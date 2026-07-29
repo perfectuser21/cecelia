@@ -1517,12 +1517,17 @@ jobs:
         env:
           BRAIN_URL: http://localhost:5221
           BRAIN_CONTAINER: cecelia-brain-smoke
-          DATABASE_URL: postgresql://cecelia:cecelia_test@localhost:5432/cecelia_test
+          DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           DB_HOST: localhost
           DB_PORT: '5432'
           DB_NAME: cecelia_test
           DB_USER: cecelia
-          DB_PASSWORD: cecelia_test
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGDATABASE: cecelia_test
+          PGUSER: cecelia
+          PGPASSWORD: ${{ secrets.CI_DB_PASSWORD }}
         run: |
           SMOKE_DIR=packages/brain/scripts/smoke
           if [ ! -d "$SMOKE_DIR" ]; then

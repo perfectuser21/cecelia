@@ -3,7 +3,7 @@
  *
  * 把本 line 的 invariant 铁律 + 累积 FR（已验收行为）从"skill 里 curl 靠自觉"
  * 升级为 graph 节点代码注入（技术保证），供 proposer/generator/evaluator 三角色使用：
- *   - fetchLineContext：三源 invariant（step/journey_feature/area，按 decision id 去重）
+ *   - fetchLineContext：四层 invariant（step/journey_feature/global/area，按 decision id 去重）
  *     + 累积 FR（journey 下 ability_status IN ('done','working') 的 golden_path，按 owner_task_id 分组；
  *       读 key=golden_path.feature_id 直连，07-10 T2 对齐；不再绕 tasks.ability_id）
  *     + 最新 line_ledger 蒸馏摘要（design_docs，T3 接线）。
@@ -30,7 +30,7 @@ function clamp(s, max) {
 }
 
 /**
- * 拉取本 line 上下文。三源 invariant + 累积 FR，全部 best-effort：
+ * 拉取本 line 上下文。四层 invariant + 累积 FR，全部 best-effort：
  * 参数缺省跳过对应路；单路失败仅 warn 降级为空数组，绝不 throw。
  * @returns {Promise<{ invariants: object[], cumulativeFR: object[], ledger: { content: string, created_at: string|Date }|null }>}
  */
@@ -62,15 +62,24 @@ export async function fetchLineContext({ pool }, { taskId = null, abilityId = nu
       ['journey_feature', abilityId])
     : [];
 
-  // 3. area 级：同源 GET /invariants?level=area
-  const areaRows = await safeQuery('area invariants',
-    `SELECT * FROM decisions WHERE category='invariant' AND status='active' AND level=$1 ORDER BY created_at DESC`,
-    ['area']);
+  // 3. global + area 级：global 是全局铁律，area 保留既有业务区规则。
+  // 一次查询保证同一快照；global 在 area 前，便于后续去重时保留更高层全局规则。
+  const globalAndAreaRows = await safeQuery('global/area invariants',
+    `SELECT * FROM decisions WHERE category='invariant' AND status='active' AND level IN ('global','area')
+     ORDER BY CASE level WHEN 'global' THEN 0 ELSE 1 END, created_at DESC`,
+    []);
+  const globalRows = globalAndAreaRows.filter((row) => row.level === 'global');
+  const areaRows = globalAndAreaRows.filter((row) => row.level !== 'global');
 
-  // 三源按 decision id 去重合并，附 source_level（step 最具体，优先保留）
+  // 四层按 decision id 去重合并，附 source_level（越具体越优先；global 先于 area）
   const invariants = [];
   const seen = new Set();
-  for (const [source_level, rows] of [['step', stepRows], ['journey_feature', featureRows], ['area', areaRows]]) {
+  for (const [source_level, rows] of [
+    ['step', stepRows],
+    ['journey_feature', featureRows],
+    ['global', globalRows],
+    ['area', areaRows],
+  ]) {
     for (const row of rows) {
       if (seen.has(row.id)) continue;
       seen.add(row.id);
