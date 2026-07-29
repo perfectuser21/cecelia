@@ -1,6 +1,17 @@
 # Brain 模块定义
 
-**版本**: 1.267.125
+**版本**: 1.267.126
+
+## Writable ephemeral Codex credential tmpfs
+
+- Docker adapter 为 `/home/cecelia/.codex` 的每 Attempt tmpfs 固定为 pinned
+  Runner 用户 `uid=999,gid=999,mode=0700`，允许其接收 FIFO 中的一次性
+  CredentialEnvelope，并继续拒绝其他 host/container 用户访问。
+- Credential payload 经 `docker exec -i` stdin 在 Runner 内部写 FIFO，不再
+  依赖 macOS host 与 OrbStack VM 之间的 FIFO 握手，也不进入 argv/env/log。
+- `noexec,nosuid,nodev`、terminal cleanup、host credential isolation 与
+  Xian 无长期凭据合同保持不变。
+- 回退：部署 Brain `1.267.125`。
 
 ## OrbStack-safe Fleet attempt mounts
 
