@@ -223,6 +223,47 @@ function protectedTokenFromFile(tokenFile) {
   return token;
 }
 
+function mountAccessPrincipal(orbstackHome) {
+  if (orbstackHome === undefined) return undefined;
+  const match = /^\/Users\/([A-Za-z_][A-Za-z0-9._-]{0,63})$/.exec(
+    orbstackHome,
+  );
+  if (!match) {
+    throw new Error('fleet_worker_orbstack_home_invalid');
+  }
+  return match[1];
+}
+
+function prepareMountRoot(sharedTmp) {
+  if (
+    typeof sharedTmp !== 'string'
+    || !path.isAbsolute(sharedTmp)
+    || sharedTmp === path.parse(sharedTmp).root
+  ) {
+    throw new Error('fleet_worker_shared_tmp_invalid');
+  }
+  let sharedStat;
+  try {
+    sharedStat = fs.lstatSync(sharedTmp);
+  } catch {
+    throw new Error('fleet_worker_shared_tmp_unavailable');
+  }
+  if (!sharedStat.isDirectory() || sharedStat.isSymbolicLink()) {
+    throw new Error('fleet_worker_shared_tmp_invalid');
+  }
+  const mountRoot = path.join(path.resolve(sharedTmp), 'fleet-mounts');
+  const worktrees = path.join(mountRoot, 'worktrees');
+  const runtime = path.join(mountRoot, 'runtime');
+  for (const directory of [mountRoot, worktrees, runtime]) {
+    fs.mkdirSync(directory, { recursive: true, mode: 0o755 });
+    fs.chmodSync(directory, 0o755);
+  }
+  const adminRoot = path.join(worktrees, '.admin');
+  fs.mkdirSync(adminRoot, { recursive: true, mode: 0o711 });
+  fs.chmodSync(adminRoot, 0o711);
+  return Object.freeze({ worktrees, runtime });
+}
+
 function createFleetWorkerRuntime({
   env = {},
   runCommand,
@@ -244,12 +285,19 @@ function createFleetWorkerRuntime({
   const attemptToken = protectedTokenFromFile(
     env.CECELIA_FLEET_WORKER_TOKEN_FILE,
   );
+  const accessPrincipal = mountAccessPrincipal(env.CECELIA_ORBSTACK_HOME);
+  const mountRoots = accessPrincipal === undefined
+    ? Object.freeze({
+        worktrees: path.join(dataRoot, 'worktrees'),
+        runtime: path.join(dataRoot, 'runtime'),
+      })
+    : prepareMountRoot(env.TMPDIR);
   const roots = Object.freeze({
     mirrors: path.join(dataRoot, 'mirrors'),
-    worktrees: path.join(dataRoot, 'worktrees'),
+    worktrees: mountRoots.worktrees,
     quarantine: path.join(dataRoot, 'quarantine'),
     state: path.join(dataRoot, 'state'),
-    runtime: path.join(dataRoot, 'runtime'),
+    runtime: mountRoots.runtime,
     credentials: path.join(dataRoot, 'credential-consumption'),
   });
   const workspaceManager = createWorkspaceManager({
@@ -264,6 +312,9 @@ function createFleetWorkerRuntime({
   });
   const docker = createDockerAdapter({
     runtimeRoot: roots.runtime,
+    ...(accessPrincipal === undefined
+      ? {}
+      : { mountAccessPrincipal: accessPrincipal }),
     ...(runCommand ? { runCommand } : {}),
   });
   const stateStore = createFileAttemptStateStore({ stateRoot: roots.state });
@@ -271,7 +322,7 @@ function createFleetWorkerRuntime({
     consumptionRoot: roots.credentials,
   });
   const runnerImageDigest = env.CECELIA_RUNNER_IMAGE
-    ?? `cecelia/runner@${digest}`;
+    ?? digest;
   const attemptRunner = createAttemptRunner({
     workspaceManager,
     docker,
@@ -284,6 +335,7 @@ function createFleetWorkerRuntime({
     attemptRunner,
     attemptToken,
     roots,
+    runnerImageDigest,
   });
 }
 

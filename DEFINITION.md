@@ -6,11 +6,22 @@
 
 
 
-**Brain 版本**: 1.267.124
+**Brain 版本**: 1.267.125
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.125 — OrbStack-safe Fleet attempt mounts
+
+- Fleet Worker 将仅供 Runner bind mount 的 worktree/runtime 放入
+  `/Users/Shared/cecelia-fleet-tmp/fleet-mounts`；mirror、state、quarantine 与
+  CredentialEnvelope consumption marker 继续留在受保护 data root。
+- Docker adapter 使用真实 host 路径和本机已加载的精确 `sha256:` image ID，
+  并只向 OrbStack owner 授予单次 workspace、Git admin 与 runtime 的 ACL。
+- ACL 遍历不跟随 symlink；`.admin` 父目录仅开放 traversal，container
+  read-only、workspace ownership 与短期凭据边界保持不变。
+- 回退：部署 Brain `1.267.124`。
 
 ## Brain 1.267.124 — Server-seeded Fleet mirror reuse
 

@@ -216,6 +216,26 @@ describe('Fleet Worker Attempt runner', () => {
     }));
   });
 
+  it('accepts the exact locally loaded sha256 image id without inventing a registry tag', async () => {
+    const deps = dependencies();
+    const rawImageId = `sha256:${'b'.repeat(64)}`;
+    const { createAttemptRunner } = loadAttemptRunner();
+    const runner = createAttemptRunner({
+      workspaceManager: deps.workspaceManager,
+      docker: deps.docker,
+      stateStore: deps.stateStore,
+      workerId: WORKER_ID,
+      runnerImageDigest: rawImageId,
+      credentialConsumer: deps.credentialConsumer,
+    });
+
+    await runner.launch(request());
+
+    expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+      image: rawImageId,
+    }));
+  });
+
   it('consumes and binds the credential before materializing a workspace', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
@@ -476,7 +496,11 @@ describe('Fleet Worker durable runtime adapters', () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
     const runCommand = vi.fn(async () => ({ stdout: '' }));
-    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+    const docker = createDockerAdapter({
+      runCommand,
+      runtimeRoot,
+      resolveMountSource: (source) => source,
+    });
 
     try {
       await expect(docker.launch({
@@ -552,10 +576,13 @@ describe('Fleet Worker durable runtime adapters', () => {
       return { stdout: '' };
     });
     const writeCredential = vi.fn(async () => undefined);
+    const resolveMountSource = vi.fn((source) => `/canonical${source}`);
     const docker = createDockerAdapter({
       runCommand,
       runtimeRoot,
       writeCredential,
+      resolveMountSource,
+      mountAccessPrincipal: 'orbstack-owner',
     });
 
     try {
@@ -568,13 +595,13 @@ describe('Fleet Worker durable runtime adapters', () => {
         role: 'generator',
         model: 'gpt-5',
         workspaceMount: {
-          source: `/controlled/worktrees/${ATTEMPT_ID}`,
+          source: `/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID}`,
           target: '/workspace',
           readOnly: true,
         },
         workspaceAdminMount: {
-          source: '/controlled/mirrors/perfectuser21__cecelia.git',
-          target: '/controlled/mirrors/perfectuser21__cecelia.git',
+          source: `/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
+          target: `/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
           readOnly: true,
         },
         labels: {
@@ -590,15 +617,58 @@ describe('Fleet Worker durable runtime adapters', () => {
         credential: CREDENTIAL,
       })).resolves.toEqual({ containerId: 'container-created' });
 
-      const [command, createArgs] = runCommand.mock.calls[0];
+      expect(runCommand.mock.calls[0]).toEqual([
+        'mkfifo',
+        ['-m', '600', path.join(runtimeRoot, ATTEMPT_ID, 'credential.fifo')],
+        undefined,
+      ]);
+      expect(runCommand.mock.calls[1]).toEqual([
+        '/usr/bin/find',
+        [
+          '-x',
+          `/canonical/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID}`,
+          `/canonical/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
+          `/canonical${path.join(runtimeRoot, ATTEMPT_ID)}`,
+          '(',
+          '-type',
+          'd',
+          '-o',
+          '-type',
+          'f',
+          '-o',
+          '-type',
+          'p',
+          ')',
+          '-exec',
+          'chmod',
+          '+a',
+          'orbstack-owner allow read,write,execute,delete',
+          '{}',
+          '+',
+        ],
+        undefined,
+      ]);
+      const [command, createArgs] = runCommand.mock.calls[2];
       expect(command).toBe('docker');
       expect(createArgs[0]).toBe('create');
       expect(createArgs).toContain(IMAGE_DIGEST);
       expect(createArgs).toContain(
-        `type=bind,src=/controlled/worktrees/${ATTEMPT_ID},dst=/workspace,readonly`,
+        `type=bind,src=/canonical/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID},dst=/workspace,readonly`,
       );
       expect(createArgs).toContain(
-        'type=bind,src=/controlled/mirrors/perfectuser21__cecelia.git,dst=/controlled/mirrors/perfectuser21__cecelia.git,readonly',
+        `type=bind,src=/canonical/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,dst=/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,readonly`,
+      );
+      expect(createArgs).toContain(
+        `type=bind,src=/canonical${path.join(runtimeRoot, ATTEMPT_ID)},dst=/tmp/cecelia-prompts`,
+      );
+      expect(resolveMountSource).toHaveBeenCalledWith(
+        `/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID}`,
+      );
+      expect(resolveMountSource).toHaveBeenCalledWith(
+        `/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
+      );
+      expect(resolveMountSource).toHaveBeenCalledWith(
+        path.join(runtimeRoot, ATTEMPT_ID),
       );
       expect(createArgs.join(' ')).not.toContain('/Users/operator');
       expect(createArgs).toEqual(expect.arrayContaining([
@@ -612,12 +682,7 @@ describe('Fleet Worker durable runtime adapters', () => {
         '--env', `CECELIA_CREDENTIAL_REF=${CREDENTIAL.credentialRef}`,
       ]));
       expect(createArgs.join(' ')).not.toContain(CREDENTIAL.authJson);
-      expect(runCommand.mock.calls[1]).toEqual([
-        'mkfifo',
-        ['-m', '600', path.join(runtimeRoot, ATTEMPT_ID, 'credential.fifo')],
-        undefined,
-      ]);
-      expect(runCommand.mock.calls[2]).toEqual([
+      expect(runCommand.mock.calls[3]).toEqual([
         'docker',
         ['start', 'cecelia-fleet-22222222-2222-4222-8222-222222222222'],
         undefined,
@@ -635,6 +700,20 @@ describe('Fleet Worker durable runtime adapters', () => {
       });
 
       expect(fs.existsSync(attemptRuntime)).toBe(false);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an unsafe OrbStack ACL principal before launching Docker', () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
+
+    try {
+      expect(() => createDockerAdapter({
+        runtimeRoot,
+        mountAccessPrincipal: 'operator allow everyone',
+      })).toThrow(/attempt_runner_invalid_mount_access_principal/);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }

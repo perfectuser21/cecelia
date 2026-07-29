@@ -14,7 +14,8 @@ const CANONICAL_MACHINE_IDS = new Set([
   'xian-mac-m1',
 ]);
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const IMAGE_DIGEST_PATTERN = /^[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/;
+const IMAGE_DIGEST_PATTERN = /^(?:[a-z0-9][a-z0-9._/-]*@)?sha256:[a-f0-9]{64}$/;
+const MOUNT_ACCESS_PRINCIPAL_PATTERN = /^[A-Za-z_][A-Za-z0-9._-]{0,63}$/;
 const PROVIDER_FIELDS = new Set([
   'provider',
   'command',
@@ -224,6 +225,8 @@ function createDockerAdapter({
   runCommand = defaultRunCommand,
   runtimeRoot,
   writeCredential = defaultWriteCredential,
+  resolveMountSource = fs.realpathSync,
+  mountAccessPrincipal,
 } = {}) {
   const root = assertRuntimeRoot(runtimeRoot, 'runtime_root');
   if (typeof runCommand !== 'function') {
@@ -231,6 +234,32 @@ function createDockerAdapter({
   }
   if (typeof writeCredential !== 'function') {
     throw new Error('attempt_runner_invalid_credential_writer');
+  }
+  if (typeof resolveMountSource !== 'function') {
+    throw new Error('attempt_runner_invalid_mount_source_resolver');
+  }
+  if (
+    mountAccessPrincipal !== undefined
+    && !MOUNT_ACCESS_PRINCIPAL_PATTERN.test(mountAccessPrincipal)
+  ) {
+    throw new Error('attempt_runner_invalid_mount_access_principal');
+  }
+
+  function canonicalMountSource(source) {
+    let resolved;
+    try {
+      resolved = resolveMountSource(source);
+    } catch {
+      throw new Error('attempt_mount_source_unavailable');
+    }
+    if (
+      typeof resolved !== 'string'
+      || !path.isAbsolute(resolved)
+      || resolved === path.parse(resolved).root
+    ) {
+      throw new Error('attempt_mount_source_invalid');
+    }
+    return path.resolve(resolved);
   }
 
   return Object.freeze({
@@ -253,6 +282,11 @@ function createDockerAdapter({
       }
       const attemptRuntime = path.join(root, attemptId);
       fs.mkdirSync(attemptRuntime, { recursive: true, mode: 0o700 });
+      const workspaceSource = canonicalMountSource(input.workspaceMount.source);
+      const workspaceAdminSource = canonicalMountSource(
+        input.workspaceAdminMount.source,
+      );
+      const runtimeSource = canonicalMountSource(attemptRuntime);
       const promptFile = path.join(attemptRuntime, 'task-bundle.json');
       const stdoutFile = path.join(attemptRuntime, 'stdout.jsonl');
       const isCodex = input.providerSpec?.provider === 'codex';
@@ -279,12 +313,12 @@ function createDockerAdapter({
       const credentialFifo = path.join(attemptRuntime, 'credential.fifo');
       const containerCredentialFifo = '/tmp/cecelia-prompts/credential.fifo';
       const workspaceMount = [
-        `type=bind,src=${input.workspaceMount.source},dst=/workspace`,
+        `type=bind,src=${workspaceSource},dst=/workspace`,
         input.workspaceMount.readOnly ? 'readonly' : null,
       ].filter(Boolean).join(',');
-      const runtimeMount = `type=bind,src=${attemptRuntime},dst=/tmp/cecelia-prompts`;
+      const runtimeMount = `type=bind,src=${runtimeSource},dst=/tmp/cecelia-prompts`;
       const workspaceAdminMount = [
-        `type=bind,src=${input.workspaceAdminMount.source},dst=${input.workspaceAdminMount.target}`,
+        `type=bind,src=${workspaceAdminSource},dst=${input.workspaceAdminMount.target}`,
         input.workspaceAdminMount.readOnly ? 'readonly' : null,
       ].filter(Boolean).join(',');
       const createArgs = [
@@ -335,12 +369,36 @@ function createDockerAdapter({
       ];
       let created;
       try {
+        if (isCodex) {
+          await runCommand('mkfifo', ['-m', '600', credentialFifo], undefined);
+        }
+        if (mountAccessPrincipal !== undefined) {
+          await runCommand('/usr/bin/find', [
+            '-x',
+            workspaceSource,
+            workspaceAdminSource,
+            runtimeSource,
+            '(',
+            '-type',
+            'd',
+            '-o',
+            '-type',
+            'f',
+            '-o',
+            '-type',
+            'p',
+            ')',
+            '-exec',
+            'chmod',
+            '+a',
+            `${mountAccessPrincipal} allow read,write,execute,delete`,
+            '{}',
+            '+',
+          ], undefined);
+        }
         created = await runCommand('docker', createArgs);
         if (!String(created?.stdout ?? '').trim()) {
           throw new Error('attempt_container_id_missing');
-        }
-        if (isCodex) {
-          await runCommand('mkfifo', ['-m', '600', credentialFifo], undefined);
         }
         await runCommand('docker', ['start', containerName], undefined);
         if (isCodex) {

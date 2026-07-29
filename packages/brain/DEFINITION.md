@@ -1,6 +1,17 @@
 # Brain 模块定义
 
-**版本**: 1.267.124
+**版本**: 1.267.125
+
+## OrbStack-safe Fleet attempt mounts
+
+- 生产 runtime 仅把 worktree/runtime 放入 OrbStack 可挂载的共享根；mirror、
+  Attempt state、quarantine 与 CredentialEnvelope consumption marker 仍位于
+  `_cecelia` 受保护 data root。
+- Docker adapter 解析真实 host 路径，直接使用本机 pinned `sha256:` image ID，
+  并对单次 workspace、Git admin 与 runtime 精确授予 OrbStack owner ACL。
+- ACL 遍历显式跳过 symlink；`.admin` 父目录仅开放 traversal。container
+  destination、ownership、read-only 与短期凭据合同保持不变。
+- 回退：部署 Brain `1.267.124`。
 
 ## Server-seeded Fleet mirror reuse
 
