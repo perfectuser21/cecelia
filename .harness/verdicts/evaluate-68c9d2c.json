@@ -1,0 +1,20 @@
+{
+  "verdict": "PASS",
+  "pr": 4442,
+  "head_sha": "68c9d2cf41aa72a94ac01302543e95638ffe3bc2",
+  "ci_run": 30417836424,
+  "invariants": {
+    "I1": "PASS",
+    "I2": "PASS",
+    "I3": "PASS",
+    "I4": "PASS",
+    "I5": "PASS",
+    "I6": "PENDING-MERGE",
+    "I7": "FIXED"
+  },
+  "unverifiable": ["I6 (pending-merge, static code analysis confirms push logic exists)"],
+  "dual_gate": {
+    "artifact": "PASS",
+    "contract_gate": "PASS"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "round": 1,
+  "verdict": "REVISION",
+  "rubric_scores": {
+    "correctness": 3,
+    "completeness": 3,
+    "testability": 4,
+    "scope_alignment": 5,
+    "tdd_discipline": 4,
+    "e2e_coverage": 4,
+    "risk": 2
+  },
+  "total": 25,
+  "judgments_written": 14,
+  "key_issues": [
+    "F1: 断言1正则 (==|!=) 不匹配 bash 单等号 = 写法",
+    "F2: ci-passed check() 函数 skipped 语义宽松，brain-tests-shell 需严格 skipped=fail",
+    "F3: awk 空块 set -e 静默失败风险",
+    "F4: engine-tests-shell 条件门导致契约测试非每次必跑",
+    "F5: 测试文件不可改约束需显式写入 DoD"
+  ]
+}
