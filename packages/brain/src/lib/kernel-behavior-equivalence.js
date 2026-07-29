@@ -825,7 +825,8 @@ export function projectJourneyCells(validation) {
             atom_ids: [],
             atom_statuses: [],
             atom_projections: [],
-            na_reason: [],
+            atom_na_reasons: [],
+            na_reason: null,
             write_database: false,
           }))
         ));
@@ -933,7 +934,8 @@ export function projectJourneyCells(validation) {
           atom_ids: tuples.map((tuple) => tuple.invariant_id),
           atom_statuses: tuples.map((tuple) => tuple.status),
           atom_projections: tuples.map((tuple) => tuple.projection),
-          na_reason: naReasons,
+          atom_na_reasons: tuples.map((tuple) => tuple.na_reason),
+          na_reason: naReasons.join('; ') || null,
         };
       }).sort((left, right) => (
         GOLDEN_PATH_STEPS.indexOf(left.step)

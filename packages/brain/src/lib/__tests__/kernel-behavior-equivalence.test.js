@@ -977,6 +977,8 @@ describe('evidence envelope and journey projection', () => {
       'reason',
       'write_database',
     ]);
+    expect(cell).not.toHaveProperty('atom_na_reasons');
+    expect(cell).not.toHaveProperty('na_reason');
 
     result.behaviors[0].atoms = [{
       invariant_id: 'UNTRUSTED-V1-ATOM',
@@ -997,6 +999,8 @@ describe('evidence envelope and journey projection', () => {
       'reason',
       'write_database',
     ]);
+    expect(projectJourneyCells(result)[0]).not.toHaveProperty('atom_na_reasons');
+    expect(projectJourneyCells(result)[0]).not.toHaveProperty('na_reason');
   });
 
   it('aggregates atomic axes into one worst-status family/step/dimension cell', () => {
@@ -1100,6 +1104,80 @@ describe('evidence envelope and journey projection', () => {
     });
   });
 
+  it('aligns per-atom N/A reasons and aggregates the compatibility scalar', () => {
+    const duplicateReason = 'retired after durable closure migration';
+    const cells = projectJourneyCells({
+      schema_version: '1.1.0',
+      journey: { key: 'kernel-harness-delivery' },
+      behaviors: [{
+        behavior_id: 'KERNEL-P1-TEST',
+        atoms: [
+          {
+            invariant_id: 'ATOM-D',
+            steps: ['S12'],
+            dimensions: ['checkpoint'],
+            effective_status: 'retired',
+            projection: 'na',
+            retired_absence_current: true,
+            na_reason: 'archived by replacement proof',
+          },
+          {
+            invariant_id: 'ATOM-B',
+            steps: ['S12'],
+            dimensions: ['checkpoint'],
+            effective_status: 'retired',
+            projection: 'na',
+            retired_absence_current: true,
+            na_reason: duplicateReason,
+          },
+          {
+            invariant_id: 'ATOM-A',
+            steps: ['S12'],
+            dimensions: ['checkpoint'],
+            effective_status: 'proven',
+            projection: 'green',
+          },
+          {
+            invariant_id: 'ATOM-C',
+            steps: ['S12'],
+            dimensions: ['checkpoint'],
+            effective_status: 'retired',
+            projection: 'na',
+            retired_absence_current: true,
+            na_reason: duplicateReason,
+          },
+          {
+            invariant_id: 'ATOM-B',
+            steps: ['S12'],
+            dimensions: ['checkpoint'],
+            effective_status: 'retired',
+            projection: 'na',
+            retired_absence_current: true,
+            na_reason: duplicateReason,
+          },
+        ],
+      }],
+    });
+
+    expect(cells).toHaveLength(1);
+    expect(cells[0]).toMatchObject({
+      atom_ids: ['ATOM-A', 'ATOM-B', 'ATOM-C', 'ATOM-D'],
+      atom_statuses: ['proven', 'retired', 'retired', 'retired'],
+      atom_projections: ['green', 'na', 'na', 'na'],
+      atom_na_reasons: [
+        null,
+        duplicateReason,
+        duplicateReason,
+        'archived by replacement proof',
+      ],
+      na_reason: 'archived by replacement proof; retired after durable closure migration',
+    });
+    expect(cells[0].atom_ids).toHaveLength(4);
+    expect(cells[0].atom_statuses).toHaveLength(4);
+    expect(cells[0].atom_projections).toHaveLength(4);
+    expect(cells[0].atom_na_reasons).toHaveLength(4);
+  });
+
   it('fails closed instead of emitting an unknown journey cell status', () => {
     const [cell] = projectJourneyCells({
       schema_version: '1.1.0',
@@ -1142,7 +1220,8 @@ describe('evidence envelope and journey projection', () => {
       cell_status: 'red',
       atom_statuses: ['not_applicable'],
       atom_projections: ['red'],
-      na_reason: [],
+      atom_na_reasons: [null],
+      na_reason: null,
     });
   });
 
@@ -1170,9 +1249,10 @@ describe('evidence envelope and journey projection', () => {
     expect(retiredCells.every((cell) => (
       cell.cell_status === 'red'
       && cell.atom_projections.includes('na')
-      && cell.na_reason.some((reason) => (
-        reason.includes('durable goal/Attempt closure')
+      && cell.atom_na_reasons.some((reason) => (
+        reason?.includes('durable goal/Attempt closure') === true
       ))
+      && cell.na_reason.includes('durable goal/Attempt closure')
       && cell.reason.includes('retired absence proof is not verified')
     ))).toBe(true);
   });
