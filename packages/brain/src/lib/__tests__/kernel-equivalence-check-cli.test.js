@@ -9,6 +9,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { load } from 'js-yaml';
 import {
   afterEach,
   describe,
@@ -17,6 +18,10 @@ import {
 } from 'vitest';
 
 import { runCheck } from '../../../../../scripts/ci/check-kernel-behavior-equivalence.mjs';
+import { compileDrillPlan } from '../kernel-equivalence-drills.js';
+import {
+  createTrustFixture,
+} from './kernel-equivalence-test-fixtures.js';
 
 const scriptPath = fileURLToPath(new URL(
   '../../../../../scripts/ci/check-kernel-behavior-equivalence.mjs',
@@ -143,6 +148,57 @@ describe('kernel equivalence check CLI', () => {
     expect(second.stdout).toBe(first.stdout);
     expect(second.stderr).toBe(first.stderr);
     expect(second.exitCode).toBe(first.exitCode);
+  });
+
+  it('keeps real signer validation on the historical report clock', () => {
+    const contract = load(readFileSync(
+      join(repositoryRoot, 'regression-contract.yaml'),
+      'utf8',
+    ));
+    const behaviors = contract.behavior_equivalence.behaviors;
+    const keyFixtures = behaviors.map(
+      (behavior) => createTrustFixture(behavior.drill.seam_id),
+    );
+    const historicalEffectKeys = keyFixtures.map((keys, index) => ({
+      ...keys.effect.record,
+      key_id: `historical-effect-${String(index).padStart(2, '0')}`,
+      not_before: '2026-07-27T00:00:00.000Z',
+      not_after: '2026-07-28T12:00:00.000Z',
+    }));
+    contract.behavior_equivalence.drill_trust_registry = {
+      ...keyFixtures[0].registry,
+      keys: [
+        keyFixtures[0].authority.record,
+        keyFixtures[0].collector.record,
+        ...historicalEffectKeys,
+      ],
+    };
+    for (const [index, behavior] of behaviors.entries()) {
+      behavior.drill.effect_signer_status = 'available';
+      behavior.drill.effect_key_id = historicalEffectKeys[index].key_id;
+      behavior.drill.blocked_by = null;
+    }
+    const root = fixtureRoot(`${JSON.stringify(contract, null, 2)}\n`);
+
+    const first = runCheck({ repositoryRoot: root });
+    const second = runCheck({ repositoryRoot: root });
+
+    expect(first).toMatchObject({
+      exitCode: 0,
+      stderr: '',
+      result: {
+        schema_valid: true,
+        drill_behavior_count: 11,
+        drill_cell_count: 99,
+        drill_blocker_count: 0,
+        drill_execution_ready: true,
+      },
+    });
+    expect(second.stdout).toBe(first.stdout);
+    expect(second.stderr).toBe(first.stderr);
+    expect(() => compileDrillPlan(contract)).toThrow(
+      'drill_effect_signer_key_inactive',
+    );
   });
 
   it('fails independently on duplicate contracts and forbidden ledger DDL', () => {
