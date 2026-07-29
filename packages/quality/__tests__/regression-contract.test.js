@@ -20,6 +20,19 @@ const EXPECTED_ATOMIC_METRICS = {
   provider_probe_assertion_count: 1326,
   retired_absence_probe_count: 4,
 };
+const EXPECTED_VALIDATOR_METRICS = {
+  ...EXPECTED_ATOMIC_METRICS,
+  probe_outcome_authority: {
+    appendix_explicit: 446,
+    design_derived: 0,
+    coverage_gap: 0,
+  },
+  recovery_mapping: {
+    exact_binding_count: 56,
+    derived_binding_count: 0,
+    coverage_gap_count: 11,
+  },
+};
 const EXPECTED_FAMILY_TOTALS = {
   'KERNEL-P0-01-BRANCH-PROTECTION': [4, 31],
   'KERNEL-P0-02-CREDENTIAL-GUARD': [3, 29],
@@ -264,7 +277,7 @@ test('the real root atomic contract validates cleanly but remains pre-cutover', 
 
   expect.soft(output.schema_valid).toBe(true);
   expect.soft(output.findings).toEqual([]);
-  expect.soft(output.metrics).toEqual(EXPECTED_ATOMIC_METRICS);
+  expect.soft(output.metrics).toEqual(EXPECTED_VALIDATOR_METRICS);
   expect(output.atomic_cutover_ready).toBe(false);
 });
 
