@@ -125,3 +125,9 @@ round: 1（无上轮 reviewer feedback）
    ```
 
 4. **合入 main 后验证**：下次 push 到 main 触发的 CI run 中，`brain-unit` / `engine-tests-shell` 等 job status 均为 success 或 failure（非 skipped），确认 push 短路修复生效。
+
+## Test Contract
+
+| Workstream | Test File | Behaviors |
+|---|---|---|
+| ws1 | `packages/engine/tests/integrity/ci-blindspot-contract.test.sh` | B5、B6、B7、B8 |
