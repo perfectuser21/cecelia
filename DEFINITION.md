@@ -14,8 +14,8 @@
 
 ## Brain 1.267.126 — Writable ephemeral Codex credential tmpfs
 
-- Fleet Worker 为 Runner 的临时 `/home/cecelia/.codex` tmpfs 固定
-  `uid=1001,gid=1001,mode=0700`，使非 root Runner 用户可从 FIFO 写入一次性
+- Fleet Worker 为 Runner 的临时 `/home/cecelia/.codex` tmpfs 固定为 pinned
+  Runner 用户 `uid=999,gid=999,mode=0700`，使其可从 FIFO 写入一次性
   `auth.json`。
 - tmpfs 仍保持 `noexec,nosuid,nodev`，CredentialEnvelope、host credential
   isolation、terminal cleanup 与 Xian 无长期凭据边界不变。

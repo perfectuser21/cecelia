@@ -4,8 +4,8 @@
 
 ## Writable ephemeral Codex credential tmpfs
 
-- Docker adapter 为 `/home/cecelia/.codex` 的每 Attempt tmpfs 固定
-  `uid=1001,gid=1001,mode=0700`，允许非 root Runner 用户接收 FIFO 中的一次性
+- Docker adapter 为 `/home/cecelia/.codex` 的每 Attempt tmpfs 固定为 pinned
+  Runner 用户 `uid=999,gid=999,mode=0700`，允许其接收 FIFO 中的一次性
   CredentialEnvelope，并继续拒绝其他 host/container 用户访问。
 - `noexec,nosuid,nodev`、terminal cleanup、host credential isolation 与
   Xian 无长期凭据合同保持不变。
