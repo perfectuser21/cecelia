@@ -1291,6 +1291,7 @@ function buildEquivalenceReportImpl(
   const validationFindings = asArray(validation?.findings)
     .slice(0, MAX_REPORT_METADATA_ITEMS);
   const schemaVersion = validation?.schema_version ?? null;
+  const atomicReport = schemaVersion === '1.1.0';
   const validationValid = validation?.valid === true;
   const atomicMetrics = asObject(validation?.atomic_metrics);
   const atomicSchemaUsable = (
@@ -1374,9 +1375,11 @@ function buildEquivalenceReportImpl(
     contract_version: validation?.contract_version ?? null,
     evaluated_at: evaluatedAt,
     valid: validationValid,
-    schema_valid: validationValid && validation?.schema_valid === true,
-    proof_complete: false,
-    atomic_cutover_ready: false,
+    ...(atomicReport ? {
+      schema_valid: validationValid && validation?.schema_valid === true,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+    } : {}),
     summary: {
       total: behaviors.length,
       by_priority: countBy(behaviors, 'priority', ['P0', 'P1']),
@@ -1429,68 +1432,72 @@ function buildEquivalenceReportImpl(
           };
         })
       )),
-      legacy_verified_family_receipts: reportMetric(
-        validation?.legacy_verified_family_receipt_count,
-        requiredCells,
-      ),
-      atomic_proven_family_cells: reportMetric(
-        0,
-        requiredCells,
-      ),
+      ...(atomicReport ? {
+        legacy_verified_family_receipts: reportMetric(
+          validation?.legacy_verified_family_receipt_count,
+          requiredCells,
+        ),
+        atomic_proven_family_cells: reportMetric(
+          0,
+          requiredCells,
+        ),
+      } : {}),
     },
-    atomic_summary: {
-      classified: atomicRequirements.atom_count,
-      proof_required: atomicRequirements.proof_required_atom_count,
-      probe_definitions: atomicRequirements.probe_count,
-      proof_required_probe_definitions: proofRequiredProbeDefinitions,
-      proven: provenAtoms,
-      gap: Math.max(
-        0,
-        atomicRequirements.proof_required_atom_count - provenAtoms,
-      ),
-      classification_counts: classificationCounts,
-      retired_absence_fresh: retiredAbsenceFresh,
-      retired_absence_required: retiredAbsenceRequired,
-      atom_scenario_required:
-        atomicRequirements.proof_required_atom_count
-        * PROOF_PROVIDERS.length
-        * PROOF_SCENARIOS.length,
-      cell_scenario_probe_obligation_required:
-        cellScenarioProbeObligations,
-      provider_probe_required:
-        atomicRequirements.provider_probe_assertion_count,
-      provider_probe_proven: 0,
-      probe_outcome_authority: {
-        appendix_explicit: reportMetric(
-          reportAtomicMetrics.probe_outcome_authority?.appendix_explicit,
-          MAX_REPORT_PROBES,
+    ...(atomicReport ? {
+      atomic_summary: {
+        classified: atomicRequirements.atom_count,
+        proof_required: atomicRequirements.proof_required_atom_count,
+        probe_definitions: atomicRequirements.probe_count,
+        proof_required_probe_definitions: proofRequiredProbeDefinitions,
+        proven: provenAtoms,
+        gap: Math.max(
+          0,
+          atomicRequirements.proof_required_atom_count - provenAtoms,
         ),
-        design_derived: reportMetric(
-          reportAtomicMetrics.probe_outcome_authority?.design_derived,
-          MAX_REPORT_PROBES,
-        ),
-        coverage_gap: reportMetric(
-          reportAtomicMetrics.probe_outcome_authority?.coverage_gap,
-          MAX_REPORT_PROBES,
-        ),
+        classification_counts: classificationCounts,
+        retired_absence_fresh: retiredAbsenceFresh,
+        retired_absence_required: retiredAbsenceRequired,
+        atom_scenario_required:
+          atomicRequirements.proof_required_atom_count
+          * PROOF_PROVIDERS.length
+          * PROOF_SCENARIOS.length,
+        cell_scenario_probe_obligation_required:
+          cellScenarioProbeObligations,
+        provider_probe_required:
+          atomicRequirements.provider_probe_assertion_count,
+        provider_probe_proven: 0,
+        probe_outcome_authority: {
+          appendix_explicit: reportMetric(
+            reportAtomicMetrics.probe_outcome_authority?.appendix_explicit,
+            MAX_REPORT_PROBES,
+          ),
+          design_derived: reportMetric(
+            reportAtomicMetrics.probe_outcome_authority?.design_derived,
+            MAX_REPORT_PROBES,
+          ),
+          coverage_gap: reportMetric(
+            reportAtomicMetrics.probe_outcome_authority?.coverage_gap,
+            MAX_REPORT_PROBES,
+          ),
+        },
+        recovery_mapping: {
+          exact_binding_count: reportMetric(
+            reportAtomicMetrics.recovery_mapping?.exact_binding_count,
+            MAX_REPORT_PROBES,
+          ),
+          derived_binding_count: reportMetric(
+            reportAtomicMetrics.recovery_mapping?.derived_binding_count,
+            MAX_REPORT_PROBES,
+          ),
+          coverage_gap_count: reportMetric(
+            reportAtomicMetrics.recovery_mapping?.coverage_gap_count,
+            MAX_REPORT_PROBES,
+          ),
+        },
       },
-      recovery_mapping: {
-        exact_binding_count: reportMetric(
-          reportAtomicMetrics.recovery_mapping?.exact_binding_count,
-          MAX_REPORT_PROBES,
-        ),
-        derived_binding_count: reportMetric(
-          reportAtomicMetrics.recovery_mapping?.derived_binding_count,
-          MAX_REPORT_PROBES,
-        ),
-        coverage_gap_count: reportMetric(
-          reportAtomicMetrics.recovery_mapping?.coverage_gap_count,
-          MAX_REPORT_PROBES,
-        ),
-      },
-    },
-    atomic_details: atomicDetails,
-    cell_atomic_coverage: cellAtomicCoverage,
+      atomic_details: atomicDetails,
+      cell_atomic_coverage: cellAtomicCoverage,
+    } : {}),
     proven_to_fire_commands: provenToFireCommands,
     gaps: behaviors
       .filter((behavior) => behavior.effective_status === 'gap')
@@ -1549,6 +1556,10 @@ function markdownCell(value) {
 }
 
 function formatEquivalenceMarkdownImpl(report) {
+  const atomicReport = (
+    report?.report_version === '1.1.0'
+    && Object.hasOwn(asObject(report), 'atomic_summary')
+  );
   const summary = asObject(report?.summary);
   const matrix = asObject(report?.provider_matrix);
   const axes = asObject(report?.axes);
@@ -1583,9 +1594,9 @@ function formatEquivalenceMarkdownImpl(report) {
     .slice(0, MAX_REPORT_FAMILY_CELLS);
   const providerCells = asArray(matrix.cells)
     .slice(0, MAX_REPORT_PROVIDER_CELLS);
-  const atomic = asObject(report?.atomic_summary);
+  const atomic = atomicReport ? asObject(report?.atomic_summary) : {};
   const classificationCounts = asObject(atomic.classification_counts);
-  const atomicDetails = asArray(report?.atomic_details)
+  const atomicDetails = (atomicReport ? asArray(report?.atomic_details) : [])
     .slice(0, MAX_REPORT_ATOMS)
     .map((atom) => ({
       invariant_id: atom?.invariant_id ?? null,
@@ -1604,7 +1615,9 @@ function formatEquivalenceMarkdownImpl(report) {
       recovery_mapping_gaps: asArray(atom?.recovery_mapping_gaps)
         .slice(0, MAX_REPORT_PROBES),
     }));
-  const atomicCells = asArray(report?.cell_atomic_coverage)
+  const atomicCells = (atomicReport
+    ? asArray(report?.cell_atomic_coverage)
+    : [])
     .slice(0, MAX_REPORT_FAMILY_CELLS)
     .map((cell) => ({
       cell_id: cell?.cell_id ?? null,
@@ -1641,13 +1654,17 @@ function formatEquivalenceMarkdownImpl(report) {
     `- 有效状态：proven ${summary.by_effective_status?.proven ?? 0} / gap ${summary.by_effective_status?.gap ?? 0} / intentional_replacement ${summary.by_effective_status?.intentional_replacement ?? 0}`,
     `- Provider 场景证据：${matrix.receipted_cells ?? 0}/${matrix.required_cells ?? 0}，缺 ${matrix.missing_cells ?? 0}`,
     `- 轴：${asArray(axes.steps).length} 个步骤（S0–S12）× 11 项行为维度 = ${axes.possible_cells ?? 0} 个可能单元`,
-    `- Atomic inventory：${atomic.classified ?? 0}/${atomic.classified ?? 0} classified；${atomic.proof_required ?? 0} proof-required；classification ${classificationCounts.active_required ?? 0}/${classificationCounts.drifted_required_gap ?? 0}/${classificationCounts.intentional_replacement ?? 0}/${classificationCounts.retired ?? 0}`,
-    `- Atomic probes：${atomic.probe_definitions ?? 0}/${atomic.proof_required_probe_definitions ?? 0} total/proof-required；cell-scenario obligations ${atomic.cell_scenario_probe_obligation_required ?? 0}`,
-    `- Atomic proof：${atomic.proven ?? 0}/${atomic.atom_scenario_required ?? 0} atom-scenario；${atomic.provider_probe_proven ?? 0}/${atomic.provider_probe_required ?? 0} provider-probe；${atomic.retired_absence_fresh ?? 0}/${atomic.retired_absence_required ?? 0} retired absence；${matrix.atomic_proven_family_cells ?? 0}/${matrix.required_cells ?? 0} family cells`,
-    `- Atomic family status：${gaps.length}/${summary.total ?? 0} family gaps`,
+    ...(atomicReport ? [
+      `- Atomic inventory：${atomic.classified ?? 0}/${atomic.classified ?? 0} classified；${atomic.proof_required ?? 0} proof-required；classification ${classificationCounts.active_required ?? 0}/${classificationCounts.drifted_required_gap ?? 0}/${classificationCounts.intentional_replacement ?? 0}/${classificationCounts.retired ?? 0}`,
+      `- Atomic probes：${atomic.probe_definitions ?? 0}/${atomic.proof_required_probe_definitions ?? 0} total/proof-required；cell-scenario obligations ${atomic.cell_scenario_probe_obligation_required ?? 0}`,
+      `- Atomic proof：${atomic.proven ?? 0}/${atomic.atom_scenario_required ?? 0} atom-scenario；${atomic.provider_probe_proven ?? 0}/${atomic.provider_probe_required ?? 0} provider-probe；${atomic.retired_absence_fresh ?? 0}/${atomic.retired_absence_required ?? 0} retired absence；${matrix.atomic_proven_family_cells ?? 0}/${matrix.required_cells ?? 0} family cells`,
+      `- Atomic family status：${gaps.length}/${summary.total ?? 0} family gaps`,
+    ] : []),
     '',
     '> 缺口不是证明。只有绑定 exact SHA/version、未过期 freshness、effect receipt，且 Claude/Codex/Grok × normal/violation/recovery 全覆盖，才是 proven。',
-    '> v1 family receipt不是atomic proof；configured receipt ID、replacement evidence 与合同自报 proof_status 都不是 live effect proof。',
+    ...(atomicReport ? [
+      '> v1 family receipt不是atomic proof；configured receipt ID、replacement evidence 与合同自报 proof_status 都不是 live effect proof。',
+    ] : []),
     '',
     '## 行为清单',
     '',
@@ -1674,24 +1691,26 @@ function formatEquivalenceMarkdownImpl(report) {
     ...providerCells.map((cell) => (
       `| ${markdownCell(cell.provider)} | ${markdownCell(cell.scenario)} | ${cell.receipted} | ${cell.required} | ${cell.missing} |`
     )),
-    '',
-    '## Atomic family cell coverage',
-    '',
-    '| Cell | Expected atoms | Configured atoms | Live atoms | Missing atoms | Expected probes | Configured probes | Live probes | Missing probes |',
-    '|---|---|---|---|---|---|---|---|---|',
-    ...atomicCells.map((cell) => (
-      `| ${markdownCell(cell.cell_id)} | ${markdownCell(cell.expected_invariant_ids.join(', '))} | ${markdownCell(cell.configured_invariant_ids.join(', '))} | ${markdownCell(cell.live_proven_invariant_ids.join(', '))} | ${markdownCell(cell.missing_invariant_ids.join(', '))} | ${markdownCell(cell.expected_probe_ids.join(', '))} | ${markdownCell(cell.configured_probe_ids.join(', '))} | ${markdownCell(cell.live_proven_probe_ids.join(', '))} | ${markdownCell(cell.missing_probe_ids.join(', '))} |`
-    )),
-    '',
-    '## Atomic invariant detail',
-    '',
-    'artifact SHA、receipt v2 identity 与 freshness 只显示 verifier-owned live proof；replacement forbidden authority 和 retired absence 独立显示。',
-    '',
-    '| Invariant | Classification | Contract proof | Effective | artifact SHA | receipt v2 identity | freshness | replacement forbidden authority | retired absence | Recovery gaps |',
-    '|---|---|---|---|---|---|---|---|---|---|',
-    ...atomicDetails.map((atom) => (
-      `| ${markdownCell(atom.invariant_id)} | ${markdownCell(atom.classification)} | ${markdownCell(atom.proof_status)} | ${markdownCell(atom.effective_status)} | ${markdownCell(atom.artifact_sha)} | ${markdownCell(atom.receipt_v2_identity)} | verified ${markdownCell(atom.verified_at)} / expires ${markdownCell(atom.expires_at)} | ${markdownCell(atom.replacement_forbidden_authority_status)} | ${markdownCell(atom.retired_absence_probe_statuses.map((status) => `${status.probe_id}:${status.status}`).join(', '))} | ${markdownCell(atom.recovery_mapping_gaps.map((gap) => gap.gap_id).join(', '))} |`
-    )),
+    ...(atomicReport ? [
+      '',
+      '## Atomic family cell coverage',
+      '',
+      '| Cell | Expected atoms | Configured atoms | Live atoms | Missing atoms | Expected probes | Configured probes | Live probes | Missing probes |',
+      '|---|---|---|---|---|---|---|---|---|',
+      ...atomicCells.map((cell) => (
+        `| ${markdownCell(cell.cell_id)} | ${markdownCell(cell.expected_invariant_ids.join(', '))} | ${markdownCell(cell.configured_invariant_ids.join(', '))} | ${markdownCell(cell.live_proven_invariant_ids.join(', '))} | ${markdownCell(cell.missing_invariant_ids.join(', '))} | ${markdownCell(cell.expected_probe_ids.join(', '))} | ${markdownCell(cell.configured_probe_ids.join(', '))} | ${markdownCell(cell.live_proven_probe_ids.join(', '))} | ${markdownCell(cell.missing_probe_ids.join(', '))} |`
+      )),
+      '',
+      '## Atomic invariant detail',
+      '',
+      'artifact SHA、receipt v2 identity 与 freshness 只显示 verifier-owned live proof；replacement forbidden authority 和 retired absence 独立显示。',
+      '',
+      '| Invariant | Classification | Contract proof | Effective | artifact SHA | receipt v2 identity | freshness | replacement forbidden authority | retired absence | Recovery gaps |',
+      '|---|---|---|---|---|---|---|---|---|---|',
+      ...atomicDetails.map((atom) => (
+        `| ${markdownCell(atom.invariant_id)} | ${markdownCell(atom.classification)} | ${markdownCell(atom.proof_status)} | ${markdownCell(atom.effective_status)} | ${markdownCell(atom.artifact_sha)} | ${markdownCell(atom.receipt_v2_identity)} | verified ${markdownCell(atom.verified_at)} / expires ${markdownCell(atom.expires_at)} | ${markdownCell(atom.replacement_forbidden_authority_status)} | ${markdownCell(atom.retired_absence_probe_statuses.map((status) => `${status.probe_id}:${status.status}`).join(', '))} | ${markdownCell(atom.recovery_mapping_gaps.map((gap) => gap.gap_id).join(', '))} |`
+      )),
+    ] : []),
     '',
     '## Legacy → Kernel unified construct 对照',
     '',

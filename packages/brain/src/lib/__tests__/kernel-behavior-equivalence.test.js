@@ -1465,7 +1465,10 @@ describe('honest equivalence report', () => {
   });
 
   it('distinguishes configured legacy receipt IDs from verified receipts', () => {
-    const validation = validateBehaviorEquivalence(contract(), { now: NOW });
+    const atomicContract = rootContract();
+    atomicContract.behavior_equivalence.behaviors[0].proof_matrix =
+      completeMatrix();
+    const validation = validateBehaviorEquivalence(atomicContract, { now: NOW });
     const report = buildEquivalenceReport(validation);
 
     expect(report.provider_matrix.receipted_cells).toBeGreaterThan(0);
@@ -1473,12 +1476,12 @@ describe('honest equivalence report', () => {
     expect(report.provider_matrix.atomic_proven_family_cells).toBe(0);
   });
 
-  it('preserves every legacy report and provider-matrix consumer field', () => {
+  it('preserves the exact legacy report and provider-matrix shape', () => {
     const report = buildEquivalenceReport(
       validateBehaviorEquivalence(contract(), { now: NOW }),
     );
 
-    for (const key of [
+    expect(Object.keys(report)).toEqual([
       'report_version',
       'contract_version',
       'evaluated_at',
@@ -1489,15 +1492,13 @@ describe('honest equivalence report', () => {
       'proven_to_fire_commands',
       'gaps',
       'behaviors',
-    ]) {
-      expect(report).toHaveProperty(key);
-    }
-    expect(Object.keys(report.provider_matrix)).toEqual(expect.arrayContaining([
+    ]);
+    expect(Object.keys(report.provider_matrix)).toEqual([
       'required_cells',
       'receipted_cells',
       'missing_cells',
       'cells',
-    ]));
+    ]);
     expect(Object.keys(report.provider_matrix.cells[0])).toEqual([
       'provider',
       'scenario',
@@ -1521,6 +1522,21 @@ describe('honest equivalence report', () => {
       'failure_semantics',
       'partial_behavioral_evidence',
     ]);
+    const markdown = formatEquivalenceMarkdown(report);
+    expect(markdown).not.toContain('Atomic');
+    expect(markdown).not.toContain('atomic proof');
+
+    for (const invalid of [
+      buildEquivalenceReport(null),
+      buildEquivalenceReport({ valid: false, schema_version: 'hostile' }),
+    ]) {
+      expect(invalid.report_version).toBe('1.0.0');
+      expect(Object.keys(invalid)).toEqual(Object.keys(report));
+      expect(Object.keys(invalid.provider_matrix)).toEqual(
+        Object.keys(report.provider_matrix),
+      );
+      expect(formatEquivalenceMarkdown(invalid)).not.toContain('Atomic');
+    }
   });
 
   it('fails closed without throwing for missing or hostile validation input', () => {
@@ -1532,21 +1548,15 @@ describe('honest equivalence report', () => {
 
     expect(() => buildEquivalenceReport(hostile)).not.toThrow();
     expect(buildEquivalenceReport(hostile)).toMatchObject({
-      schema_valid: false,
-      proof_complete: false,
-      atomic_cutover_ready: false,
-      atomic_summary: {
-        classified: 0,
-        proven: 0,
-      },
-      cell_atomic_coverage: [],
-      atomic_details: [],
-    });
-    expect(buildEquivalenceReport(null)).toMatchObject({
+      report_version: '1.0.0',
       valid: false,
-      schema_valid: false,
-      proof_complete: false,
-      atomic_cutover_ready: false,
+    });
+    expect(buildEquivalenceReport(hostile)).not.toHaveProperty(
+      'atomic_summary',
+    );
+    expect(buildEquivalenceReport(null)).toMatchObject({
+      report_version: '1.0.0',
+      valid: false,
     });
 
     const invalid = validateBehaviorEquivalence(rootContract(), { now: NOW });
