@@ -56,10 +56,10 @@ write_executable "$fake_bin/git" \
   '      if [[ "$1" == "--output" ]]; then output="$2"; shift 2; continue; fi' \
   '      shift' \
   '    done' \
-  '    exec /usr/bin/tar -cf "$output" -C "$repo_root" packages/brain/package.json packages/brain/config/fleet-node-profiles.json packages/brain/src/orchestrator/fleet-node/node-profile.js packages/brain/scripts/fleet-worker' \
+  '    exec /usr/bin/tar -cf "$output" -C "$repo_root" packages/brain/package.json packages/brain/config/fleet-node-profiles.json packages/brain/src/orchestrator/fleet-node/node-profile.js packages/brain/src/orchestrator/fleet-node/node-admission.js packages/brain/scripts/fleet-worker' \
   '  fi' \
   '  if [[ "${1:-}" == "init" && "${2:-}" == "--bare" ]]; then mkdir -p "$3"; exit 0; fi' \
-  '  if [[ "$*" == *" fetch --no-tags "* || "$*" == *" update-ref "* ]]; then exit 0; fi' \
+  '  if [[ "$*" == *" fetch --no-tags "* || "$*" == *" update-ref "* || "$*" == *" symbolic-ref HEAD "* ]]; then exit 0; fi' \
   '  if [[ "$*" == *" bundle create "* ]]; then' \
   '    while [[ $# -gt 0 && "$1" != "create" ]]; do shift; done' \
   '    shift' \
@@ -218,6 +218,10 @@ write_executable "$fake_bin/nodectl" \
   '  : > "$FLEET_TEST_NODE_ADMIT_READY"' \
   '  sleep 2' \
   'fi' \
+  'if [[ "$command_name" == "admit" && -n "${FLEET_TEST_NODE_ADMIT_FAIL_ONCE_STATE:-}" && ! -e "$FLEET_TEST_NODE_ADMIT_FAIL_ONCE_STATE" ]]; then' \
+  '  : > "$FLEET_TEST_NODE_ADMIT_FAIL_ONCE_STATE"' \
+  '  exit 23' \
+  'fi' \
   'if [[ "$command_name" == "${FLEET_TEST_NODE_FAIL:-}" ]]; then exit 23; fi' \
   'if [[ "$command_name" == "admit" ]]; then' \
   '  printf "%s\n" '"'"'{"base_admitted":true,"dispatch_ready":false}'"'"'' \
@@ -305,8 +309,16 @@ grep -Fq -- '-c tar.umask=0022 archive --format=tar' "$artifact_log" \
 grep -Eq 'archive --format=tar --output .* 0000000000000000000000000000000000000001 ' \
   "$artifact_log" \
   || fail "rollout archive did not use the frozen commit"
+grep -Fq \
+  'packages/brain/src/orchestrator/fleet-node/node-admission.js' \
+  "$artifact_log" \
+  || fail "rollout archive omitted the admission evaluator consumed by fleet-nodectl"
 grep -Fq 'bundle create' "$artifact_log" \
   || fail "rollout did not create a Git bundle"
+grep -Eq 'symbolic-ref HEAD refs/heads/fleet-rollout$' "$artifact_log" \
+  || fail "rollout bundle repository HEAD did not resolve to the frozen rollout ref"
+grep -Eq 'bundle create .* HEAD$' "$artifact_log" \
+  || fail "rollout bundle did not publish the HEAD ref consumed by baseline"
 grep -Eq 'fetch --no-tags .* 0000000000000000000000000000000000000001$' \
   "$artifact_log" \
   || fail "rollout bundle did not fetch the frozen commit"
@@ -635,9 +647,23 @@ grep -Fq 'admit xian-mac-m4 xian-mac-m4' "$node_log" \
   || fail "node-local command lost the physical machine identity"
 
 : > "$node_log"
+admit_retry_state="$test_root/admit-retry.state"
+rm -f "$admit_retry_state"
+FLEET_TEST_NODE_LOG="$node_log" \
+FLEET_TEST_NODE_ADMIT_FAIL_ONCE_STATE="$admit_retry_state" \
+FLEET_ROLLOUT_SLEEP=/usr/bin/true \
+  run_node_apply_for_test xian-mac-m4 "$payload_root" \
+    "$node_source/fleet-nodectl.sh" >/dev/null \
+  || fail "node-local apply did not recover from a transient first admission probe"
+node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
+[[ "$node_sequence" == 'drain,bootstrap,undrain,admit,admit' ]] \
+  || fail "node-local admission retry order drifted: $node_sequence"
+
+: > "$node_log"
 if FLEET_TEST_NODE_LOG="$node_log" \
   FLEET_TEST_TRANSPORT_LOG="$transport_log" \
   FLEET_TEST_NODE_FAIL=admit \
+  FLEET_ROLLOUT_SLEEP=/usr/bin/true \
   FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
   FLEET_ROLLOUT_NODECTL="$node_source/fleet-nodectl.sh" \
   run_node_apply_for_test xian-mac-m4 "$payload_root" \
@@ -646,7 +672,7 @@ if FLEET_TEST_NODE_LOG="$node_log" \
   fail "failed admission was hidden"
 fi
 node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
-[[ "$node_sequence" == 'drain,bootstrap,undrain,admit,drain' ]] \
+[[ "$node_sequence" == 'drain,bootstrap,undrain,admit,admit,admit,drain' ]] \
   || fail "failed admission did not restore drain: $node_sequence"
 
 : > "$node_log"

@@ -33,6 +33,8 @@ TAILSCALE="${FLEET_BASELINE_TAILSCALE:-$(command -v tailscale || true)}"
 DOCKER="${FLEET_BASELINE_DOCKER-$(command -v docker || true)}"
 GIT="${FLEET_BASELINE_GIT:-$(command -v git || true)}"
 CHOWN="${FLEET_BASELINE_CHOWN:-/usr/sbin/chown}"
+READLINK="${FLEET_BASELINE_READLINK:-/usr/bin/readlink}"
+STAT="${FLEET_BASELINE_STAT:-/usr/bin/stat}"
 INSTALLER="${FLEET_BASELINE_INSTALLER:-$SCRIPT_DIR/install-fleet-worker.sh}"
 
 SYSTEM_ROOT="${FLEET_BASELINE_SYSTEM_ROOT:-}"
@@ -279,15 +281,22 @@ ensure_codex_toolchain() {
   local installed_version=''
 
   if [[ -x "$codex_bin" ]]; then
-    installed_version="$("$codex_bin" --version 2>/dev/null || true)"
+    installed_version="$(
+      PATH="$TOOLCHAIN_BIN:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" \
+        "$codex_bin" --version 2>/dev/null || true
+    )"
   fi
   if [[ "$installed_version" != "codex-cli $CODEX_VERSION" ]]; then
     [[ ! -e "$codex_prefix" && ! -L "$codex_prefix" ]] \
       || die "codex_install_conflict"
-    "$node_target/bin/npm" install --global --prefix "$codex_prefix" \
+    PATH="$TOOLCHAIN_BIN:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" \
+      "$node_target/bin/npm" install --global --prefix "$codex_prefix" \
       "@openai/codex@$CODEX_VERSION"
     [[ -x "$codex_bin" \
-      && "$("$codex_bin" --version 2>/dev/null)" == "codex-cli $CODEX_VERSION" ]] \
+      && "$(
+        PATH="$TOOLCHAIN_BIN:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" \
+          "$codex_bin" --version 2>/dev/null
+      )" == "codex-cli $CODEX_VERSION" ]] \
       || die "codex_version_mismatch"
   fi
   /bin/ln -sfn "$codex_bin" "$TOOLCHAIN_BIN/codex"
@@ -390,8 +399,31 @@ ensure_orbstack() {
   ORBSTACK_INSTALL_SUCCEEDED=true
 }
 
+ensure_docker_socket_link() {
+  local socket_target="/Users/$ORBSTACK_OWNER/.orbstack/run/docker.sock"
+  local socket_path="$SYSTEM_ROOT$socket_target"
+  local socket_link="$SYSTEM_ROOT/var/run/docker.sock"
+  local current_target=''
+
+  [[ "$("$STAT" -f '%HT' "$socket_path" 2>/dev/null || true)" == Socket ]] \
+    || die "docker_socket_unavailable"
+  if [[ -L "$socket_link" ]]; then
+    current_target="$("$READLINK" "$socket_link" 2>/dev/null || true)"
+    [[ "$current_target" == "$socket_target" ]] \
+      || die "docker_socket_link_conflict"
+    return
+  fi
+  [[ ! -e "$socket_link" ]] || die "docker_socket_link_conflict"
+
+  /bin/mkdir -p "$(dirname "$socket_link")"
+  /bin/ln -s "$socket_target" "$socket_link" \
+    || die "docker_socket_link_failed"
+  [[ "$("$READLINK" "$socket_link" 2>/dev/null)" == "$socket_target" ]] \
+    || die "docker_socket_link_failed"
+}
+
 ensure_repository() {
-  local repository_parent
+  local repository_parent repository_safe_path
 
   repository_parent="$(dirname "$REPOSITORY_ROOT")"
   [[ ! -L "$repository_parent" && ! -L "$REPOSITORY_ROOT" ]] \
@@ -400,13 +432,19 @@ ensure_repository() {
   if [[ ! -e "$REPOSITORY_ROOT" ]]; then
     "$GIT" init --bare "$REPOSITORY_ROOT" >/dev/null
   fi
-  [[ -d "$REPOSITORY_ROOT" \
-    && "$("$GIT" -C "$REPOSITORY_ROOT" rev-parse --is-bare-repository)" == true ]] \
+  repository_safe_path="$(/bin/realpath "$REPOSITORY_ROOT")" \
     || die "repository_path_invalid"
-  "$GIT" -C "$REPOSITORY_ROOT" fetch --force "$REPOSITORY_BUNDLE" \
+  [[ -d "$REPOSITORY_ROOT" \
+    && "$("$GIT" -c "safe.directory=$repository_safe_path" \
+      -C "$REPOSITORY_ROOT" rev-parse --is-bare-repository)" == true ]] \
+    || die "repository_path_invalid"
+  "$GIT" -c "safe.directory=$repository_safe_path" \
+    -C "$REPOSITORY_ROOT" fetch --force "$REPOSITORY_BUNDLE" \
     HEAD:refs/heads/fleet-baseline >/dev/null
-  "$GIT" -C "$REPOSITORY_ROOT" symbolic-ref HEAD refs/heads/fleet-baseline
-  "$GIT" -C "$REPOSITORY_ROOT" rev-parse --verify HEAD >/dev/null \
+  "$GIT" -c "safe.directory=$repository_safe_path" \
+    -C "$REPOSITORY_ROOT" symbolic-ref HEAD refs/heads/fleet-baseline
+  "$GIT" -c "safe.directory=$repository_safe_path" \
+    -C "$REPOSITORY_ROOT" rev-parse --verify HEAD >/dev/null \
     || die "repository_import_failed"
   "$CHOWN" -R _cecelia:_cecelia "$REPOSITORY_ROOT"
 }
@@ -483,6 +521,7 @@ ensure_service_identity
 ensure_node_toolchain
 ensure_codex_toolchain
 ensure_orbstack
+ensure_docker_socket_link
 install_tailscale_command
 ensure_repository
 ensure_runner
@@ -508,6 +547,7 @@ FLEET_WORKER_NODE_EXECUTABLE="$TOOLCHAIN_BIN/node" \
 FLEET_WORKER_REPO_ROOT="$REPOSITORY_ROOT" \
 FLEET_WORKER_TOKEN_FILE="$WORKER_TOKEN_FILE" \
 FLEET_WORKER_ID="$ID_COMMAND" \
+FLEET_WORKER_ORBSTACK_HOME="/Users/$ORBSTACK_OWNER" \
   "$INSTALLER" "$machine_id" --apply
 
 echo "reconciled: $machine_id"

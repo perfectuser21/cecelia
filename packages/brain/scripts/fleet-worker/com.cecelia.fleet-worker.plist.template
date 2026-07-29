@@ -17,6 +17,8 @@
   <true/>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>CECELIA_ORBSTACK_HOME</key>
+    <string>@@ORBSTACK_HOME@@</string>
     <key>PATH</key>
     <string>/usr/local/libexec/cecelia/toolchain/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>DOCKER_HOST</key>

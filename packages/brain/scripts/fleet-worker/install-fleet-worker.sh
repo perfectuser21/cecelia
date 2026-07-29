@@ -28,6 +28,7 @@ WORKER_SOURCE="$SCRIPT_DIR/fleet-worker.cjs"
 PROBE_SOURCE="$SCRIPT_DIR/node-probe.cjs"
 WORKSPACE_MANAGER_SOURCE="$SCRIPT_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SOURCE="$SCRIPT_DIR/attempt-runner.cjs"
+CREDENTIAL_ENVELOPE_SOURCE="$SCRIPT_DIR/credential-envelope.cjs"
 ACCESS_HELPER_SOURCE="$SCRIPT_DIR/refresh-fleet-worker-docker-access.sh"
 ACCESS_TEMPLATE="$SCRIPT_DIR/com.cecelia.fleet-worker-docker-access.plist.template"
 DRAIN_MARKER="${FLEET_WORKER_DRAIN_MARKER:-/var/run/cecelia/fleet-worker.drain}"
@@ -40,11 +41,16 @@ STAGED_WORKER=''
 STAGED_PROBE=''
 STAGED_WORKSPACE_MANAGER=''
 STAGED_ATTEMPT_RUNNER=''
+STAGED_CREDENTIAL_ENVELOPE=''
 STAGED_PLIST=''
 STAGED_ACCESS_HELPER=''
 STAGED_ACCESS_PLIST=''
 ACL_ADDED=false
 ACL_HOME=''
+ORBSTACK_DIR_ACL_ADDED=false
+ACL_ORBSTACK_DIR=''
+RUN_DIR_ACL_ADDED=false
+ACL_RUN_DIR=''
 SOCKET_ACL_ADDED=false
 DOCKER_SOCKET_TARGET=''
 INSTALL_SUCCEEDED=false
@@ -63,10 +69,13 @@ COMMAND_PATH="$TOOLCHAIN_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr
 WORKER_SCRIPT="$RUNTIME_DIR/fleet-worker.cjs"
 WORKSPACE_MANAGER_SCRIPT="$RUNTIME_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SCRIPT="$RUNTIME_DIR/attempt-runner.cjs"
+CREDENTIAL_ENVELOPE_SCRIPT="$RUNTIME_DIR/credential-envelope.cjs"
 ACCESS_HELPER="$RUNTIME_DIR/refresh-fleet-worker-docker-access.sh"
 WORKTREE_ROOT="${FLEET_WORKER_REPO_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/repository}"
 FLEET_DATA_ROOT="${FLEET_WORKER_DATA_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/fleet-worker}"
 WORKER_TOKEN_FILE="${FLEET_WORKER_TOKEN_FILE:-$FLEET_DATA_ROOT/worker-token}"
+ORBSTACK_HOME="${FLEET_WORKER_ORBSTACK_HOME:-/var/empty}"
+SHARED_TMPDIR="${FLEET_WORKER_SHARED_TMPDIR:-$SYSTEM_ROOT/Users/Shared/cecelia-fleet-tmp}"
 
 usage() {
   echo "usage: $0 <us-mac-m4|xian-mac-m4|xian-mac-m1> [--render-to PATH|--apply]" >&2
@@ -150,6 +159,7 @@ run_default_preflight() {
   CECELIA_CALLBACK_URL="$BRAIN_HEALTH_URL" \
   CECELIA_MACHINE_ID="$machine_id" \
   CECELIA_RUNNER_DIGEST="$RUNNER_DIGEST" \
+  CECELIA_ORBSTACK_HOME="$ORBSTACK_HOME" \
   CECELIA_REPO_ROOT="$WORKTREE_ROOT" \
   CECELIA_DRAIN_MARKER="$DRAIN_MARKER" \
     "$NODE_EXECUTABLE" - \
@@ -289,6 +299,16 @@ has_managed_orbstack_acl() {
     | /usr/bin/grep -Eq '^[[:space:]]*[0-9]+: user:_cecelia allow search$'
 }
 
+has_managed_orbstack_dir_acl() {
+  "$ACL_LIST" -lde "$ACL_ORBSTACK_DIR" 2>/dev/null \
+    | /usr/bin/grep -Eq '^[[:space:]]*[0-9]+: user:_cecelia allow search$'
+}
+
+has_managed_orbstack_run_acl() {
+  "$ACL_LIST" -lde "$ACL_RUN_DIR" 2>/dev/null \
+    | /usr/bin/grep -Eq '^[[:space:]]*[0-9]+: user:_cecelia allow search$'
+}
+
 has_managed_orbstack_socket_acl() {
   "$ACL_LIST" -lde "$DOCKER_SOCKET_TARGET" 2>/dev/null \
     | /usr/bin/grep -Eq \
@@ -307,6 +327,37 @@ rollback_new_orbstack_socket_acl() {
       return 1
     fi
     SOCKET_ACL_ADDED=false
+  fi
+}
+
+rollback_new_orbstack_run_acl() {
+  if [[ "$RUN_DIR_ACL_ADDED" == true && "$INSTALL_SUCCEEDED" != true ]]; then
+    if ! has_managed_orbstack_run_acl; then
+      RUN_DIR_ACL_ADDED=false
+      return
+    fi
+    if ! "$CHMOD" -a '_cecelia allow search' \
+      "$ACL_RUN_DIR" >/dev/null 2>&1; then
+      echo "docker_acl_rollback_incomplete" >&2
+      return 1
+    fi
+    RUN_DIR_ACL_ADDED=false
+  fi
+}
+
+rollback_new_orbstack_dir_acl() {
+  if [[ "$ORBSTACK_DIR_ACL_ADDED" == true \
+    && "$INSTALL_SUCCEEDED" != true ]]; then
+    if ! has_managed_orbstack_dir_acl; then
+      ORBSTACK_DIR_ACL_ADDED=false
+      return
+    fi
+    if ! "$CHMOD" -a '_cecelia allow search' \
+      "$ACL_ORBSTACK_DIR" >/dev/null 2>&1; then
+      echo "docker_acl_rollback_incomplete" >&2
+      return 1
+    fi
+    ORBSTACK_DIR_ACL_ADDED=false
   fi
 }
 
@@ -336,6 +387,8 @@ prepare_orbstack_access() {
   esac
 
   ACL_HOME="${DOCKER_SOCKET_TARGET%/.orbstack/run/docker.sock}"
+  ACL_ORBSTACK_DIR="$ACL_HOME/.orbstack"
+  ACL_RUN_DIR="$ACL_ORBSTACK_DIR/run"
   owner_name="${ACL_HOME#/Users/}"
   if [[ -z "$owner_name" || "$owner_name" == */* || "$owner_name" == '.' \
     || "$owner_name" == '..' || ! "$owner_name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
@@ -346,6 +399,21 @@ prepare_orbstack_access() {
     trap cleanup_transaction EXIT
     ACL_ADDED=true
     "$CHMOD" +a '_cecelia allow search' "$ACL_HOME" >/dev/null 2>&1 \
+      || die "prerequisite_docker_acl"
+  fi
+
+  if ! has_managed_orbstack_dir_acl; then
+    trap cleanup_transaction EXIT
+    ORBSTACK_DIR_ACL_ADDED=true
+    "$CHMOD" +a '_cecelia allow search' \
+      "$ACL_ORBSTACK_DIR" >/dev/null 2>&1 \
+      || die "prerequisite_docker_acl"
+  fi
+
+  if ! has_managed_orbstack_run_acl; then
+    trap cleanup_transaction EXIT
+    RUN_DIR_ACL_ADDED=true
+    "$CHMOD" +a '_cecelia allow search' "$ACL_RUN_DIR" >/dev/null 2>&1 \
       || die "prerequisite_docker_acl"
   fi
 
@@ -369,6 +437,7 @@ render_plist() {
   local target="$1"
   local target_dir temporary line
   local escaped_machine escaped_digest escaped_bind_host escaped_brain_health
+  local escaped_orbstack_home
   local escaped_node escaped_worker
   local escaped_marker escaped_root escaped_token_file escaped_data_root
   local escaped_stdout escaped_stderr
@@ -376,13 +445,15 @@ render_plist() {
   [[ -f "$TEMPLATE" ]] || die "plist_template_missing"
   [[ -n "$NODE_EXECUTABLE" ]] || die "prerequisite_node"
   [[ -f "$WORKER_SOURCE" && -f "$PROBE_SOURCE" \
-    && -f "$WORKSPACE_MANAGER_SOURCE" && -f "$ATTEMPT_RUNNER_SOURCE" ]] \
+    && -f "$WORKSPACE_MANAGER_SOURCE" && -f "$ATTEMPT_RUNNER_SOURCE" \
+    && -f "$CREDENTIAL_ENVELOPE_SOURCE" ]] \
     || die "worker_script_missing"
   target_dir="$(dirname "$target")"
   [[ -d "$target_dir" ]] || die "render_target_parent_missing"
   temporary="$(mktemp "$target_dir/.fleet-worker.plist.XXXXXX")"
 
   escaped_machine="$(xml_escape "$machine_id")"
+  escaped_orbstack_home="$(xml_escape "$ORBSTACK_HOME")"
   escaped_digest="$(xml_escape "$RUNNER_DIGEST")"
   escaped_bind_host="$(xml_escape "$WORKER_BIND_HOST")"
   escaped_brain_health="$(xml_escape "$BRAIN_HEALTH_URL")"
@@ -399,6 +470,7 @@ render_plist() {
     trap 'rm -f "$temporary"' EXIT
     while IFS= read -r line || [[ -n "$line" ]]; do
       line="${line//@@MACHINE_ID@@/$escaped_machine}"
+      line="${line//@@ORBSTACK_HOME@@/$escaped_orbstack_home}"
       line="${line//@@RUNNER_DIGEST@@/$escaped_digest}"
       line="${line//@@WORKER_BIND_HOST@@/$escaped_bind_host}"
       line="${line//@@BRAIN_HEALTH_URL@@/$escaped_brain_health}"
@@ -451,6 +523,7 @@ cleanup_transaction() {
   [[ -z "$STAGED_PROBE" ]] || rm -f "$STAGED_PROBE"
   [[ -z "$STAGED_WORKSPACE_MANAGER" ]] || rm -f "$STAGED_WORKSPACE_MANAGER"
   [[ -z "$STAGED_ATTEMPT_RUNNER" ]] || rm -f "$STAGED_ATTEMPT_RUNNER"
+  [[ -z "$STAGED_CREDENTIAL_ENVELOPE" ]] || rm -f "$STAGED_CREDENTIAL_ENVELOPE"
   [[ -z "$STAGED_PLIST" ]] || rm -f "$STAGED_PLIST"
   [[ -z "$STAGED_ACCESS_HELPER" ]] || rm -f "$STAGED_ACCESS_HELPER"
   [[ -z "$STAGED_ACCESS_PLIST" ]] || rm -f "$STAGED_ACCESS_PLIST"
@@ -460,6 +533,7 @@ cleanup_transaction() {
       "$BACKUP_DIR/probe" \
       "$BACKUP_DIR/workspace-manager" \
       "$BACKUP_DIR/attempt-runner" \
+      "$BACKUP_DIR/credential-envelope" \
       "$BACKUP_DIR/plist" \
       "$BACKUP_DIR/access-helper" \
       "$BACKUP_DIR/access-plist"
@@ -467,6 +541,8 @@ cleanup_transaction() {
   fi
   [[ -z "$LOCK_DIR" ]] || rmdir "$LOCK_DIR" 2>/dev/null || true
   rollback_new_orbstack_socket_acl || true
+  rollback_new_orbstack_run_acl || true
+  rollback_new_orbstack_dir_acl || true
   rollback_new_orbstack_acl || true
 }
 
@@ -487,6 +563,9 @@ prepare_transaction_paths() {
     mktemp "$RUNTIME_DIR/.workspace-manager.cjs.XXXXXX"
   )"
   STAGED_ATTEMPT_RUNNER="$(mktemp "$RUNTIME_DIR/.attempt-runner.cjs.XXXXXX")"
+  STAGED_CREDENTIAL_ENVELOPE="$(
+    mktemp "$RUNTIME_DIR/.credential-envelope.cjs.XXXXXX"
+  )"
   STAGED_PLIST="$(mktemp "$INSTALL_DIR/.fleet-worker.plist.XXXXXX")"
   STAGED_ACCESS_HELPER="$(mktemp "$RUNTIME_DIR/.docker-access.sh.XXXXXX")"
   STAGED_ACCESS_PLIST="$(
@@ -499,10 +578,14 @@ stage_generation() {
   cp "$PROBE_SOURCE" "$STAGED_PROBE"
   cp "$WORKSPACE_MANAGER_SOURCE" "$STAGED_WORKSPACE_MANAGER"
   cp "$ATTEMPT_RUNNER_SOURCE" "$STAGED_ATTEMPT_RUNNER"
+  cp "$CREDENTIAL_ENVELOPE_SOURCE" "$STAGED_CREDENTIAL_ENVELOPE"
   cp "$ACCESS_HELPER_SOURCE" "$STAGED_ACCESS_HELPER"
   chmod 0755 "$STAGED_WORKER"
   chmod 0644 "$STAGED_PROBE"
-  chmod 0644 "$STAGED_WORKSPACE_MANAGER" "$STAGED_ATTEMPT_RUNNER"
+  chmod 0644 \
+    "$STAGED_WORKSPACE_MANAGER" \
+    "$STAGED_ATTEMPT_RUNNER" \
+    "$STAGED_CREDENTIAL_ENVELOPE"
   chmod 0755 "$STAGED_ACCESS_HELPER"
   render_plist "$STAGED_PLIST"
   render_access_plist "$STAGED_ACCESS_PLIST"
@@ -575,6 +658,20 @@ prepare_worker_data_root() {
   "$CHMOD" 0700 "$FLEET_DATA_ROOT"
   "$CHOWN" _cecelia:_cecelia "$FLEET_DATA_ROOT"
   "$CHOWN" _cecelia:_cecelia "$WORKER_TOKEN_FILE"
+}
+
+prepare_shared_tmpdir() {
+  local shared_parent="$SYSTEM_ROOT/Users/Shared"
+
+  [[ "$SHARED_TMPDIR" == "$shared_parent/cecelia-fleet-tmp" ]] \
+    || die "shared_tmpdir_invalid"
+  [[ ! -L "$shared_parent" && ! -L "$SHARED_TMPDIR" ]] \
+    || die "shared_tmpdir_invalid"
+  mkdir -p "$shared_parent" "$SHARED_TMPDIR"
+  [[ -d "$SHARED_TMPDIR" && ! -L "$SHARED_TMPDIR" ]] \
+    || die "shared_tmpdir_invalid"
+  "$CHMOD" 0755 "$SHARED_TMPDIR"
+  "$CHOWN" _cecelia:_cecelia "$SHARED_TMPDIR"
 }
 
 snapshot_file() {
@@ -693,6 +790,7 @@ run_preflight
 validate_worker_token_file
 if [[ "$mode" == 'apply' ]]; then
   prepare_worker_data_root
+  prepare_shared_tmpdir
 fi
 
 if [[ "$mode" == 'render' ]]; then
@@ -707,9 +805,11 @@ installed_access_plist="$INSTALL_DIR/$ACCESS_LABEL.plist"
   && ! -L "$installed_access_plist" ]] || die "install_path_invalid"
 prior_files_complete=false
 if [[ -f "$installed_plist" && ! -L "$installed_plist" \
-  && -f "$WORKER_SCRIPT" && ! -L "$WORKER_SCRIPT" \
-  && -f "$RUNTIME_DIR/node-probe.cjs" \
-  && ! -L "$RUNTIME_DIR/node-probe.cjs" ]]; then
+    && -f "$WORKER_SCRIPT" && ! -L "$WORKER_SCRIPT" \
+    && -f "$RUNTIME_DIR/node-probe.cjs" \
+    && ! -L "$RUNTIME_DIR/node-probe.cjs" \
+    && -f "$CREDENTIAL_ENVELOPE_SCRIPT" \
+    && ! -L "$CREDENTIAL_ENVELOPE_SCRIPT" ]]; then
   prior_files_complete=true
 fi
 prior_access_files_complete=false
@@ -748,6 +848,9 @@ prior_workspace_manager_mode="$(
 prior_attempt_runner_mode="$(
   snapshot_file "$ATTEMPT_RUNNER_SCRIPT" "$BACKUP_DIR/attempt-runner"
 )"
+prior_credential_envelope_mode="$(
+  snapshot_file "$CREDENTIAL_ENVELOPE_SCRIPT" "$BACKUP_DIR/credential-envelope"
+)"
 prior_plist_mode="$(snapshot_file "$installed_plist" "$BACKUP_DIR/plist")"
 prior_access_helper_mode="$(
   snapshot_file "$ACCESS_HELPER" "$BACKUP_DIR/access-helper"
@@ -770,6 +873,9 @@ placement_ok=true
   || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_ATTEMPT_RUNNER" "$ATTEMPT_RUNNER_SCRIPT" \
+  || placement_ok=false
+[[ "$placement_ok" == false ]] \
+  || "$MOVE" "$STAGED_CREDENTIAL_ENVELOPE" "$CREDENTIAL_ENVELOPE_SCRIPT" \
   || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_WORKER" "$WORKER_SCRIPT" \
@@ -822,6 +928,11 @@ if [[ "$launch_ok" != true ]]; then
     "$ATTEMPT_RUNNER_SCRIPT" \
     "$BACKUP_DIR/attempt-runner" \
     "$prior_attempt_runner_mode" \
+    || rollback_ok=false
+  restore_file \
+    "$CREDENTIAL_ENVELOPE_SCRIPT" \
+    "$BACKUP_DIR/credential-envelope" \
+    "$prior_credential_envelope_mode" \
     || rollback_ok=false
   restore_file "$installed_plist" "$BACKUP_DIR/plist" "$prior_plist_mode" \
     || rollback_ok=false

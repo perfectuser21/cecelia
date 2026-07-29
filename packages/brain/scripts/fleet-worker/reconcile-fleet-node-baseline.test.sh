@@ -161,10 +161,16 @@ write_executable "$fake_bin/toolchain-node" \
 
 write_executable "$fake_bin/toolchain-codex" \
   '#!/usr/bin/env bash' \
+  'if [[ "${FLEET_TEST_REQUIRE_TOOLCHAIN_NODE_PATH:-0}" == 1 ]]; then' \
+  '  [[ "$(command -v node || true)" == "${FLEET_TEST_EXPECTED_NODE:?}" ]] || { echo "clean-codex-node-path-missing" >&2; exit 127; }' \
+  'fi' \
   'echo "codex-cli 0.145.0"'
 
 write_executable "$fake_bin/toolchain-npm" \
   '#!/usr/bin/env bash' \
+  'if [[ "${FLEET_TEST_REQUIRE_TOOLCHAIN_NODE_PATH:-0}" == 1 ]]; then' \
+  '  [[ "$(command -v node || true)" == "${FLEET_TEST_EXPECTED_NODE:?}" ]] || { echo "clean-node-path-missing" >&2; exit 127; }' \
+  'fi' \
   'prefix=""' \
   'while [[ $# -gt 0 ]]; do' \
   '  if [[ "$1" == "--prefix" ]]; then prefix="$2"; shift 2; continue; fi' \
@@ -196,6 +202,13 @@ write_executable "$fake_bin/orbstack-orbctl" \
 write_executable "$fake_bin/orbstack-orb" \
   '#!/usr/bin/env bash' \
   'printf "orb %s\n" "$*" >> "${FLEET_TEST_MUTATION_LOG:?}"' \
+  'if [[ "${1:-}" == start ]]; then' \
+  '  socket="${FLEET_TEST_SOCKET_ROOT:?}/Users/fleet-admin/.orbstack/run/docker.sock"' \
+  '  mkdir -p "$(dirname "$socket")"' \
+  '  if [[ ! -e "$socket" ]]; then' \
+  '    : > "$socket"' \
+  '  fi' \
+  'fi' \
   'if [[ "${FLEET_TEST_ORB_ASYNC_START:-0}" == 1 ]]; then' \
   '  if [[ "${1:-}" == start ]]; then' \
   '    touch "${FLEET_TEST_ORB_STATE:?}"' \
@@ -239,6 +252,13 @@ write_executable "$fake_bin/codesign" \
 
 write_executable "$fake_bin/docker" \
   '#!/usr/bin/env bash' \
+  'if [[ "${1:-} ${2:-}" == "info --format" ]]; then' \
+  '  socket="${FLEET_TEST_SOCKET_ROOT:?}/Users/fleet-admin/.orbstack/run/docker.sock"' \
+  '  mkdir -p "$(dirname "$socket")"' \
+  '  if [[ ! -e "$socket" ]]; then' \
+  '    : > "$socket"' \
+  '  fi' \
+  'fi' \
   'case "${1:-} ${2:-}" in' \
   '  "info --format") [[ "${FLEET_TEST_DOCKER_FAIL_INFO:-0}" != 1 ]]; exit $? ;;' \
   '  "load --input") touch "${FLEET_TEST_RUNNER_STATE:?}"; printf "docker load\n" >> "${FLEET_TEST_MUTATION_LOG:?}"; exit 0 ;;' \
@@ -249,6 +269,33 @@ write_executable "$fake_bin/docker" \
 write_executable "$fake_bin/chown" \
   '#!/usr/bin/env bash' \
   'printf "chown %s\n" "$*" >> "${FLEET_TEST_MUTATION_LOG:?}"'
+
+write_executable "$fake_bin/stat" \
+  '#!/usr/bin/env bash' \
+  '[[ -f "${@: -1}" ]] || exit 1' \
+  'echo Socket'
+
+write_executable "$fake_bin/git" \
+  '#!/usr/bin/env bash' \
+  'safe_directory=""' \
+  'repository=""' \
+  'args=("$@")' \
+  'for (( i = 0; i < ${#args[@]}; i += 1 )); do' \
+  '  if [[ "${args[$i]}" == "-c" && "${args[$((i + 1))]:-}" == safe.directory=* ]]; then' \
+  '    safe_directory="${args[$((i + 1))]#safe.directory=}"' \
+  '  elif [[ "${args[$i]}" == "-C" ]]; then' \
+  '    repository="${args[$((i + 1))]:-}"' \
+  '  fi' \
+  'done' \
+  'canonical_repository=""' \
+  'if [[ "$repository" == */var/lib/cecelia/repository ]]; then' \
+  '  canonical_repository="$(cd "$repository" && pwd -P)"' \
+  'fi' \
+  'if [[ -n "$canonical_repository" && "$safe_directory" != "$canonical_repository" ]]; then' \
+  '  echo "fatal: detected dubious ownership in repository at '"'"'$repository'"'"'" >&2' \
+  '  exit 128' \
+  'fi' \
+  'exec "${FLEET_TEST_REAL_GIT:?}" "$@"'
 
 write_executable "$fake_bin/launchctl" \
   '#!/usr/bin/env bash' \
@@ -266,7 +313,7 @@ write_executable "$fake_bin/sudo" \
 
 write_executable "$fake_bin/installer" \
   '#!/usr/bin/env bash' \
-  'printf "installer %s\n" "$*" >> "${FLEET_TEST_MUTATION_LOG:?}"'
+  'printf "installer %s home=%s\n" "$*" "${FLEET_WORKER_ORBSTACK_HOME:-missing}" >> "${FLEET_TEST_MUTATION_LOG:?}"'
 
 bundle="$test_root/repository.bundle"
 runner_archive="$test_root/runner.tar"
@@ -300,9 +347,12 @@ run_reconciler() {
   FLEET_TEST_FAKE_NODE="$fake_bin/toolchain-node" \
   FLEET_TEST_FAKE_NPM="$fake_bin/toolchain-npm" \
   FLEET_TEST_FAKE_CODEX="$fake_bin/toolchain-codex" \
+  FLEET_TEST_EXPECTED_NODE="$root/usr/local/libexec/cecelia/toolchain/bin/node" \
+  FLEET_TEST_SOCKET_ROOT="$root" \
   FLEET_TEST_FAKE_ORBCTL="$fake_bin/orbstack-orbctl" \
   FLEET_TEST_FAKE_ORB="$fake_bin/orbstack-orb" \
   FLEET_TEST_FAKE_DOCKER="$fake_bin/docker" \
+  FLEET_TEST_REAL_GIT="$(command -v git)" \
   FLEET_TEST_DOCKER_FAIL_INFO="${FLEET_TEST_DOCKER_FAIL_INFO:-0}" \
   FLEET_BASELINE_ID="$fake_bin/id" \
   FLEET_BASELINE_DSCL="$fake_bin/dscl" \
@@ -317,8 +367,9 @@ run_reconciler() {
   FLEET_BASELINE_CODESIGN="$fake_bin/codesign" \
   FLEET_BASELINE_TAILSCALE="$tailscale_app" \
   FLEET_BASELINE_DOCKER="$docker_command" \
-  FLEET_BASELINE_GIT="$(command -v git)" \
+  FLEET_BASELINE_GIT="${FLEET_TEST_GIT_COMMAND-$(command -v git)}" \
   FLEET_BASELINE_CHOWN="$fake_bin/chown" \
+  FLEET_BASELINE_STAT="$fake_bin/stat" \
   FLEET_BASELINE_LAUNCHCTL="$fake_bin/launchctl" \
   FLEET_BASELINE_SUDO="$fake_bin/sudo" \
   FLEET_BASELINE_ORBSTACK_OWNER=fleet-admin \
@@ -401,7 +452,10 @@ FLEET_TEST_ORB_ASYNC_START=1 \
 FLEET_TEST_DOCKER_COMMAND="$test_root/missing-docker" \
 run_reconciler "$async_root" xian-mac-m4 --apply \
   >"$test_root/async-orbstack.out" 2>&1 \
-  || fail "eventually running OrbStack was rejected after start returned nonzero"
+  || {
+    cat "$test_root/async-orbstack.out" >&2
+    fail "eventually running OrbStack was rejected after start returned nonzero"
+  }
 grep -Fq 'orb start' "$mutation_log" \
   || fail "asynchronous OrbStack fixture did not exercise start"
 grep -Fq 'orb status' "$mutation_log" \
@@ -414,13 +468,26 @@ grep -Eq "launchctl asuser 501 $fake_bin/sudo -H -u fleet-admin .*/orb status" \
   || fail "OrbStack readiness was not checked in the rollout user's launchd domain"
 /bin/rm -f "$service_state" "$runner_state" "$state_root/orbstack-running"
 
+socket_conflict_root="$test_root/socket-conflict-system"
+mkdir -p "$socket_conflict_root/var/run"
+ln -s /tmp/unmanaged-docker.sock "$socket_conflict_root/var/run/docker.sock"
+if FLEET_TEST_DOCKER_COMMAND="$test_root/missing-docker" \
+  run_reconciler "$socket_conflict_root" xian-mac-m1 --apply \
+  >"$test_root/socket-conflict.out" 2>&1; then
+  fail "conflicting global Docker socket link was accepted"
+fi
+grep -Fq 'docker_socket_link_conflict' "$test_root/socket-conflict.out" \
+  || fail "Docker socket link conflict lacked a bounded refusal"
+/bin/rm -f "$service_state" "$runner_state"
+
 : > "$mutation_log"
 /bin/rm -f "$state_root/uuid-count"
 FLEET_TEST_DOCKER_COMMAND="$test_root/missing-docker" \
 FLEET_TEST_OS_VERSION=15.6.1 \
+FLEET_TEST_REQUIRE_TOOLCHAIN_NODE_PATH=1 \
 run_reconciler "$system_root" xian-mac-m1 --apply \
   >"$test_root/supported-os.out" 2>&1 \
-  || fail "valid baseline apply failed"
+  || { cat "$test_root/supported-os.out" >&2; fail "clean node baseline apply failed"; }
 grep -Fq 'os_security_update_recommended recommended=15.7.4 observed=15.6.1' \
   "$test_root/supported-os.out" \
   || fail "supported older macOS did not receive the security recommendation"
@@ -445,7 +512,7 @@ grep -Fq 'ditto orbstack' "$mutation_log" \
   || fail "pinned OrbStack app was not installed"
 grep -Fq 'docker load' "$mutation_log" \
   || fail "pinned Runner archive was not loaded"
-grep -Fq 'installer xian-mac-m1 --apply' "$mutation_log" \
+grep -Fq 'installer xian-mac-m1 --apply home=/Users/fleet-admin' "$mutation_log" \
   || fail "Fleet Worker installer was not invoked"
 [[ -x "$system_root/usr/local/libexec/cecelia/toolchain/bin/node" ]] \
   || fail "stable Node toolchain command was not installed"
@@ -457,6 +524,11 @@ grep -Fq 'installer xian-mac-m1 --apply' "$mutation_log" \
   || fail "stable OrbStack Docker command was not installed"
 [[ -x "$system_root/usr/local/libexec/cecelia/toolchain/bin/tailscale" ]] \
   || fail "stable Tailscale command was not installed"
+[[ -L "$system_root/var/run/docker.sock" ]] \
+  || fail "clean OrbStack bootstrap did not create the global Docker socket link"
+[[ "$(readlink "$system_root/var/run/docker.sock")" \
+  == '/Users/fleet-admin/.orbstack/run/docker.sock' ]] \
+  || fail "global Docker socket link does not target the rollout owner's socket"
 [[ "$(
   readlink "$system_root/usr/local/libexec/cecelia/toolchain/bin/orbctl"
 )" == "$system_root/Applications/OrbStack.app/Contents/MacOS/bin/orbctl" ]] \
@@ -478,6 +550,7 @@ install_mutations_before="$(
   grep -Ec '^(curl|tar node|npm pinned-codex|ditto orbstack|docker load)' \
     "$mutation_log"
 )"
+FLEET_TEST_GIT_COMMAND="$fake_bin/git" \
 run_reconciler "$system_root" xian-mac-m1 --apply >/dev/null \
   || fail "repeat baseline apply failed"
 install_mutations_after="$(

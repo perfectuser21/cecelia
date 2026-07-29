@@ -6,11 +6,164 @@
 
 
 
-**Brain 版本**: 1.267.109
+**Brain 版本**: 1.267.127
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.126 — Writable ephemeral Codex credential tmpfs
+
+- Fleet Worker 为 Runner 的临时 `/home/cecelia/.codex` tmpfs 固定为 pinned
+  Runner 用户 `uid=999,gid=999,mode=0700`，使其可从 FIFO 写入一次性
+  `auth.json`。
+- Worker 通过 `docker exec -i` 的 stdin 在 Runner 内部写 FIFO，避免 macOS
+  host 与 OrbStack VM 之间 bind-mounted FIFO 无法握手；secret 不进入 argv、
+  env、日志或 host credential 文件。
+- tmpfs 仍保持 `noexec,nosuid,nodev`，CredentialEnvelope、host credential
+  isolation、terminal cleanup 与 Xian 无长期凭据边界不变。
+- 回退：部署 Brain `1.267.125`。
+
+## Brain 1.267.125 — OrbStack-safe Fleet attempt mounts
+
+- Fleet Worker 将仅供 Runner bind mount 的 worktree/runtime 放入
+  `/Users/Shared/cecelia-fleet-tmp/fleet-mounts`；mirror、state、quarantine 与
+  CredentialEnvelope consumption marker 继续留在受保护 data root。
+- Docker adapter 使用真实 host 路径和本机已加载的精确 `sha256:` image ID，
+  并只向 OrbStack owner 授予单次 workspace、Git admin 与 runtime 的 ACL。
+- ACL 遍历不跟随 symlink；`.admin` 父目录仅开放 traversal，container
+  read-only、workspace ownership 与短期凭据边界保持不变。
+- 回退：部署 Brain `1.267.124`。
+
+## Brain 1.267.124 — Server-seeded Fleet mirror reuse
+
+- Fleet Worker 先验证 server-owned mirror 已包含精确的 `base_sha` 与
+  `expected_head_sha`；完整时跳过对 GitHub 的无条件 fetch。
+- 任一目标 commit 缺失时仍执行既有 fetch，并继续以精确 SHA fail closed。
+- 回退：部署 Brain `1.267.123`。
+
+## Brain 1.267.123 — Unified Fleet Worker production transport wiring
+
+- 生产 Compose 补齐 `KERNEL_FLEET_REMOTE_ENABLED`、共享 Worker bearer
+  token 与 Tailscale callback base URL，使 US M4、Xian M4、Xian M1
+  都进入 Phase 4B 的同一 authenticated Worker Attempt API。
+- 缺失或过短 token 继续 fail closed；不在 Xian 保存长期 Codex 凭据，
+  不扩展 Phase 4C/4D，也不执行 Phase 5 真实业务 Canary。
+- Brain 回退目标：`1.267.122`。
+
+## Brain 1.267.122 — Fleet Worker shared TMPDIR hotfix
+
+- system LaunchDaemon installer 创建并校验 OrbStack 可共享的固定 TMPDIR，
+  以 `_cecelia:_cecelia`、`0755` 管理，避免 clean node 在 worktree/container
+  probe 前因 `mkdtemp` 失败。
+- 路径拒绝 symlink 与任意 override；不改变 Runner pin、凭据或
+  Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.121`；节点保持 drain 后再回退。
+
+## Brain 1.267.121 — Fleet nodectl pinned Node hotfix
+
+- `fleet-nodectl admit` 优先使用受管 pinned Node，再回退到显式 override 或
+  `PATH`，使 clean node 不依赖交互式 shell 的 Node 安装。
+- 不改变 admission 阈值、Runner pin、凭据或 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.120`；节点保持 drain 后再回退。
+
+## Brain 1.267.120 — Fleet OrbStack Docker socket link hotfix
+
+- baseline reconcile 以 fail-closed 契约把 `/var/run/docker.sock` 链接到节点
+  OrbStack owner 的受管 socket，使 system LaunchDaemon 使用统一 Docker 入口。
+- 冲突链接或非 OrbStack 目标继续拒绝 admission；不扩展 Phase 4A 范围。
+- Brain 回退目标：`1.267.119`；节点保持 drain 后再回退。
+
+## Brain 1.267.119 — Fleet Codex probe pinned runtime hotfix
+
+- Node/Codex 自检通过受管 toolchain 执行，避免 LaunchDaemon 与交互式 shell
+  `PATH` 差异造成误报。
+- 不复制长期 Codex 凭据，不改变凭据 envelope 或 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.118`；节点保持 drain 后再回退。
+
+## Brain 1.267.118 — Fleet pinned Node bootstrap hotfix
+
+- baseline bootstrap 安装并验证 pinned Node 路径，使 Worker、admission 与 Codex
+  probe 在 clean node 上使用同一受管运行时。
+- 失败继续保持 drain；不改变 Runner pin 或 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.117`；节点保持 drain 后再回退。
+
+## Brain 1.267.117 — Fleet OrbStack home preflight hotfix
+
+- Worker LaunchDaemon 显式携带 OrbStack owner home，避免 system domain 使用
+  `/var/empty` 时无法解析统一容器运行时。
+- 仍只允许 OrbStack/Docker，不引入其他容器运行时或长期凭据。
+- Brain 回退目标：`1.267.116`；节点保持 drain 后再回退。
+
+## Brain 1.267.116 — Fleet production admission stabilization
+
+- 收紧生产 NodeProfile、probe 与 admission 的一致性，修复 clean node 在真实
+  LaunchDaemon 环境下的 false negative，同时保留磁盘、资源、网络与 drift
+  的 fail-closed 门槛。
+- macOS `15.7.4` 是安全更新建议，`15.6.1` 仍满足本阶段服务器 admission；
+  不扩展 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.115`；节点保持 drain 后再回退。
+
+## Brain 1.267.115 — Fleet admission evaluator artifact hotfix
+
+- rollout source archive 纳入 `node-admission.js`，使节点 `fleet-nodectl admit`
+  能加载与 `node-profile.js` 配套的 admission evaluator，而不是在 undrain 后因
+  `ERR_MODULE_NOT_FOUND` 失败。
+- artifact 合同测试机械锁定该依赖；不改变 admission 阈值、Runner pin、凭据或
+  Phase 4B/4C/4D/5 范围，任何失败继续恢复 drain。
+- Brain 回退目标：`1.267.114`；节点保持 drain 后再回退。
+
+## Brain 1.267.114 — Fleet Worker credential module install hotfix
+
+- system LaunchDaemon installer 把 Worker 运行时依赖的 `credential-envelope.cjs`
+  纳入同一代 staging、placement、snapshot 与 rollback 事务，避免启动时
+  `MODULE_NOT_FOUND`。
+- credential envelope 使用只读 `0644` runtime mode；失败继续完整回滚并保持
+  节点 drain，不改变凭据内容、Runner pin 或 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.113`；节点保持 drain 后再回退。
+
+## Brain 1.267.113 — Fleet rollout bundle HEAD contract hotfix
+
+- rollout 产物仓库把 `HEAD` 固定到冻结的 `fleet-rollout` ref，并以 `HEAD`
+  创建 Git bundle，使节点 baseline 的既有 `fetch ... HEAD` 契约可解析到同一
+  rollout commit。
+- bundle 仍只包含冻结提交，不改变 Runner pin、Worker token、admission 或
+  Phase 4B/4C/4D/5 范围；失败仍保持节点 drain。
+- Brain 回退目标：`1.267.112`；节点保持 drain 后再回退。
+
+## Brain 1.267.112 — Fleet disposable bind-mount traversal hotfix
+
+- node probe 在创建一次性 Git worktree 前把随机临时根目录从 `0700` 收敛为
+  `0755`，让宿主用户域的 OrbStack daemon 可以遍历路径并执行只读 bind mount。
+- 临时目录仍使用不可预测名称，容器挂载仍为 readonly，探针结束仍删除 worktree、
+  容器和临时根目录；不扩大 repository、凭据或 Docker socket 权限。
+- Brain 回退目标：`1.267.111`；节点保持 drain 后再回退。
+
+## Brain 1.267.111 — Fleet canonical repository safe-path hotfix
+
+- baseline 在设置进程级 `safe.directory` 前先用 `realpath` 规范化受控 bare
+  repository，兼容 macOS `/var` → `/private/var` 的系统符号链接。
+- 不放宽全局 Git 配置，不信任其他目录；失败仍保持节点 drain，不改变 Runner pin、
+  Provider 凭据或 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.110`；节点保持 drain 后再回退。
+
+## Brain 1.267.110 — Fleet repeat-bootstrap repository ownership hotfix
+
+- baseline 对受控 bare repository 的每次 Git 读取、fetch 与 ref 更新都显式限定
+  `safe.directory` 为该 NodeProfile 的 repository 路径，使 root reconcile 能安全、
+  可重复地处理已归属 `_cecelia` 的基线仓库。
+- 不放宽全局 Git 配置，不信任其他目录；失败仍保持节点 drain，不改变 Runner pin、
+  Provider 凭据或 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.109`；节点保持 drain 后再回退。
+
+## Brain 1.267.109 — Fleet OrbStack service-user path ACL hotfix
+
+- Fleet Worker installer 在低权限 node probe 前，为 OrbStack owner home、
+  `.orbstack` 与 `.orbstack/run` 授予 `_cecelia` 最小 search ACL，再授予
+  Docker socket read/write ACL，修复真实节点 `prerequisite_orbstack`。
+- 安装失败只回滚本次新增 ACL；Worker 仍是 system LaunchDaemon，不引入 GUI
+  LaunchAgent，不改变 Runner pin、Provider 凭据或 Phase 4B/4C/4D/5 范围。
+- Brain 回退目标：`1.267.108`；节点保持 drain 后再回退。
 
 ## Brain 1.267.108 — Fleet OrbStack user-domain startup hotfix
 

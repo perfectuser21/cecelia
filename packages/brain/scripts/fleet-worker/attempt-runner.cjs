@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -14,7 +14,9 @@ const CANONICAL_MACHINE_IDS = new Set([
   'xian-mac-m1',
 ]);
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const IMAGE_DIGEST_PATTERN = /^[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/;
+const CONTAINER_NAME_PATTERN = /^cecelia-fleet-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const IMAGE_DIGEST_PATTERN = /^(?:[a-z0-9][a-z0-9._/-]*@)?sha256:[a-f0-9]{64}$/;
+const MOUNT_ACCESS_PRINCIPAL_PATTERN = /^[A-Za-z_][A-Za-z0-9._-]{0,63}$/;
 const PROVIDER_FIELDS = new Set([
   'provider',
   'command',
@@ -34,51 +36,82 @@ async function defaultRunCommand(command, args, options) {
   return { stdout: stdout.trim() };
 }
 
-async function defaultWriteCredential(fifoPath, authJson) {
-  const deadline = Date.now() + 10_000;
-  let descriptor;
-  while (descriptor === undefined) {
-    try {
-      descriptor = fs.openSync(
-        fifoPath,
-        fs.constants.O_WRONLY | fs.constants.O_NONBLOCK,
-      );
-    } catch (error) {
-      if (error?.code !== 'ENXIO' || Date.now() >= deadline) {
-        throw new Error('attempt_credential_fifo_write_failed');
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
+async function defaultWriteCredential(
+  containerName,
+  fifoPath,
+  authJson,
+  {
+    spawnFn = spawn,
+    timeoutMs = 10_000,
+  } = {},
+) {
+  if (
+    !CONTAINER_NAME_PATTERN.test(containerName ?? '')
+    || fifoPath !== '/tmp/cecelia-prompts/credential.fifo'
+    || typeof authJson !== 'string'
+    || authJson.length === 0
+    || Buffer.byteLength(authJson, 'utf8') > 196_608
+    || typeof spawnFn !== 'function'
+    || !Number.isInteger(timeoutMs)
+    || timeoutMs < 1
+    || timeoutMs > 60_000
+  ) {
+    throw new Error('attempt_credential_fifo_write_failed');
   }
 
-  try {
-    const content = Buffer.from(authJson, 'utf8');
-    let offset = 0;
-    while (offset < content.length) {
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    let child;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(new Error('attempt_credential_fifo_write_failed'));
+      else resolve();
+    };
+    const timer = setTimeout(() => {
       try {
-        const written = fs.writeSync(
-          descriptor,
-          content,
-          offset,
-          content.length - offset,
-        );
-        if (written > 0) {
-          offset += written;
-          continue;
-        }
-      } catch (error) {
-        if (error?.code !== 'EAGAIN') {
-          throw new Error('attempt_credential_fifo_write_failed');
-        }
+        child?.kill('SIGKILL');
+      } catch {
+        // The generic write failure below remains the only exposed error.
       }
-      if (Date.now() >= deadline) {
-        throw new Error('attempt_credential_fifo_write_failed');
+      finish(new Error('timeout'));
+    }, timeoutMs);
+
+    try {
+      child = spawnFn(
+        'docker',
+        [
+          'exec',
+          '-i',
+          containerName,
+          'sh',
+          '-c',
+          'cat > "$1"',
+          'credential-writer',
+          fifoPath,
+        ],
+        { stdio: ['pipe', 'ignore', 'ignore'] },
+      );
+      if (
+        !child
+        || typeof child.once !== 'function'
+        || !child.stdin
+        || typeof child.stdin.end !== 'function'
+      ) {
+        finish(new Error('invalid_child'));
+        return;
       }
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      child.once('error', () => finish(new Error('spawn')));
+      child.once('close', (code) => {
+        finish(code === 0 ? null : new Error('exit'));
+      });
+      child.stdin.once('error', () => finish(new Error('stdin')));
+      child.stdin.end(authJson, 'utf8');
+    } catch {
+      finish(new Error('spawn'));
     }
-  } finally {
-    fs.closeSync(descriptor);
-  }
+  });
 }
 
 function assertRuntimeRoot(value, name) {
@@ -224,6 +257,8 @@ function createDockerAdapter({
   runCommand = defaultRunCommand,
   runtimeRoot,
   writeCredential = defaultWriteCredential,
+  resolveMountSource = fs.realpathSync,
+  mountAccessPrincipal,
 } = {}) {
   const root = assertRuntimeRoot(runtimeRoot, 'runtime_root');
   if (typeof runCommand !== 'function') {
@@ -231,6 +266,32 @@ function createDockerAdapter({
   }
   if (typeof writeCredential !== 'function') {
     throw new Error('attempt_runner_invalid_credential_writer');
+  }
+  if (typeof resolveMountSource !== 'function') {
+    throw new Error('attempt_runner_invalid_mount_source_resolver');
+  }
+  if (
+    mountAccessPrincipal !== undefined
+    && !MOUNT_ACCESS_PRINCIPAL_PATTERN.test(mountAccessPrincipal)
+  ) {
+    throw new Error('attempt_runner_invalid_mount_access_principal');
+  }
+
+  function canonicalMountSource(source) {
+    let resolved;
+    try {
+      resolved = resolveMountSource(source);
+    } catch {
+      throw new Error('attempt_mount_source_unavailable');
+    }
+    if (
+      typeof resolved !== 'string'
+      || !path.isAbsolute(resolved)
+      || resolved === path.parse(resolved).root
+    ) {
+      throw new Error('attempt_mount_source_invalid');
+    }
+    return path.resolve(resolved);
   }
 
   return Object.freeze({
@@ -253,6 +314,11 @@ function createDockerAdapter({
       }
       const attemptRuntime = path.join(root, attemptId);
       fs.mkdirSync(attemptRuntime, { recursive: true, mode: 0o700 });
+      const workspaceSource = canonicalMountSource(input.workspaceMount.source);
+      const workspaceAdminSource = canonicalMountSource(
+        input.workspaceAdminMount.source,
+      );
+      const runtimeSource = canonicalMountSource(attemptRuntime);
       const promptFile = path.join(attemptRuntime, 'task-bundle.json');
       const stdoutFile = path.join(attemptRuntime, 'stdout.jsonl');
       const isCodex = input.providerSpec?.provider === 'codex';
@@ -279,12 +345,12 @@ function createDockerAdapter({
       const credentialFifo = path.join(attemptRuntime, 'credential.fifo');
       const containerCredentialFifo = '/tmp/cecelia-prompts/credential.fifo';
       const workspaceMount = [
-        `type=bind,src=${input.workspaceMount.source},dst=/workspace`,
+        `type=bind,src=${workspaceSource},dst=/workspace`,
         input.workspaceMount.readOnly ? 'readonly' : null,
       ].filter(Boolean).join(',');
-      const runtimeMount = `type=bind,src=${attemptRuntime},dst=/tmp/cecelia-prompts`;
+      const runtimeMount = `type=bind,src=${runtimeSource},dst=/tmp/cecelia-prompts`;
       const workspaceAdminMount = [
-        `type=bind,src=${input.workspaceAdminMount.source},dst=${input.workspaceAdminMount.target}`,
+        `type=bind,src=${workspaceAdminSource},dst=${input.workspaceAdminMount.target}`,
         input.workspaceAdminMount.readOnly ? 'readonly' : null,
       ].filter(Boolean).join(',');
       const createArgs = [
@@ -301,7 +367,7 @@ function createDockerAdapter({
         ...(isCodex
           ? [
               '--tmpfs',
-              '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700',
+              '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700,uid=999,gid=999',
             ]
           : []),
         '--add-host',
@@ -335,17 +401,45 @@ function createDockerAdapter({
       ];
       let created;
       try {
+        if (isCodex) {
+          await runCommand('mkfifo', ['-m', '600', credentialFifo], undefined);
+        }
+        if (mountAccessPrincipal !== undefined) {
+          await runCommand('/usr/bin/find', [
+            '-x',
+            workspaceSource,
+            workspaceAdminSource,
+            runtimeSource,
+            '(',
+            '-type',
+            'd',
+            '-o',
+            '-type',
+            'f',
+            '-o',
+            '-type',
+            'p',
+            ')',
+            '-exec',
+            'chmod',
+            '+a',
+            `${mountAccessPrincipal} allow read,write,execute,delete`,
+            '{}',
+            '+',
+          ], undefined);
+        }
         created = await runCommand('docker', createArgs);
         if (!String(created?.stdout ?? '').trim()) {
           throw new Error('attempt_container_id_missing');
         }
-        if (isCodex) {
-          await runCommand('mkfifo', ['-m', '600', credentialFifo], undefined);
-        }
         await runCommand('docker', ['start', containerName], undefined);
         if (isCodex) {
           try {
-            await writeCredential(credentialFifo, input.credential.authJson);
+            await writeCredential(
+              containerName,
+              containerCredentialFifo,
+              input.credential.authJson,
+            );
           } finally {
             fs.rmSync(credentialFifo, { force: true });
           }

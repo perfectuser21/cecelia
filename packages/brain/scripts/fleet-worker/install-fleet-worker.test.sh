@@ -20,12 +20,15 @@ launch_state="$test_root/launchctl.state"
 launch_fail_once="$test_root/launchctl.fail-once"
 acl_log="$test_root/acl.log"
 acl_state="$test_root/acl.state"
+orbstack_acl_state="$test_root/orbstack-acl.state"
+run_acl_state="$test_root/run-acl.state"
 socket_acl_state="$test_root/socket-acl.state"
 preflight_log="$test_root/preflight.log"
 startup_probe_log="$test_root/startup-probe.log"
 chown_log="$test_root/chown.log"
 worker_token_file="$test_root/worker-token"
 worker_data_root="$test_root/var/lib/cecelia/fleet-worker"
+shared_tmpdir="$test_root/Users/Shared/cecelia-fleet-tmp"
 mkdir -p "$install_dir" "$log_dir"
 printf '%s\n' 'fleet-worker-token-at-least-32-bytes' > "$worker_token_file"
 chmod 0600 "$worker_token_file"
@@ -47,12 +50,16 @@ run_installer() {
     FLEET_WORKER_CHOWN="$test_root/chown" \
     FLEET_WORKER_CHOWN_LOG="$chown_log" \
     FLEET_WORKER_STAT="$test_root/stat" \
+    FLEET_WORKER_ORBSTACK_ACL_STATE="$orbstack_acl_state" \
+    FLEET_WORKER_RUN_ACL_STATE="$run_acl_state" \
     FLEET_WORKER_SOCKET_ACL_STATE="$socket_acl_state" \
     FLEET_WORKER_STARTUP_PROBE="$test_root/startup-probe" \
     FLEET_WORKER_STARTUP_ATTEMPTS=1 \
     FLEET_WORKER_SLEEP="$test_root/sleep" \
+    FLEET_WORKER_ORBSTACK_HOME="/Users/orbstack-owner" \
     FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
     FLEET_WORKER_DATA_ROOT="${FLEET_WORKER_TEST_DATA_ROOT:-$worker_data_root}" \
+    FLEET_WORKER_SHARED_TMPDIR="$shared_tmpdir" \
     "$INSTALLER" "$@"
 }
 
@@ -71,12 +78,16 @@ run_installer_with_id() {
     FLEET_WORKER_CHOWN="$test_root/chown" \
     FLEET_WORKER_CHOWN_LOG="$chown_log" \
     FLEET_WORKER_STAT="$test_root/stat" \
+    FLEET_WORKER_ORBSTACK_ACL_STATE="$orbstack_acl_state" \
+    FLEET_WORKER_RUN_ACL_STATE="$run_acl_state" \
     FLEET_WORKER_SOCKET_ACL_STATE="$socket_acl_state" \
     FLEET_WORKER_STARTUP_PROBE="$test_root/startup-probe" \
     FLEET_WORKER_STARTUP_ATTEMPTS=1 \
     FLEET_WORKER_SLEEP="$test_root/sleep" \
+    FLEET_WORKER_ORBSTACK_HOME="/Users/orbstack-owner" \
     FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
     FLEET_WORKER_DATA_ROOT="${FLEET_WORKER_TEST_DATA_ROOT:-$worker_data_root}" \
+    FLEET_WORKER_SHARED_TMPDIR="$shared_tmpdir" \
     "$INSTALLER" "$@"
 }
 
@@ -116,6 +127,10 @@ printf '%s\n' \
   'target="${@: -1}"' \
   'if [[ "$target" == "/Users/orbstack-owner" && -e "${FLEET_WORKER_ACL_STATE:?}" ]]; then' \
   '  printf "%s\\n" " 0: user:_cecelia allow search"' \
+  'elif [[ "$target" == "/Users/orbstack-owner/.orbstack" && -e "${FLEET_WORKER_ORBSTACK_ACL_STATE:?}" ]]; then' \
+  '  printf "%s\\n" " 0: user:_cecelia allow search"' \
+  'elif [[ "$target" == "/Users/orbstack-owner/.orbstack/run" && -e "${FLEET_WORKER_RUN_ACL_STATE:?}" ]]; then' \
+  '  printf "%s\\n" " 0: user:_cecelia allow search"' \
   'elif [[ "$target" == */docker.sock && -e "${FLEET_WORKER_SOCKET_ACL_STATE:?}" ]]; then' \
   '  printf "%s\\n" " 0: user:_cecelia allow read,write"' \
   'fi' \
@@ -127,11 +142,23 @@ printf '%s\n' \
   'printf "%s\\n" "acl $*" >> "${FLEET_WORKER_ACL_LOG:?}"' \
   'printf "%s\\n" "acl $1" >> "${FLEET_WORKER_PREFLIGHT_LOG:?}"' \
   'if [[ "$1" == "+a" && "$2" == "_cecelia allow search" ]]; then' \
-  '  : > "${FLEET_WORKER_ACL_STATE:?}"' \
+  '  case "${@: -1}" in' \
+  '    /Users/orbstack-owner) state="${FLEET_WORKER_ACL_STATE:?}" ;;' \
+  '    /Users/orbstack-owner/.orbstack) state="${FLEET_WORKER_ORBSTACK_ACL_STATE:?}" ;;' \
+  '    /Users/orbstack-owner/.orbstack/run) state="${FLEET_WORKER_RUN_ACL_STATE:?}" ;;' \
+  '    *) exit 95 ;;' \
+  '  esac' \
+  '  : > "$state"' \
   '  [[ "${FLEET_WORKER_ACL_FAIL_ADD:-0}" != "1" ]] || exit 91' \
   'elif [[ "$1" == "-a" && "$2" == "_cecelia allow search" ]]; then' \
+  '  case "${@: -1}" in' \
+  '    /Users/orbstack-owner) state="${FLEET_WORKER_ACL_STATE:?}" ;;' \
+  '    /Users/orbstack-owner/.orbstack) state="${FLEET_WORKER_ORBSTACK_ACL_STATE:?}" ;;' \
+  '    /Users/orbstack-owner/.orbstack/run) state="${FLEET_WORKER_RUN_ACL_STATE:?}" ;;' \
+  '    *) exit 95 ;;' \
+  '  esac' \
   '  [[ "${FLEET_WORKER_ACL_FAIL_REMOVE:-0}" != "1" ]] || exit 92' \
-  '  rm -f "${FLEET_WORKER_ACL_STATE:?}"' \
+  '  rm -f "$state"' \
   'elif [[ "$1" == "+a" && "$2" == "_cecelia allow read,write" ]]; then' \
   '  : > "${FLEET_WORKER_SOCKET_ACL_STATE:?}"' \
   '  [[ "${FLEET_WORKER_SOCKET_ACL_FAIL_ADD:-0}" != "1" ]] || exit 93' \
@@ -214,6 +241,7 @@ printf '%s\n' \
   'if [[ "${1:-}" == "-" ]]; then' \
   '  cat >/dev/null' \
   '  printf "%s\n" "$PATH" > "${FLEET_WORKER_TEST_DEFAULT_PROBE_PATH:?}"' \
+  '  [[ "${CECELIA_ORBSTACK_HOME:-}" == "/Users/orbstack-owner" ]] || { echo prerequisite_orbstack_home >&2; exit 1; }' \
   '  [[ "$(command -v orbctl || true)" == "${FLEET_WORKER_TEST_TOOLCHAIN_BIN:?}/orbctl" ]] || { echo prerequisite_orbstack >&2; exit 1; }' \
   '  [[ "$(command -v docker || true)" == "${FLEET_WORKER_TEST_TOOLCHAIN_BIN:?}/docker" ]] || { echo prerequisite_docker >&2; exit 1; }' \
   '  exit 0' \
@@ -243,6 +271,7 @@ FLEET_WORKER_ID="$test_root/id-default-probe" \
 FLEET_WORKER_PLUTIL="$test_root/plutil" \
 FLEET_WORKER_TOKEN_FILE="$worker_token_file" \
 FLEET_WORKER_DATA_ROOT="$worker_data_root" \
+FLEET_WORKER_ORBSTACK_HOME="/Users/orbstack-owner" \
   env -u FLEET_WORKER_NODE_PROBE \
   "$INSTALLER" xian-mac-m4 --render-to "$default_probe_plist" >/dev/null \
   || fail "default preflight could not resolve reconciled OrbStack commands"
@@ -297,6 +326,8 @@ tool_path = plist.get('EnvironmentVariables', {}).get('PATH')
 worker_host = plist.get('EnvironmentVariables', {}).get('CECELIA_FLEET_WORKER_HOST')
 docker_host = plist.get('EnvironmentVariables', {}).get('DOCKER_HOST')
 callback_url = plist.get('EnvironmentVariables', {}).get('CECELIA_CALLBACK_URL')
+orbstack_home = plist.get('EnvironmentVariables', {}).get('CECELIA_ORBSTACK_HOME')
+service_home = plist.get('EnvironmentVariables', {}).get('HOME')
 print(
     ('true' if run_at_load is True else repr(run_at_load))
     + '|'
@@ -311,10 +342,14 @@ print(
     + str(docker_host)
     + '|'
     + str(callback_url)
+    + '|'
+    + str(orbstack_home)
+    + '|'
+    + str(service_home)
 )
 PY
 )" || fail "rendered file is not a valid plist"
-[[ "$plist_contract" == 'true|true|_cecelia|/usr/local/libexec/cecelia/toolchain/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin|100.86.57.69|unix:///var/run/docker.sock|http://100.71.151.105:5221/api/brain/health' ]] \
+[[ "$plist_contract" == 'true|true|_cecelia|/usr/local/libexec/cecelia/toolchain/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin|100.86.57.69|unix:///var/run/docker.sock|http://100.71.151.105:5221/api/brain/health|/Users/orbstack-owner|None' ]] \
   || fail "plist contract drifted: $plist_contract"
 validated_plist="$test_root/validated-fleet-worker.plist"
 cp "$plist" "$validated_plist"
@@ -467,14 +502,16 @@ if acl_failure_output="$(
 fi
 grep -Fq 'prerequisite_docker_acl' <<<"$acl_failure_output" \
   || fail "failed ACL grant lacked a bounded refusal"
-[[ ! -e "$acl_state" ]] || fail "failed ACL grant left ACL state behind"
+[[ ! -e "$acl_state" && ! -e "$orbstack_acl_state" \
+  && ! -e "$run_acl_state" ]] \
+  || fail "failed ACL grant left ACL state behind"
 grep -Fq 'acl -a _cecelia allow search /Users/orbstack-owner' "$acl_log" \
   || fail "partial ACL grant was not rolled back"
 
 : > "$acl_log"
 : > "$preflight_log"
 : > "$acl_state"
-rm -f "$socket_acl_state"
+rm -f "$orbstack_acl_state" "$run_acl_state" "$socket_acl_state"
 socket_acl_failure_output=''
 if socket_acl_failure_output="$(
   FLEET_WORKER_SOCKET_ACL_FAIL_ADD=1 \
@@ -485,15 +522,17 @@ fi
 grep -Fq 'prerequisite_docker_socket_acl' <<<"$socket_acl_failure_output" \
   || fail "failed exact-socket ACL grant lacked a bounded refusal"
 [[ -e "$acl_state" ]] || fail "socket ACL failure removed a pre-existing home ACL"
-[[ ! -e "$socket_acl_state" ]] || fail "failed socket ACL grant left partial state"
+[[ ! -e "$orbstack_acl_state" && ! -e "$run_acl_state" \
+  && ! -e "$socket_acl_state" ]] \
+  || fail "failed socket ACL grant left partial state"
 grep -Fq \
   'acl -a _cecelia allow read,write /Users/orbstack-owner/.orbstack/run/docker.sock' \
   "$acl_log" || fail "partial socket ACL grant was not rolled back"
-rm -f "$acl_state"
+rm -f "$acl_state" "$orbstack_acl_state" "$run_acl_state"
 
 : > "$acl_log"
 : > "$preflight_log"
-rm -f "$acl_state" "$socket_acl_state"
+rm -f "$acl_state" "$orbstack_acl_state" "$run_acl_state" "$socket_acl_state"
 socket_validation_output=''
 if socket_validation_output="$(
   FLEET_WORKER_STAT_FAIL=1 \
@@ -523,7 +562,8 @@ if preflight_failure_output="$(
 fi
 grep -Fq 'prerequisite_docker' <<<"$preflight_failure_output" \
   || fail "failed low-privilege preflight lacked a bounded refusal"
-[[ ! -e "$acl_state" && ! -e "$socket_acl_state" ]] \
+[[ ! -e "$acl_state" && ! -e "$orbstack_acl_state" \
+  && ! -e "$run_acl_state" && ! -e "$socket_acl_state" ]] \
   || fail "failed low-privilege preflight leaked a new ACL"
 [[ ! -s "$launch_log" ]] || fail "failed low-privilege preflight mutated launchd"
 printf '%s\n' \
@@ -536,7 +576,7 @@ chmod +x "$test_root/node-probe"
 : > "$acl_log"
 : > "$preflight_log"
 : > "$launch_log"
-rm -f "$acl_state" "$socket_acl_state"
+rm -f "$acl_state" "$orbstack_acl_state" "$run_acl_state" "$socket_acl_state"
 malformed_log_dir="$test_root/"$'invalid\001log'
 mkdir -p "$malformed_log_dir"
 malformed_plist_output=''
@@ -550,7 +590,8 @@ grep -Fq 'plist_validation_failed' <<<"$malformed_plist_output" \
   || fail "malformed rendered plist lacked a bounded validation signature"
 [[ ! -s "$launch_log" ]] \
   || fail "malformed rendered plist mutated launchd before validation"
-[[ ! -e "$acl_state" && ! -e "$socket_acl_state" ]] \
+[[ ! -e "$acl_state" && ! -e "$orbstack_acl_state" \
+  && ! -e "$run_acl_state" && ! -e "$socket_acl_state" ]] \
   || fail "malformed rendered plist leaked a newly-added ACL"
 
 : > "$launch_log"
@@ -570,7 +611,9 @@ rm -f "$log_dir/fleet-worker-docker-access.stdout.log"
 
 : > "$acl_log"
 : > "$preflight_log"
-rm -f "$acl_state" "$socket_acl_state" "$launch_fail_once"
+rm -f \
+  "$acl_state" "$orbstack_acl_state" "$run_acl_state" \
+  "$socket_acl_state" "$launch_fail_once"
 export FLEET_WORKER_LAUNCH_FAIL_MATCH='bootstrap system'
 first_failure_output=''
 if first_failure_output="$(
@@ -582,17 +625,20 @@ fi
 unset FLEET_WORKER_LAUNCH_FAIL_MATCH
 grep -Fq 'install_failed_rolled_back' <<<"$first_failure_output" \
   || fail "failed first install lacked a bounded rollback signature"
-[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 2 ]] \
-  || fail "failed first install did not add both minimal ACLs"
-[[ "$(grep -Ec '^acl -a ' "$acl_log")" -eq 2 ]] \
-  || fail "failed first install did not remove both new ACLs"
-[[ ! -e "$acl_state" && ! -e "$socket_acl_state" ]] \
+[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 4 ]] \
+  || fail "failed first install did not add all minimal ACLs"
+[[ "$(grep -Ec '^acl -a ' "$acl_log")" -eq 4 ]] \
+  || fail "failed first install did not remove all new ACLs"
+[[ ! -e "$acl_state" && ! -e "$orbstack_acl_state" \
+  && ! -e "$run_acl_state" && ! -e "$socket_acl_state" ]] \
   || fail "failed first install leaked a new ACL"
 
 : > "$acl_log"
 : > "$preflight_log"
 : > "$launch_log"
-rm -f "$acl_state" "$socket_acl_state" "$launch_fail_once"
+rm -f \
+  "$acl_state" "$orbstack_acl_state" "$run_acl_state" \
+  "$socket_acl_state" "$launch_fail_once"
 export FLEET_WORKER_LAUNCH_FAIL_MATCH='bootstrap system'
 acl_rollback_failure_output=''
 if acl_rollback_failure_output="$(
@@ -605,14 +651,18 @@ fi
 unset FLEET_WORKER_LAUNCH_FAIL_MATCH
 grep -Fq 'docker_acl_rollback_incomplete' <<<"$acl_rollback_failure_output" \
   || fail "ACL rollback failure was silently swallowed"
-[[ -e "$acl_state" ]] || fail "ACL rollback failure fixture did not preserve evidence"
-rm -f "$acl_state"
+[[ -e "$acl_state" && -e "$orbstack_acl_state" \
+  && -e "$run_acl_state" ]] \
+  || fail "ACL rollback failure fixture did not preserve evidence"
+rm -f "$acl_state" "$orbstack_acl_state" "$run_acl_state"
 rm -f "$socket_acl_state"
 
 : > "$acl_log"
 : > "$preflight_log"
 : > "$launch_log"
-rm -f "$acl_state" "$socket_acl_state" "$launch_fail_once"
+rm -f \
+  "$acl_state" "$orbstack_acl_state" "$run_acl_state" \
+  "$socket_acl_state" "$launch_fail_once"
 export FLEET_WORKER_LAUNCH_FAIL_MATCH='bootstrap system'
 socket_acl_rollback_failure_output=''
 if socket_acl_rollback_failure_output="$(
@@ -628,8 +678,9 @@ grep -Fq 'docker_socket_acl_rollback_incomplete' \
   || fail "socket ACL rollback failure was silently swallowed"
 [[ -e "$socket_acl_state" ]] \
   || fail "socket ACL rollback failure fixture did not preserve evidence"
-[[ ! -e "$acl_state" ]] \
-  || fail "socket ACL rollback failure prevented home ACL rollback"
+[[ ! -e "$acl_state" && ! -e "$orbstack_acl_state" \
+  && ! -e "$run_acl_state" ]] \
+  || fail "socket ACL rollback failure prevented path ACL rollback"
 rm -f "$socket_acl_state"
 
 : > "$acl_log"
@@ -646,6 +697,7 @@ installed_worker="$runtime_dir/fleet-worker.cjs"
 installed_probe="$runtime_dir/node-probe.cjs"
 installed_workspace_manager="$runtime_dir/workspace-manager.cjs"
 installed_attempt_runner="$runtime_dir/attempt-runner.cjs"
+installed_credential_envelope="$runtime_dir/credential-envelope.cjs"
 installed_access_helper="$runtime_dir/refresh-fleet-worker-docker-access.sh"
 installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.plist"
 [[ -f "$installed_plist" ]] || fail "--apply did not install the rendered plist"
@@ -653,10 +705,16 @@ installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.pl
   || fail "--apply did not install a stable Worker runtime"
 [[ -f "$installed_workspace_manager" && -f "$installed_attempt_runner" ]] \
   || fail "--apply omitted the Workspace/Attempt runtime modules"
+[[ -f "$installed_credential_envelope" ]] \
+  || fail "--apply omitted the credential envelope runtime module"
 [[ -d "$worker_data_root" ]] \
   || fail "--apply did not create the Worker-owned data root"
+[[ -d "$shared_tmpdir" ]] \
+  || fail "--apply did not create the OrbStack-shareable Worker TMPDIR"
 grep -Fxq "_cecelia:_cecelia $worker_data_root" "$chown_log" \
   || fail "--apply did not assign the data root to the Worker identity"
+grep -Fxq "_cecelia:_cecelia $shared_tmpdir" "$chown_log" \
+  || fail "--apply did not assign the shared TMPDIR to the Worker identity"
 grep -Fxq "_cecelia:_cecelia $worker_token_file" "$chown_log" \
   || fail "--apply did not assign the token file to the Worker identity"
 [[ -f "$installed_access_helper" && -f "$installed_access_plist" ]] \
@@ -692,18 +750,26 @@ cmp -s "$validated_plist" "$installed_plist" \
   || fail "--apply did not kickstart the installed system LaunchDaemon"
 [[ "$(<"$launch_state")" == 'running' ]] \
   || fail "first apply did not leave the service running"
-[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 2 ]] \
-  || fail "first apply did not add exactly two minimal ACLs"
+[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 4 ]] \
+  || fail "first apply did not add exactly four minimal ACLs"
 grep -Fxq 'acl +a _cecelia allow search /Users/orbstack-owner' "$acl_log" \
-  || fail "first apply granted more than owner-home search ACL"
+  || fail "first apply omitted owner-home search ACL"
+grep -Fxq 'acl +a _cecelia allow search /Users/orbstack-owner/.orbstack' "$acl_log" \
+  || fail "first apply omitted OrbStack directory search ACL"
+grep -Fxq 'acl +a _cecelia allow search /Users/orbstack-owner/.orbstack/run' "$acl_log" \
+  || fail "first apply omitted OrbStack run directory search ACL"
 grep -Fxq 'acl +a _cecelia allow read,write /Users/orbstack-owner/.orbstack/run/docker.sock' \
   "$acl_log" || fail "first apply did not grant exact socket read,write"
 [[ "$(sed -n '1p' "$preflight_log")" == 'acl +a' ]] \
   || fail "home ACL was not granted before the low-privilege node probe"
 [[ "$(sed -n '2p' "$preflight_log")" == 'acl +a' ]] \
+  || fail "OrbStack directory ACL was not granted before the low-privilege node probe"
+[[ "$(sed -n '3p' "$preflight_log")" == 'acl +a' ]] \
+  || fail "OrbStack run ACL was not granted before the low-privilege node probe"
+[[ "$(sed -n '4p' "$preflight_log")" == 'acl +a' ]] \
   || fail "socket ACL was not granted before the low-privilege node probe"
-[[ "$(sed -n '3p' "$preflight_log")" == 'probe' ]] \
-  || fail "node probe did not run after both ACL grants"
+[[ "$(sed -n '5p' "$preflight_log")" == 'probe' ]] \
+  || fail "node probe did not run after all ACL grants"
 
 : > "$launch_log"
 run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null \
@@ -724,7 +790,7 @@ run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null \
   || fail "repeat --apply did not kickstart the replacement service"
 [[ "$(<"$launch_state")" == 'running' ]] \
   || fail "repeat --apply left split service state"
-[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 2 ]] \
+[[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 4 ]] \
   || fail "repeat --apply duplicated an existing ACL"
 
 mode_of() {
@@ -739,11 +805,13 @@ seed_prior_generation() {
   local tag="$1"
   printf '%s\n' "prior-worker-$tag" > "$installed_worker"
   printf '%s\n' "prior-probe-$tag" > "$installed_probe"
+  printf '%s\n' "prior-credential-envelope-$tag" > "$installed_credential_envelope"
   printf '%s\n' "prior-plist-$tag" > "$installed_plist"
   printf '%s\n' "prior-access-helper-$tag" > "$installed_access_helper"
   printf '%s\n' "prior-access-plist-$tag" > "$installed_access_plist"
   chmod 0711 "$installed_worker"
   chmod 0600 "$installed_probe"
+  chmod 0644 "$installed_credential_envelope"
   chmod 0640 "$installed_plist"
   chmod 0700 "$installed_access_helper"
   chmod 0600 "$installed_access_plist"
@@ -752,24 +820,28 @@ seed_prior_generation() {
 
 assert_support_placement_failure_rolled_back() {
   local snapshot_dir="$test_root/snapshot-placement"
-  local worker_mode probe_mode plist_mode helper_mode access_plist_mode
+  local worker_mode probe_mode credential_mode plist_mode helper_mode access_plist_mode
   local failure_output
 
   seed_prior_generation placement
   mkdir -p "$snapshot_dir"
   cp "$installed_worker" "$snapshot_dir/worker"
   cp "$installed_probe" "$snapshot_dir/probe"
+  cp "$installed_credential_envelope" "$snapshot_dir/credential-envelope"
   cp "$installed_plist" "$snapshot_dir/plist"
   cp "$installed_access_helper" "$snapshot_dir/access-helper"
   cp "$installed_access_plist" "$snapshot_dir/access-plist"
   worker_mode="$(mode_of "$installed_worker")"
   probe_mode="$(mode_of "$installed_probe")"
+  credential_mode="$(mode_of "$installed_credential_envelope")"
   plist_mode="$(mode_of "$installed_plist")"
   helper_mode="$(mode_of "$installed_access_helper")"
   access_plist_mode="$(mode_of "$installed_access_plist")"
   : > "$launch_log"
   rm -f \
     "$acl_state" \
+    "$orbstack_acl_state" \
+    "$run_acl_state" \
     "$socket_acl_state" \
     "$FLEET_WORKER_MV_FAIL_ONCE"
 
@@ -787,6 +859,8 @@ assert_support_placement_failure_rolled_back() {
     || fail "placement failure did not restore Worker bytes"
   cmp -s "$snapshot_dir/probe" "$installed_probe" \
     || fail "placement failure did not restore probe bytes"
+  cmp -s "$snapshot_dir/credential-envelope" "$installed_credential_envelope" \
+    || fail "placement failure did not restore credential envelope bytes"
   cmp -s "$snapshot_dir/plist" "$installed_plist" \
     || fail "placement failure did not restore Worker plist bytes"
   cmp -s "$snapshot_dir/access-helper" "$installed_access_helper" \
@@ -795,6 +869,7 @@ assert_support_placement_failure_rolled_back() {
     || fail "placement failure did not restore access plist bytes"
   [[ "$(mode_of "$installed_worker")" == "$worker_mode" \
     && "$(mode_of "$installed_probe")" == "$probe_mode" \
+    && "$(mode_of "$installed_credential_envelope")" == "$credential_mode" \
     && "$(mode_of "$installed_plist")" == "$plist_mode" \
     && "$(mode_of "$installed_access_helper")" == "$helper_mode" \
     && "$(mode_of "$installed_access_plist")" == "$access_plist_mode" ]] \
@@ -803,7 +878,8 @@ assert_support_placement_failure_rolled_back() {
     || fail "placement failure did not restore prior services"
   [[ "$(wc -l < "$launch_log" | tr -d ' ')" -eq 8 ]] \
     || fail "placement rollback mutation sequence drifted"
-  [[ ! -e "$acl_state" && ! -e "$socket_acl_state" ]] \
+  [[ ! -e "$acl_state" && ! -e "$orbstack_acl_state" \
+    && ! -e "$run_acl_state" && ! -e "$socket_acl_state" ]] \
     || fail "placement failure leaked a newly-added ACL"
 }
 
@@ -814,18 +890,20 @@ assert_failed_upgrade_rolled_back() {
   local expected_mutations="$2"
   local tag="$3"
   local snapshot_dir="$test_root/snapshot-$tag"
-  local worker_mode probe_mode plist_mode access_helper_mode access_plist_mode
+  local worker_mode probe_mode credential_mode plist_mode access_helper_mode access_plist_mode
   local failure_output
 
   seed_prior_generation "$tag"
   mkdir -p "$snapshot_dir"
   cp "$installed_worker" "$snapshot_dir/worker"
   cp "$installed_probe" "$snapshot_dir/probe"
+  cp "$installed_credential_envelope" "$snapshot_dir/credential-envelope"
   cp "$installed_plist" "$snapshot_dir/plist"
   cp "$installed_access_helper" "$snapshot_dir/access-helper"
   cp "$installed_access_plist" "$snapshot_dir/access-plist"
   worker_mode="$(mode_of "$installed_worker")"
   probe_mode="$(mode_of "$installed_probe")"
+  credential_mode="$(mode_of "$installed_credential_envelope")"
   plist_mode="$(mode_of "$installed_plist")"
   access_helper_mode="$(mode_of "$installed_access_helper")"
   access_plist_mode="$(mode_of "$installed_access_plist")"
@@ -848,6 +926,8 @@ assert_failed_upgrade_rolled_back() {
     || fail "$tag failure did not restore exact Worker bytes"
   cmp -s "$snapshot_dir/probe" "$installed_probe" \
     || fail "$tag failure did not restore exact probe bytes"
+  cmp -s "$snapshot_dir/credential-envelope" "$installed_credential_envelope" \
+    || fail "$tag failure did not restore exact credential envelope bytes"
   cmp -s "$snapshot_dir/plist" "$installed_plist" \
     || fail "$tag failure did not restore exact plist bytes"
   cmp -s "$snapshot_dir/access-helper" "$installed_access_helper" \
@@ -858,6 +938,8 @@ assert_failed_upgrade_rolled_back() {
     || fail "$tag failure did not restore the Worker mode"
   [[ "$(mode_of "$installed_probe")" == "$probe_mode" ]] \
     || fail "$tag failure did not restore the probe mode"
+  [[ "$(mode_of "$installed_credential_envelope")" == "$credential_mode" ]] \
+    || fail "$tag failure did not restore the credential envelope mode"
   [[ "$(mode_of "$installed_plist")" == "$plist_mode" ]] \
     || fail "$tag failure did not restore the plist mode"
   [[ "$(mode_of "$installed_access_helper")" == "$access_helper_mode" ]] \
@@ -891,6 +973,7 @@ assert_started_but_unhealthy_generation_rolled_back() {
   mkdir -p "$snapshot_dir"
   cp "$installed_worker" "$snapshot_dir/worker"
   cp "$installed_probe" "$snapshot_dir/probe"
+  cp "$installed_credential_envelope" "$snapshot_dir/credential-envelope"
   cp "$installed_plist" "$snapshot_dir/plist"
   cp "$installed_access_helper" "$snapshot_dir/access-helper"
   cp "$installed_access_plist" "$snapshot_dir/access-plist"
@@ -911,6 +994,8 @@ assert_started_but_unhealthy_generation_rolled_back() {
     || fail "startup health failure did not restore Worker bytes"
   cmp -s "$snapshot_dir/probe" "$installed_probe" \
     || fail "startup health failure did not restore probe bytes"
+  cmp -s "$snapshot_dir/credential-envelope" "$installed_credential_envelope" \
+    || fail "startup health failure did not restore credential envelope bytes"
   cmp -s "$snapshot_dir/plist" "$installed_plist" \
     || fail "startup health failure did not restore Worker plist bytes"
   cmp -s "$snapshot_dir/access-helper" "$installed_access_helper" \
@@ -932,7 +1017,7 @@ assert_stopped_upgrade_remains_stopped() {
   local expected_mutations="$2"
   local tag="$3"
   local snapshot_dir="$test_root/snapshot-stopped-$tag"
-  local worker_mode probe_mode plist_mode access_helper_mode access_plist_mode
+  local worker_mode probe_mode credential_mode plist_mode access_helper_mode access_plist_mode
   local failure_output
 
   seed_prior_generation "stopped-$tag"
@@ -940,11 +1025,13 @@ assert_stopped_upgrade_remains_stopped() {
   mkdir -p "$snapshot_dir"
   cp "$installed_worker" "$snapshot_dir/worker"
   cp "$installed_probe" "$snapshot_dir/probe"
+  cp "$installed_credential_envelope" "$snapshot_dir/credential-envelope"
   cp "$installed_plist" "$snapshot_dir/plist"
   cp "$installed_access_helper" "$snapshot_dir/access-helper"
   cp "$installed_access_plist" "$snapshot_dir/access-plist"
   worker_mode="$(mode_of "$installed_worker")"
   probe_mode="$(mode_of "$installed_probe")"
+  credential_mode="$(mode_of "$installed_credential_envelope")"
   plist_mode="$(mode_of "$installed_plist")"
   access_helper_mode="$(mode_of "$installed_access_helper")"
   access_plist_mode="$(mode_of "$installed_access_plist")"
@@ -967,6 +1054,8 @@ assert_stopped_upgrade_remains_stopped() {
     || fail "stopped $tag failure did not restore exact Worker bytes"
   cmp -s "$snapshot_dir/probe" "$installed_probe" \
     || fail "stopped $tag failure did not restore exact probe bytes"
+  cmp -s "$snapshot_dir/credential-envelope" "$installed_credential_envelope" \
+    || fail "stopped $tag failure did not restore exact credential envelope bytes"
   cmp -s "$snapshot_dir/plist" "$installed_plist" \
     || fail "stopped $tag failure did not restore exact plist bytes"
   cmp -s "$snapshot_dir/access-helper" "$installed_access_helper" \
@@ -977,6 +1066,8 @@ assert_stopped_upgrade_remains_stopped() {
     || fail "stopped $tag failure did not restore the Worker mode"
   [[ "$(mode_of "$installed_probe")" == "$probe_mode" ]] \
     || fail "stopped $tag failure did not restore the probe mode"
+  [[ "$(mode_of "$installed_credential_envelope")" == "$credential_mode" ]] \
+    || fail "stopped $tag failure did not restore the credential envelope mode"
   [[ "$(mode_of "$installed_plist")" == "$plist_mode" ]] \
     || fail "stopped $tag failure did not restore the plist mode"
   [[ "$(mode_of "$installed_access_helper")" == "$access_helper_mode" ]] \

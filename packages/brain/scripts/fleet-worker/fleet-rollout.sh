@@ -14,6 +14,9 @@ TAR="${FLEET_ROLLOUT_TAR:-/usr/bin/tar}"
 SUDO="${FLEET_ROLLOUT_SUDO:-/usr/bin/sudo}"
 ROLLOUT_TMPDIR="${FLEET_ROLLOUT_TMPDIR:-${TMPDIR:-/tmp}}"
 WORKER_TOKEN_SOURCE="${FLEET_ROLLOUT_WORKER_TOKEN_FILE:-/var/lib/cecelia/fleet-worker/worker-auth}"
+ADMISSION_ATTEMPTS="${FLEET_ROLLOUT_ADMISSION_ATTEMPTS:-3}"
+ADMISSION_RETRY_SECONDS="${FLEET_ROLLOUT_ADMISSION_RETRY_SECONDS:-2}"
+SLEEP="${FLEET_ROLLOUT_SLEEP:-/bin/sleep}"
 
 TEMP_ROOT=''
 
@@ -108,6 +111,7 @@ run_node_apply() {
   local node_ctl_override="${3:-}"
   local node_ctl
   local drain_guard_armed=false
+  local admission_attempt admitted=false
 
   require_machine "$machine_id"
   [[ -d "$payload_root" && ! -L "$payload_root" \
@@ -161,7 +165,16 @@ run_node_apply() {
     trap - EXIT HUP INT TERM
     return 1
   fi
-  if ! run_node_command admit "$machine_id"; then
+  for (( admission_attempt = 1; admission_attempt <= ADMISSION_ATTEMPTS; admission_attempt += 1 )); do
+    if run_node_command admit "$machine_id"; then
+      admitted=true
+      break
+    fi
+    if [[ "$admission_attempt" -lt "$ADMISSION_ATTEMPTS" ]]; then
+      "$SLEEP" "$ADMISSION_RETRY_SECONDS"
+    fi
+  done
+  if [[ "$admitted" != true ]]; then
     restore_drain_guard
     trap - EXIT HUP INT TERM
     return 1
@@ -365,14 +378,17 @@ stage_worker_token "$worker_token"
   packages/brain/package.json \
   packages/brain/config/fleet-node-profiles.json \
   packages/brain/src/orchestrator/fleet-node/node-profile.js \
+  packages/brain/src/orchestrator/fleet-node/node-admission.js \
   packages/brain/scripts/fleet-worker
 "$GIT" init --bare "$bundle_repository" >/dev/null
 "$GIT" --git-dir="$bundle_repository" fetch --no-tags \
   "$REPO_ROOT" "$rollout_commit" >/dev/null
 "$GIT" --git-dir="$bundle_repository" update-ref \
   refs/heads/fleet-rollout "$rollout_commit"
+"$GIT" --git-dir="$bundle_repository" symbolic-ref \
+  HEAD refs/heads/fleet-rollout
 "$GIT" --git-dir="$bundle_repository" bundle create \
-  "$repository_bundle" refs/heads/fleet-rollout
+  "$repository_bundle" HEAD
 "$DOCKER" save --output "$runner_archive" "$RUNNER_DIGEST"
 "$TAR" -cf "$payload_tar" -C "$TEMP_ROOT" \
   source.tar repository.bundle runner.tar worker-token
