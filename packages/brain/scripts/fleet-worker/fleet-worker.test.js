@@ -985,6 +985,9 @@ describe('Fleet Worker production runtime assembly', () => {
       expect(fs.statSync(mountRoot).mode & 0o777).toBe(0o755);
       expect(fs.statSync(runtime.roots.worktrees).mode & 0o777).toBe(0o755);
       expect(fs.statSync(runtime.roots.runtime).mode & 0o777).toBe(0o755);
+      expect(
+        fs.statSync(path.join(runtime.roots.worktrees, '.admin')).mode & 0o777,
+      ).toBe(0o711);
       expect(runtime.roots.credentials.startsWith(mountRoot)).toBe(false);
       expect(runtime.roots.state.startsWith(mountRoot)).toBe(false);
     } finally {
