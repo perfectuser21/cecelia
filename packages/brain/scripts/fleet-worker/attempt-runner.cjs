@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -35,51 +35,83 @@ async function defaultRunCommand(command, args, options) {
   return { stdout: stdout.trim() };
 }
 
-async function defaultWriteCredential(fifoPath, authJson) {
-  const deadline = Date.now() + 10_000;
-  let descriptor;
-  while (descriptor === undefined) {
-    try {
-      descriptor = fs.openSync(
-        fifoPath,
-        fs.constants.O_WRONLY | fs.constants.O_NONBLOCK,
-      );
-    } catch (error) {
-      if (error?.code !== 'ENXIO' || Date.now() >= deadline) {
-        throw new Error('attempt_credential_fifo_write_failed');
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
+async function defaultWriteCredential(
+  containerName,
+  fifoPath,
+  authJson,
+  {
+    spawnFn = spawn,
+    timeoutMs = 10_000,
+  } = {},
+) {
+  if (
+    containerName !== `cecelia-fleet-${containerName?.slice('cecelia-fleet-'.length)}`
+    || !UUID_PATTERN.test(containerName.slice('cecelia-fleet-'.length))
+    || fifoPath !== '/tmp/cecelia-prompts/credential.fifo'
+    || typeof authJson !== 'string'
+    || authJson.length === 0
+    || Buffer.byteLength(authJson, 'utf8') > 196_608
+    || typeof spawnFn !== 'function'
+    || !Number.isInteger(timeoutMs)
+    || timeoutMs < 1
+    || timeoutMs > 60_000
+  ) {
+    throw new Error('attempt_credential_fifo_write_failed');
   }
 
-  try {
-    const content = Buffer.from(authJson, 'utf8');
-    let offset = 0;
-    while (offset < content.length) {
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    let child;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(new Error('attempt_credential_fifo_write_failed'));
+      else resolve();
+    };
+    const timer = setTimeout(() => {
       try {
-        const written = fs.writeSync(
-          descriptor,
-          content,
-          offset,
-          content.length - offset,
-        );
-        if (written > 0) {
-          offset += written;
-          continue;
-        }
-      } catch (error) {
-        if (error?.code !== 'EAGAIN') {
-          throw new Error('attempt_credential_fifo_write_failed');
-        }
+        child?.kill('SIGKILL');
+      } catch {
+        // The generic write failure below remains the only exposed error.
       }
-      if (Date.now() >= deadline) {
-        throw new Error('attempt_credential_fifo_write_failed');
+      finish(new Error('timeout'));
+    }, timeoutMs);
+
+    try {
+      child = spawnFn(
+        'docker',
+        [
+          'exec',
+          '-i',
+          containerName,
+          'sh',
+          '-c',
+          'cat > "$1"',
+          'credential-writer',
+          fifoPath,
+        ],
+        { stdio: ['pipe', 'ignore', 'ignore'] },
+      );
+      if (
+        !child
+        || typeof child.once !== 'function'
+        || !child.stdin
+        || typeof child.stdin.end !== 'function'
+      ) {
+        finish(new Error('invalid_child'));
+        return;
       }
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      child.once('error', () => finish(new Error('spawn')));
+      child.once('close', (code) => {
+        finish(code === 0 ? null : new Error('exit'));
+      });
+      child.stdin.once('error', () => finish(new Error('stdin')));
+      child.stdin.end(authJson, 'utf8');
+    } catch {
+      finish(new Error('spawn'));
     }
-  } finally {
-    fs.closeSync(descriptor);
-  }
+  });
 }
 
 function assertRuntimeRoot(value, name) {
@@ -403,7 +435,11 @@ function createDockerAdapter({
         await runCommand('docker', ['start', containerName], undefined);
         if (isCodex) {
           try {
-            await writeCredential(credentialFifo, input.credential.authJson);
+            await writeCredential(
+              containerName,
+              containerCredentialFifo,
+              input.credential.authJson,
+            );
           } finally {
             fs.rmSync(credentialFifo, { force: true });
           }

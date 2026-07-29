@@ -17,6 +17,9 @@
 - Fleet Worker 为 Runner 的临时 `/home/cecelia/.codex` tmpfs 固定为 pinned
   Runner 用户 `uid=999,gid=999,mode=0700`，使其可从 FIFO 写入一次性
   `auth.json`。
+- Worker 通过 `docker exec -i` 的 stdin 在 Runner 内部写 FIFO，避免 macOS
+  host 与 OrbStack VM 之间 bind-mounted FIFO 无法握手；secret 不进入 argv、
+  env、日志或 host credential 文件。
 - tmpfs 仍保持 `noexec,nosuid,nodev`，CredentialEnvelope、host credential
   isolation、terminal cleanup 与 Xian 无长期凭据边界不变。
 - 回退：部署 Brain `1.267.125`。
