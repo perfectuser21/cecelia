@@ -6,13 +6,13 @@
 
 
 
-**Brain 版本**: 1.267.127
+**Brain 版本**: 1.267.128
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.267.127 — Provider-neutral attempt timeout terminal
+## Brain 1.267.128 — Provider-neutral attempt timeout terminal
 
 - `TaskBundle.constraints.timeout_seconds` 现在作为 authoritative attempt timeout，
   由 Brain transport 传入 Fleet Worker，并以 `HARNESS_TIMEOUT_SECONDS` 进入
