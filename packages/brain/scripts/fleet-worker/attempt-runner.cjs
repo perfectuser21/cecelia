@@ -14,6 +14,7 @@ const CANONICAL_MACHINE_IDS = new Set([
   'xian-mac-m1',
 ]);
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const CONTAINER_NAME_PATTERN = /^cecelia-fleet-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const IMAGE_DIGEST_PATTERN = /^(?:[a-z0-9][a-z0-9._/-]*@)?sha256:[a-f0-9]{64}$/;
 const MOUNT_ACCESS_PRINCIPAL_PATTERN = /^[A-Za-z_][A-Za-z0-9._-]{0,63}$/;
 const PROVIDER_FIELDS = new Set([
@@ -45,8 +46,7 @@ async function defaultWriteCredential(
   } = {},
 ) {
   if (
-    containerName !== `cecelia-fleet-${containerName?.slice('cecelia-fleet-'.length)}`
-    || !UUID_PATTERN.test(containerName.slice('cecelia-fleet-'.length))
+    !CONTAINER_NAME_PATTERN.test(containerName ?? '')
     || fifoPath !== '/tmp/cecelia-prompts/credential.fifo'
     || typeof authJson !== 'string'
     || authJson.length === 0
