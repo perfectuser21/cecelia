@@ -132,7 +132,6 @@ export async function loadTrustedEquivalenceRuntime({
   pool,
   runtimeRegistry,
   now = Date.now,
-  randomUUID = nodeRandomUUID,
 } = {}) {
   const metadata = validateTrustedRuntimeEnvironment(env);
   if (
@@ -152,7 +151,7 @@ export async function loadTrustedEquivalenceRuntime({
   try {
     grantExecutionAuthority = createPostgresGrantExecutionAuthority({
       pool,
-      actorInstanceId: randomUUID(),
+      actorInstanceId: nodeRandomUUID(),
     });
   } catch {
     fail('trusted_runtime_grant_authority_unavailable');

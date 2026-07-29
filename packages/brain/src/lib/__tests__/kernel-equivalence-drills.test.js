@@ -395,6 +395,39 @@ describe('executeDrillCell', () => {
     expect(value.collector).not.toHaveBeenCalled();
   });
 
+  it('keeps effect uncertainty primary when cleanup also fails', async () => {
+    const value = executionFixture();
+    value.adapter.cleanup.mockRejectedValue(
+      new Error('cleanup observer unavailable'),
+    );
+    const grantExecutionAuthority = Object.freeze({
+      consumeNonceIfActive: value.nonceConsumer,
+      invokeWhileActive: vi.fn(async ({ signal, invoke }) => {
+        await invoke(signal);
+        throw Object.assign(new Error('effect completion is uncertain'), {
+          code: 'grant_effect_unknown',
+          disposition: 'effect_unknown',
+          effect_possible: true,
+          safe_no_effect: false,
+        });
+      }),
+    });
+
+    await expect(execute(value, {
+      grantExecutionAuthority,
+    })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'grant_effect_unknown',
+      audit: { late_effect_risk: true },
+    });
+    expect(value.adapter.cleanup).toHaveBeenCalledOnce();
+    expect(value.audits.map((audit) => audit.code)).toEqual([
+      'grant_effect_unknown',
+      'adapter_cleanup_failed',
+    ]);
+    expect(value.collector).not.toHaveBeenCalled();
+  });
+
   it('treats only durable aborted-before-effect as safe failure', async () => {
     const value = executionFixture();
     const grantExecutionAuthority = Object.freeze({

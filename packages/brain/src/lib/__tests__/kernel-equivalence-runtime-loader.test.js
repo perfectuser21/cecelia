@@ -119,8 +119,8 @@ describe('trusted equivalence runtime loader', () => {
         rowCount: 1,
       }),
     };
-    const randomUUID = vi.fn(
-      () => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    const callerRandomUUID = vi.fn(
+      () => 'caller-controlled-actor-identity',
     );
 
     const runtime = await loadTrustedEquivalenceRuntime({
@@ -132,10 +132,10 @@ describe('trusted equivalence runtime loader', () => {
       pool,
       runtimeRegistry: createServerOwnedRuntimeRegistry(),
       now: () => Date.parse('2026-07-28T12:02:00.000Z'),
-      randomUUID,
+      randomUUID: callerRandomUUID,
     });
 
-    expect(randomUUID).toHaveBeenCalledOnce();
+    expect(callerRandomUUID).not.toHaveBeenCalled();
     expect(runtime).toMatchObject({
       schema_version: 'kernel-equivalence-trusted-runtime/v1',
       collector_key_id: keys.collector.record.key_id,

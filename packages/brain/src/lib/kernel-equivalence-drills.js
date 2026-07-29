@@ -1166,6 +1166,7 @@ export async function executeDrillCell({
       executionError = 'grant_effect_unknown';
     }
   }
+  const primaryExecutionError = executionError;
   const cleanupResult = await confirmCleanup(
     adapter,
     { ...context, prepared, compensations },
@@ -1174,8 +1175,27 @@ export async function executeDrillCell({
   );
   if (
     cleanupResult.error
-    && executionError !== 'adapter_cancellation_unconfirmed'
+    && [
+      'adapter_cancellation_unconfirmed',
+      'grant_effect_unknown',
+    ].includes(primaryExecutionError)
   ) {
+    const primaryDenial = await deny(
+      primaryExecutionError,
+      'seam_execution',
+    );
+    await blocked({
+      cell,
+      grant,
+      code: cleanupResult.error,
+      stage: 'adapter_cleanup',
+      now: auditNow,
+      auditSink,
+      timeoutMs,
+    });
+    return primaryDenial;
+  }
+  if (cleanupResult.error) {
     return deny(cleanupResult.error, 'adapter_cleanup');
   }
   if (signal?.aborted && executionError == null) {
