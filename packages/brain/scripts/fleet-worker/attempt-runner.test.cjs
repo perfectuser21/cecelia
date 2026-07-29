@@ -1,9 +1,10 @@
 'use strict';
 
 const fs = require('node:fs');
-const { execFileSync } = require('node:child_process');
+const { EventEmitter } = require('node:events');
 const os = require('node:os');
 const path = require('node:path');
+const { Writable } = require('node:stream');
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
@@ -462,34 +463,50 @@ describe('Fleet Worker Attempt runner', () => {
 });
 
 describe('Fleet Worker durable runtime adapters', () => {
-  it('streams a bounded credential larger than one pipe buffer without truncation', async () => {
+  it('streams a bounded credential to an in-container FIFO without argv exposure', async () => {
     const { __test__ } = loadAttemptRunner();
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-credential-fifo-'));
-    const fifo = path.join(root, 'credential.fifo');
-    execFileSync('mkfifo', [fifo]);
     const authJson = JSON.stringify({
       tokens: {
         access_token: 'x'.repeat(100_000),
       },
     });
     const received = [];
-    const reader = fs.createReadStream(fifo);
-    reader.on('data', (chunk) => received.push(chunk));
-    const readComplete = new Promise((resolve, reject) => {
-      reader.once('end', resolve);
-      reader.once('error', reject);
+    const child = new EventEmitter();
+    child.stdin = new Writable({
+      write(chunk, _encoding, callback) {
+        received.push(Buffer.from(chunk));
+        callback();
+      },
+    });
+    child.kill = vi.fn();
+    const spawnFn = vi.fn(() => {
+      queueMicrotask(() => child.emit('close', 0));
+      return child;
     });
 
-    try {
-      await Promise.all([
-        __test__.defaultWriteCredential(fifo, authJson),
-        readComplete,
-      ]);
-      expect(Buffer.concat(received).toString('utf8')).toBe(authJson);
-    } finally {
-      reader.destroy();
-      fs.rmSync(root, { recursive: true, force: true });
-    }
+    await __test__.defaultWriteCredential(
+      `cecelia-fleet-${ATTEMPT_ID}`,
+      '/tmp/cecelia-prompts/credential.fifo',
+      authJson,
+      { spawnFn },
+    );
+
+    expect(spawnFn).toHaveBeenCalledWith(
+      'docker',
+      [
+        'exec',
+        '-i',
+        `cecelia-fleet-${ATTEMPT_ID}`,
+        'sh',
+        '-c',
+        'cat > "$1"',
+        'credential-writer',
+        '/tmp/cecelia-prompts/credential.fifo',
+      ],
+      { stdio: ['pipe', 'ignore', 'ignore'] },
+    );
+    expect(JSON.stringify(spawnFn.mock.calls)).not.toContain(authJson);
+    expect(Buffer.concat(received).toString('utf8')).toBe(authJson);
   });
 
   it('removes the container and runtime when Docker omits the created id', async () => {
@@ -688,7 +705,8 @@ describe('Fleet Worker durable runtime adapters', () => {
         undefined,
       ]);
       expect(writeCredential).toHaveBeenCalledWith(
-        path.join(runtimeRoot, ATTEMPT_ID, 'credential.fifo'),
+        `cecelia-fleet-${ATTEMPT_ID}`,
+        '/tmp/cecelia-prompts/credential.fifo',
         CREDENTIAL.authJson,
       );
       const attemptRuntime = path.join(runtimeRoot, ATTEMPT_ID);
