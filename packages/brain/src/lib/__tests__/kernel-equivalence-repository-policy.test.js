@@ -507,6 +507,30 @@ describe('kernel equivalence repository policy', () => {
     ]);
   });
 
+  it('skips dependency node_modules trees but not vendor symlinks', () => {
+    const root = fixtureRoot();
+    const outside = fixtureRoot();
+    const toolTarget = write(root, 'packages/a/tool.js', '');
+    write(
+      root,
+      'packages/a/node_modules/hidden.regression-contract.yaml',
+      'behavior_equivalence: {}\n',
+    );
+    mkdirSync(join(root, 'packages/a/node_modules/.bin'), { recursive: true });
+    symlinkSync(
+      toolTarget,
+      join(root, 'packages/a/node_modules/.bin/vitest'),
+    );
+    mkdirSync(join(root, 'packages/b'), { recursive: true });
+    symlinkSync(outside, join(root, 'packages/b/node_modules'));
+    mkdirSync(join(root, 'packages/a/vendor'), { recursive: true });
+    symlinkSync(outside, join(root, 'packages/a/vendor/custom'));
+
+    expect(findSecondaryBehaviorEquivalenceContracts(root)).toEqual([
+      'packages/a/vendor/custom/:symlink_not_allowed',
+    ]);
+  });
+
   it('rejects direct migration directory symlinks at the loader boundary', () => {
     const root = fixtureRoot();
     const outside = fixtureRoot();
@@ -517,9 +541,11 @@ describe('kernel equivalence repository policy', () => {
     );
     mkdirSync(join(root, 'packages/brain/migrations'), { recursive: true });
     symlinkSync(outside, join(root, 'packages/brain/migrations/linked'));
+    symlinkSync(outside, join(root, 'packages/brain/migrations/node_modules'));
 
     expect(findForbiddenBehaviorLedgerTables(root)).toEqual([
       'packages/brain/migrations/linked/:symlink_not_allowed',
+      'packages/brain/migrations/node_modules/:symlink_not_allowed',
     ]);
   });
 

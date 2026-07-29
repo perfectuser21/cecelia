@@ -53,6 +53,7 @@ function sortedUnique(values) {
 function walkFiles(repositoryRoot, relativeRoot, {
   include,
   recursive = true,
+  skipNodeModules = false,
   missingIsError = false,
 } = {}) {
   const absoluteRoot = join(repositoryRoot, relativeRoot);
@@ -79,6 +80,14 @@ function walkFiles(repositoryRoot, relativeRoot, {
     try {
       let entry;
       while (error === null && (entry = directoryHandle.readSync()) !== null) {
+        if (
+          skipNodeModules
+          && entry.name === 'node_modules'
+          && (entry.isDirectory() || entry.isSymbolicLink())
+        ) {
+          continue;
+        }
+
         visited += 1;
         if (visited > MAX_TRAVERSAL_ENTRIES) {
           error = 'traversal_limit_exceeded';
@@ -561,6 +570,7 @@ export function findSecondaryBehaviorEquivalenceContracts(repositoryRoot) {
 
   const scan = walkFiles(root, 'packages', {
     include: isContractYamlPath,
+    skipNodeModules: true,
     missingIsError: !repositoryIsDirectory(root),
   });
   if (scan.error !== null) return [`packages/:${scan.error}`];
