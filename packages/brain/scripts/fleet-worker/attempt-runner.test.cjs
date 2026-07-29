@@ -47,6 +47,7 @@ function request(overrides = {}) {
     run_id: RUN_ID,
     lease_owner: 'dispatcher-1',
     lease_generation: 0,
+    timeout_seconds: 300,
     workspace_spec: {
       repo: 'perfectuser21/cecelia',
       base_sha: '0123456789abcdef0123456789abcdef01234567',
@@ -214,6 +215,7 @@ describe('Fleet Worker Attempt runner', () => {
       role: 'generator',
       model: 'gpt-5',
       credential: CREDENTIAL,
+      timeoutSeconds: 300,
     }));
   });
 
@@ -271,6 +273,29 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
     expect(deps.docker.launch).not.toHaveBeenCalled();
   });
+
+  it.each([
+    undefined,
+    0,
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])(
+    'rejects invalid timeout %s before credential, workspace, or Docker side effects',
+    async (timeoutSeconds) => {
+      const deps = dependencies();
+      const runner = createRunner(deps);
+      const input = request({ timeout_seconds: timeoutSeconds });
+      if (timeoutSeconds === undefined) delete input.timeout_seconds;
+
+      await expect(runner.launch(input)).rejects.toThrow(
+        'attempt_timeout_seconds_invalid',
+      );
+      expect(deps.credentialConsumer.consume).not.toHaveBeenCalled();
+      expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
+      expect(deps.docker.launch).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects caller-owned cwd and mounts before Git or Docker side effects', async () => {
     const deps = dependencies();
@@ -526,6 +551,7 @@ describe('Fleet Worker durable runtime adapters', () => {
         workerId: WORKER_ID,
         image: IMAGE_DIGEST,
         providerSpec: request().provider_spec,
+        timeoutSeconds: 300,
         role: 'generator',
         model: 'gpt-5',
         workspaceMount: {
@@ -609,6 +635,7 @@ describe('Fleet Worker durable runtime adapters', () => {
         workerId: WORKER_ID,
         image: IMAGE_DIGEST,
         providerSpec: request().provider_spec,
+        timeoutSeconds: 300,
         role: 'generator',
         model: 'gpt-5',
         workspaceMount: {
@@ -695,6 +722,7 @@ describe('Fleet Worker durable runtime adapters', () => {
         '--label', `cecelia.fleet.worker_id=${WORKER_ID}`,
         '--env', 'HARNESS_NODE=generator',
         '--env', 'HARNESS_MODEL=gpt-5',
+        '--env', 'HARNESS_TIMEOUT_SECONDS=300',
         '--env', 'CECELIA_CREDENTIAL_FIFO=/tmp/cecelia-prompts/credential.fifo',
         '--env', `CECELIA_CREDENTIAL_REF=${CREDENTIAL.credentialRef}`,
       ]));
