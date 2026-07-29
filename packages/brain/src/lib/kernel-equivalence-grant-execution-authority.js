@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import {
+  canonicalJson,
   sha256Canonical,
 } from './kernel-equivalence-receipts.js';
 
@@ -149,7 +150,6 @@ function validGrantRegistration(input) {
     && UUID_PATTERN.test(input.case_id ?? '')
     && validExecutionGrant(input.grant)
     && SHA256_PATTERN.test(input.grant_sha256 ?? '')
-    && sha256Canonical(input.grant) === input.grant_sha256
   );
 }
 
@@ -185,8 +185,12 @@ function validExecutionGrant(grant) {
     && ['claude', 'codex', 'grok'].includes(grant.provider)
     && ['normal', 'violation', 'recovery'].includes(grant.scenario)
     && grant.environment === 'isolated'
+    && typeof grant.issued_at === 'string'
+    && typeof grant.expires_at === 'string'
     && Number.isFinite(issuedAt)
     && Number.isFinite(expiresAt)
+    && new Date(issuedAt).toISOString() === grant.issued_at
+    && new Date(expiresAt).toISOString() === grant.expires_at
     && expiresAt > issuedAt
     && [
       grant.adapter_id,
@@ -209,12 +213,75 @@ function validExecutionGrant(grant) {
   );
 }
 
-function authorityInputForGrant(grant) {
-  return {
-    grant_id: grant.grant_id,
-    grant_sha256: sha256Canonical(grant),
-    cell_id: grant.cell_id,
-  };
+function hashCanonicalBytes(encoded) {
+  return createHash('sha256').update(encoded, 'utf8').digest('hex');
+}
+
+function cloneInput(value, code) {
+  try {
+    return structuredClone(value);
+  } catch (error) {
+    fail(code, error);
+  }
+}
+
+function snapshotGrant(grant, code = 'grant_authority_request_invalid') {
+  const cloned = cloneInput(grant, code);
+  if (!validExecutionGrant(cloned)) fail(code);
+  let encoded;
+  try {
+    encoded = canonicalJson(cloned);
+  } catch (error) {
+    fail(code, error);
+  }
+  return Object.freeze({
+    grant: deepFreeze(cloned),
+    encoded,
+    grant_sha256: hashCanonicalBytes(encoded),
+  });
+}
+
+function snapshotRegistration(input) {
+  const cloned = cloneInput(input, 'grant_registration_invalid');
+  if (!validGrantRegistration(cloned)) {
+    fail('grant_registration_invalid');
+  }
+  let encoded;
+  try {
+    encoded = canonicalJson(cloned.grant);
+  } catch (error) {
+    fail('grant_registration_invalid', error);
+  }
+  if (hashCanonicalBytes(encoded) !== cloned.grant_sha256) {
+    fail('grant_registration_invalid');
+  }
+  return deepFreeze({
+    case_id: cloned.case_id,
+    grant: cloned.grant,
+    grant_json: encoded,
+    grant_sha256: cloned.grant_sha256,
+  });
+}
+
+function authorityInputForGrant(grantSnapshot) {
+  return Object.freeze({
+    grant_id: grantSnapshot.grant.grant_id,
+    grant_sha256: grantSnapshot.grant_sha256,
+    cell_id: grantSnapshot.grant.cell_id,
+  });
+}
+
+function snapshotAuthorityInput(input, fields) {
+  if (!exactFields(input, fields)) {
+    fail('grant_authority_request_invalid');
+  }
+  const snapshot = Object.freeze(Object.fromEntries(
+    fields.map((field) => [field, input[field]]),
+  ));
+  if (!validAuthorityInput(snapshot, fields)) {
+    fail('grant_authority_request_invalid');
+  }
+  return snapshot;
 }
 
 function validTimeout(value) {
@@ -396,7 +463,16 @@ async function inTransaction(pool, operation) {
       client.release(true);
       failUnknown('grant_transaction_outcome_unknown', error);
     }
-    if (began) await client.query('ROLLBACK').catch(() => {});
+    if (began) {
+      try {
+        await client.query('ROLLBACK');
+        began = false;
+      } catch (rollbackError) {
+        released = true;
+        client.release(true);
+        failUnknown('grant_rollback_outcome_unknown', rollbackError);
+      }
+    }
     if (error instanceof GrantExecutionAuthorityError) throw error;
     fail('grant_authority_database_failed', error);
   } finally {
@@ -448,8 +524,13 @@ async function commitTransaction(session) {
 
 async function rollbackTransaction(session) {
   if (!session.inTransaction || session.destroyed) return;
-  await session.client.query('ROLLBACK').catch(() => {});
-  session.inTransaction = false;
+  try {
+    await session.client.query('ROLLBACK');
+    session.inTransaction = false;
+  } catch (error) {
+    destroyLockedSession(session);
+    failUnknown('grant_rollback_outcome_unknown', error);
+  }
 }
 
 async function openLockedSession({
@@ -490,13 +571,18 @@ async function openLockedSession({
     session.locked = true;
     return session;
   } catch (error) {
-    await rollbackTransaction(session);
+    let rollbackError;
+    try {
+      await rollbackTransaction(session);
+    } catch (caught) {
+      rollbackError = caught;
+    }
     destroyLockedSession(session);
+    signal?.removeEventListener('abort', session.abortHandler);
+    if (rollbackError) throw rollbackError;
     if (session.aborted && abortCode) {
-      signal?.removeEventListener('abort', session.abortHandler);
       fail(abortCode, error);
     }
-    signal?.removeEventListener('abort', session.abortHandler);
     failUnknown('grant_lock_outcome_unknown', error);
   }
 }
@@ -572,53 +658,62 @@ export function createPostgresGrantExecutionAuthority({
     !pool
     || typeof pool.connect !== 'function'
     || !UUID_PATTERN.test(actorInstanceId ?? '')
-    || !Number.isInteger(lockTimeoutMs)
-    || lockTimeoutMs < 1
+    || !validTimeout(lockTimeoutMs)
   ) {
     fail('grant_authority_configuration_invalid');
   }
 
   async function registerPendingGrant(input = {}) {
-    if (!validGrantRegistration(input)) {
-      fail('grant_registration_invalid');
-    }
+    const snapshot = snapshotRegistration(input);
     return inTransaction(pool, async (client) => {
       const result = await client.query(SQL.register, [
-        input.case_id,
-        JSON.stringify(input.grant),
-        input.grant_sha256,
+        snapshot.case_id,
+        snapshot.grant_json,
+        snapshot.grant_sha256,
       ]);
-      return registrationResult(result, input);
+      return registrationResult(result, snapshot);
     });
   }
 
   async function markGrantPublished(input = {}) {
-    if (!validAuthorityInput(input, ['grant_id', 'grant_sha256'])) {
-      fail('grant_authority_request_invalid');
-    }
+    const snapshot = snapshotAuthorityInput(
+      input,
+      ['grant_id', 'grant_sha256'],
+    );
     return inTransaction(pool, async (client) => appendResult(
-      await appendEvent(client, actorInstanceId, input, 'published', {}),
+      await appendEvent(
+        client,
+        actorInstanceId,
+        snapshot,
+        'published',
+        {},
+      ),
       actorInstanceId,
-      input.grant_id,
+      snapshot.grant_id,
       'published',
     ));
   }
 
   async function resolveActiveGrant(input = {}) {
-    if (!validResolutionInput(input)) {
+    const snapshot = snapshotAuthorityInput(
+      input,
+      ['grant_id', 'grant_sha256', 'cell_id'],
+    );
+    if (!validResolutionInput(snapshot)) {
       fail('grant_authority_request_invalid');
     }
-    return inTransaction(pool, (client) => resolveActive(client, input));
+    return inTransaction(
+      pool,
+      (client) => resolveActive(client, snapshot),
+    );
   }
 
-  async function consumeNonceIfActive({
-    grant,
-    signal = null,
-    timeoutMs = lockTimeoutMs,
-  } = {}) {
+  async function consumeNonceIfActive(request = {}) {
+    const signal = request?.signal ?? null;
+    const timeoutMs = request?.timeoutMs ?? lockTimeoutMs;
+    const grantSnapshot = snapshotGrant(request?.grant);
     if (
-      !validExecutionGrant(grant)
-      || !validSignal(signal)
+      !validSignal(signal)
       || !validTimeout(timeoutMs)
     ) {
       fail('grant_authority_request_invalid');
@@ -626,7 +721,7 @@ export function createPostgresGrantExecutionAuthority({
     if (signal?.aborted) {
       fail('grant_nonce_consumption_aborted');
     }
-    const input = authorityInputForGrant(grant);
+    const input = authorityInputForGrant(grantSnapshot);
     const session = await openLockedSession({
       pool,
       grantId: input.grant_id,
@@ -678,13 +773,19 @@ export function createPostgresGrantExecutionAuthority({
         failUnknown('grant_nonce_cancellation_unconfirmed');
       }
     } catch (error) {
-      await rollbackTransaction(session);
-      operationError = error instanceof GrantExecutionAuthorityError
-        ? error
-        : new GrantExecutionAuthorityError(
-          'grant_nonce_consumption_failed',
-          { cause: error },
-        );
+      try {
+        await rollbackTransaction(session);
+      } catch (rollbackError) {
+        operationError = rollbackError;
+      }
+      if (!operationError) {
+        operationError = error instanceof GrantExecutionAuthorityError
+          ? error
+          : new GrantExecutionAuthorityError(
+            'grant_nonce_consumption_failed',
+            { cause: error },
+          );
+      }
     }
     let closeError;
     try {
@@ -739,21 +840,19 @@ export function createPostgresGrantExecutionAuthority({
     }
   }
 
-  async function invokeWhileActive({
-    grant: callerGrant,
-    invoke,
-    signal = null,
-    timeoutMs = lockTimeoutMs,
-  } = {}) {
+  async function invokeWhileActive(request = {}) {
+    const invoke = request?.invoke;
+    const signal = request?.signal ?? null;
+    const timeoutMs = request?.timeoutMs ?? lockTimeoutMs;
+    const grantSnapshot = snapshotGrant(request?.grant);
     if (
-      !validExecutionGrant(callerGrant)
-      || typeof invoke !== 'function'
+      typeof invoke !== 'function'
       || !validSignal(signal)
       || !validTimeout(timeoutMs)
     ) {
       fail('grant_authority_request_invalid');
     }
-    const input = authorityInputForGrant(callerGrant);
+    const input = authorityInputForGrant(grantSnapshot);
     const session = await openLockedSession({
       pool,
       grantId: input.grant_id,
@@ -820,15 +919,21 @@ export function createPostgresGrantExecutionAuthority({
         result: value,
       });
     } catch (error) {
-      await rollbackTransaction(session);
-      operationError = error instanceof GrantExecutionAuthorityError
-        ? error
-        : new GrantExecutionAuthorityError('grant_effect_unknown', {
-          cause: error,
-          disposition: 'effect_unknown',
-          effectPossible: true,
-          safeNoEffect: false,
-        });
+      try {
+        await rollbackTransaction(session);
+      } catch (rollbackError) {
+        operationError = rollbackError;
+      }
+      if (!operationError) {
+        operationError = error instanceof GrantExecutionAuthorityError
+          ? error
+          : new GrantExecutionAuthorityError('grant_effect_unknown', {
+            cause: error,
+            disposition: 'effect_unknown',
+            effectPossible: true,
+            safeNoEffect: false,
+          });
+      }
     }
     let closeError;
     try {
@@ -843,20 +948,20 @@ export function createPostgresGrantExecutionAuthority({
 
   async function revokeGrant(input = {}) {
     const hasTimeout = Object.hasOwn(input ?? {}, 'timeoutMs');
-    const timeoutMs = hasTimeout ? input.timeoutMs : lockTimeoutMs;
     const expectedFields = hasTimeout
       ? ['grant_id', 'grant_sha256', 'reason', 'timeoutMs']
       : ['grant_id', 'grant_sha256', 'reason'];
+    const snapshot = snapshotAuthorityInput(input, expectedFields);
+    const timeoutMs = hasTimeout ? snapshot.timeoutMs : lockTimeoutMs;
     if (
-      !validAuthorityInput(input, expectedFields)
-      || !REASON_PATTERN.test(input.reason ?? '')
+      !REASON_PATTERN.test(snapshot.reason ?? '')
       || !validTimeout(timeoutMs)
     ) {
       fail('grant_authority_request_invalid');
     }
     const session = await openLockedSession({
       pool,
-      grantId: input.grant_id,
+      grantId: snapshot.grant_id,
       shared: false,
       timeoutMs,
     });
@@ -865,27 +970,33 @@ export function createPostgresGrantExecutionAuthority({
     try {
       outcome = revocationResult(
         await session.client.query(SQL.revoke, [
-          input.grant_id,
-          input.grant_sha256,
+          snapshot.grant_id,
+          snapshot.grant_sha256,
           actorInstanceId,
-          input.reason,
+          snapshot.reason,
         ]),
-        input.grant_id,
+        snapshot.grant_id,
       );
       await commitTransaction(session);
     } catch (error) {
-      await rollbackTransaction(session);
-      operationError = error instanceof GrantExecutionAuthorityError
-        ? error
-        : new GrantExecutionAuthorityError(
-          'grant_revocation_outcome_unknown',
-          {
-            cause: error,
-            disposition: 'effect_unknown',
-            effectPossible: true,
-            safeNoEffect: false,
-          },
-        );
+      try {
+        await rollbackTransaction(session);
+      } catch (rollbackError) {
+        operationError = rollbackError;
+      }
+      if (!operationError) {
+        operationError = error instanceof GrantExecutionAuthorityError
+          ? error
+          : new GrantExecutionAuthorityError(
+            'grant_revocation_outcome_unknown',
+            {
+              cause: error,
+              disposition: 'effect_unknown',
+              effectPossible: true,
+              safeNoEffect: false,
+            },
+          );
+      }
     }
     let closeError;
     try {

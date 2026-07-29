@@ -5,12 +5,14 @@ import {
   createPostgresGrantExecutionAuthority,
 } from '../kernel-equivalence-grant-execution-authority.js';
 import {
+  canonicalJson,
   sha256Canonical,
 } from '../kernel-equivalence-receipts.js';
 
 const ACTOR_INSTANCE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const CASE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const GRANT_ID = '11111111-1111-4111-8111-111111111111';
+const OTHER_GRANT_ID = '99999999-9999-4999-8999-999999999999';
 const NONCE = '22222222-2222-4222-8222-222222222222';
 const RUN_ID = '33333333-3333-4333-8333-333333333333';
 const ATTEMPT_ID = '44444444-4444-4444-8444-444444444444';
@@ -89,6 +91,16 @@ function eventRow(state, generation = 1) {
 }
 
 describe('PostgreSQL grant execution authority', () => {
+  it('rejects a factory lock timeout above the supported maximum', () => {
+    expect(() => createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn() },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+      lockTimeoutMs: 300_001,
+    })).toThrowError(expect.objectContaining({
+      code: 'grant_authority_configuration_invalid',
+    }));
+  });
+
   it('registers an exact pending signed grant on one dedicated transaction client', async () => {
     const grant = grantFixture();
     const grantSha256 = sha256Canonical(grant);
@@ -143,6 +155,75 @@ describe('PostgreSQL grant execution authority', () => {
       ...dbAnchor,
     });
     expect(pool.connect).toHaveBeenCalledOnce();
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('rejects Date objects instead of hashing them differently from JSON wire', async () => {
+    const grant = {
+      ...grantFixture(),
+      issued_at: new Date(grantFixture().issued_at),
+    };
+    const pool = { connect: vi.fn() };
+    const authority = createPostgresGrantExecutionAuthority({
+      pool,
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    await expect(authority.registerPendingGrant({
+      case_id: CASE_ID,
+      grant,
+      grant_sha256: sha256Canonical(grant),
+    })).rejects.toMatchObject({
+      code: 'grant_registration_invalid',
+    });
+    expect(pool.connect).not.toHaveBeenCalled();
+  });
+
+  it('snapshots nested grant bytes before register awaits a connection', async () => {
+    const grant = grantFixture();
+    const originalGrant = structuredClone(grant);
+    const grantSha256 = sha256Canonical(originalGrant);
+    let finishConnect;
+    const connectBarrier = new Promise((resolve) => {
+      finishConnect = resolve;
+    });
+    const client = clientFixture(async (sql, parameters) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] };
+      expect(sql).toMatch(/kernel_equivalence_register_grant_authority/);
+      expect(parameters).toEqual([
+        CASE_ID,
+        canonicalJson(originalGrant),
+        grantSha256,
+      ]);
+      return {
+        rowCount: 1,
+        rows: [anchorRow(grantSha256)],
+      };
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: {
+        connect: vi.fn(async () => {
+          await connectBarrier;
+          return client;
+        }),
+      },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    const registration = authority.registerPendingGrant({
+      case_id: CASE_ID,
+      grant,
+      grant_sha256: grantSha256,
+    });
+    grant.cell_id = 'KERNEL-P0-02-CREDENTIAL-GUARD::codex::normal';
+    grant.signature = 'mutated-after-call';
+    finishConnect();
+
+    await expect(registration).resolves.toMatchObject({
+      grant_id: GRANT_ID,
+      grant_sha256: grantSha256,
+      cell_id: originalGrant.cell_id,
+    });
     expect(client.release).toHaveBeenCalledOnce();
   });
 
@@ -232,6 +313,38 @@ describe('PostgreSQL grant execution authority', () => {
       expect(client.release).toHaveBeenCalledWith(true);
     },
   );
+
+  it('destroys a generic transaction when ROLLBACK is not confirmed', async () => {
+    const grant = grantFixture();
+    const grantSha256 = sha256Canonical(grant);
+    const client = clientFixture(async (sql) => {
+      if (sql === 'BEGIN') return { rows: [] };
+      if (/kernel_equivalence_register_grant_authority/.test(sql)) {
+        return { rowCount: 0, rows: [] };
+      }
+      if (sql === 'ROLLBACK') {
+        throw new Error('connection ended during ROLLBACK');
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    await expect(authority.registerPendingGrant({
+      case_id: CASE_ID,
+      grant,
+      grant_sha256: grantSha256,
+    })).rejects.toMatchObject({
+      code: 'grant_rollback_outcome_unknown',
+      disposition: 'effect_unknown',
+      safe_no_effect: false,
+      effect_possible: true,
+    });
+    expect(client.release).toHaveBeenCalledOnce();
+    expect(client.release).toHaveBeenCalledWith(true);
+  });
 
   it('rejects malformed signed-grant identity before registration connects', async () => {
     const grant = {
@@ -1018,6 +1131,79 @@ describe('PostgreSQL grant execution authority', () => {
     )).toBe(false);
   });
 
+  it('keeps revoke bound to lock A when caller mutates input to grant B', async () => {
+    const grantSha256 = sha256Canonical(grantFixture());
+    let announceLock;
+    let finishLock;
+    const lockStarted = new Promise((resolve) => {
+      announceLock = resolve;
+    });
+    const lockBarrier = new Promise((resolve) => {
+      finishLock = resolve;
+    });
+    const client = clientFixture(async (sql, parameters) => {
+      if (
+        sql === 'BEGIN'
+        || sql === 'COMMIT'
+        || /set_config\('statement_timeout'/.test(sql)
+      ) {
+        return { rows: [] };
+      }
+      if (/pg_advisory_lock\(/.test(sql)) {
+        expect(parameters).toEqual([expectedLockKey()]);
+        announceLock();
+        await lockBarrier;
+        return { rows: [] };
+      }
+      if (/kernel_equivalence_revoke_grant/.test(sql)) {
+        expect(parameters).toEqual([
+          GRANT_ID,
+          grantSha256,
+          ACTOR_INSTANCE_ID,
+          'controller_shutdown',
+        ]);
+        return {
+          rowCount: 1,
+          rows: [{
+            grant_id: GRANT_ID,
+            safe_no_effect: true,
+            effect_possible: false,
+            disposition: 'safe_no_effect',
+            revoked_at: new Date('2026-07-29T07:00:00.000Z'),
+          }],
+        };
+      }
+      return { rowCount: 1, rows: [{ unlocked: true }] };
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+    const input = {
+      grant_id: GRANT_ID,
+      grant_sha256: grantSha256,
+      reason: 'controller_shutdown',
+      timeoutMs: 1_500,
+    };
+
+    const revocation = authority.revokeGrant(input);
+    await lockStarted;
+    input.grant_id = OTHER_GRANT_ID;
+    input.grant_sha256 = 'b'.repeat(64);
+    input.reason = 'mutated_reason';
+    input.timeoutMs = 3_000;
+    finishLock();
+
+    await expect(revocation).resolves.toEqual({
+      grant_ref: GRANT_REF,
+      revoked: true,
+      safe_no_effect: true,
+      effect_possible: false,
+      disposition: 'safe_no_effect',
+    });
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
   it('takes the exclusive session lock before DB-derived revocation disposition', async () => {
     const grantSha256 = sha256Canonical(grantFixture());
     const order = [];
@@ -1089,6 +1275,47 @@ describe('PostgreSQL grant execution authority', () => {
       'commit',
       'unlock_exclusive',
     ]);
+  });
+
+  it('destroys a locked transaction when ROLLBACK is not confirmed', async () => {
+    const grantSha256 = sha256Canonical(grantFixture());
+    const client = clientFixture(async (sql) => {
+      if (
+        sql === 'BEGIN'
+        || /set_config\('statement_timeout'/.test(sql)
+        || /pg_advisory_lock\(/.test(sql)
+      ) {
+        return { rows: [] };
+      }
+      if (/kernel_equivalence_revoke_grant/.test(sql)) {
+        return { rowCount: 0, rows: [] };
+      }
+      if (sql === 'ROLLBACK') {
+        throw new Error('connection ended during ROLLBACK');
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    await expect(authority.revokeGrant({
+      grant_id: GRANT_ID,
+      grant_sha256: grantSha256,
+      reason: 'rollback_failure_test',
+      timeoutMs: 1_500,
+    })).rejects.toMatchObject({
+      code: 'grant_rollback_outcome_unknown',
+      disposition: 'effect_unknown',
+      safe_no_effect: false,
+      effect_possible: true,
+    });
+    expect(client.release).toHaveBeenCalledOnce();
+    expect(client.release).toHaveBeenCalledWith(true);
+    expect(client.query.mock.calls.some(
+      ([sql]) => /pg_advisory_unlock/.test(sql),
+    )).toBe(false);
   });
 
   it.each([
