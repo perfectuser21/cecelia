@@ -672,7 +672,7 @@ describe('Fleet Worker durable runtime adapters', () => {
       );
       expect(createArgs.join(' ')).not.toContain('/Users/operator');
       expect(createArgs).toEqual(expect.arrayContaining([
-        '--tmpfs', '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700',
+        '--tmpfs', '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700,uid=1001,gid=1001',
         '--label', `cecelia.fleet.attempt_id=${ATTEMPT_ID}`,
         '--label', `cecelia.fleet.run_id=${RUN_ID}`,
         '--label', `cecelia.fleet.worker_id=${WORKER_ID}`,
