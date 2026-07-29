@@ -239,6 +239,97 @@ describe('kernel equivalence repository policy', () => {
     ]);
   });
 
+  it.each([
+    [
+      'one backslash before a quote',
+      [
+        "SELECT 'a\\'b';",
+        'CREATE TABLE behavior_ledger(id uuid);',
+        "-- '",
+      ].join('\n'),
+    ],
+    [
+      'an odd backslash run before a quote',
+      [
+        String.raw`SELECT 'a\\\'b';`,
+        'CREATE TABLE behavior_ledger(id uuid);',
+        "-- '",
+      ].join('\n'),
+    ],
+  ])('fails closed for standard_conforming_strings ambiguity: %s', (
+    _label,
+    sql,
+  ) => {
+    const root = fixtureRoot();
+    write(root, 'packages/brain/migrations/900_ambiguous.sql', sql);
+
+    expect(findForbiddenBehaviorLedgerTables(root)).toEqual([
+      'packages/brain/migrations/900_ambiguous.sql:sql_parse_invalid',
+    ]);
+  });
+
+  it.each([
+    ['two backslashes', String.raw`SELECT 'a\\';`],
+    ['four backslashes', String.raw`SELECT 'a\\\\';`],
+  ])('accepts %s before a quote and detects following DDL', (_label, select) => {
+    const root = fixtureRoot();
+    write(
+      root,
+      'packages/brain/migrations/900_even_backslashes.sql',
+      [
+        select,
+        'CREATE TABLE behavior_ledger(id uuid);',
+      ].join('\n'),
+    );
+
+    expect(findForbiddenBehaviorLedgerTables(root)).toEqual([
+      'packages/brain/migrations/900_even_backslashes.sql',
+    ]);
+  });
+
+  it('accepts non-quote backslashes used by historical regex migrations', () => {
+    const root = fixtureRoot();
+    write(
+      root,
+      'packages/brain/migrations/900_regex.sql',
+      String.raw`SELECT '(^\s+\.x[\\])';`,
+    );
+
+    expect(findForbiddenBehaviorLedgerTables(root)).toEqual([]);
+  });
+
+  it('keeps explicit E strings unambiguous and detects following DDL', () => {
+    const root = fixtureRoot();
+    write(
+      root,
+      'packages/brain/migrations/900_e_string.sql',
+      [
+        String.raw`SELECT E'a\'b CREATE TABLE behavior_ledger';`,
+        'CREATE TABLE behavior_ledger(id uuid);',
+      ].join('\n'),
+    );
+
+    expect(findForbiddenBehaviorLedgerTables(root)).toEqual([
+      'packages/brain/migrations/900_e_string.sql',
+    ]);
+  });
+
+  it('keeps doubled quotes unambiguous and detects following DDL', () => {
+    const root = fixtureRoot();
+    write(
+      root,
+      'packages/brain/migrations/900_doubled_quote.sql',
+      [
+        "SELECT 'a''b CREATE TABLE behavior_ledger';",
+        'CREATE TABLE behavior_ledger(id uuid);',
+      ].join('\n'),
+    );
+
+    expect(findForbiddenBehaviorLedgerTables(root)).toEqual([
+      'packages/brain/migrations/900_doubled_quote.sql',
+    ]);
+  });
+
   it('scans every production migration root and returns stable unique paths', () => {
     const root = fixtureRoot();
     write(

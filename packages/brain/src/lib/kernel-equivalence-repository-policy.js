@@ -243,6 +243,7 @@ function readQuotedIdentifier(sql, quoteIndex) {
 function readSqlString(sql, quoteIndex, escapesBackslashes) {
   let value = '';
   let index = quoteIndex + 1;
+  let consecutiveBackslashes = 0;
   while (index < sql.length) {
     if (escapesBackslashes && sql[index] === '\\') {
       if (index + 1 >= sql.length) {
@@ -250,14 +251,26 @@ function readSqlString(sql, quoteIndex, escapesBackslashes) {
       }
       value += sql[index + 1];
       index += 2;
+      consecutiveBackslashes = 0;
+    } else if (!escapesBackslashes && sql[index] === '\\') {
+      value += '\\';
+      consecutiveBackslashes += 1;
+      index += 1;
+    } else if (
+      sql[index] === '\''
+      && consecutiveBackslashes % 2 === 1
+    ) {
+      return { end: index + 1, valid: false, value };
     } else if (sql[index] === '\'' && sql[index + 1] === '\'') {
       value += '\'';
       index += 2;
+      consecutiveBackslashes = 0;
     } else if (sql[index] === '\'') {
       return { end: index + 1, valid: true, value };
     } else {
       value += sql[index];
       index += 1;
+      consecutiveBackslashes = 0;
     }
   }
   return { end: index, valid: false, value };
