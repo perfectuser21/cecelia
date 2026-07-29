@@ -1,0 +1,65 @@
+import express from 'express';
+import request from 'supertest';
+import { describe, expect, it, afterAll } from 'vitest';
+import pool from '../../db.js';
+import { createAcceptanceInternalRouter, createAcceptancePublicRouter } from '../../routes/acceptance.js';
+
+function makeApp() {
+  const app = express();
+  app.use(express.json());
+  app.use('/api/brain/acceptance', createAcceptanceInternalRouter({ pool }));
+  app.use(createAcceptancePublicRouter({ pool }));
+  return app;
+}
+
+const RUN_KEY = `itest-run-${process.pid}`;
+
+describe('acceptance 全链 integration', () => {
+  afterAll(async () => {
+    await pool.query('DELETE FROM acceptance_runs WHERE run_key = $1', [RUN_KEY]);
+    await pool.end();
+  });
+
+  it('建单 → pending 可见 → 回写 results → pass_rate/status 更新', async () => {
+    const app = makeApp();
+
+    const create = await request(app).post('/api/brain/acceptance/runs').send({
+      run_key: RUN_KEY,
+      title: 'integration 测试单',
+      gp_id: 'customer_smart_acquisition',
+      checks: [
+        { kind: 'FR', name: 'step1' },
+        { kind: 'FR', name: 'step2' },
+        { kind: 'Invariant', name: '不向未授权账号发消息' },
+      ],
+    });
+    expect(create.status).toBe(201);
+    expect(create.body.checks).toHaveLength(3);
+
+    const again = await request(app).post('/api/brain/acceptance/runs').send({
+      run_key: RUN_KEY, title: '重复', checks: [{ kind: 'FR', name: 'x' }],
+    });
+    expect(again.status).toBe(200);
+    expect(again.body.created).toBe(false);
+
+    const pending = await request(app).get('/acceptance/pending');
+    expect(pending.status).toBe(200);
+    const mine = pending.body.runs.find((r) => r.run_key === RUN_KEY);
+    expect(mine.checks).toHaveLength(3);
+
+    const results = await request(app).post('/acceptance/results').send({
+      results: [
+        { check_key: `${RUN_KEY}:001`, result: '通过' },
+        { check_key: `${RUN_KEY}:002`, result: '不通过', note: '挂了' },
+        { check_key: `${RUN_KEY}:003`, result: '通过' },
+      ],
+    });
+    expect(results.status).toBe(200);
+    const updated = results.body.runs.find((r) => r.run_key === RUN_KEY);
+    expect(updated.status).toBe('failed');
+    expect(Number(updated.pass_rate)).toBeCloseTo(2 / 3, 2);
+
+    const { rows } = await pool.query('SELECT status, pass_rate FROM acceptance_runs WHERE run_key = $1', [RUN_KEY]);
+    expect(rows[0].status).toBe('failed');
+  });
+});
