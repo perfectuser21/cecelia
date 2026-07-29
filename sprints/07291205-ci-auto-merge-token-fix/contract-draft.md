@@ -158,7 +158,7 @@ fi
 # ── 字段核实（铁律：不凭记忆，实际读文件）──────────────────────────────────
 echo "--- 字段核实：ci.yml auto-merge job GH_TOKEN ---"
 GH_TOKEN_LINE=$(grep -n "GH_TOKEN:" "$CI_YML" | head -1)
-echo "实际内容：$GH_TOKEN_LINE"
+echo "实际内容: $GH_TOKEN_LINE"
 
 # ── 断言 GH_TOKEN 已使用 GH_PAT_BOT（后绿状态）────────────────────────────
 if echo "$GH_TOKEN_LINE" | grep -q "GH_PAT_BOT"; then
@@ -180,7 +180,7 @@ fi
 # ── 枚举完整性检查（铁律：grep 全仓库复查）────────────────────────────────
 echo "--- 枚举完整性：全仓库 GH_PAT_BOT 引用复查 ---"
 REFS=$(grep -r "GH_PAT_BOT" "$REPO_ROOT/.github/" --include="*.yml" -l 2>/dev/null || true)
-echo "引用 GH_PAT_BOT 的 workflow 文件：$REFS"
+echo "引用 GH_PAT_BOT 的 workflow 文件: $REFS"
 
 echo "=== PASS: final-e2e 全部通过 ==="
 ```

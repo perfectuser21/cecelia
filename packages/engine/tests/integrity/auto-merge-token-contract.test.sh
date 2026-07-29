@@ -29,7 +29,7 @@ _pass() { echo "  PASS  $1"; PASS=$((PASS + 1)); }
 _fail() { echo "  FAIL  $1"; FAIL=$((FAIL + 1)); }
 
 echo "[auto-merge-token-contract] 开始静态契约断言..."
-echo "[auto-merge-token-contract] ci.yml 路径：$CI_YML"
+echo "[auto-merge-token-contract] ci.yml path: $CI_YML"
 
 if [[ ! -f "$CI_YML" ]]; then
   echo "[auto-merge-token-contract] ERROR: $CI_YML 不存在，中止"
