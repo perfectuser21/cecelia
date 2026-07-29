@@ -70,8 +70,8 @@
   留证: contract-draft.md Step 3 验证命令段
   Test: manual:bash -c 'grep -q "event.*push" sprints/07291205-ci-auto-merge-token-fix/contract-draft.md || { echo "FAIL: 合同缺少 event=push 语义字段核实"; exit 1; }; echo "PASS: 合同含 event=push 断言"'
 
-- [ ] [BEHAVIOR] INV-3: 枚举完整性铁律 — 本 sprint 不涉及 status 枚举断言，N/A
-  N/A：本 sprint 修改的是 GH_TOKEN 字段引用，不涉及任何 status 枚举值新增/修改，无需全仓库 grep 复查枚举完整性。
+- [x] INV-3: 枚举完整性铁律 — 本 sprint 不涉及 status 枚举断言（N/A）
+  说明：本 sprint 修改的是 GH_TOKEN 字段引用，不涉及任何 status 枚举值新增/修改，无需全仓库 grep 复查枚举完整性。
 
 - [ ] [BEHAVIOR] INV-4: 毕业前校验铁律 — 测试入册前需本地先跑 lint-tdd-commit-order
   动作: 在 push 前执行 `node packages/engine/scripts/devgate/lint-tdd-commit-order.cjs`（若该脚本存在）
