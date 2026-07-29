@@ -14,7 +14,8 @@ const CANONICAL_MACHINE_IDS = new Set([
   'xian-mac-m1',
 ]);
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const IMAGE_DIGEST_PATTERN = /^[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/;
+const IMAGE_DIGEST_PATTERN = /^(?:[a-z0-9][a-z0-9._/-]*@)?sha256:[a-f0-9]{64}$/;
+const MOUNT_ACCESS_PRINCIPAL_PATTERN = /^[A-Za-z_][A-Za-z0-9._-]{0,63}$/;
 const PROVIDER_FIELDS = new Set([
   'provider',
   'command',
@@ -225,6 +226,7 @@ function createDockerAdapter({
   runtimeRoot,
   writeCredential = defaultWriteCredential,
   resolveMountSource = fs.realpathSync,
+  mountAccessPrincipal,
 } = {}) {
   const root = assertRuntimeRoot(runtimeRoot, 'runtime_root');
   if (typeof runCommand !== 'function') {
@@ -235,6 +237,12 @@ function createDockerAdapter({
   }
   if (typeof resolveMountSource !== 'function') {
     throw new Error('attempt_runner_invalid_mount_source_resolver');
+  }
+  if (
+    mountAccessPrincipal !== undefined
+    && !MOUNT_ACCESS_PRINCIPAL_PATTERN.test(mountAccessPrincipal)
+  ) {
+    throw new Error('attempt_runner_invalid_mount_access_principal');
   }
 
   function canonicalMountSource(source) {
@@ -361,12 +369,22 @@ function createDockerAdapter({
       ];
       let created;
       try {
+        if (isCodex) {
+          await runCommand('mkfifo', ['-m', '600', credentialFifo], undefined);
+        }
+        if (mountAccessPrincipal !== undefined) {
+          await runCommand('chmod', [
+            '-R',
+            '+a',
+            `${mountAccessPrincipal} allow read,write,execute,delete`,
+            workspaceSource,
+            workspaceAdminSource,
+            runtimeSource,
+          ], undefined);
+        }
         created = await runCommand('docker', createArgs);
         if (!String(created?.stdout ?? '').trim()) {
           throw new Error('attempt_container_id_missing');
-        }
-        if (isCodex) {
-          await runCommand('mkfifo', ['-m', '600', credentialFifo], undefined);
         }
         await runCommand('docker', ['start', containerName], undefined);
         if (isCodex) {
