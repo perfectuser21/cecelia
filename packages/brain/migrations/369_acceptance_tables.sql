@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS acceptance_runs (
   surface TEXT,
   version TEXT,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','in_review','passed','failed')),
-  pass_rate NUMERIC,
+  pass_rate NUMERIC(4,3),
   source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','harness')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS acceptance_checks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_acceptance_checks_run ON acceptance_checks(run_id);
+
+CREATE INDEX IF NOT EXISTS idx_acceptance_runs_status ON acceptance_runs(status, created_at);
 
 INSERT INTO schema_version (version, description, applied_at)
 VALUES ('369', 'Acceptance runs/checks tables for Notion Worker loop', NOW())
