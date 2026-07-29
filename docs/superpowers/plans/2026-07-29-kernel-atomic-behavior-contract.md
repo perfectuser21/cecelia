@@ -1243,6 +1243,7 @@ git commit -m "feat(kernel): aggregate atomic equivalence status"
     retired_absence_required: 4,
     atom_scenario_required: 378,
     provider_probe_required: 1326,
+    cell_scenario_probe_obligation_required: 1371,
     provider_probe_proven: 0,
   },
   provider_matrix: {
@@ -1284,8 +1285,13 @@ git commit -m "feat(kernel): aggregate atomic equivalence status"
 }
 ```
 
-上面给出第一个 cell 的精确期望；其余 98 个 cell 必须从真实 root canonical scenario
-plan 派生并按 ID 排序，不允许手写第二份 inventory。99 个 cell 每个都必须输出四级区分：
+上面给出第一个 cell 的精确期望；其余 98 个 cell 必须从真实 root canonical
+`scenario_plan[scenario].required_probe_ids` 派生并按 ID 排序，不允许用
+`probe_definitions[].scenario` 代替：11 个 atoms 的 recovery 会重放 normal probe。
+因此 99 cells 的 required probe obligations 是
+`(77 normal + 314 violation + 66 recovery) × 3 providers = 1371`；它与
+`442 unique proof probe definitions × 3 = 1326 provider_probe_required` 是两个不同指标。
+99 个 cell 每个都必须输出四级区分：
 
 ```text
 family cell present
@@ -1349,14 +1355,19 @@ expect(first.cell_atomic_coverage).toHaveLength(99);
 
 CLI test 连续运行两次 `--check --format=json`，断言 stdout byte-for-byte 相同。
 
-- [ ] **Step 4: 写 drill plan RED**
+- [ ] **Step 4: 写 atomic requirement summary RED，冻结 trusted drill plan digest**
 
-`compileDrillPlan()` 继续断言：
+`compileDrillPlan()` 的 enumerable shape 和 serialized digest 是 production readiness
+合同，Task 6 不得新增 top-level 字段。先锁定现有 keys/digest，再新增独立纯函数
+`compileAtomicRequirementSummary(validation)`：
 
 ```js
 expect(plan.behavior_count).toBe(11);
 expect(plan.cells).toHaveLength(99);
-expect(plan.atomic_requirements).toMatchObject({
+expect(Object.hasOwn(plan, 'atomic_requirements')).toBe(false);
+expect(digestTrustedExecutionPlan(plan)).toBe(EXPECTED_EXISTING_DIGEST);
+
+expect(compileAtomicRequirementSummary(validation)).toEqual({
   atom_count: 43,
   proof_required_atom_count: 42,
   probe_count: 446,
@@ -1364,7 +1375,9 @@ expect(plan.atomic_requirements).toMatchObject({
 });
 ```
 
-它只编译 requirements，不创建 378 个新顶层 cells，也不执行 v2 receipt。
+summary 从 atomic validation metrics 派生，不创建 378 个新顶层 cells，也不执行 v2
+receipt。`buildEquivalenceReport()` 可以把它作为报告字段输出，但不能把它写回 trusted
+execution plan。任何 execution-plan version/digest rollout 属于显式后续迁移。
 
 - [ ] **Step 5: 实现并运行 GREEN**
 
