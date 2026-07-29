@@ -231,8 +231,11 @@ _register_session_provenance
 
 # 真实执行：交互模式 + 主仓工作树 → 建立/复用 per-session worktree 并 cd 进去
 if [[ "$AUTO_WORKTREE" == "1" ]]; then
-    _sweep_orphan_wt_project_dirs || true
+    # mkdir 必须先于 sweep：sweep 里 wt_base_phys 靠 cd+pwd -P 物理化，_WT_BASE
+    # 不存在时回退逻辑路径——macOS 上 /var→/private/var 软链会让 key 派生与
+    # 孤儿目录的物理 key 不一致，glob 扫空（首次会话孤儿永不回收，本机实证）。
     mkdir -p "$_WT_BASE"
+    _sweep_orphan_wt_project_dirs || true
 
     # 孤儿目录自愈：目录存在但已不是主仓登记的合法 worktree（例如注册被意外摘除、
     # 目录残留）→ 备份后重建，不能静默把它当普通目录复用（session-isolation #3567）。

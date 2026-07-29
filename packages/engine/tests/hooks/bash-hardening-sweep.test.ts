@@ -46,12 +46,14 @@ describe('Phase 7.3 bash 3.2 + set -u hardening sweep', () => {
     // "unbound variable"。但 CI runner（ubuntu-latest）默认 bash 5+，此行为
     // 已修正，所以"基线对照"测试在 CI 不成立。本 bug 是 macOS 特有，我们只
     // 确保 guard 模式（上面的 test）在所有 bash 版本都工作，这已足够。
+    // 必须显式 /bin/bash：裸 `bash -c` 会走 PATH，装了 homebrew bash 5.x 的
+    // macOS 机器上解析到新版 bash，空数组不炸 → 断言落空（本机实证）。
     it.skipIf(process.env.CI === 'true' || process.platform !== 'darwin')(
       '基线对照（仅 macOS bash 3.2）：未 guard 的 "${arr[@]}" 在 set -u + 空数组下必炸',
       () => {
         let errorOutput = '';
         try {
-          execSync(`bash -c 'set -u; arr=(); for x in "\${arr[@]}"; do echo "$x"; done' 2>&1`, {
+          execSync(`/bin/bash -c 'set -u; arr=(); for x in "\${arr[@]}"; do echo "$x"; done' 2>&1`, {
             shell: '/bin/bash',
             stdio: 'pipe',
           });

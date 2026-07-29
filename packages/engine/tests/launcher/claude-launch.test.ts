@@ -731,7 +731,9 @@ describe('启动时 sweep — 孤儿 worktree project key 并回主仓池', () =
     for (const { key, shortId } of orphanDirs) {
       // 孤儿目录已变成软链
       expect(lstatSync(key).isSymbolicLink()).toBe(true);
-      expect(realpathSync(key)).toBe(mainTarget);
+      // 两边都 realpath：macOS 上 tmpdir 的 /var 是 /private/var 软链，
+      // realpathSync(key)（物理）与逻辑路径拼出的 mainTarget 恒差 /private 前缀
+      expect(realpathSync(key)).toBe(realpathSync(mainTarget));
       // 内容已迁入主仓池
       expect(existsSync(join(mainTarget, `${shortId}.jsonl`))).toBe(true);
     }
