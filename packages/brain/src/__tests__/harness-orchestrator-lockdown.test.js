@@ -334,3 +334,89 @@ describe('_driveHarnessInitiative — gear 硬校验', () => {
     }
   });
 });
+
+// ─── gp_anchor 硬校验（GP锚定闭环刀4 — 仅当 base_repo 含 zenithjoy-workspace 时生效，
+//     不误伤 cecelia 自己或 zenithjoy-skills 等其他项目的 harness_initiative 任务）──
+describe('_driveHarnessInitiative — gp_anchor 硬校验（base_repo 限定范围）', () => {
+  function makeAnchorTask({ baseRepo, gpAnchor } = {}) {
+    return {
+      id: 'task-gp-anchor-lockdown-1',
+      task_type: 'harness_initiative',
+      title: 'harness init gp_anchor lockdown test',
+      payload: {
+        initiative_id: 'init-gp-anchor-lockdown-001',
+        orchestrator: 'skill-relay',
+        ...(baseRepo !== undefined ? { base_repo: baseRepo } : {}),
+        ...(gpAnchor !== undefined ? { gp_anchor: gpAnchor } : {}),
+      },
+      status: 'in_progress',
+      retry_count: 0,
+      execution_attempts: 0,
+    };
+  }
+
+  it('SC-206: base_repo 含 zenithjoy-workspace 且 gp_anchor 缺失 → 拒绝，标 failed reason=missing_gp_anchor', async () => {
+    const task = makeAnchorTask({ baseRepo: 'https://github.com/perfectuser21/zenithjoy-workspace.git' });
+
+    const result = await runHarnessInitiativeRouter(task, { pool: { query: mockQuery } });
+
+    expect(mockSpawnSkillRelaySession).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    expect(result.terminal).toBe(true);
+    expect(result.error).toBe('missing_gp_anchor');
+
+    const failCall = mockQuery.mock.calls.find(
+      (call) => typeof call[0] === 'string' &&
+        /UPDATE tasks SET[\s\S]*status\s*=\s*'failed'/.test(call[0]) &&
+        Array.isArray(call[1]) &&
+        call[1].includes(task.id) &&
+        call[1].some((p) => String(p).includes('missing_gp_anchor'))
+    );
+    expect(failCall).toBeTruthy();
+  });
+
+  it('SC-207: base_repo 含 zenithjoy-workspace 且 gp_anchor 格式不合法 → 拒绝', async () => {
+    const task = makeAnchorTask({
+      baseRepo: 'https://github.com/perfectuser21/zenithjoy-workspace.git',
+      gpAnchor: '这不是合法格式',
+    });
+
+    const result = await runHarnessInitiativeRouter(task, { pool: { query: mockQuery } });
+
+    expect(mockSpawnSkillRelaySession).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    expect(result.terminal).toBe(true);
+    expect(result.error).toBe('missing_gp_anchor');
+  });
+
+  it('SC-208: base_repo 含 zenithjoy-workspace 且 gp_anchor 合法（三形态各一例）→ 正常调用 spawnSkillRelaySession', async () => {
+    const validAnchors = [
+      'line02/customer_smart_acquisition#step7',
+      'line01/customer_first_success keep-green',
+      'none(infra)',
+      'none(docs)',
+    ];
+    for (const gpAnchor of validAnchors) {
+      mockSpawnSkillRelaySession.mockClear();
+      const task = makeAnchorTask({ baseRepo: 'https://github.com/perfectuser21/zenithjoy-workspace.git', gpAnchor });
+      const result = await runHarnessInitiativeRouter(task, { pool: { query: mockQuery } });
+      expect(mockSpawnSkillRelaySession, `gp_anchor=${gpAnchor}`).toHaveBeenCalledTimes(1);
+      expect(result, `gp_anchor=${gpAnchor}`).toEqual({ ok: true, relay: true });
+    }
+  });
+
+  it('SC-209: base_repo 不含 zenithjoy-workspace（如 cecelia 自己）且 gp_anchor 缺失 → 不受影响（零回归）', async () => {
+    const cases = [
+      { baseRepo: 'https://github.com/perfectuser21/cecelia.git' },
+      { baseRepo: '/Users/administrator/perfect21/cecelia' },
+      { baseRepo: undefined }, // base_repo 完全缺失也视为不匹配，宽松默认不误杀
+    ];
+    for (const c of cases) {
+      mockSpawnSkillRelaySession.mockClear();
+      const task = makeAnchorTask(c);
+      const result = await runHarnessInitiativeRouter(task, { pool: { query: mockQuery } });
+      expect(mockSpawnSkillRelaySession, JSON.stringify(c)).toHaveBeenCalledTimes(1);
+      expect(result, JSON.stringify(c)).toEqual({ ok: true, relay: true });
+    }
+  });
+});
