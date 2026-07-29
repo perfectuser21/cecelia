@@ -5,6 +5,10 @@ const SHA40 = 'f16f2a76eef592c0e7b896bb58940f5e6231c306';
 const SHA64 = 'a'.repeat(64);
 const PROVIDERS = ['claude', 'codex', 'grok'];
 const SCENARIOS = ['normal', 'violation', 'recovery'];
+const NORMATIVE_REF =
+  'docs/superpowers/specs/2026-07-29-kernel-atomic-inventory-p0-premerge.md';
+const DERIVATION_REF =
+  'docs/superpowers/specs/2026-07-29-kernel-atomic-contract-honesty-addendum-design.md';
 const FULL_COUNTS = {
   required_behavior_count: 11,
   required_atomic_invariant_count: 43,
@@ -39,6 +43,32 @@ const FAMILY_CATALOG = [
 }));
 
 const clone = (value) => structuredClone(value);
+const appendixAuthority = () => ({
+  kind: 'appendix_explicit',
+  normative_ref: NORMATIVE_REF,
+});
+const designAuthority = () => ({
+  kind: 'design_derived',
+  derivation_ref: DERIVATION_REF,
+});
+const coverageGapAuthority = () => ({
+  kind: 'coverage_gap',
+  owner: 'kernel-contract',
+  reason: 'the appendix does not define one expected outcome',
+  closure_plan: 'approve the expected outcome and add its regression fixture',
+});
+const probeDefinition = (
+  probe_id,
+  scenario,
+  expected_outcome,
+  expectation_authority = appendixAuthority(),
+) => ({
+  probe_id,
+  scenario,
+  assertion: `${probe_id} exact normative assertion`,
+  expected_outcome,
+  expectation_authority,
+});
 const evidence = (kind = 'code', sha = SHA40) => ({
   kind,
   ref: 'packages/brain/src/lib/kernel-example.js',
@@ -51,20 +81,40 @@ const predecessorBinding = () => ({
   same_artifact_sha: true,
   same_resource_generation: true,
 });
-const receiptRequirements = () => ({
-  policy: 'required_3x3',
-  providers: [...PROVIDERS],
-  scenarios: {
-    normal: { expected_outcome: 'confirmed', effect_code: 'kernel_effect_confirmed' },
-    violation: { expected_outcome: 'denied', effect_code: 'kernel_effect_denied' },
-    recovery: {
-      expected_outcome: 'recovered',
-      effect_code: 'kernel_effect_recovered',
-      predecessor_scenario: 'violation',
-      predecessor_binding: predecessorBinding(),
+const receiptRequirements = (probeDefinitions = [
+  probeDefinition('fixture-N01', 'normal', 'confirmed'),
+  probeDefinition('fixture-V01', 'violation', 'denied'),
+  probeDefinition('fixture-R01', 'recovery', 'recovered'),
+]) => {
+  const expectedOutcome = (scenario) => {
+    const outcomes = new Set(
+      probeDefinitions
+        .filter((probe) => probe.scenario === scenario)
+        .map((probe) => probe.expected_outcome),
+    );
+    return outcomes.size === 1 ? [...outcomes][0] : 'per_probe';
+  };
+  return {
+    policy: 'required_3x3',
+    providers: [...PROVIDERS],
+    scenarios: {
+      normal: {
+        expected_outcome: expectedOutcome('normal'),
+        effect_code: 'kernel_effect_confirmed',
+      },
+      violation: {
+        expected_outcome: expectedOutcome('violation'),
+        effect_code: 'kernel_effect_denied',
+      },
+      recovery: {
+        expected_outcome: expectedOutcome('recovery'),
+        effect_code: 'kernel_effect_recovered',
+        predecessor_scenario: 'violation',
+        predecessor_binding: predecessorBinding(),
+      },
     },
-  },
-});
+  };
+};
 
 function catalogEntry(prefix = 'P0-01') {
   return FAMILY_CATALOG.find((item) => item.prefix === prefix);
@@ -72,10 +122,23 @@ function catalogEntry(prefix = 'P0-01') {
 
 function activeProbeDefinitions(atomId, count = 3) {
   const prefix = atomId.replace('KERNEL-INV-', 'KERNEL-PROBE-');
-  return Array.from({ length: count }, (_, index) => ({
-    probe_id: `${prefix}-${String(index + 1).padStart(3, '0')}`,
-    scenario: index === 0 ? 'normal' : 'violation',
-  }));
+  return Array.from({ length: count }, (_, index) => {
+    const scenario = index === 0
+      ? 'normal'
+      : index === count - 1
+        ? 'recovery'
+        : 'violation';
+    const expectedOutcome = {
+      normal: 'confirmed',
+      violation: 'denied',
+      recovery: 'recovered',
+    }[scenario];
+    return probeDefinition(
+      `${prefix}-${String(index + 1).padStart(3, '0')}`,
+      scenario,
+      expectedOutcome,
+    );
+  });
 }
 
 function scenarioPlan(probeDefinitions) {
@@ -86,10 +149,30 @@ function scenarioPlan(probeDefinitions) {
     normal: { required_probe_ids: ids('normal') },
     violation: { required_probe_ids: ids('violation') },
     recovery: {
-      replay_probe_id: ids('normal')[0],
-      predecessor_probe_ids: ids('violation'),
-      exact_predecessor_receipt_required: true,
+      required_probe_ids: ids('recovery'),
+      bindings: ids('recovery').map((recovery_probe_id) => ({
+        recovery_probe_id,
+        predecessor_probe_ids: ids('violation'),
+        authority: appendixAuthority(),
+      })),
+      coverage_gaps: [],
     },
+  };
+}
+
+function recoveryGap(
+  gap_id,
+  affected_violation_probe_ids,
+  affected_recovery_probe_ids,
+) {
+  return {
+    gap_id,
+    affected_violation_probe_ids,
+    affected_recovery_probe_ids,
+    appendix_predecessor_text: 'the appendix names recovery without exact probe identity',
+    reason: 'the appendix does not identify one exact predecessor set',
+    owner: 'kernel-contract',
+    closure_plan: 'approve the exact mapping and add its regression fixture',
   };
 }
 
@@ -111,7 +194,7 @@ function activeAtom(prefix = 'P0-01', sequence = 1, probeCount = 3, overrides = 
     single_effect_owner_seam: `kernel.${prefix.toLowerCase()}.owner`,
     probe_definitions,
     scenario_plan: scenarioPlan(probe_definitions),
-    receipt_requirements: receiptRequirements(),
+    receipt_requirements: receiptRequirements(probe_definitions),
     ...overrides,
   };
 }
@@ -147,6 +230,7 @@ function replacementAtom(prefix = 'P0-01', sequence = 1, probeCount = 3, overrid
       forbidden_legacy_authority: 'legacy direct mutation',
       replacement_behavior: 'grant-bound single-owner mutation',
       rationale: 'the replacement removes ambient authority',
+      legacy_evidence: [evidence('history')],
     },
     ...overrides,
   };
@@ -166,7 +250,16 @@ function retiredAtom(overrides = {}) {
     steps: [...family.steps],
     dimensions: [...family.dimensions],
     single_effect_owner_seam: 'kernel.p1-08.retired-owner',
-    probe_definitions: required_probe_ids.map((probe_id) => ({ probe_id, scenario: 'absence' })),
+    probe_definitions: required_probe_ids.map((probe_id) => probeDefinition(
+      probe_id,
+      'absence',
+      'absent',
+      {
+        kind: 'appendix_explicit',
+        normative_ref:
+          'docs/superpowers/specs/2026-07-29-kernel-atomic-inventory-p1.md',
+      },
+    )),
     receipt_requirements: { policy: 'not_required' },
     retirement: {
       decision_ref: 'docs/decisions/kernel-p1-08-01-retirement.md',
@@ -250,6 +343,7 @@ function resizeNumericProbes(atom, probeCount) {
     probeCount,
   );
   atom.scenario_plan = scenarioPlan(atom.probe_definitions);
+  atom.receipt_requirements = receiptRequirements(atom.probe_definitions);
   return true;
 }
 
@@ -401,22 +495,19 @@ describe('validateAtomicContract schema and canonical inventory', () => {
       const recoveryProbeIds = atom.probe_definitions
         .filter((probe) => probe.scenario === 'recovery')
         .map((probe) => probe.probe_id);
-      if (recoveryProbeIds.length > 0) {
-        expect(recoveryProbeIds).toEqual(
-          atom.scenario_plan.recovery.required_probe_ids,
-        );
-      } else {
-        expect(
-          atom.probe_definitions
-            .filter((probe) => probe.scenario === 'normal')
-            .map((probe) => probe.probe_id),
-        ).toContain(atom.scenario_plan.recovery.replay_probe_id);
-      }
-      expect(atom.scenario_plan.recovery.predecessor_probe_ids).toEqual(
-        atom.probe_definitions
-          .filter((probe) => probe.scenario === 'violation')
-          .map((probe) => probe.probe_id),
+      expect(recoveryProbeIds).toEqual(
+        atom.scenario_plan.recovery.required_probe_ids,
       );
+      expect(atom.scenario_plan.recovery.bindings).toEqual(
+        recoveryProbeIds.map((recovery_probe_id) => ({
+          recovery_probe_id,
+          predecessor_probe_ids: atom.probe_definitions
+            .filter((probe) => probe.scenario === 'violation')
+            .map((probe) => probe.probe_id),
+          authority: appendixAuthority(),
+        })),
+      );
+      expect(atom.scenario_plan.recovery.coverage_gaps).toEqual([]);
     }
     expect(input.behaviors[7].atomic_invariants[0].invariant_id).toBe('KERNEL-INV-P1-08-01');
   });
@@ -540,18 +631,16 @@ describe('canonical axes and exact scenario plan shape', () => {
     expect(atom.scenario_plan).toEqual({
       normal: { required_probe_ids: ['KERNEL-PROBE-P0-01-01-001'] },
       violation: {
-        required_probe_ids: [
-          'KERNEL-PROBE-P0-01-01-002',
-          'KERNEL-PROBE-P0-01-01-003',
-        ],
+        required_probe_ids: ['KERNEL-PROBE-P0-01-01-002'],
       },
       recovery: {
-        replay_probe_id: 'KERNEL-PROBE-P0-01-01-001',
-        predecessor_probe_ids: [
-          'KERNEL-PROBE-P0-01-01-002',
-          'KERNEL-PROBE-P0-01-01-003',
-        ],
-        exact_predecessor_receipt_required: true,
+        required_probe_ids: ['KERNEL-PROBE-P0-01-01-003'],
+        bindings: [{
+          recovery_probe_id: 'KERNEL-PROBE-P0-01-01-003',
+          predecessor_probe_ids: ['KERNEL-PROBE-P0-01-01-002'],
+          authority: appendixAuthority(),
+        }],
+        coverage_gaps: [],
       },
     });
     expect(validate(contract())).toMatchObject({ schema_valid: true, findings: [] });
@@ -570,11 +659,16 @@ describe('canonical axes and exact scenario plan shape', () => {
     const atom = activeAtom();
     atom.invariant_id = 'KERNEL-INV-P0-01-01-WORKSPACE-WRITE-ADMISSION';
     atom.probe_definitions = [
-      { probe_id: 'KERNEL-PROBE-P0-01-01-N01', scenario: 'normal' },
-      { probe_id: 'KERNEL-PROBE-P0-01-01-V01', scenario: 'violation' },
-      { probe_id: 'KERNEL-PROBE-P0-01-01-V02', scenario: 'violation' },
-      { probe_id: 'KERNEL-PROBE-P0-01-01-R01', scenario: 'recovery' },
-      { probe_id: 'KERNEL-PROBE-P0-01-01-R02', scenario: 'recovery' },
+      probeDefinition('KERNEL-PROBE-P0-01-01-N01', 'normal', 'confirmed'),
+      probeDefinition('KERNEL-PROBE-P0-01-01-V01', 'violation', 'denied'),
+      probeDefinition('KERNEL-PROBE-P0-01-01-V02', 'violation', 'blocked'),
+      probeDefinition('KERNEL-PROBE-P0-01-01-R01', 'recovery', 'recovered'),
+      probeDefinition(
+        'KERNEL-PROBE-P0-01-01-R02',
+        'recovery',
+        'recovered',
+        designAuthority(),
+      ),
     ];
     atom.scenario_plan = {
       normal: { required_probe_ids: ['KERNEL-PROBE-P0-01-01-N01'] },
@@ -591,20 +685,23 @@ describe('canonical axes and exact scenario plan shape', () => {
         ],
         bindings: [
           {
-            probe_id: 'KERNEL-PROBE-P0-01-01-R01',
+            recovery_probe_id: 'KERNEL-PROBE-P0-01-01-R01',
             predecessor_probe_ids: ['KERNEL-PROBE-P0-01-01-V01'],
+            authority: appendixAuthority(),
           },
           {
-            probe_id: 'KERNEL-PROBE-P0-01-01-R02',
+            recovery_probe_id: 'KERNEL-PROBE-P0-01-01-R02',
             predecessor_probe_ids: [
               'KERNEL-PROBE-P0-01-01-V02',
               'KERNEL-PROBE-P0-01-01-R01',
             ],
+            authority: designAuthority(),
           },
         ],
-        exact_predecessor_receipt_required: true,
+        coverage_gaps: [],
       },
     };
+    atom.receipt_requirements = receiptRequirements(atom.probe_definitions);
     const family = familyFixture('P0-01', [atom], {
       probe_definition_count: atom.probe_definitions.length,
     });
@@ -636,82 +733,7 @@ describe('canonical axes and exact scenario plan shape', () => {
     );
   });
 
-  it.each([
-    ['P0-04-01 reruns normal probes 001 through 004', () => {
-      const atom = activeAtom('P0-04', 1, 5);
-      atom.invariant_id = 'KERNEL-INV-P0-04-01-CI-EXACT-ARTIFACT';
-      atom.probe_definitions.forEach((probe, index) => {
-        probe.scenario = index < 4 ? 'normal' : 'violation';
-      });
-      atom.scenario_plan = {
-        normal: {
-          required_probe_ids: atom.probe_definitions
-            .filter((probe) => probe.scenario === 'normal')
-            .map((probe) => probe.probe_id),
-        },
-        violation: {
-          required_probe_ids: atom.probe_definitions
-            .filter((probe) => probe.scenario === 'violation')
-            .map((probe) => probe.probe_id),
-        },
-        recovery: {
-          required_probe_ids: atom.probe_definitions
-            .filter((probe) => probe.scenario === 'normal')
-            .map((probe) => probe.probe_id),
-          predecessor_probe_ids: atom.probe_definitions
-            .filter((probe) => probe.scenario === 'violation')
-            .map((probe) => probe.probe_id),
-          exact_predecessor_receipt_required: true,
-        },
-      };
-      return [atom];
-    }],
-    ['P0-04-04 reruns normal probes 008 and 010', () => {
-      const atoms = [
-        activeAtom('P0-04', 1),
-        activeAtom('P0-04', 2),
-        activeAtom('P0-04', 3),
-        activeAtom('P0-04', 4, 10),
-      ];
-      const atom = atoms[3];
-      atom.invariant_id = 'KERNEL-INV-P0-04-04-MERGE-AUTHORITY';
-      atom.probe_definitions.forEach((probe, index) => {
-        probe.scenario = [7, 9].includes(index) ? 'normal' : 'violation';
-      });
-      atom.scenario_plan = {
-        normal: {
-          required_probe_ids: atom.probe_definitions
-            .filter((probe) => probe.scenario === 'normal')
-            .map((probe) => probe.probe_id),
-        },
-        violation: {
-          required_probe_ids: atom.probe_definitions
-            .filter((probe) => probe.scenario === 'violation')
-            .map((probe) => probe.probe_id),
-        },
-        recovery: {
-          required_probe_ids: atom.probe_definitions
-            .filter((probe) => probe.scenario === 'normal')
-            .map((probe) => probe.probe_id),
-          predecessor_probe_ids: atom.probe_definitions
-            .filter((probe) => probe.scenario === 'violation')
-            .map((probe) => probe.probe_id),
-          exact_predecessor_receipt_required: true,
-        },
-      };
-      return atoms;
-    }],
-  ])('accepts multiple normal replay probes: %s', (_name, makeAtoms) => {
-    const atoms = makeAtoms();
-    expect(validate(contract([
-      familyFixture('P0-04', atoms),
-    ]))).toMatchObject({
-      schema_valid: true,
-      findings: [],
-    });
-  });
-
-  it('rejects flat required IDs that mix normal replay and dedicated recovery', () => {
+  it('rejects required IDs that mix normal and dedicated recovery probes', () => {
     const atom = activeAtom('P0-01', 1, 3);
     atom.probe_definitions[2].scenario = 'recovery';
     atom.scenario_plan = {
@@ -722,8 +744,8 @@ describe('canonical axes and exact scenario plan shape', () => {
           atom.probe_definitions[0].probe_id,
           atom.probe_definitions[2].probe_id,
         ],
-        predecessor_probe_ids: [atom.probe_definitions[1].probe_id],
-        exact_predecessor_receipt_required: true,
+        bindings: [],
+        coverage_gaps: [],
       },
     };
     expectCode(
@@ -732,22 +754,22 @@ describe('canonical axes and exact scenario plan shape', () => {
     );
   });
 
-  it('rejects a normal replay ID owned by another atom', () => {
+  it('rejects a recovery ID owned by another atom', () => {
     const first = activeAtom('P0-01', 1);
     const second = activeAtom('P0-01', 2);
     first.scenario_plan.recovery.required_probe_ids = [
-      second.scenario_plan.normal.required_probe_ids[0],
+      second.scenario_plan.recovery.required_probe_ids[0],
     ];
-    delete first.scenario_plan.recovery.replay_probe_id;
     expectCode(
       contract([familyFixture('P0-01', [first, second])]),
       'atomic_scenario_requirement_invalid',
     );
   });
 
-  it('rejects a per-recovery binding that omits violation coverage', () => {
+  it('rejects a plan that omits a recovery obligation', () => {
     const atom = activeAtom('P0-01', 1, 4);
     atom.probe_definitions[2].scenario = 'recovery';
+    atom.probe_definitions[2].expected_outcome = 'recovered';
     atom.probe_definitions[3].scenario = 'recovery';
     atom.scenario_plan = {
       normal: { required_probe_ids: [atom.probe_definitions[0].probe_id] },
@@ -759,41 +781,139 @@ describe('canonical axes and exact scenario plan shape', () => {
         ],
         bindings: [
           {
-            probe_id: atom.probe_definitions[2].probe_id,
+            recovery_probe_id: atom.probe_definitions[2].probe_id,
             predecessor_probe_ids: [atom.probe_definitions[1].probe_id],
-          },
-          {
-            probe_id: atom.probe_definitions[3].probe_id,
-            predecessor_probe_ids: [atom.probe_definitions[2].probe_id],
+            authority: appendixAuthority(),
           },
         ],
-        exact_predecessor_receipt_required: true,
+        coverage_gaps: [],
       },
     };
+    atom.receipt_requirements = receiptRequirements(atom.probe_definitions);
+    expectCode(
+      contract([familyFixture('P0-01', [atom])]),
+      'recovery_coverage_gap_invalid',
+    );
+  });
+
+  it('accepts an appendix-authorized normal replay when no recovery probe exists', () => {
+    const atom = activeAtom();
+    const [normal, firstViolation, replayedAsViolation] = atom.probe_definitions;
+    replayedAsViolation.scenario = 'violation';
+    replayedAsViolation.expected_outcome = 'denied';
+    atom.scenario_plan = {
+      normal: { required_probe_ids: [normal.probe_id] },
+      violation: {
+        required_probe_ids: [
+          firstViolation.probe_id,
+          replayedAsViolation.probe_id,
+        ],
+      },
+      recovery: {
+        required_probe_ids: [normal.probe_id],
+        bindings: [{
+          recovery_probe_id: normal.probe_id,
+          predecessor_probe_ids: [
+            firstViolation.probe_id,
+            replayedAsViolation.probe_id,
+          ],
+          authority: appendixAuthority(),
+        }],
+        coverage_gaps: [],
+      },
+    };
+    expect(validate(contract([familyFixture('P0-01', [atom])]))).toMatchObject({
+      schema_valid: true,
+      findings: [],
+    });
+  });
+
+  it('accepts multiple atom-local normal replay targets', () => {
+    const atom = activeAtom();
+    atom.probe_definitions = [
+      probeDefinition('KERNEL-PROBE-P0-01-01-N01', 'normal', 'confirmed'),
+      probeDefinition('KERNEL-PROBE-P0-01-01-N02', 'normal', 'confirmed'),
+      probeDefinition('KERNEL-PROBE-P0-01-01-V01', 'violation', 'denied'),
+    ];
+    atom.scenario_plan = {
+      normal: {
+        required_probe_ids: [
+          'KERNEL-PROBE-P0-01-01-N01',
+          'KERNEL-PROBE-P0-01-01-N02',
+        ],
+      },
+      violation: { required_probe_ids: ['KERNEL-PROBE-P0-01-01-V01'] },
+      recovery: {
+        required_probe_ids: [
+          'KERNEL-PROBE-P0-01-01-N01',
+          'KERNEL-PROBE-P0-01-01-N02',
+        ],
+        bindings: [
+          {
+            recovery_probe_id: 'KERNEL-PROBE-P0-01-01-N01',
+            predecessor_probe_ids: ['KERNEL-PROBE-P0-01-01-V01'],
+            authority: appendixAuthority(),
+          },
+          {
+            recovery_probe_id: 'KERNEL-PROBE-P0-01-01-N02',
+            predecessor_probe_ids: ['KERNEL-PROBE-P0-01-01-V01'],
+            authority: designAuthority(),
+          },
+        ],
+        coverage_gaps: [],
+      },
+    };
+    atom.receipt_requirements = receiptRequirements([
+      ...atom.probe_definitions,
+      probeDefinition('receipt-only-R01', 'recovery', 'recovered'),
+    ]);
+    const output = validate(contract([familyFixture('P0-01', [atom])]));
+    expect(output).toMatchObject({ schema_valid: true, findings: [] });
+    expect(output.metrics.recovery_mapping).toMatchObject({
+      exact_binding_count: 42,
+      derived_binding_count: 1,
+    });
+  });
+
+  it('rejects an unknown normal replay target', () => {
+    const atom = activeAtom();
+    atom.probe_definitions[2].scenario = 'violation';
+    atom.probe_definitions[2].expected_outcome = 'denied';
+    atom.scenario_plan.recovery.required_probe_ids = [
+      'KERNEL-PROBE-P0-01-01-N99',
+    ];
+    atom.scenario_plan.recovery.bindings[0].recovery_probe_id =
+      'KERNEL-PROBE-P0-01-01-N99';
     expectCode(
       contract([familyFixture('P0-01', [atom])]),
       'atomic_scenario_requirement_invalid',
     );
   });
 
-  it('rejects recovery plans that mix replay and dedicated recovery probes', () => {
+  it('rejects an unaccounted normal replay target', () => {
     const atom = activeAtom();
-    atom.scenario_plan.recovery.required_probe_ids = [
-      atom.probe_definitions[0].probe_id,
-    ];
+    const [normal] = atom.probe_definitions;
+    atom.probe_definitions[2].scenario = 'violation';
+    atom.probe_definitions[2].expected_outcome = 'denied';
+    atom.scenario_plan = scenarioPlan(atom.probe_definitions);
+    atom.scenario_plan.recovery = {
+      required_probe_ids: [normal.probe_id],
+      bindings: [],
+      coverage_gaps: [],
+    };
     expectCode(
       contract([familyFixture('P0-01', [atom])]),
-      'atomic_scenario_requirement_invalid',
+      'recovery_coverage_gap_invalid',
     );
   });
 
   it('rejects cyclic dedicated recovery bindings', () => {
     const atom = activeAtom();
     atom.probe_definitions = [
-      { probe_id: 'KERNEL-PROBE-P0-01-01-N01', scenario: 'normal' },
-      { probe_id: 'KERNEL-PROBE-P0-01-01-V01', scenario: 'violation' },
-      { probe_id: 'KERNEL-PROBE-P0-01-01-R01', scenario: 'recovery' },
-      { probe_id: 'KERNEL-PROBE-P0-01-01-R02', scenario: 'recovery' },
+      probeDefinition('KERNEL-PROBE-P0-01-01-N01', 'normal', 'confirmed'),
+      probeDefinition('KERNEL-PROBE-P0-01-01-V01', 'violation', 'denied'),
+      probeDefinition('KERNEL-PROBE-P0-01-01-R01', 'recovery', 'recovered'),
+      probeDefinition('KERNEL-PROBE-P0-01-01-R02', 'recovery', 'recovered'),
     ];
     atom.scenario_plan = {
       normal: { required_probe_ids: ['KERNEL-PROBE-P0-01-01-N01'] },
@@ -805,21 +925,240 @@ describe('canonical axes and exact scenario plan shape', () => {
         ],
         bindings: [
           {
-            probe_id: 'KERNEL-PROBE-P0-01-01-R01',
+            recovery_probe_id: 'KERNEL-PROBE-P0-01-01-R01',
             predecessor_probe_ids: ['KERNEL-PROBE-P0-01-01-R02'],
+            authority: appendixAuthority(),
           },
           {
-            probe_id: 'KERNEL-PROBE-P0-01-01-R02',
+            recovery_probe_id: 'KERNEL-PROBE-P0-01-01-R02',
             predecessor_probe_ids: ['KERNEL-PROBE-P0-01-01-R01'],
+            authority: appendixAuthority(),
           },
         ],
-        exact_predecessor_receipt_required: true,
+        coverage_gaps: [],
       },
     };
+    atom.receipt_requirements = receiptRequirements(atom.probe_definitions);
     const family = familyFixture('P0-01', [atom], {
       probe_definition_count: atom.probe_definitions.length,
     });
-    expectCode(contract([family]), 'atomic_scenario_requirement_invalid');
+    const output = validate(contract([family]));
+    expect(output.findings.map(({ code }) => code)).toContain(
+      'recovery_binding_authority_invalid',
+    );
+    expect(output.metrics.recovery_mapping.exact_binding_count).toBe(41);
+  });
+});
+
+describe('honest per-probe outcomes and recovery authority', () => {
+  it.each([
+    ['normal', 'confirmed'],
+    ['violation', 'denied'],
+    ['violation', 'blocked'],
+    ['violation', 'unknown'],
+    ['recovery', 'recovered'],
+  ])('accepts the explicit %s outcome %s', (scenario, expectedOutcome) => {
+    const atom = activeAtom();
+    const probe = atom.probe_definitions.find((item) => item.scenario === scenario);
+    probe.expected_outcome = expectedOutcome;
+    atom.receipt_requirements.scenarios[scenario].expected_outcome = expectedOutcome;
+    expect(validate(contract([familyFixture('P0-01', [atom])]))).toMatchObject({
+      schema_valid: true,
+      findings: [],
+    });
+  });
+
+  it.each([
+    ['appendix explicit', appendixAuthority()],
+    ['design derived', designAuthority()],
+    ['coverage gap', coverageGapAuthority()],
+  ])('accepts exact %s expectation authority', (_name, authority) => {
+    const atom = activeAtom();
+    atom.probe_definitions[1].expectation_authority = authority;
+    expect(validate(contract([familyFixture('P0-01', [atom])]))).toMatchObject({
+      schema_valid: true,
+      findings: [],
+    });
+  });
+
+  it.each([
+    ['missing assertion', (probe) => { delete probe.assertion; }],
+    ['invalid outcome', (probe) => { probe.expected_outcome = 'success'; }],
+    ['missing authority', (probe) => { delete probe.expectation_authority; }],
+    ['appendix ref missing', (probe) => {
+      probe.expectation_authority = { kind: 'appendix_explicit' };
+    }],
+    ['derived ref missing', (probe) => {
+      probe.expectation_authority = { kind: 'design_derived' };
+    }],
+    ['coverage gap fields missing', (probe) => {
+      probe.expectation_authority = { kind: 'coverage_gap', owner: 'kernel-contract' };
+    }],
+    ['authority extra field', (probe) => {
+      probe.expectation_authority.extra = true;
+    }],
+  ])('rejects probe outcome contract defect: %s', (_name, mutate) => {
+    const atom = activeAtom();
+    mutate(atom.probe_definitions[0]);
+    expectCode(
+      contract([familyFixture('P0-01', [atom])]),
+      'probe_outcome_contract_invalid',
+    );
+  });
+
+  it('requires per_probe for heterogeneous outcomes in one scenario', () => {
+    const atom = activeAtom('P0-01', 1, 4);
+    atom.probe_definitions[2].expected_outcome = 'blocked';
+    atom.receipt_requirements = receiptRequirements(atom.probe_definitions);
+    const valid = validate(contract([familyFixture('P0-01', [atom])]));
+    expect(valid).toMatchObject({ schema_valid: true, findings: [] });
+
+    atom.receipt_requirements.scenarios.violation.expected_outcome = 'denied';
+    expectCode(
+      contract([familyFixture('P0-01', [atom])]),
+      'probe_outcome_contract_invalid',
+    );
+  });
+
+  it('requires the unique probe outcome for a homogeneous scenario', () => {
+    const atom = activeAtom();
+    atom.receipt_requirements.scenarios.violation.expected_outcome = 'per_probe';
+    expectCode(
+      contract([familyFixture('P0-01', [atom])]),
+      'probe_outcome_contract_invalid',
+    );
+  });
+
+  it('accepts a partially bound recovery plan with an explicit coverage gap', () => {
+    const atom = activeAtom('P0-01', 1, 4);
+    const [, firstViolation, secondViolation, recovery] = atom.probe_definitions;
+    atom.scenario_plan.recovery = {
+      required_probe_ids: [recovery.probe_id],
+      bindings: [{
+        recovery_probe_id: recovery.probe_id,
+        predecessor_probe_ids: [firstViolation.probe_id],
+        authority: appendixAuthority(),
+      }],
+      coverage_gaps: [recoveryGap(
+        'KERNEL-RECOVERY-GAP-P0-01-01-01',
+        [secondViolation.probe_id],
+        [recovery.probe_id],
+      )],
+    };
+    const output = validate(contract([familyFixture('P0-01', [atom])]));
+    expect(output).toMatchObject({
+      schema_valid: true,
+      findings: [],
+      atomic_cutover_ready: false,
+    });
+    expect(output.families[0].atoms[0].effective_status).toBe('gap');
+  });
+
+  it.each([
+    ['missing authority', (binding) => { delete binding.authority; }],
+    ['appendix ref missing', (binding) => {
+      binding.authority = { kind: 'appendix_explicit' };
+    }],
+    ['derived ref missing', (binding) => {
+      binding.authority = { kind: 'design_derived' };
+    }],
+    ['outside recovery target', (binding) => {
+      binding.recovery_probe_id = 'KERNEL-PROBE-P0-01-02-R01';
+    }],
+    ['outside predecessor', (binding) => {
+      binding.predecessor_probe_ids = ['KERNEL-PROBE-P0-01-02-V01'];
+    }],
+  ])('rejects recovery binding authority defect: %s', (_name, mutate) => {
+    const atom = activeAtom();
+    mutate(atom.scenario_plan.recovery.bindings[0]);
+    expectCode(
+      contract([familyFixture('P0-01', [atom])]),
+      'recovery_binding_authority_invalid',
+    );
+  });
+
+  it.each([
+    ['missing owner', (atom, gap) => { delete gap.owner; }],
+    ['missing reason', (atom, gap) => { delete gap.reason; }],
+    ['missing closure plan', (atom, gap) => { delete gap.closure_plan; }],
+    ['outside violation', (atom, gap) => {
+      gap.affected_violation_probe_ids = ['KERNEL-PROBE-P0-01-02-V01'];
+    }],
+    ['outside recovery', (atom, gap) => {
+      gap.affected_recovery_probe_ids = ['KERNEL-PROBE-P0-01-02-R01'];
+    }],
+    ['gap ID owned by another atom', (atom, gap) => {
+      gap.gap_id = 'KERNEL-RECOVERY-GAP-P0-01-02-01';
+    }],
+    ['duplicate gap ID', (atom, gap) => {
+      atom.scenario_plan.recovery.coverage_gaps.push(clone(gap));
+    }],
+    ['unaccounted violation', (atom) => {
+      atom.scenario_plan.recovery.bindings[0].predecessor_probe_ids = [];
+    }],
+    ['unaccounted recovery', (atom) => {
+      atom.scenario_plan.recovery.bindings = [];
+    }],
+    ['binding and gap claim same relation', (atom, gap) => {
+      gap.affected_violation_probe_ids = [
+        atom.scenario_plan.recovery.bindings[0].predecessor_probe_ids[0],
+      ];
+    }],
+  ])('rejects recovery coverage gap defect: %s', (_name, mutate) => {
+    const atom = activeAtom('P0-01', 1, 4);
+    const [, firstViolation, secondViolation, recovery] = atom.probe_definitions;
+    const gap = recoveryGap(
+      'KERNEL-RECOVERY-GAP-P0-01-01-01',
+      [secondViolation.probe_id],
+      [recovery.probe_id],
+    );
+    atom.scenario_plan.recovery = {
+      required_probe_ids: [recovery.probe_id],
+      bindings: [{
+        recovery_probe_id: recovery.probe_id,
+        predecessor_probe_ids: [firstViolation.probe_id],
+        authority: appendixAuthority(),
+      }],
+      coverage_gaps: [gap],
+    };
+    mutate(atom, gap);
+    expectCode(
+      contract([familyFixture('P0-01', [atom])]),
+      'recovery_coverage_gap_invalid',
+    );
+  });
+
+  it('derives authority and recovery metrics only from legal structures', () => {
+    const atom = activeAtom('P0-01', 1, 4);
+    const [, firstViolation, secondViolation, recovery] = atom.probe_definitions;
+    firstViolation.expectation_authority = designAuthority();
+    secondViolation.expectation_authority = coverageGapAuthority();
+    atom.scenario_plan.recovery = {
+      required_probe_ids: [recovery.probe_id],
+      bindings: [{
+        recovery_probe_id: recovery.probe_id,
+        predecessor_probe_ids: [firstViolation.probe_id],
+        authority: designAuthority(),
+      }],
+      coverage_gaps: [recoveryGap(
+        'KERNEL-RECOVERY-GAP-P0-01-01-01',
+        [secondViolation.probe_id],
+        [recovery.probe_id],
+      )],
+    };
+    const output = validate(contract([familyFixture('P0-01', [atom])]));
+    expect(output.metrics).toMatchObject({
+      probe_outcome_authority: {
+        appendix_explicit: 444,
+        design_derived: 1,
+        coverage_gap: 1,
+      },
+      recovery_mapping: {
+        exact_binding_count: 41,
+        derived_binding_count: 1,
+        coverage_gap_count: 1,
+      },
+    });
   });
 });
 
@@ -1032,6 +1371,51 @@ describe('evidence is replayable, repository-relative, and non-sensitive', () =>
       'atomic_legacy_evidence_invalid',
     );
   });
+
+  it('preserves valid replacement legacy evidence without treating it as receipt proof', () => {
+    const atom = replacementAtom();
+    const output = validate(contract([familyFixture('P0-01', [atom])]));
+    expect(output).toMatchObject({
+      schema_valid: true,
+      findings: [],
+      atomic_cutover_ready: false,
+    });
+    expect(output.families[0].atoms[0].effective_status).toBe('gap');
+  });
+
+  it.each([
+    ['absolute path', { ...evidence(), ref: '/tmp/legacy.js' }],
+    ['missing SHA', { kind: 'code', ref: 'packages/engine/hooks/stop-dev.sh' }],
+    ['runtime audit', {
+      kind: 'runtime_audit',
+      ref: 'artifacts/runtime.json',
+      audited_at_sha: SHA40,
+    }],
+    ['sensitive material', { ...evidence(), token: 'forbidden' }],
+  ])('rejects replacement legacy evidence: %s', (_name, invalidEvidence) => {
+    const atom = replacementAtom();
+    atom.replacement.legacy_evidence = [invalidEvidence];
+    const output = validate(contract([familyFixture('P0-01', [atom])]));
+    const finding = output.findings.find(
+      ({ code }) => code === 'replacement_legacy_evidence_invalid',
+    );
+    expect(finding?.path).toContain('replacement.legacy_evidence');
+    expect(output.findings.map(({ code }) => code)).not.toContain(
+      'atomic_receipt_v2_verifier_unavailable',
+    );
+  });
+
+  it.each([
+    ['empty list', []],
+    ['non-list', evidence()],
+  ])('rejects replacement legacy evidence container: %s', (_name, legacyEvidence) => {
+    const atom = replacementAtom();
+    atom.replacement.legacy_evidence = legacyEvidence;
+    expectCode(
+      contract([familyFixture('P0-01', [atom])]),
+      'replacement_legacy_evidence_invalid',
+    );
+  });
 });
 
 describe('providers, scenarios, owners, and recovery binding', () => {
@@ -1064,17 +1448,18 @@ describe('providers, scenarios, owners, and recovery binding', () => {
     ['extra scenario', (atom) => { atom.receipt_requirements.scenarios.other = {}; }],
     ['normal has no probe', (atom) => {
       atom.probe_definitions[0].scenario = 'violation';
+      atom.probe_definitions[0].expected_outcome = 'denied';
       atom.scenario_plan = scenarioPlan(atom.probe_definitions);
     }, true],
     ['violation has no probe', (atom) => {
       atom.probe_definitions
         .filter((probe) => probe.scenario === 'violation')
-        .forEach((probe) => { probe.scenario = 'normal'; });
+        .forEach((probe) => {
+          probe.scenario = 'normal';
+          probe.expected_outcome = 'confirmed';
+        });
       atom.scenario_plan = scenarioPlan(atom.probe_definitions);
     }, true],
-    ['recovery predecessor is not violation', (atom) => {
-      atom.scenario_plan.recovery.predecessor_probe_ids = ['KERNEL-PROBE-P0-01-01-001'];
-    }],
   ])('rejects scenario/probe defect: %s', (_name, mutate, exact = false) => {
     const atom = activeAtom();
     mutate(atom);
@@ -1086,12 +1471,12 @@ describe('providers, scenarios, owners, and recovery binding', () => {
   it('rejects a recovery predecessor owned by another atom', () => {
     const first = activeAtom('P0-01', 1);
     const second = activeAtom('P0-01', 2);
-    first.scenario_plan.recovery.predecessor_probe_ids = [
+    first.scenario_plan.recovery.bindings[0].predecessor_probe_ids = [
       second.scenario_plan.violation.required_probe_ids[0],
     ];
     expectCode(
       contract([familyFixture('P0-01', [first, second])]),
-      'atomic_scenario_requirement_invalid',
+      'recovery_binding_authority_invalid',
     );
   });
 
@@ -1301,6 +1686,21 @@ describe('retirement is P1-08 atom 01 with exact absence proof projection', () =
     );
   });
 
+  it.each([
+    ['missing assertion', (probe) => { delete probe.assertion; }],
+    ['non-absent outcome', (probe) => { probe.expected_outcome = 'unknown'; }],
+    ['invalid authority', (probe) => {
+      probe.expectation_authority = { kind: 'appendix_explicit' };
+    }],
+  ])('rejects retired probe outcome defect: %s', (_name, mutate) => {
+    const atom = retiredAtom();
+    mutate(atom.probe_definitions[0]);
+    expectCode(
+      contract([familyFixture('P1-08', [atom])]),
+      'probe_outcome_contract_invalid',
+    );
+  });
+
   it('rejects a retired atom with a non-absence scenario plan', () => {
     const atom = retiredAtom({ scenario_plan: scenarioPlan([]) });
     expectCode(
@@ -1346,7 +1746,6 @@ describe('malformed external values never escape the finding envelope', () => {
     const atom = activeAtom();
     atom.probe_definitions[0].probe_id = value;
     atom.scenario_plan.normal.required_probe_ids[0] = value;
-    atom.scenario_plan.recovery.replay_probe_id = value;
     const input = contract([familyFixture('P0-01', [atom])]);
     let output;
     expect(() => {
@@ -1371,10 +1770,132 @@ describe('malformed external values never escape the finding envelope', () => {
 });
 
 describe('object graph validation is cycle-safe and budgeted', () => {
+  it.each([
+    ['top-level schema_version', (input, getter) => {
+      Object.defineProperty(input, 'schema_version', {
+        enumerable: true,
+        get: getter,
+      });
+    }],
+    ['top-level behaviors', (input, getter) => {
+      Object.defineProperty(input, 'behaviors', {
+        enumerable: true,
+        get: getter,
+      });
+    }],
+    ['top-level declared count', (input, getter) => {
+      Object.defineProperty(input, 'required_behavior_count', {
+        enumerable: true,
+        get: getter,
+      });
+    }],
+    ['family behavior_id', (input, getter) => {
+      Object.defineProperty(input.behaviors[0], 'behavior_id', {
+        enumerable: true,
+        get: getter,
+      });
+    }],
+    ['family steps', (input, getter) => {
+      Object.defineProperty(input.behaviors[0], 'steps', {
+        enumerable: true,
+        get: getter,
+      });
+    }],
+  ])('fails closed without invoking a throwing %s accessor', (
+    _name,
+    installAccessor,
+  ) => {
+    const input = fullFixture();
+    let accessorCalls = 0;
+    installAccessor(input, () => {
+      accessorCalls += 1;
+      throw new Error('hostile enumerable accessor');
+    });
+    let output;
+
+    expect(() => {
+      output = validate(input);
+    }).not.toThrow();
+    expect(accessorCalls).toBe(0);
+    expect(output.schema_valid).toBe(false);
+    expect(output.findings.map((finding) => finding.code)).toContain(
+      'atomic_contract_input_invalid',
+    );
+  });
+
+  it('preserves the family budget when a nested family accessor is hostile', () => {
+    const input = fullFixture();
+    input.behaviors.push(clone(input.behaviors[0]));
+    let accessorCalls = 0;
+    Object.defineProperty(input.behaviors[0], 'atomic_invariants', {
+      enumerable: true,
+      get() {
+        accessorCalls += 1;
+        throw new Error('hostile atomic_invariants accessor');
+      },
+    });
+    let output;
+
+    expect(() => {
+      output = validate(input);
+    }).not.toThrow();
+    expect(accessorCalls).toBe(0);
+    expect(output.schema_valid).toBe(false);
+    expect(output.metrics.behavior_count).toBeGreaterThan(11);
+    expect(output.findings.map((finding) => finding.code)).toEqual(
+      expect.arrayContaining([
+        'atomic_contract_input_invalid',
+        'atomic_contract_input_budget_exceeded',
+      ]),
+    );
+  });
+
   it('fails closed without throwing when an atom references itself', () => {
     const input = fullFixture();
     const atom = input.behaviors[0].atomic_invariants[0];
     atom.self = atom;
+    let output;
+
+    expect(() => {
+      output = validate(input);
+    }).not.toThrow();
+    expect(output.schema_valid).toBe(false);
+    expect(output.findings.map((finding) => finding.code)).toContain(
+      'atomic_contract_input_invalid',
+    );
+  });
+
+  it('fails closed when a probe Proxy throws from ownKeys', () => {
+    const input = fullFixture();
+    input.behaviors[0].atomic_invariants[0].probe_definitions[0] = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error('hostile ownKeys trap');
+        },
+      },
+    );
+    let output;
+
+    expect(() => {
+      output = validate(input);
+    }).not.toThrow();
+    expect(output.schema_valid).toBe(false);
+    expect(output.findings.map((finding) => finding.code)).toContain(
+      'atomic_contract_input_invalid',
+    );
+  });
+
+  it('fails closed when a probe scenario accessor throws before metrics', () => {
+    const input = fullFixture();
+    const hostileProbe = {};
+    Object.defineProperty(hostileProbe, 'scenario', {
+      enumerable: true,
+      get() {
+        throw new Error('hostile scenario accessor');
+      },
+    });
+    input.behaviors[0].atomic_invariants[0].probe_definitions[0] = hostileProbe;
     let output;
 
     expect(() => {
@@ -1568,12 +2089,13 @@ describe('nested complexity preflight stops detailed validators', () => {
     const input = fullFixture();
     const atom = input.behaviors[0].atomic_invariants[0];
     atom.scenario_plan.recovery = {
-      required_probe_ids: [atom.probe_definitions[0].probe_id],
+      required_probe_ids: [atom.probe_definitions.at(-1).probe_id],
       bindings: Array(50_000).fill({
-        probe_id: atom.probe_definitions[0].probe_id,
+        recovery_probe_id: atom.probe_definitions.at(-1).probe_id,
         predecessor_probe_ids: [atom.probe_definitions[1].probe_id],
+        authority: appendixAuthority(),
       }),
-      exact_predecessor_receipt_required: true,
+      coverage_gaps: [],
     };
     let output;
 

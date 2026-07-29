@@ -14,6 +14,20 @@ const CLASSIFICATIONS = new Set([
 ]);
 const EVIDENCE_KINDS = new Set(['code', 'test', 'contract', 'history']);
 const PROOF_REQUIRED_STATUSES = new Set(['gap', 'proven']);
+const PROBE_EXPECTED_OUTCOMES = new Set([
+  'confirmed',
+  'denied',
+  'blocked',
+  'unknown',
+  'recovered',
+  'absent',
+]);
+const PROBE_SCENARIO_OUTCOMES = Object.freeze({
+  normal: new Set(['confirmed']),
+  violation: new Set(['denied', 'blocked', 'unknown']),
+  recovery: new Set(['recovered']),
+  absence: new Set(['absent']),
+});
 const SHA_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const OWNER_SEAM_PATTERN = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
 const SENSITIVE_EVIDENCE_KEYS = new Set([
@@ -110,7 +124,12 @@ function exactArray(left, right) {
 }
 
 function exactKeys(value, expected) {
-  const keys = Reflect.ownKeys(asObject(value));
+  let keys;
+  try {
+    keys = Reflect.ownKeys(asObject(value));
+  } catch {
+    return false;
+  }
   if (keys.some((key) => typeof key !== 'string')) return false;
   const actual = keys.sort();
   return exactArray(actual, [...expected].sort());
@@ -163,6 +182,130 @@ function cappedAdd(current, increment, maximum) {
   return Math.min(maximum + 1, current + increment);
 }
 
+function validExpectationAuthority(authority) {
+  if (authority?.kind === 'appendix_explicit') {
+    return (
+      exactKeys(authority, ['kind', 'normative_ref'])
+      && nonEmpty(authority.normative_ref)
+    );
+  }
+  if (authority?.kind === 'design_derived') {
+    return (
+      exactKeys(authority, ['kind', 'derivation_ref'])
+      && nonEmpty(authority.derivation_ref)
+    );
+  }
+  if (authority?.kind === 'coverage_gap') {
+    return (
+      exactKeys(authority, ['kind', 'owner', 'reason', 'closure_plan'])
+      && ['owner', 'reason', 'closure_plan'].every(
+        (field) => nonEmpty(authority[field]),
+      )
+    );
+  }
+  return false;
+}
+
+function validBindingAuthority(authority) {
+  return (
+    authority?.kind !== 'coverage_gap'
+    && validExpectationAuthority(authority)
+  );
+}
+
+function validProbeOutcomeShape(probe) {
+  const allowedForScenario = PROBE_SCENARIO_OUTCOMES[probe?.scenario];
+  return (
+    exactKeys(probe, [
+      'probe_id',
+      'scenario',
+      'assertion',
+      'expected_outcome',
+      'expectation_authority',
+    ])
+    && nonEmpty(probe?.assertion)
+    && PROBE_EXPECTED_OUTCOMES.has(probe?.expected_outcome)
+    && allowedForScenario?.has(probe.expected_outcome) === true
+    && validExpectationAuthority(probe?.expectation_authority)
+  );
+}
+
+function validRecoveryBindingShape(
+  binding,
+  violationIds,
+  targetIds,
+  dedicatedRecoveryIds,
+) {
+  const predecessorIds = asArray(binding?.predecessor_probe_ids);
+  const allowedPredecessors = new Set([
+    ...violationIds,
+    ...dedicatedRecoveryIds,
+  ]);
+  const recoveryOrder = new Map(
+    [...dedicatedRecoveryIds].map((probeId, index) => [probeId, index]),
+  );
+  const targetOrder = recoveryOrder.get(binding?.recovery_probe_id);
+  return (
+    exactKeys(binding, [
+      'recovery_probe_id',
+      'predecessor_probe_ids',
+      'authority',
+    ])
+    && targetIds.has(binding?.recovery_probe_id)
+    && predecessorIds.length > 0
+    && uniqueArray(predecessorIds)
+    && predecessorIds.every((probeId) => (
+      allowedPredecessors.has(probeId)
+      && (
+        !dedicatedRecoveryIds.has(probeId)
+        || recoveryOrder.get(probeId) < targetOrder
+      )
+    ))
+    && validBindingAuthority(binding?.authority)
+  );
+}
+
+function validRecoveryGapShape(gap, violationIds, targetIds) {
+  const violationProbeIds = asArray(gap?.affected_violation_probe_ids);
+  const recoveryProbeIds = asArray(gap?.affected_recovery_probe_ids);
+  const localProbeId = [...violationIds, ...targetIds].find(
+    (probeId) => typeof probeId === 'string',
+  );
+  const atomIdentity = localProbeId?.match(
+    /^KERNEL-PROBE-(P[01]-\d{2}-\d{2})(?:-|$)/,
+  )?.[1];
+  const gapPrefix = atomIdentity
+    ? `KERNEL-RECOVERY-GAP-${atomIdentity}-`
+    : null;
+  return (
+    exactKeys(gap, [
+      'gap_id',
+      'affected_violation_probe_ids',
+      'affected_recovery_probe_ids',
+      'appendix_predecessor_text',
+      'reason',
+      'owner',
+      'closure_plan',
+    ])
+    && [
+      'gap_id',
+      'appendix_predecessor_text',
+      'reason',
+      'owner',
+      'closure_plan',
+    ].every((field) => nonEmpty(gap?.[field]))
+    && gapPrefix !== null
+    && gap.gap_id.startsWith(gapPrefix)
+    && gap.gap_id.length > gapPrefix.length
+    && violationProbeIds.length > 0
+    && recoveryProbeIds.length > 0
+    && uniqueArray(violationProbeIds)
+    && uniqueArray(recoveryProbeIds)
+    && violationProbeIds.every((probeId) => violationIds.has(probeId))
+    && recoveryProbeIds.every((probeId) => targetIds.has(probeId))
+  );
+}
+
 function deriveMetrics(behaviors) {
   const metrics = {
     behavior_count: behaviors.length,
@@ -172,6 +315,16 @@ function deriveMetrics(behaviors) {
     proof_required_probe_definition_count: 0,
     provider_probe_assertion_count: 0,
     retired_absence_probe_count: 0,
+    probe_outcome_authority: {
+      appendix_explicit: 0,
+      design_derived: 0,
+      coverage_gap: 0,
+    },
+    recovery_mapping: {
+      exact_binding_count: 0,
+      derived_binding_count: 0,
+      coverage_gap_count: 0,
+    },
   };
   let scannedAtoms = 0;
   let scannedProbes = 0;
@@ -197,6 +350,29 @@ function deriveMetrics(behaviors) {
         );
       }
       const probes = asArray(atom?.probe_definitions);
+      const boundedProbes = probes.slice(0, MAX_PROBES + 1);
+      const normalIds = new Set(
+        boundedProbes
+          .filter((probe) => probe?.scenario === 'normal')
+          .map((probe) => probe?.probe_id),
+      );
+      const violationIds = new Set(
+        boundedProbes
+          .filter((probe) => probe?.scenario === 'violation')
+          .map((probe) => probe?.probe_id),
+      );
+      const recoveryIds = new Set(
+        boundedProbes
+          .filter((probe) => probe?.scenario === 'recovery')
+          .map((probe) => probe?.probe_id),
+      );
+      const recovery = asObject(atom?.scenario_plan?.recovery);
+      const targetIds = recoveryIds.size > 0
+        ? recoveryIds
+        : new Set(
+          asArray(recovery.required_probe_ids)
+            .filter((probeId) => normalIds.has(probeId)),
+        );
       metrics.probe_definition_count = cappedAdd(
         metrics.probe_definition_count,
         probes.length,
@@ -214,6 +390,10 @@ function deriveMetrics(behaviors) {
         MAX_PROBES + 1 - scannedProbes,
       );
       for (let probeIndex = 0; probeIndex < probeLimit; probeIndex += 1) {
+        if (validProbeOutcomeShape(probes[probeIndex])) {
+          const authorityKind = probes[probeIndex].expectation_authority.kind;
+          metrics.probe_outcome_authority[authorityKind] += 1;
+        }
         if (probes[probeIndex]?.scenario === 'absence') {
           metrics.retired_absence_probe_count = cappedAdd(
             metrics.retired_absence_probe_count,
@@ -223,6 +403,60 @@ function deriveMetrics(behaviors) {
         }
         scannedProbes += 1;
       }
+      const boundedBindings = asArray(recovery.bindings)
+        .slice(0, MAX_PROBES + 1);
+      const boundedGaps = asArray(recovery.coverage_gaps)
+        .slice(0, MAX_PROBES + 1);
+      const structurallyValidBindings = boundedBindings.filter(
+        (binding) => validRecoveryBindingShape(
+          binding,
+          violationIds,
+          targetIds,
+          recoveryIds,
+        ),
+      );
+      const bindingTargets = structurallyValidBindings.map(
+        (binding) => binding.recovery_probe_id,
+      );
+      const legalBindings = (
+        structurallyValidBindings.length === boundedBindings.length
+        && new Set(bindingTargets).size === bindingTargets.length
+        && !recoveryGraphHasCycle(structurallyValidBindings, recoveryIds)
+      ) ? structurallyValidBindings : [];
+      for (const binding of legalBindings) {
+        if (binding.authority.kind === 'appendix_explicit') {
+          metrics.recovery_mapping.exact_binding_count += 1;
+        } else {
+          metrics.recovery_mapping.derived_binding_count += 1;
+        }
+      }
+      const structurallyValidGaps = boundedGaps.filter(
+        (gap) => validRecoveryGapShape(gap, violationIds, targetIds),
+      );
+      const gapIds = structurallyValidGaps.map((gap) => gap.gap_id);
+      const exactRelations = new Set();
+      for (const binding of legalBindings) {
+        for (const predecessorId of binding.predecessor_probe_ids) {
+          if (violationIds.has(predecessorId)) {
+            exactRelations.add(
+              `${predecessorId}\0${binding.recovery_probe_id}`,
+            );
+          }
+        }
+      }
+      const gapOverlapsExactRelation = structurallyValidGaps.some((gap) => (
+        gap.affected_violation_probe_ids.some((violationId) => (
+          gap.affected_recovery_probe_ids.some((recoveryId) => (
+            exactRelations.has(`${violationId}\0${recoveryId}`)
+          ))
+        ))
+      ));
+      if (
+        new Set(gapIds).size === gapIds.length
+        && !gapOverlapsExactRelation
+      ) {
+        metrics.recovery_mapping.coverage_gap_count += structurallyValidGaps.length;
+      }
     }
   }
   metrics.provider_probe_assertion_count = Math.min(
@@ -231,6 +465,14 @@ function deriveMetrics(behaviors) {
     metrics.proof_required_probe_definition_count * PROOF_PROVIDERS.length,
   );
   return metrics;
+}
+
+function deriveMetricsSafely(behaviors) {
+  try {
+    return { metrics: deriveMetrics(behaviors), failure: null };
+  } catch {
+    return { metrics: deriveMetrics([]), failure: 'invalid' };
+  }
 }
 
 function inspectObjectGraph(root, keyMatches) {
@@ -282,12 +524,16 @@ function inspectObjectGraph(root, keyMatches) {
     for (let index = keys.length - 1; index >= 0; index -= 1) {
       const key = keys[index];
       if (keyMatches(key)) matched = true;
-      let child;
+      let descriptor;
       try {
-        child = value[key];
+        descriptor = Reflect.getOwnPropertyDescriptor(value, key);
       } catch {
         return { matched, failure: 'invalid' };
       }
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')) {
+        return { matched, failure: 'invalid' };
+      }
+      const child = descriptor.value;
       if (child && typeof child === 'object') {
         stack.push({ value: child, depth: depth + 1, exiting: false });
       }
@@ -327,6 +573,217 @@ function addGraphFailure(findings, behaviorId, path, failure) {
   );
 }
 
+function ownDataProperty(value, key) {
+  if (!value || typeof value !== 'object') {
+    return { value: undefined, failure: null };
+  }
+  try {
+    const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) return { value: undefined, failure: null };
+    if (!Object.hasOwn(descriptor, 'value')) {
+      return { value: undefined, failure: 'invalid' };
+    }
+    return { value: descriptor.value, failure: null };
+  } catch {
+    return { value: undefined, failure: 'invalid' };
+  }
+}
+
+function inspectOwnDataProperties(value) {
+  if (!value || typeof value !== 'object') return { failure: null };
+  let keys;
+  try {
+    keys = Reflect.ownKeys(value);
+  } catch {
+    return { failure: 'invalid' };
+  }
+  if (keys.length > OBJECT_GRAPH_MAX_NODES) {
+    return { failure: 'budget_exceeded' };
+  }
+  for (const key of keys) {
+    const property = ownDataProperty(value, key);
+    if (property.failure) return { failure: property.failure };
+  }
+  return { failure: null };
+}
+
+function safeArrayLength(value) {
+  if (!Array.isArray(value)) return { length: 0, failure: null };
+  const lengthProperty = ownDataProperty(value, 'length');
+  if (
+    lengthProperty.failure
+    || !Number.isSafeInteger(lengthProperty.value)
+    || lengthProperty.value < 0
+  ) {
+    return { length: 0, failure: 'invalid' };
+  }
+  return { length: lengthProperty.value, failure: null };
+}
+
+function preflightAtomicContract(section) {
+  const metrics = deriveMetrics([]);
+  const rootInspection = inspectOwnDataProperties(section);
+  const schemaProperty = ownDataProperty(section, 'schema_version');
+  const behaviorsProperty = ownDataProperty(section, 'behaviors');
+  const behaviorsLength = safeArrayLength(behaviorsProperty.value);
+  metrics.behavior_count = behaviorsLength.length;
+  let failure = (
+    rootInspection.failure
+    || schemaProperty.failure
+    || behaviorsProperty.failure
+    || behaviorsLength.failure
+  );
+  let failurePath = 'behavior_equivalence';
+  const behaviors = Array.isArray(behaviorsProperty.value)
+    ? behaviorsProperty.value
+    : [];
+
+  if (!failure && schemaProperty.value === '1.1.0') {
+    let scannedAtoms = 0;
+    let scannedProbes = 0;
+    const familyLimit = Math.min(behaviorsLength.length, MAX_FAMILIES + 1);
+    for (let familyIndex = 0; familyIndex < familyLimit; familyIndex += 1) {
+      const familyProperty = ownDataProperty(behaviors, String(familyIndex));
+      if (familyProperty.failure) {
+        failure = familyProperty.failure;
+        failurePath = `behavior_equivalence.behaviors[${familyIndex}]`;
+        break;
+      }
+      const family = familyProperty.value;
+      const familyInspection = inspectOwnDataProperties(family);
+      if (familyInspection.failure) {
+        failure = familyInspection.failure;
+        failurePath = `behavior_equivalence.behaviors[${familyIndex}]`;
+        break;
+      }
+      for (const axisField of ['steps', 'dimensions']) {
+        const axisProperty = ownDataProperty(family, axisField);
+        if (axisProperty.failure) {
+          failure = axisProperty.failure;
+          failurePath =
+            `behavior_equivalence.behaviors[${familyIndex}].${axisField}`;
+          break;
+        }
+        const axisInspection = inspectObjectGraph(
+          axisProperty.value,
+          () => false,
+        );
+        if (axisInspection.failure) {
+          failure = axisInspection.failure;
+          failurePath =
+            `behavior_equivalence.behaviors[${familyIndex}].${axisField}`;
+          break;
+        }
+      }
+      if (failure) break;
+      const atomsProperty = ownDataProperty(family, 'atomic_invariants');
+      const atomsLength = safeArrayLength(atomsProperty.value);
+      if (atomsProperty.failure || atomsLength.failure) {
+        failure = atomsProperty.failure || atomsLength.failure;
+        failurePath =
+          `behavior_equivalence.behaviors[${familyIndex}].atomic_invariants`;
+        break;
+      }
+      const atoms = Array.isArray(atomsProperty.value)
+        ? atomsProperty.value
+        : [];
+      metrics.atomic_invariant_count = cappedAdd(
+        metrics.atomic_invariant_count,
+        atomsLength.length,
+        MAX_ATOMS,
+      );
+      const atomLimit = Math.min(
+        atomsLength.length,
+        MAX_ATOMS + 1 - scannedAtoms,
+      );
+      for (let atomIndex = 0; atomIndex < atomLimit; atomIndex += 1) {
+        const atomProperty = ownDataProperty(atoms, String(atomIndex));
+        if (atomProperty.failure) {
+          failure = atomProperty.failure;
+          failurePath =
+            `behavior_equivalence.behaviors[${familyIndex}]`
+            + `.atomic_invariants[${atomIndex}]`;
+          break;
+        }
+        const atom = atomProperty.value;
+        scannedAtoms += 1;
+        const atomInspection = inspectOwnDataProperties(atom);
+        if (atomInspection.failure) {
+          failure = atomInspection.failure;
+          failurePath =
+            `behavior_equivalence.behaviors[${familyIndex}]`
+            + `.atomic_invariants[${atomIndex}]`;
+          break;
+        }
+        const classification = ownDataProperty(atom, 'classification');
+        const probesProperty = ownDataProperty(atom, 'probe_definitions');
+        const probesLength = safeArrayLength(probesProperty.value);
+        if (
+          classification.failure
+          || probesProperty.failure
+          || probesLength.failure
+        ) {
+          failure = (
+            classification.failure
+            || probesProperty.failure
+            || probesLength.failure
+          );
+          failurePath =
+            `behavior_equivalence.behaviors[${familyIndex}]`
+            + `.atomic_invariants[${atomIndex}]`;
+          break;
+        }
+        const proofRequired = classification.value !== 'retired';
+        if (proofRequired) {
+          metrics.proof_required_atomic_invariant_count = cappedAdd(
+            metrics.proof_required_atomic_invariant_count,
+            1,
+            ATOMIC_CONTRACT_COUNTS.proof_required_atomic_invariant_count,
+          );
+        }
+        metrics.probe_definition_count = cappedAdd(
+          metrics.probe_definition_count,
+          probesLength.length,
+          MAX_PROBES,
+        );
+        if (proofRequired) {
+          metrics.proof_required_probe_definition_count = cappedAdd(
+            metrics.proof_required_probe_definition_count,
+            probesLength.length,
+            ATOMIC_CONTRACT_COUNTS.proof_required_probe_definition_count,
+          );
+        }
+        scannedProbes += Math.min(
+          probesLength.length,
+          MAX_PROBES + 1 - scannedProbes,
+        );
+        const graphInspection = inspectObjectGraph(atom, () => false);
+        if (graphInspection.failure) {
+          failure = graphInspection.failure;
+          failurePath =
+            `behavior_equivalence.behaviors[${familyIndex}]`
+            + `.atomic_invariants[${atomIndex}]`;
+          break;
+        }
+      }
+      if (failure) break;
+    }
+  }
+
+  metrics.provider_probe_assertion_count = Math.min(
+    ATOMIC_CONTRACT_COUNTS.provider_probe_assertion_count
+      + PROOF_PROVIDERS.length,
+    metrics.proof_required_probe_definition_count * PROOF_PROVIDERS.length,
+  );
+  return {
+    schemaVersion: schemaProperty.value ?? null,
+    behaviors,
+    metrics,
+    failure,
+    failurePath,
+  };
+}
+
 function inspectFamilyAxesGraph(family) {
   const steps = family?.steps;
   const dimensions = family?.dimensions;
@@ -363,7 +820,24 @@ function repositoryRelative(reference) {
   return !reference.split(/[\\/]/).includes('..');
 }
 
-function validateEvidenceList(evidenceList, findings, behaviorId, path) {
+function validateEvidenceList(
+  evidenceList,
+  findings,
+  behaviorId,
+  path,
+  invalidCode = 'atomic_legacy_evidence_invalid',
+  runtimeCode = 'runtime_audit_verifier_unavailable',
+) {
+  if (!Array.isArray(evidenceList) || evidenceList.length === 0) {
+    addFinding(
+      findings,
+      behaviorId,
+      invalidCode,
+      path,
+      'evidence must be a non-empty repository evidence list',
+    );
+    return;
+  }
   for (const evidence of asArray(evidenceList)) {
     const inspection = inspectSensitiveEvidence(evidence);
     addGraphFailure(findings, behaviorId, path, inspection.failure);
@@ -371,7 +845,7 @@ function validateEvidenceList(evidenceList, findings, behaviorId, path) {
       addFinding(
         findings,
         behaviorId,
-        'runtime_audit_verifier_unavailable',
+        runtimeCode,
         path,
         'runtime audit evidence requires a trust-bound verifier not available in A2-0',
       );
@@ -388,7 +862,7 @@ function validateEvidenceList(evidenceList, findings, behaviorId, path) {
       addFinding(
         findings,
         behaviorId,
-        'atomic_legacy_evidence_invalid',
+        invalidCode,
         path,
         'evidence must be repository-relative, immutable, replayable, and non-sensitive',
       );
@@ -458,7 +932,7 @@ function validRetirement(atom) {
     && probes.every((probe, index) => (
       probe?.probe_id === RETIRED_ABSENCE_PROBE_IDS[index]
       && probe?.scenario === 'absence'
-      && exactKeys(probe, ['probe_id', 'scenario'])
+      && validProbeOutcomeShape(probe)
     ))
     && !hasOwn(atom, 'scenario_plan')
     && !hasReceiptMaterial(atom)
@@ -502,15 +976,19 @@ function validateClassification(atom, findings, behaviorId, path) {
     );
   } else if (atom?.classification === 'intentional_replacement') {
     const replacement = asObject(atom?.replacement);
+    const replacementKeys = [
+      'forbidden_legacy_authority',
+      'replacement_behavior',
+      'rationale',
+    ];
     valid = (
       hasReplacement
-      && ['forbidden_legacy_authority', 'replacement_behavior', 'rationale']
+      && replacementKeys
         .every((field) => nonEmpty(replacement[field]))
-      && exactKeys(replacement, [
-        'forbidden_legacy_authority',
-        'replacement_behavior',
-        'rationale',
-      ])
+      && (
+        exactKeys(replacement, replacementKeys)
+        || exactKeys(replacement, [...replacementKeys, 'legacy_evidence'])
+      )
       && !hasAnyField(atom, ACTIVE_FIELDS)
       && !hasDrift
       && !hasRetirement
@@ -545,6 +1023,19 @@ function validateClassification(atom, findings, behaviorId, path) {
       findings,
       behaviorId,
       `${path}.drift.evidence`,
+    );
+  }
+  if (
+    atom?.classification === 'intentional_replacement'
+    && hasOwn(atom?.replacement, 'legacy_evidence')
+  ) {
+    validateEvidenceList(
+      atom.replacement.legacy_evidence,
+      findings,
+      behaviorId,
+      `${path}.replacement.legacy_evidence`,
+      'replacement_legacy_evidence_invalid',
+      'replacement_legacy_evidence_invalid',
     );
   }
 }
@@ -605,6 +1096,157 @@ function validateRecoveryBinding(atom, findings, behaviorId, path) {
   }
 }
 
+function validateProbeOutcomeContract(atom, findings, behaviorId, path) {
+  const probes = asArray(atom?.probe_definitions);
+  for (let probeIndex = 0; probeIndex < probes.length; probeIndex += 1) {
+    if (!validProbeOutcomeShape(probes[probeIndex])) {
+      addFinding(
+        findings,
+        behaviorId,
+        'probe_outcome_contract_invalid',
+        `${path}.probe_definitions[${probeIndex}]`,
+        'each probe must preserve its exact assertion, outcome, and expectation authority',
+      );
+    }
+  }
+  if (atom?.classification === 'retired') return;
+
+  const requirements = asObject(atom?.receipt_requirements?.scenarios);
+  for (const scenario of PROOF_SCENARIOS) {
+    const outcomes = new Set(
+      probes
+        .filter((probe) => probe?.scenario === scenario)
+        .map((probe) => probe?.expected_outcome),
+    );
+    if (outcomes.size === 0) continue;
+    const expectedOutcome = outcomes.size === 1 ? [...outcomes][0] : 'per_probe';
+    if (requirements?.[scenario]?.expected_outcome !== expectedOutcome) {
+      addFinding(
+        findings,
+        behaviorId,
+        'probe_outcome_contract_invalid',
+        `${path}.receipt_requirements.scenarios.${scenario}.expected_outcome`,
+        'scenario outcome must equal the unique probe outcome or per_probe when heterogeneous',
+      );
+    }
+  }
+}
+
+function recoveryGraphHasCycle(bindings, recoveryIds) {
+  const outgoing = new Map([...recoveryIds].map((probeId) => [probeId, []]));
+  const indegree = new Map([...recoveryIds].map((probeId) => [probeId, 0]));
+  for (const binding of bindings) {
+    for (const predecessorId of asArray(binding.predecessor_probe_ids)) {
+      if (!recoveryIds.has(predecessorId)) continue;
+      outgoing.get(predecessorId).push(binding.recovery_probe_id);
+      indegree.set(
+        binding.recovery_probe_id,
+        (indegree.get(binding.recovery_probe_id) ?? 0) + 1,
+      );
+    }
+  }
+  const queue = [...indegree]
+    .filter(([, count]) => count === 0)
+    .map(([probeId]) => probeId);
+  let visited = 0;
+  for (let index = 0; index < queue.length; index += 1) {
+    const probeId = queue[index];
+    visited += 1;
+    for (const nextId of outgoing.get(probeId) ?? []) {
+      const nextCount = indegree.get(nextId) - 1;
+      indegree.set(nextId, nextCount);
+      if (nextCount === 0) queue.push(nextId);
+    }
+  }
+  return visited !== recoveryIds.size;
+}
+
+function validateRecoveryPlan(
+  atom,
+  findings,
+  behaviorId,
+  path,
+  violationIds,
+  targetIds,
+  dedicatedRecoveryIds,
+) {
+  const recovery = asObject(atom?.scenario_plan?.recovery);
+  const bindings = asArray(recovery.bindings);
+  const gaps = asArray(recovery.coverage_gaps);
+  const validBindings = bindings.filter(
+    (binding) => validRecoveryBindingShape(
+      binding,
+      violationIds,
+      targetIds,
+      dedicatedRecoveryIds,
+    ),
+  );
+  const validGaps = gaps.filter(
+    (gap) => validRecoveryGapShape(gap, violationIds, targetIds),
+  );
+  const bindingTargets = validBindings.map(
+    (binding) => binding.recovery_probe_id,
+  );
+  const bindingInvalid = (
+    validBindings.length !== bindings.length
+    || new Set(bindingTargets).size !== bindingTargets.length
+    || recoveryGraphHasCycle(validBindings, dedicatedRecoveryIds)
+  );
+  if (bindingInvalid) {
+    addFinding(
+      findings,
+      behaviorId,
+      'recovery_binding_authority_invalid',
+      `${path}.scenario_plan.recovery.bindings`,
+      'recovery bindings require exact atom-local identities, authority, and an acyclic graph',
+    );
+  }
+
+  const gapIds = validGaps.map((gap) => gap.gap_id);
+  const accountedViolations = new Set();
+  const accountedRecoveries = new Set(bindingTargets);
+  const exactRelations = new Set();
+  for (const binding of validBindings) {
+    for (const predecessorId of binding.predecessor_probe_ids) {
+      if (!violationIds.has(predecessorId)) continue;
+      accountedViolations.add(predecessorId);
+      exactRelations.add(`${predecessorId}\0${binding.recovery_probe_id}`);
+    }
+  }
+  let duplicateRelation = false;
+  for (const gap of validGaps) {
+    gap.affected_violation_probe_ids.forEach(
+      (probeId) => accountedViolations.add(probeId),
+    );
+    gap.affected_recovery_probe_ids.forEach(
+      (probeId) => accountedRecoveries.add(probeId),
+    );
+    for (const violationId of gap.affected_violation_probe_ids) {
+      for (const recoveryId of gap.affected_recovery_probe_ids) {
+        if (exactRelations.has(`${violationId}\0${recoveryId}`)) {
+          duplicateRelation = true;
+        }
+      }
+    }
+  }
+  const gapInvalid = (
+    validGaps.length !== gaps.length
+    || new Set(gapIds).size !== gapIds.length
+    || !sameSet(accountedViolations, violationIds)
+    || !sameSet(accountedRecoveries, targetIds)
+    || duplicateRelation
+  );
+  if (gapInvalid) {
+    addFinding(
+      findings,
+      behaviorId,
+      'recovery_coverage_gap_invalid',
+      `${path}.scenario_plan.recovery.coverage_gaps`,
+      'bindings and coverage gaps must account once for every atom-local recovery relation',
+    );
+  }
+}
+
 function validateScenarioRequirements(atom, findings, behaviorId, path) {
   const probes = asArray(atom?.probe_definitions);
   const plan = asObject(atom?.scenario_plan);
@@ -641,83 +1283,20 @@ function validateScenarioRequirements(atom, findings, behaviorId, path) {
     (probe) => PROOF_SCENARIOS.includes(probe?.scenario),
   );
   const recovery = asObject(plan.recovery);
-  const exactPredecessor = recovery.exact_predecessor_receipt_required === true;
-  const predecessorsCoverViolations = (ids) => (
-    Array.isArray(ids)
-    && ids.length > 0
-    && uniqueArray(ids)
-    && ids.every((id) => violationIds.includes(id))
-    && violationIds.every((id) => ids.includes(id))
-  );
-  const replayShape = exactKeys(recovery, [
-    'replay_probe_id',
-    'predecessor_probe_ids',
-    'exact_predecessor_receipt_required',
-  ]);
-  const flatRequiredShape = exactKeys(recovery, [
-    'required_probe_ids',
-    'predecessor_probe_ids',
-    'exact_predecessor_receipt_required',
-  ]);
-  const boundRequiredShape = exactKeys(recovery, [
+  const exactRecoveryShape = exactKeys(recovery, [
     'required_probe_ids',
     'bindings',
-    'exact_predecessor_receipt_required',
+    'coverage_gaps',
   ]);
-  let recoveryValid = false;
-
-  if (replayShape) {
-    recoveryValid = (
-      recoveryIds.length === 0
-      && normalIds.includes(recovery.replay_probe_id)
-      && predecessorsCoverViolations(recovery.predecessor_probe_ids)
-      && exactPredecessor
+  const requiredTargetIds = asArray(recovery.required_probe_ids);
+  const usesDedicatedRecovery = recoveryIds.length > 0;
+  const targetsValid = usesDedicatedRecovery
+    ? exactArray(requiredTargetIds, recoveryIds)
+    : (
+      requiredTargetIds.length > 0
+      && uniqueArray(requiredTargetIds)
+      && requiredTargetIds.every((probeId) => normalIds.includes(probeId))
     );
-  } else if (flatRequiredShape) {
-    const requiredIds = asArray(recovery.required_probe_ids);
-    const replaysNormal = (
-      recoveryIds.length === 0
-      && requiredIds.length > 0
-      && requiredIds.every((id) => normalIds.includes(id))
-    );
-    const usesDedicatedRecovery = (
-      recoveryIds.length === 1
-      && exactArray(requiredIds, recoveryIds)
-    );
-    recoveryValid = (
-      (replaysNormal || usesDedicatedRecovery)
-      && predecessorsCoverViolations(recovery.predecessor_probe_ids)
-      && exactPredecessor
-    );
-  } else if (boundRequiredShape) {
-    const requiredIds = asArray(recovery.required_probe_ids);
-    const bindings = asArray(recovery.bindings);
-    const boundPredecessorIds = bindings.flatMap(
-      (binding) => asArray(binding?.predecessor_probe_ids),
-    );
-    recoveryValid = (
-      recoveryIds.length > 0
-      && exactArray(requiredIds, recoveryIds)
-      && bindings.length === recoveryIds.length
-      && exactPredecessor
-      && bindings.every((binding, index) => {
-        const predecessorIds = asArray(binding?.predecessor_probe_ids);
-        const allowedPredecessors = new Set([
-          ...violationIds,
-          ...recoveryIds.slice(0, index),
-        ]);
-        return (
-          exactKeys(binding, ['probe_id', 'predecessor_probe_ids'])
-          && binding?.probe_id === recoveryIds[index]
-          && predecessorIds.length > 0
-          && uniqueArray(predecessorIds)
-          && predecessorIds.some((id) => violationIds.includes(id))
-          && predecessorIds.every((id) => allowedPredecessors.has(id))
-        );
-      })
-      && violationIds.every((id) => boundPredecessorIds.includes(id))
-    );
-  }
 
   if (
     normalIds.length === 0
@@ -727,7 +1306,8 @@ function validateScenarioRequirements(atom, findings, behaviorId, path) {
     || !exactKeys(plan.violation, ['required_probe_ids'])
     || !exactArray(plan.normal?.required_probe_ids, normalIds)
     || !exactArray(plan.violation?.required_probe_ids, violationIds)
-    || !recoveryValid
+    || !exactRecoveryShape
+    || !targetsValid
   ) {
     invalid = true;
   }
@@ -739,6 +1319,22 @@ function validateScenarioRequirements(atom, findings, behaviorId, path) {
       'atomic_scenario_requirement_invalid',
       `${path}.scenario_plan`,
       'normal, violation, and recovery probes must use the exact atom-local scenario plan',
+    );
+  }
+  if (
+    exactRecoveryShape
+    && normalIds.length > 0
+    && violationIds.length > 0
+    && targetsValid
+  ) {
+    validateRecoveryPlan(
+      atom,
+      findings,
+      behaviorId,
+      path,
+      new Set(violationIds),
+      new Set(requiredTargetIds),
+      new Set(recoveryIds),
     );
   }
 }
@@ -1026,9 +1622,66 @@ function legacyResult(section, findings) {
   };
 }
 
-export function validateAtomicContract(section) {
+function addMetricBudgetFindings(metrics, findings) {
+  const budgetFailures = [
+    [
+      metrics.behavior_count > MAX_FAMILIES,
+      'behavior_equivalence.behaviors',
+      `atomic family count exceeds the maximum of ${MAX_FAMILIES}`,
+    ],
+    [
+      metrics.atomic_invariant_count > MAX_ATOMS,
+      'behavior_equivalence.behaviors.atomic_invariants',
+      `atomic invariant count exceeds the maximum of ${MAX_ATOMS}`,
+    ],
+    [
+      metrics.probe_definition_count > MAX_PROBES,
+      'behavior_equivalence.behaviors.atomic_invariants.probe_definitions',
+      `atomic probe count exceeds the maximum of ${MAX_PROBES}`,
+    ],
+  ];
+  for (const [exceeded, path, message] of budgetFailures) {
+    if (exceeded) {
+      addFinding(
+        findings,
+        null,
+        'atomic_contract_input_budget_exceeded',
+        path,
+        message,
+      );
+    }
+  }
+}
+
+function invalidAtomicResult(schemaVersion, metrics, findings) {
+  return {
+    schema_version: schemaVersion,
+    schema_valid: false,
+    atomic_contract_present: schemaVersion === '1.1.0',
+    atomic_cutover_ready: false,
+    metrics,
+    families: [],
+    findings,
+  };
+}
+
+function validateAtomicContractImpl(section) {
   const findings = [];
-  const schemaVersion = section?.schema_version ?? null;
+  const preflight = preflightAtomicContract(section);
+  const {
+    schemaVersion,
+    behaviors,
+  } = preflight;
+  if (preflight.failure) {
+    addGraphFailure(
+      findings,
+      null,
+      preflight.failurePath,
+      preflight.failure,
+    );
+    addMetricBudgetFindings(preflight.metrics, findings);
+    return invalidAtomicResult(schemaVersion, preflight.metrics, findings);
+  }
   if (!SUPPORTED_SCHEMA_VERSIONS.has(schemaVersion)) {
     addFinding(
       findings,
@@ -1062,36 +1715,19 @@ export function validateAtomicContract(section) {
     return legacyResult(section, findings);
   }
 
-  const behaviors = asArray(section?.behaviors);
-  const metrics = deriveMetrics(behaviors);
-  const budgetFailures = [
-    [
-      metrics.behavior_count > MAX_FAMILIES,
-      'behavior_equivalence.behaviors',
-      `atomic family count exceeds the maximum of ${MAX_FAMILIES}`,
-    ],
-    [
-      metrics.atomic_invariant_count > MAX_ATOMS,
+  const metricsDerivation = deriveMetricsSafely(behaviors);
+  const { metrics } = metricsDerivation;
+  if (metricsDerivation.failure) {
+    addGraphFailure(
+      findings,
+      null,
       'behavior_equivalence.behaviors.atomic_invariants',
-      `atomic invariant count exceeds the maximum of ${MAX_ATOMS}`,
-    ],
-    [
-      metrics.probe_definition_count > MAX_PROBES,
-      'behavior_equivalence.behaviors.atomic_invariants.probe_definitions',
-      `atomic probe count exceeds the maximum of ${MAX_PROBES}`,
-    ],
-  ];
-  for (const [exceeded, path, message] of budgetFailures) {
-    if (exceeded) {
-      addFinding(
-        findings,
-        null,
-        'atomic_contract_input_budget_exceeded',
-        path,
-        message,
-      );
-    }
+      metricsDerivation.failure,
+    );
+    addMetricBudgetFindings(metrics, findings);
+    return invalidAtomicResult(schemaVersion, metrics, findings);
   }
+  addMetricBudgetFindings(metrics, findings);
   if (findings.length > 0) {
     return {
       schema_version: schemaVersion,
@@ -1278,6 +1914,7 @@ export function validateAtomicContract(section) {
         const atomPath = `${familyPath}.atomic_invariants[${atomIndex}]`;
         validateClassification(atom, findings, behaviorId, atomPath);
         validateOwner(atom, findings, behaviorId, atomPath);
+        validateProbeOutcomeContract(atom, findings, behaviorId, atomPath);
         if (atom?.classification !== 'retired') {
           validateProviderMatrix(atom, findings, behaviorId, atomPath);
           validateScenarioRequirements(atom, findings, behaviorId, atomPath);
@@ -1304,4 +1941,19 @@ export function validateAtomicContract(section) {
     families,
     findings,
   };
+}
+
+export function validateAtomicContract(section) {
+  try {
+    return validateAtomicContractImpl(section);
+  } catch {
+    const findings = [];
+    addGraphFailure(
+      findings,
+      null,
+      'behavior_equivalence',
+      'invalid',
+    );
+    return invalidAtomicResult(null, deriveMetrics([]), findings);
+  }
 }
