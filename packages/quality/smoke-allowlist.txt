@@ -5,6 +5,7 @@
 # Smoke PASS 基线（allowlist）
 abilities-api-smoke.sh
 ability-id-chain-pr2-smoke.sh
+acceptance-aging-smoke.sh
 acceptance-endpoints-smoke.sh
 admission-report-smoke.sh
 advancement-items-smoke.sh
