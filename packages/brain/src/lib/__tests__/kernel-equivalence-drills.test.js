@@ -5,6 +5,10 @@ import {
   compileDrillPlan,
   executeDrillCell,
 } from '../kernel-equivalence-drills.js';
+import * as drillModule from '../kernel-equivalence-drills.js';
+import {
+  validateBehaviorEquivalence,
+} from '../kernel-behavior-equivalence.js';
 import {
   createServerOwnedRuntimeRegistry,
 } from '../kernel-equivalence-runtime-registry.js';
@@ -36,6 +40,41 @@ function expectDrillError(run, code) {
 }
 
 describe('compileDrillPlan', () => {
+  it('keeps the trusted execution plan serialization stable', () => {
+    const contract = rootContract();
+    const plan = compileDrillPlan(contract, {
+      now: Date.parse(contract.behavior_equivalence.report_as_of),
+    });
+
+    expect(Object.keys(plan)).toEqual([
+      'schema_version',
+      'contract_version',
+      'behavior_count',
+      'cells',
+    ]);
+    expect(sha256Canonical(plan)).toBe(
+      '9e24f6e4fa223637251585178b43f7e14b9a300416c332e5f4d13c77eb29ae4c',
+    );
+  });
+
+  it('derives atomic drill requirements independently of execution plan identity', () => {
+    const contract = rootContract();
+    const validation = validateBehaviorEquivalence(contract, {
+      now: Date.parse(contract.behavior_equivalence.report_as_of),
+    });
+
+    expect(drillModule.compileAtomicRequirementSummary).toBeTypeOf('function');
+    const summary = typeof drillModule.compileAtomicRequirementSummary === 'function'
+      ? drillModule.compileAtomicRequirementSummary(validation)
+      : {};
+    expect(summary).toEqual({
+      atom_count: 43,
+      proof_required_atom_count: 42,
+      probe_count: 446,
+      provider_probe_assertion_count: 1326,
+    });
+  });
+
   it('expands eleven canonical descriptors into exactly 99 unique blocked cells', () => {
     const plan = compileDrillPlan(rootContract());
 

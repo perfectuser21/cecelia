@@ -73,6 +73,13 @@ const TRUSTED_VERIFICATION_ERROR_CODES = new Set([
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const MINIMUM_DURABLE_CANCELLATION_CONFIRMATION_MS = 100;
 const CLEANUP_RESERVE_MS = 100;
+const MAX_ATOMIC_FAMILIES = 11;
+const MAX_ATOMIC_INVARIANTS = 43;
+const MAX_PROOF_REQUIRED_ATOMIC_INVARIANTS = 42;
+const MAX_ATOMIC_PROBES = 446;
+const MAX_PROOF_REQUIRED_ATOMIC_PROBES = 442;
+const REQUIRED_PROVIDER_PROBE_ASSERTIONS =
+  MAX_PROOF_REQUIRED_ATOMIC_PROBES * PROOF_PROVIDERS.length;
 
 export class EquivalenceDrillError extends Error {
   constructor(code, detail = null) {
@@ -93,6 +100,77 @@ function asObject(value) {
 
 function nonEmpty(value) {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function boundedMetric(value, maximum) {
+  return Number.isInteger(value) && value >= 0
+    ? Math.min(value, maximum)
+    : 0;
+}
+
+/**
+ * Project validator-owned atomic counts without changing the trusted execution
+ * plan serialization or digest.
+ */
+export function compileAtomicRequirementSummary(validation) {
+  try {
+    if (
+      validation?.schema_version !== '1.1.0'
+      || validation?.valid !== true
+      || validation?.schema_valid !== true
+    ) {
+      return {
+        atom_count: 0,
+        proof_required_atom_count: 0,
+        probe_count: 0,
+        provider_probe_assertion_count: 0,
+      };
+    }
+    const metrics = asObject(validation?.atomic_metrics);
+    if (
+      metrics.behavior_count !== MAX_ATOMIC_FAMILIES
+      || metrics.atomic_invariant_count !== MAX_ATOMIC_INVARIANTS
+      || metrics.proof_required_atomic_invariant_count
+        !== MAX_PROOF_REQUIRED_ATOMIC_INVARIANTS
+      || metrics.probe_definition_count !== MAX_ATOMIC_PROBES
+      || metrics.proof_required_probe_definition_count
+        !== MAX_PROOF_REQUIRED_ATOMIC_PROBES
+      || metrics.provider_probe_assertion_count
+        !== REQUIRED_PROVIDER_PROBE_ASSERTIONS
+    ) {
+      return {
+        atom_count: 0,
+        proof_required_atom_count: 0,
+        probe_count: 0,
+        provider_probe_assertion_count: 0,
+      };
+    }
+    return {
+      atom_count: boundedMetric(
+        metrics.atomic_invariant_count,
+        MAX_ATOMIC_INVARIANTS,
+      ),
+      proof_required_atom_count: boundedMetric(
+        metrics.proof_required_atomic_invariant_count,
+        MAX_ATOMIC_INVARIANTS,
+      ),
+      probe_count: boundedMetric(
+        metrics.probe_definition_count,
+        MAX_ATOMIC_PROBES,
+      ),
+      provider_probe_assertion_count: boundedMetric(
+        metrics.provider_probe_assertion_count,
+        REQUIRED_PROVIDER_PROBE_ASSERTIONS,
+      ),
+    };
+  } catch {
+    return {
+      atom_count: 0,
+      proof_required_atom_count: 0,
+      probe_count: 0,
+      provider_probe_assertion_count: 0,
+    };
+  }
 }
 
 function activeEffectKey(registry, keyId, seamId, now) {

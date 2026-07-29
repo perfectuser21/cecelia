@@ -4,7 +4,10 @@ import {
   PROOF_PROVIDERS,
   PROOF_SCENARIOS,
 } from './kernel-equivalence-axes.js';
-import { compileDrillPlan } from './kernel-equivalence-drills.js';
+import {
+  compileAtomicRequirementSummary,
+  compileDrillPlan,
+} from './kernel-equivalence-drills.js';
 import {
   createTrustedReceiptResolver,
 } from './kernel-equivalence-receipt-resolver.js';
@@ -1014,13 +1017,336 @@ function countBy(items, key, knownValues) {
   return counts;
 }
 
-export function buildEquivalenceReport(
+const MAX_REPORT_FAMILIES = 11;
+const MAX_REPORT_ATOMS = 43;
+const MAX_REPORT_PROBES = 446;
+const MAX_REPORT_STEPS = 13;
+const MAX_REPORT_DIMENSIONS = 11;
+const MAX_REPORT_METADATA_ITEMS = 64;
+const MAX_REPORT_FAMILY_CELLS =
+  MAX_REPORT_FAMILIES * PROOF_PROVIDERS.length * PROOF_SCENARIOS.length;
+const MAX_REPORT_PROVIDER_CELLS =
+  PROOF_PROVIDERS.length * PROOF_SCENARIOS.length;
+const ATOMIC_CLASSIFICATIONS = [
+  'active_required',
+  'drifted_required_gap',
+  'intentional_replacement',
+  'retired',
+];
+
+function canonicalCompare(left, right) {
+  const leftValue = String(left ?? '');
+  const rightValue = String(right ?? '');
+  return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
+}
+
+function canonicalStrings(values, maximum = MAX_REPORT_PROBES) {
+  return [...new Set(
+    asArray(values)
+      .slice(0, maximum)
+      .filter(nonEmpty),
+  )].sort(canonicalCompare);
+}
+
+function reportMetric(value, maximum) {
+  return Number.isInteger(value) && value >= 0
+    ? Math.min(value, maximum)
+    : 0;
+}
+
+function boundProofMatrix(matrix) {
+  return Object.fromEntries(PROOF_PROVIDERS.map((provider) => [
+    provider,
+    Object.fromEntries(PROOF_SCENARIOS.map((scenario) => {
+      const proof = asObject(matrix?.[provider]?.[scenario]);
+      return [scenario, {
+        test_command: proof.test_command ?? null,
+        expected_result: proof.expected_result ?? null,
+        observed_result: proof.observed_result ?? null,
+        effect_receipt_id: proof.effect_receipt_id ?? null,
+        evidence_refs: asArray(proof.evidence_refs)
+          .slice(0, MAX_REPORT_METADATA_ITEMS),
+      }];
+    })),
+  ]));
+}
+
+function boundProjectedAtom(atom) {
+  return {
+    invariant_id: atom?.invariant_id ?? null,
+    classification: atom?.classification ?? null,
+    proof_status: atom?.proof_status ?? null,
+    steps: asArray(atom?.steps).slice(0, MAX_REPORT_STEPS),
+    dimensions: asArray(atom?.dimensions).slice(
+      0,
+      MAX_REPORT_DIMENSIONS,
+    ),
+    effective_status: atom?.effective_status ?? 'gap',
+    projection: atom?.projection ?? 'red',
+    na_reason: atom?.na_reason ?? null,
+    retired_absence_current: atom?.retired_absence_current === true,
+    retired_absence_probe_statuses: asArray(
+      atom?.retired_absence_probe_statuses,
+    ).slice(0, MAX_REPORT_PROBES),
+  };
+}
+
+function boundReportBehavior(behavior) {
+  return {
+    behavior_id: behavior?.behavior_id ?? null,
+    priority: behavior?.priority ?? null,
+    owner: behavior?.owner ?? null,
+    contract_version: behavior?.contract_version ?? null,
+    claimed_status: behavior?.claimed_status ?? null,
+    effective_status: behavior?.effective_status ?? 'gap',
+    steps: asArray(behavior?.steps).slice(0, MAX_REPORT_STEPS),
+    dimensions: asArray(behavior?.dimensions).slice(
+      0,
+      MAX_REPORT_DIMENSIONS,
+    ),
+    assertion_id: behavior?.assertion_id ?? null,
+    legacy_behavior: behavior?.legacy_behavior ?? null,
+    legacy_evidence: asArray(behavior?.legacy_evidence)
+      .slice(0, MAX_REPORT_METADATA_ITEMS),
+    unified_constructs: asArray(behavior?.unified_constructs)
+      .slice(0, MAX_REPORT_METADATA_ITEMS),
+    failure_semantics: behavior?.failure_semantics ?? null,
+    partial_behavioral_evidence: asArray(
+      behavior?.partial_behavioral_evidence,
+    ).slice(0, MAX_REPORT_METADATA_ITEMS),
+    proof_matrix: boundProofMatrix(behavior?.proof_matrix),
+    proof_identity: {
+      artifact_sha: behavior?.proof_identity?.artifact_sha ?? null,
+      version: behavior?.proof_identity?.version ?? null,
+    },
+    freshness: {
+      verified_at: behavior?.freshness?.verified_at ?? null,
+      expires_at: behavior?.freshness?.expires_at ?? null,
+    },
+    gap: {
+      reason: behavior?.gap?.reason ?? null,
+      owner: behavior?.gap?.owner ?? null,
+      closure_plan: behavior?.gap?.closure_plan ?? null,
+    },
+    findings: asArray(behavior?.findings)
+      .slice(0, MAX_REPORT_METADATA_ITEMS)
+      .map((finding) => ({
+        code: finding?.code ?? null,
+        message: finding?.message ?? null,
+      })),
+    atoms: asArray(behavior?.atoms)
+      .slice(0, MAX_REPORT_ATOMS)
+      .map(boundProjectedAtom),
+    atomic_invariants: asArray(behavior?.atomic_invariants)
+      .slice(0, MAX_REPORT_ATOMS),
+  };
+}
+
+function projectRecoveryGaps(atom) {
+  return asArray(atom?.scenario_plan?.recovery?.coverage_gaps)
+    .slice(0, MAX_REPORT_PROBES)
+    .map((gap) => ({
+      gap_id: gap?.gap_id ?? null,
+      affected_violation_probe_ids: canonicalStrings(
+        gap?.affected_violation_probe_ids,
+      ),
+      affected_recovery_probe_ids: canonicalStrings(
+        gap?.affected_recovery_probe_ids,
+      ),
+      appendix_predecessor_text: gap?.appendix_predecessor_text ?? null,
+      reason: gap?.reason ?? null,
+      owner: gap?.owner ?? null,
+      closure_plan: gap?.closure_plan ?? null,
+    }))
+    .sort((left, right) => canonicalCompare(left.gap_id, right.gap_id));
+}
+
+function projectAtomicDetails(behaviors, atomicSchemaUsable) {
+  if (!atomicSchemaUsable) return [];
+  let remainingAtoms = MAX_REPORT_ATOMS;
+  const details = [];
+  for (const behavior of behaviors) {
+    if (remainingAtoms === 0) break;
+    const verifiedById = new Map(
+      asArray(behavior?.atoms)
+        .slice(0, remainingAtoms)
+        .map((atom) => [atom?.invariant_id, atom]),
+    );
+    const sourceAtoms = asArray(behavior?.atomic_invariants)
+      .slice(0, remainingAtoms);
+    remainingAtoms -= sourceAtoms.length;
+    for (const source of sourceAtoms) {
+      const verified = verifiedById.get(source?.invariant_id) ?? {};
+      const retiredAbsenceProbeStatuses = asArray(
+        verified?.retired_absence_probe_statuses,
+      )
+        .slice(0, MAX_REPORT_PROBES)
+        .map((status) => ({
+          probe_id: status?.probe_id ?? null,
+          status: 'unverified',
+        }))
+        .sort((left, right) => canonicalCompare(
+          left.probe_id,
+          right.probe_id,
+        ));
+      const recoveryMappingGaps = projectRecoveryGaps(source);
+      details.push({
+        behavior_id: behavior?.behavior_id ?? null,
+        invariant_id: source?.invariant_id ?? null,
+        classification: source?.classification ?? null,
+        proof_status: source?.proof_status ?? null,
+        effective_status: (
+          source?.classification === 'retired'
+          && verified?.effective_status === 'retired'
+        ) ? 'retired' : 'gap',
+        artifact_sha: null,
+        receipt_v2_identity: null,
+        verified_at: null,
+        expires_at: null,
+        replacement_forbidden_authority_status:
+          source?.classification === 'intentional_replacement'
+            ? 'unverified'
+            : null,
+        retired_absence_probe_statuses: retiredAbsenceProbeStatuses,
+        recovery_mapping_gap_count: recoveryMappingGaps.length,
+        recovery_mapping_gaps: recoveryMappingGaps,
+      });
+    }
+  }
+  return details.sort((left, right) => (
+    canonicalCompare(left.behavior_id, right.behavior_id)
+    || canonicalCompare(left.invariant_id, right.invariant_id)
+  ));
+}
+
+function projectAtomicCellCoverage(behaviors, atomicSchemaUsable) {
+  if (!atomicSchemaUsable) return [];
+  const familyRequirements = behaviors
+    .slice(0, MAX_REPORT_FAMILIES)
+    .map((behavior) => {
+      const scenarios = Object.fromEntries(PROOF_SCENARIOS.map(
+        (scenario) => [scenario, {
+          invariantIds: [],
+          probeIds: [],
+        }],
+      ));
+      const atoms = asArray(behavior?.atomic_invariants)
+        .slice(0, MAX_REPORT_ATOMS);
+      for (const atom of atoms) {
+        if (
+          atom?.classification === 'retired'
+          || !nonEmpty(atom?.invariant_id)
+        ) {
+          continue;
+        }
+        for (const scenario of PROOF_SCENARIOS) {
+          const requiredProbeIds = canonicalStrings(
+            atom?.scenario_plan?.[scenario]?.required_probe_ids,
+          );
+          if (requiredProbeIds.length === 0) continue;
+          scenarios[scenario].invariantIds.push(atom.invariant_id);
+          scenarios[scenario].probeIds.push(...requiredProbeIds);
+        }
+      }
+      return {
+        behaviorId: behavior?.behavior_id ?? null,
+        scenarios,
+      };
+    })
+    .filter((family) => nonEmpty(family.behaviorId));
+
+  return familyRequirements.flatMap((family) => (
+    PROOF_PROVIDERS.flatMap((provider) => (
+      PROOF_SCENARIOS.map((scenario) => {
+        const expectedInvariantIds = canonicalStrings(
+          family.scenarios[scenario].invariantIds,
+          MAX_REPORT_ATOMS,
+        );
+        const expectedProbeIds = canonicalStrings(
+          family.scenarios[scenario].probeIds,
+        );
+        return {
+          cell_id: `${family.behaviorId}::${provider}::${scenario}`,
+          expected_invariant_ids: expectedInvariantIds,
+          configured_invariant_ids: [],
+          live_proven_invariant_ids: [],
+          missing_invariant_ids: [...expectedInvariantIds],
+          expected_probe_ids: expectedProbeIds,
+          configured_probe_ids: [],
+          live_proven_probe_ids: [],
+          missing_probe_ids: [...expectedProbeIds],
+        };
+      })
+    ))
+  )).sort((left, right) => canonicalCompare(left.cell_id, right.cell_id));
+}
+
+function buildEquivalenceReportImpl(
   validation,
   { evaluatedAt = null } = {},
 ) {
-  const behaviors = asArray(validation?.behaviors);
-  const envelopes = buildEvidenceEnvelopes(validation);
-  const projectedCells = projectJourneyCells(validation);
+  const behaviors = asArray(validation?.behaviors)
+    .slice(0, MAX_REPORT_FAMILIES)
+    .map(boundReportBehavior);
+  const validationFindings = asArray(validation?.findings)
+    .slice(0, MAX_REPORT_METADATA_ITEMS);
+  const schemaVersion = validation?.schema_version ?? null;
+  const validationValid = validation?.valid === true;
+  const atomicMetrics = asObject(validation?.atomic_metrics);
+  const atomicSchemaUsable = (
+    schemaVersion === '1.1.0'
+    && validationValid
+    && validation?.schema_valid === true
+    && behaviors.length === MAX_REPORT_FAMILIES
+    && atomicMetrics.atomic_invariant_count === MAX_REPORT_ATOMS
+    && atomicMetrics.proof_required_atomic_invariant_count === 42
+    && atomicMetrics.probe_definition_count === MAX_REPORT_PROBES
+    && atomicMetrics.proof_required_probe_definition_count === 442
+  );
+  const reportAtomicMetrics = atomicSchemaUsable ? atomicMetrics : {};
+  const boundedValidation = {
+    schema_version: schemaVersion,
+    journey: validation?.journey ?? null,
+    behaviors,
+  };
+  const envelopes = buildEvidenceEnvelopes(boundedValidation);
+  const projectedCells = projectJourneyCells(boundedValidation);
+  const atomicDetails = projectAtomicDetails(behaviors, atomicSchemaUsable);
+  const cellAtomicCoverage = projectAtomicCellCoverage(
+    behaviors,
+    atomicSchemaUsable,
+  );
+  const atomicRequirements = compileAtomicRequirementSummary(validation);
+  const classificationCounts = countBy(
+    atomicDetails,
+    'classification',
+    ATOMIC_CLASSIFICATIONS,
+  );
+  const provenAtoms = atomicDetails.filter((atom) => (
+    atom.classification !== 'retired'
+    && atom.effective_status === 'proven'
+    && nonEmpty(atom.artifact_sha)
+    && atom.receipt_v2_identity != null
+    && nonEmpty(atom.verified_at)
+    && nonEmpty(atom.expires_at)
+  )).length;
+  const retiredAbsenceFresh = atomicDetails
+    .filter((atom) => atom.classification === 'retired')
+    .flatMap((atom) => atom.retired_absence_probe_statuses)
+    .filter((status) => status.status === 'verified')
+    .length;
+  const proofRequiredProbeDefinitions = reportMetric(
+    reportAtomicMetrics.proof_required_probe_definition_count,
+    MAX_REPORT_PROBES,
+  );
+  const retiredAbsenceRequired = reportMetric(
+    reportAtomicMetrics.retired_absence_probe_count,
+    MAX_REPORT_PROBES,
+  );
+  const cellScenarioProbeObligations = cellAtomicCoverage.reduce(
+    (total, cell) => total + cell.expected_probe_ids.length,
+    0,
+  );
   const requiredCells = behaviors.length * PROOF_PROVIDERS.length * PROOF_SCENARIOS.length;
   const receiptedCells = envelopes.filter((envelope) => nonEmpty(envelope.effect_receipt_id)).length;
   const provenToFireCommands = envelopes
@@ -1044,10 +1370,13 @@ export function buildEquivalenceReport(
     ));
 
   return {
-    report_version: '1.0.0',
+    report_version: schemaVersion === '1.1.0' ? '1.1.0' : '1.0.0',
     contract_version: validation?.contract_version ?? null,
     evaluated_at: evaluatedAt,
-    valid: validation?.valid === true,
+    valid: validationValid,
+    schema_valid: validationValid && validation?.schema_valid === true,
+    proof_complete: false,
+    atomic_cutover_ready: false,
     summary: {
       total: behaviors.length,
       by_priority: countBy(behaviors, 'priority', ['P0', 'P1']),
@@ -1056,7 +1385,7 @@ export function buildEquivalenceReport(
         'effective_status',
         ['proven', 'gap', 'intentional_replacement'],
       ),
-      findings: asArray(validation?.findings).length,
+      findings: validationFindings.length,
     },
     axes: {
       steps: [...GOLDEN_PATH_STEPS],
@@ -1100,7 +1429,68 @@ export function buildEquivalenceReport(
           };
         })
       )),
+      legacy_verified_family_receipts: reportMetric(
+        validation?.legacy_verified_family_receipt_count,
+        requiredCells,
+      ),
+      atomic_proven_family_cells: reportMetric(
+        0,
+        requiredCells,
+      ),
     },
+    atomic_summary: {
+      classified: atomicRequirements.atom_count,
+      proof_required: atomicRequirements.proof_required_atom_count,
+      probe_definitions: atomicRequirements.probe_count,
+      proof_required_probe_definitions: proofRequiredProbeDefinitions,
+      proven: provenAtoms,
+      gap: Math.max(
+        0,
+        atomicRequirements.proof_required_atom_count - provenAtoms,
+      ),
+      classification_counts: classificationCounts,
+      retired_absence_fresh: retiredAbsenceFresh,
+      retired_absence_required: retiredAbsenceRequired,
+      atom_scenario_required:
+        atomicRequirements.proof_required_atom_count
+        * PROOF_PROVIDERS.length
+        * PROOF_SCENARIOS.length,
+      cell_scenario_probe_obligation_required:
+        cellScenarioProbeObligations,
+      provider_probe_required:
+        atomicRequirements.provider_probe_assertion_count,
+      provider_probe_proven: 0,
+      probe_outcome_authority: {
+        appendix_explicit: reportMetric(
+          reportAtomicMetrics.probe_outcome_authority?.appendix_explicit,
+          MAX_REPORT_PROBES,
+        ),
+        design_derived: reportMetric(
+          reportAtomicMetrics.probe_outcome_authority?.design_derived,
+          MAX_REPORT_PROBES,
+        ),
+        coverage_gap: reportMetric(
+          reportAtomicMetrics.probe_outcome_authority?.coverage_gap,
+          MAX_REPORT_PROBES,
+        ),
+      },
+      recovery_mapping: {
+        exact_binding_count: reportMetric(
+          reportAtomicMetrics.recovery_mapping?.exact_binding_count,
+          MAX_REPORT_PROBES,
+        ),
+        derived_binding_count: reportMetric(
+          reportAtomicMetrics.recovery_mapping?.derived_binding_count,
+          MAX_REPORT_PROBES,
+        ),
+        coverage_gap_count: reportMetric(
+          reportAtomicMetrics.recovery_mapping?.coverage_gap_count,
+          MAX_REPORT_PROBES,
+        ),
+      },
+    },
+    atomic_details: atomicDetails,
+    cell_atomic_coverage: cellAtomicCoverage,
     proven_to_fire_commands: provenToFireCommands,
     gaps: behaviors
       .filter((behavior) => behavior.effective_status === 'gap')
@@ -1115,7 +1505,10 @@ export function buildEquivalenceReport(
         closure_plan: behavior.gap?.closure_plan ?? null,
         finding_codes: asArray(behavior.findings).map((finding) => finding.code),
       }))
-      .sort((left, right) => `${left.behavior_id}`.localeCompare(`${right.behavior_id}`)),
+    .sort((left, right) => canonicalCompare(
+      left.behavior_id,
+      right.behavior_id,
+    )),
     behaviors: behaviors
       .map((behavior) => ({
         behavior_id: behavior.behavior_id ?? null,
@@ -1133,24 +1526,106 @@ export function buildEquivalenceReport(
         failure_semantics: behavior.failure_semantics ?? null,
         partial_behavioral_evidence: asArray(behavior.partial_behavioral_evidence),
       }))
-      .sort((left, right) => `${left.behavior_id}`.localeCompare(`${right.behavior_id}`)),
+      .sort((left, right) => canonicalCompare(
+        left.behavior_id,
+        right.behavior_id,
+      )),
   };
+}
+
+export function buildEquivalenceReport(validation, options = {}) {
+  try {
+    return buildEquivalenceReportImpl(validation, options);
+  } catch {
+    return buildEquivalenceReportImpl(null, {
+      evaluatedAt: null,
+    });
+  }
 }
 
 function markdownCell(value) {
   if (value == null || value === '') return '—';
-  return String(value).replaceAll('|', '\\|').replaceAll('\n', ' ');
+  return String(value).replaceAll('|', '\\|').replace(/[\r\n]+/g, ' ');
 }
 
-export function formatEquivalenceMarkdown(report) {
+function formatEquivalenceMarkdownImpl(report) {
   const summary = asObject(report?.summary);
   const matrix = asObject(report?.provider_matrix);
   const axes = asObject(report?.axes);
-  const behaviors = asArray(report?.behaviors);
-  const gaps = asArray(report?.gaps);
-  const fireCommands = asArray(report?.proven_to_fire_commands);
-  const providerCells = asArray(matrix.cells);
-  const grid = asArray(axes.grid);
+  const axisDimensions = asArray(axes.dimensions)
+    .slice(0, MAX_REPORT_DIMENSIONS);
+  const behaviors = asArray(report?.behaviors)
+    .slice(0, MAX_REPORT_FAMILIES)
+    .map((behavior) => ({
+      behavior_id: behavior?.behavior_id ?? null,
+      priority: behavior?.priority ?? null,
+      claimed_status: behavior?.claimed_status ?? null,
+      effective_status: behavior?.effective_status ?? null,
+      steps: asArray(behavior?.steps).slice(0, MAX_REPORT_STEPS),
+      dimensions: asArray(behavior?.dimensions).slice(
+        0,
+        MAX_REPORT_DIMENSIONS,
+      ),
+      legacy_behavior: behavior?.legacy_behavior ?? null,
+      legacy_evidence: asArray(behavior?.legacy_evidence)
+        .slice(0, MAX_REPORT_METADATA_ITEMS),
+      unified_constructs: asArray(behavior?.unified_constructs)
+        .slice(0, MAX_REPORT_METADATA_ITEMS),
+      failure_semantics: behavior?.failure_semantics ?? null,
+      verified_at: behavior?.verified_at ?? null,
+      expires_at: behavior?.expires_at ?? null,
+      partial_behavioral_evidence: asArray(
+        behavior?.partial_behavioral_evidence,
+      ).slice(0, MAX_REPORT_METADATA_ITEMS),
+    }));
+  const gaps = asArray(report?.gaps).slice(0, MAX_REPORT_FAMILIES);
+  const fireCommands = asArray(report?.proven_to_fire_commands)
+    .slice(0, MAX_REPORT_FAMILY_CELLS);
+  const providerCells = asArray(matrix.cells)
+    .slice(0, MAX_REPORT_PROVIDER_CELLS);
+  const atomic = asObject(report?.atomic_summary);
+  const classificationCounts = asObject(atomic.classification_counts);
+  const atomicDetails = asArray(report?.atomic_details)
+    .slice(0, MAX_REPORT_ATOMS)
+    .map((atom) => ({
+      invariant_id: atom?.invariant_id ?? null,
+      classification: atom?.classification ?? null,
+      proof_status: atom?.proof_status ?? null,
+      effective_status: atom?.effective_status ?? null,
+      artifact_sha: atom?.artifact_sha ?? null,
+      receipt_v2_identity: atom?.receipt_v2_identity ?? null,
+      verified_at: atom?.verified_at ?? null,
+      expires_at: atom?.expires_at ?? null,
+      replacement_forbidden_authority_status:
+        atom?.replacement_forbidden_authority_status ?? null,
+      retired_absence_probe_statuses: asArray(
+        atom?.retired_absence_probe_statuses,
+      ).slice(0, MAX_REPORT_PROBES),
+      recovery_mapping_gaps: asArray(atom?.recovery_mapping_gaps)
+        .slice(0, MAX_REPORT_PROBES),
+    }));
+  const atomicCells = asArray(report?.cell_atomic_coverage)
+    .slice(0, MAX_REPORT_FAMILY_CELLS)
+    .map((cell) => ({
+      cell_id: cell?.cell_id ?? null,
+      expected_invariant_ids: asArray(cell?.expected_invariant_ids)
+        .slice(0, MAX_REPORT_ATOMS),
+      configured_invariant_ids: asArray(cell?.configured_invariant_ids)
+        .slice(0, MAX_REPORT_ATOMS),
+      live_proven_invariant_ids: asArray(cell?.live_proven_invariant_ids)
+        .slice(0, MAX_REPORT_ATOMS),
+      missing_invariant_ids: asArray(cell?.missing_invariant_ids)
+        .slice(0, MAX_REPORT_ATOMS),
+      expected_probe_ids: asArray(cell?.expected_probe_ids)
+        .slice(0, MAX_REPORT_PROBES),
+      configured_probe_ids: asArray(cell?.configured_probe_ids)
+        .slice(0, MAX_REPORT_PROBES),
+      live_proven_probe_ids: asArray(cell?.live_proven_probe_ids)
+        .slice(0, MAX_REPORT_PROBES),
+      missing_probe_ids: asArray(cell?.missing_probe_ids)
+        .slice(0, MAX_REPORT_PROBES),
+    }));
+  const grid = asArray(axes.grid).slice(0, MAX_REPORT_STEPS);
   const gridSymbol = {
     green: 'G',
     pending: 'P',
@@ -1166,8 +1641,13 @@ export function formatEquivalenceMarkdown(report) {
     `- 有效状态：proven ${summary.by_effective_status?.proven ?? 0} / gap ${summary.by_effective_status?.gap ?? 0} / intentional_replacement ${summary.by_effective_status?.intentional_replacement ?? 0}`,
     `- Provider 场景证据：${matrix.receipted_cells ?? 0}/${matrix.required_cells ?? 0}，缺 ${matrix.missing_cells ?? 0}`,
     `- 轴：${asArray(axes.steps).length} 个步骤（S0–S12）× 11 项行为维度 = ${axes.possible_cells ?? 0} 个可能单元`,
+    `- Atomic inventory：${atomic.classified ?? 0}/${atomic.classified ?? 0} classified；${atomic.proof_required ?? 0} proof-required；classification ${classificationCounts.active_required ?? 0}/${classificationCounts.drifted_required_gap ?? 0}/${classificationCounts.intentional_replacement ?? 0}/${classificationCounts.retired ?? 0}`,
+    `- Atomic probes：${atomic.probe_definitions ?? 0}/${atomic.proof_required_probe_definitions ?? 0} total/proof-required；cell-scenario obligations ${atomic.cell_scenario_probe_obligation_required ?? 0}`,
+    `- Atomic proof：${atomic.proven ?? 0}/${atomic.atom_scenario_required ?? 0} atom-scenario；${atomic.provider_probe_proven ?? 0}/${atomic.provider_probe_required ?? 0} provider-probe；${atomic.retired_absence_fresh ?? 0}/${atomic.retired_absence_required ?? 0} retired absence；${matrix.atomic_proven_family_cells ?? 0}/${matrix.required_cells ?? 0} family cells`,
+    `- Atomic family status：${gaps.length}/${summary.total ?? 0} family gaps`,
     '',
     '> 缺口不是证明。只有绑定 exact SHA/version、未过期 freshness、effect receipt，且 Claude/Codex/Grok × normal/violation/recovery 全覆盖，才是 proven。',
+    '> v1 family receipt不是atomic proof；configured receipt ID、replacement evidence 与合同自报 proof_status 都不是 live effect proof。',
     '',
     '## 行为清单',
     '',
@@ -1181,10 +1661,10 @@ export function formatEquivalenceMarkdown(report) {
     '',
     'R = 有真实缺口；P = 证据过期；G = 完整证明；— = 尚未映射。',
     '',
-    `| Step | ${asArray(axes.dimensions).join(' | ')} |`,
-    `|---|${asArray(axes.dimensions).map(() => '---').join('|')}|`,
+    `| Step | ${axisDimensions.join(' | ')} |`,
+    `|---|${axisDimensions.map(() => '---').join('|')}|`,
     ...grid.map((row) => (
-      `| ${markdownCell(row.step)} | ${asArray(axes.dimensions).map((dimension) => gridSymbol[row.cells?.[dimension]] ?? '—').join(' | ')} |`
+      `| ${markdownCell(row.step)} | ${axisDimensions.map((dimension) => gridSymbol[row.cells?.[dimension]] ?? '—').join(' | ')} |`
     )),
     '',
     '## Provider × 场景证据矩阵',
@@ -1193,6 +1673,24 @@ export function formatEquivalenceMarkdown(report) {
     '|---|---|---:|---:|---:|',
     ...providerCells.map((cell) => (
       `| ${markdownCell(cell.provider)} | ${markdownCell(cell.scenario)} | ${cell.receipted} | ${cell.required} | ${cell.missing} |`
+    )),
+    '',
+    '## Atomic family cell coverage',
+    '',
+    '| Cell | Expected atoms | Configured atoms | Live atoms | Missing atoms | Expected probes | Configured probes | Live probes | Missing probes |',
+    '|---|---|---|---|---|---|---|---|---|',
+    ...atomicCells.map((cell) => (
+      `| ${markdownCell(cell.cell_id)} | ${markdownCell(cell.expected_invariant_ids.join(', '))} | ${markdownCell(cell.configured_invariant_ids.join(', '))} | ${markdownCell(cell.live_proven_invariant_ids.join(', '))} | ${markdownCell(cell.missing_invariant_ids.join(', '))} | ${markdownCell(cell.expected_probe_ids.join(', '))} | ${markdownCell(cell.configured_probe_ids.join(', '))} | ${markdownCell(cell.live_proven_probe_ids.join(', '))} | ${markdownCell(cell.missing_probe_ids.join(', '))} |`
+    )),
+    '',
+    '## Atomic invariant detail',
+    '',
+    'artifact SHA、receipt v2 identity 与 freshness 只显示 verifier-owned live proof；replacement forbidden authority 和 retired absence 独立显示。',
+    '',
+    '| Invariant | Classification | Contract proof | Effective | artifact SHA | receipt v2 identity | freshness | replacement forbidden authority | retired absence | Recovery gaps |',
+    '|---|---|---|---|---|---|---|---|---|---|',
+    ...atomicDetails.map((atom) => (
+      `| ${markdownCell(atom.invariant_id)} | ${markdownCell(atom.classification)} | ${markdownCell(atom.proof_status)} | ${markdownCell(atom.effective_status)} | ${markdownCell(atom.artifact_sha)} | ${markdownCell(atom.receipt_v2_identity)} | verified ${markdownCell(atom.verified_at)} / expires ${markdownCell(atom.expires_at)} | ${markdownCell(atom.replacement_forbidden_authority_status)} | ${markdownCell(atom.retired_absence_probe_statuses.map((status) => `${status.probe_id}:${status.status}`).join(', '))} | ${markdownCell(atom.recovery_mapping_gaps.map((gap) => gap.gap_id).join(', '))} |`
     )),
     '',
     '## Legacy → Kernel unified construct 对照',
@@ -1245,4 +1743,12 @@ export function formatEquivalenceMarkdown(report) {
   }
 
   return `${lines.join('\n').trimEnd()}\n`;
+}
+
+export function formatEquivalenceMarkdown(report) {
+  try {
+    return formatEquivalenceMarkdownImpl(report);
+  } catch {
+    return formatEquivalenceMarkdownImpl(null);
+  }
 }

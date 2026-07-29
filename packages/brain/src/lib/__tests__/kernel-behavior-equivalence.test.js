@@ -1259,6 +1259,373 @@ describe('evidence envelope and journey projection', () => {
 });
 
 describe('honest equivalence report', () => {
+  it('reports the root atomic inventory without claiming unverified proof', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), { now: NOW });
+    const report = buildEquivalenceReport(validation, {
+      evaluatedAt: '2026-07-28T12:00:00.000Z',
+    });
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      schema_valid: true,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_summary: {
+        classified: 43,
+        proof_required: 42,
+        probe_definitions: 446,
+        proof_required_probe_definitions: 442,
+        proven: 0,
+        gap: 42,
+        classification_counts: {
+          active_required: 17,
+          drifted_required_gap: 23,
+          intentional_replacement: 2,
+          retired: 1,
+        },
+        retired_absence_fresh: 0,
+        retired_absence_required: 4,
+        atom_scenario_required: 378,
+        cell_scenario_probe_obligation_required: 1371,
+        provider_probe_required: 1326,
+        provider_probe_proven: 0,
+        probe_outcome_authority: {
+          appendix_explicit: 446,
+          design_derived: 0,
+          coverage_gap: 0,
+        },
+        recovery_mapping: {
+          exact_binding_count: 56,
+          derived_binding_count: 0,
+          coverage_gap_count: 11,
+        },
+      },
+      provider_matrix: {
+        required_cells: 99,
+        legacy_verified_family_receipts: 0,
+        atomic_proven_family_cells: 0,
+        receipted_cells: 0,
+        missing_cells: 99,
+      },
+    });
+    expect(report.cell_atomic_coverage).toHaveLength(99);
+    expect(report.cell_atomic_coverage[0]).toEqual({
+      cell_id:
+        'KERNEL-P0-01-BRANCH-PROTECTION::claude::normal',
+      expected_invariant_ids: [
+        'KERNEL-INV-P0-01-01-WORKSPACE-WRITE-ADMISSION',
+        'KERNEL-INV-P0-01-02-MAIN-CHECKOUT-MUTATION-DENIAL',
+        'KERNEL-INV-P0-01-03-COMMIT-ADMISSION',
+        'KERNEL-INV-P0-01-04-GUARD-SELF-PROTECTION-AND-PATH-CONTAINMENT',
+      ],
+      configured_invariant_ids: [],
+      live_proven_invariant_ids: [],
+      missing_invariant_ids: [
+        'KERNEL-INV-P0-01-01-WORKSPACE-WRITE-ADMISSION',
+        'KERNEL-INV-P0-01-02-MAIN-CHECKOUT-MUTATION-DENIAL',
+        'KERNEL-INV-P0-01-03-COMMIT-ADMISSION',
+        'KERNEL-INV-P0-01-04-GUARD-SELF-PROTECTION-AND-PATH-CONTAINMENT',
+      ],
+      expected_probe_ids: [
+        'KERNEL-PROBE-P0-01-01-001',
+        'KERNEL-PROBE-P0-01-02-007',
+        'KERNEL-PROBE-P0-01-03-001',
+        'KERNEL-PROBE-P0-01-04-006',
+      ],
+      configured_probe_ids: [],
+      live_proven_probe_ids: [],
+      missing_probe_ids: [
+        'KERNEL-PROBE-P0-01-01-001',
+        'KERNEL-PROBE-P0-01-02-007',
+        'KERNEL-PROBE-P0-01-03-001',
+        'KERNEL-PROBE-P0-01-04-006',
+      ],
+    });
+    expect(report.cell_atomic_coverage.map((cell) => cell.cell_id)).toEqual(
+      [...report.cell_atomic_coverage]
+        .map((cell) => cell.cell_id)
+        .sort(),
+    );
+    expect(report.cell_atomic_coverage.reduce(
+      (total, cell) => total + cell.expected_invariant_ids.length,
+      0,
+    )).toBe(378);
+    expect(report.cell_atomic_coverage.reduce(
+      (total, cell) => total + cell.expected_probe_ids.length,
+      0,
+    )).toBe(1371);
+    expect(new Set(report.cell_atomic_coverage.flatMap((cell) => {
+      const provider = cell.cell_id.split('::')[1];
+      return cell.expected_probe_ids.map(
+        (probeId) => `${provider}:${probeId}`,
+      );
+    })).size).toBe(1326);
+    expect(report.cell_atomic_coverage.some((cell) => (
+      cell.expected_probe_ids.some((probeId) => probeId.includes('-A0'))
+    ))).toBe(false);
+
+    const proofRequiredAtoms = validation.behaviors.flatMap(
+      (behavior) => behavior.atomic_invariants,
+    ).filter((atom) => atom.classification !== 'retired');
+    const replayCount = proofRequiredAtoms.filter((atom) => {
+      const normal = new Set(atom.scenario_plan.normal.required_probe_ids);
+      return atom.scenario_plan.recovery.required_probe_ids.every(
+        (probeId) => normal.has(probeId),
+      );
+    }).length;
+    expect(replayCount).toBe(11);
+    expect(proofRequiredAtoms).toHaveLength(replayCount + 31);
+  });
+
+  it('exposes fail-closed atom details, recovery gaps, and retirement absence', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), { now: NOW });
+    const report = buildEquivalenceReport(validation, {
+      evaluatedAt: '2026-07-28T12:00:00.000Z',
+    });
+    const replacement = report.atomic_details.find(
+      (atom) => atom.classification === 'intentional_replacement',
+    );
+    const retired = report.atomic_details.find(
+      (atom) => atom.classification === 'retired',
+    );
+    const recoveryGap = report.atomic_details.find(
+      (atom) => atom.recovery_mapping_gap_count > 0,
+    );
+
+    expect(report.atomic_details).toHaveLength(43);
+    expect(Object.keys(report.atomic_details[0])).toEqual([
+      'behavior_id',
+      'invariant_id',
+      'classification',
+      'proof_status',
+      'effective_status',
+      'artifact_sha',
+      'receipt_v2_identity',
+      'verified_at',
+      'expires_at',
+      'replacement_forbidden_authority_status',
+      'retired_absence_probe_statuses',
+      'recovery_mapping_gap_count',
+      'recovery_mapping_gaps',
+    ]);
+    expect(report.atomic_details.every((atom) => (
+      atom.artifact_sha === null
+      && atom.receipt_v2_identity === null
+      && atom.verified_at === null
+      && atom.expires_at === null
+      && atom.effective_status !== 'proven'
+    ))).toBe(true);
+    expect(replacement).toMatchObject({
+      proof_status: 'gap',
+      effective_status: 'gap',
+      replacement_forbidden_authority_status: 'unverified',
+    });
+    expect(retired).toMatchObject({
+      invariant_id: 'KERNEL-INV-P1-08-01',
+      classification: 'retired',
+      proof_status: 'not_applicable',
+      effective_status: 'retired',
+      replacement_forbidden_authority_status: null,
+      retired_absence_probe_statuses: [
+        { probe_id: 'KERNEL-PROBE-P1-08-01-A01', status: 'unverified' },
+        { probe_id: 'KERNEL-PROBE-P1-08-01-A02', status: 'unverified' },
+        { probe_id: 'KERNEL-PROBE-P1-08-01-A03', status: 'unverified' },
+        { probe_id: 'KERNEL-PROBE-P1-08-01-A04', status: 'unverified' },
+      ],
+    });
+    expect(recoveryGap.recovery_mapping_gaps).toEqual([
+      expect.objectContaining({
+        gap_id: expect.stringMatching(/^KERNEL-RECOVERY-GAP-/),
+        affected_violation_probe_ids: expect.any(Array),
+        affected_recovery_probe_ids: expect.any(Array),
+      }),
+    ]);
+  });
+
+  it('is byte-deterministic for a fixed validation and evaluation clock', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), { now: NOW });
+    const options = { evaluatedAt: '2026-07-28T12:00:00.000Z' };
+    const first = buildEquivalenceReport(validation, options);
+    const second = buildEquivalenceReport(validation, options);
+
+    expect(JSON.stringify(second)).toBe(JSON.stringify(first));
+    expect(formatEquivalenceMarkdown(second)).toBe(
+      formatEquivalenceMarkdown(first),
+    );
+
+    const shuffled = structuredClone(validation);
+    shuffled.behaviors.reverse();
+    for (const behavior of shuffled.behaviors) {
+      behavior.atomic_invariants?.reverse();
+      behavior.atoms?.reverse();
+    }
+    expect(JSON.stringify(buildEquivalenceReport(shuffled, options))).toBe(
+      JSON.stringify(first),
+    );
+  });
+
+  it('distinguishes configured legacy receipt IDs from verified receipts', () => {
+    const validation = validateBehaviorEquivalence(contract(), { now: NOW });
+    const report = buildEquivalenceReport(validation);
+
+    expect(report.provider_matrix.receipted_cells).toBeGreaterThan(0);
+    expect(report.provider_matrix.legacy_verified_family_receipts).toBe(0);
+    expect(report.provider_matrix.atomic_proven_family_cells).toBe(0);
+  });
+
+  it('preserves every legacy report and provider-matrix consumer field', () => {
+    const report = buildEquivalenceReport(
+      validateBehaviorEquivalence(contract(), { now: NOW }),
+    );
+
+    for (const key of [
+      'report_version',
+      'contract_version',
+      'evaluated_at',
+      'valid',
+      'summary',
+      'axes',
+      'provider_matrix',
+      'proven_to_fire_commands',
+      'gaps',
+      'behaviors',
+    ]) {
+      expect(report).toHaveProperty(key);
+    }
+    expect(Object.keys(report.provider_matrix)).toEqual(expect.arrayContaining([
+      'required_cells',
+      'receipted_cells',
+      'missing_cells',
+      'cells',
+    ]));
+    expect(Object.keys(report.provider_matrix.cells[0])).toEqual([
+      'provider',
+      'scenario',
+      'required',
+      'receipted',
+      'missing',
+    ]);
+    expect(Object.keys(report.behaviors[0])).toEqual([
+      'behavior_id',
+      'priority',
+      'claimed_status',
+      'effective_status',
+      'steps',
+      'dimensions',
+      'verified_at',
+      'expires_at',
+      'assertion_id',
+      'legacy_behavior',
+      'legacy_evidence',
+      'unified_constructs',
+      'failure_semantics',
+      'partial_behavioral_evidence',
+    ]);
+  });
+
+  it('fails closed without throwing for missing or hostile validation input', () => {
+    const hostile = new Proxy({}, {
+      get() {
+        throw new Error('hostile validation accessor');
+      },
+    });
+
+    expect(() => buildEquivalenceReport(hostile)).not.toThrow();
+    expect(buildEquivalenceReport(hostile)).toMatchObject({
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_summary: {
+        classified: 0,
+        proven: 0,
+      },
+      cell_atomic_coverage: [],
+      atomic_details: [],
+    });
+    expect(buildEquivalenceReport(null)).toMatchObject({
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+    });
+
+    const invalid = validateBehaviorEquivalence(rootContract(), { now: NOW });
+    invalid.valid = false;
+    invalid.schema_valid = false;
+    expect(buildEquivalenceReport(invalid)).toMatchObject({
+      atomic_summary: {
+        classified: 0,
+        proof_required: 0,
+        probe_definitions: 0,
+        provider_probe_required: 0,
+      },
+      cell_atomic_coverage: [],
+      atomic_details: [],
+      provider_matrix: {
+        required_cells: 99,
+        atomic_proven_family_cells: 0,
+      },
+    });
+  });
+
+  it('does not copy caller-supplied atomic proof claims into the report', () => {
+    const fabricated = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    fabricated.proof_complete = true;
+    fabricated.atomic_cutover_ready = true;
+    fabricated.atomic_proven_family_cell_count = 999;
+
+    const report = buildEquivalenceReport(fabricated);
+    expect(report).toMatchObject({
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      provider_matrix: {
+        atomic_proven_family_cells: 0,
+      },
+      atomic_summary: {
+        proven: 0,
+        provider_probe_proven: 0,
+      },
+    });
+    expect(report.cell_atomic_coverage.every((cell) => (
+      cell.configured_invariant_ids.length === 0
+      && cell.live_proven_invariant_ids.length === 0
+      && cell.configured_probe_ids.length === 0
+      && cell.live_proven_probe_ids.length === 0
+    ))).toBe(true);
+    expect(report.atomic_details.every(
+      (atom) => atom.effective_status !== 'proven',
+    )).toBe(true);
+  });
+
+  it('bounds nested validation arrays before report projection', () => {
+    const oversized = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const behavior = oversized.behaviors[0];
+    const atom = behavior.atoms[0];
+    behavior.legacy_evidence = Array(1_000).fill('legacy');
+    behavior.partial_behavioral_evidence = Array(1_000).fill('partial');
+    behavior.findings = Array(1_000).fill({ code: 'fabricated' });
+    atom.steps = Array(100).fill('S4');
+    atom.dimensions = Array(100).fill('invariant');
+    atom.retired_absence_probe_statuses = Array(1_000).fill({
+      probe_id: 'fabricated',
+      status: 'verified',
+    });
+
+    const report = buildEquivalenceReport(oversized);
+
+    expect(report.behaviors[0].legacy_evidence.length).toBeLessThanOrEqual(64);
+    expect(
+      report.behaviors[0].partial_behavioral_evidence.length,
+    ).toBeLessThanOrEqual(64);
+    expect(report.summary.findings).toBeLessThanOrEqual(64);
+    expect(report.axes.grid).toHaveLength(13);
+    expect(report.atomic_details).toHaveLength(43);
+  });
+
   it('accounts for priority, effective status, axes, matrix, fire commands, and gaps', () => {
     const gap = provenBehavior({
       behavior_id: 'KERNEL-P1-REPORT-CLOSURE',
@@ -1340,5 +1707,61 @@ describe('honest equivalence report', () => {
     expect(first).toContain('缺口不是证明');
     expect(first).toContain('No real Grok recovery receipt exists.');
     expect(first).toContain('Run the Grok recovery drill.');
+  });
+
+  it('renders atomic progress, all cells, and proof identities explicitly', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), { now: NOW });
+    const markdown = formatEquivalenceMarkdown(buildEquivalenceReport(
+      validation,
+      { evaluatedAt: '2026-07-28T12:00:00.000Z' },
+    ));
+
+    for (const text of [
+      '43/43',
+      '42 proof-required',
+      '446/442',
+      '17/23/2/1',
+      '0/378',
+      '0/1326',
+      '0/4',
+      '0/99',
+      '11/11 family gaps',
+      'v1 family receipt不是atomic proof',
+      'replacement forbidden authority',
+      'retired absence',
+      'artifact SHA',
+      'receipt v2 identity',
+      'freshness',
+      'KERNEL-P0-01-BRANCH-PROTECTION::claude::normal',
+      'KERNEL-P1-11-REPORT-LEARNING-CLOSURE::grok::violation',
+    ]) {
+      expect(markdown).toContain(text);
+    }
+    expect(markdown.match(/^\| KERNEL-.*::.* \|/gm)).toHaveLength(99);
+  });
+
+  it('bounds and sanitizes hostile formatter input', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), { now: NOW });
+    const report = buildEquivalenceReport(validation);
+    const oversized = structuredClone(report);
+    oversized.cell_atomic_coverage = Array(1_000).fill(
+      report.cell_atomic_coverage[0],
+    );
+    oversized.atomic_details = Array(1_000).fill({
+      ...report.atomic_details[0],
+      invariant_id: 'KERNEL-INV-WITH\r\nLINE',
+    });
+    oversized.behaviors = Array(1_000).fill(report.behaviors[0]);
+
+    const markdown = formatEquivalenceMarkdown(oversized);
+
+    expect(markdown.match(/^\| KERNEL-.*::.* \|/gm)).toHaveLength(99);
+    expect(markdown.match(/^\| KERNEL-INV-WITH LINE \|/gm)).toHaveLength(43);
+    expect(markdown).not.toContain('\r');
+    expect(() => formatEquivalenceMarkdown(new Proxy({}, {
+      get() {
+        throw new Error('hostile formatter accessor');
+      },
+    }))).not.toThrow();
   });
 });
