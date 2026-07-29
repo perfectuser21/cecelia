@@ -1609,7 +1609,7 @@ describe('honest equivalence report', () => {
     )).toBe(true);
   });
 
-  it('bounds nested validation arrays before report projection', () => {
+  it('fails closed on oversized atomic arrays before report projection', () => {
     const oversized = validateBehaviorEquivalence(rootContract(), {
       now: NOW,
     });
@@ -1633,7 +1633,15 @@ describe('honest equivalence report', () => {
     ).toBeLessThanOrEqual(64);
     expect(report.summary.findings).toBeLessThanOrEqual(64);
     expect(report.axes.grid).toHaveLength(13);
-    expect(report.atomic_details).toHaveLength(43);
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_details: [],
+      cell_atomic_coverage: [],
+    });
   });
 
   it('accounts for priority, effective status, axes, matrix, fire commands, and gaps', () => {
@@ -2191,6 +2199,111 @@ describe('honest equivalence report', () => {
     expect(indexReads).toBeLessThanOrEqual(1);
     expect(iteratorRead).toBe(false);
     expect(elapsedMilliseconds).toBeLessThan(1_000);
+  });
+
+  it.each([0, 100_000])(
+    'projects only the audited atomic snapshot when raw length changes to %i',
+    (expandedLength) => {
+      const validation = validateBehaviorEquivalence(rootContract(), {
+        now: NOW,
+      });
+      const atom = validation.behaviors
+        .flatMap((behavior) => behavior.atomic_invariants)
+        .find((candidate) => (
+          candidate.scenario_plan.recovery.coverage_gaps.length > 0
+        ));
+      const gap = atom.scenario_plan.recovery.coverage_gaps[0];
+      let lengthReads = 0;
+      let indexReads = 0;
+      let iteratorReads = 0;
+      atom.scenario_plan.recovery.coverage_gaps = new Proxy([gap], {
+        get(target, property, receiver) {
+          if (property === 'length') {
+            lengthReads += 1;
+            return lengthReads === 1 ? 1 : expandedLength;
+          }
+          if (property === Symbol.iterator) iteratorReads += 1;
+          if (typeof property === 'string' && /^\d+$/.test(property)) {
+            indexReads += 1;
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+
+      const startedAt = performance.now();
+      const report = buildEquivalenceReport(validation);
+      const elapsedMilliseconds = performance.now() - startedAt;
+
+      expect(report).toMatchObject({
+        report_version: '1.1.0',
+        valid: true,
+        schema_valid: true,
+        proof_complete: false,
+        atomic_cutover_ready: false,
+        atomic_summary: {
+          recovery_mapping: {
+            coverage_gap_count: 11,
+          },
+        },
+      });
+      expect(report.atomic_details.reduce(
+        (total, detail) => total + detail.recovery_mapping_gap_count,
+        0,
+      )).toBe(11);
+      expect(report.atomic_details).toHaveLength(43);
+      expect(report.cell_atomic_coverage).toHaveLength(99);
+      expect(report.cell_atomic_coverage.reduce(
+        (total, cell) => total + cell.expected_probe_ids.length,
+        0,
+      )).toBe(1_371);
+      expect(lengthReads).toBe(1);
+      expect(indexReads).toBe(0);
+      expect(iteratorReads).toBe(0);
+      expect(elapsedMilliseconds).toBeLessThan(1_000);
+    },
+  );
+
+  it('does not enumerate raw semantic objects while building snapshots', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const atom = validation.behaviors
+      .flatMap((behavior) => behavior.atomic_invariants)
+      .find((candidate) => (
+        candidate.scenario_plan.recovery.coverage_gaps.length > 0
+      ));
+    const rawGap = atom.scenario_plan.recovery.coverage_gaps[0];
+    let ownKeysReads = 0;
+    let propertyReads = 0;
+    atom.scenario_plan.recovery.coverage_gaps[0] = new Proxy(rawGap, {
+      ownKeys() {
+        ownKeysReads += 1;
+        throw new Error('raw semantic object was enumerated');
+      },
+      get(target, property, receiver) {
+        propertyReads += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    const report = buildEquivalenceReport(validation);
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: true,
+      schema_valid: true,
+      atomic_summary: {
+        recovery_mapping: {
+          coverage_gap_count: 11,
+        },
+      },
+    });
+    expect(report.atomic_details.reduce(
+      (total, detail) => total + detail.recovery_mapping_gap_count,
+      0,
+    )).toBe(11);
+    expect(ownKeysReads).toBe(0);
+    expect(propertyReads).toBeLessThanOrEqual(16);
   });
 
   it('escapes inline-code and table injection from direct formatter input', () => {
