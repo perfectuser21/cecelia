@@ -151,9 +151,9 @@ function destroyTestEnv(env: TestEnv): void {
   fs.rmSync(base, { recursive: true, force: true });
 }
 
-/** Write a valid .dev-mode file (per-branch format, v14.0.0+) */
+/** Write a valid .dev-mode file (per-branch format, v14.0.0+; v31 起必须含 gp_anchor 行 — GP锚定闭环刀6) */
 function writeDevMode(dir: string, branch: string, extra: Record<string, string> = {}): void {
-  let content = `dev\nbranch: ${branch}\nprd: .prd-${branch}.md\nstarted: 2026-03-05T10:00:00+00:00\ntasks_created: true\n`;
+  let content = `dev\nbranch: ${branch}\nprd: .prd-${branch}.md\nstarted: 2026-03-05T10:00:00+00:00\ntasks_created: true\ngp_anchor: none(infra)\n`;
   for (const [k, v] of Object.entries(extra)) {
     content += `${k}: ${v}\n`;
   }
