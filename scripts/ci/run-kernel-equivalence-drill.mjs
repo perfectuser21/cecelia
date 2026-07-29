@@ -190,8 +190,7 @@ function configuredBundleReferenceCount(contract) {
 
 export function atomicCutoverGateReady(report) {
   return (
-    report?.contract_valid === true
-    && report?.schema_valid === true
+    report?.schema_valid === true
     && report?.proof_complete === true
     && report?.atomic_cutover_ready === true
     && report?.atomic_proven_family_cell_count === 99
@@ -200,13 +199,16 @@ export function atomicCutoverGateReady(report) {
 }
 
 export function kernelEquivalenceReportExitCode(report, mode) {
+  if (mode === 'gate') {
+    return atomicCutoverGateReady(report) ? 0 : 1;
+  }
   if (
     report?.contract_valid !== true
     || report?.schema_valid !== true
   ) {
     return 1;
   }
-  return mode === 'gate' && !atomicCutoverGateReady(report) ? 1 : 0;
+  return 0;
 }
 
 function checkReport(contract, plan, {

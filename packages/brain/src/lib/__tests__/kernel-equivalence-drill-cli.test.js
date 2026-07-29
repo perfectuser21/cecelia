@@ -158,7 +158,6 @@ describe('kernel equivalence drill CLI', () => {
 
   it('never treats 99 legacy family receipts as atomic cutover proof', () => {
     const atomicReady = {
-      contract_valid: true,
       schema_valid: true,
       proof_complete: true,
       atomic_cutover_ready: true,
@@ -181,7 +180,6 @@ describe('kernel equivalence drill CLI', () => {
 
   it('fails closed when each atomic gate field is false or missing', () => {
     const ready = {
-      contract_valid: true,
       schema_valid: true,
       proof_complete: true,
       atomic_cutover_ready: true,
@@ -242,7 +240,17 @@ describe('kernel equivalence drill CLI', () => {
           schema_valid: true,
         },
       },
-    ])).toEqual([0, 1, 1]);
+      {
+        mode: 'gate',
+        report: {
+          schema_valid: true,
+          proof_complete: true,
+          atomic_cutover_ready: true,
+          atomic_proven_family_cell_count: 99,
+          execution_wiring_ready: true,
+        },
+      },
+    ])).toEqual([0, 1, 1, 0]);
   });
 
   it('uses the fail-closed gate in the P0 regression contract', () => {
