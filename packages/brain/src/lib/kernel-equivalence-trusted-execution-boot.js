@@ -113,6 +113,7 @@ export async function bootProductionBrainTrustedExecution({
     controller = createPostgresKernelEquivalenceCoordinator({
       pool,
       grantIssuer: wiring.grantIssuer,
+      grantExecutionAuthority: wiring.grantExecutionAuthority,
       plan: wiring.plan,
       socketPath: wiring.socket_path,
       brainVersion: BRAIN_VERSION,

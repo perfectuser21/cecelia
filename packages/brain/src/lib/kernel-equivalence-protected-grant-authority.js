@@ -75,6 +75,10 @@ function fail(code) {
   throw new ProtectedGrantAuthorityError(code);
 }
 
+function timestamp(value) {
+  return value instanceof Date ? value.getTime() : Date.parse(value);
+}
+
 function exactFields(value, expected) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false;
@@ -360,8 +364,8 @@ function readGrantFile(grantPath, {
     if (
       grant.expires_at != null
       && (
-        !Number.isFinite(Date.parse(grant.expires_at))
-        || now() >= Date.parse(grant.expires_at)
+        !Number.isFinite(timestamp(grant.expires_at))
+        || now() >= timestamp(grant.expires_at)
       )
     ) {
       fail('protected_grant_expired');
@@ -455,8 +459,8 @@ export function createProtectedGrantFileAuthority({
         let transportExpiry;
         try {
           durableGrantSha256 = canonicalGrantSha256(durable?.grant);
-          durableExpiry = Date.parse(durable?.expires_at);
-          transportExpiry = Date.parse(transport.grant.expires_at);
+          durableExpiry = timestamp(durable?.expires_at);
+          transportExpiry = timestamp(transport.grant.expires_at);
         } catch {
           fail('protected_grant_authority_mismatch');
         }
@@ -587,8 +591,8 @@ export function createProtectedGrantFileIssuer({
       if (
         typeof grantId !== 'string'
         || !GRANT_REF.test(`kernel-equivalence-grant:${grantId}`)
-        || !Number.isFinite(Date.parse(grant?.expires_at))
-        || Date.parse(grant.expires_at) <= now()
+        || !Number.isFinite(timestamp(grant?.expires_at))
+        || timestamp(grant.expires_at) <= now()
       ) {
         fail('protected_grant_issue_invalid');
       }
@@ -606,8 +610,8 @@ export function createProtectedGrantFileIssuer({
       let registrationExpiry;
       let grantExpiry;
       try {
-        registrationExpiry = Date.parse(registration?.expires_at);
-        grantExpiry = Date.parse(grant.expires_at);
+        registrationExpiry = timestamp(registration?.expires_at);
+        grantExpiry = timestamp(grant.expires_at);
       } catch {
         fail('protected_grant_registration_failed');
       }
@@ -940,7 +944,7 @@ export function createProtectedGrantFileIssuer({
             bytes.fill(0);
           }
           const completed = fstatSync(descriptor);
-          const expiresAt = Date.parse(grant?.expires_at);
+          const expiresAt = timestamp(grant?.expires_at);
           if (
             completed.dev !== opened.dev
             || completed.ino !== opened.ino

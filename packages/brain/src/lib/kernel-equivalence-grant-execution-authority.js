@@ -169,8 +169,8 @@ function validResolutionInput(input) {
 }
 
 function validExecutionGrant(grant) {
-  const issuedAt = Date.parse(grant?.issued_at);
-  const expiresAt = Date.parse(grant?.expires_at);
+  const issuedAt = timestamp(grant?.issued_at);
+  const expiresAt = timestamp(grant?.expires_at);
   return (
     exactFields(grant, GRANT_FIELDS)
     && grant.schema_version === 'kernel-equivalence-execution-grant/v1'
@@ -304,6 +304,10 @@ function validSignal(signal) {
   );
 }
 
+function timestamp(value) {
+  return value instanceof Date ? value.getTime() : Date.parse(value);
+}
+
 function deepFreeze(value) {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     for (const child of Object.values(value)) deepFreeze(child);
@@ -338,7 +342,7 @@ function activeGrant(result, expected) {
     || Array.isArray(row.grant)
     || row.grant.grant_id !== expected.grant_id
     || row.grant.cell_id !== expected.cell_id
-    || Date.parse(row.expires_at) !== Date.parse(row.grant.expires_at)
+    || timestamp(row.expires_at) !== timestamp(row.grant.expires_at)
     || sha256Canonical(row.grant) !== expected.grant_sha256
   ) {
     fail('grant_authority_revalidation_failed');
@@ -372,7 +376,7 @@ function appendResult(
     || row.state !== expectedState
     || row.actor_instance_id !== actorInstanceId
     || row.actor_kind !== expectedActorKind
-    || !Number.isFinite(Date.parse(row.occurred_at))
+    || !Number.isFinite(timestamp(row.occurred_at))
   ) {
     fail('grant_event_append_failed');
   }
@@ -395,7 +399,7 @@ function revocationResult(result, expectedGrantId) {
     || typeof row.effect_possible !== 'boolean'
     || typeof row.disposition !== 'string'
     || !REVOCATION_DISPOSITIONS.has(row.disposition)
-    || !Number.isFinite(Date.parse(row.revoked_at))
+    || !Number.isFinite(timestamp(row.revoked_at))
     || row.safe_no_effect
       !== (row.disposition === 'safe_no_effect')
     || row.effect_possible
@@ -420,7 +424,7 @@ function registrationResult(result, input) {
     || row.grant_ref !== grantRef(input.grant.grant_id)
     || row.grant_sha256 !== input.grant_sha256
     || row.cell_id !== input.grant.cell_id
-    || Date.parse(row.expires_at) !== Date.parse(input.grant.expires_at)
+    || timestamp(row.expires_at) !== timestamp(input.grant.expires_at)
   ) {
     fail('grant_registration_failed');
   }
@@ -435,7 +439,7 @@ function exactNonceConflict(result, grant) {
     && row.cell_id === grant.cell_id
     && row.run_id === grant.run_id
     && row.attempt_id === grant.attempt_id
-    && Date.parse(row.expires_at) === Date.parse(grant.expires_at)
+    && timestamp(row.expires_at) === timestamp(grant.expires_at)
   );
 }
 

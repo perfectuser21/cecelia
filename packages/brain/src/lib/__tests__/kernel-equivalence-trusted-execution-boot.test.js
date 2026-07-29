@@ -54,6 +54,7 @@ describe('production trusted execution boot lifecycle', () => {
   let intervalCallback;
   let intervalHandle;
   let listener;
+  let grantExecutionAuthority;
 
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -78,10 +79,14 @@ describe('production trusted execution boot lifecycle', () => {
       removed: 0,
       retained: 0,
     });
+    grantExecutionAuthority = Object.freeze({
+      revokeGrant: vi.fn(),
+    });
     mocks.loadWiring.mockReturnValue({
       createService: vi.fn(),
       readinessSigner: Object.freeze({}),
       socket_path: '/tmp/kernel-equivalence.sock',
+      grantExecutionAuthority,
       grantIssuer: Object.freeze({
         cleanupExpiredGrants: mocks.cleanupExpiredGrants,
       }),
@@ -112,6 +117,9 @@ describe('production trusted execution boot lifecycle', () => {
     const boot = await bootPromise;
 
     expect(mocks.cleanupExpiredGrants).toHaveBeenCalledOnce();
+    expect(mocks.createCoordinator).toHaveBeenCalledWith(
+      expect.objectContaining({ grantExecutionAuthority }),
+    );
     expect(mocks.startListener).toHaveBeenCalledOnce();
     expect(boot.controller).toBe(value);
     expect(intervalCallback).toEqual(expect.any(Function));

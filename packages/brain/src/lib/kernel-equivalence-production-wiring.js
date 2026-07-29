@@ -7,6 +7,7 @@ import {
   readFileSync,
   realpathSync,
 } from 'node:fs';
+import { randomUUID as nodeRandomUUID } from 'node:crypto';
 import {
   isAbsolute,
   parse,
@@ -21,6 +22,9 @@ import {
   createProtectedGrantFileAuthority,
   createProtectedGrantFileIssuer,
 } from './kernel-equivalence-protected-grant-authority.js';
+import {
+  createPostgresGrantExecutionAuthority,
+} from './kernel-equivalence-grant-execution-authority.js';
 import {
   createProductionTrustedExecutionServiceFactory,
 } from './kernel-equivalence-production-service-factory.js';
@@ -308,7 +312,7 @@ function pinManifest(value, now) {
     || !absolutePath(value.grant_root)
     || !absolutePath(value.socket_path)
     || !Number.isInteger(value.grant_ttl_seconds)
-    || value.grant_ttl_seconds < 1
+    || value.grant_ttl_seconds < 2
   ) {
     fail('trusted_execution_config_invalid');
   }
@@ -517,13 +521,19 @@ export function loadProductionTrustedExecutionWiring({
     trustRegistry: manifest.trustRegistry,
     now,
   });
+  const grantExecutionAuthority = createPostgresGrantExecutionAuthority({
+    pool,
+    actorInstanceId: nodeRandomUUID(),
+  });
   const grantAuthority = createProtectedGrantFileAuthority({
     grantRoot: manifest.grantRoot,
+    grantExecutionAuthority,
     now,
   });
   const grantIssuer = createProtectedGrantFileIssuer({
     grantRoot: manifest.grantRoot,
     executionGrantAuthority,
+    grantExecutionAuthority,
     maximumTtlSeconds: manifest.grantTtlSeconds,
     now,
   });
@@ -554,6 +564,7 @@ export function loadProductionTrustedExecutionWiring({
   });
   return Object.freeze({
     createService,
+    grantExecutionAuthority,
     grantIssuer,
     grant_ttl_seconds: manifest.grantTtlSeconds,
     plan: manifest.plan,

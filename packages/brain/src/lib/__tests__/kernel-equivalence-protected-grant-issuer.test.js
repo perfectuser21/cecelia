@@ -186,6 +186,31 @@ afterEach(() => {
 });
 
 describe('protected execution grant issuer', () => {
+  it('accepts millisecond-exact PostgreSQL Date registration expiry', async () => {
+    const value = fixture();
+    value.advance(123);
+    value.grantExecutionAuthority.registerPendingGrant
+      .mockImplementationOnce(async ({
+        grant,
+        grant_sha256: grantSha256,
+      }) => ({
+        grant_id: grant.grant_id,
+        grant_ref: `kernel-equivalence-grant:${grant.grant_id}`,
+        grant_sha256: grantSha256,
+        cell_id: grant.cell_id,
+        expires_at: new Date(grant.expires_at),
+      }));
+
+    await expect(issuer(value).issueProtectedGrant(
+      grantInput(value.cell),
+    )).resolves.toMatchObject({
+      grant_id: value.grantId,
+      expires_at: new Date(
+        FIXTURE_NOW + 123 + 300_000,
+      ).toISOString(),
+    });
+  });
+
   it('publishes one signed grant as a mode-0600 opaque reference readable by the separate reader', async () => {
     expect(
       typeof protectedGrants.createProtectedGrantFileIssuer,

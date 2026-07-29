@@ -158,6 +158,37 @@ describe('PostgreSQL grant execution authority', () => {
     expect(client.release).toHaveBeenCalledOnce();
   });
 
+  it('preserves millisecond equality for PostgreSQL Date readback', async () => {
+    const grant = {
+      ...grantFixture(),
+      expires_at: '2099-07-29T12:00:00.123Z',
+    };
+    const grantSha256 = sha256Canonical(grant);
+    const client = clientFixture(async (sql) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] };
+      return {
+        rowCount: 1,
+        rows: [{
+          ...anchorRow(grantSha256),
+          expires_at: new Date(grant.expires_at),
+        }],
+      };
+    });
+    const authority = createPostgresGrantExecutionAuthority({
+      pool: { connect: vi.fn(async () => client) },
+      actorInstanceId: ACTOR_INSTANCE_ID,
+    });
+
+    await expect(authority.registerPendingGrant({
+      case_id: CASE_ID,
+      grant,
+      grant_sha256: grantSha256,
+    })).resolves.toMatchObject({
+      grant_id: GRANT_ID,
+      expires_at: new Date(grant.expires_at),
+    });
+  });
+
   it('rejects Date objects instead of hashing them differently from JSON wire', async () => {
     const grant = {
       ...grantFixture(),

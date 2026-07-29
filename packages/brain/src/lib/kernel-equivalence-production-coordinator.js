@@ -20,7 +20,21 @@ const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+$/;
 const CODE_PATTERN = /^[a-z][a-z0-9_]{0,127}$/;
 const MINIMUM_GRANT_TTL_SECONDS = 2;
 const MAXIMUM_GRANT_TTL_SECONDS = 3_600;
+const GRANT_SETTLEMENT_TIMEOUT_MS = 2_000;
 const CONTROLLER_OWNER = 'brain.kernel_equivalence.controller';
+const ISSUED_GRANT_FIELDS = Object.freeze([
+  'expires_at',
+  'grant_id',
+  'grant_ref',
+  'grant_sha256',
+]);
+const REVOCATION_RESULT_FIELDS = Object.freeze([
+  'disposition',
+  'effect_possible',
+  'grant_ref',
+  'revoked',
+  'safe_no_effect',
+]);
 
 export class KernelProductionCoordinatorError extends Error {
   constructor(code) {
@@ -55,6 +69,104 @@ function validateGrantIssuer(value) {
   ) {
     fail('production_controller_grant_issuer_invalid');
   }
+}
+
+function validateGrantExecutionAuthority(value) {
+  if (
+    !Object.isFrozen(value)
+    || typeof value?.revokeGrant !== 'function'
+  ) {
+    fail('production_controller_configuration_invalid');
+  }
+}
+
+function dataSnapshot(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  let descriptors;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return null;
+  }
+  const keys = Reflect.ownKeys(descriptors);
+  if (
+    keys.some((key) => typeof key !== 'string')
+    || keys.some((key) => (
+      !Object.hasOwn(descriptors[key], 'value')
+      || descriptors[key].enumerable !== true
+    ))
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    keys: Object.freeze([...keys].sort()),
+    values: Object.freeze(Object.fromEntries(
+      keys.map((key) => [key, descriptors[key].value]),
+    )),
+  });
+}
+
+function inspectIssuedGrant(value) {
+  const snapshot = dataSnapshot(value);
+  const values = snapshot?.values ?? {};
+  const grantRefValid = GRANT_REF_PATTERN.test(
+    values.grant_ref ?? '',
+  );
+  const grantIdValid = UUID_PATTERN.test(values.grant_id ?? '');
+  const grantSha256Valid = HASH_PATTERN.test(
+    values.grant_sha256 ?? '',
+  );
+  const canonicalGrantRef = grantIdValid
+    ? `kernel-equivalence-grant:${values.grant_id}`
+    : null;
+  const identityExact = (
+    grantIdValid
+    && grantSha256Valid
+    && grantRefValid
+    && values.grant_ref === canonicalGrantRef
+  );
+  const expiresAt = typeof values.expires_at === 'string'
+    ? timestamp(values.expires_at)
+    : null;
+  const fieldsExact = (
+    snapshot?.keys.length === ISSUED_GRANT_FIELDS.length
+    && snapshot.keys.every(
+      (field, index) => field === ISSUED_GRANT_FIELDS[index],
+    )
+  );
+  return Object.freeze({
+    expires_at: expiresAt == null ? null : values.expires_at,
+    expires_at_ms: expiresAt,
+    fields_exact: fieldsExact,
+    grant_id: identityExact ? values.grant_id : null,
+    grant_ref: grantRefValid ? values.grant_ref : null,
+    grant_sha256: identityExact ? values.grant_sha256 : null,
+    identity_exact: identityExact,
+  });
+}
+
+function exactSafeRevocation(result, issued) {
+  const snapshot = dataSnapshot(result);
+  if (
+    !snapshot
+    || snapshot.keys.length !== REVOCATION_RESULT_FIELDS.length
+    || snapshot.keys.some(
+      (field, index) => field !== REVOCATION_RESULT_FIELDS[index],
+    )
+  ) {
+    return false;
+  }
+  const value = snapshot.values;
+  return (
+    value.grant_ref
+      === `kernel-equivalence-grant:${issued.grant_id}`
+    && value.revoked === true
+    && value.safe_no_effect === true
+    && value.effect_possible === false
+    && value.disposition === 'safe_no_effect'
+  );
 }
 
 function pinPlan(plan) {
@@ -390,26 +502,66 @@ async function appendRequiredEvent(pool, event) {
   }
 }
 
-async function denyAfterPublishedGrant({
+async function settleAfterPublishedGrantFailure({
   pool,
+  grantExecutionAuthority,
+  grantIssuer,
   randomUUID,
   caseId,
   generation,
   controllerInstanceId,
   issued,
+  lineageRecorded,
+  reason,
 }) {
+  let safeNoEffect = false;
+  if (issued.identity_exact) {
+    try {
+      const result = await grantExecutionAuthority.revokeGrant({
+        grant_id: issued.grant_id,
+        grant_sha256: issued.grant_sha256,
+        reason,
+        timeoutMs: GRANT_SETTLEMENT_TIMEOUT_MS,
+      });
+      safeNoEffect = exactSafeRevocation(result, issued);
+    } catch {
+      safeNoEffect = false;
+    }
+  }
+  if (
+    issued.grant_ref
+    && typeof grantIssuer.revokeProtectedGrant === 'function'
+  ) {
+    try {
+      await grantIssuer.revokeProtectedGrant({
+        grant_ref: issued.grant_ref,
+      });
+    } catch {
+      // Transport cleanup cannot establish or erase durable DB safety.
+    }
+  }
   await appendRequiredEvent(pool, {
     randomUUID,
     caseId,
     generation,
     controllerInstanceId,
-    state: 'settlement_unknown',
-    grantRef: issued.grant_ref,
+    state: safeNoEffect ? 'blocked' : 'settlement_unknown',
+    grantRef: (
+      safeNoEffect && !lineageRecorded
+        ? null
+        : issued.grant_ref
+    ),
     grantExpiresAt: issued.expires_at,
-    code: 'grant_revoke_unconfirmed',
-    lateEffectRisk: true,
+    code: safeNoEffect
+      ? reason
+      : (
+          issued.grant_ref
+            ? 'grant_revoke_unconfirmed'
+            : `${reason}_unresolved`
+        ),
+    lateEffectRisk: !safeNoEffect,
   });
-  fail('production_controller_grant_revoke_unconfirmed');
+  return safeNoEffect;
 }
 
 async function confirmBundle(
@@ -465,6 +617,7 @@ async function confirmBundle(
 function validateConfiguration({
   pool,
   grantIssuer,
+  grantExecutionAuthority,
   socketPath,
   brainVersion,
   engineVersion,
@@ -488,6 +641,7 @@ function validateConfiguration({
     fail('production_controller_configuration_invalid');
   }
   validateGrantIssuer(grantIssuer);
+  validateGrantExecutionAuthority(grantExecutionAuthority);
 }
 
 function effectiveAuthorityTtlMs(authority, maximumTtlSeconds) {
@@ -526,6 +680,7 @@ function authorityExpiry(authority) {
 export function createPostgresKernelEquivalenceCoordinator({
   pool,
   grantIssuer,
+  grantExecutionAuthority,
   plan,
   socketPath,
   brainVersion,
@@ -537,6 +692,7 @@ export function createPostgresKernelEquivalenceCoordinator({
   validateConfiguration({
     pool,
     grantIssuer,
+    grantExecutionAuthority,
     socketPath,
     brainVersion,
     engineVersion,
@@ -624,9 +780,10 @@ export function createPostgresKernelEquivalenceCoordinator({
       throw error;
     }
 
-    let issued;
+    let issuedRaw;
     try {
-      issued = await grantIssuer.issueProtectedGrant({
+      issuedRaw = await grantIssuer.issueProtectedGrant({
+        case_id: authority.case_id,
         cell: authority.cell,
         run_id: authority.run_id,
         attempt_id: authority.attempt_id,
@@ -638,45 +795,43 @@ export function createPostgresKernelEquivalenceCoordinator({
         ttl_seconds: Math.floor(effectiveTtlMs / 1_000),
       });
     } catch (error) {
+      const publicationUncertain = (
+        error?.code === 'protected_grant_publication_uncertain'
+      );
       await appendRequiredEvent(pool, {
         randomUUID,
         caseId,
         generation: 2,
         controllerInstanceId,
-        state: 'blocked',
+        state: publicationUncertain
+          ? 'settlement_unknown'
+          : 'blocked',
         code: stableCode(error, 'grant_issue_failed'),
-        lateEffectRisk: false,
+        lateEffectRisk: publicationUncertain,
       });
       throw error;
     }
+    const issued = inspectIssuedGrant(issuedRaw);
     const issueObservedAt = timestamp(authority.authority_observed_at);
     const authorityExpiresAt = authorityExpiry(authority);
-    const validIssuedGrantRef = GRANT_REF_PATTERN.test(
-      issued?.grant_ref ?? '',
-    );
-    const issuedExpiresAt = timestamp(issued?.expires_at);
     if (
-      !validIssuedGrantRef
-      || issuedExpiresAt == null
-      || issuedExpiresAt <= issueObservedAt
-      || issuedExpiresAt > authorityExpiresAt
+      !issued.fields_exact
+      || !issued.identity_exact
+      || issued.expires_at_ms == null
+      || issued.expires_at_ms <= issueObservedAt
+      || issued.expires_at_ms > authorityExpiresAt
     ) {
-      await appendRequiredEvent(pool, {
+      await settleAfterPublishedGrantFailure({
+        pool,
+        grantExecutionAuthority,
+        grantIssuer,
         randomUUID,
         caseId,
         generation: 2,
         controllerInstanceId,
-        state: 'settlement_unknown',
-        grantRef: validIssuedGrantRef
-          ? issued.grant_ref
-          : undefined,
-        grantExpiresAt: issuedExpiresAt == null
-          ? undefined
-          : issued.expires_at,
-        code: validIssuedGrantRef
-          ? 'grant_revoke_unconfirmed'
-          : 'grant_issue_invalid_unresolved',
-        lateEffectRisk: true,
+        issued,
+        lineageRecorded: false,
+        reason: 'grant_issue_invalid',
       });
       fail('production_controller_grant_issue_invalid');
     }
@@ -686,14 +841,13 @@ export function createPostgresKernelEquivalenceCoordinator({
         caseId,
         authorityContext,
       );
-      const issuedExpiresAt = timestamp(issued.expires_at);
       const currentObservedAt = timestamp(
         authority.authority_observed_at,
       );
       const currentAuthorityExpiresAt = authorityExpiry(authority);
       effectiveTtlMs = Math.min(
         effectiveAuthorityTtlMs(authority, grantTtlSeconds),
-        issuedExpiresAt - currentObservedAt,
+        issued.expires_at_ms - currentObservedAt,
       );
       controllerLeaseExpiresAt = authorityDeadline(
         authority,
@@ -701,13 +855,14 @@ export function createPostgresKernelEquivalenceCoordinator({
       );
       if (
         effectiveTtlMs <= 0
-        || issuedExpiresAt > currentAuthorityExpiresAt
+        || issued.expires_at_ms > currentAuthorityExpiresAt
       ) {
         fail('production_controller_authority_unavailable');
       }
     } catch (error) {
-      await denyAfterPublishedGrant({
+      await settleAfterPublishedGrantFailure({
         pool,
+        grantExecutionAuthority,
         grantIssuer,
         randomUUID,
         caseId,
@@ -715,8 +870,9 @@ export function createPostgresKernelEquivalenceCoordinator({
         controllerInstanceId,
         issued,
         lineageRecorded: false,
-        error,
+        reason: 'authority_revalidation_failed',
       });
+      throw error;
     }
     try {
       await appendRequiredEvent(pool, {
@@ -731,8 +887,9 @@ export function createPostgresKernelEquivalenceCoordinator({
         controllerLeaseExpiresAt,
       });
     } catch (error) {
-      await denyAfterPublishedGrant({
+      await settleAfterPublishedGrantFailure({
         pool,
+        grantExecutionAuthority,
         grantIssuer,
         randomUUID,
         caseId,
@@ -740,8 +897,9 @@ export function createPostgresKernelEquivalenceCoordinator({
         controllerInstanceId,
         issued,
         lineageRecorded: false,
-        error,
+        reason: 'grant_issued_append_failed',
       });
+      throw error;
     }
     try {
       authority = await bindAndLoadAuthority(
@@ -749,14 +907,13 @@ export function createPostgresKernelEquivalenceCoordinator({
         caseId,
         authorityContext,
       );
-      const issuedExpiresAt = timestamp(issued.expires_at);
       const currentObservedAt = timestamp(
         authority.authority_observed_at,
       );
       const currentAuthorityExpiresAt = authorityExpiry(authority);
       effectiveTtlMs = Math.min(
         effectiveAuthorityTtlMs(authority, grantTtlSeconds),
-        issuedExpiresAt - currentObservedAt,
+        issued.expires_at_ms - currentObservedAt,
       );
       controllerLeaseExpiresAt = authorityDeadline(
         authority,
@@ -764,13 +921,14 @@ export function createPostgresKernelEquivalenceCoordinator({
       );
       if (
         effectiveTtlMs <= 0
-        || issuedExpiresAt > currentAuthorityExpiresAt
+        || issued.expires_at_ms > currentAuthorityExpiresAt
       ) {
         fail('production_controller_authority_unavailable');
       }
     } catch (error) {
-      await denyAfterPublishedGrant({
+      await settleAfterPublishedGrantFailure({
         pool,
+        grantExecutionAuthority,
         grantIssuer,
         randomUUID,
         caseId,
@@ -778,20 +936,37 @@ export function createPostgresKernelEquivalenceCoordinator({
         controllerInstanceId,
         issued,
         lineageRecorded: true,
-        error,
+        reason: 'authority_revalidation_failed',
       });
+      throw error;
     }
-    await appendRequiredEvent(pool, {
-      randomUUID,
-      caseId,
-      generation: 3,
-      controllerInstanceId,
-      state: 'executing',
-      grantRef: issued.grant_ref,
-      grantExpiresAt: issued.expires_at,
-      lateEffectRisk: false,
-      controllerLeaseExpiresAt,
-    });
+    try {
+      await appendRequiredEvent(pool, {
+        randomUUID,
+        caseId,
+        generation: 3,
+        controllerInstanceId,
+        state: 'executing',
+        grantRef: issued.grant_ref,
+        grantExpiresAt: issued.expires_at,
+        lateEffectRisk: false,
+        controllerLeaseExpiresAt,
+      });
+    } catch (error) {
+      await settleAfterPublishedGrantFailure({
+        pool,
+        grantExecutionAuthority,
+        grantIssuer,
+        randomUUID,
+        caseId,
+        generation: 3,
+        controllerInstanceId,
+        issued,
+        lineageRecorded: true,
+        reason: 'executing_append_failed',
+      });
+      throw error;
+    }
 
     let result;
     try {
@@ -800,80 +975,113 @@ export function createPostgresKernelEquivalenceCoordinator({
         grant_ref: issued.grant_ref,
       });
     } catch (error) {
-      await appendRequiredEvent(pool, {
+      await settleAfterPublishedGrantFailure({
+        pool,
+        grantExecutionAuthority,
+        grantIssuer,
         randomUUID,
         caseId,
         generation: 4,
         controllerInstanceId,
-        state: 'settlement_unknown',
-        grantRef: issued.grant_ref,
-        grantExpiresAt: issued.expires_at,
-        code: stableCode(
+        issued,
+        lineageRecorded: true,
+        reason: stableCode(
           error,
-          'trusted_execution_settlement_unknown',
+          'trusted_execution_failed',
         ),
-        lateEffectRisk: true,
       });
       throw error;
     }
 
     if (result?.status === 'collected') {
       const bundleHash = result?.bundle?.bundle_hash;
-      if (await confirmBundle(
-        pool,
-        authority,
-        bundleHash,
-        issued.grant_ref,
-      )) {
-        await appendRequiredEvent(pool, {
+      let confirmed;
+      try {
+        confirmed = await confirmBundle(
+          pool,
+          authority,
+          bundleHash,
+          issued.grant_ref,
+        );
+      } catch (error) {
+        await settleAfterPublishedGrantFailure({
+          pool,
+          grantExecutionAuthority,
+          grantIssuer,
           randomUUID,
           caseId,
           generation: 4,
           controllerInstanceId,
-          state: 'succeeded',
-          grantRef: issued.grant_ref,
-          grantExpiresAt: issued.expires_at,
-          bundleHash,
-          lateEffectRisk: false,
+          issued,
+          lineageRecorded: true,
+          reason: 'bundle_confirmation_failed',
         });
+        throw error;
+      }
+      if (confirmed) {
+        try {
+          await appendRequiredEvent(pool, {
+            randomUUID,
+            caseId,
+            generation: 4,
+            controllerInstanceId,
+            state: 'succeeded',
+            grantRef: issued.grant_ref,
+            grantExpiresAt: issued.expires_at,
+            bundleHash,
+            lateEffectRisk: false,
+          });
+        } catch (error) {
+          await settleAfterPublishedGrantFailure({
+            pool,
+            grantExecutionAuthority,
+            grantIssuer,
+            randomUUID,
+            caseId,
+            generation: 4,
+            controllerInstanceId,
+            issued,
+            lineageRecorded: true,
+            reason: 'success_event_append_failed',
+          });
+          throw error;
+        }
         return Object.freeze({
           case_id: caseId,
           state: 'succeeded',
           bundle_hash: bundleHash,
         });
       }
-      await appendRequiredEvent(pool, {
+      await settleAfterPublishedGrantFailure({
+        pool,
+        grantExecutionAuthority,
+        grantIssuer,
         randomUUID,
         caseId,
         generation: 4,
         controllerInstanceId,
-        state: 'settlement_unknown',
-        grantRef: issued.grant_ref,
-        grantExpiresAt: issued.expires_at,
-        code: 'bundle_settlement_unconfirmed',
-        lateEffectRisk: true,
+        issued,
+        lineageRecorded: true,
+        reason: 'bundle_settlement_unconfirmed',
       });
       fail('production_controller_bundle_settlement_unconfirmed');
     }
     const code = CODE_PATTERN.test(result?.code ?? '')
       ? result.code
-      : 'trusted_execution_result_blocked';
-    await appendRequiredEvent(pool, {
+      : 'trusted_execution_result_invalid';
+    await settleAfterPublishedGrantFailure({
+      pool,
+      grantExecutionAuthority,
+      grantIssuer,
       randomUUID,
       caseId,
       generation: 4,
       controllerInstanceId,
-      state: 'blocked',
-      grantRef: issued.grant_ref,
-      grantExpiresAt: issued.expires_at,
-      code,
-      lateEffectRisk: false,
+      issued,
+      lineageRecorded: true,
+      reason: code,
     });
-    return Object.freeze({
-      case_id: caseId,
-      state: 'blocked',
-      code,
-    });
+    fail('production_controller_trusted_execution_result_invalid');
   };
 
   const reconcileStartup = async () => {

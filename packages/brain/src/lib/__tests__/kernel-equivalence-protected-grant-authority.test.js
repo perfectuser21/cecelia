@@ -49,7 +49,7 @@ function fixture() {
     key_id: 'fixture-grant-key',
     issued_at: '2026-07-28T12:00:00.000Z',
     cell_id: CELL_ID,
-    expires_at: '2999-01-01T00:00:00.000Z',
+    expires_at: '2999-01-01T00:00:00.123Z',
     nonce: '11111111-1111-4111-8111-111111111111',
     behavior_id: 'KERNEL-P0-01-BRANCH-PROTECTION',
     provider: 'codex',

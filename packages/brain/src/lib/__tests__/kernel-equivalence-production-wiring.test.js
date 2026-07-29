@@ -524,11 +524,17 @@ describe('kernel equivalence production wiring', () => {
 
   it('assembles one service and separate grant issuer from a complete isolated outer port set', async () => {
     const value = fixture();
+    const callerAuthority = Object.freeze({
+      revokeGrant: async () => {
+        throw new Error('caller authority must never be installed');
+      },
+    });
     const wiring =
       productionWiring.loadProductionTrustedExecutionWiring({
         env: value.env,
         pool: databasePort(),
         assemblyPorts: assemblyPorts(),
+        grantExecutionAuthority: callerAuthority,
         now: () => NOW,
       });
     value.manifest.expected_plan_digest = 'f'.repeat(64);
@@ -558,6 +564,12 @@ describe('kernel equivalence production wiring', () => {
       grantIssuer: expect.objectContaining({
         owner_service: 'brain.kernel_equivalence.grant_issuer',
       }),
+      grantExecutionAuthority: expect.objectContaining({
+        registerPendingGrant: expect.any(Function),
+        markGrantPublished: expect.any(Function),
+        resolveActiveGrant: expect.any(Function),
+        revokeGrant: expect.any(Function),
+      }),
       readinessSigner: expect.objectContaining({
         owner_service: 'brain.kernel_equivalence.readiness_signer',
         key_id: 'trusted-readiness-2026-07',
@@ -568,6 +580,8 @@ describe('kernel equivalence production wiring', () => {
           'brain.kernel_equivalence.trusted_execution',
       }),
     });
+    expect(Object.isFrozen(wiring.grantExecutionAuthority)).toBe(true);
+    expect(wiring.grantExecutionAuthority).not.toBe(callerAuthority);
     expect(wiring.plan.cells).toHaveLength(99);
     expect(Object.isFrozen(wiring)).toBe(true);
     expect(JSON.stringify(wiring)).not.toMatch(
@@ -603,6 +617,7 @@ describe('kernel equivalence production wiring', () => {
     expect(() => createPostgresKernelEquivalenceCoordinator({
       pool: database,
       grantIssuer: committedIssuer,
+      grantExecutionAuthority: wiring.grantExecutionAuthority,
       plan: wiring.plan,
       socketPath: wiring.socket_path,
       brainVersion: '1.268.30',
@@ -652,6 +667,9 @@ describe('kernel equivalence production wiring', () => {
     }, 'trusted_execution_plan_digest_mismatch'],
     ['extra manifest field', (value) => {
       value.manifest.private_key = 'forbidden';
+    }, 'trusted_execution_config_invalid'],
+    ['one-second grant TTL', (value) => {
+      value.manifest.grant_ttl_seconds = 1;
     }, 'trusted_execution_config_invalid'],
     ['wrong port profile', () => {}, 'trusted_execution_ports_profile_mismatch'],
   ])('rejects %s before listener creation', (

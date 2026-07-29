@@ -1,4 +1,5 @@
 import {
+  createHash,
   generateKeyPairSync,
   randomUUID,
 } from 'node:crypto';
@@ -32,6 +33,9 @@ import {
   createPostgresKernelEquivalenceCoordinator,
 } from '../../lib/kernel-equivalence-production-coordinator.js';
 import {
+  createPostgresGrantExecutionAuthority,
+} from '../../lib/kernel-equivalence-grant-execution-authority.js';
+import {
   createProtectedGrantFileIssuer,
 } from '../../lib/kernel-equivalence-protected-grant-authority.js';
 import {
@@ -48,12 +52,25 @@ import {
   createKernelEquivalenceControllerRouter,
 } from '../../routes/kernel-equivalence-controller.js';
 
+const schemaName =
+  `kernel_controller_${process.pid}_${randomUUID().replaceAll('-', '')}`;
+const quotedSchema = `"${schemaName}"`;
 const migration = readFileSync(
   new URL(
     '../../../migrations/381_kernel_equivalence_production_controller.sql',
     import.meta.url,
   ),
   'utf8',
+);
+const grantAuthorityMigration = readFileSync(
+  new URL(
+    '../../../migrations/382_kernel_equivalence_grant_authority.sql',
+    import.meta.url,
+  ),
+  'utf8',
+).replaceAll(
+  'SET search_path = public, pg_temp',
+  `SET search_path = ${schemaName}, pg_temp`,
 );
 const contract = loadYaml(readFileSync(
   new URL('../../../../../regression-contract.yaml', import.meta.url),
@@ -62,9 +79,6 @@ const contract = loadYaml(readFileSync(
 const plan = compileDrillPlan(contract, {
   now: Date.parse('2026-07-29T00:00:00.000Z'),
 });
-const schemaName =
-  `kernel_controller_${process.pid}_${randomUUID().replaceAll('-', '')}`;
-const quotedSchema = `"${schemaName}"`;
 const ACTIVE_CASE = '11111111-1111-4111-8111-111111111111';
 const ACTIVE_ATTEMPT = '22222222-2222-4222-8222-222222222222';
 const ACTIVE_RECEIPT = '33333333-3333-4333-8333-333333333333';
@@ -109,6 +123,12 @@ const RECONCILE_RECEIPT = '93939393-9393-4393-8393-939393939393';
 const MISMATCH_CASE = '94949494-9494-4494-8494-949494949494';
 const MISMATCH_ATTEMPT = '95959595-9595-4595-8595-959595959595';
 const MISMATCH_RECEIPT = '96969696-9696-4696-8696-969696969696';
+const EFFECT_CASE = '71717171-7171-4171-8171-717171717171';
+const EFFECT_ATTEMPT = '72727272-7272-4272-8272-727272727272';
+const EFFECT_RECEIPT = '73737373-7373-4373-8373-737373737373';
+const TIMEOUT_CASE = '74747474-7474-4474-8474-747474747474';
+const TIMEOUT_ATTEMPT = '75757575-7575-4575-8575-757575757575';
+const TIMEOUT_RECEIPT = '76767676-7676-4676-8676-767676767676';
 const GRANT_A = '10101010-1010-4010-8010-101010101010';
 const GRANT_B = '20202020-2020-4020-8020-202020202020';
 const ARTIFACT_SHA = 'a'.repeat(40);
@@ -138,6 +158,13 @@ function protectedIssuer() {
       throw new Error('startup reconciliation must not issue a grant');
     },
     cleanupExpiredGrants: async () => ({ removed: 0, retained: 0 }),
+  });
+}
+
+function durableGrantAuthority(actorInstanceId = randomUUID()) {
+  return createPostgresGrantExecutionAuthority({
+    pool,
+    actorInstanceId,
   });
 }
 
@@ -383,6 +410,7 @@ beforeAll(async () => {
   `);
   await pool.query(migration);
   await pool.query(migration);
+  await pool.query(grantAuthorityMigration);
   await insertAuthority({
     attemptId: ACTIVE_ATTEMPT,
     caseId: ACTIVE_CASE,
@@ -424,6 +452,18 @@ beforeAll(async () => {
     caseId: MISMATCH_CASE,
     receiptId: MISMATCH_RECEIPT,
     sessionId: 'mismatch-session',
+  });
+  await insertAuthority({
+    attemptId: EFFECT_ATTEMPT,
+    caseId: EFFECT_CASE,
+    receiptId: EFFECT_RECEIPT,
+    sessionId: 'effect-possible-session',
+  });
+  await insertAuthority({
+    attemptId: TIMEOUT_ATTEMPT,
+    caseId: TIMEOUT_CASE,
+    receiptId: TIMEOUT_RECEIPT,
+    sessionId: 'revoke-timeout-session',
   });
   await insertClaim({
     caseId: ACTIVE_CASE,
@@ -1089,6 +1129,7 @@ describe('production controller restart fencing on real PostgreSQL', () => {
     const coordinator = createPostgresKernelEquivalenceCoordinator({
       pool,
       grantIssuer: protectedIssuer(),
+      grantExecutionAuthority: durableGrantAuthority(),
       plan,
       socketPath: '/var/run/cecelia/kernel-equivalence.sock',
       brainVersion: '1.268.28',
@@ -1277,6 +1318,7 @@ describe('production controller restart fencing on real PostgreSQL', () => {
     const coordinator = createPostgresKernelEquivalenceCoordinator({
       pool,
       grantIssuer: protectedIssuer(),
+      grantExecutionAuthority: durableGrantAuthority(),
       plan,
       socketPath: '/var/run/cecelia/kernel-equivalence.sock',
       brainVersion: '1.268.28',
@@ -1386,6 +1428,7 @@ describe('production controller restart fencing on real PostgreSQL', () => {
     const coordinator = createPostgresKernelEquivalenceCoordinator({
       pool,
       grantIssuer: protectedIssuer(),
+      grantExecutionAuthority: durableGrantAuthority(),
       plan,
       socketPath: '/var/run/cecelia/kernel-equivalence.sock',
       brainVersion: '1.268.28',
@@ -1484,6 +1527,7 @@ describe('production controller restart fencing on real PostgreSQL', () => {
     const coordinator = createPostgresKernelEquivalenceCoordinator({
       pool,
       grantIssuer: protectedIssuer(),
+      grantExecutionAuthority: durableGrantAuthority(),
       plan,
       socketPath: '/var/run/cecelia/kernel-equivalence.sock',
       brainVersion: '1.268.28',
@@ -1535,6 +1579,7 @@ describe('production controller restart fencing on real PostgreSQL', () => {
     const promotion = createPostgresKernelEquivalenceCoordinator({
       pool,
       grantIssuer: protectedIssuer(),
+      grantExecutionAuthority: durableGrantAuthority(),
       plan,
       socketPath: '/var/run/cecelia/kernel-equivalence.sock',
       brainVersion: '1.268.28',
@@ -1635,9 +1680,11 @@ describe('production controller restart fencing on real PostgreSQL', () => {
       trustRegistry: registry,
       now,
     });
+    const grantExecutionAuthority = durableGrantAuthority();
     const grantIssuer = createProtectedGrantFileIssuer({
       grantRoot,
       executionGrantAuthority: grantAuthority,
+      grantExecutionAuthority,
       maximumTtlSeconds: 60,
       now,
     });
@@ -1650,6 +1697,8 @@ describe('production controller restart fencing on real PostgreSQL', () => {
     const bundleHash = 'c'.repeat(64);
     const mismatchedBundleHash = 'b'.repeat(64);
     let executionMode = 'mismatched';
+    let lockReleasePromise = Promise.resolve();
+    let serviceFailure = null;
     const service = Object.freeze({
       schema_version:
         'kernel-equivalence-trusted-execution-service/v1',
@@ -1663,18 +1712,81 @@ describe('production controller restart fencing on real PostgreSQL', () => {
         const mismatchedGrantId = actualGrantId === GRANT_A
           ? GRANT_B
           : GRANT_A;
-        const mismatched = executionMode === 'mismatched';
-        const currentBundleHash = mismatched
-          ? mismatchedBundleHash
-          : bundleHash;
+        const scenario = {
+          mismatched: {
+            bundleHash: mismatchedBundleHash,
+            caseId: MISMATCH_CASE,
+            mismatched: true,
+          },
+          effect_possible: {
+            bundleHash: '1'.repeat(64),
+            caseId: EFFECT_CASE,
+            mismatched: true,
+          },
+          timeout: {
+            bundleHash: '2'.repeat(64),
+            caseId: TIMEOUT_CASE,
+            mismatched: true,
+          },
+          matching: {
+            bundleHash,
+            caseId: EXECUTE_CASE,
+            mismatched: false,
+          },
+        }[executionMode];
+        if (executionMode === 'effect_possible') {
+          const grant = JSON.parse(readFileSync(
+            join(grantRoot, `${actualGrantId}.json`),
+            'utf8',
+          ));
+          try {
+            await grantExecutionAuthority.invokeWhileActive({
+              grant,
+              timeoutMs: 1_500,
+              invoke: async () => undefined,
+            });
+          } catch (error) {
+            serviceFailure = error;
+            throw error;
+          }
+        }
+        if (executionMode === 'timeout') {
+          const lockClient = await pool.connect();
+          const lockKey = createHash('sha256')
+            .update(actualGrantId, 'utf8')
+            .digest()
+            .readBigInt64BE(0)
+            .toString();
+          await lockClient.query(
+            'SELECT pg_advisory_lock_shared($1::bigint)',
+            [lockKey],
+          );
+          lockReleasePromise = new Promise((resolve) => {
+            setTimeout(async () => {
+              try {
+                await lockClient.query(
+                  'SELECT pg_advisory_unlock_shared($1::bigint)',
+                  [lockKey],
+                );
+              } finally {
+                lockClient.release();
+                resolve();
+              }
+            }, 2_500);
+          });
+        }
         await insertBundle({
-          bundleHash: currentBundleHash,
-          caseId: mismatched ? MISMATCH_CASE : EXECUTE_CASE,
-          grantId: mismatched ? mismatchedGrantId : actualGrantId,
+          bundleHash: scenario.bundleHash,
+          caseId: scenario.caseId,
+          grantId: scenario.mismatched
+            ? mismatchedGrantId
+            : actualGrantId,
         });
         return Object.freeze({
           status: 'collected',
-          bundle: Object.freeze({ bundle_hash: currentBundleHash }),
+          bundle: Object.freeze({
+            bundle_hash: scenario.bundleHash,
+          }),
         });
       },
     });
@@ -1688,6 +1800,7 @@ describe('production controller restart fencing on real PostgreSQL', () => {
       const controller = createPostgresKernelEquivalenceCoordinator({
         pool,
         grantIssuer,
+        grantExecutionAuthority,
         plan,
         socketPath,
         brainVersion: '1.268.28',
@@ -1696,12 +1809,24 @@ describe('production controller restart fencing on real PostgreSQL', () => {
         now,
       });
       const token = 'production-controller-integration-token'.repeat(2);
+      let controllerFailure = null;
+      const routedController = Object.freeze({
+        ...controller,
+        async executeCase(caseId) {
+          try {
+            return await controller.executeCase(caseId);
+          } catch (error) {
+            controllerFailure = error;
+            throw error;
+          }
+        },
+      });
       const http = express();
       http.use(express.json());
       http.use(
         '/api/brain/kernel-equivalence',
         createKernelEquivalenceControllerRouter({
-          getController: () => controller,
+          getController: () => routedController,
           getToken: () => token,
         }),
       );
@@ -1711,6 +1836,10 @@ describe('production controller restart fencing on real PostgreSQL', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({ case_id: MISMATCH_CASE });
       expect(mismatched.status, JSON.stringify(mismatched.body)).toBe(503);
+      expect(
+        controllerFailure?.code,
+        controllerFailure?.message,
+      ).toBe('production_controller_bundle_settlement_unconfirmed');
       expect(mismatched.body).toEqual({
         ok: false,
         error: 'production_controller_bundle_settlement_unconfirmed',
@@ -1726,8 +1855,42 @@ describe('production controller restart fencing on real PostgreSQL', () => {
         'claimed',
         'grant_issued',
         'executing',
-        'settlement_unknown',
+        'blocked',
       ]);
+
+      for (const [mode, caseId] of [
+        ['effect_possible', EFFECT_CASE],
+        ['timeout', TIMEOUT_CASE],
+      ]) {
+        executionMode = mode;
+        controllerFailure = null;
+        const unsettled = await request(http)
+          .post('/api/brain/kernel-equivalence/cases/execute')
+          .set('Authorization', `Bearer ${token}`)
+          .send({ case_id: caseId });
+        expect(
+          unsettled.status,
+          JSON.stringify(unsettled.body),
+        ).toBe(503);
+        expect(
+          controllerFailure?.code,
+          serviceFailure?.code ?? serviceFailure?.message,
+        ).toBe(
+          'production_controller_bundle_settlement_unconfirmed',
+        );
+        const unsettledEvents = await pool.query(
+          `SELECT state, late_effect_risk
+             FROM kernel_equivalence_production_execution_events
+            WHERE case_id = $1::uuid
+            ORDER BY generation`,
+          [caseId],
+        );
+        expect(unsettledEvents.rows.at(-1)).toEqual({
+          state: 'settlement_unknown',
+          late_effect_risk: true,
+        });
+      }
+      await lockReleasePromise;
 
       executionMode = 'matching';
       const responses = await Promise.all([
@@ -1776,8 +1939,9 @@ describe('production controller restart fencing on real PostgreSQL', () => {
         'production_controller_case_already_claimed',
       );
     } finally {
+      await lockReleasePromise;
       await listener?.close();
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 });
