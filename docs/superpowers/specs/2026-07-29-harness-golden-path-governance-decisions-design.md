@@ -1,7 +1,7 @@
 # Harness Golden Path Governance Decisions Design
 
-**状态：** Owner 定版 PRD 的实施设计；产品裁决不在本设计中重开  
-**范围：** PRD §6 ① decisions 写入，以及高风险全局 invariant 在现有 Harness 上下文中的继承  
+**状态：** Owner 定版 PRD 的实施设计；产品裁决不在本设计中重开
+**范围：** PRD §6 ① decisions 写入，以及高风险全局 invariant 在现有 Harness 上下文中的继承
 **非范围：** GP 合同、签字、Judge 合同差异、锚点回填、断言盖章、裁决记账、退役、事故库
 
 ## 目标
