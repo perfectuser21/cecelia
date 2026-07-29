@@ -1027,6 +1027,8 @@ const MAX_REPORT_IDENTIFIER_CHARS = 512;
 const MAX_REPORT_SCALAR_CHARS = 4_096;
 const MAX_MARKDOWN_CHARACTERS = 200_000;
 const MAX_MARKDOWN_UTF8_BYTES = 300_000;
+const SEMANTIC_IDENTIFIER_PATTERN =
+  /^[A-Za-z0-9][A-Za-z0-9._:/+-]*$/;
 const MAX_REPORT_FAMILY_CELLS =
   MAX_REPORT_FAMILIES * PROOF_PROVIDERS.length * PROOF_SCENARIOS.length;
 const MAX_REPORT_PROVIDER_CELLS =
@@ -1059,14 +1061,22 @@ function boundedIdentifier(value) {
   return truncateString(value, MAX_REPORT_IDENTIFIER_CHARS);
 }
 
+function semanticIdentifier(value) {
+  return typeof value === 'string'
+    && value.length <= MAX_REPORT_IDENTIFIER_CHARS
+    && SEMANTIC_IDENTIFIER_PATTERN.test(value)
+    ? value
+    : null;
+}
+
 function boundedCompositeIdentifier(prefix, ...suffixParts) {
-  const suffix = `::${suffixParts.join('::')}`;
-  const prefixBudget = MAX_REPORT_IDENTIFIER_CHARS - suffix.length;
-  if (prefixBudget <= 0) {
-    return boundedIdentifier(`${prefix}${suffix}`);
+  if (
+    semanticIdentifier(prefix) == null
+    || suffixParts.some((part) => semanticIdentifier(part) == null)
+  ) {
+    return null;
   }
-  const boundedPrefix = truncateString(prefix, prefixBudget);
-  return boundedPrefix == null ? null : `${boundedPrefix}${suffix}`;
+  return semanticIdentifier(`${prefix}::${suffixParts.join('::')}`);
 }
 
 function boundedScalar(value) {
@@ -1087,19 +1097,137 @@ function boundedScalarJoin(values, separator) {
 }
 
 function boundedIdentity(value) {
-  return typeof value === 'string'
-    && value.length <= MAX_REPORT_IDENTIFIER_CHARS
-    ? value
-    : null;
+  return semanticIdentifier(value);
 }
 
 function canonicalStrings(values, maximum = MAX_REPORT_PROBES) {
   return [...new Set(
     asArray(values)
       .slice(0, maximum)
-      .map(boundedIdentifier)
+      .map(semanticIdentifier)
       .filter(nonEmpty),
   )].sort(canonicalCompare);
+}
+
+function uniqueSemanticIdentifiers(values) {
+  return values.every((value) => semanticIdentifier(value) != null)
+    && new Set(values).size === values.length;
+}
+
+function atomicSemanticIdsValid(validation) {
+  const rawBehaviors = asArray(validation?.behaviors);
+  if (rawBehaviors.length !== MAX_REPORT_FAMILIES) return false;
+  const behaviorIds = rawBehaviors.map((behavior) => behavior?.behavior_id);
+  if (!uniqueSemanticIdentifiers(behaviorIds)) return false;
+
+  const invariantIds = [];
+  const verifiedInvariantIds = [];
+  const probeIds = [];
+  const referencedProbeIds = [];
+  const recoveryGapIds = [];
+  for (const behavior of rawBehaviors) {
+    const familyInvariantIds = [];
+    const sourceAtoms = asArray(behavior?.atomic_invariants);
+    const verifiedAtoms = asArray(behavior?.atoms);
+    if (
+      sourceAtoms.length > MAX_REPORT_ATOMS
+      || verifiedAtoms.length > MAX_REPORT_ATOMS
+    ) {
+      return false;
+    }
+    for (const atom of sourceAtoms) {
+      invariantIds.push(atom?.invariant_id);
+      familyInvariantIds.push(atom?.invariant_id);
+      const probeDefinitions = asArray(atom?.probe_definitions);
+      if (probeDefinitions.length > MAX_REPORT_PROBES) return false;
+      for (const probe of probeDefinitions) {
+        probeIds.push(probe?.probe_id);
+      }
+      for (const scenario of PROOF_SCENARIOS) {
+        const requiredProbeIds = asArray(
+          atom?.scenario_plan?.[scenario]?.required_probe_ids,
+        );
+        if (requiredProbeIds.length > MAX_REPORT_PROBES) return false;
+        referencedProbeIds.push(
+          ...requiredProbeIds,
+        );
+      }
+      const recovery = asObject(atom?.scenario_plan?.recovery);
+      const recoveryBindings = asArray(recovery.bindings);
+      const recoveryGaps = asArray(recovery.coverage_gaps);
+      if (
+        recoveryBindings.length > MAX_REPORT_PROBES
+        || recoveryGaps.length > MAX_REPORT_PROBES
+      ) {
+        return false;
+      }
+      for (const binding of recoveryBindings) {
+        const predecessorProbeIds = asArray(
+          binding?.predecessor_probe_ids,
+        );
+        if (predecessorProbeIds.length > MAX_REPORT_PROBES) return false;
+        referencedProbeIds.push(binding?.recovery_probe_id);
+        referencedProbeIds.push(...predecessorProbeIds);
+      }
+      for (const gap of recoveryGaps) {
+        const affectedViolationProbeIds = asArray(
+          gap?.affected_violation_probe_ids,
+        );
+        const affectedRecoveryProbeIds = asArray(
+          gap?.affected_recovery_probe_ids,
+        );
+        if (
+          affectedViolationProbeIds.length > MAX_REPORT_PROBES
+          || affectedRecoveryProbeIds.length > MAX_REPORT_PROBES
+        ) {
+          return false;
+        }
+        recoveryGapIds.push(gap?.gap_id);
+        referencedProbeIds.push(
+          ...affectedViolationProbeIds,
+          ...affectedRecoveryProbeIds,
+        );
+      }
+    }
+    const familyVerifiedIds = verifiedAtoms
+      .map((atom) => atom?.invariant_id);
+    verifiedInvariantIds.push(...familyVerifiedIds);
+    if (
+      !uniqueSemanticIdentifiers(familyInvariantIds)
+      || !uniqueSemanticIdentifiers(familyVerifiedIds)
+      || familyInvariantIds.length !== familyVerifiedIds.length
+      || familyVerifiedIds.some((id) => !familyInvariantIds.includes(id))
+    ) {
+      return false;
+    }
+  }
+  if (
+    invariantIds.length !== MAX_REPORT_ATOMS
+    || verifiedInvariantIds.length !== MAX_REPORT_ATOMS
+    || probeIds.length !== MAX_REPORT_PROBES
+    || !uniqueSemanticIdentifiers(invariantIds)
+    || !uniqueSemanticIdentifiers(verifiedInvariantIds)
+    || !uniqueSemanticIdentifiers(probeIds)
+    || !uniqueSemanticIdentifiers(recoveryGapIds)
+  ) {
+    return false;
+  }
+  const probeIdSet = new Set(probeIds);
+  if (
+    referencedProbeIds.some((id) => (
+      semanticIdentifier(id) == null || !probeIdSet.has(id)
+    ))
+  ) {
+    return false;
+  }
+  const composedIds = behaviorIds.flatMap((behaviorId) => (
+    PROOF_PROVIDERS.flatMap((provider) => (
+      PROOF_SCENARIOS.map((scenario) => (
+        boundedCompositeIdentifier(behaviorId, provider, scenario)
+      ))
+    ))
+  ));
+  return uniqueSemanticIdentifiers(composedIds);
 }
 
 function reportMetric(value, maximum) {
@@ -1129,7 +1257,7 @@ function boundProofMatrix(matrix) {
 
 function boundProjectedAtom(atom) {
   return {
-    invariant_id: boundedIdentifier(atom?.invariant_id),
+    invariant_id: semanticIdentifier(atom?.invariant_id),
     classification: boundedIdentifier(atom?.classification),
     proof_status: boundedIdentifier(atom?.proof_status),
     steps: asArray(atom?.steps)
@@ -1147,7 +1275,7 @@ function boundProjectedAtom(atom) {
     retired_absence_probe_statuses: asArray(
       atom?.retired_absence_probe_statuses,
     ).slice(0, MAX_REPORT_PROBES).map((status) => ({
-      probe_id: boundedIdentifier(status?.probe_id),
+      probe_id: semanticIdentifier(status?.probe_id),
       status: boundedIdentifier(status?.status),
     })),
   };
@@ -1155,7 +1283,7 @@ function boundProjectedAtom(atom) {
 
 function boundReportBehavior(behavior) {
   return {
-    behavior_id: boundedIdentifier(behavior?.behavior_id),
+    behavior_id: semanticIdentifier(behavior?.behavior_id),
     priority: boundedIdentifier(behavior?.priority),
     owner: boundedIdentifier(behavior?.owner),
     contract_version: boundedScalar(behavior?.contract_version),
@@ -1170,7 +1298,7 @@ function boundReportBehavior(behavior) {
       0,
       MAX_REPORT_DIMENSIONS,
     ).map(boundedIdentifier).filter(nonEmpty),
-    assertion_id: boundedIdentifier(behavior?.assertion_id),
+    assertion_id: semanticIdentifier(behavior?.assertion_id),
     legacy_behavior: boundedScalar(behavior?.legacy_behavior),
     legacy_evidence: asArray(behavior?.legacy_evidence)
       .slice(0, MAX_REPORT_METADATA_ITEMS)
@@ -1220,7 +1348,7 @@ function projectRecoveryGaps(atom) {
   return asArray(atom?.scenario_plan?.recovery?.coverage_gaps)
     .slice(0, MAX_REPORT_PROBES)
     .map((gap) => ({
-      gap_id: boundedIdentifier(gap?.gap_id),
+      gap_id: semanticIdentifier(gap?.gap_id),
       affected_violation_probe_ids: canonicalStrings(
         gap?.affected_violation_probe_ids,
       ),
@@ -1257,7 +1385,7 @@ function projectAtomicDetails(behaviors, atomicSchemaUsable) {
       )
         .slice(0, MAX_REPORT_PROBES)
         .map((status) => ({
-          probe_id: boundedIdentifier(status?.probe_id),
+          probe_id: semanticIdentifier(status?.probe_id),
           status: 'unverified',
         }))
         .sort((left, right) => canonicalCompare(
@@ -1266,8 +1394,8 @@ function projectAtomicDetails(behaviors, atomicSchemaUsable) {
         ));
       const recoveryMappingGaps = projectRecoveryGaps(source);
       details.push({
-        behavior_id: boundedIdentifier(behavior?.behavior_id),
-        invariant_id: boundedIdentifier(source?.invariant_id),
+        behavior_id: semanticIdentifier(behavior?.behavior_id),
+        invariant_id: semanticIdentifier(source?.invariant_id),
         classification: boundedIdentifier(source?.classification),
         proof_status: boundedIdentifier(source?.proof_status),
         effective_status: (
@@ -1372,11 +1500,18 @@ function buildEquivalenceReportImpl(
   const schemaVersion = validation?.schema_version ?? null;
   const atomicReport = schemaVersion === '1.1.0';
   const validationValid = validation?.valid === true;
+  const semanticIdsValid = !atomicReport
+    || atomicSemanticIdsValid(validation);
+  const reportValid = validationValid && semanticIdsValid;
+  const reportSchemaValid = (
+    atomicReport
+    && reportValid
+    && validation?.schema_valid === true
+  );
   const atomicMetrics = asObject(validation?.atomic_metrics);
   const atomicSchemaUsable = (
     schemaVersion === '1.1.0'
-    && validationValid
-    && validation?.schema_valid === true
+    && reportSchemaValid
     && behaviors.length === MAX_REPORT_FAMILIES
     && atomicMetrics.atomic_invariant_count === MAX_REPORT_ATOMS
     && atomicMetrics.proof_required_atomic_invariant_count === 42
@@ -1396,7 +1531,9 @@ function buildEquivalenceReportImpl(
     behaviors,
     atomicSchemaUsable,
   );
-  const atomicRequirements = compileAtomicRequirementSummary(validation);
+  const atomicRequirements = compileAtomicRequirementSummary(
+    atomicSchemaUsable ? validation : null,
+  );
   const classificationCounts = countBy(
     atomicDetails,
     'classification',
@@ -1453,9 +1590,9 @@ function buildEquivalenceReportImpl(
     report_version: schemaVersion === '1.1.0' ? '1.1.0' : '1.0.0',
     contract_version: boundedScalar(validation?.contract_version),
     evaluated_at: boundedIdentity(evaluatedAt),
-    valid: validationValid,
+    valid: reportValid,
     ...(atomicReport ? {
-      schema_valid: validationValid && validation?.schema_valid === true,
+      schema_valid: reportSchemaValid,
       proof_complete: false,
       atomic_cutover_ready: false,
     } : {}),
@@ -1645,6 +1782,9 @@ function markdownCell(value) {
   if (display === '') return '—';
   return truncateString(
     display
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
       .replaceAll('`', '&#96;')
       .replaceAll('|', '\\|')
       .replace(/[\r\n]+/g, ' '),

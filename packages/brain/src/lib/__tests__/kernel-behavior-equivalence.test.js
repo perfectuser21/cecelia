@@ -1823,23 +1823,31 @@ describe('honest equivalence report', () => {
       (item) => item.invariant_id?.length ?? 0,
     )))
       .toBeLessThanOrEqual(512);
-    const pollutedCellIds = atomicReport.cell_atomic_coverage
-      .map((cell) => cell.cell_id)
-      .filter((cellId) => cellId.startsWith('x'));
-    expect(pollutedCellIds).toHaveLength(9);
-    expect(Math.max(...pollutedCellIds.map((cellId) => cellId.length)))
-      .toBeLessThanOrEqual(512);
-    expect(new Set(pollutedCellIds).size).toBe(9);
-    expect(pollutedCellIds.every(
-      (cellId) => /::(claude|codex|grok)::(normal|violation|recovery)$/
-        .test(cellId),
+    expect(atomicReport).toMatchObject({
+      report_version: '1.1.0',
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_summary: {
+        classified: 0,
+        probe_definitions: 0,
+      },
+      atomic_details: [],
+      cell_atomic_coverage: [],
+    });
+    expect(atomicReport.behaviors.some(
+      (item) => item.behavior_id === null,
     )).toBe(true);
     expect(legacyReport.proven_to_fire_commands[0].test_command.length)
       .toBeLessThanOrEqual(4_096);
 
-    atomicReport.atomic_details[0].artifact_sha =
+    const directReport = buildEquivalenceReport(
+      validateBehaviorEquivalence(rootContract(), { now: NOW }),
+    );
+    directReport.atomic_details[0].artifact_sha =
       'identity-overflow-'.repeat(1_000);
-    expect(formatEquivalenceMarkdown(atomicReport))
+    expect(formatEquivalenceMarkdown(directReport))
       .not.toContain('identity-overflow');
   });
 
@@ -1856,6 +1864,8 @@ describe('honest equivalence report', () => {
     validation.behaviors[0].proof_matrix.claude.violation.test_command =
       commandInjection;
     validation.behaviors[0].legacy_evidence = [evidenceInjection];
+    validation.behaviors[0].proof_matrix.codex.violation.effect_receipt_id =
+      '<receipt onload=RECEIPT_INJECTED>';
 
     const report = buildEquivalenceReport(validation);
     const reportBehavior = report.behaviors.find(
@@ -1879,6 +1889,11 @@ describe('honest equivalence report', () => {
     );
     expect(markdown).not.toContain('command` **COMMAND_INJECTED**');
     expect(markdown).not.toContain('evidence` **EVIDENCE_INJECTED**');
+    expect(report.proven_to_fire_commands.some((proof) => (
+      proof.behavior_id === behaviorId
+      && proof.provider === 'codex'
+    ))).toBe(false);
+    expect(markdown).not.toContain('RECEIPT_INJECTED');
     expect(markdown).not.toContain('\n| row');
     expect(markdown).not.toContain('\r');
   });
@@ -1928,6 +1943,150 @@ describe('honest equivalence report', () => {
     expect(markdown).not.toContain('verified-overflow');
     expect(markdown).not.toContain('expires-overflow');
     expect(markdown).toContain('Freshness：verified — / expires —');
+  });
+
+  it('escapes raw HTML in inline, table, and heading formatter sinks', () => {
+    const report = buildEquivalenceReport(
+      validateBehaviorEquivalence(contract(), { now: NOW }),
+    );
+    report.contract_version = '<img src=x onerror=alert(1)&x>';
+    report.provider_matrix.cells[0].provider =
+      '<script>alert(2)&more</script>';
+    report.behaviors[0].behavior_id = '<svg onload=alert(3)&more>';
+
+    const markdown = formatEquivalenceMarkdown(report);
+
+    expect(markdown).toContain(
+      '&lt;img src=x onerror=alert(1)&amp;x&gt;',
+    );
+    expect(markdown).toContain(
+      '&lt;script&gt;alert(2)&amp;more&lt;/script&gt;',
+    );
+    expect(markdown).toContain(
+      '&lt;svg onload=alert(3)&amp;more&gt;',
+    );
+    expect(markdown).not.toContain('&amp;lt;img');
+    expect(markdown).not.toContain('<img');
+    expect(markdown).not.toContain('<script');
+    expect(markdown).not.toContain('<svg');
+  });
+
+  it('fails a v1.1 report closed on colliding oversized behavior IDs', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const shared = 'B'.repeat(512);
+    validation.behaviors[0].behavior_id = `${shared}${'A'.repeat(88)}`;
+    validation.behaviors[1].behavior_id = `${shared}${'Z'.repeat(88)}`;
+
+    const report = buildEquivalenceReport(validation);
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_summary: {
+        classified: 0,
+        probe_definitions: 0,
+      },
+      atomic_details: [],
+      cell_atomic_coverage: [],
+    });
+    expect(report.behaviors.filter(
+      (behavior) => behavior.behavior_id === null,
+    )).toHaveLength(2);
+  });
+
+  it('fails closed when a valid family ID creates an oversized cell ID', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const familyId = 'C'.repeat(500);
+    validation.behaviors[0].behavior_id = familyId;
+
+    const report = buildEquivalenceReport(validation);
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_details: [],
+      cell_atomic_coverage: [],
+    });
+    expect(report.behaviors.some(
+      (behavior) => behavior.behavior_id === familyId,
+    )).toBe(true);
+  });
+
+  it('fails a v1.1 report closed on colliding oversized invariant IDs', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const behavior = validation.behaviors[0];
+    const shared = 'I'.repeat(512);
+    behavior.atomic_invariants[0].invariant_id =
+      `${shared}${'A'.repeat(88)}`;
+    behavior.atomic_invariants[1].invariant_id =
+      `${shared}${'Z'.repeat(88)}`;
+
+    const report = buildEquivalenceReport(validation);
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_summary: {
+        classified: 0,
+        probe_definitions: 0,
+      },
+      atomic_details: [],
+      cell_atomic_coverage: [],
+    });
+  });
+
+  it('fails a v1.1 report closed on colliding oversized probe IDs', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const atom = validation.behaviors[0].atomic_invariants[0];
+    const [firstProbe, secondProbe] = atom.probe_definitions;
+    const originalFirst = firstProbe.probe_id;
+    const originalSecond = secondProbe.probe_id;
+    const shared = 'P'.repeat(512);
+    const oversizedFirst = `${shared}${'A'.repeat(88)}`;
+    const oversizedSecond = `${shared}${'Z'.repeat(88)}`;
+    firstProbe.probe_id = oversizedFirst;
+    secondProbe.probe_id = oversizedSecond;
+    for (const scenario of PROOF_SCENARIOS) {
+      atom.scenario_plan[scenario].required_probe_ids =
+        atom.scenario_plan[scenario].required_probe_ids.map((probeId) => (
+          probeId === originalFirst
+            ? oversizedFirst
+            : probeId === originalSecond ? oversizedSecond : probeId
+        ));
+    }
+
+    const report = buildEquivalenceReport(validation);
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_summary: {
+        classified: 0,
+        probe_definitions: 0,
+      },
+      atomic_details: [],
+      cell_atomic_coverage: [],
+    });
   });
 
   it('escapes inline-code and table injection from direct formatter input', () => {
