@@ -131,6 +131,32 @@ describe('Fleet Worker workspace manager', () => {
     expect(second.owner.attempt_id).toBe(ATTEMPT_B);
   });
 
+  it('reuses a server-seeded mirror when the requested commit is already present', async () => {
+    const manager = createManager(fixture);
+    const seeded = await manager.prepare(spec(fixture));
+    await manager.cleanup(seeded);
+    git([
+      '--git-dir',
+      seeded.mirror_path,
+      'remote',
+      'set-url',
+      'origin',
+      path.join(fixture.root, 'unreachable-origin.git'),
+    ], fixture.root);
+
+    const commandSpy = vi.fn(runCommand);
+    const offlineManager = createManager(fixture, { runCommand: commandSpy });
+
+    await expect(offlineManager.prepare(spec(fixture, {
+      attempt_id: ATTEMPT_B,
+      branch: 'cp-07272050-offline-seeded',
+    }))).resolves.toMatchObject({
+      head_sha: fixture.sha,
+      mirror_path: seeded.mirror_path,
+    });
+    expect(commandSpy.mock.calls.some(([, args]) => args.includes('fetch'))).toBe(false);
+  });
+
   it('rejects caller cwd before any Git side effect', async () => {
     const commandSpy = vi.fn(runCommand);
     const manager = createManager(fixture, { runCommand: commandSpy });

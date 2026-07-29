@@ -115,6 +115,15 @@ function createWorkspaceManager({
     return runCommand('git', args, options);
   }
 
+  async function mirrorHasCommit(mirrorPath, sha) {
+    try {
+      await git(['--git-dir', mirrorPath, 'cat-file', '-e', `${sha}^{commit}`]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async function updateMirror(spec) {
     const mirrorPath = path.join(mirrors, mirrorName(spec.repo));
     const source = allowedRepos[spec.repo];
@@ -123,14 +132,23 @@ function createWorkspaceManager({
       if (!fs.existsSync(mirrorPath)) {
         await git(['clone', '--mirror', '--', source, mirrorPath]);
       } else {
-        await git([
-          '--git-dir',
-          mirrorPath,
-          'fetch',
-          '--prune',
-          'origin',
-          '+refs/heads/*:refs/heads/*',
-        ]);
+        const requiredCommits = [
+          spec.base_sha,
+          spec.expected_head_sha,
+        ].filter(Boolean);
+        const present = await Promise.all(
+          requiredCommits.map((sha) => mirrorHasCommit(mirrorPath, sha)),
+        );
+        if (!present.every(Boolean)) {
+          await git([
+            '--git-dir',
+            mirrorPath,
+            'fetch',
+            '--prune',
+            'origin',
+            '+refs/heads/*:refs/heads/*',
+          ]);
+        }
       }
       return mirrorPath;
     });
