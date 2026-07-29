@@ -22,6 +22,7 @@ ci-patrol-wiring-smoke.sh
 circuit-breaker-persist-smoke.sh
 circuit-breaker-reset-smoke.sh
 claude-headed-dispatch-smoke.sh
+claude-headless-dispatch-smoke.sh
 codex-headed-dispatch-smoke.sh
 codex-test-gen-smoke.sh
 compute-ssh-reachability-smoke.sh
