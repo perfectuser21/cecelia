@@ -1,6 +1,22 @@
 # Brain 模块定义
 
-**版本**: 1.267.126
+**版本**: 1.267.128
+
+## Provider-neutral attempt timeout terminal
+
+- Brain 在 credential/network side effect 前验证
+  `TaskBundle.constraints.timeout_seconds`，并把同一值传入 Worker 与 Runner。
+- Worker fail closed 拒绝无效 timeout；Runner 对 Codex、Claude、Grok 使用统一的
+  TERM/KILL 超时边界，超时产生静态 `provider_timeout` 终态且不包含 provider
+  stdout 或 secret。
+- Kernel 将结构化 `provider_timeout` 归类为 infrastructure failure，保留既有
+  receipt、attestation 与 Commander failover 边界。
+- 三机固定 Runner：
+  `sha256:6b6c4f9381aefd41d3cac723943e81143344f584971bf715beca04cc9bdb30ea`。
+  该 artifact 以已部署的
+  `sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7`
+  为只读基线，仅叠加本版本审阅后的 Runner entrypoint。
+- 回退：节点 drain 后恢复上一 Runner digest，并部署 Brain `1.267.126`。
 
 ## Writable ephemeral Codex credential tmpfs
 

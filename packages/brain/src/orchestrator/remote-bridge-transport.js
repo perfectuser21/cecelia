@@ -212,14 +212,14 @@ export function createRemoteBridgeTransport({
         configuredBrainUrl,
         'remote_bridge_invalid_brain_url',
       );
+      const timeoutSeconds = bundle?.constraints?.timeout_seconds;
+      if (!Number.isSafeInteger(timeoutSeconds) || timeoutSeconds <= 0) {
+        throw new Error('remote_bridge_invalid_attempt_timeout');
+      }
       let credentialEnvelope;
       if (target?.provider === 'codex') {
         if (typeof configuredCredentialBroker?.issue !== 'function') {
           throw new Error('remote_bridge_credential_broker_unavailable');
-        }
-        const timeoutSeconds = bundle?.constraints?.timeout_seconds;
-        if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
-          throw new Error('remote_bridge_invalid_attempt_timeout');
         }
         const nowMs = configuredNow();
         if (!Number.isFinite(nowMs)) {
@@ -259,6 +259,7 @@ export function createRemoteBridgeTransport({
             run_id: attempt.run_id,
             lease_owner: attempt.lease_owner,
             lease_generation: leaseGeneration,
+            timeout_seconds: timeoutSeconds,
             target: {
               provider: target?.provider,
               account: target?.account,

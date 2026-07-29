@@ -6,6 +6,8 @@ ENTRYPOINT="$SCRIPT_DIR/entrypoint.sh"
 DOCKERFILE="$SCRIPT_DIR/Dockerfile"
 EVALUATOR_SKILL="$SCRIPT_DIR/../../packages/workflows/skills/harness-evaluator/SKILL.md"
 SECTION="$(sed -n '/provider-neutral:start/,/provider-neutral:end/p' "$ENTRYPOINT")"
+CODEX_SECTION="$(sed -n '/if \[\[ "$provider" == "codex" \]\]/,/elif \[\[ "$provider" == "claude" \]\]/p' <<<"$SECTION")"
+CLAUDE_SECTION="$(sed -n '/elif \[\[ "$provider" == "claude" \]\]/,/elif \[\[ "$provider" == "grok" \]\]/p' <<<"$SECTION")"
 GROK_SECTION="$(sed -n '/elif \[\[ "$provider" == "grok" \]\]/,/^  else$/p' <<<"$SECTION")"
 GIT_AUTH_SECTION="$(sed -n '/git-auth-setup:start/,/git-auth-setup:end/p' "$ENTRYPOINT")"
 PROPOSER_FINALIZER_SECTION="$(sed -n '/proposer-finalizer:start/,/proposer-finalizer:end/p' "$ENTRYPOINT")"
@@ -161,6 +163,91 @@ type normalize_provider_success >/dev/null 2>&1 || {
   echo 'missing Provider success normalizer' >&2
   exit 1
 }
+type read_attempt_timeout_seconds >/dev/null 2>&1 || {
+  echo 'missing Attempt timeout validator' >&2
+  exit 1
+}
+type run_with_attempt_timeout >/dev/null 2>&1 || {
+  echo 'missing Attempt timeout process supervisor' >&2
+  exit 1
+}
+type normalize_attempt_timeout_exit >/dev/null 2>&1 || {
+  echo 'missing Attempt timeout forced-kill classifier' >&2
+  exit 1
+}
+type normalize_provider_failure >/dev/null 2>&1 || {
+  echo 'missing Provider failure normalizer' >&2
+  exit 1
+}
+
+[[ "$(read_attempt_timeout_seconds 300)" == "300" ]]
+for invalid_timeout in '' 0 -1 1.5 12s token; do
+  if read_attempt_timeout_seconds "$invalid_timeout" >/dev/null 2>&1; then
+    echo "Attempt timeout validator accepted invalid value: $invalid_timeout" >&2
+    exit 1
+  fi
+done
+
+timeout_started=$SECONDS
+if run_with_attempt_timeout 1 bash -c 'sleep 3'; then
+  echo 'Attempt timeout supervisor allowed an over-budget process to succeed' >&2
+  exit 1
+else
+  timeout_exit=$?
+fi
+[[ $timeout_exit -eq 124 ]] || {
+  echo "Attempt timeout supervisor returned $timeout_exit instead of 124" >&2
+  exit 1
+}
+[[ "$(normalize_attempt_timeout_exit 137 11 1)" == "124" ]] || {
+  echo 'Attempt timeout forced KILL was not normalized to timeout' >&2
+  exit 1
+}
+[[ "$(normalize_attempt_timeout_exit 137 0 30)" == "137" ]] || {
+  echo 'Provider OOM/early KILL was incorrectly normalized to timeout' >&2
+  exit 1
+}
+[[ "$(normalize_attempt_timeout_exit 124 0 30)" == "125" ]] || {
+  echo 'Provider-native early exit 124 was incorrectly normalized to timeout' >&2
+  exit 1
+}
+[[ $((SECONDS - timeout_started)) -lt 3 ]] || {
+  echo 'Attempt timeout supervisor did not stop the process before natural exit' >&2
+  exit 1
+}
+
+grep -q 'run_with_attempt_timeout' <<<"$CODEX_SECTION"
+grep -q 'run_with_attempt_timeout' <<<"$CLAUDE_SECTION"
+grep -q 'run_with_attempt_timeout' <<<"$GROK_SECTION"
+
+ATTEMPT_TIMEOUT_TMP="$(mktemp -d)"
+printf '%s\n' 'sensitive-provider-output-must-not-cross-timeout-result' \
+  > "$ATTEMPT_TIMEOUT_TMP/stdout.jsonl"
+normalize_provider_failure \
+  "$ATTEMPT_TIMEOUT_TMP/normalized.json" \
+  "22222222-2222-4222-8222-222222222222" \
+  "codex" \
+  "thread-timeout" \
+  "33333333-3333-4333-8333-333333333333" \
+  "false" \
+  124 \
+  "$ATTEMPT_TIMEOUT_TMP/stdout.jsonl"
+jq -e '
+  .status == "failed"
+  and .summary == "provider process timed out"
+  and .error.code == "provider_timeout"
+  and .error.message == "provider exceeded the TaskBundle timeout"
+  and .error.exit_code == 124
+  and .provider_metadata.provider == "codex"
+  and .provider_metadata.session_id == "thread-timeout"
+  and .provider_metadata.credential_ref == "33333333-3333-4333-8333-333333333333"
+  and .provider_metadata.credential_copy_mutated == false
+' "$ATTEMPT_TIMEOUT_TMP/normalized.json" >/dev/null
+if grep -q 'sensitive-provider-output' "$ATTEMPT_TIMEOUT_TMP/normalized.json"; then
+  echo 'Attempt timeout result leaked Provider output' >&2
+  exit 1
+fi
+rm -rf "$ATTEMPT_TIMEOUT_TMP"
 
 COMMANDER_TMP="$(mktemp -d)"
 cat > "$COMMANDER_TMP/task.json" <<'JSON'

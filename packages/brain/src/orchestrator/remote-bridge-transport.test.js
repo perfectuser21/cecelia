@@ -187,6 +187,7 @@ describe('remote Bridge launch', () => {
       run_id: 'run-1',
       lease_owner: 'dispatcher-1',
       lease_generation: 3,
+      timeout_seconds: 3600,
       target: {
         provider: 'codex',
         account: 'team3',
@@ -215,6 +216,37 @@ describe('remote Bridge launch', () => {
     });
     expect(requestBody).not.toHaveProperty('bundle');
     expect(requestBody.provider_spec).not.toHaveProperty('environment');
+  });
+
+  it('rejects invalid launch timeouts before credentials or Worker transport', async () => {
+    const invalidCases = [
+      ['codex', undefined],
+      ['claude', 0],
+      ['grok', -1],
+      ['codex', 1.5],
+      ['claude', Number.MAX_SAFE_INTEGER + 1],
+    ];
+    for (const [provider, timeoutSeconds] of invalidCases) {
+      const fetchFn = vi.fn();
+      const issue = vi.fn();
+      const transport = createTransport({
+        fetchFn,
+        credentialBroker: { issue },
+      });
+
+      await expect(transport.launch(launchInput({
+        bundle: {
+          constraints: timeoutSeconds === undefined
+            ? {}
+            : { timeout_seconds: timeoutSeconds },
+        },
+        spec: { provider, command: provider },
+        target: { provider, account: `${provider}-account` },
+      }))).rejects.toThrow('remote_bridge_invalid_attempt_timeout');
+
+      expect(issue).not.toHaveBeenCalled();
+      expect(fetchFn).not.toHaveBeenCalled();
+    }
   });
 
   it('binds one Codex credential envelope to the selected attempt, account, machine, and deadline', async () => {
