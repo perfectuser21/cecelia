@@ -1,6 +1,14 @@
 # Brain 模块定义
 
-**版本**: 1.267.122
+**版本**: 1.267.123
+
+## Unified Fleet Worker production transport wiring
+
+- 生产 Compose 显式启用 Phase 4B 的统一 Fleet Worker transport，并向 Brain
+  注入三机共用的 bearer token 与 US Tailscale callback base URL。
+- token 缺失或长度不足时仍由 production transport fail closed；配置不向
+  Xian 复制任何长期 Codex 凭据，也不改变 Phase 4C/4D/5 合同。
+- 回退：恢复 `docker-compose.yml` 的上一版本并部署 Brain `1.267.122`。
 
 ## OrbStack-shareable Worker TMPDIR bootstrap
 
