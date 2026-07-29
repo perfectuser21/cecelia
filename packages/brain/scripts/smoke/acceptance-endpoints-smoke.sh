@@ -58,4 +58,18 @@ for (const needle of ['acceptance_runs', 'acceptance_checks', \"VALUES ('369'\",
 console.log('migration 369 结构完整 ✓');
 "
 
+
+echo "[acceptance-smoke] 5. 承诺检查三件套（主理人条件）"
+node -e "
+const fs = require('fs');
+const sched = fs.readFileSync('packages/brain/src/scheduler-jobs.js', 'utf8');
+if (!sched.includes(\"name: 'acceptance-aging'\")) { console.error('FAIL: scheduler-jobs 缺 acceptance-aging 哨兵挂载'); process.exit(1); }
+const aging = fs.readFileSync('packages/brain/src/acceptance-aging.js', 'utf8');
+if (!aging.includes('48') || !aging.includes('sendBark')) { console.error('FAIL: aging 哨兵缺 48h 阈值或 Bark 告警'); process.exit(1); }
+const routes = fs.readFileSync('packages/brain/src/routes/acceptance.js', 'utf8');
+if (!routes.includes('[验收驳回]')) { console.error('FAIL: results 端点缺驳回自动开任务'); process.exit(1); }
+if (!routes.includes(\"prev.status !== 'failed'\")) { console.error('FAIL: 驳回缺转变沿检测（会重复开任务）'); process.exit(1); }
+console.log('承诺检查三件套 ✓');
+"
+
 echo "[acceptance-smoke] 全部通过 ✅"
