@@ -1024,8 +1024,11 @@ git commit -m "feat(kernel): add atomic behavior inventory"
 
 - Modify: `packages/brain/src/lib/__tests__/kernel-behavior-equivalence.test.js`
 - Modify: `packages/brain/src/lib/__tests__/kernel-equivalence-atomic-contract.test.js`
+- Modify: `packages/brain/src/lib/__tests__/kernel-equivalence-receipt-resolver.test.js`
 - Modify: `packages/brain/src/lib/kernel-behavior-equivalence.js`
 - Modify: `packages/brain/src/lib/kernel-equivalence-atomic-contract.js`
+- Modify: `packages/brain/src/lib/kernel-equivalence-receipt-resolver.js`
+- Modify: `packages/brain/src/lib/kernel-equivalence-receipts.js`
 
 - [ ] **Step 1: 写 schema/proof 正交结果 RED**
 
@@ -1087,6 +1090,10 @@ status 一律 gap。合法 retired atom 投影 `retired/na`，但
 ```
 
 同 family/step/dimension 采用最差状态；不得为 43 atoms 创建新顶层 journey。
+每个 cell 必须先按 `invariant_id` 对 atom tuple 去重，再按 ID 排序，并由同一 tuple 数组
+同步派生 `atom_ids`、`atom_statuses`、`atom_projections`、`na_reason`，禁止 parallel
+arrays 漂移。只有通过 `validRetirement()` 的 atom 才能输出 `retired/na`；字段不全或
+非法 retirement 必须投影 `gap/red`。
 
 - [ ] **Step 4: 运行 RED**
 
@@ -1135,7 +1142,44 @@ proof-required projection 只能 red/pending；retired atom 可投影 `na`，但
 cell 必须 `red`；N/A 语义通过 atom projection/`na_reason` 表达。
 任何 v1 receipt 或 contract 自报都不能产生 green。
 
-- [ ] **Step 7: 运行 GREEN 和相邻 tests**
+- [ ] **Step 7: 修复 99-receipt chain 的重复验签**
+
+先在 receipt resolver tests 构造一个小型多 bundle chain，依次 resolve 每个 reference，
+断言 durable `readBundle` 调用数不超过 chain size，并确保第二次 resolve 不重读或重建
+trusted ancestry。99-cell v1.1 回归保留真实签名和完整 chain，单测设置 15 秒上限；不能用
+提高 timeout 掩盖 40+ 秒耗时。
+
+根因是 resolver 当前在每次 `resolve()` 内新建 raw cache，并从 head 重验整个 ancestry。
+修复必须使用 per-resolver、trust-registry/`now` scoped 的私有 cache：
+
+```js
+const rawBundleCache = new Map();
+let trustedAncestryHashes = null;
+const verifyBundle = createScopedReceiptBundleVerifier({
+  trustRegistry,
+  now,
+});
+```
+
+`createScopedReceiptBundleVerifier()` 返回闭包；它内部持有不可由调用方注入的 private
+historical-verification cache。第一次 ancestry verification 对每个 hash 验签一次；
+后续 target bundle 仍必须对 contract `expected` 做完整当前 bundle 校验，但已验证的
+historical hashes 不重复验签。cache 不能是 module-global，不能跨 registry、时间点或
+resolver 复用，失败结果不能写入 cache；recovery predecessor commitment 检查不得跳过。
+
+测试同时锁定：
+
+```text
+99 legacy receipts are really verified
+legacy count = 99
+atomic count = 0
+proof_complete = false
+elapsed < 15 seconds
+tampered ancestry still fails closed
+different resolver/trust registry never shares cache
+```
+
+- [ ] **Step 8: 运行 GREEN 和相邻 tests**
 
 ```bash
 cd packages/brain
@@ -1147,14 +1191,17 @@ npx vitest run \
 
 Expected: PASS。
 
-- [ ] **Step 8: 提交**
+- [ ] **Step 9: 提交**
 
 ```bash
 git add \
   packages/brain/src/lib/kernel-equivalence-atomic-contract.js \
   packages/brain/src/lib/kernel-behavior-equivalence.js \
+  packages/brain/src/lib/kernel-equivalence-receipt-resolver.js \
+  packages/brain/src/lib/kernel-equivalence-receipts.js \
   packages/brain/src/lib/__tests__/kernel-equivalence-atomic-contract.test.js \
-  packages/brain/src/lib/__tests__/kernel-behavior-equivalence.test.js
+  packages/brain/src/lib/__tests__/kernel-behavior-equivalence.test.js \
+  packages/brain/src/lib/__tests__/kernel-equivalence-receipt-resolver.test.js
 git commit -m "feat(kernel): aggregate atomic equivalence status"
 ```
 
