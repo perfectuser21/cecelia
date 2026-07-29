@@ -69,6 +69,7 @@ try {
   });
   const result = await transport.launch({
     attempt,
+    bundle: { constraints: { timeout_seconds: 60 } },
     spec: { provider: 'codex', args: [], stdin: 'remote smoke' },
     target: { machine },
   });

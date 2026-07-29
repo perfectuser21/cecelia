@@ -553,8 +553,87 @@ normalize_provider_success() {
          credential_ref: $credential_ref,
          credential_copy_mutated: $credential_copy_mutated
        } end))' \
-    "$result_file" > "$normalized_file"
+     "$result_file" > "$normalized_file"
 }
+
+# attempt-timeout-contract:start
+read_attempt_timeout_seconds() {
+  local value="${1:-}"
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] || return 1
+  (( 10#$value <= 9007199254740991 )) || return 1
+  printf '%s' "$value"
+}
+
+normalize_attempt_timeout_exit() {
+  local raw_exit="$1"
+  local elapsed_seconds="$2"
+  local timeout_seconds="$3"
+
+  if [[ "$raw_exit" -eq 137 && "$elapsed_seconds" -ge "$timeout_seconds" ]]; then
+    printf '124'
+    return
+  fi
+  if [[ "$raw_exit" -eq 124 && "$elapsed_seconds" -lt "$timeout_seconds" ]]; then
+    printf '125'
+    return
+  fi
+  printf '%s' "$raw_exit"
+}
+
+run_with_attempt_timeout() {
+  local seconds="$1"
+  shift
+  local started_at="$SECONDS"
+  local raw_exit
+  local elapsed_seconds
+  local normalized_exit
+
+  timeout --signal=TERM --kill-after=10s "${seconds}s" "$@"
+  raw_exit=$?
+  elapsed_seconds=$((SECONDS - started_at))
+  normalized_exit="$(
+    normalize_attempt_timeout_exit "$raw_exit" "$elapsed_seconds" "$seconds"
+  )"
+  return "$normalized_exit"
+}
+
+normalize_provider_failure() {
+  local normalized_file="$1"
+  local attempt_id="$2"
+  local provider="$3"
+  local session_id="$4"
+  local credential_ref="$5"
+  local credential_copy_mutated="$6"
+  local provider_exit="$7"
+  local stdout_file="$8"
+
+  if [[ "$provider_exit" -eq 124 ]]; then
+    jq -n \
+      --arg attempt "$attempt_id" \
+      --arg provider "$provider" \
+      --arg session "$session_id" \
+      --arg credential_ref "$credential_ref" \
+      --argjson credential_copy_mutated "$credential_copy_mutated" \
+      --argjson exit_code "$provider_exit" \
+      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"provider process timed out",artifacts:[],checks:[],decision:null,error:{code:"provider_timeout",message:"provider exceeded the TaskBundle timeout",exit_code:$exit_code},provider_metadata:({provider:$provider,session_id:(if $session == "" then null else $session end)} + (if $credential_ref == "" then {} else {credential_ref:$credential_ref,credential_copy_mutated:$credential_copy_mutated} end))}' \
+      > "$normalized_file"
+    return
+  fi
+
+  local stderr_tail
+  stderr_tail=$(tail -c 2000 "$stdout_file" 2>/dev/null || true)
+  jq -n \
+    --arg attempt "$attempt_id" \
+    --arg provider "$provider" \
+    --arg session "$session_id" \
+    --arg credential_ref "$credential_ref" \
+    --argjson credential_copy_mutated "$credential_copy_mutated" \
+    --arg message "$stderr_tail" \
+    --argjson exit_code "$provider_exit" \
+    '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"provider process failed",artifacts:[],checks:[],decision:null,error:{code:"provider_exit",message:$message,exit_code:$exit_code},provider_metadata:({provider:$provider,session_id:(if $session == "" then null else $session end)} + (if $credential_ref == "" then {} else {credential_ref:$credential_ref,credential_copy_mutated:$credential_copy_mutated} end))}' \
+    > "$normalized_file"
+}
+# attempt-timeout-contract:end
 # commander-provider-contract:end
 
 run_provider_contract() {
@@ -570,6 +649,18 @@ run_provider_contract() {
   local heartbeat_pid=""
   local safe_line=""
   local commander_contract=false
+  local attempt_timeout_seconds=""
+
+  if ! attempt_timeout_seconds="$(
+    read_attempt_timeout_seconds "${HARNESS_TIMEOUT_SECONDS:-}"
+  )"; then
+    jq -n \
+      --arg attempt "$HARNESS_ATTEMPT_ID" \
+      --arg provider "$provider" \
+      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"Attempt timeout rejected",artifacts:[],checks:[],decision:null,error:{code:"invalid_attempt_timeout",message:"runner rejected the bounded attempt timeout"},provider_metadata:{provider:$provider,session_id:null}}' \
+      > "$NORMALIZED_RESULT_FILE"
+    return 1
+  fi
 
   if [[ "$provider" == "codex" ]] && ! prepare_codex_credential; then
     jq -n \
@@ -715,7 +806,9 @@ run_provider_contract() {
       -
     )
     : > "$STDOUT_FILE"
-    "${codex_command[@]}" "${codex_args[@]}" < "$task_bundle_file" 2>&1 \
+    run_with_attempt_timeout \
+      "$attempt_timeout_seconds" \
+      "${codex_command[@]}" "${codex_args[@]}" < "$task_bundle_file" 2>&1 \
       | while IFS= read -r line || [[ -n "$line" ]]; do
           safe_line=$(printf '%s\n' "$line" | redact_codex_credential_text)
           printf '%s\n' "$safe_line" | tee -a "$STDOUT_FILE"
@@ -744,7 +837,9 @@ run_provider_contract() {
       persist_provider_session "$provider_session_id" || true
     fi
     claude_args+=("${model_args[@]}")
-    claude "${claude_args[@]}" < "$task_bundle_file" 2>&1 | tee "$STDOUT_FILE"
+    run_with_attempt_timeout \
+      "$attempt_timeout_seconds" \
+      claude "${claude_args[@]}" < "$task_bundle_file" 2>&1 | tee "$STDOUT_FILE"
     provider_exit=${PIPESTATUS[0]}
     if [[ $provider_exit -eq 0 ]]; then
       jq -c '
@@ -770,7 +865,9 @@ run_provider_contract() {
       persist_provider_session "$provider_session_id" || true
     fi
     grok_args+=("${model_args[@]}")
-    grok -p "$(cat "$task_bundle_file")" "${grok_args[@]}" 2>&1 | tee "$STDOUT_FILE"
+    run_with_attempt_timeout \
+      "$attempt_timeout_seconds" \
+      grok -p "$(cat "$task_bundle_file")" "${grok_args[@]}" 2>&1 | tee "$STDOUT_FILE"
     provider_exit=${PIPESTATUS[0]}
     if [[ $provider_exit -eq 0 ]]; then
       jq -c '
@@ -825,18 +922,15 @@ run_provider_contract() {
       "$CREDENTIAL_REF" \
       "$CREDENTIAL_COPY_MUTATED"
   else
-    local stderr_tail
-    stderr_tail=$(tail -c 2000 "$STDOUT_FILE" 2>/dev/null || true)
-    jq -n \
-      --arg attempt "$HARNESS_ATTEMPT_ID" \
-      --arg provider "$provider" \
-      --arg session "$provider_session_id" \
-      --arg credential_ref "$CREDENTIAL_REF" \
-      --argjson credential_copy_mutated "$CREDENTIAL_COPY_MUTATED" \
-      --arg message "$stderr_tail" \
-      --argjson exit_code "$provider_exit" \
-      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"provider process failed",artifacts:[],checks:[],decision:null,error:{code:"provider_exit",message:$message,exit_code:$exit_code},provider_metadata:({provider:$provider,session_id:(if $session == "" then null else $session end)} + (if $credential_ref == "" then {} else {credential_ref:$credential_ref,credential_copy_mutated:$credential_copy_mutated} end))}' \
-      > "$NORMALIZED_RESULT_FILE"
+    normalize_provider_failure \
+      "$NORMALIZED_RESULT_FILE" \
+      "$HARNESS_ATTEMPT_ID" \
+      "$provider" \
+      "$provider_session_id" \
+      "$CREDENTIAL_REF" \
+      "$CREDENTIAL_COPY_MUTATED" \
+      "$provider_exit" \
+      "$STDOUT_FILE"
   fi
   merge_evaluator_evidence "$NORMALIZED_RESULT_FILE" || true
   return "$provider_exit"

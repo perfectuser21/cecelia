@@ -6,11 +6,27 @@
 
 
 
-**Brain 版本**: 1.267.126
+**Brain 版本**: 1.267.128
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.128 — Provider-neutral attempt timeout terminal
+
+- `TaskBundle.constraints.timeout_seconds` 现在作为 authoritative attempt timeout，
+  由 Brain transport 传入 Fleet Worker，并以 `HARNESS_TIMEOUT_SECONDS` 进入
+  pinned Runner。
+- Codex、Claude 与 Grok 共用同一 TERM/KILL 超时边界；超时返回静态
+  `provider_timeout` 终态，不回显 provider stdout 或临时凭据。
+- Kernel 将 `provider_timeout` 归类为基础设施故障，保持 provider-neutral
+  terminal schema；本版本不扩展 Phase 5。
+- Runner pin：
+  `sha256:6b6c4f9381aefd41d3cac723943e81143344f584971bf715beca04cc9bdb30ea`。
+  该 artifact 以已部署的
+  `sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7`
+  为只读基线，仅叠加本版本审阅后的 Runner entrypoint。
+- 回退：节点 drain 后加载上一 Runner digest，并部署 Brain `1.267.126`。
 
 ## Brain 1.267.126 — Writable ephemeral Codex credential tmpfs
 

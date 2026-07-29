@@ -255,6 +255,18 @@ describe('HarnessResult contract', () => {
       'infrastructure_blocked',
     ],
     [
+      'provider timeout',
+      {
+        status: 'failed',
+        summary: 'provider process timed out',
+        error: {
+          code: 'provider_timeout',
+          message: 'provider exceeded the TaskBundle timeout',
+        },
+      },
+      'infrastructure_blocked',
+    ],
+    [
       'runner failure',
       {
         status: 'failed',
