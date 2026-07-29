@@ -73,6 +73,25 @@ echo -e "📂 改动文件数：$(echo "$CHANGED_FILES" | grep -c . 2>/dev/null 
 
 PASS=true
 
+resolve_vitest_bin() {
+  local pkg="$1"
+  local package_vitest="$REPO_ROOT/$pkg/node_modules/.bin/vitest"
+
+  # local package runner: $REPO_ROOT/$PKG/node_modules/.bin/vitest
+  if [[ -x "$package_vitest" ]]; then
+    printf '%s\n' "$package_vitest"
+    return 0
+  fi
+
+  # root fallback runner: $ROOT_NM/.bin/vitest
+  if [[ -x "$ROOT_NM/.bin/vitest" ]]; then
+    printf '%s\n' "$ROOT_NM/.bin/vitest"
+    return 0
+  fi
+
+  return 1
+}
+
 # ─── DoD 未勾选守卫 ────────────────────────────────────────────────
 # 检测本次 PR 新增或修改的 DoD.md / DoD-*.md 含未勾选条目（[ ]）
 # 只检查相对于 origin/main 变更的文件（不检查已在 main 中的旧文件）
@@ -105,10 +124,10 @@ fi
 for PKG in packages/engine packages/brain apps/api apps/dashboard; do
   if echo "$CHANGED_FILES" | grep -q "^$PKG/"; then
     echo -e "${BOLD}▶ $PKG${RESET}"
-    if [[ ! -x "$ROOT_NM/.bin/vitest" ]]; then
+    if ! VITEST_BIN="$(resolve_vitest_bin "$PKG")"; then
       echo -e "  ${YELLOW}⚠️  vitest 未安装，跳过${RESET}"
     else
-      VITEST_OUT=$(cd "$PKG" && unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE && PATH="$ROOT_NM/.bin:$PATH" NODE_OPTIONS='--max-old-space-size=2048' vitest run 2>&1)
+      VITEST_OUT=$(cd "$PKG" && unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE && NODE_OPTIONS='--max-old-space-size=2048' "$VITEST_BIN" run 2>&1)
       VITEST_EXIT=$?
       echo "$VITEST_OUT"
       if [[ $VITEST_EXIT -eq 0 ]]; then

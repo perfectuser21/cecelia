@@ -7,6 +7,24 @@ import { join } from 'path';
 // quickcheck.sh 真实路径（相对工作目录）
 const REAL_SCRIPT = join(process.cwd(), '..', '..', 'scripts', 'quickcheck.sh');
 
+describe('quickcheck.sh — package test runner resolution', () => {
+  const realContent = readFileSync(REAL_SCRIPT, 'utf8');
+
+  it('prefers each package declared Vitest before the root fallback', () => {
+    const packageRunner = 'local package runner: $REPO_ROOT/$PKG/node_modules/.bin/vitest';
+    const rootFallback = 'root fallback runner: $ROOT_NM/.bin/vitest';
+
+    expect(realContent).toContain(packageRunner);
+    expect(realContent).toContain(rootFallback);
+    expect(realContent.indexOf(packageRunner)).toBeLessThan(realContent.indexOf(rootFallback));
+  });
+
+  it('invokes the resolved executable directly instead of mixing root CLI and package runtime', () => {
+    expect(realContent).toContain('"$VITEST_BIN" run');
+    expect(realContent).not.toContain('PATH="$ROOT_NM/.bin:$PATH" NODE_OPTIONS');
+  });
+});
+
 describe('quickcheck.sh — 并发互斥锁', () => {
   let fakeRepo: string;
   let fakeScript: string;
