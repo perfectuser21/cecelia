@@ -258,6 +258,9 @@ function prepareMountRoot(sharedTmp) {
     fs.mkdirSync(directory, { recursive: true, mode: 0o755 });
     fs.chmodSync(directory, 0o755);
   }
+  const adminRoot = path.join(worktrees, '.admin');
+  fs.mkdirSync(adminRoot, { recursive: true, mode: 0o711 });
+  fs.chmodSync(adminRoot, 0o711);
   return Object.freeze({ worktrees, runtime });
 }
 
