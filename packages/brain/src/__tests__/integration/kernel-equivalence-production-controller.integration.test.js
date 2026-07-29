@@ -49,6 +49,9 @@ import {
   computeFleetAuthoritySha256,
 } from '../../orchestrator/fleet-callback-auth.js';
 import {
+  sha256Canonical,
+} from '../../lib/kernel-equivalence-receipts.js';
+import {
   createKernelEquivalenceControllerRouter,
 } from '../../routes/kernel-equivalence-controller.js';
 
@@ -129,6 +132,46 @@ const EFFECT_RECEIPT = '73737373-7373-4373-8373-737373737373';
 const TIMEOUT_CASE = '74747474-7474-4474-8474-747474747474';
 const TIMEOUT_ATTEMPT = '75757575-7575-4575-8575-757575757575';
 const TIMEOUT_RECEIPT = '76767676-7676-4676-8676-767676767676';
+const RESTART_GRANT_CASE =
+  '31313131-3131-4131-8131-313131313131';
+const RESTART_GRANT_ATTEMPT =
+  '32323232-3232-4232-8232-323232323232';
+const RESTART_GRANT_RECEIPT =
+  '34343434-3434-4434-8434-343434343434';
+const RESTART_GRANT_ID =
+  '35353535-3535-4535-8535-353535353535';
+const RESTART_EFFECT_CASE =
+  '3b3b3b3b-3b3b-4b3b-8b3b-3b3b3b3b3b3b';
+const RESTART_EFFECT_ATTEMPT =
+  '3c3c3c3c-3c3c-4c3c-8c3c-3c3c3c3c3c3c';
+const RESTART_EFFECT_RECEIPT =
+  '3d3d3d3d-3d3d-4d3d-8d3d-3d3d3d3d3d3d';
+const RESTART_EFFECT_GRANT_ID =
+  '3e3e3e3e-3e3e-4e3e-8e3e-3e3e3e3e3e3e';
+const AMBIGUOUS_GRANT_CASE =
+  '47474747-4747-4747-8747-474747474747';
+const AMBIGUOUS_GRANT_ATTEMPT =
+  '48484848-4848-4848-8848-484848484848';
+const AMBIGUOUS_GRANT_RECEIPT =
+  '49494949-4949-4949-8949-494949494949';
+const AMBIGUOUS_GRANT_ID =
+  '4a4a4a4a-4a4a-4a4a-8a4a-4a4a4a4a4a4a';
+const AMBIGUOUS_EXECUTING_CASE =
+  '4b4b4b4b-4b4b-4b4b-8b4b-4b4b4b4b4b4b';
+const AMBIGUOUS_EXECUTING_ATTEMPT =
+  '4c4c4c4c-4c4c-4c4c-8c4c-4c4c4c4c4c4c';
+const AMBIGUOUS_EXECUTING_RECEIPT =
+  '4d4d4d4d-4d4d-4d4d-8d4d-4d4d4d4d4d4d';
+const AMBIGUOUS_EXECUTING_GRANT_ID =
+  '4e4e4e4e-4e4e-4e4e-8e4e-4e4e4e4e4e4e';
+const READBACK_FAILURE_CASE =
+  '4f4f4f4f-4f4f-4f4f-8f4f-4f4f4f4f4f4f';
+const READBACK_FAILURE_ATTEMPT =
+  '51515151-5151-4151-8151-515151515151';
+const READBACK_FAILURE_RECEIPT =
+  '52525252-5252-4252-8252-525252525252';
+const READBACK_FAILURE_GRANT_ID =
+  '53535353-5353-4353-8353-535353535353';
 const GRANT_A = '10101010-1010-4010-8010-101010101010';
 const GRANT_B = '20202020-2020-4020-8020-202020202020';
 const ARTIFACT_SHA = 'a'.repeat(40);
@@ -326,6 +369,64 @@ async function insertBundle({
   );
 }
 
+async function registerFixtureGrant({
+  caseId,
+  grantId,
+}) {
+  const authority = await pool.query(
+    `SELECT cases.*, leases.lease_expires_at,
+            clock_timestamp() AS issued_at,
+            LEAST(
+              cases.expires_at,
+              leases.lease_expires_at,
+              clock_timestamp() + interval '30 seconds'
+            ) AS grant_expires_at
+       FROM kernel_equivalence_production_cases cases
+       JOIN kernel_equivalence_production_case_leases leases
+         ON leases.case_id = cases.case_id
+      WHERE cases.case_id = $1::uuid`,
+    [caseId],
+  );
+  const row = authority.rows[0];
+  const grant = {
+    adapter_id: row.adapter_id,
+    artifact_sha: row.artifact_sha,
+    attempt_id: row.attempt_id,
+    behavior_id: row.behavior_id,
+    brain_version: row.brain_version,
+    cell_id: row.cell_id,
+    engine_version: row.engine_version,
+    environment: 'isolated',
+    expires_at: row.grant_expires_at.toISOString(),
+    grant_id: grantId,
+    issued_at: row.issued_at.toISOString(),
+    key_id: 'restart-fixture-key',
+    nonce: randomUUID(),
+    provider: row.provider,
+    resource_id: row.resource_id,
+    resource_prefix: row.resource_prefix,
+    resource_ref: row.resource_ref,
+    run_id: row.run_id,
+    scenario: row.scenario,
+    schema_version: 'kernel-equivalence-execution-grant/v1',
+    scopes: ['isolated_effect'],
+    seam_id: row.seam_id,
+    signature: 'restart-fixture-signature',
+  };
+  const grantSha256 = sha256Canonical(grant);
+  const controllerAuthority = durableGrantAuthority(OLD_CONTROLLER);
+  await controllerAuthority.registerPendingGrant({
+    case_id: caseId,
+    grant,
+    grant_sha256: grantSha256,
+  });
+  await controllerAuthority.markGrantPublished({
+    grant_id: grantId,
+    grant_sha256: grantSha256,
+  });
+  return { grant, grantSha256 };
+}
+
 beforeAll(async () => {
   adminPool = new pg.Pool({ ...DB_DEFAULTS, max: 2 });
   await adminPool.query(`CREATE SCHEMA ${quotedSchema}`);
@@ -465,6 +566,36 @@ beforeAll(async () => {
     receiptId: TIMEOUT_RECEIPT,
     sessionId: 'revoke-timeout-session',
   });
+  await insertAuthority({
+    attemptId: RESTART_GRANT_ATTEMPT,
+    caseId: RESTART_GRANT_CASE,
+    receiptId: RESTART_GRANT_RECEIPT,
+    sessionId: 'restart-grant-session',
+  });
+  await insertAuthority({
+    attemptId: RESTART_EFFECT_ATTEMPT,
+    caseId: RESTART_EFFECT_CASE,
+    receiptId: RESTART_EFFECT_RECEIPT,
+    sessionId: 'restart-effect-session',
+  });
+  await insertAuthority({
+    attemptId: AMBIGUOUS_GRANT_ATTEMPT,
+    caseId: AMBIGUOUS_GRANT_CASE,
+    receiptId: AMBIGUOUS_GRANT_RECEIPT,
+    sessionId: 'ambiguous-grant-session',
+  });
+  await insertAuthority({
+    attemptId: AMBIGUOUS_EXECUTING_ATTEMPT,
+    caseId: AMBIGUOUS_EXECUTING_CASE,
+    receiptId: AMBIGUOUS_EXECUTING_RECEIPT,
+    sessionId: 'ambiguous-executing-session',
+  });
+  await insertAuthority({
+    attemptId: READBACK_FAILURE_ATTEMPT,
+    caseId: READBACK_FAILURE_CASE,
+    receiptId: READBACK_FAILURE_RECEIPT,
+    sessionId: 'readback-failure-session',
+  });
   await insertClaim({
     caseId: ACTIVE_CASE,
     eventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -516,6 +647,382 @@ afterAll(async () => {
 });
 
 describe('production controller restart fencing on real PostgreSQL', () => {
+  it('revokes a published grant before restart settlement and rejects later actual seams', async () => {
+    const { grant, grantSha256 } = await registerFixtureGrant({
+      caseId: RESTART_GRANT_CASE,
+      grantId: RESTART_GRANT_ID,
+    });
+    const runtimeAuthority = durableGrantAuthority(
+      '36363636-3636-4636-8636-363636363636',
+    );
+    await expect(runtimeAuthority.resolveActiveGrant({
+      grant_id: RESTART_GRANT_ID,
+      grant_sha256: grantSha256,
+      cell_id: CELL_ID,
+    })).resolves.toMatchObject({ active: true });
+    const controllerLease = await insertClaim({
+      caseId: RESTART_GRANT_CASE,
+      eventId: '37373737-3737-4737-8737-373737373737',
+      leaseSql: "clock_timestamp() + interval '250 milliseconds'",
+    });
+    await pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          grant_ref, grant_expires_at, late_effect_risk,
+          controller_lease_expires_at)
+       VALUES
+         ('38383838-3838-4838-8838-383838383838', $1::uuid, 2,
+          $2::uuid, 'grant_issued', $3, $4::timestamptz, false,
+          $5::timestamptz)`,
+      [
+        RESTART_GRANT_CASE,
+        OLD_CONTROLLER,
+        `kernel-equivalence-grant:${RESTART_GRANT_ID}`,
+        grant.expires_at,
+        controllerLease,
+      ],
+    );
+    await waitForDatabaseTimeAfter(controllerLease);
+    const ids = [
+      NEW_CONTROLLER,
+      '39393939-3939-4939-8939-393939393939',
+    ];
+    const coordinator = createPostgresKernelEquivalenceCoordinator({
+      pool,
+      grantIssuer: protectedIssuer(),
+      grantExecutionAuthority: durableGrantAuthority(
+        '3a3a3a3a-3a3a-4a3a-8a3a-3a3a3a3a3a3a',
+      ),
+      plan,
+      socketPath: '/var/run/cecelia/kernel-equivalence.sock',
+      brainVersion: '1.268.28',
+      engineVersion: '19.7.1',
+      grantTtlSeconds: 60,
+      randomUUID: () => ids.shift() ?? randomUUID(),
+      now: Date.now,
+    });
+
+    await expect(coordinator.reconcileStartup()).resolves.toMatchObject({
+      settled: expect.any(Number),
+    });
+    const settled = await pool.query(
+      `SELECT events.state, events.late_effect_risk,
+              fences.execution_active
+         FROM kernel_equivalence_production_execution_events events
+         JOIN kernel_equivalence_production_execution_fences fences
+           ON fences.case_id = events.case_id
+        WHERE events.case_id = $1::uuid
+        ORDER BY events.generation DESC
+        LIMIT 1`,
+      [RESTART_GRANT_CASE],
+    );
+    expect(settled.rows[0]).toEqual({
+      state: 'blocked',
+      late_effect_risk: false,
+      execution_active: false,
+    });
+    await expect(runtimeAuthority.resolveActiveGrant({
+      grant_id: RESTART_GRANT_ID,
+      grant_sha256: grantSha256,
+      cell_id: CELL_ID,
+    })).rejects.toBeDefined();
+    let actualSeamEntries = 0;
+    await expect(runtimeAuthority.invokeWhileActive({
+      grant,
+      timeoutMs: 1_000,
+      invoke: async () => {
+        actualSeamEntries += 1;
+      },
+    })).rejects.toBeDefined();
+    expect(actualSeamEntries).toBe(0);
+  });
+
+  it('retains effect-possible restart revocation as unknown and fences later actual seams', async () => {
+    const { grant, grantSha256 } = await registerFixtureGrant({
+      caseId: RESTART_EFFECT_CASE,
+      grantId: RESTART_EFFECT_GRANT_ID,
+    });
+    const runtimeAuthority = durableGrantAuthority(
+      '3f3f3f3f-3f3f-4f3f-8f3f-3f3f3f3f3f3f',
+    );
+    const controllerLease = await insertClaim({
+      caseId: RESTART_EFFECT_CASE,
+      eventId: '41414141-4141-4141-8141-414141414141',
+      leaseSql: "clock_timestamp() + interval '1 second'",
+    });
+    await pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          grant_ref, grant_expires_at, late_effect_risk,
+          controller_lease_expires_at)
+       VALUES
+         ('42424242-4242-4242-8242-424242424242', $1::uuid, 2,
+          $2::uuid, 'grant_issued', $3, $4::timestamptz, false,
+          $5::timestamptz),
+         ('43434343-4343-4343-8343-434343434343', $1::uuid, 3,
+          $2::uuid, 'executing', $3, $4::timestamptz, false,
+          $5::timestamptz)`,
+      [
+        RESTART_EFFECT_CASE,
+        OLD_CONTROLLER,
+        `kernel-equivalence-grant:${RESTART_EFFECT_GRANT_ID}`,
+        grant.expires_at,
+        controllerLease,
+      ],
+    );
+    let actualSeamEntries = 0;
+    await runtimeAuthority.invokeWhileActive({
+      grant,
+      timeoutMs: 1_000,
+      invoke: async () => {
+        actualSeamEntries += 1;
+      },
+    });
+    expect(actualSeamEntries).toBe(1);
+    await waitForDatabaseTimeAfter(controllerLease);
+    const ids = [
+      NEW_CONTROLLER,
+      '45454545-4545-4545-8545-454545454545',
+    ];
+    const coordinator = createPostgresKernelEquivalenceCoordinator({
+      pool,
+      grantIssuer: protectedIssuer(),
+      grantExecutionAuthority: durableGrantAuthority(
+        '46464646-4646-4646-8646-464646464646',
+      ),
+      plan,
+      socketPath: '/var/run/cecelia/kernel-equivalence.sock',
+      brainVersion: '1.268.28',
+      engineVersion: '19.7.1',
+      grantTtlSeconds: 60,
+      randomUUID: () => ids.shift() ?? randomUUID(),
+      now: Date.now,
+    });
+
+    await coordinator.reconcileStartup();
+    const settled = await pool.query(
+      `SELECT events.state, events.late_effect_risk,
+              fences.execution_active
+         FROM kernel_equivalence_production_execution_events events
+         JOIN kernel_equivalence_production_execution_fences fences
+           ON fences.case_id = events.case_id
+        WHERE events.case_id = $1::uuid
+        ORDER BY events.generation DESC
+        LIMIT 1`,
+      [RESTART_EFFECT_CASE],
+    );
+    expect(settled.rows[0]).toEqual({
+      state: 'settlement_unknown',
+      late_effect_risk: true,
+      execution_active: false,
+    });
+    await expect(runtimeAuthority.resolveActiveGrant({
+      grant_id: RESTART_EFFECT_GRANT_ID,
+      grant_sha256: grantSha256,
+      cell_id: CELL_ID,
+    })).rejects.toBeDefined();
+    await expect(runtimeAuthority.invokeWhileActive({
+      grant,
+      timeoutMs: 1_000,
+      invoke: async () => {
+        actualSeamEntries += 1;
+      },
+    })).rejects.toBeDefined();
+    expect(actualSeamEntries).toBe(1);
+  });
+
+  it.each([
+    [
+      'grant_issued',
+      AMBIGUOUS_GRANT_CASE,
+      AMBIGUOUS_GRANT_ID,
+      3,
+    ],
+    [
+      'executing',
+      AMBIGUOUS_EXECUTING_CASE,
+      AMBIGUOUS_EXECUTING_GRANT_ID,
+      4,
+    ],
+  ])('reads back a committed %s insert after transport ambiguity and performs zero UDS work', async (
+    failedState,
+    caseId,
+    grantId,
+    terminalGeneration,
+  ) => {
+    let ambiguousThrown = false;
+    const ambiguousPool = {
+      query: async (text, values = []) => {
+        if (values[4] === failedState && !ambiguousThrown) {
+          ambiguousThrown = true;
+          await pool.query(text, values);
+          throw new Error(`${failedState} commit acknowledgement lost`);
+        }
+        return pool.query(text, values);
+      },
+    };
+    const grantIssuer = Object.freeze({
+      ...protectedIssuer(),
+      issueProtectedGrant: async () => {
+        const { grant, grantSha256 } = await registerFixtureGrant({
+          caseId,
+          grantId,
+        });
+        return Object.freeze({
+          grant_ref: `kernel-equivalence-grant:${grantId}`,
+          grant_id: grantId,
+          grant_sha256: grantSha256,
+          expires_at: grant.expires_at,
+        });
+      },
+    });
+    const coordinator = createPostgresKernelEquivalenceCoordinator({
+      pool: ambiguousPool,
+      grantIssuer,
+      grantExecutionAuthority: durableGrantAuthority(),
+      plan,
+      socketPath: '/var/run/cecelia/unused-ambiguous.sock',
+      brainVersion: '1.268.28',
+      engineVersion: '19.7.1',
+      grantTtlSeconds: 60,
+      now: Date.now,
+    });
+
+    await expect(coordinator.executeCase(caseId)).rejects.toThrow(
+      /commit acknowledgement lost/,
+    );
+    const events = await pool.query(
+      `SELECT generation, state
+         FROM kernel_equivalence_production_execution_events
+        WHERE case_id = $1::uuid
+        ORDER BY generation`,
+      [caseId],
+    );
+    expect(events.rows.at(-1)).toEqual({
+      generation: String(terminalGeneration),
+      state: 'blocked',
+    });
+    expect(events.rows.map(({ state }) => state)).toEqual(
+      failedState === 'grant_issued'
+        ? ['claimed', 'grant_issued', 'blocked']
+        : ['claimed', 'grant_issued', 'executing', 'blocked'],
+    );
+    const fence = await pool.query(
+      `SELECT execution_active
+         FROM kernel_equivalence_production_execution_fences
+        WHERE case_id = $1::uuid`,
+      [caseId],
+    );
+    expect(fence.rows[0].execution_active).toBe(false);
+    const grantEvents = await pool.query(
+      `SELECT state
+         FROM kernel_equivalence_grant_events
+        WHERE grant_id = $1::uuid
+        ORDER BY generation`,
+      [grantId],
+    );
+    expect(grantEvents.rows.map(({ state }) => state)).toEqual([
+      'published',
+    ]);
+  });
+
+  it('writes the revoke tombstone but keeps the fence active when ambiguous append readback fails', async () => {
+    let appendFailed = false;
+    const ambiguousPool = {
+      query: async (text, values = []) => {
+        if (/AS lineage_grant_ref/i.test(text)) {
+          throw new Error('fixture latest readback unavailable');
+        }
+        if (values[4] === 'grant_issued' && !appendFailed) {
+          appendFailed = true;
+          await pool.query(text, values);
+          throw new Error('fixture grant_issued acknowledgement lost');
+        }
+        return pool.query(text, values);
+      },
+    };
+    const grantIssuer = Object.freeze({
+      ...protectedIssuer(),
+      issueProtectedGrant: async () => {
+        const { grant, grantSha256 } = await registerFixtureGrant({
+          caseId: READBACK_FAILURE_CASE,
+          grantId: READBACK_FAILURE_GRANT_ID,
+        });
+        return Object.freeze({
+          grant_ref:
+            `kernel-equivalence-grant:${READBACK_FAILURE_GRANT_ID}`,
+          grant_id: READBACK_FAILURE_GRANT_ID,
+          grant_sha256: grantSha256,
+          expires_at: grant.expires_at,
+        });
+      },
+    });
+    const coordinator = createPostgresKernelEquivalenceCoordinator({
+      pool: ambiguousPool,
+      grantIssuer,
+      grantExecutionAuthority: durableGrantAuthority(),
+      plan,
+      socketPath: '/var/run/cecelia/unused-readback.sock',
+      brainVersion: '1.268.28',
+      engineVersion: '19.7.1',
+      grantTtlSeconds: 60,
+      now: Date.now,
+    });
+
+    await expect(
+      coordinator.executeCase(READBACK_FAILURE_CASE),
+    ).rejects.toThrow(/latest readback unavailable/);
+    const state = await pool.query(
+      `SELECT events.state, fences.execution_active
+         FROM kernel_equivalence_production_execution_events events
+         JOIN kernel_equivalence_production_execution_fences fences
+           ON fences.case_id = events.case_id
+        WHERE events.case_id = $1::uuid
+        ORDER BY events.generation DESC
+        LIMIT 1`,
+      [READBACK_FAILURE_CASE],
+    );
+    expect(state.rows[0]).toEqual({
+      state: 'grant_issued',
+      execution_active: true,
+    });
+    const durable = await pool.query(
+      `SELECT revocations.execution_disposition,
+              array_agg(events.state ORDER BY events.generation)
+                AS grant_states
+         FROM kernel_equivalence_grant_revocations revocations
+         JOIN kernel_equivalence_grant_events events
+           ON events.grant_id = revocations.grant_id
+        WHERE revocations.grant_id = $1::uuid
+        GROUP BY revocations.execution_disposition`,
+      [READBACK_FAILURE_GRANT_ID],
+    );
+    expect(durable.rows[0]).toEqual({
+      execution_disposition: 'safe_no_effect',
+      grant_states: ['published'],
+    });
+    await pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          grant_ref, grant_expires_at, code, late_effect_risk)
+       SELECT
+         '54545454-5454-4454-8454-545454545454',
+         latest.case_id,
+         latest.generation + 1,
+         latest.controller_instance_id,
+         'blocked',
+         latest.grant_ref,
+         latest.grant_expires_at,
+         'fixture_cleanup_after_readback_failure',
+         false
+       FROM kernel_equivalence_production_execution_events latest
+       WHERE latest.case_id = $1::uuid
+       ORDER BY latest.generation DESC
+       LIMIT 1`,
+      [READBACK_FAILURE_CASE],
+    );
+  });
+
   it('samples DB time after locking the production lease', async () => {
     const caseId = '01010101-0101-4101-8101-010101010101';
     await insertAuthority({
@@ -1536,7 +2043,9 @@ describe('production controller restart fencing on real PostgreSQL', () => {
       now: Date.now,
     });
 
-    await coordinator.reconcileStartup();
+    await expect(coordinator.reconcileStartup()).rejects.toMatchObject({
+      code: 'production_controller_reconcile_grant_unsafe',
+    });
 
     const events = await pool.query(
       `SELECT state, grant_ref
@@ -1555,52 +2064,14 @@ describe('production controller restart fencing on real PostgreSQL', () => {
         state: 'executing',
         grant_ref: `kernel-equivalence-grant:${GRANT_A}`,
       },
-      {
-        state: 'reconciling',
-        grant_ref: null,
-      },
-      {
-        state: 'settlement_unknown',
-        grant_ref: `kernel-equivalence-grant:${GRANT_A}`,
-      },
     ]);
-    await pool.query(
-      `UPDATE kernel_equivalence_production_case_leases
-          SET state = 'cancelling'
+    const fence = await pool.query(
+      `SELECT execution_active
+         FROM kernel_equivalence_production_execution_fences
         WHERE case_id = $1::uuid`,
       [RECONCILE_CASE],
     );
-    const matchingBundle = 'd'.repeat(64);
-    await insertBundle({
-      bundleHash: matchingBundle,
-      caseId: RECONCILE_CASE,
-      grantId: GRANT_A,
-    });
-    const promotion = createPostgresKernelEquivalenceCoordinator({
-      pool,
-      grantIssuer: protectedIssuer(),
-      grantExecutionAuthority: durableGrantAuthority(),
-      plan,
-      socketPath: '/var/run/cecelia/kernel-equivalence.sock',
-      brainVersion: '1.268.28',
-      engineVersion: '19.7.1',
-      grantTtlSeconds: 60,
-      now: Date.now,
-    });
-
-    await promotion.reconcileStartup();
-    const promoted = await pool.query(
-      `SELECT state, bundle_hash
-         FROM kernel_equivalence_production_execution_events
-        WHERE case_id = $1::uuid
-        ORDER BY generation DESC
-        LIMIT 1`,
-      [RECONCILE_CASE],
-    );
-    expect(promoted.rows[0]).toEqual({
-      state: 'succeeded',
-      bundle_hash: matchingBundle,
-    });
+    expect(fence.rows[0].execution_active).toBe(true);
   });
 
   it('executes an authenticated HTTP case through DB authority and a real Unix socket', async () => {
@@ -1772,7 +2243,7 @@ describe('production controller restart fencing on real PostgreSQL', () => {
                 lockClient.release();
                 resolve();
               }
-            }, 2_500);
+            }, 4_000);
           });
         }
         await insertBundle({
@@ -1943,5 +2414,5 @@ describe('production controller restart fencing on real PostgreSQL', () => {
       await listener?.close();
       rmSync(root, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, 20_000);
 });

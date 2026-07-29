@@ -536,7 +536,7 @@ describe('production Kernel equivalence coordinator', () => {
     );
   });
 
-  it('takes over an expired controller lease explicitly before retaining unknown settlement', async () => {
+  it('durably revokes an unexpired published grant before restart settlement', async () => {
     const statements = [];
     const pool = {
       query: async (text, values = []) => {
@@ -551,7 +551,12 @@ describe('production Kernel equivalence coordinator', () => {
                 '88888888-8888-4888-8888-888888888888',
               grant_ref:
                 'kernel-equivalence-grant:55555555-5555-4555-8555-555555555555',
+              grant_id: GRANT_ID,
+              grant_sha256: GRANT_SHA256,
               grant_expires_at: '2026-07-29T00:05:00.000Z',
+              grant_authority_expires_at:
+                '2026-07-29T00:05:00.000Z',
+              grant_unexpired: true,
               lease_expired: true,
               authority_observed_at: '2026-07-29T00:00:00.000Z',
               case_expires_at: '2026-07-29T00:10:00.000Z',
@@ -574,7 +579,103 @@ describe('production Kernel equivalence coordinator', () => {
       '33333333-3333-4333-8333-333333333333',
       '44444444-4444-4444-8444-444444444444',
     ];
-    const value = coordinator(pool, grantIssuer(), () => ids.shift());
+    const revokeGrant = vi.fn(async () => ({
+      grant_ref: GRANT_REF,
+      revoked: true,
+      safe_no_effect: true,
+      effect_possible: false,
+      disposition: 'safe_no_effect',
+    }));
+    const value = coordinator(
+      pool,
+      grantIssuer(),
+      () => ids.shift(),
+      60,
+      durableGrantAuthority(revokeGrant),
+    );
+
+    await expect(value.reconcileStartup()).resolves.toEqual({
+      inspected: 1,
+      settled: 1,
+      retained_unknown: 0,
+    });
+    expect(statements[0].text).toMatch(
+      /JOIN kernel_equivalence_grant_authorities/i,
+    );
+    expect(revokeGrant).toHaveBeenCalledWith({
+      grant_id: GRANT_ID,
+      grant_sha256: GRANT_SHA256,
+      reason: 'startup_reconciliation',
+      timeoutMs: 2_000,
+    });
+    expect(statements.slice(1).map(({ values }) => values[4])).toEqual([
+      'blocked',
+    ]);
+    expect(statements[1].values[3]).toBe(
+      '11111111-1111-4111-8111-111111111111',
+    );
+    expect(statements[1].values[5]).toBe(
+      'kernel-equivalence-grant:55555555-5555-4555-8555-555555555555',
+    );
+    expect(statements[1].values[8]).toBe('startup_reconciliation');
+    expect(statements[1].values[9]).toBe(false);
+  });
+
+  it('retains effect-possible restart revocation as settlement unknown', async () => {
+    const statements = [];
+    const pool = {
+      query: async (text, values = []) => {
+        statements.push({ text, values });
+        if (statements.length === 1) {
+          return {
+            rows: [{
+              case_id: '22222222-2222-4222-8222-222222222222',
+              generation: '3',
+              state: 'executing',
+              controller_instance_id:
+                '88888888-8888-4888-8888-888888888888',
+              grant_ref: GRANT_REF,
+              grant_id: GRANT_ID,
+              grant_sha256: GRANT_SHA256,
+              grant_expires_at: '2026-07-29T00:05:00.000Z',
+              grant_authority_expires_at:
+                '2026-07-29T00:05:00.000Z',
+              grant_unexpired: true,
+              lease_expired: true,
+              authority_observed_at: '2026-07-29T00:00:00.000Z',
+              case_expires_at: '2026-07-29T00:10:00.000Z',
+              production_lease_expires_at:
+                '2026-07-29T00:00:30.000Z',
+              production_lease_prepared: true,
+              bundle_hash: null,
+            }],
+            rowCount: 1,
+          };
+        }
+        return {
+          rows: [{ generation: values[2], state: values[4] }],
+          rowCount: 1,
+        };
+      },
+    };
+    const revokeGrant = vi.fn(async () => ({
+      grant_ref: GRANT_REF,
+      revoked: true,
+      safe_no_effect: false,
+      effect_possible: true,
+      disposition: 'effect_possible',
+    }));
+    const ids = [
+      '11111111-1111-4111-8111-111111111111',
+      '33333333-3333-4333-8333-333333333333',
+    ];
+    const value = coordinator(
+      pool,
+      grantIssuer(),
+      () => ids.shift(),
+      60,
+      durableGrantAuthority(revokeGrant),
+    );
 
     await expect(value.reconcileStartup()).resolves.toEqual({
       inspected: 1,
@@ -582,22 +683,77 @@ describe('production Kernel equivalence coordinator', () => {
       retained_unknown: 1,
     });
     expect(statements.slice(1).map(({ values }) => values[4])).toEqual([
-      'reconciling',
       'settlement_unknown',
     ]);
-    expect(statements[1].values[3]).toBe(
-      '11111111-1111-4111-8111-111111111111',
+    expect(statements[1].values[8]).toBe('grant_revoke_unconfirmed');
+    expect(statements[1].values[9]).toBe(true);
+  });
+
+  it.each([
+    ['missing durable identity', vi.fn(async () => {})],
+    ['revocation timeout', vi.fn(async () => {
+      throw new Error('lock timeout');
+    })],
+  ])('fails startup closed for %s without releasing the fence', async (
+    label,
+    revokeGrant,
+  ) => {
+    const statements = [];
+    const row = {
+      case_id: '22222222-2222-4222-8222-222222222222',
+      generation: '3',
+      state: 'executing',
+      controller_instance_id:
+        '88888888-8888-4888-8888-888888888888',
+      grant_ref: GRANT_REF,
+      grant_id: label === 'missing durable identity' ? null : GRANT_ID,
+      grant_sha256:
+        label === 'missing durable identity' ? null : GRANT_SHA256,
+      grant_expires_at: '2026-07-29T00:05:00.000Z',
+      grant_authority_expires_at:
+        label === 'missing durable identity'
+          ? null
+          : '2026-07-29T00:05:00.000Z',
+      grant_unexpired: label !== 'missing durable identity',
+      lease_expired: true,
+      authority_observed_at: '2026-07-29T00:00:00.000Z',
+      case_expires_at: '2026-07-29T00:10:00.000Z',
+      production_lease_expires_at: '2026-07-29T00:00:30.000Z',
+      production_lease_prepared: true,
+      bundle_hash: null,
+    };
+    const pool = {
+      query: async (text, values = []) => {
+        statements.push({ text, values });
+        return statements.length === 1
+          ? { rows: [row], rowCount: 1 }
+          : {
+              rows: [{ generation: values[2], state: values[4] }],
+              rowCount: 1,
+            };
+      },
+    };
+    const value = coordinator(
+      pool,
+      grantIssuer(),
+      undefined,
+      60,
+      durableGrantAuthority(revokeGrant),
     );
-    expect(statements[2].values[3]).toBe(
-      '11111111-1111-4111-8111-111111111111',
-    );
-    expect(statements[1].values[5]).toBeNull();
-    expect(statements[2].values[5]).toBe(
-      'kernel-equivalence-grant:55555555-5555-4555-8555-555555555555',
+
+    await expect(value.reconcileStartup()).rejects.toMatchObject({
+      code: 'production_controller_reconcile_grant_unsafe',
+    });
+    expect(statements.filter(({ text }) => (
+      /INSERT INTO kernel_equivalence_production_execution_events/i
+        .test(text)
+    ))).toHaveLength(0);
+    expect(revokeGrant).toHaveBeenCalledTimes(
+      label === 'missing durable identity' ? 0 : 1,
     );
   });
 
-  it('caps restart takeover to short production authority', async () => {
+  it('settles a short restart window without creating a takeover lease', async () => {
     const statements = [];
     const pool = {
       query: async (text, values = []) => {
@@ -612,7 +768,12 @@ describe('production Kernel equivalence coordinator', () => {
                 '88888888-8888-4888-8888-888888888888',
               grant_ref:
                 'kernel-equivalence-grant:55555555-5555-4555-8555-555555555555',
+              grant_id: GRANT_ID,
+              grant_sha256: GRANT_SHA256,
               grant_expires_at: '2026-07-29T00:05:00.000Z',
+              grant_authority_expires_at:
+                '2026-07-29T00:05:00.000Z',
+              grant_unexpired: true,
               lease_expired: true,
               authority_observed_at: '2026-07-29T00:00:00.000Z',
               case_expires_at: '2026-07-29T00:10:00.000Z',
@@ -652,11 +813,10 @@ describe('production Kernel equivalence coordinator', () => {
       /clock_timestamp\(\) AS authority_observed_at/i,
     );
     expect(statements.slice(1).map(({ values }) => values[4])).toEqual([
-      'reconciling',
       'settlement_unknown',
     ]);
     expect(statements[1].values[10]).toBe(
-      '2026-07-29T00:00:01.500Z',
+      null,
     );
   });
 
@@ -1067,6 +1227,24 @@ describe('production Kernel equivalence coordinator', () => {
           if (/WITH authoritative AS/i.test(text)) {
             return { rows: [authorityFixture()], rowCount: 1 };
           }
+          if (/AS lineage_grant_ref/i.test(text)) {
+            return {
+              rows: [failedState === 'grant_issued'
+                ? {
+                    generation: '1',
+                    state: 'claimed',
+                    grant_ref: null,
+                    lineage_grant_ref: null,
+                  }
+                : {
+                    generation: '2',
+                    state: 'grant_issued',
+                    grant_ref: GRANT_REF,
+                    lineage_grant_ref: GRANT_REF,
+                  }],
+              rowCount: 1,
+            };
+          }
           if (values[4] === failedState && !failed) {
             failed = true;
             throw new Error(`${failedState} append failed`);
@@ -1119,6 +1297,141 @@ describe('production Kernel equivalence coordinator', () => {
     },
   );
 
+  it.each(['grant_issued', 'executing'])(
+    'uses readback generation after commit-ambiguous %s append and performs zero UDS work',
+    async (failedState) => {
+      const statements = [];
+      let ambiguousThrown = false;
+      const pool = {
+        query: async (text, values = []) => {
+          statements.push({ text, values });
+          if (/WITH authoritative AS/i.test(text)) {
+            return { rows: [authorityFixture()], rowCount: 1 };
+          }
+          if (/AS lineage_grant_ref/i.test(text)) {
+            return {
+              rows: [{
+                generation: failedState === 'grant_issued' ? '2' : '3',
+                state: failedState,
+                grant_ref: GRANT_REF,
+                lineage_grant_ref: GRANT_REF,
+              }],
+              rowCount: 1,
+            };
+          }
+          if (values[4] === failedState && !ambiguousThrown) {
+            ambiguousThrown = true;
+            throw new Error(`${failedState} commit outcome unknown`);
+          }
+          return {
+            rows: [{ generation: values[2], state: values[4] }],
+            rowCount: 1,
+          };
+        },
+      };
+      const issuer = Object.freeze({
+        ...grantIssuer(),
+        issueProtectedGrant: vi.fn(async () => ({
+          grant_ref: GRANT_REF,
+          grant_id: GRANT_ID,
+          grant_sha256: GRANT_SHA256,
+          expires_at: '2026-07-29T00:00:20.000Z',
+        })),
+      });
+      const value = coordinator(
+        pool,
+        issuer,
+        undefined,
+        60,
+        durableGrantAuthority(vi.fn(async () => ({
+          grant_ref: GRANT_REF,
+          revoked: true,
+          safe_no_effect: true,
+          effect_possible: false,
+          disposition: 'safe_no_effect',
+        }))),
+      );
+
+      await expect(value.executeCase(
+        authorityFixture().case_id,
+      )).rejects.toBeDefined();
+      const inserts = statements.filter(({ text }) => (
+        /INSERT INTO kernel_equivalence_production_execution_events/i
+          .test(text)
+      ));
+      expect(inserts.at(-1).values[4]).toBe('blocked');
+      expect(inserts.at(-1).values[2]).toBe(
+        failedState === 'grant_issued' ? 3 : 4,
+      );
+      expect(statements.some(({ text }) => (
+        /AS lineage_grant_ref/i.test(text)
+      ))).toBe(true);
+    },
+  );
+
+  it.each(['grant_issued', 'executing'])(
+    'attempts durable revoke before failed %s generation readback and leaves the fence active',
+    async (failedState) => {
+      const statements = [];
+      let appendFailed = false;
+      const pool = {
+        query: async (text, values = []) => {
+          statements.push({ text, values });
+          if (/WITH authoritative AS/i.test(text)) {
+            return { rows: [authorityFixture()], rowCount: 1 };
+          }
+          if (/AS lineage_grant_ref/i.test(text)) {
+            throw new Error('latest event readback unavailable');
+          }
+          if (values[4] === failedState && !appendFailed) {
+            appendFailed = true;
+            throw new Error(`${failedState} append outcome unknown`);
+          }
+          return {
+            rows: [{ generation: values[2], state: values[4] }],
+            rowCount: 1,
+          };
+        },
+      };
+      const issuer = Object.freeze({
+        ...grantIssuer(),
+        issueProtectedGrant: vi.fn(async () => ({
+          grant_ref: GRANT_REF,
+          grant_id: GRANT_ID,
+          grant_sha256: GRANT_SHA256,
+          expires_at: '2026-07-29T00:00:20.000Z',
+        })),
+      });
+      const revokeGrant = vi.fn(async () => ({
+        grant_ref: GRANT_REF,
+        revoked: true,
+        safe_no_effect: true,
+        effect_possible: false,
+        disposition: 'safe_no_effect',
+      }));
+      const value = coordinator(
+        pool,
+        issuer,
+        undefined,
+        60,
+        durableGrantAuthority(revokeGrant),
+      );
+
+      await expect(value.executeCase(
+        authorityFixture().case_id,
+      )).rejects.toThrow(/latest event readback unavailable/);
+      expect(revokeGrant).toHaveBeenCalledOnce();
+      expect(statements.filter(({ text }) => (
+        /INSERT INTO kernel_equivalence_production_execution_events/i
+          .test(text)
+      )).map(({ values }) => values[4])).toEqual(
+        failedState === 'grant_issued'
+          ? ['claimed', 'grant_issued']
+          : ['claimed', 'grant_issued', 'executing'],
+      );
+    },
+  );
+
   it('treats issuer publication uncertainty as unknown without fabricating revoke identity', async () => {
     const statements = [];
     const pool = {
@@ -1159,5 +1472,65 @@ describe('production Kernel equivalence coordinator', () => {
     expect(statements.at(-1).values[4]).toBe('settlement_unknown');
     expect(statements.at(-1).values[5]).toBeNull();
     expect(statements.at(-1).values[9]).toBe(true);
+  });
+
+  it('durably revokes an exact publication-uncertain identity before settling safe', async () => {
+    const statements = [];
+    const pool = {
+      query: async (text, values = []) => {
+        statements.push({ text, values });
+        if (/WITH authoritative AS/i.test(text)) {
+          return { rows: [authorityFixture()], rowCount: 1 };
+        }
+        return {
+          rows: [{ generation: values[2], state: values[4] }],
+          rowCount: 1,
+        };
+      },
+    };
+    const grantIdentity = Object.freeze({
+      grant_id: GRANT_ID,
+      grant_ref: GRANT_REF,
+      grant_sha256: GRANT_SHA256,
+      expires_at: '2026-07-29T00:00:20.000Z',
+    });
+    const issuer = Object.freeze({
+      ...grantIssuer(),
+      issueProtectedGrant: vi.fn(async () => {
+        throw Object.assign(new Error('publication uncertain'), {
+          code: 'protected_grant_publication_uncertain',
+          grant_identity: grantIdentity,
+        });
+      }),
+    });
+    const revokeGrant = vi.fn(async () => ({
+      grant_ref: GRANT_REF,
+      revoked: true,
+      safe_no_effect: true,
+      effect_possible: false,
+      disposition: 'safe_no_effect',
+    }));
+    const value = coordinator(
+      pool,
+      issuer,
+      undefined,
+      60,
+      durableGrantAuthority(revokeGrant),
+    );
+
+    await expect(value.executeCase(
+      authorityFixture().case_id,
+    )).rejects.toMatchObject({
+      code: 'protected_grant_publication_uncertain',
+    });
+    expect(revokeGrant).toHaveBeenCalledWith({
+      grant_id: GRANT_ID,
+      grant_sha256: GRANT_SHA256,
+      reason: 'protected_grant_publication_uncertain',
+      timeoutMs: 2_000,
+    });
+    expect(statements.at(-1).values[4]).toBe('blocked');
+    expect(statements.at(-1).values[5]).toBeNull();
+    expect(statements.at(-1).values[9]).toBe(false);
   });
 });

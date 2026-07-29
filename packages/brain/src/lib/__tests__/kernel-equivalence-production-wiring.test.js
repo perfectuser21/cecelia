@@ -589,6 +589,26 @@ describe('kernel equivalence production wiring', () => {
     );
   });
 
+  it('assigns separate durable actor identities to controller and runtime roles', () => {
+    const source = readFileSync(
+      new URL('../kernel-equivalence-production-wiring.js', import.meta.url),
+      'utf8',
+    );
+
+    expect(source).toMatch(
+      /controllerGrantExecutionAuthority[\s\S]*runtimeGrantExecutionAuthority/,
+    );
+    expect(source.match(
+      /createPostgresGrantExecutionAuthority\(\{/g,
+    )).toHaveLength(2);
+    expect(source).toMatch(
+      /createProtectedGrantFileAuthority\(\{[\s\S]*grantExecutionAuthority:\s*runtimeGrantExecutionAuthority/,
+    );
+    expect(source).toMatch(
+      /createProtectedGrantFileIssuer\(\{[\s\S]*grantExecutionAuthority:\s*controllerGrantExecutionAuthority/,
+    );
+  });
+
   it('constructs the controller with the committed issuer contract', () => {
     const value = fixture();
     const database = databasePort();

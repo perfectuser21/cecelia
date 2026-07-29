@@ -169,6 +169,31 @@ function exactSafeRevocation(result, issued) {
   );
 }
 
+function exactRevocationDisposition(result, issued) {
+  const snapshot = dataSnapshot(result);
+  const values = snapshot?.values ?? {};
+  if (
+    snapshot?.keys.length !== REVOCATION_RESULT_FIELDS.length
+    || snapshot.keys.some(
+      (field, index) => field !== REVOCATION_RESULT_FIELDS[index],
+    )
+    || values.grant_ref !== issued.grant_ref
+    || values.revoked !== true
+    || typeof values.safe_no_effect !== 'boolean'
+    || typeof values.effect_possible !== 'boolean'
+    || !['safe_no_effect', 'effect_possible'].includes(
+      values.disposition,
+    )
+    || values.safe_no_effect
+      !== (values.disposition === 'safe_no_effect')
+    || values.effect_possible
+      !== (values.disposition === 'effect_possible')
+  ) {
+    return null;
+  }
+  return values.disposition;
+}
+
 function pinPlan(plan) {
   let snapshot;
   try {
@@ -502,16 +527,71 @@ async function appendRequiredEvent(pool, event) {
   }
 }
 
-async function settleAfterPublishedGrantFailure({
-  pool,
+async function readLatestControllerEvent(pool, caseId) {
+  const result = await pool.query(
+    `SELECT
+       events.generation,
+       events.state,
+       events.grant_ref,
+       (
+         SELECT lineage.grant_ref
+           FROM kernel_equivalence_production_execution_events lineage
+          WHERE lineage.case_id = events.case_id
+            AND lineage.grant_ref IS NOT NULL
+          ORDER BY lineage.generation DESC
+          LIMIT 1
+       ) AS lineage_grant_ref
+     FROM kernel_equivalence_production_execution_events events
+     WHERE events.case_id = $1::uuid
+     ORDER BY events.generation DESC
+     LIMIT 1`,
+    [caseId],
+  );
+  const row = result?.rowCount === 1 ? result.rows?.[0] : null;
+  const snapshot = dataSnapshot(row);
+  const values = snapshot?.values ?? {};
+  const generation = Number(values.generation);
+  if (
+    snapshot?.keys.join(',') !== [
+      'generation',
+      'grant_ref',
+      'lineage_grant_ref',
+      'state',
+    ].join(',')
+    || !Number.isSafeInteger(generation)
+    || generation < 1
+    || ![
+      'claimed',
+      'grant_issued',
+      'executing',
+      'reconciling',
+      'succeeded',
+      'blocked',
+      'settlement_unknown',
+    ].includes(values.state)
+    || (
+      values.grant_ref != null
+      && !GRANT_REF_PATTERN.test(values.grant_ref)
+    )
+    || (
+      values.lineage_grant_ref != null
+      && !GRANT_REF_PATTERN.test(values.lineage_grant_ref)
+    )
+  ) {
+    fail('production_controller_event_readback_invalid');
+  }
+  return Object.freeze({
+    generation,
+    grant_ref: values.grant_ref,
+    lineage_grant_ref: values.lineage_grant_ref,
+    state: values.state,
+  });
+}
+
+async function revokePublishedGrant({
   grantExecutionAuthority,
   grantIssuer,
-  randomUUID,
-  caseId,
-  generation,
-  controllerInstanceId,
   issued,
-  lineageRecorded,
   reason,
 }) {
   let safeNoEffect = false;
@@ -540,28 +620,143 @@ async function settleAfterPublishedGrantFailure({
       // Transport cleanup cannot establish or erase durable DB safety.
     }
   }
+  return safeNoEffect;
+}
+
+async function appendPublishedGrantSettlement({
+  pool,
+  randomUUID,
+  caseId,
+  generation,
+  controllerInstanceId,
+  issued,
+  lineageRecorded,
+  reason,
+  safeNoEffect,
+  forceUnknown = false,
+}) {
+  const terminalSafe = safeNoEffect && !forceUnknown;
   await appendRequiredEvent(pool, {
     randomUUID,
     caseId,
     generation,
     controllerInstanceId,
-    state: safeNoEffect ? 'blocked' : 'settlement_unknown',
+    state: terminalSafe ? 'blocked' : 'settlement_unknown',
     grantRef: (
-      safeNoEffect && !lineageRecorded
+      terminalSafe && !lineageRecorded
         ? null
         : issued.grant_ref
     ),
     grantExpiresAt: issued.expires_at,
-    code: safeNoEffect
+    code: terminalSafe
       ? reason
       : (
           issued.grant_ref
             ? 'grant_revoke_unconfirmed'
             : `${reason}_unresolved`
         ),
-    lateEffectRisk: !safeNoEffect,
+    lateEffectRisk: !terminalSafe,
   });
-  return safeNoEffect;
+  return terminalSafe;
+}
+
+async function settleAfterPublishedGrantFailure({
+  grantExecutionAuthority,
+  grantIssuer,
+  issued,
+  reason,
+  ...settlement
+}) {
+  const safeNoEffect = await revokePublishedGrant({
+    grantExecutionAuthority,
+    grantIssuer,
+    issued,
+    reason,
+  });
+  return appendPublishedGrantSettlement({
+    ...settlement,
+    issued,
+    reason,
+    safeNoEffect,
+  });
+}
+
+async function settleAfterAmbiguousActiveAppend({
+  pool,
+  grantExecutionAuthority,
+  grantIssuer,
+  randomUUID,
+  caseId,
+  controllerInstanceId,
+  attemptedGeneration,
+  attemptedState,
+  previousState,
+  previousGrantRef,
+  issued,
+  reason,
+}) {
+  const safeNoEffect = await revokePublishedGrant({
+    grantExecutionAuthority,
+    grantIssuer,
+    issued,
+    reason,
+  });
+  const latest = await readLatestControllerEvent(
+    pool,
+    caseId,
+  );
+  const attemptedCommitted = (
+    latest.generation === attemptedGeneration
+    && latest.state === attemptedState
+    && latest.grant_ref === issued.grant_ref
+    && latest.lineage_grant_ref === issued.grant_ref
+  );
+  const attemptedNotCommitted = (
+    latest.generation === attemptedGeneration - 1
+    && latest.state === previousState
+    && latest.grant_ref === previousGrantRef
+    && latest.lineage_grant_ref === previousGrantRef
+  );
+  if (!attemptedCommitted && !attemptedNotCommitted) {
+    if (
+      !['claimed', 'grant_issued', 'executing', 'reconciling'].includes(
+        latest.state,
+      )
+      || (
+        latest.lineage_grant_ref != null
+        && latest.lineage_grant_ref !== issued.grant_ref
+      )
+    ) {
+      fail('production_controller_event_readback_contradictory');
+    }
+    return appendPublishedGrantSettlement({
+      pool,
+      randomUUID,
+      caseId,
+      generation: latest.generation + 1,
+      controllerInstanceId,
+      issued,
+      lineageRecorded: latest.lineage_grant_ref != null,
+      reason,
+      safeNoEffect,
+      forceUnknown: true,
+    });
+  }
+  return appendPublishedGrantSettlement({
+    pool,
+    randomUUID,
+    caseId,
+    generation: attemptedCommitted
+      ? latest.generation + 1
+      : attemptedGeneration,
+    controllerInstanceId,
+    issued,
+    lineageRecorded: attemptedCommitted
+      ? true
+      : previousGrantRef != null,
+    reason,
+    safeNoEffect,
+  });
 }
 
 async function confirmBundle(
@@ -798,6 +993,28 @@ export function createPostgresKernelEquivalenceCoordinator({
       const publicationUncertain = (
         error?.code === 'protected_grant_publication_uncertain'
       );
+      const uncertainIdentity = publicationUncertain
+        ? inspectIssuedGrant(error?.grant_identity)
+        : null;
+      if (
+        uncertainIdentity?.fields_exact
+        && uncertainIdentity.identity_exact
+        && uncertainIdentity.expires_at_ms != null
+      ) {
+        await settleAfterPublishedGrantFailure({
+          pool,
+          grantExecutionAuthority,
+          grantIssuer,
+          randomUUID,
+          caseId,
+          generation: 2,
+          controllerInstanceId,
+          issued: uncertainIdentity,
+          lineageRecorded: false,
+          reason: error.code,
+        });
+        throw error;
+      }
       await appendRequiredEvent(pool, {
         randomUUID,
         caseId,
@@ -887,16 +1104,18 @@ export function createPostgresKernelEquivalenceCoordinator({
         controllerLeaseExpiresAt,
       });
     } catch (error) {
-      await settleAfterPublishedGrantFailure({
+      await settleAfterAmbiguousActiveAppend({
         pool,
         grantExecutionAuthority,
         grantIssuer,
         randomUUID,
         caseId,
-        generation: 2,
+        attemptedGeneration: 2,
+        attemptedState: 'grant_issued',
+        previousState: 'claimed',
+        previousGrantRef: null,
         controllerInstanceId,
         issued,
-        lineageRecorded: false,
         reason: 'grant_issued_append_failed',
       });
       throw error;
@@ -953,16 +1172,18 @@ export function createPostgresKernelEquivalenceCoordinator({
         controllerLeaseExpiresAt,
       });
     } catch (error) {
-      await settleAfterPublishedGrantFailure({
+      await settleAfterAmbiguousActiveAppend({
         pool,
         grantExecutionAuthority,
         grantIssuer,
         randomUUID,
         caseId,
-        generation: 3,
+        attemptedGeneration: 3,
+        attemptedState: 'executing',
+        previousState: 'grant_issued',
+        previousGrantRef: issued.grant_ref,
         controllerInstanceId,
         issued,
-        lineageRecorded: true,
         reason: 'executing_append_failed',
       });
       throw error;
@@ -1145,6 +1366,13 @@ export function createPostgresKernelEquivalenceCoordinator({
          clock_timestamp() AS authority_observed_at,
          latest.controller_lease_expires_at <= clock_timestamp()
            AS lease_expired,
+         grant_authorities.grant_id,
+         grant_authorities.grant_digest AS grant_sha256,
+         grant_authorities.expires_at AS grant_authority_expires_at,
+         grant_authorities.expires_at > clock_timestamp()
+           AS grant_unexpired,
+         grant_revocations.execution_disposition
+           AS revocation_disposition,
          bundles.bundle_hash
        FROM latest
        LEFT JOIN LATERAL (
@@ -1166,13 +1394,22 @@ export function createPostgresKernelEquivalenceCoordinator({
          ORDER BY bundles.committed_at DESC
          LIMIT 1
        ) bundles ON true
+       LEFT JOIN kernel_equivalence_grant_authorities
+              grant_authorities
+         ON latest.grant_ref =
+              'kernel-equivalence-grant:'
+                || grant_authorities.grant_id::text
+        AND grant_authorities.case_id = latest.case_id
+       LEFT JOIN kernel_equivalence_grant_revocations
+              grant_revocations
+         ON grant_revocations.grant_id = grant_authorities.grant_id
        WHERE latest.state IN (
          'claimed', 'grant_issued', 'executing', 'reconciling',
          'settlement_unknown'
        )
          AND ($1::uuid IS NULL OR latest.case_id > $1::uuid)
-       ORDER BY latest.case_id
-       LIMIT 100`,
+      ORDER BY latest.case_id
+      LIMIT 100`,
         [cursor],
       );
       const rows = Array.isArray(result?.rows) ? result.rows : [];
@@ -1186,6 +1423,130 @@ export function createPostgresKernelEquivalenceCoordinator({
           || generation < 1
         ) {
           fail('production_controller_reconcile_readback_invalid');
+        }
+        const publishedState = [
+          'grant_issued',
+          'executing',
+          'reconciling',
+          'settlement_unknown',
+        ].includes(row.state);
+        const lineageExpiresAt = timestamp(row.grant_expires_at);
+        const authorityObservedAt = timestamp(
+          row.authority_observed_at,
+        );
+        const publishedGrantUnexpired = (
+          publishedState
+          && GRANT_REF_PATTERN.test(row.grant_ref ?? '')
+          && lineageExpiresAt != null
+          && authorityObservedAt != null
+          && lineageExpiresAt > authorityObservedAt
+        );
+        const legacyUnknownWithoutAuthority = (
+          row.state === 'settlement_unknown'
+          && row.grant_id == null
+        );
+        if (
+          publishedGrantUnexpired
+          && legacyUnknownWithoutAuthority
+          && !HASH_PATTERN.test(row.bundle_hash ?? '')
+        ) {
+          // A legacy unknown event may retain a syntactically valid
+          // reference without a corresponding durable authority row.
+          // There is no DB grant that can remain active or be revoked.
+          retainedUnknown += 1;
+          continue;
+        }
+        if (
+          publishedGrantUnexpired
+          && !legacyUnknownWithoutAuthority
+        ) {
+          if (
+            row.state !== 'settlement_unknown'
+            && row.controller_instance_id !== controllerInstanceId
+            && row.lease_expired !== true
+          ) {
+            fail('production_controller_reconcile_grant_unsafe');
+          }
+          if (
+            row.state !== 'settlement_unknown'
+            && row.controller_instance_id === controllerInstanceId
+            && row.lease_expired !== true
+          ) {
+            retainedUnknown += 1;
+            continue;
+          }
+          const issued = inspectIssuedGrant({
+            grant_ref: row.grant_ref,
+            grant_id: row.grant_id,
+            grant_sha256: row.grant_sha256,
+            expires_at: row.grant_expires_at instanceof Date
+              ? row.grant_expires_at.toISOString()
+              : row.grant_expires_at,
+          });
+          if (
+            !issued.fields_exact
+            || !issued.identity_exact
+            || issued.expires_at_ms == null
+            || timestamp(row.grant_authority_expires_at)
+              !== issued.expires_at_ms
+            || row.grant_unexpired !== true
+          ) {
+            fail('production_controller_reconcile_grant_unsafe');
+          }
+          let disposition = row.revocation_disposition;
+          if (
+            disposition !== 'safe_no_effect'
+            && disposition !== 'effect_possible'
+          ) {
+            let revocation;
+            try {
+              revocation = await grantExecutionAuthority.revokeGrant({
+                grant_id: issued.grant_id,
+                grant_sha256: issued.grant_sha256,
+                reason: 'startup_reconciliation',
+                timeoutMs: GRANT_SETTLEMENT_TIMEOUT_MS,
+              });
+            } catch {
+              fail('production_controller_reconcile_grant_unsafe');
+            }
+            disposition = exactRevocationDisposition(
+              revocation,
+              issued,
+            );
+          }
+          if (
+            disposition !== 'safe_no_effect'
+            && disposition !== 'effect_possible'
+          ) {
+            fail('production_controller_reconcile_grant_unsafe');
+          }
+          if (row.state === 'settlement_unknown') {
+            retainedUnknown += 1;
+            continue;
+          }
+          const safeNoEffect = disposition === 'safe_no_effect';
+          const appended = await appendEvent(pool, {
+            randomUUID,
+            caseId: row.case_id,
+            generation: generation + 1,
+            controllerInstanceId,
+            state: safeNoEffect ? 'blocked' : 'settlement_unknown',
+            grantRef: issued.grant_ref,
+            grantExpiresAt: issued.expires_at,
+            code: safeNoEffect
+              ? 'startup_reconciliation'
+              : 'grant_revoke_unconfirmed',
+            lateEffectRisk: !safeNoEffect,
+          });
+          if (!appended) {
+            fail('production_controller_reconcile_grant_unsafe');
+          }
+          if (safeNoEffect) {
+            settled += 1;
+          } else {
+            retainedUnknown += 1;
+          }
+          continue;
         }
         if (HASH_PATTERN.test(row.bundle_hash ?? '')) {
           const appended = await appendEvent(pool, {

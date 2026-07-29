@@ -488,16 +488,40 @@ describe('protected execution grant issuer', () => {
     }
   });
 
-  it('retains an unusable orphan for maintenance to avoid deleting a replacement inode', async () => {
+  it('attaches safe identity when mark commit outcome is uncertain and retains the orphan', async () => {
     const value = fixture();
     value.grantExecutionAuthority.markGrantPublished
-      .mockRejectedValueOnce(new Error('fixture DB unavailable'));
+      .mockRejectedValueOnce(Object.assign(
+        new Error('fixture COMMIT acknowledgement lost'),
+        { code: 'grant_transaction_outcome_unknown' },
+      ));
 
-    await expect(issuer(value).issueProtectedGrant(
-      grantInput(value.cell),
-    )).rejects.toMatchObject({
+    let publicationError;
+    try {
+      await issuer(value).issueProtectedGrant(grantInput(value.cell));
+    } catch (error) {
+      publicationError = error;
+    }
+
+    expect(publicationError).toMatchObject({
       code: 'protected_grant_publication_uncertain',
+      grant_identity: {
+        grant_id: value.grantId,
+        grant_ref: `kernel-equivalence-grant:${value.grantId}`,
+        grant_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        expires_at: new Date(FIXTURE_NOW + 300_000).toISOString(),
+      },
     });
+    expect(Object.keys(publicationError.grant_identity).sort()).toEqual([
+      'expires_at',
+      'grant_id',
+      'grant_ref',
+      'grant_sha256',
+    ]);
+    expect(Object.isFrozen(publicationError.grant_identity)).toBe(true);
+    expect(JSON.stringify(publicationError.grant_identity)).not.toMatch(
+      /signature|payload|private|secret/i,
+    );
     expect(readdirSync(value.grantRoot)).toEqual([
       `${value.grantId}.json`,
     ]);

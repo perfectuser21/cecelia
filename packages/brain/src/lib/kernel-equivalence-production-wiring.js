@@ -521,19 +521,28 @@ export function loadProductionTrustedExecutionWiring({
     trustRegistry: manifest.trustRegistry,
     now,
   });
-  const grantExecutionAuthority = createPostgresGrantExecutionAuthority({
-    pool,
-    actorInstanceId: nodeRandomUUID(),
-  });
+  // Controller publication/revocation and runtime resolution are distinct
+  // actor roles. Their independent actor identities share the same durable
+  // per-grant database lock key, so safety does not depend on object identity.
+  const controllerGrantExecutionAuthority =
+    createPostgresGrantExecutionAuthority({
+      pool,
+      actorInstanceId: nodeRandomUUID(),
+    });
+  const runtimeGrantExecutionAuthority =
+    createPostgresGrantExecutionAuthority({
+      pool,
+      actorInstanceId: nodeRandomUUID(),
+    });
   const grantAuthority = createProtectedGrantFileAuthority({
     grantRoot: manifest.grantRoot,
-    grantExecutionAuthority,
+    grantExecutionAuthority: runtimeGrantExecutionAuthority,
     now,
   });
   const grantIssuer = createProtectedGrantFileIssuer({
     grantRoot: manifest.grantRoot,
     executionGrantAuthority,
-    grantExecutionAuthority,
+    grantExecutionAuthority: controllerGrantExecutionAuthority,
     maximumTtlSeconds: manifest.grantTtlSeconds,
     now,
   });
@@ -564,7 +573,7 @@ export function loadProductionTrustedExecutionWiring({
   });
   return Object.freeze({
     createService,
-    grantExecutionAuthority,
+    grantExecutionAuthority: controllerGrantExecutionAuthority,
     grantIssuer,
     grant_ttl_seconds: manifest.grantTtlSeconds,
     plan: manifest.plan,

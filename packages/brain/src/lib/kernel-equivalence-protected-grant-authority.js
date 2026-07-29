@@ -33,8 +33,15 @@ const CASE_ID =
   /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const CELL_ID =
   /^KERNEL-P[01]-[0-9]{2}-[A-Z0-9-]+::(?:claude|codex|grok)::(?:normal|violation|recovery)$/;
+const SHA256 = /^[a-f0-9]{64}$/;
 const REQUEST_FIELDS = Object.freeze(['cellId', 'grantRef']);
 const REVOKE_FIELDS = Object.freeze(['grant_ref']);
+const SAFE_GRANT_IDENTITY_FIELDS = Object.freeze([
+  'expires_at',
+  'grant_id',
+  'grant_ref',
+  'grant_sha256',
+]);
 const SIGNED_GRANT_FIELDS = Object.freeze([
   'adapter_id',
   'artifact_sha',
@@ -64,19 +71,60 @@ const MAXIMUM_GRANT_BYTES = 65_536;
 const MAXIMUM_AUTHORITY_TIMEOUT_MS = 300_000;
 
 export class ProtectedGrantAuthorityError extends Error {
-  constructor(code) {
+  constructor(code, { grantIdentity } = {}) {
     super(code);
     this.name = 'ProtectedGrantAuthorityError';
     this.code = code;
+    const safeIdentity = snapshotSafeGrantIdentity(grantIdentity);
+    if (safeIdentity) this.grant_identity = safeIdentity;
   }
 }
 
-function fail(code) {
-  throw new ProtectedGrantAuthorityError(code);
+function fail(code, grantIdentity = undefined) {
+  throw new ProtectedGrantAuthorityError(code, { grantIdentity });
 }
 
 function timestamp(value) {
   return value instanceof Date ? value.getTime() : Date.parse(value);
+}
+
+function snapshotSafeGrantIdentity(value) {
+  if (value == null) return null;
+  let descriptors;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return null;
+  }
+  const keys = Reflect.ownKeys(descriptors);
+  if (
+    keys.some((key) => typeof key !== 'string')
+    || keys.length !== SAFE_GRANT_IDENTITY_FIELDS.length
+    || [...keys].sort().some(
+      (key, index) => key !== SAFE_GRANT_IDENTITY_FIELDS[index],
+    )
+    || keys.some((key) => (
+      !Object.hasOwn(descriptors[key], 'value')
+      || descriptors[key].enumerable !== true
+    ))
+  ) {
+    return null;
+  }
+  const identity = Object.fromEntries(keys.map((key) => [
+    key,
+    descriptors[key].value,
+  ]));
+  if (
+    !CASE_ID.test(identity.grant_id ?? '')
+    || identity.grant_ref
+      !== `kernel-equivalence-grant:${identity.grant_id}`
+    || !SHA256.test(identity.grant_sha256 ?? '')
+    || typeof identity.expires_at !== 'string'
+    || !Number.isFinite(timestamp(identity.expires_at))
+  ) {
+    return null;
+  }
+  return Object.freeze(identity);
 }
 
 function exactFields(value, expected) {
@@ -597,12 +645,19 @@ export function createProtectedGrantFileIssuer({
         fail('protected_grant_issue_invalid');
       }
       const grantSha256 = canonicalGrantSha256(grant);
+      let registeredIdentity;
       let registration;
       try {
         registration = await grantExecutionAuthority.registerPendingGrant({
           case_id: caseDescriptor.value,
           grant,
           grant_sha256: grantSha256,
+        });
+        registeredIdentity = Object.freeze({
+          grant_id: grantId,
+          grant_ref: `kernel-equivalence-grant:${grantId}`,
+          grant_sha256: grantSha256,
+          expires_at: grant.expires_at,
         });
       } catch {
         fail('protected_grant_registration_failed');
@@ -613,7 +668,7 @@ export function createProtectedGrantFileIssuer({
         registrationExpiry = timestamp(registration?.expires_at);
         grantExpiry = timestamp(grant.expires_at);
       } catch {
-        fail('protected_grant_registration_failed');
+        fail('protected_grant_registration_failed', registeredIdentity);
       }
       if (
         registration?.grant_id !== grantId
@@ -625,7 +680,7 @@ export function createProtectedGrantFileIssuer({
         || !Number.isFinite(grantExpiry)
         || registrationExpiry !== grantExpiry
       ) {
-        fail('protected_grant_registration_failed');
+        fail('protected_grant_registration_failed', registeredIdentity);
       }
       const finalPath = join(trustedRoot.path, `${grantId}.json`);
       const temporaryPath = join(
@@ -774,10 +829,16 @@ export function createProtectedGrantFileIssuer({
         // inode. Retain any published, DB-unusable orphan for maintenance
         // rather than risk deleting a replacement inode.
         if (markAttempted) {
-          fail('protected_grant_publication_uncertain');
+          fail(
+            'protected_grant_publication_uncertain',
+            registeredIdentity,
+          );
         }
-        if (error instanceof ProtectedGrantAuthorityError) throw error;
-        fail('protected_grant_publish_failed');
+        if (error instanceof ProtectedGrantAuthorityError) {
+          if (error.grant_identity) throw error;
+          fail(error.code, registeredIdentity);
+        }
+        fail('protected_grant_publish_failed', registeredIdentity);
       } finally {
         encoded.fill(0);
       }

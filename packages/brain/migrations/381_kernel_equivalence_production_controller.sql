@@ -467,7 +467,7 @@ BEGIN
       ))
     OR (previous_state = 'reconciling'
       AND NEW.state IN (
-        'reconciling', 'succeeded', 'settlement_unknown'
+        'reconciling', 'succeeded', 'blocked', 'settlement_unknown'
       ))
     OR (previous_state = 'settlement_unknown'
       AND NEW.state = 'succeeded')
@@ -639,6 +639,41 @@ BEGIN
   IF NEW.controller_instance_id <> previous_controller THEN
     IF NEW.state = 'succeeded' THEN
       NULL; -- Exact durable bundle readback is monotonic across restarts.
+    ELSIF NEW.state IN ('blocked', 'settlement_unknown')
+       AND previous_state IN (
+         'grant_issued', 'executing', 'reconciling'
+       )
+       AND previous_lease_expires_at <= authority_now
+       AND lineage_grant_ref IS NOT NULL
+       AND NEW.grant_ref = lineage_grant_ref
+       AND EXISTS (
+         SELECT 1
+           FROM kernel_equivalence_grant_authorities authorities
+           JOIN kernel_equivalence_grant_revocations revocations
+             ON revocations.grant_id = authorities.grant_id
+            AND revocations.grant_digest = authorities.grant_digest
+          WHERE authorities.case_id = NEW.case_id
+            AND lineage_grant_ref =
+                  'kernel-equivalence-grant:'
+                    || authorities.grant_id::TEXT
+            AND authorities.expires_at
+                  IS NOT DISTINCT FROM NEW.grant_expires_at
+            AND (
+              (
+                NEW.state = 'blocked'
+                AND NEW.code = 'startup_reconciliation'
+                AND revocations.execution_disposition
+                      = 'safe_no_effect'
+              )
+              OR (
+                NEW.state = 'settlement_unknown'
+                AND NEW.code = 'grant_revoke_unconfirmed'
+                AND revocations.execution_disposition
+                      = 'effect_possible'
+              )
+            )
+       ) THEN
+      NULL; -- Expired controller replaced only after exact durable revoke.
     ELSIF NEW.state = 'settlement_unknown'
        AND NEW.code = 'startup_authority_expired'
        AND previous_state IN (

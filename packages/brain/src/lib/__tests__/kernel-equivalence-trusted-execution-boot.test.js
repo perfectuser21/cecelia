@@ -127,6 +127,32 @@ describe('production trusted execution boot lifecycle', () => {
     await boot.close();
   });
 
+  it('keeps the Unix listener closed when a published grant cannot be durably settled', async () => {
+    const reconcileError = Object.assign(
+      new Error('durable revocation unavailable'),
+      { code: 'production_controller_reconcile_grant_unsafe' },
+    );
+    mocks.createCoordinator.mockReturnValue(
+      controller(vi.fn(async () => {
+        throw reconcileError;
+      })),
+    );
+
+    const boot = await bootProductionBrainTrustedExecution({
+      env: {},
+      pool: {},
+      assemblyPorts: {},
+    });
+
+    expect(mocks.cleanupExpiredGrants).toHaveBeenCalledOnce();
+    expect(mocks.startListener).not.toHaveBeenCalled();
+    expect(boot.getReadiness()).toEqual({
+      ready: false,
+      code: 'trusted_execution_controller_unavailable',
+      socket_path: null,
+    });
+  });
+
   it('fails closed when periodic reconciliation or grant cleanup fails', async () => {
     const reconcileStartup = vi.fn()
       .mockResolvedValueOnce({
