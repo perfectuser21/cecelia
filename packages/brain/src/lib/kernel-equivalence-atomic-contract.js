@@ -61,6 +61,8 @@ const PREDECESSOR_BINDING_FIELDS = [
   'same_resource_generation',
 ];
 const RETIRED_INVARIANT_ID = 'KERNEL-INV-P1-08-01';
+const RETIRED_NA_REASON_FALLBACK =
+  'retired invariant lacks a validated retirement rationale';
 const MAX_FAMILIES = ATOMIC_CONTRACT_COUNTS.behavior_count;
 const MAX_ATOMS = ATOMIC_CONTRACT_COUNTS.atomic_invariant_count;
 const MAX_PROBES = ATOMIC_CONTRACT_COUNTS.probe_definition_count;
@@ -915,7 +917,7 @@ function hasReceiptMaterial(value) {
 
 function validRetirement(atom) {
   const retirement = asObject(atom?.retirement);
-  const absenceProof = asObject(retirement.absence_proof);
+  const absenceProof = asObject(retirement?.absence_proof);
   const probes = asArray(atom?.probe_definitions);
   return (
     atom?.invariant_id === RETIRED_INVARIANT_ID
@@ -1574,14 +1576,27 @@ function validateAtomIdentities(
 }
 
 function projectAtom(atom) {
-  const retired = atom?.classification === 'retired';
+  const retiredClassification = atom?.classification === 'retired';
+  const retirementBlockPresent = (
+    atom?.retirement
+    && typeof atom.retirement === 'object'
+    && !Array.isArray(atom.retirement)
+  );
+  const retirementValidated = retiredClassification && validRetirement(atom);
   return {
     invariant_id: atom?.invariant_id ?? null,
     classification: atom?.classification ?? null,
     proof_status: atom?.proof_status ?? null,
-    effective_status: retired ? 'retired' : 'gap',
-    projection: retired ? 'na' : 'red',
-    retired_absence_probe_statuses: retired
+    steps: asArray(atom?.steps),
+    dimensions: asArray(atom?.dimensions),
+    effective_status: retirementValidated ? 'retired' : 'gap',
+    projection: retirementValidated ? 'na' : 'red',
+    na_reason: retiredClassification && retirementBlockPresent
+      ? retirementValidated
+        ? atom.retirement.rationale
+        : RETIRED_NA_REASON_FALLBACK
+      : null,
+    retired_absence_probe_statuses: retirementValidated
       ? RETIRED_ABSENCE_PROBE_IDS.map((probeId) => ({
         probe_id: probeId,
         status: 'unverified',

@@ -8,6 +8,7 @@ import { compileDrillPlan } from './kernel-equivalence-drills.js';
 import {
   createTrustedReceiptResolver,
 } from './kernel-equivalence-receipt-resolver.js';
+import { validateAtomicContract } from './kernel-equivalence-atomic-contract.js';
 
 /**
  * Pure validator/projector for the Kernel P0/P1 equivalence section embedded in
@@ -530,7 +531,44 @@ function validateSupersession(behaviors, findings) {
   }
 }
 
-export function validateBehaviorEquivalence(
+/**
+ * Aggregate only verifier-produced atom statuses. This function deliberately
+ * does not accept a contract and never interprets claimed proof material.
+ */
+export function deriveFamilyEffectiveStatus(verifiedAtomStatuses) {
+  const statuses = asArray(verifiedAtomStatuses);
+  if (statuses.length === 0) return 'gap';
+
+  const retired = statuses.filter(
+    (status) => status?.classification === 'retired',
+  );
+  if (retired.some((status) => (
+    status?.effective_status !== 'retired'
+    || status?.retired_absence_current !== true
+  ))) {
+    return 'gap';
+  }
+
+  const proofRequired = statuses.filter(
+    (status) => status?.classification !== 'retired',
+  );
+  if (
+    proofRequired.length === 0
+    || proofRequired.some((status) => status?.effective_status !== 'proven')
+  ) {
+    return proofRequired.length === 0 && retired.length > 0
+      ? 'proven'
+      : 'gap';
+  }
+  if (proofRequired.every(
+    (status) => status.classification === 'intentional_replacement',
+  )) {
+    return 'intentional_replacement';
+  }
+  return 'proven';
+}
+
+function validateBehaviorEquivalenceImpl(
   contract,
   {
     now = Date.now(),
@@ -542,6 +580,7 @@ export function validateBehaviorEquivalence(
     verifiedProofCellCount: 0,
   };
   const section = contract?.behavior_equivalence;
+  const atomic = validateAtomicContract(section);
   if (!section || typeof section !== 'object') {
     addFinding(
       findings,
@@ -552,8 +591,40 @@ export function validateBehaviorEquivalence(
     );
     return {
       valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_metrics: atomic.metrics,
+      legacy_verified_family_receipt_count: 0,
+      atomic_proven_family_cell_count: 0,
+      verified_proof_cell_count: 0,
       contract_version: null,
       findings,
+      behaviors: [],
+    };
+  }
+  const unsafeAtomicInput = (
+    section.schema_version === '1.1.0'
+    && asArray(atomic.findings).some((finding) => [
+      'atomic_contract_input_budget_exceeded',
+      'atomic_contract_input_invalid',
+    ].includes(finding.code))
+  );
+  if (unsafeAtomicInput) {
+    return {
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_metrics: atomic.metrics,
+      legacy_verified_family_receipt_count: 0,
+      atomic_proven_family_cell_count: 0,
+      verified_proof_cell_count: 0,
+      schema_version: atomic.schema_version ?? null,
+      contract_version: null,
+      journey: null,
+      dimensions: [],
+      findings: asArray(atomic.findings),
       behaviors: [],
     };
   }
@@ -646,19 +717,233 @@ export function validateBehaviorEquivalence(
     }
   }
 
+  const legacyFindings = [...findings];
+  const atomicFamilyById = new Map(
+    asArray(atomic.families).map((family) => [family.behavior_id, family]),
+  );
+  const aggregatedBehaviors = normalizedBehaviors.map((behavior) => {
+    if (section.schema_version !== '1.1.0') return behavior;
+    const atomicFamily = atomicFamilyById.get(behavior.behavior_id);
+    const atoms = asArray(atomicFamily?.atoms).map((atom) => ({
+      ...atom,
+      retired_absence_current: false,
+    }));
+    return {
+      ...behavior,
+      atoms,
+      retired_absence_complete: false,
+      effective_status: deriveFamilyEffectiveStatus(atoms),
+    };
+  });
+  const combinedFindings = [...legacyFindings, ...asArray(atomic.findings)];
+  const schemaValid = legacyFindings.length === 0 && atomic.schema_valid === true;
+  const proofComplete = (
+    section.schema_version === '1.1.0'
+    && schemaValid
+    && atomic.atomic_cutover_ready === true
+    && aggregatedBehaviors.every(
+      (behavior) => behavior.effective_status !== 'gap',
+    )
+  );
+
   return {
-    valid: findings.length === 0,
+    valid: schemaValid,
     schema_version: section.schema_version ?? null,
     contract_version: section.contract_version ?? null,
     journey: section.journey ?? null,
     dimensions: asArray(section.dimensions),
     verified_proof_cell_count: verificationMetrics.verifiedProofCellCount,
-    findings,
-    behaviors: normalizedBehaviors,
+    findings: combinedFindings,
+    behaviors: aggregatedBehaviors,
+    schema_valid: schemaValid,
+    proof_complete: proofComplete,
+    atomic_cutover_ready: atomic.atomic_cutover_ready === true,
+    atomic_metrics: atomic.metrics,
+    legacy_verified_family_receipt_count:
+      verificationMetrics.verifiedProofCellCount,
+    atomic_proven_family_cell_count: 0,
   };
 }
 
+export function validateBehaviorEquivalence(contract, options = {}) {
+  try {
+    return validateBehaviorEquivalenceImpl(contract, options);
+  } catch {
+    const findings = [];
+    addFinding(
+      findings,
+      null,
+      'behavior_equivalence_input_invalid',
+      'behavior_equivalence',
+      'behavior equivalence input could not be safely inspected',
+    );
+    return {
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_metrics: validateAtomicContract(null).metrics,
+      legacy_verified_family_receipt_count: 0,
+      atomic_proven_family_cell_count: 0,
+      verified_proof_cell_count: 0,
+      schema_version: null,
+      contract_version: null,
+      journey: null,
+      dimensions: [],
+      findings,
+      behaviors: [],
+    };
+  }
+}
+
 export function projectJourneyCells(validation) {
+  const atomicBehaviors = asArray(validation?.behaviors);
+  if (validation?.schema_version === '1.1.0') {
+    const statusRank = {
+      gray: 0,
+      green: 1,
+      pending: 2,
+      red: 3,
+    };
+    return atomicBehaviors.flatMap((behavior) => {
+      const cells = new Map();
+      const atoms = asArray(behavior.atoms);
+      if (atoms.length === 0) {
+        return asArray(behavior.steps).flatMap((step) => (
+          asArray(behavior.dimensions).map((dimension) => ({
+            journey_key: validation?.journey?.key ?? null,
+            behavior_id: behavior.behavior_id ?? null,
+            step,
+            dimension,
+            cell_kind: 'element',
+            cell_key: dimension,
+            cell_status: 'red',
+            assertion_ref: behavior.assertion_id ?? null,
+            reason: behavior.gap?.reason
+              ?? behavior.findings?.map((finding) => finding.code).join(',')
+              ?? 'atomic_status_unavailable',
+            atom_ids: [],
+            atom_statuses: [],
+            atom_projections: [],
+            na_reason: [],
+            write_database: false,
+          }))
+        ));
+      }
+      for (const atom of atoms) {
+        const atomStatus = atom.effective_status ?? 'gap';
+        let atomProjection = 'red';
+        if (atomStatus === 'retired') {
+          atomProjection = 'na';
+        } else if (atomStatus === 'proven') {
+          atomProjection = ['red', 'pending', 'green'].includes(atom.projection)
+            ? atom.projection
+            : 'green';
+        }
+        const projection = atomProjection === 'na'
+          ? atom.retired_absence_current === true ? 'gray' : 'red'
+          : atomProjection;
+        const diagnosticReason = atomProjection === 'na'
+          && atom.retired_absence_current !== true
+          ? `retired absence proof is not verified: ${
+            atom.na_reason ?? 'retired invariant is not applicable'
+          }`
+          : atom.reason
+            ?? behavior.gap?.reason
+            ?? behavior.findings?.map((finding) => finding.code).join(',')
+            ?? null;
+        for (const step of asArray(atom.steps)) {
+          for (const dimension of asArray(atom.dimensions)) {
+            const key = `${step}\u0000${dimension}`;
+            let cell = cells.get(key);
+            if (!cell) {
+              cell = {
+                journey_key: validation?.journey?.key ?? null,
+                behavior_id: behavior.behavior_id ?? null,
+                step,
+                dimension,
+                cell_kind: 'element',
+                cell_key: dimension,
+                cell_status: projection,
+                assertion_ref: behavior.assertion_id ?? null,
+                atom_tuples: new Map(),
+                write_database: false,
+              };
+              cells.set(key, cell);
+            }
+            const tuple = {
+              invariant_id: atom.invariant_id ?? null,
+              status: atomStatus,
+              projection: atomProjection,
+              cell_status: projection,
+              na_reason: atomProjection === 'na' && nonEmpty(atom.na_reason)
+                ? atom.na_reason
+                : null,
+              reason: projection === 'red' && nonEmpty(diagnosticReason)
+                ? diagnosticReason
+                : null,
+            };
+            const tupleKey = tuple.invariant_id ?? '';
+            const existing = cell.atom_tuples.get(tupleKey);
+            const tupleIdentity = JSON.stringify(tuple);
+            const existingIdentity = existing == null
+              ? null
+              : JSON.stringify(existing);
+            if (
+              existing == null
+              || statusRank[tuple.cell_status] > statusRank[existing.cell_status]
+              || (
+                statusRank[tuple.cell_status] === statusRank[existing.cell_status]
+                && tupleIdentity < existingIdentity
+              )
+            ) {
+              cell.atom_tuples.set(tupleKey, tuple);
+            }
+          }
+        }
+      }
+      return [...cells.values()].map((cell) => {
+        const {
+          atom_tuples: atomTuples,
+          ...projected
+        } = cell;
+        const tuples = [...atomTuples.values()].sort((left, right) => (
+          String(left.invariant_id) < String(right.invariant_id)
+            ? -1
+            : String(left.invariant_id) > String(right.invariant_id) ? 1 : 0
+        ));
+        const reasons = [...new Set(
+          tuples.map((tuple) => tuple.reason).filter(nonEmpty),
+        )].sort();
+        const naReasons = [...new Set(
+          tuples.map((tuple) => tuple.na_reason).filter(nonEmpty),
+        )].sort();
+        const cellStatus = tuples.reduce(
+          (worst, tuple) => (
+            statusRank[tuple.cell_status] > statusRank[worst]
+              ? tuple.cell_status
+              : worst
+          ),
+          'gray',
+        );
+        return {
+          ...projected,
+          cell_status: cellStatus,
+          reason: reasons.join('; ') || null,
+          atom_ids: tuples.map((tuple) => tuple.invariant_id),
+          atom_statuses: tuples.map((tuple) => tuple.status),
+          atom_projections: tuples.map((tuple) => tuple.projection),
+          na_reason: naReasons,
+        };
+      }).sort((left, right) => (
+        GOLDEN_PATH_STEPS.indexOf(left.step)
+          - GOLDEN_PATH_STEPS.indexOf(right.step)
+        || BEHAVIOR_DIMENSIONS.indexOf(left.dimension)
+          - BEHAVIOR_DIMENSIONS.indexOf(right.dimension)
+      ));
+    });
+  }
+
   return asArray(validation?.behaviors).flatMap((behavior) => {
     const onlyStale = behavior.findings?.length > 0
       && behavior.findings.every((finding) => finding.code === 'proof_stale');

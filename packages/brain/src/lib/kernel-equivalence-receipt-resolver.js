@@ -1,9 +1,9 @@
 import {
+  createScopedReceiptBundleVerifier,
   EquivalenceReceiptError,
   expectedFromReceiptBundle,
   preloadReceiptBundleAncestry,
   sha256Canonical,
-  verifyReceiptBundle,
 } from './kernel-equivalence-receipts.js';
 
 const REFERENCE_PATTERN = /^receipt-bundle:([a-f0-9]{64})$/;
@@ -40,6 +40,12 @@ export function createTrustedReceiptResolver({
   ) {
     fail('receipt_bundle_chain_invalid');
   }
+  const rawBundleCache = new Map();
+  let trustedAncestryHashes = null;
+  const verifyScopedReceiptBundle = createScopedReceiptBundleVerifier({
+    trustRegistry,
+    now,
+  });
 
   function readVerifiedHash(hash) {
     let raw;
@@ -54,10 +60,18 @@ export function createTrustedReceiptResolver({
     if (sha256Canonical(raw) !== hash) {
       fail('receipt_bundle_hash_mismatch');
     }
-    return raw;
+    return Object.freeze(structuredClone(raw));
   }
 
-  function trustedAncestry(read) {
+  function read(hash) {
+    if (!rawBundleCache.has(hash)) {
+      rawBundleCache.set(hash, readVerifiedHash(hash));
+    }
+    return rawBundleCache.get(hash);
+  }
+
+  function trustedAncestry() {
+    if (trustedAncestryHashes !== null) return trustedAncestryHashes;
     const hashes = new Set();
     let currentHash = bundleChain.head_hash;
     let head = null;
@@ -70,16 +84,15 @@ export function createTrustedReceiptResolver({
         if (currentHash !== bundleChain.genesis_hash) {
           fail('receipt_bundle_chain_invalid');
         }
-        verifyReceiptBundle(
+        verifyScopedReceiptBundle(
           head,
-          trustRegistry,
           expectedFromReceiptBundle(head),
           {
-            now,
             resolvePreviousBundle: read,
           },
         );
-        return hashes;
+        trustedAncestryHashes = hashes;
+        return trustedAncestryHashes;
       }
       if (!HASH_PATTERN.test(raw.previous_bundle_hash)) {
         fail('receipt_bundle_chain_invalid');
@@ -93,21 +106,14 @@ export function createTrustedReceiptResolver({
     const match = REFERENCE_PATTERN.exec(reference ?? '');
     if (!match) fail('receipt_reference_invalid');
     const expectedHash = match[1];
-    const cache = new Map();
-    const read = (hash) => {
-      if (!cache.has(hash)) cache.set(hash, readVerifiedHash(hash));
-      return cache.get(hash);
-    };
     const raw = read(expectedHash);
-    if (!trustedAncestry(read).has(expectedHash)) {
+    if (!trustedAncestry().has(expectedHash)) {
       fail('receipt_bundle_not_in_trusted_chain');
     }
-    const verified = verifyReceiptBundle(
+    const verified = verifyScopedReceiptBundle(
       raw,
-      trustRegistry,
       expected,
       {
-        now,
         resolvePreviousBundle: (hash) => {
           try {
             return read(hash);

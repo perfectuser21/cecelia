@@ -1657,6 +1657,7 @@ describe('retirement is P1-08 atom 01 with exact absence proof projection', () =
       classification: 'retired',
       effective_status: 'retired',
       projection: 'na',
+      na_reason: 'the orphaned legacy ownership path no longer exists',
       retired_absence_probe_statuses: [
         { probe_id: 'KERNEL-PROBE-P1-08-01-A01', status: 'unverified' },
         { probe_id: 'KERNEL-PROBE-P1-08-01-A02', status: 'unverified' },
@@ -1684,6 +1685,45 @@ describe('retirement is P1-08 atom 01 with exact absence proof projection', () =
       contract([familyFixture('P1-08', [atom])]),
       'atomic_classification_contract_invalid',
     );
+  });
+
+  it('fails closed when projecting an invalid retired atom', () => {
+    const atom = retiredAtom();
+    delete atom.retirement.rationale;
+    const output = validate(contract([familyFixture('P1-08', [atom])]));
+    const family = output.families.find(
+      ({ behavior_id }) => (
+        behavior_id === 'KERNEL-P1-08-STOP-ORPHAN-LIVENESS'
+      ),
+    );
+
+    expect(output.schema_valid).toBe(false);
+    expect(family.atoms[0]).toMatchObject({
+      effective_status: 'gap',
+      projection: 'red',
+      na_reason: 'retired invariant lacks a validated retirement rationale',
+    });
+  });
+
+  it.each([
+    ['missing retirement block', (atom) => { delete atom.retirement; }],
+    ['null retirement block', (atom) => { atom.retirement = null; }],
+  ])('preserves a gap/red projection for %s', (_label, mutate) => {
+    const atom = retiredAtom();
+    mutate(atom);
+    const output = validate(contract([familyFixture('P1-08', [atom])]));
+    const family = output.families.find(
+      ({ behavior_id }) => (
+        behavior_id === 'KERNEL-P1-08-STOP-ORPHAN-LIVENESS'
+      ),
+    );
+
+    expect(output.schema_valid).toBe(false);
+    expect(family.atoms[0]).toMatchObject({
+      effective_status: 'gap',
+      projection: 'red',
+      na_reason: null,
+    });
   });
 
   it.each([

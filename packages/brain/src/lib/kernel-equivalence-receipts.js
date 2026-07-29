@@ -21,6 +21,9 @@ const HISTORICAL_BUNDLE_VERIFICATION = Symbol(
 const SKIP_BUNDLE_ANCESTRY_VERIFICATION = Symbol(
   'kernel-equivalence-skip-bundle-ancestry-verification',
 );
+const SCOPED_HISTORICAL_BUNDLE_CACHE = Symbol(
+  'kernel-equivalence-scoped-historical-bundle-cache',
+);
 const DEFAULT_MAXIMUM_BUNDLE_DEPTH = 10_000;
 const ABSOLUTE_MAXIMUM_BUNDLE_DEPTH = 100_000;
 const KEY_PURPOSES = new Set([
@@ -1060,17 +1063,22 @@ export function verifyReceiptBundle(
         fail('bundle_previous_unresolved');
       }
       seen.add(previousHash);
-      verifyReceiptBundle(
-        previous,
-        registry,
-        expectedFromReceiptBundle(previous),
-        {
-          now,
-          maximumBundleDepth,
-          [HISTORICAL_BUNDLE_VERIFICATION]: true,
-          [SKIP_BUNDLE_ANCESTRY_VERIFICATION]: true,
-        },
-      );
+      const historicalCache = options[SCOPED_HISTORICAL_BUNDLE_CACHE];
+      if (!historicalCache?.has(previousHash)) {
+        verifyReceiptBundle(
+          previous,
+          registry,
+          expectedFromReceiptBundle(previous),
+          {
+            now,
+            maximumBundleDepth,
+            [HISTORICAL_BUNDLE_VERIFICATION]: true,
+            [SKIP_BUNDLE_ANCESTRY_VERIFICATION]: true,
+            [SCOPED_HISTORICAL_BUNDLE_CACHE]: historicalCache,
+          },
+        );
+        historicalCache?.add(previousHash);
+      }
       if (
         enforceRecoveryPredecessor
         && receiptBundleContainsViolationMaterial(
@@ -1095,6 +1103,31 @@ export function verifyReceiptBundle(
     grant_ids: verifiedGrants.map((grant) => grant.grant_id),
     receipt_ids: verifiedReceipts.map((receipt) => receipt.receipt_id),
     effect_receipts: verifiedReceipts,
+  });
+}
+
+export function createScopedReceiptBundleVerifier({
+  trustRegistry,
+  now = Date.now(),
+} = {}) {
+  verifyNow(now);
+  const trustRegistrySnapshot = validateTrustRegistry(trustRegistry);
+  const successfulHistoricalHashes = new Set();
+  return Object.freeze(function verifyScopedReceiptBundle(
+    bundle,
+    expected,
+    options = {},
+  ) {
+    return verifyReceiptBundle(
+      bundle,
+      trustRegistrySnapshot,
+      expected,
+      {
+        ...options,
+        now,
+        [SCOPED_HISTORICAL_BUNDLE_CACHE]: successfulHistoricalHashes,
+      },
+    );
   });
 }
 

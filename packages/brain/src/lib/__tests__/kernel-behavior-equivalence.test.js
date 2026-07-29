@@ -8,6 +8,7 @@ import {
   PROOF_SCENARIOS,
   buildEquivalenceReport,
   buildEvidenceEnvelopes,
+  deriveFamilyEffectiveStatus,
   formatEquivalenceMarkdown,
   projectJourneyCells,
   validateBehaviorEquivalence,
@@ -22,10 +23,18 @@ import {
   fixtureCell,
   fixtureGrant,
   fixtureReceipt,
+  signFixture,
 } from './kernel-equivalence-test-fixtures.js';
 
 const NOW = FIXTURE_NOW;
 const SHA = FIXTURE_SHA;
+
+function rootContract() {
+  return load(readFileSync(
+    new URL('../../../../../regression-contract.yaml', import.meta.url),
+    'utf8',
+  ));
+}
 
 function completeProof(provider, scenario) {
   return {
@@ -130,10 +139,11 @@ function contract(behaviors = [provenBehavior()]) {
     .map((behavior) => behavior.assertion_id)
     .filter((id) => !root.golden_paths.some((path) => path.id === id))
     .map((id) => ({ id }));
-  return {
+  const value = {
     golden_paths: [...root.golden_paths, ...customGoldenPaths],
     behavior_equivalence: {
       ...root.behavior_equivalence,
+      schema_version: '1.0.0',
       contract_version: '2026-07-28.1',
       required_behavior_count: 11,
       journey: {
@@ -144,6 +154,25 @@ function contract(behaviors = [provenBehavior()]) {
       behaviors: [...normalized, ...fillers],
     },
   };
+  for (const field of [
+    'required_atomic_invariant_count',
+    'proof_required_atomic_invariant_count',
+    'required_probe_definition_count',
+    'proof_required_probe_definition_count',
+    'required_provider_probe_assertion_count',
+    'required_retired_absence_probe_count',
+  ]) {
+    delete value.behavior_equivalence[field];
+  }
+  value.behavior_equivalence.behaviors =
+    value.behavior_equivalence.behaviors.map((behavior) => {
+      const legacy = { ...behavior };
+      delete legacy.atomic_invariant_count;
+      delete legacy.probe_definition_count;
+      delete legacy.atomic_invariants;
+      return legacy;
+    });
+  return value;
 }
 
 function trustedContract(
@@ -253,6 +282,143 @@ function trustedContract(
   };
 }
 
+function trustedAtomicContract() {
+  const value = rootContract();
+  const bundles = new Map();
+  const registryKeys = [];
+  let registry = null;
+  let genesisHash = null;
+  let previousBundleHash = null;
+
+  value.behavior_equivalence.behaviors.forEach((behavior, familyIndex) => {
+    const keys = createTrustFixture(behavior.drill.seam_id);
+    keys.authority.record.key_id = `authority-2026-07-${familyIndex}`;
+    keys.effect.record.key_id = `effect-2026-07-${familyIndex}`;
+    keys.collector.record.key_id = `collector-2026-07-${familyIndex}`;
+    registry ??= { ...keys.registry, keys: registryKeys };
+    registryKeys.push(
+      keys.authority.record,
+      keys.effect.record,
+      keys.collector.record,
+    );
+
+    behavior.status = 'proven';
+    behavior.proof_identity = {
+      artifact_sha: SHA,
+      version: '1.268.7',
+      effect_receipt_id: `signed-family-bundle-set-${familyIndex}`,
+    };
+    behavior.freshness = {
+      verified_at: '2026-07-28T08:00:00.000Z',
+      expires_at: '2026-08-04T08:00:00.000Z',
+    };
+    behavior.drill.effect_signer_status = 'available';
+    behavior.drill.effect_key_id = keys.effect.record.key_id;
+    behavior.drill.blocked_by = null;
+    const matrix = {};
+
+    for (const provider of PROOF_PROVIDERS) {
+      matrix[provider] = {};
+      let violationReceipt = null;
+      let violationGrant = null;
+      for (const scenario of PROOF_SCENARIOS) {
+        const scenarioContract = behavior.drill.scenarios[scenario];
+        const violationContract = behavior.drill.scenarios.violation;
+        const target = fixtureCell({
+          behaviorId: behavior.behavior_id,
+          provider,
+          scenario,
+          seamId: behavior.drill.seam_id,
+          adapterId: behavior.drill.adapter_id,
+        });
+        target.effect_key_id = keys.effect.record.key_id;
+        target.isolation = structuredClone(behavior.drill.isolation);
+        target.expected = {
+          expected_outcome: scenarioContract.expected_outcome,
+          effect_code: scenarioContract.effect_code,
+          ...(scenario === 'recovery'
+            ? {
+              predecessor_expected: {
+                expected_outcome: violationContract.expected_outcome,
+                effect_code: violationContract.effect_code,
+              },
+            }
+            : {}),
+        };
+        const fixtureExecutionGrant = fixtureGrant(keys, target);
+        const resourcePrefix = behavior.drill.isolation.resource_prefix
+          .replaceAll('{run_id}', fixtureExecutionGrant.run_id)
+          .replaceAll('{attempt_id}', fixtureExecutionGrant.attempt_id);
+        const executionGrant = signFixture({
+          ...fixtureExecutionGrant,
+          resource_prefix: resourcePrefix,
+          resource_ref: `${resourcePrefix}case`,
+        }, keys.authority.privateKey);
+        const receipt = fixtureReceipt(
+          keys,
+          executionGrant,
+          target,
+          scenario === 'recovery' ? violationReceipt : null,
+          {
+            observed_outcome: scenarioContract.expected_outcome,
+            effect_code: scenarioContract.effect_code,
+          },
+        );
+        if (scenario === 'violation') {
+          violationReceipt = receipt;
+          violationGrant = executionGrant;
+        }
+        const receipts = scenario === 'recovery'
+          ? [violationReceipt, receipt]
+          : [receipt];
+        const executionGrants = scenario === 'recovery'
+          ? [violationGrant, executionGrant]
+          : [executionGrant];
+        const bundle = fixtureBundle(
+          keys,
+          target,
+          executionGrant,
+          receipts,
+          executionGrants,
+          previousBundleHash,
+        );
+        const bundleHash = sha256Canonical(bundle);
+        genesisHash ??= bundleHash;
+        previousBundleHash = bundleHash;
+        bundles.set(bundleHash, bundle);
+        const bundleReference = `receipt-bundle:${bundleHash}`;
+        matrix[provider][scenario] = {
+          test_command: `node scripts/ci/run-kernel-equivalence-drill.mjs --execute --cell ${target.cell_id} --grant-ref kernel-equivalence-grant:${executionGrant.grant_id}`,
+          expected_result: scenario === 'violation' ? 'denied' : 'pass',
+          observed_result: scenario === 'violation' ? 'denied' : 'pass',
+          evidence_refs: [bundleReference],
+          effect_receipt_id: receipt.receipt_id,
+          receipt_bundle_ref: bundleReference,
+          run_id: executionGrant.run_id,
+          attempt_id: executionGrant.attempt_id,
+          grant_id: executionGrant.grant_id,
+          nonce: executionGrant.nonce,
+          resource_id: executionGrant.resource_id,
+          resource_ref: executionGrant.resource_ref,
+          engine_version: '1.42.0',
+        };
+      }
+    }
+    behavior.proof_matrix = matrix;
+  });
+
+  value.behavior_equivalence.drill_trust_registry = registry;
+  value.behavior_equivalence.drill_bundle_chain = {
+    schema_version: 'kernel-equivalence-bundle-chain/v1',
+    genesis_hash: genesisHash,
+    head_hash: previousBundleHash,
+  };
+  return {
+    contract: value,
+    readBundle: (hash) => bundles.get(hash),
+  };
+}
+
 describe('canonical behavior equivalence axes', () => {
   it('locks S0-S12, eleven dimensions, and the provider/scenario matrix', () => {
     expect(GOLDEN_PATH_STEPS).toEqual(
@@ -265,6 +431,160 @@ describe('canonical behavior equivalence axes', () => {
 });
 
 describe('validateBehaviorEquivalence', () => {
+  it('returns stable aliases and counters when behavior_equivalence is missing', () => {
+    expect(validateBehaviorEquivalence({}, { now: NOW })).toMatchObject({
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      verified_proof_cell_count: 0,
+      legacy_verified_family_receipt_count: 0,
+      atomic_proven_family_cell_count: 0,
+      behaviors: [],
+    });
+  });
+
+  it('keeps schema validity orthogonal to proof completeness for the honest v1.1 gap inventory', () => {
+    const result = validateBehaviorEquivalence(rootContract(), { now: NOW });
+
+    expect(result).toMatchObject({
+      valid: true,
+      schema_valid: true,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      legacy_verified_family_receipt_count: 0,
+      atomic_proven_family_cell_count: 0,
+      atomic_metrics: {
+        behavior_count: 11,
+        atomic_invariant_count: 43,
+        proof_required_atomic_invariant_count: 42,
+      },
+    });
+    expect(result.findings).toEqual([]);
+    expect(result.behaviors.every(
+      (behavior) => behavior.effective_status === 'gap',
+    )).toBe(true);
+  });
+
+  it('keeps 99 verified legacy family receipts out of atomic proof aggregation', {
+    timeout: 15_000,
+  }, () => {
+    const startedAt = performance.now();
+    const trusted = trustedAtomicContract();
+    const result = validateBehaviorEquivalence(trusted.contract, {
+      now: NOW,
+      readBundle: trusted.readBundle,
+    });
+    const cells = projectJourneyCells(result);
+
+    expect(result.findings).toEqual([]);
+    expect(result).toMatchObject({
+      valid: true,
+      schema_valid: true,
+      verified_proof_cell_count: 99,
+      legacy_verified_family_receipt_count: 99,
+      atomic_proven_family_cell_count: 0,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+    });
+    expect(cells.length).toBeGreaterThan(0);
+    expect(cells.every((cell) => cell.cell_status !== 'green')).toBe(true);
+    expect(performance.now() - startedAt).toBeLessThan(15_000);
+  });
+
+  it('makes invalid schema or unverified atomic receipt material invalidate the alias', () => {
+    const invalidSchema = rootContract();
+    invalidSchema.behavior_equivalence.required_atomic_invariant_count = 42;
+
+    expect(validateBehaviorEquivalence(invalidSchema, { now: NOW })).toMatchObject({
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+    });
+
+    const unverifiedClaim = rootContract();
+    unverifiedClaim.behavior_equivalence.behaviors[0]
+      .atomic_invariants[0].proof_status = 'proven';
+    const result = validateBehaviorEquivalence(unverifiedClaim, { now: NOW });
+
+    expect(result).toMatchObject({
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_proven_family_cell_count: 0,
+    });
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'atomic_receipt_v2_verifier_unavailable' }),
+    ]));
+    expect(result.behaviors[0].effective_status).toBe('gap');
+  });
+
+  it('preserves legacy and atomic findings without either result overwriting the other', () => {
+    const input = rootContract();
+    input.behavior_equivalence.behaviors[0].owner = '';
+    input.behavior_equivalence.behaviors[0]
+      .atomic_invariants[0].proof_status = 'proven';
+
+    const result = validateBehaviorEquivalence(input, { now: NOW });
+    const codes = result.findings.map((finding) => finding.code);
+
+    expect(codes).toContain('owner_missing');
+    expect(codes).toContain('atomic_receipt_v2_verifier_unavailable');
+    expect(codes.indexOf('owner_missing')).toBeLessThan(
+      codes.indexOf('atomic_receipt_v2_verifier_unavailable'),
+    );
+  });
+
+  it('returns a bounded invalid result instead of throwing on hostile atomic input', () => {
+    const hostile = rootContract();
+    hostile.behavior_equivalence.behaviors[0].atomic_invariants[0] = new Proxy(
+      hostile.behavior_equivalence.behaviors[0].atomic_invariants[0],
+      {
+        ownKeys() {
+          throw new Error('hostile atom');
+        },
+      },
+    );
+
+    expect(() => validateBehaviorEquivalence(hostile, { now: NOW }))
+      .not.toThrow();
+    expect(validateBehaviorEquivalence(hostile, { now: NOW })).toMatchObject({
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+    });
+  });
+
+  it('stops before legacy traversal when the atomic input budget is exceeded', () => {
+    const input = rootContract();
+    const families = Array(13).fill(input.behavior_equivalence.behaviors[0]);
+    let outOfBudgetReads = 0;
+    families[12] = {};
+    Object.defineProperty(families[12], 'status', {
+      enumerable: true,
+      get() {
+        outOfBudgetReads += 1;
+        throw new Error('out-of-budget family must not be inspected');
+      },
+    });
+    input.behavior_equivalence.behaviors = families;
+
+    const result = validateBehaviorEquivalence(input, { now: NOW });
+
+    expect(outOfBudgetReads).toBe(0);
+    expect(result).toMatchObject({
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+    });
+    expect(result.findings).toContainEqual(expect.objectContaining({
+      code: 'atomic_contract_input_budget_exceeded',
+    }));
+  });
+
   it('does not trust a caller-supplied resolver as a proof authority', () => {
     const trusted = trustedContract();
     const fabricatedResolver = (_reference, expected) => {
@@ -304,6 +624,9 @@ describe('validateBehaviorEquivalence', () => {
     expect(result.valid).toBe(true);
     expect(result.behaviors[0].effective_status).toBe('proven');
     expect(result.verified_proof_cell_count).toBe(9);
+    expect(result.legacy_verified_family_receipt_count).toBe(9);
+    expect(result.atomic_proven_family_cell_count).toBe(0);
+    expect(result.proof_complete).toBe(false);
   });
 
   it('reports zero verified proof cells when configured refs are outside a bad chain', () => {
@@ -539,6 +862,59 @@ describe('validateBehaviorEquivalence', () => {
   });
 });
 
+describe('deriveFamilyEffectiveStatus', () => {
+  const proven = (classification = 'active_required') => ({
+    classification,
+    effective_status: 'proven',
+  });
+  const replacement = {
+    classification: 'intentional_replacement',
+    effective_status: 'proven',
+  };
+  const retired = (retiredAbsenceCurrent) => ({
+    classification: 'retired',
+    effective_status: 'retired',
+    retired_absence_current: retiredAbsenceCurrent,
+  });
+
+  it('keeps a family gap when any proof-required atom is a gap', () => {
+    expect(deriveFamilyEffectiveStatus([
+      proven(),
+      { classification: 'drifted_required_gap', effective_status: 'gap' },
+    ])).toBe('gap');
+  });
+
+  it('requires current retired absence verification before a proven family', () => {
+    expect(deriveFamilyEffectiveStatus([proven(), retired(false)])).toBe('gap');
+    expect(deriveFamilyEffectiveStatus([proven(), retired(true)])).toBe('proven');
+    expect(deriveFamilyEffectiveStatus([{
+      classification: 'retired',
+      effective_status: 'not_applicable',
+      retired_absence_current: true,
+    }])).toBe('gap');
+  });
+
+  it('marks only an all-replacement non-retired family as intentional replacement', () => {
+    expect(deriveFamilyEffectiveStatus([replacement, replacement]))
+      .toBe('intentional_replacement');
+    expect(deriveFamilyEffectiveStatus([proven(), replacement]))
+      .toBe('proven');
+    expect(deriveFamilyEffectiveStatus([{
+      classification: 'active_required',
+      effective_status: 'intentional_replacement',
+    }])).toBe('gap');
+  });
+
+  it('treats a verified mix of active, drifted, and replacement atoms as proven', () => {
+    expect(deriveFamilyEffectiveStatus([
+      proven('active_required'),
+      proven('drifted_required_gap'),
+      replacement,
+      retired(true),
+    ])).toBe('proven');
+  });
+});
+
 describe('evidence envelope and journey projection', () => {
   it('builds one exact envelope per provider/scenario without inventing missing values', () => {
     const behavior = provenBehavior();
@@ -579,6 +955,226 @@ describe('evidence envelope and journey projection', () => {
       assertion_ref: 'KERNEL-MERGE-AUTHORITY-01',
     }));
     expect(cells.every((cell) => cell.write_database === false)).toBe(true);
+  });
+
+  it('keeps the exact v1.0 journey projection shape', () => {
+    const trusted = trustedContract();
+    const result = validateBehaviorEquivalence(trusted.contract, {
+      now: NOW,
+      readBundle: trusted.readBundle,
+    });
+    const [cell] = projectJourneyCells(result);
+
+    expect(Object.keys(cell)).toEqual([
+      'journey_key',
+      'behavior_id',
+      'step',
+      'dimension',
+      'cell_kind',
+      'cell_key',
+      'cell_status',
+      'assertion_ref',
+      'reason',
+      'write_database',
+    ]);
+
+    result.behaviors[0].atoms = [{
+      invariant_id: 'UNTRUSTED-V1-ATOM',
+      steps: ['S4'],
+      dimensions: ['invariant'],
+      effective_status: 'gap',
+      projection: 'red',
+    }];
+    expect(Object.keys(projectJourneyCells(result)[0])).toEqual([
+      'journey_key',
+      'behavior_id',
+      'step',
+      'dimension',
+      'cell_kind',
+      'cell_key',
+      'cell_status',
+      'assertion_ref',
+      'reason',
+      'write_database',
+    ]);
+  });
+
+  it('aggregates atomic axes into one worst-status family/step/dimension cell', () => {
+    const cells = projectJourneyCells({
+      schema_version: '1.1.0',
+      journey: { key: 'kernel-harness-delivery' },
+      behaviors: [{
+        behavior_id: 'KERNEL-P0-TEST',
+        assertion_id: 'KERNEL-TEST-01',
+        atoms: [
+          {
+            invariant_id: 'ATOM-PROVEN',
+            steps: ['S4'],
+            dimensions: ['invariant'],
+            effective_status: 'proven',
+            projection: 'green',
+          },
+          {
+            invariant_id: 'ATOM-GAP',
+            steps: ['S4'],
+            dimensions: ['invariant'],
+            effective_status: 'gap',
+            projection: 'red',
+          },
+          {
+            invariant_id: 'ATOM-RETIRED',
+            steps: ['S12'],
+            dimensions: ['checkpoint'],
+            effective_status: 'retired',
+            projection: 'na',
+            retired_absence_current: false,
+          },
+        ],
+      }],
+    });
+
+    expect(cells).toEqual([
+      expect.objectContaining({
+        step: 'S4',
+        dimension: 'invariant',
+        atom_ids: ['ATOM-GAP', 'ATOM-PROVEN'],
+        atom_statuses: ['gap', 'proven'],
+        atom_projections: ['red', 'green'],
+        cell_status: 'red',
+        write_database: false,
+      }),
+      expect.objectContaining({
+        step: 'S12',
+        dimension: 'checkpoint',
+        atom_ids: ['ATOM-RETIRED'],
+        atom_statuses: ['retired'],
+        cell_status: 'red',
+        write_database: false,
+      }),
+    ]);
+  });
+
+  it('deduplicates and canonically sorts atomic tuples per journey cell', () => {
+    const cells = projectJourneyCells({
+      schema_version: '1.1.0',
+      journey: { key: 'kernel-harness-delivery' },
+      behaviors: [{
+        behavior_id: 'KERNEL-P0-TEST',
+        atoms: [
+          {
+            invariant_id: 'ATOM-B',
+            steps: ['S5', 'S4', 'S4'],
+            dimensions: ['nfr', 'invariant'],
+            effective_status: 'proven',
+            projection: 'green',
+          },
+          {
+            invariant_id: 'ATOM-A',
+            steps: ['S4'],
+            dimensions: ['invariant'],
+            effective_status: 'gap',
+            projection: 'red',
+          },
+          {
+            invariant_id: 'ATOM-A',
+            steps: ['S4'],
+            dimensions: ['invariant'],
+            effective_status: 'gap',
+            projection: 'red',
+          },
+        ],
+      }],
+    });
+
+    expect(cells.map(({ step, dimension }) => `${step}:${dimension}`)).toEqual([
+      'S4:nfr',
+      'S4:invariant',
+      'S5:nfr',
+      'S5:invariant',
+    ]);
+    expect(cells[1]).toMatchObject({
+      atom_ids: ['ATOM-A', 'ATOM-B'],
+      atom_statuses: ['gap', 'proven'],
+      atom_projections: ['red', 'green'],
+      cell_status: 'red',
+    });
+  });
+
+  it('fails closed instead of emitting an unknown journey cell status', () => {
+    const [cell] = projectJourneyCells({
+      schema_version: '1.1.0',
+      journey: { key: 'kernel-harness-delivery' },
+      behaviors: [{
+        behavior_id: 'KERNEL-P0-TEST',
+        atoms: [{
+          invariant_id: 'ATOM-UNKNOWN-PROJECTION',
+          steps: ['S4'],
+          dimensions: ['invariant'],
+          effective_status: 'gap',
+          projection: 'blue',
+        }],
+      }],
+    });
+
+    expect(cell.cell_status).toBe('red');
+  });
+
+  it('does not project the contract-only not_applicable proof status as atomic N/A', () => {
+    const [cell] = projectJourneyCells({
+      schema_version: '1.1.0',
+      journey: { key: 'kernel-harness-delivery' },
+      behaviors: [{
+        behavior_id: 'KERNEL-P1-TEST',
+        atoms: [{
+          invariant_id: 'ATOM-INVALID-NOT-APPLICABLE',
+          classification: 'retired',
+          steps: ['S12'],
+          dimensions: ['checkpoint'],
+          effective_status: 'not_applicable',
+          projection: 'na',
+          retired_absence_current: true,
+          na_reason: 'untrusted reason',
+        }],
+      }],
+    });
+
+    expect(cell).toMatchObject({
+      cell_status: 'red',
+      atom_statuses: ['not_applicable'],
+      atom_projections: ['red'],
+      na_reason: [],
+    });
+  });
+
+  it('projects all 43 honest atomic invariants by their declared axes without writes', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), { now: NOW });
+    const cells = projectJourneyCells(validation);
+    const projectedAtomIds = new Set(cells.flatMap((cell) => cell.atom_ids));
+    const uniqueCellKeys = new Set(cells.map(
+      (cell) => `${cell.behavior_id}:${cell.step}:${cell.dimension}`,
+    ));
+
+    expect(projectedAtomIds.size).toBe(43);
+    expect(uniqueCellKeys.size).toBe(cells.length);
+    expect(cells.every((cell) => (
+      Array.isArray(cell.atom_statuses)
+      && cell.cell_status === 'red'
+      && typeof cell.reason === 'string'
+      && cell.reason.length > 0
+      && cell.write_database === false
+    ))).toBe(true);
+    const retiredCells = cells.filter((cell) => (
+      cell.atom_ids.includes('KERNEL-INV-P1-08-01')
+    ));
+    expect(retiredCells.length).toBeGreaterThan(0);
+    expect(retiredCells.every((cell) => (
+      cell.cell_status === 'red'
+      && cell.atom_projections.includes('na')
+      && cell.na_reason.some((reason) => (
+        reason.includes('durable goal/Attempt closure')
+      ))
+      && cell.reason.includes('retired absence proof is not verified')
+    ))).toBe(true);
   });
 });
 
