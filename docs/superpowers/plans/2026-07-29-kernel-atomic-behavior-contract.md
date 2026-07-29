@@ -1090,10 +1090,12 @@ status 一律 gap。合法 retired atom 投影 `retired/na`，但
 ```
 
 同 family/step/dimension 采用最差状态；不得为 43 atoms 创建新顶层 journey。
-每个 cell 必须先按 `invariant_id` 对 atom tuple 去重，再按 ID 排序，并由同一 tuple 数组
-同步派生 `atom_ids`、`atom_statuses`、`atom_projections`、`na_reason`，禁止 parallel
-arrays 漂移。只有通过 `validRetirement()` 的 atom 才能输出 `retired/na`；字段不全或
-非法 retirement 必须投影 `gap/red`。
+每个 cell 必须先按 `invariant_id` 对 atom tuple 去重，再按 ID 排序，并由同一 tuple
+数组同步派生等长的 `atom_ids`、`atom_statuses`、`atom_projections`、
+`atom_na_reasons`；`atom_na_reasons` 必须保留 `null` 位置，禁止 parallel arrays
+漂移。既有 `journey_step_links.na_reason` 保持聚合 scalar：对非空 atom reasons 去重、
+排序并以 `; ` 连接，无值时为 `null`。只有通过 `validRetirement()` 的 atom 才能输出
+`retired/na`；字段不全或非法 retirement 必须投影 `gap/red`。
 
 - [ ] **Step 4: 运行 RED**
 
