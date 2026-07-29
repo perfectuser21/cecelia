@@ -299,6 +299,12 @@ function createDockerAdapter({
       const attemptId = input?.attemptId;
       assertAttemptId(attemptId);
       if (
+        !Number.isSafeInteger(input?.timeoutSeconds)
+        || input.timeoutSeconds <= 0
+      ) {
+        throw new Error('attempt_timeout_seconds_invalid');
+      }
+      if (
         input.workspaceMount?.target !== '/workspace'
         || typeof input.workspaceMount?.source !== 'string'
         || !path.isAbsolute(input.workspaceMount.source)
@@ -385,6 +391,7 @@ function createDockerAdapter({
           HARNESS_READ_ONLY: String(input.workspaceMount.readOnly),
           HARNESS_NODE: input.role,
           HARNESS_MODEL: input.model,
+          HARNESS_TIMEOUT_SECONDS: String(input.timeoutSeconds),
           HARNESS_TASK_BUNDLE_FILE: containerPrompt,
           CECELIA_PROMPT_FILE: containerPrompt,
           CECELIA_STDOUT_FILE: containerStdout,
@@ -651,6 +658,12 @@ function validateLaunchRequest(value) {
   if (!Number.isInteger(value.lease_generation) || value.lease_generation < 0) {
     throw new Error('attempt_lease_generation_invalid');
   }
+  if (
+    !Number.isSafeInteger(value.timeout_seconds)
+    || value.timeout_seconds <= 0
+  ) {
+    throw new Error('attempt_timeout_seconds_invalid');
+  }
   return {
     request: value,
     providerSpec: validateProviderSpec(value.provider_spec),
@@ -772,6 +785,7 @@ function createAttemptRunner({
           workerId,
           image: runnerImageDigest,
           providerSpec,
+          timeoutSeconds: request.timeout_seconds,
           role: target.role,
           model: target.model,
           workspaceMount: {
