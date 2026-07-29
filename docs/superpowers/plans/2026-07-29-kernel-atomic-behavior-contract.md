@@ -477,6 +477,7 @@ git commit -m "test(kernel): require root atomic inventory"
 
 - Modify: `packages/brain/src/lib/__tests__/kernel-equivalence-atomic-contract.test.js`
 - Modify: `packages/brain/src/lib/kernel-equivalence-atomic-contract.js`
+- Modify: `packages/quality/__tests__/regression-contract.test.js`
 - Normative source: `docs/superpowers/specs/2026-07-29-kernel-atomic-contract-honesty-addendum-design.md`
 
 - [ ] **Step 1: 写 per-probe outcome 与 authority RED**
@@ -748,6 +749,28 @@ authority 和 recovery mapping 条目。`replacement.legacy_evidence` 复用 rep
 evidence 校验，但把任一 evidence finding 映射成
 `replacement_legacy_evidence_invalid`，不得把它扫描成 receipt material。
 
+根合同测试保留声明/派生的七项 identity/count metrics，并为 validator 输出新增单独
+oracle，避免把嵌套 honesty metrics 错当成根 YAML 声明字段：
+
+```js
+const EXPECTED_VALIDATOR_METRICS = {
+  ...EXPECTED_ATOMIC_METRICS,
+  probe_outcome_authority: {
+    appendix_explicit: 446,
+    design_derived: 0,
+    coverage_gap: 0,
+  },
+  recovery_mapping: {
+    exact_binding_count: 56,
+    derived_binding_count: 0,
+    coverage_gap_count: 11,
+  },
+};
+```
+
+真实 root validator test 必须严格等于 `EXPECTED_VALIDATOR_METRICS`；declared/derived
+count tests 继续严格等于 `EXPECTED_ATOMIC_METRICS`。
+
 - [ ] **Step 8: 运行 GREEN 和相邻回归**
 
 ```bash
@@ -767,6 +790,13 @@ git add \
   packages/brain/src/lib/kernel-equivalence-atomic-contract.js \
   packages/brain/src/lib/__tests__/kernel-equivalence-atomic-contract.test.js
 git commit -m "feat(kernel): preserve atomic contract uncertainty"
+```
+
+- [ ] **Step 10: 提交 root validator metrics oracle**
+
+```bash
+git add packages/quality/__tests__/regression-contract.test.js
+git commit -m "test(kernel): assert honest root metrics"
 ```
 
 ## Task 4: Root 1.1 inventory GREEN
