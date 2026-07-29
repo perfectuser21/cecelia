@@ -1,0 +1,21 @@
+name: Kernel Equivalence Cutover Gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    environment: kernel-equivalence-cutover
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: node scripts/ci/check-kernel-behavior-equivalence.mjs --check-report --format=json
+      - run: node scripts/ci/run-kernel-equivalence-drill.mjs --gate --format=json

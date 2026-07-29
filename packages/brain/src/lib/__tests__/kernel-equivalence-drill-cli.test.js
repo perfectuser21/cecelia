@@ -253,17 +253,17 @@ describe('kernel equivalence drill CLI', () => {
     ])).toEqual([0, 1, 1, 0]);
   });
 
-  it('uses the fail-closed gate in the P0 regression contract', () => {
+  it('keeps ordinary P0 regression informational and leaves cutover to its workflow', () => {
     const contract = readFileSync(
       join(repositoryRoot, 'regression-contract.yaml'),
       'utf8',
     );
 
     expect(contract).toContain(
-      'run-kernel-equivalence-drill.mjs --gate --format=json',
+      'run-kernel-equivalence-drill.mjs --check --format=json',
     );
     expect(contract).not.toContain(
-      'run-kernel-equivalence-drill.mjs --check --format=json',
+      'run-kernel-equivalence-drill.mjs --gate --format=json',
     );
   });
 
