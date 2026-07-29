@@ -1627,10 +1627,6 @@ describe('honest equivalence report', () => {
 
     const report = buildEquivalenceReport(oversized);
 
-    expect(report.behaviors[0].legacy_evidence.length).toBeLessThanOrEqual(64);
-    expect(
-      report.behaviors[0].partial_behavioral_evidence.length,
-    ).toBeLessThanOrEqual(64);
     expect(report.summary.findings).toBeLessThanOrEqual(64);
     expect(report.axes.grid).toHaveLength(13);
     expect(report).toMatchObject({
@@ -1639,6 +1635,7 @@ describe('honest equivalence report', () => {
       schema_valid: false,
       proof_complete: false,
       atomic_cutover_ready: false,
+      behaviors: [],
       atomic_details: [],
       cell_atomic_coverage: [],
     });
@@ -2342,6 +2339,72 @@ describe('honest equivalence report', () => {
     )).size).toBe(11);
     expect(identifierReads).toBe(1);
     expect(ownKeysReads).toBe(0);
+  });
+
+  it('projects the semantic snapshot when its behavior IDs are invalid', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const original = validation.behaviors[1];
+    const duplicateId = validation.behaviors[0].behavior_id;
+    const attackerId = 'attacker-after-semantic-audit';
+    let identifierReads = 0;
+    validation.behaviors[1] = new Proxy(original, {
+      get(target, property, receiver) {
+        if (property === 'behavior_id') {
+          identifierReads += 1;
+          return identifierReads === 1 ? duplicateId : attackerId;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    const report = buildEquivalenceReport(validation);
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: false,
+      schema_valid: false,
+    });
+    expect(identifierReads).toBe(1);
+    expect(report.behaviors).toHaveLength(11);
+    expect(report.behaviors[1].behavior_id).toBe(duplicateId);
+    expect(report.behaviors.map(
+      (behavior) => behavior.behavior_id,
+    )).not.toContain(attackerId);
+  });
+
+  it('uses safe empty behaviors when the atomic snapshot is structural invalid', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const original = validation.behaviors[1];
+    const attackerId = 'attacker-after-structural-failure';
+    let identifierReads = 0;
+    validation.behaviors[1] = new Proxy(original, {
+      get(target, property, receiver) {
+        if (property === 'behavior_id') {
+          identifierReads += 1;
+          if (identifierReads === 1) {
+            throw new Error('behavior ID snapshot failed');
+          }
+          return attackerId;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    const report = buildEquivalenceReport(validation);
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: false,
+      schema_valid: false,
+      behaviors: [],
+      atomic_details: [],
+      cell_atomic_coverage: [],
+    });
+    expect(identifierReads).toBe(1);
   });
 
   it('snapshots a stateful invariant ID exactly once before auditing', () => {

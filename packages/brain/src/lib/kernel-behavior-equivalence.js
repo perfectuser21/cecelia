@@ -1212,7 +1212,7 @@ function createAuditFieldSnapshotter() {
   };
 }
 
-function atomicSemanticIdsValid(validation, onValidSnapshot = null) {
+function auditAtomicSemanticSnapshot(validation) {
   const snapshotArray = createAuditArraySnapshotter();
   const snapshotField = createAuditFieldSnapshotter();
   let snapshotFailed = false;
@@ -1465,13 +1465,23 @@ function atomicSemanticIdsValid(validation, onValidSnapshot = null) {
     snapshotFailed
     || behaviorSnapshots.length !== MAX_REPORT_FAMILIES
   ) {
-    return false;
+    return Object.freeze({
+      snapshot: null,
+      valid: false,
+    });
   }
+  const snapshot = Object.freeze({
+    behaviors: behaviorSnapshots,
+  });
+  const invalid = () => Object.freeze({
+    snapshot,
+    valid: false,
+  });
 
   const behaviorIds = behaviorSnapshots.map(
     (behavior) => behavior.behavior_id,
   );
-  if (!uniqueSemanticIdentifiers(behaviorIds)) return false;
+  if (!uniqueSemanticIdentifiers(behaviorIds)) return invalid();
 
   const invariantIds = new Set();
   const verifiedInvariantIds = new Set();
@@ -1488,18 +1498,18 @@ function atomicSemanticIdsValid(validation, onValidSnapshot = null) {
           atom.invariant_id,
         )
       ) {
-        return false;
+        return invalid();
       }
       for (const probe of atom.probe_definitions) {
         if (!addUniqueSemanticIdentifier(probeIds, probe.probe_id)) {
-          return false;
+          return invalid();
         }
       }
       for (const gapRecord of atom.scenario_plan.recovery.coverage_gaps) {
         if (
           !addUniqueSemanticIdentifier(recoveryGapIds, gapRecord.gap_id)
         ) {
-          return false;
+          return invalid();
         }
       }
     }
@@ -1514,14 +1524,14 @@ function atomicSemanticIdsValid(validation, onValidSnapshot = null) {
           atom.invariant_id,
         )
       ) {
-        return false;
+        return invalid();
       }
     }
     if (
       familyInvariantIds.size !== familyVerifiedIds.size
       || [...familyVerifiedIds].some((id) => !familyInvariantIds.has(id))
     ) {
-      return false;
+      return invalid();
     }
   }
   if (
@@ -1529,7 +1539,7 @@ function atomicSemanticIdsValid(validation, onValidSnapshot = null) {
     || verifiedInvariantIds.size !== MAX_REPORT_ATOMS
     || probeIds.size !== MAX_REPORT_PROBES
   ) {
-    return false;
+    return invalid();
   }
 
   let referenceEdgeCount = 0;
@@ -1559,14 +1569,14 @@ function atomicSemanticIdsValid(validation, onValidSnapshot = null) {
             atom.scenario_plan[scenario].required_probe_ids,
           )
         ) {
-          return false;
+          return invalid();
         }
       }
       const recovery = atom.scenario_plan.recovery;
       for (const binding of recovery.bindings) {
-        if (!validReference(binding.recovery_probe_id)) return false;
+        if (!validReference(binding.recovery_probe_id)) return invalid();
         if (!validReferenceList(binding.predecessor_probe_ids)) {
-          return false;
+          return invalid();
         }
       }
       for (const gapRecord of recovery.coverage_gaps) {
@@ -1578,7 +1588,7 @@ function atomicSemanticIdsValid(validation, onValidSnapshot = null) {
             gapRecord.affected_recovery_probe_ids,
           )
         ) {
-          return false;
+          return invalid();
         }
       }
     }
@@ -1592,15 +1602,15 @@ function atomicSemanticIdsValid(validation, onValidSnapshot = null) {
           composedIds,
           boundedCompositeIdentifier(behaviorId, provider, scenario),
         )) {
-          return false;
+          return invalid();
         }
       }
     }
   }
-  onValidSnapshot?.(Object.freeze({
-    behaviors: behaviorSnapshots,
-  }));
-  return true;
+  return Object.freeze({
+    snapshot,
+    valid: true,
+  });
 }
 
 function reportMetric(value, maximum) {
@@ -2068,13 +2078,13 @@ function buildEquivalenceReportImpl(
   const atomicReport = schemaVersion === '1.1.0';
   const validationValid =
     reportInput.snapshot_valid && reportInput.valid;
-  let atomicSnapshot = null;
-  const semanticIdsValid = !atomicReport
-    || atomicSemanticIdsValid(reportInput, (snapshot) => {
-      atomicSnapshot = snapshot;
-    });
-  const behaviorSource = atomicSnapshot?.behaviors
-    ?? reportInput.behaviors;
+  const atomicAudit = atomicReport
+    ? auditAtomicSemanticSnapshot(reportInput)
+    : { snapshot: null, valid: true };
+  const semanticIdsValid = atomicAudit.valid;
+  const behaviorSource = atomicReport
+    ? atomicAudit.snapshot?.behaviors ?? []
+    : reportInput.behaviors;
   const behaviors = asArray(behaviorSource)
     .slice(0, MAX_REPORT_FAMILIES)
     .map(boundReportBehavior);
