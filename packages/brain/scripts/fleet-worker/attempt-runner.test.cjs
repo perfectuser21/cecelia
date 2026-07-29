@@ -476,7 +476,11 @@ describe('Fleet Worker durable runtime adapters', () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
     const runCommand = vi.fn(async () => ({ stdout: '' }));
-    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+    const docker = createDockerAdapter({
+      runCommand,
+      runtimeRoot,
+      resolveMountSource: (source) => source,
+    });
 
     try {
       await expect(docker.launch({
@@ -552,10 +556,14 @@ describe('Fleet Worker durable runtime adapters', () => {
       return { stdout: '' };
     });
     const writeCredential = vi.fn(async () => undefined);
+    const resolveMountSource = vi.fn(
+      (source) => source.startsWith('/var/') ? `/private${source}` : source,
+    );
     const docker = createDockerAdapter({
       runCommand,
       runtimeRoot,
       writeCredential,
+      resolveMountSource,
     });
 
     try {
@@ -568,13 +576,13 @@ describe('Fleet Worker durable runtime adapters', () => {
         role: 'generator',
         model: 'gpt-5',
         workspaceMount: {
-          source: `/controlled/worktrees/${ATTEMPT_ID}`,
+          source: `/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID}`,
           target: '/workspace',
           readOnly: true,
         },
         workspaceAdminMount: {
-          source: '/controlled/mirrors/perfectuser21__cecelia.git',
-          target: '/controlled/mirrors/perfectuser21__cecelia.git',
+          source: `/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
+          target: `/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
           readOnly: true,
         },
         labels: {
@@ -595,10 +603,22 @@ describe('Fleet Worker durable runtime adapters', () => {
       expect(createArgs[0]).toBe('create');
       expect(createArgs).toContain(IMAGE_DIGEST);
       expect(createArgs).toContain(
-        `type=bind,src=/controlled/worktrees/${ATTEMPT_ID},dst=/workspace,readonly`,
+        `type=bind,src=/private/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID},dst=/workspace,readonly`,
       );
       expect(createArgs).toContain(
-        'type=bind,src=/controlled/mirrors/perfectuser21__cecelia.git,dst=/controlled/mirrors/perfectuser21__cecelia.git,readonly',
+        `type=bind,src=/private/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,dst=/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,readonly`,
+      );
+      expect(createArgs).toContain(
+        `type=bind,src=${runtimeRoot},dst=/tmp/cecelia-prompts`,
+      );
+      expect(resolveMountSource).toHaveBeenCalledWith(
+        `/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID}`,
+      );
+      expect(resolveMountSource).toHaveBeenCalledWith(
+        `/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
+      );
+      expect(resolveMountSource).toHaveBeenCalledWith(
+        path.join(runtimeRoot, ATTEMPT_ID),
       );
       expect(createArgs.join(' ')).not.toContain('/Users/operator');
       expect(createArgs).toEqual(expect.arrayContaining([
