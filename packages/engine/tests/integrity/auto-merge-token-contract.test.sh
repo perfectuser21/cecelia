@@ -80,7 +80,7 @@ echo ""
 echo "[auto-merge-token-contract] PASS=$PASS FAIL=$FAIL"
 
 if [[ "$FAIL" -gt 0 ]]; then
-  echo "[auto-merge-token-contract] ❌ 合同断言失败：$FAIL 条未通过"
+  echo "[auto-merge-token-contract] ❌ 合同断言失败: $FAIL 条未通过"
   exit 1
 else
   echo "[auto-merge-token-contract] ✅ 全部合同断言通过"
