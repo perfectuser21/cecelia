@@ -2,12 +2,10 @@
 
 import {
   existsSync,
-  readdirSync,
   readFileSync,
-  statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, extname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load } from 'js-yaml';
 import {
@@ -18,14 +16,24 @@ import {
 import {
   compileDrillPlan,
 } from '../../packages/brain/src/lib/kernel-equivalence-drills.js';
+import {
+  evaluateRepositoryPolicy,
+} from '../../packages/brain/src/lib/kernel-equivalence-repository-policy.js';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
-const repositoryRoot = resolve(scriptDirectory, '../..');
-const contractPath = join(repositoryRoot, 'regression-contract.yaml');
-const reportPath = join(
-  repositoryRoot,
-  'docs/reviews/2026-07-28-kernel-p0-p1-equivalence-report.md',
-);
+const defaultRepositoryRoot = resolve(scriptDirectory, '../..');
+const defaultDependencies = Object.freeze({
+  buildEquivalenceReport,
+  compileDrillPlan,
+  evaluateRepositoryPolicy,
+  formatEquivalenceMarkdown,
+  validateBehaviorEquivalence,
+});
+const defaultFileSystem = Object.freeze({
+  existsSync,
+  readFileSync,
+  writeFileSync,
+});
 
 function parseArguments(argv) {
   const options = {
@@ -50,99 +58,225 @@ function parseArguments(argv) {
   return options;
 }
 
-function walkFiles(directory) {
-  if (!existsSync(directory)) return [];
-  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(directory, entry.name);
-    return entry.isDirectory() ? walkFiles(path) : [path];
-  });
+function invalidClockValidation(contract) {
+  return {
+    valid: false,
+    schema_valid: false,
+    proof_complete: false,
+    atomic_cutover_ready: false,
+    atomic_metrics: {
+      classified_atom_count: 0,
+      proof_required_atom_count: 0,
+      probe_definition_count: 0,
+      proof_required_probe_definition_count: 0,
+      provider_probe_required: 0,
+      provider_probe_proven: 0,
+    },
+    legacy_verified_family_receipt_count: 0,
+    atomic_proven_family_cell_count: 0,
+    verified_proof_cell_count: 0,
+    schema_version: contract?.behavior_equivalence?.schema_version ?? null,
+    contract_version:
+      contract?.behavior_equivalence?.contract_version ?? null,
+    journey: null,
+    dimensions: [],
+    findings: [{
+      behavior_id: null,
+      code: 'report_as_of_invalid',
+      path: 'behavior_equivalence.report_as_of',
+      message: 'report_as_of must be a valid deterministic timestamp',
+    }],
+    behaviors: [],
+  };
 }
 
-function stripSqlComments(source) {
-  return source
-    .replaceAll(/\/\*[\s\S]*?\*\//g, '')
-    .replaceAll(/--[^\n]*/g, '');
+function fallbackDrillPlan() {
+  return {
+    behavior_count: 0,
+    cells: [],
+  };
 }
 
-function findForbiddenLedgerTables() {
-  const migrationRoots = [
-    join(repositoryRoot, 'packages/brain/migrations'),
-    join(repositoryRoot, 'packages/brain/src/migrations'),
-  ];
-  const createBehaviorLedger = /\bcreate\s+table(?:\s+if\s+not\s+exists)?\s+(?:(?:"?[a-z_][\w$]*"?\.)?)"?behavior_ledger"?\b/i;
-  return migrationRoots
-    .flatMap(walkFiles)
-    .filter((path) => extname(path) === '.sql' && statSync(path).isFile())
-    .filter((path) => createBehaviorLedger.test(stripSqlComments(readFileSync(path, 'utf8'))))
-    .map((path) => path.slice(repositoryRoot.length + 1))
-    .sort();
-}
+export function runCheck({
+  argv = [],
+  repositoryRoot = defaultRepositoryRoot,
+  reportPath = join(
+    repositoryRoot,
+    'docs/reviews/2026-07-28-kernel-p0-p1-equivalence-report.md',
+  ),
+  dependencies: dependencyOverrides = {},
+  fileSystem: fileSystemOverrides = {},
+} = {}) {
+  const options = parseArguments(argv);
+  const dependencies = {
+    ...defaultDependencies,
+    ...dependencyOverrides,
+  };
+  const fileSystem = {
+    ...defaultFileSystem,
+    ...fileSystemOverrides,
+  };
+  const contractPath = join(repositoryRoot, 'regression-contract.yaml');
+  const contract = load(fileSystem.readFileSync(contractPath, 'utf8'));
+  const repositoryPolicy = dependencies.evaluateRepositoryPolicy(
+    repositoryRoot,
+  );
 
-function main() {
-  const options = parseArguments(process.argv.slice(2));
-  const contract = load(readFileSync(contractPath, 'utf8'));
-  const evaluatedAt = contract?.behavior_equivalence?.report_as_of;
-  if (!evaluatedAt || !Number.isFinite(Date.parse(evaluatedAt))) {
-    throw new Error('behavior_equivalence.report_as_of must be a valid deterministic timestamp');
+  const reportAsOf = contract?.behavior_equivalence?.report_as_of;
+  const now = typeof reportAsOf === 'string'
+    ? Date.parse(reportAsOf)
+    : Number.NaN;
+  const clockValid = Number.isFinite(now);
+  const evaluatedAt = clockValid
+    ? new Date(now).toISOString()
+    : null;
+
+  let validation = clockValid
+    ? dependencies.validateBehaviorEquivalence(contract, { now })
+    : invalidClockValidation(contract);
+  let drillPlan = fallbackDrillPlan();
+  let drillError = null;
+  if (clockValid) {
+    try {
+      drillPlan = dependencies.compileDrillPlan(contract, { now });
+    } catch (error) {
+      drillError = error instanceof Error ? error.message : String(error);
+      validation = {
+        ...validation,
+        valid: false,
+        schema_valid: false,
+        findings: [
+          ...(Array.isArray(validation.findings) ? validation.findings : []),
+          {
+            behavior_id: null,
+            code: 'drill_manifest_invalid',
+            path: 'behavior_equivalence.behaviors',
+            message: `canonical drill manifest invalid: ${drillError}`,
+          },
+        ],
+      };
+    }
   }
 
-  const validation = validateBehaviorEquivalence(contract, {
-    now: Date.parse(evaluatedAt),
-  });
-  const drillPlan = compileDrillPlan(contract);
   const drillBlockers = drillPlan.cells.filter(
     (cell) => cell.blocked_by != null,
   ).length;
-  const forbiddenTables = findForbiddenLedgerTables();
-  const report = buildEquivalenceReport(validation, { evaluatedAt });
-  const markdown = formatEquivalenceMarkdown(report);
+  const report = dependencies.buildEquivalenceReport(
+    validation,
+    { evaluatedAt },
+  );
+  const markdown = dependencies.formatEquivalenceMarkdown(report);
 
   if (options.writeReport) {
-    writeFileSync(reportPath, markdown, 'utf8');
+    fileSystem.writeFileSync(reportPath, markdown, 'utf8');
   }
 
   let drift = false;
   if (options.checkReport) {
-    drift = !existsSync(reportPath) || readFileSync(reportPath, 'utf8') !== markdown;
+    drift = (
+      !fileSystem.existsSync(reportPath)
+      || fileSystem.readFileSync(reportPath, 'utf8') !== markdown
+    );
   }
 
-  if (options.format === 'markdown') {
-    process.stdout.write(markdown);
-  } else {
-    process.stdout.write(`${JSON.stringify({
-      ...report,
-      drill_behavior_count: drillPlan.behavior_count,
-      drill_cell_count: drillPlan.cells.length,
-      drill_blocker_count: drillBlockers,
-      drill_execution_ready: drillBlockers === 0,
-      forbidden_behavior_ledger_tables: forbiddenTables,
-      report_drift: drift,
-    }, null, 2)}\n`);
+  const result = {
+    ...report,
+    valid: validation.valid === true,
+    schema_valid: validation.schema_valid === true,
+    proof_complete: validation.proof_complete === true,
+    atomic_cutover_ready: validation.atomic_cutover_ready === true,
+    drill_behavior_count: drillPlan.behavior_count,
+    drill_cell_count: drillPlan.cells.length,
+    drill_blocker_count: drillBlockers,
+    drill_execution_ready: (
+      drillPlan.cells.length > 0
+      && drillBlockers === 0
+    ),
+    repository_policy_valid: (
+      repositoryPolicy.repository_policy_valid === true
+    ),
+    duplicate_behavior_equivalence_contracts:
+      repositoryPolicy.duplicate_behavior_equivalence_contracts,
+    forbidden_behavior_ledger_tables:
+      repositoryPolicy.forbidden_behavior_ledger_tables,
+    report_drift: drift,
+  };
+  const stderr = [];
+  if (!clockValid) {
+    stderr.push(
+      'behavior_equivalence.report_as_of must be a valid deterministic timestamp\n',
+    );
   }
-
-  if (!validation.valid) {
-    process.stderr.write(
+  if (drillError !== null) {
+    stderr.push(`Kernel equivalence drill plan is invalid: ${drillError}\n`);
+  }
+  if (validation.schema_valid !== true) {
+    stderr.push(
       `Behavior equivalence contract has ${validation.findings.length} validation finding(s).\n`,
     );
-    process.exitCode = 1;
   }
-  if (forbiddenTables.length > 0) {
-    process.stderr.write(
-      `Forbidden behavior_ledger table creation found in: ${forbiddenTables.join(', ')}\n`,
+  if (repositoryPolicy.repository_policy_valid !== true) {
+    stderr.push(
+      'Repository equivalence policy failed'
+      + `; duplicate contracts: ${repositoryPolicy.duplicate_behavior_equivalence_contracts.join(', ') || 'none'}`
+      + `; forbidden behavior_ledger DDL: ${repositoryPolicy.forbidden_behavior_ledger_tables.join(', ') || 'none'}.\n`,
     );
-    process.exitCode = 1;
   }
   if (drift) {
-    process.stderr.write(
-      `Behavior equivalence report is stale; run ${process.argv[1]} --write-report.\n`,
+    stderr.push(
+      'Behavior equivalence report is stale; run '
+      + 'scripts/ci/check-kernel-behavior-equivalence.mjs --write-report.\n',
     );
-    process.exitCode = 1;
+  }
+  const exitCode = (
+    validation.schema_valid === true
+    && repositoryPolicy.repository_policy_valid === true
+    && !drift
+  ) ? 0 : 1;
+  const stdout = options.format === 'markdown'
+    ? markdown
+    : `${JSON.stringify(result, null, 2)}\n`;
+
+  return {
+    exitCode,
+    stdout,
+    stderr: stderr.join(''),
+    result,
+    report,
+    markdown,
+  };
+}
+
+export function main({
+  argv = process.argv.slice(2),
+  repositoryRoot = defaultRepositoryRoot,
+  stdout = process.stdout,
+  stderr = process.stderr,
+  setExitCode = (code) => {
+    process.exitCode = code;
+  },
+} = {}) {
+  try {
+    const check = runCheck({ argv, repositoryRoot });
+    stdout.write(check.stdout);
+    stderr.write(check.stderr);
+    setExitCode(check.exitCode);
+    return check;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    stderr.write(`${message}\n`);
+    setExitCode(1);
+    return {
+      exitCode: 1,
+      stdout: '',
+      stderr: `${message}\n`,
+      result: null,
+      report: null,
+      markdown: '',
+    };
   }
 }
 
-try {
+if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
   main();
-} catch (error) {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
 }
