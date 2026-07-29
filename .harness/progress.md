@@ -1,5 +1,6 @@
-# Sprint: sprints/07290954-ci-blindspot-fix (241578ce-6726-4658-afbc-03ac93036494)
-# 任务: 修复CI两P0: main push全量回归死码 + fleet-worker测试孤儿接线 (重试,镜像已重建)
+# Sprint: sprints/07291205-ci-auto-merge-token-fix (b62e3dc3-0ffd-4733-803c-58138dac18ce)
+# 任务: 修复auto-merge用GITHUB_TOKEN导致push-triggered workflow不触发(GH Actions loop-prevention)
 # 开始时间: 2026-07-29
-planner: done (sprint-prd.md@ae25bdff8, invariants=6, fr=2)
-contract-proposer: done (contract-draft.md, contract-dod.md, behaviors=8, tests/integrity/ci-blindspot-contract.test.sh PASS=0 FAIL=3 red-confirmed)
+planner: done (sprint-prd.md@c61e4edd2, invariants=5, fr=0)
+gan: done (contract-draft.md@d178fba64, r4, verdict=APPROVED, 铁律覆盖=5/5, judgments_written=0, rubric=.harness/verdicts/gan-08692b2b0.json)
+generator: in_progress (green-commit pending)
