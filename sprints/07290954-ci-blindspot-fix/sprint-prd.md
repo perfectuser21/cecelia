@@ -126,6 +126,10 @@ Commit-2 预期结果：`PASS=3 FAIL=0`
 
 ---
 
+## Invariant 约束
+
+见下方验收标准表。
+
 ## 三、验收标准（Final E2E Invariants）
 
 | # | 验收项 | 技术断言 |
@@ -171,3 +175,16 @@ Commit-2 预期结果：`PASS=3 FAIL=0`
 
 本 sprint 新增 FR 数量：**2**（失明点① + 失明点②）
 累积 FR 数量（本任务）：**2**
+
+---
+
+## NFR
+
+- 改动范围最小化：只改 `.github/workflows/ci.yml` + 新增一个测试文件，零应用代码变更
+- 不引入新的第三方 Action 依赖
+- 不改变现有 job 的触发条件语义（只扩充，不收窄）
+
+---
+
+journey_type: ci_fix
+target_environment: local_api
