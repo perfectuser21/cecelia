@@ -171,6 +171,10 @@ type run_with_attempt_timeout >/dev/null 2>&1 || {
   echo 'missing Attempt timeout process supervisor' >&2
   exit 1
 }
+type normalize_attempt_timeout_exit >/dev/null 2>&1 || {
+  echo 'missing Attempt timeout forced-kill classifier' >&2
+  exit 1
+}
 type normalize_provider_failure >/dev/null 2>&1 || {
   echo 'missing Provider failure normalizer' >&2
   exit 1
@@ -193,6 +197,14 @@ else
 fi
 [[ $timeout_exit -eq 124 ]] || {
   echo "Attempt timeout supervisor returned $timeout_exit instead of 124" >&2
+  exit 1
+}
+[[ "$(normalize_attempt_timeout_exit 137 11 1)" == "124" ]] || {
+  echo 'Attempt timeout forced KILL was not normalized to timeout' >&2
+  exit 1
+}
+[[ "$(normalize_attempt_timeout_exit 137 0 30)" == "137" ]] || {
+  echo 'Provider OOM/early KILL was incorrectly normalized to timeout' >&2
   exit 1
 }
 [[ $((SECONDS - timeout_started)) -lt 3 ]] || {
