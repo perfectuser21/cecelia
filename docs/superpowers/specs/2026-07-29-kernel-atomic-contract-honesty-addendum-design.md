@@ -1,7 +1,7 @@
 # Kernel Atomic Contract Honesty Addendum
 
-日期：2026-07-29  
-状态：已批准设计补充  
+日期：2026-07-29
+状态：已批准设计补充
 修订对象：
 
 - `2026-07-29-kernel-atomic-behavior-classification-design.md`
