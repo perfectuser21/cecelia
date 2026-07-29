@@ -1130,9 +1130,70 @@ function addUniqueSemanticIdentifier(values, value) {
   return true;
 }
 
+function createAuditArraySnapshotter() {
+  const snapshots = new WeakMap();
+  return (value, maximum) => {
+    let isArray;
+    try {
+      isArray = Array.isArray(value);
+    } catch {
+      return null;
+    }
+    if (!isArray) return [];
+    if (snapshots.has(value)) {
+      const cached = snapshots.get(value);
+      return cached != null && cached.length <= maximum ? cached : null;
+    }
+    let length;
+    try {
+      length = Reflect.get(value, 'length');
+    } catch {
+      snapshots.set(value, null);
+      return null;
+    }
+    if (
+      !Number.isSafeInteger(length)
+      || length < 0
+      || length > maximum
+    ) {
+      snapshots.set(value, null);
+      return null;
+    }
+    const snapshot = new Array(length);
+    try {
+      for (let index = 0; index < length; index += 1) {
+        const descriptor = Reflect.getOwnPropertyDescriptor(
+          value,
+          String(index),
+        );
+        if (descriptor == null || !Object.hasOwn(descriptor, 'value')) {
+          snapshots.set(value, null);
+          return null;
+        }
+        snapshot[index] = descriptor.value;
+      }
+    } catch {
+      snapshots.set(value, null);
+      return null;
+    }
+    const frozen = Object.freeze(snapshot);
+    snapshots.set(value, frozen);
+    return frozen;
+  };
+}
+
 function atomicSemanticIdsValid(validation) {
-  const rawBehaviors = asArray(validation?.behaviors);
-  if (rawBehaviors.length !== MAX_REPORT_FAMILIES) return false;
+  const snapshotArray = createAuditArraySnapshotter();
+  const rawBehaviors = snapshotArray(
+    validation?.behaviors,
+    MAX_REPORT_FAMILIES,
+  );
+  if (
+    rawBehaviors == null
+    || rawBehaviors.length !== MAX_REPORT_FAMILIES
+  ) {
+    return false;
+  }
   const behaviorIds = rawBehaviors.map((behavior) => behavior?.behavior_id);
   if (!uniqueSemanticIdentifiers(behaviorIds)) return false;
 
@@ -1143,11 +1204,17 @@ function atomicSemanticIdsValid(validation) {
   for (const behavior of rawBehaviors) {
     const familyInvariantIds = new Set();
     const familyVerifiedIds = new Set();
-    const sourceAtoms = asArray(behavior?.atomic_invariants);
-    const verifiedAtoms = asArray(behavior?.atoms);
+    const sourceAtoms = snapshotArray(
+      behavior?.atomic_invariants,
+      MAX_REPORT_ATOMS,
+    );
+    const verifiedAtoms = snapshotArray(
+      behavior?.atoms,
+      MAX_REPORT_ATOMS,
+    );
     if (
-      sourceAtoms.length > MAX_REPORT_ATOMS
-      || verifiedAtoms.length > MAX_REPORT_ATOMS
+      sourceAtoms == null
+      || verifiedAtoms == null
     ) {
       return false;
     }
@@ -1161,16 +1228,22 @@ function atomicSemanticIdsValid(validation) {
       ) {
         return false;
       }
-      const probeDefinitions = asArray(atom?.probe_definitions);
-      if (probeDefinitions.length > MAX_REPORT_PROBES) return false;
+      const probeDefinitions = snapshotArray(
+        atom?.probe_definitions,
+        MAX_REPORT_PROBES,
+      );
+      if (probeDefinitions == null) return false;
       for (const probe of probeDefinitions) {
         if (!addUniqueSemanticIdentifier(probeIds, probe?.probe_id)) {
           return false;
         }
       }
       const recovery = asObject(atom?.scenario_plan?.recovery);
-      const recoveryGaps = asArray(recovery.coverage_gaps);
-      if (recoveryGaps.length > MAX_REPORT_PROBES) return false;
+      const recoveryGaps = snapshotArray(
+        recovery.coverage_gaps,
+        MAX_REPORT_PROBES,
+      );
+      if (recoveryGaps == null) return false;
       for (const gap of recoveryGaps) {
         if (!addUniqueSemanticIdentifier(recoveryGapIds, gap?.gap_id)) {
           return false;
@@ -1226,38 +1299,65 @@ function atomicSemanticIdsValid(validation) {
     return values.every(validReference);
   };
   for (const behavior of rawBehaviors) {
-    for (const atom of asArray(behavior?.atomic_invariants)) {
+    const sourceAtoms = snapshotArray(
+      behavior?.atomic_invariants,
+      MAX_REPORT_ATOMS,
+    );
+    if (sourceAtoms == null) return false;
+    for (const atom of sourceAtoms) {
       for (const scenario of PROOF_SCENARIOS) {
-        const requiredProbeIds = asArray(
+        const requiredProbeIds = snapshotArray(
           atom?.scenario_plan?.[scenario]?.required_probe_ids,
+          MAX_REPORT_PROBES,
         );
-        if (!validReferenceList(requiredProbeIds)) return false;
+        if (
+          requiredProbeIds == null
+          || !validReferenceList(requiredProbeIds)
+        ) {
+          return false;
+        }
       }
       const recovery = asObject(atom?.scenario_plan?.recovery);
-      const recoveryBindings = asArray(recovery.bindings);
-      const recoveryGaps = asArray(recovery.coverage_gaps);
+      const recoveryBindings = snapshotArray(
+        recovery.bindings,
+        MAX_REPORT_PROBES,
+      );
+      const recoveryGaps = snapshotArray(
+        recovery.coverage_gaps,
+        MAX_REPORT_PROBES,
+      );
       if (
-        recoveryBindings.length > MAX_REPORT_PROBES
-        || recoveryGaps.length > MAX_REPORT_PROBES
+        recoveryBindings == null
+        || recoveryGaps == null
       ) {
         return false;
       }
       for (const binding of recoveryBindings) {
         if (!validReference(binding?.recovery_probe_id)) return false;
-        const predecessorProbeIds = asArray(
+        const predecessorProbeIds = snapshotArray(
           binding?.predecessor_probe_ids,
-        );
-        if (!validReferenceList(predecessorProbeIds)) return false;
-      }
-      for (const gap of recoveryGaps) {
-        const affectedViolationProbeIds = asArray(
-          gap?.affected_violation_probe_ids,
-        );
-        const affectedRecoveryProbeIds = asArray(
-          gap?.affected_recovery_probe_ids,
+          MAX_REPORT_PROBES,
         );
         if (
-          !validReferenceList(affectedViolationProbeIds)
+          predecessorProbeIds == null
+          || !validReferenceList(predecessorProbeIds)
+        ) {
+          return false;
+        }
+      }
+      for (const gap of recoveryGaps) {
+        const affectedViolationProbeIds = snapshotArray(
+          gap?.affected_violation_probe_ids,
+          MAX_REPORT_PROBES,
+        );
+        const affectedRecoveryProbeIds = snapshotArray(
+          gap?.affected_recovery_probe_ids,
+          MAX_REPORT_PROBES,
+        );
+        if (
+          affectedViolationProbeIds == null
+          || affectedRecoveryProbeIds == null
+          || !validReferenceList(affectedViolationProbeIds)
           || !validReferenceList(affectedRecoveryProbeIds)
         ) {
           return false;

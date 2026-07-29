@@ -2133,6 +2133,66 @@ describe('honest equivalence report', () => {
     expect(elapsedMilliseconds).toBeLessThan(1_000);
   });
 
+  it('snapshots stateful semantic arrays without iterator expansion', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const atom = validation.behaviors
+      .flatMap((behavior) => behavior.atomic_invariants)
+      .find((candidate) => (
+        candidate.scenario_plan.recovery.coverage_gaps.length > 0
+      ));
+    const gap = atom.scenario_plan.recovery.coverage_gaps[0];
+    let lengthReads = 0;
+    let indexReads = 0;
+    let iteratorRead = false;
+    const toggledGaps = new Proxy([gap], {
+      get(target, property, receiver) {
+        if (property === 'length') {
+          lengthReads += 1;
+          return lengthReads === 1 ? 1 : 100_000;
+        }
+        if (property === Symbol.iterator) iteratorRead = true;
+        if (typeof property === 'string' && /^\d+$/.test(property)) {
+          indexReads += 1;
+          return gap;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+      getOwnPropertyDescriptor(target, property) {
+        if (property === '0') {
+          return {
+            configurable: true,
+            enumerable: true,
+            get() {
+              return gap;
+            },
+          };
+        }
+        return Reflect.getOwnPropertyDescriptor(target, property);
+      },
+    });
+    atom.scenario_plan.recovery.coverage_gaps = toggledGaps;
+
+    const startedAt = performance.now();
+    const report = buildEquivalenceReport(validation);
+    const elapsedMilliseconds = performance.now() - startedAt;
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_details: [],
+      cell_atomic_coverage: [],
+    });
+    expect(lengthReads).toBe(1);
+    expect(indexReads).toBeLessThanOrEqual(1);
+    expect(iteratorRead).toBe(false);
+    expect(elapsedMilliseconds).toBeLessThan(1_000);
+  });
+
   it('escapes inline-code and table injection from direct formatter input', () => {
     const report = buildEquivalenceReport(
       validateBehaviorEquivalence(contract(), { now: NOW }),
