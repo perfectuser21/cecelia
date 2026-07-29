@@ -19,18 +19,18 @@ created: 2026-07-29
 
 ---
 
-## [BEHAVIOR] → Invariant 映射
+## [BEHAVIOR] 条目列表
 
-| BEHAVIOR | 对应 Invariant |
-|----------|--------------|
-| B1（push 短路） | I2, I6 |
-| B2（workflow 文件全量） | I2 |
-| B3（brain-tests-shell job） | I3 |
-| B4（ci-passed needs） | I4 |
-| B5（契约测试文件存在） | I1 |
-| B6（断言一 push 事件） | I1 |
-| B7（断言二 fleet-worker glob） | I1, I3 |
-| B8（断言三 ci-passed needs） | I1, I4 |
+| BEHAVIOR | 描述 | 对应 Invariant |
+|----------|------|--------------|
+| [BEHAVIOR] B1 — push 事件全量短路 | push 事件下 changes job 检测 event_name==push 并输出全 true | I2, I6 |
+| [BEHAVIOR] B2 — workflow 文件变更全量短路 | PR diff 含 .github/workflows/ 时同样输出全 true | I2 |
+| [BEHAVIOR] B3 — brain-tests-shell job 存在 | ci.yml 含 brain-tests-shell job，glob fleet-worker/*.test.sh | I3 |
+| [BEHAVIOR] B4 — ci-passed needs 含 brain-tests-shell | ci-passed needs 数组包含 brain-tests-shell | I4 |
+| [BEHAVIOR] B5 — 契约测试文件存在 | ci-blindspot-contract.test.sh 存在且被 engine-tests-shell 接线 | I1 |
+| [BEHAVIOR] B6 — 契约断言一：push 事件短路逻辑 | 契约测试 grep changes job 区块，查找 push 事件判断逻辑 | I1 |
+| [BEHAVIOR] B7 — 契约断言二：fleet-worker glob 行存在 | 契约测试 grep fleet-worker/*.test.sh 行 | I1, I3 |
+| [BEHAVIOR] B8 — 契约断言三：ci-passed needs brain-tests-shell | 契约测试 grep ci-passed 块含 brain-tests-shell | I1, I4 |
 
 ---
 
@@ -50,6 +50,8 @@ grep -qF 'for t in packages/brain/scripts/fleet-worker/*.test.sh' .github/workfl
 CI_PASSED_BLOCK=$(awk '/^  ci-passed:/{found=1} found && /^  [a-z]/ && !/^  ci-passed:/{exit} found{print}' .github/workflows/ci.yml)
 echo "$CI_PASSED_BLOCK" | grep -q 'brain-tests-shell' && echo "PASS" || echo "FAIL"
 ```
+
+manual:bash bash packages/engine/tests/integrity/ci-blindspot-contract.test.sh
 
 ---
 

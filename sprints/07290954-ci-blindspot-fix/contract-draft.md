@@ -93,3 +93,29 @@ round: 1（无上轮 reviewer feedback）
 |------|------|
 | `.github/workflows/ci.yml` | 改动 A（push 短路）/ B（workflow 文件全量）/ C（新 brain-tests-shell job）/ D（ci-passed needs 追加） |
 | `packages/engine/tests/integrity/ci-blindspot-contract.test.sh` | 新增（三条静态断言） |
+
+---
+
+## E2E 验收
+
+最终验收步骤：
+
+1. **本地静态契约测试**（验证 ci.yml 三条断言全绿）：
+   ```bash
+   bash packages/engine/tests/integrity/ci-blindspot-contract.test.sh
+   # 期望输出：PASS=3 FAIL=0
+   ```
+
+2. **触发 CI run**：push 到分支 `cp-07291011-ws-241578ce`，确认以下 job 均为 success（非 skipped）：
+   - `changes`（detect step 输出 brain/engine/workspace/compose/dod/quality 全 true）
+   - `brain-tests-shell`（5 个 fleet-worker .test.sh 均有 `::group::` 日志）
+   - `engine-tests-shell`（ci-blindspot-contract.test.sh 被接线执行）
+   - `ci-passed`（最终 exit 0）
+
+3. **验收 CI 日志**：
+   ```bash
+   gh run list --branch cp-07291011-ws-241578ce --limit 1
+   gh run view <run-id> --log | grep -E 'PASS|FAIL|brain-tests-shell|ci-passed'
+   ```
+
+4. **合入 main 后验证**：下次 push 到 main 触发的 CI run 中，`brain-unit` / `engine-tests-shell` 等 job status 均为 success 或 failure（非 skipped），确认 push 短路修复生效。
