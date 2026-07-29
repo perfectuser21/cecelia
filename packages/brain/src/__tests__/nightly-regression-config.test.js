@@ -22,6 +22,15 @@ describe('刀A nightly-regression workflow', () => {
   it('红时开 Issue', () => {
     expect(WF).toMatch(/open-issue-on-failure/);
   });
+  it('真 PostgreSQL integration 使用专用 config，不会被 unit exclude 静默跳过', () => {
+    const integrationJob = WF.match(
+      /brain-integration-nightly:[\s\S]*?(?=\n  [a-z][a-z0-9-]+:|\n# ─|$)/,
+    )?.[0] ?? '';
+    expect(integrationJob).toContain(
+      '--config vitest.integration.config.js',
+    );
+    expect(integrationJob).toContain('src/__tests__/integration/');
+  });
 });
 
 describe('刀B integration-nightly workflow', () => {

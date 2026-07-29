@@ -121,7 +121,11 @@ jobs:
           DB_USER: cecelia
           DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           NODE_ENV: test
-        run: cd packages/brain && npx vitest run src/__tests__/integration/ --reporter=verbose
+        run: >-
+          cd packages/brain && npx vitest run
+          --config vitest.integration.config.js
+          src/__tests__/integration/
+          --reporter=verbose
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Job 3: E2E Smoke（golden-path + agent-lifecycle + dev-task-lifecycle）
