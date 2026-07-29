@@ -373,13 +373,27 @@ function createDockerAdapter({
           await runCommand('mkfifo', ['-m', '600', credentialFifo], undefined);
         }
         if (mountAccessPrincipal !== undefined) {
-          await runCommand('chmod', [
-            '-R',
-            '+a',
-            `${mountAccessPrincipal} allow read,write,execute,delete`,
+          await runCommand('/usr/bin/find', [
+            '-x',
             workspaceSource,
             workspaceAdminSource,
             runtimeSource,
+            '(',
+            '-type',
+            'd',
+            '-o',
+            '-type',
+            'f',
+            '-o',
+            '-type',
+            'p',
+            ')',
+            '-exec',
+            'chmod',
+            '+a',
+            `${mountAccessPrincipal} allow read,write,execute,delete`,
+            '{}',
+            '+',
           ], undefined);
         }
         created = await runCommand('docker', createArgs);
