@@ -87,7 +87,13 @@ round: 1（无上轮 reviewer feedback）
 
 ---
 
-## 五、关键文件
+## 五、风险与已知限制
+
+**R1 已知限制（可接受）**：`ci-blindspot-contract.test.sh` 由 `engine-tests-shell` job 接线（glob `packages/engine/tests/integrity/*.test.sh`），触发条件为 `needs.changes.outputs.engine == 'true' || github.ref == 'refs/heads/main'`。对于仅改 brain 代码的 PR（engine=false），该契约测试不会在 PR CI 中运行，但会在合入 main 后的下次 push CI 中运行（可接受时差，main push 全量兜底是本次修复的核心目标）。
+
+---
+
+## 六、关键文件
 
 | 文件 | 操作 |
 |------|------|

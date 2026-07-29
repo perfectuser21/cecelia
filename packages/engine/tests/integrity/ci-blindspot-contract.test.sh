@@ -26,14 +26,14 @@ if [[ ! -f "$CI_YML" ]]; then
 fi
 
 # ── 断言 1：changes job 内含 push 事件分支判断 ───────────────────────────────
-# 提取 changes: job 到下一顶层 job 之间的内容，检测 event_name == push 或等效逻辑
+# 提取 changes: job 到下一顶层 job 之间的内容，检测 event_name 比较逻辑（接受 = / == / !=）
 CHANGES_BLOCK=$(awk '
   /^  changes:/ { found=1 }
   found && /^  [a-z]/ && !/^  changes:/ { exit }
   found { print }
 ' "$CI_YML")
 
-if echo "$CHANGES_BLOCK" | grep -qE 'event_name.*(==|!=).*push'; then
+if echo "$CHANGES_BLOCK" | grep -qE 'event_name.*[!=]*=.*push'; then
   _pass "ASSERT-1: changes job 含 push 事件短路逻辑（event_name == push）"
 else
   _fail "ASSERT-1: changes job 缺少 push 事件短路逻辑 — push 到 main 时 diff 恒空，下游全 skip（失明点①）"

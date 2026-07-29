@@ -16,6 +16,7 @@ created: 2026-07-29
 | I4 | brain-tests-shell 是 ci-passed 必过项 | ci-passed needs 数组含 brain-tests-shell，check 函数对其 result 做 skipped=fail 判断（现有 check 函数语义已覆盖） | grep ci.yml |
 | I5 | 全 CI 绿，无既有 job 破坏 | ci-passed 最终 exit 0 | CI status == success |
 | I6 | 合入 main 后下次 push CI 不 skip | push 到 main 触发的 run 中 brain-unit / engine-tests-shell 等 job status == success 或 failure（非 skipped） | gh run list --branch main --limit 1 |
+| I7 | 契约测试文件不可改 | 从 Commit-1 到 PR 合并，`packages/engine/tests/integrity/ci-blindspot-contract.test.sh` 不得被修改 | lint-tdd-commit-order 或 git diff 核查 |
 
 ---
 
