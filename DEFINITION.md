@@ -6,11 +6,34 @@
 
 
 
-**Brain 版本**: 1.267.124
+**Brain 版本**: 1.267.126
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.126 — Writable ephemeral Codex credential tmpfs
+
+- Fleet Worker 为 Runner 的临时 `/home/cecelia/.codex` tmpfs 固定为 pinned
+  Runner 用户 `uid=999,gid=999,mode=0700`，使其可从 FIFO 写入一次性
+  `auth.json`。
+- Worker 通过 `docker exec -i` 的 stdin 在 Runner 内部写 FIFO，避免 macOS
+  host 与 OrbStack VM 之间 bind-mounted FIFO 无法握手；secret 不进入 argv、
+  env、日志或 host credential 文件。
+- tmpfs 仍保持 `noexec,nosuid,nodev`，CredentialEnvelope、host credential
+  isolation、terminal cleanup 与 Xian 无长期凭据边界不变。
+- 回退：部署 Brain `1.267.125`。
+
+## Brain 1.267.125 — OrbStack-safe Fleet attempt mounts
+
+- Fleet Worker 将仅供 Runner bind mount 的 worktree/runtime 放入
+  `/Users/Shared/cecelia-fleet-tmp/fleet-mounts`；mirror、state、quarantine 与
+  CredentialEnvelope consumption marker 继续留在受保护 data root。
+- Docker adapter 使用真实 host 路径和本机已加载的精确 `sha256:` image ID，
+  并只向 OrbStack owner 授予单次 workspace、Git admin 与 runtime 的 ACL。
+- ACL 遍历不跟随 symlink；`.admin` 父目录仅开放 traversal，container
+  read-only、workspace ownership 与短期凭据边界保持不变。
+- 回退：部署 Brain `1.267.124`。
 
 ## Brain 1.267.124 — Server-seeded Fleet mirror reuse
 
