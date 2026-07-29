@@ -78,11 +78,12 @@ retirement absence probes，任一失败即视为旧 authority 复活。
 | canonical steps | `S2,S3,S4,S5,S6,S7,S8,S9,S10,S11,S12` |
 | canonical dimensions | `nfr`, `invariant`, `checkpoint`, `freshness`, `failure_semantics`, `adversarial_surface` |
 | forbidden legacy authority | dynamic prompt/Stop-loop 不得拥有 merge、quality verdict、timeout auto-PASS 或 tmux self-kill authority |
-| replacement behavior | durable controller 根据 Attempt、receipt 和 terminal closure 决定继续、阻断或完成，不依赖交互 session 存活 |
+| replacement behavior | Harness Controller 维持单 Harness/Attempt 的执行活性；Kernel Global Controller 根据 Attempt、receipt 和 terminal closure 决定全局继续、阻断或完成，两者都不依赖交互 session 存活 |
 
 Scenario mapping：normal 证明前台工具调用不被误伤；violation 证明主动逃离 turn 的工具被
 旧 owner 阻止；recovery 必须从 exact denial 回到同一 Attempt 的 foreground 执行，并由
-replacement controller 接管后续活性。
+Harness Controller 接管局部执行活性，Kernel Global Controller 接管跨 Harness 与全局
+closure。
 
 - KERNEL-PROBE-P1-08-02-N01 | normal | fresh light 下 Bash `run_in_background:false` 必须允许。
 - KERNEL-PROBE-P1-08-02-N02 | normal | fresh light 下未提供 background 字段的普通 Bash 必须允许。
@@ -335,7 +336,7 @@ recovery 绑定 exact missing/stale predecessor，在同一 Provider 和 artifac
 |---|---|
 | classification | `active_required` |
 | single owner/seam | `kernel.controller.attempt_lease_store` |
-| legacy truth | 基线 DB 对同一 `run_id/hop_id` 保持唯一 attempt，queued attempt 可原子 claim；已审 Kernel Runner snapshot 的过期 reclaim 会更换 owner 并递增 generation。现状仍不能超声明为“所有 attempt transition 均 generation-fenced”。 |
+| legacy truth | 基线 DB 对同一 `run_id/hop_id` 保持唯一 attempt，queued attempt 可原子 claim；已审 Kernel Runner snapshot 的过期 reclaim 会更换 owner 并递增父级 `kernel_attempt_lease_generation`。现状仍不能超声明为“所有 attempt transition 均 generation-fenced”，也尚未完整建模子级 Harness Controller generation。 |
 | repo evidence | baseline `packages/brain/migrations/357_harness_provider_attempts.sql`; reviewed snapshot `dec293589` 的 `packages/brain/migrations/363_kernel_fleet_execution_receipts.sql`, `packages/brain/src/orchestrator/attempt-store.js` 与 attempt-store tests |
 | canonical steps | `S0,S2,S3,S4,S5,S6,S7,S12` |
 | canonical dimensions | `fr`, `nfr`, `invariant`, `checkpoint`, `freshness`, `death_alert`, `failure_semantics`, `effect_confirmation`, `ledger_freshness`, `axis_alignment` |
@@ -344,12 +345,12 @@ Scenario mapping：normal 是唯一 attempt 与合法 claim；violation 是错�
 错误 session；recovery 必须以 exact expired lease 为前驱，递增 generation 并使旧 owner 永久失权。
 
 - KERNEL-PROBE-P1-10-01-N01 | normal | 两个并发创建者对同一 `run_id/hop_id` 只能得到一个 durable attempt identity。
-- KERNEL-PROBE-P1-10-01-N02 | normal | queued attempt 的合法 claimant 原子写入 owner、lease expiry 与当前 generation。
+- KERNEL-PROBE-P1-10-01-N02 | normal | queued attempt 的合法 Global claimant 原子写入 owner、lease expiry 与当前 `kernel_attempt_lease_generation`。
 - KERNEL-PROBE-P1-10-01-V01 | violation | attempt 复用的 provider session 不属于同一 attempt/provider/role 时必须拒绝。
-- KERNEL-PROBE-P1-10-01-V02 | violation | 非当前 owner 或错误 generation 请求 transition 必须 fail-closed。
+- KERNEL-PROBE-P1-10-01-V02 | violation | 非当前 Global owner 或错误 `kernel_attempt_lease_generation` 请求全局 transition 必须 fail-closed；子 generation 不能替代父 fence。
 - KERNEL-PROBE-P1-10-01-V03 | violation | lease 未过期时其他 worker reclaim 必须拒绝，不能只凭 heartbeat 新旧判断。
-- KERNEL-PROBE-P1-10-01-R01 | recovery | 绑定 V03 的 exact expired lease；reclaim 更换 owner、递增 generation，并保留 predecessor lineage。
-- KERNEL-PROBE-P1-10-01-R02 | recovery | 绑定 V02 与 R01；reclaim 后旧 owner/旧 generation 的 heartbeat、callback 与 terminal transition 全部失权。
+- KERNEL-PROBE-P1-10-01-R01 | recovery | 绑定 V03 的 exact expired parent lease；Global reclaim 更换 owner、递增 `kernel_attempt_lease_generation`，并保留 predecessor lineage。
+- KERNEL-PROBE-P1-10-01-R02 | recovery | 绑定 V02 与 R01；Global reclaim 后旧 parent owner/generation 下所有 Harness Controller generation 的 heartbeat、callback 与 terminal transition 全部失权。
 
 ## KERNEL-INV-P1-10-02
 
@@ -367,11 +368,11 @@ lease、artifact、authority 与 replay 冲突；recovery 只接受 exact replay
 
 - KERNEL-PROBE-P1-10-02-N01 | normal | 合法 Fleet callback 的全部 binding、authority 与 payload 校验通过后，原子持久化 receipt 并 ack。
 - KERNEL-PROBE-P1-10-02-V01 | violation | HMAC、callback protocol version、timestamp window 或 canonical signature 任一错误必须拒绝。
-- KERNEL-PROBE-P1-10-02-V02 | violation | task bundle 与 result channel 的 task/run/attempt/role 任一不一致必须拒绝。
+- KERNEL-PROBE-P1-10-02-V02 | violation | TaskBundle 与 result channel 的 task、kernel run、attempt、harness、harness run 或 role 任一不一致必须拒绝。
 - KERNEL-PROBE-P1-10-02-V03 | violation | result body、stdout/stderr 或结构化 payload 超过登记上限必须拒绝，不能截断后确认。
 - KERNEL-PROBE-P1-10-02-V04 | violation | launch 未获 durable confirmation、delivery 尚未 dispatched 或 transport identity 不一致必须拒绝。
 - KERNEL-PROBE-P1-10-02-V05 | violation | worker/job identity 与 delivery binding 不一致必须拒绝。
-- KERNEL-PROBE-P1-10-02-V06 | violation | lease owner 或 generation 与当前 attempt lease 不一致必须拒绝。
+- KERNEL-PROBE-P1-10-02-V06 | violation | Global lease owner/`kernel_attempt_lease_generation` 或 Harness owner/`harness_controller_lease_generation` 任一与当前父子 lease 不一致必须拒绝；一层新鲜不能掩盖另一层 stale。
 - KERNEL-PROBE-P1-10-02-V07 | violation | attempt identity 不存在、已被不可重入地 terminal settlement，或状态不允许 callback 时必须拒绝。
 - KERNEL-PROBE-P1-10-02-V08 | violation | callback provider 与 attempt/delivery 登记 provider 不一致必须拒绝。
 - KERNEL-PROBE-P1-10-02-V09 | violation | provider session 缺失、错误或被另一个 active attempt 复用必须拒绝。
@@ -382,7 +383,7 @@ lease、artifact、authority 与 replay 冲突；recovery 只接受 exact replay
 - KERNEL-PROBE-P1-10-02-V14 | violation | 已 terminal attempt 收到不同 receipt identity 或不同 result hash 时必须拒绝为冲突。
 - KERNEL-PROBE-P1-10-02-V15 | violation | 对已确认 receipt 的 update/delete，或相同 idempotency key 携带不同 bytes，必须拒绝并告警。
 - KERNEL-PROBE-P1-10-02-R01 | recovery | 绑定 V14/V15 的 replay conflict；仅 exact delivery、nonce、generation、authority 与 payload hash 的重放返回同一 receipt identity，不产生第二个 effect。
-- KERNEL-PROBE-P1-10-02-R02 | recovery | 绑定 stale-generation denial 的新 reclaim callback，只有在新 owner、新 generation 与 exact predecessor lineage 全部一致时可 settlement。
+- KERNEL-PROBE-P1-10-02-R02 | recovery | 绑定 stale-generation denial；只有父级 Global reclaim 与目标 Harness 的新 `harness_run_id`/子 generation 都绑定 exact predecessor lineage 时，callback 才可 settlement。
 
 ## KERNEL-INV-P1-10-03
 
@@ -411,25 +412,25 @@ recovery 绑定被拒绝的命令并改用 linked worktree，不能弱化 guard�
 |---|---|
 | classification | `drifted_required_gap` |
 | single owner/seam | `kernel.controller.portable_attempt_binding` |
-| legacy truth | 各 transport 的 binding 强度不一致：Fleet result 路径较完整，但 classic non-Fleet heartbeat/failure callback 未统一要求 generation；checkout guard 也未绑定 Attempt。尚无 Provider-neutral 的 task/run/attempt/provider/role/session/machine/workspace/branch/generation 单一合同。 |
+| legacy truth | 各 transport 的 binding 强度不一致：Fleet result 路径较完整，但 classic non-Fleet heartbeat/failure callback 未统一要求 generation；checkout guard 也未绑定 Attempt。尚无 Provider-neutral 的 task/kernel-run/attempt/kernel-generation/harness/harness-run/harness-generation/provider/role/session/machine/workspace/branch 单一合同。 |
 | repo evidence | Fleet/classic callback route comparison; dispatcher paths; attempt-store; workspace guard; `.claude/settings.json` audit |
 | canonical steps | `S0,S2,S3,S4,S5,S6,S7,S12` |
 | canonical dimensions | `fr`, `nfr`, `invariant`, `checkpoint`, `freshness`, `death_alert`, `failure_semantics`, `effect_confirmation`, `ledger_freshness`, `adversarial_surface`, `axis_alignment` |
-| drift expected | 每条 transport 在 side effect 前消费同一个 complete Attempt binding |
+| drift expected | 每条 transport 在 side effect 前消费同一个 complete 父子 Controller binding，并按父 fence 后子 fence 的顺序验证 |
 | drift observed | classic callback 缺 generation fence；workspace/branch 仅由局部 guard 约束 |
 
 Scenario mapping：normal 必须跨 transport 验证完整 binding；violation 覆盖 classic generation 缺口
 及任一身份/环境错配；recovery 重新签发与 exact reclaim predecessor 相连的新 binding。
 
-- KERNEL-PROBE-P1-10-04-N01 | normal | 任一 Provider/transport 只有在完整 Attempt binding 全部一致时才可 heartbeat、回调或产生 side effect。
-- KERNEL-PROBE-P1-10-04-V01 | violation | classic non-Fleet heartbeat 缺 generation 或携带 stale generation 必须拒绝。
-- KERNEL-PROBE-P1-10-04-V02 | violation | classic failure callback 缺 generation 或携带 stale generation 必须拒绝。
-- KERNEL-PROBE-P1-10-04-V03 | violation | task、run、hop 或 attempt identity 任一不一致必须拒绝。
+- KERNEL-PROBE-P1-10-04-N01 | normal | 任一 Provider/transport 只有在 task/kernel-run/attempt/父 generation 与 harness/harness-run/子 generation 全部一致时才可 heartbeat、回调或产生 side effect。
+- KERNEL-PROBE-P1-10-04-V01 | violation | classic non-Fleet heartbeat 缺任一层 generation、携带 stale 父/子 generation，或用新子 generation 搭配旧父 generation 时必须拒绝。
+- KERNEL-PROBE-P1-10-04-V02 | violation | classic failure callback 缺任一层 generation、携带 stale 父/子 generation，或用新父 generation 搭配旧 Harness result 时必须拒绝。
+- KERNEL-PROBE-P1-10-04-V03 | violation | task、kernel run、hop、attempt、harness 或 harness run identity 任一不一致必须拒绝，覆盖 wrong-Harness 与 cross-level replay。
 - KERNEL-PROBE-P1-10-04-V04 | violation | provider、role 或 provider session 任一不一致必须拒绝。
 - KERNEL-PROBE-P1-10-04-V05 | violation | machine identity/attestation 与 claim binding 不一致必须拒绝。
 - KERNEL-PROBE-P1-10-04-V06 | violation | workspace/branch 与 claim binding 不一致，或仅依赖用户 settings 的局部 guard，均不得取得 authority。
-- KERNEL-PROBE-P1-10-04-R01 | recovery | 绑定 V03～V06，为 exact attempt 写入并确认 workspace、branch、machine lease 后再执行。
-- KERNEL-PROBE-P1-10-04-R02 | recovery | 绑定 V01/V02 的 expired reclaim；新 claim/secret 必须携带递增 generation，旧 secret 与旧 generation 同时失效。
+- KERNEL-PROBE-P1-10-04-R01 | recovery | 绑定 V03～V06，为 exact parent Attempt 与 admitted harness run 写入并确认 workspace、branch、machine lease 后再执行。
+- KERNEL-PROBE-P1-10-04-R02 | recovery | 绑定 V01/V02：父 reclaim 递增 `kernel_attempt_lease_generation` 并使全部旧子 lease 失效；Harness 局部 retry 只递增 `harness_controller_lease_generation`。新 claim/secret 必须绑定两者，旧 secret 与任一 stale generation 同时失效。
 
 ## 5. P1-11 — Report、派生与 Closure
 

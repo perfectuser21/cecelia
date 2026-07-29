@@ -585,30 +585,77 @@ atom live effect proven
 
 前三级都不能冒充第四级。
 
-## 6. 后续 A2 typed ports 与 controller 边界
+## 6. 后续 A2 typed ports 与两级 controller 边界
 
-A1 已完成可信执行 controller、grant authority 和 10 个 non-release seam builder
-的安全骨架，但当前 production assembly 仍 fail-closed：
+A1 已完成 Kernel 侧可信执行 controller、grant authority 和 10 个 non-release seam
+builder 的安全骨架，但当前 production assembly 仍 fail-closed：
 
 - server 未注入真实 `assemblyPorts`；
 - manifest 只有 resource profile metadata；
 - P0-07 不在当前 10 个 runtime adapter 中；
-- durable controller authority 只接受 `ephemeral_run`；
+- Kernel Global Controller 的 durable resource authority 只接受 `ephemeral_run`；
 - branch、credential lease、staging、workspace、database record 缺真实
   creator + independent inspector；
 - 外部资源创建与 DB `prepared` 之间缺 durable allocation saga 和不确定态。
+
+### 6.1 两级 Controller
+
+系统同时保留两级 Controller，不得把其中一级折叠掉：
+
+1. **Harness Controller**：每个已注册 Harness 都有自己的逻辑 controller；每个
+   admitted `harness_run_id` 再实例化隔离的 controller state 和
+   `harness_controller_lease_generation`。它负责该 Harness 内部的
+   planner/generator/evaluator 等角色编排、Provider session、machine/transport/job、
+   heartbeat、局部 retry、TaskBundle、HarnessResult 和候选 artifact HEAD。
+2. **Kernel Global Controller**：位于所有 Harness Controller 之上，负责 Task/Run 的
+   Golden Path、Harness 选择与切换、父级 `kernel_attempt_lease_generation`、
+   全局 claim/fence、风险和预算、resource grant、跨 Harness 依赖、receipt 验证、
+   Evaluator/Judge/Human Review 门、effect authorization 以及全局
+   settlement/reconcile。
+
+因此是“一层一个 Kernel Global Controller + 每个 Harness 一个 Harness Controller”，
+不是二选一，也不是每个 Harness 各自复制一套 Kernel 最终权威。Harness Controller 的
+`attempt_completed` 只表示局部执行结束；它提交的 `HarnessResult` 是带签名的候选事实，
+只有 Kernel Global Controller 验证 exact Attempt/generation/artifact/receipt 并通过后续
+门后，才可推进全局 Run。Harness Controller 不得自行宣布 task complete、merge、
+staging、production 或 learning closure。
+
+两级 lease 是父子关系，不是两个 owner 竞争同一个 generation：
+
+- Kernel Global Controller 是 `kernel_attempt_lease_generation` 的唯一 owner。只有它能
+  claim/reclaim 全局 Attempt 并递增父 generation；
+- Harness Controller 是当前 admitted `harness_run_id` 下
+  `harness_controller_lease_generation` 的唯一 owner。它的局部 retry 只能通过 CAS 递增
+  子 generation，不能改变父 generation、替换全局 claimant 或扩大 effect authority；
+- 父 generation 一旦变化，旧父 generation 下全部 Harness Controller lease、无论子
+  generation 多新，立即永久失权；新子 generation 不能复活 stale 父 lease；
+- Kernel 切换 Harness 时必须撤销旧 `harness_run_id`，并为目标 Harness 建立新的
+  `harness_run_id` 和子 generation lineage，不能把旧 Harness 的 result/lease 搬过去。
+
+两级命令和回执必须共同绑定
+`kernel_run_id + attempt_id + kernel_attempt_lease_generation + harness_id +
+harness_run_id + harness_controller_lease_generation`。validator 先验证父 fence，再验证子
+fence；任一错配都拒绝。旧 Harness Controller 的 heartbeat、callback、result 和 effect
+request 不得因另一层 generation 新鲜而重新取得 authority。两层都必须能独立重启恢复，
+但不能产生第二个局部或全局 settlement owner。
+
+### 6.2 Authority ownership
 
 必须保留以下 ownership：
 
 | Owner | 唯一权威 |
 |---|---|
-| Harness | Attempt、provider session、machine/transport/job、TaskBundle、HarnessResult、artifact HEAD |
+| Kernel Global Controller | Golden Path、Harness admission/switch、父级 Attempt lease generation、全局 claim/fence、grant issue/revoke、跨 Harness receipt 验证、全局 settlement/reconcile |
+| Harness Controller | admitted harness_run 内的子级 lease generation、角色编排、provider session、machine/transport/job、heartbeat/局部 retry、TaskBundle、HarnessResult、候选 artifact HEAD |
 | Resource Authority | typed resource provision/adopt、lifecycle、cleanup evidence |
-| Controller | claim/fence、grant issue/revoke、UDS execute、settlement/reconcile |
 | Effect owner | GitHub/ReleaseRun/credential/DB 等真实外部 effect |
 
-Harness payload 不得提供 resource capability/effect port；controller HTTP 继续只收
-`{case_id}`，再从 DB trusted resolver 取 binding。
+Harness payload 和 Harness Controller 都不得提供或自选 resource capability/effect
+port；Kernel Global Controller HTTP 继续只收 `{case_id}`，再从 DB trusted resolver
+取 binding。Kernel Global Controller 可以授权 effect，但真实外部副作用仍只能由对应
+Effect owner 执行并签 receipt。
+
+### 6.3 后续实施顺序
 
 后续顺序固定为：
 
@@ -622,9 +669,12 @@ Harness payload 不得提供 resource capability/effect port；controller HTTP �
    reconciliation inspect 后收敛到 `prepared` 或 cleanup。后续状态为
    `cancelling → cleaned | cleanup_unconfirmed`；不得声称跨 GitHub/credential/filesystem/
    ReleaseRun/PostgreSQL 的数据库原子事务。
-3. **A2-3 run adopt + controller 泛化**：采用已验证 Attempt，不创建假 run。通用代码可
-   支持 typed binding，但 production admission 继续使用 exact registered resource-type
-   allowlist，初始只启用 `ephemeral_run`；不得先扩大 grant 面。
+3. **A2-3 run adopt + 两级 controller 泛化**：采用已验证 Attempt，不创建假 run；明确
+   Kernel Global Controller ↔ Harness Controller 的 command/result envelope、父子
+   generation fencing、wrong-Harness/cross-level replay denial 和 restart
+   reconciliation。通用代码可支持 typed binding，但 production admission 继续使用
+   exact registered resource-type allowlist，初始只启用 `ephemeral_run`；不得先扩大
+   grant 面。
 4. **A2-4 branch port**：真实 sandbox remote ref/worktree create/adopt/delete/inspect，
    复用 mutation broker。
 5. **A2-5 credential lease port**：真实 issue/revoke/expiry/independent inspect，
