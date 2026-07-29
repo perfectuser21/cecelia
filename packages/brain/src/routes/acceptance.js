@@ -9,6 +9,10 @@ export const ACCEPTANCE_KINDS = ['FR', 'NFR', 'Invariant', 'SOP'];
 export const ACCEPTANCE_RESULTS = ['通过', '不通过', '无法验证'];
 const SOURCES = ['manual', 'harness'];
 
+async function safeRollback(client) {
+  try { await client.query('ROLLBACK'); } catch { /* 连接已坏，忽略 */ }
+}
+
 async function loadChecks(q, runId) {
   const { rows } = await q.query(
     'SELECT * FROM acceptance_checks WHERE run_id = $1 ORDER BY check_key',
@@ -63,7 +67,18 @@ export function createAcceptanceInternalRouter({ pool }) {
       await client.query('COMMIT');
       return res.status(201).json({ run, checks: createdChecks, created: true });
     } catch (err) {
-      await client.query('ROLLBACK');
+      await safeRollback(client);
+      if (err.code === '23505') {
+        try {
+          const { rows } = await client.query('SELECT * FROM acceptance_runs WHERE run_key = $1', [run_key]);
+          if (rows.length > 0) {
+            const existingChecks = await loadChecks(client, rows[0].id);
+            return res.status(200).json({ run: rows[0], checks: existingChecks, created: false });
+          }
+        } catch (retryErr) {
+          console.error('[acceptance] POST /runs 23505 重查失败:', retryErr.message);
+        }
+      }
       console.error('[acceptance] POST /runs error:', err.message);
       return res.status(500).json({ error: err.message });
     } finally {
@@ -111,7 +126,7 @@ export function createAcceptancePublicRouter({ pool }) {
       return res.json({ runs: [...byRun.values()] });
     } catch (err) {
       console.error('[acceptance] GET /pending error:', err.message);
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: 'internal_error' });
     }
   });
 
@@ -129,6 +144,14 @@ export function createAcceptancePublicRouter({ pool }) {
     }
     if (invalid.length > 0) return res.status(400).json({ error: 'invalid results', invalid });
 
+    const seen = new Set();
+    for (const r of results) {
+      if (r?.check_key) {
+        if (seen.has(r.check_key)) return res.status(400).json({ error: 'duplicate check_key in batch', check_key: r.check_key });
+        seen.add(r.check_key);
+      }
+    }
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -140,7 +163,7 @@ export function createAcceptancePublicRouter({ pool }) {
       const foundKeys = new Set(found.map((r) => r.check_key));
       const missing = keys.filter((k) => !foundKeys.has(k));
       if (missing.length > 0) {
-        await client.query('ROLLBACK');
+        await safeRollback(client);
         return res.status(400).json({ error: 'unknown check_key', missing });
       }
       for (const r of results) {
@@ -163,7 +186,7 @@ export function createAcceptancePublicRouter({ pool }) {
         );
         const { total, pass, fail, pending } = counts[0];
         const passRate = total > 0 ? pass / total : 0;
-        const status = pending > 0 ? 'in_review' : fail > 0 ? 'failed' : 'passed';
+        const status = pending > 0 ? 'in_review' : fail > 0 ? 'failed' : pass === total ? 'passed' : 'in_review';
         const { rows: updated } = await client.query(
           `UPDATE acceptance_runs SET pass_rate = $1, status = $2, updated_at = NOW()
            WHERE id = $3 RETURNING run_key, pass_rate, status`,
@@ -174,9 +197,9 @@ export function createAcceptancePublicRouter({ pool }) {
       await client.query('COMMIT');
       return res.json({ updated: results.length, runs: updatedRuns });
     } catch (err) {
-      await client.query('ROLLBACK');
+      await safeRollback(client);
       console.error('[acceptance] POST /results error:', err.message);
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: 'internal_error' });
     } finally {
       client.release();
     }
