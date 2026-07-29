@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.124
+**Brain 版本**: 1.267.125
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.125 — Canonical OrbStack Fleet mount sources
+
+- Fleet Worker 在 `docker create` 前解析 server-owned bind source 的真实
+  host 路径，使 macOS `/var → /private/var` 与 OrbStack 可见路径一致。
+- container destination、workspace ownership、read-only 与凭据边界保持不变。
+- 回退：部署 Brain `1.267.124`。
 
 ## Brain 1.267.124 — Server-seeded Fleet mirror reuse
 

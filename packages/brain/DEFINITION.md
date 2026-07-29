@@ -1,6 +1,14 @@
 # Brain 模块定义
 
-**版本**: 1.267.124
+**版本**: 1.267.125
+
+## Canonical OrbStack Fleet mount sources
+
+- Docker adapter 在创建 Runner 前将 server-owned workspace、Git admin 与
+  attempt runtime bind source 解析为真实 host 路径。
+- macOS `/var → /private/var` 由此满足 OrbStack 可见性；container destination、
+  ownership、read-only 与 CredentialEnvelope 合同不变。
+- 回退：部署 Brain `1.267.124`。
 
 ## Server-seeded Fleet mirror reuse
 

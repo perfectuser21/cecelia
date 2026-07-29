@@ -224,6 +224,7 @@ function createDockerAdapter({
   runCommand = defaultRunCommand,
   runtimeRoot,
   writeCredential = defaultWriteCredential,
+  resolveMountSource = fs.realpathSync,
 } = {}) {
   const root = assertRuntimeRoot(runtimeRoot, 'runtime_root');
   if (typeof runCommand !== 'function') {
@@ -231,6 +232,26 @@ function createDockerAdapter({
   }
   if (typeof writeCredential !== 'function') {
     throw new Error('attempt_runner_invalid_credential_writer');
+  }
+  if (typeof resolveMountSource !== 'function') {
+    throw new Error('attempt_runner_invalid_mount_source_resolver');
+  }
+
+  function canonicalMountSource(source) {
+    let resolved;
+    try {
+      resolved = resolveMountSource(source);
+    } catch {
+      throw new Error('attempt_mount_source_unavailable');
+    }
+    if (
+      typeof resolved !== 'string'
+      || !path.isAbsolute(resolved)
+      || resolved === path.parse(resolved).root
+    ) {
+      throw new Error('attempt_mount_source_invalid');
+    }
+    return path.resolve(resolved);
   }
 
   return Object.freeze({
@@ -253,6 +274,11 @@ function createDockerAdapter({
       }
       const attemptRuntime = path.join(root, attemptId);
       fs.mkdirSync(attemptRuntime, { recursive: true, mode: 0o700 });
+      const workspaceSource = canonicalMountSource(input.workspaceMount.source);
+      const workspaceAdminSource = canonicalMountSource(
+        input.workspaceAdminMount.source,
+      );
+      const runtimeSource = canonicalMountSource(attemptRuntime);
       const promptFile = path.join(attemptRuntime, 'task-bundle.json');
       const stdoutFile = path.join(attemptRuntime, 'stdout.jsonl');
       const isCodex = input.providerSpec?.provider === 'codex';
@@ -279,12 +305,12 @@ function createDockerAdapter({
       const credentialFifo = path.join(attemptRuntime, 'credential.fifo');
       const containerCredentialFifo = '/tmp/cecelia-prompts/credential.fifo';
       const workspaceMount = [
-        `type=bind,src=${input.workspaceMount.source},dst=/workspace`,
+        `type=bind,src=${workspaceSource},dst=/workspace`,
         input.workspaceMount.readOnly ? 'readonly' : null,
       ].filter(Boolean).join(',');
-      const runtimeMount = `type=bind,src=${attemptRuntime},dst=/tmp/cecelia-prompts`;
+      const runtimeMount = `type=bind,src=${runtimeSource},dst=/tmp/cecelia-prompts`;
       const workspaceAdminMount = [
-        `type=bind,src=${input.workspaceAdminMount.source},dst=${input.workspaceAdminMount.target}`,
+        `type=bind,src=${workspaceAdminSource},dst=${input.workspaceAdminMount.target}`,
         input.workspaceAdminMount.readOnly ? 'readonly' : null,
       ].filter(Boolean).join(',');
       const createArgs = [

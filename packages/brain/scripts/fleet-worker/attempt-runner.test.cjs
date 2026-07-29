@@ -609,7 +609,7 @@ describe('Fleet Worker durable runtime adapters', () => {
         `type=bind,src=/private/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,dst=/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,readonly`,
       );
       expect(createArgs).toContain(
-        `type=bind,src=${runtimeRoot},dst=/tmp/cecelia-prompts`,
+        `type=bind,src=/private${path.join(runtimeRoot, ATTEMPT_ID)},dst=/tmp/cecelia-prompts`,
       );
       expect(resolveMountSource).toHaveBeenCalledWith(
         `/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID}`,
