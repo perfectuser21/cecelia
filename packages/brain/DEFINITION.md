@@ -2,12 +2,15 @@
 
 **版本**: 1.267.125
 
-## Canonical OrbStack Fleet mount sources
+## OrbStack-safe Fleet attempt mounts
 
-- Docker adapter 在创建 Runner 前将 server-owned workspace、Git admin 与
-  attempt runtime bind source 解析为真实 host 路径。
-- macOS `/var → /private/var` 由此满足 OrbStack 可见性；container destination、
-  ownership、read-only 与 CredentialEnvelope 合同不变。
+- 生产 runtime 仅把 worktree/runtime 放入 OrbStack 可挂载的共享根；mirror、
+  Attempt state、quarantine 与 CredentialEnvelope consumption marker 仍位于
+  `_cecelia` 受保护 data root。
+- Docker adapter 解析真实 host 路径，直接使用本机 pinned `sha256:` image ID，
+  并对单次 workspace、Git admin 与 runtime 精确授予 OrbStack owner ACL。
+- ACL 遍历显式跳过 symlink；`.admin` 父目录仅开放 traversal。container
+  destination、ownership、read-only 与短期凭据合同保持不变。
 - 回退：部署 Brain `1.267.124`。
 
 ## Server-seeded Fleet mirror reuse
