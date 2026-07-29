@@ -471,6 +471,304 @@ git add packages/quality/__tests__/regression-contract.test.js
 git commit -m "test(kernel): require root atomic inventory"
 ```
 
+## Task 3A: Honest probe outcome and recovery authority RED/GREEN
+
+**Files:**
+
+- Modify: `packages/brain/src/lib/__tests__/kernel-equivalence-atomic-contract.test.js`
+- Modify: `packages/brain/src/lib/kernel-equivalence-atomic-contract.js`
+- Normative source: `docs/superpowers/specs/2026-07-29-kernel-atomic-contract-honesty-addendum-design.md`
+
+- [ ] **Step 1: 写 per-probe outcome 与 authority RED**
+
+先把 proof-required fixture 的每个 probe 改成以下 exact shape：
+
+```js
+const probe = (probe_id, scenario, expected_outcome) => ({
+  probe_id,
+  scenario,
+  assertion: `${probe_id} exact normative assertion`,
+  expected_outcome,
+  expectation_authority: {
+    kind: 'appendix_explicit',
+    normative_ref:
+      'docs/superpowers/specs/2026-07-29-kernel-atomic-inventory-p0-premerge.md',
+  },
+});
+```
+
+新增 table tests，锁定 allowed outcomes：
+
+```js
+[
+  ['normal', 'confirmed'],
+  ['violation', 'denied'],
+  ['violation', 'blocked'],
+  ['violation', 'unknown'],
+  ['recovery', 'recovered'],
+].forEach(([scenario, expectedOutcome]) => {
+  const candidate = probe(
+    `KERNEL-PROBE-P0-01-01-${scenario}-${expectedOutcome}`,
+    scenario,
+    expectedOutcome,
+  );
+  expect(validateProbeOutcomeFixture(candidate).findings).toEqual([]);
+});
+```
+
+另写 negative tests：
+
+```js
+[
+  (item) => { delete item.assertion; },
+  (item) => { item.expected_outcome = 'success'; },
+  (item) => { delete item.expectation_authority; },
+  (item) => { item.expectation_authority.kind = 'appendix_explicit'; delete item.expectation_authority.normative_ref; },
+  (item) => { item.expectation_authority = { kind: 'design_derived' }; },
+  (item) => { item.expectation_authority = { kind: 'coverage_gap', owner: 'kernel-contract' }; },
+].forEach((mutate) => {
+  const atom = activeAtom();
+  mutate(atom.probe_definitions[0]);
+  expect(findCodes(validateAtom(atom))).toContain('probe_outcome_contract_invalid');
+});
+```
+
+`expectation_authority` exact shapes:
+
+```text
+appendix_explicit = { kind, normative_ref }
+design_derived   = { kind, derivation_ref }
+coverage_gap     = { kind, owner, reason, closure_plan }
+```
+
+再写 heterogeneous scenario test：当同一 scenario 的 probe outcomes 包含
+`denied + blocked` 或 `denied + unknown` 时，
+`receipt_requirements.scenarios.<scenario>.expected_outcome` 必须等于 `per_probe`；
+homogeneous scenario 必须等于该 scenario 的唯一 probe outcome。错误压平统一产生
+`probe_outcome_contract_invalid`。
+
+- [ ] **Step 2: 写 recovery binding authority 和 coverage-gap RED**
+
+把 dedicated recovery fixture 改为：
+
+```js
+scenario_plan: {
+  normal: { required_probe_ids: ['KERNEL-PROBE-P0-01-01-N01'] },
+  violation: {
+    required_probe_ids: [
+      'KERNEL-PROBE-P0-01-01-V01',
+      'KERNEL-PROBE-P0-01-01-V02',
+    ],
+  },
+  recovery: {
+    required_probe_ids: ['KERNEL-PROBE-P0-01-01-R01'],
+    bindings: [{
+      recovery_probe_id: 'KERNEL-PROBE-P0-01-01-R01',
+      predecessor_probe_ids: ['KERNEL-PROBE-P0-01-01-V01'],
+      authority: {
+        kind: 'appendix_explicit',
+        normative_ref:
+          'docs/superpowers/specs/2026-07-29-kernel-atomic-inventory-p0-premerge.md',
+      },
+    }],
+    coverage_gaps: [{
+      gap_id: 'KERNEL-RECOVERY-GAP-P0-01-01-01',
+      affected_violation_probe_ids: ['KERNEL-PROBE-P0-01-01-V02'],
+      affected_recovery_probe_ids: ['KERNEL-PROBE-P0-01-01-R01'],
+      appendix_predecessor_text: 'remaining denial recovery is not exactly bound',
+      reason: 'The appendix does not identify one exact predecessor set.',
+      owner: 'kernel-contract',
+      closure_plan: 'Approve the exact mapping and add its regression fixture.',
+    }],
+  },
+}
+```
+
+测试以下 fail-closed 规则及 finding code：
+
+```text
+recovery_binding_authority_invalid
+  - binding 缺 authority；
+  - appendix_explicit 缺 normative_ref；
+  - design_derived 缺 derivation_ref；
+  - binding 引用外 atom ID；
+  - earlier-R predecessor 没有 explicit/derived authority；
+  - recovery graph 有环。
+
+recovery_coverage_gap_invalid
+  - gap 缺 owner/reason/closure_plan；
+  - gap 引用外 atom ID；
+  - gap_id 重复；
+  - violation 或 recovery obligation 既不在 binding 也不在 gap；
+  - 同一 exact relation 同时由 binding 和 gap 声称。
+```
+
+`coverage_gaps: []` 必须是合法 exact plan；有 gap 时 schema 仍合法，但返回
+`atomic_cutover_ready=false`，对应 atom effective proof status 仍为 `gap`。
+
+- [ ] **Step 3: 写 retired 与 replacement 信息保真 RED**
+
+retired 四个 absence probe 必须使用：
+
+```js
+{
+  probe_id: 'KERNEL-PROBE-P1-08-01-A01',
+  scenario: 'absence',
+  assertion: 'packages/engine/hooks/stop-dev.sh must remain absent.',
+  expected_outcome: 'absent',
+  expectation_authority: {
+    kind: 'appendix_explicit',
+    normative_ref:
+      'docs/superpowers/specs/2026-07-29-kernel-atomic-inventory-p1.md',
+  },
+}
+```
+
+缺 assertion、不是 `absent`、authority 不合法都产生
+`probe_outcome_contract_invalid`，但合法 assertion 不改变四项 absence proof 的
+`unverified` 状态。
+
+intentional replacement fixture 在 `replacement` 内加入：
+
+```js
+legacy_evidence: [{
+  kind: 'code',
+  ref: 'packages/engine/hooks/stop-dev.sh',
+  audited_at_sha: 'f16f2a76eef592c0e7b896bb58940f5e6231c306',
+}],
+```
+
+合法 evidence 只保存 replacement 历史事实，不产生 atomic proof。绝对路径、缺 SHA、
+runtime audit 或敏感 material 必须产生 `replacement_legacy_evidence_invalid`，finding path
+必须指向 `replacement.legacy_evidence`。
+
+- [ ] **Step 4: 运行 RED**
+
+```bash
+cd packages/brain
+npx vitest run src/lib/__tests__/kernel-equivalence-atomic-contract.test.js
+```
+
+Expected: FAIL；旧 validator 不接受新 probe fields、没有 authority/gap finding 和 metrics。
+
+- [ ] **Step 5: 实现 strict probe outcome validator**
+
+在 `kernel-equivalence-atomic-contract.js` 新增：
+
+```js
+const PROBE_EXPECTED_OUTCOMES = new Set([
+  'confirmed',
+  'denied',
+  'blocked',
+  'unknown',
+  'recovered',
+  'absent',
+]);
+
+function validExpectationAuthority(authority) {
+  if (authority?.kind === 'appendix_explicit') {
+    return exactKeys(authority, ['kind', 'normative_ref'])
+      && nonEmpty(authority.normative_ref);
+  }
+  if (authority?.kind === 'design_derived') {
+    return exactKeys(authority, ['kind', 'derivation_ref'])
+      && nonEmpty(authority.derivation_ref);
+  }
+  if (authority?.kind === 'coverage_gap') {
+    return exactKeys(authority, [
+      'kind', 'owner', 'reason', 'closure_plan',
+    ]) && ['owner', 'reason', 'closure_plan'].every(
+      (field) => nonEmpty(authority[field]),
+    );
+  }
+  return false;
+}
+```
+
+`validateProbeOutcomeContract()` 必须按 retired/proof-required exact fields 校验
+`assertion`、`expected_outcome`、`expectation_authority`，并从真实 probes 计算每个 scenario
+的 outcome set；size 为 1 时 atom requirement 等于该值，size 大于 1 时等于
+`per_probe`。不能由 scenario 名静默推断逐 probe outcome。
+
+- [ ] **Step 6: 实现 authoritative recovery accounting**
+
+用一个 atom-local `Set` 建立 normal/violation/recovery IDs。每个 binding exact shape：
+
+```js
+{
+  recovery_probe_id,
+  predecessor_probe_ids,
+  authority: {
+    kind: 'appendix_explicit' | 'design_derived',
+    normative_ref | derivation_ref,
+  },
+}
+```
+
+每个 gap exact shape：
+
+```js
+{
+  gap_id,
+  affected_violation_probe_ids,
+  affected_recovery_probe_ids,
+  appendix_predecessor_text,
+  reason,
+  owner,
+  closure_plan,
+}
+```
+
+validator 必须以 binding/gap 的 union 覆盖全部 violation 和 recovery obligations；只允许
+同 atom predecessor，禁止无 authority 的 earlier-R chain，并用 DFS 验证 recovery graph
+无环。删除“每个 binding 必须覆盖全部 V”和“为满足 coverage 自动绑定 all-V”的旧假设。
+
+receipt-level `predecessor_binding` 的五个 `true` 继续表示未来 receipt 身份约束，不代替
+probe-level normative predecessor authority。
+
+- [ ] **Step 7: 扩展 metrics 和 replacement evidence**
+
+`deriveMetrics()` 返回并实际递增：
+
+```js
+probe_outcome_authority: {
+  appendix_explicit: 0,
+  design_derived: 0,
+  coverage_gap: 0,
+},
+recovery_mapping: {
+  exact_binding_count: 0,
+  derived_binding_count: 0,
+  coverage_gap_count: 0,
+},
+```
+
+其中 exact/derived 只统计 schema 合法 binding；coverage gap 分别统计 probe outcome
+authority 和 recovery mapping 条目。`replacement.legacy_evidence` 复用 repository
+evidence 校验，但把任一 evidence finding 映射成
+`replacement_legacy_evidence_invalid`，不得把它扫描成 receipt material。
+
+- [ ] **Step 8: 运行 GREEN 和相邻回归**
+
+```bash
+cd packages/brain
+npx vitest run \
+  src/lib/__tests__/kernel-equivalence-atomic-contract.test.js \
+  src/lib/__tests__/kernel-behavior-equivalence.test.js \
+  src/lib/__tests__/kernel-equivalence-drills.test.js
+```
+
+Expected: PASS；public validator 仍保持 proof-required atoms 全部 gap、cutover false。
+
+- [ ] **Step 9: 提交 honest schema**
+
+```bash
+git add \
+  packages/brain/src/lib/kernel-equivalence-atomic-contract.js \
+  packages/brain/src/lib/__tests__/kernel-equivalence-atomic-contract.test.js
+git commit -m "feat(kernel): preserve atomic contract uncertainty"
+```
+
 ## Task 4: Root 1.1 inventory GREEN
 
 **Files:**
@@ -510,8 +808,23 @@ steps/dimensions、probe definitions、scenario mapping、recovery predecessor �
 不得自行缩写带 slug 的 atom ID，不得重新编号 probe。
 
 每个 atom 必须用 scalar `single_effect_owner_seam` 写入 appendix 的唯一 owner/seam。
-每个 proof-required atom 的 `receipt_requirements.scenarios` 必须把 appendix 的 canonical
-scenario assertions 归一为 exact `expected_outcome`/`effect_code`，并完整写入：
+每个 proof-required probe 必须逐项保存 appendix assertion、outcome 和 authority：
+
+```yaml
+assertion: "exact appendix assertion"
+expected_outcome: denied
+expectation_authority:
+  kind: appendix_explicit
+  normative_ref: docs/superpowers/specs/2026-07-29-kernel-atomic-inventory-p0-premerge.md
+```
+
+只有经批准设计唯一推出的事实可用 `design_derived + derivation_ref`；其余必须使用
+`coverage_gap + owner/reason/closure_plan`。不得 silent inference。特别对照 honesty
+addendum §3 的 11 个 P0 probes，逐项保存 `blocked` / `unknown`，并把 heterogeneous
+atom-level scenario outcome 写成 `per_probe`。
+
+每个 proof-required atom 的 `receipt_requirements.scenarios` 还必须保留 exact
+`effect_code`，并完整写入：
 
 ```yaml
 recovery:
@@ -525,6 +838,23 @@ recovery:
 ```
 
 不能用自由文本、默认值或 family owner 替代 atom owner/seam 与 recovery binding。
+
+`scenario_plan.recovery` 必须使用 authoritative bindings：
+
+```yaml
+required_probe_ids: [KERNEL-PROBE-P1-10-01-R01]
+bindings:
+  - recovery_probe_id: KERNEL-PROBE-P1-10-01-R01
+    predecessor_probe_ids: [KERNEL-PROBE-P1-10-01-V03]
+    authority:
+      kind: appendix_explicit
+      normative_ref: docs/superpowers/specs/2026-07-29-kernel-atomic-inventory-p1.md
+coverage_gaps: []
+```
+
+对 honesty addendum §4 列出的 13 个 atoms，删除首次生成器补出的 all-V 和 invented-chain；
+附录未唯一绑定的 obligations 写成 exact `coverage_gaps`。任一 gap 保持 schema valid，
+但强制 proof/cutover red。
 
 appendix 中的 repository evidence 必须转成结构化
 `{kind, ref, audited_at_sha}`；无另行 snapshot 声明时绑定已审基线
@@ -556,6 +886,12 @@ retirement:
       - KERNEL-PROBE-P1-08-01-A03
       - KERNEL-PROBE-P1-08-01-A04
 ```
+
+四个 retired absence probes 也必须保留 exact assertion、`expected_outcome: absent` 和
+`appendix_explicit` authority。
+
+两个 `intentional_replacement` atoms 的 repository evidence 必须写在
+`replacement.legacy_evidence` 内；它只证明旧 authority/替代决策，不是 live proof。
 
 不填 `verified_at`、signature 或假 receipt；当前 proof 必须保持 incomplete。
 
@@ -595,8 +931,14 @@ console.log(JSON.stringify(result.metrics));
 NODE
 ```
 
-Expected: PASS；真实根合同而非缩小 fixture 必须通过完整 classification、recovery、axes、
-evidence 和 count validator。
+Expected: PASS；真实根合同而非缩小 fixture 必须通过完整 classification、outcome、
+recovery authority/gap、axes、evidence 和 count validator。结果必须同时满足：
+
+```text
+schema_valid = true
+atomic_cutover_ready = false
+recovery_mapping.coverage_gap_count > 0
+```
 
 - [ ] **Step 7: 运行 count self-check**
 
@@ -606,7 +948,37 @@ node scripts/ci/check-kernel-behavior-equivalence.mjs --format=json
 
 Expected: schema contract 可读取；在 Task 5 集成前 proof 仍不得完成。
 
-- [ ] **Step 8: 提交 inventory**
+- [ ] **Step 8: 做 appendix 逐 probe 语义对照**
+
+对三份 appendix 按 atom ID 和 probe ID 排序比较：
+
+```text
+43/43 atom IDs exact
+446/446 probe IDs exact
+assertion exact
+expected_outcome exact
+binding predecessor set exact where explicit
+no invented all-V mapping
+no invented earlier-R chain
+all unresolved relations represented by coverage_gaps
+11 heterogeneous P0 outcomes preserved
+4 retired assertions preserved
+2 replacement evidence lists preserved
+```
+
+任何一项不一致都先修正 root inventory 或 validator，不得以“validator findings=0”替代
+规范性对照。
+
+- [ ] **Step 9: 删除临时生成/审计脚本**
+
+```bash
+rm .tmp-generate-atomic-inventory.mjs .tmp-audit-atomic-inventory.mjs
+git status --short
+```
+
+Expected: 两个 `.tmp-*` 文件不存在；只有计划内文件有改动。
+
+- [ ] **Step 10: 提交 inventory**
 
 ```bash
 git add regression-contract.yaml
