@@ -2306,6 +2306,126 @@ describe('honest equivalence report', () => {
     expect(propertyReads).toBeLessThanOrEqual(16);
   });
 
+  it('snapshots report gates and nested atomic metrics exactly once', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const gateReads = {
+      schema_version: 0,
+      valid: 0,
+      schema_valid: 0,
+      contract_version: 0,
+    };
+    const metricReads = {
+      atomic_invariant_count: 0,
+      coverage_gap_count: 0,
+    };
+    let ownKeysReads = 0;
+    const rawRecovery = validation.atomic_metrics.recovery_mapping;
+    const recovery = new Proxy(rawRecovery, {
+      ownKeys() {
+        ownKeysReads += 1;
+        throw new Error('nested metrics were enumerated');
+      },
+      get(target, property, receiver) {
+        if (property === 'coverage_gap_count') {
+          metricReads.coverage_gap_count += 1;
+          return metricReads.coverage_gap_count === 1 ? 11 : 0;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const rawMetrics = validation.atomic_metrics;
+    const metrics = new Proxy(rawMetrics, {
+      ownKeys() {
+        ownKeysReads += 1;
+        throw new Error('atomic metrics were enumerated');
+      },
+      get(target, property, receiver) {
+        if (property === 'atomic_invariant_count') {
+          metricReads.atomic_invariant_count += 1;
+          return metricReads.atomic_invariant_count === 1 ? 43 : 0;
+        }
+        if (property === 'recovery_mapping') return recovery;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const input = new Proxy(validation, {
+      ownKeys() {
+        ownKeysReads += 1;
+        throw new Error('report input was enumerated');
+      },
+      get(target, property, receiver) {
+        if (Object.hasOwn(gateReads, property)) {
+          gateReads[property] += 1;
+          if (gateReads[property] > 1) {
+            if (property === 'schema_version') return '1.0.0';
+            if (property === 'contract_version') return 'changed';
+            return false;
+          }
+        }
+        if (property === 'atomic_metrics') return metrics;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    const report = buildEquivalenceReport(input);
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      contract_version: validation.contract_version,
+      valid: true,
+      schema_valid: true,
+      atomic_summary: {
+        classified: 43,
+        probe_definitions: 446,
+        recovery_mapping: {
+          coverage_gap_count: 11,
+        },
+      },
+    });
+    expect(report.atomic_details).toHaveLength(43);
+    expect(report.cell_atomic_coverage).toHaveLength(99);
+    expect(report.cell_atomic_coverage.reduce(
+      (total, cell) => total + cell.expected_probe_ids.length,
+      0,
+    )).toBe(1_371);
+    expect(gateReads).toEqual({
+      schema_version: 1,
+      valid: 1,
+      schema_valid: 1,
+      contract_version: 1,
+    });
+    expect(metricReads).toEqual({
+      atomic_invariant_count: 1,
+      coverage_gap_count: 1,
+    });
+    expect(ownKeysReads).toBe(0);
+  });
+
+  it('fails a v1.1 report closed on invalid atomic metric ranges', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    validation.atomic_metrics.atomic_invariant_count = Number.MAX_SAFE_INTEGER;
+
+    const report = buildEquivalenceReport(validation);
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: false,
+      schema_valid: false,
+      proof_complete: false,
+      atomic_cutover_ready: false,
+      atomic_summary: {
+        classified: 0,
+        probe_definitions: 0,
+      },
+      atomic_details: [],
+      cell_atomic_coverage: [],
+    });
+  });
+
   it('escapes inline-code and table injection from direct formatter input', () => {
     const report = buildEquivalenceReport(
       validateBehaviorEquivalence(contract(), { now: NOW }),

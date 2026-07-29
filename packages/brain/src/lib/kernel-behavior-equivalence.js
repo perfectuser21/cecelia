@@ -1824,45 +1824,248 @@ function projectAtomicCellCoverage(behaviors, atomicSchemaUsable) {
   )).sort((left, right) => canonicalCompare(left.cell_id, right.cell_id));
 }
 
+function snapshotMetric(record, key, maximum) {
+  const value = Reflect.get(record, key);
+  return Number.isInteger(value) && value >= 0 && value <= maximum
+    ? value
+    : null;
+}
+
+function snapshotAtomicMetrics(value) {
+  try {
+    if (
+      value == null
+      || typeof value !== 'object'
+      || Array.isArray(value)
+    ) {
+      return null;
+    }
+    const behaviorCount = snapshotMetric(
+      value,
+      'behavior_count',
+      MAX_REPORT_FAMILIES,
+    );
+    const atomicInvariantCount = snapshotMetric(
+      value,
+      'atomic_invariant_count',
+      MAX_REPORT_ATOMS,
+    );
+    const proofRequiredAtomicInvariantCount = snapshotMetric(
+      value,
+      'proof_required_atomic_invariant_count',
+      MAX_REPORT_ATOMS,
+    );
+    const probeDefinitionCount = snapshotMetric(
+      value,
+      'probe_definition_count',
+      MAX_REPORT_PROBES,
+    );
+    const proofRequiredProbeDefinitionCount = snapshotMetric(
+      value,
+      'proof_required_probe_definition_count',
+      MAX_REPORT_PROBES,
+    );
+    const providerProbeAssertionCount = snapshotMetric(
+      value,
+      'provider_probe_assertion_count',
+      MAX_REPORT_PROBES * PROOF_PROVIDERS.length,
+    );
+    const retiredAbsenceProbeCount = snapshotMetric(
+      value,
+      'retired_absence_probe_count',
+      MAX_REPORT_PROBES,
+    );
+    const rawAuthority = Reflect.get(value, 'probe_outcome_authority');
+    const rawRecovery = Reflect.get(value, 'recovery_mapping');
+    if (
+      rawAuthority == null
+      || typeof rawAuthority !== 'object'
+      || Array.isArray(rawAuthority)
+      || rawRecovery == null
+      || typeof rawRecovery !== 'object'
+      || Array.isArray(rawRecovery)
+    ) {
+      return null;
+    }
+    const authority = Object.freeze({
+      appendix_explicit: snapshotMetric(
+        rawAuthority,
+        'appendix_explicit',
+        MAX_REPORT_PROBES,
+      ),
+      design_derived: snapshotMetric(
+        rawAuthority,
+        'design_derived',
+        MAX_REPORT_PROBES,
+      ),
+      coverage_gap: snapshotMetric(
+        rawAuthority,
+        'coverage_gap',
+        MAX_REPORT_PROBES,
+      ),
+    });
+    const recovery = Object.freeze({
+      exact_binding_count: snapshotMetric(
+        rawRecovery,
+        'exact_binding_count',
+        MAX_REPORT_PROBES,
+      ),
+      derived_binding_count: snapshotMetric(
+        rawRecovery,
+        'derived_binding_count',
+        MAX_REPORT_PROBES,
+      ),
+      coverage_gap_count: snapshotMetric(
+        rawRecovery,
+        'coverage_gap_count',
+        MAX_REPORT_PROBES,
+      ),
+    });
+    const scalars = [
+      behaviorCount,
+      atomicInvariantCount,
+      proofRequiredAtomicInvariantCount,
+      probeDefinitionCount,
+      proofRequiredProbeDefinitionCount,
+      providerProbeAssertionCount,
+      retiredAbsenceProbeCount,
+      ...Object.values(authority),
+      ...Object.values(recovery),
+    ];
+    if (scalars.includes(null)) return null;
+    return Object.freeze({
+      behavior_count: behaviorCount,
+      atomic_invariant_count: atomicInvariantCount,
+      proof_required_atomic_invariant_count:
+        proofRequiredAtomicInvariantCount,
+      probe_definition_count: probeDefinitionCount,
+      proof_required_probe_definition_count:
+        proofRequiredProbeDefinitionCount,
+      provider_probe_assertion_count: providerProbeAssertionCount,
+      retired_absence_probe_count: retiredAbsenceProbeCount,
+      probe_outcome_authority: authority,
+      recovery_mapping: recovery,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function snapshotReportInput(validation) {
+  if (validation == null || typeof validation !== 'object') {
+    return Object.freeze({
+      snapshot_valid: true,
+      schema_version: null,
+      valid: false,
+      schema_valid: false,
+      contract_version: null,
+      behaviors: [],
+      findings: [],
+      journey: null,
+      atomic_metrics: null,
+      legacy_verified_family_receipt_count: 0,
+    });
+  }
+  const read = (key) => {
+    try {
+      return { ok: true, value: Reflect.get(validation, key) };
+    } catch {
+      return { ok: false, value: null };
+    }
+  };
+  const schemaVersion = read('schema_version');
+  const valid = read('valid');
+  const schemaValid = read('schema_valid');
+  const contractVersion = read('contract_version');
+  const behaviors = read('behaviors');
+  const findings = read('findings');
+  const journey = read('journey');
+  const atomicReport = schemaVersion.value === '1.1.0';
+  const atomicMetrics = atomicReport
+    ? read('atomic_metrics')
+    : { ok: true, value: null };
+  const legacyReceipts = atomicReport
+    ? read('legacy_verified_family_receipt_count')
+    : { ok: true, value: 0 };
+  const legacyReceiptCount = Number.isInteger(legacyReceipts.value)
+    && legacyReceipts.value >= 0
+    && legacyReceipts.value <= MAX_REPORT_FAMILY_CELLS
+    ? legacyReceipts.value
+    : null;
+  const metricsSnapshot = atomicReport
+    ? snapshotAtomicMetrics(atomicMetrics.value)
+    : null;
+  return Object.freeze({
+    snapshot_valid: [
+      schemaVersion,
+      valid,
+      schemaValid,
+      contractVersion,
+      behaviors,
+      findings,
+      journey,
+      atomicMetrics,
+      legacyReceipts,
+    ].every((result) => result.ok)
+      && (!atomicReport || (
+        metricsSnapshot != null && legacyReceiptCount != null
+      )),
+    schema_version: schemaVersion.value,
+    valid: valid.value === true,
+    schema_valid: schemaValid.value === true,
+    contract_version: contractVersion.value,
+    behaviors: behaviors.value,
+    findings: findings.value,
+    journey: journey.value,
+    atomic_metrics: metricsSnapshot,
+    legacy_verified_family_receipt_count: legacyReceiptCount ?? 0,
+  });
+}
+
 function buildEquivalenceReportImpl(
   validation,
   { evaluatedAt = null } = {},
 ) {
-  const schemaVersion = validation?.schema_version ?? null;
+  const reportInput = snapshotReportInput(validation);
+  const schemaVersion = reportInput.schema_version ?? null;
   const atomicReport = schemaVersion === '1.1.0';
-  const validationValid = validation?.valid === true;
+  const validationValid =
+    reportInput.snapshot_valid && reportInput.valid;
   let atomicSnapshot = null;
   const semanticIdsValid = !atomicReport
-    || atomicSemanticIdsValid(validation, (snapshot) => {
+    || atomicSemanticIdsValid(reportInput, (snapshot) => {
       atomicSnapshot = snapshot;
     });
   const behaviorSource = atomicSnapshot?.behaviors
-    ?? validation?.behaviors;
+    ?? reportInput.behaviors;
   const behaviors = asArray(behaviorSource)
     .slice(0, MAX_REPORT_FAMILIES)
     .map(boundReportBehavior);
-  const validationFindings = asArray(validation?.findings)
+  const validationFindings = asArray(reportInput.findings)
     .slice(0, MAX_REPORT_METADATA_ITEMS);
   const reportValid = validationValid && semanticIdsValid;
   const reportSchemaValid = (
     atomicReport
     && reportValid
-    && validation?.schema_valid === true
+    && reportInput.schema_valid
   );
-  const atomicMetrics = asObject(validation?.atomic_metrics);
+  const atomicMetrics = asObject(reportInput.atomic_metrics);
   const atomicSchemaUsable = (
     schemaVersion === '1.1.0'
     && reportSchemaValid
+    && atomicMetrics.behavior_count === MAX_REPORT_FAMILIES
     && behaviors.length === MAX_REPORT_FAMILIES
     && atomicMetrics.atomic_invariant_count === MAX_REPORT_ATOMS
     && atomicMetrics.proof_required_atomic_invariant_count === 42
     && atomicMetrics.probe_definition_count === MAX_REPORT_PROBES
     && atomicMetrics.proof_required_probe_definition_count === 442
+    && atomicMetrics.provider_probe_assertion_count
+      === 442 * PROOF_PROVIDERS.length
   );
   const reportAtomicMetrics = atomicSchemaUsable ? atomicMetrics : {};
   const boundedValidation = {
     schema_version: schemaVersion,
-    journey: validation?.journey ?? null,
+    journey: reportInput.journey ?? null,
     behaviors,
   };
   const envelopes = buildEvidenceEnvelopes(boundedValidation);
@@ -1872,9 +2075,12 @@ function buildEquivalenceReportImpl(
     behaviors,
     atomicSchemaUsable,
   );
-  const atomicRequirements = compileAtomicRequirementSummary(
-    atomicSchemaUsable ? validation : null,
-  );
+  const atomicRequirements = compileAtomicRequirementSummary(Object.freeze({
+    schema_version: schemaVersion,
+    valid: atomicSchemaUsable,
+    schema_valid: atomicSchemaUsable,
+    atomic_metrics: reportInput.atomic_metrics,
+  }));
   const classificationCounts = countBy(
     atomicDetails,
     'classification',
@@ -1929,7 +2135,7 @@ function buildEquivalenceReportImpl(
 
   return {
     report_version: schemaVersion === '1.1.0' ? '1.1.0' : '1.0.0',
-    contract_version: boundedScalar(validation?.contract_version),
+    contract_version: boundedScalar(reportInput.contract_version),
     evaluated_at: boundedIdentity(evaluatedAt),
     valid: reportValid,
     ...(atomicReport ? {
@@ -1991,7 +2197,7 @@ function buildEquivalenceReportImpl(
       )),
       ...(atomicReport ? {
         legacy_verified_family_receipts: reportMetric(
-          validation?.legacy_verified_family_receipt_count,
+          reportInput.legacy_verified_family_receipt_count,
           requiredCells,
         ),
         atomic_proven_family_cells: reportMetric(
