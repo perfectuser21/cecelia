@@ -112,3 +112,31 @@ describe('GET /api/brain/acceptance/runs/:run_key', () => {
     expect(nf.status).toBe(404);
   });
 });
+
+describe('POST /api/brain/acceptance/catalog（目录快照上载）', () => {
+  it('合法 catalog → 200 upsert 单行', async () => {
+    const upserts = [];
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        if (sql.includes('INSERT INTO acceptance_catalog')) { upserts.push(params); return { rows: [{ updated_at: 'now' }] }; }
+        return { rows: [] };
+      }),
+      connect: vi.fn(),
+    };
+    const res = await request(makeApp(pool))
+      .post('/api/brain/acceptance/catalog')
+      .send({ catalog: { golden_paths: [{ id: 'g1' }], apps: [] } });
+    expect(res.status).toBe(200);
+    expect(res.body.golden_paths).toBe(1);
+    expect(upserts).toHaveLength(1);
+  });
+
+  it('缺 catalog / golden_paths 非数组 → 400', async () => {
+    const pool = { query: vi.fn(), connect: vi.fn() };
+    const r1 = await request(makeApp(pool)).post('/api/brain/acceptance/catalog').send({});
+    expect(r1.status).toBe(400);
+    const r2 = await request(makeApp(pool)).post('/api/brain/acceptance/catalog').send({ catalog: { golden_paths: 'x' } });
+    expect(r2.status).toBe(400);
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+});

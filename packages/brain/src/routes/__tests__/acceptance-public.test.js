@@ -212,3 +212,27 @@ describe('验收驳回自动开任务（主理人条件二：转变沿）', () =
     expect(taskInserts).toHaveLength(0);
   });
 });
+
+describe('GET /acceptance/catalog（Worker 拉目录）', () => {
+  it('已种 → 200 带 catalog+updated_at', async () => {
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (sql.includes('FROM acceptance_catalog')) {
+          return { rows: [{ payload: { golden_paths: [{ id: 'g1' }] }, updated_at: '2026-07-30T00:00:00Z' }] };
+        }
+        return { rows: [] };
+      }),
+      connect: vi.fn(),
+    };
+    const res = await request(makeApp(pool)).get('/acceptance/catalog');
+    expect(res.status).toBe(200);
+    expect(res.body.catalog.golden_paths).toHaveLength(1);
+    expect(res.body.updated_at).toBeTruthy();
+  });
+
+  it('未种 → 404', async () => {
+    const pool = { query: vi.fn(async () => ({ rows: [] })), connect: vi.fn() };
+    const res = await request(makeApp(pool)).get('/acceptance/catalog');
+    expect(res.status).toBe(404);
+  });
+});

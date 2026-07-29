@@ -6,6 +6,7 @@
 abilities-api-smoke.sh
 ability-id-chain-pr2-smoke.sh
 acceptance-aging-smoke.sh
+acceptance-catalog-smoke.sh
 acceptance-endpoints-smoke.sh
 admission-report-smoke.sh
 advancement-items-smoke.sh
