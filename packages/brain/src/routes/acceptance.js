@@ -4,6 +4,7 @@
  * 公网 router：pending 拉取 / results 回写（挂 5223，见 acceptance-public-server.js）
  */
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 
 export const ACCEPTANCE_KINDS = ['FR', 'NFR', 'Invariant', 'SOP'];
 export const ACCEPTANCE_RESULTS = ['通过', '不通过', '无法验证'];
@@ -23,6 +24,8 @@ async function loadChecks(q, runId) {
 
 export function createAcceptanceInternalRouter({ pool }) {
   const router = express.Router();
+  // 内网限流：宽松额度防误伤 harness 自动建单，同时满足 DB 访问限流要求（CodeQL js/missing-rate-limiting）
+  router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
 
   router.post('/runs', async (req, res) => {
     const { run_key, title, gp_id, line, surface, version, source = 'manual', checks } = req.body || {};
