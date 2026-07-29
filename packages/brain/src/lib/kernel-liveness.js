@@ -73,6 +73,27 @@ export async function loadKernelRun(pool, { taskId, initiativeId = null } = {}) 
 }
 
 /**
+ * 取该任务最新一条 initiative_run 行，不过滤 phase（含终态）。
+ * 只在 loadKernelRun（终态过滤）查不到行时兜底调用，用于区分
+ * "这个任务的 run 早就有明确终态结论" 与 "真的从未有过任何 run 记录"。
+ * @returns {Promise<object|null>} 查不到返回 null（不抛）；SQL 异常向上抛，由调用方 fail-open。
+ */
+async function loadLatestKernelRunAnyPhase(pool, { taskId, initiativeId = null } = {}) {
+  if (!pool?.query || !taskId) return null;
+  const { rows } = await pool.query(
+    `SELECT id, initiative_id, current_task_id, phase, failure_reason,
+            orchestrator_heartbeat_at, orchestrator_pid, orchestrator_host, started_at
+       FROM initiative_runs
+      WHERE orchestrator_version = 'v2'
+        AND (current_task_id = $1::uuid OR initiative_id = COALESCE($2::uuid, $1::uuid))
+      ORDER BY started_at DESC
+      LIMIT 1`,
+    [taskId, initiativeId]
+  );
+  return rows?.[0] ?? null;
+}
+
+/**
  * Kernel 心跳时刻（epoch ms），供旧守卫与 initiative_run_events 取 max。
  * 非 kernel 任务或任何异常一律 null（调用方按"这条信号没有"处理，不当作死亡证据）。
  */
@@ -99,10 +120,14 @@ export async function latestKernelHeartbeatMs({ pool, task, run = null } = {}) {
  *   1. 非 kernel-v1 → 'not_applicable'（调用方原样走旧逻辑，旧路径行为一字不动）
  *   2. orchestrator_heartbeat_at 在 staleMs 内 → 'alive'
  *   3. 否则 orchestrator_pid + orchestrator_host 与本机一致 → kill(pid,0) 探活
- *   4. 拿不到确定答案 → 'unknown'
+ *   4. 拿不到确定答案，且该任务名下**存在**终态（done/failed）的 run 行 → 'concluded'
+ *      （事故 4a530430：15 条 run 全 failed，被 phase NOT IN('done','failed') 过滤掉，
+ *      不能因为查不到"非终态"行就说"不知道"——run 早就有明确结论了）
+ *   5. 连终态 run 行都查不到（表里对这个任务从未有过 run）→ 'unknown'
  *
- * @returns {Promise<{verdict:'not_applicable'|'alive'|'dead'|'unknown', reason:string,
- *                    source?:'heartbeat'|'pid', heartbeatAgeMs?:number, runId?:string}>}
+ * @returns {Promise<{verdict:'not_applicable'|'alive'|'dead'|'concluded'|'unknown', reason:string,
+ *                    source?:'heartbeat'|'pid', heartbeatAgeMs?:number, runId?:string,
+ *                    phase?:string, failure_reason?:string|null}>}
  */
 export async function assessKernelLiveness({
   pool,
@@ -128,7 +153,29 @@ export async function assessKernelLiveness({
       return { verdict: 'unknown', reason: `run_query_error:${err.message}` };
     }
   }
-  if (!row) return { verdict: 'unknown', reason: 'no_kernel_run' };
+  if (!row) {
+    // 终态过滤查询查不到 ≠ "真的没有任何信息"：可能全部 run 都已终态被过滤掉了。
+    // 无过滤兜底查一次，只有连这条都查不到才是真正的"活死未知"。
+    let concludedRow = null;
+    try {
+      concludedRow = await loadLatestKernelRunAnyPhase(pool, {
+        taskId: task.id,
+        initiativeId: task.payload?.initiative_id ?? null,
+      });
+    } catch (err) {
+      return { verdict: 'unknown', reason: `run_query_error:${err.message}` };
+    }
+    if (concludedRow && (concludedRow.phase === 'done' || concludedRow.phase === 'failed')) {
+      return {
+        verdict: 'concluded',
+        reason: 'terminal_run_filtered',
+        runId: concludedRow.id,
+        phase: concludedRow.phase,
+        failure_reason: concludedRow.failure_reason ?? null,
+      };
+    }
+    return { verdict: 'unknown', reason: 'no_kernel_run' };
+  }
 
   // ① 心跳
   const hbMs = toEpochMs(row.orchestrator_heartbeat_at);
