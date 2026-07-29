@@ -159,6 +159,8 @@ process.on('unhandledRejection', (reason, promise) => {
 // collide with a still-bound socket on 5221.
 let __shuttingDown = false;
 const __startedAtMs = Date.now();
+// Acceptance 公网 listener（5223）；token 未配置时保持 null
+let acceptancePublicServer = null;
 async function gracefulShutdown(signal) {
   if (__shuttingDown) return;
   __shuttingDown = true;
@@ -208,6 +210,10 @@ async function gracefulShutdown(signal) {
     ]);
   } catch (e) {
     console.warn('[shutdown] server.close error:', e && e.message);
+  }
+  if (acceptancePublicServer) {
+    acceptancePublicServer.close(() => console.log('[acceptance-public] listener 已关闭'));
+    acceptancePublicServer = null;
   }
 
   // 2) Close WebSocket server (clients get 1001 Going Away)
@@ -634,7 +640,7 @@ if (!process.env.VITEST) {
   // Acceptance 公网 listener（刀 1，决策 c08c2173）：token 未配置时静默不启动
   try {
     const ACCEPTANCE_PUBLIC_PORT = Number(process.env.ACCEPTANCE_PUBLIC_PORT || 5223);
-    startAcceptancePublicServer({ pool, port: ACCEPTANCE_PUBLIC_PORT });
+    acceptancePublicServer = startAcceptancePublicServer({ pool, port: ACCEPTANCE_PUBLIC_PORT });
   } catch (err) {
     console.error('[acceptance-public] 启动失败（不影响主服务）:', err.message);
   }
