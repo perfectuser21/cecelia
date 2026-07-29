@@ -852,9 +852,11 @@ bindings:
 coverage_gaps: []
 ```
 
-对 honesty addendum §4 列出的 13 个 atoms，删除首次生成器补出的 all-V 和 invented-chain；
-附录未唯一绑定的 obligations 写成 exact `coverage_gaps`。任一 gap 保持 schema valid，
-但强制 proof/cutover red。
+对 honesty addendum §4 列出的 11 个 gap atoms，删除首次生成器补出的 all-V/invented
+mapping，并把附录未唯一绑定的 obligations 写成 exact `coverage_gaps`。对单列的
+`KERNEL-INV-P1-10-03` 与 `KERNEL-INV-P1-11-04`，保留 appendix-explicit V bindings，
+只删除未授权 earlier-R predecessors，并保持 `coverage_gaps: []`。任一真实 gap 保持
+schema valid，但强制 proof/cutover red。
 
 appendix 中的 repository evidence 必须转成结构化
 `{kind, ref, audited_at_sha}`；无另行 snapshot 声明时绑定已审基线

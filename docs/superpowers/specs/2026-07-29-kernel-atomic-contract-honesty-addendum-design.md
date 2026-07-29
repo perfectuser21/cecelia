@@ -146,8 +146,8 @@ coverage_gaps:
 - validator 必须证明所有 violation/recovery obligations 已被 binding 或 gap 记账；
 - 任一 recovery coverage gap 存在时，atom、family、proof 和 cutover 都不能 green。
 
-首次审计确认以下 13 个 atoms 至少有一个 recovery mapping gap，根合同不得保留生成器
-补出的 all-V 或 invented-chain 映射：
+逐 ID 复审确认以下 11 个 atoms 至少有一个 recovery mapping gap。根合同不得保留生成器
+补出的 all-V 映射，未被附录唯一绑定的 obligations 必须进入 `coverage_gaps`：
 
 ```text
 KERNEL-INV-P0-02-03-ATTEMPT-SCOPED-CREDENTIAL-LEASE
@@ -160,10 +160,19 @@ KERNEL-INV-P1-09-01
 KERNEL-INV-P1-09-03
 KERNEL-INV-P1-10-01
 KERNEL-INV-P1-10-02
-KERNEL-INV-P1-10-03
 KERNEL-INV-P1-11-03
+```
+
+另外两个 atoms 没有 coverage gap，但首次生成器加入了附录未授权的 earlier-recovery
+predecessor chain：
+
+```text
+KERNEL-INV-P1-10-03
 KERNEL-INV-P1-11-04
 ```
+
+这两个 atoms 必须保留附录逐 V 明示的 exact bindings，只删除 invented earlier-R
+predecessors，并保持 `coverage_gaps: []`。不得为了维持“13”这个审计数字伪造 gap。
 
 ## 5. Retired 与 replacement 信息保真
 
@@ -237,8 +246,9 @@ recovery_mapping:
 
 ## 7. 实施和验收顺序
 
-1. 先扩展 atomic RED tests，复现 11 个 outcome 压平、13-atom recovery invention、
-   retired assertion 丢失和 replacement evidence 丢失；
+1. 先扩展 atomic RED tests，复现 11 个 outcome 压平、11-atom recovery gaps、
+   2-atom earlier-recovery chain invention、retired assertion 丢失和 replacement
+   evidence 丢失；
 2. 修改 validator，使 binding 与 gap 都能被精确表达且 fail-closed；
 3. 更新根 inventory 生成器，删除 invented mappings，写入 explicit gaps；
 4. 对照三份 appendix 逐 ID、assertion、outcome、binding、gap 复审；
