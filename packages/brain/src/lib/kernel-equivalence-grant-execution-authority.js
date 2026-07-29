@@ -543,6 +543,7 @@ async function openLockedSession({
   shared,
   signal = null,
   abortCode = null,
+  detachAbortAfterLock = false,
   timeoutMs,
 }) {
   let client;
@@ -572,7 +573,12 @@ async function openLockedSession({
     if (session.aborted) fail(abortCode);
     await beginTransaction(session, timeoutMs);
     await client.query(session.lockSql, [session.key]);
+    if (session.aborted) fail(abortCode);
     session.locked = true;
+    if (detachAbortAfterLock) {
+      signal?.removeEventListener('abort', session.abortHandler);
+      session.abortHandlerDetached = true;
+    }
     return session;
   } catch (error) {
     let rollbackError;
@@ -616,10 +622,12 @@ async function closeLockedSession(session) {
     }
     releaseLockedSession(session);
   } finally {
-    session.signal?.removeEventListener(
-      'abort',
-      session.abortHandler,
-    );
+    if (!session.abortHandlerDetached) {
+      session.signal?.removeEventListener(
+        'abort',
+        session.abortHandler,
+      );
+    }
   }
 }
 
@@ -860,17 +868,34 @@ export function createPostgresGrantExecutionAuthority({
     ) {
       fail('grant_authority_request_invalid');
     }
+    if (signal?.aborted) {
+      failAbortedBeforeEffect(signal.reason);
+    }
     const input = authorityInputForGrant(grantSnapshot);
-    const session = await openLockedSession({
-      pool,
-      grantId: input.grant_id,
-      shared: true,
-      timeoutMs,
-    });
+    let session;
+    try {
+      session = await openLockedSession({
+        pool,
+        grantId: input.grant_id,
+        shared: true,
+        signal,
+        abortCode: 'grant_effect_aborted_before_effect',
+        detachAbortAfterLock: true,
+        timeoutMs,
+      });
+    } catch (error) {
+      if (error?.code === 'grant_effect_aborted_before_effect') {
+        failAbortedBeforeEffect(error);
+      }
+      throw error;
+    }
     let outcome;
     let operationError;
     try {
       await resolveActive(session.client, input);
+      if (signal?.aborted) {
+        failAbortedBeforeEffect(signal.reason);
+      }
       const intent = appendResult(
         await appendEvent(
           session.client,
@@ -890,6 +915,16 @@ export function createPostgresGrantExecutionAuthority({
         fail('grant_effect_intent_invalid');
       }
       await commitTransaction(session);
+      if (signal?.aborted) {
+        await appendTerminal(
+          session,
+          input,
+          'effect_unknown',
+          Number(intent.generation),
+          timeoutMs,
+        );
+        failUnknown('grant_effect_unknown', signal.reason);
+      }
 
       let value;
       try {

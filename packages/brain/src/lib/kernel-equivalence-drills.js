@@ -72,6 +72,7 @@ const TRUSTED_VERIFICATION_ERROR_CODES = new Set([
 ]);
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const MINIMUM_DURABLE_CANCELLATION_CONFIRMATION_MS = 100;
+const CLEANUP_RESERVE_MS = 100;
 
 export class EquivalenceDrillError extends Error {
   constructor(code, detail = null) {
@@ -312,12 +313,15 @@ async function blocked({
   now,
   auditSink,
   timeoutMs,
+  auditAllowed = true,
 }) {
   const audit = denialAudit(cell, grant, code, stage, now);
-  let auditDelivery = typeof auditSink === 'function'
-    ? 'failed'
-    : 'not_configured';
-  if (typeof auditSink === 'function') {
+  let auditDelivery = typeof auditSink !== 'function'
+    ? 'not_configured'
+    : auditAllowed
+      ? 'failed'
+      : 'deadline_exceeded';
+  if (typeof auditSink === 'function' && auditAllowed) {
     try {
       await withTimeout(
         () => auditSink(audit),
@@ -461,6 +465,7 @@ async function withDurableAuthorityCancellation(
   operation,
   timeoutMs,
   externalSignal,
+  remainingBudgetMs,
 ) {
   try {
     return await withAbortableTimeout(
@@ -477,6 +482,9 @@ async function withDurableAuthorityCancellation(
     }
     let settlement;
     try {
+      const settlementBudgetMs = remainingBudgetMs(
+        'durable_authority_cancellation_unconfirmed',
+      );
       settlement = await withTimeout(
         () => error.abortContext.operationPromise.then(
           () => ({ status: 'fulfilled', error: null }),
@@ -485,9 +493,12 @@ async function withDurableAuthorityCancellation(
             error: operationError,
           }),
         ),
-        Math.max(
-          timeoutMs,
-          MINIMUM_DURABLE_CANCELLATION_CONFIRMATION_MS,
+        Math.min(
+          settlementBudgetMs,
+          Math.max(
+            timeoutMs,
+            MINIMUM_DURABLE_CANCELLATION_CONFIRMATION_MS,
+          ),
         ),
         'durable_authority_cancellation_unconfirmed',
       );
@@ -589,7 +600,7 @@ function validChainCheckpoint(checkpoint) {
 async function confirmCleanup(
   adapter,
   context,
-  timeoutMs,
+  remainingCleanupBudgetMs,
   cleanupVerifier,
 ) {
   if (typeof cleanupVerifier !== 'function') {
@@ -598,11 +609,11 @@ async function confirmCleanup(
   try {
     const cleanup = await withTimeout(
       () => adapter.cleanup(context),
-      timeoutMs,
+      remainingCleanupBudgetMs(),
     );
     const verification = await withTimeout(
       () => cleanupVerifier({ ...context, cleanup }),
-      timeoutMs,
+      remainingCleanupBudgetMs(),
       'cleanup_verifier_timeout',
     );
     if (verification?.confirmed !== true) {
@@ -649,7 +660,7 @@ async function confirmCancellation(
   phase,
   context,
   timeoutError,
-  timeoutMs,
+  remainingBudgetMs,
 ) {
   if (
     !['adapter_timeout', 'adapter_aborted'].includes(timeoutError?.code)
@@ -664,14 +675,14 @@ async function confirmCancellation(
         phase,
         signal: timeoutError.abortContext?.signal,
       }),
-      timeoutMs,
+      remainingBudgetMs(),
     );
     if (cancellation?.confirmed !== true || phase === 'observe') {
       return { confirmed: false, error: null };
     }
     const settlement = await operationCancellationSettlement(
       timeoutError.abortContext?.operationPromise,
-      timeoutMs,
+      remainingBudgetMs(),
     );
     return {
       confirmed: settlement.settled === 'rejected',
@@ -698,16 +709,49 @@ export async function executeDrillCell({
   timeoutMs = 30_000,
 } = {}) {
   if (!validAbortSignal(signal)) fail('adapter_abort_signal_invalid');
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    fail('adapter_timeout_invalid');
+  }
+  const absoluteDeadlineMs = Date.now() + timeoutMs;
+  const budgetUntil = (
+    deadlineMs,
+    timeoutCode = 'adapter_timeout',
+  ) => {
+    const remaining = Math.floor(deadlineMs - Date.now());
+    if (remaining < 1) {
+      throw new EquivalenceDrillError(timeoutCode);
+    }
+    return remaining;
+  };
+  const remainingBudgetMs = (
+    timeoutCode = 'adapter_timeout',
+  ) => budgetUntil(absoluteDeadlineMs, timeoutCode);
+  const createCleanupBudget = () => {
+    const cleanupDeadlineMs = Date.now()
+      + Math.min(CLEANUP_RESERVE_MS, timeoutMs);
+    return (
+      timeoutCode = 'adapter_timeout',
+    ) => budgetUntil(cleanupDeadlineMs, timeoutCode);
+  };
   const auditNow = sampleTrustedClock(now);
-  const deny = (code, stage) => blocked({
-    cell,
-    grant,
-    code,
-    stage,
-    now: auditNow ?? Date.now(),
-    auditSink,
-    timeoutMs,
-  });
+  const deny = (code, stage) => {
+    let auditBudgetMs;
+    try {
+      auditBudgetMs = remainingBudgetMs('audit_sink_timeout');
+    } catch {
+      auditBudgetMs = null;
+    }
+    return blocked({
+      cell,
+      grant,
+      code,
+      stage,
+      now: auditNow ?? Date.now(),
+      auditSink,
+      timeoutMs: auditBudgetMs ?? 1,
+      auditAllowed: auditBudgetMs != null,
+    });
+  };
   if (auditNow == null) {
     return deny('verification_time_invalid', 'clock_validation');
   }
@@ -737,7 +781,7 @@ export async function executeDrillCell({
   try {
     chainCheckpoint = await withTimeout(
       () => bundleChainStore.getCheckpoint(),
-      timeoutMs,
+      remainingBudgetMs('bundle_chain_checkpoint_timeout'),
       'bundle_chain_checkpoint_timeout',
     );
   } catch (error) {
@@ -809,19 +853,23 @@ export async function executeDrillCell({
     }
     let predecessor;
     try {
-      const resolvedPredecessor = await withTimeout(() => predecessorResolver({
-        cell_id: violationCellFor(cell).cell_id,
-        behavior_id: cell.behavior_id,
-        provider: cell.provider,
-        scenario: 'violation',
-        run_id: verifiedGrant.run_id,
-        attempt_id: verifiedGrant.attempt_id,
-        artifact_sha: verifiedGrant.artifact_sha,
-        resource_id: verifiedGrant.resource_id,
-        resource_ref: verifiedGrant.resource_ref,
-        seam_id: cell.seam_id,
-        adapter_id: cell.adapter_id,
-      }), timeoutMs, 'recovery_predecessor_timeout');
+      const resolvedPredecessor = await withTimeout(
+        () => predecessorResolver({
+          cell_id: violationCellFor(cell).cell_id,
+          behavior_id: cell.behavior_id,
+          provider: cell.provider,
+          scenario: 'violation',
+          run_id: verifiedGrant.run_id,
+          attempt_id: verifiedGrant.attempt_id,
+          artifact_sha: verifiedGrant.artifact_sha,
+          resource_id: verifiedGrant.resource_id,
+          resource_ref: verifiedGrant.resource_ref,
+          seam_id: cell.seam_id,
+          adapter_id: cell.adapter_id,
+        }),
+        remainingBudgetMs('recovery_predecessor_timeout'),
+        'recovery_predecessor_timeout',
+      );
       predecessor = structuredClone(resolvedPredecessor);
     } catch (error) {
       return deny(
@@ -855,7 +903,7 @@ export async function executeDrillCell({
           trustRegistry,
           now: ancestryVerificationNow,
         }),
-        timeoutMs,
+        remainingBudgetMs('recovery_predecessor_timeout'),
         'recovery_predecessor_timeout',
       );
       if (!ancestry.bundle_hashes.includes(predecessor.bundle_hash)) {
@@ -931,16 +979,18 @@ export async function executeDrillCell({
     return deny('execution_aborted', 'request_cancellation');
   }
   try {
+    const nonceBudgetMs = remainingBudgetMs();
     const nonceResult = await withDurableAuthorityCancellation(
       (authoritySignal) => (
         grantExecutionAuthority.consumeNonceIfActive({
           grant: verifiedGrant,
           signal: authoritySignal,
-          timeoutMs,
+          timeoutMs: nonceBudgetMs,
         })
       ),
-      timeoutMs,
+      nonceBudgetMs,
       signal,
+      remainingBudgetMs,
     );
     if (nonceResult?.consumed !== true) {
       return deny('grant_nonce_replay', 'nonce_consumption');
@@ -994,7 +1044,7 @@ export async function executeDrillCell({
         signal,
         registerCompensation,
       }),
-      timeoutMs,
+      remainingBudgetMs(),
       signal,
     );
   } catch (error) {
@@ -1012,7 +1062,7 @@ export async function executeDrillCell({
         'prepare',
         { ...context, compensations },
         error,
-        timeoutMs,
+        remainingBudgetMs,
       )
       : { confirmed: true, error: null };
     const cleanupResult = await confirmCleanup(
@@ -1022,7 +1072,7 @@ export async function executeDrillCell({
         prepared: null,
         compensations,
       },
-      timeoutMs,
+      createCleanupBudget(),
       selectedCleanupVerifier,
     );
     if (!cancellation.confirmed) {
@@ -1041,7 +1091,7 @@ export async function executeDrillCell({
     const cleanupResult = await confirmCleanup(
       adapter,
       { ...context, prepared, compensations },
-      timeoutMs,
+      createCleanupBudget(),
       selectedCleanupVerifier,
     );
     if (cleanupResult.error) {
@@ -1074,7 +1124,7 @@ export async function executeDrillCell({
     const cleanupResult = await confirmCleanup(
       adapter,
       { ...context, prepared, compensations },
-      timeoutMs,
+      createCleanupBudget(),
       selectedCleanupVerifier,
     );
     if (cleanupResult.error) {
@@ -1088,11 +1138,12 @@ export async function executeDrillCell({
   let executionStage = 'invoke';
   let timeoutError = null;
   try {
+    const seamBudgetMs = remainingBudgetMs();
     const authorityOutcome = await withAbortableTimeout(
       (authoritySignal) => grantExecutionAuthority.invokeWhileActive({
         grant: verifiedGrant,
         signal: authoritySignal,
-        timeoutMs,
+        timeoutMs: seamBudgetMs,
         invoke: (lockedSignal) => adapter.invokeActualSeam({
           ...context,
           prepared,
@@ -1100,7 +1151,7 @@ export async function executeDrillCell({
           signal: lockedSignal,
         }),
       }),
-      timeoutMs,
+      seamBudgetMs,
       signal,
     );
     if (authorityOutcome?.disposition !== 'effect_completed') {
@@ -1119,7 +1170,7 @@ export async function executeDrillCell({
             signal: observeSignal,
           },
         ),
-        timeoutMs,
+        remainingBudgetMs(),
         signal,
       );
     }
@@ -1152,7 +1203,7 @@ export async function executeDrillCell({
       executionStage,
       { ...context, prepared, compensations },
       timeoutError,
-      timeoutMs,
+      remainingBudgetMs,
     );
     if (!cancellation.confirmed) {
       executionError = 'adapter_cancellation_unconfirmed';
@@ -1170,7 +1221,7 @@ export async function executeDrillCell({
   const cleanupResult = await confirmCleanup(
     adapter,
     { ...context, prepared, compensations },
-    timeoutMs,
+    createCleanupBudget(),
     selectedCleanupVerifier,
   );
   if (
@@ -1184,6 +1235,12 @@ export async function executeDrillCell({
       primaryExecutionError,
       'seam_execution',
     );
+    let secondaryAuditBudgetMs;
+    try {
+      secondaryAuditBudgetMs = remainingBudgetMs('audit_sink_timeout');
+    } catch {
+      secondaryAuditBudgetMs = null;
+    }
     await blocked({
       cell,
       grant,
@@ -1191,7 +1248,8 @@ export async function executeDrillCell({
       stage: 'adapter_cleanup',
       now: auditNow,
       auditSink,
-      timeoutMs,
+      timeoutMs: secondaryAuditBudgetMs ?? 1,
+      auditAllowed: secondaryAuditBudgetMs != null,
     });
     return primaryDenial;
   }
@@ -1247,14 +1305,18 @@ export async function executeDrillCell({
     ? [predecessorReceipt, receipt]
     : [receipt];
   try {
-    const collectedBundle = await withTimeout(() => collector({
-      cell,
-      grant: verifiedGrant,
-      executionGrants,
-      receipts,
-      cleanupEvidence: cleanupResult.evidence,
-      previousBundleHash: chainCheckpoint.head_hash,
-    }), timeoutMs, 'collector_timeout');
+    const collectedBundle = await withTimeout(
+      () => collector({
+        cell,
+        grant: verifiedGrant,
+        executionGrants,
+        receipts,
+        cleanupEvidence: cleanupResult.evidence,
+        previousBundleHash: chainCheckpoint.head_hash,
+      }),
+      remainingBudgetMs('collector_timeout'),
+      'collector_timeout',
+    );
     bundle = structuredClone(collectedBundle);
   } catch (error) {
     return deny(
@@ -1298,7 +1360,7 @@ export async function executeDrillCell({
           trustRegistry,
           now: bundleVerificationNow,
         }),
-        timeoutMs,
+        remainingBudgetMs('bundle_chain_read_timeout'),
         'bundle_chain_read_timeout',
       );
     } catch (error) {
@@ -1339,16 +1401,18 @@ export async function executeDrillCell({
   }
   let committed;
   try {
+    const commitBudgetMs = remainingBudgetMs();
     const commitResult = await withDurableAuthorityCancellation(
       (authoritySignal) => bundleChainStore.commit({
         bundle,
         bundle_hash: verifiedBundle.bundle_hash,
         previous_head_hash: chainCheckpoint.head_hash,
-        timeout_ms: timeoutMs,
+        timeout_ms: commitBudgetMs,
         signal: authoritySignal,
       }),
-      timeoutMs,
+      commitBudgetMs,
       signal,
+      remainingBudgetMs,
     );
     committed = structuredClone(commitResult);
   } catch (error) {

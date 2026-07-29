@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createPostgresAuditSink,
@@ -159,6 +160,25 @@ function transactionPool({ updateRows, readbackBundle, updateError = null }) {
 }
 
 describe('PostgreSQL Kernel equivalence runtime authorities', () => {
+  it('keeps the standalone nonce consumer compatibility-only', () => {
+    const postgresRuntimeSource = readFileSync(
+      new URL('../kernel-equivalence-postgres-runtime.js', import.meta.url),
+      'utf8',
+    );
+    const runtimeLoaderSource = readFileSync(
+      new URL('../kernel-equivalence-runtime-loader.js', import.meta.url),
+      'utf8',
+    );
+
+    expect(postgresRuntimeSource).toMatch(
+      /@deprecated[\s\S]{0,240}createPostgresNonceConsumer/,
+    );
+    expect(runtimeLoaderSource).not.toContain(
+      'createPostgresNonceConsumer',
+    );
+    expect(createPostgresNonceConsumer).toEqual(expect.any(Function));
+  });
+
   it('consumes a grant nonce with one conflict-safe INSERT statement', async () => {
     const runtime = noncePool(1);
     const consume = createPostgresNonceConsumer({ pool: runtime.pool });

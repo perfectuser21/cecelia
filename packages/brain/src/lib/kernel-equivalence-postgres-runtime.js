@@ -128,6 +128,10 @@ function validNonceInput(input) {
   );
 }
 
+/**
+ * @deprecated Compatibility-only API for legacy callers. Production runtime
+ * execution uses createPostgresGrantExecutionAuthority instead.
+ */
 export function createPostgresNonceConsumer({ pool } = {}) {
   requireTransactionPool(pool);
   return async function consumeNonce(

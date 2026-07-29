@@ -297,11 +297,13 @@ describe('executeDrillCell', () => {
 
   it('holds the grant authority across the only actual seam entry', async () => {
     const value = executionFixture();
+    let nonceBudgetMs;
     const grantExecutionAuthority = Object.freeze({
       consumeNonceIfActive: vi.fn(async ({ grant, signal, timeoutMs }) => {
         expect(grant).toEqual(value.grant);
         expect(signal).toEqual(expect.any(AbortSignal));
-        expect(timeoutMs).toBe(25);
+        expect(timeoutMs).toBeLessThanOrEqual(25);
+        nonceBudgetMs = timeoutMs;
         value.calls.push('nonce');
         return { consumed: true };
       }),
@@ -313,7 +315,7 @@ describe('executeDrillCell', () => {
       }) => {
         expect(grant).toEqual(value.grant);
         expect(signal).toEqual(expect.any(AbortSignal));
-        expect(timeoutMs).toBe(25);
+        expect(timeoutMs).toBeLessThanOrEqual(nonceBudgetMs);
         value.calls.push('authority');
         return {
           disposition: 'effect_completed',
@@ -339,6 +341,111 @@ describe('executeDrillCell', () => {
     ]);
     expect(grantExecutionAuthority.consumeNonceIfActive).toHaveBeenCalledOnce();
     expect(grantExecutionAuthority.invokeWhileActive).toHaveBeenCalledOnce();
+  });
+
+  it('passes one decreasing wall-clock budget through sequential stages', async () => {
+    const value = executionFixture();
+    const budgets = [];
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 8));
+    value.bundleChainStore.getCheckpoint.mockImplementation(async () => {
+      await pause();
+      return {
+        schema_version: 'kernel-equivalence-bundle-chain/v1',
+        genesis_hash: null,
+        head_hash: null,
+      };
+    });
+    value.adapter.prepare.mockImplementation(async () => {
+      await pause();
+      return { resource_id: value.grant.resource_id };
+    });
+    value.adapter.invokeActualSeam.mockImplementation(async () => {
+      await pause();
+      return value.receipt;
+    });
+    value.adapter.observe.mockImplementation(async (output) => {
+      await pause();
+      return output;
+    });
+    value.collector.mockImplementation(async () => {
+      await pause();
+      return value.bundle;
+    });
+    value.grantExecutionAuthority = Object.freeze({
+      consumeNonceIfActive: vi.fn(async ({ timeoutMs: stageBudget }) => {
+        budgets.push(stageBudget);
+        await pause();
+        return { consumed: true };
+      }),
+      invokeWhileActive: vi.fn(async ({
+        signal: lockedSignal,
+        timeoutMs: stageBudget,
+        invoke,
+      }) => {
+        budgets.push(stageBudget);
+        return {
+          disposition: 'effect_completed',
+          result: await invoke(lockedSignal),
+        };
+      }),
+    });
+    value.bundleChainStore.commit.mockImplementation(async (input) => {
+      budgets.push(input.timeout_ms);
+      return {
+        committed: true,
+        checkpoint: {
+          schema_version: 'kernel-equivalence-bundle-chain/v1',
+          genesis_hash: input.bundle_hash,
+          head_hash: input.bundle_hash,
+        },
+      };
+    });
+
+    await expect(execute(value, {
+      timeoutMs: 200,
+    })).resolves.toMatchObject({
+      status: 'collected',
+      code: 'drill_receipt_collected',
+    });
+    expect(budgets).toHaveLength(3);
+    expect(budgets[0]).toBeLessThan(200);
+    expect(budgets[1]).toBeLessThan(budgets[0]);
+    expect(budgets[2]).toBeLessThan(budgets[1]);
+  });
+
+  it('bounds total wall time across sequential stages', async () => {
+    const value = executionFixture();
+    const startedAt = Date.now();
+    value.bundleChainStore.getCheckpoint.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return {
+        schema_version: 'kernel-equivalence-bundle-chain/v1',
+        genesis_hash: null,
+        head_hash: null,
+      };
+    });
+    value.nonceConsumer.mockImplementation(({ signal }) => (
+      new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => resolve({ consumed: true }),
+          50,
+        );
+        signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(new Error('nonce transaction rolled back'));
+        }, { once: true });
+      })
+    ));
+
+    await expect(execute(value, {
+      timeoutMs: 30,
+    })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'nonce_cancellation_unconfirmed',
+    });
+    expect(Date.now() - startedAt).toBeLessThan(45);
+    expect(value.nonceConsumer).toHaveBeenCalledOnce();
+    expect(value.adapter.prepare).not.toHaveBeenCalled();
   });
 
   it('cleans up once without a seam when the database denies after prepare', async () => {
@@ -657,7 +764,7 @@ describe('executeDrillCell', () => {
     expect(value.adapter.invokeActualSeam).not.toHaveBeenCalled();
   });
 
-  it('preserves uncertainty after cancelling a timed-out seam', async () => {
+  it('does not start cancellation after a seam exhausts the deadline', async () => {
     const value = executionFixture();
     let lateEffect = false;
     value.adapter.invokeActualSeam.mockImplementation(({ signal }) => (
@@ -683,11 +790,11 @@ describe('executeDrillCell', () => {
 
     expect(result).toMatchObject({
       status: 'blocked',
-      code: 'grant_effect_unknown',
+      code: 'adapter_cancellation_unconfirmed',
       audit: { late_effect_risk: true },
     });
     expect(lateEffect).toBe(false);
-    expect(value.adapter.cancel).toHaveBeenCalledTimes(1);
+    expect(value.adapter.cancel).not.toHaveBeenCalled();
     expect(value.adapter.cleanup).toHaveBeenCalledTimes(1);
     expect(value.collector).not.toHaveBeenCalled();
   });
@@ -1135,7 +1242,7 @@ describe('executeDrillCell', () => {
     });
   });
 
-  it('waits for a timed-out bundle transaction to settle before auditing', async () => {
+  it('does not extend the deadline to settle or audit a bundle timeout', async () => {
     const value = executionFixture();
     let settled = false;
     value.bundleChainStore.commit.mockImplementation(async () => {
@@ -1151,13 +1258,20 @@ describe('executeDrillCell', () => {
 
     await expect(execute(value, { timeoutMs: 5 })).resolves.toMatchObject({
       status: 'blocked',
-      code: 'bundle_chain_commit_timeout',
-      audit_delivery: 'delivered',
+      code: 'bundle_chain_cancellation_unconfirmed',
+      audit_delivery: 'deadline_exceeded',
     });
+    expect(settled).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(settled).toBe(true);
     expect(value.bundleChainStore.commit).toHaveBeenCalledWith(
-      expect.objectContaining({ timeout_ms: 5 }),
+      expect.objectContaining({
+        timeout_ms: expect.any(Number),
+      }),
     );
+    expect(
+      value.bundleChainStore.commit.mock.calls[0][0].timeout_ms,
+    ).toBeLessThanOrEqual(5);
   });
 
   it.each([
