@@ -1,13 +1,21 @@
+import {
+  randomUUID as nodeRandomUUID,
+} from 'node:crypto';
 import { isAbsolute, parse, resolve } from 'node:path';
 import {
   executeDrillCell,
 } from './kernel-equivalence-drills.js';
 import {
+  createPostgresGrantExecutionAuthority,
+} from './kernel-equivalence-grant-execution-authority.js';
+import {
   createPostgresAuditSink,
   createPostgresBundleChainStore,
-  createPostgresNonceConsumer,
   createPostgresPredecessorResolver,
 } from './kernel-equivalence-postgres-runtime.js';
+import {
+  sha256Canonical,
+} from './kernel-equivalence-receipts.js';
 import {
   loadCollectorSigner,
 } from './kernel-equivalence-signers.js';
@@ -86,18 +94,21 @@ function deepFreeze(value) {
 
 export function pinProtectedExecutionGrant(value = {}) {
   try {
+    const pinned = structuredClone(value);
     if (
-      !value
-      || typeof value !== 'object'
-      || Array.isArray(value)
-      || Object.keys(value).join(',') !== 'grant'
-      || !value.grant
-      || typeof value.grant !== 'object'
-      || Array.isArray(value.grant)
+      !pinned
+      || typeof pinned !== 'object'
+      || Array.isArray(pinned)
+      || Object.keys(pinned).sort().join(',') !== 'grant,grant_sha256'
+      || !pinned.grant
+      || typeof pinned.grant !== 'object'
+      || Array.isArray(pinned.grant)
+      || !/^[a-f0-9]{64}$/.test(pinned.grant_sha256 ?? '')
+      || sha256Canonical(pinned.grant) !== pinned.grant_sha256
     ) {
       fail('trusted_runtime_grant_invalid');
     }
-    return deepFreeze(structuredClone(value.grant));
+    return deepFreeze(pinned);
   } catch (error) {
     if (error instanceof EquivalenceTrustedRuntimeError) throw error;
     fail('trusted_runtime_grant_invalid');
@@ -121,6 +132,7 @@ export async function loadTrustedEquivalenceRuntime({
   pool,
   runtimeRegistry,
   now = Date.now,
+  randomUUID = nodeRandomUUID,
 } = {}) {
   const metadata = validateTrustedRuntimeEnvironment(env);
   if (
@@ -134,9 +146,17 @@ export async function loadTrustedEquivalenceRuntime({
     fail('trusted_runtime_registry_unavailable');
   }
   const bundleChainStore = createPostgresBundleChainStore({ pool });
-  const nonceConsumer = createPostgresNonceConsumer({ pool });
   const auditSink = createPostgresAuditSink({ pool });
   const predecessorResolver = createPostgresPredecessorResolver({ pool });
+  let grantExecutionAuthority;
+  try {
+    grantExecutionAuthority = createPostgresGrantExecutionAuthority({
+      pool,
+      actorInstanceId: randomUUID(),
+    });
+  } catch {
+    fail('trusted_runtime_grant_authority_unavailable');
+  }
   let collector;
   try {
     collector = loadCollectorSigner({
@@ -158,17 +178,19 @@ export async function loadTrustedEquivalenceRuntime({
   const executeCell = async ({
     cell,
     grant: protectedGrant,
+    grant_sha256: protectedGrantSha256,
     signal = null,
     timeoutMs = 30_000,
   } = {}) => {
-    const grant = pinProtectedExecutionGrant({
+    const pinnedGrant = pinProtectedExecutionGrant({
       grant: protectedGrant,
+      grant_sha256: protectedGrantSha256,
     });
     return executeDrillCell({
       cell,
-      grant,
+      grant: pinnedGrant.grant,
       trustRegistry,
-      nonceConsumer,
+      grantExecutionAuthority,
       adapters: runtimeRegistry,
       collector,
       bundleChainStore,

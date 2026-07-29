@@ -186,6 +186,13 @@ function executionFixture() {
     calls.push('nonce');
     return { consumed: true };
   });
+  const grantExecutionAuthority = Object.freeze({
+    consumeNonceIfActive: nonceConsumer,
+    invokeWhileActive: vi.fn(async ({ signal, invoke }) => ({
+      disposition: 'effect_completed',
+      result: await invoke(signal),
+    })),
+  });
   const adapter = {
     prepare: vi.fn(async () => {
       calls.push('prepare');
@@ -246,6 +253,7 @@ function executionFixture() {
     calls,
     audits,
     nonceConsumer,
+    grantExecutionAuthority,
     adapter,
     adapters: new Map([[cell.adapter_id, adapter]]),
     collector,
@@ -260,7 +268,7 @@ async function execute(value, overrides = {}) {
     cell: value.cell,
     grant: value.grant,
     trustRegistry: value.keys.registry,
-    nonceConsumer: value.nonceConsumer,
+    grantExecutionAuthority: value.grantExecutionAuthority,
     adapters: value.adapters,
     collector: value.collector,
     predecessorResolver: value.predecessorResolver,
@@ -274,6 +282,177 @@ async function execute(value, overrides = {}) {
 }
 
 describe('executeDrillCell', () => {
+  it('requires the server-owned grant execution authority', async () => {
+    const value = executionFixture();
+
+    await expect(execute(value, {
+      grantExecutionAuthority: undefined,
+    })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'grant_execution_authority_unavailable',
+    });
+    expect(value.adapter.prepare).not.toHaveBeenCalled();
+    expect(value.collector).not.toHaveBeenCalled();
+  });
+
+  it('holds the grant authority across the only actual seam entry', async () => {
+    const value = executionFixture();
+    const grantExecutionAuthority = Object.freeze({
+      consumeNonceIfActive: vi.fn(async ({ grant, signal, timeoutMs }) => {
+        expect(grant).toEqual(value.grant);
+        expect(signal).toEqual(expect.any(AbortSignal));
+        expect(timeoutMs).toBe(25);
+        value.calls.push('nonce');
+        return { consumed: true };
+      }),
+      invokeWhileActive: vi.fn(async ({
+        grant,
+        signal,
+        timeoutMs,
+        invoke,
+      }) => {
+        expect(grant).toEqual(value.grant);
+        expect(signal).toEqual(expect.any(AbortSignal));
+        expect(timeoutMs).toBe(25);
+        value.calls.push('authority');
+        return {
+          disposition: 'effect_completed',
+          result: await invoke(signal),
+        };
+      }),
+    });
+
+    await expect(execute(value, {
+      grantExecutionAuthority,
+    })).resolves.toMatchObject({
+      status: 'collected',
+      code: 'drill_receipt_collected',
+    });
+    expect(value.calls).toEqual([
+      'nonce',
+      'prepare',
+      'authority',
+      'seam',
+      'observe',
+      'cleanup',
+      'collector',
+    ]);
+    expect(grantExecutionAuthority.consumeNonceIfActive).toHaveBeenCalledOnce();
+    expect(grantExecutionAuthority.invokeWhileActive).toHaveBeenCalledOnce();
+  });
+
+  it('cleans up once without a seam when the database denies after prepare', async () => {
+    const value = executionFixture();
+    const grantExecutionAuthority = Object.freeze({
+      consumeNonceIfActive: value.nonceConsumer,
+      invokeWhileActive: vi.fn(async () => {
+        throw Object.assign(
+          new Error('active grant was revoked before the seam'),
+          { code: 'grant_authority_revalidation_failed' },
+        );
+      }),
+    });
+
+    await expect(execute(value, {
+      grantExecutionAuthority,
+    })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'grant_authority_revalidation_failed',
+    });
+    expect(value.adapter.prepare).toHaveBeenCalledOnce();
+    expect(value.adapter.invokeActualSeam).not.toHaveBeenCalled();
+    expect(value.adapter.cleanup).toHaveBeenCalledOnce();
+    expect(value.collector).not.toHaveBeenCalled();
+  });
+
+  it('preserves effect uncertainty after the actual seam', async () => {
+    const value = executionFixture();
+    const grantExecutionAuthority = Object.freeze({
+      consumeNonceIfActive: value.nonceConsumer,
+      invokeWhileActive: vi.fn(async ({ signal, invoke }) => {
+        await invoke(signal);
+        throw Object.assign(
+          new Error('terminal effect event could not be confirmed'),
+          {
+            code: 'grant_effect_unknown',
+            disposition: 'effect_unknown',
+            effect_possible: true,
+            safe_no_effect: false,
+          },
+        );
+      }),
+    });
+
+    await expect(execute(value, {
+      grantExecutionAuthority,
+    })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'grant_effect_unknown',
+      audit: { late_effect_risk: true },
+    });
+    expect(value.adapter.invokeActualSeam).toHaveBeenCalledOnce();
+    expect(value.adapter.cleanup).toHaveBeenCalledOnce();
+    expect(value.collector).not.toHaveBeenCalled();
+  });
+
+  it('treats only durable aborted-before-effect as safe failure', async () => {
+    const value = executionFixture();
+    const grantExecutionAuthority = Object.freeze({
+      consumeNonceIfActive: value.nonceConsumer,
+      invokeWhileActive: vi.fn(async () => {
+        throw Object.assign(new Error('seam never started'), {
+          code: 'grant_effect_aborted_before_effect',
+          disposition: 'aborted_before_effect',
+          effect_possible: false,
+          safe_no_effect: true,
+        });
+      }),
+    });
+
+    await expect(execute(value, {
+      grantExecutionAuthority,
+    })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'grant_effect_aborted_before_effect',
+      audit: { late_effect_risk: false },
+    });
+    expect(value.adapter.invokeActualSeam).not.toHaveBeenCalled();
+    expect(value.adapter.cleanup).toHaveBeenCalledOnce();
+    expect(value.collector).not.toHaveBeenCalled();
+  });
+
+  it('never exposes database, lock, or authority handles to the adapter', async () => {
+    const value = executionFixture();
+    const assertIsolatedContext = (context) => {
+      expect(context).not.toHaveProperty('pool');
+      expect(context).not.toHaveProperty('client');
+      expect(context).not.toHaveProperty('lock');
+      expect(context).not.toHaveProperty('authority');
+      expect(context).not.toHaveProperty('grantExecutionAuthority');
+    };
+    value.adapter.prepare.mockImplementation(async (context) => {
+      assertIsolatedContext(context);
+      return { resource_id: value.grant.resource_id };
+    });
+    value.adapter.invokeActualSeam.mockImplementation(async (context) => {
+      assertIsolatedContext(context);
+      return value.receipt;
+    });
+    value.adapter.observe.mockImplementation(async (output, context) => {
+      assertIsolatedContext(context);
+      return output;
+    });
+    value.adapter.cleanup.mockImplementation(async (context) => {
+      assertIsolatedContext(context);
+      return { confirmed: true };
+    });
+
+    await expect(execute(value)).resolves.toMatchObject({
+      status: 'collected',
+      code: 'drill_receipt_collected',
+    });
+  });
+
   it('blocks a missing signer before grant, nonce, adapter, or collector activity', async () => {
     const value = executionFixture();
     value.cell.effect_signer_status = 'missing';
@@ -445,7 +624,7 @@ describe('executeDrillCell', () => {
     expect(value.adapter.invokeActualSeam).not.toHaveBeenCalled();
   });
 
-  it('aborts and confirms cancellation so a delayed effect cannot fire after timeout', async () => {
+  it('preserves uncertainty after cancelling a timed-out seam', async () => {
     const value = executionFixture();
     let lateEffect = false;
     value.adapter.invokeActualSeam.mockImplementation(({ signal }) => (
@@ -471,7 +650,8 @@ describe('executeDrillCell', () => {
 
     expect(result).toMatchObject({
       status: 'blocked',
-      code: 'adapter_timeout',
+      code: 'grant_effect_unknown',
+      audit: { late_effect_risk: true },
     });
     expect(lateEffect).toBe(false);
     expect(value.adapter.cancel).toHaveBeenCalledTimes(1);
@@ -479,7 +659,7 @@ describe('executeDrillCell', () => {
     expect(value.collector).not.toHaveBeenCalled();
   });
 
-  it('links an external abort to seam cancellation before returning', async () => {
+  it('preserves uncertainty after externally aborting a seam', async () => {
     const value = executionFixture();
     const controller = new AbortController();
     let lateEffect = false;
@@ -514,7 +694,8 @@ describe('executeDrillCell', () => {
 
     expect(result).toMatchObject({
       status: 'blocked',
-      code: 'execution_aborted',
+      code: 'grant_effect_unknown',
+      audit: { late_effect_risk: true },
     });
     expect(cancellationConfirmedAt).toBeGreaterThan(0);
     expect(responseAt).toBeGreaterThanOrEqual(cancellationConfirmedAt);
@@ -525,7 +706,7 @@ describe('executeDrillCell', () => {
 
   it.each([
     ['nonce', (value, durableEffects, controller) => {
-      value.nonceConsumer.mockImplementation((_input, { signal }) => (
+      value.nonceConsumer.mockImplementation(({ signal }) => (
         new Promise((resolve, reject) => {
           const timer = setTimeout(() => {
             durableEffects.push('nonce');
@@ -583,7 +764,7 @@ describe('executeDrillCell', () => {
 
   it.each([
     ['nonce', 'nonce_cancellation_unconfirmed', (value, controller) => {
-      value.nonceConsumer.mockImplementation((_input, { signal }) => (
+      value.nonceConsumer.mockImplementation(({ signal }) => (
         new Promise((resolve, reject) => {
           signal.addEventListener('abort', () => {
             const error = new Error('nonce COMMIT outcome is ambiguous');
@@ -766,8 +947,11 @@ describe('executeDrillCell', () => {
 
     const result = await execute(value);
     expect(result).toMatchObject({
-      code: 'adapter_execution_failed',
-      audit: { code: 'adapter_execution_failed' },
+      code: 'grant_effect_unknown',
+      audit: {
+        code: 'grant_effect_unknown',
+        late_effect_risk: true,
+      },
     });
     expect(JSON.stringify(result.audit)).not.toContain('ghp_');
 
@@ -1124,6 +1308,13 @@ describe('executeDrillCell', () => {
       calls.push('nonce');
       return { consumed: true };
     });
+    const grantExecutionAuthority = Object.freeze({
+      consumeNonceIfActive: nonceConsumer,
+      invokeWhileActive: vi.fn(async ({ signal, invoke }) => ({
+        disposition: 'effect_completed',
+        result: await invoke(signal),
+      })),
+    });
     const collector = vi.fn(async (input) => {
       calls.push('collector');
       expect(input.executionGrants).toEqual([violationGrant, recoveryGrant]);
@@ -1154,7 +1345,7 @@ describe('executeDrillCell', () => {
       grant: recoveryGrant,
       trustRegistry: keys.registry,
       predecessorResolver,
-      nonceConsumer,
+      grantExecutionAuthority,
       adapters: new Map([[recoveryCell.adapter_id, adapter]]),
       collector,
       bundleChainStore,

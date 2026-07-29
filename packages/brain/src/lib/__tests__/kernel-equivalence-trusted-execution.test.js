@@ -33,6 +33,7 @@ import {
 } from '../kernel-equivalence-trusted-execution-service.js';
 import {
   canonicalJson,
+  sha256Canonical,
 } from '../kernel-equivalence-receipts.js';
 import {
   __trustedExecutionSocketServerTest,
@@ -168,20 +169,33 @@ function plan() {
   return structuredClone(CANONICAL_PLAN);
 }
 
+function protectedGrantResolution({
+  cellId = CELL_ID,
+  grantRef = GRANT_REF,
+  expiresAt = undefined,
+} = {}) {
+  const grant = {
+    grant_id: grantRef.slice('kernel-equivalence-grant:'.length),
+    cell_id: cellId,
+    ...(expiresAt === undefined ? {} : { expires_at: expiresAt }),
+  };
+  return {
+    cell_id: cellId,
+    grant_ref: grantRef,
+    grant,
+    grant_sha256: sha256Canonical(grant),
+  };
+}
+
 function fixture() {
   const executeCell = vi.fn(async ({ cell, grant }) => ({
     status: 'collected',
     cell_id: cell.cell_id,
     grant_id_used: grant.grant_id,
   }));
-  const resolveProtectedGrant = vi.fn(async ({ cellId, grantRef }) => ({
-    cell_id: cellId,
-    grant_ref: grantRef,
-    grant: {
-      grant_id: grantRef.slice('kernel-equivalence-grant:'.length),
-      cell_id: cellId,
-    },
-  }));
+  const resolveProtectedGrant = vi.fn(async ({ cellId, grantRef }) => (
+    protectedGrantResolution({ cellId, grantRef })
+  ));
   const pinnedPlan = plan();
   return {
     plan: pinnedPlan,
@@ -208,6 +222,33 @@ afterEach(() => {
 });
 
 describe('Brain trusted execution service', () => {
+  it('passes the protected reader exact frozen grant and digest to runtime', async () => {
+    const value = fixture();
+    const protectedGrant = {
+      grant_id: GRANT_REF.slice('kernel-equivalence-grant:'.length),
+      cell_id: CELL_ID,
+    };
+    const grantSha256 = sha256Canonical(protectedGrant);
+    value.grantAuthority.resolveProtectedGrant = vi.fn(async () => ({
+      cell_id: CELL_ID,
+      grant_ref: GRANT_REF,
+      grant: protectedGrant,
+      grant_sha256: grantSha256,
+    }));
+    value.runtime.executeCell = vi.fn(async (input) => {
+      expect(input.grant).toEqual(protectedGrant);
+      expect(input.grant_sha256).toBe(grantSha256);
+      expect(Object.isFrozen(input.grant)).toBe(true);
+      return { status: 'collected' };
+    });
+    const service = createBrainTrustedExecutionService(value);
+
+    await expect(service.execute({
+      cell_id: CELL_ID,
+      grant_ref: GRANT_REF,
+    })).resolves.toMatchObject({ status: 'collected' });
+  });
+
   it('resolves only a canonical pinned cell and protected grant reference', async () => {
     const value = fixture();
     const originalPlan = value.plan;
@@ -232,6 +273,10 @@ describe('Brain trusted execution service', () => {
         grant_id: GRANT_REF.slice('kernel-equivalence-grant:'.length),
         cell_id: CELL_ID,
       },
+      grant_sha256: sha256Canonical({
+        grant_id: GRANT_REF.slice('kernel-equivalence-grant:'.length),
+        cell_id: CELL_ID,
+      }),
       signal: null,
       timeoutMs: expect.any(Number),
     }));
@@ -252,6 +297,8 @@ describe('Brain trusted execution service', () => {
     ['caller adapter', { adapter_id: 'caller.adapter' }],
     ['caller signer', { signer: { key_id: 'caller-key' } }],
     ['caller runtime', { runtime: {} }],
+    ['caller digest', { grant_sha256: 'a'.repeat(64) }],
+    ['caller authority', { grantExecutionAuthority: {} }],
   ])('rejects %s fields before consulting grant authority', async (
     _label,
     injected,
@@ -271,13 +318,27 @@ describe('Brain trusted execution service', () => {
 
   it('rejects an authority response that does not bind the exact request', async () => {
     const value = fixture();
-    value.grantAuthority.resolveProtectedGrant = vi.fn(async () => ({
-      cell_id: BEHAVIORS[1].behavior_id,
+    value.grantAuthority.resolveProtectedGrant = vi.fn(async () => (
+      protectedGrantResolution({
+        cellId: BEHAVIORS[1].behavior_id,
+      })
+    ));
+    const service = createBrainTrustedExecutionService(value);
+
+    await expect(service.execute({
+      cell_id: CELL_ID,
       grant_ref: GRANT_REF,
-      grant: {
-        grant_id: GRANT_REF.slice('kernel-equivalence-grant:'.length),
-        cell_id: BEHAVIORS[1].behavior_id,
-      },
+    })).rejects.toMatchObject({
+      code: 'trusted_execution_grant_resolution_invalid',
+    });
+    expect(value.executeCell).not.toHaveBeenCalled();
+  });
+
+  it('rejects a protected grant whose outer digest does not match', async () => {
+    const value = fixture();
+    value.grantAuthority.resolveProtectedGrant = vi.fn(async () => ({
+      ...protectedGrantResolution(),
+      grant_sha256: 'a'.repeat(64),
     }));
     const service = createBrainTrustedExecutionService(value);
 
@@ -365,16 +426,10 @@ describe('Brain trusted execution service', () => {
     value.grantAuthority.resolveProtectedGrant = vi.fn(async ({
       cellId,
       grantRef,
-    }) => ({
-      cell_id: cellId,
-      grant_ref: grantRef,
-      grant: {
-        grant_id: grantRef.slice(
-          'kernel-equivalence-grant:'.length,
-        ),
-        cell_id: cellId,
-        expires_at: new Date(clockNow + 1_000).toISOString(),
-      },
+    }) => protectedGrantResolution({
+      cellId,
+      grantRef,
+      expiresAt: new Date(clockNow + 1_000).toISOString(),
     }));
     const service = createBrainTrustedExecutionService({
       ...value,

@@ -18,6 +18,7 @@ const GRANT_AUTHORITY_FIELDS = Object.freeze([
 const GRANT_RESOLUTION_FIELDS = Object.freeze([
   'cell_id',
   'grant',
+  'grant_sha256',
   'grant_ref',
 ]);
 const GRANT_REF_PATTERN =
@@ -165,15 +166,21 @@ function validRequest(request) {
   );
 }
 
-function validGrant(value, request) {
-  const grantId = request.grant_ref.match(GRANT_REF_PATTERN)?.[1];
-  return (
-    value
-    && typeof value === 'object'
-    && !Array.isArray(value)
-    && value.grant_id === grantId
-    && value.cell_id === request.cell_id
-  );
+function validGrant(value, grantSha256, request) {
+  try {
+    const grantId = request.grant_ref.match(GRANT_REF_PATTERN)?.[1];
+    return (
+      value
+      && typeof value === 'object'
+      && !Array.isArray(value)
+      && value.grant_id === grantId
+      && value.cell_id === request.cell_id
+      && HASH_PATTERN.test(grantSha256 ?? '')
+      && sha256Canonical(value) === grantSha256
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function createBrainTrustedExecutionService({
@@ -249,19 +256,32 @@ export function createBrainTrustedExecutionService({
       if (error instanceof KernelTrustedExecutionServiceError) throw error;
       fail('trusted_execution_grant_resolution_failed');
     }
+    try {
+      resolution = deepFreeze(structuredClone(resolution));
+    } catch {
+      fail('trusted_execution_grant_resolution_invalid');
+    }
     if (
       !exactKeys(resolution, [...GRANT_RESOLUTION_FIELDS].sort())
       || resolution.cell_id !== request.cell_id
       || resolution.grant_ref !== request.grant_ref
-      || !validGrant(resolution.grant, request)
+      || !validGrant(
+        resolution.grant,
+        resolution.grant_sha256,
+        request,
+      )
     ) {
       fail('trusted_execution_grant_resolution_invalid');
     }
+    const protectedGrant = Object.freeze({
+      grant: resolution.grant,
+      grant_sha256: resolution.grant_sha256,
+    });
     const resolutionNow = now();
     if (!Number.isFinite(resolutionNow)) {
       fail('trusted_execution_deadline_invalid');
     }
-    const grantExpiry = Date.parse(resolution.grant.expires_at);
+    const grantExpiry = Date.parse(protectedGrant.grant.expires_at);
     const executionDeadline = Number.isFinite(grantExpiry)
       ? Math.min(effectiveDeadline, grantExpiry)
       : effectiveDeadline;
@@ -274,7 +294,8 @@ export function createBrainTrustedExecutionService({
     }
     const result = await runtime.executeCell({
       cell,
-      grant: deepFreeze(structuredClone(resolution.grant)),
+      grant: protectedGrant.grant,
+      grant_sha256: protectedGrant.grant_sha256,
       signal,
       timeoutMs: remainingAfterResolution,
     });

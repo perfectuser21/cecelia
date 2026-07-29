@@ -298,6 +298,7 @@ function denialAudit(cell, grant, code, stage, now) {
     late_effect_risk: [
       'adapter_cancellation_unconfirmed',
       'bundle_chain_cancellation_unconfirmed',
+      'grant_effect_unknown',
       'nonce_cancellation_unconfirmed',
     ].includes(code),
   });
@@ -628,19 +629,18 @@ async function confirmCleanup(
   }
 }
 
-async function operationCancelled(operationPromise, timeoutMs) {
+async function operationCancellationSettlement(operationPromise, timeoutMs) {
   try {
-    const result = await withTimeout(
+    return await withTimeout(
       () => operationPromise.then(
-        () => ({ settled: 'resolved' }),
-        () => ({ settled: 'rejected' }),
+        () => ({ settled: 'resolved', error: null }),
+        (error) => ({ settled: 'rejected', error }),
       ),
       timeoutMs,
       'adapter_cancellation_settlement_timeout',
     );
-    return result.settled === 'rejected';
   } catch {
-    return false;
+    return { settled: 'unconfirmed', error: null };
   }
 }
 
@@ -655,7 +655,7 @@ async function confirmCancellation(
     !['adapter_timeout', 'adapter_aborted'].includes(timeoutError?.code)
     || typeof adapter.cancel !== 'function'
   ) {
-    return false;
+    return { confirmed: false, error: null };
   }
   try {
     const cancellation = await withTimeout(
@@ -666,10 +666,19 @@ async function confirmCancellation(
       }),
       timeoutMs,
     );
-    if (cancellation?.confirmed !== true || phase === 'observe') return false;
-    return operationCancelled(timeoutError.abortContext?.operationPromise, timeoutMs);
+    if (cancellation?.confirmed !== true || phase === 'observe') {
+      return { confirmed: false, error: null };
+    }
+    const settlement = await operationCancellationSettlement(
+      timeoutError.abortContext?.operationPromise,
+      timeoutMs,
+    );
+    return {
+      confirmed: settlement.settled === 'rejected',
+      error: settlement.error,
+    };
   } catch {
-    return false;
+    return { confirmed: false, error: null };
   }
 }
 
@@ -677,7 +686,7 @@ export async function executeDrillCell({
   cell,
   grant,
   trustRegistry,
-  nonceConsumer,
+  grantExecutionAuthority,
   adapters,
   collector,
   bundleChainStore = null,
@@ -908,25 +917,28 @@ export async function executeDrillCell({
     }
   }
 
-  if (typeof nonceConsumer !== 'function') {
-    return deny('nonce_consumer_unavailable', 'nonce_consumption');
+  if (
+    !Object.isFrozen(grantExecutionAuthority)
+    || typeof grantExecutionAuthority?.consumeNonceIfActive !== 'function'
+    || typeof grantExecutionAuthority?.invokeWhileActive !== 'function'
+  ) {
+    return deny(
+      'grant_execution_authority_unavailable',
+      'grant_authority',
+    );
   }
   if (signal?.aborted) {
     return deny('execution_aborted', 'request_cancellation');
   }
   try {
     const nonceResult = await withDurableAuthorityCancellation(
-      (authoritySignal) => nonceConsumer({
-        grant_id: verifiedGrant.grant_id,
-        nonce: verifiedGrant.nonce,
-        cell_id: verifiedGrant.cell_id,
-        run_id: verifiedGrant.run_id,
-        attempt_id: verifiedGrant.attempt_id,
-        expires_at: verifiedGrant.expires_at,
-      }, {
-        signal: authoritySignal,
-        timeoutMs,
-      }),
+      (authoritySignal) => (
+        grantExecutionAuthority.consumeNonceIfActive({
+          grant: verifiedGrant,
+          signal: authoritySignal,
+          timeoutMs,
+        })
+      ),
       timeoutMs,
       signal,
     );
@@ -991,7 +1003,7 @@ export async function executeDrillCell({
       : isInternalTimeout(error, 'adapter_aborted')
         ? 'execution_aborted'
         : 'adapter_prepare_failed';
-    const cancellationConfirmed = [
+    const cancellation = [
       'adapter_timeout',
       'execution_aborted',
     ].includes(code)
@@ -1002,7 +1014,7 @@ export async function executeDrillCell({
         error,
         timeoutMs,
       )
-      : true;
+      : { confirmed: true, error: null };
     const cleanupResult = await confirmCleanup(
       adapter,
       {
@@ -1013,7 +1025,7 @@ export async function executeDrillCell({
       timeoutMs,
       selectedCleanupVerifier,
     );
-    if (!cancellationConfirmed) {
+    if (!cancellation.confirmed) {
       return deny(
         'adapter_cancellation_unconfirmed',
         'adapter_prepare_cancellation',
@@ -1076,36 +1088,57 @@ export async function executeDrillCell({
   let executionStage = 'invoke';
   let timeoutError = null;
   try {
-    const seamOutput = await withAbortableTimeout(
-      (signal) => adapter.invokeActualSeam({
-        ...context,
-        prepared,
-        compensations,
-        signal,
+    const authorityOutcome = await withAbortableTimeout(
+      (authoritySignal) => grantExecutionAuthority.invokeWhileActive({
+        grant: verifiedGrant,
+        signal: authoritySignal,
+        timeoutMs,
+        invoke: (lockedSignal) => adapter.invokeActualSeam({
+          ...context,
+          prepared,
+          compensations,
+          signal: lockedSignal,
+        }),
       }),
       timeoutMs,
       signal,
     );
+    if (authorityOutcome?.disposition !== 'effect_completed') {
+      executionError = 'grant_effect_unknown';
+    }
+    const seamOutput = authorityOutcome?.result;
     executionStage = 'observe';
-    receipt = await withAbortableTimeout(
-      (signal) => adapter.observe(
-        seamOutput,
-        {
-          ...context,
-          prepared,
-          compensations,
-          signal,
-        },
-      ),
-      timeoutMs,
-      signal,
-    );
+    if (executionError == null) {
+      receipt = await withAbortableTimeout(
+        (observeSignal) => adapter.observe(
+          seamOutput,
+          {
+            ...context,
+            prepared,
+            compensations,
+            signal: observeSignal,
+          },
+        ),
+        timeoutMs,
+        signal,
+      );
+    }
   } catch (error) {
-    executionError = isInternalTimeout(error, 'adapter_timeout')
-      ? 'adapter_timeout'
-      : isInternalTimeout(error, 'adapter_aborted')
-        ? 'execution_aborted'
-        : 'adapter_execution_failed';
+    executionError = error?.disposition === 'effect_unknown'
+      ? 'grant_effect_unknown'
+      : (
+        error?.disposition === 'aborted_before_effect'
+        && error?.safe_no_effect === true
+        && error?.effect_possible === false
+      )
+        ? 'grant_effect_aborted_before_effect'
+        : error?.code === 'grant_authority_revalidation_failed'
+          ? 'grant_authority_revalidation_failed'
+          : isInternalTimeout(error, 'adapter_timeout')
+            ? 'adapter_timeout'
+            : isInternalTimeout(error, 'adapter_aborted')
+              ? 'execution_aborted'
+              : 'grant_effect_unknown';
     if (
       ['adapter_timeout', 'execution_aborted'].includes(executionError)
     ) {
@@ -1114,15 +1147,23 @@ export async function executeDrillCell({
   }
 
   if (timeoutError) {
-    const cancellationConfirmed = await confirmCancellation(
+    const cancellation = await confirmCancellation(
       adapter,
       executionStage,
       { ...context, prepared, compensations },
       timeoutError,
       timeoutMs,
     );
-    if (!cancellationConfirmed) {
+    if (!cancellation.confirmed) {
       executionError = 'adapter_cancellation_unconfirmed';
+    } else if (
+      cancellation.error?.disposition === 'aborted_before_effect'
+      && cancellation.error?.safe_no_effect === true
+      && cancellation.error?.effect_possible === false
+    ) {
+      executionError = 'grant_effect_aborted_before_effect';
+    } else {
+      executionError = 'grant_effect_unknown';
     }
   }
   const cleanupResult = await confirmCleanup(

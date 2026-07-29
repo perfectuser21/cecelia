@@ -6,7 +6,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as runtimeLoader from '../kernel-equivalence-runtime-loader.js';
 import {
   loadTrustedEquivalenceRuntime,
@@ -15,6 +15,9 @@ import {
 import {
   createServerOwnedRuntimeRegistry,
 } from '../kernel-equivalence-runtime-registry.js';
+import {
+  sha256Canonical,
+} from '../kernel-equivalence-receipts.js';
 import {
   createTrustFixture,
   fixtureCell,
@@ -78,12 +81,20 @@ describe('trusted equivalence runtime loader', () => {
   it('pins an authority-delivered grant without accepting a path capability', () => {
     const keys = createTrustFixture();
     const grant = fixtureGrant(keys, fixtureCell());
+    const grantSha256 = sha256Canonical(grant);
     expect(runtimeLoader.pinProtectedExecutionGrant)
       .toEqual(expect.any(Function));
-    const loaded = runtimeLoader.pinProtectedExecutionGrant({ grant });
+    const loaded = runtimeLoader.pinProtectedExecutionGrant({
+      grant,
+      grant_sha256: grantSha256,
+    });
 
-    expect(loaded).toEqual(grant);
+    expect(loaded).toEqual({
+      grant,
+      grant_sha256: grantSha256,
+    });
     expect(Object.isFrozen(loaded)).toBe(true);
+    expect(Object.isFrozen(loaded.grant)).toBe(true);
     expect(() => runtimeLoader.pinProtectedExecutionGrant({
       grantPath: '/tmp/caller-controlled.json',
     })).toThrowError(expect.objectContaining({
@@ -108,6 +119,9 @@ describe('trusted equivalence runtime loader', () => {
         rowCount: 1,
       }),
     };
+    const randomUUID = vi.fn(
+      () => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    );
 
     const runtime = await loadTrustedEquivalenceRuntime({
       env: {
@@ -118,8 +132,10 @@ describe('trusted equivalence runtime loader', () => {
       pool,
       runtimeRegistry: createServerOwnedRuntimeRegistry(),
       now: () => Date.parse('2026-07-28T12:02:00.000Z'),
+      randomUUID,
     });
 
+    expect(randomUUID).toHaveBeenCalledOnce();
     expect(runtime).toMatchObject({
       schema_version: 'kernel-equivalence-trusted-runtime/v1',
       collector_key_id: keys.collector.record.key_id,
@@ -129,6 +145,29 @@ describe('trusted equivalence runtime loader', () => {
     expect(Object.isFrozen(runtime)).toBe(true);
     expect(JSON.stringify(runtime)).not.toContain(secretFile);
     expect(JSON.stringify(runtime)).not.toContain('PRIVATE KEY');
+
+    const callerAuthority = Object.freeze({
+      consumeNonceIfActive: vi.fn(),
+      invokeWhileActive: vi.fn(),
+    });
+    const grant = fixtureGrant(keys, fixtureCell());
+    await expect(runtime.executeCell({
+      cell: {
+        ...fixtureCell(),
+        effect_signer_status: 'missing',
+        blocked_by: 'seam_receipt_signer_missing',
+      },
+      grant,
+      grant_sha256: sha256Canonical(grant),
+      signal: null,
+      timeoutMs: 25,
+      grantExecutionAuthority: callerAuthority,
+    })).resolves.toMatchObject({
+      status: 'blocked',
+      code: 'seam_receipt_signer_missing',
+    });
+    expect(callerAuthority.consumeNonceIfActive).not.toHaveBeenCalled();
+    expect(callerAuthority.invokeWhileActive).not.toHaveBeenCalled();
   });
 
   it('does not default to an empty trusted adapter registry', async () => {
