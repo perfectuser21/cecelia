@@ -335,7 +335,7 @@ function createDockerAdapter({
         ...(isCodex
           ? [
               '--tmpfs',
-              '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700',
+              '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700,uid=1001,gid=1001',
             ]
           : []),
         '--add-host',
