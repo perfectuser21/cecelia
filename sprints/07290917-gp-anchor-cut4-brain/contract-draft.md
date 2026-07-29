@@ -59,5 +59,12 @@ cd packages/brain && npx vitest run src/__tests__/harness-judge-mechanical-gate.
 ## 未覆盖真实链路清单
 （本合同无mock豁免——所有验证均通过真实Brain实例+真实DB INSERT+真实router调用完成，见Step1验证命令的L3真环境验证段。N/A）
 
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| ws1-executor | `packages/brain/src/__tests__/harness-orchestrator-lockdown.test.js` | SC-206: base_repo 含 zenithjoy-workspace 且 gp_anchor 缺失、SC-207: base_repo 含 zenithjoy-workspace 且 gp_anchor 格式不合法、SC-208: base_repo 含 zenithjoy-workspace 且 gp_anchor 合法、SC-209: base_repo 不含 zenithjoy-workspace | → 实现前 SC-206/207 判绿(未拦截)，与预期FAIL相反 |
+| ws2-judge | `packages/brain/src/__tests__/harness-judge-mechanical-gate.test.js` | product-map.json 存在但 contract-draft.md 既无 GP-Anchor 段也无 skipped 声明、contract 声明推进 GP-Anchor 但 id 在 product-map.json 里查无、contract 声明格式不合法 | → 实现前这3条判绿(pass:true)，与预期FAIL相反 |
+
 ## E2E 验收
 见Step 1-3验证命令，均已在本地真实环境执行通过（附Test Evidence于PR描述）。
