@@ -190,12 +190,44 @@ export function createAcceptancePublicRouter({ pool }) {
         const { total, pass, fail, pending } = counts[0];
         const passRate = total > 0 ? pass / total : 0;
         const status = pending > 0 ? 'in_review' : fail > 0 ? 'failed' : pass === total ? 'passed' : 'in_review';
+        const { rows: prevRows } = await client.query(
+          'SELECT status, title, gp_id, run_key FROM acceptance_runs WHERE id = $1',
+          [runId]
+        );
+        const prev = prevRows[0];
         const { rows: updated } = await client.query(
           `UPDATE acceptance_runs SET pass_rate = $1, status = $2, updated_at = NOW()
            WHERE id = $3 RETURNING run_key, pass_rate, status`,
           [passRate, status, runId]
         );
         updatedRuns.push(updated[0]);
+
+        // 驳回自动开任务（主理人条件二）：仅在 非failed→failed 转变沿触发，幂等查重防重复
+        if (prev && prev.status !== 'failed' && status === 'failed') {
+          const { rows: existing } = await client.query(
+            `SELECT 1 FROM tasks
+             WHERE payload->>'acceptance_run_key' = $1
+               AND status NOT IN ('completed','failed','cancelled') LIMIT 1`,
+            [prev.run_key]
+          );
+          if (existing.length === 0) {
+            const { rows: failedChecks } = await client.query(
+              `SELECT check_key, name, note FROM acceptance_checks
+               WHERE run_id = $1 AND result = '不通过' ORDER BY check_key`,
+              [runId]
+            );
+            const detail = failedChecks.map((c) => `${c.check_key} ${c.name}${c.note ? `（${c.note}）` : ''}`).join('\n');
+            await client.query(
+              `INSERT INTO tasks (title, description, task_type, priority, status, payload)
+               VALUES ($1, $2, 'dev', 'P1', 'queued', $3::jsonb)`,
+              [
+                `[验收驳回] ${prev.title}`,
+                `人工验收不通过，需修复后重新验收。GP: ${prev.gp_id || '未知'}，验收单: ${prev.run_key}。\n不通过项：\n${detail}`,
+                JSON.stringify({ acceptance_run_key: prev.run_key, gp_id: prev.gp_id, source: 'acceptance_rejection', harness_mode: false }),
+              ]
+            );
+          }
+        }
       }
       await client.query('COMMIT');
       return res.json({ updated: results.length, runs: updatedRuns });
