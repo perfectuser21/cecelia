@@ -1774,4 +1774,135 @@ describe('honest equivalence report', () => {
       },
     }))).not.toThrow();
   });
+
+  it('bounds every user-controlled report scalar including commands and IDs', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), { now: NOW });
+    const huge = 'x'.repeat(20_000);
+    validation.contract_version = huge;
+    const behavior = validation.behaviors[0];
+    behavior.behavior_id = huge;
+    behavior.legacy_behavior = huge;
+    behavior.legacy_evidence = [huge];
+    behavior.failure_semantics = huge;
+    behavior.gap = {
+      reason: huge,
+      owner: huge,
+      closure_plan: huge,
+    };
+    behavior.findings = [{ code: huge, message: huge }];
+    behavior.atomic_invariants[0].invariant_id = huge;
+    behavior.atoms[0].invariant_id = huge;
+
+    const legacyValidation = validateBehaviorEquivalence(contract(), {
+      now: NOW,
+    });
+    legacyValidation.behaviors[0].effective_status = 'proven';
+    legacyValidation.behaviors[0].proof_matrix.claude.violation.test_command =
+      huge;
+
+    const atomicReport = buildEquivalenceReport(validation);
+    const legacyReport = buildEquivalenceReport(legacyValidation);
+    const strings = [];
+    const visit = (value) => {
+      if (typeof value === 'string') strings.push(value);
+      else if (Array.isArray(value)) value.forEach(visit);
+      else if (value && typeof value === 'object') {
+        Object.values(value).forEach(visit);
+      }
+    };
+    visit(atomicReport);
+    visit(legacyReport);
+
+    expect(Math.max(...strings.map((value) => value.length)))
+      .toBeLessThanOrEqual(4_096);
+    expect(Math.max(...atomicReport.behaviors.map(
+      (item) => item.behavior_id?.length ?? 0,
+    )))
+      .toBeLessThanOrEqual(512);
+    expect(Math.max(...atomicReport.atomic_details.map(
+      (item) => item.invariant_id?.length ?? 0,
+    )))
+      .toBeLessThanOrEqual(512);
+    expect(legacyReport.proven_to_fire_commands[0].test_command.length)
+      .toBeLessThanOrEqual(4_096);
+
+    atomicReport.atomic_details[0].artifact_sha =
+      'identity-overflow-'.repeat(1_000);
+    expect(formatEquivalenceMarkdown(atomicReport))
+      .not.toContain('identity-overflow');
+  });
+
+  it('escapes inline-code and table injection from direct formatter input', () => {
+    const report = buildEquivalenceReport(
+      validateBehaviorEquivalence(contract(), { now: NOW }),
+    );
+    report.contract_version = 'safe` **INJECTED** `again';
+    report.summary.total = '11 | injected\n| row';
+    report.axes.dimensions = ['fr | injected\r\n| row'];
+    report.provider_matrix.cells[0].receipted = '0 | injected\n| row';
+    report.behaviors[0].legacy_evidence = [
+      'safe` **INJECTED** `again',
+    ];
+
+    const markdown = formatEquivalenceMarkdown(report);
+
+    expect(markdown).toContain('safe&#96; **INJECTED** &#96;again');
+    expect(markdown).not.toContain('safe` **INJECTED** `again');
+    expect(markdown).not.toContain('\n| row');
+    expect(markdown).not.toContain('\r');
+    expect(markdown).toContain('0 \\| injected \\| row');
+  });
+
+  it('enforces deterministic final Markdown character and UTF-8 budgets', () => {
+    const report = buildEquivalenceReport(
+      validateBehaviorEquivalence(rootContract(), { now: NOW }),
+    );
+    report.contract_version = '界'.repeat(2_000_000);
+    const hugeId = '探针'.repeat(10_000);
+    report.cell_atomic_coverage = Array.from({ length: 99 }, (_, index) => ({
+      cell_id: `${index}:${hugeId}`,
+      expected_invariant_ids: Array(43).fill(hugeId),
+      configured_invariant_ids: Array(43).fill(hugeId),
+      live_proven_invariant_ids: Array(43).fill(hugeId),
+      missing_invariant_ids: Array(43).fill(hugeId),
+      expected_probe_ids: Array(446).fill(hugeId),
+      configured_probe_ids: Array(446).fill(hugeId),
+      live_proven_probe_ids: Array(446).fill(hugeId),
+      missing_probe_ids: Array(446).fill(hugeId),
+    }));
+    report.atomic_details = Array.from({ length: 43 }, (_, index) => ({
+      invariant_id: `${index}:${hugeId}`,
+      retired_absence_probe_statuses: Array(446).fill({
+        probe_id: hugeId,
+        status: hugeId,
+      }),
+      recovery_mapping_gaps: Array(446).fill({ gap_id: hugeId }),
+    }));
+
+    const first = formatEquivalenceMarkdown(report);
+    const second = formatEquivalenceMarkdown(report);
+
+    expect(second).toBe(first);
+    expect(first).toContain('TRUNCATED: Markdown output budget reached');
+    expect(first.length).toBeLessThanOrEqual(200_000);
+    expect(Buffer.byteLength(first, 'utf8')).toBeLessThanOrEqual(300_000);
+    expect(first.endsWith('\n')).toBe(true);
+  });
+
+  it('renders invalid v1.1 status booleans as explicitly fail-closed', () => {
+    const report = buildEquivalenceReport({
+      schema_version: '1.1.0',
+      valid: false,
+      schema_valid: false,
+      proof_complete: true,
+      atomic_cutover_ready: true,
+      behaviors: [],
+    });
+    const markdown = formatEquivalenceMarkdown(report);
+
+    expect(markdown).toContain('schema_valid=false');
+    expect(markdown).toContain('proof_complete=false');
+    expect(markdown).toContain('atomic_cutover_ready=false');
+    expect(markdown).toContain('FAIL-CLOSED');
+  });
 });

@@ -1023,6 +1023,10 @@ const MAX_REPORT_PROBES = 446;
 const MAX_REPORT_STEPS = 13;
 const MAX_REPORT_DIMENSIONS = 11;
 const MAX_REPORT_METADATA_ITEMS = 64;
+const MAX_REPORT_IDENTIFIER_CHARS = 512;
+const MAX_REPORT_SCALAR_CHARS = 4_096;
+const MAX_MARKDOWN_CHARACTERS = 200_000;
+const MAX_MARKDOWN_UTF8_BYTES = 300_000;
 const MAX_REPORT_FAMILY_CELLS =
   MAX_REPORT_FAMILIES * PROOF_PROVIDERS.length * PROOF_SCENARIOS.length;
 const MAX_REPORT_PROVIDER_CELLS =
@@ -1040,10 +1044,50 @@ function canonicalCompare(left, right) {
   return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
 }
 
+function truncateString(value, maximum) {
+  if (typeof value !== 'string') return null;
+  if (value.length <= maximum) return value;
+  let truncated = value.slice(0, maximum);
+  const finalCodeUnit = truncated.charCodeAt(truncated.length - 1);
+  if (finalCodeUnit >= 0xD800 && finalCodeUnit <= 0xDBFF) {
+    truncated = truncated.slice(0, -1);
+  }
+  return truncated;
+}
+
+function boundedIdentifier(value) {
+  return truncateString(value, MAX_REPORT_IDENTIFIER_CHARS);
+}
+
+function boundedScalar(value) {
+  return truncateString(value, MAX_REPORT_SCALAR_CHARS);
+}
+
+function boundedScalarJoin(values, separator) {
+  let output = '';
+  for (const value of values) {
+    const item = boundedScalar(value);
+    if (!nonEmpty(item)) continue;
+    const prefix = output.length === 0 ? '' : separator;
+    const remaining = MAX_REPORT_SCALAR_CHARS - output.length;
+    if (remaining <= 0) break;
+    output += `${prefix}${item}`.slice(0, remaining);
+  }
+  return output;
+}
+
+function boundedIdentity(value) {
+  return typeof value === 'string'
+    && value.length <= MAX_REPORT_IDENTIFIER_CHARS
+    ? value
+    : null;
+}
+
 function canonicalStrings(values, maximum = MAX_REPORT_PROBES) {
   return [...new Set(
     asArray(values)
       .slice(0, maximum)
+      .map(boundedIdentifier)
       .filter(nonEmpty),
   )].sort(canonicalCompare);
 }
@@ -1060,12 +1104,14 @@ function boundProofMatrix(matrix) {
     Object.fromEntries(PROOF_SCENARIOS.map((scenario) => {
       const proof = asObject(matrix?.[provider]?.[scenario]);
       return [scenario, {
-        test_command: proof.test_command ?? null,
-        expected_result: proof.expected_result ?? null,
-        observed_result: proof.observed_result ?? null,
-        effect_receipt_id: proof.effect_receipt_id ?? null,
+        test_command: boundedScalar(proof.test_command),
+        expected_result: boundedIdentifier(proof.expected_result),
+        observed_result: boundedIdentifier(proof.observed_result),
+        effect_receipt_id: boundedIdentity(proof.effect_receipt_id),
         evidence_refs: asArray(proof.evidence_refs)
-          .slice(0, MAX_REPORT_METADATA_ITEMS),
+          .slice(0, MAX_REPORT_METADATA_ITEMS)
+          .map(boundedScalar)
+          .filter(nonEmpty),
       }];
     })),
   ]));
@@ -1073,66 +1119,84 @@ function boundProofMatrix(matrix) {
 
 function boundProjectedAtom(atom) {
   return {
-    invariant_id: atom?.invariant_id ?? null,
-    classification: atom?.classification ?? null,
-    proof_status: atom?.proof_status ?? null,
-    steps: asArray(atom?.steps).slice(0, MAX_REPORT_STEPS),
+    invariant_id: boundedIdentifier(atom?.invariant_id),
+    classification: boundedIdentifier(atom?.classification),
+    proof_status: boundedIdentifier(atom?.proof_status),
+    steps: asArray(atom?.steps)
+      .slice(0, MAX_REPORT_STEPS)
+      .map(boundedIdentifier)
+      .filter(nonEmpty),
     dimensions: asArray(atom?.dimensions).slice(
       0,
       MAX_REPORT_DIMENSIONS,
-    ),
-    effective_status: atom?.effective_status ?? 'gap',
-    projection: atom?.projection ?? 'red',
-    na_reason: atom?.na_reason ?? null,
+    ).map(boundedIdentifier).filter(nonEmpty),
+    effective_status: boundedIdentifier(atom?.effective_status) ?? 'gap',
+    projection: boundedIdentifier(atom?.projection) ?? 'red',
+    na_reason: boundedScalar(atom?.na_reason),
     retired_absence_current: atom?.retired_absence_current === true,
     retired_absence_probe_statuses: asArray(
       atom?.retired_absence_probe_statuses,
-    ).slice(0, MAX_REPORT_PROBES),
+    ).slice(0, MAX_REPORT_PROBES).map((status) => ({
+      probe_id: boundedIdentifier(status?.probe_id),
+      status: boundedIdentifier(status?.status),
+    })),
   };
 }
 
 function boundReportBehavior(behavior) {
   return {
-    behavior_id: behavior?.behavior_id ?? null,
-    priority: behavior?.priority ?? null,
-    owner: behavior?.owner ?? null,
-    contract_version: behavior?.contract_version ?? null,
-    claimed_status: behavior?.claimed_status ?? null,
-    effective_status: behavior?.effective_status ?? 'gap',
-    steps: asArray(behavior?.steps).slice(0, MAX_REPORT_STEPS),
+    behavior_id: boundedIdentifier(behavior?.behavior_id),
+    priority: boundedIdentifier(behavior?.priority),
+    owner: boundedIdentifier(behavior?.owner),
+    contract_version: boundedScalar(behavior?.contract_version),
+    claimed_status: boundedIdentifier(behavior?.claimed_status),
+    effective_status:
+      boundedIdentifier(behavior?.effective_status) ?? 'gap',
+    steps: asArray(behavior?.steps)
+      .slice(0, MAX_REPORT_STEPS)
+      .map(boundedIdentifier)
+      .filter(nonEmpty),
     dimensions: asArray(behavior?.dimensions).slice(
       0,
       MAX_REPORT_DIMENSIONS,
-    ),
-    assertion_id: behavior?.assertion_id ?? null,
-    legacy_behavior: behavior?.legacy_behavior ?? null,
+    ).map(boundedIdentifier).filter(nonEmpty),
+    assertion_id: boundedIdentifier(behavior?.assertion_id),
+    legacy_behavior: boundedScalar(behavior?.legacy_behavior),
     legacy_evidence: asArray(behavior?.legacy_evidence)
-      .slice(0, MAX_REPORT_METADATA_ITEMS),
+      .slice(0, MAX_REPORT_METADATA_ITEMS)
+      .map(boundedScalar)
+      .filter(nonEmpty),
     unified_constructs: asArray(behavior?.unified_constructs)
-      .slice(0, MAX_REPORT_METADATA_ITEMS),
-    failure_semantics: behavior?.failure_semantics ?? null,
+      .slice(0, MAX_REPORT_METADATA_ITEMS)
+      .map(boundedScalar)
+      .filter(nonEmpty),
+    failure_semantics: boundedScalar(behavior?.failure_semantics),
     partial_behavioral_evidence: asArray(
       behavior?.partial_behavioral_evidence,
-    ).slice(0, MAX_REPORT_METADATA_ITEMS),
+    ).slice(0, MAX_REPORT_METADATA_ITEMS)
+      .map(boundedScalar)
+      .filter(nonEmpty),
     proof_matrix: boundProofMatrix(behavior?.proof_matrix),
     proof_identity: {
-      artifact_sha: behavior?.proof_identity?.artifact_sha ?? null,
-      version: behavior?.proof_identity?.version ?? null,
+      artifact_sha: boundedIdentity(
+        behavior?.proof_identity?.artifact_sha,
+      ),
+      version: boundedIdentity(behavior?.proof_identity?.version),
     },
     freshness: {
-      verified_at: behavior?.freshness?.verified_at ?? null,
-      expires_at: behavior?.freshness?.expires_at ?? null,
+      verified_at: boundedIdentity(behavior?.freshness?.verified_at),
+      expires_at: boundedIdentity(behavior?.freshness?.expires_at),
     },
     gap: {
-      reason: behavior?.gap?.reason ?? null,
-      owner: behavior?.gap?.owner ?? null,
-      closure_plan: behavior?.gap?.closure_plan ?? null,
+      reason: boundedScalar(behavior?.gap?.reason),
+      owner: boundedIdentifier(behavior?.gap?.owner),
+      closure_plan: boundedScalar(behavior?.gap?.closure_plan),
     },
     findings: asArray(behavior?.findings)
       .slice(0, MAX_REPORT_METADATA_ITEMS)
       .map((finding) => ({
-        code: finding?.code ?? null,
-        message: finding?.message ?? null,
+        code: boundedIdentifier(finding?.code),
+        message: boundedScalar(finding?.message),
       })),
     atoms: asArray(behavior?.atoms)
       .slice(0, MAX_REPORT_ATOMS)
@@ -1146,17 +1210,18 @@ function projectRecoveryGaps(atom) {
   return asArray(atom?.scenario_plan?.recovery?.coverage_gaps)
     .slice(0, MAX_REPORT_PROBES)
     .map((gap) => ({
-      gap_id: gap?.gap_id ?? null,
+      gap_id: boundedIdentifier(gap?.gap_id),
       affected_violation_probe_ids: canonicalStrings(
         gap?.affected_violation_probe_ids,
       ),
       affected_recovery_probe_ids: canonicalStrings(
         gap?.affected_recovery_probe_ids,
       ),
-      appendix_predecessor_text: gap?.appendix_predecessor_text ?? null,
-      reason: gap?.reason ?? null,
-      owner: gap?.owner ?? null,
-      closure_plan: gap?.closure_plan ?? null,
+      appendix_predecessor_text:
+        boundedScalar(gap?.appendix_predecessor_text),
+      reason: boundedScalar(gap?.reason),
+      owner: boundedIdentifier(gap?.owner),
+      closure_plan: boundedScalar(gap?.closure_plan),
     }))
     .sort((left, right) => canonicalCompare(left.gap_id, right.gap_id));
 }
@@ -1182,7 +1247,7 @@ function projectAtomicDetails(behaviors, atomicSchemaUsable) {
       )
         .slice(0, MAX_REPORT_PROBES)
         .map((status) => ({
-          probe_id: status?.probe_id ?? null,
+          probe_id: boundedIdentifier(status?.probe_id),
           status: 'unverified',
         }))
         .sort((left, right) => canonicalCompare(
@@ -1191,10 +1256,10 @@ function projectAtomicDetails(behaviors, atomicSchemaUsable) {
         ));
       const recoveryMappingGaps = projectRecoveryGaps(source);
       details.push({
-        behavior_id: behavior?.behavior_id ?? null,
-        invariant_id: source?.invariant_id ?? null,
-        classification: source?.classification ?? null,
-        proof_status: source?.proof_status ?? null,
+        behavior_id: boundedIdentifier(behavior?.behavior_id),
+        invariant_id: boundedIdentifier(source?.invariant_id),
+        classification: boundedIdentifier(source?.classification),
+        proof_status: boundedIdentifier(source?.proof_status),
         effective_status: (
           source?.classification === 'retired'
           && verified?.effective_status === 'retired'
@@ -1372,8 +1437,8 @@ function buildEquivalenceReportImpl(
 
   return {
     report_version: schemaVersion === '1.1.0' ? '1.1.0' : '1.0.0',
-    contract_version: validation?.contract_version ?? null,
-    evaluated_at: evaluatedAt,
+    contract_version: boundedScalar(validation?.contract_version),
+    evaluated_at: boundedIdentity(evaluatedAt),
     valid: validationValid,
     ...(atomicReport ? {
       schema_valid: validationValid && validation?.schema_valid === true,
@@ -1506,7 +1571,10 @@ function buildEquivalenceReportImpl(
         priority: behavior.priority ?? null,
         claimed_status: behavior.claimed_status ?? null,
         reason: behavior.gap?.reason
-          ?? asArray(behavior.findings).map((finding) => finding.message).join('; ')
+          ?? boundedScalarJoin(
+            asArray(behavior.findings).map((finding) => finding.message),
+            '; ',
+          )
           ?? null,
         owner: behavior.gap?.owner ?? behavior.owner ?? null,
         closure_plan: behavior.gap?.closure_plan ?? null,
@@ -1551,8 +1619,103 @@ export function buildEquivalenceReport(validation, options = {}) {
 }
 
 function markdownCell(value) {
-  if (value == null || value === '') return '—';
-  return String(value).replaceAll('|', '\\|').replace(/[\r\n]+/g, ' ');
+  let display;
+  if (typeof value === 'string') display = boundedScalar(value);
+  else if (typeof value === 'number' && Number.isFinite(value)) {
+    display = String(value);
+  } else if (typeof value === 'boolean' || typeof value === 'bigint') {
+    display = String(value);
+  } else {
+    return '—';
+  }
+  if (display === '') return '—';
+  return truncateString(
+    display
+      .replaceAll('`', '&#96;')
+      .replaceAll('|', '\\|')
+      .replace(/[\r\n]+/g, ' '),
+    MAX_REPORT_SCALAR_CHARS,
+  );
+}
+
+function boundedMarkdownJoin(values, separator) {
+  let output = '';
+  for (const value of values) {
+    const item = markdownCell(value);
+    if (!nonEmpty(item)) continue;
+    const prefix = output.length === 0 ? '' : separator;
+    const remaining = MAX_REPORT_SCALAR_CHARS - output.length;
+    if (remaining <= 0) break;
+    output += `${prefix}${item}`.slice(0, remaining);
+  }
+  return output;
+}
+
+function boundedInlineCodeJoin(values, separator) {
+  let output = '';
+  for (const value of values) {
+    const prefix = output.length === 0 ? '' : separator;
+    const remaining = MAX_REPORT_SCALAR_CHARS
+      - output.length
+      - prefix.length;
+    if (remaining < 3) break;
+    const content = truncateString(markdownCell(value), remaining - 2);
+    output += `${prefix}\`${content}\``;
+  }
+  return output;
+}
+
+function utf8Length(value) {
+  return new TextEncoder().encode(value).length;
+}
+
+function fitMarkdownSegment(value, maximumCharacters, maximumBytes) {
+  let candidate = truncateString(value, maximumCharacters) ?? '';
+  if (utf8Length(candidate) <= maximumBytes) return candidate;
+  let low = 0;
+  let high = candidate.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (utf8Length(candidate.slice(0, middle)) <= maximumBytes) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  candidate = truncateString(candidate, low) ?? '';
+  return candidate;
+}
+
+function finalizeMarkdown(lines) {
+  const truncationMarker =
+    '\n<!-- TRUNCATED: Markdown output budget reached -->\n';
+  const markerCharacters = truncationMarker.length;
+  const markerBytes = utf8Length(truncationMarker);
+  let output = '';
+  let outputBytes = 0;
+  let finalLineCount = lines.length;
+  while (finalLineCount > 0 && lines[finalLineCount - 1] === '') {
+    finalLineCount -= 1;
+  }
+  for (const line of lines.slice(0, finalLineCount)) {
+    const segment = `${line}\n`;
+    const segmentBytes = utf8Length(segment);
+    if (
+      output.length + segment.length <= MAX_MARKDOWN_CHARACTERS
+      && outputBytes + segmentBytes <= MAX_MARKDOWN_UTF8_BYTES
+    ) {
+      output += segment;
+      outputBytes += segmentBytes;
+      continue;
+    }
+    const boundedOutput = fitMarkdownSegment(
+      `${output}${segment}`,
+      MAX_MARKDOWN_CHARACTERS - markerCharacters,
+      MAX_MARKDOWN_UTF8_BYTES - markerBytes,
+    );
+    return `${boundedOutput}${truncationMarker}`;
+  }
+  return output;
 }
 
 function formatEquivalenceMarkdownImpl(report) {
@@ -1564,79 +1727,134 @@ function formatEquivalenceMarkdownImpl(report) {
   const matrix = asObject(report?.provider_matrix);
   const axes = asObject(report?.axes);
   const axisDimensions = asArray(axes.dimensions)
-    .slice(0, MAX_REPORT_DIMENSIONS);
+    .slice(0, MAX_REPORT_DIMENSIONS)
+    .map(boundedIdentifier)
+    .filter(nonEmpty);
   const behaviors = asArray(report?.behaviors)
     .slice(0, MAX_REPORT_FAMILIES)
     .map((behavior) => ({
-      behavior_id: behavior?.behavior_id ?? null,
-      priority: behavior?.priority ?? null,
-      claimed_status: behavior?.claimed_status ?? null,
-      effective_status: behavior?.effective_status ?? null,
-      steps: asArray(behavior?.steps).slice(0, MAX_REPORT_STEPS),
+      behavior_id: boundedIdentifier(behavior?.behavior_id),
+      priority: boundedIdentifier(behavior?.priority),
+      claimed_status: boundedIdentifier(behavior?.claimed_status),
+      effective_status: boundedIdentifier(behavior?.effective_status),
+      steps: asArray(behavior?.steps)
+        .slice(0, MAX_REPORT_STEPS)
+        .map(boundedIdentifier)
+        .filter(nonEmpty),
       dimensions: asArray(behavior?.dimensions).slice(
         0,
         MAX_REPORT_DIMENSIONS,
-      ),
-      legacy_behavior: behavior?.legacy_behavior ?? null,
+      ).map(boundedIdentifier).filter(nonEmpty),
+      legacy_behavior: boundedScalar(behavior?.legacy_behavior),
       legacy_evidence: asArray(behavior?.legacy_evidence)
-        .slice(0, MAX_REPORT_METADATA_ITEMS),
+        .slice(0, MAX_REPORT_METADATA_ITEMS)
+        .map(boundedScalar)
+        .filter(nonEmpty),
       unified_constructs: asArray(behavior?.unified_constructs)
-        .slice(0, MAX_REPORT_METADATA_ITEMS),
-      failure_semantics: behavior?.failure_semantics ?? null,
-      verified_at: behavior?.verified_at ?? null,
-      expires_at: behavior?.expires_at ?? null,
+        .slice(0, MAX_REPORT_METADATA_ITEMS)
+        .map(boundedScalar)
+        .filter(nonEmpty),
+      failure_semantics: boundedScalar(behavior?.failure_semantics),
+      verified_at: boundedIdentity(behavior?.verified_at),
+      expires_at: boundedIdentity(behavior?.expires_at),
       partial_behavioral_evidence: asArray(
         behavior?.partial_behavioral_evidence,
-      ).slice(0, MAX_REPORT_METADATA_ITEMS),
+      ).slice(0, MAX_REPORT_METADATA_ITEMS)
+        .map(boundedScalar)
+        .filter(nonEmpty),
     }));
-  const gaps = asArray(report?.gaps).slice(0, MAX_REPORT_FAMILIES);
+  const gaps = asArray(report?.gaps)
+    .slice(0, MAX_REPORT_FAMILIES)
+    .map((gap) => ({
+      behavior_id: boundedIdentifier(gap?.behavior_id),
+      priority: boundedIdentifier(gap?.priority),
+      reason: boundedScalar(gap?.reason),
+      owner: boundedIdentifier(gap?.owner),
+      closure_plan: boundedScalar(gap?.closure_plan),
+    }));
   const fireCommands = asArray(report?.proven_to_fire_commands)
-    .slice(0, MAX_REPORT_FAMILY_CELLS);
+    .slice(0, MAX_REPORT_FAMILY_CELLS)
+    .map((proof) => ({
+      behavior_id: boundedIdentifier(proof?.behavior_id),
+      provider: boundedIdentifier(proof?.provider),
+      test_command: boundedScalar(proof?.test_command),
+      observed_result: boundedIdentifier(proof?.observed_result),
+      effect_receipt_id: boundedIdentity(proof?.effect_receipt_id),
+    }));
   const providerCells = asArray(matrix.cells)
-    .slice(0, MAX_REPORT_PROVIDER_CELLS);
+    .slice(0, MAX_REPORT_PROVIDER_CELLS)
+    .map((cell) => ({
+      provider: boundedIdentifier(cell?.provider),
+      scenario: boundedIdentifier(cell?.scenario),
+      receipted: cell?.receipted,
+      required: cell?.required,
+      missing: cell?.missing,
+    }));
   const atomic = atomicReport ? asObject(report?.atomic_summary) : {};
   const classificationCounts = asObject(atomic.classification_counts);
   const atomicDetails = (atomicReport ? asArray(report?.atomic_details) : [])
     .slice(0, MAX_REPORT_ATOMS)
     .map((atom) => ({
-      invariant_id: atom?.invariant_id ?? null,
-      classification: atom?.classification ?? null,
-      proof_status: atom?.proof_status ?? null,
-      effective_status: atom?.effective_status ?? null,
-      artifact_sha: atom?.artifact_sha ?? null,
-      receipt_v2_identity: atom?.receipt_v2_identity ?? null,
-      verified_at: atom?.verified_at ?? null,
-      expires_at: atom?.expires_at ?? null,
+      invariant_id: boundedIdentifier(atom?.invariant_id),
+      classification: boundedIdentifier(atom?.classification),
+      proof_status: boundedIdentifier(atom?.proof_status),
+      effective_status: boundedIdentifier(atom?.effective_status),
+      artifact_sha: boundedIdentity(atom?.artifact_sha),
+      receipt_v2_identity: boundedIdentity(atom?.receipt_v2_identity),
+      verified_at: boundedIdentity(atom?.verified_at),
+      expires_at: boundedIdentity(atom?.expires_at),
       replacement_forbidden_authority_status:
-        atom?.replacement_forbidden_authority_status ?? null,
+        boundedIdentifier(atom?.replacement_forbidden_authority_status),
       retired_absence_probe_statuses: asArray(
         atom?.retired_absence_probe_statuses,
-      ).slice(0, MAX_REPORT_PROBES),
+      ).slice(0, MAX_REPORT_PROBES).map((status) => ({
+        probe_id: boundedIdentifier(status?.probe_id),
+        status: boundedIdentifier(status?.status),
+      })),
       recovery_mapping_gaps: asArray(atom?.recovery_mapping_gaps)
-        .slice(0, MAX_REPORT_PROBES),
+        .slice(0, MAX_REPORT_PROBES)
+        .map((gap) => ({
+          gap_id: boundedIdentifier(gap?.gap_id),
+        })),
     }));
   const atomicCells = (atomicReport
     ? asArray(report?.cell_atomic_coverage)
     : [])
     .slice(0, MAX_REPORT_FAMILY_CELLS)
     .map((cell) => ({
-      cell_id: cell?.cell_id ?? null,
+      cell_id: boundedIdentifier(cell?.cell_id),
       expected_invariant_ids: asArray(cell?.expected_invariant_ids)
-        .slice(0, MAX_REPORT_ATOMS),
+        .slice(0, MAX_REPORT_ATOMS)
+        .map(boundedIdentifier)
+        .filter(nonEmpty),
       configured_invariant_ids: asArray(cell?.configured_invariant_ids)
-        .slice(0, MAX_REPORT_ATOMS),
+        .slice(0, MAX_REPORT_ATOMS)
+        .map(boundedIdentifier)
+        .filter(nonEmpty),
       live_proven_invariant_ids: asArray(cell?.live_proven_invariant_ids)
-        .slice(0, MAX_REPORT_ATOMS),
+        .slice(0, MAX_REPORT_ATOMS)
+        .map(boundedIdentifier)
+        .filter(nonEmpty),
       missing_invariant_ids: asArray(cell?.missing_invariant_ids)
-        .slice(0, MAX_REPORT_ATOMS),
+        .slice(0, MAX_REPORT_ATOMS)
+        .map(boundedIdentifier)
+        .filter(nonEmpty),
       expected_probe_ids: asArray(cell?.expected_probe_ids)
-        .slice(0, MAX_REPORT_PROBES),
+        .slice(0, MAX_REPORT_PROBES)
+        .map(boundedIdentifier)
+        .filter(nonEmpty),
       configured_probe_ids: asArray(cell?.configured_probe_ids)
-        .slice(0, MAX_REPORT_PROBES),
+        .slice(0, MAX_REPORT_PROBES)
+        .map(boundedIdentifier)
+        .filter(nonEmpty),
       live_proven_probe_ids: asArray(cell?.live_proven_probe_ids)
-        .slice(0, MAX_REPORT_PROBES),
+        .slice(0, MAX_REPORT_PROBES)
+        .map(boundedIdentifier)
+        .filter(nonEmpty),
       missing_probe_ids: asArray(cell?.missing_probe_ids)
-        .slice(0, MAX_REPORT_PROBES),
+        .slice(0, MAX_REPORT_PROBES)
+        .map(boundedIdentifier)
+        .filter(nonEmpty),
     }));
   const grid = asArray(axes.grid).slice(0, MAX_REPORT_STEPS);
   const gridSymbol = {
@@ -1650,15 +1868,16 @@ function formatEquivalenceMarkdownImpl(report) {
     '',
     `- 合同版本：\`${markdownCell(report?.contract_version)}\``,
     `- 评估时间：\`${markdownCell(report?.evaluated_at)}\``,
-    `- 合同行为数：${summary.total ?? 0}（P0 ${summary.by_priority?.P0 ?? 0} / P1 ${summary.by_priority?.P1 ?? 0}）`,
-    `- 有效状态：proven ${summary.by_effective_status?.proven ?? 0} / gap ${summary.by_effective_status?.gap ?? 0} / intentional_replacement ${summary.by_effective_status?.intentional_replacement ?? 0}`,
-    `- Provider 场景证据：${matrix.receipted_cells ?? 0}/${matrix.required_cells ?? 0}，缺 ${matrix.missing_cells ?? 0}`,
-    `- 轴：${asArray(axes.steps).length} 个步骤（S0–S12）× 11 项行为维度 = ${axes.possible_cells ?? 0} 个可能单元`,
+    `- 合同行为数：${markdownCell(summary.total)}（P0 ${markdownCell(summary.by_priority?.P0)} / P1 ${markdownCell(summary.by_priority?.P1)}）`,
+    `- 有效状态：proven ${markdownCell(summary.by_effective_status?.proven)} / gap ${markdownCell(summary.by_effective_status?.gap)} / intentional_replacement ${markdownCell(summary.by_effective_status?.intentional_replacement)}`,
+    `- Provider 场景证据：${markdownCell(matrix.receipted_cells)}/${markdownCell(matrix.required_cells)}，缺 ${markdownCell(matrix.missing_cells)}`,
+    `- 轴：${markdownCell(asArray(axes.steps).slice(0, MAX_REPORT_STEPS).length)} 个步骤（S0–S12）× ${markdownCell(axisDimensions.length)} 项行为维度 = ${markdownCell(axes.possible_cells)} 个可能单元`,
     ...(atomicReport ? [
-      `- Atomic inventory：${atomic.classified ?? 0}/${atomic.classified ?? 0} classified；${atomic.proof_required ?? 0} proof-required；classification ${classificationCounts.active_required ?? 0}/${classificationCounts.drifted_required_gap ?? 0}/${classificationCounts.intentional_replacement ?? 0}/${classificationCounts.retired ?? 0}`,
-      `- Atomic probes：${atomic.probe_definitions ?? 0}/${atomic.proof_required_probe_definitions ?? 0} total/proof-required；cell-scenario obligations ${atomic.cell_scenario_probe_obligation_required ?? 0}`,
-      `- Atomic proof：${atomic.proven ?? 0}/${atomic.atom_scenario_required ?? 0} atom-scenario；${atomic.provider_probe_proven ?? 0}/${atomic.provider_probe_required ?? 0} provider-probe；${atomic.retired_absence_fresh ?? 0}/${atomic.retired_absence_required ?? 0} retired absence；${matrix.atomic_proven_family_cells ?? 0}/${matrix.required_cells ?? 0} family cells`,
-      `- Atomic family status：${gaps.length}/${summary.total ?? 0} family gaps`,
+      `- Atomic gate：schema_valid=${markdownCell(report?.schema_valid === true)} / proof_complete=${markdownCell(report?.proof_complete === true)} / atomic_cutover_ready=${markdownCell(report?.atomic_cutover_ready === true)} / status=${report?.schema_valid === true && report?.proof_complete === true && report?.atomic_cutover_ready === true ? 'READY' : 'FAIL-CLOSED'}`,
+      `- Atomic inventory：${markdownCell(atomic.classified)}/${markdownCell(atomic.classified)} classified；${markdownCell(atomic.proof_required)} proof-required；classification ${markdownCell(classificationCounts.active_required)}/${markdownCell(classificationCounts.drifted_required_gap)}/${markdownCell(classificationCounts.intentional_replacement)}/${markdownCell(classificationCounts.retired)}`,
+      `- Atomic probes：${markdownCell(atomic.probe_definitions)}/${markdownCell(atomic.proof_required_probe_definitions)} total/proof-required；cell-scenario obligations ${markdownCell(atomic.cell_scenario_probe_obligation_required)}`,
+      `- Atomic proof：${markdownCell(atomic.proven)}/${markdownCell(atomic.atom_scenario_required)} atom-scenario；${markdownCell(atomic.provider_probe_proven)}/${markdownCell(atomic.provider_probe_required)} provider-probe；${markdownCell(atomic.retired_absence_fresh)}/${markdownCell(atomic.retired_absence_required)} retired absence；${markdownCell(matrix.atomic_proven_family_cells)}/${markdownCell(matrix.required_cells)} family cells`,
+      `- Atomic family status：${markdownCell(gaps.length)}/${markdownCell(summary.total)} family gaps`,
     ] : []),
     '',
     '> 缺口不是证明。只有绑定 exact SHA/version、未过期 freshness、effect receipt，且 Claude/Codex/Grok × normal/violation/recovery 全覆盖，才是 proven。',
@@ -1671,17 +1890,17 @@ function formatEquivalenceMarkdownImpl(report) {
     '| Behavior | Priority | Claimed | Effective | Steps | Dimensions |',
     '|---|---:|---|---|---|---|',
     ...behaviors.map((behavior) => (
-      `| ${markdownCell(behavior.behavior_id)} | ${markdownCell(behavior.priority)} | ${markdownCell(behavior.claimed_status)} | ${markdownCell(behavior.effective_status)} | ${markdownCell(behavior.steps.join(', '))} | ${markdownCell(behavior.dimensions.join(', '))} |`
+      `| ${markdownCell(behavior.behavior_id)} | ${markdownCell(behavior.priority)} | ${markdownCell(behavior.claimed_status)} | ${markdownCell(behavior.effective_status)} | ${boundedMarkdownJoin(behavior.steps, ', ')} | ${boundedMarkdownJoin(behavior.dimensions, ', ')} |`
     )),
     '',
     '## S0–S12 × 11 要素投影',
     '',
     'R = 有真实缺口；P = 证据过期；G = 完整证明；— = 尚未映射。',
     '',
-    `| Step | ${axisDimensions.join(' | ')} |`,
-    `|---|${axisDimensions.map(() => '---').join('|')}|`,
+    `| Step | ${boundedMarkdownJoin(axisDimensions, ' | ')} |`,
+    `|---|${boundedScalarJoin(axisDimensions.map(() => '---'), '|')}|`,
     ...grid.map((row) => (
-      `| ${markdownCell(row.step)} | ${axisDimensions.map((dimension) => gridSymbol[row.cells?.[dimension]] ?? '—').join(' | ')} |`
+      `| ${markdownCell(row?.step)} | ${boundedMarkdownJoin(axisDimensions.map((dimension) => gridSymbol[row?.cells?.[dimension]] ?? '—'), ' | ')} |`
     )),
     '',
     '## Provider × 场景证据矩阵',
@@ -1689,7 +1908,7 @@ function formatEquivalenceMarkdownImpl(report) {
     '| Provider | Scenario | Receipted | Required | Missing |',
     '|---|---|---:|---:|---:|',
     ...providerCells.map((cell) => (
-      `| ${markdownCell(cell.provider)} | ${markdownCell(cell.scenario)} | ${cell.receipted} | ${cell.required} | ${cell.missing} |`
+      `| ${markdownCell(cell.provider)} | ${markdownCell(cell.scenario)} | ${markdownCell(cell.receipted)} | ${markdownCell(cell.required)} | ${markdownCell(cell.missing)} |`
     )),
     ...(atomicReport ? [
       '',
@@ -1698,7 +1917,7 @@ function formatEquivalenceMarkdownImpl(report) {
       '| Cell | Expected atoms | Configured atoms | Live atoms | Missing atoms | Expected probes | Configured probes | Live probes | Missing probes |',
       '|---|---|---|---|---|---|---|---|---|',
       ...atomicCells.map((cell) => (
-        `| ${markdownCell(cell.cell_id)} | ${markdownCell(cell.expected_invariant_ids.join(', '))} | ${markdownCell(cell.configured_invariant_ids.join(', '))} | ${markdownCell(cell.live_proven_invariant_ids.join(', '))} | ${markdownCell(cell.missing_invariant_ids.join(', '))} | ${markdownCell(cell.expected_probe_ids.join(', '))} | ${markdownCell(cell.configured_probe_ids.join(', '))} | ${markdownCell(cell.live_proven_probe_ids.join(', '))} | ${markdownCell(cell.missing_probe_ids.join(', '))} |`
+        `| ${markdownCell(cell.cell_id)} | ${boundedMarkdownJoin(cell.expected_invariant_ids, ', ')} | ${boundedMarkdownJoin(cell.configured_invariant_ids, ', ')} | ${boundedMarkdownJoin(cell.live_proven_invariant_ids, ', ')} | ${boundedMarkdownJoin(cell.missing_invariant_ids, ', ')} | ${boundedMarkdownJoin(cell.expected_probe_ids, ', ')} | ${boundedMarkdownJoin(cell.configured_probe_ids, ', ')} | ${boundedMarkdownJoin(cell.live_proven_probe_ids, ', ')} | ${boundedMarkdownJoin(cell.missing_probe_ids, ', ')} |`
       )),
       '',
       '## Atomic invariant detail',
@@ -1708,7 +1927,7 @@ function formatEquivalenceMarkdownImpl(report) {
       '| Invariant | Classification | Contract proof | Effective | artifact SHA | receipt v2 identity | freshness | replacement forbidden authority | retired absence | Recovery gaps |',
       '|---|---|---|---|---|---|---|---|---|---|',
       ...atomicDetails.map((atom) => (
-        `| ${markdownCell(atom.invariant_id)} | ${markdownCell(atom.classification)} | ${markdownCell(atom.proof_status)} | ${markdownCell(atom.effective_status)} | ${markdownCell(atom.artifact_sha)} | ${markdownCell(atom.receipt_v2_identity)} | verified ${markdownCell(atom.verified_at)} / expires ${markdownCell(atom.expires_at)} | ${markdownCell(atom.replacement_forbidden_authority_status)} | ${markdownCell(atom.retired_absence_probe_statuses.map((status) => `${status.probe_id}:${status.status}`).join(', '))} | ${markdownCell(atom.recovery_mapping_gaps.map((gap) => gap.gap_id).join(', '))} |`
+        `| ${markdownCell(atom.invariant_id)} | ${markdownCell(atom.classification)} | ${markdownCell(atom.proof_status)} | ${markdownCell(atom.effective_status)} | ${markdownCell(atom.artifact_sha)} | ${markdownCell(atom.receipt_v2_identity)} | verified ${markdownCell(atom.verified_at)} / expires ${markdownCell(atom.expires_at)} | ${markdownCell(atom.replacement_forbidden_authority_status)} | ${boundedMarkdownJoin(atom.retired_absence_probe_statuses.map((status) => `${status.probe_id}:${status.status}`), ', ')} | ${boundedMarkdownJoin(atom.recovery_mapping_gaps.map((gap) => gap.gap_id), ', ')} |`
       )),
     ] : []),
     '',
@@ -1721,11 +1940,11 @@ function formatEquivalenceMarkdownImpl(report) {
       `### ${markdownCell(behavior.behavior_id)}`,
       '',
       `- 旧行为：${markdownCell(behavior.legacy_behavior)}`,
-      `- 旧证据：${behavior.legacy_evidence.length > 0 ? behavior.legacy_evidence.map((item) => `\`${markdownCell(item)}\``).join(', ') : '—'}`,
-      `- Unified constructs：${behavior.unified_constructs.length > 0 ? behavior.unified_constructs.map(markdownCell).join('; ') : '—'}`,
+      `- 旧证据：${behavior.legacy_evidence.length > 0 ? boundedInlineCodeJoin(behavior.legacy_evidence, ', ') : '—'}`,
+      `- Unified constructs：${behavior.unified_constructs.length > 0 ? boundedMarkdownJoin(behavior.unified_constructs, '; ') : '—'}`,
       `- 失败语义：${markdownCell(behavior.failure_semantics)}`,
       `- Freshness：verified ${markdownCell(behavior.verified_at)} / expires ${markdownCell(behavior.expires_at)}`,
-      `- 部分行为证据（不等于 proven）：${behavior.partial_behavioral_evidence.length > 0 ? behavior.partial_behavioral_evidence.map((item) => `\`${markdownCell(item)}\``).join(', ') : '—'}`,
+      `- 部分行为证据（不等于 proven）：${behavior.partial_behavioral_evidence.length > 0 ? boundedInlineCodeJoin(behavior.partial_behavioral_evidence, ', ') : '—'}`,
       '',
     );
   }
@@ -1761,7 +1980,7 @@ function formatEquivalenceMarkdownImpl(report) {
     }
   }
 
-  return `${lines.join('\n').trimEnd()}\n`;
+  return finalizeMarkdown(lines);
 }
 
 export function formatEquivalenceMarkdown(report) {
