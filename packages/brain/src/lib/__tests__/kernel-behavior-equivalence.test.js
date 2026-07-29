@@ -1823,6 +1823,17 @@ describe('honest equivalence report', () => {
       (item) => item.invariant_id?.length ?? 0,
     )))
       .toBeLessThanOrEqual(512);
+    const pollutedCellIds = atomicReport.cell_atomic_coverage
+      .map((cell) => cell.cell_id)
+      .filter((cellId) => cellId.startsWith('x'));
+    expect(pollutedCellIds).toHaveLength(9);
+    expect(Math.max(...pollutedCellIds.map((cellId) => cellId.length)))
+      .toBeLessThanOrEqual(512);
+    expect(new Set(pollutedCellIds).size).toBe(9);
+    expect(pollutedCellIds.every(
+      (cellId) => /::(claude|codex|grok)::(normal|violation|recovery)$/
+        .test(cellId),
+    )).toBe(true);
     expect(legacyReport.proven_to_fire_commands[0].test_command.length)
       .toBeLessThanOrEqual(4_096);
 
@@ -1830,6 +1841,93 @@ describe('honest equivalence report', () => {
       'identity-overflow-'.repeat(1_000);
     expect(formatEquivalenceMarkdown(atomicReport))
       .not.toContain('identity-overflow');
+  });
+
+  it('sanitizes bounded commands and legacy evidence through builder sinks', () => {
+    const validation = validateBehaviorEquivalence(contract(), {
+      now: NOW,
+    });
+    const commandInjection =
+      `command\` **COMMAND_INJECTED** | cell\r\n| row ${'c'.repeat(5_000)}`;
+    const evidenceInjection =
+      `evidence\` **EVIDENCE_INJECTED** | cell\r\n| row ${'e'.repeat(5_000)}`;
+    const behaviorId = validation.behaviors[0].behavior_id;
+    validation.behaviors[0].effective_status = 'proven';
+    validation.behaviors[0].proof_matrix.claude.violation.test_command =
+      commandInjection;
+    validation.behaviors[0].legacy_evidence = [evidenceInjection];
+
+    const report = buildEquivalenceReport(validation);
+    const reportBehavior = report.behaviors.find(
+      (behavior) => behavior.behavior_id === behaviorId,
+    );
+    const fireCommand = report.proven_to_fire_commands.find(
+      (proof) => (
+        proof.behavior_id === behaviorId
+        && proof.provider === 'claude'
+      ),
+    );
+    const markdown = formatEquivalenceMarkdown(report);
+
+    expect(fireCommand.test_command).toHaveLength(4_096);
+    expect(reportBehavior.legacy_evidence[0]).toHaveLength(4_096);
+    expect(markdown).toContain(
+      'command&#96; **COMMAND_INJECTED** \\| cell \\| row',
+    );
+    expect(markdown).toContain(
+      'evidence&#96; **EVIDENCE_INJECTED** \\| cell \\| row',
+    );
+    expect(markdown).not.toContain('command` **COMMAND_INJECTED**');
+    expect(markdown).not.toContain('evidence` **EVIDENCE_INJECTED**');
+    expect(markdown).not.toContain('\n| row');
+    expect(markdown).not.toContain('\r');
+  });
+
+  it('bounds finding fallback messages independently of explicit gap reasons', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const behavior = validation.behaviors[0];
+    const behaviorId = behavior.behavior_id;
+    const hugeFinding = 'finding-overflow-'.repeat(1_000);
+    behavior.gap = {
+      reason: null,
+      owner: 'owner',
+      closure_plan: 'close',
+    };
+    behavior.findings = [{
+      code: 'FINDING_OVERFLOW',
+      message: hugeFinding,
+    }];
+
+    const report = buildEquivalenceReport(validation);
+    const gap = report.gaps.find((item) => item.behavior_id === behaviorId);
+
+    expect(gap.reason).toBe(hugeFinding.slice(0, 4_096));
+    expect(gap.reason).toHaveLength(4_096);
+  });
+
+  it('fails closed for overlong freshness proof identities', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const behaviorId = validation.behaviors[0].behavior_id;
+    validation.behaviors[0].freshness = {
+      verified_at: 'verified-overflow-'.repeat(1_000),
+      expires_at: 'expires-overflow-'.repeat(1_000),
+    };
+
+    const report = buildEquivalenceReport(validation);
+    const behavior = report.behaviors.find(
+      (item) => item.behavior_id === behaviorId,
+    );
+    const markdown = formatEquivalenceMarkdown(report);
+
+    expect(behavior.verified_at).toBeNull();
+    expect(behavior.expires_at).toBeNull();
+    expect(markdown).not.toContain('verified-overflow');
+    expect(markdown).not.toContain('expires-overflow');
+    expect(markdown).toContain('Freshness：verified — / expires —');
   });
 
   it('escapes inline-code and table injection from direct formatter input', () => {

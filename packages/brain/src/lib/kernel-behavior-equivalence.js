@@ -1059,6 +1059,16 @@ function boundedIdentifier(value) {
   return truncateString(value, MAX_REPORT_IDENTIFIER_CHARS);
 }
 
+function boundedCompositeIdentifier(prefix, ...suffixParts) {
+  const suffix = `::${suffixParts.join('::')}`;
+  const prefixBudget = MAX_REPORT_IDENTIFIER_CHARS - suffix.length;
+  if (prefixBudget <= 0) {
+    return boundedIdentifier(`${prefix}${suffix}`);
+  }
+  const boundedPrefix = truncateString(prefix, prefixBudget);
+  return boundedPrefix == null ? null : `${boundedPrefix}${suffix}`;
+}
+
 function boundedScalar(value) {
   return truncateString(value, MAX_REPORT_SCALAR_CHARS);
 }
@@ -1331,7 +1341,11 @@ function projectAtomicCellCoverage(behaviors, atomicSchemaUsable) {
           family.scenarios[scenario].probeIds,
         );
         return {
-          cell_id: `${family.behaviorId}::${provider}::${scenario}`,
+          cell_id: boundedCompositeIdentifier(
+            family.behaviorId,
+            provider,
+            scenario,
+          ),
           expected_invariant_ids: expectedInvariantIds,
           configured_invariant_ids: [],
           live_proven_invariant_ids: [],
