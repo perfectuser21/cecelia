@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.267.127
+**版本**: 1.267.128
 
 ## Provider-neutral attempt timeout terminal
 
