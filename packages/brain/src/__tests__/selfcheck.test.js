@@ -197,8 +197,10 @@ describe('selfcheck', () => {
   // 351（graph_edges 表，代码依赖图谱）推进地板到 351。
   // 352（features 表更名 brain_modules，澄清语义非产品功能表）推进地板到 352。
   // 353（DROP conversation_captures + conversation_log_cursors，inbox P0 清场，decisions a823206d）推进地板到 353。
-  it('EXPECTED_SCHEMA_VERSION should be 353 (floor, bumped for conversation-capture drop)', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('353');
+  // 370（Golden Path 定版治理 decisions + global level）被 harness-line-context 直接读取，
+  // 未应用会静默缺失全局高风险 invariant，因此推进地板到 370。
+  it('EXPECTED_SCHEMA_VERSION should be 370 (floor, bumped for GP governance decisions)', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('370');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

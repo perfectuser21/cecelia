@@ -6,11 +6,23 @@
 
 
 
-**Brain 版本**: 1.267.130
+**Brain 版本**: 1.267.131
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.131 — Finalized Golden Path governance decisions
+
+- Migration 370 把 Owner 定版的两条封版判据、拒绝话术、产权变更 B、高风险
+  清单、向上默认分类和让路顺序写入 `decisions`，以稳定 `source_ref` 和
+  `context.policy_key/policy_version` 供后续合同 Gate 读取。
+- `decisions.level` 新增 `global`；Harness line context 一次读取 global 与 area
+  invariant，并按 step、journey_feature、global、area 的优先级去重注入。
+- 本版本只完成治理 SSOT 与继承入口，不启用产权变更，不包含 GP 合同签字、
+  断言盖章或其他 PRD ④机制。
+- 回退：部署 Brain `1.267.130`。Migration 370 的 policy rows 可保留为审计记录；
+  旧 Brain 不读取 `level='global'`。
 
 ## Brain 1.267.128 — Provider-neutral attempt timeout terminal
 
@@ -836,7 +848,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 357 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 370 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -1224,7 +1236,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '353'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '370'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

@@ -63,6 +63,7 @@ golden-path-proposal-smoke.sh
 golden-paths-t1-smoke.sh
 golden-paths-t7-e2e-smoke.sh
 gp-anchor-lockdown-smoke.sh
+gp-governance-decisions-smoke.sh
 graph-multi-repo-smoke.sh
 graph-photo-layer-smoke.sh
 graph-query-api-smoke.sh
