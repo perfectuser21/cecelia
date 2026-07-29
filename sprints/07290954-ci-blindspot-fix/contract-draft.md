@@ -131,3 +131,4 @@ round: 1（无上轮 reviewer feedback）
 | Workstream | Test File | Behaviors |
 |---|---|---|
 | ws1 | `packages/engine/tests/integrity/ci-blindspot-contract.test.sh` | B5、B6、B7、B8 |
+| ws2 | `tests/ci-blindspot-contract.test.sh` | B1、B2、B3、B4 |
