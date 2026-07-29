@@ -23,12 +23,18 @@ import {
 import {
   assertPathAclFree,
 } from './kernel-equivalence-protected-filesystem.js';
+import {
+  sha256Canonical,
+} from './kernel-equivalence-receipts.js';
 
 const GRANT_REF =
   /^kernel-equivalence-grant:([a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/;
+const CASE_ID =
+  /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const CELL_ID =
   /^KERNEL-P[01]-[0-9]{2}-[A-Z0-9-]+::(?:claude|codex|grok)::(?:normal|violation|recovery)$/;
 const REQUEST_FIELDS = Object.freeze(['cellId', 'grantRef']);
+const REVOKE_FIELDS = Object.freeze(['grant_ref']);
 const MAXIMUM_GRANT_BYTES = 65_536;
 
 export class ProtectedGrantAuthorityError extends Error {
@@ -74,6 +80,20 @@ function deepFreeze(value) {
     Object.freeze(value);
   }
   return value;
+}
+
+export function canonicalGrantSha256(grant) {
+  return sha256Canonical(grant);
+}
+
+function assertGrantExecutionAuthority(value) {
+  if (
+    typeof value?.registerPendingGrant !== 'function'
+    || typeof value?.markGrantPublished !== 'function'
+    || typeof value?.resolveActiveGrant !== 'function'
+  ) {
+    fail('protected_grant_configuration_invalid');
+  }
 }
 
 function validateRoot(grantRoot) {
@@ -132,13 +152,63 @@ function validateRoot(grantRoot) {
   });
 }
 
+function grantFileStatusMatches(pathStatus, openedStatus, identity) {
+  return (
+    pathStatus.isFile()
+    && !pathStatus.isSymbolicLink()
+    && pathStatus.nlink === 1
+    && openedStatus.isFile()
+    && openedStatus.nlink === 1
+    && pathStatus.dev === identity.dev
+    && pathStatus.ino === identity.ino
+    && pathStatus.size === identity.size
+    && pathStatus.ctimeMs === identity.ctimeMs
+    && openedStatus.dev === identity.dev
+    && openedStatus.ino === identity.ino
+    && openedStatus.size === identity.size
+    && openedStatus.ctimeMs === identity.ctimeMs
+    && ownedByService(pathStatus)
+    && ownedByService(openedStatus)
+    && [0o400, 0o600].includes(pathStatus.mode & 0o777)
+    && [0o400, 0o600].includes(openedStatus.mode & 0o777)
+  );
+}
+
+function assertOpenGrantFileUnchanged(grantPath, descriptor, identity) {
+  try {
+    assertPathAclFree(
+      grantPath,
+      () => fail('protected_grant_file_unsafe'),
+    );
+    const pathStatus = lstatSync(grantPath);
+    const openedStatus = fstatSync(descriptor);
+    if (!grantFileStatusMatches(pathStatus, openedStatus, identity)) {
+      fail('protected_grant_file_unsafe');
+    }
+  } catch (error) {
+    if (error instanceof ProtectedGrantAuthorityError) throw error;
+    fail('protected_grant_file_unsafe');
+  }
+}
+
+function closeBestEffort(descriptor) {
+  if (descriptor === undefined) return;
+  try {
+    closeSync(descriptor);
+  } catch {
+    // Cleanup and fail-closed error mapping take precedence.
+  }
+}
+
 function readGrantFile(grantPath, {
   expectedCellId,
   expectedGrantId,
+  keepOpen = false,
   now,
 } = {}) {
   let descriptor;
   let bytes;
+  let retainDescriptor = false;
   try {
     assertPathAclFree(
       grantPath,
@@ -178,16 +248,20 @@ function readGrantFile(grantPath, {
     if (
       completedStatus.dev !== openedStatus.dev
       || completedStatus.ino !== openedStatus.ino
+      || completedStatus.nlink !== 1
       || completedStatus.size !== openedStatus.size
       || completedStatus.ctimeMs !== openedStatus.ctimeMs
       || bytes.length !== openedStatus.size
     ) {
       fail('protected_grant_file_unsafe');
     }
-    assertPathAclFree(
-      grantPath,
-      () => fail('protected_grant_file_unsafe'),
-    );
+    const identity = Object.freeze({
+      dev: openedStatus.dev,
+      ino: openedStatus.ino,
+      size: openedStatus.size,
+      ctimeMs: openedStatus.ctimeMs,
+    });
+    assertOpenGrantFileUnchanged(grantPath, descriptor, identity);
     let grant;
     try {
       grant = JSON.parse(bytes.toString('utf8'));
@@ -198,6 +272,10 @@ function readGrantFile(grantPath, {
       !grant
       || typeof grant !== 'object'
       || Array.isArray(grant)
+      || grant.schema_version
+        !== 'kernel-equivalence-execution-grant/v1'
+      || typeof grant.signature !== 'string'
+      || grant.signature.length === 0
     ) {
       fail('protected_grant_file_invalid');
     }
@@ -216,23 +294,33 @@ function readGrantFile(grantPath, {
     ) {
       fail('protected_grant_expired');
     }
-    return deepFreeze(structuredClone(grant));
+    const frozenGrant = deepFreeze(structuredClone(grant));
+    const grantSha256 = canonicalGrantSha256(frozenGrant);
+    retainDescriptor = keepOpen;
+    return Object.freeze({
+      grant: frozenGrant,
+      grant_sha256: grantSha256,
+      descriptor: keepOpen ? descriptor : undefined,
+      identity,
+    });
   } catch (error) {
     if (error instanceof ProtectedGrantAuthorityError) throw error;
     fail('protected_grant_file_invalid');
   } finally {
     bytes?.fill(0);
-    if (descriptor !== undefined) closeSync(descriptor);
+    if (!retainDescriptor) closeBestEffort(descriptor);
   }
 }
 
 export function createProtectedGrantFileAuthority({
   grantRoot,
+  grantExecutionAuthority,
   now = Date.now,
 } = {}) {
   if (typeof now !== 'function') {
     fail('protected_grant_configuration_invalid');
   }
+  assertGrantExecutionAuthority(grantExecutionAuthority);
   const trustedRoot = validateRoot(grantRoot);
   return Object.freeze({
     owner_service: 'brain.kernel_equivalence.grants',
@@ -261,16 +349,60 @@ export function createProtectedGrantFileAuthority({
       ) {
         fail('protected_grant_request_invalid');
       }
-      const grant = readGrantFile(grantPath, {
+      const transport = readGrantFile(grantPath, {
         expectedCellId: request.cellId,
         expectedGrantId: match[1],
+        keepOpen: true,
         now,
       });
-      return Object.freeze({
-        cell_id: request.cellId,
-        grant_ref: request.grantRef,
-        grant,
-      });
+      try {
+        let durable;
+        try {
+          durable = await grantExecutionAuthority.resolveActiveGrant({
+            grant_id: match[1],
+            grant_sha256: transport.grant_sha256,
+            cell_id: request.cellId,
+          });
+        } catch {
+          fail('protected_grant_authority_denied');
+        }
+        assertOpenGrantFileUnchanged(
+          grantPath,
+          transport.descriptor,
+          transport.identity,
+        );
+        let durableGrantSha256;
+        let durableExpiry;
+        let transportExpiry;
+        try {
+          durableGrantSha256 = canonicalGrantSha256(durable?.grant);
+          durableExpiry = Date.parse(durable?.expires_at);
+          transportExpiry = Date.parse(transport.grant.expires_at);
+        } catch {
+          fail('protected_grant_authority_mismatch');
+        }
+        if (
+          durable?.active !== true
+          || durable.grant_id !== match[1]
+          || durable.grant_ref !== request.grantRef
+          || durable.grant_sha256 !== transport.grant_sha256
+          || durable.cell_id !== request.cellId
+          || !Number.isFinite(durableExpiry)
+          || !Number.isFinite(transportExpiry)
+          || durableExpiry !== transportExpiry
+          || durableGrantSha256 !== transport.grant_sha256
+        ) {
+          fail('protected_grant_authority_mismatch');
+        }
+        return Object.freeze({
+          cell_id: request.cellId,
+          grant_ref: request.grantRef,
+          grant_sha256: transport.grant_sha256,
+          grant: transport.grant,
+        });
+      } finally {
+        closeBestEffort(transport.descriptor);
+      }
     },
   });
 }
@@ -298,7 +430,7 @@ function assertRootUnchanged(trustedRoot) {
 }
 
 function removeExactFile(path, identity) {
-  if (!identity) return;
+  if (!identity) return false;
   try {
     const current = lstatSync(path);
     if (
@@ -308,15 +440,18 @@ function removeExactFile(path, identity) {
       && current.ino === identity.ino
     ) {
       unlinkSync(path);
+      return true;
     }
   } catch {
     // A missing or replaced temporary file must never broaden cleanup.
   }
+  return false;
 }
 
 export function createProtectedGrantFileIssuer({
   grantRoot,
   executionGrantAuthority,
+  grantExecutionAuthority,
   maximumTtlSeconds = null,
   now = Date.now,
 } = {}) {
@@ -333,6 +468,7 @@ export function createProtectedGrantFileIssuer({
     fail('protected_grant_configuration_invalid');
   }
   assertGrantAuthority(executionGrantAuthority);
+  assertGrantExecutionAuthority(grantExecutionAuthority);
   const trustedRoot = validateRoot(grantRoot);
 
   return Object.freeze({
@@ -341,6 +477,17 @@ export function createProtectedGrantFileIssuer({
       'brain.kernel_equivalence.protected_grant_issuer.v1',
     async issueProtectedGrant(input = {}) {
       assertRootUnchanged(trustedRoot);
+      const caseDescriptor = Object.getOwnPropertyDescriptor(
+        input,
+        'case_id',
+      );
+      if (
+        !caseDescriptor
+        || !Object.hasOwn(caseDescriptor, 'value')
+        || !CASE_ID.test(caseDescriptor.value ?? '')
+      ) {
+        fail('protected_grant_case_id_invalid');
+      }
       const ttlDescriptor = Object.getOwnPropertyDescriptor(
         input,
         'ttl_seconds',
@@ -366,12 +513,34 @@ export function createProtectedGrantFileIssuer({
       ) {
         fail('protected_grant_issue_invalid');
       }
+      const grantSha256 = canonicalGrantSha256(grant);
+      let registration;
+      try {
+        registration = await grantExecutionAuthority.registerPendingGrant({
+          case_id: caseDescriptor.value,
+          grant,
+          grant_sha256: grantSha256,
+        });
+      } catch {
+        fail('protected_grant_registration_failed');
+      }
+      if (
+        registration?.grant_id !== grantId
+        || registration.grant_ref
+          !== `kernel-equivalence-grant:${grantId}`
+        || registration.grant_sha256 !== grantSha256
+        || registration.cell_id !== grant.cell_id
+        || registration.expires_at !== grant.expires_at
+      ) {
+        fail('protected_grant_registration_failed');
+      }
       const finalPath = join(trustedRoot.path, `${grantId}.json`);
       const temporaryPath = join(
         trustedRoot.path,
         `.${grantId}.${randomUUID()}.tmp`,
       );
       let descriptor;
+      let markAttempted = false;
       let temporaryIdentity;
       const encoded = Buffer.from(`${JSON.stringify(grant)}\n`, 'utf8');
       try {
@@ -439,6 +608,14 @@ export function createProtectedGrantFileIssuer({
         ) {
           fail('protected_grant_file_unsafe');
         }
+        const verified = readGrantFile(finalPath, {
+          expectedCellId: grant.cell_id,
+          expectedGrantId: grantId,
+          now,
+        });
+        if (verified.grant_sha256 !== grantSha256) {
+          fail('protected_grant_file_invalid');
+        }
         const directoryDescriptor = openSync(
           trustedRoot.path,
           constants.O_RDONLY
@@ -450,17 +627,134 @@ export function createProtectedGrantFileIssuer({
         } finally {
           closeSync(directoryDescriptor);
         }
+        markAttempted = true;
+        let publication;
+        try {
+          publication = await grantExecutionAuthority.markGrantPublished({
+            grant_id: grantId,
+            grant_sha256: grantSha256,
+          });
+        } catch {
+          fail('protected_grant_publication_uncertain');
+        }
+        if (
+          publication?.grant_id !== grantId
+          || publication.state !== 'published'
+        ) {
+          fail('protected_grant_publication_uncertain');
+        }
         return Object.freeze({
           grant_ref: `kernel-equivalence-grant:${grantId}`,
+          grant_id: grantId,
+          grant_sha256: grantSha256,
           expires_at: grant.expires_at,
         });
       } catch (error) {
-        if (descriptor !== undefined) closeSync(descriptor);
+        closeBestEffort(descriptor);
         removeExactFile(temporaryPath, temporaryIdentity);
+        if (markAttempted) {
+          fail('protected_grant_publication_uncertain');
+        }
         if (error instanceof ProtectedGrantAuthorityError) throw error;
         fail('protected_grant_publish_failed');
       } finally {
         encoded.fill(0);
+      }
+    },
+    async revokeProtectedGrant(request = {}) {
+      if (!exactFields(request, REVOKE_FIELDS)) {
+        fail('protected_grant_revoke_request_invalid');
+      }
+      const match = String(request.grant_ref ?? '').match(GRANT_REF);
+      if (!match) fail('protected_grant_revoke_request_invalid');
+      assertRootUnchanged(trustedRoot);
+      const grantPath = join(trustedRoot.path, `${match[1]}.json`);
+      let descriptor;
+      let bytes;
+      try {
+        assertPathAclFree(
+          grantPath,
+          () => fail('protected_grant_revoke_failed'),
+        );
+        const pathStatus = lstatSync(grantPath);
+        if (
+          !pathStatus.isFile()
+          || pathStatus.isSymbolicLink()
+          || pathStatus.nlink !== 1
+          || !ownedByService(pathStatus)
+          || (pathStatus.mode & 0o777) !== 0o600
+          || pathStatus.size < 2
+          || pathStatus.size > MAXIMUM_GRANT_BYTES
+        ) {
+          fail('protected_grant_revoke_failed');
+        }
+        descriptor = openSync(
+          grantPath,
+          constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+        );
+        const opened = fstatSync(descriptor);
+        if (
+          !opened.isFile()
+          || opened.nlink !== 1
+          || opened.dev !== pathStatus.dev
+          || opened.ino !== pathStatus.ino
+          || !ownedByService(opened)
+          || (opened.mode & 0o777) !== 0o600
+          || opened.size !== pathStatus.size
+        ) {
+          fail('protected_grant_revoke_failed');
+        }
+        bytes = readFileSync(descriptor);
+        let grant;
+        try {
+          grant = JSON.parse(bytes.toString('utf8'));
+        } catch {
+          fail('protected_grant_revoke_failed');
+        }
+        const completed = fstatSync(descriptor);
+        if (
+          completed.dev !== opened.dev
+          || completed.ino !== opened.ino
+          || completed.size !== opened.size
+          || completed.ctimeMs !== opened.ctimeMs
+          || bytes.length !== opened.size
+          || grant?.schema_version
+            !== 'kernel-equivalence-execution-grant/v1'
+          || grant?.grant_id !== match[1]
+        ) {
+          fail('protected_grant_revoke_failed');
+        }
+        closeSync(descriptor);
+        descriptor = undefined;
+        assertRootUnchanged(trustedRoot);
+        const current = lstatSync(grantPath);
+        if (
+          !current.isFile()
+          || current.isSymbolicLink()
+          || current.nlink !== 1
+          || current.dev !== opened.dev
+          || current.ino !== opened.ino
+          || current.size !== opened.size
+          || current.ctimeMs !== opened.ctimeMs
+        ) {
+          fail('protected_grant_revoke_failed');
+        }
+        return Object.freeze({
+          grant_ref: request.grant_ref,
+          transport_removed: false,
+        });
+      } catch (error) {
+        if (error instanceof ProtectedGrantAuthorityError) throw error;
+        fail('protected_grant_revoke_failed');
+      } finally {
+        bytes?.fill(0);
+        if (descriptor !== undefined) {
+          try {
+            closeSync(descriptor);
+          } catch {
+            // Revocation remains fail-closed if the descriptor changed state.
+          }
+        }
       }
     },
     async cleanupExpiredGrants() {
@@ -469,7 +763,7 @@ export function createProtectedGrantFileIssuer({
       if (!Number.isFinite(operationNow)) {
         fail('protected_grant_configuration_invalid');
       }
-      let removed = 0;
+      const removed = 0;
       let retained = 0;
       let entries;
       try {
@@ -560,8 +854,7 @@ export function createProtectedGrantFileIssuer({
             retained += 1;
             continue;
           }
-          unlinkSync(grantPath);
-          removed += 1;
+          retained += 1;
         } catch {
           retained += 1;
         } finally {
@@ -572,19 +865,6 @@ export function createProtectedGrantFileIssuer({
               // Retain unsafe entries; cleanup must never broaden.
             }
           }
-        }
-      }
-      if (removed > 0) {
-        const directoryDescriptor = openSync(
-          trustedRoot.path,
-          constants.O_RDONLY
-            | (constants.O_DIRECTORY ?? 0)
-            | (constants.O_NOFOLLOW ?? 0),
-        );
-        try {
-          fsyncSync(directoryDescriptor);
-        } finally {
-          closeSync(directoryDescriptor);
         }
       }
       return Object.freeze({ removed, retained });
