@@ -84,7 +84,10 @@ async function hasFreshHeartbeat(pool, initiativeId, idleMinutes, task = null) {
 /**
  * Kernel v1 判活闸:旧守卫的两个信号(容器 + run_events)对 Kernel 恒返回"死",
  * requeue 前必须再过一遍这道闸。alive / unknown 一律不动(fail-open);
- * 只有 pid 确证消失(dead)才放行给旧的 requeue 逻辑;
+ * concluded(该任务的 run 早已有终态结论,只是被终态过滤查询挡住) → 放行,
+ * 交给调用方已有的 requeueOrphanTask 计数/封顶/终态收口逻辑处理(事故 4a530430:
+ * 15 条 run 全 failed 却因这里误当 unknown 一直 hold,永久占 active_pipelines 槽位);
+ * 只有 pid 确证消失(dead)/concluded 才放行给旧的 requeue 逻辑;
  * 非 kernel 任务返回 not_applicable —— 旧路径行为一字不变。
  * @returns {Promise<boolean>} true = 该任务被 kernel 判活闸拦下,调用方必须 continue
  */
@@ -98,6 +101,12 @@ async function kernelGuardHolds(pool, task, assessKernel) {
         `[orphan-guard][kernel-v1] task=${task.id} 判活=${verdict}(${r?.reason ?? '-'}) → 不 requeue`
       );
       return true;
+    }
+    if (verdict === 'concluded') {
+      console.warn(
+        `[orphan-guard][kernel-v1] task=${task.id} 判活=concluded(phase=${r?.phase ?? '-'}) → 放行 requeue`
+      );
+      return false;
     }
   } catch (err) {
     // 判活自身炸了也算"不知道"——对 kernel 任务 fail-open
