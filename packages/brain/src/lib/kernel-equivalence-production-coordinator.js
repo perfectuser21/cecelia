@@ -147,28 +147,6 @@ function inspectIssuedGrant(value) {
   });
 }
 
-function exactSafeRevocation(result, issued) {
-  const snapshot = dataSnapshot(result);
-  if (
-    !snapshot
-    || snapshot.keys.length !== REVOCATION_RESULT_FIELDS.length
-    || snapshot.keys.some(
-      (field, index) => field !== REVOCATION_RESULT_FIELDS[index],
-    )
-  ) {
-    return false;
-  }
-  const value = snapshot.values;
-  return (
-    value.grant_ref
-      === `kernel-equivalence-grant:${issued.grant_id}`
-    && value.revoked === true
-    && value.safe_no_effect === true
-    && value.effect_possible === false
-    && value.disposition === 'safe_no_effect'
-  );
-}
-
 function exactRevocationDisposition(result, issued) {
   const snapshot = dataSnapshot(result);
   const values = snapshot?.values ?? {};
@@ -594,7 +572,7 @@ async function revokePublishedGrant({
   issued,
   reason,
 }) {
-  let safeNoEffect = false;
+  let disposition = null;
   if (issued.identity_exact) {
     try {
       const result = await grantExecutionAuthority.revokeGrant({
@@ -603,9 +581,9 @@ async function revokePublishedGrant({
         reason,
         timeoutMs: GRANT_SETTLEMENT_TIMEOUT_MS,
       });
-      safeNoEffect = exactSafeRevocation(result, issued);
+      disposition = exactRevocationDisposition(result, issued);
     } catch {
-      safeNoEffect = false;
+      disposition = null;
     }
   }
   if (
@@ -620,7 +598,7 @@ async function revokePublishedGrant({
       // Transport cleanup cannot establish or erase durable DB safety.
     }
   }
-  return safeNoEffect;
+  return disposition;
 }
 
 async function appendPublishedGrantSettlement({
@@ -630,23 +608,27 @@ async function appendPublishedGrantSettlement({
   generation,
   controllerInstanceId,
   issued,
-  lineageRecorded,
   reason,
-  safeNoEffect,
-  forceUnknown = false,
+  disposition,
 }) {
-  const terminalSafe = safeNoEffect && !forceUnknown;
+  if (
+    !issued.identity_exact
+    || issued.expires_at_ms == null
+    || (
+      disposition !== 'safe_no_effect'
+      && disposition !== 'effect_possible'
+    )
+  ) {
+    fail('production_controller_grant_settlement_unsafe');
+  }
+  const terminalSafe = disposition === 'safe_no_effect';
   await appendRequiredEvent(pool, {
     randomUUID,
     caseId,
     generation,
     controllerInstanceId,
     state: terminalSafe ? 'blocked' : 'settlement_unknown',
-    grantRef: (
-      terminalSafe && !lineageRecorded
-        ? null
-        : issued.grant_ref
-    ),
+    grantRef: issued.grant_ref,
     grantExpiresAt: issued.expires_at,
     code: terminalSafe
       ? reason
@@ -667,7 +649,7 @@ async function settleAfterPublishedGrantFailure({
   reason,
   ...settlement
 }) {
-  const safeNoEffect = await revokePublishedGrant({
+  const disposition = await revokePublishedGrant({
     grantExecutionAuthority,
     grantIssuer,
     issued,
@@ -677,7 +659,7 @@ async function settleAfterPublishedGrantFailure({
     ...settlement,
     issued,
     reason,
-    safeNoEffect,
+    disposition,
   });
 }
 
@@ -695,7 +677,7 @@ async function settleAfterAmbiguousActiveAppend({
   issued,
   reason,
 }) {
-  const safeNoEffect = await revokePublishedGrant({
+  const disposition = await revokePublishedGrant({
     grantExecutionAuthority,
     grantIssuer,
     issued,
@@ -736,10 +718,8 @@ async function settleAfterAmbiguousActiveAppend({
       generation: latest.generation + 1,
       controllerInstanceId,
       issued,
-      lineageRecorded: latest.lineage_grant_ref != null,
       reason,
-      safeNoEffect,
-      forceUnknown: true,
+      disposition,
     });
   }
   return appendPublishedGrantSettlement({
@@ -751,11 +731,8 @@ async function settleAfterAmbiguousActiveAppend({
       : attemptedGeneration,
     controllerInstanceId,
     issued,
-    lineageRecorded: attemptedCommitted
-      ? true
-      : previousGrantRef != null,
     reason,
-    safeNoEffect,
+    disposition,
   });
 }
 
@@ -1015,16 +992,17 @@ export function createPostgresKernelEquivalenceCoordinator({
         });
         throw error;
       }
+      if (publicationUncertain) {
+        fail('production_controller_grant_settlement_unsafe');
+      }
       await appendRequiredEvent(pool, {
         randomUUID,
         caseId,
         generation: 2,
         controllerInstanceId,
-        state: publicationUncertain
-          ? 'settlement_unknown'
-          : 'blocked',
+        state: 'blocked',
         code: stableCode(error, 'grant_issue_failed'),
-        lateEffectRisk: publicationUncertain,
+        lateEffectRisk: false,
       });
       throw error;
     }
@@ -1371,8 +1349,19 @@ export function createPostgresKernelEquivalenceCoordinator({
          grant_authorities.expires_at AS grant_authority_expires_at,
          grant_authorities.expires_at > clock_timestamp()
            AS grant_unexpired,
+         EXISTS (
+           SELECT 1
+           FROM kernel_equivalence_grant_events published_events
+           WHERE published_events.grant_id = grant_authorities.grant_id
+             AND published_events.state = 'published'
+         ) AS grant_published,
          grant_revocations.execution_disposition
            AS revocation_disposition,
+         published_grants.published_grant_count,
+         published_grants.published_grant_id,
+         published_grants.published_grant_sha256,
+         published_grants.published_grant_expires_at,
+         published_grants.published_revocation_disposition,
          bundles.bundle_hash
        FROM latest
        LEFT JOIN LATERAL (
@@ -1403,6 +1392,41 @@ export function createPostgresKernelEquivalenceCoordinator({
        LEFT JOIN kernel_equivalence_grant_revocations
               grant_revocations
          ON grant_revocations.grant_id = grant_authorities.grant_id
+       LEFT JOIN LATERAL (
+         SELECT
+           count(*) AS published_grant_count,
+           (array_agg(
+             candidates.grant_id
+             ORDER BY candidates.registered_at DESC
+           ))[1] AS published_grant_id,
+           (array_agg(
+             candidates.grant_digest
+             ORDER BY candidates.registered_at DESC
+           ))[1] AS published_grant_sha256,
+           (array_agg(
+             candidates.expires_at
+             ORDER BY candidates.registered_at DESC
+           ))[1] AS published_grant_expires_at,
+           (array_agg(
+             candidates.execution_disposition
+             ORDER BY candidates.registered_at DESC
+           ))[1] AS published_revocation_disposition
+         FROM (
+           SELECT
+             authorities.grant_id,
+             authorities.grant_digest,
+             authorities.expires_at,
+             authorities.registered_at,
+             revocations.execution_disposition
+           FROM kernel_equivalence_grant_authorities authorities
+           JOIN kernel_equivalence_grant_events published_events
+             ON published_events.grant_id = authorities.grant_id
+            AND published_events.state = 'published'
+           LEFT JOIN kernel_equivalence_grant_revocations revocations
+             ON revocations.grant_id = authorities.grant_id
+           WHERE authorities.case_id = latest.case_id
+         ) candidates
+       ) published_grants ON true
        WHERE latest.state IN (
          'claimed', 'grant_issued', 'executing', 'reconciling',
          'settlement_unknown'
@@ -1424,29 +1448,104 @@ export function createPostgresKernelEquivalenceCoordinator({
         ) {
           fail('production_controller_reconcile_readback_invalid');
         }
-        const publishedState = [
+        const publishedGrantCount = Number(
+          row.published_grant_count ?? 0,
+        );
+        if (
+          !Number.isSafeInteger(publishedGrantCount)
+          || publishedGrantCount < 0
+        ) {
+          fail('production_controller_reconcile_readback_invalid');
+        }
+        const orphanedPublication = (
+          row.state === 'claimed'
+          && row.grant_ref == null
+          && publishedGrantCount > 0
+        );
+        if (
+          row.state === 'claimed'
+          && row.grant_ref == null
+          && publishedGrantCount > 1
+        ) {
+          fail('production_controller_reconcile_grant_unsafe');
+        }
+        const publishedCandidateRef = UUID_PATTERN.test(
+          row.published_grant_id ?? '',
+        )
+          ? `kernel-equivalence-grant:${row.published_grant_id}`
+          : null;
+        if (
+          row.grant_ref != null
+          && publishedGrantCount > 0
+          && (
+            publishedGrantCount !== 1
+            || publishedCandidateRef !== row.grant_ref
+          )
+        ) {
+          fail('production_controller_reconcile_grant_unsafe');
+        }
+        const effectiveGrantRef = orphanedPublication
+          ? publishedCandidateRef
+          : row.grant_ref;
+        const effectiveGrantId = orphanedPublication
+          ? row.published_grant_id
+          : row.grant_id;
+        const effectiveGrantSha256 = orphanedPublication
+          ? row.published_grant_sha256
+          : row.grant_sha256;
+        const effectiveGrantExpiresAt = orphanedPublication
+          ? row.published_grant_expires_at
+          : row.grant_expires_at;
+        const effectiveGrantAuthorityExpiresAt = orphanedPublication
+          ? row.published_grant_expires_at
+          : row.grant_authority_expires_at;
+        const durableRevocationDisposition = orphanedPublication
+          ? row.published_revocation_disposition
+          : row.revocation_disposition;
+        if (
+          orphanedPublication
+          && (
+            !GRANT_REF_PATTERN.test(effectiveGrantRef ?? '')
+            || !UUID_PATTERN.test(effectiveGrantId ?? '')
+            || !HASH_PATTERN.test(effectiveGrantSha256 ?? '')
+            || timestamp(effectiveGrantExpiresAt) == null
+          )
+        ) {
+          fail('production_controller_reconcile_grant_unsafe');
+        }
+        const publishedState = orphanedPublication || [
           'grant_issued',
           'executing',
           'reconciling',
           'settlement_unknown',
         ].includes(row.state);
-        const lineageExpiresAt = timestamp(row.grant_expires_at);
+        const lineageExpiresAt = timestamp(effectiveGrantExpiresAt);
         const authorityObservedAt = timestamp(
           row.authority_observed_at,
         );
-        const publishedGrantUnexpired = (
-          publishedState
-          && GRANT_REF_PATTERN.test(row.grant_ref ?? '')
+        if (
+          !orphanedPublication
+          && row.state !== 'settlement_unknown'
+          && GRANT_REF_PATTERN.test(effectiveGrantRef ?? '')
           && lineageExpiresAt != null
           && authorityObservedAt != null
           && lineageExpiresAt > authorityObservedAt
+          && row.grant_published !== true
+        ) {
+          fail('production_controller_reconcile_grant_unsafe');
+        }
+        const publishedGrantRecoverable = (
+          publishedState
+          && GRANT_REF_PATTERN.test(effectiveGrantRef ?? '')
+          && lineageExpiresAt != null
+          && (orphanedPublication || row.grant_published === true)
         );
         const legacyUnknownWithoutAuthority = (
           row.state === 'settlement_unknown'
           && row.grant_id == null
         );
         if (
-          publishedGrantUnexpired
+          publishedGrantRecoverable
           && legacyUnknownWithoutAuthority
           && !HASH_PATTERN.test(row.bundle_hash ?? '')
         ) {
@@ -1457,7 +1556,7 @@ export function createPostgresKernelEquivalenceCoordinator({
           continue;
         }
         if (
-          publishedGrantUnexpired
+          publishedGrantRecoverable
           && !legacyUnknownWithoutAuthority
         ) {
           if (
@@ -1476,24 +1575,24 @@ export function createPostgresKernelEquivalenceCoordinator({
             continue;
           }
           const issued = inspectIssuedGrant({
-            grant_ref: row.grant_ref,
-            grant_id: row.grant_id,
-            grant_sha256: row.grant_sha256,
-            expires_at: row.grant_expires_at instanceof Date
-              ? row.grant_expires_at.toISOString()
-              : row.grant_expires_at,
+            grant_ref: effectiveGrantRef,
+            grant_id: effectiveGrantId,
+            grant_sha256: effectiveGrantSha256,
+            expires_at: effectiveGrantExpiresAt instanceof Date
+              ? effectiveGrantExpiresAt.toISOString()
+              : effectiveGrantExpiresAt,
           });
           if (
             !issued.fields_exact
             || !issued.identity_exact
             || issued.expires_at_ms == null
-            || timestamp(row.grant_authority_expires_at)
+            || timestamp(effectiveGrantAuthorityExpiresAt)
               !== issued.expires_at_ms
-            || row.grant_unexpired !== true
+            || (!orphanedPublication && row.grant_published !== true)
           ) {
             fail('production_controller_reconcile_grant_unsafe');
           }
-          let disposition = row.revocation_disposition;
+          let disposition = durableRevocationDisposition;
           if (
             disposition !== 'safe_no_effect'
             && disposition !== 'effect_possible'

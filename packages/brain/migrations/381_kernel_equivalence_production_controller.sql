@@ -294,6 +294,9 @@ DECLARE
   previous_lease_expires_at TIMESTAMPTZ;
   previous_grant_ref TEXT;
   lineage_grant_ref TEXT;
+  published_grant_count BIGINT := 0;
+  exact_published_grant BOOLEAN := false;
+  durable_revocation_disposition TEXT;
   fence_active BOOLEAN;
   authority_now TIMESTAMPTZ;
   case_expires_at TIMESTAMPTZ;
@@ -417,6 +420,59 @@ BEGIN
    ORDER BY generation DESC
    LIMIT 1;
 
+  IF NEW.state IN ('blocked', 'settlement_unknown') THEN
+    SELECT
+        count(DISTINCT authorities.grant_id),
+        COALESCE(bool_or(
+          NEW.grant_ref =
+            'kernel-equivalence-grant:' || authorities.grant_id::TEXT
+          AND authorities.expires_at
+                IS NOT DISTINCT FROM NEW.grant_expires_at
+        ), false)
+      INTO published_grant_count, exact_published_grant
+      FROM kernel_equivalence_grant_authorities authorities
+      JOIN kernel_equivalence_grant_events grant_events
+        ON grant_events.grant_id = authorities.grant_id
+       AND grant_events.state = 'published'
+     WHERE authorities.case_id = NEW.case_id;
+    IF published_grant_count > 0
+       AND (
+         published_grant_count <> 1
+         OR NOT exact_published_grant
+       )
+    THEN
+      RAISE EXCEPTION
+        'kernel equivalence settlement requires a unique published grant';
+    END IF;
+    IF exact_published_grant THEN
+      SELECT revocations.execution_disposition
+        INTO durable_revocation_disposition
+        FROM kernel_equivalence_grant_authorities authorities
+        JOIN kernel_equivalence_grant_revocations revocations
+          ON revocations.grant_id = authorities.grant_id
+         AND revocations.grant_digest = authorities.grant_digest
+       WHERE authorities.case_id = NEW.case_id
+         AND NEW.grant_ref =
+               'kernel-equivalence-grant:'
+                 || authorities.grant_id::TEXT
+         AND authorities.expires_at
+               IS NOT DISTINCT FROM NEW.grant_expires_at;
+      IF NOT FOUND
+         OR (
+           NEW.state = 'blocked'
+           AND durable_revocation_disposition <> 'safe_no_effect'
+         )
+         OR (
+           NEW.state = 'settlement_unknown'
+           AND durable_revocation_disposition <> 'effect_possible'
+         )
+      THEN
+        RAISE EXCEPTION
+          'kernel equivalence settlement requires exact durable grant revocation';
+      END IF;
+    END IF;
+  END IF;
+
   IF NEW.state = 'executing'
      AND NEW.grant_ref IS DISTINCT FROM previous_grant_ref THEN
     RAISE EXCEPTION
@@ -438,8 +494,7 @@ BEGIN
          AND NEW.grant_ref IS NOT NULL
          AND NOT (
            previous_state = 'claimed'
-           AND NEW.state = 'settlement_unknown'
-           AND NEW.code = 'grant_revoke_unconfirmed'
+           AND exact_published_grant
          )
        )
        OR (
@@ -641,37 +696,19 @@ BEGIN
       NULL; -- Exact durable bundle readback is monotonic across restarts.
     ELSIF NEW.state IN ('blocked', 'settlement_unknown')
        AND previous_state IN (
-         'grant_issued', 'executing', 'reconciling'
+         'claimed', 'grant_issued', 'executing', 'reconciling'
        )
        AND previous_lease_expires_at <= authority_now
-       AND lineage_grant_ref IS NOT NULL
-       AND NEW.grant_ref = lineage_grant_ref
-       AND EXISTS (
-         SELECT 1
-           FROM kernel_equivalence_grant_authorities authorities
-           JOIN kernel_equivalence_grant_revocations revocations
-             ON revocations.grant_id = authorities.grant_id
-            AND revocations.grant_digest = authorities.grant_digest
-          WHERE authorities.case_id = NEW.case_id
-            AND lineage_grant_ref =
-                  'kernel-equivalence-grant:'
-                    || authorities.grant_id::TEXT
-            AND authorities.expires_at
-                  IS NOT DISTINCT FROM NEW.grant_expires_at
-            AND (
-              (
-                NEW.state = 'blocked'
-                AND NEW.code = 'startup_reconciliation'
-                AND revocations.execution_disposition
-                      = 'safe_no_effect'
-              )
-              OR (
-                NEW.state = 'settlement_unknown'
-                AND NEW.code = 'grant_revoke_unconfirmed'
-                AND revocations.execution_disposition
-                      = 'effect_possible'
-              )
-            )
+       AND exact_published_grant
+       AND (
+         (
+           NEW.state = 'blocked'
+           AND durable_revocation_disposition = 'safe_no_effect'
+         )
+         OR (
+           NEW.state = 'settlement_unknown'
+           AND durable_revocation_disposition = 'effect_possible'
+         )
        ) THEN
       NULL; -- Expired controller replaced only after exact durable revoke.
     ELSIF NEW.state = 'settlement_unknown'
