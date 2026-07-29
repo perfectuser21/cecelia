@@ -84,6 +84,14 @@ describe('安全加固', () => {
     expect(res.status).toBe(401);
   });
 
+  it('malformed JSON + 无 token → 401（证明鉴权先于 json 解析）', async () => {
+    const res = await request(createAcceptancePublicApp({ pool: makePool(), token: TOKEN }))
+      .post('/acceptance/results')
+      .set('Content-Type', 'application/json')
+      .send('{bad json');
+    expect(res.status).toBe(401);
+  });
+
   it('listener 默认绑定 127.0.0.1', async () => {
     process.env.ACCEPTANCE_API_TOKEN = TOKEN;
     const server = startAcceptancePublicServer({ pool: makePool(), port: 0 });
