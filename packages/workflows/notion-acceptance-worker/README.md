@@ -21,7 +21,7 @@ Brain (SSOT)                       Notion 云                        员工/主�
 npm install -g ntn            # Notion 官方 CLI
 export NOTION_KEYRING=0       # mosh/tmux 环境钥匙串不可用，走文件存储
 ntn login                     # 登录 Zenithjoy-July workspace（员工工作区）
-cd packages/notion-acceptance-worker
+cd packages/workflows/notion-acceptance-worker
 npm install
 npm run check                 # tsc --noEmit
 ntn workers deploy            # workers.json 已绑定 worker 019fac67-c538-70be-8fe0-b5614cef3cb1
