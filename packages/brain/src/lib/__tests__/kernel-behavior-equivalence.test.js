@@ -2306,6 +2306,266 @@ describe('honest equivalence report', () => {
     expect(propertyReads).toBeLessThanOrEqual(16);
   });
 
+  it('snapshots a stateful behavior ID exactly once before auditing', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const original = validation.behaviors[1];
+    const originalId = original.behavior_id;
+    const duplicateId = validation.behaviors[0].behavior_id;
+    let identifierReads = 0;
+    let ownKeysReads = 0;
+    validation.behaviors[1] = new Proxy(original, {
+      get(target, property, receiver) {
+        if (property === 'behavior_id') {
+          identifierReads += 1;
+          return identifierReads === 1 ? originalId : duplicateId;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+      ownKeys() {
+        ownKeysReads += 1;
+        throw new Error('behavior was enumerated');
+      },
+    });
+
+    const report = buildEquivalenceReport(validation);
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: true,
+      schema_valid: true,
+    });
+    expect(report.behaviors).toHaveLength(11);
+    expect(new Set(report.behaviors.map(
+      (behavior) => behavior.behavior_id,
+    )).size).toBe(11);
+    expect(identifierReads).toBe(1);
+    expect(ownKeysReads).toBe(0);
+  });
+
+  it('snapshots a stateful invariant ID exactly once before auditing', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const atoms = validation.behaviors[0].atomic_invariants;
+    const original = atoms[1];
+    const originalId = original.invariant_id;
+    const duplicateId = atoms[0].invariant_id;
+    let identifierReads = 0;
+    let ownKeysReads = 0;
+    atoms[1] = new Proxy(original, {
+      get(target, property, receiver) {
+        if (property === 'invariant_id') {
+          identifierReads += 1;
+          return identifierReads === 1 ? originalId : duplicateId;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+      ownKeys() {
+        ownKeysReads += 1;
+        throw new Error('invariant was enumerated');
+      },
+    });
+
+    const report = buildEquivalenceReport(validation);
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: true,
+      schema_valid: true,
+    });
+    expect(report.atomic_details).toHaveLength(43);
+    expect(new Set(report.atomic_details.map(
+      (detail) => detail.invariant_id,
+    )).size).toBe(43);
+    expect(identifierReads).toBe(1);
+    expect(ownKeysReads).toBe(0);
+  });
+
+  it('snapshots a stateful probe ID exactly once before auditing', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const probes =
+      validation.behaviors[0].atomic_invariants[0].probe_definitions;
+    const original = probes[1];
+    const originalId = original.probe_id;
+    const duplicateId = probes[0].probe_id;
+    let identifierReads = 0;
+    let ownKeysReads = 0;
+    probes[1] = new Proxy(original, {
+      get(target, property, receiver) {
+        if (property === 'probe_id') {
+          identifierReads += 1;
+          return identifierReads === 1 ? originalId : duplicateId;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+      ownKeys() {
+        ownKeysReads += 1;
+        throw new Error('probe definition was enumerated');
+      },
+    });
+
+    const report = buildEquivalenceReport(validation);
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: true,
+      schema_valid: true,
+    });
+    expect(report.atomic_details).toHaveLength(43);
+    expect(report.cell_atomic_coverage).toHaveLength(99);
+    expect(identifierReads).toBe(1);
+    expect(ownKeysReads).toBe(0);
+  });
+
+  it('snapshots a stateful recovery gap ID exactly once before auditing', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const atoms = validation.behaviors.flatMap(
+      (behavior) => behavior.atomic_invariants,
+    );
+    const gaps = atoms.flatMap(
+      (atom) => atom?.scenario_plan?.recovery?.coverage_gaps ?? [],
+    );
+    const atom = atoms.find(
+      (candidate) => (
+        candidate?.scenario_plan?.recovery?.coverage_gaps.length > 0
+      ),
+    );
+    const original = atom.scenario_plan.recovery.coverage_gaps[0];
+    const originalId = original.gap_id;
+    const duplicateId = gaps.find((gap) => gap.gap_id !== originalId).gap_id;
+    let identifierReads = 0;
+    let ownKeysReads = 0;
+    atom.scenario_plan.recovery.coverage_gaps[0] = new Proxy(original, {
+      get(target, property, receiver) {
+        if (property === 'gap_id') {
+          identifierReads += 1;
+          return identifierReads === 1 ? originalId : duplicateId;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+      ownKeys() {
+        ownKeysReads += 1;
+        throw new Error('recovery gap was enumerated');
+      },
+    });
+
+    const report = buildEquivalenceReport(validation);
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: true,
+      schema_valid: true,
+      atomic_summary: {
+        recovery_mapping: {
+          coverage_gap_count: 11,
+        },
+      },
+    });
+    expect(report.atomic_details).toHaveLength(43);
+    expect(identifierReads).toBe(1);
+    expect(ownKeysReads).toBe(0);
+  });
+
+  it('snapshots nested scenario recovery objects and bindings once', () => {
+    const validation = validateBehaviorEquivalence(rootContract(), {
+      now: NOW,
+    });
+    const behavior = validation.behaviors.find((candidate) => (
+      candidate.atomic_invariants.some((atom) => (
+        atom.scenario_plan.recovery.bindings.length > 0
+      ))
+    ));
+    const atomIndex = behavior.atomic_invariants.findIndex((candidate) => (
+      candidate.scenario_plan.recovery.bindings.length > 0
+    ));
+    const atom = behavior.atomic_invariants[atomIndex];
+    const rawScenarioPlan = atom.scenario_plan;
+    const rawRecovery = rawScenarioPlan.recovery;
+    const rawBinding = rawRecovery.bindings[0];
+    const originalRecoveryProbeId = rawBinding.recovery_probe_id;
+    const changedRecoveryProbeId = rawBinding.predecessor_probe_ids[0];
+    const reads = {
+      scenario_plan: 0,
+      recovery: 0,
+      bindings: 0,
+      recovery_probe_id: 0,
+    };
+    let ownKeysReads = 0;
+    rawRecovery.bindings[0] = new Proxy(rawBinding, {
+      get(target, property, receiver) {
+        if (property === 'recovery_probe_id') {
+          reads.recovery_probe_id += 1;
+          return reads.recovery_probe_id === 1
+            ? originalRecoveryProbeId
+            : changedRecoveryProbeId;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+      ownKeys() {
+        ownKeysReads += 1;
+        throw new Error('recovery binding was enumerated');
+      },
+    });
+    const recovery = new Proxy(rawRecovery, {
+      get(target, property, receiver) {
+        if (property === 'bindings') reads.bindings += 1;
+        return Reflect.get(target, property, receiver);
+      },
+      ownKeys() {
+        ownKeysReads += 1;
+        throw new Error('recovery scenario was enumerated');
+      },
+    });
+    const scenarioPlan = new Proxy(rawScenarioPlan, {
+      get(target, property, receiver) {
+        if (property === 'recovery') {
+          reads.recovery += 1;
+          return recovery;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+      ownKeys() {
+        ownKeysReads += 1;
+        throw new Error('scenario plan was enumerated');
+      },
+    });
+    behavior.atomic_invariants[atomIndex] = new Proxy(atom, {
+      get(target, property, receiver) {
+        if (property === 'scenario_plan') {
+          reads.scenario_plan += 1;
+          return scenarioPlan;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+      ownKeys() {
+        ownKeysReads += 1;
+        throw new Error('source atom was enumerated');
+      },
+    });
+
+    const report = buildEquivalenceReport(validation);
+
+    expect(report).toMatchObject({
+      report_version: '1.1.0',
+      valid: true,
+      schema_valid: true,
+    });
+    expect(report.atomic_details).toHaveLength(43);
+    expect(reads).toEqual({
+      scenario_plan: 1,
+      recovery: 1,
+      bindings: 1,
+      recovery_probe_id: 1,
+    });
+    expect(ownKeysReads).toBe(0);
+  });
+
   it('snapshots report gates and nested atomic metrics exactly once', () => {
     const validation = validateBehaviorEquivalence(rootContract(), {
       now: NOW,

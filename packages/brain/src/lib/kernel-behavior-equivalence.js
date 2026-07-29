@@ -1182,83 +1182,336 @@ function createAuditArraySnapshotter() {
   };
 }
 
+function createAuditFieldSnapshotter() {
+  const snapshots = new WeakMap();
+  return (object, property) => {
+    if (
+      object == null
+      || (typeof object !== 'object' && typeof object !== 'function')
+    ) {
+      return { ok: true, value: undefined };
+    }
+    let fields = snapshots.get(object);
+    if (fields == null) {
+      fields = new Map();
+      snapshots.set(object, fields);
+    }
+    if (fields.has(property)) return fields.get(property);
+    let snapshot;
+    try {
+      snapshot = {
+        ok: true,
+        value: Reflect.get(object, property),
+      };
+    } catch {
+      snapshot = { ok: false, value: undefined };
+    }
+    Object.freeze(snapshot);
+    fields.set(property, snapshot);
+    return snapshot;
+  };
+}
+
 function atomicSemanticIdsValid(validation, onValidSnapshot = null) {
   const snapshotArray = createAuditArraySnapshotter();
-  const rawBehaviors = snapshotArray(
-    validation?.behaviors,
+  const snapshotField = createAuditFieldSnapshotter();
+  let snapshotFailed = false;
+  let snapshotReferenceEdgeCount = 0;
+  const read = (object, property) => {
+    const result = snapshotField(object, property);
+    if (!result.ok) snapshotFailed = true;
+    return result.value;
+  };
+  const readArray = (object, property, maximum) => {
+    const snapshot = snapshotArray(read(object, property), maximum);
+    if (snapshot == null) snapshotFailed = true;
+    return snapshot ?? Object.freeze([]);
+  };
+  const readReferenceArray = (object, property) => {
+    const remainingEdges = Math.max(
+      0,
+      MAX_REPORT_SEMANTIC_REFERENCE_EDGES - snapshotReferenceEdgeCount,
+    );
+    const snapshot = snapshotArray(
+      read(object, property),
+      Math.min(MAX_REPORT_PROBES, remainingEdges),
+    );
+    if (snapshot == null) {
+      snapshotFailed = true;
+      return Object.freeze([]);
+    }
+    snapshotReferenceEdgeCount += snapshot.length;
+    return snapshot;
+  };
+  const snapshotRecordArray = (values, snapshotRecord) => Object.freeze(
+    values.map(snapshotRecord),
+  );
+  const snapshotRecoveryGap = (gap) => Object.freeze({
+    gap_id: read(gap, 'gap_id'),
+    affected_violation_probe_ids: readReferenceArray(
+      gap,
+      'affected_violation_probe_ids',
+    ),
+    affected_recovery_probe_ids: readReferenceArray(
+      gap,
+      'affected_recovery_probe_ids',
+    ),
+    appendix_predecessor_text: read(gap, 'appendix_predecessor_text'),
+    reason: read(gap, 'reason'),
+    owner: read(gap, 'owner'),
+    closure_plan: read(gap, 'closure_plan'),
+  });
+  const snapshotBinding = (binding) => {
+    const recoveryProbeId = read(binding, 'recovery_probe_id');
+    snapshotReferenceEdgeCount += 1;
+    if (
+      snapshotReferenceEdgeCount > MAX_REPORT_SEMANTIC_REFERENCE_EDGES
+    ) {
+      snapshotFailed = true;
+    }
+    return Object.freeze({
+      recovery_probe_id: recoveryProbeId,
+      predecessor_probe_ids: readReferenceArray(
+        binding,
+        'predecessor_probe_ids',
+      ),
+    });
+  };
+  const snapshotSourceAtom = (atom) => {
+    const rawProbeDefinitions = readArray(
+      atom,
+      'probe_definitions',
+      MAX_REPORT_PROBES,
+    );
+    const rawScenarioPlan = read(atom, 'scenario_plan');
+    const scenarioPlan = {};
+    for (const scenario of PROOF_SCENARIOS) {
+      const rawScenario = read(rawScenarioPlan, scenario);
+      const requiredProbeIds = readReferenceArray(
+        rawScenario,
+        'required_probe_ids',
+      );
+      if (scenario !== 'recovery') {
+        scenarioPlan[scenario] = Object.freeze({
+          required_probe_ids: requiredProbeIds,
+        });
+        continue;
+      }
+      const rawBindings = readArray(
+        rawScenario,
+        'bindings',
+        MAX_REPORT_PROBES,
+      );
+      const rawCoverageGaps = readArray(
+        rawScenario,
+        'coverage_gaps',
+        MAX_REPORT_PROBES,
+      );
+      scenarioPlan[scenario] = Object.freeze({
+        required_probe_ids: requiredProbeIds,
+        bindings: snapshotRecordArray(rawBindings, snapshotBinding),
+        coverage_gaps: snapshotRecordArray(
+          rawCoverageGaps,
+          snapshotRecoveryGap,
+        ),
+      });
+    }
+    return Object.freeze({
+      invariant_id: read(atom, 'invariant_id'),
+      classification: read(atom, 'classification'),
+      proof_status: read(atom, 'proof_status'),
+      steps: readArray(atom, 'steps', MAX_REPORT_STEPS),
+      dimensions: readArray(atom, 'dimensions', MAX_REPORT_DIMENSIONS),
+      probe_definitions: snapshotRecordArray(
+        rawProbeDefinitions,
+        (probe) => Object.freeze({
+          probe_id: read(probe, 'probe_id'),
+        }),
+      ),
+      scenario_plan: Object.freeze(scenarioPlan),
+    });
+  };
+  const snapshotVerifiedAtom = (atom) => Object.freeze({
+    invariant_id: read(atom, 'invariant_id'),
+    classification: read(atom, 'classification'),
+    proof_status: read(atom, 'proof_status'),
+    steps: readArray(atom, 'steps', MAX_REPORT_STEPS),
+    dimensions: readArray(atom, 'dimensions', MAX_REPORT_DIMENSIONS),
+    effective_status: read(atom, 'effective_status'),
+    projection: read(atom, 'projection'),
+    na_reason: read(atom, 'na_reason'),
+    retired_absence_current: read(atom, 'retired_absence_current'),
+    retired_absence_probe_statuses: snapshotRecordArray(
+      readArray(
+        atom,
+        'retired_absence_probe_statuses',
+        MAX_REPORT_PROBES,
+      ),
+      (status) => Object.freeze({
+        probe_id: read(status, 'probe_id'),
+        status: read(status, 'status'),
+      }),
+    ),
+  });
+  const snapshotProofMatrix = (matrix) => Object.freeze(
+    Object.fromEntries(PROOF_PROVIDERS.map((provider) => {
+      const rawProvider = read(matrix, provider);
+      return [provider, Object.freeze(Object.fromEntries(
+        PROOF_SCENARIOS.map((scenario) => {
+          const proof = read(rawProvider, scenario);
+          return [scenario, Object.freeze({
+            test_command: read(proof, 'test_command'),
+            expected_result: read(proof, 'expected_result'),
+            observed_result: read(proof, 'observed_result'),
+            effect_receipt_id: read(proof, 'effect_receipt_id'),
+            evidence_refs: readArray(
+              proof,
+              'evidence_refs',
+              MAX_REPORT_METADATA_ITEMS,
+            ),
+          })];
+        }),
+      ))];
+    })),
+  );
+  const snapshotBehavior = (behavior) => {
+    const rawSourceAtoms = readArray(
+      behavior,
+      'atomic_invariants',
+      MAX_REPORT_ATOMS,
+    );
+    const rawVerifiedAtoms = readArray(
+      behavior,
+      'atoms',
+      MAX_REPORT_ATOMS,
+    );
+    const proofIdentity = read(behavior, 'proof_identity');
+    const freshness = read(behavior, 'freshness');
+    const gap = read(behavior, 'gap');
+    return Object.freeze({
+      behavior_id: read(behavior, 'behavior_id'),
+      priority: read(behavior, 'priority'),
+      owner: read(behavior, 'owner'),
+      contract_version: read(behavior, 'contract_version'),
+      claimed_status: read(behavior, 'claimed_status'),
+      effective_status: read(behavior, 'effective_status'),
+      steps: readArray(behavior, 'steps', MAX_REPORT_STEPS),
+      dimensions: readArray(
+        behavior,
+        'dimensions',
+        MAX_REPORT_DIMENSIONS,
+      ),
+      assertion_id: read(behavior, 'assertion_id'),
+      legacy_behavior: read(behavior, 'legacy_behavior'),
+      legacy_evidence: readArray(
+        behavior,
+        'legacy_evidence',
+        MAX_REPORT_METADATA_ITEMS,
+      ),
+      unified_constructs: readArray(
+        behavior,
+        'unified_constructs',
+        MAX_REPORT_METADATA_ITEMS,
+      ),
+      failure_semantics: read(behavior, 'failure_semantics'),
+      partial_behavioral_evidence: readArray(
+        behavior,
+        'partial_behavioral_evidence',
+        MAX_REPORT_METADATA_ITEMS,
+      ),
+      proof_matrix: snapshotProofMatrix(read(behavior, 'proof_matrix')),
+      proof_identity: Object.freeze({
+        artifact_sha: read(proofIdentity, 'artifact_sha'),
+        version: read(proofIdentity, 'version'),
+      }),
+      freshness: Object.freeze({
+        verified_at: read(freshness, 'verified_at'),
+        expires_at: read(freshness, 'expires_at'),
+      }),
+      gap: Object.freeze({
+        reason: read(gap, 'reason'),
+        owner: read(gap, 'owner'),
+        closure_plan: read(gap, 'closure_plan'),
+      }),
+      findings: snapshotRecordArray(
+        readArray(
+          behavior,
+          'findings',
+          MAX_REPORT_METADATA_ITEMS,
+        ),
+        (finding) => Object.freeze({
+          code: read(finding, 'code'),
+          message: read(finding, 'message'),
+        }),
+      ),
+      atomic_invariants: snapshotRecordArray(
+        rawSourceAtoms,
+        snapshotSourceAtom,
+      ),
+      atoms: snapshotRecordArray(rawVerifiedAtoms, snapshotVerifiedAtom),
+    });
+  };
+
+  const rawBehaviors = readArray(
+    validation,
+    'behaviors',
     MAX_REPORT_FAMILIES,
   );
+  const behaviorSnapshots = snapshotRecordArray(
+    rawBehaviors,
+    snapshotBehavior,
+  );
   if (
-    rawBehaviors == null
-    || rawBehaviors.length !== MAX_REPORT_FAMILIES
+    snapshotFailed
+    || behaviorSnapshots.length !== MAX_REPORT_FAMILIES
   ) {
     return false;
   }
-  const behaviorIds = rawBehaviors.map((behavior) => behavior?.behavior_id);
+
+  const behaviorIds = behaviorSnapshots.map(
+    (behavior) => behavior.behavior_id,
+  );
   if (!uniqueSemanticIdentifiers(behaviorIds)) return false;
 
   const invariantIds = new Set();
   const verifiedInvariantIds = new Set();
   const probeIds = new Set();
   const recoveryGapIds = new Set();
-  for (const behavior of rawBehaviors) {
+  for (const behavior of behaviorSnapshots) {
     const familyInvariantIds = new Set();
     const familyVerifiedIds = new Set();
-    const sourceAtoms = snapshotArray(
-      behavior?.atomic_invariants,
-      MAX_REPORT_ATOMS,
-    );
-    const verifiedAtoms = snapshotArray(
-      behavior?.atoms,
-      MAX_REPORT_ATOMS,
-    );
-    if (
-      sourceAtoms == null
-      || verifiedAtoms == null
-    ) {
-      return false;
-    }
-    for (const atom of sourceAtoms) {
+    for (const atom of behavior.atomic_invariants) {
       if (
-        !addUniqueSemanticIdentifier(invariantIds, atom?.invariant_id)
+        !addUniqueSemanticIdentifier(invariantIds, atom.invariant_id)
         || !addUniqueSemanticIdentifier(
           familyInvariantIds,
-          atom?.invariant_id,
+          atom.invariant_id,
         )
       ) {
         return false;
       }
-      const probeDefinitions = snapshotArray(
-        atom?.probe_definitions,
-        MAX_REPORT_PROBES,
-      );
-      if (probeDefinitions == null) return false;
-      for (const probe of probeDefinitions) {
-        if (!addUniqueSemanticIdentifier(probeIds, probe?.probe_id)) {
+      for (const probe of atom.probe_definitions) {
+        if (!addUniqueSemanticIdentifier(probeIds, probe.probe_id)) {
           return false;
         }
       }
-      const recovery = asObject(atom?.scenario_plan?.recovery);
-      const recoveryGaps = snapshotArray(
-        recovery.coverage_gaps,
-        MAX_REPORT_PROBES,
-      );
-      if (recoveryGaps == null) return false;
-      for (const gap of recoveryGaps) {
-        if (!addUniqueSemanticIdentifier(recoveryGapIds, gap?.gap_id)) {
+      for (const gapRecord of atom.scenario_plan.recovery.coverage_gaps) {
+        if (
+          !addUniqueSemanticIdentifier(recoveryGapIds, gapRecord.gap_id)
+        ) {
           return false;
         }
       }
     }
-    for (const atom of verifiedAtoms) {
+    for (const atom of behavior.atoms) {
       if (
         !addUniqueSemanticIdentifier(
           verifiedInvariantIds,
-          atom?.invariant_id,
+          atom.invariant_id,
         )
         || !addUniqueSemanticIdentifier(
           familyVerifiedIds,
-          atom?.invariant_id,
+          atom.invariant_id,
         )
       ) {
         return false;
@@ -1298,67 +1551,32 @@ function atomicSemanticIdsValid(validation, onValidSnapshot = null) {
     }
     return values.every(validReference);
   };
-  for (const behavior of rawBehaviors) {
-    const sourceAtoms = snapshotArray(
-      behavior?.atomic_invariants,
-      MAX_REPORT_ATOMS,
-    );
-    if (sourceAtoms == null) return false;
-    for (const atom of sourceAtoms) {
+  for (const behavior of behaviorSnapshots) {
+    for (const atom of behavior.atomic_invariants) {
       for (const scenario of PROOF_SCENARIOS) {
-        const requiredProbeIds = snapshotArray(
-          atom?.scenario_plan?.[scenario]?.required_probe_ids,
-          MAX_REPORT_PROBES,
-        );
         if (
-          requiredProbeIds == null
-          || !validReferenceList(requiredProbeIds)
+          !validReferenceList(
+            atom.scenario_plan[scenario].required_probe_ids,
+          )
         ) {
           return false;
         }
       }
-      const recovery = asObject(atom?.scenario_plan?.recovery);
-      const recoveryBindings = snapshotArray(
-        recovery.bindings,
-        MAX_REPORT_PROBES,
-      );
-      const recoveryGaps = snapshotArray(
-        recovery.coverage_gaps,
-        MAX_REPORT_PROBES,
-      );
-      if (
-        recoveryBindings == null
-        || recoveryGaps == null
-      ) {
-        return false;
-      }
-      for (const binding of recoveryBindings) {
-        if (!validReference(binding?.recovery_probe_id)) return false;
-        const predecessorProbeIds = snapshotArray(
-          binding?.predecessor_probe_ids,
-          MAX_REPORT_PROBES,
-        );
-        if (
-          predecessorProbeIds == null
-          || !validReferenceList(predecessorProbeIds)
-        ) {
+      const recovery = atom.scenario_plan.recovery;
+      for (const binding of recovery.bindings) {
+        if (!validReference(binding.recovery_probe_id)) return false;
+        if (!validReferenceList(binding.predecessor_probe_ids)) {
           return false;
         }
       }
-      for (const gap of recoveryGaps) {
-        const affectedViolationProbeIds = snapshotArray(
-          gap?.affected_violation_probe_ids,
-          MAX_REPORT_PROBES,
-        );
-        const affectedRecoveryProbeIds = snapshotArray(
-          gap?.affected_recovery_probe_ids,
-          MAX_REPORT_PROBES,
-        );
+      for (const gapRecord of recovery.coverage_gaps) {
         if (
-          affectedViolationProbeIds == null
-          || affectedRecoveryProbeIds == null
-          || !validReferenceList(affectedViolationProbeIds)
-          || !validReferenceList(affectedRecoveryProbeIds)
+          !validReferenceList(
+            gapRecord.affected_violation_probe_ids,
+          )
+          || !validReferenceList(
+            gapRecord.affected_recovery_probe_ids,
+          )
         ) {
           return false;
         }
@@ -1379,189 +1597,8 @@ function atomicSemanticIdsValid(validation, onValidSnapshot = null) {
       }
     }
   }
-  const snapshotRecoveryGap = (gap) => {
-    const affectedViolationProbeIds = snapshotArray(
-      gap?.affected_violation_probe_ids,
-      MAX_REPORT_PROBES,
-    );
-    const affectedRecoveryProbeIds = snapshotArray(
-      gap?.affected_recovery_probe_ids,
-      MAX_REPORT_PROBES,
-    );
-    if (
-      affectedViolationProbeIds == null
-      || affectedRecoveryProbeIds == null
-    ) {
-      return null;
-    }
-    return Object.freeze({
-      gap_id: gap?.gap_id,
-      affected_violation_probe_ids: affectedViolationProbeIds,
-      affected_recovery_probe_ids: affectedRecoveryProbeIds,
-      appendix_predecessor_text: gap?.appendix_predecessor_text,
-      reason: gap?.reason,
-      owner: gap?.owner,
-      closure_plan: gap?.closure_plan,
-    });
-  };
-  const snapshotBinding = (binding) => {
-    const predecessorProbeIds = snapshotArray(
-      binding?.predecessor_probe_ids,
-      MAX_REPORT_PROBES,
-    );
-    return predecessorProbeIds == null ? null : Object.freeze({
-      recovery_probe_id: binding?.recovery_probe_id,
-      predecessor_probe_ids: predecessorProbeIds,
-    });
-  };
-  const snapshotSourceAtom = (atom) => {
-    const probeDefinitions = snapshotArray(
-      atom?.probe_definitions,
-      MAX_REPORT_PROBES,
-    );
-    const steps = snapshotArray(atom?.steps, MAX_REPORT_STEPS);
-    const dimensions = snapshotArray(
-      atom?.dimensions,
-      MAX_REPORT_DIMENSIONS,
-    );
-    if (
-      probeDefinitions == null
-      || steps == null
-      || dimensions == null
-    ) {
-      return null;
-    }
-    const rawScenarioPlan = asObject(atom?.scenario_plan);
-    const scenarioPlan = {};
-    for (const scenario of PROOF_SCENARIOS) {
-      const rawScenario = asObject(rawScenarioPlan[scenario]);
-      const requiredProbeIds = snapshotArray(
-        rawScenario.required_probe_ids,
-        MAX_REPORT_PROBES,
-      );
-      if (requiredProbeIds == null) return null;
-      if (scenario !== 'recovery') {
-        scenarioPlan[scenario] = Object.freeze({
-          required_probe_ids: requiredProbeIds,
-        });
-        continue;
-      }
-      const bindings = snapshotArray(
-        rawScenario.bindings,
-        MAX_REPORT_PROBES,
-      );
-      const coverageGaps = snapshotArray(
-        rawScenario.coverage_gaps,
-        MAX_REPORT_PROBES,
-      );
-      if (bindings == null || coverageGaps == null) return null;
-      const bindingSnapshots = bindings.map(snapshotBinding);
-      const gapSnapshots = coverageGaps.map(snapshotRecoveryGap);
-      if (
-        bindingSnapshots.includes(null)
-        || gapSnapshots.includes(null)
-      ) {
-        return null;
-      }
-      scenarioPlan[scenario] = Object.freeze({
-        required_probe_ids: requiredProbeIds,
-        bindings: Object.freeze(bindingSnapshots),
-        coverage_gaps: Object.freeze(gapSnapshots),
-      });
-    }
-    return Object.freeze({
-      invariant_id: atom?.invariant_id,
-      classification: atom?.classification,
-      proof_status: atom?.proof_status,
-      steps,
-      dimensions,
-      probe_definitions: Object.freeze(probeDefinitions.map(
-        (probe) => Object.freeze({ probe_id: probe?.probe_id }),
-      )),
-      scenario_plan: Object.freeze(scenarioPlan),
-    });
-  };
-  const snapshotVerifiedAtom = (atom) => {
-    const steps = snapshotArray(atom?.steps, MAX_REPORT_STEPS);
-    const dimensions = snapshotArray(
-      atom?.dimensions,
-      MAX_REPORT_DIMENSIONS,
-    );
-    const retiredStatuses = snapshotArray(
-      atom?.retired_absence_probe_statuses,
-      MAX_REPORT_PROBES,
-    );
-    if (
-      steps == null
-      || dimensions == null
-      || retiredStatuses == null
-    ) {
-      return null;
-    }
-    return Object.freeze({
-      invariant_id: atom?.invariant_id,
-      classification: atom?.classification,
-      proof_status: atom?.proof_status,
-      steps,
-      dimensions,
-      effective_status: atom?.effective_status,
-      projection: atom?.projection,
-      na_reason: atom?.na_reason,
-      retired_absence_current: atom?.retired_absence_current,
-      retired_absence_probe_statuses: Object.freeze(
-        retiredStatuses.map((status) => Object.freeze({
-          probe_id: status?.probe_id,
-          status: status?.status,
-        })),
-      ),
-    });
-  };
-  const behaviorSnapshots = rawBehaviors.map((behavior) => {
-    const sourceAtoms = snapshotArray(
-      behavior?.atomic_invariants,
-      MAX_REPORT_ATOMS,
-    );
-    const verifiedAtoms = snapshotArray(
-      behavior?.atoms,
-      MAX_REPORT_ATOMS,
-    );
-    if (sourceAtoms == null || verifiedAtoms == null) return null;
-    const sourceSnapshots = sourceAtoms.map(snapshotSourceAtom);
-    const verifiedSnapshots = verifiedAtoms.map(snapshotVerifiedAtom);
-    if (
-      sourceSnapshots.includes(null)
-      || verifiedSnapshots.includes(null)
-    ) {
-      return null;
-    }
-    return Object.freeze({
-      behavior_id: behavior?.behavior_id,
-      priority: behavior?.priority,
-      owner: behavior?.owner,
-      contract_version: behavior?.contract_version,
-      claimed_status: behavior?.claimed_status,
-      effective_status: behavior?.effective_status,
-      steps: behavior?.steps,
-      dimensions: behavior?.dimensions,
-      assertion_id: behavior?.assertion_id,
-      legacy_behavior: behavior?.legacy_behavior,
-      legacy_evidence: behavior?.legacy_evidence,
-      unified_constructs: behavior?.unified_constructs,
-      failure_semantics: behavior?.failure_semantics,
-      partial_behavioral_evidence:
-        behavior?.partial_behavioral_evidence,
-      proof_matrix: behavior?.proof_matrix,
-      proof_identity: behavior?.proof_identity,
-      freshness: behavior?.freshness,
-      gap: behavior?.gap,
-      findings: behavior?.findings,
-      atomic_invariants: Object.freeze(sourceSnapshots),
-      atoms: Object.freeze(verifiedSnapshots),
-    });
-  });
-  if (behaviorSnapshots.includes(null)) return false;
   onValidSnapshot?.(Object.freeze({
-    behaviors: Object.freeze(behaviorSnapshots),
+    behaviors: behaviorSnapshots,
   }));
   return true;
 }
