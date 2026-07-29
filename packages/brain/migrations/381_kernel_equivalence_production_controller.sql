@@ -87,7 +87,8 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_case_binding_guard
   ON kernel_equivalence_production_case_bindings;
@@ -123,7 +124,8 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_bound_attempt_immutable
   ON harness_attempts;
@@ -154,7 +156,8 @@ BEGIN
   ON CONFLICT (case_id) DO NOTHING;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_create_execution_fence
   ON kernel_equivalence_production_case_bindings;
@@ -201,7 +204,8 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_active_execution_lease_guard
   ON kernel_equivalence_production_case_leases;
@@ -412,6 +416,28 @@ BEGIN
       'kernel equivalence execution event generation mismatch';
   END IF;
 
+  SELECT
+      cases.expires_at,
+      leases.lease_expires_at,
+      leases.owner_id,
+      leases.state
+    INTO
+      case_expires_at,
+      production_lease_expires_at,
+      production_lease_owner,
+      production_lease_state
+    FROM kernel_equivalence_production_case_leases leases
+    JOIN kernel_equivalence_production_cases cases
+      ON cases.case_id = leases.case_id
+   WHERE leases.case_id = NEW.case_id
+   FOR UPDATE OF leases
+   FOR SHARE OF cases;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION
+      'kernel equivalence production execution authority expiry unavailable';
+  END IF;
+  authority_now := clock_timestamp();
+
   SELECT execution_active
     INTO fence_active
     FROM kernel_equivalence_production_execution_fences
@@ -544,27 +570,6 @@ BEGIN
       'kernel equivalence execution event transition mismatch';
   END IF;
 
-  SELECT
-      cases.expires_at,
-      leases.lease_expires_at,
-      leases.owner_id,
-      leases.state
-    INTO
-      case_expires_at,
-      production_lease_expires_at,
-      production_lease_owner,
-      production_lease_state
-    FROM kernel_equivalence_production_case_leases leases
-    JOIN kernel_equivalence_production_cases cases
-      ON cases.case_id = leases.case_id
-   WHERE leases.case_id = NEW.case_id
-   FOR UPDATE OF leases
-   FOR SHARE OF cases;
-  IF NOT FOUND THEN
-    RAISE EXCEPTION
-      'kernel equivalence production execution authority expiry unavailable';
-  END IF;
-  authority_now := clock_timestamp();
   IF (
        NEW.controller_lease_expires_at IS NOT NULL
        AND NEW.controller_lease_expires_at > LEAST(
@@ -738,7 +743,8 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_execution_event_guard
   ON kernel_equivalence_production_execution_events;
@@ -773,7 +779,8 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_execution_fence_update_guard
   ON kernel_equivalence_production_execution_fences;
@@ -796,7 +803,8 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_set_execution_fence
   ON kernel_equivalence_production_execution_events;
@@ -812,7 +820,8 @@ BEGIN
     'kernel equivalence production controller evidence is append-only (% blocked)',
     TG_OP;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_kernel_equivalence_execution_fences_no_delete
   ON kernel_equivalence_production_execution_fences;

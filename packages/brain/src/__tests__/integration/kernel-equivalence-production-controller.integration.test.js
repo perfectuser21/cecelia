@@ -65,6 +65,10 @@ const migration = readFileSync(
   ),
   'utf8',
 );
+const integrationMigration = migration.replaceAll(
+  'SET search_path = public, pg_temp',
+  `SET search_path = ${schemaName}, pg_temp`,
+);
 const grantAuthorityMigration = readFileSync(
   new URL(
     '../../../migrations/382_kernel_equivalence_grant_authority.sql',
@@ -351,13 +355,16 @@ async function waitForDatabaseTimeAfter(timestamp) {
 
 async function waitForLockOrCompletion(backendPid, completed) {
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    const activity = await pool.query(
-      `SELECT wait_event_type
-         FROM pg_stat_activity
-        WHERE pid = $1`,
+    const locks = await pool.query(
+      `SELECT EXISTS (
+         SELECT 1
+           FROM pg_locks
+          WHERE pid = $1
+            AND granted = false
+       ) AS waiting`,
       [backendPid],
     );
-    if (activity.rows[0]?.wait_event_type === 'Lock') return true;
+    if (locks.rows[0]?.waiting === true) return true;
     if (completed()) return false;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -527,8 +534,8 @@ beforeAll(async () => {
       lease_expires_at TIMESTAMPTZ NOT NULL
     );
   `);
-  await pool.query(migration);
-  await pool.query(migration);
+  await pool.query(integrationMigration);
+  await pool.query(integrationMigration);
   await pool.query(grantAuthorityMigration);
   await insertAuthority({
     attemptId: ACTIVE_ATTEMPT,
@@ -638,6 +645,139 @@ afterAll(async () => {
 });
 
 describe('production controller restart fencing on real PostgreSQL', () => {
+  it('pins owner terminal inserts to real grant tombstones under hostile search_path', async () => {
+    const caseId = randomUUID();
+    const attemptId = randomUUID();
+    const receiptId = randomUUID();
+    const grantId = randomUUID();
+    await insertAuthority({
+      attemptId,
+      caseId,
+      receiptId,
+      sessionId: 'owner-terminal-search-path',
+    });
+    await insertClaim({
+      caseId,
+      eventId: randomUUID(),
+      leaseSql: "clock_timestamp() + interval '1 minute'",
+    });
+    const { grant, grantSha256 } = await registerFixtureGrant({
+      caseId,
+      grantId,
+    });
+    const client = await pool.connect();
+    try {
+      await client.query(`
+        CREATE TEMP TABLE kernel_equivalence_grant_authorities (
+          grant_id UUID PRIMARY KEY,
+          case_id UUID NOT NULL,
+          grant_digest TEXT NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL
+        );
+        CREATE TEMP TABLE kernel_equivalence_grant_events (
+          grant_id UUID NOT NULL,
+          state TEXT NOT NULL
+        );
+        CREATE TEMP TABLE kernel_equivalence_grant_revocations (
+          grant_id UUID PRIMARY KEY,
+          grant_digest TEXT NOT NULL,
+          execution_disposition TEXT NOT NULL
+        );
+      `);
+      await client.query(
+        `INSERT INTO pg_temp.kernel_equivalence_grant_authorities
+           (grant_id, case_id, grant_digest, expires_at)
+         VALUES
+           ($1::uuid, $2::uuid, $3, $4::timestamptz)`,
+        [grantId, caseId, grantSha256, grant.expires_at],
+      );
+      await client.query(
+        `INSERT INTO pg_temp.kernel_equivalence_grant_events
+           (grant_id, state)
+         VALUES
+           ($1::uuid, 'published')`,
+        [grantId],
+      );
+      await client.query(
+        `INSERT INTO pg_temp.kernel_equivalence_grant_revocations
+           (grant_id, grant_digest, execution_disposition)
+         VALUES
+           ($1::uuid, $2, 'safe_no_effect')`,
+        [grantId, grantSha256],
+      );
+      await client.query(`SET search_path TO pg_temp, ${quotedSchema}`);
+      await expect(client.query(
+        `INSERT INTO ${quotedSchema}.kernel_equivalence_production_execution_events
+           (event_id, case_id, generation, controller_instance_id, state,
+            grant_ref, grant_expires_at, code, late_effect_risk)
+         VALUES
+           ($1::uuid, $2::uuid, 2, $3::uuid, 'blocked',
+            $4, $5::timestamptz, 'hostile_search_path', false)`,
+        [
+          randomUUID(),
+          caseId,
+          OLD_CONTROLLER,
+          `kernel-equivalence-grant:${grantId}`,
+          grant.expires_at,
+        ],
+      )).rejects.toThrow(/durable grant revocation/i);
+    } finally {
+      await client.query(`SET search_path TO ${quotedSchema}`);
+      await client.query(`
+        DROP TABLE IF EXISTS pg_temp.kernel_equivalence_grant_revocations;
+        DROP TABLE IF EXISTS pg_temp.kernel_equivalence_grant_events;
+        DROP TABLE IF EXISTS pg_temp.kernel_equivalence_grant_authorities;
+      `);
+      client.release();
+    }
+    const durable = await pool.query(
+      `SELECT
+         (SELECT count(*)::integer
+            FROM kernel_equivalence_grant_revocations
+           WHERE grant_id = $2::uuid) AS tombstone_count,
+         (SELECT state
+            FROM kernel_equivalence_production_execution_events
+           WHERE case_id = $1::uuid
+           ORDER BY generation DESC
+           LIMIT 1) AS state,
+         (SELECT execution_active
+            FROM kernel_equivalence_production_execution_fences
+           WHERE case_id = $1::uuid) AS execution_active`,
+      [caseId, grantId],
+    );
+    expect(durable.rows[0]).toEqual({
+      tombstone_count: 0,
+      state: 'claimed',
+      execution_active: true,
+    });
+    await expect(durableGrantAuthority(randomUUID()).resolveActiveGrant({
+      grant_id: grantId,
+      grant_sha256: grantSha256,
+      cell_id: CELL_ID,
+    })).resolves.toMatchObject({ active: true });
+    await durableGrantAuthority(OLD_CONTROLLER).revokeGrant({
+      grant_id: grantId,
+      grant_sha256: grantSha256,
+      reason: 'hostile_search_path_cleanup',
+      timeoutMs: 1_000,
+    });
+    await pool.query(
+      `INSERT INTO kernel_equivalence_production_execution_events
+         (event_id, case_id, generation, controller_instance_id, state,
+          grant_ref, grant_expires_at, code, late_effect_risk)
+       VALUES
+         ($1::uuid, $2::uuid, 2, $3::uuid, 'blocked',
+          $4, $5::timestamptz, 'hostile_search_path_cleanup', false)`,
+      [
+        randomUUID(),
+        caseId,
+        OLD_CONTROLLER,
+        `kernel-equivalence-grant:${grantId}`,
+        grant.expires_at,
+      ],
+    );
+  });
+
   it('rejects a pending grant published after null-ref terminal settlement', async () => {
     const caseId = randomUUID();
     const attemptId = randomUUID();
@@ -845,6 +985,356 @@ describe('production controller restart fencing on real PostgreSQL', () => {
       }
     },
   );
+
+  it('orders controller terminal behind the lease lock without deadlock', async () => {
+    const caseId = randomUUID();
+    const attemptId = randomUUID();
+    const receiptId = randomUUID();
+    await insertAuthority({
+      attemptId,
+      caseId,
+      receiptId,
+      sessionId: 'terminal-lease-lock-order',
+    });
+    await insertClaim({
+      caseId,
+      eventId: randomUUID(),
+      leaseSql: "clock_timestamp() + interval '1 minute'",
+    });
+    const leaseHolder = await pool.connect();
+    const terminal = await pool.connect();
+    const terminalPid = Number((
+      await terminal.query('SELECT pg_backend_pid() AS pid')
+    ).rows[0].pid);
+    let terminalCompleted = false;
+    try {
+      await leaseHolder.query('BEGIN');
+      await leaseHolder.query(`SET LOCAL statement_timeout = '5s'`);
+      await leaseHolder.query(
+        `SELECT case_id
+           FROM kernel_equivalence_production_case_leases
+          WHERE case_id = $1::uuid
+          FOR UPDATE`,
+        [caseId],
+      );
+      await terminal.query('BEGIN');
+      await terminal.query(`SET LOCAL statement_timeout = '5s'`);
+      const terminalInsert = terminal.query(
+        `INSERT INTO kernel_equivalence_production_execution_events
+           (event_id, case_id, generation, controller_instance_id,
+            state, code, late_effect_risk)
+         VALUES
+           ($1::uuid, $2::uuid, 2, $3::uuid, 'settlement_unknown',
+            'terminal_lease_lock_order', true)`,
+        [randomUUID(), caseId, OLD_CONTROLLER],
+      ).then(
+        (value) => {
+          terminalCompleted = true;
+          return { ok: true, value };
+        },
+        (error) => {
+          terminalCompleted = true;
+          return { ok: false, error };
+        },
+      );
+      expect(await waitForLockOrCompletion(
+        terminalPid,
+        () => terminalCompleted,
+      )).toBe(true);
+
+      const leaseTransition = await leaseHolder.query(
+        `UPDATE kernel_equivalence_production_case_leases
+            SET lease_expires_at = lease_expires_at + interval '1 second'
+          WHERE case_id = $1::uuid`,
+        [caseId],
+      ).then(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error }),
+      );
+      expect(leaseTransition.ok).toBe(false);
+      expect(leaseTransition.error?.code).not.toBe('40P01');
+      expect(leaseTransition.error?.message).toMatch(
+        /active production execution blocks lease transition/i,
+      );
+      await leaseHolder.query('ROLLBACK');
+
+      const terminalOutcome = await terminalInsert;
+      expect(terminalOutcome.error?.code).not.toBe('40P01');
+      expect(terminalOutcome.ok).toBe(true);
+      await terminal.query('COMMIT');
+      const durable = await pool.query(
+        `SELECT events.state, fences.execution_active
+           FROM kernel_equivalence_production_execution_events events
+           JOIN kernel_equivalence_production_execution_fences fences
+             ON fences.case_id = events.case_id
+          WHERE events.case_id = $1::uuid
+          ORDER BY events.generation DESC
+          LIMIT 1`,
+        [caseId],
+      );
+      expect(durable.rows).toEqual([{
+        state: 'settlement_unknown',
+        execution_active: false,
+      }]);
+    } finally {
+      await leaseHolder.query('ROLLBACK').catch(() => {});
+      await terminal.query('ROLLBACK').catch(() => {});
+      leaseHolder.release();
+      terminal.release();
+    }
+  });
+
+  it('orders grant publication behind the lease lock without deadlock', async () => {
+    const caseId = randomUUID();
+    const attemptId = randomUUID();
+    const receiptId = randomUUID();
+    const grantId = randomUUID();
+    await insertAuthority({
+      attemptId,
+      caseId,
+      receiptId,
+      sessionId: 'publication-lease-lock-order',
+    });
+    const { grantSha256 } = await registerFixtureGrant({
+      caseId,
+      grantId,
+      publish: false,
+    });
+    await insertClaim({
+      caseId,
+      eventId: randomUUID(),
+      leaseSql: "clock_timestamp() + interval '1 minute'",
+    });
+    const leaseHolder = await pool.connect();
+    const publisher = await pool.connect();
+    const publisherPid = Number((
+      await publisher.query('SELECT pg_backend_pid() AS pid')
+    ).rows[0].pid);
+    let publicationCompleted = false;
+    try {
+      await leaseHolder.query('BEGIN');
+      await leaseHolder.query(`SET LOCAL statement_timeout = '5s'`);
+      await leaseHolder.query(
+        `SELECT case_id
+           FROM kernel_equivalence_production_case_leases
+          WHERE case_id = $1::uuid
+          FOR UPDATE`,
+        [caseId],
+      );
+      await publisher.query('BEGIN');
+      await publisher.query(`SET LOCAL statement_timeout = '5s'`);
+      const publication = publisher.query(
+        `SELECT *
+           FROM kernel_equivalence_append_grant_event(
+             $1::uuid, $2, 'published', $3::uuid, '{}'::jsonb
+           )`,
+        [grantId, grantSha256, OLD_CONTROLLER],
+      ).then(
+        (value) => {
+          publicationCompleted = true;
+          return { ok: true, value };
+        },
+        (error) => {
+          publicationCompleted = true;
+          return { ok: false, error };
+        },
+      );
+      expect(await waitForLockOrCompletion(
+        publisherPid,
+        () => publicationCompleted,
+      )).toBe(true);
+
+      const leaseTransition = await leaseHolder.query(
+        `UPDATE kernel_equivalence_production_case_leases
+            SET lease_expires_at = lease_expires_at + interval '1 second'
+          WHERE case_id = $1::uuid`,
+        [caseId],
+      ).then(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error }),
+      );
+      expect(leaseTransition.ok).toBe(false);
+      expect(leaseTransition.error?.code).not.toBe('40P01');
+      expect(leaseTransition.error?.message).toMatch(
+        /active production execution blocks lease transition/i,
+      );
+      await leaseHolder.query('ROLLBACK');
+
+      const publicationOutcome = await publication;
+      expect(publicationOutcome.error?.code).not.toBe('40P01');
+      expect(publicationOutcome.ok).toBe(true);
+      await publisher.query('COMMIT');
+      const durable = await pool.query(
+        `SELECT
+           (SELECT state
+              FROM kernel_equivalence_grant_events
+             WHERE grant_id = $2::uuid
+             ORDER BY generation DESC
+             LIMIT 1) AS grant_state,
+           (SELECT execution_active
+              FROM kernel_equivalence_production_execution_fences
+             WHERE case_id = $1::uuid) AS execution_active`,
+        [caseId, grantId],
+      );
+      expect(durable.rows).toEqual([{
+        grant_state: 'published',
+        execution_active: true,
+      }]);
+      await durableGrantAuthority(OLD_CONTROLLER).revokeGrant({
+        grant_id: grantId,
+        grant_sha256: grantSha256,
+        reason: 'publication_lease_lock_order_cleanup',
+        timeoutMs: 1_000,
+      });
+      const authority = await pool.query(
+        `SELECT expires_at
+           FROM kernel_equivalence_grant_authorities
+          WHERE grant_id = $1::uuid`,
+        [grantId],
+      );
+      await pool.query(
+        `INSERT INTO kernel_equivalence_production_execution_events
+           (event_id, case_id, generation, controller_instance_id, state,
+            grant_ref, grant_expires_at, code, late_effect_risk)
+         VALUES
+           ($1::uuid, $2::uuid, 2, $3::uuid, 'blocked',
+            $4, $5::timestamptz,
+            'publication_lease_lock_order_cleanup', false)`,
+        [
+          randomUUID(),
+          caseId,
+          OLD_CONTROLLER,
+          `kernel-equivalence-grant:${grantId}`,
+          authority.rows[0].expires_at,
+        ],
+      );
+    } finally {
+      await leaseHolder.query('ROLLBACK').catch(() => {});
+      await publisher.query('ROLLBACK').catch(() => {});
+      leaseHolder.release();
+      publisher.release();
+    }
+  });
+
+  it('orders execution intent with duplicate publication without deadlock', async () => {
+    const caseId = randomUUID();
+    const attemptId = randomUUID();
+    const receiptId = randomUUID();
+    const grantId = randomUUID();
+    await insertAuthority({
+      attemptId,
+      caseId,
+      receiptId,
+      sessionId: 'intent-publication-lock-order',
+    });
+    await insertClaim({
+      caseId,
+      eventId: randomUUID(),
+      leaseSql: "clock_timestamp() + interval '1 minute'",
+    });
+    const { grant, grantSha256 } = await registerFixtureGrant({
+      caseId,
+      grantId,
+    });
+    const duplicatePublisher = await pool.connect();
+    const runtime = await pool.connect();
+    const runtimePid = Number((
+      await runtime.query('SELECT pg_backend_pid() AS pid')
+    ).rows[0].pid);
+    let intentCompleted = false;
+    try {
+      await duplicatePublisher.query('BEGIN');
+      await duplicatePublisher.query(
+        `SET LOCAL statement_timeout = '5s'`,
+      );
+      await duplicatePublisher.query(
+        `SELECT case_id
+           FROM kernel_equivalence_production_case_leases
+          WHERE case_id = $1::uuid
+          FOR UPDATE`,
+        [caseId],
+      );
+      await runtime.query('BEGIN');
+      await runtime.query(`SET LOCAL statement_timeout = '5s'`);
+      const executionIntent = runtime.query(
+        `SELECT *
+           FROM kernel_equivalence_append_grant_event(
+             $1::uuid, $2, 'execution_intent', $3::uuid, '{}'::jsonb
+           )`,
+        [grantId, grantSha256, randomUUID()],
+      ).then(
+        (value) => {
+          intentCompleted = true;
+          return { ok: true, value };
+        },
+        (error) => {
+          intentCompleted = true;
+          return { ok: false, error };
+        },
+      );
+      expect(await waitForLockOrCompletion(
+        runtimePid,
+        () => intentCompleted,
+      )).toBe(true);
+
+      const duplicatePublication = await duplicatePublisher.query(
+        `SELECT *
+           FROM kernel_equivalence_append_grant_event(
+             $1::uuid, $2, 'published', $3::uuid, '{}'::jsonb
+           )`,
+        [grantId, grantSha256, OLD_CONTROLLER],
+      ).then(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error }),
+      );
+      expect(duplicatePublication.ok).toBe(false);
+      expect(duplicatePublication.error?.code).not.toBe('40P01');
+      expect(duplicatePublication.error?.message).toMatch(
+        /publication|transition/i,
+      );
+      await duplicatePublisher.query('ROLLBACK');
+
+      const intentOutcome = await executionIntent;
+      expect(intentOutcome.error?.code).not.toBe('40P01');
+      expect(intentOutcome.ok).toBe(true);
+      await runtime.query('COMMIT');
+      await pool.query(
+        `SELECT *
+           FROM kernel_equivalence_append_grant_event(
+             $1::uuid, $2, 'aborted_before_effect', $3::uuid,
+             '{"intent_generation":2}'::jsonb
+           )`,
+        [grantId, grantSha256, randomUUID()],
+      );
+      await durableGrantAuthority(OLD_CONTROLLER).revokeGrant({
+        grant_id: grantId,
+        grant_sha256: grantSha256,
+        reason: 'intent_publication_lock_order_cleanup',
+        timeoutMs: 1_000,
+      });
+      await pool.query(
+        `INSERT INTO kernel_equivalence_production_execution_events
+           (event_id, case_id, generation, controller_instance_id, state,
+            grant_ref, grant_expires_at, code, late_effect_risk)
+         VALUES
+           ($1::uuid, $2::uuid, 2, $3::uuid, 'blocked',
+            $4, $5::timestamptz,
+            'intent_publication_lock_order_cleanup', false)`,
+        [
+          randomUUID(),
+          caseId,
+          OLD_CONTROLLER,
+          `kernel-equivalence-grant:${grantId}`,
+          grant.expires_at,
+        ],
+      );
+    } finally {
+      await duplicatePublisher.query('ROLLBACK').catch(() => {});
+      await runtime.query('ROLLBACK').catch(() => {});
+      duplicatePublisher.release();
+      runtime.release();
+    }
+  });
 
   it.each(['settlement_unknown', 'reconciling'])(
     'revokes a legacy late publication behind null-ref %s',

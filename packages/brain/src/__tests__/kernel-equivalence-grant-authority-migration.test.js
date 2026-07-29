@@ -164,7 +164,67 @@ describe('migration 382 Kernel equivalence grant authority', () => {
     );
   });
 
+  it('uses one documented cross-authority row-lock order', () => {
+    expect(sql).toMatch(
+      /production lease -> execution fence \(publication only\) -> grant authority/i,
+    );
+    const authorityInsertGuard = sql.match(
+      /CREATE OR REPLACE FUNCTION kernel_equivalence_grant_authority_insert_guard\(\)[\s\S]*?\$\$ LANGUAGE plpgsql/i,
+    )?.[0] ?? '';
+    const registerFunction = sql.match(
+      /CREATE OR REPLACE FUNCTION kernel_equivalence_register_grant_authority\([\s\S]*?\$\$ LANGUAGE plpgsql\s+SECURITY DEFINER/i,
+    )?.[0] ?? '';
+    const resolveFunction = sql.match(
+      /CREATE OR REPLACE FUNCTION kernel_equivalence_resolve_active_grant\([\s\S]*?\$\$ LANGUAGE plpgsql\s+SECURITY DEFINER/i,
+    )?.[0] ?? '';
+    const revocationInsertGuard = sql.match(
+      /CREATE OR REPLACE FUNCTION kernel_equivalence_grant_revocation_insert_guard\(\)[\s\S]*?\$\$ LANGUAGE plpgsql/i,
+    )?.[0] ?? '';
+    const revokeFunction = sql.match(
+      /CREATE OR REPLACE FUNCTION kernel_equivalence_revoke_grant\([\s\S]*?\$\$ LANGUAGE plpgsql\s+SECURITY DEFINER/i,
+    )?.[0] ?? '';
+
+    expect(authorityInsertGuard).toMatch(/FOR UPDATE OF leases/i);
+    const registerLeaseLock = registerFunction.indexOf(
+      'FOR UPDATE OF leases',
+    );
+    expect(registerLeaseLock).toBeGreaterThan(-1);
+    expect(registerFunction.indexOf(
+      'INSERT INTO kernel_equivalence_grant_authorities',
+    )).toBeGreaterThan(registerLeaseLock);
+
+    const resolveLeaseLock = resolveFunction.indexOf(
+      'FOR SHARE OF leases',
+    );
+    const resolveAuthorityLock = resolveFunction.indexOf(
+      'FOR SHARE OF authorities',
+    );
+    expect(resolveLeaseLock).toBeGreaterThan(-1);
+    expect(resolveAuthorityLock).toBeGreaterThan(resolveLeaseLock);
+    expect(resolveFunction).not.toMatch(
+      /FOR SHARE OF authorities, bindings, cases, leases/i,
+    );
+
+    for (const authorityOnlyFunction of [
+      revocationInsertGuard,
+      revokeFunction,
+    ]) {
+      expect(authorityOnlyFunction).toMatch(
+        /FROM kernel_equivalence_grant_authorities/i,
+      );
+      expect(authorityOnlyFunction).not.toMatch(
+        /kernel_equivalence_production_case_leases/i,
+      );
+    }
+  });
+
   it('enforces publication, intent, terminal, generation, and revoke ordering', () => {
+    const appendFunction = sql.match(
+      /CREATE OR REPLACE FUNCTION kernel_equivalence_append_grant_event\([\s\S]*?\$\$ LANGUAGE plpgsql\s+SECURITY DEFINER/i,
+    )?.[0] ?? '';
+    const insertGuard = sql.match(
+      /CREATE OR REPLACE FUNCTION kernel_equivalence_grant_event_insert_guard\(\)[\s\S]*?\$\$ LANGUAGE plpgsql/i,
+    )?.[0] ?? '';
     expect(sql).toMatch(
       /next_generation <> previous_generation \+ 1/i,
     );
@@ -190,12 +250,28 @@ describe('migration 382 Kernel equivalence grant authority', () => {
     expect(sql).toMatch(
       /IF FOUND THEN[\s\S]*existing_revocation\.reason IS DISTINCT FROM p_reason[\s\S]*RETURN QUERY[\s\S]*END IF;[\s\S]*computed_disposition :=/i,
     );
-    expect(sql).toMatch(
-      /IF p_state = 'published' THEN[\s\S]*SELECT fences\.execution_active[\s\S]*FOR UPDATE;[\s\S]*publication execution fence is inactive[\s\S]*SELECT authorities\.grant_digest[\s\S]*FOR UPDATE;/i,
-    );
-    expect(sql).toMatch(
-      /IF NEW\.state = 'published' THEN[\s\S]*SELECT fences\.execution_active[\s\S]*FOR UPDATE;[\s\S]*publication execution fence is inactive[\s\S]*SELECT authorities\.grant_digest[\s\S]*FOR UPDATE;/i,
-    );
+    for (const definition of [appendFunction, insertGuard]) {
+      const leaseLockIndex = definition.indexOf('FOR UPDATE OF leases');
+      const fenceLockIndex = definition.indexOf(
+        'FROM kernel_equivalence_production_execution_fences',
+        leaseLockIndex,
+      );
+      const publicationValidationIndex = definition.indexOf(
+        'publication execution fence is inactive',
+        fenceLockIndex,
+      );
+      const authorityLockIndex = definition.indexOf(
+        'SELECT authorities.grant_digest',
+        fenceLockIndex,
+      );
+      expect(leaseLockIndex).toBeGreaterThan(-1);
+      expect(fenceLockIndex).toBeGreaterThan(leaseLockIndex);
+      expect(publicationValidationIndex).toBeGreaterThan(fenceLockIndex);
+      expect(authorityLockIndex).toBeGreaterThan(fenceLockIndex);
+      expect(definition).toMatch(
+        /IF (?:p_state|NEW\.state) IN \('published', 'execution_intent'\) THEN[\s\S]*FOR UPDATE OF leases/i,
+      );
+    }
     expect(sql).toMatch(
       /VALUES \('382', 'kernel_equivalence_grant_authority'\)/i,
     );

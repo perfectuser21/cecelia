@@ -1569,7 +1569,7 @@ export function createPostgresKernelEquivalenceCoordinator({
             row.state !== 'settlement_unknown'
             && row.controller_instance_id === controllerInstanceId
             && row.lease_expired !== true
-            && !orphanedPublication
+            && (!orphanedPublication || row.state === 'claimed')
           ) {
             retainedUnknown += 1;
             continue;

@@ -7,6 +7,29 @@ const migrationUrl = new URL(
 );
 
 describe('migration 381 Kernel equivalence production controller', () => {
+  it('pins every trigger function to the authority schema', () => {
+    const sql = readFileSync(migrationUrl, 'utf8');
+    const functionStarts = [
+      ...sql.matchAll(
+        /CREATE OR REPLACE FUNCTION\s+([a-z0-9_]+)\s*\(/gi,
+      ),
+    ];
+
+    expect(functionStarts).toHaveLength(8);
+    for (const [index, match] of functionStarts.entries()) {
+      const definition = sql.slice(
+        match.index,
+        functionStarts[index + 1]?.index ?? sql.length,
+      );
+      expect(
+        definition,
+        `${match[1]} must use the production authority schema`,
+      ).toMatch(
+        /\$\$ LANGUAGE plpgsql\s+SET search_path = public, pg_temp;/i,
+      );
+    }
+  });
+
   it('binds every executable case to authoritative Attempt and result receipt facts', () => {
     const sql = readFileSync(migrationUrl, 'utf8');
 
@@ -127,6 +150,9 @@ describe('migration 381 Kernel equivalence production controller', () => {
 
   it('persists append-only controller settlement events for startup reconciliation', () => {
     const sql = readFileSync(migrationUrl, 'utf8');
+    const eventGuard = sql.match(
+      /CREATE OR REPLACE FUNCTION kernel_equivalence_execution_event_guard\(\)[\s\S]*?\$\$ LANGUAGE plpgsql\s+SET search_path = public, pg_temp;/i,
+    )?.[0] ?? '';
 
     expect(sql).toMatch(
       /CREATE TABLE IF NOT EXISTS kernel_equivalence_production_execution_events/i,
@@ -141,6 +167,25 @@ describe('migration 381 Kernel equivalence production controller', () => {
     expect(sql).toMatch(
       /CREATE OR REPLACE FUNCTION kernel_equivalence_execution_event_guard\(\)/i,
     );
+    const noninitialEventIndex = eventGuard.indexOf(
+      'IF NEW.generation <> previous_generation + 1',
+    );
+    const leaseLockIndex = eventGuard.indexOf(
+      'FOR UPDATE OF leases',
+      noninitialEventIndex,
+    );
+    const fenceLockIndex = eventGuard.indexOf(
+      'FROM kernel_equivalence_production_execution_fences',
+      leaseLockIndex,
+    );
+    const publicationValidationIndex = eventGuard.indexOf(
+      "IF NEW.state IN ('blocked', 'settlement_unknown')",
+      fenceLockIndex,
+    );
+    expect(noninitialEventIndex).toBeGreaterThan(-1);
+    expect(leaseLockIndex).toBeGreaterThan(noninitialEventIndex);
+    expect(fenceLockIndex).toBeGreaterThan(leaseLockIndex);
+    expect(publicationValidationIndex).toBeGreaterThan(fenceLockIndex);
     expect(sql).toMatch(
       /NEW\.state = 'reconciling'[\s\S]*previous_lease_expires_at <= authority_now/i,
     );

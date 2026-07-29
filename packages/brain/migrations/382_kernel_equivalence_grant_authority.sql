@@ -8,6 +8,10 @@
 -- every authority invariant for ordinary owner DML. PostgreSQL owners retain
 -- inherent DDL authority (including disabling triggers), which remains an
 -- administrative trust boundary.
+--
+-- Cross-authority row locks always follow this order:
+-- production lease -> execution fence (publication only) -> grant authority.
+-- A path that locks only grant authority must never request a production lease.
 
 CREATE TEMP TABLE kernel_equivalence_grant_migration_context
 ON COMMIT DROP
@@ -295,7 +299,7 @@ DECLARE
   previous_state TEXT;
   expected_generation BIGINT;
   expected_actor_kind TEXT;
-  database_now TIMESTAMPTZ := clock_timestamp();
+  database_now TIMESTAMPTZ;
 BEGIN
   IF NEW.state NOT IN (
        'published',
@@ -312,25 +316,34 @@ BEGIN
       'kernel equivalence grant event input contract mismatch';
   END IF;
 
-  IF NEW.state = 'published' THEN
+  IF NEW.state IN ('published', 'execution_intent') THEN
     SELECT authorities.case_id, authorities.grant_digest
       INTO authority_case_id, authority_digest
       FROM kernel_equivalence_grant_authorities authorities
      WHERE authorities.grant_id = NEW.grant_id;
-    IF NOT FOUND
-       OR authority_digest IS DISTINCT FROM NEW.grant_digest
-    THEN
+    IF NOT FOUND THEN
       RAISE EXCEPTION
         'kernel equivalence grant event digest contract mismatch';
     END IF;
-    SELECT fences.execution_active
-      INTO execution_fence_active
-      FROM kernel_equivalence_production_execution_fences fences
-     WHERE fences.case_id = authority_case_id
-     FOR UPDATE;
-    IF NOT FOUND OR execution_fence_active IS DISTINCT FROM true THEN
+    PERFORM leases.case_id
+      FROM kernel_equivalence_production_case_leases leases
+      JOIN kernel_equivalence_production_cases cases
+        ON cases.case_id = leases.case_id
+      JOIN kernel_equivalence_production_case_bindings bindings
+        ON bindings.case_id = cases.case_id
+     WHERE leases.case_id = authority_case_id
+     FOR UPDATE OF leases
+     FOR SHARE OF cases, bindings;
+    IF NOT FOUND THEN
       RAISE EXCEPTION
-        'kernel equivalence grant publication execution fence is inactive';
+        'kernel equivalence grant active contract is unavailable';
+    END IF;
+    IF NEW.state = 'published' THEN
+      SELECT fences.execution_active
+        INTO execution_fence_active
+        FROM kernel_equivalence_production_execution_fences fences
+       WHERE fences.case_id = authority_case_id
+       FOR UPDATE;
     END IF;
   END IF;
 
@@ -344,6 +357,15 @@ BEGIN
   THEN
     RAISE EXCEPTION
       'kernel equivalence grant event digest contract mismatch';
+  END IF;
+  database_now := clock_timestamp();
+  IF NEW.state = 'published'
+     AND (
+       execution_fence_active IS DISTINCT FROM true
+     )
+  THEN
+    RAISE EXCEPTION
+      'kernel equivalence grant publication execution fence is inactive';
   END IF;
 
   SELECT events.generation, events.state
@@ -427,7 +449,8 @@ BEGIN
            FROM kernel_equivalence_grant_revocations revocations
           WHERE revocations.grant_id = NEW.grant_id
        )
-     FOR SHARE OF authorities, bindings, cases, leases;
+     FOR UPDATE OF leases
+     FOR SHARE OF authorities, bindings, cases;
     IF NOT FOUND THEN
       IF EXISTS (
         SELECT 1
@@ -758,23 +781,34 @@ BEGIN
       'kernel equivalence grant event input is invalid';
   END IF;
 
-  IF p_state = 'published' THEN
+  IF p_state IN ('published', 'execution_intent') THEN
     SELECT authorities.case_id, authorities.grant_digest
       INTO authority_case_id, authority_digest
       FROM kernel_equivalence_grant_authorities authorities
      WHERE authorities.grant_id = p_grant_id;
-    IF NOT FOUND OR authority_digest IS DISTINCT FROM p_grant_sha256 THEN
+    IF NOT FOUND THEN
       RAISE EXCEPTION
         'kernel equivalence grant event digest mismatch';
     END IF;
-    SELECT fences.execution_active
-      INTO execution_fence_active
-      FROM kernel_equivalence_production_execution_fences fences
-     WHERE fences.case_id = authority_case_id
-     FOR UPDATE;
-    IF NOT FOUND OR execution_fence_active IS DISTINCT FROM true THEN
+    PERFORM leases.case_id
+      FROM kernel_equivalence_production_case_leases leases
+      JOIN kernel_equivalence_production_cases cases
+        ON cases.case_id = leases.case_id
+      JOIN kernel_equivalence_production_case_bindings bindings
+        ON bindings.case_id = cases.case_id
+     WHERE leases.case_id = authority_case_id
+     FOR UPDATE OF leases
+     FOR SHARE OF cases, bindings;
+    IF NOT FOUND THEN
       RAISE EXCEPTION
-        'kernel equivalence grant publication execution fence is inactive';
+        'kernel equivalence grant active authority is expired or unavailable';
+    END IF;
+    IF p_state = 'published' THEN
+      SELECT fences.execution_active
+        INTO execution_fence_active
+        FROM kernel_equivalence_production_execution_fences fences
+       WHERE fences.case_id = authority_case_id
+       FOR UPDATE;
     END IF;
   END IF;
 
@@ -786,6 +820,14 @@ BEGIN
   IF NOT FOUND OR authority_digest IS DISTINCT FROM p_grant_sha256 THEN
     RAISE EXCEPTION
       'kernel equivalence grant event digest mismatch';
+  END IF;
+  IF p_state = 'published'
+     AND (
+       execution_fence_active IS DISTINCT FROM true
+     )
+  THEN
+    RAISE EXCEPTION
+      'kernel equivalence grant publication execution fence is inactive';
   END IF;
 
   SELECT events.generation, events.state
@@ -863,7 +905,8 @@ BEGIN
            FROM kernel_equivalence_grant_revocations revocations
           WHERE revocations.grant_id = p_grant_id
        )
-     FOR SHARE OF authorities, bindings, cases, leases;
+     FOR UPDATE OF leases
+     FOR SHARE OF authorities, bindings, cases;
     IF NOT FOUND THEN
       IF EXISTS (
         SELECT 1
@@ -919,8 +962,30 @@ RETURNS TABLE (
   "grant" JSONB,
   active BOOLEAN
 ) AS $$
+DECLARE
+  authority_case_id UUID;
 BEGIN
   IF p_grant_sha256 !~ '^[a-f0-9]{64}$' THEN
+    RETURN;
+  END IF;
+  SELECT authorities.case_id
+    INTO authority_case_id
+    FROM kernel_equivalence_grant_authorities authorities
+   WHERE authorities.grant_id = p_grant_id
+     AND authorities.grant_digest = p_grant_sha256
+     AND authorities.cell_id = p_cell_id;
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+  PERFORM leases.case_id
+    FROM kernel_equivalence_production_case_leases leases
+    JOIN kernel_equivalence_production_cases cases
+      ON cases.case_id = leases.case_id
+    JOIN kernel_equivalence_production_case_bindings bindings
+      ON bindings.case_id = cases.case_id
+   WHERE leases.case_id = authority_case_id
+   FOR SHARE OF leases, cases, bindings;
+  IF NOT FOUND THEN
     RETURN;
   END IF;
   RETURN QUERY
@@ -969,7 +1034,7 @@ BEGIN
          FROM kernel_equivalence_grant_revocations revocations
         WHERE revocations.grant_id = authorities.grant_id
      )
-   FOR SHARE OF authorities, bindings, cases, leases;
+   FOR SHARE OF authorities;
 END;
 $$ LANGUAGE plpgsql
 SECURITY DEFINER

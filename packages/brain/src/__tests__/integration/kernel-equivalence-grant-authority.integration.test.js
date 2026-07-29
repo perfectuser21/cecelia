@@ -359,6 +359,40 @@ describe('migration 382 grant authority on real PostgreSQL', () => {
     }
   });
 
+  it('rejects owner direct publication through the trigger when the fence is inactive', async () => {
+    const grantId = await registerGrant();
+    await pool.query(
+      `UPDATE kernel_equivalence_production_execution_fences
+          SET execution_active = false
+        WHERE case_id = $1::uuid`,
+      [CASE_ID],
+    );
+    try {
+      await expect(pool.query(
+        `INSERT INTO kernel_equivalence_grant_events
+           (grant_id, generation, state, actor_instance_id, actor_kind,
+            grant_digest, details)
+         VALUES
+           ($1::uuid, 1, 'published', $2::uuid, 'controller', $3, '{}')`,
+        [grantId, CONTROLLER_ID, DIGEST],
+      )).rejects.toThrow(/execution fence.*inactive|publication.*fence/i);
+      const events = await pool.query(
+        `SELECT state
+           FROM kernel_equivalence_grant_events
+          WHERE grant_id = $1::uuid`,
+        [grantId],
+      );
+      expect(events.rows).toHaveLength(0);
+    } finally {
+      await pool.query(
+        `UPDATE kernel_equivalence_production_execution_fences
+            SET execution_active = true
+          WHERE case_id = $1::uuid`,
+        [CASE_ID],
+      );
+    }
+  });
+
   it('uses DB time, not details evidence, for active publication', async () => {
     const grantId = await registerGrant({ expiresInMs: 750 });
     await waitForGrantExpiry(grantId);

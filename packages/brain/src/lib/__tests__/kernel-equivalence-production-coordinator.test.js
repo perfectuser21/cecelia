@@ -845,6 +845,51 @@ describe('production Kernel equivalence coordinator', () => {
     },
   );
 
+  it('retains its active claim while a published grant awaits grant_issued append', async () => {
+    const statements = [];
+    const controllerInstanceId =
+      '11111111-1111-4111-8111-111111111111';
+    const pool = {
+      query: async (text, values = []) => {
+        statements.push({ text, values });
+        return statements.length === 1
+          ? {
+              rows: [orphanPublishedReconcileRow({
+                controller_instance_id: controllerInstanceId,
+                lease_expired: false,
+              })],
+              rowCount: 1,
+            }
+          : {
+              rows: [{ generation: values[2], state: values[4] }],
+              rowCount: 1,
+            };
+      },
+    };
+    const revokeGrant = vi.fn(async () => ({
+      grant_ref: GRANT_REF,
+      revoked: true,
+      safe_no_effect: true,
+      effect_possible: false,
+      disposition: 'safe_no_effect',
+    }));
+    const value = coordinator(
+      pool,
+      grantIssuer(),
+      () => controllerInstanceId,
+      60,
+      durableGrantAuthority(revokeGrant),
+    );
+
+    await expect(value.reconcileStartup()).resolves.toEqual({
+      inspected: 1,
+      settled: 0,
+      retained_unknown: 1,
+    });
+    expect(revokeGrant).not.toHaveBeenCalled();
+    expect(statements).toHaveLength(1);
+  });
+
   it.each([
     ['reconciling', 'blocked', 2, true],
     ['settlement_unknown', null, 2, false],
