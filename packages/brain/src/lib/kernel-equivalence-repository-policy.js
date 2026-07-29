@@ -1,7 +1,11 @@
 import {
+  closeSync,
+  constants,
+  fstatSync,
   lstatSync,
-  readFileSync,
-  readdirSync,
+  openSync,
+  opendirSync,
+  readSync,
 } from 'node:fs';
 import {
   basename,
@@ -17,6 +21,7 @@ const MAX_TRAVERSAL_ENTRIES = 20_000;
 const MAX_TRAVERSAL_DEPTH = 32;
 const MAX_YAML_BYTES = 1_000_000;
 const MAX_SQL_BYTES = 4_000_000;
+const MAX_SQL_TOKENS = 250_000;
 const MIGRATION_ROOTS = Object.freeze([
   'packages/brain/migrations',
   'packages/brain/src/db/migrations',
@@ -48,7 +53,6 @@ function sortedUnique(values) {
 function walkFiles(repositoryRoot, relativeRoot, {
   include,
   recursive = true,
-  rejectSymlink = () => false,
   missingIsError = false,
 } = {}) {
   const absoluteRoot = join(repositoryRoot, relativeRoot);
@@ -64,33 +68,45 @@ function walkFiles(repositoryRoot, relativeRoot, {
       return;
     }
 
-    let entries;
+    let directoryHandle;
     try {
-      entries = readdirSync(directory, { withFileTypes: true })
-        .sort((left, right) => compareText(left.name, right.name));
+      directoryHandle = opendirSync(directory);
     } catch {
       error = 'unreadable_or_invalid';
       return;
     }
 
-    for (const entry of entries) {
-      visited += 1;
-      if (visited > MAX_TRAVERSAL_ENTRIES) {
-        error = 'traversal_limit_exceeded';
-        return;
-      }
+    try {
+      let entry;
+      while (error === null && (entry = directoryHandle.readSync()) !== null) {
+        visited += 1;
+        if (visited > MAX_TRAVERSAL_ENTRIES) {
+          error = 'traversal_limit_exceeded';
+          break;
+        }
 
-      const path = join(directory, entry.name);
-      if (entry.isSymbolicLink()) {
-        if (rejectSymlink(path)) {
+        const path = join(directory, entry.name);
+        if (entry.isSymbolicLink()) {
           rejectedSymlinks.push(path);
+        } else if (entry.isDirectory()) {
+          if (recursive) {
+            walk(path, depth + 1);
+          }
+        } else if (entry.isFile() && include(path)) {
+          files.push(path);
         }
-      } else if (entry.isDirectory()) {
-        if (recursive) {
-          walk(path, depth + 1);
+      }
+    } catch {
+      if (error === null) {
+        error = 'unreadable_or_invalid';
+      }
+    } finally {
+      try {
+        directoryHandle.closeSync();
+      } catch {
+        if (error === null) {
+          error = 'unreadable_or_invalid';
         }
-      } else if (entry.isFile() && include(path)) {
-        files.push(path);
       }
     }
   }
@@ -106,8 +122,10 @@ function walkFiles(repositoryRoot, relativeRoot, {
   walk(absoluteRoot, 0);
   return {
     error,
-    files: error === null ? files : [],
-    rejectedSymlinks: error === null ? rejectedSymlinks : [],
+    files: error === null ? files.sort(compareText) : [],
+    rejectedSymlinks: (
+      error === null ? rejectedSymlinks.sort(compareText) : []
+    ),
   };
 }
 
@@ -124,25 +142,52 @@ function isSqlPath(path) {
 }
 
 function readBoundedText(path, maxBytes) {
-  let status;
-  try {
-    status = lstatSync(path);
-  } catch {
-    return { error: 'unreadable_or_invalid' };
+  if (typeof constants.O_NOFOLLOW !== 'number') {
+    return { error: 'nofollow_unsupported' };
   }
 
-  if (!status.isFile()) return { error: 'unreadable_or_invalid' };
-  if (status.size > maxBytes) return { error: 'oversized' };
-
+  let descriptor;
+  let result = { error: 'unreadable_or_invalid' };
   try {
-    const contents = readFileSync(path, 'utf8');
-    if (Buffer.byteLength(contents, 'utf8') > maxBytes) {
-      return { error: 'oversized' };
+    descriptor = openSync(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW,
+    );
+    const status = fstatSync(descriptor);
+    if (!status.isFile()) {
+      result = { error: 'unreadable_or_invalid' };
+    } else if (status.size > maxBytes) {
+      result = { error: 'oversized' };
+    } else {
+      const bytes = Buffer.allocUnsafe(maxBytes + 1);
+      let bytesRead = 0;
+      while (bytesRead < bytes.length) {
+        const count = readSync(
+          descriptor,
+          bytes,
+          bytesRead,
+          bytes.length - bytesRead,
+          null,
+        );
+        if (count === 0) break;
+        bytesRead += count;
+      }
+      result = bytesRead > maxBytes
+        ? { error: 'oversized' }
+        : { contents: bytes.toString('utf8', 0, bytesRead) };
     }
-    return { contents };
   } catch {
-    return { error: 'unreadable_or_invalid' };
+    result = { error: 'unreadable_or_invalid' };
+  } finally {
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        result = { error: 'unreadable_or_invalid' };
+      }
+    }
   }
+  return result;
 }
 
 function readYamlDocument(path) {
@@ -167,104 +212,15 @@ function hasOwnBehaviorEquivalence(mapping) {
 }
 
 function dollarQuoteAt(sql, index) {
-  const match = sql.slice(index).match(/^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/u);
-  return match?.[0] ?? null;
-}
+  if (sql[index] !== '$') return null;
+  if (sql[index + 1] === '$') return '$$';
+  if (!/[A-Za-z_]/u.test(sql[index + 1] ?? '')) return null;
 
-function stripSqlCommentsAndStrings(sql) {
-  const output = sql.split('');
-  let index = 0;
-
-  function blank(from, to) {
-    for (let cursor = from; cursor < to; cursor += 1) {
-      if (output[cursor] !== '\n' && output[cursor] !== '\r') {
-        output[cursor] = ' ';
-      }
-    }
+  let cursor = index + 2;
+  while (cursor < sql.length && /[A-Za-z0-9_]/u.test(sql[cursor])) {
+    cursor += 1;
   }
-
-  while (index < sql.length) {
-    if (sql[index] === '"') {
-      index += 1;
-      while (index < sql.length) {
-        if (sql[index] === '"' && sql[index + 1] === '"') {
-          index += 2;
-        } else if (sql[index] === '"') {
-          index += 1;
-          break;
-        } else {
-          index += 1;
-        }
-      }
-      continue;
-    }
-
-    if (sql.startsWith('--', index)) {
-      const end = sql.indexOf('\n', index + 2);
-      const stop = end === -1 ? sql.length : end;
-      blank(index, stop);
-      index = stop;
-      continue;
-    }
-
-    if (sql.startsWith('/*', index)) {
-      const start = index;
-      let depth = 1;
-      index += 2;
-      while (index < sql.length && depth > 0) {
-        if (sql.startsWith('/*', index)) {
-          depth += 1;
-          index += 2;
-        } else if (sql.startsWith('*/', index)) {
-          depth -= 1;
-          index += 2;
-        } else {
-          index += 1;
-        }
-      }
-      blank(start, index);
-      continue;
-    }
-
-    const dollarQuote = sql[index] === '$' ? dollarQuoteAt(sql, index) : null;
-    if (dollarQuote !== null) {
-      const start = index;
-      const contentStart = index + dollarQuote.length;
-      const close = sql.indexOf(dollarQuote, contentStart);
-      index = close === -1 ? sql.length : close + dollarQuote.length;
-      blank(start, index);
-      continue;
-    }
-
-    if (sql[index] === '\'') {
-      const start = index;
-      const prefix = index > 0 ? sql[index - 1] : '';
-      const prefixBefore = index > 1 ? sql[index - 2] : '';
-      const escapesBackslashes = (
-        (prefix === 'e' || prefix === 'E')
-        && !/[A-Za-z0-9_$]/u.test(prefixBefore)
-      );
-      index += 1;
-      while (index < sql.length) {
-        if (escapesBackslashes && sql[index] === '\\') {
-          index += 2;
-        } else if (sql[index] === '\'' && sql[index + 1] === '\'') {
-          index += 2;
-        } else if (sql[index] === '\'') {
-          index += 1;
-          break;
-        } else {
-          index += 1;
-        }
-      }
-      blank(start, Math.min(index, sql.length));
-      continue;
-    }
-
-    index += 1;
-  }
-
-  return output.join('');
+  return sql[cursor] === '$' ? sql.slice(index, cursor + 1) : null;
 }
 
 function readQuotedIdentifier(sql, quoteIndex) {
@@ -275,27 +231,57 @@ function readQuotedIdentifier(sql, quoteIndex) {
       value += '"';
       index += 2;
     } else if (sql[index] === '"') {
-      return { end: index + 1, value };
+      return { end: index + 1, valid: true, value };
     } else {
       value += sql[index];
       index += 1;
     }
   }
-  return { end: index, value };
+  return { end: index, valid: false, value };
 }
 
-function decodeUnicodeIdentifier(identifier) {
+function readSqlString(sql, quoteIndex, escapesBackslashes) {
+  let value = '';
+  let index = quoteIndex + 1;
+  while (index < sql.length) {
+    if (escapesBackslashes && sql[index] === '\\') {
+      if (index + 1 >= sql.length) {
+        return { end: sql.length, valid: false, value };
+      }
+      value += sql[index + 1];
+      index += 2;
+    } else if (sql[index] === '\'' && sql[index + 1] === '\'') {
+      value += '\'';
+      index += 2;
+    } else if (sql[index] === '\'') {
+      return { end: index + 1, valid: true, value };
+    } else {
+      value += sql[index];
+      index += 1;
+    }
+  }
+  return { end: index, valid: false, value };
+}
+
+function validUnicodeEscapeCharacter(escapeCharacter) {
+  return (
+    escapeCharacter.length === 1
+    && !/[0-9A-Fa-f+'"\s]/u.test(escapeCharacter)
+  );
+}
+
+function decodeUnicodeIdentifier(identifier, escapeCharacter = '\\') {
   let decoded = '';
   let index = 0;
 
   while (index < identifier.length) {
-    if (identifier[index] !== '\\') {
+    if (identifier[index] !== escapeCharacter) {
       decoded += identifier[index];
       index += 1;
       continue;
     }
-    if (identifier[index + 1] === '\\') {
-      decoded += '\\';
+    if (identifier[index + 1] === escapeCharacter) {
+      decoded += escapeCharacter;
       index += 2;
       continue;
     }
@@ -313,6 +299,13 @@ function decodeUnicodeIdentifier(identifier) {
     }
 
     const codePoint = Number.parseInt(digits, 16);
+    if (
+      codePoint === 0
+      || (codePoint >= 0xD800 && codePoint <= 0xDFFF)
+      || codePoint > 0x10FFFF
+    ) {
+      return null;
+    }
     try {
       decoded += String.fromCodePoint(codePoint);
     } catch {
@@ -328,9 +321,46 @@ function tokenizeSql(sql) {
   const tokens = [];
   let index = 0;
 
+  function push(token) {
+    tokens.push(token);
+    return tokens.length <= MAX_SQL_TOKENS;
+  }
+
   while (index < sql.length) {
     if (/\s/u.test(sql[index])) {
       index += 1;
+      continue;
+    }
+
+    if (sql.startsWith('--', index)) {
+      const end = sql.indexOf('\n', index + 2);
+      index = end === -1 ? sql.length : end + 1;
+      continue;
+    }
+
+    if (sql.startsWith('/*', index)) {
+      let depth = 1;
+      index += 2;
+      while (index < sql.length && depth > 0) {
+        if (sql.startsWith('/*', index)) {
+          depth += 1;
+          index += 2;
+        } else if (sql.startsWith('*/', index)) {
+          depth -= 1;
+          index += 2;
+        } else {
+          index += 1;
+        }
+      }
+      if (depth !== 0) return { invalid: true, tokens: [] };
+      continue;
+    }
+
+    const dollarQuote = sql[index] === '$' ? dollarQuoteAt(sql, index) : null;
+    if (dollarQuote !== null) {
+      const close = sql.indexOf(dollarQuote, index + dollarQuote.length);
+      if (close === -1) return { invalid: true, tokens: [] };
+      index = close + dollarQuote.length;
       continue;
     }
 
@@ -340,22 +370,46 @@ function tokenizeSql(sql) {
       && sql[index + 2] === '"'
     ) {
       const identifier = readQuotedIdentifier(sql, index + 2);
-      const decoded = decodeUnicodeIdentifier(identifier.value);
-      tokens.push({
-        kind: 'identifier',
-        value: (decoded ?? identifier.value).toLowerCase(),
-      });
+      if (!identifier.valid || !push({
+        kind: 'unicode_identifier',
+        value: identifier.value,
+      })) {
+        return { invalid: true, tokens: [] };
+      }
       index = identifier.end;
       continue;
     }
 
     if (sql[index] === '"') {
       const identifier = readQuotedIdentifier(sql, index);
-      tokens.push({
+      if (!identifier.valid || !push({
         kind: 'identifier',
         value: identifier.value.toLowerCase(),
-      });
+      })) {
+        return { invalid: true, tokens: [] };
+      }
       index = identifier.end;
+      continue;
+    }
+
+    if (
+      (sql[index] === 'e' || sql[index] === 'E')
+      && sql[index + 1] === '\''
+    ) {
+      const string = readSqlString(sql, index + 1, true);
+      if (!string.valid || !push({ kind: 'string', value: string.value })) {
+        return { invalid: true, tokens: [] };
+      }
+      index = string.end;
+      continue;
+    }
+
+    if (sql[index] === '\'') {
+      const string = readSqlString(sql, index, false);
+      if (!string.valid || !push({ kind: 'string', value: string.value })) {
+        return { invalid: true, tokens: [] };
+      }
+      index = string.end;
       continue;
     }
 
@@ -365,34 +419,72 @@ function tokenizeSql(sql) {
       while (index < sql.length && /[A-Za-z0-9_$]/u.test(sql[index])) {
         index += 1;
       }
-      tokens.push({
+      if (!push({
         kind: 'word',
         value: sql.slice(start, index).toLowerCase(),
-      });
+      })) {
+        return { invalid: true, tokens: [] };
+      }
       continue;
     }
 
     if (sql[index] === '.') {
-      tokens.push({ kind: 'dot', value: '.' });
+      if (!push({ kind: 'dot', value: '.' })) {
+        return { invalid: true, tokens: [] };
+      }
     } else {
-      tokens.push({ kind: 'punctuation', value: sql[index] });
+      if (!push({ kind: 'punctuation', value: sql[index] })) {
+        return { invalid: true, tokens: [] };
+      }
     }
     index += 1;
   }
 
-  return tokens;
+  return { invalid: false, tokens };
 }
 
 function isKeyword(token, keyword) {
   return token?.kind === 'word' && token.value === keyword;
 }
 
-function isIdentifier(token) {
-  return token?.kind === 'word' || token?.kind === 'identifier';
+function parseIdentifier(tokens, cursor) {
+  const token = tokens[cursor];
+  if (token?.kind === 'word' || token?.kind === 'identifier') {
+    return {
+      invalid: false,
+      next: cursor + 1,
+      value: token.value,
+    };
+  }
+  if (token?.kind !== 'unicode_identifier') return null;
+
+  let escapeCharacter = '\\';
+  let next = cursor + 1;
+  if (isKeyword(tokens[next], 'uescape')) {
+    const escapeLiteral = tokens[next + 1];
+    if (
+      escapeLiteral?.kind !== 'string'
+      || !validUnicodeEscapeCharacter(escapeLiteral.value)
+    ) {
+      return { invalid: true };
+    }
+    escapeCharacter = escapeLiteral.value;
+    next += 2;
+  }
+
+  const decoded = decodeUnicodeIdentifier(token.value, escapeCharacter);
+  if (decoded === null) return { invalid: true };
+  return {
+    invalid: false,
+    next,
+    value: decoded.toLowerCase(),
+  };
 }
 
-function containsForbiddenBehaviorLedgerDdl(sql) {
-  const tokens = tokenizeSql(stripSqlCommentsAndStrings(sql));
+function inspectBehaviorLedgerDdl(sql) {
+  const tokenization = tokenizeSql(sql);
+  if (tokenization.invalid) return 'invalid';
+  const { tokens } = tokenization;
 
   for (let start = 0; start < tokens.length; start += 1) {
     if (!isKeyword(tokens[start], 'create')) continue;
@@ -427,18 +519,23 @@ function containsForbiddenBehaviorLedgerDdl(sql) {
       }
       cursor += 3;
     }
-    if (!isIdentifier(tokens[cursor])) continue;
+    const firstIdentifier = parseIdentifier(tokens, cursor);
+    if (firstIdentifier?.invalid) return 'invalid';
+    if (firstIdentifier === null) continue;
 
-    let tableIdentifier = tokens[cursor];
-    if (tokens[cursor + 1]?.kind === 'dot') {
-      if (!isIdentifier(tokens[cursor + 2])) continue;
-      tableIdentifier = tokens[cursor + 2];
+    let tableIdentifier = firstIdentifier;
+    cursor = firstIdentifier.next;
+    if (tokens[cursor]?.kind === 'dot') {
+      const secondIdentifier = parseIdentifier(tokens, cursor + 1);
+      if (secondIdentifier?.invalid) return 'invalid';
+      if (secondIdentifier === null) continue;
+      tableIdentifier = secondIdentifier;
     }
     if (tableIdentifier.value === 'behavior_ledger') {
-      return true;
+      return 'forbidden';
     }
   }
-  return false;
+  return 'clean';
 }
 
 export function findSecondaryBehaviorEquivalenceContracts(repositoryRoot) {
@@ -451,13 +548,16 @@ export function findSecondaryBehaviorEquivalenceContracts(repositoryRoot) {
 
   const scan = walkFiles(root, 'packages', {
     include: isContractYamlPath,
-    rejectSymlink: isContractYamlPath,
     missingIsError: !repositoryIsDirectory(root),
   });
   if (scan.error !== null) return [`packages/:${scan.error}`];
 
   const findings = scan.rejectedSymlinks.map(
-    (path) => `${relativePath(root, path)}:symlink_not_allowed`,
+    (path) => (
+      isContractYamlPath(path)
+        ? `${relativePath(root, path)}:symlink_not_allowed`
+        : `${relativePath(root, path)}/:symlink_not_allowed`
+    ),
   );
   for (const path of scan.files) {
     const relativeContractPath = relativePath(root, path);
@@ -488,7 +588,6 @@ export function findForbiddenBehaviorLedgerTables(repositoryRoot) {
     const scan = walkFiles(root, migrationRoot, {
       include: isSqlPath,
       recursive: false,
-      rejectSymlink: isSqlPath,
       missingIsError: !repositoryExists,
     });
     if (scan.error !== null) {
@@ -497,14 +596,23 @@ export function findForbiddenBehaviorLedgerTables(repositoryRoot) {
     }
 
     findings.push(...scan.rejectedSymlinks.map(
-      (path) => `${relativePath(root, path)}:symlink_not_allowed`,
+      (path) => (
+        isSqlPath(path)
+          ? `${relativePath(root, path)}:symlink_not_allowed`
+          : `${relativePath(root, path)}/:symlink_not_allowed`
+      ),
     ));
     for (const path of scan.files) {
       const migrationPath = relativePath(root, path);
       const read = readBoundedText(path, MAX_SQL_BYTES);
       if (read.error) {
         findings.push(`${migrationPath}:${read.error}`);
-      } else if (containsForbiddenBehaviorLedgerDdl(read.contents)) {
+        continue;
+      }
+      const inspection = inspectBehaviorLedgerDdl(read.contents);
+      if (inspection === 'invalid') {
+        findings.push(`${migrationPath}:sql_parse_invalid`);
+      } else if (inspection === 'forbidden') {
         findings.push(migrationPath);
       }
     }

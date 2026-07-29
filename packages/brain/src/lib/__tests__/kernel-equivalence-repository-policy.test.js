@@ -181,12 +181,61 @@ describe('kernel equivalence repository policy', () => {
       'schema-qualified Unicode escaped identifier',
       String.raw`CREATE TABLE U&"audit".U&"behavior\+00005fledger"(id uuid);`,
     ],
+    [
+      'custom Unicode escape',
+      `CREATE TABLE U&"behavior!005fledger" UESCAPE '!' (id uuid);`,
+    ],
+    [
+      'schema custom escape and escaped escape character',
+      [
+        `CREATE TABLE U&"audit!!prod" UESCAPE '!'`,
+        `.U&"behavior!005fledger" UESCAPE '!' (id uuid);`,
+      ].join(''),
+    ],
   ])('rejects %s production behavior ledger DDL', (_label, sql) => {
     const root = fixtureRoot();
     write(root, 'packages/brain/migrations/900_policy.sql', sql);
 
     expect(findForbiddenBehaviorLedgerTables(root)).toEqual([
       'packages/brain/migrations/900_policy.sql',
+    ]);
+  });
+
+  it.each([
+    [
+      'hexadecimal escape character',
+      `CREATE TABLE U&"behavior0005fledger" UESCAPE '0' (id uuid);`,
+    ],
+    [
+      'plus escape character',
+      `CREATE TABLE U&"behavior+005fledger" UESCAPE '+' (id uuid);`,
+    ],
+    [
+      'multi-character escape',
+      `CREATE TABLE U&"behavior!!005fledger" UESCAPE '!!' (id uuid);`,
+    ],
+    [
+      'missing escape literal',
+      'CREATE TABLE U&"behavior!005fledger" UESCAPE (id uuid);',
+    ],
+    [
+      'invalid Unicode digits',
+      `CREATE TABLE U&"behavior!zzzzledger" UESCAPE '!' (id uuid);`,
+    ],
+    [
+      'Unicode zero code point',
+      String.raw`CREATE TABLE U&"behavior\0000ledger" (id uuid);`,
+    ],
+    [
+      'unpaired Unicode surrogate',
+      String.raw`CREATE TABLE U&"behavior\d800ledger" (id uuid);`,
+    ],
+  ])('fails closed for %s in Unicode DDL', (_label, sql) => {
+    const root = fixtureRoot();
+    write(root, 'packages/brain/migrations/900_invalid.sql', sql);
+
+    expect(findForbiddenBehaviorLedgerTables(root)).toEqual([
+      'packages/brain/migrations/900_invalid.sql:sql_parse_invalid',
     ]);
   });
 
@@ -341,9 +390,11 @@ describe('kernel equivalence repository policy', () => {
     ]);
   });
 
-  it('does not follow symlink escapes during bounded traversal', () => {
+  it('rejects arbitrary package directory symlinks without following them', () => {
     const root = fixtureRoot();
     const outside = fixtureRoot();
+    const inside = join(root, 'packages/inside-directory');
+    mkdirSync(inside, { recursive: true });
     write(
       outside,
       'escape.regression-contract.yaml',
@@ -351,8 +402,28 @@ describe('kernel equivalence repository policy', () => {
     );
     mkdirSync(join(root, 'packages'), { recursive: true });
     symlinkSync(outside, join(root, 'packages/linked'));
+    symlinkSync(inside, join(root, 'packages/linked-inside'));
 
-    expect(findSecondaryBehaviorEquivalenceContracts(root)).toEqual([]);
+    expect(findSecondaryBehaviorEquivalenceContracts(root)).toEqual([
+      'packages/linked-inside/:symlink_not_allowed',
+      'packages/linked/:symlink_not_allowed',
+    ]);
+  });
+
+  it('rejects direct migration directory symlinks at the loader boundary', () => {
+    const root = fixtureRoot();
+    const outside = fixtureRoot();
+    write(
+      outside,
+      'hidden.sql',
+      'CREATE TABLE behavior_ledger(id uuid);\n',
+    );
+    mkdirSync(join(root, 'packages/brain/migrations'), { recursive: true });
+    symlinkSync(outside, join(root, 'packages/brain/migrations/linked'));
+
+    expect(findForbiddenBehaviorLedgerTables(root)).toEqual([
+      'packages/brain/migrations/linked/:symlink_not_allowed',
+    ]);
   });
 
   it('fails closed with a stable finding at the traversal depth bound', () => {
@@ -397,6 +468,44 @@ describe('kernel equivalence repository policy', () => {
       'packages/brain/migrations/902_huge.sql:oversized',
     ]);
   });
+
+  it('accepts the YAML byte limit and rejects limit plus one', () => {
+    const root = fixtureRoot();
+    const prefix = 'behavior_equivalence: {}\npadding: ';
+    write(
+      root,
+      'regression-contract.yaml',
+      prefix + 'x'.repeat(1_000_000 - Buffer.byteLength(prefix)),
+    );
+
+    expect(evaluateRepositoryPolicy(root).repository_policy_valid).toBe(true);
+
+    write(
+      root,
+      'regression-contract.yaml',
+      prefix + 'x'.repeat(1_000_001 - Buffer.byteLength(prefix)),
+    );
+    expect(evaluateRepositoryPolicy(root)).toEqual({
+      repository_policy_valid: false,
+      duplicate_behavior_equivalence_contracts: [
+        'regression-contract.yaml:oversized',
+      ],
+      forbidden_behavior_ledger_tables: [],
+    });
+  });
+
+  it('fails closed after the bounded traversal entry limit', () => {
+    const root = fixtureRoot();
+    const packageRoot = join(root, 'packages/many');
+    mkdirSync(packageRoot, { recursive: true });
+    for (let index = 0; index <= 20_000; index += 1) {
+      writeFileSync(join(packageRoot, `entry-${index}`), '');
+    }
+
+    expect(findSecondaryBehaviorEquivalenceContracts(root)).toEqual([
+      'packages/:traversal_limit_exceeded',
+    ]);
+  }, 20_000);
 
   it('returns the exact valid policy shape for a clean repository', () => {
     const root = fixtureRoot();
