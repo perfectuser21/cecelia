@@ -22,14 +22,6 @@ const MIGRATION_ROOTS = Object.freeze([
   'packages/brain/src/db/migrations',
   'packages/brain/src/migrations',
 ]);
-const NON_PRODUCTION_DIRECTORY_NAMES = new Set([
-  '__fixtures__',
-  '__tests__',
-  'fixture',
-  'fixtures',
-  'test',
-  'tests',
-]);
 
 function repositoryIsDirectory(repositoryRoot) {
   try {
@@ -55,11 +47,13 @@ function sortedUnique(values) {
 
 function walkFiles(repositoryRoot, relativeRoot, {
   include,
-  skipDirectory = () => false,
+  recursive = true,
+  rejectSymlink = () => false,
   missingIsError = false,
 } = {}) {
   const absoluteRoot = join(repositoryRoot, relativeRoot);
   const files = [];
+  const rejectedSymlinks = [];
   let visited = 0;
   let error = null;
 
@@ -87,8 +81,12 @@ function walkFiles(repositoryRoot, relativeRoot, {
       }
 
       const path = join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (!skipDirectory(entry.name)) {
+      if (entry.isSymbolicLink()) {
+        if (rejectSymlink(path)) {
+          rejectedSymlinks.push(path);
+        }
+      } else if (entry.isDirectory()) {
+        if (recursive) {
           walk(path, depth + 1);
         }
       } else if (entry.isFile() && include(path)) {
@@ -102,14 +100,27 @@ function walkFiles(repositoryRoot, relativeRoot, {
     if (!status.isDirectory()) error = 'unreadable_or_invalid';
   } catch {
     if (missingIsError) error = 'unreadable_or_invalid';
-    return { error, files: [] };
+    return { error, files: [], rejectedSymlinks: [] };
   }
 
   walk(absoluteRoot, 0);
   return {
     error,
     files: error === null ? files : [],
+    rejectedSymlinks: error === null ? rejectedSymlinks : [],
   };
+}
+
+function isContractYamlPath(path) {
+  const extension = extname(path).toLowerCase();
+  return (
+    (extension === '.yaml' || extension === '.yml')
+    && basename(path).toLowerCase().includes('regression-contract')
+  );
+}
+
+function isSqlPath(path) {
+  return extname(path) === '.sql';
 }
 
 function readBoundedText(path, maxBytes) {
@@ -256,6 +267,63 @@ function stripSqlCommentsAndStrings(sql) {
   return output.join('');
 }
 
+function readQuotedIdentifier(sql, quoteIndex) {
+  let value = '';
+  let index = quoteIndex + 1;
+  while (index < sql.length) {
+    if (sql[index] === '"' && sql[index + 1] === '"') {
+      value += '"';
+      index += 2;
+    } else if (sql[index] === '"') {
+      return { end: index + 1, value };
+    } else {
+      value += sql[index];
+      index += 1;
+    }
+  }
+  return { end: index, value };
+}
+
+function decodeUnicodeIdentifier(identifier) {
+  let decoded = '';
+  let index = 0;
+
+  while (index < identifier.length) {
+    if (identifier[index] !== '\\') {
+      decoded += identifier[index];
+      index += 1;
+      continue;
+    }
+    if (identifier[index + 1] === '\\') {
+      decoded += '\\';
+      index += 2;
+      continue;
+    }
+
+    const hasLongEscape = identifier[index + 1] === '+';
+    const digits = hasLongEscape
+      ? identifier.slice(index + 2, index + 8)
+      : identifier.slice(index + 1, index + 5);
+    const requiredDigits = hasLongEscape ? 6 : 4;
+    if (
+      digits.length !== requiredDigits
+      || !/^[0-9A-Fa-f]+$/u.test(digits)
+    ) {
+      return null;
+    }
+
+    const codePoint = Number.parseInt(digits, 16);
+    try {
+      decoded += String.fromCodePoint(codePoint);
+    } catch {
+      return null;
+    }
+    index += requiredDigits + (hasLongEscape ? 2 : 1);
+  }
+
+  return decoded;
+}
+
 function tokenizeSql(sql) {
   const tokens = [];
   let index = 0;
@@ -266,22 +334,28 @@ function tokenizeSql(sql) {
       continue;
     }
 
+    if (
+      (sql[index] === 'u' || sql[index] === 'U')
+      && sql[index + 1] === '&'
+      && sql[index + 2] === '"'
+    ) {
+      const identifier = readQuotedIdentifier(sql, index + 2);
+      const decoded = decodeUnicodeIdentifier(identifier.value);
+      tokens.push({
+        kind: 'identifier',
+        value: (decoded ?? identifier.value).toLowerCase(),
+      });
+      index = identifier.end;
+      continue;
+    }
+
     if (sql[index] === '"') {
-      let identifier = '';
-      index += 1;
-      while (index < sql.length) {
-        if (sql[index] === '"' && sql[index + 1] === '"') {
-          identifier += '"';
-          index += 2;
-        } else if (sql[index] === '"') {
-          index += 1;
-          break;
-        } else {
-          identifier += sql[index];
-          index += 1;
-        }
-      }
-      tokens.push({ kind: 'identifier', value: identifier.toLowerCase() });
+      const identifier = readQuotedIdentifier(sql, index);
+      tokens.push({
+        kind: 'identifier',
+        value: identifier.value.toLowerCase(),
+      });
+      index = identifier.end;
       continue;
     }
 
@@ -324,6 +398,18 @@ function containsForbiddenBehaviorLedgerDdl(sql) {
     if (!isKeyword(tokens[start], 'create')) continue;
     let cursor = start + 1;
     if (
+      isKeyword(tokens[cursor], 'global')
+      || isKeyword(tokens[cursor], 'local')
+    ) {
+      cursor += 1;
+      if (
+        !isKeyword(tokens[cursor], 'temp')
+        && !isKeyword(tokens[cursor], 'temporary')
+      ) {
+        continue;
+      }
+      cursor += 1;
+    } else if (
       isKeyword(tokens[cursor], 'unlogged')
       || isKeyword(tokens[cursor], 'temp')
       || isKeyword(tokens[cursor], 'temporary')
@@ -364,18 +450,15 @@ export function findSecondaryBehaviorEquivalenceContracts(repositoryRoot) {
   }
 
   const scan = walkFiles(root, 'packages', {
-    include(path) {
-      const extension = extname(path).toLowerCase();
-      return (
-        (extension === '.yaml' || extension === '.yml')
-        && basename(path).toLowerCase().includes('regression-contract')
-      );
-    },
+    include: isContractYamlPath,
+    rejectSymlink: isContractYamlPath,
     missingIsError: !repositoryIsDirectory(root),
   });
   if (scan.error !== null) return [`packages/:${scan.error}`];
 
-  const findings = [];
+  const findings = scan.rejectedSymlinks.map(
+    (path) => `${relativePath(root, path)}:symlink_not_allowed`,
+  );
   for (const path of scan.files) {
     const relativeContractPath = relativePath(root, path);
     const yaml = readYamlDocument(path);
@@ -403,10 +486,9 @@ export function findForbiddenBehaviorLedgerTables(repositoryRoot) {
 
   for (const migrationRoot of MIGRATION_ROOTS) {
     const scan = walkFiles(root, migrationRoot, {
-      include: (path) => extname(path).toLowerCase() === '.sql',
-      skipDirectory: (name) => (
-        NON_PRODUCTION_DIRECTORY_NAMES.has(name.toLowerCase())
-      ),
+      include: isSqlPath,
+      recursive: false,
+      rejectSymlink: isSqlPath,
       missingIsError: !repositoryExists,
     });
     if (scan.error !== null) {
@@ -414,6 +496,9 @@ export function findForbiddenBehaviorLedgerTables(repositoryRoot) {
       continue;
     }
 
+    findings.push(...scan.rejectedSymlinks.map(
+      (path) => `${relativePath(root, path)}:symlink_not_allowed`,
+    ));
     for (const path of scan.files) {
       const migrationPath = relativePath(root, path);
       const read = readBoundedText(path, MAX_SQL_BYTES);

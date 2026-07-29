@@ -153,6 +153,34 @@ describe('kernel equivalence repository policy', () => {
       'comment markers inside quoted schema identifiers',
       'CREATE TABLE "audit--/*archive*/"."behavior_ledger"(id uuid);',
     ],
+    [
+      'global temporary',
+      'CREATE GLOBAL TEMPORARY TABLE behavior_ledger(id uuid);',
+    ],
+    [
+      'global temp',
+      'CREATE GLOBAL TEMP TABLE behavior_ledger(id uuid);',
+    ],
+    [
+      'local temporary',
+      'CREATE LOCAL TEMPORARY TABLE behavior_ledger(id uuid);',
+    ],
+    [
+      'local temp',
+      'CREATE LOCAL TEMP TABLE behavior_ledger(id uuid);',
+    ],
+    [
+      'Unicode quoted identifier',
+      'CREATE TABLE U&"behavior_ledger"(id uuid);',
+    ],
+    [
+      'Unicode escaped underscore identifier',
+      String.raw`CREATE TABLE U&"behavior\005fledger"(id uuid);`,
+    ],
+    [
+      'schema-qualified Unicode escaped identifier',
+      String.raw`CREATE TABLE U&"audit".U&"behavior\+00005fledger"(id uuid);`,
+    ],
   ])('rejects %s production behavior ledger DDL', (_label, sql) => {
     const root = fixtureRoot();
     write(root, 'packages/brain/migrations/900_policy.sql', sql);
@@ -221,6 +249,96 @@ describe('kernel equivalence repository policy', () => {
     );
 
     expect(findForbiddenBehaviorLedgerTables(root)).toEqual([]);
+  });
+
+  it('does not scan archive or rollback subdirectories outside loader boundaries', () => {
+    const root = fixtureRoot();
+    write(
+      root,
+      'packages/brain/migrations/archive/rollback.sql',
+      'CREATE TABLE behavior_ledger(id uuid);\n',
+    );
+    write(
+      root,
+      'packages/brain/src/db/migrations/archive/rollback.sql',
+      'CREATE TABLE behavior_ledger(id uuid);\n',
+    );
+    write(
+      root,
+      'packages/brain/src/migrations/archive/rollback.sql',
+      'CREATE TABLE behavior_ledger(id uuid);\n',
+    );
+
+    expect(findForbiddenBehaviorLedgerTables(root)).toEqual([]);
+  });
+
+  it('matches the loader lowercase SQL suffix boundary', () => {
+    const root = fixtureRoot();
+    write(
+      root,
+      'packages/brain/migrations/900_not_loaded.SQL',
+      'CREATE TABLE behavior_ledger(id uuid);\n',
+    );
+
+    expect(findForbiddenBehaviorLedgerTables(root)).toEqual([]);
+  });
+
+  it('rejects matching contract symlinks without following either target', () => {
+    const root = fixtureRoot();
+    const outside = fixtureRoot();
+    const outsideTarget = write(
+      outside,
+      'outside.yaml',
+      'behavior_equivalence: {}\n',
+    );
+    const insideTarget = write(
+      root,
+      'packages/inside/actual.yaml',
+      'behavior_equivalence: {}\n',
+    );
+    mkdirSync(join(root, 'packages/escape'), { recursive: true });
+    symlinkSync(
+      outsideTarget,
+      join(root, 'packages/escape/foo.regression-contract.yaml'),
+    );
+    symlinkSync(
+      insideTarget,
+      join(root, 'packages/inside/regression-contract.template.yml'),
+    );
+
+    expect(findSecondaryBehaviorEquivalenceContracts(root)).toEqual([
+      'packages/escape/foo.regression-contract.yaml:symlink_not_allowed',
+      'packages/inside/regression-contract.template.yml:symlink_not_allowed',
+    ]);
+  });
+
+  it('rejects production SQL symlinks without following either target', () => {
+    const root = fixtureRoot();
+    const outside = fixtureRoot();
+    const outsideTarget = write(
+      outside,
+      'outside.sql',
+      'CREATE TABLE behavior_ledger(id uuid);\n',
+    );
+    const insideTarget = write(
+      root,
+      'inside.sql',
+      'CREATE TABLE behavior_ledger(id uuid);\n',
+    );
+    mkdirSync(join(root, 'packages/brain/migrations'), { recursive: true });
+    symlinkSync(
+      outsideTarget,
+      join(root, 'packages/brain/migrations/900_outside.sql'),
+    );
+    symlinkSync(
+      insideTarget,
+      join(root, 'packages/brain/migrations/901_inside.sql'),
+    );
+
+    expect(findForbiddenBehaviorLedgerTables(root)).toEqual([
+      'packages/brain/migrations/900_outside.sql:symlink_not_allowed',
+      'packages/brain/migrations/901_inside.sql:symlink_not_allowed',
+    ]);
   });
 
   it('does not follow symlink escapes during bounded traversal', () => {
