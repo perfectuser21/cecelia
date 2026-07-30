@@ -36,6 +36,11 @@ describe('system-hub 路由退役（War Room PR-C）', () => {
     expect(routeFor(routes, '/live-monitor')?.component).toBe('LiveMonitor');
   });
 
+  it('保留 /warroom/gp/:gpId 断言账本入口与组件映射', () => {
+    expect(routeFor(routes, '/warroom/gp/:gpId')?.component).toBe('WarRoomGoldenPathPage');
+    expect(systemHub.components.WarRoomGoldenPathPage).toBeTypeOf('function');
+  });
+
   it('退役 /autonomous → redirect /pipeline', () => {
     const r = routeFor(routes, '/autonomous');
     expect(r?.redirect).toBe('/pipeline');
