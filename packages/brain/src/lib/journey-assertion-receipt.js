@@ -37,6 +37,17 @@ function emptyVerification(state = 'never_run') {
   };
 }
 
+function hasScenarioEvidence(receipt) {
+  if (receipt.verdict !== 'PASS') return true;
+  return (
+    Number(receipt.scenario_count) > 0
+    && receipt.scenario_evidence
+    && typeof receipt.scenario_evidence === 'object'
+    && !Array.isArray(receipt.scenario_evidence)
+    && Object.keys(receipt.scenario_evidence).length > 0
+  );
+}
+
 export function assertionDigest(assertionRef) {
   return createHash('sha256')
     .update(normalizeAssertionRef(assertionRef))
@@ -55,6 +66,7 @@ export function deriveAssertionVerification(cell = {}, receipts = []) {
     .filter(receipt => (
       String(receipt.assertion_revision) === String(cell.assertion_revision)
       && String(receipt.assertion_digest).toLowerCase() === digest
+      && hasScenarioEvidence(receipt)
     ))
     .sort(compareReceipts);
   if (matches.length === 0) return emptyVerification();
