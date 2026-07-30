@@ -15,6 +15,26 @@ function executionEvidence(overrides = {}) {
 }
 
 describe('Golden Path assertion receipt state', () => {
+  it('exposes normalized and redacted execution evidence through the receipt API', async () => {
+    const {
+      normalizeExecutionEvidence,
+      redactAndBoundOutput,
+    } = await loadReceiptState();
+
+    expect(normalizeExecutionEvidence).toBeTypeOf('function');
+    expect(redactAndBoundOutput).toBeTypeOf('function');
+    expect(normalizeExecutionEvidence({
+      scenarioCount: 2,
+      scenarioEvidence: { kind: 'vitest', passed: 2 },
+    }, 'vitest')).toEqual({
+      scenarioCount: 2,
+      scenarioEvidence: { kind: 'vitest', passed: 2 },
+    });
+    expect(redactAndBoundOutput('token=receipt-secret')).toBe(
+      'token=[REDACTED]',
+    );
+  });
+
   it('does not verify a green cell without a receipt', async () => {
     const { deriveAssertionVerification } = await loadReceiptState();
     const cell = {
