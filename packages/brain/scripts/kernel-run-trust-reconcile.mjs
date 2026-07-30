@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 /* global process */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { chmod, open } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import pool from '../src/db.js';
+import pg from 'pg';
+import { DB_DEFAULTS } from '../src/db-config.js';
 import { classifyRunTrust } from '../src/orchestrator/run-trust-classifier.js';
+
+const { Pool } = pg;
+const pool = new Pool(DB_DEFAULTS);
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 const EVIDENCE_SQL = `
   WITH evidence AS (
@@ -35,6 +40,7 @@ export function parseTrustReconcileArgs(argv) {
   let apply = false;
   let auditOutput = null;
   let batchSize = 100;
+  let expectedPlanSha256 = null;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--apply') {
@@ -44,6 +50,9 @@ export function parseTrustReconcileArgs(argv) {
       index += 1;
     } else if (arg === '--batch-size') {
       batchSize = Number(argv[index + 1]);
+      index += 1;
+    } else if (arg === '--expected-plan-sha256') {
+      expectedPlanSha256 = argv[index + 1] ?? null;
       index += 1;
     } else {
       throw new Error(`unknown argument: ${arg}`);
@@ -58,7 +67,18 @@ export function parseTrustReconcileArgs(argv) {
   if (apply && !isAbsolute(auditOutput)) {
     throw new Error('--audit-output must be an absolute path');
   }
-  return { apply, auditOutput, batchSize };
+  if (expectedPlanSha256 && !SHA256_PATTERN.test(expectedPlanSha256)) {
+    throw new Error('--expected-plan-sha256 must be 64 lowercase hex characters');
+  }
+  if (apply && !expectedPlanSha256) {
+    throw new Error('--apply requires --expected-plan-sha256');
+  }
+  return {
+    apply,
+    auditOutput,
+    batchSize,
+    expectedPlanSha256,
+  };
 }
 
 function proposalFor(row) {
@@ -157,6 +177,7 @@ export async function reconcileRunTrust({
   apply = false,
   auditOutput = null,
   batchSize = 100,
+  expectedPlanSha256 = null,
   writeLine = line => process.stdout.write(`${line}\n`),
   appendAudit = null,
   randomUUIDFn = randomUUID,
@@ -164,16 +185,31 @@ export async function reconcileRunTrust({
   if (apply && (!auditOutput || !isAbsolute(auditOutput))) {
     throw new Error('apply requires an absolute audit output path');
   }
+  if (apply && !SHA256_PATTERN.test(expectedPlanSha256 ?? '')) {
+    throw new Error('apply requires a valid expected plan sha256');
+  }
   const { rows } = await db.query(EVIDENCE_SQL);
-  const proposals = rows.map(proposalFor);
+  const proposals = rows
+    .filter(row => row.record_trust_status !== 'trusted')
+    .map(proposalFor);
+  const planContent = proposals
+    .map(proposal => `${JSON.stringify(proposal)}\n`)
+    .join('');
+  const planSha256 = createHash('sha256').update(planContent).digest('hex');
   for (const proposal of proposals) {
     writeLine(JSON.stringify(proposal));
+  }
+  if (apply && expectedPlanSha256 !== planSha256) {
+    throw new Error(
+      `reviewed plan digest mismatch: expected ${expectedPlanSha256}, actual ${planSha256}`,
+    );
   }
   if (!apply) {
     return {
       scanned: rows.length,
       proposed: proposals.length,
       applied: 0,
+      plan_sha256: planSha256,
     };
   }
 
@@ -195,6 +231,7 @@ export async function reconcileRunTrust({
       kind: 'kernel_run_trust_reconcile',
       outcome: 'started',
       proposed: proposals.length,
+      plan_sha256: planSha256,
     })}\n`);
     for (let offset = 0; offset < proposals.length; offset += batchSize) {
       const batchId = `${executionId}:${Math.floor(offset / batchSize) + 1}`;
@@ -238,6 +275,7 @@ export async function reconcileRunTrust({
     unchanged,
     conflicts,
     execution_id: executionId,
+    plan_sha256: planSha256,
   };
 }
 
