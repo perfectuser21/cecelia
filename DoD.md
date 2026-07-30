@@ -13,57 +13,57 @@ target_environment: local_api
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] 四 blocker 聚焦回归真实执行通过，且生产 migration SQL 相对冻结基线零 diff
+- [x] [ARTIFACT] 四 blocker 聚焦回归真实执行通过，且生产 migration SQL 相对冻结基线零 diff
   Test: bash -c 'set -euo pipefail; npm test --workspace packages/engine -- --run tests/scripts/quickcheck-vitest-exit-classification.test.ts --reporter=verbose; npm exec --workspace packages/brain -- vitest run src/__tests__/native-node-test-runner-registration.test.js --reporter=verbose; npm run test:node --workspace packages/brain; TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgresql://localhost/cecelia_test}" npm exec --workspace packages/brain -- vitest run src/__tests__/integration/okr-decomposition-flow.integration.test.js src/__tests__/integration/kernel-release-runs.integration.test.js --config vitest.integration.config.js --reporter=verbose; git diff --exit-code c0cd82fe298a8d1df812699507709d564a296f4e -- packages/brain/migrations/'
 
-- [ ] [ARTIFACT] node:test 登记 ratchet 真执行，证明 mutation seam 被 Vitest 排除并已登记在 test:node，随后原生 runner 真执行 seam
+- [x] [ARTIFACT] node:test 登记 ratchet 真执行，证明 mutation seam 被 Vitest 排除并已登记在 test:node，随后原生 runner 真执行 seam
   Test: bash -c 'set -euo pipefail; npm exec --workspace packages/brain -- vitest run src/__tests__/native-node-test-runner-registration.test.js --reporter=verbose; npm run test:node --workspace packages/brain'
 
-- [ ] [ARTIFACT] 冻结 sprint-prd.md 与现有 PR 分支字节等同
+- [x] [ARTIFACT] 冻结 sprint-prd.md 与现有 PR 分支字节等同
   Test: git diff --exit-code cp-kernel-phase5b-a1-review-fixes -- sprints/07300855-kernel-pr4457-devops-blockers/sprint-prd.md
 
-- [ ] [ARTIFACT] post-judge controller 使用真实账本 oracle 验证 exact-head evaluator/judge、阶段顺序与受认证批准回执
+- [x] [ARTIFACT] post-judge controller 使用真实账本 oracle 验证 exact-head evaluator/judge、阶段顺序与受认证批准回执
   Stage: post-judge-controller（不属于 evaluator E2E；judge PASS 后、review request/approval 相应阶段执行）
   Test: bash -c 'set -euo pipefail; H=$(gh pr view 4457 --repo perfectuser21/cecelia --json headRefOid --jq .headRefOid); psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -v h="$H" -Atc "WITH e AS (SELECT hop,detail FROM orchestrator_decision_log WHERE run_id='\"'\"'2ef32848-e3df-473b-ad4e-548216a33092'\"'\"' AND action='\"'\"'verdict:evaluate'\"'\"' ORDER BY hop DESC LIMIT 1), j AS (SELECT hop,detail FROM orchestrator_decision_log WHERE run_id='\"'\"'2ef32848-e3df-473b-ad4e-548216a33092'\"'\"' AND action='\"'\"'verdict:judge'\"'\"' ORDER BY hop DESC LIMIT 1), r AS (SELECT hop,observed FROM orchestrator_decision_log WHERE run_id='\"'\"'2ef32848-e3df-473b-ad4e-548216a33092'\"'\"' AND action='\"'\"'effect:human_review_requested'\"'\"' ORDER BY hop DESC LIMIT 1), a AS (SELECT hop,observed,gate_verdict,detail FROM orchestrator_decision_log WHERE run_id='\"'\"'2ef32848-e3df-473b-ad4e-548216a33092'\"'\"' AND action='\"'\"'verdict:human_review'\"'\"' ORDER BY hop DESC LIMIT 1) SELECT 1 FROM e,j,r,a WHERE e.detail->>'\"'\"'verdict'\"'\"'='\"'\"'PASS'\"'\"' AND j.detail->>'\"'\"'verdict'\"'\"'='\"'\"'PASS'\"'\"' AND e.detail->>'\"'\"'pr_head_sha'\"'\"'=:'\"'\"'h'\"'\"' AND j.detail->>'\"'\"'pr_head_sha'\"'\"'=:'\"'\"'h'\"'\"' AND e.hop<j.hop AND j.hop<r.hop AND r.hop<a.hop AND a.gate_verdict='\"'\"'allow'\"'\"' AND a.detail->>'\"'\"'approved'\"'\"'='\"'\"'true'\"'\"' AND a.detail->>'\"'\"'review_class'\"'\"'='\"'\"'merge_gate'\"'\"' AND a.detail->>'\"'\"'pr_head_sha'\"'\"'=:'\"'\"'h'\"'\"' AND a.detail->>'\"'\"'review_request_hop'\"'\"'=r.hop::text AND a.observed->'\"'\"'post_diff_risk'\"'\"'=r.observed->'\"'\"'post_diff_risk'\"'\"' AND a.observed->'\"'\"'post_diff_risk'\"'\"'->'\"'\"'bindings'\"'\"'->>'\"'\"'task_id'\"'\"'='\"'\"'0138c756-65e1-44c6-a2ae-51a0ee47f7d4'\"'\"' AND a.observed->'\"'\"'post_diff_risk'\"'\"'->'\"'\"'bindings'\"'\"'->>'\"'\"'run_id'\"'\"'='\"'\"'2ef32848-e3df-473b-ad4e-548216a33092'\"'\"'" | grep -qx 1'
 
 ## BEHAVIOR 条目
 
-- [ ] [BEHAVIOR] [L2] B-01: QuickCheck 未知非零 fail-closed，genuine OOM 仅三条件降级 [接缝×2]
+- [x] [BEHAVIOR] [L2] B-01: QuickCheck 未知非零 fail-closed，genuine OOM 仅三条件降级 [接缝×2]
   动作: 真实启动 QuickCheck/Vitest fixture，依次制造大输出失败、ANSI 失败、未知非零及 OOM worker 输出
   预期观察: 前三类返回非零；只有 OOM/worker 签名、pass summary、无 fail summary同时满足时返回零
   等待预算: 120s
   留证: 聚焦 Vitest 命令输出与各 fixture exit code
   Test: manual:bash -c 'npm test --workspace packages/engine -- --run tests/scripts/quickcheck-vitest-exit-classification.test.ts --reporter=verbose'
 
-- [ ] [BEHAVIOR] [L2] B-02: mutation seam 由 node:test 真执行且 Vitest 不收集
+- [x] [BEHAVIOR] [L2] B-02: mutation seam 由 node:test 真执行且 Vitest 不收集
   动作: 执行登记 ratchet，再执行 packages/brain 的 test:node
   预期观察: ratchet 确认 exclude 与 test:node 双登记，原生 runner 实际运行 seam 并通过
   等待预算: 180s
   留证: node --test TAP 输出与 test:node 输出
   Test: manual:bash -c 'npm exec --workspace packages/brain -- vitest run src/__tests__/native-node-test-runner-registration.test.js --reporter=verbose && npm run test:node --workspace packages/brain'
 
-- [ ] [BEHAVIOR] [L2] B-03: OKR integration 通过进程内真实 Router 绑定 cecelia_test [接缝×2]
+- [x] [BEHAVIOR] [L2] B-03: OKR integration 通过进程内真实 Router 绑定 cecelia_test [接缝×2]
   动作: 以 TEST_DATABASE_URL=cecelia_test 运行 OKR integration
   预期观察: Supertest 请求真实 router，真实测试库完成层级创建/查询/清理；不访问外部 Brain
   等待预算: 180s
   留证: Vitest 输出与测试 DB preflight 输出
   Test: manual:bash -c 'TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgresql://localhost/cecelia_test}" npm exec --workspace packages/brain -- vitest run src/__tests__/integration/okr-decomposition-flow.integration.test.js --config vitest.integration.config.js --reporter=verbose'
 
-- [ ] [BEHAVIOR] [L2] B-04: historical migration fixture 精确执行 369–381且生产 SQL 零改动 [接缝×2]
+- [x] [BEHAVIOR] [L2] B-04: historical migration fixture 精确执行 369–381且生产 SQL 零改动 [接缝×2]
   动作: 在随机 PostgreSQL schema 真跑 kernel release migration integration，并比较 migration 目录
   预期观察: canonical runner 返回 369..381 且不含382；382专属验证通过；生产 migration SQL 无 diff
   等待预算: 240s
   留证: Vitest migration 应用集合输出与 git diff exit code
   Test: manual:bash -c 'TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgresql://localhost/cecelia_test}" npm exec --workspace packages/brain -- vitest run src/__tests__/integration/kernel-release-runs.integration.test.js --config vitest.integration.config.js --reporter=verbose && git diff --exit-code c0cd82fe298a8d1df812699507709d564a296f4e -- packages/brain/migrations/'
 
-- [ ] [BEHAVIOR] [L2] B-05: atomic check 诚实保持 fail-closed 0/99
+- [x] [BEHAVIOR] [L2] B-05: atomic check 诚实保持 fail-closed 0/99
   动作: 运行 checked-in report check，并主动运行 manual cutover gate
   预期观察: schema_valid=true、proof_complete=false、atomic_cutover_ready=false、live proof 0/99；manual gate 非零
   等待预算: 60s
   留证: 两个命令的 JSON 与 exit code
   Test: manual:bash -c 'R=$(node scripts/ci/check-kernel-behavior-equivalence.mjs --check-report --format=json); echo "$R" | jq -e ".schema_valid==true and .proof_complete==false and .atomic_cutover_ready==false and (.cell_atomic_coverage|length)==99 and ([.cell_atomic_coverage[]|select((.live_proven_invariant_ids|length)>0 or (.live_proven_probe_ids|length)>0)]|length)==0"; if node scripts/ci/run-kernel-equivalence-drill.mjs --gate --format=json; then exit 1; fi'
 
-- [ ] [BEHAVIOR] [L2] B-06: exact final head 的 GitHub required checks 全部成功 [接缝×2]
+- [x] [BEHAVIOR] [L2] B-06: exact final head 的 GitHub required checks 全部成功 [接缝×2]
   动作: 查询 PR #4457 身份与 required checks 权威集合，并对照 evaluator checkout SHA
   预期观察: PR保持OPEN Draft且无auto-merge，checkout SHA与PR head一致；required 集合非空且每项 state=SUCCESS
   等待预算: 30s

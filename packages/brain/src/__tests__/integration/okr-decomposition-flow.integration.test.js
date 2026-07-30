@@ -2,47 +2,61 @@
  * Integration Test: OKR 拆解端到端流程
  *
  * 测试新 OKR 表（objectives / key_results / okr_projects / okr_scopes / okr_initiatives）
- * 通过 Brain API 验证：
+ * 通过进程内 Express Router 验证：
  *   1. 完整的层级创建链（Vision → Objective → KR → Project → Scope → Initiative）
  *   2. FK 级联删除（DELETE Objective → 子表全部删除）
  *   3. 树状层级查询 /api/brain/okr/tree
  *   4. KR 进度重算 recalculate-progress
  *
- * 依赖：Brain 服务运行于 localhost:5221，PostgreSQL cecelia 数据库可访问
+ * 依赖：PostgreSQL cecelia_test 数据库可访问
  */
-import { describe as _describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import express from 'express';
 import pg from 'pg';
-import { DB_DEFAULTS } from '../../db-config.js';
+import request from 'supertest';
 
-const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
-const OKR_BASE = `${BRAIN_URL}/api/brain/okr`;
+const testDatabaseUrl =
+  process.env.TEST_DATABASE_URL || 'postgresql://localhost/cecelia_test';
+const parsedDatabaseUrl = new URL(testDatabaseUrl);
+const databaseName = parsedDatabaseUrl.pathname.slice(1);
 
-// 直连 DB 用于 Vision 创建（顶层节点）和 afterAll 清理
-const testPool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
+if (databaseName !== 'cecelia_test') {
+  throw new Error(
+    `OKR integration requires TEST_DATABASE_URL database cecelia_test, got ${databaseName || '<empty>'}`,
+  );
+}
+
+// okr-hierarchy.js imports the production db.js singleton. Point that singleton
+// at the exact same test database as the fixture before importing the router.
+process.env.NODE_ENV = 'test';
+process.env.DB_HOST = parsedDatabaseUrl.hostname;
+process.env.DB_PORT = parsedDatabaseUrl.port || '5432';
+process.env.DB_NAME = databaseName;
+process.env.DB_USER = decodeURIComponent(parsedDatabaseUrl.username || 'cecelia');
+process.env.DB_PASSWORD = decodeURIComponent(parsedDatabaseUrl.password);
+
+const testPool = new pg.Pool({ connectionString: testDatabaseUrl, max: 3 });
+const app = express();
+app.use(express.json());
+const { default: okrRouter } = await import('../../routes/okr-hierarchy.js');
+app.use('/api/brain/okr', okrRouter);
 
 async function post(path, body) {
-  const res = await fetch(`${OKR_BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  return { status: res.status, body: await res.json() };
+  const res = await request(app).post(`/api/brain/okr${path}`).send(body);
+  return { status: res.status, body: res.body };
 }
 
 async function get(path) {
-  const res = await fetch(`${OKR_BASE}${path}`);
-  return { status: res.status, body: await res.json() };
+  const res = await request(app).get(`/api/brain/okr${path}`);
+  return { status: res.status, body: res.body };
 }
-
-// 跳过条件：Brain 服务不可达时（CI 无 live Brain 服务，本地未启动时）
-const brainAvailable = await fetch(`${BRAIN_URL}/api/brain/status`).then(r => r.ok).catch(() => false);
-const describe = brainAvailable ? _describe : _describe.skip;
 
 describe('OKR 拆解端到端集成测试', () => {
   let visionId, objId, krId, projectId, scopeId, initiativeId;
 
   beforeAll(async () => {
-
+    const preflight = await testPool.query('SELECT current_database() AS database_name');
+    expect(preflight.rows[0].database_name).toBe('cecelia_test');
     // Vision 通过 DB 直接创建（隔离测试数据）
     const visionRes = await testPool.query(
       `INSERT INTO visions (title, status) VALUES ($1, 'active') RETURNING id`,

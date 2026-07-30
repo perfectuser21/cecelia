@@ -410,15 +410,19 @@ describe('migrations 374-381 ReleaseRun ledger on PostgreSQL', () => {
         const migrationNames = readdirSync(
           new URL('../../../migrations/', import.meta.url),
         ).filter((name) => /^\d+_.+\.sql$/.test(name));
-        for (const version of migrationNames
+        // This historical fixture is permanently frozen at the 369-381
+        // upgrade window. Newer migrations have their own dedicated fixtures
+        // and must not silently expand this N-1 release proof.
+        const preAppliedVersions = migrationNames
           .map((name) => name.split('_')[0])
-          .filter((version) => Number(version) <= 368)) {
-          await seed.query(
-            `INSERT INTO schema_version (version, description)
-             VALUES ($1, 'N-1 fixture') ON CONFLICT DO NOTHING`,
-            [version],
-          );
-        }
+          .filter((version) => Number(version) <= 368 || Number(version) >= 382);
+        await seed.query(
+          `INSERT INTO schema_version (version, description)
+           SELECT version, 'N-1 fixture'
+             FROM unnest($1::text[]) AS version
+           ON CONFLICT DO NOTHING`,
+          [preAppliedVersions],
+        );
       } finally {
         seed.release();
       }

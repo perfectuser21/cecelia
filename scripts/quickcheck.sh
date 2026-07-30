@@ -132,12 +132,35 @@ for PKG in packages/engine packages/brain apps/api apps/dashboard; do
       echo "$VITEST_OUT"
       if [[ $VITEST_EXIT -eq 0 ]]; then
         echo -e "  ${GREEN}✅ 通过${RESET}"
-      elif echo "$VITEST_OUT" | grep -q " FAIL "; then
-        echo -e "  ${RED}❌ 失败 — 修复后重新 push${RESET}"
-        PASS=false
       else
-        # Worker OOM 崩溃但无测试失败 — 预存在问题，不阻塞
-        echo -e "  ${YELLOW}⚠️  Worker 异常退出（OOM？），但无测试失败 — 继续${RESET}"
+        # 非零退出默认 fail-closed。只对“明确 OOM/worker 签名 + 有通过摘要
+        # + 无失败摘要”的历史 Vitest worker 崩溃保留兼容性降级。
+        VITEST_HAS_WORKER_OOM=false
+        VITEST_HAS_PASS_SUMMARY=false
+        VITEST_HAS_FAIL_SUMMARY=false
+
+        if grep -qiE \
+          'JavaScript heap out of memory|heap limit|Worker (terminated|exited)|worker.*(out of memory|OOM)' \
+          <<< "$VITEST_OUT"; then
+          VITEST_HAS_WORKER_OOM=true
+        fi
+        if grep -qE 'Tests[[:space:]]+[0-9]+[[:space:]]+passed' <<< "$VITEST_OUT"; then
+          VITEST_HAS_PASS_SUMMARY=true
+        fi
+        if grep -qE \
+          '(^|[^[:alpha:]])FAIL([^[:alpha:]]|$)|Tests[[:space:]].*[0-9]+[[:space:]]+failed|Test Files[[:space:]].*[0-9]+[[:space:]]+failed' \
+          <<< "$VITEST_OUT"; then
+          VITEST_HAS_FAIL_SUMMARY=true
+        fi
+
+        if [[ "$VITEST_HAS_WORKER_OOM" == true ]] \
+          && [[ "$VITEST_HAS_PASS_SUMMARY" == true ]] \
+          && [[ "$VITEST_HAS_FAIL_SUMMARY" == false ]]; then
+          echo -e "  ${YELLOW}⚠️  Worker OOM 异常退出，但通过摘要完整且无失败摘要 — 继续${RESET}"
+        else
+          echo -e "  ${RED}❌ Vitest 非零退出（exit=${VITEST_EXIT}）— 修复后重新 push${RESET}"
+          PASS=false
+        fi
       fi
     fi
     echo ""
