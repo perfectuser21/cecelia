@@ -914,7 +914,7 @@ describe('runLoop：wait:* 不灌水', () => {
     expect(sleeps).toHaveLength(1);
   });
 
-  it('R9: async needs_context 只发一次人答请求，不进入 generator fix', async () => {
+  it('R9: async needs_context 原子暂停 run，不要求 PR 也不进入 generator fix', async () => {
     const callback = {
       hop: 3,
       action: 'verdict:attempt_callback',
@@ -936,29 +936,43 @@ describe('runLoop：wait:* 不灌水', () => {
         callback,
       ],
     });
-    const observedSeq = [
-      waiting,
-      waiting,
-      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
-    ];
-    const { deps, appended, sleeps, setHopBase } = makeEnv({ observedSeq });
+    const { deps, appended, sleeps, setHopBase, sqls } = makeEnv({
+      observedSeq: [waiting],
+    });
     setHopBase(3);
 
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
 
-    expect(result.exitReason).toBe('run_done');
-    expect(deps.dispatch.mock.calls.map(([action]) => action)).toEqual([
-      'wait:human_review',
-    ]);
-    expect(appended.map((entry) => entry.action)).toEqual([
-      'wait:human_review',
-      'effect:human_review_requested',
-    ]);
+    expect(result.exitReason).toBe('callback_needs_context');
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(appended).toHaveLength(0);
+    expect(sqls.some(([sql]) => /SET phase = 'paused'/i.test(sql))).toBe(true);
     expect(deps.dispatch).not.toHaveBeenCalledWith(
       'spawn:generator-fix',
       expect.anything(),
     );
-    expect(sleeps).toHaveLength(1);
+    expect(sleeps).toHaveLength(0);
+  });
+
+  it('LAUNCHED callback 抢占 effect hop 时按 singleton conflict 正常让位', async () => {
+    const { deps, appended } = makeEnv({
+      observedSeq: [obs({ generatorSpawned: false })],
+      dispatch: async () => ({
+        status: 'LAUNCHED',
+        run_id: RUN_ID,
+        attempt_id: '22222222-2222-4222-8222-222222222222',
+        lease_generation: 4,
+        provider: 'codex',
+      }),
+    });
+    deps.appendHop.mockImplementationOnce(async (entry) => {
+      appended.push(entry);
+    }).mockRejectedValueOnce(new SingletonConflictError(RUN_ID, 2));
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result).toEqual({ exitReason: 'singleton_conflict', hops: 1 });
+    expect(deps.dispatch).toHaveBeenCalledOnce();
   });
 
   it('R10: second identical unknown_no_pr callback terminalizes without a third dispatch', async () => {

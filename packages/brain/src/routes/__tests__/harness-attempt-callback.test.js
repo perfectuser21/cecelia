@@ -562,6 +562,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(response.status).toBe(200);
     const verdictCall = mocks.pool.query.mock.calls.find(([sql]) => /verdict:evaluate/.test(sql));
     expect(verdictCall).toBeTruthy();
+    expect(verdictCall[0]).toMatch(/action='verdict:evaluate'/);
     expect(verdictCall[1].join(' ')).toContain('sha-1');
   });
 
@@ -654,7 +655,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(detail.no_progress_reason).not.toBe('callback_sha_unverified');
   });
 
-  it('generator-fix blocked 也是已收到的终态 callback，必须持久化供收敛回放', async () => {
+  it('generator-fix blocked 只由标准 callback 供收敛回放，不得伪造成功 SHA verdict', async () => {
     const triggerSha = 'a'.repeat(40);
     const advancedSha = 'b'.repeat(40);
     mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
@@ -683,12 +684,30 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     const callbackCalls = mocks.pool.query.mock.calls.filter(([sql]) => (
       sql.includes('verdict:generator-fix-callback')
     ));
-    expect(callbackCalls).toHaveLength(1);
-    expect(JSON.parse(callbackCalls[0][1][6])).toMatchObject({
-      status: 'blocked',
-      verification_status: 'verified',
-      pr_head_sha: advancedSha,
+    expect(callbackCalls).toHaveLength(0);
+    expect(app.get('kernelPrHeadResolver')).not.toHaveBeenCalled();
+  });
+
+  it('generator-fix needs_context 不得写 no-progress callback verdict', async () => {
+    mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
+    mocks.store.recordCallbackTerminal.mockReset().mockResolvedValue({
+      attempt: { ...attempt, role: 'generator', status: 'needs_context' },
+      deduped: false,
     });
+
+    const response = await postCallback(app, {
+      ...validResult,
+      status: 'needs_context',
+      summary: 'Owner answer required.',
+      artifacts: [],
+      checks: [],
+      decision: { outcome: 'needs_context', reason: 'Choose the release policy.' },
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.pool.query.mock.calls.some(([sql]) => (
+      sql.includes('verdict:generator-fix-callback')
+    ))).toBe(false);
   });
 
   it('跨角色/attempt session 复用冲突返回 409，且不完成 attempt', async () => {

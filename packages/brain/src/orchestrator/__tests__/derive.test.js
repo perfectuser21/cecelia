@@ -127,8 +127,8 @@ describe('R9/R10: append-only attempt callback convergence', () => {
     }));
 
     expect(r).toEqual({
-      phase: 'review',
-      action: 'wait:human_review',
+      phase: 'paused',
+      action: 'pause_run',
       reason: 'callback_needs_context',
     });
   });
@@ -215,6 +215,48 @@ describe('R9/R10: append-only attempt callback convergence', () => {
       phase: 'failed',
       action: 'mark_failed',
       reason: 'repeated_unknown_no_pr',
+    });
+  });
+
+  it('completed generator callback carrying a PR waits for authoritative projection', () => {
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        callback(3, {
+          artifacts: [{
+            type: 'pull_request',
+            url: 'https://github.com/acme/repo/pull/7',
+            head_sha: 'a'.repeat(40),
+          }],
+        }),
+      ],
+    }));
+
+    expect(r).toEqual({
+      phase: 'generate',
+      action: 'wait:running',
+      reason: 'callback_pr_projection_pending',
+    });
+  });
+
+  it('generator-fix infrastructure callback wins over stale no-progress evidence', () => {
+    const r = derive(baseObserved({
+      noProgress: true,
+      noProgressReason: 'no_progress_same_sha',
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator-fix', observed: { trigger_sha: 'sha-new' } },
+        callback(3, {
+          status: 'blocked',
+          failure_class: 'infrastructure_blocked',
+        }),
+      ],
+    }));
+
+    expect(r).toEqual({
+      phase: 'generate',
+      action: 'spawn:generator-fix',
+      reason: 'callback_infrastructure_blocked',
     });
   });
 
