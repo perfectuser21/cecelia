@@ -1,6 +1,12 @@
 # Brain 模块定义
 
-**版本**: 1.267.146
+**版本**: 1.267.147
+
+## Trusted assertion execution contract
+
+- `gp-assertion-trusted-execution.js` 冻结 request 并校验 admission、Runner/source/
+  command 绑定、只读隔离、时间与有界输出，返回 namespaced trusted evidence。
+- 本层是 fail-closed 纯 contract，不执行进程、不接 Runner、DB、CLI 或容器。
 
 ## Assertion finalization policy
 

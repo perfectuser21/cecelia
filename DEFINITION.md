@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.146
+**Brain 版本**: 1.267.147
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.147 — Trusted assertion execution contract
+
+- 新增纯 contract，冻结并摘要 assertion request，严格绑定 Phase 4A admission、
+  Runner digest、source、command、只读隔离、执行时间与 16 KiB 输出。
+- 本层不执行断言、不接 Runner/DB/CLI/容器；仅产出可合并的 trusted evidence。
+  回退：部署 Brain `1.267.146`。
 
 ## Brain 1.267.146 — Assertion finalization policy
 
