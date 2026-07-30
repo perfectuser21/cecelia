@@ -1,7 +1,7 @@
 # Contract DoD — Golden Path 断言盖章后端
 
 - Decision: `df68e4fc-8428-4efb-9dd4-b4677dc06dee`
-- Scope: 定版 PRD §④-1 后端真相层
+- Scope: 定版 PRD §④-1 整个 backend stack 的后端真相层
 
 ## [BEHAVIOR] B-01：只有真实执行通过才能盖章
 
