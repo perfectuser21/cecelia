@@ -67,7 +67,7 @@ describe('kernel-run-trust-reconcile', () => {
     expect(db.query.mock.calls.some(([sql]) => /\bUPDATE\b/.test(sql))).toBe(false);
   });
 
-  it('apply updates by run id inside a bounded transaction and is idempotent', async () => {
+  it('apply uses the scanned before-state as an optimistic guard', async () => {
     const db = makeDb();
 
     const result = await reconcileRunTrust({
@@ -86,6 +86,8 @@ describe('kernel-run-trust-reconcile', () => {
     const update = db.query.mock.calls.find(([sql]) => /UPDATE initiative_runs/.test(sql));
     expect(update[0]).toMatch(/WHERE id = \$1/);
     expect(update[0]).toMatch(/IS DISTINCT FROM/);
+    expect(update[0]).toMatch(/record_trust_status IS NOT DISTINCT FROM \$4/);
+    expect(update[0]).toMatch(/record_trust_reason IS NOT DISTINCT FROM \$5/);
     expect(update[1][0]).toBe(RUN_ID);
   });
 });

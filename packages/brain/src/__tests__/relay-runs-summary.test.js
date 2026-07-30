@@ -152,7 +152,10 @@ describe('GET /api/brain/orchestrator/relay-runs/summary', () => {
         { phase: 'failed', record_trust_status: 'trusted', count: '1' },
         { phase: 'done', record_trust_status: 'reconstructed', count: '20' },
         { phase: 'failed', record_trust_status: 'untrusted', count: '5' },
+        { phase: 'generate', record_trust_status: 'trusted', count: '7' },
       ],
+    }).mockResolvedValueOnce({
+      rows: [{ trusted_total: '4', trusted_done: '3' }],
     });
 
     const res = await request(app).get('/api/brain/orchestrator/relay-runs/summary');
@@ -160,7 +163,7 @@ describe('GET /api/brain/orchestrator/relay-runs/summary', () => {
     expect(res.status).toBe(200);
     expect(res.body.phases).toMatchObject({ done: 23, failed: 6 });
     expect(res.body.trust).toEqual({
-      trusted: 4,
+      trusted: 11,
       reconstructed: 20,
       untrusted: 5,
     });
@@ -176,11 +179,32 @@ describe('GET /api/brain/orchestrator/relay-runs/summary', () => {
       rows: [
         { phase: 'done', record_trust_status: 'reconstructed', count: '2' },
       ],
+    }).mockResolvedValueOnce({
+      rows: [{ trusted_total: '0', trusted_done: '0' }],
     });
 
     const res = await request(app).get('/api/brain/orchestrator/relay-runs/summary');
 
     expect(res.body.slo.trusted_total).toBe(0);
     expect(res.body.slo.trusted_success_rate).toBeNull();
+  });
+
+  it('derives SLO from the latest trusted run per task, excluding active work', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ trusted_total: '2', trusted_done: '1' }],
+      });
+
+    const res = await request(app).get('/api/brain/orchestrator/relay-runs/summary');
+
+    expect(res.body.slo).toEqual({
+      trusted_total: 2,
+      trusted_done: 1,
+      trusted_success_rate: 0.5,
+    });
+    const [sql] = mockPool.query.mock.calls[1];
+    expect(sql).toMatch(/DISTINCT ON\s*\(current_task_id\)/);
+    expect(sql).toMatch(/ORDER BY current_task_id,\s*started_at DESC,\s*id DESC/);
   });
 });

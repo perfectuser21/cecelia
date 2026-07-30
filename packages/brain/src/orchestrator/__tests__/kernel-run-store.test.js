@@ -143,6 +143,25 @@ function finalizationPool({
   };
 }
 
+function exactPatchPool({ task } = {}) {
+  const harness = finalizationPool({ task });
+  return {
+    ...harness,
+    pool: {
+      query: vi.fn(async () => ({
+        rows: [{
+          id: RUN_ID,
+          initiative_id: INITIATIVE_ID,
+          current_task_id: TASK_ID,
+          phase: 'planning',
+          orchestrator_version: 'v2',
+        }],
+      })),
+      connect: harness.pool.connect,
+    },
+  };
+}
+
 describe('Kernel run store creation authority', () => {
   it('loads one v2 run only by primary key', async () => {
     const query = vi.fn(async () => ({ rows: [{ id: RUN_ID }] }));
@@ -439,6 +458,32 @@ describe('Kernel run/task terminalization authority', () => {
       'ROLLBACK',
       'release',
     ]);
+  });
+});
+
+describe('Kernel exact non-terminal patch authority', () => {
+  it('rejects an active phase write when the parent task is missing', async () => {
+    const harness = exactPatchPool({ task: null });
+
+    await expect(patchKernelRunById(harness.pool, {
+      runId: RUN_ID,
+      phase: 'generate',
+    })).rejects.toThrow(`Kernel run parent task missing: ${RUN_ID}`);
+    expect(harness.order).toContain('ROLLBACK');
+    expect(harness.order).not.toContain('run-update');
+  });
+
+  it('rejects an active phase write when the parent task is terminal', async () => {
+    const harness = exactPatchPool({
+      task: { id: TASK_ID, status: 'completed' },
+    });
+
+    await expect(patchKernelRunById(harness.pool, {
+      runId: RUN_ID,
+      phase: 'generate',
+    })).rejects.toThrow('Kernel task is terminal: completed');
+    expect(harness.order).toContain('ROLLBACK');
+    expect(harness.order).not.toContain('run-update');
   });
 });
 
