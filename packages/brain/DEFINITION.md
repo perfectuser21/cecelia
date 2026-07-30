@@ -1,6 +1,12 @@
 # Brain 模块定义
 
-**版本**: 1.267.140
+**版本**: 1.267.141
+
+## GP assertion output evidence utility
+
+- `gp-assertion-output.js` 提供 UTF-8 字节安全尾部、凭据遮蔽与真实场景证据
+  规范化；不可解码字节严格 fail closed，不拼接出新的凭据或测试语义。
+- 本层只提供纯 output/evidence 工具，不执行断言、不写 receipt、不接 API/UI。
 
 ## Golden Path §④-1 receipt evidence schema (stack 2)
 
