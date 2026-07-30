@@ -60,9 +60,9 @@ fleet-credential-envelope-smoke.sh
 fleet-worker-workspace-smoke.sh
 gate3-brain-deploy-smoke.sh
 git-sha-health-smoke.sh
+golden-path-contract-version-smoke.sh
 golden-path-proposal-smoke.sh
 golden-paths-t1-smoke.sh
-golden-paths-t7-e2e-smoke.sh
 gp-anchor-lockdown-smoke.sh
 gp-governance-decisions-smoke.sh
 graph-multi-repo-smoke.sh
