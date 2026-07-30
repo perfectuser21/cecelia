@@ -6,13 +6,30 @@
 # 后，capture_atoms 应在 5 分钟窗口内同步新增对应记录）。
 #
 # task_id: 9f24e3a9-683e-4151-9323-f4a9170242c8
-# 用法: DATABASE_URL=<postgres_url> bash t10-capture-atom-routing-smoke.sh
+# 用法: DB_NAME=<db_name> bash t10-capture-atom-routing-smoke.sh
+#
+# ⚠️ 数据库目标一致性（2026-07-30 hotfix，task_id: 9f24e3a9-683e-4151-9323-f4a9170242c8）：
+# 写入侧（node 子进程，经 auto-learning.js -> db.js -> db-config.js）和校验侧（psql）
+# 必须从同一组 DB_NAME/DB_HOST/DB_PORT/DB_USER 变量解析数据库目标——db-config.js
+# 只读这几个变量，不认那个曾经误用过的“数据库连接串环境变量”（历史坑名不再在本文件
+# 出现，见 t10-smoke-db-target-consistency.test.js 的回归护栏）。
 
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-DB="${DATABASE_URL:-postgresql://cecelia@localhost:5432/cecelia_test}"
+DB_NAME="${DB_NAME:-cecelia_test}"
+DB_HOST="${DB_HOST:-localhost}"
+DB_PORT="${DB_PORT:-5432}"
+DB_USER="${DB_USER:-cecelia}"
+
+# 硬护栏：绝不允许本 smoke 脚本写入生产库 cecelia（2026-07-30 事故根因）
+if [ "$DB_NAME" = "cecelia" ]; then
+  echo "FAIL: 禁止把 smoke 测试数据写入生产库 cecelia，请勿设置 DB_NAME=cecelia" >&2
+  exit 1
+fi
+
+DB="postgresql://${DB_USER}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
 
 echo "[t10-capture-atom-routing-smoke] 1. 检查 8 个源文件均已引用 pushCaptureAtom"
 node -e "
@@ -51,7 +68,7 @@ echo "[t10-capture-atom-routing-smoke] 4. 已接入 2 处防回归护栏"
 echo "[t10-capture-atom-routing-smoke] 5. 真实触发（零 mock，真 Postgres）— auto-learning.js::createAutoLearning"
 MARKER_TITLE="smoke-t10-$(date +%s)-${RANDOM}"
 
-RESULT=$(cd packages/brain && node --input-type=module -e "
+RESULT=$(cd packages/brain && DB_NAME="$DB_NAME" DB_HOST="$DB_HOST" DB_PORT="$DB_PORT" DB_USER="$DB_USER" node --input-type=module -e "
 import { createAutoLearning } from './src/auto-learning.js';
 import pool from './src/db.js';
 const r = await createAutoLearning({
