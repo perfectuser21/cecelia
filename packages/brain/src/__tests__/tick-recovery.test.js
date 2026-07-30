@@ -53,6 +53,9 @@ describe('tick-recovery', () => {
   beforeEach(() => {
     resetTickStateForTests();
     vi.clearAllMocks();
+    mockGetTickStatus.mockReset();
+    mockQuery.mockReset();
+    mockQuery.mockResolvedValue({ rows: [] });
     delete process.env.CECELIA_TICK_ENABLED;
     delete process.env.CECELIA_TICK_HARD_OFF;
   });
@@ -186,6 +189,60 @@ describe('tick-recovery', () => {
       expect(mockQuery).toHaveBeenCalled();
     });
 
+    it('生产 env=true 的后台 recovery 不得覆盖 manual 关闭', async () => {
+      process.env.CECELIA_TICK_ENABLED = 'true';
+      mockGetTickStatus.mockResolvedValueOnce({ enabled: false });
+      mockQuery.mockImplementation((_sql, params) => {
+        if (params?.[0] === 'tick_enabled') {
+          return Promise.resolve({
+            rows: [{
+              value_json: {
+                enabled: false,
+                source: 'manual',
+                disabled_at: '2026-01-01T00:00:00.000Z',
+              },
+            }],
+          });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+
+      tickState.recoveryTimer = setInterval(() => {}, 1000);
+      tickState.recoveryTimer.unref?.();
+
+      await tryRecoverTickLoop();
+
+      expect(mockStartTickLoop).not.toHaveBeenCalled();
+      expect(tickState.recoveryTimer).toBeNull();
+    });
+
+    it('生产 env=true 的后台 recovery 仍恢复非 manual 关闭', async () => {
+      process.env.CECELIA_TICK_ENABLED = 'true';
+      mockGetTickStatus.mockResolvedValueOnce({ enabled: false });
+      mockQuery.mockImplementation((_sql, params) => {
+        if (params?.[0] === 'tick_enabled') {
+          return Promise.resolve({
+            rows: [{
+              value_json: {
+                enabled: false,
+                source: 'drain',
+                disabled_at: new Date().toISOString(),
+              },
+            }],
+          });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+
+      tickState.recoveryTimer = setInterval(() => {}, 1000);
+      tickState.recoveryTimer.unref?.();
+
+      await tryRecoverTickLoop();
+
+      expect(mockStartTickLoop).toHaveBeenCalledTimes(1);
+      expect(tickState.recoveryTimer).toBeNull();
+    });
+
     it('成功路径：DB enabled → startTickLoop 并清 recoveryTimer', async () => {
       mockGetTickStatus.mockResolvedValueOnce({ enabled: true });
       mockQuery.mockResolvedValue({ rows: [] });
@@ -223,13 +280,80 @@ describe('tick-recovery', () => {
       expect(mockStartTickLoop).toHaveBeenCalledTimes(1);
     });
 
-    it('CECELIA_TICK_ENABLED=true → 直接 enableTick', async () => {
+    it('CECELIA_TICK_ENABLED=true → 非 manual 关闭仍直接 enableTick', async () => {
       process.env.CECELIA_TICK_ENABLED = 'true';
-      mockQuery.mockResolvedValue({ rows: [] });
+      mockGetTickStatus.mockResolvedValueOnce({ enabled: false });
+      mockQuery.mockImplementation((_sql, params) => {
+        if (params?.[0] === 'tick_enabled') {
+          return Promise.resolve({
+            rows: [{
+              value_json: {
+                enabled: false,
+                source: 'drain',
+                disabled_at: new Date().toISOString(),
+              },
+            }],
+          });
+        }
+        return Promise.resolve({ rows: [] });
+      });
 
       await initTickLoop();
       // enableTick 内部调 startTickLoop
       expect(mockStartTickLoop).toHaveBeenCalledTimes(1);
+    });
+
+    it('部署重启不得自动恢复超过阈值的 manual 关闭', async () => {
+      process.env.CECELIA_TICK_ENABLED = 'true';
+      mockGetTickStatus.mockResolvedValueOnce({ enabled: false });
+      mockQuery.mockImplementation((_sql, params) => {
+        if (params?.[0] === 'tick_enabled') {
+          return Promise.resolve({
+            rows: [{
+              value_json: {
+                enabled: false,
+                source: 'manual',
+                disabled_at: '2026-01-01T00:00:00.000Z',
+              },
+            }],
+          });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+
+      await initTickLoop();
+
+      expect(mockStartTickLoop).not.toHaveBeenCalled();
+      expect(mockQuery).not.toHaveBeenCalledWith(
+        expect.stringContaining("'tick_auto_recover'"),
+        expect.anything(),
+      );
+    });
+
+    it('超过阈值的 drain 关闭仍自动恢复', async () => {
+      mockGetTickStatus.mockResolvedValueOnce({ enabled: false });
+      mockQuery.mockImplementation((_sql, params) => {
+        if (params?.[0] === 'tick_enabled') {
+          return Promise.resolve({
+            rows: [{
+              value_json: {
+                enabled: false,
+                source: 'drain',
+                disabled_at: '2026-01-01T00:00:00.000Z',
+              },
+            }],
+          });
+        }
+        return Promise.resolve({ rows: [] });
+      });
+
+      await initTickLoop();
+
+      expect(mockStartTickLoop).toHaveBeenCalledTimes(1);
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining("'tick_auto_recover'"),
+        expect.anything(),
+      );
     });
 
     // 2026-07-06 staging 隔离硬关（真实事故：staging tick 越权跑抢生产 bridge）：
