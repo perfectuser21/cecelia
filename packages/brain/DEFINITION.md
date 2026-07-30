@@ -1,6 +1,13 @@
 # Brain 模块定义
 
-**版本**: 1.267.143
+**版本**: 1.267.144
+
+## Pinned toolchain attestation policy
+
+- `gp-assertion-toolchain.js` 消费 Phase 4A NodeProfile/admission 提供的 expected 与
+  actual Runner digest；缺失、格式非法或不一致时不允许盖章。
+- 执行前后对 canonical toolchain paths 逐文件 SHA-256，漂移失败关闭；输出仅
+  含路径与 digest，不含文件内容，也不接 Runner/receipt。
 
 ## Pinned assertion command policy
 
