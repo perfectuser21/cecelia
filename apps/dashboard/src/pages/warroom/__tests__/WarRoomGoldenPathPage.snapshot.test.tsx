@@ -96,6 +96,7 @@ describe('WarRoomGoldenPathPage atomic snapshots', () => {
       await Promise.resolve();
     });
     expect(screen.getByTestId('gp-title')).toHaveTextContent('新 GP');
+    expect(screen.getByText('新格子')).toBeInTheDocument();
     expect(screen.queryByText('旧格子')).not.toBeInTheDocument();
   });
 
