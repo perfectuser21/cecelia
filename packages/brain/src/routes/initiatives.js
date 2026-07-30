@@ -340,19 +340,48 @@ router.get('/relay-runs/summary', async (req, res) => {
   const PHASE_KEYS = ['planning', 'gan', 'generate', 'evaluate', 'done', 'failed'];
   try {
     const result = await pool.query(
-      `SELECT phase, COUNT(*) AS count
+      `SELECT phase, record_trust_status, COUNT(*) AS count
          FROM initiative_runs
         WHERE orchestrator_version = 'v2'
-        GROUP BY phase`
+        GROUP BY phase, record_trust_status`
     );
     const phases = Object.fromEntries(PHASE_KEYS.map(k => [k, 0]));
+    const trust = {
+      trusted: 0,
+      reconstructed: 0,
+      untrusted: 0,
+    };
     for (const row of result.rows) {
+      const count = Number(row.count);
       if (Object.prototype.hasOwnProperty.call(phases, row.phase)) {
-        phases[row.phase] = Number(row.count);
+        phases[row.phase] += count;
+      }
+      const trustStatus = row.record_trust_status || 'untrusted';
+      if (Object.prototype.hasOwnProperty.call(trust, trustStatus)) {
+        trust[trustStatus] += count;
       }
     }
     const total = Object.values(phases).reduce((a, b) => a + b, 0);
-    return res.json({ phases, total });
+    const trustedDone = result.rows.reduce(
+      (sum, row) => (
+        row.record_trust_status === 'trusted' && row.phase === 'done'
+          ? sum + Number(row.count)
+          : sum
+      ),
+      0,
+    );
+    return res.json({
+      phases,
+      total,
+      trust,
+      slo: {
+        trusted_total: trust.trusted,
+        trusted_done: trustedDone,
+        trusted_success_rate: trust.trusted === 0
+          ? null
+          : trustedDone / trust.trusted,
+      },
+    });
   } catch (err) {
     console.error('[GET /orchestrator/relay-runs/summary]', err.message);
     return res.status(500).json({ error: 'internal server error' });
