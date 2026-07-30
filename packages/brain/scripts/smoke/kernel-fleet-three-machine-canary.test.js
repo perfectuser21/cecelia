@@ -349,6 +349,8 @@ describe('createLiveDispatch', () => {
     liveMocks.pool.query.mockImplementation(async (sql, params) => {
       if (/INSERT INTO initiative_runs/.test(sql)) {
         expect(sql).toMatch(/\(\s*id,\s*initiative_id,/);
+        expect(sql).toContain("'fleet-canary-v1'");
+        expect(sql).not.toContain("'v2'");
         expect(params).toEqual([RUN_ID, RUN_ID]);
         return { rows: [{ id: RUN_ID }], rowCount: 1 };
       }

@@ -307,6 +307,49 @@ describe('Kernel v1 判活闸:活着的 kernel 绝不 requeue', () => {
     expect(r.kernelHeld).toBe(0);
   });
 
+  it('golden_path_proposal + kernel-v1 同样进入 exact reconciliation', async () => {
+    const pool = sweepPool({ harness_runtime: 'kernel-v1' });
+    pool.query.mockImplementation(async (sql, params) => {
+      const s = String(sql);
+      pool.calls.push({ sql: s, params });
+      if (s.includes("task_type LIKE 'harness%'")) {
+        return {
+          rows: [{
+            id: KERNEL_TASK_ID,
+            title: 'kernel GP',
+            status: 'in_progress',
+            task_type: 'golden_path_proposal',
+            payload: { harness_runtime: 'kernel-v1' },
+            initiative_id: KERNEL_TASK_ID,
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    const assessKernel = vi.fn(async () => ({
+      verdict: 'unknown',
+      reason: 'no_kernel_run',
+    }));
+    const reconcileKernelTerminal = vi.fn(async () => ({
+      reconciled: false,
+      reason: 'no_task_linked_terminal_run',
+    }));
+
+    const r = await sweepOrphanHarnessTasks({
+      pool,
+      execFn: vi.fn(noContainers),
+      idleMinutes: 15,
+      assessKernel,
+      reconcileKernelTerminal,
+    });
+
+    const select = pool.calls.find(({ sql }) => sql.includes('FROM tasks'));
+    expect(select.sql).toContain("task_type = 'golden_path_proposal'");
+    expect(assessKernel).toHaveBeenCalled();
+    expect(r.kernelUnresolved).toBe(1);
+    expect(r.requeued).toBe(0);
+  });
+
   it('callback 退出闸:kernel 活着 → noop，不 requeue', async () => {
     const pool = mockPool({
       id: KERNEL_TASK_ID, status: 'in_progress', task_type: 'harness_initiative',

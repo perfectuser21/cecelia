@@ -26,7 +26,7 @@ function transactionPool({
     id: TASK_ID,
     task_type: 'harness_initiative',
     status: 'in_progress',
-    payload: {},
+    payload: { initiative_id: INITIATIVE_ID },
   },
   activeRun = null,
 } = {}) {
@@ -262,6 +262,28 @@ describe('Kernel run store creation authority', () => {
     })).rejects.toThrow('invalid Kernel run created source: guessed');
     expect(harness.pool.connect).not.toHaveBeenCalled();
   });
+
+  it('rejects a task-to-initiative ownership mismatch under the task lock', async () => {
+    const harness = transactionPool({
+      task: {
+        id: TASK_ID,
+        task_type: 'harness_initiative',
+        status: 'in_progress',
+        payload: { initiative_id: RUN_ID },
+      },
+    });
+
+    await expect(createKernelRun(harness.pool, VALID_INPUT))
+      .rejects.toThrow(
+        `kernel run task ${TASK_ID} initiative mismatch: ${INITIATIVE_ID}/${RUN_ID}`,
+      );
+    expect(harness.order).toEqual([
+      'BEGIN',
+      'task-lock',
+      'ROLLBACK',
+      'release',
+    ]);
+  });
 });
 
 describe('Kernel run/task terminalization authority', () => {
@@ -292,8 +314,8 @@ describe('Kernel run/task terminalization authority', () => {
     expect(terminalEvent.params[3]).toContain('automation_deadline_exceeded');
     expect(harness.order).toEqual([
       'BEGIN',
-      'run-lock',
       'task-lock',
+      'run-lock',
       'run-update',
       'task-update',
       'terminal-event',
@@ -314,8 +336,8 @@ describe('Kernel run/task terminalization authority', () => {
 
     expect(harness.order).toEqual([
       'BEGIN',
-      'run-lock',
       'task-lock',
+      'run-lock',
       'run-update',
       'task-update',
       'ROLLBACK',
@@ -343,8 +365,8 @@ describe('Kernel run/task terminalization authority', () => {
     })).rejects.toThrow('Kernel terminal outcome conflict: failed/done');
     expect(harness.order).toEqual([
       'BEGIN',
-      'run-lock',
       'task-lock',
+      'run-lock',
       'ROLLBACK',
       'release',
     ]);
@@ -369,8 +391,8 @@ describe('Kernel run/task terminalization authority', () => {
     expect(result.changed).toBe(false);
     expect(harness.order).toEqual([
       'BEGIN',
-      'run-lock',
       'task-lock',
+      'run-lock',
       'task-update',
       'COMMIT',
       'release',
@@ -393,6 +415,7 @@ describe('Kernel run/task terminalization authority', () => {
     })).rejects.toThrow(`Kernel run/task identity mismatch: ${RUN_ID}/${TASK_ID}`);
     expect(harness.order).toEqual([
       'BEGIN',
+      'task-lock',
       'run-lock',
       'ROLLBACK',
       'release',

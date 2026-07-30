@@ -51,5 +51,6 @@ describe('Kernel run identity deploy preflight', () => {
     expect(sql).toHaveLength(3);
     expect(sql.join('\n')).not.toMatch(/\b(?:UPDATE|INSERT|DELETE)\b/i);
     expect(sql[2]).toContain('NULL::text AS created_source');
+    expect(sql[2]).toMatch(/AND\s+\(\s*TRUE\s*\)/);
   });
 });

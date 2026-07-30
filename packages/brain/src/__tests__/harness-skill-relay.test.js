@@ -172,6 +172,7 @@ describe('spawnSkillRelaySession', () => {
       mode: 'kernel-v1',
       runId: KERNEL_RUN_ID,
       error: 'spawn EACCES',
+      terminalized: true,
     });
     expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
       runId: KERNEL_RUN_ID,

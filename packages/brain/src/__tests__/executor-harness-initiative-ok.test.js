@@ -200,6 +200,15 @@ describe('classifyHarnessRelayAction — P1 bug 39b97ade：deferred 结果之前
     expect(classifyHarnessRelayAction({ ok: false, error: 'boom' })).toBe('failed');
   });
 
+  it('Kernel 已由 run authority 终态化 → terminalized，不允许 executor task-only 回写', () => {
+    expect(classifyHarnessRelayAction({
+      ok: false,
+      mode: 'kernel-v1',
+      terminalized: true,
+      error: 'spawn EACCES',
+    })).toBe('terminalized');
+  });
+
   it('result 为 undefined → failed（防御，不抛异常）', () => {
     expect(classifyHarnessRelayAction(undefined)).toBe('failed');
   });
