@@ -55,18 +55,22 @@ describe('scanStuckHarness — 单元 smoke', () => {
       id: '11111111-1111-4111-8111-111111111111',
       initiative_id: '22222222-2222-4222-8222-222222222222',
       contract_id: null,
+      current_task_id: '33333333-3333-4333-8333-333333333333',
       deadline_at: new Date(Date.now() - 1000),
       phase: 'B_task_loop',
     };
-    mockPoolQuery
-      .mockResolvedValueOnce({ rows: [run] })
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    mockPoolQuery.mockResolvedValueOnce({ rows: [run] });
+    const patchRun = vi.fn(async (_pool, input) => ({
+      id: input.runId,
+      phase: input.phase,
+    }));
 
-    await scanStuckHarness({});
+    await scanStuckHarness({ patchRun });
 
-    const [sql, params] = mockPoolQuery.mock.calls[1];
-    expect(sql).toMatch(/WHERE\s+id\s*=\s*\$1/i);
-    expect(sql).not.toMatch(/WHERE\s+initiative_id\s*=/i);
-    expect(params).toEqual([run.id]);
+    expect(patchRun).toHaveBeenCalledWith(expect.anything(), {
+      runId: run.id,
+      phase: 'failed',
+      failureReason: 'watchdog_overdue',
+    });
   });
 });

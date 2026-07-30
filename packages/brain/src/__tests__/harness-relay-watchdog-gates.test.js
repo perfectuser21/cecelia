@@ -10,6 +10,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
 vi.mock('../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
+vi.mock('../orchestrator/kernel-run-store.js', () => ({
+  patchKernelRunById: async (db, input) => {
+    await db.query(
+      `UPDATE initiative_runs SET phase='${input.phase}',
+         failure_reason=COALESCE(failure_reason, '${input.failureReason ?? ''}'),
+         pr_url=COALESCE(pr_url, $2) WHERE id=$1`,
+      [input.runId, input.prUrl],
+    );
+    await db.query(`UPDATE tasks SET status='${input.phase === 'done' ? 'completed' : 'failed'}'`);
+    return { id: input.runId, phase: input.phase };
+  },
+}));
 
 import {
   resumeStalledRelayRuns,
@@ -44,7 +56,7 @@ function makeDeps({
 
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql) => {
-    if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+    if (/FROM initiative_runs r/.test(sql)) {
       return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost }] };
     }
     if (/FROM tasks/.test(sql)) {
@@ -106,7 +118,7 @@ describe('C：skill-relay-spawn 事件三口收尾', () => {
   it('3) scanStuckHarness 逾期 -> 批量关闭 spawn 事件为 failed', async () => {
     const pool = { query: vi.fn().mockImplementation(async (sql) => {
       if (/SELECT id, initiative_id/.test(sql)) {
-        return { rows: [{ id: 'run-1', initiative_id: TASK_ID, orchestrator_host: 'skill-relay-session', phase: 'generate', deadline_at: new Date(Date.now() - 1000).toISOString() }] };
+        return { rows: [{ id: 'run-1', initiative_id: TASK_ID, current_task_id: TASK_ID, orchestrator_host: 'skill-relay-session', phase: 'generate', deadline_at: new Date(Date.now() - 1000).toISOString() }] };
       }
       return { rows: [] };
     })};
@@ -162,8 +174,8 @@ describe('A/B：generator_done 短路 + 超时兜底', () => {
 
   it('8) M1 headed 分支 generator_done=true + evaluator 已完成 + session 消失 → spawnFn 零调用（headed 短路）', async () => {
     const pool = { query: vi.fn().mockImplementation(async (sql) => {
-      if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-        return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '1', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: null, orchestrator_host: 'skill-relay-claude-headed', started_at: new Date(Date.now() - 3600e3).toISOString() }] };
+      if (/FROM initiative_runs r/.test(sql)) {
+        return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: '1', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: null, orchestrator_host: 'skill-relay-claude-headed', started_at: new Date(Date.now() - 3600e3).toISOString() }] };
       }
       if (/FROM tasks/.test(sql)) {
         return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', generator_done: true } }] };
@@ -201,8 +213,8 @@ describe('A/B：generator_done 短路 + 超时兜底', () => {
     // failing test: 当前 headed 短路逻辑不检查 evaluator，session 死后 evaluator 永远不跑
     // fix 后：evaluator 未完成时应重点火让 controller 从 Step 4 恢复
     const pool = { query: vi.fn().mockImplementation(async (sql) => {
-      if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-        return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '1', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: null, orchestrator_host: 'skill-relay-claude-headed', started_at: new Date().toISOString() }] };
+      if (/FROM initiative_runs r/.test(sql)) {
+        return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: '1', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: null, orchestrator_host: 'skill-relay-claude-headed', started_at: new Date().toISOString() }] };
       }
       if (/FROM tasks/.test(sql)) {
         return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', generator_done: true } }] };
@@ -224,8 +236,8 @@ describe('A/B：generator_done 短路 + 超时兜底', () => {
   it('9) M2 generator_done=true 但 generator_done_at 缺失 -> 回退 run.started_at 判超时标 failed', async () => {
     const oldStarted = new Date(Date.now() - (GENERATOR_DONE_TIMEOUT_MS + 60000)).toISOString();
     const pool = { query: vi.fn().mockImplementation(async (sql) => {
-      if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-        return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '1', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: null, orchestrator_host: 'skill-relay-session', started_at: oldStarted }] };
+      if (/FROM initiative_runs r/.test(sql)) {
+        return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: '1', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: null, orchestrator_host: 'skill-relay-session', started_at: oldStarted }] };
       }
       if (/FROM tasks/.test(sql)) {
         return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', generator_done: true } }] };
@@ -243,10 +255,10 @@ describe('A/B：generator_done 短路 + 超时兜底', () => {
     expect(r.capped).toBe(1);
   });
 
-  it('10) M2 DISTINCT ON SELECT 选出 started_at 列', async () => {
+  it('10) M2 exact-run SELECT 选出 started_at 列', async () => {
     const deps = makeDeps({ generatorDone: false });
     await resumeStalledRelayRuns(deps);
-    const runsSql = deps.pool.query.mock.calls.map((c) => c[0]).find((s) => /DISTINCT ON \(initiative_id\)/.test(s));
+    const runsSql = deps.pool.query.mock.calls.map((c) => c[0]).find((s) => /FROM initiative_runs r/.test(s));
     expect(runsSql).toMatch(/started_at/);
   });
 });
