@@ -6,11 +6,22 @@
 
 
 
-**Brain 版本**: 1.267.147
+**Brain 版本**: 1.267.148
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.148 — Kernel asynchronous callback convergence
+
+- Dispatcher 持久化 launch receipt 后只返回 `LAUNCHED`；Loop 记录 launch effect
+  后等待 callback/reconcile，不把启动误作角色完成。
+- callback 以 run/attempt/owner/generation 全身份栅栏进入一个事务；Attempt 终态和
+  `verdict:attempt_callback` 同时提交，重复 payload 幂等、旧租约和冲突 payload 409。
+- `needs_context`、基础设施阻塞、语义拒绝、runner failure、取消和 no-PR 使用独立
+  路由；只有结构化基础设施故障可换执行目标，第二次相同 `unknown_no_pr` 终结。
+- Migration 378 扩展 Attempt failure-class CHECK 以保存 `needs_context`。回退应用到
+  Brain `1.267.147` 时保留兼容 schema，禁止恢复 callback split-write。
 
 ## Brain 1.267.147 — Kernel exact run API and trust accounting
 

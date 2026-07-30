@@ -1,6 +1,21 @@
 # Brain 模块定义
 
-**版本**: 1.267.147
+**版本**: 1.267.148
+
+## Kernel asynchronous callback convergence
+
+- Dispatcher 在 launch receipt 持久化后返回 `LAUNCHED`；Loop 只追加
+  `effect:attempt_launched` 并重新观测，不再把容器启动误投影成角色完成。
+- Worker callback 必须匹配 `run_id + attempt_id + lease_owner +
+  lease_generation`；本地 runner 与远程 bridge 都转发完整租约代次，迟到代次在任何
+  业务写入前返回 409。
+- Attempt 终态与 `verdict:attempt_callback` 在一个 PostgreSQL 事务提交；相同 payload
+  重试幂等确认，冲突 payload、旧 owner/代次均不能污染 attempt 或决策账本。
+- `needs_context`、基础设施阻塞、语义拒绝、runner failure 与取消分别路由；
+  只有结构化 `infrastructure_blocked` 可换执行目标，同一 `unknown_no_pr` 第二次
+  出现即原子终结 run/task，不产生第三个 attempt。
+- Migration 378 将 `needs_context` 加入 Attempt failure-class CHECK；回退应用到
+  `1.267.147` 时保留该兼容性 schema，不恢复异步 callback 的 split-write 路径。
 
 ## Kernel exact run API and trust accounting
 
