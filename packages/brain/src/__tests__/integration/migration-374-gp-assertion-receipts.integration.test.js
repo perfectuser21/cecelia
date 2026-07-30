@@ -4,11 +4,8 @@ import { readFileSync } from 'node:fs';
 import pool from '../../db.js';
 import { deriveAssertionVerification } from '../../lib/journey-assertion-receipt.js';
 const migration = readFileSync(new URL('../../../migrations/374_gp_assertion_receipts.sql', import.meta.url), 'utf8');
-const fixture = `gp-assertion-receipt-${process.pid}-${randomUUID()}`;
-const assertionRef = 'src/lib/__tests__/journey-assertion-receipt.test.js';
-const digest = (value) => createHash('sha256').update(value).digest('hex');
-const assertionDigest = digest(assertionRef);
-const outputDigest = digest('4 tests passed');
+const fixture = `gp-assertion-receipt-${process.pid}-${randomUUID()}`; const assertionRef = 'src/lib/__tests__/journey-assertion-receipt.test.js';
+const digest = (value) => createHash('sha256').update(value).digest('hex'); const assertionDigest = digest(assertionRef); const outputDigest = digest('4 tests passed');
 let client, cellId, assertionRevision, featureId;
 async function insertReceipt(overrides = {}, conflict = '') {
   const value = {
@@ -53,9 +50,7 @@ beforeAll(async () => {
   await client.query('BEGIN');
   await client.query(migration);
   await client.query(migration);
-  const journeyId = (await client.query(
-    "INSERT INTO journeys (name, description) VALUES ($1, 'assertion receipt migration fixture') RETURNING id", [fixture],
-  )).rows[0].id;
+  const journeyId = (await client.query("INSERT INTO journeys (name, description) VALUES ($1, 'assertion receipt migration fixture') RETURNING id", [fixture])).rows[0].id;
   const stepId = (await client.query(
     "INSERT INTO journey_steps (journey_id, name, step_number) VALUES ($1, 'execute assertion', 1) RETURNING id", [journeyId],
   )).rows[0].id;
@@ -79,9 +74,7 @@ describe('migration 374 Golden Path assertion receipts [PostgreSQL]', () => {
       "SELECT is_nullable, column_default FROM information_schema.columns WHERE table_name='journey_step_links' AND column_name='assertion_revision'",
     );
     expect(version.rows).toHaveLength(1);
-    expect(column.rows).toEqual([
-      expect.objectContaining({ is_nullable: 'NO', column_default: '1' }),
-    ]);
+    expect(column.rows).toEqual([expect.objectContaining({ is_nullable: 'NO', column_default: '1' })]);
   });
   it('rejects PASS without zero exit, source SHA, or output digest', async () => {
     await rejectReceipts([
