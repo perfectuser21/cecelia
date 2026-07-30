@@ -1,6 +1,22 @@
 # Brain 模块定义
 
-**版本**: 1.267.150
+**版本**: 1.267.151
+
+## Kernel terminal-attempt convergence
+
+- Attempt 创建先以精确 `run_id` 对非终态 v2 run 取得 key-share lock；终态或缺失
+  的父 run 一律拒绝。并发 winner 重读也受同一 active-run 栅栏约束，不能在 run
+  终态化之后补生 attempt。
+- `finalizeKernelRun` 统一按 `task → run → attempt id` 加锁，并在 run/task 同一事务
+  中把 `queued/starting/running` attempt 关闭为 `cancelled`、清除租约、记录
+  `parent_run_terminal`；回执包含实际关闭数量。callback 与 finalize 竞态只允许
+  callback 先终态或 finalize 先取消两种串行结果，不残留 active attempt。
+- `kernel-stale-attempt-reconcile.mjs` 只提案“精确终态 v2 父 run + 已过期/空租约”
+  的 active attempt。默认 dry-run；生产 apply 绑定数据库、候选数、计划 SHA、
+  session advisory lock，并逐条按 `task → run → attempt` 重锁证据。证据漂移不写，
+  成功后精确回读并写入独占、fsync、只读 JSONL 审计；二次 dry-run 必须为 0。
+- 回退应用到 Brain `1.267.150` 时保留历史审计与 attempt lifecycle 数据；不得恢复
+  允许终态 run 新建 attempt 或 run/task 终态与 attempt 分裂提交的路径。
 
 ## Kernel asynchronous callback convergence
 
