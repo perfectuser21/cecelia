@@ -81,6 +81,7 @@ export const LOG_ACTION = Object.freeze({
   VERDICT_HUMAN_REVIEW: 'verdict:human_review',
   HUMAN_REVIEW_REQUESTED: 'effect:human_review_requested',
   ATTEMPT_LAUNCHED: 'effect:attempt_launched',
+  ATTEMPT_CALLBACK: 'verdict:attempt_callback',
   DISPATCH_RESULT: 'result:dispatch',
   // Sprint 07231527：generator-fix callback verdict（no-progress 推导依赖）
   VERDICT_GENERATOR_FIX_CALLBACK: 'verdict:generator-fix-callback',

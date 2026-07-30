@@ -914,6 +914,86 @@ describe('runLoop：wait:* 不灌水', () => {
     expect(sleeps).toHaveLength(1);
   });
 
+  it('R9: async needs_context 只发一次人答请求，不进入 generator fix', async () => {
+    const callback = {
+      hop: 3,
+      action: 'verdict:attempt_callback',
+      detail: {
+        attempt_id: '22222222-2222-4222-8222-222222222222',
+        lease_generation: 0,
+        role: 'generator',
+        hop: 1,
+        status: 'needs_context',
+        failure_class: 'needs_context',
+        artifacts: [],
+      },
+    };
+    const waiting = obs({
+      pr: null,
+      generatorSpawned: true,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        callback,
+      ],
+    });
+    const observedSeq = [
+      waiting,
+      waiting,
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, appended, sleeps, setHopBase } = makeEnv({ observedSeq });
+    setHopBase(3);
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.dispatch.mock.calls.map(([action]) => action)).toEqual([
+      'wait:human_review',
+    ]);
+    expect(appended.map((entry) => entry.action)).toEqual([
+      'wait:human_review',
+      'effect:human_review_requested',
+    ]);
+    expect(deps.dispatch).not.toHaveBeenCalledWith(
+      'spawn:generator-fix',
+      expect.anything(),
+    );
+    expect(sleeps).toHaveLength(1);
+  });
+
+  it('R10: second identical unknown_no_pr callback terminalizes without a third dispatch', async () => {
+    const callback = (hop) => ({
+      hop,
+      action: 'verdict:attempt_callback',
+      detail: {
+        attempt_id: `22222222-2222-4222-8222-${String(hop).padStart(12, '0')}`,
+        lease_generation: 0,
+        role: 'generator',
+        hop: hop - 1,
+        status: 'completed',
+        failure_class: null,
+        artifacts: [],
+      },
+    });
+    const observedSeq = [obs({
+      pr: null,
+      generatorSpawned: true,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        callback(3),
+        { hop: 4, action: 'spawn:generator-fix', observed: {} },
+        callback(6),
+      ],
+    })];
+    const { deps } = makeEnv({ observedSeq });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('repeated_unknown_no_pr');
+    expect(deps.finalizeRun).toHaveBeenCalledOnce();
+    expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+
   it('连续 wait:poll_ci 累积 pollCount → 超限时 derive 判 ci_timeout（mark_failed）', async () => {
     const pr = { url: 'u', state: 'OPEN', ci: 'pending', merged: false, head_sha: 's' };
     // 一直 pending：20 次 poll 后（pollCount>=MAX_POLL_COUNT）→ ci_timeout

@@ -120,6 +120,132 @@ function sortedLogRows(decisionLog) {
     : [];
 }
 
+const INFRA_RETRY_ACTION_BY_ROLE = Object.freeze({
+  planner: { phase: 'planning', action: ACTION.SPAWN_PLANNER },
+  proposer: { phase: 'gan', action: ACTION.SPAWN_PROPOSER },
+  reviewer: { phase: 'gan', action: ACTION.SPAWN_REVIEWER },
+  generator: { phase: 'generate', action: ACTION.SPAWN_GENERATOR_FIX },
+  evaluator: { phase: 'evaluate', action: ACTION.SPAWN_EVALUATOR },
+  judge: { phase: 'judge', action: ACTION.SPAWN_JUDGE },
+  reporter: { phase: 'done', action: ACTION.SPAWN_CANARY },
+});
+
+function callbackDetail(row) {
+  return asStructuredJson(row?.detail) ?? {};
+}
+
+function latestUnconsumedAttemptCallback(decisionLog) {
+  const rows = sortedLogRows(decisionLog);
+  const latestSpawn = [...rows].reverse().find(
+    (row) => typeof row.action === 'string' && row.action.startsWith('spawn:'),
+  );
+  return [...rows].reverse().find((row) => (
+    row.action === LOG_ACTION.ATTEMPT_CALLBACK
+    && (latestSpawn == null || Number(row.hop) > Number(latestSpawn.hop))
+  )) ?? null;
+}
+
+function noPrSignatureKey(detail) {
+  const structured = failureSignatureKey(detail.failure_signature);
+  if (structured != null) return `failure:${structured}`;
+  const artifacts = Array.isArray(detail.artifacts) ? detail.artifacts : [];
+  if (artifacts.length > 0) return `artifacts:${JSON.stringify(artifacts)}`;
+  return 'unknown_no_pr';
+}
+
+function generatorNoPrRoute(observed, currentDetail) {
+  const currentKey = noPrSignatureKey(currentDetail);
+  const matchingCallbacks = sortedLogRows(observed.decisionLog).filter((row) => {
+    if (row.action !== LOG_ACTION.ATTEMPT_CALLBACK) return false;
+    const detail = callbackDetail(row);
+    if (detail.role !== 'generator') return false;
+    if (!['completed', 'completed_with_concerns'].includes(detail.status)) return false;
+    if ((detail.artifacts ?? []).some((artifact) => artifact?.type === 'pull_request')) {
+      return false;
+    }
+    return noPrSignatureKey(detail) === currentKey;
+  });
+  if (matchingCallbacks.length >= 2) {
+    return {
+      phase: 'failed',
+      action: ACTION.MARK_FAILED,
+      reason: currentKey === 'unknown_no_pr'
+        ? 'repeated_unknown_no_pr'
+        : 'repeated_no_pr_signature',
+    };
+  }
+  return {
+    phase: 'generate',
+    action: ACTION.SPAWN_GENERATOR_FIX,
+    reason: currentKey === 'unknown_no_pr' ? 'unknown_no_pr' : 'structured_no_pr',
+  };
+}
+
+function attemptCallbackRoute(observed) {
+  const row = latestUnconsumedAttemptCallback(observed.decisionLog);
+  if (!row) return null;
+  const detail = callbackDetail(row);
+  const { status, failure_class: failureClass, role } = detail;
+
+  if (status === 'needs_context') {
+    return {
+      phase: 'review',
+      action: ACTION.WAIT_HUMAN_REVIEW,
+      reason: 'callback_needs_context',
+    };
+  }
+  if (
+    (status === 'blocked' || status === 'failed')
+    && failureClass === 'infrastructure_blocked'
+  ) {
+    const retry = INFRA_RETRY_ACTION_BY_ROLE[role];
+    if (!retry) {
+      return {
+        phase: 'review',
+        action: ACTION.WAIT_HUMAN_REVIEW,
+        reason: 'callback_infrastructure_route_unknown',
+      };
+    }
+    return {
+      phase: retry.phase,
+      action: retry.action,
+      reason: 'callback_infrastructure_blocked',
+    };
+  }
+  if (
+    status === 'blocked'
+    || (status === 'failed' && failureClass === 'semantic_refusal')
+  ) {
+    return {
+      phase: 'review',
+      action: ACTION.WAIT_HUMAN_REVIEW,
+      reason: 'callback_semantic_refusal',
+    };
+  }
+  if (status === 'failed') {
+    return {
+      phase: 'failed',
+      action: ACTION.MARK_FAILED,
+      reason: `callback_${failureClass ?? 'failed'}`,
+    };
+  }
+  if (status === 'cancelled') {
+    return {
+      phase: 'failed',
+      action: ACTION.MARK_FAILED,
+      reason: 'callback_cancelled',
+    };
+  }
+  if (
+    role === 'generator'
+    && observed.pr == null
+    && ['completed', 'completed_with_concerns'].includes(status)
+  ) {
+    return generatorNoPrRoute(observed, detail);
+  }
+  return null;
+}
+
 function currentHumanReviewRejection(decisionLog, currentHeadSha) {
   const rows = sortedLogRows(decisionLog);
   return rows.find((row) => {
@@ -358,6 +484,11 @@ export function derive(observed) {
   ) {
     return { phase: run.phase, action: 'wait:running', reason: 'agent_inflight' };
   }
+
+  // Async callback is authoritative only while no later role intent has
+  // consumed it. Route control outcomes before legacy artifact fallbacks.
+  const callbackRoute = attemptCallbackRoute(observed);
+  if (callbackRoute) return applyHopFence(callbackRoute, counters);
 
   // 1. planning：sprint-prd.md 落盘即真相，丢失重跑 planner（D2，plannerOutput 不持久化）
   if (!prdExists) {

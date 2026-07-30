@@ -531,7 +531,12 @@ export function createAttemptStore(pool) {
       const result = await pool.query(
         `SELECT provider, account_id, requested_machine_id
            FROM harness_attempts
-          WHERE run_id=$1 AND role=$2 AND status IN ('failed','cancelled')
+          WHERE run_id=$1
+            AND role=$2
+            AND (
+              status IN ('failed','cancelled')
+              OR (status='blocked' AND failure_class='infrastructure_blocked')
+            )
           ORDER BY hop`,
         [runId, role],
       );

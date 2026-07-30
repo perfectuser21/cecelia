@@ -834,6 +834,97 @@ describe('Kernel callback convergence on real PostgreSQL', () => {
     )).rows[0].count).toBe(0);
   });
 
+  it('R9 projects needs_context from the real callback event into human review', async () => {
+    const run = await seedRun();
+    await testPool.query('UPDATE initiative_runs SET pr_url=NULL WHERE id=$1', [run.runId]);
+    await appendLog(run.runId, { hop: 1, action: 'spawn:generator', phase: 'generate' });
+    const attemptId = await seedCallbackAttempt(run.runId, { hop: 1 });
+    await createAttemptStore(testPool).recordCallbackTerminal({
+      attemptId,
+      runId: run.runId,
+      leaseOwner: LEASE_OWNER,
+      leaseGeneration: 0,
+      result: {
+        contract_version: '1.0',
+        attempt_id: attemptId,
+        status: 'needs_context',
+        summary: 'Owner must answer a contract exception.',
+        artifacts: [],
+        checks: [],
+        decision: null,
+        error: null,
+        failure_class: 'needs_context',
+        provider_metadata: { provider: 'codex' },
+      },
+    });
+
+    const observed = await collect(run);
+    const counters = deriveCounters(observed.decisionLog, {
+      proposeBranchMaxRn: observed.proposeBranchRn,
+    });
+    expect(derive({
+      ...observed,
+      counters: { ...counters, ganCostUsd: 0 },
+    })).toEqual({
+      phase: 'review',
+      action: 'wait:human_review',
+      reason: 'callback_needs_context',
+    });
+  });
+
+  it('R10 stops the second real unknown_no_pr callback before a third attempt', async () => {
+    const run = await seedRun();
+    await testPool.query('UPDATE initiative_runs SET pr_url=NULL WHERE id=$1', [run.runId]);
+    const store = createAttemptStore(testPool);
+    const resultFor = (attemptId) => ({
+      contract_version: '1.0',
+      attempt_id: attemptId,
+      status: 'completed',
+      summary: 'Generator exited without a pull request.',
+      artifacts: [],
+      checks: [],
+      decision: null,
+      error: null,
+      provider_metadata: { provider: 'codex' },
+    });
+
+    await appendLog(run.runId, { hop: 1, action: 'spawn:generator', phase: 'generate' });
+    const firstAttemptId = await seedCallbackAttempt(run.runId, { hop: 1 });
+    await store.recordCallbackTerminal({
+      attemptId: firstAttemptId,
+      runId: run.runId,
+      leaseOwner: LEASE_OWNER,
+      leaseGeneration: 0,
+      result: resultFor(firstAttemptId),
+    });
+    await appendLog(run.runId, {
+      hop: 3,
+      action: 'spawn:generator-fix',
+      phase: 'generate',
+    });
+    const secondAttemptId = await seedCallbackAttempt(run.runId, { hop: 3 });
+    await store.recordCallbackTerminal({
+      attemptId: secondAttemptId,
+      runId: run.runId,
+      leaseOwner: LEASE_OWNER,
+      leaseGeneration: 0,
+      result: resultFor(secondAttemptId),
+    });
+
+    const observed = await collect(run);
+    const counters = deriveCounters(observed.decisionLog, {
+      proposeBranchMaxRn: observed.proposeBranchRn,
+    });
+    expect(derive({
+      ...observed,
+      counters: { ...counters, ganCostUsd: 0 },
+    })).toEqual({
+      phase: 'failed',
+      action: 'mark_failed',
+      reason: 'repeated_unknown_no_pr',
+    });
+  });
+
   it('rolls back the attempt terminal write when callback event insertion fails', async () => {
     const run = await seedRun();
     const attemptId = await seedCallbackAttempt(run.runId);
