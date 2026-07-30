@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
+import { assertionRunnerError } from './gp-assertion-command.js';
 
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
 function toolchainError(code, message, details = {}) {
-  return Object.assign(new Error(message), { code, ...details });
+  return Object.assign(assertionRunnerError(code, message), details);
 }
 
 function validateRunnerDigests(actual, expected) {
