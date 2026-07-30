@@ -4,59 +4,126 @@ import { assertionCommand, canonicalRepoIdentity } from '../gp-assertion-command
 
 const ROOT = '/repo';
 const PACKAGE = join(ROOT, 'packages/brain');
-const TEST_REF = 'packages/brain/src/example.test.js';
+const SHA = `sha256:${'a'.repeat(64)}`;
+const TOOLS = {
+  node: { path: '/tools/node-link', sha256: SHA },
+  vitest: { path: join(ROOT, 'node_modules/.bin/vitest'), sha256: SHA },
+  python: { path: '/tools/python3', sha256: SHA },
+  bash: { path: '/bin/bash', sha256: SHA },
+};
+const REAL = {
+  '/tools/node-link': '/tools/node-real',
+  [join(ROOT, 'node_modules/.bin/vitest')]:
+    join(ROOT, 'node_modules/vitest/vitest.mjs'),
+};
 const deps = {
-  realpathFn: vi.fn(async path => path),
+  toolchains: TOOLS,
+  realpathFn: vi.fn(async path => REAL[path] ?? path),
   pathExistsFn: vi.fn(async path => path === join(PACKAGE, 'package.json')),
   isTrackedPathFn: vi.fn(async () => true),
 };
 
 describe('trusted GP assertion command policy', () => {
   it.each([
-    [`manual:npx vitest run ${TEST_REF}`, join(ROOT, 'node_modules/.bin/vitest'),
-      ['run', 'src/example.test.js'], PACKAGE, 'vitest'],
-    ['manual:bash scripts/smoke/gp.sh', '/bin/bash',
-      [join(ROOT, 'scripts/smoke/gp.sh')], ROOT, 'bash'],
-    ['manual:python3 -m pytest services/tests/test_gp.py', 'python3',
-      ['-m', 'pytest', 'services/tests/test_gp.py'], ROOT, 'pytest'],
-  ])('maps only fixed manual shape %s', async (ref, executable, argv, cwd, kind) => {
-    await expect(assertionCommand(ref, ROOT, deps)).resolves.toEqual({
-      executable, argv, options: { cwd, shell: false, evidenceKind: kind },
+    ['packages/brain/src/example.test.js', '/tools/node-real',
+      [join(ROOT, 'node_modules/vitest/vitest.mjs'), 'run', './src/example.test.js', '--'],
+      PACKAGE, 'vitest', ['node', 'vitest']],
+    ['scripts/smoke/gp.sh', '/bin/bash',
+      [join(ROOT, 'scripts/smoke/gp.sh')], ROOT, 'bash', ['bash']],
+    ['services/tests/test_gp.py', '/tools/python3',
+      ['-m', 'pytest', '--', 'services/tests/test_gp.py'],
+      ROOT, 'pytest', ['python']],
+  ])('builds a pinned positional %s command', async (
+    ref, executable, argv, cwd, kind, toolNames,
+  ) => {
+    const command = await assertionCommand(ref, ROOT, deps);
+    expect(command).toMatchObject({
+      executable, argv,
+      options: {
+        cwd, shell: false, evidenceKind: kind,
+        env: { inherit: false, allowlist: [] },
+      },
     });
+    expect(command.options.toolchain.map(({ name, path }) => ({ name, path })))
+      .toEqual(toolNames.map(name => ({
+        name,
+        path: REAL[TOOLS[name].path] ?? TOOLS[name].path,
+      })));
   });
 
-  it.each(['&&', ';', '|', '`id`', '$(id)', '"quoted"'])('rejects shell %s', async token => {
-    await expect(assertionCommand(
-      `manual:npx vitest run ${TEST_REF} ${token}`, ROOT, deps,
-    )).rejects.toMatchObject({ code: 'UNSAFE_ASSERTION_COMMAND' });
+  it.each([
+    'packages/brain/--config=src/evil.test.js',
+    'packages/brain/--pool=forks.test.js',
+  ])('keeps option-shaped target positional: %s', async ref => {
+    const command = await assertionCommand(ref, ROOT, deps);
+    expect(command.argv.at(-2)).toBe(`./${ref.slice('packages/brain/'.length)}`);
+    expect(command.argv.at(-1)).toBe('--');
   });
 
-  it.each(['/tmp/evil.test.js', '../evil.test.js'])('rejects escape %s', async ref => {
-    await expect(assertionCommand(ref, ROOT, deps)).rejects.toMatchObject({
-      code: 'ASSERTION_PATH_ESCAPE',
-    });
+  it('executes the same canonical paths recorded in the toolchain', async () => {
+    const command = await assertionCommand(
+      'packages/brain/src/example.test.js', ROOT, deps,
+    );
+    expect(command.executable).toBe('/tools/node-real');
+    expect(command.argv[0]).toBe(join(ROOT, 'node_modules/vitest/vitest.mjs'));
+    expect(command.options.toolchain.map(item => item.path))
+      .toEqual([command.executable, command.argv[0]]);
   });
+
+  it.each([
+    [undefined, 'ASSERTION_TOOLCHAIN_REQUIRED'],
+    [{ ...TOOLS, python: { path: 'python3', sha256: SHA } },
+      'ASSERTION_TOOLCHAIN_PATH_INVALID'],
+    [{ ...TOOLS, bash: { path: '/bin/bash', sha256: 'latest' } },
+      'ASSERTION_TOOLCHAIN_DIGEST_INVALID'],
+  ])('fails closed for unsafe toolchain %#', async (toolchains, code) => {
+    await expect(assertionCommand('services/tests/test_gp.py', ROOT, {
+      ...deps, toolchains,
+    })).rejects.toMatchObject({ code });
+  });
+
+  it('does not accept caller environment values', async () => {
+    const command = await assertionCommand('scripts/smoke/gp.sh', ROOT, {
+      ...deps,
+      env: { PATH: '/attacker', DATABASE_URL: 'secret' },
+    });
+    expect(command.options.env).toEqual({ inherit: false, allowlist: [] });
+    expect(JSON.stringify(command)).not.toContain('secret');
+    expect(JSON.stringify(command)).not.toContain('/attacker');
+  });
+
+  it.each(['&&', ';', '|', '`id`', '$(id)', '"quoted"'])(
+    'rejects shell syntax %s',
+    async token => {
+      await expect(assertionCommand(
+        `manual:npx vitest run packages/brain/src/example.test.js ${token}`,
+        ROOT,
+        deps,
+      )).rejects.toMatchObject({ code: 'UNSAFE_ASSERTION_COMMAND' });
+    },
+  );
+
+  it.each(['/tmp/evil.test.js', '../evil.test.js'])(
+    'rejects path escape %s',
+    async ref => {
+      await expect(assertionCommand(ref, ROOT, deps))
+        .rejects.toMatchObject({ code: 'ASSERTION_PATH_ESCAPE' });
+    },
+  );
 
   it('rejects symlink escape and untracked canonical targets', async () => {
-    const escaped = { ...deps, realpathFn: vi.fn(async path => (
-      path === ROOT ? ROOT : '/outside/evil.test.js'
-    )) };
-    await expect(assertionCommand(TEST_REF, ROOT, escaped))
-      .rejects.toMatchObject({ code: 'ASSERTION_PATH_ESCAPE' });
-    await expect(assertionCommand(TEST_REF, ROOT, {
+    const escaped = {
       ...deps,
-      isTrackedPathFn: vi.fn(async () => false),
+      realpathFn: vi.fn(async path => (
+        path === ROOT ? ROOT : '/outside/evil.test.js'
+      )),
+    };
+    await expect(assertionCommand(
+      'packages/brain/src/example.test.js', ROOT, escaped,
+    )).rejects.toMatchObject({ code: 'ASSERTION_PATH_ESCAPE' });
+    await expect(assertionCommand('packages/brain/src/example.test.js', ROOT, {
+      ...deps, isTrackedPathFn: vi.fn(async () => false),
     })).rejects.toMatchObject({ code: 'ASSERTION_PATH_UNTRACKED' });
-  });
-
-  it('uses the tracked canonical pytest target instead of its alias', async () => {
-    const canonical = join(ROOT, 'services/tests/test_real.py');
-    const command = await assertionCommand(
-      'services/tests/test_alias.py',
-      ROOT,
-      { ...deps, realpathFn: vi.fn(async path => path === ROOT ? ROOT : canonical) },
-    );
-    expect(command.argv).toEqual(['-m', 'pytest', 'services/tests/test_real.py']);
   });
 
   it.each([
@@ -65,5 +132,4 @@ describe('trusted GP assertion command policy', () => {
   ])('canonicalizes origin without credentials', (origin, expected) => {
     expect(canonicalRepoIdentity(origin)).toBe(expected);
   });
-
 });
