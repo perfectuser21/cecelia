@@ -842,7 +842,7 @@ describe('Kernel callback convergence on real PostgreSQL', () => {
     )).rows[0].count).toBe(0);
   });
 
-  it('R9 projects needs_context from the real callback event into human review', async () => {
+  it('R9 projects needs_context from the real callback event into a PR-independent pause', async () => {
     const run = await seedRun();
     await testPool.query('UPDATE initiative_runs SET pr_url=NULL WHERE id=$1', [run.runId]);
     await appendLog(run.runId, { hop: 1, action: 'spawn:generator', phase: 'generate' });
@@ -874,8 +874,8 @@ describe('Kernel callback convergence on real PostgreSQL', () => {
       ...observed,
       counters: { ...counters, ganCostUsd: 0 },
     })).toEqual({
-      phase: 'review',
-      action: 'wait:human_review',
+      phase: 'paused',
+      action: 'pause_run',
       reason: 'callback_needs_context',
     });
   });
