@@ -44,7 +44,7 @@ WITH nfr_data(step_no, source_ref, topic, decision_text, reason_text) AS (
       'gp-ledger-phase3:nfr:gp-b:s3',
       '回复质量、时效与送达',
       '回复必须得体、及时，并以真实送达回执作为完成条件。',
-      'GP-B S3 promise 与 reply receipt/evaluation 共同定义该步骤 NFR。'
+      'GP-B S3 promise 与 reply receipt 定义该步骤 NFR；质量验证仍待真实 evaluator。'
     ),
     (
       4,
@@ -165,7 +165,9 @@ WHERE assertion_ref IS NOT NULL
     OR assertion_ref LIKE '已拍板：%'
   );
 
--- Use precise evidence for the two currently green NFR cells.
+-- Use the strongest truthful anchors available for the two green NFR cells.
+-- S1 has an existing no-drop regression. S3 has no real evaluator contract yet,
+-- so it points to the signed step decision and remains non-runnable.
 UPDATE journey_step_links AS cell
 SET assertion_ref =
   'zenithjoy/services/agent/wechat-rpa/tests/test_classify_unread_no_drop.py'
@@ -178,7 +180,7 @@ WHERE cell.step_id = step.id
   AND cell.assertion_ref IS NULL;
 
 UPDATE journey_step_links AS cell
-SET assertion_ref = 'eval:gp-b-s3-reply-quality-and-delivery-v1'
+SET assertion_ref = 'decision:gp-ledger-phase3:nfr:gp-b:s3'
 FROM journey_steps AS step
 WHERE cell.step_id = step.id
   AND step.journey_id = 'ac2e35bc-849a-48cd-917f-79d15c5ac886'::uuid
@@ -192,7 +194,7 @@ WHERE cell.step_id = step.id
 -- records its true-equivalence and real-machine boundaries in the script.
 UPDATE journey_step_links AS cell
 SET assertion_ref =
-  'manual:cd zenithjoy && bash .github/workflows/scripts/smoke/golden-path-4-smoke.sh'
+  'manual:cd ../zenithjoy && bash .github/workflows/scripts/smoke/golden-path-4-smoke.sh'
 FROM journey_steps AS step
 WHERE cell.step_id = step.id
   AND step.journey_id = 'ac2e35bc-849a-48cd-917f-79d15c5ac886'::uuid

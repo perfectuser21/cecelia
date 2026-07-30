@@ -83,7 +83,8 @@ evaluation reference is a semantic anchor, not executable test coverage.
   373 changes it to `red`. It does not manufacture coverage.
 
 The result is not “122 green cells”. It is an honest ledger in which every positive
-state has a named evidence source and incomplete work remains visibly incomplete.
+state has a traceable anchor, semantic-only anchors are explicitly non-runnable,
+and incomplete work remains visibly incomplete.
 
 ## 5. NFR home
 
