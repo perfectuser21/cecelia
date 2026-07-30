@@ -120,6 +120,47 @@ describe('WarRoomGoldenPathPage assertion-ledger loading', () => {
     expect(screen.queryByText('0%')).not.toBeInTheDocument();
   });
 
+  it('reports a missing GP from the plural collection without falling back to singular lookup', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/brain/golden-paths') {
+        return response({ success: true, golden_paths: [] });
+      }
+      if (url === '/api/brain/golden-path/gp-1') {
+        return response({ golden_path: goldenPath });
+      }
+      return response({ error: `unexpected URL: ${url}` }, { ok: false, status: 404 });
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    render(<WarRoomGoldenPathPage />);
+
+    expect(await screen.findByText('GP 不存在或已归档')).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('/api/brain/golden-paths');
+  });
+
+  it('fails closed when the resolved GP has no journey_id', async () => {
+    const gpWithoutJourney = { ...goldenPath, journey_id: null };
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/brain/golden-paths') {
+        return response({ success: true, golden_paths: [gpWithoutJourney] });
+      }
+      if (url === '/api/brain/golden-path/gp-1') {
+        return response({ golden_path: gpWithoutJourney });
+      }
+      return response({ error: `unexpected URL: ${url}` }, { ok: false, status: 404 });
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    render(<WarRoomGoldenPathPage />);
+
+    expect(await screen.findByText('该 GP 未关联 Journey，账本数据不可用')).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('/api/brain/golden-paths');
+  });
+
   it('refresh reloads the GP, steps, and every ledger', async () => {
     const fetchMock = installFetch();
 
