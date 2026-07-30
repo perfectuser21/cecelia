@@ -15,6 +15,7 @@ import pool from './db.js';
 import { createTask, updateTask } from './actions.js';
 import { validateDecision, hasDangerousActions, ACTION_WHITELIST } from './thalamus.js';
 import { CORTEX_ACTION_WHITELIST } from './cortex.js';
+import { signAndLaunchGoldenPathContract } from './golden-path-contracts.js';
 import { broadcast } from './websocket.js';
 
 // ============================================================
@@ -669,6 +670,19 @@ const actionHandlers = {
     console.log(`[executor] okr_decomp_review: KR ${kr_id} → ready (用户确认拆解)`);
     return { success: true, kr_id, kr_title: result.rows[0].title };
   },
+
+  /**
+   * Owner 按具体版本签署 GP 合同，并在同一事务中创建唯一 Harness 任务。
+   */
+  async sign_golden_path_contract(params, context, db = pool) {
+    return signAndLaunchGoldenPathContract(db, {
+      goldenPathId: params.golden_path_id,
+      contractId: params.contract_id,
+      version: Number(params.version),
+      contentHash: params.content_hash,
+      reviewer: context.approved_by,
+    });
+  },
 };
 
 // ============================================================
@@ -858,7 +872,11 @@ async function selectProposalOption(actionId, optionId, reviewer = 'dashboard-us
     if (selected.action && selected.action.type) {
       const handler = actionHandlers[selected.action.type];
       if (handler) {
-        const result = await handler(selected.action.params || {}, { approved_by: reviewer });
+        const result = await handler(
+          selected.action.params || {},
+          { approved_by: reviewer },
+          client,
+        );
         executionResult = { ...executionResult, ...result };
       }
     }
@@ -951,7 +969,11 @@ async function approvePendingAction(actionId, reviewer = 'unknown') {
     const params = typeof action.params === 'string' ? JSON.parse(action.params) : action.params;
     const context = typeof action.context === 'string' ? JSON.parse(action.context) : action.context;
 
-    const executionResult = await handler(params, { ...context, approved_by: reviewer });
+    const executionResult = await handler(
+      params,
+      { ...context, approved_by: reviewer },
+      client,
+    );
 
     // 更新状态
     await client.query(`
@@ -1075,7 +1097,7 @@ async function executeDecision(decision, context = {}) {
 
       try {
         console.log(`[executor] Executing action: ${action.type}`);
-        const result = await handler(action.params || {}, context);
+        const result = await handler(action.params || {}, context, client);
 
         report.actions_executed.push({
           type: action.type,

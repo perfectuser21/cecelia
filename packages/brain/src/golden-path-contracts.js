@@ -138,6 +138,36 @@ export class GoldenPathContractError extends Error {
   }
 }
 
+const GP_HARNESS_BASE_REPO = 'https://github.com/perfectuser21/cecelia.git';
+const GP_HARNESS_TARGET_ENVIRONMENT = 'local_api';
+
+function shortId(id) {
+  return String(id).replace(/-/g, '').slice(0, 8);
+}
+
+function stampMMDDHHNN(now) {
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Shanghai',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = Object.fromEntries(
+    formatter.formatToParts(now).map((part) => [part.type, part.value]),
+  );
+  return `${parts.month}${parts.day}${parts.hour}${parts.minute}`;
+}
+
+function slugifyGoldenPath(title) {
+  return String(title)
+    .toLowerCase()
+    .replace(/[^a-z0-9一-龥]+/g, '-')
+    .slice(0, 40)
+    .replace(/^-+|-+$/g, '') || 'gp';
+}
+
 function parseContractOrThrow(contract) {
   try {
     return validateGoldenPathContract(contract);
@@ -327,5 +357,281 @@ export async function createGoldenPathContractVersion(db, {
     contract_version: finalizedVersions[0],
     pending_action_id: actionId,
     idempotent: false,
+  };
+}
+
+async function lockGoldenPathAndLatestContract(db, goldenPathId) {
+  const { rows: goldenPaths } = await db.query(
+    `SELECT *
+       FROM golden_paths
+      WHERE id = $1
+      FOR UPDATE`,
+    [goldenPathId],
+  );
+  if (goldenPaths.length === 0) {
+    throw new GoldenPathContractError(
+      'GP_NOT_FOUND',
+      'Golden Path not found',
+      404,
+    );
+  }
+
+  const { rows: versions } = await db.query(
+    `SELECT *
+       FROM golden_path_contract_versions
+      WHERE golden_path_id = $1
+      ORDER BY version DESC
+      LIMIT 1
+      FOR UPDATE`,
+    [goldenPathId],
+  );
+  return {
+    goldenPath: goldenPaths[0],
+    latest: versions[0] || null,
+  };
+}
+
+async function findHarnessTaskForContract(db, contractId) {
+  const { rows } = await db.query(
+    `SELECT *
+       FROM tasks
+      WHERE task_type = 'harness_initiative'
+        AND payload->>'gp_contract_id' = $1
+      ORDER BY created_at ASC
+      LIMIT 1
+      FOR UPDATE`,
+    [contractId],
+  );
+  return rows[0] || null;
+}
+
+export async function signAndLaunchGoldenPathContract(db, {
+  goldenPathId,
+  contractId,
+  version,
+  contentHash,
+  reviewer,
+}) {
+  const { goldenPath, latest } = await lockGoldenPathAndLatestContract(
+    db,
+    goldenPathId,
+  );
+  if (
+    !latest
+    || latest.id !== contractId
+    || latest.version !== Number(version)
+    || latest.content_hash !== contentHash
+  ) {
+    throw new GoldenPathContractError(
+      'GP_CONTRACT_STALE',
+      'Only the latest Golden Path contract version can be signed',
+      409,
+      { latest_version: latest?.version ?? null },
+    );
+  }
+
+  const existingTask = await findHarnessTaskForContract(db, latest.id);
+  if (latest.status === 'signed') {
+    if (!existingTask) {
+      throw new GoldenPathContractError(
+        'GP_CONTRACT_TASK_MISSING',
+        'Signed Golden Path contract has no bound Harness task',
+      );
+    }
+    return {
+      contract_version: latest,
+      task: existingTask,
+      idempotent: true,
+    };
+  }
+  if (latest.status !== 'pending_signature') {
+    throw new GoldenPathContractError(
+      'GP_CONTRACT_STALE',
+      'Golden Path contract version is no longer signable',
+    );
+  }
+  if (existingTask) {
+    throw new GoldenPathContractError(
+      'GP_CONTRACT_TASK_CONFLICT',
+      'Unsigned Golden Path contract already has a Harness task',
+    );
+  }
+  if (goldenPath.status !== 'converged') {
+    throw new GoldenPathContractError(
+      'GP_NOT_CONVERGED',
+      'Golden Path must be converged before Owner signature',
+    );
+  }
+  if (!String(reviewer || '').trim()) {
+    throw new GoldenPathContractError(
+      'GP_CONTRACT_REVIEWER_REQUIRED',
+      'Owner identity is required to sign a Golden Path contract',
+      400,
+    );
+  }
+
+  const decisionTopic = `gp:${goldenPathId}:contract:v${latest.version}`;
+  const decisionReason = (
+    `gp:${goldenPathId} 合同 v${latest.version} 由 ${reviewer} 按具体内容哈希 `
+    + `${latest.content_hash} 签署。`
+  );
+  const decisionContext = {
+    policy_key: 'gp.contract.signature',
+    golden_path_id: goldenPathId,
+    gp_contract_id: latest.id,
+    gp_contract_version: latest.version,
+    gp_contract_hash: latest.content_hash,
+  };
+  const { rows: decisions } = await db.query(
+    `INSERT INTO decisions (
+       category,
+       topic,
+       decision,
+       reason,
+       status,
+       review_after,
+       context
+     )
+     VALUES (
+       'judgment',
+       $1,
+       'approved',
+       $2,
+       'active',
+       now() + interval '14 days',
+       $3::jsonb
+     )
+     RETURNING id`,
+    [
+      decisionTopic,
+      decisionReason,
+      JSON.stringify(decisionContext),
+    ],
+  );
+  const judgmentId = decisions[0].id;
+
+  const { rows: signedVersions } = await db.query(
+    `UPDATE golden_path_contract_versions
+        SET status = 'signed',
+            signature_decision_id = $1,
+            signed_by = $2,
+            signed_at = now()
+      WHERE id = $4
+        AND content_hash = $3
+        AND status = 'pending_signature'
+      RETURNING *`,
+    [judgmentId, reviewer, latest.content_hash, latest.id],
+  );
+  if (signedVersions.length === 0) {
+    throw new GoldenPathContractError(
+      'GP_CONTRACT_STALE',
+      'Golden Path contract changed before signature commit',
+    );
+  }
+  const signedVersion = signedVersions[0];
+
+  const sprintDir = (
+    `sprints/${stampMMDDHHNN(new Date())}-`
+    + `${slugifyGoldenPath(goldenPath.title)}-${shortId(goldenPathId)}`
+  );
+  const taskPayload = {
+    golden_path_id: goldenPathId,
+    title: goldenPath.title,
+    one_liner: goldenPath.one_liner,
+    proposal_doc: goldenPath.proposal_doc || null,
+    judgment_decision_id: judgmentId,
+    phase: 'implement',
+    orchestrator: 'skill-relay',
+    sprint_dir: sprintDir,
+    thin_prd: goldenPath.one_liner,
+    prep_prd_body: goldenPath.proposal_doc || null,
+    journey_id: goldenPath.journey_id,
+    base_repo: GP_HARNESS_BASE_REPO,
+    target_environment: GP_HARNESS_TARGET_ENVIRONMENT,
+    gp_contract_id: signedVersion.id,
+    gp_contract_version: signedVersion.version,
+    gp_contract_hash: signedVersion.content_hash,
+  };
+  const { rows: tasks } = await db.query(
+    `INSERT INTO tasks (
+       title,
+       description,
+       task_type,
+       status,
+       priority,
+       payload
+     )
+     VALUES ($1, $2, 'harness_initiative', 'queued', 'P1', $3::jsonb)
+     RETURNING *`,
+    [
+      `[GP harness] ${goldenPath.title}`,
+      `签字后 harness 实现任务——${goldenPath.one_liner}`,
+      JSON.stringify(taskPayload),
+    ],
+  );
+  const task = tasks[0];
+
+  const { rows: approvedPaths } = await db.query(
+    `UPDATE golden_paths
+        SET status = 'approved',
+            judgment_refs = ARRAY[$1::uuid],
+            approved_at = now(),
+            review_after = now() + interval '14 days',
+            proposal_doc = COALESCE($2, proposal_doc),
+            updated_at = now()
+      WHERE id = $3
+        AND status = 'converged'
+      RETURNING *`,
+    [judgmentId, goldenPath.proposal_doc || null, goldenPathId],
+  );
+  if (approvedPaths.length === 0) {
+    throw new GoldenPathContractError(
+      'GP_CONCURRENT_MODIFICATION',
+      'Golden Path status changed before signature commit',
+    );
+  }
+
+  return {
+    contract_version: signedVersion,
+    task,
+    golden_path: approvedPaths[0],
+    judgment_decision_id: judgmentId,
+    idempotent: false,
+  };
+}
+
+export async function launchLatestSignedGoldenPath(db, {
+  goldenPathId,
+  expectedVersion,
+}) {
+  const { latest } = await lockGoldenPathAndLatestContract(db, goldenPathId);
+  if (
+    expectedVersion !== undefined
+    && latest?.version !== Number(expectedVersion)
+  ) {
+    throw new GoldenPathContractError(
+      'GP_CONTRACT_STALE',
+      'Requested Golden Path contract version is not latest',
+      409,
+      { latest_version: latest?.version ?? null },
+    );
+  }
+  if (!latest || latest.status !== 'signed') {
+    throw new GoldenPathContractError(
+      'GP_CONTRACT_SIGNATURE_REQUIRED',
+      'Latest Golden Path contract requires Owner signature',
+    );
+  }
+  const task = await findHarnessTaskForContract(db, latest.id);
+  if (!task) {
+    throw new GoldenPathContractError(
+      'GP_CONTRACT_TASK_MISSING',
+      'Signed Golden Path contract has no bound Harness task',
+    );
+  }
+  return {
+    contract_version: latest,
+    task,
+    idempotent: true,
   };
 }

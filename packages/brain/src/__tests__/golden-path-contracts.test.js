@@ -5,6 +5,8 @@ import {
   GP_CONTRACT_SCHEMA_VERSION,
   createGoldenPathContractVersion,
   hashGoldenPathContract,
+  launchLatestSignedGoldenPath,
+  signAndLaunchGoldenPathContract,
   validateGoldenPathContract,
 } from '../golden-path-contracts.js';
 
@@ -170,6 +172,7 @@ class StatefulContractDb {
     this.contracts = structuredClone(contracts);
     this.tasks = structuredClone(tasks);
     this.actions = [];
+    this.decisions = [];
     this.events = [];
   }
 
@@ -188,6 +191,16 @@ class StatefulContractDb {
         .filter((row) => row.golden_path_id === params[0])
         .sort((a, b) => b.version - a.version)[0];
       return { rows: latest ? [structuredClone(latest)] : [] };
+    }
+    if (
+      /FROM tasks/i.test(compact)
+      && /payload->>'gp_contract_id'/i.test(compact)
+    ) {
+      return {
+        rows: this.tasks
+          .filter((task) => task.payload?.gp_contract_id === params[0])
+          .map((task) => structuredClone(task)),
+      };
     }
     if (/FROM tasks/i.test(compact) && /harness_initiative/i.test(compact)) {
       return {
@@ -261,6 +274,48 @@ class StatefulContractDb {
       const row = this.contracts.find((item) => item.id === params[1]);
       row.signing_action_id = params[0];
       return { rows: [structuredClone(row)] };
+    }
+    if (/INSERT INTO decisions/i.test(compact)) {
+      const row = {
+        id: `decision-${this.decisions.length + 1}`,
+        topic: params[0],
+        reason: params[1],
+        context: JSON.parse(params[2]),
+      };
+      this.decisions.push(row);
+      return { rows: [structuredClone(row)] };
+    }
+    if (
+      /UPDATE golden_path_contract_versions/i.test(compact)
+      && /status = 'signed'/i.test(compact)
+    ) {
+      const row = this.contracts.find((item) => item.id === params[3]);
+      row.status = 'signed';
+      row.signature_decision_id = params[0];
+      row.signed_by = params[1];
+      row.signed_at = 'now';
+      return { rows: [structuredClone(row)] };
+    }
+    if (/INSERT INTO tasks/i.test(compact)) {
+      const row = {
+        id: `task-${this.tasks.length + 1}`,
+        title: params[0],
+        description: params[1],
+        task_type: 'harness_initiative',
+        status: 'queued',
+        payload: JSON.parse(params[2]),
+      };
+      this.tasks.push(row);
+      return { rows: [structuredClone(row)] };
+    }
+    if (
+      /UPDATE golden_paths/i.test(compact)
+      && /status = 'approved'/i.test(compact)
+    ) {
+      this.gp.status = 'approved';
+      this.gp.judgment_refs = [params[0]];
+      this.gp.approved_at = 'now';
+      return { rows: [structuredClone(this.gp)] };
     }
     throw new Error(`Unexpected SQL: ${compact}`);
   }
@@ -421,5 +476,136 @@ describe('Golden Path contract version transaction', () => {
     );
     expect(cancelIndex).toBeGreaterThan(-1);
     expect(cancelIndex).toBeLessThan(invalidateIndex);
+  });
+});
+
+describe('Golden Path contract signature and Harness launch', () => {
+  function signingDb({
+    contracts = [contractRow()],
+    tasks = [],
+    gpStatus = 'converged',
+  } = {}) {
+    return new StatefulContractDb({
+      gp: {
+        id: 'gp-1',
+        title: '朋友圈 GP',
+        one_liner: '用户发一条朋友圈',
+        journey_id: 'journey-1',
+        proposal_doc: '# proposal',
+        status: gpStatus,
+      },
+      contracts,
+      tasks,
+    });
+  }
+
+  it('rejects signing an older version without writing a decision or task', async () => {
+    const changed = cloneContract();
+    changed.success_and_close.observation_window = '48h';
+    const db = signingDb({
+      contracts: [
+        contractRow({ version: 1, status: 'superseded' }),
+        contractRow({ version: 2, contract: changed }),
+      ],
+    });
+
+    await expect(signAndLaunchGoldenPathContract(db, {
+      goldenPathId: 'gp-1',
+      contractId: 'contract-1',
+      version: 1,
+      contentHash: db.contracts[0].content_hash,
+      reviewer: 'owner',
+    })).rejects.toMatchObject({ code: 'GP_CONTRACT_STALE' });
+    expect(db.decisions).toEqual([]);
+    expect(db.tasks).toEqual([]);
+  });
+
+  it('signs the latest pending version and creates exactly one bound Harness task', async () => {
+    const db = signingDb();
+
+    const result = await signAndLaunchGoldenPathContract(db, {
+      goldenPathId: 'gp-1',
+      contractId: 'contract-1',
+      version: 1,
+      contentHash: db.contracts[0].content_hash,
+      reviewer: 'owner',
+    });
+
+    expect(db.decisions).toHaveLength(1);
+    expect(db.contracts[0]).toMatchObject({
+      status: 'signed',
+      signature_decision_id: 'decision-1',
+      signed_by: 'owner',
+    });
+    expect(db.tasks).toHaveLength(1);
+    expect(db.tasks[0].payload).toMatchObject({
+      golden_path_id: 'gp-1',
+      journey_id: 'journey-1',
+      gp_contract_id: 'contract-1',
+      gp_contract_version: 1,
+      gp_contract_hash: hashGoldenPathContract(VALID_CONTRACT),
+    });
+    expect(db.gp.status).toBe('approved');
+    expect(result).toMatchObject({
+      contract_version: { id: 'contract-1', status: 'signed' },
+      task: { id: 'task-1' },
+      idempotent: false,
+    });
+  });
+
+  it('returns the same task when the signed version is retried', async () => {
+    const signed = contractRow({ status: 'signed' });
+    signed.signature_decision_id = 'decision-existing';
+    const existingTask = {
+      id: 'task-existing',
+      task_type: 'harness_initiative',
+      status: 'queued',
+      payload: {
+        golden_path_id: 'gp-1',
+        gp_contract_id: signed.id,
+        gp_contract_version: signed.version,
+        gp_contract_hash: signed.content_hash,
+      },
+    };
+    const db = signingDb({ contracts: [signed], tasks: [existingTask] });
+
+    const result = await signAndLaunchGoldenPathContract(db, {
+      goldenPathId: 'gp-1',
+      contractId: signed.id,
+      version: 1,
+      contentHash: signed.content_hash,
+      reviewer: 'owner',
+    });
+
+    expect(result).toMatchObject({
+      task: { id: 'task-existing' },
+      idempotent: true,
+    });
+    expect(db.decisions).toEqual([]);
+    expect(db.tasks).toHaveLength(1);
+  });
+
+  it('rejects a pending action whose contract id or hash no longer matches', async () => {
+    const db = signingDb();
+
+    await expect(signAndLaunchGoldenPathContract(db, {
+      goldenPathId: 'gp-1',
+      contractId: 'contract-other',
+      version: 1,
+      contentHash: 'f'.repeat(64),
+      reviewer: 'owner',
+    })).rejects.toMatchObject({ code: 'GP_CONTRACT_STALE' });
+    expect(db.decisions).toEqual([]);
+    expect(db.tasks).toEqual([]);
+  });
+
+  it('hard-gates compatibility launch when the latest contract is unsigned', async () => {
+    const db = signingDb();
+
+    await expect(launchLatestSignedGoldenPath(db, {
+      goldenPathId: 'gp-1',
+      expectedVersion: 1,
+    })).rejects.toMatchObject({ code: 'GP_CONTRACT_SIGNATURE_REQUIRED' });
+    expect(db.tasks).toEqual([]);
   });
 });
