@@ -3,6 +3,8 @@ import {
   createKernelRun,
   finalizeKernelRun,
   loadActiveKernelRun,
+  loadKernelRunById,
+  patchKernelRunById,
   reconcileKernelTaskTerminal,
 } from '../kernel-run-store.js';
 
@@ -142,6 +144,19 @@ function finalizationPool({
 }
 
 describe('Kernel run store creation authority', () => {
+  it('loads one v2 run only by primary key', async () => {
+    const query = vi.fn(async () => ({ rows: [{ id: RUN_ID }] }));
+
+    const result = await loadKernelRunById({ query }, RUN_ID);
+
+    expect(result).toEqual({ id: RUN_ID });
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toMatch(/WHERE id\s*=\s*\$1/i);
+    expect(sql).toContain("orchestrator_version = 'v2'");
+    expect(sql).not.toMatch(/initiative_id\s*=\s*\$1/i);
+    expect(params).toEqual([RUN_ID]);
+  });
+
   it('loads an active run only by current_task_id', async () => {
     const query = vi.fn(async () => ({ rows: [] }));
 
