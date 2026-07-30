@@ -13,15 +13,32 @@ const deps = {
 
 describe('trusted GP assertion command policy', () => {
   it.each([
-    [`manual:npx vitest run ${TEST_REF}`, join(ROOT, 'node_modules/.bin/vitest'),
-      ['run', 'src/example.test.js'], PACKAGE, 'vitest'],
+    [`manual:npx vitest run ${TEST_REF}`, process.execPath,
+      [join(ROOT, 'node_modules/.bin/vitest'), 'run', './src/example.test.js', '--'],
+      PACKAGE, 'vitest',
+      [process.execPath, join(ROOT, 'node_modules/.bin/vitest')]],
     ['manual:bash scripts/smoke/gp.sh', '/bin/bash',
-      [join(ROOT, 'scripts/smoke/gp.sh')], ROOT, 'bash'],
-    ['manual:python3 -m pytest services/tests/test_gp.py', 'python3',
-      ['-m', 'pytest', 'services/tests/test_gp.py'], ROOT, 'pytest'],
-  ])('maps only fixed manual shape %s', async (ref, executable, argv, cwd, kind) => {
+      [join(ROOT, 'scripts/smoke/gp.sh')], ROOT, 'bash', ['/bin/bash']],
+    ['manual:python3 -m pytest services/tests/test_gp.py', '/usr/bin/python3',
+      ['-m', 'pytest', '--', 'services/tests/test_gp.py'], ROOT, 'pytest',
+      ['/usr/bin/python3']],
+  ])('maps only fixed manual shape %s', async (
+    ref,
+    executable,
+    argv,
+    cwd,
+    kind,
+    toolchainPaths,
+  ) => {
     await expect(assertionCommand(ref, ROOT, deps)).resolves.toEqual({
-      executable, argv, options: { cwd, shell: false, evidenceKind: kind },
+      executable,
+      argv,
+      options: {
+        cwd,
+        shell: false,
+        evidenceKind: kind,
+        toolchain_paths: toolchainPaths,
+      },
     });
   });
 
@@ -56,7 +73,12 @@ describe('trusted GP assertion command policy', () => {
       ROOT,
       { ...deps, realpathFn: vi.fn(async path => path === ROOT ? ROOT : canonical) },
     );
-    expect(command.argv).toEqual(['-m', 'pytest', 'services/tests/test_real.py']);
+    expect(command.argv).toEqual([
+      '-m',
+      'pytest',
+      '--',
+      'services/tests/test_real.py',
+    ]);
   });
 
   it.each([

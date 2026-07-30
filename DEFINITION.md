@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.140
+**Brain 版本**: 1.267.141
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.141 — Trusted assertion invocation manifest
+
+- Vitest 1.6 固定为绝对 Node + realpath CLI，并以 `./` positional 路径和末尾
+  `--` 阻断 option injection；Pytest/bash 也返回绝对工具链 manifest。
+- 本层只冻结 `toolchain_paths`，尚未完成 digest 验证或 Runner 接线。
+  回退：部署 Brain `1.267.140`。
 
 ## Brain 1.267.140 — Trusted assertion command and source policy
 

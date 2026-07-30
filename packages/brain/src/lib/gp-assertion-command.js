@@ -1,11 +1,14 @@
 import { access, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { execPath } from 'node:process';
 import { defaultAssertionExecute } from './gp-assertion-process.js';
 
 const SHELL_META_PATTERN = /[;&|`$<>()"'\\]/;
 const VITEST_PATH_PATTERN = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 const PYTEST_PATH_PATTERN = /(^|\/)test_[^/]+\.py$/;
 const SMOKE_PATH_PATTERN = /\/smoke\/[^/]+\.sh$/;
+const PYTHON_EXECUTABLE = '/usr/bin/python3';
+const BASH_EXECUTABLE = '/bin/bash';
 
 export function assertionRunnerError(code, message) {
   return Object.assign(new Error(message), { code });
@@ -128,6 +131,21 @@ async function executeGit(repoRoot, argv) {
   return defaultAssertionExecute('git', argv, { cwd: repoRoot, shell: false });
 }
 
+function commandOptions(cwd, evidenceKind, toolchainPaths) {
+  if (!toolchainPaths.every(isAbsolute)) {
+    throw assertionRunnerError(
+      'ASSERTION_TOOLCHAIN_INVALID',
+      'Assertion toolchain paths must be absolute',
+    );
+  }
+  return {
+    cwd,
+    shell: false,
+    evidenceKind,
+    toolchain_paths: toolchainPaths,
+  };
+}
+
 export async function defaultTrackedPath(repoRoot, resolvedTarget) {
   const result = await executeGit(repoRoot, [
     'ls-files',
@@ -145,6 +163,7 @@ export async function assertionCommand(
     realpathFn = realpath,
     pathExistsFn = defaultPathExists,
     isTrackedPathFn = defaultTrackedPath,
+    nodeExecutable = execPath,
   } = {},
 ) {
   const shape = classifyCommandShape(assertionRef);
@@ -168,24 +187,31 @@ export async function assertionCommand(
         'Vitest executable escapes repository root',
       );
     }
+    const nodeTarget = await realpathFn(nodeExecutable);
     const packageRoot = await findPackageRoot(resolvedTarget, root, pathExistsFn);
+    const positionalTarget = `./${relative(packageRoot, resolvedTarget)}`;
     return {
-      executable,
-      argv: ['run', relative(packageRoot, resolvedTarget)],
-      options: { cwd: packageRoot, shell: false, evidenceKind: 'vitest' },
+      executable: nodeTarget,
+      argv: [executableTarget, 'run', positionalTarget, '--'],
+      options: commandOptions(
+        packageRoot,
+        'vitest',
+        [nodeTarget, executableTarget],
+      ),
     };
   }
   if (shape.kind === 'pytest') {
+    const executable = await realpathFn(PYTHON_EXECUTABLE);
     return {
-      executable: 'python3',
-      argv: ['-m', 'pytest', relative(root, resolvedTarget)],
-      options: { cwd: root, shell: false, evidenceKind: 'pytest' },
+      executable,
+      argv: ['-m', 'pytest', '--', relative(root, resolvedTarget)],
+      options: commandOptions(root, 'pytest', [executable]),
     };
   }
   return {
-    executable: '/bin/bash',
+    executable: BASH_EXECUTABLE,
     argv: [resolvedTarget],
-    options: { cwd: root, shell: false, evidenceKind: 'bash' },
+    options: commandOptions(root, 'bash', [BASH_EXECUTABLE]),
   };
 }
 

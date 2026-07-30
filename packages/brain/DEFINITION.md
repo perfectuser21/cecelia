@@ -1,6 +1,14 @@
 # Brain 模块定义
 
-**版本**: 1.267.140
+**版本**: 1.267.141
+
+## Trusted assertion invocation manifest
+
+- Vitest 1.6 由绝对 Node 执行 realpath 后的 CLI，测试路径以 `./` positional
+  传入并以末尾 `--` 收口；Pytest 与 bash 也固定绝对工具，均返回绝对
+  `toolchain_paths`。
+- 本层只冻结调用 manifest，尚不计算或验证工具 digest，也不接 Runner、
+  repository、finalization、receipt、API 或 UI。
 
 ## Trusted assertion command and source policy
 
