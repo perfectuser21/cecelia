@@ -217,6 +217,24 @@ describe('R9/R10: append-only attempt callback convergence', () => {
       reason: 'repeated_unknown_no_pr',
     });
   });
+
+  it('R10: unverified worker artifact churn cannot evade the second no-PR stop', () => {
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        callback(3, { artifacts: [{ type: 'note', value: 'first claim' }] }),
+        { hop: 4, action: 'spawn:generator-fix', observed: {} },
+        callback(6, { artifacts: [{ type: 'note', value: 'different claim' }] }),
+      ],
+    }));
+
+    expect(r).toEqual({
+      phase: 'failed',
+      action: 'mark_failed',
+      reason: 'repeated_unknown_no_pr',
+    });
+  });
 });
 
 describe('规则 0.6：MAX_HOPS 宽兜底（P2）', () => {
