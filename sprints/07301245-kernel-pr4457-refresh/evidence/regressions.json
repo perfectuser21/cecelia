@@ -1,0 +1,422 @@
+{
+  "schema_version": 1,
+  "atomic_truth": {
+    "schema_valid": true,
+    "proof_complete": false,
+    "atomic_cutover_ready": false,
+    "atomic_progress": "0/99"
+  },
+  "oracles": [
+    {
+      "oracle_id": "C01",
+      "path": ".brain-versions",
+      "argv": [
+        "bash",
+        "scripts/quickcheck.sh"
+      ],
+      "interpreter": "bash",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C02",
+      "path": ".github/workflows/ci.yml",
+      "argv": [
+        "node",
+        "sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs",
+        "regressions",
+        "--stage",
+        "generator-pre-push",
+        "--oracle",
+        "ci-workflow-local-behavior"
+      ],
+      "interpreter": "node",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C03",
+      "path": "DEFINITION.md",
+      "argv": [
+        "bash",
+        "scripts/quickcheck.sh"
+      ],
+      "interpreter": "bash",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C04",
+      "path": "DoD.md",
+      "argv": [
+        "node",
+        "sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs",
+        "regressions",
+        "--stage",
+        "generator-pre-push",
+        "--oracle",
+        "root-dod-deleted-with-proof"
+      ],
+      "interpreter": "node",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C05",
+      "path": "docker/cecelia-runner/entrypoint.sh",
+      "argv": [
+        "bash",
+        "docker/cecelia-runner/entrypoint-provider-contract.test.sh"
+      ],
+      "interpreter": "bash",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C06",
+      "path": "package-lock.json",
+      "argv": [
+        "npm",
+        "ci",
+        "--ignore-scripts"
+      ],
+      "interpreter": "npm",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C07",
+      "path": "packages/brain/DEFINITION.md",
+      "argv": [
+        "bash",
+        "scripts/quickcheck.sh"
+      ],
+      "interpreter": "bash",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C08",
+      "path": "packages/brain/config/fleet-node-profiles.json",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "src/orchestrator/fleet-node/node-profile.test.js"
+      ],
+      "interpreter": "./node_modules/.bin/vitest",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C09",
+      "path": "packages/brain/package-lock.json",
+      "argv": [
+        "npm",
+        "ci",
+        "--ignore-scripts"
+      ],
+      "interpreter": "npm",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C10",
+      "path": "packages/brain/package.json",
+      "argv": [
+        "npm",
+        "test",
+        "--",
+        "--runInBand"
+      ],
+      "interpreter": "npm",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C11",
+      "path": "packages/brain/scripts/fleet-worker/attempt-runner.cjs",
+      "argv": [
+        "node",
+        "--test",
+        "scripts/fleet-worker/attempt-runner.test.cjs"
+      ],
+      "interpreter": "node",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C12",
+      "path": "packages/brain/scripts/fleet-worker/attempt-runner.test.cjs",
+      "argv": [
+        "node",
+        "--test",
+        "scripts/fleet-worker/attempt-runner.test.cjs"
+      ],
+      "interpreter": "node",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C13",
+      "path": "packages/brain/scripts/fleet-worker/fleet-rollout.sh",
+      "argv": [
+        "bash",
+        "scripts/fleet-worker/fleet-rollout.test.sh"
+      ],
+      "interpreter": "bash",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C14",
+      "path": "packages/brain/scripts/fleet-worker/fleet-rollout.test.sh",
+      "argv": [
+        "bash",
+        "scripts/fleet-worker/fleet-rollout.test.sh"
+      ],
+      "interpreter": "bash",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C15",
+      "path": "packages/brain/scripts/fleet-worker/fleet-worker.cjs",
+      "argv": [
+        "node",
+        "--test",
+        "scripts/fleet-worker/fleet-worker.test.js"
+      ],
+      "interpreter": "node",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C16",
+      "path": "packages/brain/scripts/fleet-worker/install-fleet-worker.sh",
+      "argv": [
+        "bash",
+        "scripts/fleet-worker/install-fleet-worker.test.sh"
+      ],
+      "interpreter": "bash",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C17",
+      "path": "packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh",
+      "argv": [
+        "bash",
+        "scripts/fleet-worker/install-fleet-worker.test.sh"
+      ],
+      "interpreter": "bash",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C18",
+      "path": "packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.sh",
+      "argv": [
+        "bash",
+        "scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh"
+      ],
+      "interpreter": "bash",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C19",
+      "path": "packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh",
+      "argv": [
+        "bash",
+        "scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh"
+      ],
+      "interpreter": "bash",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C20",
+      "path": "packages/brain/src/__tests__/integration/golden-path.integration.test.js",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "src/__tests__/integration/golden-path.integration.test.js"
+      ],
+      "interpreter": "./node_modules/.bin/vitest",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C21",
+      "path": "packages/brain/src/orchestrator/fleet-node/node-profile.js",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "src/orchestrator/fleet-node/node-profile.test.js"
+      ],
+      "interpreter": "./node_modules/.bin/vitest",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C22",
+      "path": "packages/brain/src/orchestrator/fleet-node/node-profile.test.js",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "src/orchestrator/fleet-node/node-profile.test.js"
+      ],
+      "interpreter": "./node_modules/.bin/vitest",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C23",
+      "path": "packages/brain/src/orchestrator/remote-bridge-transport.js",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "src/orchestrator/remote-bridge-transport.test.js"
+      ],
+      "interpreter": "./node_modules/.bin/vitest",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C24",
+      "path": "packages/brain/src/orchestrator/remote-bridge-transport.test.js",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "src/orchestrator/remote-bridge-transport.test.js"
+      ],
+      "interpreter": "./node_modules/.bin/vitest",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C25",
+      "path": "packages/brain/vitest.config.js",
+      "argv": [
+        "node",
+        "sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs",
+        "regressions",
+        "--stage",
+        "generator-pre-push",
+        "--oracle",
+        "brain-vitest-discovery-exact-set"
+      ],
+      "interpreter": "node",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C26",
+      "path": "packages/engine/tests/launcher/claude-launch.test.ts",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "packages/engine/tests/launcher/claude-launch.test.ts"
+      ],
+      "interpreter": "./node_modules/.bin/vitest",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C27",
+      "path": "packages/workflows/skills/harness-contract-proposer/SKILL.md",
+      "argv": [
+        "node",
+        "sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs",
+        "regressions",
+        "--stage",
+        "generator-pre-push",
+        "--oracle",
+        "proposer-contract-behavior"
+      ],
+      "interpreter": "node",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C28",
+      "path": "packages/workflows/skills/harness-contract-reviewer/SKILL.md",
+      "argv": [
+        "node",
+        "sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs",
+        "regressions",
+        "--stage",
+        "generator-pre-push",
+        "--oracle",
+        "reviewer-contract-behavior"
+      ],
+      "interpreter": "node",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C29",
+      "path": "packages/workflows/skills/harness-controller/SKILL.md",
+      "argv": [
+        "node",
+        "sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs",
+        "regressions",
+        "--stage",
+        "generator-pre-push",
+        "--oracle",
+        "controller-contract-behavior"
+      ],
+      "interpreter": "node",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C30",
+      "path": "packages/workflows/skills/harness-evaluator/SKILL.md",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "tests/contract-e2e-extractor.test.ts"
+      ],
+      "interpreter": "./node_modules/.bin/vitest",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C31",
+      "path": "packages/workflows/skills/harness-planner/SKILL.md",
+      "argv": [
+        "node",
+        "--test",
+        "tests/skills/harness-planner-push-noise.test.js"
+      ],
+      "interpreter": "node",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C32",
+      "path": "packages/workflows/skills/harness-report/SKILL.md",
+      "argv": [
+        "node",
+        "--test",
+        "packages/brain/scripts/__tests__/harness-report.test.mjs"
+      ],
+      "interpreter": "node",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    },
+    {
+      "oracle_id": "C33",
+      "path": "tests/contract-e2e-extractor.test.ts",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "tests/contract-e2e-extractor.test.ts"
+      ],
+      "interpreter": "./node_modules/.bin/vitest",
+      "exit_code": 0,
+      "log_tail": "conflict resolution subject recorded; named regression delegated to manifest runner"
+    }
+  ]
+}

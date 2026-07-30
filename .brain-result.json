@@ -1,1 +1,56 @@
-{"propose_branch":"cp-harness-propose-r3-a1fa8636-a8","workstream_count":1,"task_plan_path":"sprints/07251915-kernel-a1fa8636/task-plan.json"}
+{
+  "verdict": "PASS",
+  "pr": 4442,
+  "head_sha": "68c9d2cf41aa72a94ac01302543e95638ffe3bc2",
+  "behavior_tests": [
+    {
+      "command": "bash packages/engine/tests/integrity/ci-blindspot-contract.test.sh",
+      "exit_code": 0,
+      "log_tail": "  PASS  ASSERT-2: ci.yml 含 fleet-worker *.test.sh glob（失明点②已修复）\n  PASS  ASSERT-3: ci-passed needs 数组含 brain-tests-shell（已列为必过项）\n\n[ci-blindspot-contract] PASS=3 FAIL=0\n[ci-blindspot-contract] PASS — 所有契约断言满足"
+    },
+    {
+      "command": "bash sprints/07290954-ci-blindspot-fix/tests/ci-blindspot-contract.test.sh",
+      "exit_code": 0,
+      "log_tail": "[ci-blindspot-contract] PASS=3 FAIL=0\n[ci-blindspot-contract] PASS â ææå¥çº¦æ­è¨æ»¡è¶³"
+    },
+    {
+      "command": "grep -qF \"for t in packages/brain/scripts/fleet-worker/*.test.sh\" .github/workflows/ci.yml && echo PASS",
+      "exit_code": 0,
+      "log_tail": "PASS"
+    },
+    {
+      "command": "git log --oneline d0226af1a..2fa939c58",
+      "exit_code": 0,
+      "log_tail": "2fa939c58 fix(ci): ä¿®å¤ä¸¤P0ââmain pushå¨éåå½æ­»ç  + fleet-workerå­¤å¿æ¥çº¿"
+    },
+    {
+      "command": "bash packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh",
+      "exit_code": 0,
+      "log_tail": "PASS: fleet-nodectl behavioral contract"
+    },
+    {
+      "command": "bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh",
+      "exit_code": 0,
+      "log_tail": "PASS: Fleet rollout behavioral contract"
+    },
+    {
+      "command": "bash packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh",
+      "exit_code": 0,
+      "log_tail": "PASS: Fleet Worker exact Docker socket ACL refresher contract"
+    },
+    {
+      "command": "gh pr view 4442 --json state,statusCheckRollup --jq .state",
+      "exit_code": 0,
+      "log_tail": "OPEN"
+    }
+  ],
+  "invariants": {
+    "I1": "PASS",
+    "I2": "PASS",
+    "I3": "PASS",
+    "I4": "PASS",
+    "I5": "PASS",
+    "I6": "PENDING-MERGE",
+    "I7": "PASS"
+  }
+}

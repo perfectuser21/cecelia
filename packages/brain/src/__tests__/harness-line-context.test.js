@@ -1,6 +1,6 @@
 /**
  * harness-line-context.test.js — A-1 Context Manifest 新模块单测（mock pool）。
- * 覆盖：三源 SQL 参数断言 / 去重 / 降级（单路失败仅 warn）/
+ * 覆盖：四层 SQL 参数断言 / 去重 / 降级（单路失败仅 warn）/
  * 格式契约逐字断言（与 harness-planner v8.12.0 Step 0.4 例句同构 = E1 解析契约）/ 空→'' / 截断。
  * Spec: docs/superpowers/specs/2026-07-02-a1-context-manifest-design.md
  */
@@ -17,7 +17,7 @@ const TASK_ID = '11111111-2222-3333-4444-555555555555';
 const ABILITY_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 const JOURNEY_ID = 'ffffffff-0000-1111-2222-333333333333';
 
-// 按 SQL 内容路由的 mock pool：step 查询 join golden_path，feature/area 查 decisions，
+// 按 SQL 内容路由的 mock pool：step 查询 join golden_path，feature/global+area 查 decisions，
 // FR 查 journey_features，taskRow 查 tasks 行（fetchAndFormatLineContext GAN 场景补齐用）
 function makePool({ step = [], feature = [], area = [], fr = [], taskRow = null, ledger = null, fail = {} } = {}) {
   return {
@@ -34,7 +34,7 @@ function makePool({ step = [], feature = [], area = [], fr = [], taskRow = null,
         if (fail.feature) throw new Error('feature query down');
         return { rows: feature };
       }
-      if (/level=\$1/.test(sql) || sql.includes("level='area'")) {
+      if (/level IN \('global','area'\)/.test(sql)) {
         if (fail.area) throw new Error('area query down');
         return { rows: area };
       }
@@ -63,7 +63,7 @@ afterEach(() => {
   warnSpy.mockRestore();
 });
 
-describe('fetchLineContext — 三源 invariant SQL（与 routes/abilities.js 同源）', () => {
+describe('fetchLineContext — 四层 invariant SQL（与 routes/abilities.js 同源）', () => {
   it('三参齐全 → 发 5 路查询，step SQL 与 tasks/:id/golden-path-decisions 同源', async () => {
     const pool = makePool();
     await fetchLineContext({ pool }, { taskId: TASK_ID, abilityId: ABILITY_ID, journeyId: JOURNEY_ID });
@@ -76,7 +76,7 @@ describe('fetchLineContext — 三源 invariant SQL（与 routes/abilities.js �
     expect(stepSql).toMatch(/d\.target_type='golden_path'/);
     expect(stepSql).toMatch(/gp\.owner_task_id=\$1/);
     expect(stepSql).toMatch(/d\.category=\$2/);
-    // 审查修正：三源语义一致 — step 路也只取 active decision（与 feature/area 路一致）
+    // 审查修正：四层语义一致 — step 路也只取 active decision
     expect(stepSql).toMatch(/d\.status='active'/);
     expect(stepSql).toMatch(/ORDER BY gp\.order_no ASC, d\.created_at DESC/);
     expect(stepParams).toEqual([TASK_ID, 'invariant']);
@@ -94,14 +94,22 @@ describe('fetchLineContext — 三源 invariant SQL（与 routes/abilities.js �
     expect(params).toEqual(['journey_feature', ABILITY_ID]);
   });
 
-  it('area 路 SQL 与 GET /invariants?level=area 同源', async () => {
-    const pool = makePool();
-    await fetchLineContext({ pool }, {});
-    const call = findCall(pool, /level=\$1/);
+  it('global + area 路一次读取两层，并保留真实 source_level', async () => {
+    const pool = makePool({
+      area: [
+        { id: 'global-risk', topic: '[全局]高风险', decision: '命中即走人', level: 'global' },
+        { id: 'area-rule', topic: '[业务区]租户隔离', decision: '按租户隔离', level: 'area' },
+      ],
+    });
+    const result = await fetchLineContext({ pool }, {});
+    const call = findCall(pool, /level IN \('global','area'\)/);
     expect(call).toBeTruthy();
     const [sql, params] = call;
     expect(sql).toMatch(/SELECT \* FROM decisions WHERE category='invariant' AND status='active'/);
-    expect(params).toEqual(['area']);
+    expect(sql).toMatch(/ORDER BY CASE level WHEN 'global' THEN 0 ELSE 1 END/);
+    expect(params).toEqual([]);
+    expect(result.invariants.find((d) => d.id === 'global-risk').source_level).toBe('global');
+    expect(result.invariants.find((d) => d.id === 'area-rule').source_level).toBe('area');
   });
 
   it('FR 路 SQL 与 journeys/:id/golden-paths 同源 + ability_status IN (done,working) 过滤', async () => {
@@ -120,11 +128,11 @@ describe('fetchLineContext — 三源 invariant SQL（与 routes/abilities.js �
     expect(params).toEqual([JOURNEY_ID]);
   });
 
-  it('参数缺省跳过对应路：全缺省只查 area，一次查询', async () => {
+  it('参数缺省跳过对应路：全缺省只查 global + area，一次查询', async () => {
     const pool = makePool();
     const r = await fetchLineContext({ pool }, {});
     expect(pool.query).toHaveBeenCalledTimes(1);
-    expect(findCall(pool, /level=\$1/)).toBeTruthy();
+    expect(findCall(pool, /level IN \('global','area'\)/)).toBeTruthy();
     expect(r).toEqual({ invariants: [], cumulativeFR: [], ledger: null });
   });
 
@@ -133,23 +141,28 @@ describe('fetchLineContext — 三源 invariant SQL（与 routes/abilities.js �
     await fetchLineContext({ pool }, { abilityId: ABILITY_ID });
     expect(findCall(pool, /JOIN golden_path gp/)).toBeUndefined();
     expect(findCall(pool, /JOIN journey_features jf/)).toBeUndefined();
-    expect(pool.query).toHaveBeenCalledTimes(2); // feature + area
+    expect(pool.query).toHaveBeenCalledTimes(2); // feature + global/area
   });
 
-  it('三源合并附 source_level，并按 decision id 去重（step 优先于 journey_feature 优先于 area）', async () => {
+  it('四层合并附 source_level，并按 decision id 去重（step > journey_feature > global > area）', async () => {
     const d = (id, topic) => ({ id, topic, decision: `铁律${id}`, category: 'invariant' });
     const pool = makePool({
       step: [{ ...d('d1', '[L4]不进群'), order_no: 1 }],
       feature: [d('d1', '[L4]不进群'), d('d2', '[L4]防假成功')],
-      area: [d('d2', '[L4]防假成功'), d('d3', '[全局]租户隔离')],
+      area: [
+        { ...d('d2', '[L4]防假成功'), level: 'global' },
+        { ...d('d3', '[全局]高风险清单'), level: 'global' },
+        { ...d('d4', '[业务区]租户隔离'), level: 'area' },
+      ],
     });
     const { invariants } = await fetchLineContext(
       { pool }, { taskId: TASK_ID, abilityId: ABILITY_ID, journeyId: JOURNEY_ID }
     );
-    expect(invariants.map((x) => x.id)).toEqual(['d1', 'd2', 'd3']);
+    expect(invariants.map((x) => x.id)).toEqual(['d1', 'd2', 'd3', 'd4']);
     expect(invariants[0].source_level).toBe('step');
     expect(invariants[1].source_level).toBe('journey_feature');
-    expect(invariants[2].source_level).toBe('area');
+    expect(invariants[2].source_level).toBe('global');
+    expect(invariants[3].source_level).toBe('area');
   });
 
   it('累积 FR：按 owner_task_id 分组，steps 保序', async () => {
@@ -169,7 +182,7 @@ describe('fetchLineContext — 三源 invariant SQL（与 routes/abilities.js �
 
   it('单路失败 → 该路空数组 + console.warn（[line-context]…non-fatal），其余路不受影响，绝不 throw', async () => {
     const pool = makePool({
-      area: [{ id: 'd9', topic: '[全局]租户隔离', decision: '按租户隔离' }],
+      area: [{ id: 'd9', topic: '[全局]租户隔离', decision: '按租户隔离', level: 'global' }],
       fr: [{ ability_id: 'a1', ability_name: '发视频', ability_status: 'done', owner_task_id: 't1', id: 'g1', order_no: 1, feature_id: null, note: 'x' }],
       fail: { feature: true },
     });
@@ -238,7 +251,8 @@ describe('formatLineContextForPrompt — 与 planner Step 0.4 逐字同构（E1 
     const text = formatLineContextForPrompt({
       invariants: [
         { id: 'd1', topic: '[Line04]不进群', decision: '只私聊；群聊一律跳过', source_level: 'journey_feature' },
-        { id: 'd2', topic: '[全局]租户隔离', decision: '记忆按租户×联系人隔离', source_level: 'area' },
+        { id: 'd2', topic: '[全局]高风险', decision: '命中高风险必须真人确认', source_level: 'global' },
+        { id: 'd3', topic: '[业务区]租户隔离', decision: '记忆按租户×联系人隔离', source_level: 'area' },
       ],
       cumulativeFR: [
         { ability_name: '发抖音视频', steps: [{ order_no: 1, note: '打开页面' }, { order_no: 2, note: '点击发布' }] },
@@ -247,6 +261,7 @@ describe('formatLineContextForPrompt — 与 planner Step 0.4 逐字同构（E1 
     expect(text).toBe(
       '## Invariant 约束（铁律，本角色产出不得违反）\n'
       + '- [不进群] 只私聊；群聊一律跳过（来源: journey_feature）\n'
+      + '- [高风险] 命中高风险必须真人确认（来源: global）\n'
       + '- [租户隔离] 记忆按租户×联系人隔离（来源: area）\n'
       + '\n'
       + '## 累积 FR（本 line 已验收行为，不得回退/重复实现）\n'

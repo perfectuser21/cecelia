@@ -13,6 +13,10 @@ services:
     # macOS/OrbStack: network_mode:host 不支持，用 bridge + port forward
     ports:
       - "5221:5221"
+      # Acceptance 公网 listener（刀1，决策 c08c2173/4303a326）：容器内 0.0.0.0:5223，
+      # 宿主侧 pf 封 en0/en1 公网网卡，仅 cloudflared(brain-acceptance.zenjoymedia.media)→localhost:5223 可达。
+      # env 注入走 env_file(.env.docker)：ACCEPTANCE_API_TOKEN（缺省=listener 不启动 fail-closed）+ ACCEPTANCE_PUBLIC_HOST=0.0.0.0
+      - "5223:5223"
       # 预览 Brain 端口范围（per-PR preview environments，由 preview-env-start.sh 在容器内启动）
       # 容器内的预览 Brain 进程绑定到 5300-5399，需对外暴露才能被 GitHub Actions 健康检查到（via Tailscale）
       - "5300-5399:5300-5399"
@@ -90,6 +94,12 @@ services:
       - FLEET_WORKER_XIAN_MAC_M4_URL=${FLEET_WORKER_XIAN_MAC_M4_URL:-http://xian-mac-m4:5231}
       - FLEET_WORKER_XIAN_MAC_M1_URL=${FLEET_WORKER_XIAN_MAC_M1_URL:-http://xian-mac-m1:5231}
       - FLEET_NODE_ADMISSION_CACHE_TTL_MS=${FLEET_NODE_ADMISSION_CACHE_TTL_MS:-1000}
+      # Phase 4B: all canonical machines use the authenticated Fleet Worker
+      # Attempt API. An absent/short token remains fail-closed in the transport.
+      - KERNEL_FLEET_REMOTE_ENABLED=${KERNEL_FLEET_REMOTE_ENABLED:-true}
+      - KERNEL_FLEET_BRIDGE_TOKEN=${KERNEL_FLEET_BRIDGE_TOKEN:-}
+      # Xian Workers must be able to call the US Brain over Tailscale.
+      - KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL=${KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL:-http://100.71.151.105:5221}
       # host.docker.internal: OrbStack 原生支持，容器内此地址到宿主 127.0.0.1
       - DB_HOST=${DB_HOST:-host.docker.internal}
       - DB_PORT=${DB_PORT:-5432}

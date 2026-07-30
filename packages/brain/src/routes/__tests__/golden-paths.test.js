@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockQuery = vi.fn();
-vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
+const mockRelease = vi.fn();
+const mockConnect = vi.fn();
+vi.mock('../../db.js', () => ({
+  default: {
+    query: mockQuery,
+    connect: mockConnect,
+  },
+}));
 
 // 默认 1 slot（capacity gate: batchLimit = 1）
 vi.mock('../../fleet-resource-cache.js', () => ({ getTotalEffectiveSlots: vi.fn(() => 1) }));
@@ -19,7 +26,15 @@ const req = async () => (await import('supertest')).default;
 const GP_ROW = { id: 'gp-1', title: '朋友圈GP', one_liner: '一句话', status: 'candidate', source: 'strategist', auto_release: false, proposal_doc: null };
 
 describe('golden-paths routes（GP 蓝图级实体，区别于既有 golden_path FR 台账）', () => {
-  beforeEach(() => mockQuery.mockReset());
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockRelease.mockReset();
+    mockConnect.mockReset();
+    mockConnect.mockResolvedValue({
+      query: mockQuery,
+      release: mockRelease,
+    });
+  });
 
   describe('GET /golden-paths', () => {
     it('无参返回全量列表', async () => {
@@ -190,49 +205,243 @@ describe('golden-paths routes（GP 蓝图级实体，区别于既有 golden_path
     });
   });
 
-  describe('POST /golden-paths/:id/approve — 批准端点（DoD F5）', () => {
-    it('F5: converged→approved，写 decisions(judgment)，judgment_decision_id 存在', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'converged' }] });    // SELECT gp
-      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'dec-1' }] });                        // INSERT decisions
-      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'task-h1' }] });                      // INSERT harness task
-      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'approved', judgment_refs: ['dec-1'] }] }); // UPDATE gp
+  describe('Golden Path 7 项合同版本端点', () => {
+    const contract = {
+      fr_summary: { statements: ['用户提交后看到成功'] },
+      lifelines_and_nfr: {
+        items: [{
+          statement: '只写一次',
+          class: 'lifeline',
+          verification: 'SELECT COUNT(*) = 1',
+          rationale: '重复写入即失败',
+        }],
+      },
+      yield_order: {
+        order: ['安全/资金正确性', '数据一致性', '功能完整', '性能', '体验顺滑'],
+        override_reason: null,
+      },
+      external_commitment_changes: { changes: [], none: true },
+      release_and_blast_radius: {
+        stages: ['internal'],
+        blast_radius: '单一 Journey',
+        rollback_triggers: ['错误率 > 1%'],
+      },
+      success_and_close: {
+        metrics: ['成功率 >= 99%'],
+        observation_window: '24h',
+        close_conditions: ['24h 达标'],
+        shutdown_conditions: ['错误率连续超阈值'],
+      },
+      budget_guard: {
+        total_cost_cap_usd: 10,
+        atom_cost_cap_usd: 2,
+        atom_runtime_sec: 1800,
+        atom_parallelism: 1,
+      },
+    };
+
+    it('GET 返回指定 GP 的版本，最新版本在前', async () => {
+      mockQuery.mockResolvedValueOnce({
+        rows: [
+          { id: 'contract-2', golden_path_id: 'gp-1', version: 2 },
+          { id: 'contract-1', golden_path_id: 'gp-1', version: 1 },
+        ],
+      });
+
       const res = await (await req())(await makeApp())
-        .post('/api/brain/golden-paths/gp-1/approve').send({});
+        .get('/api/brain/golden-paths/gp-1/contracts');
+
       expect(res.status).toBe(200);
-      expect(res.body.golden_path.status).toBe('approved');
-      expect(res.body.judgment_decision_id).toBe('dec-1');
-      expect(res.body.harness_task_id).toBe('task-h1');
-      const decSql = mockQuery.mock.calls[1][0];
-      expect(decSql).toMatch(/INSERT INTO decisions/);
-      expect(decSql).toMatch(/judgment/);
-      expect(decSql).toMatch(/review_after/);
-      const decParams = mockQuery.mock.calls[1][1];
-      expect(decParams[0]).toMatch(/^gp:/);
+      expect(res.body.contract_versions.map((row) => row.version)).toEqual([2, 1]);
+      expect(mockQuery.mock.calls[0][0]).toMatch(/ORDER BY version DESC/);
+      expect(mockQuery.mock.calls[0][1]).toEqual(['gp-1']);
     });
 
-    it('reason 字段含 gp:<id>（DoD F5 精确断言）', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'converged' }] });
-      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'dec-2' }] });
-      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'task-h2' }] });
-      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'approved' }] });
-      await (await req())(await makeApp()).post('/api/brain/golden-paths/gp-1/approve').send({});
-      const reasonParam = mockQuery.mock.calls[1][1][1]; // reason 是第二个 VALUES 参数
-      expect(reasonParam).toMatch(/gp:gp-1/);
-    });
+    it('POST raw contract 创建 pending 版本并返回 201', async () => {
+      const pending = {
+        id: 'contract-1',
+        golden_path_id: 'gp-1',
+        version: 1,
+        content_hash: 'a'.repeat(64),
+        status: 'pending_signature',
+        signing_action_id: null,
+      };
+      mockQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({ rows: [{ ...GP_ROW, journey_id: 'journey-1' }] })
+        .mockResolvedValueOnce({ rows: [] }) // latest
+        .mockResolvedValueOnce({ rows: [] }) // active tasks
+        .mockResolvedValueOnce({ rows: [] }) // invalidate/supersede
+        .mockResolvedValueOnce({ rows: [pending] }) // insert version
+        .mockResolvedValueOnce({ rows: [{ id: 'action-1' }] })
+        .mockResolvedValueOnce({
+          rows: [{ ...pending, signing_action_id: 'action-1' }],
+        })
+        .mockResolvedValueOnce({}); // COMMIT
 
-    it('非 converged/proposed 状态 → 409 INVALID_TRANSITION', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'candidate' }] });
       const res = await (await req())(await makeApp())
-        .post('/api/brain/golden-paths/gp-1/approve').send({});
-      expect(res.status).toBe(409);
-      expect(res.body.code).toBe('INVALID_TRANSITION');
+        .post('/api/brain/golden-paths/gp-1/contracts')
+        .send(contract);
+
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({
+        success: true,
+        pending_action_id: 'action-1',
+        idempotent: false,
+        contract_version: { id: 'contract-1', version: 1 },
+      });
+      expect(mockQuery.mock.calls.at(-1)[0]).toBe('COMMIT');
+      expect(mockRelease).toHaveBeenCalledOnce();
     });
 
-    it('不存在 id → 404', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [] });
+    it('POST invalid contract 返回 400 GP_CONTRACT_INVALID 并回滚', async () => {
+      mockQuery.mockResolvedValueOnce({}).mockResolvedValueOnce({});
+
       const res = await (await req())(await makeApp())
-        .post('/api/brain/golden-paths/nope/approve').send({});
+        .post('/api/brain/golden-paths/gp-1/contracts')
+        .send({ fr_summary: {} });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('GP_CONTRACT_INVALID');
+      expect(mockQuery.mock.calls.map(([sql]) => sql)).toEqual(['BEGIN', 'ROLLBACK']);
+      expect(mockRelease).toHaveBeenCalledOnce();
+    });
+
+    it('POST missing GP 返回 404 GP_NOT_FOUND', async () => {
+      mockQuery
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({});
+
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/missing/contracts')
+        .send({ contract });
+
       expect(res.status).toBe(404);
+      expect(res.body.code).toBe('GP_NOT_FOUND');
+      expect(mockQuery.mock.calls.at(-1)[0]).toBe('ROLLBACK');
+    });
+
+    it('POST running-task conflict 返回 409 GP_CONTRACT_IN_FLIGHT', async () => {
+      const existing = {
+        id: 'contract-1',
+        golden_path_id: 'gp-1',
+        version: 1,
+        content_hash: 'b'.repeat(64),
+        status: 'signed',
+      };
+      mockQuery
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [{ ...GP_ROW, journey_id: 'journey-1' }] })
+        .mockResolvedValueOnce({ rows: [existing] })
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 'task-running',
+            status: 'in_progress',
+            payload: { golden_path_id: 'gp-1' },
+          }],
+        })
+        .mockResolvedValueOnce({});
+
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/gp-1/contracts')
+        .send({ contract });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('GP_CONTRACT_IN_FLIGHT');
+      expect(mockQuery.mock.calls.at(-1)[0]).toBe('ROLLBACK');
+    });
+  });
+
+  describe('POST /golden-paths/:id/approve — 已签合同兼容入口', () => {
+    it('最新合同已签字时只返回已绑定任务，不重复创建', async () => {
+      const signed = {
+        id: 'contract-1',
+        golden_path_id: 'gp-1',
+        version: 1,
+        content_hash: 'a'.repeat(64),
+        status: 'signed',
+      };
+      mockQuery
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'approved' }] })
+        .mockResolvedValueOnce({ rows: [signed] })
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 'task-h1',
+            task_type: 'harness_initiative',
+            payload: { gp_contract_id: signed.id },
+          }],
+        })
+        .mockResolvedValueOnce({}); // COMMIT
+
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/gp-1/approve')
+        .send({ expected_version: 1 });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        success: true,
+        harness_task_id: 'task-h1',
+        contract_version: { id: 'contract-1', version: 1 },
+        idempotent: true,
+      });
+      expect(mockQuery.mock.calls.filter(([sql]) => /INSERT INTO/i.test(sql)))
+        .toHaveLength(0);
+      expect(mockQuery.mock.calls.at(-1)[0]).toBe('COMMIT');
+    });
+
+    it('最新合同未签字时返回 409 GP_CONTRACT_SIGNATURE_REQUIRED', async () => {
+      mockQuery
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'converged' }] })
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 'contract-1',
+            version: 1,
+            status: 'pending_signature',
+          }],
+        })
+        .mockResolvedValueOnce({});
+
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/gp-1/approve')
+        .send({});
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('GP_CONTRACT_SIGNATURE_REQUIRED');
+      expect(mockQuery.mock.calls.at(-1)[0]).toBe('ROLLBACK');
+    });
+
+    it('指定旧版本时返回 409 GP_CONTRACT_STALE', async () => {
+      mockQuery
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'approved' }] })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'contract-2', version: 2, status: 'signed' }],
+        })
+        .mockResolvedValueOnce({});
+
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/gp-1/approve')
+        .send({ expected_version: 1 });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('GP_CONTRACT_STALE');
+    });
+
+    it('不存在 id → 404 GP_NOT_FOUND', async () => {
+      mockQuery
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({});
+
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths/nope/approve')
+        .send({});
+
+      expect(res.status).toBe(404);
+      expect(res.body.code).toBe('GP_NOT_FOUND');
     });
   });
 

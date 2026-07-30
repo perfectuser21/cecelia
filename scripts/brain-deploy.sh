@@ -510,18 +510,21 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     if [[ "$DRY_RUN" == true ]]; then
         echo "  [dry-run] docker compose up -d cecelia-brain:${VERSION}"
     elif ! BRAIN_VERSION="${VERSION}" ENV_REGION="${ENV_REGION}" \
-      docker compose -f "$ROOT_DIR/docker-compose.yml" up -d; then
+      docker compose --env-file "$ROOT_DIR/.env.docker" \
+        -f "$ROOT_DIR/docker-compose.yml" up -d; then
         echo ""
         echo "[FAIL] docker compose up -d failed. Rolling back..."
         if [ -f "$VERSIONS_FILE" ] && [ "$(wc -l < "$VERSIONS_FILE")" -ge 2 ]; then
             PREV_VERSION=$(tail -2 "$VERSIONS_FILE" | head -1)
             echo "  Rolling back to v${PREV_VERSION}..."
             BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
-              docker compose -f "$ROOT_DIR/docker-compose.yml" up -d || true
+              docker compose --env-file "$ROOT_DIR/.env.docker" \
+                -f "$ROOT_DIR/docker-compose.yml" up -d || true
             echo "  Rolled back to v${PREV_VERSION}"
         else
             echo "  No previous version found. Stopping container."
-            docker compose -f "$ROOT_DIR/docker-compose.yml" down || true
+            docker compose --env-file "$ROOT_DIR/.env.docker" \
+              -f "$ROOT_DIR/docker-compose.yml" down || true
         fi
         exit 1
     fi
@@ -765,11 +768,13 @@ else
         PREV_VERSION=$(tail -2 "$VERSIONS_FILE" | head -1)
         echo "  Rolling back to v${PREV_VERSION}..."
         BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
-          docker compose -f "$ROOT_DIR/docker-compose.yml" up -d
+          docker compose --env-file "$ROOT_DIR/.env.docker" \
+            -f "$ROOT_DIR/docker-compose.yml" up -d
         echo "  Rolled back to v${PREV_VERSION}"
     else
         echo "  No previous version found. Stopping container."
-        docker compose -f "$ROOT_DIR/docker-compose.yml" down
+        docker compose --env-file "$ROOT_DIR/.env.docker" \
+          -f "$ROOT_DIR/docker-compose.yml" down
     fi
 fi
 

@@ -1,0 +1,16 @@
+{
+  "phase": "gan",
+  "verdict": "APPROVED",
+  "rounds": 4,
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 8,
+    "test_is_red": 9,
+    "internal_consistency": 8,
+    "risk_registered": 8,
+    "verification_oracle_completeness": 9,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 0,
+  "iron_law_coverage": "5/5"
+}

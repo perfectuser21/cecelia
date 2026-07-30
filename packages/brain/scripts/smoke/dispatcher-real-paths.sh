@@ -192,5 +192,17 @@ for tid in "${A_TASK:-}" "${B1_TASK:-}" "${B2_TASK:-}"; do
     -d '{"status":"failed","result":{"smoke":"dispatcher-real-paths cleanup"}}' >/dev/null 2>&1 || true
 done
 
+# real-env-smoke 会在本脚本之后校验“每个 harness_initiative 都有迁移映射”。
+# 这些任务只用于本脚本的并发锁断言，不能作为无映射脏数据泄漏给后续 smoke。
+# 仅按本次运行刚取得的 UUID 精确删除，绝不扩大到其他任务。
+if command -v psql >/dev/null 2>&1; then
+  for tid in "${A_TASK:-}" "${B1_TASK:-}" "${B2_TASK:-}"; do
+    [ -z "$tid" ] && continue
+    psql "${DATABASE_URL:-postgresql://localhost/cecelia}" \
+      -v ON_ERROR_STOP=1 \
+      -c "DELETE FROM tasks WHERE id='${tid}'::uuid" >/dev/null
+  done
+fi
+
 echo "📊 dispatcher-real-paths smoke: PASSED=$PASSED FAILED=$FAILED"
 exit "$FAILED"

@@ -11,7 +11,7 @@ node --input-type=module <<'NODE'
 import { listNodeProfiles } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const expectedDigest =
-  'sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7';
+  'sha256:6b6c4f9381aefd41d3cac723943e81143344f584971bf715beca04cc9bdb30ea';
 const profiles = listNodeProfiles();
 
 if (profiles.length !== 3) throw new Error(`expected 3 canonical nodes, got ${profiles.length}`);
@@ -19,7 +19,7 @@ for (const profile of profiles) {
   if (profile.runner_image_digest !== expectedDigest) {
     throw new Error(`Runner digest drift on ${profile.machine_id}`);
   }
-  if (profile.version_policy.os !== '15.7.4') {
+  if (profile.version_policy.os !== '15.6.1') {
     throw new Error(`macOS floor drift on ${profile.machine_id}`);
   }
   if (profile.launchd.domain !== 'system' || profile.launchd.kind !== 'LaunchDaemon') {

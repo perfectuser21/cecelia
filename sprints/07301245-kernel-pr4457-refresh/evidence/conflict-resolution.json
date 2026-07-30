@@ -1,0 +1,647 @@
+{
+  "schema_version": 1,
+  "subjects": [
+    {
+      "path": ".brain-versions",
+      "oracle_id": "C01",
+      "cwd": ".",
+      "argv": [
+        "bash",
+        "scripts/quickcheck.sh"
+      ],
+      "expected_observation": "exit_code=0；QuickCheck 完整执行且 fail-closed",
+      "stage": "generator-pre-push",
+      "base_blob": "77c70af0492231af1164880d3094e7c4ee941d9e",
+      "ours_blob": "55bd584888e0222be09935af4e105314a91824f0",
+      "theirs_blob": "d99801ba14893df2c734a738e42a1b106847c854",
+      "final_blob": "55bd584888e0222be09935af4e105314a91824f0",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "oracle_id": "C02",
+      "cwd": ".",
+      "argv": [
+        "node",
+        "sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs",
+        "regressions",
+        "--stage",
+        "generator-pre-push",
+        "--oracle",
+        "ci-workflow-local-behavior"
+      ],
+      "expected_observation": "exit_code=0；在 push 前本地执行 CI workflow 行为 fixture，证明三个 required context 均由真实 job 产生、失败不被 allow-failure 吞掉且不读取 workflow 源字符串作判据",
+      "stage": "generator-pre-push",
+      "base_blob": "e0caf96b8447d0abc2112897bf31c88a7cacd89c",
+      "ours_blob": "4910aedf1f4bd44e2ece57c0f563db227cdeeaee",
+      "theirs_blob": "8cbb882a89855538be211d56911af39e14398195",
+      "final_blob": "4910aedf1f4bd44e2ece57c0f563db227cdeeaee",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "DEFINITION.md",
+      "oracle_id": "C03",
+      "cwd": ".",
+      "argv": [
+        "bash",
+        "scripts/quickcheck.sh"
+      ],
+      "expected_observation": "exit_code=0；根定义版本与运行时版本一致",
+      "stage": "generator-pre-push",
+      "base_blob": "e17ab8fd70de55004a81928aa151aefcd81758ad",
+      "ours_blob": "e3f393beea43bc68c731fc43612e2214169a6a15",
+      "theirs_blob": "5c478bf98c72b5a4694807454050c852b8505026",
+      "final_blob": "e3f393beea43bc68c731fc43612e2214169a6a15",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "DoD.md",
+      "oracle_id": "C04",
+      "cwd": ".",
+      "argv": [
+        "node",
+        "sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs",
+        "regressions",
+        "--stage",
+        "generator-pre-push",
+        "--oracle",
+        "root-dod-deleted-with-proof"
+      ],
+      "expected_observation": "exit_code=0；最终树不含根 DoD.md 且本 sprint receipt 覆盖上一轮四项 blocker",
+      "stage": "generator-pre-push",
+      "base_blob": "720f7a0ce5cd0b0693d973f1522251fb42949a87",
+      "ours_blob": "6141006f1a9dccd983c475919a545072a59f3dc0",
+      "theirs_blob": null,
+      "final_blob": "deleted",
+      "disposition": "delete-with-proof",
+      "exit_code": 0,
+      "log_tail": "遵循 main 删除；Sprint DoD 与 receipt 保留证明"
+    },
+    {
+      "path": "docker/cecelia-runner/entrypoint.sh",
+      "oracle_id": "C05",
+      "cwd": ".",
+      "argv": [
+        "bash",
+        "docker/cecelia-runner/entrypoint-provider-contract.test.sh"
+      ],
+      "expected_observation": "exit_code=0；真实 shell 测试确认 provider contract",
+      "stage": "generator-pre-push",
+      "base_blob": "bb1b3ac2c1d36e8d0ca78694db9e0672de530946",
+      "ours_blob": "d5fdcdf3eaf9c6839ac45ed208743f987cd1c2cd",
+      "theirs_blob": "53e624f3b7785a50b51036e0b91f004e8f3b9e08",
+      "final_blob": "d5fdcdf3eaf9c6839ac45ed208743f987cd1c2cd",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "package-lock.json",
+      "oracle_id": "C06",
+      "cwd": ".",
+      "argv": [
+        "npm",
+        "ci",
+        "--ignore-scripts"
+      ],
+      "expected_observation": "exit_code=0；根 lockfile 可重复安装且与 package.json 一致",
+      "stage": "generator-pre-push",
+      "base_blob": "f899d159662455ce3efe54d61f1dfa15c66f0b32",
+      "ours_blob": "06e71d5a4da6593599eb74e86fe1515a04eacf05",
+      "theirs_blob": "cc581d543f55f255aa62c43e78bce82a2698b721",
+      "final_blob": "06e71d5a4da6593599eb74e86fe1515a04eacf05",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/DEFINITION.md",
+      "oracle_id": "C07",
+      "cwd": ".",
+      "argv": [
+        "bash",
+        "scripts/quickcheck.sh"
+      ],
+      "expected_observation": "exit_code=0；Brain 定义版本与运行时版本一致",
+      "stage": "generator-pre-push",
+      "base_blob": "9e8b86b7b5aae39939f1849371e0b434649cca2c",
+      "ours_blob": "3b7aab59e3f3e6bd392d4ca8e74fe4c79f5cd162",
+      "theirs_blob": "6fc1220ed1003337a3f29515718834450cbf85b8",
+      "final_blob": "3b7aab59e3f3e6bd392d4ca8e74fe4c79f5cd162",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/config/fleet-node-profiles.json",
+      "oracle_id": "C08",
+      "cwd": "packages/brain",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "src/orchestrator/fleet-node/node-profile.test.js"
+      ],
+      "expected_observation": "exit_code=0；以 Brain lockfile 本地 Vitest 真实执行 node-profile 模块，接受全部合法 profile 并拒绝无效 profile",
+      "stage": "generator-pre-push",
+      "base_blob": "04b7ff999352019b6a6fe843533b07ab6cffc692",
+      "ours_blob": "773e055aeec0cf305f32164c4233384f2cfd6f04",
+      "theirs_blob": "62e9bc788ff15d7ab8d93f2fcf87588b40d36d0e",
+      "final_blob": "773e055aeec0cf305f32164c4233384f2cfd6f04",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/package-lock.json",
+      "oracle_id": "C09",
+      "cwd": "packages/brain",
+      "argv": [
+        "npm",
+        "ci",
+        "--ignore-scripts"
+      ],
+      "expected_observation": "exit_code=0；Brain lockfile 可重复安装且与 package.json 一致",
+      "stage": "generator-pre-push",
+      "base_blob": "77ca23cb78443158fb8f1dad2edf5e3319fe64a1",
+      "ours_blob": "964ec0a69b06615a83b24bd7b6d85a4af614c1fd",
+      "theirs_blob": "5e890bb95f5e2b6ca7efcf0ed53111bd08555f89",
+      "final_blob": "964ec0a69b06615a83b24bd7b6d85a4af614c1fd",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/package.json",
+      "oracle_id": "C10",
+      "cwd": "packages/brain",
+      "argv": [
+        "npm",
+        "test",
+        "--",
+        "--runInBand"
+      ],
+      "expected_observation": "exit_code=0；Brain 声明的真实 test script 成功执行",
+      "stage": "generator-pre-push",
+      "base_blob": "796850b71b6a63137afcd5b254c8a4210a58ff22",
+      "ours_blob": "d1f4d3d47d30bfe8c63e87a12ee3e730cebbdde9",
+      "theirs_blob": "4d9ae14ceb99dbcb743a2cf679ee52bdabc62596",
+      "final_blob": "d1f4d3d47d30bfe8c63e87a12ee3e730cebbdde9",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/scripts/fleet-worker/attempt-runner.cjs",
+      "oracle_id": "C11",
+      "cwd": "packages/brain",
+      "argv": [
+        "node",
+        "--test",
+        "scripts/fleet-worker/attempt-runner.test.cjs"
+      ],
+      "expected_observation": "exit_code=0；attempt runner 行为测试全过",
+      "stage": "generator-pre-push",
+      "base_blob": "082705bf03622cd24fae2565f4ffb2703daa34f3",
+      "ours_blob": "5bb88c01f621819969da91d10cb22898b732b9a4",
+      "theirs_blob": "364e69b8a1c8597326214871e2fd8eb4f76c8646",
+      "final_blob": "5bb88c01f621819969da91d10cb22898b732b9a4",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/scripts/fleet-worker/attempt-runner.test.cjs",
+      "oracle_id": "C12",
+      "cwd": "packages/brain",
+      "argv": [
+        "node",
+        "--test",
+        "scripts/fleet-worker/attempt-runner.test.cjs"
+      ],
+      "expected_observation": "exit_code=0；node:test 发现并执行 attempt runner 测试且测试数大于零",
+      "stage": "generator-pre-push",
+      "base_blob": "41b963cbb54b4a8ccf975e1ab801123fc4403d73",
+      "ours_blob": "02315996e8e79d426f5cbe8cc709a611ced0480c",
+      "theirs_blob": "a95ca2d44e6d0615d4e443e98a519d8e86ba7852",
+      "final_blob": "02315996e8e79d426f5cbe8cc709a611ced0480c",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/scripts/fleet-worker/fleet-rollout.sh",
+      "oracle_id": "C13",
+      "cwd": "packages/brain",
+      "argv": [
+        "bash",
+        "scripts/fleet-worker/fleet-rollout.test.sh"
+      ],
+      "expected_observation": "exit_code=0；fleet rollout fail-closed shell 行为全过",
+      "stage": "generator-pre-push",
+      "base_blob": "0daf32ae1c99a5cd625faefb3e9fb0fcbaf73516",
+      "ours_blob": "907a66b628082639fff01821df5578d8dc3405e8",
+      "theirs_blob": "e55b1483f7ab06c0b9ff4035a8f7e12decde7826",
+      "final_blob": "907a66b628082639fff01821df5578d8dc3405e8",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/scripts/fleet-worker/fleet-rollout.test.sh",
+      "oracle_id": "C14",
+      "cwd": "packages/brain",
+      "argv": [
+        "bash",
+        "scripts/fleet-worker/fleet-rollout.test.sh"
+      ],
+      "expected_observation": "exit_code=0；shell 测试执行用例数大于零且全部通过",
+      "stage": "generator-pre-push",
+      "base_blob": "fea4dc5ec64a3599aa53e5340af5039ed22849dc",
+      "ours_blob": "2fcdc2b12657b3ec554e29a23b26d8910e379c4b",
+      "theirs_blob": "8cb7c7fad786707728cc7cca9a41253395abd1c2",
+      "final_blob": "2fcdc2b12657b3ec554e29a23b26d8910e379c4b",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/scripts/fleet-worker/fleet-worker.cjs",
+      "oracle_id": "C15",
+      "cwd": "packages/brain",
+      "argv": [
+        "node",
+        "--test",
+        "scripts/fleet-worker/fleet-worker.test.js"
+      ],
+      "expected_observation": "exit_code=0；fleet worker 行为测试全过",
+      "stage": "generator-pre-push",
+      "base_blob": "4c99be6d9c6af7fa6981b3b0f78704fb4bbcdf08",
+      "ours_blob": "3b00d67d97e54af283356e80887e2fad7db61fd2",
+      "theirs_blob": "4baa95d4eb0a650f59e1170c2b88bc495bf48a75",
+      "final_blob": "3b00d67d97e54af283356e80887e2fad7db61fd2",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/scripts/fleet-worker/install-fleet-worker.sh",
+      "oracle_id": "C16",
+      "cwd": "packages/brain",
+      "argv": [
+        "bash",
+        "scripts/fleet-worker/install-fleet-worker.test.sh"
+      ],
+      "expected_observation": "exit_code=0；安装流程 shell 行为全过",
+      "stage": "generator-pre-push",
+      "base_blob": "4739463bc94c6c835a16355d138493574971411c",
+      "ours_blob": "1198eff8c66e70eebe1619e72e2d484137ed5306",
+      "theirs_blob": "3d98eddc2c8e4ff0d0ca1f604a5b3e528486bfa1",
+      "final_blob": "1198eff8c66e70eebe1619e72e2d484137ed5306",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh",
+      "oracle_id": "C17",
+      "cwd": "packages/brain",
+      "argv": [
+        "bash",
+        "scripts/fleet-worker/install-fleet-worker.test.sh"
+      ],
+      "expected_observation": "exit_code=0；shell 测试执行用例数大于零且全部通过",
+      "stage": "generator-pre-push",
+      "base_blob": "a7a983a79479cefc902ff992410c574b7c60ee54",
+      "ours_blob": "2205e559296c305461801c4f3e1e66b7b846ad6a",
+      "theirs_blob": "01c486a8e5aa1f61f4b57245a0be2e08e2742feb",
+      "final_blob": "2205e559296c305461801c4f3e1e66b7b846ad6a",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.sh",
+      "oracle_id": "C18",
+      "cwd": "packages/brain",
+      "argv": [
+        "bash",
+        "scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh"
+      ],
+      "expected_observation": "exit_code=0；baseline reconcile 幂等与失败路径全过",
+      "stage": "generator-pre-push",
+      "base_blob": "6f91dab670ff3138f125773836929a1ebdcf4cd2",
+      "ours_blob": "2a27b2d98fb5b3e8d40472fbf39d6e5477d5b79b",
+      "theirs_blob": "96e074535124e0d278d7ef6850398f26c2aad10d",
+      "final_blob": "2a27b2d98fb5b3e8d40472fbf39d6e5477d5b79b",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh",
+      "oracle_id": "C19",
+      "cwd": "packages/brain",
+      "argv": [
+        "bash",
+        "scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh"
+      ],
+      "expected_observation": "exit_code=0；shell 测试执行用例数大于零且全部通过",
+      "stage": "generator-pre-push",
+      "base_blob": "a4c026b7e8004b961017388bf8d4af886b971e4f",
+      "ours_blob": "5d684995e163bcc3b248bfd491b164e9a509e90b",
+      "theirs_blob": "3f814c07ba4b8f9d17eacc2d3638973a6a6a79f5",
+      "final_blob": "5d684995e163bcc3b248bfd491b164e9a509e90b",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/src/__tests__/integration/golden-path.integration.test.js",
+      "oracle_id": "C20",
+      "cwd": "packages/brain",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "src/__tests__/integration/golden-path.integration.test.js"
+      ],
+      "expected_observation": "exit_code=0；以 Brain lockfile 本地 Vitest 执行真实相邻模块与 Postgres Golden Path 集成测试并全过",
+      "stage": "generator-pre-push",
+      "base_blob": "4c1caab47fc276e5b893a51b0fc1ca45d4a2b4ef",
+      "ours_blob": "f49953643760ed57af43e208114a250f85b66dcd",
+      "theirs_blob": "24baa5671ec0971a05d8705d4ab6bc1ba819c644",
+      "final_blob": "f49953643760ed57af43e208114a250f85b66dcd",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/src/orchestrator/fleet-node/node-profile.js",
+      "oracle_id": "C21",
+      "cwd": "packages/brain",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "src/orchestrator/fleet-node/node-profile.test.js"
+      ],
+      "expected_observation": "exit_code=0；以 Brain lockfile 本地 Vitest 执行 node-profile 解析与拒绝行为并全过",
+      "stage": "generator-pre-push",
+      "base_blob": "bbec2d450c7ba109690e9b1a80fd1c34e3b35dce",
+      "ours_blob": "314a36544d403b470002cbe257bd5c3fa9d2e179",
+      "theirs_blob": "c74b4b29f9b879974546ffb1c71fcb60095985a7",
+      "final_blob": "314a36544d403b470002cbe257bd5c3fa9d2e179",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/src/orchestrator/fleet-node/node-profile.test.js",
+      "oracle_id": "C22",
+      "cwd": "packages/brain",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "src/orchestrator/fleet-node/node-profile.test.js"
+      ],
+      "expected_observation": "exit_code=0；Brain lockfile 本地 Vitest 发现并执行测试数大于零且全部通过",
+      "stage": "generator-pre-push",
+      "base_blob": "380daea8e36688c7cf6d1d4c9c1173652cda7d00",
+      "ours_blob": "2756f5ca5e74e627634b3a5663eca3ac64b2adad",
+      "theirs_blob": "8b5444c8147ec2eac0c49f53a476d3346b94a21f",
+      "final_blob": "2756f5ca5e74e627634b3a5663eca3ac64b2adad",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/src/orchestrator/remote-bridge-transport.js",
+      "oracle_id": "C23",
+      "cwd": "packages/brain",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "src/orchestrator/remote-bridge-transport.test.js"
+      ],
+      "expected_observation": "exit_code=0；以 Brain lockfile 本地 Vitest 执行 remote bridge transport 真相邻模块行为并全过",
+      "stage": "generator-pre-push",
+      "base_blob": "c615abcb2b87aa007acc509fe126fafe028aa4d6",
+      "ours_blob": "7595ee2115200c3d48717cfbc666cc6d8d7cc2ce",
+      "theirs_blob": "0bb9cdf151a778ed9d04e8d2d48d2ef994952cdc",
+      "final_blob": "7595ee2115200c3d48717cfbc666cc6d8d7cc2ce",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/src/orchestrator/remote-bridge-transport.test.js",
+      "oracle_id": "C24",
+      "cwd": "packages/brain",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "src/orchestrator/remote-bridge-transport.test.js"
+      ],
+      "expected_observation": "exit_code=0；Brain lockfile 本地 Vitest 发现并执行测试数大于零且全部通过",
+      "stage": "generator-pre-push",
+      "base_blob": "97fa0a3e025006a761130fe432500e1264f9b0b2",
+      "ours_blob": "acac7392867f137cfbf050ef74af8a6736ad979f",
+      "theirs_blob": "04d1dcfa0b7612750e15055a6e044bfd97d1080a",
+      "final_blob": "acac7392867f137cfbf050ef74af8a6736ad979f",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/brain/vitest.config.js",
+      "oracle_id": "C25",
+      "cwd": ".",
+      "argv": [
+        "node",
+        "sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs",
+        "regressions",
+        "--stage",
+        "generator-pre-push",
+        "--oracle",
+        "brain-vitest-discovery-exact-set"
+      ],
+      "expected_observation": "exit_code=0；从仓库根解析 packages/brain/vitest.config.js，发现与实际执行的非 skipped test id exact-set 相等且非空",
+      "stage": "generator-pre-push",
+      "base_blob": "2d7778211d822dc66aa1637479f37849f70f34bc",
+      "ours_blob": "fdca938de94892473fcd3cbbfb4812ec47423129",
+      "theirs_blob": "3517b4133f940dd1e9adede2d0091fb138c60b7f",
+      "final_blob": "fdca938de94892473fcd3cbbfb4812ec47423129",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/engine/tests/launcher/claude-launch.test.ts",
+      "oracle_id": "C26",
+      "cwd": ".",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "packages/engine/tests/launcher/claude-launch.test.ts"
+      ],
+      "expected_observation": "exit_code=0；以根 lockfile 本地 Vitest 执行 launcher 行为测试并全过",
+      "stage": "generator-pre-push",
+      "base_blob": "0a51fc91f11f49faba293e1dc7e19c6982620d72",
+      "ours_blob": "ae0b3b03b828cfc8191d14c28ad61c1041ab4dc2",
+      "theirs_blob": "c30a96625cc11b3589344d6c87c5f1e64030f512",
+      "final_blob": "ae0b3b03b828cfc8191d14c28ad61c1041ab4dc2",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/workflows/skills/harness-contract-proposer/SKILL.md",
+      "oracle_id": "C27",
+      "cwd": ".",
+      "argv": [
+        "node",
+        "sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs",
+        "regressions",
+        "--stage",
+        "generator-pre-push",
+        "--oracle",
+        "proposer-contract-behavior"
+      ],
+      "expected_observation": "exit_code=0；以临时 PRD 调用 proposer contract validator，缺五行 BEHAVIOR/manifest exact-set 时拒绝、完整输入时接受，且不读取 SKILL.md 源字符串作判据",
+      "stage": "generator-pre-push",
+      "base_blob": "740bb097244aa283cd9b516987bbcf3eff47f811",
+      "ours_blob": "1784c6bde60da8ce162bdf8e38f0b6fc6dca3a94",
+      "theirs_blob": "b8973b4de8137d83f82e7bee0449461cf455be15",
+      "final_blob": "1784c6bde60da8ce162bdf8e38f0b6fc6dca3a94",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/workflows/skills/harness-contract-reviewer/SKILL.md",
+      "oracle_id": "C28",
+      "cwd": ".",
+      "argv": [
+        "node",
+        "sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs",
+        "regressions",
+        "--stage",
+        "generator-pre-push",
+        "--oracle",
+        "reviewer-contract-behavior"
+      ],
+      "expected_observation": "exit_code=0；执行非 skipped reviewer fixture，错误 subject/digest/lineage 得 REVISION、完整 exact-set 与动态 lineage 得 APPROVED，并报告实际 executed_tests>0",
+      "stage": "generator-pre-push",
+      "base_blob": "3dce8b1e4bc2cc0437508b3ebc5e3914f3946f16",
+      "ours_blob": "e08d2f4221b30f6aea1f2e7a6c5950f841072e0a",
+      "theirs_blob": "0b70a35f2508ff1956220bcc5afe76c77cf8650b",
+      "final_blob": "e08d2f4221b30f6aea1f2e7a6c5950f841072e0a",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/workflows/skills/harness-controller/SKILL.md",
+      "oracle_id": "C29",
+      "cwd": ".",
+      "argv": [
+        "node",
+        "sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs",
+        "regressions",
+        "--stage",
+        "generator-pre-push",
+        "--oracle",
+        "controller-contract-behavior"
+      ],
+      "expected_observation": "exit_code=0；执行 controller fixture，权威 task bundle lineage 逐阶段传递且陈旧/缺失 lineage fail-closed，不读取 SKILL.md 源字符串作判据",
+      "stage": "generator-pre-push",
+      "base_blob": "e1f63f660602e15c85c13dcdb71b24a17b5c1052",
+      "ours_blob": "58870d073d03d0642a3997af5819ec464e6d1b9b",
+      "theirs_blob": "9b627f1a238c85f48811a29e5e3c201fd0832d01",
+      "final_blob": "58870d073d03d0642a3997af5819ec464e6d1b9b",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/workflows/skills/harness-evaluator/SKILL.md",
+      "oracle_id": "C30",
+      "cwd": ".",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "tests/contract-e2e-extractor.test.ts"
+      ],
+      "expected_observation": "exit_code=0；以根 lockfile 本地 Vitest 执行 evaluator E2E 提取行为测试并全过",
+      "stage": "generator-pre-push",
+      "base_blob": "74baa97f87825481cc5920340ba885cd4c178e55",
+      "ours_blob": "ba3b882f20db34abf7467ca82244addf54ec744d",
+      "theirs_blob": "91e9bf29c23773f660e6501022a8adc91805485e",
+      "final_blob": "ba3b882f20db34abf7467ca82244addf54ec744d",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/workflows/skills/harness-planner/SKILL.md",
+      "oracle_id": "C31",
+      "cwd": ".",
+      "argv": [
+        "node",
+        "--test",
+        "tests/skills/harness-planner-push-noise.test.js"
+      ],
+      "expected_observation": "exit_code=0；planner push 与噪声控制行为测试全过",
+      "stage": "generator-pre-push",
+      "base_blob": "a30ac0fb91ec0b7c108df22791b17d5f7fb744d8",
+      "ours_blob": "70cd40ed1d24ba755d214d6ad600a9942f3e0aeb",
+      "theirs_blob": "94f312e543f0c51e76a323aca19ae747a286a4d9",
+      "final_blob": "70cd40ed1d24ba755d214d6ad600a9942f3e0aeb",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "packages/workflows/skills/harness-report/SKILL.md",
+      "oracle_id": "C32",
+      "cwd": ".",
+      "argv": [
+        "node",
+        "--test",
+        "packages/brain/scripts/__tests__/harness-report.test.mjs"
+      ],
+      "expected_observation": "exit_code=0；report receipt 行为测试全过",
+      "stage": "generator-pre-push",
+      "base_blob": "2c642080965e9590cce7128ddc2c06e76354bd59",
+      "ours_blob": "4828d4602fb6a70fe9a546db5032aa9962813233",
+      "theirs_blob": "2913052e3040a4f4d6200535dfc0b413f6ad541f",
+      "final_blob": "4828d4602fb6a70fe9a546db5032aa9962813233",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    },
+    {
+      "path": "tests/contract-e2e-extractor.test.ts",
+      "oracle_id": "C33",
+      "cwd": ".",
+      "argv": [
+        "./node_modules/.bin/vitest",
+        "run",
+        "tests/contract-e2e-extractor.test.ts"
+      ],
+      "expected_observation": "exit_code=0；以根 lockfile 本地 Vitest 证明全部 E2E bash 块按序提取且语法有效",
+      "stage": "generator-pre-push",
+      "base_blob": "5a3f7c6e19bd50fa173c3093ee46081d651a10ce",
+      "ours_blob": "237c4c466098d813629c72635271be29166960a5",
+      "theirs_blob": "ce362410b648e6492f50d0dcac2d6478fbcf24f9",
+      "final_blob": "237c4c466098d813629c72635271be29166960a5",
+      "disposition": "semantic-merge",
+      "exit_code": 0,
+      "log_tail": "保留累计 Kernel Harness 实现并整合 frozen main 非冲突增量"
+    }
+  ]
+}

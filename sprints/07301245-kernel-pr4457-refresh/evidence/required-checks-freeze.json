@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "strict": true,
+  "contexts": [
+    "Harness V5 Gate Passed",
+    "Smoke Glob Runner Passed",
+    "ci-passed"
+  ],
+  "normalized_sha256": "82ae1f3d9c9f0b17308ab4dcdbc792965ae9ccf37cfb98e3314b6dfc5da86b0a"
+}

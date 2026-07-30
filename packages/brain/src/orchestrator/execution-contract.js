@@ -54,6 +54,7 @@ const PROVIDER_UNAVAILABLE_CODES = new Set([
   'http_502',
   'http_503',
   'http_504',
+  'provider_timeout',
   'provider_unavailable',
 ]);
 

@@ -184,6 +184,34 @@ describe('Fleet Worker health-only service', () => {
     server.close();
   });
 
+  it('does not hold a transient self-check failure for the full healthy TTL', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    let sequence = 0;
+    let nowMs = 1_000_000;
+    const probeHealth = vi.fn(async () => {
+      const report = safeHealth(++sequence);
+      if (sequence === 1) {
+        report.worktree.root_ready = false;
+        report.container.probe_succeeded = false;
+      }
+      return report;
+    });
+    const server = createFleetWorkerServer({
+      probeHealth,
+      healthCacheTtlMs: 30_000,
+      now: () => nowMs,
+    });
+
+    const transient = await request(server, 'GET', '/health');
+    nowMs += 2_000;
+    const recovered = await request(server, 'GET', '/health');
+
+    expect(JSON.parse(transient.body).worktree.root_ready).toBe(false);
+    expect(JSON.parse(recovered.body).worktree.root_ready).toBe(true);
+    expect(probeHealth).toHaveBeenCalledTimes(2);
+    server.close();
+  });
+
   it('freshly reprobes health for every GET /health when cache disabled (ttl=0)', async () => {
     const { createFleetWorkerServer } = await loadServerContract();
     let sequence = 0;
@@ -239,6 +267,7 @@ describe('Fleet Worker health-only service', () => {
     let tempSequence = 0;
     const createdContainerNames = [];
     const makeTempDirFn = vi.fn(async () => `/private/tmp/fleet-node-probe-${++tempSequence}`);
+    const chmodTempDirFn = vi.fn(async () => undefined);
     const removeTempDirFn = vi.fn(async () => undefined);
     const fetchFn = vi.fn(async (url, options) => {
       expect(url).toBe('http://brain.internal:5221/api/brain/health');
@@ -256,7 +285,10 @@ describe('Fleet Worker health-only service', () => {
       expect(args).toBeInstanceOf(Array);
       expect(options).toMatchObject({ shell: false });
       if (file === 'sw_vers') return { stdout: '15.5\n' };
-      if (file === 'orbctl') return { stdout: '{"version":"1.9.4"}' };
+      if (file === 'orbctl') {
+        expect(options.env.HOME).toBe('/Users/orbstack-owner');
+        return { stdout: '{"version":"1.9.4"}' };
+      }
       if (file === 'docker' && args[0] === 'info') return { stdout: '{"ServerVersion":"27.5"}' };
       if (file === 'docker' && args[0] === 'image') return { stdout: JSON.stringify([`runner@${DIGEST}`]) };
       if (file === 'docker' && args[0] === 'create') {
@@ -270,6 +302,7 @@ describe('Fleet Worker health-only service', () => {
       if (file === 'node') return { stdout: 'v22.17.0\n' };
       if (file === 'codex') return { stdout: 'codex-cli 0.40.0\n' };
       if (file === 'tailscale') return { stdout: '{"BackendState":"Running"}' };
+      if (file === 'ifconfig') return { stdout: 'inet 100.71.151.105 netmask 0xffffffff\n' };
       if (file === 'pmset') return { stdout: ' sleep 0\n autorestart 1\n' };
       if (file === 'sysctl' && args.includes('hw.ncpu')) return { stdout: '6\n' };
       if (file === 'sysctl' && args.includes('hw.memsize')) {
@@ -311,13 +344,16 @@ describe('Fleet Worker health-only service', () => {
       execFileFn,
       fetchFn,
       callbackUrl: 'http://brain.internal:5221/api/brain/health',
+      orbstackHome: '/Users/orbstack-owner',
       makeTempDirFn,
+      chmodTempDirFn,
       removeTempDirFn,
     };
     const first = await probeFleetWorkerHealth(input);
     const second = await probeFleetWorkerHealth(input);
 
     expect(first.docker.available).toBe(true);
+    expect(first.orbstack.version).toBe('1.9.4');
     expect(second.runner.image_digest).toBe(DIGEST);
     for (const report of [first, second]) {
       expect(report.resources).toMatchObject({
@@ -349,6 +385,7 @@ describe('Fleet Worker health-only service', () => {
       ['node', (args) => args.includes('--version')],
       ['codex', (args) => args.includes('--version')],
       ['tailscale', (args) => args[0] === 'status'],
+      ['ifconfig', (args) => args.length === 0],
       ['pmset', (args) => args[0] === '-g'],
       ['sysctl', (args) => args.includes('hw.ncpu')],
       ['sysctl', (args) => args.includes('hw.memsize')],
@@ -391,6 +428,17 @@ describe('Fleet Worker health-only service', () => {
     }
     expect(fetchFn).toHaveBeenCalledTimes(2);
     expect(makeTempDirFn).toHaveBeenCalledTimes(2);
+    expect(chmodTempDirFn).toHaveBeenCalledTimes(2);
+    expect(chmodTempDirFn).toHaveBeenNthCalledWith(
+      1,
+      '/private/tmp/fleet-node-probe-1',
+      0o755,
+    );
+    expect(chmodTempDirFn).toHaveBeenNthCalledWith(
+      2,
+      '/private/tmp/fleet-node-probe-2',
+      0o755,
+    );
     expect(removeTempDirFn).toHaveBeenCalledTimes(2);
     expect(removeTempDirFn).toHaveBeenNthCalledWith(1, '/private/tmp/fleet-node-probe-1');
     expect(removeTempDirFn).toHaveBeenNthCalledWith(2, '/private/tmp/fleet-node-probe-2');
@@ -409,6 +457,61 @@ describe('Fleet Worker health-only service', () => {
         expect.objectContaining({ shell: false }),
       );
     }
+  });
+
+  it('accepts the exact Tailscale listener address plus callback reachability when the GUI CLI denies the service user', async () => {
+    const { probeFleetWorkerHealth } = await loadProbeContract();
+    const execFileFn = vi.fn(async (file) => {
+      if (file === 'tailscale') throw new Error('local API permission denied');
+      if (file === 'ifconfig') {
+        return {
+          stdout: [
+            'utun7: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST>',
+            '    inet 100.86.57.69 --> 100.86.57.69 netmask 0xffffffff',
+          ].join('\n'),
+        };
+      }
+      return { stdout: '' };
+    });
+
+    const report = await probeFleetWorkerHealth({
+      machineId: 'xian-mac-m4',
+      workerBindHost: '100.86.57.69',
+      runnerImageDigest: DIGEST,
+      execFileFn,
+      fetchFn: vi.fn(async () => new globalThis.Response('{}', { status: 200 })),
+      makeTempDirFn: vi.fn(async () => '/private/tmp/fleet-node-probe-fallback'),
+      chmodTempDirFn: vi.fn(async () => undefined),
+      removeTempDirFn: vi.fn(async () => undefined),
+      statFn: vi.fn(async () => undefined),
+    });
+
+    expect(report.tailscale).toEqual({ connected: true });
+  });
+
+  it('keeps the Tailscale fallback fail-closed when the callback is unreachable', async () => {
+    const { probeFleetWorkerHealth } = await loadProbeContract();
+    const execFileFn = vi.fn(async (file) => {
+      if (file === 'tailscale') throw new Error('local API permission denied');
+      if (file === 'ifconfig') return { stdout: 'inet 100.86.57.69 netmask 0xffffffff\n' };
+      return { stdout: '' };
+    });
+
+    const report = await probeFleetWorkerHealth({
+      machineId: 'xian-mac-m4',
+      workerBindHost: '100.86.57.69',
+      runnerImageDigest: DIGEST,
+      execFileFn,
+      fetchFn: vi.fn(async () => {
+        throw new Error('callback unavailable');
+      }),
+      makeTempDirFn: vi.fn(async () => '/private/tmp/fleet-node-probe-fallback'),
+      chmodTempDirFn: vi.fn(async () => undefined),
+      removeTempDirFn: vi.fn(async () => undefined),
+      statFn: vi.fn(async () => undefined),
+    });
+
+    expect(report.tailscale).toEqual({ connected: false });
   });
 
   it.each([
@@ -446,6 +549,7 @@ describe('Fleet Worker health-only service', () => {
       execFileFn,
       fetchFn: vi.fn(async () => new Response('{}', { status: 200 })),
       makeTempDirFn: vi.fn(async () => tempRoot),
+      chmodTempDirFn: vi.fn(async () => undefined),
       removeTempDirFn,
       statFn: missingDrainMarker,
     });
@@ -973,6 +1077,7 @@ describe('Fleet Worker production runtime assembly', () => {
         launch: expect.any(Function),
         reconcile: expect.any(Function),
       });
+      expect(runtime.runnerImageDigest).toBe(`sha256:${'a'.repeat(64)}`);
       expect(runtime.roots).toEqual({
         mirrors: path.join(dataRoot, 'mirrors'),
         worktrees: path.join(dataRoot, 'worktrees'),
@@ -986,6 +1091,52 @@ describe('Fleet Worker production runtime assembly', () => {
       expect(JSON.stringify(runtime)).not.toContain(
         'https://github.com/perfectuser21/cecelia.git',
       );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('separates OrbStack-mountable attempt data from protected state and credentials', async () => {
+    const { createFleetWorkerRuntime } = await loadServerContract();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-worker-runtime-'));
+    const tokenFile = path.join(root, 'worker-token');
+    const dataRoot = path.join(root, 'protected-data');
+    const sharedTmp = path.join(root, 'shared-tmp');
+    const mountRoot = path.join(sharedTmp, 'fleet-mounts');
+    fs.writeFileSync(tokenFile, 'fleet-worker-token-at-least-32-bytes\n', {
+      mode: 0o600,
+    });
+    fs.mkdirSync(sharedTmp, { mode: 0o755 });
+
+    try {
+      const runtime = createFleetWorkerRuntime({
+        env: {
+          CECELIA_MACHINE_ID: 'xian-mac-m4',
+          CECELIA_RUNNER_DIGEST: `sha256:${'a'.repeat(64)}`,
+          CECELIA_FLEET_WORKER_TOKEN_FILE: tokenFile,
+          CECELIA_FLEET_DATA_ROOT: dataRoot,
+          CECELIA_ORBSTACK_HOME: '/Users/orbstack-owner',
+          TMPDIR: sharedTmp,
+        },
+        runCommand: vi.fn(),
+      });
+
+      expect(runtime.roots).toEqual({
+        mirrors: path.join(dataRoot, 'mirrors'),
+        worktrees: path.join(mountRoot, 'worktrees'),
+        quarantine: path.join(dataRoot, 'quarantine'),
+        state: path.join(dataRoot, 'state'),
+        runtime: path.join(mountRoot, 'runtime'),
+        credentials: path.join(dataRoot, 'credential-consumption'),
+      });
+      expect(fs.statSync(mountRoot).mode & 0o777).toBe(0o755);
+      expect(fs.statSync(runtime.roots.worktrees).mode & 0o777).toBe(0o755);
+      expect(fs.statSync(runtime.roots.runtime).mode & 0o777).toBe(0o755);
+      expect(
+        fs.statSync(path.join(runtime.roots.worktrees, '.admin')).mode & 0o777,
+      ).toBe(0o711);
+      expect(runtime.roots.credentials.startsWith(mountRoot)).toBe(false);
+      expect(runtime.roots.state.startsWith(mountRoot)).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
