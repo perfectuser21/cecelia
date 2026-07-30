@@ -148,8 +148,9 @@ function latestUnconsumedAttemptCallback(decisionLog) {
 function noPrSignatureKey(detail) {
   const structured = failureSignatureKey(detail.failure_signature);
   if (structured != null) return `failure:${structured}`;
-  const artifacts = Array.isArray(detail.artifacts) ? detail.artifacts : [];
-  if (artifacts.length > 0) return `artifacts:${JSON.stringify(artifacts)}`;
+  // Callback artifacts are provider claims until a server-side projector
+  // verifies them (for example by resolving a PR head). They cannot by
+  // themselves reset convergence or an Agent could rotate arbitrary strings.
   return 'unknown_no_pr';
 }
 
