@@ -10,7 +10,7 @@ expected_schema="$(
     src/selfcheck.js \
     | head -1
 )"
-test "$expected_schema" = "378"
+test "$expected_schema" = "379"
 
 npx --no-install vitest run --config vitest.integration.config.js \
   src/__tests__/migration-376-kernel-run-trust.test.js \
@@ -18,6 +18,7 @@ npx --no-install vitest run --config vitest.integration.config.js \
   src/__tests__/migration-377-initiative-run-insert-lock.test.js \
   src/__tests__/integration/migration-377-initiative-run-insert-lock.integration.test.js \
   src/__tests__/migration-378-needs-context-class.test.js \
+  src/__tests__/migration-379-v2-active-run-parent-task-guard.test.js \
   src/__tests__/relay-runs-exact-api.test.js \
   src/__tests__/integration/relay-run-exact-api.integration.test.js \
   src/__tests__/relay-runs-legacy-adapter.test.js \

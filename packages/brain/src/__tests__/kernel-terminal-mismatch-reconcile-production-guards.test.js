@@ -35,15 +35,25 @@ describe('kernel terminal mismatch production reconciliation guards', () => {
       '--expected-proposed',
       '1',
     ])).toThrow(/confirm-database/);
-    expect(parseProductionTerminalReconcileArgs([
+    expect(() => parseProductionTerminalReconcileArgs([
       ...base,
       '--expected-proposed',
       '1',
       '--confirm-database',
       'cecelia',
+    ])).toThrow(/expected-blocked/);
+    expect(parseProductionTerminalReconcileArgs([
+      ...base,
+      '--expected-proposed',
+      '1',
+      '--expected-blocked',
+      '0',
+      '--confirm-database',
+      'cecelia',
     ])).toMatchObject({
       apply: true,
       expectedProposed: 1,
+      expectedBlocked: 0,
       confirmDatabase: 'cecelia',
       productionGuards: true,
     });
@@ -71,6 +81,7 @@ describe('kernel terminal mismatch production reconciliation guards', () => {
       auditOutput: '/tmp/terminal-single-flight.jsonl',
       expectedPlanSha256: 'a'.repeat(64),
       expectedProposed: 1,
+      expectedBlocked: 0,
       confirmDatabase: 'cecelia',
       productionGuards: true,
       appendAudit,
@@ -105,6 +116,7 @@ describe('kernel terminal mismatch production reconciliation guards', () => {
       auditOutput: '/tmp/terminal-count-drift.jsonl',
       expectedPlanSha256: dry.plan_sha256,
       expectedProposed: 2,
+      expectedBlocked: 0,
       confirmDatabase: 'cecelia',
       productionGuards: true,
       appendAudit,
@@ -114,5 +126,96 @@ describe('kernel terminal mismatch production reconciliation guards', () => {
 
     expect(appendAudit).not.toHaveBeenCalled();
     expect(finalizeRun).not.toHaveBeenCalled();
+  });
+
+  it('applies only reviewed repairs while audit-acknowledging the exact blocked set', async () => {
+    const blockedTaskId = '33333333-3333-4333-8333-333333333333';
+    const blockedRunId = '44444444-4444-4444-8444-444444444444';
+    const rows = [
+      findingRow(),
+      {
+        ...findingRow(),
+        task_id: blockedTaskId,
+        task_status: 'completed',
+        run_id: blockedRunId,
+      },
+    ];
+    const db = {
+      query: vi.fn(async (sql) => {
+        if (/current_database/.test(sql)) {
+          return { rows: [{ database_name: 'cecelia' }] };
+        }
+        if (/WITH terminal_history/.test(sql)) return { rows };
+        if (/SELECT t.status AS task_status/.test(sql)) {
+          return {
+            rows: [{
+              task_status: 'failed',
+              run_phase: 'failed',
+              current_task_id: TASK_ID,
+              no_active_sibling: true,
+            }],
+          };
+        }
+        return { rows: [] };
+      }),
+    };
+    const dry = await reconcileTerminalMismatches({
+      db,
+      productionGuards: true,
+      writeLine: vi.fn(),
+    });
+    const appendAudit = vi.fn();
+    const finalizeRun = vi.fn(async () => ({
+      changed: true,
+      outcome: 'failed',
+      runId: RUN_ID,
+      taskId: TASK_ID,
+    }));
+
+    await expect(reconcileTerminalMismatches({
+      db,
+      apply: true,
+      auditOutput: '/tmp/terminal-blocked-drift.jsonl',
+      expectedPlanSha256: dry.plan_sha256,
+      expectedProposed: 1,
+      expectedBlocked: 0,
+      confirmDatabase: 'cecelia',
+      productionGuards: true,
+      appendAudit,
+      finalizeRun,
+      writeLine: vi.fn(),
+    })).rejects.toThrow(/blocked count mismatch/);
+    expect(appendAudit).not.toHaveBeenCalled();
+    expect(finalizeRun).not.toHaveBeenCalled();
+
+    const applied = await reconcileTerminalMismatches({
+      db,
+      apply: true,
+      auditOutput: '/tmp/terminal-reviewed-blocked.jsonl',
+      expectedPlanSha256: dry.plan_sha256,
+      expectedProposed: 1,
+      expectedBlocked: 1,
+      confirmDatabase: 'cecelia',
+      productionGuards: true,
+      appendAudit,
+      finalizeRun,
+      writeLine: vi.fn(),
+    });
+
+    expect(applied).toMatchObject({
+      proposed: 1,
+      blocked: 1,
+      applied: 1,
+      verified: 1,
+    });
+    expect(finalizeRun).toHaveBeenCalledOnce();
+    expect(finalizeRun).toHaveBeenCalledWith(db, expect.objectContaining({
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+    }));
+    const audit = appendAudit.mock.calls.map(([, content]) => content).join('');
+    expect(audit).toContain('"outcome":"blocked_acknowledged"');
+    expect(audit).toContain(`"task_id":"${blockedTaskId}"`);
+    expect(audit).toContain(`"run_id":"${blockedRunId}"`);
   });
 });

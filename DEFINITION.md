@@ -6,11 +6,23 @@
 
 
 
-**Brain 版本**: 1.267.151
+**Brain 版本**: 1.267.152
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.152 — Kernel reconcile precision
+
+- Trust reconcile 事务复核直接按 run_id 使用 PostgreSQL 原始微秒时间戳，修复
+  JavaScript `Date` 丢失微秒导致的假 optimistic conflict；锁内同时复核完整历史
+  eligibility，plan 后失去资格的行 fail closed。
+- Terminal mismatch apply 必须精确确认 repair 与 blocked 数；只修无冲突记录，
+  blocked 历史逐条写 `blocked_acknowledged` 只读审计，不改人工终态。
+- Migration 379 在数据库 INSERT trigger 中保留 initiative→task 统一锁序，拒绝
+  终态父任务上的 active v2 run；等待中的 legacy writer 返回 `23514`。
+- 回退到 `1.267.151` 时保留审计、已完成 repair 和 Migration 379 前向安全约束，
+  禁止用旧 trust 脚本续跑微秒计划。
 
 ## Brain 1.267.151 — Kernel terminal-attempt convergence
 
@@ -1016,7 +1028,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 378 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 379 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -1404,7 +1416,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '378'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '379'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

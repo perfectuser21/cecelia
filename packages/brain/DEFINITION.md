@@ -1,6 +1,23 @@
 # Brain 模块定义
 
-**版本**: 1.267.151
+**版本**: 1.267.152
+
+## Kernel reconcile precision and acknowledged exceptions
+
+- Trust reconcile 在事务复核 collision evidence 时，以精确 `run_id` 在
+  PostgreSQL 内读取原始 `completed_at`；禁止把微秒时间戳经 JavaScript `Date`
+  往返后再比较，避免合法历史计划被误判为乐观锁冲突。逐行锁定后还会在数据库内
+  复核 v2/terminal/completed/non-trusted/pre-cutover 全部 eligibility；任一漂移
+  都作为 optimistic conflict 回滚，不能把失去资格的行标成 reconstructed。
+- Terminal mismatch 生产 apply 现在同时绑定 plan SHA、repair 数、blocked 数和
+  database name。精确确认 blocked 集合后，只提交彼此独立的 repair；每条 blocked
+  finding 以 `blocked_acknowledged` 写入只读审计，绝不覆盖既有人工终态。
+- Migration 379 把 active v2 run 的父任务非终态约束下沉到数据库 INSERT trigger。
+  trigger 先取得既有 initiative advisory locks，再以 `FOR UPDATE` 锁父 task；
+  等待中的 legacy writer 在父任务终态提交后以 `23514` 失败，不能重开 active run。
+- 回退到 Brain `1.267.151` 时保留所有 JSONL 审计和已完成的安全 repair；不得用
+  旧脚本重跑含微秒的 trust 计划，也不得为通过 reconcile 强改冲突终态；Migration
+  379 属于前向安全约束，应用回退时保留。
 
 ## Kernel terminal-attempt convergence
 

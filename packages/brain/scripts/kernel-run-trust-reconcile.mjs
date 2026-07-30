@@ -223,6 +223,27 @@ async function lockAndReadCurrentEvidence(client, proposal) {
   ) {
     return null;
   }
+  const eligibilityResult = await client.query(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM initiative_runs eligible
+         CROSS JOIN (
+           SELECT applied_at AS historical_cutoff
+             FROM schema_version
+            WHERE version = '376'
+         ) cutover
+        WHERE eligible.id = $1
+          AND eligible.orchestrator_version = 'v2'
+          AND eligible.phase IN ('done', 'failed')
+          AND eligible.completed_at IS NOT NULL
+          AND eligible.record_trust_status <> 'trusted'
+          AND eligible.started_at < cutover.historical_cutoff
+     ) AS eligible`,
+    [proposal.run_id],
+  );
+  if (eligibilityResult.rows?.[0]?.eligible !== true) {
+    return null;
+  }
   const attemptLocks = await client.query(
     `SELECT id
        FROM harness_attempts
@@ -230,24 +251,26 @@ async function lockAndReadCurrentEvidence(client, proposal) {
       FOR UPDATE`,
     [proposal.run_id],
   );
-  const collisionResult = current.completed_at === null
-    ? { rows: [{ count: '1' }] }
-    : await client.query(
-        `SELECT COUNT(*)::int AS count
-           FROM initiative_runs
-          CROSS JOIN (
-            SELECT applied_at AS historical_cutoff
-              FROM schema_version
-             WHERE version = '376'
-          ) cutover
-          WHERE initiative_id = $1
-            AND completed_at = $2
-            AND orchestrator_version = 'v2'
-            AND phase IN ('done', 'failed')
-            AND record_trust_status <> 'trusted'
-            AND started_at < cutover.historical_cutoff`,
-        [current.initiative_id, current.completed_at],
-      );
+  const collisionResult = await client.query(
+    `SELECT COUNT(*)::int AS count
+       FROM initiative_runs
+      CROSS JOIN (
+        SELECT applied_at AS historical_cutoff
+          FROM schema_version
+         WHERE version = '376'
+      ) cutover
+      WHERE initiative_id = $1
+        AND completed_at = (
+          SELECT exact.completed_at
+            FROM initiative_runs exact
+           WHERE exact.id = $2
+        )
+        AND orchestrator_version = 'v2'
+        AND phase IN ('done', 'failed')
+        AND record_trust_status <> 'trusted'
+        AND started_at < cutover.historical_cutoff`,
+    [current.initiative_id, proposal.run_id],
+  );
   return {
     run: current,
     evidence: {

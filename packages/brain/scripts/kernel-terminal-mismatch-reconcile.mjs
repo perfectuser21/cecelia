@@ -112,12 +112,16 @@ export function parseTerminalReconcileArgs(argv) {
 
 export function parseProductionTerminalReconcileArgs(argv) {
   let expectedProposed = null;
+  let expectedBlocked = null;
   let confirmDatabase = null;
   const baseArgs = [];
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--expected-proposed') {
       expectedProposed = Number(argv[index + 1]);
+      index += 1;
+    } else if (arg === '--expected-blocked') {
+      expectedBlocked = Number(argv[index + 1]);
       index += 1;
     } else if (arg === '--confirm-database') {
       confirmDatabase = argv[index + 1] ?? null;
@@ -136,12 +140,22 @@ export function parseProductionTerminalReconcileArgs(argv) {
   if (base.apply && expectedProposed === null) {
     throw new Error('--apply requires --expected-proposed');
   }
+  if (
+    expectedBlocked !== null
+    && (!Number.isInteger(expectedBlocked) || expectedBlocked < 0)
+  ) {
+    throw new Error('--expected-blocked must be a non-negative integer');
+  }
   if (base.apply && !confirmDatabase) {
     throw new Error('--apply requires --confirm-database');
+  }
+  if (base.apply && expectedBlocked === null) {
+    throw new Error('--apply requires --expected-blocked');
   }
   return {
     ...base,
     expectedProposed,
+    expectedBlocked,
     confirmDatabase,
     productionGuards: true,
   };
@@ -197,6 +211,7 @@ export async function reconcileTerminalMismatches({
   auditOutput = null,
   expectedPlanSha256 = null,
   expectedProposed = null,
+  expectedBlocked = null,
   confirmDatabase = null,
   productionGuards = false,
   writeLine = line => process.stdout.write(`${line}\n`),
@@ -265,6 +280,18 @@ export async function reconcileTerminalMismatches({
   }
   if (
     apply
+    && expectedBlocked !== null
+    && expectedBlocked !== blocked.length
+  ) {
+    throw new Error(
+      `blocked count mismatch: expected ${expectedBlocked}, actual ${blocked.length}`,
+    );
+  }
+  if (apply && productionGuards && expectedBlocked === null) {
+    throw new Error('production apply requires expected blocked count');
+  }
+  if (
+    apply
     && confirmDatabase !== null
     && confirmDatabase !== databaseName
   ) {
@@ -285,7 +312,7 @@ export async function reconcileTerminalMismatches({
       ...productionMetadata,
     };
   }
-  if (blocked.length > 0) {
+  if (blocked.length > 0 && !productionGuards) {
     throw new Error(
       `blocked terminal mismatch findings require manual review: ${blocked.length}`,
     );
@@ -314,9 +341,17 @@ export async function reconcileTerminalMismatches({
       kind: 'kernel_terminal_mismatch_reconcile',
       outcome: 'started',
       proposed: repairs.length,
+      blocked: blocked.length,
       plan_sha256: planSha256,
       ...productionMetadata,
     })}\n`);
+    for (const finding of blocked) {
+      await writeAudit(`${JSON.stringify({
+        execution_id: executionId,
+        outcome: 'blocked_acknowledged',
+        ...finding,
+      })}\n`);
+    }
     for (const repair of repairs) {
       await writeAudit(`${JSON.stringify({
         execution_id: executionId,
@@ -376,6 +411,7 @@ export async function reconcileTerminalMismatches({
       kind: 'kernel_terminal_mismatch_reconcile',
       outcome: 'completed',
       applied,
+      blocked_acknowledged: blocked.length,
       ...(productionGuards ? { verified } : {}),
     })}\n`);
   } finally {

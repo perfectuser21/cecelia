@@ -2,7 +2,7 @@
 
 **日期**：2026-07-30
 
-**状态**：待 Owner 书面确认
+**状态**：Owner 已确认；实施与生产收敛中
 
 **Owner**：Cecelia Owner
 
@@ -547,6 +547,20 @@ record_trust_reason = <枚举原因>
 
 历史行不得物理删除。当前 3 个重复点火 task 按同一政策处置：能证明则重建，
 否则终结悬空 task、保留 run 并标记不可信。
+
+### 9.4 生产 reconcile 精度与例外守卫
+
+- PostgreSQL `timestamptz` 的微秒值不得经 JavaScript `Date` 往返后再作为乐观锁
+  证据；事务内复核必须用 `run_id` 在数据库内读取原始 `completed_at`。
+- 逐行锁定后必须在数据库内重新验证
+  `v2 + terminal + completed + non-trusted + pre-cutover` 全部资格；任一资格漂移
+  都按 optimistic conflict 回滚。
+- Terminal mismatch 的 reviewed plan 同时锁定 plan hash、repair 数、blocked 数和
+  database name。精确确认 blocked 集合后，只允许提交独立 repair。
+- Blocked finding 必须逐条写入只读审计，状态为 `blocked_acknowledged`；不得顺手
+  覆盖已有 `completed/cancelled/failed` 人工终态。
+- `blocked_acknowledged` 不是修复成功，也不进入自动 repair 数；它是保留原始状态、
+  等待独立裁决的历史例外。
 
 ---
 
