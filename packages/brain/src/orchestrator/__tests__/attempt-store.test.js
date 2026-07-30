@@ -71,7 +71,9 @@ describe('attempt store', () => {
     })).resolves.toMatchObject({ attempt: completed, deduped: false });
 
     expect(client.query.mock.calls[0][0]).toBe('BEGIN');
-    expect(client.query.mock.calls[1][0]).toMatch(/FOR UPDATE/i);
+    expect(client.query.mock.calls[1][0]).toMatch(
+      /WITH locked_run AS MATERIALIZED[\s\S]*FROM initiative_runs[\s\S]*FOR UPDATE[\s\S]*JOIN harness_attempts attempt[\s\S]*FOR UPDATE OF attempt/i,
+    );
     expect(client.query.mock.calls[2][0]).toMatch(
       /lease_generation.*status NOT IN/is,
     );
@@ -80,6 +82,49 @@ describe('attempt store', () => {
     );
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
     expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an active callback after its exact parent run is terminal', async () => {
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({
+          rows: [{
+            id: input.id,
+            run_id: input.runId,
+            status: 'running',
+            lease_owner: 'brain-1',
+            lease_generation: 3,
+            run_phase: 'failed',
+          }],
+        })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await expect(createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: {
+        status: 'completed',
+        summary: 'late callback',
+        artifacts: [],
+        provider_metadata: { provider: 'codex' },
+      },
+    })).resolves.toMatchObject({
+      attempt: null,
+      deduped: false,
+      conflict: 'parent_run_terminal',
+    });
+
+    expect(client.query.mock.calls.map(([sql]) => sql)).toEqual([
+      'BEGIN',
+      expect.stringMatching(/WITH locked_run AS MATERIALIZED/i),
+      'ROLLBACK',
+    ]);
   });
 
   it('commits reviewer verdict in the same transaction as its successful callback', async () => {

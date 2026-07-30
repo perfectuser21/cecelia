@@ -535,10 +535,19 @@ export function createAttemptStore(pool) {
         await client.query('BEGIN');
         transactionOpen = true;
         const attempt = firstRow(await client.query(
-          `SELECT *
-             FROM harness_attempts
-            WHERE id=$1 AND run_id=$2
-            FOR UPDATE`,
+          `WITH locked_run AS MATERIALIZED (
+             SELECT id, phase
+               FROM initiative_runs
+              WHERE id=$2
+                AND orchestrator_version='v2'
+              FOR UPDATE
+           )
+           SELECT attempt.*, locked_run.phase AS run_phase
+             FROM locked_run
+             JOIN harness_attempts attempt
+               ON attempt.run_id=locked_run.id
+            WHERE attempt.id=$1
+            FOR UPDATE OF attempt`,
           [attemptId, runId],
         ));
         if (!attempt) return await rollbackConflict('attempt_identity_mismatch');
@@ -553,6 +562,12 @@ export function createAttemptStore(pool) {
         const exactDuplicate = isTerminal
           && attempt.status === result.status
           && isDeepStrictEqual(attempt.result, result);
+        if (
+          ['done', 'failed'].includes(attempt.run_phase)
+          && !isTerminal
+        ) {
+          return await rollbackConflict('parent_run_terminal');
+        }
         if (isTerminal && !exactDuplicate) {
           return await rollbackConflict('terminal_payload_conflict');
         }
