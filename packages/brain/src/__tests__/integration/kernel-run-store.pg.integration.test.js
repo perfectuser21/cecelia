@@ -14,6 +14,10 @@ const migrationUrl = new URL(
   '../../../migrations/375_kernel_run_identity.sql',
   import.meta.url,
 );
+const trustMigrationUrl = new URL(
+  '../../../migrations/376_kernel_run_trust.sql',
+  import.meta.url,
+);
 const schema = `kernel_run_store_${process.pid}_${randomUUID().replaceAll('-', '')}`;
 
 function quoteIdentifier(identifier) {
@@ -65,6 +69,7 @@ function runInput(taskId, initiativeId, createdSource = 'kernel_dispatch') {
 
 beforeAll(async () => {
   const migration = await readFile(migrationUrl, 'utf8');
+  const trustMigration = await readFile(trustMigrationUrl, 'utf8');
   await pool.query(`CREATE SCHEMA ${quoteIdentifier(schema)}`);
   await schemaPool.query(`
     CREATE TABLE tasks (
@@ -104,6 +109,7 @@ beforeAll(async () => {
     );
   `);
   await schemaPool.query(migration);
+  await schemaPool.query(trustMigration);
 });
 
 afterAll(async () => {

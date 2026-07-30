@@ -21,6 +21,7 @@
  */
 import pool from './db.js';
 import { execSync } from 'child_process';
+import { patchKernelRunById } from './orchestrator/kernel-run-store.js';
 
 /**
  * 扫描所有 in-flight initiative_runs，标 deadline_at 已过未完成的为 watchdog_overdue。
@@ -30,11 +31,17 @@ import { execSync } from 'child_process';
  * @param {{ send: (msg: object) => Promise<void> }} [opts.notifier]
  * @returns {Promise<{ flagged: string[], scanned: number }>}
  */
-export async function scanStuckHarness({ pool: dbPool = pool, notifier } = {}) {
+export async function scanStuckHarness({
+  pool: dbPool = pool,
+  notifier,
+  patchRun = patchKernelRunById,
+} = {}) {
   const overdue = await dbPool.query(`
-    SELECT initiative_id, contract_id, deadline_at, phase
+    SELECT id, initiative_id, current_task_id, contract_id, deadline_at, phase
     FROM initiative_runs
     WHERE phase IN ('A_planning', 'B_task_loop', 'C_final_e2e')
+      AND orchestrator_version = 'v2'
+      AND current_task_id IS NOT NULL
       AND deadline_at IS NOT NULL
       AND deadline_at < NOW()
       AND completed_at IS NULL
@@ -45,14 +52,11 @@ export async function scanStuckHarness({ pool: dbPool = pool, notifier } = {}) {
   const flagged = [];
   for (const row of overdue.rows) {
     try {
-      await dbPool.query(
-        `UPDATE initiative_runs
-         SET phase='failed',
-             failure_reason='watchdog_overdue',
-             completed_at=NOW()
-         WHERE initiative_id=$1 AND completed_at IS NULL`,
-        [row.initiative_id]
-      );
+      await patchRun(dbPool, {
+        runId: row.id,
+        phase: 'failed',
+        failureReason: 'watchdog_overdue',
+      });
       flagged.push(row.initiative_id);
       console.warn(
         `[harness-watchdog] flagged initiative=${row.initiative_id} ` +

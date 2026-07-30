@@ -88,7 +88,9 @@ async function queryPendingBacklog() {
 
 // ─── 测试套件 ────────────────────────────────────────────────────────────────
 
-describe('markDispatched NULL payload 防重派幂等击穿修复 — 集成测试', () => {
+const HAS_REAL_POSTGRES = Boolean(process.env.DATABASE_URL || process.env.DB);
+
+describe.runIf(HAS_REAL_POSTGRES)('markDispatched NULL payload 防重派幂等击穿修复 — 集成测试', () => {
   beforeAll(async () => {
     // 验证测试 DB 连接正常
     await testPool.query('SELECT 1');

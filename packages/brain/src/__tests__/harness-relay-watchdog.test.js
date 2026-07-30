@@ -14,11 +14,26 @@ const { mockPool, mockRaise } = vi.hoisted(() => ({
 vi.mock('../db.js', () => ({ default: mockPool }));
 vi.mock('../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
 vi.mock('../alerting.js', () => ({ raise: mockRaise }));
+vi.mock('../orchestrator/kernel-run-store.js', () => ({
+  patchKernelRunById: async (db, input) => {
+    await db.query(
+      `UPDATE initiative_runs SET phase='${input.phase}',
+         ${input.failureReason ? `failure_reason=COALESCE(failure_reason, '${input.failureReason}'),` : ''}
+         pr_url=COALESCE(pr_url, $2) WHERE id=$1`,
+      [input.runId, input.prUrl],
+    );
+    await db.query(
+      `UPDATE tasks SET status='${input.phase === 'done' ? 'completed' : 'failed'}'`,
+    );
+    return { id: input.runId, phase: input.phase };
+  },
+}));
 
 import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS, scanStuckHarness } from '../harness-relay-watchdog.js';
 import { sendBark } from '../notifier.js';
 
 const TASK_ID = 'aaaabbbb-cccc-dddd-eeee-ffff00001111';
+const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const SHORT = 'aaaabbbb';
 
 const PR_URL = 'https://github.com/org/repo/pull/42';
@@ -40,8 +55,8 @@ function makeDeps({
 } = {}) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql, params = []) => {
-    if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-      return { rows: [{ id: '11111111-1111-4111-8111-111111111111', initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt }] };
+    if (/FROM initiative_runs r/.test(sql)) {
+      return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt }] };
     }
     if (/FROM tasks/.test(sql)) {
       return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator, ...(harnessRuntime ? { harness_runtime: harnessRuntime } : {}) } }] };
@@ -159,6 +174,7 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     const overdueRun = {
       id: '11111111-1111-4111-8111-111111111111',
       initiative_id: TASK_ID,
+      current_task_id: TASK_ID,
       orchestrator_host: 'skill-relay-session',
       phase: 'review',
       deadline_at: new Date(Date.now() - 1000).toISOString(),
@@ -166,7 +182,7 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     };
     const pool = { query: vi.fn(async (sql) => {
       const normalized = String(sql);
-      if (/SELECT id, initiative_id, orchestrator_host, phase, deadline_at/.test(normalized)) {
+      if (/SELECT id, initiative_id, current_task_id, orchestrator_host, phase, deadline_at/.test(normalized)) {
         const sqlHidesOpenReviews = /effect:human_review_requested/.test(normalized);
         return { rows: sqlHidesOpenReviews ? [] : [overdueRun] };
       }
@@ -443,6 +459,20 @@ describe('resumeStalledRelayRuns', () => {
     expect(r.housekept).toBe(1);
   });
 
+  it.each(['cancelled', 'canceled'])(
+    'task %s → run 原子收敛 failed/task_cancelled 且保留任务取消态',
+    async (taskStatus) => {
+      const deps = makeDeps({ taskStatus });
+      const r = await resumeStalledRelayRuns(deps);
+      const runUpdate = deps.pool.query.mock.calls.find(([sql]) => (
+        /UPDATE initiative_runs/.test(sql) && /task_cancelled/.test(sql)
+      ));
+      expect(runUpdate).toBeTruthy();
+      expect(r.housekept).toBe(1);
+      expect(deps.spawnFn).not.toHaveBeenCalled();
+    },
+  );
+
   it('payload 非 skill-relay → 跳过（安全护栏，不碰 v1 任务）', async () => {
     const deps = makeDeps({ orchestrator: null });
     const r = await resumeStalledRelayRuns(deps);
@@ -519,8 +549,8 @@ describe('resumeStalledRelayRuns', () => {
   it('容器消失 + pr_url 存在 + gh pr view 抛错 → 保守跳过（不盲目重点火）', async () => {
     const pool = makeDeps().pool;
     pool.query.mockImplementation(async (sql) => {
-      if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-        return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '2', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: PR_URL }] };
+      if (/FROM initiative_runs r/.test(sql)) {
+        return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: '2', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: PR_URL }] };
       }
       if (/FROM tasks/.test(sql)) {
         return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', payload: { orchestrator: 'skill-relay' } }] };
@@ -608,8 +638,8 @@ describe('resumeStalledRelayRuns — pr_url fallback 链（#3560 跟进）', () 
     const taskSqls = [];
     const pool = {
       query: vi.fn(async (sql) => {
-        if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-          return { rows: [{ initiative_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
+        if (/FROM initiative_runs r/.test(sql)) {
+          return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
         }
         if (/FROM tasks/.test(sql)) {
           taskSqls.push(sql);
@@ -632,8 +662,8 @@ describe('resumeStalledRelayRuns — pr_url fallback 链（#3560 跟进）', () 
     const updates = [];
     const pool = {
       query: vi.fn(async (sql, _params) => {
-        if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-          return { rows: [{ initiative_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
+        if (/FROM initiative_runs r/.test(sql)) {
+          return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
         }
         if (/FROM tasks/.test(sql)) {
           return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: TASK_PR, payload: { orchestrator: 'skill-relay' } }] };
@@ -665,8 +695,8 @@ describe('resumeStalledRelayRuns — pr_url fallback 链（#3560 跟进）', () 
     const updates = [];
     const pool = {
       query: vi.fn(async (sql, _params) => {
-        if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-          return { rows: [{ initiative_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
+        if (/FROM initiative_runs r/.test(sql)) {
+          return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'generate', attempts: '1', deadline_at: null, pr_url: null }] };
         }
         if (/FROM tasks/.test(sql)) {
           return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', pr_url: PAYLOAD_PR } }] };
@@ -696,7 +726,7 @@ describe('PATCH /orchestrator/relay-runs — pr_url 字段写入（#3560 跟进�
   it('PATCH handler 从 req.body 解构 pr_url', async () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
-    const patchIdx = src.indexOf("router.patch('/relay-runs/");
+    const patchIdx = src.indexOf('function validateRunPatchBody');
     expect(patchIdx).toBeGreaterThan(-1);
     const block = src.slice(patchIdx, patchIdx + 1500);
     expect(block).toMatch(/pr_url/);
@@ -705,7 +735,7 @@ describe('PATCH /orchestrator/relay-runs — pr_url 字段写入（#3560 跟进�
   it('PATCH handler 校验 pr_url 须以 https://github.com/ 开头（非法时 400）', async () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
-    const patchIdx = src.indexOf("router.patch('/relay-runs/");
+    const patchIdx = src.indexOf('function validateRunPatchBody');
     const block = src.slice(patchIdx, patchIdx + 1500);
     expect(block).toMatch(/https:\/\/github\.com\//);
     expect(block).toMatch(/400/);
@@ -713,9 +743,9 @@ describe('PATCH /orchestrator/relay-runs — pr_url 字段写入（#3560 跟进�
 
   it('PATCH UPDATE SQL 用 COALESCE 保护 pr_url（只增不清）', async () => {
     const { readFileSync } = await import('node:fs');
-    const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
-    const patchIdx = src.indexOf("router.patch('/relay-runs/");
-    const block = src.slice(patchIdx, patchIdx + 1500);
+    const src = readFileSync(new URL('../orchestrator/kernel-run-store.js', import.meta.url), 'utf8');
+    const patchIdx = src.indexOf('export async function patchKernelRunById');
+    const block = src.slice(patchIdx, patchIdx + 3000);
     expect(block).toMatch(/COALESCE/i);
     expect(block).toMatch(/pr_url/);
   });
@@ -773,11 +803,14 @@ describe('_finalizeMergedRun', () => {
       return { rows: [] };
     });
     const out = { mergedPr: 0, mergedWithoutGate: 0 };
-    await _finalizeMergedRun(pool, 'init-1', 'https://github.com/x/y/pull/3', out);
+    await _finalizeMergedRun(pool, { id: RUN_ID, initiative_id: 'init-1', current_task_id: 'task-1' }, 'https://github.com/x/y/pull/3', out);
     expect(out.mergedPr).toBe(1);
     const updates = pool.query.mock.calls.map(c => c[0]).filter(s => /UPDATE initiative_runs/.test(s));
     expect(updates.length).toBeGreaterThan(0);
     expect(updates.every(s => !/failure_reason/.test(s))).toBe(true);
+    const exactUpdate = pool.query.mock.calls.find(([sql]) => /UPDATE initiative_runs/.test(sql));
+    expect(exactUpdate[0]).toMatch(/WHERE\s+id\s*=\s*\$1/);
+    expect(exactUpdate[1][0]).toBe(RUN_ID);
   });
 
   it('gated=false → UPDATE 含 failure_reason=merged_without_evaluator_gate，mergedWithoutGate++', async () => {
@@ -787,7 +820,7 @@ describe('_finalizeMergedRun', () => {
       return { rows: [] };
     })};
     const out = { mergedPr: 0, mergedWithoutGate: 0 };
-    await _finalizeMergedRun(pool, 'init-2', 'https://github.com/x/y/pull/4', out);
+    await _finalizeMergedRun(pool, { id: RUN_ID, initiative_id: 'init-2', current_task_id: 'task-2' }, 'https://github.com/x/y/pull/4', out);
     expect(out.mergedPr).toBe(1);
     expect(out.mergedWithoutGate).toBe(1);
     const updates = pool.query.mock.calls.map(c => c[0]).filter(s => /UPDATE initiative_runs/.test(s));
@@ -803,7 +836,7 @@ describe('_finalizeMergedRun', () => {
     })};
     const out = { mergedPr: 0, mergedWithoutGate: 0 };
     const PR = 'https://github.com/x/y/pull/5';
-    await _finalizeMergedRun(pool, 'init-3', PR, out, { setPrUrl: true });
+    await _finalizeMergedRun(pool, { id: RUN_ID, initiative_id: 'init-3', current_task_id: 'task-3' }, PR, out, { setPrUrl: true });
     const runUpdates = pool.query.mock.calls.filter(c => /UPDATE initiative_runs/.test(c[0]));
     expect(runUpdates.some(([, params]) => Array.isArray(params) && params.includes(PR))).toBe(true);
   });
@@ -953,10 +986,12 @@ describe('刀A2 — generator_done + pr_url 空 反查修复', () => {
         const DISCOVERED_PR = 'https://github.com/perfectuser21/cecelia/pull/1';
         const pool = { query: vi.fn() };
         pool.query.mockImplementation(async (sql) => {
-          if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+          if (/FROM initiative_runs r/.test(sql)) {
             return {
               rows: [{
+                id: RUN_ID,
                 initiative_id: TASK_ID,
+                current_task_id: TASK_ID,
                 phase: 'planning',
                 attempts: '1',
                 deadline_at: new Date(Date.now() + 3600e3).toISOString(),
@@ -1025,10 +1060,12 @@ describe('刀A2 — generator_done + pr_url 空 反查修复', () => {
       const OPEN_PR = 'https://github.com/x/y/pull/2';
       const pool = { query: vi.fn() };
       pool.query.mockImplementation(async (sql) => {
-        if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+        if (/FROM initiative_runs r/.test(sql)) {
           return {
             rows: [{
+              id: RUN_ID,
               initiative_id: TASK_ID,
+              current_task_id: TASK_ID,
               phase: 'planning',
               attempts: '1',
               deadline_at: new Date(Date.now() + 3600e3).toISOString(),
@@ -1088,10 +1125,12 @@ describe('刀A2 — generator_done + pr_url 空 反查修复', () => {
     it('TC-8: doneAt 超期 + 无 PR → phase=failed, failure_reason=generator_done_timeout，不 spawn', async () => {
       const pool = { query: vi.fn() };
       pool.query.mockImplementation(async (sql) => {
-        if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+        if (/FROM initiative_runs r/.test(sql)) {
           return {
             rows: [{
+              id: RUN_ID,
               initiative_id: TASK_ID,
+              current_task_id: TASK_ID,
               phase: 'planning',
               attempts: '1',
               // 已过期 deadline（7h 前）

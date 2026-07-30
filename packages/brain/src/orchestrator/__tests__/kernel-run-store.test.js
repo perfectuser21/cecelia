@@ -3,6 +3,9 @@ import {
   createKernelRun,
   finalizeKernelRun,
   loadActiveKernelRun,
+  loadKernelRunById,
+  patchLegacyKernelRunByInitiative,
+  patchKernelRunById,
   reconcileKernelTaskTerminal,
 } from '../kernel-run-store.js';
 
@@ -45,6 +48,10 @@ function transactionPool({
       }
       if (sql === 'ROLLBACK') {
         order.push('ROLLBACK');
+        return { rows: [] };
+      }
+      if (/pg_advisory_xact_lock/.test(sql)) {
+        order.push('advisory-lock');
         return { rows: [] };
       }
       if (/FROM tasks/.test(sql) && /FOR UPDATE/.test(sql)) {
@@ -141,7 +148,39 @@ function finalizationPool({
   };
 }
 
+function exactPatchPool({ task } = {}) {
+  const harness = finalizationPool({ task });
+  return {
+    ...harness,
+    pool: {
+      query: vi.fn(async () => ({
+        rows: [{
+          id: RUN_ID,
+          initiative_id: INITIATIVE_ID,
+          current_task_id: TASK_ID,
+          phase: 'planning',
+          orchestrator_version: 'v2',
+        }],
+      })),
+      connect: harness.pool.connect,
+    },
+  };
+}
+
 describe('Kernel run store creation authority', () => {
+  it('loads one v2 run only by primary key', async () => {
+    const query = vi.fn(async () => ({ rows: [{ id: RUN_ID }] }));
+
+    const result = await loadKernelRunById({ query }, RUN_ID);
+
+    expect(result).toEqual({ id: RUN_ID });
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toMatch(/WHERE id\s*=\s*\$1/i);
+    expect(sql).toContain("orchestrator_version = 'v2'");
+    expect(sql).not.toMatch(/initiative_id\s*=\s*\$1/i);
+    expect(params).toEqual([RUN_ID]);
+  });
+
   it('loads an active run only by current_task_id', async () => {
     const query = vi.fn(async () => ({ rows: [] }));
 
@@ -174,6 +213,7 @@ describe('Kernel run store creation authority', () => {
     expect(taskLock).toBeTruthy();
     expect(insert.sql).toContain('current_task_id');
     expect(insert.sql).toContain('created_source');
+    expect(insert.sql).toContain('record_trust_status');
     expect(insert.params).toEqual([
       INITIATIVE_ID,
       'planning',
@@ -183,9 +223,12 @@ describe('Kernel run store creation authority', () => {
       null,
       TASK_ID,
       'kernel_dispatch',
+      'trusted',
     ]);
     expect(harness.order).toEqual([
       'BEGIN',
+      'advisory-lock',
+      'advisory-lock',
       'task-lock',
       'active-run',
       'insert-run',
@@ -209,6 +252,8 @@ describe('Kernel run store creation authority', () => {
     expect(result).toEqual({ created: false, run: activeRun });
     expect(harness.order).toEqual([
       'BEGIN',
+      'advisory-lock',
+      'advisory-lock',
       'task-lock',
       'active-run',
       'COMMIT',
@@ -243,6 +288,8 @@ describe('Kernel run store creation authority', () => {
       .rejects.toThrow(`kernel run task ${TASK_ID} not eligible`);
     expect(harness.order).toEqual([
       'BEGIN',
+      'advisory-lock',
+      'advisory-lock',
       'task-lock',
       'ROLLBACK',
       'release',
@@ -279,10 +326,105 @@ describe('Kernel run store creation authority', () => {
       );
     expect(harness.order).toEqual([
       'BEGIN',
+      'advisory-lock',
+      'advisory-lock',
       'task-lock',
       'ROLLBACK',
       'release',
     ]);
+  });
+});
+
+describe('Legacy run mutation serialization', () => {
+  it('holds an initiative advisory lock through candidate resolution and exact patch', async () => {
+    const calls = [];
+    const client = {
+      query: vi.fn(async (sql, params) => {
+        calls.push({ sql, params });
+        if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [] };
+        if (/pg_advisory_xact_lock/.test(sql)) return { rows: [] };
+        if (/SELECT id\s+FROM initiative_runs/.test(sql)) {
+          return { rows: [{ id: RUN_ID }] };
+        }
+        if (/FROM initiative_runs/.test(sql) && !/FOR UPDATE/.test(sql)) {
+          return {
+            rows: [{
+              id: RUN_ID,
+              initiative_id: INITIATIVE_ID,
+              current_task_id: TASK_ID,
+              phase: 'planning',
+            }],
+          };
+        }
+        if (/FROM tasks/.test(sql) && /FOR UPDATE/.test(sql)) {
+          return { rows: [{ id: TASK_ID, status: 'in_progress' }] };
+        }
+        if (/FROM initiative_runs/.test(sql) && /FOR UPDATE/.test(sql)) {
+          return {
+            rows: [{
+              id: RUN_ID,
+              current_task_id: TASK_ID,
+              phase: 'planning',
+            }],
+          };
+        }
+        if (/UPDATE initiative_runs/.test(sql)) {
+          return {
+            rows: [{
+              id: RUN_ID,
+              initiative_id: INITIATIVE_ID,
+              current_task_id: TASK_ID,
+              phase: 'evaluate',
+            }],
+            rowCount: 1,
+          };
+        }
+        if (/INSERT INTO cecelia_events/.test(sql)) return { rows: [], rowCount: 1 };
+        throw new Error(`unexpected SQL: ${sql}`);
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(async () => client) };
+
+    const result = await patchLegacyKernelRunByInitiative(pool, {
+      rawId: INITIATIVE_ID,
+      patch: { phase: 'evaluate' },
+    });
+
+    expect(result).toMatchObject({
+      candidateCount: 1,
+      run: { id: RUN_ID, phase: 'evaluate' },
+    });
+    const lockIndex = calls.findIndex(({ sql }) => /pg_advisory_xact_lock/.test(sql));
+    const candidateIndex = calls.findIndex(({ sql }) => /SELECT id\s+FROM initiative_runs/.test(sql));
+    const updateIndex = calls.findIndex(({ sql }) => /UPDATE initiative_runs/.test(sql));
+    const commitIndex = calls.findIndex(({ sql }) => sql === 'COMMIT');
+    expect(lockIndex).toBeGreaterThan(-1);
+    expect(candidateIndex).toBeGreaterThan(lockIndex);
+    expect(updateIndex).toBeGreaterThan(candidateIndex);
+    expect(commitIndex).toBeGreaterThan(updateIndex);
+    expect(calls[lockIndex].params).toEqual([`relay-initiative:${INITIATIVE_ID}`]);
+  });
+
+  it('fails closed under the same advisory lock when history is ambiguous', async () => {
+    const client = {
+      query: vi.fn(async (sql) => {
+        if (/SELECT id\s+FROM initiative_runs/.test(sql)) {
+          return { rows: [{ id: RUN_ID }, { id: INITIATIVE_ID }] };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+
+    const result = await patchLegacyKernelRunByInitiative(
+      { connect: vi.fn(async () => client) },
+      { rawId: INITIATIVE_ID, patch: { phase: 'evaluate' } },
+    );
+
+    expect(result).toEqual({ candidateCount: 2, run: null });
+    expect(client.query.mock.calls.some(([sql]) => /UPDATE initiative_runs/.test(sql))).toBe(false);
+    expect(client.query).toHaveBeenCalledWith('COMMIT');
   });
 });
 
@@ -423,6 +565,57 @@ describe('Kernel run/task terminalization authority', () => {
       'release',
     ]);
   });
+});
+
+describe('Kernel exact non-terminal patch authority', () => {
+  it('rejects an active phase write when the parent task is missing', async () => {
+    const harness = exactPatchPool({ task: null });
+
+    await expect(patchKernelRunById(harness.pool, {
+      runId: RUN_ID,
+      phase: 'generate',
+    })).rejects.toThrow(`Kernel run parent task missing: ${RUN_ID}`);
+    expect(harness.order).toContain('ROLLBACK');
+    expect(harness.order).not.toContain('run-update');
+  });
+
+  it('rejects an active phase write when the parent task is terminal', async () => {
+    const harness = exactPatchPool({
+      task: { id: TASK_ID, status: 'completed' },
+    });
+
+    await expect(patchKernelRunById(harness.pool, {
+      runId: RUN_ID,
+      phase: 'generate',
+    })).rejects.toThrow('Kernel task is terminal: completed');
+    expect(harness.order).toContain('ROLLBACK');
+    expect(harness.order).not.toContain('run-update');
+  });
+
+  it.each(['cancelled', 'canceled'])(
+    'rejects active progress for a %s task but may close its run as failed without rewriting cancellation',
+    async (status) => {
+      const activeHarness = exactPatchPool({
+        task: { id: TASK_ID, status },
+      });
+      await expect(patchKernelRunById(activeHarness.pool, {
+        runId: RUN_ID,
+        phase: 'generate',
+      })).rejects.toThrow(`Kernel task is terminal: ${status}`);
+
+      const terminalHarness = exactPatchPool({
+        task: { id: TASK_ID, status },
+      });
+      await patchKernelRunById(terminalHarness.pool, {
+        runId: RUN_ID,
+        phase: 'failed',
+        failureReason: 'task_cancelled',
+      });
+      expect(terminalHarness.order).toContain('run-update');
+      expect(terminalHarness.order).not.toContain('task-update');
+      expect(terminalHarness.order).toContain('COMMIT');
+    },
+  );
 });
 
 describe('Kernel terminal reconciliation authority', () => {

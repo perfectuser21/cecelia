@@ -800,6 +800,9 @@ jobs:
             --config vitest.integration.config.js \
             src/__tests__/integration/ \
             src/__tests__/migration-333.test.js \
+            src/__tests__/migration-370-gp-governance-decisions.test.js \
+            src/__tests__/nightly-orchestrator.integration.test.js \
+            src/orchestrator/__tests__/contract-store.test.js \
             ../../tests/regression/relay-137fea96/contract-postdeploy-smoke-filter.test.ts \
             --reporter=verbose
       - name: Provider-neutral Kernel Spawn Callback Progression

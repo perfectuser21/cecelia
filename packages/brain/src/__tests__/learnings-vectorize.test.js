@@ -461,6 +461,6 @@ describe('selfcheck schema version', () => {
     // 352 = migration 352 features 表更名 brain_modules（澄清 Brain 内部模块语义），故推进地板到 352。
     // 353 = migration 353 DROP conversation_captures + conversation_log_cursors（inbox P0 清场，decisions a823206d），故推进地板到 353。
     // 375 = Kernel run identity is the minimum required by this Brain version.
-    expect(EXPECTED_SCHEMA_VERSION).toBe('375');
+    expect(EXPECTED_SCHEMA_VERSION).toBe('377');
   });
 });

@@ -31,7 +31,7 @@ describe('scanStuckHarness — 单元 smoke', () => {
 
   it('SELECT 无 overdue → flagged 空', async () => {
     mockPoolQuery.mockImplementation(async (sql) => {
-      if (/SELECT\s+initiative_id/i.test(sql)) return { rows: [] };
+      if (/FROM\s+initiative_runs/i.test(sql)) return { rows: [] };
       return { rows: [] };
     });
     const r = await scanStuckHarness({});
@@ -48,5 +48,29 @@ describe('scanStuckHarness — 单元 smoke', () => {
     expect(sql).toMatch(/C_final_e2e/);
     expect(sql).toMatch(/deadline_at\s*<\s*NOW/i);
     expect(sql).toMatch(/completed_at\s+IS\s+NULL/i);
+  });
+
+  it('逾期收尸只按 run id 精确更新一条记录', async () => {
+    const run = {
+      id: '11111111-1111-4111-8111-111111111111',
+      initiative_id: '22222222-2222-4222-8222-222222222222',
+      contract_id: null,
+      current_task_id: '33333333-3333-4333-8333-333333333333',
+      deadline_at: new Date(Date.now() - 1000),
+      phase: 'B_task_loop',
+    };
+    mockPoolQuery.mockResolvedValueOnce({ rows: [run] });
+    const patchRun = vi.fn(async (_pool, input) => ({
+      id: input.runId,
+      phase: input.phase,
+    }));
+
+    await scanStuckHarness({ patchRun });
+
+    expect(patchRun).toHaveBeenCalledWith(expect.anything(), {
+      runId: run.id,
+      phase: 'failed',
+      failureReason: 'watchdog_overdue',
+    });
   });
 });

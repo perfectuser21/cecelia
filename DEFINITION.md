@@ -6,11 +6,26 @@
 
 
 
-**Brain 版本**: 1.267.146
+**Brain 版本**: 1.267.147
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.147 — Kernel exact run API and trust accounting
+
+- canonical relay GET/PATCH 以完整 `run_id` 定位；initiative 历史只读且稳定排序。
+  legacy initiative PATCH 只有唯一候选时才适配并记审计，否则 409 fail closed。
+- 两个 watchdog 的 run/task 终态写入走同一事务，选择、计次与父任务定位使用
+  `current_task_id`；缺身份 fail closed，不再批量改写同 initiative 的历史。
+- Migration 376 为 run 增加可信度和 predecessor lineage。新 canonical run 标
+  `trusted`；历史默认 `untrusted`，只能由 dry-run 优先、带绝对审计文件的确定性
+  reconcile 分批重建；审计独占创建、记录真实 applied/conflict 后封为只读。
+- Migration 377 用数据库 trigger 强制所有 initiative run INSERT 参与兼容 API 的
+  identity/prefix 事务锁，直接 writer 也不能穿过唯一候选解析窗口。
+- summary 分开 `trusted/reconstructed/untrusted`；SLO 使用每个任务最新的原生
+  trusted 终态，活跃 run 不进入分母。
+  回退：部署 Brain `1.267.146` 并保留加法 schema，禁止恢复批量 mutation。
 
 ## Brain 1.267.146 — Kernel run identity and atomic terminalization
 
@@ -962,7 +977,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 375 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 377 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -1350,7 +1365,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '375'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '377'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

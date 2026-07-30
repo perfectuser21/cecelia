@@ -33,13 +33,40 @@ async function buildApp() {
   return a;
 }
 
+function installAuthorityMock({ worktree, taskId, updateError = null }) {
+  mockPool.query.mockImplementation(async (sql, params = []) => {
+    if (typeof sql === 'string' && sql.includes('SELECT r.id')) {
+      const exact = sql.includes('WHERE r.id = $1');
+      return {
+        rows: [{
+          id: exact ? params[0] : '11111111-2222-4333-8444-555555555555',
+          current_task_id: taskId,
+          worktree_path: worktree,
+          sprint_dir: 'sprints/x',
+        }],
+      };
+    }
+    if (
+      updateError
+      && typeof sql === 'string'
+      && sql.includes('UPDATE initiative_runs')
+    ) {
+      throw updateError;
+    }
+    return { rows: [], rowCount: 0 };
+  });
+}
+
 describe('POST /api/brain/harness/judge — 刀B 机械预检', () => {
   let wt;
   beforeEach(async () => {
     wt = await mkdtemp(join(tmpdir(), 'judge-blade-'));
     mockRunJudgeGate.mockReset();
     mockPool.query.mockReset();
-    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    installAuthorityMock({
+      worktree: wt,
+      taskId: 'aaaabbbb-1111-2222-3333-444455556666',
+    });
     vi.mocked(mockPreflight).mockReturnValue(null);
     vi.mocked(mockJudgmentsCheck).mockResolvedValue(null);
   });
@@ -132,7 +159,10 @@ describe('POST /api/brain/harness/judge — 刀C-2 judge_verdict 落库', () => 
     wt = await mkdtemp(join(tmpdir(), 'judge-c2-'));
     mockRunJudgeGate.mockReset();
     mockPool.query.mockReset();
-    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    installAuthorityMock({
+      worktree: wt,
+      taskId: 'aaaabbbb-cccc-dddd-eeee-111122223333',
+    });
     vi.mocked(mockPreflight).mockReturnValue(null);
     vi.mocked(mockJudgmentsCheck).mockResolvedValue(null);
   });
@@ -147,7 +177,7 @@ describe('POST /api/brain/harness/judge — 刀C-2 judge_verdict 落库', () => 
     }));
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 'aaaabbbb-cccc-dddd-eeee-111122223333', sprint_dir: 'sprints/x', worktree: wt });
+      .send({ task_id: 'aaaabbbb-cccc-dddd-eeee-111122223333', run_id: '11111111-2222-4333-8444-555555555555', sprint_dir: 'sprints/x', worktree: wt });
     expect(r.status).toBe(200);
     expect(r.body.verdict).toBe('PASS');
 
@@ -170,7 +200,7 @@ describe('POST /api/brain/harness/judge — 刀C-2 judge_verdict 落库', () => 
     }));
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 'aaaabbbb-cccc-dddd-eeee-111122223333', sprint_dir: 'sprints/x', worktree: wt });
+      .send({ task_id: 'aaaabbbb-cccc-dddd-eeee-111122223333', run_id: '11111111-2222-4333-8444-555555555555', sprint_dir: 'sprints/x', worktree: wt });
     expect(r.status).toBe(200);
     expect(r.body.verdict).toBe('FAIL');
 
@@ -183,7 +213,11 @@ describe('POST /api/brain/harness/judge — 刀C-2 judge_verdict 落库', () => 
 
   it('UPDATE initiative_runs 失败不影响响应（non-fatal）', async () => {
     mockRunJudgeGate.mockResolvedValue({ verdict: 'PASS', feedback: null, judged: true });
-    mockPool.query.mockRejectedValue(new Error('DB connection lost'));
+    installAuthorityMock({
+      worktree: wt,
+      taskId: 'aaaabbbb-cccc-dddd-eeee-111122223333',
+      updateError: new Error('DB connection lost'),
+    });
     await writeFile(join(wt, '.brain-result.json'), JSON.stringify({
       verdict: 'PASS',
       behavior_tests: ['t1'],
@@ -192,7 +226,7 @@ describe('POST /api/brain/harness/judge — 刀C-2 judge_verdict 落库', () => 
     }));
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 'aaaabbbb-cccc-dddd-eeee-111122223333', sprint_dir: 'sprints/x', worktree: wt });
+      .send({ task_id: 'aaaabbbb-cccc-dddd-eeee-111122223333', run_id: '11111111-2222-4333-8444-555555555555', sprint_dir: 'sprints/x', worktree: wt });
     expect(r.status).toBe(200);
     expect(r.body.verdict).toBe('PASS');
   });

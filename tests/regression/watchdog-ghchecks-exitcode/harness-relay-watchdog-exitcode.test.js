@@ -39,10 +39,12 @@ function makeBaseDeps({
 } = {}) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql) => {
-    if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
+    if (/FROM initiative_runs r/.test(sql)) {
       return {
         rows: [{
+          id: '10000000-0000-4000-8000-000000000003',
           initiative_id: TASK_ID,
+          current_task_id: TASK_ID,
           phase: 'planning',
           attempts: String(attempts),
           deadline_at: new Date(Date.now() + 3600e3).toISOString(),

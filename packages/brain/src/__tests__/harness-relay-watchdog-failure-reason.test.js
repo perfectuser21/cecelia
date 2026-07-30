@@ -9,6 +9,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
 vi.mock('../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
+vi.mock('../orchestrator/kernel-run-store.js', () => ({
+  patchKernelRunById: async (db, input) => {
+    await db.query(
+      `UPDATE initiative_runs SET phase='${input.phase}',
+         failure_reason=COALESCE(failure_reason, '${input.failureReason ?? ''}')
+       WHERE id=$1`,
+      [input.runId],
+    );
+    await db.query(`UPDATE tasks SET status='${input.phase === 'done' ? 'completed' : 'failed'}'`);
+    return { id: input.runId, phase: input.phase };
+  },
+}));
 
 import { resumeStalledRelayRuns } from '../harness-relay-watchdog.js';
 
@@ -18,7 +30,7 @@ function makePool(taskStatus) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql) => {
     const s = String(sql);
-    if (/DISTINCT ON \(initiative_id\)/.test(s)) {
+    if (/FROM initiative_runs r/.test(s)) {
       return {
         rows: [{
           id: 'run-1', initiative_id: TASK_ID, current_task_id: TASK_ID,

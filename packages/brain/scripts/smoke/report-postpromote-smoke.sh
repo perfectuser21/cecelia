@@ -41,8 +41,9 @@ if(!/NOT EXISTS[\s\S]{0,120}initiative_id/i.test(sp)){console.error('L1 FAIL: �
 if(!/harness-report\.mjs/.test(sp)){console.error('L1 FAIL: 缺 script_path harness-report.mjs');process.exit(1)}
 
 const wd=fs.readFileSync('$WATCHDOG','utf8');
-// 生命周期闭合（UPDATE initiative_runs phase / UPDATE tasks status）由 harness-relay-watchdog.js 兜底
-if(!/UPDATE initiative_runs SET phase/.test(wd) || !/UPDATE tasks SET status/.test(wd)){console.error('L1 FAIL: harness-relay-watchdog.js 缺生命周期闭合（UPDATE initiative_runs phase / UPDATE tasks status）');process.exit(1)}
+// 生命周期闭合由 watchdog 委托 exact-run transactional terminalizer，禁止回退到 initiative 批量 UPDATE。
+if(!/_terminalizeRelayRun/.test(wd) || !/patchKernelRunById/.test(wd)){console.error('L1 FAIL: harness-relay-watchdog.js 缺 exact-run 生命周期闭合委托');process.exit(1)}
+if(/UPDATE initiative_runs SET phase/.test(wd)){console.error('L1 FAIL: watchdog 回退到 initiative 级批量 phase UPDATE');process.exit(1)}
 
 const r=fs.readFileSync('$RUNNER','utf8');
 if(!/spawnHarnessReport/.test(r)){console.error('L1 FAIL: runner auto_promoted 未派 report');process.exit(1)}
@@ -53,7 +54,7 @@ if(!/spawnHarnessReport/.test(rt)){console.error('L1 FAIL: confirm 路由 promot
 const m=fs.readFileSync('$MIG307','utf8');
 if(/CREATE TABLE/i.test(m)){console.error('L1 FAIL: 307 不该 CREATE TABLE');process.exit(1)}
 if(!/promoted_by/.test(m) || !/ADD COLUMN/i.test(m)){console.error('L1 FAIL: 307 缺 promoted_by ALTER');process.exit(1)}
-console.log('[smoke] L1 PASS: 三态派发 + 幂等 + watchdog生命周期闭合 + migration307 齐全');
+console.log('[smoke] L1 PASS: 三态派发 + 幂等 + watchdog exact-run 生命周期闭合 + migration307 齐全');
 " || exit 1
 
 if ! curl -sf "$BRAIN/api/brain/health" >/dev/null 2>&1; then

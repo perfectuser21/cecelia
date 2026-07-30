@@ -49,11 +49,13 @@ function makePool({
   const pool = { query: vi.fn() };
 
   pool.query.mockImplementation(async (sql, params) => {
-    // initiative_runs 查询（DISTINCT ON）
-    if (/DISTINCT ON/.test(sql)) {
+    // initiative_runs exact task selector
+    if (/FROM initiative_runs r/.test(sql)) {
       return {
         rows: [{
+          id: '10000000-0000-4000-8000-000000000005',
           initiative_id: TASK_ID,
+          current_task_id: TASK_ID,
           phase: 'A_planning',
           attempts: String(attempts),
           deadline_at: new Date(Date.now() + 3600e3).toISOString(),

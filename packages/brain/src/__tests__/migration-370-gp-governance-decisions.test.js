@@ -63,7 +63,9 @@ describe('migration 370 — finalized Golden Path governance decisions', () => {
   });
 });
 
-describe('migration 370 — PostgreSQL execution and idempotency', () => {
+const HAS_REAL_POSTGRES = Boolean(process.env.DATABASE_URL || process.env.DB);
+
+describe.runIf(HAS_REAL_POSTGRES)('migration 370 — PostgreSQL execution and idempotency', () => {
   let pool;
   let client;
 

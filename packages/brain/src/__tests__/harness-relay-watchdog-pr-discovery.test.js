@@ -10,6 +10,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { mockPool } = vi.hoisted(() => ({ mockPool: { query: vi.fn() } }));
 vi.mock('../db.js', () => ({ default: mockPool }));
 vi.mock('../notifier.js', () => ({ sendBark: vi.fn().mockResolvedValue(true) }));
+vi.mock('../orchestrator/kernel-run-store.js', () => ({
+  patchKernelRunById: async (db, input) => {
+    await db.query(
+      `UPDATE initiative_runs SET phase='${input.phase}',
+         failure_reason=COALESCE(failure_reason, '${input.failureReason ?? ''}'),
+         pr_url=COALESCE(pr_url, $2) WHERE id=$1`,
+      [input.runId, input.prUrl],
+    );
+    await db.query(`UPDATE tasks SET status='${input.phase === 'done' ? 'completed' : 'failed'}'`);
+    return { id: input.runId, phase: input.phase };
+  },
+}));
 
 import {
   resumeStalledRelayRuns,
@@ -34,8 +46,8 @@ function makeDeps({
 } = {}) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql) => {
-    if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-      return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: '2', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: runPrUrl, orchestrator_host: 'skill-relay-session' }] };
+    if (/FROM initiative_runs r/.test(sql)) {
+      return { rows: [{ id: '11111111-1111-4111-8111-111111111111', initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: '2', deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: runPrUrl, orchestrator_host: 'skill-relay-session' }] };
     }
     if (/FROM tasks/.test(sql)) {
       return { rows: [{ id: TASK_ID, status: 'in_progress', title: 't', pr_url: null, payload: { orchestrator: 'skill-relay', base_repo: baseRepo } }] };
