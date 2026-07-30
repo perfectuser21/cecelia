@@ -573,95 +573,97 @@ router.get('/relay-initiatives/:initiative_id/runs', async (req, res) => {
   }
 });
 
-/**
- * 解析 :initiative_id 参数：完整 UUID 直返；8位十六进制短号 SELECT 解析；
- * 非法格式抛 {status:400}；0命中抛 {status:404}
- */
 const SHORT_ID_RE = /^[0-9a-f]{8}$/i;
 
-async function resolveRelayRunInitiativeId(rawId, pool) {
+async function resolveLegacyRunCandidates(rawId, db) {
   const isFullUUID = UUID_RE.test(rawId);
   const isShortId = SHORT_ID_RE.test(rawId);
   if (!isFullUUID && !isShortId) {
     throw { status: 400, message: 'invalid id format' };
   }
-  if (isFullUUID) return rawId;
-  // 短号解析：SELECT 找到最新非终态 v2 run 的完整 initiative_id
-  const resolveResult = await pool.query(
-    `SELECT initiative_id FROM initiative_runs
-      WHERE initiative_id::text LIKE $1
+  const condition = isFullUUID
+    ? 'initiative_id = $1'
+    : 'initiative_id::text LIKE $1';
+  const value = isFullUUID ? rawId : `${rawId}%`;
+  const { rows } = await db.query(
+    `SELECT id
+       FROM initiative_runs
+      WHERE ${condition}
         AND orchestrator_version = 'v2'
-        AND phase NOT IN ('done', 'failed')
-      ORDER BY started_at DESC
-      LIMIT 1`,
-    [`${rawId}%`]
+      ORDER BY started_at DESC, id DESC`,
+    [value],
   );
-  if (resolveResult.rows.length === 0) {
-    throw { status: 404, message: `run not found for short id: ${rawId}` };
-  }
-  return resolveResult.rows[0].initiative_id;
+  return rows;
 }
 
 /**
  * PATCH /api/brain/orchestrator/relay-runs/:initiative_id
  *
- * controller session report 步骤回写终态（skill v1.1.0 配套；治巡逻 Stuck 误报）。
- * 只接受 phase ∈ {done, failed}（中间态由 v2 观测从外部真相推导，不接受写入）；
- * 只允许改 orchestrator_version='v2' 的行；failed 可带 failure_reason。
- *
- * :initiative_id 支持两种格式：
- *   - 完整 UUID（xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）→ 现有逻辑不变
- *   - 8 位十六进制短号（/^[0-9a-f]{8}$/i）→ resolveRelayRunInitiativeId 解析到完整 UUID
+ * Deprecated compatibility adapter. It may delegate only when the supplied
+ * initiative identity resolves to exactly one historical v2 run. Ambiguity is
+ * a 409 and can never be resolved by recency.
  */
 router.patch('/relay-runs/:initiative_id', async (req, res) => {
   const { initiative_id: rawId } = req.params;
-  const { phase, failure_reason, pr_url } = req.body || {};
-  // 中间态 = controller 每棒完成后的进度上报（migration 312 枚举预留；进度条数据源）
-  const ALLOWED = ['planning', 'gan', 'generate', 'evaluate', 'done', 'failed'];
-  if (!ALLOWED.includes(phase)) {
-    return res.status(400).json({ error: 'invalid phase', allowed: ALLOWED });
+  const parsed = validateRunPatchBody(req.body);
+  if (parsed.error) {
+    return res.status(parsed.error.status).json(parsed.error.body);
   }
-  // pr_url 可选：非空必须以 https://github.com/ 开头
-  if (pr_url !== undefined && pr_url !== null) {
-    if (typeof pr_url !== 'string' || pr_url === '' || !pr_url.startsWith('https://github.com/')) {
-      return res.status(400).json({ error: 'pr_url 非法，须以 https://github.com/ 开头' });
-    }
-  }
-
-  const { warnings, evaluateVerdict, judgeVerdict, costUsd } = parseVerdictCostFields(req.body);
-
-  let initiative_id;
+  const requestPool = req.app.get('pool') || pool;
+  let candidates;
   try {
-    initiative_id = await resolveRelayRunInitiativeId(rawId, pool);
+    candidates = await resolveLegacyRunCandidates(rawId, requestPool);
   } catch (err) {
     if (err.status === 400) return res.status(400).json({ error: err.message });
-    if (err.status === 404) return res.status(404).json({ error: err.message });
     console.warn('[PATCH /orchestrator/relay-runs/:id] resolve error', rawId, err.message);
     return res.status(500).json({ error: 'internal error' });
   }
 
+  if (candidates.length === 0) {
+    return res.status(404).json({
+      error: `v2 run not found for legacy identifier: ${rawId}`,
+    });
+  }
+  if (candidates.length > 1) {
+    return res.status(409).json({
+      error: 'ambiguous_legacy_run',
+      candidate_count: candidates.length,
+      canonical_endpoint: '/api/brain/orchestrator/relay-runs/by-id/:run_id',
+    });
+  }
+
+  const runId = candidates[0].id;
   try {
-    const result = await pool.query(
-      `UPDATE initiative_runs
-         SET phase = $2,
-             completed_at = CASE WHEN $2 IN ('done','failed') THEN COALESCE(completed_at, NOW()) ELSE completed_at END,
-             failure_reason = COALESCE($3, failure_reason),
-             pr_url = COALESCE($4, pr_url),
-             evaluate_verdict = COALESCE($5, evaluate_verdict),
-             judge_verdict = COALESCE($6, judge_verdict),
-             cost_usd = COALESCE($7, cost_usd)
-       WHERE initiative_id = $1 AND orchestrator_version = 'v2'
-       RETURNING id, initiative_id, phase, completed_at, failure_reason, pr_url,
-                 evaluate_verdict, judge_verdict, cost_usd`,
-      [initiative_id, phase, failure_reason || null, pr_url || null, evaluateVerdict, judgeVerdict, costUsd]
+    await requestPool.query(
+      `INSERT INTO cecelia_events (event_type, source, payload)
+       VALUES ('legacy_relay_mutation', 'relay-run-api', $1::jsonb)`,
+      [JSON.stringify({
+        legacy_identifier: rawId,
+        run_id: runId,
+        canonical_endpoint: `/api/brain/orchestrator/relay-runs/by-id/${runId}`,
+      })],
     );
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'v2 run not found for initiative_id' });
-    }
-    return res.json(warnings.length ? { ...result.rows[0], warnings } : result.rows[0]);
+    const run = await patchKernelRunById(requestPool, {
+      runId,
+      ...parsed.patch,
+    });
+    if (!run) return res.status(404).json({ error: 'run not found' });
+    const response = {
+      ...run,
+      canonical_run_id: runId,
+      deprecated: true,
+    };
+    if (parsed.warnings.length) response.warnings = parsed.warnings;
+    return res.json(response);
   } catch (err) {
-    // 500 不暴露内部 err.message（信息卫生，run-2 同规矩）
-    console.warn('[PATCH /orchestrator/relay-runs/:id] update error', initiative_id, err.message);
+    if (
+      err.message?.includes('terminal outcome conflict')
+      || err.message?.includes('parent task missing')
+      || err.message?.includes('identity changed')
+    ) {
+      return res.status(409).json({ error: err.message });
+    }
+    console.warn('[PATCH /orchestrator/relay-runs/:id] update error', rawId, err.message);
     return res.status(500).json({ error: 'internal error' });
   }
 });
