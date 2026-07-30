@@ -168,10 +168,11 @@ export async function createToolchainAttestation(input, overrides = {}) {
   return freezeAttestation(actual, expected, files, command);
 }
 export async function verifyToolchainAttestation(attestation, overrides = {}) {
-  validateAttestation(attestation);
-  if (!trusted.has(attestation)) {
+  if (attestation === null || (typeof attestation !== 'object'
+    && typeof attestation !== 'function') || !trusted.has(attestation)) {
     fail('ASSERTION_TOOLCHAIN_ATTESTATION_UNTRUSTED', 'Attestation baseline is untrusted');
   }
+  validateAttestation(attestation);
   const command = commandBindings.get(attestation);
   const tools = commandTools(command);
   if (tools.length !== attestation.files.length) fail('ASSERTION_TOOLCHAIN_DRIFT');

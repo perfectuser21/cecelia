@@ -125,7 +125,7 @@ describe('GP assertion pinned toolchain attestation', () => {
     const attestation = await createToolchainAttestation(validInput(), fs);
     const error = await verifyToolchainAttestation(forge(attestation), fs)
       .catch(reason => reason);
-    expect(error).toMatchObject({ code: 'ASSERTION_TOOLCHAIN_ATTESTATION_INVALID' });
+    expect(error).toMatchObject({ code: 'ASSERTION_TOOLCHAIN_ATTESTATION_UNTRUSTED' });
     expect(JSON.stringify(error)).not.toContain('secret');
   });
 
