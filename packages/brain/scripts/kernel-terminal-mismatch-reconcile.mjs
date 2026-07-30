@@ -58,13 +58,22 @@ const EVIDENCE_SQL = `
     FROM tasks t
     JOIN terminal_history history ON history.task_id = t.id
     JOIN latest_terminal latest ON latest.task_id = t.id
-   WHERE (
-     latest.run_phase = 'done'
-     AND t.status <> 'completed'
-   ) OR (
-     latest.run_phase = 'failed'
-     AND t.status <> 'failed'
+   WHERE NOT EXISTS (
+     SELECT 1
+       FROM initiative_runs active
+      WHERE active.current_task_id = t.id
+        AND active.orchestrator_version = 'v2'
+        AND active.phase NOT IN ('done', 'failed')
    )
+     AND (
+       (
+         latest.run_phase = 'done'
+         AND t.status <> 'completed'
+       ) OR (
+         latest.run_phase = 'failed'
+         AND t.status <> 'failed'
+       )
+     )
    ORDER BY t.id ASC
 `;
 
@@ -318,6 +327,7 @@ export async function reconcileTerminalMismatches({
         runId: repair.run_id,
         expectedTaskId: repair.task_id,
         expectedTaskStatus: repair.before_task_status,
+        requireNoActiveSibling: true,
         outcome: repair.run_phase,
         reason: repair.reason,
       });
@@ -325,7 +335,15 @@ export async function reconcileTerminalMismatches({
         const verification = await queryDb.query(
           `SELECT t.status AS task_status,
                   r.phase AS run_phase,
-                  r.current_task_id
+                  r.current_task_id,
+                  NOT EXISTS (
+                    SELECT 1
+                      FROM initiative_runs active
+                     WHERE active.current_task_id = r.current_task_id
+                       AND active.id <> r.id
+                       AND active.orchestrator_version = 'v2'
+                       AND active.phase NOT IN ('done', 'failed')
+                  ) AS no_active_sibling
              FROM initiative_runs r
              JOIN tasks t ON t.id = r.current_task_id
             WHERE r.id = $1
@@ -338,6 +356,7 @@ export async function reconcileTerminalMismatches({
           || verifiedRow.run_phase !== repair.run_phase
           || verifiedRow.task_status !== repair.after_task_status
           || verifiedRow.current_task_id !== repair.task_id
+          || verifiedRow.no_active_sibling !== true
         ) {
           throw new Error(
             `terminal repair verification failed: ${repair.run_id}/${repair.task_id}`,

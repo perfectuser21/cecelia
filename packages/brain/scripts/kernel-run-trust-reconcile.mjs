@@ -163,6 +163,93 @@ function proposalFor(row) {
   };
 }
 
+function evidenceMatches(left, right) {
+  return (
+    left.task_reference_count === right.task_reference_count
+    && left.matching_attempt_count === right.matching_attempt_count
+    && left.batch_collision_count === right.batch_collision_count
+  );
+}
+
+async function lockAndReadCurrentEvidence(client, proposal) {
+  const currentResult = await client.query(
+    `SELECT id, initiative_id, current_task_id, phase, completed_at,
+            record_trust_status, record_trust_reason
+       FROM initiative_runs
+      WHERE id = $1
+      FOR UPDATE`,
+    [proposal.run_id],
+  );
+  const current = currentResult.rows?.[0] ?? null;
+  if (!current) return null;
+
+  await client.query(
+    `SELECT pg_advisory_xact_lock(
+       hashtextextended(
+         'relay-prefix:' ||
+         lower(substr(replace($1::text, '-', ''), 1, 8)),
+         0
+       )
+     )`,
+    [current.initiative_id],
+  );
+  await client.query(
+    `SELECT pg_advisory_xact_lock(
+       hashtextextended('relay-initiative:' || $1::text, 0)
+     )`,
+    [current.initiative_id],
+  );
+  await client.query(
+    `SELECT id
+       FROM initiative_runs
+      WHERE initiative_id = $1
+      FOR UPDATE`,
+    [current.initiative_id],
+  );
+  const attemptLocks = await client.query(
+    `SELECT id
+       FROM harness_attempts
+      WHERE run_id = $1
+      FOR UPDATE`,
+    [proposal.run_id],
+  );
+  const taskLocks = current.current_task_id
+    ? await client.query(
+        `SELECT id
+           FROM tasks
+          WHERE id = $1
+          FOR KEY SHARE`,
+        [current.current_task_id],
+      )
+    : { rows: [] };
+  const collisionResult = current.completed_at === null
+    ? { rows: [{ count: '1' }] }
+    : await client.query(
+        `SELECT COUNT(*)::int AS count
+           FROM initiative_runs
+          CROSS JOIN (
+            SELECT applied_at AS historical_cutoff
+              FROM schema_version
+             WHERE version = '376'
+          ) cutover
+          WHERE initiative_id = $1
+            AND completed_at = $2
+            AND orchestrator_version = 'v2'
+            AND phase IN ('done', 'failed')
+            AND record_trust_status <> 'trusted'
+            AND started_at < cutover.historical_cutoff`,
+        [current.initiative_id, current.completed_at],
+      );
+  return {
+    run: current,
+    evidence: {
+      task_reference_count: taskLocks.rows.length,
+      matching_attempt_count: attemptLocks.rows.length,
+      batch_collision_count: Number(collisionResult.rows[0].count),
+    },
+  };
+}
+
 async function applyBatch(
   db,
   proposals,
@@ -176,6 +263,26 @@ async function applyBatch(
     await client.query('BEGIN');
     const outcomes = [];
     for (const proposal of proposals) {
+      if (failOnConflict) {
+        const currentEvidence = await lockAndReadCurrentEvidence(client, proposal);
+        const evidenceChanged = (
+          !currentEvidence
+          || currentEvidence.run.record_trust_status !== proposal.before.status
+          || currentEvidence.run.record_trust_reason !== proposal.before.reason
+          || !evidenceMatches(currentEvidence.evidence, proposal.evidence)
+        );
+        if (evidenceChanged) {
+          outcomes.push({
+            execution_id: executionId,
+            batch_id: batchId,
+            commit_state: 'pending',
+            ...proposal,
+            current_evidence: currentEvidence?.evidence ?? null,
+            outcome: 'conflict',
+          });
+          continue;
+        }
+      }
       const result = await client.query(
         `UPDATE initiative_runs
             SET record_trust_status = $2,

@@ -397,6 +397,7 @@ export async function finalizeKernelRun(pool, {
   runId,
   expectedTaskId,
   expectedTaskStatus = null,
+  requireNoActiveSibling = false,
   outcome,
   reason = null,
 }) {
@@ -423,6 +424,23 @@ export async function finalizeKernelRun(pool, {
       throw new Error(
         `Kernel task status changed: ${task.status}/${expectedTaskStatus}`,
       );
+    }
+    if (requireNoActiveSibling) {
+      const { rows: activeSiblingRows } = await client.query(
+        `SELECT id
+           FROM initiative_runs
+          WHERE current_task_id = $1
+            AND id <> $2
+            AND orchestrator_version = 'v2'
+            AND phase NOT IN ('done', 'failed')
+          FOR UPDATE`,
+        [expectedTaskId, runId],
+      );
+      if (activeSiblingRows.length > 0) {
+        throw new Error(
+          `Kernel terminal repair blocked by active sibling: ${activeSiblingRows[0].id}`,
+        );
+      }
     }
 
     // createKernelRun also locks task before run. Keeping one global order
