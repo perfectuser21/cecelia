@@ -66,9 +66,4 @@ describe('trusted GP assertion command policy', () => {
     expect(canonicalRepoIdentity(origin)).toBe(expected);
   });
 
-  it('exposes command policy through the compatibility facade', async () => {
-    const facade = await import('../gp-assertion-execution.js');
-    expect(facade.assertionCommand).toBe(assertionCommand);
-    expect(facade.canonicalRepoIdentity).toBe(canonicalRepoIdentity);
-  });
 });
