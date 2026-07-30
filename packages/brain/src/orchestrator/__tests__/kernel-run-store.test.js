@@ -174,6 +174,7 @@ describe('Kernel run store creation authority', () => {
     expect(taskLock).toBeTruthy();
     expect(insert.sql).toContain('current_task_id');
     expect(insert.sql).toContain('created_source');
+    expect(insert.sql).toContain('record_trust_status');
     expect(insert.params).toEqual([
       INITIATIVE_ID,
       'planning',
@@ -183,6 +184,7 @@ describe('Kernel run store creation authority', () => {
       null,
       TASK_ID,
       'kernel_dispatch',
+      'trusted',
     ]);
     expect(harness.order).toEqual([
       'BEGIN',
