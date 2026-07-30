@@ -320,10 +320,15 @@ export async function reconcileRunTrust({
         `database confirmation mismatch: expected ${confirmDatabase}, actual ${databaseName}`,
       );
     }
+    const wouldChange = proposals.filter(proposal => (
+      proposal.before.status !== proposal.after.status
+      || proposal.before.reason !== proposal.after.reason
+    )).length;
     const productionMetadata = productionGuards
       ? {
           database: databaseName,
           historical_cutoff: new Date(historicalCutoff).toISOString(),
+          would_change: wouldChange,
         }
       : {};
     if (!apply) {
