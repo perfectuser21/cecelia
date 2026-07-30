@@ -18,10 +18,28 @@ function validInput(overrides = {}) {
 }
 
 function fakeFileSystem(contents) {
-  return {
+  const handles = [];
+  const fs = {
     realpathFn: vi.fn(async path => path.replace('/tools/', '/real/')),
-    readFileFn: vi.fn(async path => Buffer.from(contents.get(path))),
+    openFn: vi.fn(async path => {
+      const bytes = Buffer.from(contents.get(path));
+      let sent = false;
+      const handle = {
+        stat: vi.fn(async () => ({ isFile: () => true, size: bytes.length })),
+        read: vi.fn(async buffer => {
+          if (sent) return { bytesRead: 0 };
+          sent = true;
+          bytes.copy(buffer);
+          return { bytesRead: bytes.length };
+        }),
+        close: vi.fn(),
+      };
+      handles.push(handle);
+      return handle;
+    }),
+    handles,
   };
+  return fs;
 }
 
 describe('GP assertion pinned toolchain attestation', () => {
@@ -77,6 +95,11 @@ describe('GP assertion pinned toolchain attestation', () => {
       ['/tools/node'],
       ['/tools/git'],
     ]);
+    expect(fs.handles.every(handle => (
+      handle.stat.mock.calls.length === 1
+      && handle.read.mock.calls.length >= 1
+      && handle.close.mock.calls.length === 1
+    ))).toBe(true);
     expect(attestation).toEqual({
       kind: 'pinned_toolchain',
       actual_runner_digest: RUNNER_DIGEST,
@@ -102,6 +125,27 @@ describe('GP assertion pinned toolchain attestation', () => {
       attestation,
     );
     expect(scenarioEvidence).not.toContain('binary-secret-bytes');
+  });
+
+  it.each([
+    [false, 1, 10, 'ASSERTION_TOOLCHAIN_FILE_NOT_REGULAR'],
+    [true, 0, 10, 'ASSERTION_TOOLCHAIN_FILE_EMPTY'],
+    [true, 5, 4, 'ASSERTION_TOOLCHAIN_FILE_TOO_LARGE'],
+  ])('rejects unsafe file metadata %#', async (regular, size, limit, code) => {
+    const handle = {
+      stat: vi.fn(async () => ({ isFile: () => regular, size })),
+      read: vi.fn(),
+      close: vi.fn(),
+    };
+    await expect(createToolchainAttestation(validInput({
+      toolchain_paths: ['/tools/node'],
+    }), {
+      realpathFn: vi.fn(async path => path),
+      openFn: vi.fn(async () => handle),
+      maxFileBytes: limit,
+    })).rejects.toMatchObject({ code });
+    expect(handle.read).not.toHaveBeenCalled();
+    expect(handle.close).toHaveBeenCalledOnce();
   });
 
   it('revalidates unchanged files and rejects post-execution drift', async () => {

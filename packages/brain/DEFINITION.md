@@ -1,6 +1,13 @@
 # Brain 模块定义
 
-**版本**: 1.267.142
+**版本**: 1.267.143
+
+## Pinned toolchain file safety
+
+- `gp-assertion-toolchain.js` 以 `O_NONBLOCK` 只读 fd 打开 canonical path，
+  `fstat` 确认 non-empty regular file，再在同一 fd 内有上限地流式 SHA-256。
+- pathname pre/post hash 的 ABA 窗口不在本层关闭；A10 必须提供 pinned
+  read-only Runner execution gate。本层不接 Runner/receipt。
 
 ## Pinned toolchain attestation policy
 
