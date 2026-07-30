@@ -83,6 +83,7 @@ describe('kernel-run-trust-reconcile', () => {
     });
 
     expect(result.applied).toBe(1);
+    expect(result.unchanged).toBe(0);
     expect(result.conflicts).toBe(0);
     expect(result.execution_id).toBeTruthy();
     const sqls = db.query.mock.calls.map(([sql]) => sql);
@@ -128,11 +129,97 @@ describe('kernel-run-trust-reconcile', () => {
 
     expect(result).toMatchObject({
       applied: 0,
+      unchanged: 0,
       conflicts: 1,
       execution_id: 'execution-1',
     });
     expect(appendAudit.mock.calls.map(([, content]) => content).join(''))
       .toContain('"outcome":"conflict"');
+  });
+
+  it('is repeatable: a second apply records unchanged, never conflict', async () => {
+    let status = 'untrusted';
+    let reason = null;
+    const db = {
+      query: vi.fn(async (sql, params) => {
+        if (/WITH evidence/.test(sql)) {
+          return {
+            rows: [{
+              id: RUN_ID,
+              current_task_id: TASK_ID,
+              record_trust_status: status,
+              record_trust_reason: reason,
+              task_reference_count: '1',
+              matching_attempt_count: '0',
+              batch_collision_count: '1',
+            }],
+          };
+        }
+        if (/UPDATE initiative_runs/.test(sql)) {
+          if (
+            status === params[3]
+            && reason === params[4]
+            && (status !== params[1] || reason !== params[2])
+          ) {
+            status = params[1];
+            reason = params[2];
+            return { rows: [], rowCount: 1 };
+          }
+          return { rows: [], rowCount: 0 };
+        }
+        if (/SELECT record_trust_status/.test(sql)) {
+          return {
+            rows: [{
+              record_trust_status: status,
+              record_trust_reason: reason,
+            }],
+          };
+        }
+        return { rows: [] };
+      }),
+    };
+
+    const first = await reconcileRunTrust({
+      db,
+      apply: true,
+      auditOutput: '/tmp/kernel-run-trust-first.jsonl',
+      appendAudit: vi.fn(),
+      writeLine: vi.fn(),
+      randomUUIDFn: () => 'execution-first',
+    });
+    const secondAudit = vi.fn();
+    const second = await reconcileRunTrust({
+      db,
+      apply: true,
+      auditOutput: '/tmp/kernel-run-trust-second.jsonl',
+      appendAudit: secondAudit,
+      writeLine: vi.fn(),
+      randomUUIDFn: () => 'execution-second',
+    });
+
+    expect(first).toMatchObject({ applied: 1, unchanged: 0, conflicts: 0 });
+    expect(second).toMatchObject({ applied: 0, unchanged: 1, conflicts: 0 });
+    expect(secondAudit.mock.calls.map(([, content]) => content).join(''))
+      .toContain('"outcome":"unchanged"');
+  });
+
+  it('writes row outcomes before COMMIT and rolls back if durable audit fails', async () => {
+    const db = makeDb();
+    const appendAudit = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('audit disk full'));
+
+    await expect(reconcileRunTrust({
+      db,
+      apply: true,
+      auditOutput: '/tmp/kernel-run-trust-audit-failure.jsonl',
+      appendAudit,
+      writeLine: vi.fn(),
+    })).rejects.toThrow('audit disk full');
+
+    const sqls = db.query.mock.calls.map(([sql]) => sql);
+    expect(sqls).toContain('ROLLBACK');
+    expect(sqls).not.toContain('COMMIT');
   });
 
   it('creates the production audit exclusively and seals it read-only', async () => {

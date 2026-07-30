@@ -591,6 +591,31 @@ describe('Kernel exact non-terminal patch authority', () => {
     expect(harness.order).toContain('ROLLBACK');
     expect(harness.order).not.toContain('run-update');
   });
+
+  it.each(['cancelled', 'canceled'])(
+    'rejects active progress for a %s task but may close its run as failed without rewriting cancellation',
+    async (status) => {
+      const activeHarness = exactPatchPool({
+        task: { id: TASK_ID, status },
+      });
+      await expect(patchKernelRunById(activeHarness.pool, {
+        runId: RUN_ID,
+        phase: 'generate',
+      })).rejects.toThrow(`Kernel task is terminal: ${status}`);
+
+      const terminalHarness = exactPatchPool({
+        task: { id: TASK_ID, status },
+      });
+      await patchKernelRunById(terminalHarness.pool, {
+        runId: RUN_ID,
+        phase: 'failed',
+        failureReason: 'task_cancelled',
+      });
+      expect(terminalHarness.order).toContain('run-update');
+      expect(terminalHarness.order).not.toContain('task-update');
+      expect(terminalHarness.order).toContain('COMMIT');
+    },
+  );
 });
 
 describe('Kernel terminal reconciliation authority', () => {

@@ -459,6 +459,20 @@ describe('resumeStalledRelayRuns', () => {
     expect(r.housekept).toBe(1);
   });
 
+  it.each(['cancelled', 'canceled'])(
+    'task %s → run 原子收敛 failed/task_cancelled 且保留任务取消态',
+    async (taskStatus) => {
+      const deps = makeDeps({ taskStatus });
+      const r = await resumeStalledRelayRuns(deps);
+      const runUpdate = deps.pool.query.mock.calls.find(([sql]) => (
+        /UPDATE initiative_runs/.test(sql) && /task_cancelled/.test(sql)
+      ));
+      expect(runUpdate).toBeTruthy();
+      expect(r.housekept).toBe(1);
+      expect(deps.spawnFn).not.toHaveBeenCalled();
+    },
+  );
+
   it('payload 非 skill-relay → 跳过（安全护栏，不碰 v1 任务）', async () => {
     const deps = makeDeps({ orchestrator: null });
     const r = await resumeStalledRelayRuns(deps);

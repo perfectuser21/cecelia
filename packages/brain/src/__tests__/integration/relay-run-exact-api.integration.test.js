@@ -13,6 +13,10 @@ const trustMigrationUrl = new URL(
   '../../../migrations/376_kernel_run_trust.sql',
   import.meta.url,
 );
+const insertLockMigrationUrl = new URL(
+  '../../../migrations/377_initiative_run_insert_identity_lock.sql',
+  import.meta.url,
+);
 const schema = `exact_run_${process.pid}_${randomUUID().replaceAll('-', '')}`;
 
 let client;
@@ -44,6 +48,7 @@ async function snapshotRuns() {
 beforeAll(async () => {
   const identityMigration = await readFile(identityMigrationUrl, 'utf8');
   const trustMigration = await readFile(trustMigrationUrl, 'utf8');
+  const insertLockMigration = await readFile(insertLockMigrationUrl, 'utf8');
   client = await pool.connect();
   await client.query(`CREATE SCHEMA "${schema}"`);
   await client.query(`SET search_path TO "${schema}", public`);
@@ -90,6 +95,7 @@ beforeAll(async () => {
   `);
   await client.query(identityMigration);
   await client.query(trustMigration);
+  await client.query(insertLockMigration);
 
   initiativeId = randomUUID();
   for (let index = 0; index < 25; index += 1) {
@@ -170,5 +176,69 @@ describe('exact relay run API [PostgreSQL]', () => {
     expect(history.body.map(({ id }) => id)).toEqual(
       expected.rows.map(({ id }) => id),
     );
+  });
+
+  it('atomically terminalizes an active run and task, rolling both back on task failure', async () => {
+    const taskId = randomUUID();
+    const runId = randomUUID();
+    await client.query(
+      `INSERT INTO tasks(id,task_type,status,payload)
+       VALUES($1,'harness_initiative','in_progress',$2::jsonb)`,
+      [taskId, JSON.stringify({ initiative_id: initiativeId })],
+    );
+    await client.query(
+      `INSERT INTO initiative_runs(
+         id,initiative_id,current_task_id,phase,orchestrator_version,
+         created_source,record_trust_status
+       ) VALUES($1,$2,$3,'generate','v2','kernel_dispatch','trusted')`,
+      [runId, initiativeId, taskId],
+    );
+    await client.query(`
+      CREATE OR REPLACE FUNCTION reject_test_task_failure()
+      RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.id = '${taskId}'::uuid AND NEW.status = 'failed' THEN
+          RAISE EXCEPTION 'injected task write failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$;
+      CREATE TRIGGER reject_test_task_failure
+      BEFORE UPDATE ON tasks
+      FOR EACH ROW EXECUTE FUNCTION reject_test_task_failure();
+    `);
+
+    const failed = await request(app)
+      .patch(`/api/brain/orchestrator/relay-runs/by-id/${runId}`)
+      .send({ phase: 'failed', failure_reason: 'test_failure' });
+    expect(failed.status).toBe(500);
+    const rolledBack = await client.query(
+      `SELECT r.phase,t.status
+         FROM initiative_runs r
+         JOIN tasks t ON t.id=r.current_task_id
+        WHERE r.id=$1`,
+      [runId],
+    );
+    expect(rolledBack.rows[0]).toEqual({
+      phase: 'generate',
+      status: 'in_progress',
+    });
+
+    await client.query('DROP TRIGGER reject_test_task_failure ON tasks');
+    const succeeded = await request(app)
+      .patch(`/api/brain/orchestrator/relay-runs/by-id/${runId}`)
+      .send({ phase: 'failed', failure_reason: 'test_failure' });
+    expect(succeeded.status).toBe(200);
+    const committed = await client.query(
+      `SELECT r.phase,t.status
+         FROM initiative_runs r
+         JOIN tasks t ON t.id=r.current_task_id
+        WHERE r.id=$1`,
+      [runId],
+    );
+    expect(committed.rows[0]).toEqual({
+      phase: 'failed',
+      status: 'failed',
+    });
   });
 });
