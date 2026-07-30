@@ -12,6 +12,12 @@
 
 ---
 
+## Brain 1.267.140 — Golden Path §④-1 receipt evidence schema (stack 2)
+
+- Migration 374 新增不可变 receipt 表及 `scenario_count`/`scenario_evidence`。
+- PASS 必须有非零场景数和非空场景证据；旧 PASS 只保留审计，不算当前覆盖。
+- 本层仍不执行断言，也不包含 Runner、route 或 UI，不宣称生产盖章完成。
+
 ## Brain 1.267.139 — Golden Path §④-1 receipt-state pure model
 
 - 新增纯函数 `deriveAssertionVerification`：只从调用方提供的断言格与 receipt
