@@ -8,7 +8,7 @@ import initiativesRouter from '../../routes/initiatives.js';
 import {
   createKernelRun,
   finalizeKernelRun,
-} from '../kernel-run-store.js';
+} from '../../orchestrator/kernel-run-store.js';
 
 const migrationUrl = new URL(
   '../../../migrations/375_kernel_run_identity.sql',
