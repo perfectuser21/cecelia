@@ -22,7 +22,7 @@ echo "[blade-bc smoke] 检查 harness judge 机械闸 + complete 收账权守卫
 # 1. judge — 空 behavior_tests → 机械闸拦截，返回 FAIL
 RESP=$(curl -s -X POST "$BRAIN_URL/api/brain/harness/judge" \
   -H "Content-Type: application/json" \
-  -d '{"task_id":"00000000-0000-0000-0000-000000000001","sprint_dir":"s","worktree":"/tmp","agent_verdict":"PASS","brain_result":{"behavior_tests":[],"exit_code":0,"log_tail":"ok"}}')
+  -d '{"task_id":"00000000-0000-0000-0000-000000000001","sprint_dir":"sprints/s","worktree":"/tmp","agent_verdict":"PASS","brain_result":{"behavior_tests":[],"exit_code":0,"log_tail":"ok"}}')
 VERDICT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('verdict',''))" 2>/dev/null || echo "parse_error")
 if [ "$VERDICT" != "FAIL" ]; then
   echo "[blade-bc smoke] FAIL — 空 behavior_tests 期望 verdict=FAIL，实际: $RESP"

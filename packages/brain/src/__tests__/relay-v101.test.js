@@ -1,10 +1,11 @@
 /**
  * v1.0.1 接线三件（N4 三跑实证修订，与 harness-controller skill v1.1.0 配套）：
- * 1. PATCH /api/brain/orchestrator/relay-runs/:initiative_id —— controller report 步骤回写终态
- *    （治 Brain 巡逻把 relay run 误判 Stuck at Planner 的问题）
- * 2. spawn env 补 HARNESS_NODE + HARNESS_CALLBACK_URL —— entrypoint tee stdout 观测
- * 3. /harness/callback/:containerId 对 cecelia-relay-* 容器 200 ack ——
+ * 1. spawn env 补 HARNESS_NODE + HARNESS_CALLBACK_URL —— entrypoint tee stdout 观测
+ * 2. /harness/callback/:containerId 对 cecelia-relay-* 容器 200 ack ——
  *    relay session 无 thread_lookup，免掉 entrypoint 5×404 重试尾巴（~36s/session）
+ *
+ * relay run 的回写契约已迁移到 run_id 精确寻址；永久回归由
+ * relay-runs-exact-api.test.js 与 relay-runs-legacy-adapter.test.js 承接。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
@@ -23,68 +24,6 @@ async function buildApp() {
 
 beforeEach(() => {
   mockPool.query.mockReset();
-});
-
-describe('PATCH /relay-runs/:initiative_id（controller 终态回写）', () => {
-  const ID = 'bbbbcccc-1111-2222-3333-444455556666';
-
-  it('phase=done → UPDATE v2 行 + completed_at，200 返回更新后对象', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [{ initiative_id: ID, phase: 'done' }] });
-    const app = await buildApp();
-    const r = await request(app).patch(`/api/brain/orchestrator/relay-runs/${ID}`).send({ phase: 'done' });
-    expect(r.status).toBe(200);
-    expect(r.body.phase).toBe('done');
-    const [sql, params] = mockPool.query.mock.calls[0];
-    expect(sql).toMatch(/UPDATE initiative_runs/);
-    expect(sql).toMatch(/orchestrator_version\s*=\s*'v2'/); // 只允许改 v2 行
-    expect(sql).toMatch(/completed_at/);
-    expect(params).toContain(ID);
-  });
-
-  it('phase=failed 带 failure_reason → 落 failure_reason', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [{ initiative_id: ID, phase: 'failed' }] });
-    const app = await buildApp();
-    const r = await request(app).patch(`/api/brain/orchestrator/relay-runs/${ID}`).send({ phase: 'failed', failure_reason: '账号 401' });
-    expect(r.status).toBe(200);
-    const [sql, params] = mockPool.query.mock.calls[0];
-    expect(sql).toMatch(/failure_reason/);
-    expect(params).toContain('账号 401');
-  });
-
-  // 行为变更（relay-watchdog PR）：白名单扩到 312 中间态（进度条数据源），
-  // planning/gan/generate/evaluate 从 400 变为合法——本测试同步到新语义。
-  it('phase 白名单外（如 bogus）→ 400 + allowed 列表，零 DB 调用', async () => {
-    const app = await buildApp();
-    const r = await request(app).patch(`/api/brain/orchestrator/relay-runs/${ID}`).send({ phase: 'bogus' });
-    expect(r.status).toBe(400);
-    expect(r.body.allowed).toEqual(['planning', 'gan', 'generate', 'evaluate', 'done', 'failed']);
-    expect(mockPool.query).not.toHaveBeenCalled();
-  });
-
-  it('中间态 phase=generate → 200 且不写 completed_at（进度上报语义）', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [{ initiative_id: ID, phase: 'generate' }] });
-    const app = await buildApp();
-    const r = await request(app).patch(`/api/brain/orchestrator/relay-runs/${ID}`).send({ phase: 'generate' });
-    expect(r.status).toBe(200);
-    const [sql] = mockPool.query.mock.calls[0];
-    expect(sql).toMatch(/CASE WHEN \$2 IN \('done','failed'\)/);
-  });
-
-  it('目标不存在或非 v2 → 404 JSON', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [] });
-    const app = await buildApp();
-    const r = await request(app).patch(`/api/brain/orchestrator/relay-runs/${ID}`).send({ phase: 'done' });
-    expect(r.status).toBe(404);
-    expect(r.body.error).toBeTruthy();
-  });
-
-  it('DB 失败 → 500 JSON 且不暴露内部 err.message', async () => {
-    mockPool.query.mockRejectedValueOnce(new Error('pg secret detail'));
-    const app = await buildApp();
-    const r = await request(app).patch(`/api/brain/orchestrator/relay-runs/${ID}`).send({ phase: 'done' });
-    expect(r.status).toBe(500);
-    expect(JSON.stringify(r.body)).not.toContain('pg secret detail');
-  });
 });
 
 describe('spawn env 观测接线（HARNESS_NODE + HARNESS_CALLBACK_URL）', () => {

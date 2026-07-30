@@ -1,30 +1,32 @@
 #!/usr/bin/env bash
 # Smoke: relay-verdict-writeback — PATCH relay-runs 接住 verdict/cost/evaluate_verdict
 # 验证（结构断言，repo 根目录执行）：
-#   1. initiatives.js PATCH handler 含三列 COALESCE 写入 + RETURNING 扩列
+#   1. route 完成归一并委托 exact-run store；store 含三列 COALESCE 写入
 #   2. best-effort 归一化存在（normVerdict + warnings），且归一化块不含 400 拒绝
 #      （铁律：非法 verdict/cost 绝不 400，否则打回 phase=done 终态 → watchdog 重点火）
 #   3. 回归测试文件在位（永久守卫）
 set -euo pipefail
 
-echo "[relay-verdict-writeback-smoke] 1. PATCH handler 三列写入结构"
+echo "[relay-verdict-writeback-smoke] 1. exact-run PATCH 三列写入结构"
 node -e "
 const fs = require('fs');
-const src = fs.readFileSync('packages/brain/src/routes/initiatives.js', 'utf8');
+const route = fs.readFileSync('packages/brain/src/routes/initiatives.js', 'utf8');
+const store = fs.readFileSync('packages/brain/src/orchestrator/kernel-run-store.js', 'utf8');
 const checks = [
-  ['evaluate_verdict = COALESCE(\$5, evaluate_verdict)', 'evaluate_verdict COALESCE 写入'],
-  ['judge_verdict = COALESCE(\$6, judge_verdict)', 'judge_verdict COALESCE 写入'],
-  ['cost_usd = COALESCE(\$7, cost_usd)', 'cost_usd COALESCE 写入'],
-  ['normVerdict', '归一化辅助存在'],
-  [\"warnings.push\", '非法值 warnings 聚合'],
+  [route, 'patchKernelRunById(requestPool', 'route 委托 exact-run store'],
+  [route, 'normVerdict', '归一化辅助存在'],
+  [route, 'warnings.push', '非法值 warnings 聚合'],
+  [store, 'evaluate_verdict = COALESCE', 'evaluate_verdict COALESCE 写入'],
+  [store, 'judge_verdict = COALESCE', 'judge_verdict COALESCE 写入'],
+  [store, 'cost_usd = COALESCE', 'cost_usd COALESCE 写入'],
 ];
-const missing = checks.filter(([p]) => !src.includes(p));
+const missing = checks.filter(([src,p]) => !src.includes(p));
 if (missing.length > 0) {
-  console.error('FAIL: initiatives.js 缺少:');
-  missing.forEach(([,d]) => console.error('  - ' + d));
+  console.error('FAIL: exact-run 回写链缺少:');
+  missing.forEach(([, ,d]) => console.error('  - ' + d));
   process.exit(1);
 }
-console.log('三列写入 + 归一化结构 ✓');
+console.log('exact-run 委托 + 三列写入 + 归一化结构 ✓');
 "
 
 echo "[relay-verdict-writeback-smoke] 2. 归一化块无 400 拒绝（防 watchdog 重点火铁律）"

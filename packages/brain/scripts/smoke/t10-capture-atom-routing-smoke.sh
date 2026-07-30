@@ -22,6 +22,7 @@ DB_NAME="${DB_NAME:-cecelia_test}"
 DB_HOST="${DB_HOST:-localhost}"
 DB_PORT="${DB_PORT:-5432}"
 DB_USER="${DB_USER:-cecelia}"
+DB_PASSWORD="${DB_PASSWORD:-${PGPASSWORD:-}}"
 
 # 硬护栏：绝不允许本 smoke 脚本写入生产库 cecelia（2026-07-30 事故根因）
 if [ "$DB_NAME" = "cecelia" ]; then
@@ -85,7 +86,7 @@ await pool.end();
 echo "$RESULT" | grep -q '"id"' || { echo "FAIL: createAutoLearning 未返回 id（learnings 主写入未成功）"; exit 1; }
 echo "  learning 写入结果: $RESULT"
 
-COUNT=$(psql "$DB" -t -c "
+COUNT=$(PGPASSWORD="$DB_PASSWORD" psql "$DB" -t -c "
   SELECT count(*) FROM capture_atoms ca
   JOIN captures c ON c.id = ca.capture_id
   WHERE ca.target_type = 'learning'
