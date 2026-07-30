@@ -2,6 +2,17 @@
 export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH
 # Cecelia-Run: 无头执行器（Stop Hook 驱动）
 #
+# _SELF_PATH：解析软链后的脚本真实路径（Issue cc28d1af 根因A）。
+# 本脚本经 ~/bin/cecelia-run 软链调用时，裸 BASH_SOURCE 的 dirname 是 ~/bin，
+# 往上跳三级推 repo 根会得到 / → launcher 拼成 //scripts/claude-launch.sh →
+# 每次派发 exit 127 秒挂。所有"从脚本自身位置推路径"必须用 _SELF_PATH。
+_SELF_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$_SELF_PATH" ]]; do
+  _SELF_LINK="$(readlink "$_SELF_PATH")"
+  if [[ "$_SELF_LINK" == /* ]]; then _SELF_PATH="$_SELF_LINK"
+  else _SELF_PATH="$(dirname "$_SELF_PATH")/$_SELF_LINK"; fi
+done
+#
 # 用法:
 #   cecelia-run <task_id> <checkpoint_id> <prompt_file>
 #
@@ -60,7 +71,7 @@ if [[ "$_DRY_RUN" == "1" ]]; then
   _TASK_ID="${1:-}"
   [[ "$_TASK_ID" == "--dry-run" ]] && _TASK_ID="${2:-}"
   _SID=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]' || python3 -c 'import uuid; print(uuid.uuid4())')
-  _LAUNCHER="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/claude-launch.sh"
+  _LAUNCHER="$(cd "$(dirname "$_SELF_PATH")/../../.." && pwd)/scripts/claude-launch.sh"
   echo "CECELIA_DISPATCH=1 CECELIA_LAUNCHED_BY=cecelia-run HARNESS_TASK_ID=$_TASK_ID CLAUDE_SESSION_ID=$_SID bash $_LAUNCHER -p <prompt>"
   exit 0
 fi
@@ -636,7 +647,7 @@ main() {
     if [[ $attempt -eq 1 ]]; then
       # Phase 7.1: 走统一 claude-launch.sh（从 script 路径推算到 scripts/claude-launch.sh）
       local _launcher
-      _launcher="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/claude-launch.sh"
+      _launcher="$(cd "$(dirname "$_SELF_PATH")/../../.." && pwd)/scripts/claude-launch.sh"
       CLAUDE_INVOKE="CECELIA_DISPATCH=1 CECELIA_LAUNCHED_BY=cecelia-run HARNESS_TASK_ID=$TASK_ID CLAUDE_SESSION_ID=$SESSION_UUID bash $_launcher -p \"\$1\""
     else
       echo "[cecelia-run] 🔄 从 checkpoint resume (attempt=$attempt, session=$SESSION_UUID)" >&2

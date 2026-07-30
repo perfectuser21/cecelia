@@ -6,13 +6,13 @@
 
 
 
-**Brain 版本**: 1.267.134
+**Brain 版本**: 1.267.135
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.267.134 — Golden Path §③ ledger data knife
+## Brain 1.267.135 — Golden Path §③ ledger data knife
 
 - Migration 373 在既有 `journey_step_links` 上完成证据诚实回填，不新建平行
   账本：真实 feature 锚点和 GP-B Path 4 业务 smoke 入格，历史自由文本规范化；
