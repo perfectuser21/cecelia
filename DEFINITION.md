@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.141
+**Brain 版本**: 1.267.142
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.142 — Pinned toolchain attestation policy
+
+- 新增两阶段纯策略：执行前校验 Phase 4A NodeProfile 的 expected/actual Runner
+  digest，并对 realpath 后的工具链文件逐一 SHA-256；执行后复验漂移。
+- 缺 pinned digest、路径或文件一致性即禁止盖章；attestation 可写入场景证据但
+  不含文件内容。本层不接 Runner/receipt。回退：部署 Brain `1.267.141`。
 
 ## Brain 1.267.141 — Trusted assertion invocation manifest
 
