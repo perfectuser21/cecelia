@@ -158,7 +158,7 @@
 - Kernel 将结构化 `provider_timeout` 归类为 infrastructure failure，保留既有
   receipt、attestation 与 Commander failover 边界。
 - 三机固定 Runner：
-  `sha256:6b6c4f9381aefd41d3cac723943e81143344f584971bf715beca04cc9bdb30ea`。
+  `sha256:21b29766c7c5676f28a1f1c328eebde88e1952fd29cb9dc433874bfff0a1a05d`。
   该 artifact 以已部署的
   `sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7`
   为只读基线，仅叠加本版本审阅后的 Runner entrypoint。
