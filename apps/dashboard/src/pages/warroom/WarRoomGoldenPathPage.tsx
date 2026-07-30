@@ -9,17 +9,32 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertCircle, Zap, RefreshCw } from 'lucide-react';
 import ConversationsPanel from './ConversationsPanel';
+import GoldenPathLedgerPanel, { type StepLedger } from './GoldenPathLedgerPanel';
 
 // ── 类型 ─────────────────────────────────────────────────────────────────────
 
 interface GoldenPath {
   id: string;
-  name: string;
+  name?: string | null;
   title?: string | null;
   one_liner?: string | null;
   status?: string | null;
   journey_id?: string | null;
   description?: string | null;
+}
+
+interface JourneyStep {
+  id: string;
+  step_number: number;
+}
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${response.status}`);
+  }
+  return response.json();
 }
 
 // ── 主页面 ────────────────────────────────────────────────────────────────────
@@ -31,41 +46,75 @@ export default function WarRoomGoldenPathPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [ledgers, setLedgers] = useState<StepLedger[]>([]);
+  const [ledgerUnavailable, setLedgerUnavailable] = useState(false);
 
-  const fetchGp = useCallback(async (silent = false) => {
-    if (!gpId) return;
+  const loadPage = useCallback(async (silent = false) => {
+    if (!gpId) {
+      setError('GP 不存在或已归档');
+      setLoading(false);
+      return;
+    }
     if (!silent) setLoading(true);
     else setRefreshing(true);
     setError(null);
+    let resolvedGp: GoldenPath | null = null;
+
     try {
-      const res = await fetch(`/api/brain/golden-path/${encodeURIComponent(gpId)}`);
-      if (!res.ok) {
-        if (res.status === 404) {
-          setError('GP 不存在或已归档');
-        } else {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.error || `HTTP ${res.status}`);
-        }
+      const gpResponse = await fetchJson<{ golden_paths?: GoldenPath[] }>(
+        '/api/brain/golden-paths',
+      );
+      resolvedGp = (gpResponse.golden_paths || []).find((candidate) => candidate.id === gpId) || null;
+
+      if (!resolvedGp) {
+        setGp(null);
+        setLedgers([]);
+        setError('GP 不存在或已归档');
         return;
       }
-      const data = await res.json();
-      setGp(data.golden_path || data);
-    } catch (e: any) {
-      setError(e.message || '加载失败');
+
+      setGp(resolvedGp);
+      if (!resolvedGp.journey_id) {
+        setLedgers([]);
+        setLedgerUnavailable(true);
+        return;
+      }
+
+      const journeyId = encodeURIComponent(resolvedGp.journey_id);
+      const steps = await fetchJson<JourneyStep[]>(
+        `/api/brain/journey_steps?journey_id=${journeyId}`,
+      );
+      const orderedSteps = [...steps].sort((a, b) => a.step_number - b.step_number);
+      const nextLedgers = await Promise.all(
+        orderedSteps.map((step) => fetchJson<StepLedger>(
+          `/api/brain/journey_steps/${encodeURIComponent(step.id)}/ledger`,
+        )),
+      );
+
+      setLedgers(nextLedgers);
+      setLedgerUnavailable(false);
+    } catch {
+      if (resolvedGp) {
+        setGp(resolvedGp);
+        setLedgerUnavailable(true);
+      } else {
+        setGp(null);
+        setError('GP 数据不可用');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, [gpId]);
 
-  useEffect(() => { fetchGp(); }, [fetchGp]);
+  useEffect(() => { loadPage(); }, [loadPage]);
 
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="flex items-center gap-3 text-slate-400">
+        <div role="status" aria-live="polite" className="flex items-center gap-3 text-slate-400">
           <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm">加载 GP 数据…</span>
+          <span className="text-sm">加载 GP 与断言账本…</span>
         </div>
       </div>
     );
@@ -79,6 +128,7 @@ export default function WarRoomGoldenPathPage() {
           <div className="text-sm text-red-400">{error || 'GP 不存在或已归档'}</div>
           <button
             onClick={() => navigate(-1)}
+            aria-label="返回战情室"
             className="text-sm text-blue-400 hover:text-blue-300 underline"
           >
             返回
@@ -88,7 +138,7 @@ export default function WarRoomGoldenPathPage() {
     );
   }
 
-  const displayTitle = gp.title || gp.name;
+  const displayTitle = gp.title || gp.name || '未命名 GP';
   const journeyId = gp.journey_id || '';
 
   return (
@@ -97,6 +147,7 @@ export default function WarRoomGoldenPathPage() {
       <div className="border-b border-slate-800/60 bg-slate-900/80 backdrop-blur px-4 py-3 flex items-center gap-3 flex-shrink-0">
         <button
           onClick={() => navigate(-1)}
+          aria-label="返回战情室"
           className="p-1.5 rounded hover:bg-slate-700/50 text-slate-400 hover:text-slate-200 transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -116,7 +167,8 @@ export default function WarRoomGoldenPathPage() {
           )}
         </div>
         <button
-          onClick={() => fetchGp(true)}
+          onClick={() => loadPage(true)}
+          aria-label="刷新 GP 与断言账本"
           disabled={refreshing}
           className="p-1.5 rounded hover:bg-slate-700/50 text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-50"
         >
@@ -125,8 +177,8 @@ export default function WarRoomGoldenPathPage() {
       </div>
 
       {/* Body — 双栏 */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <div className="grid grid-cols-1 lg:grid-cols-2 h-full">
+      <div className="flex-1 min-h-0 overflow-y-auto lg:overflow-hidden">
+        <div className="grid grid-cols-1 lg:h-full lg:grid-cols-2">
           {/* 左栏：GP 信息 */}
           <div className="border-r border-slate-800/40 p-4 overflow-y-auto">
             <div className="space-y-4">
@@ -167,6 +219,17 @@ export default function WarRoomGoldenPathPage() {
                   )}
                 </div>
               </div>
+
+              {ledgerUnavailable ? (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200"
+                >
+                  {journeyId ? '账本数据不可用' : '该 GP 未关联 Journey，账本数据不可用'}
+                </div>
+              ) : (
+                <GoldenPathLedgerPanel ledgers={ledgers} />
+              )}
             </div>
           </div>
 
