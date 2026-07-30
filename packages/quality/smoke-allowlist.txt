@@ -163,6 +163,7 @@ slot-accounting-smoke.sh
 slot-admission-smoke.sh
 staging-e2e-endpoint-smoke.sh
 staging-unknown-line-smoke.sh
+t10-capture-atom-routing-smoke.sh
 t2-cumulative-fr-smoke.sh
 t2-liveness-four-blades-smoke.sh
 t3-context-manifest-smoke.sh

@@ -12,6 +12,7 @@
 import crypto from 'crypto';
 import pool from './db.js';
 import { callLLM } from './llm-caller.js';
+import { pushCaptureAtom } from './capture-inbox.js';
 
 const IDLE_THRESHOLD_MS = 30 * 60 * 1000; // 30 分钟
 const WORKING_MEMORY_KEY = 'last_conversation_summary_at';
@@ -157,11 +158,20 @@ export async function runConversationConsolidator() {
         [contentHash]
       );
       if (existing.rows.length === 0) {
-        await pool.query(`
+        const insertResult = await pool.query(`
           INSERT INTO learnings (title, content, category, trigger_event, content_hash, version, is_latest, digested)
           VALUES ($1, $2, 'conversation_decision', 'conversation_consolidator', $3, 1, true, false)
+          RETURNING id
         `, [summary.topic, summary.decision_content, contentHash]);
         console.log(`[conversation-consolidator] learnings 写入决策: "${summary.topic}"`);
+        // T10 统一收件箱：对话决策 learning 落库后顺手进箱
+        await pushCaptureAtom(pool, {
+          content: `learning: ${summary.topic}\n${summary.decision_content}`,
+          targetType: 'learning',
+          targetSubtype: 'conversation_decision',
+          routedToTable: 'learnings',
+          routedToId: insertResult?.rows?.[0]?.id,
+        }).catch(err => console.warn('[conversation-consolidator] pushCaptureAtom failed:', err.message));
       }
     }
 

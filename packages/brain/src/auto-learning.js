@@ -13,6 +13,7 @@ import crypto from 'crypto';
 import pool from './db.js';
 import { generateL0Summary } from './memory-utils.js';
 import { isNoiseLearningCategory } from './learning.js';
+import { pushCaptureAtom } from './capture-inbox.js';
 
 // ── 配置 ──────────────────────────────────────────────────
 export const DAILY_AUTO_LEARNING_BUDGET = 50;
@@ -114,6 +115,15 @@ export async function createAutoLearning({ title, category, content, triggerEven
 
     const learningId = result.rows[0].id;
     console.log(`[auto-learning] Created learning: ${title} (id: ${learningId}, hash: ${contentHash})`);
+
+    // T10 统一收件箱：自动学习 learning 落库后顺手进箱
+    await pushCaptureAtom(dbPool, {
+      content: `learning: ${title}\n${content}`,
+      targetType: 'learning',
+      targetSubtype: category,
+      routedToTable: 'learnings',
+      routedToId: learningId,
+    }).catch(err => console.warn('[auto-learning] pushCaptureAtom failed:', err.message));
 
     return result.rows[0];
   } catch (error) {

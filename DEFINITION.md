@@ -6,11 +6,27 @@
 
 
 
-**Brain 版本**: 1.267.135
+**Brain 版本**: 1.267.136
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.136 — T10 统一收件箱路由补齐（learnings → capture_atoms）
+
+- `packages/brain/src/` 下 11 处 `INSERT INTO learnings` 调用点（`cortex.js`、
+  `executor.js`、`conversation-consolidator.js`、`learning.js`×2、
+  `auto-learning.js`、`chat-action-dispatcher.js`×2、`decision-executor.js`×2、
+  `fact-extractor.js`）补齐 `pushCaptureAtom` 调用，对齐已接入路径
+  （`learning.js::recordLearning`）的既有容错模式（失败仅 `console.warn`，
+  不阻断 `learnings` 主写入）。
+- 新增 1 条永久 CI 结构性回归测试（source-code inspection，零 mock，遍历全部
+  `INSERT INTO learnings` 调用点）+ 1 条 `cortex.js::recordLearnings` 行为级
+  复现测试，防止未来新增写入点再次漏接统一收件箱。
+- 不改动已接入的 2 处（`learning.js::recordLearning`、`routes/tasks.js`
+  learnings-received 端点）、不改动 `capture-inbox.js` 内部实现、不改动
+  `ledger-hygiene.js` m7 探针判定逻辑。
+- 回退：部署 Brain `1.267.135`；本次改动为纯代码路径接线补齐，无 migration。
 
 ## Brain 1.267.135 — Golden Path §③ ledger data knife
 

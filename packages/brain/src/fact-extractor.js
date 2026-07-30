@@ -16,6 +16,8 @@
  *   - fire-and-forget 调用，失败静默
  */
 
+import { pushCaptureAtom } from './capture-inbox.js';
+
 // ─────────────────────────────────────────────
 // 1. 正则模式定义
 // ─────────────────────────────────────────────
@@ -380,13 +382,22 @@ export async function saveCorrections(pool, corrections, rawMessage) {
       );
       if (existing.rows.length > 0) continue;
 
-      await pool.query(
+      const insertResult = await pool.query(
         `INSERT INTO learnings
            (title, content, summary, category, trigger_event, content_hash, version, is_latest, digested)
-         VALUES ($1, $2, $3, 'behavior_correction', $4, $5, 1, true, false)`,
+         VALUES ($1, $2, $3, 'behavior_correction', $4, $5, 1, true, false)
+         RETURNING id`,
         [title, content, title, rawMessage?.slice(0, 100) || '', contentHash]
       );
       console.log(`[fact-extractor] 行为纠正已记录: "${correction.value}"`);
+      // T10 统一收件箱：行为纠正 learning 落库后顺手进箱
+      await pushCaptureAtom(pool, {
+        content: `learning: ${title}\n${content}`,
+        targetType: 'learning',
+        targetSubtype: 'behavior_correction',
+        routedToTable: 'learnings',
+        routedToId: insertResult?.rows?.[0]?.id,
+      }).catch(err => console.warn('[fact-extractor] pushCaptureAtom failed:', err.message));
     } catch (err) {
       console.warn('[fact-extractor] saveCorrections failed:', err.message);
     }

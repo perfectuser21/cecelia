@@ -17,6 +17,7 @@ import { createTask } from './actions.js';
 import { parseIntent, parseAndCreate, INTENT_TYPES } from './intent.js';
 import { linkEntities } from './entity-linker.js';
 import { addSource } from './notebook-adapter.js';
+import { pushCaptureAtom } from './capture-inbox.js';
 import crypto from 'crypto';
 
 /**
@@ -122,11 +123,20 @@ async function execCreateLearning(params) {
     await pool.query('UPDATE learnings SET version = $1 WHERE id = $2', [nv, eid]);
     return `\n\n✅ 已更新学习记录（第 ${nv} 版）：${title}`;
   }
-  await pool.query(
+  const clInsertResult = await pool.query(
     `INSERT INTO learnings (title, category, content, trigger_event, content_hash, version, is_latest)
-     VALUES ($1, $2, $3, $4, $5, 1, true)`,
+     VALUES ($1, $2, $3, $4, $5, 1, true)
+     RETURNING id`,
     [title, 'manual', title, 'chat_action', clHash]
   );
+  // T10 统一收件箱：chat /learn 手动记录 learning 落库后顺手进箱
+  await pushCaptureAtom(pool, {
+    content: `learning: ${title}`,
+    targetType: 'learning',
+    targetSubtype: 'manual',
+    routedToTable: 'learnings',
+    routedToId: clInsertResult?.rows?.[0]?.id,
+  }).catch(err => console.warn('[chat-action-dispatcher] pushCaptureAtom failed:', err.message));
   return `\n\n✅ 已记录学习：${title}`;
 }
 
@@ -263,11 +273,20 @@ async function handleLlmLearn(title, entities, message) {
     return `\n\n✅ 已更新学习记录（第 ${nv} 版）：${title}`;
   }
 
-  await pool.query(
+  const llmLearnInsertResult = await pool.query(
     `INSERT INTO learnings (title, category, content, trigger_event, digested, content_hash, version, is_latest)
-     VALUES ($1, $2, $3, $4, false, $5, 1, true)`,
+     VALUES ($1, $2, $3, $4, false, $5, 1, true)
+     RETURNING id`,
     [title, 'user_shared', learnContent, 'chat_llm', learnHash]
   );
+  // T10 统一收件箱：chat LLM 意图识别记录 learning 落库后顺手进箱
+  await pushCaptureAtom(pool, {
+    content: `learning: ${title}\n${learnContent}`,
+    targetType: 'learning',
+    targetSubtype: 'user_shared',
+    routedToTable: 'learnings',
+    routedToId: llmLearnInsertResult?.rows?.[0]?.id,
+  }).catch(err => console.warn('[chat-action-dispatcher] pushCaptureAtom failed:', err.message));
   await pool.query(
     `INSERT INTO memory_stream (content, importance, memory_type, expires_at)
      VALUES ($1, 5, 'long', NOW() + INTERVAL '30 days')`,

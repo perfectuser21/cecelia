@@ -1,0 +1,23 @@
+{
+  "phase": "gan",
+  "round": 1,
+  "verdict": "APPROVED",
+  "sha7": "2f4d9f1",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 9,
+    "test_is_red": 10,
+    "internal_consistency": 9,
+    "risk_registered": 7,
+    "verification_oracle_completeness": 8,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 0,
+  "judgments_note": "判定点登记表显式 N/A（纯代码路径接线补齐，不涉及 RPA/真机/外部系统状态推断），非漏写",
+  "iron_rules_coverage": "14/14 invariants mapped in contract-dod.md",
+  "format_gate": {
+    "behavior_count": 7,
+    "e2e_section_present": true,
+    "manual_bash_present": true
+  }
+}
