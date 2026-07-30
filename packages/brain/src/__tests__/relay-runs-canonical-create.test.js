@@ -1,9 +1,3 @@
-/**
- * Legacy POST /orchestrator/relay-runs/:initiative_id compatibility adapter.
- *
- * It may remain during the PR2 migration window, but it must never infer a
- * task identity or create an identity-less v2 run.
- */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
@@ -33,7 +27,7 @@ async function buildApp() {
   return app;
 }
 
-describe('legacy POST /orchestrator/relay-runs/:initiative_id', () => {
+describe('canonical POST /orchestrator/relay-runs', () => {
   beforeEach(() => {
     mockPool.query.mockReset();
     mockPool.connect.mockReset();
@@ -51,43 +45,34 @@ describe('legacy POST /orchestrator/relay-runs/:initiative_id', () => {
     });
   });
 
-  it('rejects an empty body instead of inferring current_task_id', async () => {
+  it.each([
+    {},
+    { initiative_id: INITIATIVE_ID },
+    {
+      initiative_id: INITIATIVE_ID,
+      current_task_id: TASK_ID,
+    },
+  ])('requires initiative, task, and source identity: %j', async (body) => {
     const app = await buildApp();
 
     const response = await request(app)
-      .post(`/api/brain/orchestrator/relay-runs/${INITIATIVE_ID}`)
-      .send({});
-
-    expect(response.status).toBe(400);
-    expect(response.body.error).toMatch(/current_task_id.*created_source/);
-    expect(mockCreateKernelRun).not.toHaveBeenCalled();
-  });
-
-  it('rejects an invalid phase before opening a transaction', async () => {
-    const app = await buildApp();
-
-    const response = await request(app)
-      .post(`/api/brain/orchestrator/relay-runs/${INITIATIVE_ID}`)
-      .send({
-        current_task_id: TASK_ID,
-        created_source: 'foreground_handoff',
-        phase: 'bogus',
-      });
+      .post('/api/brain/orchestrator/relay-runs')
+      .send(body);
 
     expect(response.status).toBe(400);
     expect(mockCreateKernelRun).not.toHaveBeenCalled();
   });
 
-  it('delegates a fully identified request to the transactional authority', async () => {
+  it('returns the authoritative run id and identity', async () => {
     const app = await buildApp();
 
     const response = await request(app)
-      .post(`/api/brain/orchestrator/relay-runs/${INITIATIVE_ID}`)
+      .post('/api/brain/orchestrator/relay-runs')
       .send({
+        initiative_id: INITIATIVE_ID,
         current_task_id: TASK_ID,
         created_source: 'foreground_handoff',
         phase: 'planning',
-        journey_id: null,
       });
 
     expect(response.status).toBe(201);
@@ -95,44 +80,28 @@ describe('legacy POST /orchestrator/relay-runs/:initiative_id', () => {
       created: true,
       run: {
         id: RUN_ID,
+        initiative_id: INITIATIVE_ID,
         current_task_id: TASK_ID,
         created_source: 'foreground_handoff',
       },
-    });
-    expect(mockCreateKernelRun).toHaveBeenCalledWith(mockPool, {
-      taskId: TASK_ID,
-      initiativeId: INITIATIVE_ID,
-      phase: 'planning',
-      journeyId: null,
-      abilityId: null,
-      host: 'foreground',
-      deadlineHours: 6,
-      createdSource: 'foreground_handoff',
     });
   });
 
-  it('returns the existing active run as an idempotent 200', async () => {
-    mockCreateKernelRun.mockResolvedValueOnce({
-      created: false,
-      run: {
-        id: RUN_ID,
-        initiative_id: INITIATIVE_ID,
-        current_task_id: TASK_ID,
-        phase: 'gan',
-        created_source: 'foreground_handoff',
-      },
-    });
+  it('fails closed when the task is not eligible', async () => {
+    mockCreateKernelRun.mockRejectedValueOnce(
+      new Error(`kernel run task ${TASK_ID} not eligible`),
+    );
     const app = await buildApp();
 
     const response = await request(app)
-      .post(`/api/brain/orchestrator/relay-runs/${INITIATIVE_ID}`)
+      .post('/api/brain/orchestrator/relay-runs')
       .send({
+        initiative_id: INITIATIVE_ID,
         current_task_id: TASK_ID,
         created_source: 'foreground_handoff',
       });
 
-    expect(response.status).toBe(200);
-    expect(response.body.created).toBe(false);
-    expect(response.body.run.id).toBe(RUN_ID);
+    expect(response.status).toBe(409);
+    expect(response.body.error).toContain('not eligible');
   });
 });
