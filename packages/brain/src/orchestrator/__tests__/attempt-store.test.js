@@ -72,7 +72,7 @@ describe('attempt store', () => {
 
     expect(client.query.mock.calls[0][0]).toBe('BEGIN');
     expect(client.query.mock.calls[1][0]).toMatch(
-      /WITH locked_run AS MATERIALIZED[\s\S]*FROM initiative_runs[\s\S]*FOR UPDATE[\s\S]*JOIN harness_attempts attempt[\s\S]*FOR UPDATE OF attempt/i,
+      /WITH decision_lock AS MATERIALIZED[\s\S]*pg_advisory_xact_lock[\s\S]*locked_run AS MATERIALIZED[\s\S]*JOIN initiative_runs run[\s\S]*FOR UPDATE OF run[\s\S]*JOIN harness_attempts attempt[\s\S]*FOR UPDATE OF attempt/i,
     );
     expect(client.query.mock.calls[2][0]).toMatch(
       /lease_generation.*status NOT IN/is,
@@ -122,7 +122,7 @@ describe('attempt store', () => {
 
     expect(client.query.mock.calls.map(([sql]) => sql)).toEqual([
       'BEGIN',
-      expect.stringMatching(/WITH locked_run AS MATERIALIZED/i),
+      expect.stringMatching(/WITH decision_lock AS MATERIALIZED/i),
       'ROLLBACK',
     ]);
   });

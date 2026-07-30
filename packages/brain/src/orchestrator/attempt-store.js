@@ -535,12 +535,15 @@ export function createAttemptStore(pool) {
         await client.query('BEGIN');
         transactionOpen = true;
         const attempt = firstRow(await client.query(
-          `WITH locked_run AS MATERIALIZED (
-             SELECT id, phase
-               FROM initiative_runs
-              WHERE id=$2
-                AND orchestrator_version='v2'
-              FOR UPDATE
+          `WITH decision_lock AS MATERIALIZED (
+             SELECT pg_advisory_xact_lock(hashtext($2::text)) AS locked
+           ),
+           locked_run AS MATERIALIZED (
+             SELECT run.id, run.phase
+               FROM decision_lock
+               JOIN initiative_runs run ON run.id=$2::uuid
+              WHERE run.orchestrator_version='v2'
+              FOR UPDATE OF run
            )
            SELECT attempt.*, locked_run.phase AS run_phase
              FROM locked_run
@@ -612,9 +615,7 @@ export function createAttemptStore(pool) {
 
         const detail = callbackEventDetail(terminalAttempt, result, leaseGeneration);
         await client.query(
-          `WITH lock AS (
-             SELECT pg_advisory_xact_lock(hashtext($1::text))
-           ), next_hop AS (
+          `WITH next_hop AS (
              SELECT COALESCE(MAX(hop), 0) + 1 AS hop
                FROM orchestrator_decision_log
               WHERE run_id=$1::uuid
@@ -623,7 +624,7 @@ export function createAttemptStore(pool) {
              (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
            SELECT $1::uuid, next_hop.hop, $2::jsonb, $3, $4,
                   'verdict:attempt_callback', $5::jsonb
-             FROM lock, next_hop
+             FROM next_hop
             WHERE NOT EXISTS (
               SELECT 1
                 FROM orchestrator_decision_log
