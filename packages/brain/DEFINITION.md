@@ -1,6 +1,13 @@
 # Brain 模块定义
 
-**版本**: 1.267.139
+**版本**: 1.267.140
+
+## Trusted assertion command and source policy
+
+- `gp-assertion-command.js` 仅接受固定 Vitest、Pytest 与 bash smoke 形态，拒绝
+  shell 元字符、仓库外路径、逃逸 symlink 和未跟踪目标，并固定包级 cwd。
+- 来源身份读取规范 Git SHA、去凭据 origin 和 clean 状态；本层不执行 Runner、
+  不写 receipt，也不接 API/UI。
 
 ## Trusted assertion process executor
 

@@ -6,11 +6,17 @@
 
 
 
-**Brain 版本**: 1.267.139
+**Brain 版本**: 1.267.140
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.140 — Trusted assertion command and source policy
+
+- 新增固定命令白名单、canonical path/git-tracked 校验、包级 cwd 与无凭据
+  repository identity；兼容 facade 复用既有无 shell 进程执行器。
+- 本层不接线 Runner、receipt、API 或 UI。回退：部署 Brain `1.267.139`。
 
 ## Brain 1.267.139 — Trusted assertion process executor
 
