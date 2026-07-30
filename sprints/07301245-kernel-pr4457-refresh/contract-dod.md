@@ -12,9 +12,13 @@ target_environment: local_api
 
 - [ ] [ARTIFACT] 33 路径 oracle manifest 的 schema、不可变 ID、完整 argv/观察与语义哈希精确匹配合同。
   gate-allow: weak-oracle/file-existence-only 此命令读取 JSON 后校验 schema、33 个唯一 path/ID、每行 argv/观察与冻结语义 SHA-256，非仅存在性检查。
-  Test: node -e "const fs=require('fs'),c=require('crypto'),p='sprints/07301245-kernel-pr4457-refresh/conflict-oracle-manifest.json',x=JSON.parse(fs.readFileSync(p,'utf8')),sort=v=>Array.isArray(v)?v.map(sort):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,sort(v[k])])):v;x.subjects.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);const ids=x.subjects.map(v=>v.oracle_id),paths=x.subjects.map(v=>v.path),h=c.createHash('sha256').update(JSON.stringify(sort(x))).digest('hex');if(x.schema_version!==1||paths.length!==33||new Set(paths).size!==33||new Set(ids).size!==33||ids.slice().sort().join(',')!==Array.from({length:33},(_,i)=>'C'+String(i+1).padStart(2,'0')).join(',')||x.subjects.some(v=>!v.cwd||!Array.isArray(v.argv)||!v.argv.length||!v.expected_observation.includes('exit_code=0'))||h!=='97166a9ecfec61572691cfee4b1dfa6a567657ca92663e00f7923b7fe9920460')process.exit(1)"
+  Test: node -e "const fs=require('fs'),c=require('crypto'),p='sprints/07301245-kernel-pr4457-refresh/conflict-oracle-manifest.json',x=JSON.parse(fs.readFileSync(p,'utf8')),sort=v=>Array.isArray(v)?v.map(sort):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,sort(v[k])])):v;x.subjects.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);const ids=x.subjects.map(v=>v.oracle_id),paths=x.subjects.map(v=>v.path),h=c.createHash('sha256').update(JSON.stringify(sort(x))).digest('hex');if(x.schema_version!==1||paths.length!==33||new Set(paths).size!==33||new Set(ids).size!==33||ids.slice().sort().join(',')!==Array.from({length:33},(_,i)=>'C'+String(i+1).padStart(2,'0')).join(',')||x.subjects.some(v=>v.stage!=='generator-pre-push'||!v.cwd||!Array.isArray(v.argv)||!v.argv.length||!v.expected_observation.includes('exit_code=0'))||h!=='ed69d150c7e7f0ae4e5b759964e7cbbb4f35ee489ad3e5e62ae5cb114133bb01')process.exit(1)"
 - [ ] [ARTIFACT] evidence 内容通过 schema、冻结 SHA/ID/digest、33/77/3 exact subject sets，并由四个 actor/time boundary 执法七个 phase。
   Test: bash -c 'set -euo pipefail; V=sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs; E=sprints/07301245-kernel-pr4457-refresh/evidence; node "$V" review-gate --stage controller-review-gate --exact-head-receipt "$E/exact-head-receipt.json" --evaluator-receipt "$E/evaluator-receipt.json" --audit-end "$E/audit-end.json"'
+
+## 阶段负向合同
+
+既有 8 个 `it()` 用例内必须隔离覆盖错误 stage、错误 actor role、缺 prerequisite receipt、伪造 exit/log、digest mismatch、跨阶段 lineage reuse 与倒序 receipt 时间戳。每个负向断言必须同时要求非零退出和稳定错误码 `ERR_STAGE_MISMATCH`、`ERR_ACTOR_ROLE`、`ERR_PREREQUISITE_RECEIPT`、`ERR_EVIDENCE_FABRICATED`、`ERR_DIGEST_MISMATCH`、`ERR_LINEAGE_REUSE` 或 `ERR_CHRONOLOGY_REVERSED`；缺 verifier 文件或 Node 加载失败不得算通过。`exact-head-receipt.json` 只能由 CI runner 在只读 verifier exit=0 且 stdout/evidence digest、3 个 required check-run、final-head CodeQL、final SHA、CI lineage 全匹配后签名产出；verifier 不写任何 receipt。
 
 ## BEHAVIOR 条目
 
@@ -48,7 +52,7 @@ target_environment: local_api
 
 - [ ] [BEHAVIOR] [L3] B-05: 三个 required checks 绑定同一最终 SHA [接缝×2]
   动作: CI 在最终 push receipt 后等待三个 exact context 终态，同时重查 final-head CodeQL，再以 ci-exact-head stage 运行 verifier
-  预期观察: push receipt SHA 等于 CI head；strict=true，三个 context 均 SUCCESS；final-head CodeQL 无冻结 unresolved subject；输出 exact-head receipt
+  预期观察: push receipt SHA 等于 CI head；strict=true，三个 context 均 SUCCESS；final-head CodeQL 无冻结 unresolved subject；只读 verifier exit=0 后仅由 CI runner 核对 stdout/evidence digest、final SHA 与 CI lineage并签名输出 exact-head receipt
   等待预算: 1800s
   留证: `evidence/exact-head.json`、check-run URL 与 final SHA
   Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs exact-head --stage ci-exact-head --receipt sprints/07301245-kernel-pr4457-refresh/evidence/push-receipt.json'
@@ -62,7 +66,7 @@ target_environment: local_api
 
 - [ ] [BEHAVIOR] [L3] B-07: 审计窗内无新 PR 无 merge 无 deploy [接缝×2]
   动作: controller 在 exact-head/evaluator receipt 与 audit-end 齐备后运行只读 review-gate，按闭区间分页真读 PR/merge/auto-merge/deployments
-  预期观察: receipt digest 链、final SHA 和各阶段动态 lineage exact-match 且无跨阶段复用；#4457 仍 Draft OPEN；main 不含 final head；归因的新 PR、merge、auto-merge、deployment 均为 0
+  预期观察: 机械满足 audit_start <= generator evidence <= push < exact-head < evaluator <= audit_end；receipt prerequisite/evidence/stdout digest 链、actor role、stage、唯一 final SHA 和各阶段动态 lineage exact-match 且无跨阶段复用；#4457 仍 Draft OPEN；main 不含 final head；归因的新 PR、merge、auto-merge、deployment 均为 0
   等待预算: 120s
   留证: `evidence/audit-baseline.json`、`audit-end.json`、原始分页响应摘要
   Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs review-gate --stage controller-review-gate --exact-head-receipt sprints/07301245-kernel-pr4457-refresh/evidence/exact-head-receipt.json --evaluator-receipt sprints/07301245-kernel-pr4457-refresh/evidence/evaluator-receipt.json --audit-end sprints/07301245-kernel-pr4457-refresh/evidence/audit-end.json'
