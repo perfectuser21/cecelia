@@ -6,11 +6,24 @@
 
 
 
-**Brain 版本**: 1.267.150
+**Brain 版本**: 1.267.151
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.151 — Kernel terminal-attempt convergence
+
+- Attempt 创建必须锁定精确的 active v2 run；run 已终态或不存在时 fail closed，
+  并发 winner 重读不能绕过父 run 状态。
+- run/task 终态化按 `task → run → ordered attempts` 在一个事务中关闭 active
+  attempt、清租约并记录 `parent_run_terminal`；callback/finalize 竞态不再留下
+  `queued/starting/running` 孤儿。
+- 历史 stale-attempt 修复默认 dry-run，生产 apply 绑定数据库、候选数、plan SHA
+  和单实例锁，逐条重锁证据并输出独占、fsync、只读 JSONL 审计；只处理终态 v2
+  父 run 下已过期或空租约的 active attempt，二次 dry-run 必须为 0。
+- 回退应用到 Brain `1.267.150` 时保留历史审计和 attempt lifecycle 记录；禁止恢复
+  终态父 run 继续生成 attempt 或 run/task/attempt 分裂终态。
 
 ## Brain 1.267.150 — Audited Kernel history reconciliation
 

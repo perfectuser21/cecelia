@@ -148,6 +148,9 @@ orphan-guard → no_kernel_run → requeue → tick 再派
 10. 迟到、重复或旧租约 callback 只能幂等确认或返回 409，不能改写当前状态。
 11. 所有影响路由的异步结果必须先写 append-only decision event，再由 loop 投影。
 12. 指标默认只统计 `trusted` 与满足指定口径的 `reconstructed` 记录。
+13. 终态 v2 run 不得存在 `queued/starting/running` attempt；新 attempt 必须以
+    精确 `run_id` 证明并锁定非终态父 run，run 终态化必须在同一事务关闭遗留
+    active attempt。
 
 这些不变量由数据库约束、事务边界和集成测试共同执行，不能只写在注释里。
 

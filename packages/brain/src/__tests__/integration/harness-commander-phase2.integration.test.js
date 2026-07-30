@@ -90,7 +90,8 @@ describe('Commander Phase 2 PostgreSQL authority chain', () => {
     const runId = randomUUID();
     const attemptId = randomUUID();
     await migrationPool.query(
-      `INSERT INTO initiative_runs (id,commander_mode) VALUES ($1,'hybrid')`,
+      `INSERT INTO initiative_runs (id,commander_mode,orchestrator_version)
+       VALUES ($1,'hybrid','v2')`,
       [runId],
     );
     await createCommanderStore(migrationPool).ensureRun({ runId });
@@ -194,7 +195,8 @@ describe('Commander Phase 2 PostgreSQL authority chain', () => {
     const replacementAttemptId = randomUUID();
     const attempts = createAttemptStore(migrationPool);
     await migrationPool.query(
-      `INSERT INTO initiative_runs (id,commander_mode) VALUES ($1,'hybrid')`,
+      `INSERT INTO initiative_runs (id,commander_mode,orchestrator_version)
+       VALUES ($1,'hybrid','v2')`,
       [runId],
     );
     await attempts.createAttempt({

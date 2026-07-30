@@ -108,6 +108,17 @@ beforeAll(async () => {
       action TEXT,
       detail JSONB
     );
+    CREATE TABLE harness_attempts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      run_id UUID NOT NULL REFERENCES initiative_runs(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      lease_owner TEXT,
+      lease_expires_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      error_code TEXT,
+      error_message TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `);
   await schemaPool.query(migration);
   await schemaPool.query(trustMigration);
@@ -119,6 +130,45 @@ afterAll(async () => {
 });
 
 describe('Kernel run store PostgreSQL concurrency', () => {
+  it('leaves no active attempt when its exact parent run becomes terminal', async () => {
+    const taskId = randomUUID();
+    const initiativeId = randomUUID();
+    await insertTask(taskId, initiativeId);
+    const created = await createKernelRun(
+      schemaPool,
+      runInput(taskId, initiativeId),
+    );
+    const attemptId = randomUUID();
+    await schemaPool.query(
+      `INSERT INTO harness_attempts (
+         id,run_id,status,lease_owner,lease_expires_at
+       ) VALUES ($1,$2,'running','brain:test',NOW() + INTERVAL '3 minutes')`,
+      [attemptId, created.run.id],
+    );
+
+    const receipt = await finalizeKernelRun(schemaPool, {
+      runId: created.run.id,
+      expectedTaskId: taskId,
+      outcome: 'failed',
+      reason: 'integration_terminal_attempt',
+    });
+
+    const state = await schemaPool.query(
+      `SELECT status,lease_owner,lease_expires_at,error_code,completed_at
+         FROM harness_attempts
+        WHERE id=$1`,
+      [attemptId],
+    );
+    expect(receipt.attemptsTerminalized).toBe(1);
+    expect(state.rows[0]).toMatchObject({
+      status: 'cancelled',
+      lease_owner: null,
+      lease_expires_at: null,
+      error_code: 'parent_run_terminal',
+    });
+    expect(state.rows[0].completed_at).toBeInstanceOf(Date);
+  });
+
   it('deduplicates simultaneous canonical POSTs to one active run', async () => {
     const taskId = randomUUID();
     const initiativeId = randomUUID();

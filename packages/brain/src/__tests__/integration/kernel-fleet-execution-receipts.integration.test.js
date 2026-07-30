@@ -98,7 +98,12 @@ beforeAll(async () => {
       description TEXT NOT NULL,
       applied_at TIMESTAMPTZ NOT NULL
     );
-    CREATE TABLE initiative_runs (id UUID PRIMARY KEY);
+    CREATE TABLE initiative_runs (
+      id UUID PRIMARY KEY,
+      phase TEXT NOT NULL DEFAULT 'planning',
+      orchestrator_version TEXT NOT NULL DEFAULT 'v1'
+        CHECK (orchestrator_version IN ('v1','v2'))
+    );
   `);
   await client.query(migration357);
   await client.query(migration362);
@@ -164,6 +169,16 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
     expect((await client.query(
       `SELECT COUNT(*)::int AS count FROM schema_version WHERE version = '366'`,
     )).rows[0].count).toBe(1);
+    expect((await client.query(
+      `SELECT id,orchestrator_version
+         FROM initiative_runs
+        WHERE id = ANY($1::uuid[])
+        ORDER BY id`,
+      [[legacyRunId, oldBinaryRunId]],
+    )).rows).toEqual(expect.arrayContaining([
+      { id: legacyRunId, orchestrator_version: 'v1' },
+      { id: oldBinaryRunId, orchestrator_version: 'v1' },
+    ]));
   });
 
   it('backfills existing rows and old-binary omitted inserts as durable legacy naming', async () => {
@@ -209,7 +224,10 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
 
   it('persists bounded canonical failure classes for semantic and runner terminal states', async () => {
     const runId = randomUUID();
-    await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+    await client.query(
+      `INSERT INTO initiative_runs (id,orchestrator_version) VALUES ($1,'v2')`,
+      [runId],
+    );
     const semanticAttempt = attemptInput({ runId, hop: 31, machineId: 'us-mac-m4' });
     const runnerAttempt = attemptInput({ runId, hop: 32, machineId: 'us-mac-m4' });
     await store.createAttempt(semanticAttempt);
@@ -246,7 +264,10 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
 
   it('createAttempt persists the requested machine in both machine columns', async () => {
     const runId = randomUUID();
-    await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+    await client.query(
+      `INSERT INTO initiative_runs (id,orchestrator_version) VALUES ($1,'v2')`,
+      [runId],
+    );
     const input = attemptInput({ runId, hop: 1, machineId: 'verified-worker' });
 
     await store.createAttempt(input);
@@ -266,7 +287,10 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
 
   it('returns the committed winner after a concurrent ON CONFLICT snapshot sees zero rows', async () => {
     const runId = randomUUID();
-    await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+    await client.query(
+      `INSERT INTO initiative_runs (id,orchestrator_version) VALUES ($1,'v2')`,
+      [runId],
+    );
     const winnerInput = attemptInput({ runId, hop: 41, machineId: 'us-mac-m4' });
     const duplicateInput = {
       ...attemptInput({ runId, hop: 41, machineId: 'xian-mac-m4' }),
@@ -378,7 +402,10 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
 
   it('fences launch receipts by lease owner and active status without mutating rejected writes', async () => {
     const runId = randomUUID();
-    await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+    await client.query(
+      `INSERT INTO initiative_runs (id,orchestrator_version) VALUES ($1,'v2')`,
+      [runId],
+    );
     const input = attemptInput({ runId, hop: 1, machineId: 'requested-worker' });
     await store.createAttempt(input);
     await client.query(
@@ -465,7 +492,10 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
 
   it('increments lease_generation atomically when reclaiming an expired attempt', async () => {
     const runId = randomUUID();
-    await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+    await client.query(
+      `INSERT INTO initiative_runs (id,orchestrator_version) VALUES ($1,'v2')`,
+      [runId],
+    );
     const input = attemptInput({ runId, hop: 1, machineId: 'reclaim-worker' });
     await store.createAttempt(input);
     await store.markStarting(input.id, { leaseOwner: 'brain-1', leaseSeconds: 90 });
@@ -490,7 +520,10 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
 
   it('rejects stale receipt and failure writes from an older generation with the same owner', async () => {
     const runId = randomUUID();
-    await client.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+    await client.query(
+      `INSERT INTO initiative_runs (id,orchestrator_version) VALUES ($1,'v2')`,
+      [runId],
+    );
     const input = attemptInput({ runId, hop: 1, machineId: 'reclaim-worker' });
     await store.createAttempt(input);
     await store.markStarting(input.id, { leaseOwner: 'same-owner', leaseSeconds: 90 });

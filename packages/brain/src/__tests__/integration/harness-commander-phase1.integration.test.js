@@ -356,7 +356,10 @@ describe('migration 367 through the real PostgreSQL migration runner', () => {
   it('projects the authoritative decision and Attempt lifecycle without JavaScript dual writes', async () => {
     const runId = randomUUID();
     const attemptId = randomUUID();
-    await migrationPool.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+    await migrationPool.query(
+      `INSERT INTO initiative_runs (id,orchestrator_version) VALUES ($1,'v2')`,
+      [runId],
+    );
     await appendHop(migrationPool, {
       runId,
       hop: 1,

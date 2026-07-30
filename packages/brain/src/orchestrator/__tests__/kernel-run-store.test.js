@@ -97,6 +97,7 @@ function finalizationPool({
     status: 'in_progress',
   },
   failTaskWrite = false,
+  activeAttempts = [],
 } = {}) {
   const order = [];
   const calls = [];
@@ -123,6 +124,10 @@ function finalizationPool({
         order.push('task-lock');
         return { rows: task ? [task] : [] };
       }
+      if (/FROM harness_attempts/.test(sql) && /FOR UPDATE/.test(sql)) {
+        order.push('attempt-lock');
+        return { rows: activeAttempts };
+      }
       if (/UPDATE initiative_runs/.test(sql)) {
         order.push('run-update');
         return { rows: [], rowCount: 1 };
@@ -131,6 +136,10 @@ function finalizationPool({
         order.push('task-update');
         if (failTaskWrite) throw new Error('task write failed');
         return { rows: [], rowCount: 1 };
+      }
+      if (/UPDATE harness_attempts/.test(sql)) {
+        order.push('attempt-terminalize');
+        return { rows: activeAttempts, rowCount: activeAttempts.length };
       }
       if (/INSERT INTO orchestrator_decision_log/.test(sql)) {
         order.push('terminal-event');
@@ -148,8 +157,8 @@ function finalizationPool({
   };
 }
 
-function exactPatchPool({ task } = {}) {
-  const harness = finalizationPool({ task });
+function exactPatchPool({ task, activeAttempts = [] } = {}) {
+  const harness = finalizationPool({ task, activeAttempts });
   return {
     ...harness,
     pool: {
@@ -429,6 +438,43 @@ describe('Legacy run mutation serialization', () => {
 });
 
 describe('Kernel run/task terminalization authority', () => {
+  it('closes active attempts under task-run-attempt lock order', async () => {
+    const attempt = {
+      id: '44444444-4444-4444-8444-444444444444',
+      run_id: RUN_ID,
+      status: 'running',
+    };
+    const harness = finalizationPool({ activeAttempts: [attempt] });
+
+    const result = await finalizeKernelRun(harness.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'automation_deadline_exceeded',
+    });
+
+    expect(result.attemptsTerminalized).toBe(1);
+    expect(harness.order).toEqual([
+      'BEGIN',
+      'task-lock',
+      'run-lock',
+      'attempt-lock',
+      'run-update',
+      'task-update',
+      'attempt-terminalize',
+      'terminal-event',
+      'COMMIT',
+      'release',
+    ]);
+    const terminalize = harness.calls.find(
+      ({ sql }) => /UPDATE harness_attempts/.test(sql),
+    );
+    expect(terminalize.sql).toMatch(/status\s*=\s*'cancelled'/i);
+    expect(terminalize.sql).toMatch(/error_code\s*=\s*'parent_run_terminal'/i);
+    expect(terminalize.sql).toMatch(/lease_owner\s*=\s*NULL/i);
+    expect(terminalize.sql).toMatch(/lease_expires_at\s*=\s*NULL/i);
+  });
+
   it('fails the run and parent task with one terminal event in one transaction', async () => {
     const harness = finalizationPool();
 
@@ -444,6 +490,7 @@ describe('Kernel run/task terminalization authority', () => {
       outcome: 'failed',
       runId: RUN_ID,
       taskId: TASK_ID,
+      attemptsTerminalized: 0,
     });
     const runUpdate = harness.calls.find(({ sql }) => /UPDATE initiative_runs/.test(sql));
     const taskUpdate = harness.calls.find(({ sql }) => /UPDATE tasks/.test(sql));
@@ -460,6 +507,7 @@ describe('Kernel run/task terminalization authority', () => {
       'BEGIN',
       'task-lock',
       'run-lock',
+      'attempt-lock',
       'run-update',
       'task-update',
       'terminal-event',
@@ -482,6 +530,7 @@ describe('Kernel run/task terminalization authority', () => {
       'BEGIN',
       'task-lock',
       'run-lock',
+      'attempt-lock',
       'run-update',
       'task-update',
       'ROLLBACK',
@@ -537,6 +586,7 @@ describe('Kernel run/task terminalization authority', () => {
       'BEGIN',
       'task-lock',
       'run-lock',
+      'attempt-lock',
       'task-update',
       'COMMIT',
       'release',
@@ -568,6 +618,35 @@ describe('Kernel run/task terminalization authority', () => {
 });
 
 describe('Kernel exact non-terminal patch authority', () => {
+  it('terminal exact patch closes active attempts in the same transaction', async () => {
+    const harness = exactPatchPool({
+      activeAttempts: [{
+        id: '44444444-4444-4444-8444-444444444444',
+        run_id: RUN_ID,
+        status: 'running',
+      }],
+    });
+
+    await patchKernelRunById(harness.pool, {
+      runId: RUN_ID,
+      phase: 'failed',
+      failureReason: 'exact_patch_terminal',
+    });
+
+    expect(harness.order).toEqual([
+      'BEGIN',
+      'task-lock',
+      'run-lock',
+      'attempt-lock',
+      'run-update',
+      'task-update',
+      'attempt-terminalize',
+      'terminal-event',
+      'COMMIT',
+      'release',
+    ]);
+  });
+
   it('rejects an active phase write when the parent task is missing', async () => {
     const harness = exactPatchPool({ task: null });
 

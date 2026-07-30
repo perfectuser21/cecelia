@@ -25,6 +25,47 @@ const TERMINAL_TASK_STATUSES = new Set([
   'canceled',
 ]);
 
+async function lockActiveKernelAttempts(client, runId) {
+  const { rows } = await client.query(
+    `SELECT id
+       FROM harness_attempts
+      WHERE run_id = $1
+        AND status IN ('queued', 'starting', 'running')
+      ORDER BY id
+      FOR UPDATE`,
+    [runId],
+  );
+  return rows;
+}
+
+async function terminalizeLockedKernelAttempts(client, {
+  runId,
+  attempts,
+  outcome,
+  reason,
+}) {
+  if (attempts.length === 0) return 0;
+  const { rowCount } = await client.query(
+    `UPDATE harness_attempts
+        SET status = 'cancelled',
+            error_code = 'parent_run_terminal',
+            error_message = $3,
+            completed_at = COALESCE(completed_at, NOW()),
+            lease_owner = NULL,
+            lease_expires_at = NULL,
+            updated_at = NOW()
+      WHERE id = ANY($1::uuid[])
+        AND run_id = $2
+        AND status IN ('queued', 'starting', 'running')`,
+    [
+      attempts.map(({ id }) => id),
+      runId,
+      `Parent Kernel run finalized as ${outcome}${reason ? `: ${reason}` : ''}`,
+    ],
+  );
+  return rowCount;
+}
+
 function validateCreateInput(input) {
   if (!ACTIVE_PHASES.has(input?.phase)) {
     throw new Error(`invalid Kernel run start phase: ${input?.phase}`);
@@ -143,6 +184,9 @@ export async function patchKernelRunById(pool, {
     if (!willBeTerminal && TERMINAL_TASK_STATUSES.has(task.status)) {
       throw new Error(`Kernel task is terminal: ${task.status}`);
     }
+    const activeAttempts = willBeTerminal
+      ? await lockActiveKernelAttempts(client, runId)
+      : [];
 
     const { rows: updatedRows } = await client.query(
       `UPDATE initiative_runs
@@ -201,6 +245,12 @@ export async function patchKernelRunById(pool, {
           [identity.current_task_id, taskOutcome, failureReason],
         );
       }
+      const attemptsTerminalized = await terminalizeLockedKernelAttempts(client, {
+        runId,
+        attempts: activeAttempts,
+        outcome: phase,
+        reason: failureReason,
+      });
       if (!wasTerminal) {
         await client.query(
           `INSERT INTO orchestrator_decision_log
@@ -226,6 +276,9 @@ export async function patchKernelRunById(pool, {
             }),
           ],
         );
+      }
+      if (updatedRows[0]) {
+        updatedRows[0].attemptsTerminalized = attemptsTerminalized;
       }
     }
 
@@ -477,6 +530,8 @@ export async function finalizeKernelRun(pool, {
       );
     }
 
+    const activeAttempts = await lockActiveKernelAttempts(client, runId);
+
     const changed = !runAlreadyTerminal;
     if (changed) {
       await client.query(
@@ -507,6 +562,13 @@ export async function finalizeKernelRun(pool, {
         [expectedTaskId, taskOutcome, reason],
       );
     }
+
+    const attemptsTerminalized = await terminalizeLockedKernelAttempts(client, {
+      runId,
+      attempts: activeAttempts,
+      outcome,
+      reason,
+    });
 
     if (changed) {
       await client.query(
@@ -541,6 +603,7 @@ export async function finalizeKernelRun(pool, {
       outcome,
       runId,
       taskId: expectedTaskId,
+      attemptsTerminalized,
     };
   } catch (error) {
     if (!committed) await client.query('ROLLBACK');

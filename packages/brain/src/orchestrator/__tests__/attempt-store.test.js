@@ -71,7 +71,9 @@ describe('attempt store', () => {
     })).resolves.toMatchObject({ attempt: completed, deduped: false });
 
     expect(client.query.mock.calls[0][0]).toBe('BEGIN');
-    expect(client.query.mock.calls[1][0]).toMatch(/FOR UPDATE/i);
+    expect(client.query.mock.calls[1][0]).toMatch(
+      /WITH decision_lock AS MATERIALIZED[\s\S]*pg_advisory_xact_lock[\s\S]*locked_run AS MATERIALIZED[\s\S]*JOIN initiative_runs run[\s\S]*FOR UPDATE OF run[\s\S]*JOIN harness_attempts attempt[\s\S]*FOR UPDATE OF attempt/i,
+    );
     expect(client.query.mock.calls[2][0]).toMatch(
       /lease_generation.*status NOT IN/is,
     );
@@ -80,6 +82,49 @@ describe('attempt store', () => {
     );
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
     expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an active callback after its exact parent run is terminal', async () => {
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({
+          rows: [{
+            id: input.id,
+            run_id: input.runId,
+            status: 'running',
+            lease_owner: 'brain-1',
+            lease_generation: 3,
+            run_phase: 'failed',
+          }],
+        })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await expect(createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: {
+        status: 'completed',
+        summary: 'late callback',
+        artifacts: [],
+        provider_metadata: { provider: 'codex' },
+      },
+    })).resolves.toMatchObject({
+      attempt: null,
+      deduped: false,
+      conflict: 'parent_run_terminal',
+    });
+
+    expect(client.query.mock.calls.map(([sql]) => sql)).toEqual([
+      'BEGIN',
+      expect.stringMatching(/WITH decision_lock AS MATERIALIZED/i),
+      'ROLLBACK',
+    ]);
   });
 
   it('commits reviewer verdict in the same transaction as its successful callback', async () => {
@@ -352,6 +397,10 @@ describe('attempt store', () => {
     expect(result.id).toBe(input.id);
     const [sql, values] = pool.query.mock.calls[0];
     expect(sql).toMatch(/INSERT INTO harness_attempts/i);
+    expect(sql).toMatch(/WITH guarded_run AS/i);
+    expect(sql).toMatch(/FROM initiative_runs/i);
+    expect(sql).toMatch(/phase NOT IN \('done','failed'\)/i);
+    expect(sql).toMatch(/FOR KEY SHARE/i);
     expect(sql).not.toMatch(/INSERT INTO harness_run_events/i);
     expect(sql).toMatch(/ON CONFLICT \(run_id, hop\)/i);
     expect(sql).toMatch(/machine_id,\s*requested_machine_id/i);
@@ -367,6 +416,18 @@ describe('attempt store', () => {
       `sha256:${'a'.repeat(64)}`,
       'b'.repeat(64),
     ]));
+  });
+
+  it('refuses to create an attempt when the exact parent run is terminal or missing', async () => {
+    const pool = poolWith(
+      { rows: [], rowCount: 0 },
+      { rows: [], rowCount: 0 },
+      { rows: [], rowCount: 0 },
+      { rows: [], rowCount: 0 },
+    );
+
+    await expect(createAttemptStore(pool).createAttempt(input))
+      .rejects.toThrow(`Kernel run is terminal or missing: ${input.runId}`);
   });
 
   it('并发冲突语句看不到 winner 时用新语句重读现有 attempt', async () => {
@@ -387,7 +448,9 @@ describe('attempt store', () => {
     expect(pool.query.mock.calls[0][0]).toMatch(/ON CONFLICT \(run_id, hop\) DO NOTHING/i);
     expect(pool.query.mock.calls[0][0]).not.toMatch(/DO UPDATE/i);
     expect(pool.query.mock.calls[1]).toEqual([
-      expect.stringMatching(/SELECT \* FROM harness_attempts WHERE run_id=\$1 AND hop=\$2/i),
+      expect.stringMatching(
+        /FROM harness_attempts attempt[\s\S]*JOIN initiative_runs run[\s\S]*attempt\.run_id=\$1[\s\S]*attempt\.hop=\$2[\s\S]*FOR KEY SHARE OF run/i,
+      ),
       [input.runId, input.hop],
     ]);
   });

@@ -227,7 +227,15 @@ const CREATE_ATTEMPT_WINNER_READ_DELAY_MS = 5;
 async function readConcurrentAttemptWinner(pool, runId, hop) {
   for (let attempt = 0; attempt < CREATE_ATTEMPT_WINNER_READ_ATTEMPTS; attempt += 1) {
     const winner = firstRow(await pool.query(
-      'SELECT * FROM harness_attempts WHERE run_id=$1 AND hop=$2',
+      `SELECT attempt.*
+         FROM harness_attempts attempt
+         JOIN initiative_runs run
+           ON run.id = attempt.run_id
+          AND run.orchestrator_version = 'v2'
+          AND run.phase NOT IN ('done','failed')
+        WHERE attempt.run_id=$1
+          AND attempt.hop=$2
+        FOR KEY SHARE OF run`,
       [runId, hop],
     ));
     if (winner) return winner;
@@ -247,23 +255,35 @@ export function createAttemptStore(pool) {
     async createAttempt(input) {
       const skill = input.bundle?.skill ?? null;
       const result = await pool.query(
-        `WITH inserted AS (
+        `WITH guarded_run AS (
+           SELECT id
+             FROM initiative_runs
+            WHERE id = $2
+              AND orchestrator_version = 'v2'
+              AND phase NOT IN ('done','failed')
+            FOR KEY SHARE
+         ),
+         inserted AS (
            INSERT INTO harness_attempts (
              id, run_id, hop, phase, role, provider, account_id, machine_id,
              requested_machine_id, local_container_naming,
              skill_name, skill_version, skill_digest, task_bundle,
              callback_secret_hash, logical_cycle_id, attempt_kind, retry_of_attempt_id,
              restart_reason, workstream_key, time_derived
-           ) VALUES (
-             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-             $15,$16,$17,$18,$19,$20,$21
            )
+           SELECT
+             $1, guarded_run.id, $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+             $15,$16,$17,$18,$19,$20,$21
+             FROM guarded_run
            ON CONFLICT (run_id, hop) DO NOTHING
            RETURNING *
          )
          SELECT * FROM inserted
          UNION ALL
-         SELECT * FROM harness_attempts WHERE run_id=$2 AND hop=$3
+         SELECT attempt.*
+           FROM harness_attempts attempt
+           JOIN guarded_run ON guarded_run.id = attempt.run_id
+          WHERE attempt.hop=$3
          LIMIT 1`,
         [
           input.id,
@@ -289,8 +309,12 @@ export function createAttemptStore(pool) {
           input.timeDerived ?? DERIVED_TIME_ROLES.has(input.role),
         ],
       );
-      return firstRow(result)
-        ?? readConcurrentAttemptWinner(pool, input.runId, input.hop);
+      const winner = firstRow(result)
+        ?? await readConcurrentAttemptWinner(pool, input.runId, input.hop);
+      if (!winner) {
+        throw new Error(`Kernel run is terminal or missing: ${input.runId}`);
+      }
+      return winner;
     },
 
     async markStarting(id, { leaseOwner, leaseSeconds }) {
@@ -511,10 +535,22 @@ export function createAttemptStore(pool) {
         await client.query('BEGIN');
         transactionOpen = true;
         const attempt = firstRow(await client.query(
-          `SELECT *
-             FROM harness_attempts
-            WHERE id=$1 AND run_id=$2
-            FOR UPDATE`,
+          `WITH decision_lock AS MATERIALIZED (
+             SELECT pg_advisory_xact_lock(hashtext($2::text)) AS locked
+           ),
+           locked_run AS MATERIALIZED (
+             SELECT run.id, run.phase
+               FROM decision_lock
+               JOIN initiative_runs run ON run.id=$2::uuid
+              WHERE run.orchestrator_version='v2'
+              FOR UPDATE OF run
+           )
+           SELECT attempt.*, locked_run.phase AS run_phase
+             FROM locked_run
+             JOIN harness_attempts attempt
+               ON attempt.run_id=locked_run.id
+            WHERE attempt.id=$1
+            FOR UPDATE OF attempt`,
           [attemptId, runId],
         ));
         if (!attempt) return await rollbackConflict('attempt_identity_mismatch');
@@ -529,6 +565,12 @@ export function createAttemptStore(pool) {
         const exactDuplicate = isTerminal
           && attempt.status === result.status
           && isDeepStrictEqual(attempt.result, result);
+        if (
+          ['done', 'failed'].includes(attempt.run_phase)
+          && !isTerminal
+        ) {
+          return await rollbackConflict('parent_run_terminal');
+        }
         if (isTerminal && !exactDuplicate) {
           return await rollbackConflict('terminal_payload_conflict');
         }
@@ -573,9 +615,7 @@ export function createAttemptStore(pool) {
 
         const detail = callbackEventDetail(terminalAttempt, result, leaseGeneration);
         await client.query(
-          `WITH lock AS (
-             SELECT pg_advisory_xact_lock(hashtext($1::text))
-           ), next_hop AS (
+          `WITH next_hop AS (
              SELECT COALESCE(MAX(hop), 0) + 1 AS hop
                FROM orchestrator_decision_log
               WHERE run_id=$1::uuid
@@ -584,7 +624,7 @@ export function createAttemptStore(pool) {
              (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
            SELECT $1::uuid, next_hop.hop, $2::jsonb, $3, $4,
                   'verdict:attempt_callback', $5::jsonb
-             FROM lock, next_hop
+             FROM next_hop
             WHERE NOT EXISTS (
               SELECT 1
                 FROM orchestrator_decision_log
