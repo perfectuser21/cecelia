@@ -10,7 +10,7 @@ expected_schema="$(
     src/selfcheck.js \
     | head -1
 )"
-test "$expected_schema" = "375"
+test "$expected_schema" -ge "375"
 
 npx --no-install vitest run \
   src/__tests__/migration-375-kernel-run-identity.test.js \

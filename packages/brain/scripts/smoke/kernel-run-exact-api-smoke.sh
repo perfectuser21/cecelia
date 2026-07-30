@@ -23,6 +23,7 @@ npx --no-install vitest run \
   src/__tests__/harness-watchdog.test.js \
   src/__tests__/harness-relay-watchdog.test.js \
   src/__tests__/harness-relay-watchdog-gates.test.js \
+  src/orchestrator/__tests__/kernel-run-store.test.js \
   src/orchestrator/__tests__/run-trust-classifier.test.js \
   --reporter=dot
 
