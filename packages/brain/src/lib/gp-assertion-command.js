@@ -1,25 +1,30 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { access, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { defaultAssertionExecute } from './gp-assertion-process.js';
-
-const SHELL_META_PATTERN = /[;&|`$<>()"'\\]/;
-const VITEST_PATH_PATTERN = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
-const PYTEST_PATH_PATTERN = /(^|\/)test_[^/]+\.py$/;
-const SMOKE_PATH_PATTERN = /\/smoke\/[^/]+\.sh$/;
-
-export function assertionRunnerError(code, message) {
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+const runFile = promisify(execFile);
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
+const SHELL_META = /[;&|`$<>()"'\\]/;
+const VITEST = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+const PYTEST = /(^|\/)test_[^/]+\.py$/;
+const SMOKE = /\/smoke\/[^/]+\.sh$/;
+const TOOL_NAMES = new Set(['node', 'vitest', 'python', 'bash']);
+const TOOL_BASENAME = {
+  node: /^node(?:[-.].*)?$/,
+  vitest: /^vitest(?:\.mjs)?$/,
+  python: /^python3(?:\.\d+)*$/,
+  bash: /^bash$/,
+};
+export function assertionRunnerError(code, message = code) {
   return Object.assign(new Error(message), { code });
 }
-
+function fail(code, message) { throw assertionRunnerError(code, message); }
 function isWithin(root, target) {
-  const pathFromRoot = relative(root, target);
-  return pathFromRoot !== ''
-    && pathFromRoot !== '..'
-    && !pathFromRoot.startsWith('../')
-    && !isAbsolute(pathFromRoot);
+  const path = relative(root, target);
+  return path !== '' && path !== '..' && !path.startsWith('../')
+    && !isAbsolute(path);
 }
-
-async function defaultPathExists(path) {
+async function exists(path) {
   try {
     await access(path);
     return true;
@@ -27,239 +32,181 @@ async function defaultPathExists(path) {
     return false;
   }
 }
-
-async function resolveOwnedPath(repoRoot, pathRef, realpathFn) {
+async function ownedPath(repoRoot, pathRef, realpathFn) {
   if (!pathRef || isAbsolute(pathRef) || pathRef.includes('\0')) {
-    throw assertionRunnerError(
-      'ASSERTION_PATH_ESCAPE',
-      'Assertion path must be repository-relative',
-    );
+    fail('ASSERTION_PATH_ESCAPE', 'Assertion path must be repository-relative');
   }
   const root = await realpathFn(repoRoot);
   const candidate = resolve(root, pathRef);
-  if (!isWithin(root, candidate)) {
-    throw assertionRunnerError(
-      'ASSERTION_PATH_ESCAPE',
-      'Assertion path escapes repository root',
-    );
-  }
-  let resolvedTarget;
+  if (!isWithin(root, candidate)) fail('ASSERTION_PATH_ESCAPE');
+  let target;
   try {
-    resolvedTarget = await realpathFn(candidate);
+    target = await realpathFn(candidate);
   } catch (error) {
-    throw assertionRunnerError(
-      'ASSERTION_PATH_UNAVAILABLE',
-      `Assertion path cannot be resolved: ${error.message}`,
-    );
+    fail('ASSERTION_PATH_UNAVAILABLE', `Cannot resolve assertion: ${error.message}`);
   }
-  if (!isWithin(root, resolvedTarget)) {
-    throw assertionRunnerError(
-      'ASSERTION_PATH_ESCAPE',
-      'Assertion symlink escapes repository root',
-    );
-  }
-  return { root, resolvedTarget };
+  if (!isWithin(root, target)) fail('ASSERTION_PATH_ESCAPE');
+  return { root, target };
 }
-
-async function findPackageRoot(target, repoRoot, pathExistsFn) {
-  let current = dirname(target);
-  while (current === repoRoot || isWithin(repoRoot, current)) {
+async function packageRoot(target, root, pathExistsFn) {
+  for (let current = dirname(target); isWithin(root, current) || current === root;
+    current = dirname(current)) {
     if (await pathExistsFn(join(current, 'package.json'))) return current;
-    if (current === repoRoot) break;
-    current = dirname(current);
+    if (current === root) break;
   }
-  throw assertionRunnerError(
-    'ASSERTION_PACKAGE_NOT_FOUND',
-    'Vitest assertion is not owned by a repository package',
-  );
+  fail('ASSERTION_PACKAGE_NOT_FOUND');
 }
-
-function classifyCommandShape(assertionRef) {
-  const manual = assertionRef.startsWith('manual:');
-  const command = manual ? assertionRef.slice('manual:'.length).trim() : '';
-  if (manual && (!command || SHELL_META_PATTERN.test(command))) {
-    throw assertionRunnerError(
-      'UNSAFE_ASSERTION_COMMAND',
-      'Manual assertion contains shell syntax',
-    );
-  }
-  if (manual) {
+function classify(ref) {
+  if (typeof ref !== 'string') fail('ASSERTION_NOT_RUNNABLE');
+  if (ref.startsWith('manual:')) {
+    const command = ref.slice(7).trim();
+    if (!command || SHELL_META.test(command)) fail('UNSAFE_ASSERTION_COMMAND');
     const parts = command.split(/\s+/);
-    if (
-      parts.length === 4
-      && parts[0] === 'npx'
-      && parts[1] === 'vitest'
-      && parts[2] === 'run'
-      && VITEST_PATH_PATTERN.test(parts[3])
-    ) return { kind: 'vitest', pathRef: parts[3] };
-    if (
-      parts.length === 2
-      && parts[0] === 'bash'
-      && SMOKE_PATH_PATTERN.test(parts[1])
-    ) return { kind: 'bash', pathRef: parts[1] };
-    if (
-      parts.length === 4
-      && parts[0] === 'python3'
-      && parts[1] === '-m'
-      && parts[2] === 'pytest'
-      && PYTEST_PATH_PATTERN.test(parts[3])
-    ) return { kind: 'pytest', pathRef: parts[3] };
-    throw assertionRunnerError(
-      'UNSAFE_ASSERTION_COMMAND',
-      'Manual assertion does not match the fixed command allowlist',
-    );
-  }
-  if (VITEST_PATH_PATTERN.test(assertionRef)) {
-    return { kind: 'vitest', pathRef: assertionRef };
-  }
-  if (PYTEST_PATH_PATTERN.test(assertionRef)) {
-    return { kind: 'pytest', pathRef: assertionRef };
-  }
-  if (SMOKE_PATH_PATTERN.test(assertionRef)) {
-    return { kind: 'bash', pathRef: assertionRef };
-  }
-  throw assertionRunnerError(
-    'ASSERTION_NOT_RUNNABLE',
-    'Assertion has no trusted executor',
-  );
-}
-
-async function executeGit(repoRoot, argv) {
-  return defaultAssertionExecute('git', argv, { cwd: repoRoot, shell: false });
-}
-
-export async function defaultTrackedPath(repoRoot, resolvedTarget) {
-  const result = await executeGit(repoRoot, [
-    'ls-files',
-    '--error-unmatch',
-    '--',
-    relative(repoRoot, resolvedTarget),
-  ]);
-  return result.exitCode === 0;
-}
-
-export async function assertionCommand(
-  assertionRef,
-  repoRoot,
-  {
-    realpathFn = realpath,
-    pathExistsFn = defaultPathExists,
-    isTrackedPathFn = defaultTrackedPath,
-  } = {},
-) {
-  const shape = classifyCommandShape(assertionRef);
-  const { root, resolvedTarget } = await resolveOwnedPath(
-    repoRoot,
-    shape.pathRef,
-    realpathFn,
-  );
-  if (!await isTrackedPathFn(root, resolvedTarget)) {
-    throw assertionRunnerError(
-      'ASSERTION_PATH_UNTRACKED',
-      'Canonical assertion target must be tracked by git',
-    );
-  }
-  if (shape.kind === 'vitest') {
-    const executable = resolve(root, 'node_modules/.bin/vitest');
-    const executableTarget = await realpathFn(executable);
-    if (!isWithin(root, executableTarget)) {
-      throw assertionRunnerError(
-        'ASSERTION_PATH_ESCAPE',
-        'Vitest executable escapes repository root',
-      );
+    if (parts.length === 4 && parts.slice(0, 3).join(' ') === 'npx vitest run'
+      && VITEST.test(parts[3])) return { kind: 'vitest', path: parts[3] };
+    if (parts.length === 4 && parts.slice(0, 3).join(' ') === 'python3 -m pytest'
+      && PYTEST.test(parts[3])) return { kind: 'pytest', path: parts[3] };
+    if (parts.length === 2 && parts[0] === 'bash' && SMOKE.test(parts[1])) {
+      return { kind: 'bash', path: parts[1] };
     }
-    const packageRoot = await findPackageRoot(resolvedTarget, root, pathExistsFn);
-    return {
-      executable,
-      argv: ['run', relative(packageRoot, resolvedTarget)],
-      options: { cwd: packageRoot, shell: false, evidenceKind: 'vitest' },
-    };
+    fail('UNSAFE_ASSERTION_COMMAND');
+  }
+  if (VITEST.test(ref)) return { kind: 'vitest', path: ref };
+  if (PYTEST.test(ref)) return { kind: 'pytest', path: ref };
+  if (SMOKE.test(ref)) return { kind: 'bash', path: ref };
+  fail('ASSERTION_NOT_RUNNABLE');
+}
+async function pinnedTools(toolchains, names, realpathFn) {
+  if (!toolchains || typeof toolchains !== 'object' || Array.isArray(toolchains)) {
+    fail('ASSERTION_TOOLCHAIN_REQUIRED');
+  }
+  const canonical = {};
+  for (const [name, descriptor] of Object.entries(toolchains)) {
+    if (!TOOL_NAMES.has(name) || !descriptor || typeof descriptor !== 'object'
+      || Array.isArray(descriptor)) fail('ASSERTION_TOOLCHAIN_INVALID');
+    const keys = Object.keys(descriptor);
+    if (!keys.includes('path') || keys.some(key => !['path', 'sha256'].includes(key))) {
+      fail('ASSERTION_TOOLCHAIN_INVALID');
+    }
+    if (!isAbsolute(descriptor.path)) fail('ASSERTION_TOOLCHAIN_PATH_INVALID');
+    if (descriptor.sha256 !== undefined && !SHA256.test(descriptor.sha256)) {
+      fail('ASSERTION_TOOLCHAIN_DIGEST_INVALID');
+    }
+    const path = await realpathFn(descriptor.path);
+    if (!isAbsolute(path) || !TOOL_BASENAME[name].test(basename(path))) {
+      fail('ASSERTION_TOOLCHAIN_PATH_INVALID');
+    }
+    canonical[name] = Object.freeze({
+      name, path, ...(descriptor.sha256 ? { sha256: descriptor.sha256 } : {}),
+    });
+  }
+  if (names.some(name => !canonical[name])) fail('ASSERTION_TOOLCHAIN_REQUIRED');
+  const selected = names.map(name => canonical[name]);
+  if (new Set(selected.map(tool => tool.path)).size !== selected.length) {
+    fail('ASSERTION_TOOLCHAIN_PATH_INVALID');
+  }
+  return Object.freeze(selected);
+}
+function command(executable, argv, cwd, kind, toolchain) {
+  return Object.freeze({
+    executable,
+    argv: Object.freeze(argv),
+    options: Object.freeze({
+      cwd,
+      shell: false,
+      evidenceKind: kind,
+      toolchain,
+      env: Object.freeze({ inherit: false, allowlist: Object.freeze([]) }),
+    }),
+  });
+}
+async function git(repoRoot, argv) {
+  try {
+    return await runFile('/usr/bin/git', argv, {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+      env: { PATH: '/usr/bin:/bin', HOME: '/nonexistent', LANG: 'C' },
+    });
+  } catch (error) {
+    return { stdout: error.stdout ?? '', stderr: error.stderr ?? error.message,
+      exitCode: Number.isInteger(error.code) ? error.code : 1 };
+  }
+}
+export async function defaultTrackedPath(repoRoot, target) {
+  const result = await git(repoRoot, [
+    'ls-files', '--error-unmatch', '--', relative(repoRoot, target),
+  ]);
+  return result.exitCode === undefined;
+}
+export async function assertionCommand(assertionRef, repoRoot, {
+  realpathFn = realpath,
+  pathExistsFn = exists,
+  isTrackedPathFn = defaultTrackedPath,
+  toolchains,
+} = {}) {
+  const shape = classify(assertionRef);
+  const { root, target } = await ownedPath(repoRoot, shape.path, realpathFn);
+  if (!await isTrackedPathFn(root, target)) fail('ASSERTION_PATH_UNTRACKED');
+  if (shape.kind === 'vitest') {
+    const tools = await pinnedTools(toolchains, ['node', 'vitest'], realpathFn);
+    const cwd = await packageRoot(target, root, pathExistsFn);
+    return command(tools[0].path, [
+      tools[1].path, 'run', `./${relative(cwd, target)}`, '--',
+    ], cwd, 'vitest', tools);
   }
   if (shape.kind === 'pytest') {
-    return {
-      executable: 'python3',
-      argv: ['-m', 'pytest', relative(root, resolvedTarget)],
-      options: { cwd: root, shell: false, evidenceKind: 'pytest' },
-    };
+    const tools = await pinnedTools(toolchains, ['python'], realpathFn);
+    return command(tools[0].path, [
+      '-m', 'pytest', '--', relative(root, target),
+    ], root, 'pytest', tools);
   }
-  return {
-    executable: '/bin/bash',
-    argv: [resolvedTarget],
-    options: { cwd: root, shell: false, evidenceKind: 'bash' },
-  };
+  const tools = await pinnedTools(toolchains, ['bash'], realpathFn);
+  return command(tools[0].path, [target], root, 'bash', tools);
 }
-
-function stripGitSuffix(value) {
+function cleanRepo(value) {
   return value.replace(/\/+$/, '').replace(/\.git$/i, '');
 }
-
 export function canonicalRepoIdentity(origin) {
   const value = String(origin ?? '').trim();
-  if (!value) {
-    throw assertionRunnerError(
-      'SOURCE_REPO_UNAVAILABLE',
-      'Git origin identity is required',
-    );
-  }
+  if (!value) fail('SOURCE_REPO_UNAVAILABLE');
   if (value.includes('://')) {
     try {
-      const parsed = new URL(value);
-      if (!parsed.hostname || !parsed.pathname) throw new Error('missing origin');
-      return `${parsed.hostname.toLowerCase()}/${stripGitSuffix(
-        parsed.pathname.replace(/^\/+/, ''),
+      const url = new URL(value);
+      if (!url.hostname || !url.pathname) throw new Error();
+      return `${url.hostname.toLowerCase()}/${cleanRepo(
+        url.pathname.replace(/^\/+/, ''),
       )}`;
     } catch {
-      throw assertionRunnerError(
-        'SOURCE_REPO_UNAVAILABLE',
-        'Git origin cannot be canonicalized',
-      );
+      fail('SOURCE_REPO_UNAVAILABLE');
     }
   }
   const scp = value.match(/^(?:[^@/\s]+@)?([^:/\s]+):(.+)$/);
-  if (scp) return `${scp[1].toLowerCase()}/${stripGitSuffix(scp[2])}`;
+  if (scp) return `${scp[1].toLowerCase()}/${cleanRepo(scp[2])}`;
   if (/^[^:/\s]+\.[^/\s]+\/.+/.test(value)) {
     const [host, ...path] = value.split('/');
-    return `${host.toLowerCase()}/${stripGitSuffix(path.join('/'))}`;
+    return `${host.toLowerCase()}/${cleanRepo(path.join('/'))}`;
   }
-  throw assertionRunnerError(
-    'SOURCE_REPO_UNAVAILABLE',
-    'Git origin cannot be canonicalized',
-  );
+  fail('SOURCE_REPO_UNAVAILABLE');
 }
-
-function requireGitResult(result, code, fallback) {
-  if (result.exitCode !== 0) {
-    throw assertionRunnerError(code, result.stderr || fallback);
-  }
+async function gitValue(repoRoot, argv, code) {
+  const result = await git(repoRoot, argv);
+  if (result.exitCode !== undefined) fail(code, result.stderr);
   return result.stdout.trim();
 }
-
-export async function defaultSourceSha(repoRoot) {
-  return requireGitResult(
-    await executeGit(repoRoot, ['rev-parse', 'HEAD']),
-    'SOURCE_SHA_UNAVAILABLE',
-    'git rev-parse failed',
-  );
-}
-
+export const defaultSourceSha = repoRoot => (
+  gitValue(repoRoot, ['rev-parse', 'HEAD'], 'SOURCE_SHA_UNAVAILABLE')
+);
 export async function defaultSourceRepo(repoRoot) {
-  const origin = requireGitResult(
-    await executeGit(repoRoot, ['remote', 'get-url', 'origin']),
-    'SOURCE_REPO_UNAVAILABLE',
-    'git remote get-url origin failed',
-  );
-  return canonicalRepoIdentity(origin);
+  return canonicalRepoIdentity(await gitValue(
+    repoRoot, ['remote', 'get-url', 'origin'], 'SOURCE_REPO_UNAVAILABLE',
+  ));
 }
-
 export async function defaultRepoClean(repoRoot) {
-  const status = requireGitResult(
-    await executeGit(repoRoot, [
-      'status',
-      '--porcelain=v1',
-      '--untracked-files=all',
-    ]),
+  return (await gitValue(
+    repoRoot,
+    ['status', '--porcelain=v1', '--untracked-files=all'],
     'SOURCE_STATE_UNAVAILABLE',
-    'git status failed',
-  );
-  return status === '';
+  )) === '';
 }
