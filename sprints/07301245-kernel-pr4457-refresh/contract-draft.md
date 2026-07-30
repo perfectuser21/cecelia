@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 18)
+# Sprint Contract Draft (Round 19)
 
 覆盖父路「Draft PR #4457 累计冲突与 CodeQL 收敛」第 1-5 步。
 
@@ -11,6 +11,7 @@
 - Round 16 修复 cross-stage Green 循环：同一份不可变的 8-test 文件由 `HARNESS_ACTOR_STAGE` 接收当前权威 actor stage。每一阶段只把本阶段及此前阶段判作 true-success；未来阶段用稳定错误码证明 fail-closed 且 verifier 没有创建未来 receipt。generator 不再被要求伪造 CI/evaluator/controller 产物。
 - Round 17 在不改变 8 个测试、33/77/3 集合、manifest digest 与 stage-progressive Green 语义的前提下，冻结 hermetic test-run receipt：所有 Red/Green 执行只能使用 lockfile 已安装的本地 Vitest 1.6.1，禁止 bare `npx`；runner 必须围绕真实执行采集 cwd、tested HEAD、精确 executable/version/argv、起止 UTC、逐测试原始 JSON、计数与 raw-result SHA-256，并证明开始时间晚于本 worktree 测试文件物化时间。
 - Round 18 封闭 hermetic 证据的最后歧义：初始 Red 明确由 controller/reviewer 受信、仓库外执行包装器采集（不依赖尚未实现的 sprint runner），Green 才由 sprint runner 采集；所有 33 路径 oracle 中的 Vitest argv 也固定为对应 lockfile 的本地 executable，彻底禁止 bare `npx`。时间约束改为严格 `files_materialized_at_utc < started_at_utc`。
+- Round 19 将 Round 18 的 hermetic 证据要求接入不可变 8-test 合同，而非只留在 prose：既有 8 个 case 内新增 runner receipt 的隔离负向断言，分别要求非零退出及稳定错误码 `ERR_NON_HERMETIC_TOOLCHAIN`、`ERR_TEST_MATERIALIZATION_TIME`、`ERR_TEST_HEAD_DRIFT`、`ERR_TEST_RESULT_DIGEST`。缺 runner/模块加载错误不能冒充这些稳定错误码；测试总数仍严格为 8。
 - `exact-head-receipt.json` 的唯一可信 producer 是 CI runner；CI 仅可在只读 exact-head verifier 返回 0，且 stdout/evidence digest、三个 required check-run、final-head CodeQL、final SHA 与 CI runtime lineage 全部匹配后签名/写出 receipt。verifier 永不创建 receipt。
 - 33 行 manifest 全部显式冻结 `stage=generator-pre-push`。C02 已从 post-push exact-head 改为 pre-push 本地 workflow 行为 oracle；C02/C04/C25/C27/C28/C29 argv 均显式带 `--stage generator-pre-push`。
 - manifest 测试在核对冻结 schema、33 subject、argv 与 digest 前，必须先跨过实现产出的 `generator-pre-push/conflicts` verifier/evidence 边界；因此实现前固定为 `failed=8, passed=0, total=8`。
@@ -179,6 +180,15 @@ verifier 是只读验证器，只能消费已有事实与 receipt，禁止创建
 `total`、`failed`、`passed`、`tests[]`。`tests[]` 保存 Vitest 原始逐测试
 `name/status/duration/failure_messages`，不得仅保留聚合计数；`raw_result_path`
 指向未经改写的 JSON reporter 输出，digest 必须从该文件字节重算。
+
+runner 同时必须提供只读
+`--validate-receipt-fixture <non-hermetic-toolchain|materialization-time|head-drift|result-digest>`
+隔离验证入口，供同一 8-test 文件机械证明四类证据伪造均 fail-closed。四个 fixture
+由测试在临时目录构造，runner 不得读取仓库内预置 PASS ledger；每个入口必须非零退出并分别
+输出唯一稳定错误码 `ERR_NON_HERMETIC_TOOLCHAIN`、
+`ERR_TEST_MATERIALIZATION_TIME`、`ERR_TEST_HEAD_DRIFT`、
+`ERR_TEST_RESULT_DIGEST`。Node `MODULE_NOT_FOUND`、缺 runner、JSON parse error
+或其他非约定错误均不算负向测试通过。
 
 runner 必须在 spawn 前捕获 `started_at_utc`、在子进程退出后捕获
 `ended_at_utc`；`files_materialized_at_utc` 是本 worktree 中

@@ -39,6 +39,11 @@ mtime、未改写逐测试 JSON、total/failed/passed 与 raw SHA-256。必须�
 `ERR_TEST_MATERIALIZATION_TIME`、`ERR_TEST_HEAD_DRIFT` 或
 `ERR_TEST_RESULT_DIGEST`。reviewer 初始重跑必须仍为 8/8 Red；每个后续 phase receipt
 必须绑定本 stage 8/8 Green test-run receipt digest。
+同一 8-test 文件还必须通过 runner 的只读 `--validate-receipt-fixture` 入口隔离证明
+non-hermetic toolchain、物化时间倒序、HEAD 漂移、raw result digest/计数不一致分别以
+`ERR_NON_HERMETIC_TOOLCHAIN`、`ERR_TEST_MATERIALIZATION_TIME`、
+`ERR_TEST_HEAD_DRIFT`、`ERR_TEST_RESULT_DIGEST` 非零退出；缺 runner 或模块加载错误
+不得冒充负向断言通过，测试总数不得因此增加或减少。
 
 ## BEHAVIOR 条目
 

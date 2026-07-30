@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 const sprintDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(sprintDir, '../..');
 const verifier = path.join(sprintDir, 'scripts', 'verify-pr4457-evidence.mjs');
+const contractRunner = path.join(sprintDir, 'scripts', 'run-pr4457-contract-tests.mjs');
 const oracleManifest = path.join(sprintDir, 'conflict-oracle-manifest.json');
 const ORACLE_MANIFEST_SHA256 = 'ec6bf14d639a5ddf8a340185b5d285151075a6e3a3e3b9a252283a92ca477d43';
 const ACTOR_STAGE = process.env.HARNESS_ACTOR_STAGE;
@@ -61,6 +62,22 @@ async function expectRejected(
   expect(output, `负向场景必须返回稳定错误码 ${errorCode}`).toContain(errorCode);
 }
 
+async function expectRunnerReceiptRejected(fixture: string, errorCode: string) {
+  const result = await Promise.resolve(spawnSync(process.execPath, [
+    contractRunner,
+    '--validate-receipt-fixture',
+    fixture,
+  ], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: { ...process.env, HARNESS_ACTOR_STAGE: ACTOR_STAGE ?? '' },
+  }));
+  const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+  expect(result.status, `runner receipt 负向场景 ${fixture} 必须非零退出`).not.toBe(0);
+  expect(output, `runner receipt 负向场景必须返回稳定错误码 ${errorCode}`)
+    .toContain(errorCode);
+}
+
 async function expectPrematureRefusal(
   phase: string,
   errorCode: string,
@@ -74,6 +91,7 @@ async function expectPrematureRefusal(
 
 describe('PR #4457 contract [BEHAVIOR]', () => {
   it('33 路径 oracle manifest 的 schema 身份 argv 与语义哈希精确匹配', async () => {
+    await expectRunnerReceiptRejected('non-hermetic-toolchain', 'ERR_NON_HERMETIC_TOOLCHAIN');
     await expectRejected('conflicts', 'ci-exact-head', 'ERR_STAGE_MISMATCH');
     // 静态 manifest 本身已在合同阶段冻结；它必须同时跨过由实现产出的
     // conflicts verifier/evidence 边界，避免实现尚不存在时仅靠静态 JSON 假绿。
@@ -97,6 +115,7 @@ describe('PR #4457 contract [BEHAVIOR]', () => {
   });
 
   it('冻结身份与全部 subject 精确匹配', async () => {
+    await expectRunnerReceiptRejected('materialization-time', 'ERR_TEST_MATERIALIZATION_TIME');
     await expectRejected('freeze', 'generator-pre-push', 'ERR_ACTOR_ROLE', [
       '--actor-role', 'controller',
     ]);
@@ -106,6 +125,7 @@ describe('PR #4457 contract [BEHAVIOR]', () => {
   });
 
   it('全部 33 个冲突路径完成行为验证', async () => {
+    await expectRunnerReceiptRejected('head-drift', 'ERR_TEST_HEAD_DRIFT');
     await expectRejected('conflicts', 'generator-pre-push', 'ERR_DIGEST_MISMATCH', [
       '--manifest-sha256', '0'.repeat(64),
     ]);
@@ -115,6 +135,7 @@ describe('PR #4457 contract [BEHAVIOR]', () => {
   });
 
   it('全部 77 条 CodeQL annotation 收敛', async () => {
+    await expectRunnerReceiptRejected('result-digest', 'ERR_TEST_RESULT_DIGEST');
     await expectRejected('codeql', 'generator-pre-push', 'ERR_EVIDENCE_FABRICATED', [
       '--fixture', 'fabricated-exit-zero-without-subject-logs',
     ]);

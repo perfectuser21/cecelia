@@ -6,10 +6,11 @@
     {
       "task_id": "ws1",
       "title": "收敛 Draft PR #4457 的 33 个冲突、77 条 CodeQL annotation 与 exact-head CI",
-      "scope": "仅更新既有 cp-kernel-phase5b-a1-review-fixes：用同一不可变 8-test 文件实施 stage-progressive Green；初始 Red 由受信仓库外包装器、各阶段 Green 由 sprint runner 固定使用 lockfile 本地 Vitest 1.6.1，33 路径 oracle 也禁用 bare npx，并保存严格晚于文件物化时间的 cwd、HEAD、argv、逐测试原始 JSON 与 digest 的 append-only receipt；generator-pre-push 收集冻结、33 路径、77 annotation 与回归证据，未来阶段仅证明 fail-closed 且不产 receipt；CI 在 push receipt 后验证 exact-head 与 final-head CodeQL；独立 evaluator 产出 receipt；controller 消费 receipt 与 audit-end 后停在人工审阅门。不新建 PR、不 merge、不 deploy。",
+      "scope": "仅更新既有 cp-kernel-phase5b-a1-review-fixes：用同一不可变 8-test 文件实施 stage-progressive Green；初始 Red 由受信仓库外包装器、各阶段 Green 由 sprint runner 固定使用 lockfile 本地 Vitest 1.6.1，33 路径 oracle 也禁用 bare npx，并保存严格晚于文件物化时间的 cwd、HEAD、argv、逐测试原始 JSON 与 digest 的 append-only receipt；同一 8-test 文件必须机械拒绝非 hermetic 工具链、物化时间倒序、HEAD 漂移与 raw digest/计数伪造，缺 runner 不得冒充负向通过；generator-pre-push 收集冻结、33 路径、77 annotation 与回归证据，未来阶段仅证明 fail-closed 且不产 receipt；CI 在 push receipt 后验证 exact-head 与 final-head CodeQL；独立 evaluator 产出 receipt；controller 消费 receipt 与 audit-end 后停在人工审阅门。不新建 PR、不 merge、不 deploy。",
       "dod": [
         "[BEHAVIOR] 同一不可变 8-test 文件按 HARNESS_ACTOR_STAGE 渐进 Green：当前/此前阶段 true-success，未来阶段稳定拒绝且不产 receipt；四阶段各自 8/8 Green，并区分 true-success 与 expected-future-stage-refusal",
         "[BEHAVIOR] 初始 Red 与每阶段 Green 仅用 lockfile 本地 Vitest 1.6.1，test-run receipt 精确记录 cwd、tested HEAD、executable/version/argv、真实执行时间、文件物化时间、逐测试 JSON、8-case 计数和 raw SHA-256",
+        "[BEHAVIOR] 8 个既有 case 内隔离验证非 hermetic 工具链、物化时间倒序、HEAD 漂移、raw digest/计数伪造均以对应稳定错误码非零退出",
         "[BEHAVIOR] 审计窗内无新 PR、无 merge、无 auto-merge、无 staging/production deployment",
         "[ARTIFACT] evidence 保存绑定不可变 ID、冻结 SHA 与最终 SHA 的机器可读 ledger/receipt"
       ],
