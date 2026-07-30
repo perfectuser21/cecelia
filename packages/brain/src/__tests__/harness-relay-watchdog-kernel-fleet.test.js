@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  _resumePausedKernelContext,
   reconcileExpiredKernelAttempt,
   resumeKernelAttempt,
 } from '../harness-relay-watchdog.js';
@@ -178,6 +179,85 @@ function successfulWorkerFetch(machineId = 'us-mac-m4') {
 }
 
 describe('kernel fleet watchdog recovery', () => {
+  it('claims an answered paused run before launch and publishes the resume phase only after launch', async () => {
+    const queries = [];
+    const dbPool = {
+      query: vi.fn(async (sql, params = []) => {
+        queries.push({ sql: String(sql), params });
+        if (String(sql).includes("SET phase='resuming'")) {
+          return { rows: [{ id: RUN_ID }], rowCount: 1 };
+        }
+        if (String(sql).includes('SET phase=$2')) {
+          return { rows: [{ id: RUN_ID }], rowCount: 1 };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      }),
+    };
+    const launchKernel = vi.fn(async () => ({ pid: 43210 }));
+    const out = { resumed: 0 };
+
+    await _resumePausedKernelContext({
+      id: RUN_ID,
+      phase: 'paused',
+      context_resume: {
+        context_request_hop: 8,
+        resume_phase: 'generate',
+      },
+    }, {
+      id: '44444444-4444-4444-8444-444444444444',
+      payload: { worktree_path: '/tmp/kernel-worktree' },
+    }, {
+      pool: dbPool,
+      launchKernel,
+      hostname: () => 'watchdog-host',
+      now: () => new Date('2026-07-30T19:00:00.000Z'),
+    }, out);
+
+    expect(launchKernel).toHaveBeenCalledOnce();
+    expect(queries[0].sql).toContain("SET phase='resuming'");
+    expect(queries[1].sql).toContain('SET phase=$2');
+    expect(queries[1].params).toContain('generate');
+    expect(queries[1].params).toContain(43210);
+    expect(out.resumed).toBe(1);
+  });
+
+  it('returns a failed context-resume launch to paused instead of exposing a dead active phase', async () => {
+    const queries = [];
+    const dbPool = {
+      query: vi.fn(async (sql, params = []) => {
+        queries.push({ sql: String(sql), params });
+        if (String(sql).includes("SET phase='resuming'")) {
+          return { rows: [{ id: RUN_ID }], rowCount: 1 };
+        }
+        if (String(sql).includes("SET phase='paused'")) {
+          return { rows: [{ id: RUN_ID }], rowCount: 1 };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      }),
+    };
+
+    await expect(_resumePausedKernelContext({
+      id: RUN_ID,
+      phase: 'paused',
+      context_resume: {
+        context_request_hop: 8,
+        resume_phase: 'generate',
+      },
+    }, {
+      id: '44444444-4444-4444-8444-444444444444',
+      payload: { worktree_path: '/tmp/kernel-worktree' },
+    }, {
+      pool: dbPool,
+      launchKernel: vi.fn(async () => {
+        throw new Error('spawn failed');
+      }),
+      hostname: () => 'watchdog-host',
+      now: () => new Date('2026-07-30T19:00:00.000Z'),
+    }, { resumed: 0 })).rejects.toThrow(/spawn failed/);
+
+    expect(queries.at(-1).sql).toContain("SET phase='paused'");
+  });
+
   it('resumes on the receipt-proven actual machine instead of the requested fallback origin', async () => {
     const originalParentAttempt = {
       ...parentAttempt(),

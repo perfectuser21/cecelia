@@ -161,6 +161,40 @@ describe('production WorkspaceSpec resolution', () => {
     expect(resolveRepoHead).toHaveBeenCalledWith('perfectuser21/cecelia');
   });
 
+  it('keeps generator-fix on the server-observed pull request branch and head', async () => {
+    const resolveRepoHead = vi.fn();
+    const resolveWorkspaceSpec = createWorkspaceSpecResolver({ resolveRepoHead });
+    const prBranch = 'cp-existing-pull-request';
+
+    const resolved = await resolveWorkspaceSpec({
+      action: 'spawn:generator-fix',
+      role: 'generator',
+      readOnly: false,
+      attemptId: ATTEMPT_ID,
+      ctx: {
+        runId: RUN_ID,
+        observed: {
+          task: { payload: { base_repo: 'perfectuser21/cecelia' } },
+        },
+      },
+      bundle: {
+        inputs: {
+          pr_branch: prBranch,
+          pr_head_sha: BASE_SHA,
+        },
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      repo: 'perfectuser21/cecelia',
+      base_sha: BASE_SHA,
+      branch: prBranch,
+      expected_head_sha: BASE_SHA,
+      mode: 'read-write',
+    });
+    expect(resolveRepoHead).not.toHaveBeenCalled();
+  });
+
   it('fails closed for a repository outside the Brain-owned map', async () => {
     const resolveWorkspaceSpec = createWorkspaceSpecResolver({
       resolveRepoHead: vi.fn(async () => BASE_SHA),

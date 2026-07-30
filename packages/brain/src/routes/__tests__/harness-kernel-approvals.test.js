@@ -394,7 +394,6 @@ describe('harness-kernel-approvals mounted Router behavior', () => {
           return { rows: [{ hop: 9 }], rowCount: 1 };
         }
         if (normalized.includes('UPDATE initiative_runs')) {
-          phase = params[1];
           return { rows: [{ id: RUN_ID }], rowCount: 1 };
         }
         if (normalized.includes('UPDATE tasks')) {
@@ -460,11 +459,15 @@ describe('harness-kernel-approvals mounted Router behavior', () => {
     expect(insert?.sql).toMatch(/verdict:context_answer/i);
     expect(insert?.params.join(' ')).toContain('Use the existing rollback policy.');
     const reopen = queries.find(({ sql }) => sql.includes('UPDATE initiative_runs'));
-    expect(reopen?.sql).toMatch(/phase=\$2/i);
-    expect(reopen?.params).toContain('generate');
+    expect(reopen?.sql).not.toMatch(/\bSET\s+phase=/i);
+    expect(reopen?.sql).toMatch(/deadline_at/i);
     expect(queries.some(({ sql }) => (
       /UPDATE tasks[\s\S]*updated_at=NOW\(\)/i.test(sql)
     ))).toBe(true);
+    expect(response.body).toMatchObject({
+      resume_pending: true,
+      resume_phase: 'generate',
+    });
     expect(queries.at(-1).sql).toBe('COMMIT');
 
     const retry = await request(app)
