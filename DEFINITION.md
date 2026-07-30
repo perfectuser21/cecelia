@@ -16,7 +16,8 @@
 
 - 新增纯函数 `deriveAssertionVerification`：只从调用方提供的断言格与 receipt
   历史派生 `never_run`、最新失败或最新通过状态；旧 revision 仅保留为历史，
-  同 revision 同时间以稳定字段确定性选出唯一最新记录。
+  同 revision 同时间以稳定字段确定性选出唯一最新记录。PASS 必须同时带非零
+  `scenario_count` 与非空 `scenario_evidence` 才能进入验证状态。
 - 本层不执行断言、不读写数据库、不新增 migration/API/Runner，也不持久化
   receipt；派生出的通过状态不等于完成“盖章”，不宣称 §④ 已上线。
 - 产权变更 B 继续 `effective_now=false`。回退：部署 Brain `1.267.138`。

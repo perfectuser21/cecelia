@@ -65,6 +65,8 @@ describe('Golden Path assertion receipt state', () => {
         assertion_revision: 1,
         assertion_digest: digest,
         verdict: 'PASS',
+        scenario_count: 1,
+        scenario_evidence: { kind: 'vitest', passed: 1 },
         completed_at: '2026-07-30T01:00:00Z',
       },
       {
@@ -126,6 +128,8 @@ describe('Golden Path assertion receipt state', () => {
       completed_at: '2026-07-30T02:00:00Z',
       created_at: '2026-07-30T02:00:01Z',
       verdict: 'PASS',
+      scenario_count: 1,
+      scenario_evidence: { kind: 'vitest', passed: 1 },
     };
 
     const verification = deriveAssertionVerification(cell, [
