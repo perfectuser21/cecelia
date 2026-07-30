@@ -45,6 +45,7 @@ const attempt = {
   provider: 'codex',
   status: 'running',
   lease_owner: leaseOwner,
+  lease_generation: 0,
   requested_machine_id: localMachineId,
   actual_machine_id: localMachineId,
   execution_transport: 'local-docker',
@@ -166,11 +167,18 @@ function fleetResult(overrides = {}) {
   };
 }
 
-function postCallback(app, body = validResult, token = callbackToken, owner = leaseOwner) {
+function postCallback(
+  app,
+  body = validResult,
+  token = callbackToken,
+  owner = leaseOwner,
+  generation = 0,
+) {
   let call = request(app)
     .post(`/api/brain/harness/attempts/${attemptId}/callback`)
     .set('Authorization', `Bearer ${token}`)
-    .set('X-Harness-Lease-Owner', owner);
+    .set('X-Harness-Lease-Owner', owner)
+    .set('X-Harness-Lease-Generation', String(generation));
   return call.send(body);
 }
 
@@ -490,6 +498,33 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     const response = await postCallback(app, validResult, callbackToken, 'other-owner');
     expect(response.status).toBe(409);
     expect(mocks.store.complete).not.toHaveBeenCalled();
+  });
+
+  it('R11: 缺失或非法 lease generation 时拒绝 callback', async () => {
+    const missing = await request(app)
+      .post(`/api/brain/harness/attempts/${attemptId}/callback`)
+      .set('Authorization', `Bearer ${callbackToken}`)
+      .set('X-Harness-Lease-Owner', leaseOwner)
+      .send(validResult);
+    const malformed = await request(app)
+      .post(`/api/brain/harness/attempts/${attemptId}/callback`)
+      .set('Authorization', `Bearer ${callbackToken}`)
+      .set('X-Harness-Lease-Owner', leaseOwner)
+      .set('X-Harness-Lease-Generation', 'generation-zero')
+      .send(validResult);
+
+    expect(missing.status).toBe(400);
+    expect(malformed.status).toBe(400);
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+  });
+
+  it('R11: 旧 lease generation callback 返回 409 且不写终态', async () => {
+    const response = await postCallback(app, validResult, callbackToken, leaseOwner, 1);
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toMatch(/generation/i);
+    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.store.fail).not.toHaveBeenCalled();
   });
 
   it('认证后发生换租时拒绝旧 worker，且不得追加 evaluator verdict', async () => {

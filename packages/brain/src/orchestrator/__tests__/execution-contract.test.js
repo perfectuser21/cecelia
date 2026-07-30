@@ -289,6 +289,28 @@ describe('HarnessResult contract', () => {
       .toBe(failureClass);
   });
 
+  it('classifies needs_context separately from semantic refusal', () => {
+    expect(parseHarnessResult(validResult({
+      status: 'needs_context',
+      summary: 'A contract answer is required.',
+      error: null,
+    }), 'planner').failure_class).toBe('needs_context');
+  });
+
+  it('only treats blocked as infrastructure when the worker declares that structured class', () => {
+    expect(parseHarnessResult(validResult({
+      status: 'blocked',
+      failure_class: 'infrastructure_blocked',
+      summary: 'OrbStack transport is unavailable.',
+      error: null,
+    }), 'planner').failure_class).toBe('infrastructure_blocked');
+    expect(parseHarnessResult(validResult({
+      status: 'blocked',
+      summary: 'The contract forbids this action.',
+      error: null,
+    }), 'planner').failure_class).toBe('semantic_refusal');
+  });
+
   it('accepts a planner result without a verdict decision', () => {
     expect(parseHarnessResult(validResult(), 'planner')).toMatchObject({
       contract_version: RESULT_CONTRACT_VERSION,

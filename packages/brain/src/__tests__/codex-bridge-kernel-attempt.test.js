@@ -716,6 +716,7 @@ describe('kernel attempt security and Codex execution', () => {
     expect(callbackOptions.headers).toMatchObject({
       Authorization: `Bearer ${CALLBACK_TOKEN}`,
       'X-Harness-Lease-Owner': 'dispatcher:test',
+      'X-Harness-Lease-Generation': '2',
     });
     expect(callbackOptions.redirect).toBe('error');
     expect(callbackOptions.signal).toBeInstanceOf(AbortSignal);

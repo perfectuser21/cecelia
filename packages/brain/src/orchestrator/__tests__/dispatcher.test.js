@@ -1884,6 +1884,7 @@ describe('createDetachedLauncher', () => {
         CODEX_HOME: '/home/cecelia/.codex',
         HARNESS_MODEL: 'configured-model',
         HARNESS_LEASE_OWNER: expect.any(String),
+        HARNESS_LEASE_GENERATION: '0',
         HARNESS_ATTEMPT_ID: attemptId,
         HARNESS_CALLBACK_TOKEN: 'attempt-secret',
         HARNESS_RUN_ID: runId,
