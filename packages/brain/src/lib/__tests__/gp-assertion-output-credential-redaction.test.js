@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { redactAndBoundOutput } from '../gp-assertion-output.js';
 
 describe('GP assertion output credential redaction', () => {
+  it('redacts credentials whose keys are split by ANSI control sequences', () => {
+    const output = redactAndBoundOutput(
+      '\u001b[31mtoken\u001b[0m=receipt-secret',
+    );
+
+    expect(output).not.toContain('receipt-secret');
+    expect(output).toContain('token=[REDACTED]');
+  });
+
   it('redacts AWS and URI credentials without changing ordinary URLs', () => {
     const secrets = [
       'aws-secret-value',

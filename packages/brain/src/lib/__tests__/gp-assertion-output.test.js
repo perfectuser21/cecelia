@@ -7,6 +7,13 @@ import {
 } from '../gp-assertion-output.js';
 
 describe('GP assertion output evidence', () => {
+  it.each([undefined, Number.NaN, -1, 1.5])(
+    'fails closed for an invalid byte limit: %s',
+    (limit) => {
+      expect(byteSafeTail('must-not-escape', limit)).toBe('');
+    },
+  );
+
   it('returns a valid UTF-8 tail within the byte limit', () => {
     const output = byteSafeTail(
       Buffer.concat([Buffer.from('prefix-🙂'), Buffer.alloc(16, 0xFF)]),
