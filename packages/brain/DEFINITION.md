@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.267.136
+**版本**: 1.267.137
 
 ## Golden Path §④-1 receipt-state pure model
 
