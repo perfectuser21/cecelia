@@ -7,9 +7,11 @@ description: |
   收敛轮兼裁 proposer 的 REFUTE 反驳是否成立。审查对象是提案文档质量（现状标注真实性/
   路径完整性/断言可验证性/判定点完备/风险与门），不是代码、不是合同测试。
   触发：GP 提案审查、镜头审查 golden path、裁决 REFUTE。
-version: 1.2.0
+version: 1.3.0
 created: 2026-07-12
 changelog:
+  - 1.3.0: 新增 GP_CONTRACT 红方攻击与 INCIDENT_CONTEXT 事故对照；不改变既有 7 维提案 rubric，
+    verdict JSON 增加 contract_attack 与 incident_comparison 两个独立裁决块
   - 1.2.0: rubric 6 维扩为 7 维（2026-07-18 根因排查拍板，decision 8dbe91ee）——新增「多端完整性」
     维度：功能涉及多个 os_type/device_platform（如安卓手机 vs Windows 机器）时，验收必须确认
     展示层（列表/筛选/图标）是否区分，不区分则该维打 0 分。起因：机器管理页/账号管理页曾因
@@ -35,6 +37,8 @@ LENS      — tech | product | risk | solo（solo=1v1 综合镜头）
 ROUND     — 轮次
 PROPOSAL  — <SPRINT_DIR>/proposal-v<N>.md
 EXPLORE_REPORT — .harness/explore-report.md
+GP_CONTRACT — .harness/gp-contract-v<N>.json；版本必须与 PROPOSAL 一致
+INCIDENT_CONTEXT — 事故/客诉/返工输入；§④ 事故对照库上线前允许精确值 unavailable
 上轮 feedback 与本轮回应清单（ROUND ≥ 2 时，裁核销/REFUTE 用）
 verdict 输出路径 — .harness/verdicts/gp-r<ROUND>-<LENS>.json
 ```
@@ -66,6 +70,33 @@ verdict 输出路径 — .harness/verdicts/gp-r<ROUND>-<LENS>.json
 「可以更严谨/更完整」不是阻塞项，不计入。ROUND ≥ 3 且总分无进步 → feedback 加 `[PIVOT]` 标记。
 不设 MAX_ROUNDS，是否 force 由 Brain 侧趋势检测判，你只按 rubric 真实打分，禁降标凑 APPROVED。
 
+## GP 合同红方攻击（每个镜头都必须做）
+
+这是对 7 项签字合同的独立攻击，不增加或改名既有 7 个 rubric 维度。逐项检查：
+
+1. `fr_summary`：是否存在“优化体验”式模糊承诺，是否能验证 X 入口、Y 操作、Z 结果；
+2. `lifelines_and_nfr`：是否漏掉违反即失败的命门，`lifeline|best_effort` 分类是否被故意降级，
+   验证方式是否真能证实该条；
+3. `yield_order`：是否与全局默认冲突却缺少覆盖理由，同级冲突是否被假装可自动裁；
+4. `external_commitment_changes`：API 形状、定价、公开能力、SLA 是否漏报或漂移；
+5. `release_and_blast_radius`：灰度与爆炸半径是否具体，回滚条件是否可观测、可执行；
+6. `success_and_close`：是否只写 vanity metric，是否缺观察窗口、关闭条件或失败下线条件；
+7. `budget_guard`：总成本、单 atom 成本/时长/并发是否存在逃逸口或无限值。
+
+发现任一实质问题时 `contract_attack.verdict=REVISION`，并把定位到合同键的 finding 写入
+`contract_attack.findings`；全部可签字时才为 `PASS`。合同顶层出现第 8 个业务键，或把封版
+11 要素搬进合同，直接 REVISION。
+
+### 事故对照
+
+读取 `INCIDENT_CONTEXT`，将历史事故、客诉、返工逐条映射到合同条款：
+
+- 有输入：列出 `matched_incidents`，并把没有相应命门、失败语义、回滚或关闭条件的事故写入
+  `missing_contract_terms`；有缺口则合同攻击必须 REVISION。
+- 输入精确为 `unavailable`：输出 `evidence_status=unavailable` 和空数组，表示“证据源尚未上线”；
+  禁止翻译成“无事故”“已比对无命中”或凭空补造事故。
+- 缺少 `INCIDENT_CONTEXT` 输入不是 unavailable，而是 NEEDS_CONTEXT。
+
 ## 收敛轮职责（ROUND ≥ 2 额外做）
 
 1. **核销核验**：上轮每条 P0/P1，对照新版正文确认真改了（不是只在回应清单里说改了）
@@ -85,10 +116,16 @@ cat > .harness/verdicts/gp-r<ROUND>-<LENS>.json << 'EOF'
  "verdict":"<APPROVED|REVISION>",
  "findings":[{"severity":"P0|P1|P2","finding":"<一句话>","evidence":"<文件:行号或数据>",
               "dimension":"<对应维度>","status":"OPEN|RESOLVED|REFUTED"}],
- "refute_rulings":[{"finding":"<被反驳条>","ruling":"UPHELD|REFUTE_ACCEPTED","reason":"<一句话>"}]}
+ "refute_rulings":[{"finding":"<被反驳条>","ruling":"UPHELD|REFUTE_ACCEPTED","reason":"<一句话>"}],
+ "contract_attack":{"verdict":"<PASS|REVISION>","findings":[]},
+ "incident_comparison":{"evidence_status":"<available|unavailable>","matched_incidents":[],
+                        "missing_contract_terms":[]}}
 EOF
 test -f .harness/verdicts/gp-r<ROUND>-<LENS>.json && echo OK
 ```
+
+`verdict=APPROVED` 还要求 `contract_attack.verdict=PASS`。`incident_comparison` 结构不可省略；
+在 §④ 前允许 `evidence_status=unavailable`，但不能因此跳过其余合同攻击。
 
 **2. 报告文本**：每维评分伴一句证据 + P0/P1 逐条（描述/证据/修复方向）+ P2 记账清单。
 REVISION 时只列真阻塞项，不列 nice-to-have。
@@ -98,4 +135,5 @@ REVISION 时只列真阻塞项，不列 nice-to-have。
 1. 禁不读代码就给 reality_of_status 打分（≥3 处抽验是硬动作）
 2. 禁把「可以更严谨」当阻塞项凑轮次
 3. 禁审代码实现质量/测试防作弊——那是批准后 harness 实现阶段 evaluator 的事
+4. 禁自行替 Owner 签合同；reviewer 只攻击并给裁决，不调用签字或 approve API
 4. 禁漏写 verdict JSON 文件——controller 只认结构化 verdict，散文裁决等于没裁

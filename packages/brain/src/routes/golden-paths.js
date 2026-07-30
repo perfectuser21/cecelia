@@ -3,25 +3,43 @@
 import express from 'express';
 import pool from '../db.js';
 import { getTotalEffectiveSlots } from '../fleet-resource-cache.js';
-import { stampMMDDHHNN, shortId } from '../harness-skill-relay.js';
+import {
+  GoldenPathContractError,
+  createGoldenPathContractVersion,
+  launchLatestSignedGoldenPath,
+} from '../golden-path-contracts.js';
 
 const router = express.Router();
 
-// title → slug（sprint_dir 拼接用，非字母数字转短横线，压缩连续短横线）
-function slugify(title) {
-  return String(title)
-    .toLowerCase()
-    .replace(/[^a-z0-9一-龥]+/g, '-')
-    .slice(0, 40)
-    .replace(/^-+|-+$/g, '') || 'gp';
+async function withTransaction(operation) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await operation(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      console.error('[golden-paths] transaction rollback 失败:', rollbackError);
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
-// GP approve 目前只覆盖 Cecelia monorepo 范围（决策1c6232b7后续 ZenithJoy 侧另立GP前不适用）。
-// 用 GitHub URL 而非本地路径：harness-controller 里 windows_cloud/linux_server 等
-// target_environment 强制要求可远端 clone 的 GitHub URL，此处统一走该规则，不依赖本地路径存在。
-const GP_HARNESS_BASE_REPO = 'https://github.com/perfectuser21/cecelia.git';
-// GP 验证目前都是本机 curl/docker/psql 层面，不涉及 GUI/RPA/远程真机。
-const GP_HARNESS_TARGET_ENVIRONMENT = 'local_api';
+function sendContractError(res, error) {
+  if (!(error instanceof GoldenPathContractError)) return false;
+  res.status(error.status).json({
+    success: false,
+    error: error.message,
+    code: error.code,
+    ...(error.details === undefined ? {} : { details: error.details }),
+  });
+  return true;
+}
 
 export const GP_STATUSES = ['candidate', 'proposed', 'converged', 'approved', 'in_dev',
   'delivered', 'expired', 'rejected', 'blocked_gate', 'superseded'];
@@ -79,6 +97,42 @@ router.post('/golden-paths', async (req, res) => {
   } catch (err) {
     console.error('[golden-paths] POST 失败:', err);
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/golden-paths/:id/contracts', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT *
+         FROM golden_path_contract_versions
+        WHERE golden_path_id = $1
+        ORDER BY version DESC`,
+      [req.params.id],
+    );
+    res.json({ success: true, contract_versions: rows });
+  } catch (error) {
+    console.error('[golden-paths] GET contracts 失败:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/golden-paths/:id/contracts', async (req, res) => {
+  try {
+    const contract = req.body?.contract ?? req.body;
+    const result = await withTransaction((client) => (
+      createGoldenPathContractVersion(client, {
+        goldenPathId: req.params.id,
+        contract,
+      })
+    ));
+    res.status(result.idempotent ? 200 : 201).json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    if (sendContractError(res, error)) return;
+    console.error('[golden-paths] POST contracts 失败:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -212,93 +266,26 @@ router.post('/golden-paths/:id/select', async (req, res) => {
   }
 });
 
-// ─── POST /golden-paths/:id/approve — 批准（converged→approved）+ 写 judgment 判定点 ─
+// ─── POST /golden-paths/:id/approve — 兼容入口：只返回最新已签合同绑定的任务 ─
 
 router.post('/golden-paths/:id/approve', async (req, res) => {
   try {
-    const { id } = req.params;
-    const { rows: cur } = await pool.query('SELECT * FROM golden_paths WHERE id = $1', [id]);
-    if (cur.length === 0) {
-      return res.status(404).json({ success: false, error: 'golden_path not found', code: 'GP_NOT_FOUND' });
-    }
-    const gp = cur[0];
-    // 批准来源：converged（正式批审）或 proposed（auto_release 报备路径）
-    const allowedSources = ['converged', 'proposed'];
-    if (!allowedSources.includes(gp.status)) {
-      return res.status(409).json({
-        success: false,
-        error: `批准只能从 converged 或 proposed 发起，当前状态: ${gp.status}`,
-        code: 'INVALID_TRANSITION',
-      });
-    }
-
-    // 写 decisions(category='judgment', review_after=now()+14d, reason 含 gp:<id>)
-    const decisionReason = `gp:${id} 批准决策——${gp.title}。${gp.proposal_doc ? '提案已收敛。' : ''}`;
-    const { rows: decRows } = await pool.query(
-      `INSERT INTO decisions (category, topic, decision, reason, status, review_after)
-       VALUES ('judgment', $1, 'approved', $2, 'active', now() + interval '14 days')
-       RETURNING id`,
-      [`gp:${id}`, decisionReason]
-    );
-    const judgmentId = decRows[0].id;
-
-    // 冻结 proposal_doc（如果已有则保持，否则标记已批准时间点）
-    const frozenDoc = gp.proposal_doc || null;
-
-    // 注册 harness 实现任务：必须是 task_type=harness_initiative 才会被
-    // controllerSkillFor（harness-skill-relay.js）路由到 harness-controller 真正写代码。
-    // 用 golden_path_proposal 会被误路由回 golden-path-controller（只产提案文档，issue bfaac776）。
-    const harnessTitle = `[GP harness] ${gp.title}`;
-    const sprintDir = `sprints/${stampMMDDHHNN(new Date())}-${slugify(gp.title)}-${shortId(id)}`;
-    const { rows: harnessRows } = await pool.query(
-      `INSERT INTO tasks (title, description, task_type, status, priority, payload)
-       VALUES ($1, $2, 'harness_initiative', 'queued', 'P1', $3::jsonb)
-       RETURNING id`,
-      [
-        harnessTitle,
-        `批准后 harness 实现任务——${gp.one_liner}`,
-        JSON.stringify({
-          golden_path_id: id,
-          title: gp.title,
-          one_liner: gp.one_liner,
-          proposal_doc: frozenDoc,
-          judgment_decision_id: judgmentId,
-          phase: 'implement',
-          orchestrator: 'skill-relay',
-          sprint_dir: sprintDir,
-          thin_prd: gp.one_liner,
-          prep_prd_body: frozenDoc,
-          journey_id: gp.journey_id,
-          base_repo: GP_HARNESS_BASE_REPO,
-          target_environment: GP_HARNESS_TARGET_ENVIRONMENT,
-        }),
-      ]
-    );
-    const harnessTaskId = harnessRows[0].id;
-
-    // 状态机：→ approved，写 judgment_refs、approved_at、review_after、冻结 proposal_doc
-    const { rows } = await pool.query(
-      `UPDATE golden_paths
-       SET status = 'approved',
-           judgment_refs = ARRAY[$1::uuid],
-           approved_at = now(),
-           review_after = now() + interval '14 days',
-           proposal_doc = COALESCE($2, proposal_doc),
-           proposal_task_id = COALESCE(proposal_task_id, $3),
-           updated_at = now()
-       WHERE id = $4
-       RETURNING *`,
-      [judgmentId, frozenDoc, harnessTaskId, id]
-    );
+    const result = await withTransaction((client) => (
+      launchLatestSignedGoldenPath(client, {
+        goldenPathId: req.params.id,
+        expectedVersion: req.body?.expected_version,
+      })
+    ));
     res.json({
       success: true,
-      golden_path: rows[0],
-      judgment_decision_id: judgmentId,
-      harness_task_id: harnessTaskId,
+      contract_version: result.contract_version,
+      harness_task_id: result.task.id,
+      idempotent: result.idempotent,
     });
-  } catch (err) {
-    console.error('[golden-paths] /approve 失败:', err);
-    res.status(500).json({ success: false, error: err.message });
+  } catch (error) {
+    if (sendContractError(res, error)) return;
+    console.error('[golden-paths] /approve 失败:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

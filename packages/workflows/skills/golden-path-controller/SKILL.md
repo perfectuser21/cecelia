@@ -4,14 +4,16 @@ description: |
   Golden Path Controller — GP 提案版单 session 编排者。消费 Brain `task_type=golden_path_proposal`
   任务（harness-skill-relay loadSkill 按 task_type 选中本 skill），一个 session 从头跑完一条
   Golden Path 提案：探索现状 → 提案文档 → 三镜头分级扇出对抗（技术/产品/风险）→ 收敛 →
-  HTML demo → PATCH golden_paths status=converged + findings_log。
-  产物契约 = 提案文档 + demo_url + golden_paths 行 converged，**不产 PR、不写实现代码、不写合同测试**
+  HTML demo → 提交 7 项 GP 合同 → PATCH golden_paths status=converged + findings_log → 等 Owner 签字。
+  产物契约 = 提案文档 + 合同 JSON + demo_url + pending_action_id，**不产 PR、不写实现代码、不写合同测试**
   （那是批准后 harness 实现阶段的事）。复用 harness-controller v2.1.0 横切纪律（append-only 台账 /
   phase-event 自报 / 文件接力 / 四态出口协议 / Step 0 装载恢复）。
   触发：Brain 派发 golden_path_proposal 任务；人工说「跑 GP 提案」「对这条 golden path 候选做对抗收敛」。
-version: 1.0.0
+version: 1.1.0
 created: 2026-07-12
 changelog:
+  - 1.1.0: proposer/reviewer 全程传递版本化 GP_CONTRACT 和 INCIDENT_CONTEXT；收敛后提交严格
+    7 项合同，拿到 pending_action_id 即停在 Owner 签字边界，不替 Owner approve
   - 1.0.0: 首版（GP loop T3，cecelia docs/architecture/2026-07-12-golden-path-mode）——骨架取自
     harness-controller 2.1.0 横切纪律，Step 3-6 替换为 探索→提案→分级扇出对抗→收敛→demo→回写
     golden_paths；判级规则与镜头结构来自朋友圈试点定稿（decisions cb6be3f6/b416bfb3）；
@@ -27,8 +29,9 @@ changelog:
 流程主线：
 
 ```
-Step 0 装载/恢复 → 1 探索+判级 → 2 提案(golden-path-proposer) → 3 镜头扇出对抗(golden-path-reviewer×N)
-→ 4 收敛循环(1v1) → 5 HTML demo → 6 回写 golden_paths(converged+findings_log) → 7 report+收尾
+Step 0 装载/恢复 → 1 探索+判级 → 2 提案+合同(golden-path-proposer)
+→ 3 镜头扇出对抗(golden-path-reviewer×N) → 4 收敛循环(1v1) → 5 HTML demo
+→ 6 提交合同+回写 golden_paths → 6.5 等 Owner 签字 → 7 report+收尾
 ```
 
 ## 硬约束（凌驾于一切阶段逻辑）
@@ -45,7 +48,8 @@ Step 0 装载/恢复 → 1 探索+判级 → 2 提案(golden-path-proposer) → 
 5. **台账先行**：每阶段完成立刻 append 台账，永远信台账+DB 外部真相，不信自己记忆
 6. **完成判据 = golden_paths.status ∈ {converged, rejected} + task 回写终态，两者齐才许结束 session**
 7. **零人为交互**（无头模式）：不确定 → 派 Research subagent 查（代码/decisions/learnings）代答。
-   人的参与点在批审桌（晨报军师节 v2），不在本 skill 内
+   人的参与点在批审桌（晨报军师节 v2），不在本 skill 内；本流程只创建签字待办并退出，
+   绝不替 Owner 批准
 
 ## 横切纪律（每个阶段都适用；取自 harness-controller 2.1.0，语义不变）
 
@@ -66,11 +70,12 @@ curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITI
 
 ```
 explore: done (探索报告=.harness/explore-report.md, 判级=<1v1|三镜头>, 依据=<一句话>)
-propose: done (proposal-v1.md@<commit7>)
-adversary-r<N>: done (lens=<tech|product|risk|solo>, verdict=<APPROVED|REVISION>, P0=<n> P1=<n> P2=<n>, verdict_file=.harness/verdicts/gp-r<N>-<lens>.json)
-converge: done (final=proposal-v<N>.md, rounds=<N>, P0/P1 全核销, REFUTED=<n>条已记账)
+propose: done (proposal-v1.md + gp-contract-v1.json@<commit7>)
+adversary-r<N>: done (lens=<tech|product|risk|solo>, verdict=<APPROVED|REVISION>, contract_attack=<PASS|REVISION>, P0=<n> P1=<n> P2=<n>, verdict_file=.harness/verdicts/gp-r<N>-<lens>.json)
+converge: done (final=proposal-v<N>.md + gp-contract-v<N>.json, rounds=<N>, P0/P1 全核销, REFUTED=<n>条已记账)
 demo: done (file=<path>, url=<demo_url>)
-gp-patch: done (gp=<uuid>, status=converged, findings_log=<n>条)
+contract-submit: done (gp=<uuid>, pending_action_id=<uuid>)
+gp-patch: done (gp=<uuid>, status=converged, findings_log=<n>条, pending_owner_signature=<uuid>)
 report: done
 ```
 
@@ -123,8 +128,18 @@ GP_STATUS=$(echo "$GP" | jq -r .status)   # 正常入口=proposed（select 端�
 # 0.3 台账
 LEDGER=".harness/progress.md"
 mkdir -p .harness .harness/verdicts
-printf '*\n!.gitignore\n!verdicts/\n!verdicts/**\n' > .harness/.gitignore
+printf '*\n!.gitignore\n!gp-contract-v*.json\n!verdicts/\n!verdicts/**\n' > .harness/.gitignore
 cat "$LEDGER" 2>/dev/null || echo "(新 GP 提案，无台账)"
+```
+
+事故输入按以下顺序解析，值只传路径或精确字面量 `unavailable`：
+
+```bash
+if [ -s .harness/incident-context.json ]; then
+  INCIDENT_CONTEXT=.harness/incident-context.json
+else
+  INCIDENT_CONTEXT=unavailable
+fi
 ```
 
 **前台点火防护**（人工前台接管必做；同 harness-controller 0.3 语义）：任务停在 queued 会被下一个 tick
@@ -162,13 +177,14 @@ prompt: 对 GP「<title>: <one_liner>」做现状探索，产出 .harness/explor
 prompt: 调用 Skill(golden-path-proposer)。上下文：
   GP_TITLE=<title> GP_ONE_LINER=<one_liner> SPRINT_DIR=<dir> BRAIN_URL=<url>
   EXPLORE_REPORT=.harness/explore-report.md（读它，不重复探索）
-  产出 <SPRINT_DIR>/proposal-v1.md 并 commit。
-  报告：四态 + 产物路径 + 判定点条数 + 验收断言条数
+  产出 <SPRINT_DIR>/proposal-v1.md + .harness/gp-contract-v1.json 并 commit。
+  报告：四态 + 两个产物路径 + 判定点条数 + 验收断言条数 + NFR 分类计数
 ```
 
 **验收清单（任一缺 = 打回重跑）**：①每个 Golden Path 步骤带现状标注（已有/半成/缺失+证据引用）
 ②「## 验收断言」段 ≥3 条 ③「## 判定点登记表」段存在（无接缝判定点显式写 N/A）④碰真实客户/真机的
-提案含 Gate 前置段。完成 → 台账 append → Step 3。
+提案含 Gate 前置段 ⑤ `gp-contract-v1.json` 可被 `jq -e` 解析，顶层恰好 7 项且版本与提案一致。
+完成 → 台账 append → Step 3。
 
 ## Step 3: 镜头扇出对抗（golden-path-reviewer × N）
 
@@ -178,10 +194,12 @@ prompt: 调用 Skill(golden-path-proposer)。上下文：
 prompt: 调用 Skill(golden-path-reviewer)。上下文：
   LENS=<tech|product|risk|solo> ROUND=1 SPRINT_DIR=<dir>
   PROPOSAL=<SPRINT_DIR>/proposal-v1.md  EXPLORE_REPORT=.harness/explore-report.md
+  GP_CONTRACT=.harness/gp-contract-v1.json  INCIDENT_CONTEXT=<路径|unavailable>
   verdict JSON 写 .harness/verdicts/gp-r1-<lens>.json
 ```
 
 - controller 只认结构化 verdict（JSON 文件），不认散文
+- 每个 verdict 必须同时含 `contract_attack` 与 `incident_comparison`；缺字段一律打回 reviewer
 - 三镜头结果**合并去重**：同一 finding 多镜头命中记一条（保留全部镜头归属）；合并后 P0/P1 清单
   作为 feedback 文件落 `.harness/feedback-r1.md` 交给下一轮 proposer
 - 每轮每镜头台账 append 一行 adversary-r<N>
@@ -189,9 +207,11 @@ prompt: 调用 Skill(golden-path-reviewer)。上下文：
 ## Step 4: 收敛循环（1v1，无 MAX_ROUNDS）
 
 ```
-循环：proposer 修订（读 feedback 文件，产 proposal-v<N+1>.md，逐条回应：核销 或 REFUTE 反驳）
-   → reviewer（lens=solo）复审（核对核销真实性 + 裁 REFUTE 是否成立 + 挖新洞）→ verdict
-出环：verdict=APPROVED（P0/P1 全部核销或 REFUTE 成立；P2 记账不阻塞）
+循环：proposer 修订（读 feedback 文件，同版产 proposal-v<N+1>.md + gp-contract-v<N+1>.json，
+      逐条回应：核销 或 REFUTE 反驳）
+   → reviewer（lens=solo，始终接收同版 GP_CONTRACT + INCIDENT_CONTEXT）复审
+出环：verdict=APPROVED 且 contract_attack.verdict=PASS
+      （P0/P1 全部核销或 REFUTE 成立；P2 记账不阻塞）
 ```
 
 - **proposer 有反驳权**（解法③）：REFUTE 必须带证据（代码/数据/decisions 引用）；reviewer 裁
@@ -213,7 +233,23 @@ prompt: 调用 Skill(golden-path-reviewer)。上下文：
   是批审桌（晨报军师节）的取数字段，空值等于没交付
 - 完成 → 台账 append → Step 6
 
-## Step 6: 回写 golden_paths（converged + findings_log）
+## Step 6: 提交合同并回写 golden_paths
+
+先提交 reviewer 已 PASS 的最终合同：
+
+```bash
+CONTRACT_RESPONSE=$(curl -sf -X POST \
+  "$BRAIN/api/brain/golden-paths/$GP_ID/contracts" \
+  -H "Content-Type: application/json" \
+  --data-binary "@.harness/gp-contract-v<N>.json")
+PENDING_ACTION_ID=$(printf '%s' "$CONTRACT_RESPONSE" | jq -er '.pending_action_id')
+CONTRACT_VERSION=$(printf '%s' "$CONTRACT_RESPONSE" | jq -er '.contract_version.version')
+CONTRACT_HASH=$(printf '%s' "$CONTRACT_RESPONSE" | jq -er '.contract_version.content_hash')
+```
+
+文件名 `<N>` 是收敛轮次，`CONTRACT_VERSION` 是 Brain 分配的不可变合同版本，两者不要求相等。
+POST 失败，或缺少 `pending_action_id / CONTRACT_VERSION / CONTRACT_HASH`，均为 BLOCKED；禁止继续
+PATCH 成 converged。成功后 append `contract-submit` 台账，再执行：
 
 ```bash
 # candidate 手跑入口补流转（正常 Brain select 端点入口已是 proposed，本段跳过）
@@ -239,13 +275,20 @@ jq -n --arg doc "$(cat <SPRINT_DIR>/proposal-v<N>.md)" --arg url "$DEMO_URL" \
 被 REFUTE 驳回的条目**必须保留**（含归属），本期只存不算分（对抗计分在范围外）。
 PATCH 后 GET 回读确认 status=converged 才算完成（外部真相优先）→ 台账 append → Step 7。
 
+## Step 6.5: 等 Owner 签字
+
+将 `pending_action_id / CONTRACT_VERSION / CONTRACT_HASH` 写入任务 result 和最终摘要后停止。
+本 skill 不调用 pending-action approve，也不调用旧 `/golden-paths/:id/approve`。Owner 在批审桌
+按该具体合同版本签字后，Brain 才可创建绑定 `gp_contract_id/version/hash` 的 Harness 实现任务。
+
 ## Step 7: Report + 收尾
 
-1. task 回写：`PATCH tasks/$HARNESS_TASK_ID {"status":"completed","result":{"gp_id":"<uuid>","gp_status":"converged","demo_url":"<url>","rounds":<N>}}`（终局失败则 status=failed + failure_reason）
+1. task 回写：`PATCH tasks/$HARNESS_TASK_ID {"status":"completed","result":{"gp_id":"<uuid>","gp_status":"converged","demo_url":"<url>","rounds":<N>,"pending_action_id":"<uuid>","gp_contract_version":<CONTRACT_VERSION>,"gp_contract_hash":"<CONTRACT_HASH>"}}`（终局失败则 status=failed + failure_reason）
 2. relay-runs 终态回写（best-effort，同横切纪律 A 语义）：
    `PATCH relay-runs/$HARNESS_INITIATIVE_ID {"phase":"done","verdict":"PASS","cost":<总成本>,"pr_url":""}`
    ——GP 提案无 PR，pr_url 传空串；终局失败改 phase=failed + failure_reason
-3. 台账 append `report: done`，输出最终摘要（gp_id / 状态 / demo_url / 轮次 / P0-P2 计数 / REFUTED 计数）
+3. 台账 append `report: done`，输出最终摘要（gp_id / 状态 / demo_url / 数据库合同版本与哈希 /
+   pending_action_id / 收敛轮次 / P0-P2 计数 / REFUTED 计数）
 4. **自杀式 tmux 关窗**（必须是最后一个动作，同 harness-controller 2.1.0）：
 
 ```bash
@@ -277,3 +320,4 @@ fi
 3. 禁跳过探索直接写提案（现状标注无代码证据 = 试点 v1 的死因）
 4. 禁 controller 代建 golden_paths 行（那是 select 端点/direction-proposer 的职责）
 5. 禁 demo 发布失败时静默降级——BLOCKED 分诊或终局上报，不许空 demo_url 记 converged
+6. 禁 controller 替 Owner 签字、批准 pending action 或绕过合同 Gate 启动 Harness

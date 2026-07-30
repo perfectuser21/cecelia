@@ -156,7 +156,7 @@ router.post('/pending-actions/:id/approve', async (req, res) => {
     const result = await approvePendingAction(id, reviewer || 'api-user');
 
     if (!result.success) {
-      return res.status(400).json(result);
+      return res.status(result.status || 400).json(result);
     }
 
     res.json(result);

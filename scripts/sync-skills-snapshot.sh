@@ -33,6 +33,7 @@ SKILLS=(
   golden-path-controller
   golden-path-proposer
   golden-path-reviewer
+  golden-path-mapper
 )
 
 if [[ ! -d "$SSOT_DIR" ]]; then
