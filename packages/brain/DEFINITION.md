@@ -1,6 +1,13 @@
 # Brain 模块定义
 
-**版本**: 1.267.141
+**版本**: 1.267.142
+
+## Trusted assertion process adapter
+
+- `gp-assertion-process.js` 只消费调用方显式注入的 trusted spawn adapter；
+  缺失 adapter 时在启动前 fail closed，不提供 Brain 本机 spawn 默认值。
+- 子进程环境只允许 `PATH/LANG/LC_ALL/TMPDIR/TZ`，超时按 TERM/KILL 处置，
+  signal 退出规范化为失败证据；本层不选择命令、不写 receipt、不接 API/UI。
 
 ## GP assertion output evidence utility
 
