@@ -86,6 +86,30 @@ describe('POST /api/brain/harness/judge', () => {
     expect(mockRunJudgeGate).not.toHaveBeenCalled();
   });
 
+  it('拒绝请求体 worktree 与服务端 run/task authority 不一致', async () => {
+    const authoritative = await mkdtemp(join(tmpdir(), 'judge-authority-'));
+    const supplied = await mkdtemp(join(tmpdir(), 'judge-supplied-'));
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        current_task_id: '11111111-2222-3333-8444-555555555555',
+        worktree_path: authoritative,
+        sprint_dir: 'sprints/x',
+      }],
+    });
+    const app = await buildApp();
+    const r = await request(app).post('/api/brain/harness/judge')
+      .send({
+        task_id: '11111111-2222-3333-8444-555555555555',
+        run_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        sprint_dir: 'sprints/x',
+        worktree: supplied,
+        agent_verdict: 'PASS',
+      });
+    expect(r.status).toBe(409);
+    expect(mockRunJudgeGate).not.toHaveBeenCalled();
+  });
+
   it('agent_verdict=FIXED 归一为 PASS 传给 runJudgeGate，结果透传 200', async () => {
     const wt = await mkdtemp(join(tmpdir(), 'judge-api-'));
     const canonicalWt = await realpath(wt);
