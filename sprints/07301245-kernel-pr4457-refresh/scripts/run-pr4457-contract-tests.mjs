@@ -42,7 +42,8 @@ const materialized = new Date(Math.max(...files.map((p) => fs.statSync(p).mtimeM
 const headBefore = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
 const evidenceDir = path.join(sprintDir, 'evidence', 'test-runs');
 fs.mkdirSync(evidenceDir, { recursive: true });
-const sequence = fs.readdirSync(evidenceDir).filter((x) => x.startsWith(`${stage}-`) && x.endsWith('.json')).length + 1;
+const sequence = fs.readdirSync(evidenceDir)
+  .filter((x) => x.startsWith(`${stage}-`) && x.endsWith('.json') && !x.endsWith('.raw.json')).length + 1;
 const rawRel = `evidence/test-runs/${stage}-${sequence}.raw.json`;
 const rawPath = path.join(sprintDir, rawRel);
 const argv = ['run', path.join(sprintDir, 'tests'), '--config', path.join(sprintDir, 'vitest.config.mjs'),

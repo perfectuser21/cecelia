@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "actor_stage": "generator-pre-push",
+  "runtime_lineage": {
+    "run_id": "fe20c90e-3422-4eb3-bed2-8fb4e1b64557",
+    "attempt_id": "e2b4142c-a651-4581-88b6-57e0bf630b99",
+    "task_id": "f21957f6-2ae5-4db3-822e-90c3f474fc19",
+    "role": "generator",
+    "stage": "generator-pre-push"
+  },
+  "cwd": "/workspace",
+  "tested_head_sha": "1b1c5b3a4dfa9f1c4dcfd1ecd3c50e4ecdbc8e69",
+  "executable_realpath": "/workspace/node_modules/vitest/vitest.mjs",
+  "executable_version": "1.6.1",
+  "argv": [
+    "/workspace/node_modules/vitest/vitest.mjs",
+    "run",
+    "/workspace/sprints/07301245-kernel-pr4457-refresh/tests",
+    "--config",
+    "/workspace/sprints/07301245-kernel-pr4457-refresh/vitest.config.mjs",
+    "--reporter=json",
+    "--outputFile=/workspace/sprints/07301245-kernel-pr4457-refresh/evidence/test-runs/generator-pre-push-2.raw.json"
+  ],
+  "files_materialized_at_utc": "2026-07-30T13:23:22.480Z",
+  "started_at_utc": "2026-07-30T14:15:12.496Z",
+  "ended_at_utc": "2026-07-30T14:15:13.635Z",
+  "raw_result_path": "evidence/test-runs/generator-pre-push-2.raw.json",
+  "raw_result_sha256": "d4c1a0b8827e6be4b7d1fc87df0d0d8e390f2c1c2f3385f3eb40b45cbf21ec3e",
+  "total": 8,
+  "failed": 0,
+  "passed": 8,
+  "tests": [
+    {
+      "name": " PR #4457 contract [BEHAVIOR] 33 路径 oracle manifest 的 schema 身份 argv 与语义哈希精确匹配",
+      "status": "passed",
+      "duration": 75,
+      "failure_messages": []
+    },
+    {
+      "name": " PR #4457 contract [BEHAVIOR] 冻结身份与全部 subject 精确匹配",
+      "status": "passed",
+      "duration": 58,
+      "failure_messages": []
+    },
+    {
+      "name": " PR #4457 contract [BEHAVIOR] 全部 33 个冲突路径完成行为验证",
+      "status": "passed",
+      "duration": 54,
+      "failure_messages": []
+    },
+    {
+      "name": " PR #4457 contract [BEHAVIOR] 全部 77 条 CodeQL annotation 收敛",
+      "status": "passed",
+      "duration": 55,
+      "failure_messages": []
+    },
+    {
+      "name": " PR #4457 contract [BEHAVIOR] 累计 Kernel Harness 行为与 atomic truth 保持",
+      "status": "passed",
+      "duration": 35,
+      "failure_messages": []
+    },
+    {
+      "name": " PR #4457 contract [BEHAVIOR] 三个 required checks 绑定同一最终 SHA",
+      "status": "passed",
+      "duration": 17,
+      "failure_messages": []
+    },
+    {
+      "name": " PR #4457 contract [BEHAVIOR] evaluator 在同一最终 SHA 真跑",
+      "status": "passed",
+      "duration": 17,
+      "failure_messages": []
+    },
+    {
+      "name": " PR #4457 contract [BEHAVIOR] 审计窗内无新 PR 无 merge 无 deploy",
+      "status": "passed",
+      "duration": 16,
+      "failure_messages": []
+    }
+  ]
+}
