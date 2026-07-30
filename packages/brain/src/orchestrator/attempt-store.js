@@ -77,6 +77,144 @@ function callbackEventDetail(attempt, result, leaseGeneration) {
   };
 }
 
+function attemptTaskBundle(attempt) {
+  if (attempt?.task_bundle && typeof attempt.task_bundle === 'object') {
+    return attempt.task_bundle;
+  }
+  if (typeof attempt?.task_bundle !== 'string') return {};
+  try {
+    return JSON.parse(attempt.task_bundle);
+  } catch {
+    return {};
+  }
+}
+
+function normalizeRoleVerdict(role, outcome) {
+  const value = String(outcome ?? '').trim().toUpperCase();
+  if (role === 'reviewer') {
+    return ['PASS', 'APPROVED'].includes(value) ? 'APPROVED' : 'REVISION_REQUESTED';
+  }
+  if (role === 'evaluator') {
+    return value === 'FIXED' ? 'FIXED' : (value === 'PASS' ? 'PASS' : 'FAIL');
+  }
+  return value;
+}
+
+function callbackRoleVerdictProjection(attempt, result) {
+  if (attempt.role === 'commander') {
+    if (result.status !== 'completed' || !result.decision) return null;
+    return {
+      action: 'commander.directive_proposed',
+      observed: {
+        commander_attempt_id: attempt.id,
+        event_cursor: result.decision.event_cursor,
+      },
+      phase: attempt.phase,
+      gateVerdict: null,
+      detail: {
+        attempt_id: attempt.id,
+        directive: result.decision,
+      },
+    };
+  }
+  if (!result.decision || !['reviewer', 'evaluator'].includes(attempt.role)) return null;
+  if (!['completed', 'completed_with_concerns'].includes(result.status)) return null;
+
+  const inputs = attemptTaskBundle(attempt).inputs ?? {};
+  const verdict = normalizeRoleVerdict(attempt.role, result.decision.outcome);
+  const failureSignature = normalizeFailureSignature(result.decision.failure_signature);
+  const detail = attempt.role === 'reviewer'
+    ? {
+        attempt_id: attempt.id,
+        verdict,
+        rn: inputs.contract_round ?? null,
+        contract_sha: inputs.contract_sha ?? null,
+        feedback: result.decision.reason,
+      }
+    : {
+        attempt_id: attempt.id,
+        verdict,
+        pr_head_sha: inputs.pull_request?.head_sha ?? null,
+        failure_class: result.decision.failure_class ?? null,
+        ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
+        feedback: result.decision.reason,
+      };
+  const allowed = ['APPROVED', 'PASS', 'FIXED'].includes(verdict);
+  return {
+    action: attempt.role === 'reviewer' ? 'verdict:reviewer' : 'verdict:evaluate',
+    observed: { attempt_id: attempt.id, role: attempt.role },
+    phase: attempt.role === 'reviewer' ? 'gan' : 'evaluate',
+    gateVerdict: allowed ? 'allow' : `deny:${verdict.toLowerCase()}`,
+    detail,
+  };
+}
+
+function verifiedPullRequestArtifact(attempt, result) {
+  if (attempt.role !== 'generator') return null;
+  return (result.artifacts ?? []).find((artifact) => (
+    artifact?.type === 'pull_request'
+    && artifact.verification_status === 'verified'
+    && typeof artifact.url === 'string'
+    && typeof artifact.head_sha === 'string'
+  )) ?? null;
+}
+
+async function appendGeneratorFixProjection(client, attempt, result, pullRequest) {
+  if (attempt.role !== 'generator' || pullRequest == null) return;
+  if (!['completed', 'completed_with_concerns'].includes(result.status)) return;
+
+  const context = firstRow(await client.query(
+    `SELECT observed->>'trigger_sha' AS trigger_sha
+       FROM orchestrator_decision_log
+      WHERE run_id=$1::uuid
+        AND hop=$2
+        AND action='spawn:generator-fix'
+      LIMIT 1`,
+    [attempt.run_id, attempt.hop],
+  ));
+  if (!context) return;
+
+  const observed = {
+    attempt_id: attempt.id,
+    trigger_hop: attempt.hop,
+    pr_head_sha: pullRequest.head_sha,
+    provider: result.provider_metadata?.provider ?? attempt.provider ?? null,
+  };
+  const detail = {
+    attempt_id: attempt.id,
+    pr_head_sha: pullRequest.head_sha,
+    status: result.status,
+    verification_status: 'verified',
+    trigger_sha: context.trigger_sha ?? null,
+  };
+  await client.query(
+    `WITH next_hop AS (
+       SELECT COALESCE(MAX(hop), 0) + 1 AS hop
+         FROM orchestrator_decision_log
+        WHERE run_id=$1::uuid
+     )
+     INSERT INTO orchestrator_decision_log
+       (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+     SELECT $1::uuid, next_hop.hop, $2::jsonb, 'generate', 'allow',
+            'verdict:generator-fix-callback', $3::jsonb
+       FROM next_hop
+      WHERE NOT EXISTS (
+        SELECT 1
+          FROM orchestrator_decision_log
+         WHERE run_id=$1::uuid
+           AND action='verdict:generator-fix-callback'
+           AND detail->>'attempt_id'=$4::text
+      )
+     RETURNING hop`,
+    [
+      attempt.run_id,
+      JSON.stringify(observed),
+      JSON.stringify(detail),
+      attempt.id,
+    ],
+  );
+}
+
 function firstRow(queryResult) {
   return queryResult.rows?.[0] ?? null;
 }
@@ -466,6 +604,55 @@ export function createAttemptStore(pool) {
             attemptId,
           ],
         );
+
+        const roleProjection = callbackRoleVerdictProjection(terminalAttempt, result);
+        if (roleProjection) {
+          await client.query(
+            `WITH next_hop AS (
+               SELECT COALESCE(MAX(hop), 0) + 1 AS hop
+                 FROM orchestrator_decision_log
+                WHERE run_id=$1::uuid
+             )
+             INSERT INTO orchestrator_decision_log
+               (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+             SELECT $1::uuid, next_hop.hop, $2::jsonb, $3, $4, $5, $6::jsonb
+               FROM next_hop
+              WHERE NOT EXISTS (
+                SELECT 1
+                  FROM orchestrator_decision_log
+                 WHERE run_id=$1::uuid
+                   AND action=$5
+                   AND detail->>'attempt_id'=$7::text
+              )
+             RETURNING hop`,
+            [
+              runId,
+              JSON.stringify(roleProjection.observed),
+              roleProjection.phase,
+              roleProjection.gateVerdict,
+              roleProjection.action,
+              JSON.stringify(roleProjection.detail),
+              attemptId,
+            ],
+          );
+        }
+
+        const pullRequest = verifiedPullRequestArtifact(terminalAttempt, result);
+        await appendGeneratorFixProjection(client, terminalAttempt, result, pullRequest);
+        if (pullRequest) {
+          const projection = await client.query(
+            `UPDATE initiative_runs
+                SET pr_url=$2, updated_at=NOW()
+              WHERE id=$1
+                AND phase NOT IN ('done', 'failed')
+              RETURNING id`,
+            [runId, pullRequest.url],
+          );
+          if (!firstRow(projection)) {
+            throw new Error(`generator PR projection lost run authority: ${runId}`);
+          }
+        }
+
         await client.query('COMMIT');
         transactionOpen = false;
         return { attempt: terminalAttempt, deduped: exactDuplicate };

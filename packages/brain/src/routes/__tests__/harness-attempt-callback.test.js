@@ -254,18 +254,9 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
         }),
       }),
     );
-    const proposalCalls = mocks.pool.query.mock.calls.filter(([sql]) => (
+    expect(mocks.pool.query.mock.calls.some(([sql]) => (
       sql.includes('commander.directive_proposed')
-    ));
-    expect(proposalCalls).toHaveLength(1);
-    expect(JSON.parse(proposalCalls[0][1][3])).toMatchObject({
-      attempt_id: attemptId,
-      directive: {
-        schema: 'commander-directive/v1',
-        run_id: runId,
-        event_cursor: 5,
-      },
-    });
+    ))).toBe(false);
   });
 
   it.each([
@@ -556,17 +547,21 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(mocks.pool.query.mock.calls.some(([sql]) => /verdict:evaluate/.test(sql))).toBe(false);
   });
 
-  it('evaluator decision 写入 SHA 锚定的 append-only verdict 行', async () => {
+  it('evaluator decision 交给 Attempt Store 与 callback 原子写入', async () => {
     const response = await postCallback(app);
 
     expect(response.status).toBe(200);
-    const verdictCall = mocks.pool.query.mock.calls.find(([sql]) => /verdict:evaluate/.test(sql));
-    expect(verdictCall).toBeTruthy();
-    expect(verdictCall[0]).toMatch(/action='verdict:evaluate'/);
-    expect(verdictCall[1].join(' ')).toContain('sha-1');
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          decision: expect.objectContaining({ outcome: 'PASS' }),
+        }),
+      }),
+    );
+    expect(mocks.pool.query.mock.calls.some(([sql]) => /verdict:evaluate/.test(sql))).toBe(false);
   });
 
-  it('reviewer verdict 从服务端 TaskBundle 锚定 round/SHA，不接收 worker 自报 SHA', async () => {
+  it('reviewer verdict 只把 worker outcome 交给 Store，锚点由锁行后的 TaskBundle 生成', async () => {
     const contractSha = 'a'.repeat(40);
     mocks.store.getById.mockResolvedValueOnce({
       ...attempt,
@@ -579,14 +574,20 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       });
 
     expect(response.status).toBe(200);
-    const verdictCall = mocks.pool.query.mock.calls.find(([sql]) => /verdict:reviewer/.test(sql));
-    expect(verdictCall).toBeTruthy();
-    expect(verdictCall[1].join(' ')).toContain('3');
-    expect(verdictCall[1].join(' ')).toContain(contractSha);
-    expect(verdictCall[1].join(' ')).not.toContain('b'.repeat(40));
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          decision: expect.objectContaining({
+            outcome: 'APPROVED',
+            contract_sha: 'b'.repeat(40),
+          }),
+        }),
+      }),
+    );
+    expect(mocks.pool.query.mock.calls.some(([sql]) => /verdict:reviewer/.test(sql))).toBe(false);
   });
 
-  it('generator-fix 未声明 SHA 时以 trigger SHA 写入已验证 callback', async () => {
+  it('generator-fix 未声明 SHA 时把服务端验证后的 PR 证据交给原子 Store', async () => {
     const triggerSha = 'a'.repeat(40);
     mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
     mocks.store.recordCallbackTerminal.mockReset().mockResolvedValue({
@@ -609,18 +610,26 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     });
 
     expect(response.status).toBe(200);
-    const callbackCalls = mocks.pool.query.mock.calls.filter(([sql]) => (
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          artifacts: expect.arrayContaining([
+            expect.objectContaining({
+              type: 'pull_request',
+              head_sha: triggerSha,
+              verification_status: 'verified',
+              source: 'server_observed',
+            }),
+          ]),
+        }),
+      }),
+    );
+    expect(mocks.pool.query.mock.calls.some(([sql]) => (
       sql.includes('verdict:generator-fix-callback')
-    ));
-    expect(callbackCalls).toHaveLength(1);
-    const detail = JSON.parse(callbackCalls[0][1][6]);
-    expect(detail).toMatchObject({
-      verification_status: 'verified',
-      pr_head_sha: triggerSha,
-    });
+    ))).toBe(false);
   });
 
-  it('generator-fix 未声明 SHA 且 resolver 失败时以 trigger SHA 写 pending callback', async () => {
+  it('generator-fix 未声明 SHA 且 resolver 失败时保持 callback 可重试', async () => {
     const triggerSha = 'a'.repeat(40);
     mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
     mocks.store.recordCallbackTerminal.mockReset().mockResolvedValue({
@@ -642,17 +651,9 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       decision: null,
     });
 
-    expect(response.status).toBe(200);
-    const callbackCalls = mocks.pool.query.mock.calls.filter(([sql]) => (
-      sql.includes('verdict:generator-fix-callback')
-    ));
-    expect(callbackCalls).toHaveLength(1);
-    const detail = JSON.parse(callbackCalls[0][1][6]);
-    expect(detail).toMatchObject({
-      verification_status: 'verification_pending',
-      pr_head_sha: triggerSha,
-    });
-    expect(detail.no_progress_reason).not.toBe('callback_sha_unverified');
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe('pull_request_verification_unavailable');
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it('generator-fix blocked 只由标准 callback 供收敛回放，不得伪造成功 SHA verdict', async () => {

@@ -126,7 +126,8 @@ describe('attempt store', () => {
     });
 
     expect(client.query.mock.calls[3][0]).toMatch(/verdict:attempt_callback/i);
-    expect(client.query.mock.calls[4][0]).toMatch(/verdict:reviewer/i);
+    expect(client.query.mock.calls[4][0]).toMatch(/action=\$5/i);
+    expect(client.query.mock.calls[4][1]).toContain('verdict:reviewer');
     expect(client.query.mock.calls[4][1].join(' ')).toContain('a'.repeat(40));
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
@@ -163,6 +164,7 @@ describe('attempt store', () => {
         .mockResolvedValueOnce({ rows: [running] })
         .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
         .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [{ id: input.runId }], rowCount: 1 })
         .mockResolvedValueOnce({}),
       release: vi.fn(),
@@ -177,13 +179,68 @@ describe('attempt store', () => {
       result: callbackResult,
     });
 
-    expect(client.query.mock.calls[4][0]).toMatch(
+    expect(client.query.mock.calls[5][0]).toMatch(
       /UPDATE initiative_runs[\s\S]*pr_url=\$2/i,
     );
-    expect(client.query.mock.calls[4][1]).toEqual([
+    expect(client.query.mock.calls[5][1]).toEqual([
       input.runId,
       'https://github.com/acme/repo/pull/42',
     ]);
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
+  it('commits a verified generator-fix verdict and PR projection atomically', async () => {
+    const verifiedSha = 'c'.repeat(40);
+    const callbackResult = {
+      status: 'completed',
+      summary: 'fix pushed',
+      artifacts: [{
+        type: 'pull_request',
+        url: 'https://github.com/acme/repo/pull/42',
+        head_sha: verifiedSha,
+        verification_status: 'verified',
+      }],
+      provider_metadata: { provider: 'codex' },
+      decision: null,
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'generate',
+      role: 'generator',
+      provider: 'codex',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      result: null,
+    };
+    const completed = { ...running, status: 'completed', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ trigger_sha: 'a'.repeat(40) }] })
+        .mockResolvedValueOnce({ rows: [{ hop: 5 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ id: input.runId }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    expect(client.query.mock.calls[5][0]).toMatch(/verdict:generator-fix-callback/i);
+    expect(client.query.mock.calls[5][1].join(' ')).toContain(verifiedSha);
+    expect(client.query.mock.calls[6][0]).toMatch(/UPDATE initiative_runs/i);
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
 

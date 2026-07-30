@@ -963,6 +963,11 @@ export async function resumeStalledRelayRuns(deps = {}) {
         continue;
       }
 
+      // needs_context 的 paused run 由人工补充上下文后显式恢复。其 Controller
+      // 进程退出是预期行为，watchdog 不得把它当 stalled run 重新点火。
+      // 上面的 task 终态 house-keeping 仍先执行，避免留下 terminal mismatch。
+      if (run.phase === 'paused') continue;
+
       // 只管 in_progress（queued 归 dispatcher，防双 spawn）
       if (task.status !== 'in_progress') continue;
       // 安全护栏：只碰 skill-relay 任务

@@ -43,12 +43,6 @@ import {
 import { normalizeFailureSignature } from '../orchestrator/convergence-signatures.js';
 
 const router = Router();
-const SUCCESS_TERMINAL_STATUSES = new Set([
-  'completed',
-  'completed_with_concerns',
-  'needs_context',
-  'blocked',
-]);
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const FLEET_CODEX_METADATA_FIELDS = new Set([
   'provider',
@@ -125,6 +119,92 @@ function normalizeVerdict(role, outcome) {
     return value === 'FIXED' ? 'FIXED' : (value === 'PASS' ? 'PASS' : 'FAIL');
   }
   return value;
+}
+
+const GITHUB_PULL_REQUEST_URL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/[1-9]\d*\/?$/;
+
+async function verifyGeneratorPullRequestClaims(attempt, result, db, resolvePrHead) {
+  if (attempt.role !== 'generator') return result;
+  if (!['completed', 'completed_with_concerns'].includes(result.status)) return result;
+
+  const artifacts = [];
+  for (const artifact of result.artifacts ?? []) {
+    if (artifact?.type !== 'pull_request') {
+      artifacts.push(artifact);
+      continue;
+    }
+    const url = typeof artifact.url === 'string' ? artifact.url.trim() : '';
+    if (!GITHUB_PULL_REQUEST_URL.test(url)) {
+      artifacts.push({
+        ...artifact,
+        type: 'unverified_pull_request_claim',
+        verification_status: 'invalid_url',
+      });
+      continue;
+    }
+    let resolvedSha;
+    try {
+      resolvedSha = normalizeGitSha(await resolvePrHead(url));
+    } catch (error) {
+      const unavailable = new Error('pull_request_verification_unavailable');
+      unavailable.cause = error;
+      unavailable.status = 503;
+      throw unavailable;
+    }
+    if (!resolvedSha) {
+      artifacts.push({
+        ...artifact,
+        type: 'unverified_pull_request_claim',
+        verification_status: 'not_found',
+      });
+      continue;
+    }
+    artifacts.push({
+      type: 'pull_request',
+      url,
+      head_sha: resolvedSha,
+      verification_status: 'verified',
+    });
+  }
+  if (!artifacts.some((artifact) => (
+    artifact?.type === 'pull_request' && artifact.verification_status === 'verified'
+  ))) {
+    const { rows } = await db.query(
+      `SELECT r.pr_url
+         FROM initiative_runs r
+        WHERE r.id=$1::uuid
+          AND EXISTS (
+            SELECT 1
+              FROM orchestrator_decision_log
+             WHERE run_id=r.id
+               AND hop=$2
+               AND action='spawn:generator-fix'
+          )`,
+      [attempt.run_id, attempt.hop],
+    );
+    const currentPrUrl = rows[0]?.pr_url ?? null;
+    if (currentPrUrl) {
+      let resolvedSha;
+      try {
+        resolvedSha = normalizeGitSha(await resolvePrHead(currentPrUrl));
+      } catch (error) {
+        const unavailable = new Error('pull_request_verification_unavailable');
+        unavailable.cause = error;
+        unavailable.status = 503;
+        throw unavailable;
+      }
+      if (resolvedSha) {
+        artifacts.push({
+          type: 'pull_request',
+          url: currentPrUrl,
+          head_sha: resolvedSha,
+          verification_status: 'verified',
+          source: 'server_observed',
+        });
+      }
+    }
+  }
+  return { ...result, artifacts };
 }
 
 export async function appendAttemptVerdict(attempt, result, db = pool) {
@@ -498,36 +578,33 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
     }
   }
 
+  const resolver = req.app.get('kernelPrHeadResolver') || defaultPrHeadResolver;
+  let verifiedResult;
+  try {
+    verifiedResult = await verifyGeneratorPullRequestClaims(attempt, result, db, resolver);
+  } catch (error) {
+    if (error.status === 503) {
+      return res.status(503).json({
+        ok: false,
+        error: 'pull_request_verification_unavailable',
+      });
+    }
+    throw error;
+  }
+
   try {
     const outcome = await attemptStore.recordCallbackTerminal({
       attemptId,
       runId: attempt.run_id,
       leaseOwner,
       leaseGeneration,
-      result,
+      result: verifiedResult,
     });
     if (!outcome.attempt) {
       return res.status(409).json({
         ok: false,
         error: outcome.conflict ?? 'attempt lease lost before terminal write',
       });
-    }
-    const persistedResult = outcome.attempt.result ?? result;
-    await appendCommanderProposal(attempt, persistedResult, db);
-    await appendAttemptVerdict(attempt, persistedResult, db);
-    const resolver = req.app.get('kernelPrHeadResolver') || defaultPrHeadResolver;
-    await appendGeneratorFixCallback(attempt, persistedResult, db, resolver);
-
-    if (attempt.role === 'generator') {
-      const pullRequest = persistedResult.artifacts.find(
-        (artifact) => artifact?.type === 'pull_request' && artifact.url,
-      );
-      if (pullRequest) {
-        await db.query(
-          'UPDATE initiative_runs SET pr_url=$2, updated_at=NOW() WHERE id=$1',
-          [attempt.run_id, pullRequest.url],
-        );
-      }
     }
     return res.json({ ok: true, attemptId, deduped: outcome.deduped });
   } catch (error) {
