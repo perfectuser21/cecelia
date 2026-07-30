@@ -21,7 +21,7 @@ describe('Golden Path assertion receipt state', () => {
     });
   });
 
-  it('does not verify a legacy PASS receipt without scenario evidence', async () => {
+  it('does not verify an unevidenced PASS-shaped object', async () => {
     const {
       assertionDigest,
       deriveAssertionVerification,
@@ -31,17 +31,17 @@ describe('Golden Path assertion receipt state', () => {
       assertion_ref: 'tests/a.test.js',
       assertion_revision: 1,
     };
-    const legacyPass = {
+    const unevidencedPass = {
       id: 'legacy-pass',
       assertion_revision: 1,
       assertion_digest: assertionDigest(cell.assertion_ref),
       verdict: 'PASS',
       completed_at: '2026-07-30T01:00:00Z',
-      scenario_count: 0,
-      scenario_evidence: {},
+      scenario_count: 1,
+      scenario_evidence: { kind: 'vitest', passed: 1 },
     };
 
-    expect(deriveAssertionVerification(cell, [legacyPass])).toMatchObject({
+    expect(deriveAssertionVerification(cell, [unevidencedPass])).toMatchObject({
       state: 'never_run',
       verified: false,
       last_verified: null,
