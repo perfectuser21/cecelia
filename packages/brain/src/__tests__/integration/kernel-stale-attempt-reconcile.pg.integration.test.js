@@ -212,6 +212,115 @@ describe('kernel stale attempt reconciliation on real PostgreSQL', () => {
     }
   });
 
+  it('serializes callback before advisory-to-run approval writers', async () => {
+    const taskId = randomUUID();
+    const runId = randomUUID();
+    const attemptId = randomUUID();
+    await testPool.query(
+      `INSERT INTO tasks (id, title, status)
+       VALUES ($1, 'callback approval race', 'in_progress')`,
+      [taskId],
+    );
+    await testPool.query(
+      `INSERT INTO initiative_runs (
+         id, initiative_id, phase, current_task_id, orchestrator_version,
+         created_source, record_trust_status
+       ) VALUES (
+         $1, $2, 'planning', $3, 'v2', 'kernel_dispatch', 'trusted'
+       )`,
+      [runId, randomUUID(), taskId],
+    );
+    const store = createAttemptStore(testPool);
+    await store.createAttempt({
+      id: attemptId,
+      runId,
+      hop: 1,
+      phase: 'planning',
+      role: 'planner',
+      provider: 'auto',
+      bundle: {},
+      callbackSecretHash: 'e'.repeat(64),
+    });
+    await testPool.query(
+      `UPDATE harness_attempts
+          SET status = 'running',
+              lease_owner = 'approval-race-worker',
+              lease_expires_at = NOW() + INTERVAL '2 minutes'
+        WHERE id = $1`,
+      [attemptId],
+    );
+    await testPool.query(`
+      CREATE OR REPLACE FUNCTION pause_approval_race_callback()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        IF OLD.id = '${attemptId}'::uuid
+           AND OLD.status = 'running'
+           AND NEW.status = 'completed' THEN
+          PERFORM pg_sleep(0.5);
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER pause_approval_race_callback
+      BEFORE UPDATE OF status ON harness_attempts
+      FOR EACH ROW
+      EXECUTE FUNCTION pause_approval_race_callback();
+    `);
+
+    const callback = store.recordCallbackTerminal({
+      attemptId,
+      runId,
+      leaseOwner: 'approval-race-worker',
+      leaseGeneration: 0,
+      result: {
+        status: 'completed',
+        summary: 'approval race callback',
+        artifacts: [],
+        provider_metadata: { provider: 'codex' },
+      },
+    });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const approvalWriter = (async () => {
+      const client = await testPool.connect();
+      let transactionOpen = false;
+      try {
+        await client.query('BEGIN');
+        transactionOpen = true;
+        await client.query(
+          'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+          [runId],
+        );
+        await client.query(
+          `UPDATE initiative_runs
+              SET updated_at = NOW()
+            WHERE id = $1`,
+          [runId],
+        );
+        await client.query('COMMIT');
+        transactionOpen = false;
+      } catch (error) {
+        if (transactionOpen) await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    })();
+
+    const [callbackResult, approvalResult] = await Promise.allSettled([
+      callback,
+      approvalWriter,
+    ]);
+    await testPool.query('DROP TRIGGER pause_approval_race_callback ON harness_attempts');
+
+    for (const result of [callbackResult, approvalResult]) {
+      if (result.status === 'rejected') {
+        expect(result.reason?.code).not.toBe('40P01');
+      }
+    }
+    expect(callbackResult.status).toBe('fulfilled');
+    expect(approvalResult.status).toBe('fulfilled');
+  });
+
   it('does not propose a live lease or an attempt under an active parent', async () => {
     const liveTaskId = randomUUID();
     const liveRunId = randomUUID();
