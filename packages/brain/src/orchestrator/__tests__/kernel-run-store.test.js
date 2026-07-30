@@ -619,6 +619,26 @@ describe('Kernel exact non-terminal patch authority', () => {
 });
 
 describe('Kernel terminal reconciliation authority', () => {
+  it('refuses a stale task-status repair before locking or changing the run', async () => {
+    const harness = exactPatchPool({
+      task: { id: TASK_ID, status: 'paused' },
+    });
+
+    await expect(finalizeKernelRun(harness.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      expectedTaskStatus: 'queued',
+      outcome: 'failed',
+      reason: 'production_reconciliation',
+    })).rejects.toThrow('Kernel task status changed: paused/queued');
+
+    expect(harness.order).toContain('BEGIN');
+    expect(harness.order).not.toContain('run-lock');
+    expect(harness.order).not.toContain('run-update');
+    expect(harness.order).not.toContain('task-update');
+    expect(harness.order).toContain('ROLLBACK');
+  });
+
   it('repairs a task only from its latest exactly linked terminal run', async () => {
     const query = vi.fn(async () => ({
       rows: [{
@@ -649,6 +669,7 @@ describe('Kernel terminal reconciliation authority', () => {
     expect(sql).toContain('current_task_id = $1');
     expect(sql).not.toMatch(/OR\s+initiative_id/i);
     expect(sql).toContain("phase IN ('done', 'failed')");
+    expect(sql).toContain("active.phase NOT IN ('done', 'failed')");
     expect(sql).toContain('completed_at DESC NULLS LAST');
     expect(params).toEqual([TASK_ID]);
     expect(finalizeRun).toHaveBeenCalledWith(
@@ -656,6 +677,7 @@ describe('Kernel terminal reconciliation authority', () => {
       {
         runId: RUN_ID,
         expectedTaskId: TASK_ID,
+        requireNoActiveSibling: true,
         outcome: 'failed',
         reason: 'pid_gone',
       },

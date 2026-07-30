@@ -8,6 +8,7 @@ import initiativesRouter from '../../routes/initiatives.js';
 import {
   createKernelRun,
   finalizeKernelRun,
+  reconcileKernelTaskTerminal,
 } from '../../orchestrator/kernel-run-store.js';
 
 const migrationUrl = new URL(
@@ -206,5 +207,52 @@ describe('Kernel run store PostgreSQL concurrency', () => {
       [created.run.id],
     );
     expect(state.rows).toEqual([{ phase: 'failed', status: 'failed' }]);
+  });
+
+  it('orphan reconciliation cannot terminalize a task after recovery creates an active run', async () => {
+    const taskId = randomUUID();
+    const initiativeId = randomUUID();
+    await insertTask(taskId, initiativeId);
+    const old = await createKernelRun(
+      schemaPool,
+      runInput(taskId, initiativeId),
+    );
+    await finalizeKernelRun(schemaPool, {
+      runId: old.run.id,
+      expectedTaskId: taskId,
+      outcome: 'failed',
+      reason: 'old_attempt_failed',
+    });
+    await schemaPool.query(
+      `UPDATE tasks SET status = 'in_progress' WHERE id = $1`,
+      [taskId],
+    );
+
+    let activeRunId = null;
+    const finalizeAfterRecovery = async (targetPool, options) => {
+      const recovery = await createKernelRun(
+        targetPool,
+        runInput(taskId, initiativeId, 'explicit_recovery'),
+      );
+      activeRunId = recovery.run.id;
+      return finalizeKernelRun(targetPool, options);
+    };
+    await expect(reconcileKernelTaskTerminal(
+      schemaPool,
+      taskId,
+      { finalizeRun: finalizeAfterRecovery },
+    )).rejects.toThrow(/active sibling/);
+
+    const state = await schemaPool.query(
+      `SELECT t.status AS task_status, r.phase AS active_phase
+         FROM tasks t
+         JOIN initiative_runs r ON r.current_task_id = t.id
+        WHERE t.id = $1 AND r.id = $2`,
+      [taskId, activeRunId],
+    );
+    expect(state.rows).toEqual([{
+      task_status: 'in_progress',
+      active_phase: 'planning',
+    }]);
   });
 });

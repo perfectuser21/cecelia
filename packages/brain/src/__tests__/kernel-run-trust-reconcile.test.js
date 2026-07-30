@@ -31,12 +31,22 @@ function makeDb() {
   };
 }
 
+async function reviewedPlanSha(db) {
+  const result = await reconcileRunTrust({
+    db,
+    apply: false,
+    writeLine: vi.fn(),
+  });
+  return result.plan_sha256;
+}
+
 describe('kernel-run-trust-reconcile', () => {
   it('defaults to dry-run and rejects --apply without an absolute audit output', () => {
     expect(parseTrustReconcileArgs([])).toEqual({
       apply: false,
       auditOutput: null,
       batchSize: 100,
+      expectedPlanSha256: null,
     });
     expect(() => parseTrustReconcileArgs(['--apply'])).toThrow(/audit-output/);
     expect(() => parseTrustReconcileArgs([
@@ -44,6 +54,23 @@ describe('kernel-run-trust-reconcile', () => {
       '--audit-output',
       'relative.jsonl',
     ])).toThrow(/absolute/);
+    expect(() => parseTrustReconcileArgs([
+      '--apply',
+      '--audit-output',
+      '/tmp/audit.jsonl',
+    ])).toThrow(/expected-plan-sha256/);
+    expect(parseTrustReconcileArgs([
+      '--apply',
+      '--audit-output',
+      '/tmp/audit.jsonl',
+      '--expected-plan-sha256',
+      'a'.repeat(64),
+    ])).toEqual({
+      apply: true,
+      auditOutput: '/tmp/audit.jsonl',
+      batchSize: 100,
+      expectedPlanSha256: 'a'.repeat(64),
+    });
   });
 
   it('dry-run emits deterministic proposals and performs no UPDATE', async () => {
@@ -60,6 +87,7 @@ describe('kernel-run-trust-reconcile', () => {
       scanned: 1,
       proposed: 1,
       applied: 0,
+      plan_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     expect(writeLine).toHaveBeenCalledWith(expect.stringContaining(
       `"run_id":"${RUN_ID}"`,
@@ -70,13 +98,54 @@ describe('kernel-run-trust-reconcile', () => {
     expect(db.query.mock.calls.some(([sql]) => /\bUPDATE\b/.test(sql))).toBe(false);
   });
 
+  it('refuses apply when the reviewed plan digest does not match the live evidence', async () => {
+    const db = makeDb();
+    const appendAudit = vi.fn();
+
+    await expect(reconcileRunTrust({
+      db,
+      apply: true,
+      auditOutput: '/tmp/kernel-run-trust-plan-mismatch.jsonl',
+      expectedPlanSha256: 'f'.repeat(64),
+      appendAudit,
+      writeLine: vi.fn(),
+    })).rejects.toThrow(/reviewed plan digest mismatch/);
+
+    expect(appendAudit).not.toHaveBeenCalled();
+    expect(db.query.mock.calls.some(([sql]) => /\bUPDATE\b/.test(sql))).toBe(false);
+    expect(db.query.mock.calls.some(([sql]) => sql === 'BEGIN')).toBe(false);
+  });
+
+  it('never proposes a historical rewrite for a native trusted run', async () => {
+    const db = makeDb();
+    db.query.mockResolvedValueOnce({
+      rows: [{
+        id: RUN_ID,
+        current_task_id: TASK_ID,
+        record_trust_status: 'trusted',
+        record_trust_reason: null,
+        task_reference_count: '1',
+        matching_attempt_count: '1',
+        batch_collision_count: '1',
+      }],
+    });
+    const writeLine = vi.fn();
+
+    const result = await reconcileRunTrust({ db, writeLine });
+
+    expect(result).toMatchObject({ scanned: 1, proposed: 0, applied: 0 });
+    expect(writeLine).not.toHaveBeenCalled();
+  });
+
   it('apply uses the scanned before-state as an optimistic guard', async () => {
     const db = makeDb();
+    const expectedPlanSha256 = await reviewedPlanSha(db);
 
     const result = await reconcileRunTrust({
       db,
       apply: true,
       auditOutput: '/tmp/kernel-run-trust-audit.jsonl',
+      expectedPlanSha256,
       writeLine: vi.fn(),
       appendAudit: vi.fn(),
       batchSize: 10,
@@ -117,11 +186,13 @@ describe('kernel-run-trust-reconcile', () => {
       return { rows: [] };
     });
     const appendAudit = vi.fn();
+    const expectedPlanSha256 = await reviewedPlanSha(db);
 
     const result = await reconcileRunTrust({
       db,
       apply: true,
       auditOutput: '/tmp/kernel-run-trust-conflict.jsonl',
+      expectedPlanSha256,
       appendAudit,
       writeLine: vi.fn(),
       randomUUIDFn: () => 'execution-1',
@@ -179,19 +250,23 @@ describe('kernel-run-trust-reconcile', () => {
       }),
     };
 
+    const firstPlanSha256 = await reviewedPlanSha(db);
     const first = await reconcileRunTrust({
       db,
       apply: true,
       auditOutput: '/tmp/kernel-run-trust-first.jsonl',
+      expectedPlanSha256: firstPlanSha256,
       appendAudit: vi.fn(),
       writeLine: vi.fn(),
       randomUUIDFn: () => 'execution-first',
     });
     const secondAudit = vi.fn();
+    const secondPlanSha256 = await reviewedPlanSha(db);
     const second = await reconcileRunTrust({
       db,
       apply: true,
       auditOutput: '/tmp/kernel-run-trust-second.jsonl',
+      expectedPlanSha256: secondPlanSha256,
       appendAudit: secondAudit,
       writeLine: vi.fn(),
       randomUUIDFn: () => 'execution-second',
@@ -205,6 +280,7 @@ describe('kernel-run-trust-reconcile', () => {
 
   it('writes row outcomes before COMMIT and rolls back if durable audit fails', async () => {
     const db = makeDb();
+    const expectedPlanSha256 = await reviewedPlanSha(db);
     const appendAudit = vi.fn()
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('audit disk full'));
@@ -213,6 +289,7 @@ describe('kernel-run-trust-reconcile', () => {
       db,
       apply: true,
       auditOutput: '/tmp/kernel-run-trust-audit-failure.jsonl',
+      expectedPlanSha256,
       appendAudit,
       writeLine: vi.fn(),
     })).rejects.toThrow('audit disk full');
@@ -226,20 +303,26 @@ describe('kernel-run-trust-reconcile', () => {
     const directory = await mkdtemp(join(tmpdir(), 'kernel-trust-audit-'));
     const auditOutput = join(directory, 'audit.jsonl');
     try {
+      const firstDb = makeDb();
+      const expectedPlanSha256 = await reviewedPlanSha(firstDb);
       const result = await reconcileRunTrust({
-        db: makeDb(),
+        db: firstDb,
         apply: true,
         auditOutput,
+        expectedPlanSha256,
         writeLine: vi.fn(),
         randomUUIDFn: () => 'execution-2',
       });
       expect(result.applied).toBe(1);
       expect((await stat(auditOutput)).mode & 0o777).toBe(0o400);
 
+      const secondDb = makeDb();
+      const secondPlanSha256 = await reviewedPlanSha(secondDb);
       await expect(reconcileRunTrust({
-        db: makeDb(),
+        db: secondDb,
         apply: true,
         auditOutput,
+        expectedPlanSha256: secondPlanSha256,
         writeLine: vi.fn(),
       })).rejects.toMatchObject({ code: 'EEXIST' });
       await expect(writeFile(auditOutput, 'overwrite', { flag: 'wx' }))

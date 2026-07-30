@@ -12,7 +12,7 @@ expected_schema="$(
 )"
 test "$expected_schema" = "378"
 
-npx --no-install vitest run \
+npx --no-install vitest run --config vitest.integration.config.js \
   src/__tests__/migration-376-kernel-run-trust.test.js \
   src/__tests__/integration/migration-376-kernel-run-trust.integration.test.js \
   src/__tests__/migration-377-initiative-run-insert-lock.test.js \
@@ -22,6 +22,12 @@ npx --no-install vitest run \
   src/__tests__/integration/relay-run-exact-api.integration.test.js \
   src/__tests__/relay-runs-legacy-adapter.test.js \
   src/__tests__/kernel-run-trust-reconcile.test.js \
+  src/__tests__/kernel-run-trust-reconcile-production-guards.test.js \
+  src/__tests__/integration/kernel-run-trust-reconcile.pg.integration.test.js \
+  src/__tests__/kernel-terminal-mismatch-reconcile.test.js \
+  src/__tests__/kernel-terminal-mismatch-reconcile-production-guards.test.js \
+  src/__tests__/integration/kernel-terminal-mismatch-reconcile.pg.integration.test.js \
+  src/__tests__/integration/kernel-run-store.pg.integration.test.js \
   src/__tests__/relay-runs-summary.test.js \
   src/__tests__/harness-watchdog.test.js \
   src/__tests__/harness-relay-watchdog.test.js \

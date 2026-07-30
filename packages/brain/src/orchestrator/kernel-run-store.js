@@ -396,6 +396,8 @@ export async function createKernelRun(pool, input) {
 export async function finalizeKernelRun(pool, {
   runId,
   expectedTaskId,
+  expectedTaskStatus = null,
+  requireNoActiveSibling = false,
   outcome,
   reason = null,
 }) {
@@ -417,6 +419,28 @@ export async function finalizeKernelRun(pool, {
     const task = taskRows[0];
     if (!task) {
       throw new Error(`Kernel run parent task missing: ${expectedTaskId}`);
+    }
+    if (expectedTaskStatus !== null && task.status !== expectedTaskStatus) {
+      throw new Error(
+        `Kernel task status changed: ${task.status}/${expectedTaskStatus}`,
+      );
+    }
+    if (requireNoActiveSibling) {
+      const { rows: activeSiblingRows } = await client.query(
+        `SELECT id
+           FROM initiative_runs
+          WHERE current_task_id = $1
+            AND id <> $2
+            AND orchestrator_version = 'v2'
+            AND phase NOT IN ('done', 'failed')
+          FOR UPDATE`,
+        [expectedTaskId, runId],
+      );
+      if (activeSiblingRows.length > 0) {
+        throw new Error(
+          `Kernel terminal repair blocked by active sibling: ${activeSiblingRows[0].id}`,
+        );
+      }
     }
 
     // createKernelRun also locks task before run. Keeping one global order
@@ -537,6 +561,13 @@ export async function reconcileKernelTaskTerminal(
       WHERE current_task_id = $1
         AND orchestrator_version = 'v2'
         AND phase IN ('done', 'failed')
+        AND NOT EXISTS (
+          SELECT 1
+            FROM initiative_runs active
+           WHERE active.current_task_id = $1
+             AND active.orchestrator_version = 'v2'
+             AND active.phase NOT IN ('done', 'failed')
+        )
       ORDER BY completed_at DESC NULLS LAST, started_at DESC, id DESC
       LIMIT 1`,
     [taskId],
@@ -552,6 +583,7 @@ export async function reconcileKernelTaskTerminal(
   await finalizeRun(pool, {
     runId: run.id,
     expectedTaskId: taskId,
+    requireNoActiveSibling: true,
     outcome: run.phase,
     reason: run.failure_reason ?? 'terminal_run_reconciliation',
   });

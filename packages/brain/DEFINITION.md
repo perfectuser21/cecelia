@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.267.149
+**版本**: 1.267.150
 
 ## Kernel asynchronous callback convergence
 
@@ -46,11 +46,24 @@
 - Migration 377 在数据库 BEFORE INSERT trigger 中强制同一 initiative/prefix 的事务锁，
   覆盖所有直接 INSERT writer，legacy 唯一候选解析期间不得插入第二条 run。
 - `kernel-run-trust-reconcile.mjs` 默认只输出确定性 JSONL 提案；仅同时提供
-  `--apply --audit-output <绝对路径>` 才可分批、乐观并发写入；审计文件必须独占创建、
-  逐批记录真实 applied/conflict 结果并封成只读。不得猜测身份。
+  `--apply --audit-output <绝对路径> --expected-plan-sha256 <SHA256>
+  --expected-proposed <N> --confirm-database <DB>` 才可写入；生产 apply 由 migration
+  376 切点、数据库名、候选数、计划摘要、单实例 advisory lock 和乐观并发共同约束。
+  生产 apply 每个事务只处理一条 proposal，并按 `Migration 377 advisory key →
+  task → id 排序的 initiative runs → attempts` 锁定；分类证据变化即冲突回滚，
+  与 canonical terminal writer 保持相同 task→run 次序，不形成反向锁死。
+  审计文件独占创建、逐批 fsync 真实 applied/unchanged/conflict 结果并封成只读；
+  二次 dry-run 必须报告 `would_change=0`。不得猜测身份或改写原生 trusted run。
+- `kernel-terminal-mismatch-reconcile.mjs` 只修复终态 v2 run 与非终态父 task 的
+  确定性不一致；混合 run 结果和已终态 task 冲突一律阻断。生产 apply 同样绑定
+  数据库、候选数、计划摘要和单实例锁，并以原 task status 作并发栅栏；每条修复后
+  必须重新读取精确 run/task，验证一致后审计才标记 `commit_state=verified`。
+  同 task 存在 active sibling 时 dry-run 不提案，apply 在 task 行锁内再次检查并拒绝，
+  防止旧终态 run 终结正在执行的新 run；orphan-guard 的生产 helper 使用同一栅栏，
+  覆盖 liveness probe 后 recovery run 新建的竞态窗口。
 - summary 保留全量 phase 账面数，同时拆分 trust 分母；SLO 成功率只统计原生
   `trusted` 且每个任务最新的终态 run，活跃 run 不稀释成功率。
-- 回退：部署 Brain `1.267.146`，保留 Migration 376 加法字段；legacy adapter
+- 回退：部署 Brain `1.267.149`，保留 Migration 376/378 加法字段；legacy adapter
   仍须保持 fail closed，禁止恢复 initiative-wide mutation。
 
 ## Kernel run identity and atomic terminalization

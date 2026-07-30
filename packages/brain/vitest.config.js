@@ -12,7 +12,9 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/migration-374-gp-assertion-receipts.integration.test.js',
   'src/__tests__/integration/journey-step-ledger.integration.test.js',
   'src/__tests__/integration/kernel-fleet-canary-run.integration.test.js',
+  'src/__tests__/integration/kernel-run-trust-reconcile.pg.integration.test.js',
   'src/__tests__/integration/kernel-run-store.pg.integration.test.js',
+  'src/__tests__/integration/kernel-terminal-mismatch-reconcile.pg.integration.test.js',
   'src/routes/__tests__/harness-attempt-verdict-pg.integration.test.js',
   '../../tests/regression/relay-137fea96/contract-postdeploy-smoke-filter.test.ts',
 ];

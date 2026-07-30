@@ -6,11 +6,24 @@
 
 
 
-**Brain 版本**: 1.267.149
+**Brain 版本**: 1.267.150
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.150 — Audited Kernel history reconciliation
+
+- 历史 run trust apply 绑定数据库名、migration 376 切点、候选数、plan SHA 和
+  单实例锁；batch 按 `initiative advisory → task → ordered runs → attempts` 的生产
+  统一锁序重新验证证据，证据漂移即回滚，且不会与 terminal writer 形成死锁。
+- 终态 run 与父 task 的历史不一致只按精确 run/task 修复；有 active sibling、
+  混合终态结果或 task 已有冲突终态时拒绝提案，离线修复和 orphan-guard 都在
+  task 行锁内再次检查 sibling，probe 后新建的 recovery run 不能被旧 run 误终止。
+- 两类 reconcile 均默认 dry-run，生产 apply 使用独占、fsync、只读 JSONL 审计；
+  trust 二次 dry-run 必须 `would_change=0`，terminal 只有回读精确状态后才记 `verified`。
+- 回退应用到 Brain `1.267.149` 时保留 Migration 376/378 加法 schema；不得恢复
+  initiative-wide mutation，也不得把 synthetic canary 当真实业务验收。
 
 ## Brain 1.267.149 — Kernel asynchronous callback convergence
 
