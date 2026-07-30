@@ -14,6 +14,7 @@
       ],
       "files": [
         "sprints/07301245-kernel-pr4457-refresh/",
+        "sprints/07301245-kernel-pr4457-refresh/conflict-oracle-manifest.json",
         "合同冻结的 33 个冲突路径中经逐项处置需要修改的文件"
       ],
       "depends_on": [],

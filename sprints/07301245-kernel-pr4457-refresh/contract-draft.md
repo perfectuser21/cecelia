@@ -1,11 +1,11 @@
-# Sprint Contract Draft (Round 8)
+# Sprint Contract Draft (Round 9)
 
 覆盖父路「Draft PR #4457 累计冲突与 CodeQL 收敛」第 1-5 步。
 
 ## 合同 notes
 
-- Round 8 采用 controller 的权威 machine facts，消除旧版 `32/33` 与 CodeQL 口径歧义：总冲突路径固定为 33（32 个 content + `DoD.md` 1 个 modify/delete）；77 固定指 check-run `90774353140` 的 PR-new-alert annotations。
-- 本轮针对 Reviewer 最新要求收紧：冻结清单本身也纳入语义哈希；每个 oracle 必须输出其实际枚举的 subject，不能只报告计数；副作用审计固定 mutation 前基线、闭区间和 actor/ref/SHA/run/attempt/task 归因。
+- Round 9 采用 controller 的权威 machine facts，消除旧版 `32/33` 与 CodeQL 口径歧义：总冲突路径固定为 33（32 个 content + `DoD.md` 1 个 modify/delete）；77 固定指 check-run `90774353140` 的 PR-new-alert annotations。
+- 本轮修复 Round 8 三项阻断：两个 ARTIFACT oracle 改为内容/schema/身份/exact-set 与七阶段真实行为断言；33 路径的完整 `path → oracle_id → cwd/argv → expected_observation` 已冻结为合同 manifest；审阅门不再硬编码历史 run/attempt。
 - contract-gate: enabled（`packages/brain/src/lib/contract-gate.js` 存在）。
 - context-manifest: unavailable；PRD 明示本 line 暂无累积 FR。
 - 不新增 PR、不 merge、不 deploy；generator 只能更新既有 `cp-kernel-phase5b-a1-review-fixes`。
@@ -59,7 +59,9 @@ N/A — 不新增对外 agent；GitHub annotation/message 均只作不可信数�
 
 ## 冻结身份与枚举
 
-冻结证据必须先生成不可变 manifest：`evidence/frozen-conflicts.json`、`evidence/codeql-freeze.json`、`evidence/required-checks-freeze.json`。三份文件均使用 canonical JSON（对象 key 排序、数组按本节 subject key 排序、UTF-8、末尾单换行）计算 SHA-256；verifier 必须把实际枚举的每个 subject 及 canonical hash 写入输出，禁止只做 JSON 可解析、数组长度或源码字符串检查。除下文已给定的 CodeQL/required-check hash 外，conflict manifest 的 hash 由本节 33 行生成后写入 `freeze.json`，后续各 phase 必须与首次冻结值逐字相等。
+冻结证据必须先生成不可变 manifest：`evidence/frozen-conflicts.json`、`evidence/codeql-freeze.json`、`evidence/required-checks-freeze.json`。三份文件均使用 canonical JSON（对象 key 排序、数组按本节 subject key 排序、UTF-8、末尾单换行）计算 SHA-256；verifier 必须把实际枚举的每个 subject 及 canonical hash 写入输出，禁止只做 JSON 可解析、数组长度或源码字符串检查。
+
+33 路径的可执行 oracle 合同冻结在 `conflict-oracle-manifest.json`。canonical 算法为：`subjects` 按 ASCII `path` 升序（`a.path < b.path`）排序，递归按对象 key 排序，随后无空白 `JSON.stringify`；语义 SHA-256 固定为 `e02ab04b2ae86a81a62effd9e63bbf552f9f1fb883c25fe7f57d0fd378797f4d`。该文件必须恰有 33 个唯一 path、33 个唯一 `C01..C33` oracle_id；每行 `cwd` 非空、`argv` 为完整非空 argv 数组、`expected_observation` 同时声明 `exit_code=0` 和业务观察。`conflicts` verifier 必须对合同 manifest 与 `evidence/conflict-resolution.json` 的 `path/oracle_id/cwd/argv/expected_observation` 做 exact-set 深比较，并逐行真实 spawn；禁止 generator 在 ledger 中另行发明命令。
 
 ### Git 与 CodeQL
 
@@ -90,41 +92,41 @@ required-check subject 定义为 `context + "\0" + final_head_sha`。每个 orac
 
 处置类别定义：`semantic-merge`=以三方 base/PR/main 做语义合并，保留 PR 累计 Kernel Harness 行为及 main 新约束，并运行表中 oracle；`delete-with-proof`=遵循 main 删除，同时将仍需保留的 Sprint 验收迁入本 sprint 证据，不恢复根 `DoD.md`。每行必须在 `evidence/conflict-resolution.json` 中有且仅有一条同路径记录，含 base/ours/theirs blob、类别、理由、验证命令及 exit code。
 
-| # | 唯一路径 | 类型 | 固定处置 | 内容/行为 oracle |
+| # | 唯一路径 | 类型 | 固定处置 | 固定 oracle_id（完整 cwd/argv/观察见合同 manifest） |
 |---:|---|---|---|---|
-| 1 | `.brain-versions` | content | semantic-merge | 版本登记器与 QuickCheck |
-| 2 | `.github/workflows/ci.yml` | content | semantic-merge | 真触发 final-head workflow，核三个 exact context 与 CodeQL 扫描 subject 集合；不得以 YAML parse/grep 代替 |
-| 3 | `DEFINITION.md` | content | semantic-merge | Brain 版本一致性检查 |
-| 4 | `DoD.md` | modify/delete | delete-with-proof | 根文件保持删除；合同/证据仍覆盖 PR blocker |
-| 5 | `docker/cecelia-runner/entrypoint.sh` | content | semantic-merge | entrypoint provider contract shell test |
-| 6 | `package-lock.json` | content | semantic-merge | `npm ci`/lockfile 一致性 |
-| 7 | `packages/brain/DEFINITION.md` | content | semantic-merge | Brain 定义版本一致性 |
-| 8 | `packages/brain/config/fleet-node-profiles.json` | content | semantic-merge | 加载每个 profile 并通过真实 node-profile 模块解析/拒绝无效 profile |
-| 9 | `packages/brain/package-lock.json` | content | semantic-merge | Brain `npm ci`/lockfile 一致性 |
-| 10 | `packages/brain/package.json` | content | semantic-merge | scripts/dependencies 与 lockfile、真实 test 命令 |
-| 11 | `packages/brain/scripts/fleet-worker/attempt-runner.cjs` | content | semantic-merge | attempt-runner node:test |
-| 12 | `packages/brain/scripts/fleet-worker/attempt-runner.test.cjs` | content | semantic-merge | node:test 双登记并真跑 |
-| 13 | `packages/brain/scripts/fleet-worker/fleet-rollout.sh` | content | semantic-merge | fleet-rollout shell test |
-| 14 | `packages/brain/scripts/fleet-worker/fleet-rollout.test.sh` | content | semantic-merge | shell test 真跑 |
-| 15 | `packages/brain/scripts/fleet-worker/fleet-worker.cjs` | content | semantic-merge | fleet-worker node:test |
-| 16 | `packages/brain/scripts/fleet-worker/install-fleet-worker.sh` | content | semantic-merge | install-fleet-worker shell test |
-| 17 | `packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh` | content | semantic-merge | shell test 真跑 |
-| 18 | `packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.sh` | content | semantic-merge | reconcile shell test |
-| 19 | `packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh` | content | semantic-merge | shell test 真跑 |
-| 20 | `packages/brain/src/__tests__/integration/golden-path.integration.test.js` | content | semantic-merge | integration test 真跑 |
-| 21 | `packages/brain/src/orchestrator/fleet-node/node-profile.js` | content | semantic-merge | node-profile vitest |
-| 22 | `packages/brain/src/orchestrator/fleet-node/node-profile.test.js` | content | semantic-merge | vitest 真跑 |
-| 23 | `packages/brain/src/orchestrator/remote-bridge-transport.js` | content | semantic-merge | remote-bridge vitest |
-| 24 | `packages/brain/src/orchestrator/remote-bridge-transport.test.js` | content | semantic-merge | vitest 真跑 |
-| 25 | `packages/brain/vitest.config.js` | content | semantic-merge | 真跑 vitest discovery，并将发现与执行的 test id exact-set 比较 |
-| 26 | `packages/engine/tests/launcher/claude-launch.test.ts` | content | semantic-merge | engine test 真跑 |
-| 27 | `packages/workflows/skills/harness-contract-proposer/SKILL.md` | content | semantic-merge | skill snapshot/contract tests |
-| 28 | `packages/workflows/skills/harness-contract-reviewer/SKILL.md` | content | semantic-merge | skill snapshot/contract tests |
-| 29 | `packages/workflows/skills/harness-controller/SKILL.md` | content | semantic-merge | controller regression tests |
-| 30 | `packages/workflows/skills/harness-evaluator/SKILL.md` | content | semantic-merge | E2E extractor/evaluator contract tests |
-| 31 | `packages/workflows/skills/harness-planner/SKILL.md` | content | semantic-merge | skill snapshot/contract tests |
-| 32 | `packages/workflows/skills/harness-report/SKILL.md` | content | semantic-merge | report receipt regression tests |
-| 33 | `tests/contract-e2e-extractor.test.ts` | content | semantic-merge | extractor test 真跑 |
+| 1 | `.brain-versions` | content | semantic-merge | `C01` |
+| 2 | `.github/workflows/ci.yml` | content | semantic-merge | `C02` |
+| 3 | `DEFINITION.md` | content | semantic-merge | `C03` |
+| 4 | `DoD.md` | modify/delete | delete-with-proof | `C04` |
+| 5 | `docker/cecelia-runner/entrypoint.sh` | content | semantic-merge | `C05` |
+| 6 | `package-lock.json` | content | semantic-merge | `C06` |
+| 7 | `packages/brain/DEFINITION.md` | content | semantic-merge | `C07` |
+| 8 | `packages/brain/config/fleet-node-profiles.json` | content | semantic-merge | `C08` |
+| 9 | `packages/brain/package-lock.json` | content | semantic-merge | `C09` |
+| 10 | `packages/brain/package.json` | content | semantic-merge | `C10` |
+| 11 | `packages/brain/scripts/fleet-worker/attempt-runner.cjs` | content | semantic-merge | `C11` |
+| 12 | `packages/brain/scripts/fleet-worker/attempt-runner.test.cjs` | content | semantic-merge | `C12` |
+| 13 | `packages/brain/scripts/fleet-worker/fleet-rollout.sh` | content | semantic-merge | `C13` |
+| 14 | `packages/brain/scripts/fleet-worker/fleet-rollout.test.sh` | content | semantic-merge | `C14` |
+| 15 | `packages/brain/scripts/fleet-worker/fleet-worker.cjs` | content | semantic-merge | `C15` |
+| 16 | `packages/brain/scripts/fleet-worker/install-fleet-worker.sh` | content | semantic-merge | `C16` |
+| 17 | `packages/brain/scripts/fleet-worker/install-fleet-worker.test.sh` | content | semantic-merge | `C17` |
+| 18 | `packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.sh` | content | semantic-merge | `C18` |
+| 19 | `packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.test.sh` | content | semantic-merge | `C19` |
+| 20 | `packages/brain/src/__tests__/integration/golden-path.integration.test.js` | content | semantic-merge | `C20` |
+| 21 | `packages/brain/src/orchestrator/fleet-node/node-profile.js` | content | semantic-merge | `C21` |
+| 22 | `packages/brain/src/orchestrator/fleet-node/node-profile.test.js` | content | semantic-merge | `C22` |
+| 23 | `packages/brain/src/orchestrator/remote-bridge-transport.js` | content | semantic-merge | `C23` |
+| 24 | `packages/brain/src/orchestrator/remote-bridge-transport.test.js` | content | semantic-merge | `C24` |
+| 25 | `packages/brain/vitest.config.js` | content | semantic-merge | `C25` |
+| 26 | `packages/engine/tests/launcher/claude-launch.test.ts` | content | semantic-merge | `C26` |
+| 27 | `packages/workflows/skills/harness-contract-proposer/SKILL.md` | content | semantic-merge | `C27` |
+| 28 | `packages/workflows/skills/harness-contract-reviewer/SKILL.md` | content | semantic-merge | `C28` |
+| 29 | `packages/workflows/skills/harness-controller/SKILL.md` | content | semantic-merge | `C29` |
+| 30 | `packages/workflows/skills/harness-evaluator/SKILL.md` | content | semantic-merge | `C30` |
+| 31 | `packages/workflows/skills/harness-planner/SKILL.md` | content | semantic-merge | `C31` |
+| 32 | `packages/workflows/skills/harness-report/SKILL.md` | content | semantic-merge | `C32` |
+| 33 | `tests/contract-e2e-extractor.test.ts` | content | semantic-merge | `C33` |
 
 ## Golden Path
 
@@ -141,7 +143,7 @@ node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs f
 
 ### Step 2: 处置全部 33 个冲突路径
 **来源**: `[FROM_PRD]` — Golden Path 2；controller 要求每个 oracle 枚举 subject。
-**可观测行为**: resolution ledger 的路径集合与表格 exact-set 相等，33 行无重复、无未处置；每行输出 path/base_blob/ours_blob/theirs_blob/final_blob/disposition/oracle argv/exit_code，并运行表中内容或行为 oracle，禁止仅 JSON parse、文件存在或源码字符串检查。
+**可观测行为**: resolution ledger 的路径集合与合同 manifest exact-set 相等，33 行无重复、无未处置；每行的 `path/oracle_id/cwd/argv/expected_observation` 与语义哈希 `e02ab04b2ae86a81a62effd9e63bbf552f9f1fb883c25fe7f57d0fd378797f4d` 深比较后，输出 base/ours/theirs/final blob、处置、真实 exit_code/log_tail；禁止仅 JSON parse、文件存在或源码字符串检查。
 **验证命令**:
 ```bash
 node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs conflicts
@@ -186,7 +188,7 @@ node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs e
 
 ### Step 7: 无新 PR/no-merge/no-deploy 后停在人工审阅门
 **来源**: `[FROM_PRD]` — 验收计划 7；controller 要求定义审计基线/时间窗/归因。
-**可观测行为**: `evidence/audit-baseline.json` 必须在首次 fetch/merge/cherry-pick/push 或任何 GitHub mutation 前生成，记录 `audit_start_utc`、actor、run=`2a4c648a-fa47-494f-9271-0977e1769a23`、attempt=`af8f68d2-4501-407d-bb97-6b6dc850d419`、task=`f21957f6-2ae5-4db3-822e-90c3f474fc19`、target ref、当时全部 open PR number/head、#4457 状态、main SHA、deployments 最大 id/created_at；`audit-end.json` 在 evaluator 后记录 `audit_end_utc`。闭区间 `[audit_start_utc,audit_end_utc]` 内分页枚举 PR、merge commit、auto-merge mutation、deployments，以 actor 加 target ref/final SHA/run/attempt/task/sprint marker 的并集归因本任务；归因集合不得含 pull_request.created、merged/auto_merge、deployment。
+**可观测行为**: `evidence/audit-baseline.json` 必须在首次 fetch/merge/cherry-pick/push 或任何 GitHub mutation 前生成；其 `run_id/attempt_id/task_id` 必须从本次 authoritative task bundle 或签名 execution receipt 动态读取并逐字保存，当前提案 lineage 为 run=`37ff56f3-7b8a-4c54-b710-4ab270c59521`、attempt=`9275a148-463e-4be3-8aed-97929cf52fe1`、task=`f21957f6-2ae5-4db3-822e-90c3f474fc19`。不得把任何历史 proposer/reviewer identity 当成未来 mutation actor。基线另记录 `audit_start_utc`、实际 GitHub actor、target ref、当时全部 open PR number/head、#4457 状态、main SHA、deployments 最大 id/created_at；`audit-end.json` 在 evaluator 后记录 `audit_end_utc` 与实际 evaluator execution receipt lineage。`review-gate` 必须让 baseline lineage、mutation receipt lineage、evaluator receipt lineage分别 exact-match 各自权威运行时输入，任何不等或缺失即 FAIL。闭区间 `[audit_start_utc,audit_end_utc]` 内分页枚举 PR、merge commit、auto-merge mutation、deployments，以实际 actor 加 target ref/final SHA/runtime lineage/task/sprint marker 的并集归因本任务；归因集合不得含 pull_request.created、merged/auto_merge、deployment。
 **验证命令**:
 ```bash
 node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs review-gate
@@ -250,7 +252,7 @@ echo "Golden Path exact-head 验收通过 sha=$START_SHA"
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
 | 冻结身份 | `tests/pr4457-contract.test.ts` | 冻结身份与全部 subject 精确匹配 | verifier/evidence 尚未实现 |
-| 冲突处置 | `tests/pr4457-contract.test.ts` | 全部 33 个冲突路径完成行为验证 | ledger/verifier 尚未实现 |
+| 冲突处置 | `tests/pr4457-contract.test.ts` | 全部 33 个冲突路径完成行为验证 | manifest exact-set/ledger/verifier 尚未实现 |
 | CodeQL | `tests/pr4457-contract.test.ts` | 全部 77 条 CodeQL annotation 收敛 | ledger/verifier 尚未实现 |
 | exact-head | `tests/pr4457-contract.test.ts` | 三个 required checks 绑定最终 SHA | verifier 尚未实现 |
 | 副作用审计 | `tests/pr4457-contract.test.ts` | 审计窗内无新 PR 无 merge 无 deploy | baseline/verifier 尚未实现 |

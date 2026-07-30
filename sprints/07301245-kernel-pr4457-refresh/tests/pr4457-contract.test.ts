@@ -2,10 +2,23 @@ import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
 
 const sprintDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(sprintDir, '../..');
 const verifier = path.join(sprintDir, 'scripts', 'verify-pr4457-evidence.mjs');
+const oracleManifest = path.join(sprintDir, 'conflict-oracle-manifest.json');
+const ORACLE_MANIFEST_SHA256 = 'e02ab04b2ae86a81a62effd9e63bbf552f9f1fb883c25fe7f57d0fd378797f4d';
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) =>
+      [key, canonical((value as Record<string, unknown>)[key])]));
+  }
+  return value;
+}
 
 async function run(phase: string) {
   return await Promise.resolve(spawnSync(process.execPath, [verifier, phase], {
@@ -16,6 +29,21 @@ async function run(phase: string) {
 }
 
 describe('PR #4457 contract [BEHAVIOR]', () => {
+  it('33 路径 oracle manifest 的 schema 身份 argv 与语义哈希精确匹配', async () => {
+    const manifest = JSON.parse(await fs.promises.readFile(oracleManifest, 'utf8'));
+    manifest.subjects.sort((a: { path: string }, b: { path: string }) =>
+      a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+    const digest = crypto.createHash('sha256')
+      .update(JSON.stringify(canonical(manifest))).digest('hex');
+    expect(manifest.schema_version).toBe(1);
+    expect(manifest.subjects).toHaveLength(33);
+    expect(new Set(manifest.subjects.map((row: { path: string }) => row.path)).size).toBe(33);
+    expect(new Set(manifest.subjects.map((row: { oracle_id: string }) => row.oracle_id)).size).toBe(33);
+    expect(manifest.subjects.every((row: { cwd: string; argv: string[]; expected_observation: string }) =>
+      row.cwd.length > 0 && row.argv.length > 0 && row.expected_observation.includes('exit_code=0'))).toBe(true);
+    expect(digest).toBe(ORACLE_MANIFEST_SHA256);
+  });
+
   it('冻结身份与全部 subject 精确匹配', async () => {
     const result = await run('freeze');
     expect(result.status, result.stderr || result.stdout).toBe(0);

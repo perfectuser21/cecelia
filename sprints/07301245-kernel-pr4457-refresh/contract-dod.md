@@ -10,10 +10,10 @@ target_environment: local_api
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `evidence/frozen-conflicts.json`、`codeql-freeze.json`、`required-checks-freeze.json` 与各处置/复查 evidence 按合同 canonical schema 生成并绑定不可变 ID/SHA。
-  Test: node -e "const fs=require('fs');const d='sprints/07301245-kernel-pr4457-refresh/evidence/';for(const f of ['frozen-conflicts.json','freeze.json','conflict-resolution.json','codeql-freeze.json','codeql-disposition.json','required-checks-freeze.json','regressions.json','exact-head.json','evaluator.json','audit-baseline.json','audit-end.json'])fs.accessSync(d+f)"
-- [ ] [ARTIFACT] verifier 提供 `freeze/conflicts/codeql/regressions/exact-head/evaluator/review-gate` 七个 fail-closed phase。
-  Test: node -e "const fs=require('fs');fs.accessSync('sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs')"
+- [ ] [ARTIFACT] 33 路径 oracle manifest 的 schema、不可变 ID、完整 argv/观察与语义哈希精确匹配合同。
+  Test: node -e "const fs=require('fs'),c=require('crypto'),p='sprints/07301245-kernel-pr4457-refresh/conflict-oracle-manifest.json',x=JSON.parse(fs.readFileSync(p,'utf8')),sort=v=>Array.isArray(v)?v.map(sort):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,sort(v[k])])):v;x.subjects.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);const ids=x.subjects.map(v=>v.oracle_id),paths=x.subjects.map(v=>v.path),h=c.createHash('sha256').update(JSON.stringify(sort(x))).digest('hex');if(x.schema_version!==1||paths.length!==33||new Set(paths).size!==33||new Set(ids).size!==33||ids.slice().sort().join(',')!==Array.from({length:33},(_,i)=>'C'+String(i+1).padStart(2,'0')).join(',')||x.subjects.some(v=>!v.cwd||!Array.isArray(v.argv)||!v.argv.length||!v.expected_observation.includes('exit_code=0'))||h!=='e02ab04b2ae86a81a62effd9e63bbf552f9f1fb883c25fe7f57d0fd378797f4d')process.exit(1)"
+- [ ] [ARTIFACT] evidence 内容通过 schema、冻结 SHA/ID/digest、33/77/3 exact subject sets，并由七个 phase 真实执法。
+  Test: bash -c 'set -euo pipefail; V=sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs; for phase in freeze conflicts codeql regressions exact-head evaluator review-gate; do node "$V" "$phase"; done'
 
 ## BEHAVIOR 条目
 
