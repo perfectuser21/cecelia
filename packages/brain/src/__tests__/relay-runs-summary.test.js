@@ -144,4 +144,43 @@ describe('GET /api/brain/orchestrator/relay-runs/summary', () => {
     // 不暴露内部 err.message
     expect(JSON.stringify(res.body)).not.toMatch(/pg internal|connection refused|stack/);
   });
+
+  it('separates trust counts and computes SLO from native trusted rows only', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [
+        { phase: 'done', record_trust_status: 'trusted', count: '3' },
+        { phase: 'failed', record_trust_status: 'trusted', count: '1' },
+        { phase: 'done', record_trust_status: 'reconstructed', count: '20' },
+        { phase: 'failed', record_trust_status: 'untrusted', count: '5' },
+      ],
+    });
+
+    const res = await request(app).get('/api/brain/orchestrator/relay-runs/summary');
+
+    expect(res.status).toBe(200);
+    expect(res.body.phases).toMatchObject({ done: 23, failed: 6 });
+    expect(res.body.trust).toEqual({
+      trusted: 4,
+      reconstructed: 20,
+      untrusted: 5,
+    });
+    expect(res.body.slo).toEqual({
+      trusted_total: 4,
+      trusted_done: 3,
+      trusted_success_rate: 0.75,
+    });
+  });
+
+  it('returns null trusted success rate when no native trusted rows exist', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [
+        { phase: 'done', record_trust_status: 'reconstructed', count: '2' },
+      ],
+    });
+
+    const res = await request(app).get('/api/brain/orchestrator/relay-runs/summary');
+
+    expect(res.body.slo.trusted_total).toBe(0);
+    expect(res.body.slo.trusted_success_rate).toBeNull();
+  });
 });
