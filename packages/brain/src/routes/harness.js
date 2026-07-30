@@ -1916,7 +1916,7 @@ router.post('/promote/:resultId', async (req, res) => {
  * HTTP 恒 200 承载裁决（等价 CLI exit 0/2 由调用方按 body.verdict 分支）。
  */
 router.post('/judge', async (req, res) => {
-  const { task_id, sprint_dir, worktree, agent_verdict, agent_feedback, prompt_dir, transcript_file } = req.body || {};
+  const { task_id, run_id, sprint_dir, worktree, agent_verdict, agent_feedback, prompt_dir, transcript_file } = req.body || {};
   if (!task_id || !sprint_dir || !worktree) {
     return res.status(400).json({ error: 'task_id/sprint_dir/worktree 必填' });
   }
@@ -1976,19 +1976,21 @@ router.post('/judge', async (req, res) => {
 
     // 刀C-2：judge 判定后自写 judge_verdict 落库（不依赖 controller 容器内 curl 上报）
     // 只写 judged=true 的真实裁决；PASS 禁被回退，FAIL→PASS 允许收敛；写失败 non-fatal
-    if (result?.judged === true) {
+    if (result?.judged === true && run_id && UUID_RE.test(String(run_id))) {
       try {
         await pool.query(
           `UPDATE initiative_runs SET judge_verdict = $1
-            WHERE id = (SELECT id FROM initiative_runs
-                         WHERE current_task_id = $2 AND orchestrator_version = 'v2'
-                         ORDER BY started_at DESC LIMIT 1)
+            WHERE id = $2
+              AND current_task_id = $3
+              AND orchestrator_version = 'v2'
               AND judge_verdict IS DISTINCT FROM 'PASS'`,
-          [result.verdict, String(task_id)]
+          [result.verdict, String(run_id), String(task_id)]
         );
       } catch (dbErr) {
         console.warn(`[POST /harness/judge] judge_verdict 落库失败（non-fatal）: ${dbErr.message}`);
       }
+    } else if (result?.judged === true) {
+      console.warn(`[POST /harness/judge] 缺少合法 run_id，跳过 judge_verdict 落库 task=${task_id}`);
     }
 
     return res.json(result);

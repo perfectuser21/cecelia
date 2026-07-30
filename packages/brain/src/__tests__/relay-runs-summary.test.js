@@ -148,14 +148,12 @@ describe('GET /api/brain/orchestrator/relay-runs/summary', () => {
   it('separates trust counts and computes SLO from native trusted rows only', async () => {
     mockPool.query.mockResolvedValueOnce({
       rows: [
-        { phase: 'done', record_trust_status: 'trusted', count: '3' },
+        { phase: 'done', record_trust_status: 'trusted', count: '3', trusted_total: '4', trusted_done: '3' },
         { phase: 'failed', record_trust_status: 'trusted', count: '1' },
         { phase: 'done', record_trust_status: 'reconstructed', count: '20' },
         { phase: 'failed', record_trust_status: 'untrusted', count: '5' },
         { phase: 'generate', record_trust_status: 'trusted', count: '7' },
       ],
-    }).mockResolvedValueOnce({
-      rows: [{ trusted_total: '4', trusted_done: '3' }],
     });
 
     const res = await request(app).get('/api/brain/orchestrator/relay-runs/summary');
@@ -177,10 +175,8 @@ describe('GET /api/brain/orchestrator/relay-runs/summary', () => {
   it('returns null trusted success rate when no native trusted rows exist', async () => {
     mockPool.query.mockResolvedValueOnce({
       rows: [
-        { phase: 'done', record_trust_status: 'reconstructed', count: '2' },
+        { phase: 'done', record_trust_status: 'reconstructed', count: '2', trusted_total: '0', trusted_done: '0' },
       ],
-    }).mockResolvedValueOnce({
-      rows: [{ trusted_total: '0', trusted_done: '0' }],
     });
 
     const res = await request(app).get('/api/brain/orchestrator/relay-runs/summary');
@@ -190,11 +186,9 @@ describe('GET /api/brain/orchestrator/relay-runs/summary', () => {
   });
 
   it('derives SLO from the latest trusted run per task, excluding active work', async () => {
-    mockPool.query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({
-        rows: [{ trusted_total: '2', trusted_done: '1' }],
-      });
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ phase: null, record_trust_status: null, count: null, trusted_total: '2', trusted_done: '1' }],
+    });
 
     const res = await request(app).get('/api/brain/orchestrator/relay-runs/summary');
 
@@ -203,7 +197,7 @@ describe('GET /api/brain/orchestrator/relay-runs/summary', () => {
       trusted_done: 1,
       trusted_success_rate: 0.5,
     });
-    const [sql] = mockPool.query.mock.calls[1];
+    const [sql] = mockPool.query.mock.calls[0];
     expect(sql).toMatch(/DISTINCT ON\s*\(current_task_id\)/);
     expect(sql).toMatch(/ORDER BY current_task_id,\s*started_at DESC,\s*id DESC/);
   });

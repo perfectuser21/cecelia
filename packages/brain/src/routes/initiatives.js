@@ -340,10 +340,30 @@ router.get('/relay-runs/summary', async (req, res) => {
   const PHASE_KEYS = ['planning', 'gan', 'generate', 'evaluate', 'done', 'failed'];
   try {
     const result = await pool.query(
-      `SELECT phase, record_trust_status, COUNT(*) AS count
-         FROM initiative_runs
-        WHERE orchestrator_version = 'v2'
-        GROUP BY phase, record_trust_status`
+      `WITH phase_counts AS (
+         SELECT phase, record_trust_status, COUNT(*) AS count
+           FROM initiative_runs
+          WHERE orchestrator_version = 'v2'
+          GROUP BY phase, record_trust_status
+       ),
+       latest_trusted_task_runs AS (
+         SELECT DISTINCT ON (current_task_id)
+                current_task_id, phase
+           FROM initiative_runs
+          WHERE orchestrator_version = 'v2'
+            AND record_trust_status = 'trusted'
+            AND current_task_id IS NOT NULL
+          ORDER BY current_task_id, started_at DESC, id DESC
+       ),
+       slo AS (
+         SELECT COUNT(*) FILTER (WHERE phase IN ('done','failed')) AS trusted_total,
+                COUNT(*) FILTER (WHERE phase = 'done') AS trusted_done
+           FROM latest_trusted_task_runs
+       )
+       SELECT p.phase, p.record_trust_status, p.count,
+              s.trusted_total, s.trusted_done
+         FROM slo s
+         LEFT JOIN phase_counts p ON TRUE`
     );
     const phases = Object.fromEntries(PHASE_KEYS.map(k => [k, 0]));
     const trust = {
@@ -362,24 +382,18 @@ router.get('/relay-runs/summary', async (req, res) => {
       }
     }
     const total = Object.values(phases).reduce((a, b) => a + b, 0);
-    const trustedDone = result.rows.reduce(
-      (sum, row) => (
-        row.record_trust_status === 'trusted' && row.phase === 'done'
-          ? sum + Number(row.count)
-          : sum
-      ),
-      0,
-    );
+    const trustedTotal = Number(result.rows[0]?.trusted_total ?? 0);
+    const trustedDone = Number(result.rows[0]?.trusted_done ?? 0);
     return res.json({
       phases,
       total,
       trust,
       slo: {
-        trusted_total: trust.trusted,
+        trusted_total: trustedTotal,
         trusted_done: trustedDone,
-        trusted_success_rate: trust.trusted === 0
+        trusted_success_rate: trustedTotal === 0
           ? null
-          : trustedDone / trust.trusted,
+          : trustedDone / trustedTotal,
       },
     });
   } catch (err) {

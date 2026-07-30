@@ -134,8 +134,11 @@ export async function patchKernelRunById(pool, {
         `Kernel terminal outcome conflict: ${current.phase}/${phase}`,
       );
     }
-    if (willBeTerminal && (!identity.current_task_id || !task)) {
+    if (!identity.current_task_id || !task) {
       throw new Error(`Kernel run parent task missing: ${runId}`);
+    }
+    if (!willBeTerminal && TERMINAL_TASK_STATUSES.has(task.status)) {
+      throw new Error(`Kernel task is terminal: ${task.status}`);
     }
 
     const { rows: updatedRows } = await client.query(

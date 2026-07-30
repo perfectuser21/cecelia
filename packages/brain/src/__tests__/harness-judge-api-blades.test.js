@@ -147,7 +147,7 @@ describe('POST /api/brain/harness/judge — 刀C-2 judge_verdict 落库', () => 
     }));
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 'aaaabbbb-cccc-dddd-eeee-111122223333', sprint_dir: 'sprints/x', worktree: wt });
+      .send({ task_id: 'aaaabbbb-cccc-dddd-eeee-111122223333', run_id: '11111111-2222-4333-8444-555555555555', sprint_dir: 'sprints/x', worktree: wt });
     expect(r.status).toBe(200);
     expect(r.body.verdict).toBe('PASS');
 
@@ -170,7 +170,7 @@ describe('POST /api/brain/harness/judge — 刀C-2 judge_verdict 落库', () => 
     }));
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 'aaaabbbb-cccc-dddd-eeee-111122223333', sprint_dir: 'sprints/x', worktree: wt });
+      .send({ task_id: 'aaaabbbb-cccc-dddd-eeee-111122223333', run_id: '11111111-2222-4333-8444-555555555555', sprint_dir: 'sprints/x', worktree: wt });
     expect(r.status).toBe(200);
     expect(r.body.verdict).toBe('FAIL');
 
@@ -192,7 +192,7 @@ describe('POST /api/brain/harness/judge — 刀C-2 judge_verdict 落库', () => 
     }));
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
-      .send({ task_id: 'aaaabbbb-cccc-dddd-eeee-111122223333', sprint_dir: 'sprints/x', worktree: wt });
+      .send({ task_id: 'aaaabbbb-cccc-dddd-eeee-111122223333', run_id: '11111111-2222-4333-8444-555555555555', sprint_dir: 'sprints/x', worktree: wt });
     expect(r.status).toBe(200);
     expect(r.body.verdict).toBe('PASS');
   });

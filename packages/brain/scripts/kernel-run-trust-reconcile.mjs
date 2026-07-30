@@ -94,6 +94,8 @@ async function applyBatch(db, proposals) {
             SET record_trust_status = $2,
                 record_trust_reason = $3
           WHERE id = $1
+            AND record_trust_status IS NOT DISTINCT FROM $4
+            AND record_trust_reason IS NOT DISTINCT FROM $5
             AND (
               record_trust_status IS DISTINCT FROM $2
               OR record_trust_reason IS DISTINCT FROM $3
@@ -102,6 +104,8 @@ async function applyBatch(db, proposals) {
           proposal.run_id,
           proposal.after.status,
           proposal.after.reason,
+          proposal.before.status,
+          proposal.before.reason,
         ],
       );
       applied += result.rowCount ?? 0;
