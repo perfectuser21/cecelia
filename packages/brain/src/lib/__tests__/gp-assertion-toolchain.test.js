@@ -20,7 +20,7 @@ function validInput(overrides = {}) {
 function fakeFileSystem(contents) {
   return {
     realpathFn: vi.fn(async path => path.replace('/tools/', '/real/')),
-    readFileFn: vi.fn(async path => Buffer.from(contents.get(path))),
+    readFileFn: vi.fn(async path => Buffer.from(contents.get(path) ?? 'tool')),
   };
 }
 
@@ -62,6 +62,71 @@ describe('GP assertion pinned toolchain attestation', () => {
       validInput({ toolchain_paths: toolchainPaths }),
       fakeFileSystem(new Map()),
     )).rejects.toMatchObject({ code });
+  });
+
+  it('requires native strings for runner digests', async () => {
+    const digest = { toString: () => RUNNER_DIGEST };
+    await expect(createToolchainAttestation(
+      validInput({ actual_runner_digest: digest, expected_runner_digest: digest }),
+      fakeFileSystem(new Map()),
+    )).rejects.toMatchObject({ code: 'ASSERTION_RUNNER_DIGEST_INVALID' });
+  });
+
+  it('deep-freezes the trusted pre-execution baseline', async () => {
+    const attestation = await createToolchainAttestation(
+      validInput(), fakeFileSystem(new Map()),
+    );
+    expect([attestation, attestation.files, ...attestation.files]
+      .every(Object.isFrozen)).toBe(true);
+  });
+
+  it('rejects a structurally valid self-issued baseline', async () => {
+    const fs = fakeFileSystem(new Map());
+    const attestation = await createToolchainAttestation(validInput(), fs);
+    await expect(verifyToolchainAttestation(
+      structuredClone(attestation), fs,
+    )).rejects.toMatchObject({ code: 'ASSERTION_TOOLCHAIN_ATTESTATION_UNTRUSTED' });
+  });
+
+  it.each([
+    value => ({ ...value, credential: 'credential-secret' }),
+    value => ({
+      ...value,
+      files: value.files.map(file => ({ ...file, content: 'binary-secret' })),
+    }),
+  ])('rejects non-minimal attestation schema without leaking it', async forge => {
+    const fs = fakeFileSystem(new Map());
+    const attestation = await createToolchainAttestation(validInput(), fs);
+    const error = await verifyToolchainAttestation(forge(attestation), fs)
+      .catch(reason => reason);
+    expect(error).toMatchObject({ code: 'ASSERTION_TOOLCHAIN_ATTESTATION_INVALID' });
+    expect(JSON.stringify(error)).not.toContain('secret');
+  });
+
+  it('normalizes creation filesystem errors', async () => {
+    const leak = Object.assign(new Error('credential-secret'), {
+      credential: 'credential-secret',
+    });
+    const error = await createToolchainAttestation(validInput(), {
+      realpathFn: vi.fn(async () => { throw leak; }),
+      readFileFn: vi.fn(),
+    }).catch(reason => reason);
+    expect(error).toMatchObject({ code: 'ASSERTION_TOOLCHAIN_UNAVAILABLE' });
+    expect(JSON.stringify(error)).not.toContain('credential-secret');
+  });
+
+  it('normalizes verification filesystem errors without retaining causes', async () => {
+    const fs = fakeFileSystem(new Map());
+    const attestation = await createToolchainAttestation(validInput(), fs);
+    const leak = Object.assign(new Error('credential-secret'), {
+      credential: 'credential-secret',
+    });
+    const error = await verifyToolchainAttestation(attestation, {
+      realpathFn: vi.fn(async () => { throw leak; }),
+      readFileFn: vi.fn(),
+    }).catch(reason => reason);
+    expect(error).toMatchObject({ code: 'ASSERTION_TOOLCHAIN_DRIFT' });
+    expect(JSON.stringify(error)).not.toContain('credential-secret');
   });
 
   it('realpaths and hashes every file without retaining its content', async () => {
