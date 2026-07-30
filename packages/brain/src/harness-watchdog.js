@@ -32,7 +32,7 @@ import { execSync } from 'child_process';
  */
 export async function scanStuckHarness({ pool: dbPool = pool, notifier } = {}) {
   const overdue = await dbPool.query(`
-    SELECT initiative_id, contract_id, deadline_at, phase
+    SELECT id, initiative_id, contract_id, deadline_at, phase
     FROM initiative_runs
     WHERE phase IN ('A_planning', 'B_task_loop', 'C_final_e2e')
       AND deadline_at IS NOT NULL
@@ -50,8 +50,8 @@ export async function scanStuckHarness({ pool: dbPool = pool, notifier } = {}) {
          SET phase='failed',
              failure_reason='watchdog_overdue',
              completed_at=NOW()
-         WHERE initiative_id=$1 AND completed_at IS NULL`,
-        [row.initiative_id]
+         WHERE id=$1 AND completed_at IS NULL`,
+        [row.id]
       );
       flagged.push(row.initiative_id);
       console.warn(

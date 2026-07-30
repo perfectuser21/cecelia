@@ -839,21 +839,23 @@ export async function _raiseUngatedMergeAlert(dbPool, initiativeId, prUrl) {
  * 门禁未通过 → 仍标 done/completed（PR 客观已合并无法撤销）但打 failure_reason，跳过 regression
  * 提升，并发未验收合并告警。opts.setPrUrl=true 用于 GitHub 反查分支（run 行本无 pr_url，顺手回写）。
  */
-export async function _finalizeMergedRun(dbPool, initiativeId, prUrl, out, opts = {}) {
+export async function _finalizeMergedRun(dbPool, run, prUrl, out, opts = {}) {
   const { setPrUrl = false } = opts;
+  const { id: runId, initiative_id: initiativeId } = run;
+  const taskId = run.current_task_id ?? initiativeId;
   const gated = await _hasEvaluatorGate(dbPool, initiativeId);
 
   const runSql = gated
     ? `UPDATE initiative_runs SET phase='done', completed_at=NOW()${setPrUrl ? ', pr_url=$2' : ''}
-        WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`
+        WHERE id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`
     : `UPDATE initiative_runs SET phase='done', completed_at=NOW(), failure_reason='merged_without_evaluator_gate'${setPrUrl ? ', pr_url=$2' : ''}
-        WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`;
-  await dbPool.query(runSql, setPrUrl ? [initiativeId, prUrl] : [initiativeId]);
+        WHERE id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`;
+  await dbPool.query(runSql, setPrUrl ? [runId, prUrl] : [runId]);
 
   const taskSql = setPrUrl
     ? `UPDATE tasks SET status='completed', completed_at=NOW(), pr_url=$2 WHERE id=$1 AND status='in_progress'`
     : `UPDATE tasks SET status='completed', completed_at=NOW() WHERE id=$1 AND status='in_progress'`;
-  await dbPool.query(taskSql, setPrUrl ? [initiativeId, prUrl] : [initiativeId]);
+  await dbPool.query(taskSql, setPrUrl ? [taskId, prUrl] : [taskId]);
   await _closeSpawnEvents(dbPool, initiativeId, 'done');
 
   out.mergedPr++;
@@ -918,8 +920,8 @@ export async function resumeStalledRelayRuns(deps = {}) {
       if (!task || ['completed', 'cancelled', 'canceled'].includes(task.status)) {
         await dbPool.query(
           `UPDATE initiative_runs SET phase='done', completed_at=NOW()
-            WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
-          [run.initiative_id]
+            WHERE id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+          [run.id]
         );
         out.housekept++;
         continue;
@@ -930,10 +932,10 @@ export async function resumeStalledRelayRuns(deps = {}) {
         // COALESCE：kernel/上游已写过更具体的原因时不覆盖。
         await dbPool.query(
           `UPDATE initiative_runs
-              SET phase='failed', completed_at=NOW(),
+            SET phase='failed', completed_at=NOW(),
                   failure_reason=COALESCE(failure_reason, 'task_failed_upstream')
-            WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
-          [run.initiative_id]
+            WHERE id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+          [run.id]
         );
         out.housekept++;
         continue;
@@ -1017,16 +1019,16 @@ export async function resumeStalledRelayRuns(deps = {}) {
           if (typeof rawPr === 'string' && rawPr.startsWith('https://github.com/')) {
             try { mergedLate = JSON.parse(execFn(`gh pr view "${rawPr}" --json state`)).state === 'MERGED'; } catch { mergedLate = false; }
           }
-          if (mergedLate) { await _finalizeMergedRun(dbPool, run.initiative_id, rawPr, out); continue; }
+          if (mergedLate) { await _finalizeMergedRun(dbPool, run, rawPr, out); continue; }
           await dbPool.query(
             `UPDATE initiative_runs SET phase='failed', completed_at=NOW(), failure_reason='generator_done_timeout'
-              WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
-            [run.initiative_id]);
+              WHERE id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+            [run.id]);
           await dbPool.query(
             `UPDATE tasks SET status='failed', completed_at=NOW(),
                     error_message='generator 完成后 ' || $2 || 'h 内 PR 未 MERGED（收账权收归超时兜底）'
               WHERE id=$1 AND status='in_progress'`,
-            [run.initiative_id, String(GENERATOR_DONE_TIMEOUT_MS / 3600000)]);
+            [task.id, String(GENERATOR_DONE_TIMEOUT_MS / 3600000)]);
           await _closeSpawnEvents(dbPool, run.initiative_id, 'failed');
           out.capped++;
           console.warn(`[relay-watchdog] generator_done 超时 → 标 failed initiative=${run.initiative_id}`);
@@ -1045,7 +1047,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
           const ghOut = execFn(`gh pr view "${effectivePrUrl}" --json state`);
           const prState = JSON.parse(ghOut).state;
           if (prState === 'MERGED') {
-            await _finalizeMergedRun(dbPool, run.initiative_id, effectivePrUrl, out);
+            await _finalizeMergedRun(dbPool, run, effectivePrUrl, out);
             continue;
           }
           if (prState === 'OPEN') {
@@ -1128,18 +1130,18 @@ export async function resumeStalledRelayRuns(deps = {}) {
           if (generatorDone) {
             console.log(`[relay-watchdog] discovered_merged_via_fallback initiative=${run.initiative_id} pr=${discovered.url}`);
           }
-          await _finalizeMergedRun(dbPool, run.initiative_id, discovered.url, out, { setPrUrl: true });
+          await _finalizeMergedRun(dbPool, run, discovered.url, out, { setPrUrl: true });
           continue;
         }
         if (discovered && discovered.state === 'OPEN') {
           await dbPool.query(
             `UPDATE initiative_runs SET pr_url=$2
-              WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
-            [run.initiative_id, discovered.url]
+              WHERE id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+            [run.id, discovered.url]
           );
           await dbPool.query(
             `UPDATE tasks SET pr_url=$2 WHERE id=$1 AND pr_url IS NULL`,
-            [run.initiative_id, discovered.url]
+            [task.id, discovered.url]
           );
           console.log(`[relay-watchdog] GitHub 发现在途 OPEN PR → 回写 pr_url 跳过重点火 initiative=${run.initiative_id} pr=${discovered.url}`);
           continue;
@@ -1156,14 +1158,14 @@ export async function resumeStalledRelayRuns(deps = {}) {
         await dbPool.query(
           `UPDATE initiative_runs SET phase='failed', completed_at=NOW(),
                   failure_reason='relay_watchdog_attempt_cap'
-            WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
-          [run.initiative_id]
+            WHERE id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+          [run.id]
         );
         await dbPool.query(
           `UPDATE tasks SET status='failed', completed_at=NOW(),
                   error_message='relay watchdog: 重点火 ' || $2 || ' 次仍未收敛到 merge'
             WHERE id=$1 AND status='in_progress'`,
-          [run.initiative_id, String(attempts)]
+          [task.id, String(attempts)]
         );
         await _closeSpawnEvents(dbPool, run.initiative_id, 'failed');
         out.capped++;
@@ -1188,18 +1190,18 @@ export async function resumeStalledRelayRuns(deps = {}) {
           }
           if (discovered && discovered.state === 'MERGED') {
             console.log(`[relay-watchdog] discovered_merged_via_fallback initiative=${run.initiative_id} pr=${discovered.url}`);
-            await _finalizeMergedRun(dbPool, run.initiative_id, discovered.url, out, { setPrUrl: true });
+            await _finalizeMergedRun(dbPool, run, discovered.url, out, { setPrUrl: true });
             continue;
           }
           if (discovered && discovered.state === 'OPEN') {
             await dbPool.query(
               `UPDATE initiative_runs SET pr_url=$2
-                WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
-              [run.initiative_id, discovered.url]
+                WHERE id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+              [run.id, discovered.url]
             );
             await dbPool.query(
               `UPDATE tasks SET pr_url=$2 WHERE id=$1 AND pr_url IS NULL`,
-              [run.initiative_id, discovered.url]
+              [task.id, discovered.url]
             );
             console.log(`[relay-watchdog] generator_done 反查 OPEN → 回写 pr_url 跳过重点火 initiative=${run.initiative_id} pr=${discovered.url}`);
             continue;
@@ -1222,14 +1224,14 @@ export async function resumeStalledRelayRuns(deps = {}) {
       if (oomUpgraded && lastExitCode === 137) {
         await dbPool.query(
           `UPDATE initiative_runs SET phase='failed', completed_at=NOW(), failure_reason='oom_wall'
-            WHERE initiative_id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
-          [run.initiative_id]
+            WHERE id=$1 AND orchestrator_version='v2' AND phase NOT IN ('done','failed')`,
+          [run.id]
         );
         await dbPool.query(
           `UPDATE tasks SET status='failed', completed_at=NOW(),
                   error_message='OOM 升档后仍 exit=137，撞墙终止（oom_wall）'
             WHERE id=$1 AND status='in_progress'`,
-          [run.initiative_id]
+          [task.id]
         );
         await _closeSpawnEvents(dbPool, run.initiative_id, 'failed');
         out.capped++;
@@ -1309,7 +1311,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
           await dbPool.query(
             `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || '{"oom_upgraded":true}'::jsonb
               WHERE id=$1`,
-            [run.initiative_id]
+            [task.id]
           );
           console.log(`[relay-watchdog] resume_oom_upgraded initiative=${run.initiative_id} attempt=${attempts + 1} container=${r.containerId}`);
         } else {
@@ -1366,8 +1368,8 @@ async function _handleHeadedRun(run, task, { dbPool, execFn, short }) {
       // 写 tmux_killed_at（幂等标）
       await dbPool.query(
         `UPDATE initiative_runs SET tmux_killed_at=NOW()
-          WHERE initiative_id=$1 AND orchestrator_version='v2' AND tmux_killed_at IS NULL`,
-        [run.initiative_id]
+          WHERE id=$1 AND orchestrator_version='v2' AND tmux_killed_at IS NULL`,
+        [run.id]
       );
       console.log(`[relay-watchdog][headed] tmux_killed_at 已写入 initiative=${run.initiative_id}`);
     }
@@ -1419,7 +1421,7 @@ export async function scanStuckHarness(opts = {}) {
   const resolvePrHead = opts.resolvePrHead || defaultPrHeadResolver;
 
   const overdueQ = await dbPool.query(
-    `SELECT id, initiative_id, orchestrator_host, phase, deadline_at, pr_url
+    `SELECT id, initiative_id, current_task_id, orchestrator_host, phase, deadline_at, pr_url
        FROM initiative_runs
       WHERE orchestrator_host LIKE 'skill-relay%'
         AND deadline_at < NOW()
@@ -1490,7 +1492,7 @@ export async function scanStuckHarness(opts = {}) {
       await dbPool.query(
         `UPDATE tasks SET status = 'failed', completed_at = NOW()
           WHERE id = $1 AND status NOT IN ('completed', 'cancelled', 'canceled')`,
-        [row.initiative_id]
+        [row.current_task_id ?? row.initiative_id]
       );
       await _closeSpawnEvents(dbPool, row.initiative_id, 'failed');
       console.warn(`[relay-watchdog] scanStuckHarness: overdue codex run id=${row.id} initiative=${row.initiative_id} deadline=${row.deadline_at}`);

@@ -160,6 +160,7 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     const overdueRun = {
       id: '11111111-1111-4111-8111-111111111111',
       initiative_id: TASK_ID,
+      current_task_id: TASK_ID,
       orchestrator_host: 'skill-relay-session',
       phase: 'review',
       deadline_at: new Date(Date.now() - 1000).toISOString(),
@@ -167,7 +168,7 @@ describe('scanStuckHarness — 逾期收尸 host 覆盖', () => {
     };
     const pool = { query: vi.fn(async (sql) => {
       const normalized = String(sql);
-      if (/SELECT id, initiative_id, orchestrator_host, phase, deadline_at/.test(normalized)) {
+      if (/SELECT id, initiative_id, current_task_id, orchestrator_host, phase, deadline_at/.test(normalized)) {
         const sqlHidesOpenReviews = /effect:human_review_requested/.test(normalized);
         return { rows: sqlHidesOpenReviews ? [] : [overdueRun] };
       }
@@ -697,7 +698,7 @@ describe('PATCH /orchestrator/relay-runs — pr_url 字段写入（#3560 跟进�
   it('PATCH handler 从 req.body 解构 pr_url', async () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
-    const patchIdx = src.indexOf("router.patch('/relay-runs/");
+    const patchIdx = src.indexOf('function validateRunPatchBody');
     expect(patchIdx).toBeGreaterThan(-1);
     const block = src.slice(patchIdx, patchIdx + 1500);
     expect(block).toMatch(/pr_url/);
@@ -706,7 +707,7 @@ describe('PATCH /orchestrator/relay-runs — pr_url 字段写入（#3560 跟进�
   it('PATCH handler 校验 pr_url 须以 https://github.com/ 开头（非法时 400）', async () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
-    const patchIdx = src.indexOf("router.patch('/relay-runs/");
+    const patchIdx = src.indexOf('function validateRunPatchBody');
     const block = src.slice(patchIdx, patchIdx + 1500);
     expect(block).toMatch(/https:\/\/github\.com\//);
     expect(block).toMatch(/400/);
@@ -714,9 +715,9 @@ describe('PATCH /orchestrator/relay-runs — pr_url 字段写入（#3560 跟进�
 
   it('PATCH UPDATE SQL 用 COALESCE 保护 pr_url（只增不清）', async () => {
     const { readFileSync } = await import('node:fs');
-    const src = readFileSync(new URL('../routes/initiatives.js', import.meta.url), 'utf8');
-    const patchIdx = src.indexOf("router.patch('/relay-runs/");
-    const block = src.slice(patchIdx, patchIdx + 1500);
+    const src = readFileSync(new URL('../orchestrator/kernel-run-store.js', import.meta.url), 'utf8');
+    const patchIdx = src.indexOf('export async function patchKernelRunById');
+    const block = src.slice(patchIdx, patchIdx + 3000);
     expect(block).toMatch(/COALESCE/i);
     expect(block).toMatch(/pr_url/);
   });
