@@ -213,7 +213,19 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     mocks.store.fail.mockResolvedValue({ attempt: { ...attempt, status: 'failed' }, deduped: false });
     mocks.store.heartbeat.mockResolvedValue({ ...attempt, heartbeat_at: new Date().toISOString() });
     mocks.store.markRunning.mockResolvedValue({ ...attempt, provider_session_id: 'thread-live' });
-    mocks.pool.query.mockResolvedValue({ rows: [], rowCount: 1 });
+    mocks.pool.query.mockImplementation(async (sql) => {
+      if (String(sql).includes('FROM initiative_runs r')) {
+        return {
+          rows: [{
+            pr_url: null,
+            task_id: attemptId,
+            payload: { base_repo: 'https://github.com/acme/repo.git' },
+          }],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 1 };
+    });
 
     const { default: router } = await import('../harness-callback.js');
     app = express();
@@ -436,11 +448,19 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
   });
 
   it('重复的 verified xian callback 保持幂等', async () => {
+    const claimDigest = 'sha256:verified-xian-claim';
+    app.set('kernelCallbackClaimDigest', () => claimDigest);
     const runningAttempt = remoteAttempt();
     const completedAttempt = {
       ...runningAttempt,
       status: 'completed',
-      result: remoteResult(),
+      result: {
+        ...remoteResult(),
+        provider_metadata: {
+          ...remoteResult().provider_metadata,
+          server_callback_claim_digest: claimDigest,
+        },
+      },
     };
     mocks.store.getById
       .mockReset()
@@ -453,12 +473,24 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(first.status).toBe(200);
     expect(first.body).toMatchObject({ ok: true, deduped: false });
-    expect(second.status).toBe(200);
+    expect(second.status, JSON.stringify(second.body)).toBe(200);
     expect(second.body).toMatchObject({ ok: true, deduped: true });
   });
 
   it('校验、完成 attempt，并让重复 callback 幂等返回 deduped', async () => {
-    const completedAttempt = { ...attempt, status: 'completed', result: validResult };
+    const claimDigest = 'sha256:evaluator-claim';
+    app.set('kernelCallbackClaimDigest', () => claimDigest);
+    const completedAttempt = {
+      ...attempt,
+      status: 'completed',
+      result: {
+        ...validResult,
+        provider_metadata: {
+          ...validResult.provider_metadata,
+          server_callback_claim_digest: claimDigest,
+        },
+      },
+    };
     mocks.store.getById
       .mockReset()
       .mockResolvedValueOnce(attempt)
@@ -469,7 +501,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(first.status).toBe(200);
     expect(first.body).toMatchObject({ ok: true, deduped: false });
-    expect(second.status).toBe(200);
+    expect(second.status, JSON.stringify(second.body)).toBe(200);
     expect(second.body.deduped).toBe(true);
     expect(mocks.store.assertFreshRoleSession).toHaveBeenCalledWith({
       runId,
@@ -595,12 +627,24 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       deduped: false,
     });
     mocks.pool.query.mockImplementation(async (sql) => {
-      if (sql.includes('SELECT r.pr_url')) {
-        return { rows: [{ pr_url: 'https://github.com/acme/repo/pull/42', trigger_sha: triggerSha }] };
+      if (sql.includes('FROM initiative_runs r')) {
+        return {
+          rows: [{
+            pr_url: 'https://github.com/acme/repo/pull/42',
+            task_id: attemptId,
+            payload: { base_repo: 'https://github.com/acme/repo.git' },
+          }],
+        };
+      }
+      if (sql.includes("action='spawn:generator-fix'")) {
+        return { rows: [{ trigger_sha: triggerSha }] };
       }
       return { rows: [], rowCount: 1 };
     });
-    app.set('kernelPrHeadResolver', vi.fn(async () => triggerSha));
+    app.set('kernelPrIdentityResolver', vi.fn(async () => ({
+      head_sha: triggerSha,
+      head_ref: `cp-fix-${attemptId.slice(0, 8)}`,
+    })));
 
     const response = await postCallback(app, {
       ...validResult,
@@ -637,12 +681,23 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       deduped: false,
     });
     mocks.pool.query.mockImplementation(async (sql) => {
-      if (sql.includes('SELECT r.pr_url')) {
-        return { rows: [{ pr_url: 'https://github.com/acme/repo/pull/42', trigger_sha: triggerSha }] };
+      if (sql.includes('FROM initiative_runs r')) {
+        return {
+          rows: [{
+            pr_url: 'https://github.com/acme/repo/pull/42',
+            task_id: attemptId,
+            payload: { base_repo: 'https://github.com/acme/repo.git' },
+          }],
+        };
+      }
+      if (sql.includes("action='spawn:generator-fix'")) {
+        return { rows: [{ trigger_sha: triggerSha }] };
       }
       return { rows: [], rowCount: 1 };
     });
-    app.set('kernelPrHeadResolver', vi.fn(async () => { throw new Error('GitHub unavailable'); }));
+    app.set('kernelPrIdentityResolver', vi.fn(async () => {
+      throw new Error('GitHub unavailable');
+    }));
 
     const response = await postCallback(app, {
       ...validResult,
@@ -714,7 +769,10 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
   it('未验证的 generator PR claim 不得污染 authoritative pr_url', async () => {
     mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
     const resolveHead = vi.fn(async () => null);
-    app.set('kernelPrHeadResolver', resolveHead);
+    app.set('kernelPrIdentityResolver', vi.fn(async () => ({
+      head_sha: await resolveHead(),
+      head_ref: `cp-fix-${attemptId.slice(0, 8)}`,
+    })));
 
     const response = await postCallback(app, {
       ...validResult,
@@ -785,11 +843,23 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
   });
 
   it('同仓库但不属于 task short-id 的分支不能成为权威 PR', async () => {
-    mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
+    const authoritativeBranch = `cp-fleet-generator-${attemptId.slice(0, 8)}`;
+    mocks.store.getById.mockResolvedValue({
+      ...attempt,
+      role: 'generator',
+      task_bundle: {
+        inputs: {
+          workspace_spec: {
+            repo: 'perfectuser21/cecelia',
+            branch: authoritativeBranch,
+          },
+        },
+      },
+    });
     mocks.pool.query.mockResolvedValueOnce({
       rows: [{
         pr_url: null,
-        task_id: attemptId,
+        task_id: '33333333-3333-4333-8333-333333333333',
         payload: { base_repo: 'perfectuser21/cecelia' },
       }],
     });
@@ -815,6 +885,57 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
             expect.objectContaining({
               type: 'unverified_pull_request_claim',
               verification_status: 'branch_mismatch',
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
+  it('Fleet 默认分支以签发的 workspace_spec 为准，不要求包含 task short-id', async () => {
+    const authoritativeBranch = `cp-fleet-generator-${attemptId.slice(0, 8)}`;
+    mocks.store.getById.mockResolvedValue({
+      ...attempt,
+      role: 'generator',
+      task_bundle: {
+        inputs: {
+          workspace_spec: {
+            repo: 'perfectuser21/cecelia',
+            branch: authoritativeBranch,
+          },
+        },
+      },
+    });
+    mocks.pool.query.mockResolvedValueOnce({
+      rows: [{
+        pr_url: null,
+        task_id: '33333333-3333-4333-8333-333333333333',
+        payload: { base_repo: 'perfectuser21/cecelia' },
+      }],
+    });
+    app.set('kernelPrIdentityResolver', vi.fn(async () => ({
+      head_sha: 'a'.repeat(40),
+      head_ref: authoritativeBranch,
+    })));
+
+    const response = await postCallback(app, {
+      ...validResult,
+      artifacts: [{
+        type: 'pull_request',
+        url: 'https://github.com/perfectuser21/cecelia/pull/42',
+      }],
+      decision: null,
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          artifacts: [
+            expect.objectContaining({
+              type: 'pull_request',
+              head_ref: authoritativeBranch,
+              verification_status: 'verified',
             }),
           ],
         }),
@@ -855,9 +976,37 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
+  it('终态 Attempt 的不同原始 callback 仍 fail closed', async () => {
+    const terminalAttempt = {
+      ...attempt,
+      status: 'completed',
+      result: {
+        ...validResult,
+        provider_metadata: {
+          ...validResult.provider_metadata,
+          server_callback_claim_digest: 'sha256:original',
+        },
+      },
+    };
+    mocks.store.getById.mockResolvedValue(terminalAttempt);
+    app.set('kernelCallbackClaimDigest', () => 'sha256:changed');
+    const resolver = vi.fn();
+    app.set('kernelPrIdentityResolver', resolver);
+
+    const response = await postCallback(app, {
+      ...validResult,
+      summary: 'conflicting retry payload',
+    });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe('terminal_payload_conflict');
+    expect(resolver).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+  });
+
   it('PR verification infrastructure failure keeps callback retryable', async () => {
     mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
-    app.set('kernelPrHeadResolver', vi.fn(async () => {
+    app.set('kernelPrIdentityResolver', vi.fn(async () => {
       throw new Error('GitHub unavailable');
     }));
 
