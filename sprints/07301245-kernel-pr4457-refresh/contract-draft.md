@@ -1,11 +1,12 @@
-# Sprint Contract Draft (Round 9)
+# Sprint Contract Draft (Round 10)
 
 覆盖父路「Draft PR #4457 累计冲突与 CodeQL 收敛」第 1-5 步。
 
 ## 合同 notes
 
-- Round 9 采用 controller 的权威 machine facts，消除旧版 `32/33` 与 CodeQL 口径歧义：总冲突路径固定为 33（32 个 content + `DoD.md` 1 个 modify/delete）；77 固定指 check-run `90774353140` 的 PR-new-alert annotations。
-- 本轮修复 Round 8 三项阻断：两个 ARTIFACT oracle 改为内容/schema/身份/exact-set 与七阶段真实行为断言；33 路径的完整 `path → oracle_id → cwd/argv → expected_observation` 已冻结为合同 manifest；审阅门不再硬编码历史 run/attempt。
+- Round 10 采用 controller 的权威 machine facts，消除旧版 `32/33` 与 CodeQL 口径歧义：总冲突路径固定为 33（32 个 content + `DoD.md` 1 个 modify/delete）；77 固定指 check-run `90774353140` 的 PR-new-alert annotations。
+- 本轮保持 Round 9 已完成的三项修复：两个 ARTIFACT oracle 使用内容/schema/身份/exact-set 与七阶段真实行为断言（不采用仅存在性证明）；33 路径的完整 `path → oracle_id → cwd/argv → expected_observation` 已冻结为合同 manifest；审阅门从权威运行时输入绑定 lineage。
+- 本次 proposer 权威 lineage：run=`37ff56f3-7b8a-4c54-b710-4ab270c59521`、attempt=`47d4a8a2-d82d-41bd-a38a-0e7cbc726820`、task=`f21957f6-2ae5-4db3-822e-90c3f474fc19`。该值只认证本轮合同产出；generator/evaluator 必须分别从各自 task bundle 或签名 execution receipt 读取其实际 lineage，禁止继承本值作为 mutation actor。
 - contract-gate: enabled（`packages/brain/src/lib/contract-gate.js` 存在）。
 - context-manifest: unavailable；PRD 明示本 line 暂无累积 FR。
 - 不新增 PR、不 merge、不 deploy；generator 只能更新既有 `cp-kernel-phase5b-a1-review-fixes`。
@@ -188,7 +189,7 @@ node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs e
 
 ### Step 7: 无新 PR/no-merge/no-deploy 后停在人工审阅门
 **来源**: `[FROM_PRD]` — 验收计划 7；controller 要求定义审计基线/时间窗/归因。
-**可观测行为**: `evidence/audit-baseline.json` 必须在首次 fetch/merge/cherry-pick/push 或任何 GitHub mutation 前生成；其 `run_id/attempt_id/task_id` 必须从本次 authoritative task bundle 或签名 execution receipt 动态读取并逐字保存，当前提案 lineage 为 run=`37ff56f3-7b8a-4c54-b710-4ab270c59521`、attempt=`9275a148-463e-4be3-8aed-97929cf52fe1`、task=`f21957f6-2ae5-4db3-822e-90c3f474fc19`。不得把任何历史 proposer/reviewer identity 当成未来 mutation actor。基线另记录 `audit_start_utc`、实际 GitHub actor、target ref、当时全部 open PR number/head、#4457 状态、main SHA、deployments 最大 id/created_at；`audit-end.json` 在 evaluator 后记录 `audit_end_utc` 与实际 evaluator execution receipt lineage。`review-gate` 必须让 baseline lineage、mutation receipt lineage、evaluator receipt lineage分别 exact-match 各自权威运行时输入，任何不等或缺失即 FAIL。闭区间 `[audit_start_utc,audit_end_utc]` 内分页枚举 PR、merge commit、auto-merge mutation、deployments，以实际 actor 加 target ref/final SHA/runtime lineage/task/sprint marker 的并集归因本任务；归因集合不得含 pull_request.created、merged/auto_merge、deployment。
+**可观测行为**: `evidence/audit-baseline.json` 必须在首次 fetch/merge/cherry-pick/push 或任何 GitHub mutation 前生成；其 `run_id/attempt_id/task_id` 必须从实际 generator 的 authoritative task bundle 或签名 execution receipt 动态读取并逐字保存，不得从合同正文、历史 proposer/reviewer 或环境默认值复制。基线另记录 `audit_start_utc`、实际 GitHub actor、target ref、当时全部 open PR number/head、#4457 状态、main SHA、deployments 最大 id/created_at；每次 mutation receipt 保存同一 generator runtime lineage；`audit-end.json` 在 evaluator 后记录 `audit_end_utc` 与 evaluator 自己的 authoritative execution receipt lineage。`review-gate` 必须让 baseline 与 mutation receipts exact-match generator 权威 lineage，让 evaluator receipt exact-match evaluator 权威 lineage，并验证 task_id=`f21957f6-2ae5-4db3-822e-90c3f474fc19`；任何不等、复用 proposer lineage或缺失即 FAIL。闭区间 `[audit_start_utc,audit_end_utc]` 内分页枚举 PR、merge commit、auto-merge mutation、deployments，以实际 actor 加 target ref/final SHA/runtime lineage/task/sprint marker 的并集归因本任务；归因集合不得含 pull_request.created、merged/auto_merge、deployment。
 **验证命令**:
 ```bash
 node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs review-gate
