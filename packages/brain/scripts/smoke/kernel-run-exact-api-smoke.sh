@@ -22,6 +22,11 @@ npx --no-install vitest run \
   src/__tests__/integration/relay-run-exact-api.integration.test.js \
   src/__tests__/relay-runs-legacy-adapter.test.js \
   src/__tests__/kernel-run-trust-reconcile.test.js \
+  src/__tests__/kernel-run-trust-reconcile-production-guards.test.js \
+  src/__tests__/integration/kernel-run-trust-reconcile.pg.integration.test.js \
+  src/__tests__/kernel-terminal-mismatch-reconcile.test.js \
+  src/__tests__/kernel-terminal-mismatch-reconcile-production-guards.test.js \
+  src/__tests__/integration/kernel-terminal-mismatch-reconcile.pg.integration.test.js \
   src/__tests__/relay-runs-summary.test.js \
   src/__tests__/harness-watchdog.test.js \
   src/__tests__/harness-relay-watchdog.test.js \
