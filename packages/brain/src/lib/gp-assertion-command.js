@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { access, realpath } from 'node:fs/promises';
+import { access, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 const runFile = promisify(execFile);
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
@@ -15,8 +15,7 @@ const TOOL_BASENAME = {
   python: /^python3(?:\.\d+)*$/,
   bash: /^bash$/,
 };
-export const assertionRunnerError = (code, message = code) => (
-  Object.assign(new Error(message), { code }));
+export const assertionRunnerError = (code, message = code) => Object.assign(new Error(message), { code });
 function fail(code, message) { throw assertionRunnerError(code, message); }
 function isWithin(root, target) {
   const path = relative(root, target);
@@ -119,20 +118,18 @@ async function git(repoRoot, argv) {
   }
 }
 export async function defaultTrackedPath(repoRoot, target) {
-  const result = await git(repoRoot, [
-    'ls-files', '--error-unmatch', '--', relative(repoRoot, target),
-  ]);
-  return result.exitCode === undefined;
+  const path = relative(repoRoot, target);
+  const result = await git(repoRoot, ['ls-files', '--error-unmatch', '--', path]);
+  return result.exitCode === undefined && result.stdout.split('\n').includes(path);
 }
 export async function assertionCommand(assertionRef, repoRoot, {
-  realpathFn = realpath,
-  pathExistsFn = exists,
-  isTrackedPathFn = defaultTrackedPath,
-  toolchains,
+  realpathFn = realpath, fileStatFn = stat, pathExistsFn = exists,
+  isTrackedPathFn = defaultTrackedPath, toolchains,
 } = {}) {
   const shape = classify(assertionRef);
   const { root, target } = await ownedPath(repoRoot, shape.path, realpathFn);
   if (!matchesKind(shape.kind, target)) fail('ASSERTION_PATH_TYPE_MISMATCH');
+  if (!(await fileStatFn(target)).isFile()) fail('ASSERTION_PATH_NOT_FILE');
   if (!await isTrackedPathFn(root, target)) fail('ASSERTION_PATH_UNTRACKED');
   if (shape.kind === 'vitest') {
     const tools = await pinnedTools(toolchains, ['node', 'vitest'], realpathFn);
@@ -158,12 +155,8 @@ export function canonicalRepoIdentity(origin) {
     try {
       const url = new URL(value);
       if (!url.hostname || !url.pathname) throw new Error();
-      return `${url.hostname.toLowerCase()}/${cleanRepo(
-        url.pathname.replace(/^\/+/, ''),
-      )}`;
-    } catch {
-      fail('SOURCE_REPO_UNAVAILABLE');
-    }
+      return `${url.hostname.toLowerCase()}/${cleanRepo(url.pathname.replace(/^\/+/, ''))}`;
+    } catch { fail('SOURCE_REPO_UNAVAILABLE'); }
   }
   const scp = value.match(/^(?:[^@/\s]+@)?([^:/\s]+):(.+)$/);
   if (scp) return `${scp[1].toLowerCase()}/${cleanRepo(scp[2])}`;
@@ -179,17 +172,12 @@ async function gitValue(repoRoot, argv, code) {
   return result.stdout.trim();
 }
 export const defaultSourceSha = repoRoot => gitValue(
-  repoRoot, ['rev-parse', 'HEAD'], 'SOURCE_SHA_UNAVAILABLE',
-);
+  repoRoot, ['rev-parse', 'HEAD'], 'SOURCE_SHA_UNAVAILABLE');
 export async function defaultSourceRepo(repoRoot) {
-  return canonicalRepoIdentity(await gitValue(
-    repoRoot, ['remote', 'get-url', 'origin'], 'SOURCE_REPO_UNAVAILABLE',
-  ));
+  return canonicalRepoIdentity(
+    await gitValue(repoRoot, ['remote', 'get-url', 'origin'], 'SOURCE_REPO_UNAVAILABLE'));
 }
 export async function defaultRepoClean(repoRoot) {
-  return (await gitValue(
-    repoRoot,
-    ['status', '--porcelain=v1', '--untracked-files=all'],
-    'SOURCE_STATE_UNAVAILABLE',
-  )) === '';
+  const argv = ['status', '--porcelain=v1', '--untracked-files=all'];
+  return (await gitValue(repoRoot, argv, 'SOURCE_STATE_UNAVAILABLE')) === '';
 }
