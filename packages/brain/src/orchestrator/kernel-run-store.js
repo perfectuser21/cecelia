@@ -561,6 +561,13 @@ export async function reconcileKernelTaskTerminal(
       WHERE current_task_id = $1
         AND orchestrator_version = 'v2'
         AND phase IN ('done', 'failed')
+        AND NOT EXISTS (
+          SELECT 1
+            FROM initiative_runs active
+           WHERE active.current_task_id = $1
+             AND active.orchestrator_version = 'v2'
+             AND active.phase NOT IN ('done', 'failed')
+        )
       ORDER BY completed_at DESC NULLS LAST, started_at DESC, id DESC
       LIMIT 1`,
     [taskId],
@@ -576,6 +583,7 @@ export async function reconcileKernelTaskTerminal(
   await finalizeRun(pool, {
     runId: run.id,
     expectedTaskId: taskId,
+    requireNoActiveSibling: true,
     outcome: run.phase,
     reason: run.failure_reason ?? 'terminal_run_reconciliation',
   });

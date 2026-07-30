@@ -172,16 +172,14 @@ function evidenceMatches(left, right) {
 }
 
 async function lockAndReadCurrentEvidence(client, proposal) {
-  const currentResult = await client.query(
-    `SELECT id, initiative_id, current_task_id, phase, completed_at,
-            record_trust_status, record_trust_reason
+  const identityResult = await client.query(
+    `SELECT id, initiative_id, current_task_id
        FROM initiative_runs
-      WHERE id = $1
-      FOR UPDATE`,
+      WHERE id = $1`,
     [proposal.run_id],
   );
-  const current = currentResult.rows?.[0] ?? null;
-  if (!current) return null;
+  const identity = identityResult.rows?.[0] ?? null;
+  if (!identity) return null;
 
   await client.query(
     `SELECT pg_advisory_xact_lock(
@@ -191,21 +189,40 @@ async function lockAndReadCurrentEvidence(client, proposal) {
          0
        )
      )`,
-    [current.initiative_id],
+    [identity.initiative_id],
   );
   await client.query(
     `SELECT pg_advisory_xact_lock(
        hashtextextended('relay-initiative:' || $1::text, 0)
      )`,
-    [current.initiative_id],
+    [identity.initiative_id],
   );
-  await client.query(
-    `SELECT id
+  const taskLocks = identity.current_task_id
+    ? await client.query(
+        `SELECT id
+           FROM tasks
+          WHERE id = $1
+          FOR KEY SHARE`,
+        [identity.current_task_id],
+      )
+    : { rows: [] };
+  const initiativeRunLocks = await client.query(
+    `SELECT id, initiative_id, current_task_id, phase, completed_at,
+            record_trust_status, record_trust_reason
        FROM initiative_runs
       WHERE initiative_id = $1
+      ORDER BY id
       FOR UPDATE`,
-    [current.initiative_id],
+    [identity.initiative_id],
   );
+  const current = initiativeRunLocks.rows.find(row => row.id === proposal.run_id) ?? null;
+  if (
+    !current
+    || current.initiative_id !== identity.initiative_id
+    || current.current_task_id !== identity.current_task_id
+  ) {
+    return null;
+  }
   const attemptLocks = await client.query(
     `SELECT id
        FROM harness_attempts
@@ -213,15 +230,6 @@ async function lockAndReadCurrentEvidence(client, proposal) {
       FOR UPDATE`,
     [proposal.run_id],
   );
-  const taskLocks = current.current_task_id
-    ? await client.query(
-        `SELECT id
-           FROM tasks
-          WHERE id = $1
-          FOR KEY SHARE`,
-        [current.current_task_id],
-      )
-    : { rows: [] };
   const collisionResult = current.completed_at === null
     ? { rows: [{ count: '1' }] }
     : await client.query(
@@ -469,11 +477,12 @@ export async function reconcileRunTrust({
         plan_sha256: planSha256,
         ...productionMetadata,
       })}\n`);
-      for (let offset = 0; offset < proposals.length; offset += batchSize) {
-        const batchId = `${executionId}:${Math.floor(offset / batchSize) + 1}`;
+      const effectiveBatchSize = failOnConflict ? 1 : batchSize;
+      for (let offset = 0; offset < proposals.length; offset += effectiveBatchSize) {
+        const batchId = `${executionId}:${Math.floor(offset / effectiveBatchSize) + 1}`;
         const batchOutcomes = await applyBatch(
           db,
-          proposals.slice(offset, offset + batchSize),
+          proposals.slice(offset, offset + effectiveBatchSize),
           executionId,
           batchId,
           writeAudit,
