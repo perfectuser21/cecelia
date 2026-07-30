@@ -49,7 +49,6 @@ const SUCCESS_TERMINAL_STATUSES = new Set([
   'needs_context',
   'blocked',
 ]);
-const FAILURE_TERMINAL_STATUSES = new Set(['failed', 'cancelled']);
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const FLEET_CODEX_METADATA_FIELDS = new Set([
   'provider',
@@ -361,14 +360,6 @@ export async function appendGeneratorFixCallback(
   );
 }
 
-function resultError(result) {
-  if (typeof result.error === 'string') return { code: 'provider_failed', message: result.error };
-  return {
-    code: result.error?.code ?? 'provider_failed',
-    message: result.error?.message ?? result.summary ?? 'provider execution failed',
-  };
-}
-
 router.post('/harness/attempts/:attemptId/heartbeat', heartbeatRateLimit, async (req, res) => {
   const db = requestDatabase(req);
   const attemptStore = createAttemptStore(db);
@@ -505,55 +496,34 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
   }
 
   try {
-    let outcome;
-    if (result.status === 'failed' || result.status === 'cancelled') {
-      const error = resultError(result);
-      outcome = await attemptStore.fail(
-        attemptId,
-        {
-          ...error,
-          status: result.status,
-          failureClass: result.failure_class,
-        },
-        { leaseOwner, leaseGeneration },
-      );
-      if (!outcome.attempt) {
-        const current = await attemptStore.getById(attemptId);
-        if (current?.lease_owner !== leaseOwner || !FAILURE_TERMINAL_STATUSES.has(current?.status)) {
-          return res.status(409).json({ ok: false, error: 'attempt lease lost before terminal write' });
-        }
-      }
-    } else {
-      outcome = await attemptStore.complete(
-        attemptId,
-        result,
-        { leaseOwner, leaseGeneration },
-      );
-      let completedAttempt = outcome.attempt;
-      let persistedResult = completedAttempt?.result ?? result;
-      if (!completedAttempt) {
-        const current = await attemptStore.getById(attemptId);
-        if (current?.lease_owner !== leaseOwner || !SUCCESS_TERMINAL_STATUSES.has(current?.status)) {
-          return res.status(409).json({ ok: false, error: 'attempt lease lost before terminal write' });
-        }
-        completedAttempt = current;
-        persistedResult = current.result ?? result;
-      }
-      await appendCommanderProposal(attempt, persistedResult, db);
-      await appendAttemptVerdict(attempt, persistedResult, db);
-      const resolver = req.app.get('kernelPrHeadResolver') || defaultPrHeadResolver;
-      await appendGeneratorFixCallback(attempt, persistedResult, db, resolver);
+    const outcome = await attemptStore.recordCallbackTerminal({
+      attemptId,
+      runId: attempt.run_id,
+      leaseOwner,
+      leaseGeneration,
+      result,
+    });
+    if (!outcome.attempt) {
+      return res.status(409).json({
+        ok: false,
+        error: outcome.conflict ?? 'attempt lease lost before terminal write',
+      });
+    }
+    const persistedResult = outcome.attempt.result ?? result;
+    await appendCommanderProposal(attempt, persistedResult, db);
+    await appendAttemptVerdict(attempt, persistedResult, db);
+    const resolver = req.app.get('kernelPrHeadResolver') || defaultPrHeadResolver;
+    await appendGeneratorFixCallback(attempt, persistedResult, db, resolver);
 
-      if (attempt.role === 'generator') {
-        const pullRequest = persistedResult.artifacts.find(
-          (artifact) => artifact?.type === 'pull_request' && artifact.url,
+    if (attempt.role === 'generator') {
+      const pullRequest = persistedResult.artifacts.find(
+        (artifact) => artifact?.type === 'pull_request' && artifact.url,
+      );
+      if (pullRequest) {
+        await db.query(
+          'UPDATE initiative_runs SET pr_url=$2, updated_at=NOW() WHERE id=$1',
+          [attempt.run_id, pullRequest.url],
         );
-        if (pullRequest) {
-          await db.query(
-            'UPDATE initiative_runs SET pr_url=$2, updated_at=NOW() WHERE id=$1',
-            [attempt.run_id, pullRequest.url],
-          );
-        }
       }
     }
     return res.json({ ok: true, attemptId, deduped: outcome.deduped });

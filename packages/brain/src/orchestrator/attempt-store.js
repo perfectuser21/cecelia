@@ -5,6 +5,10 @@
  * 在同一事务中推进 event_version 并投影 lifecycle event；这里不得双写
  * harness_run_events，也不得把 task_bundle/result/error_message 投影进去。
  */
+import { isDeepStrictEqual } from 'node:util';
+
+import { normalizeFailureSignature } from './convergence-signatures.js';
+
 const TERMINAL_STATUSES = [
   'completed',
   'completed_with_concerns',
@@ -23,6 +27,55 @@ const SUCCESS_TERMINAL_STATUSES = new Set([
 
 const TERMINAL_SQL = TERMINAL_STATUSES.map((status) => `'${status}'`).join(',');
 const DERIVED_TIME_ROLES = new Set(['judge', 'reporter']);
+
+function callbackGateVerdict(result) {
+  switch (result.status) {
+    case 'completed':
+      return 'allow';
+    case 'completed_with_concerns':
+      return 'allow:concerns';
+    case 'needs_context':
+      return 'deny:NEEDS_CONTEXT';
+    case 'blocked':
+      return 'deny:BLOCKED';
+    case 'failed':
+      return result.failure_class === 'semantic_refusal'
+        ? 'deny:SEMANTIC_REFUSAL'
+        : 'deny:FAILED';
+    case 'cancelled':
+      return 'deny:CANCELLED';
+    default:
+      throw new Error(`invalid callback terminal status: ${result.status}`);
+  }
+}
+
+function callbackError(result) {
+  if (typeof result.error === 'string') {
+    return { code: 'provider_failed', message: result.error };
+  }
+  return {
+    code: result.error?.code ?? null,
+    message: result.error?.message ?? null,
+  };
+}
+
+function callbackEventDetail(attempt, result, leaseGeneration) {
+  const failureSignature = normalizeFailureSignature(
+    result.failure_signature ?? result.decision?.failure_signature,
+  );
+  return {
+    run_id: attempt.run_id,
+    attempt_id: attempt.id,
+    lease_owner: attempt.lease_owner,
+    lease_generation: leaseGeneration,
+    role: attempt.role,
+    hop: attempt.hop,
+    status: result.status,
+    failure_class: result.failure_class ?? null,
+    ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
+    artifacts: result.artifacts ?? [],
+  };
+}
 
 function firstRow(queryResult) {
   return queryResult.rows?.[0] ?? null;
@@ -287,6 +340,147 @@ export function createAttemptStore(pool) {
       );
       const attempt = firstRow(result);
       return { attempt, deduped: attempt === null };
+    },
+
+    /**
+     * Authoritative callback boundary. The Attempt terminal projection and the
+     * append-only callback event either commit together or not at all.
+     */
+    async recordCallbackTerminal({
+      attemptId,
+      runId,
+      leaseOwner,
+      leaseGeneration,
+      result,
+    }) {
+      if (typeof pool.connect !== 'function') {
+        throw new Error('recordCallbackTerminal requires a transactional PostgreSQL pool');
+      }
+      if (!Number.isInteger(leaseGeneration) || leaseGeneration < 0) {
+        throw new Error('recordCallbackTerminal requires leaseGeneration');
+      }
+      const gateVerdict = callbackGateVerdict(result);
+      const client = await pool.connect();
+      let transactionOpen = false;
+      const rollbackConflict = async (conflict) => {
+        await client.query('ROLLBACK');
+        transactionOpen = false;
+        return { attempt: null, deduped: false, conflict };
+      };
+      try {
+        await client.query('BEGIN');
+        transactionOpen = true;
+        const attempt = firstRow(await client.query(
+          `SELECT *
+             FROM harness_attempts
+            WHERE id=$1 AND run_id=$2
+            FOR UPDATE`,
+          [attemptId, runId],
+        ));
+        if (!attempt) return await rollbackConflict('attempt_identity_mismatch');
+        if (attempt.lease_owner !== leaseOwner) {
+          return await rollbackConflict('lease_owner_mismatch');
+        }
+        if (attempt.lease_generation !== leaseGeneration) {
+          return await rollbackConflict('lease_generation_mismatch');
+        }
+
+        const isTerminal = TERMINAL_STATUSES.includes(attempt.status);
+        const exactDuplicate = isTerminal
+          && attempt.status === result.status
+          && isDeepStrictEqual(attempt.result, result);
+        if (isTerminal && !exactDuplicate) {
+          return await rollbackConflict('terminal_payload_conflict');
+        }
+
+        let terminalAttempt = attempt;
+        if (!isTerminal) {
+          const error = callbackError(result);
+          terminalAttempt = firstRow(await client.query(
+            `UPDATE harness_attempts
+                SET status=$5,
+                    result=$6::jsonb,
+                    provider_session_id=COALESCE($7, provider_session_id),
+                    failure_class=$8,
+                    error_code=$9,
+                    error_message=$10,
+                    completed_at=NOW(),
+                    lease_expires_at=NULL,
+                    updated_at=NOW()
+              WHERE id=$1
+                AND run_id=$2
+                AND lease_owner=$3
+                AND lease_generation=$4
+                AND status NOT IN (${TERMINAL_SQL})
+              RETURNING *`,
+            [
+              attemptId,
+              runId,
+              leaseOwner,
+              leaseGeneration,
+              result.status,
+              JSON.stringify(result),
+              result.provider_metadata?.session_id ?? null,
+              result.failure_class ?? null,
+              error.code,
+              error.message,
+            ],
+          ));
+          if (!terminalAttempt) {
+            return await rollbackConflict('attempt_changed_before_terminal_write');
+          }
+        }
+
+        const detail = callbackEventDetail(terminalAttempt, result, leaseGeneration);
+        await client.query(
+          `WITH lock AS (
+             SELECT pg_advisory_xact_lock(hashtext($1::text))
+           ), next_hop AS (
+             SELECT COALESCE(MAX(hop), 0) + 1 AS hop
+               FROM orchestrator_decision_log
+              WHERE run_id=$1::uuid
+           )
+           INSERT INTO orchestrator_decision_log
+             (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+           SELECT $1::uuid, next_hop.hop, $2::jsonb, $3, $4,
+                  'verdict:attempt_callback', $5::jsonb
+             FROM lock, next_hop
+            WHERE NOT EXISTS (
+              SELECT 1
+                FROM orchestrator_decision_log
+               WHERE run_id=$1::uuid
+                 AND action='verdict:attempt_callback'
+                 AND detail->>'attempt_id'=$6::text
+            )
+           RETURNING hop`,
+          [
+            runId,
+            JSON.stringify({
+              attempt_id: attemptId,
+              role: terminalAttempt.role,
+              status: result.status,
+            }),
+            terminalAttempt.phase,
+            gateVerdict,
+            JSON.stringify(detail),
+            attemptId,
+          ],
+        );
+        await client.query('COMMIT');
+        transactionOpen = false;
+        return { attempt: terminalAttempt, deduped: exactDuplicate };
+      } catch (error) {
+        if (transactionOpen) {
+          try {
+            await client.query('ROLLBACK');
+          } catch {
+            // Preserve the authoritative persistence failure.
+          }
+        }
+        throw error;
+      } finally {
+        client.release();
+      }
     },
 
     async getById(id) {

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   store: {
     getById: vi.fn(),
     assertFreshRoleSession: vi.fn(),
+    recordCallbackTerminal: vi.fn(),
     complete: vi.fn(),
     fail: vi.fn(),
     heartbeat: vi.fn(),
@@ -201,9 +202,14 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     vi.resetModules();
     mocks.store.getById.mockResolvedValue(attempt);
     mocks.store.assertFreshRoleSession.mockResolvedValue(true);
-    mocks.store.complete
-      .mockResolvedValueOnce({ attempt: { ...attempt, status: 'completed' }, deduped: false })
-      .mockResolvedValueOnce({ attempt: null, deduped: true });
+    let callbackCount = 0;
+    mocks.store.recordCallbackTerminal.mockImplementation(async ({ result }) => {
+      callbackCount += 1;
+      return {
+        attempt: { ...attempt, status: result.status, result },
+        deduped: callbackCount > 1,
+      };
+    });
     mocks.store.fail.mockResolvedValue({ attempt: { ...attempt, status: 'failed' }, deduped: false });
     mocks.store.heartbeat.mockResolvedValue({ ...attempt, heartbeat_at: new Date().toISOString() });
     mocks.store.markRunning.mockResolvedValue({ ...attempt, provider_session_id: 'thread-live' });
@@ -223,7 +229,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ ok: true, deduped: false });
-    expect(mocks.store.complete).toHaveBeenCalledOnce();
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledOnce();
   });
 
   it('persists a valid Commander Directive as the terminal Attempt result', async () => {
@@ -232,17 +238,21 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     const response = await postCallback(app, commanderResult());
 
     expect(response.status).toBe(200);
-    expect(mocks.store.complete).toHaveBeenCalledWith(
-      attemptId,
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
       expect.objectContaining({
+        attemptId,
+        runId,
+        leaseOwner,
+        leaseGeneration: 0,
+        result: expect.objectContaining({
         status: 'completed',
         decision: expect.objectContaining({
           schema: 'commander-directive/v1',
           run_id: runId,
           event_cursor: 5,
         }),
+        }),
       }),
-      { leaseOwner, leaseGeneration: 0 },
     );
     const proposalCalls = mocks.pool.query.mock.calls.filter(([sql]) => (
       sql.includes('commander.directive_proposed')
@@ -292,7 +302,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     const response = await postCallback(app, body);
 
     expect(response.status).toBe(400);
-    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it('接受已确认 Fleet Worker receipt 的 bounded credential callback', async () => {
@@ -303,15 +313,19 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     }));
 
     expect(response.status).toBe(200);
-    expect(mocks.store.complete).toHaveBeenCalledWith(
-      attemptId,
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
       expect.objectContaining({
+        attemptId,
+        runId,
+        leaseOwner,
+        leaseGeneration: 0,
+        result: expect.objectContaining({
         provider_metadata: expect.objectContaining({
           credential_ref: credentialRef,
           credential_copy_mutated: true,
         }),
+        }),
       }),
-      { leaseOwner, leaseGeneration: 0 },
     );
   });
 
@@ -327,7 +341,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(response.status).toBe(409);
     expect(response.body.error).toBe('credential_callback_invalid');
-    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it('拒绝 dedicated canary contract 缺少 CANARY_OK 的 completed callback', async () => {
@@ -347,7 +361,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(response.status).toBe(400);
     expect(response.body.error).toMatch(/CANARY_OK/);
-    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -368,7 +382,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(response.status).toBe(409);
     expect(response.body.error).toBe('machine_attestation_mismatch');
-    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -391,7 +405,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(response.status).toBe(409);
     expect(response.body.error).toBe('machine_attestation_mismatch');
-    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it('local receipt 无 remote attestation 时仍可完成 callback', async () => {
@@ -400,7 +414,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     const response = await postCallback(app);
 
     expect(response.status).toBe(200);
-    expect(mocks.store.complete).toHaveBeenCalledOnce();
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledOnce();
   });
 
   it('launch receipt 尚未确认时拒绝 callback，避免远端先回调绕过验签', async () => {
@@ -417,8 +431,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(response.status).toBe(409);
     expect(response.body.error).toBe('launch_receipt_unconfirmed');
-    expect(mocks.store.complete).not.toHaveBeenCalled();
-    expect(mocks.store.fail).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it('remote receipt 无 machine attestation 时拒绝 callback', async () => {
@@ -428,7 +441,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(response.status).toBe(409);
     expect(response.body.error).toBe('machine_attestation_mismatch');
-    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it('重复的 verified xian callback 保持幂等', async () => {
@@ -490,14 +503,14 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(missing.status).toBe(401);
     expect(wrong.status).toBe(401);
-    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
     expect(mocks.pool.query.mock.calls.some(([sql]) => /verdict:reviewer/.test(sql))).toBe(false);
   });
 
   it('终态 callback 的 lease_owner 不匹配时返回 409', async () => {
     const response = await postCallback(app, validResult, callbackToken, 'other-owner');
     expect(response.status).toBe(409);
-    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it('R11: 缺失或非法 lease generation 时拒绝 callback', async () => {
@@ -515,7 +528,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(missing.status).toBe(400);
     expect(malformed.status).toBe(400);
-    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it('R11: 旧 lease generation callback 返回 409 且不写终态', async () => {
@@ -523,12 +536,15 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(response.status).toBe(409);
     expect(response.body.error).toMatch(/generation/i);
-    expect(mocks.store.complete).not.toHaveBeenCalled();
-    expect(mocks.store.fail).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it('认证后发生换租时拒绝旧 worker，且不得追加 evaluator verdict', async () => {
-    mocks.store.complete.mockReset().mockResolvedValue({ attempt: null, deduped: true });
+    mocks.store.recordCallbackTerminal.mockReset().mockResolvedValue({
+      attempt: null,
+      deduped: false,
+      conflict: 'lease_owner_mismatch',
+    });
     mocks.store.getById
       .mockResolvedValueOnce(attempt)
       .mockResolvedValueOnce({ ...attempt, status: 'starting', lease_owner: 'brain-2:456' });
@@ -572,7 +588,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
   it('generator-fix 未声明 SHA 时以 trigger SHA 写入已验证 callback', async () => {
     const triggerSha = 'a'.repeat(40);
     mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
-    mocks.store.complete.mockReset().mockResolvedValue({
+    mocks.store.recordCallbackTerminal.mockReset().mockResolvedValue({
       attempt: { ...attempt, role: 'generator', status: 'completed' },
       deduped: false,
     });
@@ -606,7 +622,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
   it('generator-fix 未声明 SHA 且 resolver 失败时以 trigger SHA 写 pending callback', async () => {
     const triggerSha = 'a'.repeat(40);
     mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
-    mocks.store.complete.mockReset().mockResolvedValue({
+    mocks.store.recordCallbackTerminal.mockReset().mockResolvedValue({
       attempt: { ...attempt, role: 'generator', status: 'completed' },
       deduped: false,
     });
@@ -642,7 +658,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     const triggerSha = 'a'.repeat(40);
     const advancedSha = 'b'.repeat(40);
     mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
-    mocks.store.complete.mockReset().mockResolvedValue({
+    mocks.store.recordCallbackTerminal.mockReset().mockResolvedValue({
       attempt: { ...attempt, role: 'generator', status: 'blocked' },
       deduped: false,
     });
@@ -681,7 +697,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(response.status).toBe(409);
     expect(response.body.error).toMatch(/role_session_reuse/);
-    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it('拒绝 callback 冒充另一个 provider', async () => {
@@ -692,7 +708,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
 
     expect(response.status).toBe(409);
     expect(response.body.error).toMatch(/provider_mismatch/);
-    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it('拒绝 attempt_id 不匹配或 schema 不完整的结果', async () => {
@@ -706,7 +722,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(invalid.status).toBe(400);
   });
 
-  it('failed result 走 fail 终态，不伪装为 completed', async () => {
+  it('failed result 走统一 callback 终态事务，不伪装为 completed', async () => {
     const response = await postCallback(app, {
         ...validResult,
         status: 'failed',
@@ -716,13 +732,17 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       });
 
     expect(response.status).toBe(200);
-    expect(mocks.store.fail).toHaveBeenCalledWith(attemptId, {
-      code: 'provider_exit',
-      message: 'exit 1',
-      status: 'failed',
-      failureClass: 'runner_failure',
-    }, { leaseOwner, leaseGeneration: 0 });
-    expect(mocks.store.complete).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith({
+      attemptId,
+      runId,
+      leaseOwner,
+      leaseGeneration: 0,
+      result: expect.objectContaining({
+        status: 'failed',
+        failure_class: 'runner_failure',
+        error: { code: 'provider_exit', message: 'exit 1' },
+      }),
+    });
   });
 
   it('worker 用 lease owner 续租，跨设备 watchdog 不会误领活 attempt', async () => {

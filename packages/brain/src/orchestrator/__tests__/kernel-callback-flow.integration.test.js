@@ -59,6 +59,26 @@ const runtime = vi.hoisted(() => {
     }),
     getById: vi.fn(async (id) => attempts.get(id) ?? null),
     assertFreshRoleSession: vi.fn(async () => true),
+    recordCallbackTerminal: vi.fn(async ({
+      attemptId,
+      runId,
+      leaseOwner,
+      leaseGeneration,
+      result,
+    }) => {
+      const attempt = attempts.get(attemptId);
+      if (!attempt || attempt.run_id !== runId) {
+        return { attempt: null, deduped: false, conflict: 'attempt_identity_mismatch' };
+      }
+      if (attempt.lease_owner !== leaseOwner) {
+        return { attempt: null, deduped: false, conflict: 'lease_owner_mismatch' };
+      }
+      if (attempt.lease_generation !== leaseGeneration) {
+        return { attempt: null, deduped: false, conflict: 'lease_generation_mismatch' };
+      }
+      Object.assign(attempt, { status: result.status, result });
+      return { attempt, deduped: false };
+    }),
     complete: vi.fn(async (id, result) => {
       const attempt = attempts.get(id);
       if (!attempt || ['completed', 'failed', 'cancelled'].includes(attempt.status)) {
