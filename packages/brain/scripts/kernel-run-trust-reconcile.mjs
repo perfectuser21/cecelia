@@ -11,6 +11,15 @@ import { classifyRunTrust } from '../src/orchestrator/run-trust-classifier.js';
 const { Pool } = pg;
 const pool = new Pool(DB_DEFAULTS);
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const RECONCILE_LOCK_KEY = 'kernel_run_trust_reconcile';
+const PRODUCTION_PREFLIGHT_SQL = `
+  SELECT current_database() AS database_name,
+         (
+           SELECT applied_at
+             FROM schema_version
+            WHERE version = '376'
+         ) AS historical_cutoff
+`;
 
 const EVIDENCE_SQL = `
   WITH evidence AS (
@@ -18,6 +27,8 @@ const EVIDENCE_SQL = `
            r.current_task_id,
            r.record_trust_status,
            r.record_trust_reason,
+           current_database() AS database_name,
+           cutover.historical_cutoff,
            (SELECT COUNT(*) FROM tasks t WHERE t.id = r.current_task_id)
              AS task_reference_count,
            (SELECT COUNT(*) FROM harness_attempts a WHERE a.run_id = r.id)
@@ -29,7 +40,16 @@ const EVIDENCE_SQL = `
              )
            END AS batch_collision_count
       FROM initiative_runs r
+      CROSS JOIN (
+        SELECT applied_at AS historical_cutoff
+          FROM schema_version
+         WHERE version = '376'
+      ) cutover
      WHERE r.orchestrator_version = 'v2'
+       AND r.phase IN ('done', 'failed')
+       AND r.completed_at IS NOT NULL
+       AND r.record_trust_status <> 'trusted'
+       AND r.started_at < cutover.historical_cutoff
   )
   SELECT *
     FROM evidence
@@ -81,6 +101,44 @@ export function parseTrustReconcileArgs(argv) {
   };
 }
 
+export function parseProductionTrustReconcileArgs(argv) {
+  let expectedProposed = null;
+  let confirmDatabase = null;
+  const baseArgs = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === '--expected-proposed') {
+      expectedProposed = Number(argv[index + 1]);
+      index += 1;
+    } else if (arg === '--confirm-database') {
+      confirmDatabase = argv[index + 1] ?? null;
+      index += 1;
+    } else {
+      baseArgs.push(arg);
+    }
+  }
+  const base = parseTrustReconcileArgs(baseArgs);
+  if (
+    expectedProposed !== null
+    && (!Number.isInteger(expectedProposed) || expectedProposed < 0)
+  ) {
+    throw new Error('--expected-proposed must be a non-negative integer');
+  }
+  if (base.apply && expectedProposed === null) {
+    throw new Error('--apply requires --expected-proposed');
+  }
+  if (base.apply && !confirmDatabase) {
+    throw new Error('--apply requires --confirm-database');
+  }
+  return {
+    ...base,
+    expectedProposed,
+    confirmDatabase,
+    productionGuards: true,
+    failOnConflict: true,
+  };
+}
+
 function proposalFor(row) {
   const evidence = {
     task_reference_count: Number(row.task_reference_count),
@@ -111,6 +169,7 @@ async function applyBatch(
   executionId,
   batchId,
   writeAudit,
+  failOnConflict = false,
 ) {
   const client = typeof db.connect === 'function' ? await db.connect() : db;
   try {
@@ -162,6 +221,12 @@ async function applyBatch(
     await writeAudit(
       outcomes.map(outcome => `${JSON.stringify(outcome)}\n`).join(''),
     );
+    if (
+      failOnConflict
+      && outcomes.some(outcome => outcome.outcome === 'conflict')
+    ) {
+      throw new Error('production reconcile optimistic conflict');
+    }
     await client.query('COMMIT');
     return outcomes;
   } catch (error) {
@@ -178,6 +243,10 @@ export async function reconcileRunTrust({
   auditOutput = null,
   batchSize = 100,
   expectedPlanSha256 = null,
+  expectedProposed = null,
+  confirmDatabase = null,
+  productionGuards = false,
+  failOnConflict = false,
   writeLine = line => process.stdout.write(`${line}\n`),
   appendAudit = null,
   randomUUIDFn = randomUUID,
@@ -188,99 +257,167 @@ export async function reconcileRunTrust({
   if (apply && !SHA256_PATTERN.test(expectedPlanSha256 ?? '')) {
     throw new Error('apply requires a valid expected plan sha256');
   }
-  const { rows } = await db.query(EVIDENCE_SQL);
-  const proposals = rows
-    .filter(row => row.record_trust_status !== 'trusted')
-    .map(proposalFor);
-  const planContent = proposals
-    .map(proposal => `${JSON.stringify(proposal)}\n`)
-    .join('');
-  const planSha256 = createHash('sha256').update(planContent).digest('hex');
-  for (const proposal of proposals) {
-    writeLine(JSON.stringify(proposal));
-  }
-  if (apply && expectedPlanSha256 !== planSha256) {
-    throw new Error(
-      `reviewed plan digest mismatch: expected ${expectedPlanSha256}, actual ${planSha256}`,
-    );
-  }
-  if (!apply) {
+  let lockClient = null;
+  let lockHeld = false;
+  try {
+    if (apply && productionGuards && typeof db.connect === 'function') {
+      lockClient = await db.connect();
+      const lockResult = await lockClient.query(
+        'SELECT pg_try_advisory_lock(hashtext($1)) AS locked',
+        [RECONCILE_LOCK_KEY],
+      );
+      lockHeld = lockResult.rows?.[0]?.locked === true;
+      if (!lockHeld) {
+        lockClient.release();
+        lockClient = null;
+        throw new Error('another kernel run trust reconcile is already running');
+      }
+    }
+
+    const queryDb = lockClient ?? db;
+    let databaseName = null;
+    let historicalCutoff = null;
+    if (productionGuards) {
+      const preflight = await queryDb.query(PRODUCTION_PREFLIGHT_SQL);
+      databaseName = preflight.rows?.[0]?.database_name ?? null;
+      historicalCutoff = preflight.rows?.[0]?.historical_cutoff ?? null;
+      if (!databaseName || !historicalCutoff) {
+        throw new Error('production reconcile preflight is missing database or migration 376 cutoff');
+      }
+    }
+
+    const { rows } = await queryDb.query(EVIDENCE_SQL);
+    const proposals = rows
+      .filter(row => row.record_trust_status !== 'trusted')
+      .map(proposalFor);
+    const planContent = proposals
+      .map(proposal => `${JSON.stringify(proposal)}\n`)
+      .join('');
+    const planSha256 = createHash('sha256').update(planContent).digest('hex');
+    for (const proposal of proposals) {
+      writeLine(JSON.stringify(proposal));
+    }
+    if (apply && expectedPlanSha256 !== planSha256) {
+      throw new Error(
+        `reviewed plan digest mismatch: expected ${expectedPlanSha256}, actual ${planSha256}`,
+      );
+    }
+    if (
+      apply
+      && expectedProposed !== null
+      && expectedProposed !== proposals.length
+    ) {
+      throw new Error(
+        `proposal count mismatch: expected ${expectedProposed}, actual ${proposals.length}`,
+      );
+    }
+    if (
+      apply
+      && confirmDatabase !== null
+      && confirmDatabase !== databaseName
+    ) {
+      throw new Error(
+        `database confirmation mismatch: expected ${confirmDatabase}, actual ${databaseName}`,
+      );
+    }
+    const productionMetadata = productionGuards
+      ? {
+          database: databaseName,
+          historical_cutoff: new Date(historicalCutoff).toISOString(),
+        }
+      : {};
+    if (!apply) {
+      return {
+        scanned: rows.length,
+        proposed: proposals.length,
+        applied: 0,
+        plan_sha256: planSha256,
+        ...productionMetadata,
+      };
+    }
+
+    const executionId = randomUUIDFn();
+    let auditHandle = null;
+    const writeAudit = appendAudit
+      ? content => appendAudit(auditOutput, content)
+      : async content => {
+          await auditHandle.write(content);
+          await auditHandle.sync();
+        };
+    if (!appendAudit) {
+      auditHandle = await open(auditOutput, 'wx', 0o600);
+    }
+    const outcomes = [];
+    try {
+      await writeAudit(`${JSON.stringify({
+        execution_id: executionId,
+        kind: 'kernel_run_trust_reconcile',
+        outcome: 'started',
+        proposed: proposals.length,
+        plan_sha256: planSha256,
+        ...productionMetadata,
+      })}\n`);
+      for (let offset = 0; offset < proposals.length; offset += batchSize) {
+        const batchId = `${executionId}:${Math.floor(offset / batchSize) + 1}`;
+        const batchOutcomes = await applyBatch(
+          db,
+          proposals.slice(offset, offset + batchSize),
+          executionId,
+          batchId,
+          writeAudit,
+          failOnConflict,
+        );
+        outcomes.push(...batchOutcomes);
+        await writeAudit(`${JSON.stringify({
+          execution_id: executionId,
+          batch_id: batchId,
+          outcome: 'batch_committed',
+          rows: batchOutcomes.length,
+        })}\n`);
+      }
+      await writeAudit(`${JSON.stringify({
+        execution_id: executionId,
+        kind: 'kernel_run_trust_reconcile',
+        outcome: 'completed',
+        applied: outcomes.filter(outcome => outcome.outcome === 'applied').length,
+        unchanged: outcomes.filter(outcome => outcome.outcome === 'unchanged').length,
+        conflicts: outcomes.filter(outcome => outcome.outcome === 'conflict').length,
+      })}\n`);
+    } finally {
+      if (auditHandle) {
+        await auditHandle.sync();
+        await auditHandle.close();
+        await chmod(auditOutput, 0o400);
+      }
+    }
+    const applied = outcomes.filter(outcome => outcome.outcome === 'applied').length;
+    const conflicts = outcomes.filter(outcome => outcome.outcome === 'conflict').length;
+    const unchanged = outcomes.filter(outcome => outcome.outcome === 'unchanged').length;
     return {
       scanned: rows.length,
       proposed: proposals.length,
-      applied: 0,
+      applied,
+      unchanged,
+      conflicts,
+      execution_id: executionId,
       plan_sha256: planSha256,
+      ...productionMetadata,
     };
-  }
-
-  const executionId = randomUUIDFn();
-  let auditHandle = null;
-  const writeAudit = appendAudit
-    ? content => appendAudit(auditOutput, content)
-    : async content => {
-        await auditHandle.write(content);
-        await auditHandle.sync();
-      };
-  if (!appendAudit) {
-    auditHandle = await open(auditOutput, 'wx', 0o600);
-  }
-  const outcomes = [];
-  try {
-    await writeAudit(`${JSON.stringify({
-      execution_id: executionId,
-      kind: 'kernel_run_trust_reconcile',
-      outcome: 'started',
-      proposed: proposals.length,
-      plan_sha256: planSha256,
-    })}\n`);
-    for (let offset = 0; offset < proposals.length; offset += batchSize) {
-      const batchId = `${executionId}:${Math.floor(offset / batchSize) + 1}`;
-      const batchOutcomes = await applyBatch(
-        db,
-        proposals.slice(offset, offset + batchSize),
-        executionId,
-        batchId,
-        writeAudit,
-      );
-      outcomes.push(...batchOutcomes);
-      await writeAudit(`${JSON.stringify({
-        execution_id: executionId,
-        batch_id: batchId,
-        outcome: 'batch_committed',
-        rows: batchOutcomes.length,
-      })}\n`);
-    }
-    await writeAudit(`${JSON.stringify({
-      execution_id: executionId,
-      kind: 'kernel_run_trust_reconcile',
-      outcome: 'completed',
-      applied: outcomes.filter(outcome => outcome.outcome === 'applied').length,
-      unchanged: outcomes.filter(outcome => outcome.outcome === 'unchanged').length,
-      conflicts: outcomes.filter(outcome => outcome.outcome === 'conflict').length,
-    })}\n`);
   } finally {
-    if (auditHandle) {
-      await auditHandle.sync();
-      await auditHandle.close();
-      await chmod(auditOutput, 0o400);
+    if (lockClient) {
+      if (lockHeld) {
+        await lockClient.query(
+          'SELECT pg_advisory_unlock(hashtext($1)) AS unlocked',
+          [RECONCILE_LOCK_KEY],
+        ).catch(() => {});
+      }
+      lockClient.release();
     }
   }
-  const applied = outcomes.filter(outcome => outcome.outcome === 'applied').length;
-  const conflicts = outcomes.filter(outcome => outcome.outcome === 'conflict').length;
-  const unchanged = outcomes.filter(outcome => outcome.outcome === 'unchanged').length;
-  return {
-    scanned: rows.length,
-    proposed: proposals.length,
-    applied,
-    unchanged,
-    conflicts,
-    execution_id: executionId,
-    plan_sha256: planSha256,
-  };
 }
 
 async function main() {
-  const options = parseTrustReconcileArgs(process.argv.slice(2));
+  const options = parseProductionTrustReconcileArgs(process.argv.slice(2));
   const result = await reconcileRunTrust(options);
   process.stderr.write(`${JSON.stringify(result)}\n`);
   await pool.end();
