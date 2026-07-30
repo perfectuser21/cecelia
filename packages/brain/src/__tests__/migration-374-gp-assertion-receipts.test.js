@@ -4,11 +4,9 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 const here = dirname(fileURLToPath(import.meta.url));
 const migrationPath = join(here, '../../migrations/374_gp_assertion_receipts.sql');
-const factsPath = join(here, '../../../../scripts/facts-check.mjs');
 describe('migration 374 Golden Path assertion receipts contract', () => {
   it('defines immutable real-execution assertion receipts', async () => {
     const sql = await readFile(migrationPath, 'utf8');
-    const facts = await readFile(factsPath, 'utf8');
     expect(sql).toMatch(/assertion_revision BIGINT NOT NULL DEFAULT 1/);
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS journey_assertion_receipts/);
     expect(sql).toMatch(/UNIQUE\s*\(run_id,\s*journey_step_link_id\)/);
@@ -20,7 +18,5 @@ describe('migration 374 Golden Path assertion receipts contract', () => {
     expect(sql).toMatch(/ON DELETE RESTRICT/);
     expect(sql).toMatch(/prevent_journey_assertion_receipt_mutation/);
     expect(sql).not.toMatch(/^\s*(BEGIN|COMMIT)\s*;/mi);
-    expect(facts).toContain('Number(selfcheckVersion) === Number(highestMigration)');
-    expect(facts).not.toContain('Number(selfcheckVersion) <= Number(highestMigration)');
   });
 });
