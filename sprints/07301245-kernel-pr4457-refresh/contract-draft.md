@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 16)
+# Sprint Contract Draft (Round 17)
 
 覆盖父路「Draft PR #4457 累计冲突与 CodeQL 收敛」第 1-5 步。
 
@@ -9,6 +9,7 @@
 - Round 13 保持 8 条测试、33 路径 manifest/digest、77 个 CodeQL subject、3 个 required context、动态 lineage 与副作用阈值不变，并修复 Round 12 的阶段循环依赖：七个 verifier phase 分属四个 actor/time boundary，禁止 generator 在 push 前伪造 exact-head/evaluator 结果。
 - Round 15 保留上述非循环协议，并把它变成机械合同：8 个既有测试用例内分别加入错误 stage、错误 actor role、缺前置 receipt、伪造 exit/log、digest 不符、跨阶段 lineage 复用、倒序时间戳等隔离负向场景；每个场景必须同时得到非零退出与稳定错误码，缺实现文件本身不得冒充通过。
 - Round 16 修复 cross-stage Green 循环：同一份不可变的 8-test 文件由 `HARNESS_ACTOR_STAGE` 接收当前权威 actor stage。每一阶段只把本阶段及此前阶段判作 true-success；未来阶段用稳定错误码证明 fail-closed 且 verifier 没有创建未来 receipt。generator 不再被要求伪造 CI/evaluator/controller 产物。
+- Round 17 在不改变 8 个测试、33/77/3 集合、manifest digest 与 stage-progressive Green 语义的前提下，冻结 hermetic test-run receipt：所有 Red/Green 执行只能使用 lockfile 已安装的本地 Vitest 1.6.1，禁止 bare `npx`；runner 必须围绕真实执行采集 cwd、tested HEAD、精确 executable/version/argv、起止 UTC、逐测试原始 JSON、计数与 raw-result SHA-256，并证明开始时间晚于本 worktree 测试文件物化时间。
 - `exact-head-receipt.json` 的唯一可信 producer 是 CI runner；CI 仅可在只读 exact-head verifier 返回 0，且 stdout/evidence digest、三个 required check-run、final-head CodeQL、final SHA 与 CI runtime lineage 全部匹配后签名/写出 receipt。verifier 永不创建 receipt。
 - 33 行 manifest 全部显式冻结 `stage=generator-pre-push`。C02 已从 post-push exact-head 改为 pre-push 本地 workflow 行为 oracle；C02/C04/C25/C27/C28/C29 argv 均显式带 `--stage generator-pre-push`。
 - manifest 测试在核对冻结 schema、33 subject、argv 与 digest 前，必须先跨过实现产出的 `generator-pre-push/conflicts` verifier/evidence 边界；因此实现前固定为 `failed=8, passed=0, total=8`。
@@ -157,6 +158,38 @@ verifier 是只读验证器，只能消费已有事实与 receipt，禁止创建
 `true-success` 可授权该 phase 的可信 producer 写 receipt。expected refusal 不等于未来 phase
 已通过，不得产出 receipt。verifier 缺失/加载失败不含稳定错误码，因而实现前仍精确 8/8 Red。
 
+### Hermetic 测试运行与证据协议
+
+初始 Red 由 reviewer 的受信执行器直接启动仓库 lockfile 已安装的
+`./node_modules/.bin/vitest` 并按下述同一 receipt schema 落证；四个 actor stage 的
+每次 Green 必须由 `scripts/run-pr4457-contract-tests.mjs` 启动同一本地 executable；
+固定版本为 `1.6.1`。禁止 `npx vitest`、`npm exec`
+或任何允许联网下载/解析 registry latest 的命令。runner 启动前必须验证
+`package-lock.json` 中 `node_modules/vitest.version == "1.6.1"`、本地 executable
+可解析，且 `vitest --version` 精确报告 1.6.1；任一不符以
+`ERR_NON_HERMETIC_TOOLCHAIN` 非零退出。
+
+每次执行必须写 append-only
+`evidence/test-runs/<stage>-<run-sequence>.json`，字段精确包含：
+`schema_version`、`actor_stage`、`runtime_lineage`、`cwd`、`tested_head_sha`、
+`executable_realpath`、`executable_version`、`argv`、`files_materialized_at_utc`、
+`started_at_utc`、`ended_at_utc`、`raw_result_path`、`raw_result_sha256`、
+`total`、`failed`、`passed`、`tests[]`。`tests[]` 保存 Vitest 原始逐测试
+`name/status/duration/failure_messages`，不得仅保留聚合计数；`raw_result_path`
+指向未经改写的 JSON reporter 输出，digest 必须从该文件字节重算。
+
+runner 必须在 spawn 前捕获 `started_at_utc`、在子进程退出后捕获
+`ended_at_utc`；`files_materialized_at_utc` 是本 worktree 中
+`tests/pr4457-contract.test.ts`、`vitest.config.mjs`、
+`conflict-oracle-manifest.json` 三者 mtime 的最大值。机械约束为
+`files_materialized_at_utc <= started_at_utc <= ended_at_utc`，cwd 必须等于
+真实 repo root，tested HEAD 必须等于执行前后同一个 `git rev-parse HEAD`。
+时间倒序、HEAD 漂移、raw digest/逐测试/聚合计数不一致均非零退出，分别输出
+`ERR_TEST_MATERIALIZATION_TIME`、`ERR_TEST_HEAD_DRIFT` 或
+`ERR_TEST_RESULT_DIGEST`。reviewer 初始 Red 必须用同一个本地 1.6.1 runner
+独立重跑，精确得到 `total=8, failed=8, passed=0`；其 Red receipt 的
+`started_at_utc` 不得早于测试文件物化时间。
+
 | stage | 唯一 actor/time boundary | 允许 phase | 必需前置 | 本阶段输出 |
 |---|---|---|---|---|
 | `generator-pre-push` | generator，首次 mutation 基线之后、最终 push 之前 | `freeze conflicts codeql regressions` | generator authoritative task bundle/签名 execution receipt；`audit-baseline.json` | 四 phase evidence；不得声称 exact-head/evaluator PASS |
@@ -165,6 +198,12 @@ verifier 是只读验证器，只能消费已有事实与 receipt，禁止创建
 | `controller-review-gate` | controller，在 evaluator receipt 与 audit-end 均已存在之后 | `review-gate` | exact-head、evaluator receipt、`audit-end.json`；各自 runtime lineage exact-match 对应权威来源 | 只读 gate verdict，停在人工审阅门 |
 
 receipt 必须含 `schema_version/stage/actor_role/runtime_lineage/{run_id,attempt_id,task_id,role,stage}/final_head_sha/created_at_utc`；phase receipt 另含 `prerequisite_receipt_sha256/evidence_sha256/stdout_sha256/status/exit_code`。`runtime_lineage` 只从当前阶段权威 task bundle 或签名 execution receipt 注入，静态合同不保存任何 proposer/reviewer UUID。不同 stage 的 `run_id + attempt_id + role + stage` 必须不同；任何 cross-stage lineage reuse、缺 receipt、错误 role/stage、SHA/digest 不等、receipt 声称 `exit_code=0` 但缺真实逐 subject 执行日志，都必须非零退出。verifier 用 receipt canonical digest 与原始日志/事实重算结果，不信任 ledger 自报的 `exit_code`，且 verifier 不创建 exact-head/evaluator receipt。
+
+每个 phase receipt 还必须绑定本 stage 最新 test-run receipt 的 canonical
+SHA-256；verifier 重算其本地 Vitest 版本、HEAD、argv、mtime/时间顺序、raw
+result digest、逐测试结果和 `outcome` 分类。Red receipt 只授权进入实现，不授权
+任何 phase receipt；Green receipt 必须 `total=8,failed=0,passed=8`，且当前/此前
+case 与 future-refusal 的分类符合 stage-progressive 表，才可授权对应可信 producer。
 
 ### 负向协议与稳定错误码
 
@@ -179,6 +218,10 @@ receipt 必须含 `schema_version/stage/actor_role/runtime_lineage/{run_id,attem
 | manifest/evidence/stdout/prerequisite digest 不匹配 | `ERR_DIGEST_MISMATCH` |
 | 不同 stage 复用同一 runtime lineage | `ERR_LINEAGE_REUSE` |
 | receipt 时间戳倒序 | `ERR_CHRONOLOGY_REVERSED` |
+| 非 lockfile 本地 Vitest 1.6.1、bare npx/联网解析 | `ERR_NON_HERMETIC_TOOLCHAIN` |
+| 测试开始时间早于文件物化时间 | `ERR_TEST_MATERIALIZATION_TIME` |
+| 测试前后 HEAD 不同或 tested HEAD 不符 | `ERR_TEST_HEAD_DRIFT` |
+| raw JSON digest、逐测试与聚合计数不一致 | `ERR_TEST_RESULT_DIGEST` |
 
 ## Golden Path
 
@@ -311,8 +354,10 @@ echo "Golden Path exact-head 验收通过 sha=$START_SHA"
 | 副作用审计 | `tests/pr4457-contract.test.ts` | 审计窗内无新 PR 无 merge 无 deploy | baseline/verifier 尚未实现 |
 
 Red 闸硬阈值：实现前以
-`HARNESS_ACTOR_STAGE=generator-pre-push npx vitest run sprints/07301245-kernel-pr4457-refresh/tests --config sprints/07301245-kernel-pr4457-refresh/vitest.config.mjs`
-执行本 Test Contract，必须精确得到 `total=8, failed=8, passed=0`；任一测试预先通过即禁止进入 Green。
+`HARNESS_ACTOR_STAGE=generator-pre-push ./node_modules/.bin/vitest run sprints/07301245-kernel-pr4457-refresh/tests --config sprints/07301245-kernel-pr4457-refresh/vitest.config.mjs --reporter=json --outputFile=sprints/07301245-kernel-pr4457-refresh/evidence/test-runs/reviewer-red.raw.json`
+执行本 Test Contract，并由 reviewer 受信执行器围绕该子进程采集 receipt，必须精确得到
+`total=8, failed=8, passed=0`；任一测试预先通过即禁止进入 Green。reviewer 必须核对本地
+版本精确为 1.6.1、完整 test-run receipt 与 raw JSON digest，禁止 bare `npx`。
 实现后各 actor 用自己的权威 `HARNESS_ACTOR_STAGE` 运行同一不可变 8-test 文件并要求 8/8
 Green，同时在 stage result 中逐项区分 true-success 与 expected-future-stage-refusal；只有
 true-success 可产生对应 phase receipt。

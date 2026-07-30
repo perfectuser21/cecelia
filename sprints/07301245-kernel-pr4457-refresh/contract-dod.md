@@ -28,6 +28,17 @@ true-success；尚未来到的 case 必须以稳定 `ERR_STAGE_MISMATCH` 非零�
 8/8 Green，但只有 true-success 能授权该阶段可信 producer 写 phase receipt；expected refusal
 不得声称未来 phase 已通过。
 
+所有 Red/Green 执行必须经 `scripts/run-pr4457-contract-tests.mjs` 使用
+lockfile-pinned `./node_modules/.bin/vitest` 1.6.1；bare `npx`/registry latest
+禁止。每次 append-only test-run receipt 必须保存 cwd、tested HEAD、executable
+realpath/version、完整 argv、runner 围绕真实执行采集的 start/end UTC、三个合同文件最大
+mtime、未改写逐测试 JSON、total/failed/passed 与 raw SHA-256。必须机械满足
+`materialized_at <= started_at <= ended_at`、测试前后 HEAD 不变、raw digest 与逐测试/
+聚合计数一致；否则稳定返回 `ERR_NON_HERMETIC_TOOLCHAIN`、
+`ERR_TEST_MATERIALIZATION_TIME`、`ERR_TEST_HEAD_DRIFT` 或
+`ERR_TEST_RESULT_DIGEST`。reviewer 初始重跑必须仍为 8/8 Red；每个后续 phase receipt
+必须绑定本 stage 8/8 Green test-run receipt digest。
+
 ## BEHAVIOR 条目
 
 - [ ] [BEHAVIOR] [L3] B-01: 冻结身份与全部 subject 精确匹配 [接缝×2]
