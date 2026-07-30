@@ -157,8 +157,8 @@ function finalizationPool({
   };
 }
 
-function exactPatchPool({ task } = {}) {
-  const harness = finalizationPool({ task });
+function exactPatchPool({ task, activeAttempts = [] } = {}) {
+  const harness = finalizationPool({ task, activeAttempts });
   return {
     ...harness,
     pool: {
@@ -618,6 +618,35 @@ describe('Kernel run/task terminalization authority', () => {
 });
 
 describe('Kernel exact non-terminal patch authority', () => {
+  it('terminal exact patch closes active attempts in the same transaction', async () => {
+    const harness = exactPatchPool({
+      activeAttempts: [{
+        id: '44444444-4444-4444-8444-444444444444',
+        run_id: RUN_ID,
+        status: 'running',
+      }],
+    });
+
+    await patchKernelRunById(harness.pool, {
+      runId: RUN_ID,
+      phase: 'failed',
+      failureReason: 'exact_patch_terminal',
+    });
+
+    expect(harness.order).toEqual([
+      'BEGIN',
+      'task-lock',
+      'run-lock',
+      'attempt-lock',
+      'run-update',
+      'task-update',
+      'attempt-terminalize',
+      'terminal-event',
+      'COMMIT',
+      'release',
+    ]);
+  });
+
   it('rejects an active phase write when the parent task is missing', async () => {
     const harness = exactPatchPool({ task: null });
 

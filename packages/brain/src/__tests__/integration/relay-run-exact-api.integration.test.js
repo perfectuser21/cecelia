@@ -92,6 +92,17 @@ beforeAll(async () => {
       detail JSONB NOT NULL,
       UNIQUE(run_id,hop)
     );
+    CREATE TABLE harness_attempts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      run_id UUID NOT NULL REFERENCES initiative_runs(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      lease_owner TEXT,
+      lease_expires_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      error_code TEXT,
+      error_message TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `);
   await client.query(identityMigration);
   await client.query(trustMigration);
@@ -181,6 +192,7 @@ describe('exact relay run API [PostgreSQL]', () => {
   it('atomically terminalizes an active run and task, rolling both back on task failure', async () => {
     const taskId = randomUUID();
     const runId = randomUUID();
+    const attemptId = randomUUID();
     await client.query(
       `INSERT INTO tasks(id,task_type,status,payload)
        VALUES($1,'harness_initiative','in_progress',$2::jsonb)`,
@@ -192,6 +204,12 @@ describe('exact relay run API [PostgreSQL]', () => {
          created_source,record_trust_status
        ) VALUES($1,$2,$3,'generate','v2','kernel_dispatch','trusted')`,
       [runId, initiativeId, taskId],
+    );
+    await client.query(
+      `INSERT INTO harness_attempts (
+         id,run_id,status,lease_owner,lease_expires_at
+       ) VALUES ($1,$2,'running','exact-api-worker',NOW() + INTERVAL '2 minutes')`,
+      [attemptId, runId],
     );
     await client.query(`
       CREATE OR REPLACE FUNCTION reject_test_task_failure()
@@ -213,15 +231,17 @@ describe('exact relay run API [PostgreSQL]', () => {
       .send({ phase: 'failed', failure_reason: 'test_failure' });
     expect(failed.status).toBe(500);
     const rolledBack = await client.query(
-      `SELECT r.phase,t.status
+      `SELECT r.phase,t.status,a.status AS attempt_status
          FROM initiative_runs r
          JOIN tasks t ON t.id=r.current_task_id
+         JOIN harness_attempts a ON a.run_id=r.id
         WHERE r.id=$1`,
       [runId],
     );
     expect(rolledBack.rows[0]).toEqual({
       phase: 'generate',
       status: 'in_progress',
+      attempt_status: 'running',
     });
 
     await client.query('DROP TRIGGER reject_test_task_failure ON tasks');
@@ -230,15 +250,21 @@ describe('exact relay run API [PostgreSQL]', () => {
       .send({ phase: 'failed', failure_reason: 'test_failure' });
     expect(succeeded.status).toBe(200);
     const committed = await client.query(
-      `SELECT r.phase,t.status
+      `SELECT r.phase,t.status,a.status AS attempt_status,
+              a.error_code,a.lease_owner,a.lease_expires_at
          FROM initiative_runs r
          JOIN tasks t ON t.id=r.current_task_id
+         JOIN harness_attempts a ON a.run_id=r.id
         WHERE r.id=$1`,
       [runId],
     );
     expect(committed.rows[0]).toEqual({
       phase: 'failed',
       status: 'failed',
+      attempt_status: 'cancelled',
+      error_code: 'parent_run_terminal',
+      lease_owner: null,
+      lease_expires_at: null,
     });
   });
 });
