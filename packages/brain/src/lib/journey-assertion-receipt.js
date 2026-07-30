@@ -48,6 +48,19 @@ function hasScenarioEvidence(receipt) {
   );
 }
 
+function hasExecutionEvidence(receipt) {
+  if (receipt.verdict !== 'PASS') return true;
+  const requiredText = [receipt.id, receipt.run_id, receipt.machine_id];
+  return (
+    requiredText.every(value => typeof value === 'string' && value.trim())
+    && /^[0-9a-f]{40}$/.test(receipt.source_sha)
+    && /^[0-9a-f]{64}$/.test(receipt.output_digest)
+    && receipt.exit_code === 0
+    && receipt.synthetic === false
+    && Number.isFinite(Date.parse(receiptTime(receipt, 'completed_at')))
+  );
+}
+
 export function assertionDigest(assertionRef) {
   return createHash('sha256')
     .update(normalizeAssertionRef(assertionRef))
@@ -67,6 +80,7 @@ export function deriveAssertionVerification(cell = {}, receipts = []) {
       String(receipt.assertion_revision) === String(cell.assertion_revision)
       && String(receipt.assertion_digest).toLowerCase() === digest
       && hasScenarioEvidence(receipt)
+      && hasExecutionEvidence(receipt)
     ))
     .sort(compareReceipts);
   if (matches.length === 0) return emptyVerification();

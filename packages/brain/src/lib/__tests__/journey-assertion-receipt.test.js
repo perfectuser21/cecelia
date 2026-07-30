@@ -4,6 +4,16 @@ async function loadReceiptState() {
   return import('../journey-assertion-receipt.js');
 }
 
+function executionEvidence(overrides = {}) {
+  return {
+    id: 'receipt-1', run_id: 'run-1',
+    source_sha: 'a'.repeat(40), machine_id: 'us-mac-m4',
+    output_digest: 'b'.repeat(64), exit_code: 0, synthetic: false,
+    completed_at: '2026-07-30T01:00:00Z',
+    ...overrides,
+  };
+}
+
 describe('Golden Path assertion receipt state', () => {
   it('does not verify a green cell without a receipt', async () => {
     const { deriveAssertionVerification } = await loadReceiptState();
@@ -61,13 +71,12 @@ describe('Golden Path assertion receipt state', () => {
     const digest = assertionDigest(cell.assertion_ref);
     const receipts = [
       {
-        id: 'p1',
+        ...executionEvidence({ id: 'p1' }),
         assertion_revision: 1,
         assertion_digest: digest,
         verdict: 'PASS',
         scenario_count: 1,
         scenario_evidence: { kind: 'vitest', passed: 1 },
-        completed_at: '2026-07-30T01:00:00Z',
       },
       {
         id: 'f1',
@@ -123,6 +132,7 @@ describe('Golden Path assertion receipt state', () => {
       assertion_revision: 1,
     };
     const common = {
+      ...executionEvidence(),
       assertion_revision: 1,
       assertion_digest: assertionDigest(cell.assertion_ref),
       completed_at: '2026-07-30T02:00:00Z',

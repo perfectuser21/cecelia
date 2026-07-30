@@ -17,9 +17,15 @@ const cell = {
 };
 const receipt = {
   id: 'smoke-pass',
+  run_id: 'smoke-run',
   assertion_revision: 1,
   assertion_digest: assertionDigest(cell.assertion_ref),
   verdict: 'PASS',
+  source_sha: 'a'.repeat(40),
+  machine_id: 'smoke-runner',
+  output_digest: 'b'.repeat(64),
+  exit_code: 0,
+  synthetic: false,
   completed_at: '2026-07-30T00:00:00Z',
 };
 const legacy = deriveAssertionVerification(cell, [{
