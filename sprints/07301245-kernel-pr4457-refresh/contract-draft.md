@@ -1,11 +1,12 @@
-# Sprint Contract Draft (Round 11)
+# Sprint Contract Draft (Round 12)
 
 覆盖父路「Draft PR #4457 累计冲突与 CodeQL 收敛」第 1-5 步。
 
 ## 合同 notes
 
-- Round 11 采用 controller 的权威 machine facts，消除旧版 `32/33` 与 CodeQL 口径歧义：总冲突路径固定为 33（32 个 content + `DoD.md` 1 个 modify/delete）；77 固定指 check-run `90774353140` 的 PR-new-alert annotations。
+- Round 12 采用 controller 的权威 machine facts，消除旧版 `32/33` 与 CodeQL 口径歧义：总冲突路径固定为 33（32 个 content + `DoD.md` 1 个 modify/delete）；77 固定指 check-run `90774353140` 的 PR-new-alert annotations。
 - 保持此前已通过项：两个 ARTIFACT oracle 使用内容/schema/身份/exact-set 与七阶段真实行为断言；33 路径完整映射冻结为合同 manifest。仅修订 C25/C27/C28/C29 为可解析且非 skipped 的真实行为 oracle，并重算语义 digest。
+- Round 12 仅修复 generator Red 闸：manifest 测试在核对冻结 schema、33 subject、argv 与 digest 前，必须先跨过实现产出的 `conflicts` verifier/evidence 边界；因此实现前固定为 `failed=8, passed=0, total=8`，不得再让静态 manifest 断言预先通过。
 - durable contract 不保存任何 proposer/reviewer 的具体 `run_id` 或 `attempt_id`。各阶段必须从该阶段 authoritative task bundle 或签名 execution receipt 读取命名字段 `runtime_lineage.run_id`、`runtime_lineage.attempt_id`、`runtime_lineage.task_id`、`runtime_lineage.role`、`runtime_lineage.stage`，基线与 mutation receipt 保存 generator lineage，终验保存 evaluator lineage。
 - contract-gate: enabled（`packages/brain/src/lib/contract-gate.js` 存在）。
 - context-manifest: unavailable；PRD 明示本 line 暂无累积 FR。
@@ -252,8 +253,11 @@ echo "Golden Path exact-head 验收通过 sha=$START_SHA"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
+| manifest 实现边界 | `tests/pr4457-contract.test.ts` | 33 路径 oracle manifest 的 schema 身份 argv 与语义哈希精确匹配 | `conflicts` verifier/evidence 尚未实现；实现前该断言必须失败 |
 | 冻结身份 | `tests/pr4457-contract.test.ts` | 冻结身份与全部 subject 精确匹配 | verifier/evidence 尚未实现 |
 | 冲突处置 | `tests/pr4457-contract.test.ts` | 全部 33 个冲突路径完成行为验证 | manifest exact-set/ledger/verifier 尚未实现 |
 | CodeQL | `tests/pr4457-contract.test.ts` | 全部 77 条 CodeQL annotation 收敛 | ledger/verifier 尚未实现 |
 | exact-head | `tests/pr4457-contract.test.ts` | 三个 required checks 绑定最终 SHA | verifier 尚未实现 |
 | 副作用审计 | `tests/pr4457-contract.test.ts` | 审计窗内无新 PR 无 merge 无 deploy | baseline/verifier 尚未实现 |
+
+Red 闸硬阈值：实现前执行本 Test Contract 必须精确得到 `total=8, failed=8, passed=0`；任一测试预先通过即禁止进入 Green。

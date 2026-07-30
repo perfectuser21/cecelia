@@ -30,6 +30,10 @@ async function run(phase: string) {
 
 describe('PR #4457 contract [BEHAVIOR]', () => {
   it('33 路径 oracle manifest 的 schema 身份 argv 与语义哈希精确匹配', async () => {
+    // 静态 manifest 本身已在合同阶段冻结；它必须同时跨过由实现产出的
+    // conflicts verifier/evidence 边界，避免实现尚不存在时仅靠静态 JSON 假绿。
+    const boundary = await run('conflicts');
+    expect(boundary.status, boundary.stderr || boundary.stdout).toBe(0);
     const manifest = JSON.parse(await fs.promises.readFile(oracleManifest, 'utf8'));
     manifest.subjects.sort((a: { path: string }, b: { path: string }) =>
       a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
