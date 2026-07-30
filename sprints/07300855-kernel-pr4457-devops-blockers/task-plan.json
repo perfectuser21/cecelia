@@ -13,7 +13,7 @@
         "[BEHAVIOR] OKR integration 仅用 in-process Express/Supertest 与 cecelia_test",
         "[BEHAVIOR] historical migration fixture 精确执行 369-381且生产 migration SQL 不变",
         "[BEHAVIOR] atomic 仍为 schema_valid=true/proof_complete=false/atomic_cutover_ready=false/live proof 0/99",
-        "[BEHAVIOR] evaluator/judge 与 Draft PR #4457 同 head PASS且首次 merge 等待人工批准",
+        "[BEHAVIOR] evaluator checkout 与 Draft PR #4457 当前 head 一致且保持 Draft；judge 后续复用同一 head，首次 merge 等待人工批准",
         "[ARTIFACT] 四项 blocker 回归测试与 Red/Green 证据"
       ],
       "files": [

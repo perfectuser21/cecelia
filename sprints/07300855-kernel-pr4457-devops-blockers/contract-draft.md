@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## 合同锚点与范围
 
@@ -95,17 +95,17 @@ npx vitest run packages/engine/tests/scripts/quickcheck-vitest-exit-classificati
 
 ---
 
-### Step 6: 结果锚定同一 Draft PR head 并停在人工批准门
+### Step 6: 当前验收只核对 Draft PR head，后续阶段按序追加证据并停在人工批准门
 **来源**: `[FROM_PRD]` — PRD「Golden Path」第 6 步与假设“同一最终 head”。
 
-**可观测行为**: evaluator 与 judge 均 PASS 且 evidence SHA 等于 Draft PR #4457 当前 `headRefOid`；PR 保持 Draft、无 auto-merge，未批准前不 merge/deploy。
+**可观测行为**: 本轮 evaluator 只核对其正在验收的 checkout SHA 等于 Draft PR #4457 当前 `headRefOid`，且 PR 保持 Draft、无 auto-merge；evaluator PASS 后 judge 才能在同一 SHA 判定，judge PASS 后 controller 才能请求主理人批准。任何阶段 head 漂移都使已有证据失效并要求重跑；批准前不得 merge/deploy。
 
 **验证命令**:
 ```bash
-PR=$(gh pr view 4457 --repo perfectuser21/cecelia --json number,isDraft,headRefName,headRefOid,autoMergeRequest,state); echo "$PR" | jq -e '.number==4457 and .isDraft==true and .headRefName=="cp-kernel-phase5b-a1-review-fixes" and .autoMergeRequest==null and .state=="OPEN"' && test -n "$FINAL_HEAD_SHA" && test "$(echo "$PR" | jq -r '.headRefOid')" = "$FINAL_HEAD_SHA" && test "$EVALUATOR_HEAD_SHA" = "$FINAL_HEAD_SHA" && test "$JUDGE_HEAD_SHA" = "$FINAL_HEAD_SHA" && test "$JUDGE_VERDICT" = "PASS" && test "$OWNER_APPROVAL" = "approved"
+FINAL_HEAD_SHA=$(git rev-parse HEAD); PR=$(gh pr view 4457 --repo perfectuser21/cecelia --json number,isDraft,headRefName,headRefOid,autoMergeRequest,state); echo "$PR" | jq -e '.number==4457 and .isDraft==true and .headRefName=="cp-kernel-phase5b-a1-review-fixes" and .autoMergeRequest==null and .state=="OPEN"' && test "$(echo "$PR" | jq -r '.headRefOid')" = "$FINAL_HEAD_SHA"
 ```
 
-**硬阈值**: PR=4457、Draft=true、OPEN、autoMergeRequest=null；三个 SHA 完全相等；judge=PASS；首次 merge 前 `OWNER_APPROVAL=approved`。批准缺失即 FAIL。
+**硬阈值**: evaluator 时 PR=4457、Draft=true、OPEN、autoMergeRequest=null，checkout SHA=PR head；后续 judge/evaluator evidence SHA 必须等于同一最终 head，首次 merge 前必须有显式主理人批准。future-stage 证据不得作为 evaluator 自身的前置环境变量。
 
 ## 接缝清单
 
@@ -148,7 +148,7 @@ N/A — 本 Sprint 不新增或修改设备/agent/webhook 调服务端的生产�
 | ⚠️ Vitest 非零是否属于可降级 worker OOM | A. 任意非零且无 ` FAIL `；B. OOM/worker 签名 + pass summary + 无 fail summary | B | PRD 明确三条件并要求未知失败 fail-closed | 真实测试失败被静默放行 |
 | OKR 是否完全隔离生产 | A. 环境约定；B. DB 名 preflight + in-process router | B | 可执行且不依赖外部 Brain | 污染生产数据 |
 | historical fixture 是否偷跑 382 | A. 文件扫描；B. runner 返回应用版本精确集合 | B | 直接观察真实 migration runner | 随机 fixture 随新增 migration 漂移 |
-| ⚠️ 首次 merge 是否获主理人批准 | A. 假设 Draft 足够；B. 显式 approval evidence | B | PRD 强制人工批准 | 未授权 merge |
+| ⚠️ 首次 merge 是否获主理人批准 | A. 假设 Draft 足够；B. judge PASS 后由 controller 获取显式 approval evidence | B | PRD 强制人工批准且 payload 指定 post-evaluator gate | 未授权 merge |
 
 notes:
 - judgment-pending-user: 首次 merge 是否获主理人批准（执行时必须取得显式 approval evidence）。
@@ -162,7 +162,8 @@ notes:
 | 明确 OOM/worker + pass summary + 无 fail summary | 记录降级并继续 | 是 | 仅此三条件 |
 | 测试 DB 不是 `_test` | 测试加载即失败 | 是 | 禁止回退 BRAIN_URL |
 | migration 集合非 369–381 | 集成测试失败 | 是（随机 schema 清理后重跑） | 无 |
-| CI/evaluator/judge/head 不一致/未批准 | 保持 Draft 并阻塞 | 查询幂等 | 无 |
+| CI/evaluator/judge/head 不一致 | 既有证据失效，保持 Draft并从漂移后的 head 重跑 | 查询幂等 | 无 |
+| judge PASS 后仍未获人工批准 | 保持 Draft并阻塞 merge/deploy | 查询幂等 | 无 |
 
 ### 输入对抗面
 
@@ -201,11 +202,7 @@ echo "$REPORT" | jq -e '.schema_valid==true and .proof_complete==false and .atom
 if node scripts/ci/run-kernel-equivalence-drill.mjs --gate --format=json; then echo "FAIL: manual cutover gate 意外放行"; exit 1; fi
 PR="$(gh pr view 4457 --repo perfectuser21/cecelia --json number,isDraft,headRefName,headRefOid,autoMergeRequest,state)"
 echo "$PR" | jq -e '.number==4457 and .isDraft==true and .headRefName=="cp-kernel-phase5b-a1-review-fixes" and .headRefOid=="'"$FINAL_HEAD_SHA"'" and .autoMergeRequest==null and .state=="OPEN"'
-test "${EVALUATOR_HEAD_SHA:?缺 evaluator SHA}" = "$FINAL_HEAD_SHA"
-test "${JUDGE_HEAD_SHA:?缺 judge SHA}" = "$FINAL_HEAD_SHA"
-test "${JUDGE_VERDICT:?缺 judge verdict}" = "PASS"
-test "${OWNER_APPROVAL:?首次 merge 前缺主理人批准}" = "approved"
-echo "OK: 四 blocker 等价证明、0/99 fail-closed、Draft 与人工门均满足"
+echo "OK: 四 blocker 等价证明、0/99 fail-closed、evaluator checkout 与 Draft PR head 对齐"
 ```
 
 ## Test Contract

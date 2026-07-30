@@ -53,12 +53,12 @@ target_environment: local_api
   留证: 两个命令的 JSON 与 exit code
   Test: manual:bash -c 'R=$(node scripts/ci/check-kernel-behavior-equivalence.mjs --check-report --format=json); echo "$R" | jq -e ".schema_valid==true and .proof_complete==false and .atomic_cutover_ready==false and (.cell_atomic_coverage|length)==99 and ([.cell_atomic_coverage[]|select((.live_proven_invariant_ids|length)>0 or (.live_proven_probe_ids|length)>0)]|length)==0"; if node scripts/ci/run-kernel-equivalence-drill.mjs --gate --format=json; then exit 1; fi'
 
-- [ ] [BEHAVIOR] [L2] B-06: evaluator/judge 证据锚定既有 Draft PR 同一 head，人工批准前阻塞
-  动作: 查询 PR #4457 并对照本地、evaluator、judge SHA及人工批准回执
-  预期观察: PR保持OPEN Draft且无auto-merge，三个SHA一致，judge PASS且OWNER_APPROVAL=approved
+- [ ] [BEHAVIOR] [L2] B-06: evaluator checkout 锚定既有 Draft PR 当前 head且保持人工门
+  动作: evaluator 查询 PR #4457 并对照当前 checkout SHA
+  预期观察: PR保持OPEN Draft且无auto-merge，checkout SHA与PR head一致；不要求尚未发生的judge或人工批准结果
   等待预算: 30s
-  留证: gh pr view JSON与SHA对账输出
-  Test: manual:bash -c 'P=$(gh pr view 4457 --repo perfectuser21/cecelia --json number,isDraft,headRefName,headRefOid,autoMergeRequest,state); H=$(git rev-parse HEAD); echo "$P" | jq -e ".number==4457 and .isDraft==true and .headRefName==\"cp-kernel-phase5b-a1-review-fixes\" and .headRefOid==\"$H\" and .autoMergeRequest==null and .state==\"OPEN\"" && test "${EVALUATOR_HEAD_SHA:?}" = "$H" && test "${JUDGE_HEAD_SHA:?}" = "$H" && test "${JUDGE_VERDICT:?}" = PASS && test "${OWNER_APPROVAL:?}" = approved'
+  留证: gh pr view JSON、checkout SHA与PR head对账输出；后续judge/approval由controller另阶段追加
+  Test: manual:bash -c 'P=$(gh pr view 4457 --repo perfectuser21/cecelia --json number,isDraft,headRefName,headRefOid,autoMergeRequest,state); H=$(git rev-parse HEAD); echo "$P" | jq -e ".number==4457 and .isDraft==true and .headRefName==\"cp-kernel-phase5b-a1-review-fixes\" and .headRefOid==\"$H\" and .autoMergeRequest==null and .state==\"OPEN\""'
 
 ## Invariant 映射（PRD 全量铁律逐条处理）
 
@@ -78,7 +78,7 @@ target_environment: local_api
 - INV-14 N/A：不涉及跨模块时间常数。
 - INV-15 N/A：不涉及 Android/theater routing。
 - INV-16 覆盖：target_environment 明确为 local_api。
-- INV-17 覆盖：B-06要求 evaluator/judge verdict 与同 head evidence。
+- INV-17 覆盖：B-06先锚定 evaluator checkout 与 PR head；下游 judge 只能消费该同一 head evidence。
 - INV-18 N/A：不写不受控 varchar 来源数据。
 - INV-19 N/A：不复活退役功能。
 - INV-20 N/A：不调用 null/false 契约函数。
@@ -102,11 +102,11 @@ target_environment: local_api
 - INV-38 覆盖：generator 阶段须精确 add Red 测试文件，本合同不授权 `git add .`。
 - INV-39 N/A：本单接缝必须真跑，不能以源码 inspection 代替。
 - INV-40 N/A：不新增 cron。
-- INV-41 覆盖：B-06禁止 generator merge，merge 权归 controller且需批准。
+- INV-41 覆盖：B-06只读核对 PR；generator/evaluator 不 merge，merge 权归 controller且需批准。
 - INV-42 N/A：不使用 headed shell 上下文变量。
 - INV-43 覆盖：B-06以本任务真实 PR #4457/head 为准。
 - INV-44 N/A：不改共享 CI workflow/allowlist，除非既有 Draft PR 的明确 blocker 文件。
-- INV-45 覆盖：B-06逐 SHA 核对，提前合并视为 FAIL。
+- INV-45 覆盖：B-06核对当前 evaluator SHA；judge 阶段必须复用同一 SHA，提前合并视为 FAIL。
 - INV-46 N/A：重复 smoke 铁律。
 - INV-47 N/A：不新增 brain/src 功能或 A2 port。
 - INV-48 N/A：不新增 task_type。
