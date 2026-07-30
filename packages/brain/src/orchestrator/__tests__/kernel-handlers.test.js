@@ -55,6 +55,12 @@ function deps() {
     syncOkr: vi.fn(async () => true),
     spawnStaging: vi.fn(async () => ({ created: true })),
     cleanup: vi.fn(async () => undefined),
+    finalizeRun: vi.fn(async () => ({
+      changed: true,
+      outcome: 'done',
+      runId,
+      taskId,
+    })),
   };
 }
 
@@ -231,7 +237,7 @@ describe('kernel deterministic handlers', () => {
     expect(d.execCmd).not.toHaveBeenCalled();
   });
 
-  it('report 执行完整收尾链，最后才写 run/task done', async () => {
+  it('report 执行完整收尾链，最后用统一事务能力写 run/task done', async () => {
     const d = deps();
     const handlers = createKernelHandlers(d);
 
@@ -242,32 +248,20 @@ describe('kernel deterministic handlers', () => {
     expect(d.syncOkr).toHaveBeenCalledOnce();
     expect(d.spawnStaging).toHaveBeenCalledOnce();
     expect(d.cleanup).toHaveBeenCalledWith(runId);
-    expect(d.pool.connect).toHaveBeenCalledOnce();
-    const sql = d.pool.transactionQuery.mock.calls.map(([statement]) => statement).join('\n');
-    expect(d.pool.transactionQuery.mock.calls[0][0]).toBe('BEGIN');
-    expect(sql).toMatch(/UPDATE initiative_runs/);
-    expect(sql).toMatch(/UPDATE tasks/);
-    expect(d.pool.transactionQuery.mock.calls.at(-1)[0]).toBe('COMMIT');
-    expect(d.pool.releaseTransaction).toHaveBeenCalledOnce();
+    expect(d.finalizeRun).toHaveBeenCalledWith(d.pool, {
+      runId,
+      expectedTaskId: taskId,
+      outcome: 'done',
+    });
+    expect(d.pool.connect).not.toHaveBeenCalled();
     expect(result.status).toBe('DONE');
   });
 
-  it('report 事务失败时在同一 client 回滚并归还连接', async () => {
+  it('report 统一终态事务失败时向上抛出，不伪报 DONE', async () => {
     const d = deps();
-    d.pool.transactionQuery
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({ rowCount: 1 })
-      .mockRejectedValueOnce(new Error('task update failed'))
-      .mockResolvedValueOnce({});
+    d.finalizeRun.mockRejectedValueOnce(new Error('task update failed'));
 
     await expect(createKernelHandlers(d).report(context())).rejects.toThrow('task update failed');
-
-    expect(d.pool.transactionQuery.mock.calls.map(([sql]) => sql)).toEqual([
-      'BEGIN',
-      expect.stringMatching(/UPDATE initiative_runs/),
-      expect.stringMatching(/UPDATE tasks/),
-      'ROLLBACK',
-    ]);
-    expect(d.pool.releaseTransaction).toHaveBeenCalledOnce();
+    expect(d.finalizeRun).toHaveBeenCalledOnce();
   });
 });
