@@ -188,7 +188,7 @@ describe('createDispatcher', () => {
       };
     });
 
-    await createDispatcher(deps)('spawn:commander', {
+    const result = await createDispatcher(deps)('spawn:commander', {
       taskId,
       runId,
       hop: 12,
@@ -243,6 +243,13 @@ describe('createDispatcher', () => {
         machine: 'us-mac-m4',
       }],
     }));
+    expect(result).toMatchObject({
+      status: 'LAUNCHED',
+      run_id: runId,
+      attempt_id: attemptId,
+      lease_generation: 0,
+      provider: 'codex',
+    });
   });
 
   it('keeps one failover retry on the declared fallback lineage with a fresh session', async () => {

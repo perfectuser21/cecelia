@@ -878,6 +878,42 @@ describe('runLoop：wait:* 不灌水', () => {
     expect(sleeps).toHaveLength(1);
   });
 
+  it('R7: LAUNCHED 只记录 attempt launch effect，不能当角色 DONE 或派下一棒', async () => {
+    const observedSeq = [
+      obs({ generatorSpawned: false }),
+      obs({ inflight: { containers: [{ ID: 'attempt-container' }], host_pids: [] } }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const dispatch = vi.fn(async () => ({
+      status: 'LAUNCHED',
+      run_id: RUN_ID,
+      attempt_id: '22222222-2222-4222-8222-222222222222',
+      lease_generation: 4,
+      provider: 'codex',
+    }));
+    const { deps, appended, heartbeats, sleeps } = makeEnv({ observedSeq, dispatch });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.dispatch).toHaveBeenCalledTimes(1);
+    expect(deps.dispatch).toHaveBeenCalledWith('spawn:generator', expect.any(Object));
+    expect(appended.map((entry) => entry.action)).toEqual([
+      'spawn:generator',
+      'effect:attempt_launched',
+    ]);
+    expect(appended[1].detail).toEqual({
+      dispatch_hop: 1,
+      dispatch_action: 'spawn:generator',
+      run_id: RUN_ID,
+      attempt_id: '22222222-2222-4222-8222-222222222222',
+      lease_generation: 4,
+      provider: 'codex',
+    });
+    expect(heartbeats).toHaveLength(2);
+    expect(sleeps).toHaveLength(1);
+  });
+
   it('连续 wait:poll_ci 累积 pollCount → 超限时 derive 判 ci_timeout（mark_failed）', async () => {
     const pr = { url: 'u', state: 'OPEN', ci: 'pending', merged: false, head_sha: 's' };
     // 一直 pending：20 次 poll 后（pollCount>=MAX_POLL_COUNT）→ ci_timeout
