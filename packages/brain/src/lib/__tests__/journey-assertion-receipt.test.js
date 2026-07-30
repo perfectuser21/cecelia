@@ -21,6 +21,33 @@ describe('Golden Path assertion receipt state', () => {
     });
   });
 
+  it('does not verify a legacy PASS receipt without scenario evidence', async () => {
+    const {
+      assertionDigest,
+      deriveAssertionVerification,
+    } = await loadReceiptState();
+    const cell = {
+      link_id: 'c1',
+      assertion_ref: 'tests/a.test.js',
+      assertion_revision: 1,
+    };
+    const legacyPass = {
+      id: 'legacy-pass',
+      assertion_revision: 1,
+      assertion_digest: assertionDigest(cell.assertion_ref),
+      verdict: 'PASS',
+      completed_at: '2026-07-30T01:00:00Z',
+      scenario_count: 0,
+      scenario_evidence: {},
+    };
+
+    expect(deriveAssertionVerification(cell, [legacyPass])).toMatchObject({
+      state: 'never_run',
+      verified: false,
+      last_verified: null,
+    });
+  });
+
   it('latest matching FAIL removes current coverage but preserves historical PASS time', async () => {
     const {
       assertionDigest,
