@@ -12,7 +12,7 @@ expected_schema="$(
 )"
 test "$expected_schema" = "378"
 
-npx --no-install vitest run \
+npx --no-install vitest run --config vitest.integration.config.js \
   src/__tests__/migration-376-kernel-run-trust.test.js \
   src/__tests__/integration/migration-376-kernel-run-trust.integration.test.js \
   src/__tests__/migration-377-initiative-run-insert-lock.test.js \

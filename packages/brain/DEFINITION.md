@@ -49,12 +49,16 @@
   `--apply --audit-output <绝对路径> --expected-plan-sha256 <SHA256>
   --expected-proposed <N> --confirm-database <DB>` 才可写入；生产 apply 由 migration
   376 切点、数据库名、候选数、计划摘要、单实例 advisory lock 和乐观并发共同约束。
+  每个 batch 在事务内锁定精确 run、task、attempt 与同 initiative run 集合，并复用
+  Migration 377 advisory key 封住新插入；分类证据变化即冲突并整批回滚。
   审计文件独占创建、逐批 fsync 真实 applied/unchanged/conflict 结果并封成只读；
   二次 dry-run 必须报告 `would_change=0`。不得猜测身份或改写原生 trusted run。
 - `kernel-terminal-mismatch-reconcile.mjs` 只修复终态 v2 run 与非终态父 task 的
   确定性不一致；混合 run 结果和已终态 task 冲突一律阻断。生产 apply 同样绑定
   数据库、候选数、计划摘要和单实例锁，并以原 task status 作并发栅栏；每条修复后
   必须重新读取精确 run/task，验证一致后审计才标记 `commit_state=verified`。
+  同 task 存在 active sibling 时 dry-run 不提案，apply 在 task 行锁内再次检查并拒绝，
+  防止旧终态 run 终结正在执行的新 run。
 - summary 保留全量 phase 账面数，同时拆分 trust 分母；SLO 成功率只统计原生
   `trusted` 且每个任务最新的终态 run，活跃 run 不稀释成功率。
 - 回退：部署 Brain `1.267.149`，保留 Migration 376/378 加法字段；legacy adapter
