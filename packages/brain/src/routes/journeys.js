@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { buildCascadeReport } from '../cascade-list.js';
-import { computeLedgerStatus } from '../lib/eleven-elements-ledger.js';
+import { classifyJourneyCellAssertion } from '../lib/journey-cell-assertion.js';
 
 const router = Router();
 
@@ -564,12 +564,9 @@ router.get('/journeys/steps/:step_id/impact', async (req, res) => {
     );
     const impacts = rows.map(r => ({
       ...r,
-      needs_assertion: r.assertion_ref === null && r.na_reason === null,
+      ...classifyJourneyCellAssertion(r),
     }));
-    const runnable_count = impacts.filter(r =>
-      r.assertion_ref !== null &&
-      (r.assertion_ref.startsWith('tests/') || r.assertion_ref.startsWith('manual:'))
-    ).length;
+    const runnable_count = impacts.filter(r => r.runnable).length;
     res.json({
       step_id: req.params.step_id,
       total: impacts.length,
@@ -583,77 +580,114 @@ router.get('/journeys/steps/:step_id/impact', async (req, res) => {
 });
 
 // GET /api/brain/journey_steps/:step_id/ledger
-// 对 step 关联的所有 journey_features（有 feature_id 的格子）跑 11 要素体检，只读计算视图
+// 产品 Golden Path 每步四区账本：journey_step_links 是唯一格子 SSOT。
 router.get('/journey_steps/:step_id/ledger', async (req, res) => {
   try {
     const stepId = req.params.step_id;
 
-    // 确认 step 存在
     const { rows: stepRows } = await pool.query(
-      'SELECT id, name FROM journey_steps WHERE id=$1', [stepId]
+      `SELECT
+         js.id,
+         js.name,
+         js.step_number,
+         js.promise,
+         js.journey_id,
+         j.name AS journey_name,
+         j.home,
+         j.domain
+       FROM journey_steps js
+       JOIN journeys j ON j.id = js.journey_id
+       WHERE js.id=$1`,
+      [stepId]
     );
     if (!stepRows.length) return res.status(404).json({ error: 'step not found' });
 
-    // 拉取关联的 journey_features（只取有 feature_id 的格子）
-    const { rows: links } = await pool.query(
-      `SELECT jsl.feature_id, jsl.cell_kind, jsl.cell_status,
-              jf.id, jf.name, jf.description, jf.status, jf.priority,
-              jf.has_unit_test, jf.has_integration_test, jf.has_e2e,
-              jf.last_verified, jf.updated_at, jf.smoke_cmd, jf.smoke_status, jf.notes
+    const { rows: cellRows } = await pool.query(
+      `SELECT
+         jsl.id AS link_id,
+         jsl.cell_kind,
+         jsl.cell_key,
+         jsl.cell_status,
+         COALESCE(
+           jsl.assertion_ref,
+           jf.unit_test_path,
+           jf.workflow_ref,
+           jf.guard_ref
+         ) AS assertion_ref,
+         jsl.na_reason,
+         jsl.feature_id,
+         jf.name AS feature_name,
+         jf.unit_test_path,
+         jf.workflow_ref,
+         jf.guard_ref
        FROM journey_step_links jsl
-       JOIN journey_features jf ON jf.id = jsl.feature_id
-       WHERE jsl.step_id = $1 AND jsl.feature_id IS NOT NULL
-       ORDER BY jsl.id`,
+       LEFT JOIN journey_features jf ON jf.id = jsl.feature_id
+       WHERE jsl.step_id = $1
+         AND jsl.cell_kind IS NOT NULL
+       ORDER BY
+         CASE jsl.cell_kind
+           WHEN 'capability' THEN 1
+           WHEN 'element' THEN 2
+           WHEN 'scenario' THEN 3
+           WHEN 'base_ref' THEN 4
+           ELSE 5
+         END,
+         jsl.id`,
       [stepId]
     );
 
-    if (!links.length) {
-      return res.json({
-        step_id: stepId,
-        step_name: stepRows[0].name,
-        total: 0,
-        items: [],
-        generated_at: new Date().toISOString(),
-      });
+    const { rows: nfrRows } = await pool.query(
+      `SELECT id, topic, decision, source_ref
+       FROM decisions
+       WHERE category='nfr'
+         AND level='step'
+         AND target_type='journey_step'
+         AND target_id=$1
+         AND status='active'
+       ORDER BY created_at, id`,
+      [stepId]
+    );
+
+    const cells = cellRows.map(row => ({
+      ...row,
+      ...classifyJourneyCellAssertion(row),
+    }));
+    const zones = {
+      capability: [],
+      element: [],
+      scenario: [],
+      base_ref: [],
+    };
+    for (const cell of cells) {
+      if (zones[cell.cell_kind]) zones[cell.cell_kind].push(cell);
     }
 
-    const featureIds = links.map(r => r.feature_id);
-
-    // NFR 聚合
-    const { rows: nfrRows } = await pool.query(
-      `SELECT target_id, COUNT(*) AS cnt
-         FROM decisions
-        WHERE category = 'nfr' AND target_id = ANY($1::text[])
-        GROUP BY target_id`,
-      [featureIds]
+    const missing = cells.filter(cell => cell.needs_assertion).length;
+    const positiveMissing = cells.filter(cell =>
+      cell.needs_assertion && ['green', 'pending'].includes(cell.cell_status)
+    ).length;
+    const hasNfrCell = cells.some(cell =>
+      cell.cell_kind === 'element' && cell.cell_key === 'NFR'
     );
-    const nfrMap = Object.fromEntries(nfrRows.map(d => [d.target_id, parseInt(d.cnt)]));
-
-    // Invariant 聚合
-    const { rows: invRows } = await pool.query(
-      `SELECT target_id, COUNT(*) AS cnt
-         FROM decisions
-        WHERE (category = 'invariant' OR topic ILIKE '%铁律%' OR topic ILIKE '%invariant%')
-          AND target_id = ANY($1::text[])
-        GROUP BY target_id`,
-      [featureIds]
-    );
-    const invMap = Object.fromEntries(invRows.map(d => [d.target_id, parseInt(d.cnt)]));
-
-    const now = Date.now();
-    const items = links.map(r => ({
-      feature_id: r.feature_id,
-      feature_name: r.name,
-      cell_kind: r.cell_kind,
-      cell_status: r.cell_status,
-      ledger: computeLedgerStatus(r, nfrMap, invMap, now),
-    }));
+    const readiness = {
+      total: cells.length,
+      runnable: cells.filter(cell => cell.runnable).length,
+      semantic: cells.filter(cell =>
+        ['evaluation', 'decision'].includes(cell.assertion_state)
+      ).length,
+      not_applicable: cells.filter(cell =>
+        cell.assertion_state === 'not_applicable'
+      ).length,
+      missing,
+      positive_missing: positiveMissing,
+      ready: positiveMissing === 0 && (!hasNfrCell || nfrRows.length > 0),
+    };
 
     res.json({
-      step_id: stepId,
-      step_name: stepRows[0].name,
-      total: items.length,
-      items,
+      step: stepRows[0],
+      zones,
+      nfr_decisions: nfrRows,
+      readiness,
       generated_at: new Date().toISOString(),
     });
   } catch (err) {
