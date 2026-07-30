@@ -67,7 +67,9 @@ function makeDeps({
     if (/INSERT INTO orchestrator_decision_log/.test(sql)) {
       return { rows: [{ hop: params[1] }] };
     }
-    if (/WITH inserted AS \(\s*INSERT INTO harness_attempts/.test(sql)) {
+    if (
+      /WITH guarded_run AS \([\s\S]*inserted AS \(\s*INSERT INTO harness_attempts/.test(sql)
+    ) {
       return {
         rows: [{
           id: params[0],
