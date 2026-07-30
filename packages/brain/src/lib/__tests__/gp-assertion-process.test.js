@@ -2,7 +2,6 @@ import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAssertionExecutor } from '../gp-assertion-process.js';
-
 function childProcess() {
   const child = new EventEmitter();
   child.pid = 4242;
@@ -11,9 +10,7 @@ function childProcess() {
   child.kill = vi.fn();
   return child;
 }
-
 afterEach(() => vi.useRealTimers());
-
 function processIsAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -23,62 +20,42 @@ function processIsAlive(pid) {
     throw error;
   }
 }
-
 describe('GP assertion process executor', () => {
   it('requires an explicitly injected trusted process adapter', () => {
-    expect(() => createAssertionExecutor()).toThrowError(
-      /trusted process adapter/i,
-    );
+    expect(() => createAssertionExecutor())
+      .toThrowError(/trusted process adapter/i);
   });
-
   it('passes only an allowlisted environment to the trusted adapter', async () => {
     const child = childProcess();
     const spawnFn = vi.fn(() => child);
     const execute = createAssertionExecutor({
       spawnFn,
       environment: {
-        PATH: '/trusted/bin',
-        LANG: 'C.UTF-8',
+        PATH: '/trusted/bin', LANG: 'C.UTF-8',
         DATABASE_URL: 'postgres://brain-secret',
         OPENAI_API_KEY: 'provider-secret',
       },
     });
-    const pending = execute('/trusted/bin/test', [], {
-      cwd: '/repo',
-      evidenceKind: 'bash',
-    });
+    const pending = execute('/trusted/bin/test', [], { cwd: '/repo', evidenceKind: 'bash' });
     child.emit('close', 0, null);
     await pending;
-
     expect(spawnFn.mock.calls[0][2].env).toEqual({
-      PATH: '/trusted/bin',
-      LANG: 'C.UTF-8',
+      PATH: '/trusted/bin', LANG: 'C.UTF-8',
     });
   });
-
-  it.each([
-    ['SIGTERM', 143],
-    ['SIGKILL', 137],
-  ])('normalizes %s to a writable FAIL result', async (signal, exitCode) => {
+  it.each([['SIGTERM', 143], ['SIGKILL', 137]])(
+    'normalizes %s to a writable FAIL result', async (signal, exitCode) => {
     const child = childProcess();
     const execute = createAssertionExecutor({
-      spawnFn: vi.fn(() => child),
-      timeoutMs: 1000,
+      spawnFn: vi.fn(() => child), timeoutMs: 1000,
     });
-    const pending = execute('trusted', [], {
-      cwd: '/repo',
-      evidenceKind: 'bash',
-    });
+    const pending = execute('trusted', [], { cwd: '/repo', evidenceKind: 'bash' });
     child.emit('close', null, signal);
-
     await expect(pending).resolves.toMatchObject({
-      exitCode,
-      signal,
-      scenarioCount: 0,
+      exitCode, signal, scenarioCount: 0,
       scenarioEvidence: { kind: 'signal', signal },
     });
   });
-
   it('spawns without a shell and derives scenario evidence', async () => {
     const child = childProcess();
     const spawnFn = vi.fn(() => child);
@@ -87,10 +64,8 @@ describe('GP assertion process executor', () => {
       cwd: '/repo',
       evidenceKind: 'vitest',
     });
-
     child.stdout.emit('data', 'Tests  2 passed (2)');
     child.emit('close', 0, null);
-
     await expect(pending).resolves.toMatchObject({
       exitCode: 0,
       scenarioCount: 2,
@@ -99,10 +74,9 @@ describe('GP assertion process executor', () => {
     expect(spawnFn).toHaveBeenCalledWith(
       'vitest',
       ['run', 'safe.test.js'],
-      { cwd: '/repo', detached: true, shell: false },
+      { cwd: '/repo', detached: true, env: {}, shell: false },
     );
   });
-
   it('bounds invalid process bytes as valid UTF-8', async () => {
     const child = childProcess();
     const execute = createAssertionExecutor({
@@ -114,15 +88,12 @@ describe('GP assertion process executor', () => {
       cwd: '/repo',
       evidenceKind: 'vitest',
     });
-
     child.stdout.emit('data', Buffer.alloc(32, 0xFF));
     child.emit('close', 1, null);
-
     const result = await pending;
     expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(16);
     expect(result.stdout).not.toContain('�');
   });
-
   it('fails closed with exit 124 after TERM and KILL', async () => {
     vi.useFakeTimers();
     const child = childProcess();
@@ -137,7 +108,6 @@ describe('GP assertion process executor', () => {
       cwd: '/repo',
       evidenceKind: 'bash',
     });
-
     await vi.advanceTimersByTimeAsync(10);
     expect(killProcessGroupFn).toHaveBeenCalledWith(4242, 'SIGTERM');
     await vi.advanceTimersByTimeAsync(5);
@@ -158,7 +128,6 @@ describe('GP assertion process executor', () => {
     });
     expect(child.kill).not.toHaveBeenCalled();
   });
-
   it('kills a TERM-resistant grandchild when the parent times out', async () => {
     const grandchild = "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)";
     const parent = `const{spawn}=require('node:child_process');`
@@ -170,7 +139,6 @@ describe('GP assertion process executor', () => {
       killGraceMs: 50,
     });
     let grandchildPid;
-
     try {
       const result = await execute(process.execPath, ['-e', parent], {
         cwd: process.cwd(),
@@ -178,7 +146,6 @@ describe('GP assertion process executor', () => {
       });
       grandchildPid = Number(result.stdout.trim());
       await new Promise(resolve => setTimeout(resolve, 50));
-
       expect(result).toMatchObject({ exitCode: 124, timedOut: true });
       expect(Number.isInteger(grandchildPid)).toBe(true);
       expect(processIsAlive(grandchildPid)).toBe(false);
@@ -188,7 +155,6 @@ describe('GP assertion process executor', () => {
       }
     }
   });
-
   it('reports group KILL failure without claiming SIGKILL', async () => {
     vi.useFakeTimers();
     const child = childProcess();
@@ -207,9 +173,7 @@ describe('GP assertion process executor', () => {
       cwd: '/repo',
       evidenceKind: 'bash',
     });
-
     await vi.advanceTimersByTimeAsync(15);
-
     await expect(result).resolves.toMatchObject({
       exitCode: 124,
       signal: null,
@@ -225,7 +189,6 @@ describe('GP assertion process executor', () => {
       },
     });
   });
-
   it('rejects a spawn error before timeout', async () => {
     const child = childProcess();
     const execute = createAssertionExecutor({
@@ -237,9 +200,7 @@ describe('GP assertion process executor', () => {
       evidenceKind: 'bash',
     });
     const error = new Error('ENOENT');
-
     child.emit('error', error);
-
     await expect(pending).rejects.toBe(error);
   });
 });

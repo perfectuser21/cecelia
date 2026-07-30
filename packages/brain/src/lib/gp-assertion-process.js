@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import {
   appendBufferTail,
   byteSafeTail,
@@ -8,20 +7,32 @@ import {
 const PROCESS_CAPTURE_LIMIT_BYTES = 4096 * 4;
 const DEFAULT_TIMEOUT_MS = 300_000;
 const DEFAULT_KILL_GRACE_MS = 5_000;
+const ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'TMPDIR', 'TZ'];
+const SIGNAL_EXIT_CODES = { SIGTERM: 143, SIGKILL: 137 };
 const killProcessGroup = (pid, signal) => process.kill(-pid, signal);
 
 export function createAssertionExecutor({
-  spawnFn = spawn,
+  spawnFn,
+  environment = {},
   killProcessGroupFn = killProcessGroup,
   captureLimitBytes = PROCESS_CAPTURE_LIMIT_BYTES,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   killGraceMs = DEFAULT_KILL_GRACE_MS,
 } = {}) {
+  if (typeof spawnFn !== 'function') {
+    throw Object.assign(new Error('trusted process adapter is required'), {
+      code: 'TRUSTED_PROCESS_ADAPTER_REQUIRED',
+    });
+  }
+  const childEnv = Object.fromEntries(ENV_ALLOWLIST.flatMap(key => (
+    typeof environment?.[key] === 'string' ? [[key, environment[key]]] : []
+  )));
   return (executable, argv, options) => (
     new Promise((resolveExecution, rejectExecution) => {
       const child = spawnFn(executable, argv, {
         cwd: options.cwd,
         detached: true,
+        env: childEnv,
         shell: false,
       });
       const effectiveTimeoutMs = options.timeoutMs ?? timeoutMs;
@@ -110,6 +121,17 @@ export function createAssertionExecutor({
         }
         const stdout = byteSafeTail(stdoutBytes, captureLimitBytes);
         const stderr = byteSafeTail(stderrBytes, captureLimitBytes);
+        if (exitCode === null) {
+          finish({
+            exitCode: SIGNAL_EXIT_CODES[signal] ?? 1,
+            signal,
+            stdout,
+            stderr,
+            scenarioCount: 0,
+            scenarioEvidence: { kind: 'signal', signal: signal ?? 'UNKNOWN' },
+          });
+          return;
+        }
         finish({
           exitCode,
           signal,
@@ -125,5 +147,3 @@ export function createAssertionExecutor({
     })
   );
 }
-
-export const defaultAssertionExecute = createAssertionExecutor();

@@ -18,7 +18,7 @@
   在启动前以 `TRUSTED_PROCESS_ADAPTER_REQUIRED` 失败关闭。
 - 子进程仅获得最小环境白名单；超时以独立进程组 TERM/KILL 整树清理，
   清理失败及 signal 退出均规范化为可验证的失败证据。
-- 本层不选择命令、不写 receipt、不接 API/UI。
+- 本层没有 Brain 本机默认执行路径，不选择命令、不写 receipt、不接 API/UI。
 - 产权变更 B 继续 `effective_now=false`。回退：部署 Brain `1.267.141`。
 
 ## Brain 1.267.141 — GP assertion output evidence utility
