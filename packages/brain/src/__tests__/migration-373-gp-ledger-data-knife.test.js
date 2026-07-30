@@ -36,4 +36,15 @@ describe('migration 373 Golden Path ledger data knife contract', () => {
     expect(sql).toMatch(/cell_status\s*=\s*'red'/);
     expect(sql).toMatch(/cell_status\s+IN\s*\(\s*'green'\s*,\s*'pending'\s*\)/);
   });
+
+  it('uses the signed S3 decision instead of inventing an evaluation contract', () => {
+    expect(sql).toContain('decision:gp-ledger-phase3:nfr:gp-b:s3');
+    expect(sql).not.toContain('eval:gp-b-s3-reply-quality-and-delivery-v1');
+  });
+
+  it('records the Path 4 smoke as an executable sibling-repository command', () => {
+    expect(sql).toContain(
+      'manual:cd ../zenithjoy && bash .github/workflows/scripts/smoke/golden-path-4-smoke.sh',
+    );
+  });
 });
