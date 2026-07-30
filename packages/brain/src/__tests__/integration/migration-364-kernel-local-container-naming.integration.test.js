@@ -35,7 +35,10 @@ beforeAll(async () => {
       applied_at TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE initiative_runs (
-      id UUID PRIMARY KEY
+      id UUID PRIMARY KEY,
+      phase TEXT NOT NULL DEFAULT 'planning',
+      orchestrator_version TEXT NOT NULL DEFAULT 'v1'
+        CHECK (orchestrator_version IN ('v1','v2'))
     );
   `);
   await client.query(migration357);
@@ -113,7 +116,10 @@ describe('migration 364 through the real migration runner', () => {
       expect(constraint.rows[0]?.definition).toContain('generation-v1');
 
       const runId = randomUUID();
-      await migrationPool.query('INSERT INTO initiative_runs (id) VALUES ($1)', [runId]);
+      await migrationPool.query(
+        `INSERT INTO initiative_runs (id,orchestrator_version) VALUES ($1,'v2')`,
+        [runId],
+      );
       const attempt = await createAttemptStore(migrationPool).createAttempt({
         id: randomUUID(),
         runId,
