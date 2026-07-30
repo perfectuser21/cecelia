@@ -1,6 +1,14 @@
 # Brain 模块定义
 
-**版本**: 1.267.143
+**版本**: 1.267.144
+
+## Assertion receipt repository CAS
+
+- `gp-assertion-repository.js` 封装断言格、receipt 与已签 GP 合同的数据库访问；
+  短事务成功提交、失败回滚并释放连接。
+- receipt INSERT 以合同签字状态、内容哈希、journey 归属和断言 revision 做 CAS；
+  多份已签合同或同 journey 多 Golden Path 历史一律失败关闭。
+- 本层不含 Runner orchestration、CLI、route、UI 或 PostgreSQL 全链路集成。
 
 ## Pinned toolchain file safety
 
