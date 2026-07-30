@@ -14,6 +14,22 @@ const approvalRateLimit = rateLimit({
   identifier: 'kernel-reviews-approval',
   message: { error: 'approval rate limit exceeded' },
 });
+const contextAnswerRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  identifier: 'kernel-context-answer',
+  message: { error: 'context answer rate limit exceeded' },
+});
+const contextReadRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  identifier: 'kernel-context-read',
+  message: { error: 'context read rate limit exceeded' },
+});
 
 function asJson(value) {
   if (!value) return {};
@@ -203,11 +219,252 @@ async function handleReviewDecision(req, res, { approved }) {
   }
 }
 
+async function handleContextAnswer(req, res) {
+  const auth = authenticateApprover(req, res);
+  if (!auth.ok) return;
+
+  const { runId } = req.params;
+  const taskId = typeof req.body?.task_id === 'string' ? req.body.task_id.trim() : '';
+  const contextRequestHop = Number(req.body?.context_request_hop);
+  const contextVersion = typeof req.body?.context_version === 'string'
+    ? req.body.context_version.trim()
+    : '';
+  const answer = typeof req.body?.answer === 'string' ? req.body.answer.trim() : '';
+  if (
+    !taskId
+    || !Number.isInteger(contextRequestHop)
+    || contextRequestHop < 1
+    || !contextVersion
+    || !answer
+    || answer.length > 8_000
+  ) {
+    return res.status(400).json({
+      error: 'task_id, positive context_request_hop, context_version and answer are required',
+    });
+  }
+
+  const dbPool = req.app.get('pool') || pool;
+  try {
+    const requestResult = await dbPool.query(
+      `SELECT r.id AS run_id,
+              r.phase,
+              t.id AS task_id,
+              request.hop AS context_request_hop,
+              request.detail,
+              request.created_at
+         FROM initiative_runs r
+         JOIN tasks t ON t.id=r.current_task_id
+         JOIN orchestrator_decision_log request
+           ON request.run_id=r.id
+          AND request.hop=$3
+          AND request.action='effect:context_requested'
+        WHERE r.id=$1::uuid
+          AND t.id=$2::uuid`,
+      [runId, taskId, contextRequestHop],
+    );
+    const requestRow = requestResult.rows[0];
+    if (!requestRow) {
+      return res.status(404).json({ error: 'context request not found for run/task' });
+    }
+    const requestDetail = asJson(requestRow.detail);
+    if (requestDetail.context_version !== contextVersion) {
+      return res.status(409).json({ error: 'stale_context_version' });
+    }
+    const resumePhase = requestDetail.resume_phase;
+    if (!['planning', 'gan', 'generate', 'evaluate', 'review', 'merge'].includes(resumePhase)) {
+      return res.status(409).json({ error: 'context_resume_phase_invalid' });
+    }
+
+    const client = await dbPool.connect();
+    let transactionOpen = false;
+    try {
+      await client.query('BEGIN');
+      transactionOpen = true;
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+        [runId],
+      );
+      const duplicate = await client.query(
+        `SELECT detail
+           FROM orchestrator_decision_log
+          WHERE run_id=$1::uuid
+            AND action='verdict:context_answer'
+            AND detail->>'context_request_hop'=$2
+          LIMIT 1`,
+        [runId, String(contextRequestHop)],
+      );
+      if (duplicate.rowCount > 0) {
+        const prior = asJson(duplicate.rows[0].detail);
+        await client.query('ROLLBACK');
+        transactionOpen = false;
+        if (
+          prior.context_version === contextVersion
+          && prior.answer === answer
+          && prior.answered_by === auth.approvedBy
+        ) {
+          return res.status(200).json({
+            ok: true,
+            deduped: true,
+            run_id: runId,
+            task_id: taskId,
+            context_request_hop: contextRequestHop,
+            context_version: contextVersion,
+          });
+        }
+        return res.status(409).json({ error: 'context_request_already_answered' });
+      }
+
+      const currentRun = await client.query(
+        `SELECT phase
+           FROM initiative_runs
+          WHERE id=$1::uuid
+            AND current_task_id=$2::uuid`,
+        [runId, taskId],
+      );
+      if (currentRun.rows[0]?.phase !== 'paused') {
+        await client.query('ROLLBACK');
+        transactionOpen = false;
+        return res.status(409).json({ error: 'run_not_paused' });
+      }
+
+      const { rows: hopRows } = await client.query(
+        'SELECT COALESCE(MAX(hop), 0) + 1 AS next_hop FROM orchestrator_decision_log WHERE run_id=$1::uuid',
+        [runId],
+      );
+      const answerHop = Number(hopRows[0].next_hop);
+      const answeredAt = new Date().toISOString();
+      const detail = {
+        callback_hop: Number(requestDetail.callback_hop),
+        context_request_hop: contextRequestHop,
+        context_version: contextVersion,
+        answer,
+        answered_by: auth.approvedBy,
+        answered_at: answeredAt,
+      };
+      await client.query(
+        `INSERT INTO orchestrator_decision_log
+           (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+         VALUES (
+           $1::uuid, $2, $3::jsonb, 'paused', 'allow',
+           'verdict:context_answer', $4::jsonb
+         )
+         RETURNING hop`,
+        [
+          runId,
+          answerHop,
+          JSON.stringify({
+            callback_hop: detail.callback_hop,
+            context_request_hop: contextRequestHop,
+            context_version: contextVersion,
+          }),
+          JSON.stringify(detail),
+        ],
+      );
+      const reopened = await client.query(
+        `UPDATE initiative_runs
+            SET deadline_at=CASE
+                  WHEN deadline_at IS NULL THEN NULL
+                  ELSE deadline_at + GREATEST(
+                    INTERVAL '0 seconds',
+                    NOW() - $2::timestamptz
+                  )
+                END,
+                updated_at=NOW()
+          WHERE id=$1::uuid
+            AND phase='paused'
+          RETURNING id`,
+        [runId, requestRow.created_at ?? new Date().toISOString()],
+      );
+      if (reopened.rowCount !== 1) {
+        throw new Error('paused run changed before context answer commit');
+      }
+      await client.query(
+        `UPDATE tasks
+            SET updated_at=NOW()
+          WHERE id=$1::uuid
+            AND status='in_progress'`,
+        [taskId],
+      );
+      await client.query('COMMIT');
+      transactionOpen = false;
+      return res.status(202).json({
+        ok: true,
+        deduped: false,
+        run_id: runId,
+        task_id: taskId,
+        context_request_hop: contextRequestHop,
+        context_version: contextVersion,
+        answered_by: auth.approvedBy,
+        answered_at: answeredAt,
+        resume_pending: true,
+        resume_phase: resumePhase,
+      });
+    } catch (error) {
+      if (transactionOpen) {
+        await client.query('ROLLBACK').catch(() => {});
+        transactionOpen = false;
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    return res.status(500).json({ error: `kernel context answer failed: ${error.message}` });
+  }
+}
+
+router.get('/contexts', contextReadRateLimit, async (req, res) => {
+  const dbPool = req.app.get('pool') || pool;
+  try {
+    const { rows } = await dbPool.query(
+      `SELECT r.id AS run_id,
+              r.current_task_id AS task_id,
+              t.title AS task_title,
+              request.hop AS context_request_hop,
+              request.detail,
+              request.created_at
+         FROM initiative_runs r
+         JOIN tasks t ON t.id=r.current_task_id
+         JOIN orchestrator_decision_log request
+           ON request.run_id=r.id
+          AND request.action='effect:context_requested'
+        WHERE r.phase='paused'
+          AND NOT EXISTS (
+            SELECT 1
+              FROM orchestrator_decision_log answer
+             WHERE answer.run_id=request.run_id
+               AND answer.action='verdict:context_answer'
+               AND answer.detail->>'context_request_hop'=request.hop::text
+          )
+        ORDER BY request.created_at ASC, request.hop ASC
+        LIMIT 50`,
+    );
+    return res.json({
+      contexts: rows.map((row) => {
+        const detail = asJson(row.detail);
+        return {
+          run_id: row.run_id,
+          task_id: row.task_id,
+          task_title: row.task_title,
+          context_request_hop: Number(row.context_request_hop),
+          context_version: detail.context_version ?? null,
+          callback_hop: Number(detail.callback_hop),
+          question: detail.question ?? null,
+          created_at: row.created_at,
+        };
+      }),
+    });
+  } catch (error) {
+    return res.status(500).json({ error: `kernel context list failed: ${error.message}` });
+  }
+});
+
 router.post('/:runId/approve', approvalRateLimit, (req, res) => (
   handleReviewDecision(req, res, { approved: true })
 ));
 router.post('/:runId/reject', approvalRateLimit, (req, res) => (
   handleReviewDecision(req, res, { approved: false })
 ));
+router.post('/:runId/context', contextAnswerRateLimit, handleContextAnswer);
 
 export default router;

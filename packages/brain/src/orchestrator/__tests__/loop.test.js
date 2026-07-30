@@ -5,7 +5,7 @@
  * - BLOCKED×2 → failed；每跳恰一条日志一次心跳；singleton 冲突退出；dry-run 不派发；wait 不 append
  */
 import { describe, it, expect, vi } from 'vitest';
-import { runLoop } from '../loop.js';
+import { activateContextResume, runLoop } from '../loop.js';
 import { SingletonConflictError } from '../decision-log.js';
 
 const RUN_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -878,6 +878,138 @@ describe('runLoop：wait:* 不灌水', () => {
     expect(sleeps).toHaveLength(1);
   });
 
+  it('R7: LAUNCHED 只记录 attempt launch effect，不能当角色 DONE 或派下一棒', async () => {
+    const observedSeq = [
+      obs({ generatorSpawned: false }),
+      obs({ inflight: { containers: [{ ID: 'attempt-container' }], host_pids: [] } }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const dispatch = vi.fn(async () => ({
+      status: 'LAUNCHED',
+      run_id: RUN_ID,
+      attempt_id: '22222222-2222-4222-8222-222222222222',
+      lease_generation: 4,
+      provider: 'codex',
+    }));
+    const { deps, appended, heartbeats, sleeps } = makeEnv({ observedSeq, dispatch });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.dispatch).toHaveBeenCalledTimes(1);
+    expect(deps.dispatch).toHaveBeenCalledWith('spawn:generator', expect.any(Object));
+    expect(appended.map((entry) => entry.action)).toEqual([
+      'spawn:generator',
+      'effect:attempt_launched',
+    ]);
+    expect(appended[1].detail).toEqual({
+      dispatch_hop: 1,
+      dispatch_action: 'spawn:generator',
+      run_id: RUN_ID,
+      attempt_id: '22222222-2222-4222-8222-222222222222',
+      lease_generation: 4,
+      provider: 'codex',
+    });
+    expect(heartbeats).toHaveLength(2);
+    expect(sleeps).toHaveLength(1);
+  });
+
+  it('R9: async needs_context 原子暂停 run，不要求 PR 也不进入 generator fix', async () => {
+    const callback = {
+      hop: 3,
+      action: 'verdict:attempt_callback',
+      detail: {
+        attempt_id: '22222222-2222-4222-8222-222222222222',
+        lease_generation: 0,
+        role: 'generator',
+        hop: 1,
+        status: 'needs_context',
+        failure_class: 'needs_context',
+        artifacts: [],
+      },
+    };
+    const waiting = obs({
+      pr: null,
+      generatorSpawned: true,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        callback,
+      ],
+    });
+    const { deps, appended, sleeps, setHopBase, sqls } = makeEnv({
+      observedSeq: [waiting],
+    });
+    setHopBase(3);
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('callback_needs_context');
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(appended).toHaveLength(0);
+    const pauseWrite = sqls.find(([sql]) => /SET phase = 'paused'/i.test(sql));
+    expect(pauseWrite?.[0]).toMatch(/effect:context_requested/i);
+    expect(pauseWrite?.[1]).toContain(3);
+    expect(deps.dispatch).not.toHaveBeenCalledWith(
+      'spawn:generator-fix',
+      expect.anything(),
+    );
+    expect(sleeps).toHaveLength(0);
+  });
+
+  it('LAUNCHED callback 抢占 effect hop 时按 singleton conflict 正常让位', async () => {
+    const { deps, appended } = makeEnv({
+      observedSeq: [obs({ generatorSpawned: false })],
+      dispatch: async () => ({
+        status: 'LAUNCHED',
+        run_id: RUN_ID,
+        attempt_id: '22222222-2222-4222-8222-222222222222',
+        lease_generation: 4,
+        provider: 'codex',
+      }),
+    });
+    deps.appendHop.mockImplementationOnce(async (entry) => {
+      appended.push(entry);
+    }).mockRejectedValueOnce(new SingletonConflictError(RUN_ID, 2));
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result).toEqual({ exitReason: 'singleton_conflict', hops: 1 });
+    expect(deps.dispatch).toHaveBeenCalledOnce();
+  });
+
+  it('R10: second identical unknown_no_pr callback terminalizes without a third dispatch', async () => {
+    const callback = (hop) => ({
+      hop,
+      action: 'verdict:attempt_callback',
+      detail: {
+        attempt_id: `22222222-2222-4222-8222-${String(hop).padStart(12, '0')}`,
+        lease_generation: 0,
+        role: 'generator',
+        hop: hop - 1,
+        status: 'completed',
+        failure_class: null,
+        artifacts: [],
+      },
+    });
+    const observedSeq = [obs({
+      pr: null,
+      generatorSpawned: true,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        callback(3),
+        { hop: 4, action: 'spawn:generator-fix', observed: {} },
+        callback(6),
+      ],
+    })];
+    const { deps } = makeEnv({ observedSeq });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('repeated_unknown_no_pr');
+    expect(deps.finalizeRun).toHaveBeenCalledOnce();
+    expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+
   it('连续 wait:poll_ci 累积 pollCount → 超限时 derive 判 ci_timeout（mark_failed）', async () => {
     const pr = { url: 'u', state: 'OPEN', ci: 'pending', merged: false, head_sha: 's' };
     // 一直 pending：20 次 poll 后（pollCount>=MAX_POLL_COUNT）→ ci_timeout
@@ -934,5 +1066,49 @@ describe('runLoop：runId 缺省解析', () => {
     const observedSeq = [obs()];
     const { deps } = makeEnv({ observedSeq });
     await expect(runLoop(deps, { taskId: TASK_ID })).rejects.toThrow(/run/i);
+  });
+});
+
+describe('runLoop：context resume 启动屏障', () => {
+  it('resume token 丢失时在 collect/derive/dispatch 前退出', async () => {
+    const { deps } = makeEnv({ observedSeq: [obs()] });
+    deps.activateContextResume = vi.fn(async () => null);
+
+    const result = await runLoop(deps, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      resumeToken: 'lost-token',
+    });
+
+    expect(result).toEqual({ exitReason: 'context_resume_claim_lost', hops: 0 });
+    expect(deps.collectGroundTruth).not.toHaveBeenCalled();
+    expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('child 以唯一 token 原子发布最新 request 的 resume phase 与真实 heartbeat', async () => {
+    const pool = {
+      query: vi.fn(async () => ({
+        rows: [{ id: RUN_ID, phase: 'generate' }],
+        rowCount: 1,
+      })),
+    };
+
+    const activated = await activateContextResume(pool, {
+      runId: RUN_ID,
+      resumeToken: 'resume-token-1',
+      host: 'child-host',
+      pid: 43210,
+      now: new Date('2026-07-30T19:05:00.000Z'),
+    });
+
+    expect(activated).toMatchObject({ id: RUN_ID, phase: 'generate' });
+    const [sql, params] = pool.query.mock.calls[0];
+    expect(sql).toMatch(
+      /effect:context_requested[\s\S]*ORDER BY request\.hop DESC[\s\S]*LIMIT 1[\s\S]*verdict:context_answer/,
+    );
+    expect(sql).toMatch(/orchestrator_host=\$4[\s\S]*orchestrator_pid=\$5/);
+    expect(sql).toMatch(/orchestrator_host=\$6/);
+    expect(params).toContain('context-resume:resume-token-1');
+    expect(params).toContain(43210);
   });
 });

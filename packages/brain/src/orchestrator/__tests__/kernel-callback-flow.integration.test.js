@@ -59,6 +59,26 @@ const runtime = vi.hoisted(() => {
     }),
     getById: vi.fn(async (id) => attempts.get(id) ?? null),
     assertFreshRoleSession: vi.fn(async () => true),
+    recordCallbackTerminal: vi.fn(async ({
+      attemptId,
+      runId,
+      leaseOwner,
+      leaseGeneration,
+      result,
+    }) => {
+      const attempt = attempts.get(attemptId);
+      if (!attempt || attempt.run_id !== runId) {
+        return { attempt: null, deduped: false, conflict: 'attempt_identity_mismatch' };
+      }
+      if (attempt.lease_owner !== leaseOwner) {
+        return { attempt: null, deduped: false, conflict: 'lease_owner_mismatch' };
+      }
+      if (attempt.lease_generation !== leaseGeneration) {
+        return { attempt: null, deduped: false, conflict: 'lease_generation_mismatch' };
+      }
+      Object.assign(attempt, { status: result.status, result });
+      return { attempt, deduped: false };
+    }),
     complete: vi.fn(async (id, result) => {
       const attempt = attempts.get(id);
       if (!attempt || ['completed', 'failed', 'cancelled'].includes(attempt.status)) {
@@ -219,6 +239,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
               .post(`/api/brain/harness/attempts/${attempt.id}/callback`)
               .set('Authorization', `Bearer ${attempt.callbackSecret}`)
               .set('X-Harness-Lease-Owner', attempt.lease_owner)
+              .set('X-Harness-Lease-Generation', String(attempt.lease_generation))
               .send({
                 contract_version: '1.0',
                 attempt_id: attempt.id,
@@ -313,6 +334,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       provider: 'codex',
       status: 'running',
       lease_owner: leaseOwner,
+      lease_generation: 0,
       requested_machine_id: 'integration-host',
       actual_machine_id: 'integration-host',
       execution_transport: 'local-docker',
@@ -357,6 +379,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       .post(`/api/brain/harness/attempts/${evaluatorAttemptId}/callback`)
       .set('Authorization', `Bearer ${callbackToken}`)
       .set('X-Harness-Lease-Owner', leaseOwner)
+      .set('X-Harness-Lease-Generation', '0')
       .send(bridgedResult);
 
     expect(callback.status).toBe(200);

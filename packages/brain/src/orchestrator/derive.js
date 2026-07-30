@@ -103,6 +103,7 @@ function applyHopFence(decision, counters) {
   // budget is only a wide fallback for otherwise continuing automation.
   if ([
     ACTION.MARK_FAILED,
+    ACTION.PAUSE_RUN,
     ACTION.WAIT_HUMAN_REVIEW,
     ACTION.WAIT_GENERATOR_FIX_CALLBACK,
   ].includes(decision.action)) {
@@ -118,6 +119,147 @@ function sortedLogRows(decisionLog) {
   return Array.isArray(decisionLog)
     ? [...decisionLog].sort((a, b) => Number(a.hop) - Number(b.hop))
     : [];
+}
+
+const INFRA_RETRY_ACTION_BY_ROLE = Object.freeze({
+  planner: { phase: 'planning', action: ACTION.SPAWN_PLANNER },
+  proposer: { phase: 'gan', action: ACTION.SPAWN_PROPOSER },
+  reviewer: { phase: 'gan', action: ACTION.SPAWN_REVIEWER },
+  generator: { phase: 'generate', action: ACTION.SPAWN_GENERATOR_FIX },
+  evaluator: { phase: 'evaluate', action: ACTION.SPAWN_EVALUATOR },
+  judge: { phase: 'judge', action: ACTION.SPAWN_JUDGE },
+  reporter: { phase: 'done', action: ACTION.SPAWN_CANARY },
+});
+
+function callbackDetail(row) {
+  return asStructuredJson(row?.detail) ?? {};
+}
+
+function latestUnconsumedAttemptCallback(decisionLog) {
+  const rows = sortedLogRows(decisionLog);
+  const latestSpawn = [...rows].reverse().find(
+    (row) => typeof row.action === 'string' && row.action.startsWith('spawn:'),
+  );
+  const answeredCallbackHops = new Set(rows
+    .filter((row) => row.action === LOG_ACTION.CONTEXT_ANSWER)
+    .map((row) => Number(callbackDetail(row).callback_hop))
+    .filter(Number.isInteger));
+  return [...rows].reverse().find((row) => (
+    row.action === LOG_ACTION.ATTEMPT_CALLBACK
+    && !answeredCallbackHops.has(Number(row.hop))
+    && (latestSpawn == null || Number(row.hop) > Number(latestSpawn.hop))
+  )) ?? null;
+}
+
+function noPrSignatureKey(detail) {
+  const structured = failureSignatureKey(detail.failure_signature);
+  if (structured != null) return `failure:${structured}`;
+  // Callback artifacts are provider claims until a server-side projector
+  // verifies them (for example by resolving a PR head). They cannot by
+  // themselves reset convergence or an Agent could rotate arbitrary strings.
+  return 'unknown_no_pr';
+}
+
+function generatorNoPrRoute(observed, currentDetail) {
+  const currentKey = noPrSignatureKey(currentDetail);
+  const matchingCallbacks = sortedLogRows(observed.decisionLog).filter((row) => {
+    if (row.action !== LOG_ACTION.ATTEMPT_CALLBACK) return false;
+    const detail = callbackDetail(row);
+    if (detail.role !== 'generator') return false;
+    if (!['completed', 'completed_with_concerns'].includes(detail.status)) return false;
+    if ((detail.artifacts ?? []).some((artifact) => artifact?.type === 'pull_request')) {
+      return false;
+    }
+    return noPrSignatureKey(detail) === currentKey;
+  });
+  if (matchingCallbacks.length >= 2) {
+    return {
+      phase: 'failed',
+      action: ACTION.MARK_FAILED,
+      reason: currentKey === 'unknown_no_pr'
+        ? 'repeated_unknown_no_pr'
+        : 'repeated_no_pr_signature',
+    };
+  }
+  return {
+    phase: 'generate',
+    action: ACTION.SPAWN_GENERATOR_FIX,
+    reason: currentKey === 'unknown_no_pr' ? 'unknown_no_pr' : 'structured_no_pr',
+  };
+}
+
+function attemptCallbackRoute(observed) {
+  const row = latestUnconsumedAttemptCallback(observed.decisionLog);
+  if (!row) return null;
+  const detail = callbackDetail(row);
+  const { status, failure_class: failureClass, role } = detail;
+
+  if (status === 'needs_context') {
+    return {
+      phase: 'paused',
+      action: ACTION.PAUSE_RUN,
+      reason: 'callback_needs_context',
+    };
+  }
+  if (
+    (status === 'blocked' || status === 'failed')
+    && failureClass === 'infrastructure_blocked'
+  ) {
+    const retry = INFRA_RETRY_ACTION_BY_ROLE[role];
+    if (!retry) {
+      return {
+        phase: 'review',
+        action: ACTION.WAIT_HUMAN_REVIEW,
+        reason: 'callback_infrastructure_route_unknown',
+      };
+    }
+    return {
+      phase: retry.phase,
+      action: retry.action,
+      reason: 'callback_infrastructure_blocked',
+    };
+  }
+  if (
+    status === 'blocked'
+    || (status === 'failed' && failureClass === 'semantic_refusal')
+  ) {
+    return {
+      phase: 'review',
+      action: ACTION.WAIT_HUMAN_REVIEW,
+      reason: 'callback_semantic_refusal',
+    };
+  }
+  if (status === 'failed') {
+    return {
+      phase: 'failed',
+      action: ACTION.MARK_FAILED,
+      reason: `callback_${failureClass ?? 'failed'}`,
+    };
+  }
+  if (status === 'cancelled') {
+    return {
+      phase: 'failed',
+      action: ACTION.MARK_FAILED,
+      reason: 'callback_cancelled',
+    };
+  }
+  if (
+    role === 'generator'
+    && observed.pr == null
+    && ['completed', 'completed_with_concerns'].includes(status)
+  ) {
+    if ((detail.artifacts ?? []).some((artifact) => (
+      artifact?.type === 'pull_request' && typeof artifact.url === 'string'
+    ))) {
+      return {
+        phase: 'generate',
+        action: ACTION.WAIT_RUNNING,
+        reason: 'callback_pr_projection_pending',
+      };
+    }
+    return generatorNoPrRoute(observed, detail);
+  }
+  return null;
 }
 
 function currentHumanReviewRejection(decisionLog, currentHeadSha) {
@@ -334,6 +476,12 @@ export function derive(observed) {
       reason: 'human_review_rejected',
     };
   }
+
+  // A received callback is the newest control truth. Route it before the
+  // legacy same-SHA projection so blocked/needs_context cannot be mistaken
+  // for a successful no-progress completion.
+  const callbackRoute = attemptCallbackRoute(observed);
+  if (callbackRoute) return applyHopFence(callbackRoute, counters);
 
   // 0.4 no-progress terminal（Sprint 07231527 Blocking 4）：
   // generator-fix callback SHA === trigger_sha → 无进展，立即终局

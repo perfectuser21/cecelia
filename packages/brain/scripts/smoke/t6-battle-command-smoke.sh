@@ -65,12 +65,15 @@ echo "[t6-battle-command-smoke] 5. harness-relay-watchdog.js 双 host 识别"
 node -e "
 const fs = require('fs');
 const src = fs.readFileSync('packages/brain/src/harness-relay-watchdog.js', 'utf8');
-const checks = [
-  ['HEADED_HOST_VALUES', 'host 值集合'],
-  [\"IN ('skill-relay-codex-headed','skill-relay-claude-headed')\", 'SQL 双 host 收窗条件'],
-];
-const missing = checks.filter(([p]) => !src.includes(p));
-if (missing.length) { missing.forEach(([,d]) => console.error('FAIL: 缺少 ' + d)); process.exit(1); }
+if (!src.includes('HEADED_HOST_VALUES')) {
+  console.error('FAIL: 缺少 host 值集合');
+  process.exit(1);
+}
+const dualHostSql = /orchestrator_host\\s+IN\\s*\\(\\s*'skill-relay-codex-headed'\\s*,\\s*'skill-relay-claude-headed'\\s*\\)/;
+if (!dualHostSql.test(src)) {
+  console.error('FAIL: 缺少 SQL 双 host 收窗条件');
+  process.exit(1);
+}
 console.log('harness-relay-watchdog.js 双 host 识别 ✓');
 "
 

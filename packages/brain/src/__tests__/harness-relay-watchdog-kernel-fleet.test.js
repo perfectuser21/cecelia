@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  _resumePausedKernelContext,
   reconcileExpiredKernelAttempt,
   resumeKernelAttempt,
 } from '../harness-relay-watchdog.js';
@@ -178,6 +179,97 @@ function successfulWorkerFetch(machineId = 'us-mac-m4') {
 }
 
 describe('kernel fleet watchdog recovery', () => {
+  it('claims an answered paused run with a unique token and delegates phase publication to the child', async () => {
+    const queries = [];
+    const dbPool = {
+      query: vi.fn(async (sql, params = []) => {
+        queries.push({ sql: String(sql), params });
+        if (
+          String(sql).includes('orchestrator_host=$4')
+          && !String(sql).includes('SET phase=$2')
+        ) {
+          return { rows: [{ id: RUN_ID }], rowCount: 1 };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      }),
+    };
+    const launchKernel = vi.fn(async () => ({ pid: 43210 }));
+    const out = { resumed: 0 };
+
+    await _resumePausedKernelContext({
+      id: RUN_ID,
+      phase: 'paused',
+      context_resume: {
+        context_request_hop: 8,
+        resume_phase: 'generate',
+      },
+    }, {
+      id: '44444444-4444-4444-8444-444444444444',
+      payload: { worktree_path: '/tmp/kernel-worktree' },
+    }, {
+      pool: dbPool,
+      launchKernel,
+      hostname: () => 'watchdog-host',
+      now: () => new Date('2026-07-30T19:00:00.000Z'),
+      randomUUID: () => 'resume-token-1',
+    }, out);
+
+    expect(launchKernel).toHaveBeenCalledWith(expect.objectContaining({
+      resumeToken: 'resume-token-1',
+    }));
+    expect(queries[0].sql).not.toContain('SET phase');
+    expect(queries[0].sql).toMatch(/NOT EXISTS[\s\S]*newer/i);
+    expect(queries[0].params).toContain('context-resume:resume-token-1');
+    expect(queries).toHaveLength(1);
+    expect(out.resumed).toBe(1);
+  });
+
+  it('returns a failed context-resume launch to paused instead of exposing a dead active phase', async () => {
+    const queries = [];
+    const dbPool = {
+      query: vi.fn(async (sql, params = []) => {
+        queries.push({ sql: String(sql), params });
+        if (
+          String(sql).includes('orchestrator_host=$4')
+          && !String(sql).includes('SET phase=$2')
+        ) {
+          return { rows: [{ id: RUN_ID }], rowCount: 1 };
+        }
+        if (
+          String(sql).includes('SET orchestrator_heartbeat_at=$3')
+          && String(sql).includes('orchestrator_host=$2')
+        ) {
+          return { rows: [{ id: RUN_ID }], rowCount: 1 };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      }),
+    };
+
+    await expect(_resumePausedKernelContext({
+      id: RUN_ID,
+      phase: 'paused',
+      context_resume: {
+        context_request_hop: 8,
+        resume_phase: 'generate',
+      },
+    }, {
+      id: '44444444-4444-4444-8444-444444444444',
+      payload: { worktree_path: '/tmp/kernel-worktree' },
+    }, {
+      pool: dbPool,
+      launchKernel: vi.fn(async () => {
+        throw new Error('spawn failed');
+      }),
+      hostname: () => 'watchdog-host',
+      now: () => new Date('2026-07-30T19:00:00.000Z'),
+      randomUUID: () => 'resume-token-failed',
+    }, { resumed: 0 })).rejects.toThrow(/spawn failed/);
+
+    expect(queries.at(-1).sql).toContain('SET orchestrator_heartbeat_at=$3');
+    expect(queries.at(-1).sql).toContain('orchestrator_host=$2');
+    expect(queries.at(-1).params).toContain('context-resume:resume-token-failed');
+  });
+
   it('resumes on the receipt-proven actual machine instead of the requested fallback origin', async () => {
     const originalParentAttempt = {
       ...parentAttempt(),

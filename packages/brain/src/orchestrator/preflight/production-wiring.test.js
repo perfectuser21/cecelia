@@ -330,8 +330,8 @@ describe('production capability wiring', () => {
     });
 
     expect(result).toMatchObject({
-      status: 'DONE',
-      attemptId: '33333333-3333-4333-8333-333333333333',
+      status: 'LAUNCHED',
+      attempt_id: '33333333-3333-4333-8333-333333333333',
     });
     expect(fetchFn).toHaveBeenCalledWith(
       `${WORKER_URL}/health`,
@@ -484,7 +484,7 @@ describe('production capability wiring', () => {
       decision: { phase: 'generate', reason: 'contract_approved' },
     });
 
-    expect(result).toMatchObject({ status: 'DONE', provider: 'codex' });
+    expect(result).toMatchObject({ status: 'LAUNCHED', provider: 'codex' });
     expect(attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
       accountId: 'team1',
       machineId: 'us-mac-m4',
@@ -666,8 +666,8 @@ describe('production capability wiring', () => {
       observed: observed(),
       decision: { phase: 'generate', reason: 'contract_approved' },
     })).resolves.toMatchObject({
-      status: 'DONE',
-      attemptId: ATTEMPT_ID,
+      status: 'LAUNCHED',
+      attempt_id: ATTEMPT_ID,
     });
 
     expect(spawnDetached).not.toHaveBeenCalled();

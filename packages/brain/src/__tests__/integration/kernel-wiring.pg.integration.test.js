@@ -63,7 +63,26 @@ async function createIsolatedDatabase() {
 async function dropIsolatedDatabase() {
   if (testPool) await testPool.end();
   if (adminPool && databaseName) {
-    await adminPool.query(`DROP DATABASE IF EXISTS ${quotedIdentifier(databaseName)} WITH (FORCE)`);
+    // pg.Pool#end waits for its clients to begin closing, but PostgreSQL can
+    // still report those sessions for a few milliseconds.  FORCE races that
+    // shutdown and emits uncaught 57P01 errors from otherwise passing tests.
+    // Wait for the server-side sessions to disappear, then use a normal DROP.
+    let remainingSessions = 0;
+    for (let attempt = 0; attempt < 250; attempt += 1) {
+      const result = await adminPool.query(
+        'SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=$1',
+        [databaseName],
+      );
+      remainingSessions = result.rows[0].count;
+      if (remainingSessions === 0) break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    if (remainingSessions !== 0) {
+      throw new Error(
+        `isolated test database still has ${remainingSessions} session(s): ${databaseName}`,
+      );
+    }
+    await adminPool.query(`DROP DATABASE IF EXISTS ${quotedIdentifier(databaseName)}`);
   }
   if (adminPool) await adminPool.end();
 }
@@ -77,6 +96,7 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
     harness_runtime: 'kernel-v1',
     sprint_dir: 'sprints/07231527-relay-50170af2',
     worktree_path: '/workspace',
+    base_repo: 'perfectuser21/cecelia',
     review_required: reviewRequired,
     executor: 'codex',
     test_ci: ci,
@@ -104,6 +124,35 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
     [runId, initiativeId, contractId, taskId, PR_URL],
   );
   return { initiativeId, contractId, taskId, runId, payload };
+}
+
+async function seedCallbackAttempt(runId, {
+  role = 'generator',
+  hop = 1,
+  leaseOwner = LEASE_OWNER,
+  leaseGeneration = 0,
+} = {}) {
+  const attemptId = randomUUID();
+  await testPool.query(
+    `INSERT INTO harness_attempts
+       (id, run_id, hop, phase, role, provider, task_bundle,
+        callback_secret_hash, status, lease_owner, lease_generation,
+        actual_machine_id, execution_transport, machine_attestation_status)
+     VALUES (
+       $1, $2, $3, 'generate', $4, 'codex', '{}'::jsonb,
+       $5, 'running', $6, $7, 'us-mac-m4', 'local-docker', 'local'
+     )`,
+    [
+      attemptId,
+      runId,
+      hop,
+      role,
+      createHash('sha256').update(CALLBACK_TOKEN).digest('hex'),
+      leaseOwner,
+      leaseGeneration,
+    ],
+  );
+  return attemptId;
 }
 
 async function appendLog(runId, {
@@ -270,6 +319,133 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
     expect(lineage.rows[0].child_id).not.toBe(parentId);
     expect(lineage.rows[0].callback_secret_hash).not.toBe('old-hash');
     await setTaskStatus(run.taskId, 'completed');
+  });
+
+  it('does not let twenty live context-resume leases starve an older unclaimed answer', async () => {
+    const runs = [];
+    for (let index = 0; index < 21; index += 1) {
+      const run = await seedRun();
+      runs.push(run);
+      await testPool.query(
+        `UPDATE tasks
+            SET payload=payload || '{"orchestrator":"skill-relay"}'::jsonb
+          WHERE id=$1`,
+        [run.taskId],
+      );
+      await testPool.query(
+        `UPDATE initiative_runs
+            SET phase='paused',
+                started_at=NOW() - ($2::integer * INTERVAL '1 minute'),
+                orchestrator_host=CASE
+                  WHEN $2::integer=20 THEN NULL
+                  ELSE 'context-resume:live-' || $2::text
+                END,
+                orchestrator_heartbeat_at=CASE
+                  WHEN $2::integer=20 THEN NULL
+                  ELSE NOW()
+                END
+          WHERE id=$1`,
+        [run.runId, index],
+      );
+      await appendLog(run.runId, {
+        hop: 1,
+        action: 'effect:context_requested',
+        phase: 'paused',
+        detail: {
+          resume_phase: 'generate',
+          context_version: 1,
+        },
+      });
+      await appendLog(run.runId, {
+        hop: 2,
+        action: 'verdict:context_answer',
+        phase: 'paused',
+        detail: {
+          context_request_hop: '1',
+          context_version: 1,
+        },
+      });
+    }
+
+    const launchKernel = vi.fn(async () => ({ pid: 4242 }));
+    await resumeStalledRelayRuns({
+      pool: testPool,
+      launchKernel,
+      randomUUID: () => 'fair-context-token',
+    });
+
+    expect(launchKernel).toHaveBeenCalledWith(expect.objectContaining({
+      runId: runs[20].runId,
+      resumeToken: 'fair-context-token',
+    }));
+
+    await Promise.all(runs.map(run => setTaskStatus(run.taskId, 'completed')));
+  });
+
+  it('backs off twenty failed context launches so the next scan reaches the healthy twenty-first run', async () => {
+    const runs = [];
+    for (let index = 0; index < 21; index += 1) {
+      const run = await seedRun();
+      runs.push(run);
+      await testPool.query(
+        `UPDATE tasks
+            SET payload=payload || '{"orchestrator":"skill-relay"}'::jsonb
+          WHERE id=$1`,
+        [run.taskId],
+      );
+      await testPool.query(
+        `UPDATE initiative_runs
+            SET phase='paused',
+                started_at=NOW() - ($2::integer * INTERVAL '1 minute'),
+                orchestrator_host=NULL,
+                orchestrator_heartbeat_at=NULL
+          WHERE id=$1`,
+        [run.runId, index],
+      );
+      await appendLog(run.runId, {
+        hop: 1,
+        action: 'effect:context_requested',
+        phase: 'paused',
+        detail: {
+          resume_phase: 'generate',
+          context_version: 1,
+        },
+      });
+      await appendLog(run.runId, {
+        hop: 2,
+        action: 'verdict:context_answer',
+        phase: 'paused',
+        detail: {
+          context_request_hop: '1',
+          context_version: 1,
+        },
+      });
+    }
+
+    const healthyRun = runs[20];
+    const launchKernel = vi.fn(async ({ runId }) => {
+      if (runId === healthyRun.runId) return { pid: 4242 };
+      throw new Error(`bad_worktree:${runId}`);
+    });
+    let token = 0;
+    const deps = {
+      pool: testPool,
+      launchKernel,
+      randomUUID: () => `retry-token-${token += 1}`,
+    };
+
+    await resumeStalledRelayRuns(deps);
+    expect(launchKernel).toHaveBeenCalledTimes(20);
+    expect(launchKernel).not.toHaveBeenCalledWith(expect.objectContaining({
+      runId: healthyRun.runId,
+    }));
+
+    await resumeStalledRelayRuns(deps);
+    expect(launchKernel).toHaveBeenCalledWith(expect.objectContaining({
+      runId: healthyRun.runId,
+    }));
+
+    await Promise.all(runs.map(run => setTaskStatus(run.taskId, 'completed')));
   });
 
   it('public watchdog structurally terminates a false resume instead of leaving it running', async () => {
@@ -614,7 +790,11 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
     const app = express();
     app.use(express.json());
     app.set('pool', testPool);
-    app.set('kernelPrHeadResolver', async () => HEAD_SHA);
+    app.set('kernelPrIdentityResolver', async () => ({
+      head_sha: HEAD_SHA,
+      head_ref: `cp-kernel-${run.taskId.slice(0, 8)}`,
+      url: PR_URL,
+    }));
     app.use('/api/brain', callbackRouter);
     const attemptStore = createAttemptStore(testPool);
     let dispatchCount = 0;
@@ -664,6 +844,7 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
           .post(`/api/brain/harness/attempts/${attemptId}/callback`)
           .set('Authorization', `Bearer ${CALLBACK_TOKEN}`)
           .set('X-Harness-Lease-Owner', LEASE_OWNER)
+          .set('X-Harness-Lease-Generation', '0')
           .send({
             contract_version: '1.0',
             attempt_id: attemptId,
@@ -705,6 +886,307 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
       phase: 'failed',
       failure_reason: 'no_progress_same_sha',
     });
+  });
+});
+
+describe('Kernel callback convergence on real PostgreSQL', () => {
+  it('R8/R12 atomically persists one terminal event and idempotently acknowledges retry', async () => {
+    const run = await seedRun();
+    const attemptId = await seedCallbackAttempt(run.runId);
+    const result = {
+      contract_version: '1.0',
+      attempt_id: attemptId,
+      status: 'blocked',
+      summary: 'OrbStack transport unavailable',
+      artifacts: [{ type: 'diagnostic', code: 'docker_unavailable' }],
+      checks: [],
+      decision: null,
+      error: null,
+      failure_class: 'infrastructure_blocked',
+      provider_metadata: { provider: 'codex' },
+    };
+    const store = createAttemptStore(testPool);
+    const identity = {
+      attemptId,
+      runId: run.runId,
+      leaseOwner: LEASE_OWNER,
+      leaseGeneration: 0,
+      result,
+    };
+
+    await expect(store.recordCallbackTerminal(identity)).resolves.toMatchObject({
+      deduped: false,
+      attempt: { status: 'blocked' },
+    });
+    await expect(store.recordCallbackTerminal(identity)).resolves.toMatchObject({
+      deduped: true,
+      attempt: { status: 'blocked' },
+    });
+    await expect(store.recordCallbackTerminal({
+      ...identity,
+      result: { ...result, summary: 'conflicting terminal payload' },
+    })).resolves.toMatchObject({
+      attempt: null,
+      deduped: false,
+      conflict: 'terminal_payload_conflict',
+    });
+
+    const persisted = await testPool.query(
+      `SELECT a.status, a.result,
+              COUNT(l.*)::int AS event_count,
+              MAX(l.gate_verdict) AS gate_verdict,
+              MAX(l.detail->>'lease_generation') AS event_generation
+         FROM harness_attempts a
+         LEFT JOIN orchestrator_decision_log l
+           ON l.run_id=a.run_id
+          AND l.action='verdict:attempt_callback'
+          AND l.detail->>'attempt_id'=a.id::text
+        WHERE a.id=$1
+        GROUP BY a.id`,
+      [attemptId],
+    );
+    expect(persisted.rows[0]).toMatchObject({
+      status: 'blocked',
+      event_count: 1,
+      gate_verdict: 'deny:BLOCKED',
+      event_generation: '0',
+    });
+    expect(persisted.rows[0].result).toEqual(result);
+  });
+
+  it('R11 rejects stale generation without mutating attempt or decision log', async () => {
+    const run = await seedRun();
+    const attemptId = await seedCallbackAttempt(run.runId, { leaseGeneration: 2 });
+    const store = createAttemptStore(testPool);
+
+    await expect(store.recordCallbackTerminal({
+      attemptId,
+      runId: run.runId,
+      leaseOwner: LEASE_OWNER,
+      leaseGeneration: 1,
+      result: {
+        contract_version: '1.0',
+        attempt_id: attemptId,
+        status: 'completed',
+        summary: 'late worker',
+        artifacts: [],
+        checks: [],
+        decision: null,
+        error: null,
+        provider_metadata: { provider: 'codex' },
+      },
+    })).resolves.toMatchObject({
+      attempt: null,
+      deduped: false,
+      conflict: 'lease_generation_mismatch',
+    });
+
+    expect((await testPool.query(
+      'SELECT status, result FROM harness_attempts WHERE id=$1',
+      [attemptId],
+    )).rows[0]).toMatchObject({ status: 'running', result: null });
+    expect((await testPool.query(
+      `SELECT COUNT(*)::int AS count
+         FROM orchestrator_decision_log
+        WHERE run_id=$1 AND action='verdict:attempt_callback'`,
+      [run.runId],
+    )).rows[0].count).toBe(0);
+  });
+
+  it('R9 projects needs_context from the real callback event into a PR-independent pause', async () => {
+    const run = await seedRun();
+    await testPool.query('UPDATE initiative_runs SET pr_url=NULL WHERE id=$1', [run.runId]);
+    await appendLog(run.runId, { hop: 1, action: 'spawn:generator', phase: 'generate' });
+    const attemptId = await seedCallbackAttempt(run.runId, { hop: 1 });
+    await createAttemptStore(testPool).recordCallbackTerminal({
+      attemptId,
+      runId: run.runId,
+      leaseOwner: LEASE_OWNER,
+      leaseGeneration: 0,
+      result: {
+        contract_version: '1.0',
+        attempt_id: attemptId,
+        status: 'needs_context',
+        summary: 'Owner must answer a contract exception.',
+        artifacts: [],
+        checks: [],
+        decision: null,
+        error: null,
+        failure_class: 'needs_context',
+        provider_metadata: { provider: 'codex' },
+      },
+    });
+
+    const observed = await collect(run);
+    const counters = deriveCounters(observed.decisionLog, {
+      proposeBranchMaxRn: observed.proposeBranchRn,
+    });
+    expect(derive({
+      ...observed,
+      counters: { ...counters, ganCostUsd: 0 },
+    })).toEqual({
+      phase: 'paused',
+      action: 'pause_run',
+      reason: 'callback_needs_context',
+    });
+
+    const paused = await runLoop({
+      ...loopDeps(),
+      sleep: async () => {},
+    }, { taskId: run.taskId, runId: run.runId });
+    expect(paused.exitReason).toBe('callback_needs_context');
+    const requestRow = (await testPool.query(
+      `SELECT hop, detail
+         FROM orchestrator_decision_log
+        WHERE run_id=$1
+          AND action='effect:context_requested'`,
+      [run.runId],
+    )).rows[0];
+    expect(requestRow.detail).toMatchObject({
+      callback_hop: 2,
+      resume_phase: 'generate',
+    });
+    expect((await testPool.query(
+      'SELECT phase FROM initiative_runs WHERE id=$1',
+      [run.runId],
+    )).rows[0].phase).toBe('paused');
+
+    const originalToken = process.env.HARNESS_REVIEW_APPROVER_TOKEN;
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+    try {
+      const app = express();
+      app.use(express.json());
+      app.set('pool', testPool);
+      app.use('/kernel-reviews', approvalRouter);
+      const response = await request(app)
+        .post(`/kernel-reviews/${run.runId}/context`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: run.taskId,
+          context_request_hop: requestRow.hop,
+          context_version: requestRow.detail.context_version,
+          answer: 'Use the approved contract rollback policy.',
+          approved_by: 'kernel-pg-owner',
+        });
+      expect(response.status).toBe(202);
+    } finally {
+      if (originalToken === undefined) delete process.env.HARNESS_REVIEW_APPROVER_TOKEN;
+      else process.env.HARNESS_REVIEW_APPROVER_TOKEN = originalToken;
+    }
+
+    const resumed = await collect(run);
+    const resumedCounters = deriveCounters(resumed.decisionLog, {
+      proposeBranchMaxRn: resumed.proposeBranchRn,
+    });
+    expect(derive({
+      ...resumed,
+      counters: { ...resumedCounters, ganCostUsd: 0 },
+    })).toEqual({
+      phase: 'generate',
+      action: 'spawn:generator-fix',
+      reason: 'no_pr',
+    });
+  });
+
+  it('R10 stops the second real unknown_no_pr callback before a third attempt', async () => {
+    const run = await seedRun();
+    await testPool.query('UPDATE initiative_runs SET pr_url=NULL WHERE id=$1', [run.runId]);
+    const store = createAttemptStore(testPool);
+    const resultFor = (attemptId) => ({
+      contract_version: '1.0',
+      attempt_id: attemptId,
+      status: 'completed',
+      summary: 'Generator exited without a pull request.',
+      artifacts: [],
+      checks: [],
+      decision: null,
+      error: null,
+      provider_metadata: { provider: 'codex' },
+    });
+
+    await appendLog(run.runId, { hop: 1, action: 'spawn:generator', phase: 'generate' });
+    const firstAttemptId = await seedCallbackAttempt(run.runId, { hop: 1 });
+    await store.recordCallbackTerminal({
+      attemptId: firstAttemptId,
+      runId: run.runId,
+      leaseOwner: LEASE_OWNER,
+      leaseGeneration: 0,
+      result: resultFor(firstAttemptId),
+    });
+    await appendLog(run.runId, {
+      hop: 3,
+      action: 'spawn:generator-fix',
+      phase: 'generate',
+    });
+    const secondAttemptId = await seedCallbackAttempt(run.runId, { hop: 3 });
+    await store.recordCallbackTerminal({
+      attemptId: secondAttemptId,
+      runId: run.runId,
+      leaseOwner: LEASE_OWNER,
+      leaseGeneration: 0,
+      result: resultFor(secondAttemptId),
+    });
+
+    const observed = await collect(run);
+    const counters = deriveCounters(observed.decisionLog, {
+      proposeBranchMaxRn: observed.proposeBranchRn,
+    });
+    expect(derive({
+      ...observed,
+      counters: { ...counters, ganCostUsd: 0 },
+    })).toEqual({
+      phase: 'failed',
+      action: 'mark_failed',
+      reason: 'repeated_unknown_no_pr',
+    });
+  });
+
+  it('rolls back the attempt terminal write when callback event insertion fails', async () => {
+    const run = await seedRun();
+    const attemptId = await seedCallbackAttempt(run.runId);
+    await testPool.query(`
+      CREATE OR REPLACE FUNCTION kernel_test_reject_attempt_callback()
+      RETURNS trigger AS $$
+      BEGIN
+        IF NEW.action = 'verdict:attempt_callback' THEN
+          RAISE EXCEPTION 'forced callback event failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER kernel_test_reject_attempt_callback
+        BEFORE INSERT ON orchestrator_decision_log
+        FOR EACH ROW EXECUTE FUNCTION kernel_test_reject_attempt_callback()
+    `);
+
+    try {
+      await expect(createAttemptStore(testPool).recordCallbackTerminal({
+        attemptId,
+        runId: run.runId,
+        leaseOwner: LEASE_OWNER,
+        leaseGeneration: 0,
+        result: {
+          contract_version: '1.0',
+          attempt_id: attemptId,
+          status: 'completed',
+          summary: 'must roll back',
+          artifacts: [],
+          checks: [],
+          decision: null,
+          error: null,
+          provider_metadata: { provider: 'codex' },
+        },
+      })).rejects.toThrow(/forced callback event failure/);
+    } finally {
+      await testPool.query(
+        'DROP TRIGGER IF EXISTS kernel_test_reject_attempt_callback ON orchestrator_decision_log',
+      );
+    }
+
+    expect((await testPool.query(
+      'SELECT status, result FROM harness_attempts WHERE id=$1',
+      [attemptId],
+    )).rows[0]).toMatchObject({ status: 'running', result: null });
   });
 });
 

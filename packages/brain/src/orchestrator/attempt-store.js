@@ -5,6 +5,10 @@
  * 在同一事务中推进 event_version 并投影 lifecycle event；这里不得双写
  * harness_run_events，也不得把 task_bundle/result/error_message 投影进去。
  */
+import { isDeepStrictEqual } from 'node:util';
+
+import { normalizeFailureSignature } from './convergence-signatures.js';
+
 const TERMINAL_STATUSES = [
   'completed',
   'completed_with_concerns',
@@ -23,6 +27,195 @@ const SUCCESS_TERMINAL_STATUSES = new Set([
 
 const TERMINAL_SQL = TERMINAL_STATUSES.map((status) => `'${status}'`).join(',');
 const DERIVED_TIME_ROLES = new Set(['judge', 'reporter']);
+
+function callbackGateVerdict(result) {
+  switch (result.status) {
+    case 'completed':
+      return 'allow';
+    case 'completed_with_concerns':
+      return 'allow:concerns';
+    case 'needs_context':
+      return 'deny:NEEDS_CONTEXT';
+    case 'blocked':
+      return 'deny:BLOCKED';
+    case 'failed':
+      return result.failure_class === 'semantic_refusal'
+        ? 'deny:SEMANTIC_REFUSAL'
+        : 'deny:FAILED';
+    case 'cancelled':
+      return 'deny:CANCELLED';
+    default:
+      throw new Error(`invalid callback terminal status: ${result.status}`);
+  }
+}
+
+function callbackError(result) {
+  if (typeof result.error === 'string') {
+    return { code: 'provider_failed', message: result.error };
+  }
+  return {
+    code: result.error?.code ?? null,
+    message: result.error?.message ?? null,
+  };
+}
+
+function callbackEventDetail(attempt, result, leaseGeneration) {
+  const failureSignature = normalizeFailureSignature(
+    result.failure_signature ?? result.decision?.failure_signature,
+  );
+  return {
+    run_id: attempt.run_id,
+    attempt_id: attempt.id,
+    lease_owner: attempt.lease_owner,
+    lease_generation: leaseGeneration,
+    role: attempt.role,
+    hop: attempt.hop,
+    status: result.status,
+    summary: result.summary ?? '',
+    context_question: result.decision?.reason ?? result.summary ?? null,
+    failure_class: result.failure_class ?? null,
+    ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
+    artifacts: result.artifacts ?? [],
+  };
+}
+
+function attemptTaskBundle(attempt) {
+  if (attempt?.task_bundle && typeof attempt.task_bundle === 'object') {
+    return attempt.task_bundle;
+  }
+  if (typeof attempt?.task_bundle !== 'string') return {};
+  try {
+    return JSON.parse(attempt.task_bundle);
+  } catch {
+    return {};
+  }
+}
+
+function normalizeRoleVerdict(role, outcome) {
+  const value = String(outcome ?? '').trim().toUpperCase();
+  if (role === 'reviewer') {
+    return ['PASS', 'APPROVED'].includes(value) ? 'APPROVED' : 'REVISION_REQUESTED';
+  }
+  if (role === 'evaluator') {
+    return value === 'FIXED' ? 'FIXED' : (value === 'PASS' ? 'PASS' : 'FAIL');
+  }
+  return value;
+}
+
+function callbackRoleVerdictProjection(attempt, result) {
+  if (attempt.role === 'commander') {
+    if (result.status !== 'completed' || !result.decision) return null;
+    return {
+      action: 'commander.directive_proposed',
+      observed: {
+        commander_attempt_id: attempt.id,
+        event_cursor: result.decision.event_cursor,
+      },
+      phase: attempt.phase,
+      gateVerdict: null,
+      detail: {
+        attempt_id: attempt.id,
+        directive: result.decision,
+      },
+    };
+  }
+  if (!result.decision || !['reviewer', 'evaluator'].includes(attempt.role)) return null;
+  if (!['completed', 'completed_with_concerns'].includes(result.status)) return null;
+
+  const inputs = attemptTaskBundle(attempt).inputs ?? {};
+  const verdict = normalizeRoleVerdict(attempt.role, result.decision.outcome);
+  const failureSignature = normalizeFailureSignature(result.decision.failure_signature);
+  const detail = attempt.role === 'reviewer'
+    ? {
+        attempt_id: attempt.id,
+        verdict,
+        rn: inputs.contract_round ?? null,
+        contract_sha: inputs.contract_sha ?? null,
+        feedback: result.decision.reason,
+      }
+    : {
+        attempt_id: attempt.id,
+        verdict,
+        pr_head_sha: inputs.pull_request?.head_sha ?? null,
+        failure_class: result.decision.failure_class ?? null,
+        ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
+        feedback: result.decision.reason,
+      };
+  const allowed = ['APPROVED', 'PASS', 'FIXED'].includes(verdict);
+  return {
+    action: attempt.role === 'reviewer' ? 'verdict:reviewer' : 'verdict:evaluate',
+    observed: { attempt_id: attempt.id, role: attempt.role },
+    phase: attempt.role === 'reviewer' ? 'gan' : 'evaluate',
+    gateVerdict: allowed ? 'allow' : `deny:${verdict.toLowerCase()}`,
+    detail,
+  };
+}
+
+function verifiedPullRequestArtifact(attempt, result) {
+  if (attempt.role !== 'generator') return null;
+  return (result.artifacts ?? []).find((artifact) => (
+    artifact?.type === 'pull_request'
+    && artifact.verification_status === 'verified'
+    && typeof artifact.url === 'string'
+    && typeof artifact.head_sha === 'string'
+  )) ?? null;
+}
+
+async function appendGeneratorFixProjection(client, attempt, result, pullRequest) {
+  if (attempt.role !== 'generator' || pullRequest == null) return;
+  if (!['completed', 'completed_with_concerns'].includes(result.status)) return;
+
+  const context = firstRow(await client.query(
+    `SELECT observed->>'trigger_sha' AS trigger_sha
+       FROM orchestrator_decision_log
+      WHERE run_id=$1::uuid
+        AND hop=$2
+        AND action='spawn:generator-fix'
+      LIMIT 1`,
+    [attempt.run_id, attempt.hop],
+  ));
+  if (!context) return;
+
+  const observed = {
+    attempt_id: attempt.id,
+    trigger_hop: attempt.hop,
+    pr_head_sha: pullRequest.head_sha,
+    provider: result.provider_metadata?.provider ?? attempt.provider ?? null,
+  };
+  const detail = {
+    attempt_id: attempt.id,
+    pr_head_sha: pullRequest.head_sha,
+    status: result.status,
+    verification_status: 'verified',
+    trigger_sha: context.trigger_sha ?? null,
+  };
+  await client.query(
+    `WITH next_hop AS (
+       SELECT COALESCE(MAX(hop), 0) + 1 AS hop
+         FROM orchestrator_decision_log
+        WHERE run_id=$1::uuid
+     )
+     INSERT INTO orchestrator_decision_log
+       (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+     SELECT $1::uuid, next_hop.hop, $2::jsonb, 'generate', 'allow',
+            'verdict:generator-fix-callback', $3::jsonb
+       FROM next_hop
+      WHERE NOT EXISTS (
+        SELECT 1
+          FROM orchestrator_decision_log
+         WHERE run_id=$1::uuid
+           AND action='verdict:generator-fix-callback'
+           AND detail->>'attempt_id'=$4::text
+      )
+     RETURNING hop`,
+    [
+      attempt.run_id,
+      JSON.stringify(observed),
+      JSON.stringify(detail),
+      attempt.id,
+    ],
+  );
+}
 
 function firstRow(queryResult) {
   return queryResult.rows?.[0] ?? null;
@@ -289,6 +482,201 @@ export function createAttemptStore(pool) {
       return { attempt, deduped: attempt === null };
     },
 
+    /**
+     * Authoritative callback boundary. The Attempt terminal projection and the
+     * append-only callback event either commit together or not at all.
+     */
+    async recordCallbackTerminal({
+      attemptId,
+      runId,
+      leaseOwner,
+      leaseGeneration,
+      result,
+    }) {
+      if (typeof pool.connect !== 'function') {
+        throw new Error('recordCallbackTerminal requires a transactional PostgreSQL pool');
+      }
+      if (!Number.isInteger(leaseGeneration) || leaseGeneration < 0) {
+        throw new Error('recordCallbackTerminal requires leaseGeneration');
+      }
+      const gateVerdict = callbackGateVerdict(result);
+      const client = await pool.connect();
+      let transactionOpen = false;
+      const rollbackConflict = async (conflict) => {
+        await client.query('ROLLBACK');
+        transactionOpen = false;
+        return { attempt: null, deduped: false, conflict };
+      };
+      try {
+        await client.query('BEGIN');
+        transactionOpen = true;
+        const attempt = firstRow(await client.query(
+          `SELECT *
+             FROM harness_attempts
+            WHERE id=$1 AND run_id=$2
+            FOR UPDATE`,
+          [attemptId, runId],
+        ));
+        if (!attempt) return await rollbackConflict('attempt_identity_mismatch');
+        if (attempt.lease_owner !== leaseOwner) {
+          return await rollbackConflict('lease_owner_mismatch');
+        }
+        if (attempt.lease_generation !== leaseGeneration) {
+          return await rollbackConflict('lease_generation_mismatch');
+        }
+
+        const isTerminal = TERMINAL_STATUSES.includes(attempt.status);
+        const exactDuplicate = isTerminal
+          && attempt.status === result.status
+          && isDeepStrictEqual(attempt.result, result);
+        if (isTerminal && !exactDuplicate) {
+          return await rollbackConflict('terminal_payload_conflict');
+        }
+
+        let terminalAttempt = attempt;
+        if (!isTerminal) {
+          const error = callbackError(result);
+          terminalAttempt = firstRow(await client.query(
+            `UPDATE harness_attempts
+                SET status=$5,
+                    result=$6::jsonb,
+                    provider_session_id=COALESCE($7, provider_session_id),
+                    failure_class=$8,
+                    error_code=$9,
+                    error_message=$10,
+                    completed_at=NOW(),
+                    lease_expires_at=NULL,
+                    updated_at=NOW()
+              WHERE id=$1
+                AND run_id=$2
+                AND lease_owner=$3
+                AND lease_generation=$4
+                AND status NOT IN (${TERMINAL_SQL})
+              RETURNING *`,
+            [
+              attemptId,
+              runId,
+              leaseOwner,
+              leaseGeneration,
+              result.status,
+              JSON.stringify(result),
+              result.provider_metadata?.session_id ?? null,
+              result.failure_class ?? null,
+              error.code,
+              error.message,
+            ],
+          ));
+          if (!terminalAttempt) {
+            return await rollbackConflict('attempt_changed_before_terminal_write');
+          }
+        }
+
+        const detail = callbackEventDetail(terminalAttempt, result, leaseGeneration);
+        await client.query(
+          `WITH lock AS (
+             SELECT pg_advisory_xact_lock(hashtext($1::text))
+           ), next_hop AS (
+             SELECT COALESCE(MAX(hop), 0) + 1 AS hop
+               FROM orchestrator_decision_log
+              WHERE run_id=$1::uuid
+           )
+           INSERT INTO orchestrator_decision_log
+             (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+           SELECT $1::uuid, next_hop.hop, $2::jsonb, $3, $4,
+                  'verdict:attempt_callback', $5::jsonb
+             FROM lock, next_hop
+            WHERE NOT EXISTS (
+              SELECT 1
+                FROM orchestrator_decision_log
+               WHERE run_id=$1::uuid
+                 AND action='verdict:attempt_callback'
+                 AND detail->>'attempt_id'=$6::text
+            )
+           RETURNING hop`,
+          [
+            runId,
+            JSON.stringify({
+              attempt_id: attemptId,
+              role: terminalAttempt.role,
+              status: result.status,
+            }),
+            terminalAttempt.phase,
+            gateVerdict,
+            JSON.stringify(detail),
+            attemptId,
+          ],
+        );
+
+        // All role-specific projections were committed with the first terminal
+        // write. An exact retry only confirms the generic callback receipt; it
+        // must never replay mutable projections into a run that advanced.
+        if (!isTerminal) {
+          const roleProjection = callbackRoleVerdictProjection(terminalAttempt, result);
+          if (roleProjection) {
+            await client.query(
+              `WITH next_hop AS (
+                 SELECT COALESCE(MAX(hop), 0) + 1 AS hop
+                   FROM orchestrator_decision_log
+                  WHERE run_id=$1::uuid
+               )
+               INSERT INTO orchestrator_decision_log
+                 (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+               SELECT $1::uuid, next_hop.hop, $2::jsonb, $3, $4, $5, $6::jsonb
+                 FROM next_hop
+                WHERE NOT EXISTS (
+                  SELECT 1
+                    FROM orchestrator_decision_log
+                   WHERE run_id=$1::uuid
+                     AND action=$5
+                     AND detail->>'attempt_id'=$7::text
+                )
+               RETURNING hop`,
+              [
+                runId,
+                JSON.stringify(roleProjection.observed),
+                roleProjection.phase,
+                roleProjection.gateVerdict,
+                roleProjection.action,
+                JSON.stringify(roleProjection.detail),
+                attemptId,
+              ],
+            );
+          }
+
+          const pullRequest = verifiedPullRequestArtifact(terminalAttempt, result);
+          await appendGeneratorFixProjection(client, terminalAttempt, result, pullRequest);
+          if (pullRequest) {
+            const projection = await client.query(
+              `UPDATE initiative_runs
+                  SET pr_url=$2, updated_at=NOW()
+                WHERE id=$1
+                  AND phase NOT IN ('done', 'failed')
+                RETURNING id`,
+              [runId, pullRequest.url],
+            );
+            if (!firstRow(projection)) {
+              throw new Error(`generator PR projection lost run authority: ${runId}`);
+            }
+          }
+        }
+
+        await client.query('COMMIT');
+        transactionOpen = false;
+        return { attempt: terminalAttempt, deduped: exactDuplicate };
+      } catch (error) {
+        if (transactionOpen) {
+          try {
+            await client.query('ROLLBACK');
+          } catch {
+            // Preserve the authoritative persistence failure.
+          }
+        }
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
     async getById(id) {
       return firstRow(await pool.query('SELECT * FROM harness_attempts WHERE id=$1', [id]));
     },
@@ -337,7 +725,12 @@ export function createAttemptStore(pool) {
       const result = await pool.query(
         `SELECT provider, account_id, requested_machine_id
            FROM harness_attempts
-          WHERE run_id=$1 AND role=$2 AND status IN ('failed','cancelled')
+          WHERE run_id=$1
+            AND role=$2
+            AND (
+              status IN ('failed','cancelled')
+              OR (status='blocked' AND failure_class='infrastructure_blocked')
+            )
           ORDER BY hop`,
         [runId, role],
       );

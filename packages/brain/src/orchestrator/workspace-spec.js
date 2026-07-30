@@ -50,6 +50,7 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
   }
 
   return async function resolveWorkspaceSpec({
+    action,
     role,
     readOnly,
     attemptId,
@@ -66,16 +67,29 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
     }
 
     const inputs = bundle?.inputs ?? {};
-    const immutableRoleSha = role === 'reviewer'
-      ? inputs.contract_sha
-      : (role === 'evaluator' || role === 'judge')
-        ? inputs.pr_head_sha
-        : null;
+    const generatorFix = action === 'spawn:generator-fix';
+    if (
+      generatorFix
+      && (
+        typeof inputs.pr_branch !== 'string'
+        || typeof inputs.pr_head_sha !== 'string'
+      )
+    ) {
+      throw new Error('generator_fix_workspace_evidence_missing');
+    }
+    const immutableRoleSha = generatorFix
+      ? inputs.pr_head_sha
+      : role === 'reviewer'
+        ? inputs.contract_sha
+        : (role === 'evaluator' || role === 'judge')
+          ? inputs.pr_head_sha
+          : null;
     const baseSha = immutableRoleSha
       ?? payload.base_sha
       ?? await resolveRepoHead(repo);
     const branch = (
-      (role === 'evaluator' || role === 'judge' ? inputs.pr_branch : null)
+      (generatorFix ? inputs.pr_branch : null)
+      ?? (role === 'evaluator' || role === 'judge' ? inputs.pr_branch : null)
       ?? (role === 'reviewer' ? inputs.contract_branch : null)
       ?? inputs.propose_branch
       ?? payload.branch_name

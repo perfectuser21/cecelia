@@ -51,11 +51,17 @@ const CANONICAL_MACHINE_IDS = new Set([
 
 /** 解析 --task-id / --run-id / --dry-run */
 export function parseArgs(argv) {
-  const args = { taskId: null, runId: null, dryRun: false };
+  const args = {
+    taskId: null,
+    runId: null,
+    resumeToken: null,
+    dryRun: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--task-id') args.taskId = argv[++i];
     else if (a === '--run-id') args.runId = argv[++i];
+    else if (a === '--resume-token') args.resumeToken = argv[++i];
     else if (a === '--dry-run') args.dryRun = true;
   }
   if (!args.taskId) {
@@ -310,10 +316,20 @@ export async function buildRealDeps(overrides = {}) {
 }
 
 async function main() {
-  const { taskId, runId, dryRun } = parseArgs(process.argv.slice(2));
+  const {
+    taskId,
+    runId,
+    resumeToken,
+    dryRun,
+  } = parseArgs(process.argv.slice(2));
   const deps = await buildRealDeps();
   try {
-    const result = await runLoop(deps, { taskId, runId, dryRun });
+    const result = await runLoop(deps, {
+      taskId,
+      runId,
+      resumeToken,
+      dryRun,
+    });
     console.log(`[orchestrator] exit: ${result.exitReason} (hops=${result.hops})`);
     process.exitCode = result.exitReason === 'singleton_conflict' ? 2 : 0;
   } finally {

@@ -28,6 +28,314 @@ function poolWith(...results) {
 }
 
 describe('attempt store', () => {
+  it('R8/R12: callback terminal write and one standard event share a transaction', async () => {
+    const callbackResult = {
+      status: 'blocked',
+      summary: 'fleet transport unavailable',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+      failure_class: 'infrastructure_blocked',
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'generate',
+      role: 'generator',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      result: null,
+    };
+    const completed = { ...running, status: 'blocked', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = {
+      query: vi.fn(),
+      connect: vi.fn(async () => client),
+    };
+
+    await expect(createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    })).resolves.toMatchObject({ attempt: completed, deduped: false });
+
+    expect(client.query.mock.calls[0][0]).toBe('BEGIN');
+    expect(client.query.mock.calls[1][0]).toMatch(/FOR UPDATE/i);
+    expect(client.query.mock.calls[2][0]).toMatch(
+      /lease_generation.*status NOT IN/is,
+    );
+    expect(client.query.mock.calls[3][0]).toMatch(
+      /verdict:attempt_callback/i,
+    );
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('commits reviewer verdict in the same transaction as its successful callback', async () => {
+    const callbackResult = {
+      status: 'completed',
+      summary: 'contract approved',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+      decision: { outcome: 'APPROVED', reason: 'contract covers the PRD' },
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      task_bundle: {
+        inputs: { contract_round: 2, contract_sha: 'a'.repeat(40) },
+      },
+      result: null,
+    };
+    const completed = { ...running, status: 'completed', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 5 }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    expect(client.query.mock.calls[3][0]).toMatch(/verdict:attempt_callback/i);
+    expect(client.query.mock.calls[4][0]).toMatch(/action=\$5/i);
+    expect(client.query.mock.calls[4][1]).toContain('verdict:reviewer');
+    expect(client.query.mock.calls[4][1].join(' ')).toContain('a'.repeat(40));
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
+  it('projects only a verified generator pull request before callback commit', async () => {
+    const verifiedSha = 'b'.repeat(40);
+    const callbackResult = {
+      status: 'completed',
+      summary: 'pull request opened',
+      artifacts: [{
+        type: 'pull_request',
+        url: 'https://github.com/acme/repo/pull/42',
+        head_sha: verifiedSha,
+        verification_status: 'verified',
+      }],
+      provider_metadata: { provider: 'codex' },
+      decision: null,
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'generate',
+      role: 'generator',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      result: null,
+    };
+    const completed = { ...running, status: 'completed', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ id: input.runId }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    expect(client.query.mock.calls[5][0]).toMatch(
+      /UPDATE initiative_runs[\s\S]*pr_url=\$2/i,
+    );
+    expect(client.query.mock.calls[5][1]).toEqual([
+      input.runId,
+      'https://github.com/acme/repo/pull/42',
+    ]);
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
+  it('commits a verified generator-fix verdict and PR projection atomically', async () => {
+    const verifiedSha = 'c'.repeat(40);
+    const callbackResult = {
+      status: 'completed',
+      summary: 'fix pushed',
+      artifacts: [{
+        type: 'pull_request',
+        url: 'https://github.com/acme/repo/pull/42',
+        head_sha: verifiedSha,
+        verification_status: 'verified',
+      }],
+      provider_metadata: { provider: 'codex' },
+      decision: null,
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'generate',
+      role: 'generator',
+      provider: 'codex',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      result: null,
+    };
+    const completed = { ...running, status: 'completed', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ trigger_sha: 'a'.repeat(40) }] })
+        .mockResolvedValueOnce({ rows: [{ hop: 5 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ id: input.runId }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    expect(client.query.mock.calls[5][0]).toMatch(/verdict:generator-fix-callback/i);
+    expect(client.query.mock.calls[5][1].join(' ')).toContain(verifiedSha);
+    expect(client.query.mock.calls[6][0]).toMatch(/UPDATE initiative_runs/i);
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
+  it('an exact terminal retry never reprojects a PR into a now-terminal run', async () => {
+    const callbackResult = {
+      status: 'completed',
+      summary: 'pull request opened',
+      artifacts: [{
+        type: 'pull_request',
+        url: 'https://github.com/acme/repo/pull/42',
+        head_sha: 'c'.repeat(40),
+        verification_status: 'verified',
+      }],
+      provider_metadata: {
+        provider: 'codex',
+        server_callback_claim_digest: 'sha256:claim',
+      },
+      decision: null,
+    };
+    const terminal = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'generate',
+      role: 'generator',
+      status: 'completed',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      result: callbackResult,
+    };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [terminal] })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    const outcome = await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    expect(outcome).toMatchObject({ deduped: true });
+    expect(client.query.mock.calls.some(([sql]) => /UPDATE initiative_runs/i.test(sql))).toBe(false);
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
+  it('R11: stale callback generation rolls back without terminal or decision writes', async () => {
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({
+          rows: [{
+            id: input.id,
+            run_id: input.runId,
+            status: 'running',
+            lease_owner: 'brain-1',
+            lease_generation: 4,
+          }],
+        })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await expect(createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: {
+        status: 'completed',
+        summary: 'stale',
+        artifacts: [],
+        provider_metadata: { provider: 'codex' },
+      },
+    })).resolves.toMatchObject({
+      attempt: null,
+      deduped: false,
+      conflict: 'lease_generation_mismatch',
+    });
+
+    expect(client.query.mock.calls.map(([sql]) => sql)).toEqual([
+      'BEGIN',
+      expect.stringMatching(/FOR UPDATE/i),
+      'ROLLBACK',
+    ]);
+  });
+
   it('按 run/hop 幂等创建 attempt，并持久化冻结 Skill 元数据', async () => {
     const pool = poolWith({
       rows: [{
@@ -357,7 +665,7 @@ describe('attempt store', () => {
     ]);
     expect(pool.query).toHaveBeenCalledWith(
       expect.stringMatching(
-        /WHERE run_id=\$1 AND role=\$2 AND status IN \('failed','cancelled'\)\s+ORDER BY hop/i,
+        /status IN \('failed','cancelled'\).*OR.*status='blocked'.*failure_class='infrastructure_blocked'/is,
       ),
       [input.runId, 'generator'],
     );

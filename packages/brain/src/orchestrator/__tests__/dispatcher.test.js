@@ -188,7 +188,7 @@ describe('createDispatcher', () => {
       };
     });
 
-    await createDispatcher(deps)('spawn:commander', {
+    const result = await createDispatcher(deps)('spawn:commander', {
       taskId,
       runId,
       hop: 12,
@@ -243,6 +243,13 @@ describe('createDispatcher', () => {
         machine: 'us-mac-m4',
       }],
     }));
+    expect(result).toMatchObject({
+      status: 'LAUNCHED',
+      run_id: runId,
+      attempt_id: attemptId,
+      lease_generation: 0,
+      provider: 'codex',
+    });
   });
 
   it('keeps one failover retry on the declared fallback lineage with a fresh session', async () => {
@@ -435,7 +442,7 @@ describe('createDispatcher', () => {
       hop: 2,
       observed,
       decision: { phase: 'gan', reason: 'awaiting_review' },
-    })).resolves.toMatchObject({ status: 'DONE', attemptId });
+    })).resolves.toMatchObject({ status: 'LAUNCHED', attempt_id: attemptId });
 
     expect(deps.resolveWorkspaceSpec).toHaveBeenCalledWith(expect.objectContaining({
       role: 'reviewer',
@@ -577,7 +584,7 @@ describe('createDispatcher', () => {
       'launcher.launch',
       'attempt.receipt',
     ]);
-    expect(result).toMatchObject({ status: 'DONE', attemptId, provider: 'codex' });
+    expect(result).toMatchObject({ status: 'LAUNCHED', attempt_id: attemptId, provider: 'codex' });
     expect(deps.attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
       callbackSecretHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     }));
@@ -650,6 +657,42 @@ describe('createDispatcher', () => {
     const created = deps.attemptStore.createAttempt.mock.calls[0][0];
     expect(created.bundle.inputs).toMatchObject({
       contract_branch: 'cp-harness-propose-r2-aaaaaaaa-a6',
+    });
+  });
+
+  it('恢复 Attempt 只接收与 callback hop/version 绑定的人类上下文', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:generator-fix', {
+      taskId,
+      runId,
+      hop: 12,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-harness-propose-r2-aaaaaaaa-a6' },
+        },
+        decisionLog: [{
+          hop: 11,
+          action: 'verdict:context_answer',
+          detail: {
+            callback_hop: 9,
+            context_request_hop: 10,
+            context_version: 'context-v1:9:attempt-9',
+            answer: 'Preserve the current release policy.',
+          },
+        }],
+      },
+      decision: { phase: 'generate', reason: 'no_pr' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.human_context).toEqual({
+      callback_hop: 9,
+      context_request_hop: 10,
+      context_version: 'context-v1:9:attempt-9',
+      answer: 'Preserve the current release policy.',
     });
   });
 
@@ -996,8 +1039,8 @@ describe('createDispatcher', () => {
       observed: recoveryObserved,
       decision: { phase: 'generate' },
     })).resolves.toMatchObject({
-      status: 'DONE',
-      attemptId: secondAttemptId,
+      status: 'LAUNCHED',
+      attempt_id: secondAttemptId,
     });
 
     expect(deps.attemptStore.createAttempt.mock.calls.map(([created]) => ({
@@ -1075,8 +1118,8 @@ describe('createDispatcher', () => {
       },
       decision: { phase: 'generate' },
     })).resolves.toMatchObject({
-      status: 'DONE',
-      attemptId,
+      status: 'LAUNCHED',
+      attempt_id: attemptId,
     });
 
     expect(deps.attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
@@ -1877,6 +1920,7 @@ describe('createDetachedLauncher', () => {
         CODEX_HOME: '/home/cecelia/.codex',
         HARNESS_MODEL: 'configured-model',
         HARNESS_LEASE_OWNER: expect.any(String),
+        HARNESS_LEASE_GENERATION: '0',
         HARNESS_ATTEMPT_ID: attemptId,
         HARNESS_CALLBACK_TOKEN: 'attempt-secret',
         HARNESS_RUN_ID: runId,

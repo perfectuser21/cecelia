@@ -274,13 +274,74 @@ async function markRunFailed(deps, runId, taskId, reason) {
   });
 }
 
-async function markRunPaused(pool, runId) {
+async function markRunPaused(pool, runId, observed) {
+  const callback = [...(observed.decisionLog ?? [])]
+    .sort((a, b) => Number(b.hop) - Number(a.hop))
+    .find((row) => (
+      row.action === LOG_ACTION.ATTEMPT_CALLBACK
+      && (asStructuredJson(row.detail) ?? {}).status === 'needs_context'
+    ));
+  if (!callback) {
+    throw new Error(`needs_context callback missing for run ${runId}`);
+  }
+  const callbackDetail = asStructuredJson(callback.detail) ?? {};
+  const callbackHop = Number(callback.hop);
+  const contextVersion = `context-v1:${callbackHop}:${callbackDetail.attempt_id}`;
+  const resumePhase = callback.derived_phase ?? observed.run.phase;
   await pool.query(
-    `UPDATE initiative_runs
+    `WITH lock AS (
+       SELECT pg_advisory_xact_lock(hashtext($1::text))
+     ), callback AS (
+       SELECT hop
+         FROM orchestrator_decision_log
+        WHERE run_id=$1::uuid
+          AND hop=$2
+          AND action='verdict:attempt_callback'
+          AND detail->>'status'='needs_context'
+     ), next_hop AS (
+       SELECT COALESCE(MAX(log.hop), 0) + 1 AS hop
+         FROM lock
+         LEFT JOIN orchestrator_decision_log log
+           ON log.run_id=$1::uuid
+     ), request AS (
+       INSERT INTO orchestrator_decision_log
+         (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+       SELECT $1::uuid, next_hop.hop, $3::jsonb, 'paused', NULL,
+              'effect:context_requested', $4::jsonb
+         FROM lock, callback, next_hop
+        WHERE NOT EXISTS (
+          SELECT 1
+            FROM orchestrator_decision_log
+           WHERE run_id=$1::uuid
+             AND action='effect:context_requested'
+             AND detail->>'callback_hop'=$2::text
+        )
+       RETURNING hop
+     )
+     UPDATE initiative_runs
         SET phase = 'paused', updated_at = NOW()
-      WHERE id = $1
-        AND phase NOT IN ('done', 'failed')`,
-    [runId],
+      WHERE id = $1::uuid
+        AND phase NOT IN ('done', 'failed')
+        AND EXISTS (SELECT 1 FROM callback)
+      RETURNING id`,
+    [
+      runId,
+      callbackHop,
+      JSON.stringify({
+        callback_hop: callbackHop,
+        attempt_id: callbackDetail.attempt_id ?? null,
+        role: callbackDetail.role ?? null,
+      }),
+      JSON.stringify({
+        callback_hop: callbackHop,
+        context_version: contextVersion,
+        resume_phase: resumePhase,
+        question: callbackDetail.context_question
+          ?? callbackDetail.summary
+          ?? callbackDetail.failure_class
+          ?? 'context required',
+      }),
+    ],
   );
 }
 
@@ -319,12 +380,73 @@ async function loadRunDeadlineState(pool, runId) {
   };
 }
 
+const CONTEXT_RESUME_PHASE_SQL = "'planning','gan','generate','evaluate','review','merge'";
+
+/**
+ * Child-side startup fence for a needs_context recovery. The new Controller
+ * may not collect ground truth or dispatch until its one-use token atomically
+ * publishes the latest answered request's resume phase and its real liveness
+ * receipt.
+ */
+export async function activateContextResume(pool, {
+  runId,
+  resumeToken,
+  host,
+  pid,
+  now,
+}) {
+  const claimHost = `context-resume:${resumeToken}`;
+  const result = await pool.query(
+    `WITH latest_request AS (
+       SELECT request.hop, request.detail, $2::text AS resume_token
+         FROM orchestrator_decision_log request
+        WHERE request.run_id=$1::uuid
+          AND request.action='effect:context_requested'
+        ORDER BY request.hop DESC
+        LIMIT 1
+     ), answered AS (
+       SELECT latest_request.*
+         FROM latest_request
+        WHERE EXISTS (
+          SELECT 1
+            FROM orchestrator_decision_log answer
+           WHERE answer.run_id=$1::uuid
+             AND answer.action='verdict:context_answer'
+             AND answer.detail->>'context_request_hop'=latest_request.hop::text
+        )
+     )
+     UPDATE initiative_runs r
+        SET phase=answered.detail->>'resume_phase',
+            orchestrator_heartbeat_at=$3,
+            orchestrator_host=$4,
+            orchestrator_pid=$5,
+            updated_at=NOW()
+       FROM answered
+      WHERE r.id=$1::uuid
+        AND r.phase='paused'
+        AND r.orchestrator_host=$6
+        AND answered.resume_token=$2
+        AND answered.detail->>'resume_phase' IN (${CONTEXT_RESUME_PHASE_SQL})
+      RETURNING r.id, r.phase`,
+    [runId, resumeToken, now, host, pid, claimHost],
+  );
+  return result.rows?.[0] ?? null;
+}
+
 /**
  * runLoop(deps, {taskId, runId?, dryRun?}) → {exitReason, hops, decision?}
  * hops = 本进程实际派发（appendHop 成功）的跳数。
  * dryRun（F5 前台雏形）：只观测+推导+打印，单跳即返回，零写入零派发。
  */
-export async function runLoop(deps, { taskId, runId, dryRun = false }) {
+export async function runLoop(
+  deps,
+  {
+    taskId,
+    runId,
+    resumeToken = null,
+    dryRun = false,
+  },
+) {
   const collect = deps.collectGroundTruth ?? defaultCollect;
   // DI 包装：fake（测试）注入 appendHop(opts) 单对象接口；默认实现是 (pool, opts) 两参数接口
   const append = deps.appendHop
@@ -339,6 +461,19 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
   const pid = deps.pid ?? process.pid;
 
   const resolvedRunId = runId ?? (await resolveRunId(deps.pool, taskId));
+  if (resumeToken) {
+    const activate = deps.activateContextResume ?? activateContextResume;
+    const activated = await activate(deps.pool, {
+      runId: resolvedRunId,
+      resumeToken,
+      host,
+      pid,
+      now: now(),
+    });
+    if (!activated) {
+      return { exitReason: 'context_resume_claim_lost', hops: 0 };
+    }
+  }
   const groundTruthPaths = collect === defaultCollect
     ? await resolveGroundTruthPaths(deps.pool, taskId)
     : {};
@@ -552,8 +687,8 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       await markRunFailed(deps, resolvedRunId, taskId, decision.reason);
       return { exitReason: decision.reason, hops };
     }
-    if (decision.action === 'pause_run') {
-      await markRunPaused(deps.pool, resolvedRunId);
+    if (decision.action === ACTION.PAUSE_RUN) {
+      await markRunPaused(deps.pool, resolvedRunId, observed);
       return { exitReason: decision.reason, hops };
     }
     if (decision.action === ACTION.PERSIST_CONTRACT_APPROVAL) {
@@ -784,6 +919,43 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
         });
     const controlStatus = result.control_status ?? result.status;
 
+    if (controlStatus === 'LAUNCHED') {
+      const launchHop = await next(deps.pool, resolvedRunId);
+      try {
+        await append(deps.pool, {
+          runId: resolvedRunId,
+          hop: launchHop,
+          observed: buildSnapshot(
+            observed,
+            fullCounters,
+            LOG_ACTION.ATTEMPT_LAUNCHED,
+            decision.reason,
+          ),
+          derivedPhase: decision.phase,
+          gateVerdict: null,
+          action: LOG_ACTION.ATTEMPT_LAUNCHED,
+          detail: {
+            dispatch_hop: hop,
+            dispatch_action: decision.action,
+            run_id: result.run_id,
+            attempt_id: result.attempt_id,
+            lease_generation: result.lease_generation,
+            provider: result.provider,
+          },
+        });
+      } catch (err) {
+        if (err instanceof SingletonConflictError) {
+          log(
+            `[orchestrator] singleton conflict on attempt launch effect ` +
+            `${resolvedRunId} hop ${launchHop}, exiting`,
+          );
+          return { exitReason: 'singleton_conflict', hops };
+        }
+        throw err;
+      }
+      hops++;
+    }
+
     if (controlStatus === 'NEEDS_CONTEXT' || controlStatus === 'BLOCKED') {
       const resultHop = await next(deps.pool, resolvedRunId);
       await append(deps.pool, {
@@ -854,7 +1026,8 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
         return { exitReason: 'blocked_same_state', hops };
       }
     } else {
-      // DONE / DONE_WITH_CONCERNS：记 detail 继续
+      // LAUNCHED 只代表外部执行接管；下一轮必须重新 collect callback/inflight 真相。
+      // DONE / DONE_WITH_CONCERNS 仅保留给同步控制动作。
       log(`[orchestrator] hop ${hop} ${decision.action} → ${result.status}${result.detail ? `: ${result.detail}` : ''}`);
     }
 

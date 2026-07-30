@@ -792,6 +792,102 @@ async function _recoverKernelRun(run, task, deps, out) {
   }
 }
 
+const CONTEXT_RESUME_PHASES = new Set([
+  'planning',
+  'gan',
+  'generate',
+  'evaluate',
+  'review',
+  'merge',
+]);
+
+/**
+ * Claim an answered needs_context checkpoint before launching its replacement
+ * Controller. The phase remains orphan-safe `paused`; a leased
+ * context-resume:* host/pid/heartbeat prevents duplicate recovery. Only after
+ * the detached child receipt is durable is the original phase exposed.
+ */
+export async function _resumePausedKernelContext(run, task, deps, out) {
+  const dbPool = deps.pool || deps.dbPool || pool;
+  const contextResume = tryParseJson(run.context_resume);
+  const requestHop = Number(contextResume?.context_request_hop);
+  const resumePhase = contextResume?.resume_phase;
+  if (!Number.isInteger(requestHop) || !CONTEXT_RESUME_PHASES.has(resumePhase)) {
+    return false;
+  }
+  const now = deps.now?.() ?? new Date();
+  const watchdogPid = deps.watchdogPid ?? process.pid;
+  const resumeToken = (deps.randomUUID ?? randomUUID)();
+  const claimHost = `context-resume:${resumeToken}`;
+  const claimed = await dbPool.query(
+    `UPDATE initiative_runs r
+        SET orchestrator_heartbeat_at=$3,
+            orchestrator_host=$4,
+            orchestrator_pid=$5,
+            updated_at=NOW()
+      WHERE r.id=$1::uuid
+        AND r.phase='paused'
+        AND (
+          r.orchestrator_host IS NULL
+          OR r.orchestrator_host NOT LIKE 'context-resume:%'
+          OR r.orchestrator_heartbeat_at < NOW() - INTERVAL '5 minutes'
+        )
+        AND EXISTS (
+          SELECT 1
+            FROM orchestrator_decision_log answer
+           WHERE answer.run_id=r.id
+             AND answer.action='verdict:context_answer'
+             AND answer.detail->>'context_request_hop'=$2
+        )
+        AND NOT EXISTS (
+          SELECT 1
+            FROM orchestrator_decision_log newer
+           WHERE newer.run_id=r.id
+             AND newer.action='effect:context_requested'
+             AND newer.hop>$2::integer
+        )
+      RETURNING r.id`,
+    [run.id, String(requestHop), now, claimHost, watchdogPid],
+  );
+  if (claimed.rowCount !== 1) return false;
+
+  const launchKernel = deps.launchKernel
+    || (await import('./harness-skill-relay.js')).launchKernelProcess;
+  let launched;
+  try {
+    launched = await launchKernel({
+      taskId: task.id,
+      runId: run.id,
+      worktreePath: task.payload?.worktree_path,
+      resumeToken,
+    });
+  } catch (error) {
+    // Keep the exact claim as a short cooldown lease. Clearing it immediately
+    // lets the same newest failures retake every fixed-size scan and starve
+    // older healthy runs. The phase stays paused and the normal 5-minute
+    // expiry makes the retry bounded without publishing a dead active phase.
+    await dbPool.query(
+      `UPDATE initiative_runs
+          SET orchestrator_heartbeat_at=$3,
+              orchestrator_host=$2,
+              orchestrator_pid=NULL,
+              updated_at=NOW()
+        WHERE id=$1::uuid
+          AND phase='paused'
+          AND orchestrator_host=$2`,
+      [run.id, claimHost, now],
+    ).catch(() => {});
+    throw error;
+  }
+
+  out.resumed++;
+  console.log(
+    `[relay-watchdog][kernel-v1] context child launched run=${run.id} `
+    + `phase=${resumePhase} pid=${launched.pid ?? '?'}`,
+  );
+  return true;
+}
+
 /**
  * 查 initiative_run_events 是否存在 evaluator 已完成的心跳记录——
  * "PR 已 MERGED" 不等于"harness 验收流程走完了"，这是唯一能区分两者的机器信号。
@@ -906,19 +1002,62 @@ export async function resumeStalledRelayRuns(deps = {}) {
   // 从未写入 initiative_runs）不计数，可能导致 attempts 长期低估、MAX_RELAY_ATTEMPTS
   // 封顶判断失效，从而无限重跑不收敛。暂未修，先记录跟踪。
   const runsQ = await dbPool.query(
-    `SELECT r.id, r.initiative_id, r.current_task_id,
+    `WITH candidate_runs AS (
+       SELECT r.id, r.initiative_id, r.current_task_id,
             phase, deadline_at, pr_url, orchestrator_host,
             orchestrator_heartbeat_at, completed_at, tmux_killed_at, started_at,
+            (
+              SELECT jsonb_build_object(
+                'context_request_hop', request.hop,
+                'resume_phase', request.detail->>'resume_phase'
+              )
+                FROM orchestrator_decision_log request
+               WHERE request.run_id=r.id
+                 AND request.action='effect:context_requested'
+                 AND request.hop=(
+                   SELECT MAX(latest_request.hop)
+                     FROM orchestrator_decision_log latest_request
+                    WHERE latest_request.run_id=r.id
+                      AND latest_request.action='effect:context_requested'
+                 )
+                 AND EXISTS (
+                   SELECT 1
+                     FROM orchestrator_decision_log answer
+                    WHERE answer.run_id=request.run_id
+                      AND answer.action='verdict:context_answer'
+                      AND answer.detail->>'context_request_hop'=request.hop::text
+                 )
+               ORDER BY request.hop DESC
+               LIMIT 1
+            ) AS context_resume,
             (SELECT COUNT(*) FROM initiative_runs r2
               WHERE r2.current_task_id = r.current_task_id
                 AND r2.orchestrator_version = 'v2') AS attempts
-       FROM initiative_runs r
-      WHERE r.orchestrator_version = 'v2'
-        AND r.current_task_id IS NOT NULL
-        AND (phase NOT IN ('done', 'failed')
-          OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed')
-            AND phase = 'done' AND tmux_killed_at IS NULL))
-      ORDER BY r.started_at DESC, r.id DESC
+         FROM initiative_runs r
+        WHERE r.orchestrator_version = 'v2'
+          AND r.current_task_id IS NOT NULL
+          AND (
+            phase NOT IN ('done', 'failed')
+            OR (
+              orchestrator_host IN (
+                'skill-relay-codex-headed',
+                'skill-relay-claude-headed'
+              )
+              AND phase = 'done'
+              AND tmux_killed_at IS NULL
+            )
+          )
+          AND (
+            phase <> 'paused'
+            OR orchestrator_host IS NULL
+            OR orchestrator_host NOT LIKE 'context-resume:%'
+            OR orchestrator_heartbeat_at IS NULL
+            OR orchestrator_heartbeat_at < NOW() - INTERVAL '5 minutes'
+          )
+     )
+     SELECT *
+       FROM candidate_runs
+      ORDER BY (context_resume IS NOT NULL) DESC, started_at DESC, id DESC
       LIMIT 20`
   );
   // 护栏:注入的 pool 对未知 SQL 返回 undefined 时(集成测试 fake),按空处理
@@ -967,6 +1106,16 @@ export async function resumeStalledRelayRuns(deps = {}) {
       if (task.status !== 'in_progress') continue;
       // 安全护栏：只碰 skill-relay 任务
       if (task.payload?.orchestrator !== 'skill-relay') continue;
+      // needs_context 在答案到达前保持 paused；答案到达后由 watchdog 先用
+      // context-resume:* lease CAS 领取，再启动新 Controller，最后凭
+      // pid/host/heartbeat receipt 发布 resume_phase。没有答案时进程退出
+      // 是预期行为，不得当成 stalled run。
+      if (run.phase === 'paused') {
+        if (task.payload?.harness_runtime === 'kernel-v1' && run.context_resume) {
+          await _resumePausedKernelContext(run, task, deps, out);
+        }
+        continue;
+      }
       // 前台点火 run（POST /relay-runs 建档，host='foreground'）没有 cecelia-relay-* 容器，
       // "容器消失=死跑"判据对它恒真——跳过重点火，防 spawn 无头容器与前台会话双跑。
       // 前台崩溃恢复靠人（用户在场是前台模式的定义）；上方 house-keeping 分支仍对其生效。

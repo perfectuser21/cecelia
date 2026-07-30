@@ -17,7 +17,48 @@ describe('relay watchdog exact run identity', () => {
     expect(sql).not.toMatch(/DISTINCT ON\s*\(initiative_id\)/);
     expect(sql).toMatch(/r\.current_task_id IS NOT NULL/);
     expect(sql).toMatch(/r2\.current_task_id = r\.current_task_id/);
-    expect(sql).toMatch(/ORDER BY r\.started_at DESC,\s*r\.id DESC/);
+    expect(sql).toMatch(
+      /ORDER BY \(context_resume IS NOT NULL\) DESC,[\s\S]*started_at DESC,\s*id DESC/,
+    );
+    expect(sql).toMatch(
+      /request\.hop=\([\s\S]*MAX\(latest_request\.hop\)[\s\S]*effect:context_requested/,
+    );
+    expect(sql).toMatch(
+      /phase <> 'paused'[\s\S]*orchestrator_host IS NULL[\s\S]*orchestrator_host NOT LIKE 'context-resume:%'[\s\S]*INTERVAL '5 minutes'/,
+    );
+  });
+
+  it('holds paused runs after terminal house-keeping and never probes or refires them', async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce({
+        rows: [{
+          id: RUN_ID,
+          initiative_id: TASK_ID,
+          current_task_id: TASK_ID,
+          phase: 'paused',
+          orchestrator_host: 'kernel-worker',
+          attempts: '1',
+        }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          id: TASK_ID,
+          status: 'in_progress',
+          payload: { orchestrator: 'skill-relay' },
+        }],
+      });
+    const execFn = vi.fn(() => '');
+    const spawnFn = vi.fn();
+
+    const result = await resumeStalledRelayRuns({
+      pool: { query },
+      execFn,
+      spawnFn,
+    });
+
+    expect(result).toMatchObject({ scanned: 1, resumed: 0 });
+    expect(execFn).not.toHaveBeenCalled();
+    expect(spawnFn).not.toHaveBeenCalled();
   });
 
   it('terminalizes through the exact transactional run store', async () => {

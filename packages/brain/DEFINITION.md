@@ -1,6 +1,38 @@
 # Brain 模块定义
 
-**版本**: 1.267.147
+**版本**: 1.267.149
+
+## Kernel asynchronous callback convergence
+
+- Dispatcher 在 launch receipt 持久化后返回 `LAUNCHED`；Loop 只追加
+  `effect:attempt_launched` 并重新观测，不再把容器启动误投影成角色完成。
+- Worker callback 必须匹配 `run_id + attempt_id + lease_owner +
+  lease_generation`；本地 runner 与远程 bridge 都转发完整租约代次，迟到代次在任何
+  业务写入前返回 409。
+- Attempt 终态与 `verdict:attempt_callback` 在一个 PostgreSQL 事务提交；相同 payload
+  重试幂等确认，冲突 payload、旧 owner/代次均不能污染 attempt 或决策账本。
+- `needs_context`、基础设施阻塞、语义拒绝、runner failure 与取消分别路由；
+  只有结构化 `infrastructure_blocked` 可换执行目标，同一 `unknown_no_pr` 第二次
+  出现即原子终结 run/task，不产生第三个 attempt。
+- `needs_context` 原子写入版本化 `effect:context_requested` 并暂停；人工答案必须
+  通过审批权认证且绑定 `run/task/request hop/callback hop/context version`。答案与
+  恢复意图同事务提交，旧答案不能消费新请求；run 保持 `paused`，watchdog 先用
+  唯一 `context-resume:<token>` 的 host/pid/heartbeat CAS 领取；新 Controller
+  必须用该 token 自己原子写入真实 pid/host/heartbeat 并发布最新 request 的原 phase，
+  成功前不得进入 collect/derive/dispatch。Watchdog 不让未过期的恢复 lease 占用
+  候选窗口；detached child 仅在真实 `spawn` receipt 后返回，异步 spawn 错误会回滚
+  到安全的 paused 状态并保留 5 分钟失败冷却 lease，避免固定窗口重试风暴，且不得
+  成为 Brain 未处理异常。
+  恢复 Attempt 的 TaskBundle 显式携带版本化答案。
+- Generator 的 PR claim 只有同时匹配 Brain 签发的 `workspace_spec.repo/branch` 且由
+  GitHub 返回完整 head SHA 才能投影为权威 `pr_url`；legacy attempt 才回退 task
+  short-id。generator-fix 复用当前服务端观测到的 PR branch/head，不另开分支。
+  原始 callback 以服务端 digest 幂等，终态重放不再查询 GitHub 或重放可变投影，
+  冲突 payload 继续 fail closed。
+- Migration 378 将 `needs_context` 加入 Attempt failure-class CHECK；回退应用到
+  `1.267.147` 时保留该兼容性 schema，不恢复异步 callback 的 split-write 路径。
+- 人工 context 列表的数据库读取按来源地址限制为每分钟 60 次；答案与审批写操作
+  继续使用每分钟 10 次的独立限额，防止轮询挤占审批动作或形成无界数据库读取。
 
 ## Kernel exact run API and trust accounting
 
@@ -143,7 +175,7 @@
 - Kernel 将结构化 `provider_timeout` 归类为 infrastructure failure，保留既有
   receipt、attestation 与 Commander failover 边界。
 - 三机固定 Runner：
-  `sha256:6b6c4f9381aefd41d3cac723943e81143344f584971bf715beca04cc9bdb30ea`。
+  `sha256:21b29766c7c5676f28a1f1c328eebde88e1952fd29cb9dc433874bfff0a1a05d`。
   该 artifact 以已部署的
   `sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7`
   为只读基线，仅叠加本版本审阅后的 Runner entrypoint。

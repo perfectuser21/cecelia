@@ -323,4 +323,165 @@ describe('harness-kernel-approvals mounted Router behavior', () => {
     )).toHaveLength(1);
     expect((await rejectionRequest(app)).status).toBe(409);
   });
+
+  it('lists each unanswered context request with its exact version anchor', async () => {
+    const database = {
+      query: async () => ({
+        rows: [{
+          run_id: RUN_ID,
+          task_id: TASK_ID,
+          task_title: 'Repair Kernel convergence',
+          context_request_hop: 8,
+          detail: {
+            callback_hop: 7,
+            context_version: 'context-v1:7:attempt-7',
+            question: 'Which rollback policy should be used?',
+          },
+          created_at: REVIEW_REQUESTED_AT,
+        }],
+      }),
+    };
+    const app = express();
+    app.use(express.json());
+    app.set('pool', database);
+    app.use('/kernel-reviews', approvalRouter);
+
+    const response = await request(app).get('/kernel-reviews/contexts');
+
+    expect(response.status).toBe(200);
+    expect(response.body.contexts).toEqual([{
+      run_id: RUN_ID,
+      task_id: TASK_ID,
+      task_title: 'Repair Kernel convergence',
+      context_request_hop: 8,
+      context_version: 'context-v1:7:attempt-7',
+      callback_hop: 7,
+      question: 'Which rollback policy should be used?',
+      created_at: REVIEW_REQUESTED_AT.toISOString(),
+    }]);
+  });
+
+  it('records a version-bound context answer and atomically reopens the paused run', async () => {
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+    const contextVersion = 'context-v1:7:attempt-7';
+    const queries = [];
+    let phase = 'paused';
+    let answerDetail = null;
+    const client = {
+      async query(sql, params = []) {
+        const normalized = String(sql).trim();
+        queries.push({ sql: normalized, params });
+        if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(normalized)) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (normalized.includes('pg_advisory_xact_lock')) {
+          return { rows: [{}], rowCount: 1 };
+        }
+        if (normalized.includes("action='verdict:context_answer'")) {
+          return {
+            rows: answerDetail ? [{ detail: answerDetail }] : [],
+            rowCount: answerDetail ? 1 : 0,
+          };
+        }
+        if (normalized.includes('SELECT phase') && normalized.includes('FROM initiative_runs')) {
+          return { rows: [{ phase }], rowCount: 1 };
+        }
+        if (normalized.includes('SELECT COALESCE(MAX(hop), 0) + 1 AS next_hop')) {
+          return { rows: [{ next_hop: 9 }], rowCount: 1 };
+        }
+        if (normalized.includes('INSERT INTO orchestrator_decision_log')) {
+          answerDetail = JSON.parse(params[3]);
+          return { rows: [{ hop: 9 }], rowCount: 1 };
+        }
+        if (normalized.includes('UPDATE initiative_runs')) {
+          return { rows: [{ id: RUN_ID }], rowCount: 1 };
+        }
+        if (normalized.includes('UPDATE tasks')) {
+          return { rows: [{ id: TASK_ID }], rowCount: 1 };
+        }
+        throw new Error(`unexpected context transaction query: ${normalized}`);
+      },
+      release() {},
+    };
+    const database = {
+      async query(sql) {
+        const normalized = String(sql).trim();
+        queries.push({ sql: normalized, params: [] });
+        if (normalized.includes("action='effect:context_requested'")) {
+          return {
+            rows: [{
+              run_id: RUN_ID,
+              task_id: TASK_ID,
+              phase,
+              context_request_hop: 8,
+              detail: {
+                callback_hop: 7,
+                context_version: contextVersion,
+                resume_phase: 'generate',
+              },
+            }],
+            rowCount: 1,
+          };
+        }
+        throw new Error(`unexpected context pool query: ${normalized}`);
+      },
+      async connect() {
+        return client;
+      },
+    };
+    const app = express();
+    app.use(express.json());
+    app.set('pool', database);
+    app.use('/kernel-reviews', approvalRouter);
+
+    const response = await request(app)
+      .post(`/kernel-reviews/${RUN_ID}/context`)
+      .set('x-approver-token', APPROVER_TOKEN)
+      .send({
+        task_id: TASK_ID,
+        context_request_hop: 8,
+        context_version: contextVersion,
+        answer: 'Use the existing rollback policy.',
+        approved_by: 'review-owner',
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      ok: true,
+      run_id: RUN_ID,
+      task_id: TASK_ID,
+      context_request_hop: 8,
+      context_version: contextVersion,
+    });
+    const insert = queries.find(({ sql }) => (
+      sql.includes('INSERT INTO orchestrator_decision_log')
+    ));
+    expect(insert?.sql).toMatch(/verdict:context_answer/i);
+    expect(insert?.params.join(' ')).toContain('Use the existing rollback policy.');
+    const reopen = queries.find(({ sql }) => sql.includes('UPDATE initiative_runs'));
+    expect(reopen?.sql).not.toMatch(/\bSET\s+phase=/i);
+    expect(reopen?.sql).toMatch(/deadline_at/i);
+    expect(queries.some(({ sql }) => (
+      /UPDATE tasks[\s\S]*updated_at=NOW\(\)/i.test(sql)
+    ))).toBe(true);
+    expect(response.body).toMatchObject({
+      resume_pending: true,
+      resume_phase: 'generate',
+    });
+    expect(queries.at(-1).sql).toBe('COMMIT');
+
+    const retry = await request(app)
+      .post(`/kernel-reviews/${RUN_ID}/context`)
+      .set('x-approver-token', APPROVER_TOKEN)
+      .send({
+        task_id: TASK_ID,
+        context_request_hop: 8,
+        context_version: contextVersion,
+        answer: 'Use the existing rollback policy.',
+        approved_by: 'review-owner',
+      });
+
+    expect(retry.status).toBe(200);
+    expect(retry.body).toMatchObject({ ok: true, deduped: true });
+  });
 });

@@ -119,6 +119,12 @@ export async function assessKernelLiveness({
   }
   if (!row) return { verdict: 'unknown', reason: 'no_kernel_run' };
 
+  // needs_context 是显式控制面暂停，不是执行进程故障。Controller 在 pause 后
+  // 正常退出，旧 PID 消失和心跳停止都不能把等待人答的 run 判死。
+  if (row.phase === 'paused') {
+    return { verdict: 'alive', reason: 'run_paused', runId: row.id };
+  }
+
   // ① 心跳
   const hbMs = toEpochMs(row.orchestrator_heartbeat_at);
   if (hbMs != null) {

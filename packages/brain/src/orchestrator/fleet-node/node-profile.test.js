@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const CANONICAL_IDS = ['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1'];
-const EXPECTED_RUNNER_DIGEST = 'sha256:6b6c4f9381aefd41d3cac723943e81143344f584971bf715beca04cc9bdb30ea';
+const EXPECTED_RUNNER_DIGEST = 'sha256:21b29766c7c5676f28a1f1c328eebde88e1952fd29cb9dc433874bfff0a1a05d';
 const EXPECTED_CAPACITIES = {
   'us-mac-m4': 7,
   'xian-mac-m4': 8,

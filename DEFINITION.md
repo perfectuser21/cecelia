@@ -6,11 +6,24 @@
 
 
 
-**Brain 版本**: 1.267.147
+**Brain 版本**: 1.267.149
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.149 — Kernel asynchronous callback convergence
+
+- Dispatcher 持久化 launch receipt 后只返回 `LAUNCHED`；Loop 记录 launch effect
+  后等待 callback/reconcile，不把启动误作角色完成。
+- callback 以 run/attempt/owner/generation 全身份栅栏进入一个事务；Attempt 终态和
+  `verdict:attempt_callback` 同时提交，重复 payload 幂等、旧租约和冲突 payload 409。
+- `needs_context`、基础设施阻塞、语义拒绝、runner failure、取消和 no-PR 使用独立
+  路由；只有结构化基础设施故障可换执行目标，第二次相同 `unknown_no_pr` 终结。
+- Migration 378 扩展 Attempt failure-class CHECK 以保存 `needs_context`。回退应用到
+  Brain `1.267.147` 时保留兼容 schema，禁止恢复 callback split-write。
+- 人工 context 列表按来源地址限制为每分钟 60 次数据库读取；答案和审批写操作继续
+  使用独立的每分钟 10 次限额。
 
 ## Brain 1.267.147 — Kernel exact run API and trust accounting
 
@@ -977,7 +990,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 377 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 378 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -1365,7 +1378,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '377'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '378'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

@@ -60,6 +60,7 @@ export const ACTION = Object.freeze({
   WAIT_POLL_CI: 'wait:poll_ci',
   WAIT_GENERATOR_FIX_CALLBACK: 'wait:generator_fix_callback',
   WAIT_HUMAN_REVIEW: 'wait:human_review',
+  PAUSE_RUN: 'pause_run',
   MERGE_PR: 'merge_pr',
   REPORT: 'report',
   EXIT: 'exit',
@@ -80,6 +81,10 @@ export const LOG_ACTION = Object.freeze({
   VERDICT_REVIEWER: 'verdict:reviewer',
   VERDICT_HUMAN_REVIEW: 'verdict:human_review',
   HUMAN_REVIEW_REQUESTED: 'effect:human_review_requested',
+  CONTEXT_REQUESTED: 'effect:context_requested',
+  CONTEXT_ANSWER: 'verdict:context_answer',
+  ATTEMPT_LAUNCHED: 'effect:attempt_launched',
+  ATTEMPT_CALLBACK: 'verdict:attempt_callback',
   DISPATCH_RESULT: 'result:dispatch',
   // Sprint 07231527：generator-fix callback verdict（no-progress 推导依赖）
   VERDICT_GENERATOR_FIX_CALLBACK: 'verdict:generator-fix-callback',

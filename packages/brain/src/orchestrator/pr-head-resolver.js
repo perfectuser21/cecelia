@@ -18,3 +18,17 @@ export async function defaultPrHeadResolver(prUrl, execute = execFileAsync) {
   );
   return JSON.parse(stdout).headRefOid ?? null;
 }
+
+export async function defaultPrIdentityResolver(prUrl, execute = execFileAsync) {
+  const { stdout } = await execute(
+    'gh',
+    ['pr', 'view', prUrl, '--json', 'headRefOid,headRefName,url'],
+    { encoding: 'utf8', timeout: 8_000 },
+  );
+  const parsed = JSON.parse(stdout);
+  return {
+    head_sha: parsed.headRefOid ?? null,
+    head_ref: parsed.headRefName ?? null,
+    url: parsed.url ?? prUrl,
+  };
+}
