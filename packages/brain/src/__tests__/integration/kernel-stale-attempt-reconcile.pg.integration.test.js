@@ -117,7 +117,7 @@ describe('kernel stale attempt reconciliation on real PostgreSQL', () => {
          id, initiative_id, phase, current_task_id, orchestrator_version,
          created_source, record_trust_status
        ) VALUES (
-         $1, $2, 'planning', $3, 'v2', 'kernel_dispatch', 'trusted'
+         $1, $2, 'generate', $3, 'v2', 'kernel_dispatch', 'trusted'
        )`,
       [runId, randomUUID(), taskId],
     );
@@ -126,8 +126,8 @@ describe('kernel stale attempt reconciliation on real PostgreSQL', () => {
       id: attemptId,
       runId,
       hop: 1,
-      phase: 'planning',
-      role: 'planner',
+      phase: 'generate',
+      role: 'generator',
       provider: 'auto',
       bundle: {},
       callbackSecretHash: 'b'.repeat(64),
@@ -140,6 +140,23 @@ describe('kernel stale attempt reconciliation on real PostgreSQL', () => {
         WHERE id = $1`,
       [attemptId],
     );
+    await testPool.query(`
+      CREATE OR REPLACE FUNCTION pause_callback_attempt_terminal()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        IF OLD.id = '${attemptId}'::uuid
+           AND OLD.status = 'running'
+           AND NEW.status IN ('completed', 'cancelled') THEN
+          PERFORM pg_sleep(0.5);
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER pause_callback_attempt_terminal
+      BEFORE UPDATE OF status ON harness_attempts
+      FOR EACH ROW
+      EXECUTE FUNCTION pause_callback_attempt_terminal();
+    `);
 
     const callback = store.recordCallbackTerminal({
       attemptId,
@@ -149,10 +166,16 @@ describe('kernel stale attempt reconciliation on real PostgreSQL', () => {
       result: {
         status: 'completed',
         summary: 'callback won or serialized',
-        artifacts: [],
+        artifacts: [{
+          type: 'pull_request',
+          url: 'https://github.com/perfectuser21/cecelia/pull/4508',
+          head_sha: 'd'.repeat(40),
+          verification_status: 'verified',
+        }],
         provider_metadata: { provider: 'codex' },
       },
     });
+    await new Promise(resolve => setTimeout(resolve, 100));
     const finalization = finalizeKernelRun(testPool, {
       runId,
       expectedTaskId: taskId,
@@ -163,6 +186,7 @@ describe('kernel stale attempt reconciliation on real PostgreSQL', () => {
       callback,
       finalization,
     ]);
+    await testPool.query('DROP TRIGGER pause_callback_attempt_terminal ON harness_attempts');
 
     for (const result of [callbackResult, finalizationResult]) {
       if (result.status === 'rejected') {
