@@ -660,6 +660,42 @@ describe('createDispatcher', () => {
     });
   });
 
+  it('恢复 Attempt 只接收与 callback hop/version 绑定的人类上下文', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:generator-fix', {
+      taskId,
+      runId,
+      hop: 12,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-harness-propose-r2-aaaaaaaa-a6' },
+        },
+        decisionLog: [{
+          hop: 11,
+          action: 'verdict:context_answer',
+          detail: {
+            callback_hop: 9,
+            context_request_hop: 10,
+            context_version: 'context-v1:9:attempt-9',
+            answer: 'Preserve the current release policy.',
+          },
+        }],
+      },
+      decision: { phase: 'generate', reason: 'no_pr' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.human_context).toEqual({
+      callback_hop: 9,
+      context_request_hop: 10,
+      context_version: 'context-v1:9:attempt-9',
+      answer: 'Preserve the current release policy.',
+    });
+  });
+
   it('generator bundle 从生产合同 schema 的 row.branch 导出 contract_branch', async () => {
     const deps = makeDeps();
 

@@ -244,6 +244,56 @@ describe('attempt store', () => {
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
 
+  it('an exact terminal retry never reprojects a PR into a now-terminal run', async () => {
+    const callbackResult = {
+      status: 'completed',
+      summary: 'pull request opened',
+      artifacts: [{
+        type: 'pull_request',
+        url: 'https://github.com/acme/repo/pull/42',
+        head_sha: 'c'.repeat(40),
+        verification_status: 'verified',
+      }],
+      provider_metadata: {
+        provider: 'codex',
+        server_callback_claim_digest: 'sha256:claim',
+      },
+      decision: null,
+    };
+    const terminal = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'generate',
+      role: 'generator',
+      status: 'completed',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      result: callbackResult,
+    };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [terminal] })
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    const outcome = await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    expect(outcome).toMatchObject({ deduped: true });
+    expect(client.query.mock.calls.some(([sql]) => /UPDATE initiative_runs/i.test(sql))).toBe(false);
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
   it('R11: stale callback generation rolls back without terminal or decision writes', async () => {
     const client = {
       query: vi.fn()

@@ -946,7 +946,9 @@ describe('runLoop：wait:* 不灌水', () => {
     expect(result.exitReason).toBe('callback_needs_context');
     expect(deps.dispatch).not.toHaveBeenCalled();
     expect(appended).toHaveLength(0);
-    expect(sqls.some(([sql]) => /SET phase = 'paused'/i.test(sql))).toBe(true);
+    const pauseWrite = sqls.find(([sql]) => /SET phase = 'paused'/i.test(sql));
+    expect(pauseWrite?.[0]).toMatch(/effect:context_requested/i);
+    expect(pauseWrite?.[1]).toContain(3);
     expect(deps.dispatch).not.toHaveBeenCalledWith(
       'spawn:generator-fix',
       expect.anything(),

@@ -133,6 +133,40 @@ describe('R9/R10: append-only attempt callback convergence', () => {
     });
   });
 
+  it('R9: an answer bound to the exact callback hop consumes only that pause', () => {
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        callback(3, { status: 'needs_context', failure_class: 'needs_context' }),
+        {
+          hop: 4,
+          action: 'effect:context_requested',
+          detail: {
+            callback_hop: 3,
+            context_version: 'context-v1:3:attempt-3',
+          },
+        },
+        {
+          hop: 5,
+          action: 'verdict:context_answer',
+          detail: {
+            callback_hop: 3,
+            context_request_hop: 4,
+            context_version: 'context-v1:3:attempt-3',
+            answer: 'Use the existing rollback policy.',
+          },
+        },
+      ],
+    }));
+
+    expect(r).toEqual({
+      phase: 'generate',
+      action: 'spawn:generator-fix',
+      reason: 'no_pr',
+    });
+  });
+
   it('only infrastructure_blocked callback can retry the same role on another target', () => {
     const infra = derive(baseObserved({
       pr: null,

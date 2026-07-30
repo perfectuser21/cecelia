@@ -744,6 +744,117 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     ))).toBe(false);
   });
 
+  it('另一个仓库里的真实 PR 也不能成为本 task 的权威 PR', async () => {
+    mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
+    mocks.pool.query.mockResolvedValueOnce({
+      rows: [{
+        pr_url: null,
+        task_id: attemptId,
+        payload: { base_repo: 'perfectuser21/cecelia' },
+      }],
+    });
+    const resolveIdentity = vi.fn(async () => ({
+      head_sha: 'a'.repeat(40),
+      head_ref: `cp-fix-${attemptId.slice(0, 8)}`,
+    }));
+    app.set('kernelPrIdentityResolver', resolveIdentity);
+
+    const response = await postCallback(app, {
+      ...validResult,
+      artifacts: [{
+        type: 'pull_request',
+        url: 'https://github.com/attacker/other-repo/pull/42',
+      }],
+      decision: null,
+    });
+
+    expect(response.status).toBe(200);
+    expect(resolveIdentity).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          artifacts: [
+            expect.objectContaining({
+              type: 'unverified_pull_request_claim',
+              verification_status: 'repository_mismatch',
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
+  it('同仓库但不属于 task short-id 的分支不能成为权威 PR', async () => {
+    mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
+    mocks.pool.query.mockResolvedValueOnce({
+      rows: [{
+        pr_url: null,
+        task_id: attemptId,
+        payload: { base_repo: 'perfectuser21/cecelia' },
+      }],
+    });
+    app.set('kernelPrIdentityResolver', vi.fn(async () => ({
+      head_sha: 'a'.repeat(40),
+      head_ref: 'cp-unrelated-task',
+    })));
+
+    const response = await postCallback(app, {
+      ...validResult,
+      artifacts: [{
+        type: 'pull_request',
+        url: 'https://github.com/perfectuser21/cecelia/pull/42',
+      }],
+      decision: null,
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          artifacts: [
+            expect.objectContaining({
+              type: 'unverified_pull_request_claim',
+              verification_status: 'branch_mismatch',
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
+  it('相同原始 callback 重放不再查询变化中的 GitHub head', async () => {
+    const claimDigest = 'sha256:terminal-claim';
+    const terminalAttempt = {
+      ...attempt,
+      role: 'generator',
+      status: 'completed',
+      result: {
+        ...validResult,
+        decision: null,
+        provider_metadata: {
+          ...validResult.provider_metadata,
+          server_callback_claim_digest: claimDigest,
+        },
+      },
+    };
+    mocks.store.getById.mockResolvedValue(terminalAttempt);
+    const resolver = vi.fn(async () => {
+      throw new Error('GitHub unavailable after first commit');
+    });
+    app.set('kernelPrIdentityResolver', resolver);
+    app.set('kernelCallbackClaimDigest', () => claimDigest);
+
+    const response = await postCallback(app, {
+      ...validResult,
+      decision: null,
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.deduped).toBe(true);
+    expect(resolver).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+  });
+
   it('PR verification infrastructure failure keeps callback retryable', async () => {
     mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
     app.set('kernelPrHeadResolver', vi.fn(async () => {
