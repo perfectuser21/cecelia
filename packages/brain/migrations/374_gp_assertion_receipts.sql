@@ -8,9 +8,9 @@ ALTER TABLE journey_step_links
 CREATE OR REPLACE FUNCTION bump_journey_assertion_revision()
 RETURNS trigger AS $$
 BEGIN
-  IF ROW(NEW.assertion_ref, NEW.cell_key, NEW.feature_id, NEW.na_reason)
+  IF ROW(NEW.assertion_ref, NEW.cell_kind, NEW.cell_key, NEW.feature_id, NEW.na_reason)
      IS DISTINCT FROM
-     ROW(OLD.assertion_ref, OLD.cell_key, OLD.feature_id, OLD.na_reason) THEN
+     ROW(OLD.assertion_ref, OLD.cell_kind, OLD.cell_key, OLD.feature_id, OLD.na_reason) THEN
     NEW.assertion_revision := OLD.assertion_revision + 1;
   ELSE
     NEW.assertion_revision := OLD.assertion_revision;
