@@ -1,6 +1,13 @@
 # Brain 模块定义
 
-**版本**: 1.267.142
+**版本**: 1.267.143
+
+## Pinned assertion command policy
+
+- `gp-assertion-command.js` 仅接受固定 Vitest、Pytest 与 bash 形态；absolute
+  pinned toolchain 与 canonical target 一致，且 target 为精确 tracked 普通文件。
+- command/argv/toolchain 与无继承 env 均冻结；不执行 Runner、不写 receipt，
+  不接 API/UI。
 
 ## Trusted assertion process adapter
 
