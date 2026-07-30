@@ -19,7 +19,11 @@ const request = buildTrustedExecutionRequest({
   workspace_root: '/workspace',
   timeout_ms: 2_000,
   command: { executable: '/bin/bash', argv: ['/workspace/smoke/assertion.sh'],
-    options: { cwd: '/workspace', evidenceKind: 'bash' } },
+    options: {
+      cwd: '/workspace',
+      evidenceKind: 'bash',
+      toolchain_paths: ['/bin/bash'],
+    } },
 });
 const admission = {
   machine_id: 'us-mac-m4',
@@ -40,7 +44,17 @@ const verified = verifyTrustedExecution({
     source_repo: request.source_repo,
     source_sha: request.source_sha,
     command_digest: request.command_digest,
-    isolation: { rootfs_read_only: true, workspace_read_only: true },
+    isolation: {
+      rootfs_read_only: true,
+      workspace_read_only: true,
+      non_root: true,
+    },
+    toolchain_attestation: {
+      kind: 'pinned_toolchain',
+      actual_runner_digest: digest,
+      expected_runner_digest: digest,
+      files: [{ path: '/bin/bash', sha256: digest }],
+    },
     exit_code: 0, stdout: 'GP_ASSERTION_SCENARIO_COUNT=1', stderr: '',
     started_at: '2026-07-30T08:00:00.000Z',
     completed_at: '2026-07-30T08:00:01.000Z',

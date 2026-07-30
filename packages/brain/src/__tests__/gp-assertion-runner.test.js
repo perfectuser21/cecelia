@@ -5,10 +5,16 @@ const RUN = '11111111-1111-4111-8111-111111111111';
 const LINK = '22222222-2222-4222-8222-222222222222';
 const SHA = 'c'.repeat(40);
 const DIGEST = `sha256:${'a'.repeat(64)}`;
+const FILE_DIGEST = `sha256:${'f'.repeat(64)}`;
+const TOOLCHAIN_PATHS = ['/usr/local/bin/node', '/repo/vitest.mjs'];
 const command = {
   executable: '/usr/local/bin/node',
   argv: ['/repo/vitest.mjs', 'run', './cell.test.js', '--'],
-  options: { cwd: '/repo/packages/brain', evidenceKind: 'vitest' },
+  options: {
+    cwd: '/repo/packages/brain',
+    evidenceKind: 'vitest',
+    toolchain_paths: TOOLCHAIN_PATHS,
+  },
 };
 
 function harness(patch = {}) {
@@ -25,7 +31,17 @@ function harness(patch = {}) {
     run_id: RUN, journey_step_link_id: LINK, machine_id: 'us-mac-m4',
     runner_image_digest: DIGEST, source_repo: 'github.com/org/repo',
     source_sha: SHA, command_digest: request.command_digest,
-    isolation: { rootfs_read_only: true, workspace_read_only: true },
+    isolation: {
+      rootfs_read_only: true,
+      workspace_read_only: true,
+      non_root: true,
+    },
+    toolchain_attestation: {
+      kind: 'pinned_toolchain',
+      actual_runner_digest: DIGEST,
+      expected_runner_digest: DIGEST,
+      files: TOOLCHAIN_PATHS.map(path => ({ path, sha256: FILE_DIGEST })),
+    },
     exit_code: 0, stdout: '1 passed', stderr: '',
     started_at: '2026-07-30T08:00:01.000Z',
     completed_at: '2026-07-30T08:00:02.000Z',
@@ -82,6 +98,47 @@ describe('GP assertion trusted runner', () => {
     expect(deps.trustedExecute).not.toHaveBeenCalled();
   });
 
+  it('resolves the default Fleet identity from canonical environment state', async () => {
+    const previous = process.env.CECELIA_MACHINE_ID;
+    process.env.CECELIA_MACHINE_ID = 'xian-mac-m4';
+    try {
+      const { deps } = harness({
+        getMachineId: undefined,
+        admissionClient: {
+          getAdmission: vi.fn(async machineId => ({
+            machine_id: machineId, state: 'draining',
+            base_admitted: false, dispatch_ready: false,
+          })),
+        },
+      });
+      await expect(runGpAssertion(deps)).rejects.toMatchObject({
+        code: 'ASSERTION_RUNNER_NOT_ADMITTED',
+      });
+      expect(deps.admissionClient.getAdmission).toHaveBeenCalledWith(
+        'xian-mac-m4',
+        { forceFresh: true },
+      );
+    } finally {
+      if (previous === undefined) delete process.env.CECELIA_MACHINE_ID;
+      else process.env.CECELIA_MACHINE_ID = previous;
+    }
+  });
+
+  it('fails closed when canonical machine identity is missing', async () => {
+    const previous = process.env.CECELIA_MACHINE_ID;
+    delete process.env.CECELIA_MACHINE_ID;
+    try {
+      const { deps } = harness({ getMachineId: undefined });
+      await expect(runGpAssertion(deps)).rejects.toMatchObject({
+        code: 'ASSERTION_RUNNER_NOT_ADMITTED',
+      });
+      expect(deps.admissionClient.getAdmission).not.toHaveBeenCalled();
+      expect(deps.pool.connect).not.toHaveBeenCalled();
+    } finally {
+      if (previous !== undefined) process.env.CECELIA_MACHINE_ID = previous;
+    }
+  });
+
   it('persists only receipt-bound output evidence and Runner times', async () => {
     const { deps, saved } = harness();
     const result = await runGpAssertion(deps);
@@ -108,7 +165,17 @@ describe('GP assertion trusted runner', () => {
       run_id: RUN, journey_step_link_id: LINK, machine_id: 'us-mac-m4',
       runner_image_digest: DIGEST, source_repo: 'github.com/org/repo',
       source_sha: SHA, command_digest: request.command_digest,
-      isolation: { rootfs_read_only: true, workspace_read_only: true },
+      isolation: {
+        rootfs_read_only: true,
+        workspace_read_only: true,
+        non_root: true,
+      },
+      toolchain_attestation: {
+        kind: 'pinned_toolchain',
+        actual_runner_digest: DIGEST,
+        expected_runner_digest: DIGEST,
+        files: TOOLCHAIN_PATHS.map(path => ({ path, sha256: FILE_DIGEST })),
+      },
       exit_code: 0, stdout: '0 passed', stderr: '',
       started_at: '2026-07-30T08:00:01.000Z',
       completed_at: '2026-07-30T08:00:02.000Z',
