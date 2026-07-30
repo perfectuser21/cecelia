@@ -164,6 +164,7 @@ describe('kernel-terminal-mismatch-reconcile', () => {
       runId: RUN_ID,
       expectedTaskId: TASK_ID,
       expectedTaskStatus: 'queued',
+      requireNoActiveSibling: true,
       outcome: 'failed',
       reason: 'orphan_guard_exhausted',
     });
