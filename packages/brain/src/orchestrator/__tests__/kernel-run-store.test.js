@@ -490,6 +490,7 @@ describe('Kernel run/task terminalization authority', () => {
       outcome: 'failed',
       runId: RUN_ID,
       taskId: TASK_ID,
+      attemptsTerminalized: 0,
     });
     const runUpdate = harness.calls.find(({ sql }) => /UPDATE initiative_runs/.test(sql));
     const taskUpdate = harness.calls.find(({ sql }) => /UPDATE tasks/.test(sql));
@@ -506,6 +507,7 @@ describe('Kernel run/task terminalization authority', () => {
       'BEGIN',
       'task-lock',
       'run-lock',
+      'attempt-lock',
       'run-update',
       'task-update',
       'terminal-event',
@@ -528,6 +530,7 @@ describe('Kernel run/task terminalization authority', () => {
       'BEGIN',
       'task-lock',
       'run-lock',
+      'attempt-lock',
       'run-update',
       'task-update',
       'ROLLBACK',
@@ -583,6 +586,7 @@ describe('Kernel run/task terminalization authority', () => {
       'BEGIN',
       'task-lock',
       'run-lock',
+      'attempt-lock',
       'task-update',
       'COMMIT',
       'release',

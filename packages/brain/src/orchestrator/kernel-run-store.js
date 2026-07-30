@@ -477,6 +477,16 @@ export async function finalizeKernelRun(pool, {
       );
     }
 
+    const { rows: activeAttempts } = await client.query(
+      `SELECT id
+         FROM harness_attempts
+        WHERE run_id = $1
+          AND status IN ('queued', 'starting', 'running')
+        ORDER BY id
+        FOR UPDATE`,
+      [runId],
+    );
+
     const changed = !runAlreadyTerminal;
     if (changed) {
       await client.query(
@@ -506,6 +516,29 @@ export async function finalizeKernelRun(pool, {
           WHERE id = $1`,
         [expectedTaskId, taskOutcome, reason],
       );
+    }
+
+    let attemptsTerminalized = 0;
+    if (activeAttempts.length > 0) {
+      const { rowCount } = await client.query(
+        `UPDATE harness_attempts
+            SET status = 'cancelled',
+                error_code = 'parent_run_terminal',
+                error_message = $3,
+                completed_at = COALESCE(completed_at, NOW()),
+                lease_owner = NULL,
+                lease_expires_at = NULL,
+                updated_at = NOW()
+          WHERE id = ANY($1::uuid[])
+            AND run_id = $2
+            AND status IN ('queued', 'starting', 'running')`,
+        [
+          activeAttempts.map(({ id }) => id),
+          runId,
+          `Parent Kernel run finalized as ${outcome}${reason ? `: ${reason}` : ''}`,
+        ],
+      );
+      attemptsTerminalized = rowCount;
     }
 
     if (changed) {
@@ -541,6 +574,7 @@ export async function finalizeKernelRun(pool, {
       outcome,
       runId,
       taskId: expectedTaskId,
+      attemptsTerminalized,
     };
   } catch (error) {
     if (!committed) await client.query('ROLLBACK');
