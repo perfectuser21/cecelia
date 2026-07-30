@@ -1,0 +1,38 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "变更集中在 QuickCheck、Brain 测试 runner、真实 PostgreSQL integration 与 CI 证明，无用户界面路径。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "在既有 Draft PR #4457 完成四个 DevOps blocker 等价修复",
+      "scope": "按冻结合同完成 QuickCheck fail-closed、node:test 双登记、OKR 测试库进程内集成、migration 369-381 冻结；Red 必须行为级真执行，evaluator 验四 blocker与exact-head required checks，post-judge controller gate再绑定 evaluator/judge，并仅接受生产 kernel-reviews 批准端点的权威回执。",
+      "dod": [
+        "[BEHAVIOR] QuickCheck 对真实失败和未知非零 fail-closed，仅三条件 genuine OOM 降级",
+        "[BEHAVIOR] mutation seam 只由 node:test 执行且 Vitest exclude/test:node ratchet 双登记",
+        "[BEHAVIOR] OKR integration 仅用 in-process Express/Supertest 与 cecelia_test",
+        "[BEHAVIOR] historical migration fixture 精确执行 369-381且生产 migration SQL 不变",
+        "[BEHAVIOR] atomic 仍为 schema_valid=true/proof_complete=false/atomic_cutover_ready=false/live proof 0/99",
+        "[BEHAVIOR] GitHub required checks 集合非空且在 exact final head 全部 SUCCESS",
+        "[ARTIFACT] post-judge controller gate 证明 evaluator hop < judge hop < review-request hop < approval hop，且 evaluator/judge 均绑定 exact final head",
+        "[ARTIFACT] 首次 merge 仅接受 POST /api/brain/harness/kernel-reviews/:runId/approve 产生的同 head 回执，最长等待1800秒",
+        "[ARTIFACT] 冻结 sprint-prd.md、四项 blocker 回归测试与 Red/Green 证据"
+      ],
+      "files": [
+        "scripts/quickcheck.sh",
+        "packages/engine/tests/scripts/quickcheck-vitest-exit-classification.test.ts",
+        "packages/brain/src/__tests__/native-node-test-runner-registration.test.js",
+        "packages/brain/vitest.config.js",
+        "packages/brain/package.json",
+        "packages/brain/src/__tests__/integration/okr-decomposition-flow.integration.test.js",
+        "packages/brain/src/__tests__/integration/kernel-release-runs.integration.test.js",
+        "sprints/07300855-kernel-pr4457-devops-blockers/sprint-prd.md",
+        "sprints/07300855-kernel-pr4457-devops-blockers/tests/devops-blockers-contract.test.ts",
+        "sprints/07300855-kernel-pr4457-devops-blockers/tests/vitest.config.mjs"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
