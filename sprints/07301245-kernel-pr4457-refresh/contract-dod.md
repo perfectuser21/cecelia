@@ -1,0 +1,119 @@
+---
+skeleton: false
+journey_type: autonomous
+target_environment: local_api
+---
+# Contract DoD — Sprint: Draft PR #4457 累计冲突与 CodeQL 收敛
+
+**范围**: 仅既有 PR #4457；不新建 PR、不 merge、不 deploy。
+**大小**: L
+
+## ARTIFACT 条目
+
+- [ ] [ARTIFACT] `evidence/frozen-conflicts.json`、`codeql-freeze.json`、`required-checks-freeze.json` 与各处置/复查 evidence 按合同 canonical schema 生成并绑定不可变 ID/SHA。
+  Test: node -e "const fs=require('fs');const d='sprints/07301245-kernel-pr4457-refresh/evidence/';for(const f of ['frozen-conflicts.json','freeze.json','conflict-resolution.json','codeql-freeze.json','codeql-disposition.json','required-checks-freeze.json','regressions.json','exact-head.json','evaluator.json','audit-baseline.json','audit-end.json'])fs.accessSync(d+f)"
+- [ ] [ARTIFACT] verifier 提供 `freeze/conflicts/codeql/regressions/exact-head/evaluator/review-gate` 七个 fail-closed phase。
+  Test: node -e "const fs=require('fs');fs.accessSync('sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs')"
+
+## BEHAVIOR 条目
+
+- [ ] [BEHAVIOR] [L3] B-01: 冻结身份与全部 subject 精确匹配 [接缝×2]
+  动作: 真读三个 Git commit、merge-tree、check-run annotations 与 branch protection 后运行 freeze verifier
+  预期观察: stdout/evidence 逐项枚举 33 个冲突路径、77 条 annotation subject key、三个 required-check subject，并 exact-set 匹配冻结身份与 hash
+  等待预算: 120s
+  留证: `evidence/freeze.json`、`codeql-freeze.json`、原始 API URL 与 stdout
+  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs freeze'
+
+- [ ] [BEHAVIOR] [L2] B-02: 全部 33 个冲突路径完成内容与行为验证
+  动作: 整合冻结 main，逐行执行 conflict ledger 指定的真实模块 oracle，再运行 conflicts verifier
+  预期观察: 33 个 path 各自输出三方/final blob、处置、真实 oracle argv/exit_code；集合 exact-set 相等，32 content 加 1 modify/delete，无 unresolved
+  等待预算: 900s
+  留证: `evidence/conflict-resolution.json`、每路径 argv/exit_code/log_tail
+  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs conflicts'
+
+- [ ] [BEHAVIOR] [L3] B-03: 全部 77 条 CodeQL annotation 收敛 [接缝×2]
+  动作: 对 check-run 90774353140 的 77 个 subject key 逐条分类处置并在 final head 真跑 CodeQL
+  预期观察: 77 个 subject 各自输出 path/line/rule/severity/disposition/recheck identity/result；7 critical、59 high、11 medium 全部唯一覆盖，无 unclassified/dismissed/扫描缩小
+  等待预算: 1800s
+  留证: `evidence/codeql-disposition.json`、final CodeQL URL 与 stdout
+  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs codeql'
+
+- [ ] [BEHAVIOR] [L2] B-04: 累计 Kernel Harness 行为与 atomic truth 保持
+  动作: 运行 QuickCheck、node:test 双登记、OKR cecelia_test、migration 369-381、上一轮 blocker 与冲突表内全部行为 oracle
+  预期观察: 33 个 conflict subject 对应的行为 oracle及命名回归均由真实解释器执行且 exit 0；atomic truth 保持 true/false/false/0/99
+  等待预算: 1200s
+  留证: `evidence/regressions.json` 的 argv/interpreter/exit_code/log_tail
+  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs regressions'
+
+- [ ] [BEHAVIOR] [L3] B-05: 三个 required checks 绑定同一最终 SHA [接缝×2]
+  动作: 等待 exact context `ci-passed`、`Harness V5 Gate Passed`、`Smoke Glob Runner Passed` 终态并运行 verifier
+  预期观察: strict=true，逐项列出三个 context 的 run/suite/head/conclusion/details URL，集合与冻结 hash 一致，head 等于读取前后不变的 PR final head 且结论 SUCCESS
+  等待预算: 1800s
+  留证: `evidence/exact-head.json`、check-run URL 与 final SHA
+  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs exact-head'
+
+- [ ] [BEHAVIOR] [L3] B-06: evaluator 在同一最终 SHA 真跑 [接缝×2]
+  动作: evaluator 在 final SHA 执行合同命令并以标准 judge receipt shape 留证
+  预期观察: 顶层及每条 behavior 都含 exit_code/log_tail 且为 0，所有 evidence_sha 等于 final head
+  等待预算: 1800s
+  留证: `evidence/evaluator.json` 与 behavior_tests log tail
+  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs evaluator'
+
+- [ ] [BEHAVIOR] [L3] B-07: 审计窗内无新 PR 无 merge 无 deploy [接缝×2]
+  动作: 在首次 fetch/merge/cherry-pick/push/GitHub mutation 前取基线，evaluator 后取终点，按闭区间分页真读 PR/merge/auto-merge/deployments并按 actor/ref/SHA/run/attempt/task/sprint marker 归因
+  预期观察: #4457 仍 Draft OPEN autoMerge=null mergedAt=null；main 不含 final head；归因的新 PR、merge、auto-merge、staging/production deployment 均为 0
+  等待预算: 120s
+  留证: `evidence/audit-baseline.json`、`audit-end.json`、原始分页响应摘要
+  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs review-gate'
+
+## Invariant 映射
+
+- INV-01 agents 列名：N/A，不触达 agents 表。
+- INV-02 status 枚举：适用；冲突若改状态值须全仓枚举回归。
+- INV-03 watchdog orphan：N/A，不改该状态机。
+- INV-04 通知语义字段：适用；若冲突触达通知必须断言 sent/accepted。
+- INV-05 dep-audit：适用；先核 `fixAvailable`，禁止白名单。
+- INV-06 relay 心跳：适用；长 CI 等待持续 heartbeat。
+- INV-07 测试毕业门：适用；真跑 lint-tdd-commit-order/check-test-coverage。
+- INV-08 manual exit code/解释器：适用；逐项留证。
+- INV-09 manual node expansion：适用；逐条真跑。
+- INV-10/11/21/41/46 smoke 铁律：适用；QuickCheck/smoke 真跑。
+- INV-12/13/14 扫描周期/付费去重/时间常数：N/A，不新增对应设计。
+- INV-15 theater/Android：N/A，本任务 local_api。
+- INV-16 target_environment payload：适用，固定 local_api。
+- INV-17 judge receipt shape：适用，顶层和逐行为均含 exit_code/log_tail。
+- INV-18 DB varchar：N/A，不新增 DB 写入。
+- INV-19 复活退役功能：N/A。
+- INV-20 false/null 失败分支：适用，冲突触达时保留显式失败。
+- INV-22 journey_features stale：N/A。
+- INV-23 controller report 闸：适用，不只看 worker exit 0。
+- INV-24 host 白名单：N/A。
+- INV-25 headed payload/分支：适用，只用既有 PR 分支。
+- INV-26 退役数据：N/A。
+- INV-27 catch 吞错：适用，触达后台 job 时保留失败指标。
+- INV-28/29 表写入方/新 job 消费方：N/A。
+- INV-30 多设备 UI：N/A。
+- INV-31 git_sha unknown：适用，exact-head/终验同一策略。
+- INV-32 rev-parse：适用，使用 `--verify <ref>^{commit}`。
+- INV-33 真实 worktree生产资源：适用，禁止 deploy/tag 副作用。
+- INV-34/35 部署失败/生产自报：N/A，本 sprint 禁 deploy。
+- INV-36 lint-test-quality await：适用。
+- INV-37 Test Contract 四列：适用。
+- INV-38 Red 精确 add：适用。
+- INV-39 source inspection：适用，但源码字符串不能替代行为 oracle。
+- INV-40 scheduler SSOT：N/A。
+- INV-42 generator 禁 merge：适用。
+- INV-43 shell 环境继承：适用，参数显式传入。
+- INV-44 历史合同核实：适用，本轮采用 controller machine facts。
+- INV-45 共享 CI 默认禁区：适用，仅冻结冲突/真实 CodeQL 所需可改。
+- INV-47 brain smoke：适用，触达 brain/src 时 smoke 必跑。
+- INV-48 task_type 七点：N/A。
+- INV-49/50/51 宿主服务：N/A。
+- INV-52 单 slot 串行：适用，单 ws1 写入。
+- INV-53 禁写死环境假设：适用，动态 PR/CI 真读。
+- INV-54 真环境才 done：适用，GitHub/CodeQL/CI 真验。
+- INV-55 多租户：N/A，不触达租户数据。
+- INV-56 凭据安全：适用，token 不进 git/log。
+- INV-57 日志脱敏：适用。
+- INV-58 API 鉴权：N/A，不新增端点。
+- INV-59 租户隔离：N/A。
