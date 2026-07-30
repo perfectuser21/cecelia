@@ -1,6 +1,13 @@
 # Brain 模块定义
 
-**版本**: 1.267.145
+**版本**: 1.267.146
+
+## Assertion finalization policy
+
+- `gp-assertion-finalization.js` 规范化无合同历史与已签合同快照，并比较冻结状态和
+  最终状态；未签、非法哈希或状态漂移均失败关闭。
+- 最终阶段使用 SERIALIZABLE 短事务，`40001` 最多重试三次且不重跑外部断言。
+- 本层是纯策略，不包含 Runner、CLI、route 或 UI 接线。
 
 ## Assertion receipt repository hardening
 

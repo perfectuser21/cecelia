@@ -6,11 +6,19 @@
 
 
 
-**Brain 版本**: 1.267.145
+**Brain 版本**: 1.267.146
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.146 — Assertion finalization policy
+
+- 新增纯 finalization policy：规范化已签合同快照、对合同状态漂移失败关闭，并以
+  SERIALIZABLE 短事务完成最终写入策略。
+- PostgreSQL `40001` 仅重试最终短事务，最多三次；不重跑外部断言。
+- 本层不含 Runner orchestration、CLI、route 或 UI，也不宣称生产盖章已上线。
+- 产权变更 B 继续 `effective_now=false`。回退：部署 Brain `1.267.145`。
 
 ## Brain 1.267.145 — Assertion receipt repository hardening
 
