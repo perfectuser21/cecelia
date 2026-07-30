@@ -111,7 +111,11 @@ function CellCard({ cell, stepName, zone }: {
       </div>
       <div className="mt-1 text-[10px] opacity-80">业务状态：{cell.cell_status}</div>
       {semanticReason && <div className="mt-1 text-[10px] opacity-80">{semanticReason}</div>}
-      {verifiedAt && <div className="mt-1 text-[10px] opacity-80">最近验证：{verifiedAt}</div>}
+      {verifiedAt && (
+        <div className="mt-1 text-[10px] opacity-80">
+          {state === 'failed' ? '历史通过' : '最近验证'}：{verifiedAt}
+        </div>
+      )}
       {(cell.verification?.source_sha || cell.verification?.machine_id) && (
         <div className="mt-1 break-all text-[10px] opacity-70">
           {cell.verification.source_sha?.slice(0, 12)}
