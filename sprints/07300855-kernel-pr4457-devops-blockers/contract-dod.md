@@ -11,7 +11,7 @@ target_environment: local_api
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] 四 blocker 聚焦回归真实执行通过，且生产 migration SQL 相对冻结基线零 diff
-  Test: bash -c 'set -euo pipefail; npm test --workspace packages/engine -- --run tests/scripts/quickcheck-vitest-exit-classification.test.ts --reporter=verbose; TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgresql://localhost/cecelia_test}" npm exec --workspace packages/brain -- vitest run src/__tests__/integration/okr-decomposition-flow.integration.test.js src/__tests__/integration/kernel-release-runs.integration.test.js --config vitest.integration.config.js --reporter=verbose; git diff --exit-code c0cd82fe298a8d1df812699507709d564a296f4e -- packages/brain/migrations/'
+  Test: bash -c 'set -euo pipefail; npm test --workspace packages/engine -- --run tests/scripts/quickcheck-vitest-exit-classification.test.ts --reporter=verbose; npm exec --workspace packages/brain -- vitest run src/__tests__/native-node-test-runner-registration.test.js --reporter=verbose; npm run test:node --workspace packages/brain; TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgresql://localhost/cecelia_test}" npm exec --workspace packages/brain -- vitest run src/__tests__/integration/okr-decomposition-flow.integration.test.js src/__tests__/integration/kernel-release-runs.integration.test.js --config vitest.integration.config.js --reporter=verbose; git diff --exit-code c0cd82fe298a8d1df812699507709d564a296f4e -- packages/brain/migrations/'
 
 - [ ] [ARTIFACT] node:test 登记 ratchet 真执行，证明 mutation seam 被 Vitest 排除并已登记在 test:node，随后原生 runner 真执行 seam
   Test: bash -c 'set -euo pipefail; npm exec --workspace packages/brain -- vitest run src/__tests__/native-node-test-runner-registration.test.js --reporter=verbose; npm run test:node --workspace packages/brain'
