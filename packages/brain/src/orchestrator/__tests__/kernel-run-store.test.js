@@ -310,6 +310,8 @@ describe('Kernel run/task terminalization authority', () => {
     );
     expect(runUpdate.sql).toMatch(/completed_at\s*=\s*COALESCE\(completed_at,\s*NOW\(\)\)/);
     expect(taskUpdate.sql).toMatch(/completed_at\s*=\s*COALESCE\(completed_at,\s*NOW\(\)\)/);
+    expect(taskUpdate.sql).toContain('status = $2::varchar');
+    expect(taskUpdate.sql).toContain("WHEN $2::text = 'failed'");
     expect(terminalEvent.sql).toContain("'effect:run_terminal'");
     expect(terminalEvent.params[3]).toContain('automation_deadline_exceeded');
     expect(harness.order).toEqual([
