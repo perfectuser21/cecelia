@@ -1,6 +1,12 @@
 # Brain 模块定义
 
-**版本**: 1.267.149
+**版本**: 1.267.150
+
+## Fail-closed GP assertion CLI
+
+- `scripts/run-gp-assertion.mjs` 仅接受 GP/run 标识并调用真实 assertion runner；
+  生产默认不注入 trusted executor，禁止 legacy execute/verdict、本地 spawn 和假 receipt。
+- 未接线可信执行器时返回 `ASSERTION_TRUSTED_RUNNER_UNAVAILABLE`，并始终关闭数据库池。
 
 ## Trusted receipt isolation hardening
 

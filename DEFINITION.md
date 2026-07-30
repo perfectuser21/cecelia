@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.149
+**Brain 版本**: 1.267.150
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.150 — Fail-closed GP assertion CLI
+
+- 新增严格参数 CLI，仅把 GP 标识交给真实 assertion runner；生产入口不注入
+  trusted executor，不接受 legacy execute/verdict，也不提供本地 spawn 或假 receipt。
+- 可信执行器未接线时输出 `ASSERTION_TRUSTED_RUNNER_UNAVAILABLE` 并关闭数据库池。
+  回退：部署 Brain `1.267.149`。
 
 ## Brain 1.267.149 — Trusted receipt isolation hardening
 
