@@ -352,6 +352,10 @@ describe('attempt store', () => {
     expect(result.id).toBe(input.id);
     const [sql, values] = pool.query.mock.calls[0];
     expect(sql).toMatch(/INSERT INTO harness_attempts/i);
+    expect(sql).toMatch(/WITH guarded_run AS/i);
+    expect(sql).toMatch(/FROM initiative_runs/i);
+    expect(sql).toMatch(/phase NOT IN \('done','failed'\)/i);
+    expect(sql).toMatch(/FOR KEY SHARE/i);
     expect(sql).not.toMatch(/INSERT INTO harness_run_events/i);
     expect(sql).toMatch(/ON CONFLICT \(run_id, hop\)/i);
     expect(sql).toMatch(/machine_id,\s*requested_machine_id/i);
@@ -367,6 +371,18 @@ describe('attempt store', () => {
       `sha256:${'a'.repeat(64)}`,
       'b'.repeat(64),
     ]));
+  });
+
+  it('refuses to create an attempt when the exact parent run is terminal or missing', async () => {
+    const pool = poolWith(
+      { rows: [], rowCount: 0 },
+      { rows: [], rowCount: 0 },
+      { rows: [], rowCount: 0 },
+      { rows: [], rowCount: 0 },
+    );
+
+    await expect(createAttemptStore(pool).createAttempt(input))
+      .rejects.toThrow(`Kernel run is terminal or missing: ${input.runId}`);
   });
 
   it('并发冲突语句看不到 winner 时用新语句重读现有 attempt', async () => {
