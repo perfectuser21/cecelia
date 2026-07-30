@@ -9,6 +9,7 @@ const runtime = vi.hoisted(() => ({
   store: {
     getById: vi.fn(),
     assertFreshRoleSession: vi.fn(async () => true),
+    recordCallbackTerminal: vi.fn(),
     complete: vi.fn(),
     fail: vi.fn(),
     heartbeat: vi.fn(),
@@ -110,6 +111,7 @@ async function postCallback(app, result) {
     .post(`/api/brain/harness/attempts/${ATTEMPT_ID}/callback`)
     .set('Authorization', `Bearer ${CALLBACK_TOKEN}`)
     .set('X-Harness-Lease-Owner', LEASE_OWNER)
+    .set('X-Harness-Lease-Generation', '0')
     .send(result);
 }
 
@@ -187,6 +189,7 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
       provider: 'codex',
       status: 'running',
       lease_owner: LEASE_OWNER,
+      lease_generation: 0,
       requested_machine_id: 'us-mac-m4',
       actual_machine_id: 'us-mac-m4',
       execution_transport: 'local-docker',
@@ -196,7 +199,7 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
       task_bundle: { inputs: {} },
     };
     runtime.store.getById.mockResolvedValue(runtime.attempt);
-    runtime.store.complete.mockImplementation(async (_id, result) => ({
+    runtime.store.recordCallbackTerminal.mockImplementation(async ({ result }) => ({
       attempt: { ...runtime.attempt, status: result.status, result },
       deduped: false,
     }));
@@ -269,6 +272,7 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
           .post(`/api/brain/harness/attempts/${ATTEMPT_ID}/callback`)
           .set('Authorization', `Bearer ${CALLBACK_TOKEN}`)
           .set('X-Harness-Lease-Owner', LEASE_OWNER)
+          .set('X-Harness-Lease-Generation', '0')
           .send({
             contract_version: '1.0',
             attempt_id: ATTEMPT_ID,
