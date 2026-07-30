@@ -298,6 +298,7 @@ export async function reconcileTerminalMismatches({
   }
 
   let applied = 0;
+  let verified = 0;
   try {
     await writeAudit(`${JSON.stringify({
       execution_id: executionId,
@@ -320,10 +321,34 @@ export async function reconcileTerminalMismatches({
         outcome: repair.run_phase,
         reason: repair.reason,
       });
+      if (productionGuards) {
+        const verification = await queryDb.query(
+          `SELECT t.status AS task_status,
+                  r.phase AS run_phase,
+                  r.current_task_id
+             FROM initiative_runs r
+             JOIN tasks t ON t.id = r.current_task_id
+            WHERE r.id = $1
+              AND t.id = $2`,
+          [repair.run_id, repair.task_id],
+        );
+        const verifiedRow = verification.rows?.[0] ?? null;
+        if (
+          !verifiedRow
+          || verifiedRow.run_phase !== repair.run_phase
+          || verifiedRow.task_status !== repair.after_task_status
+          || verifiedRow.current_task_id !== repair.task_id
+        ) {
+          throw new Error(
+            `terminal repair verification failed: ${repair.run_id}/${repair.task_id}`,
+          );
+        }
+        verified += 1;
+      }
       applied += 1;
       await writeAudit(`${JSON.stringify({
         execution_id: executionId,
-        commit_state: 'committed',
+        commit_state: productionGuards ? 'verified' : 'committed',
         ...repair,
       })}\n`);
     }
@@ -332,6 +357,7 @@ export async function reconcileTerminalMismatches({
       kind: 'kernel_terminal_mismatch_reconcile',
       outcome: 'completed',
       applied,
+      ...(productionGuards ? { verified } : {}),
     })}\n`);
   } finally {
     if (auditHandle) {
@@ -346,6 +372,7 @@ export async function reconcileTerminalMismatches({
     proposed: repairs.length,
     blocked: blocked.length,
     applied,
+    ...(productionGuards ? { verified } : {}),
     execution_id: executionId,
     plan_sha256: planSha256,
     ...productionMetadata,
