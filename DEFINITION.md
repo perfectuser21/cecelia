@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.140
+**Brain 版本**: 1.267.141
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.141 — GP assertion output evidence utility
+
+- 新增独立输出证据工具：按 UTF-8 字节边界保留尾部、遮蔽 bearer 与键值凭据，
+  并从 Vitest、Pytest 或显式 bash marker 提取场景计数证据。
+- 本层只提供纯输出/evidence utility，不接线 Runner、receipt、API 或 UI。
+- 产权变更 B 继续 `effective_now=false`。回退：部署 Brain `1.267.140`。
 
 ## Brain 1.267.140 — Golden Path §④-1 receipt evidence schema (stack 2)
 
