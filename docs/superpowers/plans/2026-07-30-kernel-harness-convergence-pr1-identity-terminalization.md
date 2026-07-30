@@ -8,6 +8,11 @@
 
 **Tech Stack:** Node.js ESM, Express, PostgreSQL, Vitest, Supertest, existing Cecelia Brain migration runner and DevGate.
 
+**Execution status (2026-07-30):** Tasks 1–7 completed with separate Red and Green
+commits. Task 8 implementation is complete through Brain `1.267.146`, schema floor
+`375`, DEFINITION sync, and the real PostgreSQL/read-only preflight smoke; repository
+gates and PR checks remain the final merge boundary.
+
 ---
 
 ## File map
