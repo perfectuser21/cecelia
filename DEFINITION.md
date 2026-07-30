@@ -16,12 +16,13 @@
 
 - canonical relay GET/PATCH 以完整 `run_id` 定位；initiative 历史只读且稳定排序。
   legacy initiative PATCH 只有唯一候选时才适配并记审计，否则 409 fail closed。
-- 两个 watchdog 的 run 写入均按 run UUID 精确落一条，父任务使用
-  `current_task_id`，不再批量改写同 initiative 的历史。
+- 两个 watchdog 的 run/task 终态写入走同一事务，选择、计次与父任务定位使用
+  `current_task_id`；缺身份 fail closed，不再批量改写同 initiative 的历史。
 - Migration 376 为 run 增加可信度和 predecessor lineage。新 canonical run 标
   `trusted`；历史默认 `untrusted`，只能由 dry-run 优先、带绝对审计文件的确定性
-  reconcile 分批重建，禁止时间/前缀/initiative 猜测。
-- summary 分开 `trusted/reconstructed/untrusted`；SLO 仅使用原生 trusted 分母。
+  reconcile 分批重建；审计独占创建、记录真实 applied/conflict 后封为只读。
+- summary 分开 `trusted/reconstructed/untrusted`；SLO 使用每个任务最新的原生
+  trusted 终态，活跃 run 不进入分母。
   回退：部署 Brain `1.267.146` 并保留加法 schema，禁止恢复批量 mutation。
 
 ## Brain 1.267.146 — Kernel run identity and atomic terminalization
