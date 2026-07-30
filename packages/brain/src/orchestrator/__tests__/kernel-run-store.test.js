@@ -669,6 +669,7 @@ describe('Kernel terminal reconciliation authority', () => {
     expect(sql).toContain('current_task_id = $1');
     expect(sql).not.toMatch(/OR\s+initiative_id/i);
     expect(sql).toContain("phase IN ('done', 'failed')");
+    expect(sql).toContain("active.phase NOT IN ('done', 'failed')");
     expect(sql).toContain('completed_at DESC NULLS LAST');
     expect(params).toEqual([TASK_ID]);
     expect(finalizeRun).toHaveBeenCalledWith(
@@ -676,6 +677,7 @@ describe('Kernel terminal reconciliation authority', () => {
       {
         runId: RUN_ID,
         expectedTaskId: TASK_ID,
+        requireNoActiveSibling: true,
         outcome: 'failed',
         reason: 'pid_gone',
       },

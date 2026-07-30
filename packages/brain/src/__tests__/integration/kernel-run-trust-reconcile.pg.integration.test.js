@@ -245,4 +245,88 @@ describe('kernel trust reconciliation on real PostgreSQL', () => {
       record_trust_reason: null,
     }]);
   });
+
+  it('uses advisory-task-run lock order without deadlocking a terminal writer', async () => {
+    const cutoffResult = await testPool.query(
+      `SELECT applied_at FROM schema_version WHERE version = '376'`,
+    );
+    const cutoff = new Date(cutoffResult.rows[0].applied_at);
+    const taskId = randomUUID();
+    const runId = randomUUID();
+    await testPool.query(
+      `INSERT INTO tasks (id, title, status)
+       VALUES ($1, 'trust lock order', 'in_progress')`,
+      [taskId],
+    );
+    await testPool.query(
+      `INSERT INTO initiative_runs (
+         id, initiative_id, phase, current_task_id, orchestrator_version,
+         created_source, started_at, completed_at,
+         record_trust_status, record_trust_reason
+       ) VALUES (
+         $1, $2, 'failed', $3, 'v2', 'historical_reconstruction',
+         $4, $5, 'untrusted', NULL
+       )`,
+      [
+        runId,
+        randomUUID(),
+        taskId,
+        new Date(cutoff.getTime() - 120_000),
+        new Date(cutoff.getTime() - 60_000),
+      ],
+    );
+    const dry = await reconcileRunTrust({
+      db: testPool,
+      productionGuards: true,
+      writeLine: () => {},
+    });
+
+    let terminalWriter = null;
+    let writerClient = null;
+    let started = false;
+    const appendAudit = async (_path, content) => {
+      if (started || !content.includes('"outcome":"started"')) return;
+      started = true;
+      writerClient = await testPool.connect();
+      await writerClient.query('BEGIN');
+      await writerClient.query(
+        `SELECT id FROM tasks WHERE id = $1 FOR UPDATE`,
+        [taskId],
+      );
+      terminalWriter = new Promise((resolve) => setTimeout(resolve, 50))
+        .then(() => writerClient.query(
+          `SELECT id FROM initiative_runs WHERE id = $1 FOR UPDATE`,
+          [runId],
+        ))
+        .then(() => writerClient.query('COMMIT'))
+        .finally(() => writerClient.release());
+    };
+
+    const applying = reconcileRunTrust({
+      db: testPool,
+      apply: true,
+      auditOutput: '/tmp/kernel-trust-lock-order.jsonl',
+      expectedPlanSha256: dry.plan_sha256,
+      expectedProposed: dry.proposed,
+      confirmDatabase: databaseName,
+      productionGuards: true,
+      failOnConflict: true,
+      batchSize: 500,
+      appendAudit,
+      writeLine: () => {},
+    });
+    const applyResult = await Promise.allSettled([
+      applying,
+      new Promise((resolve) => setTimeout(resolve, 100))
+        .then(() => terminalWriter),
+    ]);
+
+    for (const result of applyResult) {
+      if (result.status === 'rejected') {
+        expect(result.reason?.code).not.toBe('40P01');
+      }
+    }
+    expect(applyResult[0].status).toBe('fulfilled');
+    expect(applyResult[1].status).toBe('fulfilled');
+  });
 });
