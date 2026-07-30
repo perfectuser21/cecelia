@@ -9,7 +9,7 @@
 # ============================================================================
 
 version: "1.0.0"
-updated: "2026-07-28"
+updated: "2026-07-30"
 
 # ============================================================================
 # 核心功能回归契约
@@ -30,6 +30,30 @@ ci:
     description: "Idempotent structured HarnessResult callback"
     endpoint: "/harness/attempts/:attemptId/callback"
     method: "POST"
+    trigger: [PR, Release]
+
+  - id: brain-api-relay-runs-by-id-runid-get
+    description: "Exact provider-neutral Kernel run read"
+    endpoint: "/relay-runs/by-id/:run_id"
+    method: "GET"
+    trigger: [PR, Release]
+
+  - id: brain-api-relay-runs-by-id-runid-patch
+    description: "Atomic exact Kernel run and parent task mutation"
+    endpoint: "/relay-runs/by-id/:run_id"
+    method: "PATCH"
+    trigger: [PR, Release]
+
+  - id: brain-api-relay-initiatives-initiativeid-runs
+    description: "Deterministically ordered Kernel run history"
+    endpoint: "/relay-initiatives/:initiative_id/runs"
+    method: "GET"
+    trigger: [PR, Release]
+
+  - id: brain-api-relay-runs-initiativeid-patch
+    description: "Fail-closed deprecated initiative mutation adapter"
+    endpoint: "/relay-runs/:initiative_id"
+    method: "PATCH"
     trigger: [PR, Release]
 
 # ============================================================================
