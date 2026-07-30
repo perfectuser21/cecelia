@@ -1,0 +1,24 @@
+{
+  "initiative_id": "f21957f6-2ae5-4db3-822e-90c3f474fc19",
+  "journey_type": "autonomous",
+  "journey_type_reason": "目标是既有 Draft PR 的 git、CodeQL 与 exact-head CI 后端收敛，不含用户界面流程。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "收敛 Draft PR #4457 冲突、CodeQL 与 exact-head CI",
+      "scope": "仅在既有 cp-kernel-phase5b-a1-review-fixes 分支上冻结证据、整合指定 main、解决冻结冲突、处置冻结 CodeQL 告警并恢复绑定最终 SHA 的 CI；不新建 PR、不 merge、不 deploy。",
+      "dod": [
+        "[BEHAVIOR] 冻结清单、冲突处置、77 个 CodeQL 告警、回归与 exact-head verifier 全部真实通过",
+        "[BEHAVIOR] PR #4457 保持 Draft、OPEN、autoMerge=null 且停在人工审阅门",
+        "[ARTIFACT] evidence/ 下保存绑定冻结 SHA 与最终 SHA 的机器可读证据"
+      ],
+      "files": [
+        "sprints/07301245-kernel-pr4457-refresh/",
+        "冻结冲突清单内由处置实际决定的文件"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
