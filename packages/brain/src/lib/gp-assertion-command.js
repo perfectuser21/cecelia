@@ -15,7 +15,9 @@ const TOOL_BASENAME = {
   python: /^python3(?:\.\d+)*$/,
   bash: /^bash$/,
 };
+const trustedCommands = new WeakSet();
 export const assertionRunnerError = (code, message = code) => Object.assign(new Error(message), { code });
+export const isTrustedAssertionCommand = value => trustedCommands.has(value);
 function fail(code, message) { throw assertionRunnerError(code, message); }
 function isWithin(root, target) {
   const path = relative(root, target);
@@ -95,13 +97,15 @@ async function pinnedTools(toolchains, names, realpathFn) {
   return Object.freeze(selected);
 }
 function command(executable, argv, cwd, kind, toolchain) {
-  return Object.freeze({
+  const value = Object.freeze({
     executable, argv: Object.freeze(argv),
     options: Object.freeze({
       cwd, shell: false, evidenceKind: kind, toolchain,
       env: Object.freeze({ inherit: false, allowlist: Object.freeze([]) }),
     }),
   });
+  trustedCommands.add(value);
+  return value;
 }
 async function git(repoRoot, argv) {
   try {

@@ -6,11 +6,16 @@
 
 
 
-**Brain 版本**: 1.267.144
+**Brain 版本**: 1.267.145
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.145 — Same-FD pinned toolchain snapshot
+
+- Attestation 仅消费策略模块签发的 command，并以 no-follow 打开 canonical tool。
+- 在同一只读 FD 上校验元数据、分块哈希和前后 identity；异常失败关闭。回退：Brain `1.267.144`。
 
 ## Brain 1.267.144 — Pinned toolchain attestation policy
 

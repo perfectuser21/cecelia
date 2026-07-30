@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
+import { assertionCommand } from '../gp-assertion-command.js';
 import {
   createToolchainAttestation,
   verifyToolchainAttestation,
@@ -7,20 +8,49 @@ import {
 
 const RUNNER_DIGEST = `sha256:${'a'.repeat(64)}`;
 const OTHER_DIGEST = `sha256:${'b'.repeat(64)}`;
+const BASE = new Map([
+  ['/tools/node', 'node-binary-secret-bytes'],
+  ['/tools/vitest.mjs', 'vitest-binary-secret-bytes'],
+]);
+const COMMAND = await assertionCommand('packages/brain/src/example.test.js', '/repo', {
+  realpathFn: vi.fn(async path => path),
+  fileStatFn: vi.fn(async () => ({ isFile: () => true })),
+  pathExistsFn: vi.fn(async path => path === '/repo/packages/brain/package.json'),
+  isTrackedPathFn: vi.fn(async () => true),
+  toolchains: Object.fromEntries([...BASE].map(([path, bytes], index) => [
+    index ? 'vitest' : 'node',
+    { path, sha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}` },
+  ])),
+});
 
 function validInput(overrides = {}) {
   return {
     actual_runner_digest: RUNNER_DIGEST,
     expected_runner_digest: RUNNER_DIGEST,
-    toolchain_paths: ['/tools/node', '/tools/git'],
+    command: COMMAND,
     ...overrides,
   };
 }
 
 function fakeFileSystem(contents) {
+  const openFn = vi.fn(async path => {
+    const bytes = Buffer.from(contents.get(path) ?? BASE.get(path));
+    const stats = {
+      dev: 1n, ino: 2n, size: BigInt(bytes.length), ctimeNs: 3n, mtimeNs: 4n,
+      isFile: () => true,
+    };
+    return {
+      stat: vi.fn(async () => stats),
+      read: vi.fn(async (buffer, offset, length, position) => {
+        const count = Math.min(length, Math.max(0, bytes.length - position));
+        bytes.copy(buffer, offset, position, position + count);
+        return { bytesRead: count };
+      }),
+      close: vi.fn(async () => {}),
+    };
+  });
   return {
-    realpathFn: vi.fn(async path => path.replace('/tools/', '/real/')),
-    readFileFn: vi.fn(async path => Buffer.from(contents.get(path) ?? 'tool')),
+    openFn,
   };
 }
 
@@ -53,15 +83,11 @@ describe('GP assertion pinned toolchain attestation', () => {
     )).rejects.toMatchObject({ code });
   });
 
-  it.each([
-    [[], 'ASSERTION_TOOLCHAIN_PATHS_REQUIRED'],
-    [['relative/node'], 'ASSERTION_TOOLCHAIN_PATH_INVALID'],
-    [[undefined], 'ASSERTION_TOOLCHAIN_PATH_INVALID'],
-  ])('rejects invalid toolchain paths %#', async (toolchainPaths, code) => {
+  it('does not accept legacy caller-provided toolchain paths', async () => {
     await expect(createToolchainAttestation(
-      validInput({ toolchain_paths: toolchainPaths }),
+      { ...validInput(), command: undefined, toolchain_paths: ['/tools/node'] },
       fakeFileSystem(new Map()),
-    )).rejects.toMatchObject({ code });
+    )).rejects.toMatchObject({ code: 'ASSERTION_COMMAND_UNTRUSTED' });
   });
 
   it('requires native strings for runner digests', async () => {
@@ -99,7 +125,7 @@ describe('GP assertion pinned toolchain attestation', () => {
     const attestation = await createToolchainAttestation(validInput(), fs);
     const error = await verifyToolchainAttestation(forge(attestation), fs)
       .catch(reason => reason);
-    expect(error).toMatchObject({ code: 'ASSERTION_TOOLCHAIN_ATTESTATION_INVALID' });
+    expect(error).toMatchObject({ code: 'ASSERTION_TOOLCHAIN_ATTESTATION_UNTRUSTED' });
     expect(JSON.stringify(error)).not.toContain('secret');
   });
 
@@ -108,8 +134,7 @@ describe('GP assertion pinned toolchain attestation', () => {
       credential: 'credential-secret',
     });
     const error = await createToolchainAttestation(validInput(), {
-      realpathFn: vi.fn(async () => { throw leak; }),
-      readFileFn: vi.fn(),
+      openFn: vi.fn(async () => { throw leak; }),
     }).catch(reason => reason);
     expect(error).toMatchObject({ code: 'ASSERTION_TOOLCHAIN_UNAVAILABLE' });
     expect(JSON.stringify(error)).not.toContain('credential-secret');
@@ -122,8 +147,7 @@ describe('GP assertion pinned toolchain attestation', () => {
       credential: 'credential-secret',
     });
     const error = await verifyToolchainAttestation(attestation, {
-      realpathFn: vi.fn(async () => { throw leak; }),
-      readFileFn: vi.fn(),
+      openFn: vi.fn(async () => { throw leak; }),
     }).catch(reason => reason);
     expect(error).toMatchObject({ code: 'ASSERTION_TOOLCHAIN_DRIFT' });
     expect(JSON.stringify(error)).not.toContain('credential-secret');
@@ -131,16 +155,15 @@ describe('GP assertion pinned toolchain attestation', () => {
 
   it('realpaths and hashes every file without retaining its content', async () => {
     const contents = new Map([
-      ['/real/node', 'node-binary-secret-bytes'],
-      ['/real/git', 'git-binary-secret-bytes'],
+      ...BASE,
     ]);
     const fs = fakeFileSystem(contents);
 
     const attestation = await createToolchainAttestation(validInput(), fs);
 
-    expect(fs.realpathFn.mock.calls).toEqual([
+    expect(fs.openFn.mock.calls.map(call => call.slice(0, 1))).toEqual([
       ['/tools/node'],
-      ['/tools/git'],
+      ['/tools/vitest.mjs'],
     ]);
     expect(attestation).toEqual({
       kind: 'pinned_toolchain',
@@ -148,14 +171,14 @@ describe('GP assertion pinned toolchain attestation', () => {
       expected_runner_digest: RUNNER_DIGEST,
       files: [
         {
-          path: '/real/node',
+          path: '/tools/node',
           sha256: `sha256:${createHash('sha256')
-            .update(contents.get('/real/node')).digest('hex')}`,
+            .update(contents.get('/tools/node')).digest('hex')}`,
         },
         {
-          path: '/real/git',
+          path: '/tools/vitest.mjs',
           sha256: `sha256:${createHash('sha256')
-            .update(contents.get('/real/git')).digest('hex')}`,
+            .update(contents.get('/tools/vitest.mjs')).digest('hex')}`,
         },
       ],
     });
@@ -171,8 +194,7 @@ describe('GP assertion pinned toolchain attestation', () => {
 
   it('revalidates unchanged files and rejects post-execution drift', async () => {
     const contents = new Map([
-      ['/real/node', 'node-v1'],
-      ['/real/git', 'git-v1'],
+      ...BASE,
     ]);
     const fs = fakeFileSystem(contents);
     const attestation = await createToolchainAttestation(validInput(), fs);
@@ -181,12 +203,12 @@ describe('GP assertion pinned toolchain attestation', () => {
       verifyToolchainAttestation(attestation, fs),
     ).resolves.toEqual(attestation);
 
-    contents.set('/real/git', 'git-v2');
+    contents.set('/tools/vitest.mjs', 'git-v2');
     await expect(
       verifyToolchainAttestation(attestation, fs),
     ).rejects.toMatchObject({
       code: 'ASSERTION_TOOLCHAIN_DRIFT',
-      path: '/real/git',
+      path: '/tools/vitest.mjs',
     });
   });
 });
