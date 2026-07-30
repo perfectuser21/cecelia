@@ -771,6 +771,14 @@ describe('Kernel callback convergence on real PostgreSQL', () => {
       deduped: true,
       attempt: { status: 'blocked' },
     });
+    await expect(store.recordCallbackTerminal({
+      ...identity,
+      result: { ...result, summary: 'conflicting terminal payload' },
+    })).resolves.toMatchObject({
+      attempt: null,
+      deduped: false,
+      conflict: 'terminal_payload_conflict',
+    });
 
     const persisted = await testPool.query(
       `SELECT a.status, a.result,
