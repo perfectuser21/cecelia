@@ -81,6 +81,8 @@ export const LOG_ACTION = Object.freeze({
   VERDICT_REVIEWER: 'verdict:reviewer',
   VERDICT_HUMAN_REVIEW: 'verdict:human_review',
   HUMAN_REVIEW_REQUESTED: 'effect:human_review_requested',
+  CONTEXT_REQUESTED: 'effect:context_requested',
+  CONTEXT_ANSWER: 'verdict:context_answer',
   ATTEMPT_LAUNCHED: 'effect:attempt_launched',
   ATTEMPT_CALLBACK: 'verdict:attempt_callback',
   DISPATCH_RESULT: 'result:dispatch',

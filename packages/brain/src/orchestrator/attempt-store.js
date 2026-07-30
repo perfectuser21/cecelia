@@ -71,6 +71,8 @@ function callbackEventDetail(attempt, result, leaseGeneration) {
     role: attempt.role,
     hop: attempt.hop,
     status: result.status,
+    summary: result.summary ?? '',
+    context_question: result.decision?.reason ?? result.summary ?? null,
     failure_class: result.failure_class ?? null,
     ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
     artifacts: result.artifacts ?? [],
@@ -605,51 +607,56 @@ export function createAttemptStore(pool) {
           ],
         );
 
-        const roleProjection = callbackRoleVerdictProjection(terminalAttempt, result);
-        if (roleProjection) {
-          await client.query(
-            `WITH next_hop AS (
-               SELECT COALESCE(MAX(hop), 0) + 1 AS hop
-                 FROM orchestrator_decision_log
-                WHERE run_id=$1::uuid
-             )
-             INSERT INTO orchestrator_decision_log
-               (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
-             SELECT $1::uuid, next_hop.hop, $2::jsonb, $3, $4, $5, $6::jsonb
-               FROM next_hop
-              WHERE NOT EXISTS (
-                SELECT 1
-                  FROM orchestrator_decision_log
-                 WHERE run_id=$1::uuid
-                   AND action=$5
-                   AND detail->>'attempt_id'=$7::text
-              )
-             RETURNING hop`,
-            [
-              runId,
-              JSON.stringify(roleProjection.observed),
-              roleProjection.phase,
-              roleProjection.gateVerdict,
-              roleProjection.action,
-              JSON.stringify(roleProjection.detail),
-              attemptId,
-            ],
-          );
-        }
+        // All role-specific projections were committed with the first terminal
+        // write. An exact retry only confirms the generic callback receipt; it
+        // must never replay mutable projections into a run that advanced.
+        if (!isTerminal) {
+          const roleProjection = callbackRoleVerdictProjection(terminalAttempt, result);
+          if (roleProjection) {
+            await client.query(
+              `WITH next_hop AS (
+                 SELECT COALESCE(MAX(hop), 0) + 1 AS hop
+                   FROM orchestrator_decision_log
+                  WHERE run_id=$1::uuid
+               )
+               INSERT INTO orchestrator_decision_log
+                 (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+               SELECT $1::uuid, next_hop.hop, $2::jsonb, $3, $4, $5, $6::jsonb
+                 FROM next_hop
+                WHERE NOT EXISTS (
+                  SELECT 1
+                    FROM orchestrator_decision_log
+                   WHERE run_id=$1::uuid
+                     AND action=$5
+                     AND detail->>'attempt_id'=$7::text
+                )
+               RETURNING hop`,
+              [
+                runId,
+                JSON.stringify(roleProjection.observed),
+                roleProjection.phase,
+                roleProjection.gateVerdict,
+                roleProjection.action,
+                JSON.stringify(roleProjection.detail),
+                attemptId,
+              ],
+            );
+          }
 
-        const pullRequest = verifiedPullRequestArtifact(terminalAttempt, result);
-        await appendGeneratorFixProjection(client, terminalAttempt, result, pullRequest);
-        if (pullRequest) {
-          const projection = await client.query(
-            `UPDATE initiative_runs
-                SET pr_url=$2, updated_at=NOW()
-              WHERE id=$1
-                AND phase NOT IN ('done', 'failed')
-              RETURNING id`,
-            [runId, pullRequest.url],
-          );
-          if (!firstRow(projection)) {
-            throw new Error(`generator PR projection lost run authority: ${runId}`);
+          const pullRequest = verifiedPullRequestArtifact(terminalAttempt, result);
+          await appendGeneratorFixProjection(client, terminalAttempt, result, pullRequest);
+          if (pullRequest) {
+            const projection = await client.query(
+              `UPDATE initiative_runs
+                  SET pr_url=$2, updated_at=NOW()
+                WHERE id=$1
+                  AND phase NOT IN ('done', 'failed')
+                RETURNING id`,
+              [runId, pullRequest.url],
+            );
+            if (!firstRow(projection)) {
+              throw new Error(`generator PR projection lost run authority: ${runId}`);
+            }
           }
         }
 

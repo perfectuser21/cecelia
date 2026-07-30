@@ -77,6 +77,7 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
     harness_runtime: 'kernel-v1',
     sprint_dir: 'sprints/07231527-relay-50170af2',
     worktree_path: '/workspace',
+    base_repo: 'perfectuser21/cecelia',
     review_required: reviewRequired,
     executor: 'codex',
     test_ci: ci,
@@ -643,7 +644,11 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
     const app = express();
     app.use(express.json());
     app.set('pool', testPool);
-    app.set('kernelPrHeadResolver', async () => HEAD_SHA);
+    app.set('kernelPrIdentityResolver', async () => ({
+      head_sha: HEAD_SHA,
+      head_ref: `cp-kernel-${run.taskId.slice(0, 8)}`,
+      url: PR_URL,
+    }));
     app.use('/api/brain', callbackRouter);
     const attemptStore = createAttemptStore(testPool);
     let dispatchCount = 0;
@@ -877,6 +882,63 @@ describe('Kernel callback convergence on real PostgreSQL', () => {
       phase: 'paused',
       action: 'pause_run',
       reason: 'callback_needs_context',
+    });
+
+    const paused = await runLoop({
+      ...loopDeps(),
+      sleep: async () => {},
+    }, { taskId: run.taskId, runId: run.runId });
+    expect(paused.exitReason).toBe('callback_needs_context');
+    const requestRow = (await testPool.query(
+      `SELECT hop, detail
+         FROM orchestrator_decision_log
+        WHERE run_id=$1
+          AND action='effect:context_requested'`,
+      [run.runId],
+    )).rows[0];
+    expect(requestRow.detail).toMatchObject({
+      callback_hop: 2,
+      resume_phase: 'generate',
+    });
+    expect((await testPool.query(
+      'SELECT phase FROM initiative_runs WHERE id=$1',
+      [run.runId],
+    )).rows[0].phase).toBe('paused');
+
+    const originalToken = process.env.HARNESS_REVIEW_APPROVER_TOKEN;
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+    try {
+      const app = express();
+      app.use(express.json());
+      app.set('pool', testPool);
+      app.use('/kernel-reviews', approvalRouter);
+      const response = await request(app)
+        .post(`/kernel-reviews/${run.runId}/context`)
+        .set('x-approver-token', APPROVER_TOKEN)
+        .send({
+          task_id: run.taskId,
+          context_request_hop: requestRow.hop,
+          context_version: requestRow.detail.context_version,
+          answer: 'Use the approved contract rollback policy.',
+          approved_by: 'kernel-pg-owner',
+        });
+      expect(response.status).toBe(202);
+    } finally {
+      if (originalToken === undefined) delete process.env.HARNESS_REVIEW_APPROVER_TOKEN;
+      else process.env.HARNESS_REVIEW_APPROVER_TOKEN = originalToken;
+    }
+
+    const resumed = await collect(run);
+    const resumedCounters = deriveCounters(resumed.decisionLog, {
+      proposeBranchMaxRn: resumed.proposeBranchRn,
+    });
+    expect(derive({
+      ...resumed,
+      counters: { ...resumedCounters, ganCostUsd: 0 },
+    })).toEqual({
+      phase: 'generate',
+      action: 'spawn:generator-fix',
+      reason: 'no_pr',
     });
   });
 

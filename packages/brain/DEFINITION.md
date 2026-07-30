@@ -14,6 +14,17 @@
 - `needs_context`、基础设施阻塞、语义拒绝、runner failure 与取消分别路由；
   只有结构化 `infrastructure_blocked` 可换执行目标，同一 `unknown_no_pr` 第二次
   出现即原子终结 run/task，不产生第三个 attempt。
+- `needs_context` 原子写入版本化 `effect:context_requested` 并暂停；人工答案必须
+  通过审批权认证且绑定 `run/task/request hop/callback hop/context version`。答案与
+  恢复意图同事务提交，旧答案不能消费新请求；run 保持 `paused`，watchdog 先用
+  `context-resume:*` 的 host/pid/heartbeat CAS 领取，新 Controller 的 receipt
+  持久化后才发布原 phase。
+  恢复 Attempt 的 TaskBundle 显式携带版本化答案。
+- Generator 的 PR claim 只有同时匹配 Brain 签发的 `workspace_spec.repo/branch` 且由
+  GitHub 返回完整 head SHA 才能投影为权威 `pr_url`；legacy attempt 才回退 task
+  short-id。generator-fix 复用当前服务端观测到的 PR branch/head，不另开分支。
+  原始 callback 以服务端 digest 幂等，终态重放不再查询 GitHub 或重放可变投影，
+  冲突 payload 继续 fail closed。
 - Migration 378 将 `needs_context` 加入 Attempt failure-class CHECK；回退应用到
   `1.267.147` 时保留该兼容性 schema，不恢复异步 callback 的 split-write 路径。
 

@@ -12,6 +12,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
+import os from 'node:os';
 
 import pool from './db.js';
 import { createAttemptStore } from './orchestrator/attempt-store.js';
@@ -792,6 +793,106 @@ async function _recoverKernelRun(run, task, deps, out) {
   }
 }
 
+const CONTEXT_RESUME_PHASES = new Set([
+  'planning',
+  'gan',
+  'generate',
+  'evaluate',
+  'review',
+  'merge',
+]);
+
+/**
+ * Claim an answered needs_context checkpoint before launching its replacement
+ * Controller. The phase remains orphan-safe `paused`; a leased
+ * context-resume:* host/pid/heartbeat prevents duplicate recovery. Only after
+ * the detached child receipt is durable is the original phase exposed.
+ */
+export async function _resumePausedKernelContext(run, task, deps, out) {
+  const dbPool = deps.pool || deps.dbPool || pool;
+  const contextResume = tryParseJson(run.context_resume);
+  const requestHop = Number(contextResume?.context_request_hop);
+  const resumePhase = contextResume?.resume_phase;
+  if (!Number.isInteger(requestHop) || !CONTEXT_RESUME_PHASES.has(resumePhase)) {
+    return false;
+  }
+  const now = deps.now?.() ?? new Date();
+  const host = deps.hostname?.() ?? os.hostname();
+  const watchdogPid = deps.watchdogPid ?? process.pid;
+  const claimHost = `context-resume:${host}:${watchdogPid}`;
+  const claimed = await dbPool.query(
+    `UPDATE initiative_runs r
+        SET orchestrator_heartbeat_at=$3,
+            orchestrator_host=$4,
+            orchestrator_pid=$5,
+            updated_at=NOW()
+      WHERE r.id=$1::uuid
+        AND r.phase='paused'
+        AND (
+          r.orchestrator_host IS NULL
+          OR r.orchestrator_host NOT LIKE 'context-resume:%'
+          OR r.orchestrator_heartbeat_at < NOW() - INTERVAL '5 minutes'
+        )
+        AND EXISTS (
+          SELECT 1
+            FROM orchestrator_decision_log answer
+           WHERE answer.run_id=r.id
+             AND answer.action='verdict:context_answer'
+             AND answer.detail->>'context_request_hop'=$2
+        )
+      RETURNING r.id`,
+    [run.id, String(requestHop), now, claimHost, watchdogPid],
+  );
+  if (claimed.rowCount !== 1) return false;
+
+  const launchKernel = deps.launchKernel
+    || (await import('./harness-skill-relay.js')).launchKernelProcess;
+  let launched;
+  try {
+    launched = await launchKernel({
+      taskId: task.id,
+      runId: run.id,
+      worktreePath: task.payload?.worktree_path,
+    });
+  } catch (error) {
+    await dbPool.query(
+      `UPDATE initiative_runs
+          SET orchestrator_heartbeat_at=NULL,
+              orchestrator_host=NULL,
+              orchestrator_pid=NULL,
+              updated_at=NOW()
+        WHERE id=$1::uuid
+          AND phase='paused'
+          AND orchestrator_host=$2`,
+      [run.id, claimHost],
+    ).catch(() => {});
+    throw error;
+  }
+
+  const published = await dbPool.query(
+    `UPDATE initiative_runs
+        SET phase=$2,
+            orchestrator_heartbeat_at=$3,
+            orchestrator_host=$4,
+            orchestrator_pid=$5,
+            updated_at=NOW()
+      WHERE id=$1::uuid
+        AND phase='paused'
+        AND orchestrator_host=$6
+      RETURNING id`,
+    [run.id, resumePhase, now, host, launched.pid ?? null, claimHost],
+  );
+  if (published.rowCount !== 1) {
+    throw new Error(`context resume claim lost for run ${run.id}`);
+  }
+  out.resumed++;
+  console.log(
+    `[relay-watchdog][kernel-v1] context resumed run=${run.id} `
+    + `phase=${resumePhase} pid=${launched.pid ?? '?'}`,
+  );
+  return true;
+}
+
 /**
  * 查 initiative_run_events 是否存在 evaluator 已完成的心跳记录——
  * "PR 已 MERGED" 不等于"harness 验收流程走完了"，这是唯一能区分两者的机器信号。
@@ -909,6 +1010,24 @@ export async function resumeStalledRelayRuns(deps = {}) {
     `SELECT r.id, r.initiative_id, r.current_task_id,
             phase, deadline_at, pr_url, orchestrator_host,
             orchestrator_heartbeat_at, completed_at, tmux_killed_at, started_at,
+            (
+              SELECT jsonb_build_object(
+                'context_request_hop', request.hop,
+                'resume_phase', request.detail->>'resume_phase'
+              )
+                FROM orchestrator_decision_log request
+               WHERE request.run_id=r.id
+                 AND request.action='effect:context_requested'
+                 AND EXISTS (
+                   SELECT 1
+                     FROM orchestrator_decision_log answer
+                    WHERE answer.run_id=request.run_id
+                      AND answer.action='verdict:context_answer'
+                      AND answer.detail->>'context_request_hop'=request.hop::text
+                 )
+               ORDER BY request.hop DESC
+               LIMIT 1
+            ) AS context_resume,
             (SELECT COUNT(*) FROM initiative_runs r2
               WHERE r2.current_task_id = r.current_task_id
                 AND r2.orchestrator_version = 'v2') AS attempts
@@ -963,15 +1082,20 @@ export async function resumeStalledRelayRuns(deps = {}) {
         continue;
       }
 
-      // needs_context 的 paused run 由人工补充上下文后显式恢复。其 Controller
-      // 进程退出是预期行为，watchdog 不得把它当 stalled run 重新点火。
-      // 上面的 task 终态 house-keeping 仍先执行，避免留下 terminal mismatch。
-      if (run.phase === 'paused') continue;
-
       // 只管 in_progress（queued 归 dispatcher，防双 spawn）
       if (task.status !== 'in_progress') continue;
       // 安全护栏：只碰 skill-relay 任务
       if (task.payload?.orchestrator !== 'skill-relay') continue;
+      // needs_context 在答案到达前保持 paused；答案到达后由 watchdog 先用
+      // context-resume:* lease CAS 领取，再启动新 Controller，最后凭
+      // pid/host/heartbeat receipt 发布 resume_phase。没有答案时进程退出
+      // 是预期行为，不得当成 stalled run。
+      if (run.phase === 'paused') {
+        if (task.payload?.harness_runtime === 'kernel-v1' && run.context_resume) {
+          await _resumePausedKernelContext(run, task, deps, out);
+        }
+        continue;
+      }
       // 前台点火 run（POST /relay-runs 建档，host='foreground'）没有 cecelia-relay-* 容器，
       // "容器消失=死跑"判据对它恒真——跳过重点火，防 spawn 无头容器与前台会话双跑。
       // 前台崩溃恢复靠人（用户在场是前台模式的定义）；上方 house-keeping 分支仍对其生效。

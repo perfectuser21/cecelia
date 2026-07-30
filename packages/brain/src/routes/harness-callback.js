@@ -28,6 +28,7 @@
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { Command } from '@langchain/langgraph';
+import { createHash } from 'node:crypto';
 import { lookupHarnessThread } from '../lib/harness-thread-lookup.js';
 import { sendBark } from '../notifier.js';
 import pool from '../db.js';
@@ -38,9 +39,11 @@ import { verifyCallbackSecret } from '../orchestrator/callback-auth.js';
 import { verifyMachineAttestation } from '../orchestrator/machine-attestation.js';
 import {
   defaultPrHeadResolver,
+  defaultPrIdentityResolver,
   normalizeGitSha,
 } from '../orchestrator/pr-head-resolver.js';
 import { normalizeFailureSignature } from '../orchestrator/convergence-signatures.js';
+import { parseBaseRepo } from '../orchestrator/github-pr-discovery.js';
 
 const router = Router();
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -49,6 +52,14 @@ const FLEET_CODEX_METADATA_FIELDS = new Set([
   'session_id',
   'credential_ref',
   'credential_copy_mutated',
+]);
+const TERMINAL_CALLBACK_STATUSES = new Set([
+  'completed',
+  'completed_with_concerns',
+  'needs_context',
+  'blocked',
+  'failed',
+  'cancelled',
 ]);
 
 function createAttemptCallbackRateLimit({ limit, identifier }) {
@@ -97,15 +108,20 @@ function attemptExpectedOutput(attempt) {
   }
 }
 
-function attemptCommanderCursor(attempt) {
+function attemptTaskBundle(attempt) {
   const value = attempt?.task_bundle;
-  const bundle = typeof value === 'string' ? (() => {
-    try {
-      return JSON.parse(value);
-    } catch {
-      return null;
-    }
-  })() : value;
+  if (value && typeof value === 'object') return value;
+  if (typeof value !== 'string') return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function attemptCommanderCursor(attempt) {
+  const bundle = attemptTaskBundle(attempt);
   const cursor = bundle?.inputs?.commander_bundle?.event_cursor;
   return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : undefined;
 }
@@ -123,9 +139,85 @@ function normalizeVerdict(role, outcome) {
 
 const GITHUB_PULL_REQUEST_URL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/[1-9]\d*\/?$/;
 
-async function verifyGeneratorPullRequestClaims(attempt, result, db, resolvePrHead) {
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .filter((key) => value[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function callbackClaimDigest(result) {
+  return `sha256:${createHash('sha256').update(canonicalJson(result)).digest('hex')}`;
+}
+
+function pullRequestRepository(url) {
+  const match = String(url).match(
+    /^https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/[1-9]\d*\/?$/,
+  );
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+async function verifyGeneratorPullRequestClaims(attempt, result, db, resolvePrIdentity) {
   if (attempt.role !== 'generator') return result;
   if (!['completed', 'completed_with_concerns'].includes(result.status)) return result;
+
+  const authorityResult = await db.query(
+    `SELECT r.pr_url, t.id AS task_id, t.payload
+       FROM initiative_runs r
+       JOIN tasks t ON t.id=r.current_task_id
+      WHERE r.id=$1::uuid`,
+    [attempt.run_id],
+  );
+  const authority = authorityResult.rows[0];
+  if (!authority) {
+    const error = new Error('generator_run_authority_not_found');
+    error.status = 409;
+    throw error;
+  }
+  const payload = typeof authority.payload === 'object'
+    ? authority.payload
+    : JSON.parse(authority.payload ?? '{}');
+  const workspaceSpec = attemptTaskBundle(attempt)?.inputs?.workspace_spec;
+  const expectedRepository = parseBaseRepo(
+    workspaceSpec?.repo ?? payload.base_repo,
+  )?.toLowerCase() ?? null;
+  const taskShort = String(authority.task_id).slice(0, 8).toLowerCase();
+  const expectedBranch = workspaceSpec?.branch;
+
+  const verifyUrl = async (url) => {
+    if (!expectedRepository || pullRequestRepository(url) !== expectedRepository) {
+      return { status: 'repository_mismatch', identity: null };
+    }
+    let identity;
+    try {
+      identity = await resolvePrIdentity(url);
+    } catch (error) {
+      const unavailable = new Error('pull_request_verification_unavailable');
+      unavailable.cause = error;
+      unavailable.status = 503;
+      throw unavailable;
+    }
+    const headSha = normalizeGitSha(identity?.head_sha);
+    const headRef = typeof identity?.head_ref === 'string'
+      ? identity.head_ref.trim()
+      : '';
+    if (!headSha) return { status: 'not_found', identity: null };
+    const branchMatches = typeof expectedBranch === 'string' && expectedBranch
+      ? headRef === expectedBranch
+      : headRef.toLowerCase().includes(taskShort);
+    if (!branchMatches) {
+      return { status: 'branch_mismatch', identity: null };
+    }
+    return {
+      status: 'verified',
+      identity: { head_sha: headSha, head_ref: headRef },
+    };
+  };
 
   const artifacts = [];
   for (const artifact of result.artifacts ?? []) {
@@ -142,27 +234,20 @@ async function verifyGeneratorPullRequestClaims(attempt, result, db, resolvePrHe
       });
       continue;
     }
-    let resolvedSha;
-    try {
-      resolvedSha = normalizeGitSha(await resolvePrHead(url));
-    } catch (error) {
-      const unavailable = new Error('pull_request_verification_unavailable');
-      unavailable.cause = error;
-      unavailable.status = 503;
-      throw unavailable;
-    }
-    if (!resolvedSha) {
+    const verification = await verifyUrl(url);
+    if (verification.status !== 'verified') {
       artifacts.push({
         ...artifact,
         type: 'unverified_pull_request_claim',
-        verification_status: 'not_found',
+        verification_status: verification.status,
       });
       continue;
     }
     artifacts.push({
       type: 'pull_request',
       url,
-      head_sha: resolvedSha,
+      head_sha: verification.identity.head_sha,
+      head_ref: verification.identity.head_ref,
       verification_status: 'verified',
     });
   }
@@ -170,34 +255,22 @@ async function verifyGeneratorPullRequestClaims(attempt, result, db, resolvePrHe
     artifact?.type === 'pull_request' && artifact.verification_status === 'verified'
   ))) {
     const { rows } = await db.query(
-      `SELECT r.pr_url
-         FROM initiative_runs r
-        WHERE r.id=$1::uuid
-          AND EXISTS (
-            SELECT 1
-              FROM orchestrator_decision_log
-             WHERE run_id=r.id
-               AND hop=$2
-               AND action='spawn:generator-fix'
-          )`,
+      `SELECT 1
+         FROM orchestrator_decision_log
+        WHERE run_id=$1::uuid
+          AND hop=$2
+          AND action='spawn:generator-fix'`,
       [attempt.run_id, attempt.hop],
     );
-    const currentPrUrl = rows[0]?.pr_url ?? null;
+    const currentPrUrl = rows[0] ? authority.pr_url : null;
     if (currentPrUrl) {
-      let resolvedSha;
-      try {
-        resolvedSha = normalizeGitSha(await resolvePrHead(currentPrUrl));
-      } catch (error) {
-        const unavailable = new Error('pull_request_verification_unavailable');
-        unavailable.cause = error;
-        unavailable.status = 503;
-        throw unavailable;
-      }
-      if (resolvedSha) {
+      const verification = await verifyUrl(currentPrUrl);
+      if (verification.status === 'verified') {
         artifacts.push({
           type: 'pull_request',
           url: currentPrUrl,
-          head_sha: resolvedSha,
+          head_sha: verification.identity.head_sha,
+          head_ref: verification.identity.head_ref,
           verification_status: 'verified',
           source: 'server_observed',
         });
@@ -578,19 +651,36 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
     }
   }
 
-  const resolver = req.app.get('kernelPrHeadResolver') || defaultPrHeadResolver;
+  const digest = (req.app.get('kernelCallbackClaimDigest') || callbackClaimDigest)(result);
+  if (TERMINAL_CALLBACK_STATUSES.has(attempt.status)) {
+    const persistedDigest = attempt.result?.provider_metadata
+      ?.server_callback_claim_digest;
+    if (persistedDigest === digest) {
+      return res.json({ ok: true, attemptId, deduped: true });
+    }
+    return res.status(409).json({ ok: false, error: 'terminal_payload_conflict' });
+  }
+
+  const resolver = req.app.get('kernelPrIdentityResolver') || defaultPrIdentityResolver;
   let verifiedResult;
   try {
     verifiedResult = await verifyGeneratorPullRequestClaims(attempt, result, db, resolver);
   } catch (error) {
-    if (error.status === 503) {
-      return res.status(503).json({
+    if (error.status) {
+      return res.status(error.status).json({
         ok: false,
-        error: 'pull_request_verification_unavailable',
+        error: error.message,
       });
     }
     throw error;
   }
+  verifiedResult = {
+    ...verifiedResult,
+    provider_metadata: {
+      ...verifiedResult.provider_metadata,
+      server_callback_claim_digest: digest,
+    },
+  };
 
   try {
     const outcome = await attemptStore.recordCallbackTerminal({

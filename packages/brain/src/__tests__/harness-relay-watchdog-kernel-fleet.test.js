@@ -184,7 +184,10 @@ describe('kernel fleet watchdog recovery', () => {
     const dbPool = {
       query: vi.fn(async (sql, params = []) => {
         queries.push({ sql: String(sql), params });
-        if (String(sql).includes("SET phase='resuming'")) {
+        if (
+          String(sql).includes('orchestrator_host=$4')
+          && !String(sql).includes('SET phase=$2')
+        ) {
           return { rows: [{ id: RUN_ID }], rowCount: 1 };
         }
         if (String(sql).includes('SET phase=$2')) {
@@ -214,7 +217,10 @@ describe('kernel fleet watchdog recovery', () => {
     }, out);
 
     expect(launchKernel).toHaveBeenCalledOnce();
-    expect(queries[0].sql).toContain("SET phase='resuming'");
+    expect(queries[0].sql).not.toContain('SET phase');
+    expect(queries[0].params.some((value) => (
+      String(value).startsWith('context-resume:watchdog-host:')
+    ))).toBe(true);
     expect(queries[1].sql).toContain('SET phase=$2');
     expect(queries[1].params).toContain('generate');
     expect(queries[1].params).toContain(43210);
@@ -226,10 +232,13 @@ describe('kernel fleet watchdog recovery', () => {
     const dbPool = {
       query: vi.fn(async (sql, params = []) => {
         queries.push({ sql: String(sql), params });
-        if (String(sql).includes("SET phase='resuming'")) {
+        if (
+          String(sql).includes('orchestrator_host=$4')
+          && !String(sql).includes('SET phase=$2')
+        ) {
           return { rows: [{ id: RUN_ID }], rowCount: 1 };
         }
-        if (String(sql).includes("SET phase='paused'")) {
+        if (String(sql).includes('SET orchestrator_heartbeat_at=NULL')) {
           return { rows: [{ id: RUN_ID }], rowCount: 1 };
         }
         throw new Error(`unexpected query: ${sql}`);
@@ -255,7 +264,7 @@ describe('kernel fleet watchdog recovery', () => {
       now: () => new Date('2026-07-30T19:00:00.000Z'),
     }, { resumed: 0 })).rejects.toThrow(/spawn failed/);
 
-    expect(queries.at(-1).sql).toContain("SET phase='paused'");
+    expect(queries.at(-1).sql).toContain('SET orchestrator_heartbeat_at=NULL');
   });
 
   it('resumes on the receipt-proven actual machine instead of the requested fallback origin', async () => {

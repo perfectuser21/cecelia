@@ -140,8 +140,13 @@ function latestUnconsumedAttemptCallback(decisionLog) {
   const latestSpawn = [...rows].reverse().find(
     (row) => typeof row.action === 'string' && row.action.startsWith('spawn:'),
   );
+  const answeredCallbackHops = new Set(rows
+    .filter((row) => row.action === LOG_ACTION.CONTEXT_ANSWER)
+    .map((row) => Number(callbackDetail(row).callback_hop))
+    .filter(Number.isInteger));
   return [...rows].reverse().find((row) => (
     row.action === LOG_ACTION.ATTEMPT_CALLBACK
+    && !answeredCallbackHops.has(Number(row.hop))
     && (latestSpawn == null || Number(row.hop) > Number(latestSpawn.hop))
   )) ?? null;
 }

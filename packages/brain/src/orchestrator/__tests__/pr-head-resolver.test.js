@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   defaultPrHeadResolver,
+  defaultPrIdentityResolver,
   normalizeGitSha,
 } from '../pr-head-resolver.js';
 
@@ -27,6 +28,29 @@ describe('pr-head-resolver', () => {
     expect(execFile).toHaveBeenCalledWith(
       'gh',
       ['pr', 'view', prUrl, '--json', 'headRefOid'],
+      { encoding: 'utf8', timeout: 8_000 },
+    );
+  });
+
+  it('resolves the PR head and branch identity in one bounded gh read', async () => {
+    const prUrl = 'https://github.com/perfectuser21/cecelia/pull/42';
+    const execFile = vi.fn(async () => ({
+      stdout: JSON.stringify({
+        headRefOid: LOWER_SHA,
+        headRefName: 'cp-07300000-22222222',
+        url: prUrl,
+      }),
+      stderr: '',
+    }));
+
+    await expect(defaultPrIdentityResolver(prUrl, execFile)).resolves.toEqual({
+      head_sha: LOWER_SHA,
+      head_ref: 'cp-07300000-22222222',
+      url: prUrl,
+    });
+    expect(execFile).toHaveBeenCalledWith(
+      'gh',
+      ['pr', 'view', prUrl, '--json', 'headRefOid,headRefName,url'],
       { encoding: 'utf8', timeout: 8_000 },
     );
   });

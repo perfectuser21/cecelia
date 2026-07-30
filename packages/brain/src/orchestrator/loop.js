@@ -274,13 +274,74 @@ async function markRunFailed(deps, runId, taskId, reason) {
   });
 }
 
-async function markRunPaused(pool, runId) {
+async function markRunPaused(pool, runId, observed) {
+  const callback = [...(observed.decisionLog ?? [])]
+    .sort((a, b) => Number(b.hop) - Number(a.hop))
+    .find((row) => (
+      row.action === LOG_ACTION.ATTEMPT_CALLBACK
+      && (asStructuredJson(row.detail) ?? {}).status === 'needs_context'
+    ));
+  if (!callback) {
+    throw new Error(`needs_context callback missing for run ${runId}`);
+  }
+  const callbackDetail = asStructuredJson(callback.detail) ?? {};
+  const callbackHop = Number(callback.hop);
+  const contextVersion = `context-v1:${callbackHop}:${callbackDetail.attempt_id}`;
+  const resumePhase = callback.derived_phase ?? observed.run.phase;
   await pool.query(
-    `UPDATE initiative_runs
+    `WITH lock AS (
+       SELECT pg_advisory_xact_lock(hashtext($1::text))
+     ), callback AS (
+       SELECT hop
+         FROM orchestrator_decision_log
+        WHERE run_id=$1::uuid
+          AND hop=$2
+          AND action='verdict:attempt_callback'
+          AND detail->>'status'='needs_context'
+     ), next_hop AS (
+       SELECT COALESCE(MAX(log.hop), 0) + 1 AS hop
+         FROM lock
+         LEFT JOIN orchestrator_decision_log log
+           ON log.run_id=$1::uuid
+     ), request AS (
+       INSERT INTO orchestrator_decision_log
+         (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+       SELECT $1::uuid, next_hop.hop, $3::jsonb, 'paused', NULL,
+              'effect:context_requested', $4::jsonb
+         FROM lock, callback, next_hop
+        WHERE NOT EXISTS (
+          SELECT 1
+            FROM orchestrator_decision_log
+           WHERE run_id=$1::uuid
+             AND action='effect:context_requested'
+             AND detail->>'callback_hop'=$2::text
+        )
+       RETURNING hop
+     )
+     UPDATE initiative_runs
         SET phase = 'paused', updated_at = NOW()
-      WHERE id = $1
-        AND phase NOT IN ('done', 'failed')`,
-    [runId],
+      WHERE id = $1::uuid
+        AND phase NOT IN ('done', 'failed')
+        AND EXISTS (SELECT 1 FROM callback)
+      RETURNING id`,
+    [
+      runId,
+      callbackHop,
+      JSON.stringify({
+        callback_hop: callbackHop,
+        attempt_id: callbackDetail.attempt_id ?? null,
+        role: callbackDetail.role ?? null,
+      }),
+      JSON.stringify({
+        callback_hop: callbackHop,
+        context_version: contextVersion,
+        resume_phase: resumePhase,
+        question: callbackDetail.context_question
+          ?? callbackDetail.summary
+          ?? callbackDetail.failure_class
+          ?? 'context required',
+      }),
+    ],
   );
 }
 
@@ -553,7 +614,7 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       return { exitReason: decision.reason, hops };
     }
     if (decision.action === ACTION.PAUSE_RUN) {
-      await markRunPaused(deps.pool, resolvedRunId);
+      await markRunPaused(deps.pool, resolvedRunId, observed);
       return { exitReason: decision.reason, hops };
     }
     if (decision.action === ACTION.PERSIST_CONTRACT_APPROVAL) {

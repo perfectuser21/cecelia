@@ -104,7 +104,7 @@ export function resolveProviderAccountHome(provider, account) {
   throw new Error(`invalid ${provider} account: ${value}`);
 }
 
-function buildInputs(spec, ctx, attemptMetadata) {
+function buildInputs(action, spec, ctx, attemptMetadata) {
   const { observed } = ctx;
   const task = observed.task;
   const payload = asObject(task.payload);
@@ -121,6 +121,23 @@ function buildInputs(spec, ctx, attemptMetadata) {
     attempt_kind: attemptMetadata.attemptKind,
     workstream_key: attemptMetadata.workstreamKey,
   };
+  const latestContextAnswer = [...(observed.decisionLog ?? [])]
+    .sort((a, b) => Number(b.hop) - Number(a.hop))
+    .find((row) => row.action === 'verdict:context_answer');
+  const contextDetail = asObject(latestContextAnswer?.detail);
+  if (
+    Number.isInteger(Number(contextDetail.callback_hop))
+    && Number.isInteger(Number(contextDetail.context_request_hop))
+    && typeof contextDetail.context_version === 'string'
+    && typeof contextDetail.answer === 'string'
+  ) {
+    common.human_context = {
+      callback_hop: Number(contextDetail.callback_hop),
+      context_request_hop: Number(contextDetail.context_request_hop),
+      context_version: contextDetail.context_version,
+      answer: contextDetail.answer,
+    };
+  }
 
   if (spec.role === 'commander') {
     return {
@@ -149,6 +166,10 @@ function buildInputs(spec, ctx, attemptMetadata) {
       ?? observed.contract?.row?.propose_branch
       ?? null;
   }
+  if (action === 'spawn:generator-fix') {
+    common.pr_branch = observed.pr?.head_ref ?? null;
+    common.pr_head_sha = observed.pr?.head_sha ?? null;
+  }
   if (spec.role === 'evaluator' || spec.role === 'judge') {
     common.pull_request = observed.pr ?? null;
   }
@@ -171,7 +192,7 @@ function buildBundle(
   attemptMetadata,
   { deferWorkspaceValidation = false } = {},
 ) {
-  const inputs = buildInputs(spec, ctx, attemptMetadata);
+  const inputs = buildInputs(action, spec, ctx, attemptMetadata);
   const bundle = {
     contract_version: '1.0',
     run_id: ctx.runId,
