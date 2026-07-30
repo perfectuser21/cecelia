@@ -3,9 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import pool from '../../db.js';
 import { deriveAssertionVerification } from '../../lib/journey-assertion-receipt.js';
-const migration = readFileSync(new URL(
-  '../../../migrations/374_gp_assertion_receipts.sql', import.meta.url,
-), 'utf8');
+const migration = readFileSync(new URL('../../../migrations/374_gp_assertion_receipts.sql', import.meta.url), 'utf8');
 const fixture = `gp-assertion-receipt-${process.pid}-${randomUUID()}`;
 const assertionRef = 'src/lib/__tests__/journey-assertion-receipt.test.js';
 const digest = (value) => createHash('sha256').update(value).digest('hex');
@@ -45,10 +43,7 @@ async function expectConstraintFailure(query) {
   await client.query('SAVEPOINT expected_failure');
   try {
     await expect(query()).rejects.toThrow();
-  } finally {
-    await client.query('ROLLBACK TO SAVEPOINT expected_failure');
-    await client.query('RELEASE SAVEPOINT expected_failure');
-  }
+  } finally { await client.query('ROLLBACK TO SAVEPOINT expected_failure'); await client.query('RELEASE SAVEPOINT expected_failure'); }
 }
 async function rejectReceipts(values) {
   for (const value of values) await expectConstraintFailure(() => insertReceipt(value));
@@ -59,12 +54,10 @@ beforeAll(async () => {
   await client.query(migration);
   await client.query(migration);
   const journeyId = (await client.query(
-    "INSERT INTO journeys (name, description) VALUES ($1, 'assertion receipt migration fixture') RETURNING id",
-    [fixture],
+    "INSERT INTO journeys (name, description) VALUES ($1, 'assertion receipt migration fixture') RETURNING id", [fixture],
   )).rows[0].id;
   const stepId = (await client.query(
-    "INSERT INTO journey_steps (journey_id, name, step_number) VALUES ($1, 'execute assertion', 1) RETURNING id",
-    [journeyId],
+    "INSERT INTO journey_steps (journey_id, name, step_number) VALUES ($1, 'execute assertion', 1) RETURNING id", [journeyId],
   )).rows[0].id;
   const cell = (await client.query(
     `INSERT INTO journey_step_links (
@@ -75,20 +68,15 @@ beforeAll(async () => {
   cellId = cell.id;
   assertionRevision = Number(cell.assertion_revision);
   featureId = (await client.query(
-    'INSERT INTO journey_features (journey_id, name) VALUES ($1,$2) RETURNING id',
-    [journeyId, `${fixture}-feature`],
+    'INSERT INTO journey_features (journey_id, name) VALUES ($1,$2) RETURNING id', [journeyId, `${fixture}-feature`],
   )).rows[0].id;
 });
-afterAll(async () => {
-  if (client) { await client.query('ROLLBACK'); client.release(); }
-  await pool.end();
-});
+afterAll(async () => { if (client) { await client.query('ROLLBACK'); client.release(); } await pool.end(); });
 describe('migration 374 Golden Path assertion receipts [PostgreSQL]', () => {
   it('is idempotent and registers its schema version', async () => {
     const version = await client.query("SELECT description FROM schema_version WHERE version='374'");
     const column = await client.query(
-      `SELECT is_nullable, column_default FROM information_schema.columns
-       WHERE table_name='journey_step_links' AND column_name='assertion_revision'`,
+      "SELECT is_nullable, column_default FROM information_schema.columns WHERE table_name='journey_step_links' AND column_name='assertion_revision'",
     );
     expect(version.rows).toHaveLength(1);
     expect(column.rows).toEqual([
@@ -113,9 +101,7 @@ describe('migration 374 Golden Path assertion receipts [PostgreSQL]', () => {
       scenario_evidence: { kind: 'timeout', timeout_ms: 300000 },
     });
   });
-  it('rejects synthetic execution receipts', async () => {
-    await rejectReceipts([{ synthetic: true }]);
-  });
+  it('rejects synthetic execution receipts', async () => rejectReceipts([{ synthetic: true }]));
   it('rejects empty argv, reversed intervals, and incomplete contract snapshots', async () => {
     await rejectReceipts([
       { commandArgv: [] },
@@ -124,9 +110,7 @@ describe('migration 374 Golden Path assertion receipts [PostgreSQL]', () => {
       { gpContractHash: 'not-a-contract-hash' },
     ]);
   });
-  it('rejects PASS without a machine identity', async () => {
-    await rejectReceipts([{ machineId: null }]);
-  });
+  it('rejects PASS without a machine identity', async () => rejectReceipts([{ machineId: null }]));
   it('makes repeated run delivery idempotent by run and cell', async () => {
     const runId = `${fixture}-idempotent`;
     await insertReceipt({ runId });
@@ -149,9 +133,7 @@ describe('migration 374 Golden Path assertion receipts [PostgreSQL]', () => {
   });
   it('prevents deleting a parent cell that has an immutable receipt', async () => {
     await insertReceipt();
-    await expectConstraintFailure(() => client.query(
-      'DELETE FROM journey_step_links WHERE id=$1', [cellId],
-    ));
+    await expectConstraintFailure(() => client.query('DELETE FROM journey_step_links WHERE id=$1', [cellId]));
   });
   it('increments revision and makes the old receipt non-current', async () => {
     const receipt = await insertReceipt();

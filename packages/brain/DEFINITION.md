@@ -2,11 +2,10 @@
 
 **版本**: 1.267.137
 
-## Golden Path §④-2 receipt evidence schema
+## Golden Path §④-1 receipt evidence schema (stack 2)
 
-- Migration 374 持久化 append-only receipt 与场景证据，并拒绝无证据的 PASS。
-- migration 可重跑升级既有 v374；旧 PASS 仍可审计，但读模型不再验证它。
-- 本层不含 Runner、route 或 UI，也不执行断言或宣称生产盖章完成。
+- Migration 374 可重跑持久化 append-only 场景证据，selfcheck 同步到 374；
+  无证据 PASS 不验证。本层不含 Runner、route 或 UI，也不宣称生产盖章完成。
 
 ## Golden Path §④-1 receipt-state pure model
 
