@@ -55,6 +55,14 @@ function harness({ clock, collectGroundTruth, appendHop, dispatch, sleep } = {})
       sleep: sleep ?? (async () => {}),
       now: () => new Date(clock.value),
       log: () => {},
+      finalizeRun: async (_pool, input) => {
+        state.failureReason = input.reason;
+        expect(input).toMatchObject({
+          runId: RUN_ID,
+          expectedTaskId: TASK_ID,
+          outcome: 'failed',
+        });
+      },
     },
   };
 }
@@ -312,6 +320,15 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
         state.dispatches += 1;
         throw new Error('stale-review-dispatched');
       },
+      finalizeRun: async (_pool, input) => {
+        state.failedWrites += 1;
+        expect(input).toMatchObject({
+          runId: RUN_ID,
+          expectedTaskId: TASK_ID,
+          outcome: 'failed',
+          reason: 'automation_deadline_exceeded',
+        });
+      },
       now: () => new Date(BASE_MS),
       log: () => {},
     }, { taskId: TASK_ID, runId: RUN_ID });
@@ -355,6 +372,15 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
         state.collects += 1;
         throw new Error('expired run must not collect');
       },
+      finalizeRun: async (_pool, input) => {
+        state.failedWrites += 1;
+        expect(input).toMatchObject({
+          runId: RUN_ID,
+          expectedTaskId: TASK_ID,
+          outcome: 'failed',
+          reason: 'automation_deadline_exceeded',
+        });
+      },
       now: () => new Date(BASE_MS),
       log: () => {},
     }, { taskId: TASK_ID, runId: RUN_ID });
@@ -393,6 +419,16 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
       pool,
       collectGroundTruth: async () => {
         throw new Error('expired terminal run must stop before collect');
+      },
+      finalizeRun: async (_pool, input) => {
+        expect(input).toMatchObject({
+          runId: RUN_ID,
+          expectedTaskId: TASK_ID,
+          outcome: 'failed',
+          reason: 'automation_deadline_exceeded',
+        });
+        // 旧回归场景只验证终态不可覆盖；真实冲突语义由
+        // kernel-run-store 的 unit + PostgreSQL integration 覆盖。
       },
       now: () => new Date(BASE_MS),
       log: () => {},
