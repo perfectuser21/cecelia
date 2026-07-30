@@ -11,6 +11,10 @@ import { finalizeKernelRun } from '../src/orchestrator/kernel-run-store.js';
 const { Pool } = pg;
 const pool = new Pool(DB_DEFAULTS);
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const RECONCILE_LOCK_KEY = 'kernel_terminal_mismatch_reconcile';
+const PRODUCTION_PREFLIGHT_SQL = `
+  SELECT current_database() AS database_name
+`;
 const TERMINAL_TASK_STATUSES = new Set([
   'completed',
   'failed',
@@ -97,6 +101,43 @@ export function parseTerminalReconcileArgs(argv) {
   return { apply, auditOutput, expectedPlanSha256 };
 }
 
+export function parseProductionTerminalReconcileArgs(argv) {
+  let expectedProposed = null;
+  let confirmDatabase = null;
+  const baseArgs = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === '--expected-proposed') {
+      expectedProposed = Number(argv[index + 1]);
+      index += 1;
+    } else if (arg === '--confirm-database') {
+      confirmDatabase = argv[index + 1] ?? null;
+      index += 1;
+    } else {
+      baseArgs.push(arg);
+    }
+  }
+  const base = parseTerminalReconcileArgs(baseArgs);
+  if (
+    expectedProposed !== null
+    && (!Number.isInteger(expectedProposed) || expectedProposed < 0)
+  ) {
+    throw new Error('--expected-proposed must be a non-negative integer');
+  }
+  if (base.apply && expectedProposed === null) {
+    throw new Error('--apply requires --expected-proposed');
+  }
+  if (base.apply && !confirmDatabase) {
+    throw new Error('--apply requires --confirm-database');
+  }
+  return {
+    ...base,
+    expectedProposed,
+    confirmDatabase,
+    productionGuards: true,
+  };
+}
+
 function findingFor(row) {
   const terminalRunCount = Number(row.terminal_run_count);
   const distinctOutcomeCount = Number(row.distinct_outcome_count);
@@ -146,6 +187,9 @@ export async function reconcileTerminalMismatches({
   apply = false,
   auditOutput = null,
   expectedPlanSha256 = null,
+  expectedProposed = null,
+  confirmDatabase = null,
+  productionGuards = false,
   writeLine = line => process.stdout.write(`${line}\n`),
   appendAudit = null,
   finalizeRun = finalizeKernelRun,
@@ -158,7 +202,33 @@ export async function reconcileTerminalMismatches({
     throw new Error('apply requires a valid expected plan sha256');
   }
 
-  const { rows } = await db.query(EVIDENCE_SQL);
+  let lockClient = null;
+  let lockHeld = false;
+  try {
+    if (apply && productionGuards && typeof db.connect === 'function') {
+      lockClient = await db.connect();
+      const lockResult = await lockClient.query(
+        'SELECT pg_try_advisory_lock(hashtext($1)) AS locked',
+        [RECONCILE_LOCK_KEY],
+      );
+      lockHeld = lockResult.rows?.[0]?.locked === true;
+      if (!lockHeld) {
+        lockClient.release();
+        lockClient = null;
+        throw new Error('another kernel terminal mismatch reconcile is already running');
+      }
+    }
+
+  const queryDb = lockClient ?? db;
+  let databaseName = null;
+  if (productionGuards) {
+    const preflight = await queryDb.query(PRODUCTION_PREFLIGHT_SQL);
+    databaseName = preflight.rows?.[0]?.database_name ?? null;
+    if (!databaseName) {
+      throw new Error('production reconcile preflight is missing database name');
+    }
+  }
+  const { rows } = await queryDb.query(EVIDENCE_SQL);
   const findings = rows.map(findingFor);
   const repairs = findings.filter(finding => finding.kind === 'repair');
   const blocked = findings.filter(finding => finding.kind === 'blocked');
@@ -175,6 +245,27 @@ export async function reconcileTerminalMismatches({
       `reviewed plan digest mismatch: expected ${expectedPlanSha256}, actual ${planSha256}`,
     );
   }
+  if (
+    apply
+    && expectedProposed !== null
+    && expectedProposed !== repairs.length
+  ) {
+    throw new Error(
+      `proposal count mismatch: expected ${expectedProposed}, actual ${repairs.length}`,
+    );
+  }
+  if (
+    apply
+    && confirmDatabase !== null
+    && confirmDatabase !== databaseName
+  ) {
+    throw new Error(
+      `database confirmation mismatch: expected ${confirmDatabase}, actual ${databaseName}`,
+    );
+  }
+  const productionMetadata = productionGuards
+    ? { database: databaseName }
+    : {};
   if (!apply) {
     return {
       scanned: rows.length,
@@ -182,6 +273,7 @@ export async function reconcileTerminalMismatches({
       blocked: blocked.length,
       applied: 0,
       plan_sha256: planSha256,
+      ...productionMetadata,
     };
   }
   if (blocked.length > 0) {
@@ -213,6 +305,7 @@ export async function reconcileTerminalMismatches({
       outcome: 'started',
       proposed: repairs.length,
       plan_sha256: planSha256,
+      ...productionMetadata,
     })}\n`);
     for (const repair of repairs) {
       await writeAudit(`${JSON.stringify({
@@ -255,11 +348,23 @@ export async function reconcileTerminalMismatches({
     applied,
     execution_id: executionId,
     plan_sha256: planSha256,
+    ...productionMetadata,
   };
+  } finally {
+    if (lockClient) {
+      if (lockHeld) {
+        await lockClient.query(
+          'SELECT pg_advisory_unlock(hashtext($1)) AS unlocked',
+          [RECONCILE_LOCK_KEY],
+        ).catch(() => {});
+      }
+      lockClient.release();
+    }
+  }
 }
 
 async function main() {
-  const options = parseTerminalReconcileArgs(process.argv.slice(2));
+  const options = parseProductionTerminalReconcileArgs(process.argv.slice(2));
   const result = await reconcileTerminalMismatches(options);
   process.stderr.write(`${JSON.stringify(result)}\n`);
   await pool.end();
