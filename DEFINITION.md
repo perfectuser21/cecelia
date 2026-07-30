@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.148
+**Brain 版本**: 1.267.149
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.149 — Trusted receipt isolation hardening
+
+- trusted receipt 必须证明只读且非 root；Runner 内生成的 pinned toolchain
+  attestation 严格绑定请求路径、文件 SHA-256 与 NodeProfile Runner digest。
+- 默认节点身份只从 `CECELIA_MACHINE_ID` 的 canonical Fleet ID 解析，不再信任
+  容器 hostname。本层仍不实现 Fleet executor。回退：部署 Brain `1.267.148`。
 
 ## Brain 1.267.148 — Fail-closed trusted assertion runner
 

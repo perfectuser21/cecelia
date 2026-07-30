@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createToolchainAttestation,
+  validateToolchainEvidence,
   verifyToolchainAttestation,
 } from '../gp-assertion-toolchain.js';
 
@@ -43,6 +44,54 @@ function fakeFileSystem(contents) {
 }
 
 describe('GP assertion pinned toolchain attestation', () => {
+  it('validates pure Runner evidence without reading local files', () => {
+    const evidence = {
+      kind: 'pinned_toolchain',
+      actual_runner_digest: RUNNER_DIGEST,
+      expected_runner_digest: RUNNER_DIGEST,
+      files: [
+        { path: '/tools/node', sha256: RUNNER_DIGEST },
+        { path: '/tools/git', sha256: OTHER_DIGEST },
+      ],
+    };
+    expect(validateToolchainEvidence(evidence, {
+      expectedRunnerDigest: RUNNER_DIGEST,
+      expectedPaths: ['/tools/node', '/tools/git'],
+    })).toEqual(evidence);
+  });
+
+  it.each([
+    ['duplicate paths', ['/tools/node', '/tools/node']],
+    ['path drift', ['/tools/git', '/tools/node']],
+  ])('rejects pure evidence %s', (_label, paths) => {
+    const evidence = {
+      kind: 'pinned_toolchain',
+      actual_runner_digest: RUNNER_DIGEST,
+      expected_runner_digest: RUNNER_DIGEST,
+      files: paths.map(path => ({ path, sha256: RUNNER_DIGEST })),
+    };
+    expect(() => validateToolchainEvidence(evidence, {
+      expectedRunnerDigest: RUNNER_DIGEST,
+      expectedPaths: ['/tools/node', '/tools/git'],
+    })).toThrowError(expect.objectContaining({
+      code: 'ASSERTION_TOOLCHAIN_DRIFT',
+    }));
+  });
+
+  it('rejects malformed pure evidence with a bounded error', () => {
+    expect(() => validateToolchainEvidence({
+      kind: 'pinned_toolchain',
+      actual_runner_digest: RUNNER_DIGEST,
+      expected_runner_digest: RUNNER_DIGEST,
+      files: null,
+    }, {
+      expectedRunnerDigest: RUNNER_DIGEST,
+      expectedPaths: ['/tools/node'],
+    })).toThrowError(expect.objectContaining({
+      code: 'ASSERTION_TOOLCHAIN_DRIFT',
+    }));
+  });
+
   it.each([
     [
       { actual_runner_digest: undefined },

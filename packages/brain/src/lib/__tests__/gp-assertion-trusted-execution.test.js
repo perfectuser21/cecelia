@@ -5,6 +5,8 @@ import {
 } from '../gp-assertion-trusted-execution.js';
 
 const DIGEST = `sha256:${'a'.repeat(64)}`;
+const FILE_DIGEST = `sha256:${'f'.repeat(64)}`;
+const TOOLCHAIN_PATHS = ['/usr/local/bin/node', '/repo/vitest.mjs'];
 const BASE = {
   run_id: '11111111-1111-4111-8111-111111111111',
   journey_step_link_id: '22222222-2222-4222-8222-222222222222',
@@ -17,7 +19,11 @@ const BASE = {
   command: {
     executable: '/usr/local/bin/node',
     argv: ['/repo/vitest.mjs', 'run', './contract.test.js', '--'],
-    options: { cwd: '/repo/packages/brain', evidenceKind: 'vitest' },
+    options: {
+      cwd: '/repo/packages/brain',
+      evidenceKind: 'vitest',
+      toolchain_paths: TOOLCHAIN_PATHS,
+    },
   },
 };
 const input = () => structuredClone(BASE);
@@ -39,7 +45,17 @@ const receipt = (subject, patch = {}) => ({
   source_repo: subject.source_repo,
   source_sha: subject.source_sha,
   command_digest: subject.command_digest,
-  isolation: { rootfs_read_only: true, workspace_read_only: true },
+  isolation: {
+    rootfs_read_only: true,
+    workspace_read_only: true,
+    non_root: true,
+  },
+  toolchain_attestation: {
+    kind: 'pinned_toolchain',
+    actual_runner_digest: DIGEST,
+    expected_runner_digest: DIGEST,
+    files: TOOLCHAIN_PATHS.map(path => ({ path, sha256: FILE_DIGEST })),
+  },
   exit_code: 0,
   stdout: '1 passed',
   stderr: '',
@@ -66,9 +82,14 @@ describe('GP assertion trusted execution contract', () => {
       cwd: BASE.command.options.cwd,
       evidence_kind: 'vitest',
       timeout_ms: 2_000,
+      toolchain_paths: TOOLCHAIN_PATHS,
     });
-    expect([subject, subject.command, subject.command.argv].every(Object.isFrozen))
-      .toBe(true);
+    expect([
+      subject,
+      subject.command,
+      subject.command.argv,
+      subject.command.toolchain_paths,
+    ].every(Object.isFrozen)).toBe(true);
   });
 
   it.each([
@@ -77,6 +98,9 @@ describe('GP assertion trusted execution contract', () => {
     ['executable', value => { value.command.executable = 'node'; }],
     ['argv', value => { value.command.argv = ['bad\0arg']; }],
     ['evidence', value => { value.command.options.evidenceKind = 'unknown'; }],
+    ['toolchain', value => {
+      value.command.options.toolchain_paths = ['/bin/node', '/bin/node'];
+    }],
     ['timeout', value => { value.timeout_ms = 0; }],
   ])('rejects invalid request %s', (_label, mutate) => {
     const value = input();
@@ -96,7 +120,12 @@ describe('GP assertion trusted execution contract', () => {
       command_digest: subject.command_digest,
       rootfs_read_only: true,
       workspace_read_only: true,
+      non_root: true,
       admission_observed_at: '2026-07-30T07:59:59.000Z',
+      toolchain_attestation: {
+        actual_runner_digest: DIGEST,
+        files: TOOLCHAIN_PATHS.map(path => ({ path, sha256: FILE_DIGEST })),
+      },
     });
     expect(Object.isFrozen(result.scenario_evidence.trusted_execution)).toBe(true);
   });
@@ -134,10 +163,32 @@ describe('GP assertion trusted execution contract', () => {
   it.each([
     [{ rootfs_read_only: false, workspace_read_only: true }],
     [{ rootfs_read_only: true, workspace_read_only: false }],
-    [{ rootfs_read_only: true }],
+    [{ rootfs_read_only: true, workspace_read_only: true }],
+    [{ rootfs_read_only: true, workspace_read_only: true, non_root: false }],
   ])('requires exact read-only isolation %#', isolation => {
     expect(() => verify(request(), { isolation })).toThrowError(
       expect.objectContaining({ code: 'ASSERTION_RUNNER_ISOLATION_UNVERIFIED' }),
+    );
+  });
+
+  it.each([
+    ['missing', { toolchain_attestation: undefined },
+      'ASSERTION_RUNNER_RECEIPT_INVALID'],
+    ['path drift', {
+      toolchain_attestation: {
+        ...receipt(request()).toolchain_attestation,
+        files: [{ path: '/other/node', sha256: FILE_DIGEST }],
+      },
+    }, 'ASSERTION_TOOLCHAIN_DRIFT'],
+    ['digest drift', {
+      toolchain_attestation: {
+        ...receipt(request()).toolchain_attestation,
+        actual_runner_digest: `sha256:${'b'.repeat(64)}`,
+      },
+    }, 'ASSERTION_RUNNER_DIGEST_MISMATCH'],
+  ])('rejects trusted toolchain attestation %s', (_label, patch, code) => {
+    expect(() => verify(request(), patch)).toThrowError(
+      expect.objectContaining({ code }),
     );
   });
 

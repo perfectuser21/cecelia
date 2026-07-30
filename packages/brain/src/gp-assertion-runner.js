@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { hostname } from 'node:os';
 import { checkGpLedgerReadiness } from './gp-ledger-readiness.js';
 import {
   assertionCommand,
@@ -35,6 +34,9 @@ import {
 } from './lib/journey-assertion-receipt.js';
 import { createNodeAdmissionClient } from './orchestrator/fleet-node/node-admission-client.js';
 import { getNodeProfile } from './orchestrator/fleet-node/node-profile.js';
+import {
+  resolveCanonicalMachineId,
+} from './orchestrator/preflight/canonical-machine-id.js';
 
 const SHA = /^[0-9a-f]{40}$/;
 
@@ -53,7 +55,7 @@ export async function runGpAssertion(options = {}) {
   const {
     pool, linkId, runId, repoRoot, trustedExecute,
     synthetic = false, dryRun = false,
-    getMachineId = async () => hostname(),
+    getMachineId = async () => resolveCanonicalMachineId(),
     getNodeProfile: profileFor = getNodeProfile,
     admissionClient = createNodeAdmissionClient(),
     checkReadiness = checkGpLedgerReadiness,
@@ -72,9 +74,10 @@ export async function runGpAssertion(options = {}) {
   if (synthetic) fail('SYNTHETIC_FORBIDDEN');
   if (dryRun) fail('DRY_RUN_FORBIDDEN');
 
-  const machineId = String(await getMachineId()).trim();
+  let machineId;
   let profile;
   try {
+    machineId = String(await getMachineId()).trim();
     profile = profileFor(machineId);
   } catch {
     fail('ASSERTION_RUNNER_NOT_ADMITTED');
