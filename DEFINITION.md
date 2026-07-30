@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.142
+**Brain 版本**: 1.267.143
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.143 — Pinned toolchain file safety
+
+- 工具链仅允许非空 regular file，并以同一只读 fd 做有上限的流式 SHA-256；
+  `/dev/null`、FIFO、空文件、超限文件均失败关闭。
+- 本层仍只提供 pre/post hash；pathname ABA 由 A10 pinned read-only Runner
+  execution gate 关闭。本层不接 Runner/receipt。回退：部署 Brain `1.267.142`。
 
 ## Brain 1.267.142 — Pinned toolchain attestation policy
 
