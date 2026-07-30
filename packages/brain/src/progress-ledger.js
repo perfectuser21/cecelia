@@ -11,10 +11,10 @@ import pool from './db.js';
 
 // 简单的 logger 实现（如果没有专门的 logger 文件）
 const logger = {
-  debug: (msg, meta) => console.log(`[DEBUG] ${msg}`, meta || ''),
-  info: (msg, meta) => console.log(`[INFO] ${msg}`, meta || ''),
-  warn: (msg, meta) => console.warn(`[WARN] ${msg}`, meta || ''),
-  error: (msg, meta) => console.error(`[ERROR] ${msg}`, meta || '')
+  debug: (msg, meta) => console.log('[DEBUG] %s', msg, meta || ''),
+  info: (msg, meta) => console.log('[INFO] %s', msg, meta || ''),
+  warn: (msg, meta) => console.warn('[WARN] %s', msg, meta || ''),
+  error: (msg, meta) => console.error('[ERROR] %s', msg, meta || '')
 };
 
 /**

@@ -16,7 +16,7 @@
  *   SKIP  — staging 是"加分项"：无 docker / 无 .env.staging / 无合同 时跳过（非失败）
  */
 
-import { execSync, spawnSync } from 'child_process';
+import { execFileSync, execSync, spawnSync } from 'child_process';
 import { createHash } from 'node:crypto';
 import fs, { existsSync } from 'fs';
 import os from 'os';
@@ -119,9 +119,9 @@ export async function deployStaging(opts = {}) {
     return { status: 'failed', reason, output: cap(combined), stagingPort };
   }
 
-  let script;
+  let scriptPath;
   if (opts.deployScript) {
-    script = `bash ${opts.deployScript}`;
+    scriptPath = opts.deployScript;
   } else if (internal) {
     return {
       status: 'failed',
@@ -130,15 +130,15 @@ export async function deployStaging(opts = {}) {
       stagingPort,
     };
   } else {
-    script = `bash ${path.join(repoRoot, 'scripts/staging-deploy.sh')}`;
+    scriptPath = path.join(repoRoot, 'scripts/staging-deploy.sh');
   }
   try {
-    const raw = exec(script, {
-      encoding: 'utf8',
-      cwd: repoRoot,
-      timeout: DEPLOY_TIMEOUT_MS,
-      maxBuffer: 20 * 1024 * 1024,
-    });
+    const options = {
+      encoding: 'utf8', cwd: repoRoot, timeout: DEPLOY_TIMEOUT_MS, maxBuffer: 20 * 1024 * 1024,
+    };
+    const raw = opts.exec
+      ? exec(`bash ${scriptPath}`, options)
+      : execFileSync('bash', [scriptPath], options);
     const out = typeof raw === 'string' ? raw : (raw ? raw.toString('utf8') : '');
     const skip = out.match(/STAGING_SKIP_REASON=(\S+)/);
     if (skip) return { status: 'skipped', reason: skip[1], output: cap(out), stagingPort };

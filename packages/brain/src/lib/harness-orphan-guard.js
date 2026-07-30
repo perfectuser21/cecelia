@@ -16,7 +16,7 @@
  *   - 只动 status='in_progress' 的行(UPDATE 带条件守卫,防与正常回写竞态)
  */
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import defaultPool from '../db.js';
 import {
   assessKernelLiveness,
@@ -36,13 +36,21 @@ function shortIdOf(taskOrContainerId) {
   return String(taskOrContainerId.id || '').replace(/-/g, '').slice(0, 8) || null;
 }
 
-function defaultExecFn(cmd) {
-  return execSync(cmd, { encoding: 'utf8', timeout: 10000 });
+function defaultExecFn(shortId) {
+  return execFileSync('docker', [
+    'ps',
+    '--format',
+    '{{.Names}}',
+    '--filter',
+    `name=cecelia-relay-${shortId}`,
+  ], { encoding: 'utf8', timeout: 10000 });
 }
 
 /** 该 initiative 是否还有活容器(可排除某个正在退出的容器名)。抛错=判活失败,由调用方 fail-open。 */
 export function findLiveRelayContainers(execFn, shortId, excludeName = null) {
-  const out = execFn(`docker ps --format '{{.Names}}' --filter name=cecelia-relay-${shortId}`) || '';
+  const out = (execFn === defaultExecFn
+    ? execFn(shortId)
+    : execFn(`docker ps --format '{{.Names}}' --filter name=cecelia-relay-${shortId}`)) || '';
   return out
     .split('\n')
     .map((s) => s.trim())

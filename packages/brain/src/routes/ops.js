@@ -927,7 +927,7 @@ async function getGroupMembers(chatId, accessToken) {
 
   try {
     const resp = await fetch(
-      `https://open.feishu.cn/open-apis/im/v1/chats/${chatId}/members?member_id_type=open_id&page_size=100`,
+      `https://open.feishu.cn/open-apis/im/v1/chats/${encodeURIComponent(chatId)}/members?member_id_type=open_id&page_size=100`,
       { headers: { 'Authorization': `Bearer ${accessToken}` }, signal: AbortSignal.timeout(5000) }
     );
     const data = await resp.json();
@@ -1056,7 +1056,7 @@ async function getFeishuUserName(openId, accessToken) {
   let apiSuccess = false;
   try {
     const resp = await fetch(
-      `https://open.feishu.cn/open-apis/contact/v3/users/${openId}?user_id_type=open_id`,
+      `https://open.feishu.cn/open-apis/contact/v3/users/${encodeURIComponent(openId)}?user_id_type=open_id`,
       { headers: { 'Authorization': `Bearer ${accessToken}` }, signal: AbortSignal.timeout(5000) }
     );
     const data = await resp.json();
@@ -1075,10 +1075,11 @@ async function getFeishuUserName(openId, accessToken) {
         [openId, name, en_name, user_id, relationship]
       );
     } else {
-      console.warn(`[feishu/event] 联系人 API 返回 code=${data.code}，openId=${openId}，尝试 staleCache 回退`);
+      console.warn('[feishu/event] 联系人 API 返回 code=%s，openId=%s，尝试 staleCache 回退',
+        data.code, openId);
     }
   } catch (err) {
-    console.warn(`[feishu/event] 获取用户名失败 ${openId}:`, err.message);
+    console.warn('[feishu/event] 获取用户名失败 %s: %s', openId, err.message);
   }
 
   // API 失败时，回退到任何历史缓存记录（ORDER BY fetched_at，忽略 TTL，比默认 guest 更可靠）
@@ -1102,7 +1103,7 @@ async function getFeishuUserName(openId, accessToken) {
 /** 下载飞书图片并返回 base64 + media_type */
 async function downloadFeishuImage(messageId, imageKey, accessToken) {
   const dlResp = await fetch(
-    `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${imageKey}?type=image`,
+    `https://open.feishu.cn/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/resources/${encodeURIComponent(imageKey)}?type=image`,
     { headers: { 'Authorization': `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10000) }
   );
   if (!dlResp.ok) throw new Error(`图片下载失败: ${dlResp.status}`);
@@ -1117,7 +1118,7 @@ async function downloadFeishuImage(messageId, imageKey, accessToken) {
 async function transcribeFeishuAudio(messageId, fileKey, accessToken) {
   // 1. 下载音频文件
   const dlResp = await fetch(
-    `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=file`,
+    `https://open.feishu.cn/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/resources/${encodeURIComponent(fileKey)}?type=file`,
     { headers: { 'Authorization': `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10000) }
   );
   if (!dlResp.ok) throw new Error(`音频下载失败: ${dlResp.status}`);

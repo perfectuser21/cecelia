@@ -15,7 +15,7 @@
  * - promote 幂等：状态机 + 回流接口校验当前态。
  */
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { readFileSync as fsReadFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -173,7 +173,7 @@ export function defaultPromoteExec(repoRoot) {
   return function promoteExec() {
     const script = path.join(repoRoot, 'scripts/promote-dashboard.sh');
     try {
-      const output = execSync(`bash ${script}`, {
+      const output = execFileSync('bash', [script], {
         cwd: repoRoot,
         encoding: 'utf8',
         timeout: 120_000,

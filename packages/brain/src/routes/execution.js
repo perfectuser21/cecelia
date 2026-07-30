@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
-import { exec, execSync } from 'child_process';
+import { exec, execSync, execFileSync } from 'child_process';
 import { promisify } from 'util';
 import { runTickSafe, getTickStatus } from '../tick.js';
 import { generatePrdFromTask, generatePrdFromGoalKR, generateTrdFromGoal, generateTrdFromGoalKR, validatePrd, validateTrd, prdToJson, trdToJson, PRD_TYPE_MAP } from '../templates.js';
@@ -43,6 +43,63 @@ router.use(rateLimit({
 }));
 const execAsync = promisify(exec);
 const HEARTBEAT_PATH = new URL('../../../HEARTBEAT.md', import.meta.url);
+
+function extractGithubPullUrl(value) {
+  if (typeof value !== 'string') return null;
+  for (const token of value.split(/\s+/)) {
+    const candidate = token.replaceAll('"', '').replaceAll("'", '').replace(/[),.;]+$/, '');
+    try {
+      const url = new URL(candidate);
+      const parts = url.pathname.split('/').filter(Boolean);
+      if (url.protocol === 'https:' && url.hostname === 'github.com'
+          && parts.length === 4 && parts[2] === 'pull'
+          && Number.isSafeInteger(Number(parts[3]))) return url.toString().replace(/\/$/, '');
+    } catch {}
+  }
+  return null;
+}
+
+function extractPullNumber(value) {
+  const url = extractGithubPullUrl(value);
+  if (url) return new URL(url).pathname.split('/').at(-1);
+  const marker = typeof value === 'string' ? value.toUpperCase().indexOf('PR #') : -1;
+  if (marker < 0) return null;
+  const tail = value.slice(marker + 4).trimStart();
+  let digits = '';
+  for (const char of tail) {
+    if (char < '0' || char > '9') break;
+    digits += char;
+  }
+  if (digits && Number.isSafeInteger(Number(digits))) return digits;
+  return null;
+}
+
+function extractKrsJson(value) {
+  const marker = value.indexOf('"krs"');
+  const start = marker < 0 ? -1 : value.lastIndexOf('{', marker);
+  if (start < 0) return null;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let i = start; i < value.length; i += 1) {
+    const char = value[i];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') quoted = false;
+    } else if (char === '"') quoted = true;
+    else if (char === '{') depth += 1;
+    else if (char === '}' && --depth === 0) {
+      try {
+        const parsed = JSON.parse(value.slice(start, i + 1));
+        return Array.isArray(parsed.krs) ? parsed : null;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
 
 router.post('/execution-callback', async (req, res) => {
   try {
@@ -1112,15 +1169,7 @@ router.post('/execution-callback', async (req, res) => {
           const outputStr = typeof result === 'string' ? result
             : (result?.result || result?.output || JSON.stringify(result || ''));
 
-          let parsedOutput = null;
-          const jsonMatch = outputStr.match(/\{[\s\S]*"krs"\s*:\s*\[[\s\S]*?\][\s\S]*\}/);
-          if (jsonMatch) {
-            try {
-              parsedOutput = JSON.parse(jsonMatch[0]);
-            } catch (jsonParseErr) {
-              console.error(`[execution-callback] strategy_session JSON parse error: ${jsonParseErr.message}`);
-            }
-          }
+          const parsedOutput = extractKrsJson(outputStr);
 
           if (parsedOutput && Array.isArray(parsedOutput.krs) && parsedOutput.krs.length > 0) {
             const meetingSummary = parsedOutput.meeting_summary || '';
@@ -1532,12 +1581,15 @@ ${resultStr.substring(0, 2000)}
       async function checkPrCiStatus(prUrl) {
         if (!prUrl) return null; // 无法检查
         try {
-          const prNumber = prUrl.match(/\/pull\/(\d+)/)?.[1];
+          const prNumber = extractPullNumber(prUrl);
           if (!prNumber) return null;
-          const output = execSync(
-            `gh pr checks ${prNumber} --json name,state 2>/dev/null || echo "[]"`,
-            { encoding: 'utf-8', timeout: 15000 }
-          ).trim();
+          let output = '[]';
+          try {
+            output = execFileSync('gh', ['pr', 'checks', prNumber, '--json', 'name,state'], {
+              encoding: 'utf-8',
+              timeout: 15000,
+            }).trim();
+          } catch {}
           const checks = JSON.parse(output);
           if (!Array.isArray(checks) || checks.length === 0) return null; // 无 CI 检查
           const failed = checks.some(c => c.state === 'FAILURE' || c.state === 'ERROR');
@@ -1870,9 +1922,9 @@ ${resultStr.substring(0, 2000)}
               const taskIdShort = task_id.split('-')[0]; // 前 8 位 hex
               const fallbackBranchName = `cp-harness-review-approved-${taskIdShort}`;
               try {
-                const lsRemoteOutput = execSync(
-                  `git ls-remote --heads origin ${fallbackBranchName}`,
-                  { encoding: 'utf-8', timeout: 8000 }
+                const lsRemoteOutput = execFileSync(
+                  'git', ['ls-remote', '--heads', 'origin', fallbackBranchName],
+                  { encoding: 'utf-8', timeout: 8000 },
                 ).trim();
                 if (lsRemoteOutput.includes(fallbackBranchName)) {
                   resolvedContractBranch = fallbackBranchName;
@@ -1959,17 +2011,16 @@ ${resultStr.substring(0, 2000)}
               } catch {}
               // 层次 5: 从文本中正则提取完整 GitHub URL
               if (!prUrl) {
-                const m = result.result.match(/https:\/\/github\.com\/[^\s"']+\/pull\/\d+/);
-                if (m) prUrl = m[0];
+                prUrl = extractGithubPullUrl(result.result);
               }
               // 层次 5.5: 从文本中提取 PR # 并构造完整 URL（覆盖 "PR #2074" 格式）
               if (!prUrl) {
-                const prNumMatch = result.result.match(/PR\s+#(\d+)/i) || result.result.match(/pull\/(\d+)/);
-                if (prNumMatch) {
+                const extractedPrNumber = extractPullNumber(result.result);
+                if (extractedPrNumber) {
                   try {
                     const repoUrl = execSync('git remote get-url origin', { encoding: 'utf-8', timeout: 5000 }).trim()
                       .replace(/\.git$/, '').replace(/^git@github\.com:/, 'https://github.com/');
-                    prUrl = `${repoUrl}/pull/${prNumMatch[1]}`;
+                    prUrl = `${repoUrl}/pull/${extractedPrNumber}`;
                   } catch {}
                 }
               }
@@ -1977,8 +2028,7 @@ ${resultStr.substring(0, 2000)}
           }
           // 层次 6: result 本身是字符串时正则提取
           if (!prUrl && typeof result === 'string') {
-            const prMatch = result.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/);
-            if (prMatch) prUrl = prMatch[0];
+            prUrl = extractGithubPullUrl(result);
           }
           // 层次 7: 从 dev_records 查（Generator /dev 会写 dev_records）
           if (!prUrl) {
@@ -2104,8 +2154,7 @@ ${resultStr.substring(0, 2000)}
             prUrl = result.pr_url || result?.result?.pr_url || null;
           }
           if (!prUrl && typeof result === 'string') {
-            const prMatch = result.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/);
-            if (prMatch) prUrl = prMatch[0];
+            prUrl = extractGithubPullUrl(result);
           }
           // fallback: 从 dev_records 或 gh pr list 查
           if (!prUrl) {

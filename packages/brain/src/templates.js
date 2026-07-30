@@ -707,9 +707,10 @@ function validatePrd(prdContent) {
   }
 
   // Content quality - acceptance criteria
-  const successMatch = prdContent.match(/(?:##\s*(?:成功标准|验收标准)|\*\*成功标准\*\*)([\s\S]*?)(?=\n##|\n\*\*[^*]|\n---|\n$)/);
-  if (successMatch) {
-    const section = successMatch[1];
+  const successSection = extractSection(prdContent, '成功标准')
+    || extractSection(prdContent, '验收标准');
+  if (successSection) {
+    const section = successSection;
     if (!/[-*]\s|^\d+\./m.test(section)) {
       warnings.push('成功标准 section has no list items');
     }
@@ -774,8 +775,9 @@ function validateTrd(trdContent) {
  * @returns {Object} Structured PRD object
  */
 function prdToJson(prdContent) {
-  const titleMatch = prdContent.match(/^#\s+(.+)$/m);
-  const title = titleMatch ? titleMatch[1].replace(/^PRD\s*-\s*/, '') : '';
+  const titleLine = prdContent.split('\n').find((line) => line.startsWith('# '));
+  const rawTitle = titleLine ? titleLine.slice(2).trim() : '';
+  const title = rawTitle.startsWith('PRD -') ? rawTitle.slice(5).trim() : rawTitle;
 
   const sections = {};
   for (const section of PRD_TEMPLATE.sections) {
@@ -791,8 +793,9 @@ function prdToJson(prdContent) {
  * @returns {Object} Structured TRD object
  */
 function trdToJson(trdContent) {
-  const titleMatch = trdContent.match(/^#\s+(.+)$/m);
-  const title = titleMatch ? titleMatch[1].replace(/^TRD\s*-\s*/, '') : '';
+  const titleLine = trdContent.split('\n').find((line) => line.startsWith('# '));
+  const rawTitle = titleLine ? titleLine.slice(2).trim() : '';
+  const title = rawTitle.startsWith('TRD -') ? rawTitle.slice(5).trim() : rawTitle;
 
   const sections = {};
   for (const section of TRD_TEMPLATE.sections) {
