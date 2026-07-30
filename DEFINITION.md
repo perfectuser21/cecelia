@@ -6,11 +6,19 @@
 
 
 
-**Brain 版本**: 1.267.142
+**Brain 版本**: 1.267.143
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.143 — Pinned assertion command policy
+
+- 新增固定 Vitest、Pytest 与 bash 断言命令策略；工具链必须由调用方提供绝对
+  pinned descriptor，执行对象必须是 canonical、普通且精确 Git tracked 文件。
+- command/argv/toolchain/env 深冻结，位置参数安全传递，环境明确不继承。
+- 本层不执行断言、不接线 Runner、receipt、API 或 UI。回退：部署 Brain
+  `1.267.142`。
 
 ## Brain 1.267.142 — Trusted assertion process adapter
 
