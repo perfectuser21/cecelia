@@ -1,9 +1,10 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 4)
 
 覆盖父路「Draft PR #4457 累计冲突与 CodeQL 收敛」第 1-5 步。
 
 ## 合同 notes
 
+- Round 4 修订焦点：本轮 task bundle 仍未附 Reviewer feedback 或已拍板的新冻结证据；保留上一轮 fail-closed 前置闸，不把已知的 `32/33`、`77/761` 事实差异伪装成可执行完成态。Generator 在拍板前仅可生成只读证据，禁止整合、处置告警或改动 PR #4457。
 - Round 3 修订焦点：当前输入未附新的 Reviewer feedback；保持 Round 2 的最小合同边界，并继续把未拍板的冻结事实差异作为 fail-closed 前置闸，避免在事实未冻结时扩大或改写 PRD。
 - Round 2 修订焦点：将冻结事实矛盾明确设为前置拍板闸；在主理人确认 `32/33` 与 `77` 的冻结来源前，generator 只允许产出只读证据，不得开始整合、告警处置或改动既有 PR。
 - PRD 冻结值与可复算事实存在前置差异：`git merge-tree --write-tree 8f2137d... 264482f...` 当前列出 33 个冲突路径，而 PRD 写 32；合同要求先产出可追溯冻结清单并使该差异显式失败，禁止擅自把 32 改成 33。
