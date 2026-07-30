@@ -50,4 +50,3 @@ export function classifyJourneyCellAssertion({ assertion_ref: assertionRef, na_r
     needs_assertion: true,
   };
 }
-

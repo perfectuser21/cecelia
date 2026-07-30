@@ -146,4 +146,3 @@ read model. Brain's internal module-health ledger remains separate.
    and product ledger HTTP 200.
 8. Report updated overall completion and a §④ handoff, then stop at the §③
    boundary.
-

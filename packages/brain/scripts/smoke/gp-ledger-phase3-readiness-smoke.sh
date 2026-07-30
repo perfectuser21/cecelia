@@ -48,4 +48,3 @@ if (body?.readiness?.positive_missing !== 0 || body?.readiness?.ready !== true) 
 NODE
 
 echo "PASS: Golden Path §③ readiness gate"
-

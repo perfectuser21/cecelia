@@ -1,8 +1,8 @@
 # Golden Path §③ Ledger Data Knife Design
 
-**Date:** 2026-07-30  
-**Status:** approved in session  
-**Scope:** finalized Harness Golden Path PRD §③ only  
+**Date:** 2026-07-30
+**Status:** approved in session
+**Scope:** finalized Harness Golden Path PRD §③ only
 **Baseline:** `origin/main@264482fadd87dc8bf6e7d4534c156ee28e276ccf`
 
 ## 1. Outcome
@@ -166,4 +166,3 @@ enforce it. The gate is included in the existing real-env smoke collection, maki
 6. `/features/ledger` remains behaviorally unchanged.
 7. §③ readiness smoke passes on a migrated database.
 8. Brain version and both definitions are updated.
-

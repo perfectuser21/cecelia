@@ -73,4 +73,3 @@ describe('migration 373 Golden Path ledger data knife [PostgreSQL]', () => {
     expect(rows[0].count).toBe(0);
   });
 });
-

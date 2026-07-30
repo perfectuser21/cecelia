@@ -35,4 +35,3 @@ describe('product journey-step ledger [PostgreSQL]', () => {
     expect(response.body.readiness.ready).toBe(true);
   });
 });
-
