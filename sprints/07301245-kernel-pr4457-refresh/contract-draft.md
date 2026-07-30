@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 13)
+# Sprint Contract Draft (Round 14)
 
 覆盖父路「Draft PR #4457 累计冲突与 CodeQL 收敛」第 1-5 步。
 
@@ -7,6 +7,7 @@
 - Round 12 采用 controller 的权威 machine facts，消除旧版 `32/33` 与 CodeQL 口径歧义：总冲突路径固定为 33（32 个 content + `DoD.md` 1 个 modify/delete）；77 固定指 check-run `90774353140` 的 PR-new-alert annotations。
 - 保持此前已通过项：两个 ARTIFACT oracle 使用内容/schema/身份/exact-set 与七阶段真实行为断言；33 路径完整映射冻结为合同 manifest。仅修订 C25/C27/C28/C29 为可解析且非 skipped 的真实行为 oracle，并重算语义 digest。
 - Round 13 保持 8 条测试、33 路径 manifest/digest、77 个 CodeQL subject、3 个 required context、动态 lineage 与副作用阈值不变，并修复 Round 12 的阶段循环依赖：七个 verifier phase 分属四个 actor/time boundary，禁止 generator 在 push 前伪造 exact-head/evaluator 结果。
+- Round 14 复核并冻结上述非循环协议：generator-pre-push 只负责 freeze/conflicts/codeql/regressions；ci-exact-head 只在最终 push receipt 后负责 exact-head 与 final-head CodeQL；独立 evaluator 只在 exact-head SUCCESS 后产出 evaluator receipt；controller 最后只读消费两类 receipt 与 audit-end。错误 stage/role、缺前置 receipt、自报 exit_code 或跨阶段 lineage 复用必须非零退出。
 - manifest 测试在核对冻结 schema、33 subject、argv 与 digest 前，必须先跨过实现产出的 `generator-pre-push/conflicts` verifier/evidence 边界；因此实现前固定为 `failed=8, passed=0, total=8`。
 - durable contract 不保存任何 proposer/reviewer 的具体 `run_id` 或 `attempt_id`。各阶段必须从该阶段 authoritative task bundle 或签名 execution receipt 读取命名字段 `runtime_lineage.run_id`、`runtime_lineage.attempt_id`、`runtime_lineage.task_id`、`runtime_lineage.role`、`runtime_lineage.stage`，基线与 mutation receipt 保存 generator lineage，终验保存 evaluator lineage。
 - contract-gate: enabled（`packages/brain/src/lib/contract-gate.js` 存在）。
