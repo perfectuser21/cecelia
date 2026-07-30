@@ -1,5 +1,7 @@
 const OUTPUT_LIMIT_BYTES = 4096;
 const SECRET_KEY_PATTERN = [
+  'aws[_-]?secret[_-]?access[_-]?key',
+  'aws[_-]?session[_-]?token',
   'api[_-]?key',
   'access[_-]?token',
   'refresh[_-]?token',
@@ -17,6 +19,7 @@ const BARE_SECRET_ASSIGNMENT = new RegExp(
   `((?:["']?)(?:${SECRET_KEY_PATTERN})(?:["']?)\\s*[=:]\\s*)([^\\s,;}]+)`,
   'gi',
 );
+const URI_PASSWORD = /\b([a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:)([^@\s]+)(@[^/@\s]+)/gi;
 
 function trimTextToByteLimit(text, limit) {
   let start = 0;
@@ -115,6 +118,7 @@ export function redactAndBoundOutput(stdout = '', stderr = '') {
       '$1[REDACTED]',
     )
     .replace(QUOTED_SECRET_ASSIGNMENT, '$1$2[REDACTED]$2')
-    .replace(BARE_SECRET_ASSIGNMENT, '$1[REDACTED]');
+    .replace(BARE_SECRET_ASSIGNMENT, '$1[REDACTED]')
+    .replace(URI_PASSWORD, '$1[REDACTED]$3');
   return byteSafeTail(redacted, OUTPUT_LIMIT_BYTES);
 }
