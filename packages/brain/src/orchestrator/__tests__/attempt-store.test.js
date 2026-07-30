@@ -403,7 +403,9 @@ describe('attempt store', () => {
     expect(pool.query.mock.calls[0][0]).toMatch(/ON CONFLICT \(run_id, hop\) DO NOTHING/i);
     expect(pool.query.mock.calls[0][0]).not.toMatch(/DO UPDATE/i);
     expect(pool.query.mock.calls[1]).toEqual([
-      expect.stringMatching(/SELECT \* FROM harness_attempts WHERE run_id=\$1 AND hop=\$2/i),
+      expect.stringMatching(
+        /FROM harness_attempts attempt[\s\S]*JOIN initiative_runs run[\s\S]*attempt\.run_id=\$1[\s\S]*attempt\.hop=\$2[\s\S]*FOR KEY SHARE OF run/i,
+      ),
       [input.runId, input.hop],
     ]);
   });
