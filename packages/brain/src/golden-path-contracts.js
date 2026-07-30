@@ -127,3 +127,205 @@ export function hashGoldenPathContract(value) {
     .update(JSON.stringify(sortJson(parsed)))
     .digest('hex');
 }
+
+export class GoldenPathContractError extends Error {
+  constructor(code, message, status = 409, details = undefined) {
+    super(message);
+    this.name = 'GoldenPathContractError';
+    this.code = code;
+    this.status = status;
+    this.details = details;
+  }
+}
+
+function parseContractOrThrow(contract) {
+  try {
+    return validateGoldenPathContract(contract);
+  } catch (cause) {
+    throw new GoldenPathContractError(
+      'GP_CONTRACT_INVALID',
+      'Golden Path contract failed schema validation',
+      400,
+      cause?.issues,
+    );
+  }
+}
+
+export async function createGoldenPathContractVersion(db, {
+  goldenPathId,
+  contract,
+}) {
+  const parsed = parseContractOrThrow(contract);
+  const contentHash = hashGoldenPathContract(parsed);
+
+  const { rows: goldenPaths } = await db.query(
+    `SELECT id, title, journey_id
+       FROM golden_paths
+      WHERE id = $1
+      FOR UPDATE`,
+    [goldenPathId],
+  );
+  if (goldenPaths.length === 0) {
+    throw new GoldenPathContractError(
+      'GP_NOT_FOUND',
+      'Golden Path not found',
+      404,
+    );
+  }
+  const goldenPath = goldenPaths[0];
+  if (!goldenPath.journey_id) {
+    throw new GoldenPathContractError(
+      'GP_LEDGER_ANCHOR_REQUIRED',
+      'Golden Path must reference a Journey before contract submission',
+    );
+  }
+
+  const { rows: contractRows } = await db.query(
+    `SELECT *
+       FROM golden_path_contract_versions
+      WHERE golden_path_id = $1
+      ORDER BY version DESC
+      LIMIT 1`,
+    [goldenPathId],
+  );
+  const latest = contractRows[0] || null;
+  if (latest?.content_hash === contentHash) {
+    return {
+      contract_version: latest,
+      pending_action_id: latest.signing_action_id,
+      idempotent: true,
+    };
+  }
+
+  const { rows: activeTasks } = await db.query(
+    `SELECT id, status, payload
+       FROM tasks
+      WHERE task_type = 'harness_initiative'
+        AND payload->>'golden_path_id' = $1
+        AND status IN ('queued', 'blocked', 'dispatched', 'in_progress')
+      FOR UPDATE`,
+    [goldenPathId],
+  );
+  const runningTasks = activeTasks.filter(
+    (task) => task.status === 'dispatched' || task.status === 'in_progress',
+  );
+  if (runningTasks.length > 0) {
+    throw new GoldenPathContractError(
+      'GP_CONTRACT_IN_FLIGHT',
+      'Drain or cancel the running Harness task before replacing its contract',
+      409,
+      { task_ids: runningTasks.map((task) => task.id) },
+    );
+  }
+
+  const cancellableTaskIds = activeTasks
+    .filter((task) => task.status === 'queued' || task.status === 'blocked')
+    .map((task) => task.id);
+  if (cancellableTaskIds.length > 0) {
+    await db.query(
+      `UPDATE tasks
+          SET status = 'cancelled',
+              error_message = 'Golden Path contract superseded before execution',
+              completed_at = now(),
+              updated_at = now()
+        WHERE id = ANY($1::uuid[])
+          AND status IN ('queued', 'blocked')
+      RETURNING id, status`,
+      [cancellableTaskIds],
+    );
+  }
+
+  await db.query(
+    `UPDATE golden_path_contract_versions
+        SET status = CASE
+          WHEN status = 'signed' THEN 'invalidated'
+          ELSE 'superseded'
+        END,
+            invalidated_at = CASE
+              WHEN status = 'signed' THEN now()
+              ELSE invalidated_at
+            END
+      WHERE golden_path_id = $1
+        AND status IN ('signed', 'pending_signature')
+    RETURNING *`,
+    [goldenPathId],
+  );
+
+  const nextVersion = (latest?.version || 0) + 1;
+  const { rows: insertedVersions } = await db.query(
+    `INSERT INTO golden_path_contract_versions (
+       golden_path_id,
+       schema_version,
+       version,
+       contract_json,
+       content_hash,
+       status
+     )
+     VALUES ($1, $2, $3, $4::jsonb, $5, 'pending_signature')
+     RETURNING *`,
+    [
+      goldenPathId,
+      GP_CONTRACT_SCHEMA_VERSION,
+      nextVersion,
+      JSON.stringify(parsed),
+      contentHash,
+    ],
+  );
+  const inserted = insertedVersions[0];
+
+  const actionParams = {
+    golden_path_id: goldenPathId,
+    contract_id: inserted.id,
+    version: inserted.version,
+    content_hash: inserted.content_hash,
+  };
+  const actionContext = {
+    title: `签署 GP 合同 v${inserted.version}: ${goldenPath.title || goldenPathId}`,
+    golden_path_id: goldenPathId,
+    schema_version: GP_CONTRACT_SCHEMA_VERSION,
+  };
+  const actionSignature = `gp-contract:${goldenPathId}:v${inserted.version}:sign`;
+  const { rows: actions } = await db.query(
+    `INSERT INTO pending_actions (
+       action_type,
+       params,
+       context,
+       category,
+       priority,
+       source,
+       signature,
+       expires_at
+     )
+     VALUES (
+       'sign_golden_path_contract',
+       $1::jsonb,
+       $2::jsonb,
+       'approval',
+       'urgent',
+       'golden_path_controller',
+       $3,
+       NULL
+     )
+     RETURNING id`,
+    [
+      JSON.stringify(actionParams),
+      JSON.stringify(actionContext),
+      actionSignature,
+    ],
+  );
+  const actionId = actions[0].id;
+
+  const { rows: finalizedVersions } = await db.query(
+    `UPDATE golden_path_contract_versions
+        SET signing_action_id = $1
+      WHERE id = $2
+      RETURNING *`,
+    [actionId, inserted.id],
+  );
+
+  return {
+    contract_version: finalizedVersions[0],
+    pending_action_id: actionId,
+    idempotent: false,
+  };
+}

@@ -3,9 +3,43 @@
 import express from 'express';
 import pool from '../db.js';
 import { getTotalEffectiveSlots } from '../fleet-resource-cache.js';
+import {
+  GoldenPathContractError,
+  createGoldenPathContractVersion,
+} from '../golden-path-contracts.js';
 import { stampMMDDHHNN, shortId } from '../harness-skill-relay.js';
 
 const router = express.Router();
+
+async function withTransaction(operation) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await operation(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      console.error('[golden-paths] transaction rollback 失败:', rollbackError);
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function sendContractError(res, error) {
+  if (!(error instanceof GoldenPathContractError)) return false;
+  res.status(error.status).json({
+    success: false,
+    error: error.message,
+    code: error.code,
+    ...(error.details === undefined ? {} : { details: error.details }),
+  });
+  return true;
+}
 
 // title → slug（sprint_dir 拼接用，非字母数字转短横线，压缩连续短横线）
 function slugify(title) {
@@ -79,6 +113,42 @@ router.post('/golden-paths', async (req, res) => {
   } catch (err) {
     console.error('[golden-paths] POST 失败:', err);
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/golden-paths/:id/contracts', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT *
+         FROM golden_path_contract_versions
+        WHERE golden_path_id = $1
+        ORDER BY version DESC`,
+      [req.params.id],
+    );
+    res.json({ success: true, contract_versions: rows });
+  } catch (error) {
+    console.error('[golden-paths] GET contracts 失败:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/golden-paths/:id/contracts', async (req, res) => {
+  try {
+    const contract = req.body?.contract ?? req.body;
+    const result = await withTransaction((client) => (
+      createGoldenPathContractVersion(client, {
+        goldenPathId: req.params.id,
+        contract,
+      })
+    ));
+    res.status(result.idempotent ? 200 : 201).json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    if (sendContractError(res, error)) return;
+    console.error('[golden-paths] POST contracts 失败:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

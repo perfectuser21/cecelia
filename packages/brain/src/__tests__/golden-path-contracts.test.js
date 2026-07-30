@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   GP_CONTRACT_KEYS,
   GP_CONTRACT_SCHEMA_VERSION,
+  createGoldenPathContractVersion,
   hashGoldenPathContract,
   validateGoldenPathContract,
 } from '../golden-path-contracts.js';
@@ -156,5 +157,269 @@ describe('Golden Path contract schema', () => {
 
     expect(hashGoldenPathContract(reordered))
       .toBe(hashGoldenPathContract(VALID_CONTRACT));
+  });
+});
+
+class StatefulContractDb {
+  constructor({
+    gp = { id: 'gp-1', journey_id: 'journey-1' },
+    contracts = [],
+    tasks = [],
+  } = {}) {
+    this.gp = gp;
+    this.contracts = structuredClone(contracts);
+    this.tasks = structuredClone(tasks);
+    this.actions = [];
+    this.events = [];
+  }
+
+  async query(sql, params = []) {
+    const compact = sql.replace(/\s+/g, ' ').trim();
+    this.events.push(compact);
+
+    if (/FROM golden_paths .*FOR UPDATE/i.test(compact)) {
+      return { rows: this.gp ? [structuredClone(this.gp)] : [] };
+    }
+    if (
+      /FROM golden_path_contract_versions/i.test(compact)
+      && /ORDER BY version DESC LIMIT 1/i.test(compact)
+    ) {
+      const latest = [...this.contracts]
+        .filter((row) => row.golden_path_id === params[0])
+        .sort((a, b) => b.version - a.version)[0];
+      return { rows: latest ? [structuredClone(latest)] : [] };
+    }
+    if (/FROM tasks/i.test(compact) && /harness_initiative/i.test(compact)) {
+      return {
+        rows: this.tasks
+          .filter((task) => (
+            task.task_type === 'harness_initiative'
+            && task.payload?.golden_path_id === params[0]
+            && ['queued', 'blocked', 'dispatched', 'in_progress'].includes(task.status)
+          ))
+          .map((task) => structuredClone(task)),
+      };
+    }
+    if (/UPDATE tasks/i.test(compact) && /status = 'cancelled'/i.test(compact)) {
+      const ids = params[0];
+      const updated = [];
+      for (const task of this.tasks) {
+        if (ids.includes(task.id) && ['queued', 'blocked'].includes(task.status)) {
+          task.status = 'cancelled';
+          updated.push(structuredClone(task));
+        }
+      }
+      return { rows: updated };
+    }
+    if (
+      /UPDATE golden_path_contract_versions/i.test(compact)
+      && /status = CASE/i.test(compact)
+    ) {
+      const updated = [];
+      for (const row of this.contracts) {
+        if (row.golden_path_id !== params[0]) continue;
+        if (row.status === 'signed') {
+          row.status = 'invalidated';
+          row.invalidated_at = 'now';
+          updated.push(structuredClone(row));
+        } else if (row.status === 'pending_signature') {
+          row.status = 'superseded';
+          updated.push(structuredClone(row));
+        }
+      }
+      return { rows: updated };
+    }
+    if (/INSERT INTO golden_path_contract_versions/i.test(compact)) {
+      const row = {
+        id: `contract-${this.contracts.length + 1}`,
+        golden_path_id: params[0],
+        schema_version: params[1],
+        version: params[2],
+        contract_json: JSON.parse(params[3]),
+        content_hash: params[4],
+        status: 'pending_signature',
+        signing_action_id: null,
+      };
+      this.contracts.push(row);
+      return { rows: [structuredClone(row)] };
+    }
+    if (/INSERT INTO pending_actions/i.test(compact)) {
+      const row = {
+        id: `action-${this.actions.length + 1}`,
+        action_type: 'sign_golden_path_contract',
+        params: JSON.parse(params[0]),
+        context: JSON.parse(params[1]),
+        signature: params[2],
+      };
+      this.actions.push(row);
+      return { rows: [structuredClone(row)] };
+    }
+    if (
+      /UPDATE golden_path_contract_versions/i.test(compact)
+      && /signing_action_id =/i.test(compact)
+    ) {
+      const row = this.contracts.find((item) => item.id === params[1]);
+      row.signing_action_id = params[0];
+      return { rows: [structuredClone(row)] };
+    }
+    throw new Error(`Unexpected SQL: ${compact}`);
+  }
+}
+
+function contractRow({
+  version = 1,
+  contract = VALID_CONTRACT,
+  status = 'pending_signature',
+  signingActionId = 'action-existing',
+} = {}) {
+  return {
+    id: `contract-${version}`,
+    golden_path_id: 'gp-1',
+    schema_version: 1,
+    version,
+    contract_json: structuredClone(contract),
+    content_hash: hashGoldenPathContract(contract),
+    status,
+    signing_action_id: signingActionId,
+  };
+}
+
+describe('Golden Path contract version transaction', () => {
+  it('requires the existing GP ledger anchor', async () => {
+    const db = new StatefulContractDb({
+      gp: { id: 'gp-1', journey_id: null },
+    });
+
+    await expect(createGoldenPathContractVersion(db, {
+      goldenPathId: 'gp-1',
+      contract: VALID_CONTRACT,
+    })).rejects.toMatchObject({ code: 'GP_LEDGER_ANCHOR_REQUIRED' });
+    expect(db.contracts).toEqual([]);
+    expect(db.actions).toEqual([]);
+  });
+
+  it('returns the latest same-hash version idempotently without a new action', async () => {
+    const existing = contractRow();
+    const db = new StatefulContractDb({ contracts: [existing] });
+
+    const result = await createGoldenPathContractVersion(db, {
+      goldenPathId: 'gp-1',
+      contract: structuredClone(VALID_CONTRACT),
+    });
+
+    expect(result).toMatchObject({
+      contract_version: { id: existing.id, version: 1 },
+      pending_action_id: 'action-existing',
+      idempotent: true,
+    });
+    expect(db.contracts).toHaveLength(1);
+    expect(db.actions).toEqual([]);
+  });
+
+  it('invalidates a signed version and appends a pending version plus action', async () => {
+    const changed = cloneContract();
+    changed.fr_summary.statements = ['用户看到新版结果'];
+    const db = new StatefulContractDb({
+      contracts: [contractRow({ status: 'signed' })],
+    });
+
+    const result = await createGoldenPathContractVersion(db, {
+      goldenPathId: 'gp-1',
+      contract: changed,
+    });
+
+    expect(db.contracts).toHaveLength(2);
+    expect(db.contracts[0]).toMatchObject({
+      version: 1,
+      status: 'invalidated',
+      invalidated_at: 'now',
+    });
+    expect(db.contracts[1]).toMatchObject({
+      version: 2,
+      status: 'pending_signature',
+      signing_action_id: 'action-1',
+    });
+    expect(db.actions[0]).toMatchObject({
+      action_type: 'sign_golden_path_contract',
+      params: {
+        golden_path_id: 'gp-1',
+        contract_id: 'contract-2',
+        version: 2,
+      },
+    });
+    expect(result).toMatchObject({
+      contract_version: { id: 'contract-2', version: 2 },
+      pending_action_id: 'action-1',
+      idempotent: false,
+    });
+  });
+
+  it('supersedes an unsigned version when content changes', async () => {
+    const changed = cloneContract();
+    changed.success_and_close.observation_window = '48h';
+    const db = new StatefulContractDb({ contracts: [contractRow()] });
+
+    await createGoldenPathContractVersion(db, {
+      goldenPathId: 'gp-1',
+      contract: changed,
+    });
+
+    expect(db.contracts.map(({ version, status }) => ({ version, status })))
+      .toEqual([
+        { version: 1, status: 'superseded' },
+        { version: 2, status: 'pending_signature' },
+      ]);
+  });
+
+  it.each(['dispatched', 'in_progress'])(
+    'rejects contract replacement while a Harness task is %s',
+    async (status) => {
+      const changed = cloneContract();
+      changed.success_and_close.observation_window = '48h';
+      const db = new StatefulContractDb({
+        contracts: [contractRow({ status: 'signed' })],
+        tasks: [{
+          id: `task-${status}`,
+          task_type: 'harness_initiative',
+          status,
+          payload: { golden_path_id: 'gp-1', gp_contract_id: 'contract-1' },
+        }],
+      });
+
+      await expect(createGoldenPathContractVersion(db, {
+        goldenPathId: 'gp-1',
+        contract: changed,
+      })).rejects.toMatchObject({ code: 'GP_CONTRACT_IN_FLIGHT' });
+      expect(db.contracts).toHaveLength(1);
+      expect(db.contracts[0].status).toBe('signed');
+      expect(db.actions).toEqual([]);
+    },
+  );
+
+  it('cancels queued and blocked Harness tasks before invalidating the old version', async () => {
+    const changed = cloneContract();
+    changed.success_and_close.observation_window = '48h';
+    const db = new StatefulContractDb({
+      contracts: [contractRow({ status: 'signed' })],
+      tasks: ['queued', 'blocked'].map((status) => ({
+        id: `task-${status}`,
+        task_type: 'harness_initiative',
+        status,
+        payload: { golden_path_id: 'gp-1', gp_contract_id: 'contract-1' },
+      })),
+    });
+
+    await createGoldenPathContractVersion(db, {
+      goldenPathId: 'gp-1',
+      contract: changed,
+    });
+
+    expect(db.tasks.map(({ status }) => status)).toEqual(['cancelled', 'cancelled']);
+    const cancelIndex = db.events.findIndex((sql) => /UPDATE tasks/i.test(sql));
+    const invalidateIndex = db.events.findIndex(
+      (sql) => /status = CASE/i.test(sql),
+    );
+    expect(cancelIndex).toBeGreaterThan(-1);
+    expect(cancelIndex).toBeLessThan(invalidateIndex);
   });
 });
