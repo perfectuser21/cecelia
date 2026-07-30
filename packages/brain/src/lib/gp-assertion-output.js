@@ -46,6 +46,7 @@ export function byteSafeTail(value, limit) {
 }
 
 export function appendBufferTail(current, chunk, limit) {
+  if (!Number.isInteger(limit) || limit < 0) return Buffer.alloc(0);
   const next = Buffer.concat([
     current,
     Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)),
