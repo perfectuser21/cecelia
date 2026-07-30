@@ -6,11 +6,25 @@
 
 
 
-**Brain 版本**: 1.267.133
+**Brain 版本**: 1.267.134
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.134 — Golden Path §③ ledger data knife
+
+- Migration 373 在既有 `journey_step_links` 上完成证据诚实回填，不新建平行
+  账本：真实 feature 锚点和 GP-B Path 4 业务 smoke 入格，历史自由文本规范化；
+  找不到可辩护证据的 green/pending 格降为 red，不制造假覆盖。
+- NFR 决策新增明确 `journey_step` target，逐步归位并继承四家 home；产品
+  Journey ledger 改为直接读取四区格子，修复此前把 Brain 内部模块字段错套到
+  `journey_features` 导致的 HTTP 500。
+- 新 readiness gate 对正向格证据、NFR 归属、base_ref 外键和 assertion_ref
+  类型 fail closed，并由 PostgreSQL integration + 真 Brain HTTP smoke 验证。
+- 本版本只完成最终 PRD §③；§④ 的断言盖章等四件机制仍未开始，产权变更 B
+  继续 `effective_now=false`。
+- 回退：部署 Brain `1.267.133`；Migration 373 数据保留供审计。
 
 ## Brain 1.267.133 — Versioned Golden Path contract Gate
 

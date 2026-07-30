@@ -64,6 +64,7 @@ golden-path-contract-version-smoke.sh
 golden-path-proposal-smoke.sh
 golden-paths-t1-smoke.sh
 gp-anchor-lockdown-smoke.sh
+gp-ledger-phase3-readiness-smoke.sh
 gp-governance-decisions-smoke.sh
 graph-multi-repo-smoke.sh
 graph-photo-layer-smoke.sh

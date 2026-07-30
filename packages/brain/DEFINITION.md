@@ -1,6 +1,23 @@
 # Brain 模块定义
 
-**版本**: 1.267.133
+**版本**: 1.267.134
+
+## Golden Path §③ ledger data knife
+
+- Migration 373 对现有 `journey_step_links` 格子做证据诚实回填：底座引用继承
+  已批准的真实 feature 锚点，历史决策说明规范为 `decision:`，GP-B 使用既有
+  Path 4 业务 smoke；仍无可辩护证据的 green/pending 格 fail closed 为 red。
+- 产品 NFR 用 `target_type='journey_step'` 精确归到业务步骤并继承
+  `journeys.home`；不伪装成 feature，也不复用旧 Harness `golden_path` 行。
+- 产品 `/journey_steps/:step_id/ledger` 直接读取 `journey_step_links` 四区，
+  不再把 Brain 内部 `brain_modules` 健康账本字段套到 `journey_features`；
+  `/features/ledger` 继续只表示 Brain 内部模块健康。
+- readiness gate 要求正向格都有合法锚点、NFR 都有步骤决策、base_ref 不悬空、
+  assertion_ref 无自由文本；真实环境 smoke 同时验证数据库和 HTTP 读面。
+- 本版本仍不含 §④ 的断言盖章、裁决记账、退役、事故对照或打回率；产权变更 B
+  继续 `effective_now=false`。
+- 回退：部署 Brain `1.267.133`；Migration 373 的 NFR 决策和诚实红格保留为
+  审计数据，旧 Brain 不消费 `journey_step` target。
 
 ## Versioned Golden Path contract Gate
 
