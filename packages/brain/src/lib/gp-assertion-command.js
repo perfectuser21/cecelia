@@ -15,34 +15,23 @@ const TOOL_BASENAME = {
   python: /^python3(?:\.\d+)*$/,
   bash: /^bash$/,
 };
-export function assertionRunnerError(code, message = code) {
-  return Object.assign(new Error(message), { code });
-}
+export const assertionRunnerError = (code, message = code) => (
+  Object.assign(new Error(message), { code }));
 function fail(code, message) { throw assertionRunnerError(code, message); }
 function isWithin(root, target) {
   const path = relative(root, target);
   return path !== '' && path !== '..' && !path.startsWith('../')
     && !isAbsolute(path);
 }
-async function exists(path) {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
+async function exists(path) { try { await access(path); return true; } catch { return false; } }
 async function ownedPath(repoRoot, pathRef, realpathFn) {
-  if (!pathRef || isAbsolute(pathRef) || pathRef.includes('\0')) {
+  if (!pathRef || isAbsolute(pathRef) || pathRef.includes('\0'))
     fail('ASSERTION_PATH_ESCAPE', 'Assertion path must be repository-relative');
-  }
   const root = await realpathFn(repoRoot);
   const candidate = resolve(root, pathRef);
   if (!isWithin(root, candidate)) fail('ASSERTION_PATH_ESCAPE');
   let target;
-  try {
-    target = await realpathFn(candidate);
-  } catch (error) {
+  try { target = await realpathFn(candidate); } catch (error) {
     fail('ASSERTION_PATH_UNAVAILABLE', `Cannot resolve assertion: ${error.message}`);
   }
   if (!isWithin(root, target)) fail('ASSERTION_PATH_ESCAPE');
@@ -62,13 +51,13 @@ function classify(ref) {
     const command = ref.slice(7).trim();
     if (!command || SHELL_META.test(command)) fail('UNSAFE_ASSERTION_COMMAND');
     const parts = command.split(/\s+/);
-    if (parts.length === 4 && parts.slice(0, 3).join(' ') === 'npx vitest run'
+    if (parts.length === 4
+      && parts.slice(0, 3).join(' ') === 'npx vitest run'
       && VITEST.test(parts[3])) return { kind: 'vitest', path: parts[3] };
     if (parts.length === 4 && parts.slice(0, 3).join(' ') === 'python3 -m pytest'
       && PYTEST.test(parts[3])) return { kind: 'pytest', path: parts[3] };
-    if (parts.length === 2 && parts[0] === 'bash' && SMOKE.test(parts[1])) {
+    if (parts.length === 2 && parts[0] === 'bash' && SMOKE.test(parts[1]))
       return { kind: 'bash', path: parts[1] };
-    }
     fail('UNSAFE_ASSERTION_COMMAND');
   }
   if (VITEST.test(ref)) return { kind: 'vitest', path: ref };
@@ -76,46 +65,41 @@ function classify(ref) {
   if (SMOKE.test(ref)) return { kind: 'bash', path: ref };
   fail('ASSERTION_NOT_RUNNABLE');
 }
+const matchesKind = (kind, path) => (
+  { vitest: VITEST, pytest: PYTEST, bash: SMOKE }[kind].test(path));
 async function pinnedTools(toolchains, names, realpathFn) {
-  if (!toolchains || typeof toolchains !== 'object' || Array.isArray(toolchains)) {
+  if (!toolchains || typeof toolchains !== 'object' || Array.isArray(toolchains))
     fail('ASSERTION_TOOLCHAIN_REQUIRED');
-  }
   const canonical = {};
   for (const [name, descriptor] of Object.entries(toolchains)) {
     if (!TOOL_NAMES.has(name) || !descriptor || typeof descriptor !== 'object'
       || Array.isArray(descriptor)) fail('ASSERTION_TOOLCHAIN_INVALID');
     const keys = Object.keys(descriptor);
-    if (!keys.includes('path') || keys.some(key => !['path', 'sha256'].includes(key))) {
+    if (!keys.includes('path') || keys.some(key => !['path', 'sha256'].includes(key)))
       fail('ASSERTION_TOOLCHAIN_INVALID');
-    }
     if (!isAbsolute(descriptor.path)) fail('ASSERTION_TOOLCHAIN_PATH_INVALID');
-    if (descriptor.sha256 !== undefined && !SHA256.test(descriptor.sha256)) {
+    if (descriptor.sha256 !== undefined
+      && (typeof descriptor.sha256 !== 'string' || !SHA256.test(descriptor.sha256))) {
       fail('ASSERTION_TOOLCHAIN_DIGEST_INVALID');
     }
     const path = await realpathFn(descriptor.path);
-    if (!isAbsolute(path) || !TOOL_BASENAME[name].test(basename(path))) {
+    if (!isAbsolute(path) || !TOOL_BASENAME[name].test(basename(path)))
       fail('ASSERTION_TOOLCHAIN_PATH_INVALID');
-    }
-    canonical[name] = Object.freeze({
-      name, path, ...(descriptor.sha256 ? { sha256: descriptor.sha256 } : {}),
-    });
+    canonical[name] = Object.freeze(
+      { name, path, ...(descriptor.sha256 ? { sha256: descriptor.sha256 } : {}) },
+    );
   }
   if (names.some(name => !canonical[name])) fail('ASSERTION_TOOLCHAIN_REQUIRED');
   const selected = names.map(name => canonical[name]);
-  if (new Set(selected.map(tool => tool.path)).size !== selected.length) {
+  if (new Set(selected.map(tool => tool.path)).size !== selected.length)
     fail('ASSERTION_TOOLCHAIN_PATH_INVALID');
-  }
   return Object.freeze(selected);
 }
 function command(executable, argv, cwd, kind, toolchain) {
   return Object.freeze({
-    executable,
-    argv: Object.freeze(argv),
+    executable, argv: Object.freeze(argv),
     options: Object.freeze({
-      cwd,
-      shell: false,
-      evidenceKind: kind,
-      toolchain,
+      cwd, shell: false, evidenceKind: kind, toolchain,
       env: Object.freeze({ inherit: false, allowlist: Object.freeze([]) }),
     }),
   });
@@ -148,6 +132,7 @@ export async function assertionCommand(assertionRef, repoRoot, {
 } = {}) {
   const shape = classify(assertionRef);
   const { root, target } = await ownedPath(repoRoot, shape.path, realpathFn);
+  if (!matchesKind(shape.kind, target)) fail('ASSERTION_PATH_TYPE_MISMATCH');
   if (!await isTrackedPathFn(root, target)) fail('ASSERTION_PATH_UNTRACKED');
   if (shape.kind === 'vitest') {
     const tools = await pinnedTools(toolchains, ['node', 'vitest'], realpathFn);
@@ -165,9 +150,7 @@ export async function assertionCommand(assertionRef, repoRoot, {
   const tools = await pinnedTools(toolchains, ['bash'], realpathFn);
   return command(tools[0].path, [target], root, 'bash', tools);
 }
-function cleanRepo(value) {
-  return value.replace(/\/+$/, '').replace(/\.git$/i, '');
-}
+const cleanRepo = value => value.replace(/\/+$/, '').replace(/\.git$/i, '');
 export function canonicalRepoIdentity(origin) {
   const value = String(origin ?? '').trim();
   if (!value) fail('SOURCE_REPO_UNAVAILABLE');
@@ -195,8 +178,8 @@ async function gitValue(repoRoot, argv, code) {
   if (result.exitCode !== undefined) fail(code, result.stderr);
   return result.stdout.trim();
 }
-export const defaultSourceSha = repoRoot => (
-  gitValue(repoRoot, ['rev-parse', 'HEAD'], 'SOURCE_SHA_UNAVAILABLE')
+export const defaultSourceSha = repoRoot => gitValue(
+  repoRoot, ['rev-parse', 'HEAD'], 'SOURCE_SHA_UNAVAILABLE',
 );
 export async function defaultSourceRepo(repoRoot) {
   return canonicalRepoIdentity(await gitValue(
