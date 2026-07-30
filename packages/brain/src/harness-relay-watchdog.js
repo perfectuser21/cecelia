@@ -862,16 +862,20 @@ export async function _resumePausedKernelContext(run, task, deps, out) {
       resumeToken,
     });
   } catch (error) {
+    // Keep the exact claim as a short cooldown lease. Clearing it immediately
+    // lets the same newest failures retake every fixed-size scan and starve
+    // older healthy runs. The phase stays paused and the normal 5-minute
+    // expiry makes the retry bounded without publishing a dead active phase.
     await dbPool.query(
       `UPDATE initiative_runs
-          SET orchestrator_heartbeat_at=NULL,
-              orchestrator_host=NULL,
+          SET orchestrator_heartbeat_at=$3,
+              orchestrator_host=$2,
               orchestrator_pid=NULL,
               updated_at=NOW()
         WHERE id=$1::uuid
           AND phase='paused'
           AND orchestrator_host=$2`,
-      [run.id, claimHost],
+      [run.id, claimHost, now],
     ).catch(() => {});
     throw error;
   }

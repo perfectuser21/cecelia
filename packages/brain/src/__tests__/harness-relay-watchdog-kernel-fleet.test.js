@@ -235,7 +235,10 @@ describe('kernel fleet watchdog recovery', () => {
         ) {
           return { rows: [{ id: RUN_ID }], rowCount: 1 };
         }
-        if (String(sql).includes('SET orchestrator_heartbeat_at=NULL')) {
+        if (
+          String(sql).includes('SET orchestrator_heartbeat_at=$3')
+          && String(sql).includes('orchestrator_host=$2')
+        ) {
           return { rows: [{ id: RUN_ID }], rowCount: 1 };
         }
         throw new Error(`unexpected query: ${sql}`);
@@ -262,7 +265,8 @@ describe('kernel fleet watchdog recovery', () => {
       randomUUID: () => 'resume-token-failed',
     }, { resumed: 0 })).rejects.toThrow(/spawn failed/);
 
-    expect(queries.at(-1).sql).toContain('SET orchestrator_heartbeat_at=NULL');
+    expect(queries.at(-1).sql).toContain('SET orchestrator_heartbeat_at=$3');
+    expect(queries.at(-1).sql).toContain('orchestrator_host=$2');
     expect(queries.at(-1).params).toContain('context-resume:resume-token-failed');
   });
 
