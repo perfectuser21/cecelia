@@ -14,8 +14,8 @@
 
 ## Brain 1.267.140 — Golden Path §④-1 receipt evidence schema (stack 2)
 
-- Migration 374 新增不可变 receipt 与场景证据，selfcheck 同步到 374；无证据
-  PASS 不算覆盖。本层仍不含 Runner、route 或 UI，不宣称生产盖章完成。
+- Migration 374 新增不可变受信执行 receipt 与场景证据，selfcheck 地板升到 374；
+  不完整 PASS 不算覆盖。本层仍不含 Runner、route 或 UI，不宣称生产盖章完成。
 
 ## Brain 1.267.139 — Golden Path §④-1 receipt-state pure model
 
