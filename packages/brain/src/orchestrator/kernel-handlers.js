@@ -1,4 +1,5 @@
 import { normalizeFailureSignature } from './convergence-signatures.js';
+import { finalizeKernelRun } from './kernel-run-store.js';
 
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
@@ -202,28 +203,12 @@ export function createKernelHandlers(deps) {
       });
       await deps.cleanup(ctx.runId);
 
-      const client = await deps.pool.connect();
-      try {
-        await client.query('BEGIN');
-        await client.query(
-          `UPDATE initiative_runs
-              SET phase='done', completed_at=NOW(), updated_at=NOW()
-            WHERE id=$1`,
-          [ctx.runId],
-        );
-        await client.query(
-          `UPDATE tasks
-              SET status='completed', completed_at=NOW(), updated_at=NOW()
-            WHERE id=$1`,
-          [ctx.taskId],
-        );
-        await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
-      }
+      const finalizeRun = deps.finalizeRun ?? finalizeKernelRun;
+      await finalizeRun(deps.pool, {
+        runId: ctx.runId,
+        expectedTaskId: ctx.taskId,
+        outcome: 'done',
+      });
       return { status: 'DONE', detail: 'report chain completed' };
     },
   });

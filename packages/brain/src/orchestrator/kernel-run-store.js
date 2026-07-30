@@ -118,6 +118,137 @@ export async function createKernelRun(pool, input) {
   }
 }
 
+export async function finalizeKernelRun(pool, {
+  runId,
+  expectedTaskId,
+  outcome,
+  reason = null,
+}) {
+  if (!['done', 'failed'].includes(outcome)) {
+    throw new Error(`invalid Kernel terminal outcome: ${outcome}`);
+  }
+
+  const client = await pool.connect();
+  let committed = false;
+  try {
+    await client.query('BEGIN');
+    const { rows: runRows } = await client.query(
+      `SELECT id, current_task_id, phase
+         FROM initiative_runs
+        WHERE id = $1
+          AND orchestrator_version = 'v2'
+        FOR UPDATE`,
+      [runId],
+    );
+    const run = runRows[0];
+    if (!run || run.current_task_id !== expectedTaskId) {
+      throw new Error(
+        `Kernel run/task identity mismatch: ${runId}/${expectedTaskId}`,
+      );
+    }
+
+    const { rows: taskRows } = await client.query(
+      `SELECT id, status
+         FROM tasks
+        WHERE id = $1
+        FOR UPDATE`,
+      [expectedTaskId],
+    );
+    const task = taskRows[0];
+    if (!task) {
+      throw new Error(`Kernel run parent task missing: ${expectedTaskId}`);
+    }
+
+    const runAlreadyTerminal = ['done', 'failed'].includes(run.phase);
+    if (runAlreadyTerminal && run.phase !== outcome) {
+      throw new Error(
+        `Kernel terminal outcome conflict: ${run.phase}/${outcome}`,
+      );
+    }
+
+    const taskOutcome = outcome === 'done' ? 'completed' : 'failed';
+    if (
+      TERMINAL_TASK_STATUSES.has(task.status)
+      && task.status !== taskOutcome
+    ) {
+      throw new Error(
+        `Kernel task terminal outcome conflict: ${task.status}/${taskOutcome}`,
+      );
+    }
+
+    const changed = !runAlreadyTerminal;
+    if (changed) {
+      await client.query(
+        `UPDATE initiative_runs
+            SET phase = $2,
+                failure_reason = CASE
+                  WHEN $2 = 'failed' THEN $3
+                  ELSE failure_reason
+                END,
+                completed_at = COALESCE(completed_at, NOW()),
+                updated_at = NOW()
+          WHERE id = $1`,
+        [runId, outcome, reason],
+      );
+    }
+
+    if (task.status !== taskOutcome) {
+      await client.query(
+        `UPDATE tasks
+            SET status = $2,
+                error_message = CASE
+                  WHEN $2 = 'failed' THEN $3
+                  ELSE error_message
+                END,
+                completed_at = COALESCE(completed_at, NOW()),
+                updated_at = NOW()
+          WHERE id = $1`,
+        [expectedTaskId, taskOutcome, reason],
+      );
+    }
+
+    if (changed) {
+      await client.query(
+        `INSERT INTO orchestrator_decision_log
+           (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
+         SELECT $1,
+                COALESCE(MAX(hop), 0) + 1,
+                $4::jsonb,
+                $2,
+                $3,
+                'effect:run_terminal',
+                $4::jsonb
+           FROM orchestrator_decision_log
+          WHERE run_id = $1`,
+        [
+          runId,
+          outcome,
+          outcome === 'done' ? 'allow' : 'deny:run_failed',
+          JSON.stringify({
+            task_id: expectedTaskId,
+            outcome,
+            reason,
+          }),
+        ],
+      );
+    }
+
+    await client.query('COMMIT');
+    committed = true;
+    return {
+      changed,
+      outcome,
+      runId,
+      taskId: expectedTaskId,
+    };
+  } catch (error) {
+    if (!committed) await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export const __test__ = {
   ACTIVE_PHASES,
   CREATED_SOURCES,
