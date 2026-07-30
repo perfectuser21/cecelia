@@ -114,6 +114,34 @@ describe('GP assertion repository', () => {
     ).rejects.toMatchObject({ code: 'GP_CONTRACT_AMBIGUOUS' });
   });
 
+  it('does not treat an older signature as current after a newer contract exists', async () => {
+    const db = {
+      query: vi.fn().mockResolvedValue({
+        rows: [
+          {
+            id: 'pending-v2',
+            golden_path_id: 'gp-a',
+            version: 2,
+            content_hash: 'b'.repeat(64),
+            status: 'pending_signature',
+          },
+          {
+            id: 'signed-v1',
+            golden_path_id: 'gp-a',
+            version: 1,
+            content_hash: 'a'.repeat(64),
+            status: 'signed',
+          },
+        ],
+      }),
+    };
+
+    await expect(signedContractFromDb(db, 'journey-1')).resolves.toEqual({
+      hasHistory: true,
+      signed: null,
+    });
+  });
+
   it('share-locks the signed contract during final delivery', async () => {
     const db = {
       query: vi.fn().mockResolvedValue({
@@ -150,5 +178,26 @@ describe('GP assertion repository', () => {
     expect(db.query.mock.calls[0][0]).toMatch(
       /NOT EXISTS[\s\S]+other_contract\.golden_path_id[\s\S]+<> contract\.golden_path_id/i,
     );
+  });
+
+  it('makes the insert CAS reject a newer version of the same GP contract', async () => {
+    const db = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+
+    await persistReceiptToDb(receipt(), db);
+
+    expect(db.query.mock.calls[0][0]).toMatch(
+      /NOT EXISTS[\s\S]+newer_contract\.golden_path_id\s*=\s*contract\.golden_path_id[\s\S]+newer_contract\.version\s*>\s*contract\.version/i,
+    );
+  });
+
+  it('rejects a query-only client instead of silently skipping the transaction', async () => {
+    const db = { query: vi.fn() };
+    const work = vi.fn();
+
+    await expect(inShortTransaction(db, 'BEGIN', work)).rejects.toMatchObject({
+      code: 'ASSERTION_TRANSACTION_POOL_REQUIRED',
+    });
+    expect(work).not.toHaveBeenCalled();
+    expect(db.query).not.toHaveBeenCalled();
   });
 });
