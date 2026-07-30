@@ -396,6 +396,7 @@ export async function createKernelRun(pool, input) {
 export async function finalizeKernelRun(pool, {
   runId,
   expectedTaskId,
+  expectedTaskStatus = null,
   outcome,
   reason = null,
 }) {
@@ -417,6 +418,11 @@ export async function finalizeKernelRun(pool, {
     const task = taskRows[0];
     if (!task) {
       throw new Error(`Kernel run parent task missing: ${expectedTaskId}`);
+    }
+    if (expectedTaskStatus !== null && task.status !== expectedTaskStatus) {
+      throw new Error(
+        `Kernel task status changed: ${task.status}/${expectedTaskStatus}`,
+      );
     }
 
     // createKernelRun also locks task before run. Keeping one global order
