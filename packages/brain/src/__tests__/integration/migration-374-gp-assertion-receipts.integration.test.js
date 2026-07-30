@@ -18,6 +18,7 @@ async function insertReceipt(overrides = {}, conflict = '') {
     ref: assertionRef, digest: assertionDigest, sourceRepo: 'cecelia',
     sourceSha: 'a'.repeat(40), gpContractId: null, gpContractHash: null,
     commandArgv: ['npx', 'vitest', 'run', assertionRef],
+    scenarioCount: 4, scenarioEvidence: { kind: 'vitest', passed: 4 },
     verdict: 'PASS', exitCode: 0, machineId: 'integration-test',
     outputDigest, synthetic: false, startedAt: '2026-07-30T00:00:00Z',
     completedAt: '2026-07-30T00:00:01Z', ...overrides,
@@ -26,17 +27,18 @@ async function insertReceipt(overrides = {}, conflict = '') {
     `INSERT INTO journey_assertion_receipts (
       journey_step_link_id, run_id, assertion_revision, assertion_ref_snapshot,
       assertion_digest, source_repo, source_sha, gp_contract_id, gp_contract_hash,
-      command_argv, verdict, exit_code, machine_id, output_digest, output_tail,
+      command_argv, verdict, exit_code, scenario_count, scenario_evidence,
+      machine_id, output_digest, output_tail,
       synthetic, started_at, completed_at
     ) VALUES (
-      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,
-      '4 tests passed',$15,$16,$17
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14::jsonb,$15,$16,
+      '4 tests passed',$17,$18,$19
     ) ${conflict} RETURNING *`,
     [cellId, value.runId, value.revision, value.ref, value.digest, value.sourceRepo,
       value.sourceSha, value.gpContractId, value.gpContractHash,
       JSON.stringify(value.commandArgv), value.verdict, value.exitCode,
-      value.machineId, value.outputDigest, value.synthetic, value.startedAt,
-      value.completedAt],
+      value.scenarioCount, JSON.stringify(value.scenarioEvidence),
+      value.machineId, value.outputDigest, value.synthetic, value.startedAt, value.completedAt],
   );
 }
 async function expectConstraintFailure(query) {
@@ -99,6 +101,17 @@ describe('migration 374 Golden Path assertion receipts [PostgreSQL]', () => {
       { sourceSha: 'A'.repeat(40) }, { outputDigest: null },
       { verdict: 'FAIL', exitCode: 0 },
     ]);
+  });
+  it('rejects zero-scenario PASS but records timeout FAIL evidence', async () => {
+    await rejectReceipts([{ scenarioCount: 0, scenarioEvidence: {} }]);
+    const timeout = (await insertReceipt({
+      verdict: 'FAIL', exitCode: 124, scenarioCount: 0,
+      scenarioEvidence: { kind: 'timeout', timeout_ms: 300000 },
+    })).rows[0];
+    expect(timeout).toMatchObject({
+      verdict: 'FAIL', exit_code: 124, scenario_count: 0,
+      scenario_evidence: { kind: 'timeout', timeout_ms: 300000 },
+    });
   });
   it('rejects synthetic execution receipts', async () => {
     await rejectReceipts([{ synthetic: true }]);

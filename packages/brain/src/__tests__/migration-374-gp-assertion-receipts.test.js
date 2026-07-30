@@ -18,6 +18,10 @@ describe('migration 374 Golden Path assertion receipts contract', () => {
       /CREATE TABLE IF NOT EXISTS journey_assertion_receipts/,
     );
     expect(sql).toMatch(/UNIQUE\s*\(run_id,\s*journey_step_link_id\)/);
+    expect(sql).toMatch(/scenario_count\s+INTEGER\s+NOT NULL\s+DEFAULT\s+0/i);
+    expect(sql).toMatch(/scenario_evidence\s+JSONB\s+NOT NULL\s+DEFAULT\s+'\{\}'::jsonb/i);
+    expect(sql).toMatch(/verdict\s*=\s*'PASS'[\s\S]+scenario_count\s*>\s*0/i);
+    expect(sql).toMatch(/scenario_evidence\s*<>\s*'\{\}'::jsonb/i);
     expect(sql).toMatch(
       /synthetic\s+BOOLEAN[^;]+CHECK\s*\(synthetic\s*=\s*false\)/s,
     );
