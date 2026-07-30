@@ -998,6 +998,9 @@ async function checkExpiredQuarantineTasks({ limit = Infinity } = {}) {
       return [];
     }
 
+    // Issue cc28d1af 根因C：自动释放原本无上限——秒挂任务隔离后被 TTL 放出、
+    // 再循环、再隔离、再放出，"隔离"形同虚设。quarantine_release_count ≥2 的
+    // 任务不再自动释放（保持 quarantined 等人工 releaseTask 裁决）。
     const result = await pool.query(`
       SELECT id, title, payload
       FROM tasks
@@ -1005,6 +1008,7 @@ async function checkExpiredQuarantineTasks({ limit = Infinity } = {}) {
         AND payload->'quarantine_info'->>'release_at' IS NOT NULL
         AND payload->'quarantine_info'->>'release_at' != 'null'
         AND (payload->'quarantine_info'->>'release_at')::timestamptz < NOW()
+        AND COALESCE((payload->>'quarantine_release_count')::int, 0) < 2
     `);
 
     if (result.rows.length === 0) {
@@ -1030,6 +1034,18 @@ async function checkExpiredQuarantineTasks({ limit = Infinity } = {}) {
       });
 
       if (releaseResult.success) {
+        // Issue cc28d1af 根因C：递增自动释放计数，≥2 后上方 SELECT 不再选中该任务
+        try {
+          await pool.query(
+            `UPDATE tasks SET payload = COALESCE(payload,'{}'::jsonb)
+             || jsonb_build_object('quarantine_release_count',
+                  COALESCE((payload->>'quarantine_release_count')::int, 0) + 1)
+             WHERE id = $1`,
+            [task.id]
+          );
+        } catch (cntErr) {
+          console.warn(`[quarantine] release_count increment failed (non-fatal): ${cntErr.message}`);
+        }
         released.push({
           task_id: task.id,
           title: task.title,
@@ -1205,18 +1221,36 @@ async function handleTaskFailure(taskId, options = {}) {
     };
   }
 
-  // skipCount 模式：auth/network/rate_limit 等外部错误，只 requeue 不累计失败
+  // skipCount 模式：auth/network/rate_limit 等外部错误，只 requeue 不累计失败。
+  // Issue cc28d1af 根因B：此路径原本完全无计数——秒挂型故障若被 classify 成
+  // transient，任务无限白嫖 requeue，每个 tick 霸占派发动作把整个队列饿死。
+  // 加 transient_requeue_count 上限：≥TRANSIENT_REQUEUE_CAP 不再白嫖，落入正常
+  // 失败计数/隔离路径（真正的瞬时故障不会连续命中 5 次，命中即结构性问题）。
+  const TRANSIENT_REQUEUE_CAP = 5;
   if (skipCount) {
     try {
-      await pool.query(
-        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL, payload=COALESCE(payload,'{}'::jsonb)||'{"run_status":null}'::jsonb WHERE id=$1`,
+      const capRow = await pool.query(
+        'SELECT payload FROM tasks WHERE id = $1',
         [taskId]
       );
-      console.log(`[quarantine] skipCount=true: task ${taskId} requeued without failure count`);
+      const capCount = (capRow.rows[0]?.payload?.transient_requeue_count || 0);
+      if (capCount >= TRANSIENT_REQUEUE_CAP) {
+        console.warn(`[quarantine] transient requeue cap hit (${capCount}/${TRANSIENT_REQUEUE_CAP}): task ${taskId} 不再按瞬时错误白嫖 requeue，转入失败计数/隔离路径`);
+        // 不 return——直落下方正常失败计数路径（failure_count++ → 达阈值隔离）
+      } else {
+        await pool.query(
+          `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL,
+           payload=COALESCE(payload,'{}'::jsonb)||jsonb_build_object('run_status', null, 'transient_requeue_count', $2::int)
+           WHERE id=$1`,
+          [taskId, capCount + 1]
+        );
+        console.log(`[quarantine] skipCount=true: task ${taskId} requeued without failure count (transient_requeue_count=${capCount + 1}/${TRANSIENT_REQUEUE_CAP})`);
+        return { quarantined: false, failure_count: 0, skipped_count: true };
+      }
     } catch (requeueErr) {
       console.error(`[quarantine] skipCount requeue error: ${requeueErr.message}`);
+      return { quarantined: false, failure_count: 0, skipped_count: true };
     }
-    return { quarantined: false, failure_count: 0, skipped_count: true };
   }
 
   try {

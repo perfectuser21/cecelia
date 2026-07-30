@@ -494,6 +494,14 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     echo ""
     echo "=== Deploy SUCCESS: cecelia-brain v${VERSION} is healthy (${DEPLOY_MODE}) ==="
 
+    # swap 成功后无条件 drain-cancel（Issue cc28d1af 根因D）：
+    # drain_before_swap 的 drain 状态持久化在 working_memory（共享DB），僵尸 in_progress
+    # 任务会让 drain 永远等不完 → 120s 超时"继续部署"后不取消 → 新容器 restoreDrainState
+    # 恢复 draining → 派发永久瘫痪（0729 16:48 / 0730 10:21 两次实证，均由合并PR自动部署触发）。
+    # 部署已收尾，pre-swap 的 drain 使命已结束，新实例不应继承——best-effort 取消。
+    echo "  [drain] swap 成功，取消 pre-swap drain（新实例不继承排水状态）..."
+    curl -sf --max-time 5 -X POST "http://localhost:5221/api/brain/tick/drain-cancel" >/dev/null 2>&1 || true
+
     # S6: FR-05 SHA 回读断言（Gate3 C-05）
     # 部署完成后读 /health.git_sha 与 EXPECTED_SHA 对比，不等则 ROLLBACK exit 1
     echo ""
