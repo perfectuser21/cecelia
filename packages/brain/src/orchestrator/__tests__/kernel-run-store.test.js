@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createKernelRun,
+  finalizeKernelRun,
   loadActiveKernelRun,
 } from '../kernel-run-store.js';
 
@@ -64,6 +65,68 @@ function transactionPool({
             created_source: 'kernel_dispatch',
           }],
         };
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    }),
+    release: vi.fn(() => order.push('release')),
+  };
+  return {
+    pool: { connect: vi.fn(async () => client) },
+    client,
+    calls,
+    order,
+  };
+}
+
+function finalizationPool({
+  run = {
+    id: RUN_ID,
+    current_task_id: TASK_ID,
+    phase: 'generate',
+  },
+  task = {
+    id: TASK_ID,
+    status: 'in_progress',
+  },
+  failTaskWrite = false,
+} = {}) {
+  const order = [];
+  const calls = [];
+  const client = {
+    query: vi.fn(async (sql, params) => {
+      calls.push({ sql, params });
+      if (sql === 'BEGIN') {
+        order.push('BEGIN');
+        return { rows: [] };
+      }
+      if (sql === 'COMMIT') {
+        order.push('COMMIT');
+        return { rows: [] };
+      }
+      if (sql === 'ROLLBACK') {
+        order.push('ROLLBACK');
+        return { rows: [] };
+      }
+      if (/FROM initiative_runs/.test(sql) && /FOR UPDATE/.test(sql)) {
+        order.push('run-lock');
+        return { rows: run ? [run] : [] };
+      }
+      if (/FROM tasks/.test(sql) && /FOR UPDATE/.test(sql)) {
+        order.push('task-lock');
+        return { rows: task ? [task] : [] };
+      }
+      if (/UPDATE initiative_runs/.test(sql)) {
+        order.push('run-update');
+        return { rows: [], rowCount: 1 };
+      }
+      if (/UPDATE tasks/.test(sql)) {
+        order.push('task-update');
+        if (failTaskWrite) throw new Error('task write failed');
+        return { rows: [], rowCount: 1 };
+      }
+      if (/INSERT INTO orchestrator_decision_log/.test(sql)) {
+        order.push('terminal-event');
+        return { rows: [], rowCount: 1 };
       }
       throw new Error(`unexpected SQL: ${sql}`);
     }),
@@ -197,5 +260,141 @@ describe('Kernel run store creation authority', () => {
       createdSource: 'guessed',
     })).rejects.toThrow('invalid Kernel run created source: guessed');
     expect(harness.pool.connect).not.toHaveBeenCalled();
+  });
+});
+
+describe('Kernel run/task terminalization authority', () => {
+  it('fails the run and parent task with one terminal event in one transaction', async () => {
+    const harness = finalizationPool();
+
+    const result = await finalizeKernelRun(harness.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'automation_deadline_exceeded',
+    });
+
+    expect(result).toEqual({
+      changed: true,
+      outcome: 'failed',
+      runId: RUN_ID,
+      taskId: TASK_ID,
+    });
+    const runUpdate = harness.calls.find(({ sql }) => /UPDATE initiative_runs/.test(sql));
+    const taskUpdate = harness.calls.find(({ sql }) => /UPDATE tasks/.test(sql));
+    const terminalEvent = harness.calls.find(
+      ({ sql }) => /INSERT INTO orchestrator_decision_log/.test(sql),
+    );
+    expect(runUpdate.sql).toMatch(/completed_at\s*=\s*COALESCE\(completed_at,\s*NOW\(\)\)/);
+    expect(taskUpdate.sql).toMatch(/completed_at\s*=\s*COALESCE\(completed_at,\s*NOW\(\)\)/);
+    expect(terminalEvent.sql).toContain("'effect:run_terminal'");
+    expect(terminalEvent.params[3]).toContain('automation_deadline_exceeded');
+    expect(harness.order).toEqual([
+      'BEGIN',
+      'run-lock',
+      'task-lock',
+      'run-update',
+      'task-update',
+      'terminal-event',
+      'COMMIT',
+      'release',
+    ]);
+  });
+
+  it('rolls back the run update when the task write fails', async () => {
+    const harness = finalizationPool({ failTaskWrite: true });
+
+    await expect(finalizeKernelRun(harness.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'automation_deadline_exceeded',
+    })).rejects.toThrow('task write failed');
+
+    expect(harness.order).toEqual([
+      'BEGIN',
+      'run-lock',
+      'task-lock',
+      'run-update',
+      'task-update',
+      'ROLLBACK',
+      'release',
+    ]);
+  });
+
+  it('rejects a conflicting terminal outcome without updates', async () => {
+    const harness = finalizationPool({
+      run: {
+        id: RUN_ID,
+        current_task_id: TASK_ID,
+        phase: 'failed',
+      },
+      task: {
+        id: TASK_ID,
+        status: 'failed',
+      },
+    });
+
+    await expect(finalizeKernelRun(harness.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'done',
+    })).rejects.toThrow('Kernel terminal outcome conflict: failed/done');
+    expect(harness.order).toEqual([
+      'BEGIN',
+      'run-lock',
+      'task-lock',
+      'ROLLBACK',
+      'release',
+    ]);
+  });
+
+  it('repairs the parent task idempotently for the same run outcome without a second event', async () => {
+    const harness = finalizationPool({
+      run: {
+        id: RUN_ID,
+        current_task_id: TASK_ID,
+        phase: 'failed',
+      },
+    });
+
+    const result = await finalizeKernelRun(harness.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'terminal_run_reconciliation',
+    });
+
+    expect(result.changed).toBe(false);
+    expect(harness.order).toEqual([
+      'BEGIN',
+      'run-lock',
+      'task-lock',
+      'task-update',
+      'COMMIT',
+      'release',
+    ]);
+  });
+
+  it('rejects a run/task identity mismatch', async () => {
+    const harness = finalizationPool({
+      run: {
+        id: RUN_ID,
+        current_task_id: INITIATIVE_ID,
+        phase: 'generate',
+      },
+    });
+
+    await expect(finalizeKernelRun(harness.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+    })).rejects.toThrow(`Kernel run/task identity mismatch: ${RUN_ID}/${TASK_ID}`);
+    expect(harness.order).toEqual([
+      'BEGIN',
+      'run-lock',
+      'ROLLBACK',
+      'release',
+    ]);
   });
 });
