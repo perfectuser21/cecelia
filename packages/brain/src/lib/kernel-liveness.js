@@ -24,6 +24,7 @@
  * 依赖全注入（pool / now / hostFn / killFn），便于单测喂假 db、假 process.kill。
  */
 import os from 'node:os';
+import { loadActiveKernelRun } from '../orchestrator/kernel-run-store.js';
 
 /**
  * 心跳新鲜阈值 = 3 分钟。
@@ -52,24 +53,12 @@ function toEpochMs(value) {
 
 /**
  * 取该任务当前的 Kernel run 行（v2 且非终态）。
- * 双键定位：current_task_id 是 kernel run 的身份键（见 _spawnKernelRuntime 去重注释），
- * initiative_id 作为兜底（B51 约定 initiative_id 缺省 = task.id）。
+ * current_task_id 是唯一身份键；initiative_id 只做业务聚合，不能参与判活。
  * @returns {Promise<object|null>} 查不到返回 null（不抛）；SQL 异常向上抛，由调用方 fail-open。
  */
-export async function loadKernelRun(pool, { taskId, initiativeId = null } = {}) {
+export async function loadKernelRun(pool, { taskId } = {}) {
   if (!pool?.query || !taskId) return null;
-  const { rows } = await pool.query(
-    `SELECT id, initiative_id, current_task_id, phase,
-            orchestrator_heartbeat_at, orchestrator_pid, orchestrator_host, started_at
-       FROM initiative_runs
-      WHERE orchestrator_version = 'v2'
-        AND phase NOT IN ('done','failed')
-        AND (current_task_id = $1::uuid OR initiative_id = COALESCE($2::uuid, $1::uuid))
-      ORDER BY started_at DESC
-      LIMIT 1`,
-    [taskId, initiativeId]
-  );
-  return rows?.[0] ?? null;
+  return loadActiveKernelRun(pool, taskId);
 }
 
 /**

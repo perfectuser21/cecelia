@@ -91,7 +91,7 @@ describe('loadKernelRun', () => {
     const q = pool.calls[0];
     expect(q.sql).toContain('initiative_runs');
     expect(q.sql).toContain("orchestrator_version = 'v2'");
-    expect(q.sql).toContain("phase NOT IN ('done','failed')");
+    expect(q.sql).toMatch(/phase NOT IN \('done',\s*'failed'\)/);
     expect(q.sql).toContain('current_task_id');
     expect(q.sql).not.toMatch(/OR\s+initiative_id/i);
     expect(q.sql).toContain('orchestrator_heartbeat_at');

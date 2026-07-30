@@ -19,6 +19,10 @@ import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  createKernelRun,
+  finalizeKernelRun,
+} from './orchestrator/kernel-run-store.js';
 
 const RELAY_FLAG = 'skill-relay';
 const RELAY_DEADLINE_HOURS = 6;
@@ -118,20 +122,6 @@ export async function launchKernelProcess({ taskId, runId, worktreePath }) {
 }
 
 async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
-  // harness_runtime 由 tasks.payload 持久化，current_task_id + 非终态才是 run 身份。
-  // orchestrator_host 是活性观测字段，heartbeat 会把它改成实际 hostname，
-  // 不得用它做去重键，否则每次重派都会再建一条 run。
-  const active = await dbPool.query(
-    `SELECT id FROM initiative_runs
-      WHERE current_task_id=$1 AND orchestrator_version='v2'
-        AND phase NOT IN ('done','failed')
-      ORDER BY started_at DESC LIMIT 1`,
-    [task.id],
-  );
-  if (active.rows?.[0]) {
-    return { ok: false, mode: 'kernel-v1', deferred: true, reason: 'kernel_run_exists', runId: active.rows[0].id };
-  }
-
   const ensureWt = deps.ensureWt
     || (await import('./harness-worktree.js')).ensureHarnessWorktree;
   const worktreePath = await ensureWt({
@@ -156,21 +146,28 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
     })],
   );
 
-  const inserted = await dbPool.query(
-    `INSERT INTO initiative_runs
-       (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
-        deadline_at, ability_id, current_task_id)
-     VALUES ($1, 'planning', $2, 'v2', 'kernel-v1', NOW() + INTERVAL '8 hours', $3, $4)
-     RETURNING id`,
-    [
-      initiativeId,
-      task.payload?.journey_id || null,
-      task.ability_id || task.payload?.ability_id || null,
-      task.id,
-    ],
-  );
-  const runId = inserted.rows?.[0]?.id;
-  if (!runId) throw new Error('kernel-v1 initiative_runs INSERT returned no id');
+  const createRun = deps.createKernelRun ?? createKernelRun;
+  const created = await createRun(dbPool, {
+    taskId: task.id,
+    initiativeId,
+    phase: 'planning',
+    journeyId: task.payload?.journey_id || null,
+    abilityId: task.ability_id || task.payload?.ability_id || null,
+    host: 'kernel-v1',
+    deadlineHours: 8,
+    createdSource: 'kernel_dispatch',
+  });
+  const runId = created.run?.id;
+  if (!runId) throw new Error('kernel-v1 run authority returned no id');
+  if (!created.created) {
+    return {
+      ok: false,
+      mode: 'kernel-v1',
+      deferred: true,
+      reason: 'kernel_run_exists',
+      runId,
+    };
+  }
 
   const launchKernel = deps.launchKernel || launchKernelProcess;
   try {
@@ -178,15 +175,13 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
     console.log(`[skill-relay][kernel-v1] launched run=${runId} pid=${launched.pid ?? '?'}`);
     return { ok: true, mode: 'kernel-v1', runId, ...launched, sprintDir, worktreePath };
   } catch (error) {
-    await dbPool.query(
-      `UPDATE initiative_runs SET phase='failed', failure_reason='kernel_launch_failed', completed_at=NOW()
-        WHERE id=$1`,
-      [runId],
-    );
-    await dbPool.query(
-      `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
-      [task.id],
-    );
+    const finalizeRun = deps.finalizeRun ?? finalizeKernelRun;
+    await finalizeRun(dbPool, {
+      runId,
+      expectedTaskId: task.id,
+      outcome: 'failed',
+      reason: `kernel_launch_failed:${error.message}`,
+    });
     return { ok: false, mode: 'kernel-v1', runId, error: error.message };
   }
 }
@@ -574,8 +569,11 @@ export async function spawnSkillRelaySession(task, deps = {}) {
           const abilityId = task.ability_id || task.payload?.ability_id || null;
           await dbPool.query(
             `INSERT INTO initiative_runs
-               (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id, current_task_id)
-             VALUES ($1, 'A_planning', $2, 'v2', 'skill-relay-grok', NOW() + INTERVAL '${GROK_RELAY_DEADLINE_HOURS} hours', $3, $4)`,
+               (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
+                deadline_at, ability_id, current_task_id, created_source)
+             VALUES ($1, 'A_planning', $2, 'v2', 'skill-relay-grok',
+                     NOW() + INTERVAL '${GROK_RELAY_DEADLINE_HOURS} hours',
+                     $3, $4, 'legacy_relay')`,
             [initiativeId, task.payload?.journey_id || null, abilityId, task.id]
           );
           console.log(`[skill-relay][grok] fallback claude spawn ok: container=${containerId} sprint=${sprintDir}`);
@@ -612,8 +610,10 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     const abilityId = task.ability_id || task.payload?.ability_id || null;
     await dbPool.query(
       `INSERT INTO initiative_runs
-         (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id, current_task_id)
-       VALUES ($1, 'A_planning', $2, 'v2', '${orchestratorHost}', NOW() + INTERVAL '${deadlineHours} hours', $3, $4)`,
+         (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
+          deadline_at, ability_id, current_task_id, created_source)
+       VALUES ($1, 'A_planning', $2, 'v2', '${orchestratorHost}',
+               NOW() + INTERVAL '${deadlineHours} hours', $3, $4, 'legacy_relay')`,
       [initiativeId, task.payload?.journey_id || null, abilityId, task.id]
     );
 
@@ -716,8 +716,11 @@ async function _spawnXianBridgeSession(task, { dbPool, now, short, initiativeId,
   const abilityId = task.ability_id || task.payload?.ability_id || null;
   await dbPool.query(
     `INSERT INTO initiative_runs
-       (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id, current_task_id)
-     VALUES ($1, 'A_planning', $2, 'v2', $3, NOW() + INTERVAL '${XIAN_RELAY_DEADLINE_HOURS} hours', $4, $5)`,
+       (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
+        deadline_at, ability_id, current_task_id, created_source)
+     VALUES ($1, 'A_planning', $2, 'v2', $3,
+             NOW() + INTERVAL '${XIAN_RELAY_DEADLINE_HOURS} hours',
+             $4, $5, 'legacy_relay')`,
     [initiativeId, task.payload?.journey_id || null, 'skill-relay-xian', abilityId, task.id]
   );
 
@@ -1011,8 +1014,11 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   const headedAbilityId = task.ability_id || task.payload?.ability_id || null;
   await dbPool.query(
     `INSERT INTO initiative_runs
-       (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, ability_id, current_task_id)
-     VALUES ($1, 'A_planning', $2, 'v2', '${headedHost}', NOW() + INTERVAL '${HEADED_RELAY_DEADLINE_HOURS} hours', $3, $4)`,
+       (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
+        deadline_at, ability_id, current_task_id, created_source)
+     VALUES ($1, 'A_planning', $2, 'v2', '${headedHost}',
+             NOW() + INTERVAL '${HEADED_RELAY_DEADLINE_HOURS} hours',
+             $3, $4, 'legacy_relay')`,
     [initiativeId, task.payload?.journey_id || null, headedAbilityId, task.id]
   );
 

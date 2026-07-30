@@ -14,7 +14,7 @@ describe('C1: spawn INSERT initiative_runs 带完整身份（源码哨兵）', (
     for (const ins of inserts) {
       expect(ins).toMatch(/current_task_id/);
       expect(ins).toMatch(/created_source/);
-      expect(ins).toMatch(/legacy_relay/);
     }
+    expect(src.match(/'legacy_relay'/g)).toHaveLength(inserts.length);
   });
 });
