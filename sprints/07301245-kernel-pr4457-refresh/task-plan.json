@@ -1,0 +1,25 @@
+{
+  "initiative_id": "f21957f6-2ae5-4db3-822e-90c3f474fc19",
+  "journey_type": "autonomous",
+  "journey_type_reason": "既有 Draft PR 的 Git、CodeQL 与 exact-head CI 后端收敛，不含用户界面流程。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "收敛 Draft PR #4457 的 33 个冲突、77 条 CodeQL annotation 与 exact-head CI",
+      "scope": "仅更新既有 cp-kernel-phase5b-a1-review-fixes：按冻结身份整合指定 main，逐项处置 33 个冲突路径和 77 条 CodeQL annotation，恢复绑定最终 SHA 的 CI 并停在人工审阅门；不新建 PR、不 merge、不 deploy。",
+      "dod": [
+        "[BEHAVIOR] 冻结身份、33 个冲突 subject、77 条 CodeQL subject、回归与 exact-head verifier 全部真跑通过",
+        "[BEHAVIOR] 审计窗内无新 PR、无 merge、无 auto-merge、无 staging/production deployment",
+        "[ARTIFACT] evidence 保存绑定不可变 ID、冻结 SHA 与最终 SHA 的机器可读 ledger/receipt"
+      ],
+      "files": [
+        "sprints/07301245-kernel-pr4457-refresh/",
+        "sprints/07301245-kernel-pr4457-refresh/conflict-oracle-manifest.json",
+        "合同冻结的 33 个冲突路径中经逐项处置需要修改的文件"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
