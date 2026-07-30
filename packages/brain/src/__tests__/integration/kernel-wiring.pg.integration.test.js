@@ -106,6 +106,35 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
   return { initiativeId, contractId, taskId, runId, payload };
 }
 
+async function seedCallbackAttempt(runId, {
+  role = 'generator',
+  hop = 1,
+  leaseOwner = LEASE_OWNER,
+  leaseGeneration = 0,
+} = {}) {
+  const attemptId = randomUUID();
+  await testPool.query(
+    `INSERT INTO harness_attempts
+       (id, run_id, hop, phase, role, provider, task_bundle,
+        callback_secret_hash, status, lease_owner, lease_generation,
+        actual_machine_id, execution_transport, machine_attestation_status)
+     VALUES (
+       $1, $2, $3, 'generate', $4, 'codex', '{}'::jsonb,
+       $5, 'running', $6, $7, 'us-mac-m4', 'local-docker', 'local'
+     )`,
+    [
+      attemptId,
+      runId,
+      hop,
+      role,
+      createHash('sha256').update(CALLBACK_TOKEN).digest('hex'),
+      leaseOwner,
+      leaseGeneration,
+    ],
+  );
+  return attemptId;
+}
+
 async function appendLog(runId, {
   hop,
   action,
@@ -706,6 +735,151 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
       phase: 'failed',
       failure_reason: 'no_progress_same_sha',
     });
+  });
+});
+
+describe('Kernel callback convergence on real PostgreSQL', () => {
+  it('R8/R12 atomically persists one terminal event and idempotently acknowledges retry', async () => {
+    const run = await seedRun();
+    const attemptId = await seedCallbackAttempt(run.runId);
+    const result = {
+      contract_version: '1.0',
+      attempt_id: attemptId,
+      status: 'blocked',
+      summary: 'OrbStack transport unavailable',
+      artifacts: [{ type: 'diagnostic', code: 'docker_unavailable' }],
+      checks: [],
+      decision: null,
+      error: null,
+      failure_class: 'infrastructure_blocked',
+      provider_metadata: { provider: 'codex' },
+    };
+    const store = createAttemptStore(testPool);
+    const identity = {
+      attemptId,
+      runId: run.runId,
+      leaseOwner: LEASE_OWNER,
+      leaseGeneration: 0,
+      result,
+    };
+
+    await expect(store.recordCallbackTerminal(identity)).resolves.toMatchObject({
+      deduped: false,
+      attempt: { status: 'blocked' },
+    });
+    await expect(store.recordCallbackTerminal(identity)).resolves.toMatchObject({
+      deduped: true,
+      attempt: { status: 'blocked' },
+    });
+
+    const persisted = await testPool.query(
+      `SELECT a.status, a.result,
+              COUNT(l.*)::int AS event_count,
+              MAX(l.gate_verdict) AS gate_verdict,
+              MAX(l.detail->>'lease_generation') AS event_generation
+         FROM harness_attempts a
+         LEFT JOIN orchestrator_decision_log l
+           ON l.run_id=a.run_id
+          AND l.action='verdict:attempt_callback'
+          AND l.detail->>'attempt_id'=a.id::text
+        WHERE a.id=$1
+        GROUP BY a.id`,
+      [attemptId],
+    );
+    expect(persisted.rows[0]).toMatchObject({
+      status: 'blocked',
+      event_count: 1,
+      gate_verdict: 'deny:BLOCKED',
+      event_generation: '0',
+    });
+    expect(persisted.rows[0].result).toEqual(result);
+  });
+
+  it('R11 rejects stale generation without mutating attempt or decision log', async () => {
+    const run = await seedRun();
+    const attemptId = await seedCallbackAttempt(run.runId, { leaseGeneration: 2 });
+    const store = createAttemptStore(testPool);
+
+    await expect(store.recordCallbackTerminal({
+      attemptId,
+      runId: run.runId,
+      leaseOwner: LEASE_OWNER,
+      leaseGeneration: 1,
+      result: {
+        contract_version: '1.0',
+        attempt_id: attemptId,
+        status: 'completed',
+        summary: 'late worker',
+        artifacts: [],
+        checks: [],
+        decision: null,
+        error: null,
+        provider_metadata: { provider: 'codex' },
+      },
+    })).resolves.toMatchObject({
+      attempt: null,
+      deduped: false,
+      conflict: 'lease_generation_mismatch',
+    });
+
+    expect((await testPool.query(
+      'SELECT status, result FROM harness_attempts WHERE id=$1',
+      [attemptId],
+    )).rows[0]).toMatchObject({ status: 'running', result: null });
+    expect((await testPool.query(
+      `SELECT COUNT(*)::int AS count
+         FROM orchestrator_decision_log
+        WHERE run_id=$1 AND action='verdict:attempt_callback'`,
+      [run.runId],
+    )).rows[0].count).toBe(0);
+  });
+
+  it('rolls back the attempt terminal write when callback event insertion fails', async () => {
+    const run = await seedRun();
+    const attemptId = await seedCallbackAttempt(run.runId);
+    await testPool.query(`
+      CREATE OR REPLACE FUNCTION kernel_test_reject_attempt_callback()
+      RETURNS trigger AS $$
+      BEGIN
+        IF NEW.action = 'verdict:attempt_callback' THEN
+          RAISE EXCEPTION 'forced callback event failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER kernel_test_reject_attempt_callback
+        BEFORE INSERT ON orchestrator_decision_log
+        FOR EACH ROW EXECUTE FUNCTION kernel_test_reject_attempt_callback()
+    `);
+
+    try {
+      await expect(createAttemptStore(testPool).recordCallbackTerminal({
+        attemptId,
+        runId: run.runId,
+        leaseOwner: LEASE_OWNER,
+        leaseGeneration: 0,
+        result: {
+          contract_version: '1.0',
+          attempt_id: attemptId,
+          status: 'completed',
+          summary: 'must roll back',
+          artifacts: [],
+          checks: [],
+          decision: null,
+          error: null,
+          provider_metadata: { provider: 'codex' },
+        },
+      })).rejects.toThrow(/forced callback event failure/);
+    } finally {
+      await testPool.query(
+        'DROP TRIGGER IF EXISTS kernel_test_reject_attempt_callback ON orchestrator_decision_log',
+      );
+    }
+
+    expect((await testPool.query(
+      'SELECT status, result FROM harness_attempts WHERE id=$1',
+      [attemptId],
+    )).rows[0]).toMatchObject({ status: 'running', result: null });
   });
 });
 

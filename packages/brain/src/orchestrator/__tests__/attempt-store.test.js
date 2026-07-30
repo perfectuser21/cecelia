@@ -28,6 +28,102 @@ function poolWith(...results) {
 }
 
 describe('attempt store', () => {
+  it('R8/R12: callback terminal write and one standard event share a transaction', async () => {
+    const callbackResult = {
+      status: 'blocked',
+      summary: 'fleet transport unavailable',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+      failure_class: 'infrastructure_blocked',
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'generate',
+      role: 'generator',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      result: null,
+    };
+    const completed = { ...running, status: 'blocked', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = {
+      query: vi.fn(),
+      connect: vi.fn(async () => client),
+    };
+
+    await expect(createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    })).resolves.toMatchObject({ attempt: completed, deduped: false });
+
+    expect(client.query.mock.calls[0][0]).toBe('BEGIN');
+    expect(client.query.mock.calls[1][0]).toMatch(/FOR UPDATE/i);
+    expect(client.query.mock.calls[2][0]).toMatch(
+      /lease_generation.*status NOT IN/is,
+    );
+    expect(client.query.mock.calls[3][0]).toMatch(
+      /verdict:attempt_callback/i,
+    );
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('R11: stale callback generation rolls back without terminal or decision writes', async () => {
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({
+          rows: [{
+            id: input.id,
+            run_id: input.runId,
+            status: 'running',
+            lease_owner: 'brain-1',
+            lease_generation: 4,
+          }],
+        })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await expect(createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: {
+        status: 'completed',
+        summary: 'stale',
+        artifacts: [],
+        provider_metadata: { provider: 'codex' },
+      },
+    })).resolves.toMatchObject({
+      attempt: null,
+      deduped: false,
+      conflict: 'lease_generation_mismatch',
+    });
+
+    expect(client.query.mock.calls.map(([sql]) => sql)).toEqual([
+      'BEGIN',
+      expect.stringMatching(/FOR UPDATE/i),
+      'ROLLBACK',
+    ]);
+  });
+
   it('按 run/hop 幂等创建 attempt，并持久化冻结 Skill 元数据', async () => {
     const pool = poolWith({
       rows: [{
