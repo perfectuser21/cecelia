@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { classifyJourneyCellAssertion } from './journey-cell-assertion.js';
 
+export {
+  normalizeExecutionEvidence,
+  redactAndBoundOutput,
+} from './gp-assertion-output.js';
+
 function normalizeAssertionRef(assertionRef) {
   return String(assertionRef ?? '').replace(/\r\n?/g, '\n').trim();
 }
