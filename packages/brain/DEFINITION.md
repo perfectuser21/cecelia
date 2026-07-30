@@ -19,7 +19,9 @@
   恢复意图同事务提交，旧答案不能消费新请求；run 保持 `paused`，watchdog 先用
   唯一 `context-resume:<token>` 的 host/pid/heartbeat CAS 领取；新 Controller
   必须用该 token 自己原子写入真实 pid/host/heartbeat 并发布最新 request 的原 phase，
-  成功前不得进入 collect/derive/dispatch。
+  成功前不得进入 collect/derive/dispatch。Watchdog 不让未过期的恢复 lease 占用
+  候选窗口；detached child 仅在真实 `spawn` receipt 后返回，异步 spawn 错误会回滚
+  对应 token 且不得成为 Brain 未处理异常。
   恢复 Attempt 的 TaskBundle 显式携带版本化答案。
 - Generator 的 PR claim 只有同时匹配 Brain 签发的 `workspace_spec.repo/branch` 且由
   GitHub 返回完整 head SHA 才能投影为权威 `pr_url`；legacy attempt 才回退 task

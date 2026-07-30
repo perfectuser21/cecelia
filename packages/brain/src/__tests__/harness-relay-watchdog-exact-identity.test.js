@@ -18,10 +18,13 @@ describe('relay watchdog exact run identity', () => {
     expect(sql).toMatch(/r\.current_task_id IS NOT NULL/);
     expect(sql).toMatch(/r2\.current_task_id = r\.current_task_id/);
     expect(sql).toMatch(
-      /ORDER BY \(context_resume IS NOT NULL\) DESC,[\s\S]*r\.started_at DESC,\s*r\.id DESC/,
+      /ORDER BY \(context_resume IS NOT NULL\) DESC,[\s\S]*started_at DESC,\s*id DESC/,
     );
     expect(sql).toMatch(
       /request\.hop=\([\s\S]*MAX\(latest_request\.hop\)[\s\S]*effect:context_requested/,
+    );
+    expect(sql).toMatch(
+      /phase <> 'paused'[\s\S]*orchestrator_host IS NULL[\s\S]*orchestrator_host NOT LIKE 'context-resume:%'[\s\S]*INTERVAL '5 minutes'/,
     );
   });
 

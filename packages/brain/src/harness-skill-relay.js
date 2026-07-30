@@ -114,18 +114,49 @@ export async function launchKernelProcess({
   const runner = fileURLToPath(new URL('./orchestrator/run.js', import.meta.url));
   const args = [runner, '--task-id', taskId, '--run-id', runId];
   if (resumeToken) args.push('--resume-token', resumeToken);
-  const child = nodeSpawn(
-    process.execPath,
-    args,
-    {
-      cwd: worktreePath,
-      detached: true,
-      stdio: 'ignore',
-      env: { ...process.env, CECELIA_HARNESS_RUNTIME: 'kernel-v1' },
-    },
-  );
-  child.unref();
-  return { pid: child.pid };
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const child = nodeSpawn(
+      process.execPath,
+      args,
+      {
+        cwd: worktreePath,
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env, CECELIA_HARNESS_RUNTIME: 'kernel-v1' },
+      },
+    );
+    const onSpawnError = (error) => {
+      if (settled) return;
+      settled = true;
+      child.removeListener('spawn', onSpawn);
+      reject(error);
+    };
+    const onSpawn = () => {
+      if (settled) return;
+      if (!Number.isInteger(child.pid) || child.pid <= 0) {
+        settled = true;
+        child.removeListener('error', onSpawnError);
+        child.on('error', () => {});
+        reject(new Error(`kernel child spawn returned invalid pid for run ${runId}`));
+        return;
+      }
+      settled = true;
+      child.removeListener('error', onSpawnError);
+      // A detached child can still emit a later process-level error. Keep a
+      // listener so it cannot become an uncaught EventEmitter error in Brain.
+      child.on('error', (error) => {
+        console.error(
+          `[harness-skill-relay] detached kernel child error `
+          + `run=${runId} pid=${child.pid}: ${error.message}`,
+        );
+      });
+      child.unref();
+      resolve({ pid: child.pid });
+    };
+    child.once('error', onSpawnError);
+    child.once('spawn', onSpawn);
+  });
 }
 
 async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {

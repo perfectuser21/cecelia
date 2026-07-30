@@ -998,7 +998,8 @@ export async function resumeStalledRelayRuns(deps = {}) {
   // 从未写入 initiative_runs）不计数，可能导致 attempts 长期低估、MAX_RELAY_ATTEMPTS
   // 封顶判断失效，从而无限重跑不收敛。暂未修，先记录跟踪。
   const runsQ = await dbPool.query(
-    `SELECT r.id, r.initiative_id, r.current_task_id,
+    `WITH candidate_runs AS (
+       SELECT r.id, r.initiative_id, r.current_task_id,
             phase, deadline_at, pr_url, orchestrator_host,
             orchestrator_heartbeat_at, completed_at, tmux_killed_at, started_at,
             (
@@ -1028,13 +1029,31 @@ export async function resumeStalledRelayRuns(deps = {}) {
             (SELECT COUNT(*) FROM initiative_runs r2
               WHERE r2.current_task_id = r.current_task_id
                 AND r2.orchestrator_version = 'v2') AS attempts
-       FROM initiative_runs r
-      WHERE r.orchestrator_version = 'v2'
-        AND r.current_task_id IS NOT NULL
-        AND (phase NOT IN ('done', 'failed')
-          OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed')
-            AND phase = 'done' AND tmux_killed_at IS NULL))
-      ORDER BY (context_resume IS NOT NULL) DESC, r.started_at DESC, r.id DESC
+         FROM initiative_runs r
+        WHERE r.orchestrator_version = 'v2'
+          AND r.current_task_id IS NOT NULL
+          AND (
+            phase NOT IN ('done', 'failed')
+            OR (
+              orchestrator_host IN (
+                'skill-relay-codex-headed',
+                'skill-relay-claude-headed'
+              )
+              AND phase = 'done'
+              AND tmux_killed_at IS NULL
+            )
+          )
+          AND (
+            phase <> 'paused'
+            OR orchestrator_host IS NULL
+            OR orchestrator_host NOT LIKE 'context-resume:%'
+            OR orchestrator_heartbeat_at IS NULL
+            OR orchestrator_heartbeat_at < NOW() - INTERVAL '5 minutes'
+          )
+     )
+     SELECT *
+       FROM candidate_runs
+      ORDER BY (context_resume IS NOT NULL) DESC, started_at DESC, id DESC
       LIMIT 20`
   );
   // 护栏:注入的 pool 对未知 SQL 返回 undefined 时(集成测试 fake),按空处理
