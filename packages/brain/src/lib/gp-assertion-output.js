@@ -31,6 +31,7 @@ function trimTextToByteLimit(text, limit) {
 }
 
 export function byteSafeTail(value, limit) {
+  if (!Number.isInteger(limit) || limit < 0) return '';
   const bytes = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
   let start = Math.max(0, bytes.length - limit);
   while (start < bytes.length && (bytes[start] & 0xC0) === 0x80) start += 1;
@@ -119,7 +120,7 @@ export function normalizeExecutionEvidence(execution, evidenceKind) {
 }
 
 export function redactAndBoundOutput(stdout = '', stderr = '') {
-  const redacted = `${stdout}${stderr ? `\n${stderr}` : ''}`
+  const redacted = stripAnsi(`${stdout}${stderr ? `\n${stderr}` : ''}`)
     .replace(
       /(authorization\s*:\s*bearer\s+)[^\s]+/gi,
       '$1[REDACTED]',
