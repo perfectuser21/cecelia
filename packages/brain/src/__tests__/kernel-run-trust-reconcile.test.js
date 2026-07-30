@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   parseTrustReconcileArgs,
   reconcileRunTrust,
@@ -80,6 +83,8 @@ describe('kernel-run-trust-reconcile', () => {
     });
 
     expect(result.applied).toBe(1);
+    expect(result.conflicts).toBe(0);
+    expect(result.execution_id).toBeTruthy();
     const sqls = db.query.mock.calls.map(([sql]) => sql);
     expect(sqls).toContain('BEGIN');
     expect(sqls).toContain('COMMIT');
@@ -89,5 +94,71 @@ describe('kernel-run-trust-reconcile', () => {
     expect(update[0]).toMatch(/record_trust_status IS NOT DISTINCT FROM \$4/);
     expect(update[0]).toMatch(/record_trust_reason IS NOT DISTINCT FROM \$5/);
     expect(update[1][0]).toBe(RUN_ID);
+  });
+
+  it('records the actual conflict outcome instead of claiming a stale proposal applied', async () => {
+    const db = makeDb();
+    db.query.mockImplementation(async (sql) => {
+      if (/WITH evidence/.test(sql)) {
+        return {
+          rows: [{
+            id: RUN_ID,
+            current_task_id: TASK_ID,
+            record_trust_status: 'untrusted',
+            record_trust_reason: null,
+            task_reference_count: '1',
+            matching_attempt_count: '0',
+            batch_collision_count: '1',
+          }],
+        };
+      }
+      if (/UPDATE initiative_runs/.test(sql)) return { rows: [], rowCount: 0 };
+      return { rows: [] };
+    });
+    const appendAudit = vi.fn();
+
+    const result = await reconcileRunTrust({
+      db,
+      apply: true,
+      auditOutput: '/tmp/kernel-run-trust-conflict.jsonl',
+      appendAudit,
+      writeLine: vi.fn(),
+      randomUUIDFn: () => 'execution-1',
+    });
+
+    expect(result).toMatchObject({
+      applied: 0,
+      conflicts: 1,
+      execution_id: 'execution-1',
+    });
+    expect(appendAudit.mock.calls.map(([, content]) => content).join(''))
+      .toContain('"outcome":"conflict"');
+  });
+
+  it('creates the production audit exclusively and seals it read-only', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'kernel-trust-audit-'));
+    const auditOutput = join(directory, 'audit.jsonl');
+    try {
+      const result = await reconcileRunTrust({
+        db: makeDb(),
+        apply: true,
+        auditOutput,
+        writeLine: vi.fn(),
+        randomUUIDFn: () => 'execution-2',
+      });
+      expect(result.applied).toBe(1);
+      expect((await stat(auditOutput)).mode & 0o777).toBe(0o400);
+
+      await expect(reconcileRunTrust({
+        db: makeDb(),
+        apply: true,
+        auditOutput,
+        writeLine: vi.fn(),
+      })).rejects.toMatchObject({ code: 'EEXIST' });
+      await expect(writeFile(auditOutput, 'overwrite', { flag: 'wx' }))
+        .rejects.toMatchObject({ code: 'EEXIST' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

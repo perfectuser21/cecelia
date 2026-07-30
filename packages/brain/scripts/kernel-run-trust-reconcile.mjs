@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { appendFile } from 'node:fs/promises';
+/* global process */
+import { randomUUID } from 'node:crypto';
+import { chmod, open } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import pool from '../src/db.js';
@@ -83,11 +85,11 @@ function proposalFor(row) {
   };
 }
 
-async function applyBatch(db, proposals) {
+async function applyBatch(db, proposals, executionId) {
   const client = typeof db.connect === 'function' ? await db.connect() : db;
   try {
     await client.query('BEGIN');
-    let applied = 0;
+    const outcomes = [];
     for (const proposal of proposals) {
       const result = await client.query(
         `UPDATE initiative_runs
@@ -108,10 +110,14 @@ async function applyBatch(db, proposals) {
           proposal.before.reason,
         ],
       );
-      applied += result.rowCount ?? 0;
+      outcomes.push({
+        execution_id: executionId,
+        ...proposal,
+        outcome: (result.rowCount ?? 0) === 1 ? 'applied' : 'conflict',
+      });
     }
     await client.query('COMMIT');
-    return applied;
+    return outcomes;
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -126,7 +132,8 @@ export async function reconcileRunTrust({
   auditOutput = null,
   batchSize = 100,
   writeLine = line => process.stdout.write(`${line}\n`),
-  appendAudit = (file, content) => appendFile(file, content, { encoding: 'utf8' }),
+  appendAudit = null,
+  randomUUIDFn = randomUUID,
 } = {}) {
   if (apply && (!auditOutput || !isAbsolute(auditOutput))) {
     throw new Error('apply requires an absolute audit output path');
@@ -144,18 +151,55 @@ export async function reconcileRunTrust({
     };
   }
 
-  await appendAudit(
-    auditOutput,
-    proposals.map(proposal => `${JSON.stringify(proposal)}\n`).join(''),
-  );
-  let applied = 0;
-  for (let offset = 0; offset < proposals.length; offset += batchSize) {
-    applied += await applyBatch(db, proposals.slice(offset, offset + batchSize));
+  const executionId = randomUUIDFn();
+  let auditHandle = null;
+  const writeAudit = appendAudit
+    ? content => appendAudit(auditOutput, content)
+    : async content => auditHandle.write(content);
+  if (!appendAudit) {
+    auditHandle = await open(auditOutput, 'wx', 0o600);
   }
+  const outcomes = [];
+  try {
+    await writeAudit(`${JSON.stringify({
+      execution_id: executionId,
+      kind: 'kernel_run_trust_reconcile',
+      outcome: 'started',
+      proposed: proposals.length,
+    })}\n`);
+    for (let offset = 0; offset < proposals.length; offset += batchSize) {
+      const batchOutcomes = await applyBatch(
+        db,
+        proposals.slice(offset, offset + batchSize),
+        executionId,
+      );
+      outcomes.push(...batchOutcomes);
+      await writeAudit(
+        batchOutcomes.map(outcome => `${JSON.stringify(outcome)}\n`).join(''),
+      );
+    }
+    await writeAudit(`${JSON.stringify({
+      execution_id: executionId,
+      kind: 'kernel_run_trust_reconcile',
+      outcome: 'completed',
+      applied: outcomes.filter(outcome => outcome.outcome === 'applied').length,
+      conflicts: outcomes.filter(outcome => outcome.outcome === 'conflict').length,
+    })}\n`);
+  } finally {
+    if (auditHandle) {
+      await auditHandle.sync();
+      await auditHandle.close();
+      await chmod(auditOutput, 0o400);
+    }
+  }
+  const applied = outcomes.filter(outcome => outcome.outcome === 'applied').length;
+  const conflicts = outcomes.filter(outcome => outcome.outcome === 'conflict').length;
   return {
     scanned: rows.length,
     proposed: proposals.length,
     applied,
+    conflicts,
+    execution_id: executionId,
   };
 }
 
