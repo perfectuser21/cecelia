@@ -27,6 +27,9 @@ npx --no-install vitest run --config vitest.integration.config.js \
   src/__tests__/kernel-terminal-mismatch-reconcile.test.js \
   src/__tests__/kernel-terminal-mismatch-reconcile-production-guards.test.js \
   src/__tests__/integration/kernel-terminal-mismatch-reconcile.pg.integration.test.js \
+  src/__tests__/kernel-stale-attempt-reconcile.test.js \
+  src/__tests__/kernel-stale-attempt-reconcile-production-guards.test.js \
+  src/__tests__/integration/kernel-stale-attempt-reconcile.pg.integration.test.js \
   src/__tests__/integration/kernel-run-store.pg.integration.test.js \
   src/__tests__/relay-runs-summary.test.js \
   src/__tests__/harness-watchdog.test.js \

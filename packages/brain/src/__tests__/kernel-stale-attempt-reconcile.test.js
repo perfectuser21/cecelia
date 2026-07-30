@@ -104,4 +104,82 @@ describe('kernel stale attempt reconciliation', () => {
     expect(db.query.mock.calls.some(([sql]) => /UPDATE harness_attempts/.test(sql)))
       .toBe(false);
   });
+
+  it('locks task then run then attempt and blocks evidence drift without mutation', async () => {
+    const row = evidenceRow();
+    const order = [];
+    const transactionClient = {
+      query: vi.fn(async sql => {
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') {
+          order.push(sql);
+          return { rows: [] };
+        }
+        if (/FROM tasks/.test(sql)) {
+          order.push('task-lock');
+          return { rows: [{ id: TASK_ID }] };
+        }
+        if (/FROM initiative_runs/.test(sql)) {
+          order.push('run-lock');
+          return {
+            rows: [{
+              id: RUN_ID,
+              current_task_id: TASK_ID,
+              phase: 'failed',
+              orchestrator_version: 'v2',
+            }],
+          };
+        }
+        if (/FROM harness_attempts attempt/.test(sql)) {
+          order.push('attempt-lock');
+          return {
+            rows: [{
+              id: ATTEMPT_ID,
+              run_id: RUN_ID,
+              current_task_id: TASK_ID,
+              status: 'running',
+              lease_owner: 'worker-1',
+              lease_expires_at: new Date(row.lease_expires_at),
+              updated_at: new Date('2026-07-25T00:00:01.000Z'),
+              error_code: null,
+              error_message: null,
+              completed_at: null,
+              run_phase: 'failed',
+              orchestrator_version: 'v2',
+              lease_is_stale: true,
+            }],
+          };
+        }
+        throw new Error(`unexpected SQL: ${sql}`);
+      }),
+      release: vi.fn(() => order.push('release')),
+    };
+    const db = {
+      query: vi.fn(async () => ({ rows: [row] })),
+      connect: vi.fn(async () => transactionClient),
+    };
+    const dry = await reconcileStaleAttempts({ db, writeLine: vi.fn() });
+
+    const applied = await reconcileStaleAttempts({
+      db,
+      apply: true,
+      auditOutput: '/tmp/stale-attempt-drift.jsonl',
+      expectedPlanSha256: dry.plan_sha256,
+      appendAudit: vi.fn(),
+      randomUUIDFn: () => 'stale-attempt-execution-1',
+      writeLine: vi.fn(),
+    });
+
+    expect(applied).toMatchObject({ applied: 0, verified: 0, blocked: 1 });
+    expect(order).toEqual([
+      'BEGIN',
+      'task-lock',
+      'run-lock',
+      'attempt-lock',
+      'ROLLBACK',
+      'release',
+    ]);
+    expect(transactionClient.query.mock.calls.some(
+      ([sql]) => /UPDATE harness_attempts/.test(sql),
+    )).toBe(false);
+  });
 });

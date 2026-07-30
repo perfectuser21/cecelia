@@ -8,6 +8,8 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { reconcileStaleAttempts } from '../../../scripts/kernel-stale-attempt-reconcile.mjs';
 import { DB_DEFAULTS } from '../../db-config.js';
+import { createAttemptStore } from '../../orchestrator/attempt-store.js';
+import { finalizeKernelRun } from '../../orchestrator/kernel-run-store.js';
 
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -71,6 +73,169 @@ afterAll(async () => {
 }, 30_000);
 
 describe('kernel stale attempt reconciliation on real PostgreSQL', () => {
+  it('rejects attempt creation after the exact parent run is terminal', async () => {
+    const taskId = randomUUID();
+    const runId = randomUUID();
+    await testPool.query(
+      `INSERT INTO tasks (id, title, status)
+       VALUES ($1, 'terminal create fence', 'failed')`,
+      [taskId],
+    );
+    await testPool.query(
+      `INSERT INTO initiative_runs (
+         id, initiative_id, phase, current_task_id, orchestrator_version,
+         created_source, completed_at, record_trust_status
+       ) VALUES (
+         $1, $2, 'failed', $3, 'v2', 'kernel_dispatch', NOW(), 'trusted'
+       )`,
+      [runId, randomUUID(), taskId],
+    );
+
+    await expect(createAttemptStore(testPool).createAttempt({
+      id: randomUUID(),
+      runId,
+      hop: 1,
+      phase: 'planning',
+      role: 'planner',
+      provider: 'auto',
+      bundle: {},
+      callbackSecretHash: 'a'.repeat(64),
+    })).rejects.toThrow(`Kernel run is terminal or missing: ${runId}`);
+  });
+
+  it('serializes callback and finalization without an active attempt or deadlock', async () => {
+    const taskId = randomUUID();
+    const runId = randomUUID();
+    const attemptId = randomUUID();
+    await testPool.query(
+      `INSERT INTO tasks (id, title, status)
+       VALUES ($1, 'callback finalize race', 'in_progress')`,
+      [taskId],
+    );
+    await testPool.query(
+      `INSERT INTO initiative_runs (
+         id, initiative_id, phase, current_task_id, orchestrator_version,
+         created_source, record_trust_status
+       ) VALUES (
+         $1, $2, 'planning', $3, 'v2', 'kernel_dispatch', 'trusted'
+       )`,
+      [runId, randomUUID(), taskId],
+    );
+    const store = createAttemptStore(testPool);
+    await store.createAttempt({
+      id: attemptId,
+      runId,
+      hop: 1,
+      phase: 'planning',
+      role: 'planner',
+      provider: 'auto',
+      bundle: {},
+      callbackSecretHash: 'b'.repeat(64),
+    });
+    await testPool.query(
+      `UPDATE harness_attempts
+          SET status = 'running',
+              lease_owner = 'race-worker',
+              lease_expires_at = NOW() + INTERVAL '2 minutes'
+        WHERE id = $1`,
+      [attemptId],
+    );
+
+    const callback = store.recordCallbackTerminal({
+      attemptId,
+      runId,
+      leaseOwner: 'race-worker',
+      leaseGeneration: 0,
+      result: {
+        status: 'completed',
+        summary: 'callback won or serialized',
+        artifacts: [],
+        provider_metadata: { provider: 'codex' },
+      },
+    });
+    const finalization = finalizeKernelRun(testPool, {
+      runId,
+      expectedTaskId: taskId,
+      outcome: 'failed',
+      reason: 'callback_finalize_race',
+    });
+    const [callbackResult, finalizationResult] = await Promise.allSettled([
+      callback,
+      finalization,
+    ]);
+
+    for (const result of [callbackResult, finalizationResult]) {
+      if (result.status === 'rejected') {
+        expect(result.reason?.code).not.toBe('40P01');
+      }
+    }
+    expect(callbackResult.status).toBe('fulfilled');
+    expect(finalizationResult.status).toBe('fulfilled');
+    const state = await testPool.query(
+      `SELECT status
+         FROM harness_attempts
+        WHERE id = $1`,
+      [attemptId],
+    );
+    expect(['completed', 'cancelled']).toContain(state.rows[0].status);
+    expect(['queued', 'starting', 'running']).not.toContain(state.rows[0].status);
+    if (state.rows[0].status === 'cancelled') {
+      expect(callbackResult.value).toMatchObject({
+        conflict: 'terminal_payload_conflict',
+      });
+    } else {
+      expect(callbackResult.value.attempt).toMatchObject({ status: 'completed' });
+    }
+  });
+
+  it('does not propose a live lease or an attempt under an active parent', async () => {
+    const liveTaskId = randomUUID();
+    const liveRunId = randomUUID();
+    const activeTaskId = randomUUID();
+    const activeRunId = randomUUID();
+    await testPool.query(
+      `INSERT INTO tasks (id, title, status)
+       VALUES
+         ($1, 'live lease fence', 'failed'),
+         ($2, 'active parent fence', 'in_progress')`,
+      [liveTaskId, activeTaskId],
+    );
+    await testPool.query(
+      `INSERT INTO initiative_runs (
+         id, initiative_id, phase, current_task_id, orchestrator_version,
+         created_source, completed_at, record_trust_status
+       ) VALUES
+         ($1, $3, 'failed', $4, 'v2', 'kernel_dispatch', NOW(), 'trusted'),
+         ($2, $5, 'generate', $6, 'v2', 'kernel_dispatch', NULL, 'trusted')`,
+      [
+        liveRunId,
+        activeRunId,
+        randomUUID(),
+        liveTaskId,
+        randomUUID(),
+        activeTaskId,
+      ],
+    );
+    await testPool.query(
+      `INSERT INTO harness_attempts (
+         id, run_id, hop, phase, role, task_bundle, callback_secret_hash,
+         status, lease_owner, lease_expires_at
+       ) VALUES
+         ($1, $3, 1, 'generate', 'generator', '{}'::jsonb, $5,
+          'running', 'live-worker', NOW() + INTERVAL '5 minutes'),
+         ($2, $4, 1, 'generate', 'generator', '{}'::jsonb, $5,
+          'running', 'stale-worker', NOW() - INTERVAL '5 minutes')`,
+      [randomUUID(), randomUUID(), liveRunId, activeRunId, 'c'.repeat(64)],
+    );
+
+    const dry = await reconcileStaleAttempts({
+      db: testPool,
+      productionGuards: true,
+      writeLine: () => {},
+    });
+    expect(dry).toMatchObject({ proposed: 0, blocked: 0 });
+  });
+
   it('audits one exact expired attempt and converges to zero proposals', async () => {
     const taskId = randomUUID();
     const runId = randomUUID();
