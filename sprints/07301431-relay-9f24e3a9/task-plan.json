@@ -1,0 +1,36 @@
+{
+  "initiative_id": null,
+  "journey_type": "autonomous",
+  "journey_type_reason": "无 apps/dashboard/、无远端 agent 协议/bridge、无 packages/engine/ 涉及，纯 packages/brain/ 后端数据写入路由修复",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "T10 统一收件箱完整性缺口修复：为 packages/brain/src/ 下 11 处 INSERT INTO learnings 调用点补齐 pushCaptureAtom 调用",
+      "scope": "为 cortex.js:890、executor.js:1106、conversation-consolidator.js:161、learning.js:728、learning.js:779、auto-learning.js:98、chat-action-dispatcher.js:126、chat-action-dispatcher.js:267、decision-executor.js:321、decision-executor.js:400、fact-extractor.js:384 这 11 处调用点，在成功执行 INSERT INTO learnings 的同一函数体内追加调用 pushCaptureAtom(pool, { targetType: 'learning', targetSubtype, routedToTable: 'learnings', routedToId: <新插入行 id> })，字段约定对齐 learning.js:121 既有 wired 路径。不得改动已接入的 2 处（learning.js::recordLearning、routes/tasks.js learnings-received）、不得改动 capture-inbox.js 内部实现、不得改动 ledger-hygiene.js m7 探针判定逻辑。",
+      "dod": [
+        "[BEHAVIOR] 结构性回归测试通过：packages/brain/src/ 下所有 INSERT INTO learnings 调用点，其所在函数体内都含 pushCaptureAtom",
+        "[BEHAVIOR] cortex.js::recordLearnings 行为级复现测试通过：写入 learnings 成功后调用 pushCaptureAtom，推送字段与既有约定一致",
+        "[BEHAVIOR] pushCaptureAtom 调用失败不阻断 learnings 主写入（不得向上抛出未捕获异常）",
+        "[BEHAVIOR] 已接入的 2 处未被误改动，既有回归测试全绿",
+        "[BEHAVIOR] 真实触发（真 Postgres）：auto-learning.js::createAutoLearning 写入 learning 后 capture_atoms 在 5 分钟窗口内同步新增对应记录",
+        "[ARTIFACT] 新增测试文件 packages/brain/src/__tests__/learnings-capture-atom-routing.test.js 存在",
+        "[ARTIFACT] 新增测试文件 packages/brain/src/__tests__/cortex-learnings-capture-push.test.js 存在"
+      ],
+      "files": [
+        "packages/brain/src/cortex.js",
+        "packages/brain/src/executor.js",
+        "packages/brain/src/conversation-consolidator.js",
+        "packages/brain/src/learning.js",
+        "packages/brain/src/auto-learning.js",
+        "packages/brain/src/chat-action-dispatcher.js",
+        "packages/brain/src/decision-executor.js",
+        "packages/brain/src/fact-extractor.js",
+        "packages/brain/src/__tests__/learnings-capture-atom-routing.test.js",
+        "packages/brain/src/__tests__/cortex-learnings-capture-push.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
