@@ -1,6 +1,8 @@
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { assertionCommand, canonicalRepoIdentity } from '../gp-assertion-command.js';
+import {
+  assertionCommand, canonicalRepoIdentity, defaultTrackedPath,
+} from '../gp-assertion-command.js';
 
 const ROOT = '/repo';
 const PACKAGE = join(ROOT, 'packages/brain');
@@ -19,6 +21,7 @@ const REAL = {
 const deps = {
   toolchains: TOOLS,
   realpathFn: vi.fn(async path => REAL[path] ?? path),
+  fileStatFn: vi.fn(async () => ({ isFile: () => true })),
   pathExistsFn: vi.fn(async path => path === join(PACKAGE, 'package.json')),
   isTrackedPathFn: vi.fn(async () => true),
 };
@@ -140,6 +143,16 @@ describe('trusted GP assertion command policy', () => {
     await expect(assertionCommand('services/tests/test_gp.py', ROOT, {
       ...deps, toolchains: { ...TOOLS, python: { path: '/tools/python3', sha256 } },
     })).rejects.toMatchObject({ code: 'ASSERTION_TOOLCHAIN_DIGEST_INVALID' });
+  });
+
+  it('rejects tracked directory prefixes', async () => {
+    expect(await defaultTrackedPath(process.cwd(), join(process.cwd(), 'src'))).toBe(false);
+  });
+
+  it('rejects canonical directories', async () => {
+    await expect(assertionCommand('packages/brain/suite.test.js', ROOT, {
+      ...deps, fileStatFn: vi.fn(async () => ({ isFile: () => false })),
+    })).rejects.toMatchObject({ code: 'ASSERTION_PATH_NOT_FILE' });
   });
 
   it.each([
