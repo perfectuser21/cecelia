@@ -5,7 +5,7 @@
  * - BLOCKED×2 → failed；每跳恰一条日志一次心跳；singleton 冲突退出；dry-run 不派发；wait 不 append
  */
 import { describe, it, expect, vi } from 'vitest';
-import { runLoop } from '../loop.js';
+import { activateContextResume, runLoop } from '../loop.js';
 import { SingletonConflictError } from '../decision-log.js';
 
 const RUN_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -1066,5 +1066,49 @@ describe('runLoop：runId 缺省解析', () => {
     const observedSeq = [obs()];
     const { deps } = makeEnv({ observedSeq });
     await expect(runLoop(deps, { taskId: TASK_ID })).rejects.toThrow(/run/i);
+  });
+});
+
+describe('runLoop：context resume 启动屏障', () => {
+  it('resume token 丢失时在 collect/derive/dispatch 前退出', async () => {
+    const { deps } = makeEnv({ observedSeq: [obs()] });
+    deps.activateContextResume = vi.fn(async () => null);
+
+    const result = await runLoop(deps, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      resumeToken: 'lost-token',
+    });
+
+    expect(result).toEqual({ exitReason: 'context_resume_claim_lost', hops: 0 });
+    expect(deps.collectGroundTruth).not.toHaveBeenCalled();
+    expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('child 以唯一 token 原子发布最新 request 的 resume phase 与真实 heartbeat', async () => {
+    const pool = {
+      query: vi.fn(async () => ({
+        rows: [{ id: RUN_ID, phase: 'generate' }],
+        rowCount: 1,
+      })),
+    };
+
+    const activated = await activateContextResume(pool, {
+      runId: RUN_ID,
+      resumeToken: 'resume-token-1',
+      host: 'child-host',
+      pid: 43210,
+      now: new Date('2026-07-30T19:05:00.000Z'),
+    });
+
+    expect(activated).toMatchObject({ id: RUN_ID, phase: 'generate' });
+    const [sql, params] = pool.query.mock.calls[0];
+    expect(sql).toMatch(
+      /MAX\(latest_request\.hop\)[\s\S]*effect:context_requested[\s\S]*verdict:context_answer/,
+    );
+    expect(sql).toMatch(/orchestrator_host=\$4[\s\S]*orchestrator_pid=\$5/);
+    expect(sql).toMatch(/orchestrator_host=\$6/);
+    expect(params).toContain('context-resume:resume-token-1');
+    expect(params).toContain(43210);
   });
 });

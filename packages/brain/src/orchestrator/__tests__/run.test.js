@@ -12,13 +12,28 @@ describe('parseArgs', () => {
   });
 
   it('解析 --task-id / --run-id / --dry-run', () => {
-    const a = parseArgs(['--task-id', 'T1', '--run-id', 'R1', '--dry-run']);
-    expect(a).toEqual({ taskId: 'T1', runId: 'R1', dryRun: true });
+    const a = parseArgs([
+      '--task-id', 'T1',
+      '--run-id', 'R1',
+      '--resume-token', 'resume-token-1',
+      '--dry-run',
+    ]);
+    expect(a).toEqual({
+      taskId: 'T1',
+      runId: 'R1',
+      resumeToken: 'resume-token-1',
+      dryRun: true,
+    });
   });
 
-  it('默认 dryRun=false、runId=null', () => {
+  it('默认 dryRun=false、runId=null、resumeToken=null', () => {
     const a = parseArgs(['--task-id', 'T1']);
-    expect(a).toEqual({ taskId: 'T1', runId: null, dryRun: false });
+    expect(a).toEqual({
+      taskId: 'T1',
+      runId: null,
+      resumeToken: null,
+      dryRun: false,
+    });
   });
 });
 

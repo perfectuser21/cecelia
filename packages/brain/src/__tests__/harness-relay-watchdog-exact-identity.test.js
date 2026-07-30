@@ -17,7 +17,12 @@ describe('relay watchdog exact run identity', () => {
     expect(sql).not.toMatch(/DISTINCT ON\s*\(initiative_id\)/);
     expect(sql).toMatch(/r\.current_task_id IS NOT NULL/);
     expect(sql).toMatch(/r2\.current_task_id = r\.current_task_id/);
-    expect(sql).toMatch(/ORDER BY r\.started_at DESC,\s*r\.id DESC/);
+    expect(sql).toMatch(
+      /ORDER BY \(context_resume IS NOT NULL\) DESC,[\s\S]*r\.started_at DESC,\s*r\.id DESC/,
+    );
+    expect(sql).toMatch(
+      /request\.hop=\([\s\S]*MAX\(latest_request\.hop\)[\s\S]*effect:context_requested/,
+    );
   });
 
   it('holds paused runs after terminal house-keeping and never probes or refires them', async () => {
