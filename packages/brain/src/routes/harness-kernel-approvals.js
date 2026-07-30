@@ -22,6 +22,14 @@ const contextAnswerRateLimit = rateLimit({
   identifier: 'kernel-context-answer',
   message: { error: 'context answer rate limit exceeded' },
 });
+const contextReadRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  identifier: 'kernel-context-read',
+  message: { error: 'context read rate limit exceeded' },
+});
 
 function asJson(value) {
   if (!value) return {};
@@ -405,7 +413,7 @@ async function handleContextAnswer(req, res) {
   }
 }
 
-router.get('/contexts', async (req, res) => {
+router.get('/contexts', contextReadRateLimit, async (req, res) => {
   const dbPool = req.app.get('pool') || pool;
   try {
     const { rows } = await dbPool.query(

@@ -6,13 +6,13 @@
 
 
 
-**Brain 版本**: 1.267.148
+**Brain 版本**: 1.267.149
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.267.148 — Kernel asynchronous callback convergence
+## Brain 1.267.149 — Kernel asynchronous callback convergence
 
 - Dispatcher 持久化 launch receipt 后只返回 `LAUNCHED`；Loop 记录 launch effect
   后等待 callback/reconcile，不把启动误作角色完成。
@@ -22,6 +22,8 @@
   路由；只有结构化基础设施故障可换执行目标，第二次相同 `unknown_no_pr` 终结。
 - Migration 378 扩展 Attempt failure-class CHECK 以保存 `needs_context`。回退应用到
   Brain `1.267.147` 时保留兼容 schema，禁止恢复 callback split-write。
+- 人工 context 列表按来源地址限制为每分钟 60 次数据库读取；答案和审批写操作继续
+  使用独立的每分钟 10 次限额。
 
 ## Brain 1.267.147 — Kernel exact run API and trust accounting
 

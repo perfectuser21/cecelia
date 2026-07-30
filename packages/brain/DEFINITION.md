@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.267.148
+**版本**: 1.267.149
 
 ## Kernel asynchronous callback convergence
 
@@ -31,6 +31,8 @@
   冲突 payload 继续 fail closed。
 - Migration 378 将 `needs_context` 加入 Attempt failure-class CHECK；回退应用到
   `1.267.147` 时保留该兼容性 schema，不恢复异步 callback 的 split-write 路径。
+- 人工 context 列表的数据库读取按来源地址限制为每分钟 60 次；答案与审批写操作
+  继续使用每分钟 10 次的独立限额，防止轮询挤占审批动作或形成无界数据库读取。
 
 ## Kernel exact run API and trust accounting
 
