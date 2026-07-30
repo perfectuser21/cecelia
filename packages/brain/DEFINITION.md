@@ -7,8 +7,9 @@
 - Attempt 创建先以精确 `run_id` 对非终态 v2 run 取得 key-share lock；终态或缺失
   的父 run 一律拒绝。并发 winner 重读也受同一 active-run 栅栏约束，不能在 run
   终态化之后补生 attempt。
-- `finalizeKernelRun` 统一按 `task → run → attempt id` 加锁，并在 run/task 同一事务
-  中把 `queued/starting/running` attempt 关闭为 `cancelled`、清除租约、记录
+- `finalizeKernelRun` 与 canonical exact terminal PATCH 统一按
+  `task → run → attempt id` 加锁，并在 run/task 同一事务中把
+  `queued/starting/running` attempt 关闭为 `cancelled`、清除租约、记录
   `parent_run_terminal`；回执包含实际关闭数量。callback 与 finalize 竞态只允许
   callback 先终态或 finalize 先取消两种串行结果，不残留 active attempt。
 - `kernel-stale-attempt-reconcile.mjs` 只提案“精确终态 v2 父 run + 已过期/空租约”
