@@ -302,6 +302,67 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
     await setTaskStatus(run.taskId, 'completed');
   });
 
+  it('does not let twenty live context-resume leases starve an older unclaimed answer', async () => {
+    const runs = [];
+    for (let index = 0; index < 21; index += 1) {
+      const run = await seedRun();
+      runs.push(run);
+      await testPool.query(
+        `UPDATE tasks
+            SET payload=payload || '{"orchestrator":"skill-relay"}'::jsonb
+          WHERE id=$1`,
+        [run.taskId],
+      );
+      await testPool.query(
+        `UPDATE initiative_runs
+            SET phase='paused',
+                started_at=NOW() - ($2::integer * INTERVAL '1 minute'),
+                orchestrator_host=CASE
+                  WHEN $2::integer=20 THEN NULL
+                  ELSE 'context-resume:live-' || $2::text
+                END,
+                orchestrator_heartbeat_at=CASE
+                  WHEN $2::integer=20 THEN NULL
+                  ELSE NOW()
+                END
+          WHERE id=$1`,
+        [run.runId, index],
+      );
+      await appendLog(run.runId, {
+        hop: 1,
+        action: 'effect:context_requested',
+        phase: 'paused',
+        detail: {
+          resume_phase: 'generate',
+          context_version: 1,
+        },
+      });
+      await appendLog(run.runId, {
+        hop: 2,
+        action: 'verdict:context_answer',
+        phase: 'paused',
+        detail: {
+          context_request_hop: '1',
+          context_version: 1,
+        },
+      });
+    }
+
+    const launchKernel = vi.fn(async () => ({ pid: 4242 }));
+    await resumeStalledRelayRuns({
+      pool: testPool,
+      launchKernel,
+      randomUUID: () => 'fair-context-token',
+    });
+
+    expect(launchKernel).toHaveBeenCalledWith(expect.objectContaining({
+      runId: runs[20].runId,
+      resumeToken: 'fair-context-token',
+    }));
+
+    await Promise.all(runs.map(run => setTaskStatus(run.taskId, 'completed')));
+  });
+
   it('public watchdog structurally terminates a false resume instead of leaving it running', async () => {
     const run = await seedRun();
     const parentId = await seedExpiredKernelAttempt(run);
