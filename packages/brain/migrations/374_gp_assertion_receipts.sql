@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS journey_assertion_receipts (
       jsonb_typeof(command_argv) = 'array'
       AND jsonb_array_length(command_argv) > 0
     ),
+  scenario_count INTEGER NOT NULL DEFAULT 0
+    CHECK (scenario_count >= 0),
+  scenario_evidence JSONB NOT NULL DEFAULT '{}'::jsonb
+    CHECK (jsonb_typeof(scenario_evidence) = 'object'),
   verdict TEXT NOT NULL CHECK (verdict IN ('PASS', 'FAIL')),
   exit_code INTEGER NOT NULL,
   started_at TIMESTAMPTZ NOT NULL,
@@ -79,10 +83,41 @@ CREATE TABLE IF NOT EXISTS journey_assertion_receipts (
         AND btrim(machine_id) <> ''
         AND output_digest IS NOT NULL
         AND output_digest ~ '^[0-9a-f]{64}$'
+        AND scenario_count > 0
+        AND scenario_evidence <> '{}'::jsonb
       )
       OR (verdict = 'FAIL' AND exit_code <> 0)
     )
 );
+
+-- Keep reruns additive when an earlier development deployment created v374.
+-- Existing PASS rows remain audit history but are excluded by the read model
+-- until a new evidenced receipt supersedes them.
+ALTER TABLE journey_assertion_receipts
+  ADD COLUMN IF NOT EXISTS scenario_count INTEGER NOT NULL DEFAULT 0
+    CHECK (scenario_count >= 0);
+ALTER TABLE journey_assertion_receipts
+  ADD COLUMN IF NOT EXISTS scenario_evidence JSONB NOT NULL DEFAULT '{}'::jsonb
+    CHECK (jsonb_typeof(scenario_evidence) = 'object');
+ALTER TABLE journey_assertion_receipts
+  DROP CONSTRAINT IF EXISTS journey_assertion_receipt_verdict_chk;
+ALTER TABLE journey_assertion_receipts
+  ADD CONSTRAINT journey_assertion_receipt_verdict_chk
+  CHECK (
+    (
+      verdict = 'PASS'
+      AND exit_code = 0
+      AND source_sha IS NOT NULL
+      AND source_sha ~ '^[0-9a-f]{40}$'
+      AND machine_id IS NOT NULL
+      AND btrim(machine_id) <> ''
+      AND output_digest IS NOT NULL
+      AND output_digest ~ '^[0-9a-f]{64}$'
+      AND scenario_count > 0
+      AND scenario_evidence <> '{}'::jsonb
+    )
+    OR (verdict = 'FAIL' AND exit_code <> 0)
+  ) NOT VALID;
 
 CREATE INDEX IF NOT EXISTS idx_journey_assertion_receipts_cell_current
   ON journey_assertion_receipts (
