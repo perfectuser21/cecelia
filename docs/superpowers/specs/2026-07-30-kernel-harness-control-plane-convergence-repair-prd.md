@@ -164,6 +164,7 @@ created_source TEXT
   CHECK (created_source IN (
     'kernel_dispatch',
     'foreground_handoff',
+    'legacy_relay',
     'explicit_recovery',
     'historical_reconstruction'
   ));
@@ -178,6 +179,8 @@ predecessor_run_id UUID REFERENCES initiative_runs(id);
 含义：
 
 - 新 canonical 创建路径写 `trusted`。
+- 双轨兼容期仍由旧 Controller 创建的行写 `legacy_relay`；该值只表明来源，
+  不把旧执行体误称为 Kernel，也不延长 legacy mutation 的退役期限。
 - cutover 前的历史行先统一视为 `untrusted`。
 - 只有确定性对账成功的行才升级为 `reconstructed`，并填写原因和来源。
 - `predecessor_run_id` 只描述显式恢复谱系，不等于允许复活旧 task。
