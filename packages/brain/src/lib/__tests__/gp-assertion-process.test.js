@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAssertionExecutor } from '../gp-assertion-process.js';
 
@@ -24,6 +25,60 @@ function processIsAlive(pid) {
 }
 
 describe('GP assertion process executor', () => {
+  it('requires an explicitly injected trusted process adapter', () => {
+    expect(() => createAssertionExecutor()).toThrowError(
+      /trusted process adapter/i,
+    );
+  });
+
+  it('passes only an allowlisted environment to the trusted adapter', async () => {
+    const child = childProcess();
+    const spawnFn = vi.fn(() => child);
+    const execute = createAssertionExecutor({
+      spawnFn,
+      environment: {
+        PATH: '/trusted/bin',
+        LANG: 'C.UTF-8',
+        DATABASE_URL: 'postgres://brain-secret',
+        OPENAI_API_KEY: 'provider-secret',
+      },
+    });
+    const pending = execute('/trusted/bin/test', [], {
+      cwd: '/repo',
+      evidenceKind: 'bash',
+    });
+    child.emit('close', 0, null);
+    await pending;
+
+    expect(spawnFn.mock.calls[0][2].env).toEqual({
+      PATH: '/trusted/bin',
+      LANG: 'C.UTF-8',
+    });
+  });
+
+  it.each([
+    ['SIGTERM', 143],
+    ['SIGKILL', 137],
+  ])('normalizes %s to a writable FAIL result', async (signal, exitCode) => {
+    const child = childProcess();
+    const execute = createAssertionExecutor({
+      spawnFn: vi.fn(() => child),
+      timeoutMs: 1000,
+    });
+    const pending = execute('trusted', [], {
+      cwd: '/repo',
+      evidenceKind: 'bash',
+    });
+    child.emit('close', null, signal);
+
+    await expect(pending).resolves.toMatchObject({
+      exitCode,
+      signal,
+      scenarioCount: 0,
+      scenarioEvidence: { kind: 'signal', signal },
+    });
+  });
+
   it('spawns without a shell and derives scenario evidence', async () => {
     const child = childProcess();
     const spawnFn = vi.fn(() => child);
@@ -110,6 +165,7 @@ describe('GP assertion process executor', () => {
       + `const c=spawn(process.execPath,['-e',${JSON.stringify(grandchild)}],`
       + `{stdio:'ignore'});console.log(c.pid);setInterval(()=>{},1000)`;
     const execute = createAssertionExecutor({
+      spawnFn: spawn,
       timeoutMs: 100,
       killGraceMs: 50,
     });
