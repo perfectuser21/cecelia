@@ -40,21 +40,7 @@ journey_type: autonomous
   期望: OK
 
 - [x] [BEHAVIOR] 真实触发（零 mock，真 Postgres）：调用 `auto-learning.js::createAutoLearning`（11 处调用点之一）写入一条新 learning 后，`capture_atoms`（经 `captures` 关联）在 5 分钟窗口内同步新增对应记录
-  Test: manual:bash -c '
-DB="${DB:-postgresql://cecelia@localhost:5432/cecelia_test}";
-cd packages/brain;
-MARKER_TITLE="dod-e2e-$(date +%s)-${RANDOM}";
-RESULT=$(node --input-type=module -e "
-import { createAutoLearning } from '"'"'./src/auto-learning.js'"'"';
-import pool from '"'"'./src/db.js'"'"';
-const r = await createAutoLearning({ title: '"'"'${MARKER_TITLE}'"'"', category: '"'"'dev_insight'"'"', content: '"'"'DoD 验收真实触发'"'"', triggerEvent: '"'"'dod_verify'"'"', metadata: {} });
-console.log(JSON.stringify(r));
-await pool.end();
-");
-echo "$RESULT" | grep -q "\"id\"" || { echo "FAIL: createAutoLearning 未返回 id"; exit 1; };
-COUNT=$(psql "$DB" -t -c "SELECT count(*) FROM capture_atoms ca JOIN captures c ON c.id = ca.capture_id WHERE ca.target_type='"'"'learning'"'"' AND c.content ILIKE '"'"'%${MARKER_TITLE}%'"'"' AND ca.created_at > NOW() - interval '"'"'5 minutes'"'"'" | tr -d " ");
-[ "$COUNT" -ge 1 ] || { echo "FAIL: capture_atoms 未同步产出 marker=${MARKER_TITLE}"; exit 1; };
-echo OK'
+  Test: manual:bash -c 'bash packages/brain/scripts/smoke/t10-capture-atom-routing-smoke.sh 2>&1 | tail -80; EXIT=${PIPESTATUS[0]:-$?}; [ "$EXIT" -eq 0 ] && echo OK || exit 1'
   期望: OK
 
 ## Invariant 覆盖（来自 sprint-prd.md「Invariant 约束」段，逐条映射或 N/A）
