@@ -2,76 +2,87 @@ import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { assertionRunnerError } from './gp-assertion-command.js';
-
-const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
-
+const DIGEST = /^sha256:[0-9a-f]{64}$/;
+const ROOT_KEYS = ['kind', 'actual_runner_digest', 'expected_runner_digest', 'files'];
+const FILE_KEYS = ['path', 'sha256'];
+const trusted = new WeakSet();
 function toolchainError(code, message, details = {}) {
   return Object.assign(assertionRunnerError(code, message), details);
 }
-
+function fail(code, message, details) { throw toolchainError(code, message, details); }
 function validateRunnerDigests(actual, expected) {
   if (!actual || !expected) {
-    throw toolchainError(
-      'ASSERTION_RUNNER_DIGEST_REQUIRED',
-      'Phase 4A actual and expected Runner digests are required',
-    );
+    fail('ASSERTION_RUNNER_DIGEST_REQUIRED', 'Phase 4A Runner digests are required');
   }
-  if (!DIGEST_PATTERN.test(actual) || !DIGEST_PATTERN.test(expected)) {
-    throw toolchainError(
-      'ASSERTION_RUNNER_DIGEST_INVALID',
-      'Runner digests must be lowercase sha256 values',
-    );
+  if (typeof actual !== 'string' || typeof expected !== 'string'
+    || !DIGEST.test(actual) || !DIGEST.test(expected)) {
+    fail('ASSERTION_RUNNER_DIGEST_INVALID', 'Runner digests must be lowercase sha256');
   }
   if (actual !== expected) {
-    throw toolchainError(
-      'ASSERTION_RUNNER_DIGEST_MISMATCH',
-      'Actual Runner digest does not match the pinned NodeProfile digest',
-    );
+    fail('ASSERTION_RUNNER_DIGEST_MISMATCH', 'Runner digest does not match NodeProfile');
   }
 }
-
 function validatePaths(paths) {
   if (!Array.isArray(paths) || paths.length === 0) {
-    throw toolchainError(
-      'ASSERTION_TOOLCHAIN_PATHS_REQUIRED',
-      'At least one pinned toolchain path is required',
-    );
+    fail('ASSERTION_TOOLCHAIN_PATHS_REQUIRED', 'Pinned toolchain paths are required');
   }
-  const invalidIndex = paths.findIndex(path => (
-    typeof path !== 'string' || !isAbsolute(path)
-  ));
-  if (invalidIndex >= 0) {
-    throw toolchainError(
-      'ASSERTION_TOOLCHAIN_PATH_INVALID',
-      'Toolchain paths must be absolute',
-      { path: paths[invalidIndex] },
-    );
+  const invalid = paths.findIndex(path => typeof path !== 'string' || !isAbsolute(path));
+  if (invalid >= 0) {
+    fail('ASSERTION_TOOLCHAIN_PATH_INVALID', 'Toolchain paths must be absolute', {
+      path: paths[invalid],
+    });
   }
 }
-
+function exactObject(value, keys) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.getPrototypeOf(value) !== Object.prototype) return false;
+  const actual = Object.keys(value);
+  return actual.length === keys.length && keys.every(key => actual.includes(key));
+}
+function validateAttestation(value) {
+  if (!exactObject(value, ROOT_KEYS) || value.kind !== 'pinned_toolchain'
+    || !Array.isArray(value.files) || value.files.length === 0
+    || value.files.some(file => (
+      !exactObject(file, FILE_KEYS) || typeof file.path !== 'string'
+      || !isAbsolute(file.path) || typeof file.sha256 !== 'string'
+      || !DIGEST.test(file.sha256)
+    ))) {
+    fail('ASSERTION_TOOLCHAIN_ATTESTATION_INVALID', 'Attestation schema is invalid');
+  }
+  validateRunnerDigests(value.actual_runner_digest, value.expected_runner_digest);
+}
 async function attestFile(path, { realpathFn, readFileFn }) {
-  const canonicalPath = await realpathFn(path);
-  if (!isAbsolute(canonicalPath)) {
-    throw toolchainError(
-      'ASSERTION_TOOLCHAIN_PATH_INVALID',
-      'Canonical toolchain paths must be absolute',
-      { path },
-    );
+  try {
+    const canonicalPath = await realpathFn(path);
+    if (!isAbsolute(canonicalPath)) {
+      fail('ASSERTION_TOOLCHAIN_PATH_INVALID', 'Canonical path must be absolute', { path });
+    }
+    const bytes = await readFileFn(canonicalPath);
+    return Object.freeze({
+      path: canonicalPath,
+      sha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+    });
+  } catch (error) {
+    if (String(error?.code).startsWith('ASSERTION_')) throw error;
+    fail('ASSERTION_TOOLCHAIN_UNAVAILABLE', 'Pinned toolchain file is unavailable', { path });
   }
-  const bytes = await readFileFn(canonicalPath);
-  return {
-    path: canonicalPath,
-    sha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
-  };
 }
-
 function dependencies(overrides = {}) {
   return {
     realpathFn: overrides.realpathFn ?? realpath,
     readFileFn: overrides.readFileFn ?? readFile,
   };
 }
-
+function freezeAttestation(actual, expected, files) {
+  const value = Object.freeze({
+    kind: 'pinned_toolchain',
+    actual_runner_digest: actual,
+    expected_runner_digest: expected,
+    files: Object.freeze(files),
+  });
+  trusted.add(value);
+  return value;
+}
 export async function createToolchainAttestation(input, overrides = {}) {
   const actual = input?.actual_runner_digest;
   const expected = input?.expected_runner_digest;
@@ -81,47 +92,34 @@ export async function createToolchainAttestation(input, overrides = {}) {
   const deps = dependencies(overrides);
   const files = [];
   for (const path of paths) files.push(await attestFile(path, deps));
-  return {
-    kind: 'pinned_toolchain',
-    actual_runner_digest: actual,
-    expected_runner_digest: expected,
-    files,
-  };
+  return freezeAttestation(actual, expected, files);
 }
-
-export async function verifyToolchainAttestation(
-  attestation,
-  overrides = {},
-) {
-  validateRunnerDigests(
-    attestation?.actual_runner_digest,
-    attestation?.expected_runner_digest,
-  );
-  const files = attestation?.files;
-  validatePaths(files?.map(file => file?.path));
+export async function verifyToolchainAttestation(attestation, overrides = {}) {
+  validateAttestation(attestation);
+  if (!trusted.has(attestation)) {
+    fail('ASSERTION_TOOLCHAIN_ATTESTATION_UNTRUSTED', 'Attestation baseline is untrusted');
+  }
   const deps = dependencies(overrides);
-  for (const expected of files) {
+  const files = [];
+  for (const expected of attestation.files) {
     let actual;
     try {
       actual = await attestFile(expected.path, deps);
-    } catch (cause) {
-      throw toolchainError(
-        'ASSERTION_TOOLCHAIN_DRIFT',
-        `Toolchain file is unavailable after execution: ${expected.path}`,
-        { path: expected.path, cause },
-      );
+    } catch {
+      fail('ASSERTION_TOOLCHAIN_DRIFT', 'Toolchain file is unavailable', {
+        path: expected.path,
+      });
     }
-    if (
-      !DIGEST_PATTERN.test(expected.sha256)
-      || actual.path !== expected.path
-      || actual.sha256 !== expected.sha256
-    ) {
-      throw toolchainError(
-        'ASSERTION_TOOLCHAIN_DRIFT',
-        `Toolchain file drifted during assertion: ${expected.path}`,
-        { path: expected.path },
-      );
+    if (actual.path !== expected.path || actual.sha256 !== expected.sha256) {
+      fail('ASSERTION_TOOLCHAIN_DRIFT', 'Toolchain file drifted', {
+        path: expected.path,
+      });
     }
+    files.push(actual);
   }
-  return attestation;
+  return freezeAttestation(
+    attestation.actual_runner_digest,
+    attestation.expected_runner_digest,
+    files,
+  );
 }
