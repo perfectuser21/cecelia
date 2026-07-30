@@ -97,10 +97,10 @@ export async function createKernelRun(pool, input) {
       `INSERT INTO initiative_runs (
          initiative_id, phase, journey_id, orchestrator_version,
          orchestrator_host, deadline_at, ability_id, current_task_id,
-         created_source
+         created_source, record_trust_status
        ) VALUES (
          $1, $2, $3, 'v2', $4,
-         NOW() + ($5 * INTERVAL '1 hour'), $6, $7, $8
+         NOW() + ($5 * INTERVAL '1 hour'), $6, $7, $8, $9
        )
        RETURNING *`,
       [
@@ -112,6 +112,7 @@ export async function createKernelRun(pool, input) {
         input.abilityId,
         input.taskId,
         input.createdSource,
+        'trusted',
       ],
     );
     await client.query('COMMIT');
