@@ -991,7 +991,12 @@ async function approvePendingAction(actionId, reviewer = 'unknown') {
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('[executor] Failed to approve action:', err.message);
-    return { success: false, error: err.message };
+    return {
+      success: false,
+      error: err.message,
+      ...(err.code ? { code: err.code } : {}),
+      status: err.status || 500,
+    };
   } finally {
     client.release();
   }

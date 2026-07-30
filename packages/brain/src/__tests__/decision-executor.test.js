@@ -532,7 +532,7 @@ describe('decision-executor', () => {
   });
 
   describe('sign_golden_path_contract pending action', () => {
-    function makeSigningClient({ failTaskInsert = false } = {}) {
+    function makeSigningClient({ failTaskInsert = false, stale = false } = {}) {
       const sqlLog = [];
       const pendingAction = {
         id: 'action-sign-1',
@@ -548,10 +548,10 @@ describe('decision-executor', () => {
         context: { title: '签 GP 合同' },
       };
       const contract = {
-        id: 'contract-1',
+        id: stale ? 'contract-2' : 'contract-1',
         golden_path_id: 'gp-1',
-        version: 1,
-        content_hash: 'a'.repeat(64),
+        version: stale ? 2 : 1,
+        content_hash: stale ? 'b'.repeat(64) : 'a'.repeat(64),
         status: 'pending_signature',
       };
       const client = {
@@ -657,6 +657,21 @@ describe('decision-executor', () => {
       expect(sqlLog).not.toContain('COMMIT');
       expect(sqlLog.some((sql) => /UPDATE pending_actions/i.test(sql))).toBe(false);
       expect(client.release).toHaveBeenCalledOnce();
+    });
+
+    it('preserves the stale-contract code and HTTP status for the API layer', async () => {
+      const { client, sqlLog } = makeSigningClient({ stale: true });
+      pool.connect.mockResolvedValueOnce(client);
+
+      const result = await approvePendingAction('action-sign-1', 'owner');
+
+      expect(result).toMatchObject({
+        success: false,
+        code: 'GP_CONTRACT_STALE',
+        status: 409,
+      });
+      expect(sqlLog).toContain('ROLLBACK');
+      expect(sqlLog.some((sql) => /INSERT INTO decisions/i.test(sql))).toBe(false);
     });
   });
 });
