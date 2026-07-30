@@ -35,6 +35,13 @@ vi.mock('../memory-utils.js', () => ({
   generateMemoryStreamL1Async: vi.fn(),
 }));
 
+// Mock capture-inbox.js（T10 收件箱路由补齐后 upsertLearning 会调用 pushCaptureAtom；
+// 若不 mock，真实实现会额外消耗一次共享的 pool.query mockResolvedValueOnce 队列槽位，
+// 导致后续测试用例的 SELECT/INSERT 期望值错位）
+vi.mock('../capture-inbox.js', () => ({
+  pushCaptureAtom: vi.fn().mockResolvedValue('atom-1'),
+}));
+
 import pool from '../db.js';
 import { upsertLearning } from '../learning.js';
 

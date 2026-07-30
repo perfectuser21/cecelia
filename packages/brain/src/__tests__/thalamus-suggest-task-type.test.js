@@ -30,6 +30,13 @@ vi.mock('../actions.js', () => ({
   updateTask: vi.fn().mockResolvedValue({ success: true })
 }));
 
+// Mock capture-inbox.js（T10 收件箱路由补齐后 suggest_task_type 会调用 pushCaptureAtom；
+// 若不 mock，真实实现会经同一个 mockQuery 落一次 captures INSERT，其 SQL 文本含
+// "ON CONFLICT DO UPDATE" + 列名 "ref_task_id"，会被本文件按子串误判成 UPDATE tasks 调用）
+vi.mock('../capture-inbox.js', () => ({
+  pushCaptureAtom: vi.fn().mockResolvedValue('atom-1'),
+}));
+
 // Mock tick.js
 vi.mock('../tick.js', () => ({
   dispatchNextTask: vi.fn().mockResolvedValue({ dispatched: true, task_id: 'dispatched-task' })
