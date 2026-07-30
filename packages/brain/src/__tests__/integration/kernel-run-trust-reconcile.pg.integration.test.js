@@ -81,14 +81,17 @@ describe('kernel trust reconciliation on real PostgreSQL', () => {
     );
 
     const historicalTaskId = randomUUID();
+    const activeTaskId = randomUUID();
     const historicalRunId = randomUUID();
     const activeRunId = randomUUID();
     const postCutoverRunId = randomUUID();
     const nativeTrustedRunId = randomUUID();
     await testPool.query(
       `INSERT INTO tasks (id, title, status)
-       VALUES ($1, 'historical trust evidence', 'completed')`,
-      [historicalTaskId],
+       VALUES
+         ($1, 'historical trust evidence', 'completed'),
+         ($2, 'active trust exclusion evidence', 'in_progress')`,
+      [historicalTaskId, activeTaskId],
     );
     const historicalStartedAt = new Date(cutoff.getTime() - 60_000);
     const postCutoverStartedAt = new Date(cutoff.getTime() + 1_000);
@@ -99,7 +102,7 @@ describe('kernel trust reconciliation on real PostgreSQL', () => {
          record_trust_status, record_trust_reason
        ) VALUES
          ($1, $5, 'done', $6, 'v2', 'historical_reconstruction', $7, $8, 'untrusted', NULL),
-         ($2, $5, 'generate', $6, 'v2', 'historical_reconstruction', $7, NULL, 'untrusted', NULL),
+         ($2, $5, 'generate', $10, 'v2', 'historical_reconstruction', $7, NULL, 'untrusted', NULL),
          ($3, $5, 'failed', $6, 'v2', 'historical_reconstruction', $9, $8, 'untrusted', NULL),
          ($4, $5, 'done', $6, 'v2', 'kernel_dispatch', $7, $8, 'trusted', 'native_writer')`,
       [
@@ -112,7 +115,14 @@ describe('kernel trust reconciliation on real PostgreSQL', () => {
         historicalStartedAt,
         cutoff,
         postCutoverStartedAt,
+        activeTaskId,
       ],
+    );
+    await testPool.query(
+      `UPDATE initiative_runs
+          SET completed_at = completed_at + INTERVAL '525 microseconds'
+        WHERE id = $1`,
+      [historicalRunId],
     );
 
     const before = await testPool.query(
@@ -260,6 +270,84 @@ describe('kernel trust reconciliation on real PostgreSQL', () => {
       record_trust_status: 'untrusted',
       record_trust_reason: null,
     }]);
+  });
+
+  it('rejects a candidate that becomes ineligible after plan review', async () => {
+    const cutoffResult = await testPool.query(
+      `SELECT applied_at FROM schema_version WHERE version = '376'`,
+    );
+    const cutoff = new Date(cutoffResult.rows[0].applied_at);
+    const taskId = randomUUID();
+    const runId = '00000000-0000-4000-8000-000000000001';
+    await testPool.query(
+      `INSERT INTO tasks (id, title, status)
+       VALUES ($1, 'trust eligibility drift', 'completed')`,
+      [taskId],
+    );
+    await testPool.query(
+      `INSERT INTO initiative_runs (
+         id, initiative_id, phase, current_task_id, orchestrator_version,
+         created_source, started_at, completed_at,
+         record_trust_status, record_trust_reason
+       ) VALUES (
+         $1, $2, 'done', $3, 'v2', 'historical_reconstruction',
+         $4, NOW() - INTERVAL '2 minutes' + INTERVAL '525 microseconds',
+         'untrusted', NULL
+       )`,
+      [
+        runId,
+        randomUUID(),
+        taskId,
+        new Date(cutoff.getTime() - 120_000),
+      ],
+    );
+
+    const dry = await reconcileRunTrust({
+      db: testPool,
+      productionGuards: true,
+      writeLine: () => {},
+    });
+    let invalidated = false;
+    const audit = [];
+    const appendAudit = async (_path, content) => {
+      audit.push(content);
+      if (!invalidated && content.includes('"outcome":"started"')) {
+        invalidated = true;
+        await testPool.query(
+          `UPDATE initiative_runs SET completed_at = NULL WHERE id = $1`,
+          [runId],
+        );
+      }
+    };
+
+    await expect(reconcileRunTrust({
+      db: testPool,
+      apply: true,
+      auditOutput: '/tmp/kernel-trust-eligibility-drift.jsonl',
+      expectedPlanSha256: dry.plan_sha256,
+      expectedProposed: dry.proposed,
+      confirmDatabase: databaseName,
+      productionGuards: true,
+      failOnConflict: true,
+      appendAudit,
+      writeLine: () => {},
+    })).rejects.toThrow(/optimistic conflict/);
+
+    const state = await testPool.query(
+      `SELECT completed_at, record_trust_status, record_trust_reason
+         FROM initiative_runs
+        WHERE id = $1`,
+      [runId],
+    );
+    expect(state.rows).toEqual([{
+      completed_at: null,
+      record_trust_status: 'untrusted',
+      record_trust_reason: null,
+    }]);
+    expect(audit.join('')).not.toContain('"outcome":"batch_committed"');
+    expect(audit.join('')).not.toContain(
+      '"kind":"kernel_run_trust_reconcile","outcome":"completed"',
+    );
   });
 
   it('uses advisory-task-run lock order without deadlocking a terminal writer', async () => {

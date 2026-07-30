@@ -197,9 +197,9 @@ describe('selfcheck', () => {
   // 351（graph_edges 表，代码依赖图谱）推进地板到 351。
   // 352（features 表更名 brain_modules，澄清语义非产品功能表）推进地板到 352。
   // 353（DROP conversation_captures + conversation_log_cursors，inbox P0 清场，decisions a823206d）推进地板到 353。
-  // 375（Kernel run identity）是本 Brain 版本所需的最低地板。
-  it('EXPECTED_SCHEMA_VERSION should be 378', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('378');
+  // 379（active v2 run parent task guard）是本 Brain 版本所需的最低地板。
+  it('EXPECTED_SCHEMA_VERSION should be 379', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('379');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
