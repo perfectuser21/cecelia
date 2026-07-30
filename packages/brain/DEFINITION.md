@@ -1,6 +1,13 @@
 # Brain 模块定义
 
-**版本**: 1.267.138
+**版本**: 1.267.139
+
+## Trusted assertion process executor
+
+- `gp-assertion-process.js` 只以 argv + `shell:false` 启动断言进程，输出按 UTF-8
+  字节上限截断，并把 Vitest、Pytest 或 bash marker 转为结构化场景证据。
+- 超时先发 TERM，宽限结束再 KILL，统一返回 exit 124 的失败证据；本层不选择
+  命令、不写 receipt，也不接 API/UI。
 
 ## GP assertion output evidence utility
 

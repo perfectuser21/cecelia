@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.138
+**Brain 版本**: 1.267.139
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.139 — Trusted assertion process executor
+
+- 新增无 shell 的短进程执行器：限制 stdout/stderr 字节、解析真实场景证据，
+  并在超时后依次 TERM/KILL，以 exit 124 失败关闭。
+- 本层只提供受信进程介质，不选择断言命令、不写 receipt、不接 API/UI。
+- 产权变更 B 继续 `effective_now=false`。回退：部署 Brain `1.267.138`。
 
 ## Brain 1.267.138 — GP assertion output evidence utility
 
