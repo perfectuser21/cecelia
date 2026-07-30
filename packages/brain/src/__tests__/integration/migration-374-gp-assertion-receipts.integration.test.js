@@ -37,8 +37,8 @@ async function insertReceipt(overrides = {}, conflict = '') {
     [cellId, value.runId, value.revision, value.ref, value.digest, value.sourceRepo,
       value.sourceSha, value.gpContractId, value.gpContractHash,
       JSON.stringify(value.commandArgv), value.verdict, value.exitCode,
-      value.scenarioCount, JSON.stringify(value.scenarioEvidence),
-      value.machineId, value.outputDigest, value.synthetic, value.startedAt, value.completedAt],
+      value.scenarioCount, JSON.stringify(value.scenarioEvidence), value.machineId,
+      value.outputDigest, value.synthetic, value.startedAt, value.completedAt],
   );
 }
 async function expectConstraintFailure(query) {
@@ -59,12 +59,12 @@ beforeAll(async () => {
   await client.query(migration);
   await client.query(migration);
   const journeyId = (await client.query(
-    `INSERT INTO journeys (name, description)
-     VALUES ($1, 'assertion receipt migration fixture') RETURNING id`, [fixture],
+    "INSERT INTO journeys (name, description) VALUES ($1, 'assertion receipt migration fixture') RETURNING id",
+    [fixture],
   )).rows[0].id;
   const stepId = (await client.query(
-    `INSERT INTO journey_steps (journey_id, name, step_number)
-     VALUES ($1, 'execute assertion', 1) RETURNING id`, [journeyId],
+    "INSERT INTO journey_steps (journey_id, name, step_number) VALUES ($1, 'execute assertion', 1) RETURNING id",
+    [journeyId],
   )).rows[0].id;
   const cell = (await client.query(
     `INSERT INTO journey_step_links (
@@ -145,9 +145,7 @@ describe('migration 374 Golden Path assertion receipts [PostgreSQL]', () => {
     for (const sql of [
       "UPDATE journey_assertion_receipts SET output_tail='tampered' WHERE id=$1",
       'DELETE FROM journey_assertion_receipts WHERE id=$1',
-    ]) {
-      await expectConstraintFailure(() => client.query(sql, [id]));
-    }
+    ]) await expectConstraintFailure(() => client.query(sql, [id]));
   });
   it('prevents deleting a parent cell that has an immutable receipt', async () => {
     await insertReceipt();
