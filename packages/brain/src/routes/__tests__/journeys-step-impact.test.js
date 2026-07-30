@@ -119,4 +119,75 @@ describe('GET /api/brain/journeys/steps/:step_id/impact', () => {
 
     expect(res.status).toBe(500);
   });
+
+  it('[S3-I5] eval/decision 是语义锚点，不计 runnable', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          link_id: 'link-eval',
+          feature_id: null,
+          feature_name: null,
+          feature_kind: null,
+          cell_kind: 'element',
+          cell_status: 'pending',
+          assertion_ref: 'eval:reply-quality-v1',
+          na_reason: null,
+        },
+        {
+          link_id: 'link-decision',
+          feature_id: null,
+          feature_name: null,
+          feature_kind: null,
+          cell_kind: 'element',
+          cell_status: 'green',
+          assertion_ref: 'decision:reply-policy-v1',
+          na_reason: null,
+        },
+      ],
+    });
+
+    const app = await makeApp();
+    const request = (await import('supertest')).default;
+    const res = await request(app)
+      .get('/api/brain/journeys/steps/step-semantic/impact');
+
+    expect(res.status).toBe(200);
+    expect(res.body.runnable_count).toBe(0);
+    expect(res.body.impacts[0]).toMatchObject({
+      assertion_state: 'evaluation',
+      runnable: false,
+      needs_assertion: false,
+    });
+    expect(res.body.impacts[1]).toMatchObject({
+      assertion_state: 'decision',
+      runnable: false,
+      needs_assertion: false,
+    });
+  });
+
+  it('[S3-I6] 普通说明文字不是合法锚点，仍需 assertion', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{
+        link_id: 'link-prose',
+        feature_id: null,
+        feature_name: null,
+        feature_kind: null,
+        cell_kind: 'element',
+        cell_status: 'green',
+        assertion_ref: '已拍板：默认全静默',
+        na_reason: null,
+      }],
+    });
+
+    const app = await makeApp();
+    const request = (await import('supertest')).default;
+    const res = await request(app)
+      .get('/api/brain/journeys/steps/step-prose/impact');
+
+    expect(res.body.impacts[0]).toMatchObject({
+      assertion_state: 'unknown',
+      runnable: false,
+      needs_assertion: true,
+    });
+  });
 });
