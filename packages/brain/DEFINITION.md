@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.135
+**版本**: 1.267.136
+
+## Golden Path §④-1 receipt-state pure model
+
+- `deriveAssertionVerification` 是无副作用的 receipt 状态派生模型：只消费调用方
+  提供的断言格与 receipt 历史，按当前 `assertion_revision` 过滤，并稳定选出
+  最新失败或最新通过；无当前 revision receipt 时返回 `never_run`，旧 receipt
+  只作为历史覆盖证据。
+- 本层尚不执行断言、不访问或持久化 receipt、不包含 migration、API 或 Runner；
+  `verified=true` 只表示输入历史中的当前断言通过，不构成生产“盖章”声明。
+- §④ 其余机制与产权变更 B 均未启用。回退：部署 Brain `1.267.135`。
 
 ## Golden Path §③ ledger data knife
 
