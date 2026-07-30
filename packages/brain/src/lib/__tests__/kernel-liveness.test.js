@@ -116,6 +116,33 @@ describe('assessKernelLiveness — 旧路径不适用', () => {
 });
 
 describe('assessKernelLiveness — 心跳信号（第一顺位）', () => {
+  it('paused run 永久按 alive 持有，不探测已经退出的旧 PID', async () => {
+    const killFn = vi.fn(() => {
+      const error = new Error('ESRCH');
+      error.code = 'ESRCH';
+      throw error;
+    });
+    const r = await assessKernelLiveness({
+      pool: poolWithRun(runRow({
+        phase: 'paused',
+        orchestrator_heartbeat_at: new Date('2026-07-27T01:00:00Z').toISOString(),
+        orchestrator_pid: 4242,
+        orchestrator_host: HOST,
+      })),
+      task: kernelTask(),
+      now: () => Date.parse('2026-07-27T02:00:00Z'),
+      hostFn: () => HOST,
+      killFn,
+    });
+
+    expect(r).toMatchObject({
+      verdict: 'alive',
+      reason: 'run_paused',
+      runId: RUN_ID,
+    });
+    expect(killFn).not.toHaveBeenCalled();
+  });
+
   it('心跳在新鲜阈值内 → alive(heartbeat)', async () => {
     const now = Date.parse('2026-07-27T01:07:30Z');
     const pool = poolWithRun(runRow({

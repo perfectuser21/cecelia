@@ -17,6 +17,7 @@ describe('relay watchdog exact run identity', () => {
     expect(sql).not.toMatch(/DISTINCT ON\s*\(initiative_id\)/);
     expect(sql).toMatch(/r\.current_task_id IS NOT NULL/);
     expect(sql).toMatch(/r2\.current_task_id = r\.current_task_id/);
+    expect(sql).toMatch(/phase NOT IN \('done', 'failed', 'paused'\)/);
     expect(sql).toMatch(/ORDER BY r\.started_at DESC,\s*r\.id DESC/);
   });
 

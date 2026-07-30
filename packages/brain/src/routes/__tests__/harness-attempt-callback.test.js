@@ -710,6 +710,59 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     ))).toBe(false);
   });
 
+  it('未验证的 generator PR claim 不得污染 authoritative pr_url', async () => {
+    mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
+    const resolveHead = vi.fn(async () => null);
+    app.set('kernelPrHeadResolver', resolveHead);
+
+    const response = await postCallback(app, {
+      ...validResult,
+      artifacts: [{
+        type: 'pull_request',
+        url: 'https://github.com/acme/repo/pull/404',
+      }],
+      decision: null,
+    });
+
+    expect(response.status).toBe(200);
+    expect(resolveHead).toHaveBeenCalledOnce();
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          artifacts: [
+            expect.objectContaining({
+              type: 'unverified_pull_request_claim',
+              url: 'https://github.com/acme/repo/pull/404',
+            }),
+          ],
+        }),
+      }),
+    );
+    expect(mocks.pool.query.mock.calls.some(([sql]) => (
+      /UPDATE initiative_runs SET pr_url/i.test(sql)
+    ))).toBe(false);
+  });
+
+  it('PR verification infrastructure failure keeps callback retryable', async () => {
+    mocks.store.getById.mockResolvedValue({ ...attempt, role: 'generator' });
+    app.set('kernelPrHeadResolver', vi.fn(async () => {
+      throw new Error('GitHub unavailable');
+    }));
+
+    const response = await postCallback(app, {
+      ...validResult,
+      artifacts: [{
+        type: 'pull_request',
+        url: 'https://github.com/acme/repo/pull/42',
+      }],
+      decision: null,
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe('pull_request_verification_unavailable');
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+  });
+
   it('跨角色/attempt session 复用冲突返回 409，且不完成 attempt', async () => {
     mocks.store.assertFreshRoleSession.mockRejectedValueOnce(new Error('role_session_reuse'));
     const response = await postCallback(app);
