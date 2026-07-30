@@ -5,3 +5,4 @@
 #     (PR #4445 已 MERGED)，与本任务无关，已归档为 progress-archived-07291205-ci-auto-merge-token-fix.md
 planner: done (sprint-prd.md@ff2f6ad69, invariants=14, fr=0, branch=cp-07301444-harness-prd)
 gan: done (contract-draft.md@cp-07301444-harness-prd r1, verdict=APPROVED, 铁律覆盖=14/14, judgments_written=0, rubric=.harness/verdicts/gan-2f4d9f1.json)
+generator: pr_opened (#4483, red=ac0cbb7, ci_fix_round=1: lint-feature-has-smoke FAIL, Deploy Preview Environment FAIL[已确认与本PR无关的既有基础设施flaky,多条无关PR同期同样fail,非required check,忽略])
