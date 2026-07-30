@@ -9,7 +9,7 @@ const sprintDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const repoRoot = path.resolve(sprintDir, '../..');
 const verifier = path.join(sprintDir, 'scripts', 'verify-pr4457-evidence.mjs');
 const oracleManifest = path.join(sprintDir, 'conflict-oracle-manifest.json');
-const ORACLE_MANIFEST_SHA256 = 'ed69d150c7e7f0ae4e5b759964e7cbbb4f35ee489ad3e5e62ae5cb114133bb01';
+const ORACLE_MANIFEST_SHA256 = 'ec6bf14d639a5ddf8a340185b5d285151075a6e3a3e3b9a252283a92ca477d43';
 const ACTOR_STAGE = process.env.HARNESS_ACTOR_STAGE;
 const STAGES = [
   'generator-pre-push',

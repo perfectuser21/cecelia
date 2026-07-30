@@ -12,7 +12,7 @@ target_environment: local_api
 
 - [ ] [ARTIFACT] 33 路径 oracle manifest 的 schema、不可变 ID、完整 argv/观察与语义哈希精确匹配合同。
   gate-allow: weak-oracle/file-existence-only 此命令读取 JSON 后校验 schema、33 个唯一 path/ID、每行 argv/观察与冻结语义 SHA-256，非仅存在性检查。
-  Test: node -e "const fs=require('fs'),c=require('crypto'),p='sprints/07301245-kernel-pr4457-refresh/conflict-oracle-manifest.json',x=JSON.parse(fs.readFileSync(p,'utf8')),sort=v=>Array.isArray(v)?v.map(sort):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,sort(v[k])])):v;x.subjects.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);const ids=x.subjects.map(v=>v.oracle_id),paths=x.subjects.map(v=>v.path),h=c.createHash('sha256').update(JSON.stringify(sort(x))).digest('hex');if(x.schema_version!==1||paths.length!==33||new Set(paths).size!==33||new Set(ids).size!==33||ids.slice().sort().join(',')!==Array.from({length:33},(_,i)=>'C'+String(i+1).padStart(2,'0')).join(',')||x.subjects.some(v=>v.stage!=='generator-pre-push'||!v.cwd||!Array.isArray(v.argv)||!v.argv.length||!v.expected_observation.includes('exit_code=0'))||h!=='ed69d150c7e7f0ae4e5b759964e7cbbb4f35ee489ad3e5e62ae5cb114133bb01')process.exit(1)"
+  Test: node -e "const fs=require('fs'),c=require('crypto'),p='sprints/07301245-kernel-pr4457-refresh/conflict-oracle-manifest.json',x=JSON.parse(fs.readFileSync(p,'utf8')),sort=v=>Array.isArray(v)?v.map(sort):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,sort(v[k])])):v;x.subjects.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);const ids=x.subjects.map(v=>v.oracle_id),paths=x.subjects.map(v=>v.path),h=c.createHash('sha256').update(JSON.stringify(sort(x))).digest('hex');if(x.schema_version!==1||paths.length!==33||new Set(paths).size!==33||new Set(ids).size!==33||ids.slice().sort().join(',')!==Array.from({length:33},(_,i)=>'C'+String(i+1).padStart(2,'0')).join(',')||x.subjects.some(v=>v.stage!=='generator-pre-push'||!v.cwd||!Array.isArray(v.argv)||!v.argv.length||!v.expected_observation.includes('exit_code=0'))||h!=='ec6bf14d639a5ddf8a340185b5d285151075a6e3a3e3b9a252283a92ca477d43')process.exit(1)"
 - [ ] [ARTIFACT] evidence 内容通过 schema、冻结 SHA/ID/digest、33/77/3 exact subject sets，并由四个 actor/time boundary 执法七个 phase。
   Test: bash -c 'set -euo pipefail; V=sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs; E=sprints/07301245-kernel-pr4457-refresh/evidence; node "$V" review-gate --stage controller-review-gate --exact-head-receipt "$E/exact-head-receipt.json" --evaluator-receipt "$E/evaluator-receipt.json" --audit-end "$E/audit-end.json"'
 
@@ -28,12 +28,13 @@ true-success；尚未来到的 case 必须以稳定 `ERR_STAGE_MISMATCH` 非零�
 8/8 Green，但只有 true-success 能授权该阶段可信 producer 写 phase receipt；expected refusal
 不得声称未来 phase 已通过。
 
-所有 Red/Green 执行必须经 `scripts/run-pr4457-contract-tests.mjs` 使用
-lockfile-pinned `./node_modules/.bin/vitest` 1.6.1；bare `npx`/registry latest
-禁止。每次 append-only test-run receipt 必须保存 cwd、tested HEAD、executable
+初始 Red 必须由 controller/reviewer 的受信仓库外执行包装器采集，不能依赖尚未实现的
+`scripts/run-pr4457-contract-tests.mjs`；各 stage Green 才必须经该 sprint runner。
+两类包装器都只能使用 lockfile-pinned `./node_modules/.bin/vitest` 1.6.1；bare
+`npx`/registry latest 禁止。每次 append-only test-run receipt 必须保存 cwd、tested HEAD、executable
 realpath/version、完整 argv、runner 围绕真实执行采集的 start/end UTC、三个合同文件最大
 mtime、未改写逐测试 JSON、total/failed/passed 与 raw SHA-256。必须机械满足
-`materialized_at <= started_at <= ended_at`、测试前后 HEAD 不变、raw digest 与逐测试/
+`materialized_at < started_at <= ended_at`、测试前后 HEAD 不变、raw digest 与逐测试/
 聚合计数一致；否则稳定返回 `ERR_NON_HERMETIC_TOOLCHAIN`、
 `ERR_TEST_MATERIALIZATION_TIME`、`ERR_TEST_HEAD_DRIFT` 或
 `ERR_TEST_RESULT_DIGEST`。reviewer 初始重跑必须仍为 8/8 Red；每个后续 phase receipt

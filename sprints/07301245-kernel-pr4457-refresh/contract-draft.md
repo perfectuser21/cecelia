@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 17)
+# Sprint Contract Draft (Round 18)
 
 覆盖父路「Draft PR #4457 累计冲突与 CodeQL 收敛」第 1-5 步。
 
@@ -10,6 +10,7 @@
 - Round 15 保留上述非循环协议，并把它变成机械合同：8 个既有测试用例内分别加入错误 stage、错误 actor role、缺前置 receipt、伪造 exit/log、digest 不符、跨阶段 lineage 复用、倒序时间戳等隔离负向场景；每个场景必须同时得到非零退出与稳定错误码，缺实现文件本身不得冒充通过。
 - Round 16 修复 cross-stage Green 循环：同一份不可变的 8-test 文件由 `HARNESS_ACTOR_STAGE` 接收当前权威 actor stage。每一阶段只把本阶段及此前阶段判作 true-success；未来阶段用稳定错误码证明 fail-closed 且 verifier 没有创建未来 receipt。generator 不再被要求伪造 CI/evaluator/controller 产物。
 - Round 17 在不改变 8 个测试、33/77/3 集合、manifest digest 与 stage-progressive Green 语义的前提下，冻结 hermetic test-run receipt：所有 Red/Green 执行只能使用 lockfile 已安装的本地 Vitest 1.6.1，禁止 bare `npx`；runner 必须围绕真实执行采集 cwd、tested HEAD、精确 executable/version/argv、起止 UTC、逐测试原始 JSON、计数与 raw-result SHA-256，并证明开始时间晚于本 worktree 测试文件物化时间。
+- Round 18 封闭 hermetic 证据的最后歧义：初始 Red 明确由 controller/reviewer 受信、仓库外执行包装器采集（不依赖尚未实现的 sprint runner），Green 才由 sprint runner 采集；所有 33 路径 oracle 中的 Vitest argv 也固定为对应 lockfile 的本地 executable，彻底禁止 bare `npx`。时间约束改为严格 `files_materialized_at_utc < started_at_utc`。
 - `exact-head-receipt.json` 的唯一可信 producer 是 CI runner；CI 仅可在只读 exact-head verifier 返回 0，且 stdout/evidence digest、三个 required check-run、final-head CodeQL、final SHA 与 CI runtime lineage 全部匹配后签名/写出 receipt。verifier 永不创建 receipt。
 - 33 行 manifest 全部显式冻结 `stage=generator-pre-push`。C02 已从 post-push exact-head 改为 pre-push 本地 workflow 行为 oracle；C02/C04/C25/C27/C28/C29 argv 均显式带 `--stage generator-pre-push`。
 - manifest 测试在核对冻结 schema、33 subject、argv 与 digest 前，必须先跨过实现产出的 `generator-pre-push/conflicts` verifier/evidence 边界；因此实现前固定为 `failed=8, passed=0, total=8`。
@@ -69,7 +70,7 @@ N/A — 不新增对外 agent；GitHub annotation/message 均只作不可信数�
 
 冻结证据必须先生成不可变 manifest：`evidence/frozen-conflicts.json`、`evidence/codeql-freeze.json`、`evidence/required-checks-freeze.json`。三份文件均使用 canonical JSON（对象 key 排序、数组按本节 subject key 排序、UTF-8、末尾单换行）计算 SHA-256；verifier 必须把实际枚举的每个 subject 及 canonical hash 写入输出，禁止只做 JSON 可解析、数组长度或源码字符串检查。
 
-33 路径的可执行 oracle 合同冻结在 `conflict-oracle-manifest.json`。canonical 算法为：`subjects` 按 ASCII `path` 升序（`a.path < b.path`）排序，递归按对象 key 排序，随后无空白 `JSON.stringify`；语义 SHA-256 固定为 `ed69d150c7e7f0ae4e5b759964e7cbbb4f35ee489ad3e5e62ae5cb114133bb01`。该文件必须恰有 33 个唯一 path、33 个唯一 `C01..C33` oracle_id；每行必须显式为 `stage=generator-pre-push`，`cwd` 非空、`argv` 为完整非空 argv 数组、`expected_observation` 同时声明 `exit_code=0` 和业务观察。`conflicts` verifier 必须对合同 manifest 与 `evidence/conflict-resolution.json` 的 `path/oracle_id/stage/cwd/argv/expected_observation` 做 exact-set 深比较，并逐行在该 stage 真实 spawn；generator-pre-push 禁止执行 post-push oracle，禁止 generator 在 ledger 中另行发明命令。
+33 路径的可执行 oracle 合同冻结在 `conflict-oracle-manifest.json`。canonical 算法为：`subjects` 按 ASCII `path` 升序（`a.path < b.path`）排序，递归按对象 key 排序，随后无空白 `JSON.stringify`；语义 SHA-256 固定为 `ec6bf14d639a5ddf8a340185b5d285151075a6e3a3e3b9a252283a92ca477d43`。该文件必须恰有 33 个唯一 path、33 个唯一 `C01..C33` oracle_id；每行必须显式为 `stage=generator-pre-push`，`cwd` 非空、`argv` 为完整非空 argv 数组、`expected_observation` 同时声明 `exit_code=0` 和业务观察。`conflicts` verifier 必须对合同 manifest 与 `evidence/conflict-resolution.json` 的 `path/oracle_id/stage/cwd/argv/expected_observation` 做 exact-set 深比较，并逐行在该 stage 真实 spawn；generator-pre-push 禁止执行 post-push oracle，禁止 generator 在 ledger 中另行发明命令。
 
 ### Git 与 CodeQL
 
@@ -160,9 +161,10 @@ verifier 是只读验证器，只能消费已有事实与 receipt，禁止创建
 
 ### Hermetic 测试运行与证据协议
 
-初始 Red 由 reviewer 的受信执行器直接启动仓库 lockfile 已安装的
-`./node_modules/.bin/vitest` 并按下述同一 receipt schema 落证；四个 actor stage 的
-每次 Green 必须由 `scripts/run-pr4457-contract-tests.mjs` 启动同一本地 executable；
+初始 Red 由 controller/reviewer 的受信、仓库外执行包装器直接启动仓库 lockfile 已安装的
+`./node_modules/.bin/vitest` 并按下述同一 receipt schema 落证；该包装器属于 Harness
+执行基础设施，不是本 sprint 待实现文件，因此实现缺失时仍可采集真实 Red。四个 actor stage 的
+每次 Green 才由 `scripts/run-pr4457-contract-tests.mjs` 启动同一本地 executable；
 固定版本为 `1.6.1`。禁止 `npx vitest`、`npm exec`
 或任何允许联网下载/解析 registry latest 的命令。runner 启动前必须验证
 `package-lock.json` 中 `node_modules/vitest.version == "1.6.1"`、本地 executable
@@ -182,7 +184,7 @@ runner 必须在 spawn 前捕获 `started_at_utc`、在子进程退出后捕获
 `ended_at_utc`；`files_materialized_at_utc` 是本 worktree 中
 `tests/pr4457-contract.test.ts`、`vitest.config.mjs`、
 `conflict-oracle-manifest.json` 三者 mtime 的最大值。机械约束为
-`files_materialized_at_utc <= started_at_utc <= ended_at_utc`，cwd 必须等于
+`files_materialized_at_utc < started_at_utc <= ended_at_utc`，cwd 必须等于
 真实 repo root，tested HEAD 必须等于执行前后同一个 `git rev-parse HEAD`。
 时间倒序、HEAD 漂移、raw digest/逐测试/聚合计数不一致均非零退出，分别输出
 `ERR_TEST_MATERIALIZATION_TIME`、`ERR_TEST_HEAD_DRIFT` 或
@@ -238,7 +240,7 @@ node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs f
 
 ### Step 2: 处置全部 33 个冲突路径
 **来源**: `[FROM_PRD]` — Golden Path 2；controller 要求每个 oracle 枚举 subject。
-**可观测行为**: resolution ledger 的路径集合与合同 manifest exact-set 相等，33 行无重复、无未处置；每行的 `path/oracle_id/stage/cwd/argv/expected_observation` 与语义哈希 `ed69d150c7e7f0ae4e5b759964e7cbbb4f35ee489ad3e5e62ae5cb114133bb01` 深比较后，输出 base/ours/theirs/final blob、处置、真实 exit_code/log_tail；全部行为 oracle 在 `generator-pre-push` 执行，禁止仅 JSON parse、文件存在或源码字符串检查。
+**可观测行为**: resolution ledger 的路径集合与合同 manifest exact-set 相等，33 行无重复、无未处置；每行的 `path/oracle_id/stage/cwd/argv/expected_observation` 与语义哈希 `ec6bf14d639a5ddf8a340185b5d285151075a6e3a3e3b9a252283a92ca477d43` 深比较后，输出 base/ours/theirs/final blob、处置、真实 exit_code/log_tail；全部行为 oracle 在 `generator-pre-push` 执行，禁止仅 JSON parse、文件存在或源码字符串检查。
 **验证命令**:
 ```bash
 node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs conflicts --stage generator-pre-push
