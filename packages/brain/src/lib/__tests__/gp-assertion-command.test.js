@@ -126,6 +126,22 @@ describe('trusted GP assertion command policy', () => {
     })).rejects.toMatchObject({ code: 'ASSERTION_PATH_UNTRACKED' });
   });
 
+  it('rejects a symlink whose canonical target changes assertion type', async () => {
+    await expect(assertionCommand('scripts/smoke/gp.sh', ROOT, {
+      ...deps,
+      realpathFn: vi.fn(async path => (
+        path.endsWith('/scripts/smoke/gp.sh') ? join(PACKAGE, 'package.json') : path
+      )),
+    })).rejects.toMatchObject({ code: 'ASSERTION_PATH_TYPE_MISMATCH' });
+  });
+
+  it('rejects a non-string toolchain digest despite string coercion', async () => {
+    const sha256 = { toString: () => SHA };
+    await expect(assertionCommand('services/tests/test_gp.py', ROOT, {
+      ...deps, toolchains: { ...TOOLS, python: { path: '/tools/python3', sha256 } },
+    })).rejects.toMatchObject({ code: 'ASSERTION_TOOLCHAIN_DIGEST_INVALID' });
+  });
+
   it.each([
     ['https://token@github.com/OpenAI/cecelia.git', 'github.com/OpenAI/cecelia'],
     ['git@GitHub.com:OpenAI/cecelia.git', 'github.com/OpenAI/cecelia'],
