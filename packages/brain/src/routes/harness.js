@@ -9,6 +9,7 @@
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { readFile, access, realpath } from 'fs/promises';
 import { execSync } from 'child_process';
 import { join, resolve, relative, isAbsolute, delimiter } from 'path';
@@ -16,8 +17,18 @@ import { homedir, tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import pool from '../db.js';
 import { runJudgeGate, runMechanicalPreflightChecks, checkJudgmentsWritten } from '../harness-judge.js';
+import {
+  DEFAULT_BASE_REPO,
+  harnessTaskWorktreePath,
+} from '../harness-worktree.js';
 
 const router = Router();
+const judgeRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+});
 
 // routes/harness.js → packages/brain/src/routes/ → 向上 4 级到仓库根
 const REPO_ROOT = new URL('../../../..', import.meta.url).pathname;
@@ -47,15 +58,19 @@ function isContainedPath(root, candidate) {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
-async function resolveJudgeWorktree(candidate) {
+async function resolveStoredJudgeWorktree(candidate) {
   if (typeof candidate !== 'string' || !isAbsolute(candidate)) {
-    throw new Error('worktree 必须是绝对路径');
+    throw new Error('stored worktree 必须是绝对路径');
   }
   const configuredRoots = String(process.env.HARNESS_JUDGE_ALLOWED_ROOTS || '')
     .split(delimiter)
     .map((item) => item.trim())
     .filter(Boolean);
-  const roots = [REPO_ROOT, ...configuredRoots];
+  const roots = [
+    process.env.REPO_ROOT || REPO_ROOT,
+    DEFAULT_BASE_REPO,
+    ...configuredRoots,
+  ];
   if (process.env.NODE_ENV === 'test') roots.push(tmpdir());
 
   const canonical = await realpath(candidate);
@@ -67,7 +82,7 @@ async function resolveJudgeWorktree(candidate) {
       // 不存在的 allow-root 不是有效授权根。
     }
   }
-  throw new Error('worktree 不在受控 Harness 根目录');
+  throw new Error('stored worktree 不在受控 Harness 根目录');
 }
 
 function normalizeJudgeSprintDir(candidate) {
@@ -86,16 +101,57 @@ function normalizeJudgeSprintDir(candidate) {
   return parts.join('/');
 }
 
-async function resolveJudgeChild(worktree, candidate, label) {
-  if (candidate === undefined || candidate === null || candidate === '') return undefined;
-  if (typeof candidate !== 'string' || !isAbsolute(candidate)) {
-    throw new Error(`${label} 必须是绝对路径`);
+async function loadJudgeAuthority(requestPool, { runId, taskId }) {
+  const exact = runId && UUID_RE.test(String(runId));
+  if (runId && !exact) {
+    const err = new Error('run_id 必须是 uuid');
+    err.status = 400;
+    throw err;
   }
-  const canonical = await realpath(candidate);
-  if (!isContainedPath(worktree, canonical)) {
-    throw new Error(`${label} 必须位于当前 worktree 内`);
+  const { rows } = exact
+    ? await requestPool.query(
+      `SELECT r.id, r.current_task_id,
+              t.payload->>'worktree_path' AS worktree_path,
+              t.payload->>'sprint_dir' AS sprint_dir
+         FROM initiative_runs r
+         JOIN tasks t ON t.id = r.current_task_id
+        WHERE r.id = $1
+          AND r.orchestrator_version = 'v2'`,
+      [runId],
+    )
+    : await requestPool.query(
+      `SELECT r.id, r.current_task_id,
+              t.payload->>'worktree_path' AS worktree_path,
+              t.payload->>'sprint_dir' AS sprint_dir
+         FROM initiative_runs r
+         JOIN tasks t ON t.id = r.current_task_id
+        WHERE r.current_task_id = $1
+          AND r.orchestrator_version = 'v2'
+          AND r.phase NOT IN ('done', 'failed')
+        ORDER BY r.started_at DESC, r.id DESC
+        LIMIT 2`,
+      [taskId],
+    );
+  if (rows.length !== 1) {
+    const err = new Error(
+      rows.length === 0 ? 'judge run authority not found' : 'judge run authority ambiguous',
+    );
+    err.status = rows.length === 0 ? 404 : 409;
+    throw err;
   }
-  return canonical;
+  const authority = rows[0];
+  if (String(authority.current_task_id) !== String(taskId)) {
+    const err = new Error('run/task identity mismatch');
+    err.status = 409;
+    throw err;
+  }
+  return {
+    runId: authority.id,
+    taskId: authority.current_task_id,
+    worktreePath: authority.worktree_path
+      || harnessTaskWorktreePath(authority.current_task_id),
+    sprintDir: authority.sprint_dir,
+  };
 }
 
 router.get('/initiative-runs/:id', async (req, res) => {
@@ -1971,7 +2027,7 @@ router.post('/promote/:resultId', async (req, res) => {
  * 三必填校验 → verdict 回退读 .brain-result.json → FIXED 归一 PASS → runJudgeGate 透传。
  * HTTP 恒 200 承载裁决（等价 CLI exit 0/2 由调用方按 body.verdict 分支）。
  */
-router.post('/judge', async (req, res) => {
+router.post('/judge', judgeRateLimit, async (req, res) => {
   const { task_id, run_id, sprint_dir, worktree, agent_verdict, agent_feedback, prompt_dir, transcript_file } = req.body || {};
   if (!task_id || !sprint_dir || !worktree) {
     return res.status(400).json({ error: 'task_id/sprint_dir/worktree 必填' });
@@ -1979,21 +2035,36 @@ router.post('/judge', async (req, res) => {
   if (!UUID_RE.test(String(task_id))) {
     return res.status(400).json({ error: 'task_id 必须是 uuid' });
   }
-  let safeWorktree;
-  let safeSprintDir;
-  let safePromptDir;
-  let safeTranscriptFile;
+  if (typeof worktree !== 'string' || !isAbsolute(worktree)) {
+    return res.status(400).json({ error: 'worktree 必须是绝对路径' });
+  }
   try {
-    safeWorktree = await resolveJudgeWorktree(worktree);
-    safeSprintDir = normalizeJudgeSprintDir(sprint_dir);
-    safePromptDir = await resolveJudgeChild(safeWorktree, prompt_dir, 'prompt_dir');
-    safeTranscriptFile = await resolveJudgeChild(
-      safeWorktree,
-      transcript_file,
-      'transcript_file',
-    );
+    normalizeJudgeSprintDir(sprint_dir);
   } catch (err) {
     return res.status(400).json({ error: err.message });
+  }
+  if (prompt_dir || transcript_file) {
+    return res.status(400).json({
+      error: 'prompt_dir/transcript_file 不接受客户端路径；证据由服务端 worktree 收集',
+    });
+  }
+  let safeWorktree;
+  let safeSprintDir;
+  let authoritativeRunId;
+  try {
+    const requestPool = req.app.get('pool') || pool;
+    const authority = await loadJudgeAuthority(requestPool, {
+      runId: run_id,
+      taskId: task_id,
+    });
+    if (worktree !== authority.worktreePath || sprint_dir !== authority.sprintDir) {
+      return res.status(409).json({ error: 'judge filesystem authority mismatch' });
+    }
+    safeWorktree = await resolveStoredJudgeWorktree(authority.worktreePath);
+    safeSprintDir = normalizeJudgeSprintDir(authority.sprintDir);
+    authoritativeRunId = authority.runId;
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message });
   }
 
   // 读取 .brain-result.json（完整对象，供机械预检 + runJudgeGate 使用）
@@ -2025,11 +2096,6 @@ router.post('/judge', async (req, res) => {
     return res.json({ ...mechFailAsync, judged: false });
   }
 
-  let transcript;
-  if (safeTranscriptFile) {
-    try { transcript = await readFile(safeTranscriptFile, 'utf8'); } catch { /* 读失败不阻塞，与 CLI 一致 */ }
-  }
-
   try {
     const result = await runJudgeGate({
       agentVerdict: verdict,
@@ -2037,14 +2103,12 @@ router.post('/judge', async (req, res) => {
       worktreePath: safeWorktree,
       sprintDir: safeSprintDir,
       taskId: task_id,
-      promptDir: safePromptDir,
-      transcript,
       instanceLabel: `judge-api-${String(task_id).slice(0, 8)}`,
     }, { dbPool: pool });
 
     // 刀C-2：judge 判定后自写 judge_verdict 落库（不依赖 controller 容器内 curl 上报）
     // 只写 judged=true 的真实裁决；PASS 禁被回退，FAIL→PASS 允许收敛；写失败 non-fatal
-    if (result?.judged === true && run_id && UUID_RE.test(String(run_id))) {
+    if (result?.judged === true) {
       try {
         await pool.query(
           `UPDATE initiative_runs SET judge_verdict = $1
@@ -2052,13 +2116,11 @@ router.post('/judge', async (req, res) => {
               AND current_task_id = $3
               AND orchestrator_version = 'v2'
               AND judge_verdict IS DISTINCT FROM 'PASS'`,
-          [result.verdict, String(run_id), String(task_id)]
+          [result.verdict, String(authoritativeRunId), String(task_id)]
         );
       } catch (dbErr) {
         console.warn(`[POST /harness/judge] judge_verdict 落库失败（non-fatal）: ${dbErr.message}`);
       }
-    } else if (result?.judged === true) {
-      console.warn(`[POST /harness/judge] 缺少合法 run_id，跳过 judge_verdict 落库 task=${task_id}`);
     }
 
     return res.json(result);

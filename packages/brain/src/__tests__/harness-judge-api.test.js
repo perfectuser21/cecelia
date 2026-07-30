@@ -14,6 +14,7 @@ const { mockPool, mockRunJudgeGate } = vi.hoisted(() => ({
   mockPool: { query: vi.fn() },
   mockRunJudgeGate: vi.fn(),
 }));
+let authorityWorktree;
 vi.mock('../db.js', () => ({ default: mockPool }));
 vi.mock('../harness-judge.js', () => ({
   runJudgeGate: mockRunJudgeGate,
@@ -32,8 +33,25 @@ async function buildApp() {
 
 describe('POST /api/brain/harness/judge', () => {
   beforeEach(() => {
+    authorityWorktree = null;
     mockRunJudgeGate.mockReset();
     mockPool.query.mockReset();
+    mockPool.query.mockImplementation(async (sql, params = []) => {
+      if (typeof sql === 'string' && sql.includes('SELECT r.id')) {
+        const exact = sql.includes('WHERE r.id = $1');
+        return {
+          rows: authorityWorktree ? [{
+            id: exact ? params[0] : 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+            current_task_id: exact
+              ? '11111111-2222-3333-8444-555555555555'
+              : params[0],
+            worktree_path: authorityWorktree,
+            sprint_dir: 'sprints/x',
+          }] : [],
+        };
+      }
+      return { rows: [], rowCount: 0 };
+    });
   });
 
   it('缺必填字段 → 400', async () => {
@@ -44,11 +62,11 @@ describe('POST /api/brain/harness/judge', () => {
     expect(mockRunJudgeGate).not.toHaveBeenCalled();
   });
 
-  it('worktree 目录不存在 → 400', async () => {
+  it('worktree 没有服务端 run authority → 404', async () => {
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
       .send({ task_id: '11111111-2222-3333-4444-555555555555', sprint_dir: 'sprints/x', worktree: '/nonexistent/path/xyz' });
-    expect(r.status).toBe(400);
+    expect(r.status).toBe(404);
   });
 
   it('拒绝 sprint_dir 路径穿越', async () => {
@@ -112,6 +130,7 @@ describe('POST /api/brain/harness/judge', () => {
 
   it('agent_verdict=FIXED 归一为 PASS 传给 runJudgeGate，结果透传 200', async () => {
     const wt = await mkdtemp(join(tmpdir(), 'judge-api-'));
+    authorityWorktree = wt;
     const canonicalWt = await realpath(wt);
     mockRunJudgeGate.mockResolvedValue({ verdict: 'PASS', feedback: null, judged: true });
     const app = await buildApp();
@@ -129,6 +148,7 @@ describe('POST /api/brain/harness/judge', () => {
 
   it('agent_verdict 缺省 → 从 <worktree>/.brain-result.json 读', async () => {
     const wt = await mkdtemp(join(tmpdir(), 'judge-api-'));
+    authorityWorktree = wt;
     await writeFile(join(wt, '.brain-result.json'), JSON.stringify({ verdict: 'PASS', feedback: 'ok' }));
     mockRunJudgeGate.mockResolvedValue({ verdict: 'PASS', feedback: 'ok', judged: false });
     const app = await buildApp();
@@ -142,6 +162,7 @@ describe('POST /api/brain/harness/judge', () => {
 
   it('agent_verdict 缺省且 .brain-result.json 不存在 → 400', async () => {
     const wt = await mkdtemp(join(tmpdir(), 'judge-api-'));
+    authorityWorktree = wt;
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
       .send({ task_id: '11111111-2222-3333-4444-555555555555', sprint_dir: 'sprints/x', worktree: wt });
@@ -151,6 +172,7 @@ describe('POST /api/brain/harness/judge', () => {
 
   it('runJudgeGate 抛错 → 500 且不泄内部 message', async () => {
     const wt = await mkdtemp(join(tmpdir(), 'judge-api-'));
+    authorityWorktree = wt;
     mockRunJudgeGate.mockRejectedValue(new Error('secret internal'));
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')

@@ -26,8 +26,20 @@ let worktree;
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  poolQuery.mockResolvedValue({ rows: [], rowCount: 0 });
   worktree = mkdtempSync(join(tmpdir(), 'judge-writeback-'));
+  poolQuery.mockImplementation(async (sql, params = []) => {
+    if (typeof sql === 'string' && sql.includes('SELECT r.id')) {
+      return {
+        rows: [{
+          id: params[0],
+          current_task_id: '11111111-2222-3333-4444-555555555555',
+          worktree_path: worktree,
+          sprint_dir: 'sprints/judge-writeback',
+        }],
+      };
+    }
+    return { rows: [], rowCount: 0 };
+  });
   const routerMod = await import('../harness.js');
   app = express();
   app.use(express.json());
@@ -64,7 +76,17 @@ describe('C2: /judge 判定后自写 initiative_runs.judge_verdict', () => {
   });
 
   it('UPDATE 抛错 → non-fatal，响应仍带裁决', async () => {
-    poolQuery.mockImplementation(async (sql) => {
+    poolQuery.mockImplementation(async (sql, params = []) => {
+      if (typeof sql === 'string' && sql.includes('SELECT r.id')) {
+        return {
+          rows: [{
+            id: params[0],
+            current_task_id: '11111111-2222-3333-4444-555555555555',
+            worktree_path: worktree,
+            sprint_dir: 'sprints/judge-writeback',
+          }],
+        };
+      }
       if (/UPDATE initiative_runs\s+SET judge_verdict/i.test(sql)) throw new Error('db down');
       return { rows: [], rowCount: 0 };
     });
