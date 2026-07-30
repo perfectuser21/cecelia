@@ -180,6 +180,25 @@ function makeLoop(log, currentObserved, dispatch = async () => ({ status: 'DONE'
     }),
     writeHeartbeat: vi.fn(async () => {}),
     dispatch: dispatchSpy,
+    finalizeRun: vi.fn(async (_pool, {
+      runId,
+      expectedTaskId,
+      outcome,
+      reason,
+    }) => {
+      failureWrites.push({
+        runId,
+        taskId: expectedTaskId,
+        outcome,
+        reason,
+      });
+      return {
+        changed: true,
+        runId,
+        taskId: expectedTaskId,
+        outcome,
+      };
+    }),
     sleep: vi.fn(async () => {}),
     now: () => new Date('2026-07-23T12:00:00Z'),
     log: vi.fn(),
