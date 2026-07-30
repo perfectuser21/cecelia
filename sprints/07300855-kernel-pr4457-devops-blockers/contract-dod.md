@@ -16,6 +16,9 @@ target_environment: local_api
 - [ ] [ARTIFACT] node:test 双登记 ratchet、OKR 真集成、migration 冻结测试存在
   Test: node -e "const fs=require('fs');for(const p of ['packages/brain/src/__tests__/native-node-test-runner-registration.test.js','packages/brain/src/__tests__/integration/okr-decomposition-flow.integration.test.js','packages/brain/src/__tests__/integration/kernel-release-runs.integration.test.js']){if(!fs.readFileSync(p,'utf8').length)process.exit(1)}"
 
+- [ ] [ARTIFACT] 冻结 sprint-prd.md 与现有 PR 分支字节等同
+  Test: git diff --exit-code cp-kernel-phase5b-a1-review-fixes -- sprints/07300855-kernel-pr4457-devops-blockers/sprint-prd.md
+
 ## BEHAVIOR 条目
 
 - [ ] [BEHAVIOR] [L2] B-01: QuickCheck 未知非零 fail-closed，genuine OOM 仅三条件降级 [接缝×2]
@@ -53,12 +56,26 @@ target_environment: local_api
   留证: 两个命令的 JSON 与 exit code
   Test: manual:bash -c 'R=$(node scripts/ci/check-kernel-behavior-equivalence.mjs --check-report --format=json); echo "$R" | jq -e ".schema_valid==true and .proof_complete==false and .atomic_cutover_ready==false and (.cell_atomic_coverage|length)==99 and ([.cell_atomic_coverage[]|select((.live_proven_invariant_ids|length)>0 or (.live_proven_probe_ids|length)>0)]|length)==0"; if node scripts/ci/run-kernel-equivalence-drill.mjs --gate --format=json; then exit 1; fi'
 
-- [ ] [BEHAVIOR] [L2] B-06: evaluator checkout 锚定既有 Draft PR 当前 head且保持人工门
-  动作: evaluator 查询 PR #4457 并对照当前 checkout SHA
-  预期观察: PR保持OPEN Draft且无auto-merge，checkout SHA与PR head一致；不要求尚未发生的judge或人工批准结果
+- [ ] [BEHAVIOR] [L2] B-06: exact final head 的 GitHub required checks 全部成功 [接缝×2]
+  动作: 查询 PR #4457 身份与 required checks 权威集合，并对照 evaluator checkout SHA
+  预期观察: PR保持OPEN Draft且无auto-merge，checkout SHA与PR head一致；required 集合非空且每项 state=SUCCESS
   等待预算: 30s
-  留证: gh pr view JSON、checkout SHA与PR head对账输出；后续judge/approval由controller另阶段追加
-  Test: manual:bash -c 'P=$(gh pr view 4457 --repo perfectuser21/cecelia --json number,isDraft,headRefName,headRefOid,autoMergeRequest,state); H=$(git rev-parse HEAD); echo "$P" | jq -e ".number==4457 and .isDraft==true and .headRefName==\"cp-kernel-phase5b-a1-review-fixes\" and .headRefOid==\"$H\" and .autoMergeRequest==null and .state==\"OPEN\""'
+  留证: gh pr view 与 gh pr checks JSON、checkout SHA 对账输出
+  Test: manual:bash -c 'P=$(gh pr view 4457 --repo perfectuser21/cecelia --json number,isDraft,headRefName,headRefOid,autoMergeRequest,state); C=$(gh pr checks 4457 --repo perfectuser21/cecelia --required --json name,state,bucket); H=$(git rev-parse HEAD); echo "$P" | jq -e ".number==4457 and .isDraft==true and .headRefName==\"cp-kernel-phase5b-a1-review-fixes\" and .headRefOid==\"$H\" and .autoMergeRequest==null and .state==\"OPEN\"" && echo "$C" | jq -e "length>0 and all(.[]; .state==\"SUCCESS\")"'
+
+- [ ] [BEHAVIOR] [L2] B-07: evaluator PASS 与 judge PASS 同绑 exact final head [接缝×2]
+  动作: 从 append-only orchestrator_decision_log 查询本 run 最新 evaluator 与 judge verdict，并对照 GitHub final head
+  预期观察: 两个 verdict 均为 PASS，且 pr_head_sha 均精确等于 PR #4457 当前 head
+  等待预算: 30s
+  留证: GitHub head、两条 verdict JSON 与 SQL exit code
+  Test: manual:bash -c 'H=$(gh pr view 4457 --repo perfectuser21/cecelia --json headRefOid --jq .headRefOid); R=$(psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -Atc "SELECT jsonb_build_object('\"'\"'action'\"'\"',action,'\"'\"'verdict'\"'\"',detail->>'\"'\"'verdict'\"'\"','\"'\"'pr_head_sha'\"'\"',detail->>'\"'\"'pr_head_sha'\"'\"') FROM orchestrator_decision_log WHERE run_id='\"'\"'2ef32848-e3df-473b-ad4e-548216a33092'\"'\"' AND action IN ('\"'\"'verdict:evaluate'\"'\"','\"'\"'verdict:judge'\"'\"') ORDER BY hop DESC"); for A in verdict:evaluate verdict:judge; do echo "$R" | jq -Rcs --arg a "$A" --arg h "$H" "split(\"\\n\")|map(select(length>0)|fromjson)|map(select(.action==\\$a))|first|.verdict==\"PASS\" and .pr_head_sha==\\$h" | grep -qx true; done'
+
+- [ ] [BEHAVIOR] [L2] B-08: 主理人权威回执解除首次 merge 门
+  动作: 在 evaluator/judge 同 head PASS 后查询受认证 approval 路由写入的 request+approval 联结回执
+  预期观察: approved=true、review_class=merge_gate、approved_by 非空，approval 与 request 均绑定 exact final head
+  等待预算: 86400s
+  留证: append-only decision log 的 request hop、approved_by、approved_at 与 PR head；无回执即保持 Draft
+  Test: manual:bash -c 'H=$(gh pr view 4457 --repo perfectuser21/cecelia --json headRefOid --jq .headRefOid); psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -Atc "WITH a AS (SELECT hop,detail FROM orchestrator_decision_log WHERE run_id='\"'\"'2ef32848-e3df-473b-ad4e-548216a33092'\"'\"' AND action='\"'\"'verdict:human_review'\"'\"' ORDER BY hop DESC LIMIT 1), r AS (SELECT hop,detail,observed FROM orchestrator_decision_log WHERE run_id='\"'\"'2ef32848-e3df-473b-ad4e-548216a33092'\"'\"' AND action='\"'\"'effect:human_review_requested'\"'\"') SELECT 1 FROM a JOIN r ON r.hop::text=a.detail->>'\"'\"'review_request_hop'\"'\"' WHERE a.detail->>'\"'\"'approved'\"'\"'='\"'\"'true'\"'\"' AND a.detail->>'\"'\"'review_class'\"'\"'='\"'\"'merge_gate'\"'\"' AND a.detail->>'\"'\"'pr_head_sha'\"'\"'='\"'\"'$H'\"'\"' AND r.observed->'\"'\"'pr'\"'\"'->>'\"'\"'head_sha'\"'\"'='\"'\"'$H'\"'\"' AND coalesce(a.detail->>'\"'\"'approved_by'\"'\"','\"'\"''\"'\"')<>'\"'\"''\"'\"'" | grep -qx 1'
 
 ## Invariant 映射（PRD 全量铁律逐条处理）
 

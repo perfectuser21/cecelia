@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## 合同锚点与范围
 
@@ -6,6 +6,7 @@
 - 只允许更新该 Draft PR；禁止新建重复 PR、转 Ready、merge、deploy。
 - 本合同只覆盖四个 blocker、对应 Red/Green、同一最终 head 的 CI/evaluator/judge 证明和首次 merge 人工门。
 - 明确不改：`packages/brain/migrations/381_*.sql`、`packages/brain/migrations/382_*.sql` 及其他生产 migration SQL；不做 Kernel cutover。
+- 冻结输入：本分支必须包含从 `cp-kernel-phase5b-a1-review-fixes` 原样复制的 `sprint-prd.md`；`git diff --exit-code cp-kernel-phase5b-a1-review-fixes -- sprints/07300855-kernel-pr4457-devops-blockers/sprint-prd.md` 必须为零。
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -81,31 +82,59 @@ TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgresql://localhost/cecelia_test}" np
 
 ---
 
-### Step 5: 统一回归保持 Kernel fail-closed 真相
+### Step 5: 合同明确列出的回归保持 Kernel fail-closed 真相
 **来源**: `[FROM_PRD]` — PRD「Golden Path」第 5 步。
 
-**可观测行为**: 四项聚焦回归及 Engine/Brain/PR-tier 检查全绿；atomic 输出仍为 `schema_valid=true`、`proof_complete=false`、`atomic_cutover_ready=false`、live proof `0/99`，manual cutover gate 必须非零。
+**可观测行为**: 本合同明确执行的 QuickCheck 聚焦测试、node:test ratchet、Brain `test:node`、两个真 PG integration、quality core regression 与 atomic report check 全绿；这不宣称未列出的整仓/runner 基础设施检查已绿。atomic 输出仍为 `schema_valid=true`、`proof_complete=false`、`atomic_cutover_ready=false`、live proof `0/99`，manual cutover gate 必须非零。
 
 **验证命令**:
 ```bash
 npx vitest run packages/engine/tests/scripts/quickcheck-vitest-exit-classification.test.ts packages/quality/__tests__/ci-core-regression.test.js --reporter=verbose && npm test -w packages/brain && node scripts/ci/check-kernel-behavior-equivalence.mjs --check-report --format=json | jq -e '.schema_valid==true and .proof_complete==false and .atomic_cutover_ready==false and (.cell_atomic_coverage|length)==99 and ([.cell_atomic_coverage[]|select((.live_proven_invariant_ids|length)>0 or (.live_proven_probe_ids|length)>0)]|length)==0' && if node scripts/ci/run-kernel-equivalence-drill.mjs --gate --format=json; then echo 'FAIL: manual cutover gate 意外放行'; exit 1; fi
 ```
 
-**硬阈值**: 正向检查全部 exit=0；manual gate exit≠0；live proof 0/99。
+**硬阈值**: 上述明确列出的正向检查全部 exit=0；manual gate exit≠0；live proof 0/99。其余 required checks 由 Step 6 的 GitHub 权威集合单独验证。
 
 ---
 
-### Step 6: 当前验收只核对 Draft PR head，后续阶段按序追加证据并停在人工批准门
+### Step 6: exact final PR head 的 GitHub required checks 全部成功
 **来源**: `[FROM_PRD]` — PRD「Golden Path」第 6 步与假设“同一最终 head”。
 
-**可观测行为**: 本轮 evaluator 只核对其正在验收的 checkout SHA 等于 Draft PR #4457 当前 `headRefOid`，且 PR 保持 Draft、无 auto-merge；evaluator PASS 后 judge 才能在同一 SHA 判定，judge PASS 后 controller 才能请求主理人批准。任何阶段 head 漂移都使已有证据失效并要求重跑；批准前不得 merge/deploy。
+**可观测行为**: GitHub 返回 PR #4457 exact final head 的 required checks 集合；集合非空，且每一项结论均为 `SUCCESS`。PR 保持 Draft、OPEN、无 auto-merge，checkout 与 `headRefOid` 完全相同。
 
 **验证命令**:
 ```bash
-FINAL_HEAD_SHA=$(git rev-parse HEAD); PR=$(gh pr view 4457 --repo perfectuser21/cecelia --json number,isDraft,headRefName,headRefOid,autoMergeRequest,state); echo "$PR" | jq -e '.number==4457 and .isDraft==true and .headRefName=="cp-kernel-phase5b-a1-review-fixes" and .autoMergeRequest==null and .state=="OPEN"' && test "$(echo "$PR" | jq -r '.headRefOid')" = "$FINAL_HEAD_SHA"
+FINAL_HEAD_SHA=$(git rev-parse HEAD); PR=$(gh pr view 4457 --repo perfectuser21/cecelia --json number,isDraft,headRefName,headRefOid,autoMergeRequest,state); CHECKS=$(gh pr checks 4457 --repo perfectuser21/cecelia --required --json name,state,bucket); echo "$PR" | jq -e --arg h "$FINAL_HEAD_SHA" '.number==4457 and .isDraft==true and .headRefName=="cp-kernel-phase5b-a1-review-fixes" and .headRefOid==$h and .autoMergeRequest==null and .state=="OPEN"' && echo "$CHECKS" | jq -e 'length>0 and all(.[]; .state=="SUCCESS")'
 ```
 
-**硬阈值**: evaluator 时 PR=4457、Draft=true、OPEN、autoMergeRequest=null，checkout SHA=PR head；后续 judge/evaluator evidence SHA 必须等于同一最终 head，首次 merge 前必须有显式主理人批准。future-stage 证据不得作为 evaluator 自身的前置环境变量。
+**硬阈值**: required 集合数量≥1且失败/未完成数量=0；PR=4457、Draft=true、OPEN、autoMergeRequest=null，checkout SHA=PR head。
+
+---
+
+### Step 7: evaluator PASS 与 judge PASS 均绑定 exact final PR head
+**来源**: `[AI_ADDED]` — Reviewer R2 要求在人工复核前提供同一最终 head 的两个权威 verdict，防止旧 SHA 证据复用。
+
+**可观测行为**: `orchestrator_decision_log` 对本 run 的最新 `verdict:evaluate` 与 `verdict:judge` 均为 PASS，且两者 `detail.pr_head_sha` 都等于 GitHub PR #4457 的当前 `headRefOid`；任一缺失、非 PASS 或 SHA 漂移均失败。
+
+**验证命令**:
+```bash
+FINAL_HEAD_SHA=$(gh pr view 4457 --repo perfectuser21/cecelia --json headRefOid --jq .headRefOid); ROWS=$(psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -Atc "SELECT jsonb_build_object('action',action,'verdict',detail->>'verdict','pr_head_sha',detail->>'pr_head_sha') FROM orchestrator_decision_log WHERE run_id='2ef32848-e3df-473b-ad4e-548216a33092' AND action IN ('verdict:evaluate','verdict:judge') ORDER BY hop DESC"); for A in verdict:evaluate verdict:judge; do echo "$ROWS" | jq -Rcs --arg a "$A" --arg h "$FINAL_HEAD_SHA" 'split("\n")|map(select(length>0)|fromjson)|map(select(.action==$a))|first|.verdict=="PASS" and .pr_head_sha==$h' | grep -qx true; done
+```
+
+**硬阈值**: evaluator PASS=1、judge PASS=1，二者 SHA 都精确等于当前 final head；查询或解析任一非零即 FAIL。
+
+---
+
+### Step 8: 权威人工批准回执才能解除首次 merge 门
+**来源**: `[AI_ADDED]` — Reviewer R2 要求禁止使用可伪造环境变量代表人工批准。
+
+**可观测行为**: controller 先写 `effect:human_review_requested`，主理人通过受认证的 host/operator approval 路由产生 `verdict:human_review`；回执必须 `approved=true`、`review_class=merge_gate`、绑定同一 PR head 与 request hop。合同不接受 `HUMAN_APPROVED=1` 等本地环境变量、PR 评论文本或普通文件作为授权。
+
+**验证命令**:
+```bash
+FINAL_HEAD_SHA=$(gh pr view 4457 --repo perfectuser21/cecelia --json headRefOid --jq .headRefOid); psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -Atc "WITH a AS (SELECT hop,detail FROM orchestrator_decision_log WHERE run_id='2ef32848-e3df-473b-ad4e-548216a33092' AND action='verdict:human_review' ORDER BY hop DESC LIMIT 1), r AS (SELECT hop,detail,observed FROM orchestrator_decision_log WHERE run_id='2ef32848-e3df-473b-ad4e-548216a33092' AND action='effect:human_review_requested') SELECT 1 FROM a JOIN r ON r.hop::text=a.detail->>'review_request_hop' WHERE a.detail->>'approved'='true' AND a.detail->>'review_class'='merge_gate' AND a.detail->>'pr_head_sha'='${FINAL_HEAD_SHA}' AND r.observed->'pr'->>'head_sha'='${FINAL_HEAD_SHA}' AND coalesce(a.detail->>'approved_by','')<>''" | grep -qx 1
+```
+
+**硬阈值**: 权威 request+approval 联表恰有可验证结果；无回执时保持 Draft 并 fail-closed，禁止 merge/deploy。
 
 ## 接缝清单
 
@@ -153,6 +182,7 @@ N/A — 本 Sprint 不新增或修改设备/agent/webhook 调服务端的生产�
 notes:
 - judgment-pending-user: 首次 merge 是否获主理人批准（执行时必须取得显式 approval evidence）。
 - contract-gate: enabled (`packages/brain/src/lib/contract-gate.js` 存在)。
+- remaining-infra-risks: GitHub required-check 配置漂移、self-hosted runner 不可用、GitHub/数据库查询暂时不可达均不由 focused 回归证明；Step 6-8 任一不可用或不确定均保持 Draft。
 
 ### 失败语义声明
 
@@ -190,7 +220,8 @@ set -euo pipefail
 cd "${REPO_ROOT:-/workspace}"
 export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgresql://localhost/cecelia_test}"
 FINAL_HEAD_SHA="$(git rev-parse HEAD)"
-test "$FINAL_HEAD_SHA" = "$(gh pr view 4457 --repo perfectuser21/cecelia --json headRefOid --jq .headRefOid)"
+PR="$(gh pr view 4457 --repo perfectuser21/cecelia --json number,isDraft,headRefName,headRefOid,autoMergeRequest,state)"
+echo "$PR" | jq -e --arg h "$FINAL_HEAD_SHA" '.number==4457 and .isDraft==true and .headRefName=="cp-kernel-phase5b-a1-review-fixes" and .headRefOid==$h and .autoMergeRequest==null and .state=="OPEN"'
 npx vitest run packages/engine/tests/scripts/quickcheck-vitest-exit-classification.test.ts --reporter=verbose
 node --test packages/brain/src/__tests__/native-node-test-runner-registration.test.js
 npm run test:node -w packages/brain
@@ -200,16 +231,29 @@ npx vitest run packages/quality/__tests__/ci-core-regression.test.js --reporter=
 REPORT="$(node scripts/ci/check-kernel-behavior-equivalence.mjs --check-report --format=json)"
 echo "$REPORT" | jq -e '.schema_valid==true and .proof_complete==false and .atomic_cutover_ready==false and (.cell_atomic_coverage|length)==99 and ([.cell_atomic_coverage[]|select((.live_proven_invariant_ids|length)>0 or (.live_proven_probe_ids|length)>0)]|length)==0'
 if node scripts/ci/run-kernel-equivalence-drill.mjs --gate --format=json; then echo "FAIL: manual cutover gate 意外放行"; exit 1; fi
-PR="$(gh pr view 4457 --repo perfectuser21/cecelia --json number,isDraft,headRefName,headRefOid,autoMergeRequest,state)"
-echo "$PR" | jq -e '.number==4457 and .isDraft==true and .headRefName=="cp-kernel-phase5b-a1-review-fixes" and .headRefOid=="'"$FINAL_HEAD_SHA"'" and .autoMergeRequest==null and .state=="OPEN"'
-echo "OK: 四 blocker 等价证明、0/99 fail-closed、evaluator checkout 与 Draft PR head 对齐"
+CHECKS="$(gh pr checks 4457 --repo perfectuser21/cecelia --required --json name,state,bucket)"
+echo "$CHECKS" | jq -e 'length>0 and all(.[]; .state=="SUCCESS")'
+ROWS="$(psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -Atc "SELECT jsonb_build_object('action',action,'verdict',detail->>'verdict','pr_head_sha',detail->>'pr_head_sha') FROM orchestrator_decision_log WHERE run_id='2ef32848-e3df-473b-ad4e-548216a33092' AND action IN ('verdict:evaluate','verdict:judge') ORDER BY hop DESC")"
+for A in verdict:evaluate verdict:judge; do echo "$ROWS" | jq -Rcs --arg a "$A" --arg h "$FINAL_HEAD_SHA" 'split("\n")|map(select(length>0)|fromjson)|map(select(.action==$a))|first|.verdict=="PASS" and .pr_head_sha==$h' | grep -qx true; done
+psql "${DB_URL:-postgresql://localhost/cecelia}" -v ON_ERROR_STOP=1 -Atc "WITH a AS (SELECT hop,detail FROM orchestrator_decision_log WHERE run_id='2ef32848-e3df-473b-ad4e-548216a33092' AND action='verdict:human_review' ORDER BY hop DESC LIMIT 1), r AS (SELECT hop,detail,observed FROM orchestrator_decision_log WHERE run_id='2ef32848-e3df-473b-ad4e-548216a33092' AND action='effect:human_review_requested') SELECT 1 FROM a JOIN r ON r.hop::text=a.detail->>'review_request_hop' WHERE a.detail->>'approved'='true' AND a.detail->>'review_class'='merge_gate' AND a.detail->>'pr_head_sha'='${FINAL_HEAD_SHA}' AND r.observed->'pr'->>'head_sha'='${FINAL_HEAD_SHA}' AND coalesce(a.detail->>'approved_by','')<>''" | grep -qx 1
+echo "OK: 四 blocker、required checks、evaluator/judge 与权威人工批准均绑定 final head"
 ```
 
 ## Test Contract
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| QuickCheck 分类 | `tests/devops-blockers-contract.test.ts` | QuickCheck 未具备三条件 OOM 分类 | 基线脚本对未知非零降级，断言失败 |
-| node:test 登记 | `tests/devops-blockers-contract.test.ts` | mutation seam 未完成双登记 ratchet | 基线缺登记测试/双登记，断言失败 |
-| OKR 隔离 | `tests/devops-blockers-contract.test.ts` | OKR integration 仍依赖外部 Brain | 基线含 BRAIN_URL/fetch/skip，断言失败 |
-| migration 窗口 | `tests/devops-blockers-contract.test.ts` | historical fixture 未显式排除 382 | 新 migration 进入 runner 返回集合，集成预期失败 |
+| QuickCheck 分类 | `tests/devops-blockers-contract.test.ts` | QuickCheck 未具备三条件 OOM 分类 | `expected ... to match /Tests?.*[0-9]+ passed/i` |
+| node:test 登记 | `tests/devops-blockers-contract.test.ts` | mutation seam 未完成双登记 ratchet | `test:node` 不含 mutation seam，`toContain` 断言失败 |
+| OKR 隔离 | `tests/devops-blockers-contract.test.ts` | OKR integration 仍依赖外部 Brain | integration 不含 `supertest`，行为接缝断言失败 |
+| migration 窗口 | `tests/devops-blockers-contract.test.ts` | historical fixture 未显式排除 382 | 缺 382 排除 oracle，行为断言失败 |
+
+## TDD Red 证据（Round 3 实跑）
+
+依赖准备：`npm ci --workspace packages/engine --ignore-scripts`，成功安装锁文件指定依赖。Red 命令使用该 workspace 的已安装 Vitest，不调用会临时下载错误版本的裸 `npx vitest`：
+
+```bash
+packages/engine/node_modules/.bin/vitest run --config sprints/07300855-kernel-pr4457-devops-blockers/tests/vitest.config.mjs --reporter=verbose
+```
+
+实跑结果：Vitest v3.2.4 正常启动并收集 1 个 test file；4 个 `it()` 全部在上表列出的行为断言处失败，exit=1。无 module/config/startup failure。

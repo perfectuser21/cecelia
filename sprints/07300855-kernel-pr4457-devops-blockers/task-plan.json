@@ -6,15 +6,17 @@
     {
       "task_id": "ws1",
       "title": "在既有 Draft PR #4457 完成四个 DevOps blocker 等价修复",
-      "scope": "按冻结合同完成 QuickCheck fail-closed、node:test 双登记、OKR 测试库进程内集成、migration 369-381 冻结，并形成同一 PR head 的 Red/Green、CI、evaluator、judge 与人工批准门证据。",
+      "scope": "按冻结合同完成 QuickCheck fail-closed、node:test 双登记、OKR 测试库进程内集成、migration 369-381 冻结，并形成 exact final PR head 的 Red/Green、GitHub required checks、evaluator PASS、judge PASS 与权威人工批准回执。",
       "dod": [
         "[BEHAVIOR] QuickCheck 对真实失败和未知非零 fail-closed，仅三条件 genuine OOM 降级",
         "[BEHAVIOR] mutation seam 只由 node:test 执行且 Vitest exclude/test:node ratchet 双登记",
         "[BEHAVIOR] OKR integration 仅用 in-process Express/Supertest 与 cecelia_test",
         "[BEHAVIOR] historical migration fixture 精确执行 369-381且生产 migration SQL 不变",
         "[BEHAVIOR] atomic 仍为 schema_valid=true/proof_complete=false/atomic_cutover_ready=false/live proof 0/99",
-        "[BEHAVIOR] evaluator checkout 与 Draft PR #4457 当前 head 一致且保持 Draft；judge 后续复用同一 head，首次 merge 等待人工批准",
-        "[ARTIFACT] 四项 blocker 回归测试与 Red/Green 证据"
+        "[BEHAVIOR] GitHub required checks 集合非空且在 exact final head 全部 SUCCESS",
+        "[BEHAVIOR] evaluator PASS 与 judge PASS 均绑定 exact final head",
+        "[BEHAVIOR] 首次 merge 仅接受受认证 host/operator approval 路由产生的同 head 回执",
+        "[ARTIFACT] 冻结 sprint-prd.md、四项 blocker 回归测试与 Red/Green 证据"
       ],
       "files": [
         "scripts/quickcheck.sh",
@@ -23,7 +25,10 @@
         "packages/brain/vitest.config.js",
         "packages/brain/package.json",
         "packages/brain/src/__tests__/integration/okr-decomposition-flow.integration.test.js",
-        "packages/brain/src/__tests__/integration/kernel-release-runs.integration.test.js"
+        "packages/brain/src/__tests__/integration/kernel-release-runs.integration.test.js",
+        "sprints/07300855-kernel-pr4457-devops-blockers/sprint-prd.md",
+        "sprints/07300855-kernel-pr4457-devops-blockers/tests/devops-blockers-contract.test.ts",
+        "sprints/07300855-kernel-pr4457-devops-blockers/tests/vitest.config.mjs"
       ],
       "depends_on": [],
       "complexity": "L",
