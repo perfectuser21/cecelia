@@ -6,11 +6,19 @@
 
 
 
-**Brain 版本**: 1.267.143
+**Brain 版本**: 1.267.144
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.144 — Assertion receipt repository CAS
+
+- 新增短事务与 receipt repository：成功提交、失败回滚，并始终释放连接。
+- 最终写入以已签合同、同 journey、同断言 revision 做 CAS；合同漂移、歧义合同
+  或同 journey 多 Golden Path 历史均失败关闭。
+- 本层不编排 Runner、不提供 CLI/route/UI，也不宣称生产盖章已上线。
+- 产权变更 B 继续 `effective_now=false`。回退：部署 Brain `1.267.143`。
 
 ## Brain 1.267.143 — Pinned toolchain file safety
 
