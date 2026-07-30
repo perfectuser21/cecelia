@@ -5,7 +5,7 @@
  * 布局：双栏（左：GP 信息；右：ConversationsPanel with gpId 过滤）
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertCircle, Zap, RefreshCw } from 'lucide-react';
 import ConversationsPanel from './ConversationsPanel';
@@ -26,13 +26,100 @@ interface GoldenPath {
 interface JourneyStep {
   id: string;
   step_number: number;
+  promise?: string | null;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+interface PageSnapshot {
+  gp: GoldenPath | null;
+  ledgers: StepLedger[];
+  ledgerUnavailable: boolean;
+  error: string | null;
+}
+
+const verificationStates = new Set(['verified', 'failed', 'never_run', 'not_executable']);
+const ledgerZones = ['capability', 'element', 'scenario', 'base_ref'] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === 'string';
+}
+
+function isGoldenPath(value: unknown): value is GoldenPath {
+  return isRecord(value) &&
+    typeof value.id === 'string' &&
+    isNullableString(value.name ?? null) &&
+    isNullableString(value.title ?? null) &&
+    isNullableString(value.journey_id ?? null) &&
+    isNullableString(value.status ?? null) &&
+    isNullableString(value.one_liner ?? null) &&
+    isNullableString(value.description ?? null);
+}
+
+function isJourneyStep(value: unknown): value is JourneyStep {
+  return isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.step_number === 'number' &&
+    Number.isFinite(value.step_number) &&
+    isNullableString(value.promise ?? null);
+}
+
+function isCoverage(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const keys = ['eligible', 'verified', 'failed', 'never_run', 'percent'];
+  const validNumbers = keys.every((key) =>
+    typeof value[key] === 'number' && Number.isFinite(value[key]) && value[key] >= 0
+  );
+  return validNumbers && (value.percent as number) <= 100;
+}
+
+function isVerification(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return typeof value.state === 'string' &&
+    verificationStates.has(value.state) &&
+    typeof value.verified === 'boolean' &&
+    value.verified === (value.state === 'verified') &&
+    isNullableString(value.last_verified) &&
+    isNullableString(value.last_run_at) &&
+    isNullableString(value.receipt_id) &&
+    isNullableString(value.run_id) &&
+    isNullableString(value.source_sha) &&
+    isNullableString(value.machine_id) &&
+    typeof value.assertion_current === 'boolean';
+}
+
+function isLedgerCell(value: unknown, expectedZone: typeof ledgerZones[number]): boolean {
+  return isRecord(value) &&
+    typeof value.link_id === 'string' &&
+    value.cell_kind === expectedZone &&
+    typeof value.cell_key === 'string' &&
+    typeof value.cell_status === 'string' &&
+    isNullableString(value.assertion_ref) &&
+    typeof value.assertion_state === 'string' &&
+    isNullableString(value.na_reason) &&
+    isVerification(value.verification);
+}
+
+function isStepLedger(value: unknown, expectedStep: JourneyStep): value is StepLedger {
+  if (!isRecord(value) || !isRecord(value.step) || !isRecord(value.zones)) return false;
+  const validStep = value.step.id === expectedStep.id &&
+    typeof value.step.name === 'string' &&
+    value.step.step_number === expectedStep.step_number &&
+    isNullableString(value.step.promise ?? null);
+  const validZones = ledgerZones.every((zone) =>
+    Array.isArray(value.zones[zone]) &&
+    value.zones[zone].every((cellValue) => isLedgerCell(cellValue, zone))
+  );
+  return validStep && validZones && isCoverage(value.coverage);
+}
+
+async function fetchJson(url: string, signal: AbortSignal): Promise<unknown> {
+  const response = await fetch(url, { signal });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${response.status}`);
+    throw new Error(isRecord(body) && typeof body.error === 'string' ? body.error : `HTTP ${response.status}`);
   }
   return response.json();
 }
@@ -42,72 +129,106 @@ async function fetchJson<T>(url: string): Promise<T> {
 export default function WarRoomGoldenPathPage() {
   const { gpId } = useParams<{ gpId: string }>();
   const navigate = useNavigate();
-  const [gp, setGp] = useState<GoldenPath | null>(null);
+  const [snapshot, setSnapshot] = useState<PageSnapshot>({
+    gp: null,
+    ledgers: [],
+    ledgerUnavailable: false,
+    error: null,
+  });
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [ledgers, setLedgers] = useState<StepLedger[]>([]);
-  const [ledgerUnavailable, setLedgerUnavailable] = useState(false);
+  const generationRef = useRef(0);
+  const controllerRef = useRef<AbortController | null>(null);
+  const { gp, ledgers, ledgerUnavailable, error } = snapshot;
 
   const loadPage = useCallback(async (silent = false) => {
     if (!gpId) {
-      setError('GP 不存在或已归档');
+      setSnapshot({ gp: null, ledgers: [], ledgerUnavailable: false, error: 'GP 不存在或已归档' });
       setLoading(false);
       return;
     }
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    const generation = ++generationRef.current;
+    const isCurrent = () => generation === generationRef.current && !controller.signal.aborted;
+
     if (!silent) setLoading(true);
     else setRefreshing(true);
-    setError(null);
     let resolvedGp: GoldenPath | null = null;
 
     try {
-      const gpResponse = await fetchJson<{ golden_paths?: GoldenPath[] }>(
+      const gpPayload = await fetchJson(
         '/api/brain/golden-paths',
+        controller.signal,
       );
-      resolvedGp = (gpResponse.golden_paths || []).find((candidate) => candidate.id === gpId) || null;
+      if (!isCurrent()) return;
+      if (!isRecord(gpPayload) || !Array.isArray(gpPayload.golden_paths) ||
+          !gpPayload.golden_paths.every(isGoldenPath)) {
+        throw new Error('invalid golden paths contract');
+      }
+      resolvedGp = gpPayload.golden_paths.find((candidate) => candidate.id === gpId) || null;
 
       if (!resolvedGp) {
-        setGp(null);
-        setLedgers([]);
-        setError('GP 不存在或已归档');
+        setSnapshot({ gp: null, ledgers: [], ledgerUnavailable: false, error: 'GP 不存在或已归档' });
         return;
       }
 
-      setGp(resolvedGp);
       if (!resolvedGp.journey_id) {
-        setLedgers([]);
-        setLedgerUnavailable(true);
+        setSnapshot({ gp: resolvedGp, ledgers: [], ledgerUnavailable: true, error: null });
         return;
       }
 
       const journeyId = encodeURIComponent(resolvedGp.journey_id);
-      const steps = await fetchJson<JourneyStep[]>(
+      const stepsPayload = await fetchJson(
         `/api/brain/journey_steps?journey_id=${journeyId}`,
+        controller.signal,
       );
+      if (!isCurrent()) return;
+      if (!Array.isArray(stepsPayload) || !stepsPayload.every(isJourneyStep)) {
+        throw new Error('invalid journey steps contract');
+      }
+      const steps = stepsPayload as JourneyStep[];
       const orderedSteps = [...steps].sort((a, b) => a.step_number - b.step_number);
-      const nextLedgers = await Promise.all(
-        orderedSteps.map((step) => fetchJson<StepLedger>(
+      const ledgerPayloads = await Promise.all(
+        orderedSteps.map((step) => fetchJson(
           `/api/brain/journey_steps/${encodeURIComponent(step.id)}/ledger`,
+          controller.signal,
         )),
       );
+      if (!isCurrent()) return;
+      if (!ledgerPayloads.every((payload, index) => isStepLedger(payload, orderedSteps[index]))) {
+        throw new Error('invalid step ledger contract');
+      }
 
-      setLedgers(nextLedgers);
-      setLedgerUnavailable(false);
-    } catch {
+      setSnapshot({
+        gp: resolvedGp,
+        ledgers: ledgerPayloads as StepLedger[],
+        ledgerUnavailable: false,
+        error: null,
+      });
+    } catch (caughtError) {
+      if (!isCurrent() || (caughtError instanceof DOMException && caughtError.name === 'AbortError')) return;
       if (resolvedGp) {
-        setGp(resolvedGp);
-        setLedgerUnavailable(true);
+        setSnapshot({ gp: resolvedGp, ledgers: [], ledgerUnavailable: true, error: null });
       } else {
-        setGp(null);
-        setError('GP 数据不可用');
+        setSnapshot({ gp: null, ledgers: [], ledgerUnavailable: false, error: 'GP 数据不可用' });
       }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isCurrent()) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [gpId]);
 
-  useEffect(() => { loadPage(); }, [loadPage]);
+  useEffect(() => {
+    void loadPage();
+    return () => {
+      generationRef.current += 1;
+      controllerRef.current?.abort();
+    };
+  }, [loadPage]);
 
   if (loading) {
     return (

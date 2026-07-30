@@ -121,12 +121,15 @@ describe('WarRoomGoldenPathPage assertion verification presentation', () => {
     expect(paper).toHaveClass('bg-slate-800/70');
     expect(paper).not.toHaveClass('bg-emerald-500/10');
     expect(within(paper).getByText('仅纸面断言')).toBeInTheDocument();
+    expect(screen.getByLabelText('收到消息，能力，已验证能力，业务状态 green，已执行验证'))
+      .toHaveClass('bg-emerald-500/10');
   });
   it('marks a previous PASS as historical after the latest failure', async () => {
     render(<WarRoomGoldenPathPage />);
     const failed = await screen.findByLabelText('收到消息，11 要素，最近失败要素，业务状态 green，最近执行失败');
     expect(within(failed).getByText('最近执行失败')).toBeInTheDocument();
     expect(within(failed).getByText(/历史通过：/)).toBeInTheDocument();
+    expect(failed).toHaveClass('bg-red-500/10');
   });
   it('shows API coverage without counting semantic cells', async () => {
     render(<WarRoomGoldenPathPage />);
