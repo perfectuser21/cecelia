@@ -1,6 +1,14 @@
 # Brain 模块定义
 
-**版本**: 1.267.144
+**版本**: 1.267.145
+
+## Assertion receipt repository hardening
+
+- 合同读取与 receipt INSERT CAS 均验证目标是同一 GP 的最新版本；新待签版本存在
+  时拒绝复用旧 Owner 签字。
+- `inShortTransaction` 仅接受 PostgreSQL Pool；非 Pool 输入失败关闭，禁止静默
+  绕过事务和 SERIALIZABLE 并发边界。
+- 本层仍不含 Runner orchestration、CLI、route、UI 或 PostgreSQL 全链路集成。
 
 ## Assertion receipt repository CAS
 
