@@ -147,6 +147,7 @@ describe('migration 374 Golden Path assertion receipts [PostgreSQL]', () => {
     for (const [column, value] of [
       ['cell_key', `${fixture}-changed-key`], ['feature_id', featureId],
       ['na_reason', 'not applicable after contract revision'],
+      ['cell_kind', 'scenario'],
     ]) {
       const changed = await client.query(
         `UPDATE journey_step_links SET ${column}=$2 WHERE id=$1
