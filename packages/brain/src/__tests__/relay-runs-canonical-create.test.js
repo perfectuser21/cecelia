@@ -14,6 +14,7 @@ vi.mock('../db.js', () => ({ default: mockPool }));
 vi.mock('../orchestrator/kernel-run-store.js', () => ({
   createKernelRun: mockCreateKernelRun,
   loadKernelRunById: vi.fn(),
+  patchLegacyKernelRunByInitiative: vi.fn(),
   patchKernelRunById: vi.fn(),
 }));
 

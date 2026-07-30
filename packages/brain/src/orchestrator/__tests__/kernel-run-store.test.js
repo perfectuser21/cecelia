@@ -4,6 +4,7 @@ import {
   finalizeKernelRun,
   loadActiveKernelRun,
   loadKernelRunById,
+  patchLegacyKernelRunByInitiative,
   patchKernelRunById,
   reconcileKernelTaskTerminal,
 } from '../kernel-run-store.js';
@@ -47,6 +48,10 @@ function transactionPool({
       }
       if (sql === 'ROLLBACK') {
         order.push('ROLLBACK');
+        return { rows: [] };
+      }
+      if (/pg_advisory_xact_lock/.test(sql)) {
+        order.push('advisory-lock');
         return { rows: [] };
       }
       if (/FROM tasks/.test(sql) && /FOR UPDATE/.test(sql)) {
@@ -222,6 +227,8 @@ describe('Kernel run store creation authority', () => {
     ]);
     expect(harness.order).toEqual([
       'BEGIN',
+      'advisory-lock',
+      'advisory-lock',
       'task-lock',
       'active-run',
       'insert-run',
@@ -245,6 +252,8 @@ describe('Kernel run store creation authority', () => {
     expect(result).toEqual({ created: false, run: activeRun });
     expect(harness.order).toEqual([
       'BEGIN',
+      'advisory-lock',
+      'advisory-lock',
       'task-lock',
       'active-run',
       'COMMIT',
@@ -279,6 +288,8 @@ describe('Kernel run store creation authority', () => {
       .rejects.toThrow(`kernel run task ${TASK_ID} not eligible`);
     expect(harness.order).toEqual([
       'BEGIN',
+      'advisory-lock',
+      'advisory-lock',
       'task-lock',
       'ROLLBACK',
       'release',
@@ -315,10 +326,105 @@ describe('Kernel run store creation authority', () => {
       );
     expect(harness.order).toEqual([
       'BEGIN',
+      'advisory-lock',
+      'advisory-lock',
       'task-lock',
       'ROLLBACK',
       'release',
     ]);
+  });
+});
+
+describe('Legacy run mutation serialization', () => {
+  it('holds an initiative advisory lock through candidate resolution and exact patch', async () => {
+    const calls = [];
+    const client = {
+      query: vi.fn(async (sql, params) => {
+        calls.push({ sql, params });
+        if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [] };
+        if (/pg_advisory_xact_lock/.test(sql)) return { rows: [] };
+        if (/SELECT id\s+FROM initiative_runs/.test(sql)) {
+          return { rows: [{ id: RUN_ID }] };
+        }
+        if (/FROM initiative_runs/.test(sql) && !/FOR UPDATE/.test(sql)) {
+          return {
+            rows: [{
+              id: RUN_ID,
+              initiative_id: INITIATIVE_ID,
+              current_task_id: TASK_ID,
+              phase: 'planning',
+            }],
+          };
+        }
+        if (/FROM tasks/.test(sql) && /FOR UPDATE/.test(sql)) {
+          return { rows: [{ id: TASK_ID, status: 'in_progress' }] };
+        }
+        if (/FROM initiative_runs/.test(sql) && /FOR UPDATE/.test(sql)) {
+          return {
+            rows: [{
+              id: RUN_ID,
+              current_task_id: TASK_ID,
+              phase: 'planning',
+            }],
+          };
+        }
+        if (/UPDATE initiative_runs/.test(sql)) {
+          return {
+            rows: [{
+              id: RUN_ID,
+              initiative_id: INITIATIVE_ID,
+              current_task_id: TASK_ID,
+              phase: 'evaluate',
+            }],
+            rowCount: 1,
+          };
+        }
+        if (/INSERT INTO cecelia_events/.test(sql)) return { rows: [], rowCount: 1 };
+        throw new Error(`unexpected SQL: ${sql}`);
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(async () => client) };
+
+    const result = await patchLegacyKernelRunByInitiative(pool, {
+      rawId: INITIATIVE_ID,
+      patch: { phase: 'evaluate' },
+    });
+
+    expect(result).toMatchObject({
+      candidateCount: 1,
+      run: { id: RUN_ID, phase: 'evaluate' },
+    });
+    const lockIndex = calls.findIndex(({ sql }) => /pg_advisory_xact_lock/.test(sql));
+    const candidateIndex = calls.findIndex(({ sql }) => /SELECT id\s+FROM initiative_runs/.test(sql));
+    const updateIndex = calls.findIndex(({ sql }) => /UPDATE initiative_runs/.test(sql));
+    const commitIndex = calls.findIndex(({ sql }) => sql === 'COMMIT');
+    expect(lockIndex).toBeGreaterThan(-1);
+    expect(candidateIndex).toBeGreaterThan(lockIndex);
+    expect(updateIndex).toBeGreaterThan(candidateIndex);
+    expect(commitIndex).toBeGreaterThan(updateIndex);
+    expect(calls[lockIndex].params).toEqual([`relay-initiative:${INITIATIVE_ID}`]);
+  });
+
+  it('fails closed under the same advisory lock when history is ambiguous', async () => {
+    const client = {
+      query: vi.fn(async (sql) => {
+        if (/SELECT id\s+FROM initiative_runs/.test(sql)) {
+          return { rows: [{ id: RUN_ID }, { id: INITIATIVE_ID }] };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+
+    const result = await patchLegacyKernelRunByInitiative(
+      { connect: vi.fn(async () => client) },
+      { rawId: INITIATIVE_ID, patch: { phase: 'evaluate' } },
+    );
+
+    expect(result).toEqual({ candidateCount: 2, run: null });
+    expect(client.query.mock.calls.some(([sql]) => /UPDATE initiative_runs/.test(sql))).toBe(false);
+    expect(client.query).toHaveBeenCalledWith('COMMIT');
   });
 });
 

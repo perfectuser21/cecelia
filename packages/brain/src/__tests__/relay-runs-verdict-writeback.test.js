@@ -4,9 +4,11 @@ import request from 'supertest';
 
 const {
   mockPool,
+  mockPatchLegacy,
   mockPatchKernelRunById,
 } = vi.hoisted(() => ({
   mockPool: { query: vi.fn(), connect: vi.fn() },
+  mockPatchLegacy: vi.fn(),
   mockPatchKernelRunById: vi.fn(),
 }));
 
@@ -14,6 +16,7 @@ vi.mock('../db.js', () => ({ default: mockPool }));
 vi.mock('../orchestrator/kernel-run-store.js', () => ({
   createKernelRun: vi.fn(),
   loadKernelRunById: vi.fn(),
+  patchLegacyKernelRunByInitiative: mockPatchLegacy,
   patchKernelRunById: mockPatchKernelRunById,
 }));
 
@@ -32,9 +35,16 @@ async function buildApp() {
 describe('legacy verdict/cost adapter delegates normalized fields', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockPool.query
-      .mockResolvedValueOnce({ rows: [{ id: RUN_ID }] })
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    mockPatchLegacy.mockResolvedValue({
+      candidateCount: 1,
+      run: {
+        id: RUN_ID,
+        initiative_id: INITIATIVE_ID,
+        phase: 'done',
+        judge_verdict: 'PASS',
+        cost_usd: 1.23,
+      },
+    });
     mockPatchKernelRunById.mockResolvedValue({
       id: RUN_ID,
       initiative_id: INITIATIVE_ID,
@@ -60,14 +70,15 @@ describe('legacy verdict/cost adapter delegates normalized fields', () => {
     });
     expect(response.status).toBe(200);
 
-    expect(mockPatchKernelRunById).toHaveBeenCalledWith(
+    expect(mockPatchLegacy).toHaveBeenCalledWith(
       mockPool,
       expect.objectContaining({
-        runId: RUN_ID,
-        phase: 'done',
-        judgeVerdict: 'PASS',
-        costUsd: 1.23,
-        prUrl: 'https://github.com/x/y/pull/1',
+        patch: expect.objectContaining({
+          phase: 'done',
+          judgeVerdict: 'PASS',
+          costUsd: 1.23,
+          prUrl: 'https://github.com/x/y/pull/1',
+        }),
       }),
     );
   });
@@ -75,9 +86,11 @@ describe('legacy verdict/cost adapter delegates normalized fields', () => {
   it('keeps invalid verdict best-effort and reports a warning', async () => {
     const response = await patch({ phase: 'done', verdict: 'MAYBE' });
     expect(response.status).toBe(200);
-    expect(mockPatchKernelRunById).toHaveBeenCalledWith(
+    expect(mockPatchLegacy).toHaveBeenCalledWith(
       mockPool,
-      expect.objectContaining({ judgeVerdict: null }),
+      expect.objectContaining({
+        patch: expect.objectContaining({ judgeVerdict: null }),
+      }),
     );
     expect(response.body.warnings).toContain('verdict_ignored');
   });
@@ -85,9 +98,11 @@ describe('legacy verdict/cost adapter delegates normalized fields', () => {
   it('keeps negative cost best-effort and reports a warning', async () => {
     const response = await patch({ phase: 'done', cost: -1 });
     expect(response.status).toBe(200);
-    expect(mockPatchKernelRunById).toHaveBeenCalledWith(
+    expect(mockPatchLegacy).toHaveBeenCalledWith(
       mockPool,
-      expect.objectContaining({ costUsd: null }),
+      expect.objectContaining({
+        patch: expect.objectContaining({ costUsd: null }),
+      }),
     );
     expect(response.body.warnings).toContain('cost_ignored');
   });
@@ -95,11 +110,13 @@ describe('legacy verdict/cost adapter delegates normalized fields', () => {
   it('passes FIXED evaluator verdict through unchanged', async () => {
     const response = await patch({ phase: 'evaluate', evaluate_verdict: 'FIXED' });
     expect(response.status).toBe(200);
-    expect(mockPatchKernelRunById).toHaveBeenCalledWith(
+    expect(mockPatchLegacy).toHaveBeenCalledWith(
       mockPool,
       expect.objectContaining({
-        phase: 'evaluate',
-        evaluateVerdict: 'FIXED',
+        patch: expect.objectContaining({
+          phase: 'evaluate',
+          evaluateVerdict: 'FIXED',
+        }),
       }),
     );
   });
@@ -107,12 +124,14 @@ describe('legacy verdict/cost adapter delegates normalized fields', () => {
   it('uses nulls when optional verdict and cost fields are absent', async () => {
     const response = await patch({ phase: 'done' });
     expect(response.status).toBe(200);
-    expect(mockPatchKernelRunById).toHaveBeenCalledWith(
+    expect(mockPatchLegacy).toHaveBeenCalledWith(
       mockPool,
       expect.objectContaining({
-        evaluateVerdict: null,
-        judgeVerdict: null,
-        costUsd: null,
+        patch: expect.objectContaining({
+          evaluateVerdict: null,
+          judgeVerdict: null,
+          costUsd: null,
+        }),
       }),
     );
     expect(response.body).not.toHaveProperty('warnings');

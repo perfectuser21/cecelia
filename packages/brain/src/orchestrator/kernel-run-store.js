@@ -77,6 +77,7 @@ export async function patchKernelRunById(pool, {
   evaluateVerdict = null,
   judgeVerdict = null,
   costUsd = null,
+  transactionClient = null,
 }) {
   if (![
     'planning',
@@ -89,13 +90,14 @@ export async function patchKernelRunById(pool, {
     throw new Error(`invalid Kernel run patch phase: ${phase}`);
   }
 
-  const identity = await loadKernelRunById(pool, runId);
+  const identity = await loadKernelRunById(transactionClient ?? pool, runId);
   if (!identity) return null;
 
-  const client = await pool.connect();
+  const ownsTransaction = transactionClient === null;
+  const client = transactionClient ?? await pool.connect();
   let committed = false;
   try {
-    await client.query('BEGIN');
+    if (ownsTransaction) await client.query('BEGIN');
 
     let task = null;
     if (identity.current_task_id) {
@@ -119,7 +121,7 @@ export async function patchKernelRunById(pool, {
     );
     const current = runRows[0];
     if (!current) {
-      await client.query('COMMIT');
+      if (ownsTransaction) await client.query('COMMIT');
       committed = true;
       return null;
     }
@@ -224,9 +226,81 @@ export async function patchKernelRunById(pool, {
       }
     }
 
-    await client.query('COMMIT');
+    if (ownsTransaction) await client.query('COMMIT');
     committed = true;
     return updatedRows[0] ?? null;
+  } catch (error) {
+    if (ownsTransaction && !committed) await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    if (ownsTransaction) client.release();
+  }
+}
+
+export async function patchLegacyKernelRunByInitiative(pool, {
+  rawId,
+  patch,
+}) {
+  const isFullUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(rawId);
+  const isShortId = /^[0-9a-f]{8}$/i.test(rawId);
+  if (!isFullUUID && !isShortId) {
+    const error = new Error('invalid id format');
+    error.status = 400;
+    throw error;
+  }
+
+  const client = await pool.connect();
+  let committed = false;
+  try {
+    await client.query('BEGIN');
+    const lockIdentity = isFullUUID
+      ? `relay-initiative:${rawId}`
+      : `relay-prefix:${rawId.toLowerCase()}`;
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      [lockIdentity],
+    );
+    const condition = isFullUUID
+      ? 'initiative_id = $1'
+      : 'initiative_id::text LIKE $1';
+    const value = isFullUUID ? rawId : `${rawId}%`;
+    const { rows: candidates } = await client.query(
+      `SELECT id
+         FROM initiative_runs
+        WHERE ${condition}
+          AND orchestrator_version = 'v2'
+        ORDER BY started_at DESC, id DESC`,
+      [value],
+    );
+    if (candidates.length !== 1) {
+      await client.query('COMMIT');
+      committed = true;
+      return { candidateCount: candidates.length, run: null };
+    }
+
+    const runId = candidates[0].id;
+    const run = await patchKernelRunById(pool, {
+      runId,
+      ...patch,
+      transactionClient: client,
+    });
+    if (!run) {
+      await client.query('COMMIT');
+      committed = true;
+      return { candidateCount: 0, run: null };
+    }
+    await client.query(
+      `INSERT INTO cecelia_events (event_type, source, payload)
+       VALUES ('legacy_relay_mutation', 'relay-run-api', $1::jsonb)`,
+      [JSON.stringify({
+        legacy_identifier: rawId,
+        run_id: runId,
+        canonical_endpoint: `/api/brain/orchestrator/relay-runs/by-id/${runId}`,
+      })],
+    );
+    await client.query('COMMIT');
+    committed = true;
+    return { candidateCount: 1, run };
   } catch (error) {
     if (!committed) await client.query('ROLLBACK');
     throw error;
@@ -241,6 +315,14 @@ export async function createKernelRun(pool, input) {
   let committed = false;
   try {
     await client.query('BEGIN');
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      [`relay-prefix:${input.initiativeId.replaceAll('-', '').slice(0, 8).toLowerCase()}`],
+    );
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      [`relay-initiative:${input.initiativeId}`],
+    );
     const { rows: taskRows } = await client.query(
       `SELECT id, task_type, status, payload
          FROM tasks

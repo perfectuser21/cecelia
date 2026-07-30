@@ -4,9 +4,11 @@ import request from 'supertest';
 
 const {
   mockPool,
+  mockPatchLegacy,
   mockPatchKernelRunById,
 } = vi.hoisted(() => ({
   mockPool: { query: vi.fn(), connect: vi.fn() },
+  mockPatchLegacy: vi.fn(),
   mockPatchKernelRunById: vi.fn(),
 }));
 
@@ -14,6 +16,7 @@ vi.mock('../db.js', () => ({ default: mockPool }));
 vi.mock('../orchestrator/kernel-run-store.js', () => ({
   createKernelRun: vi.fn(),
   loadKernelRunById: vi.fn(),
+  patchLegacyKernelRunByInitiative: mockPatchLegacy,
   patchKernelRunById: mockPatchKernelRunById,
 }));
 
@@ -33,6 +36,14 @@ async function buildApp() {
 describe('legacy initiative-addressed relay mutation adapter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPatchLegacy.mockResolvedValue({
+      candidateCount: 1,
+      run: {
+        id: RUN_ID,
+        initiative_id: INITIATIVE_ID,
+        phase: 'evaluate',
+      },
+    });
     mockPatchKernelRunById.mockResolvedValue({
       id: RUN_ID,
       initiative_id: INITIATIVE_ID,
@@ -41,7 +52,7 @@ describe('legacy initiative-addressed relay mutation adapter', () => {
   });
 
   it('returns 404 without mutation when no candidate exists', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPatchLegacy.mockResolvedValueOnce({ candidateCount: 0, run: null });
     const app = await buildApp();
 
     const response = await request(app)
@@ -53,9 +64,7 @@ describe('legacy initiative-addressed relay mutation adapter', () => {
   });
 
   it('returns 409 and never guesses when an initiative has multiple runs', async () => {
-    mockPool.query.mockResolvedValueOnce({
-      rows: [{ id: RUN_ID }, { id: OTHER_RUN_ID }],
-    });
+    mockPatchLegacy.mockResolvedValueOnce({ candidateCount: 2, run: null });
     const app = await buildApp();
 
     const response = await request(app)
@@ -68,15 +77,12 @@ describe('legacy initiative-addressed relay mutation adapter', () => {
       candidate_count: 2,
     });
     expect(mockPatchKernelRunById).not.toHaveBeenCalled();
-    const [sql] = mockPool.query.mock.calls[0];
-    expect(sql).toMatch(/SELECT id/i);
-    expect(sql).not.toMatch(/LIMIT\s+1/i);
+    expect(mockPatchLegacy).toHaveBeenCalledWith(mockPool, expect.objectContaining({
+      rawId: INITIATIVE_ID,
+    }));
   });
 
   it('records deprecation telemetry and delegates one candidate by run id', async () => {
-    mockPool.query
-      .mockResolvedValueOnce({ rows: [{ id: RUN_ID }] })
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
     const app = await buildApp();
 
     const response = await request(app)
@@ -89,22 +95,17 @@ describe('legacy initiative-addressed relay mutation adapter', () => {
       canonical_run_id: RUN_ID,
       deprecated: true,
     });
-    expect(mockPatchKernelRunById).toHaveBeenCalledWith(
+    expect(mockPatchLegacy).toHaveBeenCalledWith(
       mockPool,
-      expect.objectContaining({ runId: RUN_ID, phase: 'evaluate' }),
+      expect.objectContaining({
+        rawId: INITIATIVE_ID,
+        patch: expect.objectContaining({ phase: 'evaluate' }),
+      }),
     );
-    const eventCall = mockPool.query.mock.calls.find(([sql]) => (
-      /INSERT INTO cecelia_events/i.test(sql)
-    ));
-    expect(eventCall).toBeTruthy();
-    expect(eventCall[0]).toContain("'legacy_relay_mutation'");
-    expect(eventCall[1][0]).toContain(RUN_ID);
   });
 
   it('treats an ambiguous short initiative prefix as 409', async () => {
-    mockPool.query.mockResolvedValueOnce({
-      rows: [{ id: RUN_ID }, { id: OTHER_RUN_ID }],
-    });
+    mockPatchLegacy.mockResolvedValueOnce({ candidateCount: 2, run: null });
     const app = await buildApp();
 
     const response = await request(app)
@@ -113,9 +114,8 @@ describe('legacy initiative-addressed relay mutation adapter', () => {
 
     expect(response.status).toBe(409);
     expect(mockPatchKernelRunById).not.toHaveBeenCalled();
-    const [sql, params] = mockPool.query.mock.calls[0];
-    expect(sql).toMatch(/initiative_id::text LIKE \$1/i);
-    expect(sql).not.toMatch(/LIMIT\s+1/i);
-    expect(params).toEqual(['11111111%']);
+    expect(mockPatchLegacy).toHaveBeenCalledWith(mockPool, expect.objectContaining({
+      rawId: '11111111',
+    }));
   });
 });

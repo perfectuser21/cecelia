@@ -23,6 +23,7 @@ import pool from '../db.js';
 import {
   createKernelRun,
   loadKernelRunById,
+  patchLegacyKernelRunByInitiative,
   patchKernelRunById,
 } from '../orchestrator/kernel-run-store.js';
 
@@ -616,29 +617,6 @@ router.get('/relay-initiatives/:initiative_id/runs', async (req, res) => {
   }
 });
 
-const SHORT_ID_RE = /^[0-9a-f]{8}$/i;
-
-async function resolveLegacyRunCandidates(rawId, db) {
-  const isFullUUID = UUID_RE.test(rawId);
-  const isShortId = SHORT_ID_RE.test(rawId);
-  if (!isFullUUID && !isShortId) {
-    throw { status: 400, message: 'invalid id format' };
-  }
-  const condition = isFullUUID
-    ? 'initiative_id = $1'
-    : 'initiative_id::text LIKE $1';
-  const value = isFullUUID ? rawId : `${rawId}%`;
-  const { rows } = await db.query(
-    `SELECT id
-       FROM initiative_runs
-      WHERE ${condition}
-        AND orchestrator_version = 'v2'
-      ORDER BY started_at DESC, id DESC`,
-    [value],
-  );
-  return rows;
-}
-
 /**
  * PATCH /api/brain/orchestrator/relay-runs/:initiative_id
  *
@@ -648,57 +626,41 @@ async function resolveLegacyRunCandidates(rawId, db) {
  */
 router.patch('/relay-runs/:initiative_id', async (req, res) => {
   const { initiative_id: rawId } = req.params;
+  if (!UUID_RE.test(rawId) && !/^[0-9a-f]{8}$/i.test(rawId)) {
+    return res.status(400).json({ error: 'invalid id format' });
+  }
   const parsed = validateRunPatchBody(req.body);
   if (parsed.error) {
     return res.status(parsed.error.status).json(parsed.error.body);
   }
   const requestPool = req.app.get('pool') || pool;
-  let candidates;
   try {
-    candidates = await resolveLegacyRunCandidates(rawId, requestPool);
-  } catch (err) {
-    if (err.status === 400) return res.status(400).json({ error: err.message });
-    console.warn('[PATCH /orchestrator/relay-runs/:id] resolve error', rawId, err.message);
-    return res.status(500).json({ error: 'internal error' });
-  }
-
-  if (candidates.length === 0) {
-    return res.status(404).json({
-      error: `v2 run not found for legacy identifier: ${rawId}`,
+    const result = await patchLegacyKernelRunByInitiative(requestPool, {
+      rawId,
+      patch: parsed.patch,
     });
-  }
-  if (candidates.length > 1) {
-    return res.status(409).json({
-      error: 'ambiguous_legacy_run',
-      candidate_count: candidates.length,
-      canonical_endpoint: '/api/brain/orchestrator/relay-runs/by-id/:run_id',
-    });
-  }
-
-  const runId = candidates[0].id;
-  try {
-    await requestPool.query(
-      `INSERT INTO cecelia_events (event_type, source, payload)
-       VALUES ('legacy_relay_mutation', 'relay-run-api', $1::jsonb)`,
-      [JSON.stringify({
-        legacy_identifier: rawId,
-        run_id: runId,
-        canonical_endpoint: `/api/brain/orchestrator/relay-runs/by-id/${runId}`,
-      })],
-    );
-    const run = await patchKernelRunById(requestPool, {
-      runId,
-      ...parsed.patch,
-    });
-    if (!run) return res.status(404).json({ error: 'run not found' });
+    if (result.candidateCount === 0) {
+      return res.status(404).json({
+        error: `v2 run not found for legacy identifier: ${rawId}`,
+      });
+    }
+    if (result.candidateCount > 1) {
+      return res.status(409).json({
+        error: 'ambiguous_legacy_run',
+        candidate_count: result.candidateCount,
+        canonical_endpoint: '/api/brain/orchestrator/relay-runs/by-id/:run_id',
+      });
+    }
+    const { run } = result;
     const response = {
       ...run,
-      canonical_run_id: runId,
+      canonical_run_id: run.id,
       deprecated: true,
     };
     if (parsed.warnings.length) response.warnings = parsed.warnings;
     return res.json(response);
   } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
     if (
       err.message?.includes('terminal outcome conflict')
       || err.message?.includes('parent task missing')
