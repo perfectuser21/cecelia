@@ -724,9 +724,10 @@ export async function extractConversationLearning(userMessage, reply, dbPool) {
     if (existing.rows.length > 0) return;
 
     const summary = generateL0Summary(`${parsed.title} ${parsed.content}`);
-    await dbPool.query(`
+    const insertResult = await dbPool.query(`
       INSERT INTO learnings (title, content, summary, category, trigger_event, content_hash, version, is_latest, digested)
       VALUES ($1, $2, $3, $4, $5, $6, 1, true, false)
+      RETURNING id
     `, [
       parsed.title,
       parsed.content,
@@ -737,6 +738,14 @@ export async function extractConversationLearning(userMessage, reply, dbPool) {
     ]);
 
     console.log(`[learning] conversation learning extracted: ${parsed.title}`);
+    // T10 统一收件箱：对话中提取的 learning 落库后顺手进箱
+    await pushCaptureAtom(dbPool, {
+      content: `learning: ${parsed.title}\n${summary}`,
+      targetType: 'learning',
+      targetSubtype: parsed.category || 'conversation_insight',
+      routedToTable: 'learnings',
+      routedToId: insertResult?.rows?.[0]?.id,
+    }).catch(err => console.warn('[learning] pushCaptureAtom failed:', err.message));
   } catch (err) {
     console.warn('[learning] extractConversationLearning failed (non-blocking):', err.message);
   }
@@ -781,6 +790,14 @@ export async function upsertLearning({ title, content = '', category = 'general'
      RETURNING id`,
     [title, category, triggerEvent, content, task_id || null]
   );
+  // T10 统一收件箱：upsertLearning 新建分支落库后顺手进箱
+  await pushCaptureAtom(p, {
+    content: `learning: ${title}\n${content}`,
+    targetType: 'learning',
+    targetSubtype: category,
+    routedToTable: 'learnings',
+    routedToId: result.rows[0].id,
+  }).catch(err => console.warn('[learning] pushCaptureAtom failed:', err.message));
   return { id: result.rows[0].id, upserted: true };
 }
 

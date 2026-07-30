@@ -17,6 +17,7 @@ import { validateDecision, hasDangerousActions, ACTION_WHITELIST } from './thala
 import { CORTEX_ACTION_WHITELIST } from './cortex.js';
 import { signAndLaunchGoldenPathContract } from './golden-path-contracts.js';
 import { broadcast } from './websocket.js';
+import { pushCaptureAtom } from './capture-inbox.js';
 
 // ============================================================
 // Proposal Constants
@@ -325,6 +326,14 @@ const actionHandlers = {
     );
     const id = result.rows[0]?.id;
     console.log(`[executor] create_learning: 已插入 learning ${id}`);
+    // T10 统一收件箱：decision action create_learning 落库后顺手进箱
+    await pushCaptureAtom(pool, {
+      content: `learning: ${content}`,
+      targetType: 'learning',
+      targetSubtype: 'decision_action',
+      routedToTable: 'learnings',
+      routedToId: id,
+    }).catch(err => console.warn('[executor] pushCaptureAtom failed:', err.message));
     return { success: true, learning_id: id };
   },
 
@@ -404,6 +413,14 @@ const actionHandlers = {
     );
     const id = result.rows[0]?.id;
     console.log(`[executor] suggest_task_type: 已记录 learning ${id}（不修改 task_type）`);
+    // T10 统一收件箱：decision action suggest_task_type 落库后顺手进箱
+    await pushCaptureAtom(pool, {
+      content: `learning: ${content}`,
+      targetType: 'learning',
+      targetSubtype: 'task_type_suggestion',
+      routedToTable: 'learnings',
+      routedToId: id,
+    }).catch(err => console.warn('[executor] pushCaptureAtom failed:', err.message));
 
     return { action: 'suggested', task_id, suggested_type, learning_id: id };
   },

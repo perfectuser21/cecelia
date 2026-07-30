@@ -37,6 +37,7 @@ import { loadSkillContent, assertSprintDir } from './harness-shared.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import { EXECUTOR_KIND_FOR, resolveExecutorKind } from './executor-contracts.js';
+import { pushCaptureAtom } from './capture-inbox.js';
 import {
   sampleCpuUsage as platformSampleCpuUsage,
   _resetCpuSampler as platformResetCpuSampler,
@@ -1102,9 +1103,10 @@ async function requeueTask(taskId, reason, evidence = {}) {
     );
 
     if (existing.rows.length === 0) {
-      await pool.query(`
+      const insertResult = await pool.query(`
         INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, task_id, summary)
         VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3, $4, 1, true, false, $5, $6)
+        RETURNING id
       `, [
         failureTitle,
         failureContent,
@@ -1113,6 +1115,14 @@ async function requeueTask(taskId, reason, evidence = {}) {
         taskId || null,
         generateL0Summary(`${failureTitle} ${failureContent}`),
       ]);
+      // T10 统一收件箱：watchdog failure_pattern learning 落库后顺手进箱
+      await pushCaptureAtom(pool, {
+        content: `learning: ${failureTitle}\n${failureContent}`,
+        targetType: 'learning',
+        targetSubtype: 'failure_pattern',
+        routedToTable: 'learnings',
+        routedToId: insertResult?.rows?.[0]?.id,
+      }).catch(err => console.warn('[executor] pushCaptureAtom failed:', err.message));
     } else {
       console.log(`[executor] Skipping duplicate failure_pattern (hash=${contentHash})`);
     }

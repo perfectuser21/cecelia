@@ -12,34 +12,34 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] 新增结构性回归测试文件 `packages/brain/src/__tests__/learnings-capture-atom-routing.test.js` 存在
+- [x] [ARTIFACT] 新增结构性回归测试文件 `packages/brain/src/__tests__/learnings-capture-atom-routing.test.js` 存在
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/learnings-capture-atom-routing.test.js','utf8');if(!c.includes('pushCaptureAtom')||!c.includes('INSERT INTO learnings'))process.exit(1)"
 
-- [ ] [ARTIFACT] 新增行为级复现测试文件 `packages/brain/src/__tests__/cortex-learnings-capture-push.test.js` 存在
+- [x] [ARTIFACT] 新增行为级复现测试文件 `packages/brain/src/__tests__/cortex-learnings-capture-push.test.js` 存在
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/cortex-learnings-capture-push.test.js','utf8');if(!c.includes('pushCaptureAtom')||!c.includes('recordLearnings'))process.exit(1)"
 
-- [ ] [ARTIFACT] 11 处调用点所在的 8 个源文件均新增 `pushCaptureAtom` 引用（静态文本检查，逐个文件确认，与结构性测试互为交叉验证）
+- [x] [ARTIFACT] 11 处调用点所在的 8 个源文件均新增 `pushCaptureAtom` 引用（静态文本检查，逐个文件确认，与结构性测试互为交叉验证）
   Test: node -e "const fs=require('fs');const files=['packages/brain/src/cortex.js','packages/brain/src/executor.js','packages/brain/src/conversation-consolidator.js','packages/brain/src/learning.js','packages/brain/src/auto-learning.js','packages/brain/src/chat-action-dispatcher.js','packages/brain/src/decision-executor.js','packages/brain/src/fact-extractor.js'];for(const f of files){const c=fs.readFileSync(f,'utf8');if(!c.includes('pushCaptureAtom')){console.error('MISSING pushCaptureAtom import/call in '+f);process.exit(1);}}"
 
 ## BEHAVIOR 条目（journey_type = autonomous，内嵌可执行 manual: 命令）
 
-- [ ] [BEHAVIOR] 结构性回归测试通过：`packages/brain/src/` 下所有 `INSERT INTO learnings` 调用点，其所在函数体内都含 `pushCaptureAtom`（source-code inspection，零 mock，永久 CI，防止未来新增写入点再次漏接）
+- [x] [BEHAVIOR] 结构性回归测试通过：`packages/brain/src/` 下所有 `INSERT INTO learnings` 调用点，其所在函数体内都含 `pushCaptureAtom`（source-code inspection，零 mock，永久 CI，防止未来新增写入点再次漏接）
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/learnings-capture-atom-routing.test.js --reporter=verbose 2>&1 | tail -40; EXIT=${PIPESTATUS[0]:-$?}; [ "$EXIT" -eq 0 ] && echo OK || exit 1'
   期望: OK
 
-- [ ] [BEHAVIOR] `cortex.js::recordLearnings` 行为级复现测试通过：写入 `learnings` 成功后调用 `pushCaptureAtom`，推送字段（targetType/targetSubtype/routedToTable/routedToId）与既有约定一致（复现 m7 探针误报的原始 issue 场景）
+- [x] [BEHAVIOR] `cortex.js::recordLearnings` 行为级复现测试通过：写入 `learnings` 成功后调用 `pushCaptureAtom`，推送字段（targetType/targetSubtype/routedToTable/routedToId）与既有约定一致（复现 m7 探针误报的原始 issue 场景）
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/cortex-learnings-capture-push.test.js --reporter=verbose 2>&1 | tail -60; EXIT=${PIPESTATUS[0]:-$?}; [ "$EXIT" -eq 0 ] && echo OK || exit 1'
   期望: OK
 
-- [ ] [BEHAVIOR] pushCaptureAtom 调用失败不阻断 `learnings` 主写入（不得向上抛出未捕获异常，对齐 `learning.js:121` 既有容错模式）
+- [x] [BEHAVIOR] pushCaptureAtom 调用失败不阻断 `learnings` 主写入（不得向上抛出未捕获异常，对齐 `learning.js:121` 既有容错模式）
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/cortex-learnings-capture-push.test.js -t "pushCaptureAtom 抛错时" --reporter=verbose 2>&1 | tail -30; EXIT=${PIPESTATUS[0]:-$?}; [ "$EXIT" -eq 0 ] && echo OK || exit 1'
   期望: OK
 
-- [ ] [BEHAVIOR] 已接入的 2 处（`learning.js::recordLearning`、`routes/tasks.js` learnings-received 端点）未被误改动，既有回归测试全绿
+- [x] [BEHAVIOR] 已接入的 2 处（`learning.js::recordLearning`、`routes/tasks.js` learnings-received 端点）未被误改动，既有回归测试全绿
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/learning-capture-push.test.js src/__tests__/learnings-received.test.js --reporter=verbose 2>&1 | tail -60; EXIT=${PIPESTATUS[0]:-$?}; [ "$EXIT" -eq 0 ] && echo OK || exit 1'
   期望: OK
 
-- [ ] [BEHAVIOR] 真实触发（零 mock，真 Postgres）：调用 `auto-learning.js::createAutoLearning`（11 处调用点之一）写入一条新 learning 后，`capture_atoms`（经 `captures` 关联）在 5 分钟窗口内同步新增对应记录
+- [x] [BEHAVIOR] 真实触发（零 mock，真 Postgres）：调用 `auto-learning.js::createAutoLearning`（11 处调用点之一）写入一条新 learning 后，`capture_atoms`（经 `captures` 关联）在 5 分钟窗口内同步新增对应记录
   Test: manual:bash -c '
 DB="${DB:-postgresql://cecelia@localhost:5432/cecelia_test}";
 cd packages/brain;
@@ -74,11 +74,11 @@ echo OK'
 - INV-13 回归测试用source-code inspection — 适用，已落地为下方独立 BEHAVIOR 条目（`tests/learnings-capture-atom-routing.test.js`，零 mock 遍历全部 `INSERT INTO learnings` 调用点）
 - INV-14 catch吞错需告警 — N/A（既有敞口，非本次引入，范围限定排除）：`pushCaptureAtom` 内部 catch 吞错目前只有 `console.warn`，未接失败计数/连续阈值告警；该行为在已接入的 2 处路径中已长期存在，本次只是让另外 11 处复用同一既有函数（PRD「不在范围内」明确排除"修改 capture-inbox.js 内部实现"），不扩大也不缩小该既有风险敞口；若需要落地失败计数+告警，应作为独立 sprint 处理 capture-inbox.js 本身
 
-- [ ] [BEHAVIOR] INV-3/真环境验证：`auto-learning.js::createAutoLearning` 真实 Postgres 触发后，`## E2E 验收` 脚本（`contract-draft.md`）中的 psql 时间窗口验证片段存在且指向真实 DB 查询
+- [x] [BEHAVIOR] INV-3/真环境验证：`auto-learning.js::createAutoLearning` 真实 Postgres 触发后，`## E2E 验收` 脚本（`contract-draft.md`）中的 psql 时间窗口验证片段存在且指向真实 DB 查询
   Test: manual:bash -c 'grep -q "COUNT=\$(psql" sprints/07301431-relay-9f24e3a9/contract-draft.md && echo OK || exit 1'
   期望: OK
 
-- [ ] [BEHAVIOR] INV-13/source-code inspection：结构性回归测试通过（同上"结构性回归测试通过"条目，此处作为 invariant 落地的独立复核）
+- [x] [BEHAVIOR] INV-13/source-code inspection：结构性回归测试通过（同上"结构性回归测试通过"条目，此处作为 invariant 落地的独立复核）
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/learnings-capture-atom-routing.test.js --reporter=verbose 2>&1 | tail -10; EXIT=${PIPESTATUS[0]:-$?}; [ "$EXIT" -eq 0 ] && echo OK || exit 1'
   期望: OK
 
