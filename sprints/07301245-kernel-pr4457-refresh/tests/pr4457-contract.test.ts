@@ -10,6 +10,23 @@ const repoRoot = path.resolve(sprintDir, '../..');
 const verifier = path.join(sprintDir, 'scripts', 'verify-pr4457-evidence.mjs');
 const oracleManifest = path.join(sprintDir, 'conflict-oracle-manifest.json');
 const ORACLE_MANIFEST_SHA256 = 'ed69d150c7e7f0ae4e5b759964e7cbbb4f35ee489ad3e5e62ae5cb114133bb01';
+const ACTOR_STAGE = process.env.HARNESS_ACTOR_STAGE;
+const STAGES = [
+  'generator-pre-push',
+  'ci-exact-head',
+  'evaluator-receipt',
+  'controller-review-gate',
+] as const;
+
+function stageAtLeast(stage: typeof STAGES[number]) {
+  expect(STAGES, 'HARNESS_ACTOR_STAGE 必须来自当前 actor 的权威 task bundle/签名 receipt')
+    .toContain(ACTOR_STAGE);
+  return STAGES.indexOf(ACTOR_STAGE as typeof STAGES[number]) >= STAGES.indexOf(stage);
+}
+
+function reportOutcome(outcome: 'true-success' | 'expected-future-stage-refusal') {
+  console.log(JSON.stringify({ actor_stage: ACTOR_STAGE, outcome }));
+}
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
@@ -24,7 +41,11 @@ async function run(phase: string, stage: string, args: string[] = []) {
   return await Promise.resolve(spawnSync(process.execPath, [verifier, phase, '--stage', stage, ...args], {
     cwd: repoRoot,
     encoding: 'utf8',
-    env: { ...process.env, EXPECTED_PR: '4457' },
+    env: {
+      ...process.env,
+      EXPECTED_PR: '4457',
+      HARNESS_ACTOR_STAGE: ACTOR_STAGE ?? '',
+    },
   }));
 }
 
@@ -38,6 +59,17 @@ async function expectRejected(
   const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
   expect(result.status, `负向场景 ${errorCode} 必须非零退出`).not.toBe(0);
   expect(output, `负向场景必须返回稳定错误码 ${errorCode}`).toContain(errorCode);
+}
+
+async function expectPrematureRefusal(
+  phase: string,
+  errorCode: string,
+  futureReceipt: string,
+  args: string[] = [],
+) {
+  expect(fs.existsSync(futureReceipt), `未来阶段不得预先存在 receipt: ${futureReceipt}`).toBe(false);
+  await expectRejected(phase, ACTOR_STAGE ?? 'missing-authoritative-stage', errorCode, args);
+  expect(fs.existsSync(futureReceipt), `只读 verifier 不得创建未来 receipt: ${futureReceipt}`).toBe(false);
 }
 
 describe('PR #4457 contract [BEHAVIOR]', () => {
@@ -61,6 +93,7 @@ describe('PR #4457 contract [BEHAVIOR]', () => {
     }) => row.stage === 'generator-pre-push' && row.cwd.length > 0 && row.argv.length > 0
       && row.expected_observation.includes('exit_code=0'))).toBe(true);
     expect(digest).toBe(ORACLE_MANIFEST_SHA256);
+    reportOutcome('true-success');
   });
 
   it('冻结身份与全部 subject 精确匹配', async () => {
@@ -69,6 +102,7 @@ describe('PR #4457 contract [BEHAVIOR]', () => {
     ]);
     const result = await run('freeze', 'generator-pre-push');
     expect(result.status, result.stderr || result.stdout).toBe(0);
+    reportOutcome('true-success');
   });
 
   it('全部 33 个冲突路径完成行为验证', async () => {
@@ -77,6 +111,7 @@ describe('PR #4457 contract [BEHAVIOR]', () => {
     ]);
     const result = await run('conflicts', 'generator-pre-push');
     expect(result.status, result.stderr || result.stdout).toBe(0);
+    reportOutcome('true-success');
   });
 
   it('全部 77 条 CodeQL annotation 收敛', async () => {
@@ -85,6 +120,7 @@ describe('PR #4457 contract [BEHAVIOR]', () => {
     ]);
     const result = await run('codeql', 'generator-pre-push');
     expect(result.status, result.stderr || result.stdout).toBe(0);
+    reportOutcome('true-success');
   });
 
   it('累计 Kernel Harness 行为与 atomic truth 保持', async () => {
@@ -93,9 +129,18 @@ describe('PR #4457 contract [BEHAVIOR]', () => {
     ]);
     const result = await run('regressions', 'generator-pre-push');
     expect(result.status, result.stderr || result.stdout).toBe(0);
+    reportOutcome('true-success');
   });
 
   it('三个 required checks 绑定同一最终 SHA', async () => {
+    const exactHeadReceipt = path.join(sprintDir, 'evidence', 'exact-head-receipt.json');
+    if (!stageAtLeast('ci-exact-head')) {
+      await expectPrematureRefusal('exact-head', 'ERR_STAGE_MISMATCH', exactHeadReceipt, [
+        '--receipt', path.join(sprintDir, 'evidence', 'push-receipt.json'),
+      ]);
+      reportOutcome('expected-future-stage-refusal');
+      return;
+    }
     await expectRejected('exact-head', 'ci-exact-head', 'ERR_PREREQUISITE_RECEIPT', [
       '--receipt', path.join(sprintDir, 'evidence', 'missing-push-receipt.json'),
     ]);
@@ -103,20 +148,45 @@ describe('PR #4457 contract [BEHAVIOR]', () => {
       '--receipt', path.join(sprintDir, 'evidence', 'push-receipt.json'),
     ]);
     expect(result.status, result.stderr || result.stdout).toBe(0);
+    reportOutcome('true-success');
   });
 
   it('evaluator 在同一最终 SHA 真跑', async () => {
+    const evaluatorReceipt = path.join(sprintDir, 'evidence', 'evaluator-receipt.json');
+    if (!stageAtLeast('evaluator-receipt')) {
+      await expectPrematureRefusal('evaluator', 'ERR_STAGE_MISMATCH', evaluatorReceipt, [
+        '--receipt', evaluatorReceipt,
+      ]);
+      reportOutcome('expected-future-stage-refusal');
+      return;
+    }
     await expectRejected('evaluator', 'generator-pre-push', 'ERR_STAGE_MISMATCH', [
-      '--receipt', path.join(sprintDir, 'evidence', 'evaluator-receipt.json'),
+      '--receipt', evaluatorReceipt,
     ]);
     const result = await run('evaluator', 'evaluator-receipt', [
-      '--receipt', path.join(sprintDir, 'evidence', 'evaluator-receipt.json'),
+      '--receipt', evaluatorReceipt,
     ]);
     expect(result.status, result.stderr || result.stdout).toBe(0);
+    reportOutcome('true-success');
   });
 
   it('审计窗内无新 PR 无 merge 无 deploy', async () => {
     const evidenceDir = path.join(sprintDir, 'evidence');
+    const reviewReceipt = path.join(evidenceDir, 'review-gate-receipt.json');
+    if (!stageAtLeast('controller-review-gate')) {
+      await expectPrematureRefusal(
+        'review-gate',
+        'ERR_STAGE_MISMATCH',
+        reviewReceipt,
+        [
+          '--exact-head-receipt', path.join(evidenceDir, 'exact-head-receipt.json'),
+          '--evaluator-receipt', path.join(evidenceDir, 'evaluator-receipt.json'),
+          '--audit-end', path.join(evidenceDir, 'audit-end.json'),
+        ],
+      );
+      reportOutcome('expected-future-stage-refusal');
+      return;
+    }
     await expectRejected('review-gate', 'controller-review-gate', 'ERR_CHRONOLOGY_REVERSED', [
       '--fixture', 'reversed-receipt-timestamps',
     ]);
@@ -126,5 +196,6 @@ describe('PR #4457 contract [BEHAVIOR]', () => {
       '--audit-end', path.join(evidenceDir, 'audit-end.json'),
     ]);
     expect(result.status, result.stderr || result.stdout).toBe(0);
+    reportOutcome('true-success');
   });
 });

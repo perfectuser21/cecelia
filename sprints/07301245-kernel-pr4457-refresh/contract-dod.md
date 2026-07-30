@@ -20,6 +20,14 @@ target_environment: local_api
 
 既有 8 个 `it()` 用例内必须隔离覆盖错误 stage、错误 actor role、缺 prerequisite receipt、伪造 exit/log、digest mismatch、跨阶段 lineage reuse 与倒序 receipt 时间戳。每个负向断言必须同时要求非零退出和稳定错误码 `ERR_STAGE_MISMATCH`、`ERR_ACTOR_ROLE`、`ERR_PREREQUISITE_RECEIPT`、`ERR_EVIDENCE_FABRICATED`、`ERR_DIGEST_MISMATCH`、`ERR_LINEAGE_REUSE` 或 `ERR_CHRONOLOGY_REVERSED`；缺 verifier 文件或 Node 加载失败不得算通过。`exact-head-receipt.json` 只能由 CI runner 在只读 verifier exit=0 且 stdout/evidence digest、3 个 required check-run、final-head CodeQL、final SHA、CI lineage 全匹配后签名产出；verifier 不写任何 receipt。
 
+同一 8-test 文件在 Red commit 后不可修改。runner 必须从当前 actor 的权威 task bundle/签名
+execution receipt 注入 `HARNESS_ACTOR_STAGE`。generator-pre-push、ci-exact-head、
+evaluator-receipt、controller-review-gate 依次把前 5、前 6、前 7、全部 8 个 case 判为
+true-success；尚未来到的 case 必须以稳定 `ERR_STAGE_MISMATCH` 非零退出，并断言 verifier
+未创建对应未来 receipt，随后该 case 才以 `expected-future-stage-refusal` 通过。每阶段均要求
+8/8 Green，但只有 true-success 能授权该阶段可信 producer 写 phase receipt；expected refusal
+不得声称未来 phase 已通过。
+
 ## BEHAVIOR 条目
 
 - [ ] [BEHAVIOR] [L3] B-01: 冻结身份与全部 subject 精确匹配 [接缝×2]

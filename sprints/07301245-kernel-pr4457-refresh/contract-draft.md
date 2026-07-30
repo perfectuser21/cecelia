@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 15)
+# Sprint Contract Draft (Round 16)
 
 覆盖父路「Draft PR #4457 累计冲突与 CodeQL 收敛」第 1-5 步。
 
@@ -8,6 +8,7 @@
 - 保持此前已通过项：两个 ARTIFACT oracle 使用内容/schema/身份/exact-set 与七阶段真实行为断言；33 路径完整映射冻结为合同 manifest。仅修订 C25/C27/C28/C29 为可解析且非 skipped 的真实行为 oracle，并重算语义 digest。
 - Round 13 保持 8 条测试、33 路径 manifest/digest、77 个 CodeQL subject、3 个 required context、动态 lineage 与副作用阈值不变，并修复 Round 12 的阶段循环依赖：七个 verifier phase 分属四个 actor/time boundary，禁止 generator 在 push 前伪造 exact-head/evaluator 结果。
 - Round 15 保留上述非循环协议，并把它变成机械合同：8 个既有测试用例内分别加入错误 stage、错误 actor role、缺前置 receipt、伪造 exit/log、digest 不符、跨阶段 lineage 复用、倒序时间戳等隔离负向场景；每个场景必须同时得到非零退出与稳定错误码，缺实现文件本身不得冒充通过。
+- Round 16 修复 cross-stage Green 循环：同一份不可变的 8-test 文件由 `HARNESS_ACTOR_STAGE` 接收当前权威 actor stage。每一阶段只把本阶段及此前阶段判作 true-success；未来阶段用稳定错误码证明 fail-closed 且 verifier 没有创建未来 receipt。generator 不再被要求伪造 CI/evaluator/controller 产物。
 - `exact-head-receipt.json` 的唯一可信 producer 是 CI runner；CI 仅可在只读 exact-head verifier 返回 0，且 stdout/evidence digest、三个 required check-run、final-head CodeQL、final SHA 与 CI runtime lineage 全部匹配后签名/写出 receipt。verifier 永不创建 receipt。
 - 33 行 manifest 全部显式冻结 `stage=generator-pre-push`。C02 已从 post-push exact-head 改为 pre-push 本地 workflow 行为 oracle；C02/C04/C25/C27/C28/C29 argv 均显式带 `--stage generator-pre-push`。
 - manifest 测试在核对冻结 schema、33 subject、argv 与 digest 前，必须先跨过实现产出的 `generator-pre-push/conflicts` verifier/evidence 边界；因此实现前固定为 `failed=8, passed=0, total=8`。
@@ -137,6 +138,24 @@ required-check subject 定义为 `context + "\0" + final_head_sha`。每个 orac
 ## 阶段、actor 与 receipt 协议
 
 verifier 是只读验证器，只能消费已有事实与 receipt，禁止创建、改写或补签 `push-receipt.json`、`exact-head-receipt.json`、`evaluator-receipt.json`、`audit-end.json`。每次调用必须显式给出 `--stage`；stage、执行 role、authoritative lineage、前置 receipt 或 evidence 不符时必须非零退出并输出稳定错误码。
+
+测试 runner 必须从当前 actor 的 authoritative task bundle 或签名 execution receipt 注入
+`HARNESS_ACTOR_STAGE=generator-pre-push|ci-exact-head|evaluator-receipt|controller-review-gate`；
+禁止默认值、禁止从仓库文件或上一阶段复制。8 个测试文件在 Red commit 后不可修改。各 stage
+运行同一文件并要求 8/8 Green，但 Green 语义是 stage-progressive：
+
+- `generator-pre-push`：前 5 个 generator case 为 true-success；后三个 case 仅以
+  `ERR_STAGE_MISMATCH` 非零退出并确认未来 receipt 不存在/未创建。
+- `ci-exact-head`：前 5 个 case 重验 generator evidence，第 6 个 exact-head case
+  true-success；evaluator/controller case 仍只证明 fail-closed。
+- `evaluator-receipt`：重验此前 evidence，第 7 个 evaluator case true-success；
+  controller case 仍只证明 fail-closed。
+- `controller-review-gate`：重验全部前置 receipt/evidence，第 8 个 review-gate case
+  true-success。
+
+每阶段结果必须逐 case 输出 `outcome=true-success|expected-future-stage-refusal`；只有
+`true-success` 可授权该 phase 的可信 producer 写 receipt。expected refusal 不等于未来 phase
+已通过，不得产出 receipt。verifier 缺失/加载失败不含稳定错误码，因而实现前仍精确 8/8 Red。
 
 | stage | 唯一 actor/time boundary | 允许 phase | 必需前置 | 本阶段输出 |
 |---|---|---|---|---|
@@ -291,4 +310,9 @@ echo "Golden Path exact-head 验收通过 sha=$START_SHA"
 | exact-head | `tests/pr4457-contract.test.ts` | 三个 required checks 绑定最终 SHA | verifier 尚未实现 |
 | 副作用审计 | `tests/pr4457-contract.test.ts` | 审计窗内无新 PR 无 merge 无 deploy | baseline/verifier 尚未实现 |
 
-Red 闸硬阈值：实现前执行本 Test Contract 必须精确得到 `total=8, failed=8, passed=0`；任一测试预先通过即禁止进入 Green。
+Red 闸硬阈值：实现前以
+`HARNESS_ACTOR_STAGE=generator-pre-push npx vitest run sprints/07301245-kernel-pr4457-refresh/tests --config sprints/07301245-kernel-pr4457-refresh/vitest.config.mjs`
+执行本 Test Contract，必须精确得到 `total=8, failed=8, passed=0`；任一测试预先通过即禁止进入 Green。
+实现后各 actor 用自己的权威 `HARNESS_ACTOR_STAGE` 运行同一不可变 8-test 文件并要求 8/8
+Green，同时在 stage result 中逐项区分 true-success 与 expected-future-stage-refusal；只有
+true-success 可产生对应 phase receipt。
