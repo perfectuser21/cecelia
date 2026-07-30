@@ -103,6 +103,7 @@ function applyHopFence(decision, counters) {
   // budget is only a wide fallback for otherwise continuing automation.
   if ([
     ACTION.MARK_FAILED,
+    ACTION.PAUSE_RUN,
     ACTION.WAIT_HUMAN_REVIEW,
     ACTION.WAIT_GENERATOR_FIX_CALLBACK,
   ].includes(decision.action)) {
@@ -190,8 +191,8 @@ function attemptCallbackRoute(observed) {
 
   if (status === 'needs_context') {
     return {
-      phase: 'review',
-      action: ACTION.WAIT_HUMAN_REVIEW,
+      phase: 'paused',
+      action: ACTION.PAUSE_RUN,
       reason: 'callback_needs_context',
     };
   }
@@ -242,6 +243,15 @@ function attemptCallbackRoute(observed) {
     && observed.pr == null
     && ['completed', 'completed_with_concerns'].includes(status)
   ) {
+    if ((detail.artifacts ?? []).some((artifact) => (
+      artifact?.type === 'pull_request' && typeof artifact.url === 'string'
+    ))) {
+      return {
+        phase: 'generate',
+        action: ACTION.WAIT_RUNNING,
+        reason: 'callback_pr_projection_pending',
+      };
+    }
     return generatorNoPrRoute(observed, detail);
   }
   return null;
@@ -462,6 +472,12 @@ export function derive(observed) {
     };
   }
 
+  // A received callback is the newest control truth. Route it before the
+  // legacy same-SHA projection so blocked/needs_context cannot be mistaken
+  // for a successful no-progress completion.
+  const callbackRoute = attemptCallbackRoute(observed);
+  if (callbackRoute) return applyHopFence(callbackRoute, counters);
+
   // 0.4 no-progress terminal（Sprint 07231527 Blocking 4）：
   // generator-fix callback SHA === trigger_sha → 无进展，立即终局
   // INV-K4：no-progress 后禁止对相同 (run_id, failure_class, trigger_sha, role) 再派 generator-fix
@@ -485,11 +501,6 @@ export function derive(observed) {
   ) {
     return { phase: run.phase, action: 'wait:running', reason: 'agent_inflight' };
   }
-
-  // Async callback is authoritative only while no later role intent has
-  // consumed it. Route control outcomes before legacy artifact fallbacks.
-  const callbackRoute = attemptCallbackRoute(observed);
-  if (callbackRoute) return applyHopFence(callbackRoute, counters);
 
   // 1. planning：sprint-prd.md 落盘即真相，丢失重跑 planner（D2，plannerOutput 不持久化）
   if (!prdExists) {

@@ -552,7 +552,7 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
       await markRunFailed(deps, resolvedRunId, taskId, decision.reason);
       return { exitReason: decision.reason, hops };
     }
-    if (decision.action === 'pause_run') {
+    if (decision.action === ACTION.PAUSE_RUN) {
       await markRunPaused(deps.pool, resolvedRunId);
       return { exitReason: decision.reason, hops };
     }
@@ -786,27 +786,38 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
 
     if (controlStatus === 'LAUNCHED') {
       const launchHop = await next(deps.pool, resolvedRunId);
-      await append(deps.pool, {
-        runId: resolvedRunId,
-        hop: launchHop,
-        observed: buildSnapshot(
-          observed,
-          fullCounters,
-          LOG_ACTION.ATTEMPT_LAUNCHED,
-          decision.reason,
-        ),
-        derivedPhase: decision.phase,
-        gateVerdict: null,
-        action: LOG_ACTION.ATTEMPT_LAUNCHED,
-        detail: {
-          dispatch_hop: hop,
-          dispatch_action: decision.action,
-          run_id: result.run_id,
-          attempt_id: result.attempt_id,
-          lease_generation: result.lease_generation,
-          provider: result.provider,
-        },
-      });
+      try {
+        await append(deps.pool, {
+          runId: resolvedRunId,
+          hop: launchHop,
+          observed: buildSnapshot(
+            observed,
+            fullCounters,
+            LOG_ACTION.ATTEMPT_LAUNCHED,
+            decision.reason,
+          ),
+          derivedPhase: decision.phase,
+          gateVerdict: null,
+          action: LOG_ACTION.ATTEMPT_LAUNCHED,
+          detail: {
+            dispatch_hop: hop,
+            dispatch_action: decision.action,
+            run_id: result.run_id,
+            attempt_id: result.attempt_id,
+            lease_generation: result.lease_generation,
+            provider: result.provider,
+          },
+        });
+      } catch (err) {
+        if (err instanceof SingletonConflictError) {
+          log(
+            `[orchestrator] singleton conflict on attempt launch effect ` +
+            `${resolvedRunId} hop ${launchHop}, exiting`,
+          );
+          return { exitReason: 'singleton_conflict', hops };
+        }
+        throw err;
+      }
       hops++;
     }
 

@@ -60,6 +60,7 @@ export const ACTION = Object.freeze({
   WAIT_POLL_CI: 'wait:poll_ci',
   WAIT_GENERATOR_FIX_CALLBACK: 'wait:generator_fix_callback',
   WAIT_HUMAN_REVIEW: 'wait:human_review',
+  PAUSE_RUN: 'pause_run',
   MERGE_PR: 'merge_pr',
   REPORT: 'report',
   EXIT: 'exit',

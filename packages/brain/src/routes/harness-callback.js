@@ -167,7 +167,9 @@ export async function appendAttemptVerdict(attempt, result, db = pool) {
        FROM lock, next_hop
       WHERE NOT EXISTS (
         SELECT 1 FROM orchestrator_decision_log
-         WHERE run_id=$1::uuid AND detail->>'attempt_id'=$6::text
+         WHERE run_id=$1::uuid
+           AND action='${action}'
+           AND detail->>'attempt_id'=$6::text
       )`,
     [
       attempt.run_id,
@@ -228,9 +230,10 @@ export async function appendGeneratorFixCallback(
   resolvePrHead = defaultPrHeadResolver,
 ) {
   if (attempt.role !== 'generator') return;
-  // blocked / needs_context are terminal, received callbacks too. Dropping them
-  // makes convergence replay misclassify a durable callback as HTTP loss.
-  if (!SUCCESS_TERMINAL_STATUSES.has(result.status)) return;
+  // The generic verdict:attempt_callback is authoritative for blocked,
+  // needs_context, failed, and cancelled. This role-specific row exists only
+  // to prove progress after a successful generator-fix.
+  if (!['completed', 'completed_with_concerns'].includes(result.status)) return;
 
   const { rows: contextRows } = await db.query(
     `SELECT r.pr_url, fix_intent.observed->>'trigger_sha' AS trigger_sha
