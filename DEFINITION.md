@@ -6,11 +6,34 @@
 
 
 
-**Brain 版本**: 1.267.132
+**Brain 版本**: 1.267.133
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.133 — Versioned Golden Path contract Gate
+
+- Migration 372 新增 append-only `golden_path_contract_versions`：每条 GP 的
+  严格 7 项合同按版本和规范 SHA-256 保存，签字绑定不可变
+  `contract_id/version/hash`，同一 GP 至多一个 `signed` 版本。
+- 合同任一项变化会使旧 `signed` 版本变 `invalidated`、旧
+  `pending_signature` 变 `superseded`，并创建新的 Owner 签字待办；相同最新
+  内容幂等，不阻止未来以新版本恢复某个更旧内容。
+- 替换合同时，`dispatched/in_progress` Harness task 要求先 drain 并返回
+  `GP_CONTRACT_IN_FLIGHT`；仅 `queued/blocked` 的旧任务在同一事务中取消。
+- Owner 批准 pending action 后，judgment、具体版本签字、绑定
+  `gp_contract_id/version/hash` 的唯一 Harness task 和 GP `approved` 状态在同一
+  事务提交；旧 `/golden-paths/:id/approve` 只读回最新已签版本的既有任务，
+  未签时硬拒绝。
+- proposer/reviewer/mapper/controller 快照精确同步
+  `zenithjoy-skills#172@d19924f31`；reviewer 红方攻击与事故对照已接线。产权变更 B
+  仍不生效，因为 §④ 断言盖章尚未上线。
+- 本版本不包含 §③ 锚点回填，也不包含 §④ 断言盖章、裁决记账、退役触发、
+  事故对照库或打回率机制。
+- 回退：先暂停 GP 签字并 drain/cancel 受影响的 GP Harness task，再部署 Brain
+  `1.267.132`。Migration 372 及合同/签字记录保留作审计；旧 Brain 不得继续执行
+  GP approve，因为它没有合同 Gate。
 
 ## Brain 1.267.131 — Finalized Golden Path governance decisions
 

@@ -269,7 +269,13 @@ Export these exact interfaces:
 ```ts
 declare function signAndLaunchGoldenPathContract(
   db: DatabaseClient,
-  args: { goldenPathId: string; version: number; reviewer: string },
+  args: {
+    goldenPathId: string;
+    contractId: string;
+    version: number;
+    contentHash: string;
+    reviewer: string;
+  },
 ): Promise<{ contract_version: ContractVersion; task: Task; idempotent: boolean }>;
 
 declare function launchLatestSignedGoldenPath(

@@ -1,6 +1,24 @@
 # Brain 模块定义
 
-**版本**: 1.267.131
+**版本**: 1.267.133
+
+## Versioned Golden Path contract Gate
+
+- Migration 372 保存严格 7 项 GP 合同的 append-only 版本、规范 SHA-256、
+  Owner 签字和 pending-action/decision 审计关联；签字精确绑定
+  `contract_id/version/hash`。
+- 相同最新内容幂等；任一内容变化自动使旧签字失效并要求重签。运行中的
+  Harness task 必须先 drain，尚未执行的旧任务在同一事务中取消。
+- Owner 批准签字待办后，judgment、合同 `signed`、唯一 Harness task 和 GP
+  `approved` 原子提交；任务 payload 绑定 `gp_contract_id/version/hash`。
+- 兼容 `/approve` 不再签字或创建任务，只允许读回最新已签合同的既有任务；
+  未签、旧版本或签字/任务漂移均 fail closed。
+- 四个 Golden Path Skill 快照锁定
+  `zenithjoy-skills#172@d19924f31`，mapper 进入同步清单。
+- §③ 与 §④ 不在本版本；断言盖章未上线前，产权变更 B 继续保持
+  `effective_now=false`。
+- 回退：暂停 GP 签字并 drain/cancel 相关任务，部署 Brain `1.267.132`；
+  Migration 372 与审计记录保留，旧 Brain 禁止继续走 GP approve。
 
 ## Finalized Golden Path governance decisions
 
