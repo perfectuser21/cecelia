@@ -5,6 +5,10 @@ import { isAbsolute } from 'node:path';
 import { assertionRunnerError } from './gp-assertion-command.js';
 
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const ATTESTATION_KEYS = [
+  'kind', 'actual_runner_digest', 'expected_runner_digest', 'files',
+];
+const FILE_KEYS = ['path', 'sha256'];
 const DEFAULT_MAX_FILE_BYTES = 256 * 1024 * 1024;
 const HASH_CHUNK_BYTES = 64 * 1024;
 
@@ -50,6 +54,45 @@ function validatePaths(paths) {
       { path: paths[invalidIndex] },
     );
   }
+}
+
+function hasExactKeys(value, keys) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).length === keys.length
+    && keys.every(key => Object.hasOwn(value, key));
+}
+
+export function validateToolchainEvidence(
+  evidence,
+  { expectedRunnerDigest, expectedPaths } = {},
+) {
+  validateRunnerDigests(evidence?.actual_runner_digest, expectedRunnerDigest);
+  validateRunnerDigests(evidence?.expected_runner_digest, expectedRunnerDigest);
+  validatePaths(expectedPaths);
+  const files = evidence?.files;
+  const paths = Array.isArray(files) ? files.map(file => file?.path) : [];
+  if (!hasExactKeys(evidence, ATTESTATION_KEYS)
+    || evidence.kind !== 'pinned_toolchain'
+    || new Set(expectedPaths).size !== expectedPaths.length
+    || !Array.isArray(files)
+    || files.length !== expectedPaths.length
+    || new Set(paths).size !== paths.length
+    || files.some((file, index) => (
+      !hasExactKeys(file, FILE_KEYS)
+      || file.path !== expectedPaths[index]
+      || !DIGEST_PATTERN.test(file.sha256 ?? '')
+    ))) {
+    throw fail(
+      'ASSERTION_TOOLCHAIN_DRIFT',
+      'Trusted Runner toolchain evidence does not match the requested paths',
+    );
+  }
+  return Object.freeze({
+    kind: evidence.kind,
+    actual_runner_digest: evidence.actual_runner_digest,
+    expected_runner_digest: evidence.expected_runner_digest,
+    files: Object.freeze(files.map(file => Object.freeze({ ...file }))),
+  });
 }
 
 async function attestFile(path, { realpathFn, openFn, maxFileBytes }) {

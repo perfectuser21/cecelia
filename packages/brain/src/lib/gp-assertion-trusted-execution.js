@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { assertionRunnerError } from './gp-assertion-command.js';
+import { validateToolchainEvidence } from './gp-assertion-toolchain.js';
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const SHA = /^[0-9a-f]{40}$/;
@@ -12,7 +13,8 @@ const MAX_OUTPUT_BYTES = 16 * 1024;
 const RECEIPT_KEYS = [
   'schema_version', 'run_id', 'journey_step_link_id', 'machine_id',
   'runner_image_digest', 'source_repo', 'source_sha', 'command_digest',
-  'isolation', 'exit_code', 'stdout', 'stderr', 'started_at', 'completed_at',
+  'isolation', 'toolchain_attestation', 'exit_code', 'stdout', 'stderr',
+  'started_at', 'completed_at',
 ];
 
 function fail(code) {
@@ -46,6 +48,7 @@ export function buildTrustedExecutionRequest(input = {}) {
   const command = input.command;
   const options = command?.options;
   const argv = command?.argv;
+  const toolchainPaths = options?.toolchain_paths;
   const valid = UUID.test(input.run_id ?? '')
     && UUID.test(input.journey_step_link_id ?? '')
     && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(input.machine_id ?? '')
@@ -60,6 +63,9 @@ export function buildTrustedExecutionRequest(input = {}) {
       && arg.length <= 4_096 && !/[\0\r\n]/.test(arg))
     && isAbsolute(options?.cwd ?? '')
     && EVIDENCE_KINDS.has(options?.evidenceKind)
+    && Array.isArray(toolchainPaths) && toolchainPaths.length > 0
+    && toolchainPaths.every(path => typeof path === 'string' && isAbsolute(path))
+    && new Set(toolchainPaths).size === toolchainPaths.length
     && Number.isInteger(input.timeout_ms)
     && input.timeout_ms > 0 && input.timeout_ms <= MAX_TIMEOUT_MS;
   if (!valid) fail('ASSERTION_TRUSTED_REQUEST_INVALID');
@@ -69,6 +75,7 @@ export function buildTrustedExecutionRequest(input = {}) {
     cwd: options.cwd,
     evidence_kind: options.evidenceKind,
     timeout_ms: input.timeout_ms,
+    toolchain_paths: [...toolchainPaths],
   });
   const commandDigest = createHash('sha256')
     .update(JSON.stringify(frozenCommand)).digest('hex');
@@ -99,6 +106,7 @@ export function verifyTrustedExecution({ request, admission, receipt } = {}) {
     || !Number.isInteger(receipt.exit_code)
     || receipt.exit_code < 0 || receipt.exit_code > 255
     || typeof receipt.stdout !== 'string' || typeof receipt.stderr !== 'string'
+    || !receipt.toolchain_attestation
     || Buffer.byteLength(receipt.stdout) + Buffer.byteLength(receipt.stderr)
       > MAX_OUTPUT_BYTES) {
     fail('ASSERTION_RUNNER_RECEIPT_INVALID');
@@ -115,11 +123,22 @@ export function verifyTrustedExecution({ request, admission, receipt } = {}) {
   if (bindings.some(([actual, expected]) => receipt[actual] !== request[expected])) {
     fail('ASSERTION_RUNNER_BINDING_MISMATCH');
   }
-  if (!exactKeys(receipt.isolation, ['rootfs_read_only', 'workspace_read_only'])
+  if (!exactKeys(
+    receipt.isolation,
+    ['rootfs_read_only', 'workspace_read_only', 'non_root'],
+  )
     || receipt.isolation.rootfs_read_only !== true
-    || receipt.isolation.workspace_read_only !== true) {
+    || receipt.isolation.workspace_read_only !== true
+    || receipt.isolation.non_root !== true) {
     fail('ASSERTION_RUNNER_ISOLATION_UNVERIFIED');
   }
+  const toolchainAttestation = validateToolchainEvidence(
+    receipt.toolchain_attestation,
+    {
+      expectedRunnerDigest: request.expected_runner_digest,
+      expectedPaths: request.command.toolchain_paths,
+    },
+  );
   const admitted = canonicalTime(admission.observed_at);
   const started = canonicalTime(receipt.started_at);
   const completed = canonicalTime(receipt.completed_at);
@@ -146,9 +165,11 @@ export function verifyTrustedExecution({ request, admission, receipt } = {}) {
         command_digest: receipt.command_digest,
         rootfs_read_only: true,
         workspace_read_only: true,
+        non_root: true,
         started_at: receipt.started_at,
         completed_at: receipt.completed_at,
         admission_observed_at: admission.observed_at,
+        toolchain_attestation: toolchainAttestation,
       },
     },
   });

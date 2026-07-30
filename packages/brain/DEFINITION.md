@@ -1,6 +1,13 @@
 # Brain 模块定义
 
-**版本**: 1.267.148
+**版本**: 1.267.149
+
+## Trusted receipt isolation hardening
+
+- trusted receipt 必须带 `non_root=true`，并携带 Runner 内部生成、与 request
+  exact toolchain paths 及 NodeProfile digest 绑定的文件 SHA-256 attestation。
+- assertion runner 使用 canonical `CECELIA_MACHINE_ID`，不再使用临时 hostname；
+  Brain 不读取或伪造远端 Runner 文件证明。
 
 ## Fail-closed trusted assertion runner
 
