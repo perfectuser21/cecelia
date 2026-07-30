@@ -249,6 +249,42 @@ export async function finalizeKernelRun(pool, {
   }
 }
 
+export async function reconcileKernelTaskTerminal(
+  pool,
+  taskId,
+  { finalizeRun = finalizeKernelRun } = {},
+) {
+  const { rows } = await pool.query(
+    `SELECT id, phase, failure_reason
+       FROM initiative_runs
+      WHERE current_task_id = $1
+        AND orchestrator_version = 'v2'
+        AND phase IN ('done', 'failed')
+      ORDER BY completed_at DESC NULLS LAST, started_at DESC, id DESC
+      LIMIT 1`,
+    [taskId],
+  );
+  const run = rows[0];
+  if (!run) {
+    return {
+      reconciled: false,
+      reason: 'no_task_linked_terminal_run',
+    };
+  }
+
+  await finalizeRun(pool, {
+    runId: run.id,
+    expectedTaskId: taskId,
+    outcome: run.phase,
+    reason: run.failure_reason ?? 'terminal_run_reconciliation',
+  });
+  return {
+    reconciled: true,
+    runId: run.id,
+    outcome: run.phase,
+  };
+}
+
 export const __test__ = {
   ACTIVE_PHASES,
   CREATED_SOURCES,
