@@ -43,12 +43,12 @@ export async function signedContractFromDb(
 ) {
   const lockClause = lock === 'share' ? 'FOR SHARE OF contract' : '';
   const { rows } = await db.query(
-    `SELECT contract.id, contract.golden_path_id,
+    `SELECT contract.id, contract.golden_path_id, contract.version,
             contract.content_hash, contract.status
        FROM golden_path_contract_versions contract
        JOIN golden_paths gp ON gp.id = contract.golden_path_id
       WHERE gp.journey_id = $1
-      ORDER BY contract.created_at DESC, contract.version DESC
+      ORDER BY contract.version DESC, contract.created_at DESC
       ${lockClause}`,
     [journeyId],
   );
@@ -62,7 +62,7 @@ export async function signedContractFromDb(
   }
   return {
     hasHistory: rows.length > 0,
-    signed: signed[0] ?? null,
+    signed: rows[0]?.status === 'signed' ? rows[0] : null,
   };
 }
 
@@ -127,6 +127,12 @@ export async function persistReceiptToDb(receipt, db) {
              AND gp.journey_id = cell.journey_id
              AND NOT EXISTS (
                SELECT 1
+               FROM golden_path_contract_versions newer_contract
+               WHERE newer_contract.golden_path_id = contract.golden_path_id
+                 AND newer_contract.version > contract.version
+             )
+             AND NOT EXISTS (
+               SELECT 1
                FROM golden_path_contract_versions other_contract
                JOIN golden_paths other_gp
                  ON other_gp.id = other_contract.golden_path_id
@@ -144,7 +150,12 @@ export async function persistReceiptToDb(receipt, db) {
 }
 
 export async function inShortTransaction(pool, beginSql, work) {
-  if (typeof pool?.connect !== 'function') return work(pool);
+  if (typeof pool?.connect !== 'function') {
+    throw repositoryError(
+      'ASSERTION_TRANSACTION_POOL_REQUIRED',
+      'Assertion transactions require a PostgreSQL pool',
+    );
+  }
   const client = await pool.connect();
   let open = false;
   try {

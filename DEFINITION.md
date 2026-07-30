@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.144
+**Brain 版本**: 1.267.145
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.145 — Assertion receipt repository hardening
+
+- 合同读取与 receipt INSERT CAS 都只接受同一 GP 的最新合同版本；新待签版本存在
+  时，旧 Owner 签字不再能生成 receipt。
+- 短事务只接受可获取独占 client 的 PostgreSQL Pool；错误接入 query-only client
+  时失败关闭，不静默绕过 BEGIN/COMMIT/ROLLBACK。
+- 本层不含 Runner orchestration、CLI、route 或 UI，也不宣称生产盖章已上线。
+- 产权变更 B 继续 `effective_now=false`。回退：部署 Brain `1.267.144`。
 
 ## Brain 1.267.144 — Assertion receipt repository CAS
 
