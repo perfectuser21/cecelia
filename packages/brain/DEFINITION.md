@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**版本**: 1.267.144
+**版本**: 1.267.145
+
+## Same-FD pinned toolchain snapshot
+
+- Attestation 只接受 command policy 签发的 command；clone/自冻对象失败关闭。
+- canonical tool 以 no-follow 打开，并在同一 FD 上有界哈希及复核 identity。
 
 ## Pinned toolchain attestation policy
 
