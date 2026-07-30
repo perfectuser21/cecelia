@@ -3,6 +3,7 @@ import {
   createKernelRun,
   finalizeKernelRun,
   loadActiveKernelRun,
+  reconcileKernelTaskTerminal,
 } from '../kernel-run-store.js';
 
 const TASK_ID = '11111111-1111-4111-8111-111111111111';
@@ -396,5 +397,67 @@ describe('Kernel run/task terminalization authority', () => {
       'ROLLBACK',
       'release',
     ]);
+  });
+});
+
+describe('Kernel terminal reconciliation authority', () => {
+  it('repairs a task only from its latest exactly linked terminal run', async () => {
+    const query = vi.fn(async () => ({
+      rows: [{
+        id: RUN_ID,
+        phase: 'failed',
+        failure_reason: 'pid_gone',
+      }],
+    }));
+    const finalizeRun = vi.fn(async () => ({
+      changed: false,
+      outcome: 'failed',
+      runId: RUN_ID,
+      taskId: TASK_ID,
+    }));
+
+    const result = await reconcileKernelTaskTerminal(
+      { query },
+      TASK_ID,
+      { finalizeRun },
+    );
+
+    expect(result).toEqual({
+      reconciled: true,
+      runId: RUN_ID,
+      outcome: 'failed',
+    });
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain('current_task_id = $1');
+    expect(sql).not.toMatch(/OR\s+initiative_id/i);
+    expect(sql).toContain("phase IN ('done', 'failed')");
+    expect(sql).toContain('completed_at DESC NULLS LAST');
+    expect(params).toEqual([TASK_ID]);
+    expect(finalizeRun).toHaveBeenCalledWith(
+      { query },
+      {
+        runId: RUN_ID,
+        expectedTaskId: TASK_ID,
+        outcome: 'failed',
+        reason: 'pid_gone',
+      },
+    );
+  });
+
+  it('does not guess when no terminal run is linked to the task', async () => {
+    const query = vi.fn(async () => ({ rows: [] }));
+    const finalizeRun = vi.fn();
+
+    const result = await reconcileKernelTaskTerminal(
+      { query },
+      TASK_ID,
+      { finalizeRun },
+    );
+
+    expect(result).toEqual({
+      reconciled: false,
+      reason: 'no_task_linked_terminal_run',
+    });
+    expect(finalizeRun).not.toHaveBeenCalled();
   });
 });
