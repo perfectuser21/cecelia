@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  appendBufferTail,
   byteSafeTail,
   normalizeExecutionEvidence,
   redactAndBoundOutput,
@@ -7,6 +8,15 @@ import {
 } from '../gp-assertion-output.js';
 
 describe('GP assertion output evidence', () => {
+  it.each([undefined, Number.NaN, -1, 1.5])(
+    'fails closed when appending with an invalid byte limit: %s',
+    (limit) => {
+      expect(appendBufferTail(Buffer.from('old'), 'new', limit)).toEqual(
+        Buffer.alloc(0),
+      );
+    },
+  );
+
   it.each([undefined, Number.NaN, -1, 1.5])(
     'fails closed for an invalid byte limit: %s',
     (limit) => {
