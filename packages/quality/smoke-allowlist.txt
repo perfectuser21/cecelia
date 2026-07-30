@@ -65,6 +65,7 @@ golden-path-proposal-smoke.sh
 golden-paths-t1-smoke.sh
 gp-anchor-lockdown-smoke.sh
 gp-assertion-command-smoke.sh
+gp-assertion-finalization-smoke.sh
 gp-assertion-output-smoke.sh
 gp-assertion-process-smoke.sh
 gp-assertion-receipt-model-smoke.sh
