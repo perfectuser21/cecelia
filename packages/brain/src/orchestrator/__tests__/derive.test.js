@@ -100,6 +100,125 @@ describe('规则 0.5：在途观测（P0-1）', () => {
   );
 });
 
+describe('R9/R10: append-only attempt callback convergence', () => {
+  const callback = (hop, patch = {}) => ({
+    hop,
+    action: 'verdict:attempt_callback',
+    detail: {
+      run_id: '11111111-1111-4111-8111-111111111111',
+      attempt_id: `22222222-2222-4222-8222-${String(hop).padStart(12, '0')}`,
+      lease_generation: 0,
+      role: 'generator',
+      hop: hop - 1,
+      status: 'completed',
+      failure_class: null,
+      artifacts: [],
+      ...patch,
+    },
+  });
+
+  it('R9: needs_context pauses for one human answer and never enters no_pr fix', () => {
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        callback(3, { status: 'needs_context', failure_class: 'needs_context' }),
+      ],
+    }));
+
+    expect(r).toEqual({
+      phase: 'review',
+      action: 'wait:human_review',
+      reason: 'callback_needs_context',
+    });
+  });
+
+  it('only infrastructure_blocked callback can retry the same role on another target', () => {
+    const infra = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        callback(3, {
+          status: 'blocked',
+          failure_class: 'infrastructure_blocked',
+          failure_signature: ['docker_unavailable'],
+        }),
+      ],
+    }));
+    const semantic = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        callback(3, {
+          status: 'blocked',
+          failure_class: 'semantic_refusal',
+        }),
+      ],
+    }));
+
+    expect(infra).toEqual({
+      phase: 'generate',
+      action: 'spawn:generator-fix',
+      reason: 'callback_infrastructure_blocked',
+    });
+    expect(semantic).toEqual({
+      phase: 'review',
+      action: 'wait:human_review',
+      reason: 'callback_semantic_refusal',
+    });
+  });
+
+  it('runner failure is terminal instead of a blind machine retry', () => {
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        callback(3, { status: 'failed', failure_class: 'runner_failure' }),
+      ],
+    }));
+
+    expect(r).toEqual({
+      phase: 'failed',
+      action: 'mark_failed',
+      reason: 'callback_runner_failure',
+    });
+  });
+
+  it('R10: first unknown no-PR callback gets one recovery attempt', () => {
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        callback(3),
+      ],
+    }));
+
+    expect(r).toEqual({
+      phase: 'generate',
+      action: 'spawn:generator-fix',
+      reason: 'unknown_no_pr',
+    });
+  });
+
+  it('R10: the second identical no-PR signature fails without a third attempt', () => {
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        callback(3),
+        { hop: 4, action: 'spawn:generator-fix', observed: {} },
+        callback(6),
+      ],
+    }));
+
+    expect(r).toEqual({
+      phase: 'failed',
+      action: 'mark_failed',
+      reason: 'repeated_unknown_no_pr',
+    });
+  });
+});
+
 describe('规则 0.6：MAX_HOPS 宽兜底（P2）', () => {
   it('hops >= 4096 → failed reason=hop_cap', () => {
     const r = derive(baseObserved({

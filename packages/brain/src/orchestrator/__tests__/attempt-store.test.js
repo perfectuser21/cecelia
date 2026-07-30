@@ -453,7 +453,7 @@ describe('attempt store', () => {
     ]);
     expect(pool.query).toHaveBeenCalledWith(
       expect.stringMatching(
-        /WHERE run_id=\$1 AND role=\$2 AND status IN \('failed','cancelled'\)\s+ORDER BY hop/i,
+        /status IN \('failed','cancelled'\).*OR.*status='blocked'.*failure_class='infrastructure_blocked'/is,
       ),
       [input.runId, 'generator'],
     );
