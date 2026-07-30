@@ -1,9 +1,19 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 let pool;
+const migration373 = readFileSync(
+  new URL('../../../migrations/373_gp_ledger_data_knife.sql', import.meta.url),
+  'utf8',
+);
 
 beforeAll(async () => {
   pool = (await import('../../db.js')).default;
+  // migration-350.integration.test.js intentionally replays the historical seed
+  // against this shared CI database. Restore the latest post-migration contract
+  // so this suite verifies 373, not whichever integration file ran immediately
+  // before it.
+  await pool.query(migration373);
 });
 
 describe('migration 373 Golden Path ledger data knife [PostgreSQL]', () => {
