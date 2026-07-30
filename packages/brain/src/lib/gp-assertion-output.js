@@ -1,4 +1,5 @@
 const OUTPUT_LIMIT_BYTES = 4096;
+const STRICT_UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
 const SECRET_KEY_PATTERN = [
   'aws[_-]?secret[_-]?access[_-]?key',
   'aws[_-]?session[_-]?token',
@@ -33,7 +34,13 @@ export function byteSafeTail(value, limit) {
   const bytes = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
   let start = Math.max(0, bytes.length - limit);
   while (start < bytes.length && (bytes[start] & 0xC0) === 0x80) start += 1;
-  const decoded = bytes.subarray(start).toString('utf8').replaceAll('�', '');
+  let decoded;
+  try {
+    decoded = STRICT_UTF8_DECODER.decode(bytes.subarray(start));
+  } catch {
+    return '';
+  }
+  if (decoded.includes('�')) return '';
   return trimTextToByteLimit(decoded, limit);
 }
 
