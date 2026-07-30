@@ -19,6 +19,7 @@ import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS, scanStuckHarness } from '..
 import { sendBark } from '../notifier.js';
 
 const TASK_ID = 'aaaabbbb-cccc-dddd-eeee-ffff00001111';
+const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const SHORT = 'aaaabbbb';
 
 const PR_URL = 'https://github.com/org/repo/pull/42';
@@ -41,7 +42,7 @@ function makeDeps({
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql, params = []) => {
     if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-      return { rows: [{ id: '11111111-1111-4111-8111-111111111111', initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt }] };
+      return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt }] };
     }
     if (/FROM tasks/.test(sql)) {
       return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator, ...(harnessRuntime ? { harness_runtime: harnessRuntime } : {}) } }] };
@@ -773,11 +774,14 @@ describe('_finalizeMergedRun', () => {
       return { rows: [] };
     });
     const out = { mergedPr: 0, mergedWithoutGate: 0 };
-    await _finalizeMergedRun(pool, 'init-1', 'https://github.com/x/y/pull/3', out);
+    await _finalizeMergedRun(pool, { id: RUN_ID, initiative_id: 'init-1', current_task_id: 'task-1' }, 'https://github.com/x/y/pull/3', out);
     expect(out.mergedPr).toBe(1);
     const updates = pool.query.mock.calls.map(c => c[0]).filter(s => /UPDATE initiative_runs/.test(s));
     expect(updates.length).toBeGreaterThan(0);
     expect(updates.every(s => !/failure_reason/.test(s))).toBe(true);
+    const exactUpdate = pool.query.mock.calls.find(([sql]) => /UPDATE initiative_runs/.test(sql));
+    expect(exactUpdate[0]).toMatch(/WHERE\s+id\s*=\s*\$1/);
+    expect(exactUpdate[1][0]).toBe(RUN_ID);
   });
 
   it('gated=false → UPDATE 含 failure_reason=merged_without_evaluator_gate，mergedWithoutGate++', async () => {
@@ -787,7 +791,7 @@ describe('_finalizeMergedRun', () => {
       return { rows: [] };
     })};
     const out = { mergedPr: 0, mergedWithoutGate: 0 };
-    await _finalizeMergedRun(pool, 'init-2', 'https://github.com/x/y/pull/4', out);
+    await _finalizeMergedRun(pool, { id: RUN_ID, initiative_id: 'init-2', current_task_id: 'task-2' }, 'https://github.com/x/y/pull/4', out);
     expect(out.mergedPr).toBe(1);
     expect(out.mergedWithoutGate).toBe(1);
     const updates = pool.query.mock.calls.map(c => c[0]).filter(s => /UPDATE initiative_runs/.test(s));
@@ -803,7 +807,7 @@ describe('_finalizeMergedRun', () => {
     })};
     const out = { mergedPr: 0, mergedWithoutGate: 0 };
     const PR = 'https://github.com/x/y/pull/5';
-    await _finalizeMergedRun(pool, 'init-3', PR, out, { setPrUrl: true });
+    await _finalizeMergedRun(pool, { id: RUN_ID, initiative_id: 'init-3', current_task_id: 'task-3' }, PR, out, { setPrUrl: true });
     const runUpdates = pool.query.mock.calls.filter(c => /UPDATE initiative_runs/.test(c[0]));
     expect(runUpdates.some(([, params]) => Array.isArray(params) && params.includes(PR))).toBe(true);
   });

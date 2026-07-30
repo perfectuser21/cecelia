@@ -49,4 +49,24 @@ describe('scanStuckHarness — 单元 smoke', () => {
     expect(sql).toMatch(/deadline_at\s*<\s*NOW/i);
     expect(sql).toMatch(/completed_at\s+IS\s+NULL/i);
   });
+
+  it('逾期收尸只按 run id 精确更新一条记录', async () => {
+    const run = {
+      id: '11111111-1111-4111-8111-111111111111',
+      initiative_id: '22222222-2222-4222-8222-222222222222',
+      contract_id: null,
+      deadline_at: new Date(Date.now() - 1000),
+      phase: 'B_task_loop',
+    };
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [run] })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+    await scanStuckHarness({});
+
+    const [sql, params] = mockPoolQuery.mock.calls[1];
+    expect(sql).toMatch(/WHERE\s+id\s*=\s*\$1/i);
+    expect(sql).not.toMatch(/WHERE\s+initiative_id\s*=/i);
+    expect(params).toEqual([run.id]);
+  });
 });

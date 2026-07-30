@@ -20,6 +20,7 @@ import {
 } from '../harness-relay-watchdog.js';
 
 const TASK_ID = 'aaaabbbb-cccc-dddd-eeee-ffff00001111';
+const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const PR_URL = 'https://github.com/org/repo/pull/42';
 
 /**
@@ -44,7 +45,7 @@ function makeDeps({
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql) => {
     if (/DISTINCT ON \(initiative_id\)/.test(sql)) {
-      return { rows: [{ initiative_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost }] };
+      return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost }] };
     }
     if (/FROM tasks/.test(sql)) {
       return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', pr_url: null, payload }] };
@@ -84,7 +85,7 @@ describe('C：skill-relay-spawn 事件三口收尾', () => {
       return { rows: [] };
     })};
     const out = { mergedPr: 0, mergedWithoutGate: 0 };
-    await _finalizeMergedRun(pool, TASK_ID, PR_URL, out);
+    await _finalizeMergedRun(pool, { id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID }, PR_URL, out);
     const calls = spawnEventUpdates(pool);
     expect(calls.length).toBeGreaterThan(0);
     const [sql, params] = calls[0];
