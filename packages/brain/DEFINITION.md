@@ -1,6 +1,22 @@
 # Brain 模块定义
 
-**版本**: 1.267.145
+**版本**: 1.267.146
+
+## Kernel run identity and atomic terminalization
+
+- 每条新 v2 run 都必须绑定 `current_task_id` 并记录 `created_source`；
+  PostgreSQL 拒绝缺身份的新写入，run store 拒绝 task→initiative 归属不一致。
+- 同一个 task 最多只能拥有一条非终态 v2 run。
+- create/finalize 统一按 task→run 加锁；Kernel run 的完成/失败与父 task 终态化
+  在同一事务提交并记录唯一终态事件，executor 不得 task-only 覆盖。
+- `harness_initiative` 与 `golden_path_proposal` 的 Kernel orphan reconciliation
+  都不会复活或重新排队 Kernel task：死亡 run 原子失败，已终态 run 精确对账，
+  无法证明的历史 NULL 身份保持 untouched/untrusted。
+- Fleet synthetic canary 走 schema 合法的 v1 lane，并以
+  `orchestrator_host=kernel-fleet-canary` 标识，不作为真实业务 v2 run 或真实
+  业务 Canary 验收。
+- 回退保持 Migration 375 的加法 schema，应用恢复到上一 Brain image；不得恢复任何
+  initiative-wide run mutation，也不得猜测补写历史身份。
 
 ## Same-FD pinned toolchain snapshot
 

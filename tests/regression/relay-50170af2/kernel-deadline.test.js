@@ -12,6 +12,7 @@
 
 import { runLoop } from '../../../packages/brain/src/orchestrator/loop.js';
 import * as constants from '../../../packages/brain/src/orchestrator/constants.js';
+import { spawnSkillRelaySession } from '../../../packages/brain/src/harness-skill-relay.js';
 
 // ---- T-05/T-06：deadline fence ----
 
@@ -134,19 +135,19 @@ describe('[BEHAVIOR] B-03 deadline 三道 fence', () => {
     const pool = makeMockPool({ deadlineAt: pastDeadline, phase: 'generate' });
     let updateCalled = false;
     let updateReason = null;
+    const finalizeRun = async (_pool, input) => {
+      updateCalled = true;
+      updateReason = input.reason;
+      expect(input).toMatchObject({
+        runId: 'run-1',
+        expectedTaskId: 'task-1',
+        outcome: 'failed',
+      });
+    };
 
     const deps = {
-      pool: {
-        ...pool,
-        query: async (sql, params) => {
-          if (sql.includes('UPDATE initiative_runs') && sql.includes('failure_reason')) {
-            updateCalled = true;
-            updateReason = params?.[1];
-            return { rows: [] };
-          }
-          return pool.query(sql, params);
-        },
-      },
+      pool,
+      finalizeRun,
       collectGroundTruth: async () => ({
         run: { phase: 'generate', cost_usd: '0', deadline_at: pastDeadline },
         task: { status: 'in_progress', payload: {} },
@@ -197,6 +198,14 @@ describe('[BEHAVIOR] B-03 deadline 三道 fence', () => {
 
     const deps = {
       pool: makeMockPool({ deadlineAt: deadline, phase: 'generate' }),
+      finalizeRun: async (_pool, input) => {
+        expect(input).toMatchObject({
+          runId: 'run-1',
+          expectedTaskId: 'task-1',
+          outcome: 'failed',
+          reason: 'automation_deadline_exceeded',
+        });
+      },
       collectGroundTruth: async () => {
         // 模拟 collect 期间时间流逝，现在 deadline 已过
         nowRef.value += 200;
@@ -264,22 +273,40 @@ describe('[BEHAVIOR] B-07 固定 fix cap 删除，MAX_HOPS=4096', () => {
 
 describe('[BEHAVIOR] B-03 kernel-v1 deadline_at = 8h', () => {
   /**
-   * 验证 _spawnKernelRuntime 的 kernel-v1 INSERT 使用 8h。
+   * 验证 _spawnKernelRuntime 把 8h 合同交给唯一 run store。
    */
-  test('kernel-v1 INSERT 的 deadline SQL 使用 8 hours', async () => {
-    // 读取源文件，验证 SQL 字符串
-    const { readFileSync } = await import('node:fs');
-    const { fileURLToPath } = await import('node:url');
-    const src = readFileSync(
-      new URL('../../../packages/brain/src/harness-skill-relay.js', import.meta.url).pathname,
-      'utf8',
-    );
+  test('kernel-v1 创建合同使用 8 hours', async () => {
+    let createInput = null;
+    const task = {
+      id: 'task-1',
+      task_type: 'harness_initiative',
+      ability_id: null,
+      title: 'deadline contract',
+      payload: {
+        harness_runtime: 'kernel-v1',
+        orchestrator: 'skill-relay',
+      },
+    };
+    const deps = {
+      pool: { query: async () => ({ rows: [] }) },
+      ensureWt: async () => '/tmp/kernel-deadline-contract',
+      createKernelRun: async (_pool, input) => {
+        createInput = input;
+        return { created: true, run: { id: 'run-1' } };
+      },
+      launchKernel: async () => ({ pid: 1234 }),
+      now: () => new Date('2026-07-23T00:00:00.000Z'),
+    };
 
-    const kernelInsert = src.match(
-      /INSERT INTO initiative_runs[\s\S]*?'kernel-v1'[\s\S]*?RETURNING id/,
-    )?.[0];
-    expect(kernelInsert).toBeTruthy();
-    expect(kernelInsert).toMatch(/INTERVAL\s+'8 hours'/i);
-    expect(kernelInsert).not.toMatch(/INTERVAL\s+'120 minutes'/i);
+    const result = await spawnSkillRelaySession(task, deps);
+
+    expect(result.ok).toBe(true);
+    expect(createInput).toMatchObject({
+      taskId: 'task-1',
+      phase: 'planning',
+      host: 'kernel-v1',
+      deadlineHours: 8,
+      createdSource: 'kernel_dispatch',
+    });
   });
 });

@@ -219,14 +219,46 @@ describe('Kernel v1 判活闸:活着的 kernel 绝不 requeue', () => {
     expect(pool.calls.some((c) => c.sql.includes("status = 'queued'"))).toBe(false);
   });
 
-  it('kernel 判活=unknown → 同样不 requeue（fail-open，未知不等于死亡）', async () => {
+  it('kernel 无 active run → 只按 current_task_id 对账已终态 run，不 requeue', async () => {
     const pool = sweepPool({ harness_runtime: 'kernel-v1' });
     const assessKernel = vi.fn(async () => ({ verdict: 'unknown', reason: 'no_kernel_run' }));
+    const reconcileKernelTerminal = vi.fn(async () => ({
+      reconciled: true,
+      runId: '99999999-9999-4999-8999-999999999999',
+      outcome: 'failed',
+    }));
     const r = await sweepOrphanHarnessTasks({
-      pool, execFn: vi.fn(noContainers), idleMinutes: 15, assessKernel,
+      pool,
+      execFn: vi.fn(noContainers),
+      idleMinutes: 15,
+      assessKernel,
+      reconcileKernelTerminal,
     });
     expect(r.requeued).toBe(0);
-    expect(r.kernelHeld).toBe(1);
+    expect(r.terminalReconciled).toBe(1);
+    expect(reconcileKernelTerminal).toHaveBeenCalledWith(
+      pool,
+      KERNEL_TASK_ID,
+      expect.any(Object),
+    );
+  });
+
+  it('kernel 无 active/terminal run → 标记 unresolved，不猜测、不 requeue', async () => {
+    const pool = sweepPool({ harness_runtime: 'kernel-v1' });
+    const assessKernel = vi.fn(async () => ({ verdict: 'unknown', reason: 'no_kernel_run' }));
+    const reconcileKernelTerminal = vi.fn(async () => ({
+      reconciled: false,
+      reason: 'no_task_linked_terminal_run',
+    }));
+    const r = await sweepOrphanHarnessTasks({
+      pool,
+      execFn: vi.fn(noContainers),
+      idleMinutes: 15,
+      assessKernel,
+      reconcileKernelTerminal,
+    });
+    expect(r.requeued).toBe(0);
+    expect(r.kernelUnresolved).toBe(1);
   });
 
   it('判活函数抛异常 → 仍不 requeue（fail-open）', async () => {
@@ -238,13 +270,31 @@ describe('Kernel v1 判活闸:活着的 kernel 绝不 requeue', () => {
     expect(r.requeued).toBe(0);
   });
 
-  it('kernel 判活=dead（pid 确证消失）→ 才允许 requeue', async () => {
+  it('kernel 判活=dead → run/task 原子 failed，绝不退回 legacy requeue', async () => {
     const pool = sweepPool({ harness_runtime: 'kernel-v1' });
-    const assessKernel = vi.fn(async () => ({ verdict: 'dead', reason: 'pid_gone' }));
+    const runId = '99999999-9999-4999-8999-999999999999';
+    const assessKernel = vi.fn(async () => ({ verdict: 'dead', reason: 'pid_gone', runId }));
+    const finalizeRun = vi.fn(async () => ({
+      changed: true,
+      outcome: 'failed',
+      runId,
+      taskId: KERNEL_TASK_ID,
+    }));
     const r = await sweepOrphanHarnessTasks({
-      pool, execFn: vi.fn(noContainers), idleMinutes: 15, assessKernel,
+      pool,
+      execFn: vi.fn(noContainers),
+      idleMinutes: 15,
+      assessKernel,
+      finalizeRun,
     });
-    expect(r.requeued).toBe(1);
+    expect(r.requeued).toBe(0);
+    expect(r.failed).toBe(1);
+    expect(finalizeRun).toHaveBeenCalledWith(pool, {
+      runId,
+      expectedTaskId: KERNEL_TASK_ID,
+      outcome: 'failed',
+      reason: 'kernel_orphan_dead:pid_gone',
+    });
   });
 
   it('回归锁:旧 relay 任务（无 harness_runtime）行为一字不变 —— 判活返回 not_applicable 仍照旧 requeue', async () => {
@@ -255,6 +305,49 @@ describe('Kernel v1 判活闸:活着的 kernel 绝不 requeue', () => {
     });
     expect(r.requeued).toBe(1);
     expect(r.kernelHeld).toBe(0);
+  });
+
+  it('golden_path_proposal + kernel-v1 同样进入 exact reconciliation', async () => {
+    const pool = sweepPool({ harness_runtime: 'kernel-v1' });
+    pool.query.mockImplementation(async (sql, params) => {
+      const s = String(sql);
+      pool.calls.push({ sql: s, params });
+      if (s.includes("task_type LIKE 'harness%'")) {
+        return {
+          rows: [{
+            id: KERNEL_TASK_ID,
+            title: 'kernel GP',
+            status: 'in_progress',
+            task_type: 'golden_path_proposal',
+            payload: { harness_runtime: 'kernel-v1' },
+            initiative_id: KERNEL_TASK_ID,
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    const assessKernel = vi.fn(async () => ({
+      verdict: 'unknown',
+      reason: 'no_kernel_run',
+    }));
+    const reconcileKernelTerminal = vi.fn(async () => ({
+      reconciled: false,
+      reason: 'no_task_linked_terminal_run',
+    }));
+
+    const r = await sweepOrphanHarnessTasks({
+      pool,
+      execFn: vi.fn(noContainers),
+      idleMinutes: 15,
+      assessKernel,
+      reconcileKernelTerminal,
+    });
+
+    const select = pool.calls.find(({ sql }) => sql.includes('FROM tasks'));
+    expect(select.sql).toContain("task_type = 'golden_path_proposal'");
+    expect(assessKernel).toHaveBeenCalled();
+    expect(r.kernelUnresolved).toBe(1);
+    expect(r.requeued).toBe(0);
   });
 
   it('callback 退出闸:kernel 活着 → noop，不 requeue', async () => {
@@ -268,6 +361,33 @@ describe('Kernel v1 判活闸:活着的 kernel 绝不 requeue', () => {
       containerId: `cecelia-relay-${KERNEL_TASK_ID.slice(0, 8)}-x`, exitCode: 1, resultText: '',
     });
     expect(r.action).toBe('noop');
+    expect(pool.calls.some((c) => c.sql.includes("status = 'queued'"))).toBe(false);
+  });
+
+  it('callback 退出闸:kernel dead → 原子 failed，不 requeue', async () => {
+    const runId = '99999999-9999-4999-8999-999999999999';
+    const pool = mockPool({
+      id: KERNEL_TASK_ID, status: 'in_progress', task_type: 'harness_initiative',
+      payload: { harness_runtime: 'kernel-v1' },
+    });
+    const assessKernel = vi.fn(async () => ({ verdict: 'dead', reason: 'pid_gone', runId }));
+    const finalizeRun = vi.fn(async () => ({
+      changed: true,
+      outcome: 'failed',
+      runId,
+      taskId: KERNEL_TASK_ID,
+    }));
+    const r = await handleRelayExitConsistency({
+      pool,
+      execFn: vi.fn(noContainers),
+      assessKernel,
+      finalizeRun,
+      containerId: `cecelia-relay-${KERNEL_TASK_ID.slice(0, 8)}-x`,
+      exitCode: 1,
+      resultText: '',
+    });
+    expect(r.action).toBe('failed');
+    expect(finalizeRun).toHaveBeenCalled();
     expect(pool.calls.some((c) => c.sql.includes("status = 'queued'"))).toBe(false);
   });
 });

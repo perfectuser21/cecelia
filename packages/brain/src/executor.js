@@ -3106,10 +3106,14 @@ export function computeHarnessInitiativeOk(final) {
  * completed。改用前缀匹配，同时覆盖 headless 'skill-relay' 与两个 headed host 值。
  *
  * @param {{ok: boolean|null, mode?: string, deferred?: boolean}} result
- * @returns {'waiting'|'relay_spawned'|'deferred'|'completed'|'failed'}
+ * @returns {'waiting'|'relay_spawned'|'deferred'|'completed'|'failed'|'terminalized'}
  */
 export function classifyHarnessRelayAction(result) {
   if (result?.ok === null) return 'waiting';
+  if (
+    result?.mode === 'kernel-v1'
+    && result?.terminalized === true
+  ) return 'terminalized';
   if (
     result?.ok
     && typeof result?.mode === 'string'
@@ -3118,6 +3122,14 @@ export function classifyHarnessRelayAction(result) {
   if (result?.deferred) return 'deferred';
   if (result?.ok) return 'completed';
   return 'failed';
+}
+
+/**
+ * Kernel run store is the only authority allowed to terminalize both a v2 run
+ * and its parent task. Legacy relay tasks retain the historical task-only path.
+ */
+export function shouldUseGenericHarnessTaskWriteback(task) {
+  return task?.payload?.harness_runtime !== 'kernel-v1';
 }
 
 /**
@@ -3304,6 +3316,7 @@ async function triggerCeceliaRun(task) {
 
     try {
       const result = await runHarnessInitiativeRouter(task);
+      const genericTaskWriteback = shouldUseGenericHarnessTaskWriteback(task);
       // B48 ok=null=waiting；relay_spawned=spawn成功非完成（Issue df107724）；
       // deferred=软闸/去重护栏非失败（P1 bug 39b97ade，见 classifyHarnessRelayAction）。
       const action = classifyHarnessRelayAction(result);
@@ -3313,10 +3326,18 @@ async function triggerCeceliaRun(task) {
         console.log(`[executor] skill-relay session spawned task=${task.id} container=${result.containerId}, leaving in_progress`);
       } else if (action === 'deferred') {
         console.log(`[executor] skill-relay session deferred task=${task.id} reason=${result.reason || 'unknown'}, leaving in_progress`);
+      } else if (action === 'terminalized') {
+        console.log(`[executor] Kernel run authority terminalized task=${task.id}; skipping task-only writeback`);
       } else if (action === 'completed') {
-        await updateTaskStatus(task.id, 'completed');
+        if (genericTaskWriteback) {
+          await updateTaskStatus(task.id, 'completed');
+        }
       } else {
-        await updateTaskStatus(task.id, 'failed', { error_message: String(result.error || 'harness graph failed').slice(0, 500) });
+        if (genericTaskWriteback) {
+          await updateTaskStatus(task.id, 'failed', { error_message: String(result.error || 'harness graph failed').slice(0, 500) });
+        } else {
+          console.error(`[executor] Kernel failure lacks authoritative terminalization task=${task.id}; leaving exact reconciliation to run authority`);
+        }
       }
       return {
         success: true, // executor 已处理完毕，dispatcher 无需回退 queued
@@ -3330,10 +3351,14 @@ async function triggerCeceliaRun(task) {
       };
     } catch (err) {
       console.error(`[executor] Harness Full Graph error task=${task.id}: ${err.message}`);
-      try {
-        await updateTaskStatus(task.id, 'failed', { error_message: err.message.slice(0, 500) });
-      } catch (updateErr) {
-        console.error(`[executor] 状态回写失败 task=${task.id}: ${updateErr.message}`);
+      if (shouldUseGenericHarnessTaskWriteback(task)) {
+        try {
+          await updateTaskStatus(task.id, 'failed', { error_message: err.message.slice(0, 500) });
+        } catch (updateErr) {
+          console.error(`[executor] 状态回写失败 task=${task.id}: ${updateErr.message}`);
+        }
+      } else {
+        console.error(`[executor] Kernel exception task=${task.id}; task-only failure writeback forbidden`);
       }
       return { success: true, taskId: task.id, initiative: true, error: err.message?.slice(0, 500) };
     }

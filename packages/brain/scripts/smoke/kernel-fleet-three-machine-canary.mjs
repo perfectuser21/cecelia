@@ -418,11 +418,11 @@ export function createDryRunDispatch({
   };
 }
 
-async function ensureSyntheticRun(pool, runId) {
+export async function ensureSyntheticRun(pool, runId) {
   const inserted = await pool.query(
     `INSERT INTO initiative_runs
        (id, initiative_id, phase, orchestrator_version, orchestrator_host, started_at)
-     VALUES ($1::uuid, $2::uuid, 'gan', 'v2', 'kernel-fleet-canary', NOW())
+     VALUES ($1::uuid, $2::uuid, 'gan', 'v1', 'kernel-fleet-canary', NOW())
      ON CONFLICT (id) DO NOTHING
      RETURNING id`,
     [runId, runId],

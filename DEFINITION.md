@@ -6,11 +6,24 @@
 
 
 
-**Brain 版本**: 1.267.145
+**Brain 版本**: 1.267.146
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.146 — Kernel run identity and atomic terminalization
+
+- Migration 375 要求所有新 v2 run 绑定 `current_task_id` 并记录
+  `created_source`，校验 task→initiative 归属，同时限制每个 task 只能有一条 active run。
+- create/finalize 统一以 task→run 顺序加锁；run/task 终态原子提交，executor
+  不得对 Kernel task 单独回写终态。
+- `harness_initiative` 与 `golden_path_proposal` 的 Kernel orphan 都只做精确终态
+  对账或失败关闭，不再落入 legacy requeue 重复点火。历史缺身份行保持 untrusted，
+  等待后续重建；Fleet synthetic canary 走 schema 合法的 v1 lane，并以
+  `orchestrator_host=kernel-fleet-canary` 标识，不冒充业务 v2 run。
+- 回退：部署 Brain `1.267.145`，保留 Migration 375 的加法 schema；禁止恢复
+  initiative-wide mutation 或猜测回填历史身份。
 
 ## Brain 1.267.145 — Same-FD pinned toolchain snapshot
 
@@ -949,7 +962,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 374 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 375 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -1337,7 +1350,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '374'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '375'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

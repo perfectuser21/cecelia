@@ -62,6 +62,14 @@ function sharedHarness(rows) {
       sleep: async () => {},
       now: () => new Date(),
       log: () => {},
+      finalizeRun: async (_pool, input) => {
+        state.failureReason = input.reason;
+        expect(input).toMatchObject({
+          runId: RUN_ID,
+          expectedTaskId: TASK_ID,
+          outcome: 'failed',
+        });
+      },
     },
   };
 }

@@ -96,8 +96,11 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
   await testPool.query(
     `INSERT INTO initiative_runs
        (id, initiative_id, contract_id, phase, current_task_id, pr_url,
-        orchestrator_version, deadline_at)
-     VALUES ($1, $2, $3, 'evaluate', $4, $5, 'v2', NOW() + INTERVAL '120 minutes')`,
+        orchestrator_version, created_source, deadline_at)
+     VALUES (
+       $1, $2, $3, 'evaluate', $4, $5, 'v2', 'kernel_dispatch',
+       NOW() + INTERVAL '120 minutes'
+     )`,
     [runId, initiativeId, contractId, taskId, PR_URL],
   );
   return { initiativeId, contractId, taskId, runId, payload };

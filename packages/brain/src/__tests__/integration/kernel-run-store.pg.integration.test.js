@@ -1,0 +1,204 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import express from 'express';
+import request from 'supertest';
+import pool from '../../db.js';
+import initiativesRouter from '../../routes/initiatives.js';
+import {
+  createKernelRun,
+  finalizeKernelRun,
+} from '../../orchestrator/kernel-run-store.js';
+
+const migrationUrl = new URL(
+  '../../../migrations/375_kernel_run_identity.sql',
+  import.meta.url,
+);
+const schema = `kernel_run_store_${process.pid}_${randomUUID().replaceAll('-', '')}`;
+
+function quoteIdentifier(identifier) {
+  return `"${identifier.replaceAll('"', '""')}"`;
+}
+
+const searchPath = `${quoteIdentifier(schema)}, public`;
+
+const schemaPool = {
+  async connect() {
+    const client = await pool.connect();
+    await client.query(`SET search_path TO ${searchPath}`);
+    const release = client.release.bind(client);
+    client.release = () => {
+      void client.query('RESET search_path').finally(release);
+    };
+    return client;
+  },
+  async query(sql, params) {
+    const client = await this.connect();
+    try {
+      return await client.query(sql, params);
+    } finally {
+      client.release();
+    }
+  },
+};
+
+async function insertTask(taskId, initiativeId) {
+  await schemaPool.query(
+    `INSERT INTO tasks (id,task_type,status,payload)
+     VALUES ($1,'harness_initiative','in_progress',$2::jsonb)`,
+    [taskId, JSON.stringify({ initiative_id: initiativeId })],
+  );
+}
+
+function runInput(taskId, initiativeId, createdSource = 'kernel_dispatch') {
+  return {
+    taskId,
+    initiativeId,
+    phase: 'planning',
+    journeyId: null,
+    abilityId: null,
+    host: 'kernel-v1',
+    deadlineHours: 8,
+    createdSource,
+  };
+}
+
+beforeAll(async () => {
+  const migration = await readFile(migrationUrl, 'utf8');
+  await pool.query(`CREATE SCHEMA ${quoteIdentifier(schema)}`);
+  await schemaPool.query(`
+    CREATE TABLE tasks (
+      id UUID PRIMARY KEY,
+      task_type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      error_message TEXT,
+      completed_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE initiative_runs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      initiative_id UUID NOT NULL,
+      current_task_id UUID,
+      phase TEXT NOT NULL,
+      orchestrator_version TEXT,
+      orchestrator_host TEXT,
+      orchestrator_heartbeat_at TIMESTAMPTZ,
+      orchestrator_pid INTEGER,
+      journey_id UUID,
+      ability_id UUID,
+      deadline_at TIMESTAMPTZ,
+      failure_reason TEXT,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    );
+    CREATE TABLE orchestrator_decision_log (
+      run_id UUID NOT NULL,
+      hop INTEGER NOT NULL,
+      observed JSONB,
+      derived_phase TEXT,
+      gate_verdict TEXT,
+      action TEXT,
+      detail JSONB
+    );
+  `);
+  await schemaPool.query(migration);
+});
+
+afterAll(async () => {
+  await pool.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schema)} CASCADE`);
+  await pool.end();
+});
+
+describe('Kernel run store PostgreSQL concurrency', () => {
+  it('deduplicates simultaneous canonical POSTs to one active run', async () => {
+    const taskId = randomUUID();
+    const initiativeId = randomUUID();
+    await insertTask(taskId, initiativeId);
+
+    const app = express();
+    app.set('pool', schemaPool);
+    app.use(express.json());
+    app.use('/api/brain/orchestrator', initiativesRouter);
+    const body = {
+      initiative_id: initiativeId,
+      current_task_id: taskId,
+      created_source: 'foreground_handoff',
+      phase: 'planning',
+    };
+
+    const responses = await Promise.all([
+      request(app).post('/api/brain/orchestrator/relay-runs').send(body),
+      request(app).post('/api/brain/orchestrator/relay-runs').send(body),
+    ]);
+
+    expect(responses.map(({ status }) => status).sort()).toEqual([200, 201]);
+    expect(responses[0].body.run.id).toBe(responses[1].body.run.id);
+    const active = await schemaPool.query(
+      `SELECT id
+         FROM initiative_runs
+        WHERE current_task_id=$1
+          AND orchestrator_version='v2'
+          AND phase NOT IN ('done','failed')`,
+      [taskId],
+    );
+    expect(active.rows).toHaveLength(1);
+  });
+
+  it('uses one lock order for create/finalize interleaving without deadlock', async () => {
+    const taskId = randomUUID();
+    const initiativeId = randomUUID();
+    await insertTask(taskId, initiativeId);
+    const created = await createKernelRun(
+      schemaPool,
+      runInput(taskId, initiativeId),
+    );
+
+    await schemaPool.query(`
+      CREATE OR REPLACE FUNCTION pause_kernel_terminal_update()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        PERFORM pg_sleep(0.2);
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER pause_kernel_terminal_update
+      BEFORE UPDATE OF phase ON initiative_runs
+      FOR EACH ROW
+      WHEN (
+        OLD.phase NOT IN ('done','failed')
+        AND NEW.phase IN ('done','failed')
+      )
+      EXECUTE FUNCTION pause_kernel_terminal_update();
+    `);
+
+    const finalizing = finalizeKernelRun(schemaPool, {
+      runId: created.run.id,
+      expectedTaskId: taskId,
+      outcome: 'failed',
+      reason: 'integration_interleaving',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const recovering = createKernelRun(
+      schemaPool,
+      runInput(taskId, initiativeId, 'explicit_recovery'),
+    );
+    const results = await Promise.allSettled([finalizing, recovering]);
+
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        expect(result.reason?.code).not.toBe('40P01');
+      }
+    }
+    expect(results[0].status).toBe('fulfilled');
+    const state = await schemaPool.query(
+      `SELECT r.phase,t.status
+         FROM initiative_runs r
+         JOIN tasks t ON t.id=r.current_task_id
+        WHERE r.id=$1`,
+      [created.run.id],
+    );
+    expect(state.rows).toEqual([{ phase: 'failed', status: 'failed' }]);
+  });
+});

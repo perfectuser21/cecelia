@@ -24,6 +24,7 @@ import {
   computeHarnessInitiativeOk,
   computeHarnessInitiativeError,
   classifyHarnessRelayAction,
+  shouldUseGenericHarnessTaskWriteback,
 } from '../executor.js';
 
 describe('computeHarnessInitiativeOk', () => {
@@ -200,7 +201,30 @@ describe('classifyHarnessRelayAction — P1 bug 39b97ade：deferred 结果之前
     expect(classifyHarnessRelayAction({ ok: false, error: 'boom' })).toBe('failed');
   });
 
+  it('Kernel 已由 run authority 终态化 → terminalized，不允许 executor task-only 回写', () => {
+    expect(classifyHarnessRelayAction({
+      ok: false,
+      mode: 'kernel-v1',
+      terminalized: true,
+      error: 'spawn EACCES',
+    })).toBe('terminalized');
+  });
+
   it('result 为 undefined → failed（防御，不抛异常）', () => {
     expect(classifyHarnessRelayAction(undefined)).toBe('failed');
+  });
+});
+
+describe('Kernel terminal authority excludes executor task-only writeback', () => {
+  it('Kernel v1 任务不允许 generic executor 单独改父 task', () => {
+    expect(shouldUseGenericHarnessTaskWriteback({
+      payload: { harness_runtime: 'kernel-v1' },
+    })).toBe(false);
+  });
+
+  it('legacy relay 保留原有 generic task writeback', () => {
+    expect(shouldUseGenericHarnessTaskWriteback({
+      payload: {},
+    })).toBe(true);
   });
 });

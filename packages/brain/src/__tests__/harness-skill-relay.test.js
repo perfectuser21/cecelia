@@ -17,6 +17,7 @@ const TASK = {
     journey_id: 'j-1',
   },
 };
+const KERNEL_RUN_ID = '11111111-1111-4111-8111-111111111111';
 
 function makeDeps(overrides = {}) {
   return {
@@ -37,6 +38,16 @@ function makeDeps(overrides = {}) {
     // 2026-07-21：codex 凭据不再直挂真实 CODEX_RELAY_HOME，先快照到一次性临时目录再挂
     // （见 project_codex_token_consolidation_us 记忆 — 直挂会跟宿主 cron 刷新竞态）
     snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
+    createKernelRun: vi.fn().mockResolvedValue({
+      created: true,
+      run: { id: KERNEL_RUN_ID },
+    }),
+    finalizeRun: vi.fn().mockResolvedValue({
+      changed: true,
+      outcome: 'failed',
+      runId: KERNEL_RUN_ID,
+      taskId: TASK.id,
+    }),
     ...overrides,
   };
 }
@@ -76,13 +87,7 @@ describe('spawnSkillRelaySession', () => {
   });
 
   it('kernel-v1 启动确定性 orchestrator，不加载或 spawn harness-controller', async () => {
-    const runId = '11111111-1111-4111-8111-111111111111';
-    const pool = { query: vi.fn(async (sql) => {
-      if (/INSERT INTO initiative_runs/.test(sql)) return { rows: [{ id: runId }], rowCount: 1 };
-      return { rows: [], rowCount: 1 };
-    }) };
     const deps = makeDeps({
-      pool,
       launchKernel: vi.fn(async () => ({ pid: 4242 })),
     });
     const task = {
@@ -92,10 +97,25 @@ describe('spawnSkillRelaySession', () => {
 
     const result = await spawnSkillRelaySession(task, deps);
 
-    expect(result).toMatchObject({ ok: true, mode: 'kernel-v1', runId, pid: 4242 });
+    expect(result).toMatchObject({
+      ok: true,
+      mode: 'kernel-v1',
+      runId: KERNEL_RUN_ID,
+      pid: 4242,
+    });
+    expect(deps.createKernelRun).toHaveBeenCalledWith(deps.pool, {
+      taskId: TASK.id,
+      initiativeId: TASK.id,
+      phase: 'planning',
+      journeyId: 'j-1',
+      abilityId: null,
+      host: 'kernel-v1',
+      deadlineHours: 8,
+      createdSource: 'kernel_dispatch',
+    });
     expect(deps.launchKernel).toHaveBeenCalledWith(expect.objectContaining({
       taskId: TASK.id,
-      runId,
+      runId: KERNEL_RUN_ID,
       worktreePath: '/tmp/wt/task-aaaabbbb',
     }));
     expect(deps.loadSkill).not.toHaveBeenCalled();
@@ -104,22 +124,14 @@ describe('spawnSkillRelaySession', () => {
 
   it('P0: heartbeat 覆写 orchestrator_host 后再派发仍命中同任务 kernel run，不 INSERT 第二条', async () => {
     const activeRunId = '55555555-5555-4555-8555-555555555555';
-    const insertedRunId = '66666666-6666-4666-8666-666666666666';
-    const pool = { query: vi.fn(async (sql) => {
-      if (/SELECT id FROM initiative_runs/.test(sql)) {
-        // 真实事故状态：heartbeat 已把 host 改成 us-macmini，因此依赖
-        // orchestrator_host='kernel-v1' 的查询会漏掉活跃 run。
-        return sql.includes("orchestrator_host='kernel-v1'")
-          ? { rows: [] }
-          : { rows: [{ id: activeRunId, orchestrator_host: 'us-macmini' }] };
-      }
-      if (/INSERT INTO initiative_runs/.test(sql)) {
-        return { rows: [{ id: insertedRunId }], rowCount: 1 };
-      }
-      return { rows: [], rowCount: 1 };
-    }) };
     const deps = makeDeps({
-      pool,
+      createKernelRun: vi.fn().mockResolvedValue({
+        created: false,
+        run: {
+          id: activeRunId,
+          orchestrator_host: 'us-macmini',
+        },
+      }),
       launchKernel: vi.fn(async () => ({ pid: 4242 })),
     });
     const task = {
@@ -136,8 +148,41 @@ describe('spawnSkillRelaySession', () => {
       reason: 'kernel_run_exists',
       runId: activeRunId,
     });
-    expect(pool.query.mock.calls.some(([sql]) => /INSERT INTO initiative_runs/.test(sql))).toBe(false);
+    expect(deps.createKernelRun).toHaveBeenCalledOnce();
     expect(deps.launchKernel).not.toHaveBeenCalled();
+  });
+
+  it('kernel launch 失败时事务终结 run/task，不把父任务写回 queued', async () => {
+    const deps = makeDeps({
+      launchKernel: vi.fn().mockRejectedValue(new Error('spawn EACCES')),
+    });
+    const task = {
+      ...TASK,
+      payload: {
+        ...TASK.payload,
+        harness_runtime: 'kernel-v1',
+        executor: 'auto',
+      },
+    };
+
+    const result = await spawnSkillRelaySession(task, deps);
+
+    expect(result).toMatchObject({
+      ok: false,
+      mode: 'kernel-v1',
+      runId: KERNEL_RUN_ID,
+      error: 'spawn EACCES',
+      terminalized: true,
+    });
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: KERNEL_RUN_ID,
+      expectedTaskId: TASK.id,
+      outcome: 'failed',
+      reason: 'kernel_launch_failed:spawn EACCES',
+    });
+    expect(deps.pool.query.mock.calls.some(([sql]) => (
+      /UPDATE tasks/.test(sql) && /status='queued'/.test(sql)
+    ))).toBe(false);
   });
 
   it('harness_runtime 缺省继续走旧 controller，保留一键回滚路径', async () => {
@@ -184,6 +229,8 @@ describe('spawnSkillRelaySession', () => {
     expect(sql).toMatch(/deadline_at/);
     // 刀C1（决策 dc18d43d）：current_task_id 必须写入，否则 relay-runs?task_id= 过滤恒空
     expect(sql).toMatch(/current_task_id/);
+    expect(sql).toMatch(/created_source/);
+    expect(sql).toContain("'legacy_relay'");
     expect(params).toContain(TASK.id);
   });
 

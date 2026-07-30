@@ -6,11 +6,15 @@
 import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';
 
-describe('C1: spawn INSERT initiative_runs 带 current_task_id（源码哨兵）', () => {
-  it('harness-skill-relay.js 所有 INSERT initiative_runs 均含 current_task_id', async () => {
+describe('C1: spawn INSERT initiative_runs 带完整身份（源码哨兵）', () => {
+  it('harness-skill-relay.js 所有 INSERT initiative_runs 均含 task 与 source', async () => {
     const src = await readFile(new URL('../harness-skill-relay.js', import.meta.url), 'utf8');
     const inserts = src.match(/INSERT INTO initiative_runs[\s\S]{0,400}?VALUES/g) || [];
     expect(inserts.length).toBeGreaterThanOrEqual(2);
-    for (const ins of inserts) expect(ins).toMatch(/current_task_id/);
+    for (const ins of inserts) {
+      expect(ins).toMatch(/current_task_id/);
+      expect(ins).toMatch(/created_source/);
+    }
+    expect(src.match(/'legacy_relay'/g)).toHaveLength(inserts.length);
   });
 });

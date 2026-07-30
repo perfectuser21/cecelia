@@ -23,6 +23,10 @@ import {
   isKernelRuntimeTask,
   latestKernelHeartbeatMs,
 } from './kernel-liveness.js';
+import {
+  finalizeKernelRun,
+  reconcileKernelTaskTerminal,
+} from '../orchestrator/kernel-run-store.js';
 
 export const WAIT_SUICIDE_PATTERN = /等\s*(?:待)?.{0,10}(?:Monitor|监控|通知)|waiting\s+for\s+.{0,12}(?:Monitor|notification|CI\b)/i;
 
@@ -81,32 +85,67 @@ async function hasFreshHeartbeat(pool, initiativeId, idleMinutes, task = null) {
   return lastHbMs > 0 && Date.now() - lastHbMs < idleMinutes * 60 * 1000;
 }
 
-/**
- * Kernel v1 判活闸:旧守卫的两个信号(容器 + run_events)对 Kernel 恒返回"死",
- * requeue 前必须再过一遍这道闸。alive / unknown 一律不动(fail-open);
- * 只有 pid 确证消失(dead)才放行给旧的 requeue 逻辑;
- * 非 kernel 任务返回 not_applicable —— 旧路径行为一字不变。
- * @returns {Promise<boolean>} true = 该任务被 kernel 判活闸拦下,调用方必须 continue
- */
-async function kernelGuardHolds(pool, task, assessKernel) {
-  let verdict;
+async function reconcileKernelOrphan(pool, task, {
+  assessKernel,
+  reconcileKernelTerminal,
+  finalizeRun,
+}) {
+  if (!isKernelRuntimeTask(task)) return { handled: false };
+
   try {
     const r = await assessKernel({ pool, task });
-    verdict = r?.verdict;
-    if (verdict === 'alive' || verdict === 'unknown') {
+    if (r?.verdict === 'alive') {
       console.warn(
-        `[orphan-guard][kernel-v1] task=${task.id} 判活=${verdict}(${r?.reason ?? '-'}) → 不 requeue`
+        `[orphan-guard][kernel-v1] task=${task.id} 判活=alive(${r?.reason ?? '-'}) → 持有`
       );
-      return true;
+      return { handled: true, action: 'held' };
+    }
+    if (r?.verdict === 'unknown' && r?.reason === 'no_kernel_run') {
+      const terminal = await reconcileKernelTerminal(
+        pool,
+        task.id,
+        { finalizeRun },
+      );
+      if (terminal.reconciled) {
+        console.warn(
+          `[orphan-guard][kernel-v1] task=${task.id} 已按 linked run=${terminal.runId} 对账终态`
+        );
+        return { handled: true, action: 'reconciled', ...terminal };
+      }
+      console.warn(
+        `[orphan-guard][kernel-v1] task=${task.id} 无 active/terminal linked run → unresolved`
+      );
+      return { handled: true, action: 'unresolved', reason: terminal.reason };
+    }
+    if (r?.verdict === 'unknown') {
+      console.warn(
+        `[orphan-guard][kernel-v1] task=${task.id} 判活=unknown(${r?.reason ?? '-'}) → 持有`
+      );
+      return { handled: true, action: 'held' };
+    }
+    if (r?.verdict === 'dead') {
+      if (!r.runId) {
+        console.warn(
+          `[orphan-guard][kernel-v1] task=${task.id} dead 但缺 runId → unresolved`
+        );
+        return { handled: true, action: 'unresolved', reason: 'dead_without_run_id' };
+      }
+      await finalizeRun(pool, {
+        runId: r.runId,
+        expectedTaskId: task.id,
+        outcome: 'failed',
+        reason: `kernel_orphan_dead:${r.reason ?? 'unknown'}`,
+      });
+      console.warn(
+        `[orphan-guard][kernel-v1] task=${task.id} run=${r.runId} 已原子 failed`
+      );
+      return { handled: true, action: 'failed', runId: r.runId };
     }
   } catch (err) {
-    // 判活自身炸了也算"不知道"——对 kernel 任务 fail-open
-    if (isKernelRuntimeTask(task)) {
-      console.warn(`[orphan-guard][kernel-v1] task=${task.id} 判活异常,fail-open: ${err.message}`);
-      return true;
-    }
+    console.warn(`[orphan-guard][kernel-v1] task=${task.id} 判活异常,fail-open: ${err.message}`);
+    return { handled: true, action: 'held', reason: `probe_error:${err.message}` };
   }
-  return false;
+  return { handled: false };
 }
 
 /** 带封顶的孤儿 requeue。返回 {action: 'requeued'|'failed'} */
@@ -143,11 +182,14 @@ export async function requeueOrphanTask(pool, task, reason, extraPayloadJson = '
 
 /**
  * 件①:callback 一致性闸。容器退出回调到达时校验任务终态。
- * 返回 {action: 'noop'|'requeued'|'failed', suicide?: boolean}。全程不抛(供 callback 路由 best-effort 调用)。
+ * 返回 {action: 'noop'|'reconciled'|'requeued'|'failed', suicide?: boolean}。
+ * 全程不抛(供 callback 路由 best-effort 调用)。
  */
 export async function handleRelayExitConsistency({
   pool, execFn = defaultExecFn, containerId, exitCode, resultText = '',
   assessKernel = assessKernelLiveness,
+  reconcileKernelTerminal = reconcileKernelTaskTerminal,
+  finalizeRun = finalizeKernelRun,
 }) {
   try {
     const shortId = shortIdOf(containerId);
@@ -173,8 +215,16 @@ export async function handleRelayExitConsistency({
     }
     if (live.length > 0) return { action: 'noop' }; // 还有别的执行体在干,别抢
 
-    // Kernel v1 判活闸:kernel 没有容器,上面的"无活容器"对它恒真
-    if (await kernelGuardHolds(pool, task, assessKernel)) return { action: 'noop' };
+    const kernel = await reconcileKernelOrphan(pool, task, {
+      assessKernel,
+      reconcileKernelTerminal,
+      finalizeRun,
+    });
+    if (kernel.handled) {
+      if (kernel.action === 'failed') return { action: 'failed' };
+      if (kernel.action === 'reconciled') return { action: 'reconciled' };
+      return { action: 'noop' };
+    }
 
     const suicide = WAIT_SUICIDE_PATTERN.test(resultText || '');
     const extra = suicide
@@ -198,8 +248,18 @@ export async function handleRelayExitConsistency({
  */
 export async function sweepOrphanHarnessTasks({
   pool, execFn = defaultExecFn, idleMinutes = 15, assessKernel = assessKernelLiveness,
+  reconcileKernelTerminal = reconcileKernelTaskTerminal,
+  finalizeRun = finalizeKernelRun,
 } = {}) {
-  const result = { scanned: 0, requeued: 0, failed: 0, kernelHeld: 0, errors: [] };
+  const result = {
+    scanned: 0,
+    requeued: 0,
+    failed: 0,
+    kernelHeld: 0,
+    terminalReconciled: 0,
+    kernelUnresolved: 0,
+    errors: [],
+  };
   let rows;
   try {
     ({ rows } = await pool.query(
@@ -207,7 +267,10 @@ export async function sweepOrphanHarnessTasks({
               COALESCE(payload->>'initiative_id', id::text) AS initiative_id
        FROM tasks
        WHERE status = 'in_progress'
-         AND task_type LIKE 'harness%'
+         AND (
+           task_type LIKE 'harness%'
+           OR task_type = 'golden_path_proposal'
+         )
          AND COALESCE(payload->>'generator_done', 'false') <> 'true'
          AND updated_at < NOW() - INTERVAL '${Number(idleMinutes)} minutes'
        ORDER BY updated_at ASC
@@ -230,9 +293,16 @@ export async function sweepOrphanHarnessTasks({
         continue; // fail-open
       }
       if (live.length > 0) continue;
-      // Kernel v1 判活闸(事故 51836fb2):kernel 是裸 Node 进程,"无活容器"对它恒真
-      if (await kernelGuardHolds(pool, task, assessKernel)) {
-        result.kernelHeld++;
+      const kernel = await reconcileKernelOrphan(pool, task, {
+        assessKernel,
+        reconcileKernelTerminal,
+        finalizeRun,
+      });
+      if (kernel.handled) {
+        if (kernel.action === 'failed') result.failed++;
+        else if (kernel.action === 'reconciled') result.terminalReconciled++;
+        else if (kernel.action === 'unresolved') result.kernelUnresolved++;
+        else result.kernelHeld++;
         continue;
       }
       if (await hasFreshHeartbeat(pool, task.initiative_id || task.id, idleMinutes, task)) continue;
@@ -244,7 +314,13 @@ export async function sweepOrphanHarnessTasks({
     }
   }
   if (result.scanned > 0) {
-    console.log(`[orphan-guard] sweep done: scanned=${result.scanned} requeued=${result.requeued} failed=${result.failed} kernelHeld=${result.kernelHeld}`);
+    console.log(
+      `[orphan-guard] sweep done: scanned=${result.scanned}`
+      + ` requeued=${result.requeued} failed=${result.failed}`
+      + ` kernelHeld=${result.kernelHeld}`
+      + ` terminalReconciled=${result.terminalReconciled}`
+      + ` kernelUnresolved=${result.kernelUnresolved}`
+    );
   }
   return result;
 }

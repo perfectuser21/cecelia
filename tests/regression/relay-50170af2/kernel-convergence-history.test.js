@@ -538,12 +538,19 @@ describe('loop ordering and human-review side effect', () => {
       sleep: vi.fn(async () => {}),
       now: vi.fn(() => new Date('2026-07-23T08:00:00Z')),
       log: vi.fn(),
+      finalizeRun: vi.fn(async () => ({ changed: true })),
     };
 
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
 
     expect(result.exitReason).toBe('generator_fix_callback_missing_after_observation');
     expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'generator_fix_callback_missing_after_observation',
+    });
     expect(appended).toHaveLength(1);
     expect(appended[0]).toMatchObject({
       action: 'wait:generator_fix_callback',

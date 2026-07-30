@@ -55,7 +55,7 @@ function obs(overrides = {}) {
 }
 
 /** fake 全套 deps：observed 队列 + 可编程 dispatch，记录 append/heartbeat/sql/sleep */
-function makeEnv({ observedSeq, dispatch }) {
+function makeEnv({ observedSeq, dispatch, finalizeRun } = {}) {
   let i = 0;
   let hopCounter = 0;
   const appended = [];
@@ -102,6 +102,12 @@ function makeEnv({ observedSeq, dispatch }) {
       heartbeats.push(entry);
     }),
     dispatch: vi.fn(dispatch ?? (async () => ({ status: 'DONE', detail: 'ok' }))),
+    finalizeRun: vi.fn(finalizeRun ?? (async () => ({
+      changed: true,
+      outcome: 'failed',
+      runId: RUN_ID,
+      taskId: TASK_ID,
+    }))),
     sleep: vi.fn(async (ms) => {
       sleeps.push(ms);
     }),
@@ -484,7 +490,7 @@ describe('runLoop：崩溃在 log 与 dispatch 之间（hop 协议）', () => {
 describe('runLoop：四态返回控制流', () => {
   it('BLOCKED×2（连续同态）→ run 置 failed + exitReason=blocked_same_state', async () => {
     const observedSeq = [obs({ generatorSpawned: false })];
-    const { deps, sqls } = makeEnv({
+    const { deps } = makeEnv({
       observedSeq,
       dispatch: async () => ({ status: 'BLOCKED', detail: 'cannot proceed' }),
     });
@@ -493,9 +499,12 @@ describe('runLoop：四态返回控制流', () => {
 
     expect(result.exitReason).toBe('blocked_same_state');
     expect(deps.dispatch).toHaveBeenCalledTimes(2);
-    const failSql = sqls.find(([sql]) => sql.includes('initiative_runs') && sql.includes("'failed'"));
-    expect(failSql).toBeTruthy();
-    expect(failSql[1]).toContain(RUN_ID);
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'blocked_same_state:BLOCKED',
+    });
   });
 
   it('capability BLOCKED persists structured evidence before the convergence fence', async () => {
@@ -579,7 +588,7 @@ describe('runLoop：四态返回控制流', () => {
 });
 
 describe('runLoop：控制 action 自消费', () => {
-  it('mark_failed（宽 hop 兜底）→ UPDATE initiative_runs phase=failed + 退出，不派发', async () => {
+  it('mark_failed（宽 hop 兜底）→ 事务终结 run/task + 退出，不派发', async () => {
     const bigLog = Array.from({ length: 4096 }, (_, k) => ({
       hop: k + 1,
       action: 'wait_marker',
@@ -587,15 +596,18 @@ describe('runLoop：控制 action 自消费', () => {
       detail: null,
     }));
     const observedSeq = [obs({ decisionLog: bigLog })];
-    const { deps, sqls } = makeEnv({ observedSeq });
+    const { deps } = makeEnv({ observedSeq });
 
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
 
     expect(result.exitReason).toBe('hop_cap');
     expect(deps.dispatch).not.toHaveBeenCalled();
-    const failSql = sqls.find(([sql]) => sql.includes('initiative_runs') && sql.includes("'failed'"));
-    expect(failSql).toBeTruthy();
-    expect(failSql[1]).toEqual(expect.arrayContaining([RUN_ID, 'hop_cap']));
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'hop_cap',
+    });
   });
 
   it('persist_contract_approval 在 contract 行缺失时从冻结分支物化并继续 generator', async () => {
@@ -870,12 +882,17 @@ describe('runLoop：wait:* 不灌水', () => {
     const pr = { url: 'u', state: 'OPEN', ci: 'pending', merged: false, head_sha: 's' };
     // 一直 pending：20 次 poll 后（pollCount>=MAX_POLL_COUNT）→ ci_timeout
     const observedSeq = [obs({ generatorSpawned: true, pr })];
-    const { deps, sleeps, sqls } = makeEnv({ observedSeq });
+    const { deps, sleeps } = makeEnv({ observedSeq });
 
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(result.exitReason).toBe('ci_timeout');
     expect(sleeps).toHaveLength(20);
-    expect(sqls.some(([sql]) => sql.includes("'failed'"))).toBe(true);
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'ci_timeout',
+    });
   });
 });
 

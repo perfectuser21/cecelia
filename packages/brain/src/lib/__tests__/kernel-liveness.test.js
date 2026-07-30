@@ -84,19 +84,20 @@ describe('isKernelRuntimeTask', () => {
 });
 
 describe('loadKernelRun', () => {
-  it('只取 v2 非终态 run，按 current_task_id / initiative_id 双键定位', async () => {
+  it('只取 v2 非终态 run，身份只认 current_task_id', async () => {
     const pool = poolWithRun(runRow());
     const run = await loadKernelRun(pool, { taskId: TASK_ID });
     expect(run.id).toBe(RUN_ID);
     const q = pool.calls[0];
     expect(q.sql).toContain('initiative_runs');
     expect(q.sql).toContain("orchestrator_version = 'v2'");
-    expect(q.sql).toContain("phase NOT IN ('done','failed')");
+    expect(q.sql).toMatch(/phase NOT IN \('done',\s*'failed'\)/);
     expect(q.sql).toContain('current_task_id');
+    expect(q.sql).not.toMatch(/OR\s+initiative_id/i);
     expect(q.sql).toContain('orchestrator_heartbeat_at');
     expect(q.sql).toContain('orchestrator_pid');
     expect(q.sql).toContain('orchestrator_host');
-    expect(q.params[0]).toBe(TASK_ID);
+    expect(q.params).toEqual([TASK_ID]);
   });
 
   it('无 run 行 → null；无 pool → null（不抛）', async () => {

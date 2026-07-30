@@ -20,6 +20,7 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
+import { createKernelRun } from '../orchestrator/kernel-run-store.js';
 
 const router = Router();
 
@@ -354,61 +355,74 @@ router.get('/relay-runs/summary', async (req, res) => {
   }
 });
 
-/**
- * GET /api/brain/orchestrator/relay-runs/:initiative_id
- *
- * 查询指定 initiative_id 的最新 v2 run 详情（含全量字段）
- * 找到 → 200 + 完整对象
- * 不找到 → 404 + { error: "not found" }
- * DB 失败 → 500 + { error: err.message }
- */
-/**
- * POST /api/brain/orchestrator/relay-runs/:initiative_id — 前台点火建档。
- * 人工前台接管 controller 时没有 Brain spawnSkillRelaySession 的 INSERT（Issue 968b6f58），
- * 进度上报/PR 回写全 404。本端点补建档：幂等（已有 v2 非终态行则返回现有行），
- * orchestrator_host='foreground'（relay-watchdog 对该 host 跳过重点火——前台无 relay 容器，
- * "容器消失=死跑"判据对它恒真，会 spawn 无头容器与前台会话双跑）。
- * 列对齐 harness-skill-relay.js spawnSkillRelaySession 的 INSERT。
- */
-router.post('/relay-runs/:initiative_id', async (req, res) => {
-  const { initiative_id } = req.params;
-  const { phase, journey_id } = req.body || {};
-  const ALLOWED = ['planning', 'gan', 'generate', 'evaluate'];
-  const startPhase = phase || 'planning';
-  if (!ALLOWED.includes(startPhase)) {
-    return res.status(400).json({ error: 'invalid phase', allowed: ALLOWED });
+const CREATE_PHASES = ['planning', 'gan', 'generate', 'evaluate'];
+
+async function createRelayRun(req, res, legacyInitiativeId = null) {
+  const body = req.body || {};
+  const initiativeId = legacyInitiativeId ?? body.initiative_id;
+  const taskId = body.current_task_id;
+  const createdSource = body.created_source;
+  const startPhase = body.phase || 'planning';
+
+  if (
+    !UUID_RE.test(initiativeId ?? '')
+    || !UUID_RE.test(taskId ?? '')
+    || typeof createdSource !== 'string'
+    || createdSource.length === 0
+  ) {
+    return res.status(400).json({
+      error: 'initiative_id, current_task_id and created_source are required',
+    });
   }
+  if (!CREATE_PHASES.includes(startPhase)) {
+    return res.status(400).json({
+      error: 'invalid phase',
+      allowed: CREATE_PHASES,
+    });
+  }
+
   try {
-    const taskQ = await pool.query(`SELECT id, task_type, payload FROM tasks WHERE id = $1`, [initiative_id]);
-    const task = taskQ.rows[0];
-    if (!task || task.task_type !== 'harness_initiative') {
-      return res.status(404).json({ error: 'harness_initiative task not found' });
-    }
-    const existing = await pool.query(
-      `SELECT id, initiative_id, phase, orchestrator_host, started_at
-         FROM initiative_runs
-        WHERE initiative_id = $1 AND orchestrator_version = 'v2'
-          AND phase NOT IN ('done','failed')
-        LIMIT 1`,
-      [initiative_id]
-    );
-    if (existing.rows.length > 0) {
-      return res.json({ created: false, run: existing.rows[0] });
-    }
-    const journeyId = journey_id || task.payload?.journey_id || null;
-    const ins = await pool.query(
-      `INSERT INTO initiative_runs
-         (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at)
-       VALUES ($1, $2, $3, 'v2', 'foreground', NOW() + INTERVAL '6 hours')
-       RETURNING id, initiative_id, phase, orchestrator_host, started_at, deadline_at`,
-      [initiative_id, startPhase, journeyId]
-    );
-    return res.status(201).json({ created: true, run: ins.rows[0] });
+    const requestPool = req.app.get('pool') || pool;
+    const result = await createKernelRun(requestPool, {
+      taskId,
+      initiativeId,
+      phase: startPhase,
+      journeyId: body.journey_id ?? null,
+      abilityId: null,
+      host: 'foreground',
+      deadlineHours: 6,
+      createdSource,
+    });
+    return res.status(result.created ? 201 : 200).json(result);
   } catch (err) {
-    console.error('[POST /orchestrator/relay-runs/:id]', err.message);
+    if (err.message?.startsWith('invalid Kernel run')) {
+      return res.status(400).json({ error: err.message });
+    }
+    if (
+      err.message?.includes('not eligible')
+      || err.message?.includes('initiative mismatch')
+    ) {
+      return res.status(409).json({ error: err.message });
+    }
+    console.error('[POST /orchestrator/relay-runs]', err.message);
     return res.status(500).json({ error: 'internal error' });
   }
-});
+}
+
+/**
+ * Canonical foreground handoff. The caller must carry both aggregate and task
+ * identity; the response always returns the authoritative run_id.
+ */
+router.post('/relay-runs', (req, res) => createRelayRun(req, res));
+
+/**
+ * Legacy compatibility adapter. PR2 removes initiative-addressed mutation
+ * after every Controller has switched to the canonical run_id contract.
+ */
+router.post(
+  '/relay-runs/:initiative_id',
+  (req, res) => createRelayRun(req, res, req.params.initiative_id),
+);
 
 // ---- verdict/cost best-effort 归一（P1 裁决结构化回写）----
 // 铁律：非法值忽略+warn，绝不 400——400 会连带打回 phase=done 终态写入，

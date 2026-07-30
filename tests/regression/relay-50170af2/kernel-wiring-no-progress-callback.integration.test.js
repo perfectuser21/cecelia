@@ -254,6 +254,14 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
       sleep: async () => {},
       now: () => new Date(),
       log: () => {},
+      finalizeRun: async (_pool, input) => {
+        failureReason = input.reason;
+        expect(input).toMatchObject({
+          runId: RUN_ID,
+          expectedTaskId: TASK_ID,
+          outcome: 'failed',
+        });
+      },
       dispatch: async () => {
         dispatches += 1;
         if (dispatches > 1) throw new Error('no_progress_not_detected');
