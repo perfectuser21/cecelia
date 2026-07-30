@@ -85,6 +85,12 @@ const harnessResultSchema = z.object({
   checks: z.array(z.unknown()).default([]),
   decision: decisionSchema.nullable(),
   error: z.unknown().nullable(),
+  failure_class: z.enum([
+    'infrastructure_blocked',
+    'semantic_refusal',
+    'runner_failure',
+    'needs_context',
+  ]).optional(),
   provider_metadata: z.object({
     provider: z.string().min(1),
     session_id: z.string().min(1).nullable().optional(),
@@ -135,10 +141,16 @@ export function parseHarnessResult(
 ) {
   const parsed = harnessResultSchema.parse(value);
   const failureClass = (() => {
-    if (['blocked', 'needs_context'].includes(parsed.status)) {
-      return 'semantic_refusal';
+    if (parsed.status === 'needs_context') {
+      return 'needs_context';
+    }
+    if (parsed.status === 'blocked') {
+      return parsed.failure_class === 'infrastructure_blocked'
+        ? 'infrastructure_blocked'
+        : 'semantic_refusal';
     }
     if (!['failed', 'cancelled'].includes(parsed.status)) return null;
+    if (parsed.failure_class) return parsed.failure_class;
     const errorCode = parsed.error && typeof parsed.error === 'object'
       ? String(parsed.error.code ?? '').trim().toLowerCase()
       : '';

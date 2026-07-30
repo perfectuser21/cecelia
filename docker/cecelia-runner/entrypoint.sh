@@ -774,6 +774,7 @@ run_provider_contract() {
         -u HARNESS_CALLBACK_URL
         -u HARNESS_CALLBACK_TOKEN
         -u HARNESS_LEASE_OWNER
+        -u HARNESS_LEASE_GENERATION
         codex
       )
     elif [[ "$commander_contract" == "true" ]]; then
@@ -1056,6 +1057,7 @@ if [[ -n "${HARNESS_ATTEMPT_ID:-}" ]]; then
   CALLBACK_HEADERS+=(
     -H "Authorization: Bearer ${HARNESS_CALLBACK_TOKEN}"
     -H "X-Harness-Lease-Owner: ${HARNESS_LEASE_OWNER}"
+    -H "X-Harness-Lease-Generation: ${HARNESS_LEASE_GENERATION}"
   )
 fi
 for _retry in 1 2 3 4 5; do

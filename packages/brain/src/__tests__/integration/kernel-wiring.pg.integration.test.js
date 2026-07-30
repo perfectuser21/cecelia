@@ -664,6 +664,7 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
           .post(`/api/brain/harness/attempts/${attemptId}/callback`)
           .set('Authorization', `Bearer ${CALLBACK_TOKEN}`)
           .set('X-Harness-Lease-Owner', LEASE_OWNER)
+          .set('X-Harness-Lease-Generation', '0')
           .send({
             contract_version: '1.0',
             attempt_id: attemptId,

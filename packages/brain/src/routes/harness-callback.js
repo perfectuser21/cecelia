@@ -413,6 +413,14 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
   if (!leaseOwner || leaseOwner !== attempt.lease_owner) {
     return res.status(409).json({ ok: false, error: 'attempt lease owner mismatch' });
   }
+  const rawLeaseGeneration = req.get('x-harness-lease-generation') ?? '';
+  if (!/^(0|[1-9]\d*)$/.test(rawLeaseGeneration)) {
+    return res.status(400).json({ ok: false, error: 'valid attempt lease generation required' });
+  }
+  const leaseGeneration = Number(rawLeaseGeneration);
+  if (!Number.isSafeInteger(leaseGeneration) || leaseGeneration !== attempt.lease_generation) {
+    return res.status(409).json({ ok: false, error: 'attempt lease generation mismatch' });
+  }
 
   let result;
   try {
@@ -507,7 +515,7 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
           status: result.status,
           failureClass: result.failure_class,
         },
-        { leaseOwner },
+        { leaseOwner, leaseGeneration },
       );
       if (!outcome.attempt) {
         const current = await attemptStore.getById(attemptId);
@@ -516,7 +524,11 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
         }
       }
     } else {
-      outcome = await attemptStore.complete(attemptId, result, { leaseOwner });
+      outcome = await attemptStore.complete(
+        attemptId,
+        result,
+        { leaseOwner, leaseGeneration },
+      );
       let completedAttempt = outcome.attempt;
       let persistedResult = completedAttempt?.result ?? result;
       if (!completedAttempt) {

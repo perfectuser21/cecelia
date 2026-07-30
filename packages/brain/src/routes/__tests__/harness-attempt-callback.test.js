@@ -242,7 +242,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
           event_cursor: 5,
         }),
       }),
-      { leaseOwner },
+      { leaseOwner, leaseGeneration: 0 },
     );
     const proposalCalls = mocks.pool.query.mock.calls.filter(([sql]) => (
       sql.includes('commander.directive_proposed')
@@ -311,7 +311,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
           credential_copy_mutated: true,
         }),
       }),
-      { leaseOwner },
+      { leaseOwner, leaseGeneration: 0 },
     );
   });
 
@@ -721,7 +721,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       message: 'exit 1',
       status: 'failed',
       failureClass: 'runner_failure',
-    }, { leaseOwner });
+    }, { leaseOwner, leaseGeneration: 0 });
     expect(mocks.store.complete).not.toHaveBeenCalled();
   });
 

@@ -857,6 +857,7 @@ export function createDetachedLauncher({
             HARNESS_ATTEMPT_ID: attempt.id,
             HARNESS_CALLBACK_TOKEN: attempt.callbackSecret,
             HARNESS_LEASE_OWNER: activeLeaseOwner,
+            HARNESS_LEASE_GENERATION: String(activeLeaseGeneration),
             HARNESS_RUN_ID: attempt.run_id,
             HARNESS_HOP: String(attempt.hop),
             HARNESS_READ_ONLY: String(bundle.constraints.read_only),

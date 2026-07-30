@@ -573,6 +573,7 @@ async function deliverCallback({
           Authorization: `Bearer ${request.callback_token}`,
           'Content-Type': 'application/json',
           'X-Harness-Lease-Owner': request.lease_owner,
+          'X-Harness-Lease-Generation': String(request.lease_generation),
         },
         body: JSON.stringify(result),
       });

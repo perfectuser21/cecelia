@@ -219,6 +219,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
               .post(`/api/brain/harness/attempts/${attempt.id}/callback`)
               .set('Authorization', `Bearer ${attempt.callbackSecret}`)
               .set('X-Harness-Lease-Owner', attempt.lease_owner)
+              .set('X-Harness-Lease-Generation', String(attempt.lease_generation))
               .send({
                 contract_version: '1.0',
                 attempt_id: attempt.id,
@@ -313,6 +314,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       provider: 'codex',
       status: 'running',
       lease_owner: leaseOwner,
+      lease_generation: 0,
       requested_machine_id: 'integration-host',
       actual_machine_id: 'integration-host',
       execution_transport: 'local-docker',
@@ -357,6 +359,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       .post(`/api/brain/harness/attempts/${evaluatorAttemptId}/callback`)
       .set('Authorization', `Bearer ${callbackToken}`)
       .set('X-Harness-Lease-Owner', leaseOwner)
+      .set('X-Harness-Lease-Generation', '0')
       .send(bridgedResult);
 
     expect(callback.status).toBe(200);
