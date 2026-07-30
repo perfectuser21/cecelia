@@ -51,6 +51,41 @@ describe('POST /api/brain/harness/judge', () => {
     expect(r.status).toBe(400);
   });
 
+  it('拒绝 sprint_dir 路径穿越', async () => {
+    const wt = await mkdtemp(join(tmpdir(), 'judge-api-'));
+    const app = await buildApp();
+    const r = await request(app).post('/api/brain/harness/judge')
+      .send({
+        task_id: '11111111-2222-3333-4444-555555555555',
+        sprint_dir: '../../etc',
+        worktree: wt,
+        agent_verdict: 'PASS',
+      });
+    expect(r.status).toBe(400);
+    expect(mockRunJudgeGate).not.toHaveBeenCalled();
+  });
+
+  it('拒绝 worktree 外部的 transcript_file 与 prompt_dir', async () => {
+    const wt = await mkdtemp(join(tmpdir(), 'judge-api-'));
+    const outside = await mkdtemp(join(tmpdir(), 'judge-outside-'));
+    const app = await buildApp();
+    for (const unsafe of [
+      { transcript_file: join(outside, 'transcript.txt') },
+      { prompt_dir: outside },
+    ]) {
+      const r = await request(app).post('/api/brain/harness/judge')
+        .send({
+          task_id: '11111111-2222-3333-4444-555555555555',
+          sprint_dir: 'sprints/x',
+          worktree: wt,
+          agent_verdict: 'PASS',
+          ...unsafe,
+        });
+      expect(r.status).toBe(400);
+    }
+    expect(mockRunJudgeGate).not.toHaveBeenCalled();
+  });
+
   it('agent_verdict=FIXED 归一为 PASS 传给 runJudgeGate，结果透传 200', async () => {
     const wt = await mkdtemp(join(tmpdir(), 'judge-api-'));
     mockRunJudgeGate.mockResolvedValue({ verdict: 'PASS', feedback: null, judged: true });
