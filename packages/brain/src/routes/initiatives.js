@@ -20,7 +20,11 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
-import { createKernelRun } from '../orchestrator/kernel-run-store.js';
+import {
+  createKernelRun,
+  loadKernelRunById,
+  patchKernelRunById,
+} from '../orchestrator/kernel-run-store.js';
 
 const router = Router();
 
@@ -452,6 +456,122 @@ function parseVerdictCostFields(body) {
   }
   return { warnings, evaluateVerdict, judgeVerdict, costUsd };
 }
+
+function validateRunPatchBody(body) {
+  const { phase, failure_reason, pr_url } = body || {};
+  const allowed = ['planning', 'gan', 'generate', 'evaluate', 'done', 'failed'];
+  if (!allowed.includes(phase)) {
+    return {
+      error: { status: 400, body: { error: 'invalid phase', allowed } },
+    };
+  }
+  if (
+    pr_url !== undefined
+    && pr_url !== null
+    && (
+      typeof pr_url !== 'string'
+      || pr_url === ''
+      || !pr_url.startsWith('https://github.com/')
+    )
+  ) {
+    return {
+      error: {
+        status: 400,
+        body: { error: 'pr_url 非法，须以 https://github.com/ 开头' },
+      },
+    };
+  }
+  const parsed = parseVerdictCostFields(body);
+  return {
+    patch: {
+      phase,
+      failureReason: failure_reason || null,
+      prUrl: pr_url || null,
+      evaluateVerdict: parsed.evaluateVerdict,
+      judgeVerdict: parsed.judgeVerdict,
+      costUsd: parsed.costUsd,
+    },
+    warnings: parsed.warnings,
+  };
+}
+
+router.get('/relay-runs/by-id/:run_id', async (req, res) => {
+  const { run_id: runId } = req.params;
+  if (!UUID_RE.test(runId)) {
+    return res.status(400).json({ error: 'run_id must be a valid UUID' });
+  }
+  try {
+    const requestPool = req.app.get('pool') || pool;
+    const run = await loadKernelRunById(requestPool, runId);
+    if (!run) return res.status(404).json({ error: 'run not found' });
+    return res.json(run);
+  } catch (err) {
+    console.warn('[GET /orchestrator/relay-runs/by-id/:run_id]', err.message);
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
+
+router.patch('/relay-runs/by-id/:run_id', async (req, res) => {
+  const { run_id: runId } = req.params;
+  if (!UUID_RE.test(runId)) {
+    return res.status(400).json({ error: 'run_id must be a valid UUID' });
+  }
+  const parsed = validateRunPatchBody(req.body);
+  if (parsed.error) {
+    return res.status(parsed.error.status).json(parsed.error.body);
+  }
+  try {
+    const requestPool = req.app.get('pool') || pool;
+    const run = await patchKernelRunById(requestPool, {
+      runId,
+      ...parsed.patch,
+    });
+    if (!run) return res.status(404).json({ error: 'run not found' });
+    return res.json(
+      parsed.warnings.length ? { ...run, warnings: parsed.warnings } : run,
+    );
+  } catch (err) {
+    if (
+      err.message?.includes('terminal outcome conflict')
+      || err.message?.includes('parent task missing')
+      || err.message?.includes('identity changed')
+    ) {
+      return res.status(409).json({ error: err.message });
+    }
+    console.warn('[PATCH /orchestrator/relay-runs/by-id/:run_id]', err.message);
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
+
+router.get('/relay-initiatives/:initiative_id/runs', async (req, res) => {
+  const { initiative_id: initiativeId } = req.params;
+  if (!UUID_RE.test(initiativeId)) {
+    return res.status(400).json({ error: 'initiative_id must be a valid UUID' });
+  }
+  try {
+    const requestPool = req.app.get('pool') || pool;
+    const { rows } = await requestPool.query(
+      `SELECT id, initiative_id, current_task_id, phase,
+              orchestrator_version, orchestrator_heartbeat_at,
+              orchestrator_pid, orchestrator_host, started_at, updated_at,
+              deadline_at, completed_at, failure_reason, pr_url,
+              evaluate_verdict, judge_verdict, cost_usd, created_source,
+              record_trust_status, record_trust_reason, predecessor_run_id
+         FROM initiative_runs
+        WHERE initiative_id = $1
+          AND orchestrator_version = 'v2'
+        ORDER BY started_at DESC, id DESC`,
+      [initiativeId],
+    );
+    return res.json(rows);
+  } catch (err) {
+    console.warn(
+      '[GET /orchestrator/relay-initiatives/:initiative_id/runs]',
+      err.message,
+    );
+    return res.status(500).json({ error: 'internal error' });
+  }
+});
 
 /**
  * 解析 :initiative_id 参数：完整 UUID 直返；8位十六进制短号 SELECT 解析；

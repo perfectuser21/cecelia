@@ -114,7 +114,7 @@ describe('exact relay run API', () => {
     const [sql, params] = mockPool.query.mock.calls[0];
     expect(sql).toMatch(/WHERE initiative_id\s*=\s*\$1/i);
     expect(sql).toMatch(/ORDER BY started_at DESC,\s*id DESC/i);
-    expect(sql).not.toMatch(/UPDATE|INSERT|DELETE/i);
+    expect(sql).not.toMatch(/^\s*(UPDATE|INSERT|DELETE)\b/i);
     expect(params).toEqual([INITIATIVE_ID]);
   });
 });

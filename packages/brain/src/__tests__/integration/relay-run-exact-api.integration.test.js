@@ -63,8 +63,12 @@ beforeAll(async () => {
       current_task_id UUID,
       phase TEXT NOT NULL,
       orchestrator_version TEXT,
+      orchestrator_heartbeat_at TIMESTAMPTZ,
+      orchestrator_pid INTEGER,
+      orchestrator_host TEXT,
       started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      deadline_at TIMESTAMPTZ,
       completed_at TIMESTAMPTZ,
       failure_reason TEXT,
       pr_url TEXT,
@@ -156,10 +160,15 @@ describe('exact relay run API [PostgreSQL]', () => {
       .get(`/api/brain/orchestrator/relay-initiatives/${initiativeId}/runs`);
     expect(history.status).toBe(200);
     expect(history.body).toHaveLength(25);
-    const ordered = [...history.body].sort((left, right) => (
-      new Date(right.started_at) - new Date(left.started_at)
-      || right.id.localeCompare(left.id)
-    ));
-    expect(history.body.map(({ id }) => id)).toEqual(ordered.map(({ id }) => id));
+    const expected = await client.query(
+      `SELECT id::text
+         FROM initiative_runs
+        WHERE initiative_id=$1
+        ORDER BY started_at DESC,id DESC`,
+      [initiativeId],
+    );
+    expect(history.body.map(({ id }) => id)).toEqual(
+      expected.rows.map(({ id }) => id),
+    );
   });
 });
