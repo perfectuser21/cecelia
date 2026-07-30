@@ -42,7 +42,7 @@ function callJudge(overrides = {}) {
   return request(app).post('/judge').send({
     task_id: '11111111-2222-3333-4444-555555555555', // uuid 入口校验（c682c9c87）要求合法 uuid
     run_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-    sprint_dir: 's',
+    sprint_dir: 'sprints/judge-writeback',
     worktree,
     agent_verdict: 'PASS',
     ...overrides,

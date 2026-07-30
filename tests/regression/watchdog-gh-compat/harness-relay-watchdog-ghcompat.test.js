@@ -20,7 +20,7 @@ import { _parseBaseRepo, resumeStalledRelayRuns } from '../../../packages/brain/
 function buildFakePool({ runs = [], task = null } = {}) {
   return {
     query: vi.fn(async (sql, _params) => {
-      if (sql.includes('SELECT DISTINCT ON')) return { rows: runs };
+      if (sql.includes('FROM initiative_runs r')) return { rows: runs };
       if (sql.includes('SELECT id, status')) return { rows: task ? [task] : [] };
       return { rows: [] };
     }),
@@ -30,7 +30,9 @@ function buildFakePool({ runs = [], task = null } = {}) {
 // ── 辅助：构建在途 OPEN PR 的 run 行 ─────────────────────────────────────────
 function buildOpenPrRun(overrides = {}) {
   return {
+    id: '10000000-0000-4000-8000-000000000006',
     initiative_id: 'task-ghcompat-01',
+    current_task_id: 'task-ghcompat-01',
     phase: 'running',
     pr_url: 'https://github.com/perfectuser21/cecelia/pull/999',
     orchestrator_host: 'skill-relay-session',

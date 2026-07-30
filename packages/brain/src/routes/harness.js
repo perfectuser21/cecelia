@@ -9,10 +9,10 @@
  */
 
 import { Router } from 'express';
-import { readFile, access } from 'fs/promises';
+import { readFile, access, realpath } from 'fs/promises';
 import { execSync } from 'child_process';
-import { join } from 'path';
-import { homedir } from 'os';
+import { join, resolve, relative, isAbsolute, delimiter } from 'path';
+import { homedir, tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import pool from '../db.js';
 import { runJudgeGate, runMechanicalPreflightChecks, checkJudgmentsWritten } from '../harness-judge.js';
@@ -41,6 +41,62 @@ const HARNESS_MERMAID = `graph LR
  * :id 必须是合法 UUID，否则返回 400
  */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isContainedPath(root, candidate) {
+  const rel = relative(root, candidate);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+async function resolveJudgeWorktree(candidate) {
+  if (typeof candidate !== 'string' || !isAbsolute(candidate)) {
+    throw new Error('worktree 必须是绝对路径');
+  }
+  const configuredRoots = String(process.env.HARNESS_JUDGE_ALLOWED_ROOTS || '')
+    .split(delimiter)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const roots = [REPO_ROOT, ...configuredRoots];
+  if (process.env.NODE_ENV === 'test') roots.push(tmpdir());
+
+  const canonical = await realpath(candidate);
+  for (const root of roots) {
+    try {
+      const canonicalRoot = await realpath(resolve(root));
+      if (isContainedPath(canonicalRoot, canonical)) return canonical;
+    } catch {
+      // 不存在的 allow-root 不是有效授权根。
+    }
+  }
+  throw new Error('worktree 不在受控 Harness 根目录');
+}
+
+function normalizeJudgeSprintDir(candidate) {
+  if (typeof candidate !== 'string' || isAbsolute(candidate)) {
+    throw new Error('sprint_dir 必须是相对路径');
+  }
+  const parts = candidate.split('/');
+  if (
+    parts[0] !== 'sprints'
+    || parts.length < 2
+    || parts.some((part) => !part || part === '.' || part === '..'
+      || !/^[a-zA-Z0-9._-]+$/.test(part))
+  ) {
+    throw new Error('sprint_dir 必须位于 sprints/ 且不得包含路径穿越');
+  }
+  return parts.join('/');
+}
+
+async function resolveJudgeChild(worktree, candidate, label) {
+  if (candidate === undefined || candidate === null || candidate === '') return undefined;
+  if (typeof candidate !== 'string' || !isAbsolute(candidate)) {
+    throw new Error(`${label} 必须是绝对路径`);
+  }
+  const canonical = await realpath(candidate);
+  if (!isContainedPath(worktree, canonical)) {
+    throw new Error(`${label} 必须位于当前 worktree 内`);
+  }
+  return canonical;
+}
 
 router.get('/initiative-runs/:id', async (req, res) => {
   const { id } = req.params;
@@ -1923,11 +1979,21 @@ router.post('/judge', async (req, res) => {
   if (!UUID_RE.test(String(task_id))) {
     return res.status(400).json({ error: 'task_id 必须是 uuid' });
   }
-  if (typeof worktree !== 'string' || !worktree.startsWith('/')) {
-    return res.status(400).json({ error: 'worktree 必须是绝对路径' });
-  }
-  try { await access(worktree); } catch {
-    return res.status(400).json({ error: 'worktree 目录不存在' });
+  let safeWorktree;
+  let safeSprintDir;
+  let safePromptDir;
+  let safeTranscriptFile;
+  try {
+    safeWorktree = await resolveJudgeWorktree(worktree);
+    safeSprintDir = normalizeJudgeSprintDir(sprint_dir);
+    safePromptDir = await resolveJudgeChild(safeWorktree, prompt_dir, 'prompt_dir');
+    safeTranscriptFile = await resolveJudgeChild(
+      safeWorktree,
+      transcript_file,
+      'transcript_file',
+    );
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
   }
 
   // 读取 .brain-result.json（完整对象，供机械预检 + runJudgeGate 使用）
@@ -1935,7 +2001,9 @@ router.post('/judge', async (req, res) => {
   let verdict = agent_verdict;
   let feedback = agent_feedback;
   try {
-    resolvedBrainResult = JSON.parse(await readFile(join(worktree, '.brain-result.json'), 'utf8'));
+    resolvedBrainResult = JSON.parse(
+      await readFile(join(safeWorktree, '.brain-result.json'), 'utf8'),
+    );
     if (!verdict) { verdict = resolvedBrainResult.verdict; }
     if (feedback === undefined) { feedback = resolvedBrainResult.feedback; }
   } catch { /* verdict 缺省路径下方统一 400 */ }
@@ -1958,18 +2026,18 @@ router.post('/judge', async (req, res) => {
   }
 
   let transcript;
-  if (transcript_file) {
-    try { transcript = await readFile(transcript_file, 'utf8'); } catch { /* 读失败不阻塞，与 CLI 一致 */ }
+  if (safeTranscriptFile) {
+    try { transcript = await readFile(safeTranscriptFile, 'utf8'); } catch { /* 读失败不阻塞，与 CLI 一致 */ }
   }
 
   try {
     const result = await runJudgeGate({
       agentVerdict: verdict,
       agentFeedback: feedback,
-      worktreePath: worktree,
-      sprintDir: sprint_dir,
+      worktreePath: safeWorktree,
+      sprintDir: safeSprintDir,
       taskId: task_id,
-      promptDir: prompt_dir,
+      promptDir: safePromptDir,
       transcript,
       instanceLabel: `judge-api-${String(task_id).slice(0, 8)}`,
     }, { dbPool: pool });

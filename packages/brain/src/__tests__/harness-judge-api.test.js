@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -88,6 +88,7 @@ describe('POST /api/brain/harness/judge', () => {
 
   it('agent_verdict=FIXED 归一为 PASS 传给 runJudgeGate，结果透传 200', async () => {
     const wt = await mkdtemp(join(tmpdir(), 'judge-api-'));
+    const canonicalWt = await realpath(wt);
     mockRunJudgeGate.mockResolvedValue({ verdict: 'PASS', feedback: null, judged: true });
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/judge')
@@ -96,7 +97,7 @@ describe('POST /api/brain/harness/judge', () => {
     expect(r.body).toEqual({ verdict: 'PASS', feedback: null, judged: true });
     expect(mockRunJudgeGate).toHaveBeenCalledWith(expect.objectContaining({
       agentVerdict: 'PASS',
-      worktreePath: wt,
+      worktreePath: canonicalWt,
       sprintDir: 'sprints/x',
       instanceLabel: 'judge-api-aaaabbbb',
     }), expect.objectContaining({ dbPool: expect.anything() }));

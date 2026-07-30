@@ -19,6 +19,7 @@
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import {
   createKernelRun,
@@ -28,6 +29,12 @@ import {
 } from '../orchestrator/kernel-run-store.js';
 
 const router = Router();
+const initiativeHistoryRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 300,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+});
 
 function safeGet(obj, key, fallback = null) {
   if (!obj || typeof obj !== 'object') return fallback;
@@ -587,7 +594,10 @@ router.patch('/relay-runs/by-id/:run_id', async (req, res) => {
   }
 });
 
-router.get('/relay-initiatives/:initiative_id/runs', async (req, res) => {
+router.get(
+  '/relay-initiatives/:initiative_id/runs',
+  initiativeHistoryRateLimit,
+  async (req, res) => {
   const { initiative_id: initiativeId } = req.params;
   if (!UUID_RE.test(initiativeId)) {
     return res.status(400).json({ error: 'initiative_id must be a valid UUID' });
@@ -615,7 +625,8 @@ router.get('/relay-initiatives/:initiative_id/runs', async (req, res) => {
     );
     return res.status(500).json({ error: 'internal error' });
   }
-});
+  },
+);
 
 /**
  * PATCH /api/brain/orchestrator/relay-runs/:initiative_id

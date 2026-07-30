@@ -31,7 +31,7 @@ describe('scanStuckHarness — 单元 smoke', () => {
 
   it('SELECT 无 overdue → flagged 空', async () => {
     mockPoolQuery.mockImplementation(async (sql) => {
-      if (/SELECT\s+initiative_id/i.test(sql)) return { rows: [] };
+      if (/FROM\s+initiative_runs/i.test(sql)) return { rows: [] };
       return { rows: [] };
     });
     const r = await scanStuckHarness({});

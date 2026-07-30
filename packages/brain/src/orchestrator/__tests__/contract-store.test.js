@@ -10,7 +10,9 @@ let client;
 const runId = '11111111-1111-4111-8111-111111111111';
 const initiativeId = '22222222-2222-4222-8222-222222222222';
 
-describe('materializeApprovedContract PostgreSQL contract', () => {
+const HAS_REAL_POSTGRES = Boolean(process.env.DATABASE_URL || process.env.DB);
+
+describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contract', () => {
   beforeAll(async () => {
     client = await pool.connect();
     await client.query('BEGIN');
