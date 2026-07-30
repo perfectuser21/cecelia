@@ -12,10 +12,10 @@
 
 ## File map
 
-- Create `packages/brain/migrations/371_golden_path_contract_versions.sql`: version/signature persistence.
+- Create `packages/brain/migrations/372_golden_path_contract_versions.sql`: version/signature persistence.
 - Create `packages/brain/src/golden-path-contracts.js`: schema, hashing, version, sign/launch transactions.
 - Create `packages/brain/src/__tests__/golden-path-contracts.test.js`: service Red→Green.
-- Create `packages/brain/src/__tests__/migration-371-golden-path-contracts.test.js`: migration contract.
+- Create `packages/brain/src/__tests__/migration-372-golden-path-contracts.test.js`: migration contract.
 - Create `packages/brain/src/__tests__/integration/golden-path-contract.integration.test.js`: real PostgreSQL lifecycle.
 - Modify `packages/brain/src/routes/golden-paths.js`: GET/POST contracts and `/approve` hard Gate.
 - Modify `packages/brain/src/routes/__tests__/golden-paths.test.js`: route behavior.
@@ -131,11 +131,11 @@ git add packages/brain/src/golden-path-contracts.js packages/brain/src/__tests__
 git commit -m "feat(brain): validate seven-item GP contracts"
 ```
 
-### Task C2: Add migration 371
+### Task C2: Add migration 372
 
 **Files:**
-- Create: `packages/brain/migrations/371_golden_path_contract_versions.sql`
-- Create: `packages/brain/src/__tests__/migration-371-golden-path-contracts.test.js`
+- Create: `packages/brain/migrations/372_golden_path_contract_versions.sql`
+- Create: `packages/brain/src/__tests__/migration-372-golden-path-contracts.test.js`
 
 - [ ] **Step 1: Write migration Red test**
 
@@ -145,12 +145,12 @@ Assert the SQL contains the table, four statuses, both FKs, unique version, and 
 expect(sql).toContain('CREATE TABLE IF NOT EXISTS golden_path_contract_versions');
 expect(sql).toMatch(/UNIQUE\s*\(golden_path_id,\s*version\)/);
 expect(sql).toContain("WHERE status = 'signed'");
-expect(sql).toContain("VALUES ('371'");
+expect(sql).toContain("VALUES ('372'");
 ```
 
 - [ ] **Step 2: Run Red**
 
-Expected: ENOENT for migration 371.
+Expected: ENOENT for migration 372.
 
 - [ ] **Step 3: Write the migration**
 
@@ -167,8 +167,8 @@ Do not add a unique content-hash index; reverting to an old payload must create 
 - [ ] **Step 4: Run Green and commit**
 
 ```bash
-npx vitest run src/__tests__/migration-371-golden-path-contracts.test.js
-git add packages/brain/migrations/371_golden_path_contract_versions.sql packages/brain/src/__tests__/migration-371-golden-path-contracts.test.js
+npx vitest run src/__tests__/migration-372-golden-path-contracts.test.js
+git add packages/brain/migrations/372_golden_path_contract_versions.sql packages/brain/src/__tests__/migration-372-golden-path-contracts.test.js
 git commit -m "feat(brain): persist GP contract versions"
 ```
 
@@ -404,7 +404,7 @@ rollback and failure codes
 ```bash
 npx vitest run \
   src/__tests__/golden-path-contracts.test.js \
-  src/__tests__/migration-371-golden-path-contracts.test.js \
+  src/__tests__/migration-372-golden-path-contracts.test.js \
   src/__tests__/decision-executor.test.js \
   src/routes/__tests__/golden-paths.test.js \
   src/__tests__/golden-path-proposal-wiring.test.js \
@@ -447,4 +447,4 @@ Use the GitHub CI workflow. Any failure is diagnosed from logs, fixed with a new
 
 - [ ] **Step 3: Squash merge only after latest required checks pass**
 
-After merge, verify production Brain version/health and migration 371, demonstrate v1 sign → change → invalidate → v2 re-sign in the accepted environment, report new PRD completion, and hand off §③. Stop before §③ implementation.
+After merge, verify production Brain version/health and migration 372, demonstrate v1 sign → change → invalidate → v2 re-sign in the accepted environment, report new PRD completion, and hand off §③. Stop before §③ implementation.
