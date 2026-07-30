@@ -90,9 +90,7 @@ CREATE TABLE IF NOT EXISTS journey_assertion_receipts (
     )
 );
 
--- Keep reruns additive when an earlier development deployment created v374.
--- Existing PASS rows remain audit history but are excluded by the read model
--- until a new evidenced receipt supersedes them.
+-- Reruns upgrade earlier v374; legacy PASS remains unverified audit history.
 ALTER TABLE journey_assertion_receipts
   ADD COLUMN IF NOT EXISTS scenario_count INTEGER NOT NULL DEFAULT 0
     CHECK (scenario_count >= 0);

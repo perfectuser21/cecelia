@@ -14,9 +14,8 @@
 
 ## Brain 1.267.140 — Golden Path §④-1 receipt evidence schema (stack 2)
 
-- Migration 374 新增不可变 receipt 表及 `scenario_count`/`scenario_evidence`。
-- PASS 必须有非零场景数和非空场景证据；旧 PASS 只保留审计，不算当前覆盖。
-- 本层仍不执行断言，也不包含 Runner、route 或 UI，不宣称生产盖章完成。
+- Migration 374 新增不可变 receipt 与场景证据，selfcheck 同步到 374；无证据
+  PASS 不算覆盖。本层仍不含 Runner、route 或 UI，不宣称生产盖章完成。
 
 ## Brain 1.267.139 — Golden Path §④-1 receipt-state pure model
 
@@ -917,7 +916,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 370 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 374 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -1305,7 +1304,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '370'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '374'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

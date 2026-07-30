@@ -385,16 +385,14 @@ if (migrationConflicts.length === 0) {
   }
 }
 
-// Check 2: selfcheck.js version 是"最低可接受地板"（DB must be >= this），不要求等于最高 migration。
-// 只校验地板不超过现有最高 migration（超过=指向不存在的版本，才是错）。
-// 历史教训(issue 14d66027)：旧版用 === 要求严格相等，与 CI 硬断言 toBe('293') 死锁——
-// 加 migration 时 bump 则 CI 挂、不 bump 则本地 hook 拦。改为 <= 地板语义解锁。
+// Repository integrity requires selfcheck to equal the highest migration.
+// Runtime selfcheck remains forward-compatible and accepts DB >= expected.
 const { selfcheckVersion, highestMigration } = checkSelfcheckVersionSync();
-if (Number(selfcheckVersion) <= Number(highestMigration)) {
-  console.log(`  ✓ selfcheck_version_sync: EXPECTED_SCHEMA_VERSION = '${selfcheckVersion}' (地板) <= 最高 migration '${highestMigration}'`);
+if (Number(selfcheckVersion) === Number(highestMigration)) {
+  console.log(`  ✓ selfcheck_version_sync: selfcheck='${selfcheckVersion}' equals highest migration='${highestMigration}'`);
 } else {
   integrityFailure = true;
-  console.log(`  ✗ selfcheck_version_sync: selfcheck.js 地板='${selfcheckVersion}' 超过最高 migration='${highestMigration}' — 不应指向不存在的 migration`);
+  console.log(`  ✗ selfcheck_version_sync: selfcheck='${selfcheckVersion}' must equal highest migration='${highestMigration}'`);
 }
 
 // Check 3: LLM fetch timeouts

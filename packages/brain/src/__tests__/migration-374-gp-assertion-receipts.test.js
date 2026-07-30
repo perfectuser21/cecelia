@@ -2,11 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { readFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-
 const here = dirname(fileURLToPath(import.meta.url));
 const migrationPath = join(here, '../../migrations/374_gp_assertion_receipts.sql');
 const factsPath = join(here, '../../../../scripts/facts-check.mjs');
-
 describe('migration 374 Golden Path assertion receipts contract', () => {
   it('defines immutable real-execution assertion receipts', async () => {
     const sql = await readFile(migrationPath, 'utf8');
