@@ -48,9 +48,25 @@ beforeAll(async () => {
 afterAll(async () => {
   if (testPool) await testPool.end();
   if (adminPool && databaseName) {
-    await adminPool.query(
-      `DROP DATABASE IF EXISTS ${quotedIdentifier(databaseName)} WITH (FORCE)`,
-    );
+    // Pool#end() can resolve while PostgreSQL is still removing the final
+    // server-side session. FORCE races that shutdown and surfaces an
+    // unhandled 57P01 after otherwise-passing tests.
+    let remainingSessions = 0;
+    for (let attempt = 0; attempt < 250; attempt += 1) {
+      const result = await adminPool.query(
+        'SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=$1',
+        [databaseName],
+      );
+      remainingSessions = result.rows[0].count;
+      if (remainingSessions === 0) break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    if (remainingSessions !== 0) {
+      throw new Error(
+        `isolated test database still has ${remainingSessions} session(s): ${databaseName}`,
+      );
+    }
+    await adminPool.query(`DROP DATABASE IF EXISTS ${quotedIdentifier(databaseName)}`);
   }
   if (adminPool) await adminPool.end();
   if (auditDirectory) await rm(auditDirectory, { recursive: true, force: true });
