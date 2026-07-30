@@ -74,6 +74,13 @@ export async function createKernelRun(pool, input) {
     ) {
       throw new Error(`kernel run task ${input.taskId} not eligible`);
     }
+    const taskInitiativeId = task.payload?.initiative_id ?? task.id;
+    if (String(taskInitiativeId) !== input.initiativeId) {
+      throw new Error(
+        `kernel run task ${input.taskId} initiative mismatch: `
+        + `${input.initiativeId}/${taskInitiativeId}`,
+      );
+    }
 
     const active = await loadActiveKernelRun(
       client,
@@ -132,6 +139,20 @@ export async function finalizeKernelRun(pool, {
   let committed = false;
   try {
     await client.query('BEGIN');
+    const { rows: taskRows } = await client.query(
+      `SELECT id, status
+         FROM tasks
+        WHERE id = $1
+        FOR UPDATE`,
+      [expectedTaskId],
+    );
+    const task = taskRows[0];
+    if (!task) {
+      throw new Error(`Kernel run parent task missing: ${expectedTaskId}`);
+    }
+
+    // createKernelRun also locks task before run. Keeping one global order
+    // prevents create/finalize deadlocks under concurrent recovery.
     const { rows: runRows } = await client.query(
       `SELECT id, current_task_id, phase
          FROM initiative_runs
@@ -145,18 +166,6 @@ export async function finalizeKernelRun(pool, {
       throw new Error(
         `Kernel run/task identity mismatch: ${runId}/${expectedTaskId}`,
       );
-    }
-
-    const { rows: taskRows } = await client.query(
-      `SELECT id, status
-         FROM tasks
-        WHERE id = $1
-        FOR UPDATE`,
-      [expectedTaskId],
-    );
-    const task = taskRows[0];
-    if (!task) {
-      throw new Error(`Kernel run parent task missing: ${expectedTaskId}`);
     }
 
     const runAlreadyTerminal = ['done', 'failed'].includes(run.phase);

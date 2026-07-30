@@ -15,9 +15,12 @@
 ## Brain 1.267.146 — Kernel run identity and atomic terminalization
 
 - Migration 375 要求所有新 v2 run 绑定 `current_task_id` 并记录
-  `created_source`，同时限制每个 task 只能有一条 active run。
-- run/task 终态原子提交；Kernel orphan 只做精确终态对账或失败关闭，不再落入
-  legacy requeue 重复点火。历史缺身份行保持 untrusted，等待后续重建。
+  `created_source`，校验 task→initiative 归属，同时限制每个 task 只能有一条 active run。
+- create/finalize 统一以 task→run 顺序加锁；run/task 终态原子提交，executor
+  不得对 Kernel task 单独回写终态。
+- `harness_initiative` 与 `golden_path_proposal` 的 Kernel orphan 都只做精确终态
+  对账或失败关闭，不再落入 legacy requeue 重复点火。历史缺身份行保持 untrusted，
+  等待后续重建；Fleet synthetic canary 明确不冒充业务 v2 run。
 - 回退：部署 Brain `1.267.145`，保留 Migration 375 的加法 schema；禁止恢复
   initiative-wide mutation 或猜测回填历史身份。
 

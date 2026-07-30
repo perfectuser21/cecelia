@@ -182,7 +182,13 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
       outcome: 'failed',
       reason: `kernel_launch_failed:${error.message}`,
     });
-    return { ok: false, mode: 'kernel-v1', runId, error: error.message };
+    return {
+      ok: false,
+      mode: 'kernel-v1',
+      runId,
+      error: error.message,
+      terminalized: true,
+    };
   }
 }
 

@@ -63,15 +63,15 @@ export async function loadKernelRunIdentityReport(db) {
   const createdSourceProjection = createdSourceColumn
     ? 'created_source'
     : 'NULL::text AS created_source';
+  const identityGapPredicate = createdSourceColumn
+    ? '(current_task_id IS NULL OR created_source IS NULL)'
+    : '( TRUE )';
   const { rows: identityRows } = await db.query(
     `SELECT id, initiative_id, current_task_id, phase,
             ${createdSourceProjection}, started_at, completed_at
-       FROM initiative_runs
+      FROM initiative_runs
       WHERE orchestrator_version = 'v2'
-        AND (
-          current_task_id IS NULL
-          ${createdSourceColumn ? 'OR created_source IS NULL' : ''}
-        )
+        AND ${identityGapPredicate}
       ORDER BY started_at, id`,
   );
 

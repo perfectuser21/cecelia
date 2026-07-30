@@ -267,7 +267,10 @@ export async function sweepOrphanHarnessTasks({
               COALESCE(payload->>'initiative_id', id::text) AS initiative_id
        FROM tasks
        WHERE status = 'in_progress'
-         AND task_type LIKE 'harness%'
+         AND (
+           task_type LIKE 'harness%'
+           OR task_type = 'golden_path_proposal'
+         )
          AND COALESCE(payload->>'generator_done', 'false') <> 'true'
          AND updated_at < NOW() - INTERVAL '${Number(idleMinutes)} minutes'
        ORDER BY updated_at ASC

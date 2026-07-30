@@ -382,7 +382,8 @@ async function createRelayRun(req, res, legacyInitiativeId = null) {
   }
 
   try {
-    const result = await createKernelRun(pool, {
+    const requestPool = req.app.get('pool') || pool;
+    const result = await createKernelRun(requestPool, {
       taskId,
       initiativeId,
       phase: startPhase,
@@ -397,7 +398,10 @@ async function createRelayRun(req, res, legacyInitiativeId = null) {
     if (err.message?.startsWith('invalid Kernel run')) {
       return res.status(400).json({ error: err.message });
     }
-    if (err.message?.includes('not eligible')) {
+    if (
+      err.message?.includes('not eligible')
+      || err.message?.includes('initiative mismatch')
+    ) {
       return res.status(409).json({ error: err.message });
     }
     console.error('[POST /orchestrator/relay-runs]', err.message);
