@@ -105,11 +105,18 @@ export function shortId(id) {
   return String(id).replace(/-/g, '').slice(0, 8);
 }
 
-export async function launchKernelProcess({ taskId, runId, worktreePath }) {
+export async function launchKernelProcess({
+  taskId,
+  runId,
+  worktreePath,
+  resumeToken = null,
+}) {
   const runner = fileURLToPath(new URL('./orchestrator/run.js', import.meta.url));
+  const args = [runner, '--task-id', taskId, '--run-id', runId];
+  if (resumeToken) args.push('--resume-token', resumeToken);
   const child = nodeSpawn(
     process.execPath,
-    [runner, '--task-id', taskId, '--run-id', runId],
+    args,
     {
       cwd: worktreePath,
       detached: true,

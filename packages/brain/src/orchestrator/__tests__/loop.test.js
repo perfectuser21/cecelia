@@ -1104,7 +1104,7 @@ describe('runLoop：context resume 启动屏障', () => {
     expect(activated).toMatchObject({ id: RUN_ID, phase: 'generate' });
     const [sql, params] = pool.query.mock.calls[0];
     expect(sql).toMatch(
-      /MAX\(latest_request\.hop\)[\s\S]*effect:context_requested[\s\S]*verdict:context_answer/,
+      /effect:context_requested[\s\S]*ORDER BY request\.hop DESC[\s\S]*LIMIT 1[\s\S]*verdict:context_answer/,
     );
     expect(sql).toMatch(/orchestrator_host=\$4[\s\S]*orchestrator_pid=\$5/);
     expect(sql).toMatch(/orchestrator_host=\$6/);

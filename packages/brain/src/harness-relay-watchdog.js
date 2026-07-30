@@ -12,7 +12,6 @@
  */
 import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
-import os from 'node:os';
 
 import pool from './db.js';
 import { createAttemptStore } from './orchestrator/attempt-store.js';
@@ -817,9 +816,9 @@ export async function _resumePausedKernelContext(run, task, deps, out) {
     return false;
   }
   const now = deps.now?.() ?? new Date();
-  const host = deps.hostname?.() ?? os.hostname();
   const watchdogPid = deps.watchdogPid ?? process.pid;
-  const claimHost = `context-resume:${host}:${watchdogPid}`;
+  const resumeToken = (deps.randomUUID ?? randomUUID)();
+  const claimHost = `context-resume:${resumeToken}`;
   const claimed = await dbPool.query(
     `UPDATE initiative_runs r
         SET orchestrator_heartbeat_at=$3,
@@ -840,6 +839,13 @@ export async function _resumePausedKernelContext(run, task, deps, out) {
              AND answer.action='verdict:context_answer'
              AND answer.detail->>'context_request_hop'=$2
         )
+        AND NOT EXISTS (
+          SELECT 1
+            FROM orchestrator_decision_log newer
+           WHERE newer.run_id=r.id
+             AND newer.action='effect:context_requested'
+             AND newer.hop>$2::integer
+        )
       RETURNING r.id`,
     [run.id, String(requestHop), now, claimHost, watchdogPid],
   );
@@ -853,6 +859,7 @@ export async function _resumePausedKernelContext(run, task, deps, out) {
       taskId: task.id,
       runId: run.id,
       worktreePath: task.payload?.worktree_path,
+      resumeToken,
     });
   } catch (error) {
     await dbPool.query(
@@ -869,25 +876,9 @@ export async function _resumePausedKernelContext(run, task, deps, out) {
     throw error;
   }
 
-  const published = await dbPool.query(
-    `UPDATE initiative_runs
-        SET phase=$2,
-            orchestrator_heartbeat_at=$3,
-            orchestrator_host=$4,
-            orchestrator_pid=$5,
-            updated_at=NOW()
-      WHERE id=$1::uuid
-        AND phase='paused'
-        AND orchestrator_host=$6
-      RETURNING id`,
-    [run.id, resumePhase, now, host, launched.pid ?? null, claimHost],
-  );
-  if (published.rowCount !== 1) {
-    throw new Error(`context resume claim lost for run ${run.id}`);
-  }
   out.resumed++;
   console.log(
-    `[relay-watchdog][kernel-v1] context resumed run=${run.id} `
+    `[relay-watchdog][kernel-v1] context child launched run=${run.id} `
     + `phase=${resumePhase} pid=${launched.pid ?? '?'}`,
   );
   return true;
@@ -1018,6 +1009,12 @@ export async function resumeStalledRelayRuns(deps = {}) {
                 FROM orchestrator_decision_log request
                WHERE request.run_id=r.id
                  AND request.action='effect:context_requested'
+                 AND request.hop=(
+                   SELECT MAX(latest_request.hop)
+                     FROM orchestrator_decision_log latest_request
+                    WHERE latest_request.run_id=r.id
+                      AND latest_request.action='effect:context_requested'
+                 )
                  AND EXISTS (
                    SELECT 1
                      FROM orchestrator_decision_log answer
@@ -1037,7 +1034,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
         AND (phase NOT IN ('done', 'failed')
           OR (orchestrator_host IN ('skill-relay-codex-headed','skill-relay-claude-headed')
             AND phase = 'done' AND tmux_killed_at IS NULL))
-      ORDER BY r.started_at DESC, r.id DESC
+      ORDER BY (context_resume IS NOT NULL) DESC, r.started_at DESC, r.id DESC
       LIMIT 20`
   );
   // 护栏:注入的 pool 对未知 SQL 返回 undefined 时(集成测试 fake),按空处理

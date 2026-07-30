@@ -380,12 +380,73 @@ async function loadRunDeadlineState(pool, runId) {
   };
 }
 
+const CONTEXT_RESUME_PHASE_SQL = "'planning','gan','generate','evaluate','review','merge'";
+
+/**
+ * Child-side startup fence for a needs_context recovery. The new Controller
+ * may not collect ground truth or dispatch until its one-use token atomically
+ * publishes the latest answered request's resume phase and its real liveness
+ * receipt.
+ */
+export async function activateContextResume(pool, {
+  runId,
+  resumeToken,
+  host,
+  pid,
+  now,
+}) {
+  const claimHost = `context-resume:${resumeToken}`;
+  const result = await pool.query(
+    `WITH latest_request AS (
+       SELECT request.hop, request.detail, $2::text AS resume_token
+         FROM orchestrator_decision_log request
+        WHERE request.run_id=$1::uuid
+          AND request.action='effect:context_requested'
+        ORDER BY request.hop DESC
+        LIMIT 1
+     ), answered AS (
+       SELECT latest_request.*
+         FROM latest_request
+        WHERE EXISTS (
+          SELECT 1
+            FROM orchestrator_decision_log answer
+           WHERE answer.run_id=$1::uuid
+             AND answer.action='verdict:context_answer'
+             AND answer.detail->>'context_request_hop'=latest_request.hop::text
+        )
+     )
+     UPDATE initiative_runs r
+        SET phase=answered.detail->>'resume_phase',
+            orchestrator_heartbeat_at=$3,
+            orchestrator_host=$4,
+            orchestrator_pid=$5,
+            updated_at=NOW()
+       FROM answered
+      WHERE r.id=$1::uuid
+        AND r.phase='paused'
+        AND r.orchestrator_host=$6
+        AND answered.resume_token=$2
+        AND answered.detail->>'resume_phase' IN (${CONTEXT_RESUME_PHASE_SQL})
+      RETURNING r.id, r.phase`,
+    [runId, resumeToken, now, host, pid, claimHost],
+  );
+  return result.rows?.[0] ?? null;
+}
+
 /**
  * runLoop(deps, {taskId, runId?, dryRun?}) → {exitReason, hops, decision?}
  * hops = 本进程实际派发（appendHop 成功）的跳数。
  * dryRun（F5 前台雏形）：只观测+推导+打印，单跳即返回，零写入零派发。
  */
-export async function runLoop(deps, { taskId, runId, dryRun = false }) {
+export async function runLoop(
+  deps,
+  {
+    taskId,
+    runId,
+    resumeToken = null,
+    dryRun = false,
+  },
+) {
   const collect = deps.collectGroundTruth ?? defaultCollect;
   // DI 包装：fake（测试）注入 appendHop(opts) 单对象接口；默认实现是 (pool, opts) 两参数接口
   const append = deps.appendHop
@@ -400,6 +461,19 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
   const pid = deps.pid ?? process.pid;
 
   const resolvedRunId = runId ?? (await resolveRunId(deps.pool, taskId));
+  if (resumeToken) {
+    const activate = deps.activateContextResume ?? activateContextResume;
+    const activated = await activate(deps.pool, {
+      runId: resolvedRunId,
+      resumeToken,
+      host,
+      pid,
+      now: now(),
+    });
+    if (!activated) {
+      return { exitReason: 'context_resume_claim_lost', hops: 0 };
+    }
+  }
   const groundTruthPaths = collect === defaultCollect
     ? await resolveGroundTruthPaths(deps.pool, taskId)
     : {};

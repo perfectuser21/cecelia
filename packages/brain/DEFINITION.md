@@ -17,8 +17,9 @@
 - `needs_context` 原子写入版本化 `effect:context_requested` 并暂停；人工答案必须
   通过审批权认证且绑定 `run/task/request hop/callback hop/context version`。答案与
   恢复意图同事务提交，旧答案不能消费新请求；run 保持 `paused`，watchdog 先用
-  `context-resume:*` 的 host/pid/heartbeat CAS 领取，新 Controller 的 receipt
-  持久化后才发布原 phase。
+  唯一 `context-resume:<token>` 的 host/pid/heartbeat CAS 领取；新 Controller
+  必须用该 token 自己原子写入真实 pid/host/heartbeat 并发布最新 request 的原 phase，
+  成功前不得进入 collect/derive/dispatch。
   恢复 Attempt 的 TaskBundle 显式携带版本化答案。
 - Generator 的 PR claim 只有同时匹配 Brain 签发的 `workspace_spec.repo/branch` 且由
   GitHub 返回完整 head SHA 才能投影为权威 `pr_url`；legacy attempt 才回退 task
