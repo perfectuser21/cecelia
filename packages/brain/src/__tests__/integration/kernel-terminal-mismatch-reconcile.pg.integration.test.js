@@ -8,6 +8,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { reconcileTerminalMismatches } from '../../../scripts/kernel-terminal-mismatch-reconcile.mjs';
 import { DB_DEFAULTS } from '../../db-config.js';
+import { finalizeKernelRun } from '../../orchestrator/kernel-run-store.js';
 
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -131,5 +132,81 @@ describe('kernel terminal mismatch reconciliation on real PostgreSQL', () => {
     const audit = await readFile(auditOutput, 'utf8');
     expect(audit).toContain('"commit_state":"verified"');
     expect(audit).toContain('"outcome":"completed"');
+  });
+
+  it('does not propose an old terminal run while a sibling run is active', async () => {
+    const taskId = randomUUID();
+    const oldRunId = randomUUID();
+    const activeRunId = randomUUID();
+    await testPool.query(
+      `INSERT INTO tasks (id, title, status)
+       VALUES ($1, 'active sibling evidence', 'in_progress')`,
+      [taskId],
+    );
+    await testPool.query(
+      `INSERT INTO initiative_runs (
+         id, initiative_id, phase, current_task_id, orchestrator_version,
+         created_source, started_at, completed_at, failure_reason,
+         record_trust_status
+       ) VALUES
+         ($1, $3, 'failed', $4, 'v2', 'explicit_recovery',
+          NOW() - INTERVAL '3 minutes', NOW() - INTERVAL '2 minutes',
+          'old_attempt_failed', 'trusted'),
+         ($2, $3, 'generate', $4, 'v2', 'explicit_recovery',
+          NOW() - INTERVAL '1 minute', NULL, NULL, 'trusted')`,
+      [oldRunId, activeRunId, randomUUID(), taskId],
+    );
+
+    const dry = await reconcileTerminalMismatches({
+      db: testPool,
+      productionGuards: true,
+      writeLine: () => {},
+    });
+    expect(dry).toMatchObject({ proposed: 0, blocked: 0 });
+  });
+
+  it('rechecks active siblings under the task lock before terminal repair', async () => {
+    const taskId = randomUUID();
+    const oldRunId = randomUUID();
+    const activeRunId = randomUUID();
+    await testPool.query(
+      `INSERT INTO tasks (id, title, status)
+       VALUES ($1, 'active sibling race fence', 'in_progress')`,
+      [taskId],
+    );
+    await testPool.query(
+      `INSERT INTO initiative_runs (
+         id, initiative_id, phase, current_task_id, orchestrator_version,
+         created_source, started_at, completed_at, failure_reason,
+         record_trust_status
+       ) VALUES
+         ($1, $3, 'failed', $4, 'v2', 'explicit_recovery',
+          NOW() - INTERVAL '3 minutes', NOW() - INTERVAL '2 minutes',
+          'old_attempt_failed', 'trusted'),
+         ($2, $3, 'generate', $4, 'v2', 'explicit_recovery',
+          NOW() - INTERVAL '1 minute', NULL, NULL, 'trusted')`,
+      [oldRunId, activeRunId, randomUUID(), taskId],
+    );
+
+    await expect(finalizeKernelRun(testPool, {
+      runId: oldRunId,
+      expectedTaskId: taskId,
+      expectedTaskStatus: 'in_progress',
+      requireNoActiveSibling: true,
+      outcome: 'failed',
+      reason: 'old_attempt_failed',
+    })).rejects.toThrow(/active sibling/);
+
+    const state = await testPool.query(
+      `SELECT t.status AS task_status, active.phase AS active_phase
+         FROM tasks t
+         JOIN initiative_runs active ON active.current_task_id = t.id
+        WHERE t.id = $1 AND active.id = $2`,
+      [taskId, activeRunId],
+    );
+    expect(state.rows).toEqual([{
+      task_status: 'in_progress',
+      active_phase: 'generate',
+    }]);
   });
 });

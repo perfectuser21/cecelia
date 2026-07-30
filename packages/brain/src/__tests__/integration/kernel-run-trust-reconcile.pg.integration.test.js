@@ -168,4 +168,81 @@ describe('kernel trust reconciliation on real PostgreSQL', () => {
     expect(audit).toContain('"outcome":"batch_committed"');
     expect(audit).toContain('"outcome":"completed"');
   });
+
+  it('rolls back when classification evidence changes after plan review', async () => {
+    const cutoffResult = await testPool.query(
+      `SELECT applied_at FROM schema_version WHERE version = '376'`,
+    );
+    const cutoff = new Date(cutoffResult.rows[0].applied_at);
+    const taskId = randomUUID();
+    const runId = randomUUID();
+    await testPool.query(
+      `INSERT INTO tasks (id, title, status)
+       VALUES ($1, 'trust evidence drift', 'completed')`,
+      [taskId],
+    );
+    await testPool.query(
+      `INSERT INTO initiative_runs (
+         id, initiative_id, phase, current_task_id, orchestrator_version,
+         created_source, started_at, completed_at,
+         record_trust_status, record_trust_reason
+       ) VALUES (
+         $1, $2, 'done', $3, 'v2', 'historical_reconstruction',
+         $4, $5, 'untrusted', NULL
+       )`,
+      [
+        runId,
+        randomUUID(),
+        taskId,
+        new Date(cutoff.getTime() - 120_000),
+        new Date(cutoff.getTime() - 60_000),
+      ],
+    );
+
+    const dry = await reconcileRunTrust({
+      db: testPool,
+      productionGuards: true,
+      writeLine: () => {},
+    });
+    let inserted = false;
+    const appendAudit = async (_path, content) => {
+      if (!inserted && content.includes('"outcome":"started"')) {
+        inserted = true;
+        await testPool.query(
+          `INSERT INTO harness_attempts (
+             id, run_id, hop, phase, role, provider,
+             task_bundle, callback_secret_hash
+           ) VALUES
+             ($1, $3, 1, 'generate', 'generator', 'auto', '{}'::jsonb, 'x'),
+             ($2, $3, 2, 'generate', 'generator', 'auto', '{}'::jsonb, 'y')`,
+          [randomUUID(), randomUUID(), runId],
+        );
+      }
+    };
+
+    await expect(reconcileRunTrust({
+      db: testPool,
+      apply: true,
+      auditOutput: '/tmp/kernel-trust-evidence-drift.jsonl',
+      expectedPlanSha256: dry.plan_sha256,
+      expectedProposed: dry.proposed,
+      confirmDatabase: databaseName,
+      productionGuards: true,
+      failOnConflict: true,
+      batchSize: 500,
+      appendAudit,
+      writeLine: () => {},
+    })).rejects.toThrow(/evidence.*changed|optimistic conflict/);
+
+    const state = await testPool.query(
+      `SELECT record_trust_status, record_trust_reason
+         FROM initiative_runs
+        WHERE id = $1`,
+      [runId],
+    );
+    expect(state.rows).toEqual([{
+      record_trust_status: 'untrusted',
+      record_trust_reason: null,
+    }]);
+  });
 });
