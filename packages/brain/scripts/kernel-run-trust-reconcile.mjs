@@ -85,7 +85,13 @@ function proposalFor(row) {
   };
 }
 
-async function applyBatch(db, proposals, executionId) {
+async function applyBatch(
+  db,
+  proposals,
+  executionId,
+  batchId,
+  writeAudit,
+) {
   const client = typeof db.connect === 'function' ? await db.connect() : db;
   try {
     await client.query('BEGIN');
@@ -110,12 +116,32 @@ async function applyBatch(db, proposals, executionId) {
           proposal.before.reason,
         ],
       );
+      let outcome = 'applied';
+      if ((result.rowCount ?? 0) !== 1) {
+        const current = await client.query(
+          `SELECT record_trust_status, record_trust_reason
+             FROM initiative_runs
+            WHERE id = $1`,
+          [proposal.run_id],
+        );
+        const row = current.rows?.[0] ?? null;
+        outcome = (
+          row
+          && row.record_trust_status === proposal.after.status
+          && row.record_trust_reason === proposal.after.reason
+        ) ? 'unchanged' : 'conflict';
+      }
       outcomes.push({
         execution_id: executionId,
+        batch_id: batchId,
+        commit_state: 'pending',
         ...proposal,
-        outcome: (result.rowCount ?? 0) === 1 ? 'applied' : 'conflict',
+        outcome,
       });
     }
+    await writeAudit(
+      outcomes.map(outcome => `${JSON.stringify(outcome)}\n`).join(''),
+    );
     await client.query('COMMIT');
     return outcomes;
   } catch (error) {
@@ -155,7 +181,10 @@ export async function reconcileRunTrust({
   let auditHandle = null;
   const writeAudit = appendAudit
     ? content => appendAudit(auditOutput, content)
-    : async content => auditHandle.write(content);
+    : async content => {
+        await auditHandle.write(content);
+        await auditHandle.sync();
+      };
   if (!appendAudit) {
     auditHandle = await open(auditOutput, 'wx', 0o600);
   }
@@ -168,21 +197,28 @@ export async function reconcileRunTrust({
       proposed: proposals.length,
     })}\n`);
     for (let offset = 0; offset < proposals.length; offset += batchSize) {
+      const batchId = `${executionId}:${Math.floor(offset / batchSize) + 1}`;
       const batchOutcomes = await applyBatch(
         db,
         proposals.slice(offset, offset + batchSize),
         executionId,
+        batchId,
+        writeAudit,
       );
       outcomes.push(...batchOutcomes);
-      await writeAudit(
-        batchOutcomes.map(outcome => `${JSON.stringify(outcome)}\n`).join(''),
-      );
+      await writeAudit(`${JSON.stringify({
+        execution_id: executionId,
+        batch_id: batchId,
+        outcome: 'batch_committed',
+        rows: batchOutcomes.length,
+      })}\n`);
     }
     await writeAudit(`${JSON.stringify({
       execution_id: executionId,
       kind: 'kernel_run_trust_reconcile',
       outcome: 'completed',
       applied: outcomes.filter(outcome => outcome.outcome === 'applied').length,
+      unchanged: outcomes.filter(outcome => outcome.outcome === 'unchanged').length,
       conflicts: outcomes.filter(outcome => outcome.outcome === 'conflict').length,
     })}\n`);
   } finally {
@@ -194,10 +230,12 @@ export async function reconcileRunTrust({
   }
   const applied = outcomes.filter(outcome => outcome.outcome === 'applied').length;
   const conflicts = outcomes.filter(outcome => outcome.outcome === 'conflict').length;
+  const unchanged = outcomes.filter(outcome => outcome.outcome === 'unchanged').length;
   return {
     scanned: rows.length,
     proposed: proposals.length,
     applied,
+    unchanged,
     conflicts,
     execution_id: executionId,
   };

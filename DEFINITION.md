@@ -21,6 +21,8 @@
 - Migration 376 为 run 增加可信度和 predecessor lineage。新 canonical run 标
   `trusted`；历史默认 `untrusted`，只能由 dry-run 优先、带绝对审计文件的确定性
   reconcile 分批重建；审计独占创建、记录真实 applied/conflict 后封为只读。
+- Migration 377 用数据库 trigger 强制所有 initiative run INSERT 参与兼容 API 的
+  identity/prefix 事务锁，直接 writer 也不能穿过唯一候选解析窗口。
 - summary 分开 `trusted/reconstructed/untrusted`；SLO 使用每个任务最新的原生
   trusted 终态，活跃 run 不进入分母。
   回退：部署 Brain `1.267.146` 并保留加法 schema，禁止恢复批量 mutation。

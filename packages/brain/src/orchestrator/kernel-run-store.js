@@ -22,6 +22,7 @@ const TERMINAL_TASK_STATUSES = new Set([
   'completed',
   'failed',
   'cancelled',
+  'canceled',
 ]);
 
 function validateCreateInput(input) {
@@ -176,15 +177,17 @@ export async function patchKernelRunById(pool, {
 
     if (willBeTerminal) {
       const taskOutcome = phase === 'done' ? 'completed' : 'failed';
+      const taskIsCancelled = ['cancelled', 'canceled'].includes(task.status);
       if (
         TERMINAL_TASK_STATUSES.has(task.status)
         && task.status !== taskOutcome
+        && !(taskIsCancelled && phase === 'failed')
       ) {
         throw new Error(
           `Kernel task terminal outcome conflict: ${task.status}/${taskOutcome}`,
         );
       }
-      if (task.status !== taskOutcome) {
+      if (!taskIsCancelled && task.status !== taskOutcome) {
         await client.query(
           `UPDATE tasks
               SET status = $2::varchar,

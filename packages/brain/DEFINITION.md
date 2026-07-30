@@ -11,6 +11,8 @@
   selector、attempt cap 与父任务定位都使用 `current_task_id`，缺身份 fail closed。
 - Migration 376 增加 `trusted/reconstructed/untrusted` 可信度与 predecessor lineage；
   canonical 新 run 显式标 `trusted`，历史默认保持 `untrusted`。
+- Migration 377 在数据库 BEFORE INSERT trigger 中强制同一 initiative/prefix 的事务锁，
+  覆盖所有直接 INSERT writer，legacy 唯一候选解析期间不得插入第二条 run。
 - `kernel-run-trust-reconcile.mjs` 默认只输出确定性 JSONL 提案；仅同时提供
   `--apply --audit-output <绝对路径>` 才可分批、乐观并发写入；审计文件必须独占创建、
   逐批记录真实 applied/conflict 结果并封成只读。不得猜测身份。

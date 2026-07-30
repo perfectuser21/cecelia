@@ -943,7 +943,14 @@ export async function resumeStalledRelayRuns(deps = {}) {
         out.housekept++;
         continue;
       }
-      if (['cancelled', 'canceled'].includes(task.status)) continue;
+      if (['cancelled', 'canceled'].includes(task.status)) {
+        await terminalizeRun(dbPool, run, {
+          outcome: 'failed',
+          reason: 'task_cancelled',
+        });
+        out.housekept++;
+        continue;
+      }
       if (task.status === 'failed') {
         // failure_reason 必写 —— 旁边四条同类 UPDATE 都写了，只有这条留空，
         // 界面上这类 run 的失败原因永远是空的（事故 51836fb2 复盘卡在这）。
