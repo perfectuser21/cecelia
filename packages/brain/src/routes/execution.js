@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
@@ -34,6 +35,12 @@ import { isTransientClass } from '../lib/retry-policy.js';
 import { checkAnchor } from '../anchor-check.js';
 
 const router = Router();
+router.use(rateLimit({
+  windowMs: 60_000,
+  limit: 300,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+}));
 const execAsync = promisify(exec);
 const HEARTBEAT_PATH = new URL('../../../HEARTBEAT.md', import.meta.url);
 

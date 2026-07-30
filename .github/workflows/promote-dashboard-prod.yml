@@ -13,6 +13,9 @@ on:
         description: Persisted production effect authorization UUID
         required: true
 
+permissions:
+  contents: read
+
 concurrency:
   group: kernel-release
   cancel-in-progress: false

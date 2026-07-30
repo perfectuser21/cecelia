@@ -1,4 +1,5 @@
 import express, { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { DB_DEFAULTS } from '../db-config.js';
 import { recordActionReceipt, resolveActionReceipt } from '../receipt-collector.js';
@@ -55,6 +56,12 @@ import {
 } from '../orchestrator/release-run-controller-launcher.js';
 
 const router = Router();
+router.use(rateLimit({
+  windowMs: 60_000,
+  limit: 300,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+}));
 
 cleanupStalePrivateReleaseWorkerConfigs();
 

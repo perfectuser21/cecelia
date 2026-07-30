@@ -10,9 +10,16 @@
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 
 const router = Router();
+router.use(rateLimit({
+  windowMs: 60_000,
+  limit: 120,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+}));
 
 const VALID_STATUSES = ['active', 'executed', 'expired'];
 

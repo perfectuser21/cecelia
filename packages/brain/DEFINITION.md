@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**版本**: 1.268.31
+**版本**: 1.268.32
+
+## CodeQL 防护收敛
+
+- Brain HTTP 路由统一增加明确的速率限制，避免数据库、授权、文件系统及系统命令路径无界调用。
 
 ## Kernel atomic behavior equivalence gate
 

@@ -4,6 +4,7 @@ await initOtel();
 
 import 'dotenv/config';
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { createServer } from 'http';
 import { spawn } from 'child_process';
 import { createWriteStream } from 'fs';
@@ -134,6 +135,12 @@ setupGitCredentials({
 });
 
 const app = express();
+app.use(rateLimit({
+  windowMs: 60_000,
+  limit: 600,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+}));
 app.locals.pool = pool;
 app.set('kernelFleetBridgeToken', process.env.KERNEL_FLEET_BRIDGE_TOKEN);
 const server = createServer(app);

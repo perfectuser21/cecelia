@@ -56,6 +56,12 @@ import { normalizeFailureSignature } from '../orchestrator/convergence-signature
 import { sha256Canonical } from '../lib/kernel-equivalence-receipts.js';
 
 const router = Router();
+router.use(rateLimit({
+  windowMs: 60_000,
+  limit: 300,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+}));
 const SUCCESS_TERMINAL_STATUSES = new Set([
   'completed',
   'completed_with_concerns',
