@@ -45,6 +45,7 @@ describe('WarRoomGoldenPathPage assertion-ledger loading', () => {
   it('fails closed when one ledger is unavailable', async () => {
     install({ fail: 'step-2' }); render(<WarRoomGoldenPathPage />);
     expect(await screen.findByText('账本数据不可用')).toBeInTheDocument();
+    expect(screen.queryByText('仅纸面断言')).not.toBeInTheDocument();
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
   });
   it.each([
