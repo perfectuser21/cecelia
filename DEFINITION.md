@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.147
+**Brain 版本**: 1.267.148
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.148 — Fail-closed trusted assertion runner
+
+- 断言只接受 fresh-admitted Fleet 节点返回的 pinned、只读 Runner receipt；
+  未配置 trusted executor 时在接触 DB、Git 或本地进程前失败关闭。
+- 场景数只从 Runner 输出解析，时间与 digest 只取已绑定 receipt；不提供本地
+  spawn 回退。本层尚未提供统一 Fleet executor。回退：部署 Brain `1.267.147`。
 
 ## Brain 1.267.147 — Trusted assertion execution contract
 

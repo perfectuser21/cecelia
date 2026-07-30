@@ -1,6 +1,12 @@
 # Brain 模块定义
 
-**版本**: 1.267.147
+**版本**: 1.267.148
+
+## Fail-closed trusted assertion runner
+
+- `gp-assertion-runner.js` 要求 fresh Phase 4A admission、NodeProfile pinned digest
+  与只读 trusted receipt 后才写入断言回执。
+- 无 trusted executor 时不触碰 DB/Git/local spawn；本层不实现 Fleet transport。
 
 ## Trusted assertion execution contract
 
