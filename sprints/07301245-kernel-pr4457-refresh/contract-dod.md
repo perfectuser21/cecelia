@@ -13,8 +13,8 @@ target_environment: local_api
 - [ ] [ARTIFACT] 33 路径 oracle manifest 的 schema、不可变 ID、完整 argv/观察与语义哈希精确匹配合同。
   gate-allow: weak-oracle/file-existence-only 此命令读取 JSON 后校验 schema、33 个唯一 path/ID、每行 argv/观察与冻结语义 SHA-256，非仅存在性检查。
   Test: node -e "const fs=require('fs'),c=require('crypto'),p='sprints/07301245-kernel-pr4457-refresh/conflict-oracle-manifest.json',x=JSON.parse(fs.readFileSync(p,'utf8')),sort=v=>Array.isArray(v)?v.map(sort):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,sort(v[k])])):v;x.subjects.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);const ids=x.subjects.map(v=>v.oracle_id),paths=x.subjects.map(v=>v.path),h=c.createHash('sha256').update(JSON.stringify(sort(x))).digest('hex');if(x.schema_version!==1||paths.length!==33||new Set(paths).size!==33||new Set(ids).size!==33||ids.slice().sort().join(',')!==Array.from({length:33},(_,i)=>'C'+String(i+1).padStart(2,'0')).join(',')||x.subjects.some(v=>!v.cwd||!Array.isArray(v.argv)||!v.argv.length||!v.expected_observation.includes('exit_code=0'))||h!=='97166a9ecfec61572691cfee4b1dfa6a567657ca92663e00f7923b7fe9920460')process.exit(1)"
-- [ ] [ARTIFACT] evidence 内容通过 schema、冻结 SHA/ID/digest、33/77/3 exact subject sets，并由七个 phase 真实执法。
-  Test: bash -c 'set -euo pipefail; V=sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs; for phase in freeze conflicts codeql regressions exact-head evaluator review-gate; do node "$V" "$phase"; done'
+- [ ] [ARTIFACT] evidence 内容通过 schema、冻结 SHA/ID/digest、33/77/3 exact subject sets，并由四个 actor/time boundary 执法七个 phase。
+  Test: bash -c 'set -euo pipefail; V=sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs; E=sprints/07301245-kernel-pr4457-refresh/evidence; node "$V" review-gate --stage controller-review-gate --exact-head-receipt "$E/exact-head-receipt.json" --evaluator-receipt "$E/evaluator-receipt.json" --audit-end "$E/audit-end.json"'
 
 ## BEHAVIOR 条目
 
@@ -23,49 +23,49 @@ target_environment: local_api
   预期观察: stdout/evidence 逐项枚举 33 个冲突路径、77 条 annotation subject key、三个 required-check subject，并 exact-set 匹配冻结身份与 hash
   等待预算: 120s
   留证: `evidence/freeze.json`、`codeql-freeze.json`、原始 API URL 与 stdout
-  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs freeze'
+  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs freeze --stage generator-pre-push'
 
 - [ ] [BEHAVIOR] [L2] B-02: 全部 33 个冲突路径完成内容与行为验证
   动作: 整合冻结 main，逐行执行 conflict ledger 指定的真实模块 oracle，再运行 conflicts verifier
   预期观察: 33 个 path 各自输出三方/final blob、处置、真实 oracle argv/exit_code；集合 exact-set 相等，32 content 加 1 modify/delete，无 unresolved
   等待预算: 900s
   留证: `evidence/conflict-resolution.json`、每路径 argv/exit_code/log_tail
-  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs conflicts'
+  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs conflicts --stage generator-pre-push'
 
 - [ ] [BEHAVIOR] [L3] B-03: 全部 77 条 CodeQL annotation 收敛 [接缝×2]
-  动作: 对 check-run 90774353140 的 77 个 subject key 逐条分类处置并在 final head 真跑 CodeQL
-  预期观察: 77 个 subject 各自输出 path/line/rule/severity/disposition/recheck identity/result；7 critical、59 high、11 medium 全部唯一覆盖，无 unclassified/dismissed/扫描缩小
+  动作: generator-pre-push 对 check-run 90774353140 的 77 个 subject key 逐条分类处置；final-head 重查留给 ci-exact-head
+  预期观察: 77 个 subject 各自输出 path/line/rule/severity/disposition；7 critical、59 high、11 medium 全部唯一覆盖，无 unclassified/dismissed/扫描缩小，且本阶段不伪造 final-head 结果
   等待预算: 1800s
   留证: `evidence/codeql-disposition.json`、final CodeQL URL 与 stdout
-  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs codeql'
+  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs codeql --stage generator-pre-push'
 
 - [ ] [BEHAVIOR] [L2] B-04: 累计 Kernel Harness 行为与 atomic truth 保持
   动作: 运行 QuickCheck、node:test 双登记、OKR cecelia_test、migration 369-381、上一轮 blocker 与冲突表内全部行为 oracle
   预期观察: 33 个 conflict subject 对应的行为 oracle及命名回归均由真实解释器执行且 exit 0；atomic truth 保持 true/false/false/0/99
   等待预算: 1200s
   留证: `evidence/regressions.json` 的 argv/interpreter/exit_code/log_tail
-  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs regressions'
+  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs regressions --stage generator-pre-push'
 
 - [ ] [BEHAVIOR] [L3] B-05: 三个 required checks 绑定同一最终 SHA [接缝×2]
-  动作: 等待 exact context `ci-passed`、`Harness V5 Gate Passed`、`Smoke Glob Runner Passed` 终态并运行 verifier
-  预期观察: strict=true，逐项列出三个 context 的 run/suite/head/conclusion/details URL，集合与冻结 hash 一致，head 等于读取前后不变的 PR final head 且结论 SUCCESS
+  动作: CI 在最终 push receipt 后等待三个 exact context 终态，同时重查 final-head CodeQL，再以 ci-exact-head stage 运行 verifier
+  预期观察: push receipt SHA 等于 CI head；strict=true，三个 context 均 SUCCESS；final-head CodeQL 无冻结 unresolved subject；输出 exact-head receipt
   等待预算: 1800s
   留证: `evidence/exact-head.json`、check-run URL 与 final SHA
-  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs exact-head'
+  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs exact-head --stage ci-exact-head --receipt sprints/07301245-kernel-pr4457-refresh/evidence/push-receipt.json'
 
 - [ ] [BEHAVIOR] [L3] B-06: evaluator 在同一最终 SHA 真跑 [接缝×2]
-  动作: evaluator 在 final SHA 执行合同命令并以标准 judge receipt shape 留证
-  预期观察: 顶层及每条 behavior 都含 exit_code/log_tail 且为 0，所有 evidence_sha 等于 final head
+  动作: 独立 evaluator 在 exact-head SUCCESS 后执行合同并产出 receipt；只读 verifier 验证，不得自建 receipt
+  预期观察: evaluator lineage 独立且 role/stage 正确；顶层及每条 behavior 都含真实 argv/exit_code/log_tail 且为 0，所有 evidence_sha 等于 final head
   等待预算: 1800s
   留证: `evidence/evaluator.json` 与 behavior_tests log tail
-  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs evaluator'
+  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs evaluator --stage evaluator-receipt --receipt sprints/07301245-kernel-pr4457-refresh/evidence/evaluator-receipt.json'
 
 - [ ] [BEHAVIOR] [L3] B-07: 审计窗内无新 PR 无 merge 无 deploy [接缝×2]
-  动作: 在首次 fetch/merge/cherry-pick/push/GitHub mutation 前取基线，evaluator 后取终点，按闭区间分页真读 PR/merge/auto-merge/deployments并按 actor/ref/SHA/run/attempt/task/sprint marker 归因
-  预期观察: #4457 仍 Draft OPEN autoMerge=null mergedAt=null；main 不含 final head；归因的新 PR、merge、auto-merge、staging/production deployment 均为 0
+  动作: controller 在 exact-head/evaluator receipt 与 audit-end 齐备后运行只读 review-gate，按闭区间分页真读 PR/merge/auto-merge/deployments
+  预期观察: receipt digest 链、final SHA 和各阶段动态 lineage exact-match 且无跨阶段复用；#4457 仍 Draft OPEN；main 不含 final head；归因的新 PR、merge、auto-merge、deployment 均为 0
   等待预算: 120s
   留证: `evidence/audit-baseline.json`、`audit-end.json`、原始分页响应摘要
-  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs review-gate'
+  Test: manual:bash -c 'node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs review-gate --stage controller-review-gate --exact-head-receipt sprints/07301245-kernel-pr4457-refresh/evidence/exact-head-receipt.json --evaluator-receipt sprints/07301245-kernel-pr4457-refresh/evidence/evaluator-receipt.json --audit-end sprints/07301245-kernel-pr4457-refresh/evidence/audit-end.json'
 
 ## Invariant 映射
 

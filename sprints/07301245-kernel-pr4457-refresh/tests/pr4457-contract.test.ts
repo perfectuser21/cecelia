@@ -20,8 +20,8 @@ function canonical(value: unknown): unknown {
   return value;
 }
 
-async function run(phase: string) {
-  return await Promise.resolve(spawnSync(process.execPath, [verifier, phase], {
+async function run(phase: string, stage: string, args: string[] = []) {
+  return await Promise.resolve(spawnSync(process.execPath, [verifier, phase, '--stage', stage, ...args], {
     cwd: repoRoot,
     encoding: 'utf8',
     env: { ...process.env, EXPECTED_PR: '4457' },
@@ -32,7 +32,7 @@ describe('PR #4457 contract [BEHAVIOR]', () => {
   it('33 路径 oracle manifest 的 schema 身份 argv 与语义哈希精确匹配', async () => {
     // 静态 manifest 本身已在合同阶段冻结；它必须同时跨过由实现产出的
     // conflicts verifier/evidence 边界，避免实现尚不存在时仅靠静态 JSON 假绿。
-    const boundary = await run('conflicts');
+    const boundary = await run('conflicts', 'generator-pre-push');
     expect(boundary.status, boundary.stderr || boundary.stdout).toBe(0);
     const manifest = JSON.parse(await fs.promises.readFile(oracleManifest, 'utf8'));
     manifest.subjects.sort((a: { path: string }, b: { path: string }) =>
@@ -49,37 +49,46 @@ describe('PR #4457 contract [BEHAVIOR]', () => {
   });
 
   it('冻结身份与全部 subject 精确匹配', async () => {
-    const result = await run('freeze');
+    const result = await run('freeze', 'generator-pre-push');
     expect(result.status, result.stderr || result.stdout).toBe(0);
   });
 
   it('全部 33 个冲突路径完成行为验证', async () => {
-    const result = await run('conflicts');
+    const result = await run('conflicts', 'generator-pre-push');
     expect(result.status, result.stderr || result.stdout).toBe(0);
   });
 
   it('全部 77 条 CodeQL annotation 收敛', async () => {
-    const result = await run('codeql');
+    const result = await run('codeql', 'generator-pre-push');
     expect(result.status, result.stderr || result.stdout).toBe(0);
   });
 
   it('累计 Kernel Harness 行为与 atomic truth 保持', async () => {
-    const result = await run('regressions');
+    const result = await run('regressions', 'generator-pre-push');
     expect(result.status, result.stderr || result.stdout).toBe(0);
   });
 
   it('三个 required checks 绑定同一最终 SHA', async () => {
-    const result = await run('exact-head');
+    const result = await run('exact-head', 'ci-exact-head', [
+      '--receipt', path.join(sprintDir, 'evidence', 'push-receipt.json'),
+    ]);
     expect(result.status, result.stderr || result.stdout).toBe(0);
   });
 
   it('evaluator 在同一最终 SHA 真跑', async () => {
-    const result = await run('evaluator');
+    const result = await run('evaluator', 'evaluator-receipt', [
+      '--receipt', path.join(sprintDir, 'evidence', 'evaluator-receipt.json'),
+    ]);
     expect(result.status, result.stderr || result.stdout).toBe(0);
   });
 
   it('审计窗内无新 PR 无 merge 无 deploy', async () => {
-    const result = await run('review-gate');
+    const evidenceDir = path.join(sprintDir, 'evidence');
+    const result = await run('review-gate', 'controller-review-gate', [
+      '--exact-head-receipt', path.join(evidenceDir, 'exact-head-receipt.json'),
+      '--evaluator-receipt', path.join(evidenceDir, 'evaluator-receipt.json'),
+      '--audit-end', path.join(evidenceDir, 'audit-end.json'),
+    ]);
     expect(result.status, result.stderr || result.stdout).toBe(0);
   });
 });

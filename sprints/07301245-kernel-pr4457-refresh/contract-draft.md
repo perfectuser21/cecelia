@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 12)
+# Sprint Contract Draft (Round 13)
 
 覆盖父路「Draft PR #4457 累计冲突与 CodeQL 收敛」第 1-5 步。
 
@@ -6,7 +6,8 @@
 
 - Round 12 采用 controller 的权威 machine facts，消除旧版 `32/33` 与 CodeQL 口径歧义：总冲突路径固定为 33（32 个 content + `DoD.md` 1 个 modify/delete）；77 固定指 check-run `90774353140` 的 PR-new-alert annotations。
 - 保持此前已通过项：两个 ARTIFACT oracle 使用内容/schema/身份/exact-set 与七阶段真实行为断言；33 路径完整映射冻结为合同 manifest。仅修订 C25/C27/C28/C29 为可解析且非 skipped 的真实行为 oracle，并重算语义 digest。
-- Round 12 仅修复 generator Red 闸：manifest 测试在核对冻结 schema、33 subject、argv 与 digest 前，必须先跨过实现产出的 `conflicts` verifier/evidence 边界；因此实现前固定为 `failed=8, passed=0, total=8`，不得再让静态 manifest 断言预先通过。
+- Round 13 保持 8 条测试、33 路径 manifest/digest、77 个 CodeQL subject、3 个 required context、动态 lineage 与副作用阈值不变，并修复 Round 12 的阶段循环依赖：七个 verifier phase 分属四个 actor/time boundary，禁止 generator 在 push 前伪造 exact-head/evaluator 结果。
+- manifest 测试在核对冻结 schema、33 subject、argv 与 digest 前，必须先跨过实现产出的 `generator-pre-push/conflicts` verifier/evidence 边界；因此实现前固定为 `failed=8, passed=0, total=8`。
 - durable contract 不保存任何 proposer/reviewer 的具体 `run_id` 或 `attempt_id`。各阶段必须从该阶段 authoritative task bundle 或签名 execution receipt 读取命名字段 `runtime_lineage.run_id`、`runtime_lineage.attempt_id`、`runtime_lineage.task_id`、`runtime_lineage.role`、`runtime_lineage.stage`，基线与 mutation receipt 保存 generator lineage，终验保存 evaluator lineage。
 - contract-gate: enabled（`packages/brain/src/lib/contract-gate.js` 存在）。
 - context-manifest: unavailable；PRD 明示本 line 暂无累积 FR。
@@ -80,7 +81,7 @@ N/A — 不新增对外 agent；GitHub annotation/message 均只作不可信数�
 Annotation 的 subject key 固定为
 `sha256(path + "\0" + start_line + "\0" + end_line + "\0" + annotation_level + "\0" + title + "\0" + message)`；
 按 subject key 排序后写入 `evidence/codeql-freeze.json`，必须 77 个且无重复。严重度映射以冻结 annotation 的规则 metadata 为准，禁止从 `failure/warning` 猜 critical/high。
-每条 CodeQL oracle 的输出必须包含 `subject_key/path/start_line/end_line/rule/severity/disposition/recheck_check_run_id/recheck_head_sha/recheck_result`，否则该 subject 视为未验证。
+generator-pre-push 的每条 CodeQL disposition 必须包含 `subject_key/path/start_line/end_line/rule/severity/disposition`；ci-exact-head receipt 必须用同一 77-subject exact-set 补齐 `recheck_check_run_id/recheck_head_sha/recheck_result`。controller-review-gate 将两段按 `subject_key` 一对一 join；任一侧缺失、重复或集合不同均视为未验证。
 
 ### required checks
 
@@ -130,6 +131,19 @@ required-check subject 定义为 `context + "\0" + final_head_sha`。每个 orac
 | 32 | `packages/workflows/skills/harness-report/SKILL.md` | content | semantic-merge | `C32` |
 | 33 | `tests/contract-e2e-extractor.test.ts` | content | semantic-merge | `C33` |
 
+## 阶段、actor 与 receipt 协议
+
+verifier 是只读验证器，只能消费已有事实与 receipt，禁止创建、改写或补签 `push-receipt.json`、`exact-head-receipt.json`、`evaluator-receipt.json`、`audit-end.json`。每次调用必须显式给出 `--stage`；stage、执行 role、authoritative lineage、前置 receipt 或 evidence 不符时必须非零退出。
+
+| stage | 唯一 actor/time boundary | 允许 phase | 必需前置 | 本阶段输出 |
+|---|---|---|---|---|
+| `generator-pre-push` | generator，首次 mutation 基线之后、最终 push 之前 | `freeze conflicts codeql regressions` | generator authoritative task bundle/签名 execution receipt；`audit-baseline.json` | 四 phase evidence；不得声称 exact-head/evaluator PASS |
+| `ci-exact-head` | CI，在 generator 最终 push receipt 之后 | `exact-head`（含 final-head CodeQL recheck） | `push-receipt.json`，其 `final_head_sha` 等于 CI 实际 head；generator lineage exact-match baseline/mutation receipt | `exact-head-receipt.json` |
+| `evaluator-receipt` | 独立 evaluator，在 exact-head SUCCESS 之后 | `evaluator` | `exact-head-receipt.json` SUCCESS；evaluator 自己的 authoritative task bundle/签名 receipt，且 role/stage 与 generator 不同 | 由独立 evaluator runner 产出的 `evaluator-receipt.json`；verifier 只验证，不创建 |
+| `controller-review-gate` | controller，在 evaluator receipt 与 audit-end 均已存在之后 | `review-gate` | exact-head、evaluator receipt、`audit-end.json`；各自 runtime lineage exact-match 对应权威来源 | 只读 gate verdict，停在人工审阅门 |
+
+receipt 必须含 `schema_version/stage/actor_role/runtime_lineage/{run_id,attempt_id,task_id,role,stage}/final_head_sha/created_at_utc`；phase receipt 另含 `prerequisite_receipt_sha256/evidence_sha256/status/exit_code`。`runtime_lineage` 只从当前阶段权威 task bundle 或签名 execution receipt 注入，静态合同不保存任何 proposer/reviewer UUID。不同 stage 的 `run_id + attempt_id + role + stage` 必须不同；任何 cross-stage lineage reuse、缺 receipt、错误 role/stage、SHA/digest 不等、receipt 声称 `exit_code=0` 但缺真实逐 subject 执行日志，都必须非零退出。verifier 用 receipt canonical digest 与原始日志/事实重算结果，不信任 ledger 自报的 `exit_code`。
+
 ## Golden Path
 
 [冻结身份] → [33 路径逐项处置] → [77 annotation 逐项收敛] → [回归与 atomic truth] → [exact-head CI] → [最终 SHA evaluator] → [人工审阅门]
@@ -139,7 +153,7 @@ required-check subject 定义为 `context + "\0" + final_head_sha`。每个 orac
 **可观测行为**: verifier 真读 Git object、check-run annotations 与 branch protection，逐字段核对上节全部身份和枚举；stdout/evidence 明列 33 个 conflict path、77 个 annotation subject key、三个 required-check subject，不接受仅计数或 JSON parse。
 **验证命令**:
 ```bash
-node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs freeze
+node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs freeze --stage generator-pre-push
 ```
 **硬阈值**: SHA/ID/hash 完全相等；冲突 total=33/content=32/non_textual=1；annotation=77/7/59/11；required contexts exact-set 且 strict=true。上述命令非零即阻断后续步骤。
 
@@ -148,54 +162,54 @@ node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs f
 **可观测行为**: resolution ledger 的路径集合与合同 manifest exact-set 相等，33 行无重复、无未处置；每行的 `path/oracle_id/cwd/argv/expected_observation` 与语义哈希 `97166a9ecfec61572691cfee4b1dfa6a567657ca92663e00f7923b7fe9920460` 深比较后，输出 base/ours/theirs/final blob、处置、真实 exit_code/log_tail；禁止仅 JSON parse、文件存在或源码字符串检查。
 **验证命令**:
 ```bash
-node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs conflicts
+node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs conflicts --stage generator-pre-push
 ```
 **硬阈值**: 33/33、content=32、modify/delete=1、unresolved=0、oracle exit_code 全 0、merge-tree 对最终树无 unresolved entry；上述命令执法。
 
 ### Step 3: 收敛全部 77 条冻结 CodeQL annotation
 **来源**: `[FROM_PRD]` — Golden Path 3；controller frozen CodeQL facts。
-**可观测行为**: disposition ledger 对冻结 manifest 的 77 个 subject key exact-set 覆盖，每条逐项输出 path/line/rule/severity/classification/disposition/recheck check/head/result；真实问题修复，范围外/误报仅留证且不得 dismiss。
+**可观测行为**: disposition ledger 对冻结 manifest 的 77 个 subject key exact-set 覆盖，每条逐项输出 path/line/rule/severity/classification/disposition；真实问题修复，范围外/误报仅留证且不得 dismiss。final-head recheck 字段由后续 ci-exact-head receipt 以同一 subject key 补齐。
 **验证命令**:
 ```bash
-node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs codeql
+node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs codeql --stage generator-pre-push
 ```
-**硬阈值**: exact subjects=77、critical=7/high=59/medium=11、unclassified=0、dismissed=0、scan scope hash 未变、新 final-head CodeQL 无相同未解决 subject；上述命令执法。
+**硬阈值**: exact subjects=77、critical=7/high=59/medium=11、unclassified=0、dismissed=0、scan scope hash 未变；本阶段只完成冻结 subject disposition，不声称 final-head recheck 已完成。final-head CodeQL recheck 由 `ci-exact-head` 执法。
 
 ### Step 4: 回归与诚实状态
 **来源**: `[FROM_PRD]` — 验收计划 3-5。
 **可观测行为**: QuickCheck fail-closed、node:test 双登记、OKR in-process `cecelia_test`、migration 369-381、上一轮四项 blocker 及冲突表 33 个 path 各自命名的行为 oracle 真跑；每个 subject 输出真实 argv/interpreter/exit_code/log_tail；atomic truth 不变。
 **验证命令**:
 ```bash
-node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs regressions
+node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs regressions --stage generator-pre-push
 ```
 **硬阈值**: 每个命名 oracle 均记录 argv/interpreter/exit_code=0/log_tail；`schema_valid=true`、`proof_complete=false`、`atomic_cutover_ready=false`、`atomic_progress="0/99"`；上述命令执法。
 
 ### Step 5: exact-head required checks
 **来源**: `[FROM_PRD]` — Golden Path 4、验收计划 6。
-**可观测行为**: 逐项枚举 `ci-passed`、`Harness V5 Gate Passed`、`Smoke Glob Runner Passed` 的 check-run/check-suite，head SHA 全等于同一 final PR head，结论 SUCCESS。
+**可观测行为**: CI 在最终 push receipt 后逐项枚举 `ci-passed`、`Harness V5 Gate Passed`、`Smoke Glob Runner Passed` 的 check-run/check-suite，head SHA 全等于 receipt 与 CI 实际 head；同时在该 final head 重新读取 CodeQL，确认冻结 77 subjects 已处置且无相同 unresolved subject。缺 push receipt、receipt SHA 与 CI head 不等或 generator 在 push 前调用均 FAIL。
 **验证命令**:
 ```bash
-node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs exact-head
+node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs exact-head --stage ci-exact-head --receipt "$SPRINT_DIR/evidence/push-receipt.json"
 ```
-**硬阈值**: contexts exact-set、missing=failed=stale=duplicate=0、strict=true、head 读取前后不变；上述命令执法。
+**硬阈值**: contexts exact-set、missing=failed=stale=duplicate=0、strict=true、head 读取前后不变；final-head CodeQL recheck head 与 final head 相等且 unresolved frozen subject=0；输出签名/可哈希的 `exact-head-receipt.json`，上述命令执法。
 
 ### Step 6: evaluator 在最终 SHA 真跑
 **来源**: `[FROM_PRD]` — Golden Path 5。
-**可观测行为**: evaluator receipt 顶层及每条 behavior 都有真实 `exit_code/log_tail`，subject 与 final SHA 可追溯。
+**可观测行为**: 独立 evaluator 在 exact-head SUCCESS 后真跑合同并产生 receipt；verifier 只读验证该 receipt，不得自行创建。receipt 顶层及每条 behavior 都有真实 `argv/exit_code/log_tail`，subject 与 final SHA 可追溯，evaluator lineage 不得复用 generator/CI lineage。
 **验证命令**:
 ```bash
-node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs evaluator
+node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs evaluator --stage evaluator-receipt --receipt "$SPRINT_DIR/evidence/evaluator-receipt.json"
 ```
-**硬阈值**: 顶层/逐项 exit_code=0、所有 evidence_sha 唯一等于 final head、目标解释器启动证据存在；上述命令执法。
+**硬阈值**: exact-head prerequisite digest 匹配；顶层/逐项 exit_code=0、所有 evidence_sha 唯一等于 final head、目标解释器启动证据存在；receipt producer role=evaluator 且 lineage 独立；上述命令执法。
 
 ### Step 7: 无新 PR/no-merge/no-deploy 后停在人工审阅门
 **来源**: `[FROM_PRD]` — 验收计划 7；controller 要求定义审计基线/时间窗/归因。
 **可观测行为**: `evidence/audit-baseline.json` 必须在首次 fetch/merge/cherry-pick/push 或任何 GitHub mutation 前生成；其 `runtime_lineage.{run_id,attempt_id,task_id,role,stage}` 必须从实际 generator 的 authoritative task bundle 或签名 execution receipt 动态读取并逐字保存，不得从合同正文、历史 proposer/reviewer、默认值或另一阶段复制。基线另记录 `audit_start_utc`、实际 GitHub actor、target ref、当时全部 open PR number/head、#4457 状态、main SHA、deployments 最大 id/created_at；每次 mutation receipt 保存同一 generator runtime lineage；`audit-end.json` 在 evaluator 后记录 `audit_end_utc` 与 evaluator 自己 task bundle/签名 receipt 的同名 runtime_lineage 字段。`review-gate` 必须让 baseline 与 mutation receipts exact-match generator 权威 lineage，让 audit-end 与 evaluator receipt exact-match evaluator 权威 lineage，并验证 task_id=`f21957f6-2ae5-4db3-822e-90c3f474fc19`、role/stage 符合当前阶段；任何不等、跨阶段复用或缺失即 FAIL。闭区间 `[audit_start_utc,audit_end_utc]` 内分页枚举 PR、merge commit、auto-merge mutation、deployments，以实际 actor 加 target ref/final SHA/runtime lineage/task/sprint marker 的并集归因本任务；归因集合不得含 pull_request.created、merged/auto_merge、deployment。
 **验证命令**:
 ```bash
-node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs review-gate
+node sprints/07301245-kernel-pr4457-refresh/scripts/verify-pr4457-evidence.mjs review-gate --stage controller-review-gate --exact-head-receipt "$SPRINT_DIR/evidence/exact-head-receipt.json" --evaluator-receipt "$SPRINT_DIR/evidence/evaluator-receipt.json" --audit-end "$SPRINT_DIR/evidence/audit-end.json"
 ```
-**硬阈值**: baseline 创建时间早于首个 mutation；#4457 `OPEN/isDraft=true/autoMergeRequest=null/mergedAt=null`，headRefName 固定；main 不包含 final head；区间内逐项枚举后归因的新 PR、merge、auto-merge、任意 environment deployment 均为 0；所有 REST 分页完整且区间端点明确。上述命令执法。
+**硬阈值**: controller role/stage 正确；exact-head 与 evaluator receipt 的 prerequisite digest 链完整且 final SHA 相同；audit-end evaluator lineage exact-match；baseline 创建时间早于首个 mutation；#4457 `OPEN/isDraft=true/autoMergeRequest=null/mergedAt=null`，headRefName 固定；main 不包含 final head；区间内逐项枚举后归因的新 PR、merge、auto-merge、任意 environment deployment 均为 0；所有 REST 分页完整且区间端点明确。上述命令执法。
 
 ## 接缝清单
 
@@ -241,9 +255,9 @@ REPO="perfectuser21/cecelia"
 PR=4457
 START_SHA=$(gh pr view "$PR" --repo "$REPO" --json headRefOid -q .headRefOid)
 test -n "$START_SHA"
-for phase in freeze conflicts codeql regressions exact-head evaluator review-gate; do
-  node "$SPRINT_DIR/scripts/verify-pr4457-evidence.mjs" "$phase" --expected-head "$START_SHA"
-done
+# 本块由 controller final-e2e 执行；前三 actor/time boundary 的 receipt 必须已存在。
+# review-gate 只读消费并重算完整 receipt/evidence digest 链，禁止在错误 actor 重跑前序 phase。
+node "$SPRINT_DIR/scripts/verify-pr4457-evidence.mjs" review-gate --stage controller-review-gate --exact-head-receipt "$SPRINT_DIR/evidence/exact-head-receipt.json" --evaluator-receipt "$SPRINT_DIR/evidence/evaluator-receipt.json" --audit-end "$SPRINT_DIR/evidence/audit-end.json" --expected-head "$START_SHA"
 END=$(gh pr view "$PR" --repo "$REPO" --json number,state,isDraft,autoMergeRequest,mergedAt,headRefName,headRefOid)
 echo "$END" | jq -e --arg sha "$START_SHA" '.number==4457 and .state=="OPEN" and .isDraft==true and .autoMergeRequest==null and .mergedAt==null and .headRefName=="cp-kernel-phase5b-a1-review-fixes" and .headRefOid==$sha'
 echo "Golden Path exact-head 验收通过 sha=$START_SHA"
