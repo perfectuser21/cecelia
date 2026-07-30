@@ -30,7 +30,8 @@ export function byteSafeTail(value, limit) {
   const bytes = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
   let start = Math.max(0, bytes.length - limit);
   while (start < bytes.length && (bytes[start] & 0xC0) === 0x80) start += 1;
-  return trimTextToByteLimit(bytes.subarray(start).toString('utf8'), limit);
+  const decoded = bytes.subarray(start).toString('utf8').replaceAll('�', '');
+  return trimTextToByteLimit(decoded, limit);
 }
 
 export function appendBufferTail(current, chunk, limit) {
