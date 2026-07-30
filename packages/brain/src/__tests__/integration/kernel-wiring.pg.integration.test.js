@@ -363,6 +363,72 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
     await Promise.all(runs.map(run => setTaskStatus(run.taskId, 'completed')));
   });
 
+  it('backs off twenty failed context launches so the next scan reaches the healthy twenty-first run', async () => {
+    const runs = [];
+    for (let index = 0; index < 21; index += 1) {
+      const run = await seedRun();
+      runs.push(run);
+      await testPool.query(
+        `UPDATE tasks
+            SET payload=payload || '{"orchestrator":"skill-relay"}'::jsonb
+          WHERE id=$1`,
+        [run.taskId],
+      );
+      await testPool.query(
+        `UPDATE initiative_runs
+            SET phase='paused',
+                started_at=NOW() - ($2::integer * INTERVAL '1 minute'),
+                orchestrator_host=NULL,
+                orchestrator_heartbeat_at=NULL
+          WHERE id=$1`,
+        [run.runId, index],
+      );
+      await appendLog(run.runId, {
+        hop: 1,
+        action: 'effect:context_requested',
+        phase: 'paused',
+        detail: {
+          resume_phase: 'generate',
+          context_version: 1,
+        },
+      });
+      await appendLog(run.runId, {
+        hop: 2,
+        action: 'verdict:context_answer',
+        phase: 'paused',
+        detail: {
+          context_request_hop: '1',
+          context_version: 1,
+        },
+      });
+    }
+
+    const healthyRun = runs[20];
+    const launchKernel = vi.fn(async ({ runId }) => {
+      if (runId === healthyRun.runId) return { pid: 4242 };
+      throw new Error(`bad_worktree:${runId}`);
+    });
+    let token = 0;
+    const deps = {
+      pool: testPool,
+      launchKernel,
+      randomUUID: () => `retry-token-${token += 1}`,
+    };
+
+    await resumeStalledRelayRuns(deps);
+    expect(launchKernel).toHaveBeenCalledTimes(20);
+    expect(launchKernel).not.toHaveBeenCalledWith(expect.objectContaining({
+      runId: healthyRun.runId,
+    }));
+
+    await resumeStalledRelayRuns(deps);
+    expect(launchKernel).toHaveBeenCalledWith(expect.objectContaining({
+      runId: healthyRun.runId,
+    }));
+
+    await Promise.all(runs.map(run => setTaskStatus(run.taskId, 'completed')));
+  });
+
   it('public watchdog structurally terminates a false resume instead of leaving it running', async () => {
     const run = await seedRun();
     const parentId = await seedExpiredKernelAttempt(run);
