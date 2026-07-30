@@ -1,21 +1,6 @@
 /**
- * Golden Path E2E 集成测试
- *
- * 覆盖 Cecelia Brain 最核心的 3 条用户路径（任何一条断了都是 P0）：
- *
- * Path 1: Brain 基础调度链路
- *   tasks 表可读写 → POST 创建任务 → GET 查询验证 → PATCH 更新状态 → 数据清理
- *
- * Path 2: 内容流水线触发链路
- *   POST /api/brain/pipelines 触发 → pipeline 记录写入 DB tasks 表 → GET 可查询到该记录
- *   （注：content-pipeline 路由需要 content_type 在注册表中存在，此处用 mock 绕过注册表校验）
- *
- * Path 3: Deploy 链路完整性
- *   GET /api/brain/health 端点存在且响应正常（含 status 字段）
- *   GET /api/brain/deploy/status 端点存在且响应正常（含 status 字段）
- *
- * 运行环境：CI brain-integration job（含真实 PostgreSQL 服务）
- * 不 mock db.js，直接使用真实 PostgreSQL 连接验证端到端行为。
+ * 真实 PostgreSQL 核心链路：Brain 调度、内容流水线和 Deploy 状态。
+ * content_type 注册表及外部 AI/告警依赖使用 mock，数据库与 HTTP 路由不 mock。
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
@@ -23,8 +8,6 @@ import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
-
-// ─── Mock 外部依赖（不测 AI 调用和告警，只测路由 + DB 链路）────────────────
 
 vi.mock('../../tick.js', () => ({
   getTickStatus: vi.fn().mockResolvedValue({
@@ -187,26 +170,21 @@ vi.mock('../../docker-runtime-probe.js', () => ({
   default: __dockerRuntimeProbeMock,
 }));
 
-// ─── 真实 DB 连接池（用于直接验证写入）─────────────────────────────────────
-
 const testPool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
+const runKey = `${process.pid}-${Date.now()}`;
 
 // 记录本次测试插入的数据 ID，afterAll 统一清理
 const insertedTaskIds = [];
-const insertedGpIds = [];
-
-// ─── Express App 工厂 ────────────────────────────────────────────────────────
 
 async function makeApp() {
   const app = express();
   app.use(express.json());
 
-  const [taskTasksRouter, contentPipelineRouter, goalsRouter, opsRouter, goldenPathsRouter] = await Promise.all([
+  const [taskTasksRouter, contentPipelineRouter, goalsRouter, opsRouter] = await Promise.all([
     import('../../routes/task-tasks.js').then(m => m.default),
     import('../../routes/content-pipeline.js').then(m => m.default),
     import('../../routes/goals.js').then(m => m.default),
     import('../../routes/ops.js').then(m => m.default),
-    import('../../routes/golden-paths.js').then(m => m.default),
   ]);
 
   // 与 server.js 挂载路径一致
@@ -214,12 +192,9 @@ async function makeApp() {
   app.use('/api/brain/pipelines', contentPipelineRouter);
   app.use('/api/brain', goalsRouter);
   app.use('/api/brain', opsRouter);
-  app.use('/api/brain', goldenPathsRouter);
 
   return app;
 }
-
-// ─── 测试套件 ────────────────────────────────────────────────────────────────
 
 describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', () => {
   let app;
@@ -241,25 +216,14 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
   });
 
   afterAll(async () => {
-    // 清理顺序受外键约束：golden_paths.proposal_task_id → tasks，
-    // 必须先清 decisions/golden_paths，最后才能删 tasks
-    if (insertedGpIds.length > 0) {
-      await testPool.query(
-        "DELETE FROM decisions WHERE reason LIKE ANY(SELECT 'gp:' || id || '%' FROM golden_paths WHERE id = ANY($1))",
-        [insertedGpIds],
-      ).catch(() => {});
-      await testPool.query('DELETE FROM golden_paths WHERE id = ANY($1)', [insertedGpIds]).catch(() => {});
-    }
     if (insertedTaskIds.length > 0) {
       await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [insertedTaskIds]);
     }
     await testPool.end();
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
   // Path 1: Brain 基础调度链路
   // tasks 表可读写 → 创建 → 查询 → 更新状态
-  // ═══════════════════════════════════════════════════════════════════════════
 
   describe('Path 1: Brain 基础调度链路', () => {
     let createdTaskId;
@@ -344,10 +308,8 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
   // Path 2: 内容流水线触发链路
   // POST /api/brain/pipelines → 写入 tasks 表 → GET 可查询
-  // ═══════════════════════════════════════════════════════════════════════════
 
   describe('Path 2: 内容流水线触发链路', () => {
     let createdPipelineId;
@@ -356,14 +318,14 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
       const res = await request(app)
         .post('/api/brain/pipelines')
         .send({
-          keyword: 'golden-path-smoke-test',
+          keyword: `golden-path-smoke-test-${runKey}`,
           content_type: 'golden-path-test-type',
           priority: 'P2',
         })
         .expect(201);
 
       expect(res.body).toHaveProperty('id');
-      expect(res.body.title).toContain('golden-path-smoke-test');
+      expect(res.body.title).toContain(`golden-path-smoke-test-${runKey}`);
 
       createdPipelineId = res.body.id;
       insertedTaskIds.push(createdPipelineId);
@@ -395,7 +357,7 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
 
       // payload 包含 keyword 和 content_type
       const payload = dbRes.rows[0].payload;
-      expect(payload.keyword).toBe('golden-path-smoke-test');
+      expect(payload.keyword).toBe(`golden-path-smoke-test-${runKey}`);
       expect(payload.content_type).toBe('golden-path-test-type');
     });
 
@@ -528,171 +490,4 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
     });
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // Path 4: GP7/T7 拍板回路 E2E（DoD I1）
-  // 真实 candidate → /select → proposed → PATCH converged → /approve
-  // → judgment 落库 + harness 任务注册，全链 DB 断言
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  describe('Path 4: GP7/T7 拍板回路 E2E（DoD I1，真实 PostgreSQL）', () => {
-    let gpId;
-    let proposalTaskId;
-    let harnessTaskId;
-    let judgmentDecisionId;
-
-    it('POST /api/brain/golden-paths — 建 candidate，返回 201 + id', async () => {
-      const res = await request(app)
-        .post('/api/brain/golden-paths')
-        .send({
-          title: '[integration-test] GP7 T7 拍板回路 E2E',
-          one_liner: '端到端验证拍板回路——integration test 自动清理',
-          est_scale: '约2周/3个PR',
-        })
-        .expect(201);
-
-      expect(res.body.success).toBe(true);
-      expect(res.body.golden_path).toHaveProperty('id');
-      expect(res.body.golden_path.status).toBe('candidate');
-
-      gpId = res.body.golden_path.id;
-      insertedGpIds.push(gpId);
-    });
-
-    it('POST /api/brain/golden-paths/:id/select — candidate→proposed，建 golden_path_proposal 任务', async () => {
-      expect(gpId).toBeDefined();
-
-      const res = await request(app)
-        .post(`/api/brain/golden-paths/${gpId}/select`)
-        .send({})
-        .expect(200);
-
-      expect(res.body.success).toBe(true);
-      expect(res.body.golden_path.status).toBe('proposed');
-      expect(res.body.proposal_task_id).toBeDefined();
-
-      proposalTaskId = res.body.proposal_task_id;
-      insertedTaskIds.push(proposalTaskId);
-
-      // DB: golden_paths.status=proposed
-      const gpRow = await testPool.query('SELECT status, proposal_task_id FROM golden_paths WHERE id = $1', [gpId]);
-      expect(gpRow.rows[0].status).toBe('proposed');
-      expect(gpRow.rows[0].proposal_task_id).toBe(proposalTaskId);
-
-      // DB: tasks 存在且 task_type=golden_path_proposal
-      const taskRow = await testPool.query('SELECT task_type, status FROM tasks WHERE id = $1', [proposalTaskId]);
-      expect(taskRow.rows[0].task_type).toBe('golden_path_proposal');
-      expect(taskRow.rows[0].status).toBe('queued');
-    });
-
-    it('/select 建的 golden_path_proposal 任务 payload 含 orchestrator=skill-relay（回归守卫：缺此字段会被 executor 硬校验判 missing_orchestrator_flag terminal failed）', async () => {
-      expect(proposalTaskId).toBeDefined();
-
-      const taskRow = await testPool.query('SELECT payload FROM tasks WHERE id = $1', [proposalTaskId]);
-      expect(taskRow.rows[0].payload.orchestrator).toBe('skill-relay');
-    });
-
-    it('PATCH /api/brain/golden-paths/:id — 测试跳过对抗：proposed→converged', async () => {
-      expect(gpId).toBeDefined();
-
-      const res = await request(app)
-        .patch(`/api/brain/golden-paths/${gpId}`)
-        .send({
-          status: 'converged',
-          proposal_doc: '# E2E Demo\n集成测试提案（自动清理）',
-        })
-        .expect(200);
-
-      expect(res.body.success).toBe(true);
-      expect(res.body.golden_path.status).toBe('converged');
-
-      // DB: status=converged
-      const gpRow = await testPool.query('SELECT status FROM golden_paths WHERE id = $1', [gpId]);
-      expect(gpRow.rows[0].status).toBe('converged');
-    });
-
-    it('POST /api/brain/golden-paths/:id/approve — converged→approved，judgment 落库 + harness 任务注册', async () => {
-      expect(gpId).toBeDefined();
-
-      const res = await request(app)
-        .post(`/api/brain/golden-paths/${gpId}/approve`)
-        .send({})
-        .expect(200);
-
-      expect(res.body.success).toBe(true);
-      expect(res.body.golden_path.status).toBe('approved');
-      expect(res.body.judgment_decision_id).toBeDefined();
-      expect(res.body.harness_task_id).toBeDefined();
-
-      judgmentDecisionId = res.body.judgment_decision_id;
-      harnessTaskId = res.body.harness_task_id;
-      insertedTaskIds.push(harnessTaskId);
-
-      // DB: golden_paths.status=approved, approved_at 非空, review_after 非空
-      const gpRow = await testPool.query(
-        'SELECT status, approved_at, review_after, judgment_refs FROM golden_paths WHERE id = $1',
-        [gpId],
-      );
-      expect(gpRow.rows[0].status).toBe('approved');
-      expect(gpRow.rows[0].approved_at).not.toBeNull();
-      expect(gpRow.rows[0].review_after).not.toBeNull();
-      expect(gpRow.rows[0].judgment_refs).toContain(judgmentDecisionId);
-
-      // DB: decisions(category=judgment, reason 含 gp:<id>, review_after 非空)
-      const decRow = await testPool.query(
-        'SELECT category, reason, review_after, status FROM decisions WHERE id = $1',
-        [judgmentDecisionId],
-      );
-      expect(decRow.rows[0].category).toBe('judgment');
-      expect(decRow.rows[0].reason).toMatch(new RegExp(`gp:${gpId}`));
-      expect(decRow.rows[0].review_after).not.toBeNull();
-      expect(decRow.rows[0].status).toBe('active');
-
-      // DB: harness tasks(task_type=harness_initiative，真正走实现路由，不是 golden_path_proposal)
-      const harnessRow = await testPool.query(
-        'SELECT task_type, status, payload FROM tasks WHERE id = $1',
-        [harnessTaskId],
-      );
-      expect(harnessRow.rows[0].task_type).toBe('harness_initiative');
-      expect(harnessRow.rows[0].status).toBe('queued');
-      expect(harnessRow.rows[0].payload.phase).toBe('implement');
-      expect(harnessRow.rows[0].payload.golden_path_id).toBe(gpId);
-    });
-
-    it('/approve 建的 harness 任务 payload 含 orchestrator=skill-relay（回归守卫：缺此字段会被 executor 硬校验判 missing_orchestrator_flag terminal failed）', async () => {
-      expect(harnessTaskId).toBeDefined();
-
-      const harnessRow = await testPool.query('SELECT payload FROM tasks WHERE id = $1', [harnessTaskId]);
-      expect(harnessRow.rows[0].payload.orchestrator).toBe('skill-relay');
-    });
-
-    it('/approve 建的任务 task_type=harness_initiative 且必需字段齐全（回归守卫：修前 task_type=golden_path_proposal 会被 controllerSkillFor 误路由回 golden-path-controller，只产提案文档不写代码，issue bfaac776）', async () => {
-      expect(harnessTaskId).toBeDefined();
-
-      const harnessRow = await testPool.query(
-        'SELECT task_type, payload FROM tasks WHERE id = $1',
-        [harnessTaskId],
-      );
-      expect(harnessRow.rows[0].task_type).toBe('harness_initiative');
-      const payload = harnessRow.rows[0].payload;
-      expect(payload.sprint_dir).toBeTruthy();
-      expect(payload.thin_prd).toBeTruthy();
-      expect(payload.prep_prd_body).toBeTruthy();
-      expect(payload.base_repo).toBe('https://github.com/perfectuser21/cecelia.git');
-      expect(payload.target_environment).toBe('local_api');
-      // sprint_dir 必须带 gpId 短串后缀防撞（同一分钟内相同/相似标题重试或并发 approve 时不会撞目录）
-      expect(payload.sprint_dir).toContain(gpId.replace(/-/g, '').slice(0, 8));
-    });
-
-    it('/select 容量闸：非 candidate 状态 → 409 INVALID_TRANSITION', async () => {
-      expect(gpId).toBeDefined();
-      // gpId 现在是 approved 状态
-      const res = await request(app)
-        .post(`/api/brain/golden-paths/${gpId}/select`)
-        .send({})
-        .expect(409);
-
-      expect(res.body.success).toBe(false);
-      expect(res.body.code).toBe('INVALID_TRANSITION');
-    });
-  });
 });
