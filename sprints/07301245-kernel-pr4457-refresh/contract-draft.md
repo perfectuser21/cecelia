@@ -1,9 +1,10 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 覆盖父路「Draft PR #4457 累计冲突与 CodeQL 收敛」第 1-5 步。
 
 ## 合同 notes
 
+- Round 3 修订焦点：当前输入未附新的 Reviewer feedback；保持 Round 2 的最小合同边界，并继续把未拍板的冻结事实差异作为 fail-closed 前置闸，避免在事实未冻结时扩大或改写 PRD。
 - Round 2 修订焦点：将冻结事实矛盾明确设为前置拍板闸；在主理人确认 `32/33` 与 `77` 的冻结来源前，generator 只允许产出只读证据，不得开始整合、告警处置或改动既有 PR。
 - PRD 冻结值与可复算事实存在前置差异：`git merge-tree --write-tree 8f2137d... 264482f...` 当前列出 33 个冲突路径，而 PRD 写 32；合同要求先产出可追溯冻结清单并使该差异显式失败，禁止擅自把 32 改成 33。
 - GitHub code-scanning alerts API 当前对 PR #4457 返回 761 条 open alerts，不能直接充当 PRD 的 77 条冻结告警。77 条必须从冻结 CodeQL run/原始 SARIF 逐条溯源。
