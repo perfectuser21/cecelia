@@ -6,8 +6,9 @@
 
 - `gp-assertion-process.js` 只消费调用方显式注入的 trusted spawn adapter；
   缺失 adapter 时在启动前 fail closed，不提供 Brain 本机 spawn 默认值。
-- 子进程环境只允许 `PATH/LANG/LC_ALL/TMPDIR/TZ`，超时按 TERM/KILL 处置，
-  signal 退出规范化为失败证据；本层不选择命令、不写 receipt、不接 API/UI。
+- 子进程环境只允许 `PATH/LANG/LC_ALL/TMPDIR/TZ`；超时对独立进程组依次
+  TERM/KILL，整树清理失败及 signal 退出均成为失败证据。
+- 本层不选择命令、不写 receipt、不接 API/UI。
 
 ## GP assertion output evidence utility
 

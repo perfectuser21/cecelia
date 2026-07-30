@@ -8,9 +8,11 @@ import {
 const PROCESS_CAPTURE_LIMIT_BYTES = 4096 * 4;
 const DEFAULT_TIMEOUT_MS = 300_000;
 const DEFAULT_KILL_GRACE_MS = 5_000;
+const killProcessGroup = (pid, signal) => process.kill(-pid, signal);
 
 export function createAssertionExecutor({
   spawnFn = spawn,
+  killProcessGroupFn = killProcessGroup,
   captureLimitBytes = PROCESS_CAPTURE_LIMIT_BYTES,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   killGraceMs = DEFAULT_KILL_GRACE_MS,
@@ -19,6 +21,7 @@ export function createAssertionExecutor({
     new Promise((resolveExecution, rejectExecution) => {
       const child = spawnFn(executable, argv, {
         cwd: options.cwd,
+        detached: true,
         shell: false,
       });
       const effectiveTimeoutMs = options.timeoutMs ?? timeoutMs;
@@ -27,6 +30,13 @@ export function createAssertionExecutor({
       let settled = false;
       let timedOut = false;
       let forceKillTimer;
+      let closeSignal = null;
+      const termination = {
+        target: 'process_group',
+        term_sent: false,
+        kill_sent: false,
+        cleanup_confirmed: false,
+      };
 
       const finish = (result) => {
         if (settled) return;
@@ -40,7 +50,7 @@ export function createAssertionExecutor({
         const stderrTail = byteSafeTail(stderrBytes, captureLimitBytes);
         return {
           exitCode: 124,
-          signal: 'SIGKILL',
+          signal: closeSignal,
           timedOut: true,
           stdout,
           stderr: `${stderrTail}${stderrTail ? '\n' : ''}`
@@ -49,22 +59,24 @@ export function createAssertionExecutor({
           scenarioEvidence: {
             kind: 'timeout',
             timeout_ms: effectiveTimeoutMs,
+            termination,
           },
         };
       };
+      const terminateGroup = (signal, phase) => {
+        try {
+          killProcessGroupFn(child.pid, signal);
+          termination[`${phase}_sent`] = true;
+        } catch (error) {
+          if (error?.code === 'ESRCH') termination.cleanup_confirmed = true;
+          else termination[`${phase}_error`] = error?.code ?? error?.message;
+        }
+      };
       const timeoutTimer = setTimeout(() => {
         timedOut = true;
-        try {
-          child.kill('SIGTERM');
-        } catch {
-          // Continue to the fail-closed timeout receipt.
-        }
+        terminateGroup('SIGTERM', 'term');
         forceKillTimer = setTimeout(() => {
-          try {
-            child.kill('SIGKILL');
-          } catch {
-            // Continue to the fail-closed timeout receipt.
-          }
+          terminateGroup('SIGKILL', 'kill');
           finish(timeoutResult());
         }, killGraceMs);
       }, effectiveTimeoutMs);
@@ -85,8 +97,7 @@ export function createAssertionExecutor({
       });
       child.once('error', error => {
         clearTimeout(timeoutTimer);
-        clearTimeout(forceKillTimer);
-        if (timedOut) finish(timeoutResult());
+        if (timedOut) termination.child_error = error?.code ?? error?.message;
         else if (!settled) {
           settled = true;
           rejectExecution(error);
@@ -94,7 +105,7 @@ export function createAssertionExecutor({
       });
       child.once('close', (exitCode, signal) => {
         if (timedOut) {
-          finish(timeoutResult());
+          closeSignal = signal;
           return;
         }
         const stdout = byteSafeTail(stdoutBytes, captureLimitBytes);
