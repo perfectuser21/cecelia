@@ -784,6 +784,32 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
         });
     const controlStatus = result.control_status ?? result.status;
 
+    if (controlStatus === 'LAUNCHED') {
+      const launchHop = await next(deps.pool, resolvedRunId);
+      await append(deps.pool, {
+        runId: resolvedRunId,
+        hop: launchHop,
+        observed: buildSnapshot(
+          observed,
+          fullCounters,
+          LOG_ACTION.ATTEMPT_LAUNCHED,
+          decision.reason,
+        ),
+        derivedPhase: decision.phase,
+        gateVerdict: null,
+        action: LOG_ACTION.ATTEMPT_LAUNCHED,
+        detail: {
+          dispatch_hop: hop,
+          dispatch_action: decision.action,
+          run_id: result.run_id,
+          attempt_id: result.attempt_id,
+          lease_generation: result.lease_generation,
+          provider: result.provider,
+        },
+      });
+      hops++;
+    }
+
     if (controlStatus === 'NEEDS_CONTEXT' || controlStatus === 'BLOCKED') {
       const resultHop = await next(deps.pool, resolvedRunId);
       await append(deps.pool, {
@@ -854,7 +880,8 @@ export async function runLoop(deps, { taskId, runId, dryRun = false }) {
         return { exitReason: 'blocked_same_state', hops };
       }
     } else {
-      // DONE / DONE_WITH_CONCERNS：记 detail 继续
+      // LAUNCHED 只代表外部执行接管；下一轮必须重新 collect callback/inflight 真相。
+      // DONE / DONE_WITH_CONCERNS 仅保留给同步控制动作。
       log(`[orchestrator] hop ${hop} ${decision.action} → ${result.status}${result.detail ? `: ${result.detail}` : ''}`);
     }
 

@@ -442,7 +442,7 @@ describe('createDispatcher', () => {
       hop: 2,
       observed,
       decision: { phase: 'gan', reason: 'awaiting_review' },
-    })).resolves.toMatchObject({ status: 'DONE', attemptId });
+    })).resolves.toMatchObject({ status: 'LAUNCHED', attempt_id: attemptId });
 
     expect(deps.resolveWorkspaceSpec).toHaveBeenCalledWith(expect.objectContaining({
       role: 'reviewer',
@@ -584,7 +584,7 @@ describe('createDispatcher', () => {
       'launcher.launch',
       'attempt.receipt',
     ]);
-    expect(result).toMatchObject({ status: 'DONE', attemptId, provider: 'codex' });
+    expect(result).toMatchObject({ status: 'LAUNCHED', attempt_id: attemptId, provider: 'codex' });
     expect(deps.attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
       callbackSecretHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     }));
@@ -1003,8 +1003,8 @@ describe('createDispatcher', () => {
       observed: recoveryObserved,
       decision: { phase: 'generate' },
     })).resolves.toMatchObject({
-      status: 'DONE',
-      attemptId: secondAttemptId,
+      status: 'LAUNCHED',
+      attempt_id: secondAttemptId,
     });
 
     expect(deps.attemptStore.createAttempt.mock.calls.map(([created]) => ({
@@ -1082,8 +1082,8 @@ describe('createDispatcher', () => {
       },
       decision: { phase: 'generate' },
     })).resolves.toMatchObject({
-      status: 'DONE',
-      attemptId,
+      status: 'LAUNCHED',
+      attempt_id: attemptId,
     });
 
     expect(deps.attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({

@@ -711,13 +711,14 @@ export function createDispatcher(deps) {
     }
 
     return {
-      status: 'DONE',
+      status: 'LAUNCHED',
       detail: `attempt ${attempt.id} launched as ${launched.containerId ?? launched.jobId ?? 'worker job'}`,
-      attemptId: attempt.id,
+      run_id: attempt.run_id,
+      attempt_id: attempt.id,
       provider: adapter.name,
-      leaseOwner: attempt.lease_owner,
-      leaseGeneration: attempt.lease_generation,
-      localContainerNaming: attempt.local_container_naming ?? null,
+      lease_owner: attempt.lease_owner,
+      lease_generation: attempt.lease_generation,
+      local_container_naming: attempt.local_container_naming ?? null,
     };
   };
 }
