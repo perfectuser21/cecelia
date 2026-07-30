@@ -204,9 +204,9 @@ export async function finalizeKernelRun(pool, {
     if (task.status !== taskOutcome) {
       await client.query(
         `UPDATE tasks
-            SET status = $2,
+            SET status = $2::varchar,
                 error_message = CASE
-                  WHEN $2 = 'failed' THEN $3
+                  WHEN $2::text = 'failed' THEN $3
                   ELSE error_message
                 END,
                 completed_at = COALESCE(completed_at, NOW()),
