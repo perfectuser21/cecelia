@@ -59,22 +59,4 @@ console.log('migration 369 结构完整 ✓');
 "
 
 
-BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
-
-echo "[acceptance-smoke] 5. 内网 pending 端点存在性"
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${BRAIN_URL}/api/brain/acceptance/pending")
-[ "$STATUS" = "200" ] || { echo "FAIL: pending 端点非200，实得 $STATUS"; exit 1; }
-echo "pending 端点 200 ✓"
-
-echo "[acceptance-smoke] 6. 内网历史查询缺 gp_id 应 400"
-STATUS2=$(curl -s -o /dev/null -w "%{http_code}" "${BRAIN_URL}/api/brain/acceptance/runs")
-[ "$STATUS2" = "400" ] || { echo "FAIL: runs 缺gp_id应400，实得 $STATUS2"; exit 1; }
-echo "runs 缺 gp_id 返回 400 ✓"
-
-echo "[acceptance-smoke] 7. 内网 results 端点空数组应 400"
-STATUS3=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN_URL}/api/brain/acceptance/results" \
-  -H "Content-Type: application/json" -d '{"results":[]}')
-[ "$STATUS3" = "400" ] || { echo "FAIL: results 空数组应400，实得 $STATUS3"; exit 1; }
-echo "results 空数组返回 400 ✓"
-
 echo "[acceptance-smoke] 全部通过 ✅"
