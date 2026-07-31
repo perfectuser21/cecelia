@@ -75,12 +75,20 @@ describe('planner artifact receipt', () => {
     expect(Object.isFrozen(artifact)).toBe(true);
   });
 
+  it('accepts an attested planner receipt completed with concerns', () => {
+    expect(hasVerifiedRemotePlannerPrdReceipt(receiptInput({
+      attempt: { status: 'completed_with_concerns' },
+      detail: { status: 'completed_with_concerns' },
+    }))).toBe(true);
+  });
+
   it.each([
     ['unattested machine', { attempt: { machine_attestation_status: 'missing' } }],
     ['foreign branch', { artifact: { branch: 'cp-harness-prd-foreign-a2' } }],
     ['foreign sprint path', { artifact: { path: 'sprints/foreign/sprint-prd.md' } }],
     ['stale lease', { detail: { lease_generation: 1 } }],
     ['unverified artifact', { artifact: { verification_status: 'claimed' } }],
+    ['mismatched terminal status', { attempt: { status: 'completed_with_concerns' } }],
   ])('rejects %s', (_label, overrides) => {
     expect(hasVerifiedRemotePlannerPrdReceipt(receiptInput(overrides))).toBe(false);
   });

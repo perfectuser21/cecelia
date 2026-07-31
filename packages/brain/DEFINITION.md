@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.158
+**版本**: 1.267.159
+
+## Planner concerns receipt convergence
+
+- `completed_with_concerns` 是 Kernel 合同中的成功终态：concerns 进入决策日志，
+  但已认证、lease-fenced 且服务端验证过的 planner Git artifact receipt 可以
+  推进 `prdExists`，不再重复派发 planner。
+- callback 与 Attempt 必须使用同一成功状态，并继续精确绑定 run、Attempt、
+  lease generation、机器 attestation、仓库、分支、SHA 与 sprint path。
+- 回退到 Brain `1.267.158` 前应确认没有 active run 正依赖 concerns receipt；
+  旧版本会把这类成功 artifact 误判为 `no_prd`。
 
 ## Fleet Runner credential contract pin
 
