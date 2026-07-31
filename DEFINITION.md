@@ -6,11 +6,23 @@
 
 
 
-**Brain 版本**: 1.267.157
+**Brain 版本**: 1.267.158
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.158 — Fleet Runner credential contract pin
+
+- 三台 Fleet NodeProfile 统一固定 Runner
+  `sha256:99168f93f9bba7815eea8f1934a1d1b411b78cb7acf6094719cdd674fa598e50`。
+- Runner 内建功能探针使用真实 FIFO 调用生产 GitHub/Codex credential
+  reader；rollout 在导出或传输 exact artifact 前以 8 秒硬超时执行探针，
+  缺失或不可用时 fail closed。
+- blue-green sidecar 的主部署与 fallback 都显式读取 `.env.docker`，避免
+  Brain 重建后 Fleet bridge token 解析为空。
+- 回退到 `1.267.157` 前必须 drain Fleet 节点并恢复上一 Runner digest；
+  缺少 GitHub reader 的旧 Runner 禁止接收需要 GitHub envelope 的角色。
 
 ## Brain 1.267.157 — Fleet Worker GitHub envelope installer
 

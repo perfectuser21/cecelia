@@ -26,7 +26,7 @@ artifact_log="$test_root/artifacts.log"
 transport_log="$test_root/transport.log"
 node_log="$test_root/node.log"
 worker_token="$test_root/worker-token"
-expected_runner_digest='sha256:21b29766c7c5676f28a1f1c328eebde88e1952fd29cb9dc433874bfff0a1a05d'
+expected_runner_digest='sha256:99168f93f9bba7815eea8f1934a1d1b411b78cb7acf6094719cdd674fa598e50'
 touch "$artifact_log" "$transport_log" "$node_log"
 printf 'fleet-worker-transport-token-at-least-32-bytes\n' > "$worker_token"
 chmod 0600 "$worker_token"
@@ -105,6 +105,10 @@ write_executable "$fake_bin/git" \
 write_executable "$fake_bin/docker" \
   '#!/usr/bin/env bash' \
   'printf "docker %s\n" "$*" >> "${FLEET_TEST_ARTIFACT_LOG:?}"' \
+  'if [[ "${1:-}" == "run" ]]; then' \
+  '  [[ "${FLEET_TEST_RUNNER_CONTRACT_FAIL:-0}" != 1 ]]' \
+  '  exit' \
+  'fi' \
   'if [[ "${1:-}" == "save" ]]; then' \
   '  output=""' \
   '  while [[ $# -gt 0 ]]; do' \
@@ -324,6 +328,10 @@ grep -Eq 'fetch --no-tags .* 0000000000000000000000000000000000000001$' \
   || fail "rollout bundle did not fetch the frozen commit"
 grep -Fq 'docker save --output' "$artifact_log" \
   || fail "rollout did not export the Runner image"
+grep -Fq 'docker run --rm --entrypoint sh' "$artifact_log" \
+  && fail "rollout still uses a static source-string image contract"
+grep -Fq '__cecelia_runner_credential_contract_probe__' "$artifact_log" \
+  || fail "rollout did not execute the pinned Runner functional credential probe"
 grep -Fq "$expected_runner_digest" "$artifact_log" \
   || fail "rollout did not export the verified origin/main Runner digest"
 grep -Fq 'jinnuoshengyuan@100.86.57.69' "$transport_log" \
@@ -332,6 +340,21 @@ grep -Fq 'BatchMode=yes' "$transport_log" \
   || fail "SSH transport is not non-interactive"
 grep -Fq 'StrictHostKeyChecking=yes' "$transport_log" \
   || fail "SSH transport does not enforce host identity"
+
+: > "$artifact_log"
+: > "$transport_log"
+if CECELIA_MACHINE_ID=us-mac-m4 \
+  FLEET_TEST_RUNNER_CONTRACT_FAIL=1 \
+  run_rollout xian-mac-m4 --apply >"$test_root/runner-contract.out" 2>&1; then
+  fail "rollout accepted a Runner image without the credential contract"
+fi
+grep -Fq 'runner_image_contract_invalid' "$test_root/runner-contract.out" \
+  || fail "invalid Runner image contract failure was not explicit"
+if grep -Fq 'docker save --output' "$artifact_log"; then
+  fail "rollout exported a Runner image after its contract failed"
+fi
+[[ ! -s "$transport_log" ]] \
+  || fail "rollout transported artifacts after Runner image contract failure"
 
 : > "$transport_log"
 CECELIA_MACHINE_ID=us-mac-m4 \
