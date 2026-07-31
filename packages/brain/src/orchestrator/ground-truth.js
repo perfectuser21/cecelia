@@ -21,6 +21,8 @@ import {
 } from './human-review-class.js';
 import { normalizeFailureSet } from './convergence-signatures.js';
 import { getVerifiedRemotePlannerPrdArtifact } from './planner-artifact-receipt.js';
+import { parseHarnessResult, parseTaskBundle } from './execution-contract.js';
+import { sanitizeDiagnostic } from './failure-persistence.js';
 
 /** gh check state → 三态 ci 映射 */
 const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
@@ -34,6 +36,7 @@ const TERMINAL_ATTEMPT_STATUSES = new Set([
   'failed',
   'cancelled',
 ]);
+const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const SPAWN_ROLE_BY_ACTION = Object.freeze({
   [ACTION.SPAWN_PLANNER]: 'planner',
   [ACTION.SPAWN_PROPOSER]: 'proposer',
@@ -402,32 +405,59 @@ export async function collectGroundTruth(deps, opts) {
   const ganLatestRoundContractSha = ganLatestRoundVerdict
     ? reviewerDetail.contract_sha ?? proposeBranchSha
     : null;
-  const matchingReviewerAttempt = attemptRows.find((attempt) => {
-    if (
-      attempt.role !== 'reviewer'
-      || !['completed', 'completed_with_concerns'].includes(attempt.status)
-    ) {
-      return false;
+  let ganLatestRoundReviewFeedback = null;
+  if (
+    Number.isSafeInteger(proposeBranchRn)
+    && proposeBranchRn > 0
+    && GIT_SHA_PATTERN.test(proposeBranchSha ?? '')
+  ) {
+    for (const attempt of attemptRows) {
+      if (
+        attempt.role !== 'reviewer'
+        || !['completed', 'completed_with_concerns'].includes(attempt.status)
+      ) {
+        continue;
+      }
+      try {
+        const bundle = parseTaskBundle(asJson(attempt.task_bundle));
+        const result = parseHarnessResult(
+          asJson(attempt.result),
+          'reviewer',
+          'harness-result/reviewer-v1',
+        );
+        const inputs = bundle.inputs;
+        const summary = result.summary.trim();
+        const reason = result.decision?.reason?.trim() ?? '';
+        if (
+          bundle.run_id !== runId
+          || bundle.attempt_id !== attempt.id
+          || bundle.role !== 'reviewer'
+          || inputs.task_id !== taskId
+          || !Number.isSafeInteger(inputs.contract_round)
+          || inputs.contract_round <= 0
+          || inputs.contract_round !== proposeBranchRn
+          || !GIT_SHA_PATTERN.test(inputs.contract_sha ?? '')
+          || inputs.contract_sha !== proposeBranchSha
+          || result.attempt_id !== attempt.id
+          || result.status !== attempt.status
+          || summary.length === 0
+          || reason.length === 0
+        ) {
+          continue;
+        }
+        ganLatestRoundReviewFeedback = Object.freeze({
+          attempt_id: attempt.id,
+          contract_round: proposeBranchRn,
+          contract_sha: proposeBranchSha,
+          summary: sanitizeDiagnostic(summary),
+          reason: sanitizeDiagnostic(reason),
+        });
+        break;
+      } catch {
+        // Persisted legacy/corrupt envelopes are not authoritative feedback.
+      }
     }
-    const bundle = asJson(attempt.task_bundle);
-    const inputs = asJson(bundle?.inputs);
-    return Number(inputs?.contract_round) === proposeBranchRn
-      && typeof inputs?.contract_sha === 'string'
-      && inputs.contract_sha === proposeBranchSha;
-  });
-  const matchingReviewerResult = asJson(matchingReviewerAttempt?.result);
-  const matchingReviewerDecision = asJson(matchingReviewerResult?.decision);
-  const ganLatestRoundReviewFeedback = matchingReviewerAttempt
-    && typeof matchingReviewerResult?.summary === 'string'
-    && typeof matchingReviewerDecision?.reason === 'string'
-    ? Object.freeze({
-        attempt_id: matchingReviewerAttempt.id,
-        contract_round: proposeBranchRn,
-        contract_sha: proposeBranchSha,
-        summary: matchingReviewerResult.summary,
-        reason: matchingReviewerDecision.reason,
-      })
-    : null;
+  }
 
   // review gate：required 来自 tasks.payload（harness-initiative 透传 review_required）；
   // approved 权威 = 决策日志 verdict:human_review 行，锚定当前 head_sha（stale 批准不放行）

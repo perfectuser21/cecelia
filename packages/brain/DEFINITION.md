@@ -7,12 +7,13 @@
 - GAN Reviewer 的完整结果继续以 `harness_attempts.result` 为权威；下一轮
   Proposer TaskBundle 现在显式携带有界的 `review_feedback`，包含
   Attempt ID、合同轮次、合同 SHA、summary 与 decision reason。
-- Ground truth 只接受与当前远端 proposal branch 的 round 和 SHA 同时匹配的
-  completed Reviewer Attempt；旧轮、分支移动、缺 SHA 或畸形结果全部 fail
-  closed，不得污染下一轮修订。
-- 反馈 handoff 不包含 provider transcript、私有推理或凭据，也不要求 Worker
-  反查 Brain API，不改变 Commander/Fleet 架构与 Reviewer fresh/read-only
-  隔离。
+- Ground truth 只接受与当前远端 proposal branch 的 round 和 SHA 同时匹配，
+  且 canonical TaskBundle/HarnessResult 身份与状态一致的 completed Reviewer
+  Attempt；旧轮、分支移动、缺 SHA 或畸形结果全部 fail closed，不得污染下一轮
+  修订。
+- 反馈 handoff 不结构化复制 provider metadata/transcript；summary/reason 复用
+  Brain diagnostic 脱敏并分别截断到 2,000 字符。它不要求 Worker 反查 Brain
+  API，不改变 Commander/Fleet 架构与 Reviewer fresh/read-only 隔离。
 - 回退到 Brain `1.267.160` 会再次丢失跨轮 Reviewer 反馈，可能导致 GAN
   重复发现相同缺口；有 active GAN run 时不得回退。
 

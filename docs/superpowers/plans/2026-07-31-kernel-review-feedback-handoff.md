@@ -32,10 +32,10 @@ Proposer TaskBundle.
 - Modify: `packages/brain/src/orchestrator/ground-truth.js`
 - Modify: `packages/brain/src/orchestrator/dispatcher.js`
 
-- [ ] Select the latest completed Reviewer attempt with matching
-  `inputs.contract_round` and `inputs.contract_sha`.
+- [ ] Select the latest canonical completed Reviewer attempt with matching
+  identity, status, `inputs.contract_round`, and `inputs.contract_sha`.
 - [ ] Project only `attempt_id`, `contract_round`, `contract_sha`, `summary`, and
-  `reason`.
+  `reason`; sanitize and cap each text field at 2,000 characters.
 - [ ] Copy the projection into Proposer inputs.
 - [ ] Re-run the two focused test files and verify green.
 

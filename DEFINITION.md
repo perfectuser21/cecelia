@@ -14,11 +14,13 @@
 
 ## Brain 1.267.161 — Kernel Reviewer feedback handoff
 
-- `collectGroundTruth` 从当前 proposal round/SHA 对应的 completed Reviewer
-  Attempt 投影有界反馈；旧轮、分支移动、缺 SHA 和畸形结果全部 fail closed。
+- `collectGroundTruth` 从当前 proposal round/SHA 对应、且 canonical
+  TaskBundle/HarnessResult 身份与状态一致的 completed Reviewer Attempt 投影有界
+  反馈；旧轮、分支移动、缺 SHA 和畸形结果全部 fail closed。
 - 下一轮 Proposer TaskBundle 显式携带 Attempt ID、round、SHA、summary 与
   decision reason，不再丢失上一轮阻塞项。
-- 该 handoff 不传 transcript、私有推理或凭据，不要求 Worker 反查 Brain，
+- 该 handoff 不结构化复制 provider metadata/transcript；summary/reason 复用
+  Brain diagnostic 脱敏并分别截断到 2,000 字符。不要求 Worker 反查 Brain，
   不改变 Commander/Fleet 架构与 Reviewer fresh/read-only 隔离。
 
 ## Brain 1.267.160 — Planner receipt server attestation

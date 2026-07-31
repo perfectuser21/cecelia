@@ -19,9 +19,11 @@ structured projection to the next Proposer:
 - `summary`
 - `reason`
 
-The projection is accepted only when the Reviewer attempt's TaskBundle round and
-SHA match the current remote proposal branch. It never includes provider
-transcripts, credentials, or private reasoning.
+The projection is accepted only when canonical TaskBundle/HarnessResult
+envelopes agree with the persisted Attempt identity/status and their round/SHA
+match the current remote proposal branch. Provider metadata and transcripts are
+not structurally copied. The two allowed text fields reuse Brain diagnostic
+redaction and are truncated to 2,000 characters each before crossing roles.
 
 ## Data flow
 
@@ -35,8 +37,8 @@ transcripts, credentials, or private reasoning.
 
 ## Failure semantics
 
-- Missing, stale, malformed, round-mismatched, or SHA-mismatched feedback is
-  omitted fail-closed.
+- Missing, stale, malformed, identity/status-mismatched, round-mismatched, or
+  SHA-mismatched feedback is omitted fail-closed.
 - A first-round Proposer has no feedback field.
 - Reviewer bundles remain fresh/read-only and do not inherit Proposer
   transcripts.
