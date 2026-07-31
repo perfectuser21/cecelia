@@ -185,6 +185,65 @@ describe('attempt store', () => {
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
 
+  it('projects evaluator PASS_WITH_CONCERNS as PASS while preserving the concerns terminal', async () => {
+    const callbackResult = {
+      status: 'completed_with_concerns',
+      summary: 'verified evidence; continue Judge and review gates',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+      decision: {
+        outcome: 'PASS_WITH_CONCERNS',
+        reason: 'three environment-only checks remain visible as concerns',
+      },
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'evaluate',
+      role: 'evaluator',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      task_bundle: { inputs: { pull_request: { head_sha: 'a'.repeat(40) } } },
+      result: null,
+    };
+    const completed = {
+      ...running,
+      status: 'completed_with_concerns',
+      result: callbackResult,
+    };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 5 }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    const outcome = await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    expect(outcome.attempt.status).toBe('completed_with_concerns');
+    expect(client.query.mock.calls[3][1][3]).toBe('allow:concerns');
+    expect(client.query.mock.calls[4][1][3]).toBe('allow');
+    expect(JSON.parse(client.query.mock.calls[4][1][5])).toMatchObject({
+      verdict: 'PASS',
+      pr_head_sha: 'a'.repeat(40),
+      feedback: 'three environment-only checks remain visible as concerns',
+    });
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
   it('projects only a verified generator pull request before callback commit', async () => {
     const verifiedSha = 'b'.repeat(40);
     const callbackResult = {
