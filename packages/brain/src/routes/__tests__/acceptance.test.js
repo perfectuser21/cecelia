@@ -179,3 +179,24 @@ describe('POST /api/brain/acceptance/results（内网版）', () => {
     expect(res.body.error).toBe('unknown check_key');
   });
 });
+
+describe('GET /api/brain/acceptance/pending（内网版）', () => {
+  it('返回团队共享的待验收清单（pending/in_review），附判定项', async () => {
+    const pool = {
+      connect: vi.fn(),
+      query: vi.fn(async (sql) => {
+        if (sql.includes("status IN ('pending','in_review')")) {
+          return { rows: [{ id: 'run-1', run_key: 'r1', status: 'in_review' }] };
+        }
+        if (sql.includes('WHERE run_id = ANY')) {
+          return { rows: [{ run_id: 'run-1', check_key: 'r1:001' }] };
+        }
+        return { rows: [] };
+      }),
+    };
+    const res = await request(makeApp(pool)).get('/api/brain/acceptance/pending');
+    expect(res.status).toBe(200);
+    expect(res.body.runs).toHaveLength(1);
+    expect(res.body.runs[0].checks).toHaveLength(1);
+  });
+});

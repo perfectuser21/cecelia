@@ -142,6 +142,24 @@ async function loadChecks(q, runId) {
   return rows;
 }
 
+export async function loadPendingRuns(pool) {
+  const { rows: runs } = await pool.query(
+    `SELECT * FROM acceptance_runs WHERE status IN ('pending','in_review') ORDER BY created_at`
+  );
+  const ids = runs.map((r) => r.id);
+  let checkRows = [];
+  if (ids.length > 0) {
+    const { rows } = await pool.query(
+      'SELECT * FROM acceptance_checks WHERE run_id = ANY($1) ORDER BY check_key',
+      [ids]
+    );
+    checkRows = rows;
+  }
+  const byRun = new Map(runs.map((r) => [r.id, { ...r, checks: [] }]));
+  for (const c of checkRows) byRun.get(c.run_id)?.checks.push(c);
+  return [...byRun.values()];
+}
+
 export function createAcceptanceInternalRouter({ pool }) {
   const router = express.Router();
   // 内网限流：宽松额度防误伤 harness 自动建单，同时满足 DB 访问限流要求（CodeQL js/missing-rate-limiting）
@@ -255,6 +273,16 @@ export function createAcceptanceInternalRouter({ pool }) {
     }
   });
 
+  router.get('/pending', async (_req, res) => {
+    try {
+      const runs = await loadPendingRuns(pool);
+      return res.json({ runs });
+    } catch (err) {
+      console.error('[acceptance] internal GET /pending error:', err.message);
+      return res.status(500).json({ error: 'internal_error' });
+    }
+  });
+
   return router;
 }
 
@@ -276,21 +304,8 @@ export function createAcceptancePublicRouter({ pool }) {
 
   router.get('/acceptance/pending', async (_req, res) => {
     try {
-      const { rows: runs } = await pool.query(
-        `SELECT * FROM acceptance_runs WHERE status IN ('pending','in_review') ORDER BY created_at`
-      );
-      const ids = runs.map((r) => r.id);
-      let checkRows = [];
-      if (ids.length > 0) {
-        const { rows } = await pool.query(
-          'SELECT * FROM acceptance_checks WHERE run_id = ANY($1) ORDER BY check_key',
-          [ids]
-        );
-        checkRows = rows;
-      }
-      const byRun = new Map(runs.map((r) => [r.id, { ...r, checks: [] }]));
-      for (const c of checkRows) byRun.get(c.run_id)?.checks.push(c);
-      return res.json({ runs: [...byRun.values()] });
+      const runs = await loadPendingRuns(pool);
+      return res.json({ runs });
     } catch (err) {
       console.error('[acceptance] GET /pending error:', err.message);
       return res.status(500).json({ error: 'internal_error' });
