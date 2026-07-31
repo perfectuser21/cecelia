@@ -244,6 +244,17 @@ export function createAcceptanceInternalRouter({ pool }) {
     }
   });
 
+  router.post('/results', async (req, res) => {
+    try {
+      const result = await submitAcceptanceResults(pool, req.body?.results);
+      return res.json(result);
+    } catch (err) {
+      if (err instanceof AcceptanceResultsError) return res.status(err.status).json(err.body);
+      console.error('[acceptance] internal POST /results error:', err.message);
+      return res.status(500).json({ error: 'internal_error' });
+    }
+  });
+
   return router;
 }
 

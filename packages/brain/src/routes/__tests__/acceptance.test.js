@@ -140,3 +140,42 @@ describe('POST /api/brain/acceptance/catalog（目录快照上载）', () => {
     expect(pool.query).not.toHaveBeenCalled();
   });
 });
+
+describe('POST /api/brain/acceptance/results（内网版）', () => {
+  it('提交子集判定项：200，返回更新后的 run', async () => {
+    const client = makeClient((sql) => {
+      if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
+        return { rows: [{ check_key: 'r1:001', run_id: 'run-uuid-1' }] };
+      }
+      if (sql.includes('UPDATE acceptance_checks SET result')) return { rows: [] };
+      if (sql.includes('SELECT COUNT(*)::int AS total')) {
+        return { rows: [{ total: 2, pass: 1, fail: 0, pending: 1 }] };
+      }
+      if (sql.includes('SELECT status, title, gp_id, run_key FROM acceptance_runs')) {
+        return { rows: [{ status: 'pending', title: 'T', gp_id: 'gp1', run_key: 'r1' }] };
+      }
+      if (sql.includes('UPDATE acceptance_runs SET pass_rate')) {
+        return { rows: [{ run_key: 'r1', pass_rate: 0.5, status: 'in_review' }] };
+      }
+      return { rows: [] };
+    });
+    const res = await request(makeApp(makePool(client)))
+      .post('/api/brain/acceptance/results')
+      .send({ results: [{ check_key: 'r1:001', result: '通过', submitted_by: 'alice@zenjoymedia.media' }] });
+    expect(res.status).toBe(200);
+    expect(res.body.updated).toBe(1);
+    expect(res.body.runs[0].status).toBe('in_review');
+  });
+
+  it('未知 check_key：400', async () => {
+    const client = makeClient((sql) => {
+      if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) return { rows: [] };
+      return { rows: [] };
+    });
+    const res = await request(makeApp(makePool(client)))
+      .post('/api/brain/acceptance/results')
+      .send({ results: [{ check_key: 'ghost:001', result: '通过' }] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('unknown check_key');
+  });
+});
