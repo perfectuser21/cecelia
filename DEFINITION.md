@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.267.153
+**Brain 版本**: 1.267.154
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.154 — Fleet Worker preflight startup convergence
+
+- Fleet Worker installer 仅对 OrbStack 刚启动后的 `prerequisite_orbstack`
+  瞬时失败执行有限重试，避免健康节点因单次启动窗口被整批 rollout 拒绝。
+- Docker、container、磁盘、内存、服务身份、Runner digest、Git/worktree、
+  callback 等聚合或确定性 admission 错误仍立即 fail-closed；重试次数与
+  整数秒间隔均限制在 1–60 / 0–60 并校验输入。
+- 回退到 `1.267.153` 会恢复单次 preflight；回退前应先确认 OrbStack、Docker
+  socket 与 Runner probe 已稳定，再重跑节点 bootstrap。
 
 ## Brain 1.267.153 — Manual tick disable survives deploy restart
 

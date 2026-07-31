@@ -20,6 +20,8 @@ MOVE="${FLEET_WORKER_MV:-/bin/mv}"
 SLEEP="${FLEET_WORKER_SLEEP:-/bin/sleep}"
 STARTUP_PROBE="${FLEET_WORKER_STARTUP_PROBE:-}"
 STARTUP_ATTEMPTS="${FLEET_WORKER_STARTUP_ATTEMPTS:-20}"
+PREFLIGHT_ATTEMPTS="${FLEET_WORKER_PREFLIGHT_ATTEMPTS:-10}"
+PREFLIGHT_RETRY_SECONDS="${FLEET_WORKER_PREFLIGHT_RETRY_SECONDS:-1}"
 DOCKER_SOCKET_LINK='/var/run/docker.sock'
 DEFAULT_NODE_PROBE="$SCRIPT_DIR/node-probe.cjs"
 NODE_PROBE="${FLEET_WORKER_NODE_PROBE:-$DEFAULT_NODE_PROBE}"
@@ -211,6 +213,42 @@ run_preflight() {
   else
     "$NODE_PROBE"
   fi
+}
+
+run_preflight_with_retry() {
+  local attempt output retry_signature status
+
+  if [[ ! "$PREFLIGHT_ATTEMPTS" =~ ^([1-9]|[1-5][0-9]|60)$ ]]; then
+    die "preflight_retry_config_invalid"
+  fi
+  if [[ ! "$PREFLIGHT_RETRY_SECONDS" =~ ^(0|[1-9]|[1-5][0-9]|60)$ ]]; then
+    die "preflight_retry_config_invalid"
+  fi
+
+  for ((attempt = 1; attempt <= PREFLIGHT_ATTEMPTS; attempt += 1)); do
+    if output="$(run_preflight 2>&1)"; then
+      [[ -z "$output" ]] || printf '%s\n' "$output"
+      return 0
+    else
+      status=$?
+    fi
+
+    retry_signature="${output##*$'\n'}"
+    case "$retry_signature" in
+      prerequisite_orbstack) ;;
+      *)
+        printf '%s\n' "$output" >&2
+        return "$status"
+        ;;
+    esac
+
+    if (( attempt == PREFLIGHT_ATTEMPTS )); then
+      printf '%s\n' "$output" >&2
+      return "$status"
+    fi
+    "$SLEEP" "$PREFLIGHT_RETRY_SECONDS" \
+      || die "preflight_retry_sleep_failed"
+  done
 }
 
 probe_started_worker_once() {
@@ -786,7 +824,7 @@ validate_worker_data_root_path
 if [[ "$mode" == 'apply' ]]; then
   prepare_orbstack_access
 fi
-run_preflight
+run_preflight_with_retry
 validate_worker_token_file
 if [[ "$mode" == 'apply' ]]; then
   prepare_worker_data_root
