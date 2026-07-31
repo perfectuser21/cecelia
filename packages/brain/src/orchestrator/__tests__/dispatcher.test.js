@@ -174,6 +174,33 @@ describe('createDispatcher', () => {
     });
   });
 
+  it('passes SHA-anchored Reviewer feedback into only the next proposer TaskBundle', async () => {
+    const deps = makeDeps();
+    const reviewFeedback = {
+      attempt_id: 'review-attempt-1',
+      contract_round: 1,
+      contract_sha: 'a'.repeat(40),
+      summary: 'The E2E oracle is incomplete.',
+      reason: 'verification oracle below threshold',
+    };
+
+    await createDispatcher(deps)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 6,
+      observed: {
+        ...observed,
+        ganLatestRoundReviewFeedback: reviewFeedback,
+      },
+      decision: { phase: 'gan', reason: 'revision_requested' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.review_feedback).toEqual(reviewFeedback);
+    expect(JSON.stringify(created.bundle.inputs.review_feedback))
+      .not.toContain('private proposer chain of thought');
+  });
+
   it('dispatches the frozen CommanderBundle through preflight before Attempt creation', async () => {
     const order = [];
     const deps = makeDeps(order);

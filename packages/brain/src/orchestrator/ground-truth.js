@@ -402,6 +402,32 @@ export async function collectGroundTruth(deps, opts) {
   const ganLatestRoundContractSha = ganLatestRoundVerdict
     ? reviewerDetail.contract_sha ?? proposeBranchSha
     : null;
+  const matchingReviewerAttempt = attemptRows.find((attempt) => {
+    if (
+      attempt.role !== 'reviewer'
+      || !['completed', 'completed_with_concerns'].includes(attempt.status)
+    ) {
+      return false;
+    }
+    const bundle = asJson(attempt.task_bundle);
+    const inputs = asJson(bundle?.inputs);
+    return Number(inputs?.contract_round) === proposeBranchRn
+      && typeof inputs?.contract_sha === 'string'
+      && inputs.contract_sha === proposeBranchSha;
+  });
+  const matchingReviewerResult = asJson(matchingReviewerAttempt?.result);
+  const matchingReviewerDecision = asJson(matchingReviewerResult?.decision);
+  const ganLatestRoundReviewFeedback = matchingReviewerAttempt
+    && typeof matchingReviewerResult?.summary === 'string'
+    && typeof matchingReviewerDecision?.reason === 'string'
+    ? Object.freeze({
+        attempt_id: matchingReviewerAttempt.id,
+        contract_round: proposeBranchRn,
+        contract_sha: proposeBranchSha,
+        summary: matchingReviewerResult.summary,
+        reason: matchingReviewerDecision.reason,
+      })
+    : null;
 
   // review gate：required 来自 tasks.payload（harness-initiative 透传 review_required）；
   // approved 权威 = 决策日志 verdict:human_review 行，锚定当前 head_sha（stale 批准不放行）
@@ -455,6 +481,7 @@ export async function collectGroundTruth(deps, opts) {
     proposeBranchSha,
     ganLatestRoundVerdict,
     ganLatestRoundContractSha,
+    ganLatestRoundReviewFeedback,
     generatorSpawned,
     evaluateVerdict,
     evaluateResult,
