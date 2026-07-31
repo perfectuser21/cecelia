@@ -5,7 +5,7 @@
       "capacity": 7,
       "worker_bind_host": "127.0.0.1",
       "brain_health_url": "http://127.0.0.1:5221/api/brain/health",
-      "runner_image_digest": "sha256:21b29766c7c5676f28a1f1c328eebde88e1952fd29cb9dc433874bfff0a1a05d",
+      "runner_image_digest": "sha256:fb632fc62c21c8b88d5a1f7b0c8c25a6439e8474bb55fcb5bb01e990ed03353d",
       "resources": {
         "cpu_cores": 6,
         "memory_gib": 8,
@@ -35,7 +35,7 @@
       "capacity": 8,
       "worker_bind_host": "100.86.57.69",
       "brain_health_url": "http://100.71.151.105:5221/api/brain/health",
-      "runner_image_digest": "sha256:21b29766c7c5676f28a1f1c328eebde88e1952fd29cb9dc433874bfff0a1a05d",
+      "runner_image_digest": "sha256:fb632fc62c21c8b88d5a1f7b0c8c25a6439e8474bb55fcb5bb01e990ed03353d",
       "resources": {
         "cpu_cores": 6,
         "memory_gib": 8,
@@ -65,7 +65,7 @@
       "capacity": 8,
       "worker_bind_host": "100.88.166.55",
       "brain_health_url": "http://100.71.151.105:5221/api/brain/health",
-      "runner_image_digest": "sha256:21b29766c7c5676f28a1f1c328eebde88e1952fd29cb9dc433874bfff0a1a05d",
+      "runner_image_digest": "sha256:fb632fc62c21c8b88d5a1f7b0c8c25a6439e8474bb55fcb5bb01e990ed03353d",
       "resources": {
         "cpu_cores": 6,
         "memory_gib": 8,

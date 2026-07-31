@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-RUNNER_DIGEST='sha256:21b29766c7c5676f28a1f1c328eebde88e1952fd29cb9dc433874bfff0a1a05d'
+RUNNER_DIGEST='sha256:fb632fc62c21c8b88d5a1f7b0c8c25a6439e8474bb55fcb5bb01e990ed03353d'
 FLEET_WORKER_LABEL='com.perfect21.fleet-worker'
 FLEET_WORKER_DRAIN_MARKER='/var/run/cecelia/fleet-worker.drain'
 
@@ -389,6 +389,14 @@ stage_worker_token "$worker_token"
   HEAD refs/heads/fleet-rollout
 "$GIT" --git-dir="$bundle_repository" bundle create \
   "$repository_bundle" HEAD
+if ! "$DOCKER" run --rm --entrypoint sh "$RUNNER_DIGEST" -c '
+  grep -Fq "# github-credential-envelope:start" /usr/local/bin/entrypoint.sh &&
+  grep -Fq "CECELIA_GITHUB_CREDENTIAL_FIFO" /usr/local/bin/entrypoint.sh &&
+  grep -Fq "# codex-credential-envelope:start" /usr/local/bin/entrypoint.sh &&
+  grep -Fq "CECELIA_CREDENTIAL_FIFO" /usr/local/bin/entrypoint.sh
+'; then
+  die "runner_image_contract_invalid"
+fi
 "$DOCKER" save --output "$runner_archive" "$RUNNER_DIGEST"
 "$TAR" -cf "$payload_tar" -C "$TEMP_ROOT" \
   source.tar repository.bundle runner.tar worker-token

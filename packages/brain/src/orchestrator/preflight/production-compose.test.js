@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 const COMPOSE_PATH = new URL('../../../../../docker-compose.yml', import.meta.url);
 const DEPLOY_PATH = new URL('../../../../../scripts/brain-deploy.sh', import.meta.url);
+const SIDECAR_PATH = new URL('../../../../../scripts/lib/bluegreen-sidecar.sh', import.meta.url);
 const ENV_EXAMPLE_PATH = new URL('../../../../../.env.docker.example', import.meta.url);
 
 describe('production Kernel capability inputs', () => {
@@ -24,9 +25,10 @@ describe('production Kernel capability inputs', () => {
   });
 
   it('wires the unified Fleet Worker transport fail-closed for production', async () => {
-    const [compose, deploy, envExample] = await Promise.all([
+    const [compose, deploy, sidecar, envExample] = await Promise.all([
       readFile(COMPOSE_PATH, 'utf8'),
       readFile(DEPLOY_PATH, 'utf8'),
+      readFile(SIDECAR_PATH, 'utf8'),
       readFile(ENV_EXAMPLE_PATH, 'utf8'),
     ]);
 
@@ -42,6 +44,10 @@ describe('production Kernel capability inputs', () => {
     expect(deploy).toMatch(
       /docker compose --env-file "\$ROOT_DIR\/\.env\.docker" \\\s+-f "\$ROOT_DIR\/docker-compose\.yml" up -d/,
     );
+    const sidecarComposeCalls = sidecar.match(
+      /docker compose --env-file "\$DEPLOY_ROOT\/\.env\.docker" \\\s+-f "\$DEPLOY_ROOT\/docker-compose\.yml" up -d node-brain/g,
+    );
+    expect(sidecarComposeCalls).toHaveLength(2);
     expect(envExample).toContain('KERNEL_FLEET_BRIDGE_TOKEN=replace-with-worker-bearer-token');
   });
 });

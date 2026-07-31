@@ -1,6 +1,19 @@
 # Brain 模块定义
 
-**版本**: 1.267.157
+**版本**: 1.267.158
+
+## Fleet Runner credential contract pin
+
+- 三台 Fleet 节点统一固定 Runner
+  `sha256:fb632fc62c21c8b88d5a1f7b0c8c25a6439e8474bb55fcb5bb01e990ed03353d`；
+  该 artifact 同时实现 GitHub 与 Codex 一次性 CredentialEnvelope。
+- Fleet rollout 在导出和传输实际 pinned image 前，直接检查镜像内 entrypoint
+  的两类凭据协议；source 与 artifact 漂移时以
+  `runner_image_contract_invalid` fail closed。
+- blue-green sidecar 的主部署与 fallback 都显式读取 `.env.docker`，避免重建
+  Brain 时把 Fleet bridge token 解析为空值。
+- 回退：先 drain 全部 Fleet 节点，再恢复上一 Runner digest 并部署 Brain
+  `1.267.157`；旧 Runner 不得接收需要 GitHub envelope 的角色。
 
 ## Fleet Worker GitHub envelope installer
 
@@ -275,10 +288,9 @@
 - Kernel 将结构化 `provider_timeout` 归类为 infrastructure failure，保留既有
   receipt、attestation 与 Commander failover 边界。
 - 三机固定 Runner：
-  `sha256:21b29766c7c5676f28a1f1c328eebde88e1952fd29cb9dc433874bfff0a1a05d`。
-  该 artifact 以已部署的
-  `sha256:5a4c1918bd30d44ddddd29da6970a85eb49c8394ec3c734d50d3d6e1b6b807e7`
-  为只读基线，仅叠加本版本审阅后的 Runner entrypoint。
+  `sha256:fb632fc62c21c8b88d5a1f7b0c8c25a6439e8474bb55fcb5bb01e990ed03353d`。
+  发布前必须由 rollout 对实际 artifact 验证 GitHub 与 Codex 两类
+  CredentialEnvelope 协议，不能用源码存在相应逻辑替代镜像实检。
 - 回退：节点 drain 后恢复上一 Runner digest，并部署 Brain `1.267.126`。
 
 ## Writable ephemeral Codex credential tmpfs
