@@ -80,6 +80,14 @@ describe('attempt store', () => {
     expect(client.query.mock.calls[3][0]).toMatch(
       /verdict:attempt_callback/i,
     );
+    expect(JSON.parse(client.query.mock.calls[3][1][4])).toMatchObject({
+      run_id: input.runId,
+      attempt_id: input.id,
+      lease_generation: 3,
+      role: 'generator',
+      status: 'blocked',
+      artifacts: [],
+    });
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
     expect(client.release).toHaveBeenCalledOnce();
   });

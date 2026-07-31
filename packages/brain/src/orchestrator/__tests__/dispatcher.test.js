@@ -131,6 +131,49 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
+  it('assigns a deterministic planner Git handoff branch owned by task and hop', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:planner', {
+      taskId,
+      runId,
+      hop: 2,
+      observed,
+      decision: { phase: 'planning', reason: 'no_prd' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.planner_branch)
+      .toBe('cp-harness-prd-aaaaaaaa-a2');
+  });
+
+  it('passes the verified planner Git artifact into the proposer TaskBundle', async () => {
+    const deps = makeDeps();
+    const plannerPrdArtifact = {
+      type: 'git_artifact',
+      kind: 'planner_prd',
+      path: 'sprints/provider-neutral/sprint-prd.md',
+      repo: 'perfectuser21/cecelia',
+      branch: 'cp-harness-prd-aaaaaaaa-a2',
+      head_sha: 'a'.repeat(40),
+      verification_status: 'verified',
+    };
+
+    await createDispatcher(deps)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 3,
+      observed: { ...observed, plannerPrdArtifact },
+      decision: { phase: 'gan', reason: 'awaiting_proposal' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs).toMatchObject({
+      planner_branch: plannerPrdArtifact.branch,
+      planner_head_sha: plannerPrdArtifact.head_sha,
+    });
+  });
+
   it('dispatches the frozen CommanderBundle through preflight before Attempt creation', async () => {
     const order = [];
     const deps = makeDeps(order);

@@ -47,6 +47,7 @@ function createFixture() {
   git(['clone', '--bare', source, remote], root);
   return {
     root,
+    source,
     remote,
     sha,
     mirrorRoot: path.join(root, 'mirrors'),
@@ -175,6 +176,29 @@ describe('Fleet Worker workspace manager', () => {
       expected_head_sha: missingSha,
     }))).rejects.toThrow(/workspace_expected_head_unavailable/);
     expect(fs.existsSync(path.join(fixture.worktreeRoot, ATTEMPT_A))).toBe(false);
+  });
+
+  it('checks out a verified existing writer branch without colliding with its local ref', async () => {
+    const branch = 'cp-07272050-existing-writer';
+    git(
+      ['--git-dir', fixture.remote, 'branch', branch, fixture.sha],
+      fixture.root,
+    );
+    const branchSha = git(
+      ['ls-remote', fixture.remote, `refs/heads/${branch}`],
+      fixture.source,
+    ).split(/\s+/)[0];
+    expect(branchSha).toBe(fixture.sha);
+    const manager = createManager(fixture);
+
+    const workspace = await manager.prepare(spec(fixture, {
+      branch,
+      expected_head_sha: branchSha,
+    }));
+
+    expect(workspace.head_sha).toBe(branchSha);
+    expect(git(['branch', '--show-current'], workspace.path)).toBe(branch);
+    expect(git(['rev-parse', 'HEAD'], workspace.path)).toBe(branchSha);
   });
 
   it('removes an owned worktree idempotently', async () => {

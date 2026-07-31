@@ -149,8 +149,16 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   if (spec.role !== 'planner') {
     common.prd = { path: `${common.sprint_dir}/sprint-prd.md` };
   }
+  if (spec.role === 'planner') {
+    common.planner_branch = `cp-harness-prd-${String(common.task_id).slice(0, 8)}-a${ctx.hop}`;
+  }
   if (spec.role === 'proposer') {
     const nextRound = Number(observed.proposeBranchRn ?? 0) + 1;
+    const plannerArtifact = observed.plannerPrdArtifact;
+    if (plannerArtifact?.verification_status === 'verified') {
+      common.planner_branch = plannerArtifact.branch;
+      common.planner_head_sha = plannerArtifact.head_sha;
+    }
     common.contract_branch = observed.proposeBranch ?? observed.contract?.row?.propose_branch ?? null;
     common.contract_round = nextRound;
     common.propose_branch = `cp-harness-propose-r${nextRound}-${String(common.task_id).slice(0, 8)}-a${ctx.hop}`;

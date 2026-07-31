@@ -69,6 +69,7 @@ export function createProductionExecutionTransport({
   localMachineId = DEFAULT_LOCAL_MACHINE_ID,
   fetchFn,
   credentialBroker,
+  githubCredentialBroker,
   remoteBridgeTimeoutMs,
 } = {}) {
   if (localMachineId !== DEFAULT_LOCAL_MACHINE_ID) {
@@ -88,6 +89,7 @@ export function createProductionExecutionTransport({
     sharedSecret,
     brainUrl: callbackBaseUrl,
     credentialBroker,
+    githubCredentialBroker,
     fetchFn,
     timeoutMs: remoteBridgeTimeoutMs,
   });

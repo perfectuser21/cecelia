@@ -9,6 +9,7 @@ const { Writable } = require('node:stream');
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
 const OTHER_ATTEMPT_ID = '33333333-3333-4333-8333-333333333333';
+const TASK_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const WORKER_ID = 'us-mac-m4';
 const IMAGE_DIGEST = `cecelia/runner@sha256:${'a'.repeat(64)}`;
 const CREDENTIAL_ENVELOPE = Object.freeze({
@@ -36,9 +37,60 @@ const CREDENTIAL = Object.freeze({
     payload_hash: CREDENTIAL_ENVELOPE.payload_hash,
   }),
 });
+const GITHUB_TOKEN = 'github_pat_attempt_scoped_test_token';
+const GITHUB_CREDENTIAL_ENVELOPE = Object.freeze({
+  contract_version: 'github-credential-envelope/v1',
+  credential_ref: '44444444-4444-4444-8444-444444444444',
+  attempt_id: ATTEMPT_ID,
+  machine_id: WORKER_ID,
+  issued_at: '2026-07-27T12:00:00.000Z',
+  expires_at: '2026-07-27T14:00:00.000Z',
+  payload_hash: `sha256:${'c'.repeat(64)}`,
+  payload: 'transient-github-base64-payload',
+});
+const GITHUB_CREDENTIAL = Object.freeze({
+  credentialRef: GITHUB_CREDENTIAL_ENVELOPE.credential_ref,
+  token: GITHUB_TOKEN,
+  metadata: Object.freeze({
+    credential_ref: GITHUB_CREDENTIAL_ENVELOPE.credential_ref,
+    attempt_id: ATTEMPT_ID,
+    machine_id: WORKER_ID,
+    issued_at: GITHUB_CREDENTIAL_ENVELOPE.issued_at,
+    expires_at: GITHUB_CREDENTIAL_ENVELOPE.expires_at,
+    payload_hash: GITHUB_CREDENTIAL_ENVELOPE.payload_hash,
+  }),
+});
 
 function loadAttemptRunner() {
   return require('./attempt-runner.cjs');
+}
+
+function providerPrompt(role = 'generator', inputs = {}) {
+  return JSON.stringify({
+    instruction: 'Execute exactly one Harness role.',
+    task_bundle: {
+      contract_version: '1.0',
+      run_id: RUN_ID,
+      attempt_id: ATTEMPT_ID,
+      hop: 1,
+      phase: 'generate',
+      role,
+      objective: 'perform the bounded task',
+      inputs: {
+        task_id: TASK_ID,
+        sprint_dir: 'sprints/provider-neutral',
+        artifacts: [],
+        ...inputs,
+      },
+      constraints: {
+        read_only: false,
+        fresh_session: true,
+        timeout_seconds: 300,
+      },
+      expected_output: `harness-result/${role}-v1`,
+    },
+    continuation: null,
+  });
 }
 
 function request(overrides = {}) {
@@ -61,7 +113,7 @@ function request(overrides = {}) {
       provider: 'codex',
       command: 'codex',
       args: ['exec', '--json'],
-      stdin: 'perform the bounded task',
+      stdin: providerPrompt(),
       output: { format: 'jsonl' },
     },
     target: {
@@ -72,6 +124,7 @@ function request(overrides = {}) {
       role: 'generator',
     },
     credential_envelope: CREDENTIAL_ENVELOPE,
+    github_credential_envelope: GITHUB_CREDENTIAL_ENVELOPE,
     callback_url: 'http://brain.internal:5221/api/brain/harness/callback',
     callback_token: 'callback-secret',
     ...overrides,
@@ -142,11 +195,18 @@ function dependencies(overrides = {}) {
       return CREDENTIAL;
     }),
   };
+  const githubCredentialConsumer = {
+    consume: vi.fn(() => {
+      events.push('github-credential.consume');
+      return GITHUB_CREDENTIAL;
+    }),
+  };
   return {
     workspace,
     workspaceManager,
     docker,
     credentialConsumer,
+    githubCredentialConsumer,
     stateStore: inMemoryStateStore(),
     events,
     ...overrides,
@@ -162,10 +222,104 @@ function createRunner(deps) {
     workerId: WORKER_ID,
     runnerImageDigest: IMAGE_DIGEST,
     credentialConsumer: deps.credentialConsumer,
+    githubCredentialConsumer: deps.githubCredentialConsumer,
   });
 }
 
 describe('Fleet Worker Attempt runner', () => {
+  it.each([
+    {
+      role: 'planner',
+      inputs: {
+        planner_branch: 'cp-harness-prd-aaaaaaaa-a2',
+      },
+      expected: {
+        SPRINT_DIR: 'sprints/provider-neutral',
+        WORKSPACE_PATH: '/workspace',
+        PLANNER_BRANCH: 'cp-harness-prd-aaaaaaaa-a2',
+      },
+    },
+    {
+      role: 'proposer',
+      inputs: {
+        contract_round: 2,
+        propose_branch: 'cp-harness-propose-r2-aaaaaaaa-a17',
+        contract_branch: 'cp-harness-propose-r1-aaaaaaaa-a3',
+      },
+      expected: {
+        SPRINT_DIR: 'sprints/provider-neutral',
+        WORKSPACE_PATH: '/workspace',
+        PROPOSE_ROUND: '2',
+        PROPOSE_BRANCH: 'cp-harness-propose-r2-aaaaaaaa-a17',
+        CONTRACT_BRANCH: 'cp-harness-propose-r1-aaaaaaaa-a3',
+      },
+    },
+    {
+      role: 'reviewer',
+      inputs: {
+        contract_round: 2,
+        contract_branch: 'cp-harness-propose-r2-aaaaaaaa-a17',
+      },
+      expected: {
+        SPRINT_DIR: 'sprints/provider-neutral',
+        WORKSPACE_PATH: '/workspace',
+        PROPOSE_ROUND: '2',
+        CONTRACT_BRANCH: 'cp-harness-propose-r2-aaaaaaaa-a17',
+      },
+    },
+    {
+      role: 'generator',
+      inputs: {
+        contract_branch: 'cp-harness-propose-r2-aaaaaaaa-a17',
+      },
+      expected: {
+        SPRINT_DIR: 'sprints/provider-neutral',
+        WORKSPACE_PATH: '/workspace',
+        CONTRACT_BRANCH: 'cp-harness-propose-r2-aaaaaaaa-a17',
+      },
+    },
+    {
+      role: 'evaluator',
+      inputs: {
+        contract_branch: 'cp-harness-propose-r2-aaaaaaaa-a17',
+        pr_branch: 'cp-07310943-ws-0e82adad',
+        pr_head_sha: '0123456789abcdef0123456789abcdef01234567',
+      },
+      expected: {
+        SPRINT_DIR: 'sprints/provider-neutral',
+        WORKSPACE_PATH: '/workspace',
+        CONTRACT_BRANCH: 'cp-harness-propose-r2-aaaaaaaa-a17',
+        PR_BRANCH: 'cp-07310943-ws-0e82adad',
+        PR_HEAD_SHA: '0123456789abcdef0123456789abcdef01234567',
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'remote.origin.pushurl',
+        GIT_CONFIG_VALUE_0: 'blocked-by-harness://evaluator',
+      },
+    },
+  ])(
+    'preserves the original task id and $role role environment from TaskBundle',
+    async ({ role, inputs, expected }) => {
+      const deps = dependencies();
+      const runner = createRunner(deps);
+
+      await runner.launch(request({
+        provider_spec: {
+          ...request().provider_spec,
+          stdin: providerPrompt(role, inputs),
+        },
+        target: {
+          ...request().target,
+          role,
+        },
+      }));
+
+      expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: TASK_ID,
+        roleEnv: expected,
+      }));
+    },
+  );
+
   it.each([
     ['read-only', true],
     ['read-write', false],
@@ -190,8 +344,9 @@ describe('Fleet Worker Attempt runner', () => {
       },
     }));
 
-    expect(deps.events.slice(0, 3)).toEqual([
+    expect(deps.events.slice(0, 4)).toEqual([
       'credential.consume',
+      'github-credential.consume',
       'workspace.prepare',
       'docker.launch',
     ]);
@@ -230,6 +385,7 @@ describe('Fleet Worker Attempt runner', () => {
       workerId: WORKER_ID,
       runnerImageDigest: rawImageId,
       credentialConsumer: deps.credentialConsumer,
+      githubCredentialConsumer: deps.githubCredentialConsumer,
     });
 
     await runner.launch(request());
@@ -253,14 +409,77 @@ describe('Fleet Worker Attempt runner', () => {
         machineId: WORKER_ID,
       },
     );
-    expect(deps.events.slice(0, 2)).toEqual([
+    expect(deps.events.slice(0, 3)).toEqual([
       'credential.consume',
+      'github-credential.consume',
       'workspace.prepare',
     ]);
     const state = deps.stateStore.states.get(ATTEMPT_ID);
     expect(state.credential).toEqual(CREDENTIAL.metadata);
     expect(JSON.stringify(state)).not.toContain('sensitive');
     expect(state.credential).not.toHaveProperty('payload');
+  });
+
+  it.each(['planner', 'proposer', 'generator', 'evaluator'])(
+    'requires a one-use GitHub envelope for the %s role before side effects',
+    async (role) => {
+      const deps = dependencies();
+      const runner = createRunner(deps);
+
+      await expect(runner.launch(request({
+        github_credential_envelope: undefined,
+        provider_spec: {
+          ...request().provider_spec,
+          stdin: providerPrompt(role),
+        },
+        target: {
+          ...request().target,
+          role,
+        },
+      }))).rejects.toThrow('github_credential_envelope_required');
+      expect(deps.githubCredentialConsumer.consume).not.toHaveBeenCalled();
+      expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
+      expect(deps.docker.launch).not.toHaveBeenCalled();
+    },
+  );
+
+  it('consumes GitHub token in memory and persists metadata only', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    await runner.launch(request());
+
+    expect(deps.githubCredentialConsumer.consume).toHaveBeenCalledWith(
+      GITHUB_CREDENTIAL_ENVELOPE,
+      {
+        attemptId: ATTEMPT_ID,
+        machineId: WORKER_ID,
+      },
+    );
+    const state = deps.stateStore.states.get(ATTEMPT_ID);
+    expect(state.github_credential).toEqual(GITHUB_CREDENTIAL.metadata);
+    expect(JSON.stringify(state)).not.toContain(GITHUB_TOKEN);
+    expect(state.github_credential).not.toHaveProperty('token');
+    expect(state.github_credential).not.toHaveProperty('payload');
+  });
+
+  it('does not require or consume a GitHub envelope for reviewer', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    await runner.launch(request({
+      github_credential_envelope: undefined,
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: providerPrompt('reviewer'),
+      },
+      target: {
+        ...request().target,
+        role: 'reviewer',
+      },
+    }));
+
+    expect(deps.githubCredentialConsumer.consume).not.toHaveBeenCalled();
   });
 
   it('rejects a Codex launch without an envelope before workspace or Docker side effects', async () => {
@@ -488,6 +707,47 @@ describe('Fleet Worker Attempt runner', () => {
 });
 
 describe('Fleet Worker durable runtime adapters', () => {
+  it('streams a bounded GitHub token to its dedicated FIFO without argv exposure', async () => {
+    const { __test__ } = loadAttemptRunner();
+    const received = [];
+    const child = new EventEmitter();
+    child.stdin = new Writable({
+      write(chunk, _encoding, callback) {
+        received.push(Buffer.from(chunk));
+        callback();
+      },
+    });
+    child.kill = vi.fn();
+    const spawnFn = vi.fn(() => {
+      queueMicrotask(() => child.emit('close', 0));
+      return child;
+    });
+
+    await __test__.defaultWriteGitHubCredential(
+      `cecelia-fleet-${ATTEMPT_ID}`,
+      '/tmp/cecelia-prompts/github-credential.fifo',
+      GITHUB_TOKEN,
+      { spawnFn },
+    );
+
+    expect(spawnFn).toHaveBeenCalledWith(
+      'docker',
+      [
+        'exec',
+        '-i',
+        `cecelia-fleet-${ATTEMPT_ID}`,
+        'sh',
+        '-c',
+        'cat > "$1"',
+        'github-credential-writer',
+        '/tmp/cecelia-prompts/github-credential.fifo',
+      ],
+      { stdio: ['pipe', 'ignore', 'ignore'] },
+    );
+    expect(JSON.stringify(spawnFn.mock.calls)).not.toContain(GITHUB_TOKEN);
+    expect(Buffer.concat(received).toString('utf8')).toBe(GITHUB_TOKEN);
+  });
+
   it('streams a bounded credential to an in-container FIFO without argv exposure', async () => {
     const { __test__ } = loadAttemptRunner();
     const authJson = JSON.stringify({
@@ -551,6 +811,12 @@ describe('Fleet Worker durable runtime adapters', () => {
         workerId: WORKER_ID,
         image: IMAGE_DIGEST,
         providerSpec: request().provider_spec,
+        taskId: TASK_ID,
+        roleEnv: {
+          SPRINT_DIR: 'sprints/provider-neutral',
+          WORKSPACE_PATH: '/workspace',
+          CONTRACT_BRANCH: 'cp-harness-propose-r2-aaaaaaaa-a17',
+        },
         timeoutSeconds: 300,
         role: 'generator',
         model: 'gpt-5',
@@ -575,6 +841,7 @@ describe('Fleet Worker durable runtime adapters', () => {
         },
         lease: { owner: 'dispatcher-1', generation: 0 },
         credential: CREDENTIAL,
+        githubCredential: GITHUB_CREDENTIAL,
       })).rejects.toThrow(/attempt_container_id_missing/);
 
       expect(runCommand).toHaveBeenCalledWith(
@@ -619,11 +886,13 @@ describe('Fleet Worker durable runtime adapters', () => {
       return { stdout: '' };
     });
     const writeCredential = vi.fn(async () => undefined);
+    const writeGitHubCredential = vi.fn(async () => undefined);
     const resolveMountSource = vi.fn((source) => `/canonical${source}`);
     const docker = createDockerAdapter({
       runCommand,
       runtimeRoot,
       writeCredential,
+      writeGitHubCredential,
       resolveMountSource,
       mountAccessPrincipal: 'orbstack-owner',
     });
@@ -635,6 +904,12 @@ describe('Fleet Worker durable runtime adapters', () => {
         workerId: WORKER_ID,
         image: IMAGE_DIGEST,
         providerSpec: request().provider_spec,
+        taskId: TASK_ID,
+        roleEnv: {
+          SPRINT_DIR: 'sprints/provider-neutral',
+          WORKSPACE_PATH: '/workspace',
+          CONTRACT_BRANCH: 'cp-harness-propose-r2-aaaaaaaa-a17',
+        },
         timeoutSeconds: 300,
         role: 'generator',
         model: 'gpt-5',
@@ -659,14 +934,20 @@ describe('Fleet Worker durable runtime adapters', () => {
         },
         lease: { owner: 'dispatcher-1', generation: 0 },
         credential: CREDENTIAL,
+        githubCredential: GITHUB_CREDENTIAL,
       })).resolves.toEqual({ containerId: 'container-created' });
 
       expect(runCommand.mock.calls[0]).toEqual([
         'mkfifo',
-        ['-m', '600', path.join(runtimeRoot, ATTEMPT_ID, 'credential.fifo')],
+        ['-m', '600', path.join(runtimeRoot, ATTEMPT_ID, 'github-credential.fifo')],
         undefined,
       ]);
       expect(runCommand.mock.calls[1]).toEqual([
+        'mkfifo',
+        ['-m', '600', path.join(runtimeRoot, ATTEMPT_ID, 'credential.fifo')],
+        undefined,
+      ]);
+      expect(runCommand.mock.calls[2]).toEqual([
         '/usr/bin/find',
         [
           '-x',
@@ -692,7 +973,7 @@ describe('Fleet Worker durable runtime adapters', () => {
         ],
         undefined,
       ]);
-      const [command, createArgs] = runCommand.mock.calls[2];
+      const [command, createArgs] = runCommand.mock.calls[3];
       expect(command).toBe('docker');
       expect(createArgs[0]).toBe('create');
       expect(createArgs).toContain(IMAGE_DIGEST);
@@ -717,26 +998,42 @@ describe('Fleet Worker durable runtime adapters', () => {
       expect(createArgs.join(' ')).not.toContain('/Users/operator');
       expect(createArgs).toEqual(expect.arrayContaining([
         '--tmpfs', '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700,uid=999,gid=999',
+        '--tmpfs', '/home/cecelia/.config/gh:rw,noexec,nosuid,nodev,mode=0700,uid=999,gid=999',
         '--label', `cecelia.fleet.attempt_id=${ATTEMPT_ID}`,
         '--label', `cecelia.fleet.run_id=${RUN_ID}`,
         '--label', `cecelia.fleet.worker_id=${WORKER_ID}`,
+        '--env', `CECELIA_TASK_ID=${TASK_ID}`,
+        '--env', `HARNESS_TASK_ID=${TASK_ID}`,
         '--env', 'HARNESS_NODE=generator',
         '--env', 'HARNESS_MODEL=gpt-5',
         '--env', 'HARNESS_TIMEOUT_SECONDS=300',
+        '--env', 'SPRINT_DIR=sprints/provider-neutral',
+        '--env', 'WORKSPACE_PATH=/workspace',
+        '--env', 'CONTRACT_BRANCH=cp-harness-propose-r2-aaaaaaaa-a17',
         '--env', 'CECELIA_CREDENTIAL_FIFO=/tmp/cecelia-prompts/credential.fifo',
         '--env', `CECELIA_CREDENTIAL_REF=${CREDENTIAL.credentialRef}`,
+        '--env', 'CECELIA_GITHUB_CREDENTIAL_FIFO=/tmp/cecelia-prompts/github-credential.fifo',
+        '--env', `CECELIA_GITHUB_CREDENTIAL_REF=${GITHUB_CREDENTIAL.credentialRef}`,
       ]));
       expect(createArgs.join(' ')).not.toContain(CREDENTIAL.authJson);
-      expect(runCommand.mock.calls[3]).toEqual([
+      expect(createArgs.join(' ')).not.toContain(GITHUB_TOKEN);
+      expect(runCommand.mock.calls[4]).toEqual([
         'docker',
         ['start', 'cecelia-fleet-22222222-2222-4222-8222-222222222222'],
         undefined,
       ]);
+      expect(writeGitHubCredential).toHaveBeenCalledWith(
+        `cecelia-fleet-${ATTEMPT_ID}`,
+        '/tmp/cecelia-prompts/github-credential.fifo',
+        GITHUB_TOKEN,
+      );
       expect(writeCredential).toHaveBeenCalledWith(
         `cecelia-fleet-${ATTEMPT_ID}`,
         '/tmp/cecelia-prompts/credential.fifo',
         CREDENTIAL.authJson,
       );
+      expect(writeGitHubCredential.mock.invocationCallOrder[0])
+        .toBeLessThan(writeCredential.mock.invocationCallOrder[0]);
       const attemptRuntime = path.join(runtimeRoot, ATTEMPT_ID);
       expect(fs.existsSync(attemptRuntime)).toBe(true);
 
