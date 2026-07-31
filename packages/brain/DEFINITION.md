@@ -1,6 +1,17 @@
 # Brain 模块定义
 
-**版本**: 1.267.153
+**版本**: 1.267.154
+
+## Fleet Worker preflight startup convergence
+
+- `install-fleet-worker.sh` 仅对 `prerequisite_orbstack` 执行最多 10 次、
+  每次 1 秒的有限重试，覆盖 OrbStack 刚从 stopped 切到 running 时
+  `_cecelia` 探针短暂不可见的生产竞态。
+- Docker/container 等聚合 prerequisite 与其他确定性失败不重试并立即
+  fail-closed；次数限制为 1–60，间隔只接受 0–60 的整数秒，避免错误配置
+  导致近似无界等待或命令注入。
+- 回退到 Brain `1.267.153` 会恢复单次探针，可能再次把刚启动的健康 OrbStack
+  误判为 `prerequisite_orbstack` 并让 rollout 保持 drain。
 
 ## Manual tick disable survives deploy restart
 

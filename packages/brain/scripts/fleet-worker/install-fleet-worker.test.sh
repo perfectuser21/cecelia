@@ -278,6 +278,129 @@ FLEET_WORKER_ORBSTACK_HOME="/Users/orbstack-owner" \
 [[ "$(<"$default_probe_path_log")" == "$toolchain_bin:"* ]] \
   || fail "default preflight PATH did not begin with the reconciled toolchain"
 
+transient_preflight_count="$test_root/transient-preflight.count"
+printf '0\n' > "$transient_preflight_count"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'count="$(<"${FLEET_WORKER_TRANSIENT_PREFLIGHT_COUNT:?}")"' \
+  'count=$((count + 1))' \
+  'printf "%s\n" "$count" > "${FLEET_WORKER_TRANSIENT_PREFLIGHT_COUNT:?}"' \
+  'if [[ "$count" -eq 1 ]]; then' \
+  '  printf "%s\n" "prerequisite_orbstack" >&2' \
+  '  exit 1' \
+  'fi' \
+  'printf "%s\n" "{\"ok\":true}"' \
+  > "$test_root/node-probe"
+chmod +x "$test_root/node-probe"
+transient_plist="$test_root/transient-preflight.plist"
+FLEET_WORKER_TRANSIENT_PREFLIGHT_COUNT="$transient_preflight_count" \
+FLEET_WORKER_PREFLIGHT_ATTEMPTS=2 \
+FLEET_WORKER_PREFLIGHT_RETRY_SECONDS=0 \
+  run_installer xian-mac-m4 --render-to "$transient_plist" >/dev/null \
+  || fail "installer did not retry a transient OrbStack startup preflight"
+[[ "$(<"$transient_preflight_count")" == '2' ]] \
+  || fail "transient OrbStack preflight was not retried exactly once"
+[[ -f "$transient_plist" ]] \
+  || fail "transient OrbStack preflight did not complete rendering"
+
+non_retryable_preflight_count="$test_root/non-retryable-preflight.count"
+printf '0\n' > "$non_retryable_preflight_count"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'count="$(<"${FLEET_WORKER_NON_RETRYABLE_PREFLIGHT_COUNT:?}")"' \
+  'count=$((count + 1))' \
+  'printf "%s\n" "$count" > "${FLEET_WORKER_NON_RETRYABLE_PREFLIGHT_COUNT:?}"' \
+  'printf "%s\n" "prerequisite_docker_socket" >&2' \
+  'exit 1' \
+  > "$test_root/node-probe"
+chmod +x "$test_root/node-probe"
+non_retryable_output=''
+if non_retryable_output="$(
+  FLEET_WORKER_NON_RETRYABLE_PREFLIGHT_COUNT="$non_retryable_preflight_count" \
+  FLEET_WORKER_PREFLIGHT_ATTEMPTS=2 \
+    run_installer xian-mac-m4 \
+      --render-to "$test_root/non-retryable-preflight.plist" 2>&1
+)"; then
+  fail "installer retried a deterministic Docker socket prerequisite"
+fi
+[[ "$(<"$non_retryable_preflight_count")" == '1' ]] \
+  || fail "deterministic Docker socket prerequisite was not rejected immediately"
+grep -Fq 'prerequisite_docker_socket' <<<"$non_retryable_output" \
+  || fail "deterministic preflight lost its bounded refusal signature"
+
+unbounded_interval_output=''
+if unbounded_interval_output="$(
+  FLEET_WORKER_PREFLIGHT_RETRY_SECONDS=999999999 \
+    run_installer xian-mac-m4 \
+      --render-to "$test_root/unbounded-retry-interval.plist" 2>&1
+)"; then
+  fail "installer accepted an unbounded preflight retry interval"
+fi
+grep -Fq 'preflight_retry_config_invalid' <<<"$unbounded_interval_output" \
+  || fail "unbounded retry interval lacked a bounded refusal signature"
+
+docker_preflight_count="$test_root/docker-preflight.count"
+printf '0\n' > "$docker_preflight_count"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'count="$(<"${FLEET_WORKER_DOCKER_PREFLIGHT_COUNT:?}")"' \
+  'count=$((count + 1))' \
+  'printf "%s\n" "$count" > "${FLEET_WORKER_DOCKER_PREFLIGHT_COUNT:?}"' \
+  'if [[ "$count" -eq 1 ]]; then' \
+  '  printf "%s\n" "prerequisite_docker" >&2' \
+  '  exit 1' \
+  'fi' \
+  'printf "%s\n" "{\"ok\":true}"' \
+  > "$test_root/node-probe"
+chmod +x "$test_root/node-probe"
+docker_preflight_output=''
+if docker_preflight_output="$(
+  FLEET_WORKER_DOCKER_PREFLIGHT_COUNT="$docker_preflight_count" \
+  FLEET_WORKER_PREFLIGHT_ATTEMPTS=2 \
+  FLEET_WORKER_PREFLIGHT_RETRY_SECONDS=0 \
+    run_installer xian-mac-m4 \
+      --render-to "$test_root/docker-preflight.plist" 2>&1
+)"; then
+  fail "installer retried an aggregated Docker prerequisite"
+fi
+[[ "$(<"$docker_preflight_count")" == '1' ]] \
+  || fail "aggregated Docker prerequisite was not rejected immediately"
+grep -Fq 'prerequisite_docker' <<<"$docker_preflight_output" \
+  || fail "aggregated Docker prerequisite lost its refusal signature"
+
+invalid_retry_output=''
+if invalid_retry_output="$(
+  FLEET_WORKER_PREFLIGHT_ATTEMPTS=0 \
+    run_installer xian-mac-m4 \
+      --render-to "$test_root/invalid-retry-config.plist" 2>&1
+)"; then
+  fail "installer accepted an unbounded preflight retry configuration"
+fi
+grep -Fq 'preflight_retry_config_invalid' <<<"$invalid_retry_output" \
+  || fail "invalid preflight retry config lacked a bounded refusal signature"
+
+leading_zero_retry_output=''
+if leading_zero_retry_output="$(
+  FLEET_WORKER_PREFLIGHT_ATTEMPTS=08 \
+    run_installer xian-mac-m4 \
+      --render-to "$test_root/leading-zero-retry-config.plist" 2>&1
+)"; then
+  fail "installer accepted a leading-zero preflight retry count"
+fi
+grep -Fq 'preflight_retry_config_invalid' <<<"$leading_zero_retry_output" \
+  || fail "leading-zero retry count lacked a bounded refusal signature"
+
+overflow_retry_output=''
+if overflow_retry_output="$(
+  FLEET_WORKER_PREFLIGHT_ATTEMPTS=18446744073709551617 \
+    run_installer xian-mac-m4 \
+      --render-to "$test_root/overflow-retry-config.plist" 2>&1
+)"; then
+  fail "installer accepted an overflowing preflight retry count"
+fi
+grep -Fq 'preflight_retry_config_invalid' <<<"$overflow_retry_output" \
+  || fail "overflowing retry count lacked a bounded refusal signature"
+
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'printf "%s\\n" "$*" >> "${FLEET_WORKER_LAUNCH_LOG:?}"' \
