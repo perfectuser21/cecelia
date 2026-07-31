@@ -142,9 +142,10 @@ async function loadChecks(q, runId) {
   return rows;
 }
 
-export async function loadPendingRuns(pool) {
+export async function loadRunsWithChecks(pool, whereClause, params) {
   const { rows: runs } = await pool.query(
-    `SELECT * FROM acceptance_runs WHERE status IN ('pending','in_review') ORDER BY created_at`
+    `SELECT * FROM acceptance_runs WHERE ${whereClause}`,
+    params
   );
   const ids = runs.map((r) => r.id);
   let checkRows = [];
@@ -158,6 +159,10 @@ export async function loadPendingRuns(pool) {
   const byRun = new Map(runs.map((r) => [r.id, { ...r, checks: [] }]));
   for (const c of checkRows) byRun.get(c.run_id)?.checks.push(c);
   return [...byRun.values()];
+}
+
+export async function loadPendingRuns(pool) {
+  return loadRunsWithChecks(pool, `status IN ('pending','in_review') ORDER BY created_at`, []);
 }
 
 export function createAcceptanceInternalRouter({ pool }) {
@@ -250,29 +255,12 @@ export function createAcceptanceInternalRouter({ pool }) {
   router.get('/runs', async (req, res) => {
     const { gp_id } = req.query;
     if (!gp_id) return res.status(400).json({ error: 'gp_id query param required' });
-    const client = await pool.connect();
     try {
-      const { rows: runs } = await client.query(
-        'SELECT * FROM acceptance_runs WHERE gp_id = $1 ORDER BY created_at DESC',
-        [gp_id]
-      );
-      const ids = runs.map((r) => r.id);
-      let checkRows = [];
-      if (ids.length > 0) {
-        const { rows } = await client.query(
-          'SELECT * FROM acceptance_checks WHERE run_id = ANY($1) ORDER BY check_key',
-          [ids]
-        );
-        checkRows = rows;
-      }
-      const byRun = new Map(runs.map((r) => [r.id, { ...r, checks: [] }]));
-      for (const c of checkRows) byRun.get(c.run_id)?.checks.push(c);
-      return res.json({ runs: [...byRun.values()] });
+      const runs = await loadRunsWithChecks(pool, 'gp_id = $1 ORDER BY created_at DESC', [gp_id]);
+      return res.json({ runs });
     } catch (err) {
       console.error('[acceptance] GET /runs error:', err.message);
       return res.status(500).json({ error: err.message });
-    } finally {
-      client.release();
     }
   });
 

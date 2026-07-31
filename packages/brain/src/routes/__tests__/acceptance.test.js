@@ -199,6 +199,16 @@ describe('GET /api/brain/acceptance/pending（内网版）', () => {
     expect(res.body.runs).toHaveLength(1);
     expect(res.body.runs[0].checks).toHaveLength(1);
   });
+
+  it('DB 查询抛错：500，body 为 internal_error', async () => {
+    const pool = {
+      connect: vi.fn(),
+      query: vi.fn(async () => { throw new Error('db down'); }),
+    };
+    const res = await request(makeApp(pool)).get('/api/brain/acceptance/pending');
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'internal_error' });
+  });
 });
 
 describe('GET /api/brain/acceptance/runs?gp_id=（历史查询）', () => {
@@ -209,19 +219,22 @@ describe('GET /api/brain/acceptance/runs?gp_id=（历史查询）', () => {
   });
 
   it('按 gp_id 查历史，按 created_at 倒序，附每单判定项', async () => {
-    const client = makeClient((sql) => {
-      if (sql.includes('WHERE gp_id = $1')) {
-        return { rows: [
-          { id: 'run-2', run_key: 'r2', gp_id: 'gp1', version: '1.22', created_at: '2026-07-20' },
-          { id: 'run-1', run_key: 'r1', gp_id: 'gp1', version: '1.21', created_at: '2026-07-10' },
-        ] };
-      }
-      if (sql.includes('WHERE run_id = ANY')) {
-        return { rows: [{ run_id: 'run-2', check_key: 'r2:001', result: '通过' }] };
-      }
-      return { rows: [] };
-    });
-    const res = await request(makeApp(makePool(client)))
+    const pool = {
+      connect: vi.fn(),
+      query: vi.fn(async (sql) => {
+        if (sql.includes('WHERE gp_id = $1')) {
+          return { rows: [
+            { id: 'run-2', run_key: 'r2', gp_id: 'gp1', version: '1.22', created_at: '2026-07-20' },
+            { id: 'run-1', run_key: 'r1', gp_id: 'gp1', version: '1.21', created_at: '2026-07-10' },
+          ] };
+        }
+        if (sql.includes('WHERE run_id = ANY')) {
+          return { rows: [{ run_id: 'run-2', check_key: 'r2:001', result: '通过' }] };
+        }
+        return { rows: [] };
+      }),
+    };
+    const res = await request(makeApp(pool))
       .get('/api/brain/acceptance/runs')
       .query({ gp_id: 'gp1' });
     expect(res.status).toBe(200);
