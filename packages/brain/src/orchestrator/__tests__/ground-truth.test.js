@@ -7,9 +7,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { collectGroundTruth } from '../ground-truth.js';
 import { derive } from '../derive.js';
 
-const RUN_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-const TASK_ID = '11111111-2222-3333-4444-555555555555';
-const CONTRACT_ID = '99999999-8888-7777-6666-555555555555';
+const RUN_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const TASK_ID = '11111111-2222-4333-8444-555555555555';
+const CONTRACT_ID = '99999999-8888-4777-8666-555555555555';
 const PR_URL = 'https://github.com/o/r/pull/42';
 
 /** 按 SQL 表名路由的 fake pool */
@@ -741,6 +741,200 @@ describe('collectGroundTruth：propose 分支 rN 解析', () => {
     expect(stale.proposeBranchSha).toBe(movedSha);
     expect(stale.ganLatestRoundVerdict).toBeNull();
     expect(stale.ganLatestRoundContractSha).toBeNull();
+  });
+
+  it('只投影与当前 round 和 SHA 匹配的最新 Reviewer 反馈', async () => {
+    const contractSha = 'b'.repeat(40);
+    const branch = 'cp-harness-propose-r2-11111111-a9';
+    const attemptId = '22222222-2222-4222-8222-222222222222';
+    const matchingAttempt = {
+      id: attemptId,
+      role: 'reviewer',
+      status: 'completed_with_concerns',
+      completed_at: '2026-07-31T09:00:00.000Z',
+      task_bundle: {
+        contract_version: '1.0',
+        run_id: RUN_ID,
+        attempt_id: attemptId,
+        hop: 8,
+        phase: 'gan',
+        role: 'reviewer',
+        objective: 'Review the current contract.',
+        inputs: {
+          task_id: TASK_ID,
+          sprint_dir: 'sprints/reviewer-feedback',
+          worktree_path: '/tmp/reviewer-feedback',
+          contract_round: 2,
+          contract_sha: contractSha,
+        },
+        constraints: { read_only: true, fresh_session: true, timeout_seconds: 600 },
+        expected_output: 'harness-result/reviewer-v1',
+      },
+      result: {
+        contract_version: '1.0',
+        attempt_id: attemptId,
+        status: 'completed_with_concerns',
+        summary: 'Round 2 still misses the executable E2E oracle.',
+        artifacts: [],
+        checks: [],
+        decision: { outcome: 'REVISION', reason: 'verification oracle below threshold' },
+        error: null,
+        provider_metadata: {
+          provider: 'codex',
+          session_id: 'session-review-2',
+          transcript: 'must not cross the role boundary',
+        },
+      },
+    };
+    const staleAttempt = {
+      ...matchingAttempt,
+      id: '33333333-3333-4333-8333-333333333333',
+      completed_at: '2026-07-31T10:00:00.000Z',
+      task_bundle: {
+        ...matchingAttempt.task_bundle,
+        attempt_id: '33333333-3333-4333-8333-333333333333',
+        inputs: {
+          ...matchingAttempt.task_bundle.inputs,
+          contract_round: 1,
+          contract_sha: 'a'.repeat(40),
+        },
+      },
+      result: {
+        ...matchingAttempt.result,
+        attempt_id: '33333333-3333-4333-8333-333333333333',
+      },
+    };
+    const deps = makeDeps({
+      exec: { lsRemote: `${contractSha}\trefs/heads/${branch}` },
+      rows: { attempts: [staleAttempt, matchingAttempt] },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.ganLatestRoundReviewFeedback).toEqual({
+      attempt_id: attemptId,
+      contract_round: 2,
+      contract_sha: contractSha,
+      summary: 'Round 2 still misses the executable E2E oracle.',
+      reason: 'verification oracle below threshold',
+    });
+    expect(JSON.stringify(observed.ganLatestRoundReviewFeedback)).not.toContain('transcript');
+  });
+
+  it.each([
+    ['boolean round', 1, (attempt) => {
+      attempt.task_bundle.inputs.contract_round = true;
+    }],
+    ['mismatched result attempt id', 2, (attempt) => {
+      attempt.result.attempt_id = '44444444-4444-4444-8444-444444444444';
+    }],
+    ['mismatched row/result status', 2, (attempt) => {
+      attempt.result.status = 'blocked';
+    }],
+    ['empty decision reason', 2, (attempt) => {
+      attempt.result.decision.reason = '';
+    }],
+  ])('畸形 Reviewer feedback fail closed：%s', async (_label, currentRound, mutate) => {
+    const contractSha = 'c'.repeat(40);
+    const attemptId = '55555555-5555-4555-8555-555555555555';
+    const attempt = {
+      id: attemptId,
+      role: 'reviewer',
+      status: 'completed_with_concerns',
+      task_bundle: {
+        contract_version: '1.0',
+        run_id: RUN_ID,
+        attempt_id: attemptId,
+        hop: 9,
+        phase: 'gan',
+        role: 'reviewer',
+        objective: 'Review the current contract.',
+        inputs: {
+          task_id: TASK_ID,
+          sprint_dir: 'sprints/reviewer-feedback',
+          worktree_path: '/tmp/reviewer-feedback',
+          contract_round: currentRound,
+          contract_sha: contractSha,
+        },
+        constraints: { read_only: true, fresh_session: true, timeout_seconds: 600 },
+        expected_output: 'harness-result/reviewer-v1',
+      },
+      result: {
+        contract_version: '1.0',
+        attempt_id: attemptId,
+        status: 'completed_with_concerns',
+        summary: 'The oracle still needs one executable assertion.',
+        artifacts: [],
+        checks: [],
+        decision: { outcome: 'REVISION', reason: 'oracle below threshold' },
+        error: null,
+        provider_metadata: { provider: 'codex', session_id: 'session-review-invalid' },
+      },
+    };
+    mutate(attempt);
+    const deps = makeDeps({
+      exec: {
+        lsRemote: `${contractSha}\trefs/heads/cp-harness-propose-r${currentRound}-11111111-a9`,
+      },
+      rows: { attempts: [attempt] },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.ganLatestRoundReviewFeedback).toBeNull();
+  });
+
+  it('Reviewer feedback 脱敏并限制每个文本字段长度', async () => {
+    const contractSha = 'd'.repeat(40);
+    const attemptId = '66666666-6666-4666-8666-666666666666';
+    const attempt = {
+      id: attemptId,
+      role: 'reviewer',
+      status: 'completed_with_concerns',
+      task_bundle: {
+        contract_version: '1.0',
+        run_id: RUN_ID,
+        attempt_id: attemptId,
+        hop: 10,
+        phase: 'gan',
+        role: 'reviewer',
+        objective: 'Review the current contract.',
+        inputs: {
+          task_id: TASK_ID,
+          sprint_dir: 'sprints/reviewer-feedback',
+          worktree_path: '/tmp/reviewer-feedback',
+          contract_round: 2,
+          contract_sha: contractSha,
+        },
+        constraints: { read_only: true, fresh_session: true, timeout_seconds: 600 },
+        expected_output: 'harness-result/reviewer-v1',
+      },
+      result: {
+        contract_version: '1.0',
+        attempt_id: attemptId,
+        status: 'completed_with_concerns',
+        summary: `token=review-secret ${'x'.repeat(3_000)}`,
+        artifacts: [],
+        checks: [],
+        decision: { outcome: 'REVISION', reason: 'Bearer provider-secret' },
+        error: null,
+        provider_metadata: { provider: 'codex', session_id: 'session-review-redact' },
+      },
+    };
+    const deps = makeDeps({
+      exec: {
+        lsRemote: `${contractSha}\trefs/heads/cp-harness-propose-r2-11111111-a9`,
+      },
+      rows: { attempts: [attempt] },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+    const feedback = observed.ganLatestRoundReviewFeedback;
+
+    expect(feedback.summary).not.toContain('review-secret');
+    expect(feedback.reason).not.toContain('provider-secret');
+    expect(feedback.summary.length).toBeLessThanOrEqual(2_000);
+    expect(feedback.reason.length).toBeLessThanOrEqual(2_000);
   });
 
   it('task 作用域：跨 task 分支不计入（并发 initiative 的 rN 不污染 ganRound），ls-remote pattern 带 taskId 前 8 位', async () => {
