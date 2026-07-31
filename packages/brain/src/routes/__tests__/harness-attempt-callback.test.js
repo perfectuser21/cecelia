@@ -244,139 +244,163 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledOnce();
   });
 
-  it('只把服务端 Git 校验通过的 planner PRD artifact 写入终态 receipt', async () => {
-    const plannerBranch = `cp-harness-prd-${attemptId.slice(0, 8)}-a4`;
-    const headSha = 'a'.repeat(40);
-    mocks.store.getById.mockResolvedValue(fleetAttempt({
-      role: 'planner',
-      task_bundle: {
-        expected_output: 'harness-result/planner-v1',
-        inputs: {
-          sprint_dir: 'sprints/kernel-real',
-          planner_branch: plannerBranch,
-          workspace_spec: {
-            repo: 'perfectuser21/zenithjoy-workspace',
+  it.each(['completed', 'completed_with_concerns'])(
+    '只把服务端 Git 校验通过的 planner PRD artifact 写入 %s 终态 receipt',
+    async (callbackStatus) => {
+      const plannerBranch = `cp-harness-prd-${attemptId.slice(0, 8)}-a4`;
+      const headSha = 'a'.repeat(40);
+      mocks.store.getById.mockResolvedValue(fleetAttempt({
+        role: 'planner',
+        task_bundle: {
+          expected_output: 'harness-result/planner-v1',
+          inputs: {
+            sprint_dir: 'sprints/kernel-real',
+            planner_branch: plannerBranch,
+            workspace_spec: {
+              repo: 'perfectuser21/zenithjoy-workspace',
+            },
           },
         },
-      },
-    }));
-    const resolveHead = vi.fn(async () => ({
-      head_sha: headSha,
-      path_exists: true,
-    }));
-    app.set('kernelGitBranchHeadResolver', resolveHead);
+      }));
+      const resolveHead = vi.fn(async () => ({
+        head_sha: headSha,
+        path_exists: true,
+      }));
+      app.set('kernelGitBranchHeadResolver', resolveHead);
 
-    const response = await postCallback(app, {
-      ...fleetResult(),
-      artifacts: [{
-        type: 'git_artifact',
-        kind: 'planner_prd',
-        path: 'sprints/kernel-real/sprint-prd.md',
+      const response = await postCallback(app, {
+        ...fleetResult(),
+        status: callbackStatus,
+        artifacts: [{
+          type: 'git_artifact',
+          kind: 'planner_prd',
+          path: 'sprints/kernel-real/sprint-prd.md',
+          repo: 'perfectuser21/zenithjoy-workspace',
+          branch: plannerBranch,
+          head_sha: headSha,
+          verification_status: 'verified',
+        }],
+      });
+
+      expect(response.status).toBe(200);
+      expect(resolveHead).toHaveBeenCalledWith({
         repo: 'perfectuser21/zenithjoy-workspace',
         branch: plannerBranch,
-        head_sha: headSha,
-        verification_status: 'verified',
-      }],
-    });
-
-    expect(response.status).toBe(200);
-    expect(resolveHead).toHaveBeenCalledWith({
-      repo: 'perfectuser21/zenithjoy-workspace',
-      branch: plannerBranch,
-      path: 'sprints/kernel-real/sprint-prd.md',
-    });
-    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
-      expect.objectContaining({
-        result: expect.objectContaining({
-          artifacts: [{
-            type: 'git_artifact',
-            kind: 'planner_prd',
-            path: 'sprints/kernel-real/sprint-prd.md',
-            repo: 'perfectuser21/zenithjoy-workspace',
-            branch: plannerBranch,
-            head_sha: headSha,
-            verification_status: 'verified',
-          }],
+        path: 'sprints/kernel-real/sprint-prd.md',
+      });
+      expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          result: expect.objectContaining({
+            status: callbackStatus,
+            artifacts: [{
+              type: 'git_artifact',
+              kind: 'planner_prd',
+              path: 'sprints/kernel-real/sprint-prd.md',
+              repo: 'perfectuser21/zenithjoy-workspace',
+              branch: plannerBranch,
+              head_sha: headSha,
+              verification_status: 'verified',
+            }],
+            server_verification: {
+              planner_git_artifact: {
+                method: 'git_branch_head',
+                artifact: {
+                  path: 'sprints/kernel-real/sprint-prd.md',
+                  repo: 'perfectuser21/zenithjoy-workspace',
+                  branch: plannerBranch,
+                  head_sha: headSha,
+                },
+              },
+            },
+          }),
         }),
-      }),
-    );
-  });
+      );
+    },
+  );
 
-  it('拒绝 planner 自报 verified 但服务端分支 SHA 不匹配的假 artifact', async () => {
-    const plannerBranch = `cp-harness-prd-${attemptId.slice(0, 8)}-a4`;
-    mocks.store.getById.mockResolvedValue(fleetAttempt({
-      role: 'planner',
-      task_bundle: {
-        expected_output: 'harness-result/planner-v1',
-        inputs: {
-          sprint_dir: 'sprints/kernel-real',
-          planner_branch: plannerBranch,
-          workspace_spec: {
-            repo: 'perfectuser21/zenithjoy-workspace',
+  it.each(['completed', 'completed_with_concerns'])(
+    '拒绝 %s planner 自报 verified 但服务端分支 SHA 不匹配的假 artifact',
+    async (callbackStatus) => {
+      const plannerBranch = `cp-harness-prd-${attemptId.slice(0, 8)}-a4`;
+      mocks.store.getById.mockResolvedValue(fleetAttempt({
+        role: 'planner',
+        task_bundle: {
+          expected_output: 'harness-result/planner-v1',
+          inputs: {
+            sprint_dir: 'sprints/kernel-real',
+            planner_branch: plannerBranch,
+            workspace_spec: {
+              repo: 'perfectuser21/zenithjoy-workspace',
+            },
           },
         },
-      },
-    }));
-    app.set('kernelGitBranchHeadResolver', vi.fn(async () => ({
-      head_sha: 'b'.repeat(40),
-      path_exists: true,
-    })));
+      }));
+      app.set('kernelGitBranchHeadResolver', vi.fn(async () => ({
+        head_sha: 'b'.repeat(40),
+        path_exists: true,
+      })));
 
-    const response = await postCallback(app, {
-      ...fleetResult(),
-      artifacts: [{
-        type: 'git_artifact',
-        kind: 'planner_prd',
-        path: 'sprints/kernel-real/sprint-prd.md',
-        repo: 'perfectuser21/zenithjoy-workspace',
-        branch: plannerBranch,
-        head_sha: 'a'.repeat(40),
-        verification_status: 'verified',
-      }],
-    });
+      const response = await postCallback(app, {
+        ...fleetResult(),
+        status: callbackStatus,
+        artifacts: [{
+          type: 'git_artifact',
+          kind: 'planner_prd',
+          path: 'sprints/kernel-real/sprint-prd.md',
+          repo: 'perfectuser21/zenithjoy-workspace',
+          branch: plannerBranch,
+          head_sha: 'a'.repeat(40),
+          verification_status: 'verified',
+        }],
+      });
 
-    expect(response.status).toBe(409);
-    expect(response.body.error).toBe('planner_git_artifact_mismatch');
-    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
-  });
+      expect(response.status).toBe(409);
+      expect(response.body.error).toBe('planner_git_artifact_mismatch');
+      expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+    },
+  );
 
-  it('拒绝分支存在但 PRD 路径不在该 commit 的 planner artifact', async () => {
-    const plannerBranch = `cp-harness-prd-${attemptId.slice(0, 8)}-a4`;
-    const headSha = 'a'.repeat(40);
-    mocks.store.getById.mockResolvedValue(fleetAttempt({
-      role: 'planner',
-      task_bundle: {
-        expected_output: 'harness-result/planner-v1',
-        inputs: {
-          sprint_dir: 'sprints/kernel-real',
-          planner_branch: plannerBranch,
-          workspace_spec: {
-            repo: 'perfectuser21/zenithjoy-workspace',
+  it.each(['completed', 'completed_with_concerns'])(
+    '拒绝 %s 分支存在但 PRD 路径不在该 commit 的 planner artifact',
+    async (callbackStatus) => {
+      const plannerBranch = `cp-harness-prd-${attemptId.slice(0, 8)}-a4`;
+      const headSha = 'a'.repeat(40);
+      mocks.store.getById.mockResolvedValue(fleetAttempt({
+        role: 'planner',
+        task_bundle: {
+          expected_output: 'harness-result/planner-v1',
+          inputs: {
+            sprint_dir: 'sprints/kernel-real',
+            planner_branch: plannerBranch,
+            workspace_spec: {
+              repo: 'perfectuser21/zenithjoy-workspace',
+            },
           },
         },
-      },
-    }));
-    app.set('kernelGitBranchHeadResolver', vi.fn(async () => ({
-      head_sha: headSha,
-      path_exists: false,
-    })));
-
-    const response = await postCallback(app, {
-      ...fleetResult(),
-      artifacts: [{
-        type: 'git_artifact',
-        kind: 'planner_prd',
-        path: 'sprints/kernel-real/sprint-prd.md',
-        repo: 'perfectuser21/zenithjoy-workspace',
-        branch: plannerBranch,
+      }));
+      app.set('kernelGitBranchHeadResolver', vi.fn(async () => ({
         head_sha: headSha,
-      }],
-    });
+        path_exists: false,
+      })));
 
-    expect(response.status).toBe(409);
-    expect(response.body.error).toBe('planner_git_artifact_path_missing');
-    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
-  });
+      const response = await postCallback(app, {
+        ...fleetResult(),
+        status: callbackStatus,
+        artifacts: [{
+          type: 'git_artifact',
+          kind: 'planner_prd',
+          path: 'sprints/kernel-real/sprint-prd.md',
+          repo: 'perfectuser21/zenithjoy-workspace',
+          branch: plannerBranch,
+          head_sha: headSha,
+        }],
+      });
+
+      expect(response.status).toBe(409);
+      expect(response.body.error).toBe('planner_git_artifact_path_missing');
+      expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+    },
+  );
 
   it('persists a valid Commander Directive as the terminal Attempt result', async () => {
     mocks.store.getById.mockResolvedValue(commanderAttempt());

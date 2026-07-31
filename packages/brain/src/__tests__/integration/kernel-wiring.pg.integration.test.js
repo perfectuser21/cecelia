@@ -890,6 +890,205 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
 });
 
 describe('Kernel callback convergence on real PostgreSQL', () => {
+  it('服务端校验 concerns planner Git 产物后事务落库并推进 PRD ground truth', async () => {
+    const run = await seedRun();
+    const attemptId = randomUUID();
+    const plannerBranch = `cp-harness-prd-${attemptId.slice(0, 8)}-a4`;
+    const expectedPath = `${run.payload.sprint_dir}/sprint-prd.md`;
+    const credentialRef = randomUUID();
+    const store = createAttemptStore(testPool);
+
+    await store.createAttempt({
+      id: attemptId,
+      runId: run.runId,
+      hop: 1,
+      phase: 'planning',
+      role: 'planner',
+      provider: 'codex',
+      machineId: 'us-mac-m4',
+      bundle: {
+        expected_output: 'harness-result/planner-v1',
+        inputs: {
+          sprint_dir: run.payload.sprint_dir,
+          planner_branch: plannerBranch,
+          workspace_spec: {
+            repo: 'perfectuser21/zenithjoy-workspace',
+          },
+        },
+      },
+      callbackSecretHash: createHash('sha256').update(CALLBACK_TOKEN).digest('hex'),
+    });
+    await store.markStarting(attemptId, {
+      leaseOwner: LEASE_OWNER,
+      leaseSeconds: 180,
+    });
+    await store.recordLaunchReceipt(attemptId, {
+      leaseOwner: LEASE_OWNER,
+      leaseGeneration: 0,
+      actualMachineId: 'us-mac-m4',
+      executionTransport: 'fleet-worker',
+      remoteJobId: `fleet-job-${attemptId}`,
+      attestationStatus: 'verified',
+    });
+    await store.markRunning(attemptId, {
+      leaseOwner: LEASE_OWNER,
+      providerSessionId: `planner-${attemptId}`,
+      leaseSeconds: 180,
+    });
+
+    const resolveBranchHead = vi.fn(async () => ({
+      head_sha: HEAD_SHA,
+      path_exists: true,
+    }));
+    const app = express();
+    app.use(express.json());
+    app.set('pool', testPool);
+    app.set('kernelGitBranchHeadResolver', resolveBranchHead);
+    app.use('/api/brain', callbackRouter);
+
+    const callback = await request(app)
+      .post(`/api/brain/harness/attempts/${attemptId}/callback`)
+      .set('Authorization', `Bearer ${CALLBACK_TOKEN}`)
+      .set('X-Harness-Lease-Owner', LEASE_OWNER)
+      .set('X-Harness-Lease-Generation', '0')
+      .send({
+        contract_version: '1.0',
+        attempt_id: attemptId,
+        status: 'completed_with_concerns',
+        summary: 'PRD complete; local product-map validator was unavailable',
+        artifacts: [{
+          type: 'git_artifact',
+          kind: 'planner_prd',
+          path: expectedPath,
+          repo: 'perfectuser21/zenithjoy-workspace',
+          branch: plannerBranch,
+          head_sha: HEAD_SHA,
+          verification_status: 'worker_claimed',
+        }],
+        checks: [],
+        decision: null,
+        error: null,
+        server_verification: {
+          planner_git_artifact: {
+            method: 'caller_forged',
+            artifact: {
+              path: 'sprints/foreign/sprint-prd.md',
+              repo: 'attacker/repo',
+              branch: 'cp-attacker',
+              head_sha: SECOND_SHA,
+            },
+          },
+        },
+        provider_metadata: {
+          provider: 'codex',
+          session_id: `planner-${attemptId}`,
+          credential_ref: credentialRef,
+          credential_copy_mutated: false,
+        },
+      });
+
+    expect(callback.status).toBe(200);
+    expect(resolveBranchHead).toHaveBeenCalledWith({
+      repo: 'perfectuser21/zenithjoy-workspace',
+      branch: plannerBranch,
+      path: expectedPath,
+    });
+
+    const persistedAttempt = (await testPool.query(
+      'SELECT status, result FROM harness_attempts WHERE id=$1',
+      [attemptId],
+    )).rows[0];
+    expect(persistedAttempt).toMatchObject({
+      status: 'completed_with_concerns',
+      result: {
+        status: 'completed_with_concerns',
+        artifacts: [{
+          type: 'git_artifact',
+          kind: 'planner_prd',
+          path: expectedPath,
+          repo: 'perfectuser21/zenithjoy-workspace',
+          branch: plannerBranch,
+          head_sha: HEAD_SHA,
+          verification_status: 'verified',
+        }],
+        server_verification: {
+          planner_git_artifact: {
+            method: 'git_branch_head',
+            artifact: {
+              path: expectedPath,
+              repo: 'perfectuser21/zenithjoy-workspace',
+              branch: plannerBranch,
+              head_sha: HEAD_SHA,
+            },
+          },
+        },
+      },
+    });
+
+    const callbackEvent = (await testPool.query(
+      `SELECT gate_verdict, detail
+         FROM orchestrator_decision_log
+        WHERE run_id=$1
+          AND action='verdict:attempt_callback'`,
+      [run.runId],
+    )).rows[0];
+    expect(callbackEvent).toMatchObject({
+      gate_verdict: 'allow:concerns',
+      detail: {
+        run_id: run.runId,
+        attempt_id: attemptId,
+        status: 'completed_with_concerns',
+        artifacts: [{
+          type: 'git_artifact',
+          kind: 'planner_prd',
+          path: expectedPath,
+          repo: 'perfectuser21/zenithjoy-workspace',
+          branch: plannerBranch,
+          head_sha: HEAD_SHA,
+          verification_status: 'verified',
+        }],
+        server_verification: {
+          planner_git_artifact: {
+            method: 'git_branch_head',
+            artifact: {
+              path: expectedPath,
+              repo: 'perfectuser21/zenithjoy-workspace',
+              branch: plannerBranch,
+              head_sha: HEAD_SHA,
+            },
+          },
+        },
+      },
+    });
+
+    const observed = await collectGroundTruth(
+      {
+        pool: testPool,
+        ...externalObservation(),
+        fileExists: () => false,
+        listHostPids: async () => [],
+      },
+      {
+        taskId: run.taskId,
+        runId: run.runId,
+        prdPath: expectedPath,
+        callbackResultPath: '.kernel-pg-no-callback-file',
+      },
+    );
+    expect(observed).toMatchObject({
+      prdExists: true,
+      plannerPrdArtifact: {
+        type: 'git_artifact',
+        kind: 'planner_prd',
+        path: expectedPath,
+        repo: 'perfectuser21/zenithjoy-workspace',
+        branch: plannerBranch,
+        head_sha: HEAD_SHA,
+        verification_status: 'verified',
+      },
+    });
+  });
+
   it('R8/R12 atomically persists one terminal event and idempotently acknowledges retry', async () => {
     const run = await seedRun();
     const attemptId = await seedCallbackAttempt(run.runId);

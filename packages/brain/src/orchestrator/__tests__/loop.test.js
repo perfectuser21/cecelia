@@ -205,6 +205,31 @@ describe('runLoop：全链 planning→done', () => {
     await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(order).toEqual(['append', 'dispatch']);
   });
+
+  it('把服务端 PRD evidence 写入 append-only snapshot 供重启后安全回放', async () => {
+    const prdEvidence = {
+      source: 'brain_file_observation',
+      path: '/workspace/sprint-prd.md',
+    };
+    const observedSeq = [
+      obs({
+        prdEvidence,
+        contract: { approved: false, id: CONTRACT_ID },
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, appended } = makeEnv({ observedSeq });
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(appended[0]).toMatchObject({
+      action: 'spawn:proposer',
+      observed: {
+        prdExists: true,
+        prdEvidence,
+      },
+    });
+  });
 });
 
 describe('runLoop：hybrid Commander boundary', () => {

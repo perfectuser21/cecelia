@@ -21,6 +21,16 @@ function receiptInput(overrides = {}) {
     path: `${SPRINT_DIR}/sprint-prd.md`,
     ...overrides.artifact,
   };
+  const serverVerification = {
+    method: 'git_branch_head',
+    artifact: {
+      repo: artifact.repo,
+      branch: artifact.branch,
+      path: artifact.path,
+      head_sha: artifact.head_sha,
+    },
+    ...overrides.serverVerification,
+  };
   const attempt = {
     id: ATTEMPT_ID,
     run_id: RUN_ID,
@@ -36,6 +46,11 @@ function receiptInput(overrides = {}) {
         workspace_spec: { repo: REPO },
       },
     },
+    result: {
+      server_verification: {
+        planner_git_artifact: serverVerification,
+      },
+    },
     ...overrides.attempt,
   };
   const detail = {
@@ -45,6 +60,9 @@ function receiptInput(overrides = {}) {
     status: 'completed',
     lease_generation: 2,
     artifacts: [artifact],
+    server_verification: {
+      planner_git_artifact: serverVerification,
+    },
     ...overrides.detail,
   };
   return {
@@ -83,6 +101,10 @@ describe('planner artifact receipt', () => {
   });
 
   it.each([
+    ['pre-cutover callback without server proof', {
+      attempt: { result: {} },
+      detail: { server_verification: undefined },
+    }],
     ['unattested machine', { attempt: { machine_attestation_status: 'missing' } }],
     ['foreign branch', { artifact: { branch: 'cp-harness-prd-foreign-a2' } }],
     ['foreign sprint path', { artifact: { path: 'sprints/foreign/sprint-prd.md' } }],

@@ -242,7 +242,7 @@ export async function collectGroundTruth(deps, opts) {
     `SELECT id, run_id, hop, phase, role, provider, account_id, machine_id,
             requested_machine_id, actual_machine_id, execution_transport,
             remote_job_id, machine_attestation_status, lease_generation,
-            status, error_code, error_message, task_bundle,
+            status, error_code, error_message, task_bundle, result,
             created_at, updated_at, completed_at
        FROM harness_attempts
       WHERE run_id = $1
@@ -264,21 +264,37 @@ export async function collectGroundTruth(deps, opts) {
   }
 
   // ---- 文件通道 ----
-  // PRD 完成是单调里程碑：一旦服务端曾在 append-only 决策日志中观测为 true，
-  // Brain 重启/容器切换后即使看不到宿主机 task worktree，也不得倒退回 planner。
-  // 复用既有回放源，不新增第二本状态账。
-  const prdObservedInLog = decisionLog.some(
-    (row) => asJson(row.observed)?.prdExists === true,
-  );
+  // 本地 PRD 完成是单调里程碑，但历史 boolean 本身不是证据。只回放由
+  // collectGroundTruth 生成、且绑定相同逻辑路径的文件观测 provenance；
+  // 修复前无 provenance 的 snapshot 必须 fail closed。
+  const replayedFileEvidence = decisionLog
+    .map((row) => asJson(row.observed))
+    .filter((observed) => (
+      observed?.prdExists === true
+      && observed.prdEvidence?.source === 'brain_file_observation'
+      && observed.prdEvidence.path === prdPath
+    ))
+    .at(-1)?.prdEvidence ?? null;
   const plannerPrdArtifact = getVerifiedRemotePlannerPrdArtifact({
     runId,
     task,
     logRows: decisionLog,
     attemptRows,
   });
-  const prdExists = Boolean(fileExists(prdPath))
-    || prdObservedInLog
+  const localPrdExists = Boolean(fileExists(prdPath));
+  const prdExists = localPrdExists
+    || replayedFileEvidence != null
     || plannerPrdArtifact != null;
+  const prdEvidence = localPrdExists
+    ? Object.freeze({ source: 'brain_file_observation', path: prdPath })
+    : (
+        plannerPrdArtifact == null
+          ? replayedFileEvidence
+          : Object.freeze({
+              source: 'server_verified_git_artifact',
+              artifact: plannerPrdArtifact,
+            })
+      );
   let callbackResult = null;
   if (fileExists(callbackResultPath)) {
     try {
@@ -424,6 +440,7 @@ export async function collectGroundTruth(deps, opts) {
     run,
     task,
     prdExists,
+    prdEvidence,
     plannerPrdArtifact,
     contract,
     pr,

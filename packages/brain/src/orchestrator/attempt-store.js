@@ -63,6 +63,7 @@ function callbackEventDetail(attempt, result, leaseGeneration) {
   const failureSignature = normalizeFailureSignature(
     result.failure_signature ?? result.decision?.failure_signature,
   );
+  const plannerGitVerification = result.server_verification?.planner_git_artifact;
   return {
     run_id: attempt.run_id,
     attempt_id: attempt.id,
@@ -76,6 +77,13 @@ function callbackEventDetail(attempt, result, leaseGeneration) {
     failure_class: result.failure_class ?? null,
     ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
     artifacts: result.artifacts ?? [],
+    ...(plannerGitVerification == null
+      ? {}
+      : {
+          server_verification: {
+            planner_git_artifact: plannerGitVerification,
+          },
+        }),
   };
 }
 
