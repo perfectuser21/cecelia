@@ -95,6 +95,25 @@ describe('POST /api/brain/acceptance/runs', () => {
       .post('/api/brain/acceptance/runs').send({ run_key: 'r1', title: 'T', checks: [{ kind: 'XX', name: 'x' }] });
     expect(res.status).toBe(400);
   });
+
+  it('checks 可选携带 detail 工作卡，透传写入 INSERT', async () => {
+    const insertedDetails = [];
+    const client = makeClient((sql, params) => {
+      if (sql.includes('SELECT * FROM acceptance_runs WHERE run_key')) return { rows: [] };
+      if (sql.includes('INSERT INTO acceptance_runs')) return { rows: [RUN_ROW] };
+      if (sql.includes('INSERT INTO acceptance_checks')) {
+        insertedDetails.push(params[5]);
+        return { rows: [{ id: 'c-1', check_key: params[1], kind: params[2], name: params[3], detail: params[5] }] };
+      }
+    });
+    const res = await request(makeApp(makePool(client)))
+      .post('/api/brain/acceptance/runs')
+      .send({ run_key: 'r-detail', title: 'T', checks: [
+        { kind: 'FR', name: 'step1', detail: { op: ['点击发送'], exp: '消息送达', pass: '收到回执', fail: '无回执' } },
+      ] });
+    expect(res.status).toBe(201);
+    expect(JSON.parse(insertedDetails[0])).toEqual({ op: ['点击发送'], exp: '消息送达', pass: '收到回执', fail: '无回执' });
+  });
 });
 
 describe('GET /api/brain/acceptance/runs/:run_key', () => {

@@ -204,9 +204,9 @@ export function createAcceptanceInternalRouter({ pool }) {
         const c = checks[i];
         const checkKey = `${run_key}:${String(i + 1).padStart(3, '0')}`;
         const { rows } = await client.query(
-          `INSERT INTO acceptance_checks (run_id, check_key, kind, name, device)
-           VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-          [run.id, checkKey, c.kind, c.name, c.device || null]
+          `INSERT INTO acceptance_checks (run_id, check_key, kind, name, device, detail)
+           VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+          [run.id, checkKey, c.kind, c.name, c.device || null, c.detail ? JSON.stringify(c.detail) : null]
         );
         createdChecks.push(rows[0]);
       }
