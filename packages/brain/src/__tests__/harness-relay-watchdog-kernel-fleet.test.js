@@ -26,6 +26,21 @@ function testCredentialPayload() {
   });
 }
 
+function testGitHubCredentialBroker() {
+  return {
+    issue: vi.fn(async ({ attemptId, machineId, deadlineAt }) => ({
+      contract_version: 'github-credential-envelope/v1',
+      credential_ref: '44444444-4444-4444-8444-444444444444',
+      attempt_id: attemptId,
+      machine_id: machineId,
+      issued_at: new Date(Date.now() - 1_000).toISOString(),
+      expires_at: deadlineAt,
+      payload_hash: `sha256:${'a'.repeat(64)}`,
+      payload: Buffer.from('github-pat-for-watchdog-test', 'utf8').toString('base64'),
+    })),
+  };
+}
+
 function response(status, body) {
   return new Response(JSON.stringify(body), {
     status,
@@ -145,6 +160,7 @@ function resumeOptions(overrides = {}) {
     attemptStore: resumeStore(),
     env: remoteEnv(),
     loadCredential: vi.fn(async () => testCredentialPayload()),
+    githubCredentialBroker: testGitHubCredentialBroker(),
     fetchFn: vi.fn(),
     spawnDetached: vi.fn(),
     removeContainer: vi.fn(),

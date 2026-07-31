@@ -35,6 +35,8 @@ import {
   createCredentialBroker,
   createFileCredentialLoader,
 } from './orchestrator/credential-broker.js';
+import { createGitHubCredentialBroker } from './orchestrator/github-credential-broker.js';
+import { resolveGitHubToken } from './harness-credentials.js';
 import {
   createProductionExecutionTransport,
   DEFAULT_LOCAL_MACHINE_ID,
@@ -416,7 +418,9 @@ export async function resumeKernelAttempt(attempt, {
   launcher: injectedLauncher,
   transportFactory = createProductionExecutionTransport,
   credentialBroker: injectedCredentialBroker,
+  githubCredentialBroker: injectedGitHubCredentialBroker,
   loadCredential: injectedLoadCredential,
+  resolveGitHubToken: injectedResolveGitHubToken,
   env = process.env,
   fetchFn,
   spawnDetached: injectedSpawnDetached,
@@ -491,6 +495,11 @@ export async function resumeKernelAttempt(attempt, {
           }),
       })
       : undefined);
+  const githubCredentialBroker = injectedGitHubCredentialBroker
+    ?? createGitHubCredentialBroker({
+      controllerMachineId: env.CECELIA_MACHINE_ID ?? DEFAULT_LOCAL_MACHINE_ID,
+      loadToken: injectedResolveGitHubToken ?? resolveGitHubToken,
+    });
   const launcher = injectedLauncher ?? transportFactory({
     env,
     attemptStore: store,
@@ -500,6 +509,7 @@ export async function resumeKernelAttempt(attempt, {
     leaseOwner,
     fetchFn,
     credentialBroker,
+    githubCredentialBroker,
     remoteBridgeTimeoutMs,
   });
   const target = {

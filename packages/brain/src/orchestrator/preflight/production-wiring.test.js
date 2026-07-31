@@ -31,6 +31,7 @@ function buildTestDeps(overrides = {}) {
   return buildRealDeps({
     resolveRepoHead: vi.fn(async () => BASE_SHA),
     loadCredential: vi.fn(async () => testCredentialPayload()),
+    resolveGitHubToken: vi.fn(async () => 'github-pat-for-production-wiring-test'),
     ...overrides,
   });
 }
