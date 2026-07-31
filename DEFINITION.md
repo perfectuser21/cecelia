@@ -6,11 +6,22 @@
 
 
 
-**Brain 版本**: 1.267.161
+**Brain 版本**: 1.267.162
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.162 — Kernel Evaluator feedback handoff
+
+- `spawn:generator-fix` 现在接收与当前 PR head SHA 和失败 Evaluator Attempt ID
+  双重绑定的安全反馈，包括 verdict、summary、decision reason 与最多 20 条
+  机械检查证据；修复 Agent 不再从任务描述猜测失败原因。
+- stale SHA、PASS、畸形或 Attempt 身份不一致的结果全部 fail closed。handoff
+  只重建固定字段，不复制 provider metadata、credential reference 或 transcript，
+  且所有文本经过统一脱敏与长度限制。
+- 回退到 `1.267.161` 会再次丢失 Evaluator→Generator 修复上下文；有 active
+  repair run 时不得回退。
 
 ## Brain 1.267.161 — Kernel Reviewer feedback handoff
 
