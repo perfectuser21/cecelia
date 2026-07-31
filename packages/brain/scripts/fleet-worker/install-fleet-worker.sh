@@ -31,6 +31,7 @@ PROBE_SOURCE="$SCRIPT_DIR/node-probe.cjs"
 WORKSPACE_MANAGER_SOURCE="$SCRIPT_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SOURCE="$SCRIPT_DIR/attempt-runner.cjs"
 CREDENTIAL_ENVELOPE_SOURCE="$SCRIPT_DIR/credential-envelope.cjs"
+GITHUB_CREDENTIAL_ENVELOPE_SOURCE="$SCRIPT_DIR/github-credential-envelope.cjs"
 ACCESS_HELPER_SOURCE="$SCRIPT_DIR/refresh-fleet-worker-docker-access.sh"
 ACCESS_TEMPLATE="$SCRIPT_DIR/com.cecelia.fleet-worker-docker-access.plist.template"
 DRAIN_MARKER="${FLEET_WORKER_DRAIN_MARKER:-/var/run/cecelia/fleet-worker.drain}"
@@ -44,6 +45,7 @@ STAGED_PROBE=''
 STAGED_WORKSPACE_MANAGER=''
 STAGED_ATTEMPT_RUNNER=''
 STAGED_CREDENTIAL_ENVELOPE=''
+STAGED_GITHUB_CREDENTIAL_ENVELOPE=''
 STAGED_PLIST=''
 STAGED_ACCESS_HELPER=''
 STAGED_ACCESS_PLIST=''
@@ -72,6 +74,7 @@ WORKER_SCRIPT="$RUNTIME_DIR/fleet-worker.cjs"
 WORKSPACE_MANAGER_SCRIPT="$RUNTIME_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SCRIPT="$RUNTIME_DIR/attempt-runner.cjs"
 CREDENTIAL_ENVELOPE_SCRIPT="$RUNTIME_DIR/credential-envelope.cjs"
+GITHUB_CREDENTIAL_ENVELOPE_SCRIPT="$RUNTIME_DIR/github-credential-envelope.cjs"
 ACCESS_HELPER="$RUNTIME_DIR/refresh-fleet-worker-docker-access.sh"
 WORKTREE_ROOT="${FLEET_WORKER_REPO_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/repository}"
 FLEET_DATA_ROOT="${FLEET_WORKER_DATA_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/fleet-worker}"
@@ -484,7 +487,8 @@ render_plist() {
   [[ -n "$NODE_EXECUTABLE" ]] || die "prerequisite_node"
   [[ -f "$WORKER_SOURCE" && -f "$PROBE_SOURCE" \
     && -f "$WORKSPACE_MANAGER_SOURCE" && -f "$ATTEMPT_RUNNER_SOURCE" \
-    && -f "$CREDENTIAL_ENVELOPE_SOURCE" ]] \
+    && -f "$CREDENTIAL_ENVELOPE_SOURCE" \
+    && -f "$GITHUB_CREDENTIAL_ENVELOPE_SOURCE" ]] \
     || die "worker_script_missing"
   target_dir="$(dirname "$target")"
   [[ -d "$target_dir" ]] || die "render_target_parent_missing"
@@ -562,6 +566,8 @@ cleanup_transaction() {
   [[ -z "$STAGED_WORKSPACE_MANAGER" ]] || rm -f "$STAGED_WORKSPACE_MANAGER"
   [[ -z "$STAGED_ATTEMPT_RUNNER" ]] || rm -f "$STAGED_ATTEMPT_RUNNER"
   [[ -z "$STAGED_CREDENTIAL_ENVELOPE" ]] || rm -f "$STAGED_CREDENTIAL_ENVELOPE"
+  [[ -z "$STAGED_GITHUB_CREDENTIAL_ENVELOPE" ]] \
+    || rm -f "$STAGED_GITHUB_CREDENTIAL_ENVELOPE"
   [[ -z "$STAGED_PLIST" ]] || rm -f "$STAGED_PLIST"
   [[ -z "$STAGED_ACCESS_HELPER" ]] || rm -f "$STAGED_ACCESS_HELPER"
   [[ -z "$STAGED_ACCESS_PLIST" ]] || rm -f "$STAGED_ACCESS_PLIST"
@@ -572,6 +578,7 @@ cleanup_transaction() {
       "$BACKUP_DIR/workspace-manager" \
       "$BACKUP_DIR/attempt-runner" \
       "$BACKUP_DIR/credential-envelope" \
+      "$BACKUP_DIR/github-credential-envelope" \
       "$BACKUP_DIR/plist" \
       "$BACKUP_DIR/access-helper" \
       "$BACKUP_DIR/access-plist"
@@ -604,6 +611,9 @@ prepare_transaction_paths() {
   STAGED_CREDENTIAL_ENVELOPE="$(
     mktemp "$RUNTIME_DIR/.credential-envelope.cjs.XXXXXX"
   )"
+  STAGED_GITHUB_CREDENTIAL_ENVELOPE="$(
+    mktemp "$RUNTIME_DIR/.github-credential-envelope.cjs.XXXXXX"
+  )"
   STAGED_PLIST="$(mktemp "$INSTALL_DIR/.fleet-worker.plist.XXXXXX")"
   STAGED_ACCESS_HELPER="$(mktemp "$RUNTIME_DIR/.docker-access.sh.XXXXXX")"
   STAGED_ACCESS_PLIST="$(
@@ -617,13 +627,15 @@ stage_generation() {
   cp "$WORKSPACE_MANAGER_SOURCE" "$STAGED_WORKSPACE_MANAGER"
   cp "$ATTEMPT_RUNNER_SOURCE" "$STAGED_ATTEMPT_RUNNER"
   cp "$CREDENTIAL_ENVELOPE_SOURCE" "$STAGED_CREDENTIAL_ENVELOPE"
+  cp "$GITHUB_CREDENTIAL_ENVELOPE_SOURCE" "$STAGED_GITHUB_CREDENTIAL_ENVELOPE"
   cp "$ACCESS_HELPER_SOURCE" "$STAGED_ACCESS_HELPER"
   chmod 0755 "$STAGED_WORKER"
   chmod 0644 "$STAGED_PROBE"
   chmod 0644 \
     "$STAGED_WORKSPACE_MANAGER" \
     "$STAGED_ATTEMPT_RUNNER" \
-    "$STAGED_CREDENTIAL_ENVELOPE"
+    "$STAGED_CREDENTIAL_ENVELOPE" \
+    "$STAGED_GITHUB_CREDENTIAL_ENVELOPE"
   chmod 0755 "$STAGED_ACCESS_HELPER"
   render_plist "$STAGED_PLIST"
   render_access_plist "$STAGED_ACCESS_PLIST"
@@ -847,7 +859,9 @@ if [[ -f "$installed_plist" && ! -L "$installed_plist" \
     && -f "$RUNTIME_DIR/node-probe.cjs" \
     && ! -L "$RUNTIME_DIR/node-probe.cjs" \
     && -f "$CREDENTIAL_ENVELOPE_SCRIPT" \
-    && ! -L "$CREDENTIAL_ENVELOPE_SCRIPT" ]]; then
+    && ! -L "$CREDENTIAL_ENVELOPE_SCRIPT" \
+    && -f "$GITHUB_CREDENTIAL_ENVELOPE_SCRIPT" \
+    && ! -L "$GITHUB_CREDENTIAL_ENVELOPE_SCRIPT" ]]; then
   prior_files_complete=true
 fi
 prior_access_files_complete=false
@@ -889,6 +903,11 @@ prior_attempt_runner_mode="$(
 prior_credential_envelope_mode="$(
   snapshot_file "$CREDENTIAL_ENVELOPE_SCRIPT" "$BACKUP_DIR/credential-envelope"
 )"
+prior_github_credential_envelope_mode="$(
+  snapshot_file \
+    "$GITHUB_CREDENTIAL_ENVELOPE_SCRIPT" \
+    "$BACKUP_DIR/github-credential-envelope"
+)"
 prior_plist_mode="$(snapshot_file "$installed_plist" "$BACKUP_DIR/plist")"
 prior_access_helper_mode="$(
   snapshot_file "$ACCESS_HELPER" "$BACKUP_DIR/access-helper"
@@ -914,6 +933,11 @@ placement_ok=true
   || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_CREDENTIAL_ENVELOPE" "$CREDENTIAL_ENVELOPE_SCRIPT" \
+  || placement_ok=false
+[[ "$placement_ok" == false ]] \
+  || "$MOVE" \
+    "$STAGED_GITHUB_CREDENTIAL_ENVELOPE" \
+    "$GITHUB_CREDENTIAL_ENVELOPE_SCRIPT" \
   || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_WORKER" "$WORKER_SCRIPT" \
@@ -971,6 +995,11 @@ if [[ "$launch_ok" != true ]]; then
     "$CREDENTIAL_ENVELOPE_SCRIPT" \
     "$BACKUP_DIR/credential-envelope" \
     "$prior_credential_envelope_mode" \
+    || rollback_ok=false
+  restore_file \
+    "$GITHUB_CREDENTIAL_ENVELOPE_SCRIPT" \
+    "$BACKUP_DIR/github-credential-envelope" \
+    "$prior_github_credential_envelope_mode" \
     || rollback_ok=false
   restore_file "$installed_plist" "$BACKUP_DIR/plist" "$prior_plist_mode" \
     || rollback_ok=false

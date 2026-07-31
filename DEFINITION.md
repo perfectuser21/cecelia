@@ -6,11 +6,17 @@
 
 
 
-**Brain 版本**: 1.267.156
+**Brain 版本**: 1.267.157
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.157 — Fleet Worker GitHub envelope installer
+
+- Fleet Worker 的事务安装、升级和回滚现在包含
+  `github-credential-envelope.cjs`，保证已接入临时 GitHub 凭据的 Worker
+  generation 可以被 LaunchDaemon 实际加载。
 
 ## Brain 1.267.156 — Staff Hub 验收终局：内网 pending/历史/结果提交端点
 

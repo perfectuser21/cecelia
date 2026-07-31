@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**版本**: 1.267.155
+**版本**: 1.267.157
+
+## Fleet Worker GitHub envelope installer
+
+- Fleet Worker 的事务安装、升级和回滚包含
+  `github-credential-envelope.cjs`，避免 LaunchDaemon 因缺少运行时模块启动失败。
 
 ## Kernel real-business workspace convergence
 
