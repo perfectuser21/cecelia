@@ -15,6 +15,9 @@ const {
 const {
   createCredentialEnvelopeConsumer,
 } = require('./credential-envelope.cjs');
+const {
+  createGitHubCredentialEnvelopeConsumer,
+} = require('./github-credential-envelope.cjs');
 const { probeFleetWorkerHealth } = require('./node-probe.cjs');
 const { createWorkspaceManager } = require('./workspace-manager.cjs');
 
@@ -304,10 +307,7 @@ function createFleetWorkerRuntime({
     mirrorRoot: roots.mirrors,
     worktreeRoot: roots.worktrees,
     quarantineRoot: roots.quarantine,
-    repoAllowlist: {
-      'perfectuser21/cecelia': env.CECELIA_FLEET_REPO_SOURCE
-        ?? 'https://github.com/perfectuser21/cecelia.git',
-    },
+    repoAllowlist: createFleetRepoAllowlist(env),
     ...(runCommand ? { runCommand } : {}),
   });
   const docker = createDockerAdapter({
@@ -321,6 +321,9 @@ function createFleetWorkerRuntime({
   const credentialConsumer = createCredentialEnvelopeConsumer({
     consumptionRoot: roots.credentials,
   });
+  const githubCredentialConsumer = createGitHubCredentialEnvelopeConsumer({
+    consumptionRoot: roots.credentials,
+  });
   const runnerImageDigest = env.CECELIA_RUNNER_IMAGE
     ?? digest;
   const attemptRunner = createAttemptRunner({
@@ -330,12 +333,23 @@ function createFleetWorkerRuntime({
     workerId,
     runnerImageDigest,
     credentialConsumer,
+    githubCredentialConsumer,
   });
   return Object.freeze({
     attemptRunner,
     attemptToken,
     roots,
     runnerImageDigest,
+  });
+}
+
+function createFleetRepoAllowlist(env = {}) {
+  return Object.freeze({
+    'perfectuser21/cecelia': env.CECELIA_FLEET_REPO_SOURCE
+      ?? 'https://github.com/perfectuser21/cecelia.git',
+    'perfectuser21/zenithjoy-workspace':
+      env.CECELIA_FLEET_ZENITHJOY_REPO_SOURCE
+      ?? 'https://github.com/perfectuser21/zenithjoy-workspace.git',
   });
 }
 
@@ -574,6 +588,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  createFleetRepoAllowlist,
   createFleetWorkerRuntime,
   createFleetWorkerServer,
 };

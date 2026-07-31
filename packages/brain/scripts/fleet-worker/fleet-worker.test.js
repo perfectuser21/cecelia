@@ -906,6 +906,17 @@ describe('Fleet Worker Attempt API', () => {
 });
 
 describe('Fleet Worker production runtime assembly', () => {
+  it('uses one explicit Worker-owned repository allowlist for Cecelia and ZenithJoy', async () => {
+    const { createFleetRepoAllowlist } = await loadServerContract();
+
+    expect(createFleetRepoAllowlist({})).toEqual({
+      'perfectuser21/cecelia':
+        'https://github.com/perfectuser21/cecelia.git',
+      'perfectuser21/zenithjoy-workspace':
+        'https://github.com/perfectuser21/zenithjoy-workspace.git',
+    });
+  });
+
   it('assembles durable Worker-owned roots and reads auth only from a protected file', async () => {
     const { createFleetWorkerRuntime } = await loadServerContract();
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-worker-runtime-'));

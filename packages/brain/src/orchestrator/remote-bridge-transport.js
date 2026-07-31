@@ -5,6 +5,12 @@ const JSON_HEADERS = Object.freeze({
 });
 const CANARY_WORKSPACE_SENTINEL = '/var/empty/kernel-fleet-canary';
 const DISPOSABLE_CANARY_WORKSPACE_KIND = 'disposable-canary-v1';
+const GITHUB_CREDENTIAL_ROLES = new Set([
+  'planner',
+  'proposer',
+  'generator',
+  'evaluator',
+]);
 const WORKSPACE_SPEC_FIELDS = Object.freeze([
   'repo',
   'base_sha',
@@ -97,6 +103,7 @@ export function createRemoteBridgeTransport({
   sharedSecret,
   brainUrl,
   credentialBroker,
+  githubCredentialBroker,
   fetchFn = globalThis.fetch,
   now = Date.now,
   timeoutMs = 10000,
@@ -105,6 +112,7 @@ export function createRemoteBridgeTransport({
   const configuredSecret = sharedSecret;
   const configuredBrainUrl = brainUrl;
   const configuredCredentialBroker = credentialBroker;
+  const configuredGitHubCredentialBroker = githubCredentialBroker;
   const configuredFetch = fetchFn;
   const configuredNow = now;
   const configuredTimeout = timeoutMs;
@@ -216,11 +224,9 @@ export function createRemoteBridgeTransport({
       if (!Number.isSafeInteger(timeoutSeconds) || timeoutSeconds <= 0) {
         throw new Error('remote_bridge_invalid_attempt_timeout');
       }
-      let credentialEnvelope;
-      if (target?.provider === 'codex') {
-        if (typeof configuredCredentialBroker?.issue !== 'function') {
-          throw new Error('remote_bridge_credential_broker_unavailable');
-        }
+      const needsGitHubCredential = GITHUB_CREDENTIAL_ROLES.has(bundle?.role);
+      let deadlineAt;
+      if (target?.provider === 'codex' || needsGitHubCredential) {
         const nowMs = configuredNow();
         if (!Number.isFinite(nowMs)) {
           throw new Error('remote_bridge_invalid_clock');
@@ -232,11 +238,18 @@ export function createRemoteBridgeTransport({
         ) {
           throw new Error('remote_bridge_invalid_attempt_timeout');
         }
+        deadlineAt = new Date(deadlineMs).toISOString();
+      }
+      let credentialEnvelope;
+      if (target?.provider === 'codex') {
+        if (typeof configuredCredentialBroker?.issue !== 'function') {
+          throw new Error('remote_bridge_credential_broker_unavailable');
+        }
         credentialEnvelope = await configuredCredentialBroker.issue({
           attemptId: attempt.id,
           accountId: target?.account,
           machineId: machine,
-          deadlineAt: new Date(deadlineMs).toISOString(),
+          deadlineAt,
         });
         if (
           !credentialEnvelope
@@ -244,6 +257,24 @@ export function createRemoteBridgeTransport({
           || Array.isArray(credentialEnvelope)
         ) {
           throw new Error('remote_bridge_credential_envelope_invalid');
+        }
+      }
+      let githubCredentialEnvelope;
+      if (needsGitHubCredential) {
+        if (typeof configuredGitHubCredentialBroker?.issue !== 'function') {
+          throw new Error('remote_bridge_github_credential_broker_unavailable');
+        }
+        githubCredentialEnvelope = await configuredGitHubCredentialBroker.issue({
+          attemptId: attempt.id,
+          machineId: machine,
+          deadlineAt,
+        });
+        if (
+          !githubCredentialEnvelope
+          || typeof githubCredentialEnvelope !== 'object'
+          || Array.isArray(githubCredentialEnvelope)
+        ) {
+          throw new Error('remote_bridge_github_credential_envelope_invalid');
         }
       }
       const workspace = disposableCanaryWorkspace(bundle, attempt.id);
@@ -278,6 +309,9 @@ export function createRemoteBridgeTransport({
             },
             ...(credentialEnvelope
               ? { credential_envelope: credentialEnvelope }
+              : {}),
+            ...(githubCredentialEnvelope
+              ? { github_credential_envelope: githubCredentialEnvelope }
               : {}),
             callback_url: `${normalizedBrainUrl}/api/brain/harness/attempts/${encodeURIComponent(attempt.id)}/callback`,
             callback_token: attempt.callbackSecret,

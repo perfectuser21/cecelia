@@ -213,6 +213,231 @@ describe('collectGroundTruth：prd 与 callback 文件', () => {
     expect(o.prdExists).toBe(true);
   });
 
+  it('远端 planner 的已认证成功 callback receipt 可推进 PRD 里程碑，无需读取远端 worktree', async () => {
+    const attemptId = '10000000-0000-4000-8000-000000000009';
+    const sprintDir = 'sprints/07310943-kernel-remote';
+    const deps = makeDeps({
+      rows: {
+        tasks: [{
+          id: TASK_ID,
+          status: 'in_progress',
+          payload: { sprint_dir: sprintDir },
+        }],
+        attempts: [{
+          id: attemptId,
+          run_id: RUN_ID,
+          hop: 2,
+          role: 'planner',
+          status: 'completed',
+          execution_transport: 'fleet-worker',
+          machine_attestation_status: 'verified',
+          actual_machine_id: 'xian-mac-m4',
+          lease_generation: 0,
+          task_bundle: {
+            inputs: {
+              planner_branch: 'cp-harness-prd-aaaaaaaa-a2',
+              workspace_spec: {
+                repo: 'perfectuser21/zenithjoy-workspace',
+              },
+            },
+          },
+        }],
+        log: [{
+          hop: 3,
+          action: 'verdict:attempt_callback',
+          observed: {
+            attempt_id: attemptId,
+            role: 'planner',
+            status: 'completed',
+          },
+          detail: {
+            run_id: RUN_ID,
+            attempt_id: attemptId,
+            role: 'planner',
+            status: 'completed',
+            lease_generation: 0,
+            artifacts: [{
+              type: 'git_artifact',
+              kind: 'planner_prd',
+              path: `${sprintDir}/sprint-prd.md`,
+              repo: 'perfectuser21/zenithjoy-workspace',
+              branch: 'cp-harness-prd-aaaaaaaa-a2',
+              head_sha: 'a'.repeat(40),
+              verification_status: 'verified',
+            }],
+          },
+        }],
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      prdPath: '/untrusted/task-worktree/sprint-prd.md',
+    });
+
+    expect(deps.fileExists).toHaveBeenCalledWith('/untrusted/task-worktree/sprint-prd.md');
+    expect(observed.prdExists).toBe(true);
+    expect(observed.plannerPrdArtifact).toMatchObject({
+      branch: 'cp-harness-prd-aaaaaaaa-a2',
+      head_sha: 'a'.repeat(40),
+    });
+    expect(derive({
+      ...observed,
+      counters: {
+        hops: 1,
+        fixRound: 0,
+        pollCount: 0,
+        noPushStreak: 0,
+        noVerdictStreak: 0,
+        ganCostUsd: 0,
+      },
+    })).toMatchObject({
+      phase: 'gan',
+      action: 'spawn:proposer',
+    });
+  });
+
+  it.each([
+    ['普通 planner intent', {
+      action: 'spawn:planner',
+      attempt: {
+        role: 'planner',
+        status: 'completed',
+        execution_transport: 'fleet-worker',
+        machine_attestation_status: 'verified',
+      },
+      artifact: {
+        type: 'git_artifact',
+        kind: 'planner_prd',
+        path: 'sprints/remote/sprint-prd.md',
+        repo: 'perfectuser21/zenithjoy-workspace',
+        branch: 'cp-harness-prd-aaaaaaaa-a2',
+        head_sha: 'a'.repeat(40),
+        verification_status: 'verified',
+      },
+    }],
+    ['无匹配 Attempt 的 callback', {
+      action: 'verdict:attempt_callback',
+      attempt: null,
+      artifact: {
+        type: 'git_artifact',
+        kind: 'planner_prd',
+        path: 'sprints/remote/sprint-prd.md',
+        repo: 'perfectuser21/zenithjoy-workspace',
+        branch: 'cp-harness-prd-aaaaaaaa-a2',
+        head_sha: 'a'.repeat(40),
+        verification_status: 'verified',
+      },
+    }],
+    ['未认证机器的 callback', {
+      action: 'verdict:attempt_callback',
+      attempt: {
+        role: 'planner',
+        status: 'completed',
+        execution_transport: 'fleet-worker',
+        machine_attestation_status: 'unverified',
+      },
+      artifact: {
+        type: 'git_artifact',
+        kind: 'planner_prd',
+        path: 'sprints/remote/sprint-prd.md',
+        repo: 'perfectuser21/zenithjoy-workspace',
+        branch: 'cp-harness-prd-aaaaaaaa-a2',
+        head_sha: 'a'.repeat(40),
+        verification_status: 'verified',
+      },
+    }],
+    ['带 concerns 的非成功终态', {
+      action: 'verdict:attempt_callback',
+      attempt: {
+        role: 'planner',
+        status: 'completed_with_concerns',
+        execution_transport: 'fleet-worker',
+        machine_attestation_status: 'verified',
+      },
+      artifact: {
+        type: 'git_artifact',
+        kind: 'planner_prd',
+        path: 'sprints/remote/sprint-prd.md',
+        repo: 'perfectuser21/zenithjoy-workspace',
+        branch: 'cp-harness-prd-aaaaaaaa-a2',
+        head_sha: 'a'.repeat(40),
+        verification_status: 'verified',
+      },
+      callbackStatus: 'completed_with_concerns',
+    }],
+    ['错误路径的 artifact claim', {
+      action: 'verdict:attempt_callback',
+      attempt: {
+        role: 'planner',
+        status: 'completed',
+        execution_transport: 'fleet-worker',
+        machine_attestation_status: 'verified',
+      },
+      artifact: {
+        type: 'git_artifact',
+        kind: 'planner_prd',
+        path: 'sprints/other/sprint-prd.md',
+        repo: 'perfectuser21/zenithjoy-workspace',
+        branch: 'cp-harness-prd-aaaaaaaa-a2',
+        head_sha: 'a'.repeat(40),
+        verification_status: 'verified',
+      },
+    }],
+  ])('%s 不得伪造 PRD 里程碑', async (_label, fixture) => {
+    const attemptId = '10000000-0000-4000-8000-000000000010';
+    const callbackStatus = fixture.callbackStatus ?? 'completed';
+    const deps = makeDeps({
+      rows: {
+        tasks: [{
+          id: TASK_ID,
+          status: 'in_progress',
+          payload: { sprint_dir: 'sprints/remote' },
+        }],
+        attempts: fixture.attempt
+          ? [{
+              id: attemptId,
+              run_id: RUN_ID,
+              hop: 2,
+              actual_machine_id: 'xian-mac-m4',
+              lease_generation: 0,
+              task_bundle: {
+                inputs: {
+                  planner_branch: 'cp-harness-prd-aaaaaaaa-a2',
+                  workspace_spec: {
+                    repo: 'perfectuser21/zenithjoy-workspace',
+                  },
+                },
+              },
+              ...fixture.attempt,
+            }]
+          : [],
+        log: [{
+          hop: 3,
+          action: fixture.action,
+          observed: { prdExists: false },
+          detail: {
+            run_id: RUN_ID,
+            attempt_id: attemptId,
+            role: 'planner',
+            status: callbackStatus,
+            lease_generation: 0,
+            artifacts: [fixture.artifact],
+          },
+        }],
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      prdPath: '/untrusted/task-worktree/sprint-prd.md',
+    });
+
+    expect(observed.prdExists).toBe(false);
+  });
+
   it('Brain 容器重启后看不到 task worktree，沿用 append-only 决策日志中已观测的 PRD 里程碑', async () => {
     const deps = makeDeps({
       rows: {

@@ -1,6 +1,31 @@
 # Brain 模块定义
 
-**版本**: 1.267.154
+**版本**: 1.267.155
+
+## Kernel real-business workspace convergence
+
+- `WorkspaceSpec` 只接受两个 Brain-owned repository identity：Cecelia 与
+  ZenithJoy workspace。解析新 writer SHA 时先核对当前受控 worktree 的
+  `origin`，禁止请求仓库与实际 checkout 不一致。
+- Fleet Worker 用同一显式 allowlist 创建 per-Attempt mirror/worktree；
+  ZenithJoy 默认 source 是公开 HTTPS GitHub URL，可由独立环境变量受控覆盖。
+- Runner 从冻结 TaskBundle 恢复原 task ID、角色 branch/SHA/sprint 参数；
+  planner 由确定性 finalizer 提交并推送 PRD，callback 只有在 Brain 对远端
+  branch HEAD 做服务端核验后才投影 `prdExists`。Proposer 从该 SHA 创建新分支。
+- US M4 为 planner/proposer/generator/evaluator 签发 Attempt-bound GitHub
+  CredentialEnvelope；Worker 用一次消费 marker、FIFO 和容器 tmpfs 注入，
+  持久状态仅保留 ref/timestamp/hash，不保留 token 或 base64 payload。Runner
+  用父进程内存里的初始 token 洗敏全部 provider stdout/result，任务改写
+  `hosts.yml` 也不能绕过；evaluator 同时以 Git 环境配置硬阻断 origin push。
+- Workspace Manager 对已验证 writer branch 使用隔离 clone 内的 `switch -C`
+  锚到 exact SHA，修复 evaluator/generator-fix 的 existing-ref checkout 冲突。
+- `buildRealDeps()` 一取得 pool 就向顶层登记；`runKernelMain()` 捕获其后的
+  初始化、观测或派发层未处理 fatal 后，通过
+  `finalizeKernelRun()` 精确双写 run/task 终态并关闭 active Attempt；原始 fatal
+  仍以非零退出暴露，终态落库失败另行 loud log。
+- 回退到 Brain `1.267.154` 前必须停止新的 ZenithJoy Kernel Attempt，并清点
+  active workspace/credential envelope；旧版本会 fail-closed 为
+  `workspace_repo_not_supported`，也无法恢复新的 Git artifact handoff。
 
 ## Fleet Worker preflight startup convergence
 

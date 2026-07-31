@@ -3,6 +3,10 @@ import { parseBaseRepo } from './github-pr-discovery.js';
 
 const CANONICAL_SHA = /^[a-f0-9]{40}$/;
 const TASK_BRANCH = /^cp-[a-z0-9][a-z0-9._-]{0,126}$/;
+export const WORKSPACE_REPOSITORIES = Object.freeze([
+  'perfectuser21/cecelia',
+  'perfectuser21/zenithjoy-workspace',
+]);
 
 const shaSchema = (field) => z.string().regex(
   CANONICAL_SHA,
@@ -17,7 +21,7 @@ const branchSchema = z.string()
   );
 
 const workspaceSpecSchema = z.object({
-  repo: z.literal('perfectuser21/cecelia'),
+  repo: z.enum(WORKSPACE_REPOSITORIES),
   base_sha: shaSchema('base_sha'),
   branch: branchSchema,
   expected_head_sha: shaSchema('expected_head_sha').nullable(),
@@ -62,7 +66,7 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
     const repo = requestedRepo == null || requestedRepo === ''
       ? 'perfectuser21/cecelia'
       : parseBaseRepo(requestedRepo);
-    if (repo !== 'perfectuser21/cecelia') {
+    if (!WORKSPACE_REPOSITORIES.includes(repo)) {
       throw new Error('workspace_repo_not_supported');
     }
 
@@ -84,7 +88,11 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
         : (role === 'evaluator' || role === 'judge')
           ? inputs.pr_head_sha
           : null;
-    const baseSha = immutableRoleSha
+    const plannerBaseSha = role === 'proposer'
+      ? inputs.planner_head_sha
+      : null;
+    const baseSha = plannerBaseSha
+      ?? immutableRoleSha
       ?? payload.base_sha
       ?? await resolveRepoHead(repo);
     const branch = (

@@ -68,10 +68,114 @@ else
 fi
 export GIT_CONFIG_GLOBAL="$WRITABLE_GIT_CONFIG"
 
+# github-credential-envelope:start
+GITHUB_CREDENTIAL_SECRET=""
+
+prepare_github_credential() {
+  local config_dir="${1:-/home/cecelia/.config/gh}"
+  local credential_ref="${CECELIA_GITHUB_CREDENTIAL_REF:-}"
+  local fifo="${CECELIA_GITHUB_CREDENTIAL_FIFO:-}"
+  local prior_umask=""
+
+  if [[ ! "$credential_ref" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] \
+      || [[ -z "$fifo" || ! -r "$fifo" ]] \
+      || [[ "$config_dir" != /* || "$config_dir" == "/" ]] \
+      || ! command -v gh >/dev/null 2>&1; then
+    return 1
+  fi
+
+  prior_umask="$(umask)"
+  umask 077
+  mkdir -p "$config_dir" || {
+    umask "$prior_umask"
+    return 1
+  }
+  chmod 700 "$config_dir" || {
+    umask "$prior_umask"
+    return 1
+  }
+  export GH_CONFIG_DIR="$config_dir"
+  unset GH_TOKEN GITHUB_TOKEN
+
+  if ! gh auth login \
+      --hostname github.com \
+      --git-protocol https \
+      --with-token \
+      < "$fifo" >/dev/null 2>&1; then
+    unset CECELIA_GITHUB_CREDENTIAL_FIFO
+    umask "$prior_umask"
+    return 1
+  fi
+  unset CECELIA_GITHUB_CREDENTIAL_FIFO
+
+  if [[ ! -s "$config_dir/hosts.yml" ]]; then
+    umask "$prior_umask"
+    return 1
+  fi
+  chmod 600 "$config_dir/hosts.yml" || {
+    umask "$prior_umask"
+    return 1
+  }
+  GITHUB_CREDENTIAL_SECRET="$(
+    awk '
+      $1 == "oauth_token:" {
+        sub(/^[[:space:]]*oauth_token:[[:space:]]*/, "")
+        gsub(/^"|"$/, "")
+        print
+        exit
+      }
+    ' "$config_dir/hosts.yml"
+  )"
+  if [[ -z "$GITHUB_CREDENTIAL_SECRET" ]]; then
+    umask "$prior_umask"
+    return 1
+  fi
+  umask "$prior_umask"
+}
+# github-credential-envelope:end
+
+# provider-output-redaction:start
+redact_github_credential_text() {
+  local line=""
+
+  IFS= read -r line || [[ -n "$line" ]] || return 0
+  if [[ -z "${CECELIA_GITHUB_CREDENTIAL_REF:-}" ]]; then
+    printf '%s\n' "$line"
+    return 0
+  fi
+  if [[ -z "$GITHUB_CREDENTIAL_SECRET" ]]; then
+    printf '%s\n' '[provider output redaction failed]'
+    return 1
+  fi
+  printf '%s\n' "${line//$GITHUB_CREDENTIAL_SECRET/***REDACTED***}"
+}
+
+redact_provider_credential_text() {
+  local github_safe=""
+  if ! github_safe="$(redact_github_credential_text)"; then
+    printf '%s\n' "$github_safe"
+    return 1
+  fi
+  if [[ "${CECELIA_EXECUTOR:-}" == "codex" ]]; then
+    printf '%s\n' "$github_safe" | redact_codex_credential_text
+    return
+  fi
+  printf '%s\n' "$github_safe"
+}
+# provider-output-redaction:end
+
+if [[ -n "${CECELIA_GITHUB_CREDENTIAL_REF:-}" \
+    || -n "${CECELIA_GITHUB_CREDENTIAL_FIFO:-}" ]]; then
+  if ! prepare_github_credential "/home/cecelia/.config/gh"; then
+    echo "[entrypoint] GitHub CredentialEnvelope rejected" >&2
+    exit 1
+  fi
+fi
+
 # git-auth-setup:start
-# 宿主 gitconfig 可能引用只在 macOS 宿主存在的 credential helper。Runner 已只读挂载
-# ~/.config/gh，因此让容器内 gh 在可写副本中安装自身 helper；不把 token 放进 docker
-# argv/日志。无有效 gh 登录时保留原失败语义，由 capability gate 结构化拦截。
+# 宿主 gitconfig 可能引用只在 macOS 宿主存在的 credential helper。Fleet Runner 已从
+# 一次性 FIFO 在 gh tmpfs 中登录；legacy Runner 仍可使用既有 gh config。这里让容器内
+# gh 安装自身 helper；token 不进入 docker argv/env/日志。
 if [[ "${HARNESS_CANARY:-false}" != "true" ]] && command -v gh >/dev/null 2>&1; then
   if gh auth setup-git >/dev/null 2>&1; then
     echo "[entrypoint] in-container GitHub credential helper configured"
@@ -281,6 +385,169 @@ finalize_proposer_output() {
 }
 # proposer-finalizer:end
 
+# planner-finalizer:start
+finalize_planner_output() {
+  [[ "${HARNESS_NODE:-}" == "planner" ]] || return 0
+
+  local provider_result_file="${1:-}"
+  local workspace="${WORKTREE_PATH:-$PWD}"
+  local task_id="${CECELIA_TASK_ID:-}"
+  local task_short=""
+  local branch="${PLANNER_BRANCH:-}"
+  local sprint_dir="${SPRINT_DIR:-}"
+  local task_bundle_file="${HARNESS_TASK_BUNDLE_FILE:-}"
+  local workspace_abs=""
+  local sprint_abs=""
+  local prd_path=""
+  local repo=""
+  local local_sha=""
+  local remote_sha=""
+  local artifact=""
+  local brain_result_file=""
+  local source_result_file=""
+  local brain_result_tmp=""
+  local provider_result_tmp=""
+
+  if [[ ! "$task_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+    echo "[entrypoint] planner finalizer rejected invalid task id" >&2
+    return 1
+  fi
+  task_short="${task_id:0:8}"
+  if [[ ! "$branch" =~ ^cp-harness-prd-${task_short}-a[1-9][0-9]*$ ]]; then
+    echo "[entrypoint] planner finalizer rejected branch outside task scope: $branch" >&2
+    return 1
+  fi
+  if [[ "$sprint_dir" != sprints/* || "$sprint_dir" == *".."* \
+      || "$sprint_dir" == *$'\n'* || "$sprint_dir" == *$'\r'* ]]; then
+    echo "[entrypoint] planner finalizer rejected sprint path: $sprint_dir" >&2
+    return 1
+  fi
+  if [[ ! -f "$task_bundle_file" || ! -f "$provider_result_file" ]] \
+      || ! jq -e 'type == "object"' "$provider_result_file" >/dev/null 2>&1; then
+    echo "[entrypoint] planner finalizer inputs unavailable" >&2
+    return 1
+  fi
+
+  repo="$(jq -r \
+    --arg task "$task_id" \
+    --arg sprint "$sprint_dir" \
+    --arg branch "$branch" \
+    'if .task_bundle.role == "planner"
+        and .task_bundle.inputs.task_id == $task
+        and .task_bundle.inputs.sprint_dir == $sprint
+        and .task_bundle.inputs.planner_branch == $branch
+      then .task_bundle.inputs.workspace_spec.repo
+      else empty
+      end' \
+    "$task_bundle_file" 2>/dev/null)" || return 1
+  if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+    echo "[entrypoint] planner finalizer rejected repository identity" >&2
+    return 1
+  fi
+
+  workspace_abs="$(cd "$workspace" 2>/dev/null && pwd -P)" || {
+    echo "[entrypoint] planner finalizer workspace is unavailable" >&2
+    return 1
+  }
+  sprint_abs="$(cd "$workspace_abs/$sprint_dir" 2>/dev/null && pwd -P)" || {
+    echo "[entrypoint] planner finalizer sprint is unavailable: $sprint_dir" >&2
+    return 1
+  }
+  if [[ "$sprint_abs" != "$workspace_abs"/sprints/* ]]; then
+    echo "[entrypoint] planner finalizer sprint escaped workspace" >&2
+    return 1
+  fi
+  prd_path="$sprint_abs/sprint-prd.md"
+  if [[ ! -s "$prd_path" ]]; then
+    echo "[entrypoint] planner finalizer missing sprint-prd.md" >&2
+    return 1
+  fi
+
+  git -C "$workspace_abs" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+  git -C "$workspace_abs" checkout -B "$branch" >/dev/null || return 1
+  git -C "$workspace_abs" add -- "$sprint_dir/sprint-prd.md" || return 1
+  if ! git -C "$workspace_abs" diff --cached --quiet; then
+    git -C "$workspace_abs" commit \
+      -m "feat(planner): publish verified sprint PRD" \
+      >/dev/null || return 1
+  fi
+  local_sha="$(git -C "$workspace_abs" rev-parse HEAD)" || return 1
+  [[ "$local_sha" =~ ^[a-f0-9]{40}$ ]] || return 1
+  git -C "$workspace_abs" push origin "HEAD:refs/heads/$branch" >/dev/null \
+    || return 1
+  remote_sha="$(git -C "$workspace_abs" ls-remote \
+    --exit-code --heads origin "refs/heads/$branch" | awk 'NR == 1 {print $1}')" \
+    || return 1
+  if [[ "$remote_sha" != "$local_sha" ]]; then
+    echo "[entrypoint] planner finalizer remote SHA mismatch" >&2
+    return 1
+  fi
+
+  artifact="$(jq -nc \
+    --arg repo "$repo" \
+    --arg branch "$branch" \
+    --arg head_sha "$remote_sha" \
+    --arg path "$sprint_dir/sprint-prd.md" \
+    '{
+       type: "git_artifact",
+       kind: "planner_prd",
+       verification_status: "verified",
+       repo: $repo,
+       branch: $branch,
+       head_sha: $head_sha,
+       path: $path
+     }')" || return 1
+
+  brain_result_file="$workspace_abs/.brain-result.json"
+  source_result_file="$brain_result_file"
+  if [[ ! -f "$source_result_file" ]] \
+      || ! jq -e 'type == "object"' "$source_result_file" >/dev/null 2>&1; then
+    printf '%s\n' '{}' > "$source_result_file"
+  fi
+  brain_result_tmp="${brain_result_file}.planner-finalizer.$$"
+  jq --argjson receipt "$artifact" \
+    '(.artifacts // [] | if type == "array" then . else [] end) as $existing
+     | .artifacts = (
+         [$existing[]
+          | select(
+              (
+                type == "object"
+                and .type == "git_artifact"
+                and .kind == "planner_prd"
+              ) | not
+            )]
+         + [$receipt]
+       )' \
+    "$source_result_file" > "$brain_result_tmp" || {
+      rm -f "$brain_result_tmp"
+      return 1
+    }
+  chmod 600 "$brain_result_tmp"
+  mv "$brain_result_tmp" "$brain_result_file"
+
+  provider_result_tmp="${provider_result_file}.planner-finalizer.$$"
+  jq --argjson receipt "$artifact" \
+    '(.artifacts // [] | if type == "array" then . else [] end) as $existing
+     | .artifacts = (
+         [$existing[]
+          | select(
+              (
+                type == "object"
+                and .type == "git_artifact"
+                and .kind == "planner_prd"
+              ) | not
+            )]
+         + [$receipt]
+       )' \
+    "$provider_result_file" > "$provider_result_tmp" || {
+      rm -f "$provider_result_tmp"
+      return 1
+    }
+  mv "$provider_result_tmp" "$provider_result_file"
+  echo "[entrypoint] planner finalizer verified branch=$branch head=$remote_sha"
+}
+# planner-finalizer:end
+
 # evaluator-evidence-bridge:start
 EVALUATOR_EVIDENCE_PREPARED=0
 
@@ -405,6 +672,22 @@ redact_codex_credential_file() {
   : > "$redacted_file"
   while IFS= read -r line || [[ -n "$line" ]]; do
     printf '%s\n' "$line" | redact_codex_credential_text \
+      >> "$redacted_file" || {
+        rm -f "$redacted_file"
+        return 1
+      }
+  done < "$file"
+  chmod 600 "$redacted_file"
+  mv "$redacted_file" "$file"
+}
+
+redact_provider_credential_file() {
+  local file="$1"
+  local redacted_file="${file}.redacted"
+  [[ -f "$file" ]] || return 0
+  : > "$redacted_file"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    printf '%s\n' "$line" | redact_provider_credential_text \
       >> "$redacted_file" || {
         rm -f "$redacted_file"
         return 1
@@ -811,7 +1094,7 @@ run_provider_contract() {
       "$attempt_timeout_seconds" \
       "${codex_command[@]}" "${codex_args[@]}" < "$task_bundle_file" 2>&1 \
       | while IFS= read -r line || [[ -n "$line" ]]; do
-          safe_line=$(printf '%s\n' "$line" | redact_codex_credential_text)
+          safe_line=$(printf '%s\n' "$line" | redact_provider_credential_text)
           printf '%s\n' "$safe_line" | tee -a "$STDOUT_FILE"
           live_session=$(printf '%s\n' "$safe_line" \
             | jq -r 'select(.type == "thread.started") | (.thread_id // .thread.id // empty)' 2>/dev/null \
@@ -819,7 +1102,6 @@ run_provider_contract() {
           [[ -z "$live_session" ]] || persist_provider_session "$live_session" || true
         done
     provider_exit=${PIPESTATUS[0]}
-    redact_codex_credential_file "$result_file" || provider_exit=1
     provider_session_id=$(jq -r 'select(.type == "thread.started") | (.thread_id // .thread.id // empty)' "$STDOUT_FILE" 2>/dev/null | head -n 1)
   elif [[ "$provider" == "claude" ]]; then
     local claude_args=(-p --output-format json --json-schema "$result_schema_json")
@@ -838,9 +1120,14 @@ run_provider_contract() {
       persist_provider_session "$provider_session_id" || true
     fi
     claude_args+=("${model_args[@]}")
+    : > "$STDOUT_FILE"
     run_with_attempt_timeout \
       "$attempt_timeout_seconds" \
-      claude "${claude_args[@]}" < "$task_bundle_file" 2>&1 | tee "$STDOUT_FILE"
+      claude "${claude_args[@]}" < "$task_bundle_file" 2>&1 \
+      | while IFS= read -r line || [[ -n "$line" ]]; do
+          safe_line=$(printf '%s\n' "$line" | redact_provider_credential_text)
+          printf '%s\n' "$safe_line" | tee -a "$STDOUT_FILE"
+        done
     provider_exit=${PIPESTATUS[0]}
     if [[ $provider_exit -eq 0 ]]; then
       jq -c '
@@ -866,9 +1153,14 @@ run_provider_contract() {
       persist_provider_session "$provider_session_id" || true
     fi
     grok_args+=("${model_args[@]}")
+    : > "$STDOUT_FILE"
     run_with_attempt_timeout \
       "$attempt_timeout_seconds" \
-      grok -p "$(cat "$task_bundle_file")" "${grok_args[@]}" 2>&1 | tee "$STDOUT_FILE"
+      grok -p "$(cat "$task_bundle_file")" "${grok_args[@]}" 2>&1 \
+      | while IFS= read -r line || [[ -n "$line" ]]; do
+          safe_line=$(printf '%s\n' "$line" | redact_provider_credential_text)
+          printf '%s\n' "$safe_line" | tee -a "$STDOUT_FILE"
+        done
     provider_exit=${PIPESTATUS[0]}
     if [[ $provider_exit -eq 0 ]]; then
       jq -c '
@@ -885,6 +1177,7 @@ run_provider_contract() {
     provider_exit=1
     printf '{"error":"unsupported provider: %s"}\n' "$provider" > "$STDOUT_FILE"
   fi
+  redact_provider_credential_file "$result_file" || provider_exit=1
 
   # Persist the session before the terminal callback. If callback delivery fails after
   # the CLI exits, watchdog can still reclaim and resume this exact attempt/session.
@@ -913,6 +1206,13 @@ run_provider_contract() {
     finalize_proposer_output || {
       echo "[entrypoint] proposer finalizer did not establish remote branch; Kernel no-push detector remains authoritative" >&2
     }
+    if ! finalize_planner_output "$result_file"; then
+      echo "[entrypoint] planner finalizer did not establish a verified Git artifact" >&2
+      provider_success=false
+      provider_exit=1
+    fi
+  fi
+  if [[ "$provider_success" == "true" ]]; then
     normalize_provider_success \
       "$task_bundle_file" \
       "$result_file" \

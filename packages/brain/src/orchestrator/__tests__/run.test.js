@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { signMachineAttestation } from '../machine-attestation.js';
-import { buildRealDeps, parseArgs } from '../run.js';
+import { buildRealDeps, parseArgs, runKernelMain } from '../run.js';
 
 describe('parseArgs', () => {
   it('--task-id 必填，缺失即抛用法错误', () => {
@@ -34,6 +34,83 @@ describe('parseArgs', () => {
       resumeToken: null,
       dryRun: false,
     });
+  });
+});
+
+describe('runKernelMain fatal convergence', () => {
+  it('terminalizes and closes the exact pool when dependency assembly fails', async () => {
+    const pool = { end: vi.fn() };
+    const finalizeRun = vi.fn(async () => ({ phase: 'failed' }));
+    const buildDeps = vi.fn(async ({ onPool }) => {
+      onPool(pool);
+      throw new Error('dependency_assembly_failed');
+    });
+
+    await expect(runKernelMain({
+      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      runId: '11111111-1111-4111-8111-111111111111',
+      resumeToken: null,
+      dryRun: false,
+    }, {
+      buildDeps,
+      runLoopFn: vi.fn(),
+      finalizeRun,
+    })).rejects.toThrow('dependency_assembly_failed');
+
+    expect(finalizeRun).toHaveBeenCalledWith(pool, {
+      runId: '11111111-1111-4111-8111-111111111111',
+      expectedTaskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      outcome: 'failed',
+      reason: 'kernel_process_fatal:dependency_assembly_failed',
+    });
+    expect(pool.end).toHaveBeenCalledOnce();
+  });
+
+  it('terminalizes the exact run and parent task when startup fails before heartbeat', async () => {
+    const pool = { end: vi.fn() };
+    const finalizeRun = vi.fn(async () => ({ phase: 'failed' }));
+    const fatal = new Error('workspace_repo_not_supported');
+
+    await expect(runKernelMain({
+      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      runId: '11111111-1111-4111-8111-111111111111',
+      resumeToken: null,
+      dryRun: false,
+    }, {
+      buildDeps: vi.fn(async () => ({ pool })),
+      runLoopFn: vi.fn(async () => { throw fatal; }),
+      finalizeRun,
+    })).rejects.toThrow('workspace_repo_not_supported');
+
+    expect(finalizeRun).toHaveBeenCalledWith(pool, {
+      runId: '11111111-1111-4111-8111-111111111111',
+      expectedTaskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      outcome: 'failed',
+      reason: 'kernel_process_fatal:workspace_repo_not_supported',
+    });
+    expect(pool.end).toHaveBeenCalledOnce();
+  });
+
+  it('redacts credentials before persisting a fatal diagnostic', async () => {
+    const pool = { end: vi.fn() };
+    const finalizeRun = vi.fn(async () => ({ phase: 'failed' }));
+
+    await expect(runKernelMain({
+      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      runId: '11111111-1111-4111-8111-111111111111',
+      resumeToken: null,
+      dryRun: false,
+    }, {
+      buildDeps: vi.fn(async () => ({ pool })),
+      runLoopFn: vi.fn(async () => {
+        throw new Error('KERNEL_FLEET_BRIDGE_TOKEN=raw-bridge-secret');
+      }),
+      finalizeRun,
+    })).rejects.toThrow('raw-bridge-secret');
+
+    const persisted = finalizeRun.mock.calls[0][1].reason;
+    expect(persisted).toContain('[REDACTED]');
+    expect(persisted).not.toContain('raw-bridge-secret');
   });
 });
 
@@ -72,6 +149,18 @@ describe('buildRealDeps', () => {
         expires_at: '2026-07-27T17:00:00.000Z',
         payload_hash: `sha256:${'a'.repeat(64)}`,
         payload: 'eyJ0b2tlbnMiOnsiYWNjZXNzX3Rva2VuIjoidGVzdCJ9fQ==',
+      })),
+    };
+    const githubCredentialBroker = {
+      issue: vi.fn(async () => ({
+        contract_version: 'github-credential-envelope/v1',
+        credential_ref: '55555555-5555-4555-8555-555555555555',
+        attempt_id: attemptId,
+        machine_id: 'us-mac-m4',
+        issued_at: '2026-07-27T15:00:00.000Z',
+        expires_at: '2026-07-27T16:00:00.000Z',
+        payload_hash: `sha256:${'c'.repeat(64)}`,
+        payload: 'Z2l0aHViX3BhdF90ZXN0',
       })),
     };
     const fetchFn = vi.fn(async (_url, options) => {
@@ -133,6 +222,7 @@ describe('buildRealDeps', () => {
       },
       attemptStore,
       credentialBroker,
+      githubCredentialBroker,
       fetchFn,
       handlers: {},
       machineId: 'us-mac-m4',
@@ -179,9 +269,15 @@ describe('buildRealDeps', () => {
       accountId: 'team4',
       machineId: 'us-mac-m4',
     }));
+    expect(githubCredentialBroker.issue).toHaveBeenCalledWith(expect.objectContaining({
+      attemptId,
+      machineId: 'us-mac-m4',
+    }));
     expect(fetchFn).toHaveBeenCalledOnce();
     expect(JSON.parse(fetchFn.mock.calls[0][1].body).credential_envelope)
       .toMatchObject({ credential_ref: '44444444-4444-4444-8444-444444444444' });
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body).github_credential_envelope)
+      .toMatchObject({ credential_ref: '55555555-5555-4555-8555-555555555555' });
   });
 
   it('默认 registry 注册 Grok，可把 evaluator 派给不同厂商', async () => {

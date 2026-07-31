@@ -25,7 +25,14 @@ const PROVIDER_FIELDS = new Set([
   'output',
 ]);
 const PROVIDER_PATTERN = /^(codex|claude|grok)$/;
+const GITHUB_CREDENTIAL_ROLES = new Set([
+  'planner',
+  'proposer',
+  'generator',
+  'evaluator',
+]);
 const MAX_STATE_BYTES = 1_048_576;
+const MAX_GITHUB_TOKEN_BYTES = 16_384;
 
 async function defaultRunCommand(command, args, options) {
   const { stdout = '' } = await execFileAsync(command, args, {
@@ -34,6 +41,72 @@ async function defaultRunCommand(command, args, options) {
     maxBuffer: 1024 * 1024,
   });
   return { stdout: stdout.trim() };
+}
+
+async function writeContainerFifo(
+  containerName,
+  fifoPath,
+  payload,
+  {
+    spawnFn,
+    timeoutMs,
+    writerName,
+    errorCode,
+  },
+) {
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    let child;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(new Error(errorCode));
+      else resolve();
+    };
+    const timer = setTimeout(() => {
+      try {
+        child?.kill('SIGKILL');
+      } catch {
+        // The generic write failure below remains the only exposed error.
+      }
+      finish(new Error('timeout'));
+    }, timeoutMs);
+
+    try {
+      child = spawnFn(
+        'docker',
+        [
+          'exec',
+          '-i',
+          containerName,
+          'sh',
+          '-c',
+          'cat > "$1"',
+          writerName,
+          fifoPath,
+        ],
+        { stdio: ['pipe', 'ignore', 'ignore'] },
+      );
+      if (
+        !child
+        || typeof child.once !== 'function'
+        || !child.stdin
+        || typeof child.stdin.end !== 'function'
+      ) {
+        finish(new Error('invalid_child'));
+        return;
+      }
+      child.once('error', () => finish(new Error('spawn')));
+      child.once('close', (code) => {
+        finish(code === 0 ? null : new Error('exit'));
+      });
+      child.stdin.once('error', () => finish(new Error('stdin')));
+      child.stdin.end(payload, 'utf8');
+    } catch {
+      finish(new Error('spawn'));
+    }
+  });
 }
 
 async function defaultWriteCredential(
@@ -58,59 +131,42 @@ async function defaultWriteCredential(
   ) {
     throw new Error('attempt_credential_fifo_write_failed');
   }
+  return writeContainerFifo(containerName, fifoPath, authJson, {
+    spawnFn,
+    timeoutMs,
+    writerName: 'credential-writer',
+    errorCode: 'attempt_credential_fifo_write_failed',
+  });
+}
 
-  await new Promise((resolve, reject) => {
-    let settled = false;
-    let child;
-    const finish = (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (error) reject(new Error('attempt_credential_fifo_write_failed'));
-      else resolve();
-    };
-    const timer = setTimeout(() => {
-      try {
-        child?.kill('SIGKILL');
-      } catch {
-        // The generic write failure below remains the only exposed error.
-      }
-      finish(new Error('timeout'));
-    }, timeoutMs);
-
-    try {
-      child = spawnFn(
-        'docker',
-        [
-          'exec',
-          '-i',
-          containerName,
-          'sh',
-          '-c',
-          'cat > "$1"',
-          'credential-writer',
-          fifoPath,
-        ],
-        { stdio: ['pipe', 'ignore', 'ignore'] },
-      );
-      if (
-        !child
-        || typeof child.once !== 'function'
-        || !child.stdin
-        || typeof child.stdin.end !== 'function'
-      ) {
-        finish(new Error('invalid_child'));
-        return;
-      }
-      child.once('error', () => finish(new Error('spawn')));
-      child.once('close', (code) => {
-        finish(code === 0 ? null : new Error('exit'));
-      });
-      child.stdin.once('error', () => finish(new Error('stdin')));
-      child.stdin.end(authJson, 'utf8');
-    } catch {
-      finish(new Error('spawn'));
-    }
+async function defaultWriteGitHubCredential(
+  containerName,
+  fifoPath,
+  token,
+  {
+    spawnFn = spawn,
+    timeoutMs = 10_000,
+  } = {},
+) {
+  if (
+    !CONTAINER_NAME_PATTERN.test(containerName ?? '')
+    || fifoPath !== '/tmp/cecelia-prompts/github-credential.fifo'
+    || typeof token !== 'string'
+    || token.length === 0
+    || /[\r\n\0]/.test(token)
+    || Buffer.byteLength(token, 'utf8') > MAX_GITHUB_TOKEN_BYTES
+    || typeof spawnFn !== 'function'
+    || !Number.isInteger(timeoutMs)
+    || timeoutMs < 1
+    || timeoutMs > 60_000
+  ) {
+    throw new Error('attempt_github_credential_fifo_write_failed');
+  }
+  return writeContainerFifo(containerName, fifoPath, token, {
+    spawnFn,
+    timeoutMs,
+    writerName: 'github-credential-writer',
+    errorCode: 'attempt_github_credential_fifo_write_failed',
   });
 }
 
@@ -257,6 +313,7 @@ function createDockerAdapter({
   runCommand = defaultRunCommand,
   runtimeRoot,
   writeCredential = defaultWriteCredential,
+  writeGitHubCredential = defaultWriteGitHubCredential,
   resolveMountSource = fs.realpathSync,
   mountAccessPrincipal,
 } = {}) {
@@ -266,6 +323,9 @@ function createDockerAdapter({
   }
   if (typeof writeCredential !== 'function') {
     throw new Error('attempt_runner_invalid_credential_writer');
+  }
+  if (typeof writeGitHubCredential !== 'function') {
+    throw new Error('attempt_runner_invalid_github_credential_writer');
   }
   if (typeof resolveMountSource !== 'function') {
     throw new Error('attempt_runner_invalid_mount_source_resolver');
@@ -328,6 +388,7 @@ function createDockerAdapter({
       const promptFile = path.join(attemptRuntime, 'task-bundle.json');
       const stdoutFile = path.join(attemptRuntime, 'stdout.jsonl');
       const isCodex = input.providerSpec?.provider === 'codex';
+      const needsGitHubCredential = GITHUB_CREDENTIAL_ROLES.has(input.role);
       if (
         isCodex
         && (
@@ -340,6 +401,20 @@ function createDockerAdapter({
         fs.rmSync(attemptRuntime, { recursive: true, force: true });
         throw new Error('attempt_credential_invalid');
       }
+      if (
+        needsGitHubCredential
+        && (
+          !UUID_PATTERN.test(input.githubCredential?.credentialRef ?? '')
+          || typeof input.githubCredential?.token !== 'string'
+          || input.githubCredential.token.length === 0
+          || /[\r\n\0]/.test(input.githubCredential.token)
+          || Buffer.byteLength(input.githubCredential.token, 'utf8')
+            > MAX_GITHUB_TOKEN_BYTES
+        )
+      ) {
+        fs.rmSync(attemptRuntime, { recursive: true, force: true });
+        throw new Error('attempt_github_credential_invalid');
+      }
       fs.writeFileSync(promptFile, input.providerSpec.stdin, {
         encoding: 'utf8',
         mode: 0o600,
@@ -350,6 +425,12 @@ function createDockerAdapter({
       const containerStdout = '/tmp/cecelia-prompts/stdout.jsonl';
       const credentialFifo = path.join(attemptRuntime, 'credential.fifo');
       const containerCredentialFifo = '/tmp/cecelia-prompts/credential.fifo';
+      const githubCredentialFifo = path.join(
+        attemptRuntime,
+        'github-credential.fifo',
+      );
+      const containerGitHubCredentialFifo =
+        '/tmp/cecelia-prompts/github-credential.fifo';
       const workspaceMount = [
         `type=bind,src=${workspaceSource},dst=/workspace`,
         input.workspaceMount.readOnly ? 'readonly' : null,
@@ -376,12 +457,18 @@ function createDockerAdapter({
               '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700,uid=999,gid=999',
             ]
           : []),
+        ...(needsGitHubCredential
+          ? [
+              '--tmpfs',
+              '/home/cecelia/.config/gh:rw,noexec,nosuid,nodev,mode=0700,uid=999,gid=999',
+            ]
+          : []),
         '--add-host',
         'host.docker.internal:host-gateway',
         ...envArgs({
           CECELIA_EXECUTOR: input.providerSpec.provider,
-          CECELIA_TASK_ID: attemptId,
-          HARNESS_TASK_ID: attemptId,
+          CECELIA_TASK_ID: input.taskId,
+          HARNESS_TASK_ID: input.taskId,
           HARNESS_ATTEMPT_ID: attemptId,
           HARNESS_RUN_ID: input.runId,
           HARNESS_CALLBACK_URL: input.callback.url,
@@ -401,13 +488,27 @@ function createDockerAdapter({
           CECELIA_CREDENTIAL_REF: isCodex
             ? input.credential.credentialRef
             : undefined,
+          CECELIA_GITHUB_CREDENTIAL_FIFO: needsGitHubCredential
+            ? containerGitHubCredentialFifo
+            : undefined,
+          CECELIA_GITHUB_CREDENTIAL_REF: needsGitHubCredential
+            ? input.githubCredential.credentialRef
+            : undefined,
           WORKTREE_PATH: '/workspace',
           BRAIN_URL: callbackBrainUrl(input.callback.url),
+          ...input.roleEnv,
         }),
         input.image,
       ];
       let created;
       try {
+        if (needsGitHubCredential) {
+          await runCommand(
+            'mkfifo',
+            ['-m', '600', githubCredentialFifo],
+            undefined,
+          );
+        }
         if (isCodex) {
           await runCommand('mkfifo', ['-m', '600', credentialFifo], undefined);
         }
@@ -440,6 +541,17 @@ function createDockerAdapter({
           throw new Error('attempt_container_id_missing');
         }
         await runCommand('docker', ['start', containerName], undefined);
+        if (needsGitHubCredential) {
+          try {
+            await writeGitHubCredential(
+              containerName,
+              containerGitHubCredentialFifo,
+              input.githubCredential.token,
+            );
+          } finally {
+            fs.rmSync(githubCredentialFifo, { force: true });
+          }
+        }
         if (isCodex) {
           try {
             await writeCredential(
@@ -534,6 +646,7 @@ function validateDependencies({
   workerId,
   runnerImageDigest,
   credentialConsumer,
+  githubCredentialConsumer,
 }) {
   for (const method of ['prepare', 'verify', 'cleanup', 'quarantine', 'reconcile']) {
     requireMethod(workspaceManager, method, 'workspace_manager');
@@ -545,6 +658,11 @@ function validateDependencies({
     requireMethod(stateStore, method, 'state_store');
   }
   requireMethod(credentialConsumer, 'consume', 'credential_consumer');
+  requireMethod(
+    githubCredentialConsumer,
+    'consume',
+    'github_credential_consumer',
+  );
   if (!CANONICAL_MACHINE_IDS.has(workerId)) {
     throw new Error('attempt_runner_invalid_worker_id');
   }
@@ -636,6 +754,67 @@ function validateTarget(value) {
   });
 }
 
+function taskExecutionContract(providerSpec, request, target) {
+  let bundle;
+  try {
+    bundle = JSON.parse(providerSpec.stdin)?.task_bundle;
+  } catch {
+    throw new Error('attempt_task_bundle_invalid');
+  }
+  const inputs = bundle?.inputs;
+  if (
+    !bundle
+    || typeof bundle !== 'object'
+    || Array.isArray(bundle)
+    || bundle.run_id !== request.run_id
+    || bundle.attempt_id !== request.attempt_id
+    || bundle.role !== target.role
+    || !inputs
+    || typeof inputs !== 'object'
+    || Array.isArray(inputs)
+    || typeof inputs.task_id !== 'string'
+    || inputs.task_id.length === 0
+  ) {
+    throw new Error('attempt_task_bundle_invalid');
+  }
+
+  const roleEnv = {
+    ...(inputs.sprint_dir
+      ? { SPRINT_DIR: String(inputs.sprint_dir) }
+      : {}),
+    WORKSPACE_PATH: '/workspace',
+    ...(target.role === 'planner' && inputs.planner_branch
+      ? { PLANNER_BRANCH: String(inputs.planner_branch) }
+      : {}),
+    ...(inputs.contract_round != null
+      ? { PROPOSE_ROUND: String(inputs.contract_round) }
+      : {}),
+    ...(inputs.propose_branch
+      ? { PROPOSE_BRANCH: String(inputs.propose_branch) }
+      : {}),
+    ...(inputs.contract_branch
+      ? { CONTRACT_BRANCH: String(inputs.contract_branch) }
+      : {}),
+    ...(target.role === 'evaluator' && inputs.pr_branch
+      ? { PR_BRANCH: String(inputs.pr_branch) }
+      : {}),
+    ...(target.role === 'evaluator' && inputs.pr_head_sha
+      ? { PR_HEAD_SHA: String(inputs.pr_head_sha) }
+      : {}),
+    ...(target.role === 'evaluator'
+      ? {
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'remote.origin.pushurl',
+        GIT_CONFIG_VALUE_0: 'blocked-by-harness://evaluator',
+      }
+      : {}),
+  };
+  return Object.freeze({
+    taskId: inputs.task_id,
+    roleEnv: Object.freeze(roleEnv),
+  });
+}
+
 function validateLaunchRequest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('attempt_launch_request_invalid');
@@ -664,10 +843,13 @@ function validateLaunchRequest(value) {
   ) {
     throw new Error('attempt_timeout_seconds_invalid');
   }
+  const providerSpec = validateProviderSpec(value.provider_spec);
+  const target = validateTarget(value.target);
   return {
     request: value,
-    providerSpec: validateProviderSpec(value.provider_spec),
-    target: validateTarget(value.target),
+    providerSpec,
+    target,
+    executionContract: taskExecutionContract(providerSpec, value, target),
   };
 }
 
@@ -700,6 +882,7 @@ function createAttemptRunner({
   workerId,
   runnerImageDigest,
   credentialConsumer,
+  githubCredentialConsumer,
 } = {}) {
   validateDependencies({
     workspaceManager,
@@ -708,6 +891,7 @@ function createAttemptRunner({
     workerId,
     runnerImageDigest,
     credentialConsumer,
+    githubCredentialConsumer,
   });
 
   async function quarantineState(state, error) {
@@ -750,7 +934,12 @@ function createAttemptRunner({
 
   const runner = {
     async launch(input) {
-      const { request, providerSpec, target } = validateLaunchRequest(input);
+      const {
+        request,
+        providerSpec,
+        target,
+        executionContract,
+      } = validateLaunchRequest(input);
       if (target.machine !== workerId) {
         throw new Error('attempt_target_worker_mismatch');
       }
@@ -774,6 +963,23 @@ function createAttemptRunner({
           machineId: workerId,
         });
       }
+      let githubCredential = null;
+      if (GITHUB_CREDENTIAL_ROLES.has(target.role)) {
+        if (
+          !request.github_credential_envelope
+          || typeof request.github_credential_envelope !== 'object'
+          || Array.isArray(request.github_credential_envelope)
+        ) {
+          throw new Error('github_credential_envelope_required');
+        }
+        githubCredential = githubCredentialConsumer.consume(
+          request.github_credential_envelope,
+          {
+            attemptId: request.attempt_id,
+            machineId: workerId,
+          },
+        );
+      }
       const workspace = await workspaceManager.prepare(request.workspace_spec);
       await workspaceManager.verify(workspace);
       const labels = labelsFor(request, workerId);
@@ -785,6 +991,8 @@ function createAttemptRunner({
           workerId,
           image: runnerImageDigest,
           providerSpec,
+          taskId: executionContract.taskId,
+          roleEnv: executionContract.roleEnv,
           timeoutSeconds: request.timeout_seconds,
           role: target.role,
           model: target.model,
@@ -808,6 +1016,7 @@ function createAttemptRunner({
             generation: request.lease_generation,
           },
           credential,
+          githubCredential,
         });
       } catch (error) {
         await workspaceManager.cleanup(workspace);
@@ -826,6 +1035,9 @@ function createAttemptRunner({
         lease_generation: request.lease_generation,
         provider: providerSpec.provider,
         ...(credential ? { credential: credential.metadata } : {}),
+        ...(githubCredential
+          ? { github_credential: githubCredential.metadata }
+          : {}),
         container_id: launched.containerId,
         workspace,
         labels,
@@ -975,7 +1187,10 @@ function createAttemptRunner({
 }
 
 module.exports = {
-  __test__: Object.freeze({ defaultWriteCredential }),
+  __test__: Object.freeze({
+    defaultWriteCredential,
+    defaultWriteGitHubCredential,
+  }),
   createAttemptRunner,
   createDockerAdapter,
   createFileAttemptStateStore,

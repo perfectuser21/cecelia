@@ -26,6 +26,8 @@ import {
   createCredentialBroker,
   createFileCredentialLoader,
 } from './credential-broker.js';
+import { createGitHubCredentialBroker } from './github-credential-broker.js';
+import { resolveGitHubToken } from '../harness-credentials.js';
 import { createProviderRegistry } from './provider-registry.js';
 import { claudeAdapter } from './providers/claude.js';
 import { codexAdapter } from './providers/codex.js';
@@ -42,6 +44,9 @@ import {
 } from './production-transport.js';
 import { createWorkspaceSpecResolver } from './workspace-spec.js';
 import { createRunEventStore } from './run-event-store.js';
+import { parseBaseRepo } from './github-pr-discovery.js';
+import { finalizeKernelRun } from './kernel-run-store.js';
+import { sanitizeDiagnostic } from './failure-persistence.js';
 
 const CANONICAL_MACHINE_IDS = new Set([
   'us-mac-m4',
@@ -133,6 +138,7 @@ export async function buildDefaultHandlers({ pool, execCmd, attemptStore, judgeG
 export async function buildRealDeps(overrides = {}) {
   const pool = overrides.pool
     ?? (await import('../db.js')).default; // 延迟 import：--help/参数错误时不连库
+  overrides.onPool?.(pool);
   const execCmd = overrides.execCmd
     ?? ((cmd) => execSync(cmd, { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024, timeout: 60_000 }));
   const attemptStore = overrides.attemptStore ?? createAttemptStore(pool);
@@ -221,6 +227,11 @@ export async function buildRealDeps(overrides = {}) {
               ),
             }),
         });
+      const githubCredentialBroker = overrides.githubCredentialBroker
+        ?? createGitHubCredentialBroker({
+          controllerMachineId: machineId,
+          loadToken: overrides.resolveGitHubToken ?? resolveGitHubToken,
+        });
       launcher = createProductionExecutionTransport({
         env,
         spawnDetached,
@@ -230,6 +241,7 @@ export async function buildRealDeps(overrides = {}) {
         leaseOwner,
         fetchFn: overrides.fetchFn,
         credentialBroker,
+        githubCredentialBroker,
         remoteBridgeTimeoutMs: overrides.remoteBridgeTimeoutMs,
       });
     }
@@ -240,10 +252,20 @@ export async function buildRealDeps(overrides = {}) {
       || !overrides.launcher;
     const resolveRepoHead = overrides.resolveRepoHead
       ?? (async (repo) => {
-        if (repo !== 'perfectuser21/cecelia') {
+        const repoRoot = process.cwd();
+        const remote = execFileSync(
+          'git',
+          ['remote', 'get-url', 'origin'],
+          {
+            cwd: repoRoot,
+            encoding: 'utf8',
+            maxBuffer: 1024 * 1024,
+            timeout: 10_000,
+          },
+        ).trim();
+        if (parseBaseRepo(remote) !== repo) {
           throw new Error(`workspace_repo_not_supported:${String(repo)}`);
         }
-        const repoRoot = env.CECELIA_REPO_ROOT ?? process.cwd();
         return execFileSync(
           'git',
           ['rev-parse', '--verify', 'origin/main^{commit}'],
@@ -315,26 +337,70 @@ export async function buildRealDeps(overrides = {}) {
   };
 }
 
-async function main() {
-  const {
-    taskId,
-    runId,
-    resumeToken,
-    dryRun,
-  } = parseArgs(process.argv.slice(2));
-  const deps = await buildRealDeps();
+export async function runKernelMain({
+  taskId,
+  runId,
+  resumeToken,
+  dryRun,
+}, {
+  buildDeps = buildRealDeps,
+  runLoopFn = runLoop,
+  finalizeRun = finalizeKernelRun,
+  logError = console.error,
+} = {}) {
+  let deps;
+  let pool;
   try {
-    const result = await runLoop(deps, {
+    deps = await buildDeps({
+      onPool: (candidate) => {
+        pool = candidate;
+      },
+    });
+    pool ??= deps?.pool;
+    return await runLoopFn(deps, {
       taskId,
       runId,
       resumeToken,
       dryRun,
     });
-    console.log(`[orchestrator] exit: ${result.exitReason} (hops=${result.hops})`);
-    process.exitCode = result.exitReason === 'singleton_conflict' ? 2 : 0;
+  } catch (error) {
+    if (pool && runId && !dryRun) {
+      try {
+        await finalizeRun(pool, {
+          runId,
+          expectedTaskId: taskId,
+          outcome: 'failed',
+          reason: `kernel_process_fatal:${sanitizeDiagnostic(error?.message)}`,
+        });
+      } catch (finalizeError) {
+        logError(
+          `[orchestrator] fatal convergence failed run=${runId}: `
+          + `${finalizeError.message}`,
+        );
+      }
+    }
+    throw error;
   } finally {
-    await deps.pool.end?.();
+    await pool?.end?.();
   }
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const {
+    taskId,
+    runId,
+    resumeToken,
+    dryRun,
+  } = args;
+  const result = await runKernelMain({
+    taskId,
+    runId,
+    resumeToken,
+    dryRun,
+  });
+  console.log(`[orchestrator] exit: ${result.exitReason} (hops=${result.hops})`);
+  process.exitCode = result.exitReason === 'singleton_conflict' ? 2 : 0;
 }
 
 // 仅直接执行时跑 main（被测试 import 时不执行）

@@ -307,7 +307,13 @@ function createWorkspaceManager({
           checkoutSha,
         ]);
         if (spec.mode === 'read-write') {
-          await git(['switch', '-c', spec.branch], { cwd: workspacePath });
+          // The per-Attempt bare admin clone can already contain a verified
+          // remote writer branch. Reset only this isolated clone's ref to the
+          // server-approved checkout SHA instead of failing on `switch -c`.
+          await git(
+            ['switch', '-C', spec.branch, checkoutSha],
+            { cwd: workspacePath },
+          );
         }
       } catch (error) {
         await git([

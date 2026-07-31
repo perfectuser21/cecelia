@@ -22,6 +22,16 @@ const ENVELOPE = Object.freeze({
   payload_hash: `sha256:${'a'.repeat(64)}`,
   payload: 'eyJ0b2tlbnMiOnsiYWNjZXNzX3Rva2VuIjoic2VjcmV0In19',
 });
+const GITHUB_ENVELOPE = Object.freeze({
+  contract_version: 'github-credential-envelope/v1',
+  credential_ref: '44444444-4444-4444-8444-444444444444',
+  attempt_id: 'attempt-1',
+  machine_id: MACHINE,
+  issued_at: '2026-07-27T12:00:00.000Z',
+  expires_at: '2026-07-27T13:00:00.000Z',
+  payload_hash: `sha256:${'b'.repeat(64)}`,
+  payload: 'Z2l0aHViX3BhdF90ZXN0',
+});
 
 function jsonResponse(status, body) {
   return {
@@ -102,6 +112,7 @@ function createTransport(overrides = {}) {
     brainUrl: BRAIN_URL,
     fetchFn: vi.fn(async () => jsonResponse(202, acceptedLaunchResponse())),
     credentialBroker: { issue: vi.fn(async () => ENVELOPE) },
+    githubCredentialBroker: { issue: vi.fn(async () => GITHUB_ENVELOPE) },
     now: () => NOW_MS,
     ...overrides,
   });
@@ -211,6 +222,7 @@ describe('remote Bridge launch', () => {
         output: { format: 'jsonl' },
       },
       credential_envelope: ENVELOPE,
+      github_credential_envelope: GITHUB_ENVELOPE,
       callback_url: `${BRAIN_URL}/api/brain/harness/attempts/attempt-1/callback`,
       callback_token: CALLBACK_TOKEN,
     });
@@ -263,6 +275,72 @@ describe('remote Bridge launch', () => {
       deadlineAt: '2026-07-27T13:00:00.000Z',
     });
   });
+
+  it.each(['planner', 'proposer', 'generator', 'evaluator'])(
+    'binds one GitHub credential envelope to a %s Attempt and deadline',
+    async (role) => {
+      const issue = vi.fn(async () => GITHUB_ENVELOPE);
+      const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+      const transport = createTransport({
+        fetchFn,
+        githubCredentialBroker: { issue },
+      });
+
+      await transport.launch(launchInput({
+        bundle: {
+          role,
+          inputs: launchInput().bundle.inputs,
+          constraints: { timeout_seconds: 3600 },
+        },
+      }));
+
+      expect(issue).toHaveBeenCalledOnce();
+      expect(issue).toHaveBeenCalledWith({
+        attemptId: 'attempt-1',
+        machineId: MACHINE,
+        deadlineAt: '2026-07-27T13:00:00.000Z',
+      });
+      expect(JSON.parse(fetchFn.mock.calls[0][1].body))
+        .toHaveProperty('github_credential_envelope', GITHUB_ENVELOPE);
+    },
+  );
+
+  it('fails closed before contacting Worker when a GitHub writer broker is unavailable', async () => {
+    const fetchFn = vi.fn();
+    const transport = createTransport({
+      fetchFn,
+      githubCredentialBroker: undefined,
+    });
+
+    await expect(transport.launch(launchInput())).rejects.toThrow(
+      'remote_bridge_github_credential_broker_unavailable',
+    );
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it.each(['reviewer', 'reporter'])(
+    'does not issue a GitHub credential envelope for read-only role %s',
+    async (role) => {
+      const issue = vi.fn();
+      const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+      const transport = createTransport({
+        fetchFn,
+        githubCredentialBroker: { issue },
+      });
+
+      await transport.launch(launchInput({
+        bundle: {
+          role,
+          inputs: launchInput().bundle.inputs,
+          constraints: { timeout_seconds: 3600 },
+        },
+      }));
+
+      expect(issue).not.toHaveBeenCalled();
+      expect(JSON.parse(fetchFn.mock.calls[0][1].body))
+        .not.toHaveProperty('github_credential_envelope');
+    },
+  );
 
   it('fails closed before contacting the Worker when a Codex broker is unavailable', async () => {
     const fetchFn = vi.fn();

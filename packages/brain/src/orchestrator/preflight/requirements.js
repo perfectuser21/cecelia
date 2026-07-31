@@ -1,6 +1,11 @@
 import { parseCapabilityRequirements } from './capability-gate.js';
 
-const GITHUB_ROLES = new Set(['generator', 'evaluator']);
+const GITHUB_ROLES = new Set([
+  'planner',
+  'proposer',
+  'generator',
+  'evaluator',
+]);
 
 /**
  * Build the server-owned minimum for a role, then allow the approved

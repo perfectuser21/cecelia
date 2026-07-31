@@ -20,6 +20,7 @@ import {
   reviewClassForReason,
 } from './human-review-class.js';
 import { normalizeFailureSet } from './convergence-signatures.js';
+import { getVerifiedRemotePlannerPrdArtifact } from './planner-artifact-receipt.js';
 
 /** gh check state → 三态 ci 映射 */
 const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
@@ -241,7 +242,8 @@ export async function collectGroundTruth(deps, opts) {
     `SELECT id, run_id, hop, phase, role, provider, account_id, machine_id,
             requested_machine_id, actual_machine_id, execution_transport,
             remote_job_id, machine_attestation_status, lease_generation,
-            status, error_code, error_message, created_at, updated_at, completed_at
+            status, error_code, error_message, task_bundle,
+            created_at, updated_at, completed_at
        FROM harness_attempts
       WHERE run_id = $1
       ORDER BY hop DESC, created_at DESC, id DESC`,
@@ -268,7 +270,15 @@ export async function collectGroundTruth(deps, opts) {
   const prdObservedInLog = decisionLog.some(
     (row) => asJson(row.observed)?.prdExists === true,
   );
-  const prdExists = Boolean(fileExists(prdPath)) || prdObservedInLog;
+  const plannerPrdArtifact = getVerifiedRemotePlannerPrdArtifact({
+    runId,
+    task,
+    logRows: decisionLog,
+    attemptRows,
+  });
+  const prdExists = Boolean(fileExists(prdPath))
+    || prdObservedInLog
+    || plannerPrdArtifact != null;
   let callbackResult = null;
   if (fileExists(callbackResultPath)) {
     try {
@@ -414,6 +424,7 @@ export async function collectGroundTruth(deps, opts) {
     run,
     task,
     prdExists,
+    plannerPrdArtifact,
     contract,
     pr,
     inflight: {

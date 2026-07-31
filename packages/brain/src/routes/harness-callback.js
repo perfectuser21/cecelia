@@ -42,6 +42,9 @@ import {
   defaultPrIdentityResolver,
   normalizeGitSha,
 } from '../orchestrator/pr-head-resolver.js';
+import {
+  defaultGitBranchHeadResolver,
+} from '../orchestrator/git-branch-head-resolver.js';
 import { normalizeFailureSignature } from '../orchestrator/convergence-signatures.js';
 import { parseBaseRepo } from '../orchestrator/github-pr-discovery.js';
 
@@ -138,6 +141,7 @@ function normalizeVerdict(role, outcome) {
 }
 
 const GITHUB_PULL_REQUEST_URL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/[1-9]\d*\/?$/;
+const CANONICAL_BRANCH = /^cp-[a-z0-9][a-z0-9._-]{0,126}$/;
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
@@ -278,6 +282,84 @@ async function verifyGeneratorPullRequestClaims(attempt, result, db, resolvePrId
     }
   }
   return { ...result, artifacts };
+}
+
+async function verifyPlannerGitArtifactClaim(attempt, result, resolveBranchHead) {
+  if (
+    attempt.role !== 'planner'
+    || result.status !== 'completed'
+    || !['fleet-worker', 'remote-bridge'].includes(attempt.execution_transport)
+  ) {
+    return result;
+  }
+  const inputs = attemptTaskBundle(attempt)?.inputs ?? {};
+  const sprintDir = typeof inputs.sprint_dir === 'string'
+    ? inputs.sprint_dir.replace(/\/+$/, '')
+    : '';
+  const branch = inputs.planner_branch;
+  const repo = inputs.workspace_spec?.repo;
+  const expectedPath = sprintDir ? `${sprintDir}/sprint-prd.md` : '';
+  const claim = (result.artifacts ?? []).find((artifact) => (
+    artifact?.type === 'git_artifact'
+    && artifact.kind === 'planner_prd'
+  ));
+  const claimedSha = normalizeGitSha(claim?.head_sha);
+  if (
+    !claim
+    || !expectedPath
+    || claim.path !== expectedPath
+    || typeof repo !== 'string'
+    || !repo
+    || claim.repo !== repo
+    || !CANONICAL_BRANCH.test(branch ?? '')
+    || claim.branch !== branch
+    || !claimedSha
+  ) {
+    const error = new Error('planner_git_artifact_invalid');
+    error.status = 409;
+    throw error;
+  }
+  let resolvedSha;
+  let pathExists = false;
+  try {
+    const resolved = await resolveBranchHead({
+      repo,
+      branch,
+      path: expectedPath,
+    });
+    resolvedSha = normalizeGitSha(resolved?.head_sha);
+    pathExists = resolved?.path_exists === true;
+  } catch (cause) {
+    const error = new Error('planner_git_artifact_verification_unavailable');
+    error.status = 503;
+    error.cause = cause;
+    throw error;
+  }
+  if (!pathExists) {
+    const error = new Error('planner_git_artifact_path_missing');
+    error.status = 409;
+    throw error;
+  }
+  if (!resolvedSha || resolvedSha !== claimedSha) {
+    const error = new Error('planner_git_artifact_mismatch');
+    error.status = 409;
+    throw error;
+  }
+  const verified = {
+    type: 'git_artifact',
+    kind: 'planner_prd',
+    path: expectedPath,
+    repo,
+    branch,
+    head_sha: resolvedSha,
+    verification_status: 'verified',
+  };
+  return {
+    ...result,
+    artifacts: (result.artifacts ?? []).map((artifact) => (
+      artifact === claim ? verified : artifact
+    )),
+  };
 }
 
 export async function appendAttemptVerdict(attempt, result, db = pool) {
@@ -662,9 +744,21 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
   }
 
   const resolver = req.app.get('kernelPrIdentityResolver') || defaultPrIdentityResolver;
+  const branchHeadResolver = req.app.get('kernelGitBranchHeadResolver')
+    || defaultGitBranchHeadResolver;
   let verifiedResult;
   try {
-    verifiedResult = await verifyGeneratorPullRequestClaims(attempt, result, db, resolver);
+    verifiedResult = await verifyPlannerGitArtifactClaim(
+      attempt,
+      result,
+      branchHeadResolver,
+    );
+    verifiedResult = await verifyGeneratorPullRequestClaims(
+      attempt,
+      verifiedResult,
+      db,
+      resolver,
+    );
   } catch (error) {
     if (error.status) {
       return res.status(error.status).json({

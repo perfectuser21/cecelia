@@ -104,25 +104,28 @@ function context(role, requirements) {
 }
 
 describe('server-owned capability requirements', () => {
-  it('payload false cannot disable generator provider auth, GitHub, or structured output', async () => {
-    const { dispatch, evaluate } = dispatcherWithCapturedPreflight();
+  it.each(['planner', 'proposer', 'generator', 'evaluator'])(
+    'payload false cannot disable %s provider auth, GitHub, or structured output',
+    async (role) => {
+      const { dispatch, evaluate } = dispatcherWithCapturedPreflight();
 
-    await dispatch('spawn:generator', context('generator', {
-      provider_auth: false,
-      github: false,
-      postgres: false,
-      model_capabilities: [],
-    }));
-
-    expect(evaluate).toHaveBeenCalledWith(expect.objectContaining({
-      requirements: {
-        provider_auth: true,
-        github: true,
+      await dispatch(`spawn:${role}`, context(role, {
+        provider_auth: false,
+        github: false,
         postgres: false,
-        model_capabilities: ['structured_output'],
-      },
-    }));
-  });
+        model_capabilities: [],
+      }));
+
+      expect(evaluate).toHaveBeenCalledWith(expect.objectContaining({
+        requirements: {
+          provider_auth: true,
+          github: true,
+          postgres: false,
+          model_capabilities: ['structured_output'],
+        },
+      }));
+    },
+  );
 
   it('structured requirements can add PostgreSQL and model capabilities without duplication', async () => {
     const { dispatch, evaluate } = dispatcherWithCapturedPreflight();

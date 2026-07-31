@@ -31,6 +31,15 @@ describe('WorkspaceSpec contract', () => {
     expect(Object.isFrozen(parsed)).toBe(true);
   });
 
+  it('accepts the Brain-owned ZenithJoy business repository', () => {
+    expect(buildWorkspaceSpec(validSpec({
+      repo: 'perfectuser21/zenithjoy-workspace',
+    }))).toMatchObject({
+      repo: 'perfectuser21/zenithjoy-workspace',
+      base_sha: BASE_SHA,
+    });
+  });
+
   it.each([
     ['cwd', '/Users/operator/perfect21/cecelia'],
     ['worktree_path', '/tmp/operator-worktree'],
@@ -159,6 +168,76 @@ describe('production WorkspaceSpec resolution', () => {
       mode: 'read-write',
     });
     expect(resolveRepoHead).toHaveBeenCalledWith('perfectuser21/cecelia');
+  });
+
+  it('resolves a server-owned ZenithJoy head for a real business writer branch', async () => {
+    const resolveRepoHead = vi.fn(async () => BASE_SHA);
+    const resolveWorkspaceSpec = createWorkspaceSpecResolver({ resolveRepoHead });
+
+    const resolved = await resolveWorkspaceSpec({
+      role: 'generator',
+      readOnly: false,
+      attemptId: ATTEMPT_ID,
+      ctx: {
+        runId: RUN_ID,
+        observed: {
+          task: {
+            payload: {
+              base_repo: 'https://github.com/perfectuser21/zenithjoy-workspace.git',
+            },
+          },
+        },
+      },
+      bundle: { inputs: {} },
+    });
+
+    expect(resolved).toMatchObject({
+      repo: 'perfectuser21/zenithjoy-workspace',
+      base_sha: BASE_SHA,
+      mode: 'read-write',
+    });
+    expect(resolveRepoHead).toHaveBeenCalledWith(
+      'perfectuser21/zenithjoy-workspace',
+    );
+  });
+
+  it('starts proposer from the verified planner Git head on a fresh proposal branch', async () => {
+    const resolveRepoHead = vi.fn();
+    const resolveWorkspaceSpec = createWorkspaceSpecResolver({ resolveRepoHead });
+    const plannerHead = 'd'.repeat(40);
+
+    const resolved = await resolveWorkspaceSpec({
+      action: 'spawn:proposer',
+      role: 'proposer',
+      readOnly: false,
+      attemptId: ATTEMPT_ID,
+      ctx: {
+        runId: RUN_ID,
+        observed: {
+          task: {
+            payload: {
+              base_repo: 'https://github.com/perfectuser21/zenithjoy-workspace.git',
+            },
+          },
+        },
+      },
+      bundle: {
+        inputs: {
+          planner_branch: 'cp-harness-prd-aaaaaaaa-a2',
+          planner_head_sha: plannerHead,
+          propose_branch: 'cp-harness-propose-r1-aaaaaaaa-a3',
+        },
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      repo: 'perfectuser21/zenithjoy-workspace',
+      base_sha: plannerHead,
+      branch: 'cp-harness-propose-r1-aaaaaaaa-a3',
+      expected_head_sha: null,
+      mode: 'read-write',
+    });
+    expect(resolveRepoHead).not.toHaveBeenCalled();
   });
 
   it('keeps generator-fix on the server-observed pull request branch and head', async () => {

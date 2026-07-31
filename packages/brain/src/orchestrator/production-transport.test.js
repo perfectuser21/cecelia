@@ -22,6 +22,16 @@ const ENVELOPE = Object.freeze({
   payload_hash: `sha256:${'a'.repeat(64)}`,
   payload: 'eyJ0b2tlbnMiOnsiYWNjZXNzX3Rva2VuIjoic2VjcmV0In19',
 });
+const GITHUB_ENVELOPE = Object.freeze({
+  contract_version: 'github-credential-envelope/v1',
+  credential_ref: '44444444-4444-4444-8444-444444444444',
+  attempt_id: ATTEMPT_ID,
+  machine_id: 'us-mac-m4',
+  issued_at: '2026-07-27T12:00:00.000Z',
+  expires_at: '2026-07-27T13:00:00.000Z',
+  payload_hash: `sha256:${'b'.repeat(64)}`,
+  payload: 'Z2l0aHViX3BhdF90ZXN0',
+});
 const MACHINE_URLS = {
   'us-mac-m4': 'http://us-worker.internal:5231',
   'xian-mac-m4': 'http://xian-m4-worker.internal:5231',
@@ -51,6 +61,7 @@ function launchInput(machine) {
       lease_generation: 0,
     },
     bundle: {
+      role: 'generator',
       inputs: {
         task_id: 'task-local',
         execution_surface: 'fleet-worker',
@@ -139,6 +150,12 @@ describe('production execution transport', () => {
             machine_id: machineId,
           })),
         },
+        githubCredentialBroker: {
+          issue: vi.fn(async ({ machineId }) => ({
+            ...GITHUB_ENVELOPE,
+            machine_id: machineId,
+          })),
+        },
       });
 
       await expect(transport.launch(launchInput(machine))).resolves.toEqual({
@@ -156,6 +173,10 @@ describe('production execution transport', () => {
       );
       expect(body.credential_envelope).toEqual({
         ...ENVELOPE,
+        machine_id: machine,
+      });
+      expect(body.github_credential_envelope).toEqual({
+        ...GITHUB_ENVELOPE,
         machine_id: machine,
       });
       expect(JSON.stringify(body)).not.toMatch(

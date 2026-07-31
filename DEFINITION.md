@@ -6,11 +6,36 @@
 
 
 
-**Brain 版本**: 1.267.154
+**Brain 版本**: 1.267.155
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.155 — Kernel real-business workspace convergence
+
+- Kernel WorkspaceSpec 和 Fleet Worker 的受控仓库 allowlist 同时支持 Cecelia
+  与 `perfectuser21/zenithjoy-workspace`；仍拒绝任意第三方仓库和请求方绝对路径。
+- Brain 从 server-owned task worktree 的 Git origin 校验仓库身份并解析精确 SHA；
+  ZenithJoy 真实业务 Attempt 可以进入统一 Worker API，不再在首个 planner
+  派发时报 `workspace_repo_not_supported`。
+- Fleet Runner 保留原始 task ID 和 planner/proposer/reviewer/generator/evaluator
+  的角色环境合同；planner PRD 通过受控 Git branch + server-verified SHA 交给
+  proposer，不能用“远端曾生成文件”的 callback claim 冒充可恢复产物。
+- Planner/Proposer/Generator/Evaluator 的 GitHub 凭据由 US M4 按 Attempt 签发，
+  Worker 一次消费后经 FIFO 注入容器 tmpfs；token 不进入 Docker argv/env、
+  Worker state、receipt 或日志。Runner 用父进程内存中的初始 token 对所有
+  provider 输出和结果统一洗敏，provider 篡改 `hosts.yml` 也不能绕过。
+- Fleet evaluator 保留可写测试工作区，但以 Git 环境配置阻断 origin push，
+  不能用评测凭据推进或改写被评 PR。
+- 已存在的远端 writer branch 在独立 admin clone 中按服务端已验证 SHA
+  安全 checkout，避免 `git switch -c` 与本地 ref 冲突。
+- Kernel CLI 在依赖组装取得 pool 时即登记终结能力；其后的初始化或运行期
+  顶层 fatal 会按精确 `run_id + task_id` 事务性终结 run、父 task 和 active
+  attempts，避免子进程早退后留下无 heartbeat 的假 `in_progress`。
+- 回退到 `1.267.154` 会重新只允许 Cecelia workspace；回退前必须 drain
+  ZenithJoy Attempt，并确认没有依赖跨仓 WorkspaceSpec、Git artifact handoff
+  或 Attempt-scoped GitHub envelope 的 active run。
 
 ## Brain 1.267.154 — Fleet Worker preflight startup convergence
 
