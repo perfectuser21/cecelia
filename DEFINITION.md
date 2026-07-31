@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.267.155
+**Brain 版本**: 1.267.156
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.156 — Staff Hub 验收终局：内网 pending/历史/结果提交端点
+
+- 验收终局（决策 fc7b5dc0）：新增内网 `GET /api/brain/acceptance/pending`（团队共享待验收清单）、
+  `GET /api/brain/acceptance/runs?gp_id=`（按 GP 历史查询）、`POST /api/brain/acceptance/results`
+  （内网版结果提交，支持任意子集增量提交），供 Staff Hub 直连 Brain，Notion Worker 退场。
+- `acceptance_checks` 新增 `detail`（工作卡文案）+ `submitted_by`（留痕）列（migration 380）。
+- 抽取 `submitAcceptanceResults`/`loadRunsWithChecks` 共享核心函数，公网/内网路径复用同一套业务逻辑。
+- 修复两个并发/事务安全缺陷：①`SELECT...FOR UPDATE` 行锁防止同一 run 并发提交时 pass_rate 计算竞态
+  ②`SAVEPOINT` 包裹驳回任务 INSERT，防止撞上无关唯一索引时毒化整个事务导致静默丢数据。
 
 ## Brain 1.267.155 — Kernel real-business workspace convergence
 
