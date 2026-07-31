@@ -1,4 +1,4 @@
--- Migration 374: acceptance_checks 加 detail/submitted_by 列 + 驳回任务去重唯一索引
+-- Migration 380: acceptance_checks 加 detail/submitted_by 列 + 驳回任务去重唯一索引
 -- Staff Hub 验收终局（决策 fc7b5dc0）Brain 内网端点扩展所需
 
 ALTER TABLE acceptance_checks ADD COLUMN IF NOT EXISTS detail JSONB;
@@ -13,5 +13,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_acceptance_rejection_open
     AND payload->>'acceptance_run_key' IS NOT NULL;
 
 INSERT INTO schema_version (version, description, applied_at)
-VALUES ('374', 'acceptance_checks detail/submitted_by columns + rejection task dedup index', NOW())
+VALUES ('380', 'acceptance_checks detail/submitted_by columns + rejection task dedup index', NOW())
 ON CONFLICT (version) DO NOTHING;
