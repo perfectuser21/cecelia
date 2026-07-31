@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.267.152
+**Brain 版本**: 1.267.153
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.153 — Manual tick disable survives deploy restart
+
+- Brain 启动时先读取 `working_memory.tick_enabled` 的 `source`；`source=manual`
+  无论关闭多久都保持 disabled，不会被 60 分钟 startup auto-recover 或生产
+  compose 默认的 `CECELIA_TICK_ENABLED=true` 推翻；启动初始化失败后的后台
+  recovery timer 也遵守同一优先级，并在确认 manual 后停止无效重试。
+- `drain`、`alertness` 或未知来源仍沿用既有超时恢复，避免临时保护状态永久停机。
+- 回退到 `1.267.152` 会重新引入“部署重启自动覆盖长期人工停机”的风险；回退前
+  必须以 `CECELIA_TICK_HARD_OFF=1` 硬关，或在每次重启后立即重新调用 disable。
 
 ## Brain 1.267.152 — Kernel reconcile precision
 

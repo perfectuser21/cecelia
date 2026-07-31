@@ -114,11 +114,30 @@ async function tryRecoverTickLoop() {
     const { ensureEventsTable } = await import('./event-bus.js');
     await ensureEventsTable();
 
+    // Production compose defaults CECELIA_TICK_ENABLED=true. It may auto-enable a
+    // transient disable, but must not override the persisted manual operator intent.
     const envEnabled = process.env.CECELIA_TICK_ENABLED;
+    const status = await getTickStatus();
+    if (!status.enabled) {
+      const tickMem = await pool.query(
+        'SELECT value_json FROM working_memory WHERE key = $1',
+        [TICK_ENABLED_KEY]
+      );
+      const disableSource = tickMem.rows[0]?.value_json?.source || 'unknown';
+      if (disableSource === 'manual') {
+        tickLog('[tick-loop] Recovery skipped: tick was disabled manually');
+        if (tickState.recoveryTimer) {
+          clearInterval(tickState.recoveryTimer);
+          tickState.recoveryTimer = null;
+        }
+        await _recordRecoveryAttempt(false, 'tick_disabled_manually');
+        return;
+      }
+    }
+
     if (envEnabled === 'true') {
       await enableTick();
     } else {
-      const status = await getTickStatus();
       if (status.enabled) {
         startTickLoop();
       } else {
@@ -184,14 +203,7 @@ async function initTickLoop() {
       console.error('[tick-loop] restoreDrainState failed (non-fatal):', drainErr.message);
     }
 
-    // Auto-enable tick from env var if set
     const envEnabled = process.env.CECELIA_TICK_ENABLED;
-    if (envEnabled === 'true') {
-      tickLog('[tick-loop] CECELIA_TICK_ENABLED=true, auto-enabling tick');
-      await enableTick();
-      return;
-    }
-
     const status = await getTickStatus();
     if (status.enabled) {
       tickLog('[tick-loop] Tick is enabled in DB, starting loop on startup');
@@ -207,8 +219,14 @@ async function initTickLoop() {
       const minutesDisabled = disabledAt
         ? (Date.now() - disabledAt.getTime()) / (1000 * 60)
         : Infinity; // no timestamp = unknown, treat as expired
+      const disableSource = tickData.source || 'unknown';
 
-      if (minutesDisabled >= TICK_AUTO_RECOVER_MINUTES) {
+      if (disableSource === 'manual') {
+        tickLog('[tick-loop] Tick was disabled manually, preserving disabled state on startup');
+      } else if (envEnabled === 'true') {
+        tickLog('[tick-loop] CECELIA_TICK_ENABLED=true, auto-enabling non-manual tick');
+        await enableTick();
+      } else if (minutesDisabled >= TICK_AUTO_RECOVER_MINUTES) {
         console.warn(`[tick-loop] Tick disabled for ${Math.round(minutesDisabled)}min (>= ${TICK_AUTO_RECOVER_MINUTES}min threshold), auto-recovering`);
         await enableTick();
         // Write P1 alert event

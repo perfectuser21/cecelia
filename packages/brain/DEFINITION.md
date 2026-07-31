@@ -1,6 +1,18 @@
 # Brain 模块定义
 
-**版本**: 1.267.152
+**版本**: 1.267.153
+
+## Manual tick disable survives deploy restart
+
+- `initTickLoop()` 现在与 tick watchdog 使用同一关闭来源语义：
+  `source=manual` 是持久人工停机，部署或进程重启不得按关闭时长自动恢复；
+  生产 compose 默认的 `CECELIA_TICK_ENABLED=true` 也不能覆盖该人工意图。
+  `tryRecoverTickLoop()` 后台恢复路径使用相同判定，确认 manual 后清理 recovery
+  timer，避免每五分钟重复尝试。
+- `drain`、`alertness` 与未知来源仍保留 `TICK_AUTO_RECOVER_MINUTES` 超时恢复，
+  防止临时保护状态永久冻结调度。
+- 回退到 Brain `1.267.152` 会恢复旧的 startup auto-recover 行为；需要回退时，
+  必须先以 `CECELIA_TICK_HARD_OFF=1` 硬关或在重启后重新调用 tick disable。
 
 ## Kernel reconcile precision and acknowledged exceptions
 
