@@ -821,6 +821,7 @@ installed_probe="$runtime_dir/node-probe.cjs"
 installed_workspace_manager="$runtime_dir/workspace-manager.cjs"
 installed_attempt_runner="$runtime_dir/attempt-runner.cjs"
 installed_credential_envelope="$runtime_dir/credential-envelope.cjs"
+installed_github_credential_envelope="$runtime_dir/github-credential-envelope.cjs"
 installed_access_helper="$runtime_dir/refresh-fleet-worker-docker-access.sh"
 installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.plist"
 [[ -f "$installed_plist" ]] || fail "--apply did not install the rendered plist"
@@ -830,6 +831,8 @@ installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.pl
   || fail "--apply omitted the Workspace/Attempt runtime modules"
 [[ -f "$installed_credential_envelope" ]] \
   || fail "--apply omitted the credential envelope runtime module"
+[[ -f "$installed_github_credential_envelope" ]] \
+  || fail "--apply omitted the GitHub credential envelope runtime module"
 [[ -d "$worker_data_root" ]] \
   || fail "--apply did not create the Worker-owned data root"
 [[ -d "$shared_tmpdir" ]] \
