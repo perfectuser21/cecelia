@@ -1,6 +1,21 @@
 # Brain 模块定义
 
-**版本**: 1.267.161
+**版本**: 1.267.162
+
+## Kernel Evaluator feedback handoff
+
+- `spawn:generator-fix` 的 TaskBundle 现在携带与当前 PR head SHA 和失败
+  Evaluator Attempt ID 同时绑定的 `evaluator_feedback`，包含 verdict、
+  summary、decision reason 与最多 20 条机械检查证据。Generator 不再需要从
+  任务描述猜测失败原因，也不会在同一 SHA 上无进展重跑。
+- 只有当前 SHA 的 `FAIL` verdict、同一 Attempt 的成功终态 HarnessResult 和
+  非空诊断同时成立时才交接；stale SHA、PASS、畸形或身份不一致的结果全部
+  fail closed。
+- handoff 只重建固定字段，不复制 provider metadata、credential reference、
+  transcript 或其他私有结果；所有文本复用 Brain diagnostic 脱敏并分别截断到
+  2,000 字符。
+- 回退到 Brain `1.267.161` 会再次丢失 Evaluator→Generator 修复上下文，可能
+  触发同 SHA `no_progress_same_sha`；有 active repair run 时不得回退。
 
 ## Kernel Reviewer feedback handoff
 
