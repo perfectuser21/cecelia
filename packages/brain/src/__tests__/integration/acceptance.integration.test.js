@@ -79,4 +79,23 @@ describe('acceptance 全链 integration', () => {
     ).rejects.toMatchObject({ code: '23505' });
     await pool.query(`DELETE FROM tasks WHERE payload->>'acceptance_run_key' = $1`, [runKey]);
   });
+
+  it('并发提交同一 run 不同 check_key：行锁保证最终 pass_rate 基于完整数据', async () => {
+    const runKey = `${RUN_KEY}-race`;
+    const app = makeApp();
+    await request(app).post('/api/brain/acceptance/runs').send({
+      run_key: runKey, title: 'race 测试单',
+      checks: [{ kind: 'FR', name: 'a' }, { kind: 'FR', name: 'b' }],
+    });
+    const [r1, r2] = await Promise.all([
+      request(app).post('/acceptance/results').send({ results: [{ check_key: `${runKey}:001`, result: '通过' }] }),
+      request(app).post('/acceptance/results').send({ results: [{ check_key: `${runKey}:002`, result: '通过' }] }),
+    ]);
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    const final = await request(app).get(`/api/brain/acceptance/runs/${runKey}`);
+    expect(final.body.run.status).toBe('passed');
+    expect(Number(final.body.run.pass_rate)).toBe(1);
+    await pool.query('DELETE FROM acceptance_runs WHERE run_key = $1', [runKey]);
+  });
 });

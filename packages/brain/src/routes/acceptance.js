@@ -69,6 +69,10 @@ export async function submitAcceptanceResults(pool, results) {
     const runIds = [...new Set(found.map((r) => r.run_id))];
     const updatedRuns = [];
     for (const runId of runIds) {
+      // 并发提交同一 run 不同 check_key 时，READ COMMITTED 隔离级别下两个事务可能都读到
+      // 对方尚未提交的旧快照，导致重算的 pass_rate/status 覆盖成不完整数据。行锁把同一
+      // run 的并发提交序列化，保证重算时看到的是最新提交后的完整数据。
+      await client.query('SELECT id FROM acceptance_runs WHERE id = $1 FOR UPDATE', [runId]);
       const { rows: counts } = await client.query(
         `SELECT COUNT(*)::int AS total,
                 COUNT(*) FILTER (WHERE result = '通过')::int AS pass,
