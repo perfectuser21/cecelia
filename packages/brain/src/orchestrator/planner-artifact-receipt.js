@@ -1,6 +1,10 @@
 import { LOG_ACTION } from './constants.js';
 
 const VERIFIED_REMOTE_TRANSPORTS = new Set(['fleet-worker', 'remote-bridge']);
+const VERIFIED_TERMINAL_STATUSES = new Set([
+  'completed',
+  'completed_with_concerns',
+]);
 const CANONICAL_SHA = /^[a-f0-9]{40}$/;
 const CANONICAL_BRANCH = /^cp-[a-z0-9][a-z0-9._-]{0,126}$/;
 
@@ -59,7 +63,7 @@ export function getVerifiedRemotePlannerPrdArtifact({
     if (
       detail?.run_id !== runId
       || detail.role !== 'planner'
-      || detail.status !== 'completed'
+      || !VERIFIED_TERMINAL_STATUSES.has(detail.status)
       || !Number.isInteger(detail.lease_generation)
     ) {
       continue;
@@ -72,7 +76,8 @@ export function getVerifiedRemotePlannerPrdArtifact({
       !attempt
       || attempt.run_id !== runId
       || attempt.role !== 'planner'
-      || attempt.status !== 'completed'
+      || !VERIFIED_TERMINAL_STATUSES.has(attempt.status)
+      || attempt.status !== detail.status
       || attempt.lease_generation !== detail.lease_generation
       || !VERIFIED_REMOTE_TRANSPORTS.has(attempt.execution_transport)
       || attempt.machine_attestation_status !== 'verified'

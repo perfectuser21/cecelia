@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.267.158
+**Brain 版本**: 1.267.159
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.159 — Planner concerns receipt convergence
+
+- 远端 planner 的 `completed_with_concerns` 与既有 Kernel 合同保持一致：
+  记录 concerns，同时允许已认证、lease-fenced 且服务端验证过的 Git artifact
+  receipt 推进 PRD 里程碑，避免成功产物被误判为 `no_prd` 后重复派发 planner。
+- receipt 仍要求 callback 与 Attempt 状态完全一致，并绑定精确 run、Attempt、
+  lease generation、机器 attestation、仓库、分支、SHA 与 sprint path。
+- 回退到 `1.267.158` 会重新只接受 `completed` planner receipt；回退前必须确认
+  没有依赖 `completed_with_concerns` PRD artifact 的 active Kernel run。
 
 ## Brain 1.267.158 — Fleet Runner credential contract pin
 

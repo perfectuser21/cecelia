@@ -213,7 +213,9 @@ describe('collectGroundTruth：prd 与 callback 文件', () => {
     expect(o.prdExists).toBe(true);
   });
 
-  it('远端 planner 的已认证成功 callback receipt 可推进 PRD 里程碑，无需读取远端 worktree', async () => {
+  it.each(['completed', 'completed_with_concerns'])(
+    '远端 planner 的已认证 %s callback receipt 可推进 PRD 里程碑，无需读取远端 worktree',
+    async (callbackStatus) => {
     const attemptId = '10000000-0000-4000-8000-000000000009';
     const sprintDir = 'sprints/07310943-kernel-remote';
     const deps = makeDeps({
@@ -228,7 +230,7 @@ describe('collectGroundTruth：prd 与 callback 文件', () => {
           run_id: RUN_ID,
           hop: 2,
           role: 'planner',
-          status: 'completed',
+          status: callbackStatus,
           execution_transport: 'fleet-worker',
           machine_attestation_status: 'verified',
           actual_machine_id: 'xian-mac-m4',
@@ -248,13 +250,13 @@ describe('collectGroundTruth：prd 与 callback 文件', () => {
           observed: {
             attempt_id: attemptId,
             role: 'planner',
-            status: 'completed',
+            status: callbackStatus,
           },
           detail: {
             run_id: RUN_ID,
             attempt_id: attemptId,
             role: 'planner',
-            status: 'completed',
+            status: callbackStatus,
             lease_generation: 0,
             artifacts: [{
               type: 'git_artifact',
@@ -347,25 +349,6 @@ describe('collectGroundTruth：prd 与 callback 文件', () => {
         head_sha: 'a'.repeat(40),
         verification_status: 'verified',
       },
-    }],
-    ['带 concerns 的非成功终态', {
-      action: 'verdict:attempt_callback',
-      attempt: {
-        role: 'planner',
-        status: 'completed_with_concerns',
-        execution_transport: 'fleet-worker',
-        machine_attestation_status: 'verified',
-      },
-      artifact: {
-        type: 'git_artifact',
-        kind: 'planner_prd',
-        path: 'sprints/remote/sprint-prd.md',
-        repo: 'perfectuser21/zenithjoy-workspace',
-        branch: 'cp-harness-prd-aaaaaaaa-a2',
-        head_sha: 'a'.repeat(40),
-        verification_status: 'verified',
-      },
-      callbackStatus: 'completed_with_concerns',
     }],
     ['错误路径的 artifact claim', {
       action: 'verdict:attempt_callback',
