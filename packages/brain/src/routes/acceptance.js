@@ -14,12 +14,165 @@ async function safeRollback(client) {
   try { await client.query('ROLLBACK'); } catch { /* 连接已坏，忽略 */ }
 }
 
+export class AcceptanceResultsError extends Error {
+  constructor(status, body) {
+    super(body?.error || 'acceptance_results_error');
+    this.status = status;
+    this.body = body;
+  }
+}
+
+export async function submitAcceptanceResults(pool, results) {
+  if (!Array.isArray(results) || results.length === 0) {
+    throw new AcceptanceResultsError(400, { error: 'results must be a non-empty array' });
+  }
+  const invalid = [];
+  for (const [i, r] of results.entries()) {
+    if (!r || !r.check_key) invalid.push({ index: i, error: 'check_key required' });
+    else if (!ACCEPTANCE_RESULTS.includes(r.result)) {
+      invalid.push({ index: i, check_key: r.check_key, error: `result must be one of: ${ACCEPTANCE_RESULTS.join(',')}` });
+    }
+  }
+  if (invalid.length > 0) throw new AcceptanceResultsError(400, { error: 'invalid results', invalid });
+
+  const seen = new Set();
+  for (const r of results) {
+    if (r?.check_key) {
+      if (seen.has(r.check_key)) {
+        throw new AcceptanceResultsError(400, { error: 'duplicate check_key in batch', check_key: r.check_key });
+      }
+      seen.add(r.check_key);
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const keys = results.map((r) => r.check_key);
+    const { rows: found } = await client.query(
+      'SELECT check_key, run_id FROM acceptance_checks WHERE check_key = ANY($1)',
+      [keys]
+    );
+    const foundKeys = new Set(found.map((r) => r.check_key));
+    const missing = keys.filter((k) => !foundKeys.has(k));
+    if (missing.length > 0) {
+      await safeRollback(client);
+      throw new AcceptanceResultsError(400, { error: 'unknown check_key', missing });
+    }
+    for (const r of results) {
+      await client.query(
+        `UPDATE acceptance_checks SET result = $1, note = $2, submitted_by = $3, decided_at = NOW(), updated_at = NOW()
+         WHERE check_key = $4`,
+        [r.result, r.note || null, r.submitted_by || null, r.check_key]
+      );
+    }
+    const runIds = [...new Set(found.map((r) => r.run_id))];
+    const updatedRuns = [];
+    for (const runId of runIds) {
+      // 并发提交同一 run 不同 check_key 时，READ COMMITTED 隔离级别下两个事务可能都读到
+      // 对方尚未提交的旧快照，导致重算的 pass_rate/status 覆盖成不完整数据。行锁把同一
+      // run 的并发提交序列化，保证重算时看到的是最新提交后的完整数据。
+      await client.query('SELECT id FROM acceptance_runs WHERE id = $1 FOR UPDATE', [runId]);
+      const { rows: counts } = await client.query(
+        `SELECT COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE result = '通过')::int AS pass,
+                COUNT(*) FILTER (WHERE result = '不通过')::int AS fail,
+                COUNT(*) FILTER (WHERE result IS NULL)::int AS pending
+           FROM acceptance_checks WHERE run_id = $1`,
+        [runId]
+      );
+      const { total, pass, fail, pending } = counts[0];
+      const passRate = total > 0 ? pass / total : 0;
+      const status = pending > 0 ? 'in_review' : fail > 0 ? 'failed' : pass === total ? 'passed' : 'in_review';
+      const { rows: prevRows } = await client.query(
+        'SELECT status, title, gp_id, run_key FROM acceptance_runs WHERE id = $1',
+        [runId]
+      );
+      const prev = prevRows[0];
+      const { rows: updated } = await client.query(
+        `UPDATE acceptance_runs SET pass_rate = $1, status = $2, updated_at = NOW()
+         WHERE id = $3 RETURNING run_key, pass_rate, status`,
+        [passRate, status, runId]
+      );
+      updatedRuns.push(updated[0]);
+
+      if (prev && prev.status !== 'failed' && status === 'failed') {
+        const { rows: existingTask } = await client.query(
+          `SELECT 1 FROM tasks
+           WHERE payload->>'acceptance_run_key' = $1
+             AND status NOT IN ('completed','failed','cancelled') LIMIT 1`,
+          [prev.run_key]
+        );
+        if (existingTask.length === 0) {
+          const { rows: failedChecks } = await client.query(
+            `SELECT check_key, name, note FROM acceptance_checks
+             WHERE run_id = $1 AND result = '不通过' ORDER BY check_key`,
+            [runId]
+          );
+          const detail = failedChecks.map((c) => `${c.check_key} ${c.name}${c.note ? `（${c.note}）` : ''}`).join('\n');
+          try {
+            await client.query('SAVEPOINT reject_task_insert');
+            await client.query(
+              `INSERT INTO tasks (title, description, task_type, priority, status, payload)
+               VALUES ($1, $2, 'dev', 'P1', 'queued', $3::jsonb)`,
+              [
+                `[验收驳回] ${prev.title}`,
+                `人工验收不通过，需修复后重新验收。GP: ${prev.gp_id || '未知'}，验收单: ${prev.run_key}。\n不通过项：\n${detail}`,
+                JSON.stringify({ acceptance_run_key: prev.run_key, gp_id: prev.gp_id, source: 'acceptance_rejection', harness_mode: false }),
+              ]
+            );
+            await client.query('RELEASE SAVEPOINT reject_task_insert');
+          } catch (taskErr) {
+            if (taskErr.code !== '23505') throw taskErr;
+            // 唯一约束冲突（可能是 uq_tasks_acceptance_rejection_open 或更早的 idx_tasks_dedup_active）
+            // 只回滚这一条 INSERT，不能让整个外层事务被毒化，否则会静默丢弃这次已经写入的
+            // check 结果和 run 状态更新（PG 语义：事务 aborted 后 COMMIT 会被静默降级为 ROLLBACK）
+            await client.query('ROLLBACK TO SAVEPOINT reject_task_insert');
+          }
+        }
+      }
+    }
+    await client.query('COMMIT');
+    return { updated: results.length, runs: updatedRuns };
+  } catch (err) {
+    await safeRollback(client);
+    if (err instanceof AcceptanceResultsError) throw err;
+    console.error('[acceptance] submitAcceptanceResults error:', err.message);
+    throw new AcceptanceResultsError(500, { error: 'internal_error' });
+  } finally {
+    client.release();
+  }
+}
+
 async function loadChecks(q, runId) {
   const { rows } = await q.query(
     'SELECT * FROM acceptance_checks WHERE run_id = $1 ORDER BY check_key',
     [runId]
   );
   return rows;
+}
+
+export async function loadRunsWithChecks(pool, whereClause, params) {
+  const { rows: runs } = await pool.query(
+    `SELECT * FROM acceptance_runs WHERE ${whereClause}`,
+    params
+  );
+  const ids = runs.map((r) => r.id);
+  let checkRows = [];
+  if (ids.length > 0) {
+    const { rows } = await pool.query(
+      'SELECT * FROM acceptance_checks WHERE run_id = ANY($1) ORDER BY check_key',
+      [ids]
+    );
+    checkRows = rows;
+  }
+  const byRun = new Map(runs.map((r) => [r.id, { ...r, checks: [] }]));
+  for (const c of checkRows) byRun.get(c.run_id)?.checks.push(c);
+  return [...byRun.values()];
+}
+
+export async function loadPendingRuns(pool) {
+  return loadRunsWithChecks(pool, `status IN ('pending','in_review') ORDER BY created_at`, []);
 }
 
 export function createAcceptanceInternalRouter({ pool }) {
@@ -61,9 +214,9 @@ export function createAcceptanceInternalRouter({ pool }) {
         const c = checks[i];
         const checkKey = `${run_key}:${String(i + 1).padStart(3, '0')}`;
         const { rows } = await client.query(
-          `INSERT INTO acceptance_checks (run_id, check_key, kind, name, device)
-           VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-          [run.id, checkKey, c.kind, c.name, c.device || null]
+          `INSERT INTO acceptance_checks (run_id, check_key, kind, name, device, detail)
+           VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+          [run.id, checkKey, c.kind, c.name, c.device || null, c.detail ? JSON.stringify(c.detail) : null]
         );
         createdChecks.push(rows[0]);
       }
@@ -109,6 +262,18 @@ export function createAcceptanceInternalRouter({ pool }) {
     }
   });
 
+  router.get('/runs', async (req, res) => {
+    const { gp_id } = req.query;
+    if (!gp_id) return res.status(400).json({ error: 'gp_id query param required' });
+    try {
+      const runs = await loadRunsWithChecks(pool, 'gp_id = $1 ORDER BY created_at DESC', [gp_id]);
+      return res.json({ runs });
+    } catch (err) {
+      console.error('[acceptance] GET /runs error:', err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   router.get('/runs/:run_key', async (req, res) => {
     const client = await pool.connect();
     try {
@@ -121,6 +286,27 @@ export function createAcceptanceInternalRouter({ pool }) {
       return res.status(500).json({ error: err.message });
     } finally {
       client.release();
+    }
+  });
+
+  router.post('/results', async (req, res) => {
+    try {
+      const result = await submitAcceptanceResults(pool, req.body?.results);
+      return res.json(result);
+    } catch (err) {
+      if (err instanceof AcceptanceResultsError) return res.status(err.status).json(err.body);
+      console.error('[acceptance] internal POST /results error:', err.message);
+      return res.status(500).json({ error: 'internal_error' });
+    }
+  });
+
+  router.get('/pending', async (_req, res) => {
+    try {
+      const runs = await loadPendingRuns(pool);
+      return res.json({ runs });
+    } catch (err) {
+      console.error('[acceptance] internal GET /pending error:', err.message);
+      return res.status(500).json({ error: 'internal_error' });
     }
   });
 
@@ -145,21 +331,8 @@ export function createAcceptancePublicRouter({ pool }) {
 
   router.get('/acceptance/pending', async (_req, res) => {
     try {
-      const { rows: runs } = await pool.query(
-        `SELECT * FROM acceptance_runs WHERE status IN ('pending','in_review') ORDER BY created_at`
-      );
-      const ids = runs.map((r) => r.id);
-      let checkRows = [];
-      if (ids.length > 0) {
-        const { rows } = await pool.query(
-          'SELECT * FROM acceptance_checks WHERE run_id = ANY($1) ORDER BY check_key',
-          [ids]
-        );
-        checkRows = rows;
-      }
-      const byRun = new Map(runs.map((r) => [r.id, { ...r, checks: [] }]));
-      for (const c of checkRows) byRun.get(c.run_id)?.checks.push(c);
-      return res.json({ runs: [...byRun.values()] });
+      const runs = await loadPendingRuns(pool);
+      return res.json({ runs });
     } catch (err) {
       console.error('[acceptance] GET /pending error:', err.message);
       return res.status(500).json({ error: 'internal_error' });
@@ -167,109 +340,13 @@ export function createAcceptancePublicRouter({ pool }) {
   });
 
   router.post('/acceptance/results', async (req, res) => {
-    const { results } = req.body || {};
-    if (!Array.isArray(results) || results.length === 0) {
-      return res.status(400).json({ error: 'results must be a non-empty array' });
-    }
-    const invalid = [];
-    for (const [i, r] of results.entries()) {
-      if (!r || !r.check_key) invalid.push({ index: i, error: 'check_key required' });
-      else if (!ACCEPTANCE_RESULTS.includes(r.result)) {
-        invalid.push({ index: i, check_key: r.check_key, error: `result must be one of: ${ACCEPTANCE_RESULTS.join(',')}` });
-      }
-    }
-    if (invalid.length > 0) return res.status(400).json({ error: 'invalid results', invalid });
-
-    const seen = new Set();
-    for (const r of results) {
-      if (r?.check_key) {
-        if (seen.has(r.check_key)) return res.status(400).json({ error: 'duplicate check_key in batch', check_key: r.check_key });
-        seen.add(r.check_key);
-      }
-    }
-
-    const client = await pool.connect();
     try {
-      await client.query('BEGIN');
-      const keys = results.map((r) => r.check_key);
-      const { rows: found } = await client.query(
-        'SELECT check_key, run_id FROM acceptance_checks WHERE check_key = ANY($1)',
-        [keys]
-      );
-      const foundKeys = new Set(found.map((r) => r.check_key));
-      const missing = keys.filter((k) => !foundKeys.has(k));
-      if (missing.length > 0) {
-        await safeRollback(client);
-        return res.status(400).json({ error: 'unknown check_key', missing });
-      }
-      for (const r of results) {
-        await client.query(
-          `UPDATE acceptance_checks SET result = $1, note = $2, decided_at = NOW(), updated_at = NOW()
-           WHERE check_key = $3`,
-          [r.result, r.note || null, r.check_key]
-        );
-      }
-      const runIds = [...new Set(found.map((r) => r.run_id))];
-      const updatedRuns = [];
-      for (const runId of runIds) {
-        const { rows: counts } = await client.query(
-          `SELECT COUNT(*)::int AS total,
-                  COUNT(*) FILTER (WHERE result = '通过')::int AS pass,
-                  COUNT(*) FILTER (WHERE result = '不通过')::int AS fail,
-                  COUNT(*) FILTER (WHERE result IS NULL)::int AS pending
-             FROM acceptance_checks WHERE run_id = $1`,
-          [runId]
-        );
-        const { total, pass, fail, pending } = counts[0];
-        const passRate = total > 0 ? pass / total : 0;
-        const status = pending > 0 ? 'in_review' : fail > 0 ? 'failed' : pass === total ? 'passed' : 'in_review';
-        const { rows: prevRows } = await client.query(
-          'SELECT status, title, gp_id, run_key FROM acceptance_runs WHERE id = $1',
-          [runId]
-        );
-        const prev = prevRows[0];
-        const { rows: updated } = await client.query(
-          `UPDATE acceptance_runs SET pass_rate = $1, status = $2, updated_at = NOW()
-           WHERE id = $3 RETURNING run_key, pass_rate, status`,
-          [passRate, status, runId]
-        );
-        updatedRuns.push(updated[0]);
-
-        // 驳回自动开任务（主理人条件二）：仅在 非failed→failed 转变沿触发，幂等查重防重复
-        if (prev && prev.status !== 'failed' && status === 'failed') {
-          const { rows: existing } = await client.query(
-            `SELECT 1 FROM tasks
-             WHERE payload->>'acceptance_run_key' = $1
-               AND status NOT IN ('completed','failed','cancelled') LIMIT 1`,
-            [prev.run_key]
-          );
-          if (existing.length === 0) {
-            const { rows: failedChecks } = await client.query(
-              `SELECT check_key, name, note FROM acceptance_checks
-               WHERE run_id = $1 AND result = '不通过' ORDER BY check_key`,
-              [runId]
-            );
-            const detail = failedChecks.map((c) => `${c.check_key} ${c.name}${c.note ? `（${c.note}）` : ''}`).join('\n');
-            await client.query(
-              `INSERT INTO tasks (title, description, task_type, priority, status, payload)
-               VALUES ($1, $2, 'dev', 'P1', 'queued', $3::jsonb)`,
-              [
-                `[验收驳回] ${prev.title}`,
-                `人工验收不通过，需修复后重新验收。GP: ${prev.gp_id || '未知'}，验收单: ${prev.run_key}。\n不通过项：\n${detail}`,
-                JSON.stringify({ acceptance_run_key: prev.run_key, gp_id: prev.gp_id, source: 'acceptance_rejection', harness_mode: false }),
-              ]
-            );
-          }
-        }
-      }
-      await client.query('COMMIT');
-      return res.json({ updated: results.length, runs: updatedRuns });
+      const result = await submitAcceptanceResults(pool, req.body?.results);
+      return res.json(result);
     } catch (err) {
-      await safeRollback(client);
-      console.error('[acceptance] POST /results error:', err.message);
+      if (err instanceof AcceptanceResultsError) return res.status(err.status).json(err.body);
+      console.error('[acceptance] public POST /results error:', err.message);
       return res.status(500).json({ error: 'internal_error' });
-    } finally {
-      client.release();
     }
   });
 

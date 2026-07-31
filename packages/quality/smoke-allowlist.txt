@@ -8,6 +8,7 @@ ability-id-chain-pr2-smoke.sh
 acceptance-aging-smoke.sh
 acceptance-catalog-smoke.sh
 acceptance-endpoints-smoke.sh
+acceptance-staff-hub-internal-smoke.sh
 admission-report-smoke.sh
 advancement-items-smoke.sh
 agent-credit-smoke.sh

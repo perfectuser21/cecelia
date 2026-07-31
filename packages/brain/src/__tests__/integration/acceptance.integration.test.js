@@ -62,4 +62,64 @@ describe('acceptance 全链 integration', () => {
     const { rows } = await pool.query('SELECT status, pass_rate FROM acceptance_runs WHERE run_key = $1', [RUN_KEY]);
     expect(rows[0].status).toBe('failed');
   });
+
+  it('并发场景：同一 run_key 两次插入未终态驳回任务，第二次必须撞唯一索引', async () => {
+    const runKey = `${RUN_KEY}-dedup`;
+    await pool.query(
+      `INSERT INTO tasks (title, task_type, status, payload)
+       VALUES ('probe-1', 'dev', 'queued', $1::jsonb)`,
+      [JSON.stringify({ acceptance_run_key: runKey })]
+    );
+    await expect(
+      pool.query(
+        `INSERT INTO tasks (title, task_type, status, payload)
+         VALUES ('probe-2', 'dev', 'queued', $1::jsonb)`,
+        [JSON.stringify({ acceptance_run_key: runKey })]
+      )
+    ).rejects.toMatchObject({ code: '23505' });
+    await pool.query(`DELETE FROM tasks WHERE payload->>'acceptance_run_key' = $1`, [runKey]);
+  });
+
+  it('并发提交同一 run 不同 check_key：行锁保证最终 pass_rate 基于完整数据', async () => {
+    const runKey = `${RUN_KEY}-race`;
+    const app = makeApp();
+    await request(app).post('/api/brain/acceptance/runs').send({
+      run_key: runKey, title: 'race 测试单',
+      checks: [{ kind: 'FR', name: 'a' }, { kind: 'FR', name: 'b' }],
+    });
+    const [r1, r2] = await Promise.all([
+      request(app).post('/acceptance/results').send({ results: [{ check_key: `${runKey}:001`, result: '通过' }] }),
+      request(app).post('/acceptance/results').send({ results: [{ check_key: `${runKey}:002`, result: '通过' }] }),
+    ]);
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    const final = await request(app).get(`/api/brain/acceptance/runs/${runKey}`);
+    expect(final.body.run.status).toBe('passed');
+    expect(Number(final.body.run.pass_rate)).toBe(1);
+    await pool.query('DELETE FROM acceptance_runs WHERE run_key = $1', [runKey]);
+  });
+
+  it('驳回任务撞上无关的 idx_tasks_dedup_active 索引时，check结果和run状态不能被静默回滚', async () => {
+    const runKey = `${RUN_KEY}-savepoint`;
+    const rejectTitle = `[验收驳回] ${runKey} 标题探针`;
+    const app = makeApp();
+    await request(app).post('/api/brain/acceptance/runs').send({
+      run_key: runKey, title: `${runKey} 标题探针`,
+      checks: [{ kind: 'FR', name: 'will-fail' }],
+    });
+    // 手工占住 idx_tasks_dedup_active（title 相同 + 未终态），模拟"标题冲突但不是本次唯一索引"的场景
+    await pool.query(
+      `INSERT INTO tasks (title, task_type, status, payload) VALUES ($1, 'dev', 'queued', '{}'::jsonb)`,
+      [rejectTitle]
+    );
+    const submit = await request(app).post('/acceptance/results').send({
+      results: [{ check_key: `${runKey}:001`, result: '不通过' }],
+    });
+    expect(submit.status).toBe(200);
+    const final = await request(app).get(`/api/brain/acceptance/runs/${runKey}`);
+    expect(final.body.run.status).toBe('failed');
+    expect(final.body.checks[0].result).toBe('不通过');
+    await pool.query('DELETE FROM tasks WHERE title = $1', [rejectTitle]);
+    await pool.query('DELETE FROM acceptance_runs WHERE run_key = $1', [runKey]);
+  });
 });

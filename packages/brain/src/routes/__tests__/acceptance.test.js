@@ -95,6 +95,25 @@ describe('POST /api/brain/acceptance/runs', () => {
       .post('/api/brain/acceptance/runs').send({ run_key: 'r1', title: 'T', checks: [{ kind: 'XX', name: 'x' }] });
     expect(res.status).toBe(400);
   });
+
+  it('checks 可选携带 detail 工作卡，透传写入 INSERT', async () => {
+    const insertedDetails = [];
+    const client = makeClient((sql, params) => {
+      if (sql.includes('SELECT * FROM acceptance_runs WHERE run_key')) return { rows: [] };
+      if (sql.includes('INSERT INTO acceptance_runs')) return { rows: [RUN_ROW] };
+      if (sql.includes('INSERT INTO acceptance_checks')) {
+        insertedDetails.push(params[5]);
+        return { rows: [{ id: 'c-1', check_key: params[1], kind: params[2], name: params[3], detail: params[5] }] };
+      }
+    });
+    const res = await request(makeApp(makePool(client)))
+      .post('/api/brain/acceptance/runs')
+      .send({ run_key: 'r-detail', title: 'T', checks: [
+        { kind: 'FR', name: 'step1', detail: { op: ['点击发送'], exp: '消息送达', pass: '收到回执', fail: '无回执' } },
+      ] });
+    expect(res.status).toBe(201);
+    expect(JSON.parse(insertedDetails[0])).toEqual({ op: ['点击发送'], exp: '消息送达', pass: '收到回执', fail: '无回执' });
+  });
 });
 
 describe('GET /api/brain/acceptance/runs/:run_key', () => {
@@ -138,5 +157,109 @@ describe('POST /api/brain/acceptance/catalog（目录快照上载）', () => {
     const r2 = await request(makeApp(pool)).post('/api/brain/acceptance/catalog').send({ catalog: { golden_paths: 'x' } });
     expect(r2.status).toBe(400);
     expect(pool.query).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/brain/acceptance/results（内网版）', () => {
+  it('提交子集判定项：200，返回更新后的 run', async () => {
+    const client = makeClient((sql) => {
+      if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
+        return { rows: [{ check_key: 'r1:001', run_id: 'run-uuid-1' }] };
+      }
+      if (sql.includes('UPDATE acceptance_checks SET result')) return { rows: [] };
+      if (sql.includes('SELECT COUNT(*)::int AS total')) {
+        return { rows: [{ total: 2, pass: 1, fail: 0, pending: 1 }] };
+      }
+      if (sql.includes('SELECT status, title, gp_id, run_key FROM acceptance_runs')) {
+        return { rows: [{ status: 'pending', title: 'T', gp_id: 'gp1', run_key: 'r1' }] };
+      }
+      if (sql.includes('UPDATE acceptance_runs SET pass_rate')) {
+        return { rows: [{ run_key: 'r1', pass_rate: 0.5, status: 'in_review' }] };
+      }
+      return { rows: [] };
+    });
+    const res = await request(makeApp(makePool(client)))
+      .post('/api/brain/acceptance/results')
+      .send({ results: [{ check_key: 'r1:001', result: '通过', submitted_by: 'alice@zenjoymedia.media' }] });
+    expect(res.status).toBe(200);
+    expect(res.body.updated).toBe(1);
+    expect(res.body.runs[0].status).toBe('in_review');
+  });
+
+  it('未知 check_key：400', async () => {
+    const client = makeClient((sql) => {
+      if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) return { rows: [] };
+      return { rows: [] };
+    });
+    const res = await request(makeApp(makePool(client)))
+      .post('/api/brain/acceptance/results')
+      .send({ results: [{ check_key: 'ghost:001', result: '通过' }] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('unknown check_key');
+  });
+});
+
+describe('GET /api/brain/acceptance/pending（内网版）', () => {
+  it('返回团队共享的待验收清单（pending/in_review），附判定项', async () => {
+    const pool = {
+      connect: vi.fn(),
+      query: vi.fn(async (sql) => {
+        if (sql.includes("status IN ('pending','in_review')")) {
+          return { rows: [{ id: 'run-1', run_key: 'r1', status: 'in_review' }] };
+        }
+        if (sql.includes('WHERE run_id = ANY')) {
+          return { rows: [{ run_id: 'run-1', check_key: 'r1:001' }] };
+        }
+        return { rows: [] };
+      }),
+    };
+    const res = await request(makeApp(pool)).get('/api/brain/acceptance/pending');
+    expect(res.status).toBe(200);
+    expect(res.body.runs).toHaveLength(1);
+    expect(res.body.runs[0].checks).toHaveLength(1);
+  });
+
+  it('DB 查询抛错：500，body 为 internal_error', async () => {
+    const pool = {
+      connect: vi.fn(),
+      query: vi.fn(async () => { throw new Error('db down'); }),
+    };
+    const res = await request(makeApp(pool)).get('/api/brain/acceptance/pending');
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'internal_error' });
+  });
+});
+
+describe('GET /api/brain/acceptance/runs?gp_id=（历史查询）', () => {
+  it('缺 gp_id：400', async () => {
+    const client = makeClient(() => undefined);
+    const res = await request(makeApp(makePool(client))).get('/api/brain/acceptance/runs');
+    expect(res.status).toBe(400);
+  });
+
+  it('按 gp_id 查历史，按 created_at 倒序，附每单判定项', async () => {
+    const pool = {
+      connect: vi.fn(),
+      query: vi.fn(async (sql) => {
+        if (sql.includes('WHERE gp_id = $1')) {
+          return { rows: [
+            { id: 'run-2', run_key: 'r2', gp_id: 'gp1', version: '1.22', created_at: '2026-07-20' },
+            { id: 'run-1', run_key: 'r1', gp_id: 'gp1', version: '1.21', created_at: '2026-07-10' },
+          ] };
+        }
+        if (sql.includes('WHERE run_id = ANY')) {
+          return { rows: [{ run_id: 'run-2', check_key: 'r2:001', result: '通过' }] };
+        }
+        return { rows: [] };
+      }),
+    };
+    const res = await request(makeApp(pool))
+      .get('/api/brain/acceptance/runs')
+      .query({ gp_id: 'gp1' });
+    expect(res.status).toBe(200);
+    expect(res.body.runs).toHaveLength(2);
+    expect(res.body.runs[0].run_key).toBe('r2');
+    expect(res.body.runs[0].checks).toHaveLength(1);
+    expect(res.body.runs[1].checks).toHaveLength(0);
   });
 });
