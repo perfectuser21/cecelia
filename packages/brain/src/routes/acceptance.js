@@ -111,6 +111,7 @@ export async function submitAcceptanceResults(pool, results) {
           );
           const detail = failedChecks.map((c) => `${c.check_key} ${c.name}${c.note ? `（${c.note}）` : ''}`).join('\n');
           try {
+            await client.query('SAVEPOINT reject_task_insert');
             await client.query(
               `INSERT INTO tasks (title, description, task_type, priority, status, payload)
                VALUES ($1, $2, 'dev', 'P1', 'queued', $3::jsonb)`,
@@ -120,8 +121,13 @@ export async function submitAcceptanceResults(pool, results) {
                 JSON.stringify({ acceptance_run_key: prev.run_key, gp_id: prev.gp_id, source: 'acceptance_rejection', harness_mode: false }),
               ]
             );
+            await client.query('RELEASE SAVEPOINT reject_task_insert');
           } catch (taskErr) {
             if (taskErr.code !== '23505') throw taskErr;
+            // 唯一约束冲突（可能是 uq_tasks_acceptance_rejection_open 或更早的 idx_tasks_dedup_active）
+            // 只回滚这一条 INSERT，不能让整个外层事务被毒化，否则会静默丢弃这次已经写入的
+            // check 结果和 run 状态更新（PG 语义：事务 aborted 后 COMMIT 会被静默降级为 ROLLBACK）
+            await client.query('ROLLBACK TO SAVEPOINT reject_task_insert');
           }
         }
       }
