@@ -766,6 +766,121 @@ describe('createDispatcher', () => {
     });
   });
 
+  it('generator-fix 只接收与当前 PR SHA 和 Attempt 绑定的安全 Evaluator 反馈', async () => {
+    const deps = makeDeps();
+    const evaluatorAttemptId = '33333333-3333-4333-8333-333333333333';
+    const prHeadSha = 'b'.repeat(40);
+
+    await createDispatcher(deps)('spawn:generator-fix', {
+      taskId,
+      runId,
+      hop: 12,
+      observed: {
+        ...observed,
+        pr: {
+          number: 1571,
+          head_ref: 'cp-android-cancel',
+          head_sha: prHeadSha,
+        },
+        contract: {
+          approved: true,
+          row: { branch: 'cp-harness-propose-r2-aaaaaaaa-a6' },
+        },
+        evaluateVerdict: {
+          verdict: 'FAIL',
+          feedback: 'Cooldown oracle is missing.',
+          attempt_id: evaluatorAttemptId,
+          pr_head_sha: prHeadSha,
+        },
+        evaluateResult: {
+          contract_version: '1.0',
+          attempt_id: evaluatorAttemptId,
+          status: 'completed_with_concerns',
+          summary: 'Evaluator verdict: FAIL.',
+          decision: {
+            outcome: 'FAIL',
+            reason: 'token=secret-value; add the real cooldown assertion.',
+          },
+          checks: [{
+            command: 'npm run test:e2e',
+            exit_code: 1,
+            verification_level: 'L3',
+            log_tail: 'Bearer private-token failed',
+          }],
+          provider_metadata: {
+            credential_ref: 'must-not-reach-generator',
+            private_chain_of_thought: 'must-not-reach-generator',
+          },
+        },
+      },
+      decision: { phase: 'generate', reason: 'evaluate_failed' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.evaluator_feedback).toEqual({
+      attempt_id: evaluatorAttemptId,
+      pr_head_sha: prHeadSha,
+      verdict: 'FAIL',
+      summary: 'Evaluator verdict: FAIL.',
+      reason: 'token=[REDACTED]; add the real cooldown assertion.',
+      checks: [{
+        command: 'npm run test:e2e',
+        exit_code: 1,
+        verification_level: 'L3',
+        log_tail: 'Bearer [REDACTED] failed',
+      }],
+    });
+    expect(JSON.stringify(created.bundle.inputs.evaluator_feedback))
+      .not.toContain('must-not-reach-generator');
+  });
+
+  it.each([
+    ['stale PR SHA', {
+      verdict: 'FAIL',
+      attempt_id: '33333333-3333-4333-8333-333333333333',
+      pr_head_sha: 'c'.repeat(40),
+    }],
+    ['non-FAIL verdict', {
+      verdict: 'PASS',
+      attempt_id: '33333333-3333-4333-8333-333333333333',
+      pr_head_sha: 'b'.repeat(40),
+    }],
+    ['mismatched Evaluator Attempt', {
+      verdict: 'FAIL',
+      attempt_id: '44444444-4444-4444-8444-444444444444',
+      pr_head_sha: 'b'.repeat(40),
+    }],
+  ])('generator-fix 不接收 %s 的 Evaluator 反馈', async (_label, evaluateVerdict) => {
+    const deps = makeDeps();
+    const evaluatorAttemptId = '33333333-3333-4333-8333-333333333333';
+
+    await createDispatcher(deps)('spawn:generator-fix', {
+      taskId,
+      runId,
+      hop: 12,
+      observed: {
+        ...observed,
+        pr: {
+          number: 1571,
+          head_ref: 'cp-android-cancel',
+          head_sha: 'b'.repeat(40),
+        },
+        evaluateVerdict,
+        evaluateResult: {
+          attempt_id: evaluatorAttemptId,
+          status: 'completed_with_concerns',
+          summary: 'Evaluator verdict.',
+          decision: { outcome: 'FAIL', reason: 'Fix it.' },
+          checks: [],
+        },
+      },
+      decision: { phase: 'generate', reason: 'evaluate_failed' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs).not.toHaveProperty('evaluator_feedback');
+  });
+
   it('generator bundle 从生产合同 schema 的 row.branch 导出 contract_branch', async () => {
     const deps = makeDeps();
 

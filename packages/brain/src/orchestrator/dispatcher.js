@@ -5,8 +5,15 @@ import path from 'node:path';
 
 import { parseTaskBundle } from './execution-contract.js';
 import { generateCallbackSecret, hashCallbackSecret } from './callback-auth.js';
-import { errorMessage, failurePersistenceError } from './failure-persistence.js';
+import {
+  errorMessage,
+  failurePersistenceError,
+  sanitizeDiagnostic,
+} from './failure-persistence.js';
 import { deriveCapabilityRequirements } from './preflight/requirements.js';
+
+const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
+const MAX_EVALUATOR_FEEDBACK_CHECKS = 20;
 
 const ACTION_SPECS = Object.freeze({
   'spawn:planner': {
@@ -81,6 +88,54 @@ function asObject(value) {
   if (!value) return {};
   if (typeof value === 'object') return value;
   try { return JSON.parse(value); } catch { return {}; }
+}
+
+function buildEvaluatorFeedback(observed) {
+  const verdict = asObject(observed.evaluateVerdict);
+  const result = asObject(observed.evaluateResult);
+  const currentPrSha = observed.pr?.head_sha;
+  const attemptId = verdict.attempt_id;
+  const resultAttemptId = result.attempt_id;
+  const summary = typeof result.summary === 'string' ? result.summary.trim() : '';
+  const reason = typeof result.decision?.reason === 'string'
+    ? result.decision.reason.trim()
+    : '';
+
+  if (
+    verdict.verdict !== 'FAIL'
+    || result.decision?.outcome !== 'FAIL'
+    || !GIT_SHA_PATTERN.test(currentPrSha ?? '')
+    || verdict.pr_head_sha !== currentPrSha
+    || typeof attemptId !== 'string'
+    || attemptId.length === 0
+    || resultAttemptId !== attemptId
+    || !['completed', 'completed_with_concerns'].includes(result.status)
+    || summary.length === 0
+    || reason.length === 0
+  ) {
+    return null;
+  }
+
+  const checks = Array.isArray(result.checks)
+    ? result.checks
+      .slice(0, MAX_EVALUATOR_FEEDBACK_CHECKS)
+      .filter((check) => check && typeof check === 'object')
+      .map((check) => ({
+        command: sanitizeDiagnostic(check.command),
+        exit_code: Number.isInteger(check.exit_code) ? check.exit_code : null,
+        verification_level: sanitizeDiagnostic(check.verification_level),
+        log_tail: sanitizeDiagnostic(check.log_tail),
+      }))
+    : [];
+
+  return Object.freeze({
+    attempt_id: attemptId,
+    pr_head_sha: currentPrSha,
+    verdict: 'FAIL',
+    summary: sanitizeDiagnostic(summary),
+    reason: sanitizeDiagnostic(reason),
+    checks,
+  });
 }
 
 export function resolveProviderAccountHome(provider, account) {
@@ -180,6 +235,8 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   if (action === 'spawn:generator-fix') {
     common.pr_branch = observed.pr?.head_ref ?? null;
     common.pr_head_sha = observed.pr?.head_sha ?? null;
+    const evaluatorFeedback = buildEvaluatorFeedback(observed);
+    if (evaluatorFeedback) common.evaluator_feedback = evaluatorFeedback;
   }
   if (spec.role === 'evaluator' || spec.role === 'judge') {
     common.pull_request = observed.pr ?? null;
