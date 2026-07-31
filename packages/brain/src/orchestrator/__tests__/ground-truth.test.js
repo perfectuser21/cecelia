@@ -218,6 +218,24 @@ describe('collectGroundTruth：prd 与 callback 文件', () => {
     async (callbackStatus) => {
     const attemptId = '10000000-0000-4000-8000-000000000009';
     const sprintDir = 'sprints/07310943-kernel-remote';
+    const artifact = {
+      type: 'git_artifact',
+      kind: 'planner_prd',
+      path: `${sprintDir}/sprint-prd.md`,
+      repo: 'perfectuser21/zenithjoy-workspace',
+      branch: 'cp-harness-prd-aaaaaaaa-a2',
+      head_sha: 'a'.repeat(40),
+      verification_status: 'verified',
+    };
+    const serverVerification = {
+      method: 'git_branch_head',
+      artifact: {
+        path: artifact.path,
+        repo: artifact.repo,
+        branch: artifact.branch,
+        head_sha: artifact.head_sha,
+      },
+    };
     const deps = makeDeps({
       rows: {
         tasks: [{
@@ -235,6 +253,11 @@ describe('collectGroundTruth：prd 与 callback 文件', () => {
           machine_attestation_status: 'verified',
           actual_machine_id: 'xian-mac-m4',
           lease_generation: 0,
+          result: {
+            server_verification: {
+              planner_git_artifact: serverVerification,
+            },
+          },
           task_bundle: {
             inputs: {
               planner_branch: 'cp-harness-prd-aaaaaaaa-a2',
@@ -258,15 +281,10 @@ describe('collectGroundTruth：prd 与 callback 文件', () => {
             role: 'planner',
             status: callbackStatus,
             lease_generation: 0,
-            artifacts: [{
-              type: 'git_artifact',
-              kind: 'planner_prd',
-              path: `${sprintDir}/sprint-prd.md`,
-              repo: 'perfectuser21/zenithjoy-workspace',
-              branch: 'cp-harness-prd-aaaaaaaa-a2',
-              head_sha: 'a'.repeat(40),
-              verification_status: 'verified',
-            }],
+            artifacts: [artifact],
+            server_verification: {
+              planner_git_artifact: serverVerification,
+            },
           },
         }],
       },

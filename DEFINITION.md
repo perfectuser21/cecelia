@@ -19,6 +19,11 @@
   receipt 推进 PRD 里程碑，避免成功产物被误判为 `no_prd` 后重复派发 planner。
 - receipt 仍要求 callback 与 Attempt 状态完全一致，并绑定精确 run、Attempt、
   lease generation、机器 attestation、仓库、分支、SHA 与 sprint path。
+- Brain 在 Git 校验后向 Attempt 与 callback event 原子写入同一份
+  `server_verification.planner_git_artifact`；调用方字段会在解析时剥离，修复前
+  没有该双份证明的历史 receipt 不再被消费。
+- Migration 381 把全新数据库的 execution transport 约束与生产对齐，正式允许
+  `fleet-worker`，消除 migration 363 与生产 schema 的漂移。
 - 回退到 `1.267.158` 会重新只接受 `completed` planner receipt；回退前必须确认
   没有依赖 `completed_with_concerns` PRD artifact 的 active Kernel run。
 

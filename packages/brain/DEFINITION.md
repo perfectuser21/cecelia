@@ -9,6 +9,12 @@
   推进 `prdExists`，不再重复派发 planner。
 - callback 与 Attempt 必须使用同一成功状态，并继续精确绑定 run、Attempt、
   lease generation、机器 attestation、仓库、分支、SHA 与 sprint path。
+- 服务端 Git 校验会生成调用方无法注入的
+  `server_verification.planner_git_artifact`，并在同一事务中写入 Attempt 与
+  callback event；消费侧要求两份证明与 artifact 完全一致，修复前 receipt
+  自动失效。
+- Migration 381 将全新数据库的 `execution_transport` 约束补齐
+  `fleet-worker`，收敛 migration 363 与生产 schema 的差异。
 - 回退到 Brain `1.267.158` 前应确认没有 active run 正依赖 concerns receipt；
   旧版本会把这类成功 artifact 误判为 `no_prd`。
 
