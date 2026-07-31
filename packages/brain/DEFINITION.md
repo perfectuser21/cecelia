@@ -1,14 +1,23 @@
 # Brain 模块定义
 
-**版本**: 1.267.159
+**版本**: 1.267.160
 
-## Planner concerns receipt convergence
+## Planner receipt server attestation
 
 - `completed_with_concerns` 是 Kernel 合同中的成功终态：concerns 进入决策日志，
   但已认证、lease-fenced 且服务端验证过的 planner Git artifact receipt 可以
   推进 `prdExists`，不再重复派发 planner。
 - callback 与 Attempt 必须使用同一成功状态，并继续精确绑定 run、Attempt、
   lease generation、机器 attestation、仓库、分支、SHA 与 sprint path。
+- 服务端 Git 校验会生成调用方无法注入的
+  `server_verification.planner_git_artifact`，并在同一事务中写入 Attempt 与
+  callback event；消费侧要求两份证明与 artifact 完全一致，修复前 receipt
+  自动失效。
+- 历史 snapshot 只有携带 Brain 生成、路径一致的
+  `prdEvidence.source=brain_file_observation` 才能回放；裸
+  `observed.prdExists=true` 不再具有权威性。
+- Migration 381 将全新数据库的 `execution_transport` 约束补齐
+  `fleet-worker`，收敛 migration 363 与生产 schema 的差异。
 - 回退到 Brain `1.267.158` 前应确认没有 active run 正依赖 concerns receipt；
   旧版本会把这类成功 artifact 误判为 `no_prd`。
 

@@ -6,11 +6,24 @@
 
 
 
-**Brain 版本**: 1.267.159
+**Brain 版本**: 1.267.160
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.160 — Planner receipt server attestation
+
+- Brain 在 Git 校验后向 Attempt 与 callback event 原子写入同一份
+  `server_verification.planner_git_artifact`；调用方字段会在解析时剥离，修复前
+  没有该双份证明的历史 receipt 不再被消费。
+- append-only snapshot 不再信任裸 `prdExists=true`；本地文件里程碑必须携带
+  Brain 生成且绑定同一路径的 `prdEvidence`，阻断修复前 receipt 已被消费后的
+  历史 boolean 旁路。
+- Migration 381 把全新数据库的 execution transport 约束与生产对齐，正式允许
+  `fleet-worker`，消除 migration 363 与生产 schema 的漂移。
+- 回退到 `1.267.159` 会重新信任缺少服务端证明的历史 planner receipt；回退前
+  必须确认没有 active Kernel run。
 
 ## Brain 1.267.159 — Planner concerns receipt convergence
 

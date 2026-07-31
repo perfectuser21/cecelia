@@ -218,6 +218,24 @@ describe('collectGroundTruth：prd 与 callback 文件', () => {
     async (callbackStatus) => {
     const attemptId = '10000000-0000-4000-8000-000000000009';
     const sprintDir = 'sprints/07310943-kernel-remote';
+    const artifact = {
+      type: 'git_artifact',
+      kind: 'planner_prd',
+      path: `${sprintDir}/sprint-prd.md`,
+      repo: 'perfectuser21/zenithjoy-workspace',
+      branch: 'cp-harness-prd-aaaaaaaa-a2',
+      head_sha: 'a'.repeat(40),
+      verification_status: 'verified',
+    };
+    const serverVerification = {
+      method: 'git_branch_head',
+      artifact: {
+        path: artifact.path,
+        repo: artifact.repo,
+        branch: artifact.branch,
+        head_sha: artifact.head_sha,
+      },
+    };
     const deps = makeDeps({
       rows: {
         tasks: [{
@@ -235,6 +253,11 @@ describe('collectGroundTruth：prd 与 callback 文件', () => {
           machine_attestation_status: 'verified',
           actual_machine_id: 'xian-mac-m4',
           lease_generation: 0,
+          result: {
+            server_verification: {
+              planner_git_artifact: serverVerification,
+            },
+          },
           task_bundle: {
             inputs: {
               planner_branch: 'cp-harness-prd-aaaaaaaa-a2',
@@ -258,15 +281,10 @@ describe('collectGroundTruth：prd 与 callback 文件', () => {
             role: 'planner',
             status: callbackStatus,
             lease_generation: 0,
-            artifacts: [{
-              type: 'git_artifact',
-              kind: 'planner_prd',
-              path: `${sprintDir}/sprint-prd.md`,
-              repo: 'perfectuser21/zenithjoy-workspace',
-              branch: 'cp-harness-prd-aaaaaaaa-a2',
-              head_sha: 'a'.repeat(40),
-              verification_status: 'verified',
-            }],
+            artifacts: [artifact],
+            server_verification: {
+              planner_git_artifact: serverVerification,
+            },
           },
         }],
       },
@@ -421,7 +439,7 @@ describe('collectGroundTruth：prd 与 callback 文件', () => {
     expect(observed.prdExists).toBe(false);
   });
 
-  it('Brain 容器重启后看不到 task worktree，沿用 append-only 决策日志中已观测的 PRD 里程碑', async () => {
+  it('修复前无 provenance 的 PRD snapshot 不得绕过 server proof', async () => {
     const deps = makeDeps({
       rows: {
         log: [
@@ -448,7 +466,38 @@ describe('collectGroundTruth：prd 与 callback 文件', () => {
     });
 
     expect(deps.fileExists).toHaveBeenCalledWith('/host-only-worktree/sprint-prd.md');
+    expect(o.prdExists).toBe(false);
+  });
+
+  it('Brain 容器重启后只沿用带服务端文件观测 provenance 的 PRD 里程碑', async () => {
+    const deps = makeDeps({
+      rows: {
+        log: [{
+          hop: 3,
+          action: 'spawn:proposer',
+          observed: {
+            prdExists: true,
+            prdEvidence: {
+              source: 'brain_file_observation',
+              path: '/host-only-worktree/sprint-prd.md',
+            },
+          },
+          detail: { reason: 'no_contract_yet' },
+        }],
+      },
+    });
+
+    const o = await collectGroundTruth(deps, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      prdPath: '/host-only-worktree/sprint-prd.md',
+    });
+
     expect(o.prdExists).toBe(true);
+    expect(o.prdEvidence).toEqual({
+      source: 'brain_file_observation',
+      path: '/host-only-worktree/sprint-prd.md',
+    });
   });
 
   it('.brain-result.json 存在 → 解析进 callbackResult；不存在 → null', async () => {

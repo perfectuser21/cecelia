@@ -35,6 +35,19 @@ function verifiedPlannerArtifact(artifact, expected) {
   );
 }
 
+function serverVerificationMatches(proof, artifact) {
+  return (
+    proof
+    && typeof proof === 'object'
+    && !Array.isArray(proof)
+    && proof.method === 'git_branch_head'
+    && proof.artifact?.path === artifact.path
+    && proof.artifact?.repo === artifact.repo
+    && proof.artifact?.branch === artifact.branch
+    && proof.artifact?.head_sha === artifact.head_sha
+  );
+}
+
 /**
  * A remote planner cannot make its worker-local file visible to Brain. Its
  * authenticated, lease-fenced callback is therefore the durable artifact
@@ -96,7 +109,16 @@ export function getVerifiedRemotePlannerPrdArtifact({
           branch: expectedBranch,
         }))
       : null;
-    if (artifact) return Object.freeze({ ...artifact });
+    const attemptResult = asJson(attempt.result);
+    const eventProof = detail.server_verification?.planner_git_artifact;
+    const attemptProof = attemptResult?.server_verification?.planner_git_artifact;
+    if (
+      artifact
+      && serverVerificationMatches(eventProof, artifact)
+      && serverVerificationMatches(attemptProof, artifact)
+    ) {
+      return Object.freeze({ ...artifact });
+    }
   }
   return null;
 }

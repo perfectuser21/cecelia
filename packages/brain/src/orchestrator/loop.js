@@ -152,6 +152,7 @@ function isFailureSetReview(reason) {
 function buildSnapshot(observed, counters, action, reason = null) {
   const snapshot = {
     prdExists: observed.prdExists,
+    prdEvidence: observed.prdEvidence ?? null,
     contractApproved: observed.contract.approved,
     pr: observed.pr
       ? {

@@ -287,7 +287,7 @@ async function verifyGeneratorPullRequestClaims(attempt, result, db, resolvePrId
 async function verifyPlannerGitArtifactClaim(attempt, result, resolveBranchHead) {
   if (
     attempt.role !== 'planner'
-    || result.status !== 'completed'
+    || !['completed', 'completed_with_concerns'].includes(result.status)
     || !['fleet-worker', 'remote-bridge'].includes(attempt.execution_transport)
   ) {
     return result;
@@ -359,6 +359,17 @@ async function verifyPlannerGitArtifactClaim(attempt, result, resolveBranchHead)
     artifacts: (result.artifacts ?? []).map((artifact) => (
       artifact === claim ? verified : artifact
     )),
+    server_verification: {
+      planner_git_artifact: {
+        method: 'git_branch_head',
+        artifact: {
+          path: expectedPath,
+          repo,
+          branch,
+          head_sha: resolvedSha,
+        },
+      },
+    },
   };
 }
 
