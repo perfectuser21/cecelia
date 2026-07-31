@@ -5,7 +5,7 @@
 ## Fleet Runner credential contract pin
 
 - 三台 Fleet 节点统一固定 Runner
-  `sha256:fb632fc62c21c8b88d5a1f7b0c8c25a6439e8474bb55fcb5bb01e990ed03353d`；
+  `sha256:99168f93f9bba7815eea8f1934a1d1b411b78cb7acf6094719cdd674fa598e50`；
   该 artifact 同时实现 GitHub 与 Codex 一次性 CredentialEnvelope。
 - Fleet rollout 在导出和传输实际 pinned image 前，直接检查镜像内 entrypoint
   的两类凭据协议；source 与 artifact 漂移时以
@@ -288,7 +288,7 @@
 - Kernel 将结构化 `provider_timeout` 归类为 infrastructure failure，保留既有
   receipt、attestation 与 Commander failover 边界。
 - 三机固定 Runner：
-  `sha256:fb632fc62c21c8b88d5a1f7b0c8c25a6439e8474bb55fcb5bb01e990ed03353d`。
+  `sha256:99168f93f9bba7815eea8f1934a1d1b411b78cb7acf6094719cdd674fa598e50`。
   发布前必须由 rollout 对实际 artifact 验证 GitHub 与 Codex 两类
   CredentialEnvelope 协议，不能用源码存在相应逻辑替代镜像实检。
 - 回退：节点 drain 后恢复上一 Runner digest，并部署 Brain `1.267.126`。

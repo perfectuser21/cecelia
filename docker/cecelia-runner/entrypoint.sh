@@ -749,6 +749,92 @@ record_codex_credential_mutation() {
 }
 # codex-credential-envelope:end
 
+# credential-contract-probe:start
+run_credential_contract_probe() {
+  local probe_root=""
+  local fake_bin=""
+  local github_fifo=""
+  local github_home=""
+  local github_writer=""
+  local codex_fifo=""
+  local codex_home=""
+  local codex_writer=""
+  local probe_status=0
+  local github_token='github_pat_runner_contract_probe'
+  local codex_token='codex-runner-contract-probe'
+
+  probe_root="$(mktemp -d)" || return 1
+  fake_bin="$probe_root/bin"
+  github_fifo="$probe_root/github-token.fifo"
+  github_home="$probe_root/gh"
+  codex_fifo="$probe_root/codex-auth.fifo"
+  codex_home="$probe_root/codex"
+  mkdir -p "$fake_bin" || probe_status=1
+
+  # shellcheck disable=SC2016
+  printf '%s\n' \
+    '#!/bin/sh' \
+    'token=""' \
+    'IFS= read -r token || exit 1' \
+    'mkdir -p "${GH_CONFIG_DIR:?}" || exit 1' \
+    'printf "%s\n" "github.com:" "    oauth_token: $token" "    git_protocol: https" > "$GH_CONFIG_DIR/hosts.yml"' \
+    > "$fake_bin/gh" || probe_status=1
+  chmod 0700 "$fake_bin/gh" || probe_status=1
+  mkfifo "$github_fifo" "$codex_fifo" || probe_status=1
+
+  if [[ "$probe_status" -eq 0 ]]; then
+    (printf '%s\n' "$github_token" > "$github_fifo") &
+    github_writer="$!"
+    if ! PATH="$fake_bin:$PATH" \
+        CECELIA_GITHUB_CREDENTIAL_REF='44444444-4444-4444-8444-444444444444' \
+        CECELIA_GITHUB_CREDENTIAL_FIFO="$github_fifo" \
+        prepare_github_credential "$github_home"; then
+      probe_status=1
+    fi
+    if kill -0 "$github_writer" >/dev/null 2>&1; then
+      kill "$github_writer" >/dev/null 2>&1 || true
+      probe_status=1
+    fi
+    wait "$github_writer" >/dev/null 2>&1 || probe_status=1
+    grep -Fq "$github_token" "$github_home/hosts.yml" \
+      || probe_status=1
+  fi
+
+  if [[ "$probe_status" -eq 0 ]]; then
+    (
+      printf '%s' \
+        "{\"tokens\":{\"access_token\":\"$codex_token\"}}" \
+        > "$codex_fifo"
+    ) &
+    codex_writer="$!"
+    if ! CECELIA_CREDENTIAL_REF='33333333-3333-4333-8333-333333333333' \
+        CECELIA_CREDENTIAL_FIFO="$codex_fifo" \
+        prepare_codex_credential "$codex_home"; then
+      probe_status=1
+    fi
+    if kill -0 "$codex_writer" >/dev/null 2>&1; then
+      kill "$codex_writer" >/dev/null 2>&1 || true
+      probe_status=1
+    fi
+    wait "$codex_writer" >/dev/null 2>&1 || probe_status=1
+    jq -e \
+      --arg token "$codex_token" \
+      '.tokens.access_token == $token' \
+      "$codex_home/auth.json" >/dev/null 2>&1 \
+      || probe_status=1
+  fi
+
+  rm -rf -- "$probe_root"
+  [[ "$probe_status" -eq 0 ]] || return 1
+  printf '%s\n' 'runner-credential-contract-ok'
+}
+
+if [[ "${1:-}" == '__cecelia_runner_credential_contract_probe__' ]]; then
+  run_credential_contract_probe
+  exit $?
+fi
+# credential-contract-probe:end
+
 # commander-provider-contract:start
 provider_result_schema_json() {
   local task_bundle_file="$1"

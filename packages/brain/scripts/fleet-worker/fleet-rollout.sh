@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-RUNNER_DIGEST='sha256:fb632fc62c21c8b88d5a1f7b0c8c25a6439e8474bb55fcb5bb01e990ed03353d'
+RUNNER_DIGEST='sha256:99168f93f9bba7815eea8f1934a1d1b411b78cb7acf6094719cdd674fa598e50'
 FLEET_WORKER_LABEL='com.perfect21.fleet-worker'
 FLEET_WORKER_DRAIN_MARKER='/var/run/cecelia/fleet-worker.drain'
 
@@ -389,12 +389,12 @@ stage_worker_token "$worker_token"
   HEAD refs/heads/fleet-rollout
 "$GIT" --git-dir="$bundle_repository" bundle create \
   "$repository_bundle" HEAD
-if ! "$DOCKER" run --rm --entrypoint sh "$RUNNER_DIGEST" -c '
-  grep -Fq "# github-credential-envelope:start" /usr/local/bin/entrypoint.sh &&
-  grep -Fq "CECELIA_GITHUB_CREDENTIAL_FIFO" /usr/local/bin/entrypoint.sh &&
-  grep -Fq "# codex-credential-envelope:start" /usr/local/bin/entrypoint.sh &&
-  grep -Fq "CECELIA_CREDENTIAL_FIFO" /usr/local/bin/entrypoint.sh
-'; then
+if ! "$DOCKER" run --rm \
+    -e HARNESS_CANARY=true \
+    --entrypoint /usr/bin/timeout \
+    "$RUNNER_DIGEST" \
+    8 /usr/local/bin/entrypoint.sh \
+    __cecelia_runner_credential_contract_probe__; then
   die "runner_image_contract_invalid"
 fi
 "$DOCKER" save --output "$runner_archive" "$RUNNER_DIGEST"

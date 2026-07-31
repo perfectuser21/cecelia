@@ -26,7 +26,7 @@ artifact_log="$test_root/artifacts.log"
 transport_log="$test_root/transport.log"
 node_log="$test_root/node.log"
 worker_token="$test_root/worker-token"
-expected_runner_digest='sha256:fb632fc62c21c8b88d5a1f7b0c8c25a6439e8474bb55fcb5bb01e990ed03353d'
+expected_runner_digest='sha256:99168f93f9bba7815eea8f1934a1d1b411b78cb7acf6094719cdd674fa598e50'
 touch "$artifact_log" "$transport_log" "$node_log"
 printf 'fleet-worker-transport-token-at-least-32-bytes\n' > "$worker_token"
 chmod 0600 "$worker_token"
@@ -329,11 +329,9 @@ grep -Eq 'fetch --no-tags .* 0000000000000000000000000000000000000001$' \
 grep -Fq 'docker save --output' "$artifact_log" \
   || fail "rollout did not export the Runner image"
 grep -Fq 'docker run --rm --entrypoint sh' "$artifact_log" \
-  || fail "rollout did not verify the actual pinned Runner image contract"
-grep -Fq 'github-credential-envelope:start' "$artifact_log" \
-  || fail "Runner image contract omitted GitHub CredentialEnvelope"
-grep -Fq 'codex-credential-envelope:start' "$artifact_log" \
-  || fail "Runner image contract omitted Codex CredentialEnvelope"
+  && fail "rollout still uses a static source-string image contract"
+grep -Fq '__cecelia_runner_credential_contract_probe__' "$artifact_log" \
+  || fail "rollout did not execute the pinned Runner functional credential probe"
 grep -Fq "$expected_runner_digest" "$artifact_log" \
   || fail "rollout did not export the verified origin/main Runner digest"
 grep -Fq 'jinnuoshengyuan@100.86.57.69' "$transport_log" \
