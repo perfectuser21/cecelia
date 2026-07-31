@@ -1,7 +1,7 @@
 import express from 'express';
 import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
-import { createAcceptancePublicRouter } from '../acceptance.js';
+import { createAcceptancePublicRouter, submitAcceptanceResults } from '../acceptance.js';
 
 function makeApp(pool) {
   const app = express();
@@ -234,5 +234,72 @@ describe('GET /acceptance/catalog（Worker 拉目录）', () => {
     const pool = { query: vi.fn(async () => ({ rows: [] })), connect: vi.fn() };
     const res = await request(makeApp(pool)).get('/acceptance/catalog');
     expect(res.status).toBe(404);
+  });
+});
+
+describe('submitAcceptanceResults 驳回任务并发去重', () => {
+  it('INSERT tasks 撞 23505 时静默忽略，整体仍返回成功', async () => {
+    const client = {
+      query: vi.fn(async (sql) => {
+        if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
+          return { rows: [{ check_key: 'r1:001', run_id: 'run-1' }] };
+        }
+        if (sql.includes('UPDATE acceptance_checks SET result')) return { rows: [] };
+        if (sql.includes('SELECT COUNT(*)::int AS total')) {
+          return { rows: [{ total: 1, pass: 0, fail: 1, pending: 0 }] };
+        }
+        if (sql.includes('SELECT status, title, gp_id, run_key FROM acceptance_runs')) {
+          return { rows: [{ status: 'pending', title: 'T', gp_id: 'gp1', run_key: 'r1' }] };
+        }
+        if (sql.includes('UPDATE acceptance_runs SET pass_rate')) {
+          return { rows: [{ run_key: 'r1', pass_rate: 0, status: 'failed' }] };
+        }
+        if (sql.includes("SELECT 1 FROM tasks")) return { rows: [] };
+        if (sql.includes('SELECT check_key, name, note FROM acceptance_checks')) return { rows: [] };
+        if (sql.includes('INSERT INTO tasks')) {
+          const err = new Error('duplicate key');
+          err.code = '23505';
+          throw err;
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(async () => client) };
+    const result = await submitAcceptanceResults(pool, [{ check_key: 'r1:001', result: '不通过' }]);
+    expect(result.updated).toBe(1);
+    expect(result.runs[0].status).toBe('failed');
+  });
+
+  it('submitted_by 会被透传进 UPDATE acceptance_checks 参数', async () => {
+    const updateCalls = [];
+    const client = {
+      query: vi.fn(async (sql, params) => {
+        if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
+          return { rows: [{ check_key: 'r1:001', run_id: 'run-1' }] };
+        }
+        if (sql.includes('UPDATE acceptance_checks SET result')) {
+          updateCalls.push(params);
+          return { rows: [] };
+        }
+        if (sql.includes('SELECT COUNT(*)::int AS total')) {
+          return { rows: [{ total: 1, pass: 1, fail: 0, pending: 0 }] };
+        }
+        if (sql.includes('SELECT status, title, gp_id, run_key FROM acceptance_runs')) {
+          return { rows: [{ status: 'pending', title: 'T', gp_id: 'gp1', run_key: 'r1' }] };
+        }
+        if (sql.includes('UPDATE acceptance_runs SET pass_rate')) {
+          return { rows: [{ run_key: 'r1', pass_rate: 1, status: 'passed' }] };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(async () => client) };
+    await submitAcceptanceResults(pool, [
+      { check_key: 'r1:001', result: '通过', note: 'ok', submitted_by: 'alice@zenjoymedia.media' },
+    ]);
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0]).toEqual(['通过', 'ok', 'alice@zenjoymedia.media', 'r1:001']);
   });
 });

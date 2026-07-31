@@ -62,4 +62,21 @@ describe('acceptance 全链 integration', () => {
     const { rows } = await pool.query('SELECT status, pass_rate FROM acceptance_runs WHERE run_key = $1', [RUN_KEY]);
     expect(rows[0].status).toBe('failed');
   });
+
+  it('并发场景：同一 run_key 两次插入未终态驳回任务，第二次必须撞唯一索引', async () => {
+    const runKey = `${RUN_KEY}-dedup`;
+    await pool.query(
+      `INSERT INTO tasks (title, task_type, status, payload)
+       VALUES ('probe-1', 'dev', 'queued', $1::jsonb)`,
+      [JSON.stringify({ acceptance_run_key: runKey })]
+    );
+    await expect(
+      pool.query(
+        `INSERT INTO tasks (title, task_type, status, payload)
+         VALUES ('probe-2', 'dev', 'queued', $1::jsonb)`,
+        [JSON.stringify({ acceptance_run_key: runKey })]
+      )
+    ).rejects.toMatchObject({ code: '23505' });
+    await pool.query(`DELETE FROM tasks WHERE payload->>'acceptance_run_key' = $1`, [runKey]);
+  });
 });
