@@ -1,6 +1,18 @@
 # Brain 模块定义
 
-**版本**: 1.267.168
+**版本**: 1.267.169
+
+## Kernel Evaluator Provider schema UID boundary
+
+- Runner 在 root 可信前置生成结果 schema 后，将该公开输出合同固定为 `0444`，
+  再把 Evaluator Provider 降权到 UID 999；Provider 可读但不可改 schema。
+- evidence capsule 继续为 root 所有、目录 `0555`、文件 `0444`，GitHub credential
+  仍在 Provider 启动前销毁；本修复不放宽证据、凭据或 worktree 边界。
+- 三节点固定 Runner
+  `sha256:f57591df89aa1a15e49019f306abcc5606039314ebf5d293d884c055cbfe1d00`。
+- 回退：先 drain active Evaluator Attempt，再恢复 Brain `1.267.168` 与 Runner
+  `sha256:c78084e09c363601b00b968f47bca1e726ad14811feb438a91b70346e5fa4d33`；
+  旧组合会恢复 root `0600` schema 导致 Provider 启动前失败。
 
 ## Kernel Evaluator PR identity completeness
 
