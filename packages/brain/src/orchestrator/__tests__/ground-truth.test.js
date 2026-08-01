@@ -566,6 +566,27 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     expect(deps.execCmd.calls.some((cmd) => cmd.includes('headRefName'))).toBe(true);
   });
 
+  it('把 GitHub PR number 写入 evaluator evidence identity', async () => {
+    const deps = makeDeps({
+      rows: { run: { pr_url: PR_URL } },
+      exec: {
+        prView: JSON.stringify({
+          number: 1571,
+          state: 'OPEN',
+          mergeStateStatus: 'CLEAN',
+          headRefName: 'cp-07311932-e76cb826',
+          headRefOid: '341a7a251eb9f16593618e355c44df56a3e7c444',
+          statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
+        }),
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.pr.number).toBe(1571);
+    expect(deps.execCmd.calls.some((cmd) => cmd.includes('number'))).toBe(true);
+  });
+
   it('模型漏填 pr_url 时按 task 分支标识从 GitHub 反查 PR', async () => {
     const deps = makeDeps({
       rows: {
