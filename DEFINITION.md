@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.267.163
+**Brain 版本**: 1.267.164
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.164 — Provider-neutral Kernel Judge evidence
+
+- Independent Judge 现在优先读取 Fleet TaskBundle 内经批准且锁版本的
+  `contract_content/prd_content`，不再要求 provider-neutral bundle 暴露宿主
+  `worktree_path`；旧本地 run 仍可回退读取 sprint 文件。
+- Judge 只有在解析到合同 E2E 或 Golden Path 步骤后才运行；两者都缺失时仍返回
+  `NEEDS_CONTEXT`，结构化阶段闸、机械闸和人工合同 Gate 均未放宽。
+- 回退到 Brain `1.267.163` 会使无宿主路径的 Fleet Judge 丢失已嵌入的合同证据，
+  此类 active Kernel run 存在时不得回退。
 
 ## Brain 1.267.163 — Kernel Evaluator concerns verdict normalization
 
