@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.267.164
+**Brain 版本**: 1.267.165
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.165 — Fleet Judge embedded-contract mechanical evidence
+
+- Independent Judge 的机械合同测试闸直接统计 Fleet TaskBundle 内锁版本
+  `contract_content` 的具体 `[BEHAVIOR]` 条目；provider-neutral bundle 仍不暴露
+  宿主 `worktree_path`，也不再因此假报 `contract_tests=0`。
+- Sprint 测试文件和合同文件扫描仅作旧本地 run 的兼容 fallback；Evaluator 自报
+  测试数、空标题或空列表项仍不能通过机械闸。
+- 回退到 Brain `1.267.164` 会恢复该 path-free Fleet Judge 假失败；存在等待
+  Independent Judge 的 active Kernel run 时不得回退。
 
 ## Brain 1.267.164 — Provider-neutral Kernel Judge evidence
 
