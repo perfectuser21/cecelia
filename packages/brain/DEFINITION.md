@@ -1,6 +1,17 @@
 # Brain 模块定义
 
-**版本**: 1.267.166
+**版本**: 1.267.167
+
+## Kernel Evaluator trusted evidence capsule
+
+- Evaluator 的 GitHub CredentialEnvelope 只由 Runner 的可信前置消费；Provider 启动前
+  必须完成 exact-head 取证并销毁 `hosts.yml` 与内存变量中的 token。
+- `github-evidence-capsule/v1` 绑定 repo、PR、head、workflow、run、artifact 及 SHA-256；
+  Provider 退出后以父进程未导出的 digest 复核，篡改即 fail-closed。
+- `harness-evaluator` 不再执行 GitHub CLI，远端 Windows/Android 证据全部由胶囊提供。
+- 三节点固定 Runner `sha256:c78084e09c363601b00b968f47bca1e726ad14811feb438a91b70346e5fa4d33`。
+- 回退：先 drain Evaluator Attempt，再恢复 Brain `1.267.166` 与上一 Runner digest；
+  旧组合会恢复 Evaluator 运行期 GitHub authority，禁止带 active Evaluator 回退。
 
 ## Kernel Evaluator structured evidence transport
 

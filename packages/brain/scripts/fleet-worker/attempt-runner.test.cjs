@@ -1017,6 +1017,7 @@ describe('Fleet Worker durable runtime adapters', () => {
       ]));
       expect(createArgs.join(' ')).not.toContain(CREDENTIAL.authJson);
       expect(createArgs.join(' ')).not.toContain(GITHUB_TOKEN);
+      expect(createArgs).not.toContain('--user');
       expect(runCommand.mock.calls[4]).toEqual([
         'docker',
         ['start', 'cecelia-fleet-22222222-2222-4222-8222-222222222222'],
@@ -1043,6 +1044,71 @@ describe('Fleet Worker durable runtime adapters', () => {
       });
 
       expect(fs.existsSync(attemptRuntime)).toBe(false);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('starts only evaluator containers as root for the trusted evidence stage', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-evaluator-root-'));
+    const runCommand = vi.fn(async (_command, args) => {
+      if (args[0] === 'create') return { stdout: 'evaluator-container\n' };
+      return { stdout: '' };
+    });
+    const docker = createDockerAdapter({
+      runCommand,
+      runtimeRoot,
+      writeCredential: vi.fn(async () => undefined),
+      writeGitHubCredential: vi.fn(async () => undefined),
+      resolveMountSource: (source) => source,
+    });
+
+    try {
+      await docker.launch({
+        attemptId: ATTEMPT_ID,
+        runId: RUN_ID,
+        workerId: WORKER_ID,
+        image: IMAGE_DIGEST,
+        providerSpec: request().provider_spec,
+        taskId: TASK_ID,
+        roleEnv: {
+          SPRINT_DIR: 'sprints/provider-neutral',
+          WORKSPACE_PATH: '/workspace',
+          PR_HEAD_SHA: '0123456789abcdef0123456789abcdef01234567',
+        },
+        timeoutSeconds: 300,
+        role: 'evaluator',
+        model: 'gpt-5',
+        workspaceMount: {
+          source: `/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID}`,
+          target: '/workspace',
+          readOnly: true,
+        },
+        workspaceAdminMount: {
+          source: `/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
+          target: `/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
+          readOnly: true,
+        },
+        labels: {
+          'cecelia.fleet.attempt_id': ATTEMPT_ID,
+          'cecelia.fleet.run_id': RUN_ID,
+          'cecelia.fleet.worker_id': WORKER_ID,
+        },
+        callback: {
+          url: request().callback_url,
+          token: request().callback_token,
+        },
+        lease: { owner: 'dispatcher-1', generation: 0 },
+        credential: CREDENTIAL,
+        githubCredential: GITHUB_CREDENTIAL,
+      });
+
+      const createCall = runCommand.mock.calls.find(
+        ([command, args]) => command === 'docker' && args[0] === 'create',
+      );
+      expect(createCall).toBeDefined();
+      expect(createCall[1]).toEqual(expect.arrayContaining(['--user', 'root']));
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }

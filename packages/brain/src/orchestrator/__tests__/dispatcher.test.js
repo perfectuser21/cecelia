@@ -952,6 +952,59 @@ describe('createDispatcher', () => {
     }));
   });
 
+  it('只把结构化 GitHub 取证请求交给 evaluator TaskBundle', async () => {
+    const deps = makeDeps();
+    const headSha = 'b8be843d8a35064690a40e885eb235fc8523ea62';
+    const githubEvidenceRequest = {
+      contract_version: 'github-evidence-request/v1',
+      repo: 'perfectuser21/zenithjoy-workspace',
+      pr_number: 1571,
+      expected_head_sha: headSha,
+      runs: [{
+        purpose: 'windows_cancel',
+        mode: 'existing',
+        run_id: 30694126825,
+        workflow: '.github/workflows/e2e-orphan-consolidation-windows.yml',
+        artifacts: ['windows-cancel-evidence-30694126825-1'],
+      }],
+    };
+    const evidenceObserved = {
+      ...observed,
+      task: {
+        ...observed.task,
+        payload: { ...observed.task.payload, github_evidence_request: githubEvidenceRequest },
+      },
+      pr: {
+        number: 1571,
+        url: 'https://github.com/perfectuser21/zenithjoy-workspace/pull/1571',
+        head_ref: 'cp-android-cancel',
+        head_sha: headSha,
+        ci: 'pass',
+      },
+    };
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 7,
+      observed: evidenceObserved,
+      decision: { phase: 'evaluate', reason: 'ci_pass' },
+    });
+    const evaluatorBundle = deps.attemptStore.createAttempt.mock.calls[0][0].bundle;
+    expect(evaluatorBundle.inputs.github_evidence_request).toEqual(githubEvidenceRequest);
+
+    const generatorDeps = makeDeps();
+    await createDispatcher(generatorDeps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 8,
+      observed: evidenceObserved,
+      decision: { phase: 'generate', reason: 'no_pr' },
+    });
+    const generatorBundle = generatorDeps.attemptStore.createAttempt.mock.calls[0][0].bundle;
+    expect(generatorBundle.inputs).not.toHaveProperty('github_evidence_request');
+  });
+
   it('按 role_assignments 为同一 run 的 generator/evaluator 选择不同 provider 与账户 home', async () => {
     const attempts = ['33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444'];
     const adapters = Object.fromEntries(['codex', 'claude'].map((provider) => [provider, {
