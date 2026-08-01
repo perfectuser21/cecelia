@@ -533,6 +533,15 @@ async function persistJudgeArtifact(ctx, deps = {}) {
 const DEVICE_LOG_ENVS = new Set(['windows_wechat']);
 const MECH_SCAN_MAX_DEPTH = 4;
 const TEST_FILE_RE = /\.test\.(ts|js|mjs|sh)$/;
+const CONCRETE_BEHAVIOR_LINE_RE = /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?\[BEHAVIOR\]\s+\S/i;
+const CONCRETE_BEHAVIOR_HEADING_RE = /^\s*#{2,6}\s+\[BEHAVIOR\]\s*\[BEHAVIOR-\d+\]\s+\S/i;
+
+function countConcreteBehaviorLines(text) {
+  return String(text || '').split(/\r?\n/).filter((line) => (
+    CONCRETE_BEHAVIOR_LINE_RE.test(line)
+    || CONCRETE_BEHAVIOR_HEADING_RE.test(line)
+  )).length;
+}
 
 // 递归列 sprint 目录下测试文件（深度≤MECH_SCAN_MAX_DEPTH，跳 node_modules/.git）。
 async function defaultListTestFiles(rootDir) {
@@ -629,15 +638,14 @@ export async function runMechanicalGate(ctx, deps = {}) {
     testCount = Array.isArray(files) ? files.length : 0;
   } catch { testCount = 0; }
   if (testCount === 0) {
-    let behaviorCount = 0;
-    for (const contractName of ['contract-dod.md', 'contract-draft.md']) {
-      try {
-        const contract = await readFileFn(path.join(ctx.worktreePath || '', ctx.sprintDir || '', contractName));
-        behaviorCount += String(contract).split(/\r?\n/).filter((line) => (
-          /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?\[BEHAVIOR\]\s+\S/i.test(line)
-          || /^\s*#{2,6}\s+\[BEHAVIOR\]\s*\[BEHAVIOR-\d+\]\s+\S/i.test(line)
-        )).length;
-      } catch { /* missing contract variant */ }
+    let behaviorCount = countConcreteBehaviorLines(ctx.contractText);
+    if (behaviorCount === 0) {
+      for (const contractName of ['contract-dod.md', 'contract-draft.md']) {
+        try {
+          const contract = await readFileFn(path.join(ctx.worktreePath || '', ctx.sprintDir || '', contractName));
+          behaviorCount += countConcreteBehaviorLines(contract);
+        } catch { /* missing contract variant */ }
+      }
     }
     if (behaviorCount === 0) {
       reasons.push('contract_tests 为 0（sprint 目录无 *.test.{ts,js,mjs,sh}，contract-dod.md/contract-draft.md 亦无 [BEHAVIOR]）');

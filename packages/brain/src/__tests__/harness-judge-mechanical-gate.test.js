@@ -84,6 +84,19 @@ describe('runMechanicalGate（刀B：DeepSeek 前纯代码闸）', () => {
     expect(r.pass).toBe(true);
     expect(r.reasons.join()).not.toMatch(/contract_tests/);
   });
+  it('Fleet bundle 无宿主路径但锁版本内嵌合同有 [BEHAVIOR] 时不误判 contract_tests=0', async () => {
+    const deps = makeDeps({ testFiles: [] });
+    deps.readFileFn = vi.fn(async () => { throw new Error('ENOENT'); });
+    const ctx = goodCtx({
+      worktreePath: undefined,
+      contractText: '- [ ] [BEHAVIOR] [L3] Android 真机安全退出 [接缝×2]',
+    });
+
+    const r = await runMechanicalGate(ctx, deps);
+
+    expect(r.pass).toBe(true);
+    expect(r.reasons.join()).not.toMatch(/contract_tests/);
+  });
   it('contract-draft 只有 [BEHAVIOR] 章节标题时仍判 contract_tests=0', async () => {
     const deps = makeDeps({ testFiles: [] });
     deps.readFileFn = vi.fn(async (p) => {
