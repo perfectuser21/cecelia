@@ -6,10 +6,12 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.33.0
+version: 1.35.0
 created: 2026-05-06
-updated: 2026-07-28
+updated: 2026-08-01
 changelog:
+  - 1.35.0: Kernel A 可信胶囊加固——GitHub artifact 由 Provider 前可信阶段按成员数/单文件/总量/压缩比限额流式解包，跨目录、symlink、重复成员、加密包与 ZIP bomb 全部 fail-closed；manifest 为每个 `extracted_files` 绑定 SHA-256，root 封存后 Evaluator 只读现成证据，不再自行解包到可写 `/tmp`
+  - 1.34.0: Kernel A 安全边界——Evaluator 不再触发、轮询或下载 GitHub Actions；US M4 可信取证前置按 repo/PR/exact head/workflow/run/artifact 生成哈希证据胶囊并销毁凭据，Evaluator 只消费 `HARNESS_EVIDENCE_CAPSULE_DIR`，本地 HEAD 或 manifest 身份不一致直接 FAIL
   - 1.33.0: W7 人形验收（RD 2026-07-28，决策 d3021871，与 proposer 9.17.0 配套）——L1 按步执行逐步留证（每条剧本：执行动作 → within 等待预算轮询预期观察 → 采集留证（截图/命令输出/DB结果）→ 跑 Test: 单行命令；behavior_tests 条目新增 wait_budget/evidence 字段）；L2 意外观察（执行中发现卡顿/报错/布局歪/慢响应必录 verdict 顶层 findings[] additive 字段 + SPRINT_DIR/findings.md，P0/P1 即使断言全绿也 FAIL）；L3 探索层（剧本全过后按合同 ## 探索提示 段自由测试，默认 10 分钟/15 动作，legacy 合同无此段则跳过）；[接缝×2] 步骤重复执行 2 次不一致 → FAIL 且 failed_step="FLAKY:<步骤名>"；SEGMENT_EVAL 段验与 [legacy] 条目按旧协议不变
   - 1.32.2: attempt evidence fail-closed 补全——所有最终 PASS/FAIL verdict（含 dispatch/setup、环境/URL/workflow、timeout 与示例模板）都显式写当前 `HARNESS_ATTEMPT_ID`，避免早退失败证据因缺 attempt_id 被 runner 拒收后空转
   - 1.32.1: cross-repo bundled runtime——默认非 Windows Step B-1 用 quoted here-doc 随 Skill 内容落地自包含 extractor，不再依赖目标仓库存在 Cecelia `scripts/`；内嵌资产与 canonical extractor 逐字节契约锁定
@@ -95,6 +97,7 @@ generator 写代码 + push PR
 | `SPRINT_DIR` | Sprint 目录，如 `sprints/run-20260506-1400` |
 | `TASK_ID` | Brain 中当前 evaluate task 的 UUID |
 | `HARNESS_ATTEMPT_ID` | kernel 当前 evaluator attempt 的 UUID；注入时 verdict JSON 顶层 `attempt_id` 必须逐字一致，禁止沿用旧 attempt 证据 |
+| `HARNESS_EVIDENCE_CAPSULE_DIR` | Kernel 可信取证前置生成的只读/验后复核目录；远端 Windows/Android 验收必须读取其中 `github-evidence-capsule/v1` manifest 与 artifact，Evaluator 无 GitHub 凭据 |
 | `PR_BRANCH` | 待验证 PR 分支名——Brain evaluateContractNode 注入 / relay prompt 提供（Step 0a 消费）（EVA v2 E7 补） |
 | `JOURNEY_TYPE` | `user_facing` / `autonomous` / `dev_pipeline` / `agent_remote` |
 | `TARGET_ENV` | `mac_web` / `windows_cloud` / `windows_wechat` / `linux_server` / `local_api` / `playground` / `android_realmachine`（来自 PRD `target_environment` 字段；`mac_web` = 在宿主 Mac 直跑（非 Docker），Playwright 可达 localhost:5174；`windows_wechat` = xian-rog self-hosted，微信已登录；`windows_cloud` = GHA windows-latest 云端；`android_realmachine` = xian-rog Android 真机，通过 GHA runner 派发）|
@@ -187,34 +190,19 @@ WORKSPACE="${WORKSPACE_PATH:-/workspace}"
 
 ## 执行流程
 
-### Step 0a：切到 PR 分支（pre-merge gate 前置）
+### Step 0a：核对 WorkspaceSpec 的 exact PR head（pre-merge gate 前置）
 
-evaluator 必须先切到 PR 分支才能跑 server 验真行为。evaluator 跑 generator 在 PR 分支写的代码，PR 分支名由 `$PR_BRANCH` env 提供（brain `evaluateContractNode` 透传 — B14 修复）。
+Kernel 已把精确 PR head 作为独立 worktree 挂载到 `/workspace`。Evaluator 不 fetch、不 checkout、不查询 PR；只核对本地 HEAD 与 `$PR_HEAD_SHA`。不一致必须 FAIL，禁止改用 main、最新分支或 merge commit。
 
 ```bash
-if [ -n "$PR_BRANCH" ]; then
-  if git fetch origin "$PR_BRANCH" 2>/dev/null && git checkout "$PR_BRANCH" 2>/dev/null; then
-    git reset --hard "origin/$PR_BRANCH" 2>/dev/null || true
-  else
-    # 分支不存在 ≠ 终局（issue a638f840 实证）：PR 一 merge GitHub 就自动删分支，任何验收时机
-    # 晚于合并的场景（重跑/补验/controller 异步派发慢于自动合并）都会走到这里。此时改在
-    # merge commit（拿不到就 origin/main）上验收——post-merge 补验模式，验收标准不变。
-    PR_INFO=$(gh pr view "$PR_BRANCH" --json state,mergeCommit -q '.state + " " + (.mergeCommit.oid // "")' 2>/dev/null || echo "")
-    MERGE_SHA=$(echo "$PR_INFO" | awk '{print $2}')
-    if echo "$PR_INFO" | grep -q '^MERGED'; then
-      git fetch origin main 2>/dev/null || true
-      git checkout "${MERGE_SHA:-origin/main}" || { echo "FATAL: PR 已 merge 但 checkout ${MERGE_SHA:-origin/main} 失败"; exit 1; }
-      echo "PR 已 merge（分支已删），在 ${MERGE_SHA:-origin/main} 上验收（post-merge 补验模式）"
-    else
-      echo "FATAL: checkout $PR_BRANCH failed 且 PR 非 MERGED（state=${PR_INFO:-unknown}）——分支丢失属真异常"; exit 1
-    fi
-  fi
+ACTUAL_HEAD=$(git -C "$WORKSPACE" rev-parse HEAD 2>/dev/null || echo "")
+if [[ ! "${PR_HEAD_SHA:-}" =~ ^[a-f0-9]{40}$ || "$ACTUAL_HEAD" != "$PR_HEAD_SHA" ]]; then
+  echo "FATAL: WorkspaceSpec head 不一致 expected=${PR_HEAD_SHA:-missing} actual=${ACTUAL_HEAD:-missing}"
+  exit 1
 fi
 ```
 
-注意：Brain evaluateContractNode 始终注入 PR_BRANCH（pre-merge gate），实际总会切换到 PR 分支验证代码，不论 IS_FINAL_E2E 值。
-
-**反例**：跳过 Step 0a 直接跑 main 上的 server → generator 改动看不见 → 永远 FAIL（W19-W36 9 次实证）。
+**反例**：发现 SHA 不同后自行 fetch/checkout 到“看起来最新”的分支，会让合同、CI、远端 run 和本地代码不再指向同一个被评对象。
 
 ---
 
@@ -796,40 +784,28 @@ case "$TARGET_ENV" in
     ;;
 
   windows_cloud|windows_wechat|android_realmachine)
-    # GitHub Actions runner（ZenithJoy Agent 等连公网产品）
-    # windows_cloud        → GHA windows-latest 云端 runner（全新干净 VM）
-    # windows_wechat       → xian-rog self-hosted runner（微信已登录的 Windows 环境）
-    # android_realmachine  → xian-rog Android 真机 GHA runner（Path2 安卓获客验收）
-    # 合同 e2e 脚本必须是 .ps1 格式（见 proposer windows_cloud 模板）
-    # 等待结果：轮询 run 状态，最长 10 分钟
-    # GITHUB_REPO 由 Brain 注入，且必须源于 payload.base_repo（跨 repo 化刀3，禁止写死 cecelia）
-    # fallback 顺序：$GITHUB_REPO → 从 base_repo URL 解析 owner/repo → 两者都缺才用 perfectuser21/cecelia 并打 WARN
-    if [[ -n "$GITHUB_REPO" ]]; then
-      REPO="$GITHUB_REPO"
-    elif [[ -n "$BASE_REPO" ]]; then
-      REPO=$(echo "$BASE_REPO" | sed -E 's#^(git@github\.com:|https?://github\.com/)##; s#\.git$##')
-    else
-      REPO="perfectuser21/cecelia"
-      echo "WARN: GITHUB_REPO 与 base_repo 均缺失，回退 perfectuser21/cecelia（第三方 repo 会指向错误仓库）"
-    fi
-    if [[ "$TARGET_ENV" == "windows_wechat" ]]; then
-      WORKFLOW="${WECHAT_RPA_WORKFLOW:-e2e-wechat-rpa.yml}"
-    elif [[ "$TARGET_ENV" == "android_realmachine" ]]; then
-      WORKFLOW="${ANDROID_REALMACHINE_WORKFLOW:-e2e-android-realmachine.yml}"
-    else
-      WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
-    fi
-    E2E_COMMAND="gh workflow run $WORKFLOW --repo $REPO; wait for completed conclusion"
-    # ── 前置检查：workflow 内容是否覆盖合同 BEHAVIOR（防假绿）──────────────
-    # 读取 workflow 文件，对比合同 BEHAVIOR 断言
-    WORKFLOW_FILE=".github/workflows/${WORKFLOW}"
-    if [[ ! -f "$WORKFLOW_FILE" ]]; then
+    # GitHub Actions 的触发、等待、下载全部由 US M4 可信取证前置完成。
+    # Evaluator Provider 没有 GitHub 凭据，只读取 exact-head 哈希证据胶囊。
+    E2E_COMMAND="consume every sealed evidence run for head=$PR_HEAD_SHA"
+    MANIFEST="${HARNESS_EVIDENCE_CAPSULE_DIR:-}/manifest.json"
+    if [[ ! -f "$MANIFEST" ]] || ! jq -e \
+      --arg sha "$PR_HEAD_SHA" '
+        .contract_version == "github-evidence-capsule/v1"
+        and .expected_head_sha == $sha
+        and (.runs | length > 0)
+        and all(.runs[];
+          .head_sha == $sha
+          and .status == "completed"
+          and .conclusion == "success"
+        )
+      ' "$MANIFEST" >/dev/null; then
       cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"FAIL","task_id":"$TASK_ID","attempt_id":"${HARNESS_ATTEMPT_ID:-}","failed_step":"workflow_content_check","log_excerpt":"workflow 文件不存在: $WORKFLOW_FILE — 合同 BEHAVIOR 断言引用了不存在的 workflow，请先创建该文件"}
+{"verdict":"FAIL","task_id":"$TASK_ID","attempt_id":"${HARNESS_ATTEMPT_ID:-}","failed_step":"evidence_capsule","log_excerpt":"证据胶囊不是绑定 exact PR head 的全成功 run 集合；禁止查询最新 run 或自行重触发"}
 BREOF
       exit 0
     fi
 
+    # ── 前置检查：workflow 内容是否覆盖合同 BEHAVIOR（防假绿）──────────────
     # 提取合同 BEHAVIOR 条目（关键词）
     BEHAVIOR_COUNT=$(grep -c '\[BEHAVIOR\]' "${SPRINT_DIR}/contract-dod.md" 2>/dev/null || echo 0)
     if [[ "$BEHAVIOR_COUNT" -eq 0 ]]; then
@@ -839,53 +815,26 @@ BREOF
       exit 0
     fi
 
-    # 检查 workflow 是否只有文件存在/大小检查（空壳检测）
-    BUSINESS_STEPS=$(grep -cE "(node -e|npx|npm run|npm test|npm ci|vitest|playwright|curl|Invoke-RestMethod|session|publish|cookies|DOUYIN|Set-Content|New-Item|ConvertTo-Json|Write-Host.*PASS)" "$WORKFLOW_FILE" 2>/dev/null || echo 0)
-    SHALLOW_ONLY=$(grep -cE "(Test-Path|\.Length|\.Size|file.*exist|exist.*file)" "$WORKFLOW_FILE" 2>/dev/null || echo 0)
-
-    if [[ "$BUSINESS_STEPS" -eq 0 && "$SHALLOW_ONLY" -gt 0 ]]; then
-      WORKFLOW_PREVIEW=$(head -30 "$WORKFLOW_FILE" | tr '\n' '|')
-      cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"FAIL","task_id":"$TASK_ID","attempt_id":"${HARNESS_ATTEMPT_ID:-}","failed_step":"workflow_content_check","log_excerpt":"workflow $WORKFLOW 只包含文件存在/大小检查，不含任何业务逻辑验证（node/npx/vitest/playwright/curl）。合同 BEHAVIOR 断言无法通过此 workflow 真实验证。请更新 workflow 加入业务行为测试。workflow 前30行: $WORKFLOW_PREVIEW"}
-BREOF
-      exit 0
-    fi
-
-    echo "[evaluator] workflow 内容检查通过: $BUSINESS_STEPS 个业务步骤"
-    # ── 触发 GHA workflow ──────────────────────────────────────────────────
-    gh workflow run "$WORKFLOW" \
-      --repo "$REPO" \
-      -f task_id="$TASK_ID" \
-      -f sprint_dir="$SPRINT_DIR" \
-      -f pr_branch="${PR_BRANCH:-}" \
-      2>&1 | tee /tmp/e2e-trigger.log
-    TRIGGER_EXIT=$?
-    if [[ $TRIGGER_EXIT -ne 0 ]]; then
-      cat > "$WORKSPACE/.brain-result.json" << BREOF
-{"verdict":"FAIL","task_id":"$TASK_ID","attempt_id":"${HARNESS_ATTEMPT_ID:-}","failed_step":"gh_trigger","log_excerpt":"GitHub Actions 触发失败，检查 gh auth 状态和 repo 权限"}
-BREOF
-      exit 0
-    fi
-    # 等 Actions 完成（最长 10 分钟，每 30 秒轮询一次）
-    sleep 10
-    for i in $(seq 1 20); do
-      RUN_STATUS=$(gh run list --repo "$REPO" --workflow "$WORKFLOW" --limit 1 \
-        --json status,conclusion --jq '.[0].status' 2>/dev/null)
-      RUN_CONCLUSION=$(gh run list --repo "$REPO" --workflow "$WORKFLOW" --limit 1 \
-        --json status,conclusion --jq '.[0].conclusion' 2>/dev/null)
-      if [[ "$RUN_STATUS" == "completed" ]]; then
+    while IFS= read -r WORKFLOW_FILE; do
+      if [[ ! "$WORKFLOW_FILE" =~ ^\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml$ \
+          || ! -f "$WORKFLOW_FILE" ]]; then
+        echo "workflow 文件不存在或路径非法: $WORKFLOW_FILE" > "$E2E_RESULT_LOG"
+        EXIT_CODE=1
         break
       fi
-      sleep 30
-    done
-    if [[ "$RUN_CONCLUSION" == "success" ]]; then
+      BUSINESS_STEPS=$(grep -cE "(node -e|npx|npm run|npm test|npm ci|vitest|playwright|curl|Invoke-RestMethod|session|publish|cookies|DOUYIN|Set-Content|New-Item|ConvertTo-Json|Write-Host.*PASS)" "$WORKFLOW_FILE" 2>/dev/null || echo 0)
+      SHALLOW_ONLY=$(grep -cE "(Test-Path|\.Length|\.Size|file.*exist|exist.*file)" "$WORKFLOW_FILE" 2>/dev/null || echo 0)
+      if [[ "$BUSINESS_STEPS" -eq 0 && "$SHALLOW_ONLY" -gt 0 ]]; then
+        echo "workflow $WORKFLOW_FILE 是未验证业务逻辑的空壳" > "$E2E_RESULT_LOG"
+        EXIT_CODE=1
+        break
+      fi
+      echo "[evaluator] workflow 内容检查通过: $WORKFLOW_FILE ($BUSINESS_STEPS 个业务步骤)"
       EXIT_CODE=0
-      printf 'workflow=%s repo=%s conclusion=success\n' "$WORKFLOW" "$REPO" > "$E2E_RESULT_LOG"
-    else
-      EXIT_CODE=1
-      gh run list --repo "$REPO" --workflow "$WORKFLOW" --limit 1 \
-        --json url --jq '.[0].url' > "$E2E_RESULT_LOG" 2>&1
-      echo "conclusion: $RUN_CONCLUSION" >> "$E2E_RESULT_LOG"
+    done < <(jq -r '.runs[].workflow' "$MANIFEST")
+    if [[ "${EXIT_CODE:-1}" -eq 0 ]]; then
+      jq -c '.runs[]' "$MANIFEST" | tee "$E2E_RESULT_LOG"
+      EXIT_CODE=${PIPESTATUS[0]}
     fi
     ;;
 
@@ -940,10 +889,11 @@ fi
 
 **前置条件**：
 
-`windows_cloud`：
-- `gh` CLI 已登录（`gh auth status` 验证），PAT 有 `workflow` write scope
-- 目标 repo 有 `e2e-windows.yml` workflow（含 `workflow_dispatch` 触发器）
-- GitHub Actions 使用 `windows-latest` runner，免费（public repo）
+`windows_cloud` / `windows_wechat` / `android_realmachine`：
+- `HARNESS_EVIDENCE_CAPSULE_DIR/manifest.json` 必须是 `github-evidence-capsule/v1`
+- manifest 的 `expected_head_sha`、run `head_sha` 必须与 `$PR_HEAD_SHA` 完全一致
+- 目标 workflow 只能有一条 `completed/success` run，artifact 由可信前置下载并在 Provider 退出后复核哈希
+- Provider 内无 GitHub token；任何“自行查询最新 run / 自行触发”都属于越权
 
 `linux_server`：
 - `~/.ssh/config` 已配置 `hk-vps` / `us-vps` 别名，SSH 免密登录已配置
@@ -983,45 +933,51 @@ fi
 
 ---
 
-#### Step B-2.6: windows_cloud artifact 下载 + 视觉验证
+#### Step B-2.6: 读取可信阶段已限额解包并封存的证据
 
 ```bash
-if [[ "$TARGET_ENV" == "windows_cloud" || "$TARGET_ENV" == "windows_wechat" ]]; then
-  # GITHUB_REPO 必须源于 payload.base_repo（跨 repo 化刀3）；fallback：$GITHUB_REPO → base_repo 解析 → 两者都缺才回退默认并打 WARN
-  if [[ -n "$GITHUB_REPO" ]]; then
-    REPO="$GITHUB_REPO"
-  elif [[ -n "$BASE_REPO" ]]; then
-    REPO=$(echo "$BASE_REPO" | sed -E 's#^(git@github\.com:|https?://github\.com/)##; s#\.git$##')
-  else
-    REPO="perfectuser21/zenithjoy-workspace"
-    echo "WARN: GITHUB_REPO 与 base_repo 均缺失，回退 perfectuser21/zenithjoy-workspace（第三方 repo 会指向错误仓库）"
+if [[ "$TARGET_ENV" == "windows_cloud" || "$TARGET_ENV" == "windows_wechat" \
+    || "$TARGET_ENV" == "android_realmachine" ]]; then
+  MANIFEST="$HARNESS_EVIDENCE_CAPSULE_DIR/manifest.json"
+  if ! jq -e '
+    [.runs[].artifacts[]]
+    | length > 0
+    and all(.[].extracted_files;
+      type == "array"
+      and length > 0
+      and all(.[];
+        (.path | type == "string" and startswith("extracted/"))
+        and (.size | type == "number" and . >= 0)
+        and (.sha256 | type == "string" and test("^[a-f0-9]{64}$"))
+      )
+    )
+  ' "$MANIFEST" >/dev/null; then
+    echo "可信胶囊缺少已封存的 extracted_files" > "$E2E_RESULT_LOG"
+    EXIT_CODE=1
   fi
-  if [[ "$TARGET_ENV" == "windows_wechat" ]]; then
-    WORKFLOW="${WECHAT_RPA_WORKFLOW:-e2e-wechat-rpa.yml}"
-  else
-    WORKFLOW="${WINDOWS_CLOUD_WORKFLOW:-e2e-windows.yml}"
-  fi
-
-  # 获取最新 run ID（触发后等 10s 再查，避免拿到上一次 run）
-  RUN_ID=$(gh run list --repo "$REPO" --workflow "$WORKFLOW" \
-    --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null)
-
-  if [[ -n "$RUN_ID" ]]; then
-    # 下载 screenshots artifact（GHA workflow 需上传 artifact name="screenshots"）
-    mkdir -p /tmp/windows-cloud-screenshots
-    gh run download "$RUN_ID" \
-      --repo "$REPO" \
-      --name "screenshots" \
-      --dir /tmp/windows-cloud-screenshots 2>/dev/null || true
-
-    # evaluator 必须用 Read tool 读取每张 PNG，对照 DoD [BEHAVIOR:E2E] 逐一视觉确认：
-    # - 截图是否展示了期望的界面元素？
-    # - 操作结果是否与 DoD 描述一致？
-    # 如有截图与期望不符 → 输出 FAIL，feedback 说明哪张图有问题
-    ls /tmp/windows-cloud-screenshots/*.png 2>/dev/null | head -20
-  fi
-
-  SCREENSHOTS_JSON="[]"
+  while IFS= read -r RELATIVE_EVIDENCE_FILE; do
+    [[ "$RELATIVE_EVIDENCE_FILE" =~ ^extracted/[A-Za-z0-9._/-]+$ ]] || {
+      echo "非法 extracted evidence 路径" > "$E2E_RESULT_LOG"
+      EXIT_CODE=1
+      break
+    }
+    test -f "$HARNESS_EVIDENCE_CAPSULE_DIR/$RELATIVE_EVIDENCE_FILE" || {
+      echo "封存证据文件缺失: $RELATIVE_EVIDENCE_FILE" > "$E2E_RESULT_LOG"
+      EXIT_CODE=1
+      break
+    }
+  done < <(jq -r '.runs[].artifacts[].extracted_files[].path' "$MANIFEST")
+  # 必须读取每张 PNG，并把可见内容逐步映射到合同预期；只看到文件名不算验收。
+  SCREENSHOTS_JSON="$(jq -c --arg root "$HARNESS_EVIDENCE_CAPSULE_DIR" '
+    [.runs[].artifacts[].extracted_files[].path
+      | select(test("\\.png$"; "i"))
+      | "\($root)/\(.)"]
+  ' "$MANIFEST")"
+  jq -r --arg root "$HARNESS_EVIDENCE_CAPSULE_DIR" '
+    .runs[].artifacts[].extracted_files[].path
+    | select(test("\\.png$"; "i"))
+    | "\($root)/\(.)"
+  ' "$MANIFEST" | head -20
 fi
 ```
 

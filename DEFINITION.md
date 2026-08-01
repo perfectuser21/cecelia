@@ -6,11 +6,22 @@
 
 
 
-**Brain 版本**: 1.267.166
+**Brain 版本**: 1.267.167
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.167 — Kernel Evaluator trusted evidence capsule
+
+- GitHub 写权限只在 US M4 Runner 的 Provider 前可信取证阶段存在；取证器把 repo、
+  PR、exact head、workflow、run 与 artifact 逐层绑定并生成 SHA-256 manifest。
+- 取证完成后删除 `hosts.yml`、清空凭据变量并验证 GitHub 已未登录，才启动
+  Evaluator Provider；Provider 只能读取胶囊，不能触发、查询或下载 Actions。
+- Provider 退出后 Runner 用未导出的 manifest digest 复核全部 artifact；任一字节被改
+  即把 Attempt 判失败。三节点固定新 Runner
+  `sha256:c78084e09c363601b00b968f47bca1e726ad14811feb438a91b70346e5fa4d33`；
+  回退到 `1.267.166` 会重新暴露 Evaluator GitHub 凭据。
 
 ## Brain 1.267.166 — Kernel Evaluator structured evidence transport
 

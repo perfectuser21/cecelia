@@ -124,7 +124,10 @@ describe('harness-evaluator Step B-1', () => {
       'node "/tmp/cecelia-extract-contract-e2e.cjs" "$CONTRACT" > /tmp/e2e-verify.sh',
     );
     expect(nonWindows).not.toMatch(/awk [^\n]*```bash/);
-    expect(skill).toContain('version: 1.33.0');
+    const currentVersion = skill.match(/^version: (\d+)\.(\d+)\.(\d+)$/m);
+    expect(currentVersion).not.toBeNull();
+    const [, major, minor] = currentVersion!.map(Number);
+    expect(major > 1 || (major === 1 && minor >= 33)).toBe(true);
     expect(skill).toContain('- 1.33.0:');
   });
 

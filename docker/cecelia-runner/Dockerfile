@@ -104,9 +104,16 @@ RUN mkdir -p /home/cecelia/v6-runtime/node_modules/@resvg \
 COPY skills-bash/ /opt/cecelia-skills/
 RUN chmod +x /opt/cecelia-skills/*.sh
 
+# Evaluator 的可信 GitHub 取证器在 Provider 启动前运行；Provider 只能读取
+# 绑定 exact PR head 的哈希胶囊，运行期不持有 GitHub 凭据。
+COPY github-evidence-preflight.cjs /usr/local/lib/cecelia/github-evidence-preflight.cjs
+COPY github-evidence-extract.py /usr/local/lib/cecelia/github-evidence-extract.py
+
 # 入口脚本：复制 host-claude-config → 可写副本 + safe.directory + 启动 claude
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
+    /usr/local/lib/cecelia/github-evidence-preflight.cjs \
+    /usr/local/lib/cecelia/github-evidence-extract.py \
   && mkdir -p /home/cecelia/.claude /home/cecelia/.config/gh \
   && chown -R cecelia:cecelia /home/cecelia
 
