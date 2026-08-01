@@ -82,6 +82,29 @@ describe('kernel deterministic handlers', () => {
     }), expect.any(Object));
   });
 
+  it('judge receives version-locked contract evidence when a Fleet bundle omits the host path', async () => {
+    const d = deps();
+    const fleetContext = context({
+      bundle: {
+        inputs: {
+          sprint_dir: 'sprints/x',
+          contract: {
+            contract_content: '## E2E 验收\nembedded',
+            prd_content: '## Golden Path\n1. embedded',
+          },
+        },
+      },
+    });
+
+    await createKernelHandlers(d)['spawn:judge'](fleetContext);
+
+    expect(d.judgeGate).toHaveBeenCalledWith(expect.objectContaining({
+      worktreePath: undefined,
+      contractText: '## E2E 验收\nembedded',
+      prdText: '## Golden Path\n1. embedded',
+    }), expect.any(Object));
+  });
+
   it('judge 必须是真正独立判定，写 attempt 与 SHA 锚定 verdict', async () => {
     const d = deps();
     const handlers = createKernelHandlers(d);

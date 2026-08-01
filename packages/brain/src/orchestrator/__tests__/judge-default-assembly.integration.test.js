@@ -98,4 +98,67 @@ describe('independent judge default assembly integration', () => {
     expect(renderedPrompt).toContain('"merge_gate_approved": false');
     expect(renderedPrompt).toContain('缺少未来的批准、merge、report 日志不得判为证据缺失');
   });
+
+  it('Fleet bundle without a host path judges from its embedded approved contract and PRD', async () => {
+    let renderedPrompt = '';
+    const modelBoundary = vi.fn(async (input) => {
+      renderedPrompt = buildJudgePrompt(input);
+      return {
+        verdict: 'PASS',
+        coverage: [{
+          step: 'embedded fleet step',
+          passed: true,
+          evidence: 'embedded evidence passed',
+        }],
+        feedback: null,
+      };
+    });
+    const judgeGate = (ctx, opts) => runJudgeGate(ctx, {
+      ...opts,
+      judgeFn: modelBoundary,
+      listTestFilesFn: async () => ['embedded-contract.test.js'],
+    });
+    const pool = { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) };
+    const attemptStore = { complete: vi.fn(async () => ({ deduped: false })) };
+    const handlers = await buildDefaultHandlers({
+      pool,
+      execCmd: vi.fn(),
+      attemptStore,
+      judgeGate,
+    });
+
+    const result = await handlers['spawn:judge']({
+      taskId,
+      runId,
+      hop: 10,
+      attempt: { id: attemptId },
+      bundle: {
+        inputs: {
+          sprint_dir: 'sprints/r9',
+          contract: {
+            contract_content: '## E2E 验收\n- embedded contract check\n',
+            prd_content: '## Golden Path\n1. embedded fleet step\n',
+          },
+        },
+      },
+      observed: {
+        run: { id: runId },
+        pr: { state: 'OPEN', merged: false, head_sha: headSha },
+        reviewApproved: false,
+        evaluateVerdict: { verdict: 'PASS', pr_head_sha: headSha },
+        evaluateResult: {
+          status: 'completed',
+          transcript: 'embedded evidence passed',
+          summary: 'contract passed',
+          checks: [{ command: 'verify embedded evidence', exit_code: 0, log_tail: 'passed' }],
+          decision: { outcome: 'PASS', reason: 'verified' },
+        },
+      },
+    });
+
+    expect(result).toMatchObject({ status: 'DONE', detail: 'judge:PASS' });
+    expect(modelBoundary).toHaveBeenCalledOnce();
+    expect(renderedPrompt).toContain('embedded contract check');
+    expect(renderedPrompt).toContain('embedded fleet step');
+  });
 });
