@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.163
+**版本**: 1.267.164
+
+## Provider-neutral Kernel Judge evidence
+
+- Independent Judge 优先使用 Fleet TaskBundle 内经批准且锁版本的
+  `contract_content/prd_content`，provider-neutral bundle 继续禁止宿主
+  `worktree_path`；旧本地 run 保留 sprint 文件兼容回退。
+- 证据门只按实际解析出的合同 E2E 或 Golden Path 步骤决定是否运行；两者都缺失
+  仍 fail-safe `NEEDS_CONTEXT`，结构化阶段闸、机械闸与人工合同 Gate 均不变。
+- 回退到 Brain `1.267.163` 会恢复 Fleet Judge 丢合同证据问题；存在此类 active
+  Kernel run 时不得回退。
 
 ## Kernel Evaluator concerns verdict normalization
 
