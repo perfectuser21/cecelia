@@ -189,8 +189,8 @@ publish_provider_result_schema \
   "$PROVIDER_SCHEMA_PERMISSION_TMP/result.schema.json" \
   '{"type":"object"}'
 PROVIDER_SCHEMA_MODE="$(
-  stat -f '%Lp' "$PROVIDER_SCHEMA_PERMISSION_TMP/result.schema.json" 2>/dev/null \
-    || stat -c '%a' "$PROVIDER_SCHEMA_PERMISSION_TMP/result.schema.json"
+  stat -c '%a' "$PROVIDER_SCHEMA_PERMISSION_TMP/result.schema.json" 2>/dev/null \
+    || stat -f '%Lp' "$PROVIDER_SCHEMA_PERMISSION_TMP/result.schema.json"
 )"
 [[ "$PROVIDER_SCHEMA_MODE" == "444" ]] || {
   echo "Provider result schema mode is $PROVIDER_SCHEMA_MODE instead of 444" >&2
