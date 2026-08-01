@@ -99,13 +99,14 @@ function attemptTaskBundle(attempt) {
   }
 }
 
-function normalizeRoleVerdict(role, outcome) {
+export function normalizeRoleVerdict(role, outcome) {
   const value = String(outcome ?? '').trim().toUpperCase();
   if (role === 'reviewer') {
     return ['PASS', 'APPROVED'].includes(value) ? 'APPROVED' : 'REVISION_REQUESTED';
   }
   if (role === 'evaluator') {
-    return value === 'FIXED' ? 'FIXED' : (value === 'PASS' ? 'PASS' : 'FAIL');
+    if (value === 'FIXED') return 'FIXED';
+    return ['PASS', 'PASS_WITH_CONCERNS'].includes(value) ? 'PASS' : 'FAIL';
   }
   return value;
 }

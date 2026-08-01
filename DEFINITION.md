@@ -6,11 +6,22 @@
 
 
 
-**Brain 版本**: 1.267.162
+**Brain 版本**: 1.267.163
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.163 — Kernel Evaluator concerns verdict normalization
+
+- Evaluator 的 `PASS_WITH_CONCERNS` 现在规范化为 append-only `PASS` verdict，
+  不再被错误投影为 `FAIL` 并派发 Generator；未知 outcome 仍然 fail closed。
+- Attempt 继续保存 `completed_with_concerns` 终态、完整 summary 和 concern reason，
+  因而 Independent Judge 与 review-required Gate 仍会执行，不会吞掉 concerns。
+- callback route 与原子 Attempt Store 共用同一个 verdict normalizer，避免兼容入口
+  与生产事务路径再次漂移。
+- 回退到 Brain `1.267.162` 会恢复该误判；存在此类 callback 的 active Kernel run
+  时不得回退。
 
 ## Brain 1.267.162 — Kernel Evaluator feedback handoff
 

@@ -33,7 +33,10 @@ import { lookupHarnessThread } from '../lib/harness-thread-lookup.js';
 import { sendBark } from '../notifier.js';
 import pool from '../db.js';
 import { handleRelayExitConsistency } from '../lib/harness-orphan-guard.js';
-import { createAttemptStore } from '../orchestrator/attempt-store.js';
+import {
+  createAttemptStore,
+  normalizeRoleVerdict,
+} from '../orchestrator/attempt-store.js';
 import { parseHarnessResult } from '../orchestrator/execution-contract.js';
 import { verifyCallbackSecret } from '../orchestrator/callback-auth.js';
 import { verifyMachineAttestation } from '../orchestrator/machine-attestation.js';
@@ -127,17 +130,6 @@ function attemptCommanderCursor(attempt) {
   const bundle = attemptTaskBundle(attempt);
   const cursor = bundle?.inputs?.commander_bundle?.event_cursor;
   return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : undefined;
-}
-
-function normalizeVerdict(role, outcome) {
-  const value = String(outcome ?? '').trim().toUpperCase();
-  if (role === 'reviewer') {
-    return ['PASS', 'APPROVED'].includes(value) ? 'APPROVED' : 'REVISION_REQUESTED';
-  }
-  if (role === 'evaluator') {
-    return value === 'FIXED' ? 'FIXED' : (value === 'PASS' ? 'PASS' : 'FAIL');
-  }
-  return value;
 }
 
 const GITHUB_PULL_REQUEST_URL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/[1-9]\d*\/?$/;
@@ -383,14 +375,14 @@ export async function appendAttemptVerdict(attempt, result, db = pool) {
   const detail = attempt.role === 'reviewer'
     ? {
         attempt_id: attempt.id,
-        verdict: normalizeVerdict(attempt.role, result.decision.outcome),
+        verdict: normalizeRoleVerdict(attempt.role, result.decision.outcome),
         rn: inputs.contract_round ?? null,
         contract_sha: inputs.contract_sha ?? null,
         feedback: result.decision.reason,
       }
     : {
         attempt_id: attempt.id,
-        verdict: normalizeVerdict(attempt.role, result.decision.outcome),
+        verdict: normalizeRoleVerdict(attempt.role, result.decision.outcome),
         pr_head_sha: inputs.pull_request?.head_sha ?? null,
         failure_class: result.decision.failure_class ?? null,
         ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
