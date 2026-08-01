@@ -26,7 +26,7 @@ artifact_log="$test_root/artifacts.log"
 transport_log="$test_root/transport.log"
 node_log="$test_root/node.log"
 worker_token="$test_root/worker-token"
-expected_runner_digest='sha256:e4300138e571fbb80ebf2952f2fc1d9510066a18a218adf1c4c5259e1eaae979'
+expected_runner_digest='sha256:c78084e09c363601b00b968f47bca1e726ad14811feb438a91b70346e5fa4d33'
 touch "$artifact_log" "$transport_log" "$node_log"
 printf 'fleet-worker-transport-token-at-least-32-bytes\n' > "$worker_token"
 chmod 0600 "$worker_token"

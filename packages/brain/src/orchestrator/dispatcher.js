@@ -244,6 +244,9 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   if (spec.role === 'evaluator') {
     common.pr_branch = observed.pr?.head_ref ?? null;
     common.pr_head_sha = observed.pr?.head_sha ?? null;
+    if (payload.github_evidence_request) {
+      common.github_evidence_request = payload.github_evidence_request;
+    }
   }
   if (spec.role === 'judge') {
     common.evaluator_result = observed.evaluateVerdict ?? observed.callbackResult ?? null;

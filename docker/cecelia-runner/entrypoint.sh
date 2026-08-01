@@ -143,6 +143,10 @@ redact_github_credential_text() {
     printf '%s\n' "$line"
     return 0
   fi
+  if [[ "${GITHUB_CREDENTIAL_DESTROYED:-false}" == "true" ]]; then
+    printf '%s\n' "$line"
+    return 0
+  fi
   if [[ -z "$GITHUB_CREDENTIAL_SECRET" ]]; then
     printf '%s\n' '[provider output redaction failed]'
     return 1
@@ -164,6 +168,156 @@ redact_provider_credential_text() {
 }
 # provider-output-redaction:end
 
+# evaluator-evidence-boundary:start
+EVALUATOR_EVIDENCE_MANIFEST_DIGEST=""
+GITHUB_CREDENTIAL_DESTROYED=false
+PROVIDER_IDENTITY_PREFIX=()
+
+is_evaluator_task_bundle() {
+  local task_bundle_file="${HARNESS_TASK_BUNDLE_FILE:-}"
+  [[ -f "$task_bundle_file" ]] \
+    && [[ "$(jq -r '.task_bundle.role // empty' "$task_bundle_file" 2>/dev/null)" == "evaluator" ]]
+}
+
+prepare_evaluator_evidence_capsule() {
+  is_evaluator_task_bundle || return 0
+
+  local task_bundle_file="${HARNESS_TASK_BUNDLE_FILE:-}"
+  local preflight_bin="${CECELIA_EVIDENCE_PREFLIGHT_BIN:-/usr/local/lib/cecelia/github-evidence-preflight.cjs}"
+  local evidence_required=""
+  evidence_required="$(
+    jq -r 'if .task_bundle.inputs.github_evidence_request then "true" else "false" end' \
+      "$task_bundle_file" 2>/dev/null
+  )" || return 1
+  [[ "$evidence_required" == "true" ]] || return 0
+  if [[ -z "${CECELIA_GITHUB_CREDENTIAL_REF:-}" \
+      || ! -x "$preflight_bin" \
+      || ! "${HARNESS_ATTEMPT_ID:-}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+    echo "[entrypoint] Evaluator evidence preflight prerequisites rejected" >&2
+    return 1
+  fi
+
+  export HARNESS_EVIDENCE_CAPSULE_DIR="/tmp/cecelia-evidence/${HARNESS_ATTEMPT_ID}"
+  local evidence_heartbeat_pid=""
+  if [[ -n "${HARNESS_LEASE_OWNER:-}" \
+      && -n "${HARNESS_CALLBACK_TOKEN:-}" ]]; then
+    (
+      while :; do
+        curl -sf -m 10 -X POST \
+          "${BRAIN_URL:-http://host.docker.internal:5221}/api/brain/harness/attempts/${HARNESS_ATTEMPT_ID}/heartbeat" \
+          -H 'Content-Type: application/json' \
+          -H "Authorization: Bearer ${HARNESS_CALLBACK_TOKEN}" \
+          -d "$(jq -nc --arg owner "$HARNESS_LEASE_OWNER" '{lease_owner:$owner,lease_seconds:180}')" \
+          >/dev/null 2>&1 || true
+        sleep 60
+      done
+    ) &
+    evidence_heartbeat_pid=$!
+  fi
+  set +e
+  EVALUATOR_EVIDENCE_MANIFEST_DIGEST="$(
+    "$preflight_bin" collect \
+      --bundle "$task_bundle_file" \
+      --capsule "$HARNESS_EVIDENCE_CAPSULE_DIR"
+  )"
+  local collect_exit=$?
+  set -e
+  if [[ -n "$evidence_heartbeat_pid" ]]; then
+    kill "$evidence_heartbeat_pid" >/dev/null 2>&1 || true
+    wait "$evidence_heartbeat_pid" 2>/dev/null || true
+  fi
+  [[ "$collect_exit" -eq 0 ]] || return 1
+  [[ "$EVALUATOR_EVIDENCE_MANIFEST_DIGEST" =~ ^[a-f0-9]{64}$ ]] || return 1
+  echo "[entrypoint] Evaluator evidence capsule sealed for exact PR head"
+}
+
+destroy_evaluator_github_credential() {
+  is_evaluator_task_bundle || return 0
+
+  local config_dir="${GH_CONFIG_DIR:-/home/cecelia/.config/gh}"
+  if [[ "$config_dir" != /* || "$config_dir" == "/" ]]; then
+    echo "[entrypoint] refusing unsafe GitHub config cleanup path" >&2
+    return 1
+  fi
+  rm -f -- "$config_dir/hosts.yml" || return 1
+  unset CECELIA_GITHUB_CREDENTIAL_FIFO GH_TOKEN GITHUB_TOKEN
+  GITHUB_CREDENTIAL_SECRET=""
+  export GITHUB_CREDENTIAL_DESTROYED=true
+  if [[ -e "$config_dir/hosts.yml" ]] \
+      || gh auth token --hostname github.com >/dev/null 2>&1; then
+    echo "[entrypoint] Evaluator GitHub credential destruction failed" >&2
+    return 1
+  fi
+  echo "[entrypoint] Evaluator GitHub credential destroyed before Provider"
+}
+
+verify_evaluator_evidence_capsule() {
+  [[ -n "$EVALUATOR_EVIDENCE_MANIFEST_DIGEST" ]] || return 0
+  local preflight_bin="${CECELIA_EVIDENCE_PREFLIGHT_BIN:-/usr/local/lib/cecelia/github-evidence-preflight.cjs}"
+  "$preflight_bin" verify \
+    --capsule "$HARNESS_EVIDENCE_CAPSULE_DIR" \
+    --expected-digest "$EVALUATOR_EVIDENCE_MANIFEST_DIGEST"
+}
+
+seal_evaluator_evidence_capsule() {
+  is_evaluator_task_bundle || return 0
+  [[ -n "$EVALUATOR_EVIDENCE_MANIFEST_DIGEST" ]] || return 0
+  if [[ "$(id -u)" != "0" ]] \
+      || [[ -z "${HARNESS_EVIDENCE_CAPSULE_DIR:-}" ]] \
+      || [[ ! -d "$HARNESS_EVIDENCE_CAPSULE_DIR" ]]; then
+    echo "[entrypoint] Evaluator evidence capsule requires trusted root stage" >&2
+    return 1
+  fi
+
+  local capsule_parent=""
+  capsule_parent="$(dirname -- "$HARNESS_EVIDENCE_CAPSULE_DIR")" || return 1
+  if [[ "$capsule_parent" != "/tmp/cecelia-evidence" ]]; then
+    echo "[entrypoint] Evaluator evidence parent rejected" >&2
+    return 1
+  fi
+  chown -R root:root -- "$HARNESS_EVIDENCE_CAPSULE_DIR" || return 1
+  chown root:root -- "$capsule_parent" || return 1
+  chmod 0711 -- "$capsule_parent" || return 1
+  find "$HARNESS_EVIDENCE_CAPSULE_DIR" -type d -exec chmod 0555 {} + \
+    || return 1
+  find "$HARNESS_EVIDENCE_CAPSULE_DIR" -type f -exec chmod 0444 {} + \
+    || return 1
+  echo "[entrypoint] Evaluator evidence capsule made immutable to Provider UID"
+}
+
+prepare_evaluator_provider_identity() {
+  is_evaluator_task_bundle || {
+    PROVIDER_IDENTITY_PREFIX=()
+    return 0
+  }
+  if [[ "$(id -u)" != "0" ]] \
+      || ! command -v setpriv >/dev/null 2>&1 \
+      || [[ "$(id -u cecelia 2>/dev/null)" != "999" ]]; then
+    echo "[entrypoint] Evaluator Provider privilege boundary unavailable" >&2
+    return 1
+  fi
+
+  if [[ -d "$LOCAL_CFG" ]]; then
+    chown -R cecelia:cecelia -- "$LOCAL_CFG" || return 1
+  fi
+  if [[ -n "${CODEX_HOME:-}" && -d "$CODEX_HOME" ]]; then
+    chown -R cecelia:cecelia -- "$CODEX_HOME" || return 1
+  fi
+  PROVIDER_IDENTITY_PREFIX=(
+    setpriv
+    --reuid=cecelia
+    --regid=cecelia
+    --init-groups
+    --no-new-privs
+    --bounding-set=-all
+    --inh-caps=-all
+    --ambient-caps=-all
+    --
+  )
+  echo "[entrypoint] Evaluator Provider constrained to UID 999 without capabilities"
+}
+# evaluator-evidence-boundary:end
+
 if [[ -n "${CECELIA_GITHUB_CREDENTIAL_REF:-}" \
     || -n "${CECELIA_GITHUB_CREDENTIAL_FIFO:-}" ]]; then
   if ! prepare_github_credential "/home/cecelia/.config/gh"; then
@@ -172,11 +326,19 @@ if [[ -n "${CECELIA_GITHUB_CREDENTIAL_REF:-}" \
   fi
 fi
 
+if is_evaluator_task_bundle; then
+  prepare_evaluator_evidence_capsule
+  seal_evaluator_evidence_capsule
+  destroy_evaluator_github_credential
+fi
+
 # git-auth-setup:start
 # 宿主 gitconfig 可能引用只在 macOS 宿主存在的 credential helper。Fleet Runner 已从
 # 一次性 FIFO 在 gh tmpfs 中登录；legacy Runner 仍可使用既有 gh config。这里让容器内
 # gh 安装自身 helper；token 不进入 docker argv/env/日志。
-if [[ "${HARNESS_CANARY:-false}" != "true" ]] && command -v gh >/dev/null 2>&1; then
+if [[ "${HARNESS_CANARY:-false}" != "true" \
+    && "${GITHUB_CREDENTIAL_DESTROYED:-false}" != "true" ]] \
+    && command -v gh >/dev/null 2>&1; then
   if gh auth setup-git >/dev/null 2>&1; then
     echo "[entrypoint] in-container GitHub credential helper configured"
   else
@@ -1067,6 +1229,15 @@ run_provider_contract() {
   result_schema_json="$(provider_result_schema_json "$task_bundle_file")"
   printf '%s' "$result_schema_json" > "$result_schema_file"
 
+  if ! prepare_evaluator_provider_identity; then
+    jq -n \
+      --arg attempt "$HARNESS_ATTEMPT_ID" \
+      --arg provider "$provider" \
+      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"Evaluator Provider boundary rejected",artifacts:[],checks:[],decision:null,error:{code:"evaluator_privilege_boundary_invalid",message:"runner could not isolate the Provider from trusted evidence collection"},provider_metadata:{provider:$provider,session_id:null}}' \
+      > "$NORMALIZED_RESULT_FILE"
+    return 1
+  fi
+
   local model_args=()
   if [[ -n "${HARNESS_MODEL:-}" ]]; then
     model_args=(--model "$HARNESS_MODEL")
@@ -1175,6 +1346,7 @@ run_provider_contract() {
     : > "$STDOUT_FILE"
     run_with_attempt_timeout \
       "$attempt_timeout_seconds" \
+      "${PROVIDER_IDENTITY_PREFIX[@]}" \
       "${codex_command[@]}" "${codex_args[@]}" < "$task_bundle_file" 2>&1 \
       | while IFS= read -r line || [[ -n "$line" ]]; do
           safe_line=$(printf '%s\n' "$line" | redact_provider_credential_text)
@@ -1206,6 +1378,7 @@ run_provider_contract() {
     : > "$STDOUT_FILE"
     run_with_attempt_timeout \
       "$attempt_timeout_seconds" \
+      "${PROVIDER_IDENTITY_PREFIX[@]}" \
       claude "${claude_args[@]}" < "$task_bundle_file" 2>&1 \
       | while IFS= read -r line || [[ -n "$line" ]]; do
           safe_line=$(printf '%s\n' "$line" | redact_provider_credential_text)
@@ -1239,6 +1412,7 @@ run_provider_contract() {
     : > "$STDOUT_FILE"
     run_with_attempt_timeout \
       "$attempt_timeout_seconds" \
+      "${PROVIDER_IDENTITY_PREFIX[@]}" \
       grok -p "$(cat "$task_bundle_file")" "${grok_args[@]}" 2>&1 \
       | while IFS= read -r line || [[ -n "$line" ]]; do
           safe_line=$(printf '%s\n' "$line" | redact_provider_credential_text)
@@ -1259,6 +1433,10 @@ run_provider_contract() {
   else
     provider_exit=1
     printf '{"error":"unsupported provider: %s"}\n' "$provider" > "$STDOUT_FILE"
+  fi
+  if ! verify_evaluator_evidence_capsule; then
+    provider_exit=1
+    printf '%s\n' '{"error":"github_evidence_capsule_tampered"}' >> "$STDOUT_FILE"
   fi
   redact_provider_credential_file "$result_file" || provider_exit=1
 

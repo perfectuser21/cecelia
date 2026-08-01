@@ -54,4 +54,17 @@ describe('skill-contract — 5 类不变量守现网快照', () => {
     expect(evaluatorBody).not.toMatch(/\bgit\s+commit\b/);
     expect(evaluatorBody).not.toMatch(/\bgit\s+push\b/);
   });
+
+  it('不变量7: evaluator 不操作 GitHub，只消费可信 exact-head 证据胶囊', () => {
+    expect(evaluatorBody).toContain('HARNESS_EVIDENCE_CAPSULE_DIR');
+    expect(evaluatorBody).toContain('github-evidence-capsule/v1');
+    expect(evaluatorBody).toContain('expected_head_sha');
+    expect(evaluatorBody).not.toMatch(/\bgh\s+(?:api|auth|pr|run|workflow)\b/);
+  });
+
+  it('不变量8: evaluator 只读可信阶段已限额解包并封存的文件', () => {
+    expect(evaluatorBody).toContain('extracted_files');
+    expect(evaluatorBody).not.toMatch(/\bzipfile\b|\.extractall\(|source\.read\(\)/);
+    expect(evaluatorBody).not.toContain('EVIDENCE_UNPACK_DIR');
+  });
 });

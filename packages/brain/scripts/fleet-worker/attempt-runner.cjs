@@ -445,6 +445,7 @@ function createDockerAdapter({
         '--name',
         containerName,
         ...labelArgs(input.labels),
+        ...(input.role === 'evaluator' ? ['--user', 'root'] : []),
         '--mount',
         workspaceMount,
         '--mount',

@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-RUNNER_DIGEST='sha256:e4300138e571fbb80ebf2952f2fc1d9510066a18a218adf1c4c5259e1eaae979'
+RUNNER_DIGEST='sha256:c78084e09c363601b00b968f47bca1e726ad14811feb438a91b70346e5fa4d33'
 FLEET_WORKER_LABEL='com.perfect21.fleet-worker'
 FLEET_WORKER_DRAIN_MARKER='/var/run/cecelia/fleet-worker.drain'
 
