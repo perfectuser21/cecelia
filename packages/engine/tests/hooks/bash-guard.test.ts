@@ -21,6 +21,7 @@ const ORIG_HOOK_PATH = resolve(ENGINE_ROOT, "hooks/bash-guard.sh");
 // vitest worker thread 中 stdin pipe 不工作，使用 HOOK_INPUT env var
 let HOOK_PATH: string;
 let tempDir: string;
+let dirtyRepoDir: string;
 
 /** 递归复制目录 */
 function copyDir(src: string, dst: string): void {
@@ -46,7 +47,7 @@ function patchHookStdin(hookPath: string): void {
   writeFileSync(hookPath, content);
 }
 
-function runHook(command: string): { exitCode: number; stderr: string } {
+function runHook(command: string, cwd?: string): { exitCode: number; stderr: string } {
   const input = JSON.stringify({
     tool_name: "Bash",
     tool_input: { command },
@@ -56,6 +57,7 @@ function runHook(command: string): { exitCode: number; stderr: string } {
     execSync(`bash "${HOOK_PATH}"`, {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
+      cwd,
       env: { ...process.env, HOOK_INPUT: input },
     });
     return { exitCode: 0, stderr: "" };
@@ -99,6 +101,11 @@ describe("bash-guard.sh", () => {
     HOOK_PATH = join(hooksDir, "bash-guard.sh");
     copyFileSync(ORIG_HOOK_PATH, HOOK_PATH);
     patchHookStdin(HOOK_PATH);
+
+    dirtyRepoDir = join(tempDir, "dirty-repo");
+    mkdirSync(dirtyRepoDir);
+    execSync("git init -q -b main", { cwd: dirtyRepoDir });
+    writeFileSync(join(dirtyRepoDir, "uncommitted.txt"), "dirty\n");
   });
 
   afterAll(() => {
@@ -278,15 +285,17 @@ describe("bash-guard.sh", () => {
   // ─── HK 部署拦截 ──────────────────────────────────────────
   describe("should block HK deploy when git is dirty", () => {
     it("blocks rsync to HK public IP", () => {
-      const result = runHook("rsync -avz dist/ user@124.156.138.116:/srv/app/");
+      const result = runHook("rsync -avz dist/ user@124.156.138.116:/srv/app/", dirtyRepoDir);
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain("BASH GUARD");
+      expect(result.stderr).toContain("工作区不干净");
     });
 
     it("blocks scp to HK Tailscale IP", () => {
-      const result = runHook("scp file.tar.gz user@100.86.118.99:/tmp/");
+      const result = runHook("scp file.tar.gz user@100.86.118.99:/tmp/", dirtyRepoDir);
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain("BASH GUARD");
+      expect(result.stderr).toContain("工作区不干净");
     });
 
     it("does not block ssh to HK (read-only allowed)", () => {
