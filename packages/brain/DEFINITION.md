@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.267.167
+**版本**: 1.267.168
+
+## Kernel Evaluator PR identity completeness
+
+- Ground Truth 的 GitHub PR observation 现在包含不可变 `number`，Evaluator TaskBundle
+  因而能把 `pull_request.number` 与 `github_evidence_request.pr_number` 做同源校验。
+- exact-head、workflow、run、artifact、CredentialEnvelope 与 Provider 无 GitHub authority
+  的边界均保持不变；缺失或不匹配的 PR number 继续 fail-closed。
+- 回退到 Brain `1.267.167` 会恢复 evidence preflight 的
+  `github_evidence_identity_mismatch`；存在 active Evaluator Attempt 时不得回退。
 
 ## Kernel Evaluator trusted evidence capsule
 

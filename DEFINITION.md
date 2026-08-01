@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.167
+**Brain 版本**: 1.267.168
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.168 — Kernel Evaluator PR identity completeness
+
+- Ground Truth 的 GitHub PR observation 现在携带不可变 `number`，Evaluator
+  TaskBundle 可将 `pull_request.number` 与 evidence request 的 PR 号做同源校验。
+- exact-head、workflow、run、artifact 与无 Provider GitHub authority 的边界保持不变；
+  PR number 缺失或不匹配继续 fail-closed。
+- 回退到 `1.267.167` 会恢复 `github_evidence_identity_mismatch`；存在 active
+  Evaluator Attempt 时不得回退。
 
 ## Brain 1.267.167 — Kernel Evaluator trusted evidence capsule
 

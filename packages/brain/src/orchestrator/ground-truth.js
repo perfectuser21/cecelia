@@ -324,10 +324,11 @@ export async function collectGroundTruth(deps, opts) {
   if (prUrl) {
     const view = asJson(execTolerant(
       execCmd,
-      `gh pr view ${prUrl} --json state,mergeStateStatus,headRefName,headRefOid,statusCheckRollup`,
+      `gh pr view ${prUrl} --json number,state,mergeStateStatus,headRefName,headRefOid,statusCheckRollup`,
     )) ?? {};
     const checks = normalizeStatusCheckRollup(view.statusCheckRollup);
     pr = {
+      number: view.number ?? null,
       url: prUrl,
       state: view.state ?? null,
       mergeStateStatus: view.mergeStateStatus ?? null,
