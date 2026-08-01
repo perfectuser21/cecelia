@@ -179,6 +179,28 @@ type normalize_provider_failure >/dev/null 2>&1 || {
   echo 'missing Provider failure normalizer' >&2
   exit 1
 }
+type publish_provider_result_schema >/dev/null 2>&1 || {
+  echo 'missing Provider-readable result schema publisher' >&2
+  exit 1
+}
+
+PROVIDER_SCHEMA_PERMISSION_TMP="$(mktemp -d)"
+publish_provider_result_schema \
+  "$PROVIDER_SCHEMA_PERMISSION_TMP/result.schema.json" \
+  '{"type":"object"}'
+PROVIDER_SCHEMA_MODE="$(
+  stat -c '%a' "$PROVIDER_SCHEMA_PERMISSION_TMP/result.schema.json" 2>/dev/null \
+    || stat -f '%Lp' "$PROVIDER_SCHEMA_PERMISSION_TMP/result.schema.json"
+)"
+[[ "$PROVIDER_SCHEMA_MODE" == "444" ]] || {
+  echo "Provider result schema mode is $PROVIDER_SCHEMA_MODE instead of 444" >&2
+  exit 1
+}
+[[ "$(cat "$PROVIDER_SCHEMA_PERMISSION_TMP/result.schema.json")" == '{"type":"object"}' ]] || {
+  echo 'Provider result schema publisher changed schema contents' >&2
+  exit 1
+}
+rm -rf "$PROVIDER_SCHEMA_PERMISSION_TMP"
 
 EVALUATOR_SCHEMA_TMP="$(mktemp -d)"
 cat > "$EVALUATOR_SCHEMA_TMP/task.json" <<'JSON'

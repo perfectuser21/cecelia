@@ -1009,6 +1009,18 @@ provider_result_schema_json() {
   printf '%s' '{"type":"object","properties":{"status":{"type":"string","enum":["completed","completed_with_concerns","needs_context","blocked"]},"summary":{"type":"string"},"artifacts":{"type":"array","items":{"type":"string"}},"checks":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"object","properties":{"command":{"type":"string"},"exit_code":{"type":"integer"},"log_tail":{"type":"string"},"verification_level":{"type":"string","enum":["L1","L2","L3"]},"action":{"anyOf":[{"type":"string"},{"type":"null"}]},"expected":{"anyOf":[{"type":"string"},{"type":"null"}]},"wait_budget":{"anyOf":[{"type":"string"},{"type":"null"}]},"evidence":{"anyOf":[{"type":"string"},{"type":"null"}]}},"required":["command","exit_code","log_tail","verification_level","action","expected","wait_budget","evidence"],"additionalProperties":false}]}},"decision":{"anyOf":[{"type":"object","properties":{"outcome":{"type":"string"},"reason":{"type":"string"}},"required":["outcome","reason"],"additionalProperties":false},{"type":"null"}]},"error":{"anyOf":[{"type":"object","properties":{"code":{"type":"string"},"message":{"type":"string"}},"required":["code","message"],"additionalProperties":false},{"type":"null"}]}},"required":["status","summary","artifacts","checks","decision","error"],"additionalProperties":false}'
 }
 
+publish_provider_result_schema() {
+  local schema_file="$1"
+  local schema_json="$2"
+
+  printf '%s' "$schema_json" > "$schema_file" || return 1
+  # Evaluator preflight runs as root so it can own the immutable evidence
+  # capsule, then Provider execution drops to UID 999. The schema is public
+  # contract metadata, not evidence or a credential, and must cross that UID
+  # boundary as read-only data.
+  chmod 0444 "$schema_file"
+}
+
 validate_commander_task_bundle() {
   local task_bundle_file="$1"
   local expected_output
@@ -1227,7 +1239,7 @@ run_provider_contract() {
   fi
 
   result_schema_json="$(provider_result_schema_json "$task_bundle_file")"
-  printf '%s' "$result_schema_json" > "$result_schema_file"
+  publish_provider_result_schema "$result_schema_file" "$result_schema_json"
 
   if ! prepare_evaluator_provider_identity; then
     jq -n \

@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.267.168
+**Brain 版本**: 1.267.169
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.169 — Kernel Evaluator Provider schema UID boundary
+
+- Runner 的 root 可信前置把结果 schema 写成只读 `0444`，再以 UID 999、无 capabilities
+  启动 Evaluator Provider，修复 Provider 读取 root `0600` schema 被拒绝的问题。
+- schema 只包含公开输出合同；evidence capsule、CredentialEnvelope、exact-head 取证和
+  Provider 无 GitHub authority 的边界均保持不变。
+- 三节点固定 Runner
+  `sha256:f57591df89aa1a15e49019f306abcc5606039314ebf5d293d884c055cbfe1d00`；
+  回退到 `1.267.168`/旧 digest 前必须 drain active Evaluator Attempt。
 
 ## Brain 1.267.168 — Kernel Evaluator PR identity completeness
 
