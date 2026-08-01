@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.267.165
+**Brain 版本**: 1.267.166
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.166 — Kernel Evaluator structured evidence transport
+
+- Provider 输出契约不再把 `checks[]` 强制为字符串，Evaluator 可把真实执行产生的
+  `{command,exit_code,log_tail,verification_level}` 证据原样送入 callback 与 Judge。
+- 传输层只保真，不替证据背书；Independent Judge 仍逐项拒绝缺退出码或输出尾部的
+  结果，`.brain-result.json` bridge 继续作为兼容兜底。
+- Fleet 三机统一固定 Runner
+  `sha256:e4300138e571fbb80ebf2952f2fc1d9510066a18a218adf1c4c5259e1eaae979`；
+  回退到 `1.267.165`/旧 digest 会恢复结构化证据被降为字符串的问题。
 
 ## Brain 1.267.165 — Fleet Judge embedded-contract mechanical evidence
 

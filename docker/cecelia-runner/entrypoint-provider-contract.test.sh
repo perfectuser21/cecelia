@@ -180,6 +180,29 @@ type normalize_provider_failure >/dev/null 2>&1 || {
   exit 1
 }
 
+EVALUATOR_SCHEMA_TMP="$(mktemp -d)"
+cat > "$EVALUATOR_SCHEMA_TMP/task.json" <<'JSON'
+{"task_bundle":{"role":"evaluator","expected_output":"harness-result/evaluator-v1"}}
+JSON
+EVALUATOR_SCHEMA="$(provider_result_schema_json "$EVALUATOR_SCHEMA_TMP/task.json")"
+jq -e '
+  .properties.checks.items.anyOf[0].type == "string"
+  and .properties.checks.items.anyOf[1].type == "object"
+  and .properties.checks.items.anyOf[1].additionalProperties == false
+  and .properties.checks.items.anyOf[1].properties.command.type == "string"
+  and .properties.checks.items.anyOf[1].properties.exit_code.type == "integer"
+  and .properties.checks.items.anyOf[1].properties.log_tail.type == "string"
+  and .properties.checks.items.anyOf[1].properties.verification_level.enum == ["L1","L2","L3"]
+  and .properties.checks.items.anyOf[1].required == [
+    "command","exit_code","log_tail","verification_level",
+    "action","expected","wait_budget","evidence"
+  ]
+' <<<"$EVALUATOR_SCHEMA" >/dev/null || {
+  echo 'runner schema does not preserve strict evaluator evidence objects' >&2
+  exit 1
+}
+rm -rf "$EVALUATOR_SCHEMA_TMP"
+
 [[ "$(read_attempt_timeout_seconds 300)" == "300" ]]
 for invalid_timeout in '' 0 -1 1.5 12s token; do
   if read_attempt_timeout_seconds "$invalid_timeout" >/dev/null 2>&1; then
@@ -512,7 +535,7 @@ jq -e '.checks == ["provider summary"]' "$EVIDENCE_TMP/result.json" >/dev/null |
 grep -q '"required":\["outcome","reason"\]' <<<"$SECTION"
 # Codex structured output uses OpenAI strict JSON Schema. Every object must be
 # closed and must require each declared property; arrays must declare items.
-RESULT_SCHEMA_JSON=$(sed -n "s/^  result_schema_json='\(.*\)'$/\1/p" <<<"$SECTION")
+RESULT_SCHEMA_JSON="$EVALUATOR_SCHEMA"
 [[ -n "$RESULT_SCHEMA_JSON" ]] || { echo 'missing runner result schema' >&2; exit 1; }
 jq -e '
   all(.. | objects | select(.type? == "object");

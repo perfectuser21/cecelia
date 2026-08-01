@@ -629,7 +629,27 @@ describe('kernel attempt security and Codex execution', () => {
     expect(spawnFn.mock.calls[0][2].env).not.toHaveProperty('KERNEL_BRIDGE_STATE_DIR');
     const args = spawnFn.mock.calls[0][1];
     const schemaPath = args[args.indexOf('--output-schema') + 1];
-    expectOpenAiStrictSchema(JSON.parse(fs.readFileSync(schemaPath, 'utf8')));
+    const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+    expectOpenAiStrictSchema(schema);
+    expect(schema.properties.checks.items).toMatchObject({
+      anyOf: [
+        { type: 'string' },
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'command', 'exit_code', 'log_tail', 'verification_level',
+            'action', 'expected', 'wait_budget', 'evidence',
+          ],
+          properties: {
+            command: { type: 'string' },
+            exit_code: { type: 'integer' },
+            log_tail: { type: 'string' },
+            verification_level: { type: 'string', enum: ['L1', 'L2', 'L3'] },
+          },
+        },
+      ],
+    });
   });
 
   it('fails closed when a disposable workspace cannot be created', async () => {
