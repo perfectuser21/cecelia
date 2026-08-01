@@ -26,14 +26,4 @@ describe('deploy-root-config', () => {
       '/Users/administrator/perfect21/cecelia-deploy-main:/Users/administrator/perfect21/cecelia-deploy-main:rw'
     );
   });
-  it('西安 Fleet Worker 默认使用容器可达的固定 Tailscale IP', () => {
-    expect(COMPOSE).toContain(
-      'FLEET_WORKER_XIAN_MAC_M4_URL=${FLEET_WORKER_XIAN_MAC_M4_URL:-http://100.86.57.69:5231}'
-    );
-    expect(COMPOSE).toContain(
-      'FLEET_WORKER_XIAN_MAC_M1_URL=${FLEET_WORKER_XIAN_MAC_M1_URL:-http://100.88.166.55:5231}'
-    );
-    expect(COMPOSE).not.toContain('http://xian-mac-m4:5231');
-    expect(COMPOSE).not.toContain('http://xian-mac-m1:5231');
-  });
 });

@@ -13,7 +13,7 @@
 ### Task 1: Pin resolvable Xian Fleet Worker defaults
 
 **Files:**
-- Modify: `packages/brain/src/__tests__/deploy-root-config.test.js`
+- Modify: `scripts/__tests__/compose-project-isolation.test.sh`
 - Modify: `docker-compose.yml`
 
 - [ ] **Step 1: Write the failing deployment-contract test**
@@ -22,7 +22,7 @@ Add a test that requires `FLEET_WORKER_XIAN_MAC_M4_URL` to default to `http://10
 
 - [ ] **Step 2: Run the focused test to verify Red**
 
-Run: `cd packages/brain && npx vitest run src/__tests__/deploy-root-config.test.js`
+Run: `bash scripts/__tests__/compose-project-isolation.test.sh`
 
 Expected: FAIL because `docker-compose.yml` still defaults to the two unresolvable hostnames.
 
@@ -31,7 +31,7 @@ Expected: FAIL because `docker-compose.yml` still defaults to the two unresolvab
 Run:
 
 ```bash
-git add packages/brain/src/__tests__/deploy-root-config.test.js
+git add scripts/__tests__/compose-project-isolation.test.sh
 git commit -m "test(fleet): guard resolvable worker defaults"
 ```
 
@@ -44,8 +44,8 @@ Change only the two Xian default URLs in `docker-compose.yml`; retain `${FLEET_W
 Run:
 
 ```bash
-cd packages/brain && npx vitest run src/__tests__/deploy-root-config.test.js
-cd ../.. && CECELIA_TICK_ENABLED=false docker compose config --quiet
+bash scripts/__tests__/compose-project-isolation.test.sh
+CECELIA_TICK_ENABLED=false docker compose config --quiet
 git diff --check
 ```
 

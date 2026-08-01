@@ -54,6 +54,24 @@ else
   ok "docker-compose.dev.yml 未重复定义 cecelia-frontend"
 fi
 
+echo "── prod Fleet Worker 默认地址必须可从 OrbStack 容器解析 ──"
+PROD_COMPOSE="$REPO_ROOT/docker-compose.yml"
+if grep -Fq 'FLEET_WORKER_XIAN_MAC_M4_URL=${FLEET_WORKER_XIAN_MAC_M4_URL:-http://100.86.57.69:5231}' "$PROD_COMPOSE"; then
+  ok "Xian M4 默认使用 NodeProfile 固定 Tailscale IP"
+else
+  bad "Xian M4 默认地址未使用 100.86.57.69:5231"
+fi
+if grep -Fq 'FLEET_WORKER_XIAN_MAC_M1_URL=${FLEET_WORKER_XIAN_MAC_M1_URL:-http://100.88.166.55:5231}' "$PROD_COMPOSE"; then
+  ok "Xian M1 默认使用 NodeProfile 固定 Tailscale IP"
+else
+  bad "Xian M1 默认地址未使用 100.88.166.55:5231"
+fi
+if grep -qE 'http://xian-mac-m(4|1):5231' "$PROD_COMPOSE"; then
+  bad "prod compose 仍含 OrbStack 容器无法解析的 Xian 主机名"
+else
+  ok "prod compose 不含不可解析的 Xian 主机名"
+fi
+
 echo ""
 echo "PASS:$PASS FAIL:$FAIL"
 [[ "$FAIL" -eq 0 ]]
