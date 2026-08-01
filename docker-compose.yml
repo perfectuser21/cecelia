@@ -91,8 +91,8 @@ services:
       # Fleet Node admission is mandatory. Brain accepts only these canonical
       # server-owned Worker endpoints and caches their evidence for at most 90s.
       - FLEET_WORKER_US_MAC_M4_URL=${FLEET_WORKER_US_MAC_M4_URL:-http://host.docker.internal:5231}
-      - FLEET_WORKER_XIAN_MAC_M4_URL=${FLEET_WORKER_XIAN_MAC_M4_URL:-http://xian-mac-m4:5231}
-      - FLEET_WORKER_XIAN_MAC_M1_URL=${FLEET_WORKER_XIAN_MAC_M1_URL:-http://xian-mac-m1:5231}
+      - FLEET_WORKER_XIAN_MAC_M4_URL=${FLEET_WORKER_XIAN_MAC_M4_URL:-http://100.86.57.69:5231}
+      - FLEET_WORKER_XIAN_MAC_M1_URL=${FLEET_WORKER_XIAN_MAC_M1_URL:-http://100.88.166.55:5231}
       - FLEET_NODE_ADMISSION_CACHE_TTL_MS=${FLEET_NODE_ADMISSION_CACHE_TTL_MS:-1000}
       # Phase 4B: all canonical machines use the authenticated Fleet Worker
       # Attempt API. An absent/short token remains fail-closed in the transport.
