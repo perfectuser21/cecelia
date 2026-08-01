@@ -257,16 +257,29 @@ export function extractAgentTranscript(raw) {
 // ── 证据收集 ─────────────────────────────────────────────────────────────────
 export async function collectEvidence(ctx, deps = {}) {
   const readFileFn = deps.readFileFn || ((p) => readFile(p, 'utf8'));
-  const { worktreePath, sprintDir, transcript, brainResult, promptDir, taskId } = ctx;
-  let contractText = '';
-  let prdText = '';
+  const {
+    worktreePath,
+    sprintDir,
+    transcript,
+    brainResult,
+    promptDir,
+    taskId,
+    contractText: embeddedContractText,
+    prdText: embeddedPrdText,
+  } = ctx;
+  let contractText = typeof embeddedContractText === 'string' ? embeddedContractText : '';
+  let prdText = typeof embeddedPrdText === 'string' ? embeddedPrdText : '';
   if (worktreePath && sprintDir) {
-    try {
-      contractText = await readFileFn(path.join(worktreePath, sprintDir, 'contract-draft.md'));
-    } catch { /* 合同缺失 → 空段，裁判仅凭 transcript 判 */ }
-    try {
-      prdText = await readFileFn(path.join(worktreePath, sprintDir, 'sprint-prd.md'));
-    } catch { /* PRD 缺失 → 无 Golden Path 步骤 */ }
+    if (!contractText) {
+      try {
+        contractText = await readFileFn(path.join(worktreePath, sprintDir, 'contract-draft.md'));
+      } catch { /* 合同缺失 → 空段，裁判仅凭 transcript 判 */ }
+    }
+    if (!prdText) {
+      try {
+        prdText = await readFileFn(path.join(worktreePath, sprintDir, 'sprint-prd.md'));
+      } catch { /* PRD 缺失 → 无 Golden Path 步骤 */ }
+    }
   }
   let resolvedBrainResult = brainResult || null;
   if (!resolvedBrainResult && worktreePath) {
@@ -832,6 +845,8 @@ export async function runJudgeGate(ctx, opts = {}) {
   const ev = await collectFn({
     worktreePath: ctx.worktreePath,
     sprintDir: ctx.sprintDir,
+    contractText: ctx.contractText,
+    prdText: ctx.prdText,
     transcript: ctx.transcript,
     brainResult: ctx.brainResult,
     promptDir: ctx.promptDir,
@@ -857,7 +872,7 @@ export async function runJudgeGate(ctx, opts = {}) {
   // 证据门：无合同 E2E 段且无 Golden Path 步骤 → 裁判没有「该验什么」的独立基准，无法做覆盖对照
   // → fail-open 保留 agent verdict（不浪费裁判调用，也不在缺证据时凭空否决运动员）。
   // 真实 sprint worktree 必有 contract-draft.md + sprint-prd.md，生产路径永远过此门。
-  if (!ctx.worktreePath || (!ev.contractE2E && (!ev.goldenPathSteps || ev.goldenPathSteps.length === 0))) {
+  if (!ev.contractE2E && (!ev.goldenPathSteps || ev.goldenPathSteps.length === 0)) {
     console.log('[judge] 无合同/Golden Path 证据可独立判读 → 跳过裁判，保留 agent verdict');
     return { verdict: agentVerdict, feedback: agentFeedback || null, judged: false };
   }

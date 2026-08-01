@@ -70,6 +70,7 @@ export function createKernelHandlers(deps) {
       const evaluator = ctx.observed.evaluateVerdict ?? {};
       const evaluateResult = ctx.observed.evaluateResult ?? null;
       const brainResult = evaluatorBrainResult(evaluateResult) ?? ctx.observed.callbackResult;
+      const contract = ctx.bundle.inputs.contract ?? {};
       const result = await deps.judgeGate({
         agentVerdict: evaluator.verdict ?? evaluateResult?.decision?.outcome,
         agentFeedback: evaluator.feedback ?? evaluateResult?.decision?.reason ?? null,
@@ -77,6 +78,8 @@ export function createKernelHandlers(deps) {
         transcript: evaluateResult?.transcript ?? ctx.observed.callbackResult?.transcript,
         worktreePath: ctx.bundle.inputs.worktree_path,
         sprintDir: ctx.bundle.inputs.sprint_dir,
+        contractText: contract.contract_content ?? null,
+        prdText: contract.prd_content ?? null,
         taskId: ctx.taskId,
         instanceLabel: `kernel-${String(ctx.attempt.id).slice(0, 8)}`,
         promptDir: deps.promptDir,
