@@ -1,6 +1,17 @@
 # Brain 模块定义
 
-**版本**: 1.267.165
+**版本**: 1.267.166
+
+## Kernel Evaluator structured evidence transport
+
+- Provider/Fleet Runner 的 HarnessResult schema 允许 `checks[]` 保存结构化行为测试，
+  callback、Attempt Store 与 `evaluatorBrainResult` 原样把证据交给 Independent Judge。
+- Judge 的机械闸未放宽：每项仍必须有非空 `command`、数字 `exit_code` 和非空
+  `log_tail`；传输层不会从摘要字符串合成或伪造证据。
+- 三台 Fleet 节点固定 Runner
+  `sha256:e4300138e571fbb80ebf2952f2fc1d9510066a18a218adf1c4c5259e1eaae979`。
+- 回退：先 drain active Attempt，再恢复 Brain `1.267.165` 和上一 Runner digest；
+  旧组合会再次把 Evaluator 结构化输出限制为字符串。
 
 ## Fleet Judge embedded-contract mechanical evidence
 

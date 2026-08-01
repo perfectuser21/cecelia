@@ -467,7 +467,41 @@ const HARNESS_RESULT_SCHEMA = Object.freeze({
     },
     summary: { type: 'string' },
     artifacts: { type: 'array', items: { type: 'string' } },
-    checks: { type: 'array', items: { type: 'string' } },
+    checks: {
+      type: 'array',
+      items: {
+        anyOf: [
+          { type: 'string' },
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: [
+              'command',
+              'exit_code',
+              'log_tail',
+              'verification_level',
+              'action',
+              'expected',
+              'wait_budget',
+              'evidence',
+            ],
+            properties: {
+              command: { type: 'string' },
+              exit_code: { type: 'integer' },
+              log_tail: { type: 'string' },
+              verification_level: {
+                type: 'string',
+                enum: ['L1', 'L2', 'L3'],
+              },
+              action: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+              expected: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+              wait_budget: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+              evidence: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+            },
+          },
+        ],
+      },
+    },
     decision: {
       anyOf: [
         {
