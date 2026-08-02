@@ -1501,6 +1501,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     'docker daemon unavailable',
     'context deadline exceeded',
     'permission denied inspecting container',
+    'container inspection endpoint not found',
   ])('propagates Docker inspect infrastructure failure: %s', async (message) => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-inspect-'));
