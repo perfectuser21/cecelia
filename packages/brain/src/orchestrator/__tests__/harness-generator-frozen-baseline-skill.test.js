@@ -52,4 +52,18 @@ describe('harness-generator SKILL frozen baseline doctrine', () => {
   it('keeps the latest-main rebase for ordinary dev', () => {
     expect(preflight).toMatch(/git fetch origin main[\s\S]{0,200}git rebase origin\/main/);
   });
+
+  it('lets a green frozen PR finish when GitHub reports BEHIND', () => {
+    const behindBlock = content.slice(
+      content.indexOf('[ "$MERGE_STATE" = "BEHIND" ]'),
+      content.indexOf('if [ "$FAILED" -eq 0 ]'),
+    );
+    const frozenBranch = behindBlock.slice(
+      behindBlock.indexOf('HARNESS_FROZEN_BASELINE'),
+      behindBlock.indexOf('EVA v2'),
+    );
+
+    expect(frozenBranch).not.toContain('continue');
+    expect(behindBlock).toContain('gh pr update-branch');
+  });
 });
