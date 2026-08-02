@@ -211,7 +211,7 @@ function assertAttemptId(value) {
   }
 }
 
-function createFileAttemptStateStore({ stateRoot } = {}) {
+function createFileAttemptStateStore({ stateRoot, fileSystem = fs } = {}) {
   const root = assertRuntimeRoot(stateRoot, 'state_root');
 
   function fileFor(attemptId) {
@@ -243,18 +243,44 @@ function createFileAttemptStateStore({ stateRoot } = {}) {
       if (Buffer.byteLength(serialized, 'utf8') > MAX_STATE_BYTES) {
         throw new Error('attempt_state_too_large');
       }
-      fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+      fileSystem.mkdirSync(root, { recursive: true, mode: 0o700 });
       const target = fileFor(state.attempt_id);
       const temporary = `${target}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+      let stateFd = null;
+      let directoryFd = null;
       try {
-        fs.writeFileSync(temporary, serialized, {
-          encoding: 'utf8',
-          mode: 0o600,
-          flag: 'wx',
-        });
-        fs.renameSync(temporary, target);
+        stateFd = fileSystem.openSync(temporary, 'wx', 0o600);
+        fileSystem.writeFileSync(stateFd, serialized, { encoding: 'utf8' });
+        fileSystem.fsyncSync(stateFd);
+        const syncedStateFd = stateFd;
+        stateFd = null;
+        fileSystem.closeSync(syncedStateFd);
+        fileSystem.renameSync(temporary, target);
+        directoryFd = fileSystem.openSync(root, 'r');
+        fileSystem.fsyncSync(directoryFd);
+        const syncedDirectoryFd = directoryFd;
+        directoryFd = null;
+        fileSystem.closeSync(syncedDirectoryFd);
       } finally {
-        fs.rmSync(temporary, { force: true });
+        if (stateFd !== null) {
+          const openStateFd = stateFd;
+          stateFd = null;
+          try {
+            fileSystem.closeSync(openStateFd);
+          } catch {
+            // Preserve the original durability failure.
+          }
+        }
+        if (directoryFd !== null) {
+          const openDirectoryFd = directoryFd;
+          directoryFd = null;
+          try {
+            fileSystem.closeSync(openDirectoryFd);
+          } catch {
+            // Preserve the original durability failure.
+          }
+        }
+        fileSystem.rmSync(temporary, { force: true });
       }
       return state;
     },
@@ -262,7 +288,7 @@ function createFileAttemptStateStore({ stateRoot } = {}) {
     async get(attemptId) {
       const target = fileFor(attemptId);
       try {
-        return parseState(fs.readFileSync(target, 'utf8'), attemptId);
+        return parseState(fileSystem.readFileSync(target, 'utf8'), attemptId);
       } catch (error) {
         if (error?.code === 'ENOENT') return null;
         throw error;
@@ -270,14 +296,14 @@ function createFileAttemptStateStore({ stateRoot } = {}) {
     },
 
     async delete(attemptId) {
-      fs.rmSync(fileFor(attemptId), { force: true });
+      fileSystem.rmSync(fileFor(attemptId), { force: true });
       return true;
     },
 
     async list() {
       let entries;
       try {
-        entries = fs.readdirSync(root, { withFileTypes: true });
+        entries = fileSystem.readdirSync(root, { withFileTypes: true });
       } catch (error) {
         if (error?.code === 'ENOENT') return [];
         throw error;
@@ -289,7 +315,7 @@ function createFileAttemptStateStore({ stateRoot } = {}) {
         .map((entry) => {
           const attemptId = entry.name.slice(0, -'.json'.length);
           return parseState(
-            fs.readFileSync(path.join(root, entry.name), 'utf8'),
+            fileSystem.readFileSync(path.join(root, entry.name), 'utf8'),
             attemptId,
           );
         });
@@ -337,7 +363,7 @@ function isExplicitlyMissingDockerObject(error) {
   const detail = [error?.message, error?.stderr, error?.stdout]
     .filter(Boolean)
     .join('\n');
-  return /no such (?:container|object)|container.*not found/i.test(detail);
+  return /no such (?:container|object)/i.test(detail);
 }
 
 function createDockerAdapter({
@@ -764,8 +790,11 @@ function createDockerAdapter({
         return Object.freeze({
           status: String(result?.stdout ?? '').trim() || 'unknown',
         });
-      } catch {
-        return Object.freeze({ status: 'missing' });
+      } catch (error) {
+        if (isExplicitlyMissingDockerObject(error)) {
+          return Object.freeze({ status: 'missing' });
+        }
+        throw error;
       }
     },
 
@@ -1161,6 +1190,42 @@ function createAttemptRunner({
     resourceManager,
   });
 
+  async function prepareVerifiedWorkspace(workspaceSpec) {
+    const workspace = await workspaceManager.prepare(workspaceSpec);
+    try {
+      await workspaceManager.verify(workspace);
+      return workspace;
+    } catch (verifyError) {
+      let cleanupError = null;
+      try {
+        await workspaceManager.cleanup(workspace);
+      } catch (error) {
+        cleanupError = error;
+      }
+      if (cleanupError) {
+        try {
+          await workspaceManager.quarantine(workspace, cleanupError);
+        } catch (quarantineError) {
+          throw new Error(
+            `attempt_workspace_verify_rollback_failed:${verifyError.message}`,
+            {
+              cause: new AggregateError([
+                verifyError,
+                cleanupError,
+                quarantineError,
+              ]),
+            },
+          );
+        }
+        throw new Error(
+          `attempt_workspace_verify_rollback_failed:${verifyError.message}`,
+          { cause: new AggregateError([verifyError, cleanupError]) },
+        );
+      }
+      throw verifyError;
+    }
+  }
+
   async function quarantineState(state, error) {
     const quarantined = await workspaceManager.quarantine(state.workspace, error);
     const nextState = {
@@ -1224,6 +1289,7 @@ function createAttemptRunner({
   const pendingCredentials = new Map();
   const prepareOperations = new Map();
   const startOperations = new Map();
+  const cancellationRequests = new Set();
   const terminalWaiters = new Set();
   const finalizationPromises = new Map();
 
@@ -1267,6 +1333,18 @@ function createAttemptRunner({
       }))
       .catch(() => {})
       .finally(() => terminalWaiters.delete(state.attempt_id));
+  }
+
+  async function finalizeCancelledStart(state, lease) {
+    const cleanup = await finalizeAttempt(state.attempt_id, lease, {
+      containerId: state.container_id,
+      leaseGeneration: state.lease_generation,
+      terminalStatus: 'cleaned',
+    });
+    return terminalStartResult(
+      state.attempt_id,
+      cleanup.status === 'cleaned' ? 'cleaned' : cleanup.status,
+    );
   }
 
   function finalizeAttempt(attemptId, lease = null, expected = null) {
@@ -1520,8 +1598,7 @@ function createAttemptRunner({
         request,
         target,
       );
-      const workspace = await workspaceManager.prepare(request.workspace_spec);
-      await workspaceManager.verify(workspace);
+      const workspace = await prepareVerifiedWorkspace(request.workspace_spec);
       const labels = labelsFor(request, workerId);
       let resources = EMPTY_RUNTIME_RESOURCES;
       if (executionContract.runtimeRequirements.postgres) {
@@ -1786,12 +1863,18 @@ function createAttemptRunner({
             githubCredential: credentials?.githubCredential ?? null,
           });
           pendingCredentials.delete(attemptId);
+          if (cancellationRequests.has(attemptId)) {
+            return finalizeCancelledStart(state, lease);
+          }
           await stateStore.save({
             ...state,
             status: 'running',
             credential_delivery_status: 'delivered',
             updated_at: new Date().toISOString(),
           });
+          if (cancellationRequests.has(attemptId)) {
+            return finalizeCancelledStart(state, lease);
+          }
         } catch (error) {
           pendingCredentials.delete(attemptId);
           const cleanup = await finalizeAttempt(attemptId, lease);
@@ -1813,6 +1896,7 @@ function createAttemptRunner({
         if (startOperations.get(attemptId)?.promise === operation) {
           startOperations.delete(attemptId);
         }
+        cancellationRequests.delete(attemptId);
       }).catch(() => {});
       return operation;
     },
@@ -1836,8 +1920,7 @@ function createAttemptRunner({
         request,
         target,
       );
-      const workspace = await workspaceManager.prepare(request.workspace_spec);
-      await workspaceManager.verify(workspace);
+      const workspace = await prepareVerifiedWorkspace(request.workspace_spec);
       const labels = labelsFor(request, workerId);
       let resources = EMPTY_RUNTIME_RESOURCES;
       if (executionContract.runtimeRequirements.postgres) {
@@ -1991,6 +2074,21 @@ function createAttemptRunner({
     },
 
     async cancel(attemptId, lease) {
+      const starting = startOperations.get(attemptId);
+      if (starting) {
+        if (
+          lease?.owner !== starting.lease?.owner
+          || lease?.generation !== starting.lease?.generation
+        ) {
+          throw new Error('attempt_lease_conflict');
+        }
+        cancellationRequests.add(attemptId);
+        try {
+          await starting.promise;
+        } catch {
+          // The start path owns its exact rollback; inspect durable state below.
+        }
+      }
       const state = await stateStore.get(attemptId);
       if (!state) {
         return Object.freeze({ status: 'already_clean', attempt_id: attemptId });
