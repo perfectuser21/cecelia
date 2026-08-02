@@ -84,6 +84,12 @@ function admittedHealth(machineId = 'us-mac-m4') {
     },
     worktree: { root_ready: true },
     container: { probe_succeeded: true },
+    runtime_resources: {
+      postgres: {
+        available: true,
+        image_digest: profile.runtime_resources.postgres.image_digest,
+      },
+    },
     drain: { active: false },
   };
 }
@@ -138,6 +144,7 @@ function dispatchReadyProductionProbes({
   fetchFn,
   resolveGitHubTokenFn,
   env,
+  postgresAvailable = true,
 }) {
   return createProductionCapabilityProbes({
     pool,
@@ -147,13 +154,22 @@ function dispatchReadyProductionProbes({
     env,
     requestTimeoutMs: 100,
     nodeAdmissionClient: {
-      getAdmission: vi.fn(async (machine) => ({
-        machine_id: machine,
-        state: 'base_admitted',
-        base_admitted: true,
-        dispatch_ready: true,
-        reasons: [],
-      })),
+      getAdmission: vi.fn(async (machine) => {
+        const profile = getNodeProfile(machine);
+        return {
+          machine_id: machine,
+          state: 'base_admitted',
+          base_admitted: true,
+          dispatch_ready: true,
+          runtime_resources: {
+            postgres: {
+              available: postgresAvailable,
+              image_digest: profile.runtime_resources.postgres.image_digest,
+            },
+          },
+          reasons: [],
+        };
+      }),
     },
   });
 }
@@ -507,7 +523,7 @@ describe('production capability wiring', () => {
     }));
   });
 
-  it('PostgreSQL preflight failure is BLOCKED and creates no attempt', async () => {
+  it('selected Worker PostgreSQL runtime unavailable is BLOCKED and creates no attempt', async () => {
     process.env.CECELIA_MACHINE_ID = 'us-mac-m4';
     const fetchFn = vi.fn(async (url) => {
       if (String(url) === `${WORKER_URL}/health`) return response(admittedHealth());
@@ -587,6 +603,7 @@ describe('production capability wiring', () => {
         fetchFn,
         resolveGitHubTokenFn: resolveGitHubToken,
         env,
+        postgresAvailable: false,
       }),
       env,
     });
@@ -604,7 +621,7 @@ describe('production capability wiring', () => {
       control_status: 'BLOCKED',
       action: 'wait:human_review',
       failure_class: 'infrastructure_blocked',
-      fallback_reason: 'ECONNREFUSED',
+      fallback_reason: 'postgres_runtime_unavailable',
       should_create_attempt: false,
       should_enter_generator_fix: false,
     });
