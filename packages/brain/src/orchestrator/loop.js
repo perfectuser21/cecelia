@@ -7,7 +7,9 @@
  *   | 派发 action：nextHop → appendHop（intent-before-dispatch）→ dispatch → 四态处理 → 心跳。
  *
  * 四态最小语义（spec，T3 细化分路）：DONE/DONE_WITH_CONCERNS 记 detail 继续；
- * NEEDS_CONTEXT/BLOCKED 记 detail 不推进，连续 2 次同态 → run failed（"绝不同模型无变化重试"铁律骨架版）。
+ * NEEDS_CONTEXT/语义 BLOCKED 记 detail 不推进，连续 2 次同态 → run failed；
+ * infrastructure_blocked 记证据后退避复探，由 run deadline 收敛。
+ * （"绝不同模型无变化重试"铁律骨架版。）
  * SingletonConflictError → 立即退出（并发实例信号，交 watchdog）。
  *
  * deps：{pool, dispatch(action, ctx), sleep?, now?, host?, pid?, log?,
@@ -1020,7 +1022,18 @@ export async function runLoop(
     }
 
     if (controlStatus === 'NEEDS_CONTEXT' || controlStatus === 'BLOCKED') {
+      const failureClass = result.failure_class ?? null;
+      if (controlStatus === 'BLOCKED' && failureClass === 'infrastructure_blocked') {
+        log(
+          `[orchestrator] hop ${hop} ${decision.action} → BLOCKED `
+          + `(infrastructure backoff): ${result.detail ?? ''}`,
+        );
+        await beat();
+        await sleep(POLL_INTERVAL_MS);
+        continue;
+      }
       const currentBlockedStreak = counters.blockedStatus === controlStatus
+          && counters.blockedFailureClass === failureClass
         ? counters.blockedStreak
         : 0;
       const streak = currentBlockedStreak + 1; // 本轮实际 streak

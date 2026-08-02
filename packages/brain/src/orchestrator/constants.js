@@ -20,7 +20,9 @@ export const MAX_REBASE_ATTEMPTS = 3;
 // 4096 不作为 repair 轮次预算，只防决策日志异常失控。
 export const MAX_HOPS = 4096;
 
-// loop 四态最小语义：NEEDS_CONTEXT/BLOCKED 连续 2 次同态 → failed
+// loop 四态最小语义：语义类 NEEDS_CONTEXT/BLOCKED 连续 2 次同态 → failed。
+// infrastructure_blocked 是外部可恢复状态，按 POLL_INTERVAL_MS 退避并由 deadline 收敛，
+// 不得占用“同模型无变化”语义栅栏。
 // （"绝不同模型无变化重试"铁律骨架版；对应父图 serial_gate requeue CAP(2) 精神）
 export const BLOCKED_SAME_STATE_CAP = 2;
 
