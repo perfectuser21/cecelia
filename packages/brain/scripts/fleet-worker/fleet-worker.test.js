@@ -915,7 +915,7 @@ describe('Fleet Worker Attempt API', () => {
     attemptRunner.start.mockResolvedValueOnce({
       status: 'terminal',
       attempt_id: attemptId,
-      terminal_status: 'missing',
+      terminal_status: 'credential_delivery_unconfirmed',
       credential: 'must-not-leak',
     });
     const server = createFleetWorkerServer({
@@ -941,7 +941,7 @@ describe('Fleet Worker Attempt API', () => {
     expect(JSON.parse(response.body)).toEqual({
       status: 'terminal',
       attempt_id: attemptId,
-      terminal_status: 'missing',
+      terminal_status: 'credential_delivery_unconfirmed',
     });
     expect(response.body).not.toContain('must-not-leak');
     server.close();

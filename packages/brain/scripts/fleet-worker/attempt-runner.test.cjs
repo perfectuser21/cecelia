@@ -1054,8 +1054,12 @@ describe('Fleet Worker Attempt runner', () => {
     resolveExit({ statusCode: 0 });
 
     await vi.waitFor(() => {
-      expect(deps.stateStore.delete).toHaveBeenCalledWith(ATTEMPT_ID);
+      expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+        status: 'terminal',
+        terminal_status: 'cleaned',
+      });
     });
+    expect(deps.stateStore.delete).not.toHaveBeenCalled();
     expect(deps.events.slice(-2)).toEqual([
       'docker.remove',
       'workspace.cleanup',
@@ -1086,7 +1090,11 @@ describe('Fleet Worker Attempt runner', () => {
 
     expect(deps.docker.remove).toHaveBeenCalledTimes(1);
     expect(deps.workspaceManager.cleanup).toHaveBeenCalledTimes(1);
-    expect(deps.stateStore.delete).toHaveBeenCalledTimes(1);
+    expect(deps.stateStore.delete).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'terminal',
+      terminal_status: 'cleaned',
+    });
     expect(deps.workspaceManager.quarantine).not.toHaveBeenCalled();
   });
 
@@ -1237,6 +1245,7 @@ describe('Fleet Worker Attempt runner', () => {
         },
       },
       status: 'running',
+      credential_delivery_status: 'delivered',
     };
     const healthyAttempt = {
       attempt_id: OTHER_ATTEMPT_ID,
@@ -1249,6 +1258,7 @@ describe('Fleet Worker Attempt runner', () => {
         owner: { run_id: RUN_ID, attempt_id: OTHER_ATTEMPT_ID },
       },
       status: 'running',
+      credential_delivery_status: 'delivered',
     };
     const foreignAttempt = {
       ...healthyAttempt,
