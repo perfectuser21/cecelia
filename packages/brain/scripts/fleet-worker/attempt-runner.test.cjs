@@ -229,6 +229,14 @@ function createRunner(deps) {
 describe('Fleet Worker Attempt runner', () => {
   it.each([
     {
+      role: 'commander',
+      inputs: {},
+      expected: {
+        SPRINT_DIR: 'sprints/provider-neutral',
+        WORKSPACE_PATH: '/workspace',
+      },
+    },
+    {
       role: 'planner',
       inputs: {
         planner_branch: 'cp-harness-prd-aaaaaaaa-a2',
