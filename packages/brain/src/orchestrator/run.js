@@ -328,7 +328,8 @@ export async function buildRealDeps(overrides = {}) {
     execCmd,
     fileExists: overrides.fileExists ?? ((p) => existsSync(p)),
     readFile: overrides.readFile ?? ((p) => readFileSync(p, 'utf-8')),
-    readGitFile: overrides.readGitFile ?? ((sha, p) => readGitArtifact(sha, p)),
+    readGitFile: overrides.readGitFile
+      ?? ((sha, p, opts = {}) => readGitArtifact(sha, p, { repo: opts.repo ?? null })),
     dispatch,
     commanderCoordinator,
     commanderDirectiveExecutor,

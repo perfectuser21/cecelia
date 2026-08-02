@@ -670,9 +670,9 @@ describe('runLoop：控制 action 自消费', () => {
     expect(deps.dispatch).toHaveBeenCalledWith('spawn:generator', expect.any(Object));
     expect(sleeps).toHaveLength(0);
     expect(deps.readGitFile.mock.calls).toEqual([
-      [approvedSha, 'sprints/kernel-contract/sprint-prd.md'],
-      [approvedSha, 'sprints/kernel-contract/contract-draft.md'],
-      [approvedSha, 'sprints/kernel-contract/contract-dod.md'],
+      [approvedSha, 'sprints/kernel-contract/sprint-prd.md', { repo: null }],
+      [approvedSha, 'sprints/kernel-contract/contract-draft.md', { repo: null }],
+      [approvedSha, 'sprints/kernel-contract/contract-dod.md', { repo: null }],
     ]);
     const materializeSql = sqls.find(([sql]) => sql.includes('INSERT INTO initiative_contracts'));
     expect(materializeSql).toBeTruthy();
@@ -684,6 +684,72 @@ describe('runLoop：控制 action 自消费', () => {
     ]));
     expect(materializeSql[1].join('\n')).toContain('# Contract');
     expect(materializeSql[1].join('\n')).toContain('# DoD');
+  });
+
+  it('persist_contract_approval 按 payload.base_repo 从跨仓库权威仓库读取批准产物', async () => {
+    // 生产实弹 run 4925488b：base_repo=zenithjoy-workspace，批准 SHA 只在该仓库存在
+    const approvedSha = 'c'.repeat(40);
+    const observedSeq = [
+      obs({
+        run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+        task: {
+          status: 'in_progress',
+          payload: {
+            sprint_dir: 'sprints/kernel-contract',
+            base_repo: 'https://github.com/perfectuser21/zenithjoy-workspace.git',
+          },
+        },
+        contract: { approved: false, id: null },
+        proposeBranch: 'cp-harness-propose-r8-7194e308-a137',
+        proposeBranchSha: approvedSha,
+        proposeBranchRn: 8,
+        ganLatestRoundVerdict: 'APPROVED',
+        ganLatestRoundContractSha: approvedSha,
+      }),
+      obs({ contract: { approved: true, id: CONTRACT_ID }, generatorSpawned: false }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps } = makeEnv({ observedSeq });
+    deps.fileExists = vi.fn(() => false);
+    deps.readGitFile = vi.fn(() => '# frozen artifact');
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    for (const call of deps.readGitFile.mock.calls) {
+      expect(call[2]).toEqual({ repo: 'perfectuser21/zenithjoy-workspace' });
+    }
+    expect(deps.readGitFile).toHaveBeenCalledTimes(3);
+  });
+
+  it('persist_contract_approval 显式 base_repo 无法解析时 fail closed，不回退本仓 origin', async () => {
+    const approvedSha = 'd'.repeat(40);
+    const observedSeq = [
+      obs({
+        run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+        task: {
+          status: 'in_progress',
+          payload: {
+            sprint_dir: 'sprints/kernel-contract',
+            base_repo: 'not-an-authoritative-repository',
+          },
+        },
+        contract: { approved: false, id: null },
+        proposeBranch: 'cp-harness-propose-r1-11111111-a3',
+        proposeBranchSha: approvedSha,
+        proposeBranchRn: 1,
+        ganLatestRoundVerdict: 'APPROVED',
+        ganLatestRoundContractSha: approvedSha,
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps } = makeEnv({ observedSeq });
+    deps.readGitFile = vi.fn(() => '# must not read from origin');
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('approved_but_contract_artifacts_missing');
+    expect(deps.readGitFile).not.toHaveBeenCalled();
   });
 
   it('APPROVED 没有不可变合同 SHA 时 fail closed，不读取可变 branch', async () => {

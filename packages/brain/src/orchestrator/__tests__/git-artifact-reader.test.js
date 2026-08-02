@@ -61,4 +61,74 @@ describe('readGitArtifact', () => {
       .toBe('approved remote content\n');
     expect(git(consumer, 'cat-file', '-e', `${approvedSha}^{commit}`)).toBe('');
   });
+
+  it('批准 SHA 属于跨仓库 base_repo 时，从该权威仓库读取而不是本仓 origin', async () => {
+    // 生产实弹 run 4925488b：批准分支/SHA 在 perfectuser21/zenithjoy-workspace，
+    // Brain 本仓 origin 是 cecelia —— 只从 origin 读必然 approved_but_contract_artifacts_missing。
+    const ceceliaRemote = mkdtempSync(path.join(os.tmpdir(), 'contract-sha-cecelia-'));
+    const zenithjoyRemote = mkdtempSync(path.join(os.tmpdir(), 'contract-sha-zenithjoy-'));
+    const producer = mkdtempSync(path.join(os.tmpdir(), 'contract-sha-zj-producer-'));
+    const consumer = mkdtempSync(path.join(os.tmpdir(), 'contract-sha-brain-'));
+    dirs.push(ceceliaRemote, zenithjoyRemote, producer, consumer);
+
+    execFileSync('git', ['init', '--bare', ceceliaRemote], { encoding: 'utf8' });
+    execFileSync('git', ['init', '--bare', zenithjoyRemote], { encoding: 'utf8' });
+    const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+
+    git(producer, 'init');
+    git(producer, 'config', 'user.email', 'test@example.com');
+    git(producer, 'config', 'user.name', 'Test');
+    git(producer, 'remote', 'add', 'origin', zenithjoyRemote);
+    writeFileSync(path.join(producer, 'contract-draft.md'), 'zenithjoy approved contract\n');
+    git(producer, 'add', 'contract-draft.md');
+    git(producer, 'commit', '-m', 'approved zenithjoy contract');
+    const approvedSha = git(producer, 'rev-parse', 'HEAD');
+    git(producer, 'push', 'origin', 'HEAD:refs/heads/cp-harness-propose-r8-7194e308-a137');
+
+    // 本仓（Brain 所在 cecelia）origin 里根本没有这个 SHA
+    git(consumer, 'init');
+    git(consumer, 'remote', 'add', 'origin', ceceliaRemote);
+
+    const { readGitArtifact } = await import('../git-artifact-reader.js');
+
+    const seenRepos = [];
+    expect(readGitArtifact(approvedSha, 'contract-draft.md', {
+      cwd: consumer,
+      repo: 'perfectuser21/zenithjoy-workspace',
+      remoteUrlForRepo: (repo) => {
+        seenRepos.push(repo);
+        return zenithjoyRemote;
+      },
+    })).toBe('zenithjoy approved contract\n');
+    expect(seenRepos).toEqual(['perfectuser21/zenithjoy-workspace']);
+  });
+
+  it('权威仓库限定在 WORKSPACE_REPOSITORIES allow-list 内，其余 fail closed', async () => {
+    const repo = mkdtempSync(path.join(os.tmpdir(), 'contract-sha-badrepo-'));
+    dirs.push(repo);
+    execFileSync('git', ['init', repo], { encoding: 'utf8' });
+    const { readGitArtifact } = await import('../git-artifact-reader.js');
+    const { WORKSPACE_REPOSITORIES } = await import('../workspace-spec.js');
+
+    const rejected = [
+      'perfectuser21/zenithjoy-workspace; rm -rf /', // shell 注入形态
+      'https://evil.example.com/x.git', // 任意 URL
+      'nope', // 非 owner/repo
+      'perfectuser21/zenithjoy-skills', // 形状合法但不在 workspace allow-list 内
+      'attacker/zenithjoy-workspace', // owner 冒名
+    ];
+    for (const bad of rejected) {
+      expect(WORKSPACE_REPOSITORIES).not.toContain(bad);
+      expect(() => readGitArtifact('b'.repeat(40), 'contract.md', { cwd: repo, repo: bad }))
+        .toThrow(/authoritative repository/);
+    }
+    // allow-list 内的仓库必须仍被接受（走到 fetch 才失败，而不是被 repo 校验拦下）
+    for (const allowed of WORKSPACE_REPOSITORIES) {
+      expect(() => readGitArtifact('b'.repeat(40), 'contract.md', {
+        cwd: repo,
+        repo: allowed,
+        remoteUrlForRepo: () => '/nonexistent-remote-for-allowlist-probe',
+      })).toThrow(/nonexistent-remote-for-allowlist-probe|Command failed/);
+    }
+  });
 });

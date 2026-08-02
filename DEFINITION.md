@@ -6,11 +6,22 @@
 
 
 
-**Brain 版本**: 1.267.175
+**Brain 版本**: 1.267.176
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.176 — Kernel cross-repository approved-SHA contract artifacts
+
+- Kernel `persist_contract_approval` 现在按 task `payload.base_repo` 解析权威仓库，
+  再按被批准的精确 SHA 物化合同产物；跨仓库 run（如 ZenithJoy）不再因为只读 Brain
+  `origin` 而以 `approved_but_contract_artifacts_missing` 失败。
+- 权威仓库复用 Kernel workspace 边界同一张 allow-list（`WORKSPACE_REPOSITORIES`），
+  allow-list 外的仓库一律拒绝；本仓（origin 同仓）路径、full-SHA 与 repository-relative
+  校验、immutable `git show <sha>:<path>` 语义与 fail-closed 全部不变。
+- 回退到 Brain `1.267.175` 会让 Reviewer APPROVED 的跨仓库 run 再次在合同物化处失败，
+  回退前必须 drain 此类 active Kernel run。
 
 ## Brain 1.267.175 — Kernel repository discovery and bounded workspace cleanup
 
