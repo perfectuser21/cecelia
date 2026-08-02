@@ -220,15 +220,28 @@ function acceptedReceipt(receipt, secret) {
 function startReceipt(receipt) {
   const attemptId = receipt?.attempt_id;
   const status = receipt?.status;
+  const terminalStatus = receipt?.terminal_status;
   if (
     typeof attemptId !== 'string'
-    || !['starting', 'running'].includes(status)
+    || !['starting', 'running', 'terminal'].includes(status)
+    || (
+      status === 'terminal'
+      && ![
+        'cleaned',
+        'missing',
+        'exited',
+        'dead',
+        'removed',
+        'quarantined',
+      ].includes(terminalStatus)
+    )
   ) {
     throw new Error('attempt_start_receipt_invalid');
   }
   return Object.freeze({
     status,
     attempt_id: attemptId,
+    ...(status === 'terminal' ? { terminal_status: terminalStatus } : {}),
     ...(receipt.deduped === true ? { deduped: true } : {}),
   });
 }
