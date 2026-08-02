@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.178
+**Brain 版本**: 1.267.179
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.179 — Kernel 仓库 slug clone 边界
+
+- Kernel/Fleet 标准的 `owner/repo` 仓库标识在本机 worktree clone 边界转成
+  完整 GitHub HTTPS URL，不再被 Git 误当作本地相对路径。
+- 本地绝对路径、现有 HTTPS/SSH URL 与数据库内的 provider-neutral slug 合同保持不变；
+  私有仓库 clone 后 origin 仍还原为不含 token 的干净 URL。
+- 回退到 Brain `1.267.178` 会使以 slug 传入 `payload.base_repo` 的 Kernel 任务
+  再次在 run 建档前 clone 失败。
 
 ## Brain 1.267.178 — Kernel 冻结基线血统守卫
 

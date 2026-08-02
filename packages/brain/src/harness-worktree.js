@@ -14,6 +14,13 @@ function injectTokenIntoUrl(url, token) {
   return url.replace(/^https:\/\//, `https://x-access-token:${token}@`);
 }
 
+function normalizeRemoteCloneSource(source) {
+  if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(source)) {
+    return `https://github.com/${source}.git`;
+  }
+  return source;
+}
+
 const execFile = promisify(execFileCb);
 
 export const DEFAULT_BASE_REPO = '/Users/administrator/perfect21/cecelia';
@@ -106,13 +113,17 @@ async function defaultRm(p) {
  * @returns {Promise<string>}                  worktree 绝对路径
  */
 export async function ensureHarnessWorktree(opts) {
-  const cloneSource = opts.baseRepo || DEFAULT_BASE_REPO;
+  const requestedCloneSource = opts.baseRepo || DEFAULT_BASE_REPO;
   const wtHostRepo = DEFAULT_BASE_REPO; // worktree 物理位置始终是 cecelia，不随 cloneSource 变化
   const execFn = opts.execFn || defaultExec;
   const statFn = opts.statFn || defaultStat;
   const rmFn = opts.rmFn || defaultRm;
   const logFn = opts.logFn || ((msg) => console.warn(msg));
   const tokenFn = opts.tokenFn || resolveGitHubToken;
+  const cloneSourceIsLocal = await statFn(requestedCloneSource).catch(() => false);
+  const cloneSource = cloneSourceIsLocal
+    ? requestedCloneSource
+    : normalizeRemoteCloneSource(requestedCloneSource);
 
   // H11: opts.wtKey + opts.branch 让 sub-task callers 用复合 key（绕过 shortTaskId ≥8 校验）。
   // initiative-level callers（不传 wtKey/branch）走老路用 shortTaskId(taskId) + makeCpBranchName。
@@ -182,7 +193,6 @@ export async function ensureHarnessWorktree(opts) {
 
   // H17: 当 cloneSource 是远端 URL（GitHub/SSH）时跳过 --local --no-hardlinks。
   // --local 仅对本地路径有意义（hardlink 优化）；远端 URL 传 --local 部分 git 版本会 fatal。
-  const cloneSourceIsLocal = await statFn(cloneSource).catch(() => false);
   if (cloneSourceIsLocal) {
     await execFn('git', [
       'clone', '--local', '--no-hardlinks',

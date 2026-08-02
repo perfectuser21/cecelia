@@ -1,6 +1,19 @@
 # Brain 模块定义
 
-**版本**: 1.267.178
+**版本**: 1.267.179
+
+## Kernel repository slug clone boundary
+
+- `ensureHarnessWorktree` 现在把标准 `owner/repo` 仓库标识在 clone 边界规范化为
+  `https://github.com/owner/repo.git`，同时继续接受现有的本地仓库路径和完整远端 URL。
+- 数据库、TaskBundle 与 Fleet workspace contract 仍保存 provider-neutral 的仓库 slug；
+  只有需要调用 Git 的旧本机 workspace 适配层才生成 clone URL，凭据注入后仍会把
+  origin 还原成无 token 的干净 URL。
+- 生产实弹任务 `635b4360` 已证明旧实现会在 Kernel run 建档前执行
+  `git clone ... perfectuser21/zenithjoy-workspace` 并报 repository does not exist；本修复
+  让手动派发和自动派发共用同一归一化边界，不修改 Skills、角色、模型或 Kernel 状态机。
+- 回退到 Brain `1.267.178` 会让以 `owner/repo` 作为 `payload.base_repo` 的新 Kernel
+  任务再次在首个 Attempt 前失败；回退前应 drain 此类 active task。
 
 ## Kernel frozen-baseline lineage guard
 
