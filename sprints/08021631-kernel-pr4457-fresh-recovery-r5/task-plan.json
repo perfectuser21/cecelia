@@ -1,0 +1,33 @@
+{
+  "initiative_id": "9cc0f8fe-fe75-4fe1-a627-be14c324780f",
+  "journey_type": "autonomous",
+  "journey_type_reason": "任务是既有 Draft PR 的内核冲突、安全扫描与 exact-head 证据恢复，不含 UI 或远端 agent 用户旅程。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "收敛 Draft PR #4457 当前冲突与 CodeQL exact-head 证据",
+      "scope": "在写操作前冻结当前恢复事实，仅更新既有 PR 分支，语义解决完整冲突集和 7 条 CodeQL annotation，真实逐 oracle 留存仓外证据，在唯一 final SHA 收齐 CI/evaluator/judge 后保持 OPEN Draft 并停在人工 review；不新建或合并 PR，不 stage/deploy。",
+      "dod": [
+        "[BEHAVIOR] baseline 精确冻结 source/main、40 文件/136 块冲突和 CodeQL 3 failure/4 warning",
+        "[BEHAVIOR] 既有 PR 分支对 current main 零冲突且 7/7 CodeQL finding 有真实修复与回归",
+        "[BEHAVIOR] 每个 child oracle manifest 行含 argv/cwd/start/end/exit/raw-log sha256 且可重算",
+        "[BEHAVIOR] CodeQL 与三个 required contexts 在唯一 final SHA 全部 SUCCESS",
+        "[BEHAVIOR] evaluator/judge exact-head 通过且 PR 保持 OPEN Draft、autoMerge=null",
+        "[ARTIFACT] recovery verifier、回归测试与仓外 attempt receipts 齐全"
+      ],
+      "files": [
+        "scripts/harness/kernel-recovery-contract.mjs",
+        "sprints/08021631-kernel-pr4457-fresh-recovery-r5/vitest.config.mjs",
+        "packages/brain/src/routes/execution.js",
+        "packages/brain/src/task-updater.js",
+        "packages/brain/src/orchestrator/__tests__/release-run-surfaces.test.js",
+        "packages/brain/src/orchestrator/__tests__/release-run-worker-runtime.test.js",
+        "packages/brain/src/staging-e2e-runner.js",
+        "当前冻结 merge oracle 返回的 40 个冲突文件及必要回归测试"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
