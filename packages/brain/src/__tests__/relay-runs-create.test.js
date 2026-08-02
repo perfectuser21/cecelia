@@ -111,6 +111,7 @@ describe('legacy POST /orchestrator/relay-runs/:initiative_id', () => {
       host: 'foreground',
       deadlineHours: 6,
       createdSource: 'foreground_handoff',
+      commanderMode: 'kernel-only',
     });
   });
 

@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.267.169
+**版本**: 1.267.170
+
+## Public Kernel run commander mode creation
+
+- canonical 与 legacy Relay run 创建入口共用 allow-list 信任边界，允许显式选择
+  `legacy-session`、`kernel-only` 或 `hybrid`，省略时保持 `kernel-only`。
+- Kernel run Store 独立复核模式，并在创建事务的 INSERT 中原子持久化
+  `commander_mode`；按 run ID 和 active task 读取时都返回该字段。
+- 回退到 Brain `1.267.169` 前必须 drain active `hybrid` run；旧版本不会从公开入口
+  创建 hybrid run，且读取时会把未投影的模式按 `kernel-only` 处理。
 
 ## Kernel Evaluator Provider schema UID boundary
 
