@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.267.170
+**版本**: 1.267.171
+
+## Commander auth failure status redaction boundary
+
+- 递归秘密扫描器允许唯一的布尔运行状态键 `auth_failed`，避免 Ground Truth 的
+  `lastAgentExit.auth_failed=false` 在首个 Hybrid Commander Attempt 前被误判为凭据。
+- 同名非布尔值与 `authorization`、token、secret、password、API key 等真实秘密
+  材料继续 fail closed；不改变 Provider 凭据、Fleet 或 CredentialEnvelope 边界。
+- 回退到 `1.267.170` 前必须 drain active `hybrid` run，否则这些 run 会在下一个
+  material boundary 恢复失败。
 
 ## Public Kernel run commander mode creation
 
