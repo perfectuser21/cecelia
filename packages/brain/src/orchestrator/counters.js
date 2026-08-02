@@ -22,7 +22,8 @@
  *   crossCheckMismatch = proposerCount !== proposeBranchMaxRn（崩溃窗口漏记 / 记了没派的交叉校验信号，
  *                        loop 把它写进 appendHop detail 供回放排障）
  *   pollCount  = 从 decision log 推导：最后一次非 wait:poll_ci action 后的 wait:poll_ci 行数（持久化）
- *   blockedStreak = 从 decision log 推导：尾部连续的 gate_verdict=deny:BLOCKED 行数
+ *   blockedStreak = 从 decision log 推导：尾部连续且 failure_class 相同的
+ *                   gate_verdict=deny:BLOCKED 行数
  *   noProgress = 最新 spawn:generator-fix 的 trigger_sha === verdict:generator-fix-callback 的 pr_head_sha
  *   noProgressReason = 'no_progress_same_sha' | null
  */
@@ -469,14 +470,20 @@ export function deriveCounters(logRows, options) {
   // 但遇到任何其他行即断开，保证 DONE 后不会沿用旧 streak。
   let blockedStreak = 0;
   let blockedStatus = null;
+  let blockedFailureClass = null;
   for (let i = rows.length - 1; i >= 0;) {
     const resultRow = rows[i];
     if (resultRow.action !== LOG_ACTION.DISPATCH_RESULT) break;
     const verdict = String(resultRow.gate_verdict ?? '');
     const status = verdict.startsWith('deny:') ? verdict.slice('deny:'.length) : null;
+    const detail = asJson(resultRow.detail) ?? {};
+    const failureClass = detail.failure_class ?? null;
     if (!['BLOCKED', 'NEEDS_CONTEXT'].includes(status)) break;
-    if (blockedStatus == null) blockedStatus = status;
-    if (status !== blockedStatus) break;
+    if (blockedStatus == null) {
+      blockedStatus = status;
+      blockedFailureClass = failureClass;
+    }
+    if (status !== blockedStatus || failureClass !== blockedFailureClass) break;
     blockedStreak++;
     i--;
     if (i >= 0 && rows[i].gate_verdict === 'allow') i--;
@@ -539,6 +546,7 @@ export function deriveCounters(logRows, options) {
     pollCount,
     blockedStreak,
     blockedStatus,
+    blockedFailureClass,
     noProgress,
     noProgressReason,
   };

@@ -6,11 +6,22 @@
 
 
 
-**Brain 版本**: 1.267.184
+**Brain 版本**: 1.267.185
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.185 — Kernel transient infrastructure admission backoff
+
+- `infrastructure_blocked` 不再占用语义 BLOCKED 的连续两次终结栅栏。Kernel 会先把
+  capability snapshot、failure class 与 fallback reason 写入 append-only 决策账本，
+  再按既有 90 秒轮询周期退避并重新获取 fresh Fleet admission；整条 run 仍受 8 小时
+  deadline 与 4096 hop 宽兜底约束。
+- BLOCKED streak 现在同时按 control status 与 failure class 分段，防止一次 Worker 清理期
+  的瞬态 admission 失败提前消耗后续语义拒绝预算。语义 BLOCKED 连续两次仍立即终结，
+  没有放宽产品/安全收敛闸。回退到 `1.267.184` 会恢复“Generator cleanup 后连续两次
+  node_not_base_admitted 即误杀 run”的竞态。
 
 ## Brain 1.267.184 — Kernel runtime contract test hardening
 
