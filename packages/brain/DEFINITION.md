@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.172
+**版本**: 1.267.173
+
+## Runner Commander strict response schema
+
+- Commander Provider 的结构化输出 schema 为 `schema` 字段补齐 `type: string`，同时
+  保留 `const: commander-directive/v1`，满足当前 Codex API 的 strict JSON Schema。
+- 三节点统一固定 Runner
+  `sha256:c4c37787247cf0cb211b87f1ba7500e0e738bfa00228ddea7561821ff80f3189`；
+  不改变 Provider、凭据、workspace、Fleet admission 或 callback 的信任边界。
+- 回退：先 drain active Hybrid run，再恢复 Brain `1.267.172` 与上一 Runner digest；
+  旧组合会在首个 Commander Attempt 恢复 `invalid_json_schema`。
 
 ## Fleet Worker Commander role admission
 

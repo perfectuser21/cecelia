@@ -6,11 +6,22 @@
 
 
 
-**Brain 版本**: 1.267.172
+**Brain 版本**: 1.267.173
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.173 — Runner Commander strict response schema
+
+- Commander 的 Provider response schema 为 `schema` 常量补齐 JSON Schema
+  `type: string`，兼容当前 Codex API 的 strict schema 校验，避免首个 Hybrid Attempt
+  在模型执行前以 `invalid_json_schema` 退出。
+- 三节点固定 Runner
+  `sha256:c4c37787247cf0cb211b87f1ba7500e0e738bfa00228ddea7561821ff80f3189`；
+  Provider、凭据、workspace 与 callback 边界不变。
+- 回退到 `1.267.172`/旧 digest 前必须 drain active `hybrid` run；旧组合会恢复
+  Commander schema 被当前 Codex API 拒绝的问题。
 
 ## Brain 1.267.172 — Fleet Worker Commander role admission
 
