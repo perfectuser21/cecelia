@@ -29,7 +29,7 @@ const DEFAULT_HEALTH_CACHE_TTL_MS = 30_000;
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 5_231;
 const ATTEMPT_PATH = /^\/harness\/attempts\/([a-f0-9-]+)$/;
-const ATTEMPT_ACTION_PATH = /^\/harness\/attempts\/([a-f0-9-]+)\/(cancel|terminal)$/;
+const ATTEMPT_ACTION_PATH = /^\/harness\/attempts\/([a-f0-9-]+)\/(start|cancel|terminal)$/;
 const UNTRUSTED_WORKSPACE_FIELDS = new Set([
   'cwd',
   'worktree_path',
@@ -180,7 +180,7 @@ function writeJson(response, statusCode, value) {
 }
 
 function validAttemptRunner(value) {
-  return ['launch', 'inspect', 'cancel', 'terminal', 'reconcile']
+  return ['prepare', 'start', 'launch', 'inspect', 'cancel', 'terminal', 'reconcile']
     .every((method) => typeof value?.[method] === 'function');
 }
 
@@ -214,6 +214,22 @@ function acceptedReceipt(receipt, secret) {
     job_id: jobId,
     actual_machine_id: machineId,
     attestation: signAttestation(secret, attemptId, machineId, jobId),
+  });
+}
+
+function startReceipt(receipt) {
+  const attemptId = receipt?.attempt_id;
+  const status = receipt?.status;
+  if (
+    typeof attemptId !== 'string'
+    || !['starting', 'running'].includes(status)
+  ) {
+    throw new Error('attempt_start_receipt_invalid');
+  }
+  return Object.freeze({
+    status,
+    attempt_id: attemptId,
+    ...(receipt.deduped === true ? { deduped: true } : {}),
   });
 }
 
@@ -562,6 +578,22 @@ function createFleetWorkerServer(options = {}) {
     }
 
     try {
+      if (
+        request.method === 'POST'
+        && request.url === '/harness/attempts/prepare'
+      ) {
+        const body = await readJson(request, maximumRequestBytes);
+        const untrustedField = findUntrustedWorkspaceField(body);
+        if (untrustedField) {
+          const error = new Error(`untrusted_workspace_field:${untrustedField}`);
+          error.statusCode = 400;
+          throw error;
+        }
+        const receipt = await attemptRunner.prepare(body);
+        writeJson(response, 202, acceptedReceipt(receipt, attemptToken));
+        return;
+      }
+
       if (request.method === 'POST' && request.url === '/harness/attempts') {
         const body = await readJson(request, maximumRequestBytes);
         const untrustedField = findUntrustedWorkspaceField(body);
@@ -595,7 +627,9 @@ function createFleetWorkerServer(options = {}) {
           200,
           action === 'terminal'
             ? terminalReceipt(result, attemptToken, machineId)
-            : result,
+            : action === 'start'
+              ? startReceipt(result)
+              : result,
         );
         return;
       }
