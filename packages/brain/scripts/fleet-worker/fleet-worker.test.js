@@ -909,6 +909,44 @@ describe('Fleet Worker Attempt API', () => {
     server.close();
   });
 
+  it('returns a bounded terminal start receipt without runner details', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    attemptRunner.start.mockResolvedValueOnce({
+      status: 'terminal',
+      attempt_id: attemptId,
+      terminal_status: 'missing',
+      credential: 'must-not-leak',
+    });
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(
+      server,
+      'POST',
+      `/harness/attempts/${attemptId}/start`,
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          lease_owner: 'dispatcher-1',
+          lease_generation: 0,
+        }),
+      },
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      status: 'terminal',
+      attempt_id: attemptId,
+      terminal_status: 'missing',
+    });
+    expect(response.body).not.toContain('must-not-leak');
+    server.close();
+  });
+
   it('launches an authenticated path-free Attempt and returns a bounded receipt', async () => {
     const { createFleetWorkerServer } = await loadServerContract();
     const attemptRunner = runnerDouble();

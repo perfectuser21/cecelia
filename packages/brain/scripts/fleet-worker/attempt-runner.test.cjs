@@ -337,6 +337,141 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.githubCredentialConsumer.consume).toHaveBeenCalledOnce();
   });
 
+  it('binds duplicate prepare to callback token identity without persisting it', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+
+    expect(JSON.stringify(deps.stateStore.states.get(ATTEMPT_ID)))
+      .not.toContain('callback-secret');
+    await expect(runner.prepare(request({
+      callback_token: 'different-callback-secret',
+    }))).rejects.toThrow('attempt_already_exists');
+    expect(deps.docker.prepare).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['Provider', 'credential_envelope', CREDENTIAL_ENVELOPE],
+    ['GitHub', 'github_credential_envelope', GITHUB_CREDENTIAL_ENVELOPE],
+  ])('binds duplicate prepare to the %s envelope payload hash', async (
+    _name,
+    field,
+    envelope,
+  ) => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+
+    await expect(runner.prepare(request({
+      [field]: {
+        ...envelope,
+        payload_hash: `sha256:${'d'.repeat(64)}`,
+      },
+    }))).rejects.toThrow('attempt_already_exists');
+    expect(deps.docker.prepare).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when a restarted runner cannot recover prepared credentials', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    const restarted = createRunner(deps);
+
+    await expect(restarted.prepare(request())).rejects.toThrow(
+      'attempt_credentials_unavailable',
+    );
+    expect(deps.docker.prepare).toHaveBeenCalledOnce();
+    expect(deps.docker.start).not.toHaveBeenCalled();
+  });
+
+  it('recovers a persisted starting Attempt that Docker reports running', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    deps.stateStore.states.get(ATTEMPT_ID).status = 'starting';
+    const restarted = createRunner(deps);
+
+    await expect(restarted.start(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toMatchObject({
+      status: 'running',
+      attempt_id: ATTEMPT_ID,
+      deduped: true,
+    });
+
+    expect(deps.docker.inspect).toHaveBeenCalledWith({
+      containerId: 'container-attempt-1',
+    });
+    expect(deps.stateStore.states.get(ATTEMPT_ID).status).toBe('running');
+    expect(deps.docker.wait).toHaveBeenCalledOnce();
+    expect(deps.docker.start).not.toHaveBeenCalled();
+  });
+
+  it.each(['created', 'prepared'])(
+    'fails closed for persisted starting with Docker %s and no credentials',
+    async (dockerStatus) => {
+      const deps = dependencies();
+      await createRunner(deps).prepare(request());
+      deps.stateStore.states.get(ATTEMPT_ID).status = 'starting';
+      deps.docker.inspect.mockResolvedValueOnce({ status: dockerStatus });
+      const restarted = createRunner(deps);
+
+      await expect(restarted.start(ATTEMPT_ID, {
+        owner: 'dispatcher-1',
+        generation: 0,
+      })).rejects.toThrow('attempt_credentials_unavailable');
+      expect(deps.docker.start).not.toHaveBeenCalled();
+      expect(deps.stateStore.states.get(ATTEMPT_ID).status).toBe('starting');
+    },
+  );
+
+  it('exact-finalizes persisted starting when its container is missing', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    deps.stateStore.states.get(ATTEMPT_ID).status = 'starting';
+    deps.docker.inspect.mockResolvedValueOnce({ status: 'missing' });
+    const restarted = createRunner(deps);
+
+    await expect(restarted.start(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toEqual({
+      status: 'terminal',
+      attempt_id: ATTEMPT_ID,
+      terminal_status: 'missing',
+      deduped: true,
+    });
+    expect(deps.docker.remove).toHaveBeenCalledWith({
+      containerId: 'container-attempt-1',
+      attemptId: ATTEMPT_ID,
+      containerMissing: true,
+    });
+    expect(deps.stateStore.states.has(ATTEMPT_ID)).toBe(false);
+  });
+
+  it('returns a lease-fenced bounded terminal result after exact cleanup', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+    await runner.cancel(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    });
+
+    await expect(runner.start(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toEqual({
+      status: 'terminal',
+      attempt_id: ATTEMPT_ID,
+      terminal_status: 'cleaned',
+      deduped: true,
+    });
+    await expect(runner.start(ATTEMPT_ID, {
+      owner: 'stale-owner',
+      generation: 0,
+    })).rejects.toThrow('attempt_lease_conflict');
+  });
+
   it('starts a prepared Attempt once and deduplicates the matching lease', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
