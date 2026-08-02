@@ -27,6 +27,8 @@
   真实清理失败会 quarantine 或报 `attempt_launch_rollback_failed`，不再假绿。
 - terminal callback 只有在 exact leased Worker 返回 HMAC 验证通过的 `cleaned` /
   `already_clean` 收据后才落终态；不可达、失败或 quarantine 都返回可重试错误。
+  Worker 在 Brain 返回成功前保留负责 callback 重试的 Runner，只先释放 runtime resource；
+  Runner 自然退出后再清理容器、worktree 与状态，服务端 artifact 校验也先于资源释放。
 - 三机 NodeProfile、LaunchDaemon installer、rollout/reconcile 固定 PostgreSQL 镜像
   `postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777`
   并以真实启动 PostgreSQL + `pg_isready` 的无 host-port probe 做 admission；缺镜像、

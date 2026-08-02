@@ -891,6 +891,35 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
     return res.status(409).json({ ok: false, error: 'terminal_payload_conflict' });
   }
 
+  const resolver = req.app.get('kernelPrIdentityResolver') || defaultPrIdentityResolver;
+  const branchHeadResolver = req.app.get('kernelGitBranchHeadResolver')
+    || defaultGitBranchHeadResolver;
+  const commitLineageResolver = req.app.get('kernelCommitLineageResolver')
+    || defaultCommitLineageResolver;
+  let verifiedResult;
+  try {
+    verifiedResult = await verifyPlannerGitArtifactClaim(
+      attempt,
+      result,
+      branchHeadResolver,
+    );
+    verifiedResult = await verifyGeneratorPullRequestClaims(
+      attempt,
+      verifiedResult,
+      db,
+      resolver,
+      commitLineageResolver,
+    );
+  } catch (error) {
+    if (error.status) {
+      return res.status(error.status).json({
+        ok: false,
+        error: error.message,
+      });
+    }
+    throw error;
+  }
+
   let resourceCleanupReceipt = null;
   const requiresFleetPostgresCleanup = (
     ['fleet-worker', 'remote-bridge'].includes(attempt.execution_transport)
@@ -926,35 +955,6 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
         error: 'fleet_resource_cleanup_incomplete',
       });
     }
-  }
-
-  const resolver = req.app.get('kernelPrIdentityResolver') || defaultPrIdentityResolver;
-  const branchHeadResolver = req.app.get('kernelGitBranchHeadResolver')
-    || defaultGitBranchHeadResolver;
-  const commitLineageResolver = req.app.get('kernelCommitLineageResolver')
-    || defaultCommitLineageResolver;
-  let verifiedResult;
-  try {
-    verifiedResult = await verifyPlannerGitArtifactClaim(
-      attempt,
-      result,
-      branchHeadResolver,
-    );
-    verifiedResult = await verifyGeneratorPullRequestClaims(
-      attempt,
-      verifiedResult,
-      db,
-      resolver,
-      commitLineageResolver,
-    );
-  } catch (error) {
-    if (error.status) {
-      return res.status(error.status).json({
-        ok: false,
-        error: error.message,
-      });
-    }
-    throw error;
   }
   verifiedResult = {
     ...verifiedResult,

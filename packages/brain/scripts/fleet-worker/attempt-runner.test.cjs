@@ -641,7 +641,7 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.docker.launch).not.toHaveBeenCalled();
   });
 
-  it('terminal cleanup removes the container and isolated resources before its worktree and state', async () => {
+  it('callback terminalization releases isolated resources but keeps the Runner alive to receive the response', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
     await runner.launch(request({
@@ -662,15 +662,9 @@ describe('Fleet Worker Attempt runner', () => {
       status: 'cleaned',
       attempt_id: ATTEMPT_ID,
     });
-    expect(deps.events.slice(-3)).toEqual([
-      'docker.remove',
-      'resource.release',
-      'workspace.cleanup',
-    ]);
-    expect(deps.docker.remove).toHaveBeenCalledWith({
-      containerId: 'container-attempt-1',
-      attemptId: ATTEMPT_ID,
-    });
+    expect(deps.events.at(-1)).toBe('resource.release');
+    expect(deps.docker.remove).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
     expect(deps.resourceManager.release).toHaveBeenCalledWith({
       attemptId: ATTEMPT_ID,
       runtime: {
@@ -681,7 +675,7 @@ describe('Fleet Worker Attempt runner', () => {
         },
       },
     });
-    expect(deps.stateStore.delete).toHaveBeenCalledWith(ATTEMPT_ID);
+    expect(deps.stateStore.delete).not.toHaveBeenCalled();
   });
 
   it('automatically performs terminal cleanup after the owned container exits', async () => {
@@ -705,13 +699,16 @@ describe('Fleet Worker Attempt runner', () => {
     ]);
   });
 
-  it('quarantines the workspace and retains evidence when container cleanup fails', async () => {
+  it('cancel quarantines the workspace and retains evidence when container cleanup fails', async () => {
     const deps = dependencies();
     deps.docker.remove.mockRejectedValueOnce(new Error('docker remove failed'));
     const runner = createRunner(deps);
     await runner.launch(request());
 
-    await expect(runner.terminal(ATTEMPT_ID)).resolves.toMatchObject({
+    await expect(runner.cancel(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toMatchObject({
       status: 'quarantined',
       attempt_id: ATTEMPT_ID,
     });
@@ -721,7 +718,7 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.stateStore.states.get(ATTEMPT_ID).status).toBe('quarantined');
   });
 
-  it('quarantines and retains state when isolated resource cleanup fails', async () => {
+  it('keeps the Runner and state retryable when callback resource cleanup fails', async () => {
     const deps = dependencies();
     deps.resourceManager.release.mockRejectedValueOnce(
       new Error('attempt_resource_release_failed'),
@@ -745,11 +742,13 @@ describe('Fleet Worker Attempt runner', () => {
       status: 'quarantined',
       attempt_id: ATTEMPT_ID,
     });
+    expect(deps.docker.remove).not.toHaveBeenCalled();
     expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
     expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
-      status: 'quarantined',
+      status: 'running',
       runtime_resources: expect.any(Object),
     });
+    expect(deps.workspaceManager.quarantine).not.toHaveBeenCalled();
   });
 
   it('reports resource rollback failure instead of silently losing recovery evidence', async () => {

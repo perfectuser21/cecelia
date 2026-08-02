@@ -1069,6 +1069,33 @@ function createAttemptRunner({
     });
   }
 
+  async function finalizeAttempt(attemptId, lease = null) {
+    const state = await stateStore.get(attemptId);
+    if (!state) {
+      return Object.freeze({ status: 'already_clean', attempt_id: attemptId });
+    }
+    if (state.worker_id !== workerId) {
+      throw new Error('attempt_worker_owner_mismatch');
+    }
+    if (lease !== null) {
+      assertLeaseFence(state, lease);
+    }
+    try {
+      await docker.remove({
+        containerId: state.container_id,
+        attemptId: state.attempt_id,
+      });
+    } catch (error) {
+      return quarantineState(state, error);
+    }
+    try {
+      await releaseResources(state);
+    } catch (error) {
+      return quarantineState(state, error);
+    }
+    return cleanupWorkspaceState(state);
+  }
+
   async function rollbackLaunch({
     error,
     workspace,
@@ -1266,7 +1293,7 @@ function createAttemptRunner({
         });
       }
       void docker.wait({ containerId: launched.containerId })
-        .then(() => runner.terminal(request.attempt_id))
+        .then(() => finalizeAttempt(request.attempt_id))
         .catch(() => {});
       return Object.freeze({
         attempt_id: request.attempt_id,
@@ -1307,19 +1334,22 @@ function createAttemptRunner({
         assertLeaseFence(state, lease);
       }
       try {
-        await docker.remove({
-          containerId: state.container_id,
-          attemptId: state.attempt_id,
-        });
-      } catch (error) {
-        return quarantineState(state, error);
-      }
-      try {
         await releaseResources(state);
       } catch (error) {
-        return quarantineState(state, error);
+        return Object.freeze({
+          status: 'quarantined',
+          attempt_id: state.attempt_id,
+          reason: 'attempt_runtime_resource_cleanup_failed',
+        });
       }
-      return cleanupWorkspaceState(state);
+      // Do not remove the Runner here. It is the callback retry executor and
+      // must remain alive until Brain has durably committed the terminal claim
+      // and returned 2xx. docker.wait() performs the full exact-attempt cleanup
+      // after the Runner exits naturally.
+      return Object.freeze({
+        status: 'cleaned',
+        attempt_id: state.attempt_id,
+      });
     },
 
     async cancel(attemptId, lease) {
@@ -1328,7 +1358,7 @@ function createAttemptRunner({
         return Object.freeze({ status: 'already_clean', attempt_id: attemptId });
       }
       assertLeaseFence(state, lease);
-      return this.terminal(attemptId, lease);
+      return finalizeAttempt(attemptId, lease);
     },
 
     async reconcile() {

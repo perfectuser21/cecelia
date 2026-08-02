@@ -305,6 +305,44 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
+  it('服务端 artifact 校验不可用时不提前清理正在负责 callback 重试的 Runner', async () => {
+    const plannerBranch = `cp-harness-prd-${attemptId.slice(0, 8)}-a4`;
+    const headSha = 'a'.repeat(40);
+    mocks.store.getById.mockResolvedValue(fleetAttempt({
+      role: 'planner',
+      task_bundle: {
+        expected_output: 'harness-result/planner-v1',
+        inputs: {
+          sprint_dir: 'sprints/kernel-real',
+          planner_branch: plannerBranch,
+          runtime_resources: { postgres: true },
+          workspace_spec: { repo: 'perfectuser21/zenithjoy-workspace' },
+        },
+      },
+    }));
+    app.set('kernelGitBranchHeadResolver', vi.fn(async () => {
+      throw new Error('temporary git outage');
+    }));
+
+    const response = await postCallback(app, {
+      ...fleetResult({ session_id: 'planner-session' }),
+      artifacts: [{
+        type: 'git_artifact',
+        kind: 'planner_prd',
+        path: 'sprints/kernel-real/sprint-prd.md',
+        repo: 'perfectuser21/zenithjoy-workspace',
+        branch: plannerBranch,
+        head_sha: headSha,
+      }],
+      decision: null,
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe('planner_git_artifact_verification_unavailable');
+    expect(mocks.terminalize).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+  });
+
   it.each(['completed', 'completed_with_concerns'])(
     '只把服务端 Git 校验通过的 planner PRD artifact 写入 %s 终态 receipt',
     async (callbackStatus) => {

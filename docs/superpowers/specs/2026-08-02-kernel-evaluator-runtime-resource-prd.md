@@ -99,7 +99,10 @@ This rule does not weaken authentication or replace it with mocks.
 - Terminal callback cannot complete until the exact leased Worker returns a
   verified, bounded cleanup receipt. Only `cleaned` and `already_clean` may
   commit terminal state; unavailable, failed, incomplete, or quarantined
-  cleanup leaves the attempt non-terminal and returns a retryable error.
+  cleanup leaves the attempt non-terminal and returns a retryable error. The
+  Worker releases runtime resources but keeps the callback-sending Runner alive
+  until Brain returns success; full Runner/workspace cleanup follows natural
+  Runner exit. Server-side artifact verification runs before resource release.
 
 ## 8. Red-to-Green acceptance
 

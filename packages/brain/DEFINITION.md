@@ -16,7 +16,9 @@
   orphan reconcile 都有对称回收；历史 attempt 使用其状态内 pinned digest 做 exact
   回收，非“对象已不存在”的清理错误不得吞掉。
 - terminal callback 必须先取得 exact leased Worker 的 HMAC cleanup receipt；仅
-  `cleaned` / `already_clean` 可提交终态，其余结果保持非终态以便重试。
+  `cleaned` / `already_clean` 可提交终态，其余结果保持非终态以便重试。Worker 先释放
+  runtime resource、保留 callback Runner，等 Brain 返回成功且 Runner 自然退出后再做
+  容器/worktree/state 清理；artifact 校验失败不会提前杀掉重试执行者。
 - 三机 NodeProfile/installer/rollout/reconcile 同步固定 PostgreSQL digest，并把其
   真实启动 + `pg_isready` 结果投影到 Worker health/admission，不以 image inspect 假绿。
 - 回退到 `1.267.181` 前必须 drain 活跃 runtime-resource attempt。
