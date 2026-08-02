@@ -116,6 +116,7 @@ import { getScanStatus } from './src/task-generator-scheduler.js';
 import { waitForPortFree, listenWithRetry } from './src/startup-port-guard.js';
 import { setupGitCredentials } from './src/lib/git-credentials-setup.js';
 import { bootDurable } from './src/durable/dbos-runtime.js';
+import { createProductionExecutionTransport } from './src/orchestrator/production-transport.js';
 
 // 容器 git 凭据初始化（必须在任何 git clone/fetch/push 之前）：
 // 宿主 ~/.gitconfig 只读挂载进容器、配了容器内不存在的 credential.helper，
@@ -130,6 +131,18 @@ setupGitCredentials({
 const app = express();
 app.locals.pool = pool;
 app.set('kernelFleetBridgeToken', process.env.KERNEL_FLEET_BRIDGE_TOKEN);
+const kernelFleetTerminalTransport = createProductionExecutionTransport({
+  env: process.env,
+  fetchFn: globalThis.fetch,
+});
+app.set('kernelFleetTerminalizer', (attempt) => (
+  kernelFleetTerminalTransport.terminal({
+    attempt,
+    target: {
+      machine: attempt.actual_machine_id ?? attempt.requested_machine_id,
+    },
+  })
+));
 const server = createServer(app);
 const PORT = process.env.PORT || process.env.BRAIN_PORT || 5221;
 

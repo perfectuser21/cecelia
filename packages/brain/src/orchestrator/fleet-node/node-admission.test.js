@@ -19,6 +19,7 @@ const REQUIRED_SECTIONS = [
   'launchd',
   'worktree',
   'container',
+  'runtime_resources',
   'drain',
 ];
 const REQUIRED_LEAVES = [
@@ -56,6 +57,9 @@ const REQUIRED_LEAVES = [
   'launchd.kind',
   'worktree.root_ready',
   'container.probe_succeeded',
+  'runtime_resources.postgres',
+  'runtime_resources.postgres.available',
+  'runtime_resources.postgres.image_digest',
   'drain.active',
 ];
 const REQUIRED_EVIDENCE_PATHS = [...REQUIRED_SECTIONS, ...REQUIRED_LEAVES];
@@ -107,6 +111,12 @@ function completeReport(profile, overrides = {}) {
     launchd: { loaded: true, domain: 'system', kind: 'LaunchDaemon' },
     worktree: { root_ready: true },
     container: { probe_succeeded: true },
+    runtime_resources: {
+      postgres: {
+        available: true,
+        image_digest: profile.runtime_resources.postgres.image_digest,
+      },
+    },
     drain: { active: false },
   };
   return merge(report, overrides);
@@ -177,6 +187,7 @@ describe('pure Fleet Node base admission', () => {
       base_admitted: true,
       dispatch_ready: true,
       observed_at: report.observed_at,
+      runtime_resources: report.runtime_resources,
       reasons: [],
     });
     expect(report).toEqual(inputBefore);
@@ -291,6 +302,9 @@ describe('pure Fleet Node base admission', () => {
     ['string launchd state', { launchd: { loaded: 'true' } }, 'launchd.loaded'],
     ['string worktree state', { worktree: { root_ready: 'true' } }, 'worktree.root_ready'],
     ['string container state', { container: { probe_succeeded: 'true' } }, 'container.probe_succeeded'],
+    ['string PostgreSQL availability', {
+      runtime_resources: { postgres: { available: 'true' } },
+    }, 'runtime_resources.postgres.available'],
     ['string drain state', { drain: { active: 'false' } }, 'drain.active'],
     ['wrong worker type', { worker: [] }, 'worker'],
     ['wrong runner type', { runner: 'runner' }, 'runner'],
@@ -320,6 +334,9 @@ describe('pure Fleet Node base admission', () => {
     ['worker.version', { worker: { version: '0.0.0-drift' } }, 'worker_version_drift'],
     ['runner.version', { runner: { version: '0.0.0-drift' } }, 'runner_version_drift'],
     ['runner.image_digest', { runner: { image_digest: `sha256:${'0'.repeat(64)}` } }, 'runner_digest_drift'],
+    ['runtime_resources.postgres.image_digest', {
+      runtime_resources: { postgres: { image_digest: `postgres:16-alpine@sha256:${'0'.repeat(64)}` } },
+    }, 'postgres_image_digest_drift'],
     ['os.version', { os: { version: '0.0-drift' } }, 'os_version_drift'],
     ['orbstack.version', { orbstack: { version: '0.0-drift' } }, 'orbstack_version_drift'],
     ['git.version', { git: { version: '0.0-drift' } }, 'git_version_drift'],
@@ -359,6 +376,9 @@ describe('pure Fleet Node base admission', () => {
     ['launchd unloaded', { launchd: { loaded: false } }, 'launchd_unloaded'],
     ['worktree root not ready', { worktree: { root_ready: false } }, 'worktree_unavailable'],
     ['container probe failed', { container: { probe_succeeded: false } }, 'container_probe_failed'],
+    ['PostgreSQL runtime unavailable', {
+      runtime_resources: { postgres: { available: false } },
+    }, 'postgres_runtime_unavailable'],
   ])('drains when %s', async (_name, patch, code) => {
     const { contract, profile, report } = await fixture('xian-mac-m4', patch);
     expectDraining(
@@ -430,6 +450,12 @@ describe('pure Fleet Node base admission', () => {
     }],
     ['floating Runner tag', (profile) => {
       profile.runner_image_digest = 'runner:latest';
+    }],
+    ['missing PostgreSQL runtime policy', (profile) => {
+      delete profile.runtime_resources;
+    }],
+    ['floating PostgreSQL image', (profile) => {
+      profile.runtime_resources.postgres.image_digest = 'postgres:16-alpine';
     }],
     ['missing version policy', (profile) => { delete profile.version_policy; }],
     ['missing version policy key', (profile) => {

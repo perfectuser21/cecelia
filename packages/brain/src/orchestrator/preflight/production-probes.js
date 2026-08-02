@@ -27,7 +27,6 @@ function boundedBaseSlots(value, canonicalCapacity) {
  * Returned values deliberately exclude credentials and raw response bodies.
  */
 export function createProductionCapabilityProbes(deps = {}) {
-  const pool = deps.pool;
   const registry = deps.registry;
   const fetchFn = deps.fetchFn ?? globalThis.fetch;
   const resolveGitHubTokenFn = deps.resolveGitHubTokenFn ?? resolveGitHubToken;
@@ -100,6 +99,7 @@ export function createProductionCapabilityProbes(deps = {}) {
       return {
         admitted,
         admissionReasons,
+        runtimeResources: admission?.runtime_resources ?? null,
         signature: baseAdmitted
           ? 'node_not_dispatch_ready'
           : 'node_not_base_admitted',
@@ -272,16 +272,20 @@ export function createProductionCapabilityProbes(deps = {}) {
       }
     },
 
-    async probePostgres() {
-      try {
-        await pool.query('SELECT 1 AS ok');
-        return { ok: true };
-      } catch (error) {
+    async probePostgres({ target } = {}) {
+      const admission = await admittedNode(target?.machine);
+      if (!admission.admitted) {
         return {
           ok: false,
-          signature: boundedSignature(error?.code, 'postgres_unreachable'),
+          signature: admission.signature,
+          admission_reasons: admission.admissionReasons,
         };
       }
+      const postgres = admission.runtimeResources?.postgres;
+      if (postgres?.available !== true || typeof postgres.image_digest !== 'string') {
+        return { ok: false, signature: 'postgres_runtime_unavailable' };
+      }
+      return { ok: true, image_digest: postgres.image_digest };
     },
 
     async probeModelCapability({ capability, target }) {

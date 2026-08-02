@@ -33,6 +33,27 @@ const GITHUB_CREDENTIAL_ROLES = new Set([
 ]);
 const MAX_STATE_BYTES = 1_048_576;
 const MAX_GITHUB_TOKEN_BYTES = 16_384;
+const RUNTIME_NETWORK_PATTERN = /^cecelia-attempt-[a-f0-9-]{36}$/;
+const RUNTIME_ENVIRONMENT_FIELDS = new Set(['DB_URL', 'DATABASE_URL']);
+const EMPTY_RUNTIME_RESOURCES = Object.freeze({
+  runtime: Object.freeze({}),
+  environment: Object.freeze({}),
+  networkName: undefined,
+});
+const NO_RUNTIME_RESOURCE_MANAGER = Object.freeze({
+  async provision({ requirements } = {}) {
+    if (requirements?.postgres === true) {
+      throw new Error('attempt_resource_manager_required');
+    }
+    return EMPTY_RUNTIME_RESOURCES;
+  },
+  async release() {
+    return Object.freeze({ status: 'released' });
+  },
+  async reconcile() {
+    return Object.freeze({ removed_attempts: Object.freeze([]) });
+  },
+});
 
 async function defaultRunCommand(command, args, options) {
   const { stdout = '' } = await execFileAsync(command, args, {
@@ -309,6 +330,13 @@ function parseDockerLabels(serialized) {
   return labels;
 }
 
+function isExplicitlyMissingDockerObject(error) {
+  const detail = [error?.message, error?.stderr, error?.stdout]
+    .filter(Boolean)
+    .join('\n');
+  return /no such (?:container|object)|container.*not found/i.test(detail);
+}
+
 function createDockerAdapter({
   runCommand = defaultRunCommand,
   runtimeRoot,
@@ -385,6 +413,29 @@ function createDockerAdapter({
       ) {
         throw new Error('attempt_workspace_admin_mount_invalid');
       }
+      if (
+        input.runtimeNetwork !== undefined
+        && (
+          input.runtimeNetwork !== `cecelia-attempt-${attemptId}`
+          || !RUNTIME_NETWORK_PATTERN.test(input.runtimeNetwork)
+        )
+      ) {
+        throw new Error('attempt_runtime_network_invalid');
+      }
+      const runtimeEnvironment = input.runtimeEnvironment ?? {};
+      if (
+        !runtimeEnvironment
+        || typeof runtimeEnvironment !== 'object'
+        || Array.isArray(runtimeEnvironment)
+        || Object.keys(runtimeEnvironment).some(
+          (key) => !RUNTIME_ENVIRONMENT_FIELDS.has(key),
+        )
+        || Object.values(runtimeEnvironment).some(
+          (value) => typeof value !== 'string' || /[\r\n\0]/.test(value),
+        )
+      ) {
+        throw new Error('attempt_runtime_environment_invalid');
+      }
       const attemptRuntime = path.join(root, attemptId);
       fs.mkdirSync(attemptRuntime, { recursive: true, mode: 0o700 });
       const workspaceSource = canonicalMountSource(input.workspaceMount.source);
@@ -453,6 +504,9 @@ function createDockerAdapter({
         containerName,
         ...labelArgs(input.labels),
         ...(input.role === 'evaluator' ? ['--user', 'root'] : []),
+        ...(input.runtimeNetwork
+          ? ['--network', input.runtimeNetwork]
+          : []),
         '--mount',
         workspaceMount,
         '--mount',
@@ -509,6 +563,7 @@ function createDockerAdapter({
           WORKTREE_PATH: '/workspace',
           BRAIN_URL: callbackBrainUrl(input.callback.url),
           ...input.roleEnv,
+          ...runtimeEnvironment,
         }),
         input.image,
       ];
@@ -585,8 +640,26 @@ function createDockerAdapter({
           }
         }
       } catch (error) {
-        await runCommand('docker', ['rm', '-f', '--', containerName], undefined)
-          .catch(() => {});
+        let removalError = null;
+        try {
+          await runCommand(
+            'docker',
+            ['rm', '-f', '--', containerName],
+            undefined,
+          );
+        } catch (cleanupError) {
+          if (!isExplicitlyMissingDockerObject(cleanupError)) {
+            removalError = cleanupError;
+          }
+        }
+        if (removalError) {
+          const rollbackError = new Error(
+            `attempt_container_rollback_failed:${error.message}`,
+            { cause: new AggregateError([error, removalError]) },
+          );
+          rollbackError.rollbackContainerId = containerName;
+          throw rollbackError;
+        }
         fs.rmSync(attemptRuntime, { recursive: true, force: true });
         throw error;
       }
@@ -668,6 +741,7 @@ function validateDependencies({
   runnerImageDigest,
   credentialConsumer,
   githubCredentialConsumer,
+  resourceManager,
 }) {
   for (const method of ['prepare', 'verify', 'cleanup', 'quarantine', 'reconcile']) {
     requireMethod(workspaceManager, method, 'workspace_manager');
@@ -684,6 +758,9 @@ function validateDependencies({
     'consume',
     'github_credential_consumer',
   );
+  for (const method of ['provision', 'release', 'reconcile']) {
+    requireMethod(resourceManager, method, 'resource_manager');
+  }
   if (!CANONICAL_MACHINE_IDS.has(workerId)) {
     throw new Error('attempt_runner_invalid_worker_id');
   }
@@ -830,9 +907,36 @@ function taskExecutionContract(providerSpec, request, target) {
       }
       : {}),
   };
+  const inputRequirements = inputs.runtime_resources;
+  const requestRequirements = request.runtime_resources;
+  if (
+    (inputRequirements === undefined) !== (requestRequirements === undefined)
+    || (
+      inputRequirements !== undefined
+      && JSON.stringify(inputRequirements) !== JSON.stringify(requestRequirements)
+    )
+  ) {
+    throw new Error('attempt_runtime_requirements_mismatch');
+  }
+  const runtimeRequirements = inputRequirements ?? requestRequirements ?? {};
+  if (
+    !runtimeRequirements
+    || typeof runtimeRequirements !== 'object'
+    || Array.isArray(runtimeRequirements)
+    || Object.keys(runtimeRequirements).some((key) => key !== 'postgres')
+    || (
+      runtimeRequirements.postgres !== undefined
+      && typeof runtimeRequirements.postgres !== 'boolean'
+    )
+  ) {
+    throw new Error('attempt_runtime_requirements_invalid');
+  }
   return Object.freeze({
     taskId: inputs.task_id,
     roleEnv: Object.freeze(roleEnv),
+    runtimeRequirements: Object.freeze({
+      postgres: runtimeRequirements.postgres === true,
+    }),
   });
 }
 
@@ -904,6 +1008,7 @@ function createAttemptRunner({
   runnerImageDigest,
   credentialConsumer,
   githubCredentialConsumer,
+  resourceManager = NO_RUNTIME_RESOURCE_MANAGER,
 } = {}) {
   validateDependencies({
     workspaceManager,
@@ -913,6 +1018,7 @@ function createAttemptRunner({
     runnerImageDigest,
     credentialConsumer,
     githubCredentialConsumer,
+    resourceManager,
   });
 
   async function quarantineState(state, error) {
@@ -951,6 +1057,61 @@ function createAttemptRunner({
       status: 'cleaned',
       attempt_id: state.attempt_id,
     });
+  }
+
+  async function releaseResources(state) {
+    if (!state.runtime_resources || Object.keys(state.runtime_resources).length === 0) {
+      return;
+    }
+    await resourceManager.release({
+      attemptId: state.attempt_id,
+      runtime: state.runtime_resources,
+    });
+  }
+
+  async function rollbackLaunch({
+    error,
+    workspace,
+    attemptId,
+    containerId,
+    resources,
+  }) {
+    const cleanupFailures = [];
+    let containerCleanupFailed = false;
+    const rollbackContainerId = containerId ?? error?.rollbackContainerId;
+    if (rollbackContainerId) {
+      try {
+        await docker.remove({ containerId: rollbackContainerId, attemptId });
+      } catch (cleanupError) {
+        containerCleanupFailed = true;
+        cleanupFailures.push(cleanupError);
+      }
+    }
+    if (resources && Object.keys(resources.runtime).length > 0) {
+      try {
+        await resourceManager.release({
+          attemptId,
+          runtime: resources.runtime,
+        });
+      } catch (cleanupError) {
+        cleanupFailures.push(cleanupError);
+      }
+    }
+    try {
+      if (containerCleanupFailed) {
+        await workspaceManager.quarantine(workspace, cleanupFailures[0]);
+      } else {
+        await workspaceManager.cleanup(workspace);
+      }
+    } catch (cleanupError) {
+      cleanupFailures.push(cleanupError);
+    }
+    if (cleanupFailures.length > 0) {
+      throw new Error(`attempt_launch_rollback_failed:${error.message}`, {
+        cause: new AggregateError([error, ...cleanupFailures]),
+      });
+    }
+    throw error;
   }
 
   const runner = {
@@ -1004,6 +1165,18 @@ function createAttemptRunner({
       const workspace = await workspaceManager.prepare(request.workspace_spec);
       await workspaceManager.verify(workspace);
       const labels = labelsFor(request, workerId);
+      let resources = EMPTY_RUNTIME_RESOURCES;
+      if (executionContract.runtimeRequirements.postgres) {
+        try {
+          resources = await resourceManager.provision({
+            attemptId: request.attempt_id,
+            requirements: executionContract.runtimeRequirements,
+          });
+        } catch (error) {
+          await workspaceManager.cleanup(workspace);
+          throw error;
+        }
+      }
       let launched;
       try {
         launched = await docker.launch({
@@ -1040,14 +1213,24 @@ function createAttemptRunner({
           },
           credential,
           githubCredential,
+          runtimeNetwork: resources.networkName,
+          runtimeEnvironment: resources.environment,
         });
       } catch (error) {
-        await workspaceManager.cleanup(workspace);
-        throw error;
+        return rollbackLaunch({
+          error,
+          workspace,
+          attemptId: request.attempt_id,
+          resources,
+        });
       }
       if (typeof launched?.containerId !== 'string' || launched.containerId.length === 0) {
-        await workspaceManager.cleanup(workspace);
-        throw new Error('attempt_container_id_missing');
+        return rollbackLaunch({
+          error: new Error('attempt_container_id_missing'),
+          workspace,
+          attemptId: request.attempt_id,
+          resources,
+        });
       }
 
       const state = {
@@ -1062,6 +1245,9 @@ function createAttemptRunner({
           ? { github_credential: githubCredential.metadata }
           : {}),
         container_id: launched.containerId,
+        ...(Object.keys(resources.runtime).length > 0
+          ? { runtime_resources: resources.runtime }
+          : {}),
         workspace,
         labels,
         status: 'running',
@@ -1071,17 +1257,13 @@ function createAttemptRunner({
       try {
         await stateStore.save(state);
       } catch (error) {
-        try {
-          await docker.remove({
-            containerId: launched.containerId,
-            attemptId: request.attempt_id,
-          });
-        } catch (cleanupError) {
-          await workspaceManager.quarantine(workspace, cleanupError);
-          throw error;
-        }
-        await workspaceManager.cleanup(workspace);
-        throw error;
+        return rollbackLaunch({
+          error,
+          workspace,
+          attemptId: request.attempt_id,
+          containerId: launched.containerId,
+          resources,
+        });
       }
       void docker.wait({ containerId: launched.containerId })
         .then(() => runner.terminal(request.attempt_id))
@@ -1132,6 +1314,11 @@ function createAttemptRunner({
       } catch (error) {
         return quarantineState(state, error);
       }
+      try {
+        await releaseResources(state);
+      } catch (error) {
+        return quarantineState(state, error);
+      }
       return cleanupWorkspaceState(state);
     },
 
@@ -1160,6 +1347,12 @@ function createAttemptRunner({
             attemptId: state.attempt_id,
             ...(inspected.status === 'missing' ? { containerMissing: true } : {}),
           });
+        } catch (error) {
+          await quarantineState(state, error);
+          continue;
+        }
+        try {
+          await releaseResources(state);
         } catch (error) {
           await quarantineState(state, error);
           continue;
@@ -1195,12 +1388,18 @@ function createAttemptRunner({
       const workspaceReconciliation = await workspaceManager.reconcile({
         retainedAttemptIds: [...retainedAttemptIds],
       });
+      const resourceReconciliation = await resourceManager.reconcile({
+        retainedAttemptIds: [...retainedAttemptIds],
+      });
 
       return Object.freeze({
         cleaned_attempts: Object.freeze(cleanedAttempts),
         removed_orphan_containers: Object.freeze(removedOrphanContainers),
         cleaned_orphan_workspaces: Object.freeze(
           workspaceReconciliation.cleaned_attempts ?? [],
+        ),
+        removed_orphan_resources: Object.freeze(
+          resourceReconciliation.removed_attempts ?? [],
         ),
       });
     },

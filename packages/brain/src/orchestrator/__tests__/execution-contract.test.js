@@ -144,6 +144,15 @@ describe('TaskBundle contract', () => {
     }))).toMatchObject({ role: 'reporter', skill: null });
   });
 
+  it('accepts only the bounded server-owned PostgreSQL runtime request', () => {
+    const bundle = validBundle();
+    bundle.inputs.runtime_resources = { postgres: true };
+    expect(parseTaskBundle(bundle).inputs.runtime_resources).toEqual({ postgres: true });
+
+    bundle.inputs.runtime_resources = { postgres: true, token: 'attacker' };
+    expect(() => parseTaskBundle(bundle)).toThrow();
+  });
+
   it.each([
     '调用 Skill(foo)',
     'Use the Task tool to delegate',

@@ -1,6 +1,25 @@
 # Brain 模块定义
 
-**版本**: 1.267.181
+**版本**: 1.267.182
+
+## Kernel Evaluator attempt-scoped PostgreSQL
+
+- Dispatcher 将服务端推导的 `postgres` requirement 写入签名 TaskBundle；remote
+  transport 仅转发 `{postgres:true}`，Worker 还会与 bundle 再次比对，未知字段或
+  caller-supplied secret 均 fail closed。
+- PostgreSQL preflight 读取被选节点 admission 的 runtime-resource 能力和 pinned
+  digest，不再查询 Brain 本地 pool。
+- Fleet Worker `1.267.92` 在 Runner 启动前创建 exact-attempt 私有 network 与 pinned
+  PostgreSQL sidecar，短期账号密码只存在于进程内并注入 Runner 环境；不发布 host port，
+  不把 URL 写进 attempt state。
+- `pg_isready` 有界失败、Runner launch/state persistence 失败、terminal/cancel 与
+  orphan reconcile 都有对称回收；历史 attempt 使用其状态内 pinned digest 做 exact
+  回收，非“对象已不存在”的清理错误不得吞掉。
+- terminal callback 必须先取得 exact leased Worker 的 HMAC cleanup receipt；仅
+  `cleaned` / `already_clean` 可提交终态，其余结果保持非终态以便重试。
+- 三机 NodeProfile/installer/rollout/reconcile 同步固定 PostgreSQL digest，并把其
+  真实启动 + `pg_isready` 结果投影到 Worker health/admission，不以 image inspect 假绿。
+- 回退到 `1.267.181` 前必须 drain 活跃 runtime-resource attempt。
 
 ## Kernel Codex terminal receipt and Planner/Proposer Run isolation
 

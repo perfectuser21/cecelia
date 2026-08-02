@@ -22,6 +22,7 @@ const REQUIRED_SECTIONS = [
   'launchd',
   'worktree',
   'container',
+  'runtime_resources',
   'drain',
 ];
 
@@ -60,10 +61,13 @@ const REQUIRED_LEAVES = [
   'launchd.kind',
   'worktree.root_ready',
   'container.probe_succeeded',
+  'runtime_resources.postgres',
+  'runtime_resources.postgres.available',
+  'runtime_resources.postgres.image_digest',
   'drain.active',
 ];
 
-const OBJECT_SECTIONS = REQUIRED_SECTIONS;
+const OBJECT_SECTIONS = [...REQUIRED_SECTIONS, 'runtime_resources.postgres'];
 
 const BOOLEAN_FIELDS = [
   'docker.available',
@@ -78,6 +82,7 @@ const BOOLEAN_FIELDS = [
   'launchd.loaded',
   'worktree.root_ready',
   'container.probe_succeeded',
+  'runtime_resources.postgres.available',
   'drain.active',
 ];
 
@@ -98,6 +103,7 @@ const STRING_FIELDS = [
   'codex.version',
   'launchd.domain',
   'launchd.kind',
+  'runtime_resources.postgres.image_digest',
 ];
 
 const NUMBER_FIELDS = [
@@ -181,6 +187,14 @@ function resultFor(profile, report, reasons) {
       && report.observed_at.length <= 40
       ? report.observed_at
       : null,
+    runtime_resources: {
+      postgres: {
+        available: report?.runtime_resources?.postgres?.available === true,
+        image_digest: typeof report?.runtime_resources?.postgres?.image_digest === 'string'
+          ? report.runtime_resources.postgres.image_digest.slice(0, 160)
+          : null,
+      },
+    },
     reasons,
   };
 }
@@ -236,7 +250,7 @@ export function evaluateBaseAdmission(report, options = {}) {
   const invalidFields = new Set();
 
   for (const section of OBJECT_SECTIONS) {
-    if (hasPath(report, section) && !isRecord(report[section])) {
+    if (hasPath(report, section) && !isRecord(getPath(report, section))) {
       addInvalid(collector, invalidFields, section);
     }
   }
@@ -375,6 +389,16 @@ export function evaluateBaseAdmission(report, options = {}) {
       'Runner image digest does not match the pinned node policy.',
     );
   }
+  if (isUsable(invalidFields, report, 'runtime_resources.postgres.image_digest')
+    && typeof profile?.runtime_resources?.postgres?.image_digest === 'string'
+    && report.runtime_resources.postgres.image_digest
+      !== profile.runtime_resources.postgres.image_digest) {
+    collector.add(
+      'postgres_image_digest_drift',
+      'runtime_resources.postgres.image_digest',
+      'PostgreSQL image digest does not match the pinned node policy.',
+    );
+  }
 
   const requiredTrue = [
     ['docker.available', 'docker_unavailable', 'Docker is unavailable on the fleet node.'],
@@ -389,6 +413,7 @@ export function evaluateBaseAdmission(report, options = {}) {
     ['launchd.loaded', 'launchd_unloaded', 'Fleet Worker LaunchDaemon is not loaded.'],
     ['worktree.root_ready', 'worktree_unavailable', 'Fleet worktree root is not ready.'],
     ['container.probe_succeeded', 'container_probe_failed', 'Fleet container probe did not succeed.'],
+    ['runtime_resources.postgres.available', 'postgres_runtime_unavailable', 'Pinned PostgreSQL runtime is unavailable on the fleet node.'],
   ];
   for (const [field, code, message] of requiredTrue) {
     if (isUsable(invalidFields, report, field) && getPath(report, field) === false) {

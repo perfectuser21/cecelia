@@ -186,6 +186,28 @@ describe('production execution transport', () => {
     },
   );
 
+  it('forwards only the server-owned bounded runtime resource request to the Worker', async () => {
+    const fetchFn = vi.fn(async () => acceptedResponse(DEFAULT_LOCAL_MACHINE_ID));
+    const transport = createProductionExecutionTransport({
+      env: configuredEnv(),
+      fetchFn,
+      credentialBroker: { issue: vi.fn(async () => ENVELOPE) },
+      githubCredentialBroker: { issue: vi.fn(async () => GITHUB_ENVELOPE) },
+    });
+    const input = launchInput(DEFAULT_LOCAL_MACHINE_ID);
+    input.attempt.role = 'evaluator';
+    input.bundle.role = 'evaluator';
+    input.bundle.inputs.runtime_resources = { postgres: true };
+
+    await transport.launch(input);
+
+    const body = JSON.parse(fetchFn.mock.calls[0][1].body);
+    expect(body.runtime_resources).toEqual({ postgres: true });
+    expect(JSON.stringify(body.runtime_resources)).not.toMatch(
+      /url|password|cookie|token|secret/i,
+    );
+  });
+
   it.each([
     ['missing US URL', { FLEET_WORKER_US_MAC_M4_URL: undefined }, DEFAULT_LOCAL_MACHINE_ID],
     ['missing Xian URL', { FLEET_WORKER_XIAN_MAC_M4_URL: undefined }, 'xian-mac-m4'],

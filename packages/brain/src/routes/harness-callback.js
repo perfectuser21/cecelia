@@ -891,6 +891,43 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
     return res.status(409).json({ ok: false, error: 'terminal_payload_conflict' });
   }
 
+  let resourceCleanupReceipt = null;
+  const requiresFleetPostgresCleanup = (
+    ['fleet-worker', 'remote-bridge'].includes(attempt.execution_transport)
+    && attempt.task_bundle?.inputs?.runtime_resources?.postgres === true
+  );
+  if (requiresFleetPostgresCleanup) {
+    const terminalize = req.app.get('kernelFleetTerminalizer');
+    if (typeof terminalize !== 'function') {
+      return res.status(503).json({
+        ok: false,
+        error: 'fleet_resource_cleanup_unavailable',
+      });
+    }
+    try {
+      resourceCleanupReceipt = await terminalize(attempt);
+    } catch (error) {
+      console.error(
+        `[harness-attempt-callback] attempt=${attemptId} cleanup failed: ${error.message}`,
+      );
+      return res.status(503).json({
+        ok: false,
+        error: 'fleet_resource_cleanup_failed',
+      });
+    }
+    if (
+      !['cleaned', 'already_clean'].includes(resourceCleanupReceipt?.status)
+      || resourceCleanupReceipt?.attempt_id !== attemptId
+      || resourceCleanupReceipt?.actual_machine_id !== attempt.actual_machine_id
+      || resourceCleanupReceipt?.attestation_status !== 'verified'
+    ) {
+      return res.status(503).json({
+        ok: false,
+        error: 'fleet_resource_cleanup_incomplete',
+      });
+    }
+  }
+
   const resolver = req.app.get('kernelPrIdentityResolver') || defaultPrIdentityResolver;
   const branchHeadResolver = req.app.get('kernelGitBranchHeadResolver')
     || defaultGitBranchHeadResolver;
@@ -924,6 +961,9 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
     provider_metadata: {
       ...verifiedResult.provider_metadata,
       server_callback_claim_digest: digest,
+      ...(resourceCleanupReceipt
+        ? { server_resource_cleanup_receipt: resourceCleanupReceipt }
+        : {}),
     },
   };
 

@@ -62,6 +62,12 @@ function reportFor(profile, patch = {}) {
     launchd: { loaded: true, domain: 'system', kind: 'LaunchDaemon' },
     worktree: { root_ready: true },
     container: { probe_succeeded: true },
+    runtime_resources: {
+      postgres: {
+        available: true,
+        image_digest: profile.runtime_resources.postgres.image_digest,
+      },
+    },
     drain: { active: false },
   };
   for (const [key, value] of Object.entries(patch)) {
@@ -105,6 +111,7 @@ describe('Fleet Node admission client', () => {
       base_admitted: true,
       dispatch_ready: true,
       observed_at: health.observed_at,
+      runtime_resources: health.runtime_resources,
       reasons: [],
     }));
     const client = contract.createNodeAdmissionClient({
@@ -119,6 +126,7 @@ describe('Fleet Node admission client', () => {
       state: 'base_admitted',
       base_admitted: true,
       dispatch_ready: true,
+      runtime_resources: health.runtime_resources,
     });
     expect(fetchFn).toHaveBeenCalledWith(
       'http://xian-m4-worker.internal:5231/health',

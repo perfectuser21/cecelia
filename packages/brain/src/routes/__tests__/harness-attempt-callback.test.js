@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
     markRunning: vi.fn(),
   },
   pool: { query: vi.fn() },
+  terminalize: vi.fn(),
 }));
 
 vi.mock('../../orchestrator/attempt-store.js', () => ({
@@ -213,6 +214,12 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     mocks.store.fail.mockResolvedValue({ attempt: { ...attempt, status: 'failed' }, deduped: false });
     mocks.store.heartbeat.mockResolvedValue({ ...attempt, heartbeat_at: new Date().toISOString() });
     mocks.store.markRunning.mockResolvedValue({ ...attempt, provider_session_id: 'thread-live' });
+    mocks.terminalize.mockResolvedValue({
+      status: 'cleaned',
+      attempt_id: attemptId,
+      actual_machine_id: remoteMachineId,
+      attestation_status: 'verified',
+    });
     mocks.pool.query.mockImplementation(async (sql) => {
       if (String(sql).includes('FROM initiative_runs r')) {
         return {
@@ -230,6 +237,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     const { default: router } = await import('../harness-callback.js');
     app = express();
     app.set('kernelFleetBridgeToken', fleetSecret);
+    app.set('kernelFleetTerminalizer', mocks.terminalize);
     app.use(express.json());
     app.use('/api/brain', router);
   });
@@ -242,6 +250,59 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ ok: true, deduped: false });
     expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledOnce();
+  });
+
+  it('Fleet callback 在持久化终态前完成 Worker 清理并封存回执', async () => {
+    const ownedAttempt = fleetAttempt({
+      task_bundle: { inputs: { runtime_resources: { postgres: true } } },
+    });
+    mocks.store.getById.mockResolvedValue(ownedAttempt);
+    mocks.terminalize.mockImplementationOnce(async () => {
+      expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+      return {
+        status: 'cleaned',
+        attempt_id: attemptId,
+        actual_machine_id: remoteMachineId,
+        attestation_status: 'verified',
+      };
+    });
+
+    const response = await postCallback(app, fleetResult());
+
+    expect(response.status).toBe(200);
+    expect(mocks.terminalize).toHaveBeenCalledWith(ownedAttempt);
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          provider_metadata: expect.objectContaining({
+            server_resource_cleanup_receipt: {
+              status: 'cleaned',
+              attempt_id: attemptId,
+              actual_machine_id: remoteMachineId,
+              attestation_status: 'verified',
+            },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('Fleet 清理未完成时 callback 返回可重试错误且不写终态', async () => {
+    mocks.store.getById.mockResolvedValue(fleetAttempt({
+      task_bundle: { inputs: { runtime_resources: { postgres: true } } },
+    }));
+    mocks.terminalize.mockResolvedValueOnce({
+      status: 'quarantined',
+      attempt_id: attemptId,
+      actual_machine_id: remoteMachineId,
+      attestation_status: 'verified',
+    });
+
+    const response = await postCallback(app, fleetResult());
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe('fleet_resource_cleanup_incomplete');
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it.each(['completed', 'completed_with_concerns'])(

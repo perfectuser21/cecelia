@@ -30,12 +30,14 @@ WORKER_SOURCE="$SCRIPT_DIR/fleet-worker.cjs"
 PROBE_SOURCE="$SCRIPT_DIR/node-probe.cjs"
 WORKSPACE_MANAGER_SOURCE="$SCRIPT_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SOURCE="$SCRIPT_DIR/attempt-runner.cjs"
+ATTEMPT_RESOURCES_SOURCE="$SCRIPT_DIR/attempt-resources.cjs"
 CREDENTIAL_ENVELOPE_SOURCE="$SCRIPT_DIR/credential-envelope.cjs"
 GITHUB_CREDENTIAL_ENVELOPE_SOURCE="$SCRIPT_DIR/github-credential-envelope.cjs"
 ACCESS_HELPER_SOURCE="$SCRIPT_DIR/refresh-fleet-worker-docker-access.sh"
 ACCESS_TEMPLATE="$SCRIPT_DIR/com.cecelia.fleet-worker-docker-access.plist.template"
 DRAIN_MARKER="${FLEET_WORKER_DRAIN_MARKER:-/var/run/cecelia/fleet-worker.drain}"
 RUNNER_DIGEST=''
+POSTGRES_IMAGE=''
 WORKER_BIND_HOST=''
 BRAIN_HEALTH_URL=''
 LOCK_DIR=''
@@ -44,6 +46,7 @@ STAGED_WORKER=''
 STAGED_PROBE=''
 STAGED_WORKSPACE_MANAGER=''
 STAGED_ATTEMPT_RUNNER=''
+STAGED_ATTEMPT_RESOURCES=''
 STAGED_CREDENTIAL_ENVELOPE=''
 STAGED_GITHUB_CREDENTIAL_ENVELOPE=''
 STAGED_PLIST=''
@@ -73,6 +76,7 @@ COMMAND_PATH="$TOOLCHAIN_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr
 WORKER_SCRIPT="$RUNTIME_DIR/fleet-worker.cjs"
 WORKSPACE_MANAGER_SCRIPT="$RUNTIME_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SCRIPT="$RUNTIME_DIR/attempt-runner.cjs"
+ATTEMPT_RESOURCES_SCRIPT="$RUNTIME_DIR/attempt-resources.cjs"
 CREDENTIAL_ENVELOPE_SCRIPT="$RUNTIME_DIR/credential-envelope.cjs"
 GITHUB_CREDENTIAL_ENVELOPE_SCRIPT="$RUNTIME_DIR/github-credential-envelope.cjs"
 ACCESS_HELPER="$RUNTIME_DIR/refresh-fleet-worker-docker-access.sh"
@@ -122,6 +126,20 @@ NODE
   )
 }
 
+load_postgres_image() {
+  [[ -n "$NODE_EXECUTABLE" && -x "$NODE_EXECUTABLE" ]] || return 1
+  (
+    cd "$REPO_ROOT"
+    FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
+      "$NODE_EXECUTABLE" --input-type=module <<'NODE'
+import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+
+const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
+process.stdout.write(profile.runtime_resources.postgres.image_digest);
+NODE
+  )
+}
+
 load_worker_bind_host() {
   [[ -n "$NODE_EXECUTABLE" && -x "$NODE_EXECUTABLE" ]] || return 1
   (
@@ -164,6 +182,7 @@ run_default_preflight() {
   CECELIA_CALLBACK_URL="$BRAIN_HEALTH_URL" \
   CECELIA_MACHINE_ID="$machine_id" \
   CECELIA_RUNNER_DIGEST="$RUNNER_DIGEST" \
+  CECELIA_POSTGRES_IMAGE="$POSTGRES_IMAGE" \
   CECELIA_ORBSTACK_HOME="$ORBSTACK_HOME" \
   CECELIA_REPO_ROOT="$WORKTREE_ROOT" \
   CECELIA_DRAIN_MARKER="$DRAIN_MARKER" \
@@ -192,6 +211,7 @@ probeFleetWorkerHealth().then((report) => {
   if (!report || report.orbstack?.version === 'unavailable') failures.push('orbstack');
   if (report?.docker?.available !== true) failures.push('docker');
   if (report?.runner?.image_digest !== expectedDigest) failures.push('runner_digest');
+  if (report?.runtime_resources?.postgres?.available !== true) failures.push('postgres');
   if (!Number.isFinite(report?.resources?.disk_free_bytes)
       || report.resources.disk_free_bytes < 40 * GIB
       || report.resources.disk_used_percent > 85) failures.push('disk');
@@ -477,7 +497,7 @@ prepare_orbstack_access() {
 render_plist() {
   local target="$1"
   local target_dir temporary line
-  local escaped_machine escaped_digest escaped_bind_host escaped_brain_health
+  local escaped_machine escaped_digest escaped_postgres escaped_bind_host escaped_brain_health
   local escaped_orbstack_home
   local escaped_node escaped_worker
   local escaped_marker escaped_root escaped_token_file escaped_data_root
@@ -487,6 +507,7 @@ render_plist() {
   [[ -n "$NODE_EXECUTABLE" ]] || die "prerequisite_node"
   [[ -f "$WORKER_SOURCE" && -f "$PROBE_SOURCE" \
     && -f "$WORKSPACE_MANAGER_SOURCE" && -f "$ATTEMPT_RUNNER_SOURCE" \
+    && -f "$ATTEMPT_RESOURCES_SOURCE" \
     && -f "$CREDENTIAL_ENVELOPE_SOURCE" \
     && -f "$GITHUB_CREDENTIAL_ENVELOPE_SOURCE" ]] \
     || die "worker_script_missing"
@@ -497,6 +518,7 @@ render_plist() {
   escaped_machine="$(xml_escape "$machine_id")"
   escaped_orbstack_home="$(xml_escape "$ORBSTACK_HOME")"
   escaped_digest="$(xml_escape "$RUNNER_DIGEST")"
+  escaped_postgres="$(xml_escape "$POSTGRES_IMAGE")"
   escaped_bind_host="$(xml_escape "$WORKER_BIND_HOST")"
   escaped_brain_health="$(xml_escape "$BRAIN_HEALTH_URL")"
   escaped_node="$(xml_escape "$NODE_EXECUTABLE")"
@@ -514,6 +536,7 @@ render_plist() {
       line="${line//@@MACHINE_ID@@/$escaped_machine}"
       line="${line//@@ORBSTACK_HOME@@/$escaped_orbstack_home}"
       line="${line//@@RUNNER_DIGEST@@/$escaped_digest}"
+      line="${line//@@POSTGRES_IMAGE@@/$escaped_postgres}"
       line="${line//@@WORKER_BIND_HOST@@/$escaped_bind_host}"
       line="${line//@@BRAIN_HEALTH_URL@@/$escaped_brain_health}"
       line="${line//@@NODE_EXECUTABLE@@/$escaped_node}"
@@ -565,6 +588,7 @@ cleanup_transaction() {
   [[ -z "$STAGED_PROBE" ]] || rm -f "$STAGED_PROBE"
   [[ -z "$STAGED_WORKSPACE_MANAGER" ]] || rm -f "$STAGED_WORKSPACE_MANAGER"
   [[ -z "$STAGED_ATTEMPT_RUNNER" ]] || rm -f "$STAGED_ATTEMPT_RUNNER"
+  [[ -z "$STAGED_ATTEMPT_RESOURCES" ]] || rm -f "$STAGED_ATTEMPT_RESOURCES"
   [[ -z "$STAGED_CREDENTIAL_ENVELOPE" ]] || rm -f "$STAGED_CREDENTIAL_ENVELOPE"
   [[ -z "$STAGED_GITHUB_CREDENTIAL_ENVELOPE" ]] \
     || rm -f "$STAGED_GITHUB_CREDENTIAL_ENVELOPE"
@@ -577,6 +601,7 @@ cleanup_transaction() {
       "$BACKUP_DIR/probe" \
       "$BACKUP_DIR/workspace-manager" \
       "$BACKUP_DIR/attempt-runner" \
+      "$BACKUP_DIR/attempt-resources" \
       "$BACKUP_DIR/credential-envelope" \
       "$BACKUP_DIR/github-credential-envelope" \
       "$BACKUP_DIR/plist" \
@@ -608,6 +633,7 @@ prepare_transaction_paths() {
     mktemp "$RUNTIME_DIR/.workspace-manager.cjs.XXXXXX"
   )"
   STAGED_ATTEMPT_RUNNER="$(mktemp "$RUNTIME_DIR/.attempt-runner.cjs.XXXXXX")"
+  STAGED_ATTEMPT_RESOURCES="$(mktemp "$RUNTIME_DIR/.attempt-resources.cjs.XXXXXX")"
   STAGED_CREDENTIAL_ENVELOPE="$(
     mktemp "$RUNTIME_DIR/.credential-envelope.cjs.XXXXXX"
   )"
@@ -626,6 +652,7 @@ stage_generation() {
   cp "$PROBE_SOURCE" "$STAGED_PROBE"
   cp "$WORKSPACE_MANAGER_SOURCE" "$STAGED_WORKSPACE_MANAGER"
   cp "$ATTEMPT_RUNNER_SOURCE" "$STAGED_ATTEMPT_RUNNER"
+  cp "$ATTEMPT_RESOURCES_SOURCE" "$STAGED_ATTEMPT_RESOURCES"
   cp "$CREDENTIAL_ENVELOPE_SOURCE" "$STAGED_CREDENTIAL_ENVELOPE"
   cp "$GITHUB_CREDENTIAL_ENVELOPE_SOURCE" "$STAGED_GITHUB_CREDENTIAL_ENVELOPE"
   cp "$ACCESS_HELPER_SOURCE" "$STAGED_ACCESS_HELPER"
@@ -634,6 +661,7 @@ stage_generation() {
   chmod 0644 \
     "$STAGED_WORKSPACE_MANAGER" \
     "$STAGED_ATTEMPT_RUNNER" \
+    "$STAGED_ATTEMPT_RESOURCES" \
     "$STAGED_CREDENTIAL_ENVELOPE" \
     "$STAGED_GITHUB_CREDENTIAL_ENVELOPE"
   chmod 0755 "$STAGED_ACCESS_HELPER"
@@ -821,6 +849,9 @@ fi
 if ! RUNNER_DIGEST="$(load_runner_digest)"; then
   die "node_profile_unavailable"
 fi
+if ! POSTGRES_IMAGE="$(load_postgres_image)"; then
+  die "node_profile_unavailable"
+fi
 if ! WORKER_BIND_HOST="$(load_worker_bind_host)"; then
   die "node_profile_unavailable"
 fi
@@ -858,6 +889,8 @@ if [[ -f "$installed_plist" && ! -L "$installed_plist" \
     && -f "$WORKER_SCRIPT" && ! -L "$WORKER_SCRIPT" \
     && -f "$RUNTIME_DIR/node-probe.cjs" \
     && ! -L "$RUNTIME_DIR/node-probe.cjs" \
+    && -f "$ATTEMPT_RESOURCES_SCRIPT" \
+    && ! -L "$ATTEMPT_RESOURCES_SCRIPT" \
     && -f "$CREDENTIAL_ENVELOPE_SCRIPT" \
     && ! -L "$CREDENTIAL_ENVELOPE_SCRIPT" \
     && -f "$GITHUB_CREDENTIAL_ENVELOPE_SCRIPT" \
@@ -900,6 +933,9 @@ prior_workspace_manager_mode="$(
 prior_attempt_runner_mode="$(
   snapshot_file "$ATTEMPT_RUNNER_SCRIPT" "$BACKUP_DIR/attempt-runner"
 )"
+prior_attempt_resources_mode="$(
+  snapshot_file "$ATTEMPT_RESOURCES_SCRIPT" "$BACKUP_DIR/attempt-resources"
+)"
 prior_credential_envelope_mode="$(
   snapshot_file "$CREDENTIAL_ENVELOPE_SCRIPT" "$BACKUP_DIR/credential-envelope"
 )"
@@ -930,6 +966,9 @@ placement_ok=true
   || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_ATTEMPT_RUNNER" "$ATTEMPT_RUNNER_SCRIPT" \
+  || placement_ok=false
+[[ "$placement_ok" == false ]] \
+  || "$MOVE" "$STAGED_ATTEMPT_RESOURCES" "$ATTEMPT_RESOURCES_SCRIPT" \
   || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_CREDENTIAL_ENVELOPE" "$CREDENTIAL_ENVELOPE_SCRIPT" \
@@ -990,6 +1029,11 @@ if [[ "$launch_ok" != true ]]; then
     "$ATTEMPT_RUNNER_SCRIPT" \
     "$BACKUP_DIR/attempt-runner" \
     "$prior_attempt_runner_mode" \
+    || rollback_ok=false
+  restore_file \
+    "$ATTEMPT_RESOURCES_SCRIPT" \
+    "$BACKUP_DIR/attempt-resources" \
+    "$prior_attempt_resources_mode" \
     || rollback_ok=false
   restore_file \
     "$CREDENTIAL_ENVELOPE_SCRIPT" \

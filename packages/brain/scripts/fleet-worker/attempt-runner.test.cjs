@@ -201,12 +201,37 @@ function dependencies(overrides = {}) {
       return GITHUB_CREDENTIAL;
     }),
   };
+  const resourceManager = {
+    provision: vi.fn(async () => {
+      events.push('resource.provision');
+      return {
+        runtime: {
+          postgres: {
+            container_name: `cecelia-pg-${ATTEMPT_ID}`,
+            network_name: `cecelia-attempt-${ATTEMPT_ID}`,
+            image_digest: `sha256:${'f'.repeat(64)}`,
+          },
+        },
+        environment: {
+          DB_URL: 'postgresql://attempt:ephemeral@postgres:5432/acceptance',
+          DATABASE_URL: 'postgresql://attempt:ephemeral@postgres:5432/acceptance',
+        },
+        networkName: `cecelia-attempt-${ATTEMPT_ID}`,
+      };
+    }),
+    release: vi.fn(async () => {
+      events.push('resource.release');
+      return { status: 'released' };
+    }),
+    reconcile: vi.fn(async () => ({ removed_attempts: [] })),
+  };
   return {
     workspace,
     workspaceManager,
     docker,
     credentialConsumer,
     githubCredentialConsumer,
+    resourceManager,
     stateStore: inMemoryStateStore(),
     events,
     ...overrides,
@@ -223,6 +248,7 @@ function createRunner(deps) {
     runnerImageDigest: IMAGE_DIGEST,
     credentialConsumer: deps.credentialConsumer,
     githubCredentialConsumer: deps.githubCredentialConsumer,
+    resourceManager: deps.resourceManager,
   });
 }
 
@@ -382,6 +408,82 @@ describe('Fleet Worker Attempt runner', () => {
     }));
   });
 
+  it('provisions an isolated PostgreSQL resource before launch and injects only its ephemeral environment', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    const postgresRequest = request({
+      runtime_resources: { postgres: true },
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: providerPrompt('evaluator', {
+          runtime_resources: { postgres: true },
+        }),
+      },
+      target: {
+        ...request().target,
+        role: 'evaluator',
+      },
+    });
+
+    await runner.launch(postgresRequest);
+
+    expect(deps.resourceManager.provision).toHaveBeenCalledWith({
+      attemptId: ATTEMPT_ID,
+      requirements: { postgres: true },
+    });
+    expect(deps.events).toEqual(expect.arrayContaining([
+      'workspace.prepare',
+      'resource.provision',
+      'docker.launch',
+    ]));
+    expect(deps.events.indexOf('resource.provision'))
+      .toBeLessThan(deps.events.indexOf('docker.launch'));
+    expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+      runtimeEnvironment: {
+        DB_URL: 'postgresql://attempt:ephemeral@postgres:5432/acceptance',
+        DATABASE_URL: 'postgresql://attempt:ephemeral@postgres:5432/acceptance',
+      },
+      runtimeNetwork: `cecelia-attempt-${ATTEMPT_ID}`,
+    }));
+    const state = deps.stateStore.states.get(ATTEMPT_ID);
+    expect(state.runtime_resources).toEqual({
+      postgres: {
+        container_name: `cecelia-pg-${ATTEMPT_ID}`,
+        network_name: `cecelia-attempt-${ATTEMPT_ID}`,
+        image_digest: `sha256:${'f'.repeat(64)}`,
+      },
+    });
+    expect(JSON.stringify(state)).not.toContain('ephemeral');
+  });
+
+  it.each([
+    ['transport-only', { topLevel: { postgres: true }, bundle: undefined }],
+    ['bundle-only', { topLevel: undefined, bundle: { postgres: true } }],
+  ])('rejects a %s runtime-resource request before side effects', async (_name, variant) => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    const input = request({
+      ...(variant.topLevel === undefined
+        ? {}
+        : { runtime_resources: variant.topLevel }),
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: providerPrompt('evaluator', {
+          ...(variant.bundle === undefined
+            ? {}
+            : { runtime_resources: variant.bundle }),
+        }),
+      },
+      target: { ...request().target, role: 'evaluator' },
+    });
+
+    await expect(runner.launch(input)).rejects.toThrow(
+      'attempt_runtime_requirements_mismatch',
+    );
+    expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
+    expect(deps.resourceManager.provision).not.toHaveBeenCalled();
+  });
+
   it('accepts the exact locally loaded sha256 image id without inventing a registry tag', async () => {
     const deps = dependencies();
     const rawImageId = `sha256:${'b'.repeat(64)}`;
@@ -539,22 +641,45 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.docker.launch).not.toHaveBeenCalled();
   });
 
-  it('terminal cleanup removes the container before its worktree and state', async () => {
+  it('terminal cleanup removes the container and isolated resources before its worktree and state', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
-    await runner.launch(request());
+    await runner.launch(request({
+      runtime_resources: { postgres: true },
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: providerPrompt('evaluator', {
+          runtime_resources: { postgres: true },
+        }),
+      },
+      target: {
+        ...request().target,
+        role: 'evaluator',
+      },
+    }));
 
     await expect(runner.terminal(ATTEMPT_ID)).resolves.toMatchObject({
       status: 'cleaned',
       attempt_id: ATTEMPT_ID,
     });
-    expect(deps.events.slice(-2)).toEqual([
+    expect(deps.events.slice(-3)).toEqual([
       'docker.remove',
+      'resource.release',
       'workspace.cleanup',
     ]);
     expect(deps.docker.remove).toHaveBeenCalledWith({
       containerId: 'container-attempt-1',
       attemptId: ATTEMPT_ID,
+    });
+    expect(deps.resourceManager.release).toHaveBeenCalledWith({
+      attemptId: ATTEMPT_ID,
+      runtime: {
+        postgres: {
+          container_name: `cecelia-pg-${ATTEMPT_ID}`,
+          network_name: `cecelia-attempt-${ATTEMPT_ID}`,
+          image_digest: `sha256:${'f'.repeat(64)}`,
+        },
+      },
     });
     expect(deps.stateStore.delete).toHaveBeenCalledWith(ATTEMPT_ID);
   });
@@ -596,6 +721,79 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.stateStore.states.get(ATTEMPT_ID).status).toBe('quarantined');
   });
 
+  it('quarantines and retains state when isolated resource cleanup fails', async () => {
+    const deps = dependencies();
+    deps.resourceManager.release.mockRejectedValueOnce(
+      new Error('attempt_resource_release_failed'),
+    );
+    const runner = createRunner(deps);
+    await runner.launch(request({
+      runtime_resources: { postgres: true },
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: providerPrompt('evaluator', {
+          runtime_resources: { postgres: true },
+        }),
+      },
+      target: {
+        ...request().target,
+        role: 'evaluator',
+      },
+    }));
+
+    await expect(runner.terminal(ATTEMPT_ID)).resolves.toMatchObject({
+      status: 'quarantined',
+      attempt_id: ATTEMPT_ID,
+    });
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'quarantined',
+      runtime_resources: expect.any(Object),
+    });
+  });
+
+  it('reports resource rollback failure instead of silently losing recovery evidence', async () => {
+    const deps = dependencies();
+    deps.stateStore.save.mockRejectedValueOnce(new Error('state write failed'));
+    deps.resourceManager.release.mockRejectedValueOnce(
+      new Error('attempt_resource_release_failed'),
+    );
+    const runner = createRunner(deps);
+
+    await expect(runner.launch(request({
+      runtime_resources: { postgres: true },
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: providerPrompt('generator', {
+          runtime_resources: { postgres: true },
+        }),
+      },
+    }))).rejects.toThrow(
+      'attempt_launch_rollback_failed:state write failed',
+    );
+    expect(deps.resourceManager.release).toHaveBeenCalledOnce();
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('retries leaked-container cleanup and quarantines the workspace when rollback still fails', async () => {
+    const deps = dependencies();
+    const launchError = new Error('attempt_container_rollback_failed:start failed');
+    launchError.rollbackContainerId = `cecelia-fleet-${ATTEMPT_ID}`;
+    deps.docker.launch.mockRejectedValueOnce(launchError);
+    deps.docker.remove.mockRejectedValueOnce(new Error('docker daemon unavailable'));
+    const runner = createRunner(deps);
+
+    await expect(runner.launch(request())).rejects.toThrow(
+      'attempt_launch_rollback_failed:attempt_container_rollback_failed:start failed',
+    );
+    expect(deps.docker.remove).toHaveBeenCalledWith({
+      containerId: `cecelia-fleet-${ATTEMPT_ID}`,
+      attemptId: ATTEMPT_ID,
+    });
+    expect(deps.workspaceManager.quarantine).toHaveBeenCalledOnce();
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
+  });
+
   it('rejects stale external cancellation without touching the owned Attempt', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
@@ -614,13 +812,22 @@ describe('Fleet Worker Attempt runner', () => {
     deps.stateStore.save.mockRejectedValueOnce(new Error('state write failed'));
     const runner = createRunner(deps);
 
-    await expect(runner.launch(request())).rejects.toThrow(/state write failed/);
+    await expect(runner.launch(request({
+      runtime_resources: { postgres: true },
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: providerPrompt('generator', {
+          runtime_resources: { postgres: true },
+        }),
+      },
+    }))).rejects.toThrow(/state write failed/);
     expect(deps.docker.remove).toHaveBeenCalledWith({
       containerId: 'container-attempt-1',
       attemptId: ATTEMPT_ID,
     });
-    expect(deps.events.slice(-2)).toEqual([
+    expect(deps.events.slice(-3)).toEqual([
       'docker.remove',
+      'resource.release',
       'workspace.cleanup',
     ]);
   });
@@ -632,6 +839,13 @@ describe('Fleet Worker Attempt runner', () => {
       worker_id: WORKER_ID,
       container_id: 'missing-owned-container',
       workspace: dependencies().workspace,
+      runtime_resources: {
+        postgres: {
+          container_name: `cecelia-pg-${ATTEMPT_ID}`,
+          network_name: `cecelia-attempt-${ATTEMPT_ID}`,
+          image_digest: `sha256:${'f'.repeat(64)}`,
+        },
+      },
       status: 'running',
     };
     const healthyAttempt = {
@@ -701,6 +915,10 @@ describe('Fleet Worker Attempt runner', () => {
       containerId: 'missing-owned-container',
       attemptId: ATTEMPT_ID,
       containerMissing: true,
+    });
+    expect(deps.resourceManager.release).toHaveBeenCalledWith({
+      attemptId: ATTEMPT_ID,
+      runtime: ownedOrphan.runtime_resources,
     });
     expect(deps.docker.remove).toHaveBeenCalledWith({
       containerId: 'unrecorded-owned-container',
@@ -863,6 +1081,60 @@ describe('Fleet Worker durable runtime adapters', () => {
     }
   });
 
+  it('retains runtime evidence and reports the leaked container when launch rollback removal fails', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
+    const runCommand = vi.fn(async (_command, args) => {
+      if (args[0] === 'rm') throw new Error('permission denied removing container');
+      return { stdout: '' };
+    });
+    const docker = createDockerAdapter({
+      runCommand,
+      runtimeRoot,
+      resolveMountSource: (source) => source,
+    });
+
+    try {
+      const error = await docker.launch({
+        attemptId: ATTEMPT_ID,
+        runId: RUN_ID,
+        workerId: WORKER_ID,
+        image: IMAGE_DIGEST,
+        providerSpec: request().provider_spec,
+        taskId: TASK_ID,
+        roleEnv: { WORKSPACE_PATH: '/workspace' },
+        timeoutSeconds: 300,
+        role: 'generator',
+        model: 'gpt-5',
+        workspaceMount: {
+          source: `/controlled/worktrees/${ATTEMPT_ID}`,
+          target: '/workspace',
+          readOnly: true,
+        },
+        workspaceAdminMount: {
+          source: '/controlled/mirrors/perfectuser21__cecelia.git',
+          target: '/controlled/mirrors/perfectuser21__cecelia.git',
+          readOnly: true,
+        },
+        labels: {
+          'cecelia.fleet.attempt_id': ATTEMPT_ID,
+          'cecelia.fleet.run_id': RUN_ID,
+          'cecelia.fleet.worker_id': WORKER_ID,
+        },
+        callback: { url: request().callback_url, token: request().callback_token },
+        lease: { owner: 'dispatcher-1', generation: 0 },
+        credential: CREDENTIAL,
+        githubCredential: GITHUB_CREDENTIAL,
+      }).catch((caught) => caught);
+
+      expect(error.message).toContain('attempt_container_rollback_failed');
+      expect(error.rollbackContainerId).toBe(`cecelia-fleet-${ATTEMPT_ID}`);
+      expect(fs.existsSync(path.join(runtimeRoot, ATTEMPT_ID))).toBe(true);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it('removes an owned runtime without calling Docker when reconciliation proves the container missing', async () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
@@ -944,6 +1216,11 @@ describe('Fleet Worker durable runtime adapters', () => {
         lease: { owner: 'dispatcher-1', generation: 0 },
         credential: CREDENTIAL,
         githubCredential: GITHUB_CREDENTIAL,
+        runtimeNetwork: `cecelia-attempt-${ATTEMPT_ID}`,
+        runtimeEnvironment: {
+          DB_URL: 'postgresql://attempt:secret@postgres:5432/acceptance',
+          DATABASE_URL: 'postgresql://attempt:secret@postgres:5432/acceptance',
+        },
       })).resolves.toEqual({ containerId: 'container-created' });
 
       expect(runCommand.mock.calls[0]).toEqual([
@@ -1022,6 +1299,7 @@ describe('Fleet Worker durable runtime adapters', () => {
         '--label', `cecelia.fleet.attempt_id=${ATTEMPT_ID}`,
         '--label', `cecelia.fleet.run_id=${RUN_ID}`,
         '--label', `cecelia.fleet.worker_id=${WORKER_ID}`,
+        '--network', `cecelia-attempt-${ATTEMPT_ID}`,
         '--env', `CECELIA_TASK_ID=${TASK_ID}`,
         '--env', `HARNESS_TASK_ID=${TASK_ID}`,
         '--env', 'HARNESS_NODE=generator',
@@ -1034,6 +1312,8 @@ describe('Fleet Worker durable runtime adapters', () => {
         '--env', `CECELIA_CREDENTIAL_REF=${CREDENTIAL.credentialRef}`,
         '--env', 'CECELIA_GITHUB_CREDENTIAL_FIFO=/tmp/cecelia-prompts/github-credential.fifo',
         '--env', `CECELIA_GITHUB_CREDENTIAL_REF=${GITHUB_CREDENTIAL.credentialRef}`,
+        '--env', 'DB_URL=postgresql://attempt:secret@postgres:5432/acceptance',
+        '--env', 'DATABASE_URL=postgresql://attempt:secret@postgres:5432/acceptance',
       ]));
       expect(createArgs.join(' ')).not.toContain(CREDENTIAL.authJson);
       expect(createArgs.join(' ')).not.toContain(GITHUB_TOKEN);

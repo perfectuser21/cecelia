@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const CANONICAL_IDS = ['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1'];
 const EXPECTED_RUNNER_DIGEST = 'sha256:1ec3542ab56a58c620196a4f32fd04b12e8049ec29dbc121e33b51a0cabc4288';
+const EXPECTED_POSTGRES_IMAGE = 'postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777';
 const EXPECTED_CAPACITIES = {
   'us-mac-m4': 7,
   'xian-mac-m4': 8,
@@ -41,9 +42,28 @@ describe('Fleet NodeProfile registry', () => {
     expect(profiles.every((profile) => Object.isFrozen(profile))).toBe(true);
     for (const profile of profiles) {
       expect(Object.isFrozen(profile.resources)).toBe(true);
+      expect(Object.isFrozen(profile.runtime_resources)).toBe(true);
+      expect(Object.isFrozen(profile.runtime_resources.postgres)).toBe(true);
       expect(Object.isFrozen(profile.launchd)).toBe(true);
       expect(Object.isFrozen(profile.version_policy)).toBe(true);
     }
+  });
+
+  it('pins the isolated PostgreSQL runtime image across profiles and rollout tooling', async () => {
+    const { listNodeProfiles } = await loadContract();
+    const rollout = readFileSync(
+      new URL('../../../scripts/fleet-worker/fleet-rollout.sh', import.meta.url),
+      'utf8',
+    );
+    const reconciler = readFileSync(
+      new URL('../../../scripts/fleet-worker/reconcile-fleet-node-baseline.sh', import.meta.url),
+      'utf8',
+    );
+
+    expect(listNodeProfiles().map((profile) => profile.runtime_resources.postgres.image_digest))
+      .toEqual([EXPECTED_POSTGRES_IMAGE, EXPECTED_POSTGRES_IMAGE, EXPECTED_POSTGRES_IMAGE]);
+    expect(rollout).toContain(`POSTGRES_IMAGE='${EXPECTED_POSTGRES_IMAGE}'`);
+    expect(reconciler).toContain(`POSTGRES_IMAGE='${EXPECTED_POSTGRES_IMAGE}'`);
   });
 
   it('pins one immutable sha256 Runner digest and never admits a floating tag', async () => {

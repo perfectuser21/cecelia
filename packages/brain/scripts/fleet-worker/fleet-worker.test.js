@@ -5,6 +5,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 
 const DIGEST = `sha256:${'a'.repeat(64)}`;
+const POSTGRES_IMAGE = `postgres:16-alpine@sha256:${'b'.repeat(64)}`;
 const ALLOWED_KEYS = [
   'schema_version',
   'machine_id',
@@ -25,6 +26,7 @@ const ALLOWED_KEYS = [
   'launchd',
   'worktree',
   'container',
+  'runtime_resources',
   'drain',
 ];
 
@@ -118,6 +120,9 @@ function safeHealth(sequence) {
     launchd: { loaded: true, domain: 'system', kind: 'LaunchDaemon' },
     worktree: { root_ready: true },
     container: { probe_succeeded: true },
+    runtime_resources: {
+      postgres: { available: true, image_digest: POSTGRES_IMAGE },
+    },
     drain: { active: false },
   };
 }
@@ -291,6 +296,9 @@ describe('Fleet Worker health-only service', () => {
       }
       if (file === 'docker' && args[0] === 'info') return { stdout: '{"ServerVersion":"27.5"}' };
       if (file === 'docker' && args[0] === 'image') return { stdout: JSON.stringify([`runner@${DIGEST}`]) };
+      if (file === 'docker' && args[0] === 'run' && args.includes(POSTGRES_IMAGE)) {
+        return { stdout: 'postgres runtime ready\n' };
+      }
       if (file === 'docker' && args[0] === 'create') {
         const nameIndex = args.indexOf('--name');
         if (nameIndex >= 0) createdContainerNames.push(args[nameIndex + 1]);
@@ -340,6 +348,7 @@ describe('Fleet Worker health-only service', () => {
     const input = {
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
+      postgresImageDigest: POSTGRES_IMAGE,
       now: () => Date.parse('2026-07-27T08:00:00.000Z'),
       execFileFn,
       fetchFn,
@@ -373,6 +382,9 @@ describe('Fleet Worker health-only service', () => {
       expect(report.callback).toEqual({ reachable: true });
       expect(report.worktree).toEqual({ root_ready: true });
       expect(report.container).toEqual({ probe_succeeded: true });
+      expect(report.runtime_resources).toEqual({
+        postgres: { available: true, image_digest: POSTGRES_IMAGE },
+      });
     }
     const requiredCommands = [
       ['sw_vers', (args) => args.includes('-productVersion')],
@@ -381,6 +393,15 @@ describe('Fleet Worker health-only service', () => {
       ['docker', (args) => args[0] === 'image'
         && args[1] === 'inspect'
         && args.includes(DIGEST)],
+      ['docker', (args) => args[0] === 'image'
+        && args[1] === 'inspect'
+        && args.includes(POSTGRES_IMAGE)],
+      ['docker', (args) => args[0] === 'run'
+        && args.includes('--rm')
+        && args.includes('--network')
+        && args.includes('none')
+        && args.includes(POSTGRES_IMAGE)
+        && args.some((arg) => arg.includes('pg_isready'))],
       ['git', (args) => args.includes('--version')],
       ['node', (args) => args.includes('--version')],
       ['codex', (args) => args.includes('--version')],
@@ -457,6 +478,35 @@ describe('Fleet Worker health-only service', () => {
         expect.objectContaining({ shell: false }),
       );
     }
+  });
+
+  it('reports PostgreSQL unavailable when the pinned image exists but cannot start and become ready', async () => {
+    const { probeFleetWorkerHealth } = await loadProbeContract();
+    const execFileFn = vi.fn(async (file, args) => {
+      if (file === 'docker' && args[0] === 'info') return { stdout: '{}' };
+      if (file === 'docker' && args[0] === 'image') return { stdout: '[]' };
+      if (file === 'docker' && args[0] === 'run' && args.includes(POSTGRES_IMAGE)) {
+        throw new Error('exec format error');
+      }
+      return { stdout: '' };
+    });
+
+    const report = await probeFleetWorkerHealth({
+      machineId: 'us-mac-m4',
+      runnerImageDigest: DIGEST,
+      postgresImageDigest: POSTGRES_IMAGE,
+      execFileFn,
+      fetchFn: vi.fn(async () => new Response('{}', { status: 200 })),
+      makeTempDirFn: vi.fn(async () => '/private/tmp/fleet-node-probe-pg-run'),
+      chmodTempDirFn: vi.fn(async () => undefined),
+      removeTempDirFn: vi.fn(async () => undefined),
+      statFn: vi.fn(async () => undefined),
+    });
+
+    expect(report.runtime_resources.postgres).toEqual({
+      available: false,
+      image_digest: POSTGRES_IMAGE,
+    });
   });
 
   it('accepts the exact Tailscale listener address plus callback reachability when the GUI CLI denies the service user', async () => {
@@ -859,6 +909,12 @@ describe('Fleet Worker Attempt API', () => {
     expect(inspected.statusCode).toBe(200);
     expect(cancelled.statusCode).toBe(200);
     expect(terminal.statusCode).toBe(200);
+    expect(JSON.parse(terminal.body)).toMatchObject({
+      status: 'cleaned',
+      attempt_id: attemptId,
+      actual_machine_id: 'us-mac-m4',
+      attestation: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
     expect(attemptRunner.inspect).toHaveBeenCalledWith(attemptId);
     expect(attemptRunner.cancel).toHaveBeenCalledWith(attemptId, {
       owner: 'dispatcher-1',

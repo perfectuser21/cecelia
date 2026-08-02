@@ -72,7 +72,11 @@ function dispatcherWithCapturedPreflight() {
     })),
     leaseOwner: 'requirements-test:4242',
   };
-  return { dispatch: createDispatcher(deps), evaluate };
+  return {
+    dispatch: createDispatcher(deps),
+    evaluate,
+    launcher: deps.launcher,
+  };
 }
 
 function context(role, requirements) {
@@ -128,7 +132,7 @@ describe('server-owned capability requirements', () => {
   );
 
   it('structured requirements can add PostgreSQL and model capabilities without duplication', async () => {
-    const { dispatch, evaluate } = dispatcherWithCapturedPreflight();
+    const { dispatch, evaluate, launcher } = dispatcherWithCapturedPreflight();
 
     await dispatch('spawn:evaluator', context('evaluator', {
       provider_auth: true,
@@ -144,6 +148,13 @@ describe('server-owned capability requirements', () => {
         postgres: true,
         model_capabilities: ['structured_output', 'vision'],
       },
+    }));
+    expect(launcher.launch).toHaveBeenCalledWith(expect.objectContaining({
+      bundle: expect.objectContaining({
+        inputs: expect.objectContaining({
+          runtime_resources: { postgres: true },
+        }),
+      }),
     }));
   });
 });
