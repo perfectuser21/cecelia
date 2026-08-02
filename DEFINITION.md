@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.170
+**Brain 版本**: 1.267.171
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.171 — Commander auth failure status redaction boundary
+
+- Commander 的递归秘密扫描器只把布尔 `auth_failed` 作为非秘密运行状态放行，
+  修复初始 Hybrid run 在 `lastAgentExit.auth_failed=false` 上被误判并终止的问题。
+- 非布尔 `auth_failed` 以及 `authorization`、token、secret、password、API key 等
+  真实秘密材料仍然 fail closed；Provider 凭据与 CredentialEnvelope 边界不变。
+- 回退到 `1.267.170` 会恢复 Hybrid run 在首个 Commander Attempt 前失败；回退前
+  必须 drain active `hybrid` run。
 
 ## Brain 1.267.170 — Public Kernel run commander mode creation
 

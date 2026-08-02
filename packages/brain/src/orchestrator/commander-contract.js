@@ -80,7 +80,9 @@ function inspectStructuredValue(value, context, depth = 0, seen = new WeakSet())
     return;
   }
   for (const [key, nested] of entries) {
-    if (SECRET_KEY.test(key)) {
+    const safeAuthFailureStatus = key === 'auth_failed'
+      && typeof nested === 'boolean';
+    if (SECRET_KEY.test(key) && !safeAuthFailureStatus) {
       context.addIssue({ code: 'custom', message: 'secret_material_forbidden' });
       continue;
     }

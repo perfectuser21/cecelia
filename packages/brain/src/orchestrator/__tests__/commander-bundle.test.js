@@ -81,6 +81,22 @@ describe('CommanderBundle builder', () => {
     })).toThrow('secret_material_forbidden');
   });
 
+  it('accepts the non-secret auth_failed status while still rejecting auth material', () => {
+    expect(() => buildCommanderBundle({
+      ...fixture,
+      observed: { lastAgentExit: { code: null, auth_failed: false } },
+    })).not.toThrow();
+
+    expect(() => buildCommanderBundle({
+      ...fixture,
+      observed: { authorization: 'Bearer must-not-enter-commander' },
+    })).toThrow('secret_material_forbidden');
+    expect(() => buildCommanderBundle({
+      ...fixture,
+      observed: { lastAgentExit: { auth_failed: 'not-a-status' } },
+    })).toThrow('secret_material_forbidden');
+  });
+
   it('projects an Inbox persistence row back to the strict ActorMessage contract', () => {
     const message = {
       schema: 'harness-actor-message/v1',
