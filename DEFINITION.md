@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.183
+**Brain 版本**: 1.267.184
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.184 — Kernel runtime contract test hardening
+
+- Provider Runner 回归测试现在分别锁定 Evaluator evidence preflight、provider runtime、
+  provider session 与 terminal callback retry 四条 heartbeat 调用路径，并只在中央 helper
+  内验 endpoint、generation payload 与 callback bearer auth，防止删路径或删认证后假绿。
+- real-env task-delete smoke 完整承接原行为合同：精确 HTTP 200 / 404 / 409、响应字段和
+  PostgreSQL 终态均需一致。此版本只加固合并后的 Kernel runtime 测试契约，不改变生产
+  调度行为；回退到 `1.267.183` 会恢复较弱的结构断言。
 
 ## Brain 1.267.183 — Kernel callback rejection and lease-generation fencing
 
