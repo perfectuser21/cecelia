@@ -617,16 +617,15 @@ while true; do
     if [[ "${HARNESS_FROZEN_BASELINE:-false}" == "true" ]]; then
       # 冻结档下 update-branch 会把 main（可能已含对照候选）merge 进本分支 ——
       # 血统闸看不出来（merge commit 保留祖先），但盲测已被污染。BEHIND 不是本
-      # Attempt 能解决的问题，交给 Kernel 决策，不许自行同步。
-      echo "frozen baseline: BEHIND 不做 update-branch，保持冻结边界"
-      sleep 30
+      # Attempt 能解决的问题，不许自行同步；继续落到下方全绿完成判断。
+      echo "frozen baseline: BEHIND 不做 update-branch，保持冻结边界并按 CI 结果收尾"
+    else
+      # EVA v2（G4）：BEHIND 统一走 gh pr update-branch（与 controller 实践/全局规范对齐），
+      # 不再本地 rebase + force-with-lease push
+      echo "branch behind main, update-branch..."
+      gh pr update-branch "$PR_NUMBER" --repo "$REPO"
       continue
     fi
-    # EVA v2（G4）：BEHIND 统一走 gh pr update-branch（与 controller 实践/全局规范对齐），
-    # 不再本地 rebase + force-with-lease push
-    echo "branch behind main, update-branch..."
-    gh pr update-branch "$PR_NUMBER" --repo "$REPO"
-    continue
   }
 
   if [ "$FAILED" -eq 0 ] && [ "$PENDING" -eq 0 ]; then
