@@ -6,11 +6,36 @@
 
 
 
-**Brain 版本**: 1.267.177
+**Brain 版本**: 1.267.178
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.178 — Kernel 冻结基线血统守卫
+
+- 任务 `payload.base_sha` 钉死基线时，`workspace_spec` 新增 `frozen_baseline: true`，
+  并沿 dispatcher → 远端 bridge → Fleet Worker → 容器 env 全链路传递；Worker 把自己
+  观测到的 checkout SHA 以 `HARNESS_WORKSPACE_START_SHA` 注入，冻结位以
+  `HARNESS_FROZEN_BASELINE` 注入。模型不自报、提示词不参与判档。
+- Runner 在 Provider 启动前武装 pre-push 血统闸（SHA 与「已存在血统」快照烤进钩子脚本，
+  unset env 松不开），Provider 退出后再断言一次；违规时 Attempt 直接判 failed，
+  callback 不可能投影 PR。
+- Brain callback 对冻结 Attempt 追加服务端 lineage 校验：`start SHA` 必须仍在 PR head
+  历史中，且 head 相对 `main` 的分叉点不得越过 `start SHA`。任一不满足 → PR claim 降级为
+  `unverified_pull_request_claim`（`frozen_baseline_violation` /
+  `frozen_baseline_unverifiable`），GitHub compare 不可用继续 503 fail closed。
+- 生产实弹 run `d9785137` / Generator attempt `3aa00156`：`payload.base_sha=0dc4e3c0`，
+  forbidden 含 `read_or_copy_other_candidate`，harness-generator v7.11.0 Step 0.5 无条件
+  `git rebase origin/main`，把 Kernel PR #1578 HEAD `7629efe6` rebase 到已含 One-session
+  #1577 的 main `676fed7d`。**注意：`0dc4e3c0` 本来就是 `676fed7d` 的祖先，所以「start SHA
+  仍是 HEAD 祖先」这条判据拦不住**——三层闸门用的是「`start SHA..HEAD` 之间不得出现任何
+  已存在于其他血统的 commit」（容器侧）与「head 对 main 的分叉点不得前移」（服务端）。
+- harness-generator SKILL 升 7.12.0：Step 0.5 按 `HARNESS_FROZEN_BASELINE` 二选一，冻结档
+  禁 fetch/rebase/merge/cherry-pick/pull 其他候选、禁 force push、禁 `--no-verify`；
+  Step 7 BEHIND 在冻结档下不做 `gh pr update-branch`。普通 dev 的 latest-main rebase 不变。
+- 回退到 Brain `1.267.177` 会让冻结/对比 Kernel run 重新失去盲测边界，回退前必须 drain
+  所有带 `payload.base_sha` 的 active run。
 
 ## Brain 1.267.177 — Kernel generator 字符串 PR artifact 规范化
 

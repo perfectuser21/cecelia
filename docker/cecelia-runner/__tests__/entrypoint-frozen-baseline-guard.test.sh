@@ -48,6 +48,9 @@ new_case() {
   git init -b main "$case_root/workspace" >/dev/null
   git -C "$case_root/workspace" config user.name 'Frozen Baseline Test'
   git -C "$case_root/workspace" config user.email 'frozen@example.invalid'
+  # Neutralize any inherited global core.hooksPath so the fixture only ever runs
+  # the hook this guard installs.
+  git -C "$case_root/workspace" config core.hooksPath /dev/null
   git -C "$case_root/workspace" remote add origin "$case_root/remote.git"
   printf '%s\n' 'frozen baseline' > "$case_root/workspace/README.md"
   git -C "$case_root/workspace" add README.md
@@ -88,16 +91,20 @@ WORKTREE_PATH="$WS" \
 FROZEN_BASELINE_GUARD_DIR="$CASE/guard" \
   assert_frozen_baseline_lineage
 
-# ── 2. Rebasing the frozen candidate onto a moved main is refused at push ────
+# ── 2. Exactly the production shape: main moved past the frozen baseline ─────
+# 0dc4e3c0 (start) → 676fed7d (main, now carrying the competing candidate).
+# `git merge-base --is-ancestor start HEAD` still holds after rebasing onto that
+# main, so ancestry alone proves nothing — the guard must reject the imported
+# commits themselves.
 CASE="$(new_case rebase)"
 WS="$CASE/workspace"
 START_SHA="$(git -C "$WS" rev-parse HEAD)"
 
-# origin/main advanced with the competing candidate (#1577 in production).
 git -C "$WS" checkout -b other-candidate >/dev/null 2>&1
 commit_on_top "$WS" one-session
 git -C "$WS" push origin HEAD:refs/heads/main >/dev/null 2>&1
 git -C "$WS" checkout main >/dev/null 2>&1
+git -C "$WS" reset --hard "$START_SHA" >/dev/null 2>&1
 
 HARNESS_FROZEN_BASELINE=true \
 HARNESS_WORKSPACE_START_SHA="$START_SHA" \
@@ -105,25 +112,39 @@ WORKTREE_PATH="$WS" \
 FROZEN_BASELINE_GUARD_DIR="$CASE/guard" \
   install_frozen_baseline_guard
 
-git -C "$WS" checkout -b cp-08022012-contaminated >/dev/null 2>&1
+git -C "$WS" checkout -b cp-08022012-candidate >/dev/null 2>&1
 commit_on_top "$WS" kernel
+
+# 2a. No false positive: main having moved on is not by itself a violation.
+git -C "$WS" push origin HEAD:refs/heads/cp-08022012-candidate >/dev/null 2>&1
+HARNESS_FROZEN_BASELINE=true \
+HARNESS_WORKSPACE_START_SHA="$START_SHA" \
+WORKTREE_PATH="$WS" \
+FROZEN_BASELINE_GUARD_DIR="$CASE/guard" \
+  assert_frozen_baseline_lineage
+
+# 2b. Step 0.5 v7.11.0 behaviour: rebase onto the contaminated main.
 git -C "$WS" fetch origin main >/dev/null 2>&1
 git -C "$WS" rebase origin/main >/dev/null 2>&1
+git -C "$WS" merge-base --is-ancestor "$START_SHA" HEAD || {
+  echo "fixture is wrong: the rebase should preserve plain ancestry" >&2
+  exit 1
+}
 
 if git -C "$WS" push origin HEAD:refs/heads/cp-08022012-contaminated >/dev/null 2>&1; then
   echo "frozen baseline guard let a rebased-onto-latest-main candidate push" >&2
   exit 1
 fi
-if git -C "$WS" push --no-verify origin HEAD:refs/heads/cp-08022012-noverify >/dev/null 2>&1; then
-  : # --no-verify skips hooks by design; the post-run assertion below is the backstop.
-fi
 
+# --no-verify skips hooks by design; the post-Provider assertion is the backstop
+# that turns the whole Attempt into a failure the callback cannot project.
+git -C "$WS" push --no-verify origin HEAD:refs/heads/cp-08022012-noverify >/dev/null 2>&1 || true
 if HARNESS_FROZEN_BASELINE=true \
   HARNESS_WORKSPACE_START_SHA="$START_SHA" \
   WORKTREE_PATH="$WS" \
   FROZEN_BASELINE_GUARD_DIR="$CASE/guard" \
     assert_frozen_baseline_lineage >/dev/null 2>&1; then
-  echo "frozen baseline assertion accepted a HEAD outside the start SHA lineage" >&2
+  echo "frozen baseline assertion accepted an imported lineage" >&2
   exit 1
 fi
 
@@ -170,7 +191,8 @@ WORKTREE_PATH="$WS" \
 FROZEN_BASELINE_GUARD_DIR="$CASE/guard" \
   install_frozen_baseline_guard
 
-test -z "$(git -C "$WS" config --get core.hooksPath || true)"
+test "$(git -C "$WS" config --get core.hooksPath)" = '/dev/null'
+test ! -e "$CASE/guard/hooks/pre-push"
 
 git -C "$WS" checkout -b cp-08022012-ordinary >/dev/null 2>&1
 commit_on_top "$WS" feature

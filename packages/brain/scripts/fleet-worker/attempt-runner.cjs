@@ -484,6 +484,10 @@ function createDockerAdapter({
           HARNESS_LEASE_OWNER: input.lease.owner,
           HARNESS_LEASE_GENERATION: input.lease.generation,
           HARNESS_READ_ONLY: String(input.workspaceMount.readOnly),
+          // Server-observed checkout SHA + the frozen invariant. The Provider
+          // never reports these; the Runner reads them back to gate pushes.
+          HARNESS_WORKSPACE_START_SHA: input.workspaceStartSha,
+          HARNESS_FROZEN_BASELINE: String(input.frozenBaseline === true),
           HARNESS_NODE: input.role,
           HARNESS_MODEL: input.model,
           HARNESS_TIMEOUT_SECONDS: String(input.timeoutSeconds),
@@ -1013,6 +1017,8 @@ function createAttemptRunner({
           timeoutSeconds: request.timeout_seconds,
           role: target.role,
           model: target.model,
+          workspaceStartSha: workspace.head_sha,
+          frozenBaseline: workspace.frozen_baseline === true,
           workspaceMount: {
             source: workspace.path,
             target: '/workspace',

@@ -48,6 +48,9 @@ import {
 import {
   defaultGitBranchHeadResolver,
 } from '../orchestrator/git-branch-head-resolver.js';
+import {
+  defaultCommitLineageResolver,
+} from '../orchestrator/commit-lineage-resolver.js';
 import { normalizeFailureSignature } from '../orchestrator/convergence-signatures.js';
 import { parseBaseRepo } from '../orchestrator/github-pr-discovery.js';
 
@@ -177,7 +180,61 @@ function pullRequestRepository(url) {
   return match?.[1]?.toLowerCase() ?? null;
 }
 
-async function verifyGeneratorPullRequestClaims(attempt, result, db, resolvePrIdentity) {
+// The frozen baseline that production run d9785137 lost is NOT expressible as
+// "start SHA is still an ancestor of HEAD": main was already a descendant of the
+// pinned 0dc4e3c0, so rebasing onto it preserves ancestry while importing the
+// competing candidate wholesale. Two facts together do express it:
+//   1. the pinned SHA is still in the head's history, and
+//   2. the head's fork point from the baseline branch has not advanced past it.
+// (2) is exactly what a rebase onto — or a merge of — a moved main breaks.
+const FROZEN_BASELINE_BRANCH = 'main';
+
+async function verifyFrozenLineage({
+  repo,
+  startSha,
+  headSha,
+  resolveCommitLineage,
+}) {
+  let direct;
+  let baseline;
+  try {
+    direct = await resolveCommitLineage({ repo, base: startSha, head: headSha });
+    baseline = await resolveCommitLineage({
+      repo,
+      base: FROZEN_BASELINE_BRANCH,
+      head: headSha,
+    });
+  } catch (error) {
+    const unavailable = new Error('pull_request_verification_unavailable');
+    unavailable.cause = error;
+    unavailable.status = 503;
+    throw unavailable;
+  }
+  if (direct?.is_ancestor !== true) return 'frozen_baseline_violation';
+  const forkPoint = normalizeGitSha(baseline?.merge_base_sha);
+  if (!forkPoint) return 'frozen_baseline_unverifiable';
+  if (forkPoint === startSha) return 'verified';
+  // A frozen Attempt whose baseline is not itself on the branch (generator-fix
+  // resuming a PR head) legitimately forks earlier than the pinned SHA.
+  let drift;
+  try {
+    drift = await resolveCommitLineage({ repo, base: forkPoint, head: startSha });
+  } catch (error) {
+    const unavailable = new Error('pull_request_verification_unavailable');
+    unavailable.cause = error;
+    unavailable.status = 503;
+    throw unavailable;
+  }
+  return drift?.is_ancestor === true ? 'verified' : 'frozen_baseline_violation';
+}
+
+async function verifyGeneratorPullRequestClaims(
+  attempt,
+  result,
+  db,
+  resolvePrIdentity,
+  resolveCommitLineage,
+) {
   if (attempt.role !== 'generator') return result;
   if (!['completed', 'completed_with_concerns'].includes(result.status)) return result;
 
@@ -203,6 +260,14 @@ async function verifyGeneratorPullRequestClaims(attempt, result, db, resolvePrId
   )?.toLowerCase() ?? null;
   const taskShort = String(authority.task_id).slice(0, 8).toLowerCase();
   const expectedBranch = workspaceSpec?.branch;
+  // A frozen Attempt was launched from an exact, server-chosen commit. Proving
+  // repo/branch/head only proves the PR exists — it cannot detect that the
+  // Attempt rebased the branch onto another candidate's lineage first.
+  const frozenBaseline = workspaceSpec?.frozen_baseline === true;
+  const frozenStartSha = frozenBaseline
+    ? normalizeGitSha(workspaceSpec?.expected_head_sha)
+      ?? normalizeGitSha(workspaceSpec?.base_sha)
+    : null;
 
   const verifyUrl = async (url) => {
     if (!expectedRepository || pullRequestRepository(url) !== expectedRepository) {
@@ -227,6 +292,20 @@ async function verifyGeneratorPullRequestClaims(attempt, result, db, resolvePrId
       : headRef.toLowerCase().includes(taskShort);
     if (!branchMatches) {
       return { status: 'branch_mismatch', identity: null };
+    }
+    if (frozenBaseline) {
+      if (!frozenStartSha) {
+        return { status: 'frozen_baseline_unverifiable', identity: null };
+      }
+      const frozen = await verifyFrozenLineage({
+        repo: expectedRepository,
+        startSha: frozenStartSha,
+        headSha,
+        resolveCommitLineage,
+      });
+      if (frozen !== 'verified') {
+        return { status: frozen, identity: null };
+      }
     }
     return {
       status: 'verified',
@@ -774,6 +853,8 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
   const resolver = req.app.get('kernelPrIdentityResolver') || defaultPrIdentityResolver;
   const branchHeadResolver = req.app.get('kernelGitBranchHeadResolver')
     || defaultGitBranchHeadResolver;
+  const commitLineageResolver = req.app.get('kernelCommitLineageResolver')
+    || defaultCommitLineageResolver;
   let verifiedResult;
   try {
     verifiedResult = await verifyPlannerGitArtifactClaim(
@@ -786,6 +867,7 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
       verifiedResult,
       db,
       resolver,
+      commitLineageResolver,
     );
   } catch (error) {
     if (error.status) {

@@ -710,6 +710,119 @@ finalize_planner_output() {
 }
 # planner-finalizer:end
 
+# frozen-baseline-guard:start
+# 生产 run d9785137 / attempt 3aa00156：任务 payload.base_sha 钉死了盲测冻结基线，
+# Generator 仍按 SKILL Step 0.5 无条件 rebase 到 origin/main，把对照候选的血统带进
+# 工作区。提示词不是闸——这里用 Kernel 注入的、Provider 无法伪造的服务端观测量
+# （HARNESS_WORKSPACE_START_SHA + HARNESS_FROZEN_BASELINE）在运输层收口：
+#   ① Provider 启动前武装 pre-push 钩子，SHA 烤进钩子脚本，unset env 也松不开；
+#   ② Provider 退出后（此时会话已结束，改不动父进程）再断言一次血统。
+FROZEN_BASELINE_GUARD_DIR="${FROZEN_BASELINE_GUARD_DIR:-/tmp/cecelia-frozen-baseline}"
+
+frozen_baseline_enabled() {
+  [[ "${HARNESS_FROZEN_BASELINE:-false}" == "true" ]]
+}
+
+install_frozen_baseline_guard() {
+  frozen_baseline_enabled || return 0
+
+  local workspace="${WORKTREE_PATH:-/workspace}"
+  local start_sha="${HARNESS_WORKSPACE_START_SHA:-}"
+  local hooks_dir="$FROZEN_BASELINE_GUARD_DIR/hooks"
+
+  if [[ ! "$start_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "[entrypoint] frozen baseline guard rejected an uncanonical start SHA" >&2
+    return 1
+  fi
+  if ! git -C "$workspace" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "[entrypoint] frozen baseline guard workspace is not a git worktree" >&2
+    return 1
+  fi
+  if ! git -C "$workspace" cat-file -e "${start_sha}^{commit}" 2>/dev/null; then
+    echo "[entrypoint] frozen baseline start SHA is absent from the workspace" >&2
+    return 1
+  fi
+  if [[ "$(git -C "$workspace" rev-parse HEAD 2>/dev/null)" != "$start_sha" ]]; then
+    echo "[entrypoint] frozen baseline workspace did not start at the pinned SHA" >&2
+    return 1
+  fi
+
+  local check="$FROZEN_BASELINE_GUARD_DIR/lineage-check.sh"
+  local baseline_refs="$FROZEN_BASELINE_GUARD_DIR/baseline-refs"
+  mkdir -p "$hooks_dir" || return 1
+  rm -f "$hooks_dir/pre-push" "$check" "$baseline_refs"
+
+  # 判据不是「start SHA 仍是 HEAD 的祖先」——生产事故里 main 本来就是 0dc4e3c0
+  # 的后代，rebase 上去祖先关系照样成立，这条规则一个字都拦不住。真正的不变量是：
+  # start SHA..HEAD 之间引入的每一个 commit 都必须是本 Attempt 新写的。这里在
+  # Provider 启动前给「已存在的血统」拍一张快照（admin clone 里的 main、对照候选
+  # 分支、远端跟踪分支都在其中）；之后任何一个落进 start SHA..HEAD 的 commit 只要
+  # 在快照可达范围内，就说明 fetch/rebase/merge/pull 把别的血统搬了进来。
+  git -C "$workspace" for-each-ref --format='%(objectname)' refs/heads refs/remotes \
+    | sort -u > "$baseline_refs" || return 1
+  chmod 0444 "$baseline_refs" || return 1
+
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' 'set -uo pipefail'
+    printf "START_SHA='%s'\n" "$start_sha"
+    printf "BASELINE_REFS='%s'\n" "$baseline_refs"
+    printf '%s\n' 'commit="${1:-HEAD}"'
+    printf '%s\n' 'if ! git merge-base --is-ancestor "$START_SHA" "$commit"; then'
+    printf '%s\n' '  echo "frozen_baseline_violation: $commit no longer descends from $START_SHA" >&2'
+    printf '%s\n' '  exit 1'
+    printf '%s\n' 'fi'
+    printf '%s\n' 'exclusions=("^$START_SHA")'
+    printf '%s\n' 'while IFS= read -r baseline_sha; do'
+    printf '%s\n' '  [[ "$baseline_sha" =~ ^[0-9a-f]{40}$ ]] || continue'
+    printf '%s\n' '  git cat-file -e "${baseline_sha}^{commit}" 2>/dev/null || continue'
+    printf '%s\n' '  exclusions+=("^$baseline_sha")'
+    printf '%s\n' 'done < "$BASELINE_REFS"'
+    printf '%s\n' 'introduced="$(git rev-list --count "$START_SHA..$commit")"'
+    printf '%s\n' 'own="$(git rev-list --count "$commit" "${exclusions[@]}")"'
+    printf '%s\n' 'if [[ "$introduced" != "$own" ]]; then'
+    printf '%s\n' '  echo "frozen_baseline_violation: $commit imported $((introduced - own)) commit(s) from another lineage above $START_SHA" >&2'
+    printf '%s\n' '  exit 1'
+    printf '%s\n' 'fi'
+  } > "$check" || return 1
+  chmod 0555 "$check" || return 1
+
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' 'set -uo pipefail'
+    printf "CHECK='%s'\n" "$check"
+    printf '%s\n' 'while read -r local_ref local_sha remote_ref remote_sha; do'
+    printf '%s\n' '  [[ "$local_sha" =~ ^0{40}$ ]] && continue'
+    printf '%s\n' '  bash "$CHECK" "$local_sha" || exit 1'
+    printf '%s\n' 'done'
+  } > "$hooks_dir/pre-push" || return 1
+  chmod 0555 "$hooks_dir/pre-push" || return 1
+  git -C "$workspace" config core.hooksPath "$hooks_dir" || return 1
+  echo "[entrypoint] frozen baseline guard armed at $start_sha"
+}
+
+assert_frozen_baseline_lineage() {
+  frozen_baseline_enabled || return 0
+
+  local workspace="${WORKTREE_PATH:-/workspace}"
+  local start_sha="${HARNESS_WORKSPACE_START_SHA:-}"
+  local check="$FROZEN_BASELINE_GUARD_DIR/lineage-check.sh"
+
+  if [[ ! "$start_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "[entrypoint] frozen baseline assertion rejected an uncanonical start SHA" >&2
+    return 1
+  fi
+  if [[ ! -r "$check" ]]; then
+    echo "[entrypoint] frozen baseline lineage checker is missing" >&2
+    return 1
+  fi
+  if ! (cd "$workspace" && bash "$check" HEAD); then
+    echo "[entrypoint] frozen baseline violated above $start_sha" >&2
+    return 1
+  fi
+}
+# frozen-baseline-guard:end
+
 # evaluator-evidence-bridge:start
 EVALUATOR_EVIDENCE_PREPARED=0
 
@@ -1247,6 +1360,15 @@ run_provider_contract() {
   result_schema_json="$(provider_result_schema_json "$task_bundle_file")"
   publish_provider_result_schema "$result_schema_file" "$result_schema_json"
 
+  if ! install_frozen_baseline_guard; then
+    jq -n \
+      --arg attempt "$HARNESS_ATTEMPT_ID" \
+      --arg provider "$provider" \
+      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"Frozen baseline guard rejected",artifacts:[],checks:[],decision:null,error:{code:"frozen_baseline_guard_unavailable",message:"runner could not arm the frozen baseline lineage guard"},provider_metadata:{provider:$provider,session_id:null}}' \
+      > "$NORMALIZED_RESULT_FILE"
+    return 1
+  fi
+
   if ! prepare_evaluator_provider_identity; then
     jq -n \
       --arg attempt "$HARNESS_ATTEMPT_ID" \
@@ -1480,6 +1602,13 @@ run_provider_contract() {
       jq -e 'type == "object" and .status' "$result_file" >/dev/null 2>&1 \
         && provider_success=true
     fi
+  fi
+  # Provider 已退出，改不动这一层。血统断了就把整个 Attempt 判死，
+  # 由 Kernel 侧的 callback 服务端校验做最后一道 fail-closed。
+  if ! assert_frozen_baseline_lineage; then
+    provider_success=false
+    provider_exit=1
+    printf '%s\n' '{"error":"frozen_baseline_violation"}' >> "$STDOUT_FILE"
   fi
   if [[ "$provider_success" == "true" ]]; then
     finalize_proposer_output || {

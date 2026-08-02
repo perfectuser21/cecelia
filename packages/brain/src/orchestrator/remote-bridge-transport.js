@@ -19,6 +19,7 @@ const WORKSPACE_SPEC_FIELDS = Object.freeze([
   'mode',
   'run_id',
   'attempt_id',
+  'frozen_baseline',
 ]);
 
 function isNonemptyString(value) {

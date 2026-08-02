@@ -27,7 +27,7 @@ describe('WorkspaceSpec contract', () => {
   it('returns an immutable canonical WorkspaceSpec', () => {
     const parsed = buildWorkspaceSpec(validSpec());
 
-    expect(parsed).toEqual(validSpec());
+    expect(parsed).toEqual({ ...validSpec(), frozen_baseline: false });
     expect(Object.isFrozen(parsed)).toBe(true);
   });
 
@@ -138,6 +138,7 @@ describe('production WorkspaceSpec resolution', () => {
       mode: 'read-only',
       run_id: RUN_ID,
       attempt_id: ATTEMPT_ID,
+      frozen_baseline: false,
     });
     expect(JSON.stringify(resolved)).not.toContain('/tmp/untrusted');
     expect(resolveRepoHead).not.toHaveBeenCalled();

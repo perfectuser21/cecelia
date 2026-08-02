@@ -1278,7 +1278,9 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     const generatorBranch = `cp-fleet-generator-${attemptId.slice(0, 8)}`;
     const prUrl = 'https://github.com/perfectuser21/zenithjoy-workspace/pull/1578';
     const frozenStartSha = '0dc4e3c07ff19a0ac95440723986bf3cb78580b2';
-    const contaminatedHeadSha = '676fed7de12023d355deac7849af8a525ae53f8d';
+    // main after One-session #1577 merged — a descendant of the frozen baseline.
+    const movedMainSha = '676fed7de12023d355deac7849af8a525ae53f8d';
+    const contaminatedHeadSha = 'b'.repeat(40);
     const cleanHeadSha = '7629efe6cef4817a3498b8c10a8b2f8cfd9f31f8';
 
     function stubFrozenGeneratorAttempt(frozen = true) {
@@ -1320,13 +1322,24 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       });
     }
 
-    it('冻结任务的 PR head 脱离 start SHA 血统时 fail closed，不投影 PR', async () => {
+    // 关键：rebase 到 676fed7d 之后 0dc4e3c0 依然是 HEAD 的祖先——单看祖先关系
+    // 一个字都拦不住。真正变的是 head 相对 main 的分叉点从 0dc4e3c0 前进到了
+    // 676fed7d，也就是对照候选的内容被整体搬了进来。
+    it('冻结任务 rebase 到已含对照候选的 main 时 fail closed，不投影 PR', async () => {
       stubFrozenGeneratorAttempt();
       app.set('kernelPrIdentityResolver', vi.fn(async () => ({
         head_sha: contaminatedHeadSha,
         head_ref: generatorBranch,
       })));
-      const resolveLineage = vi.fn(async () => ({ is_ancestor: false }));
+      const resolveLineage = vi.fn(async ({ base }) => (
+        base === 'main'
+          // 分叉点已越过冻结基线
+          ? { is_ancestor: true, merge_base_sha: movedMainSha }
+          : base === movedMainSha
+            // movedMainSha 不是 start SHA 的祖先（它是后代）
+            ? { is_ancestor: false, merge_base_sha: frozenStartSha }
+            : { is_ancestor: true, merge_base_sha: frozenStartSha }
+      ));
       app.set('kernelCommitLineageResolver', resolveLineage);
 
       const response = await generatorCallback();
@@ -1334,8 +1347,13 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       expect(response.status).toBe(200);
       expect(resolveLineage).toHaveBeenCalledWith({
         repo: 'perfectuser21/zenithjoy-workspace',
-        ancestor: frozenStartSha,
-        descendant: contaminatedHeadSha,
+        base: frozenStartSha,
+        head: contaminatedHeadSha,
+      });
+      expect(resolveLineage).toHaveBeenCalledWith({
+        repo: 'perfectuser21/zenithjoy-workspace',
+        base: 'main',
+        head: contaminatedHeadSha,
       });
       const [[recorded]] = mocks.store.recordCallbackTerminal.mock.calls;
       expect(recorded.result.artifacts).toEqual([
@@ -1349,13 +1367,40 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       );
     });
 
+    it('冻结任务 HEAD 完全脱离 start SHA 血统时同样 fail closed', async () => {
+      stubFrozenGeneratorAttempt();
+      app.set('kernelPrIdentityResolver', vi.fn(async () => ({
+        head_sha: contaminatedHeadSha,
+        head_ref: generatorBranch,
+      })));
+      app.set('kernelCommitLineageResolver', vi.fn(async () => ({
+        is_ancestor: false,
+        merge_base_sha: frozenStartSha,
+      })));
+
+      const response = await generatorCallback();
+
+      expect(response.status).toBe(200);
+      const [[recorded]] = mocks.store.recordCallbackTerminal.mock.calls;
+      expect(recorded.result.artifacts).toEqual([
+        expect.objectContaining({
+          type: 'unverified_pull_request_claim',
+          verification_status: 'frozen_baseline_violation',
+        }),
+      ]);
+    });
+
     it('合法地在 start SHA 之上追加提交的冻结 PR 仍被投影为 verified', async () => {
       stubFrozenGeneratorAttempt();
       app.set('kernelPrIdentityResolver', vi.fn(async () => ({
         head_sha: cleanHeadSha,
         head_ref: generatorBranch,
       })));
-      app.set('kernelCommitLineageResolver', vi.fn(async () => ({ is_ancestor: true })));
+      // main 已经前进，但本 Attempt 没同步：分叉点仍是冻结基线本身。
+      app.set('kernelCommitLineageResolver', vi.fn(async () => ({
+        is_ancestor: true,
+        merge_base_sha: frozenStartSha,
+      })));
 
       const response = await generatorCallback();
 
@@ -1370,13 +1415,43 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       ]);
     });
 
+    // generator-fix 从 PR head 续跑时，冻结基线本身不在 main 上，分叉点合法地
+    // 早于 start SHA —— 这不是污染，不能误杀。
+    it('分叉点早于冻结基线（generator-fix 续跑 PR head）不算违规', async () => {
+      const earlierForkSha = 'a'.repeat(40);
+      stubFrozenGeneratorAttempt();
+      app.set('kernelPrIdentityResolver', vi.fn(async () => ({
+        head_sha: cleanHeadSha,
+        head_ref: generatorBranch,
+      })));
+      app.set('kernelCommitLineageResolver', vi.fn(async ({ base }) => (
+        base === 'main'
+          ? { is_ancestor: true, merge_base_sha: earlierForkSha }
+          : { is_ancestor: true, merge_base_sha: earlierForkSha }
+      )));
+
+      const response = await generatorCallback();
+
+      expect(response.status).toBe(200);
+      const [[recorded]] = mocks.store.recordCallbackTerminal.mock.calls;
+      expect(recorded.result.artifacts).toEqual([
+        expect.objectContaining({
+          type: 'pull_request',
+          verification_status: 'verified',
+        }),
+      ]);
+    });
+
     it('普通 dev（未冻结）不查血统，行为零回归', async () => {
       stubFrozenGeneratorAttempt(false);
       app.set('kernelPrIdentityResolver', vi.fn(async () => ({
         head_sha: contaminatedHeadSha,
         head_ref: generatorBranch,
       })));
-      const resolveLineage = vi.fn(async () => ({ is_ancestor: false }));
+      const resolveLineage = vi.fn(async () => ({
+        is_ancestor: false,
+        merge_base_sha: null,
+      }));
       app.set('kernelCommitLineageResolver', resolveLineage);
 
       const response = await generatorCallback();
@@ -1407,6 +1482,29 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       expect(response.status).toBe(503);
       expect(response.body.error).toBe('pull_request_verification_unavailable');
       expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+    });
+
+    it('分叉点不可解析时不得投影 PR', async () => {
+      stubFrozenGeneratorAttempt();
+      app.set('kernelPrIdentityResolver', vi.fn(async () => ({
+        head_sha: cleanHeadSha,
+        head_ref: generatorBranch,
+      })));
+      app.set('kernelCommitLineageResolver', vi.fn(async () => ({
+        is_ancestor: true,
+        merge_base_sha: null,
+      })));
+
+      const response = await generatorCallback();
+
+      expect(response.status).toBe(200);
+      const [[recorded]] = mocks.store.recordCallbackTerminal.mock.calls;
+      expect(recorded.result.artifacts).toEqual([
+        expect.objectContaining({
+          type: 'unverified_pull_request_claim',
+          verification_status: 'frozen_baseline_unverifiable',
+        }),
+      ]);
     });
 
     it('冻结任务缺少可观测 start SHA 时不得投影 PR', async () => {
