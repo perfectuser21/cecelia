@@ -28,8 +28,15 @@ echo "[task-delete-postdeploy-filter-smoke] Brain 健康 ✓"
 
 echo "[task-delete-postdeploy-filter-smoke] 2. DELETE 存在的非终态任务 → 200 + DB cancelled"
 TID=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tAq -c "INSERT INTO tasks (task_type, status, title, payload) VALUES ('dev','pending_postdeploy','smoke: task-delete-ok','{}'::jsonb) RETURNING id" | tr -d ' \n')
-RESP=$(curl -sf -X DELETE "${BRAIN_URL}/api/brain/tasks/${TID}")
-echo "$RESP" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));if(d.status!=='cancelled'){console.error('FAIL: 响应 status 非 cancelled: '+JSON.stringify(d));process.exit(1)}"
+SUCCESS_BODY=$(mktemp)
+SUCCESS_CODE=$(curl -s -o "$SUCCESS_BODY" -w "%{http_code}" -X DELETE "${BRAIN_URL}/api/brain/tasks/${TID}")
+if [[ "$SUCCESS_CODE" != "200" ]]; then
+  echo "[task-delete-postdeploy-filter-smoke] FAIL: 存在任务期望 200 得 ${SUCCESS_CODE}"
+  rm -f "$SUCCESS_BODY"
+  exit 1
+fi
+node -e "const d=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));if(d.status!=='cancelled'||d.id!==process.argv[2]){console.error('FAIL: 200 响应合同错误: '+JSON.stringify(d));process.exit(1)}" "$SUCCESS_BODY" "$TID"
+rm -f "$SUCCESS_BODY"
 DBSTATUS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tAq -c "SELECT status FROM tasks WHERE id='${TID}'" | tr -d ' \n')
 if [[ "$DBSTATUS" != "cancelled" ]]; then
   echo "[task-delete-postdeploy-filter-smoke] FAIL: DB status=${DBSTATUS}（期望 cancelled）"
@@ -52,11 +59,15 @@ echo "[task-delete-postdeploy-filter-smoke] 404 JSON 合同生效 ✓"
 
 echo "[task-delete-postdeploy-filter-smoke] 4. DELETE 已 completed 任务 → 409，未被误改"
 TID2=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tAq -c "INSERT INTO tasks (task_type, status, title, payload) VALUES ('dev','completed','smoke: task-delete-terminal','{}'::jsonb) RETURNING id" | tr -d ' \n')
-CODE=$(curl -s -o /tmp/task-delete-smoke-409.json -w "%{http_code}" -X DELETE "${BRAIN_URL}/api/brain/tasks/${TID2}")
+COMPLETED_BODY=$(mktemp)
+CODE=$(curl -s -o "$COMPLETED_BODY" -w "%{http_code}" -X DELETE "${BRAIN_URL}/api/brain/tasks/${TID2}")
 if [[ "$CODE" != "409" ]]; then
   echo "[task-delete-postdeploy-filter-smoke] FAIL: 期望 409 得 ${CODE}"
+  rm -f "$COMPLETED_BODY"
   exit 1
 fi
+node -e "const d=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));if(typeof d.error!=='string'||typeof d.details!=='string'){console.error('FAIL: completed 409 响应合同错误: '+JSON.stringify(d));process.exit(1)}" "$COMPLETED_BODY"
+rm -f "$COMPLETED_BODY"
 DBSTATUS2=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tAq -c "SELECT status FROM tasks WHERE id='${TID2}'" | tr -d ' \n')
 if [[ "$DBSTATUS2" != "completed" ]]; then
   echo "[task-delete-postdeploy-filter-smoke] FAIL: 已终态任务被误改为 ${DBSTATUS2}"

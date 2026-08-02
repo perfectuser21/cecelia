@@ -6,6 +6,10 @@ ENTRYPOINT="$SCRIPT_DIR/entrypoint.sh"
 DOCKERFILE="$SCRIPT_DIR/Dockerfile"
 EVALUATOR_SKILL="$SCRIPT_DIR/../../packages/workflows/skills/harness-evaluator/SKILL.md"
 SECTION="$(sed -n '/provider-neutral:start/,/provider-neutral:end/p' "$ENTRYPOINT")"
+HEARTBEAT_SECTION="$(sed -n '/^post_attempt_heartbeat()/,/^}/p' "$ENTRYPOINT")"
+EVIDENCE_BOUNDARY_SECTION="$(sed -n '/evaluator-evidence-boundary:start/,/evaluator-evidence-boundary:end/p' "$ENTRYPOINT")"
+PROVIDER_SESSION_SECTION="$(sed -n '/^persist_provider_session()/,/^}/p' "$ENTRYPOINT")"
+CALLBACK_SECTION="$(sed -n '/# Harness 任务路径：/,$p' "$ENTRYPOINT")"
 CODEX_SECTION="$(sed -n '/if \[\[ "$provider" == "codex" \]\]/,/elif \[\[ "$provider" == "claude" \]\]/p' <<<"$SECTION")"
 CLAUDE_SECTION="$(sed -n '/elif \[\[ "$provider" == "claude" \]\]/,/elif \[\[ "$provider" == "grok" \]\]/p' <<<"$SECTION")"
 GROK_SECTION="$(sed -n '/elif \[\[ "$provider" == "grok" \]\]/,/^  else$/p' <<<"$SECTION")"
@@ -13,6 +17,11 @@ GIT_AUTH_SECTION="$(sed -n '/git-auth-setup:start/,/git-auth-setup:end/p' "$ENTR
 PROPOSER_FINALIZER_SECTION="$(sed -n '/proposer-finalizer:start/,/proposer-finalizer:end/p' "$ENTRYPOINT")"
 
 [[ -n "$SECTION" ]] || { echo 'missing provider-neutral runner section' >&2; exit 1; }
+[[ -n "$HEARTBEAT_SECTION" ]] || { echo 'missing centralized heartbeat transport' >&2; exit 1; }
+[[ -n "$EVIDENCE_BOUNDARY_SECTION" && -n "$PROVIDER_SESSION_SECTION" && -n "$CALLBACK_SECTION" ]] || {
+  echo 'missing heartbeat caller boundary' >&2
+  exit 1
+}
 [[ -n "$GIT_AUTH_SECTION" ]] || {
   echo 'missing runner git credential setup section' >&2
   exit 1
@@ -739,11 +748,20 @@ jq -e '
 }
 grep -q '^build_attempt_heartbeat_body()' "$ENTRYPOINT"
 grep -q '^post_attempt_heartbeat()' "$ENTRYPOINT"
-grep -q 'post_attempt_heartbeat "\$session"' "$ENTRYPOINT"
+[[ "$(grep -Ec '^[[:space:]]+post_attempt_heartbeat( |$)' "$ENTRYPOINT")" -eq 4 ]] || {
+  echo 'runner must keep all four production heartbeat callers' >&2
+  exit 1
+}
+grep -q 'post_attempt_heartbeat >/dev/null' <<<"$EVIDENCE_BOUNDARY_SECTION"
+grep -q 'post_attempt_heartbeat "\$session"' <<<"$PROVIDER_SESSION_SECTION"
+grep -q 'post_attempt_heartbeat >/dev/null' <<<"$SECTION"
+grep -q 'post_attempt_heartbeat >/dev/null' <<<"$CALLBACK_SECTION"
 grep -q 'lease_generation:\$generation' "$ENTRYPOINT"
-grep -q 'HARNESS_LEASE_OWNER' "$ENTRYPOINT"
-grep -q 'HARNESS_CALLBACK_TOKEN' "$ENTRYPOINT"
-grep -q 'Authorization: Bearer' "$ENTRYPOINT"
+grep -q 'build_attempt_heartbeat_body' <<<"$HEARTBEAT_SECTION"
+grep -q 'HARNESS_LEASE_OWNER' <<<"$HEARTBEAT_SECTION"
+grep -q 'HARNESS_CALLBACK_TOKEN' <<<"$HEARTBEAT_SECTION"
+grep -q 'Authorization: Bearer' <<<"$HEARTBEAT_SECTION"
+grep -q '/heartbeat' <<<"$HEARTBEAT_SECTION"
 grep -q 'provider_session_id:\$session' "$ENTRYPOINT"
 grep -q -- '--session-id' <<<"$SECTION"
 grep -q 'HARNESS_READ_ONLY' <<<"$SECTION"
