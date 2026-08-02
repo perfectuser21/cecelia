@@ -345,27 +345,48 @@ export async function collectGroundTruth(deps, opts) {
   }
 
   // ---- propose 分支 rN（外部真相，ganRound 唯一权威）----
-  // 必须按 task 作用域过滤：分支命名 cp-harness-propose-r{N}-{taskId前8}-a{attempt}
-  //（harness-gan.graph.js proposeBranchFor）。不带 taskId 过滤会吃全仓所有 task 的 rN，
-  // 并发 initiative 时 ganRound 被污染。
+  // 新分支同时绑定 task + run，防止同一 task 重跑时碰撞或消费旧 run 的合同。
+  // 对部署前已在途的 legacy 分支，只在当前 run 的严格 TaskBundle 明确引用时兼容。
   const shortTask = String(taskId).slice(0, 8);
+  const shortRun = String(runId).slice(0, 8);
+  const legacyBranchesForRun = new Set();
+  for (const attempt of attemptRows) {
+    if (attempt.role !== 'proposer') continue;
+    try {
+      const bundle = parseTaskBundle(asJson(attempt.task_bundle));
+      const branch = bundle.inputs?.propose_branch;
+      if (
+        bundle.run_id === runId
+        && bundle.attempt_id === attempt.id
+        && bundle.role === 'proposer'
+        && bundle.inputs?.task_id === taskId
+        && typeof branch === 'string'
+        && new RegExp(`^cp-harness-propose-r\\d+-${shortTask}-a\\d+$`).test(branch)
+      ) {
+        legacyBranchesForRun.add(branch);
+      }
+    } catch {
+      // Invalid historical TaskBundles cannot authorize a legacy branch.
+    }
+  }
   const taskRepo = parseBaseRepo(asJson(task.payload)?.base_repo);
   const proposalRemote = GITHUB_REPO_PATTERN.test(taskRepo ?? '')
     ? `"https://github.com/${taskRepo}.git"`
     : 'origin';
   const lsRemote = execTolerant(
     execCmd,
-    `git ls-remote --heads ${proposalRemote} "cp-harness-propose-r*-${shortTask}-*"`,
+    `git ls-remote --heads ${proposalRemote} "cp-harness-propose-r*-${shortTask}-r${shortRun}-*" "cp-harness-propose-r*-${shortTask}-a*"`,
   );
   let proposeBranchRn = 0;
   let proposeBranchAttempt = -1;
   let proposeBranch = null;
   let proposeBranchSha = null;
-  const rnPattern = /^(\S+)\s+refs\/heads\/(cp-harness-propose-r(\d+)-([a-zA-Z0-9]{8})-a(\d+))$/gm;
+  const rnPattern = /^(\S+)\s+refs\/heads\/(cp-harness-propose-r(\d+)-([a-zA-Z0-9]{8})(?:-r([a-zA-Z0-9]{8}))?-a(\d+))$/gm;
   for (const m of String(lsRemote).matchAll(rnPattern)) {
     if (m[4] !== shortTask) continue;
+    if (m[5] ? m[5] !== shortRun : !legacyBranchesForRun.has(m[2])) continue;
     const round = Number(m[3]);
-    const attempt = Number(m[5]);
+    const attempt = Number(m[6]);
     if (round > proposeBranchRn || (round === proposeBranchRn && attempt > proposeBranchAttempt)) {
       proposeBranchRn = round;
       proposeBranchAttempt = attempt;

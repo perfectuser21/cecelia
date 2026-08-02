@@ -698,7 +698,7 @@ describe('collectGroundTruth：propose 分支 rN 解析', () => {
         }],
       },
       exec: {
-        lsRemote: `${'a'.repeat(40)}\trefs/heads/cp-harness-propose-r1-11111111-a18`,
+        lsRemote: `${'a'.repeat(40)}\trefs/heads/cp-harness-propose-r1-11111111-raaaaaaaa-a18`,
       },
     });
 
@@ -707,7 +707,7 @@ describe('collectGroundTruth：propose 分支 rN 解析', () => {
     const command = deps.execCmd.calls.find((candidate) => candidate.includes('ls-remote'));
     expect(command).toContain('https://github.com/perfectuser21/zenithjoy-workspace.git');
     expect(command).not.toMatch(/ls-remote --heads origin\b/);
-    expect(observed.proposeBranch).toBe('cp-harness-propose-r1-11111111-a18');
+    expect(observed.proposeBranch).toBe('cp-harness-propose-r1-11111111-raaaaaaaa-a18');
     expect(observed.proposeBranchRn).toBe(1);
   });
 
@@ -715,15 +715,15 @@ describe('collectGroundTruth：propose 分支 rN 解析', () => {
     const deps = makeDeps({
       exec: {
         lsRemote: [
-          'aaa\trefs/heads/cp-harness-propose-r1-11111111-a0',
-          'bbb\trefs/heads/cp-harness-propose-r3-11111111-a0',
-          'ccc\trefs/heads/cp-harness-propose-r2-11111111-a0',
+          'aaa\trefs/heads/cp-harness-propose-r1-11111111-raaaaaaaa-a1',
+          'bbb\trefs/heads/cp-harness-propose-r3-11111111-raaaaaaaa-a2',
+          'ccc\trefs/heads/cp-harness-propose-r2-11111111-raaaaaaaa-a3',
         ].join('\n'),
       },
     });
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.proposeBranchRn).toBe(3);
-    expect(o.proposeBranch).toBe('cp-harness-propose-r3-11111111-a0');
+    expect(o.proposeBranch).toBe('cp-harness-propose-r3-11111111-raaaaaaaa-a2');
   });
 
   it('无 propose 分支 → 0', async () => {
@@ -737,20 +737,20 @@ describe('collectGroundTruth：propose 分支 rN 解析', () => {
     const deps = makeDeps({
       exec: {
         lsRemote: [
-          'aaa\trefs/heads/cp-harness-propose-r2-11111111-a3',
-          'bbb\trefs/heads/cp-harness-propose-r2-11111111-a9',
+          'aaa\trefs/heads/cp-harness-propose-r2-11111111-raaaaaaaa-a3',
+          'bbb\trefs/heads/cp-harness-propose-r2-11111111-raaaaaaaa-a9',
         ].join('\n'),
       },
     });
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.proposeBranchRn).toBe(2);
-    expect(o.proposeBranch).toBe('cp-harness-propose-r2-11111111-a9');
+    expect(o.proposeBranch).toBe('cp-harness-propose-r2-11111111-raaaaaaaa-a9');
   });
 
   it('同时保留 propose tip SHA，且只接受锚定当前 SHA 的 reviewer verdict', async () => {
     const approvedSha = 'a'.repeat(40);
     const movedSha = 'b'.repeat(40);
-    const branch = 'cp-harness-propose-r2-11111111-a9';
+    const branch = 'cp-harness-propose-r2-11111111-raaaaaaaa-a9';
     const base = {
       exec: { lsRemote: `${approvedSha}\trefs/heads/${branch}` },
     };
@@ -789,7 +789,7 @@ describe('collectGroundTruth：propose 分支 rN 解析', () => {
 
   it('只投影与当前 round 和 SHA 匹配的最新 Reviewer 反馈', async () => {
     const contractSha = 'b'.repeat(40);
-    const branch = 'cp-harness-propose-r2-11111111-a9';
+    const branch = 'cp-harness-propose-r2-11111111-raaaaaaaa-a9';
     const attemptId = '22222222-2222-4222-8222-222222222222';
     const matchingAttempt = {
       id: attemptId,
@@ -967,7 +967,7 @@ describe('collectGroundTruth：propose 分支 rN 解析', () => {
     };
     const deps = makeDeps({
       exec: {
-        lsRemote: `${contractSha}\trefs/heads/cp-harness-propose-r2-11111111-a9`,
+        lsRemote: `${contractSha}\trefs/heads/cp-harness-propose-r2-11111111-raaaaaaaa-a9`,
       },
       rows: { attempts: [attempt] },
     });
@@ -985,15 +985,77 @@ describe('collectGroundTruth：propose 分支 rN 解析', () => {
     const deps = makeDeps({
       exec: {
         lsRemote: [
-          'aaa\trefs/heads/cp-harness-propose-r2-11111111-a0', // 本 task（TASK_ID 前 8 位）
-          'bbb\trefs/heads/cp-harness-propose-r9-deadbeef-a0', // 别的 task，禁止计入
+          'aaa\trefs/heads/cp-harness-propose-r2-11111111-raaaaaaaa-a1', // 本 task + 本 run
+          'bbb\trefs/heads/cp-harness-propose-r9-deadbeef-raaaaaaaa-a2', // 别的 task，禁止计入
         ].join('\n'),
       },
     });
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.proposeBranchRn).toBe(2);
     const lsCmd = deps.execCmd.calls.find((c) => c.includes('ls-remote'));
-    expect(lsCmd).toContain('cp-harness-propose-r*-11111111-*');
+    expect(lsCmd).toContain('cp-harness-propose-r*-11111111-raaaaaaaa-*');
+  });
+
+  it('run 作用域：同 task 的其他 run 即使 round 和 hop 更大也不得污染当前 run', async () => {
+    const deps = makeDeps({
+      exec: {
+        lsRemote: [
+          'aaa\trefs/heads/cp-harness-propose-r2-11111111-raaaaaaaa-a3',
+          'bbb\trefs/heads/cp-harness-propose-r9-11111111-rdeadbeef-a99',
+        ].join('\n'),
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.proposeBranchRn).toBe(2);
+    expect(observed.proposeBranch).toBe('cp-harness-propose-r2-11111111-raaaaaaaa-a3');
+  });
+
+  it('仅为当前 run 的严格 Proposer TaskBundle 兼容部署前 legacy 分支', async () => {
+    const attemptId = '77777777-7777-4777-8777-777777777777';
+    const legacyBranch = 'cp-harness-propose-r4-11111111-a7';
+    const deps = makeDeps({
+      rows: {
+        attempts: [{
+          id: attemptId,
+          run_id: RUN_ID,
+          hop: 7,
+          role: 'proposer',
+          status: 'completed',
+          task_bundle: {
+            contract_version: '1.0',
+            run_id: RUN_ID,
+            attempt_id: attemptId,
+            hop: 7,
+            phase: 'gan',
+            role: 'proposer',
+            objective: 'Produce the next contract revision.',
+            inputs: {
+              task_id: TASK_ID,
+              sprint_dir: 'sprints/legacy-proposer',
+              worktree_path: '/tmp/legacy-proposer',
+              propose_branch: legacyBranch,
+              contract_round: 4,
+              artifacts: [],
+            },
+            constraints: { read_only: false, fresh_session: true, timeout_seconds: 600 },
+            expected_output: 'harness-result/proposer-v1',
+          },
+        }],
+      },
+      exec: {
+        lsRemote: [
+          `aaa\trefs/heads/${legacyBranch}`,
+          'bbb\trefs/heads/cp-harness-propose-r9-11111111-a99',
+        ].join('\n'),
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.proposeBranchRn).toBe(4);
+    expect(observed.proposeBranch).toBe(legacyBranch);
   });
 });
 
@@ -1343,7 +1405,7 @@ describe('collectGroundTruth：决策日志推导字段', () => {
   });
 
   it('ganLatestRoundVerdict：verdict:reviewer detail.rn === 当前分支 rN 才算本轮 verdict', async () => {
-    const lsRemote = 'aaa\trefs/heads/cp-harness-propose-r2-11111111-a0';
+    const lsRemote = 'aaa\trefs/heads/cp-harness-propose-r2-11111111-raaaaaaaa-a1';
     const deps1 = makeDeps({
       rows: { log: [{ hop: 4, action: 'verdict:reviewer', observed: {}, detail: { verdict: 'REVISION', rn: 2 } }] },
       exec: { lsRemote },

@@ -205,7 +205,12 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     common.prd = { path: `${common.sprint_dir}/sprint-prd.md` };
   }
   if (spec.role === 'planner') {
-    common.planner_branch = `cp-harness-prd-${String(common.task_id).slice(0, 8)}-a${ctx.hop}`;
+    common.planner_branch = [
+      'cp-harness-prd',
+      String(common.task_id).slice(0, 8),
+      `r${String(ctx.runId).slice(0, 8)}`,
+      `a${ctx.hop}`,
+    ].join('-');
   }
   if (spec.role === 'proposer') {
     const nextRound = Number(observed.proposeBranchRn ?? 0) + 1;
@@ -216,7 +221,12 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     }
     common.contract_branch = observed.proposeBranch ?? observed.contract?.row?.propose_branch ?? null;
     common.contract_round = nextRound;
-    common.propose_branch = `cp-harness-propose-r${nextRound}-${String(common.task_id).slice(0, 8)}-a${ctx.hop}`;
+    common.propose_branch = [
+      `cp-harness-propose-r${nextRound}`,
+      String(common.task_id).slice(0, 8),
+      `r${String(ctx.runId).slice(0, 8)}`,
+      `a${ctx.hop}`,
+    ].join('-');
     if (observed.ganLatestRoundReviewFeedback) {
       common.review_feedback = { ...observed.ganLatestRoundReviewFeedback };
     }

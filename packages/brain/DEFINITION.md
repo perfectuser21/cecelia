@@ -1,6 +1,21 @@
 # Brain 模块定义
 
-**版本**: 1.267.180
+**版本**: 1.267.181
+
+## Kernel Codex terminal receipt and Planner/Proposer Run isolation
+
+- Runner 仅在 Codex JSONL 最后一个协议事件为 `turn.completed`、没有
+  `turn.failed`，且最后 agent message 与 `--output-last-message` 语义一致时，
+  接纳带非零 CLI 退出码的已完成 Provider 结果；所有安全闸仍可覆盖为失败。
+- Fleet callback 允许并严格校验成对的 `cli_exit_code` 与
+  `terminal_receipt=turn.completed`，未知字段、零退出码、缺半边收据继续 409。
+- Planner/Proposer handoff branch 都包含 task、run 与 hop，跨 Run 不再复用或
+  消费其他 Run 的远端 ref：`cp-harness-prd-<task8>-r<run8>-a<hop>` 与
+  `cp-harness-propose-r<round>-<task8>-r<run8>-a<hop>`。部署前 legacy Proposer
+  ref 只有在当前 Run 的严格 TaskBundle 明确引用时才兼容。
+- 三机 pinned Runner 基线同步为
+  `sha256:1ec3542ab56a58c620196a4f32fd04b12e8049ec29dbc121e33b51a0cabc4288`。
+- 回退到 `1.267.180` 会恢复已完成 turn 的假 `provider_exit` 与跨 Run 分支碰撞。
 
 ## Kernel read-only frozen guard and bootstrap callback convergence
 
