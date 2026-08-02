@@ -177,6 +177,19 @@ function dependencies(overrides = {}) {
     }),
   };
   const docker = {
+    prepare: vi.fn(async () => {
+      events.push('docker.prepare');
+      return {
+        containerId: 'container-attempt-1',
+        credentialFifo: `/controlled/runtime/${ATTEMPT_ID}/credential.fifo`,
+        githubCredentialFifo:
+          `/controlled/runtime/${ATTEMPT_ID}/github-credential.fifo`,
+      };
+    }),
+    start: vi.fn(async ({ containerId }) => {
+      events.push('docker.start');
+      return { containerId };
+    }),
     launch: vi.fn(async () => {
       events.push('docker.launch');
       return { containerId: 'container-attempt-1' };
@@ -257,6 +270,89 @@ function createRunner(deps) {
 }
 
 describe('Fleet Worker Attempt runner', () => {
+  it('prepares and persists a stopped Attempt without starting provider code', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    const receipt = await runner.prepare(request());
+
+    expect(receipt).toMatchObject({
+      attempt_id: ATTEMPT_ID,
+      run_id: RUN_ID,
+      actual_machine_id: WORKER_ID,
+      execution_transport: 'fleet-worker',
+      remote_job_id: 'container-attempt-1',
+    });
+    expect(deps.docker.prepare).toHaveBeenCalledOnce();
+    expect(deps.docker.start).not.toHaveBeenCalled();
+    expect(deps.docker.wait).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      attempt_id: ATTEMPT_ID,
+      status: 'prepared',
+      lease_owner: 'dispatcher-1',
+      lease_generation: 0,
+      container_id: 'container-attempt-1',
+    });
+    expect(JSON.stringify(deps.stateStore.states.get(ATTEMPT_ID)))
+      .not.toMatch(/sensitive-access-token|github_pat_attempt_scoped_test_token/);
+  });
+
+  it('returns the original receipt for an exact duplicate prepare', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    const first = await runner.prepare(request());
+    const duplicate = await runner.prepare(request());
+
+    expect(duplicate).toEqual(first);
+    expect(deps.docker.prepare).toHaveBeenCalledOnce();
+    expect(deps.docker.start).not.toHaveBeenCalled();
+  });
+
+  it('starts a prepared Attempt once and deduplicates the matching lease', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+
+    await expect(runner.start(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toMatchObject({
+      status: 'running',
+      attempt_id: ATTEMPT_ID,
+    });
+    await expect(runner.start(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toMatchObject({
+      status: 'running',
+      attempt_id: ATTEMPT_ID,
+      deduped: true,
+    });
+
+    expect(deps.docker.start).toHaveBeenCalledOnce();
+    expect(deps.docker.wait).toHaveBeenCalledOnce();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'running',
+    });
+  });
+
+  it('rejects a stale start lease without starting the prepared container', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+
+    await expect(runner.start(ATTEMPT_ID, {
+      owner: 'stale-owner',
+      generation: 0,
+    })).rejects.toThrow('attempt_lease_conflict');
+
+    expect(deps.docker.start).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'prepared',
+    });
+  });
+
   it.each([
     {
       role: 'commander',
