@@ -128,7 +128,13 @@ An exact existing state returns its prior receipt only when run, worker, lease, 
 
 - [ ] **Step 3: Add `attemptRunner.start()`**
 
-Fence by lease, transition `prepared → starting`, start/inject, persist `running`, and attach the existing `docker.wait().then(finalizeAttempt)` terminal waiter. On failure, execute the existing exact-attempt rollback and return a bounded error.
+Fence by lease, transition `prepared → starting`, start/inject, durably mark non-secret
+credential delivery, persist `running`, and attach the existing
+`docker.wait().then(finalizeAttempt)` terminal waiter. A Worker restart before delivery confirmation
+must clean the old attempt rather than persist Provider/GitHub credentials. A persisted
+`running + delivered` state reinstalls its waiter; completed cleanup leaves a minimal persistent
+lease tombstone for idempotent terminal start. On failure, execute exact-attempt rollback and return
+a bounded error.
 
 - [ ] **Step 4: Add Worker routes**
 
@@ -312,11 +318,15 @@ git commit -m "test(kernel): reproduce expired missing Worker attempt"
 
 - [ ] **Step 1: Implement the focused reconciler**
 
-Export one function that accepts the attempt, clock, launcher, attempt store, and append function. It returns one of `not_expired`, `reclaimed_prepared`, `reclaimed_running`, `missing_terminalized`, or `infrastructure_blocked`.
+Export one function that accepts the attempt, clock, launcher, attempt store, and append function. It returns one of `not_expired`, `reclaimed_prepared`, `replacement_required`, `reclaimed_running`, `missing_terminalized`, or `infrastructure_blocked`.
 
 - [ ] **Step 2: Preserve fencing and append evidence**
 
-Reclaim with a new lease generation before any start/observe action. A missing Worker state writes a bounded infrastructure failure and an append-only decision detail containing only attempt ID, prior generation, target, and signature.
+Reclaim with a new lease generation before any start/observe action.
+`attempt_credentials_unavailable` or unconfirmed credential delivery exact-cancels the old attempt
+and selects `replacement_required`; the next derive creates a new attempt with fresh envelopes. A
+missing Worker state writes a bounded infrastructure failure and an append-only decision detail
+containing only attempt ID, prior generation, target, and signature.
 
 - [ ] **Step 3: Wire before normal derive**
 

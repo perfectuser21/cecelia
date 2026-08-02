@@ -20,10 +20,14 @@ The failure is independent of Reviewer skill quality or model selection. The pro
 - A Runner must not start until Brain has durably bound the attempt to an attested Fleet Worker receipt.
 - Callback validation remains fail-closed; an early callback is not trusted or silently buffered without launch identity.
 - Prepare, start, inspect, cancel, and terminal operations are authenticated, lease-fenced, exact-attempt scoped, and idempotent.
-- A prepared attempt that is never started is recoverable and removable without running provider code.
+- A prepared attempt that is never started is recoverable without running provider code: the
+  same live Worker may start it from its in-memory one-shot credentials; after Worker restart it
+  must be cancelled and replaced with a fresh attempt/envelope rather than persisting credentials.
 - An expired Brain attempt whose Worker state is missing becomes an explicit infrastructure terminal result and may retry; it cannot remain `running` forever.
 - Tick remains unnecessary for convergence of a dedicated Kernel controller.
-- No credential is stored in the Brain database, Worker receipt, argv, logs, or long-lived Xi'an filesystem.
+- No long-lived Provider/GitHub credential is stored in the Brain database, Worker receipt, argv,
+  logs, or long-lived Xi'an filesystem. Attempt-local callback and disposable PostgreSQL values
+  remain governed by their existing isolated-container lifecycle.
 
 ## Considered Approaches
 
@@ -65,6 +69,13 @@ Brain sends `POST /harness/attempts/:attemptId/start` with lease owner and gener
 
 Start is idempotent for `starting/running/terminal`; stale lease generations are rejected. If start fails, Worker cleans the exact attempt and Brain records `launch_start_failed` as infrastructure failure.
 
+Provider/GitHub credential material remains memory/FIFO-only. Worker state records only a
+non-secret `credential_delivery_status`. A crash before `delivered` is durably recorded must clean
+and replace the attempt, even if Docker reports the container as running. A persisted
+`running + delivered` attempt may reinstall its terminal waiter after restart. Completed cleanup
+leaves a minimal, lease-fenced terminal tombstone so duplicate start remains idempotent across a
+Worker restart without retaining workspace, runtime, callback, or credential material.
+
 ### Terminal callback
 
 The existing callback contract remains strict. Because start occurs only after receipt commit, `launch_receipt_unconfirmed` cannot occur for a protocol-compliant Runner. Existing cleanup receipt, credential evidence, lease fencing, and append-only decision logging remain unchanged.
@@ -74,8 +85,11 @@ The existing callback contract remains strict. Because start occurs only after r
 The Kernel loop must not treat every `starting/running` row as live forever. When its lease is expired:
 
 1. inspect the attested Worker target using the exact attempt ID;
-2. if Worker reports `prepared`, reclaim the lease and issue idempotent start;
-3. if Worker reports `running`, reclaim and continue observing the same attempt;
+2. if Worker reports `prepared`, reclaim and start only when that Worker still owns the in-memory
+   one-shot credentials; `attempt_credentials_unavailable` triggers exact cancel plus a replacement
+   attempt with newly issued envelopes;
+3. if Worker reports `running`, reclaim and continue only when credential delivery was durably
+   confirmed; otherwise exact-cancel and replace the attempt;
 4. if Worker reports `missing`, atomically fail the attempt with `worker_attempt_missing_after_lease`, append the normal callback-equivalent infrastructure decision evidence, and let derive retry the same role under its existing cap;
 5. if Worker inspection is unavailable, record infrastructure BLOCKED/backoff without entering Generator fix.
 
@@ -103,7 +117,10 @@ Green verification covers:
 
 - prepare receipt precedes start call;
 - callback after start sees confirmed launch identity;
-- duplicate prepare/start are idempotent;
+- duplicate prepare/start are lease-fenced and idempotent, including terminal tombstones across
+  Worker restart;
+- a crash before credential-delivery commit cleans and replaces the attempt, while a durably
+  delivered running attempt reinstalls its terminal waiter;
 - receipt persistence failure cancels a prepared attempt without starting it;
 - stale lease and conflicting request are rejected;
 - missing Worker state terminalizes as infrastructure failure and retries within existing caps;
