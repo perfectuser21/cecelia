@@ -322,6 +322,21 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.docker.start).not.toHaveBeenCalled();
   });
 
+  it('single-flights concurrent exact duplicate prepare requests', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    const [first, duplicate] = await Promise.all([
+      runner.prepare(request()),
+      runner.prepare(request()),
+    ]);
+
+    expect(duplicate).toEqual(first);
+    expect(deps.docker.prepare).toHaveBeenCalledOnce();
+    expect(deps.credentialConsumer.consume).toHaveBeenCalledOnce();
+    expect(deps.githubCredentialConsumer.consume).toHaveBeenCalledOnce();
+  });
+
   it('starts a prepared Attempt once and deduplicates the matching lease', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
