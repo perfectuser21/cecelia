@@ -787,6 +787,15 @@ install_frozen_baseline_guard() {
   } > "$check" || return 1
   chmod 0555 "$check" || return 1
 
+  # Reviewer/evaluator workspaces are mounted read-only. Their provider cannot
+  # push, so the pre-push hook adds no protection; the immutable before/after
+  # lineage checker above remains authoritative without touching repository
+  # config. Writable generator roles still receive both layers.
+  if [[ "${HARNESS_READ_ONLY:-false}" == "true" ]]; then
+    echo "[entrypoint] frozen baseline read-only assertion armed at $start_sha"
+    return 0
+  fi
+
   {
     printf '%s\n' '#!/usr/bin/env bash'
     printf '%s\n' 'set -uo pipefail'
@@ -1298,6 +1307,30 @@ normalize_provider_failure() {
 # attempt-timeout-contract:end
 # commander-provider-contract:end
 
+# provider-bootstrap-failure:start
+write_provider_bootstrap_failure() {
+  local normalized_file="$1"
+  local attempt_id="$2"
+  local provider="$3"
+  local summary="$4"
+  local code="$5"
+  local message="$6"
+  local credential_ref="${7:-}"
+  local credential_copy_mutated="${8:-false}"
+
+  jq -n \
+    --arg attempt "$attempt_id" \
+    --arg provider "$provider" \
+    --arg summary "$summary" \
+    --arg code "$code" \
+    --arg message "$message" \
+    --arg credential_ref "$credential_ref" \
+    --argjson credential_copy_mutated "$credential_copy_mutated" \
+    '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:$summary,artifacts:[],checks:[],decision:null,error:{code:$code,message:$message},provider_metadata:({provider:$provider,session_id:null} + (if $provider == "codex" and $credential_ref != "" then {credential_ref:$credential_ref,credential_copy_mutated:$credential_copy_mutated} else {} end))}' \
+    > "$normalized_file"
+}
+# provider-bootstrap-failure:end
+
 run_provider_contract() {
   PROVIDER_CONTRACT=1
   local task_bundle_file="${HARNESS_TASK_BUNDLE_FILE:-$PROMPT_FILE}"
@@ -1316,21 +1349,19 @@ run_provider_contract() {
   if ! attempt_timeout_seconds="$(
     read_attempt_timeout_seconds "${HARNESS_TIMEOUT_SECONDS:-}"
   )"; then
-    jq -n \
-      --arg attempt "$HARNESS_ATTEMPT_ID" \
-      --arg provider "$provider" \
-      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"Attempt timeout rejected",artifacts:[],checks:[],decision:null,error:{code:"invalid_attempt_timeout",message:"runner rejected the bounded attempt timeout"},provider_metadata:{provider:$provider,session_id:null}}' \
-      > "$NORMALIZED_RESULT_FILE"
+    write_provider_bootstrap_failure \
+      "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
+      'Attempt timeout rejected' invalid_attempt_timeout \
+      'runner rejected the bounded attempt timeout'
     return 1
   fi
 
   if [[ "$provider" == "codex" ]] && ! prepare_codex_credential; then
-    jq -n \
-      --arg attempt "$HARNESS_ATTEMPT_ID" \
-      --arg provider "$provider" \
-      --arg credential_ref "${CECELIA_CREDENTIAL_REF:-}" \
-      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"CredentialEnvelope rejected",artifacts:[],checks:[],decision:null,error:{code:"credential_envelope_invalid",message:"runner rejected the bounded credential envelope"},provider_metadata:{provider:$provider,session_id:null,credential_ref:$credential_ref,credential_copy_mutated:false}}' \
-      > "$NORMALIZED_RESULT_FILE"
+    write_provider_bootstrap_failure \
+      "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
+      'CredentialEnvelope rejected' credential_envelope_invalid \
+      'runner rejected the bounded credential envelope' \
+      "${CECELIA_CREDENTIAL_REF:-}" false
     return 1
   fi
   if [[ "$provider" == "codex" ]]; then
@@ -1338,19 +1369,19 @@ run_provider_contract() {
   fi
 
   if [[ ! -f "$task_bundle_file" ]] || ! jq -e '.task_bundle' "$task_bundle_file" >/dev/null 2>&1; then
-    jq -n \
-      --arg attempt "$HARNESS_ATTEMPT_ID" \
-      --arg provider "$provider" \
-      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"TaskBundle missing or invalid",artifacts:[],checks:[],decision:null,error:{code:"invalid_task_bundle",message:"runner could not parse TaskBundle envelope"},provider_metadata:{provider:$provider,session_id:null}}' \
-      > "$NORMALIZED_RESULT_FILE"
+    write_provider_bootstrap_failure \
+      "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
+      'TaskBundle missing or invalid' invalid_task_bundle \
+      'runner could not parse TaskBundle envelope' \
+      "${CREDENTIAL_REF:-}" "${CREDENTIAL_COPY_MUTATED:-false}"
     return 1
   fi
   if ! validate_commander_task_bundle "$task_bundle_file"; then
-    jq -n \
-      --arg attempt "$HARNESS_ATTEMPT_ID" \
-      --arg provider "$provider" \
-      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"Commander TaskBundle rejected",artifacts:[],checks:[],decision:null,error:{code:"invalid_commander_task_bundle",message:"runner rejected the observational Commander boundary"},provider_metadata:{provider:$provider,session_id:null}}' \
-      > "$NORMALIZED_RESULT_FILE"
+    write_provider_bootstrap_failure \
+      "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
+      'Commander TaskBundle rejected' invalid_commander_task_bundle \
+      'runner rejected the observational Commander boundary' \
+      "${CREDENTIAL_REF:-}" "${CREDENTIAL_COPY_MUTATED:-false}"
     return 1
   fi
   if [[ "$(jq -r '.task_bundle.expected_output // empty' "$task_bundle_file")" == "commander-directive/v1" ]]; then
@@ -1361,20 +1392,20 @@ run_provider_contract() {
   publish_provider_result_schema "$result_schema_file" "$result_schema_json"
 
   if ! install_frozen_baseline_guard; then
-    jq -n \
-      --arg attempt "$HARNESS_ATTEMPT_ID" \
-      --arg provider "$provider" \
-      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"Frozen baseline guard rejected",artifacts:[],checks:[],decision:null,error:{code:"frozen_baseline_guard_unavailable",message:"runner could not arm the frozen baseline lineage guard"},provider_metadata:{provider:$provider,session_id:null}}' \
-      > "$NORMALIZED_RESULT_FILE"
+    write_provider_bootstrap_failure \
+      "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
+      'Frozen baseline guard rejected' frozen_baseline_guard_unavailable \
+      'runner could not arm the frozen baseline lineage guard' \
+      "${CREDENTIAL_REF:-}" "${CREDENTIAL_COPY_MUTATED:-false}"
     return 1
   fi
 
   if ! prepare_evaluator_provider_identity; then
-    jq -n \
-      --arg attempt "$HARNESS_ATTEMPT_ID" \
-      --arg provider "$provider" \
-      '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"Evaluator Provider boundary rejected",artifacts:[],checks:[],decision:null,error:{code:"evaluator_privilege_boundary_invalid",message:"runner could not isolate the Provider from trusted evidence collection"},provider_metadata:{provider:$provider,session_id:null}}' \
-      > "$NORMALIZED_RESULT_FILE"
+    write_provider_bootstrap_failure \
+      "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
+      'Evaluator Provider boundary rejected' evaluator_privilege_boundary_invalid \
+      'runner could not isolate the Provider from trusted evidence collection' \
+      "${CREDENTIAL_REF:-}" "${CREDENTIAL_COPY_MUTATED:-false}"
     return 1
   fi
 

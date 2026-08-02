@@ -505,6 +505,73 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
+  it('接受 Fleet Codex 在 Provider 启动前的结构化失败回调', async () => {
+    mocks.store.getById.mockResolvedValue(fleetAttempt());
+    const body = fleetResult({
+      credential_ref: undefined,
+      credential_copy_mutated: undefined,
+    });
+    body.status = 'failed';
+    body.decision = null;
+    body.error = {
+      code: 'invalid_attempt_timeout',
+      message: 'runner rejected the bounded attempt timeout',
+    };
+
+    const response = await postCallback(app, body);
+
+    expect(response.status).toBe(200);
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attemptId,
+        result: expect.objectContaining({
+          status: 'failed',
+          error: expect.objectContaining({
+            code: 'invalid_attempt_timeout',
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('启动前失败豁免仍拒绝 Fleet Codex 未知 metadata 字段', async () => {
+    mocks.store.getById.mockResolvedValue(fleetAttempt());
+    const body = fleetResult({
+      credential_ref: undefined,
+      credential_copy_mutated: undefined,
+      access_token: 'must-not-persist',
+    });
+    body.status = 'failed';
+    body.decision = null;
+    body.error = {
+      code: 'invalid_attempt_timeout',
+      message: 'runner rejected the bounded attempt timeout',
+    };
+
+    const response = await postCallback(app, body);
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe('credential_callback_invalid');
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+  });
+
+  it('仍拒绝缺少凭据证明的任意 Fleet Codex 失败回调', async () => {
+    mocks.store.getById.mockResolvedValue(fleetAttempt());
+    const body = fleetResult({
+      credential_ref: undefined,
+      credential_copy_mutated: undefined,
+    });
+    body.status = 'failed';
+    body.decision = null;
+    body.error = { code: 'provider_exit', message: 'untrusted failure' };
+
+    const response = await postCallback(app, body);
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe('credential_callback_invalid');
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+  });
+
   it('拒绝 dedicated canary contract 缺少 CANARY_OK 的 completed callback', async () => {
     mocks.store.getById.mockResolvedValue({
       ...attempt,
