@@ -734,7 +734,7 @@ function validateTarget(value) {
   }
   if (
     typeof value.role !== 'string'
-    || !/^(planner|proposer|reviewer|generator|evaluator|judge|reporter)$/
+    || !/^(commander|planner|proposer|reviewer|generator|evaluator|judge|reporter)$/
       .test(value.role)
   ) {
     throw new Error('attempt_target_role_invalid');
