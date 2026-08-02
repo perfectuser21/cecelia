@@ -903,6 +903,7 @@ describe('Fleet Worker durable runtime adapters', () => {
       writeGitHubCredential,
       resolveMountSource,
       mountAccessPrincipal: 'orbstack-owner',
+      cleanupAccessPrincipal: '_cecelia',
     });
 
     try {
@@ -956,6 +957,17 @@ describe('Fleet Worker durable runtime adapters', () => {
         undefined,
       ]);
       expect(runCommand.mock.calls[2]).toEqual([
+        'chmod',
+        [
+          '+a',
+          '_cecelia allow list,add_file,search,add_subdirectory,delete,delete_child,file_inherit,directory_inherit',
+          `/canonical/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID}`,
+          `/canonical/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
+          `/canonical${path.join(runtimeRoot, ATTEMPT_ID)}`,
+        ],
+        undefined,
+      ]);
+      expect(runCommand.mock.calls[3]).toEqual([
         '/usr/bin/find',
         [
           '-x',
@@ -981,7 +993,7 @@ describe('Fleet Worker durable runtime adapters', () => {
         ],
         undefined,
       ]);
-      const [command, createArgs] = runCommand.mock.calls[3];
+      const [command, createArgs] = runCommand.mock.calls[4];
       expect(command).toBe('docker');
       expect(createArgs[0]).toBe('create');
       expect(createArgs).toContain(IMAGE_DIGEST);
@@ -1026,7 +1038,7 @@ describe('Fleet Worker durable runtime adapters', () => {
       expect(createArgs.join(' ')).not.toContain(CREDENTIAL.authJson);
       expect(createArgs.join(' ')).not.toContain(GITHUB_TOKEN);
       expect(createArgs).not.toContain('--user');
-      expect(runCommand.mock.calls[4]).toEqual([
+      expect(runCommand.mock.calls[5]).toEqual([
         'docker',
         ['start', 'cecelia-fleet-22222222-2222-4222-8222-222222222222'],
         undefined,
@@ -1131,6 +1143,10 @@ describe('Fleet Worker durable runtime adapters', () => {
         runtimeRoot,
         mountAccessPrincipal: 'operator allow everyone',
       })).toThrow(/attempt_runner_invalid_mount_access_principal/);
+      expect(() => createDockerAdapter({
+        runtimeRoot,
+        cleanupAccessPrincipal: '_cecelia allow everyone',
+      })).toThrow(/attempt_runner_invalid_cleanup_access_principal/);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }

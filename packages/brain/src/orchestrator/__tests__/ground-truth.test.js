@@ -688,6 +688,29 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
 });
 
 describe('collectGroundTruth：propose 分支 rN 解析', () => {
+  it('跨仓库任务从 payload.base_repo 查询 proposal refs，不读取 Brain origin', async () => {
+    const deps = makeDeps({
+      rows: {
+        tasks: [{
+          id: TASK_ID,
+          status: 'in_progress',
+          payload: { base_repo: 'perfectuser21/zenithjoy-workspace' },
+        }],
+      },
+      exec: {
+        lsRemote: `${'a'.repeat(40)}\trefs/heads/cp-harness-propose-r1-11111111-a18`,
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    const command = deps.execCmd.calls.find((candidate) => candidate.includes('ls-remote'));
+    expect(command).toContain('https://github.com/perfectuser21/zenithjoy-workspace.git');
+    expect(command).not.toMatch(/ls-remote --heads origin\b/);
+    expect(observed.proposeBranch).toBe('cp-harness-propose-r1-11111111-a18');
+    expect(observed.proposeBranchRn).toBe(1);
+  });
+
   it('ls-remote 多分支 → 取最大 rN', async () => {
     const deps = makeDeps({
       exec: {

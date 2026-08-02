@@ -316,6 +316,7 @@ function createDockerAdapter({
   writeGitHubCredential = defaultWriteGitHubCredential,
   resolveMountSource = fs.realpathSync,
   mountAccessPrincipal,
+  cleanupAccessPrincipal,
 } = {}) {
   const root = assertRuntimeRoot(runtimeRoot, 'runtime_root');
   if (typeof runCommand !== 'function') {
@@ -335,6 +336,12 @@ function createDockerAdapter({
     && !MOUNT_ACCESS_PRINCIPAL_PATTERN.test(mountAccessPrincipal)
   ) {
     throw new Error('attempt_runner_invalid_mount_access_principal');
+  }
+  if (
+    cleanupAccessPrincipal !== undefined
+    && !MOUNT_ACCESS_PRINCIPAL_PATTERN.test(cleanupAccessPrincipal)
+  ) {
+    throw new Error('attempt_runner_invalid_cleanup_access_principal');
   }
 
   function canonicalMountSource(source) {
@@ -512,6 +519,15 @@ function createDockerAdapter({
         }
         if (isCodex) {
           await runCommand('mkfifo', ['-m', '600', credentialFifo], undefined);
+        }
+        if (cleanupAccessPrincipal !== undefined) {
+          await runCommand('chmod', [
+            '+a',
+            `${cleanupAccessPrincipal} allow list,add_file,search,add_subdirectory,delete,delete_child,file_inherit,directory_inherit`,
+            workspaceSource,
+            workspaceAdminSource,
+            runtimeSource,
+          ], undefined);
         }
         if (mountAccessPrincipal !== undefined) {
           await runCommand('/usr/bin/find', [

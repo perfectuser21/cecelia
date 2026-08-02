@@ -13,7 +13,10 @@
  *   listHostPids({runId}) → number[] —— 可选注入；主机执行（mac_web 类）pid 检查，T3 接线，缺省 []
  */
 import { ACTION, LOG_ACTION } from './constants.js';
-import { discoverPrFromGithub } from './github-pr-discovery.js';
+import {
+  discoverPrFromGithub,
+  parseBaseRepo,
+} from './github-pr-discovery.js';
 import { deriveCounters } from './counters.js';
 import {
   HUMAN_REVIEW_CLASS,
@@ -37,6 +40,7 @@ const TERMINAL_ATTEMPT_STATUSES = new Set([
   'cancelled',
 ]);
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
+const GITHUB_REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
 const SPAWN_ROLE_BY_ACTION = Object.freeze({
   [ACTION.SPAWN_PLANNER]: 'planner',
   [ACTION.SPAWN_PROPOSER]: 'proposer',
@@ -345,9 +349,13 @@ export async function collectGroundTruth(deps, opts) {
   //（harness-gan.graph.js proposeBranchFor）。不带 taskId 过滤会吃全仓所有 task 的 rN，
   // 并发 initiative 时 ganRound 被污染。
   const shortTask = String(taskId).slice(0, 8);
+  const taskRepo = parseBaseRepo(asJson(task.payload)?.base_repo);
+  const proposalRemote = GITHUB_REPO_PATTERN.test(taskRepo ?? '')
+    ? `"https://github.com/${taskRepo}.git"`
+    : 'origin';
   const lsRemote = execTolerant(
     execCmd,
-    `git ls-remote --heads origin "cp-harness-propose-r*-${shortTask}-*"`,
+    `git ls-remote --heads ${proposalRemote} "cp-harness-propose-r*-${shortTask}-*"`,
   );
   let proposeBranchRn = 0;
   let proposeBranchAttempt = -1;

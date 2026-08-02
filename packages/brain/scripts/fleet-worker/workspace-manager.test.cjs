@@ -257,4 +257,33 @@ describe('Fleet Worker workspace manager', () => {
     expect(fs.existsSync(result.path)).toBe(true);
     expect(fs.existsSync(workspace.path)).toBe(false);
   });
+
+  it('force-cleans exact owned roots for the known mounted-worktree cleanup failure', async () => {
+    const manager = createManager(fixture);
+    const workspace = await manager.prepare(spec(fixture));
+    fs.mkdirSync(path.join(workspace.path, 'node_modules', 'fixture'), {
+      recursive: true,
+    });
+    const failingManager = createManager(fixture, {
+      runCommand: async (command, args, options) => {
+        if (args[0] === '--git-dir' && args.includes('worktree') && args.includes('remove')) {
+          throw new Error(
+            "fatal: validation failed, cannot remove working tree: '.git' is not a .git file, error code 7",
+          );
+        }
+        return runCommand(command, args, options);
+      },
+    });
+
+    const result = await failingManager.cleanup(workspace);
+
+    expect(result).toMatchObject({
+      status: 'cleaned',
+      attempt_id: ATTEMPT_A,
+      forced: true,
+    });
+    expect(fs.existsSync(workspace.path)).toBe(false);
+    expect(fs.existsSync(workspace.admin_path)).toBe(false);
+    expect(fs.existsSync(fixture.quarantineRoot)).toBe(false);
+  });
 });
