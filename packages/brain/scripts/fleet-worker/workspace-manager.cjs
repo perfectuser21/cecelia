@@ -81,6 +81,8 @@ function commandOutput(result) {
   return typeof result?.stdout === 'string' ? result.stdout.trim() : '';
 }
 
+const RECOVERABLE_WORKTREE_CLEANUP_ERROR = /(?:validation failed[\s\S]*not a \.git file|failed to delete[\s\S]*Directory not empty|ENOTEMPTY)/i;
+
 function createWorkspaceManager({
   mirrorRoot,
   worktreeRoot,
@@ -412,6 +414,20 @@ function createWorkspaceManager({
           attempt_id: attemptId,
         });
       } catch (error) {
+        if (RECOVERABLE_WORKTREE_CLEANUP_ERROR.test(String(error?.message ?? error))) {
+          try {
+            fs.rmSync(expectedPath, { recursive: true, force: true });
+            fs.rmSync(expectedAdminPath, { recursive: true, force: true });
+            deleteOwnership(attemptId);
+            return Object.freeze({
+              status: 'cleaned',
+              attempt_id: attemptId,
+              forced: true,
+            });
+          } catch (forcedCleanupError) {
+            return this.quarantine(workspace, forcedCleanupError);
+          }
+        }
         return this.quarantine(workspace, error);
       }
     },

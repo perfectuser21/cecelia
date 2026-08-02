@@ -314,7 +314,10 @@ function createFleetWorkerRuntime({
     runtimeRoot: roots.runtime,
     ...(accessPrincipal === undefined
       ? {}
-      : { mountAccessPrincipal: accessPrincipal }),
+      : {
+          mountAccessPrincipal: accessPrincipal,
+          cleanupAccessPrincipal: '_cecelia',
+        }),
     ...(runCommand ? { runCommand } : {}),
   });
   const stateStore = createFileAttemptStateStore({ stateRoot: roots.state });

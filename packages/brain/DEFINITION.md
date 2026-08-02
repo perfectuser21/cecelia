@@ -1,6 +1,32 @@
 # Brain 模块定义
 
-**版本**: 1.267.174
+**版本**: 1.267.175
+
+## Kernel repository-aware proposal discovery
+
+- Ground Truth 按 task payload 的 `base_repo` 查询远端 proposal refs，不再把运行
+  ZenithJoy 等跨仓库任务时的 proposal branch 错查到 Brain 自己的 `origin`。
+- 远端仓库 identity 继续复用既有 GitHub allowlist 解析，并再次限制为安全的
+  `owner/repo` 形状；未知旧任务保留 `origin` 兼容路径，不接受任意 shell remote。
+- 这使已发布的 Proposer branch 能投影为权威 `proposeBranchRn/Sha`，Reviewer
+  因而成为合法 Kernel boundary；Commander 的角色、证据和 Directive Gate 不放宽。
+- 回退到 Brain `1.267.174` 会让跨仓库 Kernel run 再次把 proposal 轮次观测为 0，
+  并在 `illegal_role_at_kernel_boundary` 后重复派发 Proposer；回退前必须 drain
+  此类 active run。
+
+## Fleet workspace bounded cleanup
+
+- Fleet Worker `1.267.91` 在 OrbStack bind mount 前，为固定 LaunchDaemon 用户
+  `_cecelia` 增加仅限 Worker-owned workspace/admin/runtime 根的继承 ACL；容器新建的
+  `node_modules` 等目录不再阻断宿主清理。
+- `git worktree remove` 只在已知的 macOS bind-mount `.git` validation/ENOTEMPTY
+  失败上，回退到删除经过 attempt UUID 与受控根双重校验的精确 workspace/admin；
+  未知错误仍进入 quarantine，安全边界不放宽。
+- 这阻止每个成功 Attempt 把约 0.8 GiB 可再生工作树永久堆入 quarantine 并最终
+  触发 `disk_free_below_floor`；既有 Attempt result、Git branch/commit 和 JSON 元数据
+  仍是权威证据。
+- 回退 Worker `1.267.90` 前必须 drain active Attempt；旧 Worker 会恢复无继承 ACL
+  和无界 quarantine 增长。
 
 ## Runner Commander complete strict response schema
 
