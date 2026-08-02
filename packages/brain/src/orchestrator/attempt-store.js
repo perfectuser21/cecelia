@@ -341,35 +341,48 @@ export function createAttemptStore(pool) {
       return firstRow(result);
     },
 
-    async markRunning(id, { leaseOwner, providerSessionId, leaseSeconds }) {
+    async markRunning(id, {
+      leaseOwner,
+      leaseGeneration,
+      providerSessionId,
+      leaseSeconds,
+    }) {
+      if (!Number.isInteger(leaseGeneration) || leaseGeneration < 0) {
+        throw new Error('markRunning requires leaseGeneration');
+      }
       const result = await pool.query(
         `UPDATE harness_attempts
             SET status = 'running',
-                provider_session_id = $3,
-                lease_expires_at = NOW() + ($4 * INTERVAL '1 second'),
+                provider_session_id = $4,
+                lease_expires_at = NOW() + ($5 * INTERVAL '1 second'),
                 heartbeat_at = NOW(),
                 started_at = COALESCE(started_at, NOW()),
                 updated_at = NOW()
           WHERE id = $1
             AND lease_owner = $2
+            AND lease_generation = $3
             AND status IN ('starting','running')
           RETURNING *`,
-        [id, leaseOwner, providerSessionId, leaseSeconds],
+        [id, leaseOwner, leaseGeneration, providerSessionId, leaseSeconds],
       );
       return firstRow(result);
     },
 
-    async heartbeat(id, { leaseOwner, leaseSeconds }) {
+    async heartbeat(id, { leaseOwner, leaseGeneration, leaseSeconds }) {
+      if (!Number.isInteger(leaseGeneration) || leaseGeneration < 0) {
+        throw new Error('heartbeat requires leaseGeneration');
+      }
       const result = await pool.query(
         `UPDATE harness_attempts
             SET heartbeat_at = NOW(),
-                lease_expires_at = NOW() + ($3 * INTERVAL '1 second'),
+                lease_expires_at = NOW() + ($4 * INTERVAL '1 second'),
                 updated_at = NOW()
           WHERE id = $1
             AND lease_owner = $2
+            AND lease_generation = $3
             AND status IN ('starting','running')
           RETURNING *`,
-        [id, leaseOwner, leaseSeconds],
+        [id, leaseOwner, leaseGeneration, leaseSeconds],
       );
       return firstRow(result);
     },

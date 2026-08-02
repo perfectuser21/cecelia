@@ -1922,13 +1922,24 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     const response = await request(app)
       .post(`/api/brain/harness/attempts/${attemptId}/heartbeat`)
       .set('Authorization', `Bearer ${callbackToken}`)
-      .send({ lease_owner: 'brain-1:123', lease_seconds: 180 });
+      .send({ lease_owner: 'brain-1:123', lease_generation: 0, lease_seconds: 180 });
 
     expect(response.status).toBe(200);
     expect(mocks.store.heartbeat).toHaveBeenCalledWith(attemptId, {
       leaseOwner: 'brain-1:123',
+      leaseGeneration: 0,
       leaseSeconds: 180,
     });
+  });
+
+  it('heartbeat 缺 lease generation 时 fail closed，不允许旧 Runner 续新 lease', async () => {
+    const response = await request(app)
+      .post(`/api/brain/harness/attempts/${attemptId}/heartbeat`)
+      .set('Authorization', `Bearer ${callbackToken}`)
+      .send({ lease_owner: leaseOwner, lease_seconds: 180 });
+
+    expect(response.status).toBe(400);
+    expect(mocks.store.heartbeat).not.toHaveBeenCalled();
   });
 
   it('heartbeat 同样拒绝无密钥请求', async () => {
@@ -1945,6 +1956,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       .set('Authorization', `Bearer ${callbackToken}`)
       .send({
         lease_owner: 'brain-1:123',
+        lease_generation: 0,
         lease_seconds: 180,
         provider_session_id: 'thread-live',
       });
@@ -1952,6 +1964,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(response.status).toBe(200);
     expect(mocks.store.markRunning).toHaveBeenCalledWith(attemptId, {
       leaseOwner: 'brain-1:123',
+      leaseGeneration: 0,
       providerSessionId: 'thread-live',
       leaseSeconds: 180,
     });

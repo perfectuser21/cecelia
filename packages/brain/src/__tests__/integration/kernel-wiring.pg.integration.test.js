@@ -836,6 +836,7 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
         });
         await attemptStore.markRunning(attemptId, {
           leaseOwner: LEASE_OWNER,
+          leaseGeneration: 0,
           providerSessionId: `grok-before-callback-${attemptId}`,
           leaseSeconds: 180,
         });
@@ -932,6 +933,7 @@ describe('Kernel callback convergence on real PostgreSQL', () => {
     });
     await store.markRunning(attemptId, {
       leaseOwner: LEASE_OWNER,
+      leaseGeneration: 0,
       providerSessionId: `planner-${attemptId}`,
       leaseSeconds: 180,
     });

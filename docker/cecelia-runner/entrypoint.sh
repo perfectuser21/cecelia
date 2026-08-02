@@ -1922,14 +1922,31 @@ if [[ -n "${HARNESS_ATTEMPT_ID:-}" ]]; then
     -H "X-Harness-Lease-Generation: ${HARNESS_LEASE_GENERATION}"
   )
 fi
+
+callback_http_retryable() {
+  case "$1" in
+    000|408|425|429|5??) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 _retry=0
 while [[ $CALLBACK_OK -eq 0 ]]; do
   _retry=$((_retry + 1))
-  if curl -sf -m 10 -X POST "$TARGET_URL" \
+  _callback_http='000'
+  if _observed_http=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' -X POST "$TARGET_URL" \
       "${CALLBACK_HEADERS[@]}" \
-      -d "$CALLBACK_BODY" >/dev/null 2>&1; then
+      -d "$CALLBACK_BODY" 2>/dev/null); then
+    _callback_http="${_observed_http:-000}"
+  fi
+  if [[ "$_callback_http" == 2?? ]]; then
     echo "[entrypoint] harness callback POST ok (url=${TARGET_URL} exit=${EXIT_CODE} attempt=${_retry})"
     CALLBACK_OK=1
+    break
+  fi
+  if ! callback_http_retryable "$_callback_http"; then
+    echo "[entrypoint] harness callback permanent rejection http=${_callback_http} (url=${TARGET_URL})" >&2
+    EXIT_CODE=75
     break
   fi
 
@@ -1941,7 +1958,10 @@ while [[ $CALLBACK_OK -eq 0 ]]; do
       "${BRAIN_URL:-http://host.docker.internal:5221}/api/brain/harness/attempts/${HARNESS_ATTEMPT_ID}/heartbeat" \
       -H 'Content-Type: application/json' \
       -H "Authorization: Bearer ${HARNESS_CALLBACK_TOKEN}" \
-      -d "$(jq -nc --arg owner "$HARNESS_LEASE_OWNER" '{lease_owner:$owner,lease_seconds:180}')" \
+      -d "$(jq -nc \
+        --arg owner "$HARNESS_LEASE_OWNER" \
+        --argjson generation "$HARNESS_LEASE_GENERATION" \
+        '{lease_owner:$owner,lease_generation:$generation,lease_seconds:180}')" \
       >/dev/null 2>&1 || true
   elif [[ $_retry -ge 5 ]]; then
     # Legacy relay callbacks have no Attempt lease/cancel authority. Preserve

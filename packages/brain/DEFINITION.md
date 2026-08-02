@@ -1,6 +1,17 @@
 # Brain 模块定义
 
-**版本**: 1.267.182
+**版本**: 1.267.183
+
+## Kernel callback rejection and lease-generation fencing
+
+- Runner 只在 Brain 返回 HTTP 2xx 后结束 terminal callback；连接错误、408、425、429
+  和 5xx 继续续租重试，永久 4xx 退出并交由 Worker 的 full-finalize 回收全部 attempt
+  资源，避免错误凭据或冲突 callback 永久占用 capacity。
+- heartbeat payload、route 和 Attempt Store SQL 都绑定当前 `lease_generation`；旧代次即使
+  持有相同 owner 也无法续活已被接管的租约。
+- 三机 pinned Runner 基线同步为
+  `sha256:ab107faca136171e0de834aa0bad4b43232f55ad31b14aaf3868786e89a694b9`。
+- 回退到 `1.267.182` 会恢复永久拒绝无限重试与缺少 generation fence 的 heartbeat。
 
 ## Kernel Evaluator attempt-scoped PostgreSQL
 

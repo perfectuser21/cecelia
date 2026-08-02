@@ -157,6 +157,37 @@ test_entrypoint_contains_retry_code() {
   fi
 }
 
+test_http_retry_classification() {
+  local function_source
+  function_source=$(sed -n '/^callback_http_retryable()/,/^}/p' "$ENTRYPOINT")
+  if [[ -z "$function_source" ]]; then
+    fail "entrypoint.sh 缺少 callback HTTP retryability 分类器"
+    return
+  fi
+  eval "$function_source"
+  local code
+  for code in 000 408 425 429 500 503 599; do
+    if callback_http_retryable "$code"; then
+      pass "HTTP $code 被分类为可重试"
+    else
+      fail "HTTP $code 应可重试"
+    fi
+  done
+  for code in 400 401 403 404 409 422; do
+    if callback_http_retryable "$code"; then
+      fail "HTTP $code 是确定性错误，不得无限续租"
+    else
+      pass "HTTP $code 被分类为永久错误"
+    fi
+  done
+  if grep -q "HARNESS_LEASE_GENERATION" "$ENTRYPOINT" \
+    && grep -q "lease_generation" "$ENTRYPOINT"; then
+    pass "callback heartbeat 携带 lease generation fence"
+  else
+    fail "callback heartbeat 缺 lease generation fence"
+  fi
+}
+
 # ── 运行所有测试 ──────────────────────────────────────────────────────────────
 echo "=== entrypoint-callback-retry 回归测试 ==="
 echo ""
@@ -164,6 +195,7 @@ test_first_attempt_success
 test_retry_on_2nd_attempt
 test_five_failures_do_not_exit
 test_entrypoint_contains_retry_code
+test_http_retry_classification
 echo ""
 echo "结果：${TESTS_PASSED} 通过，${TESTS_FAILED} 失败"
 

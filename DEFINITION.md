@@ -6,11 +6,24 @@
 
 
 
-**Brain 版本**: 1.267.182
+**Brain 版本**: 1.267.183
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.183 — Kernel callback rejection and lease-generation fencing
+
+- Runner 只把 HTTP 2xx 视为 terminal callback 已提交；网络错误、408、425、429 与
+  5xx 续租后重试，其他 4xx 视为永久拒绝并以非零退出，让 Worker 的自然退出收口路径
+  回收 Runner、network、workspace 与状态，不再无限续租泄漏。
+- 每次 callback 重试发送的 heartbeat 必须携带当前 `lease_generation`；Brain 的 route
+  和 Attempt Store 都 fail closed，并在 SQL 更新条件中同时匹配 owner + generation，
+  防止旧 Runner 延长后来接管者的租约。
+- Runner 重建并固定为
+  `sha256:ab107faca136171e0de834aa0bad4b43232f55ad31b14aaf3868786e89a694b9`；
+  三机必须同步后才可 undrain。回退到 `1.267.182` 会恢复永久 4xx 无限重试与 heartbeat
+  仅按 owner 续租的竞态。
 
 ## Brain 1.267.182 — Kernel Evaluator attempt-scoped PostgreSQL
 

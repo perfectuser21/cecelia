@@ -725,21 +725,32 @@ router.post('/harness/attempts/:attemptId/heartbeat', heartbeatRateLimit, async 
     return res.status(401).json({ ok: false, error: 'invalid attempt callback credential' });
   }
   const leaseOwner = req.body?.lease_owner;
+  const leaseGeneration = Number(req.body?.lease_generation);
   const leaseSeconds = Number(req.body?.lease_seconds ?? 180);
   const providerSessionId = req.body?.provider_session_id ?? null;
-  if (typeof leaseOwner !== 'string' || !leaseOwner || !Number.isInteger(leaseSeconds)
+  if (typeof leaseOwner !== 'string' || !leaseOwner
+      || !Number.isSafeInteger(leaseGeneration) || leaseGeneration < 0
+      || !Number.isInteger(leaseSeconds)
       || leaseSeconds < 30 || leaseSeconds > 600
       || (providerSessionId !== null && (typeof providerSessionId !== 'string' || !providerSessionId))) {
-    return res.status(400).json({ ok: false, error: 'valid lease_owner and lease_seconds (30..600) required' });
+    return res.status(400).json({
+      ok: false,
+      error: 'valid lease_owner, lease_generation, and lease_seconds (30..600) required',
+    });
   }
   try {
     const attempt = providerSessionId
       ? await attemptStore.markRunning(req.params.attemptId, {
           leaseOwner,
+          leaseGeneration,
           providerSessionId,
           leaseSeconds,
         })
-      : await attemptStore.heartbeat(req.params.attemptId, { leaseOwner, leaseSeconds });
+      : await attemptStore.heartbeat(req.params.attemptId, {
+          leaseOwner,
+          leaseGeneration,
+          leaseSeconds,
+        });
     if (!attempt) return res.status(409).json({ ok: false, error: 'attempt lease lost or terminal' });
     return res.json({ ok: true, attemptId: req.params.attemptId });
   } catch (error) {

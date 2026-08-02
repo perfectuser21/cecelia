@@ -102,7 +102,11 @@ This rule does not weaken authentication or replace it with mocks.
   cleanup leaves the attempt non-terminal and returns a retryable error. The
   Worker first removes PostgreSQL but retains the network and callback-sending
   Runner until Brain returns success. The Runner renews its lease and retries
-  without a fixed attempt-count cutoff; control-plane cancel owns the deadline.
+  retryable transport/HTTP failures (network, 408, 425, 429, and 5xx) without a
+  fixed attempt-count cutoff; control-plane cancel owns the deadline. Every
+  heartbeat is fenced by the current lease generation. A permanent callback
+  rejection exits non-zero so the Worker can fully finalize the attempt rather
+  than renewing a rejected lease forever.
   Full Runner/network/workspace cleanup follows natural Runner exit and is
   single-flight with concurrent cancel. Server-side artifact verification runs
   before resource release.
