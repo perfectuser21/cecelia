@@ -7,6 +7,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { activateContextResume, runLoop } from '../loop.js';
 import { SingletonConflictError } from '../decision-log.js';
+import { POLL_INTERVAL_MS } from '../constants.js';
 
 const RUN_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
@@ -532,7 +533,7 @@ describe('runLoop：四态返回控制流', () => {
     });
   });
 
-  it('capability BLOCKED persists structured evidence before the convergence fence', async () => {
+  it('capability BLOCKED persists structured evidence before infrastructure retry backoff', async () => {
     const evidence = {
       capability_snapshot_id: 'snapshot-blocked',
       from_target: { provider: 'codex', account: 'team4', machine: 'us-mac-m4' },
@@ -540,7 +541,11 @@ describe('runLoop：四态返回控制流', () => {
       fallback_reason: 'postgres_unreachable',
       failure_class: 'infrastructure_blocked',
     };
-    const observedSeq = [obs({ generatorSpawned: false })];
+    const observedSeq = [
+      obs({ generatorSpawned: false }),
+      obs({ generatorSpawned: false }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
     const { deps, appended } = makeEnv({
       observedSeq,
       dispatch: async () => ({
@@ -558,7 +563,7 @@ describe('runLoop：四态返回控制流', () => {
 
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
 
-    expect(result.exitReason).toBe('blocked_same_state');
+    expect(result.exitReason).toBe('run_done');
     const dispatchResults = appended.filter((entry) => entry.action === 'result:dispatch');
     expect(dispatchResults).toHaveLength(2);
     for (const row of dispatchResults) {
@@ -574,6 +579,65 @@ describe('runLoop：四态返回控制流', () => {
         evidence,
       });
     }
+  });
+
+  it('transient infrastructure BLOCKED backs off and re-probes instead of terminalizing the run', async () => {
+    const observedSeq = [
+      obs({ generatorSpawned: false }),
+      obs({ generatorSpawned: false }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, appended, sleeps } = makeEnv({
+      observedSeq,
+      dispatch: async () => ({
+        status: 'DONE_WITH_CONCERNS',
+        control_status: 'BLOCKED',
+        detail: 'dispatch preflight blocked: node_not_base_admitted',
+        action: 'wait:human_review',
+        failure_class: 'infrastructure_blocked',
+        fallback_reason: 'node_not_base_admitted',
+        should_create_attempt: false,
+        should_enter_generator_fix: false,
+      }),
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.dispatch).toHaveBeenCalledTimes(2);
+    expect(deps.finalizeRun).not.toHaveBeenCalled();
+    expect(sleeps).toEqual([POLL_INTERVAL_MS, POLL_INTERVAL_MS]);
+    expect(appended.filter((entry) => entry.action === 'result:dispatch')).toHaveLength(2);
+  });
+
+  it('an infrastructure BLOCKED streak does not consume the semantic BLOCKED fence', async () => {
+    const responses = [
+      {
+        status: 'DONE_WITH_CONCERNS',
+        control_status: 'BLOCKED',
+        detail: 'dispatch preflight blocked: node_not_base_admitted',
+        failure_class: 'infrastructure_blocked',
+        fallback_reason: 'node_not_base_admitted',
+      },
+      { status: 'BLOCKED', detail: 'semantic refusal' },
+      { status: 'BLOCKED', detail: 'semantic refusal' },
+    ];
+    let index = 0;
+    const { deps } = makeEnv({
+      observedSeq: [obs({ generatorSpawned: false })],
+      dispatch: async () => responses[index++],
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('blocked_same_state');
+    expect(deps.dispatch).toHaveBeenCalledTimes(3);
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'blocked_same_state:BLOCKED',
+    });
   });
 
   it('NEEDS_CONTEXT 后 DONE → 同态 streak 清零，不 failed', async () => {

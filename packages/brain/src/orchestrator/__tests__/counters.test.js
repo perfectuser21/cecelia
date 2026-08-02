@@ -26,6 +26,7 @@ describe('deriveCounters：空日志', () => {
       pollCount: 0,
       blockedStreak: 0,
       blockedStatus: null,
+      blockedFailureClass: null,
       noProgress: false,
       noProgressReason: null,
     });
