@@ -248,7 +248,7 @@ printf '%s\n' \
   'fi' \
   'source="$(cat)"' \
   'case "$source" in' \
-  '  *runner_image_digest*) printf "%s" "sha256:0ac225b0878550b6fbbb1f3b960be392630e52139df3fab761f4d5fe5cc4f721" ;;' \
+  '  *runner_image_digest*) printf "%s" "sha256:7d6c52d18713a356aefa8bae7efc9b485e9277645bcea8b5250ecceaca7086d7" ;;' \
   '  *worker_bind_host*) printf "%s" "100.86.57.69" ;;' \
   '  *brain_health_url*) printf "%s" "http://100.71.151.105:5221/api/brain/health" ;;' \
   '  *) exit 1 ;;' \

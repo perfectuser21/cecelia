@@ -205,4 +205,44 @@ WORKTREE_PATH="$WS" \
 FROZEN_BASELINE_GUARD_DIR="$CASE/guard" \
   assert_frozen_baseline_lineage
 
+# Read-only reviewer/evaluator roles still require the before/after lineage
+# assertion, but must not install a pre-push hook into repository config.
+CASE="$(new_case readonly-reviewer)"
+WS="$CASE/workspace"
+START_SHA="$(git -C "$WS" rev-parse HEAD)"
+
+git -C "$WS" checkout -b readonly-contaminant >/dev/null 2>&1
+commit_on_top "$WS" readonly-contaminant
+git -C "$WS" checkout main >/dev/null 2>&1
+git -C "$WS" reset --hard "$START_SHA" >/dev/null 2>&1
+
+HARNESS_FROZEN_BASELINE=true \
+HARNESS_READ_ONLY=true \
+HARNESS_WORKSPACE_START_SHA="$START_SHA" \
+WORKTREE_PATH="$WS" \
+FROZEN_BASELINE_GUARD_DIR="$CASE/guard" \
+  install_frozen_baseline_guard
+
+test "$(git -C "$WS" config --get core.hooksPath)" = '/dev/null'
+test ! -e "$CASE/guard/hooks/pre-push"
+test -x "$CASE/guard/lineage-check.sh"
+
+HARNESS_FROZEN_BASELINE=true \
+HARNESS_READ_ONLY=true \
+HARNESS_WORKSPACE_START_SHA="$START_SHA" \
+WORKTREE_PATH="$WS" \
+FROZEN_BASELINE_GUARD_DIR="$CASE/guard" \
+  assert_frozen_baseline_lineage
+
+git -C "$WS" reset --hard readonly-contaminant >/dev/null 2>&1
+if HARNESS_FROZEN_BASELINE=true \
+  HARNESS_READ_ONLY=true \
+  HARNESS_WORKSPACE_START_SHA="$START_SHA" \
+  WORKTREE_PATH="$WS" \
+  FROZEN_BASELINE_GUARD_DIR="$CASE/guard" \
+    assert_frozen_baseline_lineage >/dev/null 2>&1; then
+  echo "read-only frozen baseline assertion accepted imported lineage" >&2
+  exit 1
+fi
+
 echo "entrypoint frozen baseline guard tests passed"

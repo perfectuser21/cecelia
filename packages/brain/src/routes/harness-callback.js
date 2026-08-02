@@ -62,6 +62,15 @@ const FLEET_CODEX_METADATA_FIELDS = new Set([
   'credential_ref',
   'credential_copy_mutated',
 ]);
+// These failures happen before a Provider process can start or a bounded
+// credential copy can be measured. The callback is still authenticated by its
+// per-Attempt secret + lease identity and can only make the Attempt fail. Keep
+// the exemption closed over known Runner bootstrap codes so arbitrary failed
+// callbacks cannot bypass Fleet credential evidence.
+const FLEET_CODEX_PRE_PROVIDER_FAILURE_CODES = new Set([
+  'invalid_attempt_timeout',
+  'credential_envelope_invalid',
+]);
 const TERMINAL_CALLBACK_STATUSES = new Set([
   'completed',
   'completed_with_concerns',
@@ -791,15 +800,21 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
     return res.status(409).json({ ok: false, error: 'launch_receipt_unconfirmed' });
   }
 
+  const trustedPreProviderFailure = result.status === 'failed'
+    && FLEET_CODEX_PRE_PROVIDER_FAILURE_CODES.has(result.error?.code);
+  const fleetCodexMetadataHasUnknownField = Object.keys(result.provider_metadata).some(
+    (field) => !FLEET_CODEX_METADATA_FIELDS.has(field),
+  );
+  const fleetCodexCredentialEvidenceInvalid = (
+    !UUID_PATTERN.test(result.provider_metadata?.credential_ref ?? '')
+    || typeof result.provider_metadata?.credential_copy_mutated !== 'boolean'
+  );
   if (
     attempt.execution_transport === 'fleet-worker'
     && attempt.provider === 'codex'
     && (
-      !UUID_PATTERN.test(result.provider_metadata?.credential_ref ?? '')
-      || typeof result.provider_metadata?.credential_copy_mutated !== 'boolean'
-      || Object.keys(result.provider_metadata).some(
-        (field) => !FLEET_CODEX_METADATA_FIELDS.has(field),
-      )
+      fleetCodexMetadataHasUnknownField
+      || (!trustedPreProviderFailure && fleetCodexCredentialEvidenceInvalid)
     )
   ) {
     return res.status(409).json({ ok: false, error: 'credential_callback_invalid' });

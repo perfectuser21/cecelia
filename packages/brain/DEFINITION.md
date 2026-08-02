@@ -1,6 +1,22 @@
 # Brain 模块定义
 
-**版本**: 1.267.179
+**版本**: 1.267.180
+
+## Kernel read-only frozen guard and bootstrap callback convergence
+
+- 冻结基线任务的 Reviewer/Evaluator 保留 Provider 前后两次血统断言，但不再对
+  只读 Fleet workspace 写入 `core.hooksPath` 或安装 pre-push hook；只有可写的
+  Generator 角色需要提交前钩子。
+- Runner 用统一 normalizer 为 TaskBundle、Commander contract、冻结基线闸和
+  Evaluator 隔离闸的启动失败补齐 `credential_ref` 与
+  `credential_copy_mutated`，使结构化 failed callback 能通过 Brain 校验并落终态。
+- 只有确实发生在凭据副本建立前的 `invalid_attempt_timeout` 与
+  `credential_envelope_invalid` 可缺少 copy 证据；所有状态的未知 metadata 字段
+  仍一律拒绝，普通 `provider_exit` 或成功回调也仍强制完整凭据证明。
+- 三台 NodeProfile 与 rollout/reconcile 统一固定到含本修复的 Runner
+  `sha256:7d6c52d18713a356aefa8bae7efc9b485e9277645bcea8b5250ecceaca7086d7`。
+- 回退到 Brain `1.267.179` 会让冻结任务的只读角色再次在模型启动前因
+  repository config 只读失败，且失败回调被 409 拒绝后卡在 `starting`。
 
 ## Kernel repository slug clone boundary
 

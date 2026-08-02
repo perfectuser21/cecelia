@@ -6,11 +6,22 @@
 
 
 
-**Brain 版本**: 1.267.179
+**Brain 版本**: 1.267.180
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.180 — Kernel 只读角色冻结闸与失败回调收敛
+
+- Reviewer/Evaluator 的只读 Fleet workspace 不再被要求写入 `core.hooksPath`；
+  冻结基线仍在 Provider 前后用独立的 `/tmp` 血统检查器验证。
+- Runner 为凭据建立后的启动失败补齐 Fleet Codex 凭据证明；仅超时合同和
+  凭据包自身失败可缺少 copy 证据。未知 metadata 字段始终拒绝。
+- 三台 Fleet 节点的 pinned Runner 基线升到
+  `sha256:7d6c52d18713a356aefa8bae7efc9b485e9277645bcea8b5250ecceaca7086d7`。
+- 回退到 `1.267.179` 会恢复「只读 Reviewer 启动前失败 + callback 409 +
+  Attempt 卡 `starting`」的生产闭环。
 
 ## Brain 1.267.179 — Kernel 仓库 slug clone 边界
 

@@ -100,4 +100,35 @@ if prepare_codex_credential "$TEST_ROOT/oversized-home" >/dev/null 2>&1; then
 fi
 test ! -e "$TEST_ROOT/oversized-home/auth.json"
 
+bootstrap_failure_block="$(
+  sed -n \
+    '/^# provider-bootstrap-failure:start$/,/^# provider-bootstrap-failure:end$/p' \
+    "$ENTRYPOINT"
+)"
+if [[ -z "$bootstrap_failure_block" ]]; then
+  echo "missing provider bootstrap failure normalizer" >&2
+  exit 1
+fi
+eval "$bootstrap_failure_block"
+
+bootstrap_failure="$TEST_ROOT/bootstrap-failure.json"
+write_provider_bootstrap_failure \
+  "$bootstrap_failure" \
+  "$HARNESS_ATTEMPT_ID" \
+  codex \
+  'Frozen baseline guard rejected' \
+  frozen_baseline_guard_unavailable \
+  'runner could not arm the frozen baseline lineage guard' \
+  "$CECELIA_CREDENTIAL_REF" \
+  false
+jq -e \
+  --arg credential_ref "$CECELIA_CREDENTIAL_REF" \
+  '.status == "failed"
+   and .error.code == "frozen_baseline_guard_unavailable"
+   and .provider_metadata.credential_ref == $credential_ref
+   and .provider_metadata.credential_copy_mutated == false
+   and (.provider_metadata | keys | sort)
+     == ["credential_copy_mutated", "credential_ref", "provider", "session_id"]' \
+  "$bootstrap_failure" >/dev/null
+
 echo "entrypoint Codex CredentialEnvelope tests passed"
