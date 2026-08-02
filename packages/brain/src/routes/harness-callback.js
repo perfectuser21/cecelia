@@ -151,6 +151,25 @@ function callbackClaimDigest(result) {
   return `sha256:${createHash('sha256').update(canonicalJson(result)).digest('hex')}`;
 }
 
+// Generators also report the PR as a bare string artifact. Such a string is only a
+// claim candidate: it enters the exact same server-side repository/branch/HEAD
+// verification as a structured artifact, and stays fail-closed when any check misses.
+const PULL_REQUEST_STRING_CANDIDATE = /github\.com\/[^/\s]+\/[^/\s]+\/pull\//i;
+
+function pullRequestClaimCandidate(artifact) {
+  if (artifact?.type === 'pull_request') {
+    return {
+      base: artifact,
+      url: typeof artifact.url === 'string' ? artifact.url.trim() : '',
+      normalizedFromString: false,
+    };
+  }
+  if (typeof artifact === 'string' && PULL_REQUEST_STRING_CANDIDATE.test(artifact)) {
+    return { base: null, url: artifact.trim(), normalizedFromString: true };
+  }
+  return null;
+}
+
 function pullRequestRepository(url) {
   const match = String(url).match(
     /^https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/[1-9]\d*\/?$/,
@@ -217,26 +236,31 @@ async function verifyGeneratorPullRequestClaims(attempt, result, db, resolvePrId
 
   const artifacts = [];
   for (const artifact of result.artifacts ?? []) {
-    if (artifact?.type !== 'pull_request') {
+    const claim = pullRequestClaimCandidate(artifact);
+    if (!claim) {
       artifacts.push(artifact);
       continue;
     }
-    const url = typeof artifact.url === 'string' ? artifact.url.trim() : '';
+    const { url } = claim;
+    const rejected = (status) => (claim.normalizedFromString
+      ? {
+          type: 'unverified_pull_request_claim',
+          url,
+          verification_status: status,
+          normalized_from: 'string_artifact',
+        }
+      : {
+          ...claim.base,
+          type: 'unverified_pull_request_claim',
+          verification_status: status,
+        });
     if (!GITHUB_PULL_REQUEST_URL.test(url)) {
-      artifacts.push({
-        ...artifact,
-        type: 'unverified_pull_request_claim',
-        verification_status: 'invalid_url',
-      });
+      artifacts.push(rejected('invalid_url'));
       continue;
     }
     const verification = await verifyUrl(url);
     if (verification.status !== 'verified') {
-      artifacts.push({
-        ...artifact,
-        type: 'unverified_pull_request_claim',
-        verification_status: verification.status,
-      });
+      artifacts.push(rejected(verification.status));
       continue;
     }
     artifacts.push({
@@ -245,6 +269,7 @@ async function verifyGeneratorPullRequestClaims(attempt, result, db, resolvePrId
       head_sha: verification.identity.head_sha,
       head_ref: verification.identity.head_ref,
       verification_status: 'verified',
+      ...(claim.normalizedFromString ? { normalized_from: 'string_artifact' } : {}),
     });
   }
   if (!artifacts.some((artifact) => (

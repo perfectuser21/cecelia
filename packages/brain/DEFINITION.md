@@ -1,6 +1,26 @@
 # Brain 模块定义
 
-**版本**: 1.267.176
+**版本**: 1.267.177
+
+## Kernel generator string PR artifact normalization
+
+- `verifyGeneratorPullRequestClaims` 把 Generator callback 里裸字符串形态的 GitHub PR
+  URL 当作 claim **候选**（宽匹配 `github.com/<owner>/<repo>/pull/`），随后走与结构化
+  artifact 同一条服务端校验链：严格 URL 形状 → `parseBaseRepo` 仓库归属 → PR identity
+  解析 → 分支归属（`workspace_spec.branch` 精确匹配，缺省回落 task short-id）→ HEAD SHA
+  归一化。只有全部通过才输出结构化 `{type:'pull_request', url, head_sha, head_ref,
+  verification_status:'verified', normalized_from:'string_artifact'}`。
+- 生产实弹 run `a75ccbbf`：`harness_attempts.result.artifacts` =
+  `["https://github.com/perfectuser21/zenithjoy-workspace/pull/1578", "Red commit: 5c7a7740",
+  "Green commit: 7629efe6"]`；旧实现只按 `artifact?.type === 'pull_request'` 过滤，
+  字符串被原样透传 → `verifiedPullRequestArtifact` 找不到证据 → `initiative_runs.pr_url`
+  未投影 → `derive.js` 走 `generatorNoPrRoute`。
+- 信任边界不放宽：字符串从不被直接采信；`repository_mismatch` / `branch_mismatch` /
+  `invalid_url`（含带 query、fragment 等非严格形态，不做猜测式改写）一律降级为
+  `unverified_pull_request_claim`；identity resolver 抛错继续 503
+  `pull_request_verification_unavailable`（fail closed，callback 可重试）。
+- 既有行为全部保持：结构化 artifact 路径与其附加字段透传不变；非 PR 形态字符串
+  （如 `Red commit: ...`）原样透传；generator-fix 无证据时的 `server_observed` 回退不变。
 
 ## Kernel cross-repository approved-SHA contract materialization
 

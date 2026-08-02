@@ -6,11 +6,27 @@
 
 
 
-**Brain 版本**: 1.267.176
+**Brain 版本**: 1.267.177
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.177 — Kernel generator 字符串 PR artifact 规范化
+
+- Generator callback 里以裸字符串上报的 GitHub PR URL 现在会被候选化，进入与结构化
+  artifact 完全相同的服务端校验（仓库归属 → PR identity → 分支归属 → HEAD SHA），
+  通过后才规范化成结构化 `type=pull_request` + `verification_status=verified`
+  （带 `normalized_from: string_artifact` 留痕），从而正常投影 `initiative_runs.pr_url`。
+- 生产实弹 run `a75ccbbf`：Generator 已开出 zenithjoy-workspace PR #1578，但
+  `result.artifacts` 是 `["https://github.com/.../pull/1578", "Red commit: ...", ...]`
+  字符串数组，Brain 只认结构化对象 → pr_url 未投影 → 状态机误判 `no_pr`。
+- 字符串本身永不被信任：`repository_mismatch` / `branch_mismatch` / `invalid_url`
+  一律降级为 `unverified_pull_request_claim`，校验设施不可用继续 503 fail closed
+  保持 callback 可重试；非 PR 形态的字符串 artifact 原样透传，generator-fix 的
+  `server_observed` 回退不变。
+- 回退到 Brain `1.267.176` 会让字符串上报 PR 的 Generator run 重新误判 no_pr，
+  回退前必须 drain 此类 active Kernel run。
 
 ## Brain 1.267.176 — Kernel cross-repository approved-SHA contract artifacts
 
