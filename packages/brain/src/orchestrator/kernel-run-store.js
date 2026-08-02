@@ -1,3 +1,5 @@
+import { COMMANDER_MODES } from './commander-contract.js';
+
 const ACTIVE_PHASES = new Set([
   'planning',
   'gan',
@@ -24,6 +26,8 @@ const TERMINAL_TASK_STATUSES = new Set([
   'cancelled',
   'canceled',
 ]);
+
+const VALID_COMMANDER_MODES = new Set(COMMANDER_MODES);
 
 async function lockActiveKernelAttempts(client, runId) {
   const { rows } = await client.query(
@@ -76,6 +80,13 @@ function validateCreateInput(input) {
   if (!Number.isFinite(input?.deadlineHours) || input.deadlineHours <= 0) {
     throw new Error(`invalid Kernel run deadline hours: ${input?.deadlineHours}`);
   }
+  const commanderMode = input?.commanderMode === undefined
+    ? 'kernel-only'
+    : input.commanderMode;
+  if (!VALID_COMMANDER_MODES.has(commanderMode)) {
+    throw new Error(`invalid Kernel run commander mode: ${commanderMode}`);
+  }
+  return { commanderMode };
 }
 
 export async function loadActiveKernelRun(db, taskId, { forUpdate = false } = {}) {
@@ -83,7 +94,7 @@ export async function loadActiveKernelRun(db, taskId, { forUpdate = false } = {}
   const { rows } = await db.query(
     `SELECT id, initiative_id, current_task_id, phase,
             orchestrator_heartbeat_at, orchestrator_pid, orchestrator_host,
-            started_at, created_source
+            started_at, created_source, commander_mode
        FROM initiative_runs
       WHERE current_task_id = $1
         AND orchestrator_version = 'v2'
@@ -102,7 +113,8 @@ export async function loadKernelRunById(db, runId) {
             orchestrator_pid, orchestrator_host, started_at, updated_at,
             deadline_at, completed_at, failure_reason, pr_url,
             evaluate_verdict, judge_verdict, cost_usd, created_source,
-            record_trust_status, record_trust_reason, predecessor_run_id
+            record_trust_status, record_trust_reason, predecessor_run_id,
+            commander_mode
        FROM initiative_runs
       WHERE id = $1
         AND orchestrator_version = 'v2'`,
@@ -366,7 +378,7 @@ export async function patchLegacyKernelRunByInitiative(pool, {
 }
 
 export async function createKernelRun(pool, input) {
-  validateCreateInput(input);
+  const { commanderMode } = validateCreateInput(input);
   const client = await pool.connect();
   let committed = false;
   try {
@@ -417,10 +429,10 @@ export async function createKernelRun(pool, input) {
       `INSERT INTO initiative_runs (
          initiative_id, phase, journey_id, orchestrator_version,
          orchestrator_host, deadline_at, ability_id, current_task_id,
-         created_source, record_trust_status
+         created_source, record_trust_status, commander_mode
        ) VALUES (
          $1, $2, $3, 'v2', $4,
-         NOW() + ($5 * INTERVAL '1 hour'), $6, $7, $8, $9
+         NOW() + ($5 * INTERVAL '1 hour'), $6, $7, $8, $9, $10
        )
        RETURNING *`,
       [
@@ -433,6 +445,7 @@ export async function createKernelRun(pool, input) {
         input.taskId,
         input.createdSource,
         'trusted',
+        commanderMode,
       ],
     );
     await client.query('COMMIT');

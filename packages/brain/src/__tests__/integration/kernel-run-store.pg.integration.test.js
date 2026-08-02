@@ -8,6 +8,7 @@ import initiativesRouter from '../../routes/initiatives.js';
 import {
   createKernelRun,
   finalizeKernelRun,
+  loadActiveKernelRun,
   reconcileKernelTaskTerminal,
 } from '../../orchestrator/kernel-run-store.js';
 
@@ -88,6 +89,8 @@ beforeAll(async () => {
       current_task_id UUID,
       phase TEXT NOT NULL,
       orchestrator_version TEXT,
+      commander_mode TEXT NOT NULL DEFAULT 'kernel-only'
+        CHECK (commander_mode IN ('legacy-session','kernel-only','hybrid')),
       orchestrator_host TEXT,
       orchestrator_heartbeat_at TIMESTAMPTZ,
       orchestrator_pid INTEGER,
@@ -193,7 +196,7 @@ describe('Kernel run store PostgreSQL concurrency', () => {
     expect(responses.map(({ status }) => status).sort()).toEqual([200, 201]);
     expect(responses[0].body.run.id).toBe(responses[1].body.run.id);
     const active = await schemaPool.query(
-      `SELECT id
+      `SELECT id,commander_mode
          FROM initiative_runs
         WHERE current_task_id=$1
           AND orchestrator_version='v2'
@@ -201,6 +204,53 @@ describe('Kernel run store PostgreSQL concurrency', () => {
       [taskId],
     );
     expect(active.rows).toHaveLength(1);
+    expect(active.rows[0].commander_mode).toBe('kernel-only');
+  });
+
+  it('persists and returns an explicit hybrid mode through the canonical API', async () => {
+    const taskId = randomUUID();
+    const initiativeId = randomUUID();
+    await insertTask(taskId, initiativeId);
+
+    const app = express();
+    app.set('pool', schemaPool);
+    app.use(express.json());
+    app.use('/api/brain/orchestrator', initiativesRouter);
+    const created = await request(app)
+      .post('/api/brain/orchestrator/relay-runs')
+      .send({
+        initiative_id: initiativeId,
+        current_task_id: taskId,
+        created_source: 'foreground_handoff',
+        commander_mode: 'hybrid',
+      });
+
+    expect(created.status).toBe(201);
+    const persisted = await schemaPool.query(
+      'SELECT commander_mode FROM initiative_runs WHERE id=$1',
+      [created.body.run.id],
+    );
+    expect(persisted.rows).toEqual([{ commander_mode: 'hybrid' }]);
+
+    const loaded = await loadActiveKernelRun(schemaPool, taskId);
+    expect(loaded.commander_mode).toBe('hybrid');
+  });
+
+  it('persists kernel-only when the Store input omits commander mode', async () => {
+    const taskId = randomUUID();
+    const initiativeId = randomUUID();
+    await insertTask(taskId, initiativeId);
+
+    const created = await createKernelRun(
+      schemaPool,
+      runInput(taskId, initiativeId),
+    );
+    const persisted = await schemaPool.query(
+      'SELECT commander_mode FROM initiative_runs WHERE id=$1',
+      [created.run.id],
+    );
+
+    expect(persisted.rows).toEqual([{ commander_mode: 'kernel-only' }]);
   });
 
   it('uses one lock order for create/finalize interleaving without deadlock', async () => {

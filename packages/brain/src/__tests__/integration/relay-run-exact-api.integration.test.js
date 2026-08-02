@@ -68,6 +68,8 @@ beforeAll(async () => {
       current_task_id UUID,
       phase TEXT NOT NULL,
       orchestrator_version TEXT,
+      commander_mode TEXT NOT NULL DEFAULT 'kernel-only'
+        CHECK (commander_mode IN ('legacy-session','kernel-only','hybrid')),
       orchestrator_heartbeat_at TIMESTAMPTZ,
       orchestrator_pid INTEGER,
       orchestrator_host TEXT,
@@ -172,6 +174,7 @@ describe('exact relay run API [PostgreSQL]', () => {
       .get(`/api/brain/orchestrator/relay-runs/by-id/${targetRunId}`);
     expect(exact.status).toBe(200);
     expect(exact.body.id).toBe(targetRunId);
+    expect(exact.body.commander_mode).toBe('kernel-only');
 
     const history = await request(app)
       .get(`/api/brain/orchestrator/relay-initiatives/${initiativeId}/runs`);
