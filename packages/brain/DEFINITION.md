@@ -1,6 +1,27 @@
 # Brain 模块定义
 
-**版本**: 1.267.175
+**版本**: 1.267.176
+
+## Kernel cross-repository approved-SHA contract materialization
+
+- `persist_contract_approval` 从 task `payload.base_repo` 解析权威仓库（复用既有
+  GitHub allowlist 解析），并把它传给 immutable git artifact reader；本地缺该对象时
+  按精确 40 位 SHA 从该仓库 fetch 后再 `git show <sha>:<path>`。
+- 生产实弹 run `4925488b`：Reviewer 第 8 轮 APPROVED 后，批准分支
+  `cp-harness-propose-r8-7194e308-a137` / SHA `487037a7` 位于
+  `perfectuser21/zenithjoy-workspace`，而 reader 只从 Cecelia `origin` fetch，
+  导致 `approved_but_contract_artifacts_missing`。
+- 边界不放宽反而收紧：repo 先要求 `owner/repo` 形状（拒绝任意 URL / shell 注入形态），
+  再必须命中 `workspace-spec.js` 的 `WORKSPACE_REPOSITORIES` allow-list——与
+  `workspace_repo_not_supported` 同一条信任边界，形状合法的第三方仓库（如
+  `perfectuser21/zenithjoy-skills`）不能成为合同产物来源。解析为本仓 origin 时继续走
+  `origin`；full-SHA 校验、repository-relative path 校验、不回退到可变 branch / 工作区
+  文件、真正缺失仍 fail closed，全部保持不变。
+- 真实冒烟（生产同类凭据环境）：全新仓库 origin=cecelia，按 `base_repo` 解析出
+  `perfectuser21/zenithjoy-workspace` 后精确 fetch `487037a7`，读回 Round 8
+  `contract-draft.md`（10088 bytes）与 `contract-dod.md`。
+- 回退到 Brain `1.267.175` 会恢复跨仓库合同产物读取失败，回退前必须 drain 相关
+  active Kernel run。
 
 ## Kernel repository-aware proposal discovery
 

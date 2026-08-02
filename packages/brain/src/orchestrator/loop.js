@@ -14,6 +14,7 @@
  *        collectGroundTruth?, appendHop?, nextHop?, writeHeartbeat?}（后四者可注入 fake）
  */
 import { derive } from './derive.js';
+import { parseBaseRepo } from './github-pr-discovery.js';
 import { COMMANDER_ACTIONS } from './commander-contract.js';
 import { parseCommanderProfile } from './commander-profile.js';
 import { isPassVerdict, mergeGate } from './gates.js';
@@ -83,10 +84,17 @@ function frozenContractArtifacts(deps, observed, groundTruthPaths, approvedSha) 
   const dodPath = sprintDir ? `${sprintDir}/contract-dod.md` : 'contract-dod.md';
   const paths = [prdPath, contractPath, dodPath];
   if (typeof deps.readGitFile !== 'function') return { missing: paths };
+  // 跨 repo initiative（如 base_repo=zenithjoy-workspace）的批准 SHA 不在本仓 origin，
+  // 必须从 payload.base_repo 解析出的权威仓库按精确 SHA 读取（生产实弹 run 4925488b）。
+  const requestedRepo = payload.base_repo;
+  const repo = parseBaseRepo(requestedRepo);
+  if (requestedRepo != null && requestedRepo !== '' && repo == null) {
+    return { missing: paths };
+  }
   const contents = [];
   for (const filePath of paths) {
     try {
-      contents.push(deps.readGitFile(approvedSha, filePath));
+      contents.push(deps.readGitFile(approvedSha, filePath, { repo }));
     } catch {
       return { missing: [filePath] };
     }
