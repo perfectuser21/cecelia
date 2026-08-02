@@ -50,6 +50,9 @@ const NO_RUNTIME_RESOURCE_MANAGER = Object.freeze({
   async release() {
     return Object.freeze({ status: 'released' });
   },
+  async releaseService() {
+    return Object.freeze({ status: 'released' });
+  },
   async reconcile() {
     return Object.freeze({ removed_attempts: Object.freeze([]) });
   },
@@ -698,7 +701,11 @@ function createDockerAdapter({
     async remove({ containerId, attemptId, containerMissing = false } = {}) {
       assertAttemptId(attemptId);
       if (!containerMissing) {
-        await runCommand('docker', ['rm', '-f', '--', containerId], undefined);
+        try {
+          await runCommand('docker', ['rm', '-f', '--', containerId], undefined);
+        } catch (error) {
+          if (!isExplicitlyMissingDockerObject(error)) throw error;
+        }
       }
       fs.rmSync(path.join(root, attemptId), { recursive: true, force: true });
       return Object.freeze({ removed: true });
@@ -758,7 +765,7 @@ function validateDependencies({
     'consume',
     'github_credential_consumer',
   );
-  for (const method of ['provision', 'release', 'reconcile']) {
+  for (const method of ['provision', 'release', 'releaseService', 'reconcile']) {
     requireMethod(resourceManager, method, 'resource_manager');
   }
   if (!CANONICAL_MACHINE_IDS.has(workerId)) {
@@ -1069,31 +1076,62 @@ function createAttemptRunner({
     });
   }
 
-  async function finalizeAttempt(attemptId, lease = null) {
-    const state = await stateStore.get(attemptId);
-    if (!state) {
-      return Object.freeze({ status: 'already_clean', attempt_id: attemptId });
+  async function releaseRuntimeService(state) {
+    if (!state.runtime_resources || Object.keys(state.runtime_resources).length === 0) {
+      return;
     }
-    if (state.worker_id !== workerId) {
-      throw new Error('attempt_worker_owner_mismatch');
-    }
-    if (lease !== null) {
-      assertLeaseFence(state, lease);
-    }
-    try {
-      await docker.remove({
-        containerId: state.container_id,
-        attemptId: state.attempt_id,
-      });
-    } catch (error) {
-      return quarantineState(state, error);
-    }
-    try {
-      await releaseResources(state);
-    } catch (error) {
-      return quarantineState(state, error);
-    }
-    return cleanupWorkspaceState(state);
+    await resourceManager.releaseService({
+      attemptId: state.attempt_id,
+      runtime: state.runtime_resources,
+    });
+  }
+
+  const finalizationPromises = new Map();
+  function finalizeAttempt(attemptId, lease = null, expected = null) {
+    const existing = finalizationPromises.get(attemptId);
+    if (existing) return existing;
+    const operation = (async () => {
+      const state = await stateStore.get(attemptId);
+      if (!state) {
+        return Object.freeze({ status: 'already_clean', attempt_id: attemptId });
+      }
+      if (state.worker_id !== workerId) {
+        throw new Error('attempt_worker_owner_mismatch');
+      }
+      if (
+        expected
+        && (
+          state.container_id !== expected.containerId
+          || state.lease_generation !== expected.leaseGeneration
+        )
+      ) {
+        return Object.freeze({ status: 'stale_waiter', attempt_id: attemptId });
+      }
+      if (lease !== null) {
+        assertLeaseFence(state, lease);
+      }
+      try {
+        await docker.remove({
+          containerId: state.container_id,
+          attemptId: state.attempt_id,
+        });
+      } catch (error) {
+        return quarantineState(state, error);
+      }
+      try {
+        await releaseResources(state);
+      } catch (error) {
+        return quarantineState(state, error);
+      }
+      return cleanupWorkspaceState(state);
+    })();
+    finalizationPromises.set(attemptId, operation);
+    void operation.finally(() => {
+      if (finalizationPromises.get(attemptId) === operation) {
+        finalizationPromises.delete(attemptId);
+      }
+    }).catch(() => {});
+    return operation;
   }
 
   async function rollbackLaunch({
@@ -1293,7 +1331,10 @@ function createAttemptRunner({
         });
       }
       void docker.wait({ containerId: launched.containerId })
-        .then(() => finalizeAttempt(request.attempt_id))
+        .then(() => finalizeAttempt(request.attempt_id, null, {
+          containerId: launched.containerId,
+          leaseGeneration: request.lease_generation,
+        }))
         .catch(() => {});
       return Object.freeze({
         attempt_id: request.attempt_id,
@@ -1334,7 +1375,7 @@ function createAttemptRunner({
         assertLeaseFence(state, lease);
       }
       try {
-        await releaseResources(state);
+        await releaseRuntimeService(state);
       } catch (error) {
         return Object.freeze({
           status: 'quarantined',

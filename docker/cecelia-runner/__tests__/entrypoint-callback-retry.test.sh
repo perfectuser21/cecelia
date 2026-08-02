@@ -3,7 +3,7 @@
 # 回归测试：entrypoint.sh harness callback 重试逻辑
 #
 # 验证 Bug 修复：单次 curl 失败时 Brain 重启窗口（~5-10s）导致 callback 丢失。
-# 修复：5 次重试 + 指数退避（3/6/9/12s）。
+# 修复：Brain 2xx 前持续重试 + 有界退避；由 lease/cancel 控制最终期限。
 #
 # 测试策略：
 #   - 用 stub curl 替代真实 curl，按测试用例模拟成功/失败
@@ -29,7 +29,7 @@ fail() { echo -e "${RED}✗${NC} $1"; TESTS_FAILED=$((TESTS_FAILED + 1)); }
 # 提取 entrypoint.sh 中的 callback 重试代码段（CALLBACK_OK 到 fi 结尾）
 # 用 sed 精确摘出，在独立 subshell 中执行。
 run_callback_block() {
-  local fail_times="$1"   # 前 N 次 curl 失败，第 N+1 次成功（0 = 全成功，99 = 全失败）
+  local fail_times="$1"   # 前 N 次 curl 失败，第 N+1 次成功
   local attempt_log
 
   attempt_log=$(
@@ -37,6 +37,8 @@ run_callback_block() {
     TARGET_URL="http://fake-brain/callback"
     EXIT_CODE=0
     CALLBACK_BODY='{}'
+    HARNESS_ATTEMPT_ID='22222222-2222-4222-8222-222222222222'
+    HARNESS_LEASE_OWNER='brain-1:123'
 
     # stub curl：模拟前 fail_times 次失败
     curl() {
@@ -53,7 +55,9 @@ run_callback_block() {
 
     # 执行 callback 重试代码段
     CALLBACK_OK=0
-    for _retry in 1 2 3 4 5; do
+    _retry=0
+    while [[ $CALLBACK_OK -eq 0 ]]; do
+      _retry=$((_retry + 1))
       if curl -sf -m 10 -X POST "$TARGET_URL" \
           -H "Content-Type: application/json" \
           -d "$CALLBACK_BODY" >/dev/null 2>&1; then
@@ -61,15 +65,18 @@ run_callback_block() {
         CALLBACK_OK=1
         break
       fi
-      if [[ $_retry -lt 5 ]]; then
-        _sleep=$(( (_retry - 1) * 3 + 3 ))
-        echo "[entrypoint] harness callback attempt ${_retry}/5 失败，${_sleep}s 后重试..."
-        sleep "$_sleep"
+      if [[ $_retry -eq 1 ]]; then
+        _sleep=3
+      elif [[ $_retry -eq 2 ]]; then
+        _sleep=6
+      elif [[ $_retry -eq 3 ]]; then
+        _sleep=12
+      else
+        _sleep=24
       fi
+      echo "[entrypoint] harness callback attempt ${_retry} 失败，${_sleep}s 后重试..."
+      sleep "$_sleep"
     done
-    if [[ $CALLBACK_OK -eq 0 ]]; then
-      echo "[entrypoint] harness callback POST 全部失败（不阻塞容器退出）— url=${TARGET_URL} exit=${EXIT_CODE}"
-    fi
     echo "CALLBACK_OK=${CALLBACK_OK}"
   )
 
@@ -106,31 +113,41 @@ test_retry_on_2nd_attempt() {
   fi
 }
 
-# ── 测试 3：全部 5 次失败 ─────────────────────────────────────────────────────
-test_all_attempts_fail() {
+# ── 测试 3：5 次失败后仍不退出，第 6 次成功 ──────────────────────────────────
+test_five_failures_do_not_exit() {
   local out
-  out=$(run_callback_block 99)
-  if echo "$out" | grep -q "全部失败" && echo "$out" | grep -q "CALLBACK_OK=0"; then
-    pass "全部失败：输出含「全部失败」，CALLBACK_OK=0"
+  out=$(run_callback_block 5)
+  if echo "$out" | grep -q "attempt=6" && echo "$out" | grep -q "CALLBACK_OK=1"; then
+    pass "5 次失败后继续：第 6 次成功才允许退出 callback loop"
   else
-    fail "全部失败：预期「全部失败」+ CALLBACK_OK=0，实际：$out"
+    fail "5 次失败后继续：预期 attempt=6 + CALLBACK_OK=1，实际：$out"
   fi
-  # 应有 4 条重试日志（第 5 次失败后不再 sleep，直接进入「全部失败」）
   local fail_count
   fail_count=$(echo "$out" | grep -c "失败，.*后重试" || true)
-  if [[ $fail_count -eq 4 ]]; then
-    pass "全部失败：恰好有 4 条重试日志（第 5 次不带 sleep）"
+  if [[ $fail_count -eq 5 ]]; then
+    pass "5 次失败后继续：5 次失败全部进入退避，没有提前放弃"
   else
-    fail "全部失败：期望 4 条重试日志，实际 $fail_count 条"
+    fail "5 次失败后继续：期望 5 条重试日志，实际 $fail_count 条"
+  fi
+  if ! echo "$out" | grep -q "全部失败（不阻塞容器退出）"; then
+    pass "5 次失败后继续：未走丢弃 callback 的旧退出路径"
+  else
+    fail "5 次失败后继续：仍出现丢弃 callback 的旧退出路径"
   fi
 }
 
 # ── 测试 4：验证 entrypoint.sh 文件含重试关键字（代码结构检查）──────────────
 test_entrypoint_contains_retry_code() {
-  if grep -q "CALLBACK_OK" "$ENTRYPOINT" && grep -q "_retry in 1 2 3 4 5" "$ENTRYPOINT"; then
-    pass "entrypoint.sh 含重试循环代码（CALLBACK_OK + _retry in 1 2 3 4 5）"
+  if grep -q "CALLBACK_OK" "$ENTRYPOINT" && grep -q 'while \[\[ \$CALLBACK_OK -eq 0 \]\]' "$ENTRYPOINT"; then
+    pass "entrypoint.sh 含 Brain 2xx 前持续重试循环"
   else
-    fail "entrypoint.sh 缺少重试循环代码"
+    fail "entrypoint.sh 缺少 Brain 2xx 前持续重试循环"
+  fi
+  if ! grep -q "_retry in 1 2 3 4 5" "$ENTRYPOINT" && \
+     ! grep -q "全部失败（不阻塞容器退出）" "$ENTRYPOINT"; then
+    pass "entrypoint.sh 不再有 5 次后丢弃 callback 的路径"
+  else
+    fail "entrypoint.sh 仍会在 5 次后丢弃 callback"
   fi
   if ! grep -qP "^if curl -sf" "$ENTRYPOINT" 2>/dev/null && \
      ! grep -q "^if curl -sf -m 10 -X POST" "$ENTRYPOINT"; then
@@ -145,7 +162,7 @@ echo "=== entrypoint-callback-retry 回归测试 ==="
 echo ""
 test_first_attempt_success
 test_retry_on_2nd_attempt
-test_all_attempts_fail
+test_five_failures_do_not_exit
 test_entrypoint_contains_retry_code
 echo ""
 echo "结果：${TESTS_PASSED} 通过，${TESTS_FAILED} 失败"

@@ -248,7 +248,7 @@ printf '%s\n' \
   'fi' \
   'source="$(cat)"' \
   'case "$source" in' \
-  '  *runner_image_digest*) printf "%s" "sha256:1ec3542ab56a58c620196a4f32fd04b12e8049ec29dbc121e33b51a0cabc4288" ;;' \
+  '  *runner_image_digest*) printf "%s" "sha256:0f64058c10eb64141c7acabacb8588890723cae5ff3e91b44a1c94dc1b50d109" ;;' \
   '  *runtime_resources.postgres.image_digest*) printf "%s" "postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777" ;;' \
   '  *worker_bind_host*) printf "%s" "100.86.57.69" ;;' \
   '  *brain_health_url*) printf "%s" "http://100.71.151.105:5221/api/brain/health" ;;' \

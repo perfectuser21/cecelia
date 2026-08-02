@@ -100,9 +100,12 @@ This rule does not weaken authentication or replace it with mocks.
   verified, bounded cleanup receipt. Only `cleaned` and `already_clean` may
   commit terminal state; unavailable, failed, incomplete, or quarantined
   cleanup leaves the attempt non-terminal and returns a retryable error. The
-  Worker releases runtime resources but keeps the callback-sending Runner alive
-  until Brain returns success; full Runner/workspace cleanup follows natural
-  Runner exit. Server-side artifact verification runs before resource release.
+  Worker first removes PostgreSQL but retains the network and callback-sending
+  Runner until Brain returns success. The Runner renews its lease and retries
+  without a fixed attempt-count cutoff; control-plane cancel owns the deadline.
+  Full Runner/network/workspace cleanup follows natural Runner exit and is
+  single-flight with concurrent cancel. Server-side artifact verification runs
+  before resource release.
 
 ## 8. Red-to-Green acceptance
 

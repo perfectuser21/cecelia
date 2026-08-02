@@ -137,6 +137,31 @@ describe('Fleet Worker Attempt runtime resources', () => {
     ]);
   });
 
+  it('releases only the PostgreSQL service before callback commit and retains the active Runner network', async () => {
+    const createAttemptResourceManager = loadResourceManager();
+    const runCommand = vi.fn(async () => ({ stdout: '' }));
+    const manager = createAttemptResourceManager({
+      runCommand,
+      postgresImageDigest: POSTGRES_IMAGE,
+    });
+
+    await expect(manager.releaseService({
+      attemptId: ATTEMPT_ID,
+      runtime: {
+        postgres: {
+          container_name: `cecelia-pg-${ATTEMPT_ID}`,
+          network_name: `cecelia-attempt-${ATTEMPT_ID}`,
+          image_digest: POSTGRES_IMAGE,
+        },
+      },
+    })).resolves.toEqual({ status: 'released' });
+
+    expect(runCommand.mock.calls).toEqual([
+      ['docker', ['rm', '-f', '--', `cecelia-pg-${ATTEMPT_ID}`]],
+    ]);
+    expect(JSON.stringify(runCommand.mock.calls)).not.toContain('network');
+  });
+
   it('releases an exact historical Attempt after the configured pinned digest changes', async () => {
     const createAttemptResourceManager = loadResourceManager();
     const previousPinnedImage = `postgres:16-alpine@sha256:${'a'.repeat(64)}`;

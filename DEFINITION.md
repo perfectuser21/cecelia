@@ -33,6 +33,9 @@
   `postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777`
   并以真实启动 PostgreSQL + `pg_isready` 的无 host-port probe 做 admission；缺镜像、
   摘要漂移或运行失败均拒绝派发。
+- Runner 因 durable callback 重试契约重建并固定为
+  `sha256:0f64058c10eb64141c7acabacb8588890723cae5ff3e91b44a1c94dc1b50d109`；
+  三机必须同步该镜像后才可 undrain。
 - 回退到 `1.267.181` 前必须 drain 含 runtime resource 的 attempt；旧 Worker 不理解
   sidecar 生命周期，也会让目标机 PostgreSQL admission 重新出现假绿。
 

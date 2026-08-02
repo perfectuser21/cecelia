@@ -1922,7 +1922,9 @@ if [[ -n "${HARNESS_ATTEMPT_ID:-}" ]]; then
     -H "X-Harness-Lease-Generation: ${HARNESS_LEASE_GENERATION}"
   )
 fi
-for _retry in 1 2 3 4 5; do
+_retry=0
+while [[ $CALLBACK_OK -eq 0 ]]; do
+  _retry=$((_retry + 1))
   if curl -sf -m 10 -X POST "$TARGET_URL" \
       "${CALLBACK_HEADERS[@]}" \
       -d "$CALLBACK_BODY" >/dev/null 2>&1; then
@@ -1930,19 +1932,31 @@ for _retry in 1 2 3 4 5; do
     CALLBACK_OK=1
     break
   fi
-  if [[ $_retry -lt 5 ]]; then
-    case $_retry in
-      1) _sleep=3 ;;
-      2) _sleep=6 ;;
-      3) _sleep=12 ;;
-      *) _sleep=24 ;;
-    esac
-    echo "[entrypoint] harness callback attempt ${_retry}/5 失败，${_sleep}s 后重试（指数退避）..."
-    sleep "$_sleep"
+
+  # A callback is the terminal claim, not best-effort telemetry. Keep its lease
+  # alive and remain the retry executor until Brain returns 2xx or the control
+  # plane explicitly cancels this container.
+  if [[ -n "${HARNESS_ATTEMPT_ID:-}" && -n "${HARNESS_LEASE_OWNER:-}" ]]; then
+    curl -sf -m 10 -X POST \
+      "${BRAIN_URL:-http://host.docker.internal:5221}/api/brain/harness/attempts/${HARNESS_ATTEMPT_ID}/heartbeat" \
+      -H 'Content-Type: application/json' \
+      -H "Authorization: Bearer ${HARNESS_CALLBACK_TOKEN}" \
+      -d "$(jq -nc --arg owner "$HARNESS_LEASE_OWNER" '{lease_owner:$owner,lease_seconds:180}')" \
+      >/dev/null 2>&1 || true
+  elif [[ $_retry -ge 5 ]]; then
+    # Legacy relay callbacks have no Attempt lease/cancel authority. Preserve
+    # their historical bounded behavior; durable retry is a Kernel contract.
+    echo "[entrypoint] legacy harness callback retry budget exhausted (url=${TARGET_URL})"
+    break
   fi
+  case $_retry in
+    1) _sleep=3 ;;
+    2) _sleep=6 ;;
+    3) _sleep=12 ;;
+    *) _sleep=24 ;;
+  esac
+  echo "[entrypoint] harness callback attempt ${_retry} 失败，${_sleep}s 后重试（等待 Brain durable 2xx）..."
+  sleep "$_sleep"
 done
-if [[ $CALLBACK_OK -eq 0 ]]; then
-  echo "[entrypoint] harness callback POST 全部失败（不阻塞容器退出）— url=${TARGET_URL} exit=${EXIT_CODE}"
-fi
 
 exit "$EXIT_CODE"

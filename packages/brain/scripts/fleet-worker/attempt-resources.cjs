@@ -86,18 +86,29 @@ function isExplicitlyMissing(error) {
     .test(detail);
 }
 
-async function removeOwned(runCommand, attemptId) {
-  const { containerName, networkName } = namesFor(attemptId);
-  const failures = [];
-  for (const args of [
-    ['rm', '-f', '--', containerName],
-    ['network', 'rm', '--', networkName],
-  ]) {
-    try {
-      await runCommand('docker', args);
-    } catch (error) {
-      if (!isExplicitlyMissing(error)) failures.push(error);
+async function removePostgresContainer(runCommand, attemptId) {
+  const { containerName } = namesFor(attemptId);
+  try {
+    await runCommand('docker', ['rm', '-f', '--', containerName]);
+  } catch (error) {
+    if (!isExplicitlyMissing(error)) {
+      throw new Error('attempt_resource_service_release_failed', { cause: error });
     }
+  }
+}
+
+async function removeOwned(runCommand, attemptId) {
+  const { networkName } = namesFor(attemptId);
+  const failures = [];
+  try {
+    await removePostgresContainer(runCommand, attemptId);
+  } catch (error) {
+    failures.push(error);
+  }
+  try {
+    await runCommand('docker', ['network', 'rm', '--', networkName]);
+  } catch (error) {
+    if (!isExplicitlyMissing(error)) failures.push(error);
   }
   if (failures.length > 0) {
     throw new Error('attempt_resource_release_failed', {
@@ -264,6 +275,19 @@ function createAttemptResourceManager({
       // baseline digest, otherwise an image upgrade makes old attempts leak.
       assertExactRuntime(attemptId, runtime);
       await removeOwned(runCommand, attemptId);
+      return Object.freeze({ status: 'released' });
+    },
+
+    async releaseService({ attemptId, runtime } = {}) {
+      assertAttemptId(attemptId);
+      if (!runtime || Object.keys(runtime).length === 0) {
+        return Object.freeze({ status: 'released' });
+      }
+      assertExactRuntime(attemptId, runtime);
+      // The callback-sending Runner is still attached to the attempt network.
+      // Only PostgreSQL can be removed before Brain durably accepts the claim;
+      // finalize() removes the network after the Runner exits.
+      await removePostgresContainer(runCommand, attemptId);
       return Object.freeze({ status: 'released' });
     },
 

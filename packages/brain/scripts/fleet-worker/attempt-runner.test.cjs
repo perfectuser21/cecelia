@@ -223,6 +223,10 @@ function dependencies(overrides = {}) {
       events.push('resource.release');
       return { status: 'released' };
     }),
+    releaseService: vi.fn(async () => {
+      events.push('resource.releaseService');
+      return { status: 'released' };
+    }),
     reconcile: vi.fn(async () => ({ removed_attempts: [] })),
   };
   return {
@@ -662,10 +666,11 @@ describe('Fleet Worker Attempt runner', () => {
       status: 'cleaned',
       attempt_id: ATTEMPT_ID,
     });
-    expect(deps.events.at(-1)).toBe('resource.release');
+    expect(deps.events.at(-1)).toBe('resource.releaseService');
     expect(deps.docker.remove).not.toHaveBeenCalled();
     expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
-    expect(deps.resourceManager.release).toHaveBeenCalledWith({
+    expect(deps.resourceManager.release).not.toHaveBeenCalled();
+    expect(deps.resourceManager.releaseService).toHaveBeenCalledWith({
       attemptId: ATTEMPT_ID,
       runtime: {
         postgres: {
@@ -699,6 +704,34 @@ describe('Fleet Worker Attempt runner', () => {
     ]);
   });
 
+  it('single-flights cancel with the docker waiter it wakes up', async () => {
+    let resolveExit;
+    const containerExit = new Promise((resolve) => {
+      resolveExit = resolve;
+    });
+    const deps = dependencies();
+    deps.docker.wait.mockReturnValueOnce(containerExit);
+    deps.docker.remove.mockImplementationOnce(async () => {
+      deps.events.push('docker.remove');
+      resolveExit({ statusCode: 137 });
+      await new Promise((resolve) => setImmediate(resolve));
+      return { removed: true };
+    });
+    const runner = createRunner(deps);
+    await runner.launch(request());
+
+    await runner.cancel(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(deps.docker.remove).toHaveBeenCalledTimes(1);
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledTimes(1);
+    expect(deps.stateStore.delete).toHaveBeenCalledTimes(1);
+    expect(deps.workspaceManager.quarantine).not.toHaveBeenCalled();
+  });
+
   it('cancel quarantines the workspace and retains evidence when container cleanup fails', async () => {
     const deps = dependencies();
     deps.docker.remove.mockRejectedValueOnce(new Error('docker remove failed'));
@@ -720,7 +753,7 @@ describe('Fleet Worker Attempt runner', () => {
 
   it('keeps the Runner and state retryable when callback resource cleanup fails', async () => {
     const deps = dependencies();
-    deps.resourceManager.release.mockRejectedValueOnce(
+    deps.resourceManager.releaseService.mockRejectedValueOnce(
       new Error('attempt_resource_release_failed'),
     );
     const runner = createRunner(deps);
@@ -1151,6 +1184,27 @@ describe('Fleet Worker durable runtime adapters', () => {
       });
 
       expect(runCommand).not.toHaveBeenCalled();
+      expect(fs.existsSync(attemptRuntime)).toBe(false);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('treats Docker already-missing as idempotent during concurrent finalization', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
+    const attemptRuntime = path.join(runtimeRoot, ATTEMPT_ID);
+    fs.mkdirSync(attemptRuntime, { recursive: true });
+    const runCommand = vi.fn(async () => {
+      throw new Error('Error response from daemon: No such container: exact-attempt');
+    });
+    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+
+    try {
+      await expect(docker.remove({
+        containerId: 'already-missing',
+        attemptId: ATTEMPT_ID,
+      })).resolves.toEqual({ removed: true });
       expect(fs.existsSync(attemptRuntime)).toBe(false);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });

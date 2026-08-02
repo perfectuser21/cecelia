@@ -21,6 +21,9 @@
   容器/worktree/state 清理；artifact 校验失败不会提前杀掉重试执行者。
 - 三机 NodeProfile/installer/rollout/reconcile 同步固定 PostgreSQL digest，并把其
   真实启动 + `pg_isready` 结果投影到 Worker health/admission，不以 image inspect 假绿。
+- durable callback 重试已进入重建 Runner
+  `sha256:0f64058c10eb64141c7acabacb8588890723cae5ff3e91b44a1c94dc1b50d109`；
+  Brain 2xx 前持续续租重试，cancel 与自然退出 cleanup 按 attempt single-flight。
 - 回退到 `1.267.181` 前必须 drain 活跃 runtime-resource attempt。
 
 ## Kernel Codex terminal receipt and Planner/Proposer Run isolation
