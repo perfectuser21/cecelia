@@ -84,6 +84,34 @@ describe('ensureHarnessWorktree', () => {
     expect(cloneCall).toContain(remoteUrl);
   });
 
+  it('normalizes an owner/repo slug before cloning a remote repository', async () => {
+    const calls = [];
+    const execFn = async (cmd, args) => {
+      calls.push([cmd, ...args].join(' '));
+      return { stdout: '' };
+    };
+    const statFn = async () => false;
+
+    await ensureHarnessWorktree({
+      taskId: 'feedface11111111',
+      baseRepo: 'perfectuser21/zenithjoy-workspace',
+      execFn,
+      statFn,
+      tokenFn: async () => 'ghp_fixture',
+      logFn: () => {},
+    });
+
+    const cloneCall = calls.find(c => c.startsWith('git clone'));
+    expect(cloneCall).toBeTruthy();
+    expect(cloneCall).toContain(
+      'https://x-access-token:ghp_fixture@github.com/perfectuser21/zenithjoy-workspace.git',
+    );
+    expect(cloneCall).not.toContain(' --single-branch perfectuser21/zenithjoy-workspace ');
+    const setUrlCall = calls.find(c => c.includes('remote set-url origin'));
+    expect(setUrlCall).toContain('https://github.com/perfectuser21/zenithjoy-workspace.git');
+    expect(setUrlCall).not.toContain('ghp_fixture');
+  });
+
   it('远端 URL clone 注入 GITHUB_TOKEN（x-access-token），clone 后改回干净 origin', async () => {
     const calls = [];
     const execFn = async (cmd, args) => {
