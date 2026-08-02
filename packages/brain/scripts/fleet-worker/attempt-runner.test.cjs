@@ -309,6 +309,19 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.docker.start).not.toHaveBeenCalled();
   });
 
+  it('rejects a conflicting duplicate prepare without touching its container', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+
+    await expect(runner.prepare(request({
+      timeout_seconds: 301,
+    }))).rejects.toThrow('attempt_already_exists');
+
+    expect(deps.docker.prepare).toHaveBeenCalledOnce();
+    expect(deps.docker.start).not.toHaveBeenCalled();
+  });
+
   it('starts a prepared Attempt once and deduplicates the matching lease', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
