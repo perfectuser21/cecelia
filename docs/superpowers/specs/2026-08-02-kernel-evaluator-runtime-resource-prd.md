@@ -1,6 +1,6 @@
 # Kernel Evaluator Runtime Resource Contract PRD
 
-**Status:** implementation approved  
+**Status:** implementation approved
 **Scope:** close the production `generator -> evaluator -> judge` resource gap without changing the existing Kernel/Commander/Fleet architecture
 
 ## 1. Production evidence
