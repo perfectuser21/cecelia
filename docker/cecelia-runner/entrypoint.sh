@@ -1003,7 +1003,7 @@ provider_result_schema_json() {
   local expected_output
   expected_output=$(jq -r '.task_bundle.expected_output // empty' "$task_bundle_file")
   if [[ "$expected_output" == "commander-directive/v1" ]]; then
-    printf '%s' '{"type":"object","properties":{"schema":{"type":"string","const":"commander-directive/v1"},"run_id":{"type":"string","format":"uuid"},"event_cursor":{"type":"integer","minimum":0},"action":{"type":"string","enum":["continue_default","dispatch_role","retry_attempt","revise_guidance","switch_provider","switch_machine","pause_run","request_human","abort_run"]},"target_role":{"type":"string","enum":["commander","planner","proposer","reviewer","generator","evaluator","judge"]},"target_attempt_id":{"type":"string","format":"uuid"},"reason":{"type":"string","minLength":1,"maxLength":4000},"guidance":{"type":"string","maxLength":4000},"route":{"type":"object","properties":{"machine":{"type":"string"},"provider":{"type":"string"},"account":{"type":"string"},"model":{"type":"string"}},"additionalProperties":false},"evidence_refs":{"type":"array","minItems":1,"maxItems":128,"items":{"type":"string","pattern":"^(event:[1-9][0-9]*|attempt:[0-9a-fA-F-]{36})$"}}},"required":["schema","run_id","event_cursor","action","reason","evidence_refs"],"additionalProperties":false}'
+    printf '%s' '{"type":"object","properties":{"schema":{"type":"string","const":"commander-directive/v1"},"run_id":{"type":"string","format":"uuid"},"event_cursor":{"type":"integer","minimum":0},"action":{"type":"string","enum":["continue_default","dispatch_role","retry_attempt","revise_guidance","switch_provider","switch_machine","pause_run","request_human","abort_run"]},"target_role":{"type":["string","null"],"enum":["commander","planner","proposer","reviewer","generator","evaluator","judge",null]},"target_attempt_id":{"anyOf":[{"type":"string","format":"uuid"},{"type":"null"}]},"reason":{"type":"string","minLength":1,"maxLength":4000},"guidance":{"type":["string","null"],"maxLength":4000},"route":{"anyOf":[{"type":"object","properties":{"machine":{"type":["string","null"]},"provider":{"type":["string","null"]},"account":{"type":["string","null"]},"model":{"type":["string","null"]}},"required":["machine","provider","account","model"],"additionalProperties":false},{"type":"null"}]},"evidence_refs":{"type":"array","minItems":1,"maxItems":128,"items":{"type":"string","pattern":"^(event:[1-9][0-9]*|attempt:[0-9a-fA-F-]{36})$"}}},"required":["schema","run_id","event_cursor","action","target_role","target_attempt_id","reason","guidance","route","evidence_refs"],"additionalProperties":false}'
     return
   fi
   printf '%s' '{"type":"object","properties":{"status":{"type":"string","enum":["completed","completed_with_concerns","needs_context","blocked"]},"summary":{"type":"string"},"artifacts":{"type":"array","items":{"type":"string"}},"checks":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"object","properties":{"command":{"type":"string"},"exit_code":{"type":"integer"},"log_tail":{"type":"string"},"verification_level":{"type":"string","enum":["L1","L2","L3"]},"action":{"anyOf":[{"type":"string"},{"type":"null"}]},"expected":{"anyOf":[{"type":"string"},{"type":"null"}]},"wait_budget":{"anyOf":[{"type":"string"},{"type":"null"}]},"evidence":{"anyOf":[{"type":"string"},{"type":"null"}]}},"required":["command","exit_code","log_tail","verification_level","action","expected","wait_budget","evidence"],"additionalProperties":false}]}},"decision":{"anyOf":[{"type":"object","properties":{"outcome":{"type":"string"},"reason":{"type":"string"}},"required":["outcome","reason"],"additionalProperties":false},{"type":"null"}]},"error":{"anyOf":[{"type":"object","properties":{"code":{"type":"string"},"message":{"type":"string"}},"required":["code","message"],"additionalProperties":false},{"type":"null"}]}},"required":["status","summary","artifacts","checks","decision","error"],"additionalProperties":false}'
@@ -1060,14 +1060,20 @@ normalize_provider_success() {
       --arg session "$session_id" \
       --arg credential_ref "$credential_ref" \
       --argjson credential_copy_mutated "$credential_copy_mutated" \
-      '{
+      '(.
+         | with_entries(select(.value != null))
+         | if (.route? | type) == "object"
+           then .route |= with_entries(select(.value != null))
+           else .
+           end) as $decision
+       | {
          contract_version: "1.0",
          attempt_id: $attempt,
          status: "completed",
-         summary: .reason,
+         summary: $decision.reason,
          artifacts: [],
          checks: [],
-         decision: .,
+         decision: $decision,
          error: null,
          provider_metadata: ({
            provider: $provider,
