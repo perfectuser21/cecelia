@@ -90,6 +90,57 @@ describe('canonical POST /orchestrator/relay-runs', () => {
     });
   });
 
+  it('passes an explicit hybrid commander mode to the Kernel store', async () => {
+    const app = await buildApp();
+
+    const response = await request(app)
+      .post('/api/brain/orchestrator/relay-runs')
+      .send({
+        initiative_id: INITIATIVE_ID,
+        current_task_id: TASK_ID,
+        created_source: 'foreground_handoff',
+        commander_mode: 'hybrid',
+      });
+
+    expect(response.status).toBe(201);
+    expect(mockCreateKernelRun).toHaveBeenCalledWith(mockPool, expect.objectContaining({
+      commanderMode: 'hybrid',
+    }));
+  });
+
+  it('defaults commander mode to kernel-only', async () => {
+    const app = await buildApp();
+
+    const response = await request(app)
+      .post('/api/brain/orchestrator/relay-runs')
+      .send({
+        initiative_id: INITIATIVE_ID,
+        current_task_id: TASK_ID,
+        created_source: 'foreground_handoff',
+      });
+
+    expect(response.status).toBe(201);
+    expect(mockCreateKernelRun).toHaveBeenCalledWith(mockPool, expect.objectContaining({
+      commanderMode: 'kernel-only',
+    }));
+  });
+
+  it('rejects an invalid commander mode without calling the Kernel store', async () => {
+    const app = await buildApp();
+
+    const response = await request(app)
+      .post('/api/brain/orchestrator/relay-runs')
+      .send({
+        initiative_id: INITIATIVE_ID,
+        current_task_id: TASK_ID,
+        created_source: 'foreground_handoff',
+        commander_mode: 'unsafe-mode',
+      });
+
+    expect(response.status).toBe(400);
+    expect(mockCreateKernelRun).not.toHaveBeenCalled();
+  });
+
   it('fails closed when the task is not eligible', async () => {
     mockCreateKernelRun.mockRejectedValueOnce(
       new Error(`kernel run task ${TASK_ID} not eligible`),

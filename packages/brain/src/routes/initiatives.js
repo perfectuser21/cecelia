@@ -27,6 +27,7 @@ import {
   patchLegacyKernelRunByInitiative,
   patchKernelRunById,
 } from '../orchestrator/kernel-run-store.js';
+import { COMMANDER_MODES } from '../orchestrator/commander-contract.js';
 
 const router = Router();
 const initiativeHistoryRateLimit = rateLimit({
@@ -411,6 +412,7 @@ router.get('/relay-runs/summary', async (req, res) => {
 });
 
 const CREATE_PHASES = ['planning', 'gan', 'generate', 'evaluate'];
+const CREATE_COMMANDER_MODES = new Set(COMMANDER_MODES);
 
 async function createRelayRun(req, res, legacyInitiativeId = null) {
   const body = req.body || {};
@@ -418,6 +420,9 @@ async function createRelayRun(req, res, legacyInitiativeId = null) {
   const taskId = body.current_task_id;
   const createdSource = body.created_source;
   const startPhase = body.phase || 'planning';
+  const commanderMode = body.commander_mode === undefined
+    ? 'kernel-only'
+    : body.commander_mode;
 
   if (
     !UUID_RE.test(initiativeId ?? '')
@@ -435,6 +440,12 @@ async function createRelayRun(req, res, legacyInitiativeId = null) {
       allowed: CREATE_PHASES,
     });
   }
+  if (!CREATE_COMMANDER_MODES.has(commanderMode)) {
+    return res.status(400).json({
+      error: 'invalid commander_mode',
+      allowed: COMMANDER_MODES,
+    });
+  }
 
   try {
     const requestPool = req.app.get('pool') || pool;
@@ -447,6 +458,7 @@ async function createRelayRun(req, res, legacyInitiativeId = null) {
       host: 'foreground',
       deadlineHours: 6,
       createdSource,
+      commanderMode,
     });
     return res.status(result.created ? 201 : 200).json(result);
   } catch (err) {

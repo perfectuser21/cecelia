@@ -186,6 +186,7 @@ describe('Kernel run store creation authority', () => {
     const [sql, params] = query.mock.calls[0];
     expect(sql).toMatch(/WHERE id\s*=\s*\$1/i);
     expect(sql).toContain("orchestrator_version = 'v2'");
+    expect(sql).toContain('commander_mode');
     expect(sql).not.toMatch(/initiative_id\s*=\s*\$1/i);
     expect(params).toEqual([RUN_ID]);
   });
@@ -198,6 +199,7 @@ describe('Kernel run store creation authority', () => {
     expect(query).toHaveBeenCalledOnce();
     const [sql, params] = query.mock.calls[0];
     expect(sql).toContain('current_task_id = $1');
+    expect(sql).toContain('commander_mode');
     expect(sql).not.toMatch(/OR\s+initiative_id/i);
     expect(params).toEqual([TASK_ID]);
   });
@@ -223,6 +225,7 @@ describe('Kernel run store creation authority', () => {
     expect(insert.sql).toContain('current_task_id');
     expect(insert.sql).toContain('created_source');
     expect(insert.sql).toContain('record_trust_status');
+    expect(insert.sql).toContain('commander_mode');
     expect(insert.params).toEqual([
       INITIATIVE_ID,
       'planning',
@@ -233,7 +236,31 @@ describe('Kernel run store creation authority', () => {
       TASK_ID,
       'kernel_dispatch',
       'trusted',
+      'kernel-only',
     ]);
+    expect(harness.order).toEqual([
+      'BEGIN',
+      'advisory-lock',
+      'advisory-lock',
+      'task-lock',
+      'active-run',
+      'insert-run',
+      'COMMIT',
+      'release',
+    ]);
+  });
+
+  it('persists an explicit commander mode in the creation transaction', async () => {
+    const harness = transactionPool();
+
+    await createKernelRun(harness.pool, {
+      ...VALID_INPUT,
+      commanderMode: 'hybrid',
+    });
+
+    const insert = harness.calls.find(({ sql }) => /INSERT INTO initiative_runs/.test(sql));
+    expect(insert.sql).toContain('commander_mode');
+    expect(insert.params).toContain('hybrid');
     expect(harness.order).toEqual([
       'BEGIN',
       'advisory-lock',
@@ -316,6 +343,16 @@ describe('Kernel run store creation authority', () => {
       ...VALID_INPUT,
       createdSource: 'guessed',
     })).rejects.toThrow('invalid Kernel run created source: guessed');
+    expect(harness.pool.connect).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid commander mode before opening a transaction', async () => {
+    const harness = transactionPool();
+
+    await expect(createKernelRun(harness.pool, {
+      ...VALID_INPUT,
+      commanderMode: 'unsafe-mode',
+    })).rejects.toThrow('invalid Kernel run commander mode: unsafe-mode');
     expect(harness.pool.connect).not.toHaveBeenCalled();
   });
 
