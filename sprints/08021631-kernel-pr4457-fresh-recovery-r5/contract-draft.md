@@ -1,11 +1,11 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## 合同边界与 notes
 
 - 仅恢复现有 Draft PR `#4457` / `cp-kernel-phase5b-a1-review-fixes`；禁止新建或合并 PR、启用 auto-merge、stage、deploy、修改 branch protection 或弱化 CodeQL。
 - 权威运行回执只写 Git 树外 `${ATTEMPT_ARTIFACT_DIR}`、Brain append-only events 或 GitHub Actions artifacts；目标分支不得提交运行回执。
 - `contract-gate: enabled`（`packages/brain/src/lib/contract-gate.js` 存在）。
-- Round 2 仅修正 reviewer 指出的四个真实漏项：完整 identity 冻结、branch protection 精确 oracle、oracle phase 顺序、仓外 root-owned append-only 证据边界；不扩展 PRD scope。
+- Round 3 仅修正 reviewer 指出的两个真实漏项：机械证明 baseline freeze 是 attempt 的首个动作，以及机械证明目标分支只发生一次 final SHA push；不扩展 PRD scope。
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -31,7 +31,7 @@ N/A — 本任务不新增 HTTP 响应。可观测合同是 Git SHA、GitHub PR/
 |---|---|---|
 | **FR（做什么）** | 功能需求 | 冻结完整现状 identity，语义解决冲突和 CodeQL，在唯一 final SHA 收齐 CI、独立 evaluator/judge，停在人工 review。 |
 | **NFR（做得多好）** | 可靠性 | 28800s 总预算；每个 child 记录 argv/cwd/start/end/exit/raw-log sha256；exact-head 严格一致。 |
-| **Invariant（永不违反）** | 安全/一致性 | 不新建/合并 PR，不 stage/deploy，不提交权威回执，不 dismiss/suppress/缩窄扫描，不改 protection。 |
+| **Invariant（永不违反）** | 安全/一致性 | baseline freeze 必须先于 fetch/merge/write；目标分支只推一次 final SHA；不新建/合并 PR，不 stage/deploy，不提交权威回执，不 dismiss/suppress/缩窄扫描，不改 protection。 |
 | **判定点（怎么知道）** | 外部状态判断 | 见下表。 |
 | **保质期（何时过期）** | 证据寿命 | source/main 冻结事实不符即 stale；final SHA 移动则该 SHA 的全部回执失效。 |
 | **死亡告警（停了谁知道）** | 失败发现 | oracle 非零、identity 漂移、证据边界不合规或 CI 超时均 fail closed。 |
@@ -42,7 +42,7 @@ N/A — 本任务不新增 HTTP 响应。可观测合同是 Git SHA、GitHub PR/
 
 | 判定点 | 候选方法 | 所选方法 | 依据 | 误判后果 |
 |---|---|---|---|---|
-| ⚠️ baseline 是否新鲜且完整 | A. 只比计数；B. 冻结排序后的 40 条路径和 7 条 annotation identity 及集合摘要 | B | 计数相同仍可能替换成员 | 在错误冲突/安全集合上假绿 |
+| ⚠️ baseline 是否在任何变更动作前新鲜且完整 | A. 只验 baseline 内容；B. attempt journal 首事件为 O_EXCL freeze，随后才允许 fetch/merge/write，并冻结排序后的 40 条路径和 7 条 annotation identity | B | 内容正确不能证明冻结时序 | 先改变远端/工作区再伪造“初始”基线 |
 | ⚠️ required gates 是否真实受保护 | A. 只看 check 成功；B. 同时读取 protection strict=true 和 contexts 精确集合 | B | PRD NFR 明定 | 未受保护的偶然绿被当门禁 |
 | ⚠️ evaluator/judge 是否独立复核 | A. generator manifest 预填；B. 本地 oracle 完成并推 final SHA 后再由独立角色追加 receipt | B | PRD Golden Path 顺序 | generator 自证冒充独立复核 |
 | ⚠️ 权威证据是否不可自引用 | A. 只声明仓外；B. realpath/owner/mode/hash-chain 机械验证 | B | PRD 边界情况 | 回执提交导致 HEAD 自引用或可篡改 |
@@ -57,7 +57,7 @@ N/A — 本任务不新增 HTTP 响应。可观测合同是 Git SHA、GitHub PR/
 | protection strict/contexts 不符 | 验收失败 | 管理者在本 sprint 外纠正后重验 | 本 sprint 禁止修改 protection |
 | child 字段/hash/phase 不符 | 对应行及整体验收失败 | 同 final SHA 可真重跑 | 禁止预填 evaluator/judge |
 | evidence 位于 Git 树内、非 root owner 或 hash-chain 断裂 | 权威证据无效 | 新仓外目录重跑 | 不提交 receipt |
-| final SHA 移动 | 既有 CI/evaluator/judge 全 stale | 新 SHA 全量重跑 | 不复用中间 HEAD 绿 |
+| final SHA 移动或目标分支 push 次数不为 1 | 既有 CI/evaluator/judge 全 stale | 新 attempt 从 freeze 重跑 | 不复用中间 HEAD 绿，不接受先推中间 SHA 再补推 |
 
 ### 输入对抗面
 
@@ -75,14 +75,15 @@ N/A — 本任务不新增 HTTP 响应。可观测合同是 Git SHA、GitHub PR/
 
 **来源**: `[FROM_PRD]` — Golden Path 第 1 步、背景与边界情况。
 
-**可观测行为**: `baseline.json` 不仅记录 40/136 与 3/4 计数，还保存排序后的完整 `conflict_paths[40]`，以及 7 条 annotation 的稳定 identity（`classification_level/path/start_line/end_line/rule_id/message_sha256`）；各集合另存 canonical sha256。R19 33-path 只在 `historical_regression_paths` 中出现。
+**可观测行为**: 全新 root-owned attempt 目录以 O_EXCL 创建 `attempt-journal.jsonl`，其 sequence=1 必须是 `baseline_freeze_started`；在 sequence=1/2 的 freeze start/complete 之前不得出现 `fetch`、`merge`、`checkout_write`、`file_write`、`commit` 或 `push`。`baseline.json` 保存冻结时的 source/main ref OID、40/136、排序后的完整 `conflict_paths[40]`、7 条 annotation 稳定 identity（`classification_level/path/start_line/end_line/rule_id/message_sha256`）及 canonical sha256。R19 33-path 只在 `historical_regression_paths` 中出现。
 
 **验证命令**:
 ```bash
 node scripts/harness/kernel-recovery-contract.mjs verify-baseline --repo perfectuser21/cecelia --pr 4457 --baseline "$ATTEMPT_ARTIFACT_DIR/baseline.json" --source 008fce85e1394a021b749a41187fac487c22b462 --main 42a6a8aa502779d7a45fbc21ebece4ed8197233a --check-run 90903873908 --conflict-files 40 --conflict-blocks 136 --failures 3 --warnings 4
+node scripts/harness/kernel-recovery-contract.mjs verify-preflight-order --journal "$ATTEMPT_ARTIFACT_DIR/attempt-journal.jsonl" --baseline "$ATTEMPT_ARTIFACT_DIR/baseline.json" --forbid-before-freeze 'fetch,merge,checkout_write,file_write,commit,push'
 ```
 
-**硬阈值**: 路径数组恰好 40 个唯一规范化 repo-relative path；annotation identity 恰好 7 个唯一项（3 failure/4 warning）；两集合 canonical hash 可重算；baseline `O_EXCL` 只创建一次、mode=0444；exit=0。
+**硬阈值**: journal 首事件为 freeze start、第二事件为 freeze complete，二者 hash-chain/单调时间可重算；此前敏感动作数=0；路径数组恰好 40 个唯一规范化 repo-relative path；annotation identity 恰好 7 个唯一项（3 failure/4 warning）；baseline `O_EXCL` 只创建一次、mode=0444；exit=0。
 
 ### Step 2: 仅在既有 PR 分支语义收敛完整冲突与 CodeQL
 
@@ -114,14 +115,15 @@ node scripts/harness/kernel-recovery-contract.mjs verify-manifest --manifest "$A
 
 **来源**: `[FROM_PRD]` — Golden Path 第 4 步与 NFR 版本要求。
 
-**可观测行为**: final SHA 只推一次；CodeQL aggregate 与三个 contexts 同 SHA SUCCESS；base branch protection 同时满足 `required_status_checks.strict=true` 且 contexts 排序后精确等于三项，不容许缺项或额外项。
+**可观测行为**: recovery runner 只准执行一次参数化 `git push origin <final_sha>:refs/heads/cp-kernel-phase5b-a1-review-fixes`；journal 中 `push_started`/`push_completed` 各恰一行，old_oid 必须是冻结 source SHA、new_oid 必须是 final SHA；远端 ref update 审计与 journal 对账后，CodeQL aggregate 与三个 contexts 同 SHA SUCCESS。
 
 **验证命令**:
 ```bash
 node scripts/harness/kernel-recovery-contract.mjs verify-checks --repo perfectuser21/cecelia --pr 4457 --head "$FINAL_HEAD_SHA" --required 'ci-passed,Harness V5 Gate Passed,Smoke Glob Runner Passed' --strict true --exact-contexts --timeout-seconds 7200
+node scripts/harness/kernel-recovery-contract.mjs verify-single-push --repo perfectuser21/cecelia --pr 4457 --journal "$ATTEMPT_ARTIFACT_DIR/attempt-journal.jsonl" --old 008fce85e1394a021b749a41187fac487c22b462 --new "$FINAL_HEAD_SHA" --ref refs/heads/cp-kernel-phase5b-a1-review-fixes --count 1
 ```
 
-**硬阈值**: protection strict=true；required contexts 精确集合为 `ci-passed`、`Harness V5 Gate Passed`、`Smoke Glob Runner Passed`；CodeQL aggregate 与三 context 在 final SHA 均 SUCCESS；head_before=head_after；exit=0。
+**硬阈值**: push pair 恰一组且真实 ref update 为 frozen source→final SHA，不存在中间 SHA push；protection strict=true；required contexts 精确集合为三项；CodeQL aggregate 与三 context 在 final SHA 均 SUCCESS；head_before=head_after；exit=0。
 
 ### Step 5: CI 完成后由独立 evaluator 与 judge 依序追加复核
 
@@ -189,9 +191,11 @@ test "$(git branch --show-current)" = "cp-kernel-phase5b-a1-review-fixes"
 test "$(git rev-parse HEAD)" = "$FINAL_HEAD_SHA"
 node scripts/harness/kernel-recovery-contract.mjs verify-artifact-boundary --repo-root "$(git rev-parse --show-toplevel)" --artifact-dir "$ATTEMPT_ARTIFACT_DIR" --manifest "$ATTEMPT_ARTIFACT_DIR/oracle-manifest.jsonl"
 node scripts/harness/kernel-recovery-contract.mjs verify-baseline --repo perfectuser21/cecelia --pr 4457 --baseline "$ATTEMPT_ARTIFACT_DIR/baseline.json" --source 008fce85e1394a021b749a41187fac487c22b462 --main 42a6a8aa502779d7a45fbc21ebece4ed8197233a --check-run 90903873908 --conflict-files 40 --conflict-blocks 136 --failures 3 --warnings 4
+node scripts/harness/kernel-recovery-contract.mjs verify-preflight-order --journal "$ATTEMPT_ARTIFACT_DIR/attempt-journal.jsonl" --baseline "$ATTEMPT_ARTIFACT_DIR/baseline.json" --forbid-before-freeze 'fetch,merge,checkout_write,file_write,commit,push'
 node scripts/harness/kernel-recovery-contract.mjs verify-resolution --repo perfectuser21/cecelia --pr 4457 --baseline "$ATTEMPT_ARTIFACT_DIR/baseline.json" --head "$FINAL_HEAD_SHA"
 node scripts/harness/kernel-recovery-contract.mjs verify-manifest --manifest "$ATTEMPT_ARTIFACT_DIR/oracle-manifest.jsonl" --head "$FINAL_HEAD_SHA" --phase local --required 'conflict-resolution,codeql-regression,local-regression'
 node scripts/harness/kernel-recovery-contract.mjs verify-checks --repo perfectuser21/cecelia --pr 4457 --head "$FINAL_HEAD_SHA" --required 'ci-passed,Harness V5 Gate Passed,Smoke Glob Runner Passed' --strict true --exact-contexts --timeout-seconds 7200
+node scripts/harness/kernel-recovery-contract.mjs verify-single-push --repo perfectuser21/cecelia --pr 4457 --journal "$ATTEMPT_ARTIFACT_DIR/attempt-journal.jsonl" --old 008fce85e1394a021b749a41187fac487c22b462 --new "$FINAL_HEAD_SHA" --ref refs/heads/cp-kernel-phase5b-a1-review-fixes --count 1
 node scripts/harness/kernel-recovery-contract.mjs verify-final-gate --repo perfectuser21/cecelia --pr 4457 --head "$FINAL_HEAD_SHA" --receipts "$ATTEMPT_ARTIFACT_DIR" --manifest "$ATTEMPT_ARTIFACT_DIR/oracle-manifest.jsonl"
 test "$(git rev-parse HEAD)" = "$FINAL_HEAD_SHA"
 echo "PASS: PR #4457 exact-head recovery 已停在人工 review gate"
@@ -201,4 +205,4 @@ echo "PASS: PR #4457 exact-head recovery 已停在人工 review gate"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| Fresh recovery 合同执行器 | `sprints/08021631-kernel-pr4457-fresh-recovery-r5/tests/kernel-recovery-contract.test.ts` | `拒绝同计数但路径身份漂移的 baseline`、`拒绝 annotation identity 漂移`、`拒绝 strict=false 或 contexts 非精确集合`、`拒绝 evaluator 在 local phase 预填`、`拒绝 Git 树内或非 root-owned 的证据目录`、`拒绝 hash 不匹配的 oracle manifest`、`拒绝移动的 final head`、`只接受 OPEN Draft 且 autoMerge=null` | verifier 尚不存在，测试在 import/断言阶段 Red |
+| Fresh recovery 合同执行器 | `sprints/08021631-kernel-pr4457-fresh-recovery-r5/tests/kernel-recovery-contract.test.ts` | `拒绝 freeze 前已有 fetch merge 或 write`、`拒绝目标分支多次 push 或中间 SHA push`、`拒绝同计数但路径身份漂移的 baseline`、`拒绝 annotation identity 漂移`、`拒绝 strict=false 或 contexts 非精确集合`、`拒绝 evaluator 在 local phase 预填`、`拒绝 Git 树内或非 root-owned 的证据目录`、`拒绝 hash 不匹配的 oracle manifest`、`拒绝移动的 final head`、`只接受 OPEN Draft 且 autoMerge=null` | verifier 尚不存在，测试在 import/断言阶段 Red |

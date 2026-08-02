@@ -10,8 +10,8 @@ target_environment: local_api
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] recovery verifier 和回归测试存在，且 verifier 提供 baseline identity、protection exact-set、manifest phase、artifact boundary 四类 fail-closed 校验
-  Test: node -e "const fs=require('fs');const c=fs.readFileSync('scripts/harness/kernel-recovery-contract.mjs','utf8');for(const x of ['verify-baseline','verify-resolution','verify-manifest','verify-checks','verify-final-gate','verify-artifact-boundary'])if(!c.includes(x))throw Error('missing '+x)"
+- [ ] [ARTIFACT] recovery verifier 和回归测试存在，且 verifier 提供 baseline identity/preflight order、single-push、protection exact-set、manifest phase、artifact boundary 校验
+  Test: node -e "const fs=require('fs');const c=fs.readFileSync('scripts/harness/kernel-recovery-contract.mjs','utf8');for(const x of ['verify-baseline','verify-preflight-order','verify-single-push','verify-resolution','verify-manifest','verify-checks','verify-final-gate','verify-artifact-boundary'])if(!c.includes(x))throw Error('missing '+x)"
 
 - [ ] [ARTIFACT] Sprint 独立 Vitest 配置存在并只收集本 Sprint Red tests
   Test: node -e "const fs=require('fs');const c=fs.readFileSync('sprints/08021631-kernel-pr4457-fresh-recovery-r5/vitest.config.mjs','utf8');if(!c.includes('kernel-pr4457-fresh-recovery-r5/tests'))throw Error('wrong include')"
@@ -22,11 +22,11 @@ target_environment: local_api
 ## BEHAVIOR 条目
 
 - [ ] [BEHAVIOR] [L2] B-01: 冻结完整 conflict path 与 CodeQL annotation identity [接缝×2]
-  动作: 写操作前从真实 merge oracle 和 check-run 90903873908 读取两次完整成员集合并创建只读 baseline。
-  预期观察: 两次均为同一 40 条唯一 path、136 blocks、7 条唯一 annotation identity（3 failure/4 warning），canonical hash 相同；只比计数不能通过。
+  动作: 在全新 attempt 中先启动 freeze，完成真实 merge oracle/check-run 集合冻结后才允许 fetch、merge 或任何 write。
+  预期观察: journal 第 1/2 行为 freeze start/complete，之前敏感动作数为零；两次均为同一 40 path、136 blocks、7 annotation identity，canonical hash 相同。
   等待预算: 60s
   留证: ${ATTEMPT_ARTIFACT_DIR}/baseline.json 与 baseline-freeze-run-1.log、baseline-freeze-run-2.log
-  Test: manual:bash -c 'node scripts/harness/kernel-recovery-contract.mjs verify-baseline --repo perfectuser21/cecelia --pr 4457 --baseline "$ATTEMPT_ARTIFACT_DIR/baseline.json" --source 008fce85e1394a021b749a41187fac487c22b462 --main 42a6a8aa502779d7a45fbc21ebece4ed8197233a --check-run 90903873908 --conflict-files 40 --conflict-blocks 136 --failures 3 --warnings 4 && node scripts/harness/kernel-recovery-contract.mjs verify-baseline --repo perfectuser21/cecelia --pr 4457 --baseline "$ATTEMPT_ARTIFACT_DIR/baseline.json" --source 008fce85e1394a021b749a41187fac487c22b462 --main 42a6a8aa502779d7a45fbc21ebece4ed8197233a --check-run 90903873908 --conflict-files 40 --conflict-blocks 136 --failures 3 --warnings 4'
+  Test: manual:bash -c 'node scripts/harness/kernel-recovery-contract.mjs verify-preflight-order --journal "$ATTEMPT_ARTIFACT_DIR/attempt-journal.jsonl" --baseline "$ATTEMPT_ARTIFACT_DIR/baseline.json" --forbid-before-freeze "fetch,merge,checkout_write,file_write,commit,push" && node scripts/harness/kernel-recovery-contract.mjs verify-baseline --repo perfectuser21/cecelia --pr 4457 --baseline "$ATTEMPT_ARTIFACT_DIR/baseline.json" --source 008fce85e1394a021b749a41187fac487c22b462 --main 42a6a8aa502779d7a45fbc21ebece4ed8197233a --check-run 90903873908 --conflict-files 40 --conflict-blocks 136 --failures 3 --warnings 4'
 
 - [ ] [BEHAVIOR] [L2] B-02: 完整冲突与七条 CodeQL findings 语义收敛 [接缝×2]
   动作: 在既有 PR 分支对 frozen main 做真实 merge graph 校验，并按 baseline identity 逐条核验修复与回归两次。
@@ -48,6 +48,13 @@ target_environment: local_api
   等待预算: 7200s
   留证: ${ATTEMPT_ARTIFACT_DIR}/github-protection.json、github-checks-run-1.log、github-checks-run-2.log
   Test: manual:bash -c 'node scripts/harness/kernel-recovery-contract.mjs verify-checks --repo perfectuser21/cecelia --pr 4457 --head "$FINAL_HEAD_SHA" --required "ci-passed,Harness V5 Gate Passed,Smoke Glob Runner Passed" --strict true --exact-contexts --timeout-seconds 7200 && node scripts/harness/kernel-recovery-contract.mjs verify-checks --repo perfectuser21/cecelia --pr 4457 --head "$FINAL_HEAD_SHA" --required "ci-passed,Harness V5 Gate Passed,Smoke Glob Runner Passed" --strict true --exact-contexts --timeout-seconds 30'
+
+- [ ] [BEHAVIOR] [L2] B-04A: 目标分支仅推送一次 final SHA [接缝×2]
+  动作: 从 attempt journal 与 GitHub 真实 ref update 对账既有目标分支的本轮更新次数和 old/new OID。
+  预期观察: push_started/push_completed 各一行，唯一更新从 frozen source 直接到 final SHA，不存在中间 SHA push。
+  等待预算: 60s
+  留证: ${ATTEMPT_ARTIFACT_DIR}/attempt-journal.jsonl 与 single-push-run-1.log、single-push-run-2.log
+  Test: manual:bash -c 'node scripts/harness/kernel-recovery-contract.mjs verify-single-push --repo perfectuser21/cecelia --pr 4457 --journal "$ATTEMPT_ARTIFACT_DIR/attempt-journal.jsonl" --old 008fce85e1394a021b749a41187fac487c22b462 --new "$FINAL_HEAD_SHA" --ref refs/heads/cp-kernel-phase5b-a1-review-fixes --count 1 && node scripts/harness/kernel-recovery-contract.mjs verify-single-push --repo perfectuser21/cecelia --pr 4457 --journal "$ATTEMPT_ARTIFACT_DIR/attempt-journal.jsonl" --old 008fce85e1394a021b749a41187fac487c22b462 --new "$FINAL_HEAD_SHA" --ref refs/heads/cp-kernel-phase5b-a1-review-fixes --count 1'
 
 - [ ] [BEHAVIOR] [L2] B-05: evaluator 后 judge 独立追加 exact-head receipt
   动作: CI 成功后先由独立 evaluator 真跑并追加 receipt/manifest 行，再由独立 judge 真跑并追加下一行。
@@ -91,7 +98,7 @@ target_environment: local_api
 - INV-24 部署安全：不 stage/deploy，不触碰生产资源。
 - INV-25 CodeQL：七条 identity 真修，拒绝 shell format、dismiss 与扫描缩窄。
 - INV-26 judge 格式：顶层 exit_code/log_tail/behavior_tests 完整，B-05 校验。
-- INV-27 决策与回执：B-06 证明仓外 root-owned hash-chain，禁止 Git 自引用。
+- INV-27 决策与回执：B-01 证明 freeze 是首动作，B-04A 证明唯一 push，B-06 证明仓外 root-owned hash-chain，禁止 Git 自引用。
 - INV-28 target_environment：task payload 与合同均为 local_api。
 
 ## 失败出口

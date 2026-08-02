@@ -8,9 +8,10 @@
       "title": "收敛 Draft PR #4457 当前冲突、CodeQL 与 exact-head 权威证据",
       "scope": "冻结完整 conflict path/annotation identity，仅更新既有 PR 分支，语义解决当前冲突和七条 CodeQL finding；以分 phase 真实 oracle、严格 branch protection、唯一 final SHA、独立 evaluator/judge 和仓外 root-owned append-only 证据停在人工 review gate；不新建或合并 PR，不 stage/deploy。",
       "dod": [
-        "[BEHAVIOR] baseline 冻结完整 40 条 conflict path 与七条 CodeQL annotation identity，集合摘要可重算",
+        "[BEHAVIOR] attempt journal 机械证明 baseline freeze 是 fetch、merge、write 前的首个动作，并冻结完整 identity",
         "[BEHAVIOR] 既有 PR 分支对 frozen main 零冲突且七条 finding 有真实修复与回归",
         "[BEHAVIOR] local oracle 先真跑，evaluator/judge 在 CI 后独立依序追加且均绑定 final SHA",
+        "[BEHAVIOR] 目标分支本轮仅发生一次 frozen source 到 final SHA 的 push，不存在中间 SHA push",
         "[BEHAVIOR] branch protection strict=true 且 required contexts 精确为三项，CodeQL 与三项在 final SHA SUCCESS",
         "[BEHAVIOR] artifact realpath 位于 Git 树外、uid=0、权限收紧且 manifest hash-chain append-only",
         "[BEHAVIOR] PR 保持 OPEN Draft、autoMerge=null 并停在人工 review",

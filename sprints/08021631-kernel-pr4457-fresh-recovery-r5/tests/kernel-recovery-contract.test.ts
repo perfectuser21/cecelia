@@ -6,9 +6,31 @@ import {
   validateHumanReviewGate,
   validateBranchProtection,
   validateArtifactBoundary,
+  validatePreflightOrder,
+  validateSinglePush,
 } from '../../../scripts/harness/kernel-recovery-contract.mjs';
 
 describe('Draft PR #4457 fresh recovery contract [BEHAVIOR]', () => {
+  it('拒绝 freeze 前已有 fetch merge 或 write', async () => {
+    const rows = [
+      { sequence: 1, action: 'fetch', at: '2026-08-02T00:00:00Z' },
+      { sequence: 2, action: 'baseline_freeze_started', at: '2026-08-02T00:00:01Z' },
+      { sequence: 3, action: 'baseline_freeze_completed', at: '2026-08-02T00:00:02Z' },
+    ];
+    await expect(validatePreflightOrder(rows)).rejects.toThrow(/freeze|fetch|order|first/);
+  });
+
+  it('拒绝目标分支多次 push 或中间 SHA push', async () => {
+    const oldOid = 'a'.repeat(40);
+    const midOid = 'b'.repeat(40);
+    const finalOid = 'c'.repeat(40);
+    const updates = [
+      { ref: 'refs/heads/cp-kernel-phase5b-a1-review-fixes', old_oid: oldOid, new_oid: midOid },
+      { ref: 'refs/heads/cp-kernel-phase5b-a1-review-fixes', old_oid: midOid, new_oid: finalOid },
+    ];
+    await expect(validateSinglePush(updates, { oldOid, finalOid, count: 1 })).rejects.toThrow(/push|count|intermediate|single/);
+  });
+
   it('拒绝同计数但路径身份漂移的 baseline', async () => {
     const expected = ['a.js', 'b.js'];
     const actual = ['a.js', 'c.js'];
