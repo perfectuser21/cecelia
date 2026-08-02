@@ -21,7 +21,7 @@
   和 Attempt Store 都 fail closed，并在 SQL 更新条件中同时匹配 owner + generation，
   防止旧 Runner 延长后来接管者的租约。
 - Runner 重建并固定为
-  `sha256:ab107faca136171e0de834aa0bad4b43232f55ad31b14aaf3868786e89a694b9`；
+  `sha256:e8979dcf7791b1fd0754276d39fd58adf9c8fc1148323a3d0d3b8abe29ea351f`；
   三机必须同步后才可 undrain。回退到 `1.267.182` 会恢复永久 4xx 无限重试与 heartbeat
   仅按 owner 续租的竞态。
 

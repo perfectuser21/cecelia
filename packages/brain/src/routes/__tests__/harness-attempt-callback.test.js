@@ -1942,6 +1942,21 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(mocks.store.heartbeat).not.toHaveBeenCalled();
   });
 
+  it('heartbeat 的旧 lease generation 无法续租，route 返回 409', async () => {
+    mocks.store.heartbeat.mockResolvedValueOnce(null);
+    const response = await request(app)
+      .post(`/api/brain/harness/attempts/${attemptId}/heartbeat`)
+      .set('Authorization', `Bearer ${callbackToken}`)
+      .send({ lease_owner: leaseOwner, lease_generation: 6, lease_seconds: 180 });
+
+    expect(response.status).toBe(409);
+    expect(mocks.store.heartbeat).toHaveBeenCalledWith(attemptId, {
+      leaseOwner,
+      leaseGeneration: 6,
+      leaseSeconds: 180,
+    });
+  });
+
   it('heartbeat 同样拒绝无密钥请求', async () => {
     const response = await request(app)
       .post(`/api/brain/harness/attempts/${attemptId}/heartbeat`)

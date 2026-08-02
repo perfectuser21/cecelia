@@ -188,6 +188,50 @@ test_http_retry_classification() {
   fi
 }
 
+test_all_attempt_heartbeats_generation_fenced() {
+  local builder_source
+  builder_source=$(sed -n '/^build_attempt_heartbeat_body()/,/^}/p' "$ENTRYPOINT")
+  if [[ -z "$builder_source" ]]; then
+    fail "entrypoint.sh 缺少统一 heartbeat payload builder"
+    return
+  fi
+  eval "$builder_source"
+
+  HARNESS_LEASE_OWNER='brain-1:runner-7'
+  HARNESS_LEASE_GENERATION=7
+  local body
+  body=$(build_attempt_heartbeat_body '')
+  if jq -e '
+      .lease_owner == "brain-1:runner-7"
+      and .lease_generation == 7
+      and .lease_seconds == 180
+      and (has("provider_session_id") | not)
+    ' <<<"$body" >/dev/null; then
+    pass "普通 heartbeat payload 绑定 owner + generation"
+  else
+    fail "普通 heartbeat payload 未绑定 owner + generation"
+  fi
+
+  body=$(build_attempt_heartbeat_body 'provider-thread-1')
+  if jq -e '
+      .lease_owner == "brain-1:runner-7"
+      and .lease_generation == 7
+      and .provider_session_id == "provider-thread-1"
+    ' <<<"$body" >/dev/null; then
+    pass "provider session heartbeat payload 同样绑定 generation"
+  else
+    fail "provider session heartbeat payload 未绑定 generation"
+  fi
+
+  local endpoint_count
+  endpoint_count=$(grep -c '/api/brain/harness/attempts/${HARNESS_ATTEMPT_ID}/heartbeat' "$ENTRYPOINT")
+  if [[ "$endpoint_count" -eq 1 ]]; then
+    pass "所有生产 heartbeat 都收敛到统一 helper"
+  else
+    fail "生产 heartbeat 存在 ${endpoint_count} 条独立构造路径，可能遗漏 generation fence"
+  fi
+}
+
 # ── 运行所有测试 ──────────────────────────────────────────────────────────────
 echo "=== entrypoint-callback-retry 回归测试 ==="
 echo ""
@@ -196,6 +240,7 @@ test_retry_on_2nd_attempt
 test_five_failures_do_not_exit
 test_entrypoint_contains_retry_code
 test_http_retry_classification
+test_all_attempt_heartbeats_generation_fenced
 echo ""
 echo "结果：${TESTS_PASSED} 通过，${TESTS_FAILED} 失败"
 

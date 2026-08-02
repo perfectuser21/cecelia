@@ -173,6 +173,37 @@ EVALUATOR_EVIDENCE_MANIFEST_DIGEST=""
 GITHUB_CREDENTIAL_DESTROYED=false
 PROVIDER_IDENTITY_PREFIX=()
 
+build_attempt_heartbeat_body() {
+  local provider_session_id="${1:-}"
+  if [[ -n "$provider_session_id" ]]; then
+    jq -nc \
+      --arg owner "${HARNESS_LEASE_OWNER:-}" \
+      --argjson generation "${HARNESS_LEASE_GENERATION:-null}" \
+      --arg session "$provider_session_id" \
+      '{lease_owner:$owner,lease_generation:$generation,lease_seconds:180,provider_session_id:$session}'
+    return
+  fi
+  jq -nc \
+    --arg owner "${HARNESS_LEASE_OWNER:-}" \
+    --argjson generation "${HARNESS_LEASE_GENERATION:-null}" \
+    '{lease_owner:$owner,lease_generation:$generation,lease_seconds:180}'
+}
+
+post_attempt_heartbeat() {
+  local provider_session_id="${1:-}"
+  local body=""
+  [[ -n "${HARNESS_ATTEMPT_ID:-}" \
+      && -n "${HARNESS_LEASE_OWNER:-}" \
+      && "${HARNESS_LEASE_GENERATION:-}" =~ ^[0-9]+$ \
+      && -n "${HARNESS_CALLBACK_TOKEN:-}" ]] || return 1
+  body="$(build_attempt_heartbeat_body "$provider_session_id")" || return 1
+  curl -sf -m 10 -X POST \
+    "${BRAIN_URL:-http://host.docker.internal:5221}/api/brain/harness/attempts/${HARNESS_ATTEMPT_ID}/heartbeat" \
+    -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer ${HARNESS_CALLBACK_TOKEN}" \
+    -d "$body"
+}
+
 is_evaluator_task_bundle() {
   local task_bundle_file="${HARNESS_TASK_BUNDLE_FILE:-}"
   [[ -f "$task_bundle_file" ]] \
@@ -203,12 +234,7 @@ prepare_evaluator_evidence_capsule() {
       && -n "${HARNESS_CALLBACK_TOKEN:-}" ]]; then
     (
       while :; do
-        curl -sf -m 10 -X POST \
-          "${BRAIN_URL:-http://host.docker.internal:5221}/api/brain/harness/attempts/${HARNESS_ATTEMPT_ID}/heartbeat" \
-          -H 'Content-Type: application/json' \
-          -H "Authorization: Bearer ${HARNESS_CALLBACK_TOKEN}" \
-          -d "$(jq -nc --arg owner "$HARNESS_LEASE_OWNER" '{lease_owner:$owner,lease_seconds:180}')" \
-          >/dev/null 2>&1 || true
+        post_attempt_heartbeat >/dev/null 2>&1 || true
         sleep 60
       done
     ) &
@@ -934,15 +960,7 @@ merge_evaluator_evidence() {
 persist_provider_session() {
   local session="$1"
   [[ -n "$session" && -n "${HARNESS_LEASE_OWNER:-}" ]] || return 0
-  curl -sf -m 10 -X POST \
-    "${BRAIN_URL:-http://host.docker.internal:5221}/api/brain/harness/attempts/${HARNESS_ATTEMPT_ID}/heartbeat" \
-    -H 'Content-Type: application/json' \
-    -H "Authorization: Bearer ${HARNESS_CALLBACK_TOKEN}" \
-    -d "$(jq -nc \
-      --arg owner "$HARNESS_LEASE_OWNER" \
-      --arg session "$session" \
-      '{lease_owner:$owner,lease_seconds:180,provider_session_id:$session}')" \
-    >/dev/null 2>&1
+  post_attempt_heartbeat "$session" >/dev/null 2>&1
 }
 
 # codex-credential-envelope:start
@@ -1535,12 +1553,7 @@ run_provider_contract() {
   if [[ -n "${HARNESS_LEASE_OWNER:-}" ]]; then
     (
       while :; do
-        curl -sf -m 10 -X POST \
-          "${BRAIN_URL:-http://host.docker.internal:5221}/api/brain/harness/attempts/${HARNESS_ATTEMPT_ID}/heartbeat" \
-          -H 'Content-Type: application/json' \
-          -H "Authorization: Bearer ${HARNESS_CALLBACK_TOKEN}" \
-          -d "$(jq -nc --arg owner "$HARNESS_LEASE_OWNER" '{lease_owner:$owner,lease_seconds:180}')" \
-          >/dev/null 2>&1 || true
+        post_attempt_heartbeat >/dev/null 2>&1 || true
         sleep 60
       done
     ) &
@@ -1954,15 +1967,7 @@ while [[ $CALLBACK_OK -eq 0 ]]; do
   # alive and remain the retry executor until Brain returns 2xx or the control
   # plane explicitly cancels this container.
   if [[ -n "${HARNESS_ATTEMPT_ID:-}" && -n "${HARNESS_LEASE_OWNER:-}" ]]; then
-    curl -sf -m 10 -X POST \
-      "${BRAIN_URL:-http://host.docker.internal:5221}/api/brain/harness/attempts/${HARNESS_ATTEMPT_ID}/heartbeat" \
-      -H 'Content-Type: application/json' \
-      -H "Authorization: Bearer ${HARNESS_CALLBACK_TOKEN}" \
-      -d "$(jq -nc \
-        --arg owner "$HARNESS_LEASE_OWNER" \
-        --argjson generation "$HARNESS_LEASE_GENERATION" \
-        '{lease_owner:$owner,lease_generation:$generation,lease_seconds:180}')" \
-      >/dev/null 2>&1 || true
+    post_attempt_heartbeat >/dev/null 2>&1 || true
   elif [[ $_retry -ge 5 ]]; then
     # Legacy relay callbacks have no Attempt lease/cancel authority. Preserve
     # their historical bounded behavior; durable retry is a Kernel contract.

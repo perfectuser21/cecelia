@@ -10,7 +10,7 @@
 - heartbeat payload、route 和 Attempt Store SQL 都绑定当前 `lease_generation`；旧代次即使
   持有相同 owner 也无法续活已被接管的租约。
 - 三机 pinned Runner 基线同步为
-  `sha256:ab107faca136171e0de834aa0bad4b43232f55ad31b14aaf3868786e89a694b9`。
+  `sha256:e8979dcf7791b1fd0754276d39fd58adf9c8fc1148323a3d0d3b8abe29ea351f`。
 - 回退到 `1.267.182` 会恢复永久拒绝无限重试与缺少 generation fence 的 heartbeat。
 
 ## Kernel Evaluator attempt-scoped PostgreSQL
