@@ -6,11 +6,24 @@
 
 
 
-**Brain 版本**: 1.267.173
+**Brain 版本**: 1.267.174
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.174 — Runner Commander complete strict response schema
+
+- Commander 的 Provider response schema 现在把根对象和 `route` 子对象的全部属性都列入
+  `required`；原有可选语义用显式 `null` 联合类型表达，满足当前 Codex API 对每层对象的
+  strict JSON Schema 约束。
+- Runner 在可信规范化阶段剥离根对象与 `route` 内的 `null` 可选字段，再交给既有
+  `commander-directive/v1` Zod 合同；不放宽 action、evidence、Provider、凭据、workspace
+  或 callback 边界。
+- 三节点固定 Runner
+  `sha256:5cd1faa1d29b1d158c39773ec94fc18b5d76e2db0c4139ca56af3c03769c9552`；
+  回退到 `1.267.173`/上一 digest 前必须 drain active `hybrid` run，旧组合会在首个
+  Commander Attempt 恢复嵌套 `required` 不完整的 `invalid_json_schema`。
 
 ## Brain 1.267.173 — Runner Commander strict response schema
 

@@ -1,6 +1,19 @@
 # Brain 模块定义
 
-**版本**: 1.267.173
+**版本**: 1.267.174
+
+## Runner Commander complete strict response schema
+
+- Commander Provider schema 的根对象与 `route` 子对象都把全部 property 列入
+  `required`，可选字段改用显式 nullable 类型，完整满足当前 Codex strict JSON Schema。
+- Provider 成功后由 Runner 可信规范化逻辑移除根层和 `route` 内的 `null` 可选字段，
+  再交给既有 `commander-directive/v1` Zod 合同；action、evidence、Provider、凭据、
+  workspace、Fleet admission 与 callback 边界不变。
+- 三节点统一固定 Runner
+  `sha256:5cd1faa1d29b1d158c39773ec94fc18b5d76e2db0c4139ca56af3c03769c9552`。
+- 回退：先 drain active Hybrid run，再恢复 Brain `1.267.173` 与上一 Runner digest；
+  旧组合会在首个 Commander Attempt 恢复嵌套 `required` 不完整的
+  `invalid_json_schema`。
 
 ## Runner Commander strict response schema
 
