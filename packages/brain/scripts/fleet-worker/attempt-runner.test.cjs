@@ -289,6 +289,7 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
       attempt_id: ATTEMPT_ID,
       status: 'prepared',
+      credential_delivery_status: 'pending',
       lease_owner: 'dispatcher-1',
       lease_generation: 0,
       container_id: 'container-attempt-1',
@@ -383,27 +384,94 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.docker.start).not.toHaveBeenCalled();
   });
 
-  it('recovers a persisted starting Attempt that Docker reports running', async () => {
+  it('startup reconciliation exact-cancels a prepared Attempt without credentials', async () => {
     const deps = dependencies();
     await createRunner(deps).prepare(request());
-    deps.stateStore.states.get(ATTEMPT_ID).status = 'starting';
+    deps.docker.inspect.mockResolvedValueOnce({ status: 'created' });
     const restarted = createRunner(deps);
 
-    await expect(restarted.start(ATTEMPT_ID, {
-      owner: 'dispatcher-1',
-      generation: 0,
-    })).resolves.toMatchObject({
-      status: 'running',
-      attempt_id: ATTEMPT_ID,
-      deduped: true,
+    await expect(restarted.reconcile()).resolves.toMatchObject({
+      cleaned_attempts: [ATTEMPT_ID],
     });
+    expect(deps.docker.start).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledWith(deps.workspace);
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'terminal',
+      terminal_status: 'credential_delivery_unconfirmed',
+    });
+  });
+
+  it('exact-finalizes a starting Attempt when delivery was not durably committed', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    Object.assign(deps.stateStore.states.get(ATTEMPT_ID), {
+      status: 'starting',
+      credential_delivery_status: 'pending',
+    });
+    const restarted = createRunner(deps);
+
+    await expect(restarted.reconcile()).resolves.toMatchObject({
+      cleaned_attempts: [ATTEMPT_ID],
+    });
+    expect(deps.docker.inspect).toHaveBeenCalledWith({
+      containerId: 'container-attempt-1',
+    });
+    expect(deps.docker.remove).toHaveBeenCalledWith({
+      containerId: 'container-attempt-1',
+      attemptId: ATTEMPT_ID,
+    });
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'terminal',
+      terminal_status: 'credential_delivery_unconfirmed',
+    });
+    expect(deps.docker.start).not.toHaveBeenCalled();
+    expect(deps.docker.wait).not.toHaveBeenCalled();
+  });
+
+  it('reinstalls one waiter for a fresh running Attempt with delivered credentials', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    Object.assign(deps.stateStore.states.get(ATTEMPT_ID), {
+      status: 'running',
+      credential_delivery_status: 'delivered',
+    });
+    const restarted = createRunner(deps);
+
+    await restarted.reconcile();
+    await restarted.reconcile();
 
     expect(deps.docker.inspect).toHaveBeenCalledWith({
       containerId: 'container-attempt-1',
     });
-    expect(deps.stateStore.states.get(ATTEMPT_ID).status).toBe('running');
     expect(deps.docker.wait).toHaveBeenCalledOnce();
-    expect(deps.docker.start).not.toHaveBeenCalled();
+    expect(deps.docker.remove).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'running',
+      credential_delivery_status: 'delivered',
+    });
+  });
+
+  it('exact-finalizes a delivered running Attempt found terminal after restart', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    Object.assign(deps.stateStore.states.get(ATTEMPT_ID), {
+      status: 'running',
+      credential_delivery_status: 'delivered',
+    });
+    deps.docker.inspect.mockResolvedValueOnce({ status: 'missing' });
+    const restarted = createRunner(deps);
+
+    await restarted.reconcile();
+
+    expect(deps.docker.remove).toHaveBeenCalledWith({
+      containerId: 'container-attempt-1',
+      attemptId: ATTEMPT_ID,
+      containerMissing: true,
+    });
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'terminal',
+      terminal_status: 'missing',
+    });
   });
 
   it.each(['created', 'prepared'])(
@@ -445,10 +513,16 @@ describe('Fleet Worker Attempt runner', () => {
       attemptId: ATTEMPT_ID,
       containerMissing: true,
     });
-    expect(deps.stateStore.states.has(ATTEMPT_ID)).toBe(false);
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      attempt_id: ATTEMPT_ID,
+      status: 'terminal',
+      terminal_status: 'missing',
+      lease_owner: 'dispatcher-1',
+      lease_generation: 0,
+    });
   });
 
-  it('returns a lease-fenced bounded terminal result after exact cleanup', async () => {
+  it('persists a minimal lease-fenced terminal result across a fresh runner', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
     await runner.prepare(request());
@@ -456,8 +530,22 @@ describe('Fleet Worker Attempt runner', () => {
       owner: 'dispatcher-1',
       generation: 0,
     });
+    const tombstone = deps.stateStore.states.get(ATTEMPT_ID);
+    expect(tombstone).toEqual({
+      attempt_id: ATTEMPT_ID,
+      worker_id: WORKER_ID,
+      lease_owner: 'dispatcher-1',
+      lease_generation: 0,
+      status: 'terminal',
+      terminal_status: 'cleaned',
+      terminal_at: expect.any(String),
+    });
+    expect(JSON.stringify(tombstone)).not.toMatch(
+      /credential|workspace|runtime|callback|container|run_id/,
+    );
+    const restarted = createRunner(deps);
 
-    await expect(runner.start(ATTEMPT_ID, {
+    await expect(restarted.start(ATTEMPT_ID, {
       owner: 'dispatcher-1',
       generation: 0,
     })).resolves.toEqual({
@@ -466,10 +554,20 @@ describe('Fleet Worker Attempt runner', () => {
       terminal_status: 'cleaned',
       deduped: true,
     });
-    await expect(runner.start(ATTEMPT_ID, {
+    await expect(restarted.start(ATTEMPT_ID, {
       owner: 'stale-owner',
       generation: 0,
     })).rejects.toThrow('attempt_lease_conflict');
+
+    deps.docker.inspect.mockClear();
+    await restarted.reconcile();
+    expect(deps.docker.inspect).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.reconcile).toHaveBeenLastCalledWith({
+      retainedAttemptIds: [],
+    });
+    expect(deps.resourceManager.reconcile).toHaveBeenLastCalledWith({
+      retainedAttemptIds: [],
+    });
   });
 
   it('starts a prepared Attempt once and deduplicates the matching lease', async () => {
@@ -497,6 +595,7 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.docker.wait).toHaveBeenCalledOnce();
     expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
       status: 'running',
+      credential_delivery_status: 'delivered',
     });
   });
 
@@ -1220,6 +1319,33 @@ describe('Fleet Worker Attempt runner', () => {
     });
     expect(stateStore.states.has(OTHER_ATTEMPT_ID)).toBe(true);
     expect(stateStore.states.has(foreignAttempt.attempt_id)).toBe(true);
+  });
+
+  it('deterministically prunes old terminal tombstones without retaining resources', async () => {
+    const tombstones = Array.from({ length: 1_025 }, (_unused, index) => ({
+      attempt_id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+      worker_id: WORKER_ID,
+      lease_owner: 'dispatcher-1',
+      lease_generation: 0,
+      status: 'terminal',
+      terminal_status: 'cleaned',
+      terminal_at: new Date(index * 1_000).toISOString(),
+    }));
+    const stateStore = inMemoryStateStore(tombstones);
+    const deps = dependencies({ stateStore });
+    const runner = createRunner(deps);
+
+    await runner.reconcile();
+
+    expect(stateStore.delete).toHaveBeenCalledWith(tombstones[0].attempt_id);
+    expect(stateStore.states.size).toBe(1_024);
+    expect(deps.docker.inspect).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.reconcile).toHaveBeenCalledWith({
+      retainedAttemptIds: [],
+    });
+    expect(deps.resourceManager.reconcile).toHaveBeenCalledWith({
+      retainedAttemptIds: [],
+    });
   });
 });
 
