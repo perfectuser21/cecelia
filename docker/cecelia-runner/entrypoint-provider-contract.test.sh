@@ -299,16 +299,21 @@ cat > "$COMMANDER_TMP/task.json" <<'JSON'
 {"task_bundle":{"contract_version":"1.0","run_id":"11111111-1111-4111-8111-111111111111","attempt_id":"22222222-2222-4222-8222-222222222222","role":"commander","skill":null,"inputs":{"commander_bundle":{"schema":"commander-bundle/v1","run_id":"11111111-1111-4111-8111-111111111111","commander_attempt_id":"22222222-2222-4222-8222-222222222222","output_schema":"commander-directive/v1"}},"constraints":{"read_only":true,"fresh_session":true,"timeout_seconds":600},"expected_output":"commander-directive/v1"}}
 JSON
 cat > "$COMMANDER_TMP/directive.json" <<'JSON'
-{"schema":"commander-directive/v1","run_id":"11111111-1111-4111-8111-111111111111","event_cursor":9,"action":"continue_default","reason":"The fresh Kernel decision remains legal.","evidence_refs":["event:9"]}
+{"schema":"commander-directive/v1","run_id":"11111111-1111-4111-8111-111111111111","event_cursor":9,"action":"continue_default","target_role":null,"target_attempt_id":null,"reason":"The fresh Kernel decision remains legal.","guidance":null,"route":null,"evidence_refs":["event:9"]}
 JSON
 
 COMMANDER_SCHEMA="$(provider_result_schema_json "$COMMANDER_TMP/task.json")"
 jq -e '
   .properties.schema.type == "string"
   and .properties.schema.const == "commander-directive/v1"
-  and .required == [
-    "schema","run_id","event_cursor","action","reason","evidence_refs"
-  ]
+  and (.required | sort) == (.properties | keys | sort)
+  and .properties.target_role.type == ["string","null"]
+  and (.properties.target_attempt_id.anyOf | map(.type) | sort) == ["null","string"]
+  and .properties.guidance.type == ["string","null"]
+  and (.properties.route.anyOf | map(.type) | sort) == ["null","object"]
+  and ([.properties.route.anyOf[] | select(.type == "object")][0] as $route
+    | ($route.required | sort) == ($route.properties | keys | sort)
+      and ([ $route.properties[] | .type ] | all(. == ["string","null"])))
   and .additionalProperties == false
 ' <<<"$COMMANDER_SCHEMA" >/dev/null || {
   echo 'runner Commander schema is not strict' >&2
@@ -332,6 +337,10 @@ jq -e '
   and .artifacts == []
   and .checks == []
   and .decision.schema == "commander-directive/v1"
+  and (.decision | has("target_role") | not)
+  and (.decision | has("target_attempt_id") | not)
+  and (.decision | has("guidance") | not)
+  and (.decision | has("route") | not)
   and .error == null
   and .provider_metadata.provider == "codex"
   and .provider_metadata.session_id == "thread-commander"
