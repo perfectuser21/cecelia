@@ -629,25 +629,40 @@ describe('production capability wiring', () => {
     expect(launcher.launch).not.toHaveBeenCalled();
   });
 
-  it('constructs the real remote router and persists its attested launch receipt', async () => {
+  it('constructs the real Fleet transport and commits its attested receipt before start', async () => {
     const target = {
       provider: 'codex',
       account: 'team3',
       machine: 'xian-mac-m4',
     };
+    const order = [];
     const attemptStore = attemptStoreDouble();
+    attemptStore.recordLaunchReceipt.mockImplementationOnce(async (id, receipt) => {
+      order.push('receipt');
+      return { id, status: 'starting', ...receipt };
+    });
     const spawnDetached = vi.fn();
-    const fetchFn = vi.fn(async () => response({
-      status: 'accepted',
-      job_id: 'remote-job-production-1',
-      actual_machine_id: target.machine,
-      attestation: signMachineAttestation({
-        secret: SHARED_SECRET,
-        attemptId: ATTEMPT_ID,
-        machineId: target.machine,
-        jobId: 'remote-job-production-1',
-      }),
-    }, 202));
+    const fetchFn = vi.fn(async (url) => {
+      if (String(url).endsWith('/harness/attempts/prepare')) {
+        order.push('prepare');
+        return response({
+          status: 'accepted',
+          job_id: 'remote-job-production-1',
+          actual_machine_id: target.machine,
+          attestation: signMachineAttestation({
+            secret: SHARED_SECRET,
+            attemptId: ATTEMPT_ID,
+            machineId: target.machine,
+            jobId: 'remote-job-production-1',
+          }),
+        }, 202);
+      }
+      if (String(url).endsWith(`/harness/attempts/${ATTEMPT_ID}/start`)) {
+        order.push('start');
+        return response({ status: 'running', attempt_id: ATTEMPT_ID });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
     const deps = await buildTestDeps({
       pool: { query: vi.fn() },
       attemptStore,
@@ -689,10 +704,11 @@ describe('production capability wiring', () => {
     });
 
     expect(spawnDetached).not.toHaveBeenCalled();
-    expect(fetchFn).toHaveBeenCalledWith(
-      'http://xian-m4.internal:5231/harness/attempts',
-      expect.objectContaining({ method: 'POST' }),
-    );
+    expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
+      'http://xian-m4.internal:5231/harness/attempts/prepare',
+      `http://xian-m4.internal:5231/harness/attempts/${ATTEMPT_ID}/start`,
+    ]);
+    expect(order).toEqual(['prepare', 'receipt', 'start']);
     const bridgeRequest = JSON.parse(fetchFn.mock.calls[0][1].body);
     expect(bridgeRequest).toMatchObject({
       attempt_id: ATTEMPT_ID,
@@ -704,6 +720,10 @@ describe('production capability wiring', () => {
         repo: 'perfectuser21/cecelia',
         attempt_id: ATTEMPT_ID,
       }),
+    });
+    expect(JSON.parse(fetchFn.mock.calls[1][1].body)).toEqual({
+      lease_owner: LEASE_OWNER,
+      lease_generation: 4,
     });
     expect(attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'xian-mac-m4',

@@ -131,6 +131,180 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
+  it('does not start a Fleet Runner until its attested receipt commit resolves', async () => {
+    const calls = [];
+    let resolveReceipt;
+    const receiptCommitted = new Promise((resolve) => {
+      resolveReceipt = resolve;
+    });
+    const deps = makeDeps(calls);
+    deps.resolveWorkspaceSpec = vi.fn(async () => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: 'cp-two-phase-ordering',
+      expected_head_sha: null,
+      mode: 'read-write',
+      run_id: runId,
+      attempt_id: attemptId,
+    }));
+    const fleetReceipt = Object.freeze({
+      actualMachineId: 'brain-1',
+      executionTransport: 'fleet-worker',
+      remoteJobId: 'fleet-job-1',
+      attestationStatus: 'verified',
+      containerId: null,
+      jobId: 'fleet-job-1',
+    });
+    deps.launcher.prepare = vi.fn(async () => {
+      calls.push('launcher.prepare');
+      return fleetReceipt;
+    });
+    deps.launcher.launch.mockImplementationOnce(async () => {
+      calls.push('launcher.launch');
+      return fleetReceipt;
+    });
+    deps.attemptStore.recordLaunchReceipt.mockImplementationOnce(async () => {
+      calls.push('attempt.receipt.pending');
+      return receiptCommitted;
+    });
+    deps.launcher.start = vi.fn(async () => {
+      calls.push('launcher.start');
+      return { status: 'running', attempt_id: attemptId };
+    });
+
+    const pending = createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate' },
+    });
+
+    await vi.waitFor(() => {
+      expect(calls).toContain('attempt.receipt.pending');
+    });
+    expect(deps.launcher.start).not.toHaveBeenCalled();
+    resolveReceipt({ id: attemptId, status: 'starting' });
+    await expect(pending).resolves.toMatchObject({ status: 'LAUNCHED' });
+    expect(deps.launcher.prepare).toHaveBeenCalledOnce();
+    expect(deps.launcher.start).toHaveBeenCalledOnce();
+    expect(calls.indexOf('launcher.prepare'))
+      .toBeLessThan(calls.indexOf('attempt.receipt.pending'));
+    expect(calls.indexOf('attempt.receipt.pending'))
+      .toBeLessThan(calls.indexOf('launcher.start'));
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
+  });
+
+  it('cancels a prepared Fleet Attempt and never starts when receipt persistence fails', async () => {
+    const deps = makeDeps();
+    deps.resolveWorkspaceSpec = vi.fn(async () => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: 'cp-two-phase-receipt-failure',
+      expected_head_sha: null,
+      mode: 'read-write',
+      run_id: runId,
+      attempt_id: attemptId,
+    }));
+    const fleetReceipt = Object.freeze({
+      actualMachineId: 'brain-1',
+      executionTransport: 'fleet-worker',
+      remoteJobId: 'fleet-job-2',
+      attestationStatus: 'verified',
+      containerId: null,
+      jobId: 'fleet-job-2',
+    });
+    deps.launcher.prepare = vi.fn(async () => fleetReceipt);
+    deps.launcher.start = vi.fn();
+    deps.launcher.launch.mockResolvedValueOnce(fleetReceipt);
+    deps.attemptStore.recordLaunchReceipt.mockRejectedValueOnce(
+      new Error('receipt postgres unavailable'),
+    );
+    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cancelled' });
+
+    await expect(createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate' },
+    })).rejects.toThrow('launch_receipt_persist_failed');
+
+    expect(deps.launcher.start).not.toHaveBeenCalled();
+    expect(deps.launcher.prepare).toHaveBeenCalledOnce();
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
+    expect(deps.launcher.cancel).toHaveBeenCalledWith({
+      attempt: expect.objectContaining({
+        id: attemptId,
+        lease_owner: 'dispatcher-test:4242',
+        lease_generation: 0,
+      }),
+      target: { provider: 'codex', account: null, machine: 'brain-1' },
+      launchReceipt: fleetReceipt,
+    });
+    expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
+      code: 'launch_receipt_persist_failed',
+      message: expect.stringContaining('receipt postgres unavailable'),
+    }, {
+      leaseOwner: 'dispatcher-test:4242',
+      leaseGeneration: 0,
+    });
+  });
+
+  it('fenced-fails and exact-cancels a Fleet Attempt when start fails', async () => {
+    const deps = makeDeps();
+    deps.resolveWorkspaceSpec = vi.fn(async () => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: 'cp-two-phase-start-failure',
+      expected_head_sha: null,
+      mode: 'read-write',
+      run_id: runId,
+      attempt_id: attemptId,
+    }));
+    const fleetReceipt = Object.freeze({
+      actualMachineId: 'brain-1',
+      executionTransport: 'fleet-worker',
+      remoteJobId: 'fleet-job-3',
+      attestationStatus: 'verified',
+      containerId: null,
+      jobId: 'fleet-job-3',
+    });
+    deps.launcher.prepare = vi.fn(async () => fleetReceipt);
+    deps.launcher.start = vi.fn(async () => {
+      throw new Error('remote_bridge_start_http_503');
+    });
+    deps.launcher.launch.mockResolvedValueOnce(fleetReceipt);
+    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cancelled' });
+
+    await expect(createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate' },
+    })).rejects.toThrow('remote_bridge_start_http_503');
+
+    expect(deps.attemptStore.recordLaunchReceipt).toHaveBeenCalledOnce();
+    expect(deps.launcher.cancel).toHaveBeenCalledWith({
+      attempt: expect.objectContaining({
+        id: attemptId,
+        lease_owner: 'dispatcher-test:4242',
+        lease_generation: 0,
+      }),
+      target: { provider: 'codex', account: null, machine: 'brain-1' },
+      launchReceipt: fleetReceipt,
+    });
+    expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
+      code: 'launch_start_failed',
+      message: 'remote_bridge_start_http_503',
+      failureClass: 'infrastructure_blocked',
+    }, {
+      leaseOwner: 'dispatcher-test:4242',
+      leaseGeneration: 0,
+    });
+  });
+
   it('assigns a deterministic planner Git handoff branch owned by task, run, and hop', async () => {
     const deps = makeDeps();
 

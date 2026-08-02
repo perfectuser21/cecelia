@@ -187,6 +187,61 @@ function resolvesWithin(promise, timeoutMs) {
 }
 
 describe('remote Bridge launch', () => {
+  it('prepares through the two-phase endpoint and verifies the attested receipt', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const transport = createTransport({ fetchFn });
+
+    expect(typeof transport.prepare).toBe('function');
+    await expect(transport.prepare(launchInput())).resolves.toEqual({
+      jobId: 'job-1',
+      actualMachineId: MACHINE,
+      executionTransport: 'fleet-worker',
+      remoteJobId: 'job-1',
+      attestationStatus: 'verified',
+    });
+    expect(fetchFn).toHaveBeenCalledWith(
+      `${BRIDGE_URL}/harness/attempts/prepare`,
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('rejects a prepared receipt with an invalid machine attestation', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse({
+      attestation: '0'.repeat(64),
+    })));
+    const transport = createTransport({ fetchFn });
+
+    expect(typeof transport.prepare).toBe('function');
+    await expect(transport.prepare(launchInput())).rejects.toThrow(
+      'remote_bridge_attestation_invalid',
+    );
+  });
+
+  it('starts the exact Attempt with only its lease identity', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(200, {
+      status: 'running',
+      attempt_id: 'attempt-1',
+      credential: 'must-not-cross',
+    }));
+    const transport = createTransport({ fetchFn });
+
+    expect(typeof transport.start).toBe('function');
+    await expect(transport.start(operationInput('start'))).resolves.toEqual({
+      status: 'running',
+      attempt_id: 'attempt-1',
+    });
+    expect(fetchFn).toHaveBeenCalledWith(
+      `${BRIDGE_URL}/harness/attempts/attempt-1/start`,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          lease_owner: 'dispatcher-1',
+          lease_generation: 3,
+        }),
+      }),
+    );
+  });
+
   it('posts the allowlisted payload with bearer authentication and verifies the receipt', async () => {
     const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
     const transport = createTransport({ fetchFn });
