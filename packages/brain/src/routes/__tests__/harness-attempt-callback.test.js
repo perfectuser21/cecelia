@@ -1101,6 +1101,176 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     );
   });
 
+  describe('Generator 字符串 artifact 里的 PR URL', () => {
+    const generatorBranch = `cp-fleet-generator-${attemptId.slice(0, 8)}`;
+    const prUrl = 'https://github.com/perfectuser21/zenithjoy-workspace/pull/1578';
+
+    function stubGeneratorAttempt() {
+      mocks.store.getById.mockResolvedValue({
+        ...attempt,
+        role: 'generator',
+        task_bundle: {
+          inputs: {
+            workspace_spec: {
+              repo: 'perfectuser21/zenithjoy-workspace',
+              branch: generatorBranch,
+            },
+          },
+        },
+      });
+      mocks.pool.query.mockImplementation(async (sql) => {
+        if (String(sql).includes('FROM initiative_runs r')) {
+          return {
+            rows: [{
+              pr_url: null,
+              task_id: attemptId,
+              payload: { base_repo: 'perfectuser21/zenithjoy-workspace' },
+            }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 1 };
+      });
+    }
+
+    function generatorCallback(artifacts) {
+      return postCallback(app, { ...validResult, artifacts, decision: null });
+    }
+
+    // 生产 run a75ccbbf：Generator 用字符串数组回报了真实 PR #1578，Brain 只认结构化
+    // artifact，pr_url 没被投影，状态机误判 no_pr。字符串必须被候选化并走同一条服务端校验。
+    it('合法字符串 PR URL 经服务端校验后规范化为结构化 verified artifact', async () => {
+      const headSha = 'c'.repeat(40);
+      stubGeneratorAttempt();
+      const resolveIdentity = vi.fn(async () => ({
+        head_sha: headSha,
+        head_ref: generatorBranch,
+      }));
+      app.set('kernelPrIdentityResolver', resolveIdentity);
+
+      const response = await generatorCallback([
+        prUrl,
+        'Red commit: 5c7a7740',
+        'Green commit: 7629efe6',
+      ]);
+
+      expect(response.status).toBe(200);
+      expect(resolveIdentity).toHaveBeenCalledWith(prUrl);
+      expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          result: expect.objectContaining({
+            artifacts: [
+              {
+                type: 'pull_request',
+                url: prUrl,
+                head_sha: headSha,
+                head_ref: generatorBranch,
+                verification_status: 'verified',
+                normalized_from: 'string_artifact',
+              },
+              'Red commit: 5c7a7740',
+              'Green commit: 7629efe6',
+            ],
+          }),
+        }),
+      );
+    });
+
+    it('别的仓库的字符串 PR URL 不能成为本 run 的权威 PR', async () => {
+      stubGeneratorAttempt();
+      const resolveIdentity = vi.fn(async () => ({
+        head_sha: 'c'.repeat(40),
+        head_ref: generatorBranch,
+      }));
+      app.set('kernelPrIdentityResolver', resolveIdentity);
+
+      const response = await generatorCallback([
+        'https://github.com/attacker/other-repo/pull/1578',
+      ]);
+
+      expect(response.status).toBe(200);
+      expect(resolveIdentity).not.toHaveBeenCalled();
+      expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          result: expect.objectContaining({
+            artifacts: [{
+              type: 'unverified_pull_request_claim',
+              url: 'https://github.com/attacker/other-repo/pull/1578',
+              verification_status: 'repository_mismatch',
+              normalized_from: 'string_artifact',
+            }],
+          }),
+        }),
+      );
+    });
+
+    it('同仓库但分支对不上的字符串 PR URL fail closed', async () => {
+      stubGeneratorAttempt();
+      app.set('kernelPrIdentityResolver', vi.fn(async () => ({
+        head_sha: 'c'.repeat(40),
+        head_ref: 'cp-unrelated-task',
+      })));
+
+      const response = await generatorCallback([prUrl]);
+
+      expect(response.status).toBe(200);
+      expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          result: expect.objectContaining({
+            artifacts: [{
+              type: 'unverified_pull_request_claim',
+              url: prUrl,
+              verification_status: 'branch_mismatch',
+              normalized_from: 'string_artifact',
+            }],
+          }),
+        }),
+      );
+    });
+
+    it('形状不合法的字符串 PR URL 不做任何猜测式改写', async () => {
+      stubGeneratorAttempt();
+      const resolveIdentity = vi.fn();
+      app.set('kernelPrIdentityResolver', resolveIdentity);
+
+      const response = await generatorCallback([
+        `${prUrl}?diff=split`,
+        'Red commit: 5c7a7740',
+      ]);
+
+      expect(response.status).toBe(200);
+      expect(resolveIdentity).not.toHaveBeenCalled();
+      expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          result: expect.objectContaining({
+            artifacts: [
+              {
+                type: 'unverified_pull_request_claim',
+                url: `${prUrl}?diff=split`,
+                verification_status: 'invalid_url',
+                normalized_from: 'string_artifact',
+              },
+              'Red commit: 5c7a7740',
+            ],
+          }),
+        }),
+      );
+    });
+
+    it('字符串 PR URL 的校验不可用时整条 callback 保持可重试', async () => {
+      stubGeneratorAttempt();
+      app.set('kernelPrIdentityResolver', vi.fn(async () => {
+        throw new Error('GitHub unavailable');
+      }));
+
+      const response = await generatorCallback([prUrl]);
+
+      expect(response.status).toBe(503);
+      expect(response.body.error).toBe('pull_request_verification_unavailable');
+      expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+    });
+  });
+
   it('相同原始 callback 重放不再查询变化中的 GitHub head', async () => {
     const claimDigest = 'sha256:terminal-claim';
     const terminalAttempt = {
