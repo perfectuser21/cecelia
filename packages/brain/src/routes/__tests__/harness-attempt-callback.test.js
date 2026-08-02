@@ -1271,6 +1271,192 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     });
   });
 
+  // 生产 run d9785137 / Attempt 3aa00156：任务 payload.base_sha=0dc4e3c0 是盲测冻结
+  // 基线，Generator 却把工作区 rebase 到已含对照候选 #1577 的 main。服务端当时只校验
+  // repo/branch/head 存在，于是被污染的 PR 仍被投影成 verified。
+  describe('冻结基线 lineage 服务端校验', () => {
+    const generatorBranch = `cp-fleet-generator-${attemptId.slice(0, 8)}`;
+    const prUrl = 'https://github.com/perfectuser21/zenithjoy-workspace/pull/1578';
+    const frozenStartSha = '0dc4e3c07ff19a0ac95440723986bf3cb78580b2';
+    const contaminatedHeadSha = '676fed7de12023d355deac7849af8a525ae53f8d';
+    const cleanHeadSha = '7629efe6cef4817a3498b8c10a8b2f8cfd9f31f8';
+
+    function stubFrozenGeneratorAttempt(frozen = true) {
+      mocks.store.getById.mockResolvedValue({
+        ...attempt,
+        role: 'generator',
+        task_bundle: {
+          inputs: {
+            workspace_spec: {
+              repo: 'perfectuser21/zenithjoy-workspace',
+              branch: generatorBranch,
+              base_sha: frozenStartSha,
+              expected_head_sha: null,
+              frozen_baseline: frozen,
+            },
+          },
+        },
+      });
+      mocks.pool.query.mockImplementation(async (sql) => {
+        if (String(sql).includes('FROM initiative_runs r')) {
+          return {
+            rows: [{
+              pr_url: null,
+              task_id: attemptId,
+              payload: { base_repo: 'perfectuser21/zenithjoy-workspace' },
+            }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 1 };
+      });
+    }
+
+    function generatorCallback() {
+      return postCallback(app, {
+        ...validResult,
+        artifacts: [{ type: 'pull_request', url: prUrl }],
+        decision: null,
+      });
+    }
+
+    it('冻结任务的 PR head 脱离 start SHA 血统时 fail closed，不投影 PR', async () => {
+      stubFrozenGeneratorAttempt();
+      app.set('kernelPrIdentityResolver', vi.fn(async () => ({
+        head_sha: contaminatedHeadSha,
+        head_ref: generatorBranch,
+      })));
+      const resolveLineage = vi.fn(async () => ({ is_ancestor: false }));
+      app.set('kernelCommitLineageResolver', resolveLineage);
+
+      const response = await generatorCallback();
+
+      expect(response.status).toBe(200);
+      expect(resolveLineage).toHaveBeenCalledWith({
+        repo: 'perfectuser21/zenithjoy-workspace',
+        ancestor: frozenStartSha,
+        descendant: contaminatedHeadSha,
+      });
+      const [[recorded]] = mocks.store.recordCallbackTerminal.mock.calls;
+      expect(recorded.result.artifacts).toEqual([
+        expect.objectContaining({
+          type: 'unverified_pull_request_claim',
+          verification_status: 'frozen_baseline_violation',
+        }),
+      ]);
+      expect(recorded.result.artifacts).not.toContainEqual(
+        expect.objectContaining({ type: 'pull_request' }),
+      );
+    });
+
+    it('合法地在 start SHA 之上追加提交的冻结 PR 仍被投影为 verified', async () => {
+      stubFrozenGeneratorAttempt();
+      app.set('kernelPrIdentityResolver', vi.fn(async () => ({
+        head_sha: cleanHeadSha,
+        head_ref: generatorBranch,
+      })));
+      app.set('kernelCommitLineageResolver', vi.fn(async () => ({ is_ancestor: true })));
+
+      const response = await generatorCallback();
+
+      expect(response.status).toBe(200);
+      const [[recorded]] = mocks.store.recordCallbackTerminal.mock.calls;
+      expect(recorded.result.artifacts).toEqual([
+        expect.objectContaining({
+          type: 'pull_request',
+          head_sha: cleanHeadSha,
+          verification_status: 'verified',
+        }),
+      ]);
+    });
+
+    it('普通 dev（未冻结）不查血统，行为零回归', async () => {
+      stubFrozenGeneratorAttempt(false);
+      app.set('kernelPrIdentityResolver', vi.fn(async () => ({
+        head_sha: contaminatedHeadSha,
+        head_ref: generatorBranch,
+      })));
+      const resolveLineage = vi.fn(async () => ({ is_ancestor: false }));
+      app.set('kernelCommitLineageResolver', resolveLineage);
+
+      const response = await generatorCallback();
+
+      expect(response.status).toBe(200);
+      expect(resolveLineage).not.toHaveBeenCalled();
+      const [[recorded]] = mocks.store.recordCallbackTerminal.mock.calls;
+      expect(recorded.result.artifacts).toEqual([
+        expect.objectContaining({
+          type: 'pull_request',
+          verification_status: 'verified',
+        }),
+      ]);
+    });
+
+    it('血统校验不可用时整条 callback 保持可重试，绝不放行', async () => {
+      stubFrozenGeneratorAttempt();
+      app.set('kernelPrIdentityResolver', vi.fn(async () => ({
+        head_sha: cleanHeadSha,
+        head_ref: generatorBranch,
+      })));
+      app.set('kernelCommitLineageResolver', vi.fn(async () => {
+        throw new Error('GitHub compare unavailable');
+      }));
+
+      const response = await generatorCallback();
+
+      expect(response.status).toBe(503);
+      expect(response.body.error).toBe('pull_request_verification_unavailable');
+      expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+    });
+
+    it('冻结任务缺少可观测 start SHA 时不得投影 PR', async () => {
+      mocks.store.getById.mockResolvedValue({
+        ...attempt,
+        role: 'generator',
+        task_bundle: {
+          inputs: {
+            workspace_spec: {
+              repo: 'perfectuser21/zenithjoy-workspace',
+              branch: generatorBranch,
+              base_sha: null,
+              expected_head_sha: null,
+              frozen_baseline: true,
+            },
+          },
+        },
+      });
+      mocks.pool.query.mockImplementation(async (sql) => {
+        if (String(sql).includes('FROM initiative_runs r')) {
+          return {
+            rows: [{
+              pr_url: null,
+              task_id: attemptId,
+              payload: { base_repo: 'perfectuser21/zenithjoy-workspace' },
+            }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 1 };
+      });
+      app.set('kernelPrIdentityResolver', vi.fn(async () => ({
+        head_sha: cleanHeadSha,
+        head_ref: generatorBranch,
+      })));
+      app.set('kernelCommitLineageResolver', vi.fn(async () => ({ is_ancestor: true })));
+
+      const response = await generatorCallback();
+
+      expect(response.status).toBe(200);
+      const [[recorded]] = mocks.store.recordCallbackTerminal.mock.calls;
+      expect(recorded.result.artifacts).toEqual([
+        expect.objectContaining({
+          type: 'unverified_pull_request_claim',
+          verification_status: 'frozen_baseline_unverifiable',
+        }),
+      ]);
+    });
+  });
+
   it('相同原始 callback 重放不再查询变化中的 GitHub head', async () => {
     const claimDigest = 'sha256:terminal-claim';
     const terminalAttempt = {

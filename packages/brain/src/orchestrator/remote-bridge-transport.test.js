@@ -230,6 +230,24 @@ describe('remote Bridge launch', () => {
     expect(requestBody.provider_spec).not.toHaveProperty('environment');
   });
 
+  // The frozen-baseline invariant is worthless if it is dropped in transit to
+  // the Worker: the Worker is the only component that can bind it to a
+  // server-observed checkout SHA before the Provider ever runs.
+  it('forwards the frozen baseline invariant to the Worker', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const transport = createTransport({ fetchFn });
+    const input = launchInput();
+    input.bundle.inputs.workspace_spec = {
+      ...input.bundle.inputs.workspace_spec,
+      frozen_baseline: true,
+    };
+
+    await transport.launch(input);
+
+    const requestBody = JSON.parse(fetchFn.mock.calls[0][1].body);
+    expect(requestBody.workspace_spec).toMatchObject({ frozen_baseline: true });
+  });
+
   it('rejects invalid launch timeouts before credentials or Worker transport', async () => {
     const invalidCases = [
       ['codex', undefined],

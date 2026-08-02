@@ -274,6 +274,106 @@ describe('production WorkspaceSpec resolution', () => {
     expect(resolveRepoHead).not.toHaveBeenCalled();
   });
 
+  // Production run d9785137 / Attempt 3aa00156: the task pinned
+  // payload.base_sha=0dc4e3c0 for a blind A/B comparison, but the resolved
+  // WorkspaceSpec carried no evidence that the baseline was pinned. Every layer
+  // below the dispatcher therefore treated a latest-main rebase as legal.
+  it('marks a task-pinned baseline as frozen so lineage can be enforced downstream', async () => {
+    const resolveRepoHead = vi.fn();
+    const resolveWorkspaceSpec = createWorkspaceSpecResolver({ resolveRepoHead });
+    const pinnedSha = 'f'.repeat(40);
+
+    const resolved = await resolveWorkspaceSpec({
+      role: 'generator',
+      readOnly: false,
+      attemptId: ATTEMPT_ID,
+      ctx: {
+        runId: RUN_ID,
+        observed: {
+          task: {
+            payload: {
+              base_repo: 'perfectuser21/zenithjoy-workspace',
+              base_sha: pinnedSha,
+            },
+          },
+        },
+      },
+      bundle: { inputs: {} },
+    });
+
+    expect(resolved).toMatchObject({
+      base_sha: pinnedSha,
+      frozen_baseline: true,
+    });
+    expect(resolveRepoHead).not.toHaveBeenCalled();
+  });
+
+  it('keeps ordinary dev on latest main with the frozen invariant disabled', async () => {
+    const resolveRepoHead = vi.fn(async () => BASE_SHA);
+    const resolveWorkspaceSpec = createWorkspaceSpecResolver({ resolveRepoHead });
+
+    const resolved = await resolveWorkspaceSpec({
+      role: 'generator',
+      readOnly: false,
+      attemptId: ATTEMPT_ID,
+      ctx: {
+        runId: RUN_ID,
+        observed: {
+          task: { payload: { base_repo: 'perfectuser21/cecelia' } },
+        },
+      },
+      bundle: { inputs: {} },
+    });
+
+    expect(resolved).toMatchObject({
+      base_sha: BASE_SHA,
+      frozen_baseline: false,
+    });
+    expect(resolveRepoHead).toHaveBeenCalledWith('perfectuser21/cecelia');
+  });
+
+  it('keeps the frozen invariant on a generator-fix resuming the pinned candidate', async () => {
+    const resolveWorkspaceSpec = createWorkspaceSpecResolver({
+      resolveRepoHead: vi.fn(),
+    });
+    const prHead = 'e'.repeat(40);
+
+    const resolved = await resolveWorkspaceSpec({
+      action: 'spawn:generator-fix',
+      role: 'generator',
+      readOnly: false,
+      attemptId: ATTEMPT_ID,
+      ctx: {
+        runId: RUN_ID,
+        observed: {
+          task: {
+            payload: {
+              base_repo: 'perfectuser21/zenithjoy-workspace',
+              base_sha: BASE_SHA,
+            },
+          },
+        },
+      },
+      bundle: {
+        inputs: {
+          pr_branch: 'cp-08010101-frozen-candidate',
+          pr_head_sha: prHead,
+        },
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      base_sha: prHead,
+      expected_head_sha: prHead,
+      frozen_baseline: true,
+    });
+  });
+
+  it('rejects a non-boolean frozen_baseline instead of coercing it', () => {
+    expect(() => parseWorkspaceSpec(validSpec({ frozen_baseline: 'true' })))
+      .toThrow(/frozen_baseline/);
+  });
+
   it('fails closed for a repository outside the Brain-owned map', async () => {
     const resolveWorkspaceSpec = createWorkspaceSpecResolver({
       resolveRepoHead: vi.fn(async () => BASE_SHA),
