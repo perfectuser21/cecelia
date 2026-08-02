@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.267.171
+**版本**: 1.267.172
+
+## Fleet Worker Commander role admission
+
+- Fleet Worker 的目标角色 allow-list 接受规范 `commander`，对齐 Hybrid Kernel 首跳
+  已经生成的 Commander Attempt 与 TaskBundle 合同。
+- 未知角色仍在凭据消费、workspace materialization 和 Docker launch 前拒绝；不改变
+  Provider、GitHub credential、机器或 pinned Runner digest 边界。
+- 回退到 `1.267.171` 前必须 drain active `hybrid` run，否则后续 Commander Attempt
+  会重新被 Worker admission 以 HTTP 400 拒绝。
 
 ## Commander auth failure status redaction boundary
 

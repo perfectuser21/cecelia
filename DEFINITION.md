@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.171
+**Brain 版本**: 1.267.172
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.172 — Fleet Worker Commander role admission
+
+- Fleet Worker 的规范角色合同新增 `commander`，使 Hybrid run 的首个 Commander
+  Attempt 能通过 Worker admission 并进入受控 workspace / pinned Runner 执行。
+- 仍只接受 Commander 与既有七个 Harness 角色；未知角色继续在凭据、Git 和 Docker
+  副作用前 fail closed，机器、Provider、模型与凭据边界不变。
+- 回退到 `1.267.171` 会使新 Hybrid run 在首个 Commander Attempt 返回 HTTP 400；
+  回退前必须 drain active `hybrid` run。
 
 ## Brain 1.267.171 — Commander auth failure status redaction boundary
 
