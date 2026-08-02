@@ -2,15 +2,26 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-03-05
+**最后更新**: 2026-08-02
 
 
 
-**Brain 版本**: 1.267.174
+**Brain 版本**: 1.267.175
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.175 — Kernel repository discovery and bounded workspace cleanup
+
+- Kernel Ground Truth 现在按 task `base_repo` 查询 proposal refs；跨仓库任务不再误查
+  Brain `origin`，因此已发布 proposal 能合法推进到 Reviewer。
+- Fleet Worker `1.267.91` 为受控 workspace 根补齐 `_cecelia` 继承 ACL，并仅对经过
+  attempt UUID 与受控根双校验的已知 worktree 清理错误执行精确删除；未知错误仍隔离。
+- 三节点 Runner digest 保持
+  `sha256:5cd1faa1d29b1d158c39773ec94fc18b5d76e2db0c4139ca56af3c03769c9552`；
+  回退前必须 drain active Hybrid run，否则会恢复跨仓库 proposal 误判与 quarantine
+  无界增长。
 
 ## Brain 1.267.174 — Runner Commander complete strict response schema
 
