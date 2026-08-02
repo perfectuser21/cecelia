@@ -1,0 +1,115 @@
+# Kernel Fleet Two-Phase Launch Design
+
+**Status:** Owner approved on 2026-08-03  
+**Scope:** One infrastructure-only PR; no Phase 4B/4C/4D product work and no business-PR merge
+
+## Problem
+
+Production run `92a67d1a-2c3a-4819-9930-09d841f31bd8` exposed a launch/callback race on Reviewer attempt `863fdc22-ad3e-4e89-a8ce-6323cf9b9917`:
+
+1. Brain created the attempt and called Fleet Worker launch.
+2. Fleet Worker created and started the Runner before Brain durably stored the attested launch receipt.
+3. The Runner completed and posted its terminal callback.
+4. Brain rejected the callback with `launch_receipt_unconfirmed` because `execution_transport`, `actual_machine_id`, and `remote_job_id` were still null.
+5. Fleet Worker removed the terminal container and state, while Brain retained an expired `running` attempt.
+
+The failure is independent of Reviewer skill quality or model selection. The protocol permits execution before the control plane has established the identity needed to accept its result.
+
+## Invariants
+
+- A Runner must not start until Brain has durably bound the attempt to an attested Fleet Worker receipt.
+- Callback validation remains fail-closed; an early callback is not trusted or silently buffered without launch identity.
+- Prepare, start, inspect, cancel, and terminal operations are authenticated, lease-fenced, exact-attempt scoped, and idempotent.
+- A prepared attempt that is never started is recoverable and removable without running provider code.
+- An expired Brain attempt whose Worker state is missing becomes an explicit infrastructure terminal result and may retry; it cannot remain `running` forever.
+- Tick remains unnecessary for convergence of a dedicated Kernel controller.
+- No credential is stored in the Brain database, Worker receipt, argv, logs, or long-lived Xi'an filesystem.
+
+## Considered Approaches
+
+### A. Two-phase prepare/start protocol — selected
+
+`prepare` creates the disposable workspace, runtime resources, credential envelopes, and stopped Runner container, persists Worker state, and returns an attested receipt. Brain stores the receipt, then calls `start`. Only `start` may run the container and deliver FIFO credentials.
+
+This removes the race structurally and gives crash recovery an explicit prepared state.
+
+### B. Durable early-callback inbox — rejected
+
+Brain could accept and buffer callbacks before receipt persistence. That leaves the callback unverifiable until a receipt arrives and does not solve a permanently lost launch response. It also creates a second result state machine.
+
+### C. Longer launch timeout or callback retries — rejected
+
+This only changes probability. A fast Runner, slow FIFO, network interruption, or Brain restart can still produce the same ordering.
+
+## Protocol
+
+### Prepare
+
+Brain sends `POST /harness/attempts/prepare` with the current path-free launch body. Fleet Worker:
+
+1. validates request, target, credentials, and workspace specification;
+2. prepares the workspace and isolated PostgreSQL resource;
+3. creates, but does not start, the Runner container;
+4. persists Worker state with `status=prepared` and the exact lease generation;
+5. returns `202` with the existing attested receipt fields.
+
+An exact duplicate prepare returns the same receipt. A conflicting lease or request returns `409`.
+
+### Receipt commit
+
+Brain validates the attestation and atomically writes `actual_machine_id`, `execution_transport=fleet-worker`, `remote_job_id`, and `machine_attestation_status=verified` to the attempt row. No callback is accepted before this commit.
+
+### Start
+
+Brain sends `POST /harness/attempts/:attemptId/start` with lease owner and generation. Fleet Worker atomically changes `prepared → starting`, starts the exact stopped container, delivers transient GitHub/Codex FIFO credentials, changes Worker state to `running`, and installs the existing terminal waiter.
+
+Start is idempotent for `starting/running/terminal`; stale lease generations are rejected. If start fails, Worker cleans the exact attempt and Brain records `launch_start_failed` as infrastructure failure.
+
+### Terminal callback
+
+The existing callback contract remains strict. Because start occurs only after receipt commit, `launch_receipt_unconfirmed` cannot occur for a protocol-compliant Runner. Existing cleanup receipt, credential evidence, lease fencing, and append-only decision logging remain unchanged.
+
+## Expired Attempt Recovery
+
+The Kernel loop must not treat every `starting/running` row as live forever. When its lease is expired:
+
+1. inspect the attested Worker target using the exact attempt ID;
+2. if Worker reports `prepared`, reclaim the lease and issue idempotent start;
+3. if Worker reports `running`, reclaim and continue observing the same attempt;
+4. if Worker reports `missing`, atomically fail the attempt with `worker_attempt_missing_after_lease`, append the normal callback-equivalent infrastructure decision evidence, and let derive retry the same role under its existing cap;
+5. if Worker inspection is unavailable, record infrastructure BLOCKED/backoff without entering Generator fix.
+
+The production R4 orphan is preserved as evidence and recovered by this mechanism; no fabricated callback or verdict is written.
+
+## File Boundaries
+
+- `packages/brain/scripts/fleet-worker/attempt-runner.cjs`: split prepare from start and persist Worker lifecycle state.
+- `packages/brain/scripts/fleet-worker/fleet-worker.cjs`: expose authenticated prepare/start routes.
+- `packages/brain/src/orchestrator/remote-bridge-transport.js`: add prepare/start transport operations and validate receipts.
+- `packages/brain/src/orchestrator/production-transport.js`: expose the two-phase interface.
+- `packages/brain/src/orchestrator/dispatcher.js`: commit receipt between prepare and start.
+- `packages/brain/src/orchestrator/loop.js` and a focused helper if needed: expired attempt reconciliation.
+- Adjacent unit/integration tests only.
+- `packages/brain/package.json`, lockfile, and `packages/brain/DEFINITION.md`: synchronized Brain version and behavior definition.
+
+## Verification
+
+Red tests must reproduce both failures:
+
+1. a Runner is not started before `recordLaunchReceipt` resolves;
+2. an expired Brain attempt with missing Worker state does not remain `running`.
+
+Green verification covers:
+
+- prepare receipt precedes start call;
+- callback after start sees confirmed launch identity;
+- duplicate prepare/start are idempotent;
+- receipt persistence failure cancels a prepared attempt without starting it;
+- stale lease and conflicting request are rejected;
+- missing Worker state terminalizes as infrastructure failure and retries within existing caps;
+- current callback cleanup, credential, attestation, and infrastructure-backoff suites remain green;
+- a real US M4 Kernel attempt crosses Reviewer, Generator, Evaluator, Judge, and Reporter with exact-SHA evidence.
+
+## Rollout and Stop Condition
+
+Deploy Brain and Fleet Worker on US M4 first, keep tick off, and rerun the blocked real Kernel chain. Do not merge the business PR until Evaluator and Independent Judge both bind PASS to the same final SHA. Stop after the successful Kernel stage boundary; do not claim Phase 5 or the full provider-neutral PRD complete.
