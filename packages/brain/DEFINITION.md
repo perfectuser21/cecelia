@@ -103,7 +103,7 @@
   再交给既有 `commander-directive/v1` Zod 合同；action、evidence、Provider、凭据、
   workspace、Fleet admission 与 callback 边界不变。
 - 三节点统一固定 Runner
-  `sha256:5cd1faa1d29b1d158c39773ec94fc18b5d76e2db0c4139ca56af3c03769c9552`。
+  `sha256:0ac225b0878550b6fbbb1f3b960be392630e52139df3fab761f4d5fe5cc4f721`。
 - 回退：先 drain active Hybrid run，再恢复 Brain `1.267.173` 与上一 Runner digest；
   旧组合会在首个 Commander Attempt 恢复嵌套 `required` 不完整的
   `invalid_json_schema`。

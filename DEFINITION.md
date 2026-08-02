@@ -71,7 +71,7 @@
 - Fleet Worker `1.267.91` 为受控 workspace 根补齐 `_cecelia` 继承 ACL，并仅对经过
   attempt UUID 与受控根双校验的已知 worktree 清理错误执行精确删除；未知错误仍隔离。
 - 三节点 Runner digest 保持
-  `sha256:5cd1faa1d29b1d158c39773ec94fc18b5d76e2db0c4139ca56af3c03769c9552`；
+  `sha256:0ac225b0878550b6fbbb1f3b960be392630e52139df3fab761f4d5fe5cc4f721`；
   回退前必须 drain active Hybrid run，否则会恢复跨仓库 proposal 误判与 quarantine
   无界增长。
 
@@ -84,7 +84,7 @@
   `commander-directive/v1` Zod 合同；不放宽 action、evidence、Provider、凭据、workspace
   或 callback 边界。
 - 三节点固定 Runner
-  `sha256:5cd1faa1d29b1d158c39773ec94fc18b5d76e2db0c4139ca56af3c03769c9552`；
+  `sha256:0ac225b0878550b6fbbb1f3b960be392630e52139df3fab761f4d5fe5cc4f721`；
   回退到 `1.267.173`/上一 digest 前必须 drain active `hybrid` run，旧组合会在首个
   Commander Attempt 恢复嵌套 `required` 不完整的 `invalid_json_schema`。
 
