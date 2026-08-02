@@ -490,6 +490,41 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     );
   });
 
+  it('接受严格成对的 Codex turn.completed 恢复收据', async () => {
+    mocks.store.getById.mockResolvedValue(fleetAttempt());
+
+    const response = await postCallback(app, fleetResult({
+      cli_exit_code: 1,
+      terminal_receipt: 'turn.completed',
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          provider_metadata: expect.objectContaining({
+            cli_exit_code: 1,
+            terminal_receipt: 'turn.completed',
+          }),
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    ['zero CLI exit', { cli_exit_code: 0, terminal_receipt: 'turn.completed' }],
+    ['unknown receipt', { cli_exit_code: 1, terminal_receipt: 'agent_message' }],
+    ['missing receipt pair', { cli_exit_code: 1 }],
+  ])('拒绝 Fleet Codex 的无效终态恢复证据：%s', async (_case, metadata) => {
+    mocks.store.getById.mockResolvedValue(fleetAttempt());
+
+    const response = await postCallback(app, fleetResult(metadata));
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe('credential_callback_invalid');
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['missing credential ref', { credential_ref: undefined }],
     ['invalid credential ref', { credential_ref: 'not-a-uuid' }],

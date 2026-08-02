@@ -457,7 +457,10 @@ finalize_proposer_output() {
   local branch="${PROPOSE_BRANCH:-}"
   local sprint_dir="${SPRINT_DIR:-}"
   local task_short=""
+  local run_id=""
+  local run_short=""
   local round=""
+  local task_bundle_file="${HARNESS_TASK_BUNDLE_FILE:-}"
   local workspace_abs=""
   local sprint_abs=""
   local brain_result_file=""
@@ -468,7 +471,13 @@ finalize_proposer_output() {
     return 1
   fi
   task_short="${task_id:0:8}"
-  if [[ ! "$branch" =~ ^cp-harness-propose-r([0-9]+)-${task_short}-a[0-9]+$ ]]; then
+  run_id="$(jq -r '.task_bundle.run_id // empty' "$task_bundle_file" 2>/dev/null)" || return 1
+  if [[ ! "$run_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+    echo "[entrypoint] proposer finalizer rejected invalid run id" >&2
+    return 1
+  fi
+  run_short="${run_id:0:8}"
+  if [[ ! "$branch" =~ ^cp-harness-propose-r([0-9]+)-${task_short}-r${run_short}-a[0-9]+$ ]]; then
     echo "[entrypoint] proposer finalizer rejected branch outside task scope: $branch" >&2
     return 1
   fi
@@ -477,6 +486,23 @@ finalize_proposer_output() {
   if [[ "$sprint_dir" != sprints/* || "$sprint_dir" == *".."* \
       || "$sprint_dir" == *$'\n'* || "$sprint_dir" == *$'\r'* ]]; then
     echo "[entrypoint] proposer finalizer rejected sprint path: $sprint_dir" >&2
+    return 1
+  fi
+  if [[ ! -f "$task_bundle_file" ]] || ! jq -e \
+    --arg task "$task_id" \
+    --arg run "$run_id" \
+    --arg sprint "$sprint_dir" \
+    --arg branch "$branch" \
+    --argjson round "$round" \
+    '.task_bundle.role == "proposer"
+     and .task_bundle.run_id == $run
+     and .task_bundle.inputs.task_id == $task
+     and .task_bundle.inputs.sprint_dir == $sprint
+     and .task_bundle.inputs.propose_branch == $branch
+     and (.task_bundle.inputs.contract_round | type) == "number"
+     and .task_bundle.inputs.contract_round == $round' \
+    "$task_bundle_file" >/dev/null 2>&1; then
+    echo "[entrypoint] proposer finalizer rejected TaskBundle identity" >&2
     return 1
   fi
   workspace_abs="$(cd "$workspace" 2>/dev/null && pwd -P)" || {
@@ -555,6 +581,8 @@ finalize_planner_output() {
   local workspace="${WORKTREE_PATH:-$PWD}"
   local task_id="${CECELIA_TASK_ID:-}"
   local task_short=""
+  local run_id=""
+  local run_short=""
   local branch="${PLANNER_BRANCH:-}"
   local sprint_dir="${SPRINT_DIR:-}"
   local task_bundle_file="${HARNESS_TASK_BUNDLE_FILE:-}"
@@ -575,7 +603,13 @@ finalize_planner_output() {
     return 1
   fi
   task_short="${task_id:0:8}"
-  if [[ ! "$branch" =~ ^cp-harness-prd-${task_short}-a[1-9][0-9]*$ ]]; then
+  run_id="$(jq -r '.task_bundle.run_id // empty' "$task_bundle_file" 2>/dev/null)" || return 1
+  if [[ ! "$run_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+    echo "[entrypoint] planner finalizer rejected invalid run id" >&2
+    return 1
+  fi
+  run_short="${run_id:0:8}"
+  if [[ ! "$branch" =~ ^cp-harness-prd-${task_short}-r${run_short}-a[1-9][0-9]*$ ]]; then
     echo "[entrypoint] planner finalizer rejected branch outside task scope: $branch" >&2
     return 1
   fi
@@ -592,9 +626,11 @@ finalize_planner_output() {
 
   repo="$(jq -r \
     --arg task "$task_id" \
+    --arg run "$run_id" \
     --arg sprint "$sprint_dir" \
     --arg branch "$branch" \
     'if .task_bundle.role == "planner"
+        and .task_bundle.run_id == $run
         and .task_bundle.inputs.task_id == $task
         and .task_bundle.inputs.sprint_dir == $sprint
         and .task_bundle.inputs.planner_branch == $branch
@@ -1172,6 +1208,8 @@ normalize_provider_success() {
   local session_id="$6"
   local credential_ref="$7"
   local credential_copy_mutated="$8"
+  local cli_exit_code="${9:-}"
+  local terminal_receipt="${10:-}"
   local expected_output
   expected_output=$(jq -r '.task_bundle.expected_output // empty' "$task_bundle_file")
 
@@ -1182,6 +1220,8 @@ normalize_provider_success() {
       --arg session "$session_id" \
       --arg credential_ref "$credential_ref" \
       --argjson credential_copy_mutated "$credential_copy_mutated" \
+      --arg cli_exit_code "$cli_exit_code" \
+      --arg terminal_receipt "$terminal_receipt" \
       '(.
          | with_entries(select(.value != null))
          | if (.route? | type) == "object"
@@ -1203,6 +1243,9 @@ normalize_provider_success() {
          } + (if $credential_ref == "" then {} else {
            credential_ref: $credential_ref,
            credential_copy_mutated: $credential_copy_mutated
+         } end) + (if $cli_exit_code == "" then {} else {
+           cli_exit_code: ($cli_exit_code | tonumber),
+           terminal_receipt: $terminal_receipt
          } end))
        }' \
       "$result_file" > "$normalized_file"
@@ -1215,6 +1258,8 @@ normalize_provider_success() {
     --arg session "$session_id" \
     --arg credential_ref "$credential_ref" \
     --argjson credential_copy_mutated "$credential_copy_mutated" \
+    --arg cli_exit_code "$cli_exit_code" \
+    --arg terminal_receipt "$terminal_receipt" \
     '.contract_version = (.contract_version // "1.0")
      | .attempt_id = $attempt
      | .provider_metadata = ((.provider_metadata // {}) + {
@@ -1223,6 +1268,9 @@ normalize_provider_success() {
        } + (if $credential_ref == "" then {} else {
          credential_ref: $credential_ref,
          credential_copy_mutated: $credential_copy_mutated
+       } end) + (if $cli_exit_code == "" then {} else {
+         cli_exit_code: ($cli_exit_code | tonumber),
+         terminal_receipt: $terminal_receipt
        } end))' \
      "$result_file" > "$normalized_file"
 }
@@ -1304,6 +1352,59 @@ normalize_provider_failure() {
     '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"provider process failed",artifacts:[],checks:[],decision:null,error:{code:"provider_exit",message:$message,exit_code:$exit_code},provider_metadata:({provider:$provider,session_id:(if $session == "" then null else $session end)} + (if $credential_ref == "" then {} else {credential_ref:$credential_ref,credential_copy_mutated:$credential_copy_mutated} end))}' \
     > "$normalized_file"
 }
+
+# A Codex CLI diagnostic error can coexist with a successfully completed
+# primary turn. The CLI deliberately retains exit 1 in that case. Do not trust
+# the result file alone: require the protocol stream to end in turn.completed,
+# reject any turn.failed, and require its last agent message to equal the
+# independently written --output-last-message file.
+validate_codex_terminal_receipt() {
+  local stdout_file="$1"
+  local result_file="$2"
+
+  [[ -s "$stdout_file" && -s "$result_file" ]] || return 1
+  jq -e '
+    type == "object"
+    and (.status as $status
+      | (
+          (
+            ($status | type) == "string"
+            and (["completed","completed_with_concerns","needs_context","blocked"] | index($status)) != null
+            and (.summary | type) == "string"
+            and (.artifacts | type) == "array"
+            and (.checks | type) == "array"
+            and ((.decision | type) == "object" or .decision == null)
+            and ((.error | type) == "object" or .error == null)
+          )
+          or .schema == "commander-directive/v1"
+        )
+    )
+  ' "$result_file" >/dev/null 2>&1 || return 1
+
+  jq -Rse --slurpfile result "$result_file" '
+    (split("\n") | map(select(length > 0))) as $lines
+    | [$lines[] | fromjson?] as $events
+    | ($lines | length) == ($events | length)
+    and ($events | length) > 0
+    and ($events[-1].type == "turn.completed")
+    and any($events[]; .type == "thread.started")
+    and (any($events[]; .type == "turn.failed") | not)
+    and (
+      [$events[]
+       | select(.type == "item.completed" and .item.type == "agent_message")
+       | .item.text
+       | fromjson?]
+      | length
+    ) > 0
+    and (
+      [$events[]
+       | select(.type == "item.completed" and .item.type == "agent_message")
+       | .item.text
+       | fromjson?]
+      | last
+    ) == $result[0]
+  ' "$stdout_file" >/dev/null 2>&1
+}
 # attempt-timeout-contract:end
 # commander-provider-contract:end
 
@@ -1341,6 +1442,8 @@ run_provider_contract() {
   local provider="${CECELIA_EXECUTOR:-claude}"
   local provider_session_id=""
   local provider_exit=1
+  local provider_cli_exit_code=""
+  local terminal_receipt=""
   local heartbeat_pid=""
   local safe_line=""
   local commander_contract=false
@@ -1605,6 +1708,13 @@ run_provider_contract() {
     provider_exit=1
     printf '{"error":"unsupported provider: %s"}\n' "$provider" > "$STDOUT_FILE"
   fi
+  if [[ "$provider" == "codex" && $provider_exit -ne 0 && $provider_exit -ne 124 ]] \
+      && validate_codex_terminal_receipt "$STDOUT_FILE" "$result_file"; then
+    provider_cli_exit_code="$provider_exit"
+    terminal_receipt='turn.completed'
+    provider_exit=0
+    echo "[entrypoint] recovered completed Codex turn from CLI exit $provider_cli_exit_code" >&2
+  fi
   if ! verify_evaluator_evidence_capsule; then
     provider_exit=1
     printf '%s\n' '{"error":"github_evidence_capsule_tampered"}' >> "$STDOUT_FILE"
@@ -1660,7 +1770,9 @@ run_provider_contract() {
       "$provider" \
       "$provider_session_id" \
       "$CREDENTIAL_REF" \
-      "$CREDENTIAL_COPY_MUTATED"
+      "$CREDENTIAL_COPY_MUTATED" \
+      "$provider_cli_exit_code" \
+      "$terminal_receipt"
   else
     normalize_provider_failure \
       "$NORMALIZED_RESULT_FILE" \

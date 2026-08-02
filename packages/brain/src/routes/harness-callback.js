@@ -61,6 +61,8 @@ const FLEET_CODEX_METADATA_FIELDS = new Set([
   'session_id',
   'credential_ref',
   'credential_copy_mutated',
+  'cli_exit_code',
+  'terminal_receipt',
 ]);
 // These failures happen before a Provider process can start or a bounded
 // credential copy can be measured. The callback is still authenticated by its
@@ -809,12 +811,27 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
     !UUID_PATTERN.test(result.provider_metadata?.credential_ref ?? '')
     || typeof result.provider_metadata?.credential_copy_mutated !== 'boolean'
   );
+  const hasCliExitCode = Object.hasOwn(result.provider_metadata, 'cli_exit_code');
+  const hasTerminalReceipt = Object.hasOwn(result.provider_metadata, 'terminal_receipt');
+  const fleetCodexTerminalReceiptInvalid = (
+    hasCliExitCode !== hasTerminalReceipt
+    || (
+      hasCliExitCode
+      && (
+        !Number.isInteger(result.provider_metadata.cli_exit_code)
+        || result.provider_metadata.cli_exit_code < 1
+        || result.provider_metadata.cli_exit_code > 255
+        || result.provider_metadata.terminal_receipt !== 'turn.completed'
+      )
+    )
+  );
   if (
     attempt.execution_transport === 'fleet-worker'
     && attempt.provider === 'codex'
     && (
       fleetCodexMetadataHasUnknownField
       || (!trustedPreProviderFailure && fleetCodexCredentialEvidenceInvalid)
+      || fleetCodexTerminalReceiptInvalid
     )
   ) {
     return res.status(409).json({ ok: false, error: 'credential_callback_invalid' });

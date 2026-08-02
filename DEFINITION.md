@@ -6,11 +6,27 @@
 
 
 
-**Brain 版本**: 1.267.180
+**Brain 版本**: 1.267.181
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.181 — Kernel Codex 终态收据与 Planner/Proposer Run 隔离
+
+- Codex JSONL 已以 `turn.completed` 结束、最后一条 agent message 与结构化结果文件
+  语义一致时，Runner 可把 CLI 保留的非零诊断退出码恢复为 Provider 合法终态；
+  `turn.failed`、缺消息、结果不一致、超时及既有安全闸失败仍 fail closed。
+- 恢复收据以受限 `cli_exit_code` + `terminal_receipt=turn.completed` 元数据穿过
+  Fleet callback，Brain 只接受完整成对且值域合法的证据，其他未知字段继续拒绝。
+- Planner/Proposer Git handoff 分支都加入 Run 短 ID：
+  `cp-harness-prd-<task8>-r<run8>-a<hop>` 与
+  `cp-harness-propose-r<round>-<task8>-r<run8>-a<hop>`；同一 task 的新 Run 不再
+  覆盖或消费旧 Run ref。部署前 legacy Proposer ref 仅由当前 Run TaskBundle 授权。
+- 三台 Fleet NodeProfile 与 rollout/reconcile 固定到 Runner
+  `sha256:7c8a27185b57ff172c157a1d330c85fd2faf79a5033c1b8cbc710e604b43e112`。
+- 回退到 `1.267.180` 会重新把已完成的 Codex turn 记为 `provider_exit`，并让
+  Planner/Proposer 重跑复用历史分支；回退前必须 drain 活跃 Kernel attempts。
 
 ## Brain 1.267.180 — Kernel 只读角色冻结闸与失败回调收敛
 

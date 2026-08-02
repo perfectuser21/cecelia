@@ -15,7 +15,11 @@ Runner 不再把 Codex 进程退出码当作唯一业务终态。仅当以下条
 
 恢复时保留原始 CLI 退出码到 `provider_metadata.cli_exit_code`，并标记 `terminal_receipt=turn.completed`。没有完整收据的 exit 1 继续 fail closed。
 
-Planner 分支改为 `cp-harness-prd-<task8>-r<run8>-a<hop>`。run ID 是服务端 TaskBundle 字段，因此同一 task 的不同 Run 不再争用远端 ref；Runner finalizer 同时校验 task、run、hop 三个边界。
+Planner 分支改为 `cp-harness-prd-<task8>-r<run8>-a<hop>`，Proposer 分支改为
+`cp-harness-propose-r<round>-<task8>-r<run8>-a<hop>`。run ID 是服务端 TaskBundle
+字段，因此同一 task 的不同 Run 不再争用远端 ref；Runner finalizer 同时校验
+task、run、hop/round 边界。Ground Truth 只发现当前 run 的新格式 proposal；旧格式
+仅在当前 run 已有精确 Attempt TaskBundle 引用时兼容，禁止误吃其他 Run 的历史 ref。
 
 ## 不做
 
@@ -27,5 +31,5 @@ Planner 分支改为 `cp-harness-prd-<task8>-r<run8>-a<hop>`。run ID 是服务�
 
 - Red 复现 exit 1 + 完整完成收据当前被判失败，Green 后被严格恢复。
 - exit 1 + 缺 agent message、结果不一致、`turn.failed` 均保持失败。
-- 两个 Run 同 task/hop 生成不同 Planner 分支。
+- 两个 Run 同 task/hop 生成不同 Planner/Proposer 分支，proposal discovery 不跨 Run。
 - Runner 合同、Brain 单测、DevGate、镜像 smoke 全绿；新 digest 部署 US M4 后完成真实全链。

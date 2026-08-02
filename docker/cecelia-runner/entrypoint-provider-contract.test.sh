@@ -65,60 +65,93 @@ git -C "$FINALIZER_REPO" add README.md
 git -C "$FINALIZER_REPO" commit -m 'base' >/dev/null
 
 FINALIZER_SPRINT='sprints/07251915-kernel-a1fa8636'
+FINALIZER_TASK_ID='a1fa8636-2ad4-41b4-8de3-8609af83daec'
+FINALIZER_RUN_ID='11111111-1111-4111-8111-111111111111'
+FINALIZER_BRANCH='cp-harness-propose-r1-a1fa8636-r11111111-a4'
+FINALIZER_TASK_BUNDLE="$FINALIZER_TMP/task-bundle.json"
+FINALIZER_ROUND2_BRANCH='cp-harness-propose-r2-a1fa8636-r11111111-a6'
+FINALIZER_ROUND2_TASK_BUNDLE="$FINALIZER_TMP/task-bundle-round2.json"
 mkdir -p "$FINALIZER_REPO/$FINALIZER_SPRINT/tests"
 printf '%s\n' '# contract' > "$FINALIZER_REPO/$FINALIZER_SPRINT/contract-draft.md"
 printf '%s\n' '# dod' > "$FINALIZER_REPO/$FINALIZER_SPRINT/contract-dod.md"
 printf '%s\n' '{"tasks":[]}' > "$FINALIZER_REPO/$FINALIZER_SPRINT/task-plan.json"
 printf '%s\n' 'test("red", () => {});' > "$FINALIZER_REPO/$FINALIZER_SPRINT/tests/kernel-telemetry.contract.test.ts"
 printf '%s\n' '{"propose_branch":"stale-provider-branch"}' > "$FINALIZER_REPO/.brain-result.json"
+printf '%s\n' \
+  "{\"task_bundle\":{\"run_id\":\"$FINALIZER_RUN_ID\",\"role\":\"proposer\",\"inputs\":{\"task_id\":\"$FINALIZER_TASK_ID\",\"sprint_dir\":\"$FINALIZER_SPRINT\",\"propose_branch\":\"$FINALIZER_BRANCH\",\"contract_round\":1}}}" \
+  > "$FINALIZER_TASK_BUNDLE"
+printf '%s\n' \
+  "{\"task_bundle\":{\"run_id\":\"$FINALIZER_RUN_ID\",\"role\":\"proposer\",\"inputs\":{\"task_id\":\"$FINALIZER_TASK_ID\",\"sprint_dir\":\"$FINALIZER_SPRINT\",\"propose_branch\":\"$FINALIZER_ROUND2_BRANCH\",\"contract_round\":2}}}" \
+  > "$FINALIZER_ROUND2_TASK_BUNDLE"
 
 HARNESS_NODE=proposer \
-CECELIA_TASK_ID=a1fa8636-2ad4-41b4-8de3-8609af83daec \
-PROPOSE_BRANCH=cp-harness-propose-r1-a1fa8636-a4 \
+CECELIA_TASK_ID="$FINALIZER_TASK_ID" \
+PROPOSE_BRANCH="$FINALIZER_BRANCH" \
 PROPOSE_ROUND=1 \
 SPRINT_DIR="$FINALIZER_SPRINT" \
 WORKTREE_PATH="$FINALIZER_REPO" \
+HARNESS_TASK_BUNDLE_FILE="$FINALIZER_TASK_BUNDLE" \
   finalize_proposer_output
 
 git --git-dir="$FINALIZER_REMOTE" rev-parse --verify \
-  refs/heads/cp-harness-propose-r1-a1fa8636-a4 >/dev/null
+  "refs/heads/$FINALIZER_BRANCH" >/dev/null
 for artifact in contract-draft.md contract-dod.md task-plan.json tests/kernel-telemetry.contract.test.ts; do
   git --git-dir="$FINALIZER_REMOTE" show \
-    "refs/heads/cp-harness-propose-r1-a1fa8636-a4:$FINALIZER_SPRINT/$artifact" >/dev/null
+    "refs/heads/$FINALIZER_BRANCH:$FINALIZER_SPRINT/$artifact" >/dev/null
 done
 jq -e \
-  '.propose_branch == "cp-harness-propose-r1-a1fa8636-a4"
+  '.propose_branch == "cp-harness-propose-r1-a1fa8636-r11111111-a4"
    and .workstream_count == 1
    and .task_plan_path == "sprints/07251915-kernel-a1fa8636/task-plan.json"' \
   "$FINALIZER_REPO/.brain-result.json" >/dev/null
 
 if HARNESS_NODE=proposer \
-  CECELIA_TASK_ID=a1fa8636-2ad4-41b4-8de3-8609af83daec \
-  PROPOSE_BRANCH=cp-harness-propose-r2-wrongid0-a5 \
+  CECELIA_TASK_ID="$FINALIZER_TASK_ID" \
+  PROPOSE_BRANCH=cp-harness-propose-r2-wrongid0-r11111111-a5 \
   SPRINT_DIR="$FINALIZER_SPRINT" \
   WORKTREE_PATH="$FINALIZER_REPO" \
+  HARNESS_TASK_BUNDLE_FILE="$FINALIZER_TASK_BUNDLE" \
     finalize_proposer_output; then
   echo 'proposer finalizer accepted a branch for another task' >&2
   exit 1
 fi
 if git --git-dir="$FINALIZER_REMOTE" show-ref --verify --quiet \
-  refs/heads/cp-harness-propose-r2-wrongid0-a5; then
+  refs/heads/cp-harness-propose-r2-wrongid0-r11111111-a5; then
   echo 'proposer finalizer pushed an invalid branch' >&2
+  exit 1
+fi
+
+if HARNESS_NODE=proposer \
+  CECELIA_TASK_ID="$FINALIZER_TASK_ID" \
+  PROPOSE_BRANCH=cp-harness-propose-r1-a1fa8636-r33333333-a4 \
+  PROPOSE_ROUND=1 \
+  SPRINT_DIR="$FINALIZER_SPRINT" \
+  WORKTREE_PATH="$FINALIZER_REPO" \
+  HARNESS_TASK_BUNDLE_FILE="$FINALIZER_TASK_BUNDLE" \
+    finalize_proposer_output; then
+  echo 'proposer finalizer accepted a branch for another run' >&2
+  exit 1
+fi
+if git --git-dir="$FINALIZER_REMOTE" show-ref --verify --quiet \
+  refs/heads/cp-harness-propose-r1-a1fa8636-r33333333-a4; then
+  echo 'proposer finalizer pushed a branch for another run' >&2
   exit 1
 fi
 
 rm "$FINALIZER_REPO/$FINALIZER_SPRINT/contract-dod.md"
 if HARNESS_NODE=proposer \
-  CECELIA_TASK_ID=a1fa8636-2ad4-41b4-8de3-8609af83daec \
-  PROPOSE_BRANCH=cp-harness-propose-r2-a1fa8636-a6 \
+  CECELIA_TASK_ID="$FINALIZER_TASK_ID" \
+  PROPOSE_BRANCH="$FINALIZER_ROUND2_BRANCH" \
+  PROPOSE_ROUND=2 \
   SPRINT_DIR="$FINALIZER_SPRINT" \
   WORKTREE_PATH="$FINALIZER_REPO" \
+  HARNESS_TASK_BUNDLE_FILE="$FINALIZER_ROUND2_TASK_BUNDLE" \
     finalize_proposer_output; then
   echo 'proposer finalizer accepted incomplete contract artifacts' >&2
   exit 1
 fi
 if git --git-dir="$FINALIZER_REMOTE" show-ref --verify --quiet \
-  refs/heads/cp-harness-propose-r2-a1fa8636-a6; then
+  refs/heads/cp-harness-propose-r2-a1fa8636-r11111111-a6; then
   echo 'proposer finalizer pushed incomplete contract artifacts' >&2
   exit 1
 fi
@@ -179,10 +212,98 @@ type normalize_provider_failure >/dev/null 2>&1 || {
   echo 'missing Provider failure normalizer' >&2
   exit 1
 }
+type validate_codex_terminal_receipt >/dev/null 2>&1 || {
+  echo 'missing strict Codex terminal receipt validator' >&2
+  exit 1
+}
 type publish_provider_result_schema >/dev/null 2>&1 || {
   echo 'missing Provider-readable result schema publisher' >&2
   exit 1
 }
+
+# codex exec can retain exit 1 after a non-retry internal error even when the
+# primary turn later completes. Recovery is legal only when the CLI's two
+# independent outputs agree: the terminal JSONL receipt and last-message file.
+CODEX_RECEIPT_TMP="$(mktemp -d)"
+cat > "$CODEX_RECEIPT_TMP/result.json" <<'JSON'
+{"status":"completed_with_concerns","summary":"planner shipped","artifacts":["sprint-prd.md"],"checks":[],"decision":{"outcome":"DONE_WITH_CONCERNS","reason":"non-fatal compact concern"},"error":null}
+JSON
+jq -nc \
+  --arg text "$(cat "$CODEX_RECEIPT_TMP/result.json")" \
+  '{type:"thread.started",thread_id:"thread-receipt"},
+   {type:"error",message:"remote compact credential refresh failed"},
+   {type:"item.completed",item:{id:"item_1",type:"agent_message",text:$text}},
+   {type:"turn.completed",usage:{input_tokens:42,output_tokens:7}}' \
+  > "$CODEX_RECEIPT_TMP/completed.jsonl"
+validate_codex_terminal_receipt \
+  "$CODEX_RECEIPT_TMP/completed.jsonl" \
+  "$CODEX_RECEIPT_TMP/result.json" || {
+  echo 'strict receipt rejected a completed Codex turn with matching result' >&2
+  exit 1
+}
+cat > "$CODEX_RECEIPT_TMP/task.json" <<'JSON'
+{"task_bundle":{"expected_output":"harness-result/planner-v1"}}
+JSON
+normalize_provider_success \
+  "$CODEX_RECEIPT_TMP/task.json" \
+  "$CODEX_RECEIPT_TMP/result.json" \
+  "$CODEX_RECEIPT_TMP/normalized.json" \
+  "22222222-2222-4222-8222-222222222222" \
+  "codex" \
+  "thread-receipt" \
+  "33333333-3333-4333-8333-333333333333" \
+  "false" \
+  "1" \
+  "turn.completed"
+jq -e '
+  .status == "completed_with_concerns"
+  and .provider_metadata.cli_exit_code == 1
+  and .provider_metadata.terminal_receipt == "turn.completed"
+' "$CODEX_RECEIPT_TMP/normalized.json" >/dev/null || {
+  echo 'normalized result dropped the Codex terminal recovery evidence' >&2
+  exit 1
+}
+
+cat > "$CODEX_RECEIPT_TMP/mismatch.json" <<'JSON'
+{"status":"completed","summary":"different result","artifacts":[],"checks":[],"decision":null,"error":null}
+JSON
+if validate_codex_terminal_receipt \
+  "$CODEX_RECEIPT_TMP/completed.jsonl" \
+  "$CODEX_RECEIPT_TMP/mismatch.json"; then
+  echo 'strict receipt accepted a last-message mismatch' >&2
+  exit 1
+fi
+
+sed 's/turn.completed/turn.failed/' \
+  "$CODEX_RECEIPT_TMP/completed.jsonl" > "$CODEX_RECEIPT_TMP/failed.jsonl"
+if validate_codex_terminal_receipt \
+  "$CODEX_RECEIPT_TMP/failed.jsonl" \
+  "$CODEX_RECEIPT_TMP/result.json"; then
+  echo 'strict receipt accepted turn.failed' >&2
+  exit 1
+fi
+
+head -n 1 "$CODEX_RECEIPT_TMP/completed.jsonl" \
+  > "$CODEX_RECEIPT_TMP/missing-message.jsonl"
+tail -n 1 "$CODEX_RECEIPT_TMP/completed.jsonl" \
+  >> "$CODEX_RECEIPT_TMP/missing-message.jsonl"
+if validate_codex_terminal_receipt \
+  "$CODEX_RECEIPT_TMP/missing-message.jsonl" \
+  "$CODEX_RECEIPT_TMP/result.json"; then
+  echo 'strict receipt accepted a missing agent message' >&2
+  exit 1
+fi
+
+cp "$CODEX_RECEIPT_TMP/completed.jsonl" "$CODEX_RECEIPT_TMP/trailing-garbage.jsonl"
+printf '%s\n' 'unstructured stderr after terminal event' \
+  >> "$CODEX_RECEIPT_TMP/trailing-garbage.jsonl"
+if validate_codex_terminal_receipt \
+  "$CODEX_RECEIPT_TMP/trailing-garbage.jsonl" \
+  "$CODEX_RECEIPT_TMP/result.json"; then
+  echo 'strict receipt ignored a non-JSON line after turn.completed' >&2
+  exit 1
+fi
+rm -rf "$CODEX_RECEIPT_TMP"
 
 PROVIDER_SCHEMA_PERMISSION_TMP="$(mktemp -d)"
 publish_provider_result_schema \

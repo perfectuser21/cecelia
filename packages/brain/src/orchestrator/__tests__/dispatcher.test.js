@@ -131,7 +131,7 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
-  it('assigns a deterministic planner Git handoff branch owned by task and hop', async () => {
+  it('assigns a deterministic planner Git handoff branch owned by task, run, and hop', async () => {
     const deps = makeDeps();
 
     await createDispatcher(deps)('spawn:planner', {
@@ -144,7 +144,35 @@ describe('createDispatcher', () => {
 
     const created = deps.attemptStore.createAttempt.mock.calls[0][0];
     expect(created.bundle.inputs.planner_branch)
-      .toBe('cp-harness-prd-aaaaaaaa-a2');
+      .toBe('cp-harness-prd-aaaaaaaa-r11111111-a2');
+  });
+
+  it('does not reuse a planner branch across Runs of the same task and hop', async () => {
+    const first = makeDeps();
+    const second = makeDeps();
+
+    await createDispatcher(first)('spawn:planner', {
+      taskId,
+      runId,
+      hop: 2,
+      observed,
+      decision: { phase: 'planning', reason: 'no_prd' },
+    });
+    await createDispatcher(second)('spawn:planner', {
+      taskId,
+      runId: '33333333-3333-4333-8333-333333333333',
+      hop: 2,
+      observed,
+      decision: { phase: 'planning', reason: 'no_prd' },
+    });
+
+    const firstBranch = first.attemptStore.createAttempt.mock.calls[0][0]
+      .bundle.inputs.planner_branch;
+    const secondBranch = second.attemptStore.createAttempt.mock.calls[0][0]
+      .bundle.inputs.planner_branch;
+    expect(firstBranch).toBe('cp-harness-prd-aaaaaaaa-r11111111-a2');
+    expect(secondBranch).toBe('cp-harness-prd-aaaaaaaa-r33333333-a2');
+    expect(secondBranch).not.toBe(firstBranch);
   });
 
   it('passes the verified planner Git artifact into the proposer TaskBundle', async () => {
@@ -918,8 +946,33 @@ describe('createDispatcher', () => {
     const created = deps.attemptStore.createAttempt.mock.calls[0][0];
     expect(created.bundle.inputs).toMatchObject({
       contract_round: 1,
-      propose_branch: 'cp-harness-propose-r1-aaaaaaaa-a17',
+      propose_branch: 'cp-harness-propose-r1-aaaaaaaa-r11111111-a17',
     });
+  });
+
+  it('does not reuse a proposer branch across Runs of the same task, round, and hop', async () => {
+    const first = makeDeps();
+    const second = makeDeps();
+    const context = {
+      taskId,
+      hop: 17,
+      observed: { ...observed, proposeBranchRn: 0, proposeBranch: null },
+      decision: { phase: 'gan', reason: 'no_contract_yet' },
+    };
+
+    await createDispatcher(first)('spawn:proposer', { ...context, runId });
+    await createDispatcher(second)('spawn:proposer', {
+      ...context,
+      runId: '33333333-3333-4333-8333-333333333333',
+    });
+
+    const firstBranch = first.attemptStore.createAttempt.mock.calls[0][0]
+      .bundle.inputs.propose_branch;
+    const secondBranch = second.attemptStore.createAttempt.mock.calls[0][0]
+      .bundle.inputs.propose_branch;
+    expect(firstBranch).toBe('cp-harness-propose-r1-aaaaaaaa-r11111111-a17');
+    expect(secondBranch).toBe('cp-harness-propose-r1-aaaaaaaa-r33333333-a17');
+    expect(secondBranch).not.toBe(firstBranch);
   });
 
   it('evaluator 工作树可写，以便切 PR 分支、真启服务并固化验收证据', async () => {
