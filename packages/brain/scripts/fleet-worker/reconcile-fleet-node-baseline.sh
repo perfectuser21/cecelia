@@ -12,7 +12,8 @@ ORBSTACK_URL='https://cdn-updates.orbstack.dev/arm64/OrbStack_v2.2.1_20628_arm64
 ORBSTACK_SHA256='5bc1719c3c987c4c60c65be9fdd65b4730990e1697ec1cb1c33e6bba31bf92b5'
 MACOS_MINIMUM_VERSION='15.6.1'
 MACOS_RECOMMENDED_VERSION='15.7.4'
-RUNNER_DIGEST='sha256:1ec3542ab56a58c620196a4f32fd04b12e8049ec29dbc121e33b51a0cabc4288'
+RUNNER_DIGEST='sha256:e8979dcf7791b1fd0754276d39fd58adf9c8fc1148323a3d0d3b8abe29ea351f'
+POSTGRES_IMAGE='postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777'
 SERVICE_UID=450
 SERVICE_GID=450
 
@@ -451,11 +452,14 @@ ensure_repository() {
 
 ensure_runner() {
   resolve_docker_command
-  if ! "$DOCKER" image inspect "$RUNNER_DIGEST" >/dev/null 2>&1; then
+  if ! "$DOCKER" image inspect "$RUNNER_DIGEST" >/dev/null 2>&1 \
+    || ! "$DOCKER" image inspect "$POSTGRES_IMAGE" >/dev/null 2>&1; then
     "$DOCKER" load --input "$RUNNER_ARCHIVE" >/dev/null
   fi
   "$DOCKER" image inspect "$RUNNER_DIGEST" >/dev/null 2>&1 \
     || die "runner_digest_unavailable"
+  "$DOCKER" image inspect "$POSTGRES_IMAGE" >/dev/null 2>&1 \
+    || die "postgres_image_unavailable"
 }
 
 ensure_worker_token() {

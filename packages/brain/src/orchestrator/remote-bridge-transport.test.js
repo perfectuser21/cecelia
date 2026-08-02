@@ -136,6 +136,24 @@ function operationInput(operation) {
   };
 }
 
+function cleanupReceipt(overrides = {}) {
+  const values = {
+    status: 'cleaned',
+    attempt_id: 'attempt-1',
+    actual_machine_id: MACHINE,
+    ...overrides,
+  };
+  return {
+    ...values,
+    attestation: overrides.attestation ?? signMachineAttestation({
+      secret: SHARED_SECRET,
+      attemptId: values.attempt_id,
+      machineId: values.actual_machine_id,
+      jobId: `resource-cleanup:${values.status}`,
+    }),
+  };
+}
+
 function listenOnLoopback(server) {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -246,6 +264,46 @@ describe('remote Bridge launch', () => {
 
     const requestBody = JSON.parse(fetchFn.mock.calls[0][1].body);
     expect(requestBody.workspace_spec).toMatchObject({ frozen_baseline: true });
+  });
+
+  it('projects runtime resources to the single bounded PostgreSQL boolean', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const transport = createTransport({ fetchFn });
+    const input = launchInput();
+    input.bundle.inputs.runtime_resources = {
+      postgres: true,
+      database_url: 'postgresql://attacker:secret@outside.invalid/db',
+      token: 'must-not-cross',
+    };
+
+    await transport.launch(input);
+
+    const requestBody = JSON.parse(fetchFn.mock.calls[0][1].body);
+    expect(requestBody.runtime_resources).toEqual({ postgres: true });
+    expect(JSON.stringify(requestBody.runtime_resources)).not.toMatch(
+      /url|password|cookie|token|secret/i,
+    );
+  });
+
+  it('terminalizes the exact leased Attempt and verifies the bounded cleanup receipt', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(200, cleanupReceipt()));
+    const transport = createTransport({ fetchFn });
+    const input = operationInput('terminal');
+
+    await expect(transport.terminal(input)).resolves.toEqual({
+      status: 'cleaned',
+      attempt_id: 'attempt-1',
+      actual_machine_id: MACHINE,
+      attestation_status: 'verified',
+    });
+
+    expect(fetchFn.mock.calls[0][0]).toBe(
+      `${BRIDGE_URL}/harness/attempts/attempt-1/terminal`,
+    );
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body)).toEqual({
+      lease_owner: 'dispatcher-1',
+      lease_generation: 3,
+    });
   });
 
   it('rejects invalid launch timeouts before credentials or Worker transport', async () => {

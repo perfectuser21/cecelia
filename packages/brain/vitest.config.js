@@ -183,6 +183,9 @@ export default defineConfig({
       // brain-integration 测试：需要真实 Brain HTTP server（localhost:5221），brain-unit 无 server
       'src/routes/__tests__/captures-api.test.ts',
       '../../tests/regression/relay-07b2fd3b/captures-api.test.ts',
+      // 真 Brain HTTP + 真 PostgreSQL 的行为回归；同一合同由
+      // scripts/smoke/task-delete-postdeploy-filter-smoke.sh 在 real-env-smoke 中执行。
+      '../../tests/regression/relay-137fea96/contract-task-delete.test.ts',
       // 2026-07-22：真实 Playwright spec（需要 @playwright/test，仓库未装此依赖，也不该装——
       // 这两个文件是浏览器 E2E，要用 `npx playwright test` 单独跑，不是 vitest 单测），被
       // include 里 tests/regression/**/*.{test,spec}.* 这条过宽的 glob 误当成 vitest 测试

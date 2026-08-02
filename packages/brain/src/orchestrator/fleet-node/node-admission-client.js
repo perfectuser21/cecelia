@@ -65,6 +65,9 @@ function failure(machineId, signature) {
     base_admitted: false,
     dispatch_ready: false,
     observed_at: null,
+    runtime_resources: {
+      postgres: { available: false, image_digest: null },
+    },
     signature: safeSignature,
     reasons: [boundedReason({
       code: safeSignature,
@@ -91,6 +94,14 @@ function boundedAdmission(machineId, evaluated) {
       && Number.isFinite(Date.parse(evaluated.observed_at))
       ? evaluated.observed_at.slice(0, 40)
       : null,
+    runtime_resources: {
+      postgres: {
+        available: evaluated?.runtime_resources?.postgres?.available === true,
+        image_digest: typeof evaluated?.runtime_resources?.postgres?.image_digest === 'string'
+          ? evaluated.runtime_resources.postgres.image_digest.slice(0, 160)
+          : null,
+      },
+    },
     reasons,
   };
   if (!admitted && typeof evaluated?.signature === 'string') {

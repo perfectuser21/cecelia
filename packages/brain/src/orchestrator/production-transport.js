@@ -61,6 +61,10 @@ function guardWorkerConfiguration(worker, {
       assertAvailable(input);
       return worker.cancel(input);
     },
+    async terminal(input) {
+      assertAvailable(input);
+      return worker.terminal(input);
+    },
   });
 }
 

@@ -6,11 +6,51 @@
 
 
 
-**Brain 版本**: 1.267.181
+**Brain 版本**: 1.267.183
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.183 — Kernel callback rejection and lease-generation fencing
+
+- Runner 只把 HTTP 2xx 视为 terminal callback 已提交；网络错误、408、425、429 与
+  5xx 续租后重试，其他 4xx 视为永久拒绝并以非零退出，让 Worker 的自然退出收口路径
+  回收 Runner、network、workspace 与状态，不再无限续租泄漏。
+- 每次 callback 重试发送的 heartbeat 必须携带当前 `lease_generation`；Brain 的 route
+  和 Attempt Store 都 fail closed，并在 SQL 更新条件中同时匹配 owner + generation，
+  防止旧 Runner 延长后来接管者的租约。
+- Runner 重建并固定为
+  `sha256:e8979dcf7791b1fd0754276d39fd58adf9c8fc1148323a3d0d3b8abe29ea351f`；
+  三机必须同步后才可 undrain。回退到 `1.267.182` 会恢复永久 4xx 无限重试与 heartbeat
+  仅按 owner 续租的竞态。
+
+## Brain 1.267.182 — Kernel Evaluator attempt-scoped PostgreSQL
+
+- `contract_requirements.postgres` 现在被规范化为
+  `TaskBundle.inputs.runtime_resources.postgres`，经 provider-neutral remote transport
+  只传布尔资源请求；URL、密码、cookie 与 token 不进入 Commander/Fleet 合同。
+- PostgreSQL capability gate 改为核对被选 Fleet Worker 的 admission 投影，不再用
+  Brain controller 自己的数据库 `SELECT 1` 冒充目标机可执行能力。
+- Fleet Worker `1.267.92` 为每个请求数据库的 attempt 建独立私有 Docker network 与
+  pinned PostgreSQL sidecar，通过 `pg_isready` 后只向 Runner 注入短期 `DB_URL` /
+  `DATABASE_URL`；状态文件仅保存无密资源身份。
+- terminal、cancel、launch rollback 与 orphan reconcile 都按 exact attempt 回收容器和
+  network；历史 attempt 按其已记录 pinned digest 回收，不依赖升级后的当前配置。
+  真实清理失败会 quarantine 或报 `attempt_launch_rollback_failed`，不再假绿。
+- terminal callback 只有在 exact leased Worker 返回 HMAC 验证通过的 `cleaned` /
+  `already_clean` 收据后才落终态；不可达、失败或 quarantine 都返回可重试错误。
+  Worker 在 Brain 返回成功前保留负责 callback 重试的 Runner，只先释放 runtime resource；
+  Runner 自然退出后再清理容器、worktree 与状态，服务端 artifact 校验也先于资源释放。
+- 三机 NodeProfile、LaunchDaemon installer、rollout/reconcile 固定 PostgreSQL 镜像
+  `postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777`
+  并以真实启动 PostgreSQL + `pg_isready` 的无 host-port probe 做 admission；缺镜像、
+  摘要漂移或运行失败均拒绝派发。
+- Runner 因 durable callback 重试契约重建并固定为
+  `sha256:0f64058c10eb64141c7acabacb8588890723cae5ff3e91b44a1c94dc1b50d109`；
+  三机必须同步该镜像后才可 undrain。
+- 回退到 `1.267.181` 前必须 drain 含 runtime resource 的 attempt；旧 Worker 不理解
+  sidecar 生命周期，也会让目标机 PostgreSQL admission 重新出现假绿。
 
 ## Brain 1.267.181 — Kernel Codex 终态收据与 Planner/Proposer Run 隔离
 

@@ -6,10 +6,12 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 9.8.0
+version: 9.10.0
 created: 2026-04-08
-updated: 2026-07-28
+updated: 2026-08-02
 changelog:
+  - 9.10.0: Kernel local_api 资源闭环——新增第 23 条审查：Postgres 合同必须对 Fleet 注入的空库运行真实 migration/schema bootstrap；业务 cookie/session/tenant 必须由 E2E 真实 signup/login 动态创建；依赖预注入 AUTH_COOKIE/TENANT_ID、生产数据副本或长期业务凭据一律 REVISION
+  - 9.9.0: GP锚定闭环刀3（与 proposer 9.18.0 配套）——Golden Path 覆盖审查新增第 22 条：product-map/generated/product-map.json 存在的仓库，合同缺 ## GP-Anchor 段/id 查无/格式不合法 → 第 4 维 internal_consistency 打回；文件不存在时缺 gp-anchor: skipped 声明同样打回（沉默跳过与真做过判断不可区分）
   - 9.8.0: W7 人形验收（RD 2026-07-28，决策 d3021871，与 proposer 9.17.0 配套）——Golden Path 覆盖审查新增第 20 条（新写 [BEHAVIOR] 缺 动作/预期观察/等待预算/留证 任一行或 Test: 非单行完整命令 → 第 1 维 dod_machineability 打回；[legacy] 标记条目豁免）+ 第 21 条（合同缺 ## 探索提示 段，或错输入/重复提交/中途中断/边界值明显适用却未覆盖 → 第 6 维低分打回，feedback 必须直接给出建议的探索提示条目文本供 proposer 原样填入）；7 个维度名不动（ReviewerOutputSchema 接口约定）
   - 9.7.0: 堵「留给后续 sprint / 技术债清理」逃逸口（decision 8dbe91ee 实证 — os_type/device_platform 语义重叠被记为技术债放行，10天后漂移成生产bug PR#1313，此后也没人回头补前端展示层）— Golden Path 覆盖审查新增第 19 条：新字段与既有字段语义重叠时，合同只写"留给后续sprint/技术债"且无具体跟进机制（无Brain task_id）→ 第 5 维 risk_registered 直接打回，必须当场消解或附可执行跟进项
   - 9.5.0: 真实链路四硬规则审查（handoff 0714 刀2 — #1267/#1269/#1271/#1256 实证，与 proposer 9.10.0 对齐）— Golden Path 覆盖审查新增第 14/15/16/17 条：(14) 设备/agent 调服务端缺「真实调用方请求 shape」段或 DoD 认证字段与生产调用方不逐字段一致 → 打回（规则A）；(15) 第三方 API 全 mock 零真调 → 打回（规则B）；(16) DoD 含 force_*/stub/假数据但无「未覆盖真实链路清单」段 → 打回（规则C）；(17) target_environment 与 ability 真实运行环境不匹配 → 第 7 维 0 分打回（规则D：微信 UI/RPA 必 windows_wechat；Android 通道未落地前真机段必登记未覆盖）；第 6 维领域验证核对清单同步补「真实调用方 shape」「第三方真调」两行
@@ -101,6 +103,10 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 20. **五行剧本完整性（W7 人形验收 — proposer 9.17.0 五行剧本格式）**：每条**新写** [BEHAVIOR]（无 `[legacy]` 标记）缺 `动作:`/`预期观察:`/`等待预算:`/`留证:` 任一行，或 `Test:` 不是单行完整命令（命令体折到后续行 = promote-regression 只收割到首词，产出假绿回归条目）→ 第 1 维 dod_machineability 打回 REVISION，feedback 指明缺哪行。异步观察类（预期观察含"收到/出现/推送/完成"等异步语义）等待预算写 `0s` 或缺失 → 同样打回；例外：预期观察带"立即/同步"限定词、动作返回时即可确认的同步观察，`0s` 合法（如 proposer 正例 1「页面立即出现 toast」）。
 
 21. **探索提示覆盖（W7 L3 探索层）**：合同缺独立二级段 `## 探索提示`，或其高风险面对本 sprint 明显适用却未覆盖（错输入/重复提交/中途中断/边界值四类逐一核对）→ 第 6 维低分打回。**feedback 必须直接给出建议的探索提示条目文本**（如"补：错输入 — POST /api/xxx 传非法枚举值"），供 proposer 原样填入——这是"探索提示由 GAN reviewer 写进合同"的落地方式，不许只说"覆盖不足"。
+
+22. **GP-Anchor 一致性核查（GP锚定闭环刀3 — cross-repo file-existence gated）**：当前仓库存在 `product-map/generated/product-map.json` 时，合同必须含 `## GP-Anchor` 段（三形态之一），且 Reviewer 须用 `jq` 亲自核实其声明的 `<line_id>/<gp_id>` 组合真实存在于该文件——缺段、或 id 查无、或格式不合三形态之一 → 第 4 维 internal_consistency 打回。文件不存在时，合同须显式写 `gp-anchor: skipped (product-map.json not found)`；缺这行同样打回（沉默跳过和真的检查过但没写不可区分，Reviewer 无法验证 Proposer 是否真的做过判断）。
+
+23. **local_api 依赖预存业务状态或未初始化空库 → 打回**（Kernel runtime-resource 硬规则）：`target_environment=local_api` 且使用 Postgres 时，合同必须只把 `DB_URL` 作为 Fleet 注入资源，并在 E2E 中先执行仓库真实 migration/schema bootstrap、机检目标表存在。需要鉴权的业务路径必须通过真实 signup/login/onboarding 动态创建临时用户、cookie jar 与 tenant，并从真实响应/本 attempt 数据库取得 tenant ID。脚本出现必填 `AUTH_COOKIE*`、`TENANT_ID*`、长期业务 token、复制生产数据，或假设 sidecar 已有业务表，却没有自举流程 → 第 4 维与第 6 维低分，REVISION。不得用“环境由操作员预注入”作为 mitigation。
 
 少一项 → 第 2 维 scope_match_prd 或第 4 维 internal_consistency 扣分。Golden Path 断链 → 直接 REVISION 不打分。
 

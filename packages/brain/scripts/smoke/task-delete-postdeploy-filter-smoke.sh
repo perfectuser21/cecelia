@@ -3,8 +3,10 @@
 # 验证 postdeploy-verifier smoke 任务清理机制真正生效：
 #   1. Brain /health 健康（前置）
 #   2. DELETE /api/brain/tasks/:id 真实存在的非终态任务 → 200 + DB status=cancelled
-#   3. DELETE 已终态（completed）任务 → 409，DB 未被误改
-#   4. fetchPendingBatch 真调 runPostdeployVerifier() → smoke: 前缀任务被排除
+#   3. DELETE 不存在的任务 → 404 + JSON error/id
+#   4. DELETE 已终态（completed）任务 → 409，DB 未被误改
+#   5. DELETE 已 cancelled 任务 → 409，DB 仍为 cancelled
+#   6. fetchPendingBatch 真调 runPostdeployVerifier() → smoke: 前缀任务被排除
 #      （仍 pending_postdeploy），非 smoke 对照任务正常消费为 completed
 set -euo pipefail
 
@@ -35,7 +37,20 @@ if [[ "$DBSTATUS" != "cancelled" ]]; then
 fi
 echo "[task-delete-postdeploy-filter-smoke] DELETE 软删除生效，id=${TID} ✓"
 
-echo "[task-delete-postdeploy-filter-smoke] 3. DELETE 已 completed 任务 → 409，未被误改"
+echo "[task-delete-postdeploy-filter-smoke] 3. DELETE 不存在的任务 → 404 + JSON error/id"
+MISSING_TID='00000000-0000-0000-0000-000000000099'
+MISSING_BODY=$(mktemp)
+MISSING_CODE=$(curl -s -o "$MISSING_BODY" -w "%{http_code}" -X DELETE "${BRAIN_URL}/api/brain/tasks/${MISSING_TID}")
+if [[ "$MISSING_CODE" != "404" ]]; then
+  echo "[task-delete-postdeploy-filter-smoke] FAIL: 不存在任务期望 404 得 ${MISSING_CODE}"
+  rm -f "$MISSING_BODY"
+  exit 1
+fi
+node -e "const d=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));if(typeof d.error!=='string'||d.id!==process.argv[2]){console.error('FAIL: 404 响应合同错误: '+JSON.stringify(d));process.exit(1)}" "$MISSING_BODY" "$MISSING_TID"
+rm -f "$MISSING_BODY"
+echo "[task-delete-postdeploy-filter-smoke] 404 JSON 合同生效 ✓"
+
+echo "[task-delete-postdeploy-filter-smoke] 4. DELETE 已 completed 任务 → 409，未被误改"
 TID2=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tAq -c "INSERT INTO tasks (task_type, status, title, payload) VALUES ('dev','completed','smoke: task-delete-terminal','{}'::jsonb) RETURNING id" | tr -d ' \n')
 CODE=$(curl -s -o /tmp/task-delete-smoke-409.json -w "%{http_code}" -X DELETE "${BRAIN_URL}/api/brain/tasks/${TID2}")
 if [[ "$CODE" != "409" ]]; then
@@ -50,7 +65,25 @@ fi
 psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -c "DELETE FROM tasks WHERE id='${TID2}'" >/dev/null
 echo "[task-delete-postdeploy-filter-smoke] 终态保护生效（409，未误改） ✓"
 
-echo "[task-delete-postdeploy-filter-smoke] 4. fetchPendingBatch 排除 smoke: 前缀任务（真调 runPostdeployVerifier）"
+echo "[task-delete-postdeploy-filter-smoke] 5. DELETE 已 cancelled 任务 → 409，未被误改"
+CANCELLED_BODY=$(mktemp)
+CANCELLED_CODE=$(curl -s -o "$CANCELLED_BODY" -w "%{http_code}" -X DELETE "${BRAIN_URL}/api/brain/tasks/${TID}")
+if [[ "$CANCELLED_CODE" != "409" ]]; then
+  echo "[task-delete-postdeploy-filter-smoke] FAIL: 已 cancelled 任务期望 409 得 ${CANCELLED_CODE}"
+  rm -f "$CANCELLED_BODY"
+  exit 1
+fi
+node -e "const d=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));if(typeof d.error!=='string'||typeof d.details!=='string'){console.error('FAIL: cancelled 409 响应合同错误: '+JSON.stringify(d));process.exit(1)}" "$CANCELLED_BODY"
+rm -f "$CANCELLED_BODY"
+DBSTATUS3=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tAq -c "SELECT status FROM tasks WHERE id='${TID}'" | tr -d ' \n')
+if [[ "$DBSTATUS3" != "cancelled" ]]; then
+  echo "[task-delete-postdeploy-filter-smoke] FAIL: 已 cancelled 任务被误改为 ${DBSTATUS3}"
+  exit 1
+fi
+psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -c "DELETE FROM tasks WHERE id='${TID}'" >/dev/null
+echo "[task-delete-postdeploy-filter-smoke] cancelled 重复删除保护生效 ✓"
+
+echo "[task-delete-postdeploy-filter-smoke] 6. fetchPendingBatch 排除 smoke: 前缀任务（真调 runPostdeployVerifier）"
 SMOKE_TID=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tAq -c "INSERT INTO tasks (task_type, status, title, payload) VALUES ('dev','pending_postdeploy','smoke: task-delete-filter-test', jsonb_build_object('postdeploy_check', jsonb_build_object('command','sh -c \"echo ok\"','timeout_s',5))) RETURNING id" | tr -d ' \n')
 CONTROL_TID=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tAq -c "INSERT INTO tasks (task_type, status, title, payload) VALUES ('dev','pending_postdeploy','task-delete-filter-control', jsonb_build_object('postdeploy_check', jsonb_build_object('command','sh -c \"echo ok\"','timeout_s',5))) RETURNING id" | tr -d ' \n')
 

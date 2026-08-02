@@ -24,6 +24,12 @@ describe('production capability probes', () => {
         state: 'base_admitted',
         base_admitted: true,
         dispatch_ready: true,
+        runtime_resources: {
+          postgres: {
+            available: true,
+            image_digest: `sha256:${'f'.repeat(64)}`,
+          },
+        },
         reasons: [],
       })),
     };
@@ -114,8 +120,13 @@ describe('production capability probes', () => {
       ok: true,
       login: 'cecelia-ci',
     });
-    await expect(probes.probePostgres()).resolves.toEqual({ ok: true });
-    expect(pool.query).toHaveBeenCalledWith('SELECT 1 AS ok');
+    await expect(probes.probePostgres({
+      target: { machine: 'us-mac-m4' },
+    })).resolves.toEqual({
+      ok: true,
+      image_digest: `sha256:${'f'.repeat(64)}`,
+    });
+    expect(pool.query).not.toHaveBeenCalled();
     await expect(probes.probeModelCapability({
       capability: 'structured_output',
       target: { provider: 'codex' },
@@ -123,6 +134,41 @@ describe('production capability probes', () => {
       ok: true,
       capability: 'structured_output',
     });
+  });
+
+  it('does not let the Brain-local pool impersonate PostgreSQL on the selected Worker', async () => {
+    const createProductionCapabilityProbes = await loadFactory();
+    const pool = { query: vi.fn(async () => ({ rows: [{ ok: 1 }] })) };
+    const nodeAdmissionClient = {
+      getAdmission: vi.fn(async () => ({
+        machine_id: 'us-mac-m4',
+        state: 'base_admitted',
+        base_admitted: true,
+        dispatch_ready: true,
+        runtime_resources: {
+          postgres: {
+            available: false,
+            image_digest: null,
+          },
+        },
+        reasons: [],
+      })),
+    };
+    const probes = createProductionCapabilityProbes({
+      pool,
+      registry: { get: vi.fn() },
+      fetchFn: vi.fn(),
+      env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
+      nodeAdmissionClient,
+    });
+
+    await expect(probes.probePostgres({
+      target: { machine: 'us-mac-m4' },
+    })).resolves.toEqual({
+      ok: false,
+      signature: 'postgres_runtime_unavailable',
+    });
+    expect(pool.query).not.toHaveBeenCalled();
   });
 
   it.each([

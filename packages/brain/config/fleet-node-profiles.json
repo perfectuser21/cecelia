@@ -5,7 +5,12 @@
       "capacity": 7,
       "worker_bind_host": "127.0.0.1",
       "brain_health_url": "http://127.0.0.1:5221/api/brain/health",
-      "runner_image_digest": "sha256:1ec3542ab56a58c620196a4f32fd04b12e8049ec29dbc121e33b51a0cabc4288",
+      "runner_image_digest": "sha256:e8979dcf7791b1fd0754276d39fd58adf9c8fc1148323a3d0d3b8abe29ea351f",
+      "runtime_resources": {
+        "postgres": {
+          "image_digest": "postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777"
+        }
+      },
       "resources": {
         "cpu_cores": 6,
         "memory_gib": 8,
@@ -23,7 +28,7 @@
         "orbstack": "2.2.1",
         "worker_protocol": "kernel-harness/v1",
         "worker_contract": "fleet-node-health/v1",
-        "worker": "1.267.91",
+        "worker": "1.267.92",
         "runner": "cecelia-runner/v1",
         "git": "2.39.5",
         "node": "25.8.0",
@@ -35,7 +40,12 @@
       "capacity": 8,
       "worker_bind_host": "100.86.57.69",
       "brain_health_url": "http://100.71.151.105:5221/api/brain/health",
-      "runner_image_digest": "sha256:1ec3542ab56a58c620196a4f32fd04b12e8049ec29dbc121e33b51a0cabc4288",
+      "runner_image_digest": "sha256:e8979dcf7791b1fd0754276d39fd58adf9c8fc1148323a3d0d3b8abe29ea351f",
+      "runtime_resources": {
+        "postgres": {
+          "image_digest": "postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777"
+        }
+      },
       "resources": {
         "cpu_cores": 6,
         "memory_gib": 8,
@@ -53,7 +63,7 @@
         "orbstack": "2.2.1",
         "worker_protocol": "kernel-harness/v1",
         "worker_contract": "fleet-node-health/v1",
-        "worker": "1.267.91",
+        "worker": "1.267.92",
         "runner": "cecelia-runner/v1",
         "git": "2.39.5",
         "node": "25.8.0",
@@ -65,7 +75,12 @@
       "capacity": 8,
       "worker_bind_host": "100.88.166.55",
       "brain_health_url": "http://100.71.151.105:5221/api/brain/health",
-      "runner_image_digest": "sha256:1ec3542ab56a58c620196a4f32fd04b12e8049ec29dbc121e33b51a0cabc4288",
+      "runner_image_digest": "sha256:e8979dcf7791b1fd0754276d39fd58adf9c8fc1148323a3d0d3b8abe29ea351f",
+      "runtime_resources": {
+        "postgres": {
+          "image_digest": "postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777"
+        }
+      },
       "resources": {
         "cpu_cores": 6,
         "memory_gib": 8,
@@ -83,7 +98,7 @@
         "orbstack": "2.2.1",
         "worker_protocol": "kernel-harness/v1",
         "worker_contract": "fleet-node-health/v1",
-        "worker": "1.267.91",
+        "worker": "1.267.92",
         "runner": "cecelia-runner/v1",
         "git": "2.39.5",
         "node": "25.8.0",

@@ -531,12 +531,24 @@ describe('attempt store', () => {
     const store = createAttemptStore(pool);
 
     await store.markStarting(input.id, { leaseOwner: 'brain-1', leaseSeconds: 90 });
-    await store.markRunning(input.id, { leaseOwner: 'brain-1', providerSessionId: 'session-1', leaseSeconds: 90 });
-    await store.heartbeat(input.id, { leaseOwner: 'brain-1', leaseSeconds: 90 });
+    await store.markRunning(input.id, {
+      leaseOwner: 'brain-1',
+      leaseGeneration: 0,
+      providerSessionId: 'session-1',
+      leaseSeconds: 90,
+    });
+    await store.heartbeat(input.id, {
+      leaseOwner: 'brain-1',
+      leaseGeneration: 0,
+      leaseSeconds: 90,
+    });
 
     expect(pool.query.mock.calls[0][0]).toMatch(/status = 'starting'.*lease_owner =/is);
     expect(pool.query.mock.calls[1][0]).toMatch(/status = 'running'.*provider_session_id/is);
-    expect(pool.query.mock.calls[2][0]).toMatch(/lease_owner = \$2.*status IN \('starting','running'\)/is);
+    expect(pool.query.mock.calls[1][0]).toMatch(/lease_generation = \$3/is);
+    expect(pool.query.mock.calls[2][0]).toMatch(
+      /lease_owner = \$2.*lease_generation = \$3.*status IN \('starting','running'\)/is,
+    );
     for (const [sql] of pool.query.mock.calls) {
       expect(sql).not.toMatch(/INSERT INTO harness_run_events/i);
     }

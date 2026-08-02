@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
     markRunning: vi.fn(),
   },
   pool: { query: vi.fn() },
+  terminalize: vi.fn(),
 }));
 
 vi.mock('../../orchestrator/attempt-store.js', () => ({
@@ -213,6 +214,12 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     mocks.store.fail.mockResolvedValue({ attempt: { ...attempt, status: 'failed' }, deduped: false });
     mocks.store.heartbeat.mockResolvedValue({ ...attempt, heartbeat_at: new Date().toISOString() });
     mocks.store.markRunning.mockResolvedValue({ ...attempt, provider_session_id: 'thread-live' });
+    mocks.terminalize.mockResolvedValue({
+      status: 'cleaned',
+      attempt_id: attemptId,
+      actual_machine_id: remoteMachineId,
+      attestation_status: 'verified',
+    });
     mocks.pool.query.mockImplementation(async (sql) => {
       if (String(sql).includes('FROM initiative_runs r')) {
         return {
@@ -230,6 +237,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     const { default: router } = await import('../harness-callback.js');
     app = express();
     app.set('kernelFleetBridgeToken', fleetSecret);
+    app.set('kernelFleetTerminalizer', mocks.terminalize);
     app.use(express.json());
     app.use('/api/brain', router);
   });
@@ -242,6 +250,97 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ ok: true, deduped: false });
     expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledOnce();
+  });
+
+  it('Fleet callback 在持久化终态前完成 Worker 清理并封存回执', async () => {
+    const ownedAttempt = fleetAttempt({
+      task_bundle: { inputs: { runtime_resources: { postgres: true } } },
+    });
+    mocks.store.getById.mockResolvedValue(ownedAttempt);
+    mocks.terminalize.mockImplementationOnce(async () => {
+      expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+      return {
+        status: 'cleaned',
+        attempt_id: attemptId,
+        actual_machine_id: remoteMachineId,
+        attestation_status: 'verified',
+      };
+    });
+
+    const response = await postCallback(app, fleetResult());
+
+    expect(response.status).toBe(200);
+    expect(mocks.terminalize).toHaveBeenCalledWith(ownedAttempt);
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          provider_metadata: expect.objectContaining({
+            server_resource_cleanup_receipt: {
+              status: 'cleaned',
+              attempt_id: attemptId,
+              actual_machine_id: remoteMachineId,
+              attestation_status: 'verified',
+            },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('Fleet 清理未完成时 callback 返回可重试错误且不写终态', async () => {
+    mocks.store.getById.mockResolvedValue(fleetAttempt({
+      task_bundle: { inputs: { runtime_resources: { postgres: true } } },
+    }));
+    mocks.terminalize.mockResolvedValueOnce({
+      status: 'quarantined',
+      attempt_id: attemptId,
+      actual_machine_id: remoteMachineId,
+      attestation_status: 'verified',
+    });
+
+    const response = await postCallback(app, fleetResult());
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe('fleet_resource_cleanup_incomplete');
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+  });
+
+  it('服务端 artifact 校验不可用时不提前清理正在负责 callback 重试的 Runner', async () => {
+    const plannerBranch = `cp-harness-prd-${attemptId.slice(0, 8)}-a4`;
+    const headSha = 'a'.repeat(40);
+    mocks.store.getById.mockResolvedValue(fleetAttempt({
+      role: 'planner',
+      task_bundle: {
+        expected_output: 'harness-result/planner-v1',
+        inputs: {
+          sprint_dir: 'sprints/kernel-real',
+          planner_branch: plannerBranch,
+          runtime_resources: { postgres: true },
+          workspace_spec: { repo: 'perfectuser21/zenithjoy-workspace' },
+        },
+      },
+    }));
+    app.set('kernelGitBranchHeadResolver', vi.fn(async () => {
+      throw new Error('temporary git outage');
+    }));
+
+    const response = await postCallback(app, {
+      ...fleetResult({ session_id: 'planner-session' }),
+      artifacts: [{
+        type: 'git_artifact',
+        kind: 'planner_prd',
+        path: 'sprints/kernel-real/sprint-prd.md',
+        repo: 'perfectuser21/zenithjoy-workspace',
+        branch: plannerBranch,
+        head_sha: headSha,
+      }],
+      decision: null,
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe('planner_git_artifact_verification_unavailable');
+    expect(mocks.terminalize).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it.each(['completed', 'completed_with_concerns'])(
@@ -1823,11 +1922,37 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     const response = await request(app)
       .post(`/api/brain/harness/attempts/${attemptId}/heartbeat`)
       .set('Authorization', `Bearer ${callbackToken}`)
-      .send({ lease_owner: 'brain-1:123', lease_seconds: 180 });
+      .send({ lease_owner: 'brain-1:123', lease_generation: 0, lease_seconds: 180 });
 
     expect(response.status).toBe(200);
     expect(mocks.store.heartbeat).toHaveBeenCalledWith(attemptId, {
       leaseOwner: 'brain-1:123',
+      leaseGeneration: 0,
+      leaseSeconds: 180,
+    });
+  });
+
+  it('heartbeat 缺 lease generation 时 fail closed，不允许旧 Runner 续新 lease', async () => {
+    const response = await request(app)
+      .post(`/api/brain/harness/attempts/${attemptId}/heartbeat`)
+      .set('Authorization', `Bearer ${callbackToken}`)
+      .send({ lease_owner: leaseOwner, lease_seconds: 180 });
+
+    expect(response.status).toBe(400);
+    expect(mocks.store.heartbeat).not.toHaveBeenCalled();
+  });
+
+  it('heartbeat 的旧 lease generation 无法续租，route 返回 409', async () => {
+    mocks.store.heartbeat.mockResolvedValueOnce(null);
+    const response = await request(app)
+      .post(`/api/brain/harness/attempts/${attemptId}/heartbeat`)
+      .set('Authorization', `Bearer ${callbackToken}`)
+      .send({ lease_owner: leaseOwner, lease_generation: 6, lease_seconds: 180 });
+
+    expect(response.status).toBe(409);
+    expect(mocks.store.heartbeat).toHaveBeenCalledWith(attemptId, {
+      leaseOwner,
+      leaseGeneration: 6,
       leaseSeconds: 180,
     });
   });
@@ -1846,6 +1971,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       .set('Authorization', `Bearer ${callbackToken}`)
       .send({
         lease_owner: 'brain-1:123',
+        lease_generation: 0,
         lease_seconds: 180,
         provider_session_id: 'thread-live',
       });
@@ -1853,6 +1979,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(response.status).toBe(200);
     expect(mocks.store.markRunning).toHaveBeenCalledWith(attemptId, {
       leaseOwner: 'brain-1:123',
+      leaseGeneration: 0,
       providerSessionId: 'thread-live',
       leaseSeconds: 180,
     });

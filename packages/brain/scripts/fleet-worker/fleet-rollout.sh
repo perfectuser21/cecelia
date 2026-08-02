@@ -3,7 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-RUNNER_DIGEST='sha256:1ec3542ab56a58c620196a4f32fd04b12e8049ec29dbc121e33b51a0cabc4288'
+RUNNER_DIGEST='sha256:e8979dcf7791b1fd0754276d39fd58adf9c8fc1148323a3d0d3b8abe29ea351f'
+POSTGRES_IMAGE='postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777'
 FLEET_WORKER_LABEL='com.perfect21.fleet-worker'
 FLEET_WORKER_DRAIN_MARKER='/var/run/cecelia/fleet-worker.drain'
 
@@ -389,6 +390,12 @@ stage_worker_token "$worker_token"
   HEAD refs/heads/fleet-rollout
 "$GIT" --git-dir="$bundle_repository" bundle create \
   "$repository_bundle" HEAD
+if ! "$DOCKER" image inspect "$POSTGRES_IMAGE" >/dev/null 2>&1; then
+  "$DOCKER" pull "$POSTGRES_IMAGE" >/dev/null \
+    || die "postgres_image_unavailable"
+fi
+"$DOCKER" image inspect "$POSTGRES_IMAGE" >/dev/null 2>&1 \
+  || die "postgres_image_unavailable"
 if ! "$DOCKER" run --rm \
     -e HARNESS_CANARY=true \
     --entrypoint /usr/bin/timeout \
@@ -397,7 +404,7 @@ if ! "$DOCKER" run --rm \
     __cecelia_runner_credential_contract_probe__; then
   die "runner_image_contract_invalid"
 fi
-"$DOCKER" save --output "$runner_archive" "$RUNNER_DIGEST"
+"$DOCKER" save --output "$runner_archive" "$RUNNER_DIGEST" "$POSTGRES_IMAGE"
 "$TAR" -cf "$payload_tar" -C "$TEMP_ROOT" \
   source.tar repository.bundle runner.tar worker-token
 rollout_commit_after="$(

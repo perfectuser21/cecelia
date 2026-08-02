@@ -455,6 +455,7 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
 
     await store.markRunning(input.id, {
       leaseOwner: 'brain-1',
+      leaseGeneration: 0,
       providerSessionId: 'provider-session',
       leaseSeconds: 90,
     });

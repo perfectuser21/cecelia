@@ -12,6 +12,7 @@ const {
   createDockerAdapter,
   createFileAttemptStateStore,
 } = require('./attempt-runner.cjs');
+const { createAttemptResourceManager } = require('./attempt-resources.cjs');
 const {
   createCredentialEnvelopeConsumer,
 } = require('./credential-envelope.cjs');
@@ -40,6 +41,7 @@ const CANONICAL_MACHINE_IDS = new Set([
   'xian-mac-m1',
 ]);
 const RUNNER_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const POSTGRES_IMAGE = 'postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777';
 
 function safeString(value, fallback = 'unavailable') {
   if (typeof value !== 'string' || value.length === 0) return fallback;
@@ -146,6 +148,15 @@ function projectHealth(report) {
     container: {
       probe_succeeded: safeBoolean(source.container?.probe_succeeded),
     },
+    runtime_resources: {
+      postgres: {
+        available: safeBoolean(source.runtime_resources?.postgres?.available),
+        image_digest: safeString(
+          source.runtime_resources?.postgres?.image_digest,
+          'unconfigured',
+        ),
+      },
+    },
     drain: {
       active: source.drain?.active !== false,
     },
@@ -203,6 +214,31 @@ function acceptedReceipt(receipt, secret) {
     job_id: jobId,
     actual_machine_id: machineId,
     attestation: signAttestation(secret, attemptId, machineId, jobId),
+  });
+}
+
+function terminalReceipt(receipt, secret, configuredMachineId) {
+  const attemptId = receipt?.attempt_id;
+  const status = receipt?.status;
+  const machineId = safeString(configuredMachineId, 'us-mac-m4');
+  if (
+    typeof attemptId !== 'string'
+    || !['cleaned', 'already_clean', 'quarantined'].includes(status)
+    || typeof machineId !== 'string'
+    || machineId.length === 0
+  ) {
+    throw new Error('attempt_terminal_receipt_invalid');
+  }
+  return Object.freeze({
+    status,
+    attempt_id: attemptId,
+    actual_machine_id: machineId,
+    attestation: signAttestation(
+      secret,
+      attemptId,
+      machineId,
+      `resource-cleanup:${status}`,
+    ),
   });
 }
 
@@ -329,6 +365,11 @@ function createFleetWorkerRuntime({
   });
   const runnerImageDigest = env.CECELIA_RUNNER_IMAGE
     ?? digest;
+  const postgresImageDigest = env.CECELIA_POSTGRES_IMAGE ?? POSTGRES_IMAGE;
+  const resourceManager = createAttemptResourceManager({
+    postgresImageDigest,
+    ...(runCommand ? { runCommand } : {}),
+  });
   const attemptRunner = createAttemptRunner({
     workspaceManager,
     docker,
@@ -337,6 +378,7 @@ function createFleetWorkerRuntime({
     runnerImageDigest,
     credentialConsumer,
     githubCredentialConsumer,
+    resourceManager,
   });
   return Object.freeze({
     attemptRunner,
@@ -420,7 +462,8 @@ function healthSelfChecksReady(report) {
     && report?.tailscale?.connected === true
     && report?.callback?.reachable === true
     && report?.worktree?.root_ready === true
-    && report?.container?.probe_succeeded === true;
+    && report?.container?.probe_succeeded === true
+    && report?.runtime_resources?.postgres?.available === true;
 }
 
 function createFleetWorkerServer(options = {}) {
@@ -431,6 +474,7 @@ function createFleetWorkerServer(options = {}) {
     ? options.attemptRunner
     : null;
   const attemptToken = options.attemptToken;
+  const machineId = safeString(options.machineId, 'us-mac-m4');
   const maximumRequestBytes = Number.isInteger(options.maxRequestBytes)
     && options.maxRequestBytes > 0
     ? options.maxRequestBytes
@@ -546,7 +590,13 @@ function createFleetWorkerServer(options = {}) {
           owner: body.lease_owner,
           generation: body.lease_generation,
         });
-        writeJson(response, 200, result);
+        writeJson(
+          response,
+          200,
+          action === 'terminal'
+            ? terminalReceipt(result, attemptToken, machineId)
+            : result,
+        );
         return;
       }
 

@@ -229,6 +229,12 @@ console.log(JSON.stringify({
   launchd: { loaded: true, domain: 'system', kind: 'LaunchDaemon' },
   worktree: { root_ready: true },
   container: { probe_succeeded: true },
+  runtime_resources: {
+    postgres: {
+      available: true,
+      image_digest: profile.runtime_resources.postgres.image_digest,
+    },
+  },
   drain: { active: false },
 }));
 NODE

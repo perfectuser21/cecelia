@@ -248,7 +248,8 @@ printf '%s\n' \
   'fi' \
   'source="$(cat)"' \
   'case "$source" in' \
-  '  *runner_image_digest*) printf "%s" "sha256:1ec3542ab56a58c620196a4f32fd04b12e8049ec29dbc121e33b51a0cabc4288" ;;' \
+  '  *runner_image_digest*) printf "%s" "sha256:e8979dcf7791b1fd0754276d39fd58adf9c8fc1148323a3d0d3b8abe29ea351f" ;;' \
+  '  *runtime_resources.postgres.image_digest*) printf "%s" "postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777" ;;' \
   '  *worker_bind_host*) printf "%s" "100.86.57.69" ;;' \
   '  *brain_health_url*) printf "%s" "http://100.71.151.105:5221/api/brain/health" ;;' \
   '  *) exit 1 ;;' \
@@ -483,6 +484,7 @@ for required in \
   '<key>CECELIA_MACHINE_ID</key>' \
   '<string>xian-mac-m4</string>' \
   '<key>CECELIA_RUNNER_DIGEST</key>' \
+  '<key>CECELIA_POSTGRES_IMAGE</key>' \
   '<key>CECELIA_FLEET_WORKER_TOKEN_FILE</key>' \
   "<string>$worker_token_file</string>" \
   '<key>CECELIA_FLEET_DATA_ROOT</key>' \
@@ -491,6 +493,8 @@ for required in \
 done
 grep -Eq '<string>sha256:[a-f0-9]{64}</string>' <<<"$plist_body" \
   || fail "plist does not pin the Runner digest"
+grep -Fq '<string>postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777</string>' <<<"$plist_body" \
+  || fail "plist does not pin the PostgreSQL runtime image"
 grep -Fq "$log_dir/fleet-worker.stdout.log" <<<"$plist_body" \
   || fail "stdout log path is not bounded"
 grep -Fq "$log_dir/fleet-worker.stderr.log" <<<"$plist_body" \
@@ -820,6 +824,7 @@ installed_worker="$runtime_dir/fleet-worker.cjs"
 installed_probe="$runtime_dir/node-probe.cjs"
 installed_workspace_manager="$runtime_dir/workspace-manager.cjs"
 installed_attempt_runner="$runtime_dir/attempt-runner.cjs"
+installed_attempt_resources="$runtime_dir/attempt-resources.cjs"
 installed_credential_envelope="$runtime_dir/credential-envelope.cjs"
 installed_github_credential_envelope="$runtime_dir/github-credential-envelope.cjs"
 installed_access_helper="$runtime_dir/refresh-fleet-worker-docker-access.sh"
@@ -829,6 +834,8 @@ installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.pl
   || fail "--apply did not install a stable Worker runtime"
 [[ -f "$installed_workspace_manager" && -f "$installed_attempt_runner" ]] \
   || fail "--apply omitted the Workspace/Attempt runtime modules"
+[[ -f "$installed_attempt_resources" ]] \
+  || fail "--apply omitted the Attempt resource runtime module"
 [[ -f "$installed_credential_envelope" ]] \
   || fail "--apply omitted the credential envelope runtime module"
 [[ -f "$installed_github_credential_envelope" ]] \

@@ -624,6 +624,9 @@ export function createDispatcher(deps) {
         ...bundle,
         inputs: {
           ...bundle.inputs,
+          ...(capabilityRequirements.postgres
+            ? { runtime_resources: { postgres: true } }
+            : {}),
           capability_snapshot_id: preflight.snapshot.capability_snapshot_id,
           capability_evidence: preflight.evidence,
         },

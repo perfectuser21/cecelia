@@ -61,6 +61,9 @@ const taskBundleSchema = z.object({
     worktree_path: z.string().min(1).optional(),
     execution_surface: z.literal('fleet-worker').optional(),
     workspace_spec: z.unknown().optional(),
+    runtime_resources: z.object({
+      postgres: z.boolean(),
+    }).strict().optional(),
     artifacts: z.array(z.unknown()).default([]),
   }).passthrough(),
   constraints: z.object({

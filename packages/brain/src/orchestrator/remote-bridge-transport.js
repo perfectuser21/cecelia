@@ -87,6 +87,12 @@ function copyWorkspaceSpec(bundle) {
   return Object.freeze(copy);
 }
 
+function copyRuntimeResources(bundle) {
+  const source = bundle?.inputs?.runtime_resources;
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
+  return Object.freeze({ postgres: source.postgres === true });
+}
+
 async function parseJson(response, operation, signal) {
   try {
     return await response.json();
@@ -280,6 +286,7 @@ export function createRemoteBridgeTransport({
       }
       const workspace = disposableCanaryWorkspace(bundle, attempt.id);
       const workspaceSpec = copyWorkspaceSpec(bundle);
+      const runtimeResources = copyRuntimeResources(bundle);
       return request(
         'launch',
         `${bridgeUrl}/harness/attempts`,
@@ -300,6 +307,7 @@ export function createRemoteBridgeTransport({
               role: bundle?.role,
             },
             ...(workspaceSpec ? { workspace_spec: workspaceSpec } : {}),
+            ...(runtimeResources ? { runtime_resources: runtimeResources } : {}),
             provider_spec: {
               provider: spec?.provider,
               command: spec?.command,
@@ -412,6 +420,54 @@ export function createRemoteBridgeTransport({
             throw new Error(`remote_bridge_cancel_http_${String(response?.status)}`);
           }
           return parseJson(response, 'cancel', signal);
+        },
+      );
+    },
+
+    async terminal({ attempt, target } = {}) {
+      const { machine, bridgeUrl } = resolveBridge(target);
+      requireNonempty(attempt?.id, 'attempt_id');
+      requireNonempty(attempt?.lease_owner, 'lease_owner');
+      if (!Number.isInteger(attempt?.lease_generation) || attempt.lease_generation < 0) {
+        throw new Error('remote_bridge_invalid_lease_generation');
+      }
+
+      return request(
+        'terminal',
+        `${bridgeUrl}/harness/attempts/${encodeURIComponent(attempt.id)}/terminal`,
+        {
+          method: 'POST',
+          headers: authHeaders(true),
+          body: JSON.stringify({
+            lease_owner: attempt.lease_owner,
+            lease_generation: attempt.lease_generation,
+          }),
+        },
+        async (response, signal) => {
+          if (!response?.ok) {
+            throw new Error(`remote_bridge_terminal_http_${String(response?.status)}`);
+          }
+          const receipt = await parseJson(response, 'terminal', signal);
+          if (
+            receipt?.attempt_id !== attempt.id
+            || receipt?.actual_machine_id !== machine
+            || !['cleaned', 'already_clean', 'quarantined'].includes(receipt?.status)
+            || !verifyMachineAttestation({
+              secret: configuredSecret,
+              attemptId: attempt.id,
+              machineId: machine,
+              jobId: `resource-cleanup:${receipt?.status}`,
+              attestation: receipt?.attestation,
+            })
+          ) {
+            throw new Error('remote_bridge_terminal_receipt_invalid');
+          }
+          return Object.freeze({
+            status: receipt.status,
+            attempt_id: receipt.attempt_id,
+            actual_machine_id: receipt.actual_machine_id,
+            attestation_status: 'verified',
+          });
         },
       );
     },

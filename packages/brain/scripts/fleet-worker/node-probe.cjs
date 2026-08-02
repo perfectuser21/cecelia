@@ -18,8 +18,9 @@ const DEFAULT_CALLBACK_TIMEOUT_MS = 5_000;
 const DEFAULT_MAX_BUFFER = 64 * 1024;
 const DEFAULT_CALLBACK_URL = 'http://127.0.0.1:5221/api/brain/health';
 const DEFAULT_DRAIN_MARKER = '/var/run/cecelia/fleet-worker.drain';
-const DEFAULT_WORKER_VERSION = '1.267.91';
+const DEFAULT_WORKER_VERSION = '1.267.92';
 const DEFAULT_RUNNER_VERSION = 'cecelia-runner/v1';
+const DEFAULT_POSTGRES_IMAGE = 'postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777';
 const MAX_CLOCK_OFFSET_SECONDS = 1;
 const EMPTY_DIGEST = `sha256:${'0'.repeat(64)}`;
 
@@ -334,12 +335,58 @@ async function probeDisposableResources({
   };
 }
 
+async function probePostgresRuntime({ run, imageDigest, machineId }) {
+  const safeMachine = String(machineId ?? 'unconfigured')
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]/g, '-')
+    .slice(0, 48);
+  const containerName = `cecelia-pg-admission-${safeMachine}`;
+  // A previous host-side timeout may have left the deterministic probe name.
+  // Removal is exact and best-effort; the actual run below remains fail-closed.
+  await run('docker', ['rm', '-f', '--', containerName]);
+  try {
+    return await run('docker', [
+      'run',
+      '--rm',
+      '--name',
+      containerName,
+      '--label',
+      'cecelia.fleet.resource=postgres-admission-probe',
+      '--network',
+      'none',
+      '--tmpfs',
+      '/var/lib/postgresql/data:rw,noexec,nosuid,nodev',
+      '--env',
+      'POSTGRES_PASSWORD=probe-only',
+      '--entrypoint',
+      'sh',
+      imageDigest,
+      '-ec',
+      [
+        'docker-entrypoint.sh postgres >/tmp/postgres-probe.log 2>&1 &',
+        'pid=$!',
+        'trap \'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true\' EXIT',
+        'i=0',
+        'while [ "$i" -lt 20 ]; do',
+        '  pg_isready -U postgres -d postgres >/dev/null 2>&1 && exit 0',
+        '  i=$((i+1))',
+        '  sleep 0.1',
+        'done',
+        'exit 1',
+      ].join('\n'),
+    ]);
+  } finally {
+    await run('docker', ['rm', '-f', '--', containerName]);
+  }
+}
+
 function failClosedReport({
   machineId,
   runnerImageDigest,
   observedAt,
   workerVersion,
   runnerVersion,
+  postgresImageDigest,
   drainActive = true,
 }) {
   return {
@@ -376,6 +423,9 @@ function failClosedReport({
     launchd: { loaded: false, domain: 'system', kind: 'LaunchDaemon' },
     worktree: { root_ready: false },
     container: { probe_succeeded: false },
+    runtime_resources: {
+      postgres: { available: false, image_digest: postgresImageDigest },
+    },
     drain: { active: drainActive },
   };
 }
@@ -407,12 +457,17 @@ async function probeFleetWorkerHealth(options = {}) {
     options.runnerVersion ?? env.CECELIA_RUNNER_VERSION,
     DEFAULT_RUNNER_VERSION,
   );
+  const postgresImageDigest = boundedString(
+    options.postgresImageDigest ?? env.CECELIA_POSTGRES_IMAGE,
+    DEFAULT_POSTGRES_IMAGE,
+  );
   const report = failClosedReport({
     machineId,
     runnerImageDigest,
     observedAt,
     workerVersion,
     runnerVersion,
+    postgresImageDigest,
   });
 
   try {
@@ -463,6 +518,8 @@ async function probeFleetWorkerHealth(options = {}) {
       orbResult,
       dockerInfoResult,
       dockerImageResult,
+      postgresImageResult,
+      postgresRuntimeResult,
       gitResult,
       nodeResult,
       codexResult,
@@ -486,6 +543,12 @@ async function probeFleetWorkerHealth(options = {}) {
       }),
       run('docker', ['info', '--format', '{{json .}}']),
       run('docker', ['image', 'inspect', '--format', '{{json .RepoDigests}}', commandDigest]),
+      run('docker', ['image', 'inspect', '--format', '{{json .RepoDigests}}', postgresImageDigest]),
+      probePostgresRuntime({
+        run,
+        imageDigest: postgresImageDigest,
+        machineId,
+      }),
       run('git', ['--version']),
       run('node', ['--version']),
       run('codex', ['--version']),
@@ -534,6 +597,12 @@ async function probeFleetWorkerHealth(options = {}) {
       ? parseVersion(orbResult.stdout, [/^OrbStack\s*/i])
       : 'unavailable';
     report.docker.available = dockerInfoResult.ok && dockerImageResult.ok;
+    report.runtime_resources.postgres = {
+      available: dockerInfoResult.ok
+        && postgresImageResult.ok
+        && postgresRuntimeResult.ok,
+      image_digest: postgresImageDigest,
+    };
     report.resources = {
       cpu_cores: cpuCores,
       memory_bytes: memoryBytes,

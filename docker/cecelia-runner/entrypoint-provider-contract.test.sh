@@ -730,11 +730,21 @@ jq -e '
   echo 'runner result schema is not Codex strict-output compatible' >&2
   exit 1
 }
-grep -q '/heartbeat' <<<"$SECTION"
-grep -q 'HARNESS_LEASE_OWNER' <<<"$SECTION"
-grep -q 'HARNESS_CALLBACK_TOKEN' <<<"$SECTION"
-grep -q 'Authorization: Bearer' <<<"$SECTION"
-grep -q 'provider_session_id:\$session' <<<"$SECTION"
+# Heartbeats are a single generation-fenced transport contract shared by the
+# provider session, provider runtime, evaluator preflight, and callback retry
+# paths. Do not regress to role-local endpoint construction inside this section.
+[[ "$(grep -c '/heartbeat' "$ENTRYPOINT")" -eq 1 ]] || {
+  echo 'runner must define exactly one centralized heartbeat endpoint' >&2
+  exit 1
+}
+grep -q '^build_attempt_heartbeat_body()' "$ENTRYPOINT"
+grep -q '^post_attempt_heartbeat()' "$ENTRYPOINT"
+grep -q 'post_attempt_heartbeat "\$session"' "$ENTRYPOINT"
+grep -q 'lease_generation:\$generation' "$ENTRYPOINT"
+grep -q 'HARNESS_LEASE_OWNER' "$ENTRYPOINT"
+grep -q 'HARNESS_CALLBACK_TOKEN' "$ENTRYPOINT"
+grep -q 'Authorization: Bearer' "$ENTRYPOINT"
+grep -q 'provider_session_id:\$session' "$ENTRYPOINT"
 grep -q -- '--session-id' <<<"$SECTION"
 grep -q 'HARNESS_READ_ONLY' <<<"$SECTION"
 # The Runner container is already the external sandbox. Asking Codex to add its

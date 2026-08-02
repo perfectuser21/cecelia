@@ -67,4 +67,21 @@ describe('skill-contract — 5 类不变量守现网快照', () => {
     expect(evaluatorBody).not.toMatch(/\bzipfile\b|\.extractall\(|source\.read\(\)/);
     expect(evaluatorBody).not.toContain('EVIDENCE_UNPACK_DIR');
   });
+
+  it('不变量9: local_api 模板自举空库和真实业务会话，不消费预存身份', () => {
+    const localApiTemplate = proposer.slice(
+      proposer.indexOf('### target_environment = local_api'),
+      proposer.indexOf('### target_environment = mac_web'),
+    );
+    expect(localApiTemplate).toContain('${DB_URL:?');
+    expect(localApiTemplate).toMatch(/migrat|schema bootstrap/i);
+    expect(localApiTemplate).toMatch(/sign-up|signup|login/i);
+    expect(localApiTemplate).toContain('mktemp');
+    expect(localApiTemplate).not.toMatch(/psql\s+\$DB(?:\s|$)/);
+    expect(localApiTemplate).not.toMatch(/AUTH_COOKIE|TENANT_ID/);
+  });
+
+  it('不变量10: proposer 保留 Android 真机 target 枚举', () => {
+    expect(proposer).toContain('playground|android_realmachine');
+  });
 });
