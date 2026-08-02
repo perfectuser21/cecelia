@@ -233,6 +233,7 @@ function startReceipt(receipt) {
         'dead',
         'removed',
         'quarantined',
+        'credential_delivery_unconfirmed',
       ].includes(terminalStatus)
     )
   ) {
