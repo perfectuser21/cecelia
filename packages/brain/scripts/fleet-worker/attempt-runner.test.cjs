@@ -145,6 +145,24 @@ function inMemoryStateStore(initial = []) {
   };
 }
 
+function instrumentedFileSystem(overrides = {}) {
+  const operations = {};
+  for (const method of [
+    'mkdirSync',
+    'openSync',
+    'writeFileSync',
+    'fsyncSync',
+    'closeSync',
+    'renameSync',
+    'rmSync',
+    'readFileSync',
+    'readdirSync',
+  ]) {
+    operations[method] = vi.fn((...args) => fs[method](...args));
+  }
+  return Object.assign(operations, overrides);
+}
+
 function dependencies(overrides = {}) {
   const events = [];
   const pendingWait = new Promise(() => {});
@@ -474,6 +492,31 @@ describe('Fleet Worker Attempt runner', () => {
     });
   });
 
+  it('fails closed on Worker inspect infrastructure errors during reconciliation', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    Object.assign(deps.stateStore.states.get(ATTEMPT_ID), {
+      status: 'running',
+      credential_delivery_status: 'delivered',
+    });
+    deps.docker.inspect.mockRejectedValueOnce(
+      new Error('docker daemon permission denied'),
+    );
+    const restarted = createRunner(deps);
+
+    await expect(restarted.reconcile()).rejects.toThrow(
+      'docker daemon permission denied',
+    );
+
+    expect(deps.docker.remove).not.toHaveBeenCalled();
+    expect(deps.resourceManager.release).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'running',
+      credential_delivery_status: 'delivered',
+    });
+  });
+
   it.each(['created', 'prepared'])(
     'fails closed for persisted starting with Docker %s and no credentials',
     async (dockerStatus) => {
@@ -599,6 +642,41 @@ describe('Fleet Worker Attempt runner', () => {
     });
   });
 
+  it('does not resurrect running when cancel races a deferred Docker start', async () => {
+    let releaseStart;
+    const deferredStart = new Promise((resolve) => {
+      releaseStart = resolve;
+    });
+    const deps = dependencies();
+    deps.docker.start.mockReturnValueOnce(deferredStart);
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+
+    const starting = runner.start(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    });
+    await vi.waitFor(() => {
+      expect(deps.stateStore.states.get(ATTEMPT_ID).status).toBe('starting');
+    });
+    const cancelling = runner.cancel(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    releaseStart({ containerId: 'container-attempt-1' });
+
+    await Promise.allSettled([starting, cancelling]);
+
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'terminal',
+      terminal_status: 'cleaned',
+    });
+    expect(deps.docker.remove).toHaveBeenCalledTimes(1);
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledTimes(1);
+    expect(deps.docker.wait).not.toHaveBeenCalled();
+  });
+
   it('rejects a stale start lease without starting the prepared container', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
@@ -613,6 +691,46 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
       status: 'prepared',
     });
+  });
+
+  it('rolls back a workspace when verification fails before resource creation', async () => {
+    const deps = dependencies();
+    deps.workspaceManager.verify.mockRejectedValueOnce(
+      new Error('workspace head mismatch'),
+    );
+    const runner = createRunner(deps);
+
+    await expect(runner.prepare(request())).rejects.toThrow(
+      'workspace head mismatch',
+    );
+
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledWith(deps.workspace);
+    expect(deps.resourceManager.provision).not.toHaveBeenCalled();
+    expect(deps.docker.prepare).not.toHaveBeenCalled();
+    expect(deps.stateStore.save).not.toHaveBeenCalled();
+  });
+
+  it('quarantines workspace evidence when verify rollback cleanup fails', async () => {
+    const deps = dependencies();
+    deps.workspaceManager.verify.mockRejectedValueOnce(
+      new Error('workspace head mismatch'),
+    );
+    deps.workspaceManager.cleanup.mockRejectedValueOnce(
+      new Error('workspace cleanup denied'),
+    );
+    const runner = createRunner(deps);
+
+    await expect(runner.prepare(request())).rejects.toThrow(
+      'attempt_workspace_verify_rollback_failed:workspace head mismatch',
+    );
+
+    expect(deps.workspaceManager.quarantine).toHaveBeenCalledWith(
+      deps.workspace,
+      expect.objectContaining({ message: 'workspace cleanup denied' }),
+    );
+    expect(deps.resourceManager.provision).not.toHaveBeenCalled();
+    expect(deps.docker.prepare).not.toHaveBeenCalled();
+    expect(deps.stateStore.save).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -1360,6 +1478,46 @@ describe('Fleet Worker Attempt runner', () => {
 });
 
 describe('Fleet Worker durable runtime adapters', () => {
+  it('maps only explicit Docker no-such-container errors to missing', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-inspect-'));
+    const runCommand = vi.fn(async () => {
+      const error = new Error('Error response from daemon: No such container');
+      error.stderr = 'No such object: exact-attempt';
+      throw error;
+    });
+    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+
+    try {
+      await expect(docker.inspect({
+        containerId: 'exact-attempt',
+      })).resolves.toEqual({ status: 'missing' });
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    'docker daemon unavailable',
+    'context deadline exceeded',
+    'permission denied inspecting container',
+  ])('propagates Docker inspect infrastructure failure: %s', async (message) => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-inspect-'));
+    const runCommand = vi.fn(async () => {
+      throw new Error(message);
+    });
+    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+
+    try {
+      await expect(docker.inspect({
+        containerId: 'exact-attempt',
+      })).rejects.toThrow(message);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it('streams a bounded GitHub token to its dedicated FIFO without argv exposure', async () => {
     const { __test__ } = loadAttemptRunner();
     const received = [];
@@ -2006,6 +2164,64 @@ describe('Fleet Worker durable runtime adapters', () => {
 
       await store.delete(ATTEMPT_ID);
       await expect(store.get(ATTEMPT_ID)).resolves.toBeNull();
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('fsyncs and closes the state file before rename and its directory after', async () => {
+    const { createFileAttemptStateStore } = loadAttemptRunner();
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-state-sync-'));
+    const fileSystem = instrumentedFileSystem();
+    const store = createFileAttemptStateStore({ stateRoot, fileSystem });
+    const state = {
+      attempt_id: ATTEMPT_ID,
+      worker_id: WORKER_ID,
+      status: 'prepared',
+    };
+
+    try {
+      await store.save(state);
+
+      expect(fileSystem.openSync).toHaveBeenCalledTimes(2);
+      expect(fileSystem.fsyncSync).toHaveBeenCalledTimes(2);
+      expect(fileSystem.closeSync).toHaveBeenCalledTimes(2);
+      expect(fileSystem.writeFileSync.mock.calls[0][0]).toEqual(expect.any(Number));
+      expect(fileSystem.fsyncSync.mock.invocationCallOrder[0])
+        .toBeLessThan(fileSystem.renameSync.mock.invocationCallOrder[0]);
+      expect(fileSystem.renameSync.mock.invocationCallOrder[0])
+        .toBeLessThan(fileSystem.fsyncSync.mock.invocationCallOrder[1]);
+      expect(fileSystem.openSync).toHaveBeenLastCalledWith(stateRoot, 'r');
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the prior state intact when temp-file fsync fails', async () => {
+    const { createFileAttemptStateStore } = loadAttemptRunner();
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-state-sync-'));
+    const original = {
+      attempt_id: ATTEMPT_ID,
+      worker_id: WORKER_ID,
+      status: 'prepared',
+    };
+    const replacement = { ...original, status: 'running' };
+    const baselineStore = createFileAttemptStateStore({ stateRoot });
+    await baselineStore.save(original);
+    const fileSystem = instrumentedFileSystem();
+    fileSystem.fsyncSync.mockImplementationOnce(() => {
+      throw new Error('state fsync failed');
+    });
+    const failingStore = createFileAttemptStateStore({ stateRoot, fileSystem });
+
+    try {
+      await expect(failingStore.save(replacement)).rejects.toThrow(
+        'state fsync failed',
+      );
+      await expect(baselineStore.get(ATTEMPT_ID)).resolves.toEqual(original);
+      expect(fileSystem.renameSync).not.toHaveBeenCalled();
+      expect(fileSystem.closeSync).toHaveBeenCalled();
+      expect(fs.readdirSync(stateRoot)).toEqual([`${ATTEMPT_ID}.json`]);
     } finally {
       fs.rmSync(stateRoot, { recursive: true, force: true });
     }
