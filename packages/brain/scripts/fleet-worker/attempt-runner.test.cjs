@@ -1134,6 +1134,104 @@ describe('Fleet Worker durable runtime adapters', () => {
     }
   });
 
+  // Attempt 3aa00156 rebased a frozen candidate onto latest main because the
+  // container was never told which SHA it started from, nor that the SHA was an
+  // invariant rather than a suggestion.
+  it('publishes the server-observed start SHA and frozen mode into the container', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-frozen-env-'));
+    const startSha = '0dc4e3c07ff19a0ac95440723986bf3cb78580b2';
+    const runCommand = vi.fn(async (_command, args) => {
+      if (args[0] === 'create') return { stdout: 'frozen-container\n' };
+      return { stdout: '' };
+    });
+    const docker = createDockerAdapter({
+      runCommand,
+      runtimeRoot,
+      writeCredential: vi.fn(async () => undefined),
+      writeGitHubCredential: vi.fn(async () => undefined),
+      resolveMountSource: (source) => source,
+    });
+
+    try {
+      await docker.launch({
+        attemptId: ATTEMPT_ID,
+        runId: RUN_ID,
+        workerId: WORKER_ID,
+        image: IMAGE_DIGEST,
+        providerSpec: request().provider_spec,
+        taskId: TASK_ID,
+        roleEnv: { WORKSPACE_PATH: '/workspace' },
+        timeoutSeconds: 300,
+        role: 'generator',
+        model: 'gpt-5',
+        workspaceStartSha: startSha,
+        frozenBaseline: true,
+        workspaceMount: {
+          source: `/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID}`,
+          target: '/workspace',
+          readOnly: false,
+        },
+        workspaceAdminMount: {
+          source: `/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
+          target: `/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
+          readOnly: false,
+        },
+        labels: {
+          'cecelia.fleet.attempt_id': ATTEMPT_ID,
+          'cecelia.fleet.run_id': RUN_ID,
+          'cecelia.fleet.worker_id': WORKER_ID,
+        },
+        callback: {
+          url: request().callback_url,
+          token: request().callback_token,
+        },
+        lease: { owner: 'dispatcher-1', generation: 0 },
+        credential: CREDENTIAL,
+        githubCredential: GITHUB_CREDENTIAL,
+      });
+
+      const createCall = runCommand.mock.calls.find(
+        ([command, args]) => command === 'docker' && args[0] === 'create',
+      );
+      expect(createCall[1]).toEqual(expect.arrayContaining([
+        '--env', `HARNESS_WORKSPACE_START_SHA=${startSha}`,
+        '--env', 'HARNESS_FROZEN_BASELINE=true',
+      ]));
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('binds the container start SHA to the workspace the Worker actually checked out', async () => {
+    const deps = dependencies();
+    deps.workspace.frozen_baseline = true;
+    const runner = createRunner(deps);
+
+    await runner.launch(request({
+      workspace_spec: {
+        ...request().workspace_spec,
+        frozen_baseline: true,
+      },
+    }));
+
+    expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceStartSha: deps.workspace.head_sha,
+      frozenBaseline: true,
+    }));
+  });
+
+  it('leaves ordinary dev Attempts unfrozen', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    await runner.launch(request());
+
+    expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+      frozenBaseline: false,
+    }));
+  });
+
   it('rejects an unsafe OrbStack ACL principal before launching Docker', () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));

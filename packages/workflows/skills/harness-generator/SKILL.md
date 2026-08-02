@@ -5,10 +5,11 @@ description: |
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。一个 Sprint = 一个 Generator = 一个 PR。
-version: 7.11.0
+version: 7.12.0
 created: 2026-04-08
-updated: 2026-07-17
+updated: 2026-08-02
 changelog:
+  - 7.12.0: 冻结基线档（生产 run d9785137 / attempt 3aa00156 事故修法）——Step 0.5 从「无条件 rebase 到最新 main」改为按 Kernel 注入的 `HARNESS_FROZEN_BASELINE` 二选一：冻结/对比任务以 `HARNESS_WORKSPACE_START_SHA` 为唯一边界，禁 fetch/rebase/merge/cherry-pick/pull 任何其他候选血统、禁 force push、禁 --no-verify，只许在起始 SHA 之上追加；Step 7 CI 轮询里 BEHIND 在冻结档下不做 `gh pr update-branch`（merge 会把对照候选带进来，血统闸看不出）；普通 dev 档 latest-main rebase 一字不变。三层机械执行：Runner pre-push 血统闸 + Provider 退出后血统断言 + Brain callback 服务端 lineage 校验
   - 7.11.0: gear 档位：Step 0 IS_SKELETON 检测旁新增 WORKSTREAM_INDEX 检测（移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策7）——segmented 档位下存在时只实现 task-plan.json 对应段的 scope/files，禁碰其他段实现文件；测试棋盘共享只许点绿禁改断言（CONTRACT IS LAW 不变）；TDD 两 commit 纪律照旧；default（未设置）保持现行整份 Sprint 一口气实现不变
   - 7.10.0: TDD 纪律新增「禁 mock 边执行规则」（刀2，配套 proposer 9.12.0）——合同 ## 禁 mock 边清单 列出的边，测试代码中 vi.mock/jest.mock/stub 命中即违约（CONTRACT IS LAW 的一部分，evaluator 机械 grep 核查，命中 = CONTRACT-IS-LAW FAIL）；需要真 PG 的测试按合同指定放 integration 命名/位置，CI 由 brain-integration job 起真 Postgres 跑
   - 7.9.0: EVA v2 审计五处修法 — G1 Red 阶段 relay 现实双分支（合同测试已随 contract import 存在则 Red commit=DoD.md+red-evidence 摘要，不重复 checkout；Red 验证按测试类型分派，.test.sh 合同逐个 bash 执行预期非零退出码即为红，替代 numTotalTests=0 即 exit 1 的死路）；G2 防事后补标（(Red) commit committer date 必须早于实现 commit）+ lint-tdd-commit-order 表述如实化（只校验文件序不校验标签顺序）；G3 新增 Step 6.7 push 前 CI 门禁自查（smoke 存在且登记/DoD 全勾/[BEHAVIOR] 测试覆盖，3827 实证）；G4 BEHIND 统一 gh pr update-branch，禁 merge commit 限定开工 rebase 阶段；G5 MAX_FIXES 用尽接线 Step 8 FAILED verdict + RELAY_STATUS BLOCKED
@@ -138,21 +139,54 @@ if [[ "$ORIGIN_URL" =~ ^/ ]]; then
 fi
 ```
 
-### Step 0.5: ★ MANDATORY PRE-FLIGHT — rebase 到最新 main
+### Step 0.5: ★ MANDATORY PRE-FLIGHT — 按基线模式二选一
+
+**先判档，再动 git。** Kernel 注入两个服务端观测量，任务是不是冻结/对比档由它们决定，不由你判断、不由提示词推测：
+
+| env | 含义 |
+|-----|------|
+| `HARNESS_FROZEN_BASELINE` | `true` = 冻结基线档（盲测 / A-B 对比 / 定点复现）；其余一律普通 dev |
+| `HARNESS_WORKSPACE_START_SHA` | 服务端观测到的工作区起始 commit，冻结档下是**唯一合法边界** |
 
 ```bash
-git fetch origin main
-git rebase origin/main || {
-  echo "ERROR: rebase 冲突 — 必须解决后才能继续"
-  exit 1
-}
-git merge-base --is-ancestor origin/main HEAD || {
-  echo "ERROR: rebase 后 HEAD 仍落后 origin/main，拒绝继续"
-  exit 1
-}
+if [[ "${HARNESS_FROZEN_BASELINE:-false}" == "true" ]]; then
+  # ── 冻结基线档：起始 SHA 是不变量，只许在它之上追加 ──
+  if [[ ! "${HARNESS_WORKSPACE_START_SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "ERROR: 冻结档缺少可信 HARNESS_WORKSPACE_START_SHA — 拒绝开工"
+    echo "{\"verdict\": \"ABORTED\", \"reason\": \"frozen baseline start sha missing\"}"
+    exit 1
+  fi
+  git merge-base --is-ancestor "$HARNESS_WORKSPACE_START_SHA" HEAD || {
+    echo "ERROR: HEAD 已脱离冻结基线 $HARNESS_WORKSPACE_START_SHA — 拒绝继续"
+    echo "{\"verdict\": \"ABORTED\", \"reason\": \"frozen baseline lineage broken\"}"
+    exit 1
+  }
+  echo "[generator] 冻结基线档：边界 = $HARNESS_WORKSPACE_START_SHA，不做任何 main 同步"
+else
+  # ── 普通 dev 档：保持原有 latest-main rebase ──
+  git fetch origin main
+  git rebase origin/main || {
+    echo "ERROR: rebase 冲突 — 必须解决后才能继续"
+    exit 1
+  }
+  git merge-base --is-ancestor origin/main HEAD || {
+    echo "ERROR: rebase 后 HEAD 仍落后 origin/main，拒绝继续"
+    exit 1
+  }
+fi
 ```
 
-**禁止事项**：
+**冻结基线档禁止事项（`HARNESS_FROZEN_BASELINE=true` 时逐条生效）**：
+- 禁止 `git fetch origin main` / `git fetch origin <任何其他分支>`——盲测下同步远端本身就是取证污染
+- 禁止 `git rebase` / `git merge` / `git cherry-pick` / `git pull` 把任何其他 lineage 带进工作区（对照候选的分支、最新 main、别的 PR 一律不许碰）
+- 禁止 `git reset --hard` / `git checkout` 到 `HARNESS_WORKSPACE_START_SHA` 血统之外的 commit
+- 禁止 `git push --force` / `--force-with-lease`——冻结档只做 fast-forward 追加
+- 禁止 `git push --no-verify`——运输层 pre-push 血统闸不是建议
+- 唯一合法动作：在 `HARNESS_WORKSPACE_START_SHA` 之上**追加** Red/Green commit 后正常 push
+
+> 这些禁令由 Runner 侧 pre-push 血统闸 + Provider 退出后的血统断言 + Brain callback 服务端 lineage 校验三层机械执行。任何一层发现 `HARNESS_WORKSPACE_START_SHA` 不再是 HEAD 的祖先，push 失败、Attempt 判死、PR 不被投影。绕过闸门不会让你通过，只会把这次 Attempt 变成 `frozen_baseline_violation`。
+
+**普通 dev 档禁止事项**：
 - 禁止跳过 rebase 直接开工
 - 禁止用 `git merge origin/main` 代替 rebase（会产生 merge commit 污染历史）——此禁令仅适用于**开工 rebase 阶段**；PR 阶段 BEHIND 用 `gh pr update-branch` 产生的 merge commit 不违规（EVA v2 G4）
 
@@ -580,11 +614,18 @@ while true; do
   fi
 
   [ "$MERGE_STATE" = "BEHIND" ] && {
-    # EVA v2（G4）：BEHIND 统一走 gh pr update-branch（与 controller 实践/全局规范对齐），
-    # 不再本地 rebase + force-with-lease push
-    echo "branch behind main, update-branch..."
-    gh pr update-branch "$PR_NUMBER" --repo "$REPO"
-    continue
+    if [[ "${HARNESS_FROZEN_BASELINE:-false}" == "true" ]]; then
+      # 冻结档下 update-branch 会把 main（可能已含对照候选）merge 进本分支 ——
+      # 血统闸看不出来（merge commit 保留祖先），但盲测已被污染。BEHIND 不是本
+      # Attempt 能解决的问题，不许自行同步；继续落到下方全绿完成判断。
+      echo "frozen baseline: BEHIND 不做 update-branch，保持冻结边界并按 CI 结果收尾"
+    else
+      # EVA v2（G4）：BEHIND 统一走 gh pr update-branch（与 controller 实践/全局规范对齐），
+      # 不再本地 rebase + force-with-lease push
+      echo "branch behind main, update-branch..."
+      gh pr update-branch "$PR_NUMBER" --repo "$REPO"
+      continue
+    fi
   }
 
   if [ "$FAILED" -eq 0 ] && [ "$PENDING" -eq 0 ]; then

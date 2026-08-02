@@ -1,6 +1,32 @@
 # Brain 模块定义
 
-**版本**: 1.267.177
+**版本**: 1.267.178
+
+## Kernel frozen-baseline lineage guard
+
+- `createWorkspaceSpecResolver` 把「任务钉死了 `payload.base_sha`」这一事实固化成
+  `workspace_spec.frozen_baseline`（strict schema，默认 false）。
+  `remote-bridge-transport` 的 `WORKSPACE_SPEC_FIELDS` 与 Fleet Worker
+  `workspace-manager.cjs` 的 `SPEC_FIELDS` 同步收下该字段；`prepare()` 把它与自己观测到的
+  `head_sha`（`expected_head_sha ?? base_sha` 实际 checkout 的那个）一起挂到 workspace 上，
+  `attempt-runner.cjs` 据此注入 `HARNESS_WORKSPACE_START_SHA` / `HARNESS_FROZEN_BASELINE`。
+- `entrypoint.sh` 新增 `frozen-baseline-guard` 段：`install_frozen_baseline_guard` 在
+  Provider 启动前校验 HEAD 恰为 start SHA，快照当前所有 `refs/heads` + `refs/remotes` 的
+  tip 到 `baseline-refs`，生成 `lineage-check.sh`（START SHA 与快照路径烤进脚本）与
+  `core.hooksPath` 下的 `pre-push`；`assert_frozen_baseline_lineage` 在 Provider 退出后
+  复用同一脚本。判据 = `git rev-list --count START..<commit>` 必须等于
+  `git rev-list --count <commit> ^START ^<每个快照 tip>`，即引入的每个 commit 都是本
+  Attempt 新写的。武装失败 → `frozen_baseline_guard_unavailable`；事后断言失败 →
+  provider_success 置 false、exit 1。
+- `commit-lineage-resolver.js` 用 GitHub compare API 返回
+  `{ is_ancestor, merge_base_sha }`；`harness-callback.js` 的 `verifyFrozenLineage`
+  对冻结 Attempt 要求 (1) `compare(start, head).status ∈ {ahead, identical}`，
+  (2) `compare('main', head).merge_base_commit.sha` 等于 start SHA，或（generator-fix
+  从 PR head 续跑的合法情形）start SHA 是该分叉点的后代。resolver 抛错 → 503
+  `pull_request_verification_unavailable`。
+- 反面判据留痕：单纯的 `git merge-base --is-ancestor start HEAD` **不是**冻结判据。
+  生产 run `d9785137` 里 main `676fed7d` 本身就是冻结基线 `0dc4e3c0` 的后代，
+  rebase 上去祖先关系照样成立。
 
 ## Kernel generator string PR artifact normalization
 
@@ -77,7 +103,7 @@
   再交给既有 `commander-directive/v1` Zod 合同；action、evidence、Provider、凭据、
   workspace、Fleet admission 与 callback 边界不变。
 - 三节点统一固定 Runner
-  `sha256:5cd1faa1d29b1d158c39773ec94fc18b5d76e2db0c4139ca56af3c03769c9552`。
+  `sha256:0ac225b0878550b6fbbb1f3b960be392630e52139df3fab761f4d5fe5cc4f721`。
 - 回退：先 drain active Hybrid run，再恢复 Brain `1.267.173` 与上一 Runner digest；
   旧组合会在首个 Commander Attempt 恢复嵌套 `required` 不完整的
   `invalid_json_schema`。

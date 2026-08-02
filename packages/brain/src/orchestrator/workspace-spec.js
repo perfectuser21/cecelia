@@ -28,6 +28,10 @@ const workspaceSpecSchema = z.object({
   mode: z.enum(['read-only', 'read-write']),
   run_id: z.string().uuid(),
   attempt_id: z.string().uuid(),
+  // A frozen baseline is an invariant, not a starting suggestion: the Attempt
+  // must never import another lineage (latest main, a competing candidate) on
+  // top of the SHA the server pinned. Every layer below re-reads this bit.
+  frozen_baseline: z.boolean().default(false),
 }).strict();
 
 export function parseWorkspaceSpec(value, expected = {}) {
@@ -91,6 +95,10 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
     const plannerBaseSha = role === 'proposer'
       ? inputs.planner_head_sha
       : null;
+    // A task that pins payload.base_sha has chosen an exact baseline instead of
+    // latest main — that is the observable, server-side signal for a frozen or
+    // comparison run. Ordinary dev leaves it unset and keeps latest-main rebase.
+    const frozenBaseline = CANONICAL_SHA.test(String(payload.base_sha ?? ''));
     const baseSha = plannerBaseSha
       ?? immutableRoleSha
       ?? payload.base_sha
@@ -113,6 +121,7 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
       mode: readOnly ? 'read-only' : 'read-write',
       run_id: ctx?.runId,
       attempt_id: attemptId,
+      frozen_baseline: frozenBaseline,
     });
   };
 }

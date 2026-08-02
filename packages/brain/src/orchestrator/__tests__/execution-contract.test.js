@@ -166,7 +166,10 @@ describe('TaskBundle contract', () => {
     bundle.inputs.execution_surface = 'fleet-worker';
     bundle.inputs.workspace_spec = validWorkspaceSpec();
 
-    expect(parseTaskBundle(bundle).inputs.workspace_spec).toEqual(validWorkspaceSpec());
+    expect(parseTaskBundle(bundle).inputs.workspace_spec).toEqual({
+      ...validWorkspaceSpec(),
+      frozen_baseline: false,
+    });
   });
 
   it('rejects a Fleet bundle that only carries a caller-owned absolute worktree path', () => {

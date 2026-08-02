@@ -132,6 +132,35 @@ describe('Fleet Worker workspace manager', () => {
     expect(second.owner.attempt_id).toBe(ATTEMPT_B);
   });
 
+  // The Worker is the only place that observes the real checkout SHA. A frozen
+  // Attempt must carry that observation forward, otherwise nothing downstream
+  // can prove the Provider never left the pinned baseline.
+  it('carries the frozen baseline invariant onto the prepared workspace', async () => {
+    const manager = createManager(fixture);
+
+    const workspace = await manager.prepare(spec(fixture, {
+      frozen_baseline: true,
+    }));
+
+    expect(workspace.frozen_baseline).toBe(true);
+    expect(workspace.head_sha).toBe(fixture.sha);
+  });
+
+  it('defaults the frozen baseline invariant to false for ordinary dev', async () => {
+    const manager = createManager(fixture);
+
+    const workspace = await manager.prepare(spec(fixture));
+
+    expect(workspace.frozen_baseline).toBe(false);
+  });
+
+  it('rejects a non-boolean frozen baseline instead of coercing it', async () => {
+    const manager = createManager(fixture);
+
+    await expect(manager.prepare(spec(fixture, { frozen_baseline: 'true' })))
+      .rejects.toThrow('workspace_frozen_baseline_invalid');
+  });
+
   it('reuses a server-seeded mirror when the requested commit is already present', async () => {
     const manager = createManager(fixture);
     const seeded = await manager.prepare(spec(fixture));

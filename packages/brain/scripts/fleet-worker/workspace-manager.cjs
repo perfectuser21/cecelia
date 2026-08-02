@@ -18,6 +18,7 @@ const SPEC_FIELDS = new Set([
   'mode',
   'run_id',
   'attempt_id',
+  'frozen_baseline',
 ]);
 
 async function defaultRunCommand(command, args, options = {}) {
@@ -70,7 +71,16 @@ function validateSpec(value, repoAllowlist) {
   if (!UUID_PATTERN.test(value.attempt_id)) {
     throw new Error('workspace_attempt_id_invalid');
   }
-  return Object.freeze({ ...value });
+  if (
+    value.frozen_baseline !== undefined
+    && typeof value.frozen_baseline !== 'boolean'
+  ) {
+    throw new Error('workspace_frozen_baseline_invalid');
+  }
+  return Object.freeze({
+    ...value,
+    frozen_baseline: value.frozen_baseline === true,
+  });
 }
 
 function mirrorName(repo) {
@@ -272,6 +282,10 @@ function createWorkspaceManager({
         base_sha: spec.base_sha,
         expected_head_sha: spec.expected_head_sha,
         head_sha: checkoutSha,
+        // head_sha is the only server-observed proof of where this Attempt
+        // started. Pairing it with the invariant is what makes a push-time
+        // lineage guard possible inside the container.
+        frozen_baseline: spec.frozen_baseline === true,
         mode: spec.mode,
         path: workspacePath,
         mirror_path: mirrorPath,
