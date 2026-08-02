@@ -304,7 +304,8 @@ JSON
 
 COMMANDER_SCHEMA="$(provider_result_schema_json "$COMMANDER_TMP/task.json")"
 jq -e '
-  .properties.schema.const == "commander-directive/v1"
+  .properties.schema.type == "string"
+  and .properties.schema.const == "commander-directive/v1"
   and .required == [
     "schema","run_id","event_cursor","action","reason","evidence_refs"
   ]
