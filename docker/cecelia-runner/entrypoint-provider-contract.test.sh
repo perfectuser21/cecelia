@@ -69,6 +69,7 @@ FINALIZER_TASK_ID='a1fa8636-2ad4-41b4-8de3-8609af83daec'
 FINALIZER_RUN_ID='11111111-1111-4111-8111-111111111111'
 FINALIZER_BRANCH='cp-harness-propose-r1-a1fa8636-r11111111-a4'
 FINALIZER_TASK_BUNDLE="$FINALIZER_TMP/task-bundle.json"
+FINALIZER_WRONG_HOP_TASK_BUNDLE="$FINALIZER_TMP/task-bundle-wrong-hop.json"
 FINALIZER_ROUND2_BRANCH='cp-harness-propose-r2-a1fa8636-r11111111-a6'
 FINALIZER_ROUND2_TASK_BUNDLE="$FINALIZER_TMP/task-bundle-round2.json"
 mkdir -p "$FINALIZER_REPO/$FINALIZER_SPRINT/tests"
@@ -78,10 +79,13 @@ printf '%s\n' '{"tasks":[]}' > "$FINALIZER_REPO/$FINALIZER_SPRINT/task-plan.json
 printf '%s\n' 'test("red", () => {});' > "$FINALIZER_REPO/$FINALIZER_SPRINT/tests/kernel-telemetry.contract.test.ts"
 printf '%s\n' '{"propose_branch":"stale-provider-branch"}' > "$FINALIZER_REPO/.brain-result.json"
 printf '%s\n' \
-  "{\"task_bundle\":{\"run_id\":\"$FINALIZER_RUN_ID\",\"role\":\"proposer\",\"inputs\":{\"task_id\":\"$FINALIZER_TASK_ID\",\"sprint_dir\":\"$FINALIZER_SPRINT\",\"propose_branch\":\"$FINALIZER_BRANCH\",\"contract_round\":1}}}" \
+  "{\"task_bundle\":{\"run_id\":\"$FINALIZER_RUN_ID\",\"hop\":4,\"role\":\"proposer\",\"inputs\":{\"task_id\":\"$FINALIZER_TASK_ID\",\"sprint_dir\":\"$FINALIZER_SPRINT\",\"propose_branch\":\"$FINALIZER_BRANCH\",\"contract_round\":1}}}" \
   > "$FINALIZER_TASK_BUNDLE"
 printf '%s\n' \
-  "{\"task_bundle\":{\"run_id\":\"$FINALIZER_RUN_ID\",\"role\":\"proposer\",\"inputs\":{\"task_id\":\"$FINALIZER_TASK_ID\",\"sprint_dir\":\"$FINALIZER_SPRINT\",\"propose_branch\":\"$FINALIZER_ROUND2_BRANCH\",\"contract_round\":2}}}" \
+  "{\"task_bundle\":{\"run_id\":\"$FINALIZER_RUN_ID\",\"hop\":4,\"role\":\"proposer\",\"inputs\":{\"task_id\":\"$FINALIZER_TASK_ID\",\"sprint_dir\":\"$FINALIZER_SPRINT\",\"propose_branch\":\"cp-harness-propose-r1-a1fa8636-r11111111-a5\",\"contract_round\":1}}}" \
+  > "$FINALIZER_WRONG_HOP_TASK_BUNDLE"
+printf '%s\n' \
+  "{\"task_bundle\":{\"run_id\":\"$FINALIZER_RUN_ID\",\"hop\":6,\"role\":\"proposer\",\"inputs\":{\"task_id\":\"$FINALIZER_TASK_ID\",\"sprint_dir\":\"$FINALIZER_SPRINT\",\"propose_branch\":\"$FINALIZER_ROUND2_BRANCH\",\"contract_round\":2}}}" \
   > "$FINALIZER_ROUND2_TASK_BUNDLE"
 
 HARNESS_NODE=proposer \
@@ -110,7 +114,7 @@ if HARNESS_NODE=proposer \
   PROPOSE_BRANCH=cp-harness-propose-r2-wrongid0-r11111111-a5 \
   SPRINT_DIR="$FINALIZER_SPRINT" \
   WORKTREE_PATH="$FINALIZER_REPO" \
-  HARNESS_TASK_BUNDLE_FILE="$FINALIZER_TASK_BUNDLE" \
+  HARNESS_TASK_BUNDLE_FILE="$FINALIZER_WRONG_HOP_TASK_BUNDLE" \
     finalize_proposer_output; then
   echo 'proposer finalizer accepted a branch for another task' >&2
   exit 1
@@ -135,6 +139,18 @@ fi
 if git --git-dir="$FINALIZER_REMOTE" show-ref --verify --quiet \
   refs/heads/cp-harness-propose-r1-a1fa8636-r33333333-a4; then
   echo 'proposer finalizer pushed a branch for another run' >&2
+  exit 1
+fi
+
+if HARNESS_NODE=proposer \
+  CECELIA_TASK_ID="$FINALIZER_TASK_ID" \
+  PROPOSE_BRANCH=cp-harness-propose-r1-a1fa8636-r11111111-a5 \
+  PROPOSE_ROUND=1 \
+  SPRINT_DIR="$FINALIZER_SPRINT" \
+  WORKTREE_PATH="$FINALIZER_REPO" \
+  HARNESS_TASK_BUNDLE_FILE="$FINALIZER_WRONG_HOP_TASK_BUNDLE" \
+    finalize_proposer_output; then
+  echo 'proposer finalizer accepted a branch for another hop' >&2
   exit 1
 fi
 
@@ -301,6 +317,20 @@ if validate_codex_terminal_receipt \
   "$CODEX_RECEIPT_TMP/trailing-garbage.jsonl" \
   "$CODEX_RECEIPT_TMP/result.json"; then
   echo 'strict receipt ignored a non-JSON line after turn.completed' >&2
+  exit 1
+fi
+
+jq -nc \
+  --arg text "$(cat "$CODEX_RECEIPT_TMP/result.json")" \
+  '{type:"thread.started",thread_id:"thread-receipt"},
+   {type:"item.completed",item:{id:"item_1",type:"agent_message",text:$text}},
+   {type:"item.completed",item:{id:"item_2",type:"agent_message",text:"not-json"}},
+   {type:"turn.completed",usage:{input_tokens:42,output_tokens:7}}' \
+  > "$CODEX_RECEIPT_TMP/invalid-last-message.jsonl"
+if validate_codex_terminal_receipt \
+  "$CODEX_RECEIPT_TMP/invalid-last-message.jsonl" \
+  "$CODEX_RECEIPT_TMP/result.json"; then
+  echo 'strict receipt ignored an invalid final agent message' >&2
   exit 1
 fi
 rm -rf "$CODEX_RECEIPT_TMP"

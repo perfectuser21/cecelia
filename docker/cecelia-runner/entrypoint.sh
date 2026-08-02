@@ -460,6 +460,7 @@ finalize_proposer_output() {
   local run_id=""
   local run_short=""
   local round=""
+  local hop=""
   local task_bundle_file="${HARNESS_TASK_BUNDLE_FILE:-}"
   local workspace_abs=""
   local sprint_abs=""
@@ -477,11 +478,16 @@ finalize_proposer_output() {
     return 1
   fi
   run_short="${run_id:0:8}"
-  if [[ ! "$branch" =~ ^cp-harness-propose-r([0-9]+)-${task_short}-r${run_short}-a[0-9]+$ ]]; then
+  if [[ ! "$branch" =~ ^cp-harness-propose-r([0-9]+)-${task_short}-r${run_short}-a([0-9]+)$ ]]; then
     echo "[entrypoint] proposer finalizer rejected branch outside task scope: $branch" >&2
     return 1
   fi
   round="${BASH_REMATCH[1]}"
+  hop="${BASH_REMATCH[2]}"
+  if [[ -n "${HARNESS_HOP:-}" && "${HARNESS_HOP}" != "$hop" ]]; then
+    echo "[entrypoint] proposer finalizer rejected branch outside dispatched hop" >&2
+    return 1
+  fi
 
   if [[ "$sprint_dir" != sprints/* || "$sprint_dir" == *".."* \
       || "$sprint_dir" == *$'\n'* || "$sprint_dir" == *$'\r'* ]]; then
@@ -494,8 +500,11 @@ finalize_proposer_output() {
     --arg sprint "$sprint_dir" \
     --arg branch "$branch" \
     --argjson round "$round" \
+    --argjson hop "$hop" \
     '.task_bundle.role == "proposer"
      and .task_bundle.run_id == $run
+     and (.task_bundle.hop | type) == "number"
+     and .task_bundle.hop == $hop
      and .task_bundle.inputs.task_id == $task
      and .task_bundle.inputs.sprint_dir == $sprint
      and .task_bundle.inputs.propose_branch == $branch
@@ -583,6 +592,7 @@ finalize_planner_output() {
   local task_short=""
   local run_id=""
   local run_short=""
+  local hop=""
   local branch="${PLANNER_BRANCH:-}"
   local sprint_dir="${SPRINT_DIR:-}"
   local task_bundle_file="${HARNESS_TASK_BUNDLE_FILE:-}"
@@ -609,8 +619,13 @@ finalize_planner_output() {
     return 1
   fi
   run_short="${run_id:0:8}"
-  if [[ ! "$branch" =~ ^cp-harness-prd-${task_short}-r${run_short}-a[1-9][0-9]*$ ]]; then
+  if [[ ! "$branch" =~ ^cp-harness-prd-${task_short}-r${run_short}-a([1-9][0-9]*)$ ]]; then
     echo "[entrypoint] planner finalizer rejected branch outside task scope: $branch" >&2
+    return 1
+  fi
+  hop="${BASH_REMATCH[1]}"
+  if [[ -n "${HARNESS_HOP:-}" && "${HARNESS_HOP}" != "$hop" ]]; then
+    echo "[entrypoint] planner finalizer rejected branch outside dispatched hop" >&2
     return 1
   fi
   if [[ "$sprint_dir" != sprints/* || "$sprint_dir" == *".."* \
@@ -629,8 +644,11 @@ finalize_planner_output() {
     --arg run "$run_id" \
     --arg sprint "$sprint_dir" \
     --arg branch "$branch" \
+    --argjson hop "$hop" \
     'if .task_bundle.role == "planner"
         and .task_bundle.run_id == $run
+        and (.task_bundle.hop | type) == "number"
+        and .task_bundle.hop == $hop
         and .task_bundle.inputs.task_id == $task
         and .task_bundle.inputs.sprint_dir == $sprint
         and .task_bundle.inputs.planner_branch == $branch
@@ -1392,17 +1410,10 @@ validate_codex_terminal_receipt() {
     and (
       [$events[]
        | select(.type == "item.completed" and .item.type == "agent_message")
-       | .item.text
-       | fromjson?]
-      | length
-    ) > 0
-    and (
-      [$events[]
-       | select(.type == "item.completed" and .item.type == "agent_message")
-       | .item.text
-       | fromjson?]
-      | last
-    ) == $result[0]
+       | .item.text] as $messages
+      | ($messages | length) > 0
+      and (($messages | last | fromjson? // null) == $result[0])
+    )
   ' "$stdout_file" >/dev/null 2>&1
 }
 # attempt-timeout-contract:end

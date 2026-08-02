@@ -36,6 +36,7 @@ RUN_ID='11111111-1111-4111-8111-111111111111'
 PLANNER_BRANCH='cp-harness-prd-aaaaaaaa-r11111111-a2'
 TASK_BUNDLE="$TEST_ROOT/task-bundle.json"
 WRONG_RUN_BUNDLE="$TEST_ROOT/wrong-run-task-bundle.json"
+WRONG_HOP_BUNDLE="$TEST_ROOT/wrong-hop-task-bundle.json"
 PROVIDER_RESULT="$TEST_ROOT/provider-result.json"
 
 git init --bare "$REMOTE" >/dev/null
@@ -51,10 +52,13 @@ git -C "$WORKSPACE" commit -m 'chore: initialize planner fixture' >/dev/null
 mkdir -p "$WORKSPACE/$SPRINT_DIR"
 printf '%s\n' '# Provider-neutral planner PRD' > "$WORKSPACE/$SPRINT_DIR/sprint-prd.md"
 cat > "$TASK_BUNDLE" <<JSON
-{"task_bundle":{"run_id":"$RUN_ID","attempt_id":"22222222-2222-4222-8222-222222222222","role":"planner","inputs":{"task_id":"$TASK_ID","sprint_dir":"$SPRINT_DIR","planner_branch":"$PLANNER_BRANCH","workspace_spec":{"repo":"perfectuser21/zenithjoy-workspace"}}}}
+{"task_bundle":{"run_id":"$RUN_ID","attempt_id":"22222222-2222-4222-8222-222222222222","hop":2,"role":"planner","inputs":{"task_id":"$TASK_ID","sprint_dir":"$SPRINT_DIR","planner_branch":"$PLANNER_BRANCH","workspace_spec":{"repo":"perfectuser21/zenithjoy-workspace"}}}}
 JSON
 cat > "$WRONG_RUN_BUNDLE" <<JSON
-{"task_bundle":{"run_id":"$RUN_ID","attempt_id":"22222222-2222-4222-8222-222222222222","role":"planner","inputs":{"task_id":"$TASK_ID","sprint_dir":"$SPRINT_DIR","planner_branch":"cp-harness-prd-aaaaaaaa-r33333333-a2","workspace_spec":{"repo":"perfectuser21/zenithjoy-workspace"}}}}
+{"task_bundle":{"run_id":"$RUN_ID","attempt_id":"22222222-2222-4222-8222-222222222222","hop":2,"role":"planner","inputs":{"task_id":"$TASK_ID","sprint_dir":"$SPRINT_DIR","planner_branch":"cp-harness-prd-aaaaaaaa-r33333333-a2","workspace_spec":{"repo":"perfectuser21/zenithjoy-workspace"}}}}
+JSON
+cat > "$WRONG_HOP_BUNDLE" <<JSON
+{"task_bundle":{"run_id":"$RUN_ID","attempt_id":"22222222-2222-4222-8222-222222222222","hop":2,"role":"planner","inputs":{"task_id":"$TASK_ID","sprint_dir":"$SPRINT_DIR","planner_branch":"cp-harness-prd-aaaaaaaa-r11111111-a3","workspace_spec":{"repo":"perfectuser21/zenithjoy-workspace"}}}}
 JSON
 printf '%s\n' \
   '{"status":"completed","summary":"provider done","artifacts":["provider-branch-claim"],"checks":[],"decision":null,"error":null}' \
@@ -111,6 +115,17 @@ if HARNESS_NODE=planner \
   HARNESS_TASK_BUNDLE_FILE="$WRONG_RUN_BUNDLE" \
     finalize_planner_output "$PROVIDER_RESULT" >/dev/null 2>&1; then
   echo "planner finalizer accepted a branch for another run" >&2
+  exit 1
+fi
+
+if HARNESS_NODE=planner \
+  CECELIA_TASK_ID="$TASK_ID" \
+  SPRINT_DIR="$SPRINT_DIR" \
+  PLANNER_BRANCH='cp-harness-prd-aaaaaaaa-r11111111-a3' \
+  WORKTREE_PATH="$WORKSPACE" \
+  HARNESS_TASK_BUNDLE_FILE="$WRONG_HOP_BUNDLE" \
+    finalize_planner_output "$PROVIDER_RESULT" >/dev/null 2>&1; then
+  echo "planner finalizer accepted a branch for another hop" >&2
   exit 1
 fi
 

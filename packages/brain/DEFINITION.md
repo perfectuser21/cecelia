@@ -14,7 +14,7 @@
   `cp-harness-propose-r<round>-<task8>-r<run8>-a<hop>`。部署前 legacy Proposer
   ref 只有在当前 Run 的严格 TaskBundle 明确引用时才兼容。
 - 三机 pinned Runner 基线同步为
-  `sha256:7c8a27185b57ff172c157a1d330c85fd2faf79a5033c1b8cbc710e604b43e112`。
+  `sha256:1ec3542ab56a58c620196a4f32fd04b12e8049ec29dbc121e33b51a0cabc4288`。
 - 回退到 `1.267.180` 会恢复已完成 turn 的假 `provider_exit` 与跨 Run 分支碰撞。
 
 ## Kernel read-only frozen guard and bootstrap callback convergence

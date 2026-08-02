@@ -813,7 +813,7 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
   );
   const hasCliExitCode = Object.hasOwn(result.provider_metadata, 'cli_exit_code');
   const hasTerminalReceipt = Object.hasOwn(result.provider_metadata, 'terminal_receipt');
-  const fleetCodexTerminalReceiptInvalid = (
+  const terminalReceiptInvalid = (
     hasCliExitCode !== hasTerminalReceipt
     || (
       hasCliExitCode
@@ -825,13 +825,22 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
       )
     )
   );
+  const terminalReceiptProviderInvalid = (
+    hasCliExitCode
+    && (
+      attempt.provider !== 'codex'
+      || result.provider_metadata.provider !== 'codex'
+    )
+  );
+  if (terminalReceiptInvalid || terminalReceiptProviderInvalid) {
+    return res.status(409).json({ ok: false, error: 'credential_callback_invalid' });
+  }
   if (
     attempt.execution_transport === 'fleet-worker'
     && attempt.provider === 'codex'
     && (
       fleetCodexMetadataHasUnknownField
       || (!trustedPreProviderFailure && fleetCodexCredentialEvidenceInvalid)
-      || fleetCodexTerminalReceiptInvalid
     )
   ) {
     return res.status(409).json({ ok: false, error: 'credential_callback_invalid' });

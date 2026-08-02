@@ -24,7 +24,7 @@
   `cp-harness-propose-r<round>-<task8>-r<run8>-a<hop>`；同一 task 的新 Run 不再
   覆盖或消费旧 Run ref。部署前 legacy Proposer ref 仅由当前 Run TaskBundle 授权。
 - 三台 Fleet NodeProfile 与 rollout/reconcile 固定到 Runner
-  `sha256:7c8a27185b57ff172c157a1d330c85fd2faf79a5033c1b8cbc710e604b43e112`。
+  `sha256:1ec3542ab56a58c620196a4f32fd04b12e8049ec29dbc121e33b51a0cabc4288`。
 - 回退到 `1.267.180` 会重新把已完成的 Codex turn 记为 `provider_exit`，并让
   Planner/Proposer 重跑复用历史分支；回退前必须 drain 活跃 Kernel attempts。
 

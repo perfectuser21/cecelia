@@ -525,6 +525,33 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
+  it('拒绝 local Codex callback 缺半边的终态恢复证据', async () => {
+    mocks.store.getById.mockResolvedValue(attempt);
+    const response = await postCallback(app, {
+      ...validResult,
+      provider_metadata: { ...validResult.provider_metadata, cli_exit_code: 1 },
+    });
+
+    expect(response.status).toBe(409);
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+  });
+
+  it('拒绝非 Codex Provider 冒充 turn.completed 恢复收据', async () => {
+    mocks.store.getById.mockResolvedValue({ ...attempt, provider: 'claude' });
+    const response = await postCallback(app, {
+      ...validResult,
+      provider_metadata: {
+        provider: 'claude',
+        session_id: 'claude-session',
+        cli_exit_code: 1,
+        terminal_receipt: 'turn.completed',
+      },
+    });
+
+    expect(response.status).toBe(409);
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['missing credential ref', { credential_ref: undefined }],
     ['invalid credential ref', { credential_ref: 'not-a-uuid' }],
