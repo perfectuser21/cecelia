@@ -992,6 +992,7 @@ fi
 
 ```bash
 # evaluator-result-writer:start
+RESULT_FILE="${BRAIN_RESULT_FILE:-${RESULT_FILE:-${WORKSPACE:-${WORKTREE_PATH:-$PWD}}/.brain-result.json}}"
 E2E_RESULT_LOG="${E2E_RESULT_LOG:-/tmp/e2e-result.log}"
 E2E_EXECUTION_FILE="${E2E_EXECUTION_FILE:-/tmp/evaluator-execution-${HARNESS_ATTEMPT_ID:-legacy}.json}"
 EXECUTION_COMMAND=""
