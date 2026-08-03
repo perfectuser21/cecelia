@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.187
+**Brain 版本**: 1.267.188
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.188 — Kernel Fleet admission stability
+
+- Fleet Worker `1.267.93` 对 pinned PostgreSQL disposable runtime probe 最多重试三次，
+  每次前后精确清理同名容器；连续失败仍 fail closed。
+- 三机 NodeProfile 的绝对磁盘余量统一为 10 GiB，并保留 85% 使用率上限；installer
+  从 NodeProfile 读取同一阈值，不再另写 40 GiB bootstrap 硬闸。
+- 回退到 Brain `1.267.187` / Worker `1.267.92` 会恢复旧 admission 行为；回退前必须
+  drain Fleet 节点。
 
 ## Brain 1.267.187 — Kernel Fleet concurrency and diagnostic containment
 
