@@ -3,6 +3,7 @@ import { createRemoteBridgeTransport } from './remote-bridge-transport.js';
 export const DEFAULT_LOCAL_MACHINE_ID = 'us-mac-m4';
 export const DEFAULT_WORKER_BRAIN_URL = 'http://host.docker.internal:5221';
 export const DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS = 60_000;
+export const DEFAULT_REMOTE_BRIDGE_PREPARE_TIMEOUT_MS = 180_000;
 
 function isValidHttpBaseUrl(value) {
   if (typeof value !== 'string' || value.trim().length === 0) return false;
@@ -80,6 +81,7 @@ export function createProductionExecutionTransport({
   credentialBroker,
   githubCredentialBroker,
   remoteBridgeTimeoutMs,
+  remoteBridgePrepareTimeoutMs,
 } = {}) {
   if (localMachineId !== DEFAULT_LOCAL_MACHINE_ID) {
     throw new Error(`invalid_local_execution_machine_id:${String(localMachineId)}`);
@@ -92,6 +94,13 @@ export function createProductionExecutionTransport({
   };
   const sharedSecret = env.KERNEL_FLEET_BRIDGE_TOKEN;
   const callbackBaseUrl = env.KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL;
+  const configuredPrepareTimeout = remoteBridgePrepareTimeoutMs
+    ?? (
+      env.KERNEL_FLEET_PREPARE_TIMEOUT_MS == null
+      || env.KERNEL_FLEET_PREPARE_TIMEOUT_MS === ''
+        ? DEFAULT_REMOTE_BRIDGE_PREPARE_TIMEOUT_MS
+        : Number(env.KERNEL_FLEET_PREPARE_TIMEOUT_MS)
+    );
   const worker = createRemoteBridgeTransport({
     enabled,
     bridgeUrls: workerUrls,
@@ -101,6 +110,7 @@ export function createProductionExecutionTransport({
     githubCredentialBroker,
     fetchFn,
     timeoutMs: remoteBridgeTimeoutMs ?? DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS,
+    prepareTimeoutMs: configuredPrepareTimeout,
   });
 
   return guardWorkerConfiguration(worker, {

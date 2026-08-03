@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.267.200
+**Brain 版本**: 1.267.201
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.201 — Fleet prepare budget and keepalive env integrity
+
+- Fleet `prepare` 单独使用 180 秒可配置预算，覆盖真实 workspace、PostgreSQL 与 Runner 冷准备；
+  其他控制请求仍为 60 秒，模型业务预算仍为 7200 秒。
+- Brain keepalive 自动恢复显式加载生产 `.env.docker`，避免蓝绿空窗后用空 shared secret
+  重建出“健康但不能派发”的 Brain。
+- Fleet Worker 保持 `1.267.100`，Runner digest 保持
+  `sha256:e0797f5a440d61827d1ea86afee629e6f5a687da6f958608671ba9c873e5e94a`。
+- 回退到 Brain `1.267.200` 会恢复 `remote_bridge_prepare_timeout` 与 keepalive 配置丢失。
 
 ## Brain 1.267.200 — Kernel context resume action identity
 

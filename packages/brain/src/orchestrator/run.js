@@ -255,6 +255,7 @@ export async function buildRealDeps(overrides = {}) {
         credentialBroker,
         githubCredentialBroker,
         remoteBridgeTimeoutMs: overrides.remoteBridgeTimeoutMs,
+        remoteBridgePrepareTimeoutMs: overrides.remoteBridgePrepareTimeoutMs,
       });
     }
     const handlers = overrides.handlers

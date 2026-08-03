@@ -98,6 +98,9 @@ services:
       # Attempt API. An absent/short token remains fail-closed in the transport.
       - KERNEL_FLEET_REMOTE_ENABLED=${KERNEL_FLEET_REMOTE_ENABLED:-true}
       - KERNEL_FLEET_BRIDGE_TOKEN=${KERNEL_FLEET_BRIDGE_TOKEN:-}
+      # Workspace + PostgreSQL + stopped Runner preparation is intentionally
+      # heavier than inspect/start/cancel, so it has an independent budget.
+      - KERNEL_FLEET_PREPARE_TIMEOUT_MS=${KERNEL_FLEET_PREPARE_TIMEOUT_MS:-180000}
       # Xian Workers must be able to call the US Brain over Tailscale.
       - KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL=${KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL:-http://100.71.151.105:5221}
       # host.docker.internal: OrbStack 原生支持，容器内此地址到宿主 127.0.0.1
