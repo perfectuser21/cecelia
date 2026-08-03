@@ -412,6 +412,45 @@ describe('resumeStalledRelayRuns', () => {
     expect(result.resumed).toBe(1);
   });
 
+  it('Fleet watchdog delegates an expired provider session to the unified controller without remote cleanup or reclaim', async () => {
+    const latestAttempt = {
+      id: '22222222-2222-4222-8222-222222222222',
+      run_id: RUN_ID,
+      hop: 1,
+      phase: 'generate',
+      role: 'generator',
+      provider: 'codex',
+      provider_session_id: 'thread-fleet-parent',
+      execution_transport: 'fleet-worker',
+      status: 'running',
+      lease_owner: 'dispatcher-parent',
+      lease_generation: 0,
+      lease_expires_at: new Date(Date.now() - 60_000).toISOString(),
+    };
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      latestAttempt,
+    });
+    deps.launcher = {
+      inspect: vi.fn(),
+      cancel: vi.fn(),
+    };
+    deps.resumeAttempt = vi.fn();
+    deps.launchKernel = vi.fn(async () => ({ pid: 7272 }));
+
+    const result = await resumeStalledRelayRuns(deps);
+
+    expect(deps.launcher.inspect).not.toHaveBeenCalled();
+    expect(deps.launcher.cancel).not.toHaveBeenCalled();
+    expect(deps.resumeAttempt).not.toHaveBeenCalled();
+    expect(deps.pool.query.mock.calls.some(([sql]) => (
+      /lease_generation = lease_generation \+ 1/.test(String(sql))
+    ))).toBe(false);
+    expect(deps.launchKernel).toHaveBeenCalledOnce();
+    expect(result.resumed).toBe(1);
+  });
+
   it('kernel-v1 无可恢复 session 时重启 reconcile，由外部真相推导新 hop', async () => {
     const deps = makeDeps({
       harnessRuntime: 'kernel-v1',
