@@ -985,6 +985,32 @@ describe('createDispatcher', () => {
     });
   });
 
+  it('copies the Controller-owned validation clock into the Generator TaskBundle', async () => {
+    const deps = makeDeps();
+    const validationClock = {
+      pipeline_started_at: '2026-08-03T19:02:13.199Z',
+      deadline_at: '2026-08-03T21:02:13.199Z',
+    };
+
+    await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-harness-propose-r8-contract' },
+        },
+      },
+      decision: { phase: 'generate', reason: 'contract_approved' },
+      validationClock,
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs).toMatchObject(validationClock);
+  });
+
   it('恢复 Attempt 只接收与 callback hop/version 绑定的人类上下文', async () => {
     const deps = makeDeps();
 

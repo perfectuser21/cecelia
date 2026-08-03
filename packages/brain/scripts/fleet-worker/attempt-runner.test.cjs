@@ -1090,6 +1090,40 @@ describe('Fleet Worker Attempt runner', () => {
     }));
   });
 
+  it('injects the exact Controller-owned validation clock without resetting it', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    const pipelineStartedAt = '2026-08-03T19:02:13.199Z';
+    const deadlineAt = '2026-08-03T21:02:13.199Z';
+
+    await runner.prepare(request({
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: providerPrompt('generator', {
+          pipeline_started_at: pipelineStartedAt,
+          deadline_at: deadlineAt,
+        }),
+      },
+    }));
+
+    expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
+      roleEnv: expect.objectContaining({
+        HARNESS_PIPELINE_STARTED_AT: pipelineStartedAt,
+        HARNESS_DEADLINE_AT: deadlineAt,
+      }),
+    }));
+  });
+
+  it('fails closed when a validation role TaskBundle has no shared clock', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    await expect(runner.prepare(request())).rejects.toThrow(
+      'validation_clock_required',
+    );
+    expect(deps.docker.prepare).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['read-only', true],
     ['read-write', false],
