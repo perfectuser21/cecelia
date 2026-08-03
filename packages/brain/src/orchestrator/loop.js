@@ -41,6 +41,7 @@ import {
   normalizeFailureSignature,
 } from './convergence-signatures.js';
 import { finalizeKernelRun } from './kernel-run-store.js';
+import { oldestExpiredAttempt } from './expired-attempt-reconciler.js';
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -204,17 +205,20 @@ function buildSnapshot(observed, counters, action, reason = null) {
     }
   }
   if (action === ACTION.SPAWN_GENERATOR_FIX) {
+    const infrastructureRetry = reason === 'callback_infrastructure_blocked';
     snapshot.trigger_sha = observed.pr?.head_sha ?? null;
     const failureVerdict = currentFailureVerdict(observed);
-    snapshot.failure_class = observed.pr?.ci === 'fail'
-      ? 'product_failure'
-      : failureVerdict?.failure_class
-        ?? (failureVerdict ? 'product_failure' : null);
+    snapshot.failure_class = infrastructureRetry
+      ? 'infrastructure_blocked'
+      : observed.pr?.ci === 'fail'
+        ? 'product_failure'
+        : failureVerdict?.failure_class
+          ?? (failureVerdict ? 'product_failure' : null);
     if (snapshot.failure_class === 'product_failure') {
       snapshot.failure_set = currentProductFailureSet(observed);
       snapshot.failure_set_key = failureSetKey(snapshot.failure_set);
     }
-    if (!observed.pr) {
+    if (!observed.pr && !infrastructureRetry) {
       const crashSignature = generatorCrashSignature(observed.lastAgentExit);
       if (crashSignature != null) snapshot.crash_signature = crashSignature;
     }
@@ -515,6 +519,66 @@ export async function runLoop(
       runId: resolvedRunId,
       ...groundTruthPaths,
     });
+
+    // Expired Fleet attempts are reconciled before derive can mistake a stale
+    // starting/running row for live work forever. The Worker keeps the original
+    // owner/generation: changing only the DB lease would fence out its callback.
+    const expiredAttempt = !dryRun
+      && !['done', 'failed'].includes(observed.run?.phase)
+      && typeof deps.reconcileExpiredAttempt === 'function'
+      ? oldestExpiredAttempt(observed.inflight?.attempts, now())
+      : null;
+    if (expiredAttempt) {
+      const recovery = await deps.reconcileExpiredAttempt({ attempt: expiredAttempt });
+      if (['missing_terminalized', 'replacement_required'].includes(recovery.status)) {
+        if (Number.isSafeInteger(recovery.hop)) hops++;
+        await beat();
+        continue;
+      }
+      if (recovery.status === 'parent_terminal') {
+        await beat();
+        continue;
+      }
+      if (recovery.status === 'ownership_lost') {
+        return { exitReason: 'singleton_conflict', hops };
+      }
+      if (['adopted_prepared', 'adopted_running'].includes(recovery.status)) {
+        await beat();
+        await sleep(POLL_INTERVAL_MS);
+        continue;
+      }
+      if (recovery.status === 'infrastructure_blocked') {
+        const recoveryHop = await next(deps.pool, resolvedRunId);
+        try {
+          await append(deps.pool, {
+            runId: resolvedRunId,
+            hop: recoveryHop,
+            observed: {
+              attempt_id: expiredAttempt.id,
+              role: expiredAttempt.role,
+              status: expiredAttempt.status,
+            },
+            derivedPhase: expiredAttempt.phase ?? observed.run.phase,
+            gateVerdict: 'deny:infrastructure_blocked',
+            action: 'result:expired_attempt_reconcile',
+            detail: {
+              attempt_id: expiredAttempt.id,
+              signature: boundedText(recovery.signature),
+              failure_class: 'infrastructure_blocked',
+            },
+          });
+          hops++;
+        } catch (error) {
+          if (error instanceof SingletonConflictError) {
+            return { exitReason: 'singleton_conflict', hops };
+          }
+          throw error;
+        }
+        await beat();
+        await sleep(POLL_INTERVAL_MS);
+        continue;
+      }
+    }
 
     const counters = deriveCounters(observed.decisionLog, { proposeBranchMaxRn: observed.proposeBranchRn });
     // pollCount 从 DB 持久化推导（Sprint 07231527 Blocking 2：进程内变量改为 DB 推导）

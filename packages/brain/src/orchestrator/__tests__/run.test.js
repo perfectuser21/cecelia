@@ -132,7 +132,56 @@ describe('buildRealDeps', () => {
     expect(deps.commanderDirectiveExecutor).toMatchObject({
       execute: expect.any(Function),
     });
+    expect(deps.reconcileExpiredAttempt).toBeUndefined();
     expect(String(deps.dispatch)).not.toContain('NotImplemented');
+  });
+
+  it('wires expired-attempt reconciliation to the exact production launcher and authority', async () => {
+    const attempt = {
+      id: '863fdc22-ad3e-4e89-a8ce-6323cf9b9917',
+      run_id: '92a67d1a-2c3a-4819-9930-09d841f31bd8',
+      hop: 49,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'controller-old:6328',
+      lease_generation: 0,
+      lease_expires_at: '2026-08-03T07:59:00.000Z',
+      requested_machine_id: 'us-mac-m4',
+      actual_machine_id: null,
+    };
+    const launcher = {
+      inspect: vi.fn(async () => ({ status: 'missing', attempt_id: attempt.id })),
+      start: vi.fn(),
+      cancel: vi.fn(),
+    };
+    const terminalize = vi.fn(async () => ({
+      attempt: { ...attempt, status: 'failed' },
+      hop: 50,
+    }));
+    const deps = await buildRealDeps({
+      pool: { query: vi.fn() },
+      dispatch: vi.fn(),
+      launcher,
+      attemptStore: { heartbeat: vi.fn() },
+      expiredAttemptAuthority: { terminalize },
+      now: () => new Date('2026-08-03T08:00:00.000Z'),
+    });
+
+    const result = await deps.reconcileExpiredAttempt({ attempt });
+
+    expect(launcher.inspect).toHaveBeenCalledWith({
+      attempt,
+      target: { machine: 'us-mac-m4' },
+    });
+    expect(terminalize).toHaveBeenCalledWith(expect.objectContaining({
+      attemptId: attempt.id,
+      runId: attempt.run_id,
+      leaseOwner: attempt.lease_owner,
+      leaseGeneration: 0,
+      code: 'worker_attempt_missing_after_lease',
+    }));
+    expect(result).toMatchObject({ status: 'missing_terminalized', hop: 50 });
   });
 
   it('wires the central Credential Broker into the real Fleet Worker launcher', async () => {
@@ -163,8 +212,18 @@ describe('buildRealDeps', () => {
         payload: 'Z2l0aHViX3BhdF90ZXN0',
       })),
     };
-    const fetchFn = vi.fn(async (_url, options) => {
+    const fetchFn = vi.fn(async (url, options) => {
       const request = JSON.parse(options.body);
+      if (String(url).endsWith(`/harness/attempts/${attemptId}/start`)) {
+        return {
+          ok: true,
+          status: 200,
+          json: vi.fn(async () => ({ status: 'running', attempt_id: attemptId })),
+        };
+      }
+      if (!String(url).endsWith('/harness/attempts/prepare')) {
+        throw new Error(`unexpected fetch: ${url}`);
+      }
       const jobId = 'run-test-fleet-job';
       return {
         ok: true,
@@ -273,7 +332,11 @@ describe('buildRealDeps', () => {
       attemptId,
       machineId: 'us-mac-m4',
     }));
-    expect(fetchFn).toHaveBeenCalledOnce();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
+      'http://worker.internal:3458/harness/attempts/prepare',
+      `http://worker.internal:3458/harness/attempts/${attemptId}/start`,
+    ]);
     expect(JSON.parse(fetchFn.mock.calls[0][1].body).credential_envelope)
       .toMatchObject({ credential_ref: '44444444-4444-4444-8444-444444444444' });
     expect(JSON.parse(fetchFn.mock.calls[0][1].body).github_credential_envelope)
@@ -404,12 +467,16 @@ describe('buildRealDeps', () => {
         handlers: {},
         preflightGate,
         launcher: {
-          launch: vi.fn(async ({ target }) => ({
+          prepare: vi.fn(async ({ target }) => ({
             actualMachineId: target.machine,
             executionTransport: 'fleet-worker',
             remoteJobId: 'canonical-worker-job',
             attestationStatus: 'verified',
             jobId: 'canonical-worker-job',
+          })),
+          start: vi.fn(async ({ attempt }) => ({
+            status: 'running',
+            attempt_id: attempt.id,
           })),
           cancel: vi.fn(),
         },

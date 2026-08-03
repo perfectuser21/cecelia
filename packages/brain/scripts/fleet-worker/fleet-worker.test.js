@@ -747,12 +747,23 @@ describe('Fleet Worker Attempt API', () => {
 
   function runnerDouble() {
     return {
-      launch: vi.fn(async () => ({
+      prepare: vi.fn(async () => ({
         attempt_id: attemptId,
         actual_machine_id: 'us-mac-m4',
         execution_transport: 'fleet-worker',
         remote_job_id: 'container-1',
+        credential: 'must-not-leak',
       })),
+      start: vi.fn(async (_attemptId, lease) => {
+        if (lease.owner !== 'dispatcher-1' || lease.generation !== 0) {
+          throw new Error('attempt_lease_conflict');
+        }
+        return {
+          status: 'running',
+          attempt_id: attemptId,
+          credential: 'must-not-leak',
+        };
+      }),
       inspect: vi.fn(async () => ({ attempt_id: attemptId, status: 'running' })),
       cancel: vi.fn(async () => ({ attempt_id: attemptId, status: 'cleaned' })),
       terminal: vi.fn(async () => ({ attempt_id: attemptId, status: 'cleaned' })),
@@ -763,7 +774,41 @@ describe('Fleet Worker Attempt API', () => {
     };
   }
 
-  it('launches an authenticated path-free Attempt and returns a bounded receipt', async () => {
+  it('prepares an authenticated path-free Attempt without starting it', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(
+      server,
+      'POST',
+      '/harness/attempts/prepare',
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: launchBody(),
+      },
+    );
+
+    expect(response.statusCode).toBe(202);
+    expect(JSON.parse(response.body)).toEqual({
+      status: 'accepted',
+      job_id: 'container-1',
+      actual_machine_id: 'us-mac-m4',
+      attestation: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(attemptRunner.prepare).toHaveBeenCalledWith(launchBody());
+    expect(attemptRunner.start).not.toHaveBeenCalled();
+    expect(response.body).not.toMatch(
+      /callback-token|perform the bounded task|must-not-leak/,
+    );
+    server.close();
+  });
+
+  it('does not expose the legacy authenticated one-step launch route', async () => {
     const { createFleetWorkerServer } = await loadServerContract();
     const attemptRunner = runnerDouble();
     const server = createFleetWorkerServer({
@@ -777,25 +822,26 @@ describe('Fleet Worker Attempt API', () => {
       body: launchBody(),
     });
 
-    expect(response.statusCode).toBe(202);
-    expect(JSON.parse(response.body)).toMatchObject({
-      status: 'accepted',
-      job_id: 'container-1',
-      actual_machine_id: 'us-mac-m4',
-      attestation: expect.stringMatching(/^[a-f0-9]{64}$/),
-    });
-    expect(attemptRunner.launch).toHaveBeenCalledWith(launchBody());
-    expect(response.body).not.toMatch(/callback-token|perform the bounded task/);
+    expect(response.statusCode).toBe(404);
+    expect(attemptRunner.prepare).not.toHaveBeenCalled();
+    expect(attemptRunner.start).not.toHaveBeenCalled();
     server.close();
   });
 
   it.each([
-    [{}, 401],
-    [{ authorization: 'Bearer wrong-token' }, 401],
-    [{ authorization: `Basic ${token}` }, 401],
-  ])('rejects unauthenticated Attempt launch before runner invocation', async (
-    headers,
-    status,
+    ['prepare', '/harness/attempts/prepare', launchBody()],
+    [
+      'start',
+      `/harness/attempts/${attemptId}/start`,
+      JSON.stringify({
+        lease_owner: 'dispatcher-1',
+        lease_generation: 0,
+      }),
+    ],
+  ])('rejects unauthenticated Attempt %s before runner invocation', async (
+    action,
+    url,
+    body,
   ) => {
     const { createFleetWorkerServer } = await loadServerContract();
     const attemptRunner = runnerDouble();
@@ -805,13 +851,113 @@ describe('Fleet Worker Attempt API', () => {
       attemptToken: token,
     });
 
-    const response = await request(server, 'POST', '/harness/attempts', {
-      headers: { ...headers, 'content-type': 'application/json' },
-      body: launchBody(),
+    const response = await request(server, 'POST', url, {
+      headers: { 'content-type': 'application/json' },
+      body,
     });
 
-    expect(response.statusCode).toBe(status);
-    expect(attemptRunner.launch).not.toHaveBeenCalled();
+    expect(response.statusCode).toBe(401);
+    expect(attemptRunner[action]).not.toHaveBeenCalled();
+    server.close();
+  });
+
+  it('starts an authenticated Attempt with the exact lease and a bounded receipt', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(
+      server,
+      'POST',
+      `/harness/attempts/${attemptId}/start`,
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          lease_owner: 'dispatcher-1',
+          lease_generation: 0,
+        }),
+      },
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      status: 'running',
+      attempt_id: attemptId,
+    });
+    expect(attemptRunner.start).toHaveBeenCalledWith(attemptId, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    });
+    expect(response.body).not.toContain('must-not-leak');
+    server.close();
+  });
+
+  it('maps a stale authenticated start lease to conflict', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(
+      server,
+      'POST',
+      `/harness/attempts/${attemptId}/start`,
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          lease_owner: 'stale-owner',
+          lease_generation: 0,
+        }),
+      },
+    );
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body)).toEqual({ error: 'attempt_lease_conflict' });
+    server.close();
+  });
+
+  it('returns a bounded terminal start receipt without runner details', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    attemptRunner.start.mockResolvedValueOnce({
+      status: 'terminal',
+      attempt_id: attemptId,
+      terminal_status: 'credential_delivery_unconfirmed',
+      credential: 'must-not-leak',
+    });
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(
+      server,
+      'POST',
+      `/harness/attempts/${attemptId}/start`,
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          lease_owner: 'dispatcher-1',
+          lease_generation: 0,
+        }),
+      },
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      status: 'terminal',
+      attempt_id: attemptId,
+      terminal_status: 'credential_delivery_unconfirmed',
+    });
+    expect(response.body).not.toContain('must-not-leak');
     server.close();
   });
 
@@ -830,14 +976,14 @@ describe('Fleet Worker Attempt API', () => {
       attemptToken: token,
     });
 
-    const response = await request(server, 'POST', '/harness/attempts', {
+    const response = await request(server, 'POST', '/harness/attempts/prepare', {
       headers: { ...auth, 'content-type': 'application/json' },
       body: launchBody(injected),
     });
 
     expect(response.statusCode).toBe(400);
     expect(JSON.parse(response.body).error).toMatch(/untrusted_workspace_field/);
-    expect(attemptRunner.launch).not.toHaveBeenCalled();
+    expect(attemptRunner.prepare).not.toHaveBeenCalled();
     server.close();
   });
 
@@ -851,22 +997,22 @@ describe('Fleet Worker Attempt API', () => {
       maxRequestBytes: 256,
     });
 
-    const malformed = await request(server, 'POST', '/harness/attempts', {
+    const malformed = await request(server, 'POST', '/harness/attempts/prepare', {
       headers: { ...auth, 'content-type': 'application/json' },
       body: '{"broken":',
     });
-    const oversized = await request(server, 'POST', '/harness/attempts', {
+    const oversized = await request(server, 'POST', '/harness/attempts/prepare', {
       headers: { ...auth, 'content-type': 'application/json' },
       body: JSON.stringify({ payload: 'x'.repeat(300) }),
     });
 
     expect(malformed.statusCode).toBe(400);
     expect(oversized.statusCode).toBe(413);
-    expect(attemptRunner.launch).not.toHaveBeenCalled();
+    expect(attemptRunner.prepare).not.toHaveBeenCalled();
     server.close();
   });
 
-  it('serves authenticated inspect, cancel, and terminal lifecycle routes', async () => {
+  it('serves lease-authenticated inspect, cancel, and terminal lifecycle routes', async () => {
     const { createFleetWorkerServer } = await loadServerContract();
     const attemptRunner = runnerDouble();
     const server = createFleetWorkerServer({
@@ -877,9 +1023,15 @@ describe('Fleet Worker Attempt API', () => {
 
     const inspected = await request(
       server,
-      'GET',
-      `/harness/attempts/${attemptId}`,
-      { headers: auth },
+      'POST',
+      `/harness/attempts/${attemptId}/inspect`,
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          lease_owner: 'dispatcher-1',
+          lease_generation: 0,
+        }),
+      },
     );
     const cancelled = await request(
       server,
@@ -915,7 +1067,10 @@ describe('Fleet Worker Attempt API', () => {
       actual_machine_id: 'us-mac-m4',
       attestation: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
-    expect(attemptRunner.inspect).toHaveBeenCalledWith(attemptId);
+    expect(attemptRunner.inspect).toHaveBeenCalledWith(attemptId, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    });
     expect(attemptRunner.cancel).toHaveBeenCalledWith(attemptId, {
       owner: 'dispatcher-1',
       generation: 0,
@@ -924,6 +1079,60 @@ describe('Fleet Worker Attempt API', () => {
       owner: 'dispatcher-1',
       generation: 0,
     });
+    server.close();
+  });
+
+  it.each([
+    ['owner', { lease_owner: 'stale-dispatcher', lease_generation: 0 }],
+    ['generation', { lease_owner: 'dispatcher-1', lease_generation: 1 }],
+  ])('returns 409 when inspect has a stale lease %s', async (_field, body) => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    attemptRunner.inspect.mockImplementationOnce(async (_attemptId, lease) => {
+      if (lease.owner !== 'dispatcher-1' || lease.generation !== 0) {
+        throw new Error('attempt_lease_conflict');
+      }
+      return { attempt_id: attemptId, status: 'running' };
+    });
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(
+      server,
+      'POST',
+      `/harness/attempts/${attemptId}/inspect`,
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    );
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body)).toEqual({ error: 'attempt_lease_conflict' });
+    server.close();
+  });
+
+  it('rejects the legacy GET inspect route without invoking the runner', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(
+      server,
+      'GET',
+      `/harness/attempts/${attemptId}`,
+      { headers: auth },
+    );
+
+    expect(response.statusCode).toBe(404);
+    expect(attemptRunner.inspect).not.toHaveBeenCalled();
     server.close();
   });
 
@@ -939,20 +1148,20 @@ describe('Fleet Worker Attempt API', () => {
       attemptToken: token,
     });
 
-    const busy = await request(server, 'POST', '/harness/attempts', {
+    const busy = await request(server, 'POST', '/harness/attempts/prepare', {
       headers: { ...auth, 'content-type': 'application/json' },
       body: launchBody(),
     });
     expect(busy.statusCode).toBe(503);
     expect(JSON.parse(busy.body)).toEqual({ error: 'worker_reconciling' });
-    expect(attemptRunner.launch).not.toHaveBeenCalled();
+    expect(attemptRunner.prepare).not.toHaveBeenCalled();
 
     release({
       cleaned_attempts: [],
       removed_orphan_containers: [],
     });
     await vi.waitFor(() => expect(attemptRunner.reconcile).toHaveBeenCalledOnce());
-    const accepted = await request(server, 'POST', '/harness/attempts', {
+    const accepted = await request(server, 'POST', '/harness/attempts/prepare', {
       headers: { ...auth, 'content-type': 'application/json' },
       body: launchBody(),
     });
@@ -996,7 +1205,8 @@ describe('Fleet Worker production runtime assembly', () => {
 
       expect(runtime.attemptToken).toBe('fleet-worker-token-at-least-32-bytes');
       expect(runtime.attemptRunner).toMatchObject({
-        launch: expect.any(Function),
+        prepare: expect.any(Function),
+        start: expect.any(Function),
         reconcile: expect.any(Function),
       });
       expect(runtime.runnerImageDigest).toBe(`sha256:${'a'.repeat(64)}`);

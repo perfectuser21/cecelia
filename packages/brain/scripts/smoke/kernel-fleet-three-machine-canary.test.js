@@ -607,7 +607,10 @@ describe('createLiveDispatch', () => {
       return {
         ok: true,
         status: 200,
-        json: vi.fn(async () => ({ status: 'cancelled' })),
+        json: vi.fn(async () => ({
+          status: 'cleaned',
+          attempt_id: ATTEMPT_IDS['xian-mac-m1'],
+        })),
       };
     });
     liveMocks.pool.query.mockImplementation(async (sql) => {

@@ -399,6 +399,7 @@ export function deriveCounters(logRows, options) {
     'needs_context',
     'contract_invalid',
     'unknown',
+    'infrastructure_blocked',
   ]);
   const callbackForIntent = (intent, nextIntent) => callbackForIntentFromRows(
     rows,

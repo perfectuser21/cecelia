@@ -24,22 +24,30 @@ const attempt = {
 let requestCount = 0;
 const server = createServer((request, response) => {
   requestCount += 1;
-  if (request.method !== 'POST' || request.url !== '/harness/attempts') {
-    response.writeHead(404).end();
+  if (request.method === 'POST' && request.url === '/harness/attempts/prepare') {
+    response.writeHead(202, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({
+      status: 'accepted',
+      job_id: jobId,
+      actual_machine_id: machine,
+      attestation: signMachineAttestation({
+        secret: sharedSecret,
+        attemptId: attempt.id,
+        machineId: machine,
+        jobId,
+      }),
+    }));
     return;
   }
-  response.writeHead(202, { 'content-type': 'application/json' });
-  response.end(JSON.stringify({
-    status: 'accepted',
-    job_id: jobId,
-    actual_machine_id: machine,
-    attestation: signMachineAttestation({
-      secret: sharedSecret,
-      attemptId: attempt.id,
-      machineId: machine,
-      jobId,
-    }),
-  }));
+  if (request.method === 'POST' && request.url === `/harness/attempts/${attempt.id}/start`) {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({
+      status: 'running',
+      attempt_id: attempt.id,
+    }));
+    return;
+  }
+  response.writeHead(404).end();
 });
 await new Promise((resolve, reject) => {
   server.once('error', reject);
@@ -54,8 +62,13 @@ try {
     sharedSecret,
     brainUrl: 'http://127.0.0.1:5221',
   });
-  await disabledTransport.launch({ attempt, target: { machine } })
-    .then(() => { throw new Error('disabled remote launch unexpectedly succeeded'); })
+  await disabledTransport.prepare({
+    attempt,
+    bundle: { constraints: { timeout_seconds: 60 } },
+    spec: { provider: 'codex', args: [], stdin: 'remote smoke' },
+    target: { machine },
+  })
+    .then(() => { throw new Error('disabled remote prepare unexpectedly succeeded'); })
     .catch((error) => {
       if (error.message !== 'remote_bridge_disabled') throw error;
     });
@@ -67,20 +80,26 @@ try {
     sharedSecret,
     brainUrl: 'http://127.0.0.1:5221',
   });
-  const result = await transport.launch({
+  const result = await transport.prepare({
     attempt,
     bundle: { constraints: { timeout_seconds: 60 } },
     spec: { provider: 'codex', args: [], stdin: 'remote smoke' },
+    target: { machine },
+  });
+  const startResult = await transport.start({
+    attempt,
     target: { machine },
   });
   if (result.executionTransport !== 'fleet-worker'
       || result.actualMachineId !== machine
       || result.remoteJobId !== jobId
       || result.attestationStatus !== 'verified'
-      || requestCount !== 1) {
-    throw new Error(`Fleet Worker route drifted: ${JSON.stringify({ result, requestCount })}`);
+      || startResult.status !== 'running'
+      || startResult.attempt_id !== attempt.id
+      || requestCount !== 2) {
+    throw new Error(`Fleet Worker route drifted: ${JSON.stringify({ result, startResult, requestCount })}`);
   }
-  console.log('PASS: fleet transport is disabled by default and verifies an enabled Worker receipt');
+  console.log('PASS: fleet transport is disabled by default and verifies prepare/start Worker receipts');
 } finally {
   await new Promise((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));

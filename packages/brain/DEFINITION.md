@@ -1,6 +1,41 @@
 # Brain 模块定义
 
-**版本**: 1.267.183
+**版本**: 1.267.187
+
+## Kernel Fleet concurrency and diagnostic containment
+
+- failure-persistence evidence 在 watchdog 边界先统一执行路径、凭据和长度脱敏，
+  AggregateError、注入 recovery alert 和默认 P1 alert 共享同一安全输出。
+- 通用 failure-persistence sanitizer 契约保持不变。
+- Worker 的 in-flight prepare 与 inspect/cancel 以 exact lease 串行化；cancel 不再在
+  prepare 落盘前误报 `already_clean`，inspect 也不再假报 `missing`。合法 terminal start
+  tombstone 可沿 transport/Dispatcher 幂等回放，malformed 或错配回执仍 fail closed。
+- receipt 尚未持久化的 Attempt 只有 TaskBundle 明确声明 `execution_surface=fleet-worker`
+  才进入 Fleet recovery；本地 Docker 崩溃窗口不会被远端 missing 证据误终结。
+- Fleet Attempt 的 watchdog 只重启 dedicated controller，不再独立 inspect/cancel/reclaim；
+  old lease 的 start/heartbeat/cancel/terminal 收敛全部由 expired-attempt reconciler 负责。
+
+## Kernel Fleet two-phase launch and expired-attempt convergence
+
+- Fleet Worker `prepare` 只创建 stopped container 与 Attempt-owned 资源；Brain 必须先
+  验证并持久化 exact attested receipt，之后才可调用 `start`。receipt 或 start 失败按原
+  lease 精确清理，Runner 不再抢在控制面身份落库前 callback。
+- prepare/start/inspect/cancel/terminal 回执全部校验 exact `attempt_id`、原 owner/generation
+  与有限状态集合；inspect 只接受带 lease body 的 authenticated POST，旧 GET 与 stale lease
+  均拒绝。Worker durable state 不保存 Provider/GitHub 原始凭据；重启后缺少一跳凭据的
+  prepared Attempt 形成 terminal tombstone，并仅在 exact cleanup 后进入替换终态。
+- normal derive 前先检查过期 Fleet Attempt。已验签存活 Worker 保持原 owner/generation
+  续租；未验签存活 Worker 先 exact cancel 再换新 Attempt；Worker missing 时 Attempt
+  `infrastructure_blocked` 终态与 bounded decision evidence 同事务写入；该独立 recovery
+  evidence 按 callback-equivalent infrastructure result 驱动同角色重试，不消耗产品 fix
+  预算。父 Run 终态只重新观测，lease/CAS 并发输家立即让位。
+- 协议切换前停止 tick/controller 并证明 DB 无 active Attempt，再用
+  `fleet-rollout.sh all --apply --protocol-cutover` 先完成三机全 drain、再开始任一 bootstrap，
+  且更新后保持 drained；部署新 Brain、
+  完成真实两阶段协议探测后才恢复 admission。PR #1581 的真实业务验收必须新建 Kernel
+  Run；旧 Run `92a67d1a-2c3a-4819-9930-09d841f31bd8` 保持 terminal FAILED，Tick 继续
+  manual-disabled/off，只运行新 Run 的 dedicated controller。回退到 `1.267.185` 同样
+  要求全局 drain 并同时回退 Worker/Brain，禁止跨协议混跑。
 
 ## Kernel callback rejection and lease-generation fencing
 

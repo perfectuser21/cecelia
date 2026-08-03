@@ -25,6 +25,10 @@ concurrency:
 jobs:
   preview_deploy:
     name: Deploy Preview Environment
+    # Harness/Fleet infrastructure is validated by Brain CI, real-env smoke,
+    # and the dedicated Kernel acceptance run. A UI preview is unrelated and
+    # must not couple those stages to the host preview-disk admission gate.
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'harness') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:

@@ -22,7 +22,7 @@ SLEEP="${FLEET_ROLLOUT_SLEEP:-/bin/sleep}"
 TEMP_ROOT=''
 
 usage() {
-  echo "usage: $0 <us-mac-m4|xian-mac-m4|xian-mac-m1|all> [--apply]" >&2
+  echo "usage: $0 <us-mac-m4|xian-mac-m4|xian-mac-m1|all> [--apply] [--protocol-cutover]" >&2
 }
 
 die() {
@@ -110,11 +110,16 @@ run_node_apply() {
   local machine_id="$1"
   local payload_root="$2"
   local node_ctl_override="${3:-}"
+  local apply_mode="${4:-standard}"
   local node_ctl
   local drain_guard_armed=false
   local admission_attempt admitted=false
 
   require_machine "$machine_id"
+  case "$apply_mode" in
+    standard|protocol-drain|protocol-bootstrap) ;;
+    *) die "rollout_internal_mode_invalid" 64 ;;
+  esac
   [[ -d "$payload_root" && ! -L "$payload_root" \
     && -f "$payload_root/repository.bundle" \
     && ! -L "$payload_root/repository.bundle" \
@@ -151,10 +156,18 @@ run_node_apply() {
     exit "$status"
   }
 
-  run_node_command drain "$machine_id" --apply
+  if [[ "$apply_mode" != 'protocol-bootstrap' ]]; then
+    run_node_command drain "$machine_id" --apply
+  fi
+  if [[ "$apply_mode" == 'protocol-drain' ]]; then
+    return 0
+  fi
   if ! run_node_command bootstrap "$machine_id" --apply; then
     run_node_command drain "$machine_id" --apply >/dev/null 2>&1 || true
     return 1
+  fi
+  if [[ "$apply_mode" == 'protocol-bootstrap' ]]; then
+    return 0
   fi
   drain_guard_armed=true
   trap restore_drain_guard EXIT
@@ -254,7 +267,9 @@ emergency_drain_local() {
 run_root_staged_payload() {
   local machine_id="$1"
   local payload_tar="$2"
+  local apply_mode="${3:-}"
   local staged_root controller controller_pid='' status=0
+  local -a controller_args
 
   interrupt_root_staged_payload() {
     local signal_name="$1"
@@ -293,10 +308,14 @@ run_root_staged_payload() {
     -type f -name '*.sh' -exec /bin/chmod +x '{}' '+'; then
     status=1
   else
+    controller_args=(__node-apply "$machine_id" "$staged_root")
+    if [[ -n "$apply_mode" ]]; then
+      controller_args+=("$apply_mode")
+    fi
     trap 'interrupt_root_staged_payload HUP 129' HUP
     trap 'interrupt_root_staged_payload INT 130' INT
     trap 'interrupt_root_staged_payload TERM 143' TERM
-    "$SUDO" -n "$controller" __node-apply "$machine_id" "$staged_root" &
+    "$SUDO" -n "$controller" "${controller_args[@]}" &
     controller_pid=$!
     wait "$controller_pid" || status=$?
     controller_pid=''
@@ -314,14 +333,19 @@ if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
 fi
 
 if [[ "${1:-}" == '__node-apply' ]]; then
-  [[ $# -eq 3 ]] || die "rollout_internal_usage" 64
+  [[ $# -ge 3 && $# -le 4 ]] || die "rollout_internal_usage" 64
   [[ "$EUID" -eq 0 ]] || die "rollout_internal_root_required" 77
+  internal_apply_mode="${4:-standard}"
+  case "$internal_apply_mode" in
+    standard|protocol-drain|protocol-bootstrap) ;;
+    *) die "rollout_internal_mode_invalid" 64 ;;
+  esac
   validate_internal_staging "$3" || die "rollout_staging_invalid"
-  run_node_apply "$2" "$3"
+  run_node_apply "$2" "$3" '' "$internal_apply_mode"
   exit 0
 fi
 
-[[ $# -ge 1 && $# -le 2 ]] || { usage; exit 64; }
+[[ $# -ge 1 && $# -le 3 ]] || { usage; exit 64; }
 target="$1"
 shift
 case "$target" in
@@ -330,9 +354,25 @@ case "$target" in
 esac
 
 mode='dry-run'
-if [[ $# -gt 0 ]]; then
-  [[ $# -eq 1 && "$1" == '--apply' ]] || { usage; exit 64; }
-  mode='apply'
+node_apply_mode=''
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --apply)
+      [[ "$mode" == 'dry-run' ]] || { usage; exit 64; }
+      mode='apply'
+      ;;
+    --protocol-cutover)
+      [[ -z "$node_apply_mode" ]] || { usage; exit 64; }
+      node_apply_mode='protocol-cutover'
+      ;;
+    *) usage; exit 64 ;;
+  esac
+  shift
+done
+
+if [[ "$node_apply_mode" == 'protocol-cutover' ]]; then
+  [[ "$target" == 'all' ]] || die "protocol_cutover_requires_all" 64
+  [[ "$mode" == 'apply' ]] || die "protocol_cutover_requires_apply" 64
 fi
 
 if [[ "$target" == 'all' ]]; then
@@ -419,6 +459,13 @@ source_status_after="$(
 remote_program="$(cat <<'REMOTE'
 set -euo pipefail
 machine_id="$1"
+apply_mode="${2:-}"
+if [[ -n "$apply_mode" \
+  && "$apply_mode" != 'protocol-drain' \
+  && "$apply_mode" != 'protocol-bootstrap' ]]; then
+  echo "rollout_internal_mode_invalid" >&2
+  exit 64
+fi
 sudo_command="${FLEET_ROLLOUT_SUDO:-/usr/bin/sudo}"
 remote_root="$("$sudo_command" -n /usr/bin/mktemp \
   -d /var/tmp/cecelia-fleet-rollout.XXXXXX)"
@@ -504,7 +551,11 @@ fi
   "$remote_root/source/packages/brain/scripts/fleet-worker" \
   -type f -name '*.sh' -exec /bin/chmod +x '{}' '+'
 status=0
-"$sudo_command" -n "$controller" __node-apply "$machine_id" "$remote_root" &
+controller_args=(__node-apply "$machine_id" "$remote_root")
+if [[ -n "$apply_mode" ]]; then
+  controller_args+=("$apply_mode")
+fi
+"$sudo_command" -n "$controller" "${controller_args[@]}" &
 controller_pid=$!
 wait "$controller_pid" || status=$?
 controller_pid=''
@@ -524,14 +575,19 @@ interrupt_transport() {
   exit "$signal_status"
 }
 
-for machine_id in "${targets[@]}"; do
+run_node_transport() {
+  local machine_id="$1"
+  local apply_mode="${2:-}"
+
   if [[ "$machine_id" == 'us-mac-m4' ]]; then
-    run_root_staged_payload "$machine_id" "$payload_tar"
-    continue
+    run_root_staged_payload "$machine_id" "$payload_tar" "$apply_mode"
+    return
   fi
 
   remote_target="$(ssh_target_for "$machine_id")" || die "unknown_fleet_node" 64
-  remote_command="$(printf '%q ' /bin/bash -c "$remote_program" -- "$machine_id")"
+  remote_command="$(
+    printf '%q ' /bin/bash -c "$remote_program" -- "$machine_id" "$apply_mode"
+  )"
   transport_status=0
   trap 'interrupt_transport HUP 129' HUP
   trap 'interrupt_transport INT 130' INT
@@ -547,5 +603,18 @@ for machine_id in "${targets[@]}"; do
   wait "$transport_pid" || transport_status=$?
   transport_pid=''
   trap - HUP INT TERM
-  [[ "$transport_status" -eq 0 ]] || exit "$transport_status"
-done
+  [[ "$transport_status" -eq 0 ]] || return "$transport_status"
+}
+
+if [[ "$node_apply_mode" == 'protocol-cutover' ]]; then
+  for machine_id in "${targets[@]}"; do
+    run_node_transport "$machine_id" protocol-drain
+  done
+  for machine_id in "${targets[@]}"; do
+    run_node_transport "$machine_id" protocol-bootstrap
+  done
+else
+  for machine_id in "${targets[@]}"; do
+    run_node_transport "$machine_id"
+  done
+fi

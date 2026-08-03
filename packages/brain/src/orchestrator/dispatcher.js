@@ -397,7 +397,7 @@ function freezeLaunchReceipt(receipt, target, executionSurface = null) {
 }
 
 function unsafeCancelDiagnostic(result) {
-  if (result?.status === 'cancelled') return null;
+  if (['cancelled', 'cleaned', 'already_clean'].includes(result?.status)) return null;
   const status = result?.status ?? 'unknown';
   const httpStatus = result?.httpStatus == null ? '' : ` (HTTP ${result.httpStatus})`;
   return `orphan cancellation unsafe: ${status}${httpStatus}`;
@@ -704,6 +704,7 @@ export function createDispatcher(deps) {
       callbackSecret,
     };
 
+    const fleetLaunch = bundle.inputs.execution_surface === 'fleet-worker';
     let rawReceipt;
     let launched;
     try {
@@ -718,7 +719,7 @@ export function createDispatcher(deps) {
           canary: spec.canary === true,
         }),
       });
-      rawReceipt = await deps.launcher.launch({
+      const launchInput = {
         attempt,
         bundle,
         spec: adapterSpec,
@@ -726,7 +727,10 @@ export function createDispatcher(deps) {
         task: ctx.observed.task,
         target: selectedTarget,
         leaseClaimed: true,
-      });
+      };
+      rawReceipt = fleetLaunch
+        ? await deps.launcher.prepare(launchInput)
+        : await deps.launcher.launch(launchInput);
       launched = freezeLaunchReceipt(
         rawReceipt,
         selectedTarget,
@@ -813,6 +817,49 @@ export function createDispatcher(deps) {
       const error = new Error(`launch_receipt_persist_failed: ${message}`);
       error.cause = receiptError;
       throw error;
+    }
+
+    if (fleetLaunch) {
+      try {
+        const started = await deps.launcher.start({
+          attempt,
+          target: selectedTarget,
+        });
+        if (
+          !['running', 'terminal'].includes(started?.status)
+          || started?.attempt_id !== attempt.id
+        ) {
+          throw new Error('launch_start_invalid_acknowledgement');
+        }
+      } catch (error) {
+        const cancelDiagnostic = await cancelAfterLaunch(deps.launcher, {
+          attempt,
+          target: selectedTarget,
+          launchReceipt: launched,
+        });
+        const message = [
+          errorMessage(error),
+          cancelDiagnostic,
+        ].filter(Boolean).join('; ');
+        try {
+          await deps.attemptStore.fail(attempt.id, {
+            code: 'launch_start_failed',
+            message,
+            failureClass: 'infrastructure_blocked',
+          }, {
+            leaseOwner: attempt.lease_owner,
+            leaseGeneration: attempt.lease_generation,
+          });
+        } catch (failError) {
+          throw await failurePersistenceError(deps, {
+            attemptId: attempt.id,
+            lifecycleCode: 'launch_start_failed',
+            originalError: error,
+            persistenceError: failError,
+          });
+        }
+        throw error;
+      }
     }
 
     return {

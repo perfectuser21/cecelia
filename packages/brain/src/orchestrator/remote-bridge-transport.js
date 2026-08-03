@@ -11,6 +11,34 @@ const GITHUB_CREDENTIAL_ROLES = new Set([
   'generator',
   'evaluator',
 ]);
+const CANCEL_RECEIPT_STATUSES = new Set([
+  'cleaned',
+  'already_clean',
+  'quarantined',
+]);
+const INSPECT_RECEIPT_STATUSES = new Set([
+  'missing',
+  'prepared',
+  'starting',
+  'created',
+  'running',
+  'paused',
+  'restarting',
+  'removing',
+  'exited',
+  'dead',
+  'terminal',
+  'quarantined',
+]);
+const START_TERMINAL_STATUSES = new Set([
+  'cleaned',
+  'missing',
+  'exited',
+  'dead',
+  'removed',
+  'quarantined',
+  'credential_delivery_unconfirmed',
+]);
 const WORKSPACE_SPEC_FIELDS = Object.freeze([
   'repo',
   'base_sha',
@@ -206,7 +234,7 @@ export function createRemoteBridgeTransport({
   }
 
   return Object.freeze({
-    async launch({
+    async prepare({
       attempt,
       bundle,
       spec,
@@ -288,8 +316,8 @@ export function createRemoteBridgeTransport({
       const workspaceSpec = copyWorkspaceSpec(bundle);
       const runtimeResources = copyRuntimeResources(bundle);
       return request(
-        'launch',
-        `${bridgeUrl}/harness/attempts`,
+        'prepare',
+        `${bridgeUrl}/harness/attempts/prepare`,
         {
           method: 'POST',
           headers: authHeaders(true),
@@ -328,18 +356,18 @@ export function createRemoteBridgeTransport({
         },
         async (response, signal) => {
           if (response?.status === 409) {
-            throw new Error('remote_bridge_launch_conflict');
+            throw new Error('remote_bridge_prepare_conflict');
           }
           if (response?.status !== 202) {
-            throw new Error(`remote_bridge_launch_http_${String(response?.status)}`);
+            throw new Error(`remote_bridge_prepare_http_${String(response?.status)}`);
           }
 
-          const receipt = await parseJson(response, 'launch', signal);
+          const receipt = await parseJson(response, 'prepare', signal);
           if (receipt?.status !== 'accepted') {
-            throw new Error('remote_bridge_launch_not_accepted');
+            throw new Error('remote_bridge_prepare_not_accepted');
           }
           if (!isNonemptyString(receipt.job_id)) {
-            throw new Error('remote_bridge_launch_invalid_job_id');
+            throw new Error('remote_bridge_prepare_invalid_job_id');
           }
           if (receipt.actual_machine_id !== machine) {
             throw new Error('remote_bridge_machine_mismatch');
@@ -365,27 +393,110 @@ export function createRemoteBridgeTransport({
       );
     },
 
+    async start({ attempt, target } = {}) {
+      const { bridgeUrl } = resolveBridge(target);
+      requireNonempty(attempt?.id, 'attempt_id');
+      requireNonempty(attempt?.lease_owner, 'lease_owner');
+      if (!Number.isInteger(attempt?.lease_generation) || attempt.lease_generation < 0) {
+        throw new Error('remote_bridge_invalid_lease_generation');
+      }
+
+      return request(
+        'start',
+        `${bridgeUrl}/harness/attempts/${encodeURIComponent(attempt.id)}/start`,
+        {
+          method: 'POST',
+          headers: authHeaders(true),
+          body: JSON.stringify({
+            lease_owner: attempt.lease_owner,
+            lease_generation: attempt.lease_generation,
+          }),
+        },
+        async (response, signal) => {
+          if (response?.status === 409) {
+            throw new Error('remote_bridge_start_conflict');
+          }
+          if (!response?.ok) {
+            throw new Error(`remote_bridge_start_http_${String(response?.status)}`);
+          }
+          const result = await parseJson(response, 'start', signal);
+          if (result?.attempt_id !== attempt.id) {
+            throw new Error('remote_bridge_start_attempt_mismatch');
+          }
+          if (result?.status === 'terminal') {
+            if (!START_TERMINAL_STATUSES.has(result.terminal_status)) {
+              throw new Error('remote_bridge_start_invalid_terminal_status');
+            }
+            return Object.freeze({
+              status: result.status,
+              attempt_id: result.attempt_id,
+              terminal_status: result.terminal_status,
+            });
+          }
+          if (result?.status !== 'running') {
+            throw new Error('remote_bridge_start_not_running');
+          }
+          return Object.freeze({
+            status: result.status,
+            attempt_id: result.attempt_id,
+          });
+        },
+      );
+    },
+
     async inspect({ attempt, target } = {}) {
       const { bridgeUrl } = resolveBridge(target);
       requireNonempty(attempt?.id, 'attempt_id');
+      requireNonempty(attempt?.lease_owner, 'lease_owner');
+      if (!Number.isInteger(attempt?.lease_generation) || attempt.lease_generation < 0) {
+        throw new Error('remote_bridge_invalid_lease_generation');
+      }
       return request(
         'inspect',
-        `${bridgeUrl}/harness/attempts/${encodeURIComponent(attempt.id)}`,
+        `${bridgeUrl}/harness/attempts/${encodeURIComponent(attempt.id)}/inspect`,
         {
-          method: 'GET',
-          headers: authHeaders(),
+          method: 'POST',
+          headers: authHeaders(true),
+          body: JSON.stringify({
+            lease_owner: attempt.lease_owner,
+            lease_generation: attempt.lease_generation,
+          }),
         },
         (response, signal) => {
-          if (response?.status === 404) {
-            return { status: 'missing', httpStatus: 404 };
-          }
           if (response?.status === 409) {
-            return { status: 'conflict', httpStatus: 409 };
+            return {
+              status: 'conflict',
+              attempt_id: attempt.id,
+              httpStatus: 409,
+            };
           }
           if (!response?.ok) {
             throw new Error(`remote_bridge_inspect_http_${String(response?.status)}`);
           }
-          return parseJson(response, 'inspect', signal);
+          return parseJson(response, 'inspect', signal).then((result) => {
+            if (!result || typeof result !== 'object' || Array.isArray(result)) {
+              throw new Error('remote_bridge_inspect_invalid_response');
+            }
+            if (!isNonemptyString(result.attempt_id)) {
+              throw new Error('remote_bridge_inspect_invalid_attempt_id');
+            }
+            if (result.attempt_id !== attempt.id) {
+              throw new Error('remote_bridge_inspect_attempt_mismatch');
+            }
+            if (!INSPECT_RECEIPT_STATUSES.has(result.status)) {
+              throw new Error('remote_bridge_inspect_invalid_status');
+            }
+            return Object.freeze({
+              status: result.status,
+              attempt_id: result.attempt_id,
+              ...(isNonemptyString(result.container_id)
+                ? { container_id: result.container_id }
+                : {}),
+              ...(isNonemptyString(result.terminal_status)
+                ? { terminal_status: result.terminal_status }
+                : {}),
+            });
+          });
         },
       );
     },
@@ -409,7 +520,7 @@ export function createRemoteBridgeTransport({
             lease_generation: attempt.lease_generation,
           }),
         },
-        (response, signal) => {
+        async (response, signal) => {
           if (response?.status === 404) {
             return { status: 'missing', httpStatus: 404 };
           }
@@ -419,7 +530,23 @@ export function createRemoteBridgeTransport({
           if (!response?.ok) {
             throw new Error(`remote_bridge_cancel_http_${String(response?.status)}`);
           }
-          return parseJson(response, 'cancel', signal);
+          const result = await parseJson(response, 'cancel', signal);
+          if (!result || typeof result !== 'object' || Array.isArray(result)) {
+            throw new Error('remote_bridge_cancel_invalid_response');
+          }
+          if (!isNonemptyString(result.attempt_id)) {
+            throw new Error('remote_bridge_cancel_invalid_attempt_id');
+          }
+          if (result.attempt_id !== attempt.id) {
+            throw new Error('remote_bridge_cancel_attempt_mismatch');
+          }
+          if (!CANCEL_RECEIPT_STATUSES.has(result.status)) {
+            throw new Error('remote_bridge_cancel_invalid_status');
+          }
+          return Object.freeze({
+            status: result.status,
+            attempt_id: result.attempt_id,
+          });
         },
       );
     },

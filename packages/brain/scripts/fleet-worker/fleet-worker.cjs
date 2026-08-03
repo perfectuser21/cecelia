@@ -28,8 +28,7 @@ const DEFAULT_MAX_REQUEST_BYTES = 1_048_576;
 const DEFAULT_HEALTH_CACHE_TTL_MS = 30_000;
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 5_231;
-const ATTEMPT_PATH = /^\/harness\/attempts\/([a-f0-9-]+)$/;
-const ATTEMPT_ACTION_PATH = /^\/harness\/attempts\/([a-f0-9-]+)\/(cancel|terminal)$/;
+const ATTEMPT_ACTION_PATH = /^\/harness\/attempts\/([a-f0-9-]+)\/(inspect|start|cancel|terminal)$/;
 const UNTRUSTED_WORKSPACE_FIELDS = new Set([
   'cwd',
   'worktree_path',
@@ -180,7 +179,7 @@ function writeJson(response, statusCode, value) {
 }
 
 function validAttemptRunner(value) {
-  return ['launch', 'inspect', 'cancel', 'terminal', 'reconcile']
+  return ['prepare', 'start', 'inspect', 'cancel', 'terminal', 'reconcile']
     .every((method) => typeof value?.[method] === 'function');
 }
 
@@ -214,6 +213,36 @@ function acceptedReceipt(receipt, secret) {
     job_id: jobId,
     actual_machine_id: machineId,
     attestation: signAttestation(secret, attemptId, machineId, jobId),
+  });
+}
+
+function startReceipt(receipt) {
+  const attemptId = receipt?.attempt_id;
+  const status = receipt?.status;
+  const terminalStatus = receipt?.terminal_status;
+  if (
+    typeof attemptId !== 'string'
+    || !['starting', 'running', 'terminal'].includes(status)
+    || (
+      status === 'terminal'
+      && ![
+        'cleaned',
+        'missing',
+        'exited',
+        'dead',
+        'removed',
+        'quarantined',
+        'credential_delivery_unconfirmed',
+      ].includes(terminalStatus)
+    )
+  ) {
+    throw new Error('attempt_start_receipt_invalid');
+  }
+  return Object.freeze({
+    status,
+    attempt_id: attemptId,
+    ...(status === 'terminal' ? { terminal_status: terminalStatus } : {}),
+    ...(receipt.deduped === true ? { deduped: true } : {}),
   });
 }
 
@@ -562,7 +591,10 @@ function createFleetWorkerServer(options = {}) {
     }
 
     try {
-      if (request.method === 'POST' && request.url === '/harness/attempts') {
+      if (
+        request.method === 'POST'
+        && request.url === '/harness/attempts/prepare'
+      ) {
         const body = await readJson(request, maximumRequestBytes);
         const untrustedField = findUntrustedWorkspaceField(body);
         if (untrustedField) {
@@ -570,15 +602,8 @@ function createFleetWorkerServer(options = {}) {
           error.statusCode = 400;
           throw error;
         }
-        const receipt = await attemptRunner.launch(body);
+        const receipt = await attemptRunner.prepare(body);
         writeJson(response, 202, acceptedReceipt(receipt, attemptToken));
-        return;
-      }
-
-      const attemptMatch = request.url.match(ATTEMPT_PATH);
-      if (request.method === 'GET' && attemptMatch) {
-        const inspected = await attemptRunner.inspect(attemptMatch[1]);
-        writeJson(response, 200, inspected);
         return;
       }
 
@@ -595,7 +620,9 @@ function createFleetWorkerServer(options = {}) {
           200,
           action === 'terminal'
             ? terminalReceipt(result, attemptToken, machineId)
-            : result,
+            : action === 'start'
+              ? startReceipt(result)
+              : result,
         );
         return;
       }

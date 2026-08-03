@@ -2,7 +2,7 @@
 'use strict';
 
 const { execFile, spawn } = require('node:child_process');
-const { randomBytes } = require('node:crypto');
+const { createHash, randomBytes } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { promisify } = require('node:util');
@@ -211,7 +211,7 @@ function assertAttemptId(value) {
   }
 }
 
-function createFileAttemptStateStore({ stateRoot } = {}) {
+function createFileAttemptStateStore({ stateRoot, fileSystem = fs } = {}) {
   const root = assertRuntimeRoot(stateRoot, 'state_root');
 
   function fileFor(attemptId) {
@@ -243,18 +243,44 @@ function createFileAttemptStateStore({ stateRoot } = {}) {
       if (Buffer.byteLength(serialized, 'utf8') > MAX_STATE_BYTES) {
         throw new Error('attempt_state_too_large');
       }
-      fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+      fileSystem.mkdirSync(root, { recursive: true, mode: 0o700 });
       const target = fileFor(state.attempt_id);
       const temporary = `${target}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+      let stateFd = null;
+      let directoryFd = null;
       try {
-        fs.writeFileSync(temporary, serialized, {
-          encoding: 'utf8',
-          mode: 0o600,
-          flag: 'wx',
-        });
-        fs.renameSync(temporary, target);
+        stateFd = fileSystem.openSync(temporary, 'wx', 0o600);
+        fileSystem.writeFileSync(stateFd, serialized, { encoding: 'utf8' });
+        fileSystem.fsyncSync(stateFd);
+        const syncedStateFd = stateFd;
+        stateFd = null;
+        fileSystem.closeSync(syncedStateFd);
+        fileSystem.renameSync(temporary, target);
+        directoryFd = fileSystem.openSync(root, 'r');
+        fileSystem.fsyncSync(directoryFd);
+        const syncedDirectoryFd = directoryFd;
+        directoryFd = null;
+        fileSystem.closeSync(syncedDirectoryFd);
       } finally {
-        fs.rmSync(temporary, { force: true });
+        if (stateFd !== null) {
+          const openStateFd = stateFd;
+          stateFd = null;
+          try {
+            fileSystem.closeSync(openStateFd);
+          } catch {
+            // Preserve the original durability failure.
+          }
+        }
+        if (directoryFd !== null) {
+          const openDirectoryFd = directoryFd;
+          directoryFd = null;
+          try {
+            fileSystem.closeSync(openDirectoryFd);
+          } catch {
+            // Preserve the original durability failure.
+          }
+        }
+        fileSystem.rmSync(temporary, { force: true });
       }
       return state;
     },
@@ -262,7 +288,7 @@ function createFileAttemptStateStore({ stateRoot } = {}) {
     async get(attemptId) {
       const target = fileFor(attemptId);
       try {
-        return parseState(fs.readFileSync(target, 'utf8'), attemptId);
+        return parseState(fileSystem.readFileSync(target, 'utf8'), attemptId);
       } catch (error) {
         if (error?.code === 'ENOENT') return null;
         throw error;
@@ -270,14 +296,14 @@ function createFileAttemptStateStore({ stateRoot } = {}) {
     },
 
     async delete(attemptId) {
-      fs.rmSync(fileFor(attemptId), { force: true });
+      fileSystem.rmSync(fileFor(attemptId), { force: true });
       return true;
     },
 
     async list() {
       let entries;
       try {
-        entries = fs.readdirSync(root, { withFileTypes: true });
+        entries = fileSystem.readdirSync(root, { withFileTypes: true });
       } catch (error) {
         if (error?.code === 'ENOENT') return [];
         throw error;
@@ -289,7 +315,7 @@ function createFileAttemptStateStore({ stateRoot } = {}) {
         .map((entry) => {
           const attemptId = entry.name.slice(0, -'.json'.length);
           return parseState(
-            fs.readFileSync(path.join(root, entry.name), 'utf8'),
+            fileSystem.readFileSync(path.join(root, entry.name), 'utf8'),
             attemptId,
           );
         });
@@ -337,7 +363,7 @@ function isExplicitlyMissingDockerObject(error) {
   const detail = [error?.message, error?.stderr, error?.stdout]
     .filter(Boolean)
     .join('\n');
-  return /no such (?:container|object)|container.*not found/i.test(detail);
+  return /no such (?:container|object)/i.test(detail);
 }
 
 function createDockerAdapter({
@@ -392,8 +418,7 @@ function createDockerAdapter({
     return path.resolve(resolved);
   }
 
-  return Object.freeze({
-    async launch(input) {
+  async function prepareContainer(input) {
       const attemptId = input?.attemptId;
       assertAttemptId(attemptId);
       if (
@@ -619,29 +644,6 @@ function createDockerAdapter({
         if (!String(created?.stdout ?? '').trim()) {
           throw new Error('attempt_container_id_missing');
         }
-        await runCommand('docker', ['start', containerName], undefined);
-        if (needsGitHubCredential) {
-          try {
-            await writeGitHubCredential(
-              containerName,
-              containerGitHubCredentialFifo,
-              input.githubCredential.token,
-            );
-          } finally {
-            fs.rmSync(githubCredentialFifo, { force: true });
-          }
-        }
-        if (isCodex) {
-          try {
-            await writeCredential(
-              containerName,
-              containerCredentialFifo,
-              input.credential.authJson,
-            );
-          } finally {
-            fs.rmSync(credentialFifo, { force: true });
-          }
-        }
       } catch (error) {
         let removalError = null;
         try {
@@ -667,8 +669,74 @@ function createDockerAdapter({
         throw error;
       }
       const containerId = String(created?.stdout ?? '').trim();
-      return Object.freeze({ containerId });
-    },
+      return Object.freeze({
+        containerId,
+        ...(isCodex ? { credentialFifo } : {}),
+        ...(needsGitHubCredential ? { githubCredentialFifo } : {}),
+      });
+  }
+
+  async function startContainer({
+    attemptId,
+    containerId,
+    credentialFifo,
+    githubCredentialFifo,
+    credential,
+    githubCredential,
+  } = {}) {
+    assertAttemptId(attemptId);
+    if (typeof containerId !== 'string' || containerId.length === 0) {
+      throw new Error('attempt_container_id_missing');
+    }
+    const attemptRuntime = path.join(root, attemptId);
+    const expectedCredentialFifo = path.join(
+      attemptRuntime,
+      'credential.fifo',
+    );
+    const expectedGitHubCredentialFifo = path.join(
+      attemptRuntime,
+      'github-credential.fifo',
+    );
+    if (credential && credentialFifo !== expectedCredentialFifo) {
+      throw new Error('attempt_credential_fifo_invalid');
+    }
+    if (
+      githubCredential
+      && githubCredentialFifo !== expectedGitHubCredentialFifo
+    ) {
+      throw new Error('attempt_github_credential_fifo_invalid');
+    }
+    const containerName = `cecelia-fleet-${attemptId}`;
+    try {
+      await runCommand('docker', ['start', containerName], undefined);
+      if (githubCredential) {
+        await writeGitHubCredential(
+          containerName,
+          '/tmp/cecelia-prompts/github-credential.fifo',
+          githubCredential.token,
+        );
+      }
+      if (credential) {
+        await writeCredential(
+          containerName,
+          '/tmp/cecelia-prompts/credential.fifo',
+          credential.authJson,
+        );
+      }
+    } finally {
+      if (githubCredentialFifo) {
+        fs.rmSync(githubCredentialFifo, { force: true });
+      }
+      if (credentialFifo) {
+        fs.rmSync(credentialFifo, { force: true });
+      }
+    }
+    return Object.freeze({ containerId });
+  }
+
+  return Object.freeze({
+    prepare: prepareContainer,
+    start: startContainer,
 
     async inspect({ containerId } = {}) {
       try {
@@ -681,8 +749,11 @@ function createDockerAdapter({
         return Object.freeze({
           status: String(result?.stdout ?? '').trim() || 'unknown',
         });
-      } catch {
-        return Object.freeze({ status: 'missing' });
+      } catch (error) {
+        if (isExplicitlyMissingDockerObject(error)) {
+          return Object.freeze({ status: 'missing' });
+        }
+        throw error;
       }
     },
 
@@ -753,7 +824,14 @@ function validateDependencies({
   for (const method of ['prepare', 'verify', 'cleanup', 'quarantine', 'reconcile']) {
     requireMethod(workspaceManager, method, 'workspace_manager');
   }
-  for (const method of ['launch', 'inspect', 'wait', 'remove', 'listOwned']) {
+  for (const method of [
+    'prepare',
+    'start',
+    'inspect',
+    'wait',
+    'remove',
+    'listOwned',
+  ]) {
     requireMethod(docker, method, 'docker');
   }
   for (const method of ['save', 'get', 'delete', 'list']) {
@@ -993,6 +1071,48 @@ function labelsFor(request, workerId) {
   });
 }
 
+function stableJson(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableJson(entry)).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .filter((key) => value[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function credentialEnvelopeIdentity(envelope) {
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) {
+    return envelope;
+  }
+  const metadata = { ...envelope };
+  delete metadata.payload;
+  return metadata;
+}
+
+function prepareRequestFingerprint(request) {
+  const boundedIdentity = {
+    ...request,
+    callback_token: undefined,
+    callback_token_hash: `sha256:${createHash('sha256')
+      .update(String(request.callback_token ?? ''), 'utf8')
+      .digest('hex')}`,
+    credential_envelope: credentialEnvelopeIdentity(
+      request.credential_envelope,
+    ),
+    github_credential_envelope: credentialEnvelopeIdentity(
+      request.github_credential_envelope,
+    ),
+  };
+  return `sha256:${createHash('sha256')
+    .update(stableJson(boundedIdentity), 'utf8')
+    .digest('hex')}`;
+}
+
 function isTerminalContainerStatus(status) {
   return ['missing', 'exited', 'dead', 'removed'].includes(status);
 }
@@ -1005,6 +1125,20 @@ function assertLeaseFence(state, lease) {
   ) {
     throw new Error('attempt_lease_conflict');
   }
+}
+
+function validateLeaseFence(lease) {
+  if (
+    !lease
+    || typeof lease.owner !== 'string'
+    || lease.owner.length === 0
+  ) {
+    throw new Error('attempt_lease_owner_invalid');
+  }
+  if (!Number.isInteger(lease.generation) || lease.generation < 0) {
+    throw new Error('attempt_lease_generation_invalid');
+  }
+  return lease;
 }
 
 function createAttemptRunner({
@@ -1028,6 +1162,42 @@ function createAttemptRunner({
     resourceManager,
   });
 
+  async function prepareVerifiedWorkspace(workspaceSpec) {
+    const workspace = await workspaceManager.prepare(workspaceSpec);
+    try {
+      await workspaceManager.verify(workspace);
+      return workspace;
+    } catch (verifyError) {
+      let cleanupError = null;
+      try {
+        await workspaceManager.cleanup(workspace);
+      } catch (error) {
+        cleanupError = error;
+      }
+      if (cleanupError) {
+        try {
+          await workspaceManager.quarantine(workspace, cleanupError);
+        } catch (quarantineError) {
+          throw new Error(
+            `attempt_workspace_verify_rollback_failed:${verifyError.message}`,
+            {
+              cause: new AggregateError([
+                verifyError,
+                cleanupError,
+                quarantineError,
+              ]),
+            },
+          );
+        }
+        throw new Error(
+          `attempt_workspace_verify_rollback_failed:${verifyError.message}`,
+          { cause: new AggregateError([verifyError, cleanupError]) },
+        );
+      }
+      throw verifyError;
+    }
+  }
+
   async function quarantineState(state, error) {
     const quarantined = await workspaceManager.quarantine(state.workspace, error);
     const nextState = {
@@ -1044,7 +1214,7 @@ function createAttemptRunner({
     });
   }
 
-  async function cleanupWorkspaceState(state) {
+  async function cleanupWorkspaceState(state, { deleteState = true } = {}) {
     const cleaned = await workspaceManager.cleanup(state.workspace);
     if (cleaned.status === 'quarantined') {
       await stateStore.save({
@@ -1059,7 +1229,9 @@ function createAttemptRunner({
         reason: cleaned.reason,
       });
     }
-    await stateStore.delete(state.attempt_id);
+    if (deleteState) {
+      await stateStore.delete(state.attempt_id);
+    }
     return Object.freeze({
       status: 'cleaned',
       attempt_id: state.attempt_id,
@@ -1086,7 +1258,91 @@ function createAttemptRunner({
     });
   }
 
+  const pendingCredentials = new Map();
+  const prepareOperations = new Map();
+  const startOperations = new Map();
+  const cancellationRequests = new Set();
+  const terminalWaiters = new Set();
   const finalizationPromises = new Map();
+
+  async function waitForInFlightPrepare(attemptId, lease) {
+    const preparing = prepareOperations.get(attemptId);
+    if (!preparing) return;
+    validateLeaseFence(lease);
+    if (
+      lease.owner !== preparing.lease.owner
+      || lease.generation !== preparing.lease.generation
+    ) {
+      throw new Error('attempt_lease_conflict');
+    }
+    try {
+      await preparing.promise;
+    } catch (error) {
+      if (
+        /^attempt_(?:launch|workspace_verify)_rollback_failed:/.test(
+          String(error?.message ?? ''),
+        )
+      ) {
+        throw error;
+      }
+      // The prepare path owns exact rollback. Re-read durable state afterwards.
+    }
+  }
+
+  function terminalStartResult(attemptId, terminalStatus) {
+    return Object.freeze({
+      status: 'terminal',
+      attempt_id: attemptId,
+      terminal_status: terminalStatus,
+      deduped: true,
+    });
+  }
+
+  async function persistTerminalTombstone(state, terminalStatus) {
+    const tombstone = Object.freeze({
+      attempt_id: state.attempt_id,
+      worker_id: state.worker_id,
+      lease_owner: state.lease_owner,
+      lease_generation: state.lease_generation,
+      status: 'terminal',
+      terminal_status: terminalStatus,
+      terminal_at: new Date().toISOString(),
+    });
+    await stateStore.save(tombstone);
+    return tombstone;
+  }
+
+  function hasRequiredPendingCredentials(state) {
+    const pending = pendingCredentials.get(state.attempt_id);
+    return (!state.credential || Boolean(pending?.credential))
+      && (!state.github_credential || Boolean(pending?.githubCredential));
+  }
+
+  function installTerminalWaiter(state) {
+    if (terminalWaiters.has(state.attempt_id)) return;
+    terminalWaiters.add(state.attempt_id);
+    void Promise.resolve()
+      .then(() => docker.wait({ containerId: state.container_id }))
+      .then(() => finalizeAttempt(state.attempt_id, null, {
+        containerId: state.container_id,
+        leaseGeneration: state.lease_generation,
+      }))
+      .catch(() => {})
+      .finally(() => terminalWaiters.delete(state.attempt_id));
+  }
+
+  async function finalizeCancelledStart(state, lease) {
+    const cleanup = await finalizeAttempt(state.attempt_id, lease, {
+      containerId: state.container_id,
+      leaseGeneration: state.lease_generation,
+      terminalStatus: 'cleaned',
+    });
+    return terminalStartResult(
+      state.attempt_id,
+      cleanup.status === 'cleaned' ? 'cleaned' : cleanup.status,
+    );
+  }
+
   function finalizeAttempt(attemptId, lease = null, expected = null) {
     const existing = finalizationPromises.get(attemptId);
     if (existing) return existing;
@@ -1110,10 +1366,14 @@ function createAttemptRunner({
       if (lease !== null) {
         assertLeaseFence(state, lease);
       }
+      pendingCredentials.delete(attemptId);
       try {
         await docker.remove({
           containerId: state.container_id,
           attemptId: state.attempt_id,
+          ...(expected?.containerMissing === true
+            ? { containerMissing: true }
+            : {}),
         });
       } catch (error) {
         return quarantineState(state, error);
@@ -1123,7 +1383,14 @@ function createAttemptRunner({
       } catch (error) {
         return quarantineState(state, error);
       }
-      return cleanupWorkspaceState(state);
+      const result = await cleanupWorkspaceState(state, { deleteState: false });
+      if (result.status === 'cleaned') {
+        await persistTerminalTombstone(
+          state,
+          expected?.terminalStatus ?? 'cleaned',
+        );
+      }
+      return result;
     })();
     finalizationPromises.set(attemptId, operation);
     void operation.finally(() => {
@@ -1179,8 +1446,117 @@ function createAttemptRunner({
     throw error;
   }
 
+  function receiptForState(state) {
+    return Object.freeze({
+      attempt_id: state.attempt_id,
+      run_id: state.run_id,
+      actual_machine_id: workerId,
+      execution_transport: 'fleet-worker',
+      remote_job_id: state.container_id,
+      container_id: state.container_id,
+      workspace_head_sha: state.workspace?.head_sha,
+    });
+  }
+
+  function isExactPrepareDuplicate(state, request, requestFingerprint) {
+    return state.worker_id === workerId
+      && state.run_id === request.run_id
+      && state.lease_owner === request.lease_owner
+      && state.lease_generation === request.lease_generation
+      && state.prepare_request_fingerprint === requestFingerprint
+      && typeof state.container_id === 'string'
+      && state.container_id.length > 0
+      && ['prepared', 'starting', 'running'].includes(state.status);
+  }
+
+  function consumeAttemptCredentials(request, target) {
+    let credential = null;
+    if (target.provider === 'codex') {
+      if (
+        !request.credential_envelope
+        || typeof request.credential_envelope !== 'object'
+        || Array.isArray(request.credential_envelope)
+      ) {
+        throw new Error('credential_envelope_required');
+      }
+      credential = credentialConsumer.consume(request.credential_envelope, {
+        attemptId: request.attempt_id,
+        accountId: target.account,
+        machineId: workerId,
+      });
+    }
+    let githubCredential = null;
+    if (GITHUB_CREDENTIAL_ROLES.has(target.role)) {
+      if (
+        !request.github_credential_envelope
+        || typeof request.github_credential_envelope !== 'object'
+        || Array.isArray(request.github_credential_envelope)
+      ) {
+        throw new Error('github_credential_envelope_required');
+      }
+      githubCredential = githubCredentialConsumer.consume(
+        request.github_credential_envelope,
+        {
+          attemptId: request.attempt_id,
+          machineId: workerId,
+        },
+      );
+    }
+    return { credential, githubCredential };
+  }
+
+  function dockerRequestFor({
+    request,
+    providerSpec,
+    target,
+    executionContract,
+    workspace,
+    labels,
+    resources,
+    credential,
+    githubCredential,
+  }) {
+    return {
+      attemptId: request.attempt_id,
+      runId: request.run_id,
+      workerId,
+      image: runnerImageDigest,
+      providerSpec,
+      taskId: executionContract.taskId,
+      roleEnv: executionContract.roleEnv,
+      timeoutSeconds: request.timeout_seconds,
+      role: target.role,
+      model: target.model,
+      workspaceStartSha: workspace.head_sha,
+      frozenBaseline: workspace.frozen_baseline === true,
+      workspaceMount: {
+        source: workspace.path,
+        target: '/workspace',
+        readOnly: workspace.mode === 'read-only',
+      },
+      workspaceAdminMount: {
+        source: workspace.admin_path,
+        target: workspace.admin_path,
+        readOnly: workspace.mode === 'read-only',
+      },
+      labels,
+      callback: {
+        url: request.callback_url,
+        token: request.callback_token,
+      },
+      lease: {
+        owner: request.lease_owner,
+        generation: request.lease_generation,
+      },
+      credential,
+      githubCredential,
+      runtimeNetwork: resources.networkName,
+      runtimeEnvironment: resources.environment,
+    };
+  }
+
   const runner = {
-    async launch(input) {
+    async prepare(input) {
       const {
         request,
         providerSpec,
@@ -1190,45 +1566,35 @@ function createAttemptRunner({
       if (target.machine !== workerId) {
         throw new Error('attempt_target_worker_mismatch');
       }
+      const requestFingerprint = prepareRequestFingerprint(request);
+      const inFlight = prepareOperations.get(request.attempt_id);
+      if (inFlight) {
+        if (inFlight.requestFingerprint !== requestFingerprint) {
+          throw new Error('attempt_already_exists');
+        }
+        return inFlight.promise;
+      }
+
+      const operation = (async () => {
       const existing = await stateStore.get(request.attempt_id);
       if (existing) {
+        if (isExactPrepareDuplicate(existing, request, requestFingerprint)) {
+          if (
+            ['prepared', 'starting'].includes(existing.status)
+            && !hasRequiredPendingCredentials(existing)
+          ) {
+            throw new Error('attempt_credentials_unavailable');
+          }
+          return receiptForState(existing);
+        }
         throw new Error('attempt_already_exists');
       }
 
-      let credential = null;
-      if (target.provider === 'codex') {
-        if (
-          !request.credential_envelope
-          || typeof request.credential_envelope !== 'object'
-          || Array.isArray(request.credential_envelope)
-        ) {
-          throw new Error('credential_envelope_required');
-        }
-        credential = credentialConsumer.consume(request.credential_envelope, {
-          attemptId: request.attempt_id,
-          accountId: target.account,
-          machineId: workerId,
-        });
-      }
-      let githubCredential = null;
-      if (GITHUB_CREDENTIAL_ROLES.has(target.role)) {
-        if (
-          !request.github_credential_envelope
-          || typeof request.github_credential_envelope !== 'object'
-          || Array.isArray(request.github_credential_envelope)
-        ) {
-          throw new Error('github_credential_envelope_required');
-        }
-        githubCredential = githubCredentialConsumer.consume(
-          request.github_credential_envelope,
-          {
-            attemptId: request.attempt_id,
-            machineId: workerId,
-          },
-        );
-      }
-      const workspace = await workspaceManager.prepare(request.workspace_spec);
-      await workspaceManager.verify(workspace);
+      const { credential, githubCredential } = consumeAttemptCredentials(
+        request,
+        target,
+      );
+      const workspace = await prepareVerifiedWorkspace(request.workspace_spec);
       const labels = labelsFor(request, workerId);
       let resources = EMPTY_RUNTIME_RESOURCES;
       if (executionContract.runtimeRequirements.postgres) {
@@ -1242,45 +1608,20 @@ function createAttemptRunner({
           throw error;
         }
       }
-      let launched;
+
+      let prepared;
       try {
-        launched = await docker.launch({
-          attemptId: request.attempt_id,
-          runId: request.run_id,
-          workerId,
-          image: runnerImageDigest,
+        prepared = await docker.prepare(dockerRequestFor({
+          request,
           providerSpec,
-          taskId: executionContract.taskId,
-          roleEnv: executionContract.roleEnv,
-          timeoutSeconds: request.timeout_seconds,
-          role: target.role,
-          model: target.model,
-          workspaceStartSha: workspace.head_sha,
-          frozenBaseline: workspace.frozen_baseline === true,
-          workspaceMount: {
-            source: workspace.path,
-            target: '/workspace',
-            readOnly: workspace.mode === 'read-only',
-          },
-          workspaceAdminMount: {
-            source: workspace.admin_path,
-            target: workspace.admin_path,
-            readOnly: workspace.mode === 'read-only',
-          },
+          target,
+          executionContract,
+          workspace,
           labels,
-          callback: {
-            url: request.callback_url,
-            token: request.callback_token,
-          },
-          lease: {
-            owner: request.lease_owner,
-            generation: request.lease_generation,
-          },
+          resources,
           credential,
           githubCredential,
-          runtimeNetwork: resources.networkName,
-          runtimeEnvironment: resources.environment,
-        });
+        }));
       } catch (error) {
         return rollbackLaunch({
           error,
@@ -1289,7 +1630,10 @@ function createAttemptRunner({
           resources,
         });
       }
-      if (typeof launched?.containerId !== 'string' || launched.containerId.length === 0) {
+      if (
+        typeof prepared?.containerId !== 'string'
+        || prepared.containerId.length === 0
+      ) {
         return rollbackLaunch({
           error: new Error('attempt_container_id_missing'),
           workspace,
@@ -1298,6 +1642,7 @@ function createAttemptRunner({
         });
       }
 
+      const now = new Date().toISOString();
       const state = {
         attempt_id: request.attempt_id,
         run_id: request.run_id,
@@ -1305,19 +1650,27 @@ function createAttemptRunner({
         lease_owner: request.lease_owner,
         lease_generation: request.lease_generation,
         provider: providerSpec.provider,
+        prepare_request_fingerprint: requestFingerprint,
+        credential_delivery_status: 'pending',
         ...(credential ? { credential: credential.metadata } : {}),
         ...(githubCredential
           ? { github_credential: githubCredential.metadata }
           : {}),
-        container_id: launched.containerId,
+        container_id: prepared.containerId,
+        ...(prepared.credentialFifo
+          ? { credential_fifo: prepared.credentialFifo }
+          : {}),
+        ...(prepared.githubCredentialFifo
+          ? { github_credential_fifo: prepared.githubCredentialFifo }
+          : {}),
         ...(Object.keys(resources.runtime).length > 0
           ? { runtime_resources: resources.runtime }
           : {}),
         workspace,
         labels,
-        status: 'running',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        status: 'prepared',
+        created_at: now,
+        updated_at: now,
       };
       try {
         await stateStore.save(state);
@@ -1326,34 +1679,248 @@ function createAttemptRunner({
           error,
           workspace,
           attemptId: request.attempt_id,
-          containerId: launched.containerId,
+          containerId: prepared.containerId,
           resources,
         });
       }
-      void docker.wait({ containerId: launched.containerId })
-        .then(() => finalizeAttempt(request.attempt_id, null, {
-          containerId: launched.containerId,
-          leaseGeneration: request.lease_generation,
-        }))
-        .catch(() => {});
-      return Object.freeze({
-        attempt_id: request.attempt_id,
-        run_id: request.run_id,
-        actual_machine_id: workerId,
-        execution_transport: 'fleet-worker',
-        remote_job_id: launched.containerId,
-        container_id: launched.containerId,
-        workspace_head_sha: workspace.head_sha,
+      pendingCredentials.set(request.attempt_id, Object.freeze({
+        credential,
+        githubCredential,
+      }));
+      return receiptForState(state);
+      })();
+      prepareOperations.set(request.attempt_id, {
+        requestFingerprint,
+        lease: Object.freeze({
+          owner: request.lease_owner,
+          generation: request.lease_generation,
+        }),
+        promise: operation,
       });
+      try {
+        return await operation;
+      } finally {
+        if (prepareOperations.get(request.attempt_id)?.promise === operation) {
+          prepareOperations.delete(request.attempt_id);
+        }
+      }
     },
 
-    async inspect(attemptId) {
+    start(attemptId, lease) {
+      const inFlight = startOperations.get(attemptId);
+      if (inFlight) {
+        if (
+          lease?.owner !== inFlight.lease.owner
+          || lease?.generation !== inFlight.lease.generation
+        ) {
+          return Promise.reject(new Error('attempt_lease_conflict'));
+        }
+        return inFlight.promise.then((result) => Object.freeze({
+          ...result,
+          deduped: true,
+        }));
+      }
+
+      const operation = (async () => {
+        const state = await stateStore.get(attemptId);
+        if (!state) throw new Error('attempt_not_found');
+        if (state.worker_id !== workerId) {
+          throw new Error('attempt_worker_owner_mismatch');
+        }
+        assertLeaseFence(state, lease);
+        if (state.status === 'terminal') {
+          return terminalStartResult(attemptId, state.terminal_status);
+        }
+        if (state.status === 'running') {
+          if (terminalWaiters.has(attemptId)) {
+            return Object.freeze({
+              status: 'running',
+              attempt_id: attemptId,
+              deduped: true,
+            });
+          }
+          const inspected = await docker.inspect({
+            containerId: state.container_id,
+          });
+          if (isTerminalContainerStatus(inspected.status)) {
+            const cleanup = await finalizeAttempt(attemptId, lease, {
+              containerId: state.container_id,
+              leaseGeneration: state.lease_generation,
+              terminalStatus: inspected.status,
+              ...(inspected.status === 'missing'
+                ? { containerMissing: true }
+                : {}),
+            });
+            return terminalStartResult(
+              attemptId,
+              cleanup.status === 'cleaned'
+                ? inspected.status
+                : cleanup.status,
+            );
+          }
+          if (state.credential_delivery_status !== 'delivered') {
+            const cleanup = await finalizeAttempt(attemptId, lease, {
+              containerId: state.container_id,
+              leaseGeneration: state.lease_generation,
+              terminalStatus: 'credential_delivery_unconfirmed',
+            });
+            return terminalStartResult(
+              attemptId,
+              cleanup.status === 'cleaned'
+                ? 'credential_delivery_unconfirmed'
+                : cleanup.status,
+            );
+          }
+          if (inspected.status !== 'running') {
+            throw new Error('attempt_start_state_conflict');
+          }
+          installTerminalWaiter(state);
+          return Object.freeze({
+            status: 'running',
+            attempt_id: attemptId,
+            deduped: true,
+          });
+        }
+        if (state.status === 'starting') {
+          const inspected = await docker.inspect({
+            containerId: state.container_id,
+          });
+          if (
+            inspected.status === 'running'
+            && state.credential_delivery_status === 'delivered'
+          ) {
+            const runningState = {
+              ...state,
+              status: 'running',
+              updated_at: new Date().toISOString(),
+            };
+            await stateStore.save(runningState);
+            installTerminalWaiter(runningState);
+            return Object.freeze({
+              status: 'running',
+              attempt_id: attemptId,
+              deduped: true,
+            });
+          }
+          if (inspected.status === 'running') {
+            const cleanup = await finalizeAttempt(attemptId, lease, {
+              containerId: state.container_id,
+              leaseGeneration: state.lease_generation,
+              terminalStatus: 'credential_delivery_unconfirmed',
+            });
+            return terminalStartResult(
+              attemptId,
+              cleanup.status === 'cleaned'
+                ? 'credential_delivery_unconfirmed'
+                : cleanup.status,
+            );
+          }
+          if (isTerminalContainerStatus(inspected.status)) {
+            const cleanup = await finalizeAttempt(attemptId, lease, {
+              containerId: state.container_id,
+              leaseGeneration: state.lease_generation,
+              terminalStatus: inspected.status,
+              ...(inspected.status === 'missing'
+                ? { containerMissing: true }
+                : {}),
+            });
+            return terminalStartResult(
+              attemptId,
+              cleanup.status === 'cleaned'
+                ? inspected.status
+                : cleanup.status,
+            );
+          }
+          if (!['created', 'prepared'].includes(inspected.status)) {
+            throw new Error('attempt_start_state_conflict');
+          }
+        }
+        if (!['prepared', 'starting'].includes(state.status)) {
+          throw new Error('attempt_start_state_conflict');
+        }
+        const credentials = pendingCredentials.get(attemptId);
+        if (
+          (state.credential && !credentials?.credential)
+          || (state.github_credential && !credentials?.githubCredential)
+        ) {
+          throw new Error('attempt_credentials_unavailable');
+        }
+
+        if (state.status === 'prepared') {
+          await stateStore.save({
+            ...state,
+            status: 'starting',
+            updated_at: new Date().toISOString(),
+          });
+        }
+        try {
+          await docker.start({
+            attemptId,
+            containerId: state.container_id,
+            credentialFifo: state.credential_fifo,
+            githubCredentialFifo: state.github_credential_fifo,
+            credential: credentials?.credential ?? null,
+            githubCredential: credentials?.githubCredential ?? null,
+          });
+          pendingCredentials.delete(attemptId);
+          if (cancellationRequests.has(attemptId)) {
+            return finalizeCancelledStart(state, lease);
+          }
+          await stateStore.save({
+            ...state,
+            status: 'running',
+            credential_delivery_status: 'delivered',
+            updated_at: new Date().toISOString(),
+          });
+          if (cancellationRequests.has(attemptId)) {
+            return finalizeCancelledStart(state, lease);
+          }
+        } catch (error) {
+          pendingCredentials.delete(attemptId);
+          const cleanup = await finalizeAttempt(attemptId, lease);
+          if (cleanup.status !== 'cleaned') {
+            throw new Error(`attempt_start_rollback_failed:${error.message}`, {
+              cause: error,
+            });
+          }
+          throw error;
+        }
+        installTerminalWaiter(state);
+        return Object.freeze({
+          status: 'running',
+          attempt_id: attemptId,
+        });
+      })();
+      startOperations.set(attemptId, { lease, promise: operation });
+      void operation.finally(() => {
+        if (startOperations.get(attemptId)?.promise === operation) {
+          startOperations.delete(attemptId);
+        }
+        cancellationRequests.delete(attemptId);
+      }).catch(() => {});
+      return operation;
+    },
+
+    async inspect(attemptId, lease) {
+      validateLeaseFence(lease);
+      await waitForInFlightPrepare(attemptId, lease);
       const state = await stateStore.get(attemptId);
       if (!state) {
         return Object.freeze({ status: 'missing', attempt_id: attemptId });
       }
       if (state.worker_id !== workerId) {
         throw new Error('attempt_worker_owner_mismatch');
+      }
+      assertLeaseFence(state, lease);
+      if (['prepared', 'starting', 'terminal', 'quarantined'].includes(state.status)) {
+        return Object.freeze({
+          attempt_id: attemptId,
+          status: state.status,
+          ...(state.container_id ? { container_id: state.container_id } : {}),
+          ...(state.status === 'terminal'
+            ? { terminal_status: state.terminal_status }
+            : {}),
+        });
       }
       const inspected = await docker.inspect({ containerId: state.container_id });
       return Object.freeze({
@@ -1373,6 +1940,9 @@ function createAttemptRunner({
       }
       if (lease !== null) {
         assertLeaseFence(state, lease);
+      }
+      if (state.status === 'terminal') {
+        return Object.freeze({ status: 'already_clean', attempt_id: attemptId });
       }
       try {
         await releaseRuntimeService(state);
@@ -1394,41 +1964,98 @@ function createAttemptRunner({
     },
 
     async cancel(attemptId, lease) {
+      await waitForInFlightPrepare(attemptId, lease);
+      const starting = startOperations.get(attemptId);
+      if (starting) {
+        if (
+          lease?.owner !== starting.lease?.owner
+          || lease?.generation !== starting.lease?.generation
+        ) {
+          throw new Error('attempt_lease_conflict');
+        }
+        cancellationRequests.add(attemptId);
+        try {
+          await starting.promise;
+        } catch {
+          // The start path owns its exact rollback; inspect durable state below.
+        }
+      }
       const state = await stateStore.get(attemptId);
       if (!state) {
         return Object.freeze({ status: 'already_clean', attempt_id: attemptId });
       }
       assertLeaseFence(state, lease);
+      if (state.status === 'terminal') {
+        return Object.freeze({ status: 'already_clean', attempt_id: attemptId });
+      }
       return finalizeAttempt(attemptId, lease);
     },
 
     async reconcile() {
       const states = await stateStore.list();
-      const ownedStates = states.filter((state) => state.worker_id === workerId);
+      const ownedTombstones = states
+        .filter((state) => (
+          state.worker_id === workerId && state.status === 'terminal'
+        ))
+        .sort((left, right) => (
+          String(left.terminal_at).localeCompare(String(right.terminal_at))
+          || left.attempt_id.localeCompare(right.attempt_id)
+        ));
+      for (const tombstone of ownedTombstones.slice(0, -1_024)) {
+        await stateStore.delete(tombstone.attempt_id);
+      }
+
+      const activeStates = states.filter((state) => state.status !== 'terminal');
+      const ownedStates = activeStates.filter(
+        (state) => state.worker_id === workerId,
+      );
       const knownAttemptIds = new Set(ownedStates.map((state) => state.attempt_id));
-      const retainedAttemptIds = new Set(states.map((state) => state.attempt_id));
+      const retainedAttemptIds = new Set(
+        activeStates.map((state) => state.attempt_id),
+      );
       const cleanedAttempts = [];
 
       for (const state of ownedStates) {
         const inspected = await docker.inspect({ containerId: state.container_id });
-        if (!isTerminalContainerStatus(inspected.status)) continue;
-        try {
-          await docker.remove({
-            containerId: state.container_id,
-            attemptId: state.attempt_id,
-            ...(inspected.status === 'missing' ? { containerMissing: true } : {}),
-          });
-        } catch (error) {
-          await quarantineState(state, error);
+        const deliveryConfirmed =
+          state.credential_delivery_status === 'delivered';
+        if (
+          inspected.status === 'running'
+          && deliveryConfirmed
+          && ['starting', 'running'].includes(state.status)
+        ) {
+          const runningState = state.status === 'running'
+            ? state
+            : {
+              ...state,
+              status: 'running',
+              updated_at: new Date().toISOString(),
+            };
+          if (state.status !== 'running') {
+            await stateStore.save(runningState);
+          }
+          installTerminalWaiter(runningState);
           continue;
         }
-        try {
-          await releaseResources(state);
-        } catch (error) {
-          await quarantineState(state, error);
-          continue;
-        }
-        const result = await cleanupWorkspaceState(state);
+
+        const containerTerminal = isTerminalContainerStatus(inspected.status);
+        const deliveryUnconfirmed = (
+          ['prepared', 'starting', 'running'].includes(state.status)
+          && !deliveryConfirmed
+        );
+        if (!containerTerminal && !deliveryUnconfirmed) continue;
+
+        const terminalStatus = containerTerminal
+          ? inspected.status
+          : 'credential_delivery_unconfirmed';
+        const result = await finalizeAttempt(state.attempt_id, null, {
+          containerId: state.container_id,
+          leaseGeneration: state.lease_generation,
+          terminalStatus,
+          ...(inspected.status === 'missing'
+            ? { containerMissing: true }
+            : {}),
+        });
         if (result.status === 'cleaned') {
           cleanedAttempts.push(state.attempt_id);
           retainedAttemptIds.delete(state.attempt_id);

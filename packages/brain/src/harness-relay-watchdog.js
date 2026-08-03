@@ -163,6 +163,7 @@ export async function reconcileExpiredKernelAttempt({
   leaseOwner,
   resumeAttempt,
   reservedChildHop = null,
+  reserveChildHop,
   randomUUIDFn = randomUUID,
   onRecoveryAlert,
 }) {
@@ -180,6 +181,18 @@ export async function reconcileExpiredKernelAttempt({
   ) {
     return { ok: false, deduped: true };
   }
+  if (originalParentAttempt.execution_transport === 'fleet-worker') {
+    return { ok: false, deferred_to_controller: true };
+  }
+
+  const childHop = reservedChildHop ?? (
+    typeof reserveChildHop === 'function'
+      ? await reserveChildHop(originalParentAttempt)
+      : Number(originalParentAttempt.hop) + 1
+  );
+  if (!Number.isInteger(childHop) || childHop <= Number(originalParentAttempt.hop)) {
+    return { ok: false, deduped: true };
+  }
 
   const reclaimed = await store.reclaim(attemptId, {
     leaseOwner,
@@ -194,7 +207,6 @@ export async function reconcileExpiredKernelAttempt({
   });
   if (!rotatedParent) return { ok: false, deduped: true };
 
-  const childHop = reservedChildHop ?? (Number(originalParentAttempt.hop) + 1);
   const callbackSecret = generateCallbackSecret();
   const childId = randomUUIDFn();
   const resumeMachineId = originalParentAttempt.actual_machine_id
@@ -266,8 +278,9 @@ export async function reconcileExpiredKernelAttempt({
       : resumed === false
         ? 'resume_returned_false'
         : resumed?.failure_code ?? 'resume_failed';
-    const lifecycleDetail = resumed?.lifecycle_detail
-      ? `; ${sanitizeDiagnostic(resumed.lifecycle_detail)}`
+    const rawDiagnostic = resumed?.lifecycle_detail || resumed?.error;
+    const lifecycleDetail = rawDiagnostic
+      ? `; ${sanitizeResumeDiagnostic(rawDiagnostic)}`
       : '';
     const childFailure = await tryFailClaimedAttempt(store, childId, {
       code: failureCode,
@@ -340,11 +353,111 @@ function isProvableLegacyLocalParent(attempt, target) {
   );
 }
 
-function unsafeCleanupDiagnostic(result) {
-  if (result?.status === 'cancelled') return null;
+function fleetCleanupConfirmed(result, attemptId) {
+  return (
+    ['cleaned', 'already_clean'].includes(result?.status)
+    && result?.attempt_id === attemptId
+  );
+}
+
+function validReceiptJobId(value) {
+  return (
+    typeof value === 'string'
+    && value.trim().length > 0
+    && !/[\r\n]/.test(value)
+  );
+}
+
+function redactDiagnosticPaths(value) {
+  return String(value ?? 'unknown')
+    .replace(
+      /\bfile:\/\/\/[^;\r\n]*?(?=:\d+(?::\d+)?\b|[;,)"']|$)/gi,
+      '[PATH]',
+    )
+    .replace(
+      /(^|[\s("'`=])\/(?!\/)[^;\r\n]*?(?=:\d+(?::\d+)?\b|[;,)"']|$)/g,
+      '$1[PATH]',
+    );
+}
+
+function sanitizeResumeDiagnostic(value) {
+  return sanitizeDiagnostic(redactDiagnosticPaths(value));
+}
+
+function sanitizeResumeError(error) {
+  const sanitized = new Error(sanitizeResumeDiagnostic(errorMessage(error)));
+  if (error?.code) sanitized.code = error.code;
+  return sanitized;
+}
+
+function validatePreparedReceipt(receipt, target) {
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) {
+    throw new Error('resume_prepare_receipt_invalid');
+  }
+  if (receipt.actualMachineId !== target?.machine) {
+    throw new Error('resume_prepare_receipt_invalid:actual_machine');
+  }
+  if (receipt.executionTransport !== 'fleet-worker') {
+    throw new Error('resume_prepare_receipt_invalid:transport');
+  }
+  if (receipt.attestationStatus !== 'verified') {
+    throw new Error('resume_prepare_receipt_invalid:attestation');
+  }
+  if (!validReceiptJobId(receipt.remoteJobId) || !validReceiptJobId(receipt.jobId)) {
+    throw new Error('resume_prepare_receipt_invalid:job_id');
+  }
+  if (receipt.jobId !== receipt.remoteJobId) {
+    throw new Error('resume_prepare_receipt_invalid:job_mismatch');
+  }
+  if (receipt.containerId != null) {
+    throw new Error('resume_prepare_receipt_invalid:container_id');
+  }
+  return Object.freeze({
+    actualMachineId: receipt.actualMachineId,
+    executionTransport: receipt.executionTransport,
+    remoteJobId: receipt.remoteJobId,
+    attestationStatus: receipt.attestationStatus,
+    containerId: null,
+    jobId: receipt.jobId,
+  });
+}
+
+function unsafeFleetCleanupDiagnostic(result, attemptId) {
+  if (fleetCleanupConfirmed(result, attemptId)) return null;
   const status = result?.status ?? 'unknown';
+  const exactCleanupStatus = ['cleaned', 'already_clean'].includes(status);
+  const attemptMismatch = !exactCleanupStatus
+    ? ''
+    : result?.attempt_id == null
+      ? ' (missing attempt_id)'
+      : ' (attempt_id mismatch)';
   const httpStatus = result?.httpStatus == null ? '' : ` (HTTP ${result.httpStatus})`;
-  return `orphan cancellation unsafe: ${status}${httpStatus}`;
+  return `orphan cancellation unsafe: ${status}${attemptMismatch}${httpStatus}`;
+}
+
+async function cancelFleetChild(launcher, {
+  attempt,
+  target,
+  launchReceipt,
+}) {
+  let result;
+  try {
+    result = await launcher.cancel({
+      attempt,
+      target,
+      ...(launchReceipt ? { launchReceipt } : {}),
+    });
+  } catch (error) {
+    result = {
+      status: 'unavailable',
+      reason: `orphan cancellation failed: ${errorMessage(error)}`,
+    };
+  }
+  return {
+    confirmed: fleetCleanupConfirmed(result, attempt.id),
+    status: result?.status ?? 'unknown',
+    diagnostic: result?.reason ?? unsafeFleetCleanupDiagnostic(result, attempt.id),
+  };
 }
 
 async function deliverRecoveryAlerts(onRecoveryAlert, alerts) {
@@ -379,7 +492,7 @@ async function tryFailClaimedAttempt(store, attemptId, failure, claim) {
         attemptId,
         lifecycleCode: failure.code,
         originalError: lifecycleError,
-        persistenceError,
+        persistenceError: sanitizeResumeError(persistenceError),
       }),
     };
   }
@@ -403,13 +516,14 @@ function deferredRecoveryAlert({
     attemptId,
     lifecycleCode,
     cleanupStatus,
-    diagnostic,
+    diagnostic: diagnostic == null ? null : sanitizeResumeDiagnostic(diagnostic),
   };
 }
 
 export async function resumeKernelAttempt(attempt, {
   originalParentAttempt,
   reclaimedParentAttempt,
+  parentCleanupConfirmed: parentCleanupAlreadyConfirmed = false,
   task,
   dbPool,
   callbackSecret,
@@ -520,8 +634,15 @@ export async function resumeKernelAttempt(attempt, {
       ?? originalParentAttempt.requested_machine_id,
   };
 
-  let parentCleanup;
-  if (isProvableLegacyLocalParent(originalParentAttempt, target)) {
+  let parentCleanup = parentCleanupAlreadyConfirmed
+    ? { status: 'already_clean', attempt_id: originalParentAttempt.id }
+    : null;
+  let parentCleanupConfirmed = parentCleanupAlreadyConfirmed;
+  let parentCleanupDiagnostic = null;
+  if (parentCleanupAlreadyConfirmed) {
+    // The watchdog confirmed exact old-lease cleanup before reclaiming the
+    // database generation. Never inspect/cancel the fenced parent again.
+  } else if (isProvableLegacyLocalParent(originalParentAttempt, target)) {
     const legacyContainerId = `cecelia-harness-${shortId(originalParentAttempt.id)}`;
     try {
       const removeContainer = injectedRemoveContainer ?? detached.removeDockerContainer;
@@ -536,6 +657,11 @@ export async function resumeKernelAttempt(attempt, {
         reason: `legacy local cleanup failed: ${errorMessage(error)}`,
       };
     }
+    parentCleanupConfirmed = parentCleanup?.status === 'cancelled';
+    parentCleanupDiagnostic = parentCleanup?.reason
+      ?? (parentCleanupConfirmed
+        ? null
+        : `legacy local cleanup unsafe: ${parentCleanup?.status ?? 'unknown'}`);
   } else {
     try {
       await launcher.inspect({
@@ -570,9 +696,15 @@ export async function resumeKernelAttempt(attempt, {
         reason: `parent cancellation failed: ${errorMessage(error)}`,
       };
     }
+    parentCleanupConfirmed = fleetCleanupConfirmed(
+      parentCleanup,
+      originalParentAttempt.id,
+    );
+    parentCleanupDiagnostic = parentCleanup?.reason
+      ?? unsafeFleetCleanupDiagnostic(parentCleanup, originalParentAttempt.id);
   }
-  if (parentCleanup?.status !== 'cancelled') {
-    const diagnostic = parentCleanup?.reason ?? unsafeCleanupDiagnostic(parentCleanup);
+  if (!parentCleanupConfirmed) {
+    const diagnostic = parentCleanupDiagnostic;
     const recoveryAlert = deferredRecoveryAlert({
       attemptId: originalParentAttempt.id,
       lifecycleCode: 'resume_parent_cleanup_unconfirmed',
@@ -590,7 +722,7 @@ export async function resumeKernelAttempt(attempt, {
 
   let launched;
   try {
-    launched = await launcher.launch({
+    const prepared = await launcher.prepare({
       attempt: { ...attempt, callbackSecret },
       bundle: attempt.task_bundle,
       spec,
@@ -599,35 +731,24 @@ export async function resumeKernelAttempt(attempt, {
       target,
       leaseClaimed: true,
     });
+    launched = validatePreparedReceipt(prepared, target);
   } catch (error) {
-    let childCleanup;
-    try {
-      childCleanup = await launcher.cancel({
-        attempt,
-        target,
-      });
-    } catch (cleanupError) {
-      childCleanup = {
-        status: 'unavailable',
-        reason: `orphan cancellation failed: ${errorMessage(cleanupError)}`,
-      };
-    }
-    const cleanupDiagnostic = childCleanup?.reason ?? unsafeCleanupDiagnostic(childCleanup);
-    if (childCleanup?.status !== 'cancelled') {
+    const childCleanup = await cancelFleetChild(launcher, { attempt, target });
+    if (!childCleanup.confirmed) {
       const diagnostic = [
         errorMessage(error),
-        cleanupDiagnostic,
+        childCleanup.diagnostic,
       ].filter(Boolean).join('; ');
       const recoveryAlert = deferredRecoveryAlert({
         attemptId: attempt.id,
         lifecycleCode: 'resume_launch_failed',
-        cleanupStatus: childCleanup?.status ?? 'unknown',
+        cleanupStatus: childCleanup.status,
         diagnostic,
       });
       return {
         ok: false,
         failure_code: 'resume_child_cleanup_unconfirmed',
-        cleanup_status: childCleanup?.status ?? 'unknown',
+        cleanup_status: childCleanup.status,
         error: diagnostic,
         recovery_alert: recoveryAlert,
       };
@@ -635,7 +756,7 @@ export async function resumeKernelAttempt(attempt, {
     return {
       ok: false,
       failure_code: 'resume_launch_failed',
-      cleanup_status: 'cancelled',
+      cleanup_status: childCleanup.status,
       error: errorMessage(error),
     };
   }
@@ -656,45 +777,78 @@ export async function resumeKernelAttempt(attempt, {
     receiptError = error;
   }
   if (receiptError) {
-    let cleanupStatus = 'unknown';
-    let cleanupDiagnostic = null;
-    try {
-      const cleanup = await launcher.cancel({
-        attempt,
-        target,
-        launchReceipt: launched,
-      });
-      cleanupStatus = cleanup?.status ?? 'unknown';
-      cleanupDiagnostic = unsafeCleanupDiagnostic(cleanup);
-    } catch (error) {
-      cleanupStatus = 'unavailable';
-      cleanupDiagnostic = `orphan cancellation failed: ${errorMessage(error)}`;
-    }
-    const sanitizedCleanupDiagnostic = cleanupDiagnostic == null
+    const childCleanup = await cancelFleetChild(launcher, {
+      attempt,
+      target,
+      launchReceipt: launched,
+    });
+    const sanitizedCleanupDiagnostic = childCleanup.diagnostic == null
       ? null
-      : sanitizeDiagnostic(cleanupDiagnostic);
-    const recoveryAlert = cleanupStatus === 'cancelled'
+      : sanitizeDiagnostic(childCleanup.diagnostic);
+    const recoveryAlert = childCleanup.confirmed
       ? null
       : deferredRecoveryAlert({
         attemptId: attempt.id,
         lifecycleCode: 'resume_receipt_persist_failed',
-        cleanupStatus,
+        cleanupStatus: childCleanup.status,
         diagnostic: sanitizedCleanupDiagnostic,
       });
     const lifecycleDetail = sanitizeDiagnostic([
       `resume receipt persistence failed: ${errorMessage(receiptError)}`,
-      `child cleanup ${cleanupStatus}`,
+      `child cleanup ${childCleanup.status}`,
       sanitizedCleanupDiagnostic,
     ].filter(Boolean).join('; '));
     return {
       ok: false,
       failure_code: 'resume_receipt_persist_failed',
-      cleanup_status: cleanupStatus,
+      cleanup_status: childCleanup.status,
       cleanup_diagnostic: sanitizedCleanupDiagnostic,
       lifecycle_detail: lifecycleDetail,
       recovery_alert: recoveryAlert,
     };
   }
+
+  try {
+    const started = await launcher.start({
+      attempt,
+      target,
+    });
+    if (started?.status !== 'running' || started?.attempt_id !== attempt.id) {
+      throw new Error('resume_start_invalid_acknowledgement');
+    }
+  } catch (error) {
+    const childCleanup = await cancelFleetChild(launcher, {
+      attempt,
+      target,
+      launchReceipt: launched,
+    });
+    if (!childCleanup.confirmed) {
+      const diagnostic = [
+        errorMessage(error),
+        childCleanup.diagnostic,
+      ].filter(Boolean).join('; ');
+      const recoveryAlert = deferredRecoveryAlert({
+        attemptId: attempt.id,
+        lifecycleCode: 'resume_start_failed',
+        cleanupStatus: childCleanup.status,
+        diagnostic,
+      });
+      return {
+        ok: false,
+        failure_code: 'resume_child_cleanup_unconfirmed',
+        cleanup_status: childCleanup.status,
+        error: diagnostic,
+        recovery_alert: recoveryAlert,
+      };
+    }
+    return {
+      ok: false,
+      failure_code: 'resume_start_failed',
+      cleanup_status: childCleanup.status,
+      error: errorMessage(error),
+    };
+  }
+
   return {
     ok: true,
     resumed: true,
@@ -709,19 +863,14 @@ async function _recoverKernelRun(run, task, deps, out) {
     const alertCode = detail.kind === 'failure_persistence'
       ? 'kernel_failure_persistence_failed'
       : 'kernel_recovery_cleanup_unconfirmed';
-    await raise(
-      'P1',
-      alertCode,
-      [
-        `attempt=${sanitizeDiagnostic(detail.attemptId)}`,
-        `lifecycle=${sanitizeDiagnostic(detail.lifecycleCode)}`,
-        `cleanup=${sanitizeDiagnostic(detail.cleanupStatus)}`,
-        `diagnostic=${sanitizeDiagnostic(
-          detail.diagnostic ?? detail.originalError?.message ?? 'unknown',
-        )}`,
-        `persistence=${sanitizeDiagnostic(detail.persistenceError?.message ?? 'none')}`,
-      ].join('; '),
-    );
+    const message = sanitizeResumeDiagnostic([
+      `attempt=${detail.attemptId ?? 'unknown'}`,
+      `lifecycle=${detail.lifecycleCode ?? 'unknown'}`,
+      `cleanup=${detail.cleanupStatus ?? 'unknown'}`,
+      `diagnostic=${detail.diagnostic ?? detail.originalError?.message ?? 'unknown'}`,
+      `persistence=${detail.persistenceError?.message ?? 'none'}`,
+    ].join('; '));
+    await raise('P1', alertCode, message);
   });
   const heartbeatAt = run.orchestrator_heartbeat_at
     ? new Date(run.orchestrator_heartbeat_at).getTime()
@@ -741,15 +890,17 @@ async function _recoverKernelRun(run, task, deps, out) {
     && new Date(attempt.lease_expires_at).getTime() > Date.now();
   if (leaseLive) return;
 
-  if (activeStatus && attempt.provider_session_id) {
+  if (
+    activeStatus
+    && attempt.provider_session_id
+    && attempt.execution_transport !== 'fleet-worker'
+  ) {
     const lowerResume = deps.resumeAttempt || resumeKernelAttempt;
-    const reservedChildHop = await reserveResumeIntent(dbPool, attempt);
-    if (reservedChildHop == null) return;
     const resumed = await reconcileExpiredKernelAttempt({
       db: dbPool,
       attemptId: attempt.id,
       leaseOwner: `watchdog:${process.pid}`,
-      reservedChildHop,
+      reserveChildHop: (parentAttempt) => reserveResumeIntent(dbPool, parentAttempt),
       onRecoveryAlert,
       resumeAttempt: (child, context) => lowerResume(child, {
         ...context,
@@ -775,7 +926,11 @@ async function _recoverKernelRun(run, task, deps, out) {
     return;
   }
 
-  if (activeStatus && attempt) {
+  if (
+    activeStatus
+    && attempt
+    && attempt.execution_transport !== 'fleet-worker'
+  ) {
     await dbPool.query(
       `UPDATE harness_attempts
           SET status='failed', error_code='recovery_without_session',

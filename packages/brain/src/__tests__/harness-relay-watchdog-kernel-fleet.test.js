@@ -171,13 +171,17 @@ function resumeOptions(overrides = {}) {
 
 function successfulWorkerFetch(machineId = 'us-mac-m4') {
   return vi.fn(async (url, init) => {
-    if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-      return response(200, { status: 'running', job_id: 'parent-job' });
+    if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
+      return response(200, {
+        status: 'running',
+        attempt_id: PARENT_ID,
+        container_id: 'parent-job',
+      });
     }
     if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
-      return response(200, { status: 'cancelled', job_id: 'parent-job' });
+      return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
     }
-    if (url === `${BRIDGE_URL}/harness/attempts`) {
+    if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
       return response(202, {
         status: 'accepted',
         job_id: 'child-job',
@@ -189,6 +193,9 @@ function successfulWorkerFetch(machineId = 'us-mac-m4') {
           jobId: 'child-job',
         }),
       });
+    }
+    if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`) {
+      return response(200, { status: 'running', attempt_id: CHILD_ID });
     }
     throw new Error(`unexpected request ${init?.method} ${url}`);
   });
@@ -317,19 +324,23 @@ describe('kernel fleet watchdog recovery', () => {
     });
   });
 
-  it('resumes a xian parent through inspect/cancel/launch and persists the child receipt', async () => {
+  it('resumes a xian parent through inspect/cancel/prepare/receipt/start', async () => {
     const child = childAttempt();
     const store = resumeStore();
     const spawnDetached = vi.fn();
     const removeContainer = vi.fn();
     const fetchFn = vi.fn(async (url, init) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-        return response(200, { status: 'running', job_id: 'parent-job' });
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
-        return response(200, { status: 'cancelled', job_id: 'parent-job' });
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
       }
-      if (url === `${BRIDGE_URL}/harness/attempts`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
         return response(202, {
           status: 'accepted',
           job_id: 'child-job',
@@ -341,6 +352,9 @@ describe('kernel fleet watchdog recovery', () => {
             jobId: 'child-job',
           }),
         });
+      }
+      if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`) {
+        return response(200, { status: 'running', attempt_id: CHILD_ID });
       }
       throw new Error(`unexpected request ${init?.method} ${url}`);
     });
@@ -358,9 +372,10 @@ describe('kernel fleet watchdog recovery', () => {
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
-      `${BRIDGE_URL}/harness/attempts`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
+      `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`,
     ]);
     expect(JSON.parse(fetchFn.mock.calls[1][1].body)).toEqual({
       lease_owner: 'dispatcher-parent',
@@ -385,8 +400,207 @@ describe('kernel fleet watchdog recovery', () => {
       remoteJobId: 'child-job',
       attestationStatus: 'verified',
     });
+    expect(fetchFn.mock.invocationCallOrder[1])
+      .toBeLessThan(fetchFn.mock.invocationCallOrder[2]);
+    expect(fetchFn.mock.invocationCallOrder[2])
+      .toBeLessThan(store.recordLaunchReceipt.mock.invocationCallOrder[0]);
+    expect(store.recordLaunchReceipt.mock.invocationCallOrder[0])
+      .toBeLessThan(fetchFn.mock.invocationCallOrder[3]);
     expect(spawnDetached).not.toHaveBeenCalled();
     expect(removeContainer).not.toHaveBeenCalled();
+  });
+
+  it('does not invoke the removed one-phase launch method during resume', async () => {
+    const store = resumeStore();
+    const launcher = {
+      inspect: vi.fn(async () => ({ status: 'running' })),
+      cancel: vi.fn(async ({ attempt }) => ({
+        status: 'cleaned',
+        attempt_id: attempt.id,
+      })),
+      launch: vi.fn(async () => ({
+        jobId: 'legacy-child-job',
+        actualMachineId: 'xian-mac-m4',
+        executionTransport: 'fleet-worker',
+        remoteJobId: 'legacy-child-job',
+        attestationStatus: 'verified',
+      })),
+      prepare: vi.fn(async () => ({
+        jobId: 'child-job',
+        actualMachineId: 'xian-mac-m4',
+        executionTransport: 'fleet-worker',
+        remoteJobId: 'child-job',
+        attestationStatus: 'verified',
+      })),
+      start: vi.fn(async () => ({ status: 'running', attempt_id: CHILD_ID })),
+    };
+
+    const result = await resumeKernelAttempt(childAttempt(), resumeOptions({
+      attemptStore: store,
+      launcher,
+    }));
+
+    expect(launcher.launch).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, resumed: true });
+    expect(launcher.prepare).toHaveBeenCalledOnce();
+    expect(store.recordLaunchReceipt.mock.invocationCallOrder[0])
+      .toBeLessThan(launcher.start.mock.invocationCallOrder[0]);
+    expect(launcher.start).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an invalid prepared receipt before persistence or start', async () => {
+    const store = resumeStore();
+    const launcher = {
+      inspect: vi.fn(async () => ({ status: 'running' })),
+      cancel: vi.fn(async ({ attempt }) => ({
+        status: 'cleaned',
+        attempt_id: attempt.id,
+      })),
+      prepare: vi.fn(async () => ({
+        jobId: 'child-job',
+        actualMachineId: 'wrong-machine',
+        executionTransport: 'fleet-worker',
+        remoteJobId: 'child-job',
+        attestationStatus: 'verified',
+      })),
+      start: vi.fn(),
+    };
+
+    await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
+      attemptStore: store,
+      launcher,
+    }))).resolves.toMatchObject({
+      ok: false,
+      failure_code: 'resume_launch_failed',
+      cleanup_status: 'cleaned',
+      error: 'resume_prepare_receipt_invalid:actual_machine',
+    });
+
+    expect(store.recordLaunchReceipt).not.toHaveBeenCalled();
+    expect(launcher.start).not.toHaveBeenCalled();
+    expect(launcher.cancel).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['cancelled', { status: 'cancelled', attempt_id: PARENT_ID }],
+    ['cleaned without attempt_id', { status: 'cleaned' }],
+    ['cleaned for another attempt', { status: 'cleaned', attempt_id: CHILD_ID }],
+  ])('fails closed for Fleet parent cleanup ack %s', async (_label, parentCleanup) => {
+    const store = resumeStore();
+    const launcher = {
+      inspect: vi.fn(async () => ({
+        status: 'running',
+        attempt_id: PARENT_ID,
+        container_id: 'parent-job',
+      })),
+      cancel: vi.fn(async () => parentCleanup),
+      prepare: vi.fn(),
+      start: vi.fn(),
+    };
+
+    await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
+      attemptStore: store,
+      launcher,
+    }))).resolves.toMatchObject({
+      ok: false,
+      failure_code: 'resume_parent_cleanup_unconfirmed',
+      cleanup_status: parentCleanup.status,
+      recovery_alert: expect.objectContaining({
+        attemptId: PARENT_ID,
+        lifecycleCode: 'resume_parent_cleanup_unconfirmed',
+      }),
+    });
+
+    expect(launcher.prepare).not.toHaveBeenCalled();
+    expect(launcher.start).not.toHaveBeenCalled();
+    expect(store.recordLaunchReceipt).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['prepare', { status: 'cancelled', attempt_id: CHILD_ID }, 'resume_child_cleanup_unconfirmed'],
+    ['receipt', { status: 'cleaned' }, 'resume_receipt_persist_failed'],
+    ['start', { status: 'cleaned', attempt_id: PARENT_ID }, 'resume_child_cleanup_unconfirmed'],
+  ])(
+    'fails closed when %s failure receives a non-exact child cleanup ack',
+    async (failurePhase, childCleanup, expectedFailureCode) => {
+      const store = resumeStore();
+      const prepare = vi.fn(async () => ({
+        jobId: 'child-job',
+        actualMachineId: 'xian-mac-m4',
+        executionTransport: 'fleet-worker',
+        remoteJobId: 'child-job',
+        attestationStatus: 'verified',
+      }));
+      const start = vi.fn(async () => ({ status: 'running', attempt_id: CHILD_ID }));
+      if (failurePhase === 'prepare') {
+        prepare.mockRejectedValueOnce(new Error('prepare failed'));
+      }
+      if (failurePhase === 'receipt') {
+        store.recordLaunchReceipt.mockResolvedValueOnce(null);
+      }
+      if (failurePhase === 'start') {
+        start.mockRejectedValueOnce(new Error('start failed'));
+      }
+      const launcher = {
+        inspect: vi.fn(async () => ({ status: 'running', attempt_id: PARENT_ID })),
+        cancel: vi.fn()
+          .mockResolvedValueOnce({ status: 'cleaned', attempt_id: PARENT_ID })
+          .mockResolvedValueOnce(childCleanup),
+        prepare,
+        start,
+      };
+
+      await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
+        attemptStore: store,
+        launcher,
+      }))).resolves.toMatchObject({
+        ok: false,
+        failure_code: expectedFailureCode,
+        cleanup_status: childCleanup.status,
+        recovery_alert: expect.objectContaining({
+          attemptId: CHILD_ID,
+        }),
+      });
+
+      expect(launcher.cancel).toHaveBeenCalledTimes(2);
+      expect(start).toHaveBeenCalledTimes(failurePhase === 'start' ? 1 : 0);
+    },
+  );
+
+  it.each([
+    ['whitespace', '   '],
+    ['CRLF', 'child-job\r\n'],
+  ])('rejects %s prepared receipt job IDs before persistence or start', async (_label, jobId) => {
+    const store = resumeStore();
+    const launcher = {
+      inspect: vi.fn(async () => ({ status: 'running', attempt_id: PARENT_ID })),
+      cancel: vi.fn(async ({ attempt }) => ({
+        status: 'cleaned',
+        attempt_id: attempt.id,
+      })),
+      prepare: vi.fn(async () => ({
+        jobId,
+        actualMachineId: 'xian-mac-m4',
+        executionTransport: 'fleet-worker',
+        remoteJobId: jobId,
+        attestationStatus: 'verified',
+      })),
+      start: vi.fn(),
+    };
+
+    await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
+      attemptStore: store,
+      launcher,
+    }))).resolves.toMatchObject({
+      ok: false,
+      failure_code: 'resume_launch_failed',
+      cleanup_status: 'cleaned',
+      error: 'resume_prepare_receipt_invalid:job_id',
+    });
+
+    expect(store.recordLaunchReceipt).not.toHaveBeenCalled();
+    expect(launcher.start).not.toHaveBeenCalled();
+    expect(launcher.cancel).toHaveBeenCalledTimes(2);
   });
 
   it('cleans a migrated local parent through the Worker Attempt API before launching the child', async () => {
@@ -426,9 +640,10 @@ describe('kernel fleet watchdog recovery', () => {
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
-      `${BRIDGE_URL}/harness/attempts`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
+      `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`,
     ]);
     expect(removeContainer).not.toHaveBeenCalled();
   });
@@ -474,7 +689,8 @@ describe('kernel fleet watchdog recovery', () => {
       'cecelia-harness-11111111',
     ]);
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      `${BRIDGE_URL}/harness/attempts`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
+      `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`,
     ]);
   });
 
@@ -516,15 +732,31 @@ describe('kernel fleet watchdog recovery', () => {
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
-      `${BRIDGE_URL}/harness/attempts`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
+      `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`,
     ]);
     expect(removeContainer).not.toHaveBeenCalled();
   });
 
-  it('fails closed before cleanup or launch when remote callback config is absent', async () => {
-    const fetchFn = vi.fn();
+  it('fails closed before child prepare when remote callback config is absent', async () => {
+    const fetchFn = vi.fn(async (url) => {
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
+      }
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
+      }
+      if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`) {
+        return response(200, { status: 'cleaned', attempt_id: CHILD_ID });
+      }
+      throw new Error(`child prepare must not occur: ${url}`);
+    });
     const store = resumeStore();
 
     await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
@@ -533,11 +765,12 @@ describe('kernel fleet watchdog recovery', () => {
       fetchFn,
     }))).resolves.toMatchObject({
       ok: false,
-      failure_code: 'resume_parent_cleanup_unconfirmed',
+      failure_code: 'resume_launch_failed',
+      cleanup_status: 'cleaned',
       error: 'execution_transport_unavailable:xian-mac-m4',
     });
 
-    expect(fetchFn).not.toHaveBeenCalled();
+    expect(fetchFn).toHaveBeenCalledTimes(3);
     expect(store.recordLaunchReceipt).not.toHaveBeenCalled();
   });
 
@@ -545,8 +778,12 @@ describe('kernel fleet watchdog recovery', () => {
     const store = resumeStore();
     const onRecoveryAlert = vi.fn(async () => {});
     const fetchFn = vi.fn(async (url) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-        return response(200, { status: 'running' });
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
         return response(404, { status: 'missing' });
@@ -577,13 +814,17 @@ describe('kernel fleet watchdog recovery', () => {
     const store = resumeStore(null);
     const onRecoveryAlert = vi.fn(async () => {});
     const fetchFn = vi.fn(async (url) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-        return response(200, { status: 'running' });
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
-        return response(200, { status: 'cancelled' });
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
       }
-      if (url === `${BRIDGE_URL}/harness/attempts`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
         return response(202, {
           status: 'accepted',
           job_id: 'child-job',
@@ -597,7 +838,7 @@ describe('kernel fleet watchdog recovery', () => {
         });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`) {
-        return response(200, { status: 'cancelled', job_id: 'child-job' });
+        return response(200, { status: 'cleaned', attempt_id: CHILD_ID });
       }
       throw new Error(`unexpected request ${url}`);
     });
@@ -609,32 +850,93 @@ describe('kernel fleet watchdog recovery', () => {
     }))).resolves.toMatchObject({
       ok: false,
       failure_code: 'resume_receipt_persist_failed',
-      cleanup_status: 'cancelled',
+      cleanup_status: 'cleaned',
       cleanup_diagnostic: null,
       lifecycle_detail: expect.stringContaining('launch receipt was not persisted'),
       recovery_alert: null,
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
-      `${BRIDGE_URL}/harness/attempts`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
       `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`,
     ]);
     expect(store.fail).not.toHaveBeenCalled();
     expect(onRecoveryAlert).not.toHaveBeenCalled();
   });
 
+  it('cancels the exact claimed child when start fails after receipt persistence', async () => {
+    const store = resumeStore();
+    const fetchFn = vi.fn(async (url) => {
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
+      }
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
+      }
+      if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
+        return response(202, {
+          status: 'accepted',
+          job_id: 'child-job',
+          actual_machine_id: 'xian-mac-m4',
+          attestation: signMachineAttestation({
+            secret: SECRET,
+            attemptId: CHILD_ID,
+            machineId: 'xian-mac-m4',
+            jobId: 'child-job',
+          }),
+        });
+      }
+      if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`) {
+        return response(200, { status: 'prepared', attempt_id: CHILD_ID });
+      }
+      if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`) {
+        return response(200, { status: 'cleaned', attempt_id: CHILD_ID });
+      }
+      throw new Error(`unexpected request ${url}`);
+    });
+
+    await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
+      attemptStore: store,
+      fetchFn,
+    }))).resolves.toMatchObject({
+      ok: false,
+      failure_code: 'resume_start_failed',
+      cleanup_status: 'cleaned',
+      error: 'remote_bridge_start_not_running',
+    });
+
+    expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
+      `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`,
+      `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`,
+    ]);
+    expect(store.recordLaunchReceipt.mock.invocationCallOrder[0])
+      .toBeLessThan(fetchFn.mock.invocationCallOrder[3]);
+    expect(store.fail).not.toHaveBeenCalled();
+  });
+
   it('cancels the exact claimed child after the Bridge accepts but returns invalid attestation', async () => {
     const store = resumeStore();
     const fetchFn = vi.fn(async (url) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-        return response(200, { status: 'running' });
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
-        return response(200, { status: 'cancelled' });
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
       }
-      if (url === `${BRIDGE_URL}/harness/attempts`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
         return response(202, {
           status: 'accepted',
           job_id: 'child-job',
@@ -643,7 +945,7 @@ describe('kernel fleet watchdog recovery', () => {
         });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`) {
-        return response(200, { status: 'cancelled', job_id: 'child-job' });
+        return response(200, { status: 'cleaned', attempt_id: CHILD_ID });
       }
       throw new Error(`unexpected request ${url}`);
     });
@@ -654,14 +956,14 @@ describe('kernel fleet watchdog recovery', () => {
     }))).resolves.toMatchObject({
       ok: false,
       failure_code: 'resume_launch_failed',
-      cleanup_status: 'cancelled',
+      cleanup_status: 'cleaned',
       error: 'remote_bridge_attestation_invalid',
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
-      `${BRIDGE_URL}/harness/attempts`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
       `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`,
     ]);
     expect(JSON.parse(fetchFn.mock.calls[3][1].body)).toEqual({
@@ -673,13 +975,17 @@ describe('kernel fleet watchdog recovery', () => {
   it('cancels the exact claimed child after the Bridge accepts but its response body times out', async () => {
     const store = resumeStore();
     const fetchFn = vi.fn(async (url, options) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-        return response(200, { status: 'running' });
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
-        return response(200, { status: 'cancelled' });
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
       }
-      if (url === `${BRIDGE_URL}/harness/attempts`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
         return {
           ok: true,
           status: 202,
@@ -691,7 +997,7 @@ describe('kernel fleet watchdog recovery', () => {
         };
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`) {
-        return response(200, { status: 'cancelled', job_id: 'child-job' });
+        return response(200, { status: 'cleaned', attempt_id: CHILD_ID });
       }
       throw new Error(`unexpected request ${url}`);
     });
@@ -703,14 +1009,14 @@ describe('kernel fleet watchdog recovery', () => {
     }))).resolves.toMatchObject({
       ok: false,
       failure_code: 'resume_launch_failed',
-      cleanup_status: 'cancelled',
-      error: 'remote_bridge_launch_timeout',
+      cleanup_status: 'cleaned',
+      error: 'remote_bridge_prepare_timeout',
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
-      `${BRIDGE_URL}/harness/attempts`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
       `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`,
     ]);
   });
@@ -718,13 +1024,17 @@ describe('kernel fleet watchdog recovery', () => {
   it('alerts when child cleanup after a failed launch is not confirmed safe', async () => {
     const onRecoveryAlert = vi.fn(async () => {});
     const fetchFn = vi.fn(async (url) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-        return response(200, { status: 'running' });
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
-        return response(200, { status: 'cancelled' });
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
       }
-      if (url === `${BRIDGE_URL}/harness/attempts`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
         return response(202, {
           status: 'accepted',
           job_id: 'child-job',
@@ -946,17 +1256,22 @@ describe('kernel fleet watchdog recovery', () => {
       }),
     };
     const launcher = {
-      inspect: vi.fn(async () => ({ status: 'running' })),
+      inspect: vi.fn(async () => ({
+        status: 'running',
+        attempt_id: PARENT_ID,
+        container_id: 'parent-job',
+      })),
       cancel: vi.fn()
-        .mockResolvedValueOnce({ status: 'cancelled' })
+        .mockResolvedValueOnce({ status: 'cleaned', attempt_id: PARENT_ID })
         .mockResolvedValueOnce({ status: 'missing' }),
-      launch: vi.fn(async () => ({
+      prepare: vi.fn(async () => ({
         jobId: 'child-job',
         actualMachineId: 'xian-mac-m4',
-        executionTransport: 'remote-bridge',
+        executionTransport: 'fleet-worker',
         remoteJobId: 'child-job',
         attestationStatus: 'verified',
       })),
+      start: vi.fn(async () => ({ status: 'running', attempt_id: CHILD_ID })),
     };
     const onRecoveryAlert = vi.fn(async () => {
       events.push('alert');
@@ -1017,13 +1332,17 @@ describe('kernel fleet watchdog recovery', () => {
       throw new Error('must remain deferred');
     });
     const fetchFn = vi.fn(async (url) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-        return response(200, { status: 'running' });
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
-        return response(200, { status: 'cancelled' });
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
       }
-      if (url === `${BRIDGE_URL}/harness/attempts`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
         return response(202, {
           status: 'accepted',
           job_id: 'child-job',
@@ -1154,6 +1473,220 @@ describe('kernel fleet watchdog recovery', () => {
     });
   });
 
+  it('defers Fleet parent recovery to the unified controller without mutating its old lease', async () => {
+    const original = {
+      ...parentAttempt(),
+      execution_transport: 'fleet-worker',
+    };
+    const store = {
+      getById: vi.fn(async () => original),
+      reclaim: vi.fn(),
+      rotateCallbackSecret: vi.fn(),
+      createAttempt: vi.fn(),
+      markStarting: vi.fn(),
+      fail: vi.fn(),
+    };
+    const resumeAttempt = vi.fn();
+
+    await expect(reconcileExpiredKernelAttempt({
+      db: { query: vi.fn() },
+      attemptStore: store,
+      attemptId: PARENT_ID,
+      leaseOwner: 'watchdog:test',
+      resumeAttempt,
+      reservedChildHop: 8,
+      randomUUIDFn: () => CHILD_ID,
+    })).resolves.toEqual({ ok: false, deferred_to_controller: true });
+
+    expect(store.reclaim).not.toHaveBeenCalled();
+    expect(store.rotateCallbackSecret).not.toHaveBeenCalled();
+    expect(store.createAttempt).not.toHaveBeenCalled();
+    expect(resumeAttempt).not.toHaveBeenCalled();
+  });
+
+  it('persists bounded sanitized diagnostics when resume throws an ordinary error', async () => {
+    const original = parentAttempt();
+    const reclaimed = {
+      ...original,
+      lease_owner: 'watchdog:test',
+      lease_generation: 4,
+    };
+    const store = {
+      getById: vi.fn(async () => original),
+      reclaim: vi.fn(async () => reclaimed),
+      rotateCallbackSecret: vi.fn(async () => reclaimed),
+      createAttempt: vi.fn(async () => ({ ...childAttempt(), status: 'queued', lease_owner: null })),
+      markStarting: vi.fn(async () => childAttempt()),
+      fail: vi.fn(async () => ({ attempt: {}, deduped: false })),
+    };
+    const sensitivePath = '/Users/administrator/private-resume/worktree/src/runner.js';
+    const rawSecret = 'raw-resume-secret';
+    const oversizedDetail = 'x'.repeat(5_000);
+
+    await expect(reconcileExpiredKernelAttempt({
+      db: { query: vi.fn() },
+      attemptStore: store,
+      attemptId: PARENT_ID,
+      leaseOwner: 'watchdog:test',
+      resumeAttempt: vi.fn(async () => {
+        throw new Error(
+          `resume adapter crashed at ${sensitivePath}:27; `
+          + `HARNESS_CALLBACK_TOKEN=${rawSecret}; detail=${oversizedDetail}`,
+        );
+      }),
+      reservedChildHop: 8,
+      randomUUIDFn: () => CHILD_ID,
+    })).resolves.toMatchObject({
+      ok: false,
+      terminal: true,
+      failure_code: 'resume_launch_failed',
+    });
+
+    expect(store.fail.mock.calls.map(([failedAttemptId]) => failedAttemptId)).toEqual([
+      CHILD_ID,
+      PARENT_ID,
+    ]);
+    for (const [, failure] of store.fail.mock.calls) {
+      expect(failure.message).toContain('resume adapter crashed at [PATH]:27');
+      expect(failure.message).toContain('HARNESS_CALLBACK_TOKEN=[REDACTED]');
+      expect(failure.message).not.toContain(sensitivePath);
+      expect(failure.message).not.toContain(rawSecret);
+      expect(failure.message.length).toBeLessThanOrEqual(2_100);
+    }
+  });
+
+  it.each([
+    [
+      'file URL',
+      'file:///Users/administrator/Private%20Project/worktree/src/runner.js',
+      ['file://', '/Users/administrator', 'Private%20Project'],
+    ],
+    [
+      'spaced POSIX path',
+      '/Users/administrator/Private Project/worktree/src/runner.js',
+      ['/Users/administrator', 'Private Project', 'worktree/src'],
+    ],
+  ])(
+    'fully redacts %s from both terminal failure records',
+    async (_label, sensitivePath, forbiddenFragments) => {
+      const original = parentAttempt();
+      const reclaimed = {
+        ...original,
+        lease_owner: 'watchdog:test',
+        lease_generation: 4,
+      };
+      const store = {
+        getById: vi.fn(async () => original),
+        reclaim: vi.fn(async () => reclaimed),
+        rotateCallbackSecret: vi.fn(async () => reclaimed),
+        createAttempt: vi.fn(async () => ({ ...childAttempt(), status: 'queued', lease_owner: null })),
+        markStarting: vi.fn(async () => childAttempt()),
+        fail: vi.fn(async () => ({ attempt: {}, deduped: false })),
+      };
+      const rawSecret = 'raw-path-secret';
+
+      await reconcileExpiredKernelAttempt({
+        db: { query: vi.fn() },
+        attemptStore: store,
+        attemptId: PARENT_ID,
+        leaseOwner: 'watchdog:test',
+        resumeAttempt: vi.fn(async () => {
+          throw new Error(
+            `resume diagnostic at ${sensitivePath}:31; `
+            + `HARNESS_CALLBACK_TOKEN=${rawSecret}; detail=${'x'.repeat(5_000)}`,
+          );
+        }),
+        reservedChildHop: 8,
+        randomUUIDFn: () => CHILD_ID,
+      });
+
+      expect(store.fail).toHaveBeenCalledTimes(2);
+      for (const [, failure] of store.fail.mock.calls) {
+        expect(failure.message).toContain('resume diagnostic at [PATH]:31');
+        expect(failure.message).toContain('HARNESS_CALLBACK_TOKEN=[REDACTED]');
+        expect(failure.message).not.toContain(rawSecret);
+        for (const fragment of forbiddenFragments) {
+          expect(failure.message).not.toContain(fragment);
+        }
+        expect(failure.message.length).toBeLessThanOrEqual(2_100);
+      }
+    },
+  );
+
+  it('sanitizes prepare cleanup deferred P1 evidence before terminal writes and alert delivery', async () => {
+    const original = parentAttempt();
+    const reclaimed = {
+      ...original,
+      lease_owner: 'watchdog:test',
+      lease_generation: 4,
+    };
+    const store = {
+      getById: vi.fn(async () => original),
+      reclaim: vi.fn(async () => reclaimed),
+      rotateCallbackSecret: vi.fn(async () => reclaimed),
+      createAttempt: vi.fn(async () => ({ ...childAttempt(), status: 'queued', lease_owner: null })),
+      markStarting: vi.fn(async () => childAttempt()),
+      fail: vi.fn(async () => ({ attempt: {}, deduped: false })),
+    };
+    const sensitivePath = '/Users/administrator/Private Project/worktree/src/runner.js';
+    const rawSecret = 'raw-alert-secret';
+    const launcher = {
+      inspect: vi.fn(async () => ({ status: 'running', attempt_id: PARENT_ID })),
+      cancel: vi.fn()
+        .mockResolvedValueOnce({ status: 'cleaned', attempt_id: PARENT_ID })
+        .mockResolvedValueOnce({ status: 'missing', httpStatus: 404 }),
+      prepare: vi.fn(async () => {
+        throw new Error(
+          `prepare failed at ${sensitivePath}:41; `
+          + `HARNESS_CALLBACK_TOKEN=${rawSecret}; detail=${'y'.repeat(5_000)}`,
+        );
+      }),
+      start: vi.fn(),
+    };
+    const onRecoveryAlert = vi.fn(async () => {});
+
+    await reconcileExpiredKernelAttempt({
+      db: { query: vi.fn() },
+      attemptStore: store,
+      attemptId: PARENT_ID,
+      leaseOwner: 'watchdog:test',
+      resumeAttempt: (child, context) => resumeKernelAttempt(child, {
+        ...context,
+        task: { id: 'task-1', payload: {} },
+        dbPool: { query: vi.fn() },
+        launcher,
+      }),
+      reservedChildHop: 8,
+      randomUUIDFn: () => CHILD_ID,
+      onRecoveryAlert,
+    });
+
+    expect(store.fail).toHaveBeenCalledTimes(2);
+    for (const [, failure] of store.fail.mock.calls) {
+      expect(failure.message).toContain('prepare failed at [PATH]:41');
+      expect(failure.message).toContain('HARNESS_CALLBACK_TOKEN=[REDACTED]');
+      expect(failure.message).not.toContain(sensitivePath);
+      expect(failure.message).not.toContain('Private Project');
+      expect(failure.message).not.toContain(rawSecret);
+      expect(failure.message.length).toBeLessThanOrEqual(2_100);
+    }
+    expect(launcher.start).not.toHaveBeenCalled();
+    expect(onRecoveryAlert).toHaveBeenCalledOnce();
+    const recoveryAlert = onRecoveryAlert.mock.calls[0][0];
+    expect(recoveryAlert).toMatchObject({
+      kind: 'cleanup_unconfirmed',
+      attemptId: CHILD_ID,
+      lifecycleCode: 'resume_launch_failed',
+      cleanupStatus: 'missing',
+      diagnostic: expect.stringContaining('prepare failed at [PATH]:41'),
+    });
+    expect(recoveryAlert.diagnostic).toContain('HARNESS_CALLBACK_TOKEN=[REDACTED]');
+    expect(recoveryAlert.diagnostic).not.toContain(sensitivePath);
+    expect(recoveryAlert.diagnostic).not.toContain('Private Project');
+    expect(recoveryAlert.diagnostic).not.toContain(rawSecret);
+    expect(recoveryAlert.diagnostic.length).toBeLessThanOrEqual(2_000);
+  });
+
   it('throws the shared aggregate when exact-failing a claimed child is rejected', async () => {
     const original = parentAttempt();
     const reclaimed = {
@@ -1197,6 +1730,71 @@ describe('kernel fleet watchdog recovery', () => {
       kind: 'failure_persistence',
       attemptId: CHILD_ID,
     }));
+  });
+
+  it('sanitizes persistence failure evidence before aggregate and injected alert delivery', async () => {
+    const original = parentAttempt();
+    const reclaimed = {
+      ...original,
+      lease_owner: 'watchdog:test',
+      lease_generation: 4,
+    };
+    const rawSecret = 'raw-persistence-secret';
+    const fileUrl = 'file:///Users/administrator/Private%20Project/worktree/db.js';
+    const spacedPath = '/Users/administrator/Private Project/worktree/fallback.js';
+    const persistenceDiagnostic = (
+      `db adapter failed at ${fileUrl}:17; fallback at ${spacedPath}:18; `
+      + `HARNESS_CALLBACK_TOKEN=${rawSecret}; detail=${'x'.repeat(5_000)}`
+    );
+    const store = {
+      getById: vi.fn(async () => original),
+      reclaim: vi.fn(async () => reclaimed),
+      rotateCallbackSecret: vi.fn(async () => reclaimed),
+      createAttempt: vi.fn(async () => ({ ...childAttempt(), status: 'queued', lease_owner: null })),
+      markStarting: vi.fn(async () => childAttempt()),
+      fail: vi.fn(async (attemptId) => {
+        if (attemptId === CHILD_ID) throw new Error(persistenceDiagnostic);
+        return { attempt: {}, deduped: false };
+      }),
+    };
+    const onRecoveryAlert = vi.fn(async () => {});
+
+    let thrown;
+    try {
+      await reconcileExpiredKernelAttempt({
+        db: { query: vi.fn() },
+        attemptStore: store,
+        attemptId: PARENT_ID,
+        leaseOwner: 'watchdog:test',
+        resumeAttempt: vi.fn(async () => ({ ok: false, failure_code: 'resume_launch_failed' })),
+        reservedChildHop: 8,
+        randomUUIDFn: () => CHILD_ID,
+        onRecoveryAlert,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect(onRecoveryAlert).toHaveBeenCalledOnce();
+    const alert = onRecoveryAlert.mock.calls[0][0];
+    const sanitizedPersistence = alert.persistenceError.message;
+    expect(sanitizedPersistence).toContain(
+      'db adapter failed at [PATH]:17; fallback at [PATH]:18; '
+      + 'HARNESS_CALLBACK_TOKEN=[REDACTED]',
+    );
+    expect(sanitizedPersistence.length).toBeLessThanOrEqual(2_000);
+    expect(thrown.message).toContain(
+      `failure_persistence_failed: ${sanitizedPersistence}`,
+    );
+    for (const output of [sanitizedPersistence, thrown.message]) {
+      expect(output).not.toContain(fileUrl);
+      expect(output).not.toContain(spacedPath);
+      expect(output).not.toContain('file://');
+      expect(output).not.toContain('Private%20Project');
+      expect(output).not.toContain('Private Project');
+      expect(output).not.toContain(rawSecret);
+    }
   });
 
   it('throws the shared aggregate when exact-failing the reclaimed parent is rejected', async () => {

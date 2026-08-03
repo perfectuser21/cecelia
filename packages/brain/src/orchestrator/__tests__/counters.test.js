@@ -59,6 +59,23 @@ describe('deriveCounters：hops 与 fixRound', () => {
     expect(deriveCounters(rows, { proposeBranchMaxRn: 0 }).fixRound).toBe(0);
   });
 
+  it('infrastructure retry 即使后续 SHA 前进也不计入 product fixRound', () => {
+    const rows = [
+      row(1, 'spawn:generator-fix', {
+        trigger_sha: 'a'.repeat(40),
+        failure_class: 'infrastructure_blocked',
+      }),
+      {
+        hop: 2,
+        action: 'verdict:generator-fix-callback',
+        observed: { pr_head_sha: 'b'.repeat(40) },
+        detail: { verification_status: 'verified' },
+      },
+    ];
+
+    expect(deriveCounters(rows, { proposeBranchMaxRn: 0 }).fixRound).toBe(0);
+  });
+
   it('同 hop 不重复计：重复 hop 行只算一次（hops 与 fixRound 都去重）', () => {
     const rows = [
       row(1, 'spawn:generator'),

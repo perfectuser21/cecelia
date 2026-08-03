@@ -1123,6 +1123,8 @@ describe('collectGroundTruth：inflight（P0-1）', () => {
       && !sql.includes("role = 'evaluator'")
       && sql.includes('WHERE run_id = $1')
       && sql.includes('ORDER BY hop DESC')
+      && sql.includes('lease_owner')
+      && sql.includes('lease_expires_at')
       && params[0] === RUN_ID
     ))).toBe(true);
   });

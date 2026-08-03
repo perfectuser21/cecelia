@@ -86,6 +86,7 @@ export const LOG_ACTION = Object.freeze({
   CONTEXT_REQUESTED: 'effect:context_requested',
   CONTEXT_ANSWER: 'verdict:context_answer',
   ATTEMPT_LAUNCHED: 'effect:attempt_launched',
+  EXPIRED_ATTEMPT_RECONCILED: 'effect:expired_attempt_reconciled',
   ATTEMPT_CALLBACK: 'verdict:attempt_callback',
   DISPATCH_RESULT: 'result:dispatch',
   // Sprint 07231527：generator-fix callback verdict（no-progress 推导依赖）

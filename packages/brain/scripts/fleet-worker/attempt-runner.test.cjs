@@ -145,6 +145,24 @@ function inMemoryStateStore(initial = []) {
   };
 }
 
+function instrumentedFileSystem(overrides = {}) {
+  const operations = {};
+  for (const method of [
+    'mkdirSync',
+    'openSync',
+    'writeFileSync',
+    'fsyncSync',
+    'closeSync',
+    'renameSync',
+    'rmSync',
+    'readFileSync',
+    'readdirSync',
+  ]) {
+    operations[method] = vi.fn((...args) => fs[method](...args));
+  }
+  return Object.assign(operations, overrides);
+}
+
 function dependencies(overrides = {}) {
   const events = [];
   const pendingWait = new Promise(() => {});
@@ -177,9 +195,18 @@ function dependencies(overrides = {}) {
     }),
   };
   const docker = {
-    launch: vi.fn(async () => {
-      events.push('docker.launch');
-      return { containerId: 'container-attempt-1' };
+    prepare: vi.fn(async () => {
+      events.push('docker.prepare');
+      return {
+        containerId: 'container-attempt-1',
+        credentialFifo: `/controlled/runtime/${ATTEMPT_ID}/credential.fifo`,
+        githubCredentialFifo:
+          `/controlled/runtime/${ATTEMPT_ID}/github-credential.fifo`,
+      };
+    }),
+    start: vi.fn(async ({ containerId }) => {
+      events.push('docker.start');
+      return { containerId };
     }),
     inspect: vi.fn(async () => ({ status: 'running' })),
     remove: vi.fn(async () => {
@@ -256,7 +283,684 @@ function createRunner(deps) {
   });
 }
 
+async function prepareAndStart(runner, input) {
+  const prepared = await runner.prepare(input);
+  await runner.start(input.attempt_id, {
+    owner: input.lease_owner,
+    generation: input.lease_generation,
+  });
+  return prepared;
+}
+
+async function prepareAndStartContainer(docker, input) {
+  const prepared = await docker.prepare(input);
+  await docker.start({
+    attemptId: input.attemptId,
+    ...prepared,
+    credential: input.credential,
+    githubCredential: input.githubCredential,
+  });
+  return Object.freeze({ containerId: prepared.containerId });
+}
+
 describe('Fleet Worker Attempt runner', () => {
+  it('prepares and persists a stopped Attempt without starting provider code', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    const receipt = await runner.prepare(request());
+
+    expect(receipt).toMatchObject({
+      attempt_id: ATTEMPT_ID,
+      run_id: RUN_ID,
+      actual_machine_id: WORKER_ID,
+      execution_transport: 'fleet-worker',
+      remote_job_id: 'container-attempt-1',
+    });
+    expect(deps.docker.prepare).toHaveBeenCalledOnce();
+    expect(deps.docker.start).not.toHaveBeenCalled();
+    expect(deps.docker.wait).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      attempt_id: ATTEMPT_ID,
+      status: 'prepared',
+      credential_delivery_status: 'pending',
+      lease_owner: 'dispatcher-1',
+      lease_generation: 0,
+      container_id: 'container-attempt-1',
+    });
+    expect(JSON.stringify(deps.stateStore.states.get(ATTEMPT_ID)))
+      .not.toMatch(/sensitive-access-token|github_pat_attempt_scoped_test_token/);
+  });
+
+  it.each([
+    ['owner', { owner: 'stale-dispatcher', generation: 0 }],
+    ['generation', { owner: 'dispatcher-1', generation: 1 }],
+  ])('rejects inspect with a stale lease %s', async (_field, lease) => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+
+    await expect(runner.inspect(ATTEMPT_ID, lease)).rejects.toThrow(
+      'attempt_lease_conflict',
+    );
+    expect(deps.docker.inspect).not.toHaveBeenCalled();
+  });
+
+  it('returns exact missing only after validating the inspect lease shape', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    await expect(runner.inspect(OTHER_ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toEqual({
+      status: 'missing',
+      attempt_id: OTHER_ATTEMPT_ID,
+    });
+    await expect(runner.inspect(OTHER_ATTEMPT_ID, {
+      owner: '',
+      generation: 0,
+    })).rejects.toThrow('attempt_lease_owner_invalid');
+    await expect(runner.inspect(OTHER_ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: -1,
+    })).rejects.toThrow('attempt_lease_generation_invalid');
+  });
+
+  it('returns the original receipt for an exact duplicate prepare', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    const first = await runner.prepare(request());
+    const duplicate = await runner.prepare(request());
+
+    expect(duplicate).toEqual(first);
+    expect(deps.docker.prepare).toHaveBeenCalledOnce();
+    expect(deps.docker.start).not.toHaveBeenCalled();
+  });
+
+  it('rejects a conflicting duplicate prepare without touching its container', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+
+    await expect(runner.prepare(request({
+      timeout_seconds: 301,
+    }))).rejects.toThrow('attempt_already_exists');
+
+    expect(deps.docker.prepare).toHaveBeenCalledOnce();
+    expect(deps.docker.start).not.toHaveBeenCalled();
+  });
+
+  it('single-flights concurrent exact duplicate prepare requests', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    const [first, duplicate] = await Promise.all([
+      runner.prepare(request()),
+      runner.prepare(request()),
+    ]);
+
+    expect(duplicate).toEqual(first);
+    expect(deps.docker.prepare).toHaveBeenCalledOnce();
+    expect(deps.credentialConsumer.consume).toHaveBeenCalledOnce();
+    expect(deps.githubCredentialConsumer.consume).toHaveBeenCalledOnce();
+  });
+
+  it('waits for an in-flight prepare before exact-cancelling its durable resources', async () => {
+    let releasePrepare;
+    const deferredPrepare = new Promise((resolve) => {
+      releasePrepare = resolve;
+    });
+    const deps = dependencies();
+    deps.docker.prepare.mockReturnValueOnce(deferredPrepare);
+    const runner = createRunner(deps);
+
+    const preparing = runner.prepare(request());
+    await vi.waitFor(() => expect(deps.docker.prepare).toHaveBeenCalledOnce());
+    let cancelSettled = false;
+    const cancelling = runner.cancel(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    }).finally(() => {
+      cancelSettled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(cancelSettled).toBe(false);
+    releasePrepare({
+      containerId: 'container-attempt-1',
+      credentialFifo: `/controlled/runtime/${ATTEMPT_ID}/credential.fifo`,
+      githubCredentialFifo:
+        `/controlled/runtime/${ATTEMPT_ID}/github-credential.fifo`,
+    });
+
+    await expect(preparing).resolves.toMatchObject({ attempt_id: ATTEMPT_ID });
+    await expect(cancelling).resolves.toEqual({
+      status: 'cleaned',
+      attempt_id: ATTEMPT_ID,
+    });
+    expect(deps.docker.remove).toHaveBeenCalledOnce();
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledOnce();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'terminal',
+      terminal_status: 'cleaned',
+    });
+  });
+
+  it('waits for a failed in-flight prepare rollback before confirming no resources remain', async () => {
+    let rejectPrepare;
+    const deferredPrepare = new Promise((_resolve, reject) => {
+      rejectPrepare = reject;
+    });
+    const deps = dependencies();
+    deps.docker.prepare.mockReturnValueOnce(deferredPrepare);
+    const runner = createRunner(deps);
+
+    const preparing = runner.prepare(request());
+    void preparing.catch(() => {});
+    await vi.waitFor(() => expect(deps.docker.prepare).toHaveBeenCalledOnce());
+    let cancelSettled = false;
+    const cancelling = runner.cancel(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    }).finally(() => {
+      cancelSettled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(cancelSettled).toBe(false);
+    rejectPrepare(new Error('docker prepare failed'));
+
+    await expect(preparing).rejects.toThrow('docker prepare failed');
+    await expect(cancelling).resolves.toEqual({
+      status: 'already_clean',
+      attempt_id: ATTEMPT_ID,
+    });
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledOnce();
+    expect(deps.docker.remove).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.has(ATTEMPT_ID)).toBe(false);
+  });
+
+  it.each(['cancel', 'inspect'])(
+    'fails closed when %s waits for an in-flight prepare whose rollback is unconfirmed',
+    async (operation) => {
+      let rejectPrepare;
+      const deferredPrepare = new Promise((_resolve, reject) => {
+        rejectPrepare = reject;
+      });
+      const deps = dependencies();
+      deps.docker.prepare.mockReturnValueOnce(deferredPrepare);
+      deps.docker.remove.mockRejectedValueOnce(new Error('container remove denied'));
+      const runner = createRunner(deps);
+      const preparing = runner.prepare(request());
+      void preparing.catch(() => {});
+      await vi.waitFor(() => expect(deps.docker.prepare).toHaveBeenCalledOnce());
+      const coordinating = runner[operation](ATTEMPT_ID, {
+        owner: 'dispatcher-1',
+        generation: 0,
+      });
+
+      const prepareError = new Error('docker prepare failed');
+      prepareError.rollbackContainerId = 'container-attempt-1';
+      rejectPrepare(prepareError);
+
+      await expect(preparing).rejects.toThrow(
+        'attempt_launch_rollback_failed:docker prepare failed',
+      );
+      await expect(coordinating).rejects.toThrow(
+        'attempt_launch_rollback_failed:docker prepare failed',
+      );
+      expect(deps.workspaceManager.quarantine).toHaveBeenCalledOnce();
+      expect(deps.stateStore.states.has(ATTEMPT_ID)).toBe(false);
+    },
+  );
+
+  it.each([
+    ['cancel', { owner: 'stale-dispatcher', generation: 0 }],
+    ['cancel', { owner: 'dispatcher-1', generation: 1 }],
+    ['inspect', { owner: 'stale-dispatcher', generation: 0 }],
+    ['inspect', { owner: 'dispatcher-1', generation: 1 }],
+  ])('lease-fences %s while prepare is in flight: %j', async (operation, lease) => {
+    let releasePrepare;
+    const deferredPrepare = new Promise((resolve) => {
+      releasePrepare = resolve;
+    });
+    const deps = dependencies();
+    deps.docker.prepare.mockReturnValueOnce(deferredPrepare);
+    const runner = createRunner(deps);
+    const preparing = runner.prepare(request());
+    await vi.waitFor(() => expect(deps.docker.prepare).toHaveBeenCalledOnce());
+
+    try {
+      await expect(runner[operation](ATTEMPT_ID, lease)).rejects.toThrow(
+        'attempt_lease_conflict',
+      );
+    } finally {
+      releasePrepare({ containerId: 'container-attempt-1' });
+      await preparing;
+      await runner.cancel(ATTEMPT_ID, {
+        owner: 'dispatcher-1',
+        generation: 0,
+      });
+    }
+
+    expect(deps.docker.remove).toHaveBeenCalledOnce();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'terminal',
+      terminal_status: 'cleaned',
+    });
+  });
+
+  it('waits for in-flight prepare before inspect and never reports it missing', async () => {
+    let releasePrepare;
+    const deferredPrepare = new Promise((resolve) => {
+      releasePrepare = resolve;
+    });
+    const deps = dependencies();
+    deps.docker.prepare.mockReturnValueOnce(deferredPrepare);
+    const runner = createRunner(deps);
+
+    const preparing = runner.prepare(request());
+    await vi.waitFor(() => expect(deps.docker.prepare).toHaveBeenCalledOnce());
+    let inspectSettled = false;
+    const inspecting = runner.inspect(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    }).finally(() => {
+      inspectSettled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(inspectSettled).toBe(false);
+    releasePrepare({ containerId: 'container-attempt-1' });
+
+    await preparing;
+    await expect(inspecting).resolves.toEqual({
+      status: 'prepared',
+      attempt_id: ATTEMPT_ID,
+      container_id: 'container-attempt-1',
+    });
+    expect(deps.docker.inspect).not.toHaveBeenCalled();
+  });
+
+  it('binds duplicate prepare to callback token identity without persisting it', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+
+    expect(JSON.stringify(deps.stateStore.states.get(ATTEMPT_ID)))
+      .not.toContain('callback-secret');
+    await expect(runner.prepare(request({
+      callback_token: 'different-callback-secret',
+    }))).rejects.toThrow('attempt_already_exists');
+    expect(deps.docker.prepare).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['Provider', 'credential_envelope', CREDENTIAL_ENVELOPE],
+    ['GitHub', 'github_credential_envelope', GITHUB_CREDENTIAL_ENVELOPE],
+  ])('binds duplicate prepare to the %s envelope payload hash', async (
+    _name,
+    field,
+    envelope,
+  ) => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+
+    await expect(runner.prepare(request({
+      [field]: {
+        ...envelope,
+        payload_hash: `sha256:${'d'.repeat(64)}`,
+      },
+    }))).rejects.toThrow('attempt_already_exists');
+    expect(deps.docker.prepare).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when a restarted runner cannot recover prepared credentials', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    const restarted = createRunner(deps);
+
+    await expect(restarted.prepare(request())).rejects.toThrow(
+      'attempt_credentials_unavailable',
+    );
+    expect(deps.docker.prepare).toHaveBeenCalledOnce();
+    expect(deps.docker.start).not.toHaveBeenCalled();
+  });
+
+  it('startup reconciliation exact-cancels a prepared Attempt without credentials', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    deps.docker.inspect.mockResolvedValueOnce({ status: 'created' });
+    const restarted = createRunner(deps);
+
+    await expect(restarted.reconcile()).resolves.toMatchObject({
+      cleaned_attempts: [ATTEMPT_ID],
+    });
+    expect(deps.docker.start).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledWith(deps.workspace);
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'terminal',
+      terminal_status: 'credential_delivery_unconfirmed',
+    });
+  });
+
+  it('exact-finalizes a starting Attempt when delivery was not durably committed', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    Object.assign(deps.stateStore.states.get(ATTEMPT_ID), {
+      status: 'starting',
+      credential_delivery_status: 'pending',
+    });
+    const restarted = createRunner(deps);
+
+    await expect(restarted.reconcile()).resolves.toMatchObject({
+      cleaned_attempts: [ATTEMPT_ID],
+    });
+    expect(deps.docker.inspect).toHaveBeenCalledWith({
+      containerId: 'container-attempt-1',
+    });
+    expect(deps.docker.remove).toHaveBeenCalledWith({
+      containerId: 'container-attempt-1',
+      attemptId: ATTEMPT_ID,
+    });
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'terminal',
+      terminal_status: 'credential_delivery_unconfirmed',
+    });
+    expect(deps.docker.start).not.toHaveBeenCalled();
+    expect(deps.docker.wait).not.toHaveBeenCalled();
+  });
+
+  it('reinstalls one waiter for a fresh running Attempt with delivered credentials', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    Object.assign(deps.stateStore.states.get(ATTEMPT_ID), {
+      status: 'running',
+      credential_delivery_status: 'delivered',
+    });
+    const restarted = createRunner(deps);
+
+    await restarted.reconcile();
+    await restarted.reconcile();
+
+    expect(deps.docker.inspect).toHaveBeenCalledWith({
+      containerId: 'container-attempt-1',
+    });
+    expect(deps.docker.wait).toHaveBeenCalledOnce();
+    expect(deps.docker.remove).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'running',
+      credential_delivery_status: 'delivered',
+    });
+  });
+
+  it('exact-finalizes a delivered running Attempt found terminal after restart', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    Object.assign(deps.stateStore.states.get(ATTEMPT_ID), {
+      status: 'running',
+      credential_delivery_status: 'delivered',
+    });
+    deps.docker.inspect.mockResolvedValueOnce({ status: 'missing' });
+    const restarted = createRunner(deps);
+
+    await restarted.reconcile();
+
+    expect(deps.docker.remove).toHaveBeenCalledWith({
+      containerId: 'container-attempt-1',
+      attemptId: ATTEMPT_ID,
+      containerMissing: true,
+    });
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'terminal',
+      terminal_status: 'missing',
+    });
+  });
+
+  it('fails closed on Worker inspect infrastructure errors during reconciliation', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    Object.assign(deps.stateStore.states.get(ATTEMPT_ID), {
+      status: 'running',
+      credential_delivery_status: 'delivered',
+    });
+    deps.docker.inspect.mockRejectedValueOnce(
+      new Error('docker daemon permission denied'),
+    );
+    const restarted = createRunner(deps);
+
+    await expect(restarted.reconcile()).rejects.toThrow(
+      'docker daemon permission denied',
+    );
+
+    expect(deps.docker.remove).not.toHaveBeenCalled();
+    expect(deps.resourceManager.release).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'running',
+      credential_delivery_status: 'delivered',
+    });
+  });
+
+  it.each(['created', 'prepared'])(
+    'fails closed for persisted starting with Docker %s and no credentials',
+    async (dockerStatus) => {
+      const deps = dependencies();
+      await createRunner(deps).prepare(request());
+      deps.stateStore.states.get(ATTEMPT_ID).status = 'starting';
+      deps.docker.inspect.mockResolvedValueOnce({ status: dockerStatus });
+      const restarted = createRunner(deps);
+
+      await expect(restarted.start(ATTEMPT_ID, {
+        owner: 'dispatcher-1',
+        generation: 0,
+      })).rejects.toThrow('attempt_credentials_unavailable');
+      expect(deps.docker.start).not.toHaveBeenCalled();
+      expect(deps.stateStore.states.get(ATTEMPT_ID).status).toBe('starting');
+    },
+  );
+
+  it('exact-finalizes persisted starting when its container is missing', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    deps.stateStore.states.get(ATTEMPT_ID).status = 'starting';
+    deps.docker.inspect.mockResolvedValueOnce({ status: 'missing' });
+    const restarted = createRunner(deps);
+
+    await expect(restarted.start(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toEqual({
+      status: 'terminal',
+      attempt_id: ATTEMPT_ID,
+      terminal_status: 'missing',
+      deduped: true,
+    });
+    expect(deps.docker.remove).toHaveBeenCalledWith({
+      containerId: 'container-attempt-1',
+      attemptId: ATTEMPT_ID,
+      containerMissing: true,
+    });
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      attempt_id: ATTEMPT_ID,
+      status: 'terminal',
+      terminal_status: 'missing',
+      lease_owner: 'dispatcher-1',
+      lease_generation: 0,
+    });
+  });
+
+  it('persists a minimal lease-fenced terminal result across a fresh runner', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+    await runner.cancel(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    });
+    const tombstone = deps.stateStore.states.get(ATTEMPT_ID);
+    expect(tombstone).toEqual({
+      attempt_id: ATTEMPT_ID,
+      worker_id: WORKER_ID,
+      lease_owner: 'dispatcher-1',
+      lease_generation: 0,
+      status: 'terminal',
+      terminal_status: 'cleaned',
+      terminal_at: expect.any(String),
+    });
+    expect(JSON.stringify(tombstone)).not.toMatch(
+      /credential|workspace|runtime|callback|container|run_id/,
+    );
+    const restarted = createRunner(deps);
+
+    await expect(restarted.start(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toEqual({
+      status: 'terminal',
+      attempt_id: ATTEMPT_ID,
+      terminal_status: 'cleaned',
+      deduped: true,
+    });
+    await expect(restarted.start(ATTEMPT_ID, {
+      owner: 'stale-owner',
+      generation: 0,
+    })).rejects.toThrow('attempt_lease_conflict');
+
+    deps.docker.inspect.mockClear();
+    await restarted.reconcile();
+    expect(deps.docker.inspect).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.reconcile).toHaveBeenLastCalledWith({
+      retainedAttemptIds: [],
+    });
+    expect(deps.resourceManager.reconcile).toHaveBeenLastCalledWith({
+      retainedAttemptIds: [],
+    });
+  });
+
+  it('starts a prepared Attempt once and deduplicates the matching lease', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+
+    await expect(runner.start(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toMatchObject({
+      status: 'running',
+      attempt_id: ATTEMPT_ID,
+    });
+    await expect(runner.start(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toMatchObject({
+      status: 'running',
+      attempt_id: ATTEMPT_ID,
+      deduped: true,
+    });
+
+    expect(deps.docker.start).toHaveBeenCalledOnce();
+    expect(deps.docker.wait).toHaveBeenCalledOnce();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'running',
+      credential_delivery_status: 'delivered',
+    });
+  });
+
+  it('does not resurrect running when cancel races a deferred Docker start', async () => {
+    let releaseStart;
+    const deferredStart = new Promise((resolve) => {
+      releaseStart = resolve;
+    });
+    const deps = dependencies();
+    deps.docker.start.mockReturnValueOnce(deferredStart);
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+
+    const starting = runner.start(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    });
+    await vi.waitFor(() => {
+      expect(deps.stateStore.states.get(ATTEMPT_ID).status).toBe('starting');
+    });
+    const cancelling = runner.cancel(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    releaseStart({ containerId: 'container-attempt-1' });
+
+    await Promise.allSettled([starting, cancelling]);
+
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'terminal',
+      terminal_status: 'cleaned',
+    });
+    expect(deps.docker.remove).toHaveBeenCalledTimes(1);
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledTimes(1);
+    expect(deps.docker.wait).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stale start lease without starting the prepared container', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+
+    await expect(runner.start(ATTEMPT_ID, {
+      owner: 'stale-owner',
+      generation: 0,
+    })).rejects.toThrow('attempt_lease_conflict');
+
+    expect(deps.docker.start).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'prepared',
+    });
+  });
+
+  it('rolls back a workspace when verification fails before resource creation', async () => {
+    const deps = dependencies();
+    deps.workspaceManager.verify.mockRejectedValueOnce(
+      new Error('workspace head mismatch'),
+    );
+    const runner = createRunner(deps);
+
+    await expect(runner.prepare(request())).rejects.toThrow(
+      'workspace head mismatch',
+    );
+
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledWith(deps.workspace);
+    expect(deps.resourceManager.provision).not.toHaveBeenCalled();
+    expect(deps.docker.prepare).not.toHaveBeenCalled();
+    expect(deps.stateStore.save).not.toHaveBeenCalled();
+  });
+
+  it('quarantines workspace evidence when verify rollback cleanup fails', async () => {
+    const deps = dependencies();
+    deps.workspaceManager.verify.mockRejectedValueOnce(
+      new Error('workspace head mismatch'),
+    );
+    deps.workspaceManager.cleanup.mockRejectedValueOnce(
+      new Error('workspace cleanup denied'),
+    );
+    const runner = createRunner(deps);
+
+    await expect(runner.prepare(request())).rejects.toThrow(
+      'attempt_workspace_verify_rollback_failed:workspace head mismatch',
+    );
+
+    expect(deps.workspaceManager.quarantine).toHaveBeenCalledWith(
+      deps.workspace,
+      expect.objectContaining({ message: 'workspace cleanup denied' }),
+    );
+    expect(deps.resourceManager.provision).not.toHaveBeenCalled();
+    expect(deps.docker.prepare).not.toHaveBeenCalled();
+    expect(deps.stateStore.save).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       role: 'commander',
@@ -340,7 +1044,7 @@ describe('Fleet Worker Attempt runner', () => {
       const deps = dependencies();
       const runner = createRunner(deps);
 
-      await runner.launch(request({
+      await prepareAndStart(runner, request({
         provider_spec: {
           ...request().provider_spec,
           stdin: providerPrompt(role, inputs),
@@ -351,7 +1055,7 @@ describe('Fleet Worker Attempt runner', () => {
         },
       }));
 
-      expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+      expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
         taskId: TASK_ID,
         roleEnv: expected,
       }));
@@ -375,7 +1079,7 @@ describe('Fleet Worker Attempt runner', () => {
     });
     const runner = createRunner(deps);
 
-    await runner.launch(request({
+    await prepareAndStart(runner, request({
       workspace_spec: {
         ...request().workspace_spec,
         mode,
@@ -386,9 +1090,9 @@ describe('Fleet Worker Attempt runner', () => {
       'credential.consume',
       'github-credential.consume',
       'workspace.prepare',
-      'docker.launch',
+      'docker.prepare',
     ]);
-    expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
       image: IMAGE_DIGEST,
       workspaceMount: {
         source: deps.workspace.path,
@@ -429,7 +1133,7 @@ describe('Fleet Worker Attempt runner', () => {
       },
     });
 
-    await runner.launch(postgresRequest);
+    await prepareAndStart(runner, postgresRequest);
 
     expect(deps.resourceManager.provision).toHaveBeenCalledWith({
       attemptId: ATTEMPT_ID,
@@ -438,11 +1142,11 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.events).toEqual(expect.arrayContaining([
       'workspace.prepare',
       'resource.provision',
-      'docker.launch',
+      'docker.prepare',
     ]));
     expect(deps.events.indexOf('resource.provision'))
-      .toBeLessThan(deps.events.indexOf('docker.launch'));
-    expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+      .toBeLessThan(deps.events.indexOf('docker.prepare'));
+    expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
       runtimeEnvironment: {
         DB_URL: 'postgresql://attempt:ephemeral@postgres:5432/acceptance',
         DATABASE_URL: 'postgresql://attempt:ephemeral@postgres:5432/acceptance',
@@ -481,7 +1185,7 @@ describe('Fleet Worker Attempt runner', () => {
       target: { ...request().target, role: 'evaluator' },
     });
 
-    await expect(runner.launch(input)).rejects.toThrow(
+    await expect(prepareAndStart(runner, input)).rejects.toThrow(
       'attempt_runtime_requirements_mismatch',
     );
     expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
@@ -502,9 +1206,9 @@ describe('Fleet Worker Attempt runner', () => {
       githubCredentialConsumer: deps.githubCredentialConsumer,
     });
 
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
 
-    expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
       image: rawImageId,
     }));
   });
@@ -513,7 +1217,7 @@ describe('Fleet Worker Attempt runner', () => {
     const deps = dependencies();
     const runner = createRunner(deps);
 
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
 
     expect(deps.credentialConsumer.consume).toHaveBeenCalledWith(
       CREDENTIAL_ENVELOPE,
@@ -540,7 +1244,7 @@ describe('Fleet Worker Attempt runner', () => {
       const deps = dependencies();
       const runner = createRunner(deps);
 
-      await expect(runner.launch(request({
+      await expect(prepareAndStart(runner, request({
         github_credential_envelope: undefined,
         provider_spec: {
           ...request().provider_spec,
@@ -553,7 +1257,7 @@ describe('Fleet Worker Attempt runner', () => {
       }))).rejects.toThrow('github_credential_envelope_required');
       expect(deps.githubCredentialConsumer.consume).not.toHaveBeenCalled();
       expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
-      expect(deps.docker.launch).not.toHaveBeenCalled();
+      expect(deps.docker.prepare).not.toHaveBeenCalled();
     },
   );
 
@@ -561,7 +1265,7 @@ describe('Fleet Worker Attempt runner', () => {
     const deps = dependencies();
     const runner = createRunner(deps);
 
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
 
     expect(deps.githubCredentialConsumer.consume).toHaveBeenCalledWith(
       GITHUB_CREDENTIAL_ENVELOPE,
@@ -581,7 +1285,7 @@ describe('Fleet Worker Attempt runner', () => {
     const deps = dependencies();
     const runner = createRunner(deps);
 
-    await runner.launch(request({
+    await prepareAndStart(runner, request({
       github_credential_envelope: undefined,
       provider_spec: {
         ...request().provider_spec,
@@ -600,11 +1304,11 @@ describe('Fleet Worker Attempt runner', () => {
     const deps = dependencies();
     const runner = createRunner(deps);
 
-    await expect(runner.launch(request({
+    await expect(prepareAndStart(runner, request({
       credential_envelope: undefined,
     }))).rejects.toThrow('credential_envelope_required');
     expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
-    expect(deps.docker.launch).not.toHaveBeenCalled();
+    expect(deps.docker.prepare).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -621,12 +1325,12 @@ describe('Fleet Worker Attempt runner', () => {
       const input = request({ timeout_seconds: timeoutSeconds });
       if (timeoutSeconds === undefined) delete input.timeout_seconds;
 
-      await expect(runner.launch(input)).rejects.toThrow(
+      await expect(prepareAndStart(runner, input)).rejects.toThrow(
         'attempt_timeout_seconds_invalid',
       );
       expect(deps.credentialConsumer.consume).not.toHaveBeenCalled();
       expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
-      expect(deps.docker.launch).not.toHaveBeenCalled();
+      expect(deps.docker.prepare).not.toHaveBeenCalled();
     },
   );
 
@@ -634,7 +1338,7 @@ describe('Fleet Worker Attempt runner', () => {
     const deps = dependencies();
     const runner = createRunner(deps);
 
-    await expect(runner.launch(request({
+    await expect(prepareAndStart(runner, request({
       provider_spec: {
         ...request().provider_spec,
         cwd: '/Users/operator/perfect21/cecelia',
@@ -642,13 +1346,13 @@ describe('Fleet Worker Attempt runner', () => {
       },
     }))).rejects.toThrow(/attempt_provider_spec_unknown_field/);
     expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
-    expect(deps.docker.launch).not.toHaveBeenCalled();
+    expect(deps.docker.prepare).not.toHaveBeenCalled();
   });
 
   it('callback terminalization releases isolated resources but keeps the Runner alive to receive the response', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
-    await runner.launch(request({
+    await prepareAndStart(runner, request({
       runtime_resources: { postgres: true },
       provider_spec: {
         ...request().provider_spec,
@@ -692,12 +1396,16 @@ describe('Fleet Worker Attempt runner', () => {
     deps.docker.wait.mockReturnValueOnce(containerExit);
     const runner = createRunner(deps);
 
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
     resolveExit({ statusCode: 0 });
 
     await vi.waitFor(() => {
-      expect(deps.stateStore.delete).toHaveBeenCalledWith(ATTEMPT_ID);
+      expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+        status: 'terminal',
+        terminal_status: 'cleaned',
+      });
     });
+    expect(deps.stateStore.delete).not.toHaveBeenCalled();
     expect(deps.events.slice(-2)).toEqual([
       'docker.remove',
       'workspace.cleanup',
@@ -718,7 +1426,7 @@ describe('Fleet Worker Attempt runner', () => {
       return { removed: true };
     });
     const runner = createRunner(deps);
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
 
     await runner.cancel(ATTEMPT_ID, {
       owner: 'dispatcher-1',
@@ -728,7 +1436,11 @@ describe('Fleet Worker Attempt runner', () => {
 
     expect(deps.docker.remove).toHaveBeenCalledTimes(1);
     expect(deps.workspaceManager.cleanup).toHaveBeenCalledTimes(1);
-    expect(deps.stateStore.delete).toHaveBeenCalledTimes(1);
+    expect(deps.stateStore.delete).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'terminal',
+      terminal_status: 'cleaned',
+    });
     expect(deps.workspaceManager.quarantine).not.toHaveBeenCalled();
   });
 
@@ -736,7 +1448,7 @@ describe('Fleet Worker Attempt runner', () => {
     const deps = dependencies();
     deps.docker.remove.mockRejectedValueOnce(new Error('docker remove failed'));
     const runner = createRunner(deps);
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
 
     await expect(runner.cancel(ATTEMPT_ID, {
       owner: 'dispatcher-1',
@@ -757,7 +1469,7 @@ describe('Fleet Worker Attempt runner', () => {
       new Error('attempt_resource_release_failed'),
     );
     const runner = createRunner(deps);
-    await runner.launch(request({
+    await prepareAndStart(runner, request({
       runtime_resources: { postgres: true },
       provider_spec: {
         ...request().provider_spec,
@@ -792,7 +1504,7 @@ describe('Fleet Worker Attempt runner', () => {
     );
     const runner = createRunner(deps);
 
-    await expect(runner.launch(request({
+    await expect(prepareAndStart(runner, request({
       runtime_resources: { postgres: true },
       provider_spec: {
         ...request().provider_spec,
@@ -811,11 +1523,11 @@ describe('Fleet Worker Attempt runner', () => {
     const deps = dependencies();
     const launchError = new Error('attempt_container_rollback_failed:start failed');
     launchError.rollbackContainerId = `cecelia-fleet-${ATTEMPT_ID}`;
-    deps.docker.launch.mockRejectedValueOnce(launchError);
+    deps.docker.prepare.mockRejectedValueOnce(launchError);
     deps.docker.remove.mockRejectedValueOnce(new Error('docker daemon unavailable'));
     const runner = createRunner(deps);
 
-    await expect(runner.launch(request())).rejects.toThrow(
+    await expect(prepareAndStart(runner, request())).rejects.toThrow(
       'attempt_launch_rollback_failed:attempt_container_rollback_failed:start failed',
     );
     expect(deps.docker.remove).toHaveBeenCalledWith({
@@ -829,7 +1541,7 @@ describe('Fleet Worker Attempt runner', () => {
   it('rejects stale external cancellation without touching the owned Attempt', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
 
     await expect(runner.cancel(ATTEMPT_ID, {
       owner: 'stale-dispatcher',
@@ -844,7 +1556,7 @@ describe('Fleet Worker Attempt runner', () => {
     deps.stateStore.save.mockRejectedValueOnce(new Error('state write failed'));
     const runner = createRunner(deps);
 
-    await expect(runner.launch(request({
+    await expect(prepareAndStart(runner, request({
       runtime_resources: { postgres: true },
       provider_spec: {
         ...request().provider_spec,
@@ -879,6 +1591,7 @@ describe('Fleet Worker Attempt runner', () => {
         },
       },
       status: 'running',
+      credential_delivery_status: 'delivered',
     };
     const healthyAttempt = {
       attempt_id: OTHER_ATTEMPT_ID,
@@ -891,6 +1604,7 @@ describe('Fleet Worker Attempt runner', () => {
         owner: { run_id: RUN_ID, attempt_id: OTHER_ATTEMPT_ID },
       },
       status: 'running',
+      credential_delivery_status: 'delivered',
     };
     const foreignAttempt = {
       ...healthyAttempt,
@@ -962,9 +1676,77 @@ describe('Fleet Worker Attempt runner', () => {
     expect(stateStore.states.has(OTHER_ATTEMPT_ID)).toBe(true);
     expect(stateStore.states.has(foreignAttempt.attempt_id)).toBe(true);
   });
+
+  it('deterministically prunes old terminal tombstones without retaining resources', async () => {
+    const tombstones = Array.from({ length: 1_025 }, (_unused, index) => ({
+      attempt_id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+      worker_id: WORKER_ID,
+      lease_owner: 'dispatcher-1',
+      lease_generation: 0,
+      status: 'terminal',
+      terminal_status: 'cleaned',
+      terminal_at: new Date(index * 1_000).toISOString(),
+    }));
+    const stateStore = inMemoryStateStore(tombstones);
+    const deps = dependencies({ stateStore });
+    const runner = createRunner(deps);
+
+    await runner.reconcile();
+
+    expect(stateStore.delete).toHaveBeenCalledWith(tombstones[0].attempt_id);
+    expect(stateStore.states.size).toBe(1_024);
+    expect(deps.docker.inspect).not.toHaveBeenCalled();
+    expect(deps.workspaceManager.reconcile).toHaveBeenCalledWith({
+      retainedAttemptIds: [],
+    });
+    expect(deps.resourceManager.reconcile).toHaveBeenCalledWith({
+      retainedAttemptIds: [],
+    });
+  });
 });
 
 describe('Fleet Worker durable runtime adapters', () => {
+  it('maps only explicit Docker no-such-container errors to missing', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-inspect-'));
+    const runCommand = vi.fn(async () => {
+      const error = new Error('Error response from daemon: No such container');
+      error.stderr = 'No such object: exact-attempt';
+      throw error;
+    });
+    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+
+    try {
+      await expect(docker.inspect({
+        containerId: 'exact-attempt',
+      })).resolves.toEqual({ status: 'missing' });
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    'docker daemon unavailable',
+    'context deadline exceeded',
+    'permission denied inspecting container',
+    'container inspection endpoint not found',
+  ])('propagates Docker inspect infrastructure failure: %s', async (message) => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-inspect-'));
+    const runCommand = vi.fn(async () => {
+      throw new Error(message);
+    });
+    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+
+    try {
+      await expect(docker.inspect({
+        containerId: 'exact-attempt',
+      })).rejects.toThrow(message);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it('streams a bounded GitHub token to its dedicated FIFO without argv exposure', async () => {
     const { __test__ } = loadAttemptRunner();
     const received = [];
@@ -1063,7 +1845,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     });
 
     try {
-      await expect(docker.launch({
+      await expect(prepareAndStartContainer(docker, {
         attemptId: ATTEMPT_ID,
         runId: RUN_ID,
         workerId: WORKER_ID,
@@ -1127,7 +1909,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     });
 
     try {
-      const error = await docker.launch({
+      const error = await prepareAndStartContainer(docker, {
         attemptId: ATTEMPT_ID,
         runId: RUN_ID,
         workerId: WORKER_ID,
@@ -1232,7 +2014,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     });
 
     try {
-      await expect(docker.launch({
+      await expect(prepareAndStartContainer(docker, {
         attemptId: ATTEMPT_ID,
         runId: RUN_ID,
         workerId: WORKER_ID,
@@ -1418,7 +2200,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     });
 
     try {
-      await docker.launch({
+      await prepareAndStartContainer(docker, {
         attemptId: ATTEMPT_ID,
         runId: RUN_ID,
         workerId: WORKER_ID,
@@ -1487,7 +2269,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     });
 
     try {
-      await docker.launch({
+      await prepareAndStartContainer(docker, {
         attemptId: ATTEMPT_ID,
         runId: RUN_ID,
         workerId: WORKER_ID,
@@ -1541,14 +2323,14 @@ describe('Fleet Worker durable runtime adapters', () => {
     deps.workspace.frozen_baseline = true;
     const runner = createRunner(deps);
 
-    await runner.launch(request({
+    await prepareAndStart(runner, request({
       workspace_spec: {
         ...request().workspace_spec,
         frozen_baseline: true,
       },
     }));
 
-    expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
       workspaceStartSha: deps.workspace.head_sha,
       frozenBaseline: true,
     }));
@@ -1558,9 +2340,9 @@ describe('Fleet Worker durable runtime adapters', () => {
     const deps = dependencies();
     const runner = createRunner(deps);
 
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
 
-    expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
       frozenBaseline: false,
     }));
   });
@@ -1611,6 +2393,64 @@ describe('Fleet Worker durable runtime adapters', () => {
 
       await store.delete(ATTEMPT_ID);
       await expect(store.get(ATTEMPT_ID)).resolves.toBeNull();
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('fsyncs and closes the state file before rename and its directory after', async () => {
+    const { createFileAttemptStateStore } = loadAttemptRunner();
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-state-sync-'));
+    const fileSystem = instrumentedFileSystem();
+    const store = createFileAttemptStateStore({ stateRoot, fileSystem });
+    const state = {
+      attempt_id: ATTEMPT_ID,
+      worker_id: WORKER_ID,
+      status: 'prepared',
+    };
+
+    try {
+      await store.save(state);
+
+      expect(fileSystem.openSync).toHaveBeenCalledTimes(2);
+      expect(fileSystem.fsyncSync).toHaveBeenCalledTimes(2);
+      expect(fileSystem.closeSync).toHaveBeenCalledTimes(2);
+      expect(fileSystem.writeFileSync.mock.calls[0][0]).toEqual(expect.any(Number));
+      expect(fileSystem.fsyncSync.mock.invocationCallOrder[0])
+        .toBeLessThan(fileSystem.renameSync.mock.invocationCallOrder[0]);
+      expect(fileSystem.renameSync.mock.invocationCallOrder[0])
+        .toBeLessThan(fileSystem.fsyncSync.mock.invocationCallOrder[1]);
+      expect(fileSystem.openSync).toHaveBeenLastCalledWith(stateRoot, 'r');
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the prior state intact when temp-file fsync fails', async () => {
+    const { createFileAttemptStateStore } = loadAttemptRunner();
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-state-sync-'));
+    const original = {
+      attempt_id: ATTEMPT_ID,
+      worker_id: WORKER_ID,
+      status: 'prepared',
+    };
+    const replacement = { ...original, status: 'running' };
+    const baselineStore = createFileAttemptStateStore({ stateRoot });
+    await baselineStore.save(original);
+    const fileSystem = instrumentedFileSystem();
+    fileSystem.fsyncSync.mockImplementationOnce(() => {
+      throw new Error('state fsync failed');
+    });
+    const failingStore = createFileAttemptStateStore({ stateRoot, fileSystem });
+
+    try {
+      await expect(failingStore.save(replacement)).rejects.toThrow(
+        'state fsync failed',
+      );
+      await expect(baselineStore.get(ATTEMPT_ID)).resolves.toEqual(original);
+      expect(fileSystem.renameSync).not.toHaveBeenCalled();
+      expect(fileSystem.closeSync).toHaveBeenCalled();
+      expect(fs.readdirSync(stateRoot)).toEqual([`${ATTEMPT_ID}.json`]);
     } finally {
       fs.rmSync(stateRoot, { recursive: true, force: true });
     }

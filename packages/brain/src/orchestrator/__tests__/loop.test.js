@@ -362,7 +362,7 @@ describe('runLoop：hybrid Commander boundary', () => {
       prdExists: false,
       contract: { approved: false, id: CONTRACT_ID },
     });
-    const { deps, appended } = makeEnv({
+    const { deps, appended, sleeps } = makeEnv({
       observedSeq: [
         current,
         obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
@@ -1031,6 +1031,261 @@ describe('runLoop：wait:* 不灌水', () => {
     expect(result.exitReason).toBe('run_done');
     expect(appended).toHaveLength(0);
     expect(sleeps).toHaveLength(1);
+  });
+
+  it('expired missing reviewer 先收敛，保留历史 intent 后可在 GAN 上限内重派 reviewer', async () => {
+    const expired = {
+      id: '863fdc22-ad3e-4e89-a8ce-6323cf9b9917',
+      run_id: RUN_ID,
+      hop: 49,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'controller-old:6328',
+      lease_generation: 0,
+      lease_expires_at: '2026-07-04T11:59:00.000Z',
+      requested_machine_id: 'us-mac-m4',
+      actual_machine_id: null,
+      task_bundle: { inputs: { execution_surface: 'fleet-worker' } },
+    };
+    const priorIntent = {
+      hop: 49,
+      action: 'spawn:reviewer',
+      observed: { proposeBranchRn: 1 },
+      detail: { reason: 'contract_round_pending_review' },
+    };
+    const reconciliationEvidence = {
+      hop: 50,
+      action: 'effect:expired_attempt_reconciled',
+      observed: { attempt_id: expired.id, role: 'reviewer' },
+      detail: {
+        attempt_id: expired.id,
+        signature: 'worker_attempt_missing_after_lease',
+      },
+    };
+    const observedSeq = [
+      obs({
+        contract: { approved: false, id: CONTRACT_ID },
+        proposeBranchRn: 1,
+        decisionLog: [priorIntent],
+        inflight: { containers: [], host_pids: [], attempts: [expired] },
+      }),
+      obs({
+        contract: { approved: false, id: CONTRACT_ID },
+        proposeBranchRn: 1,
+        decisionLog: [priorIntent, reconciliationEvidence],
+        inflight: { containers: [], host_pids: [], attempts: [] },
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, appended, sleeps, setHopBase } = makeEnv({ observedSeq });
+    setHopBase(50);
+    deps.reconcileExpiredAttempt = vi.fn(async ({ attempt }) => ({
+      status: 'missing_terminalized',
+      attempt_id: attempt.id,
+      hop: 50,
+    }));
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.reconcileExpiredAttempt).toHaveBeenCalledOnce();
+    expect(deps.reconcileExpiredAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      attempt: expired,
+    }));
+    expect(deps.dispatch).toHaveBeenCalledOnce();
+    expect(deps.dispatch).toHaveBeenCalledWith('spawn:reviewer', expect.any(Object));
+    expect(appended.some((entry) => entry.action === 'wait:running')).toBe(false);
+    expect(sleeps).toHaveLength(0);
+  });
+
+  it('expired missing generator 以 callback-equivalent infrastructure 终态重派同角色', async () => {
+    const expired = {
+      id: '863fdc22-ad3e-4e89-a8ce-6323cf9b9917',
+      run_id: RUN_ID,
+      hop: 49,
+      phase: 'generate',
+      role: 'generator',
+      status: 'running',
+      lease_owner: 'controller-old:6328',
+      lease_generation: 0,
+      lease_expires_at: '2026-07-04T11:59:00.000Z',
+      requested_machine_id: 'us-mac-m4',
+      actual_machine_id: null,
+      task_bundle: { inputs: { execution_surface: 'fleet-worker' } },
+    };
+    const priorIntent = {
+      hop: 49,
+      action: 'spawn:generator',
+      observed: { contractApproved: true },
+      detail: { reason: 'contract_approved' },
+    };
+    const reconciliationEvidence = {
+      hop: 50,
+      action: 'effect:expired_attempt_reconciled',
+      observed: { attempt_id: expired.id, role: 'generator', status: 'failed' },
+      detail: {
+        attempt_id: expired.id,
+        role: 'generator',
+        status: 'failed',
+        failure_class: 'infrastructure_blocked',
+        signature: 'worker_attempt_missing_after_lease',
+      },
+    };
+    const observedSeq = [
+      obs({
+        generatorSpawned: true,
+        decisionLog: [priorIntent],
+        inflight: { containers: [], host_pids: [], attempts: [expired] },
+      }),
+      obs({
+        generatorSpawned: true,
+        lastAgentExit: { code: 1, auth_failed: false, action: 'spawn:generator' },
+        decisionLog: [priorIntent, reconciliationEvidence],
+        inflight: { containers: [], host_pids: [], attempts: [] },
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, appended, setHopBase } = makeEnv({ observedSeq });
+    setHopBase(50);
+    deps.reconcileExpiredAttempt = vi.fn(async ({ attempt }) => ({
+      status: 'missing_terminalized',
+      attempt_id: attempt.id,
+      hop: 50,
+    }));
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.dispatch).toHaveBeenCalledOnce();
+    expect(deps.dispatch).toHaveBeenCalledWith(
+      'spawn:generator-fix',
+      expect.objectContaining({
+        decision: {
+          phase: 'generate',
+          action: 'spawn:generator-fix',
+          reason: 'callback_infrastructure_blocked',
+        },
+      }),
+    );
+    expect(appended).toHaveLength(1);
+    expect(appended[0]).toMatchObject({
+      action: 'spawn:generator-fix',
+      detail: { reason: 'callback_infrastructure_blocked' },
+      observed: { failure_class: 'infrastructure_blocked' },
+    });
+    expect(appended[0].observed).not.toHaveProperty('crash_signature');
+  });
+
+  it('expired Worker 基础设施不可达只写退避证据并 sleep，不进入产品修复', async () => {
+    const expired = {
+      id: '863fdc22-ad3e-4e89-a8ce-6323cf9b9917',
+      run_id: RUN_ID,
+      hop: 49,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'controller-old:6328',
+      lease_generation: 0,
+      lease_expires_at: '2026-07-04T11:59:00.000Z',
+      requested_machine_id: 'us-mac-m4',
+      task_bundle: { inputs: { execution_surface: 'fleet-worker' } },
+    };
+    const waiting = obs({
+      contract: { approved: false, id: CONTRACT_ID },
+      proposeBranchRn: 1,
+      decisionLog: [{ hop: 49, action: 'spawn:reviewer', observed: {} }],
+      inflight: { containers: [], host_pids: [], attempts: [expired] },
+    });
+    const { deps, appended, sleeps, setHopBase } = makeEnv({
+      observedSeq: [waiting, obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } })],
+    });
+    setHopBase(49);
+    deps.reconcileExpiredAttempt = vi.fn(async () => ({
+      status: 'infrastructure_blocked',
+      failure_class: 'infrastructure_blocked',
+      signature: 'worker_attempt_inspect_unavailable',
+    }));
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(appended).toHaveLength(1);
+    expect(appended[0]).toMatchObject({
+      action: 'result:expired_attempt_reconcile',
+      gateVerdict: 'deny:infrastructure_blocked',
+      detail: {
+        attempt_id: expired.id,
+        signature: 'worker_attempt_inspect_unavailable',
+        failure_class: 'infrastructure_blocked',
+      },
+    });
+    expect(sleeps).toEqual([POLL_INTERVAL_MS]);
+  });
+
+  it('expired authority 发现 parent run 已终态时只重采集，不写 blocked 证据', async () => {
+    const expired = {
+      id: '863fdc22-ad3e-4e89-a8ce-6323cf9b9917',
+      run_id: RUN_ID,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'old-owner',
+      lease_generation: 0,
+      lease_expires_at: '2026-07-04T11:59:00.000Z',
+      requested_machine_id: 'us-mac-m4',
+      task_bundle: { inputs: { execution_surface: 'fleet-worker' } },
+    };
+    const { deps, appended, sleeps } = makeEnv({
+      observedSeq: [
+        obs({ inflight: { containers: [], host_pids: [], attempts: [expired] } }),
+        obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+      ],
+    });
+    deps.reconcileExpiredAttempt = vi.fn(async () => ({
+      status: 'parent_terminal',
+      conflict: 'parent_run_terminal',
+    }));
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(appended).toHaveLength(0);
+    expect(sleeps).toHaveLength(0);
+    expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('expired authority 丢失 lease/identity 所有权时立即让位，不追加伪基础设施证据', async () => {
+    const expired = {
+      id: '863fdc22-ad3e-4e89-a8ce-6323cf9b9917',
+      run_id: RUN_ID,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'old-owner',
+      lease_generation: 0,
+      lease_expires_at: '2026-07-04T11:59:00.000Z',
+      requested_machine_id: 'us-mac-m4',
+      task_bundle: { inputs: { execution_surface: 'fleet-worker' } },
+    };
+    const { deps, appended, sleeps } = makeEnv({
+      observedSeq: [
+        obs({ inflight: { containers: [], host_pids: [], attempts: [expired] } }),
+        obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+      ],
+    });
+    deps.reconcileExpiredAttempt = vi.fn(async () => ({
+      status: 'ownership_lost',
+      conflict: 'lease_generation_mismatch',
+    }));
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result).toEqual({ exitReason: 'singleton_conflict', hops: 0 });
+    expect(appended).toHaveLength(0);
+    expect(sleeps).toHaveLength(0);
+    expect(deps.dispatch).not.toHaveBeenCalled();
   });
 
   it('R7: LAUNCHED 只记录 attempt launch effect，不能当角色 DONE 或派下一棒', async () => {

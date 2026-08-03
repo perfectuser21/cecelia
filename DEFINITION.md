@@ -2,15 +2,49 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-08-02
+**最后更新**: 2026-08-03
 
 
 
-**Brain 版本**: 1.267.185
+**Brain 版本**: 1.267.187
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.187 — Kernel Fleet concurrency and diagnostic containment
+
+- Watchdog 在 failure-persistence evidence 边界对持久化异常统一执行绝对路径脱敏、
+  凭据遮蔽和长度上限；AggregateError、注入的 recovery alert 与默认 P1 alert 不再
+  暴露 `file://` URL、含空格的 POSIX 路径或 token 值。
+- 通用 failure-persistence sanitizer 保持不变，避免扩大其他调用方的语义范围。
+- Worker 将 in-flight prepare 与 inspect/cancel 按 exact lease 串行化，消除 prepare 未落盘时
+  `already_clean/missing` 假证据和迟到孤儿容器；terminal start tombstone 可经 Brain
+  transport/Dispatcher 幂等回放，错配或 malformed 回执继续拒绝。
+- receiptless Attempt 只有 TaskBundle 明确标记 `execution_surface=fleet-worker` 才进入 Fleet
+  recovery，本地 Docker 启动后、receipt 前的崩溃窗口不会被远端 missing 误终结。
+- Fleet watchdog 不再独立 cleanup/reclaim Attempt，只重启 dedicated controller；统一
+  expired-attempt reconciler 以原 owner/generation 处理 live、missing 与 terminal 状态。
+
+## Brain 1.267.186 — Kernel Fleet two-phase launch and expired-attempt convergence
+
+- Fleet Runner 启动协议固定为 `prepare → attested receipt 持久化 → start`。Worker 的
+  `prepare` 只创建 stopped container 与 Attempt-owned 资源；Brain 未完成 exact receipt
+  绑定时 Runner 不得启动，receipt 写入或 start 失败均按原租约精确清理。
+- Worker 的 prepare/start/inspect/cancel/terminal 回执全部绑定 exact `attempt_id`、原
+  owner/generation 和有限状态集合；inspect 只接受带 lease body 的 authenticated POST，
+  stale lease 与旧 GET 均拒绝。Worker 只持久化非密生命周期元数据；重启后的 prepared
+  terminal tombstone 只有取得 exact cleanup 才能进入替换终态。
+- 过期 Fleet Attempt 在 normal derive 前收敛：已验签存活 Worker 保持原 owner/generation
+  续租，避免只旋转数据库 generation 后拒绝真实 callback；receipt 未确认的存活 Worker
+  必须先取得 exact cleanup 再换新 Attempt；Worker `missing/terminal` 时 Attempt 失败终态
+  与 bounded decision evidence 同事务提交，并按 callback-equivalent infrastructure result
+  重试而不污染 product fixRound。父 Run 终态只重新观测，并发输家立即让位。
+- 协议升级固定使用 `fleet-rollout.sh all --apply --protocol-cutover`。切换前必须停止 tick
+  和全部 controller、以 DB 证明无 active Attempt；rollout 必须先完成三机全 drain，之后
+  才允许任一 bootstrap，且三台 Worker 更新后保持 drained。部署
+  Brain 并完成真实两阶段协议探测后才逐机恢复 admission。回退到 `1.267.185` 也必须先
+  全局 drain，再同时回退 Worker/Brain，禁止协议混跑窗口恢复派发。
 
 ## Brain 1.267.185 — Kernel transient infrastructure admission backoff
 
@@ -1123,12 +1157,18 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
   `runner_failure` 与 `semantic_refusal`；同一任务的跨 Run 规范化产品失败集合重复时，
   L0 在创建 `generator-fix` Attempt 前转入 `wait:human_review`。
 - Phase 4D 只完成代码侧执行等价与恢复闭环；Phase 5 真实业务任务验收仍未完成。
-- 发布顺序固定为 Worker-first，待三台节点真实健康证据通过复审后再发布 Brain。
+- 两阶段协议发布顺序固定为：先停止 tick 与所有 controller，并用 DB 证据确认不存在
+  active Attempt；再执行 `fleet-rollout.sh all --apply --protocol-cutover`，让三台 Worker
+  更新后保持 drained；随后部署新 Brain；最后由新 Brain 对每台 Worker 执行真实
+  prepare → 持久化 receipt → start 两阶段协议探测；取得证据的节点才可逐机恢复
+  admission。部署后的 PR #1581 真实业务验收期间 Tick 必须继续保持
+  manual-disabled/off，仅启动新建 Kernel Run 的 dedicated controller；任一步缺少证据
+  都保持全局停止派发。
   当前 `xian-mac-m1` 的 Docker 不可用，必须保持 drained，不能降低阈值。
-- 节点紧急回退先在该节点执行
-  `CECELIA_MACHINE_ID=<machine-id> sudo -E packages/brain/scripts/fleet-worker/fleet-nodectl.sh drain <machine-id> --apply`；
-  Brain 镜像回退执行 `bash scripts/brain-rollback.sh 1.267.96`。恢复前必须重新取得
-  真实 Worker 健康证据，不能用 synthetic canary 替代。
+- 回退同样先停止 tick 与所有 controller、全局 drain 并确认 DB 不存在 active Attempt，
+  再回退 Worker/Brain 协议版本；恢复前必须用回退后的 Brain/Worker 组合重新取得真实
+  两阶段协议与 Worker 健康证据，不能用 synthetic canary 替代，也不能在协议混跑窗口
+  恢复 admission。
 
 ---
 
@@ -2136,7 +2176,7 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 
 | 环境 | 端口 | DB | restart 策略 | tick |
 |------|------|----|--------------|------|
-| Production | 5221 | cecelia | unless-stopped | 启用 |
+| Production | 5221 | cecelia | unless-stopped | 默认启用；当前 two-phase rollout 与 PR #1581 真实验收期间 manual-disabled/off |
 | Staging | 5222 | cecelia_staging | unless-stopped | HARD_OFF（双保险）|
 | Develop | 5220 | cecelia_dev | unless-stopped | 默认关 |
 

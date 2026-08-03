@@ -34,11 +34,11 @@ function guardWorkerConfiguration(worker, {
       || !isValidHttpBaseUrl(workerUrl)
       || typeof sharedSecret !== 'string'
       || sharedSecret.length < 32
-      || !isValidHttpBaseUrl(callbackBaseUrl)
       || (
         requireWorkspace
         && (
-          input?.bundle?.inputs?.execution_surface !== 'fleet-worker'
+          !isValidHttpBaseUrl(callbackBaseUrl)
+          || input?.bundle?.inputs?.execution_surface !== 'fleet-worker'
           || !workspaceSpec
           || typeof workspaceSpec !== 'object'
           || Array.isArray(workspaceSpec)
@@ -49,9 +49,13 @@ function guardWorkerConfiguration(worker, {
     }
   };
   return Object.freeze({
-    async launch(input) {
+    async prepare(input) {
       assertAvailable(input, { requireWorkspace: true });
-      return worker.launch(input);
+      return worker.prepare(input);
+    },
+    async start(input) {
+      assertAvailable(input);
+      return worker.start(input);
     },
     async inspect(input) {
       assertAvailable(input);
