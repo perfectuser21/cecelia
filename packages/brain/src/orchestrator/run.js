@@ -47,6 +47,10 @@ import { createRunEventStore } from './run-event-store.js';
 import { parseBaseRepo } from './github-pr-discovery.js';
 import { finalizeKernelRun } from './kernel-run-store.js';
 import { sanitizeDiagnostic } from './failure-persistence.js';
+import {
+  createExpiredAttemptAuthority,
+  reconcileExpiredAttempt,
+} from './expired-attempt-reconciler.js';
 
 const CANONICAL_MACHINE_IDS = new Set([
   'us-mac-m4',
@@ -192,6 +196,7 @@ export async function buildRealDeps(overrides = {}) {
     throw new Error(`invalid_kernel_machine_id:${String(machineId)}`);
   }
   let dispatch = overrides.dispatch;
+  let launcher = overrides.launcher;
   if (!dispatch) {
     const registry = overrides.registry ?? createProviderRegistry([claudeAdapter, codexAdapter, grokAdapter]);
     const productionProbes = overrides.productionProbes
@@ -213,7 +218,6 @@ export async function buildRealDeps(overrides = {}) {
     const detached = await import('../spawn/detached.js');
     const spawnDetached = overrides.spawnDetached ?? detached.spawnDockerDetached;
     const removeContainer = overrides.removeContainer ?? detached.removeDockerContainer;
-    let launcher = overrides.launcher;
     if (!launcher) {
       const resolveAccountHome = overrides.resolveAccountHome
         ?? resolveProviderAccountHome;
@@ -323,6 +327,22 @@ export async function buildRealDeps(overrides = {}) {
       ...(resolveWorkspaceSpec ? { resolveWorkspaceSpec } : {}),
     });
   }
+  let reconcileExpired = overrides.reconcileExpiredAttempt;
+  if (!reconcileExpired && launcher) {
+    let expiredAttemptAuthority = overrides.expiredAttemptAuthority ?? null;
+    const terminalizeExpiredAttempt = async (input) => {
+      expiredAttemptAuthority ??= createExpiredAttemptAuthority(pool);
+      return expiredAttemptAuthority.terminalize(input);
+    };
+    reconcileExpired = ({ attempt }) => reconcileExpiredAttempt({
+      attempt,
+      launcher,
+      attemptStore,
+      terminalize: terminalizeExpiredAttempt,
+      now: overrides.now ?? (() => new Date()),
+      leaseSeconds: overrides.leaseSeconds ?? 300,
+    });
+  }
   return {
     pool,
     execCmd,
@@ -333,6 +353,7 @@ export async function buildRealDeps(overrides = {}) {
     dispatch,
     commanderCoordinator,
     commanderDirectiveExecutor,
+    ...(reconcileExpired ? { reconcileExpiredAttempt: reconcileExpired } : {}),
     host: os.hostname(),
     pid: process.pid,
   };

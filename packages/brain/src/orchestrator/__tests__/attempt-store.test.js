@@ -814,7 +814,9 @@ describe('attempt store', () => {
     expect(pool.query.mock.calls[0][0]).toMatch(
       /error_code NOT IN\s*\(\s*'worker_attempt_missing_after_lease',\s*'worker_attempt_replacement_required_after_lease'\s*\)/i,
     );
-    expect(pool.query.mock.calls[0][0]).toMatch(/error_code IS NULL OR error_code NOT IN/i);
+    expect(pool.query.mock.calls[0][0]).toMatch(
+      /error_code IS NULL\s+OR error_code NOT IN/i,
+    );
   });
 
   it('uses bounded SQL to read the latest Commander Attempt', async () => {

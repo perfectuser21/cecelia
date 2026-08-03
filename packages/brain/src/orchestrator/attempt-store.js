@@ -793,6 +793,13 @@ export function createAttemptStore(pool) {
               status IN ('failed','cancelled')
               OR (status='blocked' AND failure_class='infrastructure_blocked')
             )
+            AND (
+              error_code IS NULL
+              OR error_code NOT IN (
+                'worker_attempt_missing_after_lease',
+                'worker_attempt_replacement_required_after_lease'
+              )
+            )
           ORDER BY hop`,
         [runId, role],
       );

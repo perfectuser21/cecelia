@@ -249,6 +249,7 @@ export async function collectGroundTruth(deps, opts) {
     `SELECT id, run_id, hop, phase, role, provider, account_id, machine_id,
             requested_machine_id, actual_machine_id, execution_transport,
             remote_job_id, machine_attestation_status, lease_generation,
+            lease_owner, lease_expires_at, heartbeat_at,
             status, error_code, error_message, task_bundle, result,
             created_at, updated_at, completed_at
        FROM harness_attempts

@@ -85,13 +85,18 @@ The existing callback contract remains strict. Because start occurs only after r
 The Kernel loop must not treat every `starting/running` row as live forever. When its lease is expired:
 
 1. inspect the attested Worker target using the exact attempt ID;
-2. if Worker reports `prepared`, reclaim and start only when that Worker still owns the in-memory
-   one-shot credentials; `attempt_credentials_unavailable` triggers exact cancel plus a replacement
-   attempt with newly issued envelopes;
-3. if Worker reports `running`, reclaim and continue only when credential delivery was durably
-   confirmed; otherwise exact-cancel and replace the attempt;
+2. if Worker reports `prepared`, start with the unchanged old owner/generation only when that
+   Worker still owns the in-memory one-shot credentials; an exact, confirmed-safe cancel permits a
+   replacement attempt with newly issued envelopes;
+3. if Worker reports `running`, retain and heartbeat the unchanged old owner/generation. Brain must
+   not increment only its database generation because that would fence out the live Worker and its
+   callback; an ownership transfer requires a separate atomic Worker lease-rotation protocol;
 4. if Worker reports `missing`, atomically fail the attempt with `worker_attempt_missing_after_lease`, append the normal callback-equivalent infrastructure decision evidence, and let derive retry the same role under its existing cap;
 5. if Worker inspection is unavailable, record infrastructure BLOCKED/backoff without entering Generator fix.
+
+The run singleton may adopt work only through those idempotent exact-lease operations. Any
+inspection, heartbeat, or cancel result that does not prove a safe state fails closed with bounded
+infrastructure evidence and backoff.
 
 The production R4 orphan is preserved as evidence and recovered by this mechanism; no fabricated callback or verdict is written.
 

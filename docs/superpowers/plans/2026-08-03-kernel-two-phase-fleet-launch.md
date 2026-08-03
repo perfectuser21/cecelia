@@ -285,7 +285,10 @@ expect(attemptStore.fail).toHaveBeenCalledWith(
 );
 ```
 
-Also assert `prepared` reclaims then starts, `running` reclaims without creating a new attempt, and inspect errors produce infrastructure backoff rather than product failure.
+Also assert `prepared` starts with its unchanged old lease, `running` heartbeats the unchanged old
+lease without creating a new attempt, and inspect/heartbeat errors produce infrastructure backoff
+rather than product failure. A database-only generation increment is forbidden because Worker and
+callback still hold the old generation.
 
 - [ ] **Step 2: Add loop Red test**
 
@@ -318,14 +321,17 @@ git commit -m "test(kernel): reproduce expired missing Worker attempt"
 
 - [ ] **Step 1: Implement the focused reconciler**
 
-Export one function that accepts the attempt, clock, launcher, attempt store, and append function. It returns one of `not_expired`, `reclaimed_prepared`, `replacement_required`, `reclaimed_running`, `missing_terminalized`, or `infrastructure_blocked`.
+Export one function that accepts the attempt, clock, launcher, attempt store, and terminal authority.
+It returns one of `not_expired`, `adopted_prepared`, `replacement_required`, `adopted_running`,
+`missing_terminalized`, or `infrastructure_blocked`.
 
 - [ ] **Step 2: Preserve fencing and append evidence**
 
-Reclaim with a new lease generation before any start/observe action.
-`attempt_credentials_unavailable` or unconfirmed credential delivery exact-cancels the old attempt
-and selects `replacement_required`; the next derive creates a new attempt with fresh envelopes. A
-missing Worker state writes a bounded infrastructure failure and an append-only decision detail
+Keep the old lease owner/generation for every Worker operation. A prepared attempt starts with that
+exact lease and then heartbeats the same database identity; a running attempt only heartbeats that
+identity. A confirmed-safe old-lease cancel permits `replacement_required`; rejected, missing,
+quarantined, or unavailable cancel evidence fails closed and backs off. A missing Worker state
+writes its bounded infrastructure failure and append-only decision detail in one transaction,
 containing only attempt ID, prior generation, target, and signature.
 
 - [ ] **Step 3: Wire before normal derive**
