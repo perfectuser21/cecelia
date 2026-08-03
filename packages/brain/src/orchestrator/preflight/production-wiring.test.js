@@ -224,6 +224,46 @@ describe('production capability wiring', () => {
     else process.env.CECELIA_MACHINE_ID = previousMachineId;
   });
 
+  it('assembles generic HTTP, Fleet admission, and outer probe budgets as 5s/20s/25s', async () => {
+    const productionProbes = {
+      resolveCanonicalMachineId: vi.fn(async () => 'us-mac-m4'),
+      getMachineHealth: vi.fn(async () => ({ ok: true })),
+      getMachineCapacity: vi.fn(async () => ({ ok: true, available: 1 })),
+      listProviderAccounts: vi.fn(async () => ['team1']),
+      probeProviderAuth: vi.fn(async () => ({ ok: true })),
+      probeGitHub: vi.fn(async () => ({ ok: true })),
+      probePostgres: vi.fn(async () => ({ ok: true })),
+      probeModelCapability: vi.fn(async () => ({ ok: true })),
+    };
+    const createProductionCapabilityProbesFn = vi.fn(() => productionProbes);
+    const createCapabilityGateFn = vi.fn(() => selectedPreflight({
+      provider: 'codex',
+      account: 'team1',
+      machine: 'us-mac-m4',
+    }));
+
+    await buildTestDeps({
+      pool: { query: vi.fn(async () => ({ rows: [] })) },
+      attemptStore: attemptStoreDouble(),
+      registry: createProviderRegistry([codexAdapter()]),
+      launcher: {},
+      handlers: {},
+      loadSkill: vi.fn(),
+      env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
+      createProductionCapabilityProbesFn,
+      createCapabilityGateFn,
+    });
+
+    expect(createProductionCapabilityProbesFn).toHaveBeenCalledWith(expect.objectContaining({
+      requestTimeoutMs: undefined,
+      nodeAdmissionRequestTimeoutMs: 20_000,
+    }));
+    expect(createCapabilityGateFn).toHaveBeenCalledWith(expect.objectContaining({
+      probeTimeoutMs: 25_000,
+    }));
+  });
+
+
   it('buildRealDeps admits a policy-matched Worker and launches through the Fleet receipt contract', async () => {
     process.env.CECELIA_MACHINE_ID = 'us-mac-m4';
     const order = [];

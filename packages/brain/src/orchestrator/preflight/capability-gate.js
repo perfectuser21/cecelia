@@ -144,6 +144,7 @@ export function createCapabilityGate(deps = {}) {
     let capacity;
     let fallbackReason = 'all_execution_targets_exhausted';
     let lastProviderProbe = null;
+    let lastNodeProbe = null;
     let selectedTarget = null;
     let providerAuth = null;
 
@@ -163,6 +164,10 @@ export function createCapabilityGate(deps = {}) {
         continue;
       }
       if (!health?.ok || !capacity?.ok || Number(capacity?.available ?? 0) < 1) {
+        lastNodeProbe = {
+          machine_health: health ?? null,
+          machine_capacity: capacity ?? null,
+        };
         const admissionSignature = [health?.signature, capacity?.signature]
           .find((signature) => NODE_ADMISSION_SIGNATURES.has(signature));
         if (admissionSignature) {
@@ -254,7 +259,7 @@ export function createCapabilityGate(deps = {}) {
         snapshotId,
         fromTarget: preferredTarget,
         fallbackReason: reason,
-        probeDetail: lastProviderProbe,
+        probeDetail: lastProviderProbe ?? lastNodeProbe,
       });
       await deps.emitAlert?.({
         kind: 'kernel_capability_preflight_blocked',

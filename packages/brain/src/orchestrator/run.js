@@ -199,8 +199,10 @@ export async function buildRealDeps(overrides = {}) {
   let launcher = overrides.launcher;
   if (!dispatch) {
     const registry = overrides.registry ?? createProviderRegistry([claudeAdapter, codexAdapter, grokAdapter]);
+    const createProductionCapabilityProbesFn = overrides.createProductionCapabilityProbesFn
+      ?? createProductionCapabilityProbes;
     const productionProbes = overrides.productionProbes
-      ?? createProductionCapabilityProbes({
+      ?? createProductionCapabilityProbesFn({
         pool,
         registry,
         fetchFn: overrides.fetchFn,
@@ -208,11 +210,13 @@ export async function buildRealDeps(overrides = {}) {
         brainUrl: overrides.brainUrl,
         env,
         requestTimeoutMs: overrides.preflightRequestTimeoutMs,
+        nodeAdmissionRequestTimeoutMs: overrides.preflightNodeAdmissionTimeoutMs ?? 20_000,
       });
+    const createCapabilityGateFn = overrides.createCapabilityGateFn ?? createCapabilityGate;
     const preflightGate = overrides.preflightGate
-      ?? createCapabilityGate({
+      ?? createCapabilityGateFn({
         ...productionProbes,
-        probeTimeoutMs: overrides.preflightProbeTimeoutMs ?? 6_000,
+        probeTimeoutMs: overrides.preflightProbeTimeoutMs ?? 25_000,
         snapshotTtlMs: overrides.preflightSnapshotTtlMs ?? 1_000,
       });
     const detached = await import('../spawn/detached.js');

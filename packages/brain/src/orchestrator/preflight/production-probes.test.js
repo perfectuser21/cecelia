@@ -16,6 +16,25 @@ async function loadFactory() {
 }
 
 describe('production capability probes', () => {
+  it('keeps the 20s Fleet admission budget separate from generic 5s HTTP calls', async () => {
+    const createProductionCapabilityProbes = await loadFactory();
+    const getAdmission = vi.fn(async () => null);
+    const createNodeAdmissionClientFn = vi.fn(() => ({ getAdmission }));
+
+    createProductionCapabilityProbes({
+      pool: { query: vi.fn() },
+      registry: { get: vi.fn() },
+      fetchFn: vi.fn(),
+      env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
+      requestTimeoutMs: 5_000,
+      createNodeAdmissionClientFn,
+    });
+
+    expect(createNodeAdmissionClientFn).toHaveBeenCalledWith(expect.objectContaining({
+      requestTimeoutMs: 20_000,
+    }));
+  });
+
   it('reads Brain-owned fleet and account state and verifies required capabilities', async () => {
     const createProductionCapabilityProbes = await loadFactory();
     const nodeAdmissionClient = {
