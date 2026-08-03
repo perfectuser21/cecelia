@@ -397,7 +397,7 @@ function freezeLaunchReceipt(receipt, target, executionSurface = null) {
 }
 
 function unsafeCancelDiagnostic(result) {
-  if (result?.status === 'cancelled') return null;
+  if (['cancelled', 'cleaned', 'already_clean'].includes(result?.status)) return null;
   const status = result?.status ?? 'unknown';
   const httpStatus = result?.httpStatus == null ? '' : ` (HTTP ${result.httpStatus})`;
   return `orphan cancellation unsafe: ${status}${httpStatus}`;
