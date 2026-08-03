@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.267.199
+**版本**: 1.267.200
+
+## Kernel context resume action identity
+
+- `verdict:context_answer` 现在按绑定的 callback hop 找到原始 needs-context Attempt，再回放
+  该 Attempt 之前的精确 spawn action；初始 Generator 与 Generator-fix 不再互相漂移。
+- 只允许已知 agent spawn action 进入恢复映射；答案之后已经存在重试 intent 时不再回放，
+  保持 append-only、一次性消费和防双派发语义。
+- Brain 版本为 `1.267.200`；Fleet Worker 保持 `1.267.100`，共享验证时钟与 Runner digest
+  均不变。回退到 `1.267.199` 会恢复初始 Generator context 恢复后误进 fix 的失败路径。
 
 ## Kernel shared validation clock
 

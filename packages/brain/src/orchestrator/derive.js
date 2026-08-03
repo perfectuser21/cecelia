@@ -131,6 +131,17 @@ const INFRA_RETRY_ACTION_BY_ROLE = Object.freeze({
   reporter: { phase: 'done', action: ACTION.SPAWN_CANARY },
 });
 
+const CONTEXT_RETRY_PHASE_BY_ACTION = Object.freeze({
+  [ACTION.SPAWN_PLANNER]: 'planning',
+  [ACTION.SPAWN_PROPOSER]: 'gan',
+  [ACTION.SPAWN_REVIEWER]: 'gan',
+  [ACTION.SPAWN_GENERATOR]: 'generate',
+  [ACTION.SPAWN_GENERATOR_FIX]: 'generate',
+  [ACTION.SPAWN_EVALUATOR]: 'evaluate',
+  [ACTION.SPAWN_EVALUATOR_EVIDENCE_REPAIR]: 'evaluate',
+  [ACTION.SPAWN_JUDGE]: 'evaluate',
+});
+
 function callbackDetail(row) {
   return asStructuredJson(row?.detail) ?? {};
 }
@@ -158,6 +169,46 @@ function latestUnconsumedAttemptResult(decisionLog) {
       && (latestSpawn == null || Number(row.hop) > Number(latestSpawn.hop))
     );
   }) ?? null;
+}
+
+function answeredContextRetryRoute(decisionLog) {
+  const rows = sortedLogRows(decisionLog);
+  const answer = [...rows].reverse().find(
+    (row) => row.action === LOG_ACTION.CONTEXT_ANSWER,
+  );
+  if (!answer) return null;
+
+  const answerDetail = callbackDetail(answer);
+  const callbackHop = Number(answerDetail.callback_hop);
+  const callback = rows.find((row) => (
+    Number(row.hop) === callbackHop
+    && row.action === LOG_ACTION.ATTEMPT_CALLBACK
+    && callbackDetail(row).status === 'needs_context'
+  ));
+  if (!callback) return null;
+
+  const alreadyRetried = rows.some((row) => (
+    Number(row.hop) > Number(answer.hop)
+    && Object.hasOwn(CONTEXT_RETRY_PHASE_BY_ACTION, row.action)
+  ));
+  if (alreadyRetried) return null;
+
+  const callbackDispatchHop = Number(callbackDetail(callback).hop);
+  const exactAction = rows.find((row) => (
+    Number(row.hop) === callbackDispatchHop
+    && Object.hasOwn(CONTEXT_RETRY_PHASE_BY_ACTION, row.action)
+  ));
+  const originalAction = exactAction ?? [...rows].reverse().find((row) => (
+    Number(row.hop) < Number(callback.hop)
+    && Object.hasOwn(CONTEXT_RETRY_PHASE_BY_ACTION, row.action)
+  ));
+  if (!originalAction) return null;
+
+  return {
+    phase: CONTEXT_RETRY_PHASE_BY_ACTION[originalAction.action],
+    action: originalAction.action,
+    reason: 'context_answered_retry',
+  };
 }
 
 function noPrSignatureKey(detail) {
@@ -491,6 +542,9 @@ export function derive(observed) {
   // for a successful no-progress completion.
   const callbackRoute = attemptCallbackRoute(observed);
   if (callbackRoute) return applyHopFence(callbackRoute, counters);
+
+  const contextRetryRoute = answeredContextRetryRoute(observed.decisionLog);
+  if (contextRetryRoute) return applyHopFence(contextRetryRoute, counters);
 
   // 0.4 no-progress terminal（Sprint 07231527 Blocking 4）：
   // generator-fix callback SHA === trigger_sha → 无进展，立即终局
