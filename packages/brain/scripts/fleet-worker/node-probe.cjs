@@ -18,7 +18,7 @@ const DEFAULT_CALLBACK_TIMEOUT_MS = 5_000;
 const DEFAULT_MAX_BUFFER = 64 * 1024;
 const DEFAULT_CALLBACK_URL = 'http://127.0.0.1:5221/api/brain/health';
 const DEFAULT_DRAIN_MARKER = '/var/run/cecelia/fleet-worker.drain';
-const DEFAULT_WORKER_VERSION = '1.267.95';
+const DEFAULT_WORKER_VERSION = '1.267.96';
 const DEFAULT_RUNNER_VERSION = 'cecelia-runner/v1';
 const DEFAULT_POSTGRES_IMAGE = 'postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777';
 const MAX_CLOCK_OFFSET_SECONDS = 1;
@@ -274,25 +274,32 @@ async function probeDisposableResources({
 
     if (worktreeAdded) {
       containerCreateAttempted = true;
-      const createResult = await run('docker', [
-        'create',
-        '--name',
-        containerName,
-        '--mount',
-        `type=bind,src=${worktreePath},dst=/workspace,readonly`,
-        '--entrypoint',
-        '/usr/bin/test',
-        runnerImageDigest,
-        '-e',
-        '/workspace/.git',
-      ]);
-      containerCreated = createResult.ok;
-      if (containerCreated) {
-        const startResult = await run(
-          'docker',
-          ['start', '--attach', containerName],
-        );
-        containerStarted = startResult.ok;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (attempt > 0) {
+          await run('docker', ['rm', '-f', '--', containerName]);
+        }
+        const createResult = await run('docker', [
+          'create',
+          '--name',
+          containerName,
+          '--mount',
+          `type=bind,src=${worktreePath},dst=/workspace,readonly`,
+          '--entrypoint',
+          '/usr/bin/test',
+          runnerImageDigest,
+          '-e',
+          '/workspace/.git',
+        ]);
+        containerCreated = createResult.ok;
+        containerStarted = false;
+        if (containerCreated) {
+          const startResult = await run(
+            'docker',
+            ['start', '--attach', containerName],
+          );
+          containerStarted = startResult.ok;
+        }
+        if (containerCreated && containerStarted) break;
       }
     }
   } catch {
