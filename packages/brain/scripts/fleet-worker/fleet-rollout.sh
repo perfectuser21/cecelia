@@ -117,7 +117,7 @@ run_node_apply() {
 
   require_machine "$machine_id"
   case "$apply_mode" in
-    standard|protocol-cutover) ;;
+    standard|protocol-drain|protocol-bootstrap) ;;
     *) die "rollout_internal_mode_invalid" 64 ;;
   esac
   [[ -d "$payload_root" && ! -L "$payload_root" \
@@ -156,12 +156,17 @@ run_node_apply() {
     exit "$status"
   }
 
-  run_node_command drain "$machine_id" --apply
+  if [[ "$apply_mode" != 'protocol-bootstrap' ]]; then
+    run_node_command drain "$machine_id" --apply
+  fi
+  if [[ "$apply_mode" == 'protocol-drain' ]]; then
+    return 0
+  fi
   if ! run_node_command bootstrap "$machine_id" --apply; then
     run_node_command drain "$machine_id" --apply >/dev/null 2>&1 || true
     return 1
   fi
-  if [[ "$apply_mode" == 'protocol-cutover' ]]; then
+  if [[ "$apply_mode" == 'protocol-bootstrap' ]]; then
     return 0
   fi
   drain_guard_armed=true
@@ -332,7 +337,7 @@ if [[ "${1:-}" == '__node-apply' ]]; then
   [[ "$EUID" -eq 0 ]] || die "rollout_internal_root_required" 77
   internal_apply_mode="${4:-standard}"
   case "$internal_apply_mode" in
-    standard|protocol-cutover) ;;
+    standard|protocol-drain|protocol-bootstrap) ;;
     *) die "rollout_internal_mode_invalid" 64 ;;
   esac
   validate_internal_staging "$3" || die "rollout_staging_invalid"
@@ -455,7 +460,9 @@ remote_program="$(cat <<'REMOTE'
 set -euo pipefail
 machine_id="$1"
 apply_mode="${2:-}"
-if [[ -n "$apply_mode" && "$apply_mode" != 'protocol-cutover' ]]; then
+if [[ -n "$apply_mode" \
+  && "$apply_mode" != 'protocol-drain' \
+  && "$apply_mode" != 'protocol-bootstrap' ]]; then
   echo "rollout_internal_mode_invalid" >&2
   exit 64
 fi
@@ -568,15 +575,18 @@ interrupt_transport() {
   exit "$signal_status"
 }
 
-for machine_id in "${targets[@]}"; do
+run_node_transport() {
+  local machine_id="$1"
+  local apply_mode="${2:-}"
+
   if [[ "$machine_id" == 'us-mac-m4' ]]; then
-    run_root_staged_payload "$machine_id" "$payload_tar" "$node_apply_mode"
-    continue
+    run_root_staged_payload "$machine_id" "$payload_tar" "$apply_mode"
+    return
   fi
 
   remote_target="$(ssh_target_for "$machine_id")" || die "unknown_fleet_node" 64
   remote_command="$(
-    printf '%q ' /bin/bash -c "$remote_program" -- "$machine_id" "$node_apply_mode"
+    printf '%q ' /bin/bash -c "$remote_program" -- "$machine_id" "$apply_mode"
   )"
   transport_status=0
   trap 'interrupt_transport HUP 129' HUP
@@ -593,5 +603,18 @@ for machine_id in "${targets[@]}"; do
   wait "$transport_pid" || transport_status=$?
   transport_pid=''
   trap - HUP INT TERM
-  [[ "$transport_status" -eq 0 ]] || exit "$transport_status"
-done
+  [[ "$transport_status" -eq 0 ]] || return "$transport_status"
+}
+
+if [[ "$node_apply_mode" == 'protocol-cutover' ]]; then
+  for machine_id in "${targets[@]}"; do
+    run_node_transport "$machine_id" protocol-drain
+  done
+  for machine_id in "${targets[@]}"; do
+    run_node_transport "$machine_id" protocol-bootstrap
+  done
+else
+  for machine_id in "${targets[@]}"; do
+    run_node_transport "$machine_id"
+  done
+fi
