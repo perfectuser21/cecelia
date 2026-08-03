@@ -1524,6 +1524,138 @@ describe('kernel fleet watchdog recovery', () => {
     }
   });
 
+  it.each([
+    [
+      'file URL',
+      'file:///Users/administrator/Private%20Project/worktree/src/runner.js',
+      ['file://', '/Users/administrator', 'Private%20Project'],
+    ],
+    [
+      'spaced POSIX path',
+      '/Users/administrator/Private Project/worktree/src/runner.js',
+      ['/Users/administrator', 'Private Project', 'worktree/src'],
+    ],
+  ])(
+    'fully redacts %s from both terminal failure records',
+    async (_label, sensitivePath, forbiddenFragments) => {
+      const original = parentAttempt();
+      const reclaimed = {
+        ...original,
+        lease_owner: 'watchdog:test',
+        lease_generation: 4,
+      };
+      const store = {
+        getById: vi.fn(async () => original),
+        reclaim: vi.fn(async () => reclaimed),
+        rotateCallbackSecret: vi.fn(async () => reclaimed),
+        createAttempt: vi.fn(async () => ({ ...childAttempt(), status: 'queued', lease_owner: null })),
+        markStarting: vi.fn(async () => childAttempt()),
+        fail: vi.fn(async () => ({ attempt: {}, deduped: false })),
+      };
+      const rawSecret = 'raw-path-secret';
+
+      await reconcileExpiredKernelAttempt({
+        db: { query: vi.fn() },
+        attemptStore: store,
+        attemptId: PARENT_ID,
+        leaseOwner: 'watchdog:test',
+        resumeAttempt: vi.fn(async () => {
+          throw new Error(
+            `resume diagnostic at ${sensitivePath}:31; `
+            + `HARNESS_CALLBACK_TOKEN=${rawSecret}; detail=${'x'.repeat(5_000)}`,
+          );
+        }),
+        reservedChildHop: 8,
+        randomUUIDFn: () => CHILD_ID,
+      });
+
+      expect(store.fail).toHaveBeenCalledTimes(2);
+      for (const [, failure] of store.fail.mock.calls) {
+        expect(failure.message).toContain('resume diagnostic at [PATH]:31');
+        expect(failure.message).toContain('HARNESS_CALLBACK_TOKEN=[REDACTED]');
+        expect(failure.message).not.toContain(rawSecret);
+        for (const fragment of forbiddenFragments) {
+          expect(failure.message).not.toContain(fragment);
+        }
+        expect(failure.message.length).toBeLessThanOrEqual(2_100);
+      }
+    },
+  );
+
+  it('sanitizes prepare cleanup deferred P1 evidence before terminal writes and alert delivery', async () => {
+    const original = parentAttempt();
+    const reclaimed = {
+      ...original,
+      lease_owner: 'watchdog:test',
+      lease_generation: 4,
+    };
+    const store = {
+      getById: vi.fn(async () => original),
+      reclaim: vi.fn(async () => reclaimed),
+      rotateCallbackSecret: vi.fn(async () => reclaimed),
+      createAttempt: vi.fn(async () => ({ ...childAttempt(), status: 'queued', lease_owner: null })),
+      markStarting: vi.fn(async () => childAttempt()),
+      fail: vi.fn(async () => ({ attempt: {}, deduped: false })),
+    };
+    const sensitivePath = '/Users/administrator/Private Project/worktree/src/runner.js';
+    const rawSecret = 'raw-alert-secret';
+    const launcher = {
+      inspect: vi.fn(async () => ({ status: 'running', attempt_id: PARENT_ID })),
+      cancel: vi.fn()
+        .mockResolvedValueOnce({ status: 'cleaned', attempt_id: PARENT_ID })
+        .mockResolvedValueOnce({ status: 'missing', httpStatus: 404 }),
+      prepare: vi.fn(async () => {
+        throw new Error(
+          `prepare failed at ${sensitivePath}:41; `
+          + `HARNESS_CALLBACK_TOKEN=${rawSecret}; detail=${'y'.repeat(5_000)}`,
+        );
+      }),
+      start: vi.fn(),
+    };
+    const onRecoveryAlert = vi.fn(async () => {});
+
+    await reconcileExpiredKernelAttempt({
+      db: { query: vi.fn() },
+      attemptStore: store,
+      attemptId: PARENT_ID,
+      leaseOwner: 'watchdog:test',
+      resumeAttempt: (child, context) => resumeKernelAttempt(child, {
+        ...context,
+        task: { id: 'task-1', payload: {} },
+        dbPool: { query: vi.fn() },
+        launcher,
+      }),
+      reservedChildHop: 8,
+      randomUUIDFn: () => CHILD_ID,
+      onRecoveryAlert,
+    });
+
+    expect(store.fail).toHaveBeenCalledTimes(2);
+    for (const [, failure] of store.fail.mock.calls) {
+      expect(failure.message).toContain('prepare failed at [PATH]:41');
+      expect(failure.message).toContain('HARNESS_CALLBACK_TOKEN=[REDACTED]');
+      expect(failure.message).not.toContain(sensitivePath);
+      expect(failure.message).not.toContain('Private Project');
+      expect(failure.message).not.toContain(rawSecret);
+      expect(failure.message.length).toBeLessThanOrEqual(2_100);
+    }
+    expect(launcher.start).not.toHaveBeenCalled();
+    expect(onRecoveryAlert).toHaveBeenCalledOnce();
+    const recoveryAlert = onRecoveryAlert.mock.calls[0][0];
+    expect(recoveryAlert).toMatchObject({
+      kind: 'cleanup_unconfirmed',
+      attemptId: CHILD_ID,
+      lifecycleCode: 'resume_launch_failed',
+      cleanupStatus: 'missing',
+      diagnostic: expect.stringContaining('prepare failed at [PATH]:41'),
+    });
+    expect(recoveryAlert.diagnostic).toContain('HARNESS_CALLBACK_TOKEN=[REDACTED]');
+    expect(recoveryAlert.diagnostic).not.toContain(sensitivePath);
+    expect(recoveryAlert.diagnostic).not.toContain('Private Project');
+    expect(recoveryAlert.diagnostic).not.toContain(rawSecret);
+    expect(recoveryAlert.diagnostic.length).toBeLessThanOrEqual(2_000);
+  });
+
   it('throws the shared aggregate when exact-failing a claimed child is rejected', async () => {
     const original = parentAttempt();
     const reclaimed = {
