@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.201
+**版本**: 1.267.202
+
+## Kernel preflight BLOCKED launch truth
+
+- `generatorSpawned` 只由严格绑定 intent+Attempt 的 launch effect，或 Callback result、provider
+  session、heartbeat、runtime provider failure 等正证据推导；裸 Attempt 与 pre-launch failure
+  不算启动，真实 Callback 即使缺 launch effect 也能跨崩溃恢复。
+- Provider 配额或 Fleet admission 在 launch 前 BLOCKED 时，下一轮继续原 Generator 路径；
+  不会把“没有创建 Attempt、所以没有 PR”误判为产品 no-PR 并进入 generator-fix。
+- Brain 版本为 `1.267.202`；Fleet Worker 和 Runner digest 不变。回退到 `1.267.201`
+  会恢复 infrastructure BLOCKED 后的 `generator_fix_workspace_evidence_missing` 致命路径。
 
 ## Kernel Fleet prepare budget and recovery env integrity
 

@@ -52,6 +52,14 @@ const SPAWN_ROLE_BY_ACTION = Object.freeze({
   [ACTION.SPAWN_EVALUATOR_EVIDENCE_REPAIR]: 'evaluator',
   [ACTION.SPAWN_JUDGE]: 'judge',
 });
+const GENERATOR_SPAWN_ACTIONS = new Set([
+  ACTION.SPAWN_GENERATOR,
+  ACTION.SPAWN_GENERATOR_FIX,
+]);
+const GENERATOR_RUNTIME_ERROR_CODES = new Set([
+  'provider_exit',
+  'provider_timeout',
+]);
 
 function mapCiStatus(checkRows) {
   if (!Array.isArray(checkRows) || checkRows.length === 0) return 'pending'; // CI 尚未挂上 → 视为 pending
@@ -105,6 +113,33 @@ function asJson(value) {
     try { return JSON.parse(value); } catch { return null; }
   }
   return value;
+}
+
+function hasMatchedGeneratorLaunchEffect(attempt, logRows) {
+  return logRows.some((row) => {
+    if (row.action !== LOG_ACTION.ATTEMPT_LAUNCHED) return false;
+    const detail = asJson(row.detail) ?? {};
+    if (
+      detail.attempt_id !== attempt.id
+      || Number(detail.dispatch_hop) !== Number(attempt.hop)
+      || !GENERATOR_SPAWN_ACTIONS.has(detail.dispatch_action)
+    ) {
+      return false;
+    }
+    return logRows.some((intent) => (
+      Number(intent.hop) === Number(detail.dispatch_hop)
+      && intent.action === detail.dispatch_action
+    ));
+  });
+}
+
+function generatorAttemptHasRuntimeEvidence(attempt, logRows) {
+  if (attempt.role !== 'generator') return false;
+  if (hasMatchedGeneratorLaunchEffect(attempt, logRows)) return true;
+  if (attempt.result != null) return true;
+  if (attempt.provider_session_id != null || attempt.heartbeat_at != null) return true;
+  if (attempt.status === 'running') return true;
+  return GENERATOR_RUNTIME_ERROR_CODES.has(attempt.error_code);
 }
 
 /** docker --format "{{json .}}" 输出（每行一个 JSON）→ 对象数组 */
@@ -414,9 +449,14 @@ export async function collectGroundTruth(deps, opts) {
   });
 
   // ---- 决策日志推导字段（verdict 权威 = 决策日志行，P0-2；initiative_runs 的 verdict 列只是展示缓存）----
-  const generatorSpawned = decisionLog.some(
-    (r) => r.action === ACTION.SPAWN_GENERATOR || r.action === ACTION.SPAWN_GENERATOR_FIX,
-  );
+  // Neither an intent nor a bare Attempt row proves launch: both are persisted
+  // before the launcher side effect. Require a strictly bound launch effect or
+  // durable runtime evidence written by the callback/provider lifecycle. This
+  // keeps preflight/launch failures on the initial Generator route while still
+  // surviving the crash window between a real launch and its audit effect.
+  const generatorSpawned = attemptRows.some((row) => (
+    generatorAttemptHasRuntimeEvidence(row, decisionLog)
+  ));
   const evalRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_EVALUATE);
   const judgeRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_JUDGE);
   const evaluateVerdict = evalRow ? asJson(evalRow.detail) : null;
