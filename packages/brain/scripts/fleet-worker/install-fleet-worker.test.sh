@@ -190,6 +190,13 @@ export FLEET_WORKER_MV_FAIL_ONCE="$test_root/mv.fail-once"
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
+  'if [[ -n "${FLEET_WORKER_TEST_REQUIRE_SHARED_TMPDIR:-}" ]]; then' \
+  '  [[ "${TMPDIR:-}" == "$FLEET_WORKER_TEST_REQUIRE_SHARED_TMPDIR"' \
+  '    && -d "$FLEET_WORKER_TEST_REQUIRE_SHARED_TMPDIR" ]] || {' \
+  '      echo prerequisite_container >&2' \
+  '      exit 1' \
+  '    }' \
+  'fi' \
   'printf "%s\\n" "probe" >> "${FLEET_WORKER_PREFLIGHT_LOG:?}"' \
   'printf "%s\\n" "{\"ok\":true}"' \
   'exit 0' > "$test_root/node-probe"
@@ -232,6 +239,7 @@ grep -Fq 'root_required' <<<"$root_output" \
 
 toolchain_bin="$test_root/usr/local/libexec/cecelia/toolchain/bin"
 default_probe_path_log="$test_root/default-probe.path"
+default_probe_tmpdir_log="$test_root/default-probe.tmpdir"
 mkdir -p "$toolchain_bin"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$toolchain_bin/orbctl"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$toolchain_bin/docker"
@@ -241,6 +249,7 @@ printf '%s\n' \
   'if [[ "${1:-}" == "-" ]]; then' \
   '  cat >/dev/null' \
   '  printf "%s\n" "$PATH" > "${FLEET_WORKER_TEST_DEFAULT_PROBE_PATH:?}"' \
+  '  printf "%s\n" "${TMPDIR:-}" > "${FLEET_WORKER_TEST_DEFAULT_PROBE_TMPDIR:?}"' \
   '  [[ "${CECELIA_ORBSTACK_HOME:-}" == "/Users/orbstack-owner" ]] || { echo prerequisite_orbstack_home >&2; exit 1; }' \
   '  [[ "$(command -v orbctl || true)" == "${FLEET_WORKER_TEST_TOOLCHAIN_BIN:?}/orbctl" ]] || { echo prerequisite_orbstack >&2; exit 1; }' \
   '  [[ "$(command -v docker || true)" == "${FLEET_WORKER_TEST_TOOLCHAIN_BIN:?}/docker" ]] || { echo prerequisite_docker >&2; exit 1; }' \
@@ -266,6 +275,7 @@ printf '%s\n' \
 chmod +x "$test_root/id-default-probe"
 default_probe_plist="$test_root/default-probe.plist"
 FLEET_WORKER_TEST_DEFAULT_PROBE_PATH="$default_probe_path_log" \
+FLEET_WORKER_TEST_DEFAULT_PROBE_TMPDIR="$default_probe_tmpdir_log" \
 FLEET_WORKER_TEST_TOOLCHAIN_BIN="$toolchain_bin" \
 FLEET_WORKER_INSTALL_DIR="$install_dir" \
 FLEET_WORKER_LOG_DIR="$log_dir" \
@@ -280,6 +290,8 @@ FLEET_WORKER_ORBSTACK_HOME="/Users/orbstack-owner" \
   || fail "default preflight could not resolve reconciled OrbStack commands"
 [[ "$(<"$default_probe_path_log")" == "$toolchain_bin:"* ]] \
   || fail "default preflight PATH did not begin with the reconciled toolchain"
+[[ "$(<"$default_probe_tmpdir_log")" == "$shared_tmpdir" ]] \
+  || fail "default preflight did not use the OrbStack-shareable Worker TMPDIR"
 
 transient_preflight_count="$test_root/transient-preflight.count"
 printf '0\n' > "$transient_preflight_count"
@@ -819,7 +831,8 @@ rm -f "$socket_acl_state"
 rm -rf "$worker_data_root"
 rm -f "$launch_fail_once"
 printf 'absent\n' > "$launch_state"
-run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null
+FLEET_WORKER_TEST_REQUIRE_SHARED_TMPDIR="$shared_tmpdir" \
+  run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null
 installed_plist="$install_dir/com.perfect21.fleet-worker.plist"
 runtime_dir="$test_root/usr/local/libexec/cecelia/fleet-worker"
 installed_worker="$runtime_dir/fleet-worker.cjs"
@@ -903,7 +916,9 @@ grep -Fxq 'acl +a _cecelia allow read,write /Users/orbstack-owner/.orbstack/run/
   || fail "OrbStack run ACL was not granted before the low-privilege node probe"
 [[ "$(sed -n '4p' "$preflight_log")" == 'acl +a' ]] \
   || fail "socket ACL was not granted before the low-privilege node probe"
-[[ "$(sed -n '5p' "$preflight_log")" == 'probe' ]] \
+[[ "$(sed -n '5p' "$preflight_log")" == 'acl 0755' ]] \
+  || fail "shared Worker TMPDIR was not prepared before the low-privilege node probe"
+[[ "$(sed -n '6p' "$preflight_log")" == 'probe' ]] \
   || fail "node probe did not run after all ACL grants"
 
 : > "$launch_log"
