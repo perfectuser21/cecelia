@@ -236,6 +236,54 @@ describe('remote Bridge prepare', () => {
     );
   });
 
+  it('accepts a bounded terminal tombstone when start is replayed after response loss', async () => {
+    const fetchFn = vi.fn()
+      .mockRejectedValueOnce(new Error('response lost after Worker start'))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        status: 'terminal',
+        attempt_id: 'attempt-1',
+        terminal_status: 'cleaned',
+        credential: 'must-not-cross',
+      }));
+    const transport = createTransport({ fetchFn });
+
+    await expect(transport.start(operationInput('start'))).rejects.toThrow(
+      'remote_bridge_start_request_failed',
+    );
+    await expect(transport.start(operationInput('start'))).resolves.toEqual({
+      status: 'terminal',
+      attempt_id: 'attempt-1',
+      terminal_status: 'cleaned',
+    });
+  });
+
+  it.each([
+    [undefined, 'remote_bridge_start_invalid_terminal_status'],
+    ['unknown-terminal', 'remote_bridge_start_invalid_terminal_status'],
+  ])('rejects malformed terminal start status %j', async (terminalStatus, errorCode) => {
+    const fetchFn = vi.fn(async () => jsonResponse(200, {
+      status: 'terminal',
+      attempt_id: 'attempt-1',
+      ...(terminalStatus === undefined ? {} : { terminal_status: terminalStatus }),
+    }));
+    const transport = createTransport({ fetchFn });
+
+    await expect(transport.start(operationInput('start'))).rejects.toThrow(errorCode);
+  });
+
+  it('rejects a terminal start tombstone for a different Attempt', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(200, {
+      status: 'terminal',
+      attempt_id: 'attempt-2',
+      terminal_status: 'cleaned',
+    }));
+    const transport = createTransport({ fetchFn });
+
+    await expect(transport.start(operationInput('start'))).rejects.toThrow(
+      'remote_bridge_start_attempt_mismatch',
+    );
+  });
+
   it('posts the allowlisted payload with bearer authentication and verifies the receipt', async () => {
     const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse()));
     const transport = createTransport({ fetchFn });

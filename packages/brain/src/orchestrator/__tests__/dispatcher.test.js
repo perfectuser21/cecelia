@@ -311,6 +311,48 @@ describe('createDispatcher', () => {
     });
   });
 
+  it('accepts an exact terminal start replay without failing or recancelling the Attempt', async () => {
+    const deps = makeDeps();
+    deps.resolveWorkspaceSpec = vi.fn(async () => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: 'cp-two-phase-terminal-replay',
+      expected_head_sha: null,
+      mode: 'read-write',
+      run_id: runId,
+      attempt_id: attemptId,
+    }));
+    const fleetReceipt = Object.freeze({
+      actualMachineId: 'brain-1',
+      executionTransport: 'fleet-worker',
+      remoteJobId: 'fleet-job-terminal',
+      attestationStatus: 'verified',
+      containerId: null,
+      jobId: 'fleet-job-terminal',
+    });
+    deps.launcher.prepare = vi.fn(async () => fleetReceipt);
+    deps.launcher.start = vi.fn(async () => ({
+      status: 'terminal',
+      attempt_id: attemptId,
+      terminal_status: 'cleaned',
+    }));
+
+    await expect(createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate' },
+    })).resolves.toMatchObject({
+      status: 'LAUNCHED',
+      attempt_id: attemptId,
+    });
+
+    expect(deps.attemptStore.recordLaunchReceipt).toHaveBeenCalledOnce();
+    expect(deps.launcher.cancel).not.toHaveBeenCalled();
+    expect(deps.attemptStore.fail).not.toHaveBeenCalled();
+  });
+
   it('assigns a deterministic planner Git handoff branch owned by task, run, and hop', async () => {
     const deps = makeDeps();
 

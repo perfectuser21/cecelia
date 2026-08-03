@@ -407,6 +407,183 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.githubCredentialConsumer.consume).toHaveBeenCalledOnce();
   });
 
+  it('waits for an in-flight prepare before exact-cancelling its durable resources', async () => {
+    let releasePrepare;
+    const deferredPrepare = new Promise((resolve) => {
+      releasePrepare = resolve;
+    });
+    const deps = dependencies();
+    deps.docker.prepare.mockReturnValueOnce(deferredPrepare);
+    const runner = createRunner(deps);
+
+    const preparing = runner.prepare(request());
+    await vi.waitFor(() => expect(deps.docker.prepare).toHaveBeenCalledOnce());
+    let cancelSettled = false;
+    const cancelling = runner.cancel(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    }).finally(() => {
+      cancelSettled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(cancelSettled).toBe(false);
+    releasePrepare({
+      containerId: 'container-attempt-1',
+      credentialFifo: `/controlled/runtime/${ATTEMPT_ID}/credential.fifo`,
+      githubCredentialFifo:
+        `/controlled/runtime/${ATTEMPT_ID}/github-credential.fifo`,
+    });
+
+    await expect(preparing).resolves.toMatchObject({ attempt_id: ATTEMPT_ID });
+    await expect(cancelling).resolves.toEqual({
+      status: 'cleaned',
+      attempt_id: ATTEMPT_ID,
+    });
+    expect(deps.docker.remove).toHaveBeenCalledOnce();
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledOnce();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'terminal',
+      terminal_status: 'cleaned',
+    });
+  });
+
+  it('waits for a failed in-flight prepare rollback before confirming no resources remain', async () => {
+    let rejectPrepare;
+    const deferredPrepare = new Promise((_resolve, reject) => {
+      rejectPrepare = reject;
+    });
+    const deps = dependencies();
+    deps.docker.prepare.mockReturnValueOnce(deferredPrepare);
+    const runner = createRunner(deps);
+
+    const preparing = runner.prepare(request());
+    void preparing.catch(() => {});
+    await vi.waitFor(() => expect(deps.docker.prepare).toHaveBeenCalledOnce());
+    let cancelSettled = false;
+    const cancelling = runner.cancel(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    }).finally(() => {
+      cancelSettled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(cancelSettled).toBe(false);
+    rejectPrepare(new Error('docker prepare failed'));
+
+    await expect(preparing).rejects.toThrow('docker prepare failed');
+    await expect(cancelling).resolves.toEqual({
+      status: 'already_clean',
+      attempt_id: ATTEMPT_ID,
+    });
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledOnce();
+    expect(deps.docker.remove).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.has(ATTEMPT_ID)).toBe(false);
+  });
+
+  it.each(['cancel', 'inspect'])(
+    'fails closed when %s waits for an in-flight prepare whose rollback is unconfirmed',
+    async (operation) => {
+      let rejectPrepare;
+      const deferredPrepare = new Promise((_resolve, reject) => {
+        rejectPrepare = reject;
+      });
+      const deps = dependencies();
+      deps.docker.prepare.mockReturnValueOnce(deferredPrepare);
+      deps.docker.remove.mockRejectedValueOnce(new Error('container remove denied'));
+      const runner = createRunner(deps);
+      const preparing = runner.prepare(request());
+      void preparing.catch(() => {});
+      await vi.waitFor(() => expect(deps.docker.prepare).toHaveBeenCalledOnce());
+      const coordinating = runner[operation](ATTEMPT_ID, {
+        owner: 'dispatcher-1',
+        generation: 0,
+      });
+
+      const prepareError = new Error('docker prepare failed');
+      prepareError.rollbackContainerId = 'container-attempt-1';
+      rejectPrepare(prepareError);
+
+      await expect(preparing).rejects.toThrow(
+        'attempt_launch_rollback_failed:docker prepare failed',
+      );
+      await expect(coordinating).rejects.toThrow(
+        'attempt_launch_rollback_failed:docker prepare failed',
+      );
+      expect(deps.workspaceManager.quarantine).toHaveBeenCalledOnce();
+      expect(deps.stateStore.states.has(ATTEMPT_ID)).toBe(false);
+    },
+  );
+
+  it.each([
+    ['cancel', { owner: 'stale-dispatcher', generation: 0 }],
+    ['cancel', { owner: 'dispatcher-1', generation: 1 }],
+    ['inspect', { owner: 'stale-dispatcher', generation: 0 }],
+    ['inspect', { owner: 'dispatcher-1', generation: 1 }],
+  ])('lease-fences %s while prepare is in flight: %j', async (operation, lease) => {
+    let releasePrepare;
+    const deferredPrepare = new Promise((resolve) => {
+      releasePrepare = resolve;
+    });
+    const deps = dependencies();
+    deps.docker.prepare.mockReturnValueOnce(deferredPrepare);
+    const runner = createRunner(deps);
+    const preparing = runner.prepare(request());
+    await vi.waitFor(() => expect(deps.docker.prepare).toHaveBeenCalledOnce());
+
+    try {
+      await expect(runner[operation](ATTEMPT_ID, lease)).rejects.toThrow(
+        'attempt_lease_conflict',
+      );
+    } finally {
+      releasePrepare({ containerId: 'container-attempt-1' });
+      await preparing;
+      await runner.cancel(ATTEMPT_ID, {
+        owner: 'dispatcher-1',
+        generation: 0,
+      });
+    }
+
+    expect(deps.docker.remove).toHaveBeenCalledOnce();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+      status: 'terminal',
+      terminal_status: 'cleaned',
+    });
+  });
+
+  it('waits for in-flight prepare before inspect and never reports it missing', async () => {
+    let releasePrepare;
+    const deferredPrepare = new Promise((resolve) => {
+      releasePrepare = resolve;
+    });
+    const deps = dependencies();
+    deps.docker.prepare.mockReturnValueOnce(deferredPrepare);
+    const runner = createRunner(deps);
+
+    const preparing = runner.prepare(request());
+    await vi.waitFor(() => expect(deps.docker.prepare).toHaveBeenCalledOnce());
+    let inspectSettled = false;
+    const inspecting = runner.inspect(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    }).finally(() => {
+      inspectSettled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(inspectSettled).toBe(false);
+    releasePrepare({ containerId: 'container-attempt-1' });
+
+    await preparing;
+    await expect(inspecting).resolves.toEqual({
+      status: 'prepared',
+      attempt_id: ATTEMPT_ID,
+      container_id: 'container-attempt-1',
+    });
+    expect(deps.docker.inspect).not.toHaveBeenCalled();
+  });
+
   it('binds duplicate prepare to callback token identity without persisting it', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
