@@ -366,7 +366,7 @@ git commit -m "fix(runner): route read-only results through runtime mount"
 
 - [ ] **Step 1: Bump aligned versions**
 
-Set Brain to `1.267.196` in `package.json`, both lockfile version fields, and `DEFINITION.md`. Set Fleet Worker to `1.267.98` in all three NodeProfiles, `node-profile.js`, and `node-probe.cjs`. Keep Runner semantic label `cecelia-runner/v1`; its immutable image digest changes at build time.
+Set Brain to `1.267.196` in `package.json`, both lockfile version fields, and `DEFINITION.md`. Set Fleet Worker to `1.267.98` in all three NodeProfiles, `node-profile.js`, and `node-probe.cjs`. Keep Runner semantic label `cecelia-runner/v1`; build the verified image before opening the PR and pin its immutable digest in all NodeProfile/rollout sources. The resulting digest is `sha256:e0797f5a440d61827d1ea86afee629e6f5a687da6f958608671ba9c873e5e94a`.
 
 - [ ] **Step 2: Add the DEFINITION entry**
 
@@ -425,9 +425,11 @@ git diff --check origin/main...HEAD
 
 Expected: only the files listed by Tasks 1-4 plus this spec/plan; no Preview disk policy, Phase 4B-4D, or business implementation change.
 
-- [ ] **Step 3: Push the feature branch and open the Cecelia PR**
+- [ ] **Step 3: Verify the prebuilt pinned Runner, then push and open the Cecelia PR**
 
 ```bash
+docker image inspect cecelia/runner:kernel-r11 --format '{{.Id}}'
+docker run --rm -e HARNESS_CANARY=true --entrypoint /usr/bin/timeout cecelia/runner:kernel-r11 8 /usr/local/bin/entrypoint.sh __cecelia_runner_credential_contract_probe__
 git push -u origin fix/kernel-harness-r11-control-plane
 gh pr create --repo perfectuser21/cecelia --base main --head fix/kernel-harness-r11-control-plane --title "fix(kernel): converge real Fleet harness runs" --body-file /tmp/kernel-r11-pr-body.md
 ```
@@ -444,7 +446,7 @@ gh pr merge --repo perfectuser21/cecelia --squash --delete-branch "$PR_NUM"
 
 Expected: every required check is green on the final PR head before merge.
 
-- [ ] **Step 5: Build and pin the new Runner, then deploy US M4**
+- [ ] **Step 5: Roll out the already pinned Runner to US M4**
 
 From a clean worktree at the merged `origin/main`, run:
 
@@ -456,7 +458,7 @@ bash packages/brain/scripts/fleet-worker/fleet-nodectl.sh admit us-mac-m4
 curl --fail --silent http://127.0.0.1:5231/health | jq '{worker_version,runner,docker,disk,checks}'
 ```
 
-Expected: rollout builds once and records the resulting immutable `sha256:` digest; health reports Worker `1.267.98`, the exact new Runner digest, and all admission checks true. Verify Brain `/api/brain/health` reports `1.267.196`. Keep Xian drained until its existing NAS/OrbStack prerequisites are healthy.
+Expected: rollout exports the prebuilt immutable image already pinned in the merged NodeProfile; health reports Worker `1.267.98`, Runner `sha256:e0797f5a440d61827d1ea86afee629e6f5a687da6f958608671ba9c873e5e94a`, and all admission checks true. Verify Brain `/api/brain/health` reports `1.267.196`. Keep Xian drained until its existing NAS/OrbStack prerequisites are healthy.
 
 - [ ] **Step 6: Launch one real Kernel r12 with tick off**
 

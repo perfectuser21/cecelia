@@ -1,6 +1,24 @@
 # Brain 模块定义
 
-**版本**: 1.267.195
+**版本**: 1.267.196
+
+## Kernel r11 control-plane convergence
+
+- GAN 的 `noPushStreak` 与 `noVerdictStreak` 只消费具备
+  `spawn intent -> effect:attempt_launched -> identity-bound terminal callback`
+  完整证据链的 Attempt；admission-blocked、未启动与未 callback 的 intent 不再冒充
+  产品无进展并提前杀死 run。
+- 生产 preflight 拆分预算：Brain snapshot/provider HTTP 保持 5 秒，Fleet Worker
+  admission 使用 20 秒，外层 capability probe 使用 25 秒；具体、限长的 admission
+  reason 随脱敏 evidence 留痕，仍然 fail closed。
+- Reviewer/Evaluator/Judge/Reporter 的结构化结果写入既有 per-Attempt runtime mount，
+  Runner evidence bridge 使用注入的 `BRAIN_RESULT_FILE`；工作树权限不放宽，task/attempt
+  身份不匹配的证据继续拒收。
+- Brain 版本为 `1.267.196`，Fleet Worker 为 `1.267.98`，三机 pinned Runner 为
+  `sha256:e0797f5a440d61827d1ea86afee629e6f5a687da6f958608671ba9c873e5e94a`。
+- 回退到 Brain `1.267.195`、Worker `1.267.97` 与 Runner
+  `sha256:eb4928940827d5c50a86676022309a34a4012d51f17ddd0f951a5b5c8f644009`
+  会恢复 r11 的假 streak、5/6 秒冷 admission 误拒和只读结果丢失；回退前保持节点 drained。
 
 ## Kernel frozen guard process-scoped hook injection
 
