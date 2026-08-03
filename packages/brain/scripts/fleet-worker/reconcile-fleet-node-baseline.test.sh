@@ -21,6 +21,8 @@ mkdir -p "$fake_bin" "$state_root" "$system_root"
 mutation_log="$state_root/mutations.log"
 service_state="$state_root/service-user"
 runner_state="$state_root/runner"
+postgres_content_state="$state_root/postgres-content"
+postgres_reference_state="$state_root/postgres-reference"
 touch "$mutation_log"
 
 write_executable() {
@@ -252,6 +254,10 @@ write_executable "$fake_bin/codesign" \
 
 write_executable "$fake_bin/docker" \
   '#!/usr/bin/env bash' \
+  'runner_digest="sha256:e8979dcf7791b1fd0754276d39fd58adf9c8fc1148323a3d0d3b8abe29ea351f"' \
+  'postgres_digest="sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777"' \
+  'postgres_reference="postgres:16-alpine@$postgres_digest"' \
+  'postgres_tag="postgres:16-alpine"' \
   'if [[ "${1:-} ${2:-}" == "info --format" ]]; then' \
   '  socket="${FLEET_TEST_SOCKET_ROOT:?}/Users/fleet-admin/.orbstack/run/docker.sock"' \
   '  mkdir -p "$(dirname "$socket")"' \
@@ -261,8 +267,23 @@ write_executable "$fake_bin/docker" \
   'fi' \
   'case "${1:-} ${2:-}" in' \
   '  "info --format") [[ "${FLEET_TEST_DOCKER_FAIL_INFO:-0}" != 1 ]]; exit $? ;;' \
-  '  "load --input") touch "${FLEET_TEST_RUNNER_STATE:?}"; printf "docker load\n" >> "${FLEET_TEST_MUTATION_LOG:?}"; exit 0 ;;' \
-  '  "image inspect") [[ -f "${FLEET_TEST_RUNNER_STATE:?}" ]]; exit $? ;;' \
+  '  "load --input") touch "${FLEET_TEST_RUNNER_STATE:?}" "${FLEET_TEST_POSTGRES_CONTENT_STATE:?}"; printf "docker load\n" >> "${FLEET_TEST_MUTATION_LOG:?}"; exit 0 ;;' \
+  '  "image inspect")' \
+  '    case "${3:-}" in' \
+  '      "$runner_digest") [[ -f "${FLEET_TEST_RUNNER_STATE:?}" ]] ;;' \
+  '      "$postgres_digest") [[ -f "${FLEET_TEST_POSTGRES_CONTENT_STATE:?}" ]] ;;' \
+  '      "$postgres_reference") [[ -f "${FLEET_TEST_POSTGRES_REFERENCE_STATE:?}" ]] ;;' \
+  '      *) exit 1 ;;' \
+  '    esac' \
+  '    exit $?' \
+  '    ;;' \
+  '  "image tag")' \
+  '    [[ "${3:-}" == "$postgres_digest" && "${4:-}" == "$postgres_tag" ]] || exit 1' \
+  '    [[ -f "${FLEET_TEST_POSTGRES_CONTENT_STATE:?}" ]] || exit 1' \
+  '    touch "${FLEET_TEST_POSTGRES_REFERENCE_STATE:?}"' \
+  '    printf "docker tag %s %s\n" "$postgres_digest" "$postgres_tag" >> "${FLEET_TEST_MUTATION_LOG:?}"' \
+  '    exit 0' \
+  '    ;;' \
   'esac' \
   'exit 1'
 
@@ -342,6 +363,8 @@ run_reconciler() {
   FLEET_TEST_MUTATION_LOG="$mutation_log" \
   FLEET_TEST_SERVICE_STATE="$service_state" \
   FLEET_TEST_RUNNER_STATE="$runner_state" \
+  FLEET_TEST_POSTGRES_CONTENT_STATE="$postgres_content_state" \
+  FLEET_TEST_POSTGRES_REFERENCE_STATE="$postgres_reference_state" \
   FLEET_TEST_ORB_STATE="$state_root/orbstack-running" \
   FLEET_TEST_UUID_STATE="$state_root/uuid-count" \
   FLEET_TEST_FAKE_NODE="$fake_bin/toolchain-node" \
@@ -443,7 +466,7 @@ grep -Fq 'docker_unavailable' "$test_root/rollback.out" \
   || fail "Docker failure was not explicit"
 [[ ! -e "$rollback_root/Applications/OrbStack.app" ]] \
   || fail "failed first OrbStack install was not rolled back"
-/bin/rm -f "$service_state" "$runner_state"
+/bin/rm -f "$service_state" "$runner_state" "$postgres_content_state" "$postgres_reference_state"
 
 : > "$mutation_log"
 /bin/rm -f "$state_root/orbstack-running"
@@ -466,7 +489,7 @@ grep -Eq "launchctl asuser 501 $fake_bin/sudo -H -u fleet-admin .*/orb start" \
 grep -Eq "launchctl asuser 501 $fake_bin/sudo -H -u fleet-admin .*/orb status" \
   "$mutation_log" \
   || fail "OrbStack readiness was not checked in the rollout user's launchd domain"
-/bin/rm -f "$service_state" "$runner_state" "$state_root/orbstack-running"
+/bin/rm -f "$service_state" "$runner_state" "$postgres_content_state" "$postgres_reference_state" "$state_root/orbstack-running"
 
 socket_conflict_root="$test_root/socket-conflict-system"
 mkdir -p "$socket_conflict_root/var/run"
@@ -478,7 +501,7 @@ if FLEET_TEST_DOCKER_COMMAND="$test_root/missing-docker" \
 fi
 grep -Fq 'docker_socket_link_conflict' "$test_root/socket-conflict.out" \
   || fail "Docker socket link conflict lacked a bounded refusal"
-/bin/rm -f "$service_state" "$runner_state"
+/bin/rm -f "$service_state" "$runner_state" "$postgres_content_state" "$postgres_reference_state"
 
 : > "$mutation_log"
 /bin/rm -f "$state_root/uuid-count"
@@ -512,6 +535,8 @@ grep -Fq 'ditto orbstack' "$mutation_log" \
   || fail "pinned OrbStack app was not installed"
 grep -Fq 'docker load' "$mutation_log" \
   || fail "pinned Runner archive was not loaded"
+grep -Fq 'docker tag sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777 postgres:16-alpine' "$mutation_log" \
+  || fail "offline PostgreSQL content did not recover its pinned repository tag"
 grep -Fq 'installer xian-mac-m1 --apply home=/Users/fleet-admin' "$mutation_log" \
   || fail "Fleet Worker installer was not invoked"
 [[ -x "$system_root/usr/local/libexec/cecelia/toolchain/bin/node" ]] \
@@ -560,7 +585,7 @@ install_mutations_after="$(
 [[ "$install_mutations_after" -eq "$install_mutations_before" ]] \
   || fail "repeat apply reinstalled an exact baseline"
 
-/bin/rm -f "$service_state" "$runner_state" "$state_root/uuid-count"
+/bin/rm -f "$service_state" "$runner_state" "$postgres_content_state" "$postgres_reference_state" "$state_root/uuid-count"
 : > "$mutation_log"
 partial_root="$test_root/partial-identity-system"
 FLEET_TEST_PARTIAL_GROUP=1 \
