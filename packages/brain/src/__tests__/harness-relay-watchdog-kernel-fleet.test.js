@@ -414,7 +414,10 @@ describe('kernel fleet watchdog recovery', () => {
     const store = resumeStore();
     const launcher = {
       inspect: vi.fn(async () => ({ status: 'running' })),
-      cancel: vi.fn(async () => ({ status: 'cancelled' })),
+      cancel: vi.fn(async ({ attempt }) => ({
+        status: 'cleaned',
+        attempt_id: attempt.id,
+      })),
       launch: vi.fn(async () => ({
         jobId: 'legacy-child-job',
         actualMachineId: 'xian-mac-m4',
@@ -449,7 +452,10 @@ describe('kernel fleet watchdog recovery', () => {
     const store = resumeStore();
     const launcher = {
       inspect: vi.fn(async () => ({ status: 'running' })),
-      cancel: vi.fn(async () => ({ status: 'cancelled' })),
+      cancel: vi.fn(async ({ attempt }) => ({
+        status: 'cleaned',
+        attempt_id: attempt.id,
+      })),
       prepare: vi.fn(async () => ({
         jobId: 'child-job',
         actualMachineId: 'wrong-machine',
@@ -466,8 +472,130 @@ describe('kernel fleet watchdog recovery', () => {
     }))).resolves.toMatchObject({
       ok: false,
       failure_code: 'resume_launch_failed',
-      cleanup_status: 'cancelled',
+      cleanup_status: 'cleaned',
       error: 'resume_prepare_receipt_invalid:actual_machine',
+    });
+
+    expect(store.recordLaunchReceipt).not.toHaveBeenCalled();
+    expect(launcher.start).not.toHaveBeenCalled();
+    expect(launcher.cancel).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['cancelled', { status: 'cancelled', attempt_id: PARENT_ID }],
+    ['cleaned without attempt_id', { status: 'cleaned' }],
+    ['cleaned for another attempt', { status: 'cleaned', attempt_id: CHILD_ID }],
+  ])('fails closed for Fleet parent cleanup ack %s', async (_label, parentCleanup) => {
+    const store = resumeStore();
+    const launcher = {
+      inspect: vi.fn(async () => ({
+        status: 'running',
+        attempt_id: PARENT_ID,
+        container_id: 'parent-job',
+      })),
+      cancel: vi.fn(async () => parentCleanup),
+      prepare: vi.fn(),
+      start: vi.fn(),
+    };
+
+    await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
+      attemptStore: store,
+      launcher,
+    }))).resolves.toMatchObject({
+      ok: false,
+      failure_code: 'resume_parent_cleanup_unconfirmed',
+      cleanup_status: parentCleanup.status,
+      recovery_alert: expect.objectContaining({
+        attemptId: PARENT_ID,
+        lifecycleCode: 'resume_parent_cleanup_unconfirmed',
+      }),
+    });
+
+    expect(launcher.prepare).not.toHaveBeenCalled();
+    expect(launcher.start).not.toHaveBeenCalled();
+    expect(store.recordLaunchReceipt).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['prepare', { status: 'cancelled', attempt_id: CHILD_ID }, 'resume_child_cleanup_unconfirmed'],
+    ['receipt', { status: 'cleaned' }, 'resume_receipt_persist_failed'],
+    ['start', { status: 'cleaned', attempt_id: PARENT_ID }, 'resume_child_cleanup_unconfirmed'],
+  ])(
+    'fails closed when %s failure receives a non-exact child cleanup ack',
+    async (failurePhase, childCleanup, expectedFailureCode) => {
+      const store = resumeStore();
+      const prepare = vi.fn(async () => ({
+        jobId: 'child-job',
+        actualMachineId: 'xian-mac-m4',
+        executionTransport: 'fleet-worker',
+        remoteJobId: 'child-job',
+        attestationStatus: 'verified',
+      }));
+      const start = vi.fn(async () => ({ status: 'running', attempt_id: CHILD_ID }));
+      if (failurePhase === 'prepare') {
+        prepare.mockRejectedValueOnce(new Error('prepare failed'));
+      }
+      if (failurePhase === 'receipt') {
+        store.recordLaunchReceipt.mockResolvedValueOnce(null);
+      }
+      if (failurePhase === 'start') {
+        start.mockRejectedValueOnce(new Error('start failed'));
+      }
+      const launcher = {
+        inspect: vi.fn(async () => ({ status: 'running', attempt_id: PARENT_ID })),
+        cancel: vi.fn()
+          .mockResolvedValueOnce({ status: 'cleaned', attempt_id: PARENT_ID })
+          .mockResolvedValueOnce(childCleanup),
+        prepare,
+        start,
+      };
+
+      await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
+        attemptStore: store,
+        launcher,
+      }))).resolves.toMatchObject({
+        ok: false,
+        failure_code: expectedFailureCode,
+        cleanup_status: childCleanup.status,
+        recovery_alert: expect.objectContaining({
+          attemptId: CHILD_ID,
+        }),
+      });
+
+      expect(launcher.cancel).toHaveBeenCalledTimes(2);
+      expect(start).toHaveBeenCalledTimes(failurePhase === 'start' ? 1 : 0);
+    },
+  );
+
+  it.each([
+    ['whitespace', '   '],
+    ['CRLF', 'child-job\r\n'],
+  ])('rejects %s prepared receipt job IDs before persistence or start', async (_label, jobId) => {
+    const store = resumeStore();
+    const launcher = {
+      inspect: vi.fn(async () => ({ status: 'running', attempt_id: PARENT_ID })),
+      cancel: vi.fn(async ({ attempt }) => ({
+        status: 'cleaned',
+        attempt_id: attempt.id,
+      })),
+      prepare: vi.fn(async () => ({
+        jobId,
+        actualMachineId: 'xian-mac-m4',
+        executionTransport: 'fleet-worker',
+        remoteJobId: jobId,
+        attestationStatus: 'verified',
+      })),
+      start: vi.fn(),
+    };
+
+    await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
+      attemptStore: store,
+      launcher,
+    }))).resolves.toMatchObject({
+      ok: false,
+      failure_code: 'resume_launch_failed',
+      cleanup_status: 'cleaned',
+      error: 'resume_prepare_receipt_invalid:job_id',
     });
 
     expect(store.recordLaunchReceipt).not.toHaveBeenCalled();

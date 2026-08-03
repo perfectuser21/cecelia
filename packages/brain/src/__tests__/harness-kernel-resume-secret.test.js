@@ -57,7 +57,10 @@ function makeAttemptContext() {
 function makeDeps(overrides = {}) {
   const launcher = {
     inspect: vi.fn(async () => ({ status: 'unsupported' })),
-    cancel: vi.fn(async () => ({ status: 'cancelled' })),
+    cancel: vi.fn(async ({ attempt }) => ({
+      status: 'cleaned',
+      attempt_id: attempt.id,
+    })),
     prepare: vi.fn(async () => ({
       jobId: 'child-job',
       actualMachineId: 'us-mac-m4',
