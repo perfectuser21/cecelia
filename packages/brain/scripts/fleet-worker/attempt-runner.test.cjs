@@ -332,6 +332,41 @@ describe('Fleet Worker Attempt runner', () => {
       .not.toMatch(/sensitive-access-token|github_pat_attempt_scoped_test_token/);
   });
 
+  it.each([
+    ['owner', { owner: 'stale-dispatcher', generation: 0 }],
+    ['generation', { owner: 'dispatcher-1', generation: 1 }],
+  ])('rejects inspect with a stale lease %s', async (_field, lease) => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+
+    await expect(runner.inspect(ATTEMPT_ID, lease)).rejects.toThrow(
+      'attempt_lease_conflict',
+    );
+    expect(deps.docker.inspect).not.toHaveBeenCalled();
+  });
+
+  it('returns exact missing only after validating the inspect lease shape', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    await expect(runner.inspect(OTHER_ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toEqual({
+      status: 'missing',
+      attempt_id: OTHER_ATTEMPT_ID,
+    });
+    await expect(runner.inspect(OTHER_ATTEMPT_ID, {
+      owner: '',
+      generation: 0,
+    })).rejects.toThrow('attempt_lease_owner_invalid');
+    await expect(runner.inspect(OTHER_ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: -1,
+    })).rejects.toThrow('attempt_lease_generation_invalid');
+  });
+
   it('returns the original receipt for an exact duplicate prepare', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);

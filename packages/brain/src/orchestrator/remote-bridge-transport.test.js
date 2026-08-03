@@ -120,12 +120,6 @@ function createTransport(overrides = {}) {
 
 function operationInput(operation) {
   if (operation === 'prepare') return prepareInput();
-  if (operation === 'inspect') {
-    return {
-      attempt: { id: 'attempt-1' },
-      target: { machine: MACHINE },
-    };
-  }
   return {
     attempt: {
       id: 'attempt-1',
@@ -925,7 +919,7 @@ describe('remote Bridge redirect policy', () => {
 });
 
 describe('remote Bridge inspect', () => {
-  it('gets the allowlisted attempt URL with bearer authentication and returns JSON', async () => {
+  it('posts only the lease identity to the allowlisted inspect action', async () => {
     const responseBody = {
       status: 'running',
       attempt_id: 'attempt-1',
@@ -935,18 +929,56 @@ describe('remote Bridge inspect', () => {
     const transport = createTransport({ fetchFn });
 
     await expect(transport.inspect({
-      attempt: { id: 'attempt-1' },
+      attempt: {
+        id: 'attempt-1',
+        lease_owner: 'dispatcher-1',
+        lease_generation: 3,
+        callbackSecret: CALLBACK_TOKEN,
+        opaque: 'must-not-be-sent',
+      },
       target: { machine: MACHINE },
     })).resolves.toEqual(responseBody);
     expect(fetchFn).toHaveBeenCalledWith(
-      `${BRIDGE_URL}/harness/attempts/attempt-1`,
+      `${BRIDGE_URL}/harness/attempts/attempt-1/inspect`,
       {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${SHARED_SECRET}` },
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${SHARED_SECRET}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          lease_owner: 'dispatcher-1',
+          lease_generation: 3,
+        }),
         signal: expect.any(AbortSignal),
         redirect: 'error',
       },
     );
+    expect(fetchFn.mock.calls[0][1].body).not.toContain(CALLBACK_TOKEN);
+    expect(fetchFn.mock.calls[0][1].body).not.toContain('opaque');
+  });
+
+  it.each([
+    ['Attempt identity', { id: '' }, 'remote_bridge_invalid_attempt_id'],
+    [
+      'lease owner',
+      { id: 'attempt-1', lease_owner: '' },
+      'remote_bridge_invalid_lease_owner',
+    ],
+    [
+      'lease generation',
+      { id: 'attempt-1', lease_owner: 'dispatcher-1', lease_generation: -1 },
+      'remote_bridge_invalid_lease_generation',
+    ],
+  ])('rejects invalid inspect %s before transport', async (_field, attempt, errorCode) => {
+    const fetchFn = vi.fn();
+    const transport = createTransport({ fetchFn });
+
+    await expect(transport.inspect({
+      attempt,
+      target: { machine: MACHINE },
+    })).rejects.toThrow(errorCode);
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it('treats a generic HTTP 404 as unavailable, never as exact missing evidence', async () => {
@@ -954,7 +986,11 @@ describe('remote Bridge inspect', () => {
     const transport = createTransport({ fetchFn });
 
     await expect(transport.inspect({
-      attempt: { id: 'attempt-1' },
+      attempt: {
+        id: 'attempt-1',
+        lease_owner: 'dispatcher-1',
+        lease_generation: 3,
+      },
       target: { machine: MACHINE },
     })).rejects.toThrow('remote_bridge_inspect_http_404');
   });
@@ -965,7 +1001,11 @@ describe('remote Bridge inspect', () => {
     const transport = createTransport({ fetchFn });
 
     await expect(transport.inspect({
-      attempt: { id: 'attempt-1' },
+      attempt: {
+        id: 'attempt-1',
+        lease_owner: 'dispatcher-1',
+        lease_generation: 3,
+      },
       target: { machine: MACHINE },
     })).resolves.toEqual(responseBody);
   });
@@ -977,7 +1017,11 @@ describe('remote Bridge inspect', () => {
     const transport = createTransport({ fetchFn });
 
     await expect(transport.inspect({
-      attempt: { id: 'attempt-1' },
+      attempt: {
+        id: 'attempt-1',
+        lease_owner: 'dispatcher-1',
+        lease_generation: 3,
+      },
       target: { machine: MACHINE },
     })).resolves.toEqual(expected);
   });
@@ -988,7 +1032,11 @@ describe('remote Bridge inspect', () => {
     });
 
     await expect(transport.inspect({
-      attempt: { id: 'attempt-1' },
+      attempt: {
+        id: 'attempt-1',
+        lease_owner: 'dispatcher-1',
+        lease_generation: 3,
+      },
       target: { machine: MACHINE },
     })).rejects.toThrow('remote_bridge_inspect_http_503');
   });
@@ -1017,7 +1065,11 @@ describe('remote Bridge inspect', () => {
     });
 
     await expect(transport.inspect({
-      attempt: { id: 'attempt-1' },
+      attempt: {
+        id: 'attempt-1',
+        lease_owner: 'dispatcher-1',
+        lease_generation: 3,
+      },
       target: { machine: MACHINE },
     })).rejects.toThrow(errorCode);
   });
@@ -1034,7 +1086,11 @@ describe('remote Bridge inspect', () => {
     });
 
     const inspect = transport.inspect({
-      attempt: { id: 'attempt-1' },
+      attempt: {
+        id: 'attempt-1',
+        lease_owner: 'dispatcher-1',
+        lease_generation: 3,
+      },
       target: { machine: MACHINE },
     });
 

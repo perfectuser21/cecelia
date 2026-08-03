@@ -1012,7 +1012,7 @@ describe('Fleet Worker Attempt API', () => {
     server.close();
   });
 
-  it('serves authenticated inspect, cancel, and terminal lifecycle routes', async () => {
+  it('serves lease-authenticated inspect, cancel, and terminal lifecycle routes', async () => {
     const { createFleetWorkerServer } = await loadServerContract();
     const attemptRunner = runnerDouble();
     const server = createFleetWorkerServer({
@@ -1023,9 +1023,15 @@ describe('Fleet Worker Attempt API', () => {
 
     const inspected = await request(
       server,
-      'GET',
-      `/harness/attempts/${attemptId}`,
-      { headers: auth },
+      'POST',
+      `/harness/attempts/${attemptId}/inspect`,
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          lease_owner: 'dispatcher-1',
+          lease_generation: 0,
+        }),
+      },
     );
     const cancelled = await request(
       server,
@@ -1061,7 +1067,10 @@ describe('Fleet Worker Attempt API', () => {
       actual_machine_id: 'us-mac-m4',
       attestation: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
-    expect(attemptRunner.inspect).toHaveBeenCalledWith(attemptId);
+    expect(attemptRunner.inspect).toHaveBeenCalledWith(attemptId, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    });
     expect(attemptRunner.cancel).toHaveBeenCalledWith(attemptId, {
       owner: 'dispatcher-1',
       generation: 0,
@@ -1070,6 +1079,60 @@ describe('Fleet Worker Attempt API', () => {
       owner: 'dispatcher-1',
       generation: 0,
     });
+    server.close();
+  });
+
+  it.each([
+    ['owner', { lease_owner: 'stale-dispatcher', lease_generation: 0 }],
+    ['generation', { lease_owner: 'dispatcher-1', lease_generation: 1 }],
+  ])('returns 409 when inspect has a stale lease %s', async (_field, body) => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    attemptRunner.inspect.mockImplementationOnce(async (_attemptId, lease) => {
+      if (lease.owner !== 'dispatcher-1' || lease.generation !== 0) {
+        throw new Error('attempt_lease_conflict');
+      }
+      return { attempt_id: attemptId, status: 'running' };
+    });
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(
+      server,
+      'POST',
+      `/harness/attempts/${attemptId}/inspect`,
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    );
+
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body)).toEqual({ error: 'attempt_lease_conflict' });
+    server.close();
+  });
+
+  it('rejects the legacy GET inspect route without invoking the runner', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(
+      server,
+      'GET',
+      `/harness/attempts/${attemptId}`,
+      { headers: auth },
+    );
+
+    expect(response.statusCode).toBe(404);
+    expect(attemptRunner.inspect).not.toHaveBeenCalled();
     server.close();
   });
 
