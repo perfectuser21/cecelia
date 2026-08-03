@@ -4,6 +4,7 @@ import { signMachineAttestation } from './machine-attestation.js';
 import {
   createProductionExecutionTransport,
   DEFAULT_LOCAL_MACHINE_ID,
+  DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS,
 } from './production-transport.js';
 
 const CALLBACK_URL = 'http://brain.internal:5221';
@@ -117,6 +118,31 @@ function acceptedResponse(machine) {
 }
 
 describe('production execution transport', () => {
+  it('keeps a normal 15-second Fleet prepare inside the production control-plane budget', async () => {
+    expect(DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS).toBe(60_000);
+    vi.useFakeTimers();
+    try {
+      const fetchFn = vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 15_000));
+        return acceptedResponse(DEFAULT_LOCAL_MACHINE_ID);
+      });
+      const transport = createProductionExecutionTransport({
+        env: configuredEnv(),
+        fetchFn,
+        credentialBroker: { issue: vi.fn(async () => ENVELOPE) },
+        githubCredentialBroker: { issue: vi.fn(async () => GITHUB_ENVELOPE) },
+      });
+
+      const outcome = transport.prepare(prepareInput(DEFAULT_LOCAL_MACHINE_ID))
+        .then(() => 'resolved', (error) => error.message);
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      await expect(outcome).resolves.toBe('resolved');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('starts an exact prepared Attempt without requiring prepare-only configuration', async () => {
     const fetchFn = vi.fn(async () => ({
       ok: true,

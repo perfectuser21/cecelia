@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.267.193
+**Brain 版本**: 1.267.194
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.194 — Kernel Fleet remote prepare budget
+
+- 生产 Fleet Worker 控制面请求预算从隐式 10 秒提升到 60 秒，覆盖已预热 mirror 的
+  per-Attempt workspace clone 与受控冷 container create；模型执行与业务 deadline 不变。
+- 通用 remote bridge 仍保留 10 秒默认值，生产组装显式选择 60 秒，测试与调用方覆盖仍可
+  使用更短 fail-closed 上限。
+- 生产真实业务证据为 US Planner 与 Xian Proposer 均在 20 秒后以
+  `remote_bridge_prepare_timeout` 收口，但节点 admission、Runner digest 与 callback 均健康。
+- 回退到 Brain `1.267.193` 会恢复该误判；回退前保持 Fleet 节点 drained。
 
 ## Brain 1.267.193 — Fleet disposable-container timeout budget
 
