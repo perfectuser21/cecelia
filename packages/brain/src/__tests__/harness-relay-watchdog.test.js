@@ -331,6 +331,73 @@ describe('resumeStalledRelayRuns', () => {
     );
   });
 
+  it('default recovery alert fully sanitizes persistence failure evidence', async () => {
+    const rawSecret = 'raw-default-alert-secret';
+    const fileUrl = 'file:///Users/administrator/Private%20Project/worktree/db.js';
+    const spacedPath = '/Users/administrator/Private Project/worktree/fallback.js';
+    const persistenceDiagnostic = (
+      `db adapter failed at ${fileUrl}:27; fallback at ${spacedPath}:28; `
+      + `HARNESS_CALLBACK_TOKEN=${rawSecret}; detail=${'y'.repeat(5_000)}`
+    );
+    const latestAttempt = {
+      id: '22222222-2222-4222-8222-222222222222',
+      run_id: RUN_ID,
+      hop: 1,
+      phase: 'evaluate',
+      role: 'evaluator',
+      provider: 'codex',
+      account_id: 'team1',
+      machine_id: 'us-mac-m4',
+      requested_machine_id: 'us-mac-m4',
+      execution_transport: 'remote-bridge',
+      provider_session_id: 'thread-persistence-alert',
+      task_bundle: {},
+      callback_secret_hash: 'old-hash',
+      lease_owner: 'dispatcher-parent',
+      lease_generation: 0,
+      logical_cycle_id: `intent:${RUN_ID}:1`,
+      workstream_key: 'ws1',
+      status: 'running',
+      lease_expires_at: new Date(Date.now() - 60_000).toISOString(),
+    };
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      latestAttempt,
+    });
+    const queryImpl = deps.pool.query.getMockImplementation();
+    deps.pool.query.mockImplementation(async (sql, params) => {
+      if (/UPDATE harness_attempts\s+SET status = \$2/.test(String(sql))) {
+        throw new Error(persistenceDiagnostic);
+      }
+      return queryImpl(sql, params);
+    });
+    deps.resumeAttempt = vi.fn(async () => ({
+      ok: false,
+      failure_code: 'resume_launch_failed',
+    }));
+    deps.launchKernel = vi.fn();
+
+    const result = await resumeStalledRelayRuns(deps);
+
+    expect(result.resumed).toBe(0);
+    expect(mockRaise).toHaveBeenCalledTimes(2);
+    for (const [, alertCode, message] of mockRaise.mock.calls) {
+      expect(alertCode).toBe('kernel_failure_persistence_failed');
+      expect(message).toContain(
+        'persistence=db adapter failed at [PATH]:27; fallback at [PATH]:28; '
+        + 'HARNESS_CALLBACK_TOKEN=[REDACTED]',
+      );
+      expect(message.length).toBeLessThanOrEqual(2_150);
+      expect(message).not.toContain(fileUrl);
+      expect(message).not.toContain(spacedPath);
+      expect(message).not.toContain('file://');
+      expect(message).not.toContain('Private%20Project');
+      expect(message).not.toContain('Private Project');
+      expect(message).not.toContain(rawSecret);
+    }
+  });
+
   it('Fleet watchdog delegates an expired provider session to the unified controller without remote cleanup or reclaim', async () => {
     const latestAttempt = {
       id: '22222222-2222-4222-8222-222222222222',

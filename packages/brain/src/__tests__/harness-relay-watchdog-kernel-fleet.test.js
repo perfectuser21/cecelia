@@ -1732,6 +1732,71 @@ describe('kernel fleet watchdog recovery', () => {
     }));
   });
 
+  it('sanitizes persistence failure evidence before aggregate and injected alert delivery', async () => {
+    const original = parentAttempt();
+    const reclaimed = {
+      ...original,
+      lease_owner: 'watchdog:test',
+      lease_generation: 4,
+    };
+    const rawSecret = 'raw-persistence-secret';
+    const fileUrl = 'file:///Users/administrator/Private%20Project/worktree/db.js';
+    const spacedPath = '/Users/administrator/Private Project/worktree/fallback.js';
+    const persistenceDiagnostic = (
+      `db adapter failed at ${fileUrl}:17; fallback at ${spacedPath}:18; `
+      + `HARNESS_CALLBACK_TOKEN=${rawSecret}; detail=${'x'.repeat(5_000)}`
+    );
+    const store = {
+      getById: vi.fn(async () => original),
+      reclaim: vi.fn(async () => reclaimed),
+      rotateCallbackSecret: vi.fn(async () => reclaimed),
+      createAttempt: vi.fn(async () => ({ ...childAttempt(), status: 'queued', lease_owner: null })),
+      markStarting: vi.fn(async () => childAttempt()),
+      fail: vi.fn(async (attemptId) => {
+        if (attemptId === CHILD_ID) throw new Error(persistenceDiagnostic);
+        return { attempt: {}, deduped: false };
+      }),
+    };
+    const onRecoveryAlert = vi.fn(async () => {});
+
+    let thrown;
+    try {
+      await reconcileExpiredKernelAttempt({
+        db: { query: vi.fn() },
+        attemptStore: store,
+        attemptId: PARENT_ID,
+        leaseOwner: 'watchdog:test',
+        resumeAttempt: vi.fn(async () => ({ ok: false, failure_code: 'resume_launch_failed' })),
+        reservedChildHop: 8,
+        randomUUIDFn: () => CHILD_ID,
+        onRecoveryAlert,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect(onRecoveryAlert).toHaveBeenCalledOnce();
+    const alert = onRecoveryAlert.mock.calls[0][0];
+    const sanitizedPersistence = alert.persistenceError.message;
+    expect(sanitizedPersistence).toContain(
+      'db adapter failed at [PATH]:17; fallback at [PATH]:18; '
+      + 'HARNESS_CALLBACK_TOKEN=[REDACTED]',
+    );
+    expect(sanitizedPersistence.length).toBeLessThanOrEqual(2_000);
+    expect(thrown.message).toContain(
+      `failure_persistence_failed: ${sanitizedPersistence}`,
+    );
+    for (const output of [sanitizedPersistence, thrown.message]) {
+      expect(output).not.toContain(fileUrl);
+      expect(output).not.toContain(spacedPath);
+      expect(output).not.toContain('file://');
+      expect(output).not.toContain('Private%20Project');
+      expect(output).not.toContain('Private Project');
+      expect(output).not.toContain(rawSecret);
+    }
+  });
+
   it('throws the shared aggregate when exact-failing the reclaimed parent is rejected', async () => {
     const original = parentAttempt();
     const reclaimed = {
