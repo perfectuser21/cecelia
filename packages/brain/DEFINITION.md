@@ -1,6 +1,23 @@
 # Brain 模块定义
 
-**版本**: 1.267.183
+**版本**: 1.267.186
+
+## Kernel Fleet two-phase launch and expired-attempt convergence
+
+- Fleet Worker `prepare` 只创建 stopped container 与 Attempt-owned 资源；Brain 必须先
+  验证并持久化 exact attested receipt，之后才可调用 `start`。receipt 或 start 失败按原
+  lease 精确清理，Runner 不再抢在控制面身份落库前 callback。
+- prepare/start/inspect/cancel/terminal 回执全部校验 exact `attempt_id` 与有限状态集合；
+  错配、畸形、未知状态、quarantine 或未确认清理均 fail closed。Worker durable state 不
+  保存 Provider/GitHub 原始凭据，重启后缺少一跳凭据的 prepared Attempt 必须清理替换。
+- normal derive 前先检查过期 Fleet Attempt。已验签存活 Worker 保持原 owner/generation
+  续租；未验签存活 Worker 先 exact cancel 再换新 Attempt；Worker missing 时 Attempt
+  `infrastructure_blocked` 终态与 bounded decision evidence 同事务写入。父 Run 终态只
+  重新观测，lease/CAS 并发输家立即让位，本机 Docker Attempt 不进入 Fleet recovery。
+- 协议切换前停止 tick/controller 并证明 DB 无 active Attempt，再用
+  `fleet-rollout.sh all --apply --protocol-cutover` 更新三机且保持 drained；部署新 Brain、
+  完成真实两阶段协议探测后才恢复 admission。回退到 `1.267.185` 同样要求全局 drain 并
+  同时回退 Worker/Brain，禁止跨协议混跑。
 
 ## Kernel callback rejection and lease-generation fencing
 

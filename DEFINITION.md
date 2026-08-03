@@ -2,22 +2,35 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-08-02
+**最后更新**: 2026-08-03
 
 
 
-**Brain 版本**: 1.267.185
+**Brain 版本**: 1.267.186
 
 **状态**: 生产运行中
 
 ---
 
+## Brain 1.267.186 — Kernel Fleet two-phase launch and expired-attempt convergence
+
+- Fleet Runner 启动协议固定为 `prepare → attested receipt 持久化 → start`。Worker 的
+  `prepare` 只创建 stopped container 与 Attempt-owned 资源；Brain 未完成 exact receipt
+  绑定时 Runner 不得启动，receipt 写入或 start 失败均按原租约精确清理。
+- Worker 的 prepare/start/inspect/cancel/terminal 回执全部绑定 exact `attempt_id` 和有限
+  状态集合；错配、畸形、未知状态或未确认清理一律 fail closed。Worker 只持久化非密
+  生命周期元数据，Provider/GitHub 凭据仍是一跳内存/FIFO 交付，不进入状态文件。
+- 过期 Fleet Attempt 在 normal derive 前收敛：已验签存活 Worker 保持原 owner/generation
+  续租，避免只旋转数据库 generation 后拒绝真实 callback；receipt 未确认的存活 Worker
+  必须先取得 exact cleanup 再换新 Attempt；Worker `missing` 时 Attempt 失败终态与 bounded
+  decision evidence 同事务提交。父 Run 终态只重新观测，并发输家立即让位。
+- 协议升级固定使用 `fleet-rollout.sh all --apply --protocol-cutover`。切换前必须停止 tick
+  和全部 controller、以 DB 证明无 active Attempt；三台 Worker 更新后保持 drained，部署
+  Brain 并完成真实两阶段协议探测后才逐机恢复 admission。回退到 `1.267.185` 也必须先
+  全局 drain，再同时回退 Worker/Brain，禁止协议混跑窗口恢复派发。
+
 ## Brain 1.267.185 — Kernel transient infrastructure admission backoff
 
-- Fleet 两阶段协议切换固定使用
-  `fleet-rollout.sh all --apply --protocol-cutover`：模式只能作用于 `all`，且每台节点完成
-  drain + bootstrap 后保持 drained，不执行 undrain/admit。该发布门禁不改变 Brain 版本号；
-  新 Brain 完成部署与真实两阶段协议探测前不得恢复派发。
 - `infrastructure_blocked` 不再占用语义 BLOCKED 的连续两次终结栅栏。Kernel 会先把
   capability snapshot、failure class 与 fallback reason 写入 append-only 决策账本，
   再按既有 90 秒轮询周期退避并重新获取 fresh Fleet admission；整条 run 仍受 8 小时
