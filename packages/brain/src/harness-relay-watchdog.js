@@ -356,12 +356,20 @@ function validReceiptJobId(value) {
   );
 }
 
+function redactDiagnosticPaths(value) {
+  return String(value ?? 'unknown')
+    .replace(
+      /\bfile:\/\/\/[^;\r\n]*?(?=:\d+(?::\d+)?\b|[;,)"']|$)/gi,
+      '[PATH]',
+    )
+    .replace(
+      /(^|[\s("'`=])\/(?!\/)[^;\r\n]*?(?=:\d+(?::\d+)?\b|[;,)"']|$)/g,
+      '$1[PATH]',
+    );
+}
+
 function sanitizeResumeDiagnostic(value) {
-  const pathRedacted = String(value ?? 'unknown').replace(
-    /(^|[\s("'`=])\/(?:[^/\s:;,)"'`]+\/)*[^/\s:;,)"'`]+/g,
-    '$1[PATH]',
-  );
-  return sanitizeDiagnostic(pathRedacted);
+  return sanitizeDiagnostic(redactDiagnosticPaths(value));
 }
 
 function validatePreparedReceipt(receipt, target) {
@@ -490,7 +498,7 @@ function deferredRecoveryAlert({
     attemptId,
     lifecycleCode,
     cleanupStatus,
-    diagnostic,
+    diagnostic: diagnostic == null ? null : sanitizeResumeDiagnostic(diagnostic),
   };
 }
 
