@@ -26,7 +26,7 @@ const CANONICAL_BASELINE = Object.freeze({
   resources: Object.freeze({
     cpu_cores: 6,
     memory_gib: 8,
-    disk_min_free_gib: 40,
+    disk_min_free_gib: 10,
     disk_max_used_percent: 85,
     cpu_pressure_max_percent: 90,
     memory_pressure_max_percent: 90,
@@ -40,7 +40,7 @@ const CANONICAL_BASELINE = Object.freeze({
     orbstack: '2.2.1',
     worker_protocol: 'kernel-harness/v1',
     worker_contract: 'fleet-node-health/v1',
-    worker: '1.267.92',
+    worker: '1.267.93',
     runner: 'cecelia-runner/v1',
     git: '2.39.5',
     node: '25.8.0',

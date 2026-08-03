@@ -38,6 +38,7 @@ ACCESS_TEMPLATE="$SCRIPT_DIR/com.cecelia.fleet-worker-docker-access.plist.templa
 DRAIN_MARKER="${FLEET_WORKER_DRAIN_MARKER:-/var/run/cecelia/fleet-worker.drain}"
 RUNNER_DIGEST=''
 POSTGRES_IMAGE=''
+DISK_MIN_FREE_GIB=''
 WORKER_BIND_HOST=''
 BRAIN_HEALTH_URL=''
 LOCK_DIR=''
@@ -140,6 +141,20 @@ NODE
   )
 }
 
+load_disk_min_free_gib() {
+  [[ -n "$NODE_EXECUTABLE" && -x "$NODE_EXECUTABLE" ]] || return 1
+  (
+    cd "$REPO_ROOT"
+    FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
+      "$NODE_EXECUTABLE" --input-type=module <<'NODE'
+import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+
+const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
+process.stdout.write(String(profile.resources.disk_min_free_gib));
+NODE
+  )
+}
+
 load_worker_bind_host() {
   [[ -n "$NODE_EXECUTABLE" && -x "$NODE_EXECUTABLE" ]] || return 1
   (
@@ -187,13 +202,15 @@ run_default_preflight() {
   CECELIA_REPO_ROOT="$WORKTREE_ROOT" \
   CECELIA_DRAIN_MARKER="$DRAIN_MARKER" \
     "$NODE_EXECUTABLE" - \
-      "$NODE_PROBE" "$RUNNER_DIGEST" "$service_uid" "$service_gid" <<'NODE'
+      "$NODE_PROBE" "$RUNNER_DIGEST" "$service_uid" "$service_gid" \
+      "$DISK_MIN_FREE_GIB" <<'NODE'
 'use strict';
 
 const probePath = process.argv[2];
 const expectedDigest = process.argv[3];
 const serviceUid = Number(process.argv[4]);
 const serviceGid = Number(process.argv[5]);
+const diskMinFreeGib = Number(process.argv[6]);
 const { probeFleetWorkerHealth } = require(probePath);
 const GIB = 1024 ** 3;
 
@@ -213,7 +230,7 @@ probeFleetWorkerHealth().then((report) => {
   if (report?.runner?.image_digest !== expectedDigest) failures.push('runner_digest');
   if (report?.runtime_resources?.postgres?.available !== true) failures.push('postgres');
   if (!Number.isFinite(report?.resources?.disk_free_bytes)
-      || report.resources.disk_free_bytes < 40 * GIB
+      || report.resources.disk_free_bytes < diskMinFreeGib * GIB
       || report.resources.disk_used_percent > 85) failures.push('disk');
   if (!Number.isFinite(report?.resources?.memory_bytes)
       || report.resources.memory_bytes < 8 * GIB) failures.push('memory');
@@ -850,6 +867,10 @@ if ! RUNNER_DIGEST="$(load_runner_digest)"; then
   die "node_profile_unavailable"
 fi
 if ! POSTGRES_IMAGE="$(load_postgres_image)"; then
+  die "node_profile_unavailable"
+fi
+if ! DISK_MIN_FREE_GIB="$(load_disk_min_free_gib)" \
+  || [[ ! "$DISK_MIN_FREE_GIB" =~ ^[1-9][0-9]*$ ]]; then
   die "node_profile_unavailable"
 fi
 if ! WORKER_BIND_HOST="$(load_worker_bind_host)"; then

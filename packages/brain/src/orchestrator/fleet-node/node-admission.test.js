@@ -369,7 +369,7 @@ describe('pure Fleet Node base admission', () => {
     ['memory pressure above ceiling', {
       resources: { memory_pressure_percent: 100 },
     }, 'memory_pressure_above_ceiling'],
-    ['disk free below floor', { resources: { disk_free_bytes: 40 * GIB - 1 } }, 'disk_free_below_floor'],
+    ['disk free below floor', { resources: { disk_free_bytes: 10 * GIB - 1 } }, 'disk_free_below_floor'],
     ['disk use above ceiling', { resources: { disk_used_percent: 85.01 } }, 'disk_usage_above_ceiling'],
     ['non-system launchd', { launchd: { domain: 'gui/501' } }, 'launchd_not_system'],
     ['LaunchAgent used', { launchd: { kind: 'LaunchAgent' } }, 'launchd_not_daemon'],
@@ -433,7 +433,7 @@ describe('pure Fleet Node base admission', () => {
     ['wrong CPU floor', (profile) => { profile.resources.cpu_cores = 5; }],
     ['wrong memory floor', (profile) => { profile.resources.memory_gib = 7; }],
     ['wrong disk floor', (profile) => {
-      profile.resources.disk_min_free_gib = 39;
+      profile.resources.disk_min_free_gib = 9;
     }],
     ['wrong disk ceiling', (profile) => {
       profile.resources.disk_max_used_percent = 86;
