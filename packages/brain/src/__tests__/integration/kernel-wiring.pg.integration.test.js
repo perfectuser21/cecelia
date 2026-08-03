@@ -1295,8 +1295,8 @@ describe('Kernel callback convergence on real PostgreSQL', () => {
       counters: { ...resumedCounters, ganCostUsd: 0 },
     })).toEqual({
       phase: 'generate',
-      action: 'spawn:generator-fix',
-      reason: 'no_pr',
+      action: 'spawn:generator',
+      reason: 'context_answered_retry',
     });
   });
 

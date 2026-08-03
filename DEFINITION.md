@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.267.199
+**Brain 版本**: 1.267.200
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.200 — Kernel context resume action identity
+
+- 已回答的 `needs_context` checkpoint 通过 callback hop 回放请求上下文的原始 spawn action；
+  初始 Generator 不再因暂时没有 PR 被误路由成 `generator-fix`。
+- 回放只接受 Controller append-only decision log 中的已知 spawn action，且答案后的首次重试
+  intent 会消费该恢复权，后续 reconcile 不会重复派发。
+- Fleet Worker 继续使用 `1.267.100`，Runner digest 与共享 7200 秒验证时钟保持不变。
+- 回退到 Brain `1.267.199` 会恢复 `generator_fix_workspace_evidence_missing`；回退前保持
+  Kernel run 与 Fleet 节点 drained。
 
 ## Brain 1.267.199 — Kernel shared validation clock
 

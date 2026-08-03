@@ -123,6 +123,7 @@ kernel-runtime-resource-smoke.sh
 kernel-run-exact-api-smoke.sh
 kernel-run-identity-terminalization-smoke.sh
 kernel-shared-validation-clock-smoke.sh
+kernel-context-resume-action-smoke.sh
 kernel-two-phase-launch-smoke.sh
 kr1-kr2-updater-smoke.sh
 kv-route-smoke.sh
