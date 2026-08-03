@@ -350,6 +350,57 @@ git add packages/brain/src/orchestrator/expired-attempt-reconciler.js \
 git commit -m "fix(kernel): converge expired missing Fleet attempts"
 ```
 
+### Task 6A: Carry two-phase launch through watchdog same-machine resume
+
+**Files:**
+- Modify: `packages/brain/src/__tests__/harness-relay-watchdog-kernel-fleet.test.js`
+- Modify: `packages/brain/src/harness-relay-watchdog.js`
+
+- [ ] **Step 1: Replace legacy Worker fixtures with the exact two-phase contract**
+
+Require parent inspect to return exact `attempt_id + container_id`, parent cleanup to return exact
+`cleaned|already_clean + attempt_id`, and child execution to call `prepare`, persist the attested
+receipt, then call `start` with exact `running + attempt_id` acknowledgement.
+
+- [ ] **Step 2: Run the watchdog Red suite**
+
+```bash
+cd packages/brain
+npx vitest run src/__tests__/harness-relay-watchdog-kernel-fleet.test.js
+```
+
+Expected: FAIL because `resumeKernelAttempt()` still calls the removed one-phase `launcher.launch()`.
+
+- [ ] **Step 3: Implement the same receipt-before-start ordering used by Dispatcher**
+
+Call `launcher.prepare()`, persist its verified receipt through `attemptStore.recordLaunchReceipt`,
+and only then call `launcher.start()`. Receipt or start failure must use the existing exact child
+cancel and fail-closed recovery evidence; it must never run a child before receipt persistence.
+
+- [ ] **Step 4: Run watchdog and transport regressions**
+
+```bash
+cd packages/brain
+npx vitest run src/__tests__/harness-relay-watchdog-kernel-fleet.test.js \
+  src/__tests__/harness-kernel-resume-secret.test.js \
+  src/orchestrator/remote-bridge-transport.test.js \
+  src/orchestrator/production-transport.test.js \
+  src/orchestrator/__tests__/dispatcher.test.js
+```
+
+Expected: all pass; request ordering is parent inspect/cancel, child prepare, receipt commit, child
+start, with no legacy `/harness/attempts` launch call.
+
+- [ ] **Step 5: Commit Red and Green separately**
+
+```bash
+git add packages/brain/src/__tests__/harness-relay-watchdog-kernel-fleet.test.js
+git commit -m "test(kernel): require two-phase watchdog resume"
+git add packages/brain/src/harness-relay-watchdog.js \
+  packages/brain/src/__tests__/harness-relay-watchdog-kernel-fleet.test.js
+git commit -m "fix(kernel): commit watchdog resume receipt before start"
+```
+
 ### Task 7: Version, definition, and regression verification
 
 **Files:**
@@ -371,6 +422,7 @@ npx vitest run scripts/fleet-worker/attempt-runner.test.cjs \
   src/orchestrator/__tests__/dispatcher.test.js \
   src/orchestrator/expired-attempt-reconciler.test.js \
   src/orchestrator/__tests__/loop.test.js \
+  src/__tests__/harness-relay-watchdog-kernel-fleet.test.js \
   src/routes/harness-callback.test.js \
   src/orchestrator/preflight/production-wiring.test.js
 ```
