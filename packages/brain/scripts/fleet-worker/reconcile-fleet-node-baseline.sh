@@ -14,6 +14,8 @@ MACOS_MINIMUM_VERSION='15.6.1'
 MACOS_RECOMMENDED_VERSION='15.7.4'
 RUNNER_DIGEST='sha256:e8979dcf7791b1fd0754276d39fd58adf9c8fc1148323a3d0d3b8abe29ea351f'
 POSTGRES_IMAGE='postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777'
+POSTGRES_DIGEST="${POSTGRES_IMAGE##*@}"
+POSTGRES_TAG="${POSTGRES_IMAGE%@*}"
 SERVICE_UID=450
 SERVICE_GID=450
 
@@ -458,6 +460,12 @@ ensure_runner() {
   fi
   "$DOCKER" image inspect "$RUNNER_DIGEST" >/dev/null 2>&1 \
     || die "runner_digest_unavailable"
+  if ! "$DOCKER" image inspect "$POSTGRES_IMAGE" >/dev/null 2>&1; then
+    "$DOCKER" image inspect "$POSTGRES_DIGEST" >/dev/null 2>&1 \
+      || die "postgres_image_unavailable"
+    "$DOCKER" image tag "$POSTGRES_DIGEST" "$POSTGRES_TAG" >/dev/null 2>&1 \
+      || die "postgres_image_unavailable"
+  fi
   "$DOCKER" image inspect "$POSTGRES_IMAGE" >/dev/null 2>&1 \
     || die "postgres_image_unavailable"
 }

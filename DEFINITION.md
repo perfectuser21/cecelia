@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.189
+**Brain 版本**: 1.267.190
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.190 — Kernel Fleet offline PostgreSQL tag recovery
+
+- Fleet Worker `1.267.95` 在离线 `docker load` 后先验证 pinned PostgreSQL 裸 digest，
+  再恢复 `postgres:16-alpine` tag 并复验 repository-qualified digest；内容缺失仍 fail closed。
+- rollout producer 导出前保存已验证的固定 PostgreSQL tag，新 archive 不再依赖 Docker
+  恢复 `RepoTags: null` 的 qualified reference；bootstrap 不新增 registry 网络依赖。
+- 回退到 Brain `1.267.189` / Worker `1.267.94` 会恢复离线 Postgres tag 丢失故障；回退前
+  必须保持三台 Fleet 节点 drained。
 
 ## Brain 1.267.189 — Kernel Fleet bootstrap TMPDIR isolation
 

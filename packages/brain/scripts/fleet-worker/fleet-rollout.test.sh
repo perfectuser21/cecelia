@@ -328,6 +328,10 @@ grep -Eq 'fetch --no-tags .* 0000000000000000000000000000000000000001$' \
   || fail "rollout bundle did not fetch the frozen commit"
 grep -Fq 'docker save --output' "$artifact_log" \
   || fail "rollout did not export the Runner image"
+grep -Fq 'docker image tag postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777 postgres:16-alpine' "$artifact_log" \
+  || fail "rollout did not preserve the pinned PostgreSQL repository tag"
+grep -Eq 'docker save --output .* sha256:e8979dcf7791b1fd0754276d39fd58adf9c8fc1148323a3d0d3b8abe29ea351f postgres:16-alpine$' "$artifact_log" \
+  || fail "rollout archive did not save the tagged PostgreSQL reference"
 grep -Fq 'docker run --rm --entrypoint sh' "$artifact_log" \
   && fail "rollout still uses a static source-string image contract"
 grep -Fq '__cecelia_runner_credential_contract_probe__' "$artifact_log" \
