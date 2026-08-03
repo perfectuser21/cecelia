@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.267.196
+**版本**: 1.267.197
+
+## Kernel frozen-contract repository root
+
+- 生产 Brain 的 `buildRealDeps` 现在把部署注入的 `REPO_ROOT` 显式传给冻结 Git 产物读取器；
+  容器 cwd 为扁平 `/app` 时，不再把已经批准的跨仓库 PRD、contract draft 和 DoD 误判为缺失。
+- 精确批准 SHA、workspace repository allow-list、只读 fetch 与 fail-closed 语义保持不变；
+  新回归测试覆盖“镜像 cwd 非 Git 仓库、bind-mounted `REPO_ROOT` 是有效仓库”的生产拓扑。
+- 回退到 Brain `1.267.196` 会恢复 `approved_but_contract_artifacts_missing`，使真实 Kernel run
+  在 GAN 批准后、Generator 启动前错误终止。
 
 ## Kernel r11 control-plane convergence
 

@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.196
+**Brain 版本**: 1.267.197
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.197 — Kernel frozen-contract repository root
+
+- Kernel 生产依赖组装把部署注入的 `REPO_ROOT` 显式传给冻结 Git 产物读取器；Brain 容器
+  cwd 为扁平 `/app` 时，仍从 bind-mounted 部署仓读取精确批准 SHA。
+- 跨仓库 workspace allow-list、只读 fetch 和缺证据 fail-closed 语义不变；生产拓扑回归
+  覆盖“镜像 cwd 非 Git 仓库、`REPO_ROOT` 为有效仓库”。
+- 回退到 Brain `1.267.196` 会恢复 `approved_but_contract_artifacts_missing`，使 Kernel run
+  在 GAN 批准后、Generator 启动前错误终止。
 
 ## Brain 1.267.196 — Kernel r11 control-plane convergence
 

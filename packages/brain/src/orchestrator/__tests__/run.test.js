@@ -1,8 +1,12 @@
 /**
- * run.js CLI 入口单测：parseArgs 解析契约。
- * buildRealDeps/main 组装真实 pg/execSync，不在单测覆盖（--dry-run 冒烟见 scripts/smoke/orchestrator-smoke.sh）。
+ * run.js CLI 入口与生产依赖组装契约。
+ * main 的真实 pg/execSync 仍由 --dry-run 冒烟覆盖（scripts/smoke/orchestrator-smoke.sh）。
  */
 import { describe, it, expect, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { signMachineAttestation } from '../machine-attestation.js';
 import { buildRealDeps, parseArgs, runKernelMain } from '../run.js';
 
@@ -115,6 +119,40 @@ describe('runKernelMain fatal convergence', () => {
 });
 
 describe('buildRealDeps', () => {
+  it('reads frozen Git artifacts from the mounted REPO_ROOT when the Brain image cwd is not a repository', async () => {
+    const repoRoot = mkdtempSync(path.join(os.tmpdir(), 'kernel-artifact-repo-root-'));
+    const imageCwd = mkdtempSync(path.join(os.tmpdir(), 'kernel-artifact-image-cwd-'));
+    const originalCwd = process.cwd();
+    const git = (...args) => execFileSync('git', args, {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    }).trim();
+
+    try {
+      git('init');
+      git('config', 'user.email', 'test@example.com');
+      git('config', 'user.name', 'Test');
+      writeFileSync(path.join(repoRoot, 'contract-draft.md'), 'approved contract\n');
+      git('add', 'contract-draft.md');
+      git('commit', '-m', 'approved contract');
+      const approvedSha = git('rev-parse', 'HEAD');
+
+      process.chdir(imageCwd);
+      const deps = await buildRealDeps({
+        pool: { query: vi.fn() },
+        dispatch: vi.fn(),
+        env: { REPO_ROOT: repoRoot },
+      });
+
+      expect(deps.readGitFile(approvedSha, 'contract-draft.md'))
+        .toBe('approved contract\n');
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(imageCwd, { recursive: true, force: true });
+    }
+  });
+
   it('组装真实 dispatcher，不再返回 T3 NotImplemented 占位', async () => {
     const dispatch = vi.fn();
     const deps = await buildRealDeps({
