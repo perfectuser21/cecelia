@@ -77,13 +77,13 @@ WORKTREE_PATH="$WS" \
 FROZEN_BASELINE_GUARD_DIR="$CASE/guard" \
   install_frozen_baseline_guard
 
-test "$(git -C "$WS" config core.hooksPath)" = "$CASE/guard/hooks"
+test "$("${FROZEN_BASELINE_PROVIDER_ENV[@]}" git -C "$WS" config core.hooksPath)" = "$CASE/guard/hooks"
 test -x "$CASE/guard/hooks/pre-push"
 
 git -C "$WS" checkout -b cp-08022012-frozen-candidate >/dev/null 2>&1
 commit_on_top "$WS" red
 commit_on_top "$WS" green
-git -C "$WS" push origin HEAD:refs/heads/cp-08022012-frozen-candidate >/dev/null 2>&1
+"${FROZEN_BASELINE_PROVIDER_ENV[@]}" git -C "$WS" push origin HEAD:refs/heads/cp-08022012-frozen-candidate >/dev/null 2>&1
 
 HARNESS_FROZEN_BASELINE=true \
 HARNESS_WORKSPACE_START_SHA="$START_SHA" \
@@ -116,7 +116,7 @@ git -C "$WS" checkout -b cp-08022012-candidate >/dev/null 2>&1
 commit_on_top "$WS" kernel
 
 # 2a. No false positive: main having moved on is not by itself a violation.
-git -C "$WS" push origin HEAD:refs/heads/cp-08022012-candidate >/dev/null 2>&1
+"${FROZEN_BASELINE_PROVIDER_ENV[@]}" git -C "$WS" push origin HEAD:refs/heads/cp-08022012-candidate >/dev/null 2>&1
 HARNESS_FROZEN_BASELINE=true \
 HARNESS_WORKSPACE_START_SHA="$START_SHA" \
 WORKTREE_PATH="$WS" \
@@ -131,14 +131,14 @@ git -C "$WS" merge-base --is-ancestor "$START_SHA" HEAD || {
   exit 1
 }
 
-if git -C "$WS" push origin HEAD:refs/heads/cp-08022012-contaminated >/dev/null 2>&1; then
+if "${FROZEN_BASELINE_PROVIDER_ENV[@]}" git -C "$WS" push origin HEAD:refs/heads/cp-08022012-contaminated >/dev/null 2>&1; then
   echo "frozen baseline guard let a rebased-onto-latest-main candidate push" >&2
   exit 1
 fi
 
 # --no-verify skips hooks by design; the post-Provider assertion is the backstop
 # that turns the whole Attempt into a failure the callback cannot project.
-git -C "$WS" push --no-verify origin HEAD:refs/heads/cp-08022012-noverify >/dev/null 2>&1 || true
+"${FROZEN_BASELINE_PROVIDER_ENV[@]}" git -C "$WS" push --no-verify origin HEAD:refs/heads/cp-08022012-noverify >/dev/null 2>&1 || true
 if HARNESS_FROZEN_BASELINE=true \
   HARNESS_WORKSPACE_START_SHA="$START_SHA" \
   WORKTREE_PATH="$WS" \
@@ -244,5 +244,57 @@ if HARNESS_FROZEN_BASELINE=true \
   echo "read-only frozen baseline assertion accepted imported lineage" >&2
   exit 1
 fi
+
+# ── 7. Fleet mount: worktree is readable but shared Git config is immutable ──
+# OrbStack mounts the checkout and its external Git admin directory with
+# different host ownership. Git reads the worktree successfully, but attempting
+# to create admin.git/config.lock fails. Guard arming must therefore use only
+# process-scoped config and leave the persistent repository config untouched.
+CASE="$TEST_ROOT/immutable-admin"
+mkdir -p "$CASE"
+git init -b main "$CASE/source" >/dev/null
+git -C "$CASE/source" config user.name 'Frozen Baseline Test'
+git -C "$CASE/source" config user.email 'frozen@example.invalid'
+git -C "$CASE/source" config core.hooksPath /dev/null
+printf '%s\n' 'frozen baseline' > "$CASE/source/README.md"
+git -C "$CASE/source" add README.md
+git -C "$CASE/source" commit -m 'chore: frozen baseline' >/dev/null
+git clone --separate-git-dir="$CASE/admin.git" "$CASE/source" "$CASE/workspace" >/dev/null 2>&1
+WS="$CASE/workspace"
+START_SHA="$(git -C "$WS" rev-parse HEAD)"
+git --git-dir="$CASE/admin.git" config core.hooksPath /dev/null
+git --git-dir="$CASE/admin.git" config immutable.fixture preserved
+chmod -R a-w "$CASE/admin.git"
+
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=immutable.fixture
+export GIT_CONFIG_VALUE_0=inherited
+export HARNESS_FROZEN_BASELINE=true
+export HARNESS_WORKSPACE_START_SHA="$START_SHA"
+export WORKTREE_PATH="$WS"
+export FROZEN_BASELINE_GUARD_DIR="$CASE/guard"
+install_frozen_baseline_guard
+
+test "$(env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 \
+  git --git-dir="$CASE/admin.git" config --get core.hooksPath)" = '/dev/null'
+test "$(env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 \
+  git --git-dir="$CASE/admin.git" config --get immutable.fixture)" = 'preserved'
+test "${GIT_CONFIG_COUNT:-}" = '1'
+test "${GIT_CONFIG_KEY_0:-}" = 'immutable.fixture'
+test "${GIT_CONFIG_VALUE_0:-}" = 'inherited'
+test "${FROZEN_BASELINE_PROVIDER_ENV[0]:-}" = 'env'
+test "${FROZEN_BASELINE_PROVIDER_ENV[1]:-}" = 'GIT_CONFIG_COUNT=2'
+test "${FROZEN_BASELINE_PROVIDER_ENV[2]:-}" = 'GIT_CONFIG_KEY_1=core.hooksPath'
+test "${FROZEN_BASELINE_PROVIDER_ENV[3]:-}" = "GIT_CONFIG_VALUE_1=$CASE/guard/hooks"
+test "$("${FROZEN_BASELINE_PROVIDER_ENV[@]}" git -C "$WS" config --get core.hooksPath)" = "$CASE/guard/hooks"
+test -x "$CASE/guard/hooks/pre-push"
+
+# ── 8. Malformed inherited process config fails closed without stale prefix ──
+FROZEN_BASELINE_PROVIDER_ENV=(env GIT_CONFIG_COUNT=1)
+if GIT_CONFIG_COUNT=invalid install_frozen_baseline_guard; then
+  echo "frozen baseline guard accepted malformed inherited process Git config" >&2
+  exit 1
+fi
+test "${#FROZEN_BASELINE_PROVIDER_ENV[@]}" -eq 0
 
 echo "entrypoint frozen baseline guard tests passed"

@@ -1,6 +1,18 @@
 # Brain 模块定义
 
-**版本**: 1.267.194
+**版本**: 1.267.195
+
+## Kernel frozen guard process-scoped hook injection
+
+- 冻结基线的可写 Fleet role 不再向挂载 worktree 的共享 Git admin config 写入
+  `core.hooksPath`；Runner 在 Provider 进程边界追加 `GIT_CONFIG_COUNT` 配置，使所有
+  Provider 子进程使用同一个 pre-push hook，同时保留既有 process config。
+- Runner 在模型启动前校验有效 hook path；Git admin config 不可写时仍可武装，格式错误
+  或有效值不一致仍 fail closed。只读 role 与 Provider 退出后的血统断言不变。
+- 三机 pinned Runner 基线同步为
+  `sha256:eb4928940827d5c50a86676022309a34a4012d51f17ddd0f951a5b5c8f644009`。
+- 回退到 `1.267.194` 会让可读 worktree + 不可写 Git admin config 的可写冻结 role 再次在
+  Provider 启动前报 `frozen_baseline_guard_unavailable`；回退前保持节点 drained。
 
 ## Kernel Fleet remote prepare control-plane budget
 
