@@ -1143,8 +1143,10 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
 - 两阶段协议发布顺序固定为：先停止 tick 与所有 controller，并用 DB 证据确认不存在
   active Attempt；再执行 `fleet-rollout.sh all --apply --protocol-cutover`，让三台 Worker
   更新后保持 drained；随后部署新 Brain；最后由新 Brain 对每台 Worker 执行真实
-  prepare → 持久化 receipt → start 两阶段协议探测，逐机取得准入证据后才可
-  undrain/admit 并恢复 controller/tick。任一步缺少证据都保持全局停止派发。
+  prepare → 持久化 receipt → start 两阶段协议探测；取得证据的节点才可逐机恢复
+  admission。部署后的 PR #1581 真实业务验收期间 Tick 必须继续保持
+  manual-disabled/off，仅启动新建 Kernel Run 的 dedicated controller；任一步缺少证据
+  都保持全局停止派发。
   当前 `xian-mac-m1` 的 Docker 不可用，必须保持 drained，不能降低阈值。
 - 回退同样先停止 tick 与所有 controller、全局 drain 并确认 DB 不存在 active Attempt，
   再回退 Worker/Brain 协议版本；恢复前必须用回退后的 Brain/Worker 组合重新取得真实
@@ -2157,7 +2159,7 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 
 | 环境 | 端口 | DB | restart 策略 | tick |
 |------|------|----|--------------|------|
-| Production | 5221 | cecelia | unless-stopped | 启用 |
+| Production | 5221 | cecelia | unless-stopped | 默认启用；当前 two-phase rollout 与 PR #1581 真实验收期间 manual-disabled/off |
 | Staging | 5222 | cecelia_staging | unless-stopped | HARD_OFF（双保险）|
 | Develop | 5220 | cecelia_dev | unless-stopped | 默认关 |
 

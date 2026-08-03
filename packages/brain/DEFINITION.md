@@ -16,8 +16,10 @@
   重新观测，lease/CAS 并发输家立即让位，本机 Docker Attempt 不进入 Fleet recovery。
 - 协议切换前停止 tick/controller 并证明 DB 无 active Attempt，再用
   `fleet-rollout.sh all --apply --protocol-cutover` 更新三机且保持 drained；部署新 Brain、
-  完成真实两阶段协议探测后才恢复 admission。回退到 `1.267.185` 同样要求全局 drain 并
-  同时回退 Worker/Brain，禁止跨协议混跑。
+  完成真实两阶段协议探测后才恢复 admission。PR #1581 的真实业务验收必须新建 Kernel
+  Run；旧 Run `92a67d1a-2c3a-4819-9930-09d841f31bd8` 保持 terminal FAILED，Tick 继续
+  manual-disabled/off，只运行新 Run 的 dedicated controller。回退到 `1.267.185` 同样
+  要求全局 drain 并同时回退 Worker/Brain，禁止跨协议混跑。
 
 ## Kernel callback rejection and lease-generation fencing
 

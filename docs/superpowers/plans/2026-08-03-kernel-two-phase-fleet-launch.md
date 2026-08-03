@@ -433,14 +433,19 @@ protocol probe fails; do not admit a mixed-protocol Fleet.
 - [ ] **Step 5: Preserve the terminal R4 evidence and create a fresh real business run**
 
 Verify run `92a67d1a-2c3a-4819-9930-09d841f31bd8` and attempt
-`863fdc22-ad3e-4e89-a8ce-6323cf9b9917` remain terminal evidence and are never resurrected. Create a
-fresh Kernel run for the same real business objective, then start only its dedicated controller.
-Verify exactly one active controller and a new Reviewer attempt using the two-phase protocol.
+`863fdc22-ad3e-4e89-a8ce-6323cf9b9917` remain terminal FAILED evidence and are never resumed,
+recovered, or resurrected. Create a new real business Kernel run for PR #1581, then start only that
+run's dedicated controller while Tick remains off. Verify exactly one active controller and a new
+Reviewer attempt using the two-phase protocol.
 
 - [ ] **Step 6: Complete real roles**
 
-Observe Reviewer → contract persistence → Generator → Evaluator → Independent Judge → Reporter. Require Evaluator and Judge verdicts to bind the identical final SHA and preserve their execution receipts.
+Observe Reviewer → contract persistence → Generator → Evaluator → Independent Judge → Reporter for
+the new PR #1581 run. Require Evaluator and Independent Judge to each record PASS bound to the exact
+same final head SHA and preserve both execution receipts.
 
 - [ ] **Step 7: Merge the business PR only after the exact-SHA gate**
 
-Confirm CI is still green on that SHA, record the final evidence, merge through PR, and stop at the independent stage boundary without claiming Phase 5 or the full PRD complete.
+Merge PR #1581 only after confirming both PASS verdicts and CI are bound to that exact final head
+SHA. Record the final evidence and stop at the independent stage boundary without claiming Phase 5
+or the full PRD complete.

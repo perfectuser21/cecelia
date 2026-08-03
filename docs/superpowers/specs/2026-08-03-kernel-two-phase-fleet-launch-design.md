@@ -24,7 +24,8 @@ The failure is independent of Reviewer skill quality or model selection. The pro
   same live Worker may start it from its in-memory one-shot credentials; after Worker restart it
   must be cancelled and replaced with a fresh attempt/envelope rather than persisting credentials.
 - An expired Brain attempt whose Worker state is missing becomes an explicit infrastructure terminal result and may retry; it cannot remain `running` forever.
-- Tick remains unnecessary for convergence of a dedicated Kernel controller.
+- Tick remains OFF throughout the globally drained cutover and the post-deployment PR #1581
+  acceptance run; only the dedicated Kernel controller drives convergence.
 - No long-lived Provider/GitHub credential is stored in the Brain database, Worker receipt, argv,
   logs, or long-lived Xi'an filesystem. Attempt-local callback and disposable PostgreSQL values
   remain governed by their existing isolated-container lifecycle.
@@ -98,9 +99,9 @@ The run singleton may adopt work only through those idempotent exact-lease opera
 inspection, heartbeat, or cancel result that does not prove a safe state fails closed with bounded
 infrastructure evidence and backoff.
 
-The production R4 orphan is preserved as terminal failure evidence; it must not be resurrected.
-After deployment, the same real business objective starts a fresh Kernel run through this mechanism;
-no fabricated callback or verdict is written.
+Production run `92a67d1a-2c3a-4819-9930-09d841f31bd8` is terminal FAILED evidence and must never
+be resumed, recovered, or resurrected. After deployment, create a new real business Kernel run for
+PR #1581 through this mechanism; no fabricated callback or verdict is written for the old run.
 
 ## File Boundaries
 
@@ -132,11 +133,14 @@ Green verification covers:
 - stale lease and conflicting request are rejected;
 - missing Worker state terminalizes as infrastructure failure and retries within existing caps;
 - current callback cleanup, credential, attestation, and infrastructure-backoff suites remain green;
-- a real US M4 Kernel attempt crosses Reviewer, Generator, Evaluator, Judge, and Reporter with exact-SHA evidence.
+- a newly created real business Kernel run for PR #1581 crosses Reviewer, Generator, Evaluator,
+  Independent Judge, and Reporter, with Evaluator and Independent Judge both recording PASS against
+  the exact same final head SHA.
 
 ## Rollout and Stop Condition
 
-Deploy Brain and Fleet Worker through the globally drained protocol cutover, keep tick off, and start
-a fresh real Kernel run for the blocked business objective. Do not merge the business PR until
-Evaluator and Independent Judge both bind PASS to the same final SHA. Stop after the successful
-Kernel stage boundary; do not claim Phase 5 or the full provider-neutral PRD complete.
+Deploy Brain and Fleet Worker through the globally drained protocol cutover and keep Tick off.
+Create a new real business Kernel run for PR #1581; do not resume terminal FAILED run
+`92a67d1a-2c3a-4819-9930-09d841f31bd8`. Do not merge PR #1581 until Evaluator and Independent
+Judge both record PASS for the exact same final head SHA. Stop after the successful Kernel stage
+boundary; do not claim Phase 5 or the full provider-neutral PRD complete.
