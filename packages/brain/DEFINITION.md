@@ -1,6 +1,13 @@
 # Brain 模块定义
 
-**版本**: 1.267.190
+**版本**: 1.267.191
+
+## Fleet Worker health version alignment
+
+- Fleet Worker 健康探针的默认版本现在与三机 NodeProfile 的 `1.267.95` 一致，避免成功
+  bootstrap 后仍因遗留 `1.267.94` 被 admission fail closed。
+- 行为测试从 NodeProfile 读取期望值并核对真实 probe 输出，锁住两侧版本的同步更新。
+- 回退到 Brain `1.267.190` 会恢复健康版本漂移；回退前必须保持所有 Fleet 节点 drained。
 
 ## Kernel Fleet offline PostgreSQL tag recovery
 

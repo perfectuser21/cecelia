@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.190
+**Brain 版本**: 1.267.191
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.191 — Fleet Worker health version alignment
+
+- Fleet Worker 健康探针默认版本与三机 NodeProfile 的 `1.267.95` 对齐，bootstrap 后不再
+  因探针遗留 `1.267.94` 而被 admission 判定为 `worker_version_drift`。
+- 新的行为测试直接比较健康探针输出与 NodeProfile，后续版本升级若只改一侧会在 CI 失败。
+- 回退到 Brain `1.267.190` 会恢复健康版本漂移；回退前必须保持所有 Fleet 节点 drained。
 
 ## Brain 1.267.190 — Kernel Fleet offline PostgreSQL tag recovery
 

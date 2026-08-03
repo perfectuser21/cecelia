@@ -3,9 +3,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 
 const DIGEST = `sha256:${'a'.repeat(64)}`;
 const POSTGRES_IMAGE = `postgres:16-alpine@sha256:${'b'.repeat(64)}`;
+const FLEET_NODE_PROFILES = JSON.parse(fs.readFileSync(path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../config/fleet-node-profiles.json',
+), 'utf8'));
 const ALLOWED_KEYS = [
   'schema_version',
   'machine_id',
@@ -361,6 +366,11 @@ describe('Fleet Worker health-only service', () => {
     const first = await probeFleetWorkerHealth(input);
     const second = await probeFleetWorkerHealth(input);
 
+    expect(first.worker.version).toBe(
+      FLEET_NODE_PROFILES.profiles.find(({ machine_id: machineId }) => (
+        machineId === input.machineId
+      )).version_policy.worker,
+    );
     expect(first.docker.available).toBe(true);
     expect(first.orbstack.version).toBe('1.9.4');
     expect(second.runner.image_digest).toBe(DIGEST);
