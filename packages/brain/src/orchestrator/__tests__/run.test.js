@@ -151,7 +151,7 @@ describe('buildRealDeps', () => {
       actual_machine_id: null,
     };
     const launcher = {
-      inspect: vi.fn(async () => ({ status: 'missing' })),
+      inspect: vi.fn(async () => ({ status: 'missing', attempt_id: attempt.id })),
       start: vi.fn(),
       cancel: vi.fn(),
     };
