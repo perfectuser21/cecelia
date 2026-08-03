@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.201
+**Brain 版本**: 1.267.202
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.202 — Kernel preflight BLOCKED launch truth
+
+- Generator 是否已启动只认 `effect:attempt_launched` 与非空 `attempt_id`，不再把预检前写入的
+  `spawn:generator` / `spawn:generator-fix` intent 当成真实 Attempt。
+- Provider 配额、Fleet admission 等 infrastructure BLOCKED 会保持原 Generator 点火路径并按
+  backoff 重试；不会因尚无 PR 误进 generator-fix，也不会触发 workspace evidence 致命失败。
+- Fleet Worker 与 pinned Runner digest 不变。回退到 Brain `1.267.201` 会恢复
+  `generator_fix_workspace_evidence_missing`；回退前保持 Kernel run 与 Fleet 节点 drained。
 
 ## Brain 1.267.201 — Fleet prepare budget and keepalive env integrity
 

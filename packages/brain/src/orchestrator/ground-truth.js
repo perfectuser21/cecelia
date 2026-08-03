@@ -414,9 +414,18 @@ export async function collectGroundTruth(deps, opts) {
   });
 
   // ---- 决策日志推导字段（verdict 权威 = 决策日志行，P0-2；initiative_runs 的 verdict 列只是展示缓存）----
-  const generatorSpawned = decisionLog.some(
-    (r) => r.action === ACTION.SPAWN_GENERATOR || r.action === ACTION.SPAWN_GENERATOR_FIX,
-  );
+  // A spawn intent is written before dispatch. Capability/admission preflight can
+  // reject that intent without creating an Attempt, so the intent alone must not
+  // make derive() enter the no-PR generator-fix route. Only the launch effect is
+  // authoritative evidence that a Generator actually started.
+  const generatorSpawned = decisionLog.some((row) => {
+    if (row.action !== LOG_ACTION.ATTEMPT_LAUNCHED) return false;
+    const detail = asJson(row.detail) ?? {};
+    return (
+      detail.dispatch_action === ACTION.SPAWN_GENERATOR
+      || detail.dispatch_action === ACTION.SPAWN_GENERATOR_FIX
+    ) && typeof detail.attempt_id === 'string' && detail.attempt_id.length > 0;
+  });
   const evalRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_EVALUATE);
   const judgeRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_JUDGE);
   const evaluateVerdict = evalRow ? asJson(evalRow.detail) : null;

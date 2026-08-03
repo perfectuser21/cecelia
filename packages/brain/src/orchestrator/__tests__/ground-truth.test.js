@@ -1410,12 +1410,49 @@ describe('collectGroundTruth：lastAgentExit hop 作用域（P0-3 + derive 3d �
 });
 
 describe('collectGroundTruth：决策日志推导字段', () => {
-  it('generatorSpawned：spawn:generator 或 spawn:generator-fix 任一存在即 true', async () => {
+  it('generatorSpawned：只有真实 launch effect 存在才为 true，BLOCKED intent 不算启动', async () => {
     const deps1 = makeDeps({ rows: { log: [{ hop: 1, action: 'spawn:planner', observed: {}, detail: null }] } });
     expect((await collectGroundTruth(deps1, { taskId: TASK_ID, runId: RUN_ID })).generatorSpawned).toBe(false);
 
-    const deps2 = makeDeps({ rows: { log: [{ hop: 2, action: 'spawn:generator', observed: {}, detail: null }] } });
-    expect((await collectGroundTruth(deps2, { taskId: TASK_ID, runId: RUN_ID })).generatorSpawned).toBe(true);
+    const blocked = makeDeps({
+      rows: {
+        log: [
+          { hop: 2, action: 'spawn:generator', observed: {}, detail: null },
+          {
+            hop: 3,
+            action: 'result:dispatch',
+            observed: {},
+            detail: {
+              dispatch_hop: 2,
+              dispatch_action: 'spawn:generator',
+              status: 'BLOCKED',
+              failure_class: 'infrastructure_blocked',
+              should_create_attempt: false,
+            },
+          },
+        ],
+      },
+    });
+    expect((await collectGroundTruth(blocked, { taskId: TASK_ID, runId: RUN_ID })).generatorSpawned).toBe(false);
+
+    const launched = makeDeps({
+      rows: {
+        log: [
+          { hop: 4, action: 'spawn:generator-fix', observed: {}, detail: null },
+          {
+            hop: 5,
+            action: 'effect:attempt_launched',
+            observed: {},
+            detail: {
+              dispatch_hop: 4,
+              dispatch_action: 'spawn:generator-fix',
+              attempt_id: '22222222-3333-4444-8555-666666666666',
+            },
+          },
+        ],
+      },
+    });
+    expect((await collectGroundTruth(launched, { taskId: TASK_ID, runId: RUN_ID })).generatorSpawned).toBe(true);
   });
 
   it('evaluateVerdict/judgeVerdict：取最新 verdict:* 行的 detail（jsonb string 兼容）', async () => {
