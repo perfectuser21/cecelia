@@ -22,17 +22,24 @@ const ATTEMPT = Object.freeze({
   execution_transport: null,
   remote_job_id: null,
 });
+const VERIFIED_ATTEMPT = Object.freeze({
+  ...ATTEMPT,
+  actual_machine_id: 'us-mac-m4',
+  execution_transport: 'fleet-worker',
+  remote_job_id: ATTEMPT.id,
+  machine_attestation_status: 'verified',
+});
 
 function makeDeps(overrides = {}) {
   return {
     now: () => NOW,
     launcher: {
-      inspect: vi.fn(async () => ({ status: 'missing' })),
+      inspect: vi.fn(async () => ({ status: 'missing', attempt_id: ATTEMPT.id })),
       start: vi.fn(async () => ({
         status: 'running',
         attempt_id: ATTEMPT.id,
       })),
-      cancel: vi.fn(async () => ({ status: 'cancelled' })),
+      cancel: vi.fn(async () => ({ status: 'cleaned', attempt_id: ATTEMPT.id })),
     },
     attemptStore: {
       heartbeat: vi.fn(async () => ({ ...ATTEMPT })),
@@ -57,6 +64,17 @@ describe('expired Fleet attempt reconciliation', () => {
     ];
 
     expect(oldestExpiredAttempt(attempts, NOW)?.id).toBe('oldest');
+  });
+
+  it('does not route an expired local-docker attempt through Fleet reconciliation', () => {
+    const attempts = [{
+      ...ATTEMPT,
+      execution_transport: 'local-docker',
+      actual_machine_id: 'us-mac-m4',
+      machine_attestation_status: 'local',
+    }];
+
+    expect(oldestExpiredAttempt(attempts, NOW)).toBeNull();
   });
 
   it('terminalizes a missing Worker attempt with exact old lease even without a launch receipt', async () => {
@@ -100,12 +118,12 @@ describe('expired Fleet attempt reconciliation', () => {
     });
 
     const result = await reconcileExpiredAttempt({
-      attempt: { ...ATTEMPT, status: 'starting' },
+      attempt: { ...VERIFIED_ATTEMPT, status: 'starting' },
       ...deps,
     });
 
     expect(deps.launcher.start).toHaveBeenCalledWith({
-      attempt: { ...ATTEMPT, status: 'starting' },
+      attempt: { ...VERIFIED_ATTEMPT, status: 'starting' },
       target: { machine: 'us-mac-m4' },
     });
     expect(deps.launcher.start.mock.calls[0][0].attempt).toMatchObject({
@@ -126,17 +144,17 @@ describe('expired Fleet attempt reconciliation', () => {
       launcher: {
         inspect: vi.fn(async () => ({ status: 'prepared' })),
         start: vi.fn(async () => { throw startError; }),
-        cancel: vi.fn(async () => ({ status: 'cancelled' })),
+        cancel: vi.fn(async () => ({ status: 'cleaned', attempt_id: ATTEMPT.id })),
       },
     });
 
     const result = await reconcileExpiredAttempt({
-      attempt: { ...ATTEMPT, status: 'starting' },
+      attempt: { ...VERIFIED_ATTEMPT, status: 'starting' },
       ...deps,
     });
 
     expect(deps.launcher.cancel).toHaveBeenCalledWith({
-      attempt: { ...ATTEMPT, status: 'starting' },
+      attempt: { ...VERIFIED_ATTEMPT, status: 'starting' },
       target: { machine: 'us-mac-m4' },
     });
     expect(deps.terminalize).toHaveBeenCalledWith(expect.objectContaining({
@@ -160,7 +178,7 @@ describe('expired Fleet attempt reconciliation', () => {
     });
 
     const result = await reconcileExpiredAttempt({
-      attempt: { ...ATTEMPT, status: 'starting' },
+      attempt: { ...VERIFIED_ATTEMPT, status: 'starting' },
       ...deps,
     });
 
@@ -199,7 +217,7 @@ describe('expired Fleet attempt reconciliation', () => {
       },
     });
 
-    const result = await reconcileExpiredAttempt({ attempt: ATTEMPT, ...deps });
+    const result = await reconcileExpiredAttempt({ attempt: VERIFIED_ATTEMPT, ...deps });
 
     expect(deps.attemptStore.heartbeat).toHaveBeenCalledWith(ATTEMPT.id, {
       leaseOwner: 'controller-old:6328',
@@ -225,7 +243,7 @@ describe('expired Fleet attempt reconciliation', () => {
         },
       });
 
-      const result = await reconcileExpiredAttempt({ attempt: ATTEMPT, ...deps });
+      const result = await reconcileExpiredAttempt({ attempt: VERIFIED_ATTEMPT, ...deps });
 
       expect(result).toEqual(expect.objectContaining({
         status: 'infrastructure_blocked',
@@ -255,6 +273,82 @@ describe('expired Fleet attempt reconciliation', () => {
     }));
     expect(deps.terminalize).not.toHaveBeenCalled();
     expect(deps.launcher.start).not.toHaveBeenCalled();
+  });
+
+  it.each(['prepared', 'starting', 'running'])(
+    'never adopts unconfirmed %s Worker state and replaces only after exact safe cancel',
+    async (workerStatus) => {
+      const deps = makeDeps({
+        launcher: {
+          inspect: vi.fn(async () => ({
+            status: workerStatus,
+            attempt_id: ATTEMPT.id,
+          })),
+          start: vi.fn(),
+          cancel: vi.fn(async () => ({
+            status: 'cleaned',
+            attempt_id: ATTEMPT.id,
+          })),
+        },
+      });
+
+      const result = await reconcileExpiredAttempt({ attempt: ATTEMPT, ...deps });
+
+      expect(deps.launcher.start).not.toHaveBeenCalled();
+      expect(deps.attemptStore.heartbeat).not.toHaveBeenCalled();
+      expect(deps.launcher.cancel).toHaveBeenCalledWith({
+        attempt: ATTEMPT,
+        target: { machine: 'us-mac-m4' },
+      });
+      expect(deps.terminalize).toHaveBeenCalledWith(expect.objectContaining({
+        code: 'worker_attempt_replacement_required_after_lease',
+      }));
+      expect(result.status).toBe('replacement_required');
+    },
+  );
+
+  it.each([
+    ['missing Attempt identity', { status: 'cleaned' }],
+    ['mismatched Attempt identity', { status: 'cleaned', attempt_id: 'stale-attempt' }],
+    ['quarantined', { status: 'quarantined', attempt_id: ATTEMPT.id }],
+    ['legacy cancelled', { status: 'cancelled', attempt_id: ATTEMPT.id }],
+  ])('does not replace an unconfirmed Worker after %s cancel evidence', async (_label, cancelResult) => {
+    const deps = makeDeps({
+      launcher: {
+        inspect: vi.fn(async () => ({ status: 'running', attempt_id: ATTEMPT.id })),
+        start: vi.fn(),
+        cancel: vi.fn(async () => cancelResult),
+      },
+    });
+
+    const result = await reconcileExpiredAttempt({ attempt: ATTEMPT, ...deps });
+
+    expect(result).toMatchObject({
+      status: 'infrastructure_blocked',
+      signature: 'worker_attempt_cancel_unconfirmed',
+    });
+    expect(deps.terminalize).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['parent_run_terminal', 'parent_terminal'],
+    ['lease_owner_mismatch', 'ownership_lost'],
+    ['lease_generation_mismatch', 'ownership_lost'],
+    ['attempt_identity_mismatch', 'ownership_lost'],
+    ['attempt_changed_before_terminal_write', 'ownership_lost'],
+  ])('maps terminal authority conflict %s to %s', async (conflict, expectedStatus) => {
+    const deps = makeDeps({
+      terminalize: vi.fn(async () => ({
+        attempt: null,
+        hop: null,
+        deduped: false,
+        conflict,
+      })),
+    });
+
+    const result = await reconcileExpiredAttempt({ attempt: ATTEMPT, ...deps });
+
+    expect(result).toEqual({ status: expectedStatus, conflict });
   });
 });
 

@@ -362,7 +362,7 @@ describe('runLoop：hybrid Commander boundary', () => {
       prdExists: false,
       contract: { approved: false, id: CONTRACT_ID },
     });
-    const { deps, appended } = makeEnv({
+    const { deps, appended, sleeps } = makeEnv({
       observedSeq: [
         current,
         obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
@@ -1142,6 +1142,68 @@ describe('runLoop：wait:* 不灌水', () => {
       },
     });
     expect(sleeps).toEqual([POLL_INTERVAL_MS]);
+  });
+
+  it('expired authority 发现 parent run 已终态时只重采集，不写 blocked 证据', async () => {
+    const expired = {
+      id: '863fdc22-ad3e-4e89-a8ce-6323cf9b9917',
+      run_id: RUN_ID,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'old-owner',
+      lease_generation: 0,
+      lease_expires_at: '2026-07-04T11:59:00.000Z',
+      requested_machine_id: 'us-mac-m4',
+    };
+    const { deps, appended } = makeEnv({
+      observedSeq: [
+        obs({ inflight: { containers: [], host_pids: [], attempts: [expired] } }),
+        obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+      ],
+    });
+    deps.reconcileExpiredAttempt = vi.fn(async () => ({
+      status: 'parent_terminal',
+      conflict: 'parent_run_terminal',
+    }));
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(appended).toHaveLength(0);
+    expect(sleeps).toHaveLength(0);
+    expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('expired authority 丢失 lease/identity 所有权时立即让位，不追加伪基础设施证据', async () => {
+    const expired = {
+      id: '863fdc22-ad3e-4e89-a8ce-6323cf9b9917',
+      run_id: RUN_ID,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'old-owner',
+      lease_generation: 0,
+      lease_expires_at: '2026-07-04T11:59:00.000Z',
+      requested_machine_id: 'us-mac-m4',
+    };
+    const { deps, appended, sleeps } = makeEnv({
+      observedSeq: [
+        obs({ inflight: { containers: [], host_pids: [], attempts: [expired] } }),
+        obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+      ],
+    });
+    deps.reconcileExpiredAttempt = vi.fn(async () => ({
+      status: 'ownership_lost',
+      conflict: 'lease_generation_mismatch',
+    }));
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result).toEqual({ exitReason: 'singleton_conflict', hops: 0 });
+    expect(appended).toHaveLength(0);
+    expect(sleeps).toHaveLength(0);
+    expect(deps.dispatch).not.toHaveBeenCalled();
   });
 
   it('R7: LAUNCHED 只记录 attempt launch effect，不能当角色 DONE 或派下一棒', async () => {
