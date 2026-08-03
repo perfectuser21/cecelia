@@ -428,12 +428,20 @@ export function createRemoteBridgeTransport({
     async inspect({ attempt, target } = {}) {
       const { bridgeUrl } = resolveBridge(target);
       requireNonempty(attempt?.id, 'attempt_id');
+      requireNonempty(attempt?.lease_owner, 'lease_owner');
+      if (!Number.isInteger(attempt?.lease_generation) || attempt.lease_generation < 0) {
+        throw new Error('remote_bridge_invalid_lease_generation');
+      }
       return request(
         'inspect',
-        `${bridgeUrl}/harness/attempts/${encodeURIComponent(attempt.id)}`,
+        `${bridgeUrl}/harness/attempts/${encodeURIComponent(attempt.id)}/inspect`,
         {
-          method: 'GET',
-          headers: authHeaders(),
+          method: 'POST',
+          headers: authHeaders(true),
+          body: JSON.stringify({
+            lease_owner: attempt.lease_owner,
+            lease_generation: attempt.lease_generation,
+          }),
         },
         (response, signal) => {
           if (response?.status === 409) {

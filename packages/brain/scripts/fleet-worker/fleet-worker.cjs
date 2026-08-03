@@ -28,8 +28,7 @@ const DEFAULT_MAX_REQUEST_BYTES = 1_048_576;
 const DEFAULT_HEALTH_CACHE_TTL_MS = 30_000;
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 5_231;
-const ATTEMPT_PATH = /^\/harness\/attempts\/([a-f0-9-]+)$/;
-const ATTEMPT_ACTION_PATH = /^\/harness\/attempts\/([a-f0-9-]+)\/(start|cancel|terminal)$/;
+const ATTEMPT_ACTION_PATH = /^\/harness\/attempts\/([a-f0-9-]+)\/(inspect|start|cancel|terminal)$/;
 const UNTRUSTED_WORKSPACE_FIELDS = new Set([
   'cwd',
   'worktree_path',
@@ -605,13 +604,6 @@ function createFleetWorkerServer(options = {}) {
         }
         const receipt = await attemptRunner.prepare(body);
         writeJson(response, 202, acceptedReceipt(receipt, attemptToken));
-        return;
-      }
-
-      const attemptMatch = request.url.match(ATTEMPT_PATH);
-      if (request.method === 'GET' && attemptMatch) {
-        const inspected = await attemptRunner.inspect(attemptMatch[1]);
-        writeJson(response, 200, inspected);
         return;
       }
 

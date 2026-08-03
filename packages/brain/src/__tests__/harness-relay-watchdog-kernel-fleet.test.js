@@ -171,7 +171,7 @@ function resumeOptions(overrides = {}) {
 
 function successfulWorkerFetch(machineId = 'us-mac-m4') {
   return vi.fn(async (url, init) => {
-    if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
+    if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
       return response(200, {
         status: 'running',
         attempt_id: PARENT_ID,
@@ -330,7 +330,7 @@ describe('kernel fleet watchdog recovery', () => {
     const spawnDetached = vi.fn();
     const removeContainer = vi.fn();
     const fetchFn = vi.fn(async (url, init) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
         return response(200, {
           status: 'running',
           attempt_id: PARENT_ID,
@@ -372,7 +372,7 @@ describe('kernel fleet watchdog recovery', () => {
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
       `${BRIDGE_URL}/harness/attempts/prepare`,
       `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`,
@@ -640,7 +640,7 @@ describe('kernel fleet watchdog recovery', () => {
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
       `${BRIDGE_URL}/harness/attempts/prepare`,
       `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`,
@@ -732,7 +732,7 @@ describe('kernel fleet watchdog recovery', () => {
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
       `${BRIDGE_URL}/harness/attempts/prepare`,
       `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`,
@@ -742,7 +742,7 @@ describe('kernel fleet watchdog recovery', () => {
 
   it('fails closed before child prepare when remote callback config is absent', async () => {
     const fetchFn = vi.fn(async (url) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
         return response(200, {
           status: 'running',
           attempt_id: PARENT_ID,
@@ -778,7 +778,7 @@ describe('kernel fleet watchdog recovery', () => {
     const store = resumeStore();
     const onRecoveryAlert = vi.fn(async () => {});
     const fetchFn = vi.fn(async (url) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
         return response(200, {
           status: 'running',
           attempt_id: PARENT_ID,
@@ -814,7 +814,7 @@ describe('kernel fleet watchdog recovery', () => {
     const store = resumeStore(null);
     const onRecoveryAlert = vi.fn(async () => {});
     const fetchFn = vi.fn(async (url) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
         return response(200, {
           status: 'running',
           attempt_id: PARENT_ID,
@@ -857,7 +857,7 @@ describe('kernel fleet watchdog recovery', () => {
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
       `${BRIDGE_URL}/harness/attempts/prepare`,
       `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`,
@@ -869,7 +869,7 @@ describe('kernel fleet watchdog recovery', () => {
   it('cancels the exact claimed child when start fails after receipt persistence', async () => {
     const store = resumeStore();
     const fetchFn = vi.fn(async (url) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
         return response(200, {
           status: 'running',
           attempt_id: PARENT_ID,
@@ -912,7 +912,7 @@ describe('kernel fleet watchdog recovery', () => {
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
       `${BRIDGE_URL}/harness/attempts/prepare`,
       `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`,
@@ -926,7 +926,7 @@ describe('kernel fleet watchdog recovery', () => {
   it('cancels the exact claimed child after the Bridge accepts but returns invalid attestation', async () => {
     const store = resumeStore();
     const fetchFn = vi.fn(async (url) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
         return response(200, {
           status: 'running',
           attempt_id: PARENT_ID,
@@ -961,7 +961,7 @@ describe('kernel fleet watchdog recovery', () => {
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
       `${BRIDGE_URL}/harness/attempts/prepare`,
       `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`,
@@ -975,7 +975,7 @@ describe('kernel fleet watchdog recovery', () => {
   it('cancels the exact claimed child after the Bridge accepts but its response body times out', async () => {
     const store = resumeStore();
     const fetchFn = vi.fn(async (url, options) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
         return response(200, {
           status: 'running',
           attempt_id: PARENT_ID,
@@ -1014,7 +1014,7 @@ describe('kernel fleet watchdog recovery', () => {
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
       `${BRIDGE_URL}/harness/attempts/prepare`,
       `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`,
@@ -1024,7 +1024,7 @@ describe('kernel fleet watchdog recovery', () => {
   it('alerts when child cleanup after a failed launch is not confirmed safe', async () => {
     const onRecoveryAlert = vi.fn(async () => {});
     const fetchFn = vi.fn(async (url) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
         return response(200, {
           status: 'running',
           attempt_id: PARENT_ID,
@@ -1332,7 +1332,7 @@ describe('kernel fleet watchdog recovery', () => {
       throw new Error('must remain deferred');
     });
     const fetchFn = vi.fn(async (url) => {
-      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/inspect`) {
         return response(200, {
           status: 'running',
           attempt_id: PARENT_ID,

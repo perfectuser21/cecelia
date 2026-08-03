@@ -1127,6 +1127,20 @@ function assertLeaseFence(state, lease) {
   }
 }
 
+function validateLeaseFence(lease) {
+  if (
+    !lease
+    || typeof lease.owner !== 'string'
+    || lease.owner.length === 0
+  ) {
+    throw new Error('attempt_lease_owner_invalid');
+  }
+  if (!Number.isInteger(lease.generation) || lease.generation < 0) {
+    throw new Error('attempt_lease_generation_invalid');
+  }
+  return lease;
+}
+
 function createAttemptRunner({
   workspaceManager,
   docker,
@@ -1859,7 +1873,8 @@ function createAttemptRunner({
       return operation;
     },
 
-    async inspect(attemptId) {
+    async inspect(attemptId, lease) {
+      validateLeaseFence(lease);
       const state = await stateStore.get(attemptId);
       if (!state) {
         return Object.freeze({ status: 'missing', attempt_id: attemptId });
@@ -1867,6 +1882,7 @@ function createAttemptRunner({
       if (state.worker_id !== workerId) {
         throw new Error('attempt_worker_owner_mismatch');
       }
+      assertLeaseFence(state, lease);
       if (['prepared', 'starting', 'terminal', 'quarantined'].includes(state.status)) {
         return Object.freeze({
           attempt_id: attemptId,
