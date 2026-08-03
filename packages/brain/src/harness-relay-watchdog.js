@@ -161,7 +161,6 @@ export async function reconcileExpiredKernelAttempt({
   attemptStore: injectedAttemptStore,
   attemptId,
   leaseOwner,
-  cleanupParentAttempt,
   resumeAttempt,
   reservedChildHop = null,
   reserveChildHop,
@@ -182,54 +181,8 @@ export async function reconcileExpiredKernelAttempt({
   ) {
     return { ok: false, deduped: true };
   }
-
-  let parentCleanupConfirmed = false;
   if (originalParentAttempt.execution_transport === 'fleet-worker') {
-    let cleanup;
-    try {
-      cleanup = typeof cleanupParentAttempt === 'function'
-        ? await cleanupParentAttempt(originalParentAttempt)
-        : null;
-    } catch (error) {
-      cleanup = {
-        ok: false,
-        cleanup_status: 'unavailable',
-        error: errorMessage(error),
-      };
-    }
-    if (
-      cleanup?.ok !== true
-      || cleanup.attempt_id !== originalParentAttempt.id
-      || !fleetCleanupConfirmed({
-        status: cleanup.cleanup_status,
-        attempt_id: cleanup.attempt_id,
-      }, originalParentAttempt.id)
-    ) {
-      const diagnostic = cleanup?.error
-        ?? cleanup?.diagnostic
-        ?? 'exact old-lease Fleet cleanup was not confirmed';
-      const recoveryAlert = deferredRecoveryAlert({
-        attemptId: originalParentAttempt.id,
-        lifecycleCode: 'resume_parent_cleanup_unconfirmed',
-        cleanupStatus: cleanup?.cleanup_status ?? 'unavailable',
-        diagnostic,
-      });
-      const alertErrors = await deliverRecoveryAlerts(
-        onRecoveryAlert,
-        [recoveryAlert],
-      );
-      if (alertErrors.length > 0) {
-        throw aggregateFailureEvidence([], alertErrors);
-      }
-      return {
-        ok: false,
-        failure_code: 'resume_parent_cleanup_unconfirmed',
-        cleanup_status: cleanup?.cleanup_status ?? 'unavailable',
-        error: sanitizeResumeDiagnostic(diagnostic),
-        recovery_alert: recoveryAlert,
-      };
-    }
-    parentCleanupConfirmed = true;
+    return { ok: false, deferred_to_controller: true };
   }
 
   const childHop = reservedChildHop ?? (
@@ -308,7 +261,6 @@ export async function reconcileExpiredKernelAttempt({
       leaseOwner,
       attemptStore: store,
       onRecoveryAlert,
-      parentCleanupConfirmed,
     });
   } catch (error) {
     if (error instanceof AggregateError || error?.code === 'kernel_recovery_alert_failed') {
@@ -499,56 +451,6 @@ async function cancelFleetChild(launcher, {
     confirmed: fleetCleanupConfirmed(result, attempt.id),
     status: result?.status ?? 'unknown',
     diagnostic: result?.reason ?? unsafeFleetCleanupDiagnostic(result, attempt.id),
-  };
-}
-
-async function cleanupExpiredFleetParent(launcher, attempt) {
-  const target = {
-    provider: attempt.provider,
-    account: attempt.account_id ?? null,
-    machine: attempt.actual_machine_id
-      ?? attempt.machine_id
-      ?? attempt.requested_machine_id,
-  };
-  let inspected;
-  try {
-    inspected = await launcher.inspect({ attempt, target });
-  } catch (error) {
-    return {
-      ok: false,
-      attempt_id: attempt.id,
-      cleanup_status: 'unavailable',
-      error: `parent inspection failed: ${errorMessage(error)}`,
-    };
-  }
-  if (inspected?.attempt_id !== attempt.id) {
-    return {
-      ok: false,
-      attempt_id: attempt.id,
-      cleanup_status: 'unconfirmed',
-      error: 'parent inspection attempt identity mismatch',
-    };
-  }
-  if (
-    inspected.status !== 'missing'
-    && inspected.status !== 'terminal'
-    && typeof attempt.remote_job_id === 'string'
-    && attempt.remote_job_id.length > 0
-    && inspected.container_id !== attempt.remote_job_id
-  ) {
-    return {
-      ok: false,
-      attempt_id: attempt.id,
-      cleanup_status: 'unconfirmed',
-      error: 'parent inspection container identity mismatch',
-    };
-  }
-  const cleanup = await cancelFleetChild(launcher, { attempt, target });
-  return {
-    ok: cleanup.confirmed,
-    attempt_id: attempt.id,
-    cleanup_status: cleanup.status,
-    diagnostic: cleanup.diagnostic,
   };
 }
 
@@ -987,26 +889,16 @@ async function _recoverKernelRun(run, task, deps, out) {
     && new Date(attempt.lease_expires_at).getTime() > Date.now();
   if (leaseLive) return;
 
-  if (activeStatus && attempt.provider_session_id) {
+  if (
+    activeStatus
+    && attempt.provider_session_id
+    && attempt.execution_transport !== 'fleet-worker'
+  ) {
     const lowerResume = deps.resumeAttempt || resumeKernelAttempt;
-    let cleanupParentAttempt;
-    if (attempt.execution_transport === 'fleet-worker') {
-      const transportFactory = deps.transportFactory
-        ?? createProductionExecutionTransport;
-      const cleanupLauncher = deps.launcher ?? transportFactory({
-        env: deps.env ?? process.env,
-        fetchFn: deps.fetchFn,
-        remoteBridgeTimeoutMs: deps.remoteBridgeTimeoutMs,
-      });
-      cleanupParentAttempt = (parentAttempt) => (
-        cleanupExpiredFleetParent(cleanupLauncher, parentAttempt)
-      );
-    }
     const resumed = await reconcileExpiredKernelAttempt({
       db: dbPool,
       attemptId: attempt.id,
       leaseOwner: `watchdog:${process.pid}`,
-      cleanupParentAttempt,
       reserveChildHop: (parentAttempt) => reserveResumeIntent(dbPool, parentAttempt),
       onRecoveryAlert,
       resumeAttempt: (child, context) => lowerResume(child, {
