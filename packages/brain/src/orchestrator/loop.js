@@ -25,6 +25,7 @@ import { collectGroundTruth as defaultCollect } from './ground-truth.js';
 import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConflictError } from './decision-log.js';
 import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
 import { materializeApprovedContract } from './contract-store.js';
+import { evaluateValidationIdentityPolicy } from './validation-identity-policy.js';
 import {
   ACTION,
   LOG_ACTION,
@@ -792,6 +793,40 @@ export async function runLoop(
             'approved_but_contract_artifacts_missing',
           );
           return { exitReason: 'approved_but_contract_artifacts_missing', hops };
+        }
+        const identityPolicy = evaluateValidationIdentityPolicy(artifacts.contractContent);
+        if (!identityPolicy.ok) {
+          const policyHop = await next(deps.pool, resolvedRunId);
+          try {
+            await append(deps.pool, {
+              runId: resolvedRunId,
+              hop: policyHop,
+              observed: {
+                proposeBranchRn: observed.proposeBranchRn,
+                proposeBranchSha: approvedSha,
+              },
+              derivedPhase: 'gan',
+              gateVerdict: 'deny:premature_validation_identity_binding',
+              action: LOG_ACTION.VERDICT_REVIEWER,
+              detail: {
+                rn: observed.proposeBranchRn,
+                contract_sha: approvedSha,
+                verdict: 'REVISION',
+                summary: '合同在执行角色产生前硬编码了可变 validation identity。',
+                reason: '删除 GAN authoring attempt/capability snapshot 字面值；使用 Runner 注入的 HARNESS_ATTEMPT_ID、CAPABILITY_SNAPSHOT_ID 与当前角色 attestation late-bound，并让后续角色以证据摘要串联。',
+                source: 'validation_identity_policy',
+                violations: identityPolicy.violations,
+              },
+            });
+            hops++;
+          } catch (error) {
+            if (error instanceof SingletonConflictError) {
+              return { exitReason: 'singleton_conflict', hops };
+            }
+            throw error;
+          }
+          await beat();
+          continue;
         }
         await materializeApprovedContract(deps.pool, {
           runId: resolvedRunId,

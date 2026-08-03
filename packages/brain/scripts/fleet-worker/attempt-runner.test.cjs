@@ -1059,10 +1059,36 @@ describe('Fleet Worker Attempt runner', () => {
 
       expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
         taskId: TASK_ID,
-        roleEnv: expected,
+        roleEnv: expect.objectContaining(expected),
       }));
     },
   );
+
+  it('injects server-observed runtime attestation for late-bound validation evidence', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    const capabilitySnapshotId = '55555555-5555-4555-8555-555555555555';
+
+    await runner.prepare(request({
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: providerPrompt('generator', {
+          capability_snapshot_id: capabilitySnapshotId,
+        }),
+      },
+    }));
+
+    expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
+      roleEnv: expect.objectContaining({
+        HARNESS_PROVIDER: 'codex',
+        HARNESS_ACCOUNT: 'team1',
+        HARNESS_MACHINE: WORKER_ID,
+        HARNESS_MODEL: 'gpt-5',
+        HARNESS_RUNNER_DIGEST: IMAGE_DIGEST,
+        CAPABILITY_SNAPSHOT_ID: capabilitySnapshotId,
+      }),
+    }));
+  });
 
   it.each([
     ['read-only', true],

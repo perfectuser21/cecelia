@@ -972,6 +972,13 @@ function taskExecutionContract(providerSpec, request, target) {
       ? { SPRINT_DIR: String(inputs.sprint_dir) }
       : {}),
     WORKSPACE_PATH: '/workspace',
+    HARNESS_PROVIDER: target.provider,
+    ...(target.account ? { HARNESS_ACCOUNT: target.account } : {}),
+    HARNESS_MACHINE: target.machine,
+    ...(target.model ? { HARNESS_MODEL: target.model } : {}),
+    ...(inputs.capability_snapshot_id
+      ? { CAPABILITY_SNAPSHOT_ID: String(inputs.capability_snapshot_id) }
+      : {}),
     ...(RUNTIME_RESULT_ROLES.has(target.role)
       ? { BRAIN_RESULT_FILE: '/tmp/cecelia-prompts/brain-result.json' }
       : {}),
@@ -1532,7 +1539,10 @@ function createAttemptRunner({
       image: runnerImageDigest,
       providerSpec,
       taskId: executionContract.taskId,
-      roleEnv: executionContract.roleEnv,
+      roleEnv: {
+        ...executionContract.roleEnv,
+        HARNESS_RUNNER_DIGEST: runnerImageDigest,
+      },
       timeoutSeconds: request.timeout_seconds,
       role: target.role,
       model: target.model,

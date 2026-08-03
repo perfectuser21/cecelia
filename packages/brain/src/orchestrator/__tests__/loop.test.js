@@ -750,6 +750,59 @@ describe('runLoop：控制 action 自消费', () => {
     expect(materializeSql[1].join('\n')).toContain('# DoD');
   });
 
+  it('批准落库前把硬编码 GAN attempt/snapshot 改判 REVISION，不进入 Generator', async () => {
+    const approvedSha = 'b'.repeat(40);
+    const observedSeq = [
+      obs({
+        run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+        task: { status: 'in_progress', payload: { sprint_dir: 'sprints/kernel-contract' } },
+        contract: { approved: false, id: null },
+        proposeBranch: 'cp-harness-propose-r1-11111111-a3',
+        proposeBranchSha: approvedSha,
+        proposeBranchRn: 1,
+        ganLatestRoundVerdict: 'APPROVED',
+        ganLatestRoundContractSha: approvedSha,
+      }),
+      obs({
+        run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+        contract: { approved: false, id: null },
+        proposeBranch: 'cp-harness-propose-r1-11111111-a3',
+        proposeBranchSha: approvedSha,
+        proposeBranchRn: 1,
+        ganLatestRoundVerdict: 'REVISION',
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, appended, sqls } = makeEnv({ observedSeq });
+    deps.readGitFile = vi.fn((_sha, filePath) => ({
+      'sprints/kernel-contract/sprint-prd.md': '# PRD',
+      'sprints/kernel-contract/contract-draft.md': [
+        '# Contract',
+        'ATTEMPT_ID="1884647e-b67a-4bfd-a44c-3d2e84509526"',
+      ].join('\n'),
+      'sprints/kernel-contract/contract-dod.md': [
+        '# DoD',
+        'capability_snapshot_id=13eb5828-b09a-4e76-ba5e-14309f842263',
+      ].join('\n'),
+    })[filePath]);
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(appended[0]).toMatchObject({
+      action: 'verdict:reviewer',
+      gateVerdict: 'deny:premature_validation_identity_binding',
+      detail: {
+        rn: 1,
+        contract_sha: approvedSha,
+        verdict: 'REVISION',
+      },
+    });
+    expect(deps.dispatch).toHaveBeenCalledWith('spawn:proposer', expect.any(Object));
+    expect(deps.dispatch).not.toHaveBeenCalledWith('spawn:generator', expect.any(Object));
+    expect(sqls.some(([sql]) => sql.includes('INSERT INTO initiative_contracts'))).toBe(false);
+  });
+
   it('persist_contract_approval 按 payload.base_repo 从跨仓库权威仓库读取批准产物', async () => {
     // 生产实弹 run 4925488b：base_repo=zenithjoy-workspace，批准 SHA 只在该仓库存在
     const approvedSha = 'c'.repeat(40);
