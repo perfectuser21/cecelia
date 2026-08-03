@@ -350,17 +350,16 @@ git add packages/brain/src/orchestrator/expired-attempt-reconciler.js \
 git commit -m "fix(kernel): converge expired missing Fleet attempts"
 ```
 
-### Task 6A: Carry two-phase launch through watchdog same-machine resume
+### Task 6A: Keep Fleet recovery under the unified Kernel controller
 
 **Files:**
 - Modify: `packages/brain/src/__tests__/harness-relay-watchdog-kernel-fleet.test.js`
 - Modify: `packages/brain/src/harness-relay-watchdog.js`
 
-- [ ] **Step 1: Replace legacy Worker fixtures with the exact two-phase contract**
+- [ ] **Step 1: Reproduce the watchdog/reconciler ownership race**
 
-Require parent inspect to return exact `attempt_id + container_id`, parent cleanup to return exact
-`cleaned|already_clean + attempt_id`, and child execution to call `prepare`, persist the attested
-receipt, then call `start` with exact `running + attempt_id` acknowledgement.
+Prove that watchdog cleanup before database reclaim can kill a Runner whose old lease concurrently
+heartbeats back to live, leaving reclaim to lose after the remote container is already gone.
 
 - [ ] **Step 2: Run the watchdog Red suite**
 
@@ -369,13 +368,14 @@ cd packages/brain
 npx vitest run src/__tests__/harness-relay-watchdog-kernel-fleet.test.js
 ```
 
-Expected: FAIL because `resumeKernelAttempt()` still calls the removed one-phase `launcher.launch()`.
+Expected: FAIL because Fleet attempts still enter the watchdog's independent resume lineage.
 
-- [ ] **Step 3: Implement the same receipt-before-start ordering used by Dispatcher**
+- [ ] **Step 3: Delegate Fleet attempts to the controller reconciler**
 
-Call `launcher.prepare()`, persist its verified receipt through `attemptStore.recordLaunchReceipt`,
-and only then call `launcher.start()`. Receipt or start failure must use the existing exact child
-cancel and fail-closed recovery evidence; it must never run a child before receipt persistence.
+For `execution_transport=fleet-worker`, watchdog must not inspect, cancel, reclaim, rotate secrets,
+or create a child. It only restarts the single dedicated Kernel controller. The controller then uses
+the Task 6 expired-attempt reconciler with the unchanged old owner/generation. Legacy non-Fleet
+session recovery may retain its existing bounded path.
 
 - [ ] **Step 4: Run watchdog and transport regressions**
 
@@ -388,17 +388,17 @@ npx vitest run src/__tests__/harness-relay-watchdog-kernel-fleet.test.js \
   src/orchestrator/__tests__/dispatcher.test.js
 ```
 
-Expected: all pass; request ordering is parent inspect/cancel, child prepare, receipt commit, child
-start, with no legacy `/harness/attempts` launch call.
+Expected: all pass; Fleet watchdog recovery performs no Worker or Attempt mutation, while normal
+Dispatcher and controller recovery retain prepare → receipt → start ordering.
 
 - [ ] **Step 5: Commit Red and Green separately**
 
 ```bash
 git add packages/brain/src/__tests__/harness-relay-watchdog-kernel-fleet.test.js
-git commit -m "test(kernel): require two-phase watchdog resume"
+git commit -m "test(kernel): delegate Fleet recovery to controller"
 git add packages/brain/src/harness-relay-watchdog.js \
   packages/brain/src/__tests__/harness-relay-watchdog-kernel-fleet.test.js
-git commit -m "fix(kernel): commit watchdog resume receipt before start"
+git commit -m "fix(kernel): delegate Fleet recovery to controller"
 ```
 
 ### Task 7: Version, definition, and regression verification

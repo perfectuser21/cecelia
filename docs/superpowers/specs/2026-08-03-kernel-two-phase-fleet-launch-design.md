@@ -99,6 +99,11 @@ The run singleton may adopt work only through those idempotent exact-lease opera
 inspection, heartbeat, or cancel result that does not prove a safe state fails closed with bounded
 infrastructure evidence and backoff.
 
+The relay watchdog is not a second Fleet recovery authority. For an expired Fleet attempt it may
+restart the dedicated Kernel controller, but it must not inspect/cancel the Worker, rotate the
+database lease, or create a resume child. This avoids a cleanup-versus-heartbeat race and keeps all
+old-lease decisions in the reconciler above.
+
 Production run `92a67d1a-2c3a-4819-9930-09d841f31bd8` is terminal FAILED evidence and must never
 be resumed, recovered, or resurrected. After deployment, create a new real business Kernel run for
 PR #1581 through this mechanism; no fabricated callback or verdict is written for the old run.
@@ -120,6 +125,10 @@ Red tests must reproduce both failures:
 
 1. a Runner is not started before `recordLaunchReceipt` resolves;
 2. an expired Brain attempt with missing Worker state does not remain `running`.
+
+Concurrency regressions additionally prove that cancel/inspect cannot overtake an in-flight
+prepare, receiptless local-Docker attempts never enter Fleet recovery, and watchdog never acts as a
+second Fleet recovery authority.
 
 Green verification covers:
 

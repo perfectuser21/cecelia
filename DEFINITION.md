@@ -12,12 +12,19 @@
 
 ---
 
-## Brain 1.267.187 — Watchdog persistence diagnostic containment
+## Brain 1.267.187 — Kernel Fleet concurrency and diagnostic containment
 
 - Watchdog 在 failure-persistence evidence 边界对持久化异常统一执行绝对路径脱敏、
   凭据遮蔽和长度上限；AggregateError、注入的 recovery alert 与默认 P1 alert 不再
   暴露 `file://` URL、含空格的 POSIX 路径或 token 值。
 - 通用 failure-persistence sanitizer 保持不变，避免扩大其他调用方的语义范围。
+- Worker 将 in-flight prepare 与 inspect/cancel 按 exact lease 串行化，消除 prepare 未落盘时
+  `already_clean/missing` 假证据和迟到孤儿容器；terminal start tombstone 可经 Brain
+  transport/Dispatcher 幂等回放，错配或 malformed 回执继续拒绝。
+- receiptless Attempt 只有 TaskBundle 明确标记 `execution_surface=fleet-worker` 才进入 Fleet
+  recovery，本地 Docker 启动后、receipt 前的崩溃窗口不会被远端 missing 误终结。
+- Fleet watchdog 不再独立 cleanup/reclaim Attempt，只重启 dedicated controller；统一
+  expired-attempt reconciler 以原 owner/generation 处理 live、missing 与 terminal 状态。
 
 ## Brain 1.267.186 — Kernel Fleet two-phase launch and expired-attempt convergence
 
@@ -32,8 +39,7 @@
   续租，避免只旋转数据库 generation 后拒绝真实 callback；receipt 未确认的存活 Worker
   必须先取得 exact cleanup 再换新 Attempt；Worker `missing/terminal` 时 Attempt 失败终态
   与 bounded decision evidence 同事务提交，并按 callback-equivalent infrastructure result
-  重试而不污染 product fixRound。watchdog 同样先按旧 lease exact cleanup 再 reclaim/rotate；
-  无 provider session 时只重启 controller。父 Run 终态只重新观测，并发输家立即让位。
+  重试而不污染 product fixRound。父 Run 终态只重新观测，并发输家立即让位。
 - 协议升级固定使用 `fleet-rollout.sh all --apply --protocol-cutover`。切换前必须停止 tick
   和全部 controller、以 DB 证明无 active Attempt；rollout 必须先完成三机全 drain，之后
   才允许任一 bootstrap，且三台 Worker 更新后保持 drained。部署

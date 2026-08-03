@@ -2,11 +2,18 @@
 
 **版本**: 1.267.187
 
-## Watchdog persistence diagnostic containment
+## Kernel Fleet concurrency and diagnostic containment
 
 - failure-persistence evidence 在 watchdog 边界先统一执行路径、凭据和长度脱敏，
   AggregateError、注入 recovery alert 和默认 P1 alert 共享同一安全输出。
 - 通用 failure-persistence sanitizer 契约保持不变。
+- Worker 的 in-flight prepare 与 inspect/cancel 以 exact lease 串行化；cancel 不再在
+  prepare 落盘前误报 `already_clean`，inspect 也不再假报 `missing`。合法 terminal start
+  tombstone 可沿 transport/Dispatcher 幂等回放，malformed 或错配回执仍 fail closed。
+- receipt 尚未持久化的 Attempt 只有 TaskBundle 明确声明 `execution_surface=fleet-worker`
+  才进入 Fleet recovery；本地 Docker 崩溃窗口不会被远端 missing 证据误终结。
+- Fleet Attempt 的 watchdog 只重启 dedicated controller，不再独立 inspect/cancel/reclaim；
+  old lease 的 start/heartbeat/cancel/terminal 收敛全部由 expired-attempt reconciler 负责。
 
 ## Kernel Fleet two-phase launch and expired-attempt convergence
 
@@ -21,8 +28,7 @@
   续租；未验签存活 Worker 先 exact cancel 再换新 Attempt；Worker missing 时 Attempt
   `infrastructure_blocked` 终态与 bounded decision evidence 同事务写入；该独立 recovery
   evidence 按 callback-equivalent infrastructure result 驱动同角色重试，不消耗产品 fix
-  预算。watchdog 也必须先以旧 lease exact inspect/cancel，才可 reclaim/rotate；无 provider
-  session 时只重启 controller。父 Run 终态只重新观测，lease/CAS 并发输家立即让位。
+  预算。父 Run 终态只重新观测，lease/CAS 并发输家立即让位。
 - 协议切换前停止 tick/controller 并证明 DB 无 active Attempt，再用
   `fleet-rollout.sh all --apply --protocol-cutover` 先完成三机全 drain、再开始任一 bootstrap，
   且更新后保持 drained；部署新 Brain、
