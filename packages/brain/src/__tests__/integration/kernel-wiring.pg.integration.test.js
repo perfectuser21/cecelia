@@ -586,6 +586,17 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
 describe('Kernel failure classifications on real PostgreSQL writers', () => {
   it('failure_class routes evidence repair without generator fix and preserves judge class', async () => {
     const run = await seedRun();
+    await appendLog(run.runId, {
+      hop: 1,
+      action: 'spawn:generator',
+      phase: 'generate',
+      gateVerdict: 'allow',
+      detail: {
+        reason: 'contract_approved',
+        pipeline_started_at: '2026-08-03T19:02:13.199Z',
+        deadline_at: '2026-08-03T20:32:13.199Z',
+      },
+    });
     const evaluatorAttemptId = randomUUID();
     await appendAttemptVerdict({
       id: evaluatorAttemptId,

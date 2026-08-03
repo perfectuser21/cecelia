@@ -6,11 +6,22 @@
 
 
 
-**Brain 版本**: 1.267.198
+**Brain 版本**: 1.267.199
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.199 — Kernel shared validation clock
+
+- Controller 在首个 Generator intent 建立唯一 7200 秒验证窗口，后续 Generator 重试、
+  Evaluator 与 Judge 从 append-only decision log 复用同一时钟，不再按角色重置。
+- TaskBundle 与 Fleet Worker 原样传递 `pipeline_started_at` / `deadline_at`；缺失、格式错误或
+  窗口不等于任务 timeout 均 fail closed。升级前 run 从首个 Generator intent 时间恢复。
+- Fleet Worker 三机基线升至 `1.267.100`；Runner digest 保持
+  `sha256:e0797f5a440d61827d1ea86afee629e6f5a687da6f958608671ba9c873e5e94a`。
+- 回退到 Brain `1.267.198` / Worker `1.267.99` 会恢复跨角色时钟缺失；回退前保持
+  Kernel run 与 Fleet 节点 drained。
 
 ## Brain 1.267.198 — Kernel late-bound validation identity
 

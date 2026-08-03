@@ -8,6 +8,22 @@ const SHA = 'a'.repeat(40);
 const SIGNATURE = ['missing screenshot', 'stale receipt'];
 const CANONICAL_SIGNATURE = ['missing screenshot', 'stale receipt'];
 
+function generatorClockIntent() {
+  return {
+    run_id: RUN_ID,
+    hop: 1,
+    action: 'spawn:generator',
+    observed: {},
+    derived_phase: 'generate',
+    gate_verdict: 'allow',
+    detail: {
+      reason: 'contract_approved',
+      pipeline_started_at: '2026-07-23T11:00:00.000Z',
+      deadline_at: '2026-07-23T12:30:00.000Z',
+    },
+  };
+}
+
 function asJson(value) {
   return typeof value === 'string' ? JSON.parse(value) : value;
 }
@@ -280,7 +296,7 @@ describe('R5/R6 structured convergence signatures', () => {
   });
 
   test('R6: the second identical evidence_invalid signature pauses for human review and records replay evidence', async () => {
-    const log = createDecisionLog();
+    const log = createDecisionLog([generatorClockIntent()]);
     const firstAttempt = evaluatorAttempt('72000000-0000-4000-8000-000000000072');
     const secondAttempt = evaluatorAttempt('73000000-0000-4000-8000-000000000073');
     await appendAttemptVerdict(
@@ -365,7 +381,7 @@ describe('R5/R6 structured convergence signatures', () => {
   });
 
   test('R6: a second unsigned evidence_invalid verdict routes to unknown human review', async () => {
-    const log = createDecisionLog();
+    const log = createDecisionLog([generatorClockIntent()]);
     const firstAttempt = evaluatorAttempt('77000000-0000-4000-8000-000000000077');
     const secondAttempt = evaluatorAttempt('78000000-0000-4000-8000-000000000078');
     await appendAttemptVerdict(
@@ -426,7 +442,7 @@ describe('R5/R6 structured convergence signatures', () => {
   });
 
   test('R6: after approval, one more unchanged evidence signature fails without a second review', async () => {
-    const log = createDecisionLog();
+    const log = createDecisionLog([generatorClockIntent()]);
     const attempts = [
       evaluatorAttempt('74000000-0000-4000-8000-000000000074'),
       evaluatorAttempt('75000000-0000-4000-8000-000000000075'),

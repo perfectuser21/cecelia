@@ -967,6 +967,32 @@ function taskExecutionContract(providerSpec, request, target) {
     throw new Error('attempt_task_bundle_invalid');
   }
 
+  const validationRole = ['generator', 'evaluator', 'judge'].includes(target.role);
+  let validationClockEnv = {};
+  if (validationRole) {
+    const pipelineStartedAt = inputs.pipeline_started_at;
+    const deadlineAt = inputs.deadline_at;
+    if (typeof pipelineStartedAt !== 'string' || typeof deadlineAt !== 'string') {
+      throw new Error('validation_clock_required');
+    }
+    const pipelineStartedMs = Date.parse(pipelineStartedAt);
+    const deadlineMs = Date.parse(deadlineAt);
+    const expectedWindowMs = Number(bundle.constraints?.timeout_seconds) * 1000;
+    if (
+      !Number.isFinite(pipelineStartedMs)
+      || !Number.isFinite(deadlineMs)
+      || !Number.isSafeInteger(expectedWindowMs)
+      || expectedWindowMs <= 0
+      || deadlineMs - pipelineStartedMs !== expectedWindowMs
+    ) {
+      throw new Error('validation_clock_invalid');
+    }
+    validationClockEnv = {
+      HARNESS_PIPELINE_STARTED_AT: pipelineStartedAt,
+      HARNESS_DEADLINE_AT: deadlineAt,
+    };
+  }
+
   const roleEnv = {
     ...(inputs.sprint_dir
       ? { SPRINT_DIR: String(inputs.sprint_dir) }
@@ -975,6 +1001,7 @@ function taskExecutionContract(providerSpec, request, target) {
     HARNESS_PROVIDER: target.provider,
     ...(target.account ? { HARNESS_ACCOUNT: target.account } : {}),
     HARNESS_MACHINE: target.machine,
+    ...validationClockEnv,
     ...(target.model ? { HARNESS_MODEL: target.model } : {}),
     ...(inputs.capability_snapshot_id
       ? { CAPABILITY_SNAPSHOT_ID: String(inputs.capability_snapshot_id) }
