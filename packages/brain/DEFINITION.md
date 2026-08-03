@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.267.188
+**版本**: 1.267.189
+
+## Kernel Fleet bootstrap TMPDIR isolation
+
+- Fleet Worker `1.267.94` 的 installer 在低权限 preflight 前先创建并归属 canonical
+  `/Users/Shared/cecelia-fleet-tmp`，且显式把它作为 `TMPDIR` 传给默认及覆盖 probe。
+- bootstrap 不再继承调用者的私有 `/var/folders` 临时目录，因此 OrbStack bind-mount
+  disposable container 在首次安装与升级时使用同一可共享路径。
+- 回退到 Brain `1.267.188` / Worker `1.267.93` 会恢复调用者 TMPDIR 继承；回退前必须
+  drain Fleet 节点，并仅在显式提供共享 TMPDIR 的维护窗口执行 bootstrap。
 
 ## Kernel Fleet admission stability and disk-policy SSOT
 

@@ -193,6 +193,7 @@ run_default_preflight() {
   service_gid="$("$ID_COMMAND" -g _cecelia)"
 
   PATH="$COMMAND_PATH" \
+  TMPDIR="$SHARED_TMPDIR" \
   DOCKER_HOST='unix:///var/run/docker.sock' \
   CECELIA_CALLBACK_URL="$BRAIN_HEALTH_URL" \
   CECELIA_MACHINE_ID="$machine_id" \
@@ -251,7 +252,7 @@ run_preflight() {
   if [[ "$NODE_PROBE" == "$DEFAULT_NODE_PROBE" ]]; then
     run_default_preflight
   else
-    "$NODE_PROBE"
+    TMPDIR="$SHARED_TMPDIR" "$NODE_PROBE"
   fi
 }
 
@@ -887,12 +888,15 @@ fi
 validate_worker_data_root_path
 if [[ "$mode" == 'apply' ]]; then
   prepare_orbstack_access
+  # The disposable bind-mount probe runs as _cecelia. Create its canonical,
+  # OrbStack-shareable TMPDIR before preflight instead of inheriting the
+  # invoking administrator's private /var/folders path.
+  prepare_shared_tmpdir
 fi
 run_preflight_with_retry
 validate_worker_token_file
 if [[ "$mode" == 'apply' ]]; then
   prepare_worker_data_root
-  prepare_shared_tmpdir
 fi
 
 if [[ "$mode" == 'render' ]]; then

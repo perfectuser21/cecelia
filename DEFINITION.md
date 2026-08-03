@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.188
+**Brain 版本**: 1.267.189
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.189 — Kernel Fleet bootstrap TMPDIR isolation
+
+- Fleet Worker `1.267.94` 在低权限 preflight 前创建 canonical OrbStack-shareable TMPDIR，
+  并显式传给默认及覆盖 probe；bootstrap 不再继承管理员私有 `/var/folders` 路径。
+- 回退到 Brain `1.267.188` / Worker `1.267.93` 会恢复旧 TMPDIR 继承行为；回退前必须
+  drain Fleet 节点。
 
 ## Brain 1.267.188 — Kernel Fleet admission stability
 
