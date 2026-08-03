@@ -281,8 +281,7 @@ jobs:
           cache: 'npm'
       # Engine's goal-injection integration suite imports Brain Commander
       # contracts directly, so their runtime dependencies must be present.
-      - run: npm ci --workspace=packages/brain --ignore-scripts
-      - run: cd packages/engine && npm ci
+      - run: npm ci --workspace=packages/brain --workspace=packages/engine --ignore-scripts
       - name: TypeCheck
         run: cd packages/engine && npx tsc --noEmit
       - name: Unit Tests
