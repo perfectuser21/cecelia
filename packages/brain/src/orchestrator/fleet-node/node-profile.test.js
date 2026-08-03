@@ -193,12 +193,12 @@ describe('Fleet NodeProfile registry', () => {
     }
   });
 
-  it('pins the TMPDIR-isolated Fleet Worker generation on every node', async () => {
+  it('pins the offline-Postgres-recovery Fleet Worker generation on every node', async () => {
     const { listNodeProfiles } = await loadContract();
 
     expect(
       listNodeProfiles().map((profile) => profile.version_policy.worker),
-    ).toEqual(['1.267.94', '1.267.94', '1.267.94']);
+    ).toEqual(['1.267.95', '1.267.95', '1.267.95']);
   });
 
   it('publishes macOS 15.6.1 as the shared minimum supported version', async () => {

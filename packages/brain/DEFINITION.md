@@ -1,6 +1,17 @@
 # Brain 模块定义
 
-**版本**: 1.267.189
+**版本**: 1.267.190
+
+## Kernel Fleet offline PostgreSQL tag recovery
+
+- Fleet Worker `1.267.95` 在离线载入 Runner archive 后，如果 pinned PostgreSQL 的
+  repository-qualified digest 尚不可解析，会先验证 archive 已提供完全相同的裸 digest，
+  再恢复 `postgres:16-alpine` tag 并复验完整 pinned 引用；缺少精确内容仍 fail closed。
+- rollout producer 在导出 archive 前把已验证的完整 PostgreSQL digest 映射到固定 tag，
+  新 archive 不再生成 `RepoTags: null` 的 PostgreSQL 记录；节点 bootstrap 不增加 registry
+  依赖，Runner digest、NodeProfile 与 Worker 健康合同保持不变。
+- 回退到 Brain `1.267.189` / Worker `1.267.94` 会恢复离线 archive 丢失 PostgreSQL tag
+  后的 `postgres_image_unavailable`；回退前必须保持所有 Fleet 节点 drained。
 
 ## Kernel Fleet bootstrap TMPDIR isolation
 
