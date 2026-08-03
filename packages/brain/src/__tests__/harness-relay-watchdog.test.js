@@ -359,6 +359,36 @@ describe('resumeStalledRelayRuns', () => {
     expect(result.resumed).toBe(1);
   });
 
+  it('expired Fleet attempt without a provider session restarts the controller without DB-only failure', async () => {
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      latestAttempt: {
+        id: '22222222-2222-4222-8222-222222222222',
+        run_id: RUN_ID,
+        role: 'generator',
+        provider: 'codex',
+        provider_session_id: null,
+        execution_transport: 'fleet-worker',
+        status: 'running',
+        lease_owner: 'dispatcher-parent',
+        lease_generation: 0,
+        lease_expires_at: new Date(Date.now() - 60_000).toISOString(),
+      },
+    });
+    deps.resumeAttempt = vi.fn();
+    deps.launchKernel = vi.fn(async () => ({ pid: 6262 }));
+
+    const result = await resumeStalledRelayRuns(deps);
+
+    expect(deps.resumeAttempt).not.toHaveBeenCalled();
+    expect(deps.launchKernel).toHaveBeenCalledOnce();
+    expect(deps.pool.query.mock.calls.some(([sql]) => (
+      String(sql).includes("error_code='recovery_without_session'")
+    ))).toBe(false);
+    expect(result.resumed).toBe(1);
+  });
+
   it('kernel-v1 attempt lease 仍有效时不恢复、不重启', async () => {
     const deps = makeDeps({
       harnessRuntime: 'kernel-v1',
