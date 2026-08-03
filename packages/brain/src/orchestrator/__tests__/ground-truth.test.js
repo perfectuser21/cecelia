@@ -1410,12 +1410,168 @@ describe('collectGroundTruth：lastAgentExit hop 作用域（P0-3 + derive 3d �
 });
 
 describe('collectGroundTruth：决策日志推导字段', () => {
-  it('generatorSpawned：spawn:generator 或 spawn:generator-fix 任一存在即 true', async () => {
+  it('generatorSpawned：只有 run-scoped Generator Attempt 存在才为 true，BLOCKED intent 与孤立 effect 不算启动', async () => {
     const deps1 = makeDeps({ rows: { log: [{ hop: 1, action: 'spawn:planner', observed: {}, detail: null }] } });
     expect((await collectGroundTruth(deps1, { taskId: TASK_ID, runId: RUN_ID })).generatorSpawned).toBe(false);
 
-    const deps2 = makeDeps({ rows: { log: [{ hop: 2, action: 'spawn:generator', observed: {}, detail: null }] } });
-    expect((await collectGroundTruth(deps2, { taskId: TASK_ID, runId: RUN_ID })).generatorSpawned).toBe(true);
+    const blocked = makeDeps({
+      rows: {
+        log: [
+          { hop: 2, action: 'spawn:generator', observed: {}, detail: null },
+          {
+            hop: 3,
+            action: 'result:dispatch',
+            observed: {},
+            detail: {
+              dispatch_hop: 2,
+              dispatch_action: 'spawn:generator',
+              status: 'BLOCKED',
+              failure_class: 'infrastructure_blocked',
+              should_create_attempt: false,
+            },
+          },
+        ],
+      },
+    });
+    const blockedObserved = await collectGroundTruth(blocked, { taskId: TASK_ID, runId: RUN_ID });
+    expect(blockedObserved.generatorSpawned).toBe(false);
+    expect(derive({
+      ...blockedObserved,
+      contract: { approved: true, id: CONTRACT_ID },
+      prdExists: true,
+      counters: {
+        hops: 3,
+        fixRound: 0,
+        pollCount: 0,
+        noPushStreak: 0,
+        noVerdictStreak: 0,
+        ganCostUsd: 0,
+      },
+    })).toMatchObject({ action: 'spawn:generator', reason: 'contract_approved' });
+
+    const orphanLaunchEffect = makeDeps({
+      rows: {
+        log: [
+          { hop: 4, action: 'spawn:generator-fix', observed: {}, detail: null },
+          {
+            hop: 5,
+            action: 'effect:attempt_launched',
+            observed: {},
+            detail: {
+              dispatch_hop: 4,
+              dispatch_action: 'spawn:generator-fix',
+              attempt_id: '22222222-3333-4444-8555-666666666666',
+            },
+          },
+        ],
+      },
+    });
+    expect((await collectGroundTruth(orphanLaunchEffect, { taskId: TASK_ID, runId: RUN_ID })).generatorSpawned).toBe(false);
+
+    const preLaunchAttempts = makeDeps({
+      rows: {
+        attempts: [
+          {
+            id: '44444444-5555-4666-8777-888888888888',
+            run_id: RUN_ID,
+            hop: 7,
+            role: 'generator',
+            status: 'queued',
+            error_code: null,
+            result: null,
+            task_bundle: {},
+          },
+          {
+            id: '55555555-6666-4777-8888-999999999999',
+            run_id: RUN_ID,
+            hop: 8,
+            role: 'generator',
+            status: 'failed',
+            error_code: 'launch_failed',
+            result: null,
+            task_bundle: {},
+          },
+          {
+            id: '66666666-7777-4888-8999-aaaaaaaaaaaa',
+            run_id: RUN_ID,
+            hop: 9,
+            role: 'generator',
+            status: 'failed',
+            error_code: 'launch_start_failed',
+            result: null,
+            remote_job_id: 'prepared-but-never-started',
+            task_bundle: {},
+          },
+        ],
+        log: [
+          { hop: 7, action: 'spawn:generator', observed: {}, detail: null },
+          { hop: 8, action: 'spawn:generator', observed: {}, detail: null },
+          { hop: 9, action: 'spawn:generator', observed: {}, detail: null },
+        ],
+      },
+    });
+    expect((await collectGroundTruth(preLaunchAttempts, { taskId: TASK_ID, runId: RUN_ID })).generatorSpawned).toBe(false);
+
+    const matchedLaunchEffect = makeDeps({
+      rows: {
+        attempts: [{
+          id: '77777777-8888-4999-8aaa-bbbbbbbbbbbb',
+          run_id: RUN_ID,
+          hop: 10,
+          role: 'generator',
+          status: 'starting',
+          result: null,
+          task_bundle: {},
+        }],
+        log: [
+          { hop: 10, action: 'spawn:generator', observed: {}, detail: null },
+          {
+            hop: 11,
+            action: 'effect:attempt_launched',
+            observed: {},
+            detail: {
+              dispatch_hop: 10,
+              dispatch_action: 'spawn:generator',
+              attempt_id: '77777777-8888-4999-8aaa-bbbbbbbbbbbb',
+            },
+          },
+        ],
+      },
+    });
+    expect((await collectGroundTruth(matchedLaunchEffect, { taskId: TASK_ID, runId: RUN_ID })).generatorSpawned).toBe(true);
+
+    const launchedWithoutEffect = makeDeps({
+      rows: {
+        attempts: [{
+          id: '33333333-4444-4555-8666-777777777777',
+          run_id: RUN_ID,
+          hop: 6,
+          role: 'generator',
+          status: 'completed',
+          result: { status: 'completed', summary: 'runtime callback proved launch' },
+          task_bundle: {},
+        }],
+        log: [{ hop: 6, action: 'spawn:generator', observed: {}, detail: null }],
+      },
+    });
+    const crashWindowObserved = await collectGroundTruth(
+      launchedWithoutEffect,
+      { taskId: TASK_ID, runId: RUN_ID },
+    );
+    expect(crashWindowObserved.generatorSpawned).toBe(true);
+    expect(derive({
+      ...crashWindowObserved,
+      contract: { approved: true, id: CONTRACT_ID },
+      prdExists: true,
+      counters: {
+        hops: 6,
+        fixRound: 0,
+        pollCount: 0,
+        noPushStreak: 0,
+        noVerdictStreak: 0,
+        ganCostUsd: 0,
+      },
+    })).toMatchObject({ action: 'spawn:generator-fix', reason: 'no_pr' });
   });
 
   it('evaluateVerdict/judgeVerdict：取最新 verdict:* 行的 detail（jsonb string 兼容）', async () => {
