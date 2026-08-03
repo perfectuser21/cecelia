@@ -471,6 +471,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: preview start 依赖隔离/旧进程顺序自测
         run: bash scripts/__tests__/preview-env-start.test.sh
+      - name: Harness PR 与 Preview 容量闸解耦自测
+        run: bash scripts/__tests__/preview-deploy-harness-gate.test.sh
       - name: reaper 单元自测
         run: bash scripts/__tests__/preview-reaper.test.sh
 
