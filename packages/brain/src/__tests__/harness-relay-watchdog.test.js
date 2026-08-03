@@ -331,6 +331,87 @@ describe('resumeStalledRelayRuns', () => {
     );
   });
 
+  it('Fleet watchdog confirms old-lease cleanup before reclaiming and resuming a child', async () => {
+    const calls = [];
+    const latestAttempt = {
+      id: '22222222-2222-4222-8222-222222222222',
+      run_id: RUN_ID,
+      hop: 1,
+      phase: 'generate',
+      role: 'generator',
+      provider: 'codex',
+      account_id: 'team1',
+      machine_id: 'us-mac-m4',
+      requested_machine_id: 'us-mac-m4',
+      actual_machine_id: 'us-mac-m4',
+      remote_job_id: 'fleet-parent-job',
+      execution_transport: 'fleet-worker',
+      provider_session_id: 'thread-fleet-parent',
+      task_bundle: {},
+      callback_secret_hash: 'old-hash',
+      lease_owner: 'dispatcher-parent',
+      lease_generation: 0,
+      logical_cycle_id: `intent:${RUN_ID}:1`,
+      workstream_key: 'ws1',
+      status: 'running',
+      lease_expires_at: new Date(Date.now() - 60_000).toISOString(),
+    };
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      latestAttempt,
+    });
+    const queryImpl = deps.pool.query.getMockImplementation();
+    deps.pool.query.mockImplementation(async (sql, params) => {
+      if (/lease_generation = lease_generation \+ 1/.test(String(sql))) {
+        calls.push('reclaim');
+      }
+      return queryImpl(sql, params);
+    });
+    deps.launcher = {
+      inspect: vi.fn(async () => {
+        calls.push('inspect-old-lease');
+        return {
+          status: 'running',
+          attempt_id: latestAttempt.id,
+          container_id: latestAttempt.remote_job_id,
+        };
+      }),
+      cancel: vi.fn(async () => {
+        calls.push('cancel-old-lease');
+        return { status: 'cleaned', attempt_id: latestAttempt.id };
+      }),
+    };
+    deps.resumeAttempt = vi.fn(async (_child, context) => {
+      calls.push('resume-child');
+      expect(context.parentCleanupConfirmed).toBe(true);
+      return { ok: true };
+    });
+    deps.launchKernel = vi.fn();
+
+    const result = await resumeStalledRelayRuns(deps);
+
+    expect(calls).toEqual([
+      'inspect-old-lease',
+      'cancel-old-lease',
+      'reclaim',
+      'resume-child',
+    ]);
+    expect(deps.launcher.inspect).toHaveBeenCalledWith(expect.objectContaining({
+      attempt: expect.objectContaining({
+        lease_owner: 'dispatcher-parent',
+        lease_generation: 0,
+      }),
+    }));
+    expect(deps.launcher.cancel).toHaveBeenCalledWith(expect.objectContaining({
+      attempt: expect.objectContaining({
+        lease_owner: 'dispatcher-parent',
+        lease_generation: 0,
+      }),
+    }));
+    expect(result.resumed).toBe(1);
+  });
+
   it('kernel-v1 无可恢复 session 时重启 reconcile，由外部真相推导新 hop', async () => {
     const deps = makeDeps({
       harnessRuntime: 'kernel-v1',
