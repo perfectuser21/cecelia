@@ -1473,6 +1473,115 @@ describe('kernel fleet watchdog recovery', () => {
     });
   });
 
+  it('does not rotate a Fleet parent lease until exact old-lease cleanup is confirmed', async () => {
+    const original = {
+      ...parentAttempt(),
+      execution_transport: 'fleet-worker',
+    };
+    const store = {
+      getById: vi.fn(async () => original),
+      reclaim: vi.fn(async () => ({
+        ...original,
+        lease_owner: 'watchdog:test',
+        lease_generation: 4,
+      })),
+      rotateCallbackSecret: vi.fn(),
+      createAttempt: vi.fn(),
+      markStarting: vi.fn(),
+      fail: vi.fn(),
+    };
+    const cleanupParentAttempt = vi.fn(async () => ({
+      ok: false,
+      failure_code: 'resume_parent_cleanup_unconfirmed',
+      cleanup_status: 'unavailable',
+    }));
+
+    await expect(reconcileExpiredKernelAttempt({
+      db: { query: vi.fn() },
+      attemptStore: store,
+      attemptId: PARENT_ID,
+      leaseOwner: 'watchdog:test',
+      cleanupParentAttempt,
+      resumeAttempt: vi.fn(),
+      reservedChildHop: 8,
+      randomUUIDFn: () => CHILD_ID,
+    })).resolves.toMatchObject({
+      ok: false,
+      failure_code: 'resume_parent_cleanup_unconfirmed',
+    });
+
+    expect(cleanupParentAttempt).toHaveBeenCalledWith(original);
+    expect(store.reclaim).not.toHaveBeenCalled();
+    expect(store.rotateCallbackSecret).not.toHaveBeenCalled();
+    expect(store.createAttempt).not.toHaveBeenCalled();
+  });
+
+  it('orders exact Fleet parent cleanup before reclaim and skips duplicate child-stage cleanup', async () => {
+    const calls = [];
+    const original = {
+      ...parentAttempt(),
+      execution_transport: 'fleet-worker',
+    };
+    const reclaimed = {
+      ...original,
+      lease_owner: 'watchdog:test',
+      lease_generation: 4,
+    };
+    const store = {
+      getById: vi.fn(async () => original),
+      reclaim: vi.fn(async () => {
+        calls.push('reclaim');
+        return reclaimed;
+      }),
+      rotateCallbackSecret: vi.fn(async () => {
+        calls.push('rotate');
+        return reclaimed;
+      }),
+      createAttempt: vi.fn(async () => {
+        calls.push('create-child');
+        return { ...childAttempt(), status: 'queued', lease_owner: null };
+      }),
+      markStarting: vi.fn(async () => {
+        calls.push('claim-child');
+        return childAttempt();
+      }),
+      fail: vi.fn(async () => ({ attempt: {}, deduped: false })),
+    };
+    const cleanupParentAttempt = vi.fn(async () => {
+      calls.push('cleanup-parent-old-lease');
+      return {
+        ok: true,
+        cleanup_status: 'cleaned',
+        attempt_id: PARENT_ID,
+      };
+    });
+    const resumeAttempt = vi.fn(async (_child, context) => {
+      calls.push('resume-child');
+      expect(context.parentCleanupConfirmed).toBe(true);
+      return { ok: true };
+    });
+
+    await expect(reconcileExpiredKernelAttempt({
+      db: { query: vi.fn() },
+      attemptStore: store,
+      attemptId: PARENT_ID,
+      leaseOwner: 'watchdog:test',
+      cleanupParentAttempt,
+      resumeAttempt,
+      reservedChildHop: 8,
+      randomUUIDFn: () => CHILD_ID,
+    })).resolves.toMatchObject({ ok: true, resumed: true });
+
+    expect(calls).toEqual([
+      'cleanup-parent-old-lease',
+      'reclaim',
+      'rotate',
+      'create-child',
+      'claim-child',
+      'resume-child',
+    ]);
+  });
+
   it('persists bounded sanitized diagnostics when resume throws an ordinary error', async () => {
     const original = parentAttempt();
     const reclaimed = {
