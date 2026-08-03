@@ -1005,6 +1005,7 @@ describe('Fleet Worker Attempt runner', () => {
       expected: {
         SPRINT_DIR: 'sprints/provider-neutral',
         WORKSPACE_PATH: '/workspace',
+        BRAIN_RESULT_FILE: '/tmp/cecelia-prompts/brain-result.json',
         PROPOSE_ROUND: '2',
         CONTRACT_BRANCH: 'cp-harness-propose-r2-aaaaaaaa-a17',
       },
@@ -1030,6 +1031,7 @@ describe('Fleet Worker Attempt runner', () => {
       expected: {
         SPRINT_DIR: 'sprints/provider-neutral',
         WORKSPACE_PATH: '/workspace',
+        BRAIN_RESULT_FILE: '/tmp/cecelia-prompts/brain-result.json',
         CONTRACT_BRANCH: 'cp-harness-propose-r2-aaaaaaaa-a17',
         PR_BRANCH: 'cp-07310943-ws-0e82adad',
         PR_HEAD_SHA: '0123456789abcdef0123456789abcdef01234567',

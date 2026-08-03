@@ -16,9 +16,9 @@
  *                Sprint 07231527：语义修正，同 SHA no-progress 不递增 fixRound；
  *                fixRound 仅保留为观测指标，不再承担终止判据。
  *   ganRound   = proposeBranchMaxRn（权威）；COUNT(action='spawn:proposer') 仅交叉校验，不一致取分支值
- *   noPushStreak    = 尾部连续的 spawn:proposer 行中 observed.propose_branch_advanced === false 的个数，
- *                     出现 true 即断；缺字段（旧行/崩溃窗口）保守断开不计
- *   noVerdictStreak = 同理，spawn:reviewer 行 × observed.verdict_parsed
+ *   noPushStreak    = 尾部连续的已启动、成功终态 proposer Attempt 中未推进提案分支的个数；
+ *                     未启动/未 callback/失败终态 intent 保守断开不计
+ *   noVerdictStreak = 同理，已启动、成功终态 reviewer Attempt 必须有同 attempt verdict 行
  *   crossCheckMismatch = proposerCount !== proposeBranchMaxRn（崩溃窗口漏记 / 记了没派的交叉校验信号，
  *                        loop 把它写进 appendHop detail 供回放排障）
  *   pollCount  = 从 decision log 推导：最后一次非 wait:poll_ci action 后的 wait:poll_ci 行数（持久化）
@@ -356,23 +356,52 @@ export function replayProductConvergence(
   return { outcome: 'continue', reason: 'failure_set_novel' };
 }
 
-/**
- * 从 (action, observed) 子序列尾部数连续 streak：
- * 只看 action 匹配的行（GAN 交替中夹的其他行不打断）；
- * flagKey === false 计入，其余（true/缺失）即断。
- * 缺字段（旧行/崩溃窗口）保守断开的代价：streak 熔断更晚触发——安全兜底依赖 MAX_HOPS(200)+budget cap，
- * 不会因此放松任何硬上限，只是 GAN 守护可能多跑几跳才停。
- */
-function tailStreak(rows, action, flagKey) {
-  let streak = 0;
-  for (let i = rows.length - 1; i >= 0; i--) {
-    if (rows[i].action !== action) continue;
-    const observed = asJson(rows[i].observed) || {};
-    if (observed[flagKey] === false) {
-      streak++;
-    } else {
-      break;
+const SUCCESSFUL_ROLE_STATUSES = new Set(['completed', 'completed_with_concerns']);
+
+function completedRoleOutcomes(rows, role, currentProposalRn) {
+  const action = `spawn:${role}`;
+  const intents = rows.filter((candidate) => candidate.action === action);
+  return intents.map((intent, index) => {
+    const launch = rows.find((candidate) => {
+      if (candidate.action !== LOG_ACTION.ATTEMPT_LAUNCHED) return false;
+      const detail = asJson(candidate.detail) ?? {};
+      return Number(detail.dispatch_hop) === Number(intent.hop)
+        && detail.dispatch_action === action
+        && typeof detail.attempt_id === 'string'
+        && detail.attempt_id.length > 0;
+    });
+    if (!launch) return null;
+
+    const attemptId = (asJson(launch.detail) ?? {}).attempt_id;
+    const callback = rows.find((candidate) => {
+      if (candidate.action !== LOG_ACTION.ATTEMPT_CALLBACK) return false;
+      const detail = asJson(candidate.detail) ?? {};
+      return detail.attempt_id === attemptId && detail.role === role;
+    });
+    const callbackDetail = asJson(callback?.detail) ?? {};
+    if (!callback || !SUCCESSFUL_ROLE_STATUSES.has(callbackDetail.status)) return null;
+
+    if (role === 'reviewer') {
+      return rows.some((candidate) => (
+        candidate.action === LOG_ACTION.VERDICT_REVIEWER
+        && (asJson(candidate.detail) ?? {}).attempt_id === attemptId
+      ));
     }
+
+    const before = Number((asJson(intent.observed) ?? {}).proposeBranchRn);
+    const laterIntent = intents[index + 1];
+    const after = laterIntent == null
+      ? currentProposalRn
+      : Number((asJson(laterIntent.observed) ?? {}).proposeBranchRn);
+    return Number.isFinite(before) && Number.isFinite(after) ? after > before : null;
+  });
+}
+
+function terminalFalseStreak(outcomes) {
+  let streak = 0;
+  for (let index = outcomes.length - 1; index >= 0; index--) {
+    if (outcomes[index] === false) streak++;
+    else break;
   }
   return streak;
 }
@@ -449,6 +478,8 @@ export function deriveCounters(logRows, options) {
   // 不一致（崩溃窗口漏记 / 记了没派）一律取分支值，mismatch 信号由 loop 写进 appendHop detail。
   const proposerCount = rows.filter((r) => r.action === ACTION.SPAWN_PROPOSER).length;
   const ganRound = proposeBranchMaxRn;
+  const proposerOutcomes = completedRoleOutcomes(rows, 'proposer', proposeBranchMaxRn);
+  const reviewerOutcomes = completedRoleOutcomes(rows, 'reviewer', proposeBranchMaxRn);
 
   // pollCount：从 decision log 推导，重启后不归零（Sprint 07231527 Blocking 2）
   // 语义：最后一次非 wait:poll_ci action 后的 wait:poll_ci 行数（连续 poll 环计数）
@@ -541,8 +572,8 @@ export function deriveCounters(logRows, options) {
     hops: rows.length,
     fixRound,
     ganRound,
-    noPushStreak: tailStreak(rows, ACTION.SPAWN_PROPOSER, 'propose_branch_advanced'),
-    noVerdictStreak: tailStreak(rows, ACTION.SPAWN_REVIEWER, 'verdict_parsed'),
+    noPushStreak: terminalFalseStreak(proposerOutcomes),
+    noVerdictStreak: terminalFalseStreak(reviewerOutcomes),
     crossCheckMismatch: proposerCount !== proposeBranchMaxRn,
     pollCount,
     blockedStreak,

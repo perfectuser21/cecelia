@@ -84,6 +84,45 @@ describe('capability gate stable helpers', () => {
 });
 
 describe('capability gate deterministic target recovery', () => {
+  it('preserves bounded Fleet admission reasons in blocked evidence', async () => {
+    const deps = healthyGateDeps();
+    deps.getMachineHealth.mockResolvedValue({
+      ok: false,
+      machine: 'xian-mac-m4',
+      signature: 'node_not_base_admitted',
+      admission_reasons: ['container_probe_timeout'],
+    });
+    deps.getMachineCapacity.mockResolvedValue({
+      ok: false,
+      available: 0,
+      signature: 'node_not_base_admitted',
+      admission_reasons: ['container_probe_timeout'],
+    });
+    const gate = createCapabilityGate(deps);
+
+    const result = await gate.evaluate({
+      preferred_target: preferredTarget,
+      candidate_targets: [preferredTarget],
+      requirements: {},
+      task_bundle: { logical_cycle: 'intent:admission-reason' },
+    });
+
+    expect(result).toMatchObject({
+      status: 'blocked',
+      fallback_reason: 'node_not_base_admitted',
+      evidence: {
+        probe_detail: {
+          machine_health: {
+            admission_reasons: ['container_probe_timeout'],
+          },
+          machine_capacity: {
+            admission_reasons: ['container_probe_timeout'],
+          },
+        },
+      },
+    });
+  });
+
   it.each(['health', 'capacity'])(
     'non-strict recovery continues to Xi’an M1 when preferred Xi’an M4 %s probe times out',
     async (timedOutProbe) => {

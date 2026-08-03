@@ -2375,6 +2375,7 @@ describe('createDetachedLauncher', () => {
         CONTRACT_BRANCH: 'cp-harness-propose-r1-aaaaaaaa-a3',
       }),
     }));
+    expect(spawnDetached.mock.calls[0][0].env.BRAIN_RESULT_FILE).toBeUndefined();
   });
 
   it('evaluator 以可写工作树进入 runner，但远端 Git 写入被执行层阻断', async () => {
@@ -2406,6 +2407,7 @@ describe('createDetachedLauncher', () => {
         GIT_CONFIG_COUNT: '1',
         GIT_CONFIG_KEY_0: 'remote.origin.pushurl',
         GIT_CONFIG_VALUE_0: 'blocked-by-harness://evaluator',
+        BRAIN_RESULT_FILE: '/tmp/cecelia-prompts/brain-result.json',
         PR_BRANCH: 'cp-evaluator-target',
         PR_HEAD_SHA: 'sha-1',
       }),
@@ -2539,6 +2541,7 @@ describe('createDetachedLauncher', () => {
         HARNESS_CALLBACK_TOKEN: 'attempt-secret',
         HARNESS_RUN_ID: runId,
         HARNESS_READ_ONLY: 'true',
+        BRAIN_RESULT_FILE: '/tmp/cecelia-prompts/brain-result.json',
       }),
     }));
     const spawnArgs = spawnDetached.mock.calls[0][0];

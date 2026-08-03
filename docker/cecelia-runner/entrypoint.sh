@@ -944,7 +944,7 @@ prepare_evaluator_evidence() {
 
 merge_evaluator_evidence() {
   local normalized_result_file="$1"
-  local brain_result_file="${WORKTREE_PATH:-$PWD}/.brain-result.json"
+  local brain_result_file="${BRAIN_RESULT_FILE:-${WORKTREE_PATH:-$PWD}/.brain-result.json}"
   local merged_result_file="${normalized_result_file}.evidence"
 
   [[ "${HARNESS_NODE:-}" == "evaluator" ]] || return 0

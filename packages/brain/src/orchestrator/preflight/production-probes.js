@@ -5,6 +5,7 @@ import { resolveCanonicalMachineId } from './canonical-machine-id.js';
 
 const DEFAULT_BRAIN_URL = 'http://127.0.0.1:5221';
 const DEFAULT_TIMEOUT_MS = 5_000;
+const DEFAULT_NODE_ADMISSION_TIMEOUT_MS = 20_000;
 const DEFAULT_CACHE_TTL_MS = 1_000;
 
 function accountRows(snapshot, provider) {
@@ -36,11 +37,16 @@ export function createProductionCapabilityProbes(deps = {}) {
   const cacheTtlMs = Number(deps.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS);
   const now = deps.now ?? Date.now;
   const cache = new Map();
-  const nodeAdmissionClient = deps.nodeAdmissionClient ?? createNodeAdmissionClient({
+  const nodeAdmissionRequestTimeoutMs = Number(
+    deps.nodeAdmissionRequestTimeoutMs ?? DEFAULT_NODE_ADMISSION_TIMEOUT_MS,
+  );
+  const createNodeAdmissionClientFn = deps.createNodeAdmissionClientFn
+    ?? createNodeAdmissionClient;
+  const nodeAdmissionClient = deps.nodeAdmissionClient ?? createNodeAdmissionClientFn({
     env,
     fetchFn,
     now,
-    requestTimeoutMs,
+    requestTimeoutMs: nodeAdmissionRequestTimeoutMs,
   });
 
   async function fetchJson(url, options = {}, { force = false } = {}) {

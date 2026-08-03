@@ -566,16 +566,18 @@ type prepare_evaluator_evidence >/dev/null 2>&1 || {
 }
 EVIDENCE_TMP="$(mktemp -d)"
 trap 'rm -rf "$EVIDENCE_TMP"' EXIT
+RUNTIME_BRAIN_RESULT="$EVIDENCE_TMP/runtime-brain-result.json"
 cat > "$EVIDENCE_TMP/result.json" <<'JSON'
 {"status":"completed","checks":["npm test passed"],"decision":{"outcome":"PASS","reason":"verified"}}
 JSON
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-current CECELIA_TASK_ID=task-current \
-  WORKTREE_PATH="$EVIDENCE_TMP" prepare_evaluator_evidence
-cat > "$EVIDENCE_TMP/.brain-result.json" <<'JSON'
+  WORKTREE_PATH="$EVIDENCE_TMP" BRAIN_RESULT_FILE="$RUNTIME_BRAIN_RESULT" prepare_evaluator_evidence
+cat > "$RUNTIME_BRAIN_RESULT" <<'JSON'
 {"verdict":"PASS","task_id":"task-current","attempt_id":"attempt-current","behavior_tests":[{"command":"npm test","exit_code":0,"log_tail":"12 tests passed"}]}
 JSON
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-current CECELIA_TASK_ID=task-current \
-  WORKTREE_PATH="$EVIDENCE_TMP" merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
+  WORKTREE_PATH="$EVIDENCE_TMP" BRAIN_RESULT_FILE="$RUNTIME_BRAIN_RESULT" \
+  merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
 jq -e '.checks == [{"command":"npm test","exit_code":0,"log_tail":"12 tests passed"}]' \
   "$EVIDENCE_TMP/result.json" >/dev/null || {
   echo 'evaluator evidence bridge did not preserve structured behavior_tests' >&2
@@ -660,7 +662,7 @@ const fs = require('node:fs');
 const match = fs.readFileSync(process.argv[2], 'utf8').match(/^version:\s*(\d+)\.(\d+)\.(\d+)$/m);
 if (!match) process.exit(1);
 const actual = match.slice(1).map(Number);
-const minimum = [1, 31, 0];
+const minimum = [1, 35, 1];
 for (let index = 0; index < minimum.length; index += 1) {
   if (actual[index] > minimum[index]) process.exit(0);
   if (actual[index] < minimum[index]) process.exit(1);
@@ -671,6 +673,11 @@ NODE
 }
 grep -q 'HARNESS_ATTEMPT_ID' "$EVALUATOR_SKILL" || {
   echo 'harness-evaluator skill does not emit attempt-bound evidence' >&2
+  exit 1
+}
+grep -Fq 'RESULT_FILE="${BRAIN_RESULT_FILE:-$WORKSPACE/.brain-result.json}"' \
+  "$EVALUATOR_SKILL" || {
+  echo 'harness-evaluator skill does not honor the injected result file' >&2
   exit 1
 }
 
@@ -690,12 +697,14 @@ printf '%s\n' \
   > "$EVIDENCE_TMP/evaluator-execution.json"
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-skill CECELIA_TASK_ID=task-current \
   WORKTREE_PATH="$EVIDENCE_TMP" prepare_evaluator_evidence
-WORKSPACE="$EVIDENCE_TMP" TASK_ID=task-current HARNESS_ATTEMPT_ID=attempt-skill \
+WORKSPACE="$EVIDENCE_TMP" RESULT_FILE="$RUNTIME_BRAIN_RESULT" \
+  TASK_ID=task-current HARNESS_ATTEMPT_ID=attempt-skill \
   TARGET_ENV=local_api E2E_EXECUTION_FILE="$EVIDENCE_TMP/evaluator-execution.json" \
   E2E_RESULT_LOG="$EVIDENCE_TMP/e2e-result.log" SCREENSHOTS_JSON='[]' CASCADE_ASSERTIONS='[]' \
   eval "$RESULT_WRITER"
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-skill CECELIA_TASK_ID=task-current \
-  WORKTREE_PATH="$EVIDENCE_TMP" merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
+  WORKTREE_PATH="$EVIDENCE_TMP" BRAIN_RESULT_FILE="$RUNTIME_BRAIN_RESULT" \
+  merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
 jq -e '.checks == [{"command":"timeout 120 bash /tmp/e2e-verify.sh","exit_code":0,"log_tail":"12 tests passed"}]' \
   "$EVIDENCE_TMP/result.json" >/dev/null || {
   echo 'harness-evaluator executable PASS writer did not survive the callback bridge' >&2
@@ -712,12 +721,14 @@ printf '%s\n' \
   > "$EVIDENCE_TMP/evaluator-execution.json"
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-skill CECELIA_TASK_ID=task-current \
   WORKTREE_PATH="$EVIDENCE_TMP" prepare_evaluator_evidence
-WORKSPACE="$EVIDENCE_TMP" TASK_ID=task-current HARNESS_ATTEMPT_ID=attempt-skill \
+WORKSPACE="$EVIDENCE_TMP" RESULT_FILE="$RUNTIME_BRAIN_RESULT" \
+  TASK_ID=task-current HARNESS_ATTEMPT_ID=attempt-skill \
   TARGET_ENV=local_api E2E_EXECUTION_FILE="$EVIDENCE_TMP/evaluator-execution.json" \
   E2E_RESULT_LOG="$EVIDENCE_TMP/e2e-result.log" SCREENSHOTS_JSON='[]' CASCADE_ASSERTIONS='[]' \
   eval "$RESULT_WRITER"
 HARNESS_NODE=evaluator HARNESS_ATTEMPT_ID=attempt-skill CECELIA_TASK_ID=task-current \
-  WORKTREE_PATH="$EVIDENCE_TMP" merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
+  WORKTREE_PATH="$EVIDENCE_TMP" BRAIN_RESULT_FILE="$RUNTIME_BRAIN_RESULT" \
+  merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
 jq -e '.checks == ["provider summary"]' "$EVIDENCE_TMP/result.json" >/dev/null || {
   echo 'harness-evaluator PASS writer accepted foreign execution metadata' >&2
   exit 1

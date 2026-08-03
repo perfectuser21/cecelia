@@ -6,11 +6,23 @@
 
 
 
-**Brain 版本**: 1.267.195
+**Brain 版本**: 1.267.196
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.196 — Kernel r11 control-plane convergence
+
+- GAN streak 只消费已实际启动且完成 identity-bound callback 的 Attempt；admission-blocked、
+  未启动与未 callback 的 intent 不再冒充产品无进展并提前杀死 run。
+- 生产 preflight 使用嵌套预算：Fleet admission 20 秒、外层 capability gate 25 秒；通用
+  Brain HTTP 仍为 5 秒，具体 admission reason 随脱敏 evidence 留痕。
+- Reviewer/Evaluator/Judge/Reporter 的结构化结果写入 per-Attempt runtime mount，保持
+  工作树只读边界；Brain `1.267.196`、Fleet Worker `1.267.98` 与三机 Runner digest
+  `sha256:e0797f5a440d61827d1ea86afee629e6f5a687da6f958608671ba9c873e5e94a` 对齐。
+- 回退到 Brain `1.267.195`、Worker `1.267.97` 与上一 Runner digest 会恢复 r11 的假
+  streak、冷 admission 误拒和只读结果丢失；回退前保持节点 drained。
 
 ## Brain 1.267.195 — Kernel frozen guard process-scoped hook injection
 

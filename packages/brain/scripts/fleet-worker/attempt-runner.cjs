@@ -31,6 +31,12 @@ const GITHUB_CREDENTIAL_ROLES = new Set([
   'generator',
   'evaluator',
 ]);
+const RUNTIME_RESULT_ROLES = new Set([
+  'reviewer',
+  'evaluator',
+  'judge',
+  'reporter',
+]);
 const MAX_STATE_BYTES = 1_048_576;
 const MAX_GITHUB_TOKEN_BYTES = 16_384;
 const RUNTIME_NETWORK_PATTERN = /^cecelia-attempt-[a-f0-9-]{36}$/;
@@ -966,6 +972,9 @@ function taskExecutionContract(providerSpec, request, target) {
       ? { SPRINT_DIR: String(inputs.sprint_dir) }
       : {}),
     WORKSPACE_PATH: '/workspace',
+    ...(RUNTIME_RESULT_ROLES.has(target.role)
+      ? { BRAIN_RESULT_FILE: '/tmp/cecelia-prompts/brain-result.json' }
+      : {}),
     ...(target.role === 'planner' && inputs.planner_branch
       ? { PLANNER_BRANCH: String(inputs.planner_branch) }
       : {}),

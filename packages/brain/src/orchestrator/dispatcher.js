@@ -14,6 +14,7 @@ import { deriveCapabilityRequirements } from './preflight/requirements.js';
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const MAX_EVALUATOR_FEEDBACK_CHECKS = 20;
+const RUNTIME_RESULT_ROLES = new Set(['reviewer', 'evaluator', 'judge', 'reporter']);
 
 const ACTION_SPECS = Object.freeze({
   'spawn:planner': {
@@ -930,6 +931,9 @@ export function createDetachedLauncher({
       };
       const providerEnv = { ...spec.env };
       const roleEnv = {};
+      if (RUNTIME_RESULT_ROLES.has(attempt.role)) {
+        roleEnv.BRAIN_RESULT_FILE = '/tmp/cecelia-prompts/brain-result.json';
+      }
       if (attempt.role === 'evaluator') {
         // Evaluator needs a writable worktree for package managers and real E2E tests,
         // but must never advance the PR it is judging. Git's environment config is

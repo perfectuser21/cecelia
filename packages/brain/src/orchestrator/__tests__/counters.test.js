@@ -3,7 +3,7 @@
  * - 空日志=0
  * - fixRound = COUNT(action='spawn:generator-fix')
  * - ganRound 权威=分支 rN，COUNT 交叉校验不一致时取分支值
- * - noPushStreak / noVerdictStreak 从 (action, observed) 序列尾部推导（清零语义：产物出现即断）
+ * - noPushStreak / noVerdictStreak 从 intent + launch + identity callback 链推导
  * - 同 hop 不重复计
  */
 import { describe, it, expect } from 'vitest';
@@ -12,6 +12,48 @@ import { deriveCounters, replayProductConvergence } from '../counters.js';
 /** 造一行决策日志 */
 function row(hop, action, observed = {}) {
   return { hop, action, observed };
+}
+
+function attemptIdFor(intentHop) {
+  return `00000000-0000-4000-8000-${String(intentHop).padStart(12, '0')}`;
+}
+
+function completedRoleAttempt({
+  intentHop,
+  effectHop,
+  callbackHop,
+  role,
+  beforeRn = 0,
+  intentObserved = {},
+}) {
+  const attemptId = attemptIdFor(intentHop);
+  return [
+    row(intentHop, `spawn:${role}`, {
+      proposeBranchRn: beforeRn,
+      ...intentObserved,
+    }),
+    {
+      hop: effectHop,
+      action: 'effect:attempt_launched',
+      observed: {},
+      detail: {
+        dispatch_hop: intentHop,
+        dispatch_action: `spawn:${role}`,
+        attempt_id: attemptId,
+      },
+    },
+    {
+      hop: callbackHop,
+      action: 'verdict:attempt_callback',
+      observed: { attempt_id: attemptId, role, status: 'completed' },
+      detail: {
+        attempt_id: attemptId,
+        role,
+        hop: intentHop,
+        status: 'completed',
+      },
+    },
+  ];
 }
 
 describe('deriveCounters：空日志', () => {
@@ -135,84 +177,225 @@ describe('deriveCounters：ganRound 权威与交叉校验', () => {
 });
 
 describe('deriveCounters：noPushStreak（尾部连续 proposer 产物未出现）', () => {
-  it('尾部两连 propose_branch_advanced=false → 2', () => {
+  it('r11：admission-blocked intent 不得把两个已 push Attempt 误杀成 no-push streak', () => {
     const rows = [
-      row(1, 'spawn:proposer', { propose_branch_advanced: true }),
-      row(2, 'spawn:proposer', { propose_branch_advanced: false }),
-      row(3, 'spawn:proposer', { propose_branch_advanced: false }),
+      ...completedRoleAttempt({
+        intentHop: 6,
+        effectHop: 7,
+        callbackHop: 8,
+        role: 'proposer',
+        beforeRn: 0,
+        intentObserved: { propose_branch_advanced: false },
+      }),
+      row(17, 'spawn:proposer', {
+        proposeBranchRn: 1,
+        propose_branch_advanced: true,
+      }),
+      {
+        hop: 18,
+        action: 'result:dispatch',
+        observed: {},
+        detail: { dispatch_hop: 17, status: 'BLOCKED' },
+      },
+      row(19, 'spawn:proposer', {
+        proposeBranchRn: 1,
+        propose_branch_advanced: false,
+      }),
+      {
+        hop: 20,
+        action: 'result:dispatch',
+        observed: {},
+        detail: { dispatch_hop: 19, status: 'BLOCKED' },
+      },
+      ...completedRoleAttempt({
+        intentHop: 21,
+        effectHop: 22,
+        callbackHop: 23,
+        role: 'proposer',
+        beforeRn: 1,
+        intentObserved: { propose_branch_advanced: false },
+      }),
     ];
-    expect(deriveCounters(rows, { proposeBranchMaxRn: 1 }).noPushStreak).toBe(2);
+
+    expect(deriveCounters(rows, { proposeBranchMaxRn: 2 }).noPushStreak).toBe(0);
   });
 
-  it('清零语义：最新一次 push 成功（true）即断 → 0', () => {
+  it('已 launch 但尚无 terminal callback 的 proposer 不消耗 no-push streak', () => {
+    const attemptId = '00000000-0000-4000-8000-000000000001';
     const rows = [
-      row(1, 'spawn:proposer', { propose_branch_advanced: false }),
-      row(2, 'spawn:proposer', { propose_branch_advanced: false }),
-      row(3, 'spawn:proposer', { propose_branch_advanced: true }),
+      row(1, 'spawn:proposer', {
+        proposeBranchRn: 0,
+        propose_branch_advanced: false,
+      }),
+      {
+        hop: 2,
+        action: 'effect:attempt_launched',
+        observed: {},
+        detail: {
+          dispatch_hop: 1,
+          dispatch_action: 'spawn:proposer',
+          attempt_id: attemptId,
+        },
+      },
+    ];
+
+    expect(deriveCounters(rows, { proposeBranchMaxRn: 0 }).noPushStreak).toBe(0);
+  });
+
+  it('两个 completed proposer Attempt 都没有推进分支 → 2', () => {
+    const rows = [
+      ...completedRoleAttempt({
+        intentHop: 1, effectHop: 2, callbackHop: 3, role: 'proposer', beforeRn: 0,
+      }),
+      ...completedRoleAttempt({
+        intentHop: 4, effectHop: 5, callbackHop: 6, role: 'proposer', beforeRn: 0,
+      }),
+    ];
+    expect(deriveCounters(rows, { proposeBranchMaxRn: 0 }).noPushStreak).toBe(2);
+  });
+
+  it('清零语义：最新一次 completed Attempt 推进分支即断 → 0', () => {
+    const rows = [
+      ...completedRoleAttempt({
+        intentHop: 1, effectHop: 2, callbackHop: 3, role: 'proposer', beforeRn: 0,
+      }),
+      ...completedRoleAttempt({
+        intentHop: 4, effectHop: 5, callbackHop: 6, role: 'proposer', beforeRn: 0,
+      }),
+      ...completedRoleAttempt({
+        intentHop: 7, effectHop: 8, callbackHop: 9, role: 'proposer', beforeRn: 0,
+      }),
     ];
     expect(deriveCounters(rows, { proposeBranchMaxRn: 1 }).noPushStreak).toBe(0);
   });
 
-  it('中间成功打断连续性：false,true,false → 1', () => {
+  it('中间分支推进打断连续性：false,true,false → 1', () => {
     const rows = [
-      row(1, 'spawn:proposer', { propose_branch_advanced: false }),
-      row(2, 'spawn:proposer', { propose_branch_advanced: true }),
-      row(3, 'spawn:proposer', { propose_branch_advanced: false }),
+      ...completedRoleAttempt({
+        intentHop: 1, effectHop: 2, callbackHop: 3, role: 'proposer', beforeRn: 0,
+      }),
+      ...completedRoleAttempt({
+        intentHop: 4, effectHop: 5, callbackHop: 6, role: 'proposer', beforeRn: 0,
+      }),
+      ...completedRoleAttempt({
+        intentHop: 7, effectHop: 8, callbackHop: 9, role: 'proposer', beforeRn: 1,
+      }),
     ];
     expect(deriveCounters(rows, { proposeBranchMaxRn: 1 }).noPushStreak).toBe(1);
   });
 
   it('GAN 交替：夹在中间的 reviewer 行不打断 proposer streak', () => {
     const rows = [
-      row(1, 'spawn:proposer', { propose_branch_advanced: false }),
-      row(2, 'spawn:reviewer', { verdict_parsed: true }),
-      row(3, 'spawn:proposer', { propose_branch_advanced: false }),
+      ...completedRoleAttempt({
+        intentHop: 1, effectHop: 2, callbackHop: 3, role: 'proposer', beforeRn: 0,
+      }),
+      row(4, 'spawn:reviewer', {}),
+      ...completedRoleAttempt({
+        intentHop: 5, effectHop: 6, callbackHop: 7, role: 'proposer', beforeRn: 0,
+      }),
     ];
     expect(deriveCounters(rows, { proposeBranchMaxRn: 0 }).noPushStreak).toBe(2);
   });
 
-  it('observed 缺 propose_branch_advanced（旧行/崩溃窗口）→ 不计入 streak（保守断开）', () => {
+  it('未启动的历史 intent 保守断开 completed Attempt streak', () => {
     const rows = [
-      row(1, 'spawn:proposer', { propose_branch_advanced: false }),
-      row(2, 'spawn:proposer', {}),
-      row(3, 'spawn:proposer', { propose_branch_advanced: false }),
+      ...completedRoleAttempt({
+        intentHop: 1, effectHop: 2, callbackHop: 3, role: 'proposer', beforeRn: 0,
+      }),
+      row(4, 'spawn:proposer', { proposeBranchRn: 0 }),
+      ...completedRoleAttempt({
+        intentHop: 5, effectHop: 6, callbackHop: 7, role: 'proposer', beforeRn: 0,
+      }),
     ];
     expect(deriveCounters(rows, { proposeBranchMaxRn: 0 }).noPushStreak).toBe(1);
   });
 });
 
 describe('deriveCounters：noVerdictStreak（尾部连续 reviewer 无 verdict）', () => {
-  it('尾部三连 verdict_parsed=false → 3', () => {
+  it('admission-blocked reviewer intents 不消耗 no-verdict streak', () => {
     const rows = [
       row(1, 'spawn:reviewer', { verdict_parsed: false }),
-      row(2, 'spawn:reviewer', { verdict_parsed: false }),
+      {
+        hop: 2,
+        action: 'result:dispatch',
+        observed: {},
+        detail: { dispatch_hop: 1, status: 'BLOCKED' },
+      },
       row(3, 'spawn:reviewer', { verdict_parsed: false }),
+      {
+        hop: 4,
+        action: 'result:dispatch',
+        observed: {},
+        detail: { dispatch_hop: 3, status: 'BLOCKED' },
+      },
+    ];
+
+    expect(deriveCounters(rows, { proposeBranchMaxRn: 1 }).noVerdictStreak).toBe(0);
+  });
+
+  it('两个 completed reviewer Attempt 都没有 role verdict 才计为 2', () => {
+    const rows = [
+      ...completedRoleAttempt({
+        intentHop: 1,
+        effectHop: 2,
+        callbackHop: 3,
+        role: 'reviewer',
+        intentObserved: { verdict_parsed: false },
+      }),
+      ...completedRoleAttempt({
+        intentHop: 4,
+        effectHop: 5,
+        callbackHop: 6,
+        role: 'reviewer',
+        intentObserved: { verdict_parsed: false },
+      }),
+    ];
+
+    expect(deriveCounters(rows, { proposeBranchMaxRn: 1 }).noVerdictStreak).toBe(2);
+  });
+
+  it('三个 completed reviewer Attempt 都没有 role verdict → 3', () => {
+    const rows = [
+      ...completedRoleAttempt({ intentHop: 1, effectHop: 2, callbackHop: 3, role: 'reviewer' }),
+      ...completedRoleAttempt({ intentHop: 4, effectHop: 5, callbackHop: 6, role: 'reviewer' }),
+      ...completedRoleAttempt({ intentHop: 7, effectHop: 8, callbackHop: 9, role: 'reviewer' }),
     ];
     expect(deriveCounters(rows, { proposeBranchMaxRn: 1 }).noVerdictStreak).toBe(3);
   });
 
-  it('清零语义：拿到 verdict（true）即断 → 0', () => {
+  it('清零语义：最新 completed reviewer 拿到 identity-bound verdict 即断 → 0', () => {
     const rows = [
-      row(1, 'spawn:reviewer', { verdict_parsed: false }),
-      row(2, 'spawn:reviewer', { verdict_parsed: true }),
+      ...completedRoleAttempt({ intentHop: 1, effectHop: 2, callbackHop: 3, role: 'reviewer' }),
+      ...completedRoleAttempt({ intentHop: 4, effectHop: 5, callbackHop: 6, role: 'reviewer' }),
+      {
+        hop: 7,
+        action: 'verdict:reviewer',
+        observed: {},
+        detail: { attempt_id: attemptIdFor(4), verdict: 'APPROVED' },
+      },
     ];
     expect(deriveCounters(rows, { proposeBranchMaxRn: 1 }).noVerdictStreak).toBe(0);
   });
 
-  it('true 之后再 false：累积从断点重新开始 → 1', () => {
+  it('有 verdict 后下一 completed reviewer 无 verdict：从断点重新计 1', () => {
     const rows = [
-      row(1, 'spawn:reviewer', { verdict_parsed: false }),
-      row(2, 'spawn:reviewer', { verdict_parsed: true }),
-      row(3, 'spawn:reviewer', { verdict_parsed: false }),
+      ...completedRoleAttempt({ intentHop: 1, effectHop: 2, callbackHop: 3, role: 'reviewer' }),
+      {
+        hop: 4,
+        action: 'verdict:reviewer',
+        observed: {},
+        detail: { attempt_id: attemptIdFor(1), verdict: 'APPROVED' },
+      },
+      ...completedRoleAttempt({ intentHop: 5, effectHop: 6, callbackHop: 7, role: 'reviewer' }),
     ];
     expect(deriveCounters(rows, { proposeBranchMaxRn: 1 }).noVerdictStreak).toBe(1);
   });
 
   it('proposer 行不参与 noVerdictStreak', () => {
     const rows = [
-      row(1, 'spawn:reviewer', { verdict_parsed: false }),
-      row(2, 'spawn:proposer', { propose_branch_advanced: true }),
-      row(3, 'spawn:reviewer', { verdict_parsed: false }),
+      ...completedRoleAttempt({ intentHop: 1, effectHop: 2, callbackHop: 3, role: 'reviewer' }),
+      row(4, 'spawn:proposer', { proposeBranchRn: 1 }),
+      ...completedRoleAttempt({ intentHop: 5, effectHop: 6, callbackHop: 7, role: 'reviewer' }),
     ];
     expect(deriveCounters(rows, { proposeBranchMaxRn: 1 }).noVerdictStreak).toBe(2);
   });
