@@ -1033,13 +1033,13 @@ describe('runLoop：wait:* 不灌水', () => {
     expect(sleeps).toHaveLength(1);
   });
 
-  it('expired missing attempt 先收敛，下一轮可在既有上限内重派同一角色', async () => {
+  it('expired missing reviewer 先收敛，保留历史 intent 后可在 GAN 上限内重派 reviewer', async () => {
     const expired = {
       id: '863fdc22-ad3e-4e89-a8ce-6323cf9b9917',
       run_id: RUN_ID,
       hop: 49,
-      phase: 'generate',
-      role: 'generator',
+      phase: 'gan',
+      role: 'reviewer',
       status: 'running',
       lease_owner: 'controller-old:6328',
       lease_generation: 0,
@@ -1047,18 +1047,38 @@ describe('runLoop：wait:* 不灌水', () => {
       requested_machine_id: 'us-mac-m4',
       actual_machine_id: null,
     };
+    const priorIntent = {
+      hop: 49,
+      action: 'spawn:reviewer',
+      observed: { proposeBranchRn: 1 },
+      detail: { reason: 'contract_round_pending_review' },
+    };
+    const reconciliationEvidence = {
+      hop: 50,
+      action: 'effect:expired_attempt_reconciled',
+      observed: { attempt_id: expired.id, role: 'reviewer' },
+      detail: {
+        attempt_id: expired.id,
+        signature: 'worker_attempt_missing_after_lease',
+      },
+    };
     const observedSeq = [
       obs({
-        generatorSpawned: true,
+        contract: { approved: false, id: CONTRACT_ID },
+        proposeBranchRn: 1,
+        decisionLog: [priorIntent],
         inflight: { containers: [], host_pids: [], attempts: [expired] },
       }),
       obs({
-        generatorSpawned: false,
+        contract: { approved: false, id: CONTRACT_ID },
+        proposeBranchRn: 1,
+        decisionLog: [priorIntent, reconciliationEvidence],
         inflight: { containers: [], host_pids: [], attempts: [] },
       }),
       obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
     ];
-    const { deps, appended, sleeps } = makeEnv({ observedSeq });
+    const { deps, appended, sleeps, setHopBase } = makeEnv({ observedSeq });
+    setHopBase(50);
     deps.reconcileExpiredAttempt = vi.fn(async ({ attempt }) => ({
       status: 'missing_terminalized',
       attempt_id: attempt.id,
@@ -1073,7 +1093,7 @@ describe('runLoop：wait:* 不灌水', () => {
       attempt: expired,
     }));
     expect(deps.dispatch).toHaveBeenCalledOnce();
-    expect(deps.dispatch).toHaveBeenCalledWith('spawn:generator', expect.any(Object));
+    expect(deps.dispatch).toHaveBeenCalledWith('spawn:reviewer', expect.any(Object));
     expect(appended.some((entry) => entry.action === 'wait:running')).toBe(false);
     expect(sleeps).toHaveLength(0);
   });

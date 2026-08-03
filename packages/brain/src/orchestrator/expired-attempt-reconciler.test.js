@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  createExpiredAttemptAuthority,
   oldestExpiredAttempt,
   reconcileExpiredAttempt,
 } from './expired-attempt-reconciler.js';
@@ -111,6 +112,11 @@ describe('expired Fleet attempt reconciliation', () => {
       lease_owner: 'controller-old:6328',
       lease_generation: 0,
     });
+    expect(deps.attemptStore.heartbeat).toHaveBeenCalledWith(ATTEMPT.id, {
+      leaseOwner: 'controller-old:6328',
+      leaseGeneration: 0,
+      leaseSeconds: 180,
+    });
     expect(result.status).toBe('adopted_prepared');
   });
 
@@ -138,6 +144,50 @@ describe('expired Fleet attempt reconciliation', () => {
       failureClass: 'infrastructure_blocked',
     }));
     expect(result.status).toBe('replacement_required');
+  });
+
+  it.each([
+    ['missing response', { status: 'missing' }],
+    ['rejected response', { status: 'rejected' }],
+    ['quarantined response', { status: 'quarantined' }],
+  ])('fails closed when prepared cancellation is not confirmed safe: %s', async (_label, cancelResult) => {
+    const deps = makeDeps({
+      launcher: {
+        inspect: vi.fn(async () => ({ status: 'prepared' })),
+        start: vi.fn(async () => { throw new Error('remote_bridge_start_http_500'); }),
+        cancel: vi.fn(async () => cancelResult),
+      },
+    });
+
+    const result = await reconcileExpiredAttempt({
+      attempt: { ...ATTEMPT, status: 'starting' },
+      ...deps,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      status: 'infrastructure_blocked',
+      failure_class: 'infrastructure_blocked',
+      signature: 'worker_attempt_cancel_unconfirmed',
+    }));
+    expect(deps.terminalize).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when prepared cancellation throws', async () => {
+    const deps = makeDeps({
+      launcher: {
+        inspect: vi.fn(async () => ({ status: 'prepared' })),
+        start: vi.fn(async () => { throw new Error('remote_bridge_start_http_500'); }),
+        cancel: vi.fn(async () => { throw new Error('remote_bridge_cancel_http_503'); }),
+      },
+    });
+
+    const result = await reconcileExpiredAttempt({
+      attempt: { ...ATTEMPT, status: 'starting' },
+      ...deps,
+    });
+
+    expect(result.signature).toBe('worker_attempt_cancel_unavailable');
+    expect(deps.terminalize).not.toHaveBeenCalled();
   });
 
   it('keeps a running Worker on the old callback lease and only extends that exact identity', async () => {
@@ -179,5 +229,87 @@ describe('expired Fleet attempt reconciliation', () => {
     }));
     expect(deps.terminalize).not.toHaveBeenCalled();
     expect(deps.launcher.start).not.toHaveBeenCalled();
+  });
+});
+
+describe('expired attempt transactional authority', () => {
+  function transactionalPool({ insertError = null } = {}) {
+    const client = {
+      query: vi.fn(async (sql) => {
+        if (/SELECT attempt\.\*/i.test(sql)) {
+          return { rows: [{ ...ATTEMPT, run_phase: 'gan' }] };
+        }
+        if (/UPDATE harness_attempts/i.test(sql)) {
+          return {
+            rows: [{
+              ...ATTEMPT,
+              status: 'failed',
+              error_code: 'worker_attempt_missing_after_lease',
+              failure_class: 'infrastructure_blocked',
+            }],
+          };
+        }
+        if (/INSERT INTO orchestrator_decision_log/i.test(sql)) {
+          if (insertError) throw insertError;
+          return { rows: [{ hop: 50 }] };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    return {
+      pool: { connect: vi.fn(async () => client) },
+      client,
+    };
+  }
+
+  const terminalInput = Object.freeze({
+    attemptId: ATTEMPT.id,
+    runId: ATTEMPT.run_id,
+    leaseOwner: ATTEMPT.lease_owner,
+    leaseGeneration: ATTEMPT.lease_generation,
+    code: 'worker_attempt_missing_after_lease',
+    message: 'Worker has no exact state after lease expiry',
+    failureClass: 'infrastructure_blocked',
+    evidence: {
+      attempt_id: ATTEMPT.id,
+      prior_lease_generation: 0,
+      target: 'us-mac-m4',
+      signature: 'worker_attempt_missing_after_lease',
+    },
+  });
+
+  it('commits exact terminal CAS and bounded decision evidence in one transaction', async () => {
+    const { pool, client } = transactionalPool();
+    const authority = createExpiredAttemptAuthority(pool);
+
+    const result = await authority.terminalize(terminalInput);
+
+    const statements = client.query.mock.calls.map(([sql]) => sql);
+    expect(statements[0]).toBe('BEGIN');
+    expect(statements.some((sql) => (
+      /UPDATE harness_attempts/i.test(sql)
+      && /lease_owner=\$3/i.test(sql)
+      && /lease_generation=\$4/i.test(sql)
+      && /lease_expires_at < NOW\(\)/i.test(sql)
+    ))).toBe(true);
+    expect(statements.some((sql) => (
+      /INSERT INTO orchestrator_decision_log/i.test(sql)
+      && /effect:expired_attempt_reconciled/i.test(sql)
+    ))).toBe(true);
+    expect(statements.at(-1)).toBe('COMMIT');
+    expect(client.release).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ hop: 50, deduped: false });
+  });
+
+  it('rolls back the terminal write when evidence append fails', async () => {
+    const { pool, client } = transactionalPool({ insertError: new Error('decision_write_failed') });
+    const authority = createExpiredAttemptAuthority(pool);
+
+    await expect(authority.terminalize(terminalInput)).rejects.toThrow('decision_write_failed');
+
+    expect(client.query.mock.calls.map(([sql]) => sql)).toContain('ROLLBACK');
+    expect(client.query.mock.calls.map(([sql]) => sql)).not.toContain('COMMIT');
+    expect(client.release).toHaveBeenCalledOnce();
   });
 });
