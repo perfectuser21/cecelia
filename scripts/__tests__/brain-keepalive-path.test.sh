@@ -39,6 +39,7 @@ make_fake_docker() {
   local dir="$1" mode="$2"
   cat > "$dir/docker" <<FAKE
 #!/bin/bash
+[[ -n "\${DOCKER_CALL_LOG:-}" ]] && echo "\$@" >> "\$DOCKER_CALL_LOG"
 case "$mode" in
   daemon_down)
     [[ "\$1" == "info" ]] && exit 1
@@ -47,6 +48,14 @@ case "$mode" in
   container_running)
     [[ "\$1" == "info" ]] && exit 0
     [[ "\$1" == "inspect" ]] && { echo "running"; exit 0; }
+    ;;
+  container_stopped)
+    [[ "\$1" == "info" ]] && exit 0
+    if [[ "\$1" == "inspect" ]]; then
+      if [[ -f "\${DOCKER_FAKE_STATE:-}" ]]; then echo "running"; else echo "exited"; fi
+      exit 0
+    fi
+    [[ "\$1" == "compose" ]] && { touch "\$DOCKER_FAKE_STATE"; exit 0; }
     ;;
 esac
 exit 0
@@ -61,6 +70,9 @@ run_script() {
     HOME="$THOME" \
     BRAIN_KEEPALIVE_STATE_DIR="$STATE" \
     BRAIN_KEEPALIVE_PATH="$1" \
+    BRAIN_KEEPALIVE_RESTART_WAIT_SECONDS="0" \
+    DOCKER_CALL_LOG="$STATE/docker-calls.log" \
+    DOCKER_FAKE_STATE="$STATE/docker-restarted" \
     FEISHU_BOT_WEBHOOK="" \
     bash "$TARGET" 2>&1
 }
@@ -109,6 +121,17 @@ if grep -qi 'is running' <<<"$out" \
   ok "PATH 前置生效，homebrew 下的 docker 被找到，容器判为 running"
 else
   bad "PATH 前置未生效（输出：$(echo "$out" | tr '\n' '|'))"
+fi
+
+echo "== 场景 4：自动恢复必须加载 production env-file，不能把 Fleet secret 重建为空 =="
+rm -f "$STATE/docker-calls.log" "$STATE/docker-restarted"
+make_fake_docker "$HBSIM" container_stopped
+out=$(run_script "$HBSIM")
+expected_env_file="$(cd "$SCRIPT_DIR/../.." && pwd)/.env.docker"
+if grep -Fq "compose --env-file $expected_env_file -f" "$STATE/docker-calls.log"; then
+  ok "自动恢复 compose 显式加载 .env.docker"
+else
+  bad "自动恢复未加载 production env-file（calls：$(tr '\n' '|' < "$STATE/docker-calls.log")）"
 fi
 
 echo
