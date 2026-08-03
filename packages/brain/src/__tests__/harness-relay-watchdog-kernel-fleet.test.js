@@ -445,6 +445,36 @@ describe('kernel fleet watchdog recovery', () => {
     expect(launcher.start).toHaveBeenCalledOnce();
   });
 
+  it('rejects an invalid prepared receipt before persistence or start', async () => {
+    const store = resumeStore();
+    const launcher = {
+      inspect: vi.fn(async () => ({ status: 'running' })),
+      cancel: vi.fn(async () => ({ status: 'cancelled' })),
+      prepare: vi.fn(async () => ({
+        jobId: 'child-job',
+        actualMachineId: 'wrong-machine',
+        executionTransport: 'fleet-worker',
+        remoteJobId: 'child-job',
+        attestationStatus: 'verified',
+      })),
+      start: vi.fn(),
+    };
+
+    await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
+      attemptStore: store,
+      launcher,
+    }))).resolves.toMatchObject({
+      ok: false,
+      failure_code: 'resume_launch_failed',
+      cleanup_status: 'cancelled',
+      error: 'resume_prepare_receipt_invalid:actual_machine',
+    });
+
+    expect(store.recordLaunchReceipt).not.toHaveBeenCalled();
+    expect(launcher.start).not.toHaveBeenCalled();
+    expect(launcher.cancel).toHaveBeenCalledTimes(2);
+  });
+
   it('cleans a migrated local parent through the Worker Attempt API before launching the child', async () => {
     const originalParentAttempt = {
       ...parentAttempt(),
@@ -594,6 +624,9 @@ describe('kernel fleet watchdog recovery', () => {
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
         return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
       }
+      if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`) {
+        return response(200, { status: 'cleaned', attempt_id: CHILD_ID });
+      }
       throw new Error(`child prepare must not occur: ${url}`);
     });
     const store = resumeStore();
@@ -605,10 +638,11 @@ describe('kernel fleet watchdog recovery', () => {
     }))).resolves.toMatchObject({
       ok: false,
       failure_code: 'resume_launch_failed',
+      cleanup_status: 'cleaned',
       error: 'execution_transport_unavailable:xian-mac-m4',
     });
 
-    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn).toHaveBeenCalledTimes(3);
     expect(store.recordLaunchReceipt).not.toHaveBeenCalled();
   });
 

@@ -58,12 +58,16 @@ function makeDeps(overrides = {}) {
   const launcher = {
     inspect: vi.fn(async () => ({ status: 'unsupported' })),
     cancel: vi.fn(async () => ({ status: 'cancelled' })),
-    launch: vi.fn(async () => ({
-      containerId: 'cecelia-harness-attempt-g0',
+    prepare: vi.fn(async () => ({
+      jobId: 'child-job',
       actualMachineId: 'us-mac-m4',
-      executionTransport: 'local-docker',
-      remoteJobId: null,
-      attestationStatus: 'local',
+      executionTransport: 'fleet-worker',
+      remoteJobId: 'child-job',
+      attestationStatus: 'verified',
+    })),
+    start: vi.fn(async ({ attempt }) => ({
+      status: 'running',
+      attempt_id: attempt.id,
     })),
   };
   const attemptStore = {
@@ -124,8 +128,8 @@ describe('resumeKernelAttempt callback fencing', () => {
     expect(deps.launcher.inspect.mock.invocationCallOrder[0])
       .toBeLessThan(deps.launcher.cancel.mock.invocationCallOrder[0]);
     expect(deps.launcher.cancel.mock.invocationCallOrder[0])
-      .toBeLessThan(deps.launcher.launch.mock.invocationCallOrder[0]);
-    expect(deps.launcher.launch).toHaveBeenCalledWith(expect.objectContaining({
+      .toBeLessThan(deps.launcher.prepare.mock.invocationCallOrder[0]);
+    expect(deps.launcher.prepare).toHaveBeenCalledWith(expect.objectContaining({
       attempt: expect.objectContaining({
         id: 'attempt-child',
         callbackSecret: 'rotated-raw-secret',
@@ -141,6 +145,10 @@ describe('resumeKernelAttempt callback fencing', () => {
         leaseGeneration: 0,
       }),
     );
+    expect(deps.launcher.prepare.mock.invocationCallOrder[0])
+      .toBeLessThan(deps.attemptStore.recordLaunchReceipt.mock.invocationCallOrder[0]);
+    expect(deps.attemptStore.recordLaunchReceipt.mock.invocationCallOrder[0])
+      .toBeLessThan(deps.launcher.start.mock.invocationCallOrder[0]);
   });
 
   it('旧 attempt 无法确认清除时不启动恢复容器并发出安全告警', async () => {
@@ -166,7 +174,8 @@ describe('resumeKernelAttempt callback fencing', () => {
     expect(deps.launcher.inspect).toHaveBeenCalledOnce();
     expect(deps.launcher.cancel).toHaveBeenCalledOnce();
     expect(deps.onRecoveryAlert).not.toHaveBeenCalled();
-    expect(deps.launcher.launch).not.toHaveBeenCalled();
+    expect(deps.launcher.prepare).not.toHaveBeenCalled();
+    expect(deps.launcher.start).not.toHaveBeenCalled();
     expect(deps.attemptStore.recordLaunchReceipt).not.toHaveBeenCalled();
   });
 });

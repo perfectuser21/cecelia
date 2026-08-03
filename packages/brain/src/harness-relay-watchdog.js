@@ -340,8 +340,44 @@ function isProvableLegacyLocalParent(attempt, target) {
   );
 }
 
+function cleanupConfirmed(result) {
+  return ['cancelled', 'cleaned', 'already_clean'].includes(result?.status);
+}
+
+function validatePreparedReceipt(receipt, target) {
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) {
+    throw new Error('resume_prepare_receipt_invalid');
+  }
+  if (receipt.actualMachineId !== target?.machine) {
+    throw new Error('resume_prepare_receipt_invalid:actual_machine');
+  }
+  if (receipt.executionTransport !== 'fleet-worker') {
+    throw new Error('resume_prepare_receipt_invalid:transport');
+  }
+  if (receipt.attestationStatus !== 'verified') {
+    throw new Error('resume_prepare_receipt_invalid:attestation');
+  }
+  if (typeof receipt.remoteJobId !== 'string' || receipt.remoteJobId.length === 0) {
+    throw new Error('resume_prepare_receipt_invalid:job_id');
+  }
+  if (receipt.jobId !== receipt.remoteJobId) {
+    throw new Error('resume_prepare_receipt_invalid:job_mismatch');
+  }
+  if (receipt.containerId != null) {
+    throw new Error('resume_prepare_receipt_invalid:container_id');
+  }
+  return Object.freeze({
+    actualMachineId: receipt.actualMachineId,
+    executionTransport: receipt.executionTransport,
+    remoteJobId: receipt.remoteJobId,
+    attestationStatus: receipt.attestationStatus,
+    containerId: null,
+    jobId: receipt.jobId,
+  });
+}
+
 function unsafeCleanupDiagnostic(result) {
-  if (result?.status === 'cancelled') return null;
+  if (cleanupConfirmed(result)) return null;
   const status = result?.status ?? 'unknown';
   const httpStatus = result?.httpStatus == null ? '' : ` (HTTP ${result.httpStatus})`;
   return `orphan cancellation unsafe: ${status}${httpStatus}`;
@@ -571,7 +607,7 @@ export async function resumeKernelAttempt(attempt, {
       };
     }
   }
-  if (parentCleanup?.status !== 'cancelled') {
+  if (!cleanupConfirmed(parentCleanup)) {
     const diagnostic = parentCleanup?.reason ?? unsafeCleanupDiagnostic(parentCleanup);
     const recoveryAlert = deferredRecoveryAlert({
       attemptId: originalParentAttempt.id,
@@ -590,7 +626,7 @@ export async function resumeKernelAttempt(attempt, {
 
   let launched;
   try {
-    launched = await launcher.launch({
+    const prepared = await launcher.prepare({
       attempt: { ...attempt, callbackSecret },
       bundle: attempt.task_bundle,
       spec,
@@ -599,6 +635,7 @@ export async function resumeKernelAttempt(attempt, {
       target,
       leaseClaimed: true,
     });
+    launched = validatePreparedReceipt(prepared, target);
   } catch (error) {
     let childCleanup;
     try {
@@ -613,7 +650,7 @@ export async function resumeKernelAttempt(attempt, {
       };
     }
     const cleanupDiagnostic = childCleanup?.reason ?? unsafeCleanupDiagnostic(childCleanup);
-    if (childCleanup?.status !== 'cancelled') {
+    if (!cleanupConfirmed(childCleanup)) {
       const diagnostic = [
         errorMessage(error),
         cleanupDiagnostic,
@@ -635,7 +672,7 @@ export async function resumeKernelAttempt(attempt, {
     return {
       ok: false,
       failure_code: 'resume_launch_failed',
-      cleanup_status: 'cancelled',
+      cleanup_status: childCleanup.status,
       error: errorMessage(error),
     };
   }
@@ -673,7 +710,7 @@ export async function resumeKernelAttempt(attempt, {
     const sanitizedCleanupDiagnostic = cleanupDiagnostic == null
       ? null
       : sanitizeDiagnostic(cleanupDiagnostic);
-    const recoveryAlert = cleanupStatus === 'cancelled'
+    const recoveryAlert = cleanupConfirmed({ status: cleanupStatus })
       ? null
       : deferredRecoveryAlert({
         attemptId: attempt.id,
@@ -695,6 +732,57 @@ export async function resumeKernelAttempt(attempt, {
       recovery_alert: recoveryAlert,
     };
   }
+
+  try {
+    const started = await launcher.start({
+      attempt,
+      target,
+    });
+    if (started?.status !== 'running' || started?.attempt_id !== attempt.id) {
+      throw new Error('resume_start_invalid_acknowledgement');
+    }
+  } catch (error) {
+    let childCleanup;
+    try {
+      childCleanup = await launcher.cancel({
+        attempt,
+        target,
+        launchReceipt: launched,
+      });
+    } catch (cleanupError) {
+      childCleanup = {
+        status: 'unavailable',
+        reason: `orphan cancellation failed: ${errorMessage(cleanupError)}`,
+      };
+    }
+    const cleanupDiagnostic = childCleanup?.reason ?? unsafeCleanupDiagnostic(childCleanup);
+    if (!cleanupConfirmed(childCleanup)) {
+      const diagnostic = [
+        errorMessage(error),
+        cleanupDiagnostic,
+      ].filter(Boolean).join('; ');
+      const recoveryAlert = deferredRecoveryAlert({
+        attemptId: attempt.id,
+        lifecycleCode: 'resume_start_failed',
+        cleanupStatus: childCleanup?.status ?? 'unknown',
+        diagnostic,
+      });
+      return {
+        ok: false,
+        failure_code: 'resume_child_cleanup_unconfirmed',
+        cleanup_status: childCleanup?.status ?? 'unknown',
+        error: diagnostic,
+        recovery_alert: recoveryAlert,
+      };
+    }
+    return {
+      ok: false,
+      failure_code: 'resume_start_failed',
+      cleanup_status: childCleanup.status,
+      error: errorMessage(error),
+    };
+  }
+
   return {
     ok: true,
     resumed: true,
