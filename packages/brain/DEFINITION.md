@@ -1,6 +1,12 @@
 # Brain 模块定义
 
-**版本**: 1.267.186
+**版本**: 1.267.187
+
+## Watchdog persistence diagnostic containment
+
+- failure-persistence evidence 在 watchdog 边界先统一执行路径、凭据和长度脱敏，
+  AggregateError、注入 recovery alert 和默认 P1 alert 共享同一安全输出。
+- 通用 failure-persistence sanitizer 契约保持不变。
 
 ## Kernel Fleet two-phase launch and expired-attempt convergence
 

@@ -384,6 +384,12 @@ function sanitizeResumeDiagnostic(value) {
   return sanitizeDiagnostic(redactDiagnosticPaths(value));
 }
 
+function sanitizeResumeError(error) {
+  const sanitized = new Error(sanitizeResumeDiagnostic(errorMessage(error)));
+  if (error?.code) sanitized.code = error.code;
+  return sanitized;
+}
+
 function validatePreparedReceipt(receipt, target) {
   if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) {
     throw new Error('resume_prepare_receipt_invalid');
@@ -486,7 +492,7 @@ async function tryFailClaimedAttempt(store, attemptId, failure, claim) {
         attemptId,
         lifecycleCode: failure.code,
         originalError: lifecycleError,
-        persistenceError,
+        persistenceError: sanitizeResumeError(persistenceError),
       }),
     };
   }
@@ -857,19 +863,14 @@ async function _recoverKernelRun(run, task, deps, out) {
     const alertCode = detail.kind === 'failure_persistence'
       ? 'kernel_failure_persistence_failed'
       : 'kernel_recovery_cleanup_unconfirmed';
-    await raise(
-      'P1',
-      alertCode,
-      [
-        `attempt=${sanitizeDiagnostic(detail.attemptId)}`,
-        `lifecycle=${sanitizeDiagnostic(detail.lifecycleCode)}`,
-        `cleanup=${sanitizeDiagnostic(detail.cleanupStatus)}`,
-        `diagnostic=${sanitizeDiagnostic(
-          detail.diagnostic ?? detail.originalError?.message ?? 'unknown',
-        )}`,
-        `persistence=${sanitizeDiagnostic(detail.persistenceError?.message ?? 'none')}`,
-      ].join('; '),
-    );
+    const message = sanitizeResumeDiagnostic([
+      `attempt=${detail.attemptId ?? 'unknown'}`,
+      `lifecycle=${detail.lifecycleCode ?? 'unknown'}`,
+      `cleanup=${detail.cleanupStatus ?? 'unknown'}`,
+      `diagnostic=${detail.diagnostic ?? detail.originalError?.message ?? 'unknown'}`,
+      `persistence=${detail.persistenceError?.message ?? 'none'}`,
+    ].join('; '));
+    await raise('P1', alertCode, message);
   });
   const heartbeatAt = run.orchestrator_heartbeat_at
     ? new Date(run.orchestrator_heartbeat_at).getTime()

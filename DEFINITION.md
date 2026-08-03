@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.186
+**Brain 版本**: 1.267.187
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.187 — Watchdog persistence diagnostic containment
+
+- Watchdog 在 failure-persistence evidence 边界对持久化异常统一执行绝对路径脱敏、
+  凭据遮蔽和长度上限；AggregateError、注入的 recovery alert 与默认 P1 alert 不再
+  暴露 `file://` URL、含空格的 POSIX 路径或 token 值。
+- 通用 failure-persistence sanitizer 保持不变，避免扩大其他调用方的语义范围。
 
 ## Brain 1.267.186 — Kernel Fleet two-phase launch and expired-attempt convergence
 
