@@ -1265,6 +1265,30 @@ function createAttemptRunner({
   const terminalWaiters = new Set();
   const finalizationPromises = new Map();
 
+  async function waitForInFlightPrepare(attemptId, lease) {
+    const preparing = prepareOperations.get(attemptId);
+    if (!preparing) return;
+    validateLeaseFence(lease);
+    if (
+      lease.owner !== preparing.lease.owner
+      || lease.generation !== preparing.lease.generation
+    ) {
+      throw new Error('attempt_lease_conflict');
+    }
+    try {
+      await preparing.promise;
+    } catch (error) {
+      if (
+        /^attempt_(?:launch|workspace_verify)_rollback_failed:/.test(
+          String(error?.message ?? ''),
+        )
+      ) {
+        throw error;
+      }
+      // The prepare path owns exact rollback. Re-read durable state afterwards.
+    }
+  }
+
   function terminalStartResult(attemptId, terminalStatus) {
     return Object.freeze({
       status: 'terminal',
@@ -1667,6 +1691,10 @@ function createAttemptRunner({
       })();
       prepareOperations.set(request.attempt_id, {
         requestFingerprint,
+        lease: Object.freeze({
+          owner: request.lease_owner,
+          generation: request.lease_generation,
+        }),
         promise: operation,
       });
       try {
@@ -1875,6 +1903,7 @@ function createAttemptRunner({
 
     async inspect(attemptId, lease) {
       validateLeaseFence(lease);
+      await waitForInFlightPrepare(attemptId, lease);
       const state = await stateStore.get(attemptId);
       if (!state) {
         return Object.freeze({ status: 'missing', attempt_id: attemptId });
@@ -1935,6 +1964,7 @@ function createAttemptRunner({
     },
 
     async cancel(attemptId, lease) {
+      await waitForInFlightPrepare(attemptId, lease);
       const starting = startOperations.get(attemptId);
       if (starting) {
         if (

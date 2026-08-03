@@ -825,7 +825,10 @@ export function createDispatcher(deps) {
           attempt,
           target: selectedTarget,
         });
-        if (started?.status !== 'running' || started?.attempt_id !== attempt.id) {
+        if (
+          !['running', 'terminal'].includes(started?.status)
+          || started?.attempt_id !== attempt.id
+        ) {
           throw new Error('launch_start_invalid_acknowledgement');
         }
       } catch (error) {

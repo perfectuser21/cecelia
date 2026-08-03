@@ -30,6 +30,15 @@ const INSPECT_RECEIPT_STATUSES = new Set([
   'terminal',
   'quarantined',
 ]);
+const START_TERMINAL_STATUSES = new Set([
+  'cleaned',
+  'missing',
+  'exited',
+  'dead',
+  'removed',
+  'quarantined',
+  'credential_delivery_unconfirmed',
+]);
 const WORKSPACE_SPEC_FIELDS = Object.freeze([
   'repo',
   'base_sha',
@@ -411,11 +420,21 @@ export function createRemoteBridgeTransport({
             throw new Error(`remote_bridge_start_http_${String(response?.status)}`);
           }
           const result = await parseJson(response, 'start', signal);
-          if (result?.status !== 'running') {
-            throw new Error('remote_bridge_start_not_running');
-          }
           if (result?.attempt_id !== attempt.id) {
             throw new Error('remote_bridge_start_attempt_mismatch');
+          }
+          if (result?.status === 'terminal') {
+            if (!START_TERMINAL_STATUSES.has(result.terminal_status)) {
+              throw new Error('remote_bridge_start_invalid_terminal_status');
+            }
+            return Object.freeze({
+              status: result.status,
+              attempt_id: result.attempt_id,
+              terminal_status: result.terminal_status,
+            });
+          }
+          if (result?.status !== 'running') {
+            throw new Error('remote_bridge_start_not_running');
           }
           return Object.freeze({
             status: result.status,
