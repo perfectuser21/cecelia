@@ -6,10 +6,11 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 9.10.0
+version: 9.11.0
 created: 2026-04-08
-updated: 2026-08-02
+updated: 2026-08-03
 changelog:
+  - 9.11.0: Kernel validation identity late-binding——Reviewer task bundle 只描述当前审查者 provenance，不得要求合同改绑为 Reviewer attempt/account/snapshot；审查改为拒绝所有 GAN authoring UUID 硬编码，并要求实际 Generator/Evaluator/Judge 各自使用 Runner attestation 与证据摘要串联
   - 9.10.0: Kernel local_api 资源闭环——新增第 23 条审查：Postgres 合同必须对 Fleet 注入的空库运行真实 migration/schema bootstrap；业务 cookie/session/tenant 必须由 E2E 真实 signup/login 动态创建；依赖预注入 AUTH_COOKIE/TENANT_ID、生产数据副本或长期业务凭据一律 REVISION
   - 9.9.0: GP锚定闭环刀3（与 proposer 9.18.0 配套）——Golden Path 覆盖审查新增第 22 条：product-map/generated/product-map.json 存在的仓库，合同缺 ## GP-Anchor 段/id 查无/格式不合法 → 第 4 维 internal_consistency 打回；文件不存在时缺 gp-anchor: skipped 声明同样打回（沉默跳过与真做过判断不可区分）
   - 9.8.0: W7 人形验收（RD 2026-07-28，决策 d3021871，与 proposer 9.17.0 配套）——Golden Path 覆盖审查新增第 20 条（新写 [BEHAVIOR] 缺 动作/预期观察/等待预算/留证 任一行或 Test: 非单行完整命令 → 第 1 维 dod_machineability 打回；[legacy] 标记条目豁免）+ 第 21 条（合同缺 ## 探索提示 段，或错输入/重复提交/中途中断/边界值明显适用却未覆盖 → 第 6 维低分打回，feedback 必须直接给出建议的探索提示条目文本供 proposer 原样填入）；7 个维度名不动（ReviewerOutputSchema 接口约定）
@@ -107,6 +108,8 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 22. **GP-Anchor 一致性核查（GP锚定闭环刀3 — cross-repo file-existence gated）**：当前仓库存在 `product-map/generated/product-map.json` 时，合同必须含 `## GP-Anchor` 段（三形态之一），且 Reviewer 须用 `jq` 亲自核实其声明的 `<line_id>/<gp_id>` 组合真实存在于该文件——缺段、或 id 查无、或格式不合三形态之一 → 第 4 维 internal_consistency 打回。文件不存在时，合同须显式写 `gp-anchor: skipped (product-map.json not found)`；缺这行同样打回（沉默跳过和真的检查过但没写不可区分，Reviewer 无法验证 Proposer 是否真的做过判断）。
 
 23. **local_api 依赖预存业务状态或未初始化空库 → 打回**（Kernel runtime-resource 硬规则）：`target_environment=local_api` 且使用 Postgres 时，合同必须只把 `DB_URL` 作为 Fleet 注入资源，并在 E2E 中先执行仓库真实 migration/schema bootstrap、机检目标表存在。需要鉴权的业务路径必须通过真实 signup/login/onboarding 动态创建临时用户、cookie jar 与 tenant，并从真实响应/本 attempt 数据库取得 tenant ID。脚本出现必填 `AUTH_COOKIE*`、`TENANT_ID*`、长期业务 token、复制生产数据，或假设 sidecar 已有业务表，却没有自举流程 → 第 4 维与第 6 维低分，REVISION。不得用“环境由操作员预注入”作为 mitigation。
+
+24. **validation identity 必须 late-bound，禁止角色追逐**：Reviewer task bundle 顶层 `attempt_id`、account 与 capability snapshot 只是当前审查角色的 `GAN authoring identity`，**不得作为 validation identity**，更不能拿它们与合同比较后要求 Proposer 替换。若合同/DoD/测试把 Planner、Proposer 或 Reviewer 的 attempt UUID、snapshot UUID、account 写成未来 Evaluator/Judge 的固定期望 → 第 4 维与第 6 维低分，REVISION；反馈必须要求删除字面值，改用 Runner 在实际执行角色注入的 `HARNESS_ATTEMPT_ID` / `HARNESS_PROVIDER` / `HARNESS_ACCOUNT` / `HARNESS_MACHINE` / `HARNESS_MODEL` / `HARNESS_RUNNER_DIGEST` / `CAPABILITY_SNAPSHOT_ID`。**禁止要求改绑为 Reviewer** 当前值。`run_id` 与冻结 candidate SHA 可以固定；Evaluator、Judge 必须各写自己的 provenance，并用证据 SHA-256 串联，禁止三角色共用同一 attempt/account/snapshot。
 
 少一项 → 第 2 维 scope_match_prd 或第 4 维 internal_consistency 扣分。Golden Path 断链 → 直接 REVISION 不打分。
 

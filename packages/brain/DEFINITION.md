@@ -1,6 +1,19 @@
 # Brain 模块定义
 
-**版本**: 1.267.197
+**版本**: 1.267.198
+
+## Kernel late-bound validation identity
+
+- GAN 合同把当前 Planner/Proposer/Reviewer task bundle 视为 authoring provenance，不再把
+  它们的 attempt/account/capability snapshot 固化成未来验收身份。
+- 合同批准落库前的确定性 identity gate 会拒绝 attempt/snapshot UUID 字面值，并写入
+  锚定同一 contract SHA 的 REVISION；下一轮 Proposer 收到具体 late-bound 修复方向。
+- Fleet Worker `1.267.99` 注入当前执行角色的 provider/account/machine/model、capability
+  snapshot 与 pinned Runner digest，供 E2E 证据按实际 Attempt 生成。
+- Brain 版本为 `1.267.198`，Runner digest 保持
+  `sha256:e0797f5a440d61827d1ea86afee629e6f5a687da6f958608671ba9c873e5e94a`。
+- 回退到 Brain `1.267.197` / Worker `1.267.98` 会恢复角色身份追逐和 attestation 缺字段；
+  回退前保持 Kernel run 与 Fleet 节点 drained。
 
 ## Kernel frozen-contract repository root
 

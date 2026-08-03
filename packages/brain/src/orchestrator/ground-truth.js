@@ -436,9 +436,23 @@ export async function collectGroundTruth(deps, opts) {
   const ganLatestRoundContractSha = ganLatestRoundVerdict
     ? reviewerDetail.contract_sha ?? proposeBranchSha
     : null;
-  let ganLatestRoundReviewFeedback = null;
+  let ganLatestRoundReviewFeedback = (
+    ganLatestRoundVerdict === 'REVISION'
+    && reviewerDetail?.source === 'validation_identity_policy'
+    && typeof reviewerDetail.summary === 'string'
+    && typeof reviewerDetail.reason === 'string'
+  )
+    ? Object.freeze({
+        contract_round: proposeBranchRn,
+        contract_sha: proposeBranchSha,
+        summary: sanitizeDiagnostic(reviewerDetail.summary),
+        reason: sanitizeDiagnostic(reviewerDetail.reason),
+        source: 'validation_identity_policy',
+      })
+    : null;
   if (
-    Number.isSafeInteger(proposeBranchRn)
+    ganLatestRoundReviewFeedback == null
+    && Number.isSafeInteger(proposeBranchRn)
     && proposeBranchRn > 0
     && GIT_SHA_PATTERN.test(proposeBranchSha ?? '')
   ) {

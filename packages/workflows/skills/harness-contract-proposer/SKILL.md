@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.19.1
+version: 9.20.0
 created: 2026-04-08
-updated: 2026-08-02
+updated: 2026-08-03
 changelog:
+  - 9.20.0: Kernel validation identity late-binding——GAN authoring identity 只作作者 provenance，禁止把 Planner/Proposer/Reviewer 的 attempt/account/capability snapshot 固化为未来验收身份；合同必须使用 Runner 在实际执行角色中注入的 HARNESS_* / CAPABILITY_SNAPSHOT_ID，并用证据摘要串联 Evaluator 与 Judge
   - 9.19.1: 修复 local_api 示例与硬规则自相矛盾——模板改为 DB_URL + 真实 migration + signup/login 双 cookie jar 自举，禁止直接 INSERT 业务身份；同时保留 android_realmachine 枚举，防止 SSOT 同步再次回退 Cecelia 9.17.1 补丁
   - 9.19.0: Kernel local_api 资源闭环——需要 Postgres 的合同只声明由 Fleet 注入的短期 DB_URL；E2E 必须先对空库运行仓库真实 migration/schema bootstrap，再启动应用；业务 cookie/session/tenant 必须由同一 E2E 通过真实 signup/login 动态创建并用临时 cookie jar 持有，禁止要求预注入 AUTH_COOKIE/TENANT_ID 或复制生产数据/长期业务凭据
   - 9.18.0: GP锚定闭环刀3——新增 Step 1.7「GP-Anchor 声明」，cross-repo file-existence gated（仅 product-map/generated/product-map.json 存在的仓库适用，其余跳过不阻塞）；合同须含 ## GP-Anchor 段，三形态声明与刀2 lint-gp-anchor.sh CI硬闸规范逐字一致，写前用jq核实id存在，让合同阶段就能发现"这个改动挂不上任何GP"而不是等CI最后一步才拦
@@ -148,6 +149,17 @@ GAN 收敛（Reviewer APPROVED）后输出第 4 件：
 4. 清理由 attempt 级数据库销毁兜底；脚本仍要用 `trap` 删除 cookie jar、停止应用进程，且不得打印 cookie/token。
 
 违反任一条时不得交 Reviewer。数据库 migration、真实登录和被测业务请求必须在同一个隔离 `DB_URL` 上完成。
+
+### Kernel validation identity 必须 late-bound（硬规则）
+
+Task bundle 顶层 `attempt_id` 以及 `inputs.capability_snapshot_id`、`capability_evidence` 描述的是**当前起草角色**的 `GAN authoring identity`，只证明谁写了本轮合同。Generator、Evaluator、Judge 的 attempt 在此时尚未创建，因此这些值绝不可能是未来的 validation identity。
+
+1. **禁止把 Proposer、Planner 或 Reviewer 的 UUID/account/snapshot 写进合同、DoD 或测试期望。** 也禁止根据 Reviewer feedback 把旧 Proposer 值替换成 Reviewer task bundle 的值；那只会让下一角色再次不匹配。
+2. 合同 E2E 执行时必须从 Runner 注入的 `HARNESS_ATTEMPT_ID`、`HARNESS_PROVIDER`、`HARNESS_ACCOUNT`、`HARNESS_MACHINE`、`HARNESS_MODEL`、`HARNESS_RUNNER_DIGEST`、`CAPABILITY_SNAPSHOT_ID` 读取**当前执行角色**身份。例如 `ATTEMPT_ID="$HARNESS_ATTEMPT_ID"`，不得写 UUID 字面值。
+3. `run_id`、仓库、PR 号、base SHA、候选 final SHA 是运行开始前已冻结的稳定对象，可以按 PRD 固定；可变的 role attempt/capability 只能 late-bound。
+4. 每个角色保留自己的 provenance：Evaluator 证据写自己的 attempt/capability 并引用被测 Generator/PR receipt；Independent Judge 写自己的 attempt/capability，并引用 Evaluator 证据 SHA-256。禁止要求三个角色共用同一个 attempt/account/snapshot。
+
+提交前搜索 `attempt_id|ATTEMPT_ID|capability_snapshot_id|snapshotId|CAPABILITY_SNAPSHOT_ID`：若同一行出现 UUID 字面值，必须改成运行时变量，否则确定性 approval gate 会直接 REVISION。
 
 ### RPA 快验通道（dev-verify）— 真机 RPA 断言的标准可执行 oracle
 

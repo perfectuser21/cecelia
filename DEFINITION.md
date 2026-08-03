@@ -6,11 +6,24 @@
 
 
 
-**Brain 版本**: 1.267.197
+**Brain 版本**: 1.267.198
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.198 — Kernel late-bound validation identity
+
+- GAN 合同不再把 Planner/Proposer/Reviewer 的临时 attempt 或 capability snapshot 当成
+  Generator/Evaluator/Judge 的验收身份；Proposer/Reviewer skill 明确使用执行角色的
+  late-bound attestation，并以证据 SHA-256 串联独立角色。
+- Brain 在合同批准落库前机械拒绝可变身份 UUID 字面值，即使 Reviewer 误批也会改判
+  REVISION；确定性反馈会进入下一轮 Proposer，不进入 Generator。
+- Fleet Worker `1.267.99` 向运行容器注入 provider/account/machine/model、capability snapshot
+  与 pinned Runner digest；Brain 为 `1.267.198`，Runner digest 保持
+  `sha256:e0797f5a440d61827d1ea86afee629e6f5a687da6f958608671ba9c873e5e94a`。
+- 回退到 Brain `1.267.197` / Worker `1.267.98` 会恢复 GAN role identity 追逐与运行时
+  attestation 缺字段；回退前保持 Kernel run 和 Fleet 节点 drained。
 
 ## Brain 1.267.197 — Kernel frozen-contract repository root
 

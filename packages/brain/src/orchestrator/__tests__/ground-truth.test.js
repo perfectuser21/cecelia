@@ -865,6 +865,40 @@ describe('collectGroundTruth：propose 分支 rN 解析', () => {
     expect(JSON.stringify(observed.ganLatestRoundReviewFeedback)).not.toContain('transcript');
   });
 
+  it('确定性 identity gate 的 REVISION 反馈优先于 Reviewer Attempt 的旧 APPROVED 文本', async () => {
+    const contractSha = 'e'.repeat(40);
+    const branch = 'cp-harness-propose-r2-11111111-raaaaaaaa-a9';
+    const deps = makeDeps({
+      exec: { lsRemote: `${contractSha}\trefs/heads/${branch}` },
+      rows: {
+        log: [{
+          hop: 14,
+          action: 'verdict:reviewer',
+          observed: { proposeBranchRn: 2, proposeBranchSha: contractSha },
+          detail: {
+            verdict: 'REVISION',
+            rn: 2,
+            contract_sha: contractSha,
+            summary: '合同硬编码了 GAN authoring identity。',
+            reason: '改用 late-bound runtime identity。',
+            source: 'validation_identity_policy',
+          },
+        }],
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.ganLatestRoundVerdict).toBe('REVISION');
+    expect(observed.ganLatestRoundReviewFeedback).toEqual({
+      contract_round: 2,
+      contract_sha: contractSha,
+      summary: '合同硬编码了 GAN authoring identity。',
+      reason: '改用 late-bound runtime identity。',
+      source: 'validation_identity_policy',
+    });
+  });
+
   it.each([
     ['boolean round', 1, (attempt) => {
       attempt.task_bundle.inputs.contract_round = true;
