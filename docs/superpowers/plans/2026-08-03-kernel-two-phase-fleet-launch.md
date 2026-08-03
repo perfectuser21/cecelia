@@ -424,13 +424,18 @@ The PR body must include the production attempt/run IDs, Red signatures, exact t
 
 Do not merge until current head has all required checks green. Never push directly to main.
 
-- [ ] **Step 4: Deploy Brain and reinstall US M4 Fleet Worker**
+- [ ] **Step 4: Deploy Brain and cut over every Fleet Worker while globally drained**
 
-Verify `/health`, pinned Runner digest, Node admission, and that tick remains stopped.
+Run `fleet-rollout.sh all --apply --protocol-cutover`. Verify `/health`, the pinned Runner digest,
+and that tick and every dedicated controller remain stopped. A node stays drained if its cutover or
+protocol probe fails; do not admit a mixed-protocol Fleet.
 
-- [ ] **Step 5: Recover the production R4 orphan through the implemented mechanism**
+- [ ] **Step 5: Preserve the terminal R4 evidence and create a fresh real business run**
 
-Restart only the dedicated controller. Verify attempt `863fdc22-ad3e-4e89-a8ce-6323cf9b9917` becomes an explicit infrastructure terminal row and a new Reviewer attempt is created without duplicate active controllers.
+Verify run `92a67d1a-2c3a-4819-9930-09d841f31bd8` and attempt
+`863fdc22-ad3e-4e89-a8ce-6323cf9b9917` remain terminal evidence and are never resurrected. Create a
+fresh Kernel run for the same real business objective, then start only its dedicated controller.
+Verify exactly one active controller and a new Reviewer attempt using the two-phase protocol.
 
 - [ ] **Step 6: Complete real roles**
 

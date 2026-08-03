@@ -98,7 +98,9 @@ The run singleton may adopt work only through those idempotent exact-lease opera
 inspection, heartbeat, or cancel result that does not prove a safe state fails closed with bounded
 infrastructure evidence and backoff.
 
-The production R4 orphan is preserved as evidence and recovered by this mechanism; no fabricated callback or verdict is written.
+The production R4 orphan is preserved as terminal failure evidence; it must not be resurrected.
+After deployment, the same real business objective starts a fresh Kernel run through this mechanism;
+no fabricated callback or verdict is written.
 
 ## File Boundaries
 
@@ -134,4 +136,7 @@ Green verification covers:
 
 ## Rollout and Stop Condition
 
-Deploy Brain and Fleet Worker on US M4 first, keep tick off, and rerun the blocked real Kernel chain. Do not merge the business PR until Evaluator and Independent Judge both bind PASS to the same final SHA. Stop after the successful Kernel stage boundary; do not claim Phase 5 or the full provider-neutral PRD complete.
+Deploy Brain and Fleet Worker through the globally drained protocol cutover, keep tick off, and start
+a fresh real Kernel run for the blocked business objective. Do not merge the business PR until
+Evaluator and Independent Judge both bind PASS to the same final SHA. Stop after the successful
+Kernel stage boundary; do not claim Phase 5 or the full provider-neutral PRD complete.
