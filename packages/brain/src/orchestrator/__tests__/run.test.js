@@ -132,6 +132,7 @@ describe('buildRealDeps', () => {
     expect(deps.commanderDirectiveExecutor).toMatchObject({
       execute: expect.any(Function),
     });
+    expect(deps.reconcileExpiredAttempt).toBeUndefined();
     expect(String(deps.dispatch)).not.toContain('NotImplemented');
   });
 

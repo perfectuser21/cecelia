@@ -211,6 +211,32 @@ describe('expired Fleet attempt reconciliation', () => {
     expect(result.status).toBe('adopted_running');
   });
 
+  it.each(['prepared', 'running'])(
+    'backs off when the exact %s Worker lease heartbeat has a transient DB error',
+    async (workerStatus) => {
+      const deps = makeDeps({
+        launcher: {
+          inspect: vi.fn(async () => ({ status: workerStatus })),
+          start: vi.fn(async () => ({ status: 'running', attempt_id: ATTEMPT.id })),
+          cancel: vi.fn(),
+        },
+        attemptStore: {
+          heartbeat: vi.fn(async () => { throw new Error('postgres_connection_reset'); }),
+        },
+      });
+
+      const result = await reconcileExpiredAttempt({ attempt: ATTEMPT, ...deps });
+
+      expect(result).toEqual(expect.objectContaining({
+        status: 'infrastructure_blocked',
+        failure_class: 'infrastructure_blocked',
+        signature: 'worker_attempt_lease_heartbeat_unavailable',
+      }));
+      expect(deps.launcher.cancel).not.toHaveBeenCalled();
+      expect(deps.terminalize).not.toHaveBeenCalled();
+    },
+  );
+
   it('returns infrastructure backoff when exact Worker inspection is unavailable', async () => {
     const deps = makeDeps({
       launcher: {
