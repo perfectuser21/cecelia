@@ -127,6 +127,94 @@ describe('expired Fleet attempt reconciliation', () => {
     });
   });
 
+  it('exact-cancels a terminal credential tombstone before replacing the expired attempt', async () => {
+    const expiredAttempt = { ...VERIFIED_ATTEMPT, status: 'starting' };
+    const deps = makeDeps({
+      launcher: {
+        inspect: vi.fn(async () => ({
+          status: 'terminal',
+          terminal_status: 'credential_delivery_unconfirmed',
+          attempt_id: ATTEMPT.id,
+        })),
+        start: vi.fn(),
+        cancel: vi.fn(async () => ({
+          status: 'already_clean',
+          attempt_id: ATTEMPT.id,
+        })),
+      },
+    });
+
+    const result = await reconcileExpiredAttempt({ attempt: expiredAttempt, ...deps });
+
+    expect(deps.launcher.cancel).toHaveBeenCalledWith({
+      attempt: expiredAttempt,
+      target: { machine: 'us-mac-m4' },
+    });
+    expect(deps.launcher.start).not.toHaveBeenCalled();
+    expect(deps.attemptStore.heartbeat).not.toHaveBeenCalled();
+    expect(deps.terminalize).toHaveBeenCalledWith(expect.objectContaining({
+      attemptId: ATTEMPT.id,
+      leaseOwner: ATTEMPT.lease_owner,
+      leaseGeneration: ATTEMPT.lease_generation,
+      code: 'worker_attempt_replacement_required_after_lease',
+      failureClass: 'infrastructure_blocked',
+    }));
+    expect(result).toMatchObject({
+      status: 'replacement_required',
+      attempt_id: ATTEMPT.id,
+      hop: 50,
+    });
+  });
+
+  it.each([
+    ['missing Attempt identity', { status: 'already_clean' }],
+    ['mismatched Attempt identity', { status: 'already_clean', attempt_id: 'stale-attempt' }],
+    ['unconfirmed terminal cleanup', { status: 'quarantined', attempt_id: ATTEMPT.id }],
+  ])('fails closed on terminal tombstone after %s cancel evidence', async (_label, cancelResult) => {
+    const deps = makeDeps({
+      launcher: {
+        inspect: vi.fn(async () => ({
+          status: 'terminal',
+          terminal_status: 'credential_delivery_unconfirmed',
+          attempt_id: ATTEMPT.id,
+        })),
+        start: vi.fn(),
+        cancel: vi.fn(async () => cancelResult),
+      },
+    });
+
+    const result = await reconcileExpiredAttempt({ attempt: VERIFIED_ATTEMPT, ...deps });
+
+    expect(result).toMatchObject({
+      status: 'infrastructure_blocked',
+      signature: 'worker_attempt_cancel_unconfirmed',
+    });
+    expect(deps.terminalize).not.toHaveBeenCalled();
+    expect(deps.attemptStore.heartbeat).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when exact terminal tombstone cancellation is unavailable', async () => {
+    const deps = makeDeps({
+      launcher: {
+        inspect: vi.fn(async () => ({
+          status: 'terminal',
+          terminal_status: 'credential_delivery_unconfirmed',
+          attempt_id: ATTEMPT.id,
+        })),
+        start: vi.fn(),
+        cancel: vi.fn(async () => { throw new Error('remote_bridge_cancel_http_503'); }),
+      },
+    });
+
+    const result = await reconcileExpiredAttempt({ attempt: VERIFIED_ATTEMPT, ...deps });
+
+    expect(result).toMatchObject({
+      status: 'infrastructure_blocked',
+      signature: 'worker_attempt_cancel_unavailable',
+    });
+    expect(deps.terminalize).not.toHaveBeenCalled();
+  });
+
   it('starts a prepared Worker with its old lease and never rotates Brain generation', async () => {
     const deps = makeDeps({
       launcher: {
@@ -525,16 +613,17 @@ describe('expired Fleet attempt reconciliation', () => {
 });
 
 describe('expired attempt transactional authority', () => {
-  function transactionalPool({ insertError = null } = {}) {
+  function transactionalPool({ insertError = null, attemptRole = ATTEMPT.role } = {}) {
     const client = {
       query: vi.fn(async (sql) => {
         if (/SELECT attempt\.\*/i.test(sql)) {
-          return { rows: [{ ...ATTEMPT, run_phase: 'gan' }] };
+          return { rows: [{ ...ATTEMPT, role: attemptRole, run_phase: 'gan' }] };
         }
         if (/UPDATE harness_attempts/i.test(sql)) {
           return {
             rows: [{
               ...ATTEMPT,
+              role: attemptRole,
               status: 'failed',
               error_code: 'worker_attempt_missing_after_lease',
               failure_class: 'infrastructure_blocked',
@@ -592,6 +681,28 @@ describe('expired attempt transactional authority', () => {
     expect(statements.at(-1)).toBe('COMMIT');
     expect(client.release).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ hop: 50, deduped: false });
+  });
+
+  it('persists a bounded callback-equivalent infrastructure terminal detail under its distinct effect', async () => {
+    const { pool, client } = transactionalPool({ attemptRole: `generator${'x'.repeat(500)}` });
+    const authority = createExpiredAttemptAuthority(pool);
+
+    await authority.terminalize(terminalInput);
+
+    const insertCall = client.query.mock.calls.find(([sql]) => (
+      /INSERT INTO orchestrator_decision_log/i.test(sql)
+    ));
+    const detail = JSON.parse(insertCall[1][3]);
+    expect(detail).toMatchObject({
+      attempt_id: ATTEMPT.id,
+      prior_lease_generation: ATTEMPT.lease_generation,
+      target: 'us-mac-m4',
+      status: 'failed',
+      failure_class: 'infrastructure_blocked',
+      signature: 'worker_attempt_missing_after_lease',
+    });
+    expect(detail.role.startsWith('generator')).toBe(true);
+    expect(detail.role.length).toBeLessThanOrEqual(128);
   });
 
   it('rolls back the terminal write when evidence append fails', async () => {

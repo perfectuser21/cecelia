@@ -1098,6 +1098,83 @@ describe('runLoop：wait:* 不灌水', () => {
     expect(sleeps).toHaveLength(0);
   });
 
+  it('expired missing generator 以 callback-equivalent infrastructure 终态重派同角色', async () => {
+    const expired = {
+      id: '863fdc22-ad3e-4e89-a8ce-6323cf9b9917',
+      run_id: RUN_ID,
+      hop: 49,
+      phase: 'generate',
+      role: 'generator',
+      status: 'running',
+      lease_owner: 'controller-old:6328',
+      lease_generation: 0,
+      lease_expires_at: '2026-07-04T11:59:00.000Z',
+      requested_machine_id: 'us-mac-m4',
+      actual_machine_id: null,
+    };
+    const priorIntent = {
+      hop: 49,
+      action: 'spawn:generator',
+      observed: { contractApproved: true },
+      detail: { reason: 'contract_approved' },
+    };
+    const reconciliationEvidence = {
+      hop: 50,
+      action: 'effect:expired_attempt_reconciled',
+      observed: { attempt_id: expired.id, role: 'generator', status: 'failed' },
+      detail: {
+        attempt_id: expired.id,
+        role: 'generator',
+        status: 'failed',
+        failure_class: 'infrastructure_blocked',
+        signature: 'worker_attempt_missing_after_lease',
+      },
+    };
+    const observedSeq = [
+      obs({
+        generatorSpawned: true,
+        decisionLog: [priorIntent],
+        inflight: { containers: [], host_pids: [], attempts: [expired] },
+      }),
+      obs({
+        generatorSpawned: true,
+        lastAgentExit: { code: 1, auth_failed: false, action: 'spawn:generator' },
+        decisionLog: [priorIntent, reconciliationEvidence],
+        inflight: { containers: [], host_pids: [], attempts: [] },
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, appended, setHopBase } = makeEnv({ observedSeq });
+    setHopBase(50);
+    deps.reconcileExpiredAttempt = vi.fn(async ({ attempt }) => ({
+      status: 'missing_terminalized',
+      attempt_id: attempt.id,
+      hop: 50,
+    }));
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.dispatch).toHaveBeenCalledOnce();
+    expect(deps.dispatch).toHaveBeenCalledWith(
+      'spawn:generator-fix',
+      expect.objectContaining({
+        decision: {
+          phase: 'generate',
+          action: 'spawn:generator-fix',
+          reason: 'callback_infrastructure_blocked',
+        },
+      }),
+    );
+    expect(appended).toHaveLength(1);
+    expect(appended[0]).toMatchObject({
+      action: 'spawn:generator-fix',
+      detail: { reason: 'callback_infrastructure_blocked' },
+      observed: { failure_class: 'infrastructure_blocked' },
+    });
+    expect(appended[0].observed).not.toHaveProperty('crash_signature');
+  });
+
   it('expired Worker 基础设施不可达只写退避证据并 sleep，不进入产品修复', async () => {
     const expired = {
       id: '863fdc22-ad3e-4e89-a8ce-6323cf9b9917',

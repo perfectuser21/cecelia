@@ -202,6 +202,37 @@ describe('R9/R10: append-only attempt callback convergence', () => {
     });
   });
 
+  it('routes the latest distinct expired-attempt infrastructure terminal effect like a callback', () => {
+    const r = derive(baseObserved({
+      pr: null,
+      lastAgentExit: {
+        code: 1,
+        auth_failed: false,
+        action: 'spawn:generator',
+      },
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        {
+          hop: 3,
+          action: 'effect:expired_attempt_reconciled',
+          detail: {
+            attempt_id: '22222222-2222-4222-8222-000000000003',
+            role: 'generator',
+            status: 'failed',
+            failure_class: 'infrastructure_blocked',
+            signature: 'worker_attempt_missing_after_lease',
+          },
+        },
+      ],
+    }));
+
+    expect(r).toEqual({
+      phase: 'generate',
+      action: 'spawn:generator-fix',
+      reason: 'callback_infrastructure_blocked',
+    });
+  });
+
   it('runner failure is terminal instead of a blind machine retry', () => {
     const r = derive(baseObserved({
       pr: null,
