@@ -77,6 +77,25 @@ describe('expired Fleet attempt reconciliation', () => {
     expect(oldestExpiredAttempt(attempts, NOW)).toBeNull();
   });
 
+  it.each([
+    ['unattested actual machine', {
+      execution_transport: null,
+      actual_machine_id: 'us-mac-m4',
+      machine_attestation_status: 'unverified',
+    }],
+    ['noncanonical requested machine', {
+      execution_transport: null,
+      actual_machine_id: null,
+      requested_machine_id: 'unknown-worker',
+    }],
+    ['other remote transport', {
+      execution_transport: 'remote-bridge',
+      actual_machine_id: null,
+    }],
+  ])('does not select an expired %s attempt for Fleet recovery', (_label, fields) => {
+    expect(oldestExpiredAttempt([{ ...ATTEMPT, ...fields }], NOW)).toBeNull();
+  });
+
   it('terminalizes a missing Worker attempt with exact old lease even without a launch receipt', async () => {
     const deps = makeDeps();
 
