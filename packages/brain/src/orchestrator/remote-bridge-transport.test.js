@@ -800,7 +800,10 @@ describe('remote Bridge unread response cleanup', () => {
     [
       'inspect',
       404,
-      { status: 'resolved', value: { status: 'missing', httpStatus: 404 } },
+      {
+        status: 'resolved',
+        value: { status: 'missing', attempt_id: 'attempt-1', httpStatus: 404 },
+      },
     ],
     [
       'inspect',
@@ -866,7 +869,7 @@ describe('remote Bridge redirect policy', () => {
           ? acceptedPrepareResponse()
           : operation === 'cancel'
             ? { status: 'cleaned', attempt_id: 'attempt-1' }
-            : { status: 'running' },
+            : { status: 'running', attempt_id: 'attempt-1' },
       ));
       const transport = createTransport({ fetchFn });
 

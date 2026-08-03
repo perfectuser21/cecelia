@@ -532,6 +532,13 @@ export async function runLoop(
         await beat();
         continue;
       }
+      if (recovery.status === 'parent_terminal') {
+        await beat();
+        continue;
+      }
+      if (recovery.status === 'ownership_lost') {
+        return { exitReason: 'singleton_conflict', hops };
+      }
       if (['adopted_prepared', 'adopted_running'].includes(recovery.status)) {
         await beat();
         await sleep(POLL_INTERVAL_MS);

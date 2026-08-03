@@ -1156,7 +1156,7 @@ describe('runLoop：wait:* 不灌水', () => {
       lease_expires_at: '2026-07-04T11:59:00.000Z',
       requested_machine_id: 'us-mac-m4',
     };
-    const { deps, appended } = makeEnv({
+    const { deps, appended, sleeps } = makeEnv({
       observedSeq: [
         obs({ inflight: { containers: [], host_pids: [], attempts: [expired] } }),
         obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),

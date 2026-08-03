@@ -130,7 +130,7 @@ describe('expired Fleet attempt reconciliation', () => {
   it('starts a prepared Worker with its old lease and never rotates Brain generation', async () => {
     const deps = makeDeps({
       launcher: {
-        inspect: vi.fn(async () => ({ status: 'prepared' })),
+        inspect: vi.fn(async () => ({ status: 'prepared', attempt_id: ATTEMPT.id })),
         start: vi.fn(async () => ({ status: 'running', attempt_id: ATTEMPT.id })),
         cancel: vi.fn(),
       },
@@ -161,7 +161,7 @@ describe('expired Fleet attempt reconciliation', () => {
     const startError = new Error('remote_bridge_start_http_500');
     const deps = makeDeps({
       launcher: {
-        inspect: vi.fn(async () => ({ status: 'prepared' })),
+        inspect: vi.fn(async () => ({ status: 'prepared', attempt_id: ATTEMPT.id })),
         start: vi.fn(async () => { throw startError; }),
         cancel: vi.fn(async () => ({ status: 'cleaned', attempt_id: ATTEMPT.id })),
       },
@@ -190,7 +190,7 @@ describe('expired Fleet attempt reconciliation', () => {
   ])('fails closed when prepared cancellation is not confirmed safe: %s', async (_label, cancelResult) => {
     const deps = makeDeps({
       launcher: {
-        inspect: vi.fn(async () => ({ status: 'prepared' })),
+        inspect: vi.fn(async () => ({ status: 'prepared', attempt_id: ATTEMPT.id })),
         start: vi.fn(async () => { throw new Error('remote_bridge_start_http_500'); }),
         cancel: vi.fn(async () => cancelResult),
       },
@@ -212,7 +212,7 @@ describe('expired Fleet attempt reconciliation', () => {
   it('fails closed when prepared cancellation throws', async () => {
     const deps = makeDeps({
       launcher: {
-        inspect: vi.fn(async () => ({ status: 'prepared' })),
+        inspect: vi.fn(async () => ({ status: 'prepared', attempt_id: ATTEMPT.id })),
         start: vi.fn(async () => { throw new Error('remote_bridge_start_http_500'); }),
         cancel: vi.fn(async () => { throw new Error('remote_bridge_cancel_http_503'); }),
       },
@@ -230,7 +230,7 @@ describe('expired Fleet attempt reconciliation', () => {
   it('keeps a running Worker on the old callback lease and only extends that exact identity', async () => {
     const deps = makeDeps({
       launcher: {
-        inspect: vi.fn(async () => ({ status: 'running' })),
+        inspect: vi.fn(async () => ({ status: 'running', attempt_id: ATTEMPT.id })),
         start: vi.fn(),
         cancel: vi.fn(),
       },
@@ -253,7 +253,7 @@ describe('expired Fleet attempt reconciliation', () => {
     async (workerStatus) => {
       const deps = makeDeps({
         launcher: {
-          inspect: vi.fn(async () => ({ status: workerStatus })),
+          inspect: vi.fn(async () => ({ status: workerStatus, attempt_id: ATTEMPT.id })),
           start: vi.fn(async () => ({ status: 'running', attempt_id: ATTEMPT.id })),
           cancel: vi.fn(),
         },

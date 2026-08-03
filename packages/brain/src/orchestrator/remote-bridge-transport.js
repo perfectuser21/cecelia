@@ -16,6 +16,20 @@ const CANCEL_RECEIPT_STATUSES = new Set([
   'already_clean',
   'quarantined',
 ]);
+const INSPECT_RECEIPT_STATUSES = new Set([
+  'missing',
+  'prepared',
+  'starting',
+  'created',
+  'running',
+  'paused',
+  'restarting',
+  'removing',
+  'exited',
+  'dead',
+  'terminal',
+  'quarantined',
+]);
 const WORKSPACE_SPEC_FIELDS = Object.freeze([
   'repo',
   'base_sha',
@@ -423,15 +437,46 @@ export function createRemoteBridgeTransport({
         },
         (response, signal) => {
           if (response?.status === 404) {
-            return { status: 'missing', httpStatus: 404 };
+            return {
+              status: 'missing',
+              attempt_id: attempt.id,
+              httpStatus: 404,
+            };
           }
           if (response?.status === 409) {
-            return { status: 'conflict', httpStatus: 409 };
+            return {
+              status: 'conflict',
+              attempt_id: attempt.id,
+              httpStatus: 409,
+            };
           }
           if (!response?.ok) {
             throw new Error(`remote_bridge_inspect_http_${String(response?.status)}`);
           }
-          return parseJson(response, 'inspect', signal);
+          return parseJson(response, 'inspect', signal).then((result) => {
+            if (!result || typeof result !== 'object' || Array.isArray(result)) {
+              throw new Error('remote_bridge_inspect_invalid_response');
+            }
+            if (!isNonemptyString(result.attempt_id)) {
+              throw new Error('remote_bridge_inspect_invalid_attempt_id');
+            }
+            if (result.attempt_id !== attempt.id) {
+              throw new Error('remote_bridge_inspect_attempt_mismatch');
+            }
+            if (!INSPECT_RECEIPT_STATUSES.has(result.status)) {
+              throw new Error('remote_bridge_inspect_invalid_status');
+            }
+            return Object.freeze({
+              status: result.status,
+              attempt_id: result.attempt_id,
+              ...(isNonemptyString(result.container_id)
+                ? { container_id: result.container_id }
+                : {}),
+              ...(isNonemptyString(result.terminal_status)
+                ? { terminal_status: result.terminal_status }
+                : {}),
+            });
+          });
         },
       );
     },

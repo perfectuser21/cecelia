@@ -1,9 +1,13 @@
 const INFLIGHT_STATUSES = new Set(['starting', 'running']);
 const PREPARED_WORKER_STATUSES = new Set(['prepared', 'starting']);
 const CONFIRMED_CANCEL_STATUSES = new Set([
-  'cancelled',
   'cleaned',
   'already_clean',
+]);
+const CANONICAL_FLEET_TARGETS = new Set([
+  'us-mac-m4',
+  'xian-mac-m4',
+  'xian-mac-m1',
 ]);
 const TERMINAL_CODES = new Set([
   'worker_attempt_missing_after_lease',
@@ -27,6 +31,26 @@ function expired(attempt, now) {
   if (!INFLIGHT_STATUSES.has(attempt?.status)) return false;
   const expiresAt = new Date(attempt?.lease_expires_at);
   return Number.isFinite(expiresAt.getTime()) && expiresAt < now;
+}
+
+function fleetRecoveryCandidate(attempt) {
+  if (attempt?.execution_transport === 'fleet-worker') return true;
+  return (
+    attempt?.execution_transport == null
+    && attempt?.actual_machine_id == null
+    && attempt?.remote_job_id == null
+    && attempt?.machine_attestation_status == null
+    && CANONICAL_FLEET_TARGETS.has(attempt?.requested_machine_id)
+  );
+}
+
+function launchReceiptConfirmed(attempt) {
+  return (
+    attempt?.execution_transport === 'fleet-worker'
+    && attempt?.machine_attestation_status === 'verified'
+    && typeof attempt.actual_machine_id === 'string'
+    && attempt.actual_machine_id.length > 0
+  );
 }
 
 function targetMachine(attempt) {
@@ -67,10 +91,80 @@ function terminalInput(attempt, machine, code, message) {
   });
 }
 
+function terminalConflict(terminal) {
+  if (terminal?.conflict === 'parent_run_terminal') {
+    return Object.freeze({
+      status: 'parent_terminal',
+      conflict: terminal.conflict,
+    });
+  }
+  if (typeof terminal?.conflict === 'string' && terminal.conflict.length > 0) {
+    return Object.freeze({
+      status: 'ownership_lost',
+      conflict: terminal.conflict,
+    });
+  }
+  return infrastructureBlocked('worker_attempt_terminal_authority_conflict');
+}
+
+async function terminalizeRecovery({
+  terminalize,
+  input,
+  status,
+  attemptId,
+}) {
+  let terminal;
+  try {
+    terminal = await terminalize(input);
+  } catch {
+    return infrastructureBlocked('worker_attempt_terminal_authority_unavailable');
+  }
+  if (!terminal?.attempt || !Number.isSafeInteger(Number(terminal.hop))) {
+    return terminalConflict(terminal);
+  }
+  return Object.freeze({
+    status,
+    attempt_id: attemptId,
+    hop: Number(terminal.hop),
+  });
+}
+
+async function cancelAndReplace({
+  launcher,
+  terminalize,
+  attempt,
+  target,
+  machine,
+}) {
+  let cancelled;
+  try {
+    cancelled = await launcher.cancel({ attempt, target });
+  } catch {
+    return infrastructureBlocked('worker_attempt_cancel_unavailable');
+  }
+  if (
+    cancelled?.attempt_id !== attempt.id
+    || !CONFIRMED_CANCEL_STATUSES.has(cancelled?.status)
+  ) {
+    return infrastructureBlocked('worker_attempt_cancel_unconfirmed');
+  }
+  return terminalizeRecovery({
+    terminalize,
+    input: terminalInput(
+      attempt,
+      machine,
+      'worker_attempt_replacement_required_after_lease',
+      'Worker could not resume with its exact confirmed launch identity',
+    ),
+    status: 'replacement_required',
+    attemptId: attempt.id,
+  });
+}
+
 export function oldestExpiredAttempt(attempts, now = new Date()) {
   if (!Array.isArray(attempts) || !(now instanceof Date)) return null;
   return attempts
-    .filter((attempt) => expired(attempt, now))
+    .filter((attempt) => expired(attempt, now) && fleetRecoveryCandidate(attempt))
     .sort((left, right) => {
       const byExpiry = new Date(left.lease_expires_at) - new Date(right.lease_expires_at);
       if (byExpiry !== 0) return byExpiry;
@@ -263,59 +357,48 @@ export async function reconcileExpiredAttempt({
   } catch {
     return infrastructureBlocked('worker_attempt_inspect_unavailable');
   }
+  if (inspected?.attempt_id !== attempt.id) {
+    return infrastructureBlocked('worker_attempt_inspect_unconfirmed');
+  }
 
   if (inspected?.status === 'missing') {
-    try {
-      const terminal = await terminalize(terminalInput(
+    return terminalizeRecovery({
+      terminalize,
+      input: terminalInput(
         attempt,
         machine,
         'worker_attempt_missing_after_lease',
         'Worker has no exact state after lease expiry',
-      ));
-      if (!terminal?.attempt || !Number.isSafeInteger(Number(terminal.hop))) {
-        return infrastructureBlocked('worker_attempt_terminal_authority_conflict');
-      }
-      return Object.freeze({
-        status: 'missing_terminalized',
-        attempt_id: attempt.id,
-        hop: Number(terminal.hop),
-      });
-    } catch {
-      return infrastructureBlocked('worker_attempt_terminal_authority_unavailable');
-    }
+      ),
+      status: 'missing_terminalized',
+      attemptId: attempt.id,
+    });
+  }
+
+  if (
+    !launchReceiptConfirmed(attempt)
+    && (PREPARED_WORKER_STATUSES.has(inspected?.status) || inspected?.status === 'running')
+  ) {
+    return cancelAndReplace({
+      launcher,
+      terminalize,
+      attempt,
+      target,
+      machine,
+    });
   }
 
   if (PREPARED_WORKER_STATUSES.has(inspected?.status)) {
     try {
       await launcher.start({ attempt, target });
     } catch {
-      let cancelled;
-      try {
-        cancelled = await launcher.cancel({ attempt, target });
-      } catch {
-        return infrastructureBlocked('worker_attempt_cancel_unavailable');
-      }
-      if (!CONFIRMED_CANCEL_STATUSES.has(cancelled?.status)) {
-        return infrastructureBlocked('worker_attempt_cancel_unconfirmed');
-      }
-      try {
-        const terminal = await terminalize(terminalInput(
-          attempt,
-          machine,
-          'worker_attempt_replacement_required_after_lease',
-          'Prepared Worker could not resume with its exact credential lease',
-        ));
-        if (!terminal?.attempt || !Number.isSafeInteger(Number(terminal.hop))) {
-          return infrastructureBlocked('worker_attempt_terminal_authority_conflict');
-        }
-        return Object.freeze({
-          status: 'replacement_required',
-          attempt_id: attempt.id,
-          hop: Number(terminal.hop),
-        });
-      } catch {
-        return infrastructureBlocked('worker_attempt_terminal_authority_unavailable');
-      }
+      return cancelAndReplace({
+        launcher,
+        terminalize,
+        attempt,
+        target,
+        machine,
+      });
     }
     let renewed;
     try {
