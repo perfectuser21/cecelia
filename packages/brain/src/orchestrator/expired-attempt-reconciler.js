@@ -43,6 +43,7 @@ function fleetRecoveryCandidate(attempt) {
     && attempt?.remote_job_id == null
     && attempt?.machine_attestation_status == null
     && CANONICAL_FLEET_TARGETS.has(attempt?.requested_machine_id)
+    && attempt?.task_bundle?.inputs?.execution_surface === 'fleet-worker'
   );
 }
 
