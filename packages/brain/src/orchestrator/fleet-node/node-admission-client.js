@@ -4,8 +4,8 @@ import { getNodeProfile } from './node-profile.js';
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CACHE_TTL_MS = 90_000;
 const DEFAULT_CACHE_TTL_MS = 1_000;
-const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
-const MAX_REQUEST_TIMEOUT_MS = 10_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
+const MAX_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_REASONS = 16;
 
 const WORKER_URL_ENV = Object.freeze({

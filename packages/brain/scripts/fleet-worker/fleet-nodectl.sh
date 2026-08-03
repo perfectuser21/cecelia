@@ -107,7 +107,7 @@ try {
     const response = await fetch(`http://${profile.worker_bind_host}:5231/health`, {
       method: 'GET',
       redirect: 'error',
-      signal: AbortSignal.timeout(5_000),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) throw new Error('health_unavailable');
     report = await readBoundedJson(response);

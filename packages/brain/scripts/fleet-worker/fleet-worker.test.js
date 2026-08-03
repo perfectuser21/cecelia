@@ -670,6 +670,42 @@ describe('Fleet Worker health-only service', () => {
     expect(removeTempDirFn).toHaveBeenCalledWith(tempRoot);
   });
 
+  it('retries a disposable container after an ambiguous Docker create timeout', async () => {
+    const { probeFleetWorkerHealth } = await loadProbeContract();
+    let createAttempts = 0;
+    const missingDrainMarker = vi.fn(async () => {
+      const error = new Error('missing');
+      error.code = 'ENOENT';
+      throw error;
+    });
+    const execFileFn = vi.fn(async (file, args) => {
+      if (file === 'docker' && args[0] === 'create') {
+        createAttempts += 1;
+        if (createAttempts === 1) {
+          const error = new Error('docker create timed out');
+          error.code = 143;
+          throw error;
+        }
+      }
+      return { stdout: '' };
+    });
+
+    const report = await probeFleetWorkerHealth({
+      machineId: 'us-mac-m4',
+      runnerImageDigest: DIGEST,
+      repoRoot: '/repo',
+      execFileFn,
+      fetchFn: vi.fn(async () => new Response('{}', { status: 200 })),
+      makeTempDirFn: vi.fn(async () => '/private/tmp/fleet-node-probe-retry'),
+      chmodTempDirFn: vi.fn(async () => undefined),
+      removeTempDirFn: vi.fn(async () => undefined),
+      statFn: missingDrainMarker,
+    });
+
+    expect(createAttempts).toBe(2);
+    expect(report.container).toEqual({ probe_succeeded: true });
+  });
+
   it('returns only the health allowlist and strips authority, credentials, prompts, and local paths', async () => {
     const { createFleetWorkerServer } = await loadServerContract();
     const probeHealth = vi.fn(async () => ({

@@ -6,11 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.191
+**Brain 版本**: 1.267.192
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.192 — Fleet cold-container admission stability
+
+- Fleet Worker `1.267.96` 对 disposable Runner container 的 create/start 执行最多三次
+  精确清理重试，OrbStack 冷启动超过单次 5 秒时不再随机误拒健康节点。
+- Brain admission 默认等待 20 秒、硬上限 30 秒，nodectl 等待 30 秒，完整覆盖受控重试；
+  重试耗尽、响应超限或证据不合格仍全部 fail closed。
+- 回退到 Brain `1.267.191` / Worker `1.267.95` 会恢复美国 M4 冷 container admission
+  抖动；回退前必须保持所有 Fleet 节点 drained。
 
 ## Brain 1.267.191 — Fleet Worker health version alignment
 

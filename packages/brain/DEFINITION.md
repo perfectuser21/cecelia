@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.267.191
+**版本**: 1.267.192
+
+## Fleet cold-container admission stability
+
+- Fleet Worker `1.267.96` 对 disposable Runner container 的 create/start 最多执行三次
+  exact-name 清理重试，覆盖 OrbStack 冷 `docker create` 偶发超过 5 秒的现场故障。
+- Brain admission 默认等待 20 秒且硬上限 30 秒，nodectl 等待 30 秒，完整覆盖受控重试；
+  重试耗尽、HTTP 超时与任何证据缺失仍 fail closed。
+- 回退到 Brain `1.267.191` / Worker `1.267.95` 会恢复冷 container admission 抖动；
+  回退前必须保持所有 Fleet 节点 drained。
 
 ## Fleet Worker health version alignment
 
