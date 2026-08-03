@@ -173,6 +173,16 @@ describe('runLoop：全链 planning→done', () => {
       'merge_pr',
       'report',
     ]);
+    const validationClock = {
+      pipeline_started_at: '2026-07-04T12:00:00.000Z',
+      deadline_at: '2026-07-04T13:30:00.000Z',
+    };
+    for (const action of ['spawn:generator', 'spawn:evaluator', 'spawn:judge']) {
+      const call = deps.dispatch.mock.calls.find(([candidate]) => candidate === action);
+      expect(call?.[1]?.validationClock).toEqual(validationClock);
+    }
+    expect(appended.find((entry) => entry.action === 'spawn:generator')?.detail)
+      .toMatchObject(validationClock);
     // 每个派发跳恰一条 intent；poll 另有一条持久计数日志。
     expect(appended).toHaveLength(9);
     expect(result.hops).toBe(9);
@@ -456,7 +466,13 @@ describe('runLoop：崩溃在 log 与 dispatch 之间（hop 协议）', () => {
   it('intent 有记录、无容器无产物 → 视为未遂，重派为新 hop（nextHop = MAX+1）', async () => {
     // 上一进程在 hop=4 记了 spawn:generator intent 后崩溃：无 inflight、无 PR
     const staleLog = [
-      { hop: 4, action: 'spawn:generator', observed: {}, detail: null },
+      {
+        hop: 4,
+        action: 'spawn:generator',
+        created_at: '2026-07-04T11:30:00.000Z',
+        observed: {},
+        detail: null,
+      },
     ];
     const observedSeq = [
       obs({ generatorSpawned: true, decisionLog: staleLog }),
@@ -482,6 +498,13 @@ describe('runLoop：崩溃在 log 与 dispatch 之间（hop 协议）', () => {
     const evaluatorIntent = {
       hop: 44, action: 'spawn:evaluator', observed: {}, detail: null,
     };
+    const generatorIntent = {
+      hop: 1,
+      action: 'spawn:generator',
+      created_at: '2026-07-04T11:30:00.000Z',
+      observed: {},
+      detail: null,
+    };
     const evaluatePass = {
       hop: 45,
       action: 'verdict:evaluate',
@@ -490,12 +513,12 @@ describe('runLoop：崩溃在 log 与 dispatch 之间（hop 协议）', () => {
     };
     const observedSeq = [
       // collect 先读到 hop 44；慢速 gh/git/docker 期间 callback 追加 hop 45。
-      obs({ generatorSpawned: true, pr, decisionLog: [evaluatorIntent] }),
+      obs({ generatorSpawned: true, pr, decisionLog: [generatorIntent, evaluatorIntent] }),
       // 重新观测后才能看见 PASS，并正确进入 judge。
       obs({
         generatorSpawned: true,
         pr,
-        decisionLog: [evaluatorIntent, evaluatePass],
+        decisionLog: [generatorIntent, evaluatorIntent, evaluatePass],
         evaluateVerdict: evaluatePass.detail,
       }),
       obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
@@ -1170,6 +1193,7 @@ describe('runLoop：wait:* 不灌水', () => {
     const priorIntent = {
       hop: 49,
       action: 'spawn:generator',
+      created_at: '2026-07-04T11:30:00.000Z',
       observed: { contractApproved: true },
       detail: { reason: 'contract_approved' },
     };

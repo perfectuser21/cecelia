@@ -1,6 +1,18 @@
 # Brain 模块定义
 
-**版本**: 1.267.198
+**版本**: 1.267.199
+
+## Kernel shared validation clock
+
+- Controller 在首个 Generator intent 创建唯一验证时钟，并通过 append-only decision log、
+  TaskBundle 和 Runner 环境把同一 `pipeline_started_at` / `deadline_at` 原样传给 Generator、
+  Evaluator 与 Judge；角色切换、重试和恢复均不得重置 7200 秒窗口。
+- 对升级前已启动的 run，从首个持久化 Generator intent 的 `created_at` 确定性恢复时钟；
+  下游角色缺失、格式错误或窗口不等于 TaskBundle timeout 时 fail closed。
+- Brain 版本为 `1.267.199`，Fleet Worker 三机基线为 `1.267.100`，Runner digest 保持
+  `sha256:e0797f5a440d61827d1ea86afee629e6f5a687da6f958608671ba9c873e5e94a`。
+- 回退到 Brain `1.267.198` / Worker `1.267.99` 会恢复角色各自缺失验证时钟的问题；
+  回退前保持 Kernel run 与 Fleet 节点 drained。
 
 ## Kernel late-bound validation identity
 

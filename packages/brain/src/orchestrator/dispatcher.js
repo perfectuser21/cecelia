@@ -177,6 +177,13 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     attempt_kind: attemptMetadata.attemptKind,
     workstream_key: attemptMetadata.workstreamKey,
   };
+  if (
+    ['generator', 'evaluator', 'judge'].includes(spec.role)
+    && ctx.validationClock
+  ) {
+    common.pipeline_started_at = ctx.validationClock.pipeline_started_at;
+    common.deadline_at = ctx.validationClock.deadline_at;
+  }
   const latestContextAnswer = [...(observed.decisionLog ?? [])]
     .sort((a, b) => Number(b.hop) - Number(a.hop))
     .find((row) => row.action === 'verdict:context_answer');
@@ -952,6 +959,12 @@ export function createDetachedLauncher({
       }
       if (bundle.inputs.contract_branch) {
         roleEnv.CONTRACT_BRANCH = String(bundle.inputs.contract_branch);
+      }
+      if (bundle.inputs.pipeline_started_at) {
+        roleEnv.HARNESS_PIPELINE_STARTED_AT = String(bundle.inputs.pipeline_started_at);
+      }
+      if (bundle.inputs.deadline_at) {
+        roleEnv.HARNESS_DEADLINE_AT = String(bundle.inputs.deadline_at);
       }
       if (attempt.role === 'evaluator' && bundle.inputs.pr_branch) {
         roleEnv.PR_BRANCH = String(bundle.inputs.pr_branch);

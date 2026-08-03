@@ -26,6 +26,7 @@ import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConf
 import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
 import { materializeApprovedContract } from './contract-store.js';
 import { evaluateValidationIdentityPolicy } from './validation-identity-policy.js';
+import { resolveValidationClock } from './validation-clock.js';
 import {
   ACTION,
   LOG_ACTION,
@@ -978,6 +979,14 @@ export async function runLoop(
       });
       gateVerdict = gate.allow ? 'allow' : `deny:${gate.reason}`;
     }
+    const intentAt = now();
+    const taskPayload = asPayload(observed.task?.payload);
+    const validationClock = resolveValidationClock({
+      action: decision.action,
+      decisionLog: observed.decisionLog,
+      intentAt,
+      timeoutSeconds: Number(taskPayload.timeout_seconds ?? 5400),
+    });
 
     try {
       await append(deps.pool, {
@@ -995,6 +1004,7 @@ export async function runLoop(
         detail: {
           reason: decision.reason,
           crossCheckMismatch: counters.crossCheckMismatch,
+          ...(validationClock ?? {}),
           ...humanReviewDetail(observed, decision.reason),
         },
       });
@@ -1024,6 +1034,7 @@ export async function runLoop(
           hop,
           observed,
           decision,
+          ...(validationClock ? { validationClock } : {}),
           ...(commanderDispatchContext ? { commander: commanderDispatchContext } : {}),
           ...(retryDispatchContext ? { retry: retryDispatchContext } : {}),
         });

@@ -66,6 +66,12 @@ function loadAttemptRunner() {
 }
 
 function providerPrompt(role = 'generator', inputs = {}) {
+  const validationInputs = ['generator', 'evaluator', 'judge'].includes(role)
+    ? {
+        pipeline_started_at: '2026-08-03T19:02:13.199Z',
+        deadline_at: '2026-08-03T19:07:13.199Z',
+      }
+    : {};
   return JSON.stringify({
     instruction: 'Execute exactly one Harness role.',
     task_bundle: {
@@ -80,6 +86,7 @@ function providerPrompt(role = 'generator', inputs = {}) {
         task_id: TASK_ID,
         sprint_dir: 'sprints/provider-neutral',
         artifacts: [],
+        ...validationInputs,
         ...inputs,
       },
       constraints: {
@@ -1088,6 +1095,48 @@ describe('Fleet Worker Attempt runner', () => {
         CAPABILITY_SNAPSHOT_ID: capabilitySnapshotId,
       }),
     }));
+  });
+
+  it('injects the exact Controller-owned validation clock without resetting it', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    const pipelineStartedAt = '2026-08-03T19:02:13.199Z';
+    const deadlineAt = '2026-08-03T19:07:13.199Z';
+
+    await runner.prepare(request({
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: providerPrompt('generator', {
+          pipeline_started_at: pipelineStartedAt,
+          deadline_at: deadlineAt,
+        }),
+      },
+    }));
+
+    expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
+      roleEnv: expect.objectContaining({
+        HARNESS_PIPELINE_STARTED_AT: pipelineStartedAt,
+        HARNESS_DEADLINE_AT: deadlineAt,
+      }),
+    }));
+  });
+
+  it('fails closed when a validation role TaskBundle has no shared clock', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    await expect(runner.prepare(request({
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: providerPrompt('generator', {
+          pipeline_started_at: null,
+          deadline_at: null,
+        }),
+      },
+    }))).rejects.toThrow(
+      'validation_clock_required',
+    );
+    expect(deps.docker.prepare).not.toHaveBeenCalled();
   });
 
   it.each([
