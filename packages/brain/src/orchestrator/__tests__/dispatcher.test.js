@@ -687,7 +687,7 @@ describe('createDispatcher', () => {
     expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
   });
 
-  it('replaces caller paths with a resolved WorkspaceSpec before Fleet launch', async () => {
+  it('replaces caller paths with a resolved WorkspaceSpec before Fleet prepare', async () => {
     const deps = makeDeps();
     deps.machineId = 'us-mac-m4';
     deps.resolveWorkspaceSpec = vi.fn(async () => ({
@@ -699,13 +699,17 @@ describe('createDispatcher', () => {
       run_id: runId,
       attempt_id: attemptId,
     }));
-    deps.launcher.launch.mockResolvedValueOnce({
+    deps.launcher.prepare = vi.fn(async () => ({
       jobId: 'worker-job-1',
       actualMachineId: 'us-mac-m4',
       executionTransport: 'fleet-worker',
       remoteJobId: 'worker-job-1',
       attestationStatus: 'verified',
-    });
+    }));
+    deps.launcher.start = vi.fn(async () => ({
+      status: 'running',
+      attempt_id: attemptId,
+    }));
     const dispatch = createDispatcher(deps);
 
     await expect(dispatch('spawn:reviewer', {
@@ -735,7 +739,8 @@ describe('createDispatcher', () => {
       },
     });
     expect(created.bundle.inputs).not.toHaveProperty('worktree_path');
-    expect(deps.launcher.launch.mock.calls[0][0].bundle).toBe(created.bundle);
+    expect(deps.launcher.prepare.mock.calls[0][0].bundle).toBe(created.bundle);
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
   });
 
   it('dispatches the fleet canary without a role Skill or workspace dependency', async () => {

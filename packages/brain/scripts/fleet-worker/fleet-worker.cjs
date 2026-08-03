@@ -180,7 +180,7 @@ function writeJson(response, statusCode, value) {
 }
 
 function validAttemptRunner(value) {
-  return ['prepare', 'start', 'launch', 'inspect', 'cancel', 'terminal', 'reconcile']
+  return ['prepare', 'start', 'inspect', 'cancel', 'terminal', 'reconcile']
     .every((method) => typeof value?.[method] === 'function');
 }
 
@@ -604,19 +604,6 @@ function createFleetWorkerServer(options = {}) {
           throw error;
         }
         const receipt = await attemptRunner.prepare(body);
-        writeJson(response, 202, acceptedReceipt(receipt, attemptToken));
-        return;
-      }
-
-      if (request.method === 'POST' && request.url === '/harness/attempts') {
-        const body = await readJson(request, maximumRequestBytes);
-        const untrustedField = findUntrustedWorkspaceField(body);
-        if (untrustedField) {
-          const error = new Error(`untrusted_workspace_field:${untrustedField}`);
-          error.statusCode = 400;
-          throw error;
-        }
-        const receipt = await attemptRunner.launch(body);
         writeJson(response, 202, acceptedReceipt(receipt, attemptToken));
         return;
       }

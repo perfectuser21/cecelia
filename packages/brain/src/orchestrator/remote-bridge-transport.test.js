@@ -41,7 +41,7 @@ function jsonResponse(status, body) {
   };
 }
 
-function launchInput(overrides = {}) {
+function prepareInput(overrides = {}) {
   const attempt = {
     id: 'attempt-1',
     run_id: 'run-1',
@@ -86,7 +86,7 @@ function launchInput(overrides = {}) {
   return { attempt, bundle, spec, target };
 }
 
-function acceptedLaunchResponse(overrides = {}) {
+function acceptedPrepareResponse(overrides = {}) {
   const values = {
     status: 'accepted',
     job_id: 'job-1',
@@ -110,7 +110,7 @@ function createTransport(overrides = {}) {
     bridgeUrls: { [MACHINE]: BRIDGE_URL },
     sharedSecret: SHARED_SECRET,
     brainUrl: BRAIN_URL,
-    fetchFn: vi.fn(async () => jsonResponse(202, acceptedLaunchResponse())),
+    fetchFn: vi.fn(async () => jsonResponse(202, acceptedPrepareResponse())),
     credentialBroker: { issue: vi.fn(async () => ENVELOPE) },
     githubCredentialBroker: { issue: vi.fn(async () => GITHUB_ENVELOPE) },
     now: () => NOW_MS,
@@ -119,7 +119,7 @@ function createTransport(overrides = {}) {
 }
 
 function operationInput(operation) {
-  if (operation === 'launch') return launchInput();
+  if (operation === 'prepare') return prepareInput();
   if (operation === 'inspect') {
     return {
       attempt: { id: 'attempt-1' },
@@ -186,13 +186,13 @@ function resolvesWithin(promise, timeoutMs) {
   });
 }
 
-describe('remote Bridge launch', () => {
+describe('remote Bridge prepare', () => {
   it('prepares through the two-phase endpoint and verifies the attested receipt', async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse()));
     const transport = createTransport({ fetchFn });
 
     expect(typeof transport.prepare).toBe('function');
-    await expect(transport.prepare(launchInput())).resolves.toEqual({
+    await expect(transport.prepare(prepareInput())).resolves.toEqual({
       jobId: 'job-1',
       actualMachineId: MACHINE,
       executionTransport: 'fleet-worker',
@@ -206,13 +206,13 @@ describe('remote Bridge launch', () => {
   });
 
   it('rejects a prepared receipt with an invalid machine attestation', async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse({
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse({
       attestation: '0'.repeat(64),
     })));
     const transport = createTransport({ fetchFn });
 
     expect(typeof transport.prepare).toBe('function');
-    await expect(transport.prepare(launchInput())).rejects.toThrow(
+    await expect(transport.prepare(prepareInput())).rejects.toThrow(
       'remote_bridge_attestation_invalid',
     );
   });
@@ -243,10 +243,10 @@ describe('remote Bridge launch', () => {
   });
 
   it('posts the allowlisted payload with bearer authentication and verifies the receipt', async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse()));
     const transport = createTransport({ fetchFn });
 
-    await expect(transport.launch(launchInput())).resolves.toEqual({
+    await expect(transport.prepare(prepareInput())).resolves.toEqual({
       jobId: 'job-1',
       actualMachineId: MACHINE,
       executionTransport: 'fleet-worker',
@@ -255,7 +255,7 @@ describe('remote Bridge launch', () => {
     });
     expect(fetchFn).toHaveBeenCalledOnce();
     expect(fetchFn).toHaveBeenCalledWith(
-      `${BRIDGE_URL}/harness/attempts`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
       expect.objectContaining({
         method: 'POST',
         headers: {
@@ -307,31 +307,31 @@ describe('remote Bridge launch', () => {
   // the Worker: the Worker is the only component that can bind it to a
   // server-observed checkout SHA before the Provider ever runs.
   it('forwards the frozen baseline invariant to the Worker', async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse()));
     const transport = createTransport({ fetchFn });
-    const input = launchInput();
+    const input = prepareInput();
     input.bundle.inputs.workspace_spec = {
       ...input.bundle.inputs.workspace_spec,
       frozen_baseline: true,
     };
 
-    await transport.launch(input);
+    await transport.prepare(input);
 
     const requestBody = JSON.parse(fetchFn.mock.calls[0][1].body);
     expect(requestBody.workspace_spec).toMatchObject({ frozen_baseline: true });
   });
 
   it('projects runtime resources to the single bounded PostgreSQL boolean', async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse()));
     const transport = createTransport({ fetchFn });
-    const input = launchInput();
+    const input = prepareInput();
     input.bundle.inputs.runtime_resources = {
       postgres: true,
       database_url: 'postgresql://attacker:secret@outside.invalid/db',
       token: 'must-not-cross',
     };
 
-    await transport.launch(input);
+    await transport.prepare(input);
 
     const requestBody = JSON.parse(fetchFn.mock.calls[0][1].body);
     expect(requestBody.runtime_resources).toEqual({ postgres: true });
@@ -361,7 +361,7 @@ describe('remote Bridge launch', () => {
     });
   });
 
-  it('rejects invalid launch timeouts before credentials or Worker transport', async () => {
+  it('rejects invalid prepare timeouts before credentials or Worker transport', async () => {
     const invalidCases = [
       ['codex', undefined],
       ['claude', 0],
@@ -377,7 +377,7 @@ describe('remote Bridge launch', () => {
         credentialBroker: { issue },
       });
 
-      await expect(transport.launch(launchInput({
+      await expect(transport.prepare(prepareInput({
         bundle: {
           constraints: timeoutSeconds === undefined
             ? {}
@@ -396,7 +396,7 @@ describe('remote Bridge launch', () => {
     const issue = vi.fn(async () => ENVELOPE);
     const transport = createTransport({ credentialBroker: { issue } });
 
-    await transport.launch(launchInput());
+    await transport.prepare(prepareInput());
 
     expect(issue).toHaveBeenCalledOnce();
     expect(issue).toHaveBeenCalledWith({
@@ -411,16 +411,16 @@ describe('remote Bridge launch', () => {
     'binds one GitHub credential envelope to a %s Attempt and deadline',
     async (role) => {
       const issue = vi.fn(async () => GITHUB_ENVELOPE);
-      const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+      const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse()));
       const transport = createTransport({
         fetchFn,
         githubCredentialBroker: { issue },
       });
 
-      await transport.launch(launchInput({
+      await transport.prepare(prepareInput({
         bundle: {
           role,
-          inputs: launchInput().bundle.inputs,
+          inputs: prepareInput().bundle.inputs,
           constraints: { timeout_seconds: 3600 },
         },
       }));
@@ -443,7 +443,7 @@ describe('remote Bridge launch', () => {
       githubCredentialBroker: undefined,
     });
 
-    await expect(transport.launch(launchInput())).rejects.toThrow(
+    await expect(transport.prepare(prepareInput())).rejects.toThrow(
       'remote_bridge_github_credential_broker_unavailable',
     );
     expect(fetchFn).not.toHaveBeenCalled();
@@ -453,16 +453,16 @@ describe('remote Bridge launch', () => {
     'does not issue a GitHub credential envelope for read-only role %s',
     async (role) => {
       const issue = vi.fn();
-      const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+      const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse()));
       const transport = createTransport({
         fetchFn,
         githubCredentialBroker: { issue },
       });
 
-      await transport.launch(launchInput({
+      await transport.prepare(prepareInput({
         bundle: {
           role,
-          inputs: launchInput().bundle.inputs,
+          inputs: prepareInput().bundle.inputs,
           constraints: { timeout_seconds: 3600 },
         },
       }));
@@ -477,7 +477,7 @@ describe('remote Bridge launch', () => {
     const fetchFn = vi.fn();
     const transport = createTransport({ fetchFn, credentialBroker: undefined });
 
-    await expect(transport.launch(launchInput())).rejects.toThrow(
+    await expect(transport.prepare(prepareInput())).rejects.toThrow(
       'remote_bridge_credential_broker_unavailable',
     );
     expect(fetchFn).not.toHaveBeenCalled();
@@ -490,7 +490,7 @@ describe('remote Bridge launch', () => {
       credentialBroker: { issue: vi.fn(async () => undefined) },
     });
 
-    await expect(transport.launch(launchInput())).rejects.toThrow(
+    await expect(transport.prepare(prepareInput())).rejects.toThrow(
       'remote_bridge_credential_envelope_invalid',
     );
     expect(fetchFn).not.toHaveBeenCalled();
@@ -505,7 +505,7 @@ describe('remote Bridge launch', () => {
       now: () => 8_640_000_000_000_000 - 1000,
     });
 
-    await expect(transport.launch(launchInput())).rejects.toThrow(
+    await expect(transport.prepare(prepareInput())).rejects.toThrow(
       'remote_bridge_invalid_attempt_timeout',
     );
     expect(issue).not.toHaveBeenCalled();
@@ -514,10 +514,10 @@ describe('remote Bridge launch', () => {
 
   it('does not issue or send a Codex credential envelope for another provider', async () => {
     const issue = vi.fn();
-    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse()));
     const transport = createTransport({ fetchFn, credentialBroker: { issue } });
 
-    await transport.launch(launchInput({
+    await transport.prepare(prepareInput({
       spec: { provider: 'claude', command: 'claude' },
       target: { provider: 'claude', account: 'claude-team1' },
     }));
@@ -529,21 +529,21 @@ describe('remote Bridge launch', () => {
   });
 
   it('uses zero when lease generation is absent', async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse()));
     const transport = createTransport({ fetchFn });
-    const input = launchInput();
+    const input = prepareInput();
     delete input.attempt.lease_generation;
 
-    await transport.launch(input);
+    await transport.prepare(input);
 
     expect(JSON.parse(fetchFn.mock.calls[0][1].body).lease_generation).toBe(0);
   });
 
   it('converts only the server-owned canary sentinel into a path-free workspace capability', async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse()));
     const transport = createTransport({ fetchFn });
 
-    await transport.launch(launchInput({
+    await transport.prepare(prepareInput({
       bundle: {
         inputs: {
           worktree_path: '/var/empty/kernel-fleet-canary',
@@ -568,10 +568,10 @@ describe('remote Bridge launch', () => {
   });
 
   it('does not trust a provider cwd or workspace when the bundle is not a canary', async () => {
-    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse()));
     const transport = createTransport({ fetchFn });
 
-    await transport.launch(launchInput({
+    await transport.prepare(prepareInput({
       bundle: {
         inputs: {
           worktree_path: '/Users/operator/repos/cecelia',
@@ -591,25 +591,25 @@ describe('remote Bridge launch', () => {
     expect(providerSpec).not.toHaveProperty('cwd');
   });
 
-  it('freezes a successful launch receipt', async () => {
+  it('freezes a successful prepare receipt', async () => {
     const transport = createTransport();
 
-    const result = await transport.launch(launchInput());
+    const result = await transport.prepare(prepareInput());
 
     expect(Object.isFrozen(result)).toBe(true);
   });
 
   it('copies and freezes URL routing at construction instead of trusting later mutations', async () => {
     const bridgeUrls = { [MACHINE]: BRIDGE_URL };
-    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedLaunchResponse()));
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse()));
     const transport = createTransport({ bridgeUrls, fetchFn });
     bridgeUrls[MACHINE] = 'http://attacker.invalid:9000';
     bridgeUrls['xian-mac-m1'] = 'http://attacker.invalid:9001';
 
-    await transport.launch(launchInput());
+    await transport.prepare(prepareInput());
 
-    expect(fetchFn.mock.calls[0][0]).toBe(`${BRIDGE_URL}/harness/attempts`);
-    await expect(transport.launch(launchInput({
+    expect(fetchFn.mock.calls[0][0]).toBe(`${BRIDGE_URL}/harness/attempts/prepare`);
+    await expect(transport.prepare(prepareInput({
       target: { machine: 'xian-mac-m1' },
     }))).rejects.toThrow('remote_bridge_unknown_machine');
     expect(fetchFn).toHaveBeenCalledOnce();
@@ -625,7 +625,7 @@ describe('remote Bridge launch', () => {
     const fetchFn = vi.fn();
     const transport = createTransport({ fetchFn, ...config });
 
-    await expect(transport.launch(launchInput())).rejects.toThrow(errorCode);
+    await expect(transport.prepare(prepareInput())).rejects.toThrow(errorCode);
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
@@ -634,7 +634,7 @@ describe('remote Bridge launch', () => {
     const fetchFn = vi.fn();
     const transport = createTransport({ bridgeUrls, fetchFn });
 
-    await expect(transport.launch(launchInput())).rejects.toThrow(
+    await expect(transport.prepare(prepareInput())).rejects.toThrow(
       'remote_bridge_unknown_machine',
     );
     expect(fetchFn).not.toHaveBeenCalled();
@@ -646,38 +646,38 @@ describe('remote Bridge launch', () => {
     ['lease owner', { attempt: { lease_owner: '' } }, 'remote_bridge_invalid_lease_owner'],
     ['callback token', { attempt: { callbackSecret: '' } }, 'remote_bridge_invalid_callback_token'],
     ['machine', { target: { machine: '' } }, 'remote_bridge_invalid_machine'],
-  ])('requires a nonempty %s before launch', async (_field, inputOverride, errorCode) => {
+  ])('requires a nonempty %s before prepare', async (_field, inputOverride, errorCode) => {
     const fetchFn = vi.fn();
     const transport = createTransport({ fetchFn });
 
-    await expect(transport.launch(launchInput(inputOverride))).rejects.toThrow(errorCode);
+    await expect(transport.prepare(prepareInput(inputOverride))).rejects.toThrow(errorCode);
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it.each([
-    [200, 'remote_bridge_launch_http_200'],
-    [301, 'remote_bridge_launch_http_301'],
-    [302, 'remote_bridge_launch_http_302'],
-    [307, 'remote_bridge_launch_http_307'],
-    [308, 'remote_bridge_launch_http_308'],
-    [409, 'remote_bridge_launch_conflict'],
-    [500, 'remote_bridge_launch_http_500'],
+    [200, 'remote_bridge_prepare_http_200'],
+    [301, 'remote_bridge_prepare_http_301'],
+    [302, 'remote_bridge_prepare_http_302'],
+    [307, 'remote_bridge_prepare_http_307'],
+    [308, 'remote_bridge_prepare_http_308'],
+    [409, 'remote_bridge_prepare_conflict'],
+    [500, 'remote_bridge_prepare_http_500'],
   ])('accepts only HTTP 202 (received %s)', async (status, errorCode) => {
     const fetchFn = vi.fn(async () => jsonResponse(status, { secret: CALLBACK_TOKEN }));
     const transport = createTransport({ fetchFn });
 
-    const launch = transport.launch(launchInput());
+    const prepare = transport.prepare(prepareInput());
 
-    await expect(launch).rejects.toThrow(errorCode);
-    await expect(launch).rejects.not.toThrow(CALLBACK_TOKEN);
+    await expect(prepare).rejects.toThrow(errorCode);
+    await expect(prepare).rejects.not.toThrow(CALLBACK_TOKEN);
   });
 
   it.each([
-    ['non-accepted response', { status: 'queued' }, 'remote_bridge_launch_not_accepted'],
+    ['non-accepted response', { status: 'queued' }, 'remote_bridge_prepare_not_accepted'],
     ['empty job id', {
       job_id: '',
       attestation: '0'.repeat(64),
-    }, 'remote_bridge_launch_invalid_job_id'],
+    }, 'remote_bridge_prepare_invalid_job_id'],
     ['mismatched machine', { actual_machine_id: 'xian-mac-m1' }, 'remote_bridge_machine_mismatch'],
     ['bad attestation', { attestation: '0'.repeat(64) }, 'remote_bridge_attestation_invalid'],
     ['uppercase attestation', {
@@ -691,11 +691,11 @@ describe('remote Bridge launch', () => {
   ])('rejects a 202 response with %s', async (_case, responseOverride, errorCode) => {
     const fetchFn = vi.fn(async () => jsonResponse(
       202,
-      acceptedLaunchResponse(responseOverride),
+      acceptedPrepareResponse(responseOverride),
     ));
     const transport = createTransport({ fetchFn });
 
-    await expect(transport.launch(launchInput())).rejects.toThrow(errorCode);
+    await expect(transport.prepare(prepareInput())).rejects.toThrow(errorCode);
   });
 
   it('rejects malformed JSON with a sanitized error', async () => {
@@ -708,11 +708,11 @@ describe('remote Bridge launch', () => {
     }));
     const transport = createTransport({ fetchFn });
 
-    const launch = transport.launch(launchInput());
+    const prepare = transport.prepare(prepareInput());
 
-    await expect(launch).rejects.toThrow('remote_bridge_launch_invalid_json');
-    await expect(launch).rejects.not.toThrow(SHARED_SECRET);
-    await expect(launch).rejects.not.toThrow(CALLBACK_TOKEN);
+    await expect(prepare).rejects.toThrow('remote_bridge_prepare_invalid_json');
+    await expect(prepare).rejects.not.toThrow(SHARED_SECRET);
+    await expect(prepare).rejects.not.toThrow(CALLBACK_TOKEN);
   });
 
   it('aborts timed-out requests and reports a sanitized timeout', async () => {
@@ -723,11 +723,11 @@ describe('remote Bridge launch', () => {
     }));
     const transport = createTransport({ fetchFn, timeoutMs: 5 });
 
-    const launch = transport.launch(launchInput());
+    const prepare = transport.prepare(prepareInput());
 
-    await expect(launch).rejects.toThrow('remote_bridge_launch_timeout');
-    await expect(launch).rejects.not.toThrow(SHARED_SECRET);
-    await expect(launch).rejects.not.toThrow(CALLBACK_TOKEN);
+    await expect(prepare).rejects.toThrow('remote_bridge_prepare_timeout');
+    await expect(prepare).rejects.not.toThrow(SHARED_SECRET);
+    await expect(prepare).rejects.not.toThrow(CALLBACK_TOKEN);
     expect(fetchFn.mock.calls[0][1].signal.aborted).toBe(true);
   });
 
@@ -737,16 +737,16 @@ describe('remote Bridge launch', () => {
     });
     const transport = createTransport({ fetchFn });
 
-    const launch = transport.launch(launchInput());
+    const prepare = transport.prepare(prepareInput());
 
-    await expect(launch).rejects.toThrow('remote_bridge_launch_request_failed');
-    await expect(launch).rejects.not.toThrow(SHARED_SECRET);
-    await expect(launch).rejects.not.toThrow(CALLBACK_TOKEN);
+    await expect(prepare).rejects.toThrow('remote_bridge_prepare_request_failed');
+    await expect(prepare).rejects.not.toThrow(SHARED_SECRET);
+    await expect(prepare).rejects.not.toThrow(CALLBACK_TOKEN);
   });
 });
 
 describe('remote Bridge operation deadlines', () => {
-  it.each(['launch', 'inspect', 'cancel'])(
+  it.each(['prepare', 'inspect', 'cancel'])(
     'keeps the %s deadline active while consuming the response body',
     async (operation) => {
       let requestSignal;
@@ -754,7 +754,7 @@ describe('remote Bridge operation deadlines', () => {
         requestSignal = options.signal;
         return {
           ok: true,
-          status: operation === 'launch' ? 202 : 200,
+          status: operation === 'prepare' ? 202 : 200,
           json: () => new Promise((_resolve, reject) => {
             requestSignal.addEventListener('abort', () => {
               reject(new Error(`body exposed ${SHARED_SECRET} ${CALLBACK_TOKEN}`));
@@ -788,14 +788,14 @@ describe('remote Bridge operation deadlines', () => {
 describe('remote Bridge unread response cleanup', () => {
   it.each([
     [
-      'launch',
+      'prepare',
       409,
-      { status: 'rejected', message: 'remote_bridge_launch_conflict' },
+      { status: 'rejected', message: 'remote_bridge_prepare_conflict' },
     ],
     [
-      'launch',
+      'prepare',
       503,
-      { status: 'rejected', message: 'remote_bridge_launch_http_503' },
+      { status: 'rejected', message: 'remote_bridge_prepare_http_503' },
     ],
     [
       'inspect',
@@ -857,13 +857,13 @@ describe('remote Bridge unread response cleanup', () => {
 });
 
 describe('remote Bridge redirect policy', () => {
-  it.each(['launch', 'inspect', 'cancel'])(
+  it.each(['prepare', 'inspect', 'cancel'])(
     'locks %s requests to redirect:error',
     async (operation) => {
       const fetchFn = vi.fn(async () => jsonResponse(
-        operation === 'launch' ? 202 : 200,
-        operation === 'launch'
-          ? acceptedLaunchResponse()
+        operation === 'prepare' ? 202 : 200,
+        operation === 'prepare'
+          ? acceptedPrepareResponse()
           : { status: 'running' },
       ));
       const transport = createTransport({ fetchFn });
@@ -874,7 +874,7 @@ describe('remote Bridge redirect policy', () => {
     },
   );
 
-  it('does not send sensitive launch JSON to a 307 redirect target', async () => {
+  it('does not send sensitive prepare JSON to a 307 redirect target', async () => {
     let redirectedBody = '';
     let targetUrl;
     const targetServer = createServer(async (request, response) => {
@@ -900,16 +900,16 @@ describe('remote Bridge redirect policy', () => {
         timeoutMs: 1000,
       });
 
-      let launchError;
+      let prepareError;
       try {
-        await transport.launch(launchInput());
+        await transport.prepare(prepareInput());
       } catch (error) {
-        launchError = error;
+        prepareError = error;
       }
 
-      expect(launchError?.message).toBe('remote_bridge_launch_request_failed');
-      expect(launchError?.message).not.toContain(SHARED_SECRET);
-      expect(launchError?.message).not.toContain(CALLBACK_TOKEN);
+      expect(prepareError?.message).toBe('remote_bridge_prepare_request_failed');
+      expect(prepareError?.message).not.toContain(SHARED_SECRET);
+      expect(prepareError?.message).not.toContain(CALLBACK_TOKEN);
       expect(redirectedBody).toBe('');
       expect(redirectedBody).not.toContain(CALLBACK_TOKEN);
       expect(redirectedBody).not.toContain('do the work');

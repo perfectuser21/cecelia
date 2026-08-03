@@ -208,10 +208,6 @@ function dependencies(overrides = {}) {
       events.push('docker.start');
       return { containerId };
     }),
-    launch: vi.fn(async () => {
-      events.push('docker.launch');
-      return { containerId: 'container-attempt-1' };
-    }),
     inspect: vi.fn(async () => ({ status: 'running' })),
     remove: vi.fn(async () => {
       events.push('docker.remove');
@@ -285,6 +281,26 @@ function createRunner(deps) {
     githubCredentialConsumer: deps.githubCredentialConsumer,
     resourceManager: deps.resourceManager,
   });
+}
+
+async function prepareAndStart(runner, input) {
+  const prepared = await runner.prepare(input);
+  await runner.start(input.attempt_id, {
+    owner: input.lease_owner,
+    generation: input.lease_generation,
+  });
+  return prepared;
+}
+
+async function prepareAndStartContainer(docker, input) {
+  const prepared = await docker.prepare(input);
+  await docker.start({
+    attemptId: input.attemptId,
+    ...prepared,
+    credential: input.credential,
+    githubCredential: input.githubCredential,
+  });
+  return Object.freeze({ containerId: prepared.containerId });
 }
 
 describe('Fleet Worker Attempt runner', () => {
@@ -816,7 +832,7 @@ describe('Fleet Worker Attempt runner', () => {
       const deps = dependencies();
       const runner = createRunner(deps);
 
-      await runner.launch(request({
+      await prepareAndStart(runner, request({
         provider_spec: {
           ...request().provider_spec,
           stdin: providerPrompt(role, inputs),
@@ -827,7 +843,7 @@ describe('Fleet Worker Attempt runner', () => {
         },
       }));
 
-      expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+      expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
         taskId: TASK_ID,
         roleEnv: expected,
       }));
@@ -851,7 +867,7 @@ describe('Fleet Worker Attempt runner', () => {
     });
     const runner = createRunner(deps);
 
-    await runner.launch(request({
+    await prepareAndStart(runner, request({
       workspace_spec: {
         ...request().workspace_spec,
         mode,
@@ -862,9 +878,9 @@ describe('Fleet Worker Attempt runner', () => {
       'credential.consume',
       'github-credential.consume',
       'workspace.prepare',
-      'docker.launch',
+      'docker.prepare',
     ]);
-    expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
       image: IMAGE_DIGEST,
       workspaceMount: {
         source: deps.workspace.path,
@@ -905,7 +921,7 @@ describe('Fleet Worker Attempt runner', () => {
       },
     });
 
-    await runner.launch(postgresRequest);
+    await prepareAndStart(runner, postgresRequest);
 
     expect(deps.resourceManager.provision).toHaveBeenCalledWith({
       attemptId: ATTEMPT_ID,
@@ -914,11 +930,11 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.events).toEqual(expect.arrayContaining([
       'workspace.prepare',
       'resource.provision',
-      'docker.launch',
+      'docker.prepare',
     ]));
     expect(deps.events.indexOf('resource.provision'))
-      .toBeLessThan(deps.events.indexOf('docker.launch'));
-    expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+      .toBeLessThan(deps.events.indexOf('docker.prepare'));
+    expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
       runtimeEnvironment: {
         DB_URL: 'postgresql://attempt:ephemeral@postgres:5432/acceptance',
         DATABASE_URL: 'postgresql://attempt:ephemeral@postgres:5432/acceptance',
@@ -957,7 +973,7 @@ describe('Fleet Worker Attempt runner', () => {
       target: { ...request().target, role: 'evaluator' },
     });
 
-    await expect(runner.launch(input)).rejects.toThrow(
+    await expect(prepareAndStart(runner, input)).rejects.toThrow(
       'attempt_runtime_requirements_mismatch',
     );
     expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
@@ -978,9 +994,9 @@ describe('Fleet Worker Attempt runner', () => {
       githubCredentialConsumer: deps.githubCredentialConsumer,
     });
 
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
 
-    expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
       image: rawImageId,
     }));
   });
@@ -989,7 +1005,7 @@ describe('Fleet Worker Attempt runner', () => {
     const deps = dependencies();
     const runner = createRunner(deps);
 
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
 
     expect(deps.credentialConsumer.consume).toHaveBeenCalledWith(
       CREDENTIAL_ENVELOPE,
@@ -1016,7 +1032,7 @@ describe('Fleet Worker Attempt runner', () => {
       const deps = dependencies();
       const runner = createRunner(deps);
 
-      await expect(runner.launch(request({
+      await expect(prepareAndStart(runner, request({
         github_credential_envelope: undefined,
         provider_spec: {
           ...request().provider_spec,
@@ -1029,7 +1045,7 @@ describe('Fleet Worker Attempt runner', () => {
       }))).rejects.toThrow('github_credential_envelope_required');
       expect(deps.githubCredentialConsumer.consume).not.toHaveBeenCalled();
       expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
-      expect(deps.docker.launch).not.toHaveBeenCalled();
+      expect(deps.docker.prepare).not.toHaveBeenCalled();
     },
   );
 
@@ -1037,7 +1053,7 @@ describe('Fleet Worker Attempt runner', () => {
     const deps = dependencies();
     const runner = createRunner(deps);
 
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
 
     expect(deps.githubCredentialConsumer.consume).toHaveBeenCalledWith(
       GITHUB_CREDENTIAL_ENVELOPE,
@@ -1057,7 +1073,7 @@ describe('Fleet Worker Attempt runner', () => {
     const deps = dependencies();
     const runner = createRunner(deps);
 
-    await runner.launch(request({
+    await prepareAndStart(runner, request({
       github_credential_envelope: undefined,
       provider_spec: {
         ...request().provider_spec,
@@ -1076,11 +1092,11 @@ describe('Fleet Worker Attempt runner', () => {
     const deps = dependencies();
     const runner = createRunner(deps);
 
-    await expect(runner.launch(request({
+    await expect(prepareAndStart(runner, request({
       credential_envelope: undefined,
     }))).rejects.toThrow('credential_envelope_required');
     expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
-    expect(deps.docker.launch).not.toHaveBeenCalled();
+    expect(deps.docker.prepare).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -1097,12 +1113,12 @@ describe('Fleet Worker Attempt runner', () => {
       const input = request({ timeout_seconds: timeoutSeconds });
       if (timeoutSeconds === undefined) delete input.timeout_seconds;
 
-      await expect(runner.launch(input)).rejects.toThrow(
+      await expect(prepareAndStart(runner, input)).rejects.toThrow(
         'attempt_timeout_seconds_invalid',
       );
       expect(deps.credentialConsumer.consume).not.toHaveBeenCalled();
       expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
-      expect(deps.docker.launch).not.toHaveBeenCalled();
+      expect(deps.docker.prepare).not.toHaveBeenCalled();
     },
   );
 
@@ -1110,7 +1126,7 @@ describe('Fleet Worker Attempt runner', () => {
     const deps = dependencies();
     const runner = createRunner(deps);
 
-    await expect(runner.launch(request({
+    await expect(prepareAndStart(runner, request({
       provider_spec: {
         ...request().provider_spec,
         cwd: '/Users/operator/perfect21/cecelia',
@@ -1118,13 +1134,13 @@ describe('Fleet Worker Attempt runner', () => {
       },
     }))).rejects.toThrow(/attempt_provider_spec_unknown_field/);
     expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
-    expect(deps.docker.launch).not.toHaveBeenCalled();
+    expect(deps.docker.prepare).not.toHaveBeenCalled();
   });
 
   it('callback terminalization releases isolated resources but keeps the Runner alive to receive the response', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
-    await runner.launch(request({
+    await prepareAndStart(runner, request({
       runtime_resources: { postgres: true },
       provider_spec: {
         ...request().provider_spec,
@@ -1168,7 +1184,7 @@ describe('Fleet Worker Attempt runner', () => {
     deps.docker.wait.mockReturnValueOnce(containerExit);
     const runner = createRunner(deps);
 
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
     resolveExit({ statusCode: 0 });
 
     await vi.waitFor(() => {
@@ -1198,7 +1214,7 @@ describe('Fleet Worker Attempt runner', () => {
       return { removed: true };
     });
     const runner = createRunner(deps);
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
 
     await runner.cancel(ATTEMPT_ID, {
       owner: 'dispatcher-1',
@@ -1220,7 +1236,7 @@ describe('Fleet Worker Attempt runner', () => {
     const deps = dependencies();
     deps.docker.remove.mockRejectedValueOnce(new Error('docker remove failed'));
     const runner = createRunner(deps);
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
 
     await expect(runner.cancel(ATTEMPT_ID, {
       owner: 'dispatcher-1',
@@ -1241,7 +1257,7 @@ describe('Fleet Worker Attempt runner', () => {
       new Error('attempt_resource_release_failed'),
     );
     const runner = createRunner(deps);
-    await runner.launch(request({
+    await prepareAndStart(runner, request({
       runtime_resources: { postgres: true },
       provider_spec: {
         ...request().provider_spec,
@@ -1276,7 +1292,7 @@ describe('Fleet Worker Attempt runner', () => {
     );
     const runner = createRunner(deps);
 
-    await expect(runner.launch(request({
+    await expect(prepareAndStart(runner, request({
       runtime_resources: { postgres: true },
       provider_spec: {
         ...request().provider_spec,
@@ -1295,11 +1311,11 @@ describe('Fleet Worker Attempt runner', () => {
     const deps = dependencies();
     const launchError = new Error('attempt_container_rollback_failed:start failed');
     launchError.rollbackContainerId = `cecelia-fleet-${ATTEMPT_ID}`;
-    deps.docker.launch.mockRejectedValueOnce(launchError);
+    deps.docker.prepare.mockRejectedValueOnce(launchError);
     deps.docker.remove.mockRejectedValueOnce(new Error('docker daemon unavailable'));
     const runner = createRunner(deps);
 
-    await expect(runner.launch(request())).rejects.toThrow(
+    await expect(prepareAndStart(runner, request())).rejects.toThrow(
       'attempt_launch_rollback_failed:attempt_container_rollback_failed:start failed',
     );
     expect(deps.docker.remove).toHaveBeenCalledWith({
@@ -1313,7 +1329,7 @@ describe('Fleet Worker Attempt runner', () => {
   it('rejects stale external cancellation without touching the owned Attempt', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
 
     await expect(runner.cancel(ATTEMPT_ID, {
       owner: 'stale-dispatcher',
@@ -1328,7 +1344,7 @@ describe('Fleet Worker Attempt runner', () => {
     deps.stateStore.save.mockRejectedValueOnce(new Error('state write failed'));
     const runner = createRunner(deps);
 
-    await expect(runner.launch(request({
+    await expect(prepareAndStart(runner, request({
       runtime_resources: { postgres: true },
       provider_spec: {
         ...request().provider_spec,
@@ -1617,7 +1633,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     });
 
     try {
-      await expect(docker.launch({
+      await expect(prepareAndStartContainer(docker, {
         attemptId: ATTEMPT_ID,
         runId: RUN_ID,
         workerId: WORKER_ID,
@@ -1681,7 +1697,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     });
 
     try {
-      const error = await docker.launch({
+      const error = await prepareAndStartContainer(docker, {
         attemptId: ATTEMPT_ID,
         runId: RUN_ID,
         workerId: WORKER_ID,
@@ -1786,7 +1802,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     });
 
     try {
-      await expect(docker.launch({
+      await expect(prepareAndStartContainer(docker, {
         attemptId: ATTEMPT_ID,
         runId: RUN_ID,
         workerId: WORKER_ID,
@@ -1972,7 +1988,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     });
 
     try {
-      await docker.launch({
+      await prepareAndStartContainer(docker, {
         attemptId: ATTEMPT_ID,
         runId: RUN_ID,
         workerId: WORKER_ID,
@@ -2041,7 +2057,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     });
 
     try {
-      await docker.launch({
+      await prepareAndStartContainer(docker, {
         attemptId: ATTEMPT_ID,
         runId: RUN_ID,
         workerId: WORKER_ID,
@@ -2095,14 +2111,14 @@ describe('Fleet Worker durable runtime adapters', () => {
     deps.workspace.frozen_baseline = true;
     const runner = createRunner(deps);
 
-    await runner.launch(request({
+    await prepareAndStart(runner, request({
       workspace_spec: {
         ...request().workspace_spec,
         frozen_baseline: true,
       },
     }));
 
-    expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
       workspaceStartSha: deps.workspace.head_sha,
       frozenBaseline: true,
     }));
@@ -2112,9 +2128,9 @@ describe('Fleet Worker durable runtime adapters', () => {
     const deps = dependencies();
     const runner = createRunner(deps);
 
-    await runner.launch(request());
+    await prepareAndStart(runner, request());
 
-    expect(deps.docker.launch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
       frozenBaseline: false,
     }));
   });

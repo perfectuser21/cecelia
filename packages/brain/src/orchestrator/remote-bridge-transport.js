@@ -206,7 +206,7 @@ export function createRemoteBridgeTransport({
   }
 
   return Object.freeze({
-    async launch({
+    async prepare({
       attempt,
       bundle,
       spec,
@@ -288,8 +288,8 @@ export function createRemoteBridgeTransport({
       const workspaceSpec = copyWorkspaceSpec(bundle);
       const runtimeResources = copyRuntimeResources(bundle);
       return request(
-        'launch',
-        `${bridgeUrl}/harness/attempts`,
+        'prepare',
+        `${bridgeUrl}/harness/attempts/prepare`,
         {
           method: 'POST',
           headers: authHeaders(true),
@@ -328,18 +328,18 @@ export function createRemoteBridgeTransport({
         },
         async (response, signal) => {
           if (response?.status === 409) {
-            throw new Error('remote_bridge_launch_conflict');
+            throw new Error('remote_bridge_prepare_conflict');
           }
           if (response?.status !== 202) {
-            throw new Error(`remote_bridge_launch_http_${String(response?.status)}`);
+            throw new Error(`remote_bridge_prepare_http_${String(response?.status)}`);
           }
 
-          const receipt = await parseJson(response, 'launch', signal);
+          const receipt = await parseJson(response, 'prepare', signal);
           if (receipt?.status !== 'accepted') {
-            throw new Error('remote_bridge_launch_not_accepted');
+            throw new Error('remote_bridge_prepare_not_accepted');
           }
           if (!isNonemptyString(receipt.job_id)) {
-            throw new Error('remote_bridge_launch_invalid_job_id');
+            throw new Error('remote_bridge_prepare_invalid_job_id');
           }
           if (receipt.actual_machine_id !== machine) {
             throw new Error('remote_bridge_machine_mismatch');
@@ -360,6 +360,47 @@ export function createRemoteBridgeTransport({
             executionTransport: 'fleet-worker',
             remoteJobId: receipt.job_id,
             attestationStatus: 'verified',
+          });
+        },
+      );
+    },
+
+    async start({ attempt, target } = {}) {
+      const { bridgeUrl } = resolveBridge(target);
+      requireNonempty(attempt?.id, 'attempt_id');
+      requireNonempty(attempt?.lease_owner, 'lease_owner');
+      if (!Number.isInteger(attempt?.lease_generation) || attempt.lease_generation < 0) {
+        throw new Error('remote_bridge_invalid_lease_generation');
+      }
+
+      return request(
+        'start',
+        `${bridgeUrl}/harness/attempts/${encodeURIComponent(attempt.id)}/start`,
+        {
+          method: 'POST',
+          headers: authHeaders(true),
+          body: JSON.stringify({
+            lease_owner: attempt.lease_owner,
+            lease_generation: attempt.lease_generation,
+          }),
+        },
+        async (response, signal) => {
+          if (response?.status === 409) {
+            throw new Error('remote_bridge_start_conflict');
+          }
+          if (!response?.ok) {
+            throw new Error(`remote_bridge_start_http_${String(response?.status)}`);
+          }
+          const result = await parseJson(response, 'start', signal);
+          if (result?.status !== 'running') {
+            throw new Error('remote_bridge_start_not_running');
+          }
+          if (result?.attempt_id !== attempt.id) {
+            throw new Error('remote_bridge_start_attempt_mismatch');
+          }
+          return Object.freeze({
+            status: result.status,
+            attempt_id: result.attempt_id,
           });
         },
       );

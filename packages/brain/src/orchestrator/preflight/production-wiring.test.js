@@ -302,8 +302,8 @@ describe('production capability wiring', () => {
       normalizeResult: vi.fn(),
     };
     const launcher = {
-      launch: vi.fn(async () => {
-        order.push('launch');
+      prepare: vi.fn(async () => {
+        order.push('prepare');
         return Object.freeze({
           actualMachineId: 'us-mac-m4',
           executionTransport: 'fleet-worker',
@@ -312,6 +312,10 @@ describe('production capability wiring', () => {
           containerId: null,
           jobId: 'worker-1',
         });
+      }),
+      start: vi.fn(async () => {
+        order.push('start');
+        return { status: 'running', attempt_id: ATTEMPT_ID };
       }),
       cancel: vi.fn(),
     };
@@ -356,13 +360,15 @@ describe('production capability wiring', () => {
     );
     expect(attemptStore.createAttempt).toHaveBeenCalledOnce();
     expect(adapter.start).toHaveBeenCalledOnce();
-    expect(launcher.launch).toHaveBeenCalledOnce();
+    expect(launcher.prepare).toHaveBeenCalledOnce();
+    expect(launcher.start).toHaveBeenCalledOnce();
     expect(order).toEqual(expect.arrayContaining([
       'createAttempt',
       'claimAttempt',
       'adapter.start',
-      'launch',
+      'prepare',
       'recordReceipt',
+      'start',
     ]));
   });
 
@@ -429,12 +435,16 @@ describe('production capability wiring', () => {
       normalizeResult: vi.fn(),
     };
     const launcher = {
-      launch: vi.fn(async (input) => Object.freeze({
+      prepare: vi.fn(async (input) => Object.freeze({
         actualMachineId: input.target.machine,
         executionTransport: 'fleet-worker',
         remoteJobId: `worker-${input.attempt.accountId}`,
         attestationStatus: 'verified',
         jobId: `worker-${input.attempt.accountId}`,
+      })),
+      start: vi.fn(async (input) => ({
+        status: 'running',
+        attempt_id: input.attempt.id,
       })),
       cancel: vi.fn(),
     };
@@ -510,7 +520,7 @@ describe('production capability wiring', () => {
     expect(startedExecutions).toContainEqual(expect.objectContaining({
       codexHome: '/accounts/team1',
     }));
-    expect(launcher.launch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(launcher.prepare).toHaveBeenCalledWith(expect.objectContaining({
       attempt: expect.objectContaining({ accountId: 'team1' }),
       bundle: expect.objectContaining({
         inputs: expect.objectContaining({
@@ -739,33 +749,33 @@ describe('production capability wiring', () => {
   });
 
   it.each([
-    ['disabled by default', {}],
+    ['disabled by default', {}, false],
     ['missing selected bridge URL', {
       KERNEL_FLEET_REMOTE_ENABLED: 'true',
       FLEET_WORKER_XIAN_MAC_M1_URL: 'http://xian-m1.internal:5231',
       KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
       KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
-    }],
+    }, false],
     ['missing shared token', {
       KERNEL_FLEET_REMOTE_ENABLED: 'true',
       FLEET_WORKER_XIAN_MAC_M4_URL: 'http://xian-m4.internal:5231',
       FLEET_WORKER_XIAN_MAC_M1_URL: 'http://xian-m1.internal:5231',
       KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'https://brain.public.example',
-    }],
+    }, false],
     ['missing remote callback base', {
       KERNEL_FLEET_REMOTE_ENABLED: 'true',
       FLEET_WORKER_XIAN_MAC_M4_URL: 'http://xian-m4.internal:5231',
       FLEET_WORKER_XIAN_MAC_M1_URL: 'http://xian-m1.internal:5231',
       KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
-    }],
+    }, true],
     ['invalid remote callback base', {
       KERNEL_FLEET_REMOTE_ENABLED: 'true',
       FLEET_WORKER_XIAN_MAC_M4_URL: 'http://xian-m4.internal:5231',
       FLEET_WORKER_XIAN_MAC_M1_URL: 'http://xian-m1.internal:5231',
       KERNEL_FLEET_BRIDGE_TOKEN: SHARED_SECRET,
       KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: 'ftp://brain.public.example',
-    }],
-  ])('fails closed when remote transport is %s', async (_description, env) => {
+    }, true],
+  ])('fails closed when remote transport is %s', async (_description, env, canExactCancel) => {
     const target = {
       provider: 'codex',
       account: 'team3',
@@ -773,7 +783,12 @@ describe('production capability wiring', () => {
     };
     const attemptStore = attemptStoreDouble();
     const spawnDetached = vi.fn();
-    const fetchFn = vi.fn();
+    const fetchFn = vi.fn(async (url) => {
+      if (canExactCancel && String(url).endsWith(`/harness/attempts/${ATTEMPT_ID}/cancel`)) {
+        return response({ status: 'cancelled', attempt_id: ATTEMPT_ID });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
     const deps = await buildTestDeps({
       pool: { query: vi.fn() },
       attemptStore,
@@ -805,13 +820,26 @@ describe('production capability wiring', () => {
     })).rejects.toThrow('execution_transport_unavailable:xian-mac-m4');
 
     expect(spawnDetached).not.toHaveBeenCalled();
-    expect(fetchFn).not.toHaveBeenCalled();
+    if (canExactCancel) {
+      expect(fetchFn).toHaveBeenCalledOnce();
+      expect(fetchFn.mock.calls[0][0]).toBe(
+        `http://xian-m4.internal:5231/harness/attempts/${ATTEMPT_ID}/cancel`,
+      );
+      expect(JSON.parse(fetchFn.mock.calls[0][1].body)).toEqual({
+        lease_owner: LEASE_OWNER,
+        lease_generation: 4,
+      });
+    } else {
+      expect(fetchFn).not.toHaveBeenCalled();
+    }
     expect(attemptStore.fail).toHaveBeenCalledWith(ATTEMPT_ID, {
       code: 'launch_failed',
-      message: [
-        'execution_transport_unavailable:xian-mac-m4',
-        'orphan cancellation failed: execution_transport_unavailable:xian-mac-m4',
-      ].join('; '),
+      message: canExactCancel
+        ? 'execution_transport_unavailable:xian-mac-m4'
+        : [
+            'execution_transport_unavailable:xian-mac-m4',
+            'orphan cancellation failed: execution_transport_unavailable:xian-mac-m4',
+          ].join('; '),
     }, {
       leaseOwner: LEASE_OWNER,
       leaseGeneration: 4,
@@ -874,7 +902,7 @@ describe('production capability wiring', () => {
     const attemptStore = attemptStoreDouble();
     const spawnDetached = vi.fn();
     const fetchFn = vi.fn(async (url) => {
-      if (String(url).endsWith('/harness/attempts')) {
+      if (String(url).endsWith('/harness/attempts/prepare')) {
         return response({
           status: 'accepted',
           job_id: 'unverified-remote-job',
@@ -924,7 +952,7 @@ describe('production capability wiring', () => {
     })).rejects.toThrow('remote_bridge_attestation_invalid');
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      'http://xian-m4.internal:5231/harness/attempts',
+      'http://xian-m4.internal:5231/harness/attempts/prepare',
       `http://xian-m4.internal:5231/harness/attempts/${ATTEMPT_ID}/cancel`,
     ]);
     expect(attemptStore.fail).toHaveBeenCalledWith(ATTEMPT_ID, {
@@ -937,7 +965,7 @@ describe('production capability wiring', () => {
     expect(spawnDetached).not.toHaveBeenCalled();
   });
 
-  it('never falls back to local Docker when an enabled remote launch fails', async () => {
+  it('never falls back to local Docker when an enabled remote prepare fails', async () => {
     const target = {
       provider: 'codex',
       account: 'team3',
@@ -982,10 +1010,10 @@ describe('production capability wiring', () => {
       hop: 14,
       observed: observed(),
       decision: { phase: 'generate' },
-    })).rejects.toThrow('remote_bridge_launch_request_failed');
+    })).rejects.toThrow('remote_bridge_prepare_request_failed');
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      'http://xian-m1.internal:5231/harness/attempts',
+      'http://xian-m1.internal:5231/harness/attempts/prepare',
       `http://xian-m1.internal:5231/harness/attempts/${ATTEMPT_ID}/cancel`,
     ]);
     expect(spawnDetached).not.toHaveBeenCalled();

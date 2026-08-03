@@ -50,7 +50,7 @@ function configuredEnv(overrides = {}) {
   };
 }
 
-function launchInput(machine) {
+function prepareInput(machine) {
   return {
     attempt: {
       id: ATTEMPT_ID,
@@ -117,6 +117,28 @@ function acceptedResponse(machine) {
 }
 
 describe('production execution transport', () => {
+  it('starts an exact prepared Attempt without requiring prepare-only configuration', async () => {
+    const fetchFn = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: vi.fn(async () => ({ status: 'running', attempt_id: ATTEMPT_ID })),
+    }));
+    const transport = createProductionExecutionTransport({
+      env: configuredEnv({ KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL: undefined }),
+      fetchFn,
+    });
+
+    await expect(transport.start({
+      attempt: {
+        id: ATTEMPT_ID,
+        lease_owner: 'dispatcher-local',
+        lease_generation: 0,
+      },
+      target: { machine: DEFAULT_LOCAL_MACHINE_ID },
+    })).resolves.toEqual({ status: 'running', attempt_id: ATTEMPT_ID });
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
+
   it.each(Object.keys(MACHINE_URLS))(
     'fails closed for %s when unified Worker execution is not configured',
     async (machine) => {
@@ -127,7 +149,7 @@ describe('production execution transport', () => {
         spawnDetached,
       });
 
-      await expect(transport.launch(launchInput(machine))).rejects.toThrow(
+      await expect(transport.prepare(prepareInput(machine))).rejects.toThrow(
         `execution_transport_unavailable:${machine}`,
       );
       expect(fetchFn).not.toHaveBeenCalled();
@@ -158,7 +180,7 @@ describe('production execution transport', () => {
         },
       });
 
-      await expect(transport.launch(launchInput(machine))).resolves.toEqual({
+      await expect(transport.prepare(prepareInput(machine))).resolves.toEqual({
         jobId: `container-${machine}`,
         actualMachineId: machine,
         executionTransport: 'fleet-worker',
@@ -166,10 +188,10 @@ describe('production execution transport', () => {
         attestationStatus: 'verified',
       });
       expect(fetchFn).toHaveBeenCalledOnce();
-      expect(fetchFn.mock.calls[0][0]).toBe(`${workerUrl}/harness/attempts`);
+      expect(fetchFn.mock.calls[0][0]).toBe(`${workerUrl}/harness/attempts/prepare`);
       const body = JSON.parse(fetchFn.mock.calls[0][1].body);
       expect(body.workspace_spec).toEqual(
-        launchInput(machine).bundle.inputs.workspace_spec,
+        prepareInput(machine).bundle.inputs.workspace_spec,
       );
       expect(body.credential_envelope).toEqual({
         ...ENVELOPE,
@@ -194,12 +216,12 @@ describe('production execution transport', () => {
       credentialBroker: { issue: vi.fn(async () => ENVELOPE) },
       githubCredentialBroker: { issue: vi.fn(async () => GITHUB_ENVELOPE) },
     });
-    const input = launchInput(DEFAULT_LOCAL_MACHINE_ID);
+    const input = prepareInput(DEFAULT_LOCAL_MACHINE_ID);
     input.attempt.role = 'evaluator';
     input.bundle.role = 'evaluator';
     input.bundle.inputs.runtime_resources = { postgres: true };
 
-    await transport.launch(input);
+    await transport.prepare(input);
 
     const body = JSON.parse(fetchFn.mock.calls[0][1].body);
     expect(body.runtime_resources).toEqual({ postgres: true });
@@ -228,7 +250,7 @@ describe('production execution transport', () => {
       spawnDetached,
     });
 
-    await expect(transport.launch(launchInput(machine))).rejects.toThrow(
+    await expect(transport.prepare(prepareInput(machine))).rejects.toThrow(
       `execution_transport_unavailable:${machine}`,
     );
     expect(fetchFn).not.toHaveBeenCalled();
@@ -242,7 +264,7 @@ describe('production execution transport', () => {
       fetchFn,
     });
 
-    await expect(transport.launch(launchInput(DEFAULT_LOCAL_MACHINE_ID))).rejects.toThrow(
+    await expect(transport.prepare(prepareInput(DEFAULT_LOCAL_MACHINE_ID))).rejects.toThrow(
       'remote_bridge_credential_broker_unavailable',
     );
     expect(fetchFn).not.toHaveBeenCalled();

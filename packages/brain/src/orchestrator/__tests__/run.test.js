@@ -163,8 +163,18 @@ describe('buildRealDeps', () => {
         payload: 'Z2l0aHViX3BhdF90ZXN0',
       })),
     };
-    const fetchFn = vi.fn(async (_url, options) => {
+    const fetchFn = vi.fn(async (url, options) => {
       const request = JSON.parse(options.body);
+      if (String(url).endsWith(`/harness/attempts/${attemptId}/start`)) {
+        return {
+          ok: true,
+          status: 200,
+          json: vi.fn(async () => ({ status: 'running', attempt_id: attemptId })),
+        };
+      }
+      if (!String(url).endsWith('/harness/attempts/prepare')) {
+        throw new Error(`unexpected fetch: ${url}`);
+      }
       const jobId = 'run-test-fleet-job';
       return {
         ok: true,
@@ -273,7 +283,11 @@ describe('buildRealDeps', () => {
       attemptId,
       machineId: 'us-mac-m4',
     }));
-    expect(fetchFn).toHaveBeenCalledOnce();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
+      'http://worker.internal:3458/harness/attempts/prepare',
+      `http://worker.internal:3458/harness/attempts/${attemptId}/start`,
+    ]);
     expect(JSON.parse(fetchFn.mock.calls[0][1].body).credential_envelope)
       .toMatchObject({ credential_ref: '44444444-4444-4444-8444-444444444444' });
     expect(JSON.parse(fetchFn.mock.calls[0][1].body).github_credential_envelope)
@@ -404,12 +418,16 @@ describe('buildRealDeps', () => {
         handlers: {},
         preflightGate,
         launcher: {
-          launch: vi.fn(async ({ target }) => ({
+          prepare: vi.fn(async ({ target }) => ({
             actualMachineId: target.machine,
             executionTransport: 'fleet-worker',
             remoteJobId: 'canonical-worker-job',
             attestationStatus: 'verified',
             jobId: 'canonical-worker-job',
+          })),
+          start: vi.fn(async ({ attempt }) => ({
+            status: 'running',
+            attempt_id: attempt.id,
           })),
           cancel: vi.fn(),
         },

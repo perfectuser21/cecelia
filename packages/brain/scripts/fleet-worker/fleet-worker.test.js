@@ -764,12 +764,6 @@ describe('Fleet Worker Attempt API', () => {
           credential: 'must-not-leak',
         };
       }),
-      launch: vi.fn(async () => ({
-        attempt_id: attemptId,
-        actual_machine_id: 'us-mac-m4',
-        execution_transport: 'fleet-worker',
-        remote_job_id: 'container-1',
-      })),
       inspect: vi.fn(async () => ({ attempt_id: attemptId, status: 'running' })),
       cancel: vi.fn(async () => ({ attempt_id: attemptId, status: 'cleaned' })),
       terminal: vi.fn(async () => ({ attempt_id: attemptId, status: 'cleaned' })),
@@ -811,6 +805,26 @@ describe('Fleet Worker Attempt API', () => {
     expect(response.body).not.toMatch(
       /callback-token|perform the bounded task|must-not-leak/,
     );
+    server.close();
+  });
+
+  it('does not expose the legacy authenticated one-step launch route', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const attemptRunner = runnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(server, 'POST', '/harness/attempts', {
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: launchBody(),
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(attemptRunner.prepare).not.toHaveBeenCalled();
+    expect(attemptRunner.start).not.toHaveBeenCalled();
     server.close();
   });
 
@@ -947,58 +961,6 @@ describe('Fleet Worker Attempt API', () => {
     server.close();
   });
 
-  it('launches an authenticated path-free Attempt and returns a bounded receipt', async () => {
-    const { createFleetWorkerServer } = await loadServerContract();
-    const attemptRunner = runnerDouble();
-    const server = createFleetWorkerServer({
-      probeHealth: vi.fn(async () => safeHealth(1)),
-      attemptRunner,
-      attemptToken: token,
-    });
-
-    const response = await request(server, 'POST', '/harness/attempts', {
-      headers: { ...auth, 'content-type': 'application/json' },
-      body: launchBody(),
-    });
-
-    expect(response.statusCode).toBe(202);
-    expect(JSON.parse(response.body)).toMatchObject({
-      status: 'accepted',
-      job_id: 'container-1',
-      actual_machine_id: 'us-mac-m4',
-      attestation: expect.stringMatching(/^[a-f0-9]{64}$/),
-    });
-    expect(attemptRunner.launch).toHaveBeenCalledWith(launchBody());
-    expect(response.body).not.toMatch(/callback-token|perform the bounded task/);
-    server.close();
-  });
-
-  it.each([
-    [{}, 401],
-    [{ authorization: 'Bearer wrong-token' }, 401],
-    [{ authorization: `Basic ${token}` }, 401],
-  ])('rejects unauthenticated Attempt launch before runner invocation', async (
-    headers,
-    status,
-  ) => {
-    const { createFleetWorkerServer } = await loadServerContract();
-    const attemptRunner = runnerDouble();
-    const server = createFleetWorkerServer({
-      probeHealth: vi.fn(async () => safeHealth(1)),
-      attemptRunner,
-      attemptToken: token,
-    });
-
-    const response = await request(server, 'POST', '/harness/attempts', {
-      headers: { ...headers, 'content-type': 'application/json' },
-      body: launchBody(),
-    });
-
-    expect(response.statusCode).toBe(status);
-    expect(attemptRunner.launch).not.toHaveBeenCalled();
-    server.close();
-  });
-
   it.each([
     { cwd: '/Users/operator/perfect21/cecelia' },
     { worktree_path: '/tmp/operator-worktree' },
@@ -1014,14 +976,14 @@ describe('Fleet Worker Attempt API', () => {
       attemptToken: token,
     });
 
-    const response = await request(server, 'POST', '/harness/attempts', {
+    const response = await request(server, 'POST', '/harness/attempts/prepare', {
       headers: { ...auth, 'content-type': 'application/json' },
       body: launchBody(injected),
     });
 
     expect(response.statusCode).toBe(400);
     expect(JSON.parse(response.body).error).toMatch(/untrusted_workspace_field/);
-    expect(attemptRunner.launch).not.toHaveBeenCalled();
+    expect(attemptRunner.prepare).not.toHaveBeenCalled();
     server.close();
   });
 
@@ -1035,18 +997,18 @@ describe('Fleet Worker Attempt API', () => {
       maxRequestBytes: 256,
     });
 
-    const malformed = await request(server, 'POST', '/harness/attempts', {
+    const malformed = await request(server, 'POST', '/harness/attempts/prepare', {
       headers: { ...auth, 'content-type': 'application/json' },
       body: '{"broken":',
     });
-    const oversized = await request(server, 'POST', '/harness/attempts', {
+    const oversized = await request(server, 'POST', '/harness/attempts/prepare', {
       headers: { ...auth, 'content-type': 'application/json' },
       body: JSON.stringify({ payload: 'x'.repeat(300) }),
     });
 
     expect(malformed.statusCode).toBe(400);
     expect(oversized.statusCode).toBe(413);
-    expect(attemptRunner.launch).not.toHaveBeenCalled();
+    expect(attemptRunner.prepare).not.toHaveBeenCalled();
     server.close();
   });
 
@@ -1123,20 +1085,20 @@ describe('Fleet Worker Attempt API', () => {
       attemptToken: token,
     });
 
-    const busy = await request(server, 'POST', '/harness/attempts', {
+    const busy = await request(server, 'POST', '/harness/attempts/prepare', {
       headers: { ...auth, 'content-type': 'application/json' },
       body: launchBody(),
     });
     expect(busy.statusCode).toBe(503);
     expect(JSON.parse(busy.body)).toEqual({ error: 'worker_reconciling' });
-    expect(attemptRunner.launch).not.toHaveBeenCalled();
+    expect(attemptRunner.prepare).not.toHaveBeenCalled();
 
     release({
       cleaned_attempts: [],
       removed_orphan_containers: [],
     });
     await vi.waitFor(() => expect(attemptRunner.reconcile).toHaveBeenCalledOnce());
-    const accepted = await request(server, 'POST', '/harness/attempts', {
+    const accepted = await request(server, 'POST', '/harness/attempts/prepare', {
       headers: { ...auth, 'content-type': 'application/json' },
       body: launchBody(),
     });
@@ -1180,7 +1142,8 @@ describe('Fleet Worker production runtime assembly', () => {
 
       expect(runtime.attemptToken).toBe('fleet-worker-token-at-least-32-bytes');
       expect(runtime.attemptRunner).toMatchObject({
-        launch: expect.any(Function),
+        prepare: expect.any(Function),
+        start: expect.any(Function),
         reconcile: expect.any(Function),
       });
       expect(runtime.runnerImageDigest).toBe(`sha256:${'a'.repeat(64)}`);

@@ -734,50 +734,9 @@ function createDockerAdapter({
     return Object.freeze({ containerId });
   }
 
-  async function launchContainer(input) {
-    const prepared = await prepareContainer(input);
-    try {
-      await startContainer({
-        attemptId: input.attemptId,
-        ...prepared,
-        credential: input.credential,
-        githubCredential: input.githubCredential,
-      });
-    } catch (error) {
-      const containerName = `cecelia-fleet-${input.attemptId}`;
-      let removalError = null;
-      try {
-        await runCommand(
-          'docker',
-          ['rm', '-f', '--', containerName],
-          undefined,
-        );
-      } catch (cleanupError) {
-        if (!isExplicitlyMissingDockerObject(cleanupError)) {
-          removalError = cleanupError;
-        }
-      }
-      if (removalError) {
-        const rollbackError = new Error(
-          `attempt_container_rollback_failed:${error.message}`,
-          { cause: new AggregateError([error, removalError]) },
-        );
-        rollbackError.rollbackContainerId = containerName;
-        throw rollbackError;
-      }
-      fs.rmSync(path.join(root, input.attemptId), {
-        recursive: true,
-        force: true,
-      });
-      throw error;
-    }
-    return Object.freeze({ containerId: prepared.containerId });
-  }
-
   return Object.freeze({
     prepare: prepareContainer,
     start: startContainer,
-    launch: launchContainer,
 
     async inspect({ containerId } = {}) {
       try {
@@ -868,7 +827,6 @@ function validateDependencies({
   for (const method of [
     'prepare',
     'start',
-    'launch',
     'inspect',
     'wait',
     'remove',
@@ -1899,119 +1857,6 @@ function createAttemptRunner({
         cancellationRequests.delete(attemptId);
       }).catch(() => {});
       return operation;
-    },
-
-    async launch(input) {
-      const {
-        request,
-        providerSpec,
-        target,
-        executionContract,
-      } = validateLaunchRequest(input);
-      if (target.machine !== workerId) {
-        throw new Error('attempt_target_worker_mismatch');
-      }
-      const existing = await stateStore.get(request.attempt_id);
-      if (existing) {
-        throw new Error('attempt_already_exists');
-      }
-
-      const { credential, githubCredential } = consumeAttemptCredentials(
-        request,
-        target,
-      );
-      const workspace = await prepareVerifiedWorkspace(request.workspace_spec);
-      const labels = labelsFor(request, workerId);
-      let resources = EMPTY_RUNTIME_RESOURCES;
-      if (executionContract.runtimeRequirements.postgres) {
-        try {
-          resources = await resourceManager.provision({
-            attemptId: request.attempt_id,
-            requirements: executionContract.runtimeRequirements,
-          });
-        } catch (error) {
-          await workspaceManager.cleanup(workspace);
-          throw error;
-        }
-      }
-      let launched;
-      try {
-        launched = await docker.launch(dockerRequestFor({
-          request,
-          providerSpec,
-          target,
-          executionContract,
-          workspace,
-          labels,
-          resources,
-          credential,
-          githubCredential,
-        }));
-      } catch (error) {
-        return rollbackLaunch({
-          error,
-          workspace,
-          attemptId: request.attempt_id,
-          resources,
-        });
-      }
-      if (typeof launched?.containerId !== 'string' || launched.containerId.length === 0) {
-        return rollbackLaunch({
-          error: new Error('attempt_container_id_missing'),
-          workspace,
-          attemptId: request.attempt_id,
-          resources,
-        });
-      }
-
-      const state = {
-        attempt_id: request.attempt_id,
-        run_id: request.run_id,
-        worker_id: workerId,
-        lease_owner: request.lease_owner,
-        lease_generation: request.lease_generation,
-        provider: providerSpec.provider,
-        credential_delivery_status: 'delivered',
-        ...(credential ? { credential: credential.metadata } : {}),
-        ...(githubCredential
-          ? { github_credential: githubCredential.metadata }
-          : {}),
-        container_id: launched.containerId,
-        ...(Object.keys(resources.runtime).length > 0
-          ? { runtime_resources: resources.runtime }
-          : {}),
-        workspace,
-        labels,
-        status: 'running',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      try {
-        await stateStore.save(state);
-      } catch (error) {
-        return rollbackLaunch({
-          error,
-          workspace,
-          attemptId: request.attempt_id,
-          containerId: launched.containerId,
-          resources,
-        });
-      }
-      void docker.wait({ containerId: launched.containerId })
-        .then(() => finalizeAttempt(request.attempt_id, null, {
-          containerId: launched.containerId,
-          leaseGeneration: request.lease_generation,
-        }))
-        .catch(() => {});
-      return Object.freeze({
-        attempt_id: request.attempt_id,
-        run_id: request.run_id,
-        actual_machine_id: workerId,
-        execution_transport: 'fleet-worker',
-        remote_job_id: launched.containerId,
-        container_id: launched.containerId,
-        workspace_head_sha: workspace.head_sha,
-      });
     },
 
     async inspect(attemptId) {
