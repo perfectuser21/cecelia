@@ -1473,6 +1473,57 @@ describe('kernel fleet watchdog recovery', () => {
     });
   });
 
+  it('persists bounded sanitized diagnostics when resume throws an ordinary error', async () => {
+    const original = parentAttempt();
+    const reclaimed = {
+      ...original,
+      lease_owner: 'watchdog:test',
+      lease_generation: 4,
+    };
+    const store = {
+      getById: vi.fn(async () => original),
+      reclaim: vi.fn(async () => reclaimed),
+      rotateCallbackSecret: vi.fn(async () => reclaimed),
+      createAttempt: vi.fn(async () => ({ ...childAttempt(), status: 'queued', lease_owner: null })),
+      markStarting: vi.fn(async () => childAttempt()),
+      fail: vi.fn(async () => ({ attempt: {}, deduped: false })),
+    };
+    const sensitivePath = '/Users/administrator/private-resume/worktree/src/runner.js';
+    const rawSecret = 'raw-resume-secret';
+    const oversizedDetail = 'x'.repeat(5_000);
+
+    await expect(reconcileExpiredKernelAttempt({
+      db: { query: vi.fn() },
+      attemptStore: store,
+      attemptId: PARENT_ID,
+      leaseOwner: 'watchdog:test',
+      resumeAttempt: vi.fn(async () => {
+        throw new Error(
+          `resume adapter crashed at ${sensitivePath}:27; `
+          + `HARNESS_CALLBACK_TOKEN=${rawSecret}; detail=${oversizedDetail}`,
+        );
+      }),
+      reservedChildHop: 8,
+      randomUUIDFn: () => CHILD_ID,
+    })).resolves.toMatchObject({
+      ok: false,
+      terminal: true,
+      failure_code: 'resume_launch_failed',
+    });
+
+    expect(store.fail.mock.calls.map(([failedAttemptId]) => failedAttemptId)).toEqual([
+      CHILD_ID,
+      PARENT_ID,
+    ]);
+    for (const [, failure] of store.fail.mock.calls) {
+      expect(failure.message).toContain('resume adapter crashed at [PATH]:27');
+      expect(failure.message).toContain('HARNESS_CALLBACK_TOKEN=[REDACTED]');
+      expect(failure.message).not.toContain(sensitivePath);
+      expect(failure.message).not.toContain(rawSecret);
+      expect(failure.message.length).toBeLessThanOrEqual(2_100);
+    }
+  });
+
   it('throws the shared aggregate when exact-failing a claimed child is rejected', async () => {
     const original = parentAttempt();
     const reclaimed = {
