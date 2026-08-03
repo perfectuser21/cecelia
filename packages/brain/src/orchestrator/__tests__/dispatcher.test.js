@@ -220,7 +220,10 @@ describe('createDispatcher', () => {
     deps.attemptStore.recordLaunchReceipt.mockRejectedValueOnce(
       new Error('receipt postgres unavailable'),
     );
-    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cancelled' });
+    deps.launcher.cancel.mockResolvedValueOnce({
+      status: 'cleaned',
+      attempt_id: attemptId,
+    });
 
     await expect(createDispatcher(deps)('spawn:generator', {
       taskId,
@@ -275,7 +278,10 @@ describe('createDispatcher', () => {
       throw new Error('remote_bridge_start_http_503');
     });
     deps.launcher.launch.mockResolvedValueOnce(fleetReceipt);
-    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cancelled' });
+    deps.launcher.cancel.mockResolvedValueOnce({
+      status: 'already_clean',
+      attempt_id: attemptId,
+    });
 
     await expect(createDispatcher(deps)('spawn:generator', {
       taskId,
@@ -1660,7 +1666,10 @@ describe('createDispatcher', () => {
     } else {
       deps.attemptStore.recordLaunchReceipt.mockResolvedValueOnce(receiptFailure);
     }
-    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cancelled' });
+    deps.launcher.cancel.mockResolvedValueOnce({
+      status: 'cleaned',
+      attempt_id: attemptId,
+    });
 
     await expect(createDispatcher(deps)('spawn:generator', {
       taskId,
@@ -1695,7 +1704,10 @@ describe('createDispatcher', () => {
       new Error('receipt postgres unavailable'),
     );
     deps.attemptStore.fail.mockRejectedValueOnce(new Error('terminal postgres unavailable'));
-    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cancelled' });
+    deps.launcher.cancel.mockResolvedValueOnce({
+      status: 'already_clean',
+      attempt_id: attemptId,
+    });
 
     await expect(createDispatcher(deps)('spawn:generator', {
       taskId,
@@ -1727,7 +1739,10 @@ describe('createDispatcher', () => {
       new Error('receipt postgres unavailable'),
     );
     deps.attemptStore.fail.mockRejectedValueOnce(new Error('terminal postgres unavailable'));
-    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cancelled' });
+    deps.launcher.cancel.mockResolvedValueOnce({
+      status: 'cleaned',
+      attempt_id: attemptId,
+    });
 
     let thrown;
     try {
@@ -1775,7 +1790,10 @@ describe('createDispatcher', () => {
       jobId: 'remote-job-unverified',
     });
     deps.launcher.launch.mockResolvedValueOnce(invalidReceipt);
-    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cancelled' });
+    deps.launcher.cancel.mockResolvedValueOnce({
+      status: 'already_clean',
+      attempt_id: attemptId,
+    });
 
     await expect(createDispatcher(deps)('spawn:generator', {
       taskId,
@@ -1852,7 +1870,10 @@ describe('createDispatcher', () => {
       validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
     };
     deps.launcher.launch.mockRejectedValueOnce(new Error('remote_bridge_attestation_invalid'));
-    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cancelled' });
+    deps.launcher.cancel.mockResolvedValueOnce({
+      status: 'cleaned',
+      attempt_id: attemptId,
+    });
 
     await expect(createDispatcher(deps)('spawn:generator', {
       taskId,
@@ -1909,6 +1930,87 @@ describe('createDispatcher', () => {
     expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
       code: 'launch_failed',
       message: 'remote launch failed; orphan cancellation unsafe: missing (HTTP 404)',
+    }, {
+      leaseOwner: 'dispatcher-test:4242',
+      leaseGeneration: 0,
+    });
+  });
+
+  it.each(['cleaned', 'already_clean'])(
+    'treats Fleet Worker cancel status %s as confirmed cleanup',
+    async (cancelStatus) => {
+      const deps = makeDeps();
+      deps.resolveWorkspaceSpec = vi.fn(async () => ({
+        repo: 'perfectuser21/cecelia',
+        base_sha: 'a'.repeat(40),
+        branch: 'cp-cancel-status-contract',
+        expected_head_sha: null,
+        mode: 'read-write',
+        run_id: runId,
+        attempt_id: attemptId,
+      }));
+      deps.launcher.prepare = vi.fn(async () => {
+        throw new Error('remote_bridge_prepare_request_failed');
+      });
+      deps.launcher.start = vi.fn();
+      deps.launcher.cancel.mockResolvedValueOnce({
+        status: cancelStatus,
+        attempt_id: attemptId,
+      });
+
+      await expect(createDispatcher(deps)('spawn:generator', {
+        taskId,
+        runId,
+        hop: 5,
+        observed,
+        decision: { phase: 'generate' },
+      })).rejects.toThrow('remote_bridge_prepare_request_failed');
+
+      expect(deps.launcher.start).not.toHaveBeenCalled();
+      expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
+        code: 'launch_failed',
+        message: 'remote_bridge_prepare_request_failed',
+      }, {
+        leaseOwner: 'dispatcher-test:4242',
+        leaseGeneration: 0,
+      });
+    },
+  );
+
+  it('continues to diagnose an abnormal Fleet Worker cancel status', async () => {
+    const deps = makeDeps();
+    deps.resolveWorkspaceSpec = vi.fn(async () => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: 'cp-cancel-status-contract',
+      expected_head_sha: null,
+      mode: 'read-write',
+      run_id: runId,
+      attempt_id: attemptId,
+    }));
+    deps.launcher.prepare = vi.fn(async () => {
+      throw new Error('remote_bridge_prepare_request_failed');
+    });
+    deps.launcher.start = vi.fn();
+    deps.launcher.cancel.mockResolvedValueOnce({
+      status: 'quarantined',
+      attempt_id: attemptId,
+    });
+
+    await expect(createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed,
+      decision: { phase: 'generate' },
+    })).rejects.toThrow('remote_bridge_prepare_request_failed');
+
+    expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
+      code: 'launch_failed',
+      message: [
+        'remote_bridge_prepare_request_failed',
+        'orphan cancellation unsafe: quarantined',
+      ].join('; '),
     }, {
       leaseOwner: 'dispatcher-test:4242',
       leaseGeneration: 0,

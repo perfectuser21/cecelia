@@ -785,7 +785,7 @@ describe('production capability wiring', () => {
     const spawnDetached = vi.fn();
     const fetchFn = vi.fn(async (url) => {
       if (canExactCancel && String(url).endsWith(`/harness/attempts/${ATTEMPT_ID}/cancel`)) {
-        return response({ status: 'cancelled', attempt_id: ATTEMPT_ID });
+        return response({ status: 'already_clean', attempt_id: ATTEMPT_ID });
       }
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -911,7 +911,7 @@ describe('production capability wiring', () => {
         }, 202);
       }
       if (String(url).endsWith(`/harness/attempts/${ATTEMPT_ID}/cancel`)) {
-        return response({ status: 'cancelled', job_id: 'unverified-remote-job' });
+        return response({ status: 'cleaned', attempt_id: ATTEMPT_ID });
       }
       throw new Error(`unexpected fetch: ${url}`);
     });
