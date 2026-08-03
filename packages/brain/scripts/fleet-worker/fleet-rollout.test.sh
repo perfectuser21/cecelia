@@ -12,6 +12,14 @@ fail() {
 
 [[ -x "$ROLLOUT" ]] || fail "missing fleet-rollout.sh entrypoint"
 
+admission_wait_budget="$({
+  /bin/bash -c \
+    'source "$1"; printf "%s\n" "$(( (ADMISSION_ATTEMPTS - 1) * ADMISSION_RETRY_SECONDS ))"' \
+    -- "$ROLLOUT"
+})"
+[[ "$admission_wait_budget" -ge 30 ]] \
+  || fail "default admission retry window does not span the 30s Worker health cache: ${admission_wait_budget}s"
+
 if grep -Fq \
   '"$staged_root/source/packages/brain/scripts/fleet-worker/"*.sh' \
   "$ROLLOUT"; then
@@ -790,8 +798,11 @@ if FLEET_TEST_NODE_LOG="$node_log" \
   fail "failed admission was hidden"
 fi
 node_sequence="$(awk '{print $1}' "$node_log" | paste -sd, -)"
-[[ "$node_sequence" == 'drain,bootstrap,undrain,admit,admit,admit,drain' ]] \
-  || fail "failed admission did not restore drain: $node_sequence"
+admit_count="$(awk '$1 == "admit" { count += 1 } END { print count + 0 }' "$node_log")"
+[[ "$admit_count" -eq 8 ]] \
+  || fail "failed admission did not exhaust the production retry budget: $node_sequence"
+[[ "$node_sequence" == drain,bootstrap,undrain,admit,* && "$node_sequence" == *,drain ]] \
+  || fail "failed admission did not preserve rollout ordering and restore drain: $node_sequence"
 
 : > "$node_log"
 signal_status=0

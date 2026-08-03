@@ -16,8 +16,11 @@ TAR="${FLEET_ROLLOUT_TAR:-/usr/bin/tar}"
 SUDO="${FLEET_ROLLOUT_SUDO:-/usr/bin/sudo}"
 ROLLOUT_TMPDIR="${FLEET_ROLLOUT_TMPDIR:-${TMPDIR:-/tmp}}"
 WORKER_TOKEN_SOURCE="${FLEET_ROLLOUT_WORKER_TOKEN_FILE:-/var/lib/cecelia/fleet-worker/worker-auth}"
-ADMISSION_ATTEMPTS="${FLEET_ROLLOUT_ADMISSION_ATTEMPTS:-3}"
-ADMISSION_RETRY_SECONDS="${FLEET_ROLLOUT_ADMISSION_RETRY_SECONDS:-2}"
+# A freshly bootstrapped Worker can retain a cold failed health report for the
+# 30-second health-cache TTL. Keep the default rollout retry window longer than
+# that cache so a healthy node is not re-drained from stale startup evidence.
+ADMISSION_ATTEMPTS="${FLEET_ROLLOUT_ADMISSION_ATTEMPTS:-8}"
+ADMISSION_RETRY_SECONDS="${FLEET_ROLLOUT_ADMISSION_RETRY_SECONDS:-5}"
 SLEEP="${FLEET_ROLLOUT_SLEEP:-/bin/sleep}"
 
 TEMP_ROOT=''
