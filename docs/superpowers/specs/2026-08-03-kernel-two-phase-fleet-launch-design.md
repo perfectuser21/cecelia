@@ -1,6 +1,6 @@
 # Kernel Fleet Two-Phase Launch Design
 
-**Status:** Owner approved on 2026-08-03  
+**Status:** Owner approved on 2026-08-03
 **Scope:** One infrastructure-only PR; no Phase 4B/4C/4D product work and no business-PR merge
 
 ## Problem
