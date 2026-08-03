@@ -436,13 +436,6 @@ export function createRemoteBridgeTransport({
           headers: authHeaders(),
         },
         (response, signal) => {
-          if (response?.status === 404) {
-            return {
-              status: 'missing',
-              attempt_id: attempt.id,
-              httpStatus: 404,
-            };
-          }
           if (response?.status === 409) {
             return {
               status: 'conflict',

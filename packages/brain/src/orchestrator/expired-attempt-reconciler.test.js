@@ -165,7 +165,11 @@ describe('expired Fleet attempt reconciliation', () => {
     const startError = new Error('remote_bridge_start_http_500');
     const deps = makeDeps({
       launcher: {
-        inspect: vi.fn(async () => ({ status: 'prepared', attempt_id: ATTEMPT.id })),
+        inspect: vi.fn(async () => ({
+          status: 'prepared',
+          attempt_id: ATTEMPT.id,
+          container_id: VERIFIED_ATTEMPT.remote_job_id,
+        })),
         start: vi.fn(async () => { throw startError; }),
         cancel: vi.fn(async () => ({ status: 'cleaned', attempt_id: ATTEMPT.id })),
       },
@@ -194,7 +198,11 @@ describe('expired Fleet attempt reconciliation', () => {
   ])('fails closed when prepared cancellation is not confirmed safe: %s', async (_label, cancelResult) => {
     const deps = makeDeps({
       launcher: {
-        inspect: vi.fn(async () => ({ status: 'prepared', attempt_id: ATTEMPT.id })),
+        inspect: vi.fn(async () => ({
+          status: 'prepared',
+          attempt_id: ATTEMPT.id,
+          container_id: VERIFIED_ATTEMPT.remote_job_id,
+        })),
         start: vi.fn(async () => { throw new Error('remote_bridge_start_http_500'); }),
         cancel: vi.fn(async () => cancelResult),
       },

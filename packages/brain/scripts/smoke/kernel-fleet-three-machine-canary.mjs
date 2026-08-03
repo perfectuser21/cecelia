@@ -35,10 +35,8 @@ const TERMINAL_STATUSES = new Set([
   'cancelled',
 ]);
 const SAFE_REMOTE_CANCELLATION_STATUSES = new Set([
-  'cancelled',
-  'completed',
-  'failed',
-  'callback_pending',
+  'cleaned',
+  'already_clean',
 ]);
 const LIVE_BRAIN_URL = 'http://localhost:5221';
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;

@@ -44,21 +44,37 @@ function fleetRecoveryCandidate(attempt) {
   );
 }
 
+function legacyLaunchReceiptEmpty(attempt) {
+  return (
+    attempt?.execution_transport == null
+    && attempt?.actual_machine_id == null
+    && attempt?.remote_job_id == null
+    && attempt?.machine_attestation_status == null
+    && CANONICAL_FLEET_TARGETS.has(attempt?.requested_machine_id)
+  );
+}
+
 function launchReceiptConfirmed(attempt) {
   return (
     attempt?.execution_transport === 'fleet-worker'
     && attempt?.machine_attestation_status === 'verified'
-    && typeof attempt.actual_machine_id === 'string'
-    && attempt.actual_machine_id.length > 0
+    && CANONICAL_FLEET_TARGETS.has(attempt?.actual_machine_id)
+    && attempt.actual_machine_id === attempt.requested_machine_id
+    && typeof attempt.remote_job_id === 'string'
+    && attempt.remote_job_id.length > 0
+  );
+}
+
+function workerContainerConfirmed(attempt, inspected) {
+  return (
+    typeof inspected?.container_id === 'string'
+    && inspected.container_id.length > 0
+    && inspected.container_id === attempt?.remote_job_id
   );
 }
 
 function targetMachine(attempt) {
-  if (
-    attempt?.machine_attestation_status === 'verified'
-    && typeof attempt.actual_machine_id === 'string'
-    && attempt.actual_machine_id.length > 0
-  ) {
+  if (launchReceiptConfirmed(attempt)) {
     return attempt.actual_machine_id;
   }
   return [attempt?.requested_machine_id, attempt?.machine_id]
@@ -375,23 +391,34 @@ export async function reconcileExpiredAttempt({
     });
   }
 
-  if (
-    !launchReceiptConfirmed(attempt)
-    && (PREPARED_WORKER_STATUSES.has(inspected?.status) || inspected?.status === 'running')
-  ) {
-    return cancelAndReplace({
-      launcher,
-      terminalize,
-      attempt,
-      target,
-      machine,
-    });
+  const activeWorker = (
+    PREPARED_WORKER_STATUSES.has(inspected?.status)
+    || inspected?.status === 'running'
+  );
+  if (activeWorker && legacyLaunchReceiptEmpty(attempt)) {
+    return cancelAndReplace({ launcher, terminalize, attempt, target, machine });
+  }
+  if (activeWorker && !launchReceiptConfirmed(attempt)) {
+    return infrastructureBlocked('worker_attempt_launch_receipt_unconfirmed');
+  }
+  if (activeWorker && !workerContainerConfirmed(attempt, inspected)) {
+    return infrastructureBlocked('worker_attempt_container_identity_mismatch');
   }
 
   if (PREPARED_WORKER_STATUSES.has(inspected?.status)) {
+    let started;
     try {
-      await launcher.start({ attempt, target });
+      started = await launcher.start({ attempt, target });
     } catch {
+      return cancelAndReplace({
+        launcher,
+        terminalize,
+        attempt,
+        target,
+        machine,
+      });
+    }
+    if (started?.attempt_id !== attempt.id || started?.status !== 'running') {
       return cancelAndReplace({
         launcher,
         terminalize,
