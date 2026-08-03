@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # An answered needs_context checkpoint must retry the exact original spawn action.
+# This smoke imports the pure Kernel reducer, so production does not need Vitest.
 
 set -euo pipefail
 
