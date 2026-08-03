@@ -200,7 +200,7 @@ write_executable "$fake_bin/sudo" \
   '    /usr/bin/mktemp|/usr/bin/tar|/usr/bin/find|/bin/mkdir|/bin/chmod|/bin/rm|/bin/kill|/bin/test|/bin/realpath) exec "$@" ;;' \
   '    */fleet-rollout.sh)' \
   '      if [[ "${2:-}" == "__node-apply" ]]; then' \
-  '        exec /bin/bash -c '"'"'source "$1"; run_node_apply "$2" "$3" "${FLEET_ROLLOUT_NODECTL:-}"'"'"' -- "$1" "$3" "$4"' \
+  '        exec /bin/bash -c '"'"'source "$1"; run_node_apply "$2" "$3" "${FLEET_ROLLOUT_NODECTL:-}" "${4:-}"'"'"' -- "$1" "$3" "$4" "${5:-}"' \
   '      fi' \
   '      exec "$@"' \
   '      ;;' \
@@ -226,7 +226,7 @@ write_executable "$fake_bin/nodectl" \
   '  : > "$FLEET_TEST_NODE_ADMIT_FAIL_ONCE_STATE"' \
   '  exit 23' \
   'fi' \
-  'if [[ "$command_name" == "${FLEET_TEST_NODE_FAIL:-}" ]]; then exit 23; fi' \
+  'if [[ "$command_name" == "${FLEET_TEST_NODE_FAIL:-}" && ( -z "${FLEET_TEST_NODE_FAIL_MACHINE:-}" || "${CECELIA_MACHINE_ID:-}" == "$FLEET_TEST_NODE_FAIL_MACHINE" ) ]]; then exit 23; fi' \
   'if [[ "$command_name" == "admit" ]]; then' \
   '  printf "%s\n" '"'"'{"base_admitted":true,"dispatch_ready":false}'"'"'' \
   'fi'
@@ -442,6 +442,70 @@ fi
 grep -Fq 'sudo -n /usr/bin/stat -f %u:%Lp -- /var/tmp/cecelia-fleet-rollout.' \
   "$transport_log" \
   || fail "local rollout did not validate root staging ownership and mode"
+
+if CECELIA_MACHINE_ID=us-mac-m4 \
+  run_rollout xian-mac-m4 --apply --protocol-cutover \
+  >"$test_root/cutover-single-node.out" 2>&1; then
+  fail "protocol cutover accepted a single-node target"
+fi
+grep -Fq 'protocol_cutover_requires_all' "$test_root/cutover-single-node.out" \
+  || fail "single-node protocol cutover failure was not explicit"
+
+if CECELIA_MACHINE_ID=us-mac-m4 \
+  run_rollout all --protocol-cutover \
+  >"$test_root/cutover-without-apply.out" 2>&1; then
+  fail "protocol cutover ran without --apply"
+fi
+grep -Fq 'protocol_cutover_requires_apply' "$test_root/cutover-without-apply.out" \
+  || fail "non-apply protocol cutover failure was not explicit"
+
+: > "$node_log"
+: > "$transport_log"
+CECELIA_MACHINE_ID=us-mac-m4 \
+FLEET_TEST_REAL_GIT=1 \
+FLEET_TEST_SSH_EXECUTE=1 \
+FLEET_TEST_SUDO_NOEXEC=1 \
+FLEET_TEST_SUDO_EXEC_NODE=1 \
+FLEET_TEST_NODE_LOG="$node_log" \
+FLEET_ROLLOUT_NODECTL="$fake_bin/nodectl" \
+FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
+  run_rollout all --apply --protocol-cutover >/dev/null \
+  || fail "valid all-node protocol cutover failed"
+cutover_sequence="$(
+  awk '{ print $1 ":" $2 }' "$node_log" | paste -sd, -
+)"
+[[ "$cutover_sequence" == 'drain:xian-mac-m4,bootstrap:xian-mac-m4,drain:us-mac-m4,bootstrap:us-mac-m4,drain:xian-mac-m1,bootstrap:xian-mac-m1' ]] \
+  || fail "protocol cutover did not keep every updated node drained: $cutover_sequence"
+if grep -Eq '^(undrain|admit) ' "$node_log"; then
+  fail "protocol cutover reopened Worker admission"
+fi
+[[ "$(grep -Ec '^sudo .*__node-apply .* protocol-cutover$' "$transport_log")" -eq 3 ]] \
+  || fail "protocol cutover mode was lost across root staging or SSH"
+
+: > "$node_log"
+: > "$transport_log"
+if CECELIA_MACHINE_ID=us-mac-m4 \
+  FLEET_TEST_REAL_GIT=1 \
+  FLEET_TEST_SSH_EXECUTE=1 \
+  FLEET_TEST_SUDO_NOEXEC=1 \
+  FLEET_TEST_SUDO_EXEC_NODE=1 \
+  FLEET_TEST_NODE_LOG="$node_log" \
+  FLEET_TEST_NODE_FAIL=bootstrap \
+  FLEET_TEST_NODE_FAIL_MACHINE=us-mac-m4 \
+  FLEET_ROLLOUT_NODECTL="$fake_bin/nodectl" \
+  FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
+  run_rollout all --apply --protocol-cutover \
+  >"$test_root/cutover-bootstrap-failure.out" 2>&1; then
+  fail "protocol cutover hid an all-node bootstrap failure"
+fi
+failed_cutover_sequence="$(
+  awk '{ print $1 ":" $2 }' "$node_log" | paste -sd, -
+)"
+[[ "$failed_cutover_sequence" == 'drain:xian-mac-m4,bootstrap:xian-mac-m4,drain:us-mac-m4,bootstrap:us-mac-m4' ]] \
+  || fail "failed protocol cutover did not remain fail closed: $failed_cutover_sequence"
+if grep -Eq '^(undrain|admit) ' "$node_log"; then
+  fail "failed protocol cutover reopened Worker admission"
+fi
 
 for invalid_stage in owner writable symlink; do
   : > "$transport_log"
