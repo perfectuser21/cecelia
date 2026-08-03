@@ -1,6 +1,17 @@
 # Brain 模块定义
 
-**版本**: 1.267.187
+**版本**: 1.267.188
+
+## Kernel Fleet admission stability and disk-policy SSOT
+
+- Fleet Worker `1.267.93` 对 pinned PostgreSQL disposable runtime probe 最多执行三次
+  exact-name 冷启动；每次前后都清理同名容器，三次失败仍 fail closed，单次 OrbStack
+  冷启动抖动不再误 drain 健康节点。
+- 三机 NodeProfile 的绝对磁盘余量统一为 10 GiB，并继续叠加 85% 使用率上限；installer
+  从 NodeProfile 读取同一阈值，不再另写 40 GiB 常量。该余量覆盖八槽节点 worktree、
+  pinned runtime 与临时 Attempt 数据，同时不会要求小容量服务器长期空出大半磁盘。
+- 回退到 Brain `1.267.187` / Worker `1.267.92` 会恢复单次 PostgreSQL 探针与重复的
+  40 GiB bootstrap 硬闸；回退前必须先 drain Fleet 节点。
 
 ## Kernel Fleet concurrency and diagnostic containment
 

@@ -509,6 +509,40 @@ describe('Fleet Worker health-only service', () => {
     });
   });
 
+  it('retries a transient pinned PostgreSQL runtime startup before reporting it unavailable', async () => {
+    const { probeFleetWorkerHealth } = await loadProbeContract();
+    let postgresStarts = 0;
+    const execFileFn = vi.fn(async (file, args) => {
+      if (file === 'docker' && args[0] === 'info') return { stdout: '{}' };
+      if (file === 'docker' && args[0] === 'image') return { stdout: '[]' };
+      if (file === 'docker' && args[0] === 'run' && args.includes(POSTGRES_IMAGE)) {
+        postgresStarts += 1;
+        if (postgresStarts === 1) throw new Error('cold OrbStack startup');
+      }
+      return { stdout: '' };
+    });
+
+    const report = await probeFleetWorkerHealth({
+      machineId: 'us-mac-m4',
+      runnerImageDigest: DIGEST,
+      postgresImageDigest: POSTGRES_IMAGE,
+      execFileFn,
+      fetchFn: vi.fn(async () => new Response('{}', { status: 200 })),
+      makeTempDirFn: vi.fn(async () => '/private/tmp/fleet-node-probe-pg-retry'),
+      chmodTempDirFn: vi.fn(async () => undefined),
+      removeTempDirFn: vi.fn(async () => undefined),
+      statFn: vi.fn(async () => undefined),
+    });
+
+    expect(report.runtime_resources.postgres.available).toBe(true);
+    expect(postgresStarts).toBe(2);
+    expect(execFileFn.mock.calls.filter(
+      ([file, args]) => file === 'docker'
+        && args[0] === 'rm'
+        && args.includes('cecelia-pg-admission-us-mac-m4'),
+    )).toHaveLength(4);
+  });
+
   it('accepts the exact Tailscale listener address plus callback reachability when the GUI CLI denies the service user', async () => {
     const { probeFleetWorkerHealth } = await loadProbeContract();
     const execFileFn = vi.fn(async (file) => {

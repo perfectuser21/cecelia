@@ -121,7 +121,7 @@ describe('Fleet NodeProfile registry', () => {
       expect(profile.resources).toEqual({
         cpu_cores: 6,
         memory_gib: 8,
-        disk_min_free_gib: 40,
+        disk_min_free_gib: 10,
         disk_max_used_percent: 85,
         cpu_pressure_max_percent: expect.any(Number),
         memory_pressure_max_percent: expect.any(Number),

@@ -244,12 +244,14 @@ printf '%s\n' \
   '  [[ "${CECELIA_ORBSTACK_HOME:-}" == "/Users/orbstack-owner" ]] || { echo prerequisite_orbstack_home >&2; exit 1; }' \
   '  [[ "$(command -v orbctl || true)" == "${FLEET_WORKER_TEST_TOOLCHAIN_BIN:?}/orbctl" ]] || { echo prerequisite_orbstack >&2; exit 1; }' \
   '  [[ "$(command -v docker || true)" == "${FLEET_WORKER_TEST_TOOLCHAIN_BIN:?}/docker" ]] || { echo prerequisite_docker >&2; exit 1; }' \
+  '  [[ "${6:-}" == "10" ]] || { echo prerequisite_disk_floor >&2; exit 1; }' \
   '  exit 0' \
   'fi' \
   'source="$(cat)"' \
   'case "$source" in' \
   '  *runner_image_digest*) printf "%s" "sha256:e8979dcf7791b1fd0754276d39fd58adf9c8fc1148323a3d0d3b8abe29ea351f" ;;' \
   '  *runtime_resources.postgres.image_digest*) printf "%s" "postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777" ;;' \
+  '  *resources.disk_min_free_gib*) printf "%s" "10" ;;' \
   '  *worker_bind_host*) printf "%s" "100.86.57.69" ;;' \
   '  *brain_health_url*) printf "%s" "http://100.71.151.105:5221/api/brain/health" ;;' \
   '  *) exit 1 ;;' \
