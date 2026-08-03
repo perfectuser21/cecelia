@@ -172,12 +172,16 @@ function resumeOptions(overrides = {}) {
 function successfulWorkerFetch(machineId = 'us-mac-m4') {
   return vi.fn(async (url, init) => {
     if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-      return response(200, { status: 'running', job_id: 'parent-job' });
+      return response(200, {
+        status: 'running',
+        attempt_id: PARENT_ID,
+        container_id: 'parent-job',
+      });
     }
     if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
-      return response(200, { status: 'cancelled', job_id: 'parent-job' });
+      return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
     }
-    if (url === `${BRIDGE_URL}/harness/attempts`) {
+    if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
       return response(202, {
         status: 'accepted',
         job_id: 'child-job',
@@ -189,6 +193,9 @@ function successfulWorkerFetch(machineId = 'us-mac-m4') {
           jobId: 'child-job',
         }),
       });
+    }
+    if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`) {
+      return response(200, { status: 'running', attempt_id: CHILD_ID });
     }
     throw new Error(`unexpected request ${init?.method} ${url}`);
   });
@@ -317,19 +324,23 @@ describe('kernel fleet watchdog recovery', () => {
     });
   });
 
-  it('resumes a xian parent through inspect/cancel/launch and persists the child receipt', async () => {
+  it('resumes a xian parent through inspect/cancel/prepare/receipt/start', async () => {
     const child = childAttempt();
     const store = resumeStore();
     const spawnDetached = vi.fn();
     const removeContainer = vi.fn();
     const fetchFn = vi.fn(async (url, init) => {
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-        return response(200, { status: 'running', job_id: 'parent-job' });
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
-        return response(200, { status: 'cancelled', job_id: 'parent-job' });
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
       }
-      if (url === `${BRIDGE_URL}/harness/attempts`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
         return response(202, {
           status: 'accepted',
           job_id: 'child-job',
@@ -341,6 +352,9 @@ describe('kernel fleet watchdog recovery', () => {
             jobId: 'child-job',
           }),
         });
+      }
+      if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`) {
+        return response(200, { status: 'running', attempt_id: CHILD_ID });
       }
       throw new Error(`unexpected request ${init?.method} ${url}`);
     });
@@ -360,7 +374,8 @@ describe('kernel fleet watchdog recovery', () => {
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
-      `${BRIDGE_URL}/harness/attempts`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
+      `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`,
     ]);
     expect(JSON.parse(fetchFn.mock.calls[1][1].body)).toEqual({
       lease_owner: 'dispatcher-parent',
@@ -385,8 +400,49 @@ describe('kernel fleet watchdog recovery', () => {
       remoteJobId: 'child-job',
       attestationStatus: 'verified',
     });
+    expect(fetchFn.mock.invocationCallOrder[1])
+      .toBeLessThan(fetchFn.mock.invocationCallOrder[2]);
+    expect(fetchFn.mock.invocationCallOrder[2])
+      .toBeLessThan(store.recordLaunchReceipt.mock.invocationCallOrder[0]);
+    expect(store.recordLaunchReceipt.mock.invocationCallOrder[0])
+      .toBeLessThan(fetchFn.mock.invocationCallOrder[3]);
     expect(spawnDetached).not.toHaveBeenCalled();
     expect(removeContainer).not.toHaveBeenCalled();
+  });
+
+  it('does not invoke the removed one-phase launch method during resume', async () => {
+    const store = resumeStore();
+    const launcher = {
+      inspect: vi.fn(async () => ({ status: 'running' })),
+      cancel: vi.fn(async () => ({ status: 'cancelled' })),
+      launch: vi.fn(async () => ({
+        jobId: 'legacy-child-job',
+        actualMachineId: 'xian-mac-m4',
+        executionTransport: 'fleet-worker',
+        remoteJobId: 'legacy-child-job',
+        attestationStatus: 'verified',
+      })),
+      prepare: vi.fn(async () => ({
+        jobId: 'child-job',
+        actualMachineId: 'xian-mac-m4',
+        executionTransport: 'fleet-worker',
+        remoteJobId: 'child-job',
+        attestationStatus: 'verified',
+      })),
+      start: vi.fn(async () => ({ status: 'running', attempt_id: CHILD_ID })),
+    };
+
+    const result = await resumeKernelAttempt(childAttempt(), resumeOptions({
+      attemptStore: store,
+      launcher,
+    }));
+
+    expect(launcher.launch).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, resumed: true });
+    expect(launcher.prepare).toHaveBeenCalledOnce();
+    expect(store.recordLaunchReceipt.mock.invocationCallOrder[0])
+      .toBeLessThan(launcher.start.mock.invocationCallOrder[0]);
+    expect(launcher.start).toHaveBeenCalledOnce();
   });
 
   it('cleans a migrated local parent through the Worker Attempt API before launching the child', async () => {
@@ -428,7 +484,8 @@ describe('kernel fleet watchdog recovery', () => {
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
-      `${BRIDGE_URL}/harness/attempts`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
+      `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`,
     ]);
     expect(removeContainer).not.toHaveBeenCalled();
   });
@@ -474,7 +531,8 @@ describe('kernel fleet watchdog recovery', () => {
       'cecelia-harness-11111111',
     ]);
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
-      `${BRIDGE_URL}/harness/attempts`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
+      `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`,
     ]);
   });
 
@@ -518,13 +576,26 @@ describe('kernel fleet watchdog recovery', () => {
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
-      `${BRIDGE_URL}/harness/attempts`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
+      `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`,
     ]);
     expect(removeContainer).not.toHaveBeenCalled();
   });
 
-  it('fails closed before cleanup or launch when remote callback config is absent', async () => {
-    const fetchFn = vi.fn();
+  it('fails closed before child prepare when remote callback config is absent', async () => {
+    const fetchFn = vi.fn(async (url) => {
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
+      }
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
+      }
+      throw new Error(`child prepare must not occur: ${url}`);
+    });
     const store = resumeStore();
 
     await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
@@ -533,11 +604,11 @@ describe('kernel fleet watchdog recovery', () => {
       fetchFn,
     }))).resolves.toMatchObject({
       ok: false,
-      failure_code: 'resume_parent_cleanup_unconfirmed',
+      failure_code: 'resume_launch_failed',
       error: 'execution_transport_unavailable:xian-mac-m4',
     });
 
-    expect(fetchFn).not.toHaveBeenCalled();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
     expect(store.recordLaunchReceipt).not.toHaveBeenCalled();
   });
 
@@ -546,7 +617,11 @@ describe('kernel fleet watchdog recovery', () => {
     const onRecoveryAlert = vi.fn(async () => {});
     const fetchFn = vi.fn(async (url) => {
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-        return response(200, { status: 'running' });
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
         return response(404, { status: 'missing' });
@@ -578,12 +653,16 @@ describe('kernel fleet watchdog recovery', () => {
     const onRecoveryAlert = vi.fn(async () => {});
     const fetchFn = vi.fn(async (url) => {
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-        return response(200, { status: 'running' });
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
-        return response(200, { status: 'cancelled' });
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
       }
-      if (url === `${BRIDGE_URL}/harness/attempts`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
         return response(202, {
           status: 'accepted',
           job_id: 'child-job',
@@ -597,7 +676,7 @@ describe('kernel fleet watchdog recovery', () => {
         });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`) {
-        return response(200, { status: 'cancelled', job_id: 'child-job' });
+        return response(200, { status: 'cleaned', attempt_id: CHILD_ID });
       }
       throw new Error(`unexpected request ${url}`);
     });
@@ -609,7 +688,7 @@ describe('kernel fleet watchdog recovery', () => {
     }))).resolves.toMatchObject({
       ok: false,
       failure_code: 'resume_receipt_persist_failed',
-      cleanup_status: 'cancelled',
+      cleanup_status: 'cleaned',
       cleanup_diagnostic: null,
       lifecycle_detail: expect.stringContaining('launch receipt was not persisted'),
       recovery_alert: null,
@@ -618,23 +697,84 @@ describe('kernel fleet watchdog recovery', () => {
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
-      `${BRIDGE_URL}/harness/attempts`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
       `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`,
     ]);
     expect(store.fail).not.toHaveBeenCalled();
     expect(onRecoveryAlert).not.toHaveBeenCalled();
   });
 
+  it('cancels the exact claimed child when start fails after receipt persistence', async () => {
+    const store = resumeStore();
+    const fetchFn = vi.fn(async (url) => {
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
+      }
+      if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
+      }
+      if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
+        return response(202, {
+          status: 'accepted',
+          job_id: 'child-job',
+          actual_machine_id: 'xian-mac-m4',
+          attestation: signMachineAttestation({
+            secret: SECRET,
+            attemptId: CHILD_ID,
+            machineId: 'xian-mac-m4',
+            jobId: 'child-job',
+          }),
+        });
+      }
+      if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`) {
+        return response(200, { status: 'prepared', attempt_id: CHILD_ID });
+      }
+      if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`) {
+        return response(200, { status: 'cleaned', attempt_id: CHILD_ID });
+      }
+      throw new Error(`unexpected request ${url}`);
+    });
+
+    await expect(resumeKernelAttempt(childAttempt(), resumeOptions({
+      attemptStore: store,
+      fetchFn,
+    }))).resolves.toMatchObject({
+      ok: false,
+      failure_code: 'resume_start_failed',
+      cleanup_status: 'cleaned',
+      error: 'remote_bridge_start_not_running',
+    });
+
+    expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
+      `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
+      `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/start`,
+      `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`,
+    ]);
+    expect(store.recordLaunchReceipt.mock.invocationCallOrder[0])
+      .toBeLessThan(fetchFn.mock.invocationCallOrder[3]);
+    expect(store.fail).not.toHaveBeenCalled();
+  });
+
   it('cancels the exact claimed child after the Bridge accepts but returns invalid attestation', async () => {
     const store = resumeStore();
     const fetchFn = vi.fn(async (url) => {
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-        return response(200, { status: 'running' });
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
-        return response(200, { status: 'cancelled' });
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
       }
-      if (url === `${BRIDGE_URL}/harness/attempts`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
         return response(202, {
           status: 'accepted',
           job_id: 'child-job',
@@ -643,7 +783,7 @@ describe('kernel fleet watchdog recovery', () => {
         });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`) {
-        return response(200, { status: 'cancelled', job_id: 'child-job' });
+        return response(200, { status: 'cleaned', attempt_id: CHILD_ID });
       }
       throw new Error(`unexpected request ${url}`);
     });
@@ -654,14 +794,14 @@ describe('kernel fleet watchdog recovery', () => {
     }))).resolves.toMatchObject({
       ok: false,
       failure_code: 'resume_launch_failed',
-      cleanup_status: 'cancelled',
+      cleanup_status: 'cleaned',
       error: 'remote_bridge_attestation_invalid',
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
-      `${BRIDGE_URL}/harness/attempts`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
       `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`,
     ]);
     expect(JSON.parse(fetchFn.mock.calls[3][1].body)).toEqual({
@@ -674,12 +814,16 @@ describe('kernel fleet watchdog recovery', () => {
     const store = resumeStore();
     const fetchFn = vi.fn(async (url, options) => {
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-        return response(200, { status: 'running' });
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
-        return response(200, { status: 'cancelled' });
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
       }
-      if (url === `${BRIDGE_URL}/harness/attempts`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
         return {
           ok: true,
           status: 202,
@@ -691,7 +835,7 @@ describe('kernel fleet watchdog recovery', () => {
         };
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`) {
-        return response(200, { status: 'cancelled', job_id: 'child-job' });
+        return response(200, { status: 'cleaned', attempt_id: CHILD_ID });
       }
       throw new Error(`unexpected request ${url}`);
     });
@@ -703,14 +847,14 @@ describe('kernel fleet watchdog recovery', () => {
     }))).resolves.toMatchObject({
       ok: false,
       failure_code: 'resume_launch_failed',
-      cleanup_status: 'cancelled',
-      error: 'remote_bridge_launch_timeout',
+      cleanup_status: 'cleaned',
+      error: 'remote_bridge_prepare_timeout',
     });
 
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`,
       `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`,
-      `${BRIDGE_URL}/harness/attempts`,
+      `${BRIDGE_URL}/harness/attempts/prepare`,
       `${BRIDGE_URL}/harness/attempts/${CHILD_ID}/cancel`,
     ]);
   });
@@ -719,12 +863,16 @@ describe('kernel fleet watchdog recovery', () => {
     const onRecoveryAlert = vi.fn(async () => {});
     const fetchFn = vi.fn(async (url) => {
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-        return response(200, { status: 'running' });
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
-        return response(200, { status: 'cancelled' });
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
       }
-      if (url === `${BRIDGE_URL}/harness/attempts`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
         return response(202, {
           status: 'accepted',
           job_id: 'child-job',
@@ -946,17 +1094,22 @@ describe('kernel fleet watchdog recovery', () => {
       }),
     };
     const launcher = {
-      inspect: vi.fn(async () => ({ status: 'running' })),
+      inspect: vi.fn(async () => ({
+        status: 'running',
+        attempt_id: PARENT_ID,
+        container_id: 'parent-job',
+      })),
       cancel: vi.fn()
-        .mockResolvedValueOnce({ status: 'cancelled' })
+        .mockResolvedValueOnce({ status: 'cleaned', attempt_id: PARENT_ID })
         .mockResolvedValueOnce({ status: 'missing' }),
-      launch: vi.fn(async () => ({
+      prepare: vi.fn(async () => ({
         jobId: 'child-job',
         actualMachineId: 'xian-mac-m4',
-        executionTransport: 'remote-bridge',
+        executionTransport: 'fleet-worker',
         remoteJobId: 'child-job',
         attestationStatus: 'verified',
       })),
+      start: vi.fn(async () => ({ status: 'running', attempt_id: CHILD_ID })),
     };
     const onRecoveryAlert = vi.fn(async () => {
       events.push('alert');
@@ -1018,12 +1171,16 @@ describe('kernel fleet watchdog recovery', () => {
     });
     const fetchFn = vi.fn(async (url) => {
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}`) {
-        return response(200, { status: 'running' });
+        return response(200, {
+          status: 'running',
+          attempt_id: PARENT_ID,
+          container_id: 'parent-job',
+        });
       }
       if (url === `${BRIDGE_URL}/harness/attempts/${PARENT_ID}/cancel`) {
-        return response(200, { status: 'cancelled' });
+        return response(200, { status: 'cleaned', attempt_id: PARENT_ID });
       }
-      if (url === `${BRIDGE_URL}/harness/attempts`) {
+      if (url === `${BRIDGE_URL}/harness/attempts/prepare`) {
         return response(202, {
           status: 'accepted',
           job_id: 'child-job',
