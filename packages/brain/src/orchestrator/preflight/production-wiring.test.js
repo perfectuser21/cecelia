@@ -913,7 +913,7 @@ describe('production capability wiring', () => {
       if (String(url).endsWith(`/harness/attempts/${ATTEMPT_ID}/cancel`)) {
         return response({
           status: 'cleaned',
-          attempt_id: '33333333-3333-4333-8333-333333333333',
+          attempt_id: '44444444-4444-4444-8444-444444444444',
         });
       }
       throw new Error(`unexpected fetch: ${url}`);

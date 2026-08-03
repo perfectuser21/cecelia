@@ -864,7 +864,9 @@ describe('remote Bridge redirect policy', () => {
         operation === 'prepare' ? 202 : 200,
         operation === 'prepare'
           ? acceptedPrepareResponse()
-          : { status: 'running' },
+          : operation === 'cancel'
+            ? { status: 'cleaned', attempt_id: 'attempt-1' }
+            : { status: 'running' },
       ));
       const transport = createTransport({ fetchFn });
 

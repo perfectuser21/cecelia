@@ -135,6 +135,54 @@ describe('buildRealDeps', () => {
     expect(String(deps.dispatch)).not.toContain('NotImplemented');
   });
 
+  it('wires expired-attempt reconciliation to the exact production launcher and authority', async () => {
+    const attempt = {
+      id: '863fdc22-ad3e-4e89-a8ce-6323cf9b9917',
+      run_id: '92a67d1a-2c3a-4819-9930-09d841f31bd8',
+      hop: 49,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'controller-old:6328',
+      lease_generation: 0,
+      lease_expires_at: '2026-08-03T07:59:00.000Z',
+      requested_machine_id: 'us-mac-m4',
+      actual_machine_id: null,
+    };
+    const launcher = {
+      inspect: vi.fn(async () => ({ status: 'missing' })),
+      start: vi.fn(),
+      cancel: vi.fn(),
+    };
+    const terminalize = vi.fn(async () => ({
+      attempt: { ...attempt, status: 'failed' },
+      hop: 50,
+    }));
+    const deps = await buildRealDeps({
+      pool: { query: vi.fn() },
+      dispatch: vi.fn(),
+      launcher,
+      attemptStore: { heartbeat: vi.fn() },
+      expiredAttemptAuthority: { terminalize },
+      now: () => new Date('2026-08-03T08:00:00.000Z'),
+    });
+
+    const result = await deps.reconcileExpiredAttempt({ attempt });
+
+    expect(launcher.inspect).toHaveBeenCalledWith({
+      attempt,
+      target: { machine: 'us-mac-m4' },
+    });
+    expect(terminalize).toHaveBeenCalledWith(expect.objectContaining({
+      attemptId: attempt.id,
+      runId: attempt.run_id,
+      leaseOwner: attempt.lease_owner,
+      leaseGeneration: 0,
+      code: 'worker_attempt_missing_after_lease',
+    }));
+    expect(result).toMatchObject({ status: 'missing_terminalized', hop: 50 });
+  });
+
   it('wires the central Credential Broker into the real Fleet Worker launcher', async () => {
     const attemptId = '33333333-3333-4333-8333-333333333333';
     const sharedSecret = 'run-test-fleet-secret-that-is-long-enough';
