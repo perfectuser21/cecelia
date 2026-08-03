@@ -133,7 +133,7 @@ describe('R9/R10: append-only attempt callback convergence', () => {
     });
   });
 
-  it('R9: an answer bound to the exact callback hop consumes only that pause', () => {
+  it('R9: an answer bound to an initial Generator callback retries the original action', () => {
     const r = derive(baseObserved({
       pr: null,
       decisionLog: [
@@ -162,8 +162,41 @@ describe('R9/R10: append-only attempt callback convergence', () => {
 
     expect(r).toEqual({
       phase: 'generate',
+      action: 'spawn:generator',
+      reason: 'context_answered_retry',
+    });
+  });
+
+  it('R9: an answer bound to a Generator-fix callback preserves the fix action', () => {
+    const r = derive(baseObserved({
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator-fix', observed: {} },
+        callback(3, { status: 'needs_context', failure_class: 'needs_context' }),
+        {
+          hop: 4,
+          action: 'effect:context_requested',
+          detail: {
+            callback_hop: 3,
+            context_version: 'context-v1:3:attempt-3',
+          },
+        },
+        {
+          hop: 5,
+          action: 'verdict:context_answer',
+          detail: {
+            callback_hop: 3,
+            context_request_hop: 4,
+            context_version: 'context-v1:3:attempt-3',
+            answer: 'Keep the current PR and apply the requested repair.',
+          },
+        },
+      ],
+    }));
+
+    expect(r).toEqual({
+      phase: 'generate',
       action: 'spawn:generator-fix',
-      reason: 'no_pr',
+      reason: 'context_answered_retry',
     });
   });
 
