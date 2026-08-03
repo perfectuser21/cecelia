@@ -6,11 +6,23 @@
 
 
 
-**Brain 版本**: 1.267.194
+**Brain 版本**: 1.267.195
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.195 — Kernel frozen guard process-scoped hook injection
+
+- 冻结基线可写 role 的 pre-push hook 改由 Provider 进程级 Git config 注入，不再修改
+  OrbStack 挂载 worktree 的共享 Git admin config；既有 process config 会被保留。
+- Runner 启动 Provider 前校验 hook 的有效路径，Evaluator/Reviewer 的只读断言以及
+  Provider 退出后的血统复核保持不变。
+- 生产形态回归覆盖「worktree 可读写、外置 admin.git config 不可写」边界；三机固定
+  Runner digest 为
+  `sha256:eb4928940827d5c50a86676022309a34a4012d51f17ddd0f951a5b5c8f644009`。
+- 回退到 Brain `1.267.194` 会恢复 Xian M4 的 `frozen_baseline_guard_unavailable`；回退前
+  保持 Fleet 节点 drained。
 
 ## Brain 1.267.194 — Kernel Fleet remote prepare budget
 

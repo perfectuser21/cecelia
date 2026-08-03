@@ -795,9 +795,10 @@ finalize_planner_output() {
 # Generator 仍按 SKILL Step 0.5 无条件 rebase 到 origin/main，把对照候选的血统带进
 # 工作区。提示词不是闸——这里用 Kernel 注入的、Provider 无法伪造的服务端观测量
 # （HARNESS_WORKSPACE_START_SHA + HARNESS_FROZEN_BASELINE）在运输层收口：
-#   ① Provider 启动前武装 pre-push 钩子，SHA 烤进钩子脚本，unset env 也松不开；
-#   ② Provider 退出后（此时会话已结束，改不动父进程）再断言一次血统。
+#   ① Provider 启动前武装 pre-push 钩子，SHA 烤进钩子脚本；
+#   ② 即使 Provider 绕过钩子，退出后（此时会话已结束，改不动父进程）仍断言血统。
 FROZEN_BASELINE_GUARD_DIR="${FROZEN_BASELINE_GUARD_DIR:-/tmp/cecelia-frozen-baseline}"
+FROZEN_BASELINE_PROVIDER_ENV=()
 
 frozen_baseline_enabled() {
   [[ "${HARNESS_FROZEN_BASELINE:-false}" == "true" ]]
@@ -805,6 +806,7 @@ frozen_baseline_enabled() {
 
 install_frozen_baseline_guard() {
   frozen_baseline_enabled || return 0
+  FROZEN_BASELINE_PROVIDER_ENV=()
 
   local workspace="${WORKTREE_PATH:-/workspace}"
   local start_sha="${HARNESS_WORKSPACE_START_SHA:-}"
@@ -886,7 +888,27 @@ install_frozen_baseline_guard() {
     printf '%s\n' 'done'
   } > "$hooks_dir/pre-push" || return 1
   chmod 0555 "$hooks_dir/pre-push" || return 1
-  git -C "$workspace" config core.hooksPath "$hooks_dir" || return 1
+  # Fleet worktrees can be writable while their external Git admin directory is
+  # owned by the host service account and read-only inside OrbStack. Persisting
+  # core.hooksPath would then fail on config.lock before the Provider starts.
+  # Process-scoped Git config is inherited by the Provider and every descendant
+  # git command, and leaves repository/global/system config untouched.
+  local git_config_count="${GIT_CONFIG_COUNT:-0}"
+  if [[ ! "$git_config_count" =~ ^(0|[1-9][0-9]*)$ ]] \
+      || (( git_config_count >= 1024 )); then
+    echo "[entrypoint] frozen baseline guard rejected malformed process Git config" >&2
+    return 1
+  fi
+  FROZEN_BASELINE_PROVIDER_ENV=(
+    env
+    "GIT_CONFIG_COUNT=$((git_config_count + 1))"
+    "GIT_CONFIG_KEY_${git_config_count}=core.hooksPath"
+    "GIT_CONFIG_VALUE_${git_config_count}=$hooks_dir"
+  )
+  if [[ "$("${FROZEN_BASELINE_PROVIDER_ENV[@]}" git -C "$workspace" config --get core.hooksPath 2>/dev/null)" != "$hooks_dir" ]]; then
+    echo "[entrypoint] frozen baseline guard could not activate its process hook path" >&2
+    return 1
+  fi
   echo "[entrypoint] frozen baseline guard armed at $start_sha"
 }
 
@@ -1645,6 +1667,7 @@ run_provider_contract() {
     run_with_attempt_timeout \
       "$attempt_timeout_seconds" \
       "${PROVIDER_IDENTITY_PREFIX[@]}" \
+      "${FROZEN_BASELINE_PROVIDER_ENV[@]}" \
       "${codex_command[@]}" "${codex_args[@]}" < "$task_bundle_file" 2>&1 \
       | while IFS= read -r line || [[ -n "$line" ]]; do
           safe_line=$(printf '%s\n' "$line" | redact_provider_credential_text)
@@ -1677,6 +1700,7 @@ run_provider_contract() {
     run_with_attempt_timeout \
       "$attempt_timeout_seconds" \
       "${PROVIDER_IDENTITY_PREFIX[@]}" \
+      "${FROZEN_BASELINE_PROVIDER_ENV[@]}" \
       claude "${claude_args[@]}" < "$task_bundle_file" 2>&1 \
       | while IFS= read -r line || [[ -n "$line" ]]; do
           safe_line=$(printf '%s\n' "$line" | redact_provider_credential_text)
@@ -1711,6 +1735,7 @@ run_provider_contract() {
     run_with_attempt_timeout \
       "$attempt_timeout_seconds" \
       "${PROVIDER_IDENTITY_PREFIX[@]}" \
+      "${FROZEN_BASELINE_PROVIDER_ENV[@]}" \
       grok -p "$(cat "$task_bundle_file")" "${grok_args[@]}" 2>&1 \
       | while IFS= read -r line || [[ -n "$line" ]]; do
           safe_line=$(printf '%s\n' "$line" | redact_provider_credential_text)
