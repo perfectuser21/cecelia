@@ -1046,6 +1046,7 @@ describe('runLoop：wait:* 不灌水', () => {
       lease_expires_at: '2026-07-04T11:59:00.000Z',
       requested_machine_id: 'us-mac-m4',
       actual_machine_id: null,
+      task_bundle: { inputs: { execution_surface: 'fleet-worker' } },
     };
     const priorIntent = {
       hop: 49,
@@ -1111,6 +1112,7 @@ describe('runLoop：wait:* 不灌水', () => {
       lease_expires_at: '2026-07-04T11:59:00.000Z',
       requested_machine_id: 'us-mac-m4',
       actual_machine_id: null,
+      task_bundle: { inputs: { execution_surface: 'fleet-worker' } },
     };
     const priorIntent = {
       hop: 49,
@@ -1187,6 +1189,7 @@ describe('runLoop：wait:* 不灌水', () => {
       lease_generation: 0,
       lease_expires_at: '2026-07-04T11:59:00.000Z',
       requested_machine_id: 'us-mac-m4',
+      task_bundle: { inputs: { execution_surface: 'fleet-worker' } },
     };
     const waiting = obs({
       contract: { approved: false, id: CONTRACT_ID },
@@ -1232,6 +1235,7 @@ describe('runLoop：wait:* 不灌水', () => {
       lease_generation: 0,
       lease_expires_at: '2026-07-04T11:59:00.000Z',
       requested_machine_id: 'us-mac-m4',
+      task_bundle: { inputs: { execution_surface: 'fleet-worker' } },
     };
     const { deps, appended, sleeps } = makeEnv({
       observedSeq: [
@@ -1263,6 +1267,7 @@ describe('runLoop：wait:* 不灌水', () => {
       lease_generation: 0,
       lease_expires_at: '2026-07-04T11:59:00.000Z',
       requested_machine_id: 'us-mac-m4',
+      task_bundle: { inputs: { execution_surface: 'fleet-worker' } },
     };
     const { deps, appended, sleeps } = makeEnv({
       observedSeq: [

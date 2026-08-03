@@ -21,6 +21,11 @@ const ATTEMPT = Object.freeze({
   actual_machine_id: null,
   execution_transport: null,
   remote_job_id: null,
+  task_bundle: {
+    inputs: {
+      execution_surface: 'fleet-worker',
+    },
+  },
 });
 const VERIFIED_ATTEMPT = Object.freeze({
   ...ATTEMPT,
@@ -75,6 +80,35 @@ describe('expired Fleet attempt reconciliation', () => {
     }];
 
     expect(oldestExpiredAttempt(attempts, NOW)).toBeNull();
+  });
+
+  it.each([
+    ['missing execution surface', { inputs: { task_id: 'local-task' } }],
+    ['explicit local Docker surface', { inputs: { execution_surface: 'local-docker' } }],
+    ['untrusted TaskBundle shape', '{"inputs":{"execution_surface":"fleet-worker"}}'],
+  ])(
+    'does not Fleet-terminalize a receiptless local launch crash with %s',
+    (_label, taskBundle) => {
+      const receiptlessLocalAttempt = {
+        ...ATTEMPT,
+        task_bundle: taskBundle,
+      };
+
+      expect(oldestExpiredAttempt([receiptlessLocalAttempt], NOW)).toBeNull();
+    },
+  );
+
+  it('selects a receiptless attempt when its stored TaskBundle proves Fleet execution', () => {
+    expect(oldestExpiredAttempt([ATTEMPT], NOW)).toBe(ATTEMPT);
+  });
+
+  it('keeps a persisted Fleet transport recoverable even with no trusted TaskBundle surface', () => {
+    const persistedFleetAttempt = {
+      ...VERIFIED_ATTEMPT,
+      task_bundle: null,
+    };
+
+    expect(oldestExpiredAttempt([persistedFleetAttempt], NOW)).toBe(persistedFleetAttempt);
   });
 
   it.each([
