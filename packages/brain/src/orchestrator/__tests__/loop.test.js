@@ -1033,6 +1033,51 @@ describe('runLoop：wait:* 不灌水', () => {
     expect(sleeps).toHaveLength(1);
   });
 
+  it('expired missing attempt 先收敛，下一轮可在既有上限内重派同一角色', async () => {
+    const expired = {
+      id: '863fdc22-ad3e-4e89-a8ce-6323cf9b9917',
+      run_id: RUN_ID,
+      hop: 49,
+      phase: 'generate',
+      role: 'generator',
+      status: 'running',
+      lease_owner: 'controller-old:6328',
+      lease_generation: 0,
+      lease_expires_at: '2026-07-04T11:59:00.000Z',
+      requested_machine_id: 'us-mac-m4',
+      actual_machine_id: null,
+    };
+    const observedSeq = [
+      obs({
+        generatorSpawned: true,
+        inflight: { containers: [], host_pids: [], attempts: [expired] },
+      }),
+      obs({
+        generatorSpawned: false,
+        inflight: { containers: [], host_pids: [], attempts: [] },
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, appended, sleeps } = makeEnv({ observedSeq });
+    deps.reconcileExpiredAttempt = vi.fn(async ({ attempt }) => ({
+      status: 'missing_terminalized',
+      attempt_id: attempt.id,
+      hop: 50,
+    }));
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.reconcileExpiredAttempt).toHaveBeenCalledOnce();
+    expect(deps.reconcileExpiredAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      attempt: expired,
+    }));
+    expect(deps.dispatch).toHaveBeenCalledOnce();
+    expect(deps.dispatch).toHaveBeenCalledWith('spawn:generator', expect.any(Object));
+    expect(appended.some((entry) => entry.action === 'wait:running')).toBe(false);
+    expect(sleeps).toHaveLength(0);
+  });
+
   it('R7: LAUNCHED 只记录 attempt launch effect，不能当角色 DONE 或派下一棒', async () => {
     const observedSeq = [
       obs({ generatorSpawned: false }),
