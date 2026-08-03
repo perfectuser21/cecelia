@@ -98,7 +98,7 @@ export function createProductionExecutionTransport({
     ?? (
       env.KERNEL_FLEET_PREPARE_TIMEOUT_MS == null
       || env.KERNEL_FLEET_PREPARE_TIMEOUT_MS === ''
-        ? DEFAULT_REMOTE_BRIDGE_PREPARE_TIMEOUT_MS
+        ? (remoteBridgeTimeoutMs ?? DEFAULT_REMOTE_BRIDGE_PREPARE_TIMEOUT_MS)
         : Number(env.KERNEL_FLEET_PREPARE_TIMEOUT_MS)
     );
   const worker = createRemoteBridgeTransport({
