@@ -800,10 +800,7 @@ describe('remote Bridge unread response cleanup', () => {
     [
       'inspect',
       404,
-      {
-        status: 'resolved',
-        value: { status: 'missing', attempt_id: 'attempt-1', httpStatus: 404 },
-      },
+      { status: 'rejected', message: 'remote_bridge_inspect_http_404' },
     ],
     [
       'inspect',
@@ -952,10 +949,30 @@ describe('remote Bridge inspect', () => {
     );
   });
 
-  it.each([
-    [404, { status: 'missing', attempt_id: 'attempt-1', httpStatus: 404 }],
-    [409, { status: 'conflict', attempt_id: 'attempt-1', httpStatus: 409 }],
-  ])('returns a structured result for HTTP %s', async (status, expected) => {
+  it('treats a generic HTTP 404 as unavailable, never as exact missing evidence', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(404, { ignored: true }));
+    const transport = createTransport({ fetchFn });
+
+    await expect(transport.inspect({
+      attempt: { id: 'attempt-1' },
+      target: { machine: MACHINE },
+    })).rejects.toThrow('remote_bridge_inspect_http_404');
+  });
+
+  it('accepts exact Worker missing evidence only from a successful response', async () => {
+    const responseBody = { status: 'missing', attempt_id: 'attempt-1' };
+    const fetchFn = vi.fn(async () => jsonResponse(200, responseBody));
+    const transport = createTransport({ fetchFn });
+
+    await expect(transport.inspect({
+      attempt: { id: 'attempt-1' },
+      target: { machine: MACHINE },
+    })).resolves.toEqual(responseBody);
+  });
+
+  it('returns a structured result for HTTP 409', async () => {
+    const status = 409;
+    const expected = { status: 'conflict', attempt_id: 'attempt-1', httpStatus: 409 };
     const fetchFn = vi.fn(async () => jsonResponse(status, { ignored: true }));
     const transport = createTransport({ fetchFn });
 

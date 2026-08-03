@@ -130,7 +130,11 @@ describe('expired Fleet attempt reconciliation', () => {
   it('starts a prepared Worker with its old lease and never rotates Brain generation', async () => {
     const deps = makeDeps({
       launcher: {
-        inspect: vi.fn(async () => ({ status: 'prepared', attempt_id: ATTEMPT.id })),
+        inspect: vi.fn(async () => ({
+          status: 'prepared',
+          attempt_id: ATTEMPT.id,
+          container_id: VERIFIED_ATTEMPT.remote_job_id,
+        })),
         start: vi.fn(async () => ({ status: 'running', attempt_id: ATTEMPT.id })),
         cancel: vi.fn(),
       },
@@ -230,7 +234,11 @@ describe('expired Fleet attempt reconciliation', () => {
   it('keeps a running Worker on the old callback lease and only extends that exact identity', async () => {
     const deps = makeDeps({
       launcher: {
-        inspect: vi.fn(async () => ({ status: 'running', attempt_id: ATTEMPT.id })),
+        inspect: vi.fn(async () => ({
+          status: 'running',
+          attempt_id: ATTEMPT.id,
+          container_id: VERIFIED_ATTEMPT.remote_job_id,
+        })),
         start: vi.fn(),
         cancel: vi.fn(),
       },
@@ -253,7 +261,11 @@ describe('expired Fleet attempt reconciliation', () => {
     async (workerStatus) => {
       const deps = makeDeps({
         launcher: {
-          inspect: vi.fn(async () => ({ status: workerStatus, attempt_id: ATTEMPT.id })),
+          inspect: vi.fn(async () => ({
+            status: workerStatus,
+            attempt_id: ATTEMPT.id,
+            container_id: VERIFIED_ATTEMPT.remote_job_id,
+          })),
           start: vi.fn(async () => ({ status: 'running', attempt_id: ATTEMPT.id })),
           cancel: vi.fn(),
         },
@@ -292,6 +304,139 @@ describe('expired Fleet attempt reconciliation', () => {
     }));
     expect(deps.terminalize).not.toHaveBeenCalled();
     expect(deps.launcher.start).not.toHaveBeenCalled();
+  });
+
+  it('treats a generic inspect HTTP 404 as unavailable and never terminalizes it', async () => {
+    const deps = makeDeps({
+      launcher: {
+        inspect: vi.fn(async () => { throw new Error('remote_bridge_inspect_http_404'); }),
+        start: vi.fn(),
+        cancel: vi.fn(),
+      },
+    });
+
+    const result = await reconcileExpiredAttempt({ attempt: ATTEMPT, ...deps });
+
+    expect(result).toMatchObject({
+      status: 'infrastructure_blocked',
+      signature: 'worker_attempt_inspect_unavailable',
+    });
+    expect(deps.terminalize).not.toHaveBeenCalled();
+    expect(deps.launcher.cancel).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['actual machine differs from requested', { actual_machine_id: 'xian-mac-m4' }],
+    ['actual machine is not canonical', { actual_machine_id: 'unknown-worker' }],
+    ['remote job identity is missing', { remote_job_id: null }],
+    ['machine attestation is not verified', { machine_attestation_status: 'unverified' }],
+    ['execution transport is not Fleet Worker', { execution_transport: 'remote-bridge' }],
+  ])('fails closed on active Worker with partial launch receipt: %s', async (_label, fields) => {
+    const deps = makeDeps({
+      launcher: {
+        inspect: vi.fn(async () => ({
+          status: 'running',
+          attempt_id: ATTEMPT.id,
+          container_id: VERIFIED_ATTEMPT.remote_job_id,
+        })),
+        start: vi.fn(),
+        cancel: vi.fn(),
+      },
+    });
+
+    const result = await reconcileExpiredAttempt({
+      attempt: { ...VERIFIED_ATTEMPT, ...fields },
+      ...deps,
+    });
+
+    expect(result).toMatchObject({
+      status: 'infrastructure_blocked',
+      signature: 'worker_attempt_launch_receipt_unconfirmed',
+    });
+    expect(deps.attemptStore.heartbeat).not.toHaveBeenCalled();
+    expect(deps.launcher.start).not.toHaveBeenCalled();
+    expect(deps.launcher.cancel).not.toHaveBeenCalled();
+    expect(deps.terminalize).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing container identity', undefined],
+    ['mismatched container identity', 'stale-container'],
+  ])('fails closed when active Worker has %s', async (_label, containerId) => {
+    const deps = makeDeps({
+      launcher: {
+        inspect: vi.fn(async () => ({
+          status: 'running',
+          attempt_id: ATTEMPT.id,
+          ...(containerId ? { container_id: containerId } : {}),
+        })),
+        start: vi.fn(),
+        cancel: vi.fn(),
+      },
+    });
+
+    const result = await reconcileExpiredAttempt({ attempt: VERIFIED_ATTEMPT, ...deps });
+
+    expect(result).toMatchObject({
+      status: 'infrastructure_blocked',
+      signature: 'worker_attempt_container_identity_mismatch',
+    });
+    expect(deps.attemptStore.heartbeat).not.toHaveBeenCalled();
+    expect(deps.launcher.start).not.toHaveBeenCalled();
+    expect(deps.launcher.cancel).not.toHaveBeenCalled();
+    expect(deps.terminalize).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['mismatched Attempt identity', { status: 'running', attempt_id: 'stale-attempt' }],
+    ['non-running status', { status: 'prepared', attempt_id: ATTEMPT.id }],
+  ])('exact-cancels prepared Worker after %s start acknowledgement', async (_label, startAck) => {
+    const deps = makeDeps({
+      launcher: {
+        inspect: vi.fn(async () => ({
+          status: 'prepared',
+          attempt_id: ATTEMPT.id,
+          container_id: VERIFIED_ATTEMPT.remote_job_id,
+        })),
+        start: vi.fn(async () => startAck),
+        cancel: vi.fn(async () => ({ status: 'cleaned', attempt_id: ATTEMPT.id })),
+      },
+    });
+
+    const result = await reconcileExpiredAttempt({
+      attempt: { ...VERIFIED_ATTEMPT, status: 'starting' },
+      ...deps,
+    });
+
+    expect(deps.attemptStore.heartbeat).not.toHaveBeenCalled();
+    expect(deps.launcher.cancel).toHaveBeenCalledOnce();
+    expect(result.status).toBe('replacement_required');
+  });
+
+  it('backs off after wrong start acknowledgement when exact cancel is not proven', async () => {
+    const deps = makeDeps({
+      launcher: {
+        inspect: vi.fn(async () => ({
+          status: 'prepared',
+          attempt_id: ATTEMPT.id,
+          container_id: VERIFIED_ATTEMPT.remote_job_id,
+        })),
+        start: vi.fn(async () => ({ status: 'running', attempt_id: 'stale-attempt' })),
+        cancel: vi.fn(async () => ({ status: 'cleaned', attempt_id: 'stale-attempt' })),
+      },
+    });
+
+    const result = await reconcileExpiredAttempt({
+      attempt: { ...VERIFIED_ATTEMPT, status: 'starting' },
+      ...deps,
+    });
+
+    expect(result).toMatchObject({
+      status: 'infrastructure_blocked',
+      signature: 'worker_attempt_cancel_unconfirmed',
+    });
+    expect(deps.attemptStore.heartbeat).not.toHaveBeenCalled();
+    expect(deps.terminalize).not.toHaveBeenCalled();
   });
 
   it.each(['prepared', 'starting', 'running'])(
