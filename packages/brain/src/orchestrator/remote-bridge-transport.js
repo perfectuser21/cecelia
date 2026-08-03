@@ -142,6 +142,7 @@ export function createRemoteBridgeTransport({
   fetchFn = globalThis.fetch,
   now = Date.now,
   timeoutMs = 10000,
+  prepareTimeoutMs = timeoutMs,
 } = {}) {
   const machineUrls = copyBridgeUrls(bridgeUrls);
   const configuredSecret = sharedSecret;
@@ -151,6 +152,7 @@ export function createRemoteBridgeTransport({
   const configuredFetch = fetchFn;
   const configuredNow = now;
   const configuredTimeout = timeoutMs;
+  const configuredPrepareTimeout = prepareTimeoutMs;
 
   function resolveBridge(target) {
     if (enabled !== true) {
@@ -182,6 +184,12 @@ export function createRemoteBridgeTransport({
   }
 
   async function request(operation, url, options, consumeResponse) {
+    const operationTimeout = operation === 'prepare'
+      ? configuredPrepareTimeout
+      : configuredTimeout;
+    if (!Number.isFinite(operationTimeout) || operationTimeout <= 0) {
+      throw new Error('remote_bridge_invalid_timeout');
+    }
     const controller = new AbortController();
     let timedOut = false;
     let timeoutId;
@@ -190,7 +198,7 @@ export function createRemoteBridgeTransport({
         timedOut = true;
         controller.abort();
         reject(new Error(`remote_bridge_${operation}_timeout`));
-      }, configuredTimeout);
+      }, operationTimeout);
     });
 
     try {
@@ -241,6 +249,9 @@ export function createRemoteBridgeTransport({
       target,
     } = {}) {
       const { machine, bridgeUrl } = resolveBridge(target);
+      if (!Number.isFinite(configuredPrepareTimeout) || configuredPrepareTimeout <= 0) {
+        throw new Error('remote_bridge_invalid_timeout');
+      }
       requireNonempty(attempt?.id, 'attempt_id');
       requireNonempty(attempt?.run_id, 'run_id');
       requireNonempty(attempt?.lease_owner, 'lease_owner');

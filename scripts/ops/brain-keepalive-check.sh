@@ -13,10 +13,12 @@ DAEMON_STATE_FILE="$STATE_DIR/brain-keepalive-daemon.alerting"
 MISSING_CMD_STATE_FILE="$STATE_DIR/brain-keepalive-nodocker.alerting"
 SILENCED_TTL=300    # 5 分钟后重试重启
 DAEMON_TTL=600      # 10 分钟后重新发 daemon 不可用告警
+RESTART_WAIT_SECONDS="${BRAIN_KEEPALIVE_RESTART_WAIT_SECONDS:-15}"
 WEBHOOK_URL="${FEISHU_BOT_WEBHOOK:-}"
 LOG_PREFIX="[brain-keepalive]"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 COMPOSE_FILE="$REPO_ROOT/docker-compose.yml"
+ENV_FILE="$REPO_ROOT/.env.docker"
 
 send_feishu() {
   local msg="$1"
@@ -85,15 +87,18 @@ if [[ "$STATUS" != "running" ]]; then
     echo "$LOG_PREFIX Brain not running (status=$STATUS), attempting restart..."
   fi
 
-  docker compose -f "$COMPOSE_FILE" up -d node-brain 2>&1 || true
-  sleep 15
+  # `docker compose` 不会自动读取 `.env.docker`。若 keepalive 在蓝绿切换的
+  # 短暂空窗里重建 Brain，却没显式加载该文件，Fleet shared secret 等生产配置
+  # 会被默认空值覆盖，健康检查仍绿但 Kernel transport 全部 fail-closed。
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d node-brain 2>&1 || true
+  sleep "$RESTART_WAIT_SECONDS"
   NEW_STATUS=$(docker inspect "$CONTAINER_NAME" --format '{{.State.Status}}' 2>/dev/null || echo "not_found")
   if [[ "$NEW_STATUS" == "running" ]]; then
     echo "$LOG_PREFIX AUTO-RESTARTED: $CONTAINER_NAME is now running"
     send_feishu "✅ Brain 容器已自动重启恢复"
   else
     echo "$LOG_PREFIX ALERT: restart failed, $CONTAINER_NAME still $NEW_STATUS — sending P0"
-    send_feishu "🚨 [P0] Brain 容器已停止且自动重启失败（status=${NEW_STATUS}）\n请手动检查：docker compose -f $COMPOSE_FILE up -d node-brain"
+    send_feishu "🚨 [P0] Brain 容器已停止且自动重启失败（status=${NEW_STATUS}）\n请手动检查：docker compose --env-file $ENV_FILE -f $COMPOSE_FILE up -d node-brain"
     touch "$STATE_FILE"
   fi
 else

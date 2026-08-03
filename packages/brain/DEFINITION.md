@@ -1,6 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.267.200
+**版本**: 1.267.201
+
+## Kernel Fleet prepare budget and recovery env integrity
+
+- Fleet Worker 的重型 `prepare`（workspace、PostgreSQL、stopped Runner）使用独立、可配置的
+  180 秒控制面预算；`start/inspect/cancel/terminal` 继续保持 60 秒，避免放大普通故障等待。
+- launchd keepalive 重建生产 Brain 时显式加载 `.env.docker`，不会再把 Fleet shared secret
+  以 compose 默认空值覆盖；secret 缺失仍由 transport fail closed。
+- Brain 版本为 `1.267.201`，Fleet Worker 与 pinned Runner digest 不变。回退到
+  `1.267.200` 会恢复 60 秒误杀真实 prepare 和 keepalive 恢复后 Fleet transport 失效。
 
 ## Kernel context resume action identity
 
