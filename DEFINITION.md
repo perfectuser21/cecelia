@@ -14,6 +14,10 @@
 
 ## Brain 1.267.185 — Kernel transient infrastructure admission backoff
 
+- Fleet 两阶段协议切换固定使用
+  `fleet-rollout.sh all --apply --protocol-cutover`：模式只能作用于 `all`，且每台节点完成
+  drain + bootstrap 后保持 drained，不执行 undrain/admit。该发布门禁不改变 Brain 版本号；
+  新 Brain 完成部署与真实两阶段协议探测前不得恢复派发。
 - `infrastructure_blocked` 不再占用语义 BLOCKED 的连续两次终结栅栏。Kernel 会先把
   capability snapshot、failure class 与 fallback reason 写入 append-only 决策账本，
   再按既有 90 秒轮询周期退避并重新获取 fresh Fleet admission；整条 run 仍受 8 小时
@@ -1123,12 +1127,16 @@ Brain 的意识 / 自我对话模块（rumination / diary / proactive-mouth / ev
   `runner_failure` 与 `semantic_refusal`；同一任务的跨 Run 规范化产品失败集合重复时，
   L0 在创建 `generator-fix` Attempt 前转入 `wait:human_review`。
 - Phase 4D 只完成代码侧执行等价与恢复闭环；Phase 5 真实业务任务验收仍未完成。
-- 发布顺序固定为 Worker-first，待三台节点真实健康证据通过复审后再发布 Brain。
+- 两阶段协议发布顺序固定为：先停止 tick 与所有 controller，并用 DB 证据确认不存在
+  active Attempt；再执行 `fleet-rollout.sh all --apply --protocol-cutover`，让三台 Worker
+  更新后保持 drained；随后部署新 Brain；最后由新 Brain 对每台 Worker 执行真实
+  prepare → 持久化 receipt → start 两阶段协议探测，逐机取得准入证据后才可
+  undrain/admit 并恢复 controller/tick。任一步缺少证据都保持全局停止派发。
   当前 `xian-mac-m1` 的 Docker 不可用，必须保持 drained，不能降低阈值。
-- 节点紧急回退先在该节点执行
-  `CECELIA_MACHINE_ID=<machine-id> sudo -E packages/brain/scripts/fleet-worker/fleet-nodectl.sh drain <machine-id> --apply`；
-  Brain 镜像回退执行 `bash scripts/brain-rollback.sh 1.267.96`。恢复前必须重新取得
-  真实 Worker 健康证据，不能用 synthetic canary 替代。
+- 回退同样先停止 tick 与所有 controller、全局 drain 并确认 DB 不存在 active Attempt，
+  再回退 Worker/Brain 协议版本；恢复前必须用回退后的 Brain/Worker 组合重新取得真实
+  两阶段协议与 Worker 健康证据，不能用 synthetic canary 替代，也不能在协议混跑窗口
+  恢复 admission。
 
 ---
 

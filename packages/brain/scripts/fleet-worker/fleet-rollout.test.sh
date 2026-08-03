@@ -501,7 +501,7 @@ fi
 failed_cutover_sequence="$(
   awk '{ print $1 ":" $2 }' "$node_log" | paste -sd, -
 )"
-[[ "$failed_cutover_sequence" == 'drain:xian-mac-m4,bootstrap:xian-mac-m4,drain:us-mac-m4,bootstrap:us-mac-m4' ]] \
+[[ "$failed_cutover_sequence" == 'drain:xian-mac-m4,bootstrap:xian-mac-m4,drain:us-mac-m4,bootstrap:us-mac-m4,drain:us-mac-m4' ]] \
   || fail "failed protocol cutover did not remain fail closed: $failed_cutover_sequence"
 if grep -Eq '^(undrain|admit) ' "$node_log"; then
   fail "failed protocol cutover reopened Worker admission"
