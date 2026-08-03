@@ -189,6 +189,10 @@ export async function buildRealDeps(overrides = {}) {
       commanderStore,
     });
   const env = overrides.env ?? process.env;
+  // 生产 Brain 镜像的 cwd 是扁平 `/app`，并不是 Git worktree；部署仓通过
+  // REPO_ROOT bind mount 暴露。冻结合同必须从这个权威 Git 根读取，否则批准
+  // SHA 会被错误地判成缺少产物，Kernel 在 Generator 前 fail closed。
+  const repoRoot = env.REPO_ROOT || process.cwd();
   const leaseOwner = overrides.leaseOwner ?? `${os.hostname()}:${process.pid}`;
   const brainUrl = overrides.brainUrl ?? env.BRAIN_URL ?? DEFAULT_WORKER_BRAIN_URL;
   const machineId = overrides.machineId ?? env.CECELIA_MACHINE_ID ?? DEFAULT_LOCAL_MACHINE_ID;
@@ -353,7 +357,10 @@ export async function buildRealDeps(overrides = {}) {
     fileExists: overrides.fileExists ?? ((p) => existsSync(p)),
     readFile: overrides.readFile ?? ((p) => readFileSync(p, 'utf-8')),
     readGitFile: overrides.readGitFile
-      ?? ((sha, p, opts = {}) => readGitArtifact(sha, p, { repo: opts.repo ?? null })),
+      ?? ((sha, p, opts = {}) => readGitArtifact(sha, p, {
+        cwd: repoRoot,
+        repo: opts.repo ?? null,
+      })),
     dispatch,
     commanderCoordinator,
     commanderDirectiveExecutor,
