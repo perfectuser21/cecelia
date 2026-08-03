@@ -893,7 +893,7 @@ describe('production capability wiring', () => {
     })).rejects.toThrow('invalid_kernel_machine_id:moon-base');
   });
 
-  it('cancels by Attempt when Bridge accepts but remote attestation validation fails', async () => {
+  it('does not accept a stale cancel receipt when remote attestation validation fails', async () => {
     const target = {
       provider: 'codex',
       account: 'team3',
@@ -911,7 +911,10 @@ describe('production capability wiring', () => {
         }, 202);
       }
       if (String(url).endsWith(`/harness/attempts/${ATTEMPT_ID}/cancel`)) {
-        return response({ status: 'cleaned', attempt_id: ATTEMPT_ID });
+        return response({
+          status: 'cleaned',
+          attempt_id: '33333333-3333-4333-8333-333333333333',
+        });
       }
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -957,7 +960,10 @@ describe('production capability wiring', () => {
     ]);
     expect(attemptStore.fail).toHaveBeenCalledWith(ATTEMPT_ID, {
       code: 'launch_failed',
-      message: 'remote_bridge_attestation_invalid',
+      message: [
+        'remote_bridge_attestation_invalid',
+        'orphan cancellation failed: remote_bridge_cancel_attempt_mismatch',
+      ].join('; '),
     }, {
       leaseOwner: LEASE_OWNER,
       leaseGeneration: 4,

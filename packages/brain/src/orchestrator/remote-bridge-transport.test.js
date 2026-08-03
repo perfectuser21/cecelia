@@ -969,35 +969,82 @@ describe('remote Bridge inspect', () => {
 });
 
 describe('remote Bridge cancel', () => {
-  it('posts the lease identity with bearer authentication and returns JSON', async () => {
-    const responseBody = { status: 'cancelled', job_id: 'job-1' };
-    const fetchFn = vi.fn(async () => jsonResponse(200, responseBody));
-    const transport = createTransport({ fetchFn });
+  it.each(['cleaned', 'already_clean', 'quarantined'])(
+    'posts the lease identity and accepts exact %s Worker JSON',
+    async (status) => {
+      const responseBody = { status, attempt_id: 'attempt-1' };
+      const fetchFn = vi.fn(async () => jsonResponse(200, responseBody));
+      const transport = createTransport({ fetchFn });
 
-    await expect(transport.cancel({
-      attempt: {
-        id: 'attempt-1',
-        lease_owner: 'dispatcher-1',
-        lease_generation: 3,
-      },
-      target: { machine: MACHINE },
-    })).resolves.toEqual(responseBody);
-    expect(fetchFn).toHaveBeenCalledWith(
-      `${BRIDGE_URL}/harness/attempts/attempt-1/cancel`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${SHARED_SECRET}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      await expect(transport.cancel({
+        attempt: {
+          id: 'attempt-1',
           lease_owner: 'dispatcher-1',
           lease_generation: 3,
+        },
+        target: { machine: MACHINE },
+      })).resolves.toEqual(responseBody);
+      expect(fetchFn).toHaveBeenCalledWith(
+        `${BRIDGE_URL}/harness/attempts/attempt-1/cancel`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${SHARED_SECRET}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            lease_owner: 'dispatcher-1',
+            lease_generation: 3,
+          }),
+          signal: expect.any(AbortSignal),
+          redirect: 'error',
+        },
+      );
+    },
+  );
+
+  it.each([
+    ['null body', null, 'remote_bridge_cancel_invalid_response'],
+    ['array body', [], 'remote_bridge_cancel_invalid_response'],
+    [
+      'missing Attempt identity',
+      { status: 'cleaned' },
+      'remote_bridge_cancel_invalid_attempt_id',
+    ],
+    [
+      'mismatched Attempt identity',
+      { status: 'cleaned', attempt_id: 'stale-attempt' },
+      'remote_bridge_cancel_attempt_mismatch',
+    ],
+    [
+      'non-protocol status',
+      { status: 'cancelled', attempt_id: 'attempt-1' },
+      'remote_bridge_cancel_invalid_status',
+    ],
+  ])('rejects a 2xx response with %s', async (_case, body, errorCode) => {
+    const transport = createTransport({
+      fetchFn: vi.fn(async () => jsonResponse(200, body)),
+    });
+
+    await expect(transport.cancel(operationInput('cancel'))).rejects.toThrow(errorCode);
+  });
+
+  it('rejects malformed cancel JSON with a bounded error', async () => {
+    const transport = createTransport({
+      fetchFn: vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: vi.fn(async () => {
+          throw new Error(`parser exposed ${SHARED_SECRET} ${CALLBACK_TOKEN}`);
         }),
-        signal: expect.any(AbortSignal),
-        redirect: 'error',
-      },
-    );
+      })),
+    });
+
+    const cancel = transport.cancel(operationInput('cancel'));
+
+    await expect(cancel).rejects.toThrow('remote_bridge_cancel_invalid_json');
+    await expect(cancel).rejects.not.toThrow(SHARED_SECRET);
+    await expect(cancel).rejects.not.toThrow(CALLBACK_TOKEN);
   });
 
   it.each([
