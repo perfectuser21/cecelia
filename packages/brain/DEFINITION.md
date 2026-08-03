@@ -7,15 +7,19 @@
 - Fleet Worker `prepare` 只创建 stopped container 与 Attempt-owned 资源；Brain 必须先
   验证并持久化 exact attested receipt，之后才可调用 `start`。receipt 或 start 失败按原
   lease 精确清理，Runner 不再抢在控制面身份落库前 callback。
-- prepare/start/inspect/cancel/terminal 回执全部校验 exact `attempt_id` 与有限状态集合；
-  错配、畸形、未知状态、quarantine 或未确认清理均 fail closed。Worker durable state 不
-  保存 Provider/GitHub 原始凭据，重启后缺少一跳凭据的 prepared Attempt 必须清理替换。
+- prepare/start/inspect/cancel/terminal 回执全部校验 exact `attempt_id`、原 owner/generation
+  与有限状态集合；inspect 只接受带 lease body 的 authenticated POST，旧 GET 与 stale lease
+  均拒绝。Worker durable state 不保存 Provider/GitHub 原始凭据；重启后缺少一跳凭据的
+  prepared Attempt 形成 terminal tombstone，并仅在 exact cleanup 后进入替换终态。
 - normal derive 前先检查过期 Fleet Attempt。已验签存活 Worker 保持原 owner/generation
   续租；未验签存活 Worker 先 exact cancel 再换新 Attempt；Worker missing 时 Attempt
-  `infrastructure_blocked` 终态与 bounded decision evidence 同事务写入。父 Run 终态只
-  重新观测，lease/CAS 并发输家立即让位，本机 Docker Attempt 不进入 Fleet recovery。
+  `infrastructure_blocked` 终态与 bounded decision evidence 同事务写入；该独立 recovery
+  evidence 按 callback-equivalent infrastructure result 驱动同角色重试，不消耗产品 fix
+  预算。watchdog 也必须先以旧 lease exact inspect/cancel，才可 reclaim/rotate；无 provider
+  session 时只重启 controller。父 Run 终态只重新观测，lease/CAS 并发输家立即让位。
 - 协议切换前停止 tick/controller 并证明 DB 无 active Attempt，再用
-  `fleet-rollout.sh all --apply --protocol-cutover` 更新三机且保持 drained；部署新 Brain、
+  `fleet-rollout.sh all --apply --protocol-cutover` 先完成三机全 drain、再开始任一 bootstrap，
+  且更新后保持 drained；部署新 Brain、
   完成真实两阶段协议探测后才恢复 admission。PR #1581 的真实业务验收必须新建 Kernel
   Run；旧 Run `92a67d1a-2c3a-4819-9930-09d841f31bd8` 保持 terminal FAILED，Tick 继续
   manual-disabled/off，只运行新 Run 的 dedicated controller。回退到 `1.267.185` 同样

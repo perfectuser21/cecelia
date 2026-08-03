@@ -17,15 +17,19 @@
 - Fleet Runner 启动协议固定为 `prepare → attested receipt 持久化 → start`。Worker 的
   `prepare` 只创建 stopped container 与 Attempt-owned 资源；Brain 未完成 exact receipt
   绑定时 Runner 不得启动，receipt 写入或 start 失败均按原租约精确清理。
-- Worker 的 prepare/start/inspect/cancel/terminal 回执全部绑定 exact `attempt_id` 和有限
-  状态集合；错配、畸形、未知状态或未确认清理一律 fail closed。Worker 只持久化非密
-  生命周期元数据，Provider/GitHub 凭据仍是一跳内存/FIFO 交付，不进入状态文件。
+- Worker 的 prepare/start/inspect/cancel/terminal 回执全部绑定 exact `attempt_id`、原
+  owner/generation 和有限状态集合；inspect 只接受带 lease body 的 authenticated POST，
+  stale lease 与旧 GET 均拒绝。Worker 只持久化非密生命周期元数据；重启后的 prepared
+  terminal tombstone 只有取得 exact cleanup 才能进入替换终态。
 - 过期 Fleet Attempt 在 normal derive 前收敛：已验签存活 Worker 保持原 owner/generation
   续租，避免只旋转数据库 generation 后拒绝真实 callback；receipt 未确认的存活 Worker
-  必须先取得 exact cleanup 再换新 Attempt；Worker `missing` 时 Attempt 失败终态与 bounded
-  decision evidence 同事务提交。父 Run 终态只重新观测，并发输家立即让位。
+  必须先取得 exact cleanup 再换新 Attempt；Worker `missing/terminal` 时 Attempt 失败终态
+  与 bounded decision evidence 同事务提交，并按 callback-equivalent infrastructure result
+  重试而不污染 product fixRound。watchdog 同样先按旧 lease exact cleanup 再 reclaim/rotate；
+  无 provider session 时只重启 controller。父 Run 终态只重新观测，并发输家立即让位。
 - 协议升级固定使用 `fleet-rollout.sh all --apply --protocol-cutover`。切换前必须停止 tick
-  和全部 controller、以 DB 证明无 active Attempt；三台 Worker 更新后保持 drained，部署
+  和全部 controller、以 DB 证明无 active Attempt；rollout 必须先完成三机全 drain，之后
+  才允许任一 bootstrap，且三台 Worker 更新后保持 drained。部署
   Brain 并完成真实两阶段协议探测后才逐机恢复 admission。回退到 `1.267.185` 也必须先
   全局 drain，再同时回退 Worker/Brain，禁止协议混跑窗口恢复派发。
 
