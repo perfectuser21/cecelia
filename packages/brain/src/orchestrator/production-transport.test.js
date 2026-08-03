@@ -4,6 +4,7 @@ import { signMachineAttestation } from './machine-attestation.js';
 import {
   createProductionExecutionTransport,
   DEFAULT_LOCAL_MACHINE_ID,
+  DEFAULT_REMOTE_BRIDGE_PREPARE_TIMEOUT_MS,
   DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS,
 } from './production-transport.js';
 
@@ -118,12 +119,13 @@ function acceptedResponse(machine) {
 }
 
 describe('production execution transport', () => {
-  it('keeps a normal 15-second Fleet prepare inside the production control-plane budget', async () => {
+  it('gives heavy Fleet prepare its own budget without widening normal control requests', async () => {
     expect(DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS).toBe(60_000);
+    expect(DEFAULT_REMOTE_BRIDGE_PREPARE_TIMEOUT_MS).toBe(180_000);
     vi.useFakeTimers();
     try {
       const fetchFn = vi.fn(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 15_000));
+        await new Promise((resolve) => setTimeout(resolve, 90_000));
         return acceptedResponse(DEFAULT_LOCAL_MACHINE_ID);
       });
       const transport = createProductionExecutionTransport({
@@ -135,7 +137,7 @@ describe('production execution transport', () => {
 
       const outcome = transport.prepare(prepareInput(DEFAULT_LOCAL_MACHINE_ID))
         .then(() => 'resolved', (error) => error.message);
-      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(90_000);
 
       await expect(outcome).resolves.toBe('resolved');
     } finally {
