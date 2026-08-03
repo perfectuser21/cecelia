@@ -12,6 +12,8 @@ fail() {
 }
 
 [[ -f "$NODECTL" ]] || fail "missing fleet-nodectl.sh entrypoint"
+grep -Fq 'AbortSignal.timeout(30_000)' "$NODECTL" \
+  || fail "admission fetch timeout does not cover bounded container retries"
 
 test_root="$(mktemp -d)"
 trap 'rm -rf "$test_root"' EXIT

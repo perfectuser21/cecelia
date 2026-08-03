@@ -312,6 +312,34 @@ describe('Fleet Node admission client', () => {
     expect(performance.now() - startedAt).toBeLessThan(500);
   });
 
+  it('keeps the default request open for the bounded container retry window', async () => {
+    vi.useFakeTimers();
+    try {
+      const contract = await loadContract();
+      let settled = false;
+      const client = contract.createNodeAdmissionClient({
+        env: URLS,
+        fetchFn: vi.fn(async (_url, options) => new Promise((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => {
+            reject(new DOMException('timed out', 'AbortError'));
+          }, { once: true });
+        })),
+        now: () => NOW_MS,
+      });
+      const pending = client.getAdmission('us-mac-m4').then((result) => {
+        settled = true;
+        return result;
+      });
+
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(14_999);
+      expectFailed(await pending, 'worker_timeout');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('aborts and cancels a stalled response body within the request timeout', async () => {
     const contract = await loadContract();
     let bodyCancelled = false;
