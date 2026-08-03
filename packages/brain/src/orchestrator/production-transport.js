@@ -2,6 +2,7 @@ import { createRemoteBridgeTransport } from './remote-bridge-transport.js';
 
 export const DEFAULT_LOCAL_MACHINE_ID = 'us-mac-m4';
 export const DEFAULT_WORKER_BRAIN_URL = 'http://host.docker.internal:5221';
+export const DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS = 60_000;
 
 function isValidHttpBaseUrl(value) {
   if (typeof value !== 'string' || value.trim().length === 0) return false;
@@ -99,7 +100,7 @@ export function createProductionExecutionTransport({
     credentialBroker,
     githubCredentialBroker,
     fetchFn,
-    timeoutMs: remoteBridgeTimeoutMs,
+    timeoutMs: remoteBridgeTimeoutMs ?? DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS,
   });
 
   return guardWorkerConfiguration(worker, {

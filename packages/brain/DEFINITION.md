@@ -1,6 +1,16 @@
 # Brain 模块定义
 
-**版本**: 1.267.193
+**版本**: 1.267.194
+
+## Kernel Fleet remote prepare control-plane budget
+
+- 生产 Fleet transport 对 Worker `prepare/start/inspect/cancel/terminal` 的 HTTP 控制面请求
+  使用 60 秒上限，覆盖已预热 mirror 的 per-Attempt workspace clone 与最多 15 秒的冷
+  container create；Attempt 自身的 7200 秒业务预算与模型执行超时不变。
+- `remote-bridge-transport` 的通用 10 秒默认值继续保留，只有生产组装显式使用 60 秒；
+  测试注入的短超时与 fail-closed 语义不变。
+- 回退到 Brain `1.267.193` 会恢复 10 秒生产请求预算，并可能把健康的 warm prepare 误判为
+  `remote_bridge_prepare_timeout`；回退前保持 Fleet 节点 drained。
 
 ## Fleet disposable-container timeout budget
 

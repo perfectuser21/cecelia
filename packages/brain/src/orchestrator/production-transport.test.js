@@ -4,6 +4,7 @@ import { signMachineAttestation } from './machine-attestation.js';
 import {
   createProductionExecutionTransport,
   DEFAULT_LOCAL_MACHINE_ID,
+  DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS,
 } from './production-transport.js';
 
 const CALLBACK_URL = 'http://brain.internal:5221';
@@ -118,6 +119,7 @@ function acceptedResponse(machine) {
 
 describe('production execution transport', () => {
   it('keeps a normal 15-second Fleet prepare inside the production control-plane budget', async () => {
+    expect(DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS).toBe(60_000);
     vi.useFakeTimers();
     try {
       const fetchFn = vi.fn(async () => {
