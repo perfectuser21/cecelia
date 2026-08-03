@@ -11,6 +11,11 @@ const GITHUB_CREDENTIAL_ROLES = new Set([
   'generator',
   'evaluator',
 ]);
+const CANCEL_RECEIPT_STATUSES = new Set([
+  'cleaned',
+  'already_clean',
+  'quarantined',
+]);
 const WORKSPACE_SPEC_FIELDS = Object.freeze([
   'repo',
   'base_sha',
@@ -450,7 +455,7 @@ export function createRemoteBridgeTransport({
             lease_generation: attempt.lease_generation,
           }),
         },
-        (response, signal) => {
+        async (response, signal) => {
           if (response?.status === 404) {
             return { status: 'missing', httpStatus: 404 };
           }
@@ -460,7 +465,23 @@ export function createRemoteBridgeTransport({
           if (!response?.ok) {
             throw new Error(`remote_bridge_cancel_http_${String(response?.status)}`);
           }
-          return parseJson(response, 'cancel', signal);
+          const result = await parseJson(response, 'cancel', signal);
+          if (!result || typeof result !== 'object' || Array.isArray(result)) {
+            throw new Error('remote_bridge_cancel_invalid_response');
+          }
+          if (!isNonemptyString(result.attempt_id)) {
+            throw new Error('remote_bridge_cancel_invalid_attempt_id');
+          }
+          if (result.attempt_id !== attempt.id) {
+            throw new Error('remote_bridge_cancel_attempt_mismatch');
+          }
+          if (!CANCEL_RECEIPT_STATUSES.has(result.status)) {
+            throw new Error('remote_bridge_cancel_invalid_status');
+          }
+          return Object.freeze({
+            status: result.status,
+            attempt_id: result.attempt_id,
+          });
         },
       );
     },
