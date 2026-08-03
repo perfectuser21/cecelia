@@ -474,13 +474,40 @@ FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
 cutover_sequence="$(
   awk '{ print $1 ":" $2 }' "$node_log" | paste -sd, -
 )"
-[[ "$cutover_sequence" == 'drain:xian-mac-m4,bootstrap:xian-mac-m4,drain:us-mac-m4,bootstrap:us-mac-m4,drain:xian-mac-m1,bootstrap:xian-mac-m1' ]] \
-  || fail "protocol cutover did not keep every updated node drained: $cutover_sequence"
+[[ "$cutover_sequence" == 'drain:xian-mac-m4,drain:us-mac-m4,drain:xian-mac-m1,bootstrap:xian-mac-m4,bootstrap:us-mac-m4,bootstrap:xian-mac-m1' ]] \
+  || fail "protocol cutover bootstrapped before every node was drained: $cutover_sequence"
 if grep -Eq '^(undrain|admit) ' "$node_log"; then
   fail "protocol cutover reopened Worker admission"
 fi
-[[ "$(grep -Ec '^sudo .*__node-apply .* protocol-cutover$' "$transport_log")" -eq 3 ]] \
-  || fail "protocol cutover mode was lost across root staging or SSH"
+[[ "$(grep -Ec '^sudo .*__node-apply .* protocol-drain$' "$transport_log")" -eq 3 ]] \
+  || fail "protocol drain phase was lost across root staging or SSH"
+[[ "$(grep -Ec '^sudo .*__node-apply .* protocol-bootstrap$' "$transport_log")" -eq 3 ]] \
+  || fail "protocol bootstrap phase was lost across root staging or SSH"
+
+: > "$node_log"
+: > "$transport_log"
+if CECELIA_MACHINE_ID=us-mac-m4 \
+  FLEET_TEST_REAL_GIT=1 \
+  FLEET_TEST_SSH_EXECUTE=1 \
+  FLEET_TEST_SUDO_NOEXEC=1 \
+  FLEET_TEST_SUDO_EXEC_NODE=1 \
+  FLEET_TEST_NODE_LOG="$node_log" \
+  FLEET_TEST_NODE_FAIL=drain \
+  FLEET_TEST_NODE_FAIL_MACHINE=us-mac-m4 \
+  FLEET_ROLLOUT_NODECTL="$fake_bin/nodectl" \
+  FLEET_ROLLOUT_SUDO="$fake_bin/sudo" \
+  run_rollout all --apply --protocol-cutover \
+  >"$test_root/cutover-drain-failure.out" 2>&1; then
+  fail "protocol cutover hid an all-node drain failure"
+fi
+failed_drain_sequence="$(
+  awk '{ print $1 ":" $2 }' "$node_log" | paste -sd, -
+)"
+[[ "$failed_drain_sequence" == 'drain:xian-mac-m4,drain:us-mac-m4' ]] \
+  || fail "failed protocol drain reached bootstrap or a later node: $failed_drain_sequence"
+if grep -Eq '^(bootstrap|undrain|admit) ' "$node_log"; then
+  fail "failed protocol drain reached bootstrap or reopened Worker admission"
+fi
 
 : > "$node_log"
 : > "$transport_log"
@@ -501,7 +528,7 @@ fi
 failed_cutover_sequence="$(
   awk '{ print $1 ":" $2 }' "$node_log" | paste -sd, -
 )"
-[[ "$failed_cutover_sequence" == 'drain:xian-mac-m4,bootstrap:xian-mac-m4,drain:us-mac-m4,bootstrap:us-mac-m4,drain:us-mac-m4' ]] \
+[[ "$failed_cutover_sequence" == 'drain:xian-mac-m4,drain:us-mac-m4,drain:xian-mac-m1,bootstrap:xian-mac-m4,bootstrap:us-mac-m4,drain:us-mac-m4' ]] \
   || fail "failed protocol cutover did not remain fail closed: $failed_cutover_sequence"
 if grep -Eq '^(undrain|admit) ' "$node_log"; then
   fail "failed protocol cutover reopened Worker admission"
