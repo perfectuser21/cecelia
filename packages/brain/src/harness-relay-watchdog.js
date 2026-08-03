@@ -340,8 +340,19 @@ function isProvableLegacyLocalParent(attempt, target) {
   );
 }
 
-function cleanupConfirmed(result) {
-  return ['cancelled', 'cleaned', 'already_clean'].includes(result?.status);
+function fleetCleanupConfirmed(result, attemptId) {
+  return (
+    ['cleaned', 'already_clean'].includes(result?.status)
+    && result?.attempt_id === attemptId
+  );
+}
+
+function validReceiptJobId(value) {
+  return (
+    typeof value === 'string'
+    && value.trim().length > 0
+    && !/[\r\n]/.test(value)
+  );
 }
 
 function validatePreparedReceipt(receipt, target) {
@@ -357,7 +368,7 @@ function validatePreparedReceipt(receipt, target) {
   if (receipt.attestationStatus !== 'verified') {
     throw new Error('resume_prepare_receipt_invalid:attestation');
   }
-  if (typeof receipt.remoteJobId !== 'string' || receipt.remoteJobId.length === 0) {
+  if (!validReceiptJobId(receipt.remoteJobId) || !validReceiptJobId(receipt.jobId)) {
     throw new Error('resume_prepare_receipt_invalid:job_id');
   }
   if (receipt.jobId !== receipt.remoteJobId) {
@@ -376,11 +387,17 @@ function validatePreparedReceipt(receipt, target) {
   });
 }
 
-function unsafeCleanupDiagnostic(result) {
-  if (cleanupConfirmed(result)) return null;
+function unsafeFleetCleanupDiagnostic(result, attemptId) {
+  if (fleetCleanupConfirmed(result, attemptId)) return null;
   const status = result?.status ?? 'unknown';
+  const exactCleanupStatus = ['cleaned', 'already_clean'].includes(status);
+  const attemptMismatch = !exactCleanupStatus
+    ? ''
+    : result?.attempt_id == null
+      ? ' (missing attempt_id)'
+      : ' (attempt_id mismatch)';
   const httpStatus = result?.httpStatus == null ? '' : ` (HTTP ${result.httpStatus})`;
-  return `orphan cancellation unsafe: ${status}${httpStatus}`;
+  return `orphan cancellation unsafe: ${status}${attemptMismatch}${httpStatus}`;
 }
 
 async function deliverRecoveryAlerts(onRecoveryAlert, alerts) {
@@ -557,6 +574,8 @@ export async function resumeKernelAttempt(attempt, {
   };
 
   let parentCleanup;
+  let parentCleanupConfirmed = false;
+  let parentCleanupDiagnostic = null;
   if (isProvableLegacyLocalParent(originalParentAttempt, target)) {
     const legacyContainerId = `cecelia-harness-${shortId(originalParentAttempt.id)}`;
     try {
@@ -572,6 +591,11 @@ export async function resumeKernelAttempt(attempt, {
         reason: `legacy local cleanup failed: ${errorMessage(error)}`,
       };
     }
+    parentCleanupConfirmed = parentCleanup?.status === 'cancelled';
+    parentCleanupDiagnostic = parentCleanup?.reason
+      ?? (parentCleanupConfirmed
+        ? null
+        : `legacy local cleanup unsafe: ${parentCleanup?.status ?? 'unknown'}`);
   } else {
     try {
       await launcher.inspect({
@@ -606,9 +630,15 @@ export async function resumeKernelAttempt(attempt, {
         reason: `parent cancellation failed: ${errorMessage(error)}`,
       };
     }
+    parentCleanupConfirmed = fleetCleanupConfirmed(
+      parentCleanup,
+      originalParentAttempt.id,
+    );
+    parentCleanupDiagnostic = parentCleanup?.reason
+      ?? unsafeFleetCleanupDiagnostic(parentCleanup, originalParentAttempt.id);
   }
-  if (!cleanupConfirmed(parentCleanup)) {
-    const diagnostic = parentCleanup?.reason ?? unsafeCleanupDiagnostic(parentCleanup);
+  if (!parentCleanupConfirmed) {
+    const diagnostic = parentCleanupDiagnostic;
     const recoveryAlert = deferredRecoveryAlert({
       attemptId: originalParentAttempt.id,
       lifecycleCode: 'resume_parent_cleanup_unconfirmed',
@@ -649,8 +679,9 @@ export async function resumeKernelAttempt(attempt, {
         reason: `orphan cancellation failed: ${errorMessage(cleanupError)}`,
       };
     }
-    const cleanupDiagnostic = childCleanup?.reason ?? unsafeCleanupDiagnostic(childCleanup);
-    if (!cleanupConfirmed(childCleanup)) {
+    const cleanupDiagnostic = childCleanup?.reason
+      ?? unsafeFleetCleanupDiagnostic(childCleanup, attempt.id);
+    if (!fleetCleanupConfirmed(childCleanup, attempt.id)) {
       const diagnostic = [
         errorMessage(error),
         cleanupDiagnostic,
@@ -693,24 +724,29 @@ export async function resumeKernelAttempt(attempt, {
     receiptError = error;
   }
   if (receiptError) {
+    let childCleanup;
     let cleanupStatus = 'unknown';
     let cleanupDiagnostic = null;
     try {
-      const cleanup = await launcher.cancel({
+      childCleanup = await launcher.cancel({
         attempt,
         target,
         launchReceipt: launched,
       });
-      cleanupStatus = cleanup?.status ?? 'unknown';
-      cleanupDiagnostic = unsafeCleanupDiagnostic(cleanup);
+      cleanupStatus = childCleanup?.status ?? 'unknown';
+      cleanupDiagnostic = unsafeFleetCleanupDiagnostic(childCleanup, attempt.id);
     } catch (error) {
+      childCleanup = {
+        status: 'unavailable',
+        reason: `orphan cancellation failed: ${errorMessage(error)}`,
+      };
       cleanupStatus = 'unavailable';
-      cleanupDiagnostic = `orphan cancellation failed: ${errorMessage(error)}`;
+      cleanupDiagnostic = childCleanup.reason;
     }
     const sanitizedCleanupDiagnostic = cleanupDiagnostic == null
       ? null
       : sanitizeDiagnostic(cleanupDiagnostic);
-    const recoveryAlert = cleanupConfirmed({ status: cleanupStatus })
+    const recoveryAlert = fleetCleanupConfirmed(childCleanup, attempt.id)
       ? null
       : deferredRecoveryAlert({
         attemptId: attempt.id,
@@ -755,8 +791,9 @@ export async function resumeKernelAttempt(attempt, {
         reason: `orphan cancellation failed: ${errorMessage(cleanupError)}`,
       };
     }
-    const cleanupDiagnostic = childCleanup?.reason ?? unsafeCleanupDiagnostic(childCleanup);
-    if (!cleanupConfirmed(childCleanup)) {
+    const cleanupDiagnostic = childCleanup?.reason
+      ?? unsafeFleetCleanupDiagnostic(childCleanup, attempt.id);
+    if (!fleetCleanupConfirmed(childCleanup, attempt.id)) {
       const diagnostic = [
         errorMessage(error),
         cleanupDiagnostic,
