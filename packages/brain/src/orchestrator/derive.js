@@ -135,7 +135,7 @@ function callbackDetail(row) {
   return asStructuredJson(row?.detail) ?? {};
 }
 
-function latestUnconsumedAttemptCallback(decisionLog) {
+function latestUnconsumedAttemptResult(decisionLog) {
   const rows = sortedLogRows(decisionLog);
   const latestSpawn = [...rows].reverse().find(
     (row) => typeof row.action === 'string' && row.action.startsWith('spawn:'),
@@ -144,11 +144,20 @@ function latestUnconsumedAttemptCallback(decisionLog) {
     .filter((row) => row.action === LOG_ACTION.CONTEXT_ANSWER)
     .map((row) => Number(callbackDetail(row).callback_hop))
     .filter(Number.isInteger));
-  return [...rows].reverse().find((row) => (
-    row.action === LOG_ACTION.ATTEMPT_CALLBACK
-    && !answeredCallbackHops.has(Number(row.hop))
-    && (latestSpawn == null || Number(row.hop) > Number(latestSpawn.hop))
-  )) ?? null;
+  return [...rows].reverse().find((row) => {
+    const detail = callbackDetail(row);
+    const isAttemptCallback = row.action === LOG_ACTION.ATTEMPT_CALLBACK;
+    const isExpiredInfrastructureTerminal = (
+      row.action === LOG_ACTION.EXPIRED_ATTEMPT_RECONCILED
+      && detail.status === 'failed'
+      && detail.failure_class === 'infrastructure_blocked'
+    );
+    return (
+      (isAttemptCallback || isExpiredInfrastructureTerminal)
+      && !answeredCallbackHops.has(Number(row.hop))
+      && (latestSpawn == null || Number(row.hop) > Number(latestSpawn.hop))
+    );
+  }) ?? null;
 }
 
 function noPrSignatureKey(detail) {
@@ -189,7 +198,7 @@ function generatorNoPrRoute(observed, currentDetail) {
 }
 
 function attemptCallbackRoute(observed) {
-  const row = latestUnconsumedAttemptCallback(observed.decisionLog);
+  const row = latestUnconsumedAttemptResult(observed.decisionLog);
   if (!row) return null;
   const detail = callbackDetail(row);
   const { status, failure_class: failureClass, role } = detail;

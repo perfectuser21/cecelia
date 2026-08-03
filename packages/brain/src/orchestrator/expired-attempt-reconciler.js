@@ -1,3 +1,5 @@
+import { LOG_ACTION } from './constants.js';
+
 const INFLIGHT_STATUSES = new Set(['starting', 'running']);
 const PREPARED_WORKER_STATUSES = new Set(['prepared', 'starting']);
 const CONFIRMED_CANCEL_STATUSES = new Set([
@@ -304,7 +306,7 @@ export function createExpiredAttemptAuthority(pool) {
              (run_id, hop, observed, derived_phase, gate_verdict, action, detail)
            SELECT $1::uuid, next_hop.hop, $2::jsonb, $3,
                   'deny:infrastructure_blocked',
-                  'effect:expired_attempt_reconciled', $4::jsonb
+                  '${LOG_ACTION.EXPIRED_ATTEMPT_RECONCILED}', $4::jsonb
              FROM next_hop
            RETURNING hop`,
           [
@@ -315,7 +317,13 @@ export function createExpiredAttemptAuthority(pool) {
               status: 'failed',
             }),
             terminalAttempt.phase,
-            JSON.stringify(detail),
+            JSON.stringify({
+              ...detail,
+              role: bounded(terminalAttempt.role, 128),
+              status: bounded(terminalAttempt.status, 32),
+              failure_class: bounded(input.failureClass, 64),
+              signature: bounded(input.code, 128),
+            }),
           ],
         );
         const hop = Number(evidence.rows?.[0]?.hop);
@@ -389,6 +397,10 @@ export async function reconcileExpiredAttempt({
       status: 'missing_terminalized',
       attemptId: attempt.id,
     });
+  }
+
+  if (inspected?.status === 'terminal') {
+    return cancelAndReplace({ launcher, terminalize, attempt, target, machine });
   }
 
   const activeWorker = (

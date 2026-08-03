@@ -205,17 +205,20 @@ function buildSnapshot(observed, counters, action, reason = null) {
     }
   }
   if (action === ACTION.SPAWN_GENERATOR_FIX) {
+    const infrastructureRetry = reason === 'callback_infrastructure_blocked';
     snapshot.trigger_sha = observed.pr?.head_sha ?? null;
     const failureVerdict = currentFailureVerdict(observed);
-    snapshot.failure_class = observed.pr?.ci === 'fail'
-      ? 'product_failure'
-      : failureVerdict?.failure_class
-        ?? (failureVerdict ? 'product_failure' : null);
+    snapshot.failure_class = infrastructureRetry
+      ? 'infrastructure_blocked'
+      : observed.pr?.ci === 'fail'
+        ? 'product_failure'
+        : failureVerdict?.failure_class
+          ?? (failureVerdict ? 'product_failure' : null);
     if (snapshot.failure_class === 'product_failure') {
       snapshot.failure_set = currentProductFailureSet(observed);
       snapshot.failure_set_key = failureSetKey(snapshot.failure_set);
     }
-    if (!observed.pr) {
+    if (!observed.pr && !infrastructureRetry) {
       const crashSignature = generatorCrashSignature(observed.lastAgentExit);
       if (crashSignature != null) snapshot.crash_signature = crashSignature;
     }
