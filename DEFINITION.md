@@ -6,11 +6,21 @@
 
 
 
-**Brain 版本**: 1.267.192
+**Brain 版本**: 1.267.193
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.193 — Fleet disposable-container timeout budget
+
+- Fleet Worker `1.267.97` 保留三次精确清理重试，并把 disposable Runner container 的
+  `docker create/start` 单次预算从通用 5 秒提升到 15 秒；其他命令仍使用 5 秒
+  fail-closed 上限。
+- 生产证据显示美国 M4 冷 `docker create` 会在 5 秒被 code 143 终止，随后同一健康请求
+  误报 `node_not_base_admitted`；节点当时磁盘占用仅 39%，与磁盘门槛无关。
+- 回退到 Brain `1.267.192` / Worker `1.267.96` 会恢复该冷启动误拒；回退前保持节点
+  drained，避免在 admission 抖动期间派发新 Attempt。
 
 ## Brain 1.267.192 — Fleet cold-container admission stability
 

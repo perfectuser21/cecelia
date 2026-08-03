@@ -706,6 +706,37 @@ describe('Fleet Worker health-only service', () => {
     expect(report.container).toEqual({ probe_succeeded: true });
   });
 
+  it('gives disposable Docker startup a cold-start budget without widening other probes', async () => {
+    const { probeFleetWorkerHealth } = await loadProbeContract();
+    const execFileFn = vi.fn(async () => ({ stdout: '' }));
+
+    const report = await probeFleetWorkerHealth({
+      machineId: 'us-mac-m4',
+      runnerImageDigest: DIGEST,
+      repoRoot: '/repo',
+      execFileFn,
+      fetchFn: vi.fn(async () => new Response('{}', { status: 200 })),
+      makeTempDirFn: vi.fn(async () => '/private/tmp/fleet-node-probe-timeout-budget'),
+      chmodTempDirFn: vi.fn(async () => undefined),
+      removeTempDirFn: vi.fn(async () => undefined),
+      statFn: vi.fn(async () => undefined),
+    });
+
+    const createCall = execFileFn.mock.calls.find(
+      ([file, args]) => file === 'docker' && args[0] === 'create',
+    );
+    const startCall = execFileFn.mock.calls.find(
+      ([file, args]) => file === 'docker' && args[0] === 'start',
+    );
+    const infoCall = execFileFn.mock.calls.find(
+      ([file, args]) => file === 'docker' && args[0] === 'info',
+    );
+    expect(report.container).toEqual({ probe_succeeded: true });
+    expect(createCall[2]).toEqual(expect.objectContaining({ timeout: 15_000 }));
+    expect(startCall[2]).toEqual(expect.objectContaining({ timeout: 15_000 }));
+    expect(infoCall[2]).toEqual(expect.objectContaining({ timeout: 5_000 }));
+  });
+
   it('returns only the health allowlist and strips authority, credentials, prompts, and local paths', async () => {
     const { createFleetWorkerServer } = await loadServerContract();
     const probeHealth = vi.fn(async () => ({
