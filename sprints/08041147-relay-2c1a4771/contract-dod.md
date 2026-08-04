@@ -144,5 +144,8 @@ journey_type: autonomous
 | ARTIFACT-4 workflows 零改动 | bash→git | 0 | 现状绿 ✓ |
 | INV-3 列名核对 | bash→psql | 0 | 环境前提成立 ✓ |
 | INV-4 枚举复查 | bash→grep 循环 | 1 | 真红 ✓（executor.js 无 never_started） |
+| E2E 探针脚本 r3 修复版（$PWD 绝对路径 import） | bash→node | 0 | 脚本可跑 ✓（2026-08-04 实测：import 解析到 worktree 绝对路径、NODE_ENV=test 路由 cecelia_test、两轮 suspect→confirmed dead 真实执行；红移交断言层，非脚本崩溃） |
+| E2E 步骤 4 REASON 断言（r3 修复版实测，fixture 注入→探针→断言全链） | bash→psql | 1 | 真红 ✓（现返 process_disappeared 兜底，实现后转绿） |
+| E2E TID 捕获 r3 修复版（psql -q -t -A） | bash→psql | 0 | 环境前提成立 ✓（不加 -q 时 psql 17 附带 `INSERT 0 1` 命令标签行致 TID 两行、后续 uuid 语法错恒炸，实测 -q 后单行纯 UUID） |
 
 假绿自查（每条心测「代码一行不写会 FAIL 吗」）：B1/B2/B5/B6/B7 + ARTIFACT-2/3 + INV-4 全部 YES（实测红）；B3/B4/ARTIFACT-4/INV-3 为回归护栏/环境前提，性质即「现状绿、防退化」，非实现性断言。
