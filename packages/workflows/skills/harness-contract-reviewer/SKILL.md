@@ -6,10 +6,11 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 9.12.0
+version: 9.13.0
 created: 2026-04-08
-updated: 2026-08-04
+updated: 2026-08-05
 changelog:
+  - 9.13.0: 堵「伪 RED 占位桩」漏检口（Kernel PR#1581 r33 实证 — fleet-worker-receipt.test.ts 一条测试体是无条件 `throw new Error('TDD RED：...')`，被批准锁定后与"测试文件不可改"铁律死锁，Generator 既无法实现出能通过的代码也不能改测试，只能 BLOCKED，浪费整轮 GAN + Generator 尝试）——Golden Path 覆盖审查新增第 25 条：测试体断言任何输入下都必然失败（不区分实现对错）的占位符 → 批准前必须打回，要求换成断言具体行为、只是当前未实现所以真 FAIL 的正常 TDD RED 断言
   - 9.12.0: 案卷式 GAN 协议（配套 cecelia kernel 1.267.207+）——Step 2.5 收敛追踪整节重写为「案卷 closure 裁定协议」：不再依赖 reviewer 自己的跨轮记忆（每轮都是新会话），改读 bundle inputs.case_file 逐条裁定上一轮 blocker closed/still-open，proposer 的 closure 声明行只作线索、以合同实际内容为准；新增 blocker 必填 why_not_found_earlier + prd_gap 两字段，缺任一作废、不计入扣分依据；blocker 带稳定编号 R<round>-<seq>。结果 JSON 新增顶层 `case_file`（blockers[] + feedback_md）与 `decision.rubric_scores`，closure 裁定表写入 feedback_md。趋势兜底（diverging/oscillating）明确由 Kernel `detectRubricTrend` 负责，旧引用 `harness-gan.graph.js` 改为该函数名；PRD 锚新增 thin_prd/prep_prd_body 读取指引（bundle 有值时以其为准）。7 个 rubric 维度键名一字未动。
   - 9.11.0: Kernel validation identity late-binding——Reviewer task bundle 只描述当前审查者 provenance，不得要求合同改绑为 Reviewer attempt/account/snapshot；审查改为拒绝所有 GAN authoring UUID 硬编码，并要求实际 Generator/Evaluator/Judge 各自使用 Runner attestation 与证据摘要串联
   - 9.10.0: Kernel local_api 资源闭环——新增第 23 条审查：Postgres 合同必须对 Fleet 注入的空库运行真实 migration/schema bootstrap；业务 cookie/session/tenant 必须由 E2E 真实 signup/login 动态创建；依赖预注入 AUTH_COOKIE/TENANT_ID、生产数据副本或长期业务凭据一律 REVISION
@@ -111,6 +112,8 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 23. **local_api 依赖预存业务状态或未初始化空库 → 打回**（Kernel runtime-resource 硬规则）：`target_environment=local_api` 且使用 Postgres 时，合同必须只把 `DB_URL` 作为 Fleet 注入资源，并在 E2E 中先执行仓库真实 migration/schema bootstrap、机检目标表存在。需要鉴权的业务路径必须通过真实 signup/login/onboarding 动态创建临时用户、cookie jar 与 tenant，并从真实响应/本 attempt 数据库取得 tenant ID。脚本出现必填 `AUTH_COOKIE*`、`TENANT_ID*`、长期业务 token、复制生产数据，或假设 sidecar 已有业务表，却没有自举流程 → 第 4 维与第 6 维低分，REVISION。不得用“环境由操作员预注入”作为 mitigation。
 
 24. **validation identity 必须 late-bound，禁止角色追逐**：Reviewer task bundle 顶层 `attempt_id`、account 与 capability snapshot 只是当前审查角色的 `GAN authoring identity`，**不得作为 validation identity**，更不能拿它们与合同比较后要求 Proposer 替换。若合同/DoD/测试把 Planner、Proposer 或 Reviewer 的 attempt UUID、snapshot UUID、account 写成未来 Evaluator/Judge 的固定期望 → 第 4 维与第 6 维低分，REVISION；反馈必须要求删除字面值，改用 Runner 在实际执行角色注入的 `HARNESS_ATTEMPT_ID` / `HARNESS_PROVIDER` / `HARNESS_ACCOUNT` / `HARNESS_MACHINE` / `HARNESS_MODEL` / `HARNESS_RUNNER_DIGEST` / `CAPABILITY_SNAPSHOT_ID`。**禁止要求改绑为 Reviewer** 当前值。`run_id` 与冻结 candidate SHA 可以固定；Evaluator、Judge 必须各写自己的 provenance，并用证据 SHA-256 串联，禁止三角色共用同一 attempt/account/snapshot。
+
+25. **测试体含无条件失败断言（伪 RED 占位桩）→ 打回**（Kernel PR#1581 r33 实证 — `fleet-worker-receipt.test.ts` 一条测试体是 `throw new Error('TDD RED: Generator 必须实现...')`，看起来像标准 TDD RED，实际是**任何输入、任何实现都必然失败**的占位符，与"实现前 FAIL、实现正确后转 PASS"的正常 RED 断言有本质区别：正常 RED 断言的是具体行为，只是当前代码还没做到；伪 RED 占位桩不断言任何行为，无论生产代码怎么写都无法转绿。一旦这类占位桩随合同一起在 commit 1 锁定，就会和"测试文件锁定后不可改"铁律（CONTRACT IS LAW）死锁：Generator 既不能实现出让它变绿的代码，也不能修改测试文件，只能整轮 BLOCKED，浪费一次完整的 GAN + Generator 尝试）：Reviewer 批准前必须逐条**读测试体本身**（不能只看测试标题/描述），凡命中 `throw new Error(...)`、`expect(false).toBe(true)`、`fail(...)`、`.skip`/`.todo` 掩盖等"断言恒为假、与生产代码实现内容无关"的占位符 → 对应 [BEHAVIOR] 项第 1 维 dod_machineability 与第 3 维 test_actually_red 直接打回 REVISION，feedback 要求 Proposer 在合同锁定前把测试体换成断言具体行为的真实 RED（可以且应该仍然是 FAIL，但必须是"因为生产代码还没写/还没对"而 FAIL，不是"写死必错"）。
 
 少一项 → 第 2 维 scope_match_prd 或第 4 维 internal_consistency 扣分。Golden Path 断链 → 直接 REVISION 不打分。
 
