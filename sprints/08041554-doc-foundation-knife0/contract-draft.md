@@ -129,6 +129,17 @@ test $FIRE_EXIT -eq 1   # 必须 exit 1
 
 ---
 
+## Test Contract
+
+| BEHAVIOR | Test File | it() 名称 |
+|----------|-----------|-----------|
+| ASSERT-1 正本文件存在且含双 marker | `tests/doc-foundation-contract.test.sh` | ASSERT-1: KERNEL_CONTEXT.md 存在且含双 marker |
+| ASSERT-2 三方对账脚本升级为三方 | `tests/doc-foundation-contract.test.sh` | ASSERT-2: check-agents-rules-sync.sh 引用正本路径 |
+| ASSERT-3 docs 目录登记 smoke 脚本存在且可执行 | `tests/doc-foundation-contract.test.sh` | ASSERT-3: check-docs-dir-registry-smoke.sh 存在且可执行 |
+| ASSERT-4 基线文件存在且非空 | `tests/doc-foundation-contract.test.sh` | ASSERT-4: docs-dir-baseline.txt 存在且非空 |
+
+---
+
 ## 六、不在本 Contract 范围内
 
 - 僵尸文档清理（刀0.5）
