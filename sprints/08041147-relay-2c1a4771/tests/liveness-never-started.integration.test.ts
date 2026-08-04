@@ -36,7 +36,10 @@ beforeAll(async () => {
 afterEach(async () => {
   suspectProcesses.clear();
   while (seededIds.length) {
-    await pool.query('DELETE FROM tasks WHERE id = $1', [seededIds.pop()]);
+    const id = seededIds.pop();
+    // 先清 learnings（学习文本保真断言的 fixture 副产物），再清 tasks
+    await pool.query('DELETE FROM learnings WHERE task_id = $1', [id]);
+    await pool.query('DELETE FROM tasks WHERE id = $1', [id]);
   }
   while (tmpLogs.length) {
     try { rmSync(tmpLogs.pop() as string); } catch { /* already gone */ }
@@ -119,6 +122,33 @@ describe('watchdog liveness 从未启动任务分类 [BEHAVIOR]', () => {
 
     const row = await readTask(id);
     expect(row.payload?.watchdog_kill?.reason).toBe('process_disappeared');
+  });
+
+  it('从未启动任务的 failure learning 文本含真实根因标签 never_started 且不含 liveness_dead 假标签', async () => {
+    // PRD 行 20 (b)：failure learning 文本必须携带真实根因，不再出现 liveness_dead 假标签。
+    // 现状实证：executor.js requeueTask 内 learnings INSERT（category=failure_pattern,
+    // trigger_event=watchdog_kill）的 title/content 取 requeue 通道参数 liveness_dead → 本断言真红。
+    // fixture 标题带时间戳唯一化：learnings 以 content_hash（title+content 派生）去重，
+    // 固定标题会命中历史 is_latest 行跳写，导致复跑假红。
+    const id = await seedTask({
+      title: `liveness-learning 保真 fixture ${Date.now()}`,
+      error_message: S2_ERROR_MESSAGE,
+      payload: { failure_class: 'missing_anchor' },
+    });
+
+    await doubleConfirmProbe();
+
+    // task_id 定位 + created_at 5 分钟时间窗，防历史 learnings 行冒充本轮产出
+    const r = await pool.query(
+      `SELECT title, content FROM learnings
+       WHERE task_id = $1 AND trigger_event = 'watchdog_kill'
+         AND created_at > NOW() - interval '5 minutes'`,
+      [id]
+    );
+    expect(r.rows.length).toBeGreaterThanOrEqual(1);
+    const text = r.rows.map((row: any) => `${row.title} ${row.content}`).join('\n');
+    expect(text).toContain('never_started');
+    expect(text).not.toContain('liveness_dead');
   });
 
   it('边界：started_at=null 但存在进程日志（确实曾启动）→ 不判 never_started，仍走既有 process_disappeared 判定', async () => {
