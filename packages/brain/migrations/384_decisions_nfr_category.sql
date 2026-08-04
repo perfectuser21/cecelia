@@ -16,6 +16,7 @@ ALTER TABLE decisions ADD CONSTRAINT decisions_category_chk
       'architecture',
       'bug-fix',
       'decision',
+      'deployment',
       'feature',
       'governance',
       'infra',
@@ -23,7 +24,8 @@ ALTER TABLE decisions ADD CONSTRAINT decisions_category_chk
       'judgment',
       'nfr',
       'small-change',
-      'technical'
+      'technical',
+      'testing'
     )
   );
 
