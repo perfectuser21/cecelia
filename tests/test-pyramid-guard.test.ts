@@ -36,7 +36,7 @@ beforeAll(() => {
   mkdirSync(path.join(root, '.agent-knowledge'), { recursive: true });
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
   writeFileSync(path.join(root, '.agent-knowledge/CURRENT_STATE.md'),
-    `---\ngenerated: ${now} CST\nsource: write-current-state.sh\n---\n`);
+    `---\ngenerated: ${now} CST\nsource: state-writer (retired)\n---\n`);
 });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -591,7 +591,7 @@ describe('checkPanelFreshness', () => {
     const stale = new Date(Date.now() - 49 * 3600e3 + 8 * 3600e3)
       .toISOString().replace('T', ' ').slice(0, 19);
     writeFileSync(path.join(staleRoot, '.agent-knowledge/CURRENT_STATE.md'),
-      `---\ngenerated: ${stale} CST\nsource: write-current-state.sh\n---\n`);
+      `---\ngenerated: ${stale} CST\nsource: state-writer (retired)\n---\n`);
     expect(checkPanelFreshness(staleRoot, 48).fresh).toBe(false);
     rmSync(staleRoot, { recursive: true, force: true });
   });

@@ -7,7 +7,7 @@
 
 在刀1（测试自动入册）施工前，先让"测试金字塔的真实状态"变得机械可见、可拦截：
 孤儿测试数、smoke 池跑道挂载、永久测试池计数，全部由脚本断言，红了 CI 拦。
-顺带治好 2026-05-22 起停更的 CURRENT_STATE.md 僵尸健康横幅（根因=`write-current-state.sh` 无调用方）。
+顺带治好 2026-05-22 起停更的 CURRENT_STATE.md 僵尸健康横幅（根因=状态更新脚本（已退役）无调用方）。
 
 ## 现状事实（已核实）
 
@@ -15,7 +15,7 @@
   brain vitest 不再 include sprints，全部孤儿化。
 - 根 `vitest.config.js` 的 sprints include 只服务 harness sprint PR 自己的 CI，merge 后无人再跑。
 - smoke 池 `scripts/smoke/` 仅 2 条脚本。
-- `scripts/write-current-state.sh` 存在、有 bash 测试（`scripts/__tests__/write-current-state.test.sh`），
+- 状态更新脚本（已退役）存在、有 bash 测试，
   但**两者都没有任何调用方**——脚本停更、测试也是孤儿。
 - ci.yml 已有 `lint-*` 型 job 直接 `bash .github/workflows/scripts/__tests__/xxx.test.sh` 的先例。
 - 本机 crontab 已有 janitor daily（4am）先例，本地日更走 cron 与现状一致。
@@ -61,10 +61,10 @@
 
 ### 5. 面板复活
 
-- `write-current-state.sh` 增「测试金字塔」段：调 `guard --json` 写入三层计数/孤儿数/最后运行时间。
-- 顺手把孤儿测试 `scripts/__tests__/write-current-state.test.sh` 接进 guard 同一个 CI job。
+- 状态更新脚本（已退役）增「测试金字塔」段：调 `guard --json` 写入三层计数/孤儿数/最后运行时间。
+- 顺手把孤儿测试接进 guard 同一个 CI job。
 - 调用方（merge 后机器态操作，不进本 PR diff）：本机 crontab 加每日一条
-  `cd 主仓 && bash scripts/write-current-state.sh`（与 janitor 同机制）。A4 保证这条线断了会被看见。
+  （与 janitor 同机制）。A4 保证这条线断了会被看见。
 
 ## 不做（本 PR）
 

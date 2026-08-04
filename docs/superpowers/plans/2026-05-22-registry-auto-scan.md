@@ -100,7 +100,7 @@ cd packages/brain && npx vitest run src/__tests__/run-post-merge-scan.test.js --
 
 - [ ] **Step 3: 修改 engine-ship SKILL.md**
 
-在 `~/.claude/skills/engine-ship/SKILL.md` 第 51 行 `bash scripts/write-current-state.sh` 之后、闭合的 ` ``` ` 之前，插入：
+在 `~/.claude/skills/engine-ship/SKILL.md` 状态更新脚本行（已退役）之后、闭合的 ` ``` ` 之前，插入：
 
 ```
 bash scripts/run-post-merge-scan.sh || echo "[engine-ship] registry scan 失败，不阻塞"
@@ -108,7 +108,7 @@ bash scripts/run-post-merge-scan.sh || echo "[engine-ship] registry scan 失败�
 
 修改后该段变为：
 ```bash
-bash scripts/write-current-state.sh
+# 状态更新脚本（已退役）
 bash scripts/run-post-merge-scan.sh || echo "[engine-ship] registry scan 失败，不阻塞"
 ```
 

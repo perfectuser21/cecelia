@@ -1195,7 +1195,7 @@ changelog:
   - version: "19.2.2"
     date: "2026-05-29"
     type: "feat"
-    description: "engine-ship 从 packages/engine/skills/ 移除（已在 zenithjoy-skills）。engine-ship TERMINAL IMPERATIVE 改为调用 engine-pr-watchdog（PR 合并守卫）。dev/SKILL.md 接力链补全 engine-pr-watchdog。write-current-state 测试移除对 engine-ship 路径的硬引用。"
+    description: "engine-ship 从 packages/engine/skills/ 移除（已在 zenithjoy-skills）。engine-ship TERMINAL IMPERATIVE 改为调用 engine-pr-watchdog（PR 合并守卫）。dev/SKILL.md 接力链补全 engine-pr-watchdog。状态更新脚本（已退役）测试移除对 engine-ship 路径的硬引用。"
   - version: "19.3.0"
     date: "2026-07-05"
     type: "feat"
