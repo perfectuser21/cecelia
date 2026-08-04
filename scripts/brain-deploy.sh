@@ -102,6 +102,23 @@ run_post_deploy_smoke() {
 # Brain 未在线时静默跳过（首次部署/迁移场景无需 drain）
 DRAIN_TIMEOUT_SECS="${DRAIN_TIMEOUT_SECS:-120}"
 
+# drain-cancel 带重试（Issue cc28d1af 根因D 第3/4次复发，2026-08-04）：
+# 单发 curl -sf ||true 会在 swap 端口切换窗口静默失败 → drain 残留被新容器恢复
+# → 派发瘫痪。重试 5 次×5s 跨过切换窗口；全败也不阻塞部署（drain.js restore
+# 过期自愈是最终兜底）。
+drain_cancel_with_retry() {
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        if curl -sf --max-time 5 -X POST "http://localhost:5221/api/brain/tick/drain-cancel" >/dev/null 2>&1; then
+            echo "  [drain] drain-cancel 成功（第 ${attempt} 次尝试）"
+            return 0
+        fi
+        sleep 5
+    done
+    echo "  [drain] WARN: drain-cancel 5 次均失败——依赖 Brain 启动时的过期自愈兜底（restoreDrainState 15min 上限）"
+    return 0
+}
+
 drain_before_swap() {
     local brain_url="http://localhost:5221"
 
@@ -355,7 +372,7 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
             echo "[FAIL] green canary 未通过，已保留旧生产容器(5221 不受影响)，终止部署"
             # blue 仍在运行且已进入 drain 模式 → 恢复正常派发
             echo "  [drain] green 未通过，恢复旧 Brain 派发..."
-            curl -sf --max-time 5 -X POST "http://localhost:5221/api/brain/tick/drain-cancel" >/dev/null 2>&1 || true
+            drain_cancel_with_retry
             exit 1
         fi
     else
@@ -500,7 +517,7 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     # 恢复 draining → 派发永久瘫痪（0729 16:48 / 0730 10:21 两次实证，均由合并PR自动部署触发）。
     # 部署已收尾，pre-swap 的 drain 使命已结束，新实例不应继承——best-effort 取消。
     echo "  [drain] swap 成功，取消 pre-swap drain（新实例不继承排水状态）..."
-    curl -sf --max-time 5 -X POST "http://localhost:5221/api/brain/tick/drain-cancel" >/dev/null 2>&1 || true
+    drain_cancel_with_retry
 
     # S6: FR-05 SHA 回读断言（Gate3 C-05）
     # 部署完成后读 /health.git_sha 与 EXPECTED_SHA 对比，不等则 ROLLBACK exit 1
