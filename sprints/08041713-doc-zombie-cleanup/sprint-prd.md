@@ -222,3 +222,71 @@ git mv packages/engine/tests/integration/current-state-format.test.ts docs/archi
 3. **seven-ring-audit.js**：第 32 行 `write-current-state.sh` 注释是 Brain 功能说明，不是调用——改为说明已退役即可，不影响运行时逻辑
 
 4. **AGENTS.md 的 skills-index.md 链接**：模块地图表和「Cecelia 能调用什么」节均指向已退役文件，两处都需清理
+
+---
+
+## Invariant 约束
+
+（从 Brain `GET /api/brain/invariants?line=cecelia` 加载，共 105 条，以下为分类摘要）
+
+**Harness / Pipeline 类**：
+1. watchdog 对「从未启动的进程」必须走 never_started 分类兜底且不覆盖已有 error_message/failure_class
+2. relay 单 session 模式必须在各 phase 完成时调 POST /api/brain/harness/phase-event 写 node 级 done 事件
+3. PR 处于 CONFLICTING 状态时 GitHub 静默不触发 pull_request CI：不要按 CI 卡死空等，先 merge
+4. evaluator 临时脚本必须落会话独享路径（含 session id），禁止共享 /tmp 固定文件名
+5. headed relay session 在长 CI 等待循环中应周期性 PATCH relay-runs 心跳，防止 Brain reap
+6. harness judge 未按 target_environment 校准证据要求
+7. PR 被 should-auto-merge.sh 等 CI 侧兜底机制在 evaluator/judge 跑完前提前合并时，必须用 PR label/状态机补判
+
+**测试 / CI 类**：
+8. 毕业（测试入册）commit 后必须本地先跑 lint-tdd-commit-order 与 check-test-coverage 再 push
+9. Red commit 必须只 git add 精确路径（*.test.ts），禁止 git add . 或 git add .harness
+10. 合同批准前必须同时记录 manual oracle 的真实 exit code，并确认目标解释器确实启动
+
+**数据 / DB 类**：
+11. capture_atoms urgent 路由建任务前必须按锚点/探针坐标查重：同根因已有 open 任务时合并而非裂变新单
+12. 守卫/探针自产数据用共享常量前缀（如 LEDGER_SELF_ATOM_PREFIX）标记并在统计侧排除，防自指计数污染
+13. 探针类时间窗口用确定性日历窗口（自然日+时区）而非 NOW()-interval 滑动窗，防执行时刻秒级漂移重复计账/漏计
+14. 冒烟/校验类脚本涉及数据库连接目标时，写入侧与校验侧的 DB_NAME 必须来自同一变量/同一解析逻辑
+
+**系统通则类**：
+15. [系统] 禁止写死环境假设值
+16. [系统] 真环境验证才算 done
+17. [系统] 测试默认多租户
+18. [系统] 凭据安全
+19. [系统] 日志脱敏
+20. [系统] 端点鉴权
+21. [系统] 租户隔离
+
+（完整 105 条见 Brain decisions 表 category=invariant）
+
+---
+
+## 累积 FR
+
+（从 Brain `GET /api/brain/features?line=cecelia` 加载，共 247 条 active features，以下为核心功能列表节选）
+
+| ID | 名称 | 领域 | 优先级 |
+|----|------|------|--------|
+| llm-caller | LLM 调用层 | admin/brain | P0 |
+| agent-execution | Agent 执行引擎 | agent/brain | P0 |
+| alerting-notifier | 飞书告警通知 | collaboration/brain | P0 |
+| dashboard-live-monitor | 实时监控面板 | dashboard | P0 |
+| dashboard-roadmap | OKR 路线图 | dashboard | — |
+| dashboard-tasks | 任务管理界面 | dashboard | — |
+| context-snapshot | Brain 上下文快照 | brain | — |
+| okr-current | OKR 当前状态 | brain | — |
+| brain-health | Brain 健康检查 | brain | P0 |
+
+（完整 247 条见 Brain features 表；本刀为文档整理，不新增 FR，不改变任何 feature 状态）
+
+---
+
+## NFR
+
+N/A（本刀为文档整理，无性能/可用性/安全性 NFR）
+
+---
+
+journey_type: feature
+target_environment: local_api
