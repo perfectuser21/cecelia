@@ -429,7 +429,7 @@ router.get('/line/:id/command', async (req, res) => {
     let abilities = [], features = [];
     try {
       const { rows: jfRows } = await pool.query(
-        `SELECT id, name, kind, status, group_name, created_at
+        `SELECT id, name, kind, status, "group" AS group_name, created_at
          FROM journey_features
          WHERE journey_id = $1
          ORDER BY kind, name`,
@@ -486,31 +486,39 @@ router.get('/line/:id/command', async (req, res) => {
     } catch { /* issues 表缺失优雅降级 */ }
 
     // 7. 最近 harness runs（initiative_runs，该 journey，时间倒序）
+    //    真列名是 phase（值域 done/failed/evaluate/planning/gan…），无 status/result 列；
+    //    映射为前端 RecentRun 契约的 status（done→completed / failed→failed / 其余→in_progress）
     let recentRuns = [];
     try {
       const { rows: runRows } = await pool.query(
-        `SELECT id, status, started_at, completed_at, result, created_at
+        `SELECT id, phase, started_at, completed_at, created_at
          FROM initiative_runs
          WHERE journey_id = $1
          ORDER BY created_at DESC
          LIMIT 10`,
         [journey.id]
       );
-      recentRuns = runRows;
+      recentRuns = runRows.map((r) => ({
+        id: r.id,
+        status: r.phase === 'done' ? 'completed' : r.phase === 'failed' ? 'failed' : 'in_progress',
+        started_at: r.started_at,
+        completed_at: r.completed_at,
+        created_at: r.created_at,
+      }));
     } catch { /* initiative_runs 缺失优雅降级 */ }
 
     // 8. 健康度计算（近30天）
     let health = { run_total: 0, run_success: 0, success_rate: null, pr_count: 0, is_stopped: false };
     try {
       const { rows: healthRows } = await pool.query(
-        `SELECT id, status, result, created_at
+        `SELECT id, phase, created_at
          FROM initiative_runs
          WHERE journey_id = $1
            AND created_at > NOW() - INTERVAL '30 days'`,
         [journey.id]
       );
       const runTotal = healthRows.length;
-      const runSuccess = healthRows.filter((r) => r.status === 'completed').length;
+      const runSuccess = healthRows.filter((r) => r.phase === 'done').length;
 
       // PR 频率：近30天该 journey 相关任务有 pr_url
       const { rows: prRows } = await pool.query(
