@@ -52,8 +52,8 @@ node scripts/facts-check.mjs \
 bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh \
   && echo "PASS E6: fleet-rollout 测试全通"
 
-# E7: node-profile jest 测试（含 EXPECTED_RUNNER_DIGEST 校验）
-cd packages/brain && npx jest src/orchestrator/fleet-node/node-profile.test.js --no-coverage 2>&1 | tail -5
+# E7: node-profile vitest 测试（含 EXPECTED_RUNNER_DIGEST 校验；测试文件使用 vitest 语法）
+cd packages/brain && npx vitest run src/orchestrator/fleet-node/node-profile.test.js 2>&1 | tail -5
 ```
 
 ---
