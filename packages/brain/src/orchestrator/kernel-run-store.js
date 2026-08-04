@@ -626,6 +626,45 @@ export async function finalizeKernelRun(pool, {
   }
 }
 
+/**
+ * run.phase 前进持久化（r17 实证修复：运行中 phase 恒 'planning'，只有
+ * finalizeKernelRun 写终态）。loop.js 在每轮最终 decision 确定后调用，仅限
+ * decision.phase ∈ {planning,gan,generate,evaluate,judge} 且非 wait:* 决策。
+ *
+ * 死锁铁律（PR #4596 教训）：必须是独立单语句 autocommit UPDATE，禁止塞进任何
+ * 还会锁其他行的事务；调用方负责把失败降级为告警，不炸 loop。
+ */
+export async function persistKernelRunPhase(pool, runId, phase) {
+  const { rows } = await pool.query(
+    `UPDATE initiative_runs
+        SET phase = $2, updated_at = NOW()
+      WHERE id = $1
+        AND orchestrator_version = 'v2'
+        AND phase IS DISTINCT FROM $2
+        AND phase NOT IN ('done', 'failed')
+      RETURNING id, phase`,
+    [runId, phase],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * task.status 启动置位（r17 实证修复：派发时也不置 in_progress，task.status 恒
+ * 'queued'）。run.js 启动流程装载 task 后调用一次；只在仍是 'queued' 时翻面，
+ * 已 in_progress/终态一律不碰。调用方负责把失败降级为告警，不阻断 loop 启动。
+ */
+export async function activateQueuedKernelTask(pool, taskId) {
+  const { rows } = await pool.query(
+    `UPDATE tasks
+        SET status = 'in_progress', updated_at = NOW()
+      WHERE id = $1
+        AND status = 'queued'
+      RETURNING id`,
+    [taskId],
+  );
+  return rows[0] ?? null;
+}
+
 export async function reconcileKernelTaskTerminal(
   pool,
   taskId,

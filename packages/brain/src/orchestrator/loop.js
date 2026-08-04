@@ -42,10 +42,15 @@ import {
   normalizeFailureSet,
   normalizeFailureSignature,
 } from './convergence-signatures.js';
-import { finalizeKernelRun } from './kernel-run-store.js';
+import { finalizeKernelRun, persistKernelRunPhase } from './kernel-run-store.js';
 import { oldestExpiredAttempt } from './expired-attempt-reconciler.js';
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// r17 实证修复：run.phase 前进持久化只对这些活跃相位生效，且仅当最终决策不是
+// wait:* 才写（wait:* 只是复查在途状态，不代表相位真的前进了）。终态永远只归
+// finalizeKernelRun 独有，这里绝不写 done/failed。
+const PROGRESSING_KERNEL_PHASES = new Set(['planning', 'gan', 'generate', 'evaluate', 'judge']);
 
 /** runId 缺省解析：task 当前挂着的最新 v2 run（双轨期 D7：过滤 orchestrator_version，防误伤 v1/LangGraph run） */
 async function resolveRunId(pool, taskId) {
@@ -753,6 +758,24 @@ export async function runLoop(
           ? directiveResult.decision
           : defaultDecision;
         retryDispatchContext = directiveResult.dispatch_context ?? null;
+      }
+    }
+
+    // ---- run.phase 前进持久化（r17 实证修复）----
+    // 以最终被执行的 decision 为准（commander 改写后的版本）；wait:* 只是复查在途
+    // 状态不算前进，terminal/mark_failed 的 phase 不在活跃集合里天然被过滤掉。
+    // 非关键路径：持久化失败只告警，不阻断 loop。
+    if (
+      PROGRESSING_KERNEL_PHASES.has(decision.phase)
+      && !String(decision.action).startsWith('wait:')
+    ) {
+      try {
+        await persistKernelRunPhase(deps.pool, resolvedRunId, decision.phase);
+      } catch (err) {
+        log(
+          `[orchestrator] run.phase 持久化失败 run=${resolvedRunId} `
+          + `phase=${decision.phase}: ${err.message}`,
+        );
       }
     }
 
