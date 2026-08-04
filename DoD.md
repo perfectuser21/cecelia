@@ -61,7 +61,7 @@ journey_type: autonomous
 ## Invariant 覆盖（PRD 铁律 58 条逐条映射：可执行 INV 条目 或 显式 N/A）
 
 - [x] [BEHAVIOR] INV-3 起草涉及表字段的合同/测试前 psql 核对真实列名（tasks 表 started_at/error_message/payload 三列实存）
-  Test: manual:bash -c 'C=$(psql postgresql://localhost:5432/cecelia_test -t -A -c "SELECT count(*) FROM information_schema.columns WHERE table_name='"'"'tasks'"'"' AND column_name IN ('"'"'started_at'"'"','"'"'error_message'"'"','"'"'payload'"'"')"); [ "$C" = "3" ] || exit 1; echo OK'
+  Test: manual:bash -c 'C=$(psql "${TEST_DATABASE_URL:-postgresql://localhost:5432/cecelia_test}" -t -A -c "SELECT count(*) FROM information_schema.columns WHERE table_name='"'"'tasks'"'"' AND column_name IN ('"'"'started_at'"'"','"'"'error_message'"'"','"'"'payload'"'"')"); [ "$C" = "3" ] || exit 1; echo OK'
   期望: OK（proposer 起草时已实查通过，evaluator 复跑防漂移）
   gate-allow: domain/db-no-time-window INV-3 为 information_schema 列元数据核对（表结构存在性），非业务数据聚合，无历史数据冒充面
 
