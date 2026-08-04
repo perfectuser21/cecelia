@@ -9,6 +9,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { normalizeFailureSignature } from './convergence-signatures.js';
 import { ATTEMPT_COST_ACCRUAL_USD } from './constants.js';
+import { insertCaseFileRow } from './case-file-store.js';
 
 const TERMINAL_STATUSES = [
   'completed',
@@ -158,6 +159,47 @@ function callbackRoleVerdictProjection(attempt, result) {
     phase: attempt.role === 'reviewer' ? 'gan' : 'evaluate',
     gateVerdict: allowed ? 'allow' : `deny:${verdict.toLowerCase()}`,
     detail,
+  };
+}
+
+const CASE_FILE_ROLES = new Set(['proposer', 'reviewer']);
+
+/**
+ * 案卷行的 round：主来源是 dispatcher.buildInputs 写入的 task_bundle.inputs.
+ * contract_round（proposer=正在推进的下一轮，reviewer=正在评审的当轮——两者
+ * dispatcher 都会写，见 dispatcher.js buildInputs 的 proposer/reviewer 分支）。
+ * 只有历史/损坏 TaskBundle 缺该字段这种边缘情况才退化读 result 自带的轮次
+ * 声明（case_file.round 或 decision.contract_round）；两处都没有就放弃写入
+ * ——round 是 NOT NULL 列，不能用猜测值填一条残缺案卷行。
+ */
+function caseFileRoundForAttempt(attempt, result) {
+  const inputs = attemptTaskBundle(attempt).inputs ?? {};
+  if (Number.isInteger(inputs.contract_round)) return inputs.contract_round;
+  const resultRound = result.case_file?.round ?? result.decision?.contract_round;
+  return Number.isInteger(resultRound) ? resultRound : null;
+}
+
+/**
+ * 案卷式 GAN（issue ce42f68f）：proposer/reviewer 每轮终态（携带 case_file
+ * 或 decision 中至少一项）都投影一行 gan_case_file——即使旧版 Skill 还没升级
+ * 到结构化 case_file 输出，也先落一行空 blockers/null rubric 的行，保证案卷
+ * 视图从这次改动起就是每轮连续的（不用等 PR-D skill 改造才有数据）。
+ */
+function callbackCaseFileProjection(attempt, result) {
+  if (!CASE_FILE_ROLES.has(attempt.role)) return null;
+  if (!result.case_file && !result.decision) return null;
+  const round = caseFileRoundForAttempt(attempt, result);
+  if (round == null) return null;
+  const inputs = attemptTaskBundle(attempt).inputs ?? {};
+  return {
+    runId: attempt.run_id,
+    round,
+    authorRole: attempt.role,
+    attemptId: attempt.id,
+    contractSha: inputs.contract_sha ?? null,
+    rubricScores: result.decision?.rubric_scores ?? null,
+    blockers: result.case_file?.blockers ?? [],
+    feedbackMd: result.case_file?.feedback_md ?? null,
   };
 }
 
@@ -704,6 +746,14 @@ export function createAttemptStore(pool) {
                 attemptId,
               ],
             );
+          }
+
+          // 案卷式 GAN：对 gan_case_file 的 INSERT 不受"同 run 行只允许一条
+          // UPDATE"死锁定律约束（那条定律只管 initiative_runs 行的 UPDATE 排队，
+          // 见下方 pr_url/cost_usd 投影注释）——这里插入的是新表新行。
+          const caseFileProjection = callbackCaseFileProjection(terminalAttempt, result);
+          if (caseFileProjection) {
+            await insertCaseFileRow(client, caseFileProjection);
           }
 
           const pullRequest = verifiedPullRequestArtifact(terminalAttempt, result);

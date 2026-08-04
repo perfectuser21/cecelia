@@ -229,6 +229,239 @@ describe('attempt store', () => {
     expect(client.query.mock.calls[4][0]).toMatch(/action=\$5/i);
     expect(client.query.mock.calls[4][1]).toContain('verdict:reviewer');
     expect(client.query.mock.calls[4][1].join(' ')).toContain('a'.repeat(40));
+    // 即使没有结构化 case_file/rubric_scores，reviewer 的每轮终态也落一行
+    // gan_case_file（blockers 默认 []，rubric_scores/feedback_md 为 null），
+    // 案卷视图从一开始就有完整的轮次台账。
+    expect(client.query.mock.calls[5][0]).toMatch(/INSERT INTO gan_case_file/);
+    expect(client.query.mock.calls[5][1]).toEqual([
+      input.runId,
+      2,
+      'reviewer',
+      input.id,
+      'a'.repeat(40),
+      null,
+      '[]',
+      null,
+    ]);
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
+  it('reviewer 终态携带结构化 case_file 时把 rubric_scores/blockers/feedback_md 写进案卷行', async () => {
+    const callbackResult = {
+      status: 'completed_with_concerns',
+      summary: 'contract mostly covers the PRD',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+      decision: {
+        outcome: 'REVISION_REQUESTED',
+        reason: 'one blocker open',
+        rubric_scores: { correctness: 8, coverage: 6 },
+      },
+      case_file: {
+        blockers: [{ id: 'R2-1', dimension: 'coverage', status: 'open' }],
+        feedback_md: '# Round 2\n\nR2-1 still open.',
+      },
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      task_bundle: {
+        inputs: { contract_round: 2, contract_sha: 'a'.repeat(40) },
+      },
+      result: null,
+    };
+    const completed = { ...running, status: 'completed_with_concerns', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 5 }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    expect(client.query.mock.calls[5][0]).toMatch(/INSERT INTO gan_case_file/);
+    const [, params] = client.query.mock.calls[5];
+    expect(params[0]).toBe(input.runId);
+    expect(params[1]).toBe(2);
+    expect(params[2]).toBe('reviewer');
+    expect(params[3]).toBe(input.id);
+    expect(params[4]).toBe('a'.repeat(40));
+    expect(JSON.parse(params[5])).toEqual({ correctness: 8, coverage: 6 });
+    expect(JSON.parse(params[6])).toEqual([
+      { id: 'R2-1', dimension: 'coverage', status: 'open' },
+    ]);
+    expect(params[7]).toBe('# Round 2\n\nR2-1 still open.');
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
+  it('proposer 终态案卷行的 round 取 bundle.inputs.contract_round（proposer 推的下一轮）', async () => {
+    const callbackResult = {
+      status: 'completed',
+      summary: 'contract revised',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+      decision: null,
+      case_file: {
+        blockers: [{ id: 'R2-1', closure: 'added the missing edge-case test' }],
+        feedback_md: '# Round 3 proposal\n\nclosed R2-1.',
+      },
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'gan',
+      role: 'proposer',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      task_bundle: {
+        inputs: { contract_round: 3 },
+      },
+      result: null,
+    };
+    const completed = { ...running, status: 'completed', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    // proposer 不是 reviewer/evaluator，callbackRoleVerdictProjection 不产生
+    // 第二条 decision_log 投影，案卷写入紧跟通用 callback 事件行之后。
+    expect(client.query.mock.calls[4][0]).toMatch(/INSERT INTO gan_case_file/);
+    const [, params] = client.query.mock.calls[4];
+    expect(params[0]).toBe(input.runId);
+    expect(params[1]).toBe(3);
+    expect(params[2]).toBe('proposer');
+    expect(params[4]).toBeNull();
+    expect(JSON.parse(params[6])).toEqual([
+      { id: 'R2-1', closure: 'added the missing edge-case test' },
+    ]);
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
+  it('bundle 与 result 都没有可用轮次时跳过案卷写入，不报错也不写残缺行', async () => {
+    const callbackResult = {
+      status: 'completed',
+      summary: 'contract revised',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+      decision: null,
+      case_file: { blockers: [] },
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'gan',
+      role: 'proposer',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      task_bundle: { inputs: {} },
+      result: null,
+    };
+    const completed = { ...running, status: 'completed', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValue({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    expect(client.query.mock.calls.some(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO gan_case_file'),
+    )).toBe(false);
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
+  it('reviewer 终态既无 case_file 也无 decision 时不写案卷行', async () => {
+    const callbackResult = {
+      status: 'needs_context',
+      summary: 'need product clarification',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+      decision: null,
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      task_bundle: { inputs: { contract_round: 2 } },
+      result: null,
+    };
+    const completed = { ...running, status: 'needs_context', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValue({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    expect(client.query.mock.calls.some(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO gan_case_file'),
+    )).toBe(false);
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
 
