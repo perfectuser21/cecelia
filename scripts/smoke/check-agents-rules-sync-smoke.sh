@@ -16,17 +16,10 @@ fi
 WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 
-# Scenario 1: matching content
-cat > "$WORKDIR/a-sync.md" <<'CONTENT'
-noise before
-<!-- HARD_RULES:BEGIN -->
-1. 规则一
-2. 规则二
-<!-- HARD_RULES:END -->
-noise after
-CONTENT
-
-cp "$WORKDIR/a-sync.md" "$WORKDIR/b-sync.md"
+# Scenario 1: matching content — 三方对账脚本以 KERNEL_CONTEXT.md 为正本，fixture 必须与之一致
+KERNEL_FILE="$REPO_ROOT/packages/workflows/KERNEL_CONTEXT.md"
+cp "$KERNEL_FILE" "$WORKDIR/a-sync.md"
+cp "$KERNEL_FILE" "$WORKDIR/b-sync.md"
 
 if bash "$SCRIPT" "$WORKDIR/a-sync.md" "$WORKDIR/b-sync.md" > "$WORKDIR/sync.log" 2>&1; then
   echo "PASS: Scenario 1 - matching content"
