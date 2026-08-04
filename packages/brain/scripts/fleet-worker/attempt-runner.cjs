@@ -145,7 +145,10 @@ async function defaultWriteCredential(
   authJson,
   {
     spawnFn = spawn,
-    timeoutMs = 10_000,
+    // entrypoint.sh 要跑完约 2000 行安全/环境设置才到达打开 FIFO 读端的那一行；
+    // 10s 曾在真实 attempt（r18/r19/r20）里被容器启动开销常规性超过，导致宿主侧
+    // 写入抢先超时、容器从未真正跑起来。25s 留出约 2.5 倍冗余，仍在 60_000 硬顶内。
+    timeoutMs = 25_000,
   } = {},
 ) {
   if (
@@ -175,7 +178,8 @@ async function defaultWriteGitHubCredential(
   token,
   {
     spawnFn = spawn,
-    timeoutMs = 10_000,
+    // 同 defaultWriteCredential 的超时理由：entrypoint.sh 启动开销可轻松超过 10s。
+    timeoutMs = 25_000,
   } = {},
 ) {
   if (
