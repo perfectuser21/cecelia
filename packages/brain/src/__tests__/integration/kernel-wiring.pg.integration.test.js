@@ -10,7 +10,8 @@ import { deriveCounters } from '../../orchestrator/counters.js';
 import { derive } from '../../orchestrator/derive.js';
 import { collectGroundTruth } from '../../orchestrator/ground-truth.js';
 import { createKernelHandlers } from '../../orchestrator/kernel-handlers.js';
-import { runLoop } from '../../orchestrator/loop.js';
+import { PROGRESSING_KERNEL_PHASES, runLoop } from '../../orchestrator/loop.js';
+import { persistKernelRunPhase } from '../../orchestrator/kernel-run-store.js';
 import { createAttemptStore } from '../../orchestrator/attempt-store.js';
 import { resumeStalledRelayRuns } from '../../harness-relay-watchdog.js';
 import callbackRouter, {
@@ -1684,5 +1685,59 @@ describe('Kernel approval HTTP route on real PostgreSQL', () => {
         WHERE run_id=$1 AND action='verdict:human_review'`,
       [run.runId],
     )).rows[0].count).toBe(1);
+  });
+});
+
+// migration 382 回归守卫：367 版本的 initiative_runs_phase_check 枚举缺 'judge'，
+// 会让 persistKernelRunPhase(pool, runId, 'judge') 静默失败（CHECK 约束违反，
+// 调用方在 loop.js 里把这类失败降级为告警，不会显式抛错让测试变红）。这条测试
+// 直接对真实迁移后的 Postgres 断言 phase 真的变成了 'judge'——382 之前这个断言
+// 不可能过（要么 UPDATE 命中 0 行、要么直接抛 CHECK 违反错误），382 之后必须绿。
+describe('Kernel run store phase CHECK constraint（migration 382）', () => {
+  // I-4 审查修正：参数化遍历 loop.js 导出的 PROGRESSING_KERNEL_PHASES 白名单
+  // 本身，而不是只硬编码 'judge' 一个值——白名单和 DB CHECK 约束漂移（比如
+  // 未来给白名单加了新相位但忘了同步 migration）会在这里立刻变红，而不是像
+  // 382 之前那样静默降级为一条告警日志。
+  it.each([...PROGRESSING_KERNEL_PHASES])(
+    'persistKernelRunPhase 可以把 run.phase 真实写成 %s',
+    async (phase) => {
+      const run = await seedRun();
+      const seedPhase = phase === 'planning' ? 'gan' : 'planning';
+      await testPool.query(
+        `UPDATE initiative_runs SET phase=$2 WHERE id=$1`,
+        [run.runId, seedPhase],
+      );
+
+      const result = await persistKernelRunPhase(testPool, run.runId, phase);
+
+      expect(result).toMatchObject({ id: run.runId, phase });
+      const persisted = await testPool.query(
+        'SELECT phase FROM initiative_runs WHERE id=$1',
+        [run.runId],
+      );
+      expect(persisted.rows[0].phase).toBe(phase);
+    },
+  );
+
+  // I-2 审查修正：paused 是 needs_context 人审等待态（markRunPaused 写入），
+  // 真实触发场景是 loop 崩溃重启后重新算出一个活跃 decision.phase 并调用
+  // persistKernelRunPhase——此时绝不能把仍在等待 context-answer 的 run 行
+  // 覆写掉，否则 activateContextResume 的 WHERE r.phase='paused' 会命中 0
+  // 行，锚点永久丢失、resume 卡死。
+  it('当前行是 paused（needs_context 人审等待）时不覆写，锚点保留', async () => {
+    const run = await seedRun();
+    await testPool.query(
+      `UPDATE initiative_runs SET phase='paused' WHERE id=$1`,
+      [run.runId],
+    );
+
+    const result = await persistKernelRunPhase(testPool, run.runId, 'gan');
+
+    expect(result).toBeNull();
+    const persisted = await testPool.query(
+      'SELECT phase FROM initiative_runs WHERE id=$1',
+      [run.runId],
+    );
+    expect(persisted.rows[0].phase).toBe('paused');
   });
 });
