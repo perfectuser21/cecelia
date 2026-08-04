@@ -806,4 +806,115 @@ router.post('/cascade-list', async (req, res) => {
   }
 });
 
+// GET /api/brain/ledger — 11要素账本（journey_features 视图，单次查询）
+// 可选参数: ?journey_id=xxx 过滤到单个 journey；?limit=N（默认200，最大1000）
+router.get('/ledger', async (req, res) => {
+  try {
+    const journeyId = req.query.journey_id || null;
+    const limit = Math.min(parseInt(req.query.limit) || 200, 1000);
+
+    // 1. 拉取 journey_features，JOIN journeys 取 e2e_test_path 和 journey 名
+    const { rows: features } = journeyId
+      ? await pool.query(
+          `SELECT jf.*, j.name AS journey_name, j.e2e_test_path
+             FROM journey_features jf
+             LEFT JOIN journeys j ON j.id = jf.journey_id
+            WHERE jf.journey_id = $1
+            ORDER BY jf.created_at DESC
+            LIMIT $2`,
+          [journeyId, limit]
+        )
+      : await pool.query(
+          `SELECT jf.*, j.name AS journey_name, j.e2e_test_path
+             FROM journey_features jf
+             LEFT JOIN journeys j ON j.id = jf.journey_id
+            WHERE jf.name NOT LIKE 'gp-agg-smoke%'
+            ORDER BY jf.created_at DESC
+            LIMIT $1`,
+          [limit]
+        );
+
+    // 2. 拉取相关 decisions（NFR/invariant/gate）
+    const allIds = [...new Set(
+      features.flatMap(f => [f.id, f.journey_id].filter(Boolean))
+    )];
+    const { rows: decisions } = allIds.length
+      ? await pool.query(
+          `SELECT id, category, topic, status, target_id, target_type
+             FROM decisions
+            WHERE status = 'active'
+              AND target_id = ANY($1)`,
+          [allIds]
+        )
+      : { rows: [] };
+
+    // 按 target_id 聚合
+    const nfrMap = {};
+    const invMap = {};
+    const gateMap = {};
+    for (const d of decisions) {
+      if (d.category === 'nfr') {
+        nfrMap[d.target_id] = (nfrMap[d.target_id] || 0) + 1;
+      }
+      if (d.category === 'invariant' || (d.topic && d.topic.includes('不变量'))) {
+        invMap[d.target_id] = (invMap[d.target_id] || 0) + 1;
+      }
+      if (d.category === 'gate' || (d.topic && (d.topic.includes('判定') || d.topic.includes('验收')))) {
+        gateMap[d.target_id] = (gateMap[d.target_id] || 0) + 1;
+      }
+    }
+
+    // 3. 计算每条 feature 的 11 要素覆盖
+    const STALE_DAYS = 30;
+    const now = Date.now();
+    const rows = features.map(f => {
+      const days = Math.floor((now - new Date(f.updated_at).getTime()) / 86400000);
+      const nfrCnt = (nfrMap[f.id] || 0) + (nfrMap[f.journey_id] || 0);
+      const invCnt = (invMap[f.id] || 0) + (invMap[f.journey_id] || 0);
+      const gateCnt = (gateMap[f.id] || 0) + (gateMap[f.journey_id] || 0);
+
+      const coverage = {
+        fr:          (f.name && f.name.length > 5) ? 'present' : 'missing',
+        nfr:         nfrCnt > 0 ? 'present' : 'unknown',
+        invariant:   invCnt > 0 ? 'present' : 'unknown',
+        gate:        gateCnt > 0 ? 'present' : 'unknown',
+        ttl:         f.unit_test_path ? 'present' : 'missing',
+        death:       f.guard_ref ? 'present' : 'missing',
+        failure:     (f.unit_test_path || f.guard_ref) ? 'present' : 'missing',
+        e2e:         f.e2e_test_path ? 'present' : 'missing',
+        adversarial: 'unknown',
+        freshness:   days > STALE_DAYS ? 'stale' : 'present',
+        twoaxis:     f.area_id ? 'present' : 'unknown',
+      };
+      const coverage_score = Object.values(coverage).filter(v => v === 'present').length;
+
+      return {
+        id: f.id,
+        name: f.name,
+        journey_id: f.journey_id,
+        journey_name: f.journey_name || null,
+        status: f.status,
+        kind: f.kind,
+        thickness: f.thickness,
+        area_id: f.area_id,
+        unit_test_path: f.unit_test_path,
+        guard_ref: f.guard_ref,
+        workflow_ref: f.workflow_ref,
+        updated_at: f.updated_at,
+        created_at: f.created_at,
+        coverage,
+        coverage_score,
+      };
+    });
+
+    res.json({
+      rows,
+      meta: { total: rows.length, journey_id: journeyId },
+    });
+  } catch (err) {
+    console.error('[journeys] GET /ledger error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

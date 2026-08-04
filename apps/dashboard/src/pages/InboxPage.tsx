@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 interface Capture {
   id: string;
@@ -31,7 +32,8 @@ interface CaptureAtom {
 
 interface CaptureDetail extends Capture {
   atoms: CaptureAtom[];
-  backlinks: Array<{ table: string; id: string; summary: string }>;
+  backlinks: Array<{ table: string; id: string; summary: string; navigate_url: string | null }>;
+  done_at?: string | null;
 }
 
 interface CountsByStage {
@@ -74,6 +76,7 @@ function formatAge(created_at: string) {
 }
 
 export default function InboxPage() {
+  const navigate = useNavigate();
   const [counts, setCounts] = useState<CountsByStage>({ captured: 0, clarified: 0, done: 0, dropped: 0 });
   const [items, setItems] = useState<Capture[]>([]);
   const [total, setTotal] = useState(0);
@@ -83,6 +86,7 @@ export default function InboxPage() {
   const [selectedItem, setSelectedItem] = useState<CaptureDetail | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [page, setPage] = useState(0);
+  const [markingDone, setMarkingDone] = useState<string | null>(null);
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -138,6 +142,25 @@ export default function InboxPage() {
   const handleRetry = async (atomId: string) => {
     await fetch(`/api/brain/capture-atoms/${atomId}/retry`, { method: 'POST' });
     if (selectedItem) openDetail(selectedItem.id);
+  };
+
+  const handleMarkDone = async (captureId: string) => {
+    setMarkingDone(captureId);
+    try {
+      const resp = await fetch(`/api/brain/captures/${captureId}/done`, { method: 'PATCH' });
+      const data = await resp.json();
+      fetchList();
+      if (data.navigate_url) {
+        navigate(data.navigate_url);
+        return;
+      }
+      // 没有去向 URL 则刷新详情
+      openDetail(captureId);
+    } catch (err) {
+      console.error('[InboxPage] mark done failed', err);
+    } finally {
+      setMarkingDone(null);
+    }
   };
 
   // parked atom 数（从 items 中取 status=parked 的条目聚合）
@@ -313,9 +336,23 @@ export default function InboxPage() {
                     {atom.routed_to_table && (
                       <p className="text-green-600 dark:text-green-400">
                         → {atom.routed_to_table}
-                        {atom.routed_to_table === 'tasks' && atom.routed_to_id && (
-                          <a href={`/tasks/${atom.routed_to_id}`} className="ml-1 text-blue-500 hover:underline">[跳转]</a>
-                        )}
+                        {atom.routed_to_id && (() => {
+                          const urlMap: Record<string, string> = {
+                            tasks: `/tasks/${atom.routed_to_id}/prd`,
+                            golden_paths: `/warroom/gp/${atom.routed_to_id}`,
+                            journeys: `/warroom/line/${atom.routed_to_id}`,
+                          };
+                          const url = urlMap[atom.routed_to_table];
+                          return url ? (
+                            <a
+                              href={url}
+                              data-testid="destination-link"
+                              className="ml-1 text-blue-500 hover:underline"
+                            >[跳转]</a>
+                          ) : (
+                            <span className="ml-1 text-slate-400 text-xs">{atom.routed_to_id.slice(0, 8)}</span>
+                          );
+                        })()}
                       </p>
                     )}
                     {/* parked 条目改判交互 */}
@@ -342,15 +379,39 @@ export default function InboxPage() {
               </div>
             )}
 
-            {/* 回链 */}
+            {/* 去向回链（可导航） */}
             {selectedItem.backlinks && selectedItem.backlinks.length > 0 && (
               <div className="space-y-1">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">回链</h3>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">去向</h3>
                 {selectedItem.backlinks.map((bl, i) => (
-                  <div key={i} className="text-xs text-slate-500">
-                    {bl.table}/{bl.id?.slice(0, 8)}... — {bl.summary}
+                  <div key={i} className="text-xs">
+                    {bl.navigate_url ? (
+                      <a
+                        href={bl.navigate_url}
+                        data-testid="backlink-navigate"
+                        className="text-blue-500 hover:underline"
+                      >
+                        {bl.table}/{bl.id?.slice(0, 8)}… — {bl.summary}
+                      </a>
+                    ) : (
+                      <span className="text-slate-500">{bl.table}/{bl.id?.slice(0, 8)}… — {bl.summary}</span>
+                    )}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* 归位完成按钮 */}
+            {selectedItem.status !== 'done' && selectedItem.status !== 'dropped' && (
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                <button
+                  data-testid="mark-done-btn"
+                  onClick={() => handleMarkDone(selectedItem.id)}
+                  disabled={markingDone === selectedItem.id}
+                  className="w-full text-sm px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-medium disabled:opacity-50 transition-colors"
+                >
+                  {markingDone === selectedItem.id ? '处理中...' : '归位完成 →'}
+                </button>
               </div>
             )}
           </div>
