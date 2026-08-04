@@ -18,7 +18,7 @@ describe('writeCascadeCellStatuses — S3 格子状态回写', () => {
     vi.unstubAllGlobals();
   });
 
-  it('[BEHAVIOR] ran=true + result=pass → PATCH journey_step_links cell_status=green', async () => {
+  it('[BEHAVIOR] ran=true + result=pass → PATCH journey_step_links cell_status=green + assertion_ref', async () => {
     const cascade = [
       { link_id: 'l1', assertion_ref: 'tests/crm.test.ts', ran: true, result: 'pass' },
     ];
@@ -28,7 +28,7 @@ describe('writeCascadeCellStatuses — S3 格子状态回写', () => {
       'http://localhost:5221/api/brain/journey_step_links/l1',
       expect.objectContaining({
         method: 'PATCH',
-        body: JSON.stringify({ cell_status: 'green' }),
+        body: JSON.stringify({ cell_status: 'green', assertion_ref: 'tests/crm.test.ts' }),
       })
     );
   });
