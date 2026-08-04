@@ -4,7 +4,7 @@ journey_type: autonomous
 ---
 # Contract DoD — Sprint: watchdog liveness「从未启动」误判 liveness_dead 修复（防复发）
 
-**范围**: packages/brain/src/executor.js（checkExitReason/liveness 探针分类）+ packages/brain/src/dev-failure-classifier.js（never_started 识别）+ 回归测试永久入 CI。不含：capture_atoms 路由、S2 豁免名单、1dfa40f7 补锚重跑
+**范围**: packages/brain/src/executor.js（checkExitReason/liveness 探针分类 + requeueTask 内 failure learning 文本真根因保真）+ packages/brain/src/dev-failure-classifier.js（never_started 识别）+ 回归测试永久入 CI。不含：capture_atoms 路由逻辑改动（PRD 排除的是路由逻辑；learnings 失败学习行文本保真在范围内，其 INSERT 位于 executor.js）、S2 豁免名单、1dfa40f7 补锚重跑
 **大小**: S
 
 ## ARTIFACT 条目
@@ -24,8 +24,8 @@ journey_type: autonomous
 ## BEHAVIOR 条目（journey_type=autonomous，真 Postgres cecelia_test + 真模块 + 真 ps，零 mock）
 
 > 4 类标准场景映射：本任务无 HTTP Response Schema（纯内部分类修复），对应关系为——
-> 「schema 字段值」→ B1（DB 可观测字段 watchdog_kill.reason 字面值）；「禁用字段反向」→ B1 内含 not-liveness_dead/not-process_disappeared 反向断言；
-> 「数据完整性」→ B2（error_message/failure_class 不被覆盖）；「error/边界 path」→ B3/B4（曾启动回归 + 有日志边界）+ B5（下游误分类通道封堵）。
+> 「schema 字段值」→ B1（DB 可观测字段 watchdog_kill.reason 字面值）；「禁用字段反向」→ B1 内含 not-liveness_dead/not-process_disappeared 反向断言 + B7 学习文本 not-liveness_dead 反向；
+> 「数据完整性」→ B2（error_message/failure_class 不被覆盖）+ B7（PRD 行 20 (b)：failure learning 文本真根因保真）；「error/边界 path」→ B3/B4（曾启动回归 + 有日志边界）+ B5（下游误分类通道封堵）。
 
 - [ ] [BEHAVIOR] 从未启动任务（started_at=null ∧ 无进程日志 ∧ pid 未跟踪）双确认后 watchdog_kill.reason 为 never_started（真 PG 落库断言，含 not liveness_dead/process_disappeared 反向）
   Test: manual:bash -c 'NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t "watchdog_kill.reason 为 never_started"'
@@ -51,6 +51,10 @@ journey_type: autonomous
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/integration/liveness-never-started.integration.test.js --config vitest.integration.config.js'
   期望: exit 0（未毕业/未登记白名单时 vitest 报 No test files found exit 1——登记被执行路径隐式强制）
 
+- [ ] [BEHAVIOR] failure learning 文本真根因保真（PRD 行 20 (b)，r2 补）：never_started 任务双确认后 learnings 表该任务失败学习行（task_id 定位 + trigger_event='watchdog_kill' + created_at 5 分钟时间窗防历史冒充）存在，且文本含 never_started、不含 liveness_dead 假标签（真 Postgres cecelia_test 零 mock）
+  Test: manual:bash -c 'NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t "failure learning 文本含真实根因标签"'
+  期望: exit 0（实现前实测 exit 1 = 真红：现 title/content 取 requeue 通道参数，含 [liveness_dead] 且缺 never_started）
+
 ## Invariant 覆盖（PRD 铁律 58 条逐条映射：可执行 INV 条目 或 显式 N/A）
 
 - [ ] [BEHAVIOR] INV-3 起草涉及表字段的合同/测试前 psql 核对真实列名（tasks 表 started_at/error_message/payload 三列实存）
@@ -64,7 +68,7 @@ journey_type: autonomous
 
 非可执行条目逐条声明（编号按 PRD Invariant 段顺序，1-58）：
 
-- INV-1 触发条件窄路径两层验证法：采纳——B1/B2/B6 即「同机制真实端到端触发（零 mock）」层；auto-learning 传参保真由 B1 的 watchdog_kill.reason DB 断言钉死（写入 watchdog_kill 与传给 auto-learning 的是同一 evidence 对象），source-code inspection 层由 code-review-gate 覆盖
+- INV-1 触发条件窄路径两层验证法：采纳——B1/B2/B6/B7 即「同机制真实端到端触发（零 mock）」层；auto-learning 传参保真由 B1 的 watchdog_kill.reason DB 断言钉死（写入 watchdog_kill 与传给 auto-learning 的是同一 evidence 对象），requeueTask 学习文本保真由 B7 learnings 行真 PG 断言钉死，source-code inspection 层由 code-review-gate 覆盖
 - INV-2 DB_NAME 写入侧/校验侧同源：结构满足——写入侧 node 走 db-config.js（NODE_ENV=test→cecelia_test 单源），校验侧 psql 由 E2E 脚本单一 TEST_DB_NAME 变量派生，无两处默认值；db-config.js 含测试环境禁连生产库 guard
 - INV-3 见上方可执行条目
 - INV-4 见上方可执行条目
@@ -133,6 +137,7 @@ journey_type: autonomous
 | B4 有日志边界 | bash→npx vitest | 0 | 现状绿 ✓（边界护栏性质） |
 | B5 classifier 保真 | bash→node | 1 | 真红 ✓（现判 transient） |
 | B6 毕业+白名单 | bash→npx vitest | 1 | 真红 ✓（文件不存在→No test files found） |
+| B7 学习文本保真（r2 补） | bash→npx vitest | 1 | 真红 ✓（现文本含 [liveness_dead] 缺 never_started，2026-08-03 实测） |
 | ARTIFACT-1 sprint 测试存在 | node | 0 | 已交付 ✓ |
 | ARTIFACT-2 毕业文件存在 | node | 1 | 真红 ✓ |
 | ARTIFACT-3 白名单登记 | node | 1 | 真红 ✓ |
@@ -140,4 +145,4 @@ journey_type: autonomous
 | INV-3 列名核对 | bash→psql | 0 | 环境前提成立 ✓ |
 | INV-4 枚举复查 | bash→grep 循环 | 1 | 真红 ✓（executor.js 无 never_started） |
 
-假绿自查（每条心测「代码一行不写会 FAIL 吗」）：B1/B2/B5/B6 + ARTIFACT-2/3 + INV-4 全部 YES（实测红）；B3/B4/ARTIFACT-4/INV-3 为回归护栏/环境前提，性质即「现状绿、防退化」，非实现性断言。
+假绿自查（每条心测「代码一行不写会 FAIL 吗」）：B1/B2/B5/B6/B7 + ARTIFACT-2/3 + INV-4 全部 YES（实测红）；B3/B4/ARTIFACT-4/INV-3 为回归护栏/环境前提，性质即「现状绿、防退化」，非实现性断言。
