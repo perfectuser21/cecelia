@@ -12,16 +12,16 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] sprint 红测试文件原样保留（CONTRACT IS LAW 锚）且零 mock（无 vi.mock( 调用）
+- [x] [ARTIFACT] sprint 红测试文件原样保留（CONTRACT IS LAW 锚）且零 mock（无 vi.mock( 调用）
   Test: node -e "const c=require('fs').readFileSync('sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts','utf8');if(!c.includes('never_started')||!c.includes('process_disappeared')||c.includes('vi.mock('))process.exit(1)"
 
-- [ ] [ARTIFACT] 毕业回归测试存在于 packages/brain/src/__tests__/integration/ 且零 mock（PRD「永久回归测试入 CI」载体）
+- [x] [ARTIFACT] 毕业回归测试存在于 packages/brain/src/__tests__/integration/ 且零 mock（PRD「永久回归测试入 CI」载体）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/liveness-never-started.integration.test.js','utf8');if(!c.includes('never_started')||!c.includes('process_disappeared')||c.includes('vi.mock('))process.exit(1)"
 
-- [ ] [ARTIFACT] 毕业测试已登记 vitest.config.js POSTGRES_INTEGRATION_TESTS（brain-integration job 机械入口）
+- [x] [ARTIFACT] 毕业测试已登记 vitest.config.js POSTGRES_INTEGRATION_TESTS（brain-integration job 机械入口）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/vitest.config.js','utf8');if(!c.includes('liveness-never-started.integration.test.js'))process.exit(1)"
 
-- [ ] [ARTIFACT] 共享 CI 基础设施零改动（.github/workflows/ 禁区铁律）
+- [x] [ARTIFACT] 共享 CI 基础设施零改动（.github/workflows/ 禁区铁律）
   Test: bash -c 'git fetch origin main --quiet 2>/dev/null; [ -z "$(git diff --name-only origin/main...HEAD -- .github/workflows/)" ] || exit 1; echo OK'
 
 ## BEHAVIOR 条目（journey_type=autonomous，真 Postgres cecelia_test + 真模块 + 真 ps，零 mock）
@@ -30,42 +30,42 @@ journey_type: autonomous
 > 「schema 字段值」→ B1（DB 可观测字段 watchdog_kill.reason 字面值）；「禁用字段反向」→ B1 内含 not-liveness_dead/not-process_disappeared 反向断言 + B7 学习文本 not-liveness_dead 反向；
 > 「数据完整性」→ B2（error_message/failure_class 不被覆盖）+ B7（PRD 行 20 (b)：failure learning 文本真根因保真）；「error/边界 path」→ B3/B4（曾启动回归 + 有日志边界）+ B5（下游误分类通道封堵）。
 
-- [ ] [BEHAVIOR] 从未启动任务（started_at=null ∧ 无进程日志 ∧ pid 未跟踪）双确认后 watchdog_kill.reason 为 never_started（真 PG 落库断言，含 not liveness_dead/process_disappeared 反向）
+- [x] [BEHAVIOR] 从未启动任务（started_at=null ∧ 无进程日志 ∧ pid 未跟踪）双确认后 watchdog_kill.reason 为 never_started（真 PG 落库断言，含 not liveness_dead/process_disappeared 反向）
   Test: manual:bash -c 'NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t "watchdog_kill.reason 为 never_started"'
   期望: exit 0（实现前实测 exit 1 = 真红）
 
-- [ ] [BEHAVIOR] 从未启动任务已有 error_message（S2 拒绝原文）与 payload.failure_class=missing_anchor 不被 watchdog 记账覆盖
+- [x] [BEHAVIOR] 从未启动任务已有 error_message（S2 拒绝原文）与 payload.failure_class=missing_anchor 不被 watchdog 记账覆盖
   Test: manual:bash -c 'NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t "不被 watchdog 记账覆盖"'
   期望: exit 0（实现前实测 exit 1 = 真红，联合分类断言）
 
-- [ ] [BEHAVIOR] 回归护栏：曾启动任务（started_at 非空 + 进程日志存在）仍判 process_disappeared，行为与现状完全一致
+- [x] [BEHAVIOR] 回归护栏：曾启动任务（started_at 非空 + 进程日志存在）仍判 process_disappeared，行为与现状完全一致
   Test: manual:bash -c 'NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t "仍判 process_disappeared"'
   期望: exit 0（现状即绿，实现后不得变红——防误改）
 
-- [ ] [BEHAVIOR] 边界：started_at=null 但存在进程日志（确实曾启动）→ 不判 never_started，仍走既有 process_disappeared 判定
+- [x] [BEHAVIOR] 边界：started_at=null 但存在进程日志（确实曾启动）→ 不判 never_started，仍走既有 process_disappeared 判定
   Test: manual:bash -c 'NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t "不判 never_started"'
   期望: exit 0（现状即绿，钉死判定面不扩大）
 
-- [ ] [BEHAVIOR] 下游分类保真：classifyDevFailure 对 never_started 失败文本不落 transient 环境重试通道（liveness_dead 假标签的下游闸口）
+- [x] [BEHAVIOR] 下游分类保真：classifyDevFailure 对 never_started 失败文本不落 transient 环境重试通道（liveness_dead 假标签的下游闸口）
   Test: manual:bash -c 'node -e "import(\"./packages/brain/src/dev-failure-classifier.js\").then(m=>{const r=m.classifyDevFailure({error:\"[watchdog] liveness_probe_failed reason=never_started\"});process.exit(r.class===\"transient\"?1:0)})"'
   期望: exit 0（实现前实测 exit 1 = 真红：现命中 /\[watchdog\]/i 误判 transient）
 
-- [ ] [BEHAVIOR] 回归测试已毕业入 CI 并在真 Postgres 下全绿（brain-integration job 同款命令）
+- [x] [BEHAVIOR] 回归测试已毕业入 CI 并在真 Postgres 下全绿（brain-integration job 同款命令）
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/integration/liveness-never-started.integration.test.js --config vitest.integration.config.js'
   期望: exit 0（未毕业/未登记白名单时 vitest 报 No test files found exit 1——登记被执行路径隐式强制）
 
-- [ ] [BEHAVIOR] failure learning 文本真根因保真（PRD 行 20 (b)，r2 补）：never_started 任务双确认后 learnings 表该任务失败学习行（task_id 定位 + trigger_event='watchdog_kill' + created_at 5 分钟时间窗防历史冒充）存在，且文本含 never_started、不含 liveness_dead 假标签（真 Postgres cecelia_test 零 mock）
+- [x] [BEHAVIOR] failure learning 文本真根因保真（PRD 行 20 (b)，r2 补）：never_started 任务双确认后 learnings 表该任务失败学习行（task_id 定位 + trigger_event='watchdog_kill' + created_at 5 分钟时间窗防历史冒充）存在，且文本含 never_started、不含 liveness_dead 假标签（真 Postgres cecelia_test 零 mock）
   Test: manual:bash -c 'NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t "failure learning 文本含真实根因标签"'
   期望: exit 0（实现前实测 exit 1 = 真红：现 title/content 取 requeue 通道参数，含 [liveness_dead] 且缺 never_started）
 
 ## Invariant 覆盖（PRD 铁律 58 条逐条映射：可执行 INV 条目 或 显式 N/A）
 
-- [ ] [BEHAVIOR] INV-3 起草涉及表字段的合同/测试前 psql 核对真实列名（tasks 表 started_at/error_message/payload 三列实存）
+- [x] [BEHAVIOR] INV-3 起草涉及表字段的合同/测试前 psql 核对真实列名（tasks 表 started_at/error_message/payload 三列实存）
   Test: manual:bash -c 'C=$(psql postgresql://localhost:5432/cecelia_test -t -A -c "SELECT count(*) FROM information_schema.columns WHERE table_name='"'"'tasks'"'"' AND column_name IN ('"'"'started_at'"'"','"'"'error_message'"'"','"'"'payload'"'"')"); [ "$C" = "3" ] || exit 1; echo OK'
   期望: OK（proposer 起草时已实查通过，evaluator 复跑防漂移）
   gate-allow: domain/db-no-time-window INV-3 为 information_schema 列元数据核对（表结构存在性），非业务数据聚合，无历史数据冒充面
 
-- [ ] [BEHAVIOR] INV-4 新增枚举值全仓库 grep 复查：引用 process_disappeared 枚举的生产源文件必须同时处理 never_started（ASSUMPTION 兑现）
+- [x] [BEHAVIOR] INV-4 新增枚举值全仓库 grep 复查：引用 process_disappeared 枚举的生产源文件必须同时处理 never_started（ASSUMPTION 兑现）
   Test: manual:bash -c 'for f in $(grep -rln "process_disappeared" packages/brain/src --include="*.js" | grep -v __tests__); do grep -q "never_started" "$f" || exit 1; done; echo OK'
   期望: OK（实现前实测 exit 1 = 真红：executor.js 现无 never_started）
 

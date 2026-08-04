@@ -134,6 +134,7 @@ ledger-hygiene-smoke.sh
 line-context-smoke.sh
 line-dreaming-smoke.sh
 line-strategist-dispatch-smoke.sh
+liveness-never-started-smoke.sh
 migration-339-drop-abilities-gp-priority-smoke.sh
 migration-346-idempotent-smoke.sh
 migration-verify.sh

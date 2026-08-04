@@ -29,6 +29,7 @@ export const DEV_FAILURE_CLASS = {
   AUTH: 'auth',              // 权限/认证错误
   RESOURCE: 'resource',      // 资源不足
   ENV_BROKEN: 'env_broken',  // 容器环境结构性故障：skill 未部署 / 二进制缺失（重试无意义）
+  NEVER_STARTED: 'never_started', // 进程从未启动：派发前被拒（如 S2 锚点执法拒绝点火），环境重试无意义
   UNKNOWN: 'unknown',        // 无法识别
 };
 
@@ -133,6 +134,13 @@ const ENV_BROKEN_PATTERNS = [
   /Did\s+you\s+mean\s+\S+\?/i,
 ];
 
+// never_started：进程从未启动（派发前被拒，如 S2 锚点执法拒绝点火）——1dfa40f7 下游闸口。
+// 必须先于 TRANSIENT 匹配：never_started 失败文本常含 [watchdog] 前缀，会被
+// /\[watchdog\]/i 误吞成 transient（= liveness_dead 环境重试假通道），把真根因静默改写。
+const NEVER_STARTED_PATTERNS = [
+  /never_started/i,
+];
+
 // ============================================================
 // 重试配置
 // ============================================================
@@ -183,6 +191,8 @@ export function classifyDevFailure(result, status = 'AI Failed', context = {}) {
     { patterns: ENV_BROKEN_PATTERNS, class: DEV_FAILURE_CLASS.ENV_BROKEN },
     { patterns: AUTH_PATTERNS, class: DEV_FAILURE_CLASS.AUTH },
     { patterns: RESOURCE_PATTERNS, class: DEV_FAILURE_CLASS.RESOURCE },
+    // never_started 先于 transient：防 [watchdog] 宽松规则把真根因吞成环境重试假通道
+    { patterns: NEVER_STARTED_PATTERNS, class: DEV_FAILURE_CLASS.NEVER_STARTED },
     { patterns: TRANSIENT_PATTERNS, class: DEV_FAILURE_CLASS.TRANSIENT },
     { patterns: CODE_ERROR_PATTERNS, class: DEV_FAILURE_CLASS.CODE_ERROR },
   ];
@@ -246,6 +256,14 @@ function buildResult(failureClass, errorMsg, retryCount) {
         class: failureClass,
         retryable: false,
         reason: 'Container environment broken (skill/tool missing) - requires deployment fix',
+        previous_failure: previousFailure,
+      };
+
+    case DEV_FAILURE_CLASS.NEVER_STARTED:
+      return {
+        class: failureClass,
+        retryable: false,
+        reason: 'Process never started (dispatch rejected before launch, e.g. missing anchor) - fix root cause first',
         previous_failure: previousFailure,
       };
 
