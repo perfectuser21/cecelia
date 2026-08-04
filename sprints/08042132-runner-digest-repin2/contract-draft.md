@@ -6,16 +6,12 @@
 
 ---
 
-## Test Contract 表
+## Test Contract
 
-| ID | 行为描述 | 测试锚点 | 类型 |
-|----|---------|---------|------|
-| B1 | 全仓可执行路径不含旧 digest 5c202d56 | git grep 断言 | [BEHAVIOR] |
-| B2 | `fleet-rollout.sh` 含 `verify_runner_label` 函数 | declare -f 断言 | [BEHAVIOR] |
-| B3 | `verify_runner_label` 对无 label 镜像 loud-fail | fleet-rollout.test.sh 新增测试 | [BEHAVIOR] |
-| B4 | `docker/build.sh` 构建时写入 `cecelia.entrypoint.sha256` label | build.sh grep 断言 | [BEHAVIOR] |
-| B5 | `node-profile.test.js` EXPECTED_RUNNER_DIGEST 与 fleet-rollout.sh RUNNER_DIGEST 一致 | jest 既有测试（digest 更新后） | [BEHAVIOR] |
-| B6 | Brain 版本 bump 到 1.267.216，三处文件同步 | version-sync 脚本 | [BEHAVIOR] |
+| Workstream | Test File | Behavior |
+|---|---|---|
+| B3 | `packages/brain/scripts/fleet-worker/fleet-rollout.test.sh` | verify_runner_label exists in fleet-rollout.sh / verify_runner_label rejects images without label |
+| B5 | `packages/brain/src/orchestrator/fleet-node/node-profile.test.js` | pins one immutable sha256 Runner digest and never admits a floating tag / keeps NodeProfile, rollout, and node reconciler on the verified origin/main Runner |
 
 ---
 
