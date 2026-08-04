@@ -2,6 +2,7 @@
  * /api/brain/captures — 统一进箱端点 + CRUD
  * FR-3: POST /api/brain/captures（进箱+幂等）
  * FR-8: GET/GET/:id（列表+详情+计数）
+ * F6-S3: GET /aging（账龄哨兵）, PATCH /:id/done（归位完成）
  */
 import { Router } from 'express';
 import pool from '../db.js';
@@ -10,6 +11,19 @@ const router = Router();
 
 const VALID_SOURCES = ['harness', 'dashboard', 'feishu', 'api', 'conversation-claude', 'conversation-codex', 'conversation-grok'];
 const VALID_NATURES = ['learning', 'issue', 'handoff', 'session_summary'];
+
+/** 根据 routed_to_table 生成前端导航 URL */
+function getNavigateUrl(table, id) {
+  if (!table || !id) return null;
+  switch (table) {
+    case 'tasks':        return `/tasks/${id}/prd`;
+    case 'golden_paths': return `/warroom/gp/${id}`;
+    case 'journeys':     return `/warroom/line/${id}`;
+    case 'decisions':    return `/warroom?decision=${id}`;
+    case 'notes':        return `/knowledge/doc-chat?note=${id}`;
+    default:             return null;
+  }
+}
 
 // POST /api/brain/captures
 router.post('/', async (req, res) => {
@@ -69,6 +83,27 @@ router.post('/', async (req, res) => {
       return res.status(200).json({ ...existing.rows[0], dedupe_hit: true });
     }
     res.status(500).json({ error: 'Failed to create capture', details: err.message });
+  }
+});
+
+// GET /api/brain/captures/aging — 账龄哨兵：超期未处理条目
+router.get('/aging', async (req, res) => {
+  try {
+    const days = Math.max(1, parseInt(req.query.days || '7', 10));
+    const limit = Math.min(100, parseInt(req.query.limit || '50', 10));
+    const { rows } = await pool.query(
+      `SELECT id, content, source, status, created_at,
+              EXTRACT(DAY FROM (NOW() - created_at))::INT AS age_days
+       FROM captures
+       WHERE status NOT IN ('done','dropped')
+         AND created_at < NOW() - ($1 || ' days')::INTERVAL
+       ORDER BY created_at ASC
+       LIMIT $2`,
+      [days, limit]
+    );
+    res.json({ overdue: rows, count: rows.length, threshold_days: days });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to query aging captures', details: err.message });
   }
 });
 
@@ -140,12 +175,43 @@ router.get('/', async (req, res) => {
   }
 });
 
+// PATCH /api/brain/captures/:id/done — 归位完成，写 done_at + status=done + 返回 navigate_url
+router.patch('/:id/done', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rows } = await pool.query(
+      `UPDATE captures SET status='done', done_at=NOW(), updated_at=NOW()
+       WHERE id=$1 AND status NOT IN ('done','dropped')
+       RETURNING id, status, done_at`,
+      [id]
+    );
+    if (!rows.length) {
+      // 已是 done/dropped 或不存在，幂等返回当前状态
+      const cur = await pool.query('SELECT id, status, done_at FROM captures WHERE id=$1', [id]);
+      if (!cur.rows.length) return res.status(404).json({ error: 'capture not found' });
+      return res.json(cur.rows[0]);
+    }
+    // 找最近已路由的 atom，生成导航 URL
+    const atomRes = await pool.query(
+      `SELECT routed_to_table, routed_to_id FROM capture_atoms
+       WHERE capture_id=$1 AND routed_to_table IS NOT NULL AND routed_to_id IS NOT NULL
+       ORDER BY created_at DESC LIMIT 1`,
+      [id]
+    );
+    const atom = atomRes.rows[0];
+    const navigate_url = atom ? getNavigateUrl(atom.routed_to_table, atom.routed_to_id) : null;
+    res.json({ ...rows[0], navigate_url });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to mark capture done', details: err.message });
+  }
+});
+
 // GET /api/brain/captures/:id
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const captureResult = await pool.query(
-      `SELECT id, content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status, created_at, updated_at
+      `SELECT id, content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status, done_at, created_at, updated_at
        FROM captures WHERE id = $1`,
       [id]
     );
@@ -161,13 +227,14 @@ router.get('/:id', async (req, res) => {
       [id]
     );
 
-    // 构建回链
+    // 构建回链，附带前端导航 URL
     const backlinks = atomsResult.rows
       .filter(a => a.routed_to_table && a.routed_to_id)
       .map(a => ({
         table: a.routed_to_table,
         id: a.routed_to_id,
         summary: `${a.target_type} → ${a.routed_to_table}`,
+        navigate_url: getNavigateUrl(a.routed_to_table, a.routed_to_id),
       }));
 
     res.json({ ...capture, atoms: atomsResult.rows, backlinks });
