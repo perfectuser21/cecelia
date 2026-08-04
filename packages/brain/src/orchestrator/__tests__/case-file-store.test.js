@@ -73,7 +73,7 @@ describe('insertCaseFileRow', () => {
 });
 
 describe('loadCaseFile', () => {
-  it('按 run_id 全量读回，SQL 按 round,author_role 升序排序', async () => {
+  it('按 run_id 全量读回，SQL 按 round,author_role 升序排序，默认 fullTextRounds=2', async () => {
     const rows = [
       { id: 'a', run_id: RUN_ID, round: 1, author_role: 'proposer' },
       { id: 'b', run_id: RUN_ID, round: 1, author_role: 'reviewer' },
@@ -84,8 +84,21 @@ describe('loadCaseFile', () => {
 
     const [sql, params] = pool.query.mock.calls[0];
     expect(sql).toMatch(/FROM gan_case_file/);
-    expect(sql).toMatch(/WHERE run_id\s*=\s*\$1/);
-    expect(sql).toMatch(/ORDER BY round ASC, author_role ASC/);
-    expect(params).toEqual([RUN_ID]);
+    expect(sql).toMatch(/WHERE gcf\.run_id\s*=\s*\$1/);
+    expect(sql).toMatch(/ORDER BY gcf\.round ASC, gcf\.author_role ASC/);
+    expect(params).toEqual([RUN_ID, 2]);
+  });
+
+  it('P2-3 膨胀闸1：SQL 用 CASE WHEN 按 fullTextRounds 截断更早轮次的 feedback_md', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+
+    await loadCaseFile(pool, RUN_ID, { fullTextRounds: 3 });
+
+    const [sql, params] = pool.query.mock.calls[0];
+    expect(sql).toMatch(/COALESCE\(MAX\(round\), 0\) - \$2::integer AS cutoff_round/);
+    expect(sql).toMatch(
+      /CASE WHEN gcf\.round > bounds\.cutoff_round THEN gcf\.feedback_md ELSE NULL END AS feedback_md/,
+    );
+    expect(params).toEqual([RUN_ID, 3]);
   });
 });

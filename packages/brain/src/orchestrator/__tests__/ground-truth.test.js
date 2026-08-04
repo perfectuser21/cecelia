@@ -173,9 +173,10 @@ describe('collectGroundTruth：DB 通道组装', () => {
 
     expect(observed.caseFile).toEqual(caseFileRows);
     const [sql, params] = deps.pool.calls.find(([query]) => query.includes('FROM gan_case_file'));
-    expect(sql).toMatch(/WHERE run_id\s*=\s*\$1/);
-    expect(sql).toMatch(/ORDER BY round ASC, author_role ASC/);
-    expect(params).toEqual([RUN_ID]);
+    expect(sql).toMatch(/WHERE gcf\.run_id\s*=\s*\$1/);
+    expect(sql).toMatch(/ORDER BY gcf\.round ASC, gcf\.author_role ASC/);
+    // ground-truth 显式传 CASE_FILE_FULL_TEXT_ROUNDS（P2-3 膨胀闸1，当前=2）。
+    expect(params).toEqual([RUN_ID, 2]);
   });
 
   it('gan_case_file 无行时 observed.caseFile 为空数组（不是 null/undefined）', async () => {
