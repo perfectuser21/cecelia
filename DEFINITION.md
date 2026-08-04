@@ -6,19 +6,26 @@
 
 
 
-**Brain 版本**: 1.267.209
+**Brain 版本**: 1.267.210
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.267.209 — watchdog liveness never_started 分类保真（1dfa40f7 防复发）
+## Brain 1.267.210 — watchdog liveness never_started 分类保真（1dfa40f7 防复发）
 
 - liveness 探针「从未启动」任务（pid 未跟踪 ∧ 无进程日志 ∧ (started_at=null ∨ 已有派发失败 error_message)）双确认后分类 `never_started`，不再落 `process_disappeared` 兜底；已有 error_message / payload.failure_class 不被 watchdog 记账覆盖。
 - requeueTask 失败学习文本取 evidence 真实 exit reason（非 requeue 通道参数 liveness_dead）——failure learning / capture atom 学习链不再被假根因标签污染。
 - dev-failure-classifier 识别 `never_started`（先于 `/\[watchdog\]/i` 宽松规则），不落 transient 环境重试假通道；retryable=false。
 - 曾启动进程消失场景（有进程日志/started_at 非空）分类行为与现状完全一致（回归护栏入 CI：liveness-never-started.integration.test.js 登记 POSTGRES_INTEGRATION_TESTS）。
-- 回退到 1.267.208 会恢复：从未启动任务被假标 liveness_dead/process_disappeared，urgent 学习流被假根因污染。
+- 回退到 1.267.209 会恢复：从未启动任务被假标 liveness_dead/process_disappeared，urgent 学习流被假根因污染。
+
+## Brain 1.267.209 — GAN rubric trend backstop (案卷式 GAN PR-B)
+
+- deriveGan 三闸后新增趋势闸 detectRubricTrend（最近 3 轮 reviewer rubric）：diverging（单维两连降累计≥2 或 ≥2 维同时两连降）/ oscillating（两腿幅度均≥2）→ force_approve_contract（复用 persist 合同落库 + decision log 留痕 + P1 告警 + cecelia_events 'gan_forced_approval' 持久化事件）。converging/insufficient_data 路由不变，**无任何轮数上限**。
+- 护栏：真 APPROVED 优先 persist 不被劫持；identity-policy 驳回当前 SHA 时趋势闸让路 spawn:proposer（防 4096 跳热循环）；JSON null 维度按缺数据跳过。
+- r17 真实三轮 rubric 回放判 oscillating（永久回归锚点用例）。
+- 回退到 1.267.208 会恢复：GAN 发散无代码层兜底（skill 承诺的 detectConvergenceTrend 缺位）。
 
 ## Brain 1.267.208 — ledger-hygiene m7 探针口径修正 + 自主循环产出登记覆盖
 

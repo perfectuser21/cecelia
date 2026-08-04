@@ -60,6 +60,7 @@ fix-markdispatched-smoke.sh
 fleet-credential-envelope-smoke.sh
 fleet-worker-workspace-smoke.sh
 gan-case-file-smoke.sh
+gan-trend-backstop-smoke.sh
 gate3-brain-deploy-smoke.sh
 git-sha-health-smoke.sh
 golden-path-contract-version-smoke.sh
