@@ -19,6 +19,23 @@ const WINDOW_MINUTE_END = 15;
 
 export const RATCHET_KEY = 'ledger_hygiene_ratchet';
 
+/**
+ * 守卫自产 capture atom 的 content 前缀（与 raiseBreachAlerts 写入格式同源）。
+ * m7 分类 SQL 与写入侧共用本常量，防单边改动使 organic/self 分类静默失效。
+ */
+export const LEDGER_SELF_ATOM_PREFIX = 'issue: [ledger-hygiene]';
+
+/**
+ * m7 capture 统计的确定性窗口：北京（Asia/Shanghai）昨日自然日 [00:00:00, 24:00:00)
+ * 对应的 UTC 时刻对。仅依赖 now 的北京日历日——同一北京日内任意时刻调用结果完全一致，
+ * 消除 NOW()-24h 滑动窗的调度秒级漂移竞态（2026-08-03 误击穿根因）。
+ */
+export function getM7CaptureWindow(now = new Date()) {
+  const day = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(now);
+  const todayMidnight = new Date(`${day}T00:00:00+08:00`);
+  return { startUtc: new Date(todayMidnight.getTime() - 86400000), endUtc: todayMidnight };
+}
+
 /** 判断当前是否在守卫窗口内（UTC 21:10-21:15）。 */
 export function isInLedgerHygieneWindow(now = new Date()) {
   return (
@@ -44,7 +61,7 @@ const toInt = (v) => parseInt(v ?? '0', 10) || 0;
  * 计算 5 项卫生指标。每项 {key, name, value, debt, enabled}。
  * debt=欠账数（棘轮口径）；enabled=false 表示该指标暂不可用/未激活，不参与棘轮。
  */
-export async function computeMetrics(pool) {
+export async function computeMetrics(pool, now = new Date()) {
   const m1 = await safeMetric(async () => {
     // FR 沉淀率：近 7 天 merged 的 harness run 中 golden_path 有行的比例
     const { rows } = await pool.query(
@@ -160,11 +177,12 @@ export async function computeMetrics(pool) {
   }, { key: 'm6', name: 'evaluator门禁覆盖率', value: null, debt: 0 });
 
   const m7 = await safeMetric(async () => {
-    // 自主循环零产出：过去 24h 内，下列"应产出"循环是否出现零产出天——
-    // (a) strategist：design_docs(type='strategy_session') 行数
-    // (b) capture：capture_atoms 行数（T10 通电后才激活）
+    // 自主循环零产出：下列"应产出"循环是否出现零产出天——
+    // (a) strategist：design_docs(type='strategy_session') 近 24h 行数（口径不变）
+    // (b) capture：capture_atoms 北京昨日自然日窗口内的**有机**产出（排除守卫自产 atom）
     // 规则：各项探针先查"历史上有没有产出过"，从未产出=未激活(enabled=false)；
-    // 激活后 24h 零产出 → debt+1（absolute 棘轮，首发即击穿）。
+    // capture 激活且窗口内有机产出 organic===0 → captureDebt=1（自产 atom 不算产出，
+    // 防指标自指假绿）；窗口界参数化传入，禁 NOW() 滑动窗（防调度秒级漂移误击穿）。
 
     // (a) strategist 近 24h
     const strat = await pool.query(
@@ -178,23 +196,31 @@ export async function computeMetrics(pool) {
     const stratActivated = stratEver.rows.length > 0;
     const stratDebt = stratActivated && toInt(strat.rows[0]?.cnt) === 0 ? 1 : 0;
 
-    // (b) capture_atoms 近 24h
+    // (b) capture_atoms 北京昨日自然日窗口 organic/self 分解
     let captureActivated = false;
     let captureDebt = 0;
+    let organic = null;
+    let selfCnt = null;
     try {
       const capEver = await pool.query(
         `SELECT 1 FROM capture_atoms LIMIT 1`
       );
       captureActivated = capEver.rows.length > 0;
       if (captureActivated) {
+        const { startUtc, endUtc } = getM7CaptureWindow(now);
         const cap = await pool.query(
-          `SELECT count(*) AS cnt FROM capture_atoms
-           WHERE created_at >= NOW() - INTERVAL '24 hours'`
+          `SELECT count(*) FILTER (WHERE content NOT LIKE '${LEDGER_SELF_ATOM_PREFIX}%') AS organic,
+                  count(*) FILTER (WHERE content LIKE '${LEDGER_SELF_ATOM_PREFIX}%') AS self
+           FROM capture_atoms
+           WHERE created_at >= $1 AND created_at < $2`,
+          [startUtc.toISOString(), endUtc.toISOString()]
         );
-        captureDebt = toInt(cap.rows[0]?.cnt) === 0 ? 1 : 0;
+        organic = toInt(cap.rows[0]?.organic);
+        selfCnt = toInt(cap.rows[0]?.self);
+        captureDebt = organic === 0 ? 1 : 0;
       }
     } catch {
-      // capture_atoms 表可能未激活，忽略
+      // capture_atoms 表可能未激活，忽略（capture 分支降级未激活，organic/self 保持 null）
     }
 
     const totalDebt = stratDebt + captureDebt;
@@ -205,7 +231,7 @@ export async function computeMetrics(pool) {
     return {
       key: 'm7',
       name: '自主循环零产出',
-      value: { stratDebt, captureDebt },
+      value: { stratDebt, captureDebt, organic, self: selfCnt },
       debt: totalDebt,
       enabled: true,
       absolute: true,
@@ -256,7 +282,7 @@ export function renderHygieneMarkdown(today, metrics, breaches) {
   for (const m of Object.values(metrics)) {
     let value;
     if (typeof m.value === 'object' && m.value !== null && m.key === 'm7') {
-      // m7 value 是 { stratDebt, captureDebt } 对象
+      // m7 value 是 { stratDebt, captureDebt, organic, self } 对象
       value = JSON.stringify(m.value);
     } else if (typeof m.value === 'number' && m.value <= 1 && !['m5', 'm7'].includes(m.key)) {
       value = `${Math.round(m.value * 100)}%`;
@@ -392,7 +418,7 @@ export async function maybeRunLedgerHygiene(pool, now = new Date()) {
 
   // 北京日期（与 battle-report 先例一致）：UTC 21:10 已是北京次日凌晨
   const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(now);
-  const metrics = await computeMetrics(pool);
+  const metrics = await computeMetrics(pool, now);
   const prev = await loadRatchet(pool);
   const { state, breaches } = evaluateRatchet(metrics, prev, today);
 

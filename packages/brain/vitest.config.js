@@ -17,6 +17,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/kernel-stale-attempt-reconcile.pg.integration.test.js',
   'src/__tests__/integration/kernel-terminal-mismatch-reconcile.pg.integration.test.js',
   'src/routes/__tests__/harness-attempt-verdict-pg.integration.test.js',
+  'src/__tests__/integration/ledger-hygiene-m7-organic.integration.test.js',
   '../../tests/regression/relay-137fea96/contract-postdeploy-smoke-filter.test.ts',
 ];
 

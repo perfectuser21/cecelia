@@ -1,0 +1,30 @@
+{
+  "initiative_id": "a6e6afc7-f7ee-4dea-9434-510a9b316d95",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain 纯后端定时守卫指标计算，无 UI/engine/远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "m7 capture 子探针可信化：北京昨日自然日确定性窗口 + 自产 atom 排除 + organic/self 分解",
+      "scope": "按合同实现 ledger-hygiene.js 的 m7 capture 子探针新统计口径（getM7CaptureWindow / LEDGER_SELF_ATOM_PREFIX / computeMetrics(pool, now?) 三个新导出，capture 计数 SQL 参数化窗口界 + 前缀分类，value 增加 organic/self），从合同 tests/ 原样复制两个测试文件落位 packages/brain/src/__tests__/（integration 版进 integration/ 并登记 POSTGRES_INTEGRATION_TESTS）。不改 strategist 子探针、m1-m6、棘轮机制、击穿 issue/capture push 通路与未激活降级行为。",
+      "dod": [
+        "[BEHAVIOR] node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs organic-self 通过（organic=1/self=1/captureDebt=0 不误报）",
+        "[BEHAVIOR] node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs only-self 通过（organic=0 仍击穿，不被自产 atom 假绿）",
+        "[BEHAVIOR] node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs boundary 与 drift 通过（边界确定性 + ±60s 漂移结果不变）",
+        "[BEHAVIOR] node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs no-table 通过（未激活降级不变）",
+        "[BEHAVIOR] cd packages/brain && npx vitest run src/__tests__/ledger-hygiene-m7-organic.test.js src/__tests__/ledger-hygiene-m7.test.js src/__tests__/ledger-hygiene.test.js src/__tests__/scheduler-jobs.test.js 全绿（合同测试转绿 + 零回退）",
+        "[BEHAVIOR] cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/ledger-hygiene-m7-organic.integration.test.js 全绿（真 Postgres 禁 mock 边）",
+        "[ARTIFACT] 两个合同测试文件逐字节落位 + POSTGRES_INTEGRATION_TESTS 登记 + ledger-hygiene.js 三个新导出存在且 capture 计数无 24h 滑动窗"
+      ],
+      "files": [
+        "packages/brain/src/ledger-hygiene.js",
+        "packages/brain/src/__tests__/ledger-hygiene-m7-organic.test.js",
+        "packages/brain/src/__tests__/integration/ledger-hygiene-m7-organic.integration.test.js",
+        "packages/brain/vitest.config.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
