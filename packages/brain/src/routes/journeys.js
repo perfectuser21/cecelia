@@ -515,12 +515,28 @@ router.post('/journey_step_links', async (req, res) => {
 });
 
 // PATCH /api/brain/journey_step_links/:id — 格子状态回写（evaluator S3联动 + S4保鲜用）
+// fail-closed: cell_status='green' 时必须有 assertion_ref（现有行或本次请求）
+// 决策 df1ccf5a §③：机器托管，军师只提案不点绿；无 assertion_ref 拒收
 router.patch('/journey_step_links/:id', async (req, res) => {
   try {
     const { cell_status, assertion_ref, na_reason, cell_kind } = req.body;
     if (cell_status && !VALID_CELL_STATUS.includes(cell_status)) {
       return res.status(400).json({ error: `cell_status must be one of: ${VALID_CELL_STATUS.join(',')}` });
     }
+
+    if (cell_status === 'green' && !assertion_ref) {
+      const { rows: existing } = await pool.query(
+        'SELECT assertion_ref FROM journey_step_links WHERE id=$1',
+        [req.params.id]
+      );
+      if (!existing.length) return res.status(404).json({ error: 'not found' });
+      if (!existing[0].assertion_ref) {
+        return res.status(422).json({
+          error: 'fail-closed: green requires assertion_ref (decision df1ccf5a §③)',
+        });
+      }
+    }
+
     const sets = [];
     const vals = [];
     let idx = 1;
