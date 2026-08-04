@@ -4,29 +4,29 @@
 
 ---
 
-[BEHAVIOR] B1: 全仓可执行路径旧 digest 5c202d56 已清零
-- 断言：`git grep "5c202d56" -- packages/ docker/ scripts/ | grep -v DEFINITION.md | grep -v docs/handoffs/ | wc -l` 输出 0
-- manual:bash: `[ "$(git grep "5c202d56" -- packages/ docker/ scripts/ | grep -v DEFINITION.md | grep -v docs/handoffs/ | wc -l)" -eq 0 ] && echo PASS || echo FAIL`
+- [BEHAVIOR] B1: 全仓可执行路径旧 digest 5c202d56 已清零
+  - 断言：`git grep "5c202d56" -- packages/ docker/ scripts/ | grep -v DEFINITION.md | grep -v docs/handoffs/ | wc -l` 输出 0
+  - manual:bash: `[ "$(git grep "5c202d56" -- packages/ docker/ scripts/ | grep -v DEFINITION.md | grep -v docs/handoffs/ | wc -l)" -eq 0 ] && echo PASS || echo FAIL`
 
-[BEHAVIOR] B2: fleet-rollout.sh 含 verify_runner_label 函数
-- 断言：`source packages/brain/scripts/fleet-worker/fleet-rollout.sh 2>/dev/null; declare -f verify_runner_label` 成功返回
-- manual:bash: `(source packages/brain/scripts/fleet-worker/fleet-rollout.sh 2>/dev/null && declare -f verify_runner_label > /dev/null && echo PASS) || echo FAIL`
+- [BEHAVIOR] B2: fleet-rollout.sh 含 verify_runner_label 函数
+  - 断言：`source packages/brain/scripts/fleet-worker/fleet-rollout.sh 2>/dev/null; declare -f verify_runner_label` 成功返回
+  - manual:bash: `(source packages/brain/scripts/fleet-worker/fleet-rollout.sh 2>/dev/null && declare -f verify_runner_label > /dev/null && echo PASS) || echo FAIL`
 
-[BEHAVIOR] B3: verify_runner_label 对无 label 镜像 loud-fail（TDD，proven-to-fire）
-- 断言：fleet-rollout.test.sh 中新增 label 守卫测试用例通过，且在实现前跑红（commit 顺序证明先红后绿）
-- manual:bash: `bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh && echo PASS || echo FAIL`
+- [BEHAVIOR] B3: verify_runner_label 对无 label 镜像 loud-fail（TDD，proven-to-fire）
+  - 断言：fleet-rollout.test.sh 中新增 label 守卫测试用例通过，且在实现前跑红（commit 顺序证明先红后绿）
+  - manual:bash: `bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh && echo PASS || echo FAIL`
 
-[BEHAVIOR] B4: docker/build.sh 写入 cecelia.entrypoint.sha256 label
-- 断言：`grep -q "cecelia.entrypoint.sha256" docker/build.sh`
-- manual:bash: `grep -q "cecelia.entrypoint.sha256" docker/build.sh && echo PASS || echo FAIL`
+- [BEHAVIOR] B4: docker/build.sh 写入 cecelia.entrypoint.sha256 label
+  - 断言：`grep -q "cecelia.entrypoint.sha256" docker/build.sh`
+  - manual:bash: `grep -q "cecelia.entrypoint.sha256" docker/build.sh && echo PASS || echo FAIL`
 
-[BEHAVIOR] B5: EXPECTED_RUNNER_DIGEST / fleet-node-profiles.json / RUNNER_DIGEST 三处均为新 digest
-- 断言：`grep ae2eaabba packages/brain/src/orchestrator/fleet-node/node-profile.test.js packages/brain/scripts/fleet-worker/fleet-rollout.sh packages/brain/config/fleet-node-profiles.json | wc -l` ≥ 5
-- manual:bash: `[ "$(grep -c ae2eaabba packages/brain/src/orchestrator/fleet-node/node-profile.test.js packages/brain/scripts/fleet-worker/fleet-rollout.sh packages/brain/config/fleet-node-profiles.json)" -ge 5 ] && echo PASS || echo FAIL`
+- [BEHAVIOR] B5: EXPECTED_RUNNER_DIGEST / fleet-node-profiles.json / RUNNER_DIGEST 三处均为新 digest
+  - 断言：新 digest ae2eaabba 在 node-profile.test.js + fleet-rollout.sh + fleet-node-profiles.json 合计 ≥5 处
+  - manual:bash: `[ "$(grep -c ae2eaabba packages/brain/src/orchestrator/fleet-node/node-profile.test.js packages/brain/scripts/fleet-worker/fleet-rollout.sh packages/brain/config/fleet-node-profiles.json | awk -F: '{s+=$2}END{print s}')" -ge 5 ] && echo PASS || echo FAIL`
 
-[BEHAVIOR] B6: Brain 版本同步 1.267.216，三处文件一致
-- 断言：`bash scripts/check-version-sync.sh` 输出 "All version files in sync (1.267.216)"
-- manual:bash: `bash scripts/check-version-sync.sh | grep -q "1.267.216" && echo PASS || echo FAIL`
+- [BEHAVIOR] B6: Brain 版本同步 1.267.216，三处文件一致
+  - 断言：`bash scripts/check-version-sync.sh` 输出 "All version files in sync"
+  - manual:bash: `bash scripts/check-version-sync.sh | grep -q "All version files in sync" && echo PASS || echo FAIL`
 
 ---
 
