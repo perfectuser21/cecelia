@@ -145,10 +145,12 @@ async function defaultWriteCredential(
   authJson,
   {
     spawnFn = spawn,
-    // entrypoint.sh 要跑完约 2000 行安全/环境设置才到达打开 FIFO 读端的那一行；
-    // 10s 曾在真实 attempt（r18/r19/r20）里被容器启动开销常规性超过，导致宿主侧
-    // 写入抢先超时、容器从未真正跑起来。25s 留出约 2.5 倍冗余，仍在 60_000 硬顶内。
-    timeoutMs = 25_000,
+    // 真实负载下（并发 attempt 抢 CPU/virtiofs）entrypoint.sh 到达打开 FIFO 读端
+    // 那一行的耗时会明显拉长；10s（r18/r19）、25s（r23/r24）都在真实 attempt 里
+    // 被常规性超过。60s 给足冗余，且严格小于 remote-bridge 'start' 操作独立预算
+    // DEFAULT_REMOTE_BRIDGE_START_TIMEOUT_MS=120_000（见 production-transport.js），
+    // 避免这层内部超时和外层 HTTP 超时打平赛跑、被外层先中止掩盖真实错误。
+    timeoutMs = 60_000,
   } = {},
 ) {
   if (
@@ -178,8 +180,8 @@ async function defaultWriteGitHubCredential(
   token,
   {
     spawnFn = spawn,
-    // 同 defaultWriteCredential 的超时理由：entrypoint.sh 启动开销可轻松超过 10s。
-    timeoutMs = 25_000,
+    // 同 defaultWriteCredential 的超时理由。
+    timeoutMs = 60_000,
   } = {},
 ) {
   if (

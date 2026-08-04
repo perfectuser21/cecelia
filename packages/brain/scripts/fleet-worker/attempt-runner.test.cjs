@@ -2096,7 +2096,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     expect(Buffer.concat(received).toString('utf8')).toBe(authJson);
   });
 
-  it('gives the entrypoint at least 25s to open its FIFO reader before the GitHub credential write gives up (r18/r19/r20 real-attempt timeout: entrypoint.sh runs ~2000 lines of setup before reaching prepare_github_credential, routinely exceeding a bare 10s default)', async () => {
+  it('gives the entrypoint at least 60s to open its FIFO reader before the GitHub credential write gives up (r18-r24 real-attempt timeouts: under real concurrent load, entrypoint.sh reaching prepare_github_credential routinely outran 10s and 25s defaults)', async () => {
     vi.useFakeTimers();
     try {
       const { __test__ } = loadAttemptRunner();
@@ -2114,11 +2114,11 @@ describe('Fleet Worker durable runtime adapters', () => {
       const settled = vi.fn();
       pending.catch(settled);
 
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(30_000);
       expect(settled).not.toHaveBeenCalled();
       expect(child.kill).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(15_001);
+      await vi.advanceTimersByTimeAsync(30_001);
       await Promise.resolve();
       expect(child.kill).toHaveBeenCalledWith('SIGKILL');
       await expect(pending).rejects.toThrow('attempt_github_credential_fifo_write_failed');
@@ -2127,7 +2127,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     }
   });
 
-  it('gives the entrypoint at least 25s to open its FIFO reader before the codex credential write gives up (same startup race as the GitHub credential FIFO)', async () => {
+  it('gives the entrypoint at least 60s to open its FIFO reader before the codex credential write gives up (same startup race as the GitHub credential FIFO)', async () => {
     vi.useFakeTimers();
     try {
       const { __test__ } = loadAttemptRunner();
@@ -2146,11 +2146,11 @@ describe('Fleet Worker durable runtime adapters', () => {
       const settled = vi.fn();
       pending.catch(settled);
 
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(30_000);
       expect(settled).not.toHaveBeenCalled();
       expect(child.kill).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(15_001);
+      await vi.advanceTimersByTimeAsync(30_001);
       await Promise.resolve();
       expect(child.kill).toHaveBeenCalledWith('SIGKILL');
       await expect(pending).rejects.toThrow('attempt_credential_fifo_write_failed');

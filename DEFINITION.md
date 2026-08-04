@@ -6,13 +6,20 @@
 
 
 
-**Brain 版本**: 1.267.214
+**Brain 版本**: 1.267.215
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.267.213 — 刀0.5 CI 修复版本 bump
+## Brain 1.267.215 — remote-bridge start 操作独立超时预算
+
+- `remote-bridge-transport.js` 的 `start` 操作此前和 `inspect`/`cancel`/`terminal` 共用通用 `timeoutMs`（`DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS=60_000`），而 fleet-worker `attempt-runner.cjs` 内层 credential FIFO 写入超时也在同一量级——真实负载下（并发 attempt 抢 CPU/virtiofs）内层写入耗时逼近甚至撞上外层 60s，导致 Brain 侧先中止连接报 `remote_bridge_start_timeout`，掩盖 fleet-worker 自己更具体的 `attempt_*_credential_fifo_write_failed`。
+- 新增 `DEFAULT_REMOTE_BRIDGE_START_TIMEOUT_MS=120_000`，`start` 操作单独走这个预算，不再和轻量轮询操作共用桶；可用 `KERNEL_FLEET_START_TIMEOUT_MS` 环境变量覆盖，语义对齐已有的 `KERNEL_FLEET_PREPARE_TIMEOUT_MS`。
+- 回归测试：`remote-bridge-transport.test.js` 验证 start 用的是 `startTimeoutMs` 而非共享 `timeoutMs`；`production-transport.test.js` 验证新常量值与 env 覆盖生效。
+- 回退会恢复：`start` 超时预算重新被通用 60s 顶住，credential FIFO 写入偏慢时又开始报笼统的 `remote_bridge_start_timeout`。
+
+## Brain 1.267.214 — 刀0.5 CI 修复版本 bump
 
 - 同步版本 bump：`seven-ring-audit.js` + `quality.js` 注释更新已由 1.267.212 记录；本版本为 CI gate 版本严格大于 main(1.267.212) 的补丁。
 

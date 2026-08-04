@@ -787,6 +787,59 @@ describe('remote Bridge prepare', () => {
   });
 });
 
+describe('remote Bridge start operation timeout budget', () => {
+  it('gives start its own timeout budget instead of sharing the generic timeoutMs bucket', async () => {
+    const fetchFn = vi.fn((_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        reject(new Error(`aborted ${SHARED_SECRET} ${CALLBACK_TOKEN}`));
+      }, { once: true });
+    }));
+    // timeoutMs 只给 inspect/cancel/terminal 用；start 有单独的 startTimeoutMs，
+    // 这里刻意把 timeoutMs 设得极短、startTimeoutMs 设得较长，验证 start 用的是
+    // 后者而不是前者（credential FIFO 写入需要比通用轮询操作更久的窗口）。
+    const transport = createTransport({ fetchFn, timeoutMs: 5, startTimeoutMs: 50 });
+
+    const outcome = await Promise.race([
+      transport.start(operationInput('start')).then(
+        () => ({ status: 'resolved' }),
+        (error) => ({ status: 'rejected', message: error.message }),
+      ),
+      new Promise((resolve) => {
+        setTimeout(() => resolve({ status: 'still_pending_past_generic_timeout' }), 20);
+      }),
+    ]);
+
+    expect(outcome).toEqual({ status: 'still_pending_past_generic_timeout' });
+  });
+
+  it('still times out start once startTimeoutMs elapses', async () => {
+    const fetchFn = vi.fn((_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        reject(new Error(`aborted ${SHARED_SECRET} ${CALLBACK_TOKEN}`));
+      }, { once: true });
+    }));
+    // timeoutMs 故意设得很大，只有真正用上 startTimeoutMs 时才会在这个有界
+    // race 窗口内 reject；如果实现退回到共享 timeoutMs，会一直等不到，判定为
+    // 'timed_out_waiting_for_start_timeout_budget'。
+    const transport = createTransport({ fetchFn, timeoutMs: 100_000, startTimeoutMs: 5 });
+
+    const outcome = await Promise.race([
+      transport.start(operationInput('start')).then(
+        () => ({ status: 'resolved' }),
+        (error) => ({ status: 'rejected', message: error.message }),
+      ),
+      new Promise((resolve) => {
+        setTimeout(() => resolve({ status: 'timed_out_waiting_for_start_timeout_budget' }), 200);
+      }),
+    ]);
+
+    expect(outcome).toEqual({
+      status: 'rejected',
+      message: 'remote_bridge_start_timeout',
+    });
+  });
+});
+
 describe('remote Bridge operation deadlines', () => {
   it.each(['prepare', 'inspect', 'cancel'])(
     'keeps the %s deadline active while consuming the response body',
