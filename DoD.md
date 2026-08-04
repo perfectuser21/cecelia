@@ -12,16 +12,16 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] 合同单测按原样落位（CONTRACT IS LAW，逐字节一致）`packages/brain/src/__tests__/ledger-hygiene-m7-organic.test.js`
+- [x] [ARTIFACT] 合同单测按原样落位（CONTRACT IS LAW，逐字节一致）`packages/brain/src/__tests__/ledger-hygiene-m7-organic.test.js`
   Test: node -e "const f=require('fs');const a=f.readFileSync('sprints/08040913-relay-a6e6afc7/tests/ledger-hygiene-m7-organic.test.js','utf8');const b=f.readFileSync('packages/brain/src/__tests__/ledger-hygiene-m7-organic.test.js','utf8');if(a!==b)process.exit(1)"
 
-- [ ] [ARTIFACT] 合同集成测试按原样落位 `packages/brain/src/__tests__/integration/ledger-hygiene-m7-organic.integration.test.js`
+- [x] [ARTIFACT] 合同集成测试按原样落位 `packages/brain/src/__tests__/integration/ledger-hygiene-m7-organic.integration.test.js`
   Test: node -e "const f=require('fs');const a=f.readFileSync('sprints/08040913-relay-a6e6afc7/tests/ledger-hygiene-m7-organic.integration.test.js','utf8');const b=f.readFileSync('packages/brain/src/__tests__/integration/ledger-hygiene-m7-organic.integration.test.js','utf8');if(a!==b)process.exit(1)"
 
-- [ ] [ARTIFACT] 集成测试已登记进 `vitest.config.js` 的 `POSTGRES_INTEGRATION_TESTS`（brain-unit 排除、brain-integration 真 PG 永跑）
+- [x] [ARTIFACT] 集成测试已登记进 `vitest.config.js` 的 `POSTGRES_INTEGRATION_TESTS`（brain-unit 排除、brain-integration 真 PG 永跑）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/vitest.config.js','utf8');const i=c.indexOf('POSTGRES_INTEGRATION_TESTS');if(i<0||!c.slice(i).split('];')[0].includes('integration/ledger-hygiene-m7-organic.integration.test.js'))process.exit(1)"
 
-- [ ] [ARTIFACT] `ledger-hygiene.js` 含三个新导出且 capture 计数不再挂 24h 滑动窗
+- [x] [ARTIFACT] `ledger-hygiene.js` 含三个新导出且 capture 计数不再挂 24h 滑动窗
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/ledger-hygiene.js','utf8');if(!c.includes('getM7CaptureWindow')||!c.includes('LEDGER_SELF_ATOM_PREFIX'))process.exit(1);if(/capture_atoms[^;]{0,300}NOW\(\)\s*-\s*INTERVAL '24 hours'/s.test(c))process.exit(1)"
 
 ## BEHAVIOR 条目（journey_type = autonomous，真 Postgres 场景 oracle，内嵌可执行 manual: 命令）
@@ -29,35 +29,35 @@ journey_type: autonomous
 > 前置：本机 Postgres 可达（`$DB` 缺省 `postgresql://localhost/cecelia`）；`packages/brain` 已 `npm ci`。
 > 各场景由 `sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs` 在**一次性独立 schema** 内建最小表、种 atom、跑**真实实现** `computeMetrics`、断言后 DROP SCHEMA；期望窗口由 runner 按北京日历日**独立推导**（不复用实现窗口函数），实现一行未写时 runner 必 FAIL（无 mock、无 exit 0 兜底）。
 
-- [ ] [BEHAVIOR] 昨日北京自然日内 1 有机 + 1 自产 atom → m7.value organic=1 / self=1 / captureDebt=0，debt=0 不误报（Golden Path Step 3，PRD 验收点 2）
+- [x] [BEHAVIOR] 昨日北京自然日内 1 有机 + 1 自产 atom → m7.value organic=1 / self=1 / captureDebt=0，debt=0 不误报（Golden Path Step 3，PRD 验收点 2）
   Test: manual:bash -c 'node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs organic-self'
   期望: exit 0，末行 OK scenario=organic-self
 
-- [ ] [BEHAVIOR] 昨日仅守卫自产 atom → organic=0 / captureDebt=1，debt=1 真零产出仍击穿，不被自产 atom 假绿（Golden Path Step 3，PRD 验收点 3）
+- [x] [BEHAVIOR] 昨日仅守卫自产 atom → organic=0 / captureDebt=1，debt=1 真零产出仍击穿，不被自产 atom 假绿（Golden Path Step 3，PRD 验收点 3）
   Test: manual:bash -c 'node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs only-self'
   期望: exit 0，末行 OK scenario=only-self
 
-- [ ] [BEHAVIOR] 窗口边界确定性：昨日 23:59:59 计入、今日 00:00:00 不计入、前日 23:59:59 不计入（4 枚边界 atom 仅计 2 organic）（Golden Path Step 2，PRD 边界情况 L29）
+- [x] [BEHAVIOR] 窗口边界确定性：昨日 23:59:59 计入、今日 00:00:00 不计入、前日 23:59:59 不计入（4 枚边界 atom 仅计 2 organic）（Golden Path Step 2，PRD 边界情况 L29）
   Test: manual:bash -c 'node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs boundary'
   期望: exit 0，末行 OK scenario=boundary
 
-- [ ] [BEHAVIOR] 运行时刻偏移 ±60 秒真库重算，m7 结果逐字节不变，且 getM7CaptureWindow 界值与独立推导的北京昨日窗口一致（Golden Path Step 2，PRD 验收点 4）
+- [x] [BEHAVIOR] 运行时刻偏移 ±60 秒真库重算，m7 结果逐字节不变，且 getM7CaptureWindow 界值与独立推导的北京昨日窗口一致（Golden Path Step 2，PRD 验收点 4）
   Test: manual:bash -c 'node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs drift'
   期望: exit 0，末行 OK scenario=drift
 
-- [ ] [BEHAVIOR] error path — capture_atoms 表不存在且 strategist 无记录 → m7 保持既有未激活降级（enabled=false / debt=0），不 throw（Golden Path Step 4，PRD 边界情况 L31）
+- [x] [BEHAVIOR] error path — capture_atoms 表不存在且 strategist 无记录 → m7 保持既有未激活降级（enabled=false / debt=0），不 throw（Golden Path Step 4，PRD 边界情况 L31）
   Test: manual:bash -c 'node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs no-table'
   期望: exit 0，末行 OK scenario=no-table
 
-- [ ] [BEHAVIOR] 合同回归测试转绿 + 既有 ledger-hygiene / scheduler-jobs 套件零回退（m1-m6 与 strategist 行为不变）（Golden Path Step 1/5，PRD 验收点 1/5）
+- [x] [BEHAVIOR] 合同回归测试转绿 + 既有 ledger-hygiene / scheduler-jobs 套件零回退（m1-m6 与 strategist 行为不变）（Golden Path Step 1/5，PRD 验收点 1/5）
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/ledger-hygiene-m7-organic.test.js src/__tests__/ledger-hygiene-m7.test.js src/__tests__/ledger-hygiene.test.js src/__tests__/scheduler-jobs.test.js --reporter=verbose 2>&1 | tail -25; [ "${PIPESTATUS[0]}" -eq 0 ] && echo OK || exit 1'
   期望: OK（0 failed）
 
-- [ ] [BEHAVIOR] 真 Postgres 集成测试全绿（禁 mock 边执法：代码 ↔ capture_atoms 的窗口/分类 SQL 语义在真库验证）（Golden Path Step 2/3）
+- [x] [BEHAVIOR] 真 Postgres 集成测试全绿（禁 mock 边执法：代码 ↔ capture_atoms 的窗口/分类 SQL 语义在真库验证）（Golden Path Step 2/3）
   Test: manual:bash -c 'cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/ledger-hygiene-m7-organic.integration.test.js --reporter=verbose 2>&1 | tail -20; [ "${PIPESTATUS[0]}" -eq 0 ] && echo OK || exit 1'
   期望: OK（4/4 绿）
 
-- [ ] [BEHAVIOR] INV-3 [真环境验证] 接缝断言（时区窗口 SQL 语义）已在真目标（真 Postgres）验证而非仅 mock 绿——drift 场景真库重跑作为铁律覆盖锚点
+- [x] [BEHAVIOR] INV-3 [真环境验证] 接缝断言（时区窗口 SQL 语义）已在真目标（真 Postgres）验证而非仅 mock 绿——drift 场景真库重跑作为铁律覆盖锚点
   Test: manual:bash -c 'node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs drift && node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs boundary'
   期望: exit 0，两场景均输出 OK
 
