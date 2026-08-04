@@ -1,5 +1,5 @@
 /**
- * escalation-cancel-pending-sql.test.js
+ * escalation-cancel-pending-sql.integration.test.js
  *
  * 回归守卫 —— 紧急制动 cancel_pending 的 SQL $3 参数类型推断修复
  *
@@ -17,14 +17,18 @@
  * SQL 从未真正被 Postgres 解析。这与本仓 autoblock-sql-integration.test.js
  * 记录的教训同源（上次是 $2）——**禁止 mock pool.query**，必须真库 PREPARE。
  *
+ * 归属：brain-integration job（带真 postgres service）。放这里而非 src/__tests__/ 根目录，
+ * 因为 brain-unit 分片无 DB 且显式 --exclude='src/__tests__/integration/**'——2026-08-05
+ * 首次提交误放根目录，CI 报 AggregateError(pg-pool 连不上库) 而非 SQL 错，已修正。
+ *
  * 运行（需真实 PG）：
  *   DATABASE_URL=postgresql://localhost/cecelia_test \
- *     npx vitest run packages/brain/src/__tests__/escalation-cancel-pending-sql.test.js
+ *     npx vitest run packages/brain/src/__tests__/integration/escalation-cancel-pending-sql.integration.test.js
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
-import { buildCancelPendingQuery, buildPauseLowPriorityQuery } from '../alertness/escalation.js';
+import { buildCancelPendingQuery, buildPauseLowPriorityQuery } from '../../alertness/escalation.js';
 
 const DB_URL = process.env.DATABASE_URL
   || process.env.BRAIN_DB_URL
