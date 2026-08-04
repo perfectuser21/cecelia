@@ -24,7 +24,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
-import { buildCancelPendingQuery } from '../alertness/escalation.js';
+import { buildCancelPendingQuery, buildPauseLowPriorityQuery } from '../alertness/escalation.js';
 
 const DB_URL = process.env.DATABASE_URL
   || process.env.BRAIN_DB_URL
@@ -40,36 +40,53 @@ afterAll(async () => {
   await pool?.end();
 });
 
+/**
+ * PREPARE 时**故意只声明前两个参数的类型**，把 $3 留给服务器自行推断——
+ * 这是本守卫能否抓到事故的唯一关键，2026-08-05 变异测试连踩两次坑才定型：
+ *   ✗ client.query(sql, values)：pg 驱动在 Parse 消息里替服务器把类型定死，
+ *     服务器不做推断，裸 $3 照样过——守卫是虚的。
+ *   ✗ PREPARE name(text[], text[], text)：显式声明 $3 是 text，同样绕过推断。
+ *   ✓ PREPARE name(text[], text[])：$3 无声明 → 服务器必须从语句内用法推断
+ *     → 裸 $3 落进 jsonb_build_object(any) 立即报 could not determine data type。
+ * 实测：变异态(裸 $3) 报错、修复态($3::text) 通过，干净区分。
+ */
+async function prepareWithUninferredThirdParam(pool, sql, name) {
+  const client = await pool.connect();
+  try {
+    await client.query(`PREPARE ${name}(text[], text[]) AS ${sql}`);
+    await client.query(`DEALLOCATE ${name}`);
+    return true;
+  } finally {
+    client.release();
+  }
+}
+
 describe('cancel_pending SQL 参数类型（真库 PREPARE，禁 mock）', () => {
   it('keepCritical=false 的 SQL 能被 Postgres 成功 PREPARE（$3 类型可推断）', async () => {
     const sql = buildCancelPendingQuery(false);
-    const client = await pool.connect();
-    try {
-      // PREPARE 只做解析与计划，不执行——不会误伤任何真实任务行
-      await expect(
-        client.query({ text: sql, values: [[], [], 'test_reason'] , rowMode: 'array', name: undefined })
-      ).resolves.toBeDefined();
-    } finally {
-      client.release();
-    }
+    await expect(prepareWithUninferredThirdParam(pool, sql, 'guard_cancel_pending_f')).resolves.toBe(true);
   });
 
   it('keepCritical=true 的 SQL 同样能被成功 PREPARE', async () => {
     const sql = buildCancelPendingQuery(true);
-    const client = await pool.connect();
-    try {
-      await expect(
-        client.query({ text: sql, values: [[], [], 'test_reason'] })
-      ).resolves.toBeDefined();
-    } finally {
-      client.release();
-    }
+    await expect(prepareWithUninferredThirdParam(pool, sql, 'guard_cancel_pending_t')).resolves.toBe(true);
   });
 
   it('SQL 里每一处 $3 都带显式 text 标注（防再次出现裸 $3 进 any 上下文）', () => {
     const sql = buildCancelPendingQuery(false);
     // 找出所有 $3 出现处，逐个确认紧跟 ::text
     const bareDollar3 = sql.match(/\$3(?!::text)/g) || [];
+    expect(bareDollar3).toEqual([]);
+  });
+
+  // ── pause_low_priority（L1 优雅降级）——修 cancel_pending 时发现的同源哑弹 ──
+  it('pause_low_priority 的 SQL 同样能被成功 PREPARE（$3 类型可推断）', async () => {
+    const sql = buildPauseLowPriorityQuery();
+    await expect(prepareWithUninferredThirdParam(pool, sql, 'guard_pause_low')).resolves.toBe(true);
+  });
+
+  it('pause_low_priority SQL 里每一处 $3 都带显式 text 标注', () => {
+    const bareDollar3 = buildPauseLowPriorityQuery().match(/\$3(?!::text)/g) || [];
     expect(bareDollar3).toEqual([]);
   });
 
