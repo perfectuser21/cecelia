@@ -3,7 +3,7 @@
 TASK_ID: f1cd8a2e-476e-4827-a26c-5e44293d018b
 SPRINT_DIR: sprints/08041554-doc-foundation-knife0
 生成时间: 2026-08-04
-轮次: 首轮（无 reviewer feedback）
+轮次: 第2轮（修复 R1 格式硬检查）
 
 ---
 
@@ -147,3 +147,16 @@ test $FIRE_EXIT -eq 1   # 必须 exit 1
 | 目录登记 smoke 脚本 | `scripts/smoke/check-docs-dir-registry-smoke.sh` | 待创建（FR-3） |
 | 基线文件 | `docs/current/docs-dir-baseline.txt` | 待创建（FR-4） |
 | 契约测试 | `packages/engine/tests/integrity/doc-foundation-contract.test.sh` | 待创建（FR-5） |
+
+---
+
+## E2E 验收
+
+**判定为 PASS 的充要条件**（全部满足方可合并）：
+
+1. `bash packages/engine/tests/integrity/doc-foundation-contract.test.sh` 输出 `PASS=4 FAIL=0`，exit 0
+2. `bash scripts/check-agents-rules-sync.sh` 输出 `✅ 三方（正本/AGENTS/CLAUDE）硬规则摘要一致`，exit 0
+3. `bash scripts/smoke/check-docs-dir-registry-smoke.sh` exit 0（所有 docs/ 一级子目录已登记）
+4. PR body 含 FIRE-1 和 FIRE-2 的验火截图/输出（均显示 exit 1）
+
+**任一不满足 → 判定为 FAIL，不合并**

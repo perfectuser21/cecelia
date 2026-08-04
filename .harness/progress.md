@@ -1,8 +1,5 @@
-# Sprint: sprints/07301431-relay-9f24e3a9 (9f24e3a9-683e-4151-9323-f4a9170242c8)
-# 任务: [紧急] issue: [ledger-hygiene] 自主循环零产出 欠账上升 0→1（2026-07-30）
-# 开始时间: 2026-07-30
-# 注: 本 worktree 之前 .harness/progress.md 属于已合并的历史任务 07291205-ci-auto-merge-token-fix
-#     (PR #4445 已 MERGED)，与本任务无关，已归档为 progress-archived-07291205-ci-auto-merge-token-fix.md
-planner: done (sprint-prd.md@ff2f6ad69, invariants=14, fr=0, branch=cp-07301444-harness-prd)
-gan: done (contract-draft.md@cp-07301444-harness-prd r1, verdict=APPROVED, 铁律覆盖=14/14, judgments_written=0, rubric=.harness/verdicts/gan-2f4d9f1.json)
-generator: pr_opened (#4483, red=ac0cbb7, ci_fix_round=1: lint-feature-has-smoke FAIL, Deploy Preview Environment FAIL[已确认与本PR无关的既有基础设施flaky,多条无关PR同期同样fail,非required check,忽略])
+# Sprint: sprints/08041554-doc-foundation-knife0 (f1cd8a2e-476e-4827-a26c-5e44293d018b)
+# 任务: 刀0: 文档约束正本落地+三方对账闸+docs目录登记闸（六型制地基）
+# 开始时间: 2026-08-04
+# 注: 前一个 run (legacy_relay, phase=generate) 无任何产物，本次从 Step 1 全新开跑
+planner: done (sprint-prd.md@75ae999d4, invariants=7, fr=6)

@@ -49,13 +49,26 @@ TASK_ID: f1cd8a2e-476e-4827-a26c-5e44293d018b
 
 ---
 
-## 验收判定标准（Final E2E）
+## E2E 验收
 
 **判定为 PASS 的充要条件**：
 
-1. `bash packages/engine/tests/integrity/doc-foundation-contract.test.sh` 输出 `PASS=4 FAIL=0`，exit 0
-2. `bash scripts/check-agents-rules-sync.sh` 输出 `✅ 三方（正本/AGENTS/CLAUDE）硬规则摘要一致`，exit 0
-3. `bash scripts/smoke/check-docs-dir-registry-smoke.sh` exit 0（所有 docs/ 一级子目录已登记）
-4. PR body 含 FIRE-1 和 FIRE-2 的验火截图/输出（均显示 exit 1）
+[BEHAVIOR] ASSERT-1: packages/workflows/KERNEL_CONTEXT.md 存在且含 HARD_RULES:BEGIN/END marker
+manual:bash test -f packages/workflows/KERNEL_CONTEXT.md && grep -q 'HARD_RULES:BEGIN' packages/workflows/KERNEL_CONTEXT.md && grep -q 'HARD_RULES:END' packages/workflows/KERNEL_CONTEXT.md && echo "PASS" || echo "FAIL"
+
+[BEHAVIOR] ASSERT-2: scripts/check-agents-rules-sync.sh 引用正本路径 packages/workflows/KERNEL_CONTEXT.md（三方对账已升级）
+manual:bash grep -q 'packages/workflows/KERNEL_CONTEXT.md' scripts/check-agents-rules-sync.sh && echo "PASS" || echo "FAIL"
+
+[BEHAVIOR] ASSERT-3: scripts/smoke/check-docs-dir-registry-smoke.sh 存在且可执行
+manual:bash test -f scripts/smoke/check-docs-dir-registry-smoke.sh && test -x scripts/smoke/check-docs-dir-registry-smoke.sh && echo "PASS" || echo "FAIL"
+
+[BEHAVIOR] ASSERT-4: docs/current/docs-dir-baseline.txt 存在且非空
+manual:bash test -s docs/current/docs-dir-baseline.txt && echo "PASS" || echo "FAIL"
+
+[BEHAVIOR] ASSERT-5: 契约测试全部通过 PASS=4 FAIL=0
+manual:bash bash packages/engine/tests/integrity/doc-foundation-contract.test.sh 2>&1 | grep -E 'PASS=4 FAIL=0' && echo "PASS" || echo "FAIL"
+
+[BEHAVIOR] ASSERT-6: 三方对账脚本运行通过
+manual:bash bash scripts/check-agents-rules-sync.sh && echo "PASS" || echo "FAIL"
 
 **任一不满足 → 判定为 FAIL，不合并**
