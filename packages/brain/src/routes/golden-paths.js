@@ -64,13 +64,19 @@ const PATCHABLE_FIELDS = ['one_liner', 'est_scale', 'proposal_doc', 'demo_url', 
 
 router.get('/golden-paths', async (req, res) => {
   try {
-    const { status } = req.query;
+    const { status, journey_id } = req.query;
     if (status && !GP_STATUSES.includes(status)) {
       return res.status(400).json({ success: false, error: `invalid status: ${status}` });
     }
-    const { rows } = status
-      ? await pool.query('SELECT * FROM golden_paths WHERE status = $1 ORDER BY created_at DESC', [status])
-      : await pool.query('SELECT * FROM golden_paths ORDER BY created_at DESC');
+    const conditions = [];
+    const params = [];
+    if (status) { conditions.push(`status = $${params.length + 1}`); params.push(status); }
+    if (journey_id) { conditions.push(`journey_id = $${params.length + 1}`); params.push(journey_id); }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const { rows } = await pool.query(
+      `SELECT * FROM golden_paths ${where} ORDER BY created_at DESC`,
+      params
+    );
     res.json({ success: true, golden_paths: rows });
   } catch (err) {
     console.error('[golden-paths] GET 失败:', err);

@@ -6,12 +6,12 @@
  * 晨报/拍板/对话三页先通，其余待建
  */
 
-import { useEffect, useState, useCallback, useRef, type ComponentType } from 'react';
+import { Fragment, useEffect, useState, useCallback, useRef, type ComponentType } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, RefreshCw, MapPin, FileText,
   CheckSquare, MessageSquare, Layout, DollarSign,
-  ChevronRight, Activity, CheckCircle2,
+  ChevronRight, Activity, CheckCircle2, Zap,
 } from 'lucide-react';
 import ConversationsPanel from '../warroom/ConversationsPanel';
 import {
@@ -94,80 +94,398 @@ const TABS = [
 
 type TabKey = typeof TABS[number]['key'];
 
-// ── 全貌 Tab ─────────────────────────────────────────────────────────────────
+// ── GP 类型 ──────────────────────────────────────────────────────────────────
 
-function OverviewTab({ detail }: { detail: LineDetail | null }) {
+interface GoldenPath {
+  id: string;
+  title?: string | null;
+  one_liner?: string | null;
+  status?: string | null;
+  approved_at?: string | null;
+  journey_id?: string | null;
+  created_at: string;
+}
+
+// GP 状态颜色映射
+const GP_STATUS_META: Record<string, { dot: string; text: string; label: string }> = {
+  candidate:    { dot: 'bg-slate-500',   text: 'text-slate-400',   label: '候选' },
+  proposed:     { dot: 'bg-blue-400',    text: 'text-blue-300',    label: '提案' },
+  converged:    { dot: 'bg-indigo-400',  text: 'text-indigo-300',  label: '收敛' },
+  approved:     { dot: 'bg-emerald-500', text: 'text-emerald-400', label: '批准' },
+  in_dev:       { dot: 'bg-amber-400 wr-pulse', text: 'text-amber-300', label: '开发中' },
+  delivered:    { dot: 'bg-emerald-600', text: 'text-emerald-300', label: '已交付' },
+  expired:      { dot: 'bg-slate-600',   text: 'text-slate-500',   label: '过期' },
+  rejected:     { dot: 'bg-red-600',     text: 'text-red-400',     label: '否决' },
+  blocked_gate: { dot: 'bg-red-500 wr-pulse', text: 'text-red-300', label: '门禁阻' },
+  superseded:   { dot: 'bg-slate-700',   text: 'text-slate-600',   label: '已超越' },
+};
+
+// GP 合同要素列
+const GP_CONTRACT_COLS = [
+  { key: 'fr_summary',                 label: 'FR',   tip: '功能定义' },
+  { key: 'lifelines_and_nfr',          label: 'NFR',  tip: '生命线/非功能' },
+  { key: 'yield_order',                label: '优先', tip: '优先序' },
+  { key: 'release_and_blast_radius',   label: '投产', tip: '投产/爆炸半径' },
+  { key: 'success_and_close',          label: '成功', tip: '成功关闭条件' },
+  { key: 'budget_guard',               label: '预算', tip: '预算守护' },
+] as const;
+
+// ── 全貌 Tab（Line总览表：GP × 要素矩阵） ────────────────────────────────────
+
+function OverviewTab({ detail, lineId }: { detail: LineDetail | null; lineId: string }) {
+  const navigate = useNavigate();
+  const [gps, setGps] = useState<GoldenPath[]>([]);
+  const [gpLoading, setGpLoading] = useState(true);
+  const [selectedGp, setSelectedGp] = useState<GoldenPath | null>(null);
+  const [contracts, setContracts] = useState<any[]>([]);
+  const [contractLoading, setContractLoading] = useState(false);
+
+  useEffect(() => {
+    setGpLoading(true);
+    fetch(`/api/brain/golden-paths?journey_id=${encodeURIComponent(lineId)}`)
+      .then((r) => r.json())
+      .then((d) => {
+        const all: GoldenPath[] = d.golden_paths || [];
+        // 客户端过滤兜底（backend journey_id filter 需重启后生效）
+        setGps(all.filter((gp) => gp.journey_id === lineId));
+      })
+      .catch(() => setGps([]))
+      .finally(() => setGpLoading(false));
+  }, [lineId]);
+
+  const selectGp = useCallback(async (gp: GoldenPath) => {
+    setSelectedGp(gp);
+    setContracts([]);
+    setContractLoading(true);
+    try {
+      const r = await fetch(`/api/brain/golden-paths/${encodeURIComponent(gp.id)}/contracts`);
+      const d = await r.json();
+      setContracts(d.contract_versions || []);
+    } catch { /* 静默 */ } finally {
+      setContractLoading(false);
+    }
+  }, []);
+
   if (!detail) return <div className="p-6 text-slate-600 text-sm">线数据加载中…</div>;
+
   const { line, tasks } = detail;
   const safeTasks = Array.isArray(tasks) ? tasks : [];
   const active = safeTasks.filter((t) => t.status === 'active');
-  const done = safeTasks.filter((t) => t.raw_status === 'completed' || t.status === 'done');
-  const failed = safeTasks.filter((t) => t.status === 'failed');
   const score = healthScore(line as LineSummary);
   const meta = healthMeta(score);
 
   return (
-    <div className="p-6 max-w-2xl space-y-6">
-      {/* 基本信息 */}
-      <div className="rounded-lg border border-slate-800/60 bg-slate-900/20 p-4 space-y-3">
-        <div className="text-[11px] tracking-[0.12em] uppercase text-slate-500 font-bold mb-2">线档案</div>
-        <div className="flex items-center justify-between text-[13px]">
-          <span className="text-slate-600">状态</span>
-          <span className="text-slate-300">{line.status || '--'}</span>
-        </div>
-        <div className="flex items-center justify-between text-[13px]">
+    <div className="flex h-full min-h-0">
+      {/* ── 左侧：GP 矩阵表 ── */}
+      <div className={`flex flex-col min-h-0 overflow-hidden border-r border-slate-800/60 ${selectedGp ? 'w-[58%]' : 'w-full'}`}>
+        {/* 线档案摘要条 */}
+        <div className="flex items-center gap-4 px-5 py-2.5 border-b border-slate-800/40 bg-slate-900/30 flex-shrink-0 text-[11px]">
           <span className="text-slate-600">成熟度</span>
           <span className="text-slate-300">{MATURITY_LABEL[line.maturity ?? ''] ?? (line.maturity ?? '--')}</span>
+          <span className="text-slate-700 mx-1">·</span>
+          <span className={`font-bold font-mono ${meta.text}`}>{score}</span>
+          <span className="text-slate-600">健康分</span>
+          <span className="text-slate-700 mx-1">·</span>
+          <span className="text-blue-300">{active.length}</span>
+          <span className="text-slate-600">进行中</span>
         </div>
-        <div className="flex items-center justify-between text-[13px]">
-          <span className="text-slate-600">所属域</span>
-          <span className="text-slate-300">{line.areaName || '--'}</span>
+
+        {/* GP 矩阵表头 */}
+        <div className="flex-shrink-0 overflow-x-auto">
+          <table className="w-full min-w-[520px] text-[11px] font-mono">
+            <thead>
+              <tr className="border-b border-slate-800/60">
+                <th className="text-left pl-5 pr-3 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase w-[40%]">Golden Path</th>
+                <th className="text-center px-2 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase w-14">状态</th>
+                {GP_CONTRACT_COLS.map((col) => (
+                  <th key={col.key} title={col.tip} className="text-center px-2 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase w-10">
+                    {col.label}
+                  </th>
+                ))}
+                <th className="text-center px-3 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase w-10">版本</th>
+              </tr>
+            </thead>
+          </table>
         </div>
-        {line.description && (
-          <p className="text-[13px] text-slate-400 leading-relaxed pt-1 border-t border-slate-800/50">
-            {line.description}
-          </p>
+
+        {/* GP 矩阵内容 */}
+        <div className="flex-1 overflow-y-auto">
+          {gpLoading ? (
+            <div className="flex items-center gap-2 p-6 text-slate-600 text-sm">
+              <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+              加载 Golden Paths…
+            </div>
+          ) : gps.length === 0 ? (
+            <div className="p-8 flex flex-col items-center gap-3 text-center">
+              <Zap className="w-8 h-8 text-slate-700" />
+              <div className="text-[13px] text-slate-600">本线暂无 Golden Path</div>
+              <div className="text-[11px] text-slate-700">由军师调度后自动出现</div>
+            </div>
+          ) : (
+            <table className="w-full min-w-[520px] text-[11px] font-mono">
+              <tbody>
+                {gps.map((gp) => {
+                  const sm = GP_STATUS_META[gp.status ?? ''] ?? { dot: 'bg-slate-600', text: 'text-slate-500', label: gp.status ?? '?' };
+                  const isSelected = selectedGp?.id === gp.id;
+                  return (
+                    <tr
+                      key={gp.id}
+                      onClick={() => selectGp(gp)}
+                      className={`border-b border-slate-800/30 cursor-pointer transition-colors ${
+                        isSelected ? 'bg-indigo-500/10 border-indigo-500/20' : 'hover:bg-slate-800/20'
+                      }`}
+                    >
+                      {/* GP 名称 */}
+                      <td className="pl-5 pr-3 py-2.5 w-[40%]">
+                        <div className="flex items-start gap-2">
+                          <Zap className="w-3 h-3 text-amber-500/70 flex-shrink-0 mt-0.5" />
+                          <div className="min-w-0">
+                            <div className="text-slate-200 text-[12px] truncate leading-snug">{gp.title || gp.id.slice(0, 8)}</div>
+                            {gp.one_liner && !isSelected && (
+                              <div className="text-slate-600 text-[10px] truncate mt-0.5">{gp.one_liner}</div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      {/* 状态 */}
+                      <td className="text-center px-2 py-2.5 w-14">
+                        <div className="flex items-center justify-center gap-1">
+                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sm.dot}`} />
+                          <span className={`text-[10px] ${sm.text}`}>{sm.label}</span>
+                        </div>
+                      </td>
+                      {/* 合同要素格（暂无合同时显示 —） */}
+                      {GP_CONTRACT_COLS.map((col) => (
+                        <td key={col.key} className="text-center px-2 py-2.5 w-10">
+                          <span className="text-slate-700">—</span>
+                        </td>
+                      ))}
+                      {/* 合同版本数 */}
+                      <td className="text-center px-3 py-2.5 w-10">
+                        <span className="text-slate-600">—</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* 底部跳转 */}
+        {selectedGp && (
+          <div className="flex-shrink-0 px-5 py-2 border-t border-slate-800/40 bg-slate-900/20">
+            <button
+              onClick={() => navigate(`/warroom/gp/${selectedGp.id}`)}
+              className="flex items-center gap-1.5 text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors"
+            >
+              <span>在 GP 详情页打开</span>
+              <ChevronRight className="w-3 h-3" />
+            </button>
+          </div>
         )}
       </div>
 
-      {/* 健康分 */}
-      <div className="rounded-lg border border-slate-800/60 bg-slate-900/20 p-4">
-        <div className="text-[11px] tracking-[0.12em] uppercase text-slate-500 font-bold mb-3">健康分</div>
-        <div className="flex items-center gap-4">
-          <span className={`text-[36px] font-bold font-mono ${meta.text}`}>{score}</span>
-          <div className="flex-1">
-            <div className="h-2 rounded-full bg-slate-800 overflow-hidden mb-1">
-              <div
-                className={`h-full rounded-full ${
-                  score >= 70 ? 'bg-emerald-500' : score >= 40 ? 'bg-amber-400' : 'bg-red-500'
-                }`}
-                style={{ width: `${score}%` }}
-              />
+      {/* ── 右侧：GP 详情面板 ── */}
+      {selectedGp && (
+        <div className="flex flex-col min-h-0 overflow-hidden" style={{ width: '42%' }}>
+          {/* GP 详情头 */}
+          <div className="flex items-start gap-3 px-4 py-3 border-b border-slate-800/60 bg-slate-900/30 flex-shrink-0">
+            <Zap className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] text-slate-100 font-semibold leading-snug truncate">
+                {selectedGp.title || selectedGp.id.slice(0, 8)}
+              </div>
+              {selectedGp.one_liner && (
+                <div className="text-[11px] text-slate-500 mt-0.5 line-clamp-2 leading-relaxed">{selectedGp.one_liner}</div>
+              )}
             </div>
-            <div className="text-[11px] text-slate-600">规划进度 60% + 成熟度 40%</div>
+          </div>
+
+          {/* 版本对比表 */}
+          <div className="flex-1 overflow-y-auto">
+            <GpContractVersionTable
+              contracts={contracts}
+              loading={contractLoading}
+              gpId={selectedGp.id}
+            />
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── GP 合同版本对比表 ─────────────────────────────────────────────────────────
+
+const CONTRACT_ROW_LABELS: Record<string, { label: string; short: string }> = {
+  fr_summary:                 { label: '功能定义 (FR)',   short: 'FR' },
+  lifelines_and_nfr:          { label: '生命线 / NFR',   short: 'NFR' },
+  yield_order:                { label: '优先序',          short: '优先' },
+  external_commitment_changes:{ label: '外部承诺变化',   short: '外承' },
+  release_and_blast_radius:   { label: '投产 / 爆炸半径', short: '投产' },
+  success_and_close:          { label: '成功关闭条件',   short: '成功' },
+  budget_guard:               { label: '预算守护',        short: '预算' },
+};
+
+const CONTRACT_KEYS = Object.keys(CONTRACT_ROW_LABELS);
+
+function summarizeSection(key: string, val: any): string {
+  if (!val || typeof val !== 'object') return '—';
+  if (key === 'fr_summary') return `${(val.statements || []).length} 条声明`;
+  if (key === 'lifelines_and_nfr') return `${(val.items || []).length} 项`;
+  if (key === 'yield_order') return (val.order || []).slice(0, 2).join('→') + (val.order?.length > 2 ? '…' : '');
+  if (key === 'external_commitment_changes') return val.none ? '无变化' : `${(val.changes || []).length} 项变化`;
+  if (key === 'release_and_blast_radius') return `${(val.stages || []).length} 阶段`;
+  if (key === 'success_and_close') return `${(val.metrics || []).length} 指标`;
+  if (key === 'budget_guard') return `$${val.total_cost_cap_usd ?? '?'}`;
+  return '有';
+}
+
+function hashSection(val: any): string {
+  return JSON.stringify(val ?? null);
+}
+
+interface ContractRowDetail {
+  key: string;
+  label: string;
+  versions: Array<{ versionNum: number; summary: string; raw: any; changed: boolean }>;
+}
+
+function GpContractVersionTable({
+  contracts,
+  loading,
+  gpId,
+}: {
+  contracts: any[];
+  loading: boolean;
+  gpId: string;
+}) {
+  const navigate = useNavigate();
+  const [expandedRow, setExpandedRow] = useState<string | null>(null);
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 p-6 text-slate-600 text-sm">
+        <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+        加载合同版本…
+      </div>
+    );
+  }
+
+  if (contracts.length === 0) {
+    return (
+      <div className="p-6 flex flex-col items-center gap-3 text-center">
+        <div className="w-10 h-10 rounded-full bg-slate-800/60 flex items-center justify-center">
+          <FileText className="w-5 h-5 text-slate-600" />
+        </div>
+        <div className="text-[13px] text-slate-500">暂无合同记录</div>
+        <div className="text-[11px] text-slate-700">GP 批准后自动生成合同版本</div>
+        <button
+          onClick={() => navigate(`/warroom/gp/${gpId}`)}
+          className="mt-2 text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors"
+        >
+          查看 GP 详情 <ChevronRight className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  }
+
+  // 按版本号升序排列（旧→新）
+  const sorted = [...contracts].sort((a, b) => a.version - b.version);
+
+  // 构建版本对比行
+  const rows: ContractRowDetail[] = CONTRACT_KEYS.map((key) => {
+    const versions = sorted.map((cv, idx) => {
+      const val = cv.contract_json?.[key];
+      const prevVal = idx > 0 ? sorted[idx - 1].contract_json?.[key] : undefined;
+      const changed = idx > 0 && hashSection(val) !== hashSection(prevVal);
+      return {
+        versionNum: cv.version,
+        summary: summarizeSection(key, val),
+        raw: val,
+        changed,
+      };
+    });
+    return { key, label: CONTRACT_ROW_LABELS[key]?.label ?? key, versions };
+  });
+
+  return (
+    <div className="p-0">
+      {/* 标题栏 */}
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800/40 bg-slate-900/20">
+        <span className="text-[11px] tracking-[0.1em] uppercase text-slate-500 font-semibold">版本对比</span>
+        <span className="text-[11px] text-slate-700">{contracts.length} 个版本</span>
       </div>
 
-      {/* 任务统计 */}
-      <div className="rounded-lg border border-slate-800/60 bg-slate-900/20 p-4">
-        <div className="text-[11px] tracking-[0.12em] uppercase text-slate-500 font-bold mb-3">任务快照</div>
-        <div className="grid grid-cols-3 gap-3">
-          {[
-            { label: '进行中', count: active.length, color: 'text-blue-400', dot: 'bg-blue-400' },
-            { label: '已完成', count: done.length, color: 'text-emerald-400', dot: 'bg-emerald-500' },
-            { label: '失败', count: failed.length, color: 'text-red-400', dot: 'bg-red-500' },
-          ].map((s) => (
-            <div key={s.label} className="text-center">
-              <div className={`text-[28px] font-bold font-mono ${s.color}`}>{s.count}</div>
-              <div className="text-[11px] text-slate-600">{s.label}</div>
-            </div>
-          ))}
-        </div>
+      {/* 对比表 */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11px] font-mono">
+          <thead>
+            <tr className="border-b border-slate-800/40">
+              <th className="text-left pl-4 pr-2 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase w-24">要素</th>
+              {sorted.map((cv) => (
+                <th key={cv.version} className="text-center px-2 py-2 text-slate-600 font-semibold tracking-[0.08em] w-20">
+                  <div>v{cv.version}</div>
+                  <div className="text-[9px] text-slate-700 font-normal mt-0.5">{fmtDate(cv.created_at)}</div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const isExpanded = expandedRow === row.key;
+              return (
+                <Fragment key={row.key}>
+                  <tr
+                    onClick={() => setExpandedRow(isExpanded ? null : row.key)}
+                    className="border-b border-slate-800/20 cursor-pointer hover:bg-slate-800/20 transition-colors"
+                  >
+                    <td className="pl-4 pr-2 py-2 text-slate-400">{row.label}</td>
+                    {row.versions.map((v) => (
+                      <td
+                        key={v.versionNum}
+                        className={`text-center px-2 py-2 ${
+                          v.changed ? 'bg-purple-900/30 text-purple-300' : 'text-slate-500'
+                        }`}
+                        title={v.changed ? '相比上一版本有变化' : undefined}
+                      >
+                        <span className={v.changed ? 'font-semibold' : ''}>{v.summary}</span>
+                        {v.changed && <span className="ml-1 text-[9px] text-purple-400">↑</span>}
+                      </td>
+                    ))}
+                  </tr>
+                  {isExpanded && (
+                    <tr className="border-b border-slate-800/20">
+                      <td colSpan={sorted.length + 1} className="px-4 pb-3 pt-1">
+                        <div className="flex gap-3 overflow-x-auto">
+                          {row.versions.map((v) => (
+                            <div
+                              key={v.versionNum}
+                              className={`flex-shrink-0 w-52 rounded border p-2 ${
+                                v.changed ? 'border-purple-700/40 bg-purple-900/15' : 'border-slate-800/40 bg-slate-900/20'
+                              }`}
+                            >
+                              <div className="text-[10px] text-slate-600 mb-1">v{v.versionNum}</div>
+                              <pre className="text-[10px] text-slate-400 whitespace-pre-wrap break-words max-h-32 overflow-y-auto leading-relaxed">
+                                {JSON.stringify(v.raw, null, 2)}
+                              </pre>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
+// ── end GpContractVersionTable ────────────────────────────────────────────────
 
 // ── 规划 Tab ─────────────────────────────────────────────────────────────────
 
@@ -524,18 +842,26 @@ export default function StrategistLinePage() {
       </div>
 
       {/* ── 内容区 ── */}
-      <div className="flex-1 overflow-y-auto bg-[#0a0e1a]">
-        {activeTab === 'overview' && <OverviewTab detail={detail} />}
-        {activeTab === 'roadmap' && <RoadmapTab detail={detail} />}
-        {activeTab === 'morning' && <MorningTab />}
-        {activeTab === 'decision' && lineId && <DecisionTab lineId={lineId} />}
+      <div className="flex-1 overflow-hidden bg-[#0a0e1a] flex flex-col">
+        {activeTab === 'overview' && lineId && (
+          <div className="flex-1 overflow-hidden flex">
+            <OverviewTab detail={detail} lineId={lineId} />
+          </div>
+        )}
+        {activeTab !== 'overview' && activeTab !== 'conversation' && (
+          <div className="flex-1 overflow-y-auto">
+            {activeTab === 'roadmap' && <RoadmapTab detail={detail} />}
+            {activeTab === 'morning' && <MorningTab />}
+            {activeTab === 'decision' && lineId && <DecisionTab lineId={lineId} />}
+            {activeTab === 'elements' && <PlaceholderTab label="要素" icon={Activity} />}
+            {activeTab === 'investment' && <PlaceholderTab label="投入" icon={DollarSign} />}
+          </div>
+        )}
         {activeTab === 'conversation' && lineId && (
-          <div className="h-full p-4">
+          <div className="flex-1 overflow-hidden p-4">
             <ConversationsPanel journeyId={lineId} />
           </div>
         )}
-        {activeTab === 'elements' && <PlaceholderTab label="要素" icon={Activity} />}
-        {activeTab === 'investment' && <PlaceholderTab label="投入" icon={DollarSign} />}
       </div>
     </div>
   );
