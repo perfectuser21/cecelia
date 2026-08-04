@@ -451,8 +451,6 @@ jobs:
           node-version: 20
       - name: Guard 自测（proven-to-fire）
         run: bash scripts/__tests__/test-pyramid-guard.test.sh
-      - name: write-current-state 自测（原孤儿测试接入）
-        run: bash scripts/__tests__/write-current-state.test.sh
       - name: rescan-if-changed 事件扳机自测
         run: bash scripts/__tests__/rescan-if-changed.test.sh
       - name: main-repo-sentinel 主仓哨兵自测

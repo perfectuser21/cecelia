@@ -29,7 +29,7 @@ async function checkRing1TestRegistered(pool) {
     `SELECT value_json, updated_at FROM working_memory WHERE key = 'quality_test_pyramid'`,
   );
   const row = rows[0];
-  if (!row) return { ok: false, detail: '无 test-pyramid 快照（运行 write-current-state.sh 喂数据）' };
+  if (!row) return { ok: false, detail: '无 test-pyramid 快照（由 test-pyramid-guard CI job POST /api/brain/quality/test-pyramid 写入；历史数据源脚本已于 2026-08 退役）' };
   const snap = row.value_json ?? {};
   const ageH = (Date.now() - new Date(row.updated_at).getTime()) / 3_600_000;
   if (ageH > 48) return { ok: false, detail: `test-pyramid 快照已过期 ${ageH.toFixed(1)}h（>48h）` };

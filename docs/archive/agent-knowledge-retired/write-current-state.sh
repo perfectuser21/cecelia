@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# write-current-state.sh — 写入系统健康状态到 .agent-knowledge/CURRENT_STATE.md
+# write_current_state.sh — 写入系统健康状态到 .agent-knowledge/CURRENT_STATE.md
 #
 # 功能：
 # - 读取最新 capability-probe 结果（来自 DB 的 cecelia_events 表）
@@ -11,7 +11,7 @@
 # - 写到主仓库 .agent-knowledge/CURRENT_STATE.md
 #
 # 调用时机：/dev Stage 4 Ship 阶段（PR 合并后）
-# 调用方式：bash scripts/write-current-state.sh
+# 调用方式：bash scripts/write_current_state.sh
 # =============================================================================
 
 set -euo pipefail
@@ -32,8 +32,8 @@ fi
 OUTPUT_FILE="${CURRENT_STATE_OUTPUT_FILE:-${MAIN_REPO}/.agent-knowledge/CURRENT_STATE.md}"
 mkdir -p "$(dirname "$OUTPUT_FILE")"
 
-echo "[write-current-state] 主仓库: $MAIN_REPO"
-echo "[write-current-state] 输出文件: $OUTPUT_FILE"
+echo "[write_current_state] 主仓库: $MAIN_REPO"
+echo "[write_current_state] 输出文件: $OUTPUT_FILE"
 
 # ─── 读取 Brain 警觉等级 ──────────────────────────────────────────────────────
 ALERTNESS_JSON=$(curl -s --max-time 5 "${BRAIN_URL}/api/brain/alertness" 2>/dev/null || echo "{}")
@@ -239,7 +239,7 @@ console.log(r.pass ? "守卫: ✅ PASS" : "守卫: ❌ FAIL — " + (r.failures|
 cat > "$OUTPUT_FILE" <<STATEOF
 ---
 generated: ${TIMESTAMP}
-source: write-current-state.sh
+source: write_current_state.sh
 ---
 
 # Cecelia 系统当前状态
@@ -298,4 +298,4 @@ ${CI_SECTION}
 > 要触发探针：Brain 每小时自动运行，或重启 Brain 触发。
 STATEOF
 
-echo "[write-current-state] ✅ CURRENT_STATE.md 已写入: $OUTPUT_FILE"
+echo "[write_current_state] ✅ CURRENT_STATE.md 已写入: $OUTPUT_FILE"

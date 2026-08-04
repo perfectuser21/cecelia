@@ -12,6 +12,10 @@
 
 ---
 
+## Brain 1.267.213 — 刀0.5 CI 修复版本 bump
+
+- 同步版本 bump：`seven-ring-audit.js` + `quality.js` 注释更新已由 1.267.212 记录；本版本为 CI gate 版本严格大于 main(1.267.212) 的补丁。
+
 ## Brain 1.267.212 — Runner digest 重新钉住（意外删除后重建）
 
 - 运维清理磁盘时误删了 pinned Runner 镜像 `sha256:e0797f5a440d...`（无法在任何机器/归档恢复，已核实）；从当前 main 未修改的 `docker/cecelia-runner/` 重新构建，新 digest `sha256:5c202d56e869...` 已同步进 `node-profile.js` CANONICAL_BASELINE、`fleet-node-profiles.json`（三机）、`fleet-rollout.sh`、`reconcile-fleet-node-baseline.sh` 及配套测试。

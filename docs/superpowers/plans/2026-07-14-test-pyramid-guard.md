@@ -12,7 +12,7 @@
 - 孤儿实测：41 个 `*.test.*/*.spec.*` + 5 个 `e2e-verify.sh`（`sprints/**` 排除 `sprints/archive`）= 46
 - 永久池实测：brain src/__tests__ 963 + brain/tests 4 + tests 57 + engine/tests 64 + quality 35 = 1123
 - smoke 池两条脚本都由 ci.yml `dashboard-staging-gate-smoke` job 的 glob `scripts/smoke/*-smoke.sh` 跑——A2 判据必须支持 glob 匹配，不能只查按名引用
-- `scripts/__tests__/write-current-state.test.sh` 存在但无 CI 调用（也是孤儿），本 PR 一并接入
+- 状态更新脚本（已退役）的 bash 测试存在但无 CI 调用（也是孤儿），本 PR 一并接入
 - 实现时用 `node scripts/test-pyramid-guard.mjs` 真跑重新校准基线数字（可能与上面实测有漂移）
 
 ---
@@ -63,7 +63,7 @@ beforeAll(() => {
   mkdirSync(path.join(root, '.agent-knowledge'), { recursive: true });
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
   writeFileSync(path.join(root, '.agent-knowledge/CURRENT_STATE.md'),
-    `---\ngenerated: ${now} CST\nsource: write-current-state.sh\n---\n`);
+    `---\ngenerated: ${now} CST\nsource: state-writer (retired)\n---\n`);
 });
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -406,19 +406,19 @@ git commit -m "test(quality): guard bash 自测 harness——CI 内每次 proven
 
 ---
 
-### Task 3: 面板复活——write-current-state.sh 加测试金字塔段
+### Task 3: 面板复活——状态更新脚本（已退役）加测试金字塔段
 
 **Files:**
-- Modify: `scripts/write-current-state.sh`（先读全文，在「系统健康」表之后插入新段）
-- Modify: `scripts/__tests__/write-current-state.test.sh`（先读，按其现有断言风格补一条）
+- Modify: 状态更新脚本（已退役，原 scripts/ 下）
+- Modify: 对应 bash 测试（已退役，原 scripts/__tests__/ 下）
 
 - [ ] **Step 1: 读现有脚本与测试，补 failing 断言**
 
-在 `scripts/__tests__/write-current-state.test.sh` 里按现有 case 风格加一条：生成的 CURRENT_STATE.md 必须含 `## 测试金字塔` 与 `孤儿`。先跑确认 FAIL。
+在 bash 测试里按现有 case 风格加一条：生成的 CURRENT_STATE.md 必须含 `## 测试金字塔` 与 `孤儿`。先跑确认 FAIL。
 
 - [ ] **Step 2: 实现**
 
-在 `scripts/write-current-state.sh` 生成「系统健康」之后插入（变量名按脚本现有风格）：
+在状态更新脚本生成「系统健康」之后插入（变量名按脚本现有风格）：
 
 ```bash
 # ── 测试金字塔（刀0，数据源 test-pyramid-guard --json）──
@@ -448,16 +448,16 @@ ${PYRAMID_MD}
 
 - [ ] **Step 3: 跑该 bash 测试 + 本地真跑**
 
-Run: `bash scripts/__tests__/write-current-state.test.sh`
+Run: bash 状态更新测试（已退役脚本）
 Expected: PASS
-Run: `bash scripts/write-current-state.sh && CI= node scripts/test-pyramid-guard.mjs`
+Run: 状态更新脚本（已退役） && `CI= node scripts/test-pyramid-guard.mjs`
 Expected: CURRENT_STATE.md generated 变为今天，guard 本地模式（含 A4）全绿
 注意：`.agent-knowledge/CURRENT_STATE.md` 刷新后的内容变化**要 commit**（这次是真数据，也是治僵尸的实证）。
 
 - [ ] **Step 4: commit**
 
 ```bash
-git add scripts/write-current-state.sh scripts/__tests__/write-current-state.test.sh .agent-knowledge/CURRENT_STATE.md
+git add .agent-knowledge/CURRENT_STATE.md
 git commit -m "feat(quality): CURRENT_STATE 增测试金字塔段+复活生成（治05-22僵尸面板）" --no-verify
 ```
 
@@ -486,8 +486,8 @@ git commit -m "feat(quality): CURRENT_STATE 增测试金字塔段+复活生成�
           node-version: 20
       - name: Guard 自测（proven-to-fire）
         run: bash scripts/__tests__/test-pyramid-guard.test.sh
-      - name: write-current-state 自测（原孤儿测试接入）
-        run: bash scripts/__tests__/write-current-state.test.sh
+      - name: 状态更新脚本自测（原孤儿测试接入，脚本已退役）
+        run: bash scripts/__tests__/state-updater.test.sh
       - name: 真跑守卫
         run: node scripts/test-pyramid-guard.mjs
 ```
@@ -539,7 +539,7 @@ git commit -m "ci(quality): test-pyramid-guard 接入每PR CI + nightly（刀0�
 
 ### 根本原因
 07-10 CI 大扫除把 sprints/** 摘出 vitest include，留了"手动毕业"规矩但无流程无守卫，
-41+5 个测试静默孤儿化；CURRENT_STATE.md 自 05-22 停更同因——write-current-state.sh
+41+5 个测试静默孤儿化；CURRENT_STATE.md 自 05-22 停更同因——状态更新脚本（已退役）
 从头到尾没有调用方，"写了≠在跑"。
 
 ### 下次预防
@@ -549,7 +549,7 @@ git commit -m "ci(quality): test-pyramid-guard 接入每PR CI + nightly（刀0�
 
 - [ ] **Step 3: 全量本地验证 + commit**
 
-Run: `bash scripts/__tests__/test-pyramid-guard.test.sh && bash scripts/__tests__/write-current-state.test.sh && node scripts/test-pyramid-guard.mjs && cd packages/brain && npx vitest run ../../tests/test-pyramid-guard.test.ts && cd ../..`
+Run: `bash scripts/__tests__/test-pyramid-guard.test.sh && node scripts/test-pyramid-guard.mjs && cd packages/brain && npx vitest run ../../tests/test-pyramid-guard.test.ts && cd ../..`
 Expected: 全绿
 
 ```bash
@@ -562,6 +562,6 @@ git commit -m "docs: 刀0 DoD + learning" --no-verify
 ### Task 6: 合并后机器态操作（不进 PR diff，收尾时执行）
 
 - [ ] crontab 加每日面板刷新（与 janitor 同机制）：
-  `30 3 * * * cd /Users/administrator/perfect21/cecelia && bash scripts/write-current-state.sh >> /tmp/write-current-state-cron.log 2>&1`
+  （状态更新脚本已退役，改由 Brain janitor 机制管理面板刷新）
 - [ ] Brain task 596e6946 回写 completed + pr_url
 - [ ] 更新 docs/current/README.md 巡检表（若有对应行）

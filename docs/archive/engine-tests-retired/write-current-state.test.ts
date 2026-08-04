@@ -5,9 +5,9 @@ import { resolve } from 'path';
 // 用 resolve(__dirname, ...) 让 check-changed-coverage 的 gate2 能识别路径引用
 const SESSION_START = resolve(__dirname, '../hooks/session-start.sh');
 const SHIP_MD = resolve(__dirname, '../skills/engine-ship/SKILL.md');
-const WRITE_STATE_SH = resolve(__dirname, '../../../scripts/write-current-state.sh');
+const WRITE_STATE_SH = resolve(__dirname, '../../../scripts/write_current_state.sh');
 
-describe('write-current-state.sh', () => {
+describe('write_current_state.sh', () => {
   it('脚本文件存在', () => {
     expect(existsSync(WRITE_STATE_SH)).toBe(true);
   });
@@ -30,7 +30,7 @@ describe('write-current-state.sh', () => {
 
 // engine-ship/SKILL.md 已迁移到 zenithjoy-skills，不再由 engine CI 校验
 
-describe('write-current-state.sh 包含 CI 状态章节', () => {
+describe('write_current_state.sh 包含 CI 状态章节', () => {
   it('脚本包含 gh run list 调用', () => {
     const content = readFileSync(WRITE_STATE_SH, 'utf8');
     expect(content).toContain('gh run list');
