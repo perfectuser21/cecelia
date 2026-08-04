@@ -460,7 +460,7 @@ describe('selfcheck schema version', () => {
     // 351 = migration 351 graph_edges 表（graph.js 语义关联网络直接依赖），故推进地板到 351。
     // 352 = migration 352 features 表更名 brain_modules（澄清 Brain 内部模块语义），故推进地板到 352。
     // 353 = migration 353 DROP conversation_captures + conversation_log_cursors（inbox P0 清场，decisions a823206d），故推进地板到 353。
-    // 386 = GP phases + nfr_decisions_ref 迁移（数据地基②）是本 Brain 版本所需的最低地板。
+    // 386 = capture destination link + F1/F5 ledger template is the minimum required by this Brain version.
     expect(EXPECTED_SCHEMA_VERSION).toBe('386');
   });
 });

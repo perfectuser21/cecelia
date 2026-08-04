@@ -2,28 +2,23 @@
  * /api/brain/captures — 统一进箱端点 + CRUD
  * FR-3: POST /api/brain/captures（进箱+幂等）
  * FR-8: GET/GET/:id（列表+详情+计数）
- * F6-S3: GET /aging（账龄哨兵）, PATCH /:id/done（归位完成）
+ * FR-9: PATCH /api/brain/captures/:id（去向链+状态更新，migration 385）
+ * FR-10: GET /api/brain/captures/aging — 账龄哨兵视图查询
  */
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
+
+const VALID_DESTINATION_TYPES = ['initiative', 'project', 'task', 'dropped', 'na'];
 
 const router = Router();
 
+// CodeQL js/missing-rate-limiting：本 router 全部端点做 DB 访问，统一限流
+// （模式同 acceptance.js router 级限流）
+router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
+
 const VALID_SOURCES = ['harness', 'dashboard', 'feishu', 'api', 'conversation-claude', 'conversation-codex', 'conversation-grok'];
 const VALID_NATURES = ['learning', 'issue', 'handoff', 'session_summary'];
-
-/** 根据 routed_to_table 生成前端导航 URL */
-function getNavigateUrl(table, id) {
-  if (!table || !id) return null;
-  switch (table) {
-    case 'tasks':        return `/tasks/${id}/prd`;
-    case 'golden_paths': return `/warroom/gp/${id}`;
-    case 'journeys':     return `/warroom/line/${id}`;
-    case 'decisions':    return `/warroom?decision=${id}`;
-    case 'notes':        return `/knowledge/doc-chat?note=${id}`;
-    default:             return null;
-  }
-}
 
 // POST /api/brain/captures
 router.post('/', async (req, res) => {
@@ -86,27 +81,6 @@ router.post('/', async (req, res) => {
   }
 });
 
-// GET /api/brain/captures/aging — 账龄哨兵：超期未处理条目
-router.get('/aging', async (req, res) => {
-  try {
-    const days = Math.max(1, parseInt(req.query.days || '7', 10));
-    const limit = Math.min(100, parseInt(req.query.limit || '50', 10));
-    const { rows } = await pool.query(
-      `SELECT id, content, source, status, created_at,
-              EXTRACT(DAY FROM (NOW() - created_at))::INT AS age_days
-       FROM captures
-       WHERE status NOT IN ('done','dropped')
-         AND created_at < NOW() - ($1 || ' days')::INTERVAL
-       ORDER BY created_at ASC
-       LIMIT $2`,
-      [days, limit]
-    );
-    res.json({ overdue: rows, count: rows.length, threshold_days: days });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to query aging captures', details: err.message });
-  }
-});
-
 // GET /api/brain/captures
 router.get('/', async (req, res) => {
   try {
@@ -144,7 +118,7 @@ router.get('/', async (req, res) => {
 
     const [itemsResult, countResult, totalResult] = await Promise.all([
       pool.query(
-        `SELECT id, content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status, created_at, updated_at
+        `SELECT id, content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status, destination_type, destination_id, created_at, updated_at
          FROM captures ${where} ORDER BY created_at DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
         [...values, lim, off]
       ),
@@ -175,34 +149,74 @@ router.get('/', async (req, res) => {
   }
 });
 
-// PATCH /api/brain/captures/:id/done — 归位完成，写 done_at + status=done + 返回 navigate_url
-router.patch('/:id/done', async (req, res) => {
+// GET /api/brain/captures/aging — 账龄哨兵（超过7天未归位）
+router.get('/aging', async (req, res) => {
+  try {
+    const { limit = 50, severity } = req.query;
+    const lim = Math.min(parseInt(limit, 10) || 50, 200);
+    let sql = `SELECT id, content, source, status, destination_type, destination_id, created_at, age_days, severity FROM capture_aging_sentinel`;
+    const params = [];
+    if (severity) {
+      params.push(severity);
+      sql += ` WHERE severity = $1`;
+    }
+    sql += ` ORDER BY created_at ASC LIMIT $${params.length + 1}`;
+    params.push(lim);
+    const result = await pool.query(sql, params);
+    res.json({ items: result.rows, count: result.rows.length });
+  } catch (err) {
+    // 视图不存在时（migration 385 未应用）返回空列表而非 500
+    if (err.code === '42P01') {
+      return res.json({ items: [], count: 0, warning: 'capture_aging_sentinel view not yet created (migration 385 pending)' });
+    }
+    res.status(500).json({ error: 'Failed to query aging sentinel', details: err.message });
+  }
+});
+
+// PATCH /api/brain/captures/:id — 去向链更新（migration 385）
+router.patch('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { rows } = await pool.query(
-      `UPDATE captures SET status='done', done_at=NOW(), updated_at=NOW()
-       WHERE id=$1 AND status NOT IN ('done','dropped')
-       RETURNING id, status, done_at`,
-      [id]
-    );
-    if (!rows.length) {
-      // 已是 done/dropped 或不存在，幂等返回当前状态
-      const cur = await pool.query('SELECT id, status, done_at FROM captures WHERE id=$1', [id]);
-      if (!cur.rows.length) return res.status(404).json({ error: 'capture not found' });
-      return res.json(cur.rows[0]);
+    const { status, destination_type, destination_id } = req.body;
+
+    const fields = [];
+    const values = [];
+
+    if (status !== undefined) {
+      if (!['captured', 'clarified', 'done', 'dropped'].includes(status)) {
+        return res.status(400).json({ error: 'status must be one of: captured, clarified, done, dropped' });
+      }
+      values.push(status);
+      fields.push(`status = $${values.length}`);
     }
-    // 找最近已路由的 atom，生成导航 URL
-    const atomRes = await pool.query(
-      `SELECT routed_to_table, routed_to_id FROM capture_atoms
-       WHERE capture_id=$1 AND routed_to_table IS NOT NULL AND routed_to_id IS NOT NULL
-       ORDER BY created_at DESC LIMIT 1`,
-      [id]
+    if (destination_type !== undefined) {
+      if (destination_type !== null && !VALID_DESTINATION_TYPES.includes(destination_type)) {
+        return res.status(400).json({ error: `destination_type must be one of: ${VALID_DESTINATION_TYPES.join(', ')}` });
+      }
+      values.push(destination_type || null);
+      fields.push(`destination_type = $${values.length}`);
+    }
+    if (destination_id !== undefined) {
+      values.push(destination_id || null);
+      fields.push(`destination_id = $${values.length}`);
+    }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    values.push(id);
+    const result = await pool.query(
+      `UPDATE captures SET ${fields.join(', ')}, updated_at = now() WHERE id = $${values.length}
+       RETURNING id, status, destination_type, destination_id, updated_at`,
+      values
     );
-    const atom = atomRes.rows[0];
-    const navigate_url = atom ? getNavigateUrl(atom.routed_to_table, atom.routed_to_id) : null;
-    res.json({ ...rows[0], navigate_url });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'capture not found' });
+    }
+    res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to mark capture done', details: err.message });
+    res.status(500).json({ error: 'Failed to update capture', details: err.message });
   }
 });
 
@@ -211,7 +225,7 @@ router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const captureResult = await pool.query(
-      `SELECT id, content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status, done_at, created_at, updated_at
+      `SELECT id, content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status, destination_type, destination_id, created_at, updated_at
        FROM captures WHERE id = $1`,
       [id]
     );
@@ -227,14 +241,13 @@ router.get('/:id', async (req, res) => {
       [id]
     );
 
-    // 构建回链，附带前端导航 URL
+    // 构建回链
     const backlinks = atomsResult.rows
       .filter(a => a.routed_to_table && a.routed_to_id)
       .map(a => ({
         table: a.routed_to_table,
         id: a.routed_to_id,
         summary: `${a.target_type} → ${a.routed_to_table}`,
-        navigate_url: getNavigateUrl(a.routed_to_table, a.routed_to_id),
       }));
 
     res.json({ ...capture, atoms: atomsResult.rows, backlinks });
