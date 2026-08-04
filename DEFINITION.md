@@ -6,11 +6,15 @@
 
 
 
-**Brain 版本**: 1.267.211
+**Brain 版本**: 1.267.212
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.212 — 刀0.5 僵尸文档清尸注释更新
+
+- `seven-ring-audit.js` + `quality.js` 注释更新：data source 说明由 `write-current-state.sh`（已退役）改为 CI `test-pyramid-guard` job POST。
 
 ## Brain 1.267.211 — GAN role workspace node deps (案卷式 GAN PR-C)
 

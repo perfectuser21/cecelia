@@ -37,6 +37,14 @@
 
 ---
 
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期结果 |
+|---|---|---|---|
+| 僵尸文档清尸全量验收 | `tests/contract-behaviors.test.sh` | BEHAVIOR-1 退役文件不在原路径 / BEHAVIOR-2 @import 死链和 PATROL-REGISTRY 已清除 / BEHAVIOR-3 全仓 write-current-state 零命中 / BEHAVIOR-4 AGENTS.md 快照内容已清除 HARD_RULES 完整 / BEHAVIOR-5 engine.md 死路径已修正 / BEHAVIOR-6 CI 不含 write-current-state step / BEHAVIOR-7 cleanup.sh 不含 write-current-state 调用 | 7/7 PASS，exit 0 |
+
+---
+
 ## E2E 验收
 
 ### 验收场景 1：退役文件不在原路径
