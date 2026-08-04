@@ -373,6 +373,74 @@ describe('HarnessResult contract', () => {
     }), 'reviewer')).toThrow(/outcome/);
   });
 
+  it('r17 教训：case_file 是顶层显式字段，不会被 zod 默认 strip 掉', () => {
+    const parsed = parseHarnessResult(validResult({
+      decision: { outcome: 'REVISION_REQUESTED', reason: 'blockers open' },
+      case_file: {
+        blockers: [{
+          id: 'R2-1',
+          dimension: 'correctness',
+          title: 'missing edge case',
+          detail: 'no coverage for empty input',
+          status: 'open',
+          why_not_found_earlier: 'round 1 skipped edge cases',
+          prd_gap: 'PRD §3 未覆盖空输入',
+        }],
+        feedback_md: '# Round 2 review\n\nblocker R2-1 open.',
+      },
+    }), 'reviewer');
+
+    expect(parsed.case_file).toMatchObject({
+      blockers: [{ id: 'R2-1', status: 'open' }],
+      feedback_md: '# Round 2 review\n\nblocker R2-1 open.',
+    });
+  });
+
+  it('case_file 省略时结果不携带该字段（可选字段，不强加空案卷）', () => {
+    const parsed = parseHarnessResult(validResult({
+      decision: { outcome: 'APPROVED', reason: 'ok' },
+    }), 'reviewer');
+    expect(parsed.case_file).toBeUndefined();
+  });
+
+  it('case_file.blockers 默认 []，缺省字段不报错', () => {
+    const parsed = parseHarnessResult(validResult({
+      decision: { outcome: 'APPROVED', reason: 'ok' },
+      case_file: {},
+    }), 'reviewer');
+    expect(parsed.case_file).toMatchObject({ blockers: [] });
+  });
+
+  it('decision.rubric_scores 结构化字段保留（不是塞进 reason 文本）', () => {
+    const parsed = parseHarnessResult(validResult({
+      decision: {
+        outcome: 'REVISION_REQUESTED',
+        reason: 'coverage gap',
+        rubric_scores: { correctness: 8, coverage: 5, clarity: 9 },
+      },
+    }), 'reviewer');
+    expect(parsed.decision.rubric_scores).toEqual({
+      correctness: 8,
+      coverage: 5,
+      clarity: 9,
+    });
+  });
+
+  it('P3-5：decision.rubric_scores 允许混合形状，不在 transport 层 400 拒绝（数值过滤挪到落库前）', () => {
+    const parsed = parseHarnessResult(validResult({
+      decision: {
+        outcome: 'APPROVED',
+        reason: 'ok',
+        rubric_scores: { correctness: 8, coverage: 'n/a', clarity: null },
+      },
+    }), 'reviewer');
+    expect(parsed.decision.rubric_scores).toEqual({
+      correctness: 8,
+      coverage: 'n/a',
+      clarity: null,
+    });
+  });
+
   it('requires CANARY_OK for the dedicated canary output contract', () => {
     expect(() => parseHarnessResult(
       validResult({ decision: null }),

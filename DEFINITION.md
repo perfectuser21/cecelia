@@ -6,13 +6,13 @@
 
 
 
-**Brain 版本**: 1.267.207
+**Brain 版本**: 1.267.208
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.267.207 — ledger-hygiene m7 探针口径修正 + 自主循环产出登记覆盖
+## Brain 1.267.208 — ledger-hygiene m7 探针口径修正 + 自主循环产出登记覆盖
 
 - m7 统计窗改为上一完整北京日（Asia/Shanghai 昨日自然日），替代 NOW()-24h 滑窗（秒级漂移
   致误报自我延续）；capture 子项经 `getM7CaptureWindow` 参数化窗口 + `LEDGER_SELF_ATOM_PREFIX`
@@ -25,6 +25,15 @@
 - auto-learning `VALUABLE_TASK_TYPES` 纳入 `harness_initiative`（失败任务产 learning + 溯源 atom）。
 - `handoff.js` 新增导出 `pushHandoffAtom`（saveHandoff 复用同口径）；
   `PATCH /api/brain/tasks/:id` 在 `result.handoff` 有效时补登记 capture_atom（吞错不阻断）。
+
+## Brain 1.267.207 — GAN case file data plane (案卷式 GAN PR-A)
+
+- 新表 `gan_case_file`（migration 383，append-only，UNIQUE(run_id,round,author_role)）：GAN 每轮 reviewer/proposer 的结构化 blockers、rubric_scores、完整 feedback_md 落库为案卷 SSOT。
+- callback 终态同事务落案卷行（终态白名单 completed/completed_with_concerns + 触发收紧防非权威 attempt 抢槽；对 initiative_runs 行无第二条 UPDATE——死锁定律）。
+- harnessResultSchema 顶层显式收 case_file / decision.rubric_scores（宽松解析，落库前数值过滤）。
+- bundle 注入：proposer/reviewer 拿全量案卷（最近 2 轮带全文，更早只留台账——SQL 投影裁剪）+ dispatcher 256KB 硬闸（超限按 round 从旧到新丢 feedback_md 并告警）。
+- 案卷文本走 redactSecrets（不折行不截断，单字段 32KB 上限），与诊断日志的 2000 字符截断分离。
+- 回退到 1.267.205 会恢复：GAN 各轮互相失忆、Reviewer 反馈只剩 2 句摘要。
 
 ## Brain 1.267.205 — Kernel TaskBundle PRD anchor
 

@@ -77,7 +77,26 @@ const taskBundleSchema = z.object({
 // Keep transport parsing permissive because legacy role Skills emit useful
 // metadata alongside either `outcome` or `verdict`. Adversarial roles are
 // normalized and validated in parseHarnessResult below.
-const decisionSchema = z.object({}).passthrough();
+// rubric_scores 显式声明（案卷式 GAN，issue ce42f68f）：7 维分数结构化落库，
+// 不再靠 reason 文本里的自然语言分数——其余字段维持 passthrough 兼容旧 Skill。
+// P3-5（review CHANGES REQUESTED）：record(number) 曾经对混合形状 400 拒绝
+// 整个 callback——一个字段格式问题不该炸掉整条终态回调。放宽为
+// record(unknown) 在 transport 层无条件接住，数值过滤挪到落库前
+// （attempt-store.js numericRubricScores），只留 number 项写入 DB。
+const decisionSchema = z.object({
+  rubric_scores: z.record(z.unknown()).optional(),
+}).passthrough();
+
+// 案卷式 GAN 出口字段（design doc §数据流1）。r17 教训：zod 对象 schema 默认
+// strip 未声明字段——case_file 必须在顶层逐字段显式声明，不能指望顶层
+// passthrough（那会放行任意垃圾字段）。blockers 内部条目形状因角色而异
+// （reviewer 带 why_not_found_earlier/prd_gap，proposer 带 closure），
+// 用 passthrough 只做"是对象"级校验，字段语义交给案卷落库/展示层。
+const caseFileBlockerSchema = z.object({}).passthrough();
+const caseFileSchema = z.object({
+  blockers: z.array(caseFileBlockerSchema).default([]),
+  feedback_md: z.string().optional(),
+}).optional();
 
 const harnessResultSchema = z.object({
   contract_version: z.literal(RESULT_CONTRACT_VERSION),
@@ -98,6 +117,7 @@ const harnessResultSchema = z.object({
     provider: z.string().min(1),
     session_id: z.string().min(1).nullable().optional(),
   }).passthrough(),
+  case_file: caseFileSchema,
 });
 
 export function parseTaskBundle(value) {
