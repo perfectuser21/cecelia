@@ -1,7 +1,7 @@
 /**
  * CURRENT_STATE 全链路集成测试
  *
- * 模拟 /dev Stage4 触发 write-current-state.sh 生成 CURRENT_STATE.md，
+ * 模拟 /dev Stage4 触发 write_current_state.sh 生成 CURRENT_STATE.md，
  * 验证内容格式正确（含所有必需章节）。
  *
  * 设计原则：CI 兼容（Brain/DB/gh 不可用时脚本优雅降级，测试仍可通过）
@@ -16,9 +16,9 @@ import { randomUUID } from "crypto";
 
 const ENGINE_ROOT = path.resolve(__dirname, "../..");
 // WORKTREE_ROOT：当前分支代码所在的根目录（worktree 或主仓库均适用）
-// 用于找到本次 PR 修改后的 scripts/write-current-state.sh
+// 用于找到本次 PR 修改后的 scripts/write_current_state.sh
 const WORKTREE_ROOT = path.resolve(ENGINE_ROOT, "../..");
-const SCRIPT = path.join(WORKTREE_ROOT, "scripts/write-current-state.sh");
+const SCRIPT = path.join(WORKTREE_ROOT, "scripts/write_current_state.sh");
 // 使用 UUID 临时文件隔离测试输出，避免与其他进程竞争主仓库的 CURRENT_STATE.md
 const TMP_OUTPUT = path.join(os.tmpdir(), `current-state-test-${randomUUID()}.md`);
 
@@ -26,7 +26,7 @@ const state: { content: string } = { content: "" };
 
 describe("CURRENT_STATE 全链路集成验证", () => {
   beforeAll(() => {
-    // 模拟 Stage4 cleanup.sh 触发 write-current-state.sh
+    // 模拟 Stage4 cleanup.sh 触发 write_current_state.sh
     // 使用 spawnSync 替代 execSync，只传入系统标准 PATH（不包含 node_modules/.bin）。
     // 原因：node_modules/.bin/cat 是 Node.js 脚本，无法处理 bash heredoc 的 stdin 管道，
     //       导致 cat > file <<HEREDOC 写入空文件。必须使用 /bin/cat 等真实系统命令。
@@ -47,7 +47,7 @@ describe("CURRENT_STATE 全链路集成验证", () => {
 
     if (result.status !== 0 || result.error) {
       throw new Error(
-        `write-current-state.sh 执行失败 (status=${result.status})\n` +
+        `write_current_state.sh 执行失败 (status=${result.status})\n` +
           `STDOUT: ${result.stdout}\n` +
           `STDERR: ${result.stderr}\n` +
           `ERROR: ${result.error ?? "none"}`
@@ -65,7 +65,7 @@ describe("CURRENT_STATE 全链路集成验证", () => {
     }
   });
 
-  it("write-current-state.sh 脚本存在", () => {
+  it("write_current_state.sh 脚本存在", () => {
     expect(existsSync(SCRIPT)).toBe(true);
   });
 
@@ -76,7 +76,7 @@ describe("CURRENT_STATE 全链路集成验证", () => {
   it("包含 YAML frontmatter（generated + source 字段）", () => {
     expect(state.content).toMatch(/^---/);
     expect(state.content).toContain("generated:");
-    expect(state.content).toContain("source: write-current-state.sh");
+    expect(state.content).toContain("source: write_current_state.sh");
   });
 
   it("包含页面主标题", () => {

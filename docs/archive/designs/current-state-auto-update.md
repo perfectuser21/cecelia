@@ -30,11 +30,11 @@
 | `packages/engine/lib/devloop-check.sh` | ~489 | `gh pr merge` 执行 + Brain 回调 |
 | `packages/engine/hooks/stop-dev.sh` | ~421 | 检测 `cleanup_done: true` → `exit 0` |
 | `packages/engine/hooks/stop.sh` | ~79 | 普通对话结束 → `curl conversation-summary` |
-| `packages/engine/skills/dev/steps/04-ship.md` | §4.4.5 | AI 手动执行 `write-current-state.sh` |
+| `packages/engine/skills/dev/steps/04-ship.md` | §4.4.5 | AI 手动执行 `write_current_state.sh` |
 
 ### 1.3 现有 Stage4.4.5 的局限性
 
-`04-ship.md` §4.4.5 要求 AI 在 PR 合并后执行 `bash scripts/write-current-state.sh`，但：
+`04-ship.md` §4.4.5 要求 AI 在 PR 合并后执行 `bash scripts/write_current_state.sh`，但：
 
 - **依赖 AI 主动执行**：AI 可能遗漏或 context 压缩后跳过此步骤
 - **时序不确定**：在 PR 合并 → cleanup 的链路中没有强制保证
@@ -51,7 +51,7 @@ if gh pr merge "$pr_number" --squash --delete-branch 2>&1; then
     # ... Brain execution-callback ...
 
     # ← 新增：触发 CURRENT_STATE.md 更新（fire-and-forget）
-    bash "${PROJECT_ROOT}/scripts/write-current-state.sh" 2>/dev/null || true
+    bash "${PROJECT_ROOT}/scripts/write_current_state.sh" 2>/dev/null || true
 
     _devloop_jq -n ... '{"status":"merged",...}'
     return 0
@@ -120,13 +120,13 @@ id, task_id, pr_title, pr_url, branch, merged_at, ci_results, code_review_result
 
 ### 2.6 降级策略
 
-所有 API 调用使用 `--max-time 5` + `|| echo "{}"` 降级，Brain 离线不中断流程（`write-current-state.sh` 已实现此模式）。
+所有 API 调用使用 `--max-time 5` + `|| echo "{}"` 降级，Brain 离线不中断流程（`write_current_state.sh` 已实现此模式）。
 
 ---
 
 ## 3. CURRENT_STATE.md 增强格式设计
 
-### 3.1 现有格式（已在 `scripts/write-current-state.sh` 实现）
+### 3.1 现有格式（已在 `scripts/write_current_state.sh` 实现）
 
 ```markdown
 ## 系统健康
@@ -143,7 +143,7 @@ id, task_id, pr_title, pr_url, branch, merged_at, ci_results, code_review_result
 
 ### 3.2 建议增强字段
 
-在 `write-current-state.sh` 中新增以下章节：
+在 `write_current_state.sh` 中新增以下章节：
 
 #### 新增：最近合并 PR（来自 dev-records API）
 
@@ -163,7 +163,7 @@ id, task_id, pr_title, pr_url, branch, merged_at, ci_results, code_review_result
 ```markdown
 ## 排队中任务（Top 3）
 
-- [P0] 开发 write-current-state.sh 脚本 (dev)
+- [P0] 开发 write_current_state.sh 脚本 (dev)
 - [P0] /dev Stage4 集成 (dev)
 ```
 
@@ -186,7 +186,7 @@ id, task_id, pr_title, pr_url, branch, merged_at, ci_results, code_review_result
 ```markdown
 ---
 generated: 2026-03-29 09:00:00 CST
-source: write-current-state.sh
+source: write_current_state.sh
 ---
 
 # Cecelia 系统当前状态
@@ -224,10 +224,10 @@ source: write-current-state.sh
 
 基于本调研，下游任务的实施顺序和关键点：
 
-### 任务 1：增强 write-current-state.sh（Brain Task: 785eff90）
+### 任务 1：增强 write_current_state.sh（Brain Task: 785eff90）
 
 **修改点**：
-- `scripts/write-current-state.sh` 新增 dev-records 查询（最近 3 PR）
+- `scripts/write_current_state.sh` 新增 dev-records 查询（最近 3 PR）
 - 新增 queued tasks 查询
 - 可选：新增 OKR 摘要章节
 - 时间戳格式改为上海时间
@@ -240,8 +240,8 @@ source: write-current-state.sh
 ### 任务 2：Stage4 集成（Brain Task: 8e904219）
 
 **修改点**：
-- `packages/engine/lib/devloop-check.sh`：在 `gh pr merge` 成功后（Brain 回调之后）添加调用 `write-current-state.sh`
-- 调用方式：`bash "${PROJECT_ROOT}/scripts/write-current-state.sh" 2>/dev/null || true`
+- `packages/engine/lib/devloop-check.sh`：在 `gh pr merge` 成功后（Brain 回调之后）添加调用 `write_current_state.sh`
+- 调用方式：`bash "${PROJECT_ROOT}/scripts/write_current_state.sh" 2>/dev/null || true`
 - 不需要修改 stop.sh 或 stop-dev.sh
 
 **Engine 版本 bump 要求**：
@@ -260,8 +260,8 @@ source: write-current-state.sh
 ### 任务 4：集成测试（Brain Task: de276f80）
 
 **测试策略**：
-- 不需要真实 PR 合并，可以直接调用 `write-current-state.sh` 验证输出格式
-- 测试文件：`scripts/__tests__/write-current-state.test.ts`
+- 不需要真实 PR 合并，可以直接调用 `write_current_state.sh` 验证输出格式
+- 测试文件：`scripts/__tests__/write_current_state.test.ts`
 - 验证 CURRENT_STATE.md 包含必要章节（系统健康/Probe/PR/任务）
 - 验证 Brain 离线时降级为空章节（不 crash）
 
@@ -271,7 +271,7 @@ source: write-current-state.sh
 
 | 风险 | 影响 | 缓解措施 |
 |------|------|----------|
-| `write-current-state.sh` 执行慢 | 延迟 PR 合并流程 | 已有 `--max-time 5` 限制 |
+| `write_current_state.sh` 执行慢 | 延迟 PR 合并流程 | 已有 `--max-time 5` 限制 |
 | DB 不可用（psql 失败） | Probe 章节为空 | 脚本已有 `|| echo ""` 降级 |
 | Brain 离线 | 多章节为空 | 所有 curl 均有 `|| echo "{}"` 降级 |
 | devloop-check.sh 调用失败 | `|| true` 保证不中断主流程 | 已在设计中体现 |

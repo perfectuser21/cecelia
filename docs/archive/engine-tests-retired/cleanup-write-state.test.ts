@@ -1,7 +1,7 @@
 /**
- * cleanup.sh + write-current-state.sh 集成契约测试
+ * cleanup.sh + write_current_state.sh 集成契约测试
  *
- * 验证 cleanup.sh section 2.6 包含对 write-current-state.sh 的调用，
+ * 验证 cleanup.sh section 2.6 包含对 write_current_state.sh 的调用，
  * 确保 PR 合并后 CURRENT_STATE.md 能自动更新。
  */
 
@@ -15,16 +15,16 @@ const REPO_ROOT = path.resolve(ENGINE_ROOT, "../..");
 // 门禁 2: 显式引用本 PR 修改的源文件，确保 check-changed-coverage 能追踪到
 const CLEANUP_SH = path.resolve(__dirname, "../../skills/dev/scripts/cleanup.sh");
 
-describe("cleanup.sh write-current-state.sh 集成契约", () => {
+describe("cleanup.sh write_current_state.sh 集成契约", () => {
   const cleanupPath = CLEANUP_SH;
 
   it("cleanup.sh 存在", () => {
     expect(fs.existsSync(cleanupPath)).toBe(true);
   });
 
-  it("cleanup.sh 包含 write-current-state.sh 调用", () => {
+  it("cleanup.sh 包含 write_current_state.sh 调用", () => {
     const content = fs.readFileSync(cleanupPath, "utf-8");
-    expect(content).toContain("write-current-state.sh");
+    expect(content).toContain("write_current_state.sh");
   });
 
   it("cleanup.sh 包含 [2.6] 节标题", () => {
@@ -32,8 +32,8 @@ describe("cleanup.sh write-current-state.sh 集成契约", () => {
     expect(content).toContain("[2.6]");
   });
 
-  it("write-current-state.sh 存在于 scripts/", () => {
-    const scriptPath = path.join(REPO_ROOT, "scripts/write-current-state.sh");
+  it("write_current_state.sh 存在于 scripts/", () => {
+    const scriptPath = path.join(REPO_ROOT, "scripts/write_current_state.sh");
     expect(fs.existsSync(scriptPath)).toBe(true);
   });
 

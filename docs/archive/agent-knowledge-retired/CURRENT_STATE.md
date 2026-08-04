@@ -1,6 +1,6 @@
 ---
 generated: 2026-07-17 21:38:16 CST
-source: write-current-state.sh
+source: write_current_state.sh
 ---
 
 # Cecelia 系统当前状态

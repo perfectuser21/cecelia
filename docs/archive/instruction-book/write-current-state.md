@@ -1,5 +1,5 @@
 ---
-id: instruction-write-current-state
+id: instruction-write_current_state
 version: 1.0.0
 created: 2026-03-29
 updated: 2026-03-29
@@ -8,7 +8,7 @@ changelog:
   - 1.0.0: 初始版本
 ---
 
-# write-current-state.sh — 系统状态快照生成
+# write_current_state.sh — 系统状态快照生成
 
 ## What it is
 
@@ -18,7 +18,7 @@ Claude 下次对话时读取此文件，无需重新查询 Brain API 即可感�
 ## 触发时机
 
 1. **自动触发**：`/dev` Stage 4 Ship 阶段，PR 合并后执行
-2. **手动触发**：`bash scripts/write-current-state.sh`
+2. **手动触发**：`bash scripts/write_current_state.sh`
 
 ## 输出内容
 
