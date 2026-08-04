@@ -6,11 +6,16 @@
  * FR-10: GET /api/brain/captures/aging — 账龄哨兵视图查询
  */
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 
 const VALID_DESTINATION_TYPES = ['initiative', 'project', 'task', 'dropped', 'na'];
 
 const router = Router();
+
+// CodeQL js/missing-rate-limiting：本 router 全部端点做 DB 访问，统一限流
+// （模式同 acceptance.js router 级限流）
+router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
 
 const VALID_SOURCES = ['harness', 'dashboard', 'feishu', 'api', 'conversation-claude', 'conversation-codex', 'conversation-grok'];
 const VALID_NATURES = ['learning', 'issue', 'handoff', 'session_summary'];
