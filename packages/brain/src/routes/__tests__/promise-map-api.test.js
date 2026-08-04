@@ -163,15 +163,25 @@ describe('POST /api/brain/journey_step_links — cell 字段', () => {
 describe('PATCH /api/brain/journey_step_links/:id — cell 状态回写', () => {
   beforeEach(() => { mockQuery.mockReset(); });
 
-  it('回写 cell_status=green 成功', async () => {
-    const fakeRow = { id: 'l1', cell_status: 'green' };
+  it('回写 cell_status=green + assertion_ref 成功（fail-closed：必须带 assertion_ref）', async () => {
+    const fakeRow = { id: 'l1', cell_status: 'green', assertion_ref: 'tests/foo.test.js' };
     mockQuery.mockResolvedValueOnce({ rows: [fakeRow] });
     const app = await makeApp();
     const request = await import('supertest');
     const res = await request.default(app)
       .patch('/api/brain/journey_step_links/l1')
-      .send({ cell_status: 'green' });
+      .send({ cell_status: 'green', assertion_ref: 'tests/foo.test.js' });
     expect(res.status).toBe(200);
+  });
+
+  it('回写 cell_status=green 无 assertion_ref → 422（fail-closed，决策 df1ccf5a §③）', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ assertion_ref: null }] });
+    const app = await makeApp();
+    const request = await import('supertest');
+    const res = await request.default(app)
+      .patch('/api/brain/journey_step_links/l1')
+      .send({ cell_status: 'green' });
+    expect(res.status).toBe(422);
   });
 
   it('无 fields 时返回 400', async () => {
