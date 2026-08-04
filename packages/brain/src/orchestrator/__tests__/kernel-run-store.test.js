@@ -832,12 +832,21 @@ describe('persistKernelRunPhase', () => {
 
     expect(query).toHaveBeenCalledTimes(1);
     const [sql, params] = query.mock.calls[0];
-    // 死锁铁律（PR #4596 教训）：必须是独立单语句，不得出现 BEGIN/事务包装或多表联锁。
-    expect(sql).not.toMatch(/BEGIN|pg_advisory_xact_lock|FOR UPDATE/i);
+    // 死锁铁律（PR #4596 教训）：本语句本身不得出现 BEGIN/FOR UPDATE 之类的
+    // 显式事务包装或多表联锁。注意这不等于"整个操作无锁"——initiative_runs 上
+    // 的 AFTER 触发器会在同一条 UPDATE 隐式打开的事务里另外取
+    // pg_advisory_xact_lock（见 kernel-run-store.js 顶部注释的锁序说明），
+    // 因此这里不对 SQL 文本做 pg_advisory_xact_lock 的"无锁"假断言
+    // （I-1 审查修正：真实的 pg 集成测试覆盖锁序，而不是 SQL 字符串匹配）。
+    expect(sql).not.toMatch(/\bBEGIN\b/i);
+    expect(sql).not.toMatch(/FOR\s+UPDATE/i);
     expect(sql).toMatch(/UPDATE\s+initiative_runs/i);
     expect(sql).toMatch(/orchestrator_version\s*=\s*'v2'/);
     expect(sql).toMatch(/phase\s+IS\s+DISTINCT\s+FROM\s+\$2/i);
-    expect(sql).toMatch(/phase\s+NOT\s+IN\s*\(\s*'done'\s*,\s*'failed'\s*\)/i);
+    // 'paused' 必须在排除列表里（I-2 审查修正）：paused 是 needs_context 人审
+    // 等待态，被前进相位覆写会让 activateContextResume 的 WHERE phase='paused'
+    // 命中 0 行，context-answer 锚点丢失、resume 永久卡死。
+    expect(sql).toMatch(/phase\s+NOT\s+IN\s*\(\s*'done'\s*,\s*'failed'\s*,\s*'paused'\s*\)/i);
     expect(sql).toMatch(/updated_at\s*=\s*NOW\(\)/i);
     expect(params).toEqual([RUN_ID, 'gan']);
     expect(result).toEqual({ id: RUN_ID, phase: 'gan' });
@@ -852,6 +861,20 @@ describe('persistKernelRunPhase', () => {
     expect(result).toBeNull();
   });
 
+  it('当前行是 paused（needs_context 人审等待）时 WHERE 不命中：不覆写、不丢锚点', async () => {
+    // mock 层面代表"当前行 phase='paused'"这一事实——真实 DB 行为由
+    // kernel-wiring.pg.integration.test.js 对真实 Postgres 断言。
+    const query = vi.fn(async () => ({ rows: [] }));
+    const pool = { query };
+
+    const result = await persistKernelRunPhase(pool, RUN_ID, 'gan');
+
+    expect(query).toHaveBeenCalledTimes(1);
+    const [sql] = query.mock.calls[0];
+    expect(sql).toMatch(/'paused'/);
+    expect(result).toBeNull();
+  });
+
   it('底层 query 失败原样上抛（由调用方 loop.js 决定降级为告警）', async () => {
     const query = vi.fn(async () => { throw new Error('connection refused'); });
     const pool = { query };
@@ -862,7 +885,7 @@ describe('persistKernelRunPhase', () => {
 });
 
 describe('activateQueuedKernelTask', () => {
-  it('queued → in_progress：单条 UPDATE WHERE status=queued', async () => {
+  it('queued → in_progress：单条 UPDATE WHERE status=queued，补写 started_at', async () => {
     const query = vi.fn(async () => ({ rows: [{ id: TASK_ID }] }));
     const pool = { query };
 
@@ -875,6 +898,11 @@ describe('activateQueuedKernelTask', () => {
     expect(sql).toMatch(/status\s*=\s*'in_progress'/i);
     expect(sql).toMatch(/WHERE\s+id\s*=\s*\$1/i);
     expect(sql).toMatch(/AND\s+status\s*=\s*'queued'/i);
+    // I-3 审查修正：isStale（tick-status.js）/ getBlockedTasks（decision.js）
+    // 都是 `if (!started_at) return false` / 直接 skip——不补写 started_at，
+    // Kernel 任务对这两个巡检永久隐形。用 COALESCE 不硬覆盖，防止 resume 场景
+    // 重复推迟起算时间。
+    expect(sql).toMatch(/started_at\s*=\s*COALESCE\(\s*started_at\s*,\s*NOW\(\)\s*\)/i);
     expect(sql).toMatch(/updated_at\s*=\s*NOW\(\)/i);
     expect(params).toEqual([TASK_ID]);
     expect(result).toEqual({ id: TASK_ID });
