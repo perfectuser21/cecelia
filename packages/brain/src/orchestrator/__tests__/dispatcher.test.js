@@ -501,6 +501,125 @@ describe('createDispatcher', () => {
       .not.toContain('private proposer chain of thought');
   });
 
+  it('案卷式 GAN：proposer TaskBundle 注入 observed.caseFile 全量历轮行', async () => {
+    const deps = makeDeps();
+    const caseFile = [
+      { round: 1, author_role: 'proposer', blockers: [] },
+      { round: 1, author_role: 'reviewer', blockers: [{ id: 'R1-1', status: 'open' }] },
+    ];
+
+    await createDispatcher(deps)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 6,
+      observed: { ...observed, caseFile },
+      decision: { phase: 'gan', reason: 'revision_requested' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.case_file).toEqual(caseFile);
+    // 这个 fixture 没有提供 observed.ganLatestRoundReviewFeedback，所以
+    // review_feedback 本来就不会被注入——这条断言只确认"没有多余字段"，
+    // 不能证明旧字段被保留。旧字段与案卷共存的真正证据见下面的用例（P3-7）。
+    expect(created.bundle.inputs).not.toHaveProperty('review_feedback');
+  });
+
+  it('案卷式 GAN：review_feedback 摘要字段与全量案卷可以同时注入（design doc §数据流1：旧字段保留兼容一版）', async () => {
+    const deps = makeDeps();
+    const caseFile = [
+      { round: 1, author_role: 'proposer', blockers: [] },
+      { round: 1, author_role: 'reviewer', blockers: [{ id: 'R1-1', status: 'open' }] },
+    ];
+    const reviewFeedback = {
+      attempt_id: 'review-attempt-1',
+      contract_round: 1,
+      contract_sha: 'a'.repeat(40),
+      summary: 'The E2E oracle is incomplete.',
+      reason: 'verification oracle below threshold',
+    };
+
+    await createDispatcher(deps)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 6,
+      observed: { ...observed, caseFile, ganLatestRoundReviewFeedback: reviewFeedback },
+      decision: { phase: 'gan', reason: 'revision_requested' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.case_file).toEqual(caseFile);
+    expect(created.bundle.inputs.review_feedback).toEqual(reviewFeedback);
+  });
+
+  it('案卷式 GAN：observed.caseFile 为空数组时不往 proposer/reviewer TaskBundle 塞空字段', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 6,
+      observed: { ...observed, caseFile: [] },
+      decision: { phase: 'gan', reason: 'first_round' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs).not.toHaveProperty('case_file');
+  });
+
+  it('P2-3 膨胀闸2：TaskBundle 超 256KB 时按 round 从旧到新丢 case_file.feedback_md，够用就停', async () => {
+    const deps = makeDeps();
+    const bigText = 'x'.repeat(150 * 1024);
+    const caseFile = [
+      { round: 1, author_role: 'proposer', blockers: [], feedback_md: bigText },
+      { round: 2, author_role: 'proposer', blockers: [], feedback_md: bigText },
+      { round: 3, author_role: 'proposer', blockers: [], feedback_md: bigText },
+    ];
+
+    await createDispatcher(deps)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 6,
+      observed: { ...observed, caseFile },
+      decision: { phase: 'gan', reason: 'revision_requested' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    const bundleBytes = Buffer.byteLength(JSON.stringify(created.bundle));
+    expect(bundleBytes).toBeLessThanOrEqual(256 * 1024);
+    // 从最旧的 round 1 开始丢，丢到够用（round 1/2 清空）就停——最新的
+    // round 3 保留全文，不是无差别清空所有轮次。
+    expect(created.bundle.inputs.case_file.map((row) => [row.round, row.feedback_md === null])).toEqual([
+      [1, true],
+      [2, true],
+      [3, false],
+    ]);
+  });
+
+  it('P2-3 膨胀闸2：全部丢完 feedback_md 仍超限时只 console.warn 不阻断派发', async () => {
+    const deps = makeDeps();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const caseFile = [
+      { round: 1, author_role: 'proposer', blockers: [], feedback_md: 'small note' },
+    ];
+    const hugeDescription = 'y'.repeat(300 * 1024);
+
+    await createDispatcher(deps)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 6,
+      observed: {
+        ...observed,
+        caseFile,
+        task: { ...observed.task, description: hugeDescription },
+      },
+      decision: { phase: 'gan', reason: 'revision_requested' },
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('TaskBundle exceeds'));
+    expect(deps.attemptStore.createAttempt).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
   it('dispatches the frozen CommanderBundle through preflight before Attempt creation', async () => {
     const order = [];
     const deps = makeDeps(order);
@@ -1008,6 +1127,24 @@ describe('createDispatcher', () => {
       contract_round: 1,
       contract_sha: 'a'.repeat(40),
     });
+  });
+
+  it('案卷式 GAN：reviewer TaskBundle 也注入 observed.caseFile 全量历轮行', async () => {
+    const deps = makeDeps();
+    const caseFile = [
+      { round: 1, author_role: 'proposer', blockers: [] },
+    ];
+
+    await createDispatcher(deps)('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 4,
+      observed: { ...observed, caseFile },
+      decision: { phase: 'gan', reason: 'review' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.case_file).toEqual(caseFile);
   });
 
   it('generator bundle 从已批准合同导出 contract_branch，供 launcher 注入环境', async () => {

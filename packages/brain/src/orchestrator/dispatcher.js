@@ -11,6 +11,7 @@ import {
   sanitizeDiagnostic,
 } from './failure-persistence.js';
 import { deriveCapabilityRequirements } from './preflight/requirements.js';
+import { HARNESS_BUNDLE_MAX_BYTES } from './constants.js';
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const MAX_EVALUATOR_FEEDBACK_CHECKS = 20;
@@ -252,6 +253,17 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     common.contract_round = observed.proposeBranchRn ?? 0;
     common.contract_sha = observed.proposeBranchSha ?? null;
   }
+  // 案卷式 GAN（issue ce42f68f，design doc §数据流2）：proposer/reviewer 读同一份
+  // 全量历轮案卷（rubric 历史 + blocker 台账），由 ground-truth.js collectGroundTruth
+  // 现查现给。旧的 review_feedback 字段（只带上一轮 2 句摘要）继续保留一版做兼容，
+  // 不在这次改动里替换/删除。空案卷（首轮）不注入，避免给 Skill 塞无意义空数组。
+  if (
+    ['proposer', 'reviewer'].includes(spec.role)
+    && Array.isArray(observed.caseFile)
+    && observed.caseFile.length > 0
+  ) {
+    common.case_file = observed.caseFile;
+  }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
     common.contract = observed.contract?.row ?? null;
     common.contract_branch = observed.contract?.row?.branch
@@ -310,6 +322,53 @@ function buildBundle(
     expected_output: spec.expectedOutput,
   };
   return deferWorkspaceValidation ? bundle : parseTaskBundle(bundle);
+}
+
+function bundleByteLength(bundle) {
+  return Buffer.byteLength(JSON.stringify(bundle));
+}
+
+/**
+ * TaskBundle 膨胀闸2（P2-3，review CHANGES REQUESTED）：闸1（case-file-store.js
+ * loadCaseFile 的 fullTextRounds SQL 投影）已经把大部分 feedback_md 全文收窄
+ * 到最近几轮，但 round 数很多、单条 feedback_md 很长时仍可能把整条 TaskBundle
+ * 撑到 provider payload 上限附近。派发前做字节数体检，超限就按 round 从旧到
+ * 新继续丢 case_file 里的 feedback_md；全部丢完还超只告警不阻断派发——把
+ * "静默撑爆派发/被 provider 拒收"变成可观测的日志，而不是让一次案卷膨胀直接
+ * 搞挂整条派发链。
+ */
+function enforceBundleSizeLimit(bundle) {
+  if (bundleByteLength(bundle) <= HARNESS_BUNDLE_MAX_BYTES) return bundle;
+
+  let trimmedBundle = bundle;
+  const caseFile = bundle.inputs?.case_file;
+  if (Array.isArray(caseFile) && caseFile.length > 0) {
+    const oldestFirst = [...caseFile.keys()].sort(
+      (a, b) => (caseFile[a].round ?? 0) - (caseFile[b].round ?? 0),
+    );
+    let trimmedCaseFile = caseFile;
+    for (const index of oldestFirst) {
+      if (bundleByteLength(trimmedBundle) <= HARNESS_BUNDLE_MAX_BYTES) break;
+      if (trimmedCaseFile[index].feedback_md == null) continue;
+      trimmedCaseFile = trimmedCaseFile.map((row, i) => (
+        i === index ? { ...row, feedback_md: null } : row
+      ));
+      trimmedBundle = {
+        ...trimmedBundle,
+        inputs: { ...trimmedBundle.inputs, case_file: trimmedCaseFile },
+      };
+    }
+  }
+
+  const finalBytes = bundleByteLength(trimmedBundle);
+  if (finalBytes > HARNESS_BUNDLE_MAX_BYTES) {
+    console.warn(
+      `[dispatcher] TaskBundle exceeds ${HARNESS_BUNDLE_MAX_BYTES} bytes after trimming `
+      + `case_file feedback_md (run_id=${trimmedBundle.run_id} attempt_id=${trimmedBundle.attempt_id} `
+      + `bytes=${finalBytes})`,
+    );
+  }
+  return trimmedBundle;
 }
 
 function executionConfig(payload, { provider, accountHome, canary = false } = {}) {
@@ -651,6 +710,8 @@ export function createDispatcher(deps) {
     if (spec.role !== 'judge' && selectedAccount) {
       accountHome = resolveAccountHome(adapter.name, selectedAccount);
     }
+
+    bundle = enforceBundleSizeLimit(bundle);
 
     const persisted = await deps.attemptStore.createAttempt({
       id: attemptId,
@@ -1104,4 +1165,6 @@ export function createDetachedLauncher({
   });
 }
 
-export const __test__ = { ACTION_SPECS, buildInputs, buildBundle, executionConfig };
+export const __test__ = {
+  ACTION_SPECS, buildInputs, buildBundle, executionConfig, enforceBundleSizeLimit,
+};

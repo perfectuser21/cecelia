@@ -21,13 +21,22 @@ export function errorMessage(error) {
   return error?.message ?? String(error);
 }
 
-export function sanitizeDiagnostic(value) {
+/**
+ * 只做 secret 脱敏，不折行、不截断——诊断日志（sanitizeDiagnostic）和案卷式
+ * GAN 的 feedback_md/blockers（attempt-store.js sanitizeCaseFileValue）复用
+ * 同一份正则，但后者需要保留完整反馈原文的换行与长度，不能套用诊断日志的
+ * "折叠成一行 + 砍到 2000 字符" 那套（review CHANGES REQUESTED P2-4 复审）。
+ */
+export function redactSecrets(value) {
   return String(value ?? 'unknown')
-    .replace(/[\r\n\t]+/g, ' ')
     .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
     .replace(QUOTED_SECRET_ASSIGNMENT, '$1$2[REDACTED]$2')
-    .replace(BARE_SECRET_ASSIGNMENT, '$1[REDACTED]')
-    .slice(0, MAX_DIAGNOSTIC_LENGTH);
+    .replace(BARE_SECRET_ASSIGNMENT, '$1[REDACTED]');
+}
+
+export function sanitizeDiagnostic(value) {
+  const folded = String(value ?? 'unknown').replace(/[\r\n\t]+/g, ' ');
+  return redactSecrets(folded).slice(0, MAX_DIAGNOSTIC_LENGTH);
 }
 
 function sanitizedError(error) {

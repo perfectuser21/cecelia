@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   failurePersistenceError,
+  redactSecrets,
   sanitizeDiagnostic,
 } from './failure-persistence.js';
 
@@ -34,5 +35,29 @@ describe('failure persistence diagnostics', () => {
     expect(error.message).not.toContain('raw-callback-value');
     expect(error.message).not.toContain('raw-bridge-value');
     expect(error.message).toContain('[REDACTED]');
+  });
+});
+
+describe('redactSecrets：只脱敏 secret，不折行不截断（案卷式 GAN P2-4 复审拆分）', () => {
+  it('保留换行与超过 2000 字符的长度，只替换 secret 片段', () => {
+    const longLine = 'x'.repeat(2500);
+    const value = `# heading\n\n${longLine}\n\nBearer bearer-secret-000 leaked`;
+
+    const redacted = redactSecrets(value);
+
+    expect(redacted).toContain('\n');
+    expect(redacted.length).toBeGreaterThan(2000);
+    expect(redacted).not.toContain('bearer-secret-000');
+    expect(redacted).toContain('Bearer [REDACTED]');
+  });
+
+  it('sanitizeDiagnostic 仍然折行 + 截断 2000（对既有调用方零影响）', () => {
+    const longLine = 'x'.repeat(2500);
+    const value = `# heading\n\n${longLine}`;
+
+    const sanitized = sanitizeDiagnostic(value);
+
+    expect(sanitized).not.toContain('\n');
+    expect(sanitized.length).toBe(2000);
   });
 });

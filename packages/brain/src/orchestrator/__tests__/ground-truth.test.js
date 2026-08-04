@@ -41,6 +41,7 @@ function fakePool(rowsByTable = {}) {
         return { rows: rowsByTable.orchestrator_decision_log ?? [] };
       }
       if (sql.includes('FROM account_usage_cache')) return { rows: rowsByTable.account_usage_cache ?? [] };
+      if (sql.includes('FROM gan_case_file')) return { rows: rowsByTable.gan_case_file ?? [] };
       throw new Error(`unexpected sql: ${sql}`);
     }),
   };
@@ -91,6 +92,7 @@ function makeDeps({ rows = {}, exec = {}, files = {}, readAuthCircuit } = {}) {
     orchestrator_decision_log: rows.log ?? [],
     historical_failure_sets: rows.historicalFailureSets ?? [],
     account_usage_cache: rows.circuit ?? [],
+    gan_case_file: rows.caseFile ?? [],
     ...(rows.attemptsQueryResult !== undefined
       ? { harness_attempts_result: rows.attemptsQueryResult }
       : {}),
@@ -148,6 +150,39 @@ describe('collectGroundTruth：DB 通道组装', () => {
     const o = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
     expect(o.authCircuit).toEqual([{ account_id: 'account1', is_auth_failed: true }]);
     expect(deps.pool.calls.some(([sql]) => sql.includes('account_usage_cache'))).toBe(false);
+  });
+
+  it('案卷式 GAN（issue ce42f68f）：collectGroundTruth 透传 gan_case_file 全量行给 observed.caseFile', async () => {
+    const caseFileRows = [
+      {
+        id: 'row-1', run_id: RUN_ID, round: 1, author_role: 'proposer',
+        attempt_id: 'a1', contract_sha: null, rubric_scores: null,
+        blockers: [], feedback_md: null,
+      },
+      {
+        id: 'row-2', run_id: RUN_ID, round: 1, author_role: 'reviewer',
+        attempt_id: 'a2', contract_sha: 'a'.repeat(40),
+        rubric_scores: { correctness: 8 },
+        blockers: [{ id: 'R1-1', status: 'open' }],
+        feedback_md: '# round 1',
+      },
+    ];
+    const deps = makeDeps({ rows: { caseFile: caseFileRows } });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.caseFile).toEqual(caseFileRows);
+    const [sql, params] = deps.pool.calls.find(([query]) => query.includes('FROM gan_case_file'));
+    expect(sql).toMatch(/WHERE gcf\.run_id\s*=\s*\$1/);
+    expect(sql).toMatch(/ORDER BY gcf\.round ASC, gcf\.author_role ASC/);
+    // ground-truth 显式传 CASE_FILE_FULL_TEXT_ROUNDS（P2-3 膨胀闸1，当前=2）。
+    expect(params).toEqual([RUN_ID, 2]);
+  });
+
+  it('gan_case_file 无行时 observed.caseFile 为空数组（不是 null/undefined）', async () => {
+    const deps = makeDeps();
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(observed.caseFile).toEqual([]);
   });
 
   it('读取最新完成 evaluator attempt 的完整 result，供 judge 取机械证据', async () => {
