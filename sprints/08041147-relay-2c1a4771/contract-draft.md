@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 Sprint: watchdog liveness 探针「从未启动任务」误判 liveness_dead 修复（防复发）
 TASK_ID: 2c1a4771-3424-45ea-b6e4-19ae980edb95
@@ -130,7 +130,7 @@ N/A — 纯 Brain 内部调度逻辑，无外部用户/agent 可写入的输入�
 **验证命令**:
 ```bash
 TEST_DB_URL="postgresql://localhost:5432/cecelia_test"
-TID=$(psql "$TEST_DB_URL" -t -A -c "INSERT INTO tasks (title, task_type, status, payload, error_message, started_at) VALUES ('e2e-never-started 探针场景', 'dev', 'in_progress', '{\"failure_class\":\"missing_anchor\"}', 'S2锚点执法：task缺少 payload.anchor.{journey_id,gp_id,step_id}，拒绝点火', NULL) RETURNING id")
+TID=$(psql "$TEST_DB_URL" -q -t -A -c "INSERT INTO tasks (title, task_type, status, payload, error_message, started_at) VALUES ('e2e-never-started 探针场景', 'dev', 'in_progress', '{\"failure_class\":\"missing_anchor\"}', 'S2锚点执法：task缺少 payload.anchor.{journey_id,gp_id,step_id}，拒绝点火', NULL) RETURNING id")
 [ -n "$TID" ] || { echo "FAIL: 注入失败"; exit 1; }
 rm -f "/tmp/cecelia-${TID}.log"
 ```
@@ -146,9 +146,9 @@ rm -f "/tmp/cecelia-${TID}.log"
 
 **验证命令**:
 ```bash
-cat > /tmp/e2e-never-started-probe.mjs <<'MJS'
+cat > /tmp/e2e-never-started-probe.mjs <<MJS
 process.env.NODE_ENV = process.env.NODE_ENV || 'test';
-const { probeTaskLiveness } = await import('./packages/brain/src/executor.js');
+const { probeTaskLiveness } = await import('$PWD/packages/brain/src/executor.js');
 await probeTaskLiveness();
 await probeTaskLiveness();
 process.exit(0);
@@ -285,15 +285,15 @@ node -e "const c=require('fs').readFileSync('packages/brain/vitest.config.js','u
 # 2. Golden Path 场景直验：注入「从未启动」任务（1dfa40f7 复现）
 # fixture 标题带时间戳唯一化：learnings 以 content_hash（title+content 派生）去重，
 # 固定标题会命中历史 is_latest 行跳写，导致步骤 6 学习行断言在复跑时假红
-TID=$(psql "$TEST_DB_URL" -t -A -c "INSERT INTO tasks (title, task_type, status, payload, error_message, started_at) VALUES ('e2e-never-started 探针场景 '||extract(epoch from now())::bigint, 'dev', 'in_progress', '{\"failure_class\":\"missing_anchor\"}', 'S2锚点执法：task缺少 payload.anchor.{journey_id,gp_id,step_id}，拒绝点火', NULL) RETURNING id")
+TID=$(psql "$TEST_DB_URL" -q -t -A -c "INSERT INTO tasks (title, task_type, status, payload, error_message, started_at) VALUES ('e2e-never-started 探针场景 '||extract(epoch from now())::bigint, 'dev', 'in_progress', '{\"failure_class\":\"missing_anchor\"}', 'S2锚点执法：task缺少 payload.anchor.{journey_id,gp_id,step_id}，拒绝点火', NULL) RETURNING id")
 [ -n "$TID" ] || { echo "FAIL: fixture 注入失败"; exit 1; }
 trap "psql \"$TEST_DB_URL\" -c \"DELETE FROM learnings WHERE task_id='$TID'\" >/dev/null 2>&1; psql \"$TEST_DB_URL\" -c \"DELETE FROM tasks WHERE id='$TID'\" >/dev/null 2>&1 || true" EXIT
 rm -f "/tmp/cecelia-${TID}.log"
 
 # 3. 真实两轮探针（suspect → confirmed dead），worktree 真代码 + 真 DB + 真 ps
-cat > /tmp/e2e-never-started-probe.mjs <<'MJS'
+cat > /tmp/e2e-never-started-probe.mjs <<MJS
 process.env.NODE_ENV = process.env.NODE_ENV || 'test';
-const { probeTaskLiveness } = await import('./packages/brain/src/executor.js');
+const { probeTaskLiveness } = await import('$PWD/packages/brain/src/executor.js');
 await probeTaskLiveness();
 await probeTaskLiveness();
 process.exit(0);
@@ -366,6 +366,8 @@ echo "OK Golden Path 验证通过: never_started 分类保真 + 字段不覆盖 
 gate-allow: domain/db-no-time-window E2E 步骤 0 的 `SELECT 1` 为 DB 连通性预检（不可达即 FAIL exit 1 的环境就绪探测），非业务数据聚合，无历史数据冒充面
 gate-allow: cheat/or-true E2E trap 行为 fixture 清理路径（DELETE learnings/tasks），非断言路径；全部断言路径均显式 exit 1 传播失败
 - manual oracle 真实 exit code 记录见 contract-dod.md 附录（铁律：合同批准前逐条真跑）
+- 探针 heredoc 用非引号定界符 `<<MJS`（r3 修复 ERR_MODULE_NOT_FOUND）：`$PWD` 在写入时展开为 repo 根绝对路径供 ESM import；脚本内当前无其他 `$`，后续若加含 `$` 内容须转义 `\$`
+- TID 捕获用 `psql -q -t -A`（r3 修复，INV-10 重跑时发现同类结构性缺陷）：psql 17 下不加 `-q` 时 INSERT RETURNING 输出第二行命令标签 `INSERT 0 1`，TID 变两行 → 后续 `WHERE id='$TID'` 恒报 uuid 语法错；`-q` 抑制命令标签，本机实测捕获为单行纯 UUID
 - contract-gate: 若 packages/brain/src/lib/contract-gate.js 存在则照常过 gate（cecelia 仓库场景）
 
 ## journey_type: autonomous
