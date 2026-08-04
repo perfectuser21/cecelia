@@ -6,19 +6,33 @@
 
 
 
-**Brain 版本**: 1.267.208
+**Brain 版本**: 1.267.209
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.267.208 — watchdog liveness never_started 分类保真（1dfa40f7 防复发）
+## Brain 1.267.209 — watchdog liveness never_started 分类保真（1dfa40f7 防复发）
 
 - liveness 探针「从未启动」任务（pid 未跟踪 ∧ 无进程日志 ∧ (started_at=null ∨ 已有派发失败 error_message)）双确认后分类 `never_started`，不再落 `process_disappeared` 兜底；已有 error_message / payload.failure_class 不被 watchdog 记账覆盖。
 - requeueTask 失败学习文本取 evidence 真实 exit reason（非 requeue 通道参数 liveness_dead）——failure learning / capture atom 学习链不再被假根因标签污染。
 - dev-failure-classifier 识别 `never_started`（先于 `/\[watchdog\]/i` 宽松规则），不落 transient 环境重试假通道；retryable=false。
 - 曾启动进程消失场景（有进程日志/started_at 非空）分类行为与现状完全一致（回归护栏入 CI：liveness-never-started.integration.test.js 登记 POSTGRES_INTEGRATION_TESTS）。
-- 回退到 1.267.207 会恢复：从未启动任务被假标 liveness_dead/process_disappeared，urgent 学习流被假根因污染。
+- 回退到 1.267.208 会恢复：从未启动任务被假标 liveness_dead/process_disappeared，urgent 学习流被假根因污染。
+
+## Brain 1.267.208 — ledger-hygiene m7 探针口径修正 + 自主循环产出登记覆盖
+
+- m7 统计窗改为上一完整北京日（Asia/Shanghai 昨日自然日），替代 NOW()-24h 滑窗（秒级漂移
+  致误报自我延续）；capture 子项经 `getM7CaptureWindow` 参数化窗口 + `LEDGER_SELF_ATOM_PREFIX`
+  content 前缀做 organic/self 分解排除自产（与 #4597 兄弟单合流，本单叠加 strategist 子项同窗口
+  与写入侧 lane 标识）。
+- raiseBreachAlerts：debt 持平时文案改"欠账持平 N（连续第 N 天）"不再写"上升 X→X"；
+  自产 issue atom 打 `lane='ledger-hygiene'` 标识。
+- `pushCaptureAtom` 签名断裂修复：`routedToTable/routedToId/lane` 真实落库
+  （routed_to_table/routed_to_id/lane 列），不再静默丢弃。
+- auto-learning `VALUABLE_TASK_TYPES` 纳入 `harness_initiative`（失败任务产 learning + 溯源 atom）。
+- `handoff.js` 新增导出 `pushHandoffAtom`（saveHandoff 复用同口径）；
+  `PATCH /api/brain/tasks/:id` 在 `result.handoff` 有效时补登记 capture_atom（吞错不阻断）。
 
 ## Brain 1.267.207 — GAN case file data plane (案卷式 GAN PR-A)
 

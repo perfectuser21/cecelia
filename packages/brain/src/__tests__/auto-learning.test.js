@@ -242,7 +242,7 @@ describe('Auto Learning Module', () => {
         valuableTaskTypes: VALUABLE_TASK_TYPES
       });
       expect(stats.dailyBudget).toBe(50);
-      expect(stats.valuableTaskTypes).toEqual(['dev', 'feature', 'research']);
+      expect(stats.valuableTaskTypes).toEqual(['dev', 'feature', 'research', 'harness_initiative']);
     });
 
     it('should reset state correctly', async () => {

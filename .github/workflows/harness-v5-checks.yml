@@ -182,7 +182,16 @@ jobs:
           PGPORT: '5432'
           PGUSER: cecelia
           PGPASSWORD: cecelia
-        run: createdb cecelia_test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_USER: cecelia
+          DB_PASSWORD: cecelia
+        run: |
+          createdb cecelia_test
+          # 与本地 packages/brain/scripts/setup-test-db.sh、ci.yml brain-integration 同机制：
+          # cecelia_test 必须跑全套 migrations，否则真 PG 集成型 sprint 测试
+          # （TEMP TABLE LIKE public.xxx）因缺表必红（42P01）。
+          cd packages/brain && DB_NAME=cecelia_test node src/migrate.js
       - name: Start Brain server
         if: steps.check-tests.outputs.has_tests == 'true'
         env:

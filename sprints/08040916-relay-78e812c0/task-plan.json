@@ -1,0 +1,42 @@
+{
+  "initiative_id": "78e812c0-458e-4829-9b29-f2eda72c3ffb",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全部改动在 packages/brain 后端探针/登记链路，无 UI、无 engine、无远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "ledger-hygiene m7 探针口径修正 + 自主循环产出登记覆盖",
+      "scope": "m7 统计窗改上一完整北京日并排除探针自产 atoms（lane 标识）；debt 持平文案如实；harness_initiative 纳入 auto-learning；relay PATCH result.handoff 补 capture_atom 登记（pushHandoffAtom 同口径）；修 pushCaptureAtom 签名断裂恢复 routed_to_table/routed_to_id/lane 落库；合同 5 个回归测试毕业入册 CI",
+      "dod": [
+        "[BEHAVIOR] m7 统计窗为上一完整北京日：仅当前时刻 atom 不计入 → debt=1（m7-scenarios.mjs window）",
+        "[BEHAVIOR] m7 排除探针自产 atoms 且非自产清偿 debt=0（m7-scenarios.mjs exclusion）",
+        "[BEHAVIOR] debt=0 时 ratchet streak 复位（m7-scenarios.mjs reset）",
+        "[BEHAVIOR] debt 持平文案不含上升 + 自产 lane 标识 + routed_to 落库（m7-scenarios.mjs copy）",
+        "[BEHAVIOR] harness_initiative failed → learning + 溯源 atom（b5-autolearn.sh）",
+        "[BEHAVIOR] relay PATCH result.handoff → handoff atom（b6-handoff-patch.sh）",
+        "[BEHAVIOR] 空 handoff 不产 atom 不阻断 PATCH（b7-handoff-empty.sh）",
+        "[BEHAVIOR] 非 valuable 类型不产 learning（b8-nonvaluable-skip.sh）",
+        "[BEHAVIOR] DevGate 三件套通过",
+        "[ARTIFACT] 回归测试入册 packages/brain/src/__tests__/（integration 4 个登记 POSTGRES_INTEGRATION_TESTS + 纯逻辑 1 个）"
+      ],
+      "files": [
+        "packages/brain/src/ledger-hygiene.js",
+        "packages/brain/src/auto-learning.js",
+        "packages/brain/src/capture-inbox.js",
+        "packages/brain/src/handoff.js",
+        "packages/brain/src/routes/tasks.js",
+        "packages/brain/src/__tests__/ledger-hygiene-m7.test.js",
+        "packages/brain/src/__tests__/integration/ledger-hygiene-m7-beijing-window.integration.test.ts",
+        "packages/brain/src/__tests__/integration/breach-issue-copy.integration.test.ts",
+        "packages/brain/src/__tests__/integration/capture-atom-routing.integration.test.ts",
+        "packages/brain/src/__tests__/integration/handoff-atom-relay.integration.test.ts",
+        "packages/brain/src/__tests__/auto-learning-harness.test.ts",
+        "packages/brain/vitest.config.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90,
+      "notes": "合同即法律：测试文件从 sprints/08040916-relay-78e812c0/tests/ 原样复制（位置无关设计，repo root 经 DEFINITION.md 探测）。禁 mock 边清单见 contract-draft.md。generator 纪律：Red commit 只 git add 精确测试路径（INV-40）；毕业入册 commit 前本地跑 lint-tdd-commit-order 与 check-test-coverage（INV-9）；开 PR 前核对 smoke-allowlist 登记需要（INV-49）；禁自行 merge PR，merge 权归 controller（INV-43）。既有测试 ledger-hygiene-m7.test.js 的 24h SQL 桩需随新窗口 SQL 同步更新，it() 全保留。"
+    }
+  ]
+}
