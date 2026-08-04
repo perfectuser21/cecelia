@@ -2,7 +2,7 @@
 
 - 日期：2026-08-04
 - 任务：7bd1fa03（fix(kernel): attempt 用量回写 run.cost_usd 复活 GAN budget cap）
-- 关联：issue ce42f68f / 决策 ba33fc68、c953a263、fbb0bc9d / sprints/08040841-kernel-cost-writeback/prep-prd.md
+- 关联：issue ce42f68f / 决策 ba33fc68、c953a263、fbb0bc9d / docs/prd/2026-08-04-kernel-cost-writeback-prep-prd.md
 
 ## 问题
 
