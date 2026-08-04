@@ -20,6 +20,7 @@
 import { caps, isPassVerdict } from './gates.js';
 import { ACTION, LOG_ACTION } from './constants.js';
 import { replayProductConvergence } from './counters.js';
+import { detectRubricTrend } from './rubric-trend.js';
 import {
   asStructuredJson,
   crashSignatureKey,
@@ -603,6 +604,19 @@ function deriveGan(observed) {
   }
   if (caps.noVerdictStreakExceeded(counters.noVerdictStreak)) {
     return { phase: 'failed', action: 'mark_failed', reason: 'gan_no_verdict_streak' };
+  }
+
+  // 案卷式 GAN 趋势观测安全网（issue ce42f68f / 决策 ba33fc68）：GAN 本身无轮数 cap（用户铁律），
+  // 但 rubric 评分逐轮走低/震荡时代码层强制收敛——不再指望"reviewer 自己会喊停"
+  // （r17 四轮零收敛实锤：R2 47 分 → R3 46 分多维走低仍继续对抗，无人踩刹车）。
+  // 语义 SSOT：docs/superpowers/specs/2026-08-04-gan-case-file-design.md §数据流 4。
+  const rubricTrend = detectRubricTrend(observed.caseFile);
+  if (rubricTrend === 'diverging' || rubricTrend === 'oscillating') {
+    return {
+      phase: 'gan',
+      action: ACTION.FORCE_APPROVE_CONTRACT,
+      reason: `convergence_${rubricTrend}`,
+    };
   }
 
   // rN 从 propose 分支现查（外部真相，非内存）：

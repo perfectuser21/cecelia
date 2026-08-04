@@ -47,6 +47,9 @@ export const BLOCKED_SAME_STATE_CAP = 2;
  * - mark_failed               —— 守护/上限触发，run 置 failed
  * - persist_contract_approval —— reviewer 已 APPROVED 但 contract.approved 未落库（崩溃窗口），
  *                                loop/dispatcher 补落库，不 spawn
+ * - force_approve_contract    —— 案卷式 GAN 趋势观测（PR-B，issue ce42f68f）：detectRubricTrend
+ *                                判 diverging/oscillating 时代码层强制收敛，跳过 reviewer 直接把
+ *                                当前 propose 分支标 approved 落库 + 发 P1 告警，不 spawn
  */
 export const ACTION = Object.freeze({
   SPAWN_PLANNER: 'spawn:planner',
@@ -68,6 +71,7 @@ export const ACTION = Object.freeze({
   EXIT: 'exit',
   MARK_FAILED: 'mark_failed',
   PERSIST_CONTRACT_APPROVAL: 'persist_contract_approval',
+  FORCE_APPROVE_CONTRACT: 'force_approve_contract',
 });
 
 export const ACTIONS = Object.freeze(Object.values(ACTION));

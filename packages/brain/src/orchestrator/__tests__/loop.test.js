@@ -911,6 +911,95 @@ describe('runLoop：控制 action 自消费', () => {
     expect(deps.readGitFile).not.toHaveBeenCalled();
   });
 
+  it('force_approve_contract：案卷 rubric 趋势 diverging → 跳过 reviewer 直接物化合同 + 写决策日志 + P1 告警', async () => {
+    const approvedSha = 'e'.repeat(40);
+    const caseFile = [
+      { round: 1, author_role: 'reviewer', rubric_scores: { dod_machineability: 8, scope_match_prd: 7 } },
+      { round: 2, author_role: 'reviewer', rubric_scores: { dod_machineability: 7, scope_match_prd: 7 } },
+      { round: 3, author_role: 'reviewer', rubric_scores: { dod_machineability: 6, scope_match_prd: 7 } },
+    ];
+    const observedSeq = [
+      obs({
+        run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+        task: { status: 'in_progress', payload: { sprint_dir: 'sprints/kernel-contract' } },
+        contract: { approved: false, id: null },
+        proposeBranch: 'cp-harness-propose-r3-11111111-a3',
+        proposeBranchSha: approvedSha,
+        proposeBranchRn: 3,
+        ganLatestRoundVerdict: 'REVISION',
+        caseFile,
+      }),
+      obs({ contract: { approved: true, id: CONTRACT_ID }, generatorSpawned: false }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, sqls, appended } = makeEnv({ observedSeq });
+    const files = {
+      'sprints/kernel-contract/sprint-prd.md': '# PRD',
+      'sprints/kernel-contract/contract-draft.md': '# Contract',
+      'sprints/kernel-contract/contract-dod.md': '# DoD',
+    };
+    deps.fileExists = vi.fn(() => false);
+    deps.readGitFile = vi.fn((sha, filePath) => {
+      expect(sha).toBe(approvedSha);
+      if (!Object.hasOwn(files, filePath)) throw new Error(`missing ${filePath}`);
+      return files[filePath];
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    // 直接进 generator，从没派发过 spawn:reviewer/spawn:proposer（跳过 GAN 剩余轮次）
+    expect(deps.dispatch.mock.calls.map(([action]) => action)).not.toContain('spawn:reviewer');
+    expect(deps.dispatch.mock.calls.map(([action]) => action)).not.toContain('spawn:proposer');
+    expect(deps.dispatch).toHaveBeenCalledWith('spawn:generator', expect.any(Object));
+    const materializeSql = sqls.find(([sql]) => sql.includes('INSERT INTO initiative_contracts'));
+    expect(materializeSql).toBeTruthy();
+    expect(materializeSql[1]).toEqual(expect.arrayContaining([
+      RUN_ID,
+      3,
+      'cp-harness-propose-r3-11111111-a3',
+      '# PRD',
+    ]));
+    const forcedLog = appended.find(
+      (e) => e.action === 'verdict:reviewer' && e.detail?.source === 'rubric_trend_force_approval',
+    );
+    expect(forcedLog).toBeTruthy();
+    expect(forcedLog.detail).toMatchObject({
+      verdict: 'APPROVED',
+      reason: 'convergence_diverging',
+      rn: 3,
+      contract_sha: approvedSha,
+    });
+    expect(forcedLog.gateVerdict).toBe('force_approved');
+  });
+
+  it('force_approve_contract：无冻结分支可用（rn=0）→ mark_failed，不物化', async () => {
+    const caseFile = [
+      { round: 1, author_role: 'reviewer', rubric_scores: { dod_machineability: 8, scope_match_prd: 7 } },
+      { round: 2, author_role: 'reviewer', rubric_scores: { dod_machineability: 6, scope_match_prd: 7 } },
+      { round: 3, author_role: 'reviewer', rubric_scores: { dod_machineability: 8, scope_match_prd: 7 } },
+    ];
+    const observedSeq = [obs({
+      run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+      contract: { approved: false, id: null },
+      proposeBranch: null,
+      proposeBranchRn: 0,
+      ganLatestRoundVerdict: null,
+      caseFile,
+    })];
+    const { deps } = makeEnv({ observedSeq });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('force_approve_but_no_contract_branch');
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'force_approve_but_no_contract_branch',
+    });
+  });
+
   it('exit（terminal）→ 直接退出，无任何写入', async () => {
     const observedSeq = [obs({ task: { status: 'aborted' } })];
     const { deps, appended, sqls } = makeEnv({ observedSeq });

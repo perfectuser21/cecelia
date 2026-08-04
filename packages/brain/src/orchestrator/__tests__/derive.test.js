@@ -503,6 +503,81 @@ describe('规则 2：GAN（prd 存在 && contract 未 approved）', () => {
     expect(r.phase).toBe('failed');
     expect(r.reason).toBe('gan_no_verdict_streak');
   });
+
+  describe('rubric 趋势观测安全网（PR-B，issue ce42f68f）', () => {
+    function reviewerRow(round, rubric_scores) {
+      return { round, author_role: 'reviewer', rubric_scores };
+    }
+
+    it('最近 3 轮某维度连续走低（案卷 diverging）→ force_approve_contract', () => {
+      const caseFile = [
+        reviewerRow(1, { dod_machineability: 8, scope_match_prd: 7 }),
+        reviewerRow(2, { dod_machineability: 7, scope_match_prd: 7 }),
+        reviewerRow(3, { dod_machineability: 6, scope_match_prd: 7 }),
+      ];
+      const r = derive(gan({ proposeBranchRn: 3, ganLatestRoundVerdict: 'REVISION', caseFile }));
+      expect(r.phase).toBe('gan');
+      expect(r.action).toBe('force_approve_contract');
+      expect(r.reason).toBe('convergence_diverging');
+    });
+
+    it('最近 3 轮某维度高低高震荡（案卷 oscillating）→ force_approve_contract', () => {
+      const caseFile = [
+        reviewerRow(1, { dod_machineability: 8, scope_match_prd: 7 }),
+        reviewerRow(2, { dod_machineability: 6, scope_match_prd: 7 }),
+        reviewerRow(3, { dod_machineability: 8, scope_match_prd: 7 }),
+      ];
+      const r = derive(gan({ proposeBranchRn: 3, ganLatestRoundVerdict: 'REVISION', caseFile }));
+      expect(r.phase).toBe('gan');
+      expect(r.action).toBe('force_approve_contract');
+      expect(r.reason).toBe('convergence_oscillating');
+    });
+
+    it('案卷 converging（全维度持平/上升）→ 原路由不动，仍走 spawn:proposer', () => {
+      const caseFile = [
+        reviewerRow(1, { dod_machineability: 5, scope_match_prd: 5 }),
+        reviewerRow(2, { dod_machineability: 6, scope_match_prd: 6 }),
+        reviewerRow(3, { dod_machineability: 7, scope_match_prd: 7 }),
+      ];
+      const r = derive(gan({ proposeBranchRn: 3, ganLatestRoundVerdict: 'REVISION', caseFile }));
+      expect(r.action).toBe('spawn:proposer');
+    });
+
+    it('案卷 insufficient_data（< 3 轮/缺字段）→ 原路由不动', () => {
+      const r = derive(gan({ proposeBranchRn: 1, ganLatestRoundVerdict: null, caseFile: [] }));
+      expect(r.action).toBe('spawn:reviewer');
+    });
+
+    it('observed.caseFile 缺省（未注入）→ 不崩，按 insufficient_data 走原路由', () => {
+      const r = derive(gan({ proposeBranchRn: 1, ganLatestRoundVerdict: null }));
+      expect(r.action).toBe('spawn:reviewer');
+    });
+
+    it('趋势闸在三闸（budget/noPush/noVerdict）之后判定：budget 超限优先 failed，不看案卷', () => {
+      const caseFile = [
+        reviewerRow(1, { dod_machineability: 8 }),
+        reviewerRow(2, { dod_machineability: 7 }),
+        reviewerRow(3, { dod_machineability: 6 }),
+      ];
+      const r = derive(gan({
+        counters: { hops: 1, fixRound: 0, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: BUDGET_CAP_USD },
+        caseFile,
+      }));
+      expect(r.phase).toBe('failed');
+      expect(r.reason).toBe('gan_budget_cap');
+    });
+
+    it('趋势闸在路由判断之前：即使本轮已是 spawn:reviewer 的触发条件，diverging 仍优先 force_approve_contract', () => {
+      const caseFile = [
+        reviewerRow(1, { dod_machineability: 8 }),
+        reviewerRow(2, { dod_machineability: 7 }),
+        reviewerRow(3, { dod_machineability: 6 }),
+      ];
+      // proposeBranchRn>=1 且 ganLatestRoundVerdict==null 本应触发 spawn:reviewer
+      const r = derive(gan({ proposeBranchRn: 4, ganLatestRoundVerdict: null, caseFile }));
+      expect(r.action).toBe('force_approve_contract');
+    });
+  });
 });
 
 describe('规则 3a：contract approved && !pr', () => {
