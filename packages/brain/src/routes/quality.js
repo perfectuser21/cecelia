@@ -3,7 +3,7 @@
  *
  * - POST /api/brain/quality/test-pyramid — 接收 test-pyramid-guard --json 输出，
  *   upsert 到 working_memory（key=quality_test_pyramid，含 updated_at）。
- *   数据源：scripts/write-current-state.sh 日更 best-effort POST。
+ *   数据源：CI test-pyramid-guard job POST（历史脚本数据源已于 2026-08 刀0.5 退役）。
  * - GET  /api/brain/quality/test-pyramid — 返回 {available:true, updated_at, ...快照}；
  *   无数据/DB 异常 → 200 {available:false[, error]}（Dashboard 面板灰态数据，不 500）。
  * - GET  /api/brain/kv/:key — 通用 working_memory KV 读取（供外部巡检读取任意快照键）

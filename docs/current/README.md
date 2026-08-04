@@ -29,9 +29,8 @@ updated: 2026-03-25
 |----------|------|------|
 | 整体架构、子系统关系 | `docs/current/SYSTEM_MAP.md` | 权威，每10个PR审计一次 |
 | **Kernel Harness / Golden Path 体系**（11要素/7项合同/两套派发分流/provider注入链/数据账本） | `docs/current/KERNEL_HARNESS_MAP.md` | 权威指针地图，只放指针不放快照 |
-| CI 流水线（L1-L4） | `docs/current/CI_PIPELINE.md` | 权威 |
-| /dev 工作流 | `docs/current/DEV_PIPELINE.md` | 权威 |
-| **自动巡检状态** | `docs/current/PATROL-REGISTRY.md` | 权威，见下方 |
+| CI 流水线（L1-L4） | `docs/current/CI_PIPELINE.md` | ⚠️ 过期待重写（2026-03旧结构），仅存档参考 |
+| /dev 工作流 | `docs/current/DEV_PIPELINE.md` | ⚠️ 过期待重写（2026-03旧结构），仅存档参考 |
 | PR 学习记录 | `docs/learnings/cp-MMDDHHNN-xxx.md` | 每个PR自动写 |
 | 架构审查结果 | `docs/arch-reviews/YYYY-MM-DD.md` | arch_review 写入 |
 | 操作手册（技能/功能） | `docs/instruction-book/` | 用户/AI 操作参考 |
@@ -46,31 +45,9 @@ updated: 2026-03-25
 |-----------|--------|
 | 合并了一个 PR | `docs/learnings/cp-xxx.md`（已在流程里）|
 | 发现了系统架构变化 | `docs/current/SYSTEM_MAP.md` 更新版本号 |
-| 发现了新的巡检缺口 | `docs/current/PATROL-REGISTRY.md` 更新状态 |
+| 发现了新的巡检缺口 | `localhost:5221/api/brain/decisions` 记录缺口决策 |
 | 做了一个架构决定 | `localhost:5221/api/brain/decisions` POST |
 | 完成了一个 OKR 任务 | `PATCH localhost:5221/api/brain/tasks/{id}` status→completed |
-
----
-
-## 自动巡检状态（PATROL-REGISTRY）
-
-> 更新时间：2026-03-25
-
-| 巡检项 | 类型 | 触发方式 | 实际状态 | 发现→任务闭环 |
-|--------|------|---------|---------|--------------|
-| `check-coverage-completeness.mjs` | 脚本 | PR CI（L3） | ✅ 每个PR跑 | ❌ 无cron，warning不自动建任务 |
-| `arch_review` | LLM | Brain调度 | ❌ 几乎不跑（7天内1条canceled） | ❌ |
-| `code_review` | LLM | Brain调度 | ❌ 7天内0条 | ❌ |
-| Brain src 覆盖率 Check4 | 脚本 | PR CI（L3） | ✅ 2026-03-25 上线 | ❌ 无cron |
-| relay-watchdog 自愈链（死因分类→对因处置） | 代码 | Brain 每5min | ✅ 2026-07-16 上生产（刀A1-A8，PRD: docs/prd/2026-07-15-self-healing-golden-path.prd.md） | ✅ 处置失败→告警/blocked |
-| 金丝雀故障注入演习 canary-death-drill | 脚本 | nightly 03:30 CST（staging） | 🆕 2026-07-16 首跑待验（连续7天绿=验收） | ✅ 失败→Bark |
-| 每日部署演习 deploy-daily-drill | 脚本 | nightly 09:00 CST（UTC 01:00） | 🆕 2026-07-16 首跑待验（有 merge 日必须 15min 内部署） | ✅ 演习红→Bark+incidents |
-
-**当前覆盖缺口（warning状态，未锁死）：**
-- Brain 普通模块：10/151 无测试
-- Engine hooks：4/9 无测试
-- Engine devgate 脚本：8/13 无测试
-- `apps/api/`、`apps/dashboard/`：完全未扫描
 
 ---
 

@@ -46,7 +46,6 @@ features:
         - packages/engine/tests/devgate-fake-test-detection.wrapper.test.ts
         - packages/engine/tests/playwright-runner.test.ts
         - packages/engine/tests/stop-hook-bypass-fix.test.ts
-        - packages/engine/tests/write-current-state.test.ts
         - packages/quality/tests/hooks/pr-gate-phase1.test.ts
         - packages/quality/tests/hooks/pr-gate-phase2.test.ts
         - packages/quality/tests/hooks/pr-gate.test.ts
@@ -68,7 +67,6 @@ features:
             - packages/engine/tests/devgate-fake-test-detection.wrapper.test.ts
             - packages/engine/tests/playwright-runner.test.ts
             - packages/engine/tests/stop-hook-bypass-fix.test.ts
-            - packages/engine/tests/write-current-state.test.ts
             - packages/quality/tests/hooks/pr-gate-phase1.test.ts
             - packages/quality/tests/hooks/pr-gate-phase2.test.ts
             - packages/quality/tests/hooks/pr-gate.test.ts

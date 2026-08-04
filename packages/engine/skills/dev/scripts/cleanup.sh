@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ZenithJoy Engine - Cleanup 脚本
-# v2.1: 新增 2.6 更新系统状态（write-current-state.sh）
+# v2.1: 曾有 2.6 节调用状态快照脚本（已于 2026-08 刀0.5 退役，见 docs/archive/agent-knowledge-retired/）
 # v2.0: R2 全面修复 - worktree 感知、grep 精确匹配、safe_rm_rf 精确前缀
 # v1.9: 使用 lib/lock-utils.sh 原子操作 + 协调信号
 # v1.8: PRD/DoD 归档到 .history/ 目录（而非直接删除）
@@ -286,23 +286,6 @@ echo "[2.5] 触发本地部署..."
 # 在 push to main 时自动触发。本地 deploy-local.sh fire-and-forget
 # 不可观测且重复，废弃。
 echo -e "   ${GREEN}[OK] deploy 由 brain-ci-deploy.yml workflow 接管${NC}"
-
-# ========================================
-# 2.6 更新系统状态（CURRENT_STATE.md）
-# ========================================
-echo ""
-echo "[2.6] 更新系统状态..."
-WCS_SCRIPT="$REPO_ROOT/scripts/write-current-state.sh"
-if [[ -f "$WCS_SCRIPT" ]]; then
-    if bash "$WCS_SCRIPT" 2>/dev/null; then
-        echo -e "   ${GREEN}[OK] CURRENT_STATE.md 已更新${NC}"
-    else
-        echo -e "   ${YELLOW}[WARN] write-current-state.sh 执行失败，跳过（不影响 cleanup）${NC}"
-        WARNINGS=$((WARNINGS + 1))
-    fi
-else
-    echo -e "   ${YELLOW}[WARN] write-current-state.sh 不存在（${WCS_SCRIPT}），跳过${NC}"
-fi
 
 # ========================================
 # 3. 检查并删除本地 cp-* 分支

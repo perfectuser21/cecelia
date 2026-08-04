@@ -21,7 +21,7 @@
 |------|------|------|
 | Hooks | `packages/engine/hooks/` | 分支保护、Stop Hook、Bash Guard |
 | Skills | `packages/engine/skills/` | 内置 dev/qa/audit/assurance skill 配置 |
-| DevGate | `scripts/devgate/` | CI 门禁脚本（DoD 映射、RCI 覆盖、版本检查） |
+| DevGate | `packages/quality/scripts/devgate/` + `packages/engine/scripts/devgate/` | CI 门禁脚本（DoD 映射、RCI 覆盖、版本检查） |
 | CI 配置 | `packages/engine/ci/` | GitHub Actions 工作流配置 |
 | Tests | `packages/engine/tests/` | Engine 单元测试（vitest） |
 
@@ -43,13 +43,13 @@
 
 ```bash
 # DoD → Test 映射检查（CI L2 强制）
-node packages/engine/scripts/devgate/check-dod-mapping.cjs
+node packages/quality/scripts/devgate/check-dod-mapping.cjs
 
 # RCI 覆盖率扫描
-node scripts/devgate/scan-rci-coverage.cjs
+node packages/quality/scripts/devgate/scan-rci-coverage.cjs
 
 # P0/P1 任务必须更新 RCI
-bash scripts/devgate/require-rci-update-if-p0p1.sh
+bash packages/quality/scripts/devgate/require-rci-update-if-p0p1.sh
 
 # 版本同步检查（Engine 改动后）
 bash scripts/check-version-sync.sh

@@ -299,7 +299,7 @@ export default function TestPyramidPage() {
           }}
         >
           guard 数据不可用{data?.error ? `：${data.error}` : ''}。
-          等每日 03:30 面板日更，或手动 bash scripts/write-current-state.sh 喂数据。
+          等每日 03:30 CI 写入快照后刷新面板。
         </div>
       </div>
     );
