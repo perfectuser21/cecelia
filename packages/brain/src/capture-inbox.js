@@ -24,6 +24,8 @@ export async function pushCapture(pool, {
   // atom params
   targetType = null,
   targetSubtype = null,
+  routedToTable = null,
+  routedToId = null,
 } = {}) {
   if (!content) return null;
   try {
@@ -58,9 +60,9 @@ export async function pushCapture(pool, {
     if (targetType && captureId) {
       try {
         const { rows } = await pool.query(
-          `INSERT INTO capture_atoms (capture_id, content, target_type, target_subtype)
-           VALUES ($1, $2, $3, $4) RETURNING id`,
-          [captureId, truncated, targetType, targetSubtype]
+          `INSERT INTO capture_atoms (capture_id, content, target_type, target_subtype, routed_to_table, routed_to_id, lane)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+          [captureId, truncated, targetType, targetSubtype, routedToTable, routedToId, lane]
         );
         return { captureId, atomId: rows[0]?.id ?? null };
       } catch (atomErr) {
@@ -79,7 +81,7 @@ export async function pushCapture(pool, {
 /**
  * 原有入口保留（向后兼容）——内部改为先写 capture 再写 atom
  */
-export async function pushCaptureAtom(pool, { content, targetType, targetSubtype = null, _routedToTable = null, _routedToId = null } = {}) {
+export async function pushCaptureAtom(pool, { content, targetType, targetSubtype = null, routedToTable = null, routedToId = null, lane = null } = {}) {
   if (!content || !targetType) return null;
   try {
     // 派生 nature（三类系统产出 targetType 即 nature）
@@ -90,8 +92,11 @@ export async function pushCaptureAtom(pool, { content, targetType, targetSubtype
       content,
       source: 'harness',
       nature,
+      lane,
       targetType,
       targetSubtype,
+      routedToTable,
+      routedToId,
     });
     return result?.atomId ?? null;
   } catch (err) {

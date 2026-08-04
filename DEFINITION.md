@@ -6,11 +6,23 @@
 
 
 
-**Brain 版本**: 1.267.203
+**Brain 版本**: 1.267.204
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.204 — ledger-hygiene m7 探针口径修正 + 自主循环产出登记覆盖
+
+- m7 统计窗改为上一完整北京日（Asia/Shanghai 00:00-24:00），替代 NOW()-24h 滑窗（秒级漂移
+  致误报自我延续）；统计排除探针自产 atoms（`capture_atoms.lane='ledger-hygiene'`）。
+- raiseBreachAlerts：debt 持平时文案改"欠账持平 N（连续第 N 天）"不再写"上升 X→X"；
+  自产 issue atom 打 `lane='ledger-hygiene'` 标识。
+- `pushCaptureAtom` 签名断裂修复：`routedToTable/routedToId/lane` 真实落库
+  （routed_to_table/routed_to_id/lane 列），不再静默丢弃。
+- auto-learning `VALUABLE_TASK_TYPES` 纳入 `harness_initiative`（失败任务产 learning + 溯源 atom）。
+- `handoff.js` 新增导出 `pushHandoffAtom`（saveHandoff 复用同口径）；
+  `PATCH /api/brain/tasks/:id` 在 `result.handoff` 有效时补登记 capture_atom（吞错不阻断）。
 
 ## Brain 1.267.203 — Kernel GAN cost writeback
 

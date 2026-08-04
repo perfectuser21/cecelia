@@ -18,6 +18,10 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/kernel-terminal-mismatch-reconcile.pg.integration.test.js',
   'src/routes/__tests__/harness-attempt-verdict-pg.integration.test.js',
   '../../tests/regression/relay-137fea96/contract-postdeploy-smoke-filter.test.ts',
+  'src/__tests__/integration/ledger-hygiene-m7-beijing-window.integration.test.ts',
+  'src/__tests__/integration/breach-issue-copy.integration.test.ts',
+  'src/__tests__/integration/capture-atom-routing.integration.test.ts',
+  'src/__tests__/integration/handoff-atom-relay.integration.test.ts',
 ];
 
 export default defineConfig({

@@ -160,17 +160,23 @@ export async function computeMetrics(pool) {
   }, { key: 'm6', name: 'evaluator门禁覆盖率', value: null, debt: 0 });
 
   const m7 = await safeMetric(async () => {
-    // 自主循环零产出：过去 24h 内，下列"应产出"循环是否出现零产出天——
+    // 自主循环零产出：上一完整北京日（Asia/Shanghai 00:00-24:00）内，下列"应产出"
+    // 循环是否出现零产出天——
     // (a) strategist：design_docs(type='strategy_session') 行数
-    // (b) capture：capture_atoms 行数（T10 通电后才激活）
+    // (b) capture：capture_atoms 行数（T10 通电后才激活；排除探针自产 lane='ledger-hygiene'，防自污染）
     // 规则：各项探针先查"历史上有没有产出过"，从未产出=未激活(enabled=false)；
-    // 激活后 24h 零产出 → debt+1（absolute 棘轮，首发即击穿）。
+    // 激活后窗口内零产出 → debt+1（absolute 棘轮，首发即击穿）。
+    // 口径修正（08-04）：NOW()-24h 滑窗有秒级漂移，昨日探针自产 atom 恰掉出窗口
+    // 造成误报自我延续；改为上一完整北京日固定窗（时区推导，不受服务器时区影响）。
+    const PREV_BEIJING_DAY_WINDOW = `
+         created_at >= ((date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') - interval '1 day') AT TIME ZONE 'Asia/Shanghai')
+         AND created_at < (date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai')`;
 
-    // (a) strategist 近 24h
+    // (a) strategist 上一完整北京日
     const strat = await pool.query(
       `SELECT count(*) AS cnt FROM design_docs
        WHERE type = 'strategy_session'
-         AND created_at >= NOW() - INTERVAL '24 hours'`
+         AND ${PREV_BEIJING_DAY_WINDOW}`
     );
     const stratEver = await pool.query(
       `SELECT 1 FROM design_docs WHERE type = 'strategy_session' LIMIT 1`
@@ -178,7 +184,7 @@ export async function computeMetrics(pool) {
     const stratActivated = stratEver.rows.length > 0;
     const stratDebt = stratActivated && toInt(strat.rows[0]?.cnt) === 0 ? 1 : 0;
 
-    // (b) capture_atoms 近 24h
+    // (b) capture_atoms 上一完整北京日（排除探针自产 lane='ledger-hygiene'）
     let captureActivated = false;
     let captureDebt = 0;
     try {
@@ -189,7 +195,8 @@ export async function computeMetrics(pool) {
       if (captureActivated) {
         const cap = await pool.query(
           `SELECT count(*) AS cnt FROM capture_atoms
-           WHERE created_at >= NOW() - INTERVAL '24 hours'`
+           WHERE ${PREV_BEIJING_DAY_WINDOW}
+             AND (lane IS DISTINCT FROM 'ledger-hygiene')`
         );
         captureDebt = toInt(cap.rows[0]?.cnt) === 0 ? 1 : 0;
       }
@@ -308,7 +315,17 @@ export async function raiseBreachAlerts(pool, breaches, today) {
   for (const b of breaches) {
     const escalated = b.streak >= 3;
     const priority = escalated ? 'P1' : 'P2';
-    const title = `[ledger-hygiene] ${b.name} 欠账上升 ${b.prevDebt}→${b.debt}（${today}）`;
+    // 文案如实（08-04）：absolute 指标 debt 持平时不再写"上升 X→X"，改为持平表述；
+    // title 前缀 [ledger-hygiene] <指标名> 逐字不变（每指标每日一条频控的去重键）。
+    let deltaText;
+    if (b.prevDebt === b.debt) {
+      deltaText = `欠账持平 ${b.debt}（连续第 ${b.streak} 天）`;
+    } else if (b.debt > b.prevDebt) {
+      deltaText = `欠账上升 ${b.prevDebt}→${b.debt}`;
+    } else {
+      deltaText = `欠账 ${b.prevDebt}→${b.debt}`;
+    }
+    const title = `[ledger-hygiene] ${b.name} ${deltaText}（${today}）`;
     try {
       // 每指标每日最多一条 issue：当日已有同指标 issue 则跳过 INSERT 与 Bark
       const { rows: dup } = await pool.query(
@@ -329,13 +346,14 @@ export async function raiseBreachAlerts(pool, breaches, today) {
             `当日分数卡见 design_docs(type='ledger_hygiene')。`,
         ]
       );
-      // T10 统一收件箱：issue 落库后顺手进箱
+      // T10 统一收件箱：issue 落库后顺手进箱（lane 打标自产来源，m7 统计排除自产防自污染）
       await pushCaptureAtom(pool, {
         content: `issue: ${title}`,
         targetType: 'issue',
         targetSubtype: priority,
         routedToTable: 'issues',
         routedToId: inserted[0]?.id ?? null,
+        lane: 'ledger-hygiene',
       });
     } catch (err) {
       console.warn('[ledger-hygiene] issue 写入失败:', err.message);

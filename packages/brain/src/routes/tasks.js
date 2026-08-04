@@ -12,6 +12,7 @@ import { getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, Q
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from '../executor.js';
 import { emit as emitEvent } from '../event-bus.js';
 import { pushCaptureAtom } from '../capture-inbox.js';
+import { pushHandoffAtom } from '../handoff.js';
 import { checkAnchor } from '../anchor-check.js';
 import { blockTask } from '../task-updater.js';
 
@@ -540,6 +541,18 @@ router.patch('/tasks/:task_id', async (req, res) => {
     );
 
     const updatedTask = updateResult.rows[0];
+
+    // relay handoff 登记缺口修复（08-04）：skill-relay 直接 PATCH result.handoff 不走
+    // saveHandoff，导致零 handoff atom。此处 API 侧兜底：result.handoff 为有效对象时
+    // 推一条 capture_atom（pushHandoffAtom 与 saveHandoff 同口径；空/非法对象返回 null；
+    // 吞错不阻断 PATCH 响应）。
+    if (result && result.handoff !== undefined) {
+      try {
+        await pushHandoffAtom(pool, task_id, result.handoff);
+      } catch (handoffAtomErr) {
+        console.warn(`[tasks-patch] pushHandoffAtom failed (non-fatal): ${handoffAtomErr.message}`);
+      }
+    }
 
     if (status && !isStatusNoop && !harnessDemoted) {
       await emitEvent('task_status_changed', {
