@@ -34,6 +34,42 @@ die() {
   exit "${2:-1}"
 }
 
+# verify_runner_label — 校验 Runner 镜像的 cecelia.entrypoint.sha256 label 与
+# repo 内 docker/cecelia-runner/entrypoint.sh 实际 sha256 一致。
+# 不一致或 label 缺失时 loud-fail，从机制上防止"源码核对了、镜像实物是别的"的毒镜像被 pin。
+verify_runner_label() {
+  local digest="${1:?需要传入 Runner digest}"
+  local docker_bin label repo_sha256
+
+  docker_bin="${FLEET_ROLLOUT_DOCKER:-$(command -v docker || true)}"
+  [[ -n "$docker_bin" ]] \
+    || { echo "[FATAL] verify_runner_label: docker 不可用" >&2; return 1; }
+
+  label="$("$docker_bin" inspect --format \
+    '{{index .Config.Labels "cecelia.entrypoint.sha256"}}' "$digest" 2>/dev/null || true)"
+
+  if [[ -z "$label" ]]; then
+    echo "[FATAL] Runner 镜像缺少 cecelia.entrypoint.sha256 label — 该镜像可能从错误 worktree 构建，重新从 main 构建后再 pin。" >&2
+    return 1
+  fi
+
+  local entrypoint_path="$REPO_ROOT/docker/cecelia-runner/entrypoint.sh"
+  if command -v sha256sum >/dev/null 2>&1; then
+    repo_sha256="$(sha256sum "$entrypoint_path" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    repo_sha256="$(shasum -a 256 "$entrypoint_path" | awk '{print $1}')"
+  else
+    echo "[FATAL] verify_runner_label: sha256 工具不可用（sha256sum / shasum）" >&2; return 1
+  fi
+
+  if [[ "$label" != "$repo_sha256" ]]; then
+    echo "[FATAL] Runner 镜像 entrypoint 不匹配 — label sha256=$label，repo 实际=$repo_sha256。镜像与当前 entrypoint.sh 不同源，重新从 main 构建再 pin。" >&2
+    return 1
+  fi
+
+  echo "[verify_runner_label] OK: entrypoint.sha256=$label 与 repo 一致"
+}
+
 require_machine() {
   case "$1" in
     us-mac-m4|xian-mac-m4|xian-mac-m1) ;;

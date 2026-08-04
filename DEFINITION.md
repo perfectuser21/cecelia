@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.216
+**Brain 版本**: 1.267.217
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.217 — 构建来源 label 守卫 TDD 测试补全
+
+- `docker/build.sh` 新增构建时写入 `cecelia.entrypoint.sha256`（entrypoint.sh sha256）和 `cecelia.build.head`（git HEAD）两个 label，供 `verify_runner_label` 校验。
+- `fleet-rollout.test.sh` 新增 TDD label 守卫用例（proven-to-fire：先红后绿，测试验证 `verify_runner_label` 对缺少 label 的镜像 loud-fail）。
+- 沿用 1.267.216 的 `verify_runner_label` 函数和新 digest `sha256:ae2eaabba483...`，本版本为守卫机制的测试覆盖补全。
+- 回退到 1.267.216：`build.sh` 不写 label，无法在构建时验证镜像来源（守卫降级为无 TDD 保证）。
 
 ## Brain 1.267.216 — Runner digest 第二次重新钉住（同一根因二次复发）
 
@@ -18,6 +25,8 @@
 - 已核实新 digest 的 `entrypoint.sh` 与当前 main 逐字节一致（`docker run --entrypoint cat ... | diff` 零差异），非行为变更，纯粹是内容一致但 content-hash 不同的重新对齐；同步进 `node-profile.js` CANONICAL_BASELINE、`fleet-node-profiles.json`（三机）、`fleet-rollout.sh`、`reconcile-fleet-node-baseline.sh` 及配套测试/smoke。
 - **这是同一失效模式的第二次复发**（第一次见 1.267.212 条目）：`:latest` 是可变 tag，任何重新 build（无论是谁、因何触发）都会让旧 digest 变成悬空镜像，一旦被 prune 清理，pinned digest 就物理消失。根治方案（打一个不可变的稳定引用 tag，而不是只靠 digest+`:latest`）本次未做，留作后续独立任务。
 - 回退到旧 digest 无意义（镜像已不存在于本机）。
+
+## Brain 1.267.215 — remote-bridge start 操作独立超时预算
 
 - `remote-bridge-transport.js` 的 `start` 操作此前和 `inspect`/`cancel`/`terminal` 共用通用 `timeoutMs`（`DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS=60_000`），而 fleet-worker `attempt-runner.cjs` 内层 credential FIFO 写入超时也在同一量级——真实负载下（并发 attempt 抢 CPU/virtiofs）内层写入耗时逼近甚至撞上外层 60s，导致 Brain 侧先中止连接报 `remote_bridge_start_timeout`，掩盖 fleet-worker 自己更具体的 `attempt_*_credential_fifo_write_failed`。
 - 新增 `DEFAULT_REMOTE_BRIDGE_START_TIMEOUT_MS=120_000`，`start` 操作单独走这个预算，不再和轻量轮询操作共用桶；可用 `KERNEL_FLEET_START_TIMEOUT_MS` 环境变量覆盖，语义对齐已有的 `KERNEL_FLEET_PREPARE_TIMEOUT_MS`。
