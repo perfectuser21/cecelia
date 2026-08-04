@@ -2,13 +2,14 @@
  * WarRoomGoldenPathPage — GP 二级页
  *
  * 路由：/warroom/gp/:gpId
- * 布局：双栏（左：GP 信息；右：ConversationsPanel with gpId 过滤）
+ * 标签页：概览（GP信息 + 议题对话） | 要素账本（11要素覆盖，journey 过滤）
  */
 
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, AlertCircle, Zap, RefreshCw } from 'lucide-react';
+import { ArrowLeft, AlertCircle, Zap, RefreshCw, LayoutGrid, BookOpen } from 'lucide-react';
 import ConversationsPanel from './ConversationsPanel';
+import { LedgerPanel } from '@features/core/system/pages/LedgerPage';
 
 // ── 类型 ─────────────────────────────────────────────────────────────────────
 
@@ -22,6 +23,8 @@ interface GoldenPath {
   description?: string | null;
 }
 
+type Tab = 'overview' | 'ledger';
+
 // ── 主页面 ────────────────────────────────────────────────────────────────────
 
 export default function WarRoomGoldenPathPage() {
@@ -31,6 +34,7 @@ export default function WarRoomGoldenPathPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState<Tab>('overview');
 
   const fetchGp = useCallback(async (silent = false) => {
     if (!gpId) return;
@@ -77,10 +81,7 @@ export default function WarRoomGoldenPathPage() {
         <div className="text-center space-y-3">
           <AlertCircle className="w-8 h-8 text-red-400 mx-auto" />
           <div className="text-sm text-red-400">{error || 'GP 不存在或已归档'}</div>
-          <button
-            onClick={() => navigate(-1)}
-            className="text-sm text-blue-400 hover:text-blue-300 underline"
-          >
+          <button onClick={() => navigate(-1)} className="text-sm text-blue-400 hover:text-blue-300 underline">
             返回
           </button>
         </div>
@@ -91,10 +92,15 @@ export default function WarRoomGoldenPathPage() {
   const displayTitle = gp.title || gp.name;
   const journeyId = gp.journey_id || '';
 
+  const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
+    { id: 'overview', label: '概览', icon: <LayoutGrid className="w-3.5 h-3.5" /> },
+    { id: 'ledger',   label: '要素账本', icon: <BookOpen className="w-3.5 h-3.5" /> },
+  ];
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       {/* Header */}
-      <div className="border-b border-slate-800/60 bg-slate-900/80 backdrop-blur px-4 py-3 flex items-center gap-3 flex-shrink-0">
+      <div className="border-b border-slate-800/60 bg-slate-900/80 backdrop-blur px-4 py-2.5 flex items-center gap-3 flex-shrink-0">
         <button
           onClick={() => navigate(-1)}
           className="p-1.5 rounded hover:bg-slate-700/50 text-slate-400 hover:text-slate-200 transition-colors"
@@ -102,19 +108,36 @@ export default function WarRoomGoldenPathPage() {
           <ArrowLeft className="w-4 h-4" />
         </button>
         <Zap className="w-4 h-4 text-amber-400 flex-shrink-0" />
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <span
-            data-testid="gp-title"
-            className="text-sm font-semibold text-slate-100 truncate"
-          >
-            {displayTitle}
+        <span
+          data-testid="gp-title"
+          className="text-sm font-semibold text-slate-100 truncate flex-1 min-w-0"
+        >
+          {displayTitle}
+        </span>
+        {gp.status && (
+          <span className="text-[11px] text-slate-600 px-1.5 py-0.5 bg-slate-800 rounded font-mono flex-shrink-0">
+            {gp.status}
           </span>
-          {gp.status && (
-            <span className="text-[11px] text-slate-600 px-1.5 py-0.5 bg-slate-800 rounded font-mono flex-shrink-0">
-              {gp.status}
-            </span>
-          )}
+        )}
+
+        {/* 标签页 */}
+        <div className="flex items-center gap-1 bg-slate-800/60 rounded-lg p-0.5">
+          {tabs.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                activeTab === tab.id
+                  ? 'bg-slate-700 text-white'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {tab.icon}
+              {tab.label}
+            </button>
+          ))}
         </div>
+
         <button
           onClick={() => fetchGp(true)}
           disabled={refreshing}
@@ -124,13 +147,12 @@ export default function WarRoomGoldenPathPage() {
         </button>
       </div>
 
-      {/* Body — 双栏 */}
+      {/* Body */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        <div className="grid grid-cols-1 lg:grid-cols-2 h-full">
-          {/* 左栏：GP 信息 */}
-          <div className="border-r border-slate-800/40 p-4 overflow-y-auto">
-            <div className="space-y-4">
-              {/* GP 基本信息 */}
+        {activeTab === 'overview' && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 h-full">
+            {/* 左栏：GP 信息 */}
+            <div className="border-r border-slate-800/40 p-4 overflow-y-auto">
               <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4 space-y-3">
                 <div className="flex items-start gap-2">
                   <Zap className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
@@ -168,19 +190,32 @@ export default function WarRoomGoldenPathPage() {
                 </div>
               </div>
             </div>
-          </div>
 
-          {/* 右栏：议题对话（gpId 过滤） */}
-          <div className="p-4 flex flex-col overflow-hidden">
+            {/* 右栏：议题对话 */}
+            <div className="p-4 flex flex-col overflow-hidden">
+              {journeyId ? (
+                <ConversationsPanel journeyId={journeyId} gpId={gpId} />
+              ) : (
+                <div className="flex flex-col items-center justify-center flex-1 gap-3 py-8">
+                  <div className="text-[12px] text-slate-600 text-center">该 GP 未关联 Journey，无法加载对话</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'ledger' && (
+          <div className="h-full overflow-hidden">
             {journeyId ? (
-              <ConversationsPanel journeyId={journeyId} gpId={gpId} />
+              <LedgerPanel journeyId={journeyId} />
             ) : (
-              <div className="flex flex-col items-center justify-center flex-1 gap-3 py-8">
-                <div className="text-[12px] text-slate-600 text-center">该 GP 未关联 Journey，无法加载对话</div>
+              <div className="flex flex-col items-center justify-center h-full gap-3">
+                <BookOpen className="w-8 h-8 text-slate-600" />
+                <div className="text-sm text-slate-500">该 GP 未关联 Journey，无法显示要素账本</div>
               </div>
             )}
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
