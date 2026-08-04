@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import pool from '../db.js';
+import pool from '../../db.js';
 
 let captureId;
 
