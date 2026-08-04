@@ -13,64 +13,64 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] capture-inbox.js 签名恢复：无 `_routedToTable/_routedToId` 丢弃形态，atom INSERT 含 routed_to_table/routed_to_id/lane 三列
+- [x] [ARTIFACT] capture-inbox.js 签名恢复：无 `_routedToTable/_routedToId` 丢弃形态，atom INSERT 含 routed_to_table/routed_to_id/lane 三列
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/capture-inbox.js','utf8');if(c.includes('_routedToTable')||c.includes('_routedToId'))process.exit(1);const m=c.match(/INSERT INTO capture_atoms[\s\S]*?RETURNING id/);if(!m||!/routed_to_table/.test(m[0])||!/routed_to_id/.test(m[0])||!/lane/.test(m[0]))process.exit(1)"
 
-- [ ] [ARTIFACT] ledger-hygiene.js：m7 SQL 含 Asia/Shanghai 北京日窗口与 lane 排除；raiseBreachAlerts 的 pushCaptureAtom 带 lane:'ledger-hygiene'
+- [x] [ARTIFACT] ledger-hygiene.js：m7 SQL 含 Asia/Shanghai 北京日窗口与 lane 排除；raiseBreachAlerts 的 pushCaptureAtom 带 lane:'ledger-hygiene'
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/ledger-hygiene.js','utf8');if(!/Asia\/Shanghai/.test(c))process.exit(1);if(!/ledger-hygiene/.test(c.match(/lane/g)?'x':'')&&!/lane.*ledger-hygiene|ledger-hygiene.*lane/s.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] auto-learning.js：VALUABLE_TASK_TYPES 含 harness_initiative（源级声明，运行级由 B5 验）
+- [x] [ARTIFACT] auto-learning.js：VALUABLE_TASK_TYPES 含 harness_initiative（源级声明，运行级由 B5 验）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/auto-learning.js','utf8');const m=c.match(/VALUABLE_TASK_TYPES\s*=\s*\[[^\]]*\]/);if(!m||!m[0].includes('harness_initiative'))process.exit(1)"
 
-- [ ] [ARTIFACT] handoff.js 导出 pushHandoffAtom 且 saveHandoff 复用；routes/tasks.js PATCH 接线调用（同口径保证）
+- [x] [ARTIFACT] handoff.js 导出 pushHandoffAtom 且 saveHandoff 复用；routes/tasks.js PATCH 接线调用（同口径保证）
   Test: node -e "const h=require('fs').readFileSync('packages/brain/src/handoff.js','utf8');if(!/export\s+(async\s+)?function\s+pushHandoffAtom/.test(h))process.exit(1);const t=require('fs').readFileSync('packages/brain/src/routes/tasks.js','utf8');if(!t.includes('pushHandoffAtom'))process.exit(1)"
 
-- [ ] [ARTIFACT] cortex.js/learning.js/chat-action-dispatcher.js/conversation-consolidator.js 调用方仍传 routedToTable/routedToId（source-code inspection，铁律 INV-1 授权：触发条件窄路径可结构性验证）
+- [x] [ARTIFACT] cortex.js/learning.js/chat-action-dispatcher.js/conversation-consolidator.js 调用方仍传 routedToTable/routedToId（source-code inspection，铁律 INV-1 授权：触发条件窄路径可结构性验证）
   Test: node -e "for(const f of ['cortex.js','learning.js','chat-action-dispatcher.js','conversation-consolidator.js']){const c=require('fs').readFileSync('packages/brain/src/'+f,'utf8');if(c.includes('pushCaptureAtom')&&!c.includes('routedToTable'))process.exit(1)}"
 
-- [ ] [ARTIFACT] 回归测试永久入 CI：4 个真 PG 测试入册 src/__tests__/integration/ 且登记 POSTGRES_INTEGRATION_TESTS；auto-learning-harness.test.ts 入册 src/__tests__/（NFR：修 bug failing test 必须 commit 进 CI，不得删除）
+- [x] [ARTIFACT] 回归测试永久入 CI：4 个真 PG 测试入册 src/__tests__/integration/ 且登记 POSTGRES_INTEGRATION_TESTS；auto-learning-harness.test.ts 入册 src/__tests__/（NFR：修 bug failing test 必须 commit 进 CI，不得删除）
   Test: node -e "const fs=require('fs');for(const f of ['ledger-hygiene-m7-beijing-window.integration.test.ts','breach-issue-copy.integration.test.ts','capture-atom-routing.integration.test.ts','handoff-atom-relay.integration.test.ts']){fs.accessSync('packages/brain/src/__tests__/integration/'+f)};fs.accessSync('packages/brain/src/__tests__/auto-learning-harness.test.ts');const v=fs.readFileSync('packages/brain/vitest.config.js','utf8');if(!v.includes('ledger-hygiene-m7-beijing-window.integration.test.ts'))process.exit(1)"
 
-- [ ] [ARTIFACT] 既有测试不回退：ledger-hygiene-m7.test.js 既有 it() 全保留（mock SQL 桩可随新窗口 SQL 更新，语义不变）
+- [x] [ARTIFACT] 既有测试不回退：ledger-hygiene-m7.test.js 既有 it() 全保留（mock SQL 桩可随新窗口 SQL 更新，语义不变）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/ledger-hygiene-m7.test.js','utf8');for(const s of ['enabled=false','debt=1','debt=0','表不存在']){if(!c.includes(s))process.exit(1)}"
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令，journey_type = autonomous，测真实 Brain/DB）
 
 > B1-B4 走真 Postgres（TEMP 影子表隔离，不污染真实数据，DB 解析与 Brain 同源 db-config.js）；B5-B8 走真 Brain HTTP + psql（5 分钟时间窗防历史数据冒充，脚本自清理）。全部命令从 repo 根目录可直接执行。
 
-- [ ] [BEHAVIOR] m7 统计窗为上一完整北京日：仅当前时刻 atom 不计入 → debt=1（旧口径 NOW()-24h 下此断言必 FAIL，判别性防假绿；真实零产出击穿有效性保留）
+- [x] [BEHAVIOR] m7 统计窗为上一完整北京日：仅当前时刻 atom 不计入 → debt=1（旧口径 NOW()-24h 下此断言必 FAIL，判别性防假绿；真实零产出击穿有效性保留）
   Test: manual:bash -c 'node "$(git rev-parse --show-toplevel)/sprints/08040916-relay-78e812c0/tests/e2e/m7-scenarios.mjs" window'
   期望: stdout 含 "OK window"，exit 0
 
-- [ ] [BEHAVIOR] m7 排除探针自产 atoms：上一北京日仅 lane=ledger-hygiene 自产 issue atom → debt=1 正确击穿；加 1 条非自产 atom → debt=0 清偿
+- [x] [BEHAVIOR] m7 排除探针自产 atoms：上一北京日仅 lane=ledger-hygiene 自产 issue atom → debt=1 正确击穿；加 1 条非自产 atom → debt=0 清偿
   Test: manual:bash -c 'node "$(git rev-parse --show-toplevel)/sprints/08040916-relay-78e812c0/tests/e2e/m7-scenarios.mjs" exclusion'
   期望: stdout 含 "OK exclusion"，exit 0
 
-- [ ] [BEHAVIOR] debt=0 无击穿 → ratchet streak 复位为 0（prev streak=2 → 0，breaches 空）
+- [x] [BEHAVIOR] debt=0 无击穿 → ratchet streak 复位为 0（prev streak=2 → 0，breaches 空）
   Test: manual:bash -c 'node "$(git rev-parse --show-toplevel)/sprints/08040916-relay-78e812c0/tests/e2e/m7-scenarios.mjs" reset'
   期望: stdout 含 "OK reset"，exit 0
 
-- [ ] [BEHAVIOR] debt 持平时 issue 文案不含「上升」且含持平或连续第 N 天表述；title 前缀 [ledger-hygiene] 指标名不变（频控去重键）；自产 atom 带 lane=ledger-hygiene 且 routed_to_table=issues、routed_to_id 非空
+- [x] [BEHAVIOR] debt 持平时 issue 文案不含「上升」且含持平或连续第 N 天表述；title 前缀 [ledger-hygiene] 指标名不变（频控去重键）；自产 atom 带 lane=ledger-hygiene 且 routed_to_table=issues、routed_to_id 非空
   Test: manual:bash -c 'node "$(git rev-parse --show-toplevel)/sprints/08040916-relay-78e812c0/tests/e2e/m7-scenarios.mjs" copy'
   期望: stdout 含 "OK copy"，exit 0
 
-- [ ] [BEHAVIOR] harness_initiative 任务 failed（真 execution-callback）→ learnings 新增 1 行且 capture_atoms 新增 1 行 routed_to_table=learnings、routed_to_id=该 learning id（5 分钟时间窗）
+- [x] [BEHAVIOR] harness_initiative 任务 failed（真 execution-callback）→ learnings 新增 1 行且 capture_atoms 新增 1 行 routed_to_table=learnings、routed_to_id=该 learning id（5 分钟时间窗）
   Test: manual:bash -c 'bash "$(git rev-parse --show-toplevel)/sprints/08040916-relay-78e812c0/tests/e2e/b5-autolearn.sh"'
   期望: stdout 含 "OK b5"，exit 0
 
-- [ ] [BEHAVIOR] relay PATCH tasks result.handoff（真 Brain HTTP）→ capture_atoms 新增 1 行 target_type=handoff、routed_to_table=tasks、routed_to_id=task_id（与 saveHandoff 同口径，5 分钟时间窗）
+- [x] [BEHAVIOR] relay PATCH tasks result.handoff（真 Brain HTTP）→ capture_atoms 新增 1 行 target_type=handoff、routed_to_table=tasks、routed_to_id=task_id（与 saveHandoff 同口径，5 分钟时间窗）
   Test: manual:bash -c 'bash "$(git rev-parse --show-toplevel)/sprints/08040916-relay-78e812c0/tests/e2e/b6-handoff-patch.sh"'
   期望: stdout 含 "OK b6"，exit 0
 
-- [ ] [BEHAVIOR] error path — result.handoff 为空对象 → PATCH 仍 200（主流程不阻断）且不产 atom
+- [x] [BEHAVIOR] error path — result.handoff 为空对象 → PATCH 仍 200（主流程不阻断）且不产 atom
   Test: manual:bash -c 'bash "$(git rev-parse --show-toplevel)/sprints/08040916-relay-78e812c0/tests/e2e/b7-handoff-empty.sh"'
   期望: stdout 含 "OK b7"，exit 0
 
-- [ ] [BEHAVIOR] error path — 非 VALUABLE_TASK_TYPES 任务（code_review）failed → 不产 learning（高频低价值过滤不回退，防全量放行造垃圾）
+- [x] [BEHAVIOR] error path — 非 VALUABLE_TASK_TYPES 任务（code_review）failed → 不产 learning（高频低价值过滤不回退，防全量放行造垃圾）
   Test: manual:bash -c 'bash "$(git rev-parse --show-toplevel)/sprints/08040916-relay-78e812c0/tests/e2e/b8-nonvaluable-skip.sh"'
   期望: stdout 含 "OK b8"，exit 0
 
-- [ ] [BEHAVIOR] DevGate 三件套通过（PRD ASSUMPTION 3：改 packages/brain 必过）
+- [x] [BEHAVIOR] DevGate 三件套通过（PRD ASSUMPTION 3：改 packages/brain 必过）
   Test: manual:bash -c 'node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs'
   期望: 三命令全 exit 0
 
@@ -78,19 +78,19 @@ journey_type: autonomous
 
 **有对应断言的铁律（4 条，命令复用上方 BEHAVIOR oracle）：**
 
-- [ ] [BEHAVIOR] INV-2 冒烟/校验脚本写入侧与校验侧 DB_NAME 同一解析逻辑——m7-scenarios.mjs 与 Brain 同用 db-config.js DB_DEFAULTS，b5-b8 统一 `${DB:-cecelia}` 单变量，无两处各自默认值
+- [x] [BEHAVIOR] INV-2 冒烟/校验脚本写入侧与校验侧 DB_NAME 同一解析逻辑——m7-scenarios.mjs 与 Brain 同用 db-config.js DB_DEFAULTS，b5-b8 统一 `${DB:-cecelia}` 单变量，无两处各自默认值
   Test: manual:bash -c 'node "$(git rev-parse --show-toplevel)/sprints/08040916-relay-78e812c0/tests/e2e/m7-scenarios.mjs" window'
   期望: exit 0（脚本能连上与 Brain 同源解析出的库即证同一逻辑）
 
-- [ ] [BEHAVIOR] INV-6 写库接口成功判定看语义字段——b6 断言 capture_atoms 行本体三字段（target_type/routed_to_table/routed_to_id）而非 HTTP 200 或 ok:true
+- [x] [BEHAVIOR] INV-6 写库接口成功判定看语义字段——b6 断言 capture_atoms 行本体三字段（target_type/routed_to_table/routed_to_id）而非 HTTP 200 或 ok:true
   Test: manual:bash -c 'bash "$(git rev-parse --show-toplevel)/sprints/08040916-relay-78e812c0/tests/e2e/b6-handoff-patch.sh"'
   期望: exit 0
 
-- [ ] [BEHAVIOR] INV-56 禁止写死环境假设值——北京日窗口从 Asia/Shanghai 时区推导（非写死服务器本地时区偏移），window 场景在真 Postgres 上验证推导正确
+- [x] [BEHAVIOR] INV-56 禁止写死环境假设值——北京日窗口从 Asia/Shanghai 时区推导（非写死服务器本地时区偏移），window 场景在真 Postgres 上验证推导正确
   Test: manual:bash -c 'node "$(git rev-parse --show-toplevel)/sprints/08040916-relay-78e812c0/tests/e2e/m7-scenarios.mjs" window'
   期望: exit 0
 
-- [ ] [BEHAVIOR] INV-57 真环境验证才算 done——登记链路在真 Brain（localhost:5221）+ 真 cecelia 库上验证，非 mock/CI 绿
+- [x] [BEHAVIOR] INV-57 真环境验证才算 done——登记链路在真 Brain（localhost:5221）+ 真 cecelia 库上验证，非 mock/CI 绿
   Test: manual:bash -c 'bash "$(git rev-parse --show-toplevel)/sprints/08040916-relay-78e812c0/tests/e2e/b5-autolearn.sh"'
   期望: exit 0
 

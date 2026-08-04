@@ -297,11 +297,11 @@ echo "✅ Golden Path 验证通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| m7 北京日窗口 + 自产排除 + streak 复位 | `tests/ledger-hygiene-m7-beijing-window.integration.test.ts` | 仅当前时刻 atom 不计入 → debt=1；lane=ledger-hygiene 自产 issue atom → debt=1 正确击穿；非自产 atom → m7 debt=0 清偿；ratchet streak 复位为 0 | → 2 failures（窗口/排除未实现），2 pass（清偿/复位为既有行为保留断言） |
-| debt 持平文案 + 自产标识 | `tests/breach-issue-copy.integration.test.ts` | 不含「上升」且含持平或连续第 N 天；lane=ledger-hygiene 且 routed_to_table=issues；title 保持 [ledger-hygiene] 指标名前缀 | → 2 failures（文案/lane 未实现），2 pass |
-| pushCaptureAtom 溯源落库 | `tests/capture-atom-routing.integration.test.ts` | routedToTable/routedToId 真实落库到 capture_atoms；透传 lane 落库；未传时列为 NULL；缺 content 或 targetType 返回 null 不写库 | → 2 failures（签名断裂未修），2 pass |
-| VALUABLE_TASK_TYPES 覆盖 | `tests/auto-learning-harness.test.ts` | 含 harness_initiative；保留 dev feature research 不回退；不纳入 code_review | → 1 failure，2 pass |
-| relay handoff 登记（pushHandoffAtom） | `tests/handoff-atom-relay.integration.test.ts` | 写入 target_type=handoff 且 routed_to_table=tasks routed_to_id=task_id；空对象或非对象时不产 atom 且不抛异常；target_subtype=PASS+NEXT 与 saveHandoff 同口径 | → 3 failures（pushHandoffAtom 未导出，import 失败整文件红） |
+| m7 北京日窗口 + 自产排除 + streak 复位 | `tests/ledger-hygiene-m7-beijing-window.integration.test.ts` | m7 统计窗为上一完整北京日：仅当前时刻 atom 不计入 → debt=1 / m7 排除探针自产 atoms：上一北京日仅 lane=ledger-hygiene 自产 issue atom → debt=1 正确击穿 / 上一北京日存在非自产 atom → m7 debt=0 清偿 / debt=0 无击穿 → ratchet streak 复位为 0 | → 2 failures（窗口/排除未实现），2 pass（清偿/复位为既有行为保留断言） |
+| debt 持平文案 + 自产标识 | `tests/breach-issue-copy.integration.test.ts` | debt 持平时 issue 文案不含「上升」且含持平或连续第 N 天表述 / 探针自产 issue atom 带 lane=ledger-hygiene 且 routed_to_table=issues routed_to_id 非空 / issue title 保持 [ledger-hygiene] 指标名前缀不变 | → 2 failures（文案/lane 未实现），2 pass |
+| pushCaptureAtom 溯源落库 | `tests/capture-atom-routing.integration.test.ts` | pushCaptureAtom 传 routedToTable/routedToId 真实落库到 capture_atoms / pushCaptureAtom 透传 lane 落库 / routedToTable/routedToId 未传时列为 NULL（可选参数不回退既有调用方） / 缺 content 或 targetType 返回 null 不写库 | → 2 failures（签名断裂未修），2 pass |
+| VALUABLE_TASK_TYPES 覆盖 | `tests/auto-learning-harness.test.ts` | VALUABLE_TASK_TYPES 含 harness_initiative / VALUABLE_TASK_TYPES 保留 dev feature research 不回退 / VALUABLE_TASK_TYPES 不纳入 code_review 等高频低价值类型 | → 1 failure，2 pass |
+| relay handoff 登记（pushHandoffAtom） | `tests/handoff-atom-relay.integration.test.ts` | pushHandoffAtom 写入 target_type=handoff 且 routed_to_table=tasks routed_to_id=task_id / handoff 为空对象或非对象时不产 atom 且不抛异常 / verdict=PASS 且含真实 next_steps → target_subtype=PASS+NEXT 与 saveHandoff 同口径 | → 3 failures（pushHandoffAtom 未导出，import 失败整文件红） |
 
 **测试运行方式**（generator TDD 用，evaluator 不以此为 oracle）：
 ```bash
