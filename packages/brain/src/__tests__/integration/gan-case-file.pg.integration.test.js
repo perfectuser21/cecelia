@@ -150,8 +150,9 @@ describe('案卷式 GAN 写读全链（真库）', () => {
       contract_sha: 'a'.repeat(40),
       rubric_scores: { correctness: 8, coverage: 6 },
       blockers: [{ id: 'R2-1', dimension: 'coverage', status: 'open' }],
-      // P2-4：feedback_md 落库前过 sanitizeDiagnostic，连续换行被折叠成单空格。
-      feedback_md: '# Round 2 R2-1 still open.',
+      // P2-4 复审修正：feedback_md 只过 redactSecrets（secret 脱敏），
+      // 不折行不截断——完整反馈原文（含换行）原样落库。
+      feedback_md: '# Round 2\n\nR2-1 still open.',
     });
   });
 

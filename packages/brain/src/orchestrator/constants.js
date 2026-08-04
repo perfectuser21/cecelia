@@ -112,6 +112,11 @@ export const CASE_FILE_FULL_TEXT_ROUNDS = 2;
 // 已经收窄过也可能发生（round 多、单条 feedback_md 长），按 round 从旧到新
 // 继续丢 feedback_md，丢完还超只告警不阻断派发。
 export const HARNESS_BUNDLE_MAX_BYTES = 256 * 1024;
+// 落库前每条案卷文本字段（feedback_md / blockers 里的字符串叶子值）的硬上限
+// （review CHANGES REQUESTED P2-4 复审）：只是极端输入的最后防线，正常反馈
+// 远小于这个值；不折行、不套用诊断日志的 2000 字符截断（那会砸烂"完整反馈
+// 原文"这条设计不变量，见 attempt-store.js sanitizeCaseFileValue）。
+export const CASE_FILE_TEXT_MAX_BYTES = 32 * 1024;
 
 // 每 attempt 固定记账单价（安全网代理值，非真实成本）：
 // callback schema（execution-contract.js harnessResultSchema）顶层 strip 未知键、

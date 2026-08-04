@@ -308,10 +308,9 @@ describe('attempt store', () => {
     expect(JSON.parse(params[6])).toEqual([
       { id: 'R2-1', dimension: 'coverage', status: 'open' },
     ]);
-    // P2-4：feedback_md 落库前过 sanitizeDiagnostic 净化——该函数把连续
-    // \r\n\t 折叠成单个空格（诊断日志同款处理），markdown 换行结构会被拉平，
-    // 这是复用 sanitizeDiagnostic 的已知代价，换来 secret 正则/长度截断保护。
-    expect(params[7]).toBe('# Round 2 R2-1 still open.');
+    // P2-4 复审修正：feedback_md 落库前只过 redactSecrets（secret 脱敏），
+    // 不折行不截断——完整反馈原文（含 markdown 换行）原样保留。
+    expect(params[7]).toBe('# Round 2\n\nR2-1 still open.');
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
 
@@ -611,7 +610,7 @@ describe('attempt store', () => {
     expect(insertCall[1][1]).toBe(4);
   });
 
-  it('P2-4：feedback_md/blockers 里的 secret 落库前过 sanitizeDiagnostic 净化（Bearer token 被 REDACT）', async () => {
+  it('P2-4：feedback_md/blockers 里的 secret 落库前过 redactSecrets 净化（Bearer token 被 REDACT）', async () => {
     const callbackResult = {
       status: 'completed',
       summary: 'contract approved',
@@ -663,6 +662,71 @@ describe('attempt store', () => {
     expect(params[6]).not.toContain('sk-secret-123');
     expect(params[6]).toContain('Bearer [REDACTED]');
     expect(params[7]).not.toContain('sk-secret-456');
+    expect(params[7]).toContain('Bearer [REDACTED]');
+  });
+
+  it('P2-4 复审回归：5KB 带换行的 feedback_md 落库后不折行不砍 2000（完整反馈原文不变量），Bearer 已 REDACT', async () => {
+    const paragraph = 'This paragraph documents one blocker in enough prose detail to '
+      + 'pad the payload out to several kilobytes of realistic review feedback text, '
+      + 'proving the sanitizer no longer truncates it down to two thousand characters '
+      + 'like the old shared diagnostic sanitizer used to before the P2-4 fix.';
+    const bodyLines = Array.from({ length: 30 }, (_, i) => `## Blocker note ${i}\n\n${paragraph}`);
+    const feedbackMd = `# Round 2 review\n\n${bodyLines.join('\n\n')}\n\n`
+      + 'Bearer sk-secret-789 was left in the diff.';
+    expect(Buffer.byteLength(feedbackMd)).toBeGreaterThan(5 * 1024);
+
+    const callbackResult = {
+      status: 'completed',
+      summary: 'contract approved with a long review',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+      decision: { outcome: 'APPROVED', reason: 'ok' },
+      case_file: { blockers: [], feedback_md: feedbackMd },
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      task_bundle: { inputs: { contract_round: 2 } },
+      result: null,
+    };
+    const completed = { ...running, status: 'completed', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 5 }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    const insertCall = client.query.mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO gan_case_file'),
+    );
+    const [, params] = insertCall;
+    const expectedStored = feedbackMd.replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]');
+    // 唯一的差异只是 Bearer token 被替换成占位符，其余原文（含全部换行、
+    // 全部长度）逐字保留——不是砍到 2000、也不是折成一行。
+    expect(params[7]).toBe(expectedStored);
+    expect(params[7].length).toBeGreaterThan(2000);
+    expect((params[7].match(/\n/g) ?? []).length).toBe((feedbackMd.match(/\n/g) ?? []).length);
+    expect(params[7]).not.toContain('sk-secret-789');
     expect(params[7]).toContain('Bearer [REDACTED]');
   });
 

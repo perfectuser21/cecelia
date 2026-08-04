@@ -8,9 +8,9 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { normalizeFailureSignature } from './convergence-signatures.js';
-import { ATTEMPT_COST_ACCRUAL_USD } from './constants.js';
+import { ATTEMPT_COST_ACCRUAL_USD, CASE_FILE_TEXT_MAX_BYTES } from './constants.js';
 import { insertCaseFileRow } from './case-file-store.js';
-import { sanitizeDiagnostic } from './failure-persistence.js';
+import { redactSecrets } from './failure-persistence.js';
 
 const TERMINAL_STATUSES = [
   'completed',
@@ -212,14 +212,21 @@ function numericRubricScores(rubricScores) {
 }
 
 /**
- * P2-4：feedback_md/blockers 是自由文本，可能被 Skill 意外带出日志片段里的
- * secret（Bearer token 等）——落库前过与 failure-persistence.js 診断日志同款
- * 的 sanitizeDiagnostic（secret 正则 + 长度截断）。blockers 形状因角色而异
- * （reviewer 带 why_not_found_earlier/prd_gap，proposer 带 closure），深度
- * 遍历所有字符串叶子值，不假设固定字段名。
+ * P2-4（review CHANGES REQUESTED 复审修正）：feedback_md/blockers 是自由
+ * 文本，可能被 Skill 意外带出日志片段里的 secret（Bearer token 等）——落库
+ * 前只脱敏，不套用 sanitizeDiagnostic 那套"折叠成一行 + 砍到 2000 字符"
+ * （那是给诊断日志用的，会砸烂设计里"feedback_md=完整反馈原文"这条不变量，
+ * 且让 P2-3 的两道膨胀闸——loadCaseFile fullTextRounds 与 dispatcher 字节数
+ * 体检——在生产环境永远摸不到真实输入，因为落库时就已经被砍到 2000）。
+ * 改用只做 secret 脱敏的 redactSecrets，配一个远大于正常反馈的硬上限
+ * CASE_FILE_TEXT_MAX_BYTES（32KB）兜极端输入，不折行。blockers 形状因角色
+ * 而异（reviewer 带 why_not_found_earlier/prd_gap，proposer 带 closure），
+ * 深度遍历所有字符串叶子值，不假设固定字段名。
  */
 function sanitizeCaseFileValue(value) {
-  if (typeof value === 'string') return sanitizeDiagnostic(value);
+  if (typeof value === 'string') {
+    return redactSecrets(value).slice(0, CASE_FILE_TEXT_MAX_BYTES);
+  }
   if (Array.isArray(value)) return value.map(sanitizeCaseFileValue);
   if (value && typeof value === 'object') {
     return Object.fromEntries(
@@ -262,7 +269,7 @@ function callbackCaseFileProjection(attempt, result) {
     contractSha: inputs.contract_sha ?? null,
     rubricScores: numericRubricScores(result.decision?.rubric_scores),
     blockers: sanitizeCaseFileValue(result.case_file?.blockers ?? []),
-    feedbackMd: feedbackMd == null ? null : sanitizeDiagnostic(feedbackMd),
+    feedbackMd: feedbackMd == null ? null : sanitizeCaseFileValue(feedbackMd),
   };
 }
 
