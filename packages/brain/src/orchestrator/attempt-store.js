@@ -8,6 +8,7 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { normalizeFailureSignature } from './convergence-signatures.js';
+import { ATTEMPT_COST_ACCRUAL_USD } from './constants.js';
 
 const TERMINAL_STATUSES = [
   'completed',
@@ -720,6 +721,16 @@ export function createAttemptStore(pool) {
               throw new Error(`generator PR projection lost run authority: ${runId}`);
             }
           }
+
+          // GAN budget cap 的唯一记账来源（决策 fbb0bc9d）：首次终态即累加固定单价。
+          // run 行在事务开头已 FOR UPDATE，无竞态；exact-retry 走 isTerminal 早退不重复记账。
+          await client.query(
+            `UPDATE initiative_runs
+                SET cost_usd = COALESCE(cost_usd, 0) + $2,
+                    updated_at = NOW()
+              WHERE id = $1`,
+            [runId, ATTEMPT_COST_ACCRUAL_USD],
+          );
         }
 
         await client.query('COMMIT');
