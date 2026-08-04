@@ -397,6 +397,56 @@ describe('createDispatcher', () => {
     expect(secondBranch).not.toBe(firstBranch);
   });
 
+  it('把 payload.thin_prd 与 prep_prd_body 注入角色 TaskBundle inputs（GAN 收敛的 PRD 锚）', async () => {
+    const deps = makeDeps();
+    const withPrd = {
+      ...observed,
+      task: {
+        ...observed.task,
+        payload: {
+          ...observed.task.payload,
+          thin_prd: '用户可以在列表页看到最新 10 条记录',
+          prep_prd_body: '# PrepPRD\n完整正文',
+        },
+      },
+    };
+
+    await createDispatcher(deps)('spawn:planner', {
+      taskId,
+      runId,
+      hop: 1,
+      observed: withPrd,
+      decision: { phase: 'planning', reason: 'no_prd' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.thin_prd).toBe('用户可以在列表页看到最新 10 条记录');
+    expect(created.bundle.inputs.prep_prd_body).toBe('# PrepPRD\n完整正文');
+  });
+
+  it('payload 无 thin_prd / 空白 thin_prd 时不注入该字段', async () => {
+    const deps = makeDeps();
+    const blank = {
+      ...observed,
+      task: {
+        ...observed.task,
+        payload: { ...observed.task.payload, thin_prd: '   ' },
+      },
+    };
+
+    await createDispatcher(deps)('spawn:planner', {
+      taskId,
+      runId,
+      hop: 1,
+      observed: blank,
+      decision: { phase: 'planning', reason: 'no_prd' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs).not.toHaveProperty('thin_prd');
+    expect(created.bundle.inputs).not.toHaveProperty('prep_prd_body');
+  });
+
   it('passes the verified planner Git artifact into the proposer TaskBundle', async () => {
     const deps = makeDeps();
     const plannerPrdArtifact = {
