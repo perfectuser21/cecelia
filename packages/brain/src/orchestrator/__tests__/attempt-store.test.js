@@ -344,6 +344,7 @@ describe('attempt store', () => {
     expect(client.query.mock.calls[5][1]).toEqual([
       input.runId,
       'https://github.com/acme/repo/pull/42',
+      ATTEMPT_COST_ACCRUAL_USD,
     ]);
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
