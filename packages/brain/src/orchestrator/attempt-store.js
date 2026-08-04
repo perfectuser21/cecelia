@@ -8,6 +8,7 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { normalizeFailureSignature } from './convergence-signatures.js';
+import { ATTEMPT_COST_ACCRUAL_USD } from './constants.js';
 
 const TERMINAL_STATUSES = [
   'completed',
@@ -707,18 +708,35 @@ export function createAttemptStore(pool) {
 
           const pullRequest = verifiedPullRequestArtifact(terminalAttempt, result);
           await appendGeneratorFixProjection(client, terminalAttempt, result, pullRequest);
+
+          // GAN budget cap 的唯一记账来源（决策 fbb0bc9d）：首次终态即累加固定单价。
+          // exact-retry 走 isTerminal 早退不重复记账。
+          // 死锁约束：本事务对同一 run 行只允许一条 UPDATE——已有 FOR UPDATE 等锁者
+          // 排队时，第二条 UPDATE 需重新竞争 heavyweight tuple lock 会与排队者互等
+          // （40P01，kernel-stale-attempt-reconcile.pg.integration 实证），因此
+          // pr_url 投影与成本记账合并为单条语句。
           if (pullRequest) {
             const projection = await client.query(
               `UPDATE initiative_runs
-                  SET pr_url=$2, updated_at=NOW()
+                  SET pr_url=$2,
+                      cost_usd = COALESCE(cost_usd, 0) + $3,
+                      updated_at=NOW()
                 WHERE id=$1
                   AND phase NOT IN ('done', 'failed')
                 RETURNING id`,
-              [runId, pullRequest.url],
+              [runId, pullRequest.url, ATTEMPT_COST_ACCRUAL_USD],
             );
             if (!firstRow(projection)) {
               throw new Error(`generator PR projection lost run authority: ${runId}`);
             }
+          } else {
+            await client.query(
+              `UPDATE initiative_runs
+                  SET cost_usd = COALESCE(cost_usd, 0) + $2,
+                      updated_at = NOW()
+                WHERE id = $1`,
+              [runId, ATTEMPT_COST_ACCRUAL_USD],
+            );
           }
         }
 

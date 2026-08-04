@@ -92,3 +92,10 @@ export const LOG_ACTION = Object.freeze({
   // Sprint 07231527：generator-fix callback verdict（no-progress 推导依赖）
   VERDICT_GENERATOR_FIX_CALLBACK: 'verdict:generator-fix-callback',
 });
+
+// 每 attempt 固定记账单价（安全网代理值，非真实成本）：
+// callback schema（execution-contract.js harnessResultSchema）顶层 strip 未知键、
+// 三家 provider 均不上报用量 → 真实成本当前物理不可达（判定点 1391f0c6）。
+// BUDGET_CAP_USD(10) ÷ 0.25 = 40 个 attempt 触发 cap——定位是"明显异常才触发"的
+// 兜底，正常收敛由案卷机制 + 趋势观测负责（决策 ba33fc68）。
+export const ATTEMPT_COST_ACCRUAL_USD = 0.25;
