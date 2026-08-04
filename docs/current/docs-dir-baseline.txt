@@ -1,0 +1,47 @@
+# docs/ 一级子目录基线登记（祖父条款 I-5）
+# 生成时间：2026-08-04
+# 说明：本文件记录 docs/ 下的全部一级子目录。
+#       新增目录必须先加入本文件，否则 check-docs-dir-registry-smoke.sh 触发 CI 红。
+#       存量目录（本文件初次建立时已存在的）自动豁免，不受此约束。
+adr
+arch-reviews
+architecture
+archive
+audits
+current
+database
+delivery
+demo
+design
+designs
+diagnosis
+diagnostics
+dod
+evals
+fire-drills
+gaps
+gates
+handoffs
+initiatives
+instruction-book
+issues
+knowledge
+learnings
+planning
+prd
+proofs
+proposals
+quality
+registry
+reports
+research
+reviews
+roadmap
+rtm
+runbooks
+superpowers
+task-cards
+tasks
+templates
+testing
+workflows
