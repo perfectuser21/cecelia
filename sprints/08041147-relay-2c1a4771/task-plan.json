@@ -1,0 +1,33 @@
+{
+  "initiative_id": "2c1a4771-3424-45ea-b6e4-19ae980edb95",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅在 packages/brain/（watchdog/executor 后端分类逻辑），无 UI/agent 协议面",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "watchdog liveness 探针「从未启动任务」分类保真：never_started（防复发）",
+      "scope": "从未启动任务（pid 未跟踪 ∧ 无进程日志 ∧ started_at=null）经双确认探针后 watchdog_kill.reason=never_started（不落 process_disappeared/liveness_dead 兜底）；已有 error_message/payload.failure_class 不被覆盖；failure learning 文本含真实根因标签（never_started）不含 liveness_dead 假标签（只钉学习文本，requeue 退避/隔离策略不变）；曾启动场景分类行为与现状完全一致；classifyDevFailure 对 never_started 文本不落 transient；回归测试毕业至 packages/brain/src/__tests__/integration/ 并登记 POSTGRES_INTEGRATION_TESTS 永久入 CI",
+      "dod": [
+        "[BEHAVIOR] 从未启动任务双确认后 watchdog_kill.reason 为 never_started（真 PG，vitest -t 'watchdog_kill.reason 为 never_started' exit 0）",
+        "[BEHAVIOR] 已有 error_message/failure_class 不被 watchdog 记账覆盖（vitest -t '不被 watchdog 记账覆盖' exit 0）",
+        "[BEHAVIOR] failure learning 文本含 never_started 且不含 liveness_dead（真 PG，vitest -t 'failure learning 文本含真实根因标签' exit 0）",
+        "[BEHAVIOR] 曾启动/有日志场景仍判 process_disappeared（vitest -t '仍判 process_disappeared' 与 -t '不判 never_started' 均 exit 0）",
+        "[BEHAVIOR] classifyDevFailure 对 never_started 文本 class !== 'transient'（node 直跑 exit 0）",
+        "[BEHAVIOR] 毕业回归测试在 vitest.integration.config.js 下 exit 0（未登记白名单则必挂）",
+        "[ARTIFACT] packages/brain/src/__tests__/integration/liveness-never-started.integration.test.js 存在且零 vi.mock( 调用",
+        "[ARTIFACT] packages/brain/vitest.config.js POSTGRES_INTEGRATION_TESTS 含该文件",
+        "[ARTIFACT] .github/workflows/ 零改动"
+      ],
+      "files": [
+        "packages/brain/src/executor.js",
+        "packages/brain/src/dev-failure-classifier.js",
+        "packages/brain/src/__tests__/integration/liveness-never-started.integration.test.js",
+        "packages/brain/vitest.config.js",
+        "sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}

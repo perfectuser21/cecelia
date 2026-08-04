@@ -16,7 +16,7 @@
 import crypto from 'crypto';
 import { spawn, execSync, exec } from 'child_process';
 import { writeFile, mkdir, access } from 'fs/promises';
-import { readFileSync, readdirSync, unlinkSync } from 'fs';
+import { readFileSync, readdirSync, unlinkSync, existsSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -335,6 +335,35 @@ async function checkExitReason(pid, taskId) {
 
   // 3. Default: process disappeared with unknown reason
   return { reason: 'process_disappeared', diagnostic_info: diagnosticInfo };
+}
+
+/**
+ * Detect "never started" tasks (1dfa40f7 防复发): dispatch was rejected/failed before any
+ * process launched — e.g. S2 锚点执法拒绝点火. 三信号联合判定（判定点登记表方法 A）：
+ *   pid 未跟踪（executor 内存无 activeProcesses 条目）
+ *   ∧ 无进程日志 /tmp/cecelia-{id}.log
+ *   ∧ (started_at=null ∨ 已有派发失败 error_message)
+ *
+ * 保守回落（失败语义）：信号不完整（如日志探测异常）或存在进程日志（曾启动强证据，
+ * 即使 started_at 被 requeue 清空）→ 返回 false，维持既有 process_disappeared 兜底，
+ * 宁可漏判不可把曾启动任务误判为 never_started（真实 OOM/抢占事件不被静默改写根因）。
+ *
+ * @param {Object} task - tasks 行（id, started_at, error_message）
+ * @param {Object|undefined} entry - activeProcesses 条目（undefined = pid 未跟踪）
+ * @returns {boolean}
+ */
+function isNeverStarted(task, entry) {
+  try {
+    if (entry) {
+      return false; // executor 曾跟踪该任务 → 发生过点火尝试，非「从未启动」
+    }
+    if (existsSync(`/tmp/cecelia-${task.id}.log`)) {
+      return false; // 进程日志存在 = 曾启动强证据 → 回落 process_disappeared
+    }
+    return task.started_at === null || Boolean(task.error_message);
+  } catch {
+    return false; // 信号不完整 → 保守回落现状兜底，杜绝新误判面
+  }
 }
 
 // Resource thresholds — dynamic seat scaling based on actual load
@@ -1090,8 +1119,13 @@ async function requeueTask(taskId, reason, evidence = {}) {
   // Fix: 记录失败到 learnings 表，供 planner buildLearningPenaltyMap 使用
   // 使用 content_hash 去重，防止相同失败原因无限堆积
   try {
-    const failureTitle = `Task Failure: ${taskTitle || taskId} [${reason}]`;
-    const failureContent = `Watchdog killed task after ${retryCount} attempts. Reason: ${reason}`;
+    // 失败学习文本取 evidence 内真实 exit reason（如 never_started / process_disappeared / oom_killed），
+    // 而非 requeue 通道参数（liveness_dead 是通道名，不是 exit reason 枚举值）——
+    // 防 failure learning / capture atom 学习链被 liveness_dead 假根因标签污染（1dfa40f7）。
+    // evidence 无 reason 时（如 watchdog 资源 kill 路径）回落通道参数，行为与现状一致。
+    const rootCause = evidence?.reason || reason;
+    const failureTitle = `Task Failure: ${taskTitle || taskId} [${rootCause}]`;
+    const failureContent = `Watchdog killed task after ${retryCount} attempts. Reason: ${rootCause}`;
     const contentHash = crypto.createHash('sha256')
       .update(`${failureTitle}\n${failureContent}`)
       .digest('hex')
@@ -3835,7 +3869,7 @@ async function probeTaskLiveness() {
 
   // Get all in_progress tasks from DB
   const result = await pool.query(`
-    SELECT id, title, payload, started_at, task_type
+    SELECT id, title, payload, started_at, task_type, error_message
     FROM tasks
     WHERE status = 'in_progress'
   `);
@@ -3941,11 +3975,18 @@ async function probeTaskLiveness() {
 
     // Auto-fail the task with enhanced diagnostics
     const pid = entry?.pid || null;
-    const { reason, diagnostic_info } = await checkExitReason(pid, task.id);
+    let { reason, diagnostic_info } = await checkExitReason(pid, task.id);
+
+    // never_started 分类（1dfa40f7 防复发）：仅在落入 process_disappeared 兜底时收窄——
+    // 从未启动任务（pid 未跟踪 ∧ 无进程日志 ∧ (started_at=null ∨ 已有派发失败 error_message)）
+    // 分类为 never_started；其余场景（含曾启动进程消失）分类行为与现状完全一致。
+    if (reason === 'process_disappeared' && isNeverStarted(task, entry)) {
+      reason = 'never_started';
+    }
 
     const errorDetails = {
       type: 'liveness_probe_failed',
-      reason: reason, // oom_killed / oom_likely / killed_signal / timeout / process_disappeared
+      reason: reason, // oom_killed / oom_likely / killed_signal / timeout / process_disappeared / never_started
       message: `Process not found after double-confirm probe (suspect since ${suspect.firstSeen})`,
       first_suspect_at: suspect.firstSeen,
       probe_ticks: suspect.tickCount + 1,
