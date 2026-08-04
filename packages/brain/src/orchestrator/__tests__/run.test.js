@@ -118,6 +118,78 @@ describe('runKernelMain fatal convergence', () => {
   });
 });
 
+// r17 实证：task.status 运行中恒 'queued'（派发时也不置 in_progress）。以下锁死
+// runKernelMain 启动流程装载 task 后必须调用 activateQueuedTask（默认实现
+// kernel-run-store.activateQueuedKernelTask）单条 UPDATE，失败只告警不中断 loop
+// （PrepPRD: docs/prd/2026-08-04-kernel-phase-persist-prep-prd.md）。
+describe('runKernelMain：task 启动置位', () => {
+  it('非 dry-run：启动时调用 activateQueuedTask(pool, taskId)，随后照常跑 loop', async () => {
+    const pool = { end: vi.fn() };
+    const activateQueuedTask = vi.fn(async () => ({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }));
+    const runLoopFn = vi.fn(async () => ({ exitReason: 'run_done', hops: 1 }));
+
+    const result = await runKernelMain({
+      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      runId: '11111111-1111-4111-8111-111111111111',
+      resumeToken: null,
+      dryRun: false,
+    }, {
+      buildDeps: vi.fn(async () => ({ pool })),
+      runLoopFn,
+      activateQueuedTask,
+    });
+
+    expect(activateQueuedTask).toHaveBeenCalledWith(
+      pool,
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    );
+    expect(runLoopFn).toHaveBeenCalled();
+    expect(result).toEqual({ exitReason: 'run_done', hops: 1 });
+  });
+
+  it('dry-run：不调用 activateQueuedTask（零写入契约不破）', async () => {
+    const pool = { end: vi.fn() };
+    const activateQueuedTask = vi.fn(async () => null);
+    const runLoopFn = vi.fn(async () => ({ exitReason: 'dry_run', hops: 0 }));
+
+    await runKernelMain({
+      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      runId: '11111111-1111-4111-8111-111111111111',
+      resumeToken: null,
+      dryRun: true,
+    }, {
+      buildDeps: vi.fn(async () => ({ pool })),
+      runLoopFn,
+      activateQueuedTask,
+    });
+
+    expect(activateQueuedTask).not.toHaveBeenCalled();
+  });
+
+  it('activateQueuedTask 失败只告警，不中断 loop（非关键路径）', async () => {
+    const pool = { end: vi.fn() };
+    const activateQueuedTask = vi.fn(async () => { throw new Error('connection refused'); });
+    const runLoopFn = vi.fn(async () => ({ exitReason: 'run_done', hops: 1 }));
+    const logError = vi.fn();
+
+    const result = await runKernelMain({
+      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      runId: '11111111-1111-4111-8111-111111111111',
+      resumeToken: null,
+      dryRun: false,
+    }, {
+      buildDeps: vi.fn(async () => ({ pool })),
+      runLoopFn,
+      activateQueuedTask,
+      logError,
+    });
+
+    expect(runLoopFn).toHaveBeenCalled();
+    expect(result).toEqual({ exitReason: 'run_done', hops: 1 });
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'));
+  });
+});
+
 describe('buildRealDeps', () => {
   it('reads frozen Git artifacts from the mounted REPO_ROOT when the Brain image cwd is not a repository', async () => {
     const repoRoot = mkdtempSync(path.join(os.tmpdir(), 'kernel-artifact-repo-root-'));
