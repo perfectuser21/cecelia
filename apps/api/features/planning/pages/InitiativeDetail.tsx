@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Target, RefreshCw, AlertCircle, List, Network } from 'lucide-react';
+import { ArrowLeft, Target, RefreshCw, AlertCircle, List, Network, Inbox, Clock } from 'lucide-react';
 import { useCeceliaPage } from '@/contexts/CeceliaContext';
 import PRPlansList from '../components/PRPlansList';
 import PRPlanDependencyGraph from '../components/PRPlanDependencyGraph';
 import StatusIcon from '../../shared/components/StatusIcon';
-import { getInitiative, getPRPlans } from '../api/pr-plans.api';
-import type { Initiative, PRPlan } from '../api/pr-plans.api';
+import { getInitiative, getPRPlans, getCapturesForInitiative } from '../api/pr-plans.api';
+import type { Initiative, PRPlan, CaptureLink } from '../api/pr-plans.api';
 
 export default function InitiativeDetail() {
   const { id } = useParams<{ id: string }>();
@@ -14,6 +14,7 @@ export default function InitiativeDetail() {
 
   const [initiative, setInitiative] = useState<Initiative | null>(null);
   const [prPlans, setPRPlans] = useState<PRPlan[]>([]);
+  const [captures, setCaptures] = useState<CaptureLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'graph'>('list');
@@ -35,14 +36,16 @@ export default function InitiativeDetail() {
       setLoading(true);
       setError(null);
 
-      // Load initiative and PR Plans in parallel
-      const [initiativeData, prPlansData] = await Promise.all([
+      // Load initiative, PR Plans, and linked captures in parallel
+      const [initiativeData, prPlansData, capturesData] = await Promise.all([
         getInitiative(id),
-        getPRPlans(id)
+        getPRPlans(id),
+        getCapturesForInitiative(id),
       ]);
 
       setInitiative(initiativeData);
       setPRPlans(prPlansData);
+      setCaptures(capturesData);
     } catch (err) {
       console.error('Failed to load initiative:', err);
       setError(err instanceof Error ? err.message : 'Failed to load initiative');
@@ -262,6 +265,56 @@ export default function InitiativeDetail() {
             </div>
           </div>
         )}
+
+        {/* 关联 Captures — 去向反向链（migration 385） */}
+        <div className="mt-6 bg-white dark:bg-slate-800 rounded-xl p-6 border border-slate-200 dark:border-slate-700" data-testid="initiative-captures-section">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+              <Inbox className="w-5 h-5 text-slate-400" />
+              关联 Captures
+              <span className="text-sm font-normal text-slate-500 dark:text-slate-400">
+                ({captures.length})
+              </span>
+            </h2>
+            <Link
+              to="/gtd/inbox"
+              className="text-xs text-blue-500 dark:text-blue-400 hover:underline flex items-center gap-1"
+              data-testid="back-to-inbox-link"
+            >
+              <Inbox className="w-3 h-3" />
+              返回 Inbox
+            </Link>
+          </div>
+          {captures.length === 0 ? (
+            <p className="text-sm text-slate-500 dark:text-slate-400 text-center py-4">
+              暂无关联 Captures — 在 Inbox 标记完成时选择本立项即可建立链接
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {captures.map(cap => (
+                <div
+                  key={cap.id}
+                  className="flex items-start gap-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700"
+                  data-testid={`initiative-capture-${cap.id}`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-slate-700 dark:text-slate-300 line-clamp-2">
+                      {cap.content}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-xs text-slate-400">{cap.source}</span>
+                      <span className="text-slate-300 dark:text-slate-600">·</span>
+                      <span className="flex items-center gap-0.5 text-xs text-slate-400">
+                        <Clock className="w-3 h-3" />
+                        {new Date(cap.created_at).toLocaleDateString('zh-CN')}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

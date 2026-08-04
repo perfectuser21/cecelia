@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Inbox, RefreshCw, CheckCircle2, Archive, Clock, Atom, MessageSquare } from 'lucide-react';
+import { Inbox, RefreshCw, CheckCircle2, Archive, Clock, Atom, MessageSquare, ExternalLink, Link2 } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 import QuickCapture from '../components/QuickCapture';
 import AtomReview from '../components/AtomReview';
 
@@ -10,8 +11,16 @@ interface Capture {
   status: string;
   area_id: string | null;
   owner: string;
+  destination_type: string | null;
+  destination_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface Initiative {
+  id: string;
+  title: string;
+  status: string;
 }
 
 type TabKey = 'captures' | 'review';
@@ -32,10 +41,6 @@ const SOURCE_COLORS: Record<string, string> = {
   api: 'bg-slate-500/20 text-slate-400',
 };
 
-// migration 356 起，对话捕获的 source 从单一的 'conversation' 拆成
-// 'conversation-claude'/'conversation-codex'/'conversation-grok' 三个工具专属值，
-// 旧数据也被改名为 'conversation-claude'。这里统一用前缀匹配识别"这是一条对话捕获"，
-// 具体工具名作为标签后缀展示，避免走精确匹配后全部退化成通用 fallback 徽标。
 const CONVERSATION_TOOL_LABELS: Record<string, string> = {
   claude: 'Claude',
   codex: 'Codex',
@@ -74,15 +79,74 @@ function formatTime(iso: string): string {
   return d.toLocaleDateString('zh-CN');
 }
 
+// 去向选择弹窗
+function DestinationPicker({
+  initiatives,
+  onSelect,
+  onSkip,
+}: {
+  initiatives: Initiative[];
+  onSelect: (type: string, id: string) => void;
+  onSkip: () => void;
+}) {
+  const [search, setSearch] = useState('');
+  const filtered = initiatives.filter(i =>
+    i.title.toLowerCase().includes(search.toLowerCase())
+  );
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="w-full max-w-sm mx-4 bg-slate-800 rounded-xl border border-slate-700 shadow-2xl p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Link2 size={14} className="text-blue-400" />
+          <span className="text-sm font-medium text-gray-200">选择去向立项</span>
+        </div>
+        <input
+          autoFocus
+          type="text"
+          placeholder="搜索立项..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="w-full px-3 py-2 text-sm bg-slate-700 border border-slate-600 rounded-lg text-gray-200 placeholder-slate-500 focus:outline-none focus:border-blue-500 mb-2"
+        />
+        <div className="max-h-48 overflow-y-auto flex flex-col gap-1">
+          {filtered.length === 0 ? (
+            <p className="text-xs text-slate-500 px-2 py-3 text-center">无匹配立项</p>
+          ) : (
+            filtered.map(i => (
+              <button
+                key={i.id}
+                onClick={() => onSelect('initiative', i.id)}
+                className="text-left px-3 py-2 text-xs rounded-lg hover:bg-slate-700 text-gray-300 hover:text-gray-100 transition-colors"
+              >
+                {i.title}
+              </button>
+            ))
+          )}
+        </div>
+        <div className="flex gap-2 mt-3 pt-3 border-t border-slate-700">
+          <button
+            onClick={onSkip}
+            className="flex-1 px-3 py-1.5 text-xs text-slate-400 hover:text-slate-300 hover:bg-slate-700 rounded-lg transition-colors"
+          >
+            跳过
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface KanbanColumnProps {
   title: string;
   status: 'inbox' | 'processing' | 'done';
   captures: Capture[];
   updating: string | null;
   onUpdateStatus: (id: string, status: string) => void;
+  onMarkDoneWithDestination: (id: string) => void;
 }
 
-function KanbanColumn({ title, status, captures, updating, onUpdateStatus }: KanbanColumnProps) {
+function KanbanColumn({ title, status, captures, updating, onUpdateStatus, onMarkDoneWithDestination }: KanbanColumnProps) {
+  const navigate = useNavigate();
   const headerColors: Record<string, string> = {
     inbox: 'text-blue-400 border-blue-500/30',
     processing: 'text-amber-400 border-amber-500/30',
@@ -108,6 +172,19 @@ function KanbanColumn({ title, status, captures, updating, onUpdateStatus }: Kan
               className="group p-2.5 rounded-lg border border-slate-700/50 bg-slate-800/30 hover:bg-slate-800/60 transition-colors"
             >
               <p className="text-xs text-gray-200 leading-relaxed line-clamp-3 mb-2">{cap.content}</p>
+
+              {/* 去向链接（done 状态）*/}
+              {status === 'done' && cap.destination_type === 'initiative' && cap.destination_id && (
+                <button
+                  onClick={() => navigate(`/gtd/initiatives/${cap.destination_id}`)}
+                  className="flex items-center gap-1 mb-2 text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+                  data-testid={`capture-destination-link-${cap.id}`}
+                >
+                  <ExternalLink size={9} />
+                  <span>查看立项</span>
+                </button>
+              )}
+
               <div className="flex items-center justify-between gap-1">
                 <div className="flex items-center gap-1 flex-wrap">
                   <span className={`px-1.5 py-0.5 text-[10px] rounded-full ${getSourceColor(cap.source)}`}>
@@ -131,10 +208,11 @@ function KanbanColumn({ title, status, captures, updating, onUpdateStatus }: Kan
                         <Clock size={12} />
                       </button>
                       <button
-                        onClick={() => onUpdateStatus(cap.id, 'done')}
+                        onClick={() => onMarkDoneWithDestination(cap.id)}
                         disabled={updating === cap.id}
                         className="p-1 rounded hover:bg-green-500/20 text-slate-500 hover:text-green-400 transition-colors disabled:opacity-50"
-                        title="标记完成"
+                        title="标记完成并选择去向"
+                        data-testid={`capture-done-btn-${cap.id}`}
                       >
                         <CheckCircle2 size={12} />
                       </button>
@@ -142,10 +220,11 @@ function KanbanColumn({ title, status, captures, updating, onUpdateStatus }: Kan
                   )}
                   {status === 'processing' && (
                     <button
-                      onClick={() => onUpdateStatus(cap.id, 'done')}
+                      onClick={() => onMarkDoneWithDestination(cap.id)}
                       disabled={updating === cap.id}
                       className="p-1 rounded hover:bg-green-500/20 text-slate-500 hover:text-green-400 transition-colors disabled:opacity-50"
-                      title="标记完成"
+                      title="标记完成并选择去向"
+                      data-testid={`capture-done-btn-${cap.id}`}
                     >
                       <CheckCircle2 size={12} />
                     </button>
@@ -176,6 +255,8 @@ export default function GTDInbox(): React.ReactElement {
   const [updating, setUpdating] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>('captures');
   const [reviewCount, setReviewCount] = useState(0);
+  const [pendingDoneId, setPendingDoneId] = useState<string | null>(null);
+  const [initiatives, setInitiatives] = useState<Initiative[]>([]);
 
   const fetchCaptures = useCallback(async () => {
     setLoading(true);
@@ -191,7 +272,22 @@ export default function GTDInbox(): React.ReactElement {
     }
   }, []);
 
-  useEffect(() => { fetchCaptures(); }, [fetchCaptures]);
+  const fetchInitiatives = useCallback(async () => {
+    try {
+      const res = await fetch('/api/brain/initiatives?limit=50');
+      if (!res.ok) return;
+      const data = await res.json();
+      const list = data.initiatives ?? data.items ?? (Array.isArray(data) ? data : []);
+      setInitiatives(list.map((i: Initiative) => ({ id: i.id, title: i.title, status: i.status })));
+    } catch {
+      setInitiatives([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchCaptures();
+    fetchInitiatives();
+  }, [fetchCaptures, fetchInitiatives]);
 
   const updateStatus = async (id: string, status: string) => {
     setUpdating(id);
@@ -208,9 +304,38 @@ export default function GTDInbox(): React.ReactElement {
     }
   };
 
-  // kanban columns
-  const inbox = allCaptures.filter(c => c.status === 'inbox');
-  const processing = allCaptures.filter(c => c.status === 'processing');
+  const handleMarkDoneWithDestination = (id: string) => {
+    setPendingDoneId(id);
+  };
+
+  const handleDestinationSelect = async (type: string, destinationId: string) => {
+    if (!pendingDoneId) return;
+    const id = pendingDoneId;
+    setPendingDoneId(null);
+    setUpdating(id);
+    try {
+      const res = await fetch(`/api/captures/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'done', destination_type: type, destination_id: destinationId }),
+      });
+      if (!res.ok) throw new Error('更新失败');
+      await fetchCaptures();
+    } finally {
+      setUpdating(null);
+    }
+  };
+
+  const handleDestinationSkip = async () => {
+    if (!pendingDoneId) return;
+    const id = pendingDoneId;
+    setPendingDoneId(null);
+    await updateStatus(id, 'done');
+  };
+
+  // Kanban columns — 状态从 captured/clarified→inbox/processing，done→done
+  const inbox = allCaptures.filter(c => c.status === 'inbox' || c.status === 'captured');
+  const processing = allCaptures.filter(c => c.status === 'processing' || c.status === 'clarified');
   const done = allCaptures.filter(c => c.status === 'done');
 
   const tabs: { key: TabKey; label: string; icon: React.ReactNode; badge?: number }[] = [
@@ -220,6 +345,15 @@ export default function GTDInbox(): React.ReactElement {
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-slate-900">
+      {/* 去向选择弹窗 */}
+      {pendingDoneId && (
+        <DestinationPicker
+          initiatives={initiatives}
+          onSelect={handleDestinationSelect}
+          onSkip={handleDestinationSkip}
+        />
+      )}
+
       {/* Header */}
       <div className="shrink-0 flex items-center gap-3 px-4 py-3 border-b border-slate-800">
         <div className="flex items-center gap-2 text-sm font-medium text-gray-200">
@@ -272,7 +406,6 @@ export default function GTDInbox(): React.ReactElement {
               <span className="text-sm">加载中...</span>
             </div>
           ) : (
-            // Kanban Board — 三列
             <div className="flex flex-row gap-3 h-full">
               <KanbanColumn
                 title="Raw Input"
@@ -280,6 +413,7 @@ export default function GTDInbox(): React.ReactElement {
                 captures={inbox}
                 updating={updating}
                 onUpdateStatus={updateStatus}
+                onMarkDoneWithDestination={handleMarkDoneWithDestination}
               />
               <KanbanColumn
                 title="AI 加工中"
@@ -287,6 +421,7 @@ export default function GTDInbox(): React.ReactElement {
                 captures={processing}
                 updating={updating}
                 onUpdateStatus={updateStatus}
+                onMarkDoneWithDestination={handleMarkDoneWithDestination}
               />
               <KanbanColumn
                 title="已拆解"
@@ -294,6 +429,7 @@ export default function GTDInbox(): React.ReactElement {
                 captures={done}
                 updating={updating}
                 onUpdateStatus={updateStatus}
+                onMarkDoneWithDestination={handleMarkDoneWithDestination}
               />
             </div>
           )

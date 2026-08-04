@@ -2,9 +2,13 @@
  * /api/brain/captures — 统一进箱端点 + CRUD
  * FR-3: POST /api/brain/captures（进箱+幂等）
  * FR-8: GET/GET/:id（列表+详情+计数）
+ * FR-9: PATCH /api/brain/captures/:id（去向链+状态更新，migration 385）
+ * FR-10: GET /api/brain/captures/aging — 账龄哨兵视图查询
  */
 import { Router } from 'express';
 import pool from '../db.js';
+
+const VALID_DESTINATION_TYPES = ['initiative', 'project', 'task', 'dropped', 'na'];
 
 const router = Router();
 
@@ -109,7 +113,7 @@ router.get('/', async (req, res) => {
 
     const [itemsResult, countResult, totalResult] = await Promise.all([
       pool.query(
-        `SELECT id, content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status, created_at, updated_at
+        `SELECT id, content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status, destination_type, destination_id, created_at, updated_at
          FROM captures ${where} ORDER BY created_at DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
         [...values, lim, off]
       ),
@@ -140,12 +144,83 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/brain/captures/aging — 账龄哨兵（超过7天未归位）
+router.get('/aging', async (req, res) => {
+  try {
+    const { limit = 50, severity } = req.query;
+    const lim = Math.min(parseInt(limit, 10) || 50, 200);
+    let sql = `SELECT id, content, source, status, destination_type, destination_id, created_at, age_days, severity FROM capture_aging_sentinel`;
+    const params = [];
+    if (severity) {
+      params.push(severity);
+      sql += ` WHERE severity = $1`;
+    }
+    sql += ` ORDER BY created_at ASC LIMIT $${params.length + 1}`;
+    params.push(lim);
+    const result = await pool.query(sql, params);
+    res.json({ items: result.rows, count: result.rows.length });
+  } catch (err) {
+    // 视图不存在时（migration 385 未应用）返回空列表而非 500
+    if (err.code === '42P01') {
+      return res.json({ items: [], count: 0, warning: 'capture_aging_sentinel view not yet created (migration 385 pending)' });
+    }
+    res.status(500).json({ error: 'Failed to query aging sentinel', details: err.message });
+  }
+});
+
+// PATCH /api/brain/captures/:id — 去向链更新（migration 385）
+router.patch('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, destination_type, destination_id } = req.body;
+
+    const fields = [];
+    const values = [];
+
+    if (status !== undefined) {
+      if (!['captured', 'clarified', 'done', 'dropped'].includes(status)) {
+        return res.status(400).json({ error: 'status must be one of: captured, clarified, done, dropped' });
+      }
+      values.push(status);
+      fields.push(`status = $${values.length}`);
+    }
+    if (destination_type !== undefined) {
+      if (destination_type !== null && !VALID_DESTINATION_TYPES.includes(destination_type)) {
+        return res.status(400).json({ error: `destination_type must be one of: ${VALID_DESTINATION_TYPES.join(', ')}` });
+      }
+      values.push(destination_type || null);
+      fields.push(`destination_type = $${values.length}`);
+    }
+    if (destination_id !== undefined) {
+      values.push(destination_id || null);
+      fields.push(`destination_id = $${values.length}`);
+    }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    values.push(id);
+    const result = await pool.query(
+      `UPDATE captures SET ${fields.join(', ')}, updated_at = now() WHERE id = $${values.length}
+       RETURNING id, status, destination_type, destination_id, updated_at`,
+      values
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'capture not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update capture', details: err.message });
+  }
+});
+
 // GET /api/brain/captures/:id
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const captureResult = await pool.query(
-      `SELECT id, content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status, created_at, updated_at
+      `SELECT id, content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status, destination_type, destination_id, created_at, updated_at
        FROM captures WHERE id = $1`,
       [id]
     );
