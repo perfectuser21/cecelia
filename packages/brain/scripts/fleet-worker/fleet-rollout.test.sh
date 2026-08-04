@@ -829,4 +829,23 @@ if grep -Eni '\.codex|auth\.json|credentials|CODEX_ACCOUNT|token|prompt|bridge.*
   fail "rollout artifacts or transport contain account, Prompt, or Bridge authority"
 fi
 
+# === TDD label guard (Red: fails before verify_runner_label is implemented) ===
+grep -qw 'verify_runner_label' "$ROLLOUT" \
+  || fail "label guard: verify_runner_label not found in fleet-rollout.sh — implement it (TDD red baseline)"
+
+write_executable "$fake_bin/docker-nolabel" \
+  '#!/usr/bin/env bash' \
+  'case "${1:-}" in' \
+  '  inspect) printf "";;' \
+  '  *) ;;' \
+  'esac'
+label_guard_status=0
+(
+  FLEET_ROLLOUT_DOCKER="$fake_bin/docker-nolabel" \
+    bash -c "source '${ROLLOUT}' && verify_runner_label '${expected_runner_digest}'"
+) >/dev/null 2>&1 || label_guard_status=$?
+[[ "$label_guard_status" -ne 0 ]] \
+  || fail "label guard: verify_runner_label must reject images missing cecelia.entrypoint.sha256 label"
+# === end TDD label guard ===
+
 echo "PASS: Fleet rollout behavioral contract"

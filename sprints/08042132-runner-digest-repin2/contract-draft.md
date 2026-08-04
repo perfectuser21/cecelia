@@ -1,0 +1,63 @@
+# Test Contract: Runner digest 二次重钉 + 构建来源 label 守卫
+
+**Task ID**: 93161b22-9478-4695-b3e2-a01eddce78f8  
+**Gear**: hotfix  
+**Sprint**: sprints/08042132-runner-digest-repin2
+
+---
+
+## Test Contract
+
+| Workstream | Test File | Behavior |
+|---|---|---|
+| B3 | `packages/brain/scripts/fleet-worker/fleet-rollout.test.sh` | verify_runner_label exists in fleet-rollout.sh / verify_runner_label rejects images without label |
+| B5 | `packages/brain/src/orchestrator/fleet-node/node-profile.test.js` | pins one immutable sha256 Runner digest and never admits a floating tag / keeps NodeProfile, rollout, and node reconciler on the verified origin/main Runner |
+
+---
+
+## E2E 验收
+
+```bash
+# E1: 全仓可执行路径旧 digest 清零
+STALE=$(git grep "5c202d56" -- \
+  "packages/" "docker/" "scripts/" \
+  | grep -v "DEFINITION.md" \
+  | grep -v "docs/handoffs/" \
+  | wc -l)
+[ "$STALE" -eq 0 ] || { echo "FAIL: 仍有 $STALE 处旧 digest"; exit 1; }
+echo "PASS E1: 可执行路径旧 digest 已清零"
+
+# E2: fleet-rollout.sh 含 verify_runner_label 函数
+source packages/brain/scripts/fleet-worker/fleet-rollout.sh 2>/dev/null || true
+declare -f verify_runner_label > /dev/null \
+  || { echo "FAIL: verify_runner_label 函数不存在"; exit 1; }
+echo "PASS E2: verify_runner_label 函数存在"
+
+# E3: build.sh 含 cecelia.entrypoint.sha256 label
+grep -q "cecelia.entrypoint.sha256" docker/build.sh \
+  || { echo "FAIL: build.sh 缺 entrypoint label"; exit 1; }
+echo "PASS E3: build.sh 含 label 指令"
+
+# E4: 版本同步
+bash scripts/check-version-sync.sh \
+  && echo "PASS E4: 版本同步正确" \
+  || { echo "FAIL: 版本不同步"; exit 1; }
+
+# E5: DevGate 全量
+node scripts/facts-check.mjs \
+  && node packages/quality/scripts/devgate/check-dod-mapping.cjs \
+  && echo "PASS E5: DevGate 通过"
+
+# E6: fleet-rollout.sh 测试（含新 label 守卫 TDD 用例）
+bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh \
+  && echo "PASS E6: fleet-rollout 测试全通"
+
+# E7: node-profile vitest 测试（含 EXPECTED_RUNNER_DIGEST 校验；测试文件使用 vitest 语法）
+cd packages/brain && npx vitest run src/orchestrator/fleet-node/node-profile.test.js 2>&1 | tail -5
+```
+
+---
+
+## 未覆盖真实链路清单
+
+N/A（无覆盖漏洞。真实 fleet 发射 r27 是 merge 后生产验证，不属本 PR E2E 范围。Docker 镜像实物 label 验证需要 docker inspect 真实镜像，本 PR CI 无 Docker daemon，以测试替身覆盖等价行为）
