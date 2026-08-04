@@ -2,7 +2,7 @@
 
 ### 根本原因
 07-10 CI 大扫除把 sprints/** 摘出 vitest include，留了"手动毕业"规矩但无流程无守卫，
-41+5 个测试静默孤儿化；CURRENT_STATE.md 自 05-22 停更同因——write-current-state.sh
+41+5 个测试静默孤儿化；CURRENT_STATE.md 自 05-22 停更同因——状态更新脚本（已退役）
 从头到尾没有调用方，"写了≠在跑"。
 
 ### 下次预防

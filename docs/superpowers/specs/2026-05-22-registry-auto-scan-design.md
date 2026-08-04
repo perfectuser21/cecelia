@@ -35,7 +35,7 @@ echo "[scan] registry 刷新完成"
 
 ### engine-ship SKILL.md 变更
 
-在 §2 `bash scripts/write-current-state.sh` 之后追加：
+在 §2 状态更新脚本（已退役）之后追加：
 ```bash
 bash scripts/run-post-merge-scan.sh || echo "[engine-ship] registry scan 失败，不阻塞"
 ```

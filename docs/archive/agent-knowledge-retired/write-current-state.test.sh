@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
-# write-current-state.test.sh — 验证 write-current-state.sh 的功能完整性
+# write_current_state.test.sh — 验证 write_current_state.sh 的功能完整性
 #
 # 测试内容：
 # 1. 脚本文件存在且可执行
 # 2. 脚本包含正确的输出路径逻辑（兼容 worktree）
 # 3. 脚本包含 Brain 离线降级保护（--max-time）
-# 4. Stage 4 集成：engine-ship/SKILL.md 含 write-current-state 调用（Phase 5 迁移）
+# 4. Stage 4 集成：engine-ship/SKILL.md 含 write_current_state 调用（Phase 5 迁移）
 # 5. 脚本执行不崩溃（即使 Brain 离线）
 #
-# 使用方式：bash scripts/__tests__/write-current-state.test.sh
+# 使用方式：bash scripts/__tests__/write_current_state.test.sh
 # =============================================================================
 
 set -euo pipefail
@@ -20,17 +20,17 @@ PASS=0
 pass() { echo "✅ $1"; PASS=$((PASS+1)); }
 fail() { echo "❌ $1"; ERRORS=$((ERRORS+1)); }
 
-echo "=== write-current-state.sh 集成测试 ==="
+echo "=== write_current_state.sh 集成测试 ==="
 echo ""
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-SCRIPT="$REPO_ROOT/scripts/write-current-state.sh"
+SCRIPT="$REPO_ROOT/scripts/write_current_state.sh"
 
 # ── 测试 1：脚本文件存在且可执行 ──────────────────────────────────────────────
 if [[ -f "$SCRIPT" ]]; then
-    pass "脚本文件存在: scripts/write-current-state.sh"
+    pass "脚本文件存在: scripts/write_current_state.sh"
 else
-    fail "脚本文件不存在: scripts/write-current-state.sh"
+    fail "脚本文件不存在: scripts/write_current_state.sh"
 fi
 
 if bash -n "$SCRIPT" 2>/dev/null; then

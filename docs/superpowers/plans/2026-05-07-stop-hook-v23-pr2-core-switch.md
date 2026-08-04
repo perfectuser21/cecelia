@@ -742,9 +742,9 @@ Expected: 3 case PASS。
 
 - [ ] **打开 `packages/engine/skills/engine-ship/SKILL.md`，在 `## 3. 标记完成` 之前插入**
 
-找到（约 line 50-55 处）：
+找到（约 line 50-55 处）状态更新脚本行（已退役）：
 ```markdown
-bash scripts/write-current-state.sh
+# 状态更新脚本（已退役）
 ```
 
 之后、 `## 3. 标记完成` 之前**插入**：

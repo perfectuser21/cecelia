@@ -215,7 +215,7 @@ describe('TestPyramidPage — 灰态（数据不可用）', () => {
 
     expect(screen.getByTestId('pyramid-unavailable')).toHaveTextContent('guard 数据不可用');
     expect(screen.getByTestId('pyramid-unavailable')).toHaveTextContent('03:30');
-    expect(screen.getByTestId('pyramid-unavailable')).toHaveTextContent('write-current-state.sh');
+    expect(screen.getByTestId('pyramid-unavailable')).toHaveTextContent('03:30 CI 写入快照后刷新面板');
   });
 
   it('fetch !ok → 灰态，不崩溃', async () => {

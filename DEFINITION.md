@@ -6,11 +6,15 @@
 
 
 
-**Brain 版本**: 1.267.212
+**Brain 版本**: 1.267.213
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.213 — 刀0.5 CI 修复版本 bump
+
+- 同步版本 bump：`seven-ring-audit.js` + `quality.js` 注释更新已由 1.267.212 记录；本版本为 CI gate 版本严格大于 main(1.267.212) 的补丁。
 
 ## Brain 1.267.212 — Runner digest 重新钉住（意外删除后重建）
 
