@@ -308,7 +308,10 @@ describe('attempt store', () => {
     expect(JSON.parse(params[6])).toEqual([
       { id: 'R2-1', dimension: 'coverage', status: 'open' },
     ]);
-    expect(params[7]).toBe('# Round 2\n\nR2-1 still open.');
+    // P2-4：feedback_md 落库前过 sanitizeDiagnostic 净化——该函数把连续
+    // \r\n\t 折叠成单个空格（诊断日志同款处理），markdown 换行结构会被拉平，
+    // 这是复用 sanitizeDiagnostic 的已知代价，换来 secret 正则/长度截断保护。
+    expect(params[7]).toBe('# Round 2 R2-1 still open.');
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
 
@@ -463,6 +466,256 @@ describe('attempt store', () => {
       ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO gan_case_file'),
     )).toBe(false);
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
+  it('P1：failed 状态即使带 decision 也不落案卷行（终态白名单收紧，防止占位）', async () => {
+    const callbackResult = {
+      status: 'failed',
+      summary: 'infra crash before verdict',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+      decision: { outcome: 'REVISION_REQUESTED', reason: 'never actually reviewed' },
+      error: { code: 'provider_exit', message: 'boom' },
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      task_bundle: { inputs: { contract_round: 2 } },
+      result: null,
+    };
+    const failed = { ...running, status: 'failed', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [failed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValue({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    expect(client.query.mock.calls.some(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO gan_case_file'),
+    )).toBe(false);
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
+  it('P1：blocked 状态即使带 decision + case_file 也不落案卷行', async () => {
+    const callbackResult = {
+      status: 'blocked',
+      summary: 'contract forbids this action',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+      decision: { outcome: 'REVISION_REQUESTED', reason: 'blocked mid-review' },
+      case_file: { blockers: [{ id: 'R2-1', status: 'open' }], feedback_md: 'partial notes' },
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      task_bundle: { inputs: { contract_round: 2 } },
+      result: null,
+    };
+    const blocked = { ...running, status: 'blocked', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [blocked], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValue({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    expect(client.query.mock.calls.some(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO gan_case_file'),
+    )).toBe(false);
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
+  it('P2-2：bundle 缺 contract_round 时退化读 decision.contract_round（真正被使用的兜底路径）', async () => {
+    const callbackResult = {
+      status: 'completed',
+      summary: 'contract approved',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+      decision: { outcome: 'APPROVED', reason: 'ok', contract_round: 4 },
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      // 有意不带 contract_round：证明主来源缺失时兜底真的生效，不是死码。
+      task_bundle: { inputs: {} },
+      result: null,
+    };
+    const completed = { ...running, status: 'completed', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 5 }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    const insertCall = client.query.mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO gan_case_file'),
+    );
+    expect(insertCall).toBeDefined();
+    expect(insertCall[1][1]).toBe(4);
+  });
+
+  it('P2-4：feedback_md/blockers 里的 secret 落库前过 sanitizeDiagnostic 净化（Bearer token 被 REDACT）', async () => {
+    const callbackResult = {
+      status: 'completed',
+      summary: 'contract approved',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+      decision: { outcome: 'APPROVED', reason: 'ok' },
+      case_file: {
+        blockers: [{ id: 'R2-1', detail: 'saw Bearer sk-secret-123 in logs', status: 'open' }],
+        feedback_md: 'leaked Bearer sk-secret-456 in the diff',
+      },
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      task_bundle: { inputs: { contract_round: 2 } },
+      result: null,
+    };
+    const completed = { ...running, status: 'completed', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 5 }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    const insertCall = client.query.mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO gan_case_file'),
+    );
+    const [, params] = insertCall;
+    expect(params[6]).not.toContain('sk-secret-123');
+    expect(params[6]).toContain('Bearer [REDACTED]');
+    expect(params[7]).not.toContain('sk-secret-456');
+    expect(params[7]).toContain('Bearer [REDACTED]');
+  });
+
+  it('P3-5：rubric_scores 非数值项落库前被过滤，只留 number 项', async () => {
+    const callbackResult = {
+      status: 'completed',
+      summary: 'contract approved with mixed rubric shapes',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+      decision: {
+        outcome: 'APPROVED',
+        reason: 'ok',
+        rubric_scores: { correctness: 8, coverage: 'n/a', clarity: null, safety: 7 },
+      },
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      task_bundle: { inputs: { contract_round: 2 } },
+      result: null,
+    };
+    const completed = { ...running, status: 'completed', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 5 }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    const insertCall = client.query.mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO gan_case_file'),
+    );
+    const [, params] = insertCall;
+    expect(JSON.parse(params[5])).toEqual({ correctness: 8, safety: 7 });
   });
 
   it('projects evaluator PASS_WITH_CONCERNS as PASS while preserving the concerns terminal', async () => {

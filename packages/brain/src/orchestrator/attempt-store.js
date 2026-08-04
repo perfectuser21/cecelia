@@ -10,6 +10,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { normalizeFailureSignature } from './convergence-signatures.js';
 import { ATTEMPT_COST_ACCRUAL_USD } from './constants.js';
 import { insertCaseFileRow } from './case-file-store.js';
+import { sanitizeDiagnostic } from './failure-persistence.js';
 
 const TERMINAL_STATUSES = [
   'completed',
@@ -29,6 +30,12 @@ const SUCCESS_TERMINAL_STATUSES = new Set([
 
 const TERMINAL_SQL = TERMINAL_STATUSES.map((status) => `'${status}'`).join(',');
 const DERIVED_TIME_ROLES = new Set(['judge', 'reporter']);
+
+// 权威裁决终态：只有这两个状态代表"角色真的跑完并产出了结果"。
+// callbackRoleVerdictProjection（既有）与 callbackCaseFileProjection（案卷式
+// GAN）共用同一份白名单——failed/blocked/needs_context/cancelled 即使意外带了
+// decision/case_file 字段也不是权威裁决，不能投影进决策日志或案卷。
+const ADVERSARIAL_TERMINAL_STATUSES = new Set(['completed', 'completed_with_concerns']);
 
 function callbackGateVerdict(result) {
   switch (result.status) {
@@ -131,7 +138,7 @@ function callbackRoleVerdictProjection(attempt, result) {
     };
   }
   if (!result.decision || !['reviewer', 'evaluator'].includes(attempt.role)) return null;
-  if (!['completed', 'completed_with_concerns'].includes(result.status)) return null;
+  if (!ADVERSARIAL_TERMINAL_STATUSES.has(result.status)) return null;
 
   const inputs = attemptTaskBundle(attempt).inputs ?? {};
   const verdict = normalizeRoleVerdict(attempt.role, result.decision.outcome);
@@ -168,38 +175,94 @@ const CASE_FILE_ROLES = new Set(['proposer', 'reviewer']);
  * 案卷行的 round：主来源是 dispatcher.buildInputs 写入的 task_bundle.inputs.
  * contract_round（proposer=正在推进的下一轮，reviewer=正在评审的当轮——两者
  * dispatcher 都会写，见 dispatcher.js buildInputs 的 proposer/reviewer 分支）。
- * 只有历史/损坏 TaskBundle 缺该字段这种边缘情况才退化读 result 自带的轮次
- * 声明（case_file.round 或 decision.contract_round）；两处都没有就放弃写入
- * ——round 是 NOT NULL 列，不能用猜测值填一条残缺案卷行。
+ * 只有历史/损坏 TaskBundle 缺该字段这种边缘情况才退化读 result.decision.
+ * contract_round 兜底；两处都没有就放弃写入——round 是 NOT NULL 列，不能用
+ * 猜测值填一条残缺案卷行。
+ *
+ * P2-2：不再读 result.case_file?.round——caseFileSchema（execution-contract.js）
+ * 从未声明过这个字段，callback 路由在这里之前已经跑过 parseHarnessResult，
+ * 未声明字段会被 zod 静默 strip，读它是不可达死码。
  */
 function caseFileRoundForAttempt(attempt, result) {
   const inputs = attemptTaskBundle(attempt).inputs ?? {};
   if (Number.isInteger(inputs.contract_round)) return inputs.contract_round;
-  const resultRound = result.case_file?.round ?? result.decision?.contract_round;
+  const resultRound = result.decision?.contract_round;
   return Number.isInteger(resultRound) ? resultRound : null;
 }
 
+function hasUsableOutcome(decision) {
+  const outcome = decision?.outcome ?? decision?.verdict;
+  return typeof outcome === 'string' && outcome.trim().length > 0;
+}
+
 /**
- * 案卷式 GAN（issue ce42f68f）：proposer/reviewer 每轮终态（携带 case_file
- * 或 decision 中至少一项）都投影一行 gan_case_file——即使旧版 Skill 还没升级
- * 到结构化 case_file 输出，也先落一行空 blockers/null rubric 的行，保证案卷
- * 视图从这次改动起就是每轮连续的（不用等 PR-D skill 改造才有数据）。
+ * P3-5：decision.rubric_scores 的 zod schema 放宽为 record(unknown)（不再对
+ * 非数值项 400 拒绝整个 callback），过滤到只留 number 项挪到这里——落库前
+ * 的最后一道关卡，不是 transport 校验的职责。全部过滤掉后返回 null（等价于
+ * "没有可用分数"），不落一个空对象。
+ */
+function numericRubricScores(rubricScores) {
+  if (!rubricScores || typeof rubricScores !== 'object') return null;
+  const numeric = Object.fromEntries(
+    Object.entries(rubricScores).filter(
+      ([, value]) => typeof value === 'number' && Number.isFinite(value),
+    ),
+  );
+  return Object.keys(numeric).length > 0 ? numeric : null;
+}
+
+/**
+ * P2-4：feedback_md/blockers 是自由文本，可能被 Skill 意外带出日志片段里的
+ * secret（Bearer token 等）——落库前过与 failure-persistence.js 診断日志同款
+ * 的 sanitizeDiagnostic（secret 正则 + 长度截断）。blockers 形状因角色而异
+ * （reviewer 带 why_not_found_earlier/prd_gap，proposer 带 closure），深度
+ * 遍历所有字符串叶子值，不假设固定字段名。
+ */
+function sanitizeCaseFileValue(value) {
+  if (typeof value === 'string') return sanitizeDiagnostic(value);
+  if (Array.isArray(value)) return value.map(sanitizeCaseFileValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, sanitizeCaseFileValue(entry)]),
+    );
+  }
+  return value;
+}
+
+/**
+ * 案卷式 GAN（issue ce42f68f）：proposer/reviewer 的权威终态（completed/
+ * completed_with_concerns——与 ADVERSARIAL_TERMINAL_STATUSES 一致）才投影一行
+ * gan_case_file。
+ *
+ * P1（review CHANGES REQUESTED）：触发条件从"随便带个 case_file 或 decision"
+ * 收紧为"有结构化 case_file，或 reviewer 且 decision 带可用 outcome"——
+ * ①失败/被否决的 attempt 不该抢占 (run_id, round, author_role) 槽位：如果
+ * failed/blocked 的 attempt 先写了一行空案卷，后面真正跑完的权威 attempt
+ * 撞 ON CONFLICT DO NOTHING 会被静默丢弃（同 rn 重派 + force-push 场景）；
+ * 终态白名单已经堵掉大部分这类场景，这里再收紧触发条件是双重保险。
+ * ②proposer 没有 case_file 就没有可落的内容——proposer 的 decision 不是
+ * 必填字段、语义上也不代表"案卷"（proposer 的案卷内容是 case_file.blockers
+ * 里的 closure 声明），不再对"proposer 随便带个 decision"就落一行空案卷。
  */
 function callbackCaseFileProjection(attempt, result) {
   if (!CASE_FILE_ROLES.has(attempt.role)) return null;
-  if (!result.case_file && !result.decision) return null;
+  if (!ADVERSARIAL_TERMINAL_STATUSES.has(result.status)) return null;
+  const hasCaseFile = Boolean(result.case_file);
+  const hasUsableReviewerDecision = attempt.role === 'reviewer' && hasUsableOutcome(result.decision);
+  if (!hasCaseFile && !hasUsableReviewerDecision) return null;
   const round = caseFileRoundForAttempt(attempt, result);
   if (round == null) return null;
   const inputs = attemptTaskBundle(attempt).inputs ?? {};
+  const feedbackMd = result.case_file?.feedback_md;
   return {
     runId: attempt.run_id,
     round,
     authorRole: attempt.role,
     attemptId: attempt.id,
     contractSha: inputs.contract_sha ?? null,
-    rubricScores: result.decision?.rubric_scores ?? null,
-    blockers: result.case_file?.blockers ?? [],
-    feedbackMd: result.case_file?.feedback_md ?? null,
+    rubricScores: numericRubricScores(result.decision?.rubric_scores),
+    blockers: sanitizeCaseFileValue(result.case_file?.blockers ?? []),
+    feedbackMd: feedbackMd == null ? null : sanitizeDiagnostic(feedbackMd),
   };
 }
 

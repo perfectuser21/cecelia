@@ -79,8 +79,12 @@ const taskBundleSchema = z.object({
 // normalized and validated in parseHarnessResult below.
 // rubric_scores 显式声明（案卷式 GAN，issue ce42f68f）：7 维分数结构化落库，
 // 不再靠 reason 文本里的自然语言分数——其余字段维持 passthrough 兼容旧 Skill。
+// P3-5（review CHANGES REQUESTED）：record(number) 曾经对混合形状 400 拒绝
+// 整个 callback——一个字段格式问题不该炸掉整条终态回调。放宽为
+// record(unknown) 在 transport 层无条件接住，数值过滤挪到落库前
+// （attempt-store.js numericRubricScores），只留 number 项写入 DB。
 const decisionSchema = z.object({
-  rubric_scores: z.record(z.number()).optional(),
+  rubric_scores: z.record(z.unknown()).optional(),
 }).passthrough();
 
 // 案卷式 GAN 出口字段（design doc §数据流1）。r17 教训：zod 对象 schema 默认

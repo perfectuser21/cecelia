@@ -426,14 +426,19 @@ describe('HarnessResult contract', () => {
     });
   });
 
-  it('decision.rubric_scores 非数值 record 时报错（zod record(number) 校验）', () => {
-    expect(() => parseHarnessResult(validResult({
+  it('P3-5：decision.rubric_scores 允许混合形状，不在 transport 层 400 拒绝（数值过滤挪到落库前）', () => {
+    const parsed = parseHarnessResult(validResult({
       decision: {
         outcome: 'APPROVED',
         reason: 'ok',
-        rubric_scores: { correctness: 'high' },
+        rubric_scores: { correctness: 8, coverage: 'n/a', clarity: null },
       },
-    }), 'reviewer')).toThrow();
+    }), 'reviewer');
+    expect(parsed.decision.rubric_scores).toEqual({
+      correctness: 8,
+      coverage: 'n/a',
+      clarity: null,
+    });
   });
 
   it('requires CANARY_OK for the dedicated canary output contract', () => {
