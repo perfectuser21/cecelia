@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAttemptStore } from '../attempt-store.js';
+import { ATTEMPT_COST_ACCRUAL_USD } from '../constants.js';
 
 const input = {
   id: '22222222-2222-4222-8222-222222222222',
@@ -28,6 +29,52 @@ function poolWith(...results) {
 }
 
 describe('attempt store', () => {
+  it('首次终态 callback 在同事务内向 run 累加固定记账单价', async () => {
+    const callbackResult = {
+      status: 'completed',
+      summary: 'ok',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'gan',
+      role: 'reviewer',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      result: null,
+    };
+    const completed = { ...running, status: 'completed', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})                                  // BEGIN
+        .mockResolvedValueOnce({ rows: [running] })                 // 锁 + 加载
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })  // attempt 终态 UPDATE
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 }) // 通用 decision log
+        .mockResolvedValue({}),                                     // 其余（投影/累加/COMMIT）
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    const accrual = client.query.mock.calls.find(
+      ([sql]) => typeof sql === 'string' && /cost_usd\s*=\s*COALESCE\(cost_usd,\s*0\)\s*\+/.test(sql),
+    );
+    expect(accrual).toBeDefined();
+    expect(accrual[1]).toEqual([input.runId, ATTEMPT_COST_ACCRUAL_USD]);
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+  });
+
   it('R8/R12: callback terminal write and one standard event share a transaction', async () => {
     const callbackResult = {
       status: 'blocked',
