@@ -1,0 +1,10 @@
+CONCERN: Step3.5:prep-prd.md不存在归档跳过
+CONCERN: RelayEntry:FEATURE_ID/SUB_AREA/INITIATIVE_ID为空(task无ability_id挂载,sub_area默认brain,initiative用task_id)
+CONCERN: RelayEntry:TOTAL_COST=0.00(relay-runs未记录成本)与SCREENSHOTS空(无截图目录)
+CONCERN: Step2:harness/complete accepted=false(initiative_run phase=evaluate,relay模式无run记录)
+CONCERN: Step3:无E2E截图(本sprint为后端探针无UI截图,E2E证明为m7-e2e-runner五场景真库输出)
+CONCERN: Step4:FEATURE_ID为空(task无ability_id),FeatureRegistry翻牌跳过
+CONCERN: Step5:飞书notify返回sent=false(通道未实际发出)
+CONCERN: Step8f:capture_atoms未写入(HTTP 404)
+CONCERN: PhaseB:J6 journey e2e_test_path=TBD无smoke脚本可核对(台账缺口,本sprint的m7 integration/e2e测试已进CI可作候选)
+CONCERN: PhaseB:notes核验GET端点不存在(Cannot GET /api/brain/notes)无法二次核验——但Step3/3.5 POST均已返回Notion id/url(Report:3b2c40c2-ba63-8134,Contract:3b2c40c2-ba63-813a)证明写入成功
