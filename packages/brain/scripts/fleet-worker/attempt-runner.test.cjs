@@ -2096,6 +2096,69 @@ describe('Fleet Worker durable runtime adapters', () => {
     expect(Buffer.concat(received).toString('utf8')).toBe(authJson);
   });
 
+  it('gives the entrypoint at least 25s to open its FIFO reader before the GitHub credential write gives up (r18/r19/r20 real-attempt timeout: entrypoint.sh runs ~2000 lines of setup before reaching prepare_github_credential, routinely exceeding a bare 10s default)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { __test__ } = loadAttemptRunner();
+      const child = new EventEmitter();
+      child.stdin = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+      child.kill = vi.fn();
+      const spawnFn = vi.fn(() => child); // never closes on its own
+
+      const pending = __test__.defaultWriteGitHubCredential(
+        `cecelia-fleet-${ATTEMPT_ID}`,
+        '/tmp/cecelia-prompts/github-credential.fifo',
+        GITHUB_TOKEN,
+        { spawnFn },
+      );
+      const settled = vi.fn();
+      pending.catch(settled);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(settled).not.toHaveBeenCalled();
+      expect(child.kill).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(15_001);
+      await Promise.resolve();
+      expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+      await expect(pending).rejects.toThrow('attempt_github_credential_fifo_write_failed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives the entrypoint at least 25s to open its FIFO reader before the codex credential write gives up (same startup race as the GitHub credential FIFO)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { __test__ } = loadAttemptRunner();
+      const authJson = JSON.stringify({ tokens: { access_token: 'x' } });
+      const child = new EventEmitter();
+      child.stdin = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+      child.kill = vi.fn();
+      const spawnFn = vi.fn(() => child); // never closes on its own
+
+      const pending = __test__.defaultWriteCredential(
+        `cecelia-fleet-${ATTEMPT_ID}`,
+        '/tmp/cecelia-prompts/credential.fifo',
+        authJson,
+        { spawnFn },
+      );
+      const settled = vi.fn();
+      pending.catch(settled);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(settled).not.toHaveBeenCalled();
+      expect(child.kill).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(15_001);
+      await Promise.resolve();
+      expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+      await expect(pending).rejects.toThrow('attempt_credential_fifo_write_failed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('removes the container and runtime when Docker omits the created id', async () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
