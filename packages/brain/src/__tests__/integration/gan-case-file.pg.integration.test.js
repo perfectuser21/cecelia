@@ -150,7 +150,8 @@ describe('案卷式 GAN 写读全链（真库）', () => {
       contract_sha: 'a'.repeat(40),
       rubric_scores: { correctness: 8, coverage: 6 },
       blockers: [{ id: 'R2-1', dimension: 'coverage', status: 'open' }],
-      feedback_md: '# Round 2\n\nR2-1 still open.',
+      // P2-4：feedback_md 落库前过 sanitizeDiagnostic，连续换行被折叠成单空格。
+      feedback_md: '# Round 2 R2-1 still open.',
     });
   });
 
@@ -265,5 +266,167 @@ describe('案卷式 GAN 写读全链（真库）', () => {
       [2, 'proposer'],
       [2, 'reviewer'],
     ]);
+  });
+
+  it('P1：failed reviewer 不占位，同一 (run,round,role) 槽位换成第二个权威 completed reviewer 仍能落行', async () => {
+    const taskId = randomUUID();
+    const runId = randomUUID();
+    await testPool.query(
+      `INSERT INTO tasks (id, title, status) VALUES ($1, $2, 'in_progress')`,
+      [taskId, `gan case file failed-then-authoritative ${taskId}`],
+    );
+    await testPool.query(
+      `INSERT INTO initiative_runs (
+         id, initiative_id, phase, current_task_id, orchestrator_version,
+         created_source, record_trust_status
+       ) VALUES ($1, $2, 'gan', $3, 'v2', 'kernel_dispatch', 'trusted')`,
+      [runId, randomUUID(), taskId],
+    );
+    const store = createAttemptStore(testPool);
+
+    // 第一次：reviewer attempt 基础设施崩溃，status=failed（即使意外带了
+    // decision 也不该落案卷行，不能抢占槽位）。
+    const firstAttemptId = randomUUID();
+    await store.createAttempt({
+      id: firstAttemptId,
+      runId,
+      hop: 1,
+      phase: 'gan',
+      role: 'reviewer',
+      provider: 'auto',
+      bundle: { inputs: { contract_round: 2 } },
+      callbackSecretHash: 'a'.repeat(64),
+    });
+    await testPool.query(
+      `UPDATE harness_attempts
+          SET status = 'running', lease_owner = 'pg-case-file-worker',
+              lease_expires_at = NOW() + INTERVAL '2 minutes'
+        WHERE id = $1`,
+      [firstAttemptId],
+    );
+    const firstOutcome = await store.recordCallbackTerminal({
+      attemptId: firstAttemptId,
+      runId,
+      leaseOwner: 'pg-case-file-worker',
+      leaseGeneration: 0,
+      result: {
+        status: 'failed',
+        summary: 'infra crash',
+        artifacts: [],
+        provider_metadata: { provider: 'codex' },
+        decision: { outcome: 'REVISION_REQUESTED', reason: 'incomplete' },
+        error: { code: 'provider_exit', message: 'boom' },
+      },
+    });
+    expect(firstOutcome.deduped).toBe(false);
+    expect(await loadCaseFile(testPool, runId)).toEqual([]);
+
+    // 第二次：同一 round 的权威 reviewer attempt 真正跑完，completed——如果第
+    // 一次意外占了槽位，这里的 INSERT 会撞 ON CONFLICT DO NOTHING 被静默丢弃。
+    const secondAttemptId = randomUUID();
+    await store.createAttempt({
+      id: secondAttemptId,
+      runId,
+      hop: 2,
+      phase: 'gan',
+      role: 'reviewer',
+      provider: 'auto',
+      bundle: { inputs: { contract_round: 2, contract_sha: 'b'.repeat(40) } },
+      callbackSecretHash: 'b'.repeat(64),
+    });
+    await testPool.query(
+      `UPDATE harness_attempts
+          SET status = 'running', lease_owner = 'pg-case-file-worker',
+              lease_expires_at = NOW() + INTERVAL '2 minutes'
+        WHERE id = $1`,
+      [secondAttemptId],
+    );
+    const secondOutcome = await store.recordCallbackTerminal({
+      attemptId: secondAttemptId,
+      runId,
+      leaseOwner: 'pg-case-file-worker',
+      leaseGeneration: 0,
+      result: {
+        status: 'completed',
+        summary: 'contract approved',
+        artifacts: [],
+        provider_metadata: { provider: 'codex' },
+        decision: { outcome: 'APPROVED', reason: 'covers the PRD' },
+        case_file: { blockers: [], feedback_md: '# round 2 approved' },
+      },
+    });
+    expect(secondOutcome.deduped).toBe(false);
+
+    const rows = await loadCaseFile(testPool, runId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      round: 2,
+      author_role: 'reviewer',
+      attempt_id: secondAttemptId,
+    });
+  });
+
+  it('P2-3 膨胀闸1：loadCaseFile 只让最近 fullTextRounds 轮带 feedback_md 全文，更早轮次截断为 null', async () => {
+    const taskId = randomUUID();
+    const runId = randomUUID();
+    await testPool.query(
+      `INSERT INTO tasks (id, title, status) VALUES ($1, $2, 'in_progress')`,
+      [taskId, `gan case file full-text-window ${taskId}`],
+    );
+    await testPool.query(
+      `INSERT INTO initiative_runs (
+         id, initiative_id, phase, current_task_id, orchestrator_version,
+         created_source, record_trust_status
+       ) VALUES ($1, $2, 'gan', $3, 'v2', 'kernel_dispatch', 'trusted')`,
+      [runId, randomUUID(), taskId],
+    );
+    const store = createAttemptStore(testPool);
+
+    for (const round of [1, 2, 3]) {
+      const attemptId = randomUUID();
+      await store.createAttempt({
+        id: attemptId,
+        runId,
+        hop: round,
+        phase: 'gan',
+        role: 'reviewer',
+        provider: 'auto',
+        bundle: { inputs: { contract_round: round } },
+        callbackSecretHash: 'c'.repeat(64),
+      });
+      await testPool.query(
+        `UPDATE harness_attempts
+            SET status = 'running', lease_owner = 'pg-case-file-worker',
+                lease_expires_at = NOW() + INTERVAL '2 minutes'
+          WHERE id = $1`,
+        [attemptId],
+      );
+      await store.recordCallbackTerminal({
+        attemptId,
+        runId,
+        leaseOwner: 'pg-case-file-worker',
+        leaseGeneration: 0,
+        result: {
+          status: 'completed',
+          summary: `round ${round}`,
+          artifacts: [],
+          provider_metadata: { provider: 'codex' },
+          decision: { outcome: round === 3 ? 'APPROVED' : 'REVISION_REQUESTED', reason: 'ok' },
+          case_file: { blockers: [], feedback_md: `full text round ${round}` },
+        },
+      });
+    }
+
+    const rows = await loadCaseFile(testPool, runId, { fullTextRounds: 2 });
+    const byRound = Object.fromEntries(rows.map((row) => [row.round, row.feedback_md]));
+    expect(byRound[1]).toBeNull(); // 最旧一轮，超出窗口，只留结构化字段
+    expect(byRound[2]).toBe('full text round 2');
+    expect(byRound[3]).toBe('full text round 3');
+
+    // 全量读（无窗口限制，K 足够大）时三轮 feedback_md 都在——证明截断是
+    // loadCaseFile 的可选投影，不是写入时就丢了数据。
+    const untruncated = await loadCaseFile(testPool, runId, { fullTextRounds: 99 });
+    const untruncatedByRound = Object.fromEntries(untruncated.map((row) => [row.round, row.feedback_md]));
+    expect(untruncatedByRound[1]).toBe('full text round 1');
   });
 });
