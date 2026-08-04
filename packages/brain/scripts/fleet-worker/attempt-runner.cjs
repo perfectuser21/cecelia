@@ -1041,20 +1041,28 @@ function taskExecutionContract(providerSpec, request, target) {
     (inputRequirements === undefined) !== (requestRequirements === undefined)
     || (
       inputRequirements !== undefined
-      && JSON.stringify(inputRequirements) !== JSON.stringify(requestRequirements)
+      // F10（复审）：按值比较，不按键序比较——两侧独立构造出的对象即便字段
+      // 写入顺序不同（例如 {postgres,node_deps} vs {node_deps,postgres}），
+      // 语义相同就不该被判 mismatch。stableJson 递归按 key 排序后再序列化。
+      && stableJson(inputRequirements) !== stableJson(requestRequirements)
     )
   ) {
     throw new Error('attempt_runtime_requirements_mismatch');
   }
   const runtimeRequirements = inputRequirements ?? requestRequirements ?? {};
+  const RUNTIME_REQUIREMENT_FIELDS = new Set(['postgres', 'node_deps']);
   if (
     !runtimeRequirements
     || typeof runtimeRequirements !== 'object'
     || Array.isArray(runtimeRequirements)
-    || Object.keys(runtimeRequirements).some((key) => key !== 'postgres')
+    || Object.keys(runtimeRequirements).some((key) => !RUNTIME_REQUIREMENT_FIELDS.has(key))
     || (
       runtimeRequirements.postgres !== undefined
       && typeof runtimeRequirements.postgres !== 'boolean'
+    )
+    || (
+      runtimeRequirements.node_deps !== undefined
+      && typeof runtimeRequirements.node_deps !== 'boolean'
     )
   ) {
     throw new Error('attempt_runtime_requirements_invalid');
@@ -1064,6 +1072,13 @@ function taskExecutionContract(providerSpec, request, target) {
     roleEnv: Object.freeze(roleEnv),
     runtimeRequirements: Object.freeze({
       postgres: runtimeRequirements.postgres === true,
+      // Presence-preserving（同 remote-bridge-transport.js copyRuntimeResources
+      // 注释）：只有原始请求真的带了这个字段才回填，不凭空多出一个默认键。
+      // node_deps 只在这里（workspace 层消费）保留；resourceManager.provision
+      // 调用处（下方）会显式剥离只留 postgres，见 F3 注释。
+      ...(runtimeRequirements.node_deps !== undefined
+        ? { node_deps: runtimeRequirements.node_deps === true }
+        : {}),
     }),
   });
 }
@@ -1205,8 +1220,8 @@ function createAttemptRunner({
     resourceManager,
   });
 
-  async function prepareVerifiedWorkspace(workspaceSpec) {
-    const workspace = await workspaceManager.prepare(workspaceSpec);
+  async function prepareVerifiedWorkspace(workspaceSpec, { nodeDeps = false } = {}) {
+    const workspace = await workspaceManager.prepare(workspaceSpec, { nodeDeps });
     try {
       await workspaceManager.verify(workspace);
       return workspace;
@@ -1640,14 +1655,31 @@ function createAttemptRunner({
         request,
         target,
       );
-      const workspace = await prepareVerifiedWorkspace(request.workspace_spec);
+      const workspace = await prepareVerifiedWorkspace(request.workspace_spec, {
+        nodeDeps: executionContract.runtimeRequirements.node_deps === true,
+      });
+      // F4（复审）：node_deps 失败/跳过不炸 prepare（设计明确要求），但不能
+      // 因此变得不可观测——最少落一条 fleet-worker 日志，运维排查"这个
+      // attempt 为什么 product-map:check 又红了"时不用先去挖 attempt 落库。
+      if (workspace.node_deps && workspace.node_deps.status !== 'installed') {
+        console.warn(
+          `[attempt-runner] node_deps ${workspace.node_deps.status} `
+          + `attempt=${request.attempt_id} run=${request.run_id}`
+          + (workspace.node_deps.warning ? `: ${workspace.node_deps.warning}` : ''),
+        );
+      }
       const labels = labelsFor(request, workerId);
       let resources = EMPTY_RUNTIME_RESOURCES;
       if (executionContract.runtimeRequirements.postgres) {
         try {
           resources = await resourceManager.provision({
             attemptId: request.attempt_id,
-            requirements: executionContract.runtimeRequirements,
+            // F3（复审实测坐实）：resourceManager（attempt-resources.cjs
+            // validateRequirements）只认 {postgres} 这一个字段，见到未知键
+            // 一律 throw attempt_runtime_requirements_invalid。node_deps 是
+            // workspace 层自己的开关，不能原样把 executionContract.runtimeRequirements
+            // （可能带 node_deps）整个转发进去——必须在这里剥离只留 postgres。
+            requirements: { postgres: executionContract.runtimeRequirements.postgres },
           });
         } catch (error) {
           await workspaceManager.cleanup(workspace);
@@ -1966,6 +1998,9 @@ function createAttemptRunner({
           ...(state.status === 'terminal'
             ? { terminal_status: state.terminal_status }
             : {}),
+          // F4（复审）：node_deps 成败进 inspect 响应体——运维/调用方不用扒
+          // stateStore 落库文件就能看到"这个 attempt 装依赖了吗、装成功没有"。
+          ...(state.workspace?.node_deps ? { node_deps: state.workspace.node_deps } : {}),
         });
       }
       const inspected = await docker.inspect({ containerId: state.container_id });
@@ -1973,6 +2008,7 @@ function createAttemptRunner({
         attempt_id: attemptId,
         status: inspected.status,
         container_id: state.container_id,
+        ...(state.workspace?.node_deps ? { node_deps: state.workspace.node_deps } : {}),
       });
     },
 

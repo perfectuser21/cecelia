@@ -1147,6 +1147,36 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs.case_file).toEqual(caseFile);
   });
 
+  it('运行时依赖预装（design doc §运行时依赖）：proposer TaskBundle 默认注入 runtime_resources.node_deps=true', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 1,
+      observed: { ...observed },
+      decision: { phase: 'gan', reason: 'first_round' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.runtime_resources).toEqual({ postgres: false, node_deps: true });
+  });
+
+  it('运行时依赖预装：reviewer TaskBundle 也默认注入 runtime_resources.node_deps=true', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 4,
+      observed: { ...observed },
+      decision: { phase: 'gan', reason: 'review' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.runtime_resources).toEqual({ postgres: false, node_deps: true });
+  });
+
   it('generator bundle 从已批准合同导出 contract_branch，供 launcher 注入环境', async () => {
     const deps = makeDeps();
 
@@ -1170,6 +1200,10 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).toMatchObject({
       contract_branch: 'cp-harness-propose-r2-aaaaaaaa-a6',
     });
+    // 运行时依赖预装只对 proposer/reviewer 默认开——generator 不该被塞
+    // runtime_resources.node_deps（design doc §运行时依赖，决策 ba33fc68 只覆盖
+    // GAN 双方角色）。
+    expect(created.bundle.inputs).not.toHaveProperty('runtime_resources');
   });
 
   it('copies the Controller-owned validation clock into the Generator TaskBundle', async () => {

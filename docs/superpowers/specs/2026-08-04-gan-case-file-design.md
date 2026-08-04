@@ -43,7 +43,31 @@ CREATE TABLE gan_case_file (
    - `execution-contract.js` harnessResultSchema **顶层显式加 `case_file` 字段**（zod strip 教训——不加 passthrough，逐字段声明）
    - `attempt-store.js` recordCallbackTerminal 的 role projection 段（reviewer/proposer 分支）同事务 INSERT `gan_case_file` 一行（对 initiative_runs 行无第二条 UPDATE——死锁定律）
 2. **入口（读案卷）**：`dispatcher.buildInputs` 对 proposer/reviewer 注入 `case_file: [...全量历轮行...]`（含 rubric 历史与 blocker 台账）；替换现在只带 2 句摘要的 `review_feedback`（保留旧字段兼容一版）
-3. **会话续接**：dispatcher 派发 proposer/reviewer 时查同 run 同 role 最近 completed attempt 的 `provider_session_id`，注入 bundle `resume_session_id`；attempt-runner（fleet-worker）把它传给 codex `--resume`。恢复失败/字段缺失 → 新会话读案卷（降级等价，不算失败）
+3. **会话续接（PR-C 审查 CHANGES REQUESTED，本期不做，F1 实测坐实）**：原计划 dispatcher
+   派发 proposer/reviewer 时查同 run 同 role 最近 completed attempt 的 `provider_session_id`，
+   注入 bundle `resume_session_id`，attempt-runner（fleet-worker）转成
+   `HARNESS_RESUME_SESSION_ID` 传给 codex `--resume`。**PR-C 复审用真实 fleet 部署形态实测
+   证伪**：fleet-worker 的 `attempt-runner.cjs::prepareContainer` 给 codex 角色的容器挂的是
+   `--tmpfs /home/cecelia/.codex:rw,noexec,nosuid,nodev,...`（见该文件 `createArgs` 里
+   `isCodex ? ['--tmpfs', '/home/cecelia/.codex:...']`），即 `CODEX_HOME` 是随容器销毁清空
+   的临时文件系统——容器一销毁，本地会话状态物理上不可能留存到下一次派发。同 run 下一轮
+   即便查到了上一轮的 `provider_session_id`，下一次派发也是全新容器 + 全新 tmpfs，
+   `codex exec resume <id>` 必然找不到会话，注入这个字段除了偶尔徒增一次失败重试外没有
+   任何实际收益。
+
+   **本期机制 = 案卷降级本身就是常态路径，不是"降级"**：proposer/reviewer 每轮读同一份
+   全量历轮 `case_file`（§数据流2，含 rubric 历史 + blocker 台账 + 完整反馈原文）就是当前
+   唯一、也是设计好的跨轮记忆机制。不存在"先试 resume 再降级到案卷"这个两级结构——直接
+   就是案卷。
+
+   **持久会话是独立后续任务，不在本次范围**：要让 provider resume 真正有意义，前置条件是
+   fleet 侧给每个 `(run, role)` 甚至 `(account, role)` 建立**跨 attempt 持久卷**（而不是
+   per-attempt tmpfs）挂载 `CODEX_HOME`，此外还需要：①用真实观察到的 codex resume 失败
+   文案（而不是无先例的猜测正则）判定"resume 确实失败该降级"；②毒会话熔断——一个损坏/
+   卡死的持久会话如果被无限重复 resume，会比"直接读案卷开新会话"更差（PR-C 审查 F2 实测：
+   一条无法匹配真实错误文案的启发式正则 + 无熔断机制，会让同一个坏会话在多轮之间反复被
+   注入、反复续接失败，且失败信号无法被上层观测到，构成新的隐藏故障模式）。这三项都还没有
+   设计落地，独立立项后续处理。
 4. **趋势观测**：deriveGan 在现有三闸后、`spawn:reviewer`/`persist_contract_approval` 判断之后（PR-B 审查修复 F5：必须晚于这两条，否则会出现"冻结一个从未被任何人/代码评审过的 SHA"的窗口——本轮 verdict 还没产生，或已经是权威 APPROVED 时，趋势闸都不该插队）、`spawn:proposer` 兜底之前，加 `detectRubricTrend(caseFileRows)`：取最近 3 轮 reviewer 结构化 rubric——命中即返回 `persist_contract_approval` 类新 action `force_approve_contract`（记 decision log `reason=convergence_diverging|convergence_oscillating` + 发 P1 告警）。converging/insufficient_data → 继续。**无轮数 cap。**
 
    **判据阈值（PR-B 审查 F2(a) 拍板，立法本意"无上限、只拦真发散"，单点小抖动不算）**：
@@ -65,13 +89,49 @@ CREATE TABLE gan_case_file (
 
 ## 运行时依赖（ajv 类问题，并入本任务）
 
-bundle `runtime_resources.node_deps: true`（proposer/reviewer 默认开）→ fleet workspace-manager prepare 在 clone 后若 package.json 存在则 `npm ci --no-audit --no-fund`（带缓存目录复用）。fleet-worker 改动需手动重装 launchd 侧（部署面独立，PR 里写清）。
+bundle `runtime_resources.node_deps: true`（proposer/reviewer 默认开）→ fleet
+workspace-manager prepare 在 clone 后若 package.json 存在则跑
+`npm ci --no-audit --no-fund --ignore-scripts`。fleet-worker 改动需手动重装 launchd 侧
+（部署面独立，PR 里写清）。
+
+- **`--ignore-scripts`（PR-C 审查 F5 实测坐实，绝对不许省）**：npm ci 这一步发生在
+  fleet-worker **宿主**上、provider 容器创建之前——checkout 出来的代码此刻还没有任何容器
+  沙箱包着。如果不加 `--ignore-scripts`，`package.json` 的 pre/postinstall 生命周期脚本会
+  以宿主进程权限直接执行，而宿主对 `docker.sock` 有访问权，等于给了任意仓库内容一条现成的
+  沙箱穿透路径。对本次要解决的 ajv 缺失场景（纯 JS 依赖，无 install-time 编译/脚本）零影响。
+- **npm 缓存目录（PR-C 审查 F4）**：显式钉死 `npm_config_cache` 到机器级、跨 attempt 复用
+  的目录（`worktreeRoot` 上一级的 `npm-cache` 兄弟目录，同 `worktrees` 目录一样
+  `mkdirSync({recursive:true, mode:0o700})`），不让 npm 落到宿主进程默认 HOME 缓存——避免
+  多 attempt 并发写同一隐式缓存位置时产生跨 attempt 的隐性依赖/权限纠缠。传 `env` 给
+  npm 子进程时必须基于 `process.env` 展开（`{...process.env, npm_config_cache}`），直接传
+  `{npm_config_cache}` 会把 `PATH` 等继承环境全部丢光，导致 npm/node 本身都起不来。
+- **超时与缓冲（PR-C 审查 F7）**：`npm ci` 独立超时 120s（fleet 180s prepare 总预算内留
+  60s 给 git clone/worktree/verify 等其余步骤），`maxBuffer` 提到 8MiB（默认 1MB 在真实
+  monorepo 依赖树上容易溢出报 `ERR_CHILD_PROCESS_STDIO_MAXBUFFER`）。超时按普通失败处理，
+  不特殊短路、不炸 `prepare`。
+- **`resourceManager.provision` 隔离（PR-C 审查 F3 实测坐实——现网 34 条任务直接回归）**：
+  `attempt-resources.cjs` 的 `validateRequirements` 只认 `{postgres}` 一个字段，见到未知键
+  一律 `throw attempt_runtime_requirements_invalid`。`node_deps` 绝不能原样跟着
+  `executionContract.runtimeRequirements` 整个转发给 `resourceManager.provision`——
+  `attempt-runner.cjs` 在调用 `provision` 前必须显式剥离，只传 `{postgres}`；`node_deps`
+  只流向 `workspaceManager.prepare` 的 `nodeDeps` 参数。
+- **失败可观测（PR-C 审查 F4）**：`node_deps` 失败/跳过不炸 `prepare`，但不能因此变得
+  不可观测——最少落一条 fleet-worker 日志（`console.warn`），并且状态（`status`/`warning`）
+  要能通过 `inspect()` 响应体查到，不用先去挖 attempt 落库文件。
+- **runtime_resources 比对键序无关（PR-C 审查 F10）**：bundle 侧（dispatcher.js 拼装）与
+  request 侧（remote-bridge-transport.js `copyRuntimeResources` 拼装）没有共享同一处字面量，
+  字段写入顺序不保证一致；`attempt-runner.cjs` 的一致性校验必须按值比较（递归按 key 排序后
+  再序列化），不能按 `JSON.stringify` 原始键序比较。
 
 ## 分 PR 计划（串行）
 
 - **PR-A（brain）**：migration 383 + case-file store + callback 落库 + schema 顶层字段 + bundle 注入。E2E：单测 + pg 集成（写读案卷全链）
 - **PR-B（brain）**：detectRubricTrend + force_approve_contract action + P1 告警。E2E：构造三轮走低 rubric 的 decision log/case file → derive 返回 force
-- **PR-C（brain+fleet）**：resume_session_id 注入与 attempt-runner --resume + node_deps prepare。E2E：attempt-runner 单测 + workspace-manager 单测
+- **PR-C（brain+fleet）**：node_deps 运行时依赖预装（fleet workspace-manager prepare
+  自动 `npm ci --ignore-scripts`，隔离进 resourceManager.provision 之外，独立超时/缓冲/
+  缓存目录）。**provider 会话续接不在本次交付**——PR-C 审查阶段用真实 fleet 部署形态实测
+  证伪（tmpfs CODEX_HOME 物理不可能跨 attempt 存活），已改写进 §数据流3，留给独立后续
+  任务。E2E：attempt-runner 单测 + workspace-manager 单测
 - **PR-D（zenithjoy-skills）**：proposer/reviewer skill 改造 + dist sync（"先 SSOT 后 sync 快照"铁律）
 - **验收（不合并 #1581 前提不变）**：r18 用真实 PR #1581 跑 Kernel 全链，观察 GAN 带案卷收敛（blocker 逐轮递减至 APPROVED 或趋势兜底触发），Generator→Evaluator→Judge 绑定精确 SHA
 
@@ -79,7 +139,10 @@ bundle `runtime_resources.node_deps: true`（proposer/reviewer 默认开）→ f
 
 - 不复活 workstream（1 run = 1 合同 = 1 PR 不变）
 - 不做真实用量上报（独立后续）
-- Claude/Grok 的 session resume 通道本期只做 codex（fleet 现役 provider），其余降级读案卷
+- **不做 provider 会话续接**（PR-C 审查改判，见§数据流3）：fleet 侧 tmpfs CODEX_HOME
+  让 resume 物理不可能跨 attempt 存活；持久会话需要 per-account/per-role 持久卷 + 真实
+  错误文案验证过的降级判据 + 毒会话熔断，三项都待设计，独立立项后续处理。当前 proposer/
+  reviewer 的跨轮记忆机制就是每轮读全量案卷（case_file），不是"resume 失败后的降级路径"
 
 ## PR-B 前拍板项（PR-A review 时发现，未决，不阻塞 PR-A 合并）
 
