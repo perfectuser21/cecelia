@@ -11,6 +11,8 @@ interface Capture {
   ref_pr_url: string | null;
   dedupe_key: string | null;
   status: string;
+  dest_type: string | null;
+  dest_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -288,6 +290,27 @@ export default function InboxPage() {
                 <div><span className="font-medium">状态:</span> {selectedItem.status}</div>
                 <div><span className="font-medium">来源:</span> {selectedItem.source}</div>
               </div>
+              {/* 去向链接 */}
+              {selectedItem.dest_type && selectedItem.dest_id && (
+                <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+                  <span className="text-xs font-medium text-slate-500">去向:</span>
+                  {selectedItem.dest_type === 'task' ? (
+                    <a href={`/tasks/${selectedItem.dest_id}`} className="ml-1 text-xs text-blue-500 hover:underline">
+                      [{selectedItem.dest_type}] {selectedItem.dest_id.slice(0, 8)}... →
+                    </a>
+                  ) : selectedItem.dest_type === 'initiative' ? (
+                    <a href={`/initiatives/${selectedItem.dest_id}`} className="ml-1 text-xs text-blue-500 hover:underline">
+                      [{selectedItem.dest_type}] {selectedItem.dest_id.slice(0, 8)}... →
+                    </a>
+                  ) : selectedItem.dest_type === 'project' ? (
+                    <a href={`/projects/${selectedItem.dest_id}`} className="ml-1 text-xs text-blue-500 hover:underline">
+                      [{selectedItem.dest_type}] {selectedItem.dest_id.slice(0, 8)}... →
+                    </a>
+                  ) : (
+                    <span className="ml-1 text-xs text-slate-500">[{selectedItem.dest_type}] {selectedItem.dest_id.slice(0, 8)}...</span>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Atoms */}

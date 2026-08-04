@@ -11,6 +11,53 @@ const router = Router();
 const VALID_SOURCES = ['harness', 'dashboard', 'feishu', 'api', 'conversation-claude', 'conversation-codex', 'conversation-grok'];
 const VALID_NATURES = ['learning', 'issue', 'handoff', 'session_summary'];
 
+// PATCH /api/brain/captures/:id — 更新 status / dest_type / dest_id
+router.patch('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, dest_type, dest_id } = req.body;
+
+    const VALID_STATUSES = ['captured', 'clarified', 'done', 'dropped'];
+    const VALID_DEST_TYPES = ['project', 'initiative', 'task', 'knowledge'];
+
+    if (status && !VALID_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `status must be one of: ${VALID_STATUSES.join(', ')}` });
+    }
+    if (dest_type && !VALID_DEST_TYPES.includes(dest_type)) {
+      return res.status(400).json({ error: `dest_type must be one of: ${VALID_DEST_TYPES.join(', ')}` });
+    }
+    if (dest_id && !dest_type) {
+      return res.status(400).json({ error: 'dest_type is required when dest_id is set' });
+    }
+
+    const setClauses = [];
+    const values = [];
+
+    if (status !== undefined) { values.push(status); setClauses.push(`status = $${values.length}`); }
+    if (dest_type !== undefined) { values.push(dest_type); setClauses.push(`dest_type = $${values.length}`); }
+    if (dest_id !== undefined) { values.push(dest_id); setClauses.push(`dest_id = $${values.length}`); }
+
+    if (setClauses.length === 0) {
+      return res.status(400).json({ error: 'no fields to update' });
+    }
+
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+
+    const result = await pool.query(
+      `UPDATE captures SET ${setClauses.join(', ')} WHERE id = $${values.length} RETURNING id, status, dest_type, dest_id, updated_at`,
+      values
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'capture not found' });
+    }
+    return res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update capture', details: err.message });
+  }
+});
+
 // POST /api/brain/captures
 router.post('/', async (req, res) => {
   const { content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key } = req.body;
@@ -109,7 +156,7 @@ router.get('/', async (req, res) => {
 
     const [itemsResult, countResult, totalResult] = await Promise.all([
       pool.query(
-        `SELECT id, content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status, created_at, updated_at
+        `SELECT id, content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status, dest_type, dest_id, created_at, updated_at
          FROM captures ${where} ORDER BY created_at DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
         [...values, lim, off]
       ),
@@ -145,7 +192,7 @@ router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const captureResult = await pool.query(
-      `SELECT id, content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status, created_at, updated_at
+      `SELECT id, content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status, dest_type, dest_id, created_at, updated_at
        FROM captures WHERE id = $1`,
       [id]
     );
