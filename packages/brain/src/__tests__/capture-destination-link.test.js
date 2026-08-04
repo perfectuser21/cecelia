@@ -89,7 +89,8 @@ function makeMockPool(overrides = {}) {
 }
 
 async function buildApp(pool) {
-  // 动态 mock db.js（vitest 路径隔离）
+  // 每次重置模块缓存，确保不同 pool 能注入到 captures.js
+  vi.resetModules();
   vi.doMock('../db.js', () => ({ default: pool }));
   const { default: capturesRouter } = await import('../routes/captures.js');
   const app = express();
