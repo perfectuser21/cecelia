@@ -12,6 +12,13 @@
 
 ---
 
+## Brain 1.267.204 — Kernel run phase/task status runtime persistence
+
+- Kernel loop 每轮最终 decision 后持久化前进相位到 `initiative_runs.phase`（白名单 planning/gan/generate/evaluate/judge；wait/终态/paused 不写；终态仍归 finalizeKernelRun 独有）。UPDATE 为独立单语句，锁序经 AFTER 触发器为 X(run 行)→L(advisory)，与 finalize 同向。
+- `runKernelMain` 启动把 `status='queued'` 的父 task 置 `in_progress` 并补 `started_at`（COALESCE），watchdog/orphan-guard/isStale 对 Kernel 任务首次真实生效。
+- migration 382：`initiative_runs_phase_check` 补 `'judge'` 枚举（此前 judge 相位持久化必被约束拒绝）。
+- 回退到 1.267.203 会恢复：run.phase 恒停初值、task 恒 queued、监控与恢复链对 Kernel 任务失明。
+
 ## Brain 1.267.203 — Kernel GAN cost writeback
 
 - Attempt 经 callback 首次到达终态时，向 `initiative_runs.cost_usd` 累加固定记账单价

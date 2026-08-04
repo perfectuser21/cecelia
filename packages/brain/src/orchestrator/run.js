@@ -45,7 +45,7 @@ import {
 import { createWorkspaceSpecResolver } from './workspace-spec.js';
 import { createRunEventStore } from './run-event-store.js';
 import { parseBaseRepo } from './github-pr-discovery.js';
-import { finalizeKernelRun } from './kernel-run-store.js';
+import { activateQueuedKernelTask, finalizeKernelRun } from './kernel-run-store.js';
 import { sanitizeDiagnostic } from './failure-persistence.js';
 import {
   createExpiredAttemptAuthority,
@@ -380,6 +380,7 @@ export async function runKernelMain({
   buildDeps = buildRealDeps,
   runLoopFn = runLoop,
   finalizeRun = finalizeKernelRun,
+  activateQueuedTask = activateQueuedKernelTask,
   logError = console.error,
 } = {}) {
   let deps;
@@ -391,6 +392,17 @@ export async function runKernelMain({
       },
     });
     pool ??= deps?.pool;
+    // r17 实证修复：task.status 派发时也不置 in_progress，运行中恒 'queued'。
+    // 启动流程装载 task 后一次性翻面；非关键路径，失败只告警不阻断 loop 启动。
+    if (!dryRun) {
+      try {
+        await activateQueuedTask(pool, taskId);
+      } catch (err) {
+        logError(
+          `[orchestrator] task 启动置位失败 task=${taskId}: ${err.message}`,
+        );
+      }
+    }
     return await runLoopFn(deps, {
       taskId,
       runId,

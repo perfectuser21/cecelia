@@ -922,6 +922,115 @@ describe('runLoop：控制 action 自消费', () => {
   });
 });
 
+// r17 实证：run.phase 运行中恒 'planning'（初值不动）。以下锁死 loop.js 必须在最终
+// decision 确定后调用 kernel-run-store.persistKernelRunPhase 独立单语句 UPDATE
+// （PrepPRD: docs/prd/2026-08-04-kernel-phase-persist-prep-prd.md）。
+describe('runLoop：run.phase 前进持久化', () => {
+  const phasePersistCalls = (sqls) => sqls.filter(
+    ([sql]) => /UPDATE\s+initiative_runs/i.test(sql) && /phase\s*=\s*\$2/i.test(sql),
+  );
+
+  it('前进相位（spawn:generator，phase=generate）→ 触发独立 UPDATE initiative_runs.phase', async () => {
+    const observedSeq = [
+      obs({ generatorSpawned: false }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, sqls } = makeEnv({ observedSeq });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.dispatch).toHaveBeenCalledWith('spawn:generator', expect.any(Object));
+    const calls = phasePersistCalls(sqls);
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toEqual([RUN_ID, 'generate']);
+  });
+
+  it('wait:poll_ci（phase=generate 但是 wait:* 决策）→ 不触发 phase 持久化', async () => {
+    const pr = { url: 'u', state: 'OPEN', ci: 'pending', merged: false, head_sha: 's' };
+    const observedSeq = [
+      obs({ generatorSpawned: true, pr }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, sqls } = makeEnv({ observedSeq });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(phasePersistCalls(sqls)).toHaveLength(0);
+  });
+
+  it('wait:running（在途容器）→ 不触发 phase 持久化', async () => {
+    const observedSeq = [
+      obs({ inflight: { containers: [{ ID: 'c1' }], host_pids: [] } }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, sqls } = makeEnv({ observedSeq });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(phasePersistCalls(sqls)).toHaveLength(0);
+  });
+
+  it('mark_failed（phase=failed，hop_cap 兜底）→ 不触发 phase 持久化', async () => {
+    const bigLog = Array.from({ length: 4096 }, (_, k) => ({
+      hop: k + 1,
+      action: 'wait_marker',
+      observed: {},
+      detail: null,
+    }));
+    const observedSeq = [obs({ decisionLog: bigLog })];
+    const { deps, sqls } = makeEnv({ observedSeq });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('hop_cap');
+    expect(phasePersistCalls(sqls)).toHaveLength(0);
+  });
+
+  it('exit（phase=terminal，task aborted）→ 不触发 phase 持久化', async () => {
+    const observedSeq = [obs({ task: { status: 'aborted' } })];
+    const { deps, sqls } = makeEnv({ observedSeq });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('task_aborted');
+    expect(phasePersistCalls(sqls)).toHaveLength(0);
+  });
+
+  it('dry-run → 不触发 phase 持久化（零写入契约不破）', async () => {
+    const observedSeq = [obs({ generatorSpawned: false })];
+    const { deps, sqls } = makeEnv({ observedSeq });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID, dryRun: true });
+
+    expect(result.exitReason).toBe('dry_run');
+    expect(phasePersistCalls(sqls)).toHaveLength(0);
+  });
+
+  it('phase 持久化失败只告警，不炸 loop（非关键路径）', async () => {
+    const observedSeq = [
+      obs({ generatorSpawned: false }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps } = makeEnv({ observedSeq });
+    const originalQuery = deps.pool.query;
+    deps.pool.query = vi.fn(async (sql, params) => {
+      if (/UPDATE\s+initiative_runs/i.test(sql) && /phase\s*=\s*\$2/i.test(sql)) {
+        throw new Error('connection refused');
+      }
+      return originalQuery(sql, params);
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('phase'));
+  });
+});
+
 describe('runLoop：singleton 守卫', () => {
   it('appendHop 抛 SingletonConflictError → 立即退出 exitReason=singleton_conflict，不派发', async () => {
     const observedSeq = [obs({ generatorSpawned: false })];

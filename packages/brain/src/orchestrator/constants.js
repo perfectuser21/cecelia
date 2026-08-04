@@ -72,6 +72,16 @@ export const ACTION = Object.freeze({
 
 export const ACTIONS = Object.freeze(Object.values(ACTION));
 
+// wait:* 四个动作的枚举集合（M-1 审查修正）：只复查在途状态、不派 dispatcher、
+// 不代表相位真的前进——loop.js 用它替代 decision.action.startsWith('wait:')
+// 字符串前缀判断，防止新增非 wait: 前缀的等待动作时静默漏判。
+export const WAIT_ACTIONS = Object.freeze(new Set([
+  ACTION.WAIT_RUNNING,
+  ACTION.WAIT_POLL_CI,
+  ACTION.WAIT_GENERATOR_FIX_CALLBACK,
+  ACTION.WAIT_HUMAN_REVIEW,
+]));
+
 /**
  * LOG_ACTION —— 决策日志 verdict 行的 action 值（T3 dispatcher 写入契约，spec 决策 3：
  * verdict 权威 = 决策日志行，detail={verdict, pr_head_sha}[, rn / approved]）。
