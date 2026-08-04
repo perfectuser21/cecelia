@@ -69,3 +69,32 @@ bundle `runtime_resources.node_deps: true`（proposer/reviewer 默认开）→ f
 - 不复活 workstream（1 run = 1 合同 = 1 PR 不变）
 - 不做真实用量上报（独立后续）
 - Claude/Grok 的 session resume 通道本期只做 codex（fleet 现役 provider），其余降级读案卷
+
+## PR-B 前拍板项（PR-A review 时发现，未决，不阻塞 PR-A 合并）
+
+①**案卷槽位语义根治**：现状 `UNIQUE(run_id, round, author_role)` 假设"同一
+(run,round,role) 只应该有一条权威行"，PR-A 用"终态白名单 + 触发条件收紧"
+（只有 completed/completed_with_concerns、且有实质内容才落行）降低了失败
+attempt 抢占槽位的概率，但没有根治——同一轮次里两个都跑到权威终态的 attempt
+（例如超时后被重派、旧 attempt 才姗姗来迟地 completed）理论上仍会竞争同一
+个槽位，后到的那条被 `ON CONFLICT DO NOTHING` 静默吃掉。三个候选方向，PR-B
+前需要拍板一个：
+  - (a) UNIQUE 加 `attempt_id`（`UNIQUE(run_id, round, author_role, attempt_id)`），
+    每个 attempt 各自落一行，读侧（loadCaseFile）改成按 `(round, author_role)`
+    取 `created_at`/`hop` 最新的一条作为"本轮权威行"，历史行留作审计轨迹；
+  - (b) 落行动作从"attempt terminal 时"推迟到"derive.js 认可这就是本轮 verdict
+    之后"（即已经在 decision log 里确认是权威 verdict 的那一刻），从源头避免
+    非权威 attempt 有机会参与竞争；
+  - (c) 维持现状，接受"极小概率丢一行案卷"为已知限额（案卷是收敛观测辅助，
+    不是唯一真相源——决策日志 `orchestrator_decision_log` 仍然是 verdict 的
+    权威记录）。
+
+②**proposer 行 `contract_sha` 恒为 null 的锚定缺口**：`dispatcher.js buildInputs`
+只给 reviewer 注入 `contract_sha`（reviewer 评审的是已经 push 好的合同分支，
+sha 派发时就知道）；proposer 派发时合同还没写、更没 push，sha 要等 proposer
+自己跑完 push 之后才产生，所以 PR-A 里 proposer 案卷行的 `contract_sha` 目前
+永远是 null（`attemptTaskBundle(attempt).inputs.contract_sha` 对 proposer
+bundle 不存在这个字段）。PR-D（skill 改造）时需要让 proposer 的 result JSON
+自带其推送后的 sha（比如 `case_file.contract_sha` 或复用 `decision` 里的字段），
+在 `callbackCaseFileProjection` 里补一条"result 自带 sha 优先于 bundle"的
+读取顺序，否则 proposer 案卷行永远无法和它实际推送的合同版本对上号。
