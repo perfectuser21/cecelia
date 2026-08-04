@@ -1,73 +1,77 @@
-contract_branch: cp-07301444-harness-prd
-sprint_dir: sprints/07301431-relay-9f24e3a9
+contract_branch: cp-08040913-harness-propose-r1
+sprint_dir: sprints/08040913-relay-a6e6afc7
 
 ---
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Sprint: T10 统一收件箱完整性缺口修复（learnings → capture_atoms 路由补齐）
+# Contract DoD — Sprint: ledger-hygiene m7「自主循环零产出」探针可信化
 
-**范围**: `packages/brain/src/` 下 11 处 `INSERT INTO learnings` 调用点（`cortex.js:890`、`executor.js:1106`、`conversation-consolidator.js:161`、`learning.js:728`、`learning.js:779`、`auto-learning.js:98`、`chat-action-dispatcher.js:126`、`chat-action-dispatcher.js:267`、`decision-executor.js:321`、`decision-executor.js:400`、`fact-extractor.js:384`）逐一补齐 `pushCaptureAtom` 调用；新增 1 条永久 CI 结构性回归测试（source-code inspection，覆盖全部调用点）+ 1 条 `cortex.js::recordLearnings` 行为级复现测试。不改动已接入的 2 处（`learning.js::recordLearning`、`routes/tasks.js` learnings-received）、不改动 `capture-inbox.js` 内部实现、不改动 `ledger-hygiene.js` m7 探针判定逻辑。
-**大小**: M
+**范围**: `packages/brain/src/ledger-hygiene.js` m7 capture 子探针统计口径（北京昨日自然日确定性窗口 + 自产 atom 排除 + organic/self 分解）与三个新导出（`getM7CaptureWindow` / `LEDGER_SELF_ATOM_PREFIX` / `computeMetrics(pool, now?)` 第二参）；合同 tests/ 两个测试文件原样落位 `packages/brain/src/__tests__/`（integration 版进 `integration/` 并登记 `POSTGRES_INTEGRATION_TESTS`）。**不改**：strategist 子探针、m1-m6、棘轮机制（evaluateRatchet）、raiseBreachAlerts 击穿标题与 issue/capture push 通路、未激活降级行为。
+**大小**: S
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] 新增结构性回归测试文件 `packages/brain/src/__tests__/learnings-capture-atom-routing.test.js` 存在
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/learnings-capture-atom-routing.test.js','utf8');if(!c.includes('pushCaptureAtom')||!c.includes('INSERT INTO learnings'))process.exit(1)"
+- [ ] [ARTIFACT] 合同单测按原样落位（CONTRACT IS LAW，逐字节一致）`packages/brain/src/__tests__/ledger-hygiene-m7-organic.test.js`
+  Test: node -e "const f=require('fs');const a=f.readFileSync('sprints/08040913-relay-a6e6afc7/tests/ledger-hygiene-m7-organic.test.js','utf8');const b=f.readFileSync('packages/brain/src/__tests__/ledger-hygiene-m7-organic.test.js','utf8');if(a!==b)process.exit(1)"
 
-- [x] [ARTIFACT] 新增行为级复现测试文件 `packages/brain/src/__tests__/cortex-learnings-capture-push.test.js` 存在
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/cortex-learnings-capture-push.test.js','utf8');if(!c.includes('pushCaptureAtom')||!c.includes('recordLearnings'))process.exit(1)"
+- [ ] [ARTIFACT] 合同集成测试按原样落位 `packages/brain/src/__tests__/integration/ledger-hygiene-m7-organic.integration.test.js`
+  Test: node -e "const f=require('fs');const a=f.readFileSync('sprints/08040913-relay-a6e6afc7/tests/ledger-hygiene-m7-organic.integration.test.js','utf8');const b=f.readFileSync('packages/brain/src/__tests__/integration/ledger-hygiene-m7-organic.integration.test.js','utf8');if(a!==b)process.exit(1)"
 
-- [x] [ARTIFACT] 11 处调用点所在的 8 个源文件均新增 `pushCaptureAtom` 引用（静态文本检查，逐个文件确认，与结构性测试互为交叉验证）
-  Test: node -e "const fs=require('fs');const files=['packages/brain/src/cortex.js','packages/brain/src/executor.js','packages/brain/src/conversation-consolidator.js','packages/brain/src/learning.js','packages/brain/src/auto-learning.js','packages/brain/src/chat-action-dispatcher.js','packages/brain/src/decision-executor.js','packages/brain/src/fact-extractor.js'];for(const f of files){const c=fs.readFileSync(f,'utf8');if(!c.includes('pushCaptureAtom')){console.error('MISSING pushCaptureAtom import/call in '+f);process.exit(1);}}"
+- [ ] [ARTIFACT] 集成测试已登记进 `vitest.config.js` 的 `POSTGRES_INTEGRATION_TESTS`（brain-unit 排除、brain-integration 真 PG 永跑）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/vitest.config.js','utf8');const i=c.indexOf('POSTGRES_INTEGRATION_TESTS');if(i<0||!c.slice(i).split('];')[0].includes('integration/ledger-hygiene-m7-organic.integration.test.js'))process.exit(1)"
 
-## BEHAVIOR 条目（journey_type = autonomous，内嵌可执行 manual: 命令）
+- [ ] [ARTIFACT] `ledger-hygiene.js` 含三个新导出且 capture 计数不再挂 24h 滑动窗
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/ledger-hygiene.js','utf8');if(!c.includes('getM7CaptureWindow')||!c.includes('LEDGER_SELF_ATOM_PREFIX'))process.exit(1);if(/capture_atoms[^;]{0,300}NOW\(\)\s*-\s*INTERVAL '24 hours'/s.test(c))process.exit(1)"
 
-- [x] [BEHAVIOR] 结构性回归测试通过：`packages/brain/src/` 下所有 `INSERT INTO learnings` 调用点，其所在函数体内都含 `pushCaptureAtom`（source-code inspection，零 mock，永久 CI，防止未来新增写入点再次漏接）
-  Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/learnings-capture-atom-routing.test.js --reporter=verbose 2>&1 | tail -40; EXIT=${PIPESTATUS[0]:-$?}; [ "$EXIT" -eq 0 ] && echo OK || exit 1'
-  期望: OK
+## BEHAVIOR 条目（journey_type = autonomous，真 Postgres 场景 oracle，内嵌可执行 manual: 命令）
 
-- [x] [BEHAVIOR] `cortex.js::recordLearnings` 行为级复现测试通过：写入 `learnings` 成功后调用 `pushCaptureAtom`，推送字段（targetType/targetSubtype/routedToTable/routedToId）与既有约定一致（复现 m7 探针误报的原始 issue 场景）
-  Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/cortex-learnings-capture-push.test.js --reporter=verbose 2>&1 | tail -60; EXIT=${PIPESTATUS[0]:-$?}; [ "$EXIT" -eq 0 ] && echo OK || exit 1'
-  期望: OK
+> 前置：本机 Postgres 可达（`$DB` 缺省 `postgresql://localhost/cecelia`）；`packages/brain` 已 `npm ci`。
+> 各场景由 `sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs` 在**一次性独立 schema** 内建最小表、种 atom、跑**真实实现** `computeMetrics`、断言后 DROP SCHEMA；期望窗口由 runner 按北京日历日**独立推导**（不复用实现窗口函数），实现一行未写时 runner 必 FAIL（无 mock、无 exit 0 兜底）。
 
-- [x] [BEHAVIOR] pushCaptureAtom 调用失败不阻断 `learnings` 主写入（不得向上抛出未捕获异常，对齐 `learning.js:121` 既有容错模式）
-  Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/cortex-learnings-capture-push.test.js -t "pushCaptureAtom 抛错时" --reporter=verbose 2>&1 | tail -30; EXIT=${PIPESTATUS[0]:-$?}; [ "$EXIT" -eq 0 ] && echo OK || exit 1'
-  期望: OK
+- [ ] [BEHAVIOR] 昨日北京自然日内 1 有机 + 1 自产 atom → m7.value organic=1 / self=1 / captureDebt=0，debt=0 不误报（Golden Path Step 3，PRD 验收点 2）
+  Test: manual:bash -c 'node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs organic-self'
+  期望: exit 0，末行 OK scenario=organic-self
 
-- [x] [BEHAVIOR] 已接入的 2 处（`learning.js::recordLearning`、`routes/tasks.js` learnings-received 端点）未被误改动，既有回归测试全绿
-  Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/learning-capture-push.test.js src/__tests__/learnings-received.test.js --reporter=verbose 2>&1 | tail -60; EXIT=${PIPESTATUS[0]:-$?}; [ "$EXIT" -eq 0 ] && echo OK || exit 1'
-  期望: OK
+- [ ] [BEHAVIOR] 昨日仅守卫自产 atom → organic=0 / captureDebt=1，debt=1 真零产出仍击穿，不被自产 atom 假绿（Golden Path Step 3，PRD 验收点 3）
+  Test: manual:bash -c 'node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs only-self'
+  期望: exit 0，末行 OK scenario=only-self
 
-- [x] [BEHAVIOR] 真实触发（零 mock，真 Postgres）：调用 `auto-learning.js::createAutoLearning`（11 处调用点之一）写入一条新 learning 后，`capture_atoms`（经 `captures` 关联）在 5 分钟窗口内同步新增对应记录
-  Test: manual:bash -c 'bash packages/brain/scripts/smoke/t10-capture-atom-routing-smoke.sh 2>&1 | tail -80; EXIT=${PIPESTATUS[0]:-$?}; [ "$EXIT" -eq 0 ] && echo OK || exit 1'
-  期望: OK
+- [ ] [BEHAVIOR] 窗口边界确定性：昨日 23:59:59 计入、今日 00:00:00 不计入、前日 23:59:59 不计入（4 枚边界 atom 仅计 2 organic）（Golden Path Step 2，PRD 边界情况 L29）
+  Test: manual:bash -c 'node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs boundary'
+  期望: exit 0，末行 OK scenario=boundary
 
-## Invariant 覆盖（来自 sprint-prd.md「Invariant 约束」段，逐条映射或 N/A）
+- [ ] [BEHAVIOR] 运行时刻偏移 ±60 秒真库重算，m7 结果逐字节不变，且 getM7CaptureWindow 界值与独立推导的北京昨日窗口一致（Golden Path Step 2，PRD 验收点 4）
+  Test: manual:bash -c 'node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs drift'
+  期望: exit 0，末行 OK scenario=drift
 
-- INV-1 单slot串行 — N/A：本 sprint 不涉及多 slot/多会话并发调度，纯代码路由补齐，单一 PR/单一 generator 顺序执行
-- INV-2 禁止写死环境假设值 — N/A：本次改动不引入任何屏幕坐标/阈值/环境相关的硬编码值，11 处新增调用均是 `pushCaptureAtom(pool, {...})` 的纯代码调用，无环境假设
-- INV-3 真环境验证才算done — 适用，已落地为下方独立 BEHAVIOR 条目（`## E2E 验收` 对 `auto-learning.js::createAutoLearning` 做真实 Postgres 端到端触发 + `psql` 验证，零 mock）
-- INV-4 测试默认多租户 — N/A：`learnings`/`captures`/`capture_atoms` 三张表均无 `tenant_id` 列（已用 `psql \d` 核实），系统当前为单租户内部系统，不适用
-- INV-5 凭据安全 — N/A：本次不涉及任何新增/修改凭据、密钥、token
-- INV-6 日志脱敏 — N/A：新增调用仅传递 `targetType`/`targetSubtype`/`content`（learning 自身的 title/summary，属系统内部学习记录，非用户对话 PII），无新增日志语句包含用户隐私内容
-- INV-7 端点鉴权 — N/A：本次未新增/未修改任何 HTTP API 端点
-- INV-8 租户隔离 — N/A：同 INV-4，无租户概念，不适用
-- INV-9 表名认领冲突 — N/A：`capture_atoms`/`captures` 均为既有表，写入方唯一入口仍是既有的 `capture-inbox.js::pushCaptureAtom`（本次只是让另外 11 处调用这个既有单一入口，不新建表、不新增写入方式）
-- INV-10 无消费方不上线 — N/A：`capture_atoms` 已有既存消费方（capture-triage 分诊链路），本次只是让更多来源接入同一条既有消费链路，不产生"无消费方"风险
-- INV-11 错误码契约需显式else — N/A（沿用既有惯例）：`pushCaptureAtom` 失败时已在内部完成 `console.warn`（`capture-inbox.js:98`）记录，可观测性由被调用方自身保证；已接入的 2 处 wired 路径（`learning.js:121`）同样不显式检查返回值，本次遵循同一既定调用惯例，不引入新违规也不扩大既有敞口
-- INV-12 语义字段判定成功 — N/A：`pushCaptureAtom` 是 fire-and-forget 式辅助写入（不影响调用方主流程判断成功与否），调用方无需依赖其返回值做业务判断
-- INV-13 回归测试用source-code inspection — 适用，已落地为下方独立 BEHAVIOR 条目（`tests/learnings-capture-atom-routing.test.js`，零 mock 遍历全部 `INSERT INTO learnings` 调用点）
-- INV-14 catch吞错需告警 — N/A（既有敞口，非本次引入，范围限定排除）：`pushCaptureAtom` 内部 catch 吞错目前只有 `console.warn`，未接失败计数/连续阈值告警；该行为在已接入的 2 处路径中已长期存在，本次只是让另外 11 处复用同一既有函数（PRD「不在范围内」明确排除"修改 capture-inbox.js 内部实现"），不扩大也不缩小该既有风险敞口；若需要落地失败计数+告警，应作为独立 sprint 处理 capture-inbox.js 本身
+- [ ] [BEHAVIOR] error path — capture_atoms 表不存在且 strategist 无记录 → m7 保持既有未激活降级（enabled=false / debt=0），不 throw（Golden Path Step 4，PRD 边界情况 L31）
+  Test: manual:bash -c 'node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs no-table'
+  期望: exit 0，末行 OK scenario=no-table
 
-- [x] [BEHAVIOR] INV-3/真环境验证：`auto-learning.js::createAutoLearning` 真实 Postgres 触发后，`## E2E 验收` 脚本（`contract-draft.md`）中的 psql 时间窗口验证片段存在且指向真实 DB 查询
-  Test: manual:bash -c 'grep -q "COUNT=\$(psql" sprints/07301431-relay-9f24e3a9/contract-draft.md && echo OK || exit 1'
-  期望: OK
+- [ ] [BEHAVIOR] 合同回归测试转绿 + 既有 ledger-hygiene / scheduler-jobs 套件零回退（m1-m6 与 strategist 行为不变）（Golden Path Step 1/5，PRD 验收点 1/5）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/ledger-hygiene-m7-organic.test.js src/__tests__/ledger-hygiene-m7.test.js src/__tests__/ledger-hygiene.test.js src/__tests__/scheduler-jobs.test.js --reporter=verbose 2>&1 | tail -25; [ "${PIPESTATUS[0]}" -eq 0 ] && echo OK || exit 1'
+  期望: OK（0 failed）
 
-- [x] [BEHAVIOR] INV-13/source-code inspection：结构性回归测试通过（同上"结构性回归测试通过"条目，此处作为 invariant 落地的独立复核）
-  Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/learnings-capture-atom-routing.test.js --reporter=verbose 2>&1 | tail -10; EXIT=${PIPESTATUS[0]:-$?}; [ "$EXIT" -eq 0 ] && echo OK || exit 1'
-  期望: OK
+- [ ] [BEHAVIOR] 真 Postgres 集成测试全绿（禁 mock 边执法：代码 ↔ capture_atoms 的窗口/分类 SQL 语义在真库验证）（Golden Path Step 2/3）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/ledger-hygiene-m7-organic.integration.test.js --reporter=verbose 2>&1 | tail -20; [ "${PIPESTATUS[0]}" -eq 0 ] && echo OK || exit 1'
+  期望: OK（4/4 绿）
 
-## BEHAVIOR:E2E 条目
+- [ ] [BEHAVIOR] INV-3 [真环境验证] 接缝断言（时区窗口 SQL 语义）已在真目标（真 Postgres）验证而非仅 mock 绿——drift 场景真库重跑作为铁律覆盖锚点
+  Test: manual:bash -c 'node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs drift && node sprints/08040913-relay-a6e6afc7/tests/m7-e2e-runner.mjs boundary'
+  期望: exit 0，两场景均输出 OK
 
-N/A — `journey_type=autonomous` + `target_environment=local_api`，无浏览器/UI，不适用 Mode B Playwright 截图流程；Mode B 的对应验证已由上方「BEHAVIOR 条目」的 manual:bash 命令 + `## E2E 验收`（`contract-draft.md`）脚本承担。
+## 铁律清单映射（Step 1.3 — 每条铁律 INV 条目或显式 N/A）
+
+- INV-1 [单slot串行] N/A：本 sprint 不触及任务派发/slot 并行逻辑。
+- INV-2 [禁写死环境假设] 窗口界从 IANA `Asia/Shanghai` 日历日推导（getM7CaptureWindow），无写死时刻/坐标/偏移值 → 由上方 boundary / drift 两条 [BEHAVIOR] 真库覆盖。
+- INV-3 [真环境验证] → 上方独立 [BEHAVIOR] INV-3 条目 + integration 测试进 brain-integration 真 PG 永跑。
+- INV-4 [测试多租户] N/A：capture_atoms 无租户列，本 sprint 未引入任何跨租户读写（豁免条件符合 PRD L64）。
+- INV-5 [凭据安全] N/A：无新增凭据；测试/runner 的 DB 连接串仅走环境变量，无硬编码密码。
+- INV-6 [日志脱敏] N/A：m7 仅统计计数，不将 atom content 写入日志或日报（日报只含数字分解）。
+- INV-7 [端点鉴权] N/A：本 sprint 不新增任何 API 端点（PRD L67）。
+- INV-8 [租户隔离] N/A：不碰租户数据。
+- INV-9 [字段语义重叠] 已本 sprint 内消解：organic/self 为窗口计数、captureDebt 为击穿位，语义不重叠且合同以「value keys 恒定」硬约束锁死（见 contract-draft Response Schema 段）。
+- INV-10 [payload真源] N/A：本 sprint 不注册新任务；target_environment=local_api 已由 PRD/task-plan 声明。
+- INV-11 [judge格式] 由 proposer 侧 `.brain-result.json` 输出协议满足（顶层字段齐备），交付物本身不产 judge 结果。
+- INV-12 [theater检查] N/A：合同文本不含 android 关键词，不触发 theater 不匹配。
