@@ -39,11 +39,12 @@ describe('drain.js — working_memory 持久化', () => {
     expect(writeCall[1][1]).toMatchObject({ draining: true });
   });
 
-  it('restoreDrainState() 读到 draining=true 的持久化记录时，应恢复内存态', async () => {
+  it('restoreDrainState() 读到新鲜 draining=true 记录时，应恢复内存态（过期残留见 drain-stale-restore.integration.test.js）', async () => {
+    const freshStartedAt = new Date(Date.now() - 60 * 1000).toISOString();
     mockQuery.mockImplementation((sql) => {
       if (sql.includes('SELECT value_json FROM working_memory')) {
         return Promise.resolve({
-          rows: [{ value_json: { draining: true, drain_started_at: '2026-07-19T00:00:00.000Z' } }],
+          rows: [{ value_json: { draining: true, drain_started_at: freshStartedAt } }],
         });
       }
       return Promise.resolve({ rows: [] });
