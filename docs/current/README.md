@@ -28,6 +28,7 @@ updated: 2026-03-25
 | 内容类型 | 位置 | 说明 |
 |----------|------|------|
 | 整体架构、子系统关系 | `docs/current/SYSTEM_MAP.md` | 权威，每10个PR审计一次 |
+| **Kernel Harness / Golden Path 体系**（11要素/7项合同/两套派发分流/provider注入链/数据账本） | `docs/current/KERNEL_HARNESS_MAP.md` | 权威指针地图，只放指针不放快照 |
 | CI 流水线（L1-L4） | `docs/current/CI_PIPELINE.md` | 权威 |
 | /dev 工作流 | `docs/current/DEV_PIPELINE.md` | 权威 |
 | **自动巡检状态** | `docs/current/PATROL-REGISTRY.md` | 权威，见下方 |
