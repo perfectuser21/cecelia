@@ -1,0 +1,6 @@
+{"next_steps_suggested": [
+  "relay 单session 模式必须在各 phase 完成时调 POST /api/brain/harness/phase-event 写 node 级 done 事件并推进 run.phase，否则 finalize 收账闸报 no_evaluator_gate/pr_not_found 降级、harness/complete Dashboard 更新被拒，report 棒被迫手工补账",
+  "finalize 收账的 PR 反查依赖 tasks.pr_url 或 payload.base_repo：relay 点火/merge 后应回写 pr_url（tasks 主路由 PATCH 不收 pr_url 字段，需走 /api/brain/tasks/tasks/:id 路由）",
+  "毕业步（Red 后删/改 sprint tests 树）与 lint-contract-test-immutability、brain-unit shard 两道 CI 闸互斥：永久回归保护改放 packages/brain/src/__tests__/integration/ 副本，不改闸脚本（Notion issue 6b8f1239-a001-4f80-8f2a-953802a77a74）",
+  "watchdog 对『从未启动的进程』必须走 never_started 分类兜底且不覆盖已有 error_message/failure_class，防止 process_disappeared→liveness_dead 假标签污染 urgent 学习流"
+]}

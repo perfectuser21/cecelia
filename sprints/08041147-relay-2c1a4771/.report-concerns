@@ -1,0 +1,6 @@
+CONCERN: Step3.5:prep-prd.md不存在(仅Contract归档)
+CONCERN: Step2:harness/complete被拒(initiative_run_not_done phase=A_planning, relay模式run.phase未推进)
+CONCERN: Step4:FEATURE_ID为空无从更新journey_features
+CONCERN: Step5:飞书通知sent=false(通道未真实发出)
+CONCERN: Step8f:capture_atoms未写入(HTTP 404)
+CONCERN: PhaseB:notes无本sprint记录

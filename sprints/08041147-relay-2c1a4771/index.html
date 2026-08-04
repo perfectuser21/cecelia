@@ -1,0 +1,719 @@
+<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8"><title>watchdog liveness 探针「从未启动任务」误判 liveness_dead 修复（防复发） — Sprint Report</title><style>body{font-family:sans-serif;margin:0;display:flex;flex-direction:column;height:100vh;}header{background:#1a1a2e;color:#fff;padding:12px 24px;display:flex;align-items:center;gap:16px;}header a{color:#adf;text-decoration:none;}main{display:flex;flex:1;overflow:hidden;}nav{width:160px;background:#f4f4f4;border-right:1px solid #ddd;padding:16px 0;overflow-y:auto;}nav ul{list-style:none;margin:0;padding:0;}nav li a{display:block;padding:8px 16px;color:#333;text-decoration:none;}nav li a:hover{background:#e0e0e0;}.content{flex:1;overflow-y:auto;padding:24px;}.section pre{background:#f8f8f8;border:1px solid #ddd;padding:16px;border-radius:4px;}.screenshot{margin-bottom:16px;}</style></head><body><header><span><strong>watchdog liveness 探针「从未启动任务」误判 liveness_dead 修复（防复发）</strong> Sprint Report</span><a href="https://github.com/perfectuser21/cecelia/pull/4606" target="_blank">PR</a></header><main><nav><ul><li><a href="#" onclick="show('prep-prd');return false;">PrepPRD</a></li><li><a href="#" onclick="show('sprint-prd');return false;">PRD</a></li><li><a href="#" onclick="show('contract');return false;">D-Contract</a></li><li><a href="#" onclick="show('dod');return false;">DOD</a></li><li><a href="#" onclick="show('report');return false;">Report</a></li><li><a href="#" onclick="show('learning');return false;">Learning</a></li><li><a href="#" onclick="show('screenshots');return false;">截图</a></li></ul></nav><div class="content"><div id="prep-prd" class="section" style="display:none;"><p>（文件不存在）</p></div><div id="sprint-prd" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;"># Sprint PRD — watchdog liveness 探针「从未启动任务」误判 liveness_dead 修复（防复发）
+
+## OKR 对齐
+
+- **对应 KR**：Cecelia 基础稳固 — 系统可信赖、算力全开、管家闭环
+- **当前进度**：82%
+- **本次推进预期**：83%（失败分类保真，urgent 学习流不再被假根因污染）
+
+## 背景
+
+任务 1dfa40f7「feat(kernel): 案卷式 GAN 收敛机制」被 watchdog 以 liveness_dead 杀死并产出紧急 failure learning。诊断证据链（Brain DB 实查）：该任务 started_at=null、execution_attempts=0、watchdog_kill.pid=null、log_tail="Log file not found or empty"——进程**从未启动**；真实根因是任务缺 payload.anchor，被 S2 锚点执法拒绝点火（error_message="S2锚点执法：task缺少 payload.anchor.{journey_id,gp_id,step_id}，拒绝点火"，payload.failure_class=missing_anchor）。watchdog 的 checkExitReason 兜底把「从未存在的进程」判成 process_disappeared → liveness_dead，导致 capture_atoms urgent 路由带着假标签（liveness_dead）而非真根因（missing_anchor/never_started）生成学习任务，浪费一整条紧急诊断链。
+
+## Golden Path（核心场景）
+
+系统从 [一个 dev 任务从未点火成功（pid=null 且无进程日志且 started_at 为空）] → 经过 [watchdog liveness 探针巡检] → 到达 [失败分类保真：判为 never_started（非 liveness_dead），下游 failure learning 文本携带真实根因]
+
+具体：
+1. [触发条件] 任务被 S2 锚点执法拒绝点火（或其他派发前失败），进程从未启动：pid=null、无进程日志、started_at=null
+2. [系统处理] watchdog liveness 探针（executor.js checkExitReason 链路）识别「从未启动」特征，分类为 never_started，不再落入 process_disappeared/liveness_dead 兜底；已有的 error_message / payload.failure_class（如 missing_anchor）不被覆盖
+3. [可观测结果] 该任务的 watchdog_kill.reason 为 never_started；由此产生的 failure learning / capture atom 文本含真实根因标签（never_started 或已有 failure_class），不再出现 liveness_dead 假标签
+
+## 边界情况
+
+- pid=null 但任务确实曾启动（有进程日志/started_at 非空）→ 仍走既有 process_disappeared 判定，不误改
+- 任务已有 error_message（点火拒绝原因）→ watchdog 记账不得覆盖该字段
+- 真正的进程中途消失（曾有 pid、日志存在）→ 分类行为与现状完全一致（回归保护）
+
+## 范围限定
+
+**在范围内**：watchdog liveness 探针对「从未启动任务」的分类修复；能复现本次误判的 failing test 先行 + 永久回归测试入 CI
+**不在范围内**：原任务 1dfa40f7 的补锚与重跑（需人工承诺地图坐标）；S2 锚点豁免名单调整；案卷式 GAN 收敛机制本身；capture_atoms 路由逻辑改动
+
+## 假设
+
+- [ASSUMPTION: 「从未启动」可由 pid=null ∧ 无进程日志 ∧ (started_at=null ∨ 已有派发失败 error_message) 联合判定，无需新增 DB 字段]
+- [ASSUMPTION: never_started 作为新 reason 枚举值不破坏下游 dev-failure-classifier 的既有分类消费（新增值需全仓库 grep 复查枚举硬编码断言）]
+
+## 预期受影响文件
+
+- `packages/brain/src/executor.js`: checkExitReason / liveness 探针兜底分类逻辑
+- `packages/brain/src/dev-failure-classifier.js`: 若消费 reason 枚举需识别 never_started
+- `packages/brain/src/__tests__/`: 新增复现 1dfa40f7 场景的回归测试（pid=null+无日志+未启动 → never_started）
+
+## NFR 约束
+
+&lt;!-- 来源: decisions 表 category=nfr（step/feature 两源均为空数组），PrepPRD 无（payload 无 thin_prd） --&gt;
+- 可观测: 失败分类结果必须落 watchdog_kill.reason 字段，可由 Brain DB 直查验证
+- 其余（超时/频控/版本）: 待定（PrepPRD 未指定，decisions 无值）
+
+## Invariant 约束（铁律，proposer/evaluator 不得违反）
+
+&lt;!-- 来源: decisions category=invariant，step(0)+journey_feature(0)+area(58) 三源合并去重 --&gt;
+- [cortex.js:] cortex.js::recordLearnings 等触发条件窄的路径，真实端到端验证成本高时，可用结构性 source-code inspection(零mock)+同机制其他调用点的真实端到端触发(零mock)两层（来源: area）
+- [冒烟/校验类脚本涉及] 冒烟/校验类脚本涉及数据库连接目标时，写入侧与校验侧的 DB_NAME 必须来自同一变量/同一解析逻辑，禁止两处各自默认值——本次因此导致一次真实生产库脏数据污染（来源: area）
+- [proposer起草] proposer起草涉及agents表字段的合同/测试前先psql核对真实列名，不要凭经验假设常见字段名（machine_id vs 真实agent_id已有历史回归测试仍会重蹈）（来源: area）
+- [contract-d] contract-dod.md/测试里涉及 status 枚举的硬编码断言，GAN 新增状态值（如本次的 'stale'）时应做一次全仓库 grep 复查，避免遗漏同类枚举检查点（来源: area）
+- [watchdog_o] watchdog_overdue 标 failed 的 relay run 经 orphan requeue + 外部真相核查（查 PR/sprint 目录）从头重跑是安全恢复路径（f90ddca3 实证成功）（来源: area）
+- [通知/写库接口的成功] 通知/写库接口的成功判定必须看语义字段（sent/accepted），只 grep ok:true 会把 sent=false 误判为送达（harness/notify 实证）（来源: area）
+- [dep-audit ] dep-audit 因新披露 advisory 突然翻红时先查 fixAvailable：布尔 true = semver 兼容修复，直接 npm audit fix，不要急着加白名单（来源: area）
+- [headed rel] headed relay session 在长 CI 等待循环中应周期性 PATCH relay-runs 心跳，防止 Brain reaper 单信号把存活 session 的任务误标 failed（failed 是状（来源: area）
+- [毕业（测试入册）co] 毕业（测试入册）commit 后必须本地先跑 lint-tdd-commit-order 与 check-test-coverage 再 push：毕业 rename 是这两个门的高危触发点（contract 表路径失效（来源: area）
+- [合同批准前必须同时记] 合同批准前必须同时记录 manual oracle 的真实 exit code，并确认目标解释器确实启动。（来源: area）
+- [manual:nod] manual:node -e 双引号中的 JavaScript `${}` 必须在 GAN 批准前逐条真跑，bash -n 不足以捕获 expansion failure。（来源: area）
+- [smoke 铁律] smoke 铁律（来源: area）
+- [测试如果全部依赖"重] 测试如果全部依赖"重置状态=冷启动"的写法（`afterEach` 清空 sentinel、传 `sinceMs=0`），要专门补至少一条"真实多轮扫描、状态不重置、时间真实流逝"的集成测试，否则这类"跨扫描周期"的 b（来源: area）
+- [涉及"周期性重新扫描] 涉及"周期性重新扫描同一批数据"的设计，一旦引入外部付费调用（LLM/第三方API），必须同时设计"是否已处理过"的前置检查，不能假设"重扫不常发生"就不用防——扩大扫描窗口（为了修一个 bug）反而可能意外放大另一个本（来源: area）
+- [跨模块的"时间常数"] 跨模块的"时间常数"（扫描间隔、闲置阈值、缓存 TTL 等）如果彼此之间有隐含的大小关系依赖，必须在设计阶段显式写一条不变量断言或注释（比如"必须保证 LOOKBACK_WINDOW &gt; IDLE_THRESHOLD"）（来源: area）
+- [theater_mi] theater_mismatch 检查机制：contract 文本中出现 android 关键词，即使在排除说明列表内，也会触发 theater 不匹配警告。可将 target_environment 设为 window（来源: area）
+- [target_env] target_environment 字段由 Brain orchestrator 从 DB tasks.payload 读取，不从本地文件读取。务必在 POST /api/brain/tasks 注册时在 payloa（来源: area）
+- [Brain judg] Brain judge API 格式要求：必须有顶层 exit_code + log_tail + behavior_tests[]（每条需 exit_code + log_tail）。缺失任一字段 judge 会报格式（来源: area）
+- [DB 表字段长度约束] DB 表字段长度约束（如 `varchar(100)`）在写入前若来源数据没有天然长度保证（如文件系统路径/目录名），必须显式截断，不能假设"看起来不会太长"——本次触发条件（嵌套 worktree 路径）就存在于开发者（来源: area）
+- [复活/重做一个曾经死] 复活/重做一个曾经死过的功能前，先用 `git log --diff-filter=D` + `git show &lt;commit&gt;:&lt;path&gt;` 读退役前的真实代码，逐字核对 death cause，不要只信退役 co（来源: area）
+- [调用任何"失败不抛异] 调用任何"失败不抛异常，返回 null/false 表示失败"契约的函数时，写完 `if (成功分支)` 一定要显式写 `else` 处理失败分支，不能只依赖外层 `try/catch`——这类"错误码而非异常"的契约在（来源: area）
+- [journey_fe] journey_features 表的 updated_at 长期停滞（明显早于对应 PR 合并时间）可作为 report 阶段漏跑的兜底探针信号，建议定期巡检（来源: area）
+- [harness-co] harness-controller relay 容器可能在 Step 6(merge) 后异常退出而跳过 Step 7(report)，因为该硬约束只写在 prompt 里没有机械闸门；Brain 侧不应仅凭容器 ex（来源: area）
+- [contract-p] contract-proposer 起草 host/环境白名单类断言时强制核对 headed 人工接管场景，本次 round1 误判直到 judge 实测才暴露、多耗 4 轮 GAN（来源: area）
+- [headed rel] headed relay 点火时必须把 base_repo 或 pr_url 写入 task payload，且分支名带 task short id，否则 finalizeHarnessTask 收账守卫与 watchd（来源: area）
+- [退役判断依据数据不靠] 退役判断依据数据不靠记忆：本次靠查生产库实锤（cursor 状态分布/表行数/消费方 grep）拍板，避免误删活模块（conversation-consolidator 同名族但活着，已验证保留）（来源: area）
+- [catch 吞错的后] catch 吞错的后台 job 必须带失败计数指标，连续失败超阈值告警（inbox P1 账龄哨兵将覆盖）（来源: area）
+- [表名认领冲突：建新表] 表名认领冲突：建新表/复用表前先 grep 全部写入方，两个模块写同一张表必须 schema 对齐评审（来源: area）
+- [新增后台 job 必] 新增后台 job 必须同时声明消费方——无下游读方的落库 job 不允许上线（inbox 统一设计已立为死规矩：每条路由必须有真实消费者）（来源: area）
+- [1) contrac] 1) contract-dod模板加规则：新字段与既有字段语义重叠时必须本sprint内消解或建正式decision+挂任务队列，禁止只在文档里写'留给后续技术债sprint'了事，harness-contract-re（来源: area）
+- [同一语义（如 git] 同一语义（如 git_sha=unknown）在判变端与终验端必须同一处理策略，跨脚本语义分叉会开假绿面（来源: area）
+- [`git rev-p] `git rev-parse` 判 ref 存在必须带 `--verify "&lt;ref&gt;^{commit}"`，裸 rev-parse 失败回显字面量（来源: area）
+- [smoke/测试用真] smoke/测试用真实 worktree 当 CECELIA_DEPLOY_ROOT 时，必须核对被测脚本会不会向上触碰生产资源（brain-deploy、git tag 向上找共享 refs、/tmp 状态文件）——S（来源: area）
+- [部署链任何失败路径禁] 部署链任何失败路径禁止 warning 降级：显式 FAIL 变量 + Bark + exit 非零（set -uo 无 -e 的脚本尤其注意管道赋值 `|| echo ""` 兜底，grep 空结果 + pipefai（来源: area）
+- [判变基准永远用"生产] 判变基准永远用"生产实体自报"（build-info.json / health.git_sha）对账 origin/main，禁用"工作区 diff"——部署根 reset 后 diff 恒空是结构性陷阱（来源: area）
+- [lint-test-] lint-test-quality 要求 await fn() ≥ 1：讀源碼必須包裝 async function，不能直接 readFileSync（来源: area）
+- [Test Contr] Test Contract 表格固定 4 列格式，testFile 用 backtick 包裹，checker 從第 3 列解析路徑（来源: area）
+- [Red commit] Red commit 必須只 git add 精確路徑（*.test.ts），禁止 git add . 或 git add .harness/，防非測試文件混入（来源: area）
+- [回归测试用 sour] 回归测试用 source-code inspection 验证调度接线比 mock 覆盖更直接有效（来源: area）
+- [新增 cron 功能] 新增 cron 功能首先检查 scheduler-jobs.js JOBS，tick-runner.js 是 deprecated 路径（来源: area）
+- [harness-ge] harness-generator 需新增铁律：禁止 generator 自行 merge PR，merge 权归 controller，generator 只推 branch 并报告 branch ready（来源: area）
+- [headed rel] headed relay 的 tmux innerCmd 启动的子 shell 不自动继承父进程环境变量；凡需要在 Claude session 内部感知 harness 上下文的变量（HARNESS_TASK_ID、H（来源: area）
+- [Proposer 复] Proposer 复用历史合同模板（尤其E2E验收断言）时必须先核对本次任务的真实派发/执行历史，不能假设与先例路径相同——本次task 63db6f8a的自动headed spawn从未走通，若照抄049ebf93先例（来源: area）
+- [给 harness-] 给 harness-generator skill 增加共享 CI 基础设施文件默认禁区规则（.github/workflows/*.yml、packages/quality/smoke-allowlist.txt 等跨（来源: area）
+- [PR 被 shoul] PR 被 should-auto-merge.sh 等 CI 侧兜底机制在 evaluator/judge 跑完前提前合并时，必须用 PR head SHA 核对 evaluator/judge verdict 文件锚定（来源: area）
+- [feat+brain] feat+brain/src PR 开 PR 前直接一次带齐 smoke.sh + smoke-allowlist 登记，别等 CI 两连红（来源: area）
+- [新 task_typ] 新 task_type 接线用七点清单：CHECK 约束 / task-router 四表 / EXECUTOR_KIND_FOR / executor dispatch 分支 / executor override 排（来源: area）
+- [服务"该活着"的判定] 服务"该活着"的判定用双信号：launchctl 状态 + 端口监听（单看 launchd 漏 nohup 孤儿宕机，判定点决策 d172e54a）（来源: area）
+- [本机（美国 Mac ] 本机（美国 Mac mini）**禁止再往 `~/Library/LaunchAgents` 放需要常驻的服务**——gui 域不存在，永不加载；用系统域 LaunchDaemon + `UserName=adminis（来源: area）
+- [新增常驻宿主服务时，] 新增常驻宿主服务时，必须同步加进 `packages/brain/src/launchd-patrol.js` 的 manifest（MUST_RUN_DAEMONS / MUST_LOAD_DAEMONS / MUST（来源: area）
+- [一个 slot/会话] 一个 slot/会话内严格串行执行任务——同一 slot 同时只允许一个任务在跑，任务与任务之间必须前一个收口（handoff）后才起下一个；需要并行时用多个 slot/独立 session 各跑各的任务。澄清边界：单个（来源: area）
+- [屏幕外坐标/UIA气] 屏幕外坐标/UIA气泡阈值/假设调用方传X/假设.env有Y 等环境假设值禁止写死，要么从环境推导要么真机校准——这类值是接缝，必真验（来源: area）
+- [依赖真机/生产env] 依赖真机/生产env/真实调用方的【接缝断言】必须在真目标上验证过才算done；未真验的只能标 logic-done-pending，绝不标 done。接缝清单通常1-3条，不是全功能跑真机。（来源: area）
+- [单元/E2E 测试默] 单元/E2E 测试默认种≥2个租户并断言互不串(让隔离漏洞当场暴露)（来源: area）
+- [secrets 不硬] secrets 不硬编码、不进 git、不进日志（来源: area）
+- [客户隐私/PII/聊] 客户隐私/PII/聊天内容不得明文进日志（来源: area）
+- [每个 API 端点必] 每个 API 端点必须有 auth;无鉴权端点不准 ship（来源: area）
+- [碰租户数据的查询/写] 碰租户数据的查询/写入必须 scope 到当前租户;跨租户数据绝不混读/混写（来源: area）
+
+## 累积 FR（本 line 已验收行为，本 sprint 不得回退/重复）
+
+&lt;!-- 来源: task.payload 无 journey_id（capture_atoms urgent 路由，非路径 C 点火），优雅降级 --&gt;
+- （本 line 暂无历史）
+
+## E2E 验收
+
+&gt; 最终可执行 E2E 脚本由 proposer 按 target_environment=local_api 产出（curl localhost:5221 + psql/单测）。
+
+```bash
+# 占位：proposer 将填入真实脚本
+# 期望验收点（自然语言）：构造一个 pid=null、无进程日志、started_at=null 的失败探针场景，
+# watchdog 分类结果为 never_started（非 liveness_dead/process_disappeared）；已有 error_message 未被覆盖；
+# 曾启动过的进程消失场景仍判 process_disappeared（回归不变）；回归测试进 CI 永久保留。
+```
+
+## journey_type: autonomous
+## journey_type_reason: 改动仅在 packages/brain/（watchdog/executor 后端逻辑），无 UI/engine/agent 协议
+## target_environment: local_api
+## target_environment_reason: Brain 内部纯后端，本地 evaluator 用 curl localhost:5221 + 单测/psql 验证
+## journey_id: none
+## step_id: none（PrepPRD 未锚定）
+</pre></div><div id="contract" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;"># Sprint Contract Draft (Round 3)
+
+Sprint: watchdog liveness 探针「从未启动任务」误判 liveness_dead 修复（防复发）
+TASK_ID: 2c1a4771-3424-45ea-b6e4-19ae980edb95
+
+---
+
+## Response Schema（推导来源: N/A）
+
+N/A — 任务无 HTTP 响应（纯 Brain 内部 watchdog 分类修复，不新增/不改任何 API 端点）。
+
+**可观测数据 Schema（DB 层，PRD NFR「失败分类结果必须落 watchdog_kill.reason 字段」）**：
+
+- 字段：`tasks.payload -&gt; 'watchdog_kill' -&gt;&gt; 'reason'`（jsonb，由 executor.js watchdog 记账写入）
+- 枚举（现有，来源: executor.js checkExitReason 实现）：`oom_killed | oom_likely | killed_signal | process_error | timeout | process_disappeared`
+- 本 sprint 新增值（来源: PRD Golden Path 第 3 点字面）：`never_started`
+- **禁用**：从未启动场景下 `watchdog_kill.reason` 不得为 `liveness_dead` 或 `process_disappeared`（PRD 行 19「不再落入 process_disappeared/liveness_dead 兜底」）；`liveness_dead` 是 requeue 通道名，不是 exit reason 枚举值
+- 伴随不变量（PRD 行 19/25）：已有 `tasks.error_message` 与 `payload.failure_class`（如 `missing_anchor`）不被 watchdog 记账覆盖
+- 伴随可观测（PRD 行 20，r2 补）：`learnings` 表该任务的失败学习行（category=failure_pattern, trigger_event=watchdog_kill）title/content 含真实根因标签 `never_started`（或既有 failure_class），**不含** `liveness_dead` 假标签——该 INSERT 在 executor.js requeueTask 内（PRD 预期受影响文件第一项），属本 sprint 范围
+
+---
+
+## 已知约束（来自回归测试 + 累积 FR）
+
+来源 [回归测试] `packages/brain/src/__tests__/liveness-probe.test.js`：
+- should mark task as suspect on first probe failure（双确认第一轮只标 suspect）
+- should requeue task on second probe failure (double-confirm)
+- should clear suspect status when process recovers
+- should use grace period for recently dispatched tasks without run_id（派发后 60s 宽限）
+- should NOT mark decomposition task as dead within 60min grace period
+
+来源 [回归测试] `packages/brain/src/__tests__/t2-liveness-four-blades-regression.test.js`：
+- verdict=alive 时：不调用 UPDATE tasks SET status=failed 也不调用 status=queued
+- dead + release-claim-and-alert → UPDATE status=queued 且不是 failed
+
+来源 [回归测试] `packages/brain/src/__tests__/executor-requeue-learning.test.js`：
+- learning INSERT uses correct category=failure_pattern and includes content_hash
+- learning error does not prevent requeue from succeeding
+
+**约束含义**：本 sprint 只改「从未启动」场景的 reason 分类与字段保护，双确认节奏、suspect 恢复、宽限期、requeue→queued 状态迁移、learning 写入链均不得破坏（上述测试必须继续全绿）。
+
+来源 [累积FR]：context-manifest: unavailable（PRD journey_id=none，端点 404，无历史 FR）。
+
+---
+
+## 真实调用方请求 shape
+
+N/A — 本 sprint 无设备/agent/外部 webhook 调用方。触发方是 Brain 自身 tick 循环内的 `probeTaskLiveness()` 进程内函数调用，无网络请求 shape 可摘录。
+
+---
+
+## 未覆盖真实链路清单（规则 C）
+
+- **生产 Brain 运行时 tick 内触发**未在本合同 E2E 覆盖｜原因：evaluate 在 merge 前的 worktree 执行，运行中的生产 Brain（localhost:5221）尚未加载新代码，等真实 tick 双确认需 ≥2 个 tick 周期且需真实制造孤儿任务污染生产库｜补位计划：merge 后 brain-deploy 流程重启 Brain，生产端按 PRD NFR「watchdog_kill.reason 可由 Brain DB 直查验证」直接观测（下一个真实从未启动任务出现时 psql 直查）。本合同以「worktree 真代码 + 真 Postgres(cecelia_test) + 真 ps 进程探测」零 mock 覆盖同一代码路径。
+- 除上条外**本合同无 mock 豁免**：tests/ 与 E2E 零 vi.mock、零 stub、零假数据注入（fixture 行为真实 INSERT 的 DB 行，非 mock）。
+
+---
+
+## 禁 mock 边清单
+
+本单改动涉及：状态判定（watchdog exit reason 分类）+ 跨模块数据传递（checkExitReason → probeTaskLiveness → requeueTask 的 reason 接力）+ DB 写路径（tasks.payload.watchdog_kill / error_message / failure_class）。逐条禁 mock 边：
+
+- `probeTaskLiveness`/`requeueTask` ↔ DB `tasks` 表（本单改 watchdog_kill.reason 写路径与 error_message/failure_class 保护，测试必须真 Postgres cecelia_test 验行落库，禁止 mock `db.js`）
+- `checkExitReason` ↔ `probeTaskLiveness`（本单改两者间 reason 数据接力与「从未启动」判定输入，测试必须真调同模块真函数，禁止 stub checkExitReason）
+- `probeTaskLiveness` ↔ OS 进程探测（ps/execSync）（「pid 未跟踪且无进程」是判定输入之一，测试用随机 UUID 天然无匹配进程，真 ps 探测，禁止 mock child_process）
+- `requeueTask` ↔ DB `learnings` 表（r2 补：本单钉失败学习文本真根因标签——watchdog 路径唯一的 failure learning 落库点在 executor.js requeueTask 内，测试必须真 Postgres 验 learnings 行落库与文本内容，禁止 mock）
+- 允许不真触发的更外层：`auto-learning.js`（fire-and-forget，requeue 路径下 status='requeued' 走 no-op 分支，真 import 真执行但无副作用——watchdog 路径的 failure learning 由上一条 requeueTask↔learnings 边真验覆盖）、dmesg（macOS 平台天然返回 null，无需注入）
+
+**执行落地**：tests/liveness-never-started.integration.test.ts 零 `vi.mock`/`stub`（generator 复制后不得加 mock，evaluator 可机械 grep 核查）。
+
+---
+
+## 八要素需求规范
+
+| 要素 | 说明 | 本次答案（必填，可 N/A） |
+|------|------|--------------------------|
+| **FR（做什么）** | 功能需求 | watchdog liveness 探针识别「从未启动」任务（pid 未跟踪 ∧ 无进程日志 ∧ started_at=null），分类为 `never_started`，不落 `process_disappeared`/`liveness_dead` 兜底；已有 error_message / payload.failure_class 不被覆盖 |
+| **NFR（做得多好）** | 非功能需求 | 可观测：分类结果落 `watchdog_kill.reason`，Brain DB 直查可验（PRD NFR 段字面）；其余（超时/频控）PRD 标注待定，本合同不加码 |
+| **Invariant（永不违反）** | 不变量 | ① 曾启动进程消失场景分类行为与现状完全一致（process_disappeared，回归保护）② 双确认节奏/宽限期/requeue→queued 迁移不变 ③ 已有 error_message 与 failure_class 永不被 watchdog 记账覆盖 |
+| **判定点（怎么知道）** | 判断假设 | 见下方登记表 |
+| **保质期（何时过期）** | 失效与退役 | 分类逻辑随 executor.js 长期有效；回归测试永久入 CI（brain-integration job），退役需走正式测试退役流程 |
+| **死亡告警（停了谁知道）** | 停止工作的感知 | 若分类退化，CI 每晚 brain-integration job 跑回归测试红（integration-nightly 开 [integration-red] Issue）；生产侧误判复发时 capture_atoms urgent 学习链会再次出现 liveness_dead 假标签（与本次事故同信号，Brain DB 可查） |
+| **失败语义（挂了怎么办）** | 故障策略 | 分类函数不抛异常：无法确认「从未启动」时保守回落现有 process_disappeared 兜底（宁可漏判不可误判曾启动任务）；requeue/退避/隔离链路行为不变 |
+| **效果确认（已发≠已生效）** | 回执验证 | watchdog 记账后 psql 直查 `payload-&gt;'watchdog_kill'-&gt;&gt;'reason'`（含 ts 5 分钟时间窗防历史冒充）；E2E 脚本即回执 |
+
+### 判定点登记表（对模糊现实的判断假设 — decisions e035dad8）
+
+| 判定点 | 候选方法 | 所选方法 | 依据 | 误判后果 |
+|--------|----------|----------|------|----------|
+| （示例：微信群是否发送成功） | A. 监听发送按钮变灰; B. 读取聊天记录 API | A. 监听按钮变灰 | 聊天记录 API 不稳定 | 静默丢消息，用户不知 |
+| 任务进程是否「从未启动」 | A. pid 未跟踪 ∧ 无 /tmp/cecelia-{id}.log ∧ (started_at=null ∨ 已有派发失败 error_message) 联合判定; B. 新增 DB 字段记录点火尝试 | A（PRD ASSUMPTION 字面拍板，无需新增 DB 字段） | 三信号在 1dfa40f7 事故证据链中全部命中且互相佐证；B 需 migration 超出范围 | 反向误判（把曾启动判成 never_started）会掩盖真实进程消失事件——故边界规则：只要存在进程日志即回落 process_disappeared |
+| 任务是否「曾启动过」 | A. 存在进程日志或 started_at 非空; B. 仅看 started_at | A（日志存在 = 曾启动的强证据，即使 started_at 被 requeue 清空） | PRD 边界行 24 字面：「pid=null 但任务确实曾启动（有进程日志/started_at 非空）→ 仍走既有 process_disappeared」 | 把曾启动任务误判 never_started → 真实 OOM/抢占事件被静默改写根因 |
+
+（判定方法已由 PrepPRD ASSUMPTION 段拍板，无 judgment-pending-user 项）
+
+### 失败语义声明
+
+| 场景 | 失败行为 | 重试幂等？ | 降级策略 |
+|------|----------|-----------|----------|
+| 「从未启动」信号不完整（如日志读取异常） | 保守回落现有 process_disappeared 兜底，不猜测 | 是（探针每 tick 幂等重跑） | 分类不确定时维持现状行为，杜绝新误判面 |
+| cecelia_test DB 不可达（测试/E2E 时） | E2E/测试显式 FAIL exit 非 0 | 是 | 无降级——环境未就绪 = FAIL，禁止 skip 当 PASS |
+| never_started 任务后续消费 | requeue/退避/隔离链路维持现有行为（本 sprint 不改策略），仅分类标签保真 | 与现状一致 | N/A |
+
+### 输入对抗面（对外暴露 agent 必填）
+
+N/A — 纯 Brain 内部调度逻辑，无外部用户/agent 可写入的输入面。
+
+---
+
+## 接缝断言清单（接缝 vs 逻辑）
+
+| # | 接缝点 | 真目标验证方式 | 状态 |
+|---|--------|----------------|------|
+| 1 | 代码 ↔ 真 Postgres（watchdog_kill/error_message/failure_class + learnings 失败学习行落库） | tests + E2E 真连 cecelia_test（db-config.js 同源解析），psql 直查断言 | 本合同内真验 |
+| 2 | 代码 ↔ OS 真 ps 进程探测（「无进程」信号） | tests + E2E 真跑 execSync ps，随机 UUID 天然无进程 | 本合同内真验 |
+| 3 | 生产 Brain 运行时 tick 触发 | merge 后 brain-deploy 重启，生产 DB 直查 watchdog_kill.reason（PRD NFR 条款） | logic-done-pending（入未覆盖真实链路清单，merge 前无法真验，非静默） |
+
+其余断言（分类条件组合、classifier 枚举识别）为环境无关逻辑断言，CI 单测/integration 绿 = done。
+
+---
+
+## Golden Path
+[从未启动任务出现] → [watchdog 双确认探针] → [分类 never_started + 字段不覆盖] → [failure learning 文本真根因] → [下游分类保真] → [回归护栏 + 永久入 CI]
+
+### Step 1: 前置——构造「从未启动」任务特征
+**来源**: `[FROM_PRD]` — PRD 行 18「任务被 S2 锚点执法拒绝点火…进程从未启动：pid=null、无进程日志、started_at=null」
+
+**可观测行为**: DB 中存在一条 in_progress 任务：started_at=null、pid 未被 executor 跟踪、无 /tmp/cecelia-{id}.log、error_message=S2 拒绝文本、payload.failure_class=missing_anchor（1dfa40f7 完整复现）
+
+**验证命令**:
+```bash
+TEST_DB_URL="postgresql://localhost:5432/cecelia_test"
+TID=$(psql "$TEST_DB_URL" -q -t -A -c "INSERT INTO tasks (title, task_type, status, payload, error_message, started_at) VALUES ('e2e-never-started 探针场景', 'dev', 'in_progress', '{\"failure_class\":\"missing_anchor\"}', 'S2锚点执法：task缺少 payload.anchor.{journey_id,gp_id,step_id}，拒绝点火', NULL) RETURNING id")
+[ -n "$TID" ] || { echo "FAIL: 注入失败"; exit 1; }
+rm -f "/tmp/cecelia-${TID}.log"
+```
+
+**硬阈值**: INSERT RETURNING id 非空（列名 started_at/error_message/payload 已 psql 实查核对存在）
+
+---
+
+### Step 2: watchdog 双确认探针分类为 never_started
+**来源**: `[FROM_PRD]` — PRD 行 19「watchdog liveness 探针识别『从未启动』特征，分类为 never_started，不再落入 process_disappeared/liveness_dead 兜底」；时间窗防伪部分 `[AI_ADDED]` — 防止 generator 用历史残留 watchdog_kill payload 冒充本轮分类产出
+
+**可观测行为**: 真实两轮探针（suspect → confirmed dead）后，该任务 `payload-&gt;'watchdog_kill'-&gt;&gt;'reason'` = `never_started`，且 watchdog_kill.ts 在本轮 5 分钟窗内
+
+**验证命令**:
+```bash
+cat &gt; /tmp/e2e-never-started-probe.mjs &lt;&lt;MJS
+process.env.NODE_ENV = process.env.NODE_ENV || 'test';
+const { probeTaskLiveness } = await import('$PWD/packages/brain/src/executor.js');
+await probeTaskLiveness();
+await probeTaskLiveness();
+process.exit(0);
+MJS
+NODE_ENV=test node /tmp/e2e-never-started-probe.mjs || { echo "FAIL: 探针执行失败"; exit 1; }
+REASON=$(psql "$TEST_DB_URL" -t -A -c "SELECT payload-&gt;'watchdog_kill'-&gt;&gt;'reason' FROM tasks WHERE id='$TID' AND (payload-&gt;'watchdog_kill'-&gt;&gt;'ts')::timestamptz &gt; NOW() - interval '5 minutes'")
+[ "$REASON" = "never_started" ] || { echo "FAIL: watchdog_kill.reason=$REASON 期望 never_started"; exit 1; }
+```
+
+**硬阈值**: reason 字面等于 `never_started`（非 process_disappeared/liveness_dead），ts 时间窗 5 分钟
+
+---
+
+### Step 3: 已有 error_message / failure_class 不被覆盖
+**来源**: `[FROM_PRD]` — PRD 行 19「已有的 error_message / payload.failure_class（如 missing_anchor）不被覆盖」+ 边界行 25
+
+**可观测行为**: 双确认记账后，error_message 仍为 S2 拒绝原文，payload.failure_class 仍为 missing_anchor
+
+**验证命令**:
+```bash
+EM=$(psql "$TEST_DB_URL" -t -A -c "SELECT error_message FROM tasks WHERE id='$TID'")
+echo "$EM" | grep -q 'S2锚点执法' || { echo "FAIL: error_message 被覆盖为 $EM"; exit 1; }
+FC=$(psql "$TEST_DB_URL" -t -A -c "SELECT payload-&gt;&gt;'failure_class' FROM tasks WHERE id='$TID'")
+[ "$FC" = "missing_anchor" ] || { echo "FAIL: failure_class 被覆盖为 $FC"; exit 1; }
+```
+
+**硬阈值**: error_message 含 S2 原文、failure_class 字面等于 missing_anchor
+
+---
+
+### Step 4: 回归护栏——曾启动场景仍判 process_disappeared
+**来源**: `[FROM_PRD]` — PRD 边界行 24「pid=null 但任务确实曾启动（有进程日志/started_at 非空）→ 仍走既有 process_disappeared 判定，不误改」+ 行 26「真正的进程中途消失…分类行为与现状完全一致」
+
+**可观测行为**: started_at 非空 + 进程日志存在的死任务仍分类 process_disappeared；started_at=null 但有日志（确实曾启动）也不判 never_started
+
+**验证命令**:
+```bash
+NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t "仍判 process_disappeared" || { echo "FAIL: 回归护栏破坏"; exit 1; }
+NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t "不判 never_started" || { echo "FAIL: 边界护栏破坏"; exit 1; }
+```
+
+**硬阈值**: 两条 vitest -t 过滤各 exit 0（已实测过滤精确命中单条 it）
+
+---
+
+### Step 5: failure learning 文本携带真实根因标签（r2 补，Reviewer 阻塞项）
+**来源**: `[FROM_PRD]` — PRD 行 20「由此产生的 failure learning / capture atom 文本含真实根因标签（never_started 或已有 failure_class），不再出现 liveness_dead 假标签」。代码实证：executor.js requeueTask 内 learnings INSERT（category=failure_pattern, trigger_event=watchdog_kill）的 title/content 现取 requeue 通道参数 `liveness_dead`——原事故（urgent 学习流被假根因污染）的直接伤害面。时间窗防伪部分 `[AI_ADDED]` — task_id 定位 + created_at 5 分钟窗，防历史 learnings 行冒充本轮产出
+
+**可观测行为**: never_started 任务双确认后，learnings 表该任务的失败学习行（task_id=$TID ∧ trigger_event='watchdog_kill' ∧ created_at 5 分钟窗内）存在，且 title/content 含 `never_started`（或既有 failure_class），**不含** `liveness_dead`
+
+**验证命令**:
+```bash
+L=$(psql "$TEST_DB_URL" -t -A -c "SELECT title || ' ' || content FROM learnings WHERE task_id='$TID' AND trigger_event='watchdog_kill' AND created_at &gt; NOW() - interval '5 minutes'")
+[ -n "$L" ] || { echo "FAIL: 该任务无 watchdog_kill 失败学习行"; exit 1; }
+echo "$L" | grep -q 'never_started' || { echo "FAIL: 学习文本缺真根因标签"; exit 1; }
+if echo "$L" | grep -q 'liveness_dead'; then echo "FAIL: 学习文本仍含 liveness_dead 假标签"; exit 1; fi
+```
+
+**硬阈值**: 学习行存在（5 分钟时间窗）+ 文本含 never_started + 不含 liveness_dead
+
+**钉窄声明（防 scope 蔓延）**: 本步只钉**学习文本标签保真**，不钉 requeue 通道退避/隔离策略——15min 最短退避、3 次隔离阈值继续按 liveness 通道语义走（PRD「requeue/退避/隔离链路行为不变」已由失败语义声明表第 3 行覆盖）。generator 自选实现方式（如学习文本取 evidence 内真实 exit reason 而非通道参数），合同不钉 How。
+
+---
+
+### Step 6: 下游分类保真——classifier 不落 transient 假通道
+**来源**: `[FROM_PRD]` — PRD 行 20「failure learning / capture atom 文本含真实根因标签…不再出现 liveness_dead 假标签」+ 预期受影响文件「dev-failure-classifier.js 若消费 reason 枚举需识别 never_started」。断言形态 `[AI_ADDED]` — 现状实测：classifyDevFailure 对含 `[watchdog] reason=never_started` 的文本命中 TRANSIENT_PATTERNS（/\[watchdog\]/i）误判 transient（= liveness_dead 环境重试假通道），这是假标签进入学习链的下游闸口，必须钉死
+
+**可观测行为**: `classifyDevFailure({error: '…reason=never_started…'})` 返回的 class 不是 `transient`（目标类别 generator 可选 unknown 或新增枚举，合同只钉「不落 transient」，不加码）
+
+**验证命令**:
+```bash
+node -e "import('./packages/brain/src/dev-failure-classifier.js').then(m=&gt;{const r=m.classifyDevFailure({error:'[watchdog] liveness_probe_failed reason=never_started 进程从未启动'});if(r.class==='transient'){console.error('FAIL: never_started 误分类 transient');process.exit(1);}console.log('classifier class='+r.class);})" || exit 1
+```
+
+**硬阈值**: r.class !== 'transient'，node exit 0
+
+---
+
+### Step 7: 回归测试永久入 CI
+**来源**: `[FROM_PRD]` — PRD 行 30「能复现本次误判的 failing test 先行 + 永久回归测试入 CI」
+
+**可观测行为**: 毕业测试文件存在于 `packages/brain/src/__tests__/integration/liveness-never-started.integration.test.js` 且已登记 `packages/brain/vitest.config.js` 的 `POSTGRES_INTEGRATION_TESTS` 白名单（brain-integration job 的机械入口，未登记则 integration config 下 vitest 报 No test files found exit 1——登记被执行路径隐式强制）
+
+**验证命令**:
+```bash
+cd packages/brain
+npx vitest run src/__tests__/integration/liveness-never-started.integration.test.js --config vitest.integration.config.js || { echo "FAIL: 毕业回归测试未通过或未登记"; exit 1; }
+cd ../..
+node -e "const c=require('fs').readFileSync('packages/brain/vitest.config.js','utf8');if(!c.includes('liveness-never-started.integration.test.js'))process.exit(1)" || { echo "FAIL: POSTGRES_INTEGRATION_TESTS 未登记"; exit 1; }
+```
+
+**硬阈值**: integration config 下 vitest exit 0 + 白名单登记内容断言通过
+
+---
+
+### Step 8: 枚举硬编码全仓库复查
+**来源**: `[AI_ADDED]` — PRD ASSUMPTION「never_started 作为新 reason 枚举值不破坏下游…新增值需全仓库 grep 复查枚举硬编码断言」+ 铁律「新增状态值应全仓库 grep 复查避免遗漏同类枚举检查点」。理由：防止某个消费 exit reason 枚举的生产文件漏配 never_started 分支形成静默漏洞
+
+**可观测行为**: 所有引用 process_disappeared 枚举的生产源文件（非测试）同时含 never_started 处理
+
+**验证命令**:
+```bash
+for f in $(grep -rln "process_disappeared" packages/brain/src --include="*.js" | grep -v __tests__); do grep -q "never_started" "$f" || { echo "FAIL: $f 缺 never_started"; exit 1; }; done; echo OK
+```
+
+**硬阈值**: 逐文件通过（当前仅 executor.js 命中，实现前该命令 FAIL = 真红）
+
+---
+
+## E2E 验收（最终 final-e2e 跑）
+
+**journey_type**: autonomous
+**target_environment**: local_api
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+# DB_NAME 同源纪律（铁律）：写入侧 node(db-config.js: NODE_ENV=test → cecelia_test)
+# 与校验侧 psql 同一库名变量派生，禁止两处各自默认值
+TEST_DB_NAME="cecelia_test"
+TEST_DB_URL="postgresql://localhost:5432/${TEST_DB_NAME}"
+
+# 0. 环境预检（不可用 = 环境未就绪 = FAIL，禁止 exit 0 兜底）
+psql "$TEST_DB_URL" -t -A -c "SELECT 1" &gt;/dev/null || { echo "FAIL: ${TEST_DB_NAME} 不可达"; exit 1; }
+curl -sf -m 5 localhost:5221/api/brain/health | jq -e '.status == "healthy"' &gt;/dev/null || { echo "FAIL: Brain 不健康(环境未就绪)"; exit 1; }
+
+# 1. 回归测试已毕业入 CI 且全绿（brain-integration job 同款入口，真 Postgres）
+cd packages/brain
+npx vitest run src/__tests__/integration/liveness-never-started.integration.test.js --config vitest.integration.config.js --reporter=verbose || { echo "FAIL: never_started 毕业回归测试未通过"; exit 1; }
+cd ../..
+node -e "const c=require('fs').readFileSync('packages/brain/vitest.config.js','utf8');if(!c.includes('liveness-never-started.integration.test.js'))process.exit(1)" || { echo "FAIL: POSTGRES_INTEGRATION_TESTS 未登记，非永久入 CI"; exit 1; }
+
+# 2. Golden Path 场景直验：注入「从未启动」任务（1dfa40f7 复现）
+# fixture 标题带时间戳唯一化：learnings 以 content_hash（title+content 派生）去重，
+# 固定标题会命中历史 is_latest 行跳写，导致步骤 6 学习行断言在复跑时假红
+TID=$(psql "$TEST_DB_URL" -q -t -A -c "INSERT INTO tasks (title, task_type, status, payload, error_message, started_at) VALUES ('e2e-never-started 探针场景 '||extract(epoch from now())::bigint, 'dev', 'in_progress', '{\"failure_class\":\"missing_anchor\"}', 'S2锚点执法：task缺少 payload.anchor.{journey_id,gp_id,step_id}，拒绝点火', NULL) RETURNING id")
+[ -n "$TID" ] || { echo "FAIL: fixture 注入失败"; exit 1; }
+trap "psql \"$TEST_DB_URL\" -c \"DELETE FROM learnings WHERE task_id='$TID'\" &gt;/dev/null 2&gt;&amp;1; psql \"$TEST_DB_URL\" -c \"DELETE FROM tasks WHERE id='$TID'\" &gt;/dev/null 2&gt;&amp;1 || true" EXIT
+rm -f "/tmp/cecelia-${TID}.log"
+
+# 3. 真实两轮探针（suspect → confirmed dead），worktree 真代码 + 真 DB + 真 ps
+cat &gt; /tmp/e2e-never-started-probe.mjs &lt;&lt;MJS
+process.env.NODE_ENV = process.env.NODE_ENV || 'test';
+const { probeTaskLiveness } = await import('$PWD/packages/brain/src/executor.js');
+await probeTaskLiveness();
+await probeTaskLiveness();
+process.exit(0);
+MJS
+NODE_ENV=test node /tmp/e2e-never-started-probe.mjs || { echo "FAIL: 探针执行失败"; exit 1; }
+
+# 4. 分类保真断言（时间窗防历史数据冒充：watchdog_kill.ts 须在 5 分钟内）
+REASON=$(psql "$TEST_DB_URL" -t -A -c "SELECT payload-&gt;'watchdog_kill'-&gt;&gt;'reason' FROM tasks WHERE id='$TID' AND (payload-&gt;'watchdog_kill'-&gt;&gt;'ts')::timestamptz &gt; NOW() - interval '5 minutes'")
+[ "$REASON" = "never_started" ] || { echo "FAIL: watchdog_kill.reason=$REASON 期望 never_started"; exit 1; }
+
+# 5. 已有 error_message / failure_class 不被覆盖（PRD 边界）
+EM=$(psql "$TEST_DB_URL" -t -A -c "SELECT error_message FROM tasks WHERE id='$TID'")
+echo "$EM" | grep -q 'S2锚点执法' || { echo "FAIL: error_message 被覆盖为 $EM"; exit 1; }
+FC=$(psql "$TEST_DB_URL" -t -A -c "SELECT payload-&gt;&gt;'failure_class' FROM tasks WHERE id='$TID'")
+[ "$FC" = "missing_anchor" ] || { echo "FAIL: failure_class 被覆盖为 $FC"; exit 1; }
+
+# 6. failure learning 文本真根因保真（PRD 行 20，r2 补：task_id 定位 + 5 分钟时间窗防历史冒充）
+L=$(psql "$TEST_DB_URL" -t -A -c "SELECT title || ' ' || content FROM learnings WHERE task_id='$TID' AND trigger_event='watchdog_kill' AND created_at &gt; NOW() - interval '5 minutes'")
+[ -n "$L" ] || { echo "FAIL: 该任务无 watchdog_kill 失败学习行"; exit 1; }
+echo "$L" | grep -q 'never_started' || { echo "FAIL: 学习文本缺真根因标签 never_started"; exit 1; }
+if echo "$L" | grep -q 'liveness_dead'; then echo "FAIL: 学习文本仍含 liveness_dead 假标签"; exit 1; fi
+
+# 7. 下游分类保真：never_started 文本不落 transient 环境重试假通道
+node -e "import('./packages/brain/src/dev-failure-classifier.js').then(m=&gt;{const r=m.classifyDevFailure({error:'[watchdog] liveness_probe_failed reason=never_started 进程从未启动'});if(r.class==='transient'){console.error('FAIL: never_started 误分类 transient');process.exit(1);}console.log('classifier class='+r.class);})" || { echo "FAIL: classifier 分类保真失败"; exit 1; }
+
+# 8. 枚举硬编码全仓库复查（ASSUMPTION 兑现）
+for f in $(grep -rln "process_disappeared" packages/brain/src --include="*.js" | grep -v __tests__); do grep -q "never_started" "$f" || { echo "FAIL: $f 引用 exit reason 枚举但缺 never_started"; exit 1; }; done
+
+echo "OK Golden Path 验证通过: never_started 分类保真 + 字段不覆盖 + 学习文本真根因 + 回归护栏 + 永久入 CI"
+```
+
+**PASS 标准**: 脚本 exit 0
+**FAIL 标准**: 任一断言 exit 非 0（含环境不可达——禁止 skip 当 PASS）
+
+---
+
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| 从未启动分类 | `tests/liveness-never-started.integration.test.ts` | watchdog_kill.reason 为 never_started | → 1 failure（现返 process_disappeared，已实测） |
+| 字段不覆盖 | `tests/liveness-never-started.integration.test.ts` | 不被 watchdog 记账覆盖 | → 1 failure（分类断言红，已实测） |
+| 学习文本保真 | `tests/liveness-never-started.integration.test.ts` | failure learning 文本含真实根因标签 | → 1 failure（现 title/content 取通道参数 [liveness_dead]，已实测） |
+| 曾启动回归 | `tests/liveness-never-started.integration.test.ts` | 仍判 process_disappeared | 现状绿（回归护栏，已实测 exit 0） |
+| 有日志边界 | `tests/liveness-never-started.integration.test.ts` | 不判 never_started | 现状绿（边界护栏，已实测） |
+| classifier 保真 | `tests/liveness-never-started.integration.test.ts` | 不落 transient 环境重试通道 | → 1 failure（现命中 /\[watchdog\]/i 判 transient，已实测） |
+
+**Red 实测证据（proposer 本机，2026-08-03，r2 复测）**：`NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/` → **Tests 4 failed | 2 passed (6)**，失败原因与预期逐条一致（process_disappeared / transient / 学习文本现含 [liveness_dead] 缺 never_started）。
+
+**测试不可变纪律**：generator commit 1（Red）原样提交本 tests/ 文件；毕业到 `packages/brain/src/__tests__/integration/liveness-never-started.integration.test.js` 时仅允许改 import 相对路径与去除 TS 类型标注，describe/it 名与 expect 断言逐字不变；毕业 commit 前本地先跑 lint-tdd-commit-order 与 check-test-coverage（铁律）。
+
+---
+
+## generator 义务硬条款（合同法律部分）
+
+1. **禁改共享 CI 基础设施**：`.github/workflows/` 零改动；唯一允许触碰的测试注册点 = `packages/brain/vitest.config.js` 的 `POSTGRES_INTEGRATION_TESTS` 数组追加一行
+2. **DevGate**：改 packages/brain 前过 facts-check.mjs / check-version-sync.sh / check-dod-mapping.cjs
+3. **禁自行 merge PR**：merge 权归 controller，generator 只推分支报告 ready
+4. **Red commit 只 add 精确测试路径**，禁止 git add . 混入
+5. **错误码契约**：checkExitReason 消费处若新增「失败返 null/false」形态分支，必须显式 else 处理（铁律）
+6. **保守回落**：「从未启动」信号不完整时回落 process_disappeared 现状兜底，禁止扩大 never_started 判定面（判定点登记表方法 A 的三信号缺一不可，其中 started_at=null 与「已有派发失败 error_message」为 PRD ASSUMPTION 的或关系）
+
+---
+
+## contract-gate 备注
+
+- 本合同所有 psql 计数/取值断言带 5 分钟时间窗或定点读（id 定位），无历史数据冒充面
+- E2E 中 `trap ... || true` 为清理路径（非断言），`import(...).then` node 断言以 process.exit(1) 传播失败
+
+gate-allow: domain/db-no-time-window E2E 步骤 0 的 `SELECT 1` 为 DB 连通性预检（不可达即 FAIL exit 1 的环境就绪探测），非业务数据聚合，无历史数据冒充面
+gate-allow: cheat/or-true E2E trap 行为 fixture 清理路径（DELETE learnings/tasks），非断言路径；全部断言路径均显式 exit 1 传播失败
+- manual oracle 真实 exit code 记录见 contract-dod.md 附录（铁律：合同批准前逐条真跑）
+- 探针 heredoc 用非引号定界符 `&lt;&lt;MJS`（r3 修复 ERR_MODULE_NOT_FOUND）：`$PWD` 在写入时展开为 repo 根绝对路径供 ESM import；脚本内当前无其他 `$`，后续若加含 `$` 内容须转义 `\$`
+- TID 捕获用 `psql -q -t -A`（r3 修复，INV-10 重跑时发现同类结构性缺陷）：psql 17 下不加 `-q` 时 INSERT RETURNING 输出第二行命令标签 `INSERT 0 1`，TID 变两行 → 后续 `WHERE id='$TID'` 恒报 uuid 语法错；`-q` 抑制命令标签，本机实测捕获为单行纯 UUID
+- contract-gate: 若 packages/brain/src/lib/contract-gate.js 存在则照常过 gate（cecelia 仓库场景）
+
+## journey_type: autonomous
+## target_environment: local_api
+</pre></div><div id="dod" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;">---
+skeleton: false
+journey_type: autonomous
+---
+# Contract DoD — Sprint: watchdog liveness「从未启动」误判 liveness_dead 修复（防复发）
+
+**范围**: packages/brain/src/executor.js（checkExitReason/liveness 探针分类 + requeueTask 内 failure learning 文本真根因保真）+ packages/brain/src/dev-failure-classifier.js（never_started 识别）+ 回归测试永久入 CI。不含：capture_atoms 路由逻辑改动（PRD 排除的是路由逻辑；learnings 失败学习行文本保真在范围内，其 INSERT 位于 executor.js）、S2 豁免名单、1dfa40f7 补锚重跑
+**大小**: S
+
+## ARTIFACT 条目
+
+- [x] [ARTIFACT] sprint 红测试文件原样保留（CONTRACT IS LAW 锚）且零 mock（无 vi.mock( 调用）
+  Test: node -e "const c=require('fs').readFileSync('sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts','utf8');if(!c.includes('never_started')||!c.includes('process_disappeared')||c.includes('vi.mock('))process.exit(1)"
+
+- [x] [ARTIFACT] 毕业回归测试存在于 packages/brain/src/__tests__/integration/ 且零 mock（PRD「永久回归测试入 CI」载体）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/liveness-never-started.integration.test.js','utf8');if(!c.includes('never_started')||!c.includes('process_disappeared')||c.includes('vi.mock('))process.exit(1)"
+
+- [x] [ARTIFACT] 毕业测试已登记 vitest.config.js POSTGRES_INTEGRATION_TESTS（brain-integration job 机械入口）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/vitest.config.js','utf8');if(!c.includes('liveness-never-started.integration.test.js'))process.exit(1)"
+
+- [x] [ARTIFACT] 共享 CI 基础设施零改动（.github/workflows/ 禁区铁律）
+  Test: bash -c 'git fetch origin main --quiet 2&gt;/dev/null; [ -z "$(git diff --name-only origin/main...HEAD -- .github/workflows/)" ] || exit 1; echo OK'
+
+## BEHAVIOR 条目（journey_type=autonomous，真 Postgres cecelia_test + 真模块 + 真 ps，零 mock）
+
+&gt; 4 类标准场景映射：本任务无 HTTP Response Schema（纯内部分类修复），对应关系为——
+&gt; 「schema 字段值」→ B1（DB 可观测字段 watchdog_kill.reason 字面值）；「禁用字段反向」→ B1 内含 not-liveness_dead/not-process_disappeared 反向断言 + B7 学习文本 not-liveness_dead 反向；
+&gt; 「数据完整性」→ B2（error_message/failure_class 不被覆盖）+ B7（PRD 行 20 (b)：failure learning 文本真根因保真）；「error/边界 path」→ B3/B4（曾启动回归 + 有日志边界）+ B5（下游误分类通道封堵）。
+
+- [x] [BEHAVIOR] 从未启动任务（started_at=null ∧ 无进程日志 ∧ pid 未跟踪）双确认后 watchdog_kill.reason 为 never_started（真 PG 落库断言，含 not liveness_dead/process_disappeared 反向）
+  Test: manual:bash -c 'NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t "watchdog_kill.reason 为 never_started"'
+  期望: exit 0（实现前实测 exit 1 = 真红）
+
+- [x] [BEHAVIOR] 从未启动任务已有 error_message（S2 拒绝原文）与 payload.failure_class=missing_anchor 不被 watchdog 记账覆盖
+  Test: manual:bash -c 'NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t "不被 watchdog 记账覆盖"'
+  期望: exit 0（实现前实测 exit 1 = 真红，联合分类断言）
+
+- [x] [BEHAVIOR] 回归护栏：曾启动任务（started_at 非空 + 进程日志存在）仍判 process_disappeared，行为与现状完全一致
+  Test: manual:bash -c 'NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t "仍判 process_disappeared"'
+  期望: exit 0（现状即绿，实现后不得变红——防误改）
+
+- [x] [BEHAVIOR] 边界：started_at=null 但存在进程日志（确实曾启动）→ 不判 never_started，仍走既有 process_disappeared 判定
+  Test: manual:bash -c 'NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t "不判 never_started"'
+  期望: exit 0（现状即绿，钉死判定面不扩大）
+
+- [x] [BEHAVIOR] 下游分类保真：classifyDevFailure 对 never_started 失败文本不落 transient 环境重试通道（liveness_dead 假标签的下游闸口）
+  Test: manual:bash -c 'node -e "import(\"./packages/brain/src/dev-failure-classifier.js\").then(m=&gt;{const r=m.classifyDevFailure({error:\"[watchdog] liveness_probe_failed reason=never_started\"});process.exit(r.class===\"transient\"?1:0)})"'
+  期望: exit 0（实现前实测 exit 1 = 真红：现命中 /\[watchdog\]/i 误判 transient）
+
+- [x] [BEHAVIOR] 回归测试已毕业入 CI 并在真 Postgres 下全绿（brain-integration job 同款命令）
+  Test: manual:bash -c 'cd packages/brain &amp;&amp; npx vitest run src/__tests__/integration/liveness-never-started.integration.test.js --config vitest.integration.config.js'
+  期望: exit 0（未毕业/未登记白名单时 vitest 报 No test files found exit 1——登记被执行路径隐式强制）
+
+- [x] [BEHAVIOR] failure learning 文本真根因保真（PRD 行 20 (b)，r2 补）：never_started 任务双确认后 learnings 表该任务失败学习行（task_id 定位 + trigger_event='watchdog_kill' + created_at 5 分钟时间窗防历史冒充）存在，且文本含 never_started、不含 liveness_dead 假标签（真 Postgres cecelia_test 零 mock）
+  Test: manual:bash -c 'NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t "failure learning 文本含真实根因标签"'
+  期望: exit 0（实现前实测 exit 1 = 真红：现 title/content 取 requeue 通道参数，含 [liveness_dead] 且缺 never_started）
+
+## Invariant 覆盖（PRD 铁律 58 条逐条映射：可执行 INV 条目 或 显式 N/A）
+
+- [x] [BEHAVIOR] INV-3 起草涉及表字段的合同/测试前 psql 核对真实列名（tasks 表 started_at/error_message/payload 三列实存）
+  Test: manual:bash -c 'C=$(psql postgresql://localhost:5432/cecelia_test -t -A -c "SELECT count(*) FROM information_schema.columns WHERE table_name='"'"'tasks'"'"' AND column_name IN ('"'"'started_at'"'"','"'"'error_message'"'"','"'"'payload'"'"')"); [ "$C" = "3" ] || exit 1; echo OK'
+  期望: OK（proposer 起草时已实查通过，evaluator 复跑防漂移）
+  gate-allow: domain/db-no-time-window INV-3 为 information_schema 列元数据核对（表结构存在性），非业务数据聚合，无历史数据冒充面
+
+- [x] [BEHAVIOR] INV-4 新增枚举值全仓库 grep 复查：引用 process_disappeared 枚举的生产源文件必须同时处理 never_started（ASSUMPTION 兑现）
+  Test: manual:bash -c 'for f in $(grep -rln "process_disappeared" packages/brain/src --include="*.js" | grep -v __tests__); do grep -q "never_started" "$f" || exit 1; done; echo OK'
+  期望: OK（实现前实测 exit 1 = 真红：executor.js 现无 never_started）
+
+非可执行条目逐条声明（编号按 PRD Invariant 段顺序，1-58）：
+
+- INV-1 触发条件窄路径两层验证法：采纳——B1/B2/B6/B7 即「同机制真实端到端触发（零 mock）」层；auto-learning 传参保真由 B1 的 watchdog_kill.reason DB 断言钉死（写入 watchdog_kill 与传给 auto-learning 的是同一 evidence 对象），requeueTask 学习文本保真由 B7 learnings 行真 PG 断言钉死，source-code inspection 层由 code-review-gate 覆盖
+- INV-2 DB_NAME 写入侧/校验侧同源：结构满足——写入侧 node 走 db-config.js（NODE_ENV=test→cecelia_test 单源），校验侧 psql 由 E2E 脚本单一 TEST_DB_NAME 变量派生，无两处默认值；db-config.js 含测试环境禁连生产库 guard
+- INV-3 见上方可执行条目
+- INV-4 见上方可执行条目
+- INV-5 watchdog_overdue relay run 恢复路径：N/A——本 sprint 不触及 relay run requeue 恢复
+- INV-6 成功判定看语义字段：满足——本合同断言全部为语义字段直查（reason 字面值/error_message 内容/class 值），无 ok:true 探测；另无通知/外部写库接口
+- INV-7 dep-audit fixAvailable：N/A——不改依赖
+- INV-8 headed relay 心跳：N/A——无 headed relay 长等待环节（本合同产物自身）
+- INV-9 毕业 commit 前先本地跑 lint-tdd-commit-order 与 check-test-coverage：已写入 contract-draft「测试不可变纪律」，generator 流程义务
+- INV-10 合同批准前记录 manual oracle 真实 exit code 并确认解释器启动：已执行——见文末「manual oracle 实测 exit code 附录」
+- INV-11 manual:node -e 双引号 ${} 逐条真跑：满足——本合同全部 node -e 均无 ${} 模板串（字符串拼接/纯断言），且已逐条真跑（见附录）
+- INV-12 smoke 铁律：N/A——不改 smoke 脚本/allowlist（若 CI smoke 因 brain/src 变更要求登记，按 INV-46 处理）
+- INV-13 跨扫描周期状态不重置的真实多轮测试：满足——B1-B4 均为真实两轮探针，suspect 状态跨轮真实保留（测试仅在 afterEach 清理，轮间不重置）
+- INV-14 重扫+付费调用前置检查：N/A——本链路无 LLM/付费第三方调用
+- INV-15 跨模块时间常数隐含依赖：N/A——不新增时间常数，复用现有双确认节奏与宽限期
+- INV-16 theater 移动端关键词检查：N/A——target_environment=local_api，合同文本无移动端关键词
+- INV-17 target_environment 从 DB tasks.payload 读取：流程满足——PRD 已声明 local_api；relay 派发 payload 由 controller 写入（controller 职责，非本合同产物）
+- INV-18 judge API 格式（顶层 exit_code+log_tail+behavior_tests[]）：evaluator 侧义务——本合同每条 BEHAVIOR/E2E 均输出确定性 exit code 供其采集
+- INV-19 varchar 长度截断：N/A——本 sprint 写入均为 jsonb 字段（watchdog_kill），无 varchar 新写入
+- INV-20 复活死功能先读退役代码：N/A——非复活类改动
+- INV-21 「失败返 null/false」契约显式 else：已写入 contract-draft generator 义务硬条款第 5 条
+- INV-22 journey_features updated_at 巡检：N/A——report 阶段兜底探针，非本合同范围
+- INV-23 controller Step 7 机械闸：N/A——controller 职责
+- INV-24 host/环境白名单断言核对 headed 场景：N/A——本合同无 host 白名单类断言
+- INV-25 headed relay payload 带 base_repo/pr_url：N/A——controller 点火职责
+- INV-26 退役判断查生产库：N/A——非退役改动
+- INV-27 catch 吞错后台 job 失败计数：N/A——不新增后台 job；探针失败路径本身即告警链（liveness 学习）
+- INV-28 表名认领冲突：N/A——不建表不复用新表
+- INV-29 后台 job 声明消费方：N/A——不新增落库 job；never_started 标签的消费方即既有 failure learning/capture_atoms 链（PRD Golden Path 第 3 点）
+- INV-30 新字段与既有字段语义重叠须本 sprint 内消解：满足——never_started 与 process_disappeared 的语义边界在 contract-draft「判定点登记表」显式消解（从未启动 vs 曾启动互斥判据），无留债
+- INV-31 git_sha 判变/终验同一策略：N/A——无部署判变环节
+- INV-32 git rev-parse --verify：N/A——合同脚本无 rev-parse
+- INV-33 测试 worktree 触碰生产资源核对：满足——tests/E2E 仅触 cecelia_test（db-config.js guard 禁测试连生产库），fixture 行 afterEach/trap 清理
+- INV-34 失败路径禁 warning 降级：满足——E2E set -euo pipefail，全部失败路径显式 exit 1，唯一 || true 在 trap 清理（非断言路径）
+- INV-35 判变基准用生产实体自报：N/A——无部署判变
+- INV-36 lint-test-quality await 要求：满足——tests 每条 it 均 await 真实异步调用（probeTaskLiveness/pool.query/import）
+- INV-37 Test Contract 表 4 列 + backtick testFile：满足——见 contract-draft Test Contract 表
+- INV-38 Red commit 只 add 精确测试路径：已写入 generator 义务硬条款第 4 条
+- INV-39 source-code inspection 验调度接线：采纳于 INV-1 覆盖方式说明
+- INV-40 新 cron 先查 scheduler-jobs.js：N/A——不新增 cron
+- INV-41 generator 禁自行 merge：已写入 generator 义务硬条款第 3 条
+- INV-42 tmux 子 shell 环境变量继承：N/A——无 headed tmux 环节
+- INV-43 复用历史合同模板须核对真实派发历史：满足——本合同 E2E/断言为本 sprint 新写并逐条真跑（见附录），非先例照抄
+- INV-44 共享 CI 基础设施文件默认禁区：可执行——见 ARTIFACT 第 4 条（.github/workflows/ 零改动 diff 断言）
+- INV-45 PR head SHA 核对 verdict 锚定：N/A——controller/evaluator 收账职责
+- INV-46 feat+brain PR 一次带齐 smoke 登记：generator 义务——若 CI smoke 闸要求 allowlist 登记，随实现 commit 一次带齐，不等两连红
+- INV-47 新 task_type 七点清单：N/A——不新增 task_type（never_started 是 payload 内 reason 值，非任务状态/类型枚举）
+- INV-48 服务存活双信号：N/A——不改服务存活判定
+- INV-49 LaunchAgents 禁用：N/A——无常驻服务改动
+- INV-50 launchd-patrol manifest：N/A——无新常驻服务
+- INV-51 slot 内严格串行：N/A——执行体调度纪律，非本合同产物
+- INV-52 环境假设值禁写死：满足——判定条件全部从任务自身 DB 状态/文件系统实况推导（started_at、日志存在性、pid 跟踪态），无屏幕坐标/env 假设值
+- INV-53 接缝断言必须真目标验证：满足——见 contract-draft「接缝断言清单」（真 PG + 真 ps 已真验；生产 tick 段显式 logic-done-pending 入未覆盖清单，不标 done）
+- INV-54 测试默认种 ≥2 租户：N/A——tasks 为 Brain 内部调度表，无租户维度读写面
+- INV-55 secrets 不硬编码不进 git：满足——合同/测试/E2E 零凭据（本地 trust 连接），无新增 env 秘密
+- INV-56 PII 不明文进日志：N/A——无客户数据经过本链路
+- INV-57 API 端点必须有 auth：N/A——不新增/不改任何端点
+- INV-58 租户数据查询 scope：N/A——同 INV-54
+
+## manual oracle 实测 exit code 附录（INV-10，proposer 2026-08-03 本机逐条真跑）
+
+| 条目 | 命令首词 | 实测 exit code（实现前） | 判定 |
+|---|---|---|---|
+| B1 never_started 分类 | bash→npx vitest | 1 | 真红 ✓（现返 process_disappeared） |
+| B2 字段不覆盖 | bash→npx vitest | 1 | 真红 ✓（联合分类断言） |
+| B3 曾启动回归 | bash→npx vitest | 0 | 现状绿 ✓（回归护栏性质） |
+| B4 有日志边界 | bash→npx vitest | 0 | 现状绿 ✓（边界护栏性质） |
+| B5 classifier 保真 | bash→node | 1 | 真红 ✓（现判 transient） |
+| B6 毕业+白名单 | bash→npx vitest | 1 | 真红 ✓（文件不存在→No test files found） |
+| B7 学习文本保真（r2 补） | bash→npx vitest | 1 | 真红 ✓（现文本含 [liveness_dead] 缺 never_started，2026-08-03 实测） |
+| ARTIFACT-1 sprint 测试存在 | node | 0 | 已交付 ✓ |
+| ARTIFACT-2 毕业文件存在 | node | 1 | 真红 ✓ |
+| ARTIFACT-3 白名单登记 | node | 1 | 真红 ✓ |
+| ARTIFACT-4 workflows 零改动 | bash→git | 0 | 现状绿 ✓ |
+| INV-3 列名核对 | bash→psql | 0 | 环境前提成立 ✓ |
+| INV-4 枚举复查 | bash→grep 循环 | 1 | 真红 ✓（executor.js 无 never_started） |
+| E2E 探针脚本 r3 修复版（$PWD 绝对路径 import） | bash→node | 0 | 脚本可跑 ✓（2026-08-04 实测：import 解析到 worktree 绝对路径、NODE_ENV=test 路由 cecelia_test、两轮 suspect→confirmed dead 真实执行；红移交断言层，非脚本崩溃） |
+| E2E 步骤 4 REASON 断言（r3 修复版实测，fixture 注入→探针→断言全链） | bash→psql | 1 | 真红 ✓（现返 process_disappeared 兜底，实现后转绿） |
+| E2E TID 捕获 r3 修复版（psql -q -t -A） | bash→psql | 0 | 环境前提成立 ✓（不加 -q 时 psql 17 附带 `INSERT 0 1` 命令标签行致 TID 两行、后续 uuid 语法错恒炸，实测 -q 后单行纯 UUID） |
+
+假绿自查（每条心测「代码一行不写会 FAIL 吗」）：B1/B2/B5/B6/B7 + ARTIFACT-2/3 + INV-4 全部 YES（实测红）；B3/B4/ARTIFACT-4/INV-3 为回归护栏/环境前提，性质即「现状绿、防退化」，非实现性断言。
+</pre></div><div id="report" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;">━━━ Sprint: watchdog liveness 探针「从未启动任务」误判 liveness_dead 修复（防复发）  PR #4606  2026-08-04 ━━━
+
+PIPELINE  A+B+C phases · 3 GAN rounds · relay 单session · $0（成本未采集）
+
+Phase          Time    Cost    Result
+Planner        -       -       ✅ (sprint-prd.md, invariants=14)
+GAN×3          -       -       ✅ APPROVED (rubric 62/70, judgments=2)
+Generator      -       -       ✅ TDD Red=b0ea429 / Green=ce775e0
+Evaluator      -       -       ✅ PASS (9/9 BEHAVIOR + E2E exit 0, unverifiable 1条已兜底)
+Judge          -       -       ✅ PASS (Brain API, 重锚 151403efe)
+Reporter       -       -       ✅
+
+DOD 9/9 ✅  FAIL: 无
+
+## 合同未覆盖真实链路清单（规则 C，原样转呈——禁止静默）
+- 生产 Brain 运行时 tick 内触发未在本合同 E2E 覆盖｜原因：evaluate 在 merge 前的 worktree 执行，运行中的生产 Brain（localhost:5221）尚未加载新代码，等真实 tick 双确认需 ≥2 个 tick 周期且需真实制造孤儿任务污染生产库｜补位计划：merge 后 brain-deploy 流程重启 Brain，生产端按 PRD NFR「watchdog_kill.reason 可由 Brain DB 直查验证」直接观测（下一个真实从未启动任务出现时 psql 直查）。本合同以「worktree 真代码 + 真 Postgres(cecelia_test) + 真 ps 进程探测」零 mock 覆盖同一代码路径。
+- 除上条外本合同无 mock 豁免：tests/ 与 E2E 零 vi.mock、零 stub、零假数据注入（fixture 行为真实 INSERT 的 DB 行，非 mock）。
+
+E2E 截图: （无截图——后端 watchdog 分类逻辑，E2E 为 e2e-verify.sh exit 0）
+Learning: （从本次 Sprint 提炼的洞察见 learning.md）
+DB sync: journey_features(无关联feature) · api_registry ✅ · Notion pushed ✅
+# journey_steps 保留只读兼容（notion-push-sync 仍同步存量数据），新增数据禁止写入；Ability/Feature 一律写 journey_features
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+</pre></div><div id="learning" class="section" style="display:none;"><pre style="white-space:pre-wrap;word-break:break-word;"># Learning — watchdog liveness 探针「从未启动任务」误判 liveness_dead 修复（防复发）
+
+## 运行指标
+
+- GAN 轮次：3（r1/r2 反馈文件留档，第 3 轮 APPROVED，rubric 62/70，judgments=2）
+- Evaluator Fix 次数：0（evaluator 一次 PASS：9/9 BEHAVIOR + E2E exit 0，unverifiable 1 条已兜底）
+- 总成本：未采集（relay-runs API 对本 task_id 求和为 $0.00，成本行缺失）
+- PR：https://github.com/perfectuser21/cecelia/pull/4606（已 MERGED @2026-08-04T06:16:29Z，squash，sha 锚定 151403efe）
+- Sprint Dir：sprints/08041147-relay-2c1a4771
+
+## 发现的问题
+
+### [PROMPT] Prompt 类问题
+
+无（本次未遇到）。
+
+### [BUG] 代码缺陷
+
+- watchdog checkExitReason 对「从未存在的进程」兜底误判 process_disappeared → liveness_dead 假标签污染 urgent 学习流 → executor.js liveness 探针新增 never_started 分类（pid=null ∧ 无日志 ∧ 未启动），且不覆盖已有 error_message/failure_class。
+- dev-failure-classifier 见到 [watchdog] 文本一律判 transient，把真实根因（锚点执法拒绝点火）洗成瞬时故障 → 分类器不再对 [watchdog] 文本做 transient 短路，failure learning 文本携带真实根因标签。
+
+### [INFRA] 基础设施问题
+
+- 原任务 1dfa40f7 缺 payload.anchor 被锚点执法拒绝点火（从未启动），却被打上 liveness_dead 死标签——点火前置校验失败与运行期死亡是两类根因，不能共用一个标签。
+- merge 窗口两次被 main 前进打断：记账文件（版本 bump）冲突两轮让位重试才合入——高频仓库的 merge 让位成本要计入 relay 时长预期。
+- 【report 阶段亲历】relay 单 session 模式全程未写 node 级 initiative_run_events（只有 skill-relay-spawn），导致 finalize 收账闸先后报 pr_not_found / no_evaluator_gate，task 无法翻 completed → 本次通过官方 POST /api/brain/harness/phase-event 补登记 evaluator done + 经 /api/brain/tasks/tasks/:id 补写 pr_url 后放行；run.phase 也停在 A_planning，harness/complete Dashboard 更新被拒（initiative_run_not_done）。
+
+### [DESIGN] 设计缺陷
+
+- 毕业步（Red 后删/改 sprint tests 树）与 lint-contract-test-immutability（fail-closed 无毕业豁免）、brain-unit shard（收集 tests/regression/*.ts 致 PG integration 测试在 unit 环境必炸）两道 CI 闸互斥——毕业 commit 8d64be48b 被实锤拒绝后 revert（c88f3074），永久回归保护改由 packages/brain/src/__tests__/integration/*.js 副本承担；系统冲突已建 Notion issue 6b8f1239-a001-4f80-8f2a-953802a77a74。
+
+## 下次预防清单
+
+- [ ] relay controller 每个 phase 完成时调 POST /api/brain/harness/phase-event 登记 node=planner/gan/generator/evaluator/judge 的 done 事件，并推进 run.phase——否则 finalize 收账降级、Dashboard 更新被拒、report 棒要手工补账。
+- [ ] relay 点火或 merge 后立即回写 tasks.pr_url（主路由 PATCH 不收 pr_url，走 /api/brain/tasks/tasks/:id），并确保 payload.base_repo 存在，finalize 的 GitHub 反查才有落点。
+- [ ] 涉及删/改 Red 后测试树的毕业类改动，先核对 lint-contract-test-immutability 与 brain-unit shard 的收集范围，越界即改走 packages/brain/src/__tests__/integration/ 副本路径，不改闸脚本。
+- [ ] 高频仓库 merge 前预期 main 前进导致记账文件冲突，合并窗口预留 ≥2 轮让位重试。
+</pre></div><div id="screenshots" class="section" style="display:none;"><p>无截图</p></div></div></main><script>function show(id){document.querySelectorAll('.section').forEach(s=>s.style.display='none');var el=document.getElementById(id);if(el)el.style.display='block';}var first=document.querySelector('.section');if(first)first.style.display='block';</script></body></html>
