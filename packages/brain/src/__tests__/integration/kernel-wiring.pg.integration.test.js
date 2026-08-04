@@ -11,6 +11,7 @@ import { derive } from '../../orchestrator/derive.js';
 import { collectGroundTruth } from '../../orchestrator/ground-truth.js';
 import { createKernelHandlers } from '../../orchestrator/kernel-handlers.js';
 import { runLoop } from '../../orchestrator/loop.js';
+import { persistKernelRunPhase } from '../../orchestrator/kernel-run-store.js';
 import { createAttemptStore } from '../../orchestrator/attempt-store.js';
 import { resumeStalledRelayRuns } from '../../harness-relay-watchdog.js';
 import callbackRouter, {
@@ -1684,5 +1685,29 @@ describe('Kernel approval HTTP route on real PostgreSQL', () => {
         WHERE run_id=$1 AND action='verdict:human_review'`,
       [run.runId],
     )).rows[0].count).toBe(1);
+  });
+});
+
+// migration 382 回归守卫：367 版本的 initiative_runs_phase_check 枚举缺 'judge'，
+// 会让 persistKernelRunPhase(pool, runId, 'judge') 静默失败（CHECK 约束违反，
+// 调用方在 loop.js 里把这类失败降级为告警，不会显式抛错让测试变红）。这条测试
+// 直接对真实迁移后的 Postgres 断言 phase 真的变成了 'judge'——382 之前这个断言
+// 不可能过（要么 UPDATE 命中 0 行、要么直接抛 CHECK 违反错误），382 之后必须绿。
+describe('Kernel run store phase CHECK constraint（migration 382）', () => {
+  it('persistKernelRunPhase 可以把 run.phase 写成 judge', async () => {
+    const run = await seedRun();
+    await testPool.query(
+      `UPDATE initiative_runs SET phase='evaluate' WHERE id=$1`,
+      [run.runId],
+    );
+
+    const result = await persistKernelRunPhase(testPool, run.runId, 'judge');
+
+    expect(result).toMatchObject({ id: run.runId, phase: 'judge' });
+    const persisted = await testPool.query(
+      'SELECT phase FROM initiative_runs WHERE id=$1',
+      [run.runId],
+    );
+    expect(persisted.rows[0].phase).toBe('judge');
   });
 });
