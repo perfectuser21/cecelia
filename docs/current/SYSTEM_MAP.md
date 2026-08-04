@@ -1,14 +1,15 @@
 ---
 id: current-system-map
-version: 1.3.0
+version: 1.4.0
 created: 2026-03-10
-updated: 2026-07-19
+updated: 2026-08-04
 authority: CURRENT_STATE
 changelog:
   - 1.0.0: 初始版本，基于 main 分支代码实际审计
   - 1.1.0: Wave1 双层架构 — LLM fire-and-forget、circuit_breaker_states 持久化、brain_guidance 表
   - 1.2.0: Harness Pipeline 可视化 v2 — GET /initiative/:id/detail 端点 + Dashboard initiative 详情面板（data-testid: initiative-card/detail-panel/prd-content/step-timeline）+ reportNode step_timing/ws_issues/ws_costs 增强
   - 1.3.0: 七大机制总账(DevOps 完备性基准,2026-07-18/19 信息逻辑重建周收官)
+  - 1.4.0: 刀0 六型制地基——约束正本(KERNEL_CONTEXT.md)+三方对账闸+docs目录登记闸(PR #4611)
 ---
 
 # Cecelia 系统架构图（当前事实版）
@@ -95,6 +96,15 @@ Brain (port 5221)
 | LLM 去阻塞 | `src/tick-runner.js` | LLM 调用全部 fire-and-forget，thalamus 30s 超时，tick loop 不再阻塞 |
 | Circuit Breaker 持久化 | `src/circuit-breaker.js` + migration 261 | 重启后自动从 DB 恢复熔断状态，消除每次重启的冷启动盲区 |
 | brain_guidance 表 | `src/guidance.js` + migration 262 | 两层架构握手基础设施，getGuidance/setGuidance/clearExpired API |
+
+**刀0 新增能力（2026-08-04，PR #4611）——六型制地基 · 文档约束正本落地**：
+
+| 能力 | 实现 | 说明 |
+|------|------|------|
+| 约束正本（SSOT） | `packages/workflows/KERNEL_CONTEXT.md` | 硬规则唯一权威源，HARD_RULES:BEGIN/END marker 包裹 23 条铁律 |
+| 三方对账闸（升级） | `scripts/check-agents-rules-sync.sh` | 正本 vs AGENTS.md vs .claude/CLAUDE.md 三方 diff，任一不一致 exit 1 |
+| docs 目录登记闸 | `scripts/smoke/check-docs-dir-registry-smoke.sh` | 检测 docs/ 未登记子目录，exit 1 阻断 |
+| docs 目录基线 | `docs/current/docs-dir-baseline.txt` | 39 条祖父条款，登记闸的对账基准 |
 
 **Brain 版本同步（4 处必须同时更新）**：
 

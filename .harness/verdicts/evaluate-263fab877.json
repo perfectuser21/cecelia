@@ -1,0 +1,15 @@
+{
+  "verdict": "PASS",
+  "sha": "263fab877",
+  "unverifiable": [],
+  "double_gate": {
+    "artifact_gate": "PASS",
+    "contract_gate": "PASS"
+  },
+  "assertions": [
+    {"id": "ASSERT-1", "cmd": "bash packages/engine/tests/integrity/doc-foundation-contract.test.sh", "result": "PASS=4 FAIL=0", "status": "PASS"},
+    {"id": "ASSERT-2", "cmd": "bash scripts/check-agents-rules-sync.sh", "result": "三方对账通过 exit 0", "status": "PASS"},
+    {"id": "ASSERT-3", "cmd": "bash scripts/smoke/check-docs-dir-registry-smoke.sh", "result": "全登记 exit 0", "status": "PASS"},
+    {"id": "ASSERT-4", "cmd": "gh pr view 4611 body FIRE证据", "result": "FIRE-1+FIRE-2 均 exit 1 有记录", "status": "PASS"}
+  ]
+}
