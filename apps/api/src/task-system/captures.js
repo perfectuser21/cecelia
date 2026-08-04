@@ -29,7 +29,7 @@ router.get('/', async (req, res) => {
     values.push(parseInt(offset, 10) || 0);
 
     const sql = `
-      SELECT id, content, source, status, area_id, project_id, extracted_to, owner, created_at, updated_at
+      SELECT id, content, source, status, area_id, project_id, extracted_to, owner, destination_type, destination_id, created_at, updated_at
       FROM captures
       ${where}
       ORDER BY created_at DESC
@@ -79,10 +79,10 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PATCH /api/captures/:id — 更新
+// PATCH /api/captures/:id — 更新（含去向链 migration 385）
 router.patch('/:id', async (req, res) => {
   try {
-    const { status, area_id, project_id, extracted_to } = req.body;
+    const { status, area_id, project_id, extracted_to, destination_type, destination_id } = req.body;
     const fields = [];
     const values = [];
 
@@ -101,6 +101,14 @@ router.patch('/:id', async (req, res) => {
     if (extracted_to !== undefined) {
       values.push(JSON.stringify(extracted_to));
       fields.push(`extracted_to = $${values.length}`);
+    }
+    if (destination_type !== undefined) {
+      values.push(destination_type || null);
+      fields.push(`destination_type = $${values.length}`);
+    }
+    if (destination_id !== undefined) {
+      values.push(destination_id || null);
+      fields.push(`destination_id = $${values.length}`);
     }
 
     if (fields.length === 0) {

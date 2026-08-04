@@ -3,6 +3,17 @@
  */
 
 const BRAIN_API_URL = '/api/brain';
+const CAPTURES_API_URL = '/api/captures';
+
+export interface CaptureLink {
+  id: string;
+  content: string;
+  source: string;
+  status: string;
+  destination_type: string | null;
+  destination_id: string | null;
+  created_at: string;
+}
 
 export interface PRPlan {
   id: string;
@@ -221,6 +232,23 @@ export async function updatePRPlanStatus(
   } catch (error) {
     console.error('Error updating PR Plan status:', error);
     throw error;
+  }
+}
+
+/**
+ * 获取某个立项关联的所有 Captures（去向链反向查询，migration 385）
+ */
+export async function getCapturesForInitiative(initiativeId: string): Promise<CaptureLink[]> {
+  try {
+    const res = await fetch(`${CAPTURES_API_URL}?limit=50`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    const all: CaptureLink[] = Array.isArray(data) ? data : (data.items ?? []);
+    return all.filter(
+      c => c.destination_type === 'initiative' && c.destination_id === initiativeId
+    );
+  } catch {
+    return [];
   }
 }
 

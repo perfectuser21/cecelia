@@ -24,6 +24,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/breach-issue-copy.integration.test.ts',
   'src/__tests__/integration/capture-atom-routing.integration.test.ts',
   'src/__tests__/integration/handoff-atom-relay.integration.test.ts',
+  'src/__tests__/integration/capture-destination-link.integration.test.js',
 ];
 
 export default defineConfig({

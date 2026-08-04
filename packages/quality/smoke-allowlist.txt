@@ -22,6 +22,7 @@ bluegreen-bark-nojq-smoke.sh
 callback-postprocess-smoke.sh
 canary-drill-repair-smoke.sh
 canary-drill-smoke.sh
+capture-destination-link-smoke.sh
 capture-inbox-smoke.sh
 capture-triage-line-backlog-autotask-smoke.sh
 capture-triage-scope-smoke.sh
