@@ -24,7 +24,7 @@
   - 断言：新 digest ae2eaabba 在 node-profile.test.js + fleet-rollout.sh + fleet-node-profiles.json 合计 ≥5 处
   - manual:bash: `[ "$(grep -c ae2eaabba packages/brain/src/orchestrator/fleet-node/node-profile.test.js packages/brain/scripts/fleet-worker/fleet-rollout.sh packages/brain/config/fleet-node-profiles.json | awk -F: '{s+=$2}END{print s}')" -ge 5 ] && echo PASS || echo FAIL`
 
-- [BEHAVIOR] B6: Brain 版本同步 1.267.216，三处文件一致
+- [BEHAVIOR] B6: Brain 版本同步 1.267.217，三处文件一致
   - 断言：`bash scripts/check-version-sync.sh` 输出 "All version files in sync"
   - manual:bash: `bash scripts/check-version-sync.sh | grep -q "All version files in sync" && echo PASS || echo FAIL`
 
