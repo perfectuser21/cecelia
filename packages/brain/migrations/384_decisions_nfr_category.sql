@@ -1,4 +1,4 @@
--- Migration 374: decisions.category NFR 类别定家
+-- Migration 384: decisions.category NFR 类别定家
 --
 -- 目的：
 --   1. 将 category 从无约束 varchar(50) 升格为有正式 CHECK 约束的枚举型列
@@ -31,5 +31,5 @@ COMMENT ON COLUMN decisions.category IS
   '决策类别。nfr = NFR步骤级决策（目标：由 CI/E2E 闸写回 assertion_ref，禁手填）。';
 
 INSERT INTO schema_version (version, description, applied_at)
-VALUES ('374', 'decisions.category formal CHECK constraint incl. nfr', NOW())
+VALUES ('384', 'decisions.category formal CHECK constraint incl. nfr', NOW())
 ON CONFLICT (version) DO NOTHING;
