@@ -25,6 +25,12 @@ let _postDrainCooldownTimer = null;
 // 时同步清库，避免"已经不需要 drain 了"却在下次重启时被误恢复。）
 const DRAIN_STATE_KEY = 'tick_draining';
 
+// restore 时的过期上限（Issue cc28d1af 根因D，2026-08-04 一夜 4 次实证）：
+// 部署链 swap 后的无条件 drain-cancel 会在端口切换窗口 curl 静默失败，残留的
+// drain 行被新容器无条件恢复 → 派发瘫痪到有人发现。drain 的合法生命周期 =
+// pre-swap 等待（120s 超时）+ swap 数分钟；超过 15 分钟的必是残留，不恢复并清库。
+export const DRAIN_RESTORE_MAX_AGE_MS = 15 * 60 * 1000;
+
 async function persistDrainState() {
   await pool.query(`
     INSERT INTO working_memory (key, value_json, updated_at)
@@ -48,10 +54,20 @@ export async function restoreDrainState() {
     [DRAIN_STATE_KEY]
   );
   const saved = result.rows[0]?.value_json;
-  if (saved?.draining) {
-    _draining = true;
-    _drainStartedAt = saved.drain_started_at || new Date().toISOString();
+  if (!saved?.draining) return;
+
+  // 过期自愈：drain_started_at 缺失/不可解析/超过上限 → 判为部署残留，
+  // 不恢复内存态并清掉持久化行（fail-safe：宁可少 drain 也不无限瘫痪派发）
+  const startedMs = Date.parse(saved.drain_started_at ?? '');
+  const age = Number.isNaN(startedMs) ? Infinity : Date.now() - startedMs;
+  if (age > DRAIN_RESTORE_MAX_AGE_MS) {
+    log(`[tick] Stale drain state ignored on restore (started_at=${saved.drain_started_at ?? 'null'}, age>${Math.round(DRAIN_RESTORE_MAX_AGE_MS / 60000)}min) — clearing residue`);
+    await clearPersistedDrainState();
+    return;
   }
+
+  _draining = true;
+  _drainStartedAt = saved.drain_started_at;
 }
 
 // ─── Getter API（供 tick.js 等 caller 读取状态）────────────────────────
