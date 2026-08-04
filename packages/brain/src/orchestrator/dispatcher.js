@@ -252,6 +252,17 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     common.contract_round = observed.proposeBranchRn ?? 0;
     common.contract_sha = observed.proposeBranchSha ?? null;
   }
+  // 案卷式 GAN（issue ce42f68f，design doc §数据流2）：proposer/reviewer 读同一份
+  // 全量历轮案卷（rubric 历史 + blocker 台账），由 ground-truth.js collectGroundTruth
+  // 现查现给。旧的 review_feedback 字段（只带上一轮 2 句摘要）继续保留一版做兼容，
+  // 不在这次改动里替换/删除。空案卷（首轮）不注入，避免给 Skill 塞无意义空数组。
+  if (
+    ['proposer', 'reviewer'].includes(spec.role)
+    && Array.isArray(observed.caseFile)
+    && observed.caseFile.length > 0
+  ) {
+    common.case_file = observed.caseFile;
+  }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
     common.contract = observed.contract?.row ?? null;
     common.contract_branch = observed.contract?.row?.branch

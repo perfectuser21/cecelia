@@ -501,6 +501,42 @@ describe('createDispatcher', () => {
       .not.toContain('private proposer chain of thought');
   });
 
+  it('案卷式 GAN：proposer TaskBundle 注入 observed.caseFile 全量历轮行', async () => {
+    const deps = makeDeps();
+    const caseFile = [
+      { round: 1, author_role: 'proposer', blockers: [] },
+      { round: 1, author_role: 'reviewer', blockers: [{ id: 'R1-1', status: 'open' }] },
+    ];
+
+    await createDispatcher(deps)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 6,
+      observed: { ...observed, caseFile },
+      decision: { phase: 'gan', reason: 'revision_requested' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.case_file).toEqual(caseFile);
+    // review_feedback 是旧字段，本轮改动只加不减（design doc §数据流1：保留旧字段兼容一版）。
+    expect(created.bundle.inputs).not.toHaveProperty('review_feedback');
+  });
+
+  it('案卷式 GAN：observed.caseFile 为空数组时不往 proposer/reviewer TaskBundle 塞空字段', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 6,
+      observed: { ...observed, caseFile: [] },
+      decision: { phase: 'gan', reason: 'first_round' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs).not.toHaveProperty('case_file');
+  });
+
   it('dispatches the frozen CommanderBundle through preflight before Attempt creation', async () => {
     const order = [];
     const deps = makeDeps(order);
@@ -1008,6 +1044,24 @@ describe('createDispatcher', () => {
       contract_round: 1,
       contract_sha: 'a'.repeat(40),
     });
+  });
+
+  it('案卷式 GAN：reviewer TaskBundle 也注入 observed.caseFile 全量历轮行', async () => {
+    const deps = makeDeps();
+    const caseFile = [
+      { round: 1, author_role: 'proposer', blockers: [] },
+    ];
+
+    await createDispatcher(deps)('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 4,
+      observed: { ...observed, caseFile },
+      decision: { phase: 'gan', reason: 'review' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.case_file).toEqual(caseFile);
   });
 
   it('generator bundle 从已批准合同导出 contract_branch，供 launcher 注入环境', async () => {

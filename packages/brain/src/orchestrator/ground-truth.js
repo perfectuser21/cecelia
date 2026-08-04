@@ -26,6 +26,7 @@ import { normalizeFailureSet } from './convergence-signatures.js';
 import { getVerifiedRemotePlannerPrdArtifact } from './planner-artifact-receipt.js';
 import { parseHarnessResult, parseTaskBundle } from './execution-contract.js';
 import { sanitizeDiagnostic } from './failure-persistence.js';
+import { loadCaseFile } from './case-file-store.js';
 
 /** gh check state → 三态 ci 映射 */
 const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
@@ -293,6 +294,11 @@ export async function collectGroundTruth(deps, opts) {
     [runId],
   );
   const attemptRows = attemptRes.rows;
+
+  // 案卷式 GAN（issue ce42f68f，design doc §数据流2）：dispatcher.buildInputs
+  // 对 proposer/reviewer 注入的 case_file 由这里现查现给——同一份全量历轮行，
+  // 不做增量/摘要。
+  const caseFile = await loadCaseFile(pool, runId);
 
   // 熔断状态（P0-3 通道②）：markAuthFailure 写 account_usage_cache（src/account-usage.js:194-202）。
   // derive 不读——熔断换号分路归 T3 dispatcher；这里只透传观测。
@@ -609,5 +615,6 @@ export async function collectGroundTruth(deps, opts) {
     callbackResult,
     noProgress,
     noProgressReason,
+    caseFile,
   };
 }
