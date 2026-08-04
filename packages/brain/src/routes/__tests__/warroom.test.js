@@ -118,14 +118,14 @@ describe('GET /warroom/line/:id/command', () => {
     }] });
     // 6. open issues
     mockPool.query.mockResolvedValueOnce({ rows: [] });
-    // 7. recent runs
+    // 7. recent runs（真列名 phase，handler 内映射为前端 status）
     mockPool.query.mockResolvedValueOnce({ rows: [
-      { id: 'r1', status: 'completed', started_at: '2026-07-01T00:00:00Z', completed_at: '2026-07-01T01:00:00Z', created_at: '2026-07-01T00:00:00Z' },
+      { id: 'r1', phase: 'done', started_at: '2026-07-01T00:00:00Z', completed_at: '2026-07-01T01:00:00Z', created_at: '2026-07-01T00:00:00Z' },
     ] });
-    // 8. health runs (30 days)
+    // 8. health runs (30 days)（真列名 phase，done=成功）
     mockPool.query.mockResolvedValueOnce({ rows: [
-      { id: 'r1', status: 'completed', created_at: '2026-07-01T00:00:00Z' },
-      { id: 'r2', status: 'failed', created_at: '2026-07-02T00:00:00Z' },
+      { id: 'r1', phase: 'done', created_at: '2026-07-01T00:00:00Z' },
+      { id: 'r2', phase: 'failed', created_at: '2026-07-02T00:00:00Z' },
     ] });
     // 9. health pr count
     mockPool.query.mockResolvedValueOnce({ rows: [{ cnt: '3' }] });
