@@ -2,14 +2,12 @@
   "verdict": "PASS",
   "task_id": "78e812c0-458e-4829-9b29-f2eda72c3ffb",
   "attempt_id": "",
-  "head_sha": "6bc78f97c63086024eb8807bca9f9b07db518cff",
+  "head_sha": "97c2e2932793d7d64c5ae9ab42e672c6f69d2d53",
   "pr": "https://github.com/perfectuser21/cecelia/pull/4598",
   "sprint_dir": "sprints/08040916-relay-78e812c0",
   "target_environment": "local_api",
   "journey_type": "autonomous",
   "verification_level": "L2",
-  "exit_code": 0,
-  "log_tail": "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  ✅ 映射检查通过 (3 项)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✅ Golden Path 验证通过",
   "failed_step": null,
   "log_excerpt": null,
   "screenshots": [],
@@ -22,15 +20,15 @@
       "log_tail": "OK window: 当前时刻 atom 不计入上一北京日窗，debt=1",
       "verification_level": "L2",
       "action": "真 Postgres(cecelia) TEMP 影子表插入当前时刻非自产 atom",
-      "expected": "旧口径 NOW()-24h 必 debt=0 假绿；合流终态 getM7CaptureWindow 北京昨日自然日窗 debt=1"
+      "expected": "旧口径 NOW()-24h 必 debt=0 假绿；新口径上一完整北京日窗 debt=1"
     },
     {
       "command": "node sprints/08040916-relay-78e812c0/tests/e2e/m7-scenarios.mjs exclusion",
       "exit_code": 0,
       "log_tail": "OK exclusion: 仅自产 debt=1 → 加非自产 debt=0",
       "verification_level": "L2",
-      "action": "上一北京日窗内先插自产 atom（content 带 issue: [ledger-hygiene] 前缀 + lane 打标），再插非自产 atom",
-      "expected": "合流终态由 LEDGER_SELF_ATOM_PREFIX content 前缀分解 organic/self：仅自产 → debt=1 正确击穿；加非自产 → debt=0 清偿（合同断言语义在前缀机制下如实成立）"
+      "action": "上一北京日窗内先插 lane=ledger-hygiene 自产 atom，再插非自产 atom",
+      "expected": "仅自产 → debt=1 正确击穿；加非自产 → debt=0 清偿"
     },
     {
       "command": "node sprints/08040916-relay-78e812c0/tests/e2e/m7-scenarios.mjs reset",
@@ -47,15 +45,15 @@
     {
       "command": "bash tests/e2e/b5-autolearn.sh (端口路由副本 5221→5224，断言逐字一致)",
       "exit_code": 0,
-      "log_tail": "OK b5: learning=f96331d1-b6ef-4e23-9eea-6f1334bdc28b atom 溯源落库",
+      "log_tail": "OK b5: learning=871212c5-75cf-40ad-b659-95f142a37ecc atom 溯源落库",
       "verification_level": "L2",
-      "action": "POST /api/brain/execution-callback (harness_initiative failed) → worktree(6bc78f97) 代码 Brain HTTP + 真 cecelia 库",
+      "action": "POST /api/brain/execution-callback (harness_initiative failed) → worktree 代码 Brain HTTP + 真 cecelia 库",
       "expected": "learnings 新增 1 行(task_id 关联) + capture_atoms 新增 1 行 routed_to_table=learnings routed_to_id=learning id，created_at 5 分钟窗"
     },
     {
       "command": "bash tests/e2e/b6-handoff-patch.sh (端口路由副本)",
       "exit_code": 0,
-      "log_tail": "OK b6: handoff atom 登记 task=28251c6b-386e-4894-bf43-ddc3cd5f4c7b",
+      "log_tail": "OK b6: handoff atom 登记 task=f9973727-01be-4ff9-8526-b823257b421c",
       "verification_level": "L2",
       "action": "PATCH /api/brain/tasks/:id body result.handoff(buildHandoff shape)",
       "expected": "200 success==true 且 capture_atoms 新增 target_type=handoff routed_to_table=tasks routed_to_id=task_id，5 分钟窗"
@@ -75,7 +73,7 @@
     {
       "command": "node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs",
       "exit_code": 0,
-      "log_tail": "All facts consistent. / ✅ All version files in sync (1.267.207) / ✅ 映射检查通过 (3 项)",
+      "log_tail": "All facts consistent. / ✅ All version files in sync / ✅ 映射检查通过 (3 项)",
       "verification_level": "L2"
     },
     {
@@ -110,10 +108,11 @@
     }
   ],
   "notes": {
-    "reevaluation": "head 实质变更（97c2e2932 → 6bc78f97，merge origin/main 含 #4597 同探针合流，版本 1.267.207）触发全量重评；合同文件与 sprint 测试 git diff 零改动；13 条 [BEHAVIOR] + final E2E 在新 head 全部重新真跑，证据全部来自本轮执行。",
-    "merge_semantics": "合流终态 m7 capture 子项排除机制由 lane SQL 条件改为 LEDGER_SELF_ATOM_PREFIX content 前缀分解（#4597 骨架）+ getM7CaptureWindow 参数化北京昨日自然日窗；exclusion oracle 的自产 fixture content 带该前缀，断言在新机制下如实成立（真跑 exit 0，非改写断言）；写入侧保留 lane:'ledger-hygiene' 打标（copy 场景 lane 断言真跑通过）。",
-    "mock_edge_check": "clean（禁 mock 边清单 5 条，新 merge-base 重扫 PR 测试文件，唯一命中 auto-learning.test.js:8 vi.mock('crypto')——外层无关依赖，不属清单边）",
-    "environment_routing": "生产 Brain(5221) 不含 PR 代码。b5-b8 与 final E2E 打从 worktree 6bc78f97 启动的隔离 Brain 实例（端口 5224，挂 src/routes.js 真实路由聚合；不启 tick/调度防对真库双重派发）。改写面仅 localhost:5221→5224 与脚本副本路径，全部断言逐字一致（diff 已核）。生产部署接缝为 PRD 显式裁剪（接缝清单 #3）。",
+    "mock_edge_check": "clean（禁 mock 边清单 5 条，扫描 PR 内 10 个测试文件，唯一命中 auto-learning.test.js:8 vi.mock('crypto')——外层无关依赖，不属清单边）",
+    "environment_routing": "生产 Brain(5221, git_sha 01d1b372c) 不含 PR 代码（handoff.js 无 pushHandoffAtom，merge-base 实证）。按 controller relay 口径，b5-b8 与 final E2E 打从 worktree 97c2e2932 启动的隔离 Brain 实例（端口 5224，挂 src/routes.js 真实路由聚合，含 routes/tasks.js PATCH 与 routes/execution.js execution-callback inline auto-learning；不启 tick/调度防对真库双重派发）。改写面仅 localhost:5221→5224 与脚本副本路径（B-1.6 容器 URL 重写同型环境路由），全部断言逐字一致（diff 已核）。生产部署接缝为 PRD 显式裁剪（接缝清单 #3）。",
+    "playground_heuristic": "仓库根 playground/ 为 main 既有训练产物(#4230)，本 PR 零触碰——B33 playground 启发式误命中，按真实功能 autonomous sprint 分支执行位置词验证（脚本含 localhost:5221/api/brain/ ✓）",
     "cleanup": "tasks/capture_atoms/learnings 中 e2e-78e812c0-% 标记数据残留 0 行；隔离 Brain 实例已停止（5224 关闭）"
-  }
+  },
+  "exit_code": 0,
+  "log_tail": "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  ✅ 映射检查通过 (3 项)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✅ Golden Path 验证通过"
 }

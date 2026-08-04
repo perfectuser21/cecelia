@@ -1,6 +1,3 @@
-contract_branch: cp-08040930-harness-prd
-sprint_dir: sprints/08040916-relay-78e812c0
-
 ---
 skeleton: false
 journey_type: autonomous

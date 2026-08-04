@@ -48,8 +48,10 @@ describe('harness-v5 CI checks 结构', () => {
     )?.[0] ?? '';
     const runSprintStep = sprintJob.slice(sprintJob.indexOf('- name: Run sprint tests'));
 
+    // createdb + migrate 两步都锁住（2026-08-04 PR #4598）：cecelia_test 不跑 migrations
+    // 会让真 PG 集成型 sprint 测试（TEMP TABLE LIKE public.xxx）42P01 必红
     expect(sprintJob).toMatch(
-      /- name: Create isolated sprint test database[\s\S]*?run:\s*createdb cecelia_test/,
+      /- name: Create isolated sprint test database[\s\S]*?run:\s*\|[\s\S]*?createdb cecelia_test[\s\S]*?DB_NAME=cecelia_test node src\/migrate\.js/,
     );
     expect(runSprintStep).toContain(
       'TEST_DATABASE_URL: postgresql://cecelia:cecelia@localhost:5432/cecelia_test',

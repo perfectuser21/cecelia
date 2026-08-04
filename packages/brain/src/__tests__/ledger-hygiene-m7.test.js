@@ -39,7 +39,7 @@ describe('m7 — 自主循环零产出指标', () => {
       async query(sql) {
         const s = sql.replace(/\s+/g, ' ').trim();
         // m1-m6 返回 0 行（只测 m7）
-        if (s.includes('strategy_session') && s.includes('INTERVAL \'24 hours\'')) {
+        if (s.includes('strategy_session') && s.includes('Asia/Shanghai')) {
           return { rows: [{ cnt: '0' }] }; // 近 24h 零产出
         }
         if (s.includes('strategy_session') && !s.includes('INTERVAL')) {
@@ -63,7 +63,7 @@ describe('m7 — 自主循环零产出指标', () => {
     const pool = {
       async query(sql) {
         const s = sql.replace(/\s+/g, ' ').trim();
-        if (s.includes('strategy_session') && s.includes('INTERVAL \'24 hours\'')) {
+        if (s.includes('strategy_session') && s.includes('Asia/Shanghai')) {
           return { rows: [{ cnt: '3' }] }; // 3 条
         }
         if (s.includes('strategy_session')) {
@@ -84,7 +84,7 @@ describe('m7 — 自主循环零产出指标', () => {
     const pool = {
       async query(sql) {
         const s = sql.replace(/\s+/g, ' ').trim();
-        if (s.includes('strategy_session') && s.includes('INTERVAL \'24 hours\'')) {
+        if (s.includes('strategy_session') && s.includes('Asia/Shanghai')) {
           return { rows: [{ cnt: '2' }] };
         }
         if (s.includes('strategy_session')) {
@@ -108,13 +108,13 @@ describe('m7 — 自主循环零产出指标', () => {
     const pool = {
       async query(sql) {
         const s = sql.replace(/\s+/g, ' ').trim();
-        if (s.includes('strategy_session') && s.includes('INTERVAL \'24 hours\'')) {
+        if (s.includes('strategy_session') && s.includes('Asia/Shanghai')) {
           return { rows: [{ cnt: '0' }] };
         }
         if (s.includes('strategy_session')) {
           return { rows: [{ '?column?': '1' }] };
         }
-        if (s.includes('capture_atoms') && s.includes('INTERVAL \'24 hours\'')) {
+        if (s.includes('capture_atoms') && s.includes('Asia/Shanghai')) {
           return { rows: [{ cnt: '0' }] };
         }
         if (s.includes('capture_atoms')) {
