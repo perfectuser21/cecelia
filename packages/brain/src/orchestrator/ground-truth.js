@@ -283,7 +283,7 @@ export async function collectGroundTruth(deps, opts) {
   );
   const evaluateResult = asJson(evaluatorAttemptRes.rows[0]?.result);
   const attemptRes = await pool.query(
-    `SELECT id, run_id, hop, phase, role, provider, account_id, machine_id,
+    `SELECT id, run_id, hop, phase, role, provider, provider_session_id, account_id, machine_id,
             requested_machine_id, actual_machine_id, execution_transport,
             remote_job_id, machine_attestation_status, lease_generation,
             lease_owner, lease_expires_at, heartbeat_at,
@@ -295,6 +295,28 @@ export async function collectGroundTruth(deps, opts) {
     [runId],
   );
   const attemptRows = attemptRes.rows;
+
+  // 案卷式 GAN 会话续接（design doc §数据流3，决策 ba33fc68）：Proposer/Reviewer
+  // 各自跨轮持久 provider 会话，互相隔离——同 run 同 role 最近一个终态成功
+  // （completed/completed_with_concerns）attempt 的 provider_session_id 才有资格
+  // 被续接；attemptRows 已经按 hop DESC, created_at DESC 排序，find() 天然取
+  // "最近一个"。跨 role 不串：按 role 精确过滤，proposer 永远拿不到 reviewer 的会话。
+  const RESUME_ELIGIBLE_STATUSES = new Set(['completed', 'completed_with_concerns']);
+  const latestResumeSession = (role) => {
+    const attempt = attemptRows.find((row) => (
+      row.role === role
+      && RESUME_ELIGIBLE_STATUSES.has(row.status)
+      && typeof row.provider_session_id === 'string'
+      && row.provider_session_id.length > 0
+    ));
+    return attempt
+      ? Object.freeze({ provider_session_id: attempt.provider_session_id, provider: attempt.provider })
+      : null;
+  };
+  const resumeSessions = Object.freeze({
+    proposer: latestResumeSession('proposer'),
+    reviewer: latestResumeSession('reviewer'),
+  });
 
   // 案卷式 GAN（issue ce42f68f，design doc §数据流2）：dispatcher.buildInputs
   // 对 proposer/reviewer 注入的 case_file 由这里现查现给——同一份全量历轮行，
@@ -620,5 +642,6 @@ export async function collectGroundTruth(deps, opts) {
     noProgress,
     noProgressReason,
     caseFile,
+    resumeSessions,
   };
 }

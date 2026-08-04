@@ -32,7 +32,7 @@ async function runCommand(command, args, options = {}) {
   return { stdout: stdout.trim() };
 }
 
-function createFixture() {
+function createFixture({ withPackageJson = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-workspace-test-'));
   const source = path.join(root, 'source');
   const remote = path.join(root, 'remote.git');
@@ -42,6 +42,13 @@ function createFixture() {
   git(['config', 'user.email', 'fleet-test@example.invalid'], source);
   fs.writeFileSync(path.join(source, 'README.md'), 'fleet workspace\n');
   git(['add', 'README.md'], source);
+  if (withPackageJson) {
+    fs.writeFileSync(
+      path.join(source, 'package.json'),
+      `${JSON.stringify({ name: 'fleet-fixture', version: '1.0.0' }, null, 2)}\n`,
+    );
+    git(['add', 'package.json'], source);
+  }
   git(['commit', '-m', 'fixture'], source);
   const sha = git(['rev-parse', 'HEAD'], source);
   git(['clone', '--bare', source, remote], root);
@@ -314,5 +321,95 @@ describe('Fleet Worker workspace manager', () => {
     expect(fs.existsSync(workspace.path)).toBe(false);
     expect(fs.existsSync(workspace.admin_path)).toBe(false);
     expect(fs.existsSync(fixture.quarantineRoot)).toBe(false);
+  });
+
+  // 运行时依赖预装（design doc §运行时依赖，r17 实证：proposer 的
+  // product-map:check 因 fleet workspace 缺 ajv 每轮红）：checkout 后若
+  // nodeDeps 打开且 package.json 存在则跑 `npm ci`。真 npm 从不在单测里
+  // 执行——注入的 runCommand 拦截 'npm' 调用，其余命令（git）转发给真实实现。
+  describe('运行时依赖预装（node_deps）', () => {
+    it('nodeDeps=true 且 package.json 存在 → prepare 后跑 npm ci --no-audit --no-fund', async () => {
+      const pkgFixture = createFixture({ withPackageJson: true });
+      try {
+        const npmCalls = [];
+        const manager = createManager(pkgFixture, {
+          runCommand: async (command, args, options) => {
+            if (command === 'npm') {
+              npmCalls.push({ args, cwd: options?.cwd });
+              return { stdout: '' };
+            }
+            return runCommand(command, args, options);
+          },
+        });
+
+        const workspace = await manager.prepare(spec(pkgFixture), { nodeDeps: true });
+
+        expect(npmCalls).toEqual([
+          { args: ['ci', '--no-audit', '--no-fund'], cwd: workspace.path },
+        ]);
+        expect(workspace.node_deps).toEqual({ status: 'installed' });
+      } finally {
+        fs.rmSync(pkgFixture.root, { recursive: true, force: true });
+      }
+    });
+
+    it('nodeDeps=true 但没有 package.json → 不跑 npm，标记 skipped_no_package_json', async () => {
+      const npmCalls = [];
+      const manager = createManager(fixture, {
+        runCommand: async (command, args, options) => {
+          if (command === 'npm') {
+            npmCalls.push({ args, cwd: options?.cwd });
+            return { stdout: '' };
+          }
+          return runCommand(command, args, options);
+        },
+      });
+
+      const workspace = await manager.prepare(spec(fixture), { nodeDeps: true });
+
+      expect(npmCalls).toEqual([]);
+      expect(workspace.node_deps).toEqual({ status: 'skipped_no_package_json' });
+    });
+
+    it('nodeDeps 缺省（false）→ 完全不检查/不跑 npm，返回的 workspace 不带 node_deps 字段', async () => {
+      const npmCalls = [];
+      const manager = createManager(fixture, {
+        runCommand: async (command, args, options) => {
+          if (command === 'npm') {
+            npmCalls.push({ args, cwd: options?.cwd });
+            return { stdout: '' };
+          }
+          return runCommand(command, args, options);
+        },
+      });
+
+      const workspace = await manager.prepare(spec(fixture));
+
+      expect(npmCalls).toEqual([]);
+      expect(workspace).not.toHaveProperty('node_deps');
+    });
+
+    it('npm ci 失败不炸 prepare（设计明确要求）——记 warn，workspace 正常返回', async () => {
+      const pkgFixture = createFixture({ withPackageJson: true });
+      try {
+        const manager = createManager(pkgFixture, {
+          runCommand: async (command, args, options) => {
+            if (command === 'npm') {
+              throw new Error('npm ci failed: simulated registry timeout');
+            }
+            return runCommand(command, args, options);
+          },
+        });
+
+        const workspace = await manager.prepare(spec(pkgFixture), { nodeDeps: true });
+
+        expect(workspace.node_deps.status).toBe('failed');
+        expect(workspace.node_deps.warning).toMatch(/simulated registry timeout/);
+        // prepare 没有炸——worktree 依然被正常创建，attempt 可以照常继续跑。
+        expect(fs.existsSync(workspace.path)).toBe(true);
+      } finally {
+        fs.rmSync(pkgFixture.root, { recursive: true, force: true });
+      }
+    });
   });
 });

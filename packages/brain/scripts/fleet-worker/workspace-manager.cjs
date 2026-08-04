@@ -258,7 +258,7 @@ function createWorkspaceManager({
   }
 
   return Object.freeze({
-    async prepare(input) {
+    async prepare(input, { nodeDeps = false } = {}) {
       const spec = validateSpec(input, allowedRepos);
       const mirrorPath = await updateMirror(spec);
       await requireCommit(
@@ -345,12 +345,39 @@ function createWorkspaceManager({
         throw error;
       }
 
+      // 运行时依赖预装（design doc §运行时依赖，r17 实证）：clone 后的裸 worktree
+      // 默认不装 npm 依赖，proposer 的 product-map:check 因缺 ajv 每轮红——
+      // ajv 本在 workspace package.json 里。dispatcher 对 proposer/reviewer
+      // 默认开 node_deps；这里只在 checkout 成功、且确实有 package.json 时才
+      // 跑 `npm ci`。失败不炸 prepare（设计明确要求）——attempt 照常跑，
+      // product-map check 会像今天一样自己红，只是不再因为"根本没装依赖"
+      // 而必然红。用注入的 runCommand（同 git 一样可测试替身），不直接碰
+      // child_process，方便单测 mock 掉真实 npm 执行。
+      let nodeDepsResult;
+      if (nodeDeps === true) {
+        const packageJsonPath = path.join(workspacePath, 'package.json');
+        if (fs.existsSync(packageJsonPath)) {
+          try {
+            await runCommand('npm', ['ci', '--no-audit', '--no-fund'], { cwd: workspacePath });
+            nodeDepsResult = Object.freeze({ status: 'installed' });
+          } catch (error) {
+            nodeDepsResult = Object.freeze({
+              status: 'failed',
+              warning: String(error?.message ?? error).slice(0, 1024),
+            });
+          }
+        } else {
+          nodeDepsResult = Object.freeze({ status: 'skipped_no_package_json' });
+        }
+      }
+
       return Object.freeze({
         ...workspace,
         owner: Object.freeze({
           run_id: spec.run_id,
           attempt_id: spec.attempt_id,
         }),
+        ...(nodeDepsResult ? { node_deps: nodeDepsResult } : {}),
       });
     },
 

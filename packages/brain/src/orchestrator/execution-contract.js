@@ -62,7 +62,11 @@ const taskBundleSchema = z.object({
     execution_surface: z.literal('fleet-worker').optional(),
     workspace_spec: z.unknown().optional(),
     runtime_resources: z.object({
-      postgres: z.boolean(),
+      postgres: z.boolean().optional(),
+      // node_deps（案卷式 GAN 运行时依赖，r17 实证 ajv 缺失）：fleet workspace
+      // clone 后是否自动 npm ci。可选——只有 dispatcher 显式声明的角色（当前
+      // proposer/reviewer）才会带这个字段，其余角色沿用旧的 {postgres} 独占形状。
+      node_deps: z.boolean().optional(),
     }).strict().optional(),
     artifacts: z.array(z.unknown()).default([]),
   }).passthrough(),

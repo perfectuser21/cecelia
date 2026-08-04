@@ -185,6 +185,91 @@ describe('collectGroundTruth：DB 通道组装', () => {
     expect(observed.caseFile).toEqual([]);
   });
 
+  it('案卷式 GAN 会话续接（决策 ba33fc68）：同 run 同 role 最近一个 completed attempt 提供 resumeSessions', async () => {
+    const deps = makeDeps({
+      rows: {
+        attempts: [
+          {
+            id: 'reviewer-r2', role: 'reviewer', status: 'completed',
+            provider: 'codex', provider_session_id: 'thread-r2',
+            hop: 8, created_at: '2026-08-04T02:00:00.000Z',
+          },
+          {
+            id: 'reviewer-r1', role: 'reviewer', status: 'completed',
+            provider: 'codex', provider_session_id: 'thread-r1',
+            hop: 4, created_at: '2026-08-04T01:00:00.000Z',
+          },
+          {
+            id: 'proposer-r1', role: 'proposer', status: 'completed',
+            provider: 'codex', provider_session_id: 'thread-p1',
+            hop: 3, created_at: '2026-08-04T00:30:00.000Z',
+          },
+        ],
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    // attemptRows 已按 hop DESC 排序，取到的是最近一个（hop=8 的 reviewer-r2）而非最旧。
+    expect(observed.resumeSessions.reviewer).toEqual({
+      provider_session_id: 'thread-r2',
+      provider: 'codex',
+    });
+    expect(observed.resumeSessions.proposer).toEqual({
+      provider_session_id: 'thread-p1',
+      provider: 'codex',
+    });
+  });
+
+  it('案卷式 GAN 会话续接：无历史 completed attempt → resumeSessions 该角色为 null（无 attempt 行时两角色皆 null）', async () => {
+    const deps = makeDeps();
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(observed.resumeSessions).toEqual({ proposer: null, reviewer: null });
+  });
+
+  it('案卷式 GAN 会话续接：跨 role 不串——只有 proposer 有会话时 reviewer 拿不到', async () => {
+    const deps = makeDeps({
+      rows: {
+        attempts: [
+          {
+            id: 'proposer-r1', role: 'proposer', status: 'completed',
+            provider: 'codex', provider_session_id: 'thread-p1',
+            hop: 3, created_at: '2026-08-04T00:30:00.000Z',
+          },
+        ],
+      },
+    });
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(observed.resumeSessions.proposer).toEqual({ provider_session_id: 'thread-p1', provider: 'codex' });
+    expect(observed.resumeSessions.reviewer).toBeNull();
+  });
+
+  it('案卷式 GAN 会话续接：failed/running attempt 的 provider_session_id 不被采信', async () => {
+    const deps = makeDeps({
+      rows: {
+        attempts: [
+          {
+            id: 'reviewer-failed', role: 'reviewer', status: 'failed',
+            provider: 'codex', provider_session_id: 'thread-failed',
+            hop: 5, created_at: '2026-08-04T02:00:00.000Z',
+          },
+          {
+            id: 'reviewer-running', role: 'reviewer', status: 'running',
+            provider: 'codex', provider_session_id: 'thread-running',
+            hop: 6, created_at: '2026-08-04T03:00:00.000Z',
+          },
+          {
+            id: 'reviewer-ok', role: 'reviewer', status: 'completed_with_concerns',
+            provider: 'codex', provider_session_id: 'thread-ok',
+            hop: 2, created_at: '2026-08-04T00:00:00.000Z',
+          },
+        ],
+      },
+    });
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(observed.resumeSessions.reviewer).toEqual({ provider_session_id: 'thread-ok', provider: 'codex' });
+  });
+
   it('读取最新完成 evaluator attempt 的完整 result，供 judge 取机械证据', async () => {
     const evaluatorResult = {
       contract_version: '1.0',

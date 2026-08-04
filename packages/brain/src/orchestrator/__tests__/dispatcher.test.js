@@ -566,6 +566,78 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).not.toHaveProperty('case_file');
   });
 
+  it('案卷式 GAN 会话续接（决策 ba33fc68）：observed.resumeSessions.proposer 存在 → 注入 resume_session_id/resume_provider', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 6,
+      observed: {
+        ...observed,
+        resumeSessions: {
+          proposer: { provider_session_id: 'thread-proposer-1', provider: 'codex' },
+          reviewer: null,
+        },
+      },
+      decision: { phase: 'gan', reason: 'revision_requested' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.resume_session_id).toBe('thread-proposer-1');
+    expect(created.bundle.inputs.resume_provider).toBe('codex');
+  });
+
+  it('案卷式 GAN 会话续接：observed.resumeSessions 缺失/角色无历史会话 → 不注入 resume_session_id', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 1,
+      observed: { ...observed, resumeSessions: { proposer: null, reviewer: null } },
+      decision: { phase: 'gan', reason: 'first_round' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs).not.toHaveProperty('resume_session_id');
+    expect(created.bundle.inputs).not.toHaveProperty('resume_provider');
+
+    // observed 完全不带 resumeSessions 字段（旧数据/未接线场景）同样不能炸。
+    const deps2 = makeDeps();
+    await createDispatcher(deps2)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 1,
+      observed: { ...observed },
+      decision: { phase: 'gan', reason: 'first_round' },
+    });
+    const created2 = deps2.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created2.bundle.inputs).not.toHaveProperty('resume_session_id');
+  });
+
+  it('案卷式 GAN 会话续接：跨 role 不串——resumeSessions.reviewer 有值时不会泄漏进 proposer TaskBundle', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 6,
+      observed: {
+        ...observed,
+        resumeSessions: {
+          proposer: null,
+          reviewer: { provider_session_id: 'thread-reviewer-1', provider: 'codex' },
+        },
+      },
+      decision: { phase: 'gan', reason: 'revision_requested' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs).not.toHaveProperty('resume_session_id');
+    expect(created.bundle.inputs).not.toHaveProperty('resume_provider');
+  });
+
   it('P2-3 膨胀闸2：TaskBundle 超 256KB 时按 round 从旧到新丢 case_file.feedback_md，够用就停', async () => {
     const deps = makeDeps();
     const bigText = 'x'.repeat(150 * 1024);
@@ -1147,6 +1219,80 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs.case_file).toEqual(caseFile);
   });
 
+  it('案卷式 GAN 会话续接：observed.resumeSessions.reviewer 存在 → reviewer TaskBundle 注入 resume_session_id/resume_provider', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 4,
+      observed: {
+        ...observed,
+        resumeSessions: {
+          proposer: null,
+          reviewer: { provider_session_id: 'thread-reviewer-1', provider: 'codex' },
+        },
+      },
+      decision: { phase: 'gan', reason: 'review' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.resume_session_id).toBe('thread-reviewer-1');
+    expect(created.bundle.inputs.resume_provider).toBe('codex');
+  });
+
+  it('案卷式 GAN 会话续接：跨 role 不串——resumeSessions.proposer 有值时不会泄漏进 reviewer TaskBundle', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 4,
+      observed: {
+        ...observed,
+        resumeSessions: {
+          proposer: { provider_session_id: 'thread-proposer-1', provider: 'codex' },
+          reviewer: null,
+        },
+      },
+      decision: { phase: 'gan', reason: 'review' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs).not.toHaveProperty('resume_session_id');
+    expect(created.bundle.inputs).not.toHaveProperty('resume_provider');
+  });
+
+  it('运行时依赖预装（design doc §运行时依赖）：proposer TaskBundle 默认注入 runtime_resources.node_deps=true', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:proposer', {
+      taskId,
+      runId,
+      hop: 1,
+      observed: { ...observed },
+      decision: { phase: 'gan', reason: 'first_round' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.runtime_resources).toEqual({ postgres: false, node_deps: true });
+  });
+
+  it('运行时依赖预装：reviewer TaskBundle 也默认注入 runtime_resources.node_deps=true', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 4,
+      observed: { ...observed },
+      decision: { phase: 'gan', reason: 'review' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.runtime_resources).toEqual({ postgres: false, node_deps: true });
+  });
+
   it('generator bundle 从已批准合同导出 contract_branch，供 launcher 注入环境', async () => {
     const deps = makeDeps();
 
@@ -1170,6 +1316,10 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).toMatchObject({
       contract_branch: 'cp-harness-propose-r2-aaaaaaaa-a6',
     });
+    // 运行时依赖预装只对 proposer/reviewer 默认开——generator 不该被塞
+    // runtime_resources.node_deps（design doc §运行时依赖，决策 ba33fc68 只覆盖
+    // GAN 双方角色）。
+    expect(created.bundle.inputs).not.toHaveProperty('runtime_resources');
   });
 
   it('copies the Controller-owned validation clock into the Generator TaskBundle', async () => {

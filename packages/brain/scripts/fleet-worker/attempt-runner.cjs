@@ -1034,6 +1034,24 @@ function taskExecutionContract(providerSpec, request, target) {
         GIT_CONFIG_VALUE_0: 'blocked-by-harness://evaluator',
       }
       : {}),
+    // 案卷式 GAN 会话续接（design doc §数据流3，决策 ba33fc68）：dispatcher.js
+    // 已经把同 role 最近一个终态成功 attempt 的 provider_session_id/provider
+    // 注入 bundle.inputs（brain 侧只负责查数据，不知道本次实际会派到哪个
+    // provider）。这里才是真正的匹配点——只有 resume_provider 与本次实际派发
+    // 的 target.provider 都是 codex 时才追加 HARNESS_RESUME_SESSION_ID，
+    // entrypoint.sh 里已有的 codex 分支（`codex exec resume <id>`）直接消费
+    // 这个既有环境变量，不用改容器脚本。provider 不匹配/字段缺失时不注入，
+    // 视同没有历史会话——proposer/reviewer 走全新会话，全量案卷（case_file）
+    // 已经在 bundle 里，读案卷降级，不算失败。
+    ...(
+      ['proposer', 'reviewer'].includes(target.role)
+      && typeof inputs.resume_session_id === 'string'
+      && inputs.resume_session_id.length > 0
+      && inputs.resume_provider === 'codex'
+      && target.provider === 'codex'
+        ? { HARNESS_RESUME_SESSION_ID: inputs.resume_session_id }
+        : {}
+    ),
   };
   const inputRequirements = inputs.runtime_resources;
   const requestRequirements = request.runtime_resources;
@@ -1047,14 +1065,19 @@ function taskExecutionContract(providerSpec, request, target) {
     throw new Error('attempt_runtime_requirements_mismatch');
   }
   const runtimeRequirements = inputRequirements ?? requestRequirements ?? {};
+  const RUNTIME_REQUIREMENT_FIELDS = new Set(['postgres', 'node_deps']);
   if (
     !runtimeRequirements
     || typeof runtimeRequirements !== 'object'
     || Array.isArray(runtimeRequirements)
-    || Object.keys(runtimeRequirements).some((key) => key !== 'postgres')
+    || Object.keys(runtimeRequirements).some((key) => !RUNTIME_REQUIREMENT_FIELDS.has(key))
     || (
       runtimeRequirements.postgres !== undefined
       && typeof runtimeRequirements.postgres !== 'boolean'
+    )
+    || (
+      runtimeRequirements.node_deps !== undefined
+      && typeof runtimeRequirements.node_deps !== 'boolean'
     )
   ) {
     throw new Error('attempt_runtime_requirements_invalid');
@@ -1064,6 +1087,13 @@ function taskExecutionContract(providerSpec, request, target) {
     roleEnv: Object.freeze(roleEnv),
     runtimeRequirements: Object.freeze({
       postgres: runtimeRequirements.postgres === true,
+      // Presence-preserving（同 remote-bridge-transport.js copyRuntimeResources
+      // 注释）：只有原始请求真的带了这个字段才回填，不凭空多出一个默认键——
+      // 否则 resourceManager.provision({requirements}) 这类下游精确比对会被
+      // 一个从未声明过的 node_deps:false 撑破。
+      ...(runtimeRequirements.node_deps !== undefined
+        ? { node_deps: runtimeRequirements.node_deps === true }
+        : {}),
     }),
   });
 }
@@ -1205,8 +1235,8 @@ function createAttemptRunner({
     resourceManager,
   });
 
-  async function prepareVerifiedWorkspace(workspaceSpec) {
-    const workspace = await workspaceManager.prepare(workspaceSpec);
+  async function prepareVerifiedWorkspace(workspaceSpec, { nodeDeps = false } = {}) {
+    const workspace = await workspaceManager.prepare(workspaceSpec, { nodeDeps });
     try {
       await workspaceManager.verify(workspace);
       return workspace;
@@ -1640,7 +1670,9 @@ function createAttemptRunner({
         request,
         target,
       );
-      const workspace = await prepareVerifiedWorkspace(request.workspace_spec);
+      const workspace = await prepareVerifiedWorkspace(request.workspace_spec, {
+        nodeDeps: executionContract.runtimeRequirements.node_deps === true,
+      });
       const labels = labelsFor(request, workerId);
       let resources = EMPTY_RUNTIME_RESOURCES;
       if (executionContract.runtimeRequirements.postgres) {

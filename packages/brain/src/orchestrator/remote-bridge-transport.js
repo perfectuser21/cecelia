@@ -118,7 +118,14 @@ function copyWorkspaceSpec(bundle) {
 function copyRuntimeResources(bundle) {
   const source = bundle?.inputs?.runtime_resources;
   if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
-  return Object.freeze({ postgres: source.postgres === true });
+  return Object.freeze({
+    postgres: source.postgres === true,
+    // node_deps（案卷式 GAN 运行时依赖）：只有 source 显式带这个字段时才透传，
+    // 保持"presence-preserving"——attempt-runner.cjs taskExecutionContract
+    // 拿 bundle.inputs.runtime_resources 和这里透传的 request.runtime_resources
+    // 做逐字节 JSON 一致性比对，两侧字段集合必须完全对齐，不能凭空多一个默认键。
+    ...(source.node_deps !== undefined ? { node_deps: source.node_deps === true } : {}),
+  });
 }
 
 async function parseJson(response, operation, signal) {

@@ -264,6 +264,27 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   ) {
     common.case_file = observed.caseFile;
   }
+  // 案卷式 GAN 会话续接（design doc §数据流3，决策 ba33fc68）：Proposer/Reviewer
+  // 各自跨轮持久对话，互相隔离——只透传本角色自己最近一个终态成功 attempt 的
+  // provider_session_id（ground-truth.js 已按 role 精确过滤，这里按 spec.role
+  // 索引不会跨角色串号）。同时带 resume_provider，让执行端（fleet-worker）
+  // 自行判断"当前实际派发 provider 是否与录制会话时的 provider 一致"——不一致
+  // 时不续接，读案卷（case_file 全量历轮反馈）降级，降级不算失败。
+  if (['proposer', 'reviewer'].includes(spec.role)) {
+    const resumeSession = observed.resumeSessions?.[spec.role];
+    if (resumeSession?.provider_session_id) {
+      common.resume_session_id = resumeSession.provider_session_id;
+      common.resume_provider = resumeSession.provider;
+    }
+    // 运行时依赖预装（design doc §运行时依赖，r17 实证：fleet workspace clone
+    // 后不装依赖，proposer 的 product-map:check 因缺 ajv 每轮红——ajv 本在
+    // workspace package.json）。dispatcher 对 proposer/reviewer 默认开启
+    // node_deps，让 workspace-manager checkout 后自动 npm ci。两个字段都显式
+    // 写出（而不是只写 node_deps），是为了让 fleet 侧的 request/bundle 字节级
+    // 一致性校验（attempt-runner.cjs taskExecutionContract）稳定匹配——那条
+    // 校验按原样比较两侧 JSON，缺一个默认字段就会误判 mismatch。
+    common.runtime_resources = { postgres: false, node_deps: true };
+  }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
     common.contract = observed.contract?.row ?? null;
     common.contract_branch = observed.contract?.row?.branch
@@ -700,7 +721,15 @@ export function createDispatcher(deps) {
         inputs: {
           ...bundle.inputs,
           ...(capabilityRequirements.postgres
-            ? { runtime_resources: { postgres: true } }
+            ? {
+                // node_deps 可能已经被 buildInputs 对 proposer/reviewer 默认置
+                // true（见上）——这里只加 postgres:true，不能整体替换掉
+                // runtime_resources，否则会把刚设好的 node_deps 冲掉。
+                runtime_resources: {
+                  ...bundle.inputs.runtime_resources,
+                  postgres: true,
+                },
+              }
             : {}),
           capability_snapshot_id: preflight.snapshot.capability_snapshot_id,
           capability_evidence: preflight.evidence,
