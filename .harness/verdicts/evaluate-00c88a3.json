@@ -1,0 +1,35 @@
+{
+  "verdict": "PASS",
+  "task_id": "2c1a4771-3424-45ea-b6e4-19ae980edb95",
+  "attempt_id": "",
+  "pr": "https://github.com/perfectuser21/cecelia/pull/4606",
+  "pr_head": "00c88a3db92eeff876c7efa614ddadbbfcdfcafa",
+  "failed_step": null,
+  "log_excerpt": null,
+  "verification_level": "L2",
+  "screenshots": [],
+  "cascade_assertions": [],
+  "contract_is_law": "PASS — sprints/08041147-relay-2c1a4771/tests/ 相对合同分支 cp-08041244-harness-propose-r3-2c1a4771 零改动（git diff 空）",
+  "mock_edge_check": "clean（禁 mock 边清单 4 条，扫描 2 个测试文件，命中仅注释文本「零 vi.mock。」，无真实 vi.mock/stub 调用）",
+  "behavior_tests": [
+    {"command": "NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t \"watchdog_kill.reason 为 never_started\"", "exit_code": 0, "log_tail": "Test Files 1 passed (1) | Tests 1 passed | 5 skipped (6) | Duration 355ms", "verification_level": "L2"},
+    {"command": "NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t \"不被 watchdog 记账覆盖\"", "exit_code": 0, "log_tail": "Test Files 1 passed (1) | Tests 1 passed | 5 skipped (6) | Duration 435ms", "verification_level": "L2"},
+    {"command": "NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t \"仍判 process_disappeared\"", "exit_code": 0, "log_tail": "Test Files 1 passed (1) | Tests 1 passed | 5 skipped (6) | Duration 580ms", "verification_level": "L2"},
+    {"command": "NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t \"不判 never_started\"", "exit_code": 0, "log_tail": "Test Files 1 passed (1) | Tests 1 passed | 5 skipped (6) | Duration 434ms", "verification_level": "L2"},
+    {"command": "node -e \"import('./packages/brain/src/dev-failure-classifier.js').then(m=>{const r=m.classifyDevFailure({error:'[watchdog] liveness_probe_failed reason=never_started'});process.exit(r.class==='transient'?1:0)})\"", "exit_code": 0, "log_tail": "class=never_started", "verification_level": "L2"},
+    {"command": "cd packages/brain && npx vitest run src/__tests__/integration/liveness-never-started.integration.test.js --config vitest.integration.config.js", "exit_code": 0, "log_tail": "Test Files 1 passed (1) | Tests 6 passed (6) | Duration 683ms", "verification_level": "L2"},
+    {"command": "NODE_ENV=test npx vitest run sprints/08041147-relay-2c1a4771/tests/liveness-never-started.integration.test.ts -t \"failure learning 文本含真实根因标签\"", "exit_code": 0, "log_tail": "Test Files 1 passed (1) | Tests 1 passed | 5 skipped (6) | Duration 368ms", "verification_level": "L2"},
+    {"command": "psql cecelia_test information_schema.columns 核对 tasks 表 started_at/error_message/payload 三列（INV-3）", "exit_code": 0, "log_tail": "INV3 OK (C=3)", "verification_level": "L2"},
+    {"command": "for f in $(grep -rln process_disappeared packages/brain/src --include=*.js | grep -v __tests__); do grep -q never_started $f || exit 1; done（INV-4）", "exit_code": 0, "log_tail": "INV4 OK", "verification_level": "L2"},
+    {"command": "timeout 120 bash e2e-verify.sh（合同 ## E2E 验收 整跑，local_api，固化提取器逐字节提取 59 行）", "exit_code": 0, "log_tail": "[liveness] Task 14350490-... marked as SUSPECT (first probe failure)\n[liveness] Task 14350490-... confirmed DEAD\nclassifier class=never_started\nOK Golden Path 验证通过: never_started 分类保真 + 字段不覆盖 + 学习文本真根因 + 回归护栏 + 永久入 CI", "verification_level": "L2"}
+  ],
+  "artifact_checks": [
+    {"item": "sprint 红测试原样保留且零 mock", "result": "PASS"},
+    {"item": "毕业回归测试存在 packages/brain/src/__tests__/integration/ 零 mock", "result": "PASS"},
+    {"item": "vitest.config.js POSTGRES_INTEGRATION_TESTS 已登记", "result": "PASS"},
+    {"item": ".github/workflows/ 零改动", "result": "PASS（diff 0 文件）"}
+  ],
+  "unverifiable": [
+    {"item": "生产 Brain 运行时 tick 内触发（接缝断言清单 #3）", "reason": "合同「未覆盖真实链路清单」显式声明：merge 前 worktree 执行，生产 Brain 未加载新代码；补位计划=merge 后 brain-deploy 重启，生产 DB 直查 watchdog_kill.reason。本合同已以 worktree 真代码 + 真 Postgres(cecelia_test) + 真 ps 零 mock 覆盖同一代码路径，非静默跳过"}
+  ]
+}

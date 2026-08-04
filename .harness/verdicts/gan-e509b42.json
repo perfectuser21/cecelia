@@ -1,0 +1,25 @@
+{
+  "phase": "gan",
+  "contract_branch": "cp-08041244-harness-propose-r3-2c1a4771",
+  "contract_commit": "e509b42cbb053a491b27e69ed261145d5022a57f",
+  "rounds": 3,
+  "final_verdict": "APPROVED",
+  "judgments_written": 2,
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 9,
+    "test_is_red": 9,
+    "internal_consistency": 8,
+    "risk_registered": 8,
+    "verification_oracle_completeness": 9,
+    "ci_workflow_alignment": 10
+  },
+  "rubric_total": "62/70",
+  "round_history": [
+    {"round": 1, "verdict": "REVISION", "blocker": "PRD行20 learnings 假标签零覆盖"},
+    {"round": 2, "verdict": "REVISION", "blocker": "E2E 探针 /tmp 相对路径 import 必炸"},
+    {"round": 3, "verdict": "APPROVED", "blocker": null}
+  ],
+  "invariant_coverage": "58/58（DoD INV 条目引用 65 处）",
+  "red_evidence": "vitest 4 failed | 2 passed"
+}
