@@ -12,6 +12,11 @@
 
 ---
 
+## Brain 1.267.205 — Kernel TaskBundle PRD anchor
+
+- dispatcher buildInputs 把 task.payload.thin_prd / prep_prd_body（非空白时）注入所有角色 TaskBundle inputs——GAN 收敛的 PRD 锚（r17 实证缺锚时 Planner 凭一句话推断 PRD、Reviewer 失去"覆盖完 PRD 即收敛"边界）。
+- 回退到 1.267.204 会恢复：Planner/Proposer/Reviewer 只见 title+description。
+
 ## Brain 1.267.204 — Kernel run phase/task status runtime persistence
 
 - Kernel loop 每轮最终 decision 后持久化前进相位到 `initiative_runs.phase`（白名单 planning/gan/generate/evaluate/judge；wait/终态/paused 不写；终态仍归 finalizeKernelRun 独有）。UPDATE 为独立单语句，锁序经 AFTER 触发器为 X(run 行)→L(advisory)，与 finalize 同向。

@@ -177,6 +177,14 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     attempt_kind: attemptMetadata.attemptKind,
     workstream_key: attemptMetadata.workstreamKey,
   };
+  // GAN 收敛的 PRD 锚（issue ce42f68f）：r17 实证 payload 缺 thin_prd 时 Planner
+  // 只能凭一句话 description 推断 PRD，"覆盖完 PRD 即收敛"失去锚点。有值才注入。
+  if (typeof payload.thin_prd === 'string' && payload.thin_prd.trim()) {
+    common.thin_prd = payload.thin_prd;
+  }
+  if (typeof payload.prep_prd_body === 'string' && payload.prep_prd_body.trim()) {
+    common.prep_prd_body = payload.prep_prd_body;
+  }
   if (
     ['generator', 'evaluator', 'judge'].includes(spec.role)
     && ctx.validationClock
