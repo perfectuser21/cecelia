@@ -98,7 +98,7 @@ describe('F6步骤3 去向链接能力', () => {
         [stale.id],
       );
       expect(rows.length).toBe(1);
-      expect(rows[0].age_days).toBeGreaterThanOrEqual(7);
+      expect(parseFloat(rows[0].age_days)).toBeGreaterThanOrEqual(7);
       expect(rows[0].severity).toMatch(/^(watch|warning|critical)$/);
     } finally {
       await pool.query('DELETE FROM captures WHERE id = $1', [stale.id]);
