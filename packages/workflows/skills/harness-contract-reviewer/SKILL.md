@@ -6,10 +6,11 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 9.11.0
+version: 9.12.0
 created: 2026-04-08
-updated: 2026-08-03
+updated: 2026-08-04
 changelog:
+  - 9.12.0: 案卷式 GAN 协议（配套 cecelia kernel 1.267.207+）——Step 2.5 收敛追踪整节重写为「案卷 closure 裁定协议」：不再依赖 reviewer 自己的跨轮记忆（每轮都是新会话），改读 bundle inputs.case_file 逐条裁定上一轮 blocker closed/still-open，proposer 的 closure 声明行只作线索、以合同实际内容为准；新增 blocker 必填 why_not_found_earlier + prd_gap 两字段，缺任一作废、不计入扣分依据；blocker 带稳定编号 R<round>-<seq>。结果 JSON 新增顶层 `case_file`（blockers[] + feedback_md）与 `decision.rubric_scores`，closure 裁定表写入 feedback_md。趋势兜底（diverging/oscillating）明确由 Kernel `detectRubricTrend` 负责，旧引用 `harness-gan.graph.js` 改为该函数名；PRD 锚新增 thin_prd/prep_prd_body 读取指引（bundle 有值时以其为准）。7 个 rubric 维度键名一字未动。
   - 9.11.0: Kernel validation identity late-binding——Reviewer task bundle 只描述当前审查者 provenance，不得要求合同改绑为 Reviewer attempt/account/snapshot；审查改为拒绝所有 GAN authoring UUID 硬编码，并要求实际 Generator/Evaluator/Judge 各自使用 Runner attestation 与证据摘要串联
   - 9.10.0: Kernel local_api 资源闭环——新增第 23 条审查：Postgres 合同必须对 Fleet 注入的空库运行真实 migration/schema bootstrap；业务 cookie/session/tenant 必须由 E2E 真实 signup/login 动态创建；依赖预注入 AUTH_COOKIE/TENANT_ID、生产数据副本或长期业务凭据一律 REVISION
   - 9.9.0: GP锚定闭环刀3（与 proposer 9.18.0 配套）——Golden Path 覆盖审查新增第 22 条：product-map/generated/product-map.json 存在的仓库，合同缺 ## GP-Anchor 段/id 查无/格式不合法 → 第 4 维 internal_consistency 打回；文件不存在时缺 gp-anchor: skipped 声明同样打回（沉默跳过与真做过判断不可区分）
@@ -72,7 +73,7 @@ changelog:
 - **按 rubric 打分，不自由判断**：每条合同按下文 5 个维度 0-10 打分，硬阈值由代码判 PASS，Reviewer 不主观决定 APPROVED / REVISION
 - **攻击向量是产品质量，不是测试框架防作弊**：挑 spec 中真实的歧义、遗漏、边界，不挑"Generator 用 regex 伪造怎么办"
 - **承认自己的局限**：合同阶段是 alignment，不是代码 QA。代码能不能真工作让代码阶段 Evaluator 验
-- **无轮数上限，但发散自动收敛（外部代码兜底）**：`harness-gan.graph.js` 不设 MAX_ROUNDS，改用 `detectConvergenceTrend(rubricHistory)` 判趋势。converging（5 维度持平或上升）→ 继续；diverging（任一维度连续走低）/ oscillating（最近 3 轮高低高）→ 外层强制 APPROVED + 写 P1 alert。Reviewer 该按 rubric 真实打分，是否 force 由代码判（不要因此"赶工凑数 APPROVED"）
+- **无轮数上限，但发散自动收敛（Kernel 代码兜底）**：Kernel `detectRubricTrend(rubricHistory)` 判趋势，不设 MAX_ROUNDS。converging（5 维度持平或上升）→ 继续；diverging（任一维度连续走低）/ oscillating（最近 3 轮高低高）→ 外层强制 APPROVED + 写 P1 alert。Reviewer 该按 rubric 真实打分，是否 force 由 Kernel 代码判（不要因此"赶工凑数 APPROVED"，skill 不需要也不许自己降标）
 
 ---
 
@@ -134,7 +135,7 @@ Proposer 产出的 `contract-draft.md` 格式是 **Golden Path Steps**：每步 
 - 其他 `target_environment`：全部 7 维 ≥ 7 → APPROVED，任何一维 < 7 → REVISION（ci_workflow_alignment 对非 windows/linux 环境默认填 10，表示 N/A 直接通过）
 
 **收敛兜底（无轮数硬 cap）**：
-不设 MAX_ROUNDS。`harness-gan.graph.js` 调 `detectConvergenceTrend(rubricHistory)` 看最近 3 轮 7 维度走势：
+不设 MAX_ROUNDS。Kernel `detectRubricTrend(rubricHistory)` 看最近 3 轮 7 维度走势：
 
 | trend | 含义 | brain 决策 |
 |---|---|---|
@@ -219,6 +220,8 @@ cat "${SPRINT_DIR}/contract-draft.md"
 cat "${SPRINT_DIR}/contract-dod.md" 2>/dev/null || true
 ```
 
+**PRD 锚（v9.12 — bundle 有值时优先）**：bundle `inputs.thin_prd` / `inputs.prep_prd_body` 有值时，是比 `sprint-prd.md` 更精炼的 PRD 正文来源，第 2 维 `scope_match_prd` 打分以其为锚（`sprint-prd.md` 仍读，作补充上下文）；两者都缺失时退回只用 `sprint-prd.md`。
+
 ### Step 2: 按 Rubric 打分
 
 严格按上文"评分 Rubric"的 7 个维度独立打 0-10 分，逐维给出证据。不要按旧版结构组织思考，只按 rubric 表逐个打分。
@@ -230,7 +233,9 @@ cat .github/workflows/<workflow文件名>.yml 2>/dev/null || echo "WORKFLOW_NOT_
 读取结果后逐步对比合同 BEHAVIOR 断言与 workflow steps 的语义对齐性。
 **未执行此 Bash 命令 → 第 7 维强制 0 分，不允许 APPROVED**。
 
-### Step 2.5: 收敛追踪（B50 — 防发散，每轮必做）
+### Step 2.5: 案卷 closure 裁定协议（v9.12 — 案卷式 GAN，每轮必做）
+
+**背景（r17 实证根因）**：Reviewer 每轮都是全新会话，"上轮我提的"这种自我记忆不存在——4 轮 GAN 里 4 组互不重叠的 blocker 轮流冒出来，永远收敛不了，因为每轮 Reviewer 其实不知道自己上轮说过什么、这轮该验哪些是否已解决。**解法：不再靠记忆，靠案卷。** Kernel 把历轮 blocker 台账 + rubric 历史 + 完整反馈注入 `inputs.case_file`（数组，行 = `{round, author_role:'proposer'|'reviewer', attempt_id, contract_sha, rubric_scores, blockers[], feedback_md|null, created_at}`，最近 2 轮带全文，更早只留结构化字段）。
 
 **核心原则：合同收敛目标是"覆盖完 PRD"，不是"无限逼近完美"。**
 
@@ -238,21 +243,40 @@ cat .github/workflows/<workflow文件名>.yml 2>/dev/null || echo "WORKFLOW_NOT_
 > "复杂/膨胀" = 在 PRD 之外不断加"还能更严谨"的内容（无限）。
 > Reviewer 的职责是确认**覆盖完 PRD**，不是把简单任务的合同往大里推。
 
-**每轮 Verdict 前必须输出 `## 收敛状态` 段：**
+**执行顺序（严格按序，不得先加后核）：**
+
+1. **读案卷**：从 `inputs.case_file` 里取出上一轮 `author_role: 'reviewer'` 的那一行，逐条列出其 `blockers[]`（每条带编号 `R<round>-<seq>`）。
+2. **逐条裁定 closed / still-open**：对照**本轮合同实际内容**逐条核实每条上轮 blocker 是否已解决。案卷里 proposer 那一行的 closure 声明（若存在）只是**线索**，不是判据——Reviewer 必须自己在本轮合同里找到对应改动才能判 closed；proposer 声明"已修"但合同没改到位 = 仍判 still-open。
+3. **只有裁定完成后，才允许新增 blocker**。新增 blocker 每条**必填两字段**（缺任一则该 blocker **作废**，不得计入任何维度扣分依据——这是应对"死规则1 不可执行"矛盾的消解：作废机制只作用于扣分依据，rubric 机械判定阈值不受影响）：
+   - `why_not_found_earlier`：上一轮为什么没发现这个问题（如果是新引入的改动导致的新问题，写"本轮新改动引入，非漏检"）
+   - `prd_gap`：对应 PRD 的哪一条具体要求未覆盖（引用 PRD 段落/User Story，不能是"可以更严谨"这类空泛描述）
+4. **新增 blocker 同样带稳定编号**：延续本轮号 `R<round>-<seq>`（如本轮是 Round 3，编号 `R3-1`、`R3-2`……），closure 裁定与新增 blocker 引用编号时全部用此格式，供下一轮 Reviewer 案卷回溯。
+
+**Verdict 前必须输出 `## 案卷 Closure 裁定` 段（写入 feedback_md）：**
 
 ```markdown
-## 收敛状态（Round N）
-- 上轮我提的阻塞问题：[N 个]
-- 本轮已解决：[M 个]
-- 仍阻塞：[N-M 个]
-- 本轮新增阻塞问题：[K 个] —— **只能是"PRD 某项未覆盖"，禁止"可以更严谨/更完整/更健壮"**
+## 案卷 Closure 裁定（Round N）
+
+### 上轮 blocker 裁定
+| 编号 | 上轮描述 | 裁定 | 依据 |
+|---|---|---|---|
+| R{N-1}-1 | ... | closed | 合同 Step 3 已补 jq -e 完整性卡 |
+| R{N-1}-2 | ... | still-open | proposer 声明已修，但 contract-dod.md 仍无对应 [BEHAVIOR] |
+
+### 本轮新增 blocker（均已过 why_not_found_earlier + prd_gap 校验）
+| 编号 | 描述 | why_not_found_earlier | prd_gap |
+|---|---|---|---|
+| RN-1 | ... | ... | ... |
+
 - 合同行数：上轮 X → 本轮 Y（趋势：增/平/减）
 ```
 
 **死规则：**
-1. **阻塞问题必须逐轮减少**。若本轮新增问题 > 已解决问题，且新增的不是"PRD 真实漏覆盖"而是"锦上添花"，→ 这些新问题作废，不计入，直接按已覆盖判 APPROVED。
-2. **合同行数逐轮增长是发散信号**。简单任务（PRD ≤ 100 行）合同超过 ~150 行还在涨 → 说明在膨胀，Reviewer 应停止挑"更严谨"，按 PRD 覆盖度判分。
-3. **"可以更完整"不是阻塞问题**。只有"PRD 明确要求的某项，合同没覆盖"才是真阻塞。PRD 没要求的，合同有没有都不扣分（有了反而按维度 2 超覆盖扣分）。
+1. **裁定必须先于新增**。未先逐条裁定上轮 blocker 就直接列新问题 = 协议违规，本轮 verdict 无效，须重做。
+2. **阻塞问题必须逐轮减少**。若本轮新增问题（已过两字段校验的）> 已裁定 closed 的问题，且新增的不是"PRD 真实漏覆盖"而是"锦上添花"，→ 这些新问题作废，不计入，直接按已覆盖判 APPROVED。
+3. **合同行数逐轮增长是发散信号**。简单任务（PRD ≤ 100 行）合同超过 ~150 行还在涨 → 说明在膨胀，Reviewer 应停止挑"更严谨"，按 PRD 覆盖度判分。
+4. **"可以更完整"不是阻塞问题**。只有"PRD 明确要求的某项，合同没覆盖"才是真阻塞。PRD 没要求的，合同有没有都不扣分（有了反而按维度 2 超覆盖扣分）。
+5. **趋势兜底不是 Reviewer 的活**。案卷协议解决的是"记忆断层导致的伪发散"，跟 Kernel `detectRubricTrend` 解决的"真实 rubric 分数发散"是两层机制——Reviewer 照样按 rubric 真实打分，不因为"轮数多了"自己放宽标准。
 
 ---
 
@@ -289,7 +313,7 @@ cat .github/workflows/<workflow文件名>.yml 2>/dev/null || echo "WORKFLOW_NOT_
 ## VERDICT: {APPROVED or REVISION based on rubric threshold}
 
 Round N, 阈值固定 7/10（不随 round 衰减）。
-维度 [...] < 7 → REVISION。外部 brain `detectConvergenceTrend` 看趋势决定是否 force（Reviewer 不参与该决策）。
+维度 [...] < 7 → REVISION。Kernel `detectRubricTrend` 看趋势决定是否 force（Reviewer 不参与该决策）。
 
 ### 需要 Proposer 修的（只列 block 项，不列 nice-to-have）
 
@@ -327,7 +351,7 @@ Round N, 阈值固定 7/10（不随 round 衰减）。
 # [必须通过 Bash 工具执行，不是文字描述] 写结果文件
 RESULT_FILE="${BRAIN_RESULT_FILE:-/workspace/.brain-result.json}"
 cat > "$RESULT_FILE" << 'BREOF'
-{"verdict":"<APPROVED|REVISION>","rubric_scores":{"dod_machineability":X,"scope_match_prd":X,"test_is_red":X,"internal_consistency":X,"risk_registered":X,"verification_oracle_completeness":X,"ci_workflow_alignment":X},"judgments_written":0,"feedback":"<feedback text or empty>"}
+{"verdict":"<APPROVED|REVISION>","rubric_scores":{"dod_machineability":X,"scope_match_prd":X,"test_is_red":X,"internal_consistency":X,"risk_registered":X,"verification_oracle_completeness":X,"ci_workflow_alignment":X},"judgments_written":0,"feedback":"<feedback text or empty>","decision":{"rubric_scores":{"dod_machineability":X,"scope_match_prd":X,"test_is_red":X,"internal_consistency":X,"risk_registered":X,"verification_oracle_completeness":X,"ci_workflow_alignment":X}},"case_file":{"blockers":[{"id":"R<round>-<seq>","dimension":"<7维之一>","title":"<一句话标题>","detail":"<具体描述>","status":"open","why_not_found_earlier":"<上一轮为何没发现>","prd_gap":"<对应PRD哪条未覆盖>"}],"feedback_md":"<本轮完整审查反馈 markdown 原文，含 ## 案卷 Closure 裁定 表>"}}
 BREOF
 ```
 
@@ -338,6 +362,10 @@ test -f "$RESULT_FILE" && echo "OK: result file written" || echo "FAIL: file mis
 
 - `judgments_written` 是**必含字段**（v9.5 — EVA v2）：初始写 0；APPROVED 走 Step 5 判定点写库后回读真实条数更新此字段（见 Step 5「回读自证」段）；REVISION 保持 0。
 - REVISION 时 feedback 必须含具体修改方向。
+- **案卷式协议新增字段（v9.12）**：
+  - `decision.rubric_scores`：与顶层 `rubric_scores` 数值完全一致（7 维键名不变，Kernel 接口要求同时读顶层与 `decision` 两处，二者必须相等，不许漂移）。
+  - `case_file.blockers`：本轮**新增**且已通过 `why_not_found_earlier`/`prd_gap` 校验的 blocker 数组（closed 的上轮 blocker 不重复列入本字段，closure 裁定过程写进 `feedback_md`）；本轮无新增 blocker（APPROVED 或纯 closure 无新问题）时写 `[]`。
+  - `case_file.feedback_md`：本轮完整审查反馈的 markdown 原文（含「## 案卷 Closure 裁定」表 + Step 3 的 RUBRIC SCORES/VERDICT/问题列表），供 Kernel 落库 `gan_case_file` 表、供下一轮 Reviewer 通过 `inputs.case_file` 读回。
 
 **ci_workflow_alignment 填值规则**：
 - `target_environment` 为 `windows_cloud` 或 `linux_server`：正常审查 workflow 文件后打分（0-10）
