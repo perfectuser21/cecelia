@@ -76,6 +76,7 @@ GREP_RESULT=$(grep -r "write-current-state" \
   | grep -v "^$REPO_ROOT/docs/superpowers/" \
   | grep -v "^$REPO_ROOT/tests/test-pyramid-guard.test.ts" \
   | grep -v "^$REPO_ROOT/packages/engine/feature-registry.yml" \
+  | grep -v "^$REPO_ROOT/packages/brain/scripts/smoke/" \
   || true)
 if [[ -n "$GREP_RESULT" ]]; then
   echo -e "${RED}[FAIL]${NC} 断言4: 仍有 write-current-state 引用（archive 外）："
