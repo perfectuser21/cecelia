@@ -5,6 +5,7 @@ import {
   createProductionExecutionTransport,
   DEFAULT_LOCAL_MACHINE_ID,
   DEFAULT_REMOTE_BRIDGE_PREPARE_TIMEOUT_MS,
+  DEFAULT_REMOTE_BRIDGE_START_TIMEOUT_MS,
   DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS,
 } from './production-transport.js';
 
@@ -137,6 +138,39 @@ describe('production execution transport', () => {
 
       const outcome = transport.prepare(prepareInput(DEFAULT_LOCAL_MACHINE_ID))
         .then(() => 'resolved', (error) => error.message);
+      await vi.advanceTimersByTimeAsync(90_000);
+
+      await expect(outcome).resolves.toBe('resolved');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives start its own budget above the generic control-request timeout (credential FIFO write under real load can run past 60s)', async () => {
+    expect(DEFAULT_REMOTE_BRIDGE_START_TIMEOUT_MS).toBe(120_000);
+    vi.useFakeTimers();
+    try {
+      const fetchFn = vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 90_000));
+        return {
+          ok: true,
+          status: 200,
+          json: vi.fn(async () => ({ status: 'running', attempt_id: ATTEMPT_ID })),
+        };
+      });
+      const transport = createProductionExecutionTransport({
+        env: configuredEnv(),
+        fetchFn,
+      });
+
+      const outcome = transport.start({
+        attempt: {
+          id: ATTEMPT_ID,
+          lease_owner: 'dispatcher-local',
+          lease_generation: 0,
+        },
+        target: { machine: DEFAULT_LOCAL_MACHINE_ID },
+      }).then(() => 'resolved', (error) => error.message);
       await vi.advanceTimersByTimeAsync(90_000);
 
       await expect(outcome).resolves.toBe('resolved');

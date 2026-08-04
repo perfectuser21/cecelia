@@ -4,6 +4,12 @@ export const DEFAULT_LOCAL_MACHINE_ID = 'us-mac-m4';
 export const DEFAULT_WORKER_BRAIN_URL = 'http://host.docker.internal:5221';
 export const DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS = 60_000;
 export const DEFAULT_REMOTE_BRIDGE_PREPARE_TIMEOUT_MS = 180_000;
+// start 要等 docker start + credential FIFO 写入（entrypoint.sh 真正打开读端）都完成
+// 才返回；真实负载下（并发 attempt 抢 CPU/virtiofs）FIFO 写入实测能逼近甚至撞上
+// 通用 60s 控制请求超时（remote_bridge_start_timeout），掩盖 attempt-runner 自己
+// 更具体的 attempt_*_credential_fifo_write_failed 错误。给 start 单独更大预算，
+// 不再和 inspect/cancel/terminal 这类轻量轮询共用 60s 桶。
+export const DEFAULT_REMOTE_BRIDGE_START_TIMEOUT_MS = 120_000;
 
 function isValidHttpBaseUrl(value) {
   if (typeof value !== 'string' || value.trim().length === 0) return false;
@@ -82,6 +88,7 @@ export function createProductionExecutionTransport({
   githubCredentialBroker,
   remoteBridgeTimeoutMs,
   remoteBridgePrepareTimeoutMs,
+  remoteBridgeStartTimeoutMs,
 } = {}) {
   if (localMachineId !== DEFAULT_LOCAL_MACHINE_ID) {
     throw new Error(`invalid_local_execution_machine_id:${String(localMachineId)}`);
@@ -101,6 +108,13 @@ export function createProductionExecutionTransport({
         ? (remoteBridgeTimeoutMs ?? DEFAULT_REMOTE_BRIDGE_PREPARE_TIMEOUT_MS)
         : Number(env.KERNEL_FLEET_PREPARE_TIMEOUT_MS)
     );
+  const configuredStartTimeout = remoteBridgeStartTimeoutMs
+    ?? (
+      env.KERNEL_FLEET_START_TIMEOUT_MS == null
+      || env.KERNEL_FLEET_START_TIMEOUT_MS === ''
+        ? (remoteBridgeTimeoutMs ?? DEFAULT_REMOTE_BRIDGE_START_TIMEOUT_MS)
+        : Number(env.KERNEL_FLEET_START_TIMEOUT_MS)
+    );
   const worker = createRemoteBridgeTransport({
     enabled,
     bridgeUrls: workerUrls,
@@ -111,6 +125,7 @@ export function createProductionExecutionTransport({
     fetchFn,
     timeoutMs: remoteBridgeTimeoutMs ?? DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS,
     prepareTimeoutMs: configuredPrepareTimeout,
+    startTimeoutMs: configuredStartTimeout,
   });
 
   return guardWorkerConfiguration(worker, {

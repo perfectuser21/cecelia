@@ -150,6 +150,7 @@ export function createRemoteBridgeTransport({
   now = Date.now,
   timeoutMs = 10000,
   prepareTimeoutMs = timeoutMs,
+  startTimeoutMs = timeoutMs,
 } = {}) {
   const machineUrls = copyBridgeUrls(bridgeUrls);
   const configuredSecret = sharedSecret;
@@ -160,6 +161,7 @@ export function createRemoteBridgeTransport({
   const configuredNow = now;
   const configuredTimeout = timeoutMs;
   const configuredPrepareTimeout = prepareTimeoutMs;
+  const configuredStartTimeout = startTimeoutMs;
 
   function resolveBridge(target) {
     if (enabled !== true) {
@@ -193,7 +195,9 @@ export function createRemoteBridgeTransport({
   async function request(operation, url, options, consumeResponse) {
     const operationTimeout = operation === 'prepare'
       ? configuredPrepareTimeout
-      : configuredTimeout;
+      : operation === 'start'
+        ? configuredStartTimeout
+        : configuredTimeout;
     if (!Number.isFinite(operationTimeout) || operationTimeout <= 0) {
       throw new Error('remote_bridge_invalid_timeout');
     }
