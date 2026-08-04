@@ -7,9 +7,10 @@ description: |
   移植 Superpowers 6.0 subagent-driven-development 零件：进度台账 / 文件接力 / 四态出口协议 / 单评审双裁决 / compaction 恢复。
   点火方：Brain harness dispatch（无头）或人工前台（同一份 skill 两种触发，行为一致）。
   /dev 仍是唯一需求入口：本 skill 消费 /dev 路径C 的交接契约（PrepPRD + 铁律清单 + NFR），不做需求对抗。
-version: 2.9.0
+version: 2.10.0
 created: 2026-07-04
 changelog:
+  - 2.10.0: Controller exact-run cutover——Step 0 通过 canonical POST /relay-runs 幂等取得并持久化 HARNESS_RUN_ID（Brain 已注入时复用，恢复时从 .harness/run-id 读取，并用 exact GET 校验 task 归属）；中间进度、PR URL、Evaluator/Judge verdict 与最终终态全部改走 /relay-runs/by-id/${HARNESS_RUN_ID}，彻底停止按 initiative_id mutation；Judge 请求显式携带 run_id；前台点火也创建 canonical run，不再允许“无 run 裸跑/404 当正常”；run identity 缺失、格式非法或 task 归属不一致均 fail closed
   - 2.9.0: gear 档位：新增 gear=segmented 分叉（骨架棋盘 + 分段串行点绿，移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策2）——HARNESS_GEAR=segmented 时 Step 1 planner 照跑、Step 2 GAN 透传该档位给 proposer 输出多段 task-plan.json、GAN 后先派骨架 generator 落全红棋盘、再按 task-plan.json 串行段循环 generator(WORKSTREAM_INDEX)+evaluator(SEGMENT_EVAL)，同段 2 次仍败转 escalate，全段绿后走现行全量总验；复用既有 Step 0.1 HARNESS_GEAR 解析与 gear=hotfix 同款 default 不生效声明，不与 2.8.0 hotfix 支路冲突；HARNESS_GEAR 缺失/=default/=hotfix 时本节整节不生效
   - 2.8.0: gear=hotfix 短流程支路（handoff 0716 刀C，fcb459b5-c510-4f45-b41f-e71b100d94f1）——Step 0 新增 HARNESS_GEAR 变量（来源 payload.gear）；当 HARNESS_GEAR=hotfix 时跳过 GAN（proposer/reviewer）直接由 controller 从 thin_prd 锚定断言组装 contract-draft.md/contract-dod.md（输出 [gear=hotfix] skip proposer/reviewer GAN）；两条安全阀铁律：①generator 发现需改 Golden Path 断言 → FATAL 报错升档，禁止顺手改；②thin_prd 缺锚定声明 → 拒绝 hotfix，回退全流程（走完整 GAN 路径）；新增 examples/hotfix-shortflow/ 示例文件；全流程默认档（无 gear 字段）路径零回归
   - 2.7.0: Step 6 新增「毕业（测试入册）」机械步（刀1b relay 路径，配套 cecelia test-pyramid-guard 孤儿棘轮锁 0）——judge PASS 后、SHA 锚定与 merge 前，仓库存在 scripts/graduate-sprint-tests.mjs 时必须跑毕业脚本把 sprints/ 下 tests/ 与 e2e-verify.sh 搬进永久池（tests/regression/<slug>/ + scripts/smoke/e2e/<slug>.sh），commit+push 等 CI 绿再锚定；无脚本的 repo（如 zenithjoy-workspace）跳过。SHA 锚定条款新增与 update-branch 对称的毕业 commit 豁免（git diff --stat HEAD~1 证明纯 rename 零内容变更 → re-anchor 不触发 Step 4 全量重评）。插点依据：evaluator B-1 已把 e2e-verify.sh 固化完毕、merge 后无人再接手，且 guard 棘轮 orphans=0 会把没毕业的 PR 拦红
@@ -70,9 +71,10 @@ Step 0 装载/恢复 → 1 planner → 2 GAN(proposer×reviewer) → 3 generator
 echo "<阶段>: done (<关键证据>)" >> .harness/progress.md
 # 动作二：进度上报（dashboard 进度条数据源。阶段→phase 映射：planner 完成→gan 开始报 gan;
 # GAN 完成→generate;generator 完成→evaluate;judge PASS 后→由 report 步骤报 done。
-# 失败终局报 failed。上报失败不阻塞流程,warn 即可）
-curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_ID}" \
-  -H "Content-Type: application/json" -d '{"phase":"<下一阶段:planning|gan|generate|evaluate>"}' || true
+# 失败终局报 failed。exact endpoint 的 identity 失败必须 fail closed。）
+curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/by-id/${HARNESS_RUN_ID}" \
+  -H "Content-Type: application/json" -d '{"phase":"<下一阶段:planning|gan|generate|evaluate>"}' \
+  || { echo "[FATAL] exact run 进度回写失败"; exit 1; }
 ```
 
 台账记录格式（每阶段一行，append-only）：
@@ -146,6 +148,40 @@ mkdir -p .harness .harness/verdicts
 # .harness 整体忽略，但 verdicts/（裁决留痕附件）放行随 PR 入库
 printf '*\n!.gitignore\n!verdicts/\n!verdicts/**\n' > .harness/.gitignore
 cat "$LEDGER" 2>/dev/null || echo "(新 sprint，无台账)"
+
+# 0.2.1 canonical run identity（所有 mutation 的唯一 key）
+# Brain/Kernel 已注入则直接复用；compaction/重建优先读本地 identity receipt；
+# 都没有时调用 canonical create（幂等：已有 active run 返回同一 run_id）。
+RUN_ID_FILE=".harness/run-id"
+if [ -z "${HARNESS_RUN_ID:-}" ] && [ -s "$RUN_ID_FILE" ]; then
+  HARNESS_RUN_ID=$(tr -d '[:space:]' < "$RUN_ID_FILE")
+fi
+if [ -z "${HARNESS_RUN_ID:-}" ]; then
+  JOURNEY_ID=$(echo "$TASK" | jq -r '.payload.journey_id // empty')
+  TASK_INITIATIVE_ID=$(echo "$TASK" | jq -r '.payload.initiative_id // .id // empty')
+  RUN_RESP=$(curl -fsS -m 15 -X POST "$BRAIN/api/brain/orchestrator/relay-runs" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -nc \
+      --arg initiative_id "${HARNESS_INITIATIVE_ID:-$TASK_INITIATIVE_ID}" \
+      --arg current_task_id "$HARNESS_TASK_ID" \
+      --arg journey_id "$JOURNEY_ID" \
+      '{initiative_id:$initiative_id,current_task_id:$current_task_id,phase:"planning",
+        journey_id:(if $journey_id=="" then null else $journey_id end),
+        created_source:"foreground_handoff"}')")
+  HARNESS_RUN_ID=$(echo "$RUN_RESP" | jq -r '.run.id // empty')
+fi
+if ! printf '%s' "$HARNESS_RUN_ID" | grep -qE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'; then
+  echo "[FATAL] canonical HARNESS_RUN_ID 缺失或格式非法，禁止退回 initiative_id mutation"
+  exit 1
+fi
+RUN_DOC=$(curl -fsS -m 15 "$BRAIN/api/brain/orchestrator/relay-runs/by-id/${HARNESS_RUN_ID}") || {
+  echo "[FATAL] exact run 不可读取：$HARNESS_RUN_ID"; exit 1;
+}
+[ "$(echo "$RUN_DOC" | jq -r '.current_task_id // empty')" = "$HARNESS_TASK_ID" ] || {
+  echo "[FATAL] run/task identity mismatch，禁止继续"; exit 1;
+}
+printf '%s\n' "$HARNESS_RUN_ID" > "$RUN_ID_FILE"
+export HARNESS_RUN_ID
 ```
 
 ### 0.3 前台点火防护（人工前台接管必做；Brain dispatch 注入 env 的无头跑跳过）
@@ -165,7 +201,9 @@ fi
   -H "Content-Type: application/json" -d '{"status":"in_progress"}'
 ```
 
-前台点火没有 initiative_runs 行（该行由 Brain spawnSkillRelaySession INSERT，前台不经过它），因此各阶段的进度上报 `PATCH relay-runs` 会 404（"v2 run not found"）——这是**预期行为**，`|| true` 吞掉即可，不代表流程出错，也不会被 relay-watchdog 误重点火（它只扫 initiative_runs 行）。Brain 侧前台建档端点落地后本段更新。
+前台点火同样执行 Step 0.2.1：canonical POST 幂等创建/取得 run，并把响应的
+`run_id` 保存为 `HARNESS_RUN_ID`。**不再允许无 run 裸跑，也不再把 exact PATCH 的
+404 当正常**；identity 无法建立时必须 fail closed，修复点火输入后重试。
 
 ### 0.4 恢复规则
 
@@ -178,8 +216,8 @@ if [ ! -s .harness/progress.md ]; then
   # a. 找本任务的 PR（generator 阶段的外部真相；标题/正文带 task id 是 generator 约定）
   PR_HIT=$(gh pr list --state open --search "$HARNESS_TASK_ID" --json number,headRefName -q '.[0]' 2>/dev/null)
   [ -z "$PR_HIT" ] && PR_HIT=$(gh pr list --state open --search "${HARNESS_TASK_ID:0:8}" --json number,headRefName -q '.[0]' 2>/dev/null)
-  # b. Brain 侧 relay-runs phase 佐证（前台跑无 initiative_run 行则为空，不阻塞）
-  RUN_PHASE=$(curl -s -m 10 "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_ID}" 2>/dev/null | jq -r '.phase // empty')
+  # b. Brain exact run phase 佐证（Step 0.2.1 已确保 HARNESS_RUN_ID 可用）
+  RUN_PHASE=$(curl -s -m 10 "$BRAIN/api/brain/orchestrator/relay-runs/by-id/${HARNESS_RUN_ID}" 2>/dev/null | jq -r '.phase // empty')
 
   if [ -n "$PR_HIT" ]; then
     PR_BRANCH=$(echo "$PR_HIT" | jq -r .headRefName); PR_NUM=$(echo "$PR_HIT" | jq -r .number)
@@ -374,9 +412,10 @@ prompt: 调用 Skill(harness-generator)。CONTRACT_BRANCH=<branch> SPRINT_DIR=<d
 ```bash
 PR_URL_EARLY=$(gh pr view --json url -q .url 2>/dev/null || echo "")
 if [ -n "$PR_URL_EARLY" ]; then
-  curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_ID}" \
+  curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/by-id/${HARNESS_RUN_ID}" \
     -H "Content-Type: application/json" \
-    -d "{\"phase\":\"generate\",\"pr_url\":\"$PR_URL_EARLY\"}" || true
+    -d "{\"phase\":\"generate\",\"pr_url\":\"$PR_URL_EARLY\"}" \
+    || { echo "[FATAL] exact run PR URL 回写失败"; exit 1; }
   # 台账同步 append 中间态行（EVA v2）——31e29c09 实证「开 PR→CI 绿」窗口死亡则台账止步 gan，恢复只能靠 Step 0.4 兜底
   echo "generator: pr_opened (#<num>, red=<sha7>)" >> .harness/progress.md
 fi
@@ -428,13 +467,15 @@ if [ "$CI_STATUS" = "GREEN" ]; then echo "CI_GREEN"; else echo "CI_FAILED"; fi
 **evaluate_verdict 上报（硬性动作，与台账 append 同时做）**——evaluator 每次出裁决（含 fix loop 重评）后立刻 best-effort 上报，让 initiative_runs.evaluate_verdict 有结构化值（cecelia#3754 起 PATCH 接住该字段；非法值 Brain 只 warn 不 400，绝不阻塞。此前该列全 NULL=裁决只活在台账文本里，机器不可读）：
 
 ```bash
-curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_ID}" \
+curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/by-id/${HARNESS_RUN_ID}" \
   -H "Content-Type: application/json" \
-  -d '{"phase":"evaluate","evaluate_verdict":"<PASS|FAIL|FIXED>"}' || true
+  -d '{"phase":"evaluate","evaluate_verdict":"<PASS|FAIL|FIXED>"}' \
+  || { echo "[FATAL] exact run evaluator verdict 回写失败"; exit 1; }
 ```
 
 - verdict 原样发（FIXED 不用自己归一，Brain/gates 侧做归一）；写侧 COALESCE=提供即覆盖，fix loop 多轮以最后一次为准
-- 前台手跑无 initiative_run 行时 404 照旧 `|| true` 吞掉（同进度上报语义）
+- exact endpoint 返回 404/409 代表 identity 已失配，必须停止并查明，禁止改回
+  initiative mutation；仅短暂网络失败可在台账记 WARN 后重试
 
 ## Step 5: Judge（独立裁判，硬门禁）
 
@@ -446,7 +487,7 @@ curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITI
 # 本机前台直跑时即 worktree 绝对路径本身。禁止传容器内 /workspace（Brain 容器读不到）。
 JUDGE_RESP=$(curl -s -m 300 -X POST "${BRAIN_URL:-http://localhost:5221}/api/brain/harness/judge" \
   -H "Content-Type: application/json" \
-  -d "{\"task_id\":\"$HARNESS_TASK_ID\",\"sprint_dir\":\"$SPRINT_DIR\",\"worktree\":\"${HARNESS_WORKTREE_HOST:-$PWD}\"}")
+  -d "{\"task_id\":\"$HARNESS_TASK_ID\",\"run_id\":\"$HARNESS_RUN_ID\",\"sprint_dir\":\"$SPRINT_DIR\",\"worktree\":\"${HARNESS_WORKTREE_HOST:-$PWD}\"}")
 VERDICT=$(echo "$JUDGE_RESP" | jq -r '.verdict // empty')
 FEEDBACK=$(echo "$JUDGE_RESP" | jq -r '.feedback // ""')
 # HTTP 恒 200：VERDICT=PASS（API 已把 FIXED 归一为 PASS）→ 放行；FAIL/ERROR/空 → 一律按 FAIL 处理
@@ -455,9 +496,10 @@ FEEDBACK=$(echo "$JUDGE_RESP" | jq -r '.feedback // ""')
 - **judge_verdict 上报（硬性动作，EVA v2，与 Step 4 evaluate_verdict 对称）**——拿到 VERDICT 后立刻 best-effort 上报（DB 实证：judge_verdict 30 条仅 2 非空，病根就是此处从未上报，裁决只活在台账文本里）：
 
 ```bash
-curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_ID}" \
+curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/by-id/${HARNESS_RUN_ID}" \
   -H "Content-Type: application/json" \
-  -d "{\"judge_verdict\":\"$VERDICT\"}" || true
+  -d "{\"phase\":\"evaluate\",\"judge_verdict\":\"$VERDICT\"}" \
+  || { echo "[FATAL] exact run judge verdict 回写失败"; exit 1; }
 ```
 
 - agent_verdict 缺省时 API 自读 `<worktree>/.brain-result.json`；可选字段：agent_verdict / agent_feedback / prompt_dir / transcript_file
@@ -515,9 +557,10 @@ curl -s -m 15 -X POST "$BRAIN_URL/api/brain/harness/staging-e2e" \
 **追加硬性动作——回写 initiative_runs 终态**（否则 Brain 巡逻把 run 误判为 Stuck at Planner 并派干预任务，N4 实证）：
 
 ```bash
-curl -s -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/${HARNESS_INITIATIVE_ID}" \
+curl -fsS -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/by-id/${HARNESS_RUN_ID}" \
   -H "Content-Type: application/json" \
-  -d '{"phase":"done","verdict":"PASS","cost":<总成本USD数字>,"pr_url":"<pr_url>"}'
+  -d '{"phase":"done","verdict":"PASS","cost":<总成本USD数字>,"pr_url":"<pr_url>"}' \
+  || { echo "[FATAL] exact run 终态回写失败"; exit 1; }
   # 终局失败改 {"phase":"failed","failure_reason":"<一句话>","verdict":"FAIL","cost":<总成本>,"pr_url":"<有PR则填>"}
 ```
 
