@@ -6,11 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.208
+**Brain 版本**: 1.267.209
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.209 — GAN rubric trend backstop (案卷式 GAN PR-B)
+
+- deriveGan 三闸后新增趋势闸 detectRubricTrend（最近 3 轮 reviewer rubric）：diverging（单维两连降累计≥2 或 ≥2 维同时两连降）/ oscillating（两腿幅度均≥2）→ force_approve_contract（复用 persist 合同落库 + decision log 留痕 + P1 告警 + cecelia_events 'gan_forced_approval' 持久化事件）。converging/insufficient_data 路由不变，**无任何轮数上限**。
+- 护栏：真 APPROVED 优先 persist 不被劫持；identity-policy 驳回当前 SHA 时趋势闸让路 spawn:proposer（防 4096 跳热循环）；JSON null 维度按缺数据跳过。
+- r17 真实三轮 rubric 回放判 oscillating（永久回归锚点用例）。
+- 回退到 1.267.208 会恢复：GAN 发散无代码层兜底（skill 承诺的 detectConvergenceTrend 缺位）。
 
 ## Brain 1.267.208 — ledger-hygiene m7 探针口径修正 + 自主循环产出登记覆盖
 

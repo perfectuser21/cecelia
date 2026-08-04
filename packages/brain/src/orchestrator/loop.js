@@ -874,6 +874,159 @@ export async function runLoop(
       await beat();
       continue;
     }
+    if (decision.action === ACTION.FORCE_APPROVE_CONTRACT) {
+      // 案卷式 GAN 趋势观测安全网（PR-B，issue ce42f68f）：detectRubricTrend 判
+      // diverging/oscillating 时，代码层跳过 reviewer 直接强制批准当前 propose 分支。
+      // 消费路径对齐 ACTION.PERSIST_CONTRACT_APPROVAL（同一持久化函数 materializeApprovedContract
+      // / 同一 UPDATE 语句），区别：①无既有 reviewer APPROVED 决策日志可复用，必须自己写一条
+      // verdict:reviewer 行留痕（source=rubric_trend_force_approval，供审计与崩溃窗口重放识别）；
+      // ②多发一条 P1 告警（这是"代码越过 reviewer 拍板"，理应被人看到）。
+      //
+      // F3（审查修复）：raise('P1', ...) 只是把事件推进 Brain 主进程内存缓冲区（每小时刷一次
+      // 飞书汇总）——Kernel run 常年跑在 stdio ignore 的子进程/容器里，主进程重启或子进程
+      // 退出都会把还没刷出去的 P1 缓冲区一并蒸发，raise() 本身对此毫无感知（既有系统缺口，
+      // 不是本次改动引入的新问题）。cecelia_events 这一行 DB 记录落在事务外独立 INSERT，
+      // 是这条告警唯一保证可查、可被后续巡检/Dashboard 读到的送达通道；raise() 依旧保留
+      // （命中时飞书汇总仍会正常收到），两者并行、互不替代。
+      const recordForcedApprovalSideEffects = async (contractSha) => {
+        try {
+          const { raise } = await import('../alerting.js');
+          await raise(
+            'P1',
+            'gan_forced_approval',
+            `GAN rubric 趋势观测强制批准合同：run=${resolvedRunId} task=${taskId} `
+            + `reason=${decision.reason}`,
+          );
+        } catch (err) {
+          log(`[orchestrator] gan_forced_approval P1 告警发送失败 run=${resolvedRunId}: ${err.message}`);
+        }
+        try {
+          await deps.pool.query(
+            `INSERT INTO cecelia_events (event_type, payload) VALUES ($1, $2::jsonb)`,
+            [
+              'gan_forced_approval',
+              JSON.stringify({
+                run_id: resolvedRunId,
+                trend: String(decision.reason ?? '').replace(/^convergence_/, ''),
+                contract_sha: contractSha ?? null,
+                reason: decision.reason,
+              }),
+            ],
+          );
+        } catch (err) {
+          log(`[orchestrator] gan_forced_approval cecelia_events 写入失败 run=${resolvedRunId}: ${err.message}`);
+        }
+      };
+      if (!observed.contract.id) {
+        if (!observed.proposeBranch || !Number.isInteger(observed.proposeBranchRn)
+            || observed.proposeBranchRn < 1) {
+          await markRunFailed(deps, resolvedRunId, taskId, 'force_approve_but_no_contract_branch');
+          return { exitReason: 'force_approve_but_no_contract_branch', hops };
+        }
+        const approvedSha = observed.proposeBranchSha ?? null;
+        if (!approvedSha) {
+          await markRunFailed(deps, resolvedRunId, taskId, 'force_approve_but_no_contract_sha');
+          return { exitReason: 'force_approve_but_no_contract_sha', hops };
+        }
+        const artifacts = frozenContractArtifacts(
+          deps,
+          observed,
+          groundTruthPaths,
+          approvedSha,
+        );
+        if (artifacts.missing.length > 0) {
+          await markRunFailed(
+            deps,
+            resolvedRunId,
+            taskId,
+            'force_approve_but_contract_artifacts_missing',
+          );
+          return { exitReason: 'force_approve_but_contract_artifacts_missing', hops };
+        }
+        // 硬安全门不因"强制批准"而豁免：合同硬编码了可变 validation identity 时仍判 REVISION，
+        // 落一条决策日志后回 GAN（不 materialize）——对齐 persist_contract_approval 同款检查。
+        const identityPolicy = evaluateValidationIdentityPolicy(artifacts.contractContent);
+        if (!identityPolicy.ok) {
+          const policyHop = await next(deps.pool, resolvedRunId);
+          try {
+            await append(deps.pool, {
+              runId: resolvedRunId,
+              hop: policyHop,
+              observed: {
+                proposeBranchRn: observed.proposeBranchRn,
+                proposeBranchSha: approvedSha,
+              },
+              derivedPhase: 'gan',
+              gateVerdict: 'deny:premature_validation_identity_binding',
+              action: LOG_ACTION.VERDICT_REVIEWER,
+              detail: {
+                rn: observed.proposeBranchRn,
+                contract_sha: approvedSha,
+                verdict: 'REVISION',
+                summary: '合同在执行角色产生前硬编码了可变 validation identity。',
+                reason: '删除 GAN authoring attempt/capability snapshot 字面值；使用 Runner 注入的 HARNESS_ATTEMPT_ID、CAPABILITY_SNAPSHOT_ID 与当前角色 attestation late-bound，并让后续角色以证据摘要串联。',
+                source: 'validation_identity_policy',
+                violations: identityPolicy.violations,
+              },
+            });
+            hops++;
+          } catch (error) {
+            if (error instanceof SingletonConflictError) {
+              return { exitReason: 'singleton_conflict', hops };
+            }
+            throw error;
+          }
+          await beat();
+          continue;
+        }
+        const forceHop = await next(deps.pool, resolvedRunId);
+        try {
+          await append(deps.pool, {
+            runId: resolvedRunId,
+            hop: forceHop,
+            observed: {
+              proposeBranchRn: observed.proposeBranchRn,
+              proposeBranchSha: approvedSha,
+            },
+            derivedPhase: 'gan',
+            gateVerdict: 'force_approved',
+            action: LOG_ACTION.VERDICT_REVIEWER,
+            detail: {
+              rn: observed.proposeBranchRn,
+              contract_sha: approvedSha,
+              verdict: 'APPROVED',
+              reason: decision.reason,
+              source: 'rubric_trend_force_approval',
+            },
+          });
+          hops++;
+        } catch (error) {
+          if (error instanceof SingletonConflictError) {
+            return { exitReason: 'singleton_conflict', hops };
+          }
+          throw error;
+        }
+        await materializeApprovedContract(deps.pool, {
+          runId: resolvedRunId,
+          version: observed.proposeBranchRn,
+          branch: observed.proposeBranch,
+          prdContent: artifacts.prdContent,
+          contractContent: artifacts.contractContent,
+          approvedAt: now(),
+        });
+        await recordForcedApprovalSideEffects(approvedSha);
+        await beat();
+        continue;
+      }
+      // 崩溃窗口对称分支（force 落库前进程中断，contract 行已建但未 approved）
+      await deps.pool.query(
+        `UPDATE initiative_contracts SET status = 'approved', approved_at = $2, updated_at = $2 WHERE id = $1`,
+        [observed.contract.id, now()],
+      );
+      await recordForcedApprovalSideEffects(observed.proposeBranchSha ?? null);
+      await beat();
+      continue;
+    }
 
     // ---- 纯轮询 wait：只心跳+sleep（部分需 append 持久化计数）、不派发 ----
     // wait:human_review 首次必须经过 dispatcher，才能真正创建预览并通知人；同一
