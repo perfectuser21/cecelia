@@ -626,6 +626,64 @@ export async function finalizeKernelRun(pool, {
   }
 }
 
+/**
+ * run.phase 前进持久化（r17 实证修复：运行中 phase 恒 'planning'，只有
+ * finalizeKernelRun 写终态）。loop.js 在每轮最终 decision 确定后调用，仅限
+ * decision.phase ∈ {planning,gan,generate,evaluate,judge} 且非 WAIT_ACTIONS
+ * 决策。当前行 phase 若已是 'done'/'failed'/'paused' 一律不覆写——'paused'
+ * 是 needs_context 人审等待态（markRunPaused 写入），会被 activateContextResume
+ * 用一次性 resumeToken 精确翻回原相位；被本函数抢先覆写会导致 WHERE
+ * r.phase='paused' 命中 0 行，context-answer 锚点丢失、resume 永久卡死
+ * （I-2 审查修正）。
+ *
+ * 锁序铁律（PR #4596 教训 + I-1 审查修正）：本函数是独立单语句 autocommit
+ * UPDATE（不建 BEGIN/不加 FOR UPDATE），但不是"无锁/无事务"——initiative_runs
+ * 上的 AFTER 触发器 trg_project_harness_initiative_run_event 会在这条 UPDATE
+ * 隐式打开的同一事务里，对已被本语句锁住的这一行调用 append_harness_run_event()，
+ * 其中 PERFORM pg_advisory_xact_lock(hashtextextended(run_id,0)) 后再写
+ * harness_run_events。真实锁序固定为 X(run 行，UPDATE 隐式获得) → L(advisory
+ * lock，触发器取)，与 finalizeKernelRun 同向。任何调用方都不得反过来先取该
+ * run_id 的 advisory lock 再去锁/UPDATE 这一行，否则并发时会反向死锁。
+ * 调用方（loop.js）负责把持久化失败降级为告警，不炸 loop。
+ */
+export async function persistKernelRunPhase(pool, runId, phase) {
+  const { rows } = await pool.query(
+    `UPDATE initiative_runs
+        SET phase = $2, updated_at = NOW()
+      WHERE id = $1
+        AND orchestrator_version = 'v2'
+        AND phase IS DISTINCT FROM $2
+        AND phase NOT IN ('done', 'failed', 'paused')
+      RETURNING id, phase`,
+    [runId, phase],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * task.status 启动置位（r17 实证修复：派发时也不置 in_progress，task.status 恒
+ * 'queued'）。run.js 启动流程装载 task 后调用一次；只在仍是 'queued' 时翻面，
+ * 已 in_progress/终态一律不碰。同时补写 started_at（I-3 审查修正）：
+ * tick-status.js#isStale / decision.js#getBlockedTasks 都是 `if (!started_at)
+ * return false`/直接 skip——task.status 之前从未被推进过 in_progress，
+ * started_at 也从未被写过，Kernel 任务对这两个巡检永久隐形。用
+ * COALESCE(started_at, NOW()) 而不是硬覆盖，防止 resume/重派场景重复推迟
+ * 起算时间。调用方负责把失败降级为告警，不阻断 loop 启动。
+ */
+export async function activateQueuedKernelTask(pool, taskId) {
+  const { rows } = await pool.query(
+    `UPDATE tasks
+        SET status = 'in_progress',
+            started_at = COALESCE(started_at, NOW()),
+            updated_at = NOW()
+      WHERE id = $1
+        AND status = 'queued'
+      RETURNING id`,
+    [taskId],
+  );
+  return rows[0] ?? null;
+}
+
 export async function reconcileKernelTaskTerminal(
   pool,
   taskId,

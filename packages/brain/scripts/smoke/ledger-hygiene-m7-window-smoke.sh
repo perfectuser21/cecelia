@@ -9,13 +9,14 @@
 #   5. handoff.js 导出 pushHandoffAtom 且 routes/tasks.js PATCH 已接线
 set -euo pipefail
 
-echo "[ledger-hygiene-m7-window-smoke] 1. m7 北京日窗口 + lane 排除"
+echo "[ledger-hygiene-m7-window-smoke] 1. m7 北京日窗口 + 自产排除"
 node -e "
 const fs = require('fs');
 const src = fs.readFileSync('packages/brain/src/ledger-hygiene.js', 'utf8');
 const checks = [
-  [\"AT TIME ZONE 'Asia/Shanghai'\", 'm7 统计窗按 Asia/Shanghai 推导'],
-  [\"lane IS DISTINCT FROM 'ledger-hygiene'\", 'm7 排除探针自产 atoms'],
+  [\"AT TIME ZONE 'Asia/Shanghai'\", 'strategist 子项统计窗按 Asia/Shanghai 北京日推导'],
+  ['getM7CaptureWindow', 'capture 子项参数化北京昨日自然日窗口（#4597 骨架）'],
+  ['LEDGER_SELF_ATOM_PREFIX', 'm7 排除探针自产 atoms（content 前缀分类）'],
 ];
 const missing = checks.filter(([p]) => !src.includes(p));
 if (missing.length > 0) {

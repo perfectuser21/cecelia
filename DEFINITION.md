@@ -6,16 +6,18 @@
 
 
 
-**Brain 版本**: 1.267.204
+**Brain 版本**: 1.267.207
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.267.204 — ledger-hygiene m7 探针口径修正 + 自主循环产出登记覆盖
+## Brain 1.267.207 — ledger-hygiene m7 探针口径修正 + 自主循环产出登记覆盖
 
-- m7 统计窗改为上一完整北京日（Asia/Shanghai 00:00-24:00），替代 NOW()-24h 滑窗（秒级漂移
-  致误报自我延续）；统计排除探针自产 atoms（`capture_atoms.lane='ledger-hygiene'`）。
+- m7 统计窗改为上一完整北京日（Asia/Shanghai 昨日自然日），替代 NOW()-24h 滑窗（秒级漂移
+  致误报自我延续）；capture 子项经 `getM7CaptureWindow` 参数化窗口 + `LEDGER_SELF_ATOM_PREFIX`
+  content 前缀做 organic/self 分解排除自产（与 #4597 兄弟单合流，本单叠加 strategist 子项同窗口
+  与写入侧 lane 标识）。
 - raiseBreachAlerts：debt 持平时文案改"欠账持平 N（连续第 N 天）"不再写"上升 X→X"；
   自产 issue atom 打 `lane='ledger-hygiene'` 标识。
 - `pushCaptureAtom` 签名断裂修复：`routedToTable/routedToId/lane` 真实落库
@@ -23,6 +25,18 @@
 - auto-learning `VALUABLE_TASK_TYPES` 纳入 `harness_initiative`（失败任务产 learning + 溯源 atom）。
 - `handoff.js` 新增导出 `pushHandoffAtom`（saveHandoff 复用同口径）；
   `PATCH /api/brain/tasks/:id` 在 `result.handoff` 有效时补登记 capture_atom（吞错不阻断）。
+
+## Brain 1.267.205 — Kernel TaskBundle PRD anchor
+
+- dispatcher buildInputs 把 task.payload.thin_prd / prep_prd_body（非空白时）注入所有角色 TaskBundle inputs——GAN 收敛的 PRD 锚（r17 实证缺锚时 Planner 凭一句话推断 PRD、Reviewer 失去"覆盖完 PRD 即收敛"边界）。
+- 回退到 1.267.204 会恢复：Planner/Proposer/Reviewer 只见 title+description。
+
+## Brain 1.267.204 — Kernel run phase/task status runtime persistence
+
+- Kernel loop 每轮最终 decision 后持久化前进相位到 `initiative_runs.phase`（白名单 planning/gan/generate/evaluate/judge；wait/终态/paused 不写；终态仍归 finalizeKernelRun 独有）。UPDATE 为独立单语句，锁序经 AFTER 触发器为 X(run 行)→L(advisory)，与 finalize 同向。
+- `runKernelMain` 启动把 `status='queued'` 的父 task 置 `in_progress` 并补 `started_at`（COALESCE），watchdog/orphan-guard/isStale 对 Kernel 任务首次真实生效。
+- migration 382：`initiative_runs_phase_check` 补 `'judge'` 枚举（此前 judge 相位持久化必被约束拒绝）。
+- 回退到 1.267.203 会恢复：run.phase 恒停初值、task 恒 queued、监控与恢复链对 Kernel 任务失明。
 
 ## Brain 1.267.203 — Kernel GAN cost writeback
 

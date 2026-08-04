@@ -112,5 +112,7 @@
     "environment_routing": "生产 Brain(5221, git_sha 01d1b372c) 不含 PR 代码（handoff.js 无 pushHandoffAtom，merge-base 实证）。按 controller relay 口径，b5-b8 与 final E2E 打从 worktree 97c2e2932 启动的隔离 Brain 实例（端口 5224，挂 src/routes.js 真实路由聚合，含 routes/tasks.js PATCH 与 routes/execution.js execution-callback inline auto-learning；不启 tick/调度防对真库双重派发）。改写面仅 localhost:5221→5224 与脚本副本路径（B-1.6 容器 URL 重写同型环境路由），全部断言逐字一致（diff 已核）。生产部署接缝为 PRD 显式裁剪（接缝清单 #3）。",
     "playground_heuristic": "仓库根 playground/ 为 main 既有训练产物(#4230)，本 PR 零触碰——B33 playground 启发式误命中，按真实功能 autonomous sprint 分支执行位置词验证（脚本含 localhost:5221/api/brain/ ✓）",
     "cleanup": "tasks/capture_atoms/learnings 中 e2e-78e812c0-% 标记数据残留 0 行；隔离 Brain 实例已停止（5224 关闭）"
-  }
+  },
+  "exit_code": 0,
+  "log_tail": "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  ✅ 映射检查通过 (3 项)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✅ Golden Path 验证通过"
 }

@@ -1,56 +1,118 @@
 {
   "verdict": "PASS",
-  "pr": 4442,
-  "head_sha": "68c9d2cf41aa72a94ac01302543e95638ffe3bc2",
+  "task_id": "78e812c0-458e-4829-9b29-f2eda72c3ffb",
+  "attempt_id": "",
+  "head_sha": "97c2e2932793d7d64c5ae9ab42e672c6f69d2d53",
+  "pr": "https://github.com/perfectuser21/cecelia/pull/4598",
+  "sprint_dir": "sprints/08040916-relay-78e812c0",
+  "target_environment": "local_api",
+  "journey_type": "autonomous",
+  "verification_level": "L2",
+  "failed_step": null,
+  "log_excerpt": null,
+  "screenshots": [],
+  "cascade_assertions": [],
+  "unverifiable": [],
   "behavior_tests": [
     {
-      "command": "bash packages/engine/tests/integrity/ci-blindspot-contract.test.sh",
+      "command": "node sprints/08040916-relay-78e812c0/tests/e2e/m7-scenarios.mjs window",
       "exit_code": 0,
-      "log_tail": "  PASS  ASSERT-2: ci.yml 含 fleet-worker *.test.sh glob（失明点②已修复）\n  PASS  ASSERT-3: ci-passed needs 数组含 brain-tests-shell（已列为必过项）\n\n[ci-blindspot-contract] PASS=3 FAIL=0\n[ci-blindspot-contract] PASS — 所有契约断言满足"
+      "log_tail": "OK window: 当前时刻 atom 不计入上一北京日窗，debt=1",
+      "verification_level": "L2",
+      "action": "真 Postgres(cecelia) TEMP 影子表插入当前时刻非自产 atom",
+      "expected": "旧口径 NOW()-24h 必 debt=0 假绿；新口径上一完整北京日窗 debt=1"
     },
     {
-      "command": "bash sprints/07290954-ci-blindspot-fix/tests/ci-blindspot-contract.test.sh",
+      "command": "node sprints/08040916-relay-78e812c0/tests/e2e/m7-scenarios.mjs exclusion",
       "exit_code": 0,
-      "log_tail": "[ci-blindspot-contract] PASS=3 FAIL=0\n[ci-blindspot-contract] PASS â ææå¥çº¦æ­è¨æ»¡è¶³"
+      "log_tail": "OK exclusion: 仅自产 debt=1 → 加非自产 debt=0",
+      "verification_level": "L2",
+      "action": "上一北京日窗内先插 lane=ledger-hygiene 自产 atom，再插非自产 atom",
+      "expected": "仅自产 → debt=1 正确击穿；加非自产 → debt=0 清偿"
     },
     {
-      "command": "grep -qF \"for t in packages/brain/scripts/fleet-worker/*.test.sh\" .github/workflows/ci.yml && echo PASS",
+      "command": "node sprints/08040916-relay-78e812c0/tests/e2e/m7-scenarios.mjs reset",
       "exit_code": 0,
-      "log_tail": "PASS"
+      "log_tail": "OK reset: debt=0 时 streak 2 → 0 复位",
+      "verification_level": "L2"
     },
     {
-      "command": "git log --oneline d0226af1a..2fa939c58",
+      "command": "node sprints/08040916-relay-78e812c0/tests/e2e/m7-scenarios.mjs copy",
       "exit_code": 0,
-      "log_tail": "2fa939c58 fix(ci): ä¿®å¤ä¸¤P0ââmain pushå¨éåå½æ­»ç  + fleet-workerå­¤å¿æ¥çº¿"
+      "log_tail": "OK copy: 持平文案无「上升」+ lane 标识 + routed_to 落库",
+      "verification_level": "L2"
     },
     {
-      "command": "bash packages/brain/scripts/fleet-worker/fleet-nodectl.test.sh",
+      "command": "bash tests/e2e/b5-autolearn.sh (端口路由副本 5221→5224，断言逐字一致)",
       "exit_code": 0,
-      "log_tail": "PASS: fleet-nodectl behavioral contract"
+      "log_tail": "OK b5: learning=871212c5-75cf-40ad-b659-95f142a37ecc atom 溯源落库",
+      "verification_level": "L2",
+      "action": "POST /api/brain/execution-callback (harness_initiative failed) → worktree 代码 Brain HTTP + 真 cecelia 库",
+      "expected": "learnings 新增 1 行(task_id 关联) + capture_atoms 新增 1 行 routed_to_table=learnings routed_to_id=learning id，created_at 5 分钟窗"
     },
     {
-      "command": "bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh",
+      "command": "bash tests/e2e/b6-handoff-patch.sh (端口路由副本)",
       "exit_code": 0,
-      "log_tail": "PASS: Fleet rollout behavioral contract"
+      "log_tail": "OK b6: handoff atom 登记 task=f9973727-01be-4ff9-8526-b823257b421c",
+      "verification_level": "L2",
+      "action": "PATCH /api/brain/tasks/:id body result.handoff(buildHandoff shape)",
+      "expected": "200 success==true 且 capture_atoms 新增 target_type=handoff routed_to_table=tasks routed_to_id=task_id，5 分钟窗"
     },
     {
-      "command": "bash packages/brain/scripts/fleet-worker/fleet-worker-docker-access.test.sh",
+      "command": "bash tests/e2e/b7-handoff-empty.sh (端口路由副本)",
       "exit_code": 0,
-      "log_tail": "PASS: Fleet Worker exact Docker socket ACL refresher contract"
+      "log_tail": "OK b7: 空 handoff 不产 atom 且 PATCH 200",
+      "verification_level": "L2"
     },
     {
-      "command": "gh pr view 4442 --json state,statusCheckRollup --jq .state",
+      "command": "bash tests/e2e/b8-nonvaluable-skip.sh (端口路由副本)",
       "exit_code": 0,
-      "log_tail": "OPEN"
+      "log_tail": "OK b8: 非 valuable 类型不产 learning",
+      "verification_level": "L2"
+    },
+    {
+      "command": "node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs",
+      "exit_code": 0,
+      "log_tail": "All facts consistent. / ✅ All version files in sync / ✅ 映射检查通过 (3 项)",
+      "verification_level": "L2"
+    },
+    {
+      "command": "[INV-2] node .../m7-scenarios.mjs window（复用 B1 oracle，合同声明复用）",
+      "exit_code": 0,
+      "log_tail": "OK window（DB_DEFAULTS 与 Brain 同源 db-config.js 解析连库成功即证同一逻辑）",
+      "verification_level": "L2"
+    },
+    {
+      "command": "[INV-6] bash tests/e2e/b6-handoff-patch.sh（复用 B6 oracle）",
+      "exit_code": 0,
+      "log_tail": "OK b6（断言 capture_atoms 行本体三语义字段，非 HTTP 200）",
+      "verification_level": "L2"
+    },
+    {
+      "command": "[INV-56] node .../m7-scenarios.mjs window（复用 B1 oracle）",
+      "exit_code": 0,
+      "log_tail": "OK window（北京窗从 Asia/Shanghai 推导，真 Postgres 验证）",
+      "verification_level": "L2"
+    },
+    {
+      "command": "[INV-57] bash tests/e2e/b5-autolearn.sh（复用 B5 oracle）",
+      "exit_code": 0,
+      "log_tail": "OK b5（真 Brain HTTP + 真 cecelia 库，非 mock/CI 绿）",
+      "verification_level": "L2"
+    },
+    {
+      "command": "timeout 120 bash /tmp/e2e-verify-routed.sh (final E2E 整脚本，合同 ## E2E 验收 段提取)",
+      "exit_code": 0,
+      "log_tail": "✅ 映射检查通过 (3 项)\n✅ Golden Path 验证通过",
+      "verification_level": "L2"
     }
   ],
-  "invariants": {
-    "I1": "PASS",
-    "I2": "PASS",
-    "I3": "PASS",
-    "I4": "PASS",
-    "I5": "PASS",
-    "I6": "PENDING-MERGE",
-    "I7": "PASS"
-  }
+  "notes": {
+    "mock_edge_check": "clean（禁 mock 边清单 5 条，扫描 PR 内 10 个测试文件，唯一命中 auto-learning.test.js:8 vi.mock('crypto')——外层无关依赖，不属清单边）",
+    "environment_routing": "生产 Brain(5221, git_sha 01d1b372c) 不含 PR 代码（handoff.js 无 pushHandoffAtom，merge-base 实证）。按 controller relay 口径，b5-b8 与 final E2E 打从 worktree 97c2e2932 启动的隔离 Brain 实例（端口 5224，挂 src/routes.js 真实路由聚合，含 routes/tasks.js PATCH 与 routes/execution.js execution-callback inline auto-learning；不启 tick/调度防对真库双重派发）。改写面仅 localhost:5221→5224 与脚本副本路径（B-1.6 容器 URL 重写同型环境路由），全部断言逐字一致（diff 已核）。生产部署接缝为 PRD 显式裁剪（接缝清单 #3）。",
+    "playground_heuristic": "仓库根 playground/ 为 main 既有训练产物(#4230)，本 PR 零触碰——B33 playground 启发式误命中，按真实功能 autonomous sprint 分支执行位置词验证（脚本含 localhost:5221/api/brain/ ✓）",
+    "cleanup": "tasks/capture_atoms/learnings 中 e2e-78e812c0-% 标记数据残留 0 行；隔离 Brain 实例已停止（5224 关闭）"
+  },
+  "exit_code": 0,
+  "log_tail": "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  ✅ 映射检查通过 (3 项)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n✅ Golden Path 验证通过"
 }

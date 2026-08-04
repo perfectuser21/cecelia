@@ -128,6 +128,7 @@ kernel-two-phase-launch-smoke.sh
 kr1-kr2-updater-smoke.sh
 kv-route-smoke.sh
 launchd-patrol-smoke.sh
+ledger-hygiene-m7-organic-smoke.sh
 ledger-hygiene-m7-window-smoke.sh
 ledger-hygiene-smoke.sh
 line-context-smoke.sh
