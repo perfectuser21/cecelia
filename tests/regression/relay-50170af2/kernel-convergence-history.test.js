@@ -140,6 +140,7 @@ function makeGroundTruthDeps(statusCheckRollup) {
         if (sql.includes('FROM harness_attempts')) return { rows: [] };
         if (sql.includes('FROM orchestrator_decision_log')) return { rows: [] };
         if (sql.includes('FROM account_usage_cache')) return { rows: [] };
+        if (sql.includes('gan_case_file')) return { rows: [] };
         throw new Error(`unexpected SQL: ${sql}`);
       }),
     },
