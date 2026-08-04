@@ -45,6 +45,7 @@ curl -X POST localhost:5221/api/brain/tick
 | 模块 | 路径 | 职责 | 详情 |
 |------|------|------|------|
 | Brain | `packages/brain/` | 核心调度、决策、保护 | → [brain/AGENTS.md](.agent-knowledge/brain.md) |
+| Kernel Harness × Golden Path | `packages/brain/src/orchestrator/` | provider 无关执行内核 + GP 治理体系 | → [KERNEL_HARNESS_MAP.md](docs/current/KERNEL_HARNESS_MAP.md) |
 | Engine | `packages/engine/` | 开发工作流（hooks/skills/CI） | → [engine/AGENTS.md](.agent-knowledge/engine.md) |
 | Apps | `apps/dashboard/` | React 前端界面 port 5211 | — |
 | Skills | `~/.claude/skills/` | 63 个外部能力 | → [skills-index.md](.agent-knowledge/skills-index.md) |
