@@ -1034,24 +1034,6 @@ function taskExecutionContract(providerSpec, request, target) {
         GIT_CONFIG_VALUE_0: 'blocked-by-harness://evaluator',
       }
       : {}),
-    // 案卷式 GAN 会话续接（design doc §数据流3，决策 ba33fc68）：dispatcher.js
-    // 已经把同 role 最近一个终态成功 attempt 的 provider_session_id/provider
-    // 注入 bundle.inputs（brain 侧只负责查数据，不知道本次实际会派到哪个
-    // provider）。这里才是真正的匹配点——只有 resume_provider 与本次实际派发
-    // 的 target.provider 都是 codex 时才追加 HARNESS_RESUME_SESSION_ID，
-    // entrypoint.sh 里已有的 codex 分支（`codex exec resume <id>`）直接消费
-    // 这个既有环境变量，不用改容器脚本。provider 不匹配/字段缺失时不注入，
-    // 视同没有历史会话——proposer/reviewer 走全新会话，全量案卷（case_file）
-    // 已经在 bundle 里，读案卷降级，不算失败。
-    ...(
-      ['proposer', 'reviewer'].includes(target.role)
-      && typeof inputs.resume_session_id === 'string'
-      && inputs.resume_session_id.length > 0
-      && inputs.resume_provider === 'codex'
-      && target.provider === 'codex'
-        ? { HARNESS_RESUME_SESSION_ID: inputs.resume_session_id }
-        : {}
-    ),
   };
   const inputRequirements = inputs.runtime_resources;
   const requestRequirements = request.runtime_resources;
@@ -1059,7 +1041,10 @@ function taskExecutionContract(providerSpec, request, target) {
     (inputRequirements === undefined) !== (requestRequirements === undefined)
     || (
       inputRequirements !== undefined
-      && JSON.stringify(inputRequirements) !== JSON.stringify(requestRequirements)
+      // F10（复审）：按值比较，不按键序比较——两侧独立构造出的对象即便字段
+      // 写入顺序不同（例如 {postgres,node_deps} vs {node_deps,postgres}），
+      // 语义相同就不该被判 mismatch。stableJson 递归按 key 排序后再序列化。
+      && stableJson(inputRequirements) !== stableJson(requestRequirements)
     )
   ) {
     throw new Error('attempt_runtime_requirements_mismatch');
@@ -1088,9 +1073,9 @@ function taskExecutionContract(providerSpec, request, target) {
     runtimeRequirements: Object.freeze({
       postgres: runtimeRequirements.postgres === true,
       // Presence-preserving（同 remote-bridge-transport.js copyRuntimeResources
-      // 注释）：只有原始请求真的带了这个字段才回填，不凭空多出一个默认键——
-      // 否则 resourceManager.provision({requirements}) 这类下游精确比对会被
-      // 一个从未声明过的 node_deps:false 撑破。
+      // 注释）：只有原始请求真的带了这个字段才回填，不凭空多出一个默认键。
+      // node_deps 只在这里（workspace 层消费）保留；resourceManager.provision
+      // 调用处（下方）会显式剥离只留 postgres，见 F3 注释。
       ...(runtimeRequirements.node_deps !== undefined
         ? { node_deps: runtimeRequirements.node_deps === true }
         : {}),
@@ -1673,13 +1658,28 @@ function createAttemptRunner({
       const workspace = await prepareVerifiedWorkspace(request.workspace_spec, {
         nodeDeps: executionContract.runtimeRequirements.node_deps === true,
       });
+      // F4（复审）：node_deps 失败/跳过不炸 prepare（设计明确要求），但不能
+      // 因此变得不可观测——最少落一条 fleet-worker 日志，运维排查"这个
+      // attempt 为什么 product-map:check 又红了"时不用先去挖 attempt 落库。
+      if (workspace.node_deps && workspace.node_deps.status !== 'installed') {
+        console.warn(
+          `[attempt-runner] node_deps ${workspace.node_deps.status} `
+          + `attempt=${request.attempt_id} run=${request.run_id}`
+          + (workspace.node_deps.warning ? `: ${workspace.node_deps.warning}` : ''),
+        );
+      }
       const labels = labelsFor(request, workerId);
       let resources = EMPTY_RUNTIME_RESOURCES;
       if (executionContract.runtimeRequirements.postgres) {
         try {
           resources = await resourceManager.provision({
             attemptId: request.attempt_id,
-            requirements: executionContract.runtimeRequirements,
+            // F3（复审实测坐实）：resourceManager（attempt-resources.cjs
+            // validateRequirements）只认 {postgres} 这一个字段，见到未知键
+            // 一律 throw attempt_runtime_requirements_invalid。node_deps 是
+            // workspace 层自己的开关，不能原样把 executionContract.runtimeRequirements
+            // （可能带 node_deps）整个转发进去——必须在这里剥离只留 postgres。
+            requirements: { postgres: executionContract.runtimeRequirements.postgres },
           });
         } catch (error) {
           await workspaceManager.cleanup(workspace);
@@ -1998,6 +1998,9 @@ function createAttemptRunner({
           ...(state.status === 'terminal'
             ? { terminal_status: state.terminal_status }
             : {}),
+          // F4（复审）：node_deps 成败进 inspect 响应体——运维/调用方不用扒
+          // stateStore 落库文件就能看到"这个 attempt 装依赖了吗、装成功没有"。
+          ...(state.workspace?.node_deps ? { node_deps: state.workspace.node_deps } : {}),
         });
       }
       const inspected = await docker.inspect({ containerId: state.container_id });
@@ -2005,6 +2008,7 @@ function createAttemptRunner({
         attempt_id: attemptId,
         status: inspected.status,
         container_id: state.container_id,
+        ...(state.workspace?.node_deps ? { node_deps: state.workspace.node_deps } : {}),
       });
     },
 

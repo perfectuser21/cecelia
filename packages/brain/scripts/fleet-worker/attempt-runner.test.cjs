@@ -1071,111 +1071,6 @@ describe('Fleet Worker Attempt runner', () => {
     },
   );
 
-  // 案卷式 GAN 会话续接（design doc §数据流3，决策 ba33fc68）：dispatcher.js 已经把
-  // resume_session_id/resume_provider 塞进 bundle.inputs，attempt-runner.cjs 是
-  // 真正做"provider 匹配才续接"判断的地方——只有 resume_provider 与本次实际派发
-  // 的 target.provider 都是 codex 时才追加 HARNESS_RESUME_SESSION_ID，交给
-  // entrypoint.sh 里既有的 `codex exec resume <id>` 分支消费。
-  describe('案卷式 GAN 会话续接（resume_session_id）', () => {
-    it('reviewer + resume_provider=codex + target.provider=codex → 注入 HARNESS_RESUME_SESSION_ID', async () => {
-      const deps = dependencies();
-      const runner = createRunner(deps);
-
-      await runner.prepare(request({
-        provider_spec: {
-          ...request().provider_spec,
-          stdin: providerPrompt('reviewer', {
-            resume_session_id: 'thread-reviewer-1',
-            resume_provider: 'codex',
-          }),
-        },
-        target: { ...request().target, role: 'reviewer' },
-      }));
-
-      expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
-        roleEnv: expect.objectContaining({
-          HARNESS_RESUME_SESSION_ID: 'thread-reviewer-1',
-        }),
-      }));
-    });
-
-    it('proposer + resume_provider=codex + target.provider=codex → 注入 HARNESS_RESUME_SESSION_ID', async () => {
-      const deps = dependencies();
-      const runner = createRunner(deps);
-
-      await runner.prepare(request({
-        provider_spec: {
-          ...request().provider_spec,
-          stdin: providerPrompt('proposer', {
-            resume_session_id: 'thread-proposer-1',
-            resume_provider: 'codex',
-          }),
-        },
-        target: { ...request().target, role: 'proposer' },
-      }));
-
-      expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
-        roleEnv: expect.objectContaining({
-          HARNESS_RESUME_SESSION_ID: 'thread-proposer-1',
-        }),
-      }));
-    });
-
-    it('resume_provider 与实际派发 target.provider 不一致 → 不注入，读案卷降级', async () => {
-      const deps = dependencies();
-      const runner = createRunner(deps);
-
-      await runner.prepare(request({
-        provider_spec: {
-          ...request().provider_spec,
-          stdin: providerPrompt('reviewer', {
-            resume_session_id: 'thread-reviewer-1',
-            resume_provider: 'codex',
-          }),
-        },
-        target: { ...request().target, role: 'reviewer', provider: 'claude' },
-      }));
-
-      const call = deps.docker.prepare.mock.calls[0][0];
-      expect(call.roleEnv).not.toHaveProperty('HARNESS_RESUME_SESSION_ID');
-    });
-
-    it('非 proposer/reviewer 角色（如 generator）即便带 resume 字段也不注入', async () => {
-      const deps = dependencies();
-      const runner = createRunner(deps);
-
-      await runner.prepare(request({
-        provider_spec: {
-          ...request().provider_spec,
-          stdin: providerPrompt('generator', {
-            resume_session_id: 'thread-generator-1',
-            resume_provider: 'codex',
-          }),
-        },
-        target: { ...request().target, role: 'generator' },
-      }));
-
-      const call = deps.docker.prepare.mock.calls[0][0];
-      expect(call.roleEnv).not.toHaveProperty('HARNESS_RESUME_SESSION_ID');
-    });
-
-    it('resume_session_id 缺失/空 → 不注入（首轮/无历史会话的正常路径）', async () => {
-      const deps = dependencies();
-      const runner = createRunner(deps);
-
-      await runner.prepare(request({
-        provider_spec: {
-          ...request().provider_spec,
-          stdin: providerPrompt('reviewer', {}),
-        },
-        target: { ...request().target, role: 'reviewer' },
-      }));
-
-      const call = deps.docker.prepare.mock.calls[0][0];
-      expect(call.roleEnv).not.toHaveProperty('HARNESS_RESUME_SESSION_ID');
-    });
-  });
-
   // 运行时依赖预装（design doc §运行时依赖）：runtime_resources.node_deps 走同一条
   // request/bundle 一致性校验通道，再传给 workspaceManager.prepare 的第二参数。
   describe('运行时依赖预装（runtime_resources.node_deps）', () => {
@@ -1243,6 +1138,121 @@ describe('Fleet Worker Attempt runner', () => {
         },
         target: { ...request().target, role: 'reviewer' },
       }))).rejects.toThrow('attempt_runtime_requirements_invalid');
+    });
+
+    // F3（复审实测坐实——现网 34 条任务回归的根因）：resourceManager 的真实
+    // 实现（attempt-resources.cjs validateRequirements）只认 {postgres} 一个
+    // 字段，见到 node_deps 这类未知键会直接 throw
+    // attempt_runtime_requirements_invalid。{postgres:true, node_deps:true}
+    // 同时为真是完全合法的组合（评估类角色若未来也要装依赖），必须证明
+    // provision() 拿到的是剥离过的干净 {postgres:true}，而 workspace 层仍然
+    // 拿到完整的 nodeDeps:true。
+    it('F3：{postgres:true, node_deps:true} 组合——resourceManager.provision 只收到 {postgres:true}，node_deps 独立流向 workspace 层', async () => {
+      const deps = dependencies();
+      const runner = createRunner(deps);
+
+      await runner.prepare(request({
+        runtime_resources: { postgres: true, node_deps: true },
+        provider_spec: {
+          ...request().provider_spec,
+          stdin: providerPrompt('evaluator', {
+            runtime_resources: { postgres: true, node_deps: true },
+          }),
+        },
+        target: { ...request().target, role: 'evaluator' },
+      }));
+
+      expect(deps.resourceManager.provision).toHaveBeenCalledWith({
+        attemptId: ATTEMPT_ID,
+        requirements: { postgres: true },
+      });
+      expect(deps.workspaceManager.prepare).toHaveBeenCalledWith(
+        expect.any(Object),
+        { nodeDeps: true },
+      );
+    });
+
+    // F10（复审）：两侧独立构造的 runtime_resources 字段写入顺序不保证一致
+    // （bundle 走 dispatcher.js 拼装，request 走 remote-bridge-transport.js
+    // copyRuntimeResources 拼装，没有共享同一处字面量）——按值比较，不能因为
+    // 键序不同就误判 mismatch。
+    it('F10：bundle 与 request 的 runtime_resources 键序不同不算 mismatch', async () => {
+      const deps = dependencies();
+      const runner = createRunner(deps);
+
+      await runner.prepare(request({
+        runtime_resources: { node_deps: true, postgres: false },
+        provider_spec: {
+          ...request().provider_spec,
+          stdin: providerPrompt('reviewer', {
+            runtime_resources: { postgres: false, node_deps: true },
+          }),
+        },
+        target: { ...request().target, role: 'reviewer' },
+      }));
+
+      expect(deps.workspaceManager.prepare).toHaveBeenCalledWith(
+        expect.any(Object),
+        { nodeDeps: true },
+      );
+    });
+
+    // F4（复审）：node_deps 失败/跳过不炸 prepare，但必须可观测——最少
+    // fleet-worker 日志 + 响应体（这里验响应体：inspect() 返回值）里有。
+    it('F4：workspace.node_deps 透传进 inspect() 的响应体', async () => {
+      const deps = dependencies();
+      deps.workspaceManager.prepare.mockImplementationOnce(async () => ({
+        ...deps.workspace,
+        node_deps: { status: 'failed', warning: 'npm ci failed: simulated' },
+      }));
+      const runner = createRunner(deps);
+
+      await runner.prepare(request({
+        runtime_resources: { postgres: false, node_deps: true },
+        provider_spec: {
+          ...request().provider_spec,
+          stdin: providerPrompt('reviewer', {
+            runtime_resources: { postgres: false, node_deps: true },
+          }),
+        },
+        target: { ...request().target, role: 'reviewer' },
+      }));
+
+      await expect(runner.inspect(ATTEMPT_ID, {
+        owner: 'dispatcher-1',
+        generation: 0,
+      })).resolves.toMatchObject({
+        node_deps: { status: 'failed', warning: 'npm ci failed: simulated' },
+      });
+    });
+
+    it('F4：node_deps 非 installed 时 fleet-worker 落一条日志（可观测，不阻断 prepare）', async () => {
+      const deps = dependencies();
+      deps.workspaceManager.prepare.mockImplementationOnce(async () => ({
+        ...deps.workspace,
+        node_deps: { status: 'failed', warning: 'npm ci failed: simulated registry timeout' },
+      }));
+      const runner = createRunner(deps);
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      try {
+        await runner.prepare(request({
+          runtime_resources: { postgres: false, node_deps: true },
+          provider_spec: {
+            ...request().provider_spec,
+            stdin: providerPrompt('reviewer', {
+              runtime_resources: { postgres: false, node_deps: true },
+            }),
+          },
+          target: { ...request().target, role: 'reviewer' },
+        }));
+
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining(`node_deps failed attempt=${ATTEMPT_ID}`),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
   });
 

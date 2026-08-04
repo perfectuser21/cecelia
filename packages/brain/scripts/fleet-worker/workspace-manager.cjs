@@ -20,12 +20,25 @@ const SPEC_FIELDS = new Set([
   'attempt_id',
   'frozen_baseline',
 ]);
+// F7（复审）：npm ci 独立超时预算——180s prepare 总预算里留至少 60s 给 git
+// clone/worktree/verify 等其余步骤，npm ci 本身封顶 120s；超时按失败处理
+// （被下面的 try/catch 吸收成 nodeDepsResult.status='failed'，不炸 prepare）。
+const NODE_DEPS_INSTALL_TIMEOUT_MS = 120_000;
+// F7：8MiB——npm ci 在大依赖树上的 stdout/stderr 体量比 git 命令大得多，
+// 默认 execFile maxBuffer(1MB) 在真实 monorepo 依赖树上容易溢出报
+// ERR_CHILD_PROCESS_STDIO_MAXBUFFER，把"依赖装成功但日志读不完整"误判成失败。
+const NODE_DEPS_INSTALL_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 
 async function defaultRunCommand(command, args, options = {}) {
   const { stdout = '' } = await execFileAsync(command, args, {
     cwd: options.cwd,
     encoding: 'utf8',
-    maxBuffer: 1024 * 1024,
+    maxBuffer: options.maxBuffer ?? 1024 * 1024,
+    // env/timeout 只在调用方显式给出时才透传（git 调用从不给，行为不变）。
+    // 调用方负责自己决定要不要带 process.env——workspace-manager 不在这里
+    // 偷偷帮它合并，避免对已有调用方产生意外副作用。
+    ...(options.env ? { env: options.env } : {}),
+    ...(options.timeout ? { timeout: options.timeout } : {}),
   });
   return { stdout: stdout.trim() };
 }
@@ -103,6 +116,12 @@ function createWorkspaceManager({
   const mirrors = assertRoot(mirrorRoot, 'mirror_root');
   const worktrees = assertRoot(worktreeRoot, 'worktree_root');
   const quarantine = assertRoot(quarantineRoot, 'quarantine_root');
+  // F4（复审）：npm 缓存目录——机器级、跨 attempt 复用（同 mirrors 的复用思路，
+  // 不是每 attempt 一份）。worktrees 根目录已有的建法是"用到时 mkdirSync
+  // {recursive:true, mode:0o700}"（见 prepare() 里的 fs.mkdirSync(worktrees,...)），
+  // 这里照抄同一权限模式，只是位置挪到 worktrees 的上一级、单独一个
+  // 'npm-cache' 兄弟目录，不跟任何单个 attempt 的 worktree 绑定生命周期。
+  const npmCacheRoot = path.join(path.dirname(worktrees), 'npm-cache');
   if (
     !repoAllowlist
     || typeof repoAllowlist !== 'object'
@@ -358,7 +377,34 @@ function createWorkspaceManager({
         const packageJsonPath = path.join(workspacePath, 'package.json');
         if (fs.existsSync(packageJsonPath)) {
           try {
-            await runCommand('npm', ['ci', '--no-audit', '--no-fund'], { cwd: workspacePath });
+            // F5（复审实测坐实）：npm ci 在 fleet-worker **宿主**上跑（这一步
+            // 发生在 provider 容器创建之前，checkout 出来的代码此刻还没有任何
+            // 容器沙箱包着）。如果不加 --ignore-scripts，package.json 里的
+            // pre/postinstall 生命周期脚本会以宿主进程权限直接执行——宿主对
+            // docker.sock 有访问权，等于给了任意仓库内容一条现成的沙箱穿透
+            // 路径（起同权限的兄弟容器/挂主机盘）。--ignore-scripts 对 ajv
+            // 这类纯 JS 依赖（本次要解决的 product-map:check 场景）没有任何
+            // 影响——它们不依赖 install-time 编译/脚本。
+            //
+            // F4：显式钉死 npm 缓存目录到机器级 npmCacheRoot（而不是让 npm
+            // 落到宿主进程默认 HOME 下的全局缓存），避免多 attempt 并发写
+            // 同一个隐式缓存位置时产生跨 attempt 的隐性依赖/权限纠缠；env
+            // 必须基于 process.env 展开，直接传 {npm_config_cache} 会把 PATH
+            // 等继承环境全部丢掉，导致 npm/node 本身都起不来。
+            fs.mkdirSync(npmCacheRoot, { recursive: true, mode: 0o700 });
+            await runCommand(
+              'npm',
+              ['ci', '--no-audit', '--no-fund', '--ignore-scripts'],
+              {
+                cwd: workspacePath,
+                env: { ...process.env, npm_config_cache: npmCacheRoot },
+                // F7：120s 封顶 + 8MiB 输出缓冲（见文件顶部常量注释）；超时被
+                // execFile 的 timeout 机制杀掉进程后作为 reject 落进下面的
+                // catch，按普通失败处理，不特殊短路、不炸 prepare。
+                timeout: NODE_DEPS_INSTALL_TIMEOUT_MS,
+                maxBuffer: NODE_DEPS_INSTALL_MAX_BUFFER_BYTES,
+              },
+            );
             nodeDepsResult = Object.freeze({ status: 'installed' });
           } catch (error) {
             nodeDepsResult = Object.freeze({
@@ -507,6 +553,7 @@ function createWorkspaceManager({
       quarantine,
       ownership: ownershipRoot,
       admin: adminRoot,
+      npmCache: npmCacheRoot,
     }),
   });
 }

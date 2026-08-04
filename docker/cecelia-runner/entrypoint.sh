@@ -1498,10 +1498,6 @@ run_provider_contract() {
   local heartbeat_pid=""
   local safe_line=""
   local commander_contract=false
-  # 案卷式 GAN 会话续接降级标记（design doc §数据流3，决策 ba33fc68）：只有
-  # codex resume 分支会置 true——resume 失败时改跑全新会话（案卷已在 TaskBundle
-  # 里，等价，不算失败），成功后要在最终结果的 provider_metadata 里留痕。
-  local resume_fallback=false
   local attempt_timeout_seconds=""
 
   if ! attempt_timeout_seconds="$(
@@ -1683,43 +1679,6 @@ run_provider_contract() {
         done
     provider_exit=${PIPESTATUS[0]}
     provider_session_id=$(jq -r 'select(.type == "thread.started") | (.thread_id // .thread.id // empty)' "$STDOUT_FILE" 2>/dev/null | head -n 1)
-    # 案卷式 GAN 会话续接降级（design doc §数据流3，决策 ba33fc68）：resume 失败
-    # （非超时的非零退出 + 输出里带"找不到/无效会话"这类信号）不算 Attempt 失败——
-    # 案卷（case_file）已经在同一份 TaskBundle 里，改跑一次全新会话等价。会话
-    # 相关错误文案没有仓库先例，这里用一条保守的启发式正则；真实碰到过的
-    # codex 错误文案应该回来把这条正则收紧/放宽，不要凭空扩大匹配面。
-    if [[ -n "${HARNESS_RESUME_SESSION_ID:-}" ]] \
-        && [[ "$provider_exit" -ne 0 && "$provider_exit" -ne 124 ]] \
-        && is_codex_resume_error "$STDOUT_FILE"; then
-      echo "[entrypoint] codex resume of session ${HARNESS_RESUME_SESSION_ID} failed (exit $provider_exit); falling back to a fresh session with the same TaskBundle" >&2
-      resume_fallback=true
-      local fallback_codex_args=(exec)
-      fallback_codex_args+=(
-        --json
-        --output-schema "$result_schema_file"
-        --output-last-message "$result_file"
-        --skip-git-repo-check
-        "${codex_permission_args[@]}"
-        "${model_args[@]}"
-        -
-      )
-      : > "$STDOUT_FILE"
-      run_with_attempt_timeout \
-        "$attempt_timeout_seconds" \
-        "${PROVIDER_IDENTITY_PREFIX[@]}" \
-        "${FROZEN_BASELINE_PROVIDER_ENV[@]}" \
-        "${codex_command[@]}" "${fallback_codex_args[@]}" < "$task_bundle_file" 2>&1 \
-        | while IFS= read -r line || [[ -n "$line" ]]; do
-            safe_line=$(printf '%s\n' "$line" | redact_provider_credential_text)
-            printf '%s\n' "$safe_line" | tee -a "$STDOUT_FILE"
-            live_session=$(printf '%s\n' "$safe_line" \
-              | jq -r 'select(.type == "thread.started") | (.thread_id // .thread.id // empty)' 2>/dev/null \
-              || true)
-            [[ -z "$live_session" ]] || persist_provider_session "$live_session" || true
-          done
-      provider_exit=${PIPESTATUS[0]}
-      provider_session_id=$(jq -r 'select(.type == "thread.started") | (.thread_id // .thread.id // empty)' "$STDOUT_FILE" 2>/dev/null | head -n 1)
-    fi
   elif [[ "$provider" == "claude" ]]; then
     local claude_args=(-p --output-format json --json-schema "$result_schema_json")
     if [[ "${HARNESS_READ_ONLY:-false}" == "true" ]]; then
@@ -1851,15 +1810,6 @@ run_provider_contract() {
       provider_exit=1
     fi
   fi
-  if [[ "$provider_success" == "true" && "$resume_fallback" == "true" ]]; then
-    # 案卷式 GAN 会话续接降级留痕（design doc §数据流3）：只往 $result_file 自己
-    # 的 .provider_metadata 里加一个字段，不改 normalize_provider_success 的
-    # 签名/调用方——它自己会用 `+` 把这个已有对象和新算出的 provider/session_id
-    # 等字段浅合并，resume_fallback 原样透传进最终 NORMALIZED_RESULT_FILE。
-    jq '.provider_metadata = ((.provider_metadata // {}) + {resume_fallback: true})' \
-      "$result_file" > "${result_file}.resume-fallback.tmp" \
-      && mv "${result_file}.resume-fallback.tmp" "$result_file"
-  fi
   if [[ "$provider_success" == "true" ]]; then
     normalize_provider_success \
       "$task_bundle_file" \
@@ -1918,17 +1868,6 @@ fi
 # B7: CECELIA_EXECUTOR=codex 分支
 # CODEX_RELAY_HOME 挂载目录（~/.codex-team2，含 auth/config）
 CODEX_RELAY_HOME="${CODEX_RELAY_HOME:-/home/cecelia/.codex-team2}"
-
-# 案卷式 GAN 会话续接降级（design doc §数据流3，决策 ba33fc68）：判断 codex
-# resume 是否因"会话本身不可续接"而失败（而不是别的原因，比如超时——那条
-# 已经在调用处单独用 exit code 124 排除）。会话相关错误文案没有仓库先例，
-# 这里是一条保守的启发式正则；真实碰到过的 codex 错误文案应该回来收紧/放宽，
-# 不要凭空扩大匹配面。拆成独立函数是为了能像 scan_error_keywords 一样单测。
-is_codex_resume_error() {
-  local stdout_file="$1"
-  [[ -f "$stdout_file" ]] || return 1
-  grep -qiE '(thread|session|conversation)[^"]*(not found|does not exist|invalid|expired|unknown)|no such (thread|session|conversation)' "$stdout_file"
-}
 
 # B7 真实性校验：只认"真实错误行"（带 ERROR/FATAL 标记的行）里的关键词。
 # 裸词全文匹配会把 agent 自然语言总结（如复述"usage limit 治理"类 PRD）误判为失败，

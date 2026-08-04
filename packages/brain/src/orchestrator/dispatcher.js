@@ -264,25 +264,23 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   ) {
     common.case_file = observed.caseFile;
   }
-  // 案卷式 GAN 会话续接（design doc §数据流3，决策 ba33fc68）：Proposer/Reviewer
-  // 各自跨轮持久对话，互相隔离——只透传本角色自己最近一个终态成功 attempt 的
-  // provider_session_id（ground-truth.js 已按 role 精确过滤，这里按 spec.role
-  // 索引不会跨角色串号）。同时带 resume_provider，让执行端（fleet-worker）
-  // 自行判断"当前实际派发 provider 是否与录制会话时的 provider 一致"——不一致
-  // 时不续接，读案卷（case_file 全量历轮反馈）降级，降级不算失败。
+  // 运行时依赖预装（design doc §运行时依赖，r17 实证：fleet workspace clone
+  // 后不装依赖，proposer 的 product-map:check 因缺 ajv 每轮红——ajv 本在
+  // workspace package.json）。dispatcher 对 proposer/reviewer 默认开启
+  // node_deps，让 workspace-manager checkout 后自动 npm ci。两个字段都显式
+  // 写出（而不是只写 node_deps），方便 fleet 侧的 request/bundle 一致性校验
+  // 稳定匹配（attempt-runner.cjs taskExecutionContract）。
+  //
+  // 会话续接（provider resume）本期不做：F1 复审实测坐实 fleet 侧
+  // CODEX_HOME 是 tmpfs（容器销毁即清空，见 attempt-runner.cjs
+  // prepareContainer 的 `--tmpfs /home/cecelia/.codex:...`），resume 依赖
+  // 的会话状态物理上活不过一次 Attempt 生命周期，同 run 下一轮拿到的
+  // provider_session_id 对下一次全新容器毫无意义——注入了也永远续不上。
+  // 详见 design doc §数据流3（已改写）。持久会话需要 fleet 侧 per-account
+  // 会话持久卷 + 真实错误文案验证过的降级启发式 + 毒会话熔断，这些都还没
+  // 有，独立立项后续再做；当前"案卷（case_file）全量历轮反馈"就是唯一的
+  // 跨轮记忆机制，读案卷本身不是"降级"，是本期设计好的常态路径。
   if (['proposer', 'reviewer'].includes(spec.role)) {
-    const resumeSession = observed.resumeSessions?.[spec.role];
-    if (resumeSession?.provider_session_id) {
-      common.resume_session_id = resumeSession.provider_session_id;
-      common.resume_provider = resumeSession.provider;
-    }
-    // 运行时依赖预装（design doc §运行时依赖，r17 实证：fleet workspace clone
-    // 后不装依赖，proposer 的 product-map:check 因缺 ajv 每轮红——ajv 本在
-    // workspace package.json）。dispatcher 对 proposer/reviewer 默认开启
-    // node_deps，让 workspace-manager checkout 后自动 npm ci。两个字段都显式
-    // 写出（而不是只写 node_deps），是为了让 fleet 侧的 request/bundle 字节级
-    // 一致性校验（attempt-runner.cjs taskExecutionContract）稳定匹配——那条
-    // 校验按原样比较两侧 JSON，缺一个默认字段就会误判 mismatch。
     common.runtime_resources = { postgres: false, node_deps: true };
   }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {

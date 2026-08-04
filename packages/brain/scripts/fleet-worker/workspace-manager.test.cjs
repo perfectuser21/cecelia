@@ -328,14 +328,14 @@ describe('Fleet Worker workspace manager', () => {
   // nodeDeps 打开且 package.json 存在则跑 `npm ci`。真 npm 从不在单测里
   // 执行——注入的 runCommand 拦截 'npm' 调用，其余命令（git）转发给真实实现。
   describe('运行时依赖预装（node_deps）', () => {
-    it('nodeDeps=true 且 package.json 存在 → prepare 后跑 npm ci --no-audit --no-fund', async () => {
+    it('nodeDeps=true 且 package.json 存在 → prepare 后跑 npm ci --no-audit --no-fund --ignore-scripts', async () => {
       const pkgFixture = createFixture({ withPackageJson: true });
       try {
         const npmCalls = [];
         const manager = createManager(pkgFixture, {
           runCommand: async (command, args, options) => {
             if (command === 'npm') {
-              npmCalls.push({ args, cwd: options?.cwd });
+              npmCalls.push({ args, options });
               return { stdout: '' };
             }
             return runCommand(command, args, options);
@@ -344,10 +344,21 @@ describe('Fleet Worker workspace manager', () => {
 
         const workspace = await manager.prepare(spec(pkgFixture), { nodeDeps: true });
 
-        expect(npmCalls).toEqual([
-          { args: ['ci', '--no-audit', '--no-fund'], cwd: workspace.path },
-        ]);
+        expect(npmCalls).toHaveLength(1);
+        const [call] = npmCalls;
+        // F5：--ignore-scripts 必须在——宿主直接跑 npm ci，生命周期脚本
+        // 若不禁用等于把仓库内容当宿主代码执行（docker.sock 沙箱穿透面）。
+        expect(call.args).toEqual(['ci', '--no-audit', '--no-fund', '--ignore-scripts']);
+        expect(call.options.cwd).toBe(workspace.path);
+        // F4：npm_config_cache 显式钉死到机器级目录，env 必须基于
+        // process.env 展开（不能只传 {npm_config_cache} 丢光 PATH）。
+        expect(call.options.env.npm_config_cache).toBe(manager.roots.npmCache);
+        expect(call.options.env.PATH).toBe(process.env.PATH);
+        // F7：超时 120s（180s prepare 预算内留 60s 余量）+ 8MiB 输出缓冲。
+        expect(call.options.timeout).toBe(120_000);
+        expect(call.options.maxBuffer).toBe(8 * 1024 * 1024);
         expect(workspace.node_deps).toEqual({ status: 'installed' });
+        expect(fs.existsSync(manager.roots.npmCache)).toBe(true);
       } finally {
         fs.rmSync(pkgFixture.root, { recursive: true, force: true });
       }
@@ -411,5 +422,32 @@ describe('Fleet Worker workspace manager', () => {
         fs.rmSync(pkgFixture.root, { recursive: true, force: true });
       }
     });
+
+    // F7：npm ci 超时必须按普通失败处理，不特殊短路、不炸 prepare。
+    it('npm ci 超时（execFile timeout 触发）→ 按失败处理，不炸 prepare', async () => {
+      const pkgFixture = createFixture({ withPackageJson: true });
+      try {
+        const manager = createManager(pkgFixture, {
+          runCommand: async (command, args, options) => {
+            if (command === 'npm') {
+              const timeoutError = new Error('command timed out');
+              timeoutError.killed = true;
+              timeoutError.signal = 'SIGTERM';
+              throw timeoutError;
+            }
+            return runCommand(command, args, options);
+          },
+        });
+
+        const workspace = await manager.prepare(spec(pkgFixture), { nodeDeps: true });
+
+        expect(workspace.node_deps.status).toBe('failed');
+        expect(workspace.node_deps.warning).toMatch(/timed out/);
+        expect(fs.existsSync(workspace.path)).toBe(true);
+      } finally {
+        fs.rmSync(pkgFixture.root, { recursive: true, force: true });
+      }
+    });
+
   });
 });

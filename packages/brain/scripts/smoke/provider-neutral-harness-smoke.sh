@@ -31,7 +31,6 @@ if (registry.resolve({ provider: 'auto', requires: ['output_schema'] }).name !==
 NODE
 
 bash docker/cecelia-runner/entrypoint-provider-contract.test.sh
-bash docker/cecelia-runner/__tests__/entrypoint-codex-resume-fallback.test.sh
 README="packages/brain/src/orchestrator/README.md"
 grep -q 'bash docker/build.sh --no-cache' "$README"
 grep -q 'HARNESS_CALLBACK_TOKEN /usr/local/bin/entrypoint.sh' "$README"

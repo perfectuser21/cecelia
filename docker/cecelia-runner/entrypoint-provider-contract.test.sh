@@ -814,35 +814,4 @@ if grep -Eq -- '--model[[:space:]]+(sonnet|opus|haiku|gpt-|o[0-9])' <<<"$SECTION
   exit 1
 fi
 
-# 案卷式 GAN 会话续接降级（design doc §数据流3，决策 ba33fc68）：resume 失败
-# （非超时的非零退出 + session/thread 相关错误信号）必须改跑一次不带 resume
-# 的全新会话，而不是直接把 Attempt 判死——案卷（case_file）已经在同一份
-# TaskBundle 里，改跑一次全新会话等价，不算失败。
-grep -q 'resume_fallback' <<<"$CODEX_SECTION" || {
-  echo 'codex branch does not implement the resume-failure fallback' >&2
-  exit 1
-}
-grep -q 'HARNESS_RESUME_SESSION_ID' <<<"$CODEX_SECTION" || {
-  echo 'codex branch fallback path lost the resume session guard' >&2
-  exit 1
-}
-if ! grep -qE 'provider_exit.*-ne 0.*&&.*provider_exit.*-ne 124' <<<"$CODEX_SECTION"; then
-  echo 'codex resume fallback must not fire on a timeout exit (124)' >&2
-  exit 1
-fi
-grep -q 'fallback_codex_args=(exec)' <<<"$CODEX_SECTION" || {
-  echo 'codex resume fallback does not retry with a fresh (non-resume) session' >&2
-  exit 1
-}
-# 降级留痕：成功的降级必须在最终结果里留下 provider_metadata.resume_fallback，
-# 否则上游（案卷/dispatcher）无法区分"续接成功"和"续接失败后重开了一局"。
-grep -q 'resume_fallback: true' <<<"$SECTION" || {
-  echo 'runner does not record resume_fallback in the normalized provider_metadata' >&2
-  exit 1
-}
-if ! grep -qE 'provider_success.*==.*true.*&&.*resume_fallback.*==.*true' <<<"$SECTION"; then
-  echo 'resume_fallback provider_metadata patch is not gated on provider_success' >&2
-  exit 1
-fi
-
 echo 'provider-neutral runner contract: PASS'
