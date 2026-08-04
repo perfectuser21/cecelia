@@ -12,6 +12,15 @@
 
 ---
 
+## Brain 1.267.203 — Kernel GAN cost writeback
+
+- Attempt 经 callback 首次到达终态时，向 `initiative_runs.cost_usd` 累加固定记账单价
+  `ATTEMPT_COST_ACCRUAL_USD = 0.25`（安全网代理值，非真实用量；exact-retry 重放不重复累加）。
+- GAN budget cap（`BUDGET_CAP_USD = 10`，累计 40 个 attempt 触发 `gan_budget_cap` 判 `mark_failed`）
+  由此前恒不触发变为可触发；`deriveGan` 判断逻辑本身不动。
+- Fleet Worker 与 pinned Runner digest 不变。回退到 Brain `1.267.202` 会恢复
+  `initiative_runs.cost_usd` 恒为 0、GAN budget cap 失效。
+
 ## Brain 1.267.202 — Kernel preflight BLOCKED launch truth
 
 - Generator 是否已启动只认当前 run 严格绑定的 launch effect 或 Callback/session/heartbeat 等

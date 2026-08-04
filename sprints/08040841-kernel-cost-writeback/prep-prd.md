@@ -18,8 +18,8 @@ attempt 终态处理路径（callback → attempt 完成落库处）提取该 at
 failing test 复现：attempt completed（带用量数据）后 run.cost_usd 仍为 0 → FAIL；修复后断言 cost_usd 单调累加、多 attempt 累计正确、无用量数据时按估算价累加不为 0。永久留 CI。
 
 ## 验收标准
-- [ ] failing test 先 commit（commit-1）
-- [ ] 修复代码让 test 变绿（commit-2）
-- [ ] 守卫：纯逻辑接缝，CI regression test 即守卫（proven-to-fire：先红后绿）
-- [ ] DevGate 三关（facts-check / version-sync / dod-mapping）+ brain version bump
+- [x] failing test 先 commit（commit-1）
+- [x] 修复代码让 test 变绿（commit-2）
+- [x] 守卫：纯逻辑接缝，CI regression test 即守卫（proven-to-fire：先红后绿）
+- [x] DevGate 三关（facts-check / version-sync / dod-mapping）+ brain version bump
 - [ ] CI 全绿

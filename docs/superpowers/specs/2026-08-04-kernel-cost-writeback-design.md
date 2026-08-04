@@ -42,6 +42,15 @@
 - **旁路终态不计账**：`expired-attempt-reconciler`（lease 过期打 failed）、`attemptStore.complete()`（in-brain judge）、`attemptStore.fail()`（launch 前失败）绕过 callback 路径不累加。GAN cap 关心的 proposer/reviewer 主路径全走 callback，已覆盖；过期 attempt 漏计造成的低估方向安全（cap 晚触发不早触发误杀）。后续真实用量增强时一并收编。
 - **不加 schema 字段 / 不迁移列宽**：当前无上报方，YAGNI。
 - **generator/evaluator 阶段的累加照常发生但无人读**（budgetExceeded 只在 deriveGan 调用）——账面如实记录，不额外加读取方。
+- **cost_usd 的第二个消费方被一并激活，非本修复目标**：`directive-validator`（loop.js 传入
+  `spentUsd = observed.run.cost_usd` → `cost_budget_exceeded` deny，软降级回退 `defaultDecision`）
+  此前因 cost_usd 恒 0 是死代码，本修复后在所有相位被激活；`commander_mode` 默认
+  `kernel-only`，生产实际触达面窄，行为激活视为已知副作用而非本次目标。
+- **固定单价对所有角色一视同仁记账**：planner/canary/context 等重试路径同样按
+  `ATTEMPT_COST_ACCRUAL_USD` 累加，"高估方向"会挤占 40 格分母（budget cap 触发阈值），
+  属已知取舍，与安全网代理值定位一致，不单独为角色差异化计价。
+- **Dashboard / DAG 端点直接以 `$` 展示该代理值，无"估算"标注**：UI 层未区分真实用量与
+  固定记账代理值，标注/提示属后续任务，不在本次范围内。
 
 ## 判定点
 
