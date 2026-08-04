@@ -594,7 +594,9 @@ export function derive(observed) {
  * 硬保护 budgetCapUsd(10)/MAX_NO_PUSH_STREAK(2)/MAX_NO_VERDICT_STREAK(3) 照抄。
  */
 function deriveGan(observed) {
-  const { counters, proposeBranchRn, ganLatestRoundVerdict } = observed;
+  const {
+    counters, proposeBranchRn, proposeBranchSha, ganLatestRoundVerdict,
+  } = observed;
 
   if (caps.budgetExceeded(counters.ganCostUsd)) {
     return { phase: 'failed', action: 'mark_failed', reason: 'gan_budget_cap' };
@@ -606,30 +608,56 @@ function deriveGan(observed) {
     return { phase: 'failed', action: 'mark_failed', reason: 'gan_no_verdict_streak' };
   }
 
-  // 案卷式 GAN 趋势观测安全网（issue ce42f68f / 决策 ba33fc68）：GAN 本身无轮数 cap（用户铁律），
-  // 但 rubric 评分逐轮走低/震荡时代码层强制收敛——不再指望"reviewer 自己会喊停"
-  // （r17 四轮零收敛实锤：R2 47 分 → R3 46 分多维走低仍继续对抗，无人踩刹车）。
-  // 语义 SSOT：docs/superpowers/specs/2026-08-04-gan-case-file-design.md §数据流 4。
-  const rubricTrend = detectRubricTrend(observed.caseFile);
-  if (rubricTrend === 'diverging' || rubricTrend === 'oscillating') {
-    return {
-      phase: 'gan',
-      action: ACTION.FORCE_APPROVE_CONTRACT,
-      reason: `convergence_${rubricTrend}`,
-    };
-  }
-
   // rN 从 propose 分支现查（外部真相，非内存）：
   // 最新 rN 合同存在且无本轮 verdict → reviewer；否则 proposer（proposerRouter/reviewerRouter 交替）。
+  // F5（审查修复）：此判断必须留在趋势闸之前——本轮 SHA 还没被任何人（含代码）评审过时，
+  // 不能被趋势闸越过去直接冻结批准，否则会出现"冻结一个从未被评审过的 SHA"的窗口。
   if (proposeBranchRn >= 1 && ganLatestRoundVerdict == null) {
     return { phase: 'gan', action: 'spawn:reviewer', reason: `contract_r${proposeBranchRn}_awaiting_review` };
   }
 
   // 崩溃窗口：reviewer 已出 APPROVED 但 contract.approved 尚未落库
   // → 只补落库不 spawn（否则误路由 proposer 白烧一轮）。loop/dispatcher 消费此控制 action。
+  // F2(b)（审查修复）：真实 reviewer APPROVED 是权威 verdict，趋势闸绝不能覆盖/劫持它——
+  // 这里必须无条件先判，不受下面的趋势闸影响。
   if (ganLatestRoundVerdict === 'APPROVED') {
     return { phase: 'gan', action: 'persist_contract_approval', reason: 'approved_pending_persist' };
   }
+
+  // 案卷式 GAN 趋势观测安全网（issue ce42f68f / 决策 ba33fc68）：GAN 本身无轮数 cap（用户铁律），
+  // 但 rubric 评分逐轮走低/震荡时代码层强制收敛——不再指望"reviewer 自己会喊停"
+  // （r17 四轮零收敛实锤：R2 47 分 → R3 46 分多维走低仍继续对抗，无人踩刹车）。
+  // 语义 SSOT：docs/superpowers/specs/2026-08-04-gan-case-file-design.md §数据流 4。
+  // 位置（F5）：必须在上面两个判断之后——此刻能走到这里，说明本轮 SHA 要么还没有
+  // propose 分支（rn<1），要么已经有一个非 APPROVED（REVISION）的真实 verdict，不存在
+  // "冻结从未被评审 SHA" 的窗口。
+  //
+  // F1（审查实锤复现修复）：如果最近一条 verdict:reviewer 决策行是"validation-identity-policy
+  // 硬门驳回当前 propose 分支 SHA"（force_approve_contract / persist_contract_approval 分支复用
+  // 同一硬门检查产生的 REVISION），caseFile 案卷不会因此改变，趋势闸会在下一跳对同一 SHA 重复
+  // 判 diverging/oscillating → 重复 force_approve_contract → 重复撞硬门 → 重复 REVISION……
+  // 4096 跳热循环直到宽兜底 hop_cap 才被打断。修法：这种情况下趋势闸让路，回落到下面的
+  // spawn:proposer，把"改代码"这件事交还给 proposer（新 SHA 产生后趋势闸再开火）。
+  const latestReviewerLogRow = [...sortedLogRows(observed.decisionLog)]
+    .reverse()
+    .find((row) => row.action === LOG_ACTION.VERDICT_REVIEWER);
+  const latestReviewerLogDetail = latestReviewerLogRow
+    ? (asStructuredJson(latestReviewerLogRow.detail) ?? {})
+    : null;
+  const identityPolicyBlockedCurrentSha = latestReviewerLogDetail?.source === 'validation_identity_policy'
+    && latestReviewerLogDetail?.contract_sha === proposeBranchSha;
+
+  if (!identityPolicyBlockedCurrentSha) {
+    const rubricTrend = detectRubricTrend(observed.caseFile);
+    if (rubricTrend === 'diverging' || rubricTrend === 'oscillating') {
+      return {
+        phase: 'gan',
+        action: ACTION.FORCE_APPROVE_CONTRACT,
+        reason: `convergence_${rubricTrend}`,
+      };
+    }
+  }
+
   return { phase: 'gan', action: 'spawn:proposer', reason: proposeBranchRn >= 1 ? 'revision_requested' : 'no_contract_yet' };
 }
 

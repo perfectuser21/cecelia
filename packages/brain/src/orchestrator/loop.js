@@ -881,7 +881,14 @@ export async function runLoop(
       // / 同一 UPDATE 语句），区别：①无既有 reviewer APPROVED 决策日志可复用，必须自己写一条
       // verdict:reviewer 行留痕（source=rubric_trend_force_approval，供审计与崩溃窗口重放识别）；
       // ②多发一条 P1 告警（这是"代码越过 reviewer 拍板"，理应被人看到）。
-      const raiseForcedApprovalAlert = async () => {
+      //
+      // F3（审查修复）：raise('P1', ...) 只是把事件推进 Brain 主进程内存缓冲区（每小时刷一次
+      // 飞书汇总）——Kernel run 常年跑在 stdio ignore 的子进程/容器里，主进程重启或子进程
+      // 退出都会把还没刷出去的 P1 缓冲区一并蒸发，raise() 本身对此毫无感知（既有系统缺口，
+      // 不是本次改动引入的新问题）。cecelia_events 这一行 DB 记录落在事务外独立 INSERT，
+      // 是这条告警唯一保证可查、可被后续巡检/Dashboard 读到的送达通道；raise() 依旧保留
+      // （命中时飞书汇总仍会正常收到），两者并行、互不替代。
+      const recordForcedApprovalSideEffects = async (contractSha) => {
         try {
           const { raise } = await import('../alerting.js');
           await raise(
@@ -892,6 +899,22 @@ export async function runLoop(
           );
         } catch (err) {
           log(`[orchestrator] gan_forced_approval P1 告警发送失败 run=${resolvedRunId}: ${err.message}`);
+        }
+        try {
+          await deps.pool.query(
+            `INSERT INTO cecelia_events (event_type, payload) VALUES ($1, $2::jsonb)`,
+            [
+              'gan_forced_approval',
+              JSON.stringify({
+                run_id: resolvedRunId,
+                trend: String(decision.reason ?? '').replace(/^convergence_/, ''),
+                contract_sha: contractSha ?? null,
+                reason: decision.reason,
+              }),
+            ],
+          );
+        } catch (err) {
+          log(`[orchestrator] gan_forced_approval cecelia_events 写入失败 run=${resolvedRunId}: ${err.message}`);
         }
       };
       if (!observed.contract.id) {
@@ -991,7 +1014,7 @@ export async function runLoop(
           contractContent: artifacts.contractContent,
           approvedAt: now(),
         });
-        await raiseForcedApprovalAlert();
+        await recordForcedApprovalSideEffects(approvedSha);
         await beat();
         continue;
       }
@@ -1000,7 +1023,7 @@ export async function runLoop(
         `UPDATE initiative_contracts SET status = 'approved', approved_at = $2, updated_at = $2 WHERE id = $1`,
         [observed.contract.id, now()],
       );
-      await raiseForcedApprovalAlert();
+      await recordForcedApprovalSideEffects(observed.proposeBranchSha ?? null);
       await beat();
       continue;
     }

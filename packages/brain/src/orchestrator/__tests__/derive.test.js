@@ -567,14 +567,109 @@ describe('规则 2：GAN（prd 存在 && contract 未 approved）', () => {
       expect(r.reason).toBe('gan_budget_cap');
     });
 
-    it('趋势闸在路由判断之前：即使本轮已是 spawn:reviewer 的触发条件，diverging 仍优先 force_approve_contract', () => {
+    it('F5（审查修复）：本轮 verdict 尚未产生（awaiting review）时，即使案卷发散，趋势闸仍让路给 spawn:reviewer——不冻结从未被评审过的 SHA', () => {
       const caseFile = [
         reviewerRow(1, { dod_machineability: 8 }),
         reviewerRow(2, { dod_machineability: 7 }),
         reviewerRow(3, { dod_machineability: 6 }),
       ];
-      // proposeBranchRn>=1 且 ganLatestRoundVerdict==null 本应触发 spawn:reviewer
+      // proposeBranchRn>=1 且 ganLatestRoundVerdict==null → 趋势闸必须排在这条判断之后，
+      // 否则会出现"强制批准一个还没有任何人（含代码）评审过的 SHA"的上线切换窗口。
       const r = derive(gan({ proposeBranchRn: 4, ganLatestRoundVerdict: null, caseFile }));
+      expect(r.action).toBe('spawn:reviewer');
+    });
+
+    it('F2(b)（审查修复）：真实 reviewer APPROVED 不得被趋势闸劫持，即使案卷同时判 diverging 仍无条件 persist_contract_approval', () => {
+      const caseFile = [
+        reviewerRow(1, { dod_machineability: 9 }),
+        reviewerRow(2, { dod_machineability: 8 }),
+        reviewerRow(3, { dod_machineability: 7 }),
+      ];
+      const r = derive(gan({ proposeBranchRn: 3, ganLatestRoundVerdict: 'APPROVED', caseFile }));
+      expect(r.phase).toBe('gan');
+      expect(r.action).toBe('persist_contract_approval');
+      expect(r.reason).toBe('approved_pending_persist');
+    });
+
+    it('F1（审查实锤复现修复）：最近一条 verdict:reviewer 是 validation-identity-policy 驳回当前 SHA 时，趋势闸让路回 spawn:proposer（防 4096 跳热循环）', () => {
+      const sha = 'f'.repeat(40);
+      const caseFile = [
+        reviewerRow(1, { dod_machineability: 9 }),
+        reviewerRow(2, { dod_machineability: 8 }),
+        reviewerRow(3, { dod_machineability: 7 }),
+      ];
+      const decisionLog = [
+        {
+          hop: 5,
+          action: 'verdict:reviewer',
+          detail: {
+            rn: 3,
+            contract_sha: sha,
+            verdict: 'REVISION',
+            source: 'validation_identity_policy',
+            summary: '合同硬编码了 validation identity。',
+            reason: '删除硬编码字面值。',
+          },
+        },
+      ];
+      const r = derive(gan({
+        proposeBranchRn: 3,
+        proposeBranchSha: sha,
+        ganLatestRoundVerdict: 'REVISION',
+        caseFile,
+        decisionLog,
+      }));
+      expect(r.action).toBe('spawn:proposer');
+    });
+
+    it('F1 对照组：最近一条 verdict:reviewer 是普通 REVISION（非 identity-policy 来源）时，趋势闸正常开火', () => {
+      const sha = 'f'.repeat(40);
+      const caseFile = [
+        reviewerRow(1, { dod_machineability: 9 }),
+        reviewerRow(2, { dod_machineability: 8 }),
+        reviewerRow(3, { dod_machineability: 7 }),
+      ];
+      const decisionLog = [
+        {
+          hop: 5,
+          action: 'verdict:reviewer',
+          detail: { rn: 3, contract_sha: sha, verdict: 'REVISION' },
+        },
+      ];
+      const r = derive(gan({
+        proposeBranchRn: 3,
+        proposeBranchSha: sha,
+        ganLatestRoundVerdict: 'REVISION',
+        caseFile,
+        decisionLog,
+      }));
+      expect(r.action).toBe('force_approve_contract');
+    });
+
+    it('F1 对照组：identity-policy 驳回的是旧 SHA（proposer 已经 push 了新一轮），趋势闸不该被旧记录挡住', () => {
+      const oldSha = 'a'.repeat(40);
+      const newSha = 'b'.repeat(40);
+      const caseFile = [
+        reviewerRow(1, { dod_machineability: 9 }),
+        reviewerRow(2, { dod_machineability: 8 }),
+        reviewerRow(3, { dod_machineability: 7 }),
+      ];
+      const decisionLog = [
+        {
+          hop: 5,
+          action: 'verdict:reviewer',
+          detail: {
+            rn: 3, contract_sha: oldSha, verdict: 'REVISION', source: 'validation_identity_policy',
+          },
+        },
+      ];
+      const r = derive(gan({
+        proposeBranchRn: 4,
+        proposeBranchSha: newSha,
+        ganLatestRoundVerdict: 'REVISION',
+        caseFile,
+        decisionLog,
+      }));
       expect(r.action).toBe('force_approve_contract');
     });
   });

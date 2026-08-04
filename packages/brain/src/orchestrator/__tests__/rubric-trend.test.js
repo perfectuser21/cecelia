@@ -148,4 +148,121 @@ describe('detectRubricTrend [BEHAVIOR]', () => {
     ];
     expect(detectRubricTrend(rows)).toBe('insufficient_data');
   });
+
+  describe('F2(a) 阈值拍板：只拦真发散，单点小抖动不算', () => {
+    it('10→9→10 单维小幅抖动（两腿都 <2）→ converging，不是 oscillating', () => {
+      const rows = [
+        reviewerRow(1, { ci_workflow_alignment: 10 }),
+        reviewerRow(2, { ci_workflow_alignment: 9 }),
+        reviewerRow(3, { ci_workflow_alignment: 10 }),
+      ];
+      expect(detectRubricTrend(rows)).toBe('converging');
+    });
+
+    it('方向命中高低高但腿幅只有 1 → 不算 oscillating（幅度门槛生效）', () => {
+      const rows = [
+        reviewerRow(1, { dod_machineability: 8 }),
+        reviewerRow(2, { dod_machineability: 7 }),
+        reviewerRow(3, { dod_machineability: 8 }),
+      ];
+      expect(detectRubricTrend(rows)).toBe('converging');
+    });
+
+    it('方向命中高低高且两腿都 >=2 → 仍判 oscillating', () => {
+      const rows = [
+        reviewerRow(1, { dod_machineability: 8 }),
+        reviewerRow(2, { dod_machineability: 6 }),
+        reviewerRow(3, { dod_machineability: 8 }),
+      ];
+      expect(detectRubricTrend(rows)).toBe('oscillating');
+    });
+
+    it('单维两连降但累计跌幅 <2 且只有 1 个维度 → 不算 diverging', () => {
+      const rows = [
+        reviewerRow(1, { dod_machineability: 8.5, scope_match_prd: 7 }),
+        reviewerRow(2, { dod_machineability: 8, scope_match_prd: 7 }),
+        reviewerRow(3, { dod_machineability: 7.5, scope_match_prd: 7 }),
+      ];
+      // dod: 8.5>8>7.5 两连降，累计跌幅 1 < 2，且只有这一个维度在降 → converging
+      expect(detectRubricTrend(rows)).toBe('converging');
+    });
+
+    it('单维两连降且累计跌幅 >=2 → diverging（即使只有这一个维度）', () => {
+      const rows = [
+        reviewerRow(1, { dod_machineability: 9, scope_match_prd: 7 }),
+        reviewerRow(2, { dod_machineability: 8, scope_match_prd: 7 }),
+        reviewerRow(3, { dod_machineability: 7, scope_match_prd: 7 }),
+      ];
+      expect(detectRubricTrend(rows)).toBe('diverging');
+    });
+
+    it('≥2 个维度同时两连降（各自幅度都 <2）→ diverging', () => {
+      const rows = [
+        reviewerRow(1, { dod_machineability: 8, scope_match_prd: 8 }),
+        reviewerRow(2, { dod_machineability: 7.5, scope_match_prd: 7.5 }),
+        reviewerRow(3, { dod_machineability: 7, scope_match_prd: 7 }),
+      ];
+      // 每个维度单独跌幅只有 1（<2），但两个维度同时两连降 → 命中"≥2 维度"分支
+      expect(detectRubricTrend(rows)).toBe('diverging');
+    });
+  });
+
+  describe('F4：JSON null 维度不得被当成 0 分（null→0 假发散回归）', () => {
+    it('{ci:9} → {ci:null} → {ci:9}：null 视为缺失跳过该维度，不判 oscillating', () => {
+      const rows = [
+        reviewerRow(1, { ci_workflow_alignment: 9 }),
+        reviewerRow(2, { ci_workflow_alignment: null }),
+        reviewerRow(3, { ci_workflow_alignment: 9 }),
+      ];
+      // 若把 null 误当 0：9,0,9 会命中高低高且幅度 9>=2 → 错判 oscillating。
+      // 正确语义：round2 该维度视为缺失，三轮里只有 1 条有效值，方向判定不成立 → converging。
+      expect(detectRubricTrend(rows)).toBe('converging');
+    });
+
+    it('null 维度也不会被误判为 diverging（同理防 0 分误判成连续下降）', () => {
+      const rows = [
+        reviewerRow(1, { risk_registered: 8 }),
+        reviewerRow(2, { risk_registered: null }),
+        reviewerRow(3, { risk_registered: 6 }),
+      ];
+      // 若把 null 当 0：8,0,6 会命中高低高（幅度都>=2）→ 误判 oscillating。
+      // 正确语义：round2 缺失，跳过该维度 → converging（无其他维度佐证）。
+      expect(detectRubricTrend(rows)).toBe('converging');
+    });
+  });
+
+  describe('r17 真实数据回归（锚死灵敏度，报告心算校验，R1 未给出精确值处用 "其余>=7" 的下限 7 近似）', () => {
+    it('r17 三轮真实 rubric（risk_registered 7→0→6 等）→ 仍判 oscillating', () => {
+      const rows = [
+        reviewerRow(1, {
+          dod_machineability: 7,
+          scope_match_prd: 7,
+          test_is_red: 7,
+          internal_consistency: 5,
+          risk_registered: 7,
+          verification_oracle_completeness: 5,
+          ci_workflow_alignment: 7,
+        }),
+        reviewerRow(2, {
+          dod_machineability: 8,
+          scope_match_prd: 9,
+          test_is_red: 10,
+          internal_consistency: 5,
+          risk_registered: 0,
+          verification_oracle_completeness: 5,
+          ci_workflow_alignment: 10,
+        }),
+        reviewerRow(3, {
+          dod_machineability: 5,
+          scope_match_prd: 6,
+          test_is_red: 10,
+          internal_consistency: 4,
+          risk_registered: 6,
+          verification_oracle_completeness: 5,
+          ci_workflow_alignment: 10,
+        }),
+      ];
+      expect(detectRubricTrend(rows)).toBe('oscillating');
+    });
+  });
 });

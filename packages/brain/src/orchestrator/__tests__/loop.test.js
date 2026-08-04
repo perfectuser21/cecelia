@@ -911,7 +911,7 @@ describe('runLoop：控制 action 自消费', () => {
     expect(deps.readGitFile).not.toHaveBeenCalled();
   });
 
-  it('force_approve_contract：案卷 rubric 趋势 diverging → 跳过 reviewer 直接物化合同 + 写决策日志 + P1 告警', async () => {
+  it('force_approve_contract：案卷 rubric 趋势 diverging → 跳过 reviewer 直接物化合同 + 写决策日志 + P1 告警 + cecelia_events 落库（F3）', async () => {
     const approvedSha = 'e'.repeat(40);
     const caseFile = [
       { round: 1, author_role: 'reviewer', rubric_scores: { dod_machineability: 8, scope_match_prd: 7 } },
@@ -971,6 +971,61 @@ describe('runLoop：控制 action 自消费', () => {
       contract_sha: approvedSha,
     });
     expect(forcedLog.gateVerdict).toBe('force_approved');
+    // F3：raise('P1') 之外，必须还有一条 cecelia_events INSERT——这是唯一保证可查的送达通道
+    // （Kernel 子进程 stdio ignore + alerting 内存 buffer 蒸发的既有缺口）。
+    const eventSql = sqls.find(([sql]) => sql.includes('INSERT INTO cecelia_events'));
+    expect(eventSql).toBeTruthy();
+    expect(eventSql[1][0]).toBe('gan_forced_approval');
+    const eventPayload = JSON.parse(eventSql[1][1]);
+    expect(eventPayload).toMatchObject({
+      run_id: RUN_ID,
+      trend: 'diverging',
+      contract_sha: approvedSha,
+      reason: 'convergence_diverging',
+    });
+  });
+
+  it('force_approve_contract：cecelia_events 写入失败只 warn 不炸，合同物化与循环推进不受影响', async () => {
+    const approvedSha = 'a1'.repeat(20);
+    const caseFile = [
+      { round: 1, author_role: 'reviewer', rubric_scores: { dod_machineability: 8, scope_match_prd: 7 } },
+      { round: 2, author_role: 'reviewer', rubric_scores: { dod_machineability: 7, scope_match_prd: 7 } },
+      { round: 3, author_role: 'reviewer', rubric_scores: { dod_machineability: 6, scope_match_prd: 7 } },
+    ];
+    const observedSeq = [
+      obs({
+        run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+        task: { status: 'in_progress', payload: { sprint_dir: 'sprints/kernel-contract' } },
+        contract: { approved: false, id: null },
+        proposeBranch: 'cp-harness-propose-r3-11111111-a3',
+        proposeBranchSha: approvedSha,
+        proposeBranchRn: 3,
+        ganLatestRoundVerdict: 'REVISION',
+        caseFile,
+      }),
+      obs({ contract: { approved: true, id: CONTRACT_ID }, generatorSpawned: false }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, sqls } = makeEnv({ observedSeq });
+    deps.fileExists = vi.fn(() => false);
+    deps.readGitFile = vi.fn((_sha, filePath) => ({
+      'sprints/kernel-contract/sprint-prd.md': '# PRD',
+      'sprints/kernel-contract/contract-draft.md': '# Contract',
+      'sprints/kernel-contract/contract-dod.md': '# DoD',
+    })[filePath]);
+    const originalQuery = deps.pool.query;
+    deps.pool.query = vi.fn(async (sql, params) => {
+      if (sql.includes('INSERT INTO cecelia_events')) {
+        throw new Error('db unavailable');
+      }
+      return originalQuery(sql, params);
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    const materializeSql = sqls.find(([sql]) => sql.includes('INSERT INTO initiative_contracts'));
+    expect(materializeSql).toBeTruthy();
   });
 
   it('force_approve_contract：无冻结分支可用（rn=0）→ mark_failed，不物化', async () => {

@@ -44,7 +44,18 @@ CREATE TABLE gan_case_file (
    - `attempt-store.js` recordCallbackTerminal 的 role projection 段（reviewer/proposer 分支）同事务 INSERT `gan_case_file` 一行（对 initiative_runs 行无第二条 UPDATE——死锁定律）
 2. **入口（读案卷）**：`dispatcher.buildInputs` 对 proposer/reviewer 注入 `case_file: [...全量历轮行...]`（含 rubric 历史与 blocker 台账）；替换现在只带 2 句摘要的 `review_feedback`（保留旧字段兼容一版）
 3. **会话续接**：dispatcher 派发 proposer/reviewer 时查同 run 同 role 最近 completed attempt 的 `provider_session_id`，注入 bundle `resume_session_id`；attempt-runner（fleet-worker）把它传给 codex `--resume`。恢复失败/字段缺失 → 新会话读案卷（降级等价，不算失败）
-4. **趋势观测**：deriveGan 在现有三闸后加 `detectRubricTrend(caseFileRows)`：最近 3 轮 reviewer rubric——任一维度连续 2 轮严格走低=diverging；高低高/低高低=oscillating → 返回 `persist_contract_approval` 类新 action `force_approve_contract`（记 decision log reason=convergence_forced + 发 P1 告警走既有 alert 通道）。converging/insufficient_data → 继续。**无轮数 cap。**
+4. **趋势观测**：deriveGan 在现有三闸后、`spawn:reviewer`/`persist_contract_approval` 判断之后（PR-B 审查修复 F5：必须晚于这两条，否则会出现"冻结一个从未被任何人/代码评审过的 SHA"的窗口——本轮 verdict 还没产生，或已经是权威 APPROVED 时，趋势闸都不该插队）、`spawn:proposer` 兜底之前，加 `detectRubricTrend(caseFileRows)`：取最近 3 轮 reviewer 结构化 rubric——命中即返回 `persist_contract_approval` 类新 action `force_approve_contract`（记 decision log `reason=convergence_diverging|convergence_oscillating` + 发 P1 告警）。converging/insufficient_data → 继续。**无轮数 cap。**
+
+   **判据阈值（PR-B 审查 F2(a) 拍板，立法本意"无上限、只拦真发散"，单点小抖动不算）**：
+   - `oscillating`：方向命中高低高/低高低（严格不等式）**且**两腿幅度都 `>= 2`（`|a-b|>=2` 且 `|b-c|>=2`）。例如 10→9→10 这种 1 分抖动不算。
+   - `diverging`：满足其一即算——(i) 单维两连降（`a>b>c`，严格）且累计跌幅 `a-c >= 2`；(ii) `>= 2` 个维度同时两连降（`a>b>c`，严格），不限单维幅度（多维同时走低本身就是发散信号）。
+   - JSONB 取值时 `null`（显式缺失，如 optional 维度未填）必须视为"该维度跳过"，不能走 `Number(null)===0` 的隐式转换（PR-B 审查 F4 实锤：会把"没打分"误判成"打了 0 分"，产生假发散/假震荡）。
+
+   **legacy 判据显式不移植**：旧 `harness-gan.graph.js::detectConvergenceTrend` 还有一条"合同行数连续 2 轮净增长（`contractLines` 逐轮膨胀）=diverging"（B50，防合同越改越长）。`gan_case_file` 当前没有落合同行数列，本次（PR-B）**不移植**这条判据；PR-D（skill 侧改造）若需要防膨胀，需要先在 `gan_case_file` 加一列再议，不能假装这条判据已经在代码里生效。
+
+   **identity-policy 硬门互斥（PR-B 审查 F1 实锤复现修复）**：`force_approve_contract`/`persist_contract_approval` 冻结合同前都会跑 `validation-identity-policy` 硬门检查，违规判 REVISION 打回 GAN（不因"强制批准"而豁免）。这条 REVISION 决策日志不会改变 `gan_case_file` 案卷内容，如果趋势闸对同一 SHA 无差别重复触发 `force_approve_contract`，会立刻再次撞同一处硬编码违规、再次 REVISION——死循环直到 `MAX_HOPS`(4096) 宽兜底才被打断（审查阶段实弹复现）。修法：deriveGan 判定趋势前先查最近一条 `verdict:reviewer` 决策行，若 `detail.source==='validation_identity_policy' && detail.contract_sha===proposeBranchSha`（即"当前这个 SHA 刚被硬门挡下"），趋势闸让路回 `spawn:proposer`，把"改代码"这件事交还给 proposer；新 SHA 产生后趋势闸自然恢复正常判定。
+
+   **P1 告警送达通道（PR-B 审查 F3 修复，标注既有系统缺口）**：`force_approve_contract` 命中时除了走 `alerting.js` 的 `raise('P1', 'gan_forced_approval', ...)`（P1 缓冲区每小时汇总飞书），**必须**额外独立 `INSERT INTO cecelia_events (event_type, payload) VALUES ('gan_forced_approval', ...)` 落一行 DB 记录。原因：Kernel run 常年跑在 stdio ignore 的子进程/容器里，`raise()` 的 P1 缓冲区是 Brain 主进程内存态，子进程退出或主进程重启都会让还没刷出去的缓冲区连同进程一起蒸发，`raise()` 对此毫无感知——这不是本次改动引入的新问题，是 alerting 系统对"派发到短生命周期子进程的事件"这条既有缺口，`cecelia_events` 这行落库记录是唯一保证事后可查、可被巡检/Dashboard 读到的送达证据，两条通道并行、互不替代。
 
 ## Skill 侧（zenithjoy-skills 独立 PR，SSOT 先行）
 
