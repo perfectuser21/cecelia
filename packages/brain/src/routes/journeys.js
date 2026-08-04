@@ -1,9 +1,11 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { buildCascadeReport } from '../cascade-list.js';
 import { classifyJourneyCellAssertion } from '../lib/journey-cell-assertion.js';
 
 const router = Router();
+router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
 
 const VALID_JOURNEY_TYPES = ['user_facing', 'autonomous', 'dev_pipeline', 'agent_remote'];
 const VALID_THICKNESS     = ['thin', 'medium', 'thick', 'mature'];
