@@ -1,0 +1,19 @@
+{
+  "phase": "gan",
+  "round": 1,
+  "contract_commit": "196e14174",
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 9,
+    "test_is_red": 9,
+    "internal_consistency": 9,
+    "risk_registered": 9,
+    "verification_oracle_completeness": 9,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 4,
+  "behavior_count": 13,
+  "iron_rules_coverage": "62/62 (4 断言 + 58 显式 N/A)",
+  "uncovered_real_links": "无 mock 豁免；唯一未真跑链路=05:10 定时窗口 gate（既有单测守护）"
+}
