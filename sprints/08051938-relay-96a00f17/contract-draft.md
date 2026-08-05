@@ -25,6 +25,14 @@ cd packages/brain && npx vitest run --reporter=verbose \
 
 预期：全部 PASS，0 失败。
 
+## Test Contract
+
+| Workstream | Test File | Behaviors | Notes |
+|-----------|-----------|-----------|-------|
+| ws1 | `packages/brain/src/__tests__/capture-triage.test.js` | no_journey → status 必须转 parked / low_confidence → status 必须转 parked / gate_fail → status 必须转 parked | F6修复-回归 永久保留 |
+| ws2 | `packages/brain/src/__tests__/capture-aging.test.js` | aging step5 必须清零 / aging step5 结果 stuck_parked | F6修复-回归 aging 兜底 |
+| ws3 | `packages/brain/src/__tests__/morning-cockpit-bark.test.js` | 排序官榜单有数据时晨报 triage_items > 0 / 无榜单数据时晨报 triage_items=0 | F6守卫 归并榜单 |
+
 ## 未覆盖真实链路清单
 
 **N/A** — 本 hotfix 只修代码路径，不需真实 LLM 调用或 DB 连接即可单元验证。存量积压清零依赖下一轮 aging job 自动执行（PR 合并后 ≤1h），不在本 PR 的 E2E 范围内。
