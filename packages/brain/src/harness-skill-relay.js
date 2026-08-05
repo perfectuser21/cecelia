@@ -284,6 +284,17 @@ export function snapshotCodexRelayHome(codexRelayHome, taskId) {
  * @returns {Promise<{ok:boolean, mode:string, containerId?:string, error?:string}>}
  */
 export async function spawnSkillRelaySession(task, deps = {}) {
+  // preview Brain 隔离闸（2026-08-05 preview-4643 事故）：预览 Brain 由生产快照
+  // 整库克隆而来且作为生产 Brain 子进程启动，继承生产 env（同一 fleet bridge
+  // token、callback 指回生产 Brain）。startup-sync 会把克隆的 in_progress 任务
+  // 当孤儿重点火，spawn 出的 orchestrator 与生产 Brain 争抢同一 fleet-worker/
+  // 工作区/run。这里是所有 harness 派发路径（kernel/headed/headless/xian）的
+  // 唯一咽喉——预览环境一律拒绝，任何调用方（startup-sync/dispatcher/API）都拦。
+  const previewFlag = (deps.env ?? process.env).BRAIN_PREVIEW;
+  if (previewFlag === '1' || previewFlag === 'true') {
+    console.warn(`[skill-relay][preview-guard] BRAIN_PREVIEW=${previewFlag} — refusing harness spawn task=${task?.id}`);
+    return { ok: false, mode: RELAY_FLAG, error: 'preview_brain_harness_spawn_forbidden' };
+  }
   const dbPool = deps.pool || pool;
   const now = deps.now || (() => new Date());
   const initiativeId = task.payload?.initiative_id || task.id; // B51: initiative_id = task.id
