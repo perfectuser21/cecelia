@@ -71,7 +71,7 @@ const ZENITHJOY_NAME_RE = /智能发布|视频剪辑|运营中枢|客户|获客|
  * @param {string} name  journey.name
  * @returns {'zenithjoy'|'cecelia'}
  */
-// biz_area 合法三桶（journeys.biz_area，migration 388；Alex 08-05 拍板：分区不许靠名字猜）
+// biz_area 合法三桶（journeys.biz_area，migration 389；Alex 08-05 拍板：分区不许靠名字猜）
 const BIZ_AREAS = new Set(['cecelia', 'zenithjoy', 'infrastructure']);
 
 export function classifyJourneyArea(name, bizArea) {

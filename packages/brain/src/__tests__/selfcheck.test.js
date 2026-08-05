@@ -197,9 +197,9 @@ describe('selfcheck', () => {
   // 351（graph_edges 表，代码依赖图谱）推进地板到 351。
   // 352（features 表更名 brain_modules，澄清语义非产品功能表）推进地板到 352。
   // 353（DROP conversation_captures + conversation_log_cursors，inbox P0 清场，decisions a823206d）推进地板到 353。
-  // 388（journeys biz_area 三桶分区 + smoke 残渣清库）是本 Brain 版本所需的最低地板。
-  it('EXPECTED_SCHEMA_VERSION should be 388', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('388');
+  // 389（journeys biz_area 三桶分区 + smoke 残渣清库）是本 Brain 版本所需的最低地板。
+  it('EXPECTED_SCHEMA_VERSION should be 389', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('389');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

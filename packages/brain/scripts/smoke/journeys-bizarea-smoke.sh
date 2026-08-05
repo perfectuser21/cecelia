@@ -3,7 +3,7 @@
 #
 # 验证 Alex 08-05 拍板：分区不许靠名字正则猜。
 #   1. 源码断言：classifyJourneyArea 接受 biz_area 一等参数且校验三桶
-#   2. DB 断言：journeys.biz_area 列 + CHECK 约束存在（migration 388）
+#   2. DB 断言：journeys.biz_area 列 + CHECK 约束存在（migration 389）
 #   3. 行为断言：种 infrastructure journey → /warroom/lines 出 Infrastructure 分区；
 #      名字含"客服"但 biz_area=zenithjoy → 归 ZenithJoy（正则猜不出、字段猜得出）
 #   4. 残渣断言：/warroom/lines 不出现 [smoke]%/gp-agg-smoke%（deprecated 被过滤）
@@ -36,7 +36,7 @@ echo "[smoke:journeys-bizarea] Case 2: biz_area 列 + CHECK 约束"
 COL=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
   -c "SELECT data_type FROM information_schema.columns WHERE table_name='journeys' AND column_name='biz_area';" 2>/dev/null || echo "")
 if [ "$COL" != "text" ]; then
-  echo "  WARN: biz_area 列未应用（'$COL'）— migration 388 未跑，CI fresh DB 会跑"; echo "[smoke:journeys-bizarea] DONE"; exit 0
+  echo "  WARN: biz_area 列未应用（'$COL'）— migration 389 未跑，CI fresh DB 会跑"; echo "[smoke:journeys-bizarea] DONE"; exit 0
 fi
 BAD=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
   -c "INSERT INTO journeys (name, status, biz_area) VALUES ('[smoke-bizarea] bad', 'active', 'not-a-bucket') RETURNING id;" 2>&1 || true)
