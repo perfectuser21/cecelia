@@ -152,11 +152,11 @@ describe('GTDWarRoom data logic', () => {
     expect(src).toContain('h-full');
   });
 
-  it('index.ts registers warroom/:areaId route', () => {
+  it('index.ts registers warroom/:areaId as redirect (retired)', () => {
     const fs = require('fs');
     const src = fs.readFileSync('features/gtd/index.ts', 'utf8');
     expect(src).toContain('warroom/:areaId');
-    expect(src).toContain('GTDWarRoomArea');
+    expect(src).toContain('redirect');
   });
 
   it('GTDWarRoomArea uses three-column layout', () => {

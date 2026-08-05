@@ -12,30 +12,25 @@ const manifest: FeatureManifest = {
   ],
 
   routes: [
-    {
-      path: '/dashboard',
-      component: 'CommandCenter',
-      navItem: { label: 'Dashboard', icon: 'LayoutDashboard', group: 'dashboard' },
-    },
-    { path: '/dashboard/*', component: 'CommandCenter' },
-    { path: '/dashboard/command', component: 'CommandCenter' },
-    { path: '/dashboard/command/*', component: 'CommandCenter' },
+    // Default route — 主理人指挥舱 (task:80a5be84)
+    { path: '/', component: 'OwnerCockpitPage', requireAuth: true },
+    // Dashboard 退役重定向 → 军师台
+    { path: '/dashboard', redirect: '/strategist' },
+    { path: '/dashboard/command', redirect: '/strategist' },
+    { path: '/dashboard/command/*', redirect: '/strategist' },
     { path: '/dashboard/panorama', component: 'PanoramaV3' },
     {
       path: '/dashboard/team',
       component: 'TeamDashboardV1',
       navItem: { label: '团队 Dashboard', icon: 'LayoutGrid', group: 'dashboard' },
     },
-    // Default route — 主理人指挥舱 (task:80a5be84)
-    { path: '/', component: 'OwnerCockpitPage', requireAuth: true },
     // Legacy redirects
-    { path: '/command', redirect: '/dashboard/command' },
-    { path: '/command/*', redirect: '/dashboard/command' },
+    { path: '/command', redirect: '/strategist' },
+    { path: '/command/*', redirect: '/strategist' },
     { path: '/features', redirect: '/work/features' },
   ],
 
   components: {
-    CommandCenter: () => import('../business/pages/CommandCenter'),
     PanoramaV3: () => import('../business/pages/PanoramaV3'),
     TeamDashboardV1: () => import('../business/pages/TeamDashboardV1'),
     OwnerCockpitPage: () => import('../../../dashboard/src/pages/owner-cockpit/OwnerCockpitPage'),
