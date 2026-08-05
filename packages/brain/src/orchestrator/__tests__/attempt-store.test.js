@@ -467,6 +467,61 @@ describe('attempt store', () => {
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
 
+  it('哨兵：GAN 权威终态落空壳案卷（blockers 空 + feedback_md 空 + rubric 空）必须告警，不许静默（r36 实证）', async () => {
+    // r36 事故：runner schema 禁掉 case_file/rubric_scores → 案卷连写 14 行空壳
+    // → 每轮 reviewer 零记忆重审 → 打地鼠不收敛，全程零报错零日志。案卷是收敛
+    // 机制的命脉，写空壳必须在日志里喊出来，否则下次断链还是要靠人肉验尸才发现。
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const callbackResult = {
+        status: 'completed',
+        summary: 'reviewed',
+        artifacts: [],
+        provider_metadata: { provider: 'codex' },
+        decision: { outcome: 'REVISION', reason: 'scores below threshold' },
+        // case_file 缺失 —— 正是被 runner schema 禁掉时的真实形状
+      };
+      const running = {
+        id: input.id,
+        run_id: input.runId,
+        hop: input.hop,
+        phase: 'gan',
+        role: 'reviewer',
+        status: 'running',
+        lease_owner: 'brain-1',
+        lease_generation: 3,
+        task_bundle: { inputs: { contract_round: 2 } },
+        result: null,
+      };
+      const completed = { ...running, status: 'completed', result: callbackResult };
+      const client = {
+        query: vi.fn()
+          .mockResolvedValueOnce({})
+          .mockResolvedValueOnce({ rows: [running] })
+          .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+          .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+          .mockResolvedValue({}),
+        release: vi.fn(),
+      };
+      const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+      await createAttemptStore(pool).recordCallbackTerminal({
+        attemptId: input.id,
+        runId: input.runId,
+        leaseOwner: 'brain-1',
+        leaseGeneration: 3,
+        result: callbackResult,
+      });
+
+      const warned = warn.mock.calls.some(([msg]) => (
+        typeof msg === 'string' && msg.includes('case_file_empty')
+      ));
+      expect(warned, '空壳案卷必须 console.warn 含 case_file_empty 标记').toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('P1：failed 状态即使带 decision 也不落案卷行（终态白名单收紧，防止占位）', async () => {
     const callbackResult = {
       status: 'failed',

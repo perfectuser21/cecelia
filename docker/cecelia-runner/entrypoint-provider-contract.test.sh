@@ -385,6 +385,33 @@ jq -e '
 }
 rm -rf "$EVALUATOR_SCHEMA_TMP"
 
+# ── 案卷式 GAN 出口字段必须被 schema 放行（2026-08-05 r36 实证根因）──────────
+# 事故：runner schema 顶层 additionalProperties:false 且 decision 只允许
+# outcome/reason，把 skill 9.13.0 要求的 case_file / decision.rubric_scores
+# 硬性禁掉。codex structured output 遵守 schema → 两个字段永远输不出来 →
+# Brain 落库 gan_case_file 永远是空壳（blockers=[] / feedback_md=null /
+# rubric_scores=null）→ 每轮 reviewer 读到零信息案卷 → 无跨轮记忆 → 打地鼠式
+# 挑毛病，r36 跑满 14 轮仍不收敛。案卷是 GAN 收敛机制的命脉，schema 必须放行。
+GAN_SCHEMA_TMP="$(mktemp -d)"
+cat > "$GAN_SCHEMA_TMP/task.json" <<'JSON'
+{"task_bundle":{"role":"reviewer","expected_output":"harness-result/v1"}}
+JSON
+GAN_SCHEMA="$(provider_result_schema_json "$GAN_SCHEMA_TMP/task.json")"
+jq -e '
+  (.required | index("case_file")) != null
+  and .properties.case_file.anyOf[0].properties.blockers.type == "array"
+  and .properties.case_file.anyOf[0].properties.feedback_md.type == "string"
+  and (.properties.case_file.anyOf[0].properties.blockers.items.anyOf
+       | map(.properties | has("why_not_found_earlier")) | any)
+  and (.properties.decision.anyOf[0].required | index("rubric_scores")) != null
+  and (.properties.decision.anyOf[0].properties.rubric_scores.anyOf[0].properties
+       | has("test_is_red"))
+' <<<"$GAN_SCHEMA" >/dev/null || {
+  echo 'runner schema forbids case_file / decision.rubric_scores — GAN 案卷断链' >&2
+  exit 1
+}
+rm -rf "$GAN_SCHEMA_TMP"
+
 [[ "$(read_attempt_timeout_seconds 300)" == "300" ]]
 for invalid_timeout in '' 0 -1 1.5 12s token; do
   if read_attempt_timeout_seconds "$invalid_timeout" >/dev/null 2>&1; then
@@ -735,7 +762,9 @@ jq -e '.checks == ["provider summary"]' "$EVIDENCE_TMP/result.json" >/dev/null |
 }
 # The runner's provider-facing schema must emit decisions accepted by the Brain
 # callback parser. A permissive object here caused real planner callbacks to 400.
-grep -q '"required":\["outcome","reason"\]' <<<"$SECTION"
+# 案卷式 GAN（r36 根因修复）：rubric_scores 并入 decision 的 required——OpenAI
+# strict output 要求"声明即必填"，GAN 角色填 7 维分数、其余角色填 null。
+grep -q '"required":\["outcome","reason","rubric_scores"\]' <<<"$SECTION"
 # Codex structured output uses OpenAI strict JSON Schema. Every object must be
 # closed and must require each declared property; arrays must declare items.
 RESULT_SCHEMA_JSON="$EVALUATOR_SCHEMA"
