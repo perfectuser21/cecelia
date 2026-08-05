@@ -36,6 +36,106 @@ function baseObserved(overrides = {}) {
   };
 }
 
+describe('合同故障重开 GAN（r40 实证：CONTRACT IS LAW 死锁出路）', () => {
+  // r40 实证：Evaluator 真跑判 FAIL,根因在合同资产自身(final-E2E 脚本比较方式
+  // bug)。Generator 无权改合同(CONTRACT IS LAW),旧路由一刀切 wait:human_review
+  // → run 死等。合同的 bug 责任在 Proposer/Reviewer,必须自动退回 GAN 修合同。
+  const cb = (hop, patch = {}) => ({
+    hop,
+    action: 'verdict:attempt_callback',
+    detail: {
+      run_id: '11111111-1111-4111-8111-111111111111',
+      attempt_id: `22222222-2222-4222-8222-${String(hop).padStart(12, '0')}`,
+      lease_generation: 0,
+      role: 'generator',
+      hop: hop - 1,
+      status: 'blocked',
+      failure_class: 'semantic_refusal',
+      error_code: 'CONTRACT_SELF_CONTRADICTION',
+      artifacts: [],
+      ...patch,
+    },
+  });
+
+  it('generator 报合同故障码(blocked+CONTRACT_SELF_CONTRADICTION) → reopen_gan_contract,不转人工', () => {
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator-fix', observed: {} },
+        cb(3),
+      ],
+    }));
+    expect(r.phase).toBe('gan');
+    expect(r.action).toBe('reopen_gan_contract');
+    expect(r.reason).toBe('contract_fault_reopen_gan');
+    expect(r.callbackHop).toBe(3);
+  });
+
+  it('CONTRACT_TEST_UNSATISFIABLE(r33 形态)同样重开 GAN', () => {
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        cb(3, { error_code: 'CONTRACT_TEST_UNSATISFIABLE' }),
+      ],
+    }));
+    expect(r.action).toBe('reopen_gan_contract');
+  });
+
+  it('同一 run 第二次合同故障 → 不再重开,回落 wait:human_review(防合同震荡)', () => {
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        cb(3),
+        { hop: 4, action: 'reopen_gan_contract', detail: { callback_hop: 3 } },
+        { hop: 5, action: 'spawn:generator', observed: {} },
+        cb(7),
+      ],
+    }));
+    expect(r.action).toBe('wait:human_review');
+    expect(r.reason).toBe('callback_semantic_refusal');
+  });
+
+  it('reopen 行(detail.callback_hop)消费其 callback:同一 callback 不再重复路由', () => {
+    const r = derive(baseObserved({
+      contract: { approved: false },
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        cb(3),
+        { hop: 4, action: 'reopen_gan_contract', detail: { callback_hop: 3 } },
+      ],
+    }));
+    expect(r.action).not.toBe('reopen_gan_contract');
+    expect(r.action).not.toBe('wait:human_review');
+    expect(r.phase).toBe('gan');
+  });
+
+  it('重开后 proposer 尚未出新一轮:趋势闸让路,不许 force_approve 把坏合同再批回去', () => {
+    const reviewerRow = (round, rubric_scores) => ({ round, author_role: 'reviewer', rubric_scores });
+    const caseFile = [
+      reviewerRow(1, { dod_machineability: 8, scope_match_prd: 7 }),
+      reviewerRow(2, { dod_machineability: 6, scope_match_prd: 7 }),
+      reviewerRow(3, { dod_machineability: 8, scope_match_prd: 7 }),
+    ];
+    const r = derive(baseObserved({
+      contract: { approved: false },
+      pr: null,
+      proposeBranchRn: 3,
+      ganLatestRoundVerdict: 'REVISION',
+      caseFile,
+      decisionLog: [
+        { hop: 2, action: 'verdict:reviewer', detail: { verdict: 'REVISION' } },
+        { hop: 3, action: 'verdict:attempt_callback', detail: { role: 'generator', status: 'blocked', failure_class: 'semantic_refusal', error_code: 'CONTRACT_SELF_CONTRADICTION', hop: 2 } },
+        { hop: 4, action: 'reopen_gan_contract', detail: { callback_hop: 3 } },
+      ],
+    }));
+    expect(r.action).toBe('spawn:proposer');
+    expect(r.action).not.toBe('force_approve_contract');
+  });
+});
+
 describe('规则 0：terminal', () => {
   it('run.phase=done → terminal', () => {
     const r = derive(baseObserved({ run: { phase: 'done' } }));

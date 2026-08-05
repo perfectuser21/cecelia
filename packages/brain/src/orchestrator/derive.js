@@ -153,7 +153,10 @@ function latestUnconsumedAttemptResult(decisionLog) {
     (row) => typeof row.action === 'string' && row.action.startsWith('spawn:'),
   );
   const answeredCallbackHops = new Set(rows
-    .filter((row) => row.action === LOG_ACTION.CONTEXT_ANSWER)
+    .filter((row) => (
+      row.action === LOG_ACTION.CONTEXT_ANSWER
+      || row.action === ACTION.REOPEN_GAN_CONTRACT
+    ))
     .map((row) => Number(callbackDetail(row).callback_hop))
     .filter(Number.isInteger));
   return [...rows].reverse().find((row) => {
@@ -279,6 +282,28 @@ function attemptCallbackRoute(observed) {
       action: retry.action,
       reason: 'callback_infrastructure_blocked',
     };
+  }
+  // 合同故障重开 GAN（r40 实证）：Generator 报出的故障根因在合同资产自身
+  // （伪 RED 占位桩 / final-E2E 脚本缺陷），它受 CONTRACT IS LAW 约束无权修。
+  // 责任在写合同的 Proposer 与批合同的 Reviewer——自动降级合同重开 GAN 让
+  // 他们修，而不是死等人工。每 run 只重开一次：第二次同类故障说明 GAN 修
+  // 不动，回落人工。
+  const CONTRACT_FAULT_ERROR_CODES = ['CONTRACT_SELF_CONTRADICTION', 'CONTRACT_TEST_UNSATISFIABLE'];
+  if (
+    role === 'generator'
+    && (status === 'blocked' || (status === 'failed' && failureClass === 'semantic_refusal'))
+    && CONTRACT_FAULT_ERROR_CODES.includes(detail.error_code)
+  ) {
+    const priorReopens = sortedLogRows(observed.decisionLog)
+      .filter((r) => r.action === ACTION.REOPEN_GAN_CONTRACT).length;
+    if (priorReopens < 1) {
+      return {
+        phase: 'gan',
+        action: ACTION.REOPEN_GAN_CONTRACT,
+        reason: 'contract_fault_reopen_gan',
+        callbackHop: Number(row.hop),
+      };
+    }
   }
   if (
     status === 'blocked'
@@ -647,7 +672,16 @@ function deriveGan(observed) {
   const identityPolicyBlockedCurrentSha = latestReviewerLogDetail?.source === 'validation_identity_policy'
     && latestReviewerLogDetail?.contract_sha === proposeBranchSha;
 
-  if (!identityPolicyBlockedCurrentSha) {
+  // 合同故障重开后（reopen 行比最新 reviewer verdict 新 = proposer 还没出修复轮）：
+  // 趋势闸必须让路。案卷未变，趋势仍会判 diverging/oscillating——若不让路，
+  // force_approve 会把刚被下游证伪的坏合同原样再批回去，generate 复撞同一故障。
+  const rows = sortedLogRows(observed.decisionLog);
+  const latestReopenHop = [...rows].reverse()
+    .find((r) => r.action === ACTION.REOPEN_GAN_CONTRACT)?.hop ?? null;
+  const reopenPendingProposerFix = latestReopenHop != null
+    && (latestReviewerLogRow == null || Number(latestReopenHop) > Number(latestReviewerLogRow.hop));
+
+  if (!identityPolicyBlockedCurrentSha && !reopenPendingProposerFix) {
     const rubricTrend = detectRubricTrend(observed.caseFile);
     if (rubricTrend === 'diverging' || rubricTrend === 'oscillating') {
       return {

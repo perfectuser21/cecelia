@@ -84,6 +84,12 @@ function callbackEventDetail(attempt, result, leaseGeneration) {
     summary: result.summary ?? '',
     context_question: result.decision?.reason ?? result.summary ?? null,
     failure_class: result.failure_class ?? null,
+    // 合同故障重开 GAN 的路由信号（r40 实证缺口）：derive 需要看到
+    // CONTRACT_SELF_CONTRADICTION / CONTRACT_TEST_UNSATISFIABLE 才能把
+    // "合同资产自身有 bug"退回 GAN,而不是按笼统 semantic_refusal 死等人工。
+    error_code: typeof result.error?.code === 'string'
+      ? result.error.code.slice(0, 64)
+      : null,
     ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
     artifacts: result.artifacts ?? [],
     ...(plannerGitVerification == null

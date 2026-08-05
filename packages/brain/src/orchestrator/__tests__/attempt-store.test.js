@@ -490,6 +490,62 @@ describe('attempt store', () => {
     })).not.toThrow();
   });
 
+  it('callback 决策行 detail 必须带 error_code(合同故障重开 GAN 的路由信号,r40 实证缺口)', async () => {
+    // r40 实证:generator 报 CONTRACT_SELF_CONTRADICTION,但 callback 决策行 detail
+    // 没有 error 字段 → derive 只能按笼统 semantic_refusal 转人工,无法识别
+    // "根因在合同资产"而自动退回 GAN。error.code 必须进投影。
+    const callbackResult = {
+      status: 'blocked',
+      summary: 'contract fault',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+      decision: { outcome: 'BLOCKED', reason: 'contract self contradiction' },
+      failure_class: 'semantic_refusal',
+      error: { code: 'CONTRACT_SELF_CONTRADICTION', message: 'final-E2E 在合同内且无法修复' },
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'generate',
+      role: 'generator',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      task_bundle: { inputs: {} },
+      result: null,
+    };
+    const completed = { ...running, status: 'blocked', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValue({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    const logInsert = client.query.mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('orchestrator_decision_log'),
+    );
+    expect(logInsert, '应有决策日志 INSERT').toBeTruthy();
+    const detailParam = (logInsert[1] ?? []).find(
+      (v) => typeof v === 'string' && v.includes('CONTRACT_SELF_CONTRADICTION'),
+    );
+    expect(detailParam, 'callback 决策行 detail 必须含 error_code=CONTRACT_SELF_CONTRADICTION').toBeTruthy();
+    expect(JSON.parse(detailParam).error_code).toBe('CONTRACT_SELF_CONTRADICTION');
+  });
+
   it('哨兵：GAN 权威终态落空壳案卷（blockers 空 + feedback_md 空 + rubric 空）必须告警，不许静默（r36 实证）', async () => {
     // r36 事故：runner schema 禁掉 case_file/rubric_scores → 案卷连写 14 行空壳
     // → 每轮 reviewer 零记忆重审 → 打地鼠不收敛，全程零报错零日志。案卷是收敛
