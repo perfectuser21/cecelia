@@ -30,7 +30,7 @@ const NODE_PCT = {
 // 纳入 feed 的任务类型（有实质执行的；排除 harness_report 等子任务噪音）
 const FEED_TYPES = ['harness_initiative', 'dev', 'content-pipeline', 'platform_scraper'];
 
-const AREA_NAMES = { cecelia: 'Cecelia', zenithjoy: 'ZenithJoy' };
+const AREA_NAMES = { cecelia: 'Cecelia', zenithjoy: 'ZenithJoy', infrastructure: 'Infrastructure' };
 
 /**
  * 拉一批 sprint（harness_initiative）任务的 harness_report 摘要（verdict / pr / findings）。
@@ -181,7 +181,7 @@ router.get('/lines', async (req, res) => {
   try {
     // 1. active journeys
     const { rows: journeys } = await pool.query(
-      `SELECT id, notion_id, name, status, maturity
+      `SELECT id, notion_id, name, status, maturity, biz_area
        FROM journeys WHERE status = 'active'`
     );
 
@@ -211,7 +211,7 @@ router.get('/lines', async (req, res) => {
     // 4. 按 Area 归类，逐条线统计
     const areaMap = new Map(); // areaKey → lines[]
     for (const j of journeys) {
-      const areaKey = classifyJourneyArea(j.name);
+      const areaKey = classifyJourneyArea(j.name, j.biz_area);
       const { step_total, step_done } = computeStepProgress(stepsByJourney.get(String(j.id)) || []);
 
       let running = 0, task_total = 0, last_activity = null;
@@ -261,12 +261,12 @@ router.get('/line/:id', async (req, res) => {
 
     // 1. journey 本体
     const { rows: jrows } = await pool.query(
-      `SELECT id, notion_id, name, description, status, maturity FROM journeys WHERE id = $1`,
+      `SELECT id, notion_id, name, description, status, maturity, biz_area FROM journeys WHERE id = $1`,
       [id]
     );
     if (jrows.length === 0) return res.status(404).json({ error: 'journey not found' });
     const journey = jrows[0];
-    const areaKey = classifyJourneyArea(journey.name);
+    const areaKey = classifyJourneyArea(journey.name, journey.biz_area);
 
     // 2. steps（按 step_number 升序 = roadmap）
     const { rows: stepRows } = await pool.query(
@@ -397,7 +397,7 @@ router.get('/line/:id/command', async (req, res) => {
 
     // 1. journey 本体
     const { rows: jrows } = await pool.query(
-      `SELECT id, notion_id, name, description, status, maturity FROM journeys WHERE id = $1`,
+      `SELECT id, notion_id, name, description, status, maturity, biz_area FROM journeys WHERE id = $1`,
       [id]
     );
     if (jrows.length === 0) return res.status(404).json({ error: 'journey not found' });
