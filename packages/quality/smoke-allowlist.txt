@@ -55,6 +55,14 @@ drift-sentinel-smoke.sh
 evaluator-evidence-bridge-smoke.sh
 evaluator-no-push-smoke.sh
 executor-liveness-t1-smoke.sh
+factory-f0-proposal-smoke.sh
+factory-f1-devloop-smoke.sh
+factory-f2-deploy-smoke.sh
+factory-f3-nightly-smoke.sh
+factory-f4-selfheal-smoke.sh
+factory-f5-cockpit-smoke.sh
+factory-f6-inbox-smoke.sh
+factory-f7-memory-smoke.sh
 feature-registry-smoke.sh
 features-ledger-smoke.sh
 journeys-bizarea-smoke.sh
