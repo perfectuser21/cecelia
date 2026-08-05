@@ -5,23 +5,23 @@
 
 ## 行为断言（BEHAVIOR）
 
-[BEHAVIOR] no_journey 分支调用 `updateAtom` 携带 `status: 'parked'`
-- grep 验证: `grep -n "no_journey" packages/brain/src/capture-triage.js | grep "parked"` 有输出
-- manual:bash: cd packages/brain && npx vitest run src/__tests__/capture-triage.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|no_journey|parked"
+- [BEHAVIOR] no_journey 分支调用 `updateAtom` 携带 `status: 'parked'`
+  - grep 验证: `grep -n "no_journey" packages/brain/src/capture-triage.js | grep "parked"` 有输出
+  - manual:bash: cd packages/brain && npx vitest run src/__tests__/capture-triage.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|no_journey|parked"
 
-[BEHAVIOR] low_confidence 分支调用 `updateAtom` 携带 `status: 'parked'`
-- grep 验证: `grep -n "low_confidence" packages/brain/src/capture-triage.js | grep "parked"` 有输出
-- manual:bash: cd packages/brain && npx vitest run src/__tests__/capture-triage.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|low_confidence"
+- [BEHAVIOR] low_confidence 分支调用 `updateAtom` 携带 `status: 'parked'`
+  - grep 验证: `grep -n "low_confidence" packages/brain/src/capture-triage.js | grep "parked"` 有输出
+  - manual:bash: cd packages/brain && npx vitest run src/__tests__/capture-triage.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|low_confidence"
 
-[BEHAVIOR] gate_fail 分支调用 `updateAtom` 携带 `status: 'parked'`
-- grep 验证: `grep -n "gate_fail" packages/brain/src/capture-triage.js | grep "parked"` 有输出
-- manual:bash: cd packages/brain && npx vitest run src/__tests__/capture-triage.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|gate_fail"
+- [BEHAVIOR] gate_fail 分支调用 `updateAtom` 携带 `status: 'parked'`
+  - grep 验证: `grep -n "gate_fail" packages/brain/src/capture-triage.js | grep "parked"` 有输出
+  - manual:bash: cd packages/brain && npx vitest run src/__tests__/capture-triage.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|gate_fail"
 
-[BEHAVIOR] `runCaptureAging` 返回含 `stuck_parked` 字段（number）
-- manual:bash: cd packages/brain && npx vitest run src/__tests__/capture-aging.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|stuck_parked"
+- [BEHAVIOR] `runCaptureAging` 返回含 `stuck_parked` 字段（number）
+  - manual:bash: cd packages/brain && npx vitest run src/__tests__/capture-aging.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|stuck_parked"
 
-[BEHAVIOR] 晨报 bark message 含 triage_items 段（归并榜单守卫）
-- manual:bash: cd packages/brain && npx vitest run src/__tests__/morning-cockpit-bark.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|triage"
+- [BEHAVIOR] 晨报 bark message 含 triage_items 段（归并榜单守卫）
+  - manual:bash: cd packages/brain && npx vitest run src/__tests__/morning-cockpit-bark.test.js --reporter=verbose 2>&1 | grep -E "PASS|FAIL|triage"
 
 ## ARTIFACT 断言
 
