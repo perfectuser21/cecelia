@@ -62,7 +62,7 @@ function generateSummary(content) {
  * 返回字符串 select 选项值。
  */
 function inferSuggestedDir(atom) {
-  const { target_type, target_subtype, content = '' } = atom;
+  const { target_type, content = '' } = atom;
   if (target_type === 'learning') return '存档/归知';
   if (target_type === 'issue')    return '立即处理';
   if (target_type === 'handoff')  return '传递下游';
