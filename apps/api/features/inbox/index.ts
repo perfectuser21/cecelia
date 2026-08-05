@@ -7,21 +7,9 @@ const manifest: FeatureManifest = {
   source: 'core',
   instances: ['core'],
 
-  navGroups: [
-    { id: 'inbox', label: 'Inbox', icon: 'Inbox', order: 1.5 },
-  ],
-
   routes: [
-    {
-      path: '/inbox',
-      component: 'InboxPage',
-      navItem: {
-        label: '收件箱',
-        icon: 'Inbox',
-        group: 'inbox',
-        order: 1,
-      },
-    },
+    // 旧 /inbox 退役重定向 → GTD Inbox
+    { path: '/inbox', redirect: '/gtd/inbox' },
     {
       path: '/okr/review/:id',
       component: 'OkrReviewPage',
@@ -29,7 +17,6 @@ const manifest: FeatureManifest = {
   ],
 
   components: {
-    InboxPage: () => import('./pages/InboxPage'),
     OkrReviewPage: () => import('./pages/OkrReviewPage'),
   },
 };
