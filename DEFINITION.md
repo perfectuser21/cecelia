@@ -12,6 +12,10 @@
 
 ---
 
+## Brain 1.267.229 — Notion 个人 Inbox 增量采集（F6加厚）
+
+新增 `notion-capture-ingest` scheduler job：每5分钟增量拉取 Notion Inbox 数据库，`dedupe_key='notion:inbox:<page_id>'` 幂等写入 captures + capture_atoms，`notion_page_id` 落 captures 表（migration 388）。凭据来源 CCAPI2026（AI Hub workspace），`NOTION_INBOX_TOKEN` + `NOTION_INBOX_DB_ID` 未配置时静默跳过。
+
 ## Brain 1.267.228 — 案卷字段 null 兼容（r38 实证回归修复）
 
 - 回归来源：1.267.226 把 `case_file` 列进 runner schema 顶层 `required`（OpenAI strict 要求"声明即必填"），codex 对非 GAN 角色因此输出 `"case_file":null`、`"rubric_scores":null`。但 Brain 侧 zod 用的是 `.optional()`——**只放行 undefined，拒绝 null** → 整条终态回调被 400 拒收 → 容器正常干完活（planner 已生成/提交/推送 PRD）结果却丢失 → attempt 永远卡 `running` 直到租约过期 → reconciler 空转、run 卡死在 planning。

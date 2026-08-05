@@ -10,6 +10,7 @@ const DEFAULT_INTERVAL_MS = 60 * 60 * 1000; // 1小时
 const INTERVAL_MS = parseInt(process.env.CECELIA_CAPTURE_AGING_INTERVAL_MS || String(DEFAULT_INTERVAL_MS), 10);
 
 let lastRunAt = 0;
+export function __resetCaptureAgingForTest() { lastRunAt = 0; }
 
 async function sendFeishuAlert(msg) {
   if (!FEISHU_AGING_WEBHOOK) {
@@ -30,7 +31,7 @@ async function sendFeishuAlert(msg) {
 
 /**
  * 账龄哨兵主函数
- * @returns {{ overdue_captures: number, overdue_atoms: number, retried: number, parked_by_aging: number }}
+ * @returns {{ overdue_captures: number, overdue_atoms: number, retried: number, parked_by_aging: number, stuck_parked: number }}
  */
 export async function runCaptureAging(pool) {
   const now = Date.now();
@@ -43,6 +44,7 @@ export async function runCaptureAging(pool) {
   let overdue_atoms = 0;
   let retried = 0;
   let parked_by_aging = 0;
+  let stuck_parked = 0;
 
   try {
     // 1. 超期 captures 告警（非终态，超7天）
@@ -95,10 +97,25 @@ export async function runCaptureAging(pool) {
     );
     retried = retryAtoms.length;
 
-    console.log(`[capture-aging] overdue_captures=${overdue_captures} overdue_atoms=${overdue_atoms} retried=${retried} parked_by_aging=${parked_by_aging}`);
+    // 5. F6修复：no_journey/low_confidence/gate_fail 已标记但误留 pending_review 的原子转 parked
+    //    兜底清零（防止旧版 capture-triage 遗留的积压 + 任何未来边缘场景）
+    const { rows: stuckAtoms } = await pool.query(
+      `UPDATE capture_atoms
+       SET status = 'parked', updated_at = now()
+       WHERE status = 'pending_review'
+         AND (
+           ai_reason LIKE '[triage:no_journey%'
+           OR ai_reason LIKE '[triage:low_confidence%'
+           OR ai_reason LIKE '[triage:gate_fail%'
+         )
+       RETURNING id`,
+    );
+    stuck_parked = stuckAtoms.length;
+
+    console.log(`[capture-aging] overdue_captures=${overdue_captures} overdue_atoms=${overdue_atoms} retried=${retried} parked_by_aging=${parked_by_aging} stuck_parked=${stuck_parked}`);
   } catch (err) {
     console.error(`[capture-aging] 运行失败: ${err.message}`);
   }
 
-  return { overdue_captures, overdue_atoms, retried, parked_by_aging };
+  return { overdue_captures, overdue_atoms, retried, parked_by_aging, stuck_parked };
 }

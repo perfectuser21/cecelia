@@ -21,6 +21,7 @@ export async function pushCapture(pool, {
   refJourneyId = null,
   refPrUrl = null,
   dedupeKey = null,
+  notionPageId = null,
   // atom params
   targetType = null,
   targetSubtype = null,
@@ -38,11 +39,11 @@ export async function pushCapture(pool, {
     {
       try {
         const { rows } = await pool.query(
-          `INSERT INTO captures (content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, status)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+          `INSERT INTO captures (content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, notion_page_id, status)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
            ON CONFLICT (dedupe_key) DO UPDATE SET content = EXCLUDED.content, updated_at = now()
            RETURNING id`,
-          [truncated, source, nature, repo, lane, refTaskId, refJourneyId, refPrUrl, dedupeKey, status]
+          [truncated, source, nature, repo, lane, refTaskId, refJourneyId, refPrUrl, dedupeKey, notionPageId, status]
         );
         captureId = rows[0]?.id ?? null;
       } catch (insertErr) {

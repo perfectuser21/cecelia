@@ -144,6 +144,7 @@ liveness-never-started-smoke.sh
 migration-339-drop-abilities-gp-priority-smoke.sh
 migration-346-idempotent-smoke.sh
 migration-verify.sh
+notion-capture-ingest-smoke.sh
 okr-initiative-mirror-smoke.sh
 oom-aware-retry-smoke.sh
 ops-panorama-smoke.sh

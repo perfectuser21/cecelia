@@ -171,7 +171,7 @@ describe('runCaptureTriage 四路落地', () => {
     expect(upd.params.join(' ')).not.toMatch(/\[triage:/);
   });
 
-  it('line_backlog 但源 task 无 journey_id → 留 pending_review，ai_reason 标 no_journey', async () => {
+  it('line_backlog 但源 task 无 journey_id → 转 parked，ai_reason 标 no_journey', async () => {
     const pool = makePool([{ id: 'a3', target_type: 'handoff', target_subtype: 'FAIL', content: 'x', routed_to_table: 'tasks', routed_to_id: 't1' }], { journeyId: null });
     await runCaptureTriage(pool);
     expect(pool.updates[0].sql).not.toMatch(/status = 'confirmed'/);
@@ -188,7 +188,7 @@ describe('runCaptureTriage 四路落地', () => {
     expect(pool.updates[0].params).toContain('dec-1');
   });
 
-  it('invariant：gate FAIL → 不写 decisions，留 pending_review 记四查明细', async () => {
+  it('invariant：gate FAIL → 不写 decisions，转 parked 记四查明细', async () => {
     checkInvariantCandidate.mockResolvedValue({ pass: false, checks: { conflict: true }, reason: '与铁律冲突' });
     const pool = makePool([{ id: 'a5', target_type: 'learning', target_subtype: 'failure_pattern', content: '根本原因是X', routed_to_table: 'learnings', routed_to_id: 'l1' }]);
     await runCaptureTriage(pool);
@@ -196,7 +196,7 @@ describe('runCaptureTriage 四路落地', () => {
     expect(pool.updates[0].params.join(' ')).toContain('[triage:gate_fail]');
   });
 
-  it('规则不中 + LLM 兜底 confidence<0.7 → 留 pending_review 标 low_confidence', async () => {
+  it('规则不中 + LLM 兜底 confidence<0.7 → 转 parked 标 low_confidence', async () => {
     const llm = vi.fn().mockResolvedValue({ text: JSON.stringify({ route: 'okr', confidence: 0.5, reason: '可能是OKR' }) });
     const pool = makePool([{ id: 'a6', target_type: 'issue', target_subtype: 'P2', content: 'x', routed_to_table: 'issues', routed_to_id: 'i2' }]);
     await runCaptureTriage(pool, { llm });
@@ -402,5 +402,40 @@ describe('runCaptureTriage 四路落地', () => {
     await runCaptureTriage(pool);
     expect(createTask).toHaveBeenCalledTimes(1);
     expect(createTask.mock.calls[0][0].title.startsWith('[自动派工] ')).toBe(true);
+  });
+
+  // ─── F6修复 防积压回归测试（永久保留在 CI）────────────────────────────────────
+  // 根因：no_journey/low_confidence/gate_fail 三路未显式设 status='parked'，
+  // 导致原子永久卡在 pending_review 无法清零。
+  // 决策 efa578b8 + 4c595c84，任务 96a00f17。
+
+  it('[F6修复-回归] no_journey → status 必须转 parked，不得卡在 pending_review', async () => {
+    const pool = makePool(
+      [{ id: 'f6-nj', target_type: 'handoff', target_subtype: 'FAIL', content: 'x', routed_to_table: 'tasks', routed_to_id: 't1' }],
+      { journeyId: null },
+    );
+    await runCaptureTriage(pool);
+    const upd = pool.updates[0];
+    expect(upd.sql).toMatch(/status = 'parked'/);
+    expect(upd.params.join(' ')).toContain('[triage:no_journey]');
+  });
+
+  it('[F6修复-回归] low_confidence → status 必须转 parked，不得卡在 pending_review', async () => {
+    const llm = vi.fn().mockResolvedValue({ text: JSON.stringify({ route: 'okr', confidence: 0.5, reason: '不确定' }) });
+    const pool = makePool([{ id: 'f6-lc', target_type: 'issue', target_subtype: 'P2', content: 'x', routed_to_table: 'issues', routed_to_id: 'i2' }]);
+    await runCaptureTriage(pool, { llm });
+    const upd = pool.updates[0];
+    expect(upd.sql).toMatch(/status = 'parked'/);
+    expect(upd.params.join(' ')).toContain('[triage:low_confidence]');
+  });
+
+  it('[F6修复-回归] gate_fail → status 必须转 parked，不得卡在 pending_review', async () => {
+    checkInvariantCandidate.mockResolvedValue({ pass: false, checks: { conflict: true }, reason: '与铁律冲突' });
+    const pool = makePool([{ id: 'f6-gf', target_type: 'learning', target_subtype: 'failure_pattern', content: '根本原因是X', routed_to_table: 'learnings', routed_to_id: 'l1' }]);
+    await runCaptureTriage(pool);
+    expect(pool.inserts.length).toBe(0);
+    const upd = pool.updates[0];
+    expect(upd.sql).toMatch(/status = 'parked'/);
+    expect(upd.params.join(' ')).toContain('[triage:gate_fail]');
   });
 });
