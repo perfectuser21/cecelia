@@ -39,6 +39,7 @@ import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import { classifyCodexFailure } from './lib/codex-fatal-patterns.js';
 import { raise } from './alerting.js';
 import { EXECUTOR_KIND_FOR, resolveExecutorKind } from './executor-contracts.js';
+import { probeCodexReviewLock, CODEX_REVIEW_LOCK_DIR as CODEX_REVIEW_LOCK_DIR_SSOT } from './lib/codex-review-liveness.js';
 import { pushCaptureAtom } from './capture-inbox.js';
 import {
   sampleCpuUsage as platformSampleCpuUsage,
@@ -251,7 +252,7 @@ const PROMPT_DIR = '/tmp/cecelia-prompts';
 const WORK_DIR = process.env.CECELIA_WORK_DIR || '/Users/administrator/perfect21/cecelia';
 
 // Codex Review 独立池（不占动态派发槽位）
-const CODEX_REVIEW_LOCK_DIR = '/tmp/codex-review-locks';
+const CODEX_REVIEW_LOCK_DIR = CODEX_REVIEW_LOCK_DIR_SSOT;
 const CODEX_REVIEW_MAX = 2;
 
 // 审查任务类型列表（由 triggerCodexReview 以本机 codex CLI 执行，走独立 codex-review-locks 池）
@@ -2443,6 +2444,9 @@ async function triggerCodexReview(task) {
     const lockFile = path.join(CODEX_REVIEW_LOCK_DIR, `${task.id}.lock`);
     await writeFile(lockFile, JSON.stringify({ taskId: task.id, runId, startedAt: new Date().toISOString() }));
 
+    // liveness 打标：合同层由 codex-review-local 合同以 lock 文件探活（决策 9befa9c3）
+    try { await setExecutorKind(task.id, 'codex-review-local'); } catch { /* 打标失败不阻塞派发 */ }
+
     console.log(`[executor] triggerCodexReview: 使用本机 codex CLI task=${task.id} type=${task.task_type}`);
 
     // 派发到本机 codex CLI（容器内默认 /usr/local/bin/codex，host fallback /opt/homebrew/bin/codex）
@@ -3982,6 +3986,17 @@ async function probeTaskLiveness() {
     ]);
     if (HARNESS_LIVENESS_EXEMPT_TYPES.has(task.task_type)) {
       continue;
+    }
+
+    // REVIEW 类任务由 triggerCodexReview spawn detached codex，三条进程信号全无
+    //（issue f1d6840f：曾 60 秒宽限后恒判死，10~30 分钟审查结构性跑不完）。
+    // 活性以 lock 文件为准，与合同层 codex-review-local 共用 SSOT；
+    // lock 缺失/超龄 → 不 continue，落入下方既有 SUSPECT→DEAD 双确认流程（回队有出路）。
+    if (REVIEW_TASK_TYPES.includes(task.task_type)) {
+      if (probeCodexReviewLock(task.id) === 'alive') {
+        suspectProcesses.delete(task.id);
+        continue;
+      }
     }
 
     // Decomposition tasks (/decomp) and initiative_plan/initiative_verify tasks run for
