@@ -672,3 +672,40 @@ describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门
     try { rmSync(task.payload.sprint_dir, { recursive: true, force: true }); } catch { /* 忽略 */ }
   });
 });
+
+describe('spawnSkillRelaySession preview 隔离闸（2026-08-05 preview-4643 事故）', () => {
+  // 事故：preview Brain 从生产快照整库克隆而来，startup-sync 把克隆的 in_progress
+  // harness 任务当孤儿重点火；preview 进程继承生产 env（同一 fleet bridge token、
+  // callback 指回生产 Brain），spawn 出的 orchestrator 与生产 Brain 争抢同一 run，
+  // 毒死了生产验证 run（r35 Generator 容器环境变量被搅丢）。
+  it('BRAIN_PREVIEW=1 → 拒绝 spawn 任何 harness 会话，不建 run 不点火', async () => {
+    process.env.BRAIN_PREVIEW = '1';
+    try {
+      const deps = makeDeps();
+      const kernelTask = {
+        ...TASK,
+        payload: { ...TASK.payload, harness_runtime: 'kernel-v1' },
+      };
+      const r = await spawnSkillRelaySession(kernelTask, deps);
+      expect(r.ok).toBe(false);
+      expect(r.error).toBe('preview_brain_harness_spawn_forbidden');
+      expect(deps.spawnFn).not.toHaveBeenCalled();
+      expect(deps.createKernelRun).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.BRAIN_PREVIEW;
+    }
+  });
+
+  it('BRAIN_PREVIEW=true（字符串）同样拒绝；未设置时不拦截正常路径', async () => {
+    process.env.BRAIN_PREVIEW = 'true';
+    try {
+      const deps = makeDeps();
+      const r = await spawnSkillRelaySession(TASK, deps);
+      expect(r.ok).toBe(false);
+      expect(r.error).toBe('preview_brain_harness_spawn_forbidden');
+      expect(deps.spawnFn).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.BRAIN_PREVIEW;
+    }
+  });
+});
