@@ -46,8 +46,9 @@ async function getLineId(): Promise<string> {
 /**
  * 向 Brain API 插入 approved GP fixture（用于紫 diff 场景）
  * 返回插入的 GP id 列表（清理用）
+ * 同时注入 journey_step_links，确保两版本间存在 cell_status 差异从而触发紫 diff
  */
-async function injectApprovedGPFixtures(journeyId: string): Promise<string[]> {
+async function injectApprovedGPFixtures(journeyId: string): Promise<{ gpIds: string[]; stepLinkIds: string[] }> {
   const now = new Date();
   const v1Time = new Date(now.getTime() - 7 * 24 * 3600 * 1000).toISOString(); // 7天前
   const v2Time = new Date(now.getTime() - 1 * 24 * 3600 * 1000).toISOString(); // 1天前
@@ -69,7 +70,7 @@ async function injectApprovedGPFixtures(journeyId: string): Promise<string[]> {
     },
   ];
 
-  const ids: string[] = [];
+  const gpIds: string[] = [];
   for (const gp of fixtureGPs) {
     const res = await fetch(`${BRAIN_URL}/api/brain/golden-paths`, {
       method: 'POST',
@@ -79,11 +80,52 @@ async function injectApprovedGPFixtures(journeyId: string): Promise<string[]> {
     if (res.ok) {
       const data = await res.json();
       const id = data?.id ?? data?.golden_path?.id;
-      if (id) ids.push(id);
+      if (id) gpIds.push(id);
     }
   }
-  return ids;
+
+  // 注入 journey_step_links，确保两个版本间有 cell_status 差异触发紫 diff
+  // v1 时刻（7天前）注入 cell_status='candidate'，v2 时刻（1天前）注入 cell_status='approved'
+  // 这样同一 (step_id, cell_key) 在两个 GP approved_at 时间点前后的状态不同，前端可据此判断变化
+  const stepLinkIds: string[] = [];
+  const ANCHOR_STEP_ID = '626817c6-3dc7-4773-97ab-d4892f064e8e'; // PRD 约定锚点步骤 id
+  const fixtureStepLinks = [
+    {
+      journey_id: journeyId,
+      step_id: ANCHOR_STEP_ID,
+      cell_key: 'FR',
+      cell_kind: 'element',
+      cell_status: 'candidate',
+      assertion_ref: '[TEST-FIXTURE] v1 FR assertion',
+      created_at: new Date(now.getTime() - 8 * 24 * 3600 * 1000).toISOString(), // v1 版本前（8天前）
+    },
+    {
+      journey_id: journeyId,
+      step_id: ANCHOR_STEP_ID,
+      cell_key: 'FR',
+      cell_kind: 'element',
+      cell_status: 'approved',
+      assertion_ref: '[TEST-FIXTURE] v2 FR assertion updated',
+      created_at: new Date(now.getTime() - 2 * 24 * 3600 * 1000).toISOString(), // v2 版本前（2天前）
+    },
+  ];
+
+  for (const link of fixtureStepLinks) {
+    const res = await fetch(`${BRAIN_URL}/api/brain/journey_step_links`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(link),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const id = data?.id ?? data?.journey_step_link?.id;
+      if (id) stepLinkIds.push(id);
+    }
+  }
+
+  return { gpIds, stepLinkIds };
 }
+
 
 /**
  * 清理测试 fixture GP
@@ -91,6 +133,15 @@ async function injectApprovedGPFixtures(journeyId: string): Promise<string[]> {
 async function cleanupGPFixtures(ids: string[]) {
   for (const id of ids) {
     await fetch(`${BRAIN_URL}/api/brain/golden-paths/${id}`, { method: 'DELETE' }).catch(() => {});
+  }
+}
+
+/**
+ * 清理测试 fixture journey_step_links
+ */
+async function cleanupStepLinkFixtures(ids: string[]) {
+  for (const id of ids) {
+    await fetch(`${BRAIN_URL}/api/brain/journey_step_links/${id}`, { method: 'DELETE' }).catch(() => {});
   }
 }
 
@@ -183,8 +234,8 @@ test('Scenario 3 (紫 diff): 有两版本 approved GP 时 changed 格子存在',
 
   const lineId = await getLineId();
 
-  // 注入 fixture approved GP
-  const fixtureIds = await injectApprovedGPFixtures(ANCHOR_JOURNEY_ID);
+  // 注入 fixture：两个 approved GP + 两条 journey_step_links（确保版本间有 cell_status 差异）
+  const { gpIds, stepLinkIds } = await injectApprovedGPFixtures(ANCHOR_JOURNEY_ID);
 
   try {
     await page.goto(`${BASE_URL}/strategist/${lineId}`, { waitUntil: 'networkidle' });
@@ -202,34 +253,22 @@ test('Scenario 3 (紫 diff): 有两版本 approved GP 时 changed 格子存在',
     await versionTab.click();
     await page.waitForTimeout(2000);
 
+    // fixture 已注入 ≥2 approved GP，版本对比表必须渲染（不允许显示空态）
     const versionTable = page.locator('[data-testid="gp-version-table"]');
+    await expect(versionTable).toBeVisible({ timeout: 5000 });
 
-    if (await versionTable.count() > 0) {
-      // 找 changed 格子
-      const changedCells = page.locator('[data-testid="gp-version-cell-changed"]');
-      const changedCount = await changedCells.count();
+    // 找 changed 格子（fixture 已注入版本间 cell_status 差异，必须存在至少一个紫 diff 格子）
+    const changedCells = page.locator('[data-testid="gp-version-cell-changed"]');
+    expect(await changedCells.count()).toBeGreaterThan(0);
 
-      // 如果有格子账本数据，应有 changed 格子；如无数据则格子为空不强制
-      if (changedCount > 0) {
-        await expect(changedCells.first()).toBeVisible();
-        // 验证紫底样式
-        const classList = await changedCells.first().getAttribute('class') ?? '';
-        const hasPurpleClass = classList.includes('bg-violet') || classList.includes('changed');
-        expect(hasPurpleClass).toBe(true);
-      }
-      // 无 changed 格子时（两版本间无差异）不 fail — 只要表格渲染正常即可
-    } else {
-      // 降级路径：即使有 fixture GP，也可能因 journey 无格子账本而无 diff
-      const versionEmpty = page.locator('[data-testid="gp-version-empty"]');
-      // 此时空态提示仍应合规（fixture GP 存在则不应出现空态，需 fail）
-      const emptyCount = await versionEmpty.count();
-      if (emptyCount > 0) {
-        // fixture 注入成功但仍显示空态：记录警告（不因 fixture API 失败而 fail 合同测试）
-        console.warn('[Scenario 3] fixture GP 注入成功但版本对比表未渲染，请检查 gp-version-table 实现');
-      }
-    }
+    // 验证紫底样式
+    await expect(changedCells.first()).toBeVisible();
+    const classList = await changedCells.first().getAttribute('class') ?? '';
+    const hasPurpleClass = classList.includes('bg-violet') || classList.includes('changed');
+    expect(hasPurpleClass).toBe(true);
   } finally {
-    await cleanupGPFixtures(fixtureIds);
+    await cleanupGPFixtures(gpIds);
+    await cleanupStepLinkFixtures(stepLinkIds);
   }
 });
 
@@ -240,8 +279,8 @@ test('Scenario 4 (L3/L4): 点击版本格子展开详情面板，再点收起', 
 
   const lineId = await getLineId();
 
-  // 注入 fixture GP（确保版本对比表有内容）
-  const fixtureIds = await injectApprovedGPFixtures(ANCHOR_JOURNEY_ID);
+  // 注入 fixture GP + step_links（确保版本对比表有内容及可点击格子）
+  const { gpIds, stepLinkIds } = await injectApprovedGPFixtures(ANCHOR_JOURNEY_ID);
 
   try {
     await page.goto(`${BASE_URL}/strategist/${lineId}`, { waitUntil: 'networkidle' });
@@ -259,48 +298,40 @@ test('Scenario 4 (L3/L4): 点击版本格子展开详情面板，再点收起', 
     await versionTab.click();
     await page.waitForTimeout(2000);
 
+    // fixture 已注入 ≥2 approved GP，版本对比表必须渲染（不允许 skip）
     const versionTable = page.locator('[data-testid="gp-version-table"]');
-    if (await versionTable.count() === 0) {
-      // 无版本对比表时跳过 L3/L4 断言（fixture API 限制）
-      test.skip();
-      return;
-    }
+    await expect(versionTable).toBeVisible({ timeout: 5000 });
 
-    // 点击版本对比表中任意一个格子（非表头）
+    // 点击版本对比表中任意一个格子（优先带 data-cell-key 的格子）
     const cells = versionTable.locator('td[data-cell-key]');
     const cellCount = await cells.count();
 
-    if (cellCount === 0) {
-      // 无可点击格子（账本为空）时，用通用格子 locator
-      const anyCells = versionTable.locator('td').filter({ hasNotText: 'FR|NFR|判定点|v\\d+|当前' });
-      if (await anyCells.count() === 0) {
-        test.skip();
-        return;
-      }
-      await anyCells.first().click();
+    let targetCell;
+    if (cellCount > 0) {
+      targetCell = cells.first();
     } else {
-      await cells.first().click();
+      // 无 data-cell-key 时退化到普通 td（非表头行）
+      targetCell = versionTable.locator('td').first();
     }
+    await targetCell.click();
 
     // L3：行详情面板应展开
     const detailPanel = page.locator('[data-testid="cell-detail-panel"]');
     await expect(detailPanel).toBeVisible({ timeout: 3000 });
 
-    // 面板内含带日期的条目
+    // 面板内含带日期的条目（fixture 注入的 step_link 含 created_at，UI 需展示日期）
     const dateItems = detailPanel.locator('*').filter({ hasText: /\d{2}-\d{2}/ });
-    // 有格子账本数据时应有日期条目；账本为空则不强制
-    // （此处宽松断言，避免因数据为空而 fail 合同测试）
+    expect(await dateItems.count()).toBeGreaterThan(0);
 
     // 截图 L3
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'L3-detail.png'), fullPage: false });
 
     // L4：再次点击同一格子，面板收起
-    const targetCell = cellCount > 0 ? cells.first() : versionTable.locator('td').first();
     await targetCell.click();
-
     await expect(detailPanel).not.toBeVisible({ timeout: 3000 });
   } finally {
-    await cleanupGPFixtures(fixtureIds);
+    await cleanupGPFixtures(gpIds);
+    await cleanupStepLinkFixtures(stepLinkIds);
   }
 });
 

@@ -108,7 +108,7 @@
 ## 六、不变量（Invariant，Generator 不得违反）
 
 - testid 名称不得与上表不同
-- lineId / journeyId / gpId 不得硬编码，fixture ID 须动态注入或预约定
+- lineId / journeyId / gpId 不得硬编码，fixture ID 须动态注入或预约定；唯一例外：测试常量 `ANCHOR_JOURNEY_ID` 为 PRD 预约定 journey，允许作为测试固定值声明，但 UI 组件逻辑中 lineId/journeyId 不得硬编码
 - 修 bug 的 failing test 必须 commit 进 repo 永久保留
 - 紫底 class 命名：`bg-violet-500/15` 或带 `changed` 标记（两者选一，不得混用）
 - 对比表显示空态时（无 approved GP）不抛异常，console 无 error

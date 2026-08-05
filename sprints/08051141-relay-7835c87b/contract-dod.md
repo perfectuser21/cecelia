@@ -13,9 +13,10 @@
 - [ ] `StrategistLinePage.tsx` 步骤行 `<tr>` 带 `data-testid="step-row-clickable"`
 - [ ] `StepLedgerPanel` 根元素带 `data-testid="step-ledger-panel"`
 - [ ] 版本子页签下：GP 对比表根元素带 `data-testid="gp-version-table"`
-- [ ] 无 approved GP 时：空态节点带 `data-testid="gp-version-empty"`，文本含"本线暂无批准版本记录"
+- [ ] 无 approved GP 时：空态节点带 `data-testid="gp-version-empty"`，文本含"本线暂无批准版本记录"（Generator 必须将 UI 文字统一为此字符串，不得使用"本线暂无 GP 版本记录"等变体）
 - [ ] 有变化格子带 `data-testid="gp-version-cell-changed"` 且含紫底 class（`bg-violet-500/15` 或 `changed`）
 - [ ] 行详情面板带 `data-testid="cell-detail-panel"`，点击格子展开，再次点击收起
+- [ ] 步骤未选中时（`StepLedgerPanel` 未弹出），版本对比格子点击无响应（UI 不抛异常，console 无 error）
 - [ ] `StepLedgerPanel` 已有账本视图（`panelView === 'ledger'`）行为不变
 - [ ] L1 矩阵 `OverviewTab` 行为不变（无账本空态文字"账本模板铺入后自动出现"保留）
 - [ ] 无新数据库表引入
@@ -43,6 +44,10 @@
 - [ ] 格子 diff 对比：同一 `(step_id, cell_key)` 在相邻版本快照间 `cell_status` 或 `assertion_ref` 变化时标紫
 - [ ] 单版本 GP：无紫 diff，所有格子正常渲染，不报错
 - [ ] 格子账本为空：版本对比表行显示"—"，不报错
+
+### 不变量豁免说明
+
+- 测试常量 `ANCHOR_JOURNEY_ID`（值 `8bb8252f-29b4-4c34-acb9-1accda7ddfcf`）为 PRD 预约定 journey，允许在测试文件中作为固定值声明；UI 组件逻辑（React 代码）中 lineId/journeyId 不得硬编码
 
 ---
 
