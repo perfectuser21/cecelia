@@ -1,3 +1,4 @@
+// TDD-RED-BASELINE: 实现前运行必须全部失败（4/4 fail 已验证）
 /**
  * TDD 测试：验证 Kernel DevOps 格子存在性
  *
