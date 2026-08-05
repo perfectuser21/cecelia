@@ -36,6 +36,8 @@ import { writeDockerCallback, resolveResourceTier, isDockerAvailable, resolveBra
 import { loadSkillContent, assertSprintDir } from './harness-shared.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
+import { classifyCodexFailure } from './lib/codex-fatal-patterns.js';
+import { raise } from './alerting.js';
 import { EXECUTOR_KIND_FOR, resolveExecutorKind } from './executor-contracts.js';
 import { pushCaptureAtom } from './capture-inbox.js';
 import {
@@ -2475,6 +2477,8 @@ async function triggerCodexReview(task) {
     // 收集 stdout，解析审查结果后回调 Brain
     let stdout = '';
     child.stdout?.on('data', (d) => { stdout += d.toString(); });
+    let stderr = '';
+    child.stderr?.on('data', (d) => { stderr += d.toString(); });
 
     child.on('error', async (err) => {
       console.error(`[executor] codex spawn error: ${err.message} task=${task.id}`);
@@ -2500,6 +2504,50 @@ async function triggerCodexReview(task) {
     child.on('exit', async (code) => {
       try { unlinkSync(lockFile); } catch {}
       console.log(`[executor] codex review exit code=${code} task=${task.id}`);
+
+      // 环境级致命错误（config 不兼容/CLI 版本过旧/trust 拒绝）→ 不发 AI Failed callback
+      // （callback_queue 无记录，inline 与 worker 两条链都不会烧任务），安全回队 + 响亮告警。
+      // 对齐 dispatcher pre-spawn configError 语义（回队+不计熔断），补上告警与回队上限。
+      const fatal = code === 0 ? null : classifyCodexFailure(stdout, stderr);
+      if (fatal) {
+        try {
+          const summary = (stderr || stdout).slice(-300).replace(/\s+/g, ' ').trim();
+          const countRes = await pool.query(
+            `SELECT COALESCE((payload->>'codex_config_error_count')::int, 0) AS n FROM tasks WHERE id = $1`,
+            [task.id]
+          );
+          const n = (countRes.rows[0]?.n ?? 0) + 1;
+          if (n < 3) {
+            await pool.query(
+              `UPDATE tasks
+                 SET status = 'queued', claimed_by = NULL, claimed_at = NULL,
+                     payload = (COALESCE(payload, '{}'::jsonb) - 'run_status')
+                               || jsonb_build_object('codex_config_error_count', $2::int),
+                     updated_at = NOW()
+               WHERE id = $1 AND status IN ('in_progress','dispatched')`,
+              [task.id, n]
+            );
+            raise('P1', 'codex_config_error', `codex 环境错误(${fatal.reason})，任务安全回队(${n}/3)：task=${task.id} ${summary}`);
+          } else {
+            await pool.query(
+              `UPDATE tasks
+                 SET status = 'blocked',
+                     blocked_at = NOW(), blocked_reason = 'codex_config_error',
+                     claimed_by = NULL, claimed_at = NULL,
+                     payload = (COALESCE(payload, '{}'::jsonb) - 'run_status')
+                               || jsonb_build_object('codex_config_error_count', $2::int),
+                     updated_at = NOW()
+               WHERE id = $1 AND status IN ('in_progress','dispatched')`,
+              [task.id, n]
+            );
+            raise('P0', 'codex_config_error', `codex 环境错误连续${n}次(${fatal.reason})，任务已 blocked 待人工：task=${task.id} ${summary}`);
+          }
+          console.error(`[executor] codex configError: reason=${fatal.reason} task=${task.id} count=${n}`);
+        } catch (cfgErr) {
+          console.error(`[executor] codex configError 处理自身失败: ${cfgErr.message} task=${task.id}`);
+        }
+        return;
+      }
 
       // 尝试从输出中提取 JSON verdict 并回调 Brain
       try {
