@@ -106,6 +106,14 @@ npx playwright test sprints/08051141-relay-7835c87b/tests/strategist-gp-drill.e2
 
 ---
 
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期 Red 证据 |
+|---|---|---|---|
+| GP四级下钻 E2E | `tests/strategist-gp-drill.e2e.spec.ts` | J-01、J-02、J-03、J-04、J-05、J-06、J-07、J-08 | → 8 failures（功能未实现时全红）|
+
+---
+
 ## 风险标注
 
 | 风险 | 可能性 | 处理方式 |
