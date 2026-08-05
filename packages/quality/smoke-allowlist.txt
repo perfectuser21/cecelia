@@ -215,3 +215,4 @@ zenithjoy-schema-migration-smoke.sh
 
 doc-zombie-retire-smoke.sh
 nfr-decisions-assertion-ref-smoke.sh
+strategist-form-smoke.sh
