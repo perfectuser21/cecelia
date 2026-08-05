@@ -6,6 +6,7 @@ set -euo pipefail
 
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 DASHBOARD_URL="${DASHBOARD_URL:-http://localhost:5174}"
+REPO_ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || echo "/workspace")"
 
 echo "=== strategist-form-smoke: 开始 ==="
 
@@ -24,12 +25,12 @@ curl -sf "${BRAIN_URL}/api/brain/journey_step_links?journey_id=e6f803f2-8c48-4cc
 
 # 4. smoke 过滤代码存在（Fix-5）
 echo "[4/5] 检查 smoke 过滤源码..."
-grep -q "smoke" /workspace/apps/dashboard/src/pages/strategist/StrategistPage.tsx \
+grep -q "smoke" "${REPO_ROOT}/apps/dashboard/src/pages/strategist/StrategistPage.tsx" \
   || { echo "FAIL: StrategistPage.tsx 缺少 smoke 过滤"; exit 1; }
 
 # 5. AbortController 超时保护（Fix-3）
 echo "[5/5] 检查 AbortController 源码..."
-grep -q "AbortController" /workspace/apps/dashboard/src/pages/warroom/ConversationsPanel.tsx \
+grep -q "AbortController" "${REPO_ROOT}/apps/dashboard/src/pages/warroom/ConversationsPanel.tsx" \
   || { echo "FAIL: ConversationsPanel.tsx 缺少 AbortController"; exit 1; }
 
 echo "=== strategist-form-smoke: 全通过 ==="
