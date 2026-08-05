@@ -65,8 +65,13 @@ let d=''; process.stdin.on('data',c=>d+=c).on('end',()=>{
 });
 "
 
-echo "[smoke:journeys-bizarea] Case 4: 残渣不再出现在 /lines"
-echo "$LINES" | grep -q "gp-agg-smoke-journey" && { echo "  FAIL: gp-agg-smoke 残渣仍在 /lines"; exit 1; }
-echo "  PASS: 残渣已随 deprecated 过滤"
+echo "[smoke:journeys-bizarea] Case 4: deprecated 线不出现在 /lines（自包含断言）"
+# 不断言全局无 gp-agg 残渣：同场 CI 的 gp-aggregation smoke 会临时新建 active 残渣线，
+# 那是它的测试数据不是本刀的病。本刀保证的是 deprecated 状态被过滤。
+psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -c \
+  "INSERT INTO journeys (name, status, biz_area) VALUES ('[smoke-bizarea] 已退役线', 'deprecated', 'cecelia');" >/dev/null
+LINES2=$(curl -sf "${API}/warroom/lines") || { echo "  FAIL: /warroom/lines 不可达"; exit 1; }
+echo "$LINES2" | grep -q "smoke-bizarea] 已退役线" && { echo "  FAIL: deprecated 线仍出现在 /lines"; exit 1; }
+echo "  PASS: deprecated 线已被过滤"
 
 echo "[smoke:journeys-bizarea] DONE — 全部通过"
