@@ -54,21 +54,21 @@ curl -s "http://localhost:5221/api/brain/journey_steps?journey_id=e6f803f2-8c48-
 
 ### Step 2：验证 artifact-verification 能力格子存在（B-2）
 ```bash
-curl -s "http://localhost:5221/api/brain/journey_step_links?journey_id=e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29&cells=1&cell_kind=capability" \
+curl -s "http://localhost:5221/api/brain/journey_step_links?journey_id=e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29&cells=1&cell_kind=capability&limit=500" \
   | jq '[.[] | select(.cell_key | test("artifact";"i"))] | length >= 1'
 # 期望输出: true
 ```
 
 ### Step 3：验证 A2-0 合同维度格子 ≥ 4 格（B-3）
 ```bash
-curl -s "http://localhost:5221/api/brain/journey_step_links?journey_id=e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29&cells=1" \
+curl -s "http://localhost:5221/api/brain/journey_step_links?journey_id=e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29&cells=1&limit=500" \
   | jq '[.[] | select(.cell_key | test("a20";"i"))] | length >= 4'
 # 期望输出: true
 ```
 
 ### Step 4：验证所有新格子均为 gray（B-4）
 ```bash
-curl -s "http://localhost:5221/api/brain/journey_step_links?journey_id=e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29&cells=1" \
+curl -s "http://localhost:5221/api/brain/journey_step_links?journey_id=e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29&cells=1&limit=500" \
   | jq '[.[] | select(.cell_key | test("a20|artifact";"i")) | select(.cell_status == "green")] | length == 0'
 # 期望输出: true（无 green 格子）
 ```
