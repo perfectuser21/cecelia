@@ -6,11 +6,19 @@
 
 
 
-**Brain 版本**: 1.267.225
+**Brain 版本**: 1.267.226
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.226 — GAN 案卷断链根治（r36 十四轮不收敛根因）
+
+- 根因：runner structured-output schema（`entrypoint.sh provider_result_schema_json`）顶层 `additionalProperties:false`、`decision` 只允许 `outcome/reason`，把 skill 9.13.0 案卷协议要求的 `case_file` 与 `decision.rubric_scores` **在协议层硬性禁掉**。codex 遵守 schema → 两字段永远输不出 → `gan_case_file` 连写空壳（blockers=[]/feedback_md=null/rubric_scores=null）→ 每轮 reviewer 读到零信息案卷、无跨轮记忆 → 打地鼠式轮流挑不同维度，r36 跑满 14 轮仍不收敛。案卷式 GAN 上线时 skill 端与 Brain 端都升级了，唯独漏了中间这层容器 schema——三端版本不同步，且因 Brain 侧 zod 两字段是 `optional()`，全程零报错零日志。
+- 修复：schema 按 OpenAI strict 规范放行两字段——`case_file` 进顶层 `required`（`anyOf` 带 null，非 GAN 角色填 null），blockers 显式声明 reviewer 七字段/proposer 两字段两种闭合形状；`decision.rubric_scores` 进 decision `required`，7 维分数逐字段声明。
+- 防复发：`attempt-store.js` 加空壳案卷哨兵——GAN 权威终态落库时三项全空则 `console.warn` 打 `case_file_empty` 标记，杜绝再次静默断链。
+- 部署面：runner 镜像已重建，pin digest `sha256:ae2eaabb…` → `sha256:349c40cc…`（`node-profile.js` CANONICAL_BASELINE、`fleet-node-profiles.json` ×3、rollout/reconcile 脚本与配套测试全部同步；fleet-worker plist 的 `CECELIA_RUNNER_DIGEST` 需随部署更新）。
+- 回退会恢复：GAN 永远无跨轮记忆，任何 sprint 都不可能收敛。
 
 ## Brain 1.267.225 — preview Brain 与生产 harness 完全隔离（preview-4643 事故）
 

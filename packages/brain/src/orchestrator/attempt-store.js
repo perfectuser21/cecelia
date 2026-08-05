@@ -261,14 +261,29 @@ function callbackCaseFileProjection(attempt, result) {
   if (round == null) return null;
   const inputs = attemptTaskBundle(attempt).inputs ?? {};
   const feedbackMd = result.case_file?.feedback_md;
+  const rubricScores = numericRubricScores(result.decision?.rubric_scores);
+  const blockers = sanitizeCaseFileValue(result.case_file?.blockers ?? []);
+  // 空壳案卷哨兵（r36 实证）：案卷是 GAN 收敛机制的命脉——下一轮 reviewer 靠它
+  // 才知道上轮提过什么、该复核哪些。三项全空说明 provider 侧根本没吐案卷
+  // （2026-08-05 根因：runner structured-output schema 用 additionalProperties:
+  // false 把 case_file / decision.rubric_scores 硬性禁掉），案卷连写空壳、每轮
+  // 零记忆重审、GAN 打地鼠不收敛，而 zod 里两字段是 optional 所以全程零报错。
+  // 静默是这个 bug 潜伏至今的唯一原因，这里必须喊出来。
+  if (blockers.length === 0 && feedbackMd == null && rubricScores == null) {
+    console.warn(
+      `[attempt-store][case_file_empty] run=${attempt.run_id} round=${round} `
+      + `role=${attempt.role} attempt=${attempt.id} —— 案卷三项全空，`
+      + 'provider 未输出 case_file/rubric_scores，GAN 跨轮记忆断链、无法收敛',
+    );
+  }
   return {
     runId: attempt.run_id,
     round,
     authorRole: attempt.role,
     attemptId: attempt.id,
     contractSha: inputs.contract_sha ?? null,
-    rubricScores: numericRubricScores(result.decision?.rubric_scores),
-    blockers: sanitizeCaseFileValue(result.case_file?.blockers ?? []),
+    rubricScores,
+    blockers,
     feedbackMd: feedbackMd == null ? null : sanitizeCaseFileValue(feedbackMd),
   };
 }

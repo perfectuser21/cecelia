@@ -398,10 +398,14 @@ cat > "$GAN_SCHEMA_TMP/task.json" <<'JSON'
 JSON
 GAN_SCHEMA="$(provider_result_schema_json "$GAN_SCHEMA_TMP/task.json")"
 jq -e '
-  .properties.case_file.type == "object"
-  and .properties.case_file.properties.blockers.type == "array"
-  and .properties.case_file.properties.feedback_md != null
-  and (.properties.decision.anyOf[0].properties | has("rubric_scores"))
+  (.required | index("case_file")) != null
+  and .properties.case_file.anyOf[0].properties.blockers.type == "array"
+  and .properties.case_file.anyOf[0].properties.feedback_md.type == "string"
+  and (.properties.case_file.anyOf[0].properties.blockers.items.anyOf
+       | map(.properties | has("why_not_found_earlier")) | any)
+  and (.properties.decision.anyOf[0].required | index("rubric_scores")) != null
+  and (.properties.decision.anyOf[0].properties.rubric_scores.anyOf[0].properties
+       | has("test_is_red"))
 ' <<<"$GAN_SCHEMA" >/dev/null || {
   echo 'runner schema forbids case_file / decision.rubric_scores — GAN 案卷断链' >&2
   exit 1
@@ -758,7 +762,9 @@ jq -e '.checks == ["provider summary"]' "$EVIDENCE_TMP/result.json" >/dev/null |
 }
 # The runner's provider-facing schema must emit decisions accepted by the Brain
 # callback parser. A permissive object here caused real planner callbacks to 400.
-grep -q '"required":\["outcome","reason"\]' <<<"$SECTION"
+# 案卷式 GAN（r36 根因修复）：rubric_scores 并入 decision 的 required——OpenAI
+# strict output 要求"声明即必填"，GAN 角色填 7 维分数、其余角色填 null。
+grep -q '"required":\["outcome","reason","rubric_scores"\]' <<<"$SECTION"
 # Codex structured output uses OpenAI strict JSON Schema. Every object must be
 # closed and must require each declared property; arrays must declare items.
 RESULT_SCHEMA_JSON="$EVALUATOR_SCHEMA"
