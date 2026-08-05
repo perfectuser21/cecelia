@@ -6,12 +6,13 @@
  * 已落地：全貌/规划/晨报/拍板/对话/投入；要素待建
  */
 
-import { Fragment, useEffect, useState, useCallback, useRef, type ComponentType } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo, type ComponentType } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, RefreshCw, MapPin, FileText,
   CheckSquare, MessageSquare, Layout, DollarSign,
   ChevronRight, Activity, CheckCircle2, Zap,
+  X, LayoutGrid, BookOpen, AlertCircle,
 } from 'lucide-react';
 import ConversationsPanel from '../warroom/ConversationsPanel';
 import {
@@ -94,77 +95,240 @@ const TABS = [
 
 type TabKey = typeof TABS[number]['key'];
 
-// ── GP 类型 ──────────────────────────────────────────────────────────────────
 
-interface GoldenPath {
+// ── 格子账本类型 ─────────────────────────────────────────────────────────────
+
+interface JourneyStep {
   id: string;
-  title?: string | null;
-  one_liner?: string | null;
-  status?: string | null;
-  approved_at?: string | null;
-  journey_id?: string | null;
-  created_at: string;
+  journey_id: string;
+  name: string;
+  step_number: number;
+  status: string;
+  promise?: string | null;
+  description?: string | null;
+  backbone_version?: string | null;
 }
 
-// GP 状态颜色映射
-const GP_STATUS_META: Record<string, { dot: string; text: string; label: string }> = {
-  candidate:    { dot: 'bg-slate-500',   text: 'text-slate-400',   label: '候选' },
-  proposed:     { dot: 'bg-blue-400',    text: 'text-blue-300',    label: '提案' },
-  converged:    { dot: 'bg-indigo-400',  text: 'text-indigo-300',  label: '收敛' },
-  approved:     { dot: 'bg-emerald-500', text: 'text-emerald-400', label: '批准' },
-  in_dev:       { dot: 'bg-amber-400 wr-pulse', text: 'text-amber-300', label: '开发中' },
-  delivered:    { dot: 'bg-emerald-600', text: 'text-emerald-300', label: '已交付' },
-  expired:      { dot: 'bg-slate-600',   text: 'text-slate-500',   label: '过期' },
-  rejected:     { dot: 'bg-red-600',     text: 'text-red-400',     label: '否决' },
-  blocked_gate: { dot: 'bg-red-500 wr-pulse', text: 'text-red-300', label: '门禁阻' },
-  superseded:   { dot: 'bg-slate-700',   text: 'text-slate-600',   label: '已超越' },
+type CellStatus = 'gray' | 'red' | 'pending' | 'green';
+type CellKind = 'capability' | 'element' | 'scenario' | 'base_ref';
+
+interface StepCell {
+  id: string;
+  step_id: string;
+  journey_id: string;
+  cell_kind: CellKind;
+  cell_key: string;
+  cell_status: CellStatus;
+  assertion_ref?: string | null;
+  na_reason?: string | null;
+  feature_id?: string | null;
+  assertion_revision?: string;
+}
+
+const CELL_STATUS_META: Record<CellStatus, { dot: string; text: string; bg: string; label: string }> = {
+  gray:    { dot: 'bg-slate-600',   text: 'text-slate-500',   bg: 'bg-slate-800/40',  label: '待填' },
+  red:     { dot: 'bg-red-500',     text: 'text-red-400',     bg: 'bg-red-900/30',    label: '缺失' },
+  pending: { dot: 'bg-amber-400',   text: 'text-amber-300',   bg: 'bg-amber-900/25',  label: '待验' },
+  green:   { dot: 'bg-emerald-500', text: 'text-emerald-400', bg: 'bg-emerald-900/20',label: '已覆盖' },
 };
 
-// GP 合同要素列
-const GP_CONTRACT_COLS = [
-  { key: 'fr_summary',                 label: 'FR',   tip: '功能定义' },
-  { key: 'lifelines_and_nfr',          label: 'NFR',  tip: '生命线/非功能' },
-  { key: 'yield_order',                label: '优先', tip: '优先序' },
-  { key: 'release_and_blast_radius',   label: '投产', tip: '投产/爆炸半径' },
-  { key: 'success_and_close',          label: '成功', tip: '成功关闭条件' },
-  { key: 'budget_guard',               label: '预算', tip: '预算守护' },
-] as const;
+const STANDARD_ELEMENT_KEYS = ['FR', 'NFR', '判定点', '不变量', '失败语义', '效果确认', '两轴衔接'];
 
-// ── 全貌 Tab（Line总览表：GP × 要素矩阵） ────────────────────────────────────
+const STEP_STATUS_META: Record<string, { dot: string }> = {
+  done:        { dot: 'bg-emerald-500' },
+  in_progress: { dot: 'bg-blue-400' },
+  planned:     { dot: 'bg-slate-600' },
+  blocked:     { dot: 'bg-red-500' },
+};
+
+function CellDot({ status, size = 'sm' }: { status: CellStatus; size?: 'xs' | 'sm' }) {
+  const meta = CELL_STATUS_META[status] ?? CELL_STATUS_META.gray;
+  const sz = size === 'xs' ? 'w-1.5 h-1.5' : 'w-2 h-2';
+  return <span className={`inline-block rounded-full flex-shrink-0 ${sz} ${meta.dot}`} />;
+}
+
+function CellRowDetail({ cell, onClose }: { cell: StepCell; onClose: () => void }) {
+  const meta = CELL_STATUS_META[cell.cell_status] ?? CELL_STATUS_META.gray;
+  const KIND_LABEL: Record<CellKind, string> = {
+    capability: '能力', element: '要素', scenario: '场景', base_ref: '基准引用',
+  };
+  return (
+    <div className={`mx-4 mb-2 rounded border p-3 text-[11px] font-mono ${meta.bg} border-slate-700/40`}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <CellDot status={cell.cell_status} />
+          <span className="text-slate-200 font-semibold">{cell.cell_key}</span>
+          <span className="text-slate-600 px-1 rounded bg-slate-800/60">{KIND_LABEL[cell.cell_kind]}</span>
+          <span className={meta.text}>{meta.label}</span>
+        </div>
+        <button onClick={onClose} className="text-slate-700 hover:text-slate-400 p-0.5">
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+      <div className="space-y-1 text-[10px]">
+        <div className="flex gap-2">
+          <span className="text-slate-600 w-20 flex-shrink-0">断言引用</span>
+          <span className={cell.assertion_ref ? 'text-slate-300' : 'text-slate-700'}>{cell.assertion_ref || '—'}</span>
+        </div>
+        <div className="flex gap-2">
+          <span className="text-slate-600 w-20 flex-shrink-0">豁免原因</span>
+          <span className={cell.na_reason ? 'text-amber-300' : 'text-slate-700'}>{cell.na_reason || '—'}</span>
+        </div>
+        <div className="flex gap-2">
+          <span className="text-slate-600 w-20 flex-shrink-0">断言版本</span>
+          <span className="text-slate-600">{cell.assertion_revision ? `r${cell.assertion_revision}` : '—'}</span>
+        </div>
+        <div className="flex gap-2">
+          <span className="text-slate-600 w-20 flex-shrink-0">格子 ID</span>
+          <span className="text-slate-700">{cell.id.slice(0, 16)}…</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StepLedgerPanel({ step, cells, onClose }: { step: JourneyStep; cells: StepCell[]; onClose: () => void }) {
+  const [expandedCell, setExpandedCell] = useState<string | null>(null);
+  const capabilityCells = cells.filter(c => c.cell_kind === 'capability');
+  const elementCells    = cells.filter(c => c.cell_kind === 'element');
+  const scenarioCells   = cells.filter(c => c.cell_kind === 'scenario');
+  const greenEl = elementCells.filter(c => c.cell_status === 'green').length;
+  const stepDot = (STEP_STATUS_META[step.status] ?? STEP_STATUS_META.planned).dot;
+
+  const CellZoneRow = ({ cell }: { cell: StepCell }) => {
+    const isExpanded = expandedCell === cell.id;
+    const meta = CELL_STATUS_META[cell.cell_status] ?? CELL_STATUS_META.gray;
+    return (
+      <>
+        <button
+          onClick={() => setExpandedCell(isExpanded ? null : cell.id)}
+          className={`w-full flex items-center gap-2.5 px-4 py-2 text-left hover:bg-slate-800/20 transition-colors ${isExpanded ? 'bg-slate-800/30' : ''}`}
+        >
+          <CellDot status={cell.cell_status} />
+          <span className={`flex-1 text-[11px] font-mono ${meta.text}`}>{cell.cell_key}</span>
+          <span className="text-[10px] text-slate-700">{meta.label}</span>
+          {cell.assertion_ref && (
+            <span className="text-[10px] text-indigo-400/80 truncate max-w-24" title={cell.assertion_ref}>
+              {cell.assertion_ref.split('/').pop()}
+            </span>
+          )}
+          <ChevronRight className={`w-2.5 h-2.5 text-slate-700 flex-shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+        </button>
+        {isExpanded && <CellRowDetail cell={cell} onClose={() => setExpandedCell(null)} />}
+      </>
+    );
+  };
+
+  return (
+    <div className="flex flex-col h-full min-h-0 overflow-hidden">
+      <div className="flex items-start gap-3 px-4 py-3 border-b border-slate-800/60 bg-slate-900/30 flex-shrink-0">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] font-mono text-slate-600">#{step.step_number}</span>
+            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${stepDot} ${step.status === 'in_progress' ? 'wr-pulse' : ''}`} />
+            <span className="text-[13px] text-slate-100 font-semibold leading-snug truncate">{step.name}</span>
+          </div>
+          {step.promise && (
+            <div className="text-[11px] text-slate-500 mt-0.5 leading-relaxed line-clamp-2">承诺：{step.promise}</div>
+          )}
+          {elementCells.length > 0 && (
+            <div className="flex items-center gap-1.5 mt-1">
+              <div className="w-16 h-[3px] rounded-full bg-slate-800 overflow-hidden">
+                <div className="h-full rounded-full bg-emerald-500/60" style={{ width: `${Math.round((greenEl / elementCells.length) * 100)}%` }} />
+              </div>
+              <span className="text-[10px] text-slate-600 font-mono">{greenEl}/{elementCells.length} 要素</span>
+            </div>
+          )}
+        </div>
+        <button onClick={onClose} className="text-slate-600 hover:text-slate-300 transition-colors flex-shrink-0 p-0.5">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {elementCells.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 px-4 py-1.5 bg-slate-900/30 border-b border-slate-800/30">
+              <BookOpen className="w-2.5 h-2.5 text-slate-600" />
+              <span className="text-[10px] tracking-[0.1em] uppercase text-slate-600 font-semibold">要素</span>
+              <span className="text-[10px] text-slate-700">{greenEl}/{elementCells.length}</span>
+            </div>
+            {elementCells.map(cell => <CellZoneRow key={cell.id} cell={cell} />)}
+          </div>
+        )}
+        {capabilityCells.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 px-4 py-1.5 bg-slate-900/30 border-b border-slate-800/30">
+              <Zap className="w-2.5 h-2.5 text-slate-600" />
+              <span className="text-[10px] tracking-[0.1em] uppercase text-slate-600 font-semibold">能力</span>
+              <span className="text-[10px] text-slate-700">{capabilityCells.filter(c => c.cell_status === 'green').length}/{capabilityCells.length}</span>
+            </div>
+            {capabilityCells.map(cell => <CellZoneRow key={cell.id} cell={cell} />)}
+          </div>
+        )}
+        {scenarioCells.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 px-4 py-1.5 bg-slate-900/30 border-b border-slate-800/30">
+              <Activity className="w-2.5 h-2.5 text-slate-600" />
+              <span className="text-[10px] tracking-[0.1em] uppercase text-slate-600 font-semibold">场景</span>
+              <span className="text-[10px] text-slate-700">{scenarioCells.filter(c => c.cell_status === 'green').length}/{scenarioCells.length}</span>
+            </div>
+            {scenarioCells.map(cell => <CellZoneRow key={cell.id} cell={cell} />)}
+          </div>
+        )}
+        {cells.length === 0 && (
+          <div className="p-8 flex flex-col items-center gap-3 text-center">
+            <AlertCircle className="w-6 h-6 text-slate-700" />
+            <div className="text-[12px] text-slate-600">本步骤暂无格子账本</div>
+            <div className="text-[10px] text-slate-700">账本模板铺入后自动出现</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── 全貌 Tab（Line总览表：Step × 要素矩阵 + 格子账本详情） ───────────────────
 
 function OverviewTab({ detail, lineId }: { detail: LineDetail | null; lineId: string }) {
-  const navigate = useNavigate();
-  const [gps, setGps] = useState<GoldenPath[]>([]);
-  const [gpLoading, setGpLoading] = useState(true);
-  const [selectedGp, setSelectedGp] = useState<GoldenPath | null>(null);
-  const [contracts, setContracts] = useState<any[]>([]);
-  const [contractLoading, setContractLoading] = useState(false);
+  // 格子账本数据
+  const [steps, setSteps] = useState<JourneyStep[]>([]);
+  const [cells, setCells] = useState<StepCell[]>([]);
+  const [ledgerLoading, setLedgerLoading] = useState(true);
+  const [selectedStep, setSelectedStep] = useState<JourneyStep | null>(null);
 
   useEffect(() => {
-    setGpLoading(true);
-    fetch(`/api/brain/golden-paths?journey_id=${encodeURIComponent(lineId)}`)
-      .then((r) => r.json())
-      .then((d) => {
-        const all: GoldenPath[] = d.golden_paths || [];
-        // 客户端过滤兜底（backend journey_id filter 需重启后生效）
-        setGps(all.filter((gp) => gp.journey_id === lineId));
+    setLedgerLoading(true);
+    Promise.all([
+      fetch(`/api/brain/journey_steps?journey_id=${encodeURIComponent(lineId)}&limit=50`).then(r => r.json()),
+      fetch(`/api/brain/journey_step_links?journey_id=${encodeURIComponent(lineId)}&cells=1&limit=500`).then(r => r.json()),
+    ])
+      .then(([stepsData, cellsData]) => {
+        const arr: JourneyStep[] = Array.isArray(stepsData) ? stepsData : [];
+        setSteps(arr.sort((a, b) => a.step_number - b.step_number));
+        setCells(Array.isArray(cellsData) ? cellsData : []);
       })
-      .catch(() => setGps([]))
-      .finally(() => setGpLoading(false));
+      .catch(() => {})
+      .finally(() => setLedgerLoading(false));
   }, [lineId]);
 
-  const selectGp = useCallback(async (gp: GoldenPath) => {
-    setSelectedGp(gp);
-    setContracts([]);
-    setContractLoading(true);
-    try {
-      const r = await fetch(`/api/brain/golden-paths/${encodeURIComponent(gp.id)}/contracts`);
-      const d = await r.json();
-      setContracts(d.contract_versions || []);
-    } catch { /* 静默 */ } finally {
-      setContractLoading(false);
+  const cellsByStep = useMemo(() => {
+    const map: Record<string, StepCell[]> = {};
+    for (const cell of cells) {
+      if (!map[cell.step_id]) map[cell.step_id] = [];
+      map[cell.step_id].push(cell);
     }
-  }, []);
+    return map;
+  }, [cells]);
+
+  const elementKeys = useMemo(() => {
+    const found = new Set<string>();
+    for (const cell of cells) {
+      if (cell.cell_kind === 'element') found.add(cell.cell_key);
+    }
+    return STANDARD_ELEMENT_KEYS.filter(k => found.has(k))
+      .concat([...found].filter(k => !STANDARD_ELEMENT_KEYS.includes(k)));
+  }, [cells]);
 
   if (!detail) return <div className="p-6 text-slate-600 text-sm">线数据加载中…</div>;
 
@@ -173,11 +337,14 @@ function OverviewTab({ detail, lineId }: { detail: LineDetail | null; lineId: st
   const active = safeTasks.filter((t) => t.status === 'active');
   const score = healthScore(line as LineSummary);
   const meta = healthMeta(score);
+  const selectedStepCells = selectedStep ? (cellsByStep[selectedStep.id] ?? []) : [];
+  const greenCells = cells.filter(c => c.cell_status === 'green').length;
 
   return (
     <div className="flex h-full min-h-0">
-      {/* ── 左侧：GP 矩阵表 ── */}
-      <div className={`flex flex-col min-h-0 overflow-hidden border-r border-slate-800/60 ${selectedGp ? 'w-[58%]' : 'w-full'}`}>
+      {/* ── 左侧：Step × 要素 矩阵（Level 1） ── */}
+      <div className={`flex flex-col min-h-0 overflow-hidden border-r border-slate-800/60 transition-all ${selectedStep ? 'w-[55%]' : 'w-full'}`}>
+
         {/* 线档案摘要条 */}
         <div className="flex items-center gap-4 px-5 py-2.5 border-b border-slate-800/40 bg-slate-900/30 flex-shrink-0 text-[11px]">
           <span className="text-slate-600">成熟度</span>
@@ -188,81 +355,112 @@ function OverviewTab({ detail, lineId }: { detail: LineDetail | null; lineId: st
           <span className="text-slate-700 mx-1">·</span>
           <span className="text-blue-300">{active.length}</span>
           <span className="text-slate-600">进行中</span>
+          {cells.length > 0 && (
+            <>
+              <span className="text-slate-700 mx-1">·</span>
+              <span className="text-emerald-400 font-mono">{greenCells}</span>
+              <span className="text-slate-600">/{cells.length} 格覆盖</span>
+            </>
+          )}
         </div>
 
-        {/* GP 矩阵表头 */}
-        <div className="flex-shrink-0 overflow-x-auto">
-          <table className="w-full min-w-[520px] text-[11px] font-mono">
+        {/* 矩阵表头 */}
+        <div className="flex-shrink-0 border-b border-slate-800/50 overflow-x-auto">
+          <table className="w-full min-w-[480px] text-[11px] font-mono">
             <thead>
-              <tr className="border-b border-slate-800/60">
-                <th className="text-left pl-5 pr-3 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase w-[40%]">Golden Path</th>
-                <th className="text-center px-2 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase w-14">状态</th>
-                {GP_CONTRACT_COLS.map((col) => (
-                  <th key={col.key} title={col.tip} className="text-center px-2 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase w-10">
-                    {col.label}
+              <tr>
+                <th className="text-left pl-5 pr-2 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase w-8">#</th>
+                <th className="text-left pr-3 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase">步骤</th>
+                <th className="text-center px-2 py-2 text-slate-600 font-semibold w-10" title="能力">能</th>
+                {elementKeys.map(key => (
+                  <th key={key} className="text-center px-1.5 py-2 text-slate-600 font-semibold w-10" title={key}>
+                    {key.length > 4 ? key.slice(0, 3) + '…' : key}
                   </th>
                 ))}
-                <th className="text-center px-3 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase w-10">版本</th>
+                <th className="text-center px-2 py-2 text-slate-600 font-semibold w-10" title="场景">景</th>
               </tr>
             </thead>
           </table>
         </div>
 
-        {/* GP 矩阵内容 */}
+        {/* 矩阵内容 */}
         <div className="flex-1 overflow-y-auto">
-          {gpLoading ? (
+          {ledgerLoading ? (
             <div className="flex items-center gap-2 p-6 text-slate-600 text-sm">
               <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-              加载 Golden Paths…
+              加载格子账本…
             </div>
-          ) : gps.length === 0 ? (
+          ) : steps.length === 0 ? (
             <div className="p-8 flex flex-col items-center gap-3 text-center">
-              <Zap className="w-8 h-8 text-slate-700" />
-              <div className="text-[13px] text-slate-600">本线暂无 Golden Path</div>
-              <div className="text-[11px] text-slate-700">由军师调度后自动出现</div>
+              <LayoutGrid className="w-8 h-8 text-slate-700" />
+              <div className="text-[13px] text-slate-600">本线暂无步骤账本</div>
+              <div className="text-[11px] text-slate-700">账本模板铺入后自动出现</div>
             </div>
           ) : (
-            <table className="w-full min-w-[520px] text-[11px] font-mono">
+            <table className="w-full min-w-[480px] text-[11px] font-mono">
               <tbody>
-                {gps.map((gp) => {
-                  const sm = GP_STATUS_META[gp.status ?? ''] ?? { dot: 'bg-slate-600', text: 'text-slate-500', label: gp.status ?? '?' };
-                  const isSelected = selectedGp?.id === gp.id;
+                {steps.map(step => {
+                  const stepCells = cellsByStep[step.id] ?? [];
+                  const capCells = stepCells.filter(c => c.cell_kind === 'capability');
+                  const scnCells = stepCells.filter(c => c.cell_kind === 'scenario');
+                  const isSelected = selectedStep?.id === step.id;
+                  const stepDot = (STEP_STATUS_META[step.status] ?? STEP_STATUS_META.planned).dot;
+                  const greenCap = capCells.filter(c => c.cell_status === 'green').length;
+                  const greenScn = scnCells.filter(c => c.cell_status === 'green').length;
+
                   return (
                     <tr
-                      key={gp.id}
-                      onClick={() => selectGp(gp)}
+                      key={step.id}
+                      onClick={() => setSelectedStep(isSelected ? null : step)}
                       className={`border-b border-slate-800/30 cursor-pointer transition-colors ${
                         isSelected ? 'bg-indigo-500/10 border-indigo-500/20' : 'hover:bg-slate-800/20'
                       }`}
                     >
-                      {/* GP 名称 */}
-                      <td className="pl-5 pr-3 py-2.5 w-[40%]">
-                        <div className="flex items-start gap-2">
-                          <Zap className="w-3 h-3 text-amber-500/70 flex-shrink-0 mt-0.5" />
-                          <div className="min-w-0">
-                            <div className="text-slate-200 text-[12px] truncate leading-snug">{gp.title || gp.id.slice(0, 8)}</div>
-                            {gp.one_liner && !isSelected && (
-                              <div className="text-slate-600 text-[10px] truncate mt-0.5">{gp.one_liner}</div>
-                            )}
-                          </div>
-                        </div>
+                      <td className="pl-5 pr-2 py-2.5 w-8">
+                        <span className="text-slate-700 text-[10px]">{step.step_number}</span>
                       </td>
-                      {/* 状态 */}
-                      <td className="text-center px-2 py-2.5 w-14">
-                        <div className="flex items-center justify-center gap-1">
-                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sm.dot}`} />
-                          <span className={`text-[10px] ${sm.text}`}>{sm.label}</span>
+                      <td className="pr-3 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${stepDot} ${step.status === 'in_progress' ? 'wr-pulse' : ''}`} />
+                          <span className={`text-[12px] ${isSelected ? 'text-indigo-200 font-semibold' : 'text-slate-200'} truncate`}>
+                            {step.name}
+                          </span>
                         </div>
+                        {step.promise && !isSelected && (
+                          <div className="text-[10px] text-slate-600 mt-0.5 truncate pl-3.5">{step.promise}</div>
+                        )}
                       </td>
-                      {/* 合同要素格（暂无合同时显示 —） */}
-                      {GP_CONTRACT_COLS.map((col) => (
-                        <td key={col.key} className="text-center px-2 py-2.5 w-10">
-                          <span className="text-slate-700">—</span>
-                        </td>
-                      ))}
-                      {/* 合同版本数 */}
-                      <td className="text-center px-3 py-2.5 w-10">
-                        <span className="text-slate-600">—</span>
+                      {/* 能力数 */}
+                      <td className="text-center px-2 py-2.5 w-10">
+                        {capCells.length > 0 ? (
+                          <span className={`text-[10px] font-mono ${greenCap === capCells.length ? 'text-emerald-400' : greenCap > 0 ? 'text-amber-400' : 'text-slate-600'}`}>
+                            {greenCap}/{capCells.length}
+                          </span>
+                        ) : <span className="text-slate-800">—</span>}
+                      </td>
+                      {/* 要素格 */}
+                      {elementKeys.map(key => {
+                        const cell = stepCells.find(c => c.cell_kind === 'element' && c.cell_key === key);
+                        if (!cell) return (
+                          <td key={key} className="text-center px-1.5 py-2.5 w-10">
+                            <span className="text-slate-800">—</span>
+                          </td>
+                        );
+                        return (
+                          <td key={key} className="text-center px-1.5 py-2.5 w-10">
+                            <div className="flex justify-center">
+                              <CellDot status={cell.cell_status} size="xs" />
+                            </div>
+                          </td>
+                        );
+                      })}
+                      {/* 场景数 */}
+                      <td className="text-center px-2 py-2.5 w-10">
+                        {scnCells.length > 0 ? (
+                          <span className={`text-[10px] font-mono ${greenScn === scnCells.length ? 'text-emerald-400' : greenScn > 0 ? 'text-amber-400' : 'text-slate-600'}`}>
+                            {greenScn}/{scnCells.length}
+                          </span>
+                        ) : <span className="text-slate-800">—</span>}
                       </td>
                     </tr>
                   );
@@ -272,220 +470,34 @@ function OverviewTab({ detail, lineId }: { detail: LineDetail | null; lineId: st
           )}
         </div>
 
-        {/* 底部跳转 */}
-        {selectedGp && (
-          <div className="flex-shrink-0 px-5 py-2 border-t border-slate-800/40 bg-slate-900/20">
-            <button
-              onClick={() => navigate(`/warroom/gp/${selectedGp.id}`)}
-              className="flex items-center gap-1.5 text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors"
-            >
-              <span>在 GP 详情页打开</span>
-              <ChevronRight className="w-3 h-3" />
-            </button>
+        {/* 图例 */}
+        {!ledgerLoading && steps.length > 0 && (
+          <div className="flex-shrink-0 flex items-center gap-4 px-5 py-2 border-t border-slate-800/40 bg-slate-900/20 text-[10px]">
+            <span className="text-slate-700">格子：</span>
+            {(['gray', 'red', 'pending', 'green'] as CellStatus[]).map(s => (
+              <div key={s} className="flex items-center gap-1">
+                <CellDot status={s} size="xs" />
+                <span className="text-slate-600">{CELL_STATUS_META[s].label}</span>
+              </div>
+            ))}
           </div>
         )}
       </div>
 
-      {/* ── 右侧：GP 详情面板 ── */}
-      {selectedGp && (
-        <div className="flex flex-col min-h-0 overflow-hidden" style={{ width: '42%' }}>
-          {/* GP 详情头 */}
-          <div className="flex items-start gap-3 px-4 py-3 border-b border-slate-800/60 bg-slate-900/30 flex-shrink-0">
-            <Zap className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <div className="text-[13px] text-slate-100 font-semibold leading-snug truncate">
-                {selectedGp.title || selectedGp.id.slice(0, 8)}
-              </div>
-              {selectedGp.one_liner && (
-                <div className="text-[11px] text-slate-500 mt-0.5 line-clamp-2 leading-relaxed">{selectedGp.one_liner}</div>
-              )}
-            </div>
-          </div>
-
-          {/* 版本对比表 */}
-          <div className="flex-1 overflow-y-auto">
-            <GpContractVersionTable
-              contracts={contracts}
-              loading={contractLoading}
-              gpId={selectedGp.id}
-            />
-          </div>
+      {/* ── 右侧：Step 格子账本详情（Level 2+3） ── */}
+      {selectedStep && (
+        <div className="flex flex-col min-h-0 overflow-hidden" style={{ width: '45%' }}>
+          <StepLedgerPanel
+            step={selectedStep}
+            cells={selectedStepCells}
+            onClose={() => setSelectedStep(null)}
+          />
         </div>
       )}
     </div>
   );
 }
 
-// ── GP 合同版本对比表 ─────────────────────────────────────────────────────────
-
-const CONTRACT_ROW_LABELS: Record<string, { label: string; short: string }> = {
-  fr_summary:                 { label: '功能定义 (FR)',   short: 'FR' },
-  lifelines_and_nfr:          { label: '生命线 / NFR',   short: 'NFR' },
-  yield_order:                { label: '优先序',          short: '优先' },
-  external_commitment_changes:{ label: '外部承诺变化',   short: '外承' },
-  release_and_blast_radius:   { label: '投产 / 爆炸半径', short: '投产' },
-  success_and_close:          { label: '成功关闭条件',   short: '成功' },
-  budget_guard:               { label: '预算守护',        short: '预算' },
-};
-
-const CONTRACT_KEYS = Object.keys(CONTRACT_ROW_LABELS);
-
-function summarizeSection(key: string, val: any): string {
-  if (!val || typeof val !== 'object') return '—';
-  if (key === 'fr_summary') return `${(val.statements || []).length} 条声明`;
-  if (key === 'lifelines_and_nfr') return `${(val.items || []).length} 项`;
-  if (key === 'yield_order') return (val.order || []).slice(0, 2).join('→') + (val.order?.length > 2 ? '…' : '');
-  if (key === 'external_commitment_changes') return val.none ? '无变化' : `${(val.changes || []).length} 项变化`;
-  if (key === 'release_and_blast_radius') return `${(val.stages || []).length} 阶段`;
-  if (key === 'success_and_close') return `${(val.metrics || []).length} 指标`;
-  if (key === 'budget_guard') return `$${val.total_cost_cap_usd ?? '?'}`;
-  return '有';
-}
-
-function hashSection(val: any): string {
-  return JSON.stringify(val ?? null);
-}
-
-interface ContractRowDetail {
-  key: string;
-  label: string;
-  versions: Array<{ versionNum: number; summary: string; raw: any; changed: boolean }>;
-}
-
-function GpContractVersionTable({
-  contracts,
-  loading,
-  gpId,
-}: {
-  contracts: any[];
-  loading: boolean;
-  gpId: string;
-}) {
-  const navigate = useNavigate();
-  const [expandedRow, setExpandedRow] = useState<string | null>(null);
-
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 p-6 text-slate-600 text-sm">
-        <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-        加载合同版本…
-      </div>
-    );
-  }
-
-  if (contracts.length === 0) {
-    return (
-      <div className="p-6 flex flex-col items-center gap-3 text-center">
-        <div className="w-10 h-10 rounded-full bg-slate-800/60 flex items-center justify-center">
-          <FileText className="w-5 h-5 text-slate-600" />
-        </div>
-        <div className="text-[13px] text-slate-500">暂无合同记录</div>
-        <div className="text-[11px] text-slate-700">GP 批准后自动生成合同版本</div>
-        <button
-          onClick={() => navigate(`/warroom/gp/${gpId}`)}
-          className="mt-2 text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors"
-        >
-          查看 GP 详情 <ChevronRight className="w-3 h-3" />
-        </button>
-      </div>
-    );
-  }
-
-  // 按版本号升序排列（旧→新）
-  const sorted = [...contracts].sort((a, b) => a.version - b.version);
-
-  // 构建版本对比行
-  const rows: ContractRowDetail[] = CONTRACT_KEYS.map((key) => {
-    const versions = sorted.map((cv, idx) => {
-      const val = cv.contract_json?.[key];
-      const prevVal = idx > 0 ? sorted[idx - 1].contract_json?.[key] : undefined;
-      const changed = idx > 0 && hashSection(val) !== hashSection(prevVal);
-      return {
-        versionNum: cv.version,
-        summary: summarizeSection(key, val),
-        raw: val,
-        changed,
-      };
-    });
-    return { key, label: CONTRACT_ROW_LABELS[key]?.label ?? key, versions };
-  });
-
-  return (
-    <div className="p-0">
-      {/* 标题栏 */}
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800/40 bg-slate-900/20">
-        <span className="text-[11px] tracking-[0.1em] uppercase text-slate-500 font-semibold">版本对比</span>
-        <span className="text-[11px] text-slate-700">{contracts.length} 个版本</span>
-      </div>
-
-      {/* 对比表 */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-[11px] font-mono">
-          <thead>
-            <tr className="border-b border-slate-800/40">
-              <th className="text-left pl-4 pr-2 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase w-24">要素</th>
-              {sorted.map((cv) => (
-                <th key={cv.version} className="text-center px-2 py-2 text-slate-600 font-semibold tracking-[0.08em] w-20">
-                  <div>v{cv.version}</div>
-                  <div className="text-[9px] text-slate-700 font-normal mt-0.5">{fmtDate(cv.created_at)}</div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const isExpanded = expandedRow === row.key;
-              return (
-                <Fragment key={row.key}>
-                  <tr
-                    onClick={() => setExpandedRow(isExpanded ? null : row.key)}
-                    className="border-b border-slate-800/20 cursor-pointer hover:bg-slate-800/20 transition-colors"
-                  >
-                    <td className="pl-4 pr-2 py-2 text-slate-400">{row.label}</td>
-                    {row.versions.map((v) => (
-                      <td
-                        key={v.versionNum}
-                        className={`text-center px-2 py-2 ${
-                          v.changed ? 'bg-purple-900/30 text-purple-300' : 'text-slate-500'
-                        }`}
-                        title={v.changed ? '相比上一版本有变化' : undefined}
-                      >
-                        <span className={v.changed ? 'font-semibold' : ''}>{v.summary}</span>
-                        {v.changed && <span className="ml-1 text-[9px] text-purple-400">↑</span>}
-                      </td>
-                    ))}
-                  </tr>
-                  {isExpanded && (
-                    <tr className="border-b border-slate-800/20">
-                      <td colSpan={sorted.length + 1} className="px-4 pb-3 pt-1">
-                        <div className="flex gap-3 overflow-x-auto">
-                          {row.versions.map((v) => (
-                            <div
-                              key={v.versionNum}
-                              className={`flex-shrink-0 w-52 rounded border p-2 ${
-                                v.changed ? 'border-purple-700/40 bg-purple-900/15' : 'border-slate-800/40 bg-slate-900/20'
-                              }`}
-                            >
-                              <div className="text-[10px] text-slate-600 mb-1">v{v.versionNum}</div>
-                              <pre className="text-[10px] text-slate-400 whitespace-pre-wrap break-words max-h-32 overflow-y-auto leading-relaxed">
-                                {JSON.stringify(v.raw, null, 2)}
-                              </pre>
-                            </div>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-// ── end GpContractVersionTable ────────────────────────────────────────────────
 
 // ── 规划 Tab ─────────────────────────────────────────────────────────────────
 
