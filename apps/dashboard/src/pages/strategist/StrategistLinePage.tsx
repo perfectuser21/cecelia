@@ -3,7 +3,7 @@
  *
  * 路由：/strategist/:lineId
  * 页签：全貌 | 规划 | 晨报 | 拍板 | 对话 | 要素 | 投入
- * 晨报/拍板/对话三页先通，其余待建
+ * 已落地：全貌/规划/晨报/拍板/对话/投入；要素待建
  */
 
 import { Fragment, useEffect, useState, useCallback, useRef, type ComponentType } from 'react';
@@ -729,6 +729,123 @@ function DecisionTab({ lineId }: { lineId: string }) {
   );
 }
 
+// ── 投入 Tab ─────────────────────────────────────────────────────────────────
+
+function MiniBar({ pct, color }: { pct: number; color: string }) {
+  return (
+    <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+      <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.max(2, pct)}%` }} />
+    </div>
+  );
+}
+
+function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="bg-slate-900/60 border border-slate-800/60 rounded p-4 flex flex-col gap-1">
+      <div className="text-[11px] text-slate-500 uppercase tracking-[0.1em]">{label}</div>
+      <div className="text-[22px] font-bold text-slate-200 font-mono leading-none">{value}</div>
+      {sub && <div className="text-[11px] text-slate-600 mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
+function InvestmentTab({ detail }: { detail: LineDetail | null }) {
+  const tasks = detail?.tasks ?? [];
+  const total = tasks.length;
+
+  const done = tasks.filter(t => t.status === 'done').length;
+  const failed = tasks.filter(t => t.status === 'failed').length;
+  const active = tasks.filter(t => t.status === 'active').length;
+  const paused = tasks.filter(t => ['paused', 'blocked'].includes(t.raw_status ?? '')).length;
+
+  const finished = done + failed;
+  const successRate = finished > 0 ? Math.round((done / finished) * 100) : 0;
+
+  const prCount = tasks.filter(t => t.pr_url || (t.pr_urls && t.pr_urls.length > 0)).length;
+
+  const totalMs = tasks
+    .filter(t => t.status === 'done' && (t.elapsed_ms ?? 0) > 0)
+    .reduce((acc, t) => acc + (t.elapsed_ms ?? 0), 0);
+  const hours = totalMs / 3_600_000;
+  const hoursStr = hours >= 1 ? `${hours.toFixed(1)}h` : hours > 0 ? `${Math.round(hours * 60)}m` : '—';
+
+  const sprints = tasks.filter(t => t.kind === 'sprint').length;
+  const taskKind = tasks.filter(t => t.kind === 'task').length;
+  const pipelines = tasks.filter(t => t.kind === 'pipeline').length;
+  const scrapers = tasks.filter(t => t.kind === 'scraper').length;
+
+  const ganTotal = tasks.reduce((s, t) => s + (t.gan_rounds ?? 0), 0);
+  const fixTotal = tasks.reduce((s, t) => s + (t.fix_rounds ?? 0), 0);
+
+  if (total === 0) {
+    return <div className="p-8 text-center text-slate-600 text-[13px]">暂无执行数据</div>;
+  }
+
+  const kindRows = [
+    { label: 'Sprint', count: sprints, color: 'bg-indigo-500' },
+    { label: 'Task', count: taskKind, color: 'bg-blue-400' },
+    ...(pipelines > 0 ? [{ label: 'Pipeline', count: pipelines, color: 'bg-cyan-500' }] : []),
+    ...(scrapers > 0 ? [{ label: 'Scraper', count: scrapers, color: 'bg-teal-400' }] : []),
+  ];
+
+  return (
+    <div className="p-5 flex flex-col gap-4">
+      <div className="grid grid-cols-4 gap-3">
+        <StatCard label="总 Runs" value={String(total)} sub={`跑中 ${active}`} />
+        <StatCard label="成功率" value={`${successRate}%`} sub={`${done} 成 / ${failed} 败`} />
+        <StatCard label="合并 PR" value={String(prCount)} sub={`覆盖 ${total > 0 ? Math.round(prCount / total * 100) : 0}%`} />
+        <StatCard label="累计工时" value={hoursStr} sub={`完成 ${done} 条`} />
+      </div>
+
+      <div className="bg-slate-900/60 border border-slate-800/60 rounded p-4">
+        <div className="text-[11px] text-slate-500 uppercase tracking-[0.1em] mb-3">角色分布</div>
+        <div className="flex flex-col gap-2.5">
+          {kindRows.map(({ label, count, color }) => (
+            <div key={label} className="flex items-center gap-3">
+              <span className="text-[12px] text-slate-400 w-16">{label}</span>
+              <div className="flex-1"><MiniBar pct={total > 0 ? (count / total) * 100 : 0} color={color} /></div>
+              <span className="text-[12px] font-mono text-slate-400 w-8 text-right">{count}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-slate-900/60 border border-slate-800/60 rounded p-4">
+        <div className="text-[11px] text-slate-500 uppercase tracking-[0.1em] mb-3">状态分布</div>
+        <div className="grid grid-cols-4 gap-2 text-center">
+          {[
+            { label: '已完成', count: done, color: 'text-emerald-400' },
+            { label: '进行中', count: active, color: 'text-blue-400' },
+            { label: '失败', count: failed, color: 'text-red-400' },
+            { label: '暂停/阻塞', count: paused, color: 'text-amber-400' },
+          ].map(({ label, count, color }) => (
+            <div key={label} className="flex flex-col gap-0.5">
+              <div className={`text-[18px] font-bold font-mono ${color}`}>{count}</div>
+              <div className="text-[10px] text-slate-600">{label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {(ganTotal > 0 || fixTotal > 0) && (
+        <div className="bg-slate-900/60 border border-slate-800/60 rounded p-4">
+          <div className="text-[11px] text-slate-500 uppercase tracking-[0.1em] mb-3">执行消耗（Sprint）</div>
+          <div className="flex gap-8">
+            <div>
+              <div className="text-[18px] font-bold font-mono text-violet-400">{ganTotal}</div>
+              <div className="text-[10px] text-slate-600">GAN 对抗轮</div>
+            </div>
+            <div>
+              <div className="text-[18px] font-bold font-mono text-orange-400">{fixTotal}</div>
+              <div className="text-[10px] text-slate-600">Fix 修复轮</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── 占位 Tab ─────────────────────────────────────────────────────────────────
 
 function PlaceholderTab({ label, icon: Icon }: { label: string; icon: ComponentType<{ className?: string }> }) {
@@ -854,7 +971,7 @@ export default function StrategistLinePage() {
             {activeTab === 'morning' && <MorningTab />}
             {activeTab === 'decision' && lineId && <DecisionTab lineId={lineId} />}
             {activeTab === 'elements' && <PlaceholderTab label="要素" icon={Activity} />}
-            {activeTab === 'investment' && <PlaceholderTab label="投入" icon={DollarSign} />}
+            {activeTab === 'investment' && <InvestmentTab detail={detail} />}
           </div>
         )}
         {activeTab === 'conversation' && lineId && (
