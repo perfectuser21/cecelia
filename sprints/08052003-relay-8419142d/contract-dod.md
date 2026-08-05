@@ -65,3 +65,4 @@ cd packages/brain && npx vitest run --reporter=verbose src/__tests__/f1-registra
 - FR-4/5/6 → packages/brain/src/__tests__/f1-registration-dispatch.test.js（failing tests）
 - FR-7 → packages/brain/.github/workflows/brain-ci.yml 或现有 CI 已收集路径
 
+
