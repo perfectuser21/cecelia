@@ -43,12 +43,13 @@ services:
       - /Users/administrator/.claude-account2:/Users/administrator/.claude-account2:ro
       - /Users/administrator/.claude-account3:/Users/administrator/.claude-account3:ro
       # Provider-neutral Kernel preflight 需要看到本机已验证的全部账号状态。
-      # 只读挂载：Brain 只探测；attempt launcher 再把选中的 home 挂入独立 worker。
-      - /Users/administrator/.codex-team1:/Users/administrator/.codex-team1:ro
-      - /Users/administrator/.codex-team2:/Users/administrator/.codex-team2:ro
-      - /Users/administrator/.codex-team3:/Users/administrator/.codex-team3:ro
-      - /Users/administrator/.codex-team4:/Users/administrator/.codex-team4:ro
-      - /Users/administrator/.codex-team5:/Users/administrator/.codex-team5:ro
+      # codex home 须可写（rw）：codex 0.146 起启动即写 cache/sessions/locks，:ro 直接
+      # Read-only file system 崩死 triggerCodexReview（2026-08-05 事故，决策 c62c423a）。
+      - /Users/administrator/.codex-team1:/Users/administrator/.codex-team1:rw
+      - /Users/administrator/.codex-team2:/Users/administrator/.codex-team2:rw
+      - /Users/administrator/.codex-team3:/Users/administrator/.codex-team3:rw
+      - /Users/administrator/.codex-team4:/Users/administrator/.codex-team4:rw
+      - /Users/administrator/.codex-team5:/Users/administrator/.codex-team5:rw
       - /Users/administrator/.grok:/Users/administrator/.grok:ro
       # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
       - /Users/administrator/perfect21/cecelia/packages/workflows:/Users/administrator/perfect21/cecelia/packages/workflows:ro
