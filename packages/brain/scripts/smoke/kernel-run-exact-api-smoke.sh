@@ -10,7 +10,7 @@ expected_schema="$(
     src/selfcheck.js \
     | head -1
 )"
-test "$expected_schema" = "386"
+test "$expected_schema" = "389"
 
 npx --no-install vitest run --config vitest.integration.config.js \
   src/__tests__/migration-376-kernel-run-trust.test.js \

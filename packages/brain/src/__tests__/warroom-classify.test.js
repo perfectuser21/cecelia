@@ -400,6 +400,20 @@ import {
 } from '../warroom-classify.js';
 
 describe('classifyJourneyArea', () => {
+  // ── biz_area 一等字段优先（Alex 08-05 拍板：分区不许靠名字正则猜）──
+  it('[BEHAVIOR] biz_area 字段优先于名字正则：智能客服 GP-B + zenithjoy → zenithjoy', () => {
+    expect(classifyJourneyArea('智能客服 · GP-B 被动接待', 'zenithjoy')).toBe('zenithjoy');
+  });
+  it('[BEHAVIOR] biz_area=infrastructure 直出（正则无此桶）', () => {
+    expect(classifyJourneyArea('西安机群CI/RPA基础设施', 'infrastructure')).toBe('infrastructure');
+  });
+  it('[BEHAVIOR] biz_area 非法值忽略，退回正则兜底', () => {
+    expect(classifyJourneyArea('智能发布', 'not-a-bucket')).toBe('zenithjoy');
+  });
+  it('[BEHAVIOR] 无 biz_area 时保持正则兜底行为（存量兼容）', () => {
+    expect(classifyJourneyArea('工厂 · F5 指挥舱')).toBe('cecelia');
+  });
+
   it('智能发布 → zenithjoy', () => {
     expect(classifyJourneyArea('智能发布')).toBe('zenithjoy');
   });

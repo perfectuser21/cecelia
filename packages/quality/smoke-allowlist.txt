@@ -57,6 +57,7 @@ evaluator-no-push-smoke.sh
 executor-liveness-t1-smoke.sh
 feature-registry-smoke.sh
 features-ledger-smoke.sh
+journeys-bizarea-smoke.sh
 ledger-unified-api-smoke.sh
 fix-markdispatched-smoke.sh
 fleet-credential-envelope-smoke.sh

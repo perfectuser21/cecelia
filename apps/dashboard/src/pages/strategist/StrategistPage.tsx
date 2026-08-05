@@ -9,7 +9,7 @@
 import { useEffect, useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Zap, Server, Layers, CircleDot, RefreshCw, ChevronRight, Clock,
+  Zap, Server, Layers, CircleDot, RefreshCw, ChevronRight, Clock, Cpu,
 } from 'lucide-react';
 import { shanghaiClock } from '../warroom/WarRoomPage';
 
@@ -94,8 +94,8 @@ function HealthRing({ score }: { score: number }) {
 
 // ── LineCard ─────────────────────────────────────────────────────────────────
 
-const AREA_ICON: Record<string, typeof Server> = { cecelia: Server, zenithjoy: Layers };
-const AREA_ACCENT: Record<string, string> = { cecelia: 'text-cyan-500', zenithjoy: 'text-amber-500' };
+const AREA_ICON: Record<string, typeof Server> = { cecelia: Server, zenithjoy: Layers, infrastructure: Cpu };
+const AREA_ACCENT: Record<string, string> = { cecelia: 'text-cyan-500', zenithjoy: 'text-amber-500', infrastructure: 'text-emerald-500' };
 
 function LineCard({ line, onClick }: { line: LineSummary; onClick: () => void }) {
   const score = healthScore(line);
