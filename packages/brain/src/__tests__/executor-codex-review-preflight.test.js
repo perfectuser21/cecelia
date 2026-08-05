@@ -79,8 +79,9 @@ describe('Dockerfile / docker-compose 配置闭环', () => {
     expect(dockerfileSrc).toMatch(/npm install -g @openai\/codex/);
   });
 
-  it('docker-compose.yml mount /Users/administrator/.codex-team1 read-only', () => {
-    expect(composeSrc).toContain('/Users/administrator/.codex-team1:/Users/administrator/.codex-team1:ro');
+  it('docker-compose.yml mount /Users/administrator/.codex-team1 可写（codex 0.146 起启动需写 cache/sessions，决策 c62c423a）', () => {
+    expect(composeSrc).toContain('/Users/administrator/.codex-team1:/Users/administrator/.codex-team1:rw');
+    expect(composeSrc).not.toContain('/Users/administrator/.codex-team1:/Users/administrator/.codex-team1:ro');
   });
 
   it('docker-compose.yml 设置 CODEX_BIN env 指向容器内路径', () => {
