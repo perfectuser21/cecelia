@@ -14,8 +14,12 @@ describe('production Kernel capability inputs', () => {
     expect(compose).toContain(
       '- CECELIA_MACHINE_ID=${CECELIA_MACHINE_ID:-us-mac-m4}',
     );
+    // codex 0.146 起 CODEX_HOME 必须可写（cache/sessions/locks），:ro 挂载启动即死（决策 c62c423a）
     for (const account of ['team1', 'team2', 'team3', 'team4', 'team5']) {
       expect(compose).toContain(
+        `- /Users/administrator/.codex-${account}:/Users/administrator/.codex-${account}:rw`,
+      );
+      expect(compose).not.toContain(
         `- /Users/administrator/.codex-${account}:/Users/administrator/.codex-${account}:ro`,
       );
     }
