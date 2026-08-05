@@ -8,194 +8,143 @@
 
 ---
 
-## 现状差距分析
+## Invariant 约束
 
-| 页签 | 现状 | 目标状态 |
-|------|------|----------|
-| 要素页 | `PlaceholderTab` 渲染「建设中，敬请期待」 | 11要素覆盖/缺口清单，接 F1 账本真数据 |
-| 拍板页 | `DecisionTab` 渲染卡片，但标题直接用 `t.title`（可能为裸uuid），无 A/B 选项按钮 | 卡片含问题描述 + 可点击选项按钮，标题无裸uuid |
-| 对话页 | `ConversationsPanel` 发消息后若 `loadingMsgs=true` 显示「加载中…」，响应后显示内容 | 发消息后不永久停留在「加载中…」；显示应答或明确空态/错误提示 |
-| 全貌页 | Step×要素矩阵（存在），但**顶部无**愿景/数字行区块（Features数/GP数/决策数/在干活数） | 顶部补 pano.nums 数字行，数字与 Brain API 对账 |
-| 线列表 | `/strategist` 渲染所有 journey，包含 `[smoke]%` 和 `gp-agg-smoke%` 行（已确认 16+ 条） | 过滤掉这些测试污染行，不渲染给用户 |
+以下约束在任何情况下不得破坏：
+
+1. **线列表不得污染 smoke 行**：`/strategist` 页面渲染的 line name 不得匹配 `/^\[smoke\]/i` 或 `/^gp-agg-smoke/i`
+2. **要素页不得显示占位内容**：有账本数据的线（F1）进入要素页签，不得出现「建设中」「敬请期待」字样
+3. **拍板卡标题不得裸 UUID**：待拍板卡片标题字段不得直接为 UUID 格式（`/^[0-9a-f-]{36}$/i`）
+4. **对话页不得永久加载**：发送消息后页面不得无限停留在「加载中…」，最长等待 30s 后必须有状态变化
+5. **数字行数据源唯一**：全貌页 GP数/决策数/在干活数必须从 Brain API 实时拉取，不得硬编码
+6. **不破坏已有页签**：全貌/规划/晨报/投入页签的已有功能不得因本次修改出现回归
+
+---
+
+## 累积 FR
+
+| # | 功能需求 | 对应 Fix |
+|---|----------|----------|
+| FR-1 | 要素页签从 `PlaceholderTab` 替换为 `ElementsTab`，以要素为纵轴、步骤为横轴展示覆盖矩阵，数据来源 `/api/brain/journey_step_links?cells=1` | Fix-1 |
+| FR-2 | 拍板卡标题做 UUID 检测，匹配则降级显示 `description` 或「待拍板事项」；待拍板卡片内增加「✓ 通过」「✗ 否决」两个选项按钮（仅 UI） | Fix-2 |
+| FR-3 | 对话页 `fetchMessages` 加 10s AbortController 超时，消息列表为空时显示「暂无消息，发送第一条吧」替代无限加载态 | Fix-3 |
+| FR-4 | `StrategistPage` 顶栏下方增加四格数字行（Features数/GP数/决策数/在干活数），并发拉取 Brain API，误差 ≤ 5% | Fix-4 |
+| FR-5 | `fetchLines` 回调对 `areas` 数据做 `.filter()` 过滤 smoke 行，匹配 `/^\[smoke\]/i` 或 `/^gp-agg-smoke/i` 的 line 不渲染 | Fix-5 |
+
+---
+
+## NFR
+
+NFR: N/A（本次全为 UI 修复，无特殊非功能约束）
+
+---
+
+## 现状差距
+
+| 页签 | 现状 | 目标 |
+|------|------|------|
+| 要素页 | `PlaceholderTab` 显示「建设中」 | 11要素覆盖/缺口清单，接 F1 真数据 |
+| 拍板页 | 标题可能为裸 UUID，无 A/B 按钮 | 标题去 UUID，卡片含选项按钮 |
+| 对话页 | fetch 失败可能永久「加载中…」 | 超时保护 + 空态兜底 |
+| 全貌页 | 顶部无愿景/数字行区块 | 补 pano.nums 四格数字行 |
+| 线列表 | 含 16+ 条 smoke 测试行 | 过滤掉，不渲染给用户 |
 
 ---
 
 ## 验收标准（Final E2E — mac_web Playwright）
 
 ### AC-1 要素页
-- 访问 `/strategist/e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29`（工厂 F1 — 有账本数据）切到「要素」页签
-- 断言页面**不含**文字「建设中」
-- 断言出现 11要素相关的关键词（如「FR」「NFR」「覆盖」「缺口」）或格子状态指示
+- 访问 `/strategist/e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29` 切到「要素」页签
+- 断言页面**不含**「建设中」；断言出现「FR」「NFR」等要素关键词
 - 快照：`screenshots/ac1-elements.png`
 
 ### AC-2 拍板页
-- 访问线空间 decision 页签，找到待拍板卡片
-- 断言：每张待拍板卡片标题**不匹配** `/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/`（无裸 UUID）
-- 断言：卡片内存在可点击的选项按钮（`button` 包含「同意」「否决」或「A」「B」等选项文字）
+- 访问线空间 decision 页签
+- 断言：待拍板卡片标题不匹配 `/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/`
+- 断言：卡片内存在「通过」或「否决」按钮
 - 快照：`screenshots/ac2-decision.png`
 
 ### AC-3 对话页
-- 访问线空间 conversation 页签，进入或创建一条对话，发送消息「你好」
-- 等待不超过 30s
-- 断言页面**不**仅显示「加载中…」（即应答出现，或出现错误提示、空态文字）
+- 进入对话，发送消息「你好」，等待 ≤ 30s
+- 断言页面不永久停留「加载中…」
 - 快照：`screenshots/ac3-conversation.png`
 
 ### AC-4 全貌页顶部数字行
-- 访问 `/strategist`（线列表）或任意线的全貌页
-- 断言：页面顶部包含 Features 数/GP 数/决策数/在干活数四个数字区块
-- 通过 Brain API 对账：`GET /api/brain/context` 返回值 vs 页面显示值误差 ≤ 5%
+- 访问 `/strategist`
+- 断言：页面含 GP 数/决策数/在干活数四个数字区块
+- Brain API 对账误差 ≤ 5%（基线：GP=25, 决策=100, 活跃任务=2）
 - 快照：`screenshots/ac4-pano-nums.png`
 
-### AC-5 线列表 smoke 行过滤
+### AC-5 线列表 smoke 过滤
 - 访问 `/strategist`
-- 断言：页面上不出现匹配 `/\[smoke\]/i` 的文字
-- 断言：页面上不出现匹配 `/gp-agg-smoke/i` 的文字
+- 断言：页面不出现 `/\[smoke\]/i` 或 `/gp-agg-smoke/i` 匹配文字
 - 快照：`screenshots/ac5-line-list.png`
 
 ---
 
 ## 实现方案
 
-### Fix-1：要素页接线（`StrategistLinePage.tsx`）
+### Fix-1：要素页接线（`StrategistLinePage.tsx` L1093）
+替换 `PlaceholderTab` 为 `ElementsTab`，以 `STANDARD_ELEMENT_KEYS` 为纵轴、步骤为横轴展示覆盖矩阵；数据复用 `journey_step_links` API（L408-421 已有 `cells` 数据获取逻辑）。
 
-**当前代码**（Line 1093）:
+### Fix-2：拍板卡带选项（`StrategistLinePage.tsx` `DecisionTab` L754）
+- 标题：优先 `t.description`，fallback `t.title`；UUID 正则命中则显示「待拍板事项」
+- 待处理卡片内追加「✓ 通过」「✗ 否决」两个 `<button>`（仅 UI，无后端调用）
+
+### Fix-3：对话超时兜底（`ConversationsPanel.tsx` L130）
+- `fetchMessages` 加 `AbortController` 10s 超时
+- 空消息列表显示「暂无消息，发送第一条吧」
+
+### Fix-4：全貌数字行（`StrategistPage.tsx`）
+顶栏下方并发拉取四接口渲染 `PanoNums` 横排卡片：
+```
+Features数 | GP数(/golden-paths) | 决策数(/decisions?status=active) | 在干活数(/tasks?status=in_progress)
+```
+
+### Fix-5：smoke 过滤（`StrategistPage.tsx` `fetchLines` L180）
 ```tsx
-{activeTab === 'elements' && <PlaceholderTab label="要素" icon={Activity} />}
-```
-
-**目标**：实现 `ElementsTab` 组件，复用 `OverviewTab` 中已有的 `StepLedgerPanel` + 格子账本数据获取逻辑，但改为以「要素维度」为主轴展示：
-- 纵轴：11要素键（FR/NFR/判定点/不变量/失败语义/效果确认/两轴衔接等）
-- 横轴：各步骤的覆盖状态
-- 汇总行：已覆盖数 / 总格子数 / 缺口高亮（red/gray 格子）
-- 数据 API：`/api/brain/journey_step_links?journey_id=<lineId>&cells=1&limit=500`（已有，直接复用）
-
-### Fix-2：拍板卡带选项（`StrategistLinePage.tsx` `DecisionTab`）
-
-**当前问题**：
-1. 标题来源 `t.title`，可能直接是 UUID
-2. 无 A/B 选项按钮渲染
-
-**目标**：
-- 标题显示 `t.description`（优先）或 `t.title`（fallback，且做 UUID 检测裁剪为「待拍板事项」）
-- UUID 检测正则：`/^[0-9a-f-]{36}$/i`
-- 对 `queued/in_progress` 状态任务，卡片内增加「✓ 通过」「✗ 否决」两个行动按钮（仅 UI，不做后端 POST，显示即达标）
-
-### Fix-3：对话页加载状态（`ConversationsPanel.tsx`）
-
-**当前问题**：`loadingMsgs` 为 true 时显示「加载中…」；若 fetch 失败或超时未 catch，可能永久停留
-
-**目标**：
-- `fetchMessages` 加超时保护（10s timeout via `AbortController`）
-- 无论成功失败，`finally` 确保 `setLoadingMsgs(false)`（现已有，但校验错误路径覆盖）
-- 消息列表为空时显示明确空态文字：「暂无消息，发送第一条吧」（替代无限加载中）
-
-### Fix-4：全貌页顶部数字行（`StrategistPage.tsx` 或新 `PanoNums` 组件）
-
-**目标**：在 `StrategistPage`（线列表入口）顶栏下方增加四格数字行：
-```
-Features数 | GP数 | 决策数 | 在干活数
-```
-数据源：
-- Features 数 → `GET /api/brain/warroom/lines` 聚合 `task_total`（或新增 feature count 接口）
-- GP 数 → `GET /api/brain/golden-paths?limit=1` → 取响应总数（目前已知 25）
-- 决策数 → `GET /api/brain/decisions?status=active&limit=1` → 取总数（100）
-- 在干活数 → `GET /api/brain/tasks?status=in_progress` → 取总数（2）
-
-实现：在 `StrategistPage` 主内容区顶部插入 `PanoNums` 组件，独立 `useEffect` 并发拉取四个数字，渲染为横排卡片条。
-
-### Fix-5：线列表 smoke 过滤（`StrategistPage.tsx`）
-
-**目标**：在渲染前过滤 `LineSummary.name` 匹配以下模式的条目：
-- `/^\[smoke\]/i`
-- `/^gp-agg-smoke/i`
-
-修改位置：`fetchLines` 回调中对 `areas` 数据做 `line.filter()` 处理：
-```tsx
-const filteredAreas = data.areas.map(area => ({
-  ...area,
-  lines: area.lines.filter(l =>
-    !/^\[smoke\]/i.test(l.name) && !/^gp-agg-smoke/i.test(l.name)
-  ),
-}));
-setAreas(filteredAreas.filter(a => a.lines.length > 0));
+lines: area.lines.filter(l =>
+  !/^\[smoke\]/i.test(l.name) && !/^gp-agg-smoke/i.test(l.name)
+)
 ```
 
 ---
 
-## E2E 测试文件
+## E2E 测试
 
-**路径**: `sprints/08051144-relay-184c6da1/strategist-form-verify.spec.ts`  
-**运行器**: `npx playwright test --config=playwright.config.ts sprints/08051144-relay-184c6da1/strategist-form-verify.spec.ts`
+**路径**: `sprints/08051144-relay-184c6da1/strategist-form-verify.spec.ts`
 
-测试套件结构：
 ```
 describe('军师台形态对版')
-  test('AC-1 要素页显示账本真数据无「建设中」字样')
-  test('AC-2 拍板卡无裸uuid且有选项按钮')
-  test('AC-3 对话发消息不永久停留加载中')
-  test('AC-4 全貌页顶部有愿景/数字行区块')
-  test('AC-5 线列表不含smoke行')
+  test AC-1 要素页无「建设中」有账本数据
+  test AC-2 拍板卡无裸uuid有选项按钮
+  test AC-3 对话发消息不永久停留加载中
+  test AC-4 全貌数字行四区块与API对账
+  test AC-5 线列表不含smoke行
 ```
 
----
-
-## 截图存档要求
-
-| 文件名 | 对应 AC |
-|--------|---------|
-| `screenshots/ac1-elements.png` | 要素页真数据 |
-| `screenshots/ac2-decision.png` | 拍板卡片带选项 |
-| `screenshots/ac3-conversation.png` | 对话应答状态 |
-| `screenshots/ac4-pano-nums.png` | 全貌数字行 |
-| `screenshots/ac5-line-list.png` | 线列表无smoke |
-
-所有截图须进 PR diff（`git add screenshots/`）。
+截图存档：`screenshots/ac{1-5}-*.png` 须进 PR diff。
 
 ---
 
 ## 不包含
 
 - 四级下钻（批次1/2）
-- C-suite 四角色审线（规划页换帽，另立 task）
-- 要素页写入功能（只做只读展示）
-- 拍板按钮后端接入（UI 渲染即达标）
-
----
-
-## 技术上下文
-
-### 关键文件
-- `apps/dashboard/src/pages/strategist/StrategistLinePage.tsx` — 七页签主文件（1106 行，Fix-1/2/3 均在此）
-- `apps/dashboard/src/pages/strategist/StrategistPage.tsx` — 线列表入口（Fix-4/5 在此）
-- `apps/dashboard/src/pages/warroom/ConversationsPanel.tsx` — 对话面板（Fix-3 协同）
-
-### Brain API 对账基线（2026-08-05 实测）
-- 活跃 GP 数：25
-- 活跃决策数：100
-- 进行中任务数：2
-- 线总数：cecelia 38 条 + zenithjoy 8 条 = 46 条（含 smoke，过滤后约 30 条）
-- F1（工厂·开发闭环）journey_id：`e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29`，有 20 个格子账本
-
-### 当前 `elements` 页签状态
-```tsx
-// StrategistLinePage.tsx Line 1093 — 待替换
-{activeTab === 'elements' && <PlaceholderTab label="要素" icon={Activity} />}
-```
-
-`STANDARD_ELEMENT_KEYS`（已在文件中定义）：
-```ts
-['FR', 'NFR', '判定点', '不变量', '失败语义', '效果确认', '两轴衔接']
-```
+- C-suite 角色审线（另立 task）
+- 要素页写入功能（只读）
+- 拍板按钮后端接入（UI 即达标）
 
 ---
 
 ## 完成标准 Checklist
 
-- [ ] Fix-1 落地：要素页用真数据替换 PlaceholderTab
-- [ ] Fix-2 落地：拍板卡标题去 uuid，增加 A/B 选项按钮
-- [ ] Fix-3 落地：对话页加载状态兜底，不永久停留
-- [ ] Fix-4 落地：全貌页/线列表顶部数字行（Features/GP/决策/在干活）
-- [ ] Fix-5 落地：线列表过滤 smoke 行
-- [ ] E2E 测试文件写完并全绿
-- [ ] 五处截图存入 PR
+- [ ] Fix-1：要素页接真数据，无「建设中」
+- [ ] Fix-2：拍板卡去 UUID + A/B 按钮
+- [ ] Fix-3：对话超时兜底 + 空态文字
+- [ ] Fix-4：全貌数字行四格
+- [ ] Fix-5：smoke 行过滤
+- [ ] E2E 五条全绿 + 截图存档
 - [ ] CI 绿（workspace-ci.yml）
+
+journey_type: feature
+target_environment: mac_web
