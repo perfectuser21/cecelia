@@ -20,6 +20,7 @@ import {
   type LineDetail, type LineSummary,
 } from '../warroom/WarRoomPage';
 import { healthScore, healthMeta } from './StrategistPage';
+import GPVersionTable from './GPVersionTable';
 
 // ── 晨报类型 ─────────────────────────────────────────────────────────────────
 
@@ -141,29 +142,6 @@ const STEP_STATUS_META: Record<string, { dot: string }> = {
   blocked:     { dot: 'bg-red-500' },
 };
 
-// ── GP 版本类型 ───────────────────────────────────────────────────────────────
-
-interface GoldenPath {
-  id: string;
-  title: string;
-  one_liner?: string | null;
-  status: string;
-  approved_at?: string | null;
-  created_at: string;
-}
-
-const GP_STATUS_META: Record<string, { dot: string; text: string; label: string }> = {
-  candidate:    { dot: 'bg-slate-600',   text: 'text-slate-400',   label: '候选' },
-  proposed:     { dot: 'bg-amber-400',   text: 'text-amber-300',   label: '报备中' },
-  converged:    { dot: 'bg-blue-400',    text: 'text-blue-300',    label: '批审中' },
-  approved:     { dot: 'bg-emerald-500', text: 'text-emerald-400', label: '已批' },
-  in_dev:       { dot: 'bg-indigo-400',  text: 'text-indigo-300',  label: '开发中' },
-  delivered:    { dot: 'bg-purple-400',  text: 'text-purple-300',  label: '已交付' },
-  expired:      { dot: 'bg-slate-600',   text: 'text-slate-500',   label: '过期' },
-  rejected:     { dot: 'bg-red-500',     text: 'text-red-400',     label: '已否' },
-  blocked_gate: { dot: 'bg-orange-400',  text: 'text-orange-300',  label: '闸阻' },
-  superseded:   { dot: 'bg-slate-700',   text: 'text-slate-600',   label: '已替代' },
-};
 
 function CellDot({ status, size = 'sm' }: { status: CellStatus; size?: 'xs' | 'sm' }) {
   const meta = CELL_STATUS_META[status] ?? CELL_STATUS_META.gray;
@@ -214,23 +192,13 @@ function CellRowDetail({ cell, onClose }: { cell: StepCell; onClose: () => void 
 function StepLedgerPanel({ step, cells, onClose }: { step: JourneyStep; cells: StepCell[]; onClose: () => void }) {
   const [expandedCell, setExpandedCell] = useState<string | null>(null);
   const [panelView, setPanelView] = useState<'ledger' | 'versions'>('ledger');
-  const [gps, setGps] = useState<GoldenPath[]>([]);
-  const [gpsLoading, setGpsLoading] = useState(false);
   const capabilityCells = cells.filter(c => c.cell_kind === 'capability');
   const elementCells    = cells.filter(c => c.cell_kind === 'element');
   const scenarioCells   = cells.filter(c => c.cell_kind === 'scenario');
   const greenEl = elementCells.filter(c => c.cell_status === 'green').length;
   const stepDot = (STEP_STATUS_META[step.status] ?? STEP_STATUS_META.planned).dot;
-
-  useEffect(() => {
-    if (panelView !== 'versions' || gps.length > 0) return;
-    setGpsLoading(true);
-    fetch(`/api/brain/golden-paths?journey_id=${encodeURIComponent(step.journey_id)}&limit=30`)
-      .then(r => r.json())
-      .then(d => setGps(Array.isArray(d.golden_paths) ? d.golden_paths : []))
-      .catch(() => {})
-      .finally(() => setGpsLoading(false));
-  }, [panelView, step.journey_id, gps.length]);
+  // 无账本时不发版本对比请求（NFR-03）
+  const hasLedger = cells.length > 0;
 
   const CellZoneRow = ({ cell }: { cell: StepCell }) => {
     const isExpanded = expandedCell === cell.id;
@@ -257,7 +225,7 @@ function StepLedgerPanel({ step, cells, onClose }: { step: JourneyStep; cells: S
   };
 
   return (
-    <div className="flex flex-col h-full min-h-0 overflow-hidden">
+    <div data-testid="step-ledger-panel" className="flex flex-col h-full min-h-0 overflow-hidden">
       <div className="flex items-start gap-3 px-4 py-3 border-b border-slate-800/60 bg-slate-900/30 flex-shrink-0">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -298,55 +266,15 @@ function StepLedgerPanel({ step, cells, onClose }: { step: JourneyStep; cells: S
         ))}
       </div>
 
-      {/* 版本历史面板（Level 3）*/}
+      {/* 版本历史面板（Level 3）— GPVersionTable 接管 */}
       {panelView === 'versions' && (
         <div className="flex-1 overflow-y-auto">
-          {gpsLoading ? (
-            <div className="flex items-center gap-2 p-6 text-slate-600 text-sm">
-              <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-              加载版本记录…
-            </div>
-          ) : gps.length === 0 ? (
-            <div className="p-8 flex flex-col items-center gap-3 text-center">
-              <Clock className="w-6 h-6 text-slate-700" />
-              <div className="text-[12px] text-slate-600">本线暂无 GP 版本记录</div>
-              <div className="text-[10px] text-slate-700">GP 批准后自动成为版本节点（照相层）</div>
-            </div>
-          ) : (
-            <div>
-              {gps.map((gp, idx) => {
-                const sm = GP_STATUS_META[gp.status] ?? { dot: 'bg-slate-700', text: 'text-slate-500', label: gp.status };
-                return (
-                  <div key={gp.id} className="border-b border-slate-800/30">
-                    <div className="flex items-start gap-2.5 px-4 py-2.5">
-                      <span className="text-[10px] font-mono text-slate-700 flex-shrink-0 mt-0.5">v{gps.length - idx}</span>
-                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1 ${sm.dot}`} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[12px] text-slate-200 truncate font-mono">{gp.title}</span>
-                          <span className={`text-[10px] px-1 py-px rounded border border-slate-700/60 ${sm.text} flex-shrink-0`}>
-                            {sm.label}
-                          </span>
-                        </div>
-                        {gp.one_liner && (
-                          <div className="text-[10px] text-slate-600 mt-0.5 line-clamp-1">{gp.one_liner}</div>
-                        )}
-                        <div className="text-[10px] text-slate-700 mt-0.5 font-mono">
-                          {gp.approved_at ? `批准 ${fmtDate(gp.approved_at)}` : `创建 ${fmtDate(gp.created_at)}`}
-                        </div>
-                      </div>
-                    </div>
-                    {/* 格子级快照 diff（暂无数据，待照相层上线） */}
-                    {gp.status === 'approved' || gp.status === 'delivered' ? (
-                      <div className="mx-4 mb-2 px-2 py-1 rounded bg-violet-900/10 border border-violet-500/15 text-[10px] text-violet-500/60 font-mono">
-                        ∅ 格子快照待照相层接入
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          <GPVersionTable
+            stepId={step.id}
+            journeyId={step.journey_id}
+            stepLinks={cells}
+            hasLedger={hasLedger}
+          />
         </div>
       )}
 
@@ -519,6 +447,7 @@ function OverviewTab({ detail, lineId }: { detail: LineDetail | null; lineId: st
                   return (
                     <tr
                       key={step.id}
+                      data-testid="step-row"
                       onClick={() => setSelectedStep(isSelected ? null : step)}
                       className={`border-b border-slate-800/30 cursor-pointer transition-colors ${
                         isSelected ? 'bg-indigo-500/10 border-indigo-500/20' : 'hover:bg-slate-800/20'
