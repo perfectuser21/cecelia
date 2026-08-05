@@ -164,6 +164,19 @@ cd /workspace && npx playwright test sprints/08051144-relay-184c6da1/tests/strat
 
 ---
 
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 说明 |
+|---|---|---|---|
+| AC-1 要素页 | `tests/strategist-form-verify.spec.ts` | 要素页签不显示占位内容，展示要素关键词 / journey_step_links API 对账本线有数据 | Fix-1 ElementsTab 替换 |
+| AC-2 拍板卡 | `tests/strategist-form-verify.spec.ts` | 拍板页签卡片标题不为裸 UUID / 待拍板卡片内含「通过」或「否决」按钮 | Fix-2 UUID 降级 |
+| AC-3 对话 | `tests/strategist-form-verify.spec.ts` | 对话面板空态显示友好文字，不永久停留加载中 / ConversationsPanel 源码有 AbortController 超时保护 | Fix-3 超时保护 |
+| AC-4 全貌 | `tests/strategist-form-verify.spec.ts` | 全貌页显示数字行四格区块 / 数字行 GP 数与 Brain API 误差 ≤ 5% / 数字行决策数与 Brain API 误差 ≤ 5% | Fix-4 数字行 |
+| AC-5 smoke | `tests/strategist-form-verify.spec.ts` | 全貌页线列表不出现 smoke 行名称 / StrategistPage 源码 fetchLines 含 smoke 过滤逻辑 | Fix-5 smoke 过滤 |
+| AC-6 回归 | `tests/strategist-form-verify.spec.ts` | 全貌页签正常渲染（不含 JS 错误标记） / /strategist 路由可正常访问 | Fix 回归保护 |
+
+---
+
 ## 回归保护
 
 本次修改不得破坏以下已有功能（Invariant 约束）：
