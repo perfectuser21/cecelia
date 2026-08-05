@@ -112,3 +112,50 @@
 - 修 bug 的 failing test 必须 commit 进 repo 永久保留
 - 紫底 class 命名：`bg-violet-500/15` 或带 `changed` 标记（两者选一，不得混用）
 - 对比表显示空态时（无 approved GP）不抛异常，console 无 error
+
+---
+
+## E2E 验收
+
+**执行环境**：mac_web（Playwright 本机，localhost:5174，内网）
+**测试文件**：`sprints/08051141-relay-7835c87b/tests/e2e-gp-drill.spec.ts`
+**截图目录**：`sprints/08051141-relay-7835c87b/screenshots/`
+
+### Scenario 1（L1→L2）：步骤行可点，右侧面板出现
+
+- 打开 `/strategist/<lineId>`，等待步骤行渲染，点击第一行
+- 断言 `[data-testid="step-ledger-panel"]` 可见（DOM 有变化，不是死行）
+- 截图保存：`screenshots/L1.png`（全貌矩阵）
+
+### Scenario 2（L2 版本对比表）：GP 版本对比表结构断言
+
+- 在 StepLedgerPanel 点击"版本"子页签
+- 断言 `[data-testid="gp-version-table"]` 存在
+- 断言表头包含至少一个版本列标签（如"v1"或"当前"）且含 FR/NFR/判定点 行标签
+- 截图保存：`screenshots/L2-version-table.png`
+
+### Scenario 3（紫 diff）：对有两个版本的 GP，断言 changed 样式格存在
+
+- fixture 预置或动态选择有 ≥2 个 approved GP 的 journey（同一 (step_id, cell_key) 在两版本间有差异）
+- 断言至少一个 `[data-testid="gp-version-cell-changed"]` 存在
+- 断言该元素带紫底 class（classList 含 `bg-violet` 前缀或 `changed`）
+
+### Scenario 4（L3 行详情）：点击版本对比格子展开详情面板
+
+- 点击版本对比表中任一格子
+- 断言 `[data-testid="cell-detail-panel"]` 变为 visible
+- 断言面板内有至少一条条目带日期字段（文本含 "-" 日期格式，匹配 `/\d{2}-\d{2}/`）
+- 再次点击同一格子
+- 断言 `[data-testid="cell-detail-panel"]` 变为 hidden 或 detached
+- 截图保存：`screenshots/L3-detail.png`
+
+### Scenario 5（跨线一致）：无账本 journey 显示空态提示
+
+- 打开一个无格子账本的 lineId（或使用清空账本数据的 fixture）
+- 断言全貌 Tab 仍存在矩阵区域（无账本显示 LayoutGrid 空态，不是另一种布局）
+- 断言"账本模板铺入后自动出现"文本可见
+
+**可执行命令**：
+```
+manual:bash npx playwright test sprints/08051141-relay-7835c87b/tests/e2e-gp-drill.spec.ts --headed
+```

@@ -71,6 +71,69 @@
 
 ---
 
+## 行为断言（[BEHAVIOR]）
+
+[BEHAVIOR] FR-1: L1 步骤行可点击
+  - given: 全貌页已加载，steps.length > 0，矩阵渲染完成
+  - when: 用户在 OverviewTab 矩阵中点击任一步骤 `<tr>` 行（data-testid="step-row-clickable"）
+  - then: data-testid="step-ledger-panel" 从 detached/hidden 变为 visible
+
+[BEHAVIOR] FR-2: L1→L2 StepLedgerPanel 弹出
+  - given: 步骤行已可见，用户点击了某步骤行
+  - when: 点击事件触发 setSelectedStep
+  - then: 右侧 StepLedgerPanel 出现，data-testid="step-ledger-panel" isVisible() 为 true
+
+[BEHAVIOR] FR-3: GP 版本对比表结构正确渲染
+  - given: StepLedgerPanel 已弹出，journey 有 ≥1 条 approved GP 记录
+  - when: 用户点击"版本"子页签
+  - then: data-testid="gp-version-table" 存在于 DOM，表头含版本列标签（匹配 /v\d+/ 或"当前"），行标签含 FR / NFR / 判定点等要素键
+
+[BEHAVIOR] FR-4: 紫 diff 格子在有变化时显示
+  - given: 版本对比表已渲染，fixture 已注入 ≥2 条 approved GP 且同一 (step_id, cell_key) 的 cell_status 或 assertion_ref 在两版本间有差异
+  - when: 版本对比表完成渲染
+  - then: 至少 1 个 data-testid="gp-version-cell-changed" 存在，且该元素 classList 含 bg-violet 前缀 class 或 changed class
+
+[BEHAVIOR] FR-5: L3 行详情面板点击格子展开
+  - given: 版本对比表已渲染，至少有一个可点击的格子
+  - when: 用户点击版本对比表中任一格子
+  - then: data-testid="cell-detail-panel" 变为 visible，面板内至少一条条目含日期字符串（匹配 /\d{2}-\d{2}/ 格式）
+
+[BEHAVIOR] FR-6: L4 再次点击格子收起详情面板
+  - given: data-testid="cell-detail-panel" 当前为 visible（已展开）
+  - when: 用户再次点击同一格子
+  - then: data-testid="cell-detail-panel" 变为 hidden 或 detached
+
+[BEHAVIOR] FR-7: 无批准 GP 时显示空态降级
+  - given: 当前 journey 仅有 candidate GP，无 approved/delivered 记录
+  - when: 用户切换到"版本"子页签
+  - then: data-testid="gp-version-empty" 存在，文本含"本线暂无批准版本记录"，gp-version-table 不渲染，console 无 error
+
+[BEHAVIOR] FR-8: 跨线全貌页布局一致性
+  - given: 打开一个无格子账本的 lineId（步骤数据存在但无 journey_step_links 记录）
+  - when: 全貌 Tab 渲染完成
+  - then: 矩阵区域仍存在（不切换为另一种 DOM 结构），文本"账本模板铺入后自动出现"可见，LayoutGrid 图标区域存在
+
+---
+
+## 可执行验收命令（manual:bash）
+
+主验收命令（运行全部 E2E 场景）：
+```
+manual:bash npx playwright test sprints/08051141-relay-7835c87b/tests/e2e-gp-drill.spec.ts --headed
+```
+
+单场景调试（有头模式，仅跑紫 diff 场景）：
+```
+manual:bash npx playwright test sprints/08051141-relay-7835c87b/tests/e2e-gp-drill.spec.ts --headed --grep "紫 diff"
+```
+
+查看截图存档：
+```
+manual:bash ls -la sprints/08051141-relay-7835c87b/screenshots/
+```
+
+---
+
 ## 测试文件路径
 
 - E2E 测试：`sprints/08051141-relay-7835c87b/tests/e2e-gp-drill.spec.ts`
