@@ -12,6 +12,13 @@
 
 ---
 
+## Brain 1.267.224 — preview Brain 与生产 harness 完全隔离（preview-4643 事故）
+
+- 事故（2026-08-05 实测）：preview 环境用 `pg_dump cecelia | pg_restore` 整库克隆生产库，快照携带 in_progress 的 harness_initiative 任务；preview Brain 作为生产 Brain 子进程启动、继承生产 env（同一 `KERNEL_FLEET_BRIDGE_TOKEN`、callback 指回生产 5221），其 `startup-sync scanOrphanedRelayTasks` 把克隆任务当孤儿重点火，spawn 出的 Kernel orchestrator 与生产 Brain 争抢同一 fleet-worker/工作区分支/run——preview 库里留下成串 `worker_attempt_missing_after_lease`/`worker_attempt_replacement_required_after_lease` 战损，生产侧 r35 验证 run 的 Generator 容器环境变量被搅丢（`MISSING_HARNESS_RUNTIME_CONTEXT`）。
+- 双层防御：① `scripts/preview-env-start.sh` Step 4.5——克隆完成后立即对预览库执行 `UPDATE tasks SET status='failed' ... WHERE task_type='harness_initiative' AND status IN ('queued','in_progress')`（掐燃料）；② `harness-skill-relay.js spawnSkillRelaySession` 入口 preview 拒绝闸——`BRAIN_PREVIEW=1/true` 时对所有 harness 派发路径（kernel/headed/headless/xian）返回 `preview_brain_harness_spawn_forbidden`（掐点火器，preview 启动 env 本就带 `BRAIN_PREVIEW=1`）。
+- 回归测试：`preview-env-start.test.sh` 断言灭活 UPDATE 必须打在预览库（`-d $DB_NAME`）而非生产库；`harness-skill-relay.test.js` 断言 BRAIN_PREVIEW 置位时不建 run、不点火。
+- 回退会恢复：每次 preview 部署都克隆出一批"影子大脑"火种，随时可能再次抢占生产 run。
+
 ## Brain 1.267.217 — 构建来源 label 守卫 TDD 测试补全
 
 - `docker/build.sh` 新增构建时写入 `cecelia.entrypoint.sha256`（entrypoint.sh sha256）和 `cecelia.build.head`（git HEAD）两个 label，供 `verify_runner_label` 校验。
