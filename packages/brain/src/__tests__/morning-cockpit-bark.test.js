@@ -112,4 +112,45 @@ describe('runMorningCockpitBark', () => {
     // 验证 mock 路径：如果有硬编码 token，这里的 mock 会失效
     expect(vi.isMockFunction(sendBark)).toBe(true);
   });
+
+  // ─── F6修复 守卫：晨报必须含归并榜单（triage_items > 0 时）────────────────────
+  // DoD: 晨报含归并榜单（triage-officer-rank 输出必须接线到 morning-cockpit）
+  // 任务 96a00f17，决策 efa578b8 + 4c595c84。
+
+  it('[F6守卫] 排序官榜单有数据时晨报 triage_items > 0（归并榜单已接线）', async () => {
+    const fakeLeaderboard = {
+      generated_at: new Date().toISOString(),
+      budget: { top_n: 3 },
+      leaderboard: [
+        { rank: 1, id: 't1', title: 'Task A', priority: 'P1', task_type: 'dev' },
+        { rank: 2, id: 't2', title: 'Task B', priority: 'P2', task_type: 'dev' },
+      ],
+      veto_deadline: new Date(Date.now() + 90 * 60 * 1000).toISOString(),
+      anomaly_lines: [],
+    };
+    // pool.query 顺序：alreadySentToday → buildBriefData(×2) → fetchTriageLeaderboard → writeSentinel
+    const pool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })                              // alreadySentToday: no sentinel
+        .mockResolvedValueOnce({ rows: [{ completed: '8', total: '10' }] }) // harness_pipelines
+        .mockResolvedValueOnce({ rows: [{ cnt: '3' }] })                  // tasks in_progress
+        .mockResolvedValueOnce({ rows: [{ value_json: fakeLeaderboard }] }) // working_memory leaderboard
+        .mockResolvedValue({ rows: [] }),                                   // writeSentinel
+    };
+    const result = await runMorningCockpitBark(pool);
+    expect(result.sent).toBe(true);
+    expect(result.triage_items).toBe(2);
+    // 推送内容包含榜单（排序官 Top N）
+    const body = sendBark.mock.calls[0][1];
+    expect(body).toMatch(/排序官 Top/);
+  });
+
+  it('[F6守卫] 无榜单数据时晨报 triage_items=0（降级安全，不影响推送）', async () => {
+    const pool = makePool(); // 所有 query 返回空 rows
+    const result = await runMorningCockpitBark(pool);
+    expect(result.sent).toBe(true);
+    expect(result.triage_items).toBe(0);
+    const body = sendBark.mock.calls[0][1];
+    expect(body).not.toMatch(/排序官 Top/);
+  });
 });

@@ -6,11 +6,15 @@
 
 
 
-**Brain 版本**: 1.267.228
+**Brain 版本**: 1.267.229
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.229 — Notion 个人 Inbox 增量采集（F6加厚）
+
+新增 `notion-capture-ingest` scheduler job：每5分钟增量拉取 Notion Inbox 数据库，`dedupe_key='notion:inbox:<page_id>'` 幂等写入 captures + capture_atoms，`notion_page_id` 落 captures 表（migration 388）。凭据来源 CCAPI2026（AI Hub workspace），`NOTION_INBOX_TOKEN` + `NOTION_INBOX_DB_ID` 未配置时静默跳过。
 
 ## Brain 1.267.228 — 案卷字段 null 兼容（r38 实证回归修复）
 
