@@ -207,6 +207,17 @@ else
   fi
 fi
 
+# ── 4.5 灭活克隆快照里的生产 harness 任务 ────────────────────────────────────
+# 预览库是生产库整库快照，携带 in_progress/queued 的 harness_initiative 任务。
+# 预览 Brain 启动时 startup-sync 会把它们当孤儿"恢复"，spawn 出自己的 Kernel
+# orchestrator——与生产 Brain 共用同一 fleet-worker bridge token/工作区分支/回调
+# 地址，两个大脑争抢同一 run（2026-08-05 preview-4643 实测毒死生产验证 run）。
+# 双层防御第一层：克隆完成后立即把这些任务置为终态（第二层是 Brain 侧
+# BRAIN_PREVIEW spawn 拒绝闸，见 harness-skill-relay.js）。
+log "Step 4.5: 灭活克隆快照中的活跃 harness 任务..."
+NEUTRALIZED=$(PGPASSWORD="${DB_PASSWORD:-cecelia}" psql   -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" -d "$DB_NAME" -tAc   "UPDATE tasks SET status='failed', result=COALESCE(result,'{}'::jsonb) || jsonb_build_object('reason','preview_clone_neutralized') WHERE task_type='harness_initiative' AND status IN ('queued','in_progress') RETURNING id"   2>>"$LOG_FILE" | grep -c . || true)
+log "  ✓ 已灭活 ${NEUTRALIZED:-0} 条克隆 harness 任务"
+
 # ── 5. 启动预览 Brain ─────────────────────────────────────────────────────────
 # 上一轮遗留进程已在 Step 0（数据库克隆之前）停止，这里不再重复处理。
 log "Step 5: 启动预览 Brain on port=${PORT}..."
