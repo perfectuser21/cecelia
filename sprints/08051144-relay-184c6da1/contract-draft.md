@@ -74,6 +74,10 @@ cd /workspace && npx playwright test sprints/08051144-relay-184c6da1/tests/strat
 2. 页面含至少一个文字含「通过」或「否决」的按钮（无待拍板事项时跳过）
 3. 快照存档 `screenshots/ac2-decision.png`
 
+**Fix-2 实现要求（data-testid）**:
+- 待拍板卡片标题元素必须加 `data-testid="decision-card-title"` 属性，供 E2E 精确定位
+- 测试选择器为 `page.locator('[data-testid="decision-card-title"]')`，替代原来的 `.font-medium` 通用类（后者会误命中导航栏、侧边栏等非卡片区域）
+
 **Playwright 真跑命令**:
 ```bash
 cd /workspace && npx playwright test sprints/08051144-relay-184c6da1/tests/strategist-form-verify.spec.ts \

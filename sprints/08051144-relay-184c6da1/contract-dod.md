@@ -37,6 +37,10 @@ curl -s "${BRAIN_URL}/api/brain/journey_step_links?journey_id=e6f803f2-8c48-4cce
 - 若 `title` 为 UUID，则展示 `description` 内容；若 `description` 也为空则展示「待拍板事项」
 - 每个待拍板卡片内含「通过」和「否决」两个按钮（纯 UI，点击无后端调用）
 
+**Fix-2 实现约束**:
+- 待拍板卡片标题元素必须加 `data-testid="decision-card-title"`，供 E2E 精确定位
+- E2E 测试使用 `page.locator('[data-testid="decision-card-title"]')` 选择器，不使用 `.font-medium` 等通用类
+
 **manual:bash 验收命令**:
 ```bash
 BRAIN_URL=http://localhost:5221

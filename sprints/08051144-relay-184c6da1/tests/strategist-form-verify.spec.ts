@@ -9,6 +9,24 @@
  * AC-3 对话发消息不永久停留加载中
  * AC-4 全貌数字行四区块与API对账
  * AC-5 线列表不含smoke行
+ *
+ * judgments_written: 15
+ * 判定点登记：
+ * [J-01] bodyText 不含「建设中」                    → AC-1 test 1, L55
+ * [J-02] bodyText 不含「敬请期待」                   → AC-1 test 1, L56
+ * [J-03] 含要素关键词之一（FR/NFR/判定点/...）         → AC-1 test 1, L61
+ * [J-04] journey_step_links API 可用且返回数据       → AC-1 test 2, L73
+ * [J-05] 卡片标题不匹配纯 UUID 正则                  → AC-2 test 1, L117
+ * [J-06] 含「通过」或「否决」按钮                    → AC-2 test 2, L143
+ * [J-07] 不永久停留「加载中…」（30s 内脱离）          → AC-3 test 1, L180
+ * [J-08] 显示空态文字或消息内容                      → AC-3 test 1, L191
+ * [J-09] AbortController/abort/暂无消息 代码存在     → AC-3 test 2, L203
+ * [J-10] 数字行含 ≥2 个关键词（GP/决策/在干活/Features）→ AC-4 test 1, L224
+ * [J-11] GP 数与 Brain API 误差 ≤ 5%（强断言）      → AC-4 test 2, L244
+ * [J-12] 决策数与 Brain API 误差 ≤ 5%（强断言）     → AC-4 test 3, L271
+ * [J-13] bodyText 不匹配 /\[smoke\]/i              → AC-5 test 1, L295
+ * [J-14] bodyText 不匹配 /gp-agg-smoke/i           → AC-5 test 1, L296
+ * [J-15] smoke 过滤源码存在（grep 命中 ≥1 行）       → AC-5 test 2, L308
  */
 
 import { test, expect, Page } from '@playwright/test';
@@ -102,10 +120,8 @@ test.describe('AC-2: 拍板卡无裸UUID有选项按钮', () => {
     }
 
     // [BEHAVIOR-2] 断言：标题不匹配纯 UUID
-    // 找所有卡片标题元素（通过常见选择器）
-    const cardTitles = page.locator('.font-medium, .card-title, h3, h4').filter({
-      hasNotText: '待拍板',
-    });
+    // 精确定位决策卡片标题（Fix-2 实现时需在卡片标题元素上加 data-testid="decision-card-title"）
+    const cardTitles = page.locator('[data-testid="decision-card-title"]');
     const titleCount = await cardTitles.count();
 
     for (let i = 0; i < titleCount; i++) {
@@ -241,15 +257,9 @@ test.describe('AC-4: 全貌数字行四区块与API对账', () => {
     // 找页面中的数字（基线 GP=25，允许 ±5%）
     const numbers = (bodyText.match(/\d+/g) ?? []).map(Number).filter(n => n > 0);
     const tolerance = Math.ceil(apiGpCount * 0.05);
+    // [J-11] 强断言：GP 数与 API 误差必须 ≤ 5%，不允许降级回退
     const hasCloseMatch = numbers.some(n => Math.abs(n - apiGpCount) <= tolerance);
-
-    // 如果找不到精确匹配，至少数字行存在
-    if (!hasCloseMatch) {
-      // 降级：只验证数字区块存在
-      expect(numbers.length).toBeGreaterThan(0);
-    } else {
-      expect(hasCloseMatch).toBe(true);
-    }
+    expect(hasCloseMatch).toBe(true);
   });
 
   test('数字行决策数与 Brain API 误差 ≤ 5%', async ({ page }) => {
@@ -267,10 +277,9 @@ test.describe('AC-4: 全貌数字行四区块与API对账', () => {
     const bodyText = await page.textContent('body') ?? '';
     const numbers = (bodyText.match(/\d+/g) ?? []).map(Number).filter(n => n > 0);
     const tolerance = Math.ceil(apiDecisionCount * 0.05) + 1;
-    const hasCloseMatch = numbers.some(n => Math.abs(n - apiDecisionCount) <= tolerance);
-
-    // 降级：只验证页面有数字内容
-    expect(numbers.length > 0 || hasCloseMatch).toBe(true);
+    // [J-12] 强断言：决策数与 API 误差必须 ≤ 5%，不允许降级回退
+    const hasCloseMatchDecision = numbers.some(n => Math.abs(n - apiDecisionCount) <= tolerance);
+    expect(hasCloseMatchDecision).toBe(true);
   });
 });
 
