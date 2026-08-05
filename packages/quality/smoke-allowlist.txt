@@ -215,4 +215,5 @@ zenithjoy-schema-migration-smoke.sh
 
 doc-zombie-retire-smoke.sh
 nfr-decisions-assertion-ref-smoke.sh
+notion-inbox-smoke.sh
 strategist-form-smoke.sh
