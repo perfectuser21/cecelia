@@ -211,3 +211,8 @@ test.describe('军师台 GP 四级下钻', () => {
 ---
 
 *生成者：Planner Agent（Claude Sonnet 4.6），2026-08-05*
+
+---
+
+journey_type: user_facing
+target_environment: mac_web
