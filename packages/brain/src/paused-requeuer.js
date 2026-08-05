@@ -36,6 +36,8 @@ export async function runPausedRequeue(dbPool) {
   const requeueResult = await db.query(`
     UPDATE tasks
     SET status = 'queued',
+        claimed_by = NULL,
+        claimed_at = NULL,
         retry_count = COALESCE(retry_count, 0) + 1,
         updated_at = NOW()
     WHERE status = 'paused'

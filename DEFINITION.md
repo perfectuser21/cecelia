@@ -6,11 +6,19 @@
 
 
 
-**Brain 版本**: 1.267.226
+**Brain 版本**: 1.267.227
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.227 — codex-review 活性以 lock 文件为准（liveness 60 秒恒判死修复）
+
+- 决策 9befa9c3 / issue f1d6840f：`REVIEW_TASK_TYPES`（spec_review/code_review_gate/prd_review/initiative_review/code_review/decomp_review/initiative_plan/initiative_verify/arch_review/architecture_design/architecture_scan）由 `triggerCodexReview` spawn detached codex 执行，进程层三条活性信号（activeProcesses/current_run_id/ps 扫描）全无，`probeTaskLiveness` 60 秒宽限后恒判死，10~30 分钟的审查任务结构性跑不完（三轮真机复现）。
+- 新增 SSOT 模块 `lib/codex-review-liveness.js`（`probeCodexReviewLock`）：活性以 `/tmp/codex-review-locks/<taskId>.lock` 为准——spawn 前写入含 `startedAt`，spawn error 与 exit handler 均删除；lock 存在即在跑，缺失/超龄（>90min）判死后落入既有 SUSPECT→DEAD 双确认流程（回队有出路）。
+- 合同层新增 `codex-review-local`（`staleMinutes=90, onStale='requeue'`）；进程层 `probeTaskLiveness` 对 `REVIEW_TASK_TYPES` 任务优先查 lock，alive 则 `continue` 不落入 60 秒 grace 恒死路径；`triggerCodexReview` 写 lock 后打标 `executor_kind='codex-review-local'`。
+- `paused-requeuer.js` requeue UPDATE 补 `claimed_by = NULL, claimed_at = NULL`，防回队后无主卡死（此前只清 `status`/`retry_count`，claim 字段残留会让新一轮派发误判"已被认领"）。
+- 回退到 1.267.225：codex-review 类任务重新回到进程层 60 秒恒判死路径，10~30 分钟审查任务无法完成。
 
 ## Brain 1.267.226 — GAN 案卷断链根治（r36 十四轮不收敛根因）
 

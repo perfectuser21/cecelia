@@ -17,6 +17,7 @@
 
 import { execSync } from 'child_process';
 import { assessKernelLiveness } from './lib/kernel-liveness.js';
+import { probeCodexReviewLock } from './lib/codex-review-liveness.js';
 
 export const KERNEL_EXECUTOR_KIND = 'kernel-process';
 
@@ -27,6 +28,7 @@ export const VALID_EXECUTOR_KINDS = [
   'headed-session',
   'bridge',
   'external-worker',
+  'codex-review-local',
 ];
 
 // ─── 打标映射（各派发点用的快查表）────────────────────────────────────────────
@@ -135,6 +137,17 @@ export const EXECUTOR_CONTRACTS = {
     },
     staleMinutes: 60,
     onStale: 'fail',
+  },
+
+  /**
+   * codex-review-local: triggerCodexReview 直接 spawn 的 detached codex
+   * （REVIEW_TASK_TYPES）。活性：/tmp/codex-review-locks/<taskId>.lock ——
+   * spawn 前写、error/exit handler 删，存在即在跑（决策 9befa9c3）。
+   */
+  'codex-review-local': {
+    probe: async (task, _ctx) => probeCodexReviewLock(task.id),
+    staleMinutes: 90,
+    onStale: 'requeue',
   },
 
   /**

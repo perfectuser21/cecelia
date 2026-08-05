@@ -50,11 +50,11 @@ if [[ ! -f "$CONTRACTS_JS" ]]; then
   fail "executor-contracts.js 不存在: $CONTRACTS_JS"
 else
   node --input-type=module <<EOF 2>/dev/null \
-    && ok "EXECUTOR_CONTRACTS 六合同结构正确" \
+    && ok "EXECUTOR_CONTRACTS 七合同结构正确" \
     || fail "executor-contracts.js 导入/结构检查失败"
 import { EXECUTOR_CONTRACTS, VALID_EXECUTOR_KINDS, assessTaskLiveness } from '${CONTRACTS_JS}';
-const EXPECTED = ['brain-local','relay-container','kernel-process','headed-session','bridge','external-worker'];
-if (VALID_EXECUTOR_KINDS.length !== 6) throw new Error('VALID_EXECUTOR_KINDS 长度不对');
+const EXPECTED = ['brain-local','relay-container','kernel-process','headed-session','bridge','external-worker','codex-review-local'];
+if (VALID_EXECUTOR_KINDS.length !== 7) throw new Error('VALID_EXECUTOR_KINDS 长度不对');
 for (const k of EXPECTED) {
   const c = EXECUTOR_CONTRACTS[k];
   if (!c) throw new Error('missing contract: ' + k);
