@@ -6,7 +6,9 @@ set -euo pipefail
 
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 DASHBOARD_URL="${DASHBOARD_URL:-http://localhost:5174}"
-REPO_ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || echo "/workspace")"
+# 相对定位仓库根（packages/brain/scripts/smoke → 上跳四级），不依赖 git/容器路径
+# （模式同 gp-assertion-command-smoke.sh；此前 git 兜底在 glob runner 失效落到 /workspace 死路径）
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 
 echo "=== strategist-form-smoke: 开始 ==="
 
