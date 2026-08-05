@@ -467,6 +467,29 @@ describe('attempt store', () => {
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
 
+  it('provider 输出 case_file:null / rubric_scores:null 时回调必须被接受（strict schema 要求声明即必填，非 GAN 角色只能填 null）', async () => {
+    // r38 实证回归：runner schema 把 case_file 列进 required 后，codex 对非 GAN
+    // 角色输出 "case_file":null。Brain 侧若用 zod .optional()（只放行 undefined、
+    // 拒绝 null）会整条回调 400——容器正常干完活、结果却丢失，attempt 永远卡
+    // running 直到租约过期。必须用 .nullish() 同时放行 null 与 undefined。
+    const { parseHarnessResult } = await import('../execution-contract.js');
+    const base = {
+      contract_version: '1.0',
+      attempt_id: '22222222-2222-4222-8222-222222222222',
+      status: 'completed',
+      summary: 'planner done',
+      artifacts: [],
+      checks: [],
+      error: null,
+      provider_metadata: { provider: 'codex' },
+    };
+    expect(() => parseHarnessResult({
+      ...base,
+      decision: { outcome: 'PASS', reason: 'ok', rubric_scores: null },
+      case_file: null,
+    })).not.toThrow();
+  });
+
   it('哨兵：GAN 权威终态落空壳案卷（blockers 空 + feedback_md 空 + rubric 空）必须告警，不许静默（r36 实证）', async () => {
     // r36 事故：runner schema 禁掉 case_file/rubric_scores → 案卷连写 14 行空壳
     // → 每轮 reviewer 零记忆重审 → 打地鼠不收敛，全程零报错零日志。案卷是收敛
