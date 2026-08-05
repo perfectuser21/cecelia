@@ -25,7 +25,6 @@ const manifest: FeatureManifest = {
           { path: '/gtd/projects', label: 'Projects', icon: 'FolderKanban', order: 3 },
           { path: '/gtd/tasks', label: 'Tasks', icon: 'ListTodo', order: 4 },
           { path: '/gtd/knowledge', label: 'Knowledge', icon: 'BookOpen', order: 5 },
-          { path: '/gtd/warroom', label: 'War Room', icon: 'Crosshair', order: 6 },
         ],
       },
     },
@@ -38,8 +37,8 @@ const manifest: FeatureManifest = {
     { path: '/gtd/initiatives/:id', component: 'InitiativeDetail' },
     { path: '/gtd/tasks', component: 'GTDTasks' },
     { path: '/gtd/knowledge', component: 'GTDKnowledge' },
-    { path: '/gtd/warroom', component: 'GTDWarRoom' },
-    { path: '/gtd/warroom/:areaId', component: 'GTDWarRoomArea' },
+    { path: '/gtd/warroom', redirect: '/pipeline' },
+    { path: '/gtd/warroom/:areaId', redirect: '/pipeline' },
   ],
 
   components: {
@@ -49,8 +48,6 @@ const manifest: FeatureManifest = {
     GTDProjects: () => import('./pages/GTDProjects'),
     GTDTasks: () => import('./pages/GTDTasks'),
     GTDKnowledge: () => import('./pages/GTDKnowledge'),
-    GTDWarRoom: () => import('./pages/GTDWarRoom'),
-    GTDWarRoomArea: () => import('./pages/GTDWarRoomArea'),
     ProjectDetail: () => import('../planning/pages/ProjectDetail'),
     InitiativeDetail: () => import('../planning/pages/InitiativeDetail'),
   },
