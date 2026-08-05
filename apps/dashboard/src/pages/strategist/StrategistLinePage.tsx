@@ -12,7 +12,7 @@ import {
   ArrowLeft, RefreshCw, MapPin, FileText,
   CheckSquare, MessageSquare, Layout, DollarSign,
   ChevronRight, Activity, CheckCircle2, Zap,
-  X, LayoutGrid, BookOpen, AlertCircle,
+  X, LayoutGrid, BookOpen, AlertCircle, Clock,
 } from 'lucide-react';
 import ConversationsPanel from '../warroom/ConversationsPanel';
 import {
@@ -141,6 +141,30 @@ const STEP_STATUS_META: Record<string, { dot: string }> = {
   blocked:     { dot: 'bg-red-500' },
 };
 
+// ── GP 版本类型 ───────────────────────────────────────────────────────────────
+
+interface GoldenPath {
+  id: string;
+  title: string;
+  one_liner?: string | null;
+  status: string;
+  approved_at?: string | null;
+  created_at: string;
+}
+
+const GP_STATUS_META: Record<string, { dot: string; text: string; label: string }> = {
+  candidate:    { dot: 'bg-slate-600',   text: 'text-slate-400',   label: '候选' },
+  proposed:     { dot: 'bg-amber-400',   text: 'text-amber-300',   label: '报备中' },
+  converged:    { dot: 'bg-blue-400',    text: 'text-blue-300',    label: '批审中' },
+  approved:     { dot: 'bg-emerald-500', text: 'text-emerald-400', label: '已批' },
+  in_dev:       { dot: 'bg-indigo-400',  text: 'text-indigo-300',  label: '开发中' },
+  delivered:    { dot: 'bg-purple-400',  text: 'text-purple-300',  label: '已交付' },
+  expired:      { dot: 'bg-slate-600',   text: 'text-slate-500',   label: '过期' },
+  rejected:     { dot: 'bg-red-500',     text: 'text-red-400',     label: '已否' },
+  blocked_gate: { dot: 'bg-orange-400',  text: 'text-orange-300',  label: '闸阻' },
+  superseded:   { dot: 'bg-slate-700',   text: 'text-slate-600',   label: '已替代' },
+};
+
 function CellDot({ status, size = 'sm' }: { status: CellStatus; size?: 'xs' | 'sm' }) {
   const meta = CELL_STATUS_META[status] ?? CELL_STATUS_META.gray;
   const sz = size === 'xs' ? 'w-1.5 h-1.5' : 'w-2 h-2';
@@ -189,11 +213,24 @@ function CellRowDetail({ cell, onClose }: { cell: StepCell; onClose: () => void 
 
 function StepLedgerPanel({ step, cells, onClose }: { step: JourneyStep; cells: StepCell[]; onClose: () => void }) {
   const [expandedCell, setExpandedCell] = useState<string | null>(null);
+  const [panelView, setPanelView] = useState<'ledger' | 'versions'>('ledger');
+  const [gps, setGps] = useState<GoldenPath[]>([]);
+  const [gpsLoading, setGpsLoading] = useState(false);
   const capabilityCells = cells.filter(c => c.cell_kind === 'capability');
   const elementCells    = cells.filter(c => c.cell_kind === 'element');
   const scenarioCells   = cells.filter(c => c.cell_kind === 'scenario');
   const greenEl = elementCells.filter(c => c.cell_status === 'green').length;
   const stepDot = (STEP_STATUS_META[step.status] ?? STEP_STATUS_META.planned).dot;
+
+  useEffect(() => {
+    if (panelView !== 'versions' || gps.length > 0) return;
+    setGpsLoading(true);
+    fetch(`/api/brain/golden-paths?journey_id=${encodeURIComponent(step.journey_id)}&limit=30`)
+      .then(r => r.json())
+      .then(d => setGps(Array.isArray(d.golden_paths) ? d.golden_paths : []))
+      .catch(() => {})
+      .finally(() => setGpsLoading(false));
+  }, [panelView, step.journey_id, gps.length]);
 
   const CellZoneRow = ({ cell }: { cell: StepCell }) => {
     const isExpanded = expandedCell === cell.id;
@@ -245,6 +282,76 @@ function StepLedgerPanel({ step, cells, onClose }: { step: JourneyStep; cells: S
         </button>
       </div>
 
+      {/* 账本 | 版本 切换 */}
+      <div className="flex items-center border-b border-slate-800/50 flex-shrink-0">
+        {(['ledger', 'versions'] as const).map(v => (
+          <button
+            key={v}
+            onClick={() => { setPanelView(v); setExpandedCell(null); }}
+            className={`flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold border-b-2 transition-colors ${
+              panelView === v ? 'border-indigo-500 text-indigo-300' : 'border-transparent text-slate-600 hover:text-slate-400'
+            }`}
+          >
+            {v === 'ledger' ? <BookOpen className="w-2.5 h-2.5" /> : <Clock className="w-2.5 h-2.5" />}
+            {v === 'ledger' ? '账本' : '版本'}
+          </button>
+        ))}
+      </div>
+
+      {/* 版本历史面板（Level 3）*/}
+      {panelView === 'versions' && (
+        <div className="flex-1 overflow-y-auto">
+          {gpsLoading ? (
+            <div className="flex items-center gap-2 p-6 text-slate-600 text-sm">
+              <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+              加载版本记录…
+            </div>
+          ) : gps.length === 0 ? (
+            <div className="p-8 flex flex-col items-center gap-3 text-center">
+              <Clock className="w-6 h-6 text-slate-700" />
+              <div className="text-[12px] text-slate-600">本线暂无 GP 版本记录</div>
+              <div className="text-[10px] text-slate-700">GP 批准后自动成为版本节点（照相层）</div>
+            </div>
+          ) : (
+            <div>
+              {gps.map((gp, idx) => {
+                const sm = GP_STATUS_META[gp.status] ?? { dot: 'bg-slate-700', text: 'text-slate-500', label: gp.status };
+                return (
+                  <div key={gp.id} className="border-b border-slate-800/30">
+                    <div className="flex items-start gap-2.5 px-4 py-2.5">
+                      <span className="text-[10px] font-mono text-slate-700 flex-shrink-0 mt-0.5">v{gps.length - idx}</span>
+                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1 ${sm.dot}`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[12px] text-slate-200 truncate font-mono">{gp.title}</span>
+                          <span className={`text-[10px] px-1 py-px rounded border border-slate-700/60 ${sm.text} flex-shrink-0`}>
+                            {sm.label}
+                          </span>
+                        </div>
+                        {gp.one_liner && (
+                          <div className="text-[10px] text-slate-600 mt-0.5 line-clamp-1">{gp.one_liner}</div>
+                        )}
+                        <div className="text-[10px] text-slate-700 mt-0.5 font-mono">
+                          {gp.approved_at ? `批准 ${fmtDate(gp.approved_at)}` : `创建 ${fmtDate(gp.created_at)}`}
+                        </div>
+                      </div>
+                    </div>
+                    {/* 格子级快照 diff（暂无数据，待照相层上线） */}
+                    {gp.status === 'approved' || gp.status === 'delivered' ? (
+                      <div className="mx-4 mb-2 px-2 py-1 rounded bg-violet-900/10 border border-violet-500/15 text-[10px] text-violet-500/60 font-mono">
+                        ∅ 格子快照待照相层接入
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 账本面板（Level 2）*/}
+      {panelView === 'ledger' && (
       <div className="flex-1 overflow-y-auto">
         {elementCells.length > 0 && (
           <div>
@@ -284,6 +391,7 @@ function StepLedgerPanel({ step, cells, onClose }: { step: JourneyStep; cells: S
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
