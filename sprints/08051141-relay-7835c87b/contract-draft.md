@@ -121,9 +121,3 @@ npx playwright test sprints/08051141-relay-7835c87b/tests/strategist-gp-drill.e2
 | fixture journey 无 2 个 GP，J-04 无法触发 `.changed` | 中 | 测试中 skip J-04 并加注释；开发时确认 fixture 数据 |
 | `journey_step_links` 无 `created_at` 字段导致时间切片失效 | 低 | 代码加 null 守卫，格子降级为 gray |
 | `StrategistLinePage.tsx` 已 1105 行，新增组件必须拆分 | 高（必发生） | GPVersionTable 拆至独立文件 |
-
-## Test Contract
-
-| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
-|---|---|---|---|
-| GP 四级下钻全链 | `tests/strategist-gp-drill.e2e.spec.ts` | J-01 步骤行点击 → StepLedgerPanel 出现 / J-02 版本对比表表头含 FR / NFR / 判定点列 / J-03 版本对比表表头含版本列（v 前缀） / J-04 存在 changed 紫底格（fixture ≥2 GP版本） / J-05 点击版本对比表格子 → 行详情卡出现含日期 / J-06 关闭行详情卡 → 卡片消失 / J-07 无账本线全貌页显示空态提示 / J-08 L1/L2/L3 各截一张存档 | → 8 failures（实现前：步骤行不可点、无版本表、无行详情卡、无空态、无截图产物） |
