@@ -537,7 +537,7 @@ function MorningTab() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/brain/design-docs?type=diary&limit=14');
+        const res = await fetch('/api/brain/design-docs?type=battle_report,diary&limit=20');
         const data = await res.json();
         const list: DiaryDoc[] = Array.isArray(data) ? data : (data?.data ?? []);
         setDocs(list.filter((d) => d.title && !d.title.startsWith('[ci-patrol-state]')));
