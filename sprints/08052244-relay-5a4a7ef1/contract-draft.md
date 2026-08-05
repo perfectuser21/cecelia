@@ -75,6 +75,14 @@ curl -s "http://localhost:5221/api/brain/journey_step_links?journey_id=e6f803f2-
 
 ---
 
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| ws1 | `tests/kernel-devops-map.test.js` | B-1 / B-2 / B-3 / B-4 | 实现前 4/4 断言失败（格子未写入时 API 返回空列表） |
+
+---
+
 ## 未覆盖真实链路清单
 
 - PR #4457 代码层面无法实际运行或执行，本 sprint 仅做账本映射，不执行真实 Kernel Harness E2E

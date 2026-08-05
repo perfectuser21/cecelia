@@ -59,8 +59,8 @@ while IFS= read -r tf; do
     continue
   fi
 
-  # ── Rule B: 完全无 expect ──
-  EXPECTS=$(grep -cE "expect\s*\(" "$tf" 2>/dev/null || true)
+  # ── Rule B: 完全无 expect 或 assert（支持 Node 内置 assert 模块）──
+  EXPECTS=$(grep -cE "expect\s*\(|assert\.(ok|equal|strictEqual|deepEqual|notEqual|notStrictEqual|deepStrictEqual|throws|rejects|doesNotThrow|match|doesNotMatch|fail|ifError)\s*\(" "$tf" 2>/dev/null || true)
   EXPECTS="${EXPECTS:-0}"
   if [ "$EXPECTS" -eq 0 ]; then
     BAD_EMPTY+=("$tf")
