@@ -72,6 +72,10 @@ export const ACTION = Object.freeze({
   MARK_FAILED: 'mark_failed',
   PERSIST_CONTRACT_APPROVAL: 'persist_contract_approval',
   FORCE_APPROVE_CONTRACT: 'force_approve_contract',
+  // 合同故障重开 GAN（r40 实证）：下游执行(Generator/Evaluator)证伪合同资产
+  // 自身时,降级已批准合同回 revision、退回 GAN 让 Proposer/Reviewer 修——
+  // Generator 无权改合同(CONTRACT IS LAW),不能让它扛,更不能死等人工。
+  REOPEN_GAN_CONTRACT: 'reopen_gan_contract',
 });
 
 export const ACTIONS = Object.freeze(Object.values(ACTION));

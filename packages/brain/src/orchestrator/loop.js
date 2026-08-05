@@ -25,6 +25,7 @@ import { collectGroundTruth as defaultCollect } from './ground-truth.js';
 import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConflictError } from './decision-log.js';
 import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
 import { materializeApprovedContract } from './contract-store.js';
+import { insertCaseFileRow } from './case-file-store.js';
 import { evaluateValidationIdentityPolicy } from './validation-identity-policy.js';
 import { resolveValidationClock } from './validation-clock.js';
 import {
@@ -871,6 +872,71 @@ export async function runLoop(
         `UPDATE initiative_contracts SET status = 'approved', approved_at = $2, updated_at = $2 WHERE id = $1`,
         [observed.contract.id, now()],
       );
+      await beat();
+      continue;
+    }
+    if (decision.action === ACTION.REOPEN_GAN_CONTRACT) {
+      // 合同故障重开 GAN（r40 实证）：下游执行证伪合同资产（CONTRACT_SELF_
+      // CONTRADICTION / CONTRACT_TEST_UNSATISFIABLE）。三步：①写 reopen 决策行
+      // （detail.callback_hop 消费触发它的 callback，防重复路由）②把下游发现的
+      // 故障写进案卷（下一轮 proposer/reviewer 从 inputs.case_file 看到"为什么
+      // 重开"，与既有跨轮记忆通道一致）③降级合同 approved→revision，下一跳
+      // derive 自然回到 GAN。
+      const reopenHop = await next(deps.pool, resolvedRunId);
+      try {
+        await append(deps.pool, {
+          runId: resolvedRunId,
+          hop: reopenHop,
+          observed: { contract_id: observed.contract.id ?? null },
+          derivedPhase: 'gan',
+          gateVerdict: 'allow',
+          action: ACTION.REOPEN_GAN_CONTRACT,
+          detail: {
+            callback_hop: decision.callbackHop ?? null,
+            reason: decision.reason,
+          },
+        });
+        hops++;
+      } catch (error) {
+        if (error instanceof SingletonConflictError) {
+          return { exitReason: 'singleton_conflict', hops };
+        }
+        throw error;
+      }
+      const faultRow = observed.decisionLog.find(
+        (r) => Number(r.hop) === Number(decision.callbackHop),
+      );
+      const faultDetail = faultRow ? (asStructuredJson(faultRow.detail) ?? {}) : {};
+      const faultRound = (observed.caseFile ?? []).reduce(
+        (max, r) => Math.max(max, Number(r.round) || 0),
+        0,
+      ) + 1;
+      if (faultDetail.attempt_id) {
+        await insertCaseFileRow(deps.pool, {
+          runId: resolvedRunId,
+          round: faultRound,
+          authorRole: 'reviewer',
+          attemptId: faultDetail.attempt_id,
+          contractSha: observed.ganLatestRoundContractSha ?? null,
+          rubricScores: null,
+          blockers: [{
+            id: `E${faultRound}-1`,
+            dimension: 'internal_consistency',
+            title: '合同资产被下游执行证伪（合同故障重开）',
+            detail: String(faultDetail.summary ?? faultDetail.error_code ?? '').slice(0, 2000),
+            status: 'open',
+            why_not_found_earlier: 'GAN 阶段无人真正执行合同内验证脚本，缺陷只能在 Generator/Evaluator 真跑时暴露',
+            prd_gap: 'N/A —— 合同资产缺陷，非 PRD 缺口',
+          }],
+          feedbackMd: `## 合同故障重开（${faultDetail.error_code ?? 'contract_fault'}）\n\n${String(faultDetail.summary ?? '').slice(0, 2000)}\n\n要求：Proposer 修复合同资产中被证伪的部分（禁止削弱断言强度来"绕过"），Reviewer 复审时优先核验本条。`,
+        });
+      }
+      if (observed.contract.id) {
+        await deps.pool.query(
+          `UPDATE initiative_contracts SET status = 'revision', updated_at = $2 WHERE id = $1`,
+          [observed.contract.id, now()],
+        );
+      }
       await beat();
       continue;
     }
