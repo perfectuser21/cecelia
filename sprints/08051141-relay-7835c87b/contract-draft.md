@@ -3,7 +3,7 @@
 **TASK_ID**: 7835c87b-ca2e-4c2f-9c54-28d910d14211
 **Sprint Dir**: sprints/08051141-relay-7835c87b
 **Generated**: 2026-08-05
-**Round**: 1（首轮）
+**Round**: 2（格式修复）
 
 ---
 
@@ -81,6 +81,28 @@
 3. 版本对比表不替换账本面板——两子视图通过 `panelView` tab 切换共存
 4. `OverviewTab` 左侧 L1 矩阵交互逻辑不变
 5. `StrategistLinePage.tsx` 若超 500 行则将 `GPVersionTable` 拆至独立文件
+
+---
+
+## E2E 验收
+
+**运行环境**：`mac_web`（本机 Playwright，localhost:5174，内网）
+
+**执行命令**：
+
+```bash
+npx playwright test sprints/08051141-relay-7835c87b/tests/strategist-gp-drill.e2e.spec.ts --project=chromium
+```
+
+**环境说明**：
+- 应用需先在 localhost:5174 启动（`pnpm dev` 或 `pnpm start`）
+- Brain API 需在 localhost:5221 运行
+- Playwright 配置见 `packages/quality/playwright.config.ts`
+- 截图产物写入 `packages/quality/screenshots/`（L1.png / L2.png / L3.png）
+
+**Fixture 依赖**：
+- Journey ID `8bb8252f-29b4-4c34-acb9-1accda7ddfcf` 须存在 ≥2 个 GP 版本（供 J-04 `.changed` 断言）
+- J-07 需要一条无 journey_step_links 的 journey
 
 ---
 

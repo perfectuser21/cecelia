@@ -35,14 +35,19 @@
 
 - [ ] `packages/quality/e2e/strategist-gp-drill.e2e.spec.ts` 新建，包含 J-01 ~ J-08 全部判定点
 - [ ] 所有测试可在 `packages/quality/e2e/` 下执行：`npx playwright test strategist-gp-drill.e2e.spec.ts`
-- [ ] J-01 通过：点击步骤行后 `[data-testid="step-ledger-panel"]` 可见
-- [ ] J-02 通过：版本对比表表头含 "FR" / "NFR" / "判定点"
-- [ ] J-03 通过：表头至少一列匹配 `/^v\d/`
-- [ ] J-04 通过（或标注 skip + 原因）：`.changed` 元素 count > 0
-- [ ] J-05 通过：`[data-testid="cell-row-detail"]` 可见且含日期文字
-- [ ] J-06 通过：关闭操作后 `[data-testid="cell-row-detail"]` 不可见
-- [ ] J-07 通过：无账本线 `text=账本模板铺入后自动出现` 可见
-- [ ] J-08 通过：`screenshots/L1.png`、`screenshots/L2.png`、`screenshots/L3.png` 文件存在
+
+[BEHAVIOR] J-01: 点击步骤行后 `[data-testid="step-ledger-panel"]` 可见（点击前不可见，点击后 waitForSelector 成功）
+[BEHAVIOR] J-02: 版本对比表表头含 "FR" / "NFR" / "判定点" 三个列标签（getByRole columnheader 断言）
+[BEHAVIOR] J-03: 表头至少一列标签文字匹配 `/^v\d/`（版本列存在且带 v 前缀）
+[BEHAVIOR] J-04: `.changed` 紫底格子 count > 0（fixture ≥2 GP 版本时触发；否则 skip 并注明原因）
+[BEHAVIOR] J-05: 点击格子后 `[data-testid="cell-row-detail"]` 可见，且内部文字包含日期格式（`\d{4}-\d{2}` 或 `\d{2}-\d{2}`）
+[BEHAVIOR] J-06: 执行关闭操作后 `[data-testid="cell-row-detail"]` 不可见（`.not.toBeVisible()` 通过）
+[BEHAVIOR] J-07: 无账本线全貌页 `text=账本模板铺入后自动出现` 可见（空态提示未回归）
+[BEHAVIOR] J-08: 截图存档 `screenshots/L1.png`、`screenshots/L2.png`、`screenshots/L3.png` 文件均存在
+
+**E2E 验收命令**：
+
+manual:bash: npx playwright test sprints/08051141-relay-7835c87b/tests/strategist-gp-drill.e2e.spec.ts --project=chromium
 
 ### 代码质量
 
