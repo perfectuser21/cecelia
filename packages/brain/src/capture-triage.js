@@ -196,7 +196,7 @@ async function routeAtom(pool, atom, verdict, opts) {
       journeyId = rows[0]?.journey_id ?? null;
     }
     if (!journeyId) {
-      return updateAtom(pool, atom.id, { confidence, aiReason: `[triage:no_journey] 源无 journey_id，留人工复核。${reason}` });
+      return updateAtom(pool, atom.id, { status: 'parked', confidence, aiReason: `[triage:no_journey] 源无 journey_id，留人工复核。${reason}` });
     }
     const scope = resolveScope(atom, verdict);
     if (scope === 'capability') {
@@ -232,7 +232,7 @@ async function routeAtom(pool, atom, verdict, opts) {
   if (route === 'invariant') {
     const gate = await checkInvariantCandidate(pool, atom, opts);
     if (!gate.pass) {
-      return updateAtom(pool, atom.id, { confidence, aiReason: `[triage:gate_fail] ${gate.reason} checks=${JSON.stringify(gate.checks)}` });
+      return updateAtom(pool, atom.id, { status: 'parked', confidence, aiReason: `[triage:gate_fail] ${gate.reason} checks=${JSON.stringify(gate.checks)}` });
     }
     const atomUpdate = { status: 'confirmed', confidence, aiReason: `[triage:invariant] gate PASS. ${reason}` };
     // 幂等：上一轮 INSERT 后 atom UPDATE 失败/进程崩时，同 atom 重分诊不重复写铁律
@@ -335,7 +335,7 @@ export async function runCaptureTriage(pool, { llm = callLLM } = {}) {
           continue;
         }
         if (parsed.confidence < LLM_CONFIDENCE_FLOOR) {
-          await updateAtom(pool, atom.id, { confidence: parsed.confidence, aiReason: `[triage:low_confidence] ${parsed.reason || ''}` });
+          await updateAtom(pool, atom.id, { status: 'parked', confidence: parsed.confidence, aiReason: `[triage:low_confidence] ${parsed.reason || ''}` });
           continue;
         }
         verdict = { route: parsed.route, confidence: parsed.confidence, reason: parsed.reason || '', scope: parsed.scope };
