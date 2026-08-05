@@ -25,17 +25,17 @@ import("./packages/brain/src/executor-contracts.js").then(m => {
   }
   process.exit(0);
 }).catch(e => { console.error(e.message); process.exit(1); })
-' && ok "executor-contracts 七 kind 各有 probe（进程级导入）" || fail "executor-contracts 结构断言失败"
+' && ok "[结构] executor-contracts 七 kind 各有 probe（进程级导入）" || fail "executor-contracts 结构断言失败"
 
 node -e '
 import("./packages/brain/src/lib/codex-review-liveness.js").then(m => {
   if (typeof m.probeCodexReviewLock !== "function" || !m.CODEX_REVIEW_LOCK_DIR) process.exit(1);
   process.exit(0);
 }).catch(() => process.exit(1))
-' && ok "codex-review-liveness SSOT 导出完整" || fail "codex-review-liveness SSOT 缺失"
+' && ok "[结构] codex-review-liveness SSOT 导出完整" || fail "codex-review-liveness SSOT 缺失"
 
 grep -q "codex-review-liveness" packages/brain/src/executor-contracts.js \
-  && ok "合同层引用 lock SSOT" || fail "合同层未引用 lock SSOT"
+  && ok "[结构] 合同层引用 lock SSOT" || fail "合同层未引用 lock SSOT"
 
 [ "$(psql_q "SELECT to_regclass('circuit_breaker_states') IS NOT NULL")" = "t" ] \
   && ok "[运行时] circuit_breaker_states 表存在" || fail "circuit_breaker_states 表缺失"
@@ -45,7 +45,7 @@ let d=""; process.stdin.on("data",c=>d+=c).on("end",()=>{ const j=JSON.parse(d);
 ' && ok "[运行时] /health 200 且含 organs" || fail "/health 断言失败"
 
 grep -q "requeueTask" packages/brain/src/executor.js \
-  && ok "executor 含 requeueTask（回队出路）" || fail "requeueTask 缺失"
+  && ok "[结构] executor 含 requeueTask（回队出路）" || fail "requeueTask 缺失"
 
 if [ "${FIRE_TEST:-0}" = "1" ]; then
   fail "FIRE_TEST 自炸（proven-to-fire 验证口）"
