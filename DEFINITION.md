@@ -6,11 +6,17 @@
 
 
 
-**Brain 版本**: 1.267.226
+**Brain 版本**: 1.267.227
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.227 — Notion 个人 Inbox 增量采集器（F6加厚 WS2）
+
+- 新增 `notion-capture-ingest.js`：挂 scheduler-jobs 每轮调用，模块内 5 分钟自 gate；`last_edited_time` 游标增量拉取，存 `working_memory`；双 token 幂等：captures 用 `dedupe_key = 'notion:inbox:<pageId>'`，capture_atoms 用 `notion_page_id` 唯一索引 `ON CONFLICT DO NOTHING`。凭据从 `NOTION_API_KEY` env → `~/.credentials/CCAPI2026.env` 兜底。
+- Migration 387：`captures.notion_page_id`（信封级可查）+ `capture_atoms.notion_page_id`（唯一索引，防重编辑产第二条原子）。
+- 白名单：`NOTION_INBOX_DB_IDS` 环境变量逗号分隔，未配置则静默跳过。
 
 ## Brain 1.267.226 — GAN 案卷断链根治（r36 十四轮不收敛根因）
 
@@ -1727,7 +1733,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 386 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 387 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -2115,7 +2121,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '386'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '387'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
