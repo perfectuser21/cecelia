@@ -4,6 +4,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
+import path from 'path';
+import { randomUUID } from 'crypto';
+import { existsSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { CODEX_REVIEW_LOCK_DIR } from '../lib/codex-review-liveness.js';
 
 // Mock pool — hoisted so executor.js always gets this mockPool regardless of module cache order
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
@@ -230,5 +234,132 @@ describe('probeTaskLiveness', () => {
     expect(actions).toHaveLength(1);
     expect(actions[0].action).toBe('liveness_auto_requeue');
     expect(actions[0].task_id).toBe('decomp-task-2');
+  });
+});
+
+// REVIEW 类任务（arch_review 等）活性以 lock 文件为准（决策 9befa9c3，issue f1d6840f）
+// executor.js probeTaskLiveness 内 REVIEW_TASK_TYPES 分支：lock 新鲜 → 不判 SUSPECT；
+// lock 缺失/超龄 → 落入既有 SUSPECT→DEAD 双确认流程（回队有出路）。
+describe('probeTaskLiveness — REVIEW 分支（codex-review-local lock 探活）', () => {
+  const lockFiles = [];
+
+  const lockPath = (taskId) => path.join(CODEX_REVIEW_LOCK_DIR, `${taskId}.lock`);
+
+  const writeLock = (taskId, startedAt) => {
+    if (!existsSync(CODEX_REVIEW_LOCK_DIR)) {
+      mkdirSync(CODEX_REVIEW_LOCK_DIR, { recursive: true });
+    }
+    const file = lockPath(taskId);
+    writeFileSync(file, JSON.stringify({ startedAt }), 'utf-8');
+    lockFiles.push(file);
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    suspectProcesses.clear();
+  });
+
+  afterEach(() => {
+    while (lockFiles.length) {
+      const f = lockFiles.pop();
+      try { rmSync(f, { force: true }); } catch { /* already gone */ }
+    }
+  });
+
+  it('lock 新鲜 → probeTaskLiveness 后任务不被标 SUSPECT', async () => {
+    const taskId = `arch-review-fresh-${randomUUID()}`;
+    writeLock(taskId, new Date().toISOString()); // 刚写入，远小于 90 分钟上限
+
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{
+        id: taskId,
+        title: 'Arch Review Fresh',
+        task_type: 'arch_review',
+        payload: {},
+        started_at: new Date(Date.now() - 120000).toISOString(), // 早于 60s grace，触发进程死信号
+      }]
+    });
+
+    const actions = await probeTaskLiveness();
+    expect(actions).toEqual([]);
+    expect(suspectProcesses.has(taskId)).toBe(false);
+  });
+
+  it('lock 缺失 → 两轮 probe 后走 DEAD 处置（requeue）', async () => {
+    const taskId = `arch-review-missing-${randomUUID()}`;
+    // 不写 lock 文件 —— probeCodexReviewLock 返回 'dead'
+
+    // 第一轮：首次探测失败，标 SUSPECT，不 requeue
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{
+        id: taskId,
+        title: 'Arch Review Missing Lock',
+        task_type: 'arch_review',
+        payload: {},
+        started_at: new Date(Date.now() - 120000).toISOString(),
+      }]
+    });
+    const firstActions = await probeTaskLiveness();
+    expect(firstActions).toEqual([]);
+    expect(suspectProcesses.has(taskId)).toBe(true);
+
+    // 第二轮：确认死亡 → requeue（复用既有测试的 requeueTask mock 序列）
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: taskId,
+          title: 'Arch Review Missing Lock',
+          task_type: 'arch_review',
+          payload: {},
+          started_at: new Date(Date.now() - 120000).toISOString(),
+        }]
+      })
+      // requeueTask: SELECT payload, task_type, project_id, title, started_at
+      .mockResolvedValueOnce({ rows: [{ payload: {}, task_type: 'arch_review', project_id: null, title: 'Arch Review Missing Lock' }] })
+      // requeueTask: UPDATE tasks SET status = 'queued'
+      .mockResolvedValueOnce({ rowCount: 1 })
+      // requeueTask: SELECT content_hash from learnings (dedup check)
+      .mockResolvedValueOnce({ rows: [] })
+      // requeueTask: INSERT INTO learnings
+      .mockResolvedValueOnce({ rowCount: 1 });
+
+    const secondActions = await probeTaskLiveness();
+    expect(secondActions).toHaveLength(1);
+    expect(secondActions[0].action).toBe('liveness_auto_requeue');
+    expect(secondActions[0].task_id).toBe(taskId);
+    expect(suspectProcesses.has(taskId)).toBe(false);
+  });
+
+  it('lock 超龄（startedAt 2 小时前）→ 走 DEAD 处置（同缺失 lock）', async () => {
+    const taskId = `arch-review-stale-${randomUUID()}`;
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    writeLock(taskId, twoHoursAgo); // 超过 90 分钟 maxAgeMinutes 上限 → probeCodexReviewLock 返回 'dead'
+
+    // 预置 SUSPECT，直接验证第二轮确认死亡（与既有测试对 DEAD 的断言方式一致）
+    suspectProcesses.set(taskId, {
+      firstSeen: new Date(Date.now() - 10000).toISOString(),
+      tickCount: 1,
+    });
+
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: taskId,
+          title: 'Arch Review Stale Lock',
+          task_type: 'arch_review',
+          payload: {},
+          started_at: new Date(Date.now() - 120000).toISOString(),
+        }]
+      })
+      .mockResolvedValueOnce({ rows: [{ payload: {}, task_type: 'arch_review', project_id: null, title: 'Arch Review Stale Lock' }] })
+      .mockResolvedValueOnce({ rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1 });
+
+    const actions = await probeTaskLiveness();
+    expect(actions).toHaveLength(1);
+    expect(actions[0].action).toBe('liveness_auto_requeue');
+    expect(actions[0].task_id).toBe(taskId);
+    expect(suspectProcesses.has(taskId)).toBe(false);
   });
 });
