@@ -381,8 +381,22 @@ function OverviewTab({ detail, lineId }: { detail: LineDetail | null; lineId: st
       {/* ── 左侧：Step × 要素 矩阵（Level 1） ── */}
       <div className={`flex flex-col min-h-0 overflow-hidden border-r border-slate-800/60 transition-all ${selectedStep ? 'w-[55%]' : 'w-full'}`}>
 
+        {/* 愿景区（对版 e67e7b0b pano：这条线是干什么的，一句话） */}
+        {line.description && (
+          <div
+            data-testid="pano-vision"
+            className="px-5 py-3 border-b border-slate-800/40 bg-gradient-to-r from-indigo-950/30 to-slate-900/20 flex-shrink-0"
+          >
+            <div className="text-[10px] tracking-[0.14em] uppercase text-slate-600 font-bold mb-1">愿景</div>
+            <div className="text-[12px] text-slate-300 leading-relaxed line-clamp-2">{line.description}</div>
+          </div>
+        )}
+
         {/* 线档案摘要条 */}
         <div className="flex items-center gap-4 px-5 py-2.5 border-b border-slate-800/40 bg-slate-900/30 flex-shrink-0 text-[11px]">
+          <span className="text-slate-400 font-mono">{steps.length}</span>
+          <span className="text-slate-600">步骤</span>
+          <span className="text-slate-700 mx-1">·</span>
           <span className="text-slate-600">成熟度</span>
           <span className="text-slate-300">{MATURITY_LABEL[line.maturity ?? ''] ?? (line.maturity ?? '--')}</span>
           <span className="text-slate-700 mx-1">·</span>
@@ -680,6 +694,16 @@ const TASK_STATUS_META: Record<string, { dot: string; text: string; label: strin
   failed: { dot: 'bg-red-500', text: 'text-red-400', label: '失败' },
 };
 
+/**
+ * 拍板项标题清洗：军师任务标题历史格式为「Line 军师决策 — journey <uuid>」，
+ * uuid 对主理人无意义——剥掉 journey 段；纯 uuid 标题降级到 description。
+ */
+export function cleanDecisionTitle(title: string, description?: string | null): string {
+  const stripped = title.replace(/\s*[—-]\s*journey\s+[0-9a-f][0-9a-f-]{7,}.*$/i, '').trim();
+  if (stripped && !/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(stripped)) return stripped;
+  return (description || '').slice(0, 60) || '军师决策';
+}
+
 function DecisionTab({ lineId }: { lineId: string }) {
   const [tasks, setTasks] = useState<StrategistTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -738,9 +762,7 @@ function DecisionTab({ lineId }: { lineId: string }) {
                       data-testid="decision-card-title"
                       className="text-[13px] text-slate-200 flex-1 min-w-0"
                     >
-                      {/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t.title)
-                        ? (t.description || '待拍板事项')
-                        : t.title}
+                      {cleanDecisionTitle(t.title, t.description)}
                     </span>
                     <span className={`text-[11px] px-1.5 py-px rounded border border-slate-700/50 ${sm.text} flex-shrink-0`}>
                       {sm.label}
@@ -779,7 +801,7 @@ function DecisionTab({ lineId }: { lineId: string }) {
               return (
                 <div key={t.id} className="flex items-center gap-2.5 px-3 py-2 rounded border border-slate-800/40 text-[13px]">
                   <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sm.dot}`} />
-                  <span className="text-slate-500 flex-1 min-w-0 truncate">{t.title}</span>
+                  <span className="text-slate-500 flex-1 min-w-0 truncate">{cleanDecisionTitle(t.title, t.description)}</span>
                   <span className="text-slate-700 flex-shrink-0">{fmtRelative(t.created_at)}</span>
                 </div>
               );
