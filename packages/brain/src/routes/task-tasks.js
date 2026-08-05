@@ -65,6 +65,7 @@ router.post('/', async (req, res) => {
       okr_initiative_id = null,
       ability_id = null,
       journey_id = null,
+      blocked_at: blockedAtInput = null,
     } = req.body;
 
     if (!title || title.trim() === '') {
@@ -140,9 +141,14 @@ router.post('/', async (req, res) => {
       payload = { ...(payload ?? {}), journey_id };
     }
 
-    // 允许创建时指定 pending_postdeploy 状态（第5环门禁协议），其余状态创建时一律 queued
-    const ALLOWED_CREATE_STATUSES = ['queued', 'pending_postdeploy'];
+    // 允许创建时指定 pending_postdeploy / blocked 状态，其余状态创建时一律 queued
+    // blocked: F1 接单失守修复（task 8419142d）——串行 depends_on_prev 场景需在注册时即写入 blocked
+    const ALLOWED_CREATE_STATUSES = ['queued', 'pending_postdeploy', 'blocked'];
     const initialStatus = statusInput && ALLOWED_CREATE_STATUSES.includes(statusInput) ? statusInput : 'queued';
+    // blocked_at: 调用方可显式传入；缺省时若 status=blocked 自动补 NOW()
+    const initialBlockedAt = initialStatus === 'blocked'
+      ? (blockedAtInput ?? new Date().toISOString())
+      : null;
 
     // B51: harness_initiative 任务缺 journey_id 会导致 initiative_runs + Notion 游离，提前 warn
     const warnings = [];
@@ -171,10 +177,11 @@ router.post('/', async (req, res) => {
       `INSERT INTO tasks (
          title, description, priority, task_type, status,
          project_id, area_id, goal_id, location,
-         payload, trigger_source, domain, okr_initiative_id, ability_id
+         payload, trigger_source, domain, okr_initiative_id, ability_id,
+         blocked_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-       RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, payload, created_at`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+       RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, payload, blocked_at, created_at`,
       [
         title.trim(),
         description,
@@ -190,6 +197,7 @@ router.post('/', async (req, res) => {
         domain,
         okr_initiative_id,
         ability_id,
+        initialBlockedAt,
       ]
     );
 

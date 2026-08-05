@@ -352,6 +352,25 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     console.warn(`[skill-relay][GUARD] docker ps 检查失败（保守放行 spawn）: ${err.message}`);
   }
 
+  // DB 层幂等防重：initiative_runs 有非终态行 → 拒绝二次 spawn（task 8419142d）
+  // fail-open：DB 报错时保守通过，不能让 DB 抽风挡住正常调度
+  try {
+    const activeRunCheck = await dbPool.query(
+      `SELECT id FROM initiative_runs
+       WHERE current_task_id = $1
+         AND phase NOT IN ('done','failed')
+         AND deadline_at > NOW()
+       LIMIT 1`,
+      [task.id]
+    );
+    if (activeRunCheck.rows.length > 0) {
+      console.warn(`[dispatcher][spawn-guard] active_run_guard: task=${task.id} initiative_run=${activeRunCheck.rows[0].id} — refusing duplicate spawn`);
+      return { ok: false, mode: RELAY_FLAG, deferred: true, reason: 'active_run_guard', containerId: activeRunCheck.rows[0].id };
+    }
+  } catch (guardErr) {
+    console.warn(`[skill-relay][spawn-guard] DB 守门查询失败（保守通过）: ${guardErr.message}`);
+  }
+
   // ─── xian 分支：task.location='xian' → bridge 派发 ─────────────────────────
   const targetLocation = task.location ?? null;
   if (targetLocation === 'xian') {
