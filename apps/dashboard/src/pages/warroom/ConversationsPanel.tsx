@@ -130,11 +130,21 @@ export default function ConversationsPanel({ journeyId, gpId }: ConversationsPan
   const fetchMessages = useCallback(async (convId: string) => {
     setLoadingMsgs(true);
     try {
-      const res = await fetch(`/api/brain/conversations/${encodeURIComponent(convId)}/messages?limit=100`);
+      // Fix-3: AbortController 10s 超时保护
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10_000);
+      const res = await fetch(
+        `/api/brain/conversations/${encodeURIComponent(convId)}/messages?limit=100`,
+        { signal: controller.signal }
+      );
+      clearTimeout(timeoutId);
       const data = await res.json();
       setMessages(data.messages || []);
-    } catch {
-      setConvError('加载消息失败');
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name !== 'AbortError') {
+        setConvError('加载消息失败');
+      }
+      setMessages([]);
     } finally {
       setLoadingMsgs(false);
     }
@@ -227,6 +237,12 @@ export default function ConversationsPanel({ journeyId, gpId }: ConversationsPan
         <div className="flex-1 overflow-y-auto space-y-2 mb-3 min-h-0">
           {loadingMsgs && (
             <div className="text-[11px] text-slate-600 text-center py-4">加载中…</div>
+          )}
+          {/* Fix-3: 空态文字 */}
+          {!loadingMsgs && messages.length === 0 && (
+            <div className="flex items-center justify-center py-8 text-slate-600 text-sm">
+              暂无消息，发送第一条吧
+            </div>
           )}
           {messages.filter((m) => m.role !== 'system').map((m) => {
             const badge = turnMarkerLabel(m.turn_marker);

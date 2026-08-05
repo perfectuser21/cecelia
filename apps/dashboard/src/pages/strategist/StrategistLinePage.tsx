@@ -804,7 +804,15 @@ function DecisionTab({ lineId }: { lineId: string }) {
                 >
                   <div className="flex items-center gap-2.5">
                     <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sm.dot}`} />
-                    <span className="text-[13px] text-slate-200 flex-1 min-w-0">{t.title}</span>
+                    {/* Fix-2: UUID 降级 + data-testid */}
+                    <span
+                      data-testid="decision-card-title"
+                      className="text-[13px] text-slate-200 flex-1 min-w-0"
+                    >
+                      {/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t.title)
+                        ? (t.description || '待拍板事项')
+                        : t.title}
+                    </span>
                     <span className={`text-[11px] px-1.5 py-px rounded border border-slate-700/50 ${sm.text} flex-shrink-0`}>
                       {sm.label}
                     </span>
@@ -817,6 +825,11 @@ function DecisionTab({ lineId }: { lineId: string }) {
                   {t.description && (
                     <div className="text-[12px] text-slate-500 mt-1.5 leading-relaxed line-clamp-2">{t.description}</div>
                   )}
+                  {/* Fix-2: A/B 选项按钮（纯 UI，无后端调用） */}
+                  <div className="flex items-center gap-2 mt-2">
+                    <button className="text-[11px] px-2 py-1 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25 transition-colors">通过</button>
+                    <button className="text-[11px] px-2 py-1 rounded bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25 transition-colors">否决</button>
+                  </div>
                   <div className="text-[11px] text-slate-700 mt-1">{fmtRelative(t.created_at)}</div>
                 </div>
               );
@@ -976,8 +989,198 @@ function PlaceholderTab({ label, icon: Icon }: { label: string; icon: ComponentT
       </div>
       <div>
         <div className="text-[15px] text-slate-400 font-semibold mb-1">{label}</div>
-        <div className="text-[13px] text-slate-600">建设中，敬请期待</div>
+        <div className="text-[13px] text-slate-600">待建设</div>
       </div>
+    </div>
+  );
+}
+
+// ── 要素 Tab（Fix-1: 接真数据替换占位） ─────────────────────────────────────
+
+function ElementsTab({ lineId }: { lineId: string }) {
+  const [steps, setSteps] = useState<JourneyStep[]>([]);
+  const [cells, setCells] = useState<StepCell[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedStep, setSelectedStep] = useState<JourneyStep | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      fetch(`/api/brain/journey_steps?journey_id=${encodeURIComponent(lineId)}&limit=50`).then(r => r.json()),
+      fetch(`/api/brain/journey_step_links?journey_id=${encodeURIComponent(lineId)}&cells=1&limit=500`).then(r => r.json()),
+    ])
+      .then(([stepsData, cellsData]) => {
+        const arr: JourneyStep[] = Array.isArray(stepsData) ? stepsData : (stepsData?.items ?? []);
+        setSteps(arr.sort((a, b) => a.step_number - b.step_number));
+        const cellArr: StepCell[] = Array.isArray(cellsData) ? cellsData : (cellsData?.items ?? []);
+        setCells(cellArr);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [lineId]);
+
+  const cellsByStep = useMemo(() => {
+    const map: Record<string, StepCell[]> = {};
+    for (const cell of cells) {
+      if (!map[cell.step_id]) map[cell.step_id] = [];
+      map[cell.step_id].push(cell);
+    }
+    return map;
+  }, [cells]);
+
+  const elementKeys = useMemo(() => {
+    const found = new Set<string>();
+    for (const cell of cells) {
+      if (cell.cell_kind === 'element') found.add(cell.cell_key);
+    }
+    return STANDARD_ELEMENT_KEYS.filter(k => found.has(k))
+      .concat([...found].filter(k => !STANDARD_ELEMENT_KEYS.includes(k)));
+  }, [cells]);
+
+  const selectedStepCells = selectedStep ? (cellsByStep[selectedStep.id] ?? []) : [];
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 p-6 text-slate-600 text-sm">
+        <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+        加载要素账本…
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-0">
+      {/* 左侧：Step × 要素矩阵 */}
+      <div className={`flex flex-col min-h-0 overflow-hidden border-r border-slate-800/60 transition-all ${selectedStep ? 'w-[55%]' : 'w-full'}`}>
+        <div className="flex items-center gap-3 px-5 py-2.5 border-b border-slate-800/40 bg-slate-900/30 flex-shrink-0 text-[11px]">
+          <span className="text-slate-400 font-semibold tracking-[0.08em] uppercase">要素账本</span>
+          {cells.length > 0 && (
+            <>
+              <span className="text-slate-700 mx-1">·</span>
+              <span className="text-emerald-400 font-mono">{cells.filter(c => c.cell_status === 'green').length}</span>
+              <span className="text-slate-600">/{cells.length} 格覆盖</span>
+            </>
+          )}
+        </div>
+
+        {/* 矩阵表头 */}
+        <div className="flex-shrink-0 border-b border-slate-800/50 overflow-x-auto">
+          <table className="w-full min-w-[480px] text-[11px] font-mono">
+            <thead>
+              <tr>
+                <th className="text-left pl-5 pr-2 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase w-8">#</th>
+                <th className="text-left pr-3 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase">步骤</th>
+                <th className="text-center px-2 py-2 text-slate-600 font-semibold w-10" title="能力">能</th>
+                {elementKeys.map(key => (
+                  <th key={key} className="text-center px-1.5 py-2 text-slate-600 font-semibold w-10" title={key}>
+                    {key.length > 4 ? key.slice(0, 3) + '…' : key}
+                  </th>
+                ))}
+                <th className="text-center px-2 py-2 text-slate-600 font-semibold w-10" title="场景">景</th>
+              </tr>
+            </thead>
+          </table>
+        </div>
+
+        {/* 矩阵内容 */}
+        <div className="flex-1 overflow-y-auto">
+          {steps.length === 0 ? (
+            <div className="p-8 flex flex-col items-center gap-3 text-center">
+              <LayoutGrid className="w-8 h-8 text-slate-700" />
+              <div className="text-[13px] text-slate-600">本线暂无步骤账本</div>
+              <div className="text-[11px] text-slate-700">账本模板铺入后自动出现</div>
+              {elementKeys.length === 0 && (
+                <div className="mt-2 text-[11px] text-slate-700">
+                  要素轴：{STANDARD_ELEMENT_KEYS.slice(0, 3).join(' / ')} 等
+                </div>
+              )}
+            </div>
+          ) : (
+            <table className="w-full min-w-[480px] text-[11px] font-mono">
+              <tbody>
+                {steps.map(step => {
+                  const stepCells = cellsByStep[step.id] ?? [];
+                  const capCells = stepCells.filter(c => c.cell_kind === 'capability');
+                  const scnCells = stepCells.filter(c => c.cell_kind === 'scenario');
+                  const isSelected = selectedStep?.id === step.id;
+                  const stepDot = (STEP_STATUS_META[step.status] ?? STEP_STATUS_META.planned).dot;
+                  const greenCap = capCells.filter(c => c.cell_status === 'green').length;
+                  const greenScn = scnCells.filter(c => c.cell_status === 'green').length;
+
+                  return (
+                    <tr
+                      key={step.id}
+                      onClick={() => setSelectedStep(isSelected ? null : step)}
+                      className={`border-b border-slate-800/30 cursor-pointer transition-colors ${
+                        isSelected ? 'bg-indigo-500/10 border-indigo-500/20' : 'hover:bg-slate-800/20'
+                      }`}
+                    >
+                      <td className="pl-5 pr-2 py-2.5 w-8">
+                        <span className="text-slate-700 text-[10px]">{step.step_number}</span>
+                      </td>
+                      <td className="pr-3 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${stepDot} ${step.status === 'in_progress' ? 'wr-pulse' : ''}`} />
+                          <span className={`text-[12px] ${isSelected ? 'text-indigo-200 font-semibold' : 'text-slate-200'} truncate`}>
+                            {step.name}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="text-center px-2 py-2.5 w-10">
+                        {capCells.length > 0 ? (
+                          <span className={`text-[10px] font-mono ${greenCap === capCells.length ? 'text-emerald-400' : greenCap > 0 ? 'text-amber-400' : 'text-slate-600'}`}>
+                            {greenCap}/{capCells.length}
+                          </span>
+                        ) : <span className="text-slate-800">—</span>}
+                      </td>
+                      {elementKeys.map(key => {
+                        const cell = stepCells.find(c => c.cell_kind === 'element' && c.cell_key === key);
+                        if (!cell) return (
+                          <td key={key} className="text-center px-1.5 py-2.5 w-10">
+                            <span className="text-slate-800">—</span>
+                          </td>
+                        );
+                        return (
+                          <td key={key} className="text-center px-1.5 py-2.5 w-10">
+                            <div className="flex justify-center">
+                              <CellDot status={cell.cell_status} size="xs" />
+                            </div>
+                          </td>
+                        );
+                      })}
+                      <td className="text-center px-2 py-2.5 w-10">
+                        {scnCells.length > 0 ? (
+                          <span className={`text-[10px] font-mono ${greenScn === scnCells.length ? 'text-emerald-400' : greenScn > 0 ? 'text-amber-400' : 'text-slate-600'}`}>
+                            {greenScn}/{scnCells.length}
+                          </span>
+                        ) : <span className="text-slate-800">—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* 图例 */}
+        {steps.length > 0 && (
+          <div className="flex-shrink-0 flex items-center gap-4 px-5 py-2 border-t border-slate-800/40 bg-slate-900/20 text-[10px]">
+            <span className="text-slate-700">要素轴：FR / NFR / 判定点 / 不变量 / 失败语义 / 效果确认 / 两轴衔接</span>
+          </div>
+        )}
+      </div>
+
+      {/* 右侧：格子账本详情 */}
+      {selectedStep && (
+        <div className="flex flex-col min-h-0 overflow-hidden" style={{ width: '45%' }}>
+          <StepLedgerPanel
+            step={selectedStep}
+            cells={selectedStepCells}
+            onClose={() => setSelectedStep(null)}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -1090,7 +1293,7 @@ export default function StrategistLinePage() {
             {activeTab === 'roadmap' && <RoadmapTab detail={detail} />}
             {activeTab === 'morning' && <MorningTab />}
             {activeTab === 'decision' && lineId && <DecisionTab lineId={lineId} />}
-            {activeTab === 'elements' && <PlaceholderTab label="要素" icon={Activity} />}
+            {activeTab === 'elements' && lineId && <ElementsTab lineId={lineId} />}
             {activeTab === 'investment' && <InvestmentTab detail={detail} />}
           </div>
         )}

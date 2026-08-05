@@ -171,11 +171,16 @@ const ST_STYLE = `
 
 // ── 主页面 ────────────────────────────────────────────────────────────────────
 
+// Fix-5: smoke 行过滤正则
+const SMOKE_RE = [/^\[smoke\]/i, /^gp-agg-smoke/i];
+
 export default function StrategistPage() {
   const navigate = useNavigate();
   const [areas, setAreas] = useState<LineArea[]>([]);
   const [loading, setLoading] = useState(true);
   const [clock, setClock] = useState('');
+  // Fix-4: 全貌页数字行四格
+  const [panoNums, setPanoNums] = useState({ features: 0, gp: 0, decisions: 0, activeTasks: 0 });
 
   const fetchLines = useCallback(async (silent = false) => {
     try {
@@ -183,7 +188,12 @@ export default function StrategistPage() {
       const res = await fetch('/api/brain/warroom/lines');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setAreas(Array.isArray(data?.areas) ? data.areas : []);
+      // Fix-5: 过滤 smoke 前缀行
+      const filtered = (Array.isArray(data?.areas) ? data.areas : []).map((area: LineArea) => ({
+        ...area,
+        lines: area.lines.filter((l: LineSummary) => !SMOKE_RE.some(re => re.test(l.name))),
+      }));
+      setAreas(filtered);
     } catch {
       // 加载失败时保留旧数据，不清空
     } finally {
@@ -196,6 +206,26 @@ export default function StrategistPage() {
     const poll = setInterval(() => fetchLines(true), 30_000);
     return () => clearInterval(poll);
   }, [fetchLines]);
+
+  // Fix-4: 并发拉取四格数字
+  useEffect(() => {
+    (async () => {
+      try {
+        const [featRes, gpRes, decRes, taskRes] = await Promise.allSettled([
+          fetch('/api/brain/features?limit=1').then(r => r.json()),
+          fetch('/api/brain/golden-paths?limit=1').then(r => r.json()),
+          fetch('/api/brain/decisions?status=active&limit=1').then(r => r.json()),
+          fetch('/api/brain/tasks?status=in_progress&limit=1').then(r => r.json()),
+        ]);
+        setPanoNums({
+          features: featRes.status === 'fulfilled' ? (featRes.value.total ?? featRes.value.items?.length ?? 0) : 0,
+          gp: gpRes.status === 'fulfilled' ? (gpRes.value.total ?? gpRes.value.items?.length ?? 0) : 0,
+          decisions: decRes.status === 'fulfilled' ? (decRes.value.total ?? decRes.value.items?.length ?? 0) : 0,
+          activeTasks: taskRes.status === 'fulfilled' ? (taskRes.value.total ?? taskRes.value.items?.length ?? 0) : 0,
+        });
+      } catch { /* 静默失败 */ }
+    })();
+  }, []);
 
   useEffect(() => {
     const tick = () => setClock(shanghaiClock());
@@ -246,6 +276,21 @@ export default function StrategistPage() {
             <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
+      </div>
+
+      {/* ── 数字行（Fix-4：四格数字行）── */}
+      <div className="flex items-center gap-0 border-b border-slate-800/60 bg-slate-900/30 flex-shrink-0">
+        {[
+          { label: 'Features', value: panoNums.features, color: 'text-violet-400' },
+          { label: 'GP数', value: panoNums.gp, color: 'text-emerald-400' },
+          { label: '决策数', value: panoNums.decisions, color: 'text-amber-400' },
+          { label: '在干活', value: panoNums.activeTasks, color: 'text-blue-400' },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="flex-1 flex flex-col items-center py-2 border-r border-slate-800/40 last:border-r-0">
+            <span className={`text-[18px] font-bold font-mono leading-none ${color}`}>{value}</span>
+            <span className="text-[10px] text-slate-600 mt-0.5">{label}</span>
+          </div>
+        ))}
       </div>
 
       {/* ── 主内容 ── */}
