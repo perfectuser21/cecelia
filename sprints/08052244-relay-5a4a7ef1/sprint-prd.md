@@ -42,7 +42,7 @@
 
 **FR-1 交付物**：
 - 在 Brain DB `journey_step_links` 格子账本中，为 F1 开发闭环的"artifact 可验证性"能力新建格子条目（cell_kind=capability），记录当前状态为"分散实现、无独立模块、无可执行 E2E 验收"
-- 写入格子坐标：journey=`e6f803f2`，step=artifact-verification，cell_kind=capability，cell_status=grey（纸面）
+- 写入格子坐标：journey=`e6f803f2`，step=kernel-contract-a20，cell_kind=capability，cell_status=gray（纸面）
 - **不修改 PR #4457 代码**（mutate_downstream_pr_allowed: false）
 
 **验收断言**：
@@ -50,9 +50,10 @@
 SELECT id, cell_kind, cell_status FROM journey_step_links
 WHERE step_id IN (
   SELECT id FROM journey_steps WHERE journey_id = 'e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29'
+    AND name ILIKE '%kernel-contract-a20%'
 ) AND cell_kind = 'capability'
   AND assertion ILIKE '%artifact%';
--- 期望：返回至少 1 行，cell_status='grey'
+-- 期望：返回至少 1 行，cell_status='gray'
 ```
 
 ---
@@ -79,7 +80,7 @@ WHERE step_id IN (
   SELECT id FROM journey_steps WHERE journey_id = 'e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29'
     AND name ILIKE '%kernel%'
 ) GROUP BY cell_kind, cell_status;
--- 期望：capability/grey 1行，element/grey 2行，scenario/grey 4行
+-- 期望：capability/gray 1行，element/gray 2行，scenario/gray 4行
 ```
 
 ---
@@ -100,7 +101,7 @@ WHERE step_id IN (
 - **不修改 PR #4457 代码**：本 sprint 仅做账本写入，不触碰 cumulative branch
 - **不重复 Fleet transport 工作**：PR #4617 已合并，跳过
 - **Brain API 优先**：所有写入通过 `localhost:5221/api/brain/` 接口，不直接 psql 写入
-- **格子状态保守**：当前 PR #4457 proof_complete=false，格子一律标 grey/纸面，不虚报 green
+- **格子状态保守**：当前 PR #4457 proof_complete=false，格子一律标 gray/纸面，不虚报 green
 - **行数约束**：本文件 ≤ 160 行
 
 ---

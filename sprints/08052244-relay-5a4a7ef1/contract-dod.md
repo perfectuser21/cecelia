@@ -11,14 +11,15 @@
 [BEHAVIOR] B-1: journey_step kernel-contract-a20 在 journey e6f803f2 中存在
 manual:bash: curl -s "http://localhost:5221/api/brain/journey_steps?journey_id=e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29" | jq '[.[] | select(.name | test("kernel";"i"))] | length >= 1'
 
-[BEHAVIOR] B-2: journey_step_links 中存在 artifact-verification 能力格子（cell_kind=capability，cell_status=gray）
-manual:bash: curl -s "http://localhost:5221/api/brain/journey_step_links?journey_id=e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29&cells=1&cell_kind=capability" | jq '[.[] | select(.cell_key | test("artifact";"i"))] | length >= 1'
+[BEHAVIOR] B-2: journey_step_links 中存在 artifact-verification 能力格子（cell_kind=capability，cell_status=gray，归属步骤 kernel-contract-a20）
+manual:bash: curl -s "http://localhost:5221/api/brain/journey_step_links?journey_id=e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29&cells=1&cell_kind=capability&limit=500" | jq '[.[] | select(.cell_key | test("artifact";"i"))] | length >= 1'
+# 注意：artifact-verification 格子挂在 kernel-contract-a20 步骤下（不单独建步骤），step_id 由 B-1 写入步骤获取
 
 [BEHAVIOR] B-3: journey_step_links 中存在 A2-0 合同维度格子 ≥ 4 格（cell_kind ∈ capability/element/scenario，cell_key 含 a20）
-manual:bash: curl -s "http://localhost:5221/api/brain/journey_step_links?journey_id=e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29&cells=1" | jq '[.[] | select(.cell_key | test("a20";"i"))] | length >= 4'
+manual:bash: curl -s "http://localhost:5221/api/brain/journey_step_links?journey_id=e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29&cells=1&limit=500" | jq '[.[] | select(.cell_key | test("a20";"i"))] | length >= 4'
 
 [BEHAVIOR] B-4: 所有新写入格子（cell_key 含 a20 或 artifact）的 cell_status 均为 gray，不存在 green 状态
-manual:bash: curl -s "http://localhost:5221/api/brain/journey_step_links?journey_id=e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29&cells=1" | jq '[.[] | select(.cell_key | test("a20|artifact";"i")) | select(.cell_status == "green")] | length == 0'
+manual:bash: curl -s "http://localhost:5221/api/brain/journey_step_links?journey_id=e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29&cells=1&limit=500" | jq '[.[] | select(.cell_key | test("a20|artifact";"i")) | select(.cell_status == "green")] | length == 0'
 
 ---
 

@@ -75,7 +75,7 @@ describe('Kernel DevOps 格子账本 — sprint 08052244-relay-5a4a7ef1', () => 
    */
   test('B-2: artifact-verification 能力格子存在（cell_kind=capability，cell_status=gray）', async () => {
     const cells = await fetchJSON(
-      `${BRAIN}/api/brain/journey_step_links?journey_id=${JOURNEY_ID}&cells=1&cell_kind=capability`
+      `${BRAIN}/api/brain/journey_step_links?journey_id=${JOURNEY_ID}&cells=1&cell_kind=capability&limit=500`
     );
 
     assert.ok(Array.isArray(cells), '响应应为数组');
@@ -109,7 +109,7 @@ describe('Kernel DevOps 格子账本 — sprint 08052244-relay-5a4a7ef1', () => 
    */
   test('B-3: A2-0 合同维度格子 ≥ 4 格存在（cell_key 含 a20）', async () => {
     const cells = await fetchJSON(
-      `${BRAIN}/api/brain/journey_step_links?journey_id=${JOURNEY_ID}&cells=1`
+      `${BRAIN}/api/brain/journey_step_links?journey_id=${JOURNEY_ID}&cells=1&limit=500`
     );
 
     assert.ok(Array.isArray(cells), '响应应为数组');
@@ -157,7 +157,7 @@ describe('Kernel DevOps 格子账本 — sprint 08052244-relay-5a4a7ef1', () => 
    */
   test('B-4: 所有 a20/artifact 格子 cell_status=gray（禁止虚报 green）', async () => {
     const cells = await fetchJSON(
-      `${BRAIN}/api/brain/journey_step_links?journey_id=${JOURNEY_ID}&cells=1`
+      `${BRAIN}/api/brain/journey_step_links?journey_id=${JOURNEY_ID}&cells=1&limit=500`
     );
 
     assert.ok(Array.isArray(cells), '响应应为数组');

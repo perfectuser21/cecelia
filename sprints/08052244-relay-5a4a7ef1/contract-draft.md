@@ -22,10 +22,10 @@ PR #4457（Kernel Harness 累积分支，A2-0 原子行为等价合同，11 行�
 - 期望：GET /api/brain/journey_steps?journey_id=e6f803f2-... 结果中，name 含 "kernel" 的条目 ≥ 1
 
 [BEHAVIOR] B-2: `journey_step_links` 格子账本中，存在 `artifact-verification` 能力格子（cell_kind=capability，cell_status=gray）
-- 归属步骤：kernel-contract-a20（step_id 由 B-1 创建）
+- 归属步骤：**kernel-contract-a20**（即 B-1 创建的步骤，step_id 由 B-1 获取；artifact-verification 格子不单独建步骤，挂在 kernel-contract-a20 步骤下）
 - cell_key: artifact-verification-capability
 - assertion_ref: PR #4457 分散实现、无独立模块审计记录
-- 期望：GET /api/brain/journey_step_links?journey_id=e6f803f2-...&cells=1&cell_kind=capability 返回结果中，cell_key='artifact-verification-capability' 的条目存在
+- 期望：GET /api/brain/journey_step_links?journey_id=e6f803f2-...&cells=1&cell_kind=capability 返回结果中，cell_key='artifact-verification-capability' 的条目存在，且其 step_id 对应 kernel-contract-a20
 
 [BEHAVIOR] B-3: `journey_step_links` 格子账本中，存在 A2-0 合同维度格子共 ≥ 4 格（cell_kind ∈ capability/element/scenario）
 - 格子清单：
