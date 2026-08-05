@@ -1,5 +1,6 @@
-# Sprint: sprints/08041554-doc-foundation-knife0 (f1cd8a2e-476e-4827-a26c-5e44293d018b)
-# 任务: 刀0: 文档约束正本落地+三方对账闸+docs目录登记闸（六型制地基）
-# 开始时间: 2026-08-04
-# 注: 前一个 run (legacy_relay, phase=generate) 无任何产物，本次从 Step 1 全新开跑
-planner: done (sprint-prd.md@75ae999d4, invariants=7, fr=6)
+# Sprint: sprints/08051141-relay-7835c87b (7835c87b-ca2e-4c2f-9c54-28d910d14211)
+# 任务: 军师台GP四级下钻真落地——版本对比表+紫diff+行详情+步骤可点（对版f881eef2）
+# 开始时间: 2026-08-05
+# run_id: 3e158533-b700-4553-afa6-62c9f9ca9a07
+planner: done (sprint-prd.md@32c7c6f7c, invariants=8, fr=4)
+proposer: done (contract-draft.md, contract-dod.md, tests/e2e-gp-drill.spec.ts, scenarios=5, testids=6)
