@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.267.235
+**Brain 版本**: 1.267.236
 
 **状态**: 生产运行中
 
@@ -20,6 +20,14 @@
 - 修复：`capture-inbox.js` 的 `capture_atoms` INSERT 追加 `ON CONFLICT (capture_id, target_type) DO NOTHING RETURNING id`；Migration 390 为 `capture_atoms(capture_id, target_type)` 添加 `UNIQUE` 约束（`uq_capture_atoms_capture_target`），代码层与 DB 层双重防护。DO NOTHING 时 `atomId=null`，调用方兼容此空值。
 - 同步修正：`notion-capture-ingest.js` 与本文件凭据来源统一为 `Notion-juke（bot=cc20260728, workspace=Zenithjoy-July）`；`docker-compose.yml` 追加 `NOTION_INBOX_TOKEN` / `NOTION_INBOX_DB_ID` 占位符。
 - 回归测试永久入库：`capture-inbox.test.js` 三用例（[BEHAVIOR][BEHAVIOR-3][INV-4]）锁入 CI。
+## Brain 1.267.236 — F1 接单失守三联修复（注册/调度/spawn 幂等）
+
+- 修复 POST /api/brain/tasks 携带 status=blocked 被注册层白名单强制改为 queued 的缺陷（ALLOWED_CREATE_STATUSES + blocked_at INSERT）。
+- 修复 depends_on_prev 串行语义失效：根因同上（初始 status 被篡改），blocked 任务进了 queued 池导致并行抢跑。
+- 修复同 task_id 被双容器重复 spawn：harness-skill-relay.js spawn 前增 DB 查 initiative_runs 非终态行幂等守卫（active_run_guard）。
+- 回归测试：f1-registration-dispatch.test.js（TC-A×4/TC-B×1/TC-C×3/TC-REG×1，9 个断言全绿）。
+- 回退会恢复：blocked 任务被当 queued 抢跑、同任务双容器竞争。
+
 ## Brain 1.267.234 — 合同申诉仲裁制（运动员不能自己当裁判）
 
 - #4664 的 reopen_gan_contract 缺制衡：Generator 报 CONTRACT_SELF_CONTRADICTION/CONTRACT_TEST_UNSATISFIABLE 即自动重开 GAN——被审查者可单方面触发对审查产物（合同）的推翻，存在"喊合同有问题来逃活"的偷懒后门。
@@ -27,11 +35,6 @@
 - 每 run 重开一次的上限与案卷 E 号 blocker 留痕机制不变。
 - 回退会恢复：Generator 一句话就能推翻已批合同。
 
-## Brain 1.267.232 — sidecar 测试 mock curl（CI 分片4 必挂 20min 根治）
-
-- 纯测试改动:#4666 的 sidecar 独立测试执行真实 bluegreen-sidecar.sh,mock 了 docker 没 mock curl——CI 无 Brain 时 90×(curl 3s+sleep 2s) healthz 轮询每用例干等 3-7 分钟,brain-unit 分片4 必撞 timeout-minutes:20 被杀(全仓 PR 被挡);本地则把 drain-cancel POST 打到真实生产 Brain。
-- 修复:mock bin 补假 curl(断网+零睡眠);execSync 60s 保险丝;回归哨兵断言成功路径 <30s 且 curl 走 mock。
-- 回退会恢复:所有 PR 的 brain-unit (4) 重新必挂 20 分钟。
 ## Brain 1.267.233 — Judge 闭环三修（r41 实证：最后一道闸从来没能自动修复）
 
 - **① Judge FAIL 缺 failure_class → 全部死等人工**：`harness-judge.js` 三个 FAIL 出口里，机械闸与 LLM 终判都不填 `failure_class`；derive 的 `deriveFailureClassRoute` 把 null 归入 unknown → `wait:human_review`。Judge 是最后一道闸，它一判 FAIL 就必然卡人工——"Judge FAIL 后自动修复"这条路从上线起就没通过（r41 实测卡死在此）。现两个出口都带分类，LLM 未给时兜底 `evidence_insufficient`。
@@ -40,13 +43,19 @@
 - 配套：judge prompt 显式要求输出 `failure_class` 并说明两类语义（填错会派错人）；`runJudgeGate` 新增 `mechanicalGateFn` 注入点（可测性）。
 - 回退会恢复：Judge 每次 FAIL 都要人工捞，且捞回来还可能派错角色。
 
+## Brain 1.267.232 — sidecar 测试 mock curl（CI 分片4 必挂 20min 根治）
+
+- 纯测试改动:#4666 的 sidecar 独立测试执行真实 bluegreen-sidecar.sh,mock 了 docker 没 mock curl——CI 无 Brain 时 90×(curl 3s+sleep 2s) healthz 轮询每用例干等 3-7 分钟,brain-unit 分片4 必撞 timeout-minutes:20 被杀(全仓 PR 被挡);本地则把 drain-cancel POST 打到真实生产 Brain。
+- 修复:mock bin 补假 curl(断网+零睡眠);execSync 60s 保险丝;回归哨兵断言成功路径 <30s 且 curl 走 mock。
+- 回退会恢复:所有 PR 的 brain-unit (4) 重新必挂 20 分钟。
+
 ## Brain 1.267.231 — 合同故障自动重开 GAN（r40 死锁出路）
 
 - 实证：r40 全链路推进到 Evaluator 真跑判 FAIL，根因在合同资产自身（final-E2E 脚本拿含 npm 前导文本的完整 stdout 与单行 PASS 做相等比较）。Generator 受 CONTRACT IS LAW 约束无权修合同，旧路由把 blocked/semantic_refusal 一刀切 `wait:human_review` → run 死等。同类死锁当天已两见（r33 伪 RED 占位桩 / r40 E2E 脚本缺陷）——结构性根因：GAN 阶段无人真正执行合同内验证脚本，此类缺陷只能在下游真跑时暴露，因此系统必须有自动修复回路：合同的 bug 退回给写合同的 Proposer 和批合同的 Reviewer。
 - 修复链：① callback 决策行投影新增 `error_code`（路由信号）；② derive：generator 报 `CONTRACT_SELF_CONTRADICTION`/`CONTRACT_TEST_UNSATISFIABLE` → `reopen_gan_contract`（每 run 限一次，第二次回落人工防合同震荡）；③ loop：写 reopen 决策行（callback_hop 消费语义防重复路由）＋把下游发现写进案卷（blocker `E<round>-1`，下一轮 proposer/reviewer 从 inputs.case_file 看到重开原因）＋合同 approved→revision；④ 趋势闸让路：reopen 行比最新 reviewer verdict 新时禁止 force_approve 把刚被证伪的合同原样再批回去。
 - 回退会恢复：合同资产缺陷 → Generator 死锁 → run 永久等人工。
 
-## Brain 1.267.229 — Notion 个人 Inbox 增量采集（F6加厚）
+## Brain 1.267.232 — Notion 个人 Inbox 增量采集（F6加厚）
 
 新增 `notion-capture-ingest` scheduler job：每5分钟增量拉取 Notion Inbox 数据库，`dedupe_key='notion:inbox:<page_id>'` 幂等写入 captures + capture_atoms，`notion_page_id` 落 captures 表（migration 388）。凭据来源 Notion-juke（bot=cc20260728, workspace=Zenithjoy-July），`NOTION_INBOX_TOKEN` + `NOTION_INBOX_DB_ID` 未配置时静默跳过。
 
