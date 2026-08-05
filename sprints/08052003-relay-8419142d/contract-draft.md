@@ -18,12 +18,11 @@ gear: hotfix
 
 ## Test Contract
 
-| # | 类型 | 描述 | 对应断言 |
-|---|------|------|---------|
-| TC-A | [BEHAVIOR] | POST 注册含 status=blocked → DB 行 status=blocked, blocked_at 非 null | 断言 A |
-| TC-B | [BEHAVIOR] | dispatcher 遇 status=blocked 任务 → spawnFn 零次调用 | 断言 B |
-| TC-C | [BEHAVIOR] | 同 task_id 在途容器存在 → 二次 spawn 被拒，日志含关键词 | 断言 C |
-| TC-REG | [BEHAVIOR] | 回归：注册 1 queued + 2 blocked 串行序列，仅首个被派发 | 断言 A+B |
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| 注册 blocked 写入 | `packages/brain/src/__tests__/f1-registration-dispatch.test.js` | TC-A-1: 携带 status=blocked 时，INSERT 的 $5 参数应为 "blocked"/TC-A-2: 携带 status=blocked 时，INSERT SQL 必须含 blocked_at 字段 | → FAIL（ALLOWED_CREATE_STATUSES 无 blocked，$5 写 queued） |
+| spawn 幂等防重 | `packages/brain/src/__tests__/f1-registration-dispatch.test.js` | TC-C-1: initiative_runs 存在非终态行 → spawn 被拒绝，reason=active_run_guard/TC-C-2: initiative_runs 无非终态行 → 正常放行（不误阻）/TC-C-3: DB 守门查询失败 → 保守通过（fail-open） | → FAIL（无 initiative_runs 守卫，直接 spawn） |
+| 注册序列回归 | `packages/brain/src/__tests__/f1-registration-dispatch.test.js` | TC-REG-1: status=blocked 注册时，INSERT 参数不得包含 "queued"（状态不被篡改） | → FAIL（两个 blocked 任务被改写为 queued） |
 
 ---
 
