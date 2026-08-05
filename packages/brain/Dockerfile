@@ -35,7 +35,9 @@ RUN apk add --no-cache curl bash procps tini docker-cli docker-cli-compose git o
 # 历史事故：容器漏装 codex CLI → spawn ENOENT → cecelia-run breaker failures=351 OPEN
 # → 阻断所有 dispatch（spec_review/code_review_gate/arch_review/initiative_review）。
 # 容器内默认路径 /usr/local/bin/codex，由 docker-compose CODEX_BIN env 显式指定。
-RUN npm install -g @openai/codex@0.116.0
+# 2026-08-05 事故：0.116.0 读宿主 0.146.0 维护的团队 config（default_permissions 新键）启动即死，
+# arch_review 全量秒挂。codex 版本必须与宿主 brew codex / ~/.codex-team* config 保持兼容。
+RUN npm install -g @openai/codex@0.146.0
 
 # Install gh CLI for shepherd.js (gh pr view/merge) and harness-watcher.js (gh run list).
 # Use release tarball (not apk's github-cli, which lives in community repo and is less stable).
