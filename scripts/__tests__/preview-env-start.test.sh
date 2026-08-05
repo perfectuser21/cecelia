@@ -36,6 +36,8 @@ setup() {
   mkdir -p "$BIN"
   DROPDB_MARKER="$TMP/dropdb_saw_old_pid_status"
   NPM_MARKER="$TMP/npm_calls"
+  PSQL_MARKER="$TMP/psql_calls"
+  : > "$PSQL_MARKER"
   BRAIN_NM_TARGET="$REPO_ROOT/node_modules"
   BRAIN_BRAIN_NM_TARGET="$REPO_ROOT/packages/brain/node_modules"
   BRAIN_LOCK_TARGET="$REPO_ROOT/package-lock.json"
@@ -91,7 +93,12 @@ SH
   printf '#!/bin/bash\nexit 0\n' >"$BIN/pg_dump"; chmod +x "$BIN/pg_dump"
   printf '#!/bin/bash\ncat >/dev/null\nexit 0\n' >"$BIN/pg_restore"; chmod +x "$BIN/pg_restore"
   printf '#!/bin/bash\nexit 0\n' >"$BIN/createdb"; chmod +x "$BIN/createdb"
-  printf '#!/bin/bash\nexit 0\n' >"$BIN/psql"; chmod +x "$BIN/psql"
+  cat >"$BIN/psql" <<'SH'
+#!/bin/bash
+printf '%s\n' "$*" >> "${PSQL_MARKER:?}"
+exit 0
+SH
+  chmod +x "$BIN/psql"
 
   # mock dropdb：调用发生的那一刻，记录 PID_FILE 里的旧进程是否还活着
   cat >"$BIN/dropdb" <<SH
@@ -106,7 +113,7 @@ SH
   chmod +x "$BIN/dropdb"
 
   export PATH="$BIN:$PATH"
-  export REPO_ROOT PREVIEW_BASE_DIR NPM_MARKER BRANCH_ROOT_LOCK_CONTENT
+  export REPO_ROOT PREVIEW_BASE_DIR NPM_MARKER PSQL_MARKER BRANCH_ROOT_LOCK_CONTENT
   export BRAIN_NM_TARGET BRAIN_BRAIN_NM_TARGET BRAIN_LOCK_TARGET
 }
 
@@ -137,6 +144,19 @@ if [ "${RC:-1}" -eq 0 ]; then
   pass "脚本正常完成（exit 0）"
 else
   fail "脚本非正常退出" "exit code=${RC:-unknown}，见 $TMP/stdout.log"
+fi
+
+# ── 断言：克隆完成后必须灭活预览库里的 harness 任务（2026-08-05 preview-4643 事故）──
+# 预览库是生产整库快照，携带 in_progress/queued 的 harness_initiative 任务；预览 Brain
+# startup-sync 会把它们当孤儿重点火，与生产 Brain 争抢同一 fleet-worker/run。灭活 UPDATE
+# 必须打在预览库（-d $DB_NAME）上，绝不允许打在生产库 cecelia 上。
+NEUTRALIZE_CALL=$(grep -E "harness_initiative" "$PSQL_MARKER" 2>/dev/null | grep -E "UPDATE tasks" | head -1)
+if [ -z "$NEUTRALIZE_CALL" ]; then
+  fail "克隆后未灭活预览库 harness 任务" "psql 调用记录无 harness_initiative UPDATE: $(tr '\n' ';' < "$PSQL_MARKER" 2>/dev/null)"
+elif echo "$NEUTRALIZE_CALL" | grep -q -- "-d cecelia_preview_test900001"; then
+  pass "克隆后已对预览库执行 harness 任务灭活 UPDATE"
+else
+  fail "灭活 UPDATE 未指向预览库" "实际调用: $NEUTRALIZE_CALL"
 fi
 teardown
 
