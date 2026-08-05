@@ -91,7 +91,10 @@ const taskBundleSchema = z.object({
 // record(unknown) 在 transport 层无条件接住，数值过滤挪到落库前
 // （attempt-store.js numericRubricScores），只留 number 项写入 DB。
 const decisionSchema = z.object({
-  rubric_scores: z.record(z.unknown()).optional(),
+  // strict output 要求"声明即必填"，非 GAN 角色只能填 null——必须用 nullish
+  // 同时放行 null 与 undefined。用 optional() 会拒绝 null，整条回调 400、
+  // 容器白干、attempt 卡 running 到租约过期（r38 实证回归）。
+  rubric_scores: z.record(z.unknown()).nullish(),
 }).passthrough();
 
 // 案卷式 GAN 出口字段（design doc §数据流1）。r17 教训：zod 对象 schema 默认
@@ -103,7 +106,7 @@ const caseFileBlockerSchema = z.object({}).passthrough();
 const caseFileSchema = z.object({
   blockers: z.array(caseFileBlockerSchema).default([]),
   feedback_md: z.string().optional(),
-}).optional();
+}).nullish();
 
 const harnessResultSchema = z.object({
   contract_version: z.literal(RESULT_CONTRACT_VERSION),

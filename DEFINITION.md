@@ -6,11 +6,17 @@
 
 
 
-**Brain 版本**: 1.267.227
+**Brain 版本**: 1.267.228
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.228 — 案卷字段 null 兼容（r38 实证回归修复）
+
+- 回归来源：1.267.226 把 `case_file` 列进 runner schema 顶层 `required`（OpenAI strict 要求"声明即必填"），codex 对非 GAN 角色因此输出 `"case_file":null`、`"rubric_scores":null`。但 Brain 侧 zod 用的是 `.optional()`——**只放行 undefined，拒绝 null** → 整条终态回调被 400 拒收 → 容器正常干完活（planner 已生成/提交/推送 PRD）结果却丢失 → attempt 永远卡 `running` 直到租约过期 → reconciler 空转、run 卡死在 planning。
+- 修复：`caseFileSchema` 与 `decision.rubric_scores` 由 `.optional()` 改 `.nullish()`，同时放行 null 与 undefined。
+- 回归测试：`parseHarnessResult` 对 `case_file:null` + `rubric_scores:null` 的完整 payload 必须不抛。
 
 ## Brain 1.267.227 — codex-review 活性以 lock 文件为准（liveness 60 秒恒判死修复）
 
