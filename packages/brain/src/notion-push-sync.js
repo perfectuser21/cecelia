@@ -1,5 +1,6 @@
 import { notionReq, getToken } from './recurring-notion-sync.js';
 import { computeProgress } from './advancement-progress.js';
+import { pushCapturesToNotionInbox } from './notion-inbox-push.js';
 
 const JOURNEY_DB = '358c40c2-ba63-8148-bde7-e313d789931a';
 const FEATURE_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
@@ -501,4 +502,5 @@ export async function runNotionPushSync(pool) {
   await pushDecisions(pool, token);
   await pushInitiativeContracts(pool, token);
   await pushAdvancementItems(pool, token);
+  await pushCapturesToNotionInbox(pool);
 }
