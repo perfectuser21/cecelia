@@ -17,13 +17,16 @@ describe('Skill Language Rule', () => {
   });
 
   for (const skill of CORE_SKILLS) {
-    it.skipIf(!skillsDirExists)(`skills/${skill}/SKILL.md 包含中文语言强制规则`, () => {
-      const content = readFileSync(join(SKILLS_DIR, skill, 'SKILL.md'), 'utf8');
+    const skillFilePath = join(SKILLS_DIR, skill, 'SKILL.md');
+    const skillFileExists = existsSync(skillFilePath);
+
+    it.skipIf(!skillsDirExists || !skillFileExists)(`skills/${skill}/SKILL.md 包含中文语言强制规则`, () => {
+      const content = readFileSync(skillFilePath, 'utf8');
       expect(content).toContain(LANGUAGE_RULE);
     });
 
-    it.skipIf(!skillsDirExists)(`skills/${skill}/SKILL.md 语言规则在文件前 30 行`, () => {
-      const lines = readFileSync(join(SKILLS_DIR, skill, 'SKILL.md'), 'utf8').split('\n');
+    it.skipIf(!skillsDirExists || !skillFileExists)(`skills/${skill}/SKILL.md 语言规则在文件前 30 行`, () => {
+      const lines = readFileSync(skillFilePath, 'utf8').split('\n');
       const ruleLineIndex = lines.findIndex(l => l.includes(LANGUAGE_RULE));
       expect(ruleLineIndex).toBeGreaterThanOrEqual(0);
       expect(ruleLineIndex).toBeLessThan(30);

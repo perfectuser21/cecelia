@@ -149,7 +149,7 @@ fi
 # ── 断言：克隆完成后必须灭活预览库里的 harness 任务（2026-08-05 preview-4643 事故）──
 # 预览库是生产整库快照，携带 in_progress/queued 的 harness_initiative 任务；预览 Brain
 # startup-sync 会把它们当孤儿重点火，与生产 Brain 争抢同一 fleet-worker/run。灭活 UPDATE
-# 必须打在预览库（-d $DB_NAME）上，绝不允许打在生产库 cecelia 上。
+# 必须打在预览库（-d ${DB_NAME}）上，绝不允许打在生产库 cecelia 上。
 NEUTRALIZE_CALL=$(grep -E "harness_initiative" "$PSQL_MARKER" 2>/dev/null | grep -E "UPDATE tasks" | head -1)
 if [ -z "$NEUTRALIZE_CALL" ]; then
   fail "克隆后未灭活预览库 harness 任务" "psql 调用记录无 harness_initiative UPDATE: $(tr '\n' ';' < "$PSQL_MARKER" 2>/dev/null)"
