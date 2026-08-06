@@ -243,3 +243,8 @@ maybeAlertNotion(category, msg):
 | 新建 | `packages/brain/src/__tests__/notion-channel-sentinel.test.js` |
 | 修改 | `packages/brain/src/scheduler-jobs.js`（追加 import + JOBS 条目） |
 | 新增 smoke | `packages/brain/src/cron/__tests__/notion-sentinel-smoke.sh`（可选，不改现有 F6 smoke） |
+
+---
+
+journey_type: user_facing
+target_environment: local_api
