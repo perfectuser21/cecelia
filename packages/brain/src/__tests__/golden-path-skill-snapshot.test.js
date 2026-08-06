@@ -12,25 +12,25 @@ const syncScript = readFileSync(
 );
 
 const EXPECTED = {
-  'golden-path-proposer': {
-    version: '1.3.0',
-    sha256: 'da2ffa626d0859107879cec71dd7f1532904611f68e9a66645378bba0374b174',
+  'capability-proposer': {
+    version: '1.4.0',
+    sha256: '3932f1169a6db4a6dcae8fcc4f24a30c2a6176e2e8da45ac45e9a94c58ae84b1',
   },
-  'golden-path-reviewer': {
-    version: '1.3.0',
-    sha256: '39715ac05ede9a3f1d49d0ccbf987e89f2d4d49030721189ae4e4865981a40d4',
+  'capability-reviewer': {
+    version: '1.4.0',
+    sha256: 'f0f6adeeab7ad498c8f78831761beddec117cdf021e0ca690a6ca06af5f5b12e',
   },
-  'golden-path-mapper': {
+  'capability-mapper': {
+    version: '1.3.0',
+    sha256: '30fa2d73c2f974a24a8662747672c4e0862bb62b5c0494bdf025ebfa82a9d394',
+  },
+  'capability-controller': {
     version: '1.2.0',
-    sha256: '1c0bf642be71bd3226c3eb7da50a17b896f757bd36b485df7c3e568e8ecff9c6',
-  },
-  'golden-path-controller': {
-    version: '1.1.0',
-    sha256: '66c7ba4ae8c03a6eb87af6efa536f5fd77c8f416187b9870480e3ebb8ab3b300',
+    sha256: 'bcd3d112c1cc5a33d9d70b3900b5dc9125c6ea9a595ad677ce8431ed07aafe90',
   },
 };
 
-describe('Golden Path skill snapshots from zenithjoy-skills#172', () => {
+describe('Capability (原 Golden Path) skill snapshots from zenithjoy-skills#184', () => {
   it('keeps all four GP skills in the sync allowlist', () => {
     for (const skill of Object.keys(EXPECTED)) {
       expect(syncScript).toMatch(new RegExp(`^  ${skill}$`, 'm'));

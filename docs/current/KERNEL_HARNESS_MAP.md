@@ -20,8 +20,8 @@
 
 | 要查什么 | 唯一权威源 | 注意 |
 |---|---|---|
-| 什么是价值流 / 能力 / 主干活动 / 特性与使能项，三问法，七动作，场景八格 | zenithjoy-skills 仓库 `golden-path/references/doctrine.md` | ⚠️ 07-24 版缺"能力级 7 项合同"层与"完成定义+非功能需求封版"，补课 PR 未发前以下两行为准 |
-| 能力级 7 项合同（key 清单与铁律） | zenithjoy-skills `golden-path-proposer/SKILL.md` 铁律第 8 条 | 7 个 key：fr_summary / lifelines_and_nfr / yield_order / external_commitment_changes / release_and_blast_radius / success_and_close / budget_guard，禁增第 8 个 |
+| 什么是价值流 / 能力 / 主干活动 / 特性与使能项，三问法，七动作，场景八格 | zenithjoy-skills 仓库 `capability/references/doctrine.md`（原 `golden-path/`，决策 a340f100 追加口径 08-06 skill 层改名，PR #184） | ⚠️ 07-24 版缺"能力级 7 项合同"层与"完成定义+非功能需求封版"，补课 PR 未发前以下两行为准 |
+| 能力级 7 项合同（key 清单与铁律） | zenithjoy-skills `capability-proposer/SKILL.md`（原 `golden-path-proposer/`）铁律第 8 条 | 7 个 key：fr_summary / lifelines_and_nfr / yield_order / external_commitment_changes / release_and_blast_radius / success_and_close / budget_guard，禁增第 8 个 |
 | 完成定义+非功能需求（DoD+NFRs，旧称 11 要素）封版判据与拒绝话术 | Brain DB：`SELECT topic, decision FROM decisions WHERE category='governance' AND status='active'` | 07-29 主理人拍板（migration 370 seed），DoD+NFRs = 拍板4项(FR/NFR/判定点/两轴衔接) + 机器托管7项(不变量/失败语义/死亡告警/效果确认/对抗面/保质期/账本保鲜)，封版不增补 |
 
 ### 分层结构（07-29 拍板终版）
@@ -53,16 +53,16 @@
 ⚠️ 命名地雷：DB 里同时存在 `golden_path`（单数，sprint 级 FR 记录）和 `golden_paths`
 （复数，GP 业务账本），不是一张表，别混。
 
-### skill 家族分工（SSOT 全在 zenithjoy-skills 仓库）
+### skill 家族分工（SSOT 全在 zenithjoy-skills 仓库；决策 a340f100 追加口径 08-06 全系改名，PR #184）
 
-| skill | 管什么 |
+| skill（原名） | 管什么 |
 |---|---|
-| golden-path-mapper | 领域→切几个能力（Mode 1）；新东西归位到哪个能力哪一步（Mode 2） |
-| golden-path-proposer | 单个能力的提案文档 + 7 项合同起草 |
-| golden-path-reviewer | 对抗审查（红方），三镜头 |
-| golden-path-controller | 能力提案编排（proposer↔reviewer 多轮） |
-| golden-path（门面） | 判定链入口 + doctrine.md 所在地 |
-| golden-path-scoping | ⚠️ 疑与 mapper 重叠、待下架确认 |
+| capability-mapper（原 golden-path-mapper） | 领域→切几个能力（Mode 1）；新东西归位到哪个能力哪一步（Mode 2） |
+| capability-proposer（原 golden-path-proposer） | 单个能力的提案文档 + 7 项合同起草 |
+| capability-reviewer（原 golden-path-reviewer） | 对抗审查（红方），三镜头 |
+| capability-controller（原 golden-path-controller） | 能力提案编排（proposer↔reviewer 多轮） |
+| capability（门面，原 golden-path） | 判定链入口 + doctrine.md 所在地 |
+| golden-path-scoping | ⚠️ 疑与 mapper 重叠、待下架确认（未部署遗产，未随本次改名——本身从未落地） |
 | harness-contract-proposer / reviewer | sprint 级合同 GAN（与能力级合同是两层，别混） |
 
 ---

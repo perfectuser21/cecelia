@@ -28,7 +28,7 @@ const fs = require('fs');
 const src = fs.readFileSync('packages/brain/src/task-router.js', 'utf8');
 const n = (src.match(/golden_path_proposal/g) || []).length;
 if (n < 4) { console.error('FAIL: task-router 登记数 ' + n + ' < 4（VALID/SKILL/LOCATION/CAPABILITY 四表）'); process.exit(1); }
-if (!src.includes(\"'golden_path_proposal': '/golden-path-controller'\")) { console.error('FAIL: SKILL_WHITELIST 映射缺失'); process.exit(1); }
+if (!src.includes(\"'golden_path_proposal': '/capability-controller'\")) { console.error('FAIL: SKILL_WHITELIST 映射缺失'); process.exit(1); }
 console.log('task-router 四表登记齐全 ✓');
 "
 
@@ -48,7 +48,7 @@ node -e "
 const fs = require('fs');
 const src = fs.readFileSync('packages/brain/src/harness-skill-relay.js', 'utf8');
 if (!src.includes('export function controllerSkillFor')) { console.error('FAIL: controllerSkillFor 未导出'); process.exit(1); }
-if (!src.includes(\"'golden-path-controller'\")) { console.error('FAIL: golden-path-controller 映射缺失'); process.exit(1); }
+if (!src.includes(\"'capability-controller'\")) { console.error('FAIL: capability-controller 映射缺失'); process.exit(1); }
 if (src.includes(\"loadSkill('harness-controller')\")) { console.error('FAIL: 仍有硬编码 loadSkill(harness-controller)'); process.exit(1); }
 const n = (src.match(/loadSkill\(controllerSkillFor\(task\.task_type\)\)/g) || []).length;
 if (n !== 2) { console.error('FAIL: controllerSkillFor 调用处 ' + n + ' != 2（headless+headed）'); process.exit(1); }
