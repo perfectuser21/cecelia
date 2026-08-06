@@ -8,18 +8,35 @@
 
 
 
-**Brain 版本**: 1.267.237
+**Brain 版本**: 1.267.240
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.267.237 — F5加厚 WS3 成品呈报+裁决窄口（Notion Inbox 三键回读）
+## Brain 1.267.240 — F5加厚 WS3 成品呈报+裁决窄口（Notion Inbox 三键回读）
 
 - 新增 `notion-inbox-push.js`：排序官产物（proposal/morning_summary/acceptance_receipt 白名单）推送主理人 Notion 个人 Inbox，成品行含 AI 摘要/建议去向/置信度/需拍板 flag；幂等键 `notion:product:<task_id>:<type>`，notion_page_id 回写 tasks。
 - 新增 `notion-verdict-ingest.js`：裁决窄口回读，仅白名单结构化字段（✅放行/❌不放行/✏️批注）一次性提交语义消费；fail-closed（非白名单/散文字段永不触发动作），消费即写 captures.consumed_at 幂等锚；放行→tasks completed + decisions 留痕，不放行→cancelled，批注→追加 description。
 - `scheduler-jobs.js` 注册 notion-product-push / notion-verdict-ingest 两个 ≤5min 轮询 job。
 - 决策 efa578b8（异步指挥模式）+ 4c595c84（裁决窄口）。
+
+## Brain 1.267.239 — 仲裁器按故障码分裁定标准
+
+- r43 实证:真仲裁器对 CONTRACT_CI_SCOPE_CONFLICT 类申诉以"合同文本内部无矛盾"为由误驳——该类的矛盾本就不在合同内部,而在合同范围条款与仓库级 CI 硬闸之间。守法执行者(拒绝超范围改 registry)被判"畏难",死路。
+- 修法:callContractArbiter 按 errorCode 分裁定标准——CI 范围冲突类:仓库强制闸门 × 合同范围条款禁止满足 = 客观冲突成立(责任在起草方,重开扩范围),并明示不得以"内部无矛盾"驳回;自相矛盾类标准不变。
+- 回退会恢复:范围冲突类申诉恒被误驳,generator-fix 无限打回。
+
+## Brain 1.267.238 — 仲裁器 URL 双 /v1 修复
+
+- r43 实证:callContractArbiter 拼 `${baseUrl}/v1/chat/completions` 而 resolveToapisConfig 的 baseUrl 已含 /v1 → POST /v1/v1/... 恒 404 → arbitrateContractAppeal 恒 upheld=null → 合同申诉恒落人工。改与 callDeepSeekJudge 同规(strip 尾斜杠 + /chat/completions),回归测试锁定 URL 形状。
+- 回退会恢复:仲裁器永远"不可用",仲裁链形同虚设。
+
+## Brain 1.267.237 — CONTRACT_CI_SCOPE_CONFLICT 进仲裁名单
+
+- r43 实证:合同限定只改 scripts/product-map/,仓库 CI Orphan Test Check 却强制登记根目录 test-registry.yaml——合同与仓库级约定客观冲突,generator/generator-fix 守约即无法修 CI,报 CONTRACT_CI_SCOPE_CONFLICT 后掉进死等人工。
+- 修法:该码加入 CONTRACT_FAULT_ERROR_CODES,走既有仲裁链(arbitrateContractAppeal 裁定→成立才重开 GAN 扩范围/驳回打回干活)。
+- 回退会恢复:范围类合同故障永远卡人工。
 
 ## Brain 1.267.235 — capture_atoms 幂等修复（F6加厚 ed911a7c）
 

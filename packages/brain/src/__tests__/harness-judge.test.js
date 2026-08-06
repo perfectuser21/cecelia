@@ -80,6 +80,61 @@ describe('Judge 模型配置化（最终裁判不该是链路里最弱的模型�
   });
 });
 
+describe('callContractArbiter — URL 拼接与 judge 同规(r43 实证双 /v1 打 404)', () => {
+  it('baseUrl 已含 /v1 时不再重复拼 /v1', async () => {
+    const { callContractArbiter } = await import('../harness-judge.js');
+    let calledUrl = null;
+    await callContractArbiter(
+      { contractText: 'x', errorCode: 'E', claimSummary: 'y' },
+      {
+        config: { apiKey: 'k', baseUrl: 'https://api.example.com/v1', model: 'm' },
+        fetchFn: async (url) => {
+          calledUrl = url;
+          return { ok: true, json: async () => ({ choices: [{ message: { content: '{"upheld":false,"reasoning":"r"}' } }] }) };
+        },
+      },
+    );
+    expect(calledUrl).toBe('https://api.example.com/v1/chat/completions');
+  });
+
+  // r43 实证:真仲裁器对 CONTRACT_CI_SCOPE_CONFLICT 申诉判"合同文本内部无矛盾→驳回"。
+  // 该类的矛盾本来就不在合同内部,而在合同范围条款与仓库级 CI 硬闸之间——
+  // 裁定标准必须按故障码分类,否则守法执行者(拒绝超范围改 registry)永远无路可走。
+  it('CONTRACT_CI_SCOPE_CONFLICT 类:prompt 必须用范围冲突标准,且明示不得以"内部无矛盾"驳回', async () => {
+    const { callContractArbiter } = await import('../harness-judge.js');
+    let sentPrompt = null;
+    await callContractArbiter(
+      { contractText: 'c', errorCode: 'CONTRACT_CI_SCOPE_CONFLICT', claimSummary: 's' },
+      {
+        config: { apiKey: 'k', baseUrl: 'https://api.example.com/v1', model: 'm' },
+        fetchFn: async (url, init) => {
+          sentPrompt = JSON.parse(init.body).messages[1].content;
+          return { ok: true, json: async () => ({ choices: [{ message: { content: '{"upheld":true,"reasoning":"r"}' } }] }) };
+        },
+      },
+    );
+    expect(sentPrompt).toContain('仓库级 CI 硬性要求');
+    expect(sentPrompt).toContain('不得以"合同内部无矛盾"为由驳回');
+    expect(sentPrompt).not.toContain('唯一标准:合同文本内存在客观矛盾');
+  });
+
+  it('自相矛盾类(默认):prompt 保持合同内部矛盾标准', async () => {
+    const { callContractArbiter } = await import('../harness-judge.js');
+    let sentPrompt = null;
+    await callContractArbiter(
+      { contractText: 'c', errorCode: 'CONTRACT_SELF_CONTRADICTION', claimSummary: 's' },
+      {
+        config: { apiKey: 'k', baseUrl: 'https://api.example.com/v1', model: 'm' },
+        fetchFn: async (url, init) => {
+          sentPrompt = JSON.parse(init.body).messages[1].content;
+          return { ok: true, json: async () => ({ choices: [{ message: { content: '{"upheld":false,"reasoning":"r"}' } }] }) };
+        },
+      },
+    );
+    expect(sentPrompt).toContain('合同文本内存在客观矛盾');
+  });
+});
+
 describe('arbitrateContractAppeal — Generator 合同申诉的独立仲裁', () => {
   // Generator 喊"合同自相矛盾"只是申诉,不能自动成立(运动员不能自己当裁判)。
   // 由独立仲裁器(与 Judge 同模型)裁定:成立→重开 GAN;驳回→打回 generator-fix。
