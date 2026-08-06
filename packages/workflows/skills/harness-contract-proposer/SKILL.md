@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.21.0
+version: 9.22.0
 created: 2026-04-08
 updated: 2026-08-04
 changelog:
+  - 9.22.0: 堵「橡皮 closure」口（r43 实证,与 reviewer 9.14.0 配套）——Step 1.4 closure 声明新增硬格式 quote: 字段:必须直接引用本轮合同/DoD 新增或修改后的原文片段(≥20字),无引用的声明性话术("已按合同实际内容关闭")禁用;E 号(重开)blocker 的 quote 必须来自本轮新增条款。r43 实证一句空话 closure 骗过 Reviewer 放行未改合同,下游再撞死,重开白做
   - 9.21.0: 案卷式 GAN 协议（配套 cecelia kernel 1.267.207+，与 reviewer 9.12.0 配套）——新增「案卷 closure 声明」步骤：改合同前先读 `inputs.case_file`，对上一轮 reviewer 行的每条 blocker 按编号（R<round>-<seq>）逐条输出 closure 声明（做了什么/为什么足以关闭），写进本轮结果 `case_file.blockers` 与 `feedback_md`；结果 JSON 顶层新增 `case_file:{blockers[],feedback_md}`，`decision` 新增 `contract_round` 与 push 后的 `contract_sha`（供 Kernel 案卷锚定）；bundle 有 `thin_prd`/`prep_prd_body` 时作为 PRD 正文来源优先于自行推断。
   - 9.20.0: Kernel validation identity late-binding——GAN authoring identity 只作作者 provenance，禁止把 Planner/Proposer/Reviewer 的 attempt/account/capability snapshot 固化为未来验收身份；合同必须使用 Runner 在实际执行角色中注入的 HARNESS_* / CAPABILITY_SNAPSHOT_ID，并用证据摘要串联 Evaluator 与 Judge
   - 9.19.1: 修复 local_api 示例与硬规则自相矛盾——模板改为 DB_URL + 真实 migration + signup/login 双 cookie jar 自举，禁止直接 INSERT 业务身份；同时保留 android_realmachine 枚举，防止 SSOT 同步再次回退 Cecelia 9.17.1 补丁
@@ -578,6 +579,7 @@ curl -sf "localhost:5221/api/brain/registry?type=test&limit=30" > /tmp/test_regi
 
 1. 读 `inputs.case_file`，取出 `author_role: 'reviewer'` 且 `round` 为上一轮的那一行，逐条取出 `blockers[]`（每条带编号 `R<round>-<seq>`）。
 2. 对每条 blocker，按编号输出 closure 声明：**做了什么改动**（合同/DoD/E2E 脚本的具体变更）+ **为什么这个改动足以关闭该 blocker**（对应到 Reviewer 原话指出的缺口）。真改不动的 blocker 不得声明 closed——写不出"做了什么"就说明还没改，如实标注未关闭原因。
+   **closure 必须附原文引用（v9.22 硬格式,r43 橡皮 closure 实证）**：每条 closure 声明必须包含 `quote:` 字段，内容为**直接复制本轮合同/DoD 中新增或修改后的原文片段（≥20 字）**。禁止"已按合同实际内容关闭"/"已修复"这类无引用的声明性话术——r43 实证:这类空话 closure 曾骗过 Reviewer 放行一字未改的合同,导致下游 Generator 再次撞死、整轮重开白做。写不出 quote = 没真改 = 不得声明 closed。E 号 blocker（下游证伪重开写入的）的 quote 必须来自本轮**新增**的条款,不得引用上轮已存在的旧文。
 3. 把 closure 声明写进本轮结果 `case_file.blockers`（格式 `[{"id":"R<round>-<seq>","closure":"<做了什么/为什么足以关闭>"}]`），并同步写入 `feedback_md`（本轮修订说明，含逐条 closure 表）。
 
 **死规则**：closure 声明是给 Reviewer 复核用的，不是自我宣布"已解决"就算数——Reviewer Step 2.5 会逐条对照本轮合同实际内容复核，声明与实际不符（合同没改到位）会被判 still-open，且此类"声明与实际脱节"本身会被记入 Reviewer 对 Proposer 诚信度的观感（虽不直接扣 rubric，但会导致该轮更细致的复核）。
