@@ -10,9 +10,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-// ─── TC-A / TC-REG 公共 mock（task-tasks 路由层）───────────────────────────
+// ─── 公共 mock（TC-A/TC-B/TC-REG 共用）──────────────────────────────────────
 const queryMock = vi.fn();
 vi.mock('../db.js', () => ({ default: { query: (...a) => queryMock(...a) } }));
+
+// TC-B 需要的额外 mock（selectNextDispatchableTask 依赖）
+vi.mock('../alertness-actions.js', () => ({
+  getMitigationState: vi.fn().mockReturnValue({ p2_paused: false, drain_mode_requested: false }),
+}));
+vi.mock('../task-weight.js', () => ({
+  sortTasksByWeight: vi.fn((rows) => rows),
+}));
+vi.mock('../actions.js', () => ({
+  updateTask: vi.fn().mockResolvedValue({}),
+  createTask: vi.fn().mockResolvedValue({}),
+}));
+vi.mock('../slot-allocator.js', () => ({
+  shouldBypassBackpressure: vi.fn().mockReturnValue(true),
+}));
 
 vi.mock('../domain-detector.js', () => ({
   detectDomain: () => ({ domain: 'growth' }),
@@ -256,6 +271,28 @@ describe('TC-C: 双容器幂等防重 (active_run_guard)', () => {
 
     // fail-open：不应因 DB 报错而拒绝
     expect(result.reason).not.toBe('active_run_guard');
+  });
+});
+
+// ─── TC-B：dispatcher selectNextDispatchableTask WHERE 仅选 queued ────────────
+describe('TC-B: dispatcher 遇 blocked 任务 → selectNextDispatchableTask 不选', () => {
+  it('TC-B-1: SELECT SQL WHERE 子句仅选 status=queued，blocked 任务在筛选范围外', async () => {
+    const { selectNextDispatchableTask } = await import('../dispatch-helpers.js');
+
+    queryMock.mockReset();
+    queryMock.mockResolvedValue({ rows: [] }); // 返回空集，模拟无可派发任务
+
+    await selectNextDispatchableTask(['any-goal-id']);
+
+    // 断言：DB 被调用（dispatcher 真的查了 DB）
+    expect(queryMock).toHaveBeenCalled();
+    // 找到包含 SELECT FROM tasks 的主查询
+    const mainSqlCall = queryMock.mock.calls.find(c => /SELECT.*FROM tasks/i.test(c[0]));
+    expect(mainSqlCall).toBeDefined();
+    const sql = mainSqlCall[0];
+    // 断言：WHERE 子句仅选 status='queued'，不含 'blocked'
+    expect(sql).toContain("t.status = 'queued'");
+    expect(sql).not.toMatch(/status\s*=\s*'blocked'/);
   });
 });
 
