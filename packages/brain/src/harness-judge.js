@@ -101,7 +101,7 @@ ${String(input.contractText ?? '').slice(0, 24000)}`,
     '只输出 JSON(不要任何解释文字、不要 markdown 代码围栏):',
     '{"upheld":true|false,"reasoning":"<引用合同原文的具体裁定理由>"}',
   ].join('\n');
-  const resp = await fetchFn(`${cfg.baseUrl}/v1/chat/completions`, {
+  const resp = await fetchFn(`${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${cfg.apiKey}`,
