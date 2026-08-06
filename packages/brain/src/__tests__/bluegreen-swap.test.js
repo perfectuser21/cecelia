@@ -313,6 +313,16 @@ esac
   const bin = join(dir, 'docker');
   writeFileSync(bin, script);
   chmodSync(bin, 0o755);
+  // curl 也必须 mock：sidecar 的 cancel_drain_after_up 会 curl healthz（90×2s 轮询）
+  // 和 POST drain-cancel。不 mock 的后果（CI 事故 2026-08-06 实证）：
+  //   - CI 无 Brain → 每个成功路径用例干等 3-7 分钟 → 分片撞 20min 上限被杀
+  //   - 本地有 Brain → 单测把 drain-cancel POST 打到真实生产 Brain
+  const curlBin = join(dir, 'curl');
+  writeFileSync(curlBin, `#!/usr/bin/env bash
+echo "curl $@" >> "${log}"
+exit 0
+`);
+  chmodSync(curlBin, 0o755);
   return log;
 }
 
@@ -332,6 +342,7 @@ function runSidecar(dir, log, deployRoot, extraEnv = {}) {
         ...extraEnv,
       },
       stdio: 'pipe',
+      timeout: 60_000,
     }).toString();
   } catch (e) {
     code = e.status || 1;
@@ -352,9 +363,14 @@ describe('bluegreen-sidecar.sh（Gate3 failure 场景防护）', () => {
     rmSync(deployRoot, { recursive: true, force: true });
   });
 
-  it('compose up 成功时 exit 0，不调用 blue-fallback', () => {
+  it('compose up 成功时 exit 0，不调用 blue-fallback；且不碰真实网络、不睡长轮询', () => {
     const log = makeSidecarMockDocker(tmp, { primaryComposeFails: false });
+    const startedAt = Date.now();
     const { code, calls } = runSidecar(tmp, log, deployRoot);
+    // 回归哨兵（CI 事故 2026-08-06）：curl 未走 mock 时这里要么慢到分钟级
+    // （CI 无 Brain，90×2s 轮询），要么打到真实生产 Brain（本地）。两者都不可接受。
+    expect(Date.now() - startedAt).toBeLessThan(30_000);
+    expect(calls).toMatch(/curl .*healthz/);
     expect(code).toBe(0);
     // 不应出现 blue-fallback compose up 调用
     expect(calls.split('\n').filter(l => l.includes('compose') && l.includes('blue-fallback'))).toHaveLength(0);

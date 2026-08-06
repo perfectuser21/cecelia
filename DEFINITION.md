@@ -8,11 +8,17 @@
 
 
 
-**Brain 版本**: 1.267.231
+**Brain 版本**: 1.267.232
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.232 — sidecar 测试 mock curl（CI 分片4 必挂 20min 根治）
+
+- 纯测试改动:#4666 的 sidecar 独立测试执行真实 bluegreen-sidecar.sh,mock 了 docker 没 mock curl——CI 无 Brain 时 90×(curl 3s+sleep 2s) healthz 轮询每用例干等 3-7 分钟,brain-unit 分片4 必撞 timeout-minutes:20 被杀(全仓 PR 被挡);本地则把 drain-cancel POST 打到真实生产 Brain。
+- 修复:mock bin 补假 curl(断网+零睡眠);execSync 60s 保险丝;回归哨兵断言成功路径 <30s 且 curl 走 mock。
+- 回退会恢复:所有 PR 的 brain-unit (4) 重新必挂 20 分钟。
 
 ## Brain 1.267.231 — 合同故障自动重开 GAN（r40 死锁出路）
 
