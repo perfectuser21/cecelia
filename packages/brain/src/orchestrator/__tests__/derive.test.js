@@ -202,6 +202,45 @@ describe('合同故障重开 GAN（r40 实证：CONTRACT IS LAW 死锁出路）'
     expect(r.action).toBe('spawn:proposer');
     expect(r.action).not.toBe('force_approve_contract');
   });
+
+  it('重开后 reviewer 已出新 REVISION:趋势闸仍不得拿跨纪元旧轮判震荡强批(r43 实证)', () => {
+    // r43 实证:重开后 reviewer 重审判 REVISION(hop>reopen),#4664 的让路守卫
+    // (reopen 比最新 reviewer 行新)随即解除,趋势闸用重开前 1-3 轮 + 重开后 1 轮
+    // 的全量案卷判 oscillating → 把刚被证伪的合同原样强批回去,重开被撤销。
+    // 纪元规则:趋势闸只看重开纪元内的案卷轮(E 号故障轮起);不足以判趋势 →
+    // 老实回 spawn:proposer 修合同。
+    const reviewerRow = (round, rubric_scores) => ({ round, author_role: 'reviewer', rubric_scores });
+    const caseFile = [
+      reviewerRow(1, { dod_machineability: 8, scope_match_prd: 7 }),
+      reviewerRow(2, { dod_machineability: 6, scope_match_prd: 7 }),
+      reviewerRow(3, { dod_machineability: 8, scope_match_prd: 7 }),
+      // 重开写入的 E 号故障轮(round 4)
+      {
+        round: 4,
+        author_role: 'reviewer',
+        rubric_scores: null,
+        blockers: [{ id: 'E4-1', status: 'open', title: '合同资产被下游执行证伪（合同故障重开）' }],
+      },
+      // 重开后 reviewer 重审(round 4 之后的新轮打分)——与重开前旧轮拼起来
+      // 正好构成 6<8>6 双腿≥2 的"震荡",这是 r43 被强批的确切形态
+      reviewerRow(5, { dod_machineability: 6, scope_match_prd: 7 }),
+    ];
+    const r = derive(baseObserved({
+      contract: { approved: false },
+      pr: null,
+      proposeBranchRn: 3,
+      ganLatestRoundVerdict: 'REVISION',
+      caseFile,
+      decisionLog: [
+        { hop: 2, action: 'verdict:reviewer', detail: { verdict: 'REVISION' } },
+        { hop: 3, action: 'verdict:attempt_callback', detail: { role: 'generator', status: 'blocked', failure_class: 'semantic_refusal', error_code: 'CONTRACT_SELF_CONTRADICTION', hop: 2 } },
+        { hop: 4, action: 'reopen_gan_contract', detail: { callback_hop: 3 } },
+        { hop: 6, action: 'verdict:reviewer', detail: { verdict: 'REVISION_REQUESTED', rn: 3 } },
+      ],
+    }));
+    expect(r.action).toBe('spawn:proposer');
+    expect(r.action).not.toBe('force_approve_contract');
+  });
 });
 
 describe('证据不足退回 Evaluator 重新取证（r41 实证：Judge 要证据却退给 Generator 改码）', () => {
