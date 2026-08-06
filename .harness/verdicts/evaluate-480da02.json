@@ -1,0 +1,19 @@
+{
+  "phase": "evaluate",
+  "verdict": "PASS",
+  "sha": "480da027aea24762e8bb8261d783e31ee5f5d1eb",
+  "verification_level": "L2",
+  "unverifiable": [],
+  "double_gates": {"artifact_gate": "A1-A4 真跑全 OK", "contract_gate": "PASS（无未豁免命中）"},
+  "behaviors": {
+    "B1_noise_exclusion": "PASS D0=288 D1=288（三类噪声注入 debt 不变）",
+    "B2_real_miss_task": "PASS D0=288→289 恰+1",
+    "B3_real_miss_issue": "PASS 中缀含前缀的真实 issue 仍捕捉",
+    "B4_harness_stop_count": "PASS 恰+1 非旧口径+2",
+    "B5_vitest_regression": "PASS 6 passed（红证据 4 failed/2 passed 对照）",
+    "B6_constant_same_source": "OK",
+    "B7_credentials": "OK 零命中"
+  },
+  "e2e": "PASS D0=288 D1=288 D2=289 D3=290 Golden Path 全过；注入数据 0 残留",
+  "real_effect": "真库 m2 debt 462→288-290 区间（合同预期约300相符）"
+}
