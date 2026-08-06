@@ -6,10 +6,11 @@ description: |
   而非"防作弊测试框架"。
   核心职责：(1) spec 对齐用户真需求 (2) criteria 可量化无歧义 (3) happy + error + 边界场景全覆盖
   GAN 对抗**多轮**直到双方达成共识。无硬轮数上限，但 Reviewer 真找不出实质 spec/产品漏洞时必须 APPROVED。
-version: 9.13.0
+version: 9.14.0
 created: 2026-04-08
 updated: 2026-08-05
 changelog:
+  - 9.14.0: 堵「橡皮 closure」口（r43 实证 — proposer 一句"已按合同实际内容关闭"空话 closure E4-1,合同正文一字未改,Reviewer 未核原文即 APPROVED,下游 Generator 拿到未改合同再次撞死,重开白做）——Step 2.5 closed 裁定新增硬格式:必须附 evidence: 字段直接引用本轮合同原文片段(≥20字),无引用=still-open;E 号(重开)blocker 从严,引用条款必须是本轮新增/实质修改的。9.12 已有"以合同实际内容为准"的原则条款但被采样漂移击穿,本次改为可机械核验的格式要求(配套 Kernel 机械闸 backlog)
   - 9.13.0: 堵「伪 RED 占位桩」漏检口（Kernel PR#1581 r33 实证 — fleet-worker-receipt.test.ts 一条测试体是无条件 `throw new Error('TDD RED：...')`，被批准锁定后与"测试文件不可改"铁律死锁，Generator 既无法实现出能通过的代码也不能改测试，只能 BLOCKED，浪费整轮 GAN + Generator 尝试）——Golden Path 覆盖审查新增第 25 条：测试体断言任何输入下都必然失败（不区分实现对错）的占位符 → 批准前必须打回，要求换成断言具体行为、只是当前未实现所以真 FAIL 的正常 TDD RED 断言
   - 9.12.0: 案卷式 GAN 协议（配套 cecelia kernel 1.267.207+）——Step 2.5 收敛追踪整节重写为「案卷 closure 裁定协议」：不再依赖 reviewer 自己的跨轮记忆（每轮都是新会话），改读 bundle inputs.case_file 逐条裁定上一轮 blocker closed/still-open，proposer 的 closure 声明行只作线索、以合同实际内容为准；新增 blocker 必填 why_not_found_earlier + prd_gap 两字段，缺任一作废、不计入扣分依据；blocker 带稳定编号 R<round>-<seq>。结果 JSON 新增顶层 `case_file`（blockers[] + feedback_md）与 `decision.rubric_scores`，closure 裁定表写入 feedback_md。趋势兜底（diverging/oscillating）明确由 Kernel `detectRubricTrend` 负责，旧引用 `harness-gan.graph.js` 改为该函数名；PRD 锚新增 thin_prd/prep_prd_body 读取指引（bundle 有值时以其为准）。7 个 rubric 维度键名一字未动。
   - 9.11.0: Kernel validation identity late-binding——Reviewer task bundle 只描述当前审查者 provenance，不得要求合同改绑为 Reviewer attempt/account/snapshot；审查改为拒绝所有 GAN authoring UUID 硬编码，并要求实际 Generator/Evaluator/Judge 各自使用 Runner attestation 与证据摘要串联
@@ -250,6 +251,8 @@ cat .github/workflows/<workflow文件名>.yml 2>/dev/null || echo "WORKFLOW_NOT_
 
 1. **读案卷**：从 `inputs.case_file` 里取出上一轮 `author_role: 'reviewer'` 的那一行，逐条列出其 `blockers[]`（每条带编号 `R<round>-<seq>`）。
 2. **逐条裁定 closed / still-open**：对照**本轮合同实际内容**逐条核实每条上轮 blocker 是否已解决。案卷里 proposer 那一行的 closure 声明（若存在）只是**线索**，不是判据——Reviewer 必须自己在本轮合同里找到对应改动才能判 closed；proposer 声明"已修"但合同没改到位 = 仍判 still-open。
+   **closed 裁定必须附证据引用（v9.14 硬格式,r43 橡皮 closure 实证）**：closure 裁定表中每条判 closed 的行,必须附 `evidence:` 字段,内容为**直接复制本轮合同正文中体现该修复的原文片段（≥20 字,一字不改）**。找不到可引用的原文 = 判不了 closed,就是 still-open。禁止以 proposer 的任何声明性话术（"已按合同实际内容关闭"/"已修复"/"已验证"）替代原文引用——r43 实证:proposer 一句空话 closure + Reviewer 未核原文放行,导致下游 Generator 拿到一字未改的合同再次撞死,重开白做。
+   **E 号 blocker（合同故障重开）从严**：E 编号 blocker 是下游真实执行证伪后重开写入的,其 closed 裁定除原文引用外,还必须确认引用的条款是**本轮新增或实质修改**的（对照上轮合同能看出差异）;上轮就存在的旧条款不能用来关 E 号 blocker。
 3. **只有裁定完成后，才允许新增 blocker**。新增 blocker 每条**必填两字段**（缺任一则该 blocker **作废**，不得计入任何维度扣分依据——这是应对"死规则1 不可执行"矛盾的消解：作废机制只作用于扣分依据，rubric 机械判定阈值不受影响）：
    - `why_not_found_earlier`：上一轮为什么没发现这个问题（如果是新引入的改动导致的新问题，写"本轮新改动引入，非漏检"）
    - `prd_gap`：对应 PRD 的哪一条具体要求未覆盖（引用 PRD 段落/User Story，不能是"可以更严谨"这类空泛描述）
