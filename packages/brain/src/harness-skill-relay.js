@@ -94,11 +94,12 @@ export function isSkillRelayTask(task) {
 
 /**
  * controllerSkillFor — 按 task_type 选 relay session 要跑的 controller skill（GP2/T2）。
- * golden-path-controller 本体在 skills repo T3 落地；未部署时 loadSkillContent 会带
+ * capability-controller（原 golden-path-controller，决策 a340f100 追加口径改名）本体在
+ * skills repo T3 落地；未部署时 loadSkillContent 会带
  * skill 名 throw（harness-shared.js:62），spawn 硬失败不起半截 session——即"明确报错"。
  */
 export function controllerSkillFor(taskType) {
-  return taskType === 'golden_path_proposal' ? 'golden-path-controller' : 'harness-controller';
+  return taskType === 'golden_path_proposal' ? 'capability-controller' : 'harness-controller';
 }
 
 export function shortId(id) {

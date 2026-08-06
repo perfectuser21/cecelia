@@ -1,44 +1,46 @@
 ---
-name: golden-path-mapper
+name: capability-mapper
 description: |
-  Golden Path Mapper — 领域切分师。管上游「一个领域该切几条 Golden Path」，是
-  golden-path-proposer/reviewer/controller（管「一条已命名 GP 的提案+对抗」）的上游输入源。
+  Capability Mapper（原 Golden Path Mapper）— 领域切分师。管上游「一个领域该切几条
+  Capability」，是 capability-proposer/reviewer/controller（管「一条已命名 GP 的提案+对抗」）的上游输入源。
   有头交互：主理人说一个领域（例如「私域获客」「客服」），产出该领域的 GP 地图——
   触发器计数法切分的 GP 清单、边界声明、横切件池、共享前置清单，每条 GP 给承诺式骨干（3-5 步，
   步骤名必须是客户/老板可感知的承诺，工序词禁当步骤名），派 3 个镜头对抗切法本身，
   收敛后呈主理人拍板，拍板后才写 Brain golden_paths/journeys 账本。
   产物契约 = 领域 GP 地图 markdown + 拍板后的账本写入，不产提案文档、不产代码、不开 PR。
-  触发：/golden-path-mapper、帮我定义X领域的golden path、这个领域切几条路、领域切分。
+  触发：/capability-mapper、帮我定义X领域的能力(Capability)、这个领域切几条能力、领域切分。
   Mode 2（归位模式）：已有领域地图下，判定一个新东西该挂进哪条路的哪一步——不切新路，
   走频率判据→三问法→承诺翻译测试→四问归家→归位裁决单五关判定链，裁决单拍板后才落账。
-  Mode 2 触发：归位、这个加到哪、放哪个golden path、XX算什么、帮我看看XX属于哪。
-version: 1.2.0
+  Mode 2 触发：归位、这个加到哪、放哪个capability、XX算什么、帮我看看XX属于哪。
+version: 1.3.0
 created: 2026-07-17
 changelog:
+  - 1.3.0: skill 改名 golden-path-mapper→capability-mapper（决策 a340f100 追加拍板，Golden Path
+    skill 层全面退役），触发词/description 同步换新词
   - 1.2.0: 固化 GP 级 7 项合同与既有格子账本的引用关系；合同通过 golden_path_id →
     golden_paths.journey_id → journey_step_links 找到账本，禁止复制正文或新建平行账本
   - 1.0.0: 首版（2026-07-17 主理人定型口径）——补上游「领域→切几条路」缺口；四件产物
     （GP清单/边界声明/横切件池/共享前置）+ 承诺式骨干规则（工序词黑名单）+ 三镜头切法对抗，
-    与 golden-path-proposer/reviewer 同批同步升级「承诺式骨干」纪律
+    与 capability-proposer/reviewer 同批同步升级「承诺式骨干」纪律
   - 1.1.0: 归位模式Mode2+doctrine补丁：七动作/场景牌/频率判据/例外铁律——0717主理人定型总纲
     承诺地图体系v1.0
 ---
 
 > **语言规则: 所有输出简体中文。**
 > **角色**: 领域切分师。主理人说一个领域，你产出这个领域该切几条 Golden Path 的地图，
-> 不是某一条 GP 的提案文档（那是 golden-path-proposer 的事）。拍板前绝不写库。
+> 不是某一条 GP 的提案文档（那是 capability-proposer 的事）。拍板前绝不写库。
 
-# /golden-path-mapper — 领域切分师
+# /capability-mapper — 领域切分师
 
 ## 模式总览
 
 本 skill 有两种模式，触发词不同、目标不同，判定链结果不同：
 
 - **Mode 1：切新领域**（原有流程，见下）——主理人说一个新领域，产出该领域该切几条
-  Golden Path 的地图。触发：/golden-path-mapper、帮我定义X领域的golden path、
-  这个领域切几条路、领域切分。
+  Capability 的地图。触发：/capability-mapper、帮我定义X领域的能力(Capability)、
+  这个领域切几条能力、领域切分。
 - **Mode 2：归位**（本次新增，见 Step 5 后）——领域地图已存在，判定主理人抛来的一个
-  新东西该挂进哪条路的哪一步，不切新路。触发：归位、这个加到哪、放哪个golden path、
+  新东西该挂进哪条路的哪一步，不切新路。触发：归位、这个加到哪、放哪个capability、
   XX算什么、帮我看看XX属于哪。
 
 ## GP 合同与格子账本的唯一引用纪律
@@ -54,7 +56,7 @@ changelog:
 5. 禁止为合同层修改 `journey_step_links` 表结构。缺锚点时先补正确关联，不能绕过锚点闸。
 
 mapper 只负责确定引用和归属，不起草、签署或修改 7 项合同正文；合同正文由
-golden-path-proposer 起草、reviewer 攻击、Owner 按版本签字。
+capability-proposer 起草、reviewer 攻击、Owner 按版本签字。
 
 ---
 
@@ -127,7 +129,7 @@ curl -s "$BRAIN/api/brain/golden-paths"
 
 ## Step 4：对抗切法
 
-派 **3 个 fresh subagent** 复用 `Skill(golden-path-reviewer)`（LENS=product/tech/risk），
+派 **3 个 fresh subagent** 复用 `Skill(capability-reviewer)`（LENS=product/tech/risk），
 审查对象是**切法本身**，不是某条 GP 的提案细节：
 
 - **触发器完备性**：漏了哪种起点事件？
@@ -136,7 +138,7 @@ curl -s "$BRAIN/api/brain/golden-paths"
 - **挂片归位**：该挂在哪一步的东西有没有挂错步或漏挂？
 - **横切识别遗漏**：有没有被漏识别成"横切件"、实际却重复在多条 GP 里独立实现的东西？
 
-P0/P1 打回修订；**真找不出实质漏洞时必须 APPROVED（禁凑数打回）**，同 golden-path-reviewer
+P0/P1 打回修订；**真找不出实质漏洞时必须 APPROVED（禁凑数打回）**，同 capability-reviewer
 收敛纪律。
 
 ## Step 5：收敛输出
@@ -156,7 +158,7 @@ P0/P1 打回修订；**真找不出实质漏洞时必须 APPROVED（禁凑数打
 ```
 
 **拍板后**（且仅拍板后）：调用 `Skill(db-update)` 规范，写 Brain `golden_paths` / `journeys` 账本；
-写入时同时校验本文件的唯一引用纪律，并提示主理人可逐条点火 `golden-path-controller`
+写入时同时校验本文件的唯一引用纪律，并提示主理人可逐条点火 `capability-controller`
 深化成正式提案。
 
 **拍板前绝不写库**——地图是给主理人审的草案，不是既成事实。
@@ -352,4 +354,4 @@ BDD+混沌工程（场景牌组）/ RTM / Team Topologies（四个家）。组�
 2. 禁把工序词直接当骨干步骤名（识别/判定/检测/解析/校验/生成/调用等，出现即降级为挂片或分支）
 3. 禁跳过 Step 1 探索直接切分——现状标注必须有代码/Brain 数据证据
 4. 禁三镜头对抗为凑轮次而打回无实质漏洞的切法
-5. 禁越权写某条 GP 的提案文档细节——那是 golden-path-proposer 批准后的工作
+5. 禁越权写某条 GP 的提案文档细节——那是 capability-proposer 批准后的工作
