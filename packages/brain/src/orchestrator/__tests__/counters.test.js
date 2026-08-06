@@ -525,3 +525,43 @@ describe('replayProductConvergence:reopen_gan_contract = 纪元切换(r43 实证
     expect(r.reason).toBe('generator_fix_callback_missing_after_observation');
   });
 });
+
+describe('replayProductConvergence:blocked/failed 终局的 fix attempt = 已答,不是回调失踪(r43 二次实证)', () => {
+  // r43 实证:generator-fix attempt 以 blocked 终局(verdict:attempt_callback,
+  // 不产生 generator-fix-callback 行),其出路已被别的路由收编(仲裁/人工/重开)。
+  // 守卫仍判"回调失踪",两拍杀 run。终局回调 = 已答(aborted),不追讨。
+  const abortSha = 'd'.repeat(40);
+
+  it('fix intent 的 attempt_callback blocked → continue,不判 missing', () => {
+    const rows = [
+      row(1, 'spawn:generator-fix', { trigger_sha: abortSha, failure_class: 'product_failure' }),
+      row(2, 'effect:attempt_launched', {}),
+      {
+        hop: 3,
+        action: 'verdict:attempt_callback',
+        observed: {},
+        detail: { role: 'generator', status: 'blocked', failure_class: 'semantic_refusal', hop: 1 },
+      },
+      row(4, 'wait:generator_fix_callback', {}),
+    ];
+    const r = replayProductConvergence(rows, {
+      currentFailureSet: null,
+      currentHeadSha: abortSha,
+    });
+    expect(r.outcome).toBe('continue');
+  });
+
+  it('无任何终局回调时仍判 missing(原语义不变)', () => {
+    const rows = [
+      row(1, 'spawn:generator-fix', { trigger_sha: abortSha, failure_class: 'product_failure' }),
+      row(2, 'effect:attempt_launched', {}),
+      row(4, 'wait:generator_fix_callback', {}),
+    ];
+    const r = replayProductConvergence(rows, {
+      currentFailureSet: null,
+      currentHeadSha: abortSha,
+    });
+    expect(r.outcome).toBe('failed');
+    expect(r.reason).toBe('generator_fix_callback_missing_after_observation');
+  });
+});
