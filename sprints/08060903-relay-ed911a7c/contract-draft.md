@@ -63,9 +63,9 @@ Brain 容器 `environment` 段增加 `NOTION_INBOX_TOKEN=${NOTION_INBOX_TOKEN:-}
 **测试文件**: `packages/brain/src/__tests__/capture-inbox.test.js`
 
 **断言**：
-1. 同一 `dedupeKey` 二次调用 `pushCapture`，`capture_atoms` INSERT 的 mock 调用次数在第二次之后不增加（首次 count=1，二次后 count 仍=1）
+1. [BEHAVIOR-1] `pushCapture` 生成的 `capture_atoms` INSERT SQL 字符串包含 `ON CONFLICT (capture_id, target_type) DO NOTHING` 子句（SQL 层幂等保障，不通过 mock 调用次数验证）
 2. 首次调用返回 `{ captureId: 'cap-1', atomId: 'atom-1' }`
-3. 二次调用返回 `{ captureId: 'cap-1', atomId: null }`（DO NOTHING 路径，RETURNING 空数组）
+3. [BEHAVIOR-3] ON CONFLICT DO NOTHING 时 `atomId=null`，函数不抛错，返回结构完整
 4. 现有 `pushCaptureAtom` 测试（两次 query 断言）全部通过，不回归
 
 **运行命令**：
@@ -104,9 +104,55 @@ grep -q "Notion-juke" /workspace/packages/brain/src/notion-capture-ingest.js && 
 
 ---
 
+### L3 — FR-6 Smoke（真实 Notion Inbox 端到端，手动触发）
+
+**触发条件**：migration 390 已执行 + `capture-inbox.js` 已上线后，由 evaluator 在 `local_api` 环境手动执行。
+
+**手动触发命令**：
+```bash
+# 1. 确认环境变量已加载
+source ~/.credentials/sync-credentials.sh
+source ~/.credentials/notion-juke.env
+
+# 2. 触发一次采集（同一 notionPageId 重复调用验证幂等）
+node -e "
+const { createPool } = await import('./packages/brain/src/db.js');
+const { pushCapture } = await import('./packages/brain/src/capture-inbox.js');
+const pool = createPool();
+const args = {
+  content: 'L3 smoke 测试页面',
+  source: 'notion',
+  dedupeKey: 'notion:inbox:smoke-l3-manual-001',
+  notionPageId: 'smoke-l3-manual-001',
+  targetType: 'notes',
+  targetSubtype: 'notion_inbox',
+};
+const r1 = await pushCapture(pool, args);
+console.log('首次采集:', JSON.stringify(r1));
+const r2 = await pushCapture(pool, args);
+console.log('二次采集（幂等）:', JSON.stringify(r2));
+await pool.end();
+"
+
+# 3. 数据库确认：capture_atoms 只有一行
+psql \$DATABASE_URL -c "
+SELECT COUNT(*) AS atom_count FROM capture_atoms
+WHERE capture_id = (
+  SELECT id FROM captures WHERE dedupe_key = 'notion:inbox:smoke-l3-manual-001'
+);
+"
+# 期望输出：atom_count = 1（幂等生效）
+```
+
+**通过标准**：
+- 首次 `r1.atomId` 非 null
+- 二次 `r2.atomId` 为 null（DO NOTHING）
+- 数据库 `atom_count = 1`
+
+---
+
 ## 排除范围
 
-- L3 smoke（真实 Notion Inbox 10分钟验证）在 `local_api` 环境由 evaluator 执行，不属于本合同自动化范围
 - capture_atoms 中已存在的重复数据去重（pre-migration 清理）由执行体在 migration 前检查，不列入本合同
 
 ---

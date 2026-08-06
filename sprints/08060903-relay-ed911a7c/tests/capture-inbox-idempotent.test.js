@@ -11,48 +11,19 @@ import { describe, it, expect, vi } from 'vitest';
 import { pushCapture } from '../../../packages/brain/src/capture-inbox.js';
 
 describe('pushCapture 幂等（F6加厚回归 — Contract ed911a7c）', () => {
-  it('[BEHAVIOR-1][BEHAVIOR-2] 同一 dedupeKey 二次调用 pushCapture，capture_atoms INSERT 只触发一次', async () => {
-    let captureAtomInsertCount = 0;
-
-    const pool = {
-      query: vi.fn().mockImplementation((sql) => {
-        if (/INSERT INTO capture_atoms/.test(sql)) {
-          captureAtomInsertCount++;
-          // 首次成功返回 atom，二次 DO NOTHING 返回空 rows
-          return Promise.resolve({
-            rows: captureAtomInsertCount === 1 ? [{ id: 'atom-1' }] : [],
-          });
-        }
-        // captures INSERT（ON CONFLICT DO UPDATE）始终返回同一 captureId
-        return Promise.resolve({ rows: [{ id: 'cap-1' }] });
-      }),
-    };
-
-    const args = {
-      content: '测试页面标题-幂等验证',
+  it('[BEHAVIOR] capture_atoms INSERT 包含 ON CONFLICT DO NOTHING（B-1）', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ id: 'cap-1' }] }) };
+    await pushCapture(pool, {
+      content: '测试页面',
       source: 'notion',
-      dedupeKey: 'notion:inbox:test-page-idempotent-001',
-      notionPageId: 'test-page-idempotent-001',
+      dedupeKey: 'notion:inbox:test-page-id',
+      notionPageId: 'test-page-id',
       targetType: 'notes',
       targetSubtype: 'notion_inbox',
-    };
-
-    // [BEHAVIOR-2] 首次采集：正常写入
-    const r1 = await pushCapture(pool, args);
-    expect(r1).not.toBeNull();
-    expect(r1?.captureId).toBe('cap-1');
-    expect(r1?.atomId).toBe('atom-1');
-
-    const atomInsertCountAfterFirst = captureAtomInsertCount;
-    expect(atomInsertCountAfterFirst).toBe(1);
-
-    // [BEHAVIOR-1] 二次采集（同一页面）：capture_atoms INSERT 不再新增
-    const r2 = await pushCapture(pool, args);
-    expect(r2).not.toBeNull();
-    expect(r2?.captureId).toBe('cap-1'); // 同一 captureId（ON CONFLICT DO UPDATE）
-
-    // 核心断言：capture_atoms INSERT 调用次数未增加
-    expect(captureAtomInsertCount).toBe(atomInsertCountAfterFirst);
+    });
+    const atomInsertCall = pool.query.mock.calls.find(c => /INSERT INTO capture_atoms/.test(c[0]));
+    expect(atomInsertCall).toBeTruthy();
+    expect(atomInsertCall[0]).toMatch(/ON CONFLICT \(capture_id, target_type\) DO NOTHING/);
   });
 
   it('[BEHAVIOR-3] ON CONFLICT DO NOTHING 时 atomId=null，函数不抛错，返回结构完整', async () => {
