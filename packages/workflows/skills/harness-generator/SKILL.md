@@ -5,10 +5,11 @@ description: |
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。一个 Sprint = 一个 Generator = 一个 PR。
-version: 7.12.0
+version: 7.13.0
 created: 2026-04-08
 updated: 2026-08-02
 changelog:
+  - 7.13.0: 冻结档合同来源死锁修复（r42 实证 FROZEN_CONTRACT_ARTIFACTS_MISSING 拒工）——Step 1 原文只有 git fetch/show 合同分支一条路，与冻结档「禁 fetch 任何分支」自相矛盾且合同分支本就不在远端，模型守规则=必死、自作主张=侥幸活（r41/r42 同条件二象性实证）。修法：Step 1 按 HARNESS_FROZEN_BASELINE 分叉，冻结档下合同资产一律从 TaskBundle inputs.contract（Brain 锁定版）原样落盘到 ${SPRINT_DIR}/，这是官方来源不算重写；FROZEN_CONTRACT_ARTIFACTS_MISSING 只允许在 bundle 内也无合同内容时上报
   - 7.12.0: 冻结基线档（生产 run d9785137 / attempt 3aa00156 事故修法）——Step 0.5 从「无条件 rebase 到最新 main」改为按 Kernel 注入的 `HARNESS_FROZEN_BASELINE` 二选一：冻结/对比任务以 `HARNESS_WORKSPACE_START_SHA` 为唯一边界，禁 fetch/rebase/merge/cherry-pick/pull 任何其他候选血统、禁 force push、禁 --no-verify，只许在起始 SHA 之上追加；Step 7 CI 轮询里 BEHIND 在冻结档下不做 `gh pr update-branch`（merge 会把对照候选带进来，血统闸看不出）；普通 dev 档 latest-main rebase 一字不变。三层机械执行：Runner pre-push 血统闸 + Provider 退出后血统断言 + Brain callback 服务端 lineage 校验
   - 7.11.0: gear 档位：Step 0 IS_SKELETON 检测旁新增 WORKSTREAM_INDEX 检测（移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策7）——segmented 档位下存在时只实现 task-plan.json 对应段的 scope/files，禁碰其他段实现文件；测试棋盘共享只许点绿禁改断言（CONTRACT IS LAW 不变）；TDD 两 commit 纪律照旧；default（未设置）保持现行整份 Sprint 一口气实现不变
   - 7.10.0: TDD 纪律新增「禁 mock 边执行规则」（刀2，配套 proposer 9.12.0）——合同 ## 禁 mock 边清单 列出的边，测试代码中 vi.mock/jest.mock/stub 命中即违约（CONTRACT IS LAW 的一部分，evaluator 机械 grep 核查，命中 = CONTRACT-IS-LAW FAIL）；需要真 PG 的测试按合同指定放 integration 命名/位置，CI 由 brain-integration job 起真 Postgres 跑
@@ -183,6 +184,7 @@ fi
 - 禁止 `git push --force` / `--force-with-lease`——冻结档只做 fast-forward 追加
 - 禁止 `git push --no-verify`——运输层 pre-push 血统闸不是建议
 - 唯一合法动作：在 `HARNESS_WORKSPACE_START_SHA` 之上**追加** Red/Green commit 后正常 push
+- 合同资产来源：冻结档下**只认 TaskBundle inputs.contract**（见 Step 1 冻结分支）——盘上没有 sprint 目录不是拒工理由，bundle 里有合同就落盘开工
 
 > 这些禁令由 Runner 侧 pre-push 血统闸 + Provider 退出后的血统断言 + Brain callback 服务端 lineage 校验三层机械执行。任何一层发现 `HARNESS_WORKSPACE_START_SHA` 不再是 HEAD 的祖先，push 失败、Attempt 判死、PR 不被投影。绕过闸门不会让你通过，只会把这次 Attempt 变成 `frozen_baseline_violation`。
 
@@ -192,17 +194,37 @@ fi
 
 ### Step 1: 读合同 + 测试文件清单
 
+**先按档位分叉取合同——冻结档禁 fetch,合同走 TaskBundle,不走 git:**
+
 ```bash
-git fetch origin "${CONTRACT_BRANCH}" 2>/dev/null || true
+if [[ "${HARNESS_FROZEN_BASELINE:-false}" == "true" ]]; then
+  # ── 冻结档:合同资产的唯一合法来源 = TaskBundle inputs.contract(Brain 锁定版) ──
+  # 合同分支是 fleet 工作区本地产物,不在远端;冻结档禁 fetch 任何分支。
+  # TaskBundle 里的 contract_content / e2e_acceptance / prd_content 就是 GAN 批准后
+  # 的锁定官方版本——把它们原样落盘到 ${SPRINT_DIR}/ 不是"自行重写测试",而是
+  # 装配官方资产,与 git show 取文件完全等价:
+  #   contract_content → ${SPRINT_DIR}/contract-draft.md(全文原样)
+  #   合同文内声明的 DoD 段 → ${SPRINT_DIR}/contract-dod.md(原样抽取)
+  #   合同文内声明的测试文件(tests/*.test.*)→ 按声明路径原样落盘,一字不改
+  # 落盘后照常进入 Red 阶段;这些文件受 CONTRACT IS LAW 约束,commit 1 后不可修改。
+  #
+  # FROZEN_CONTRACT_ARTIFACTS_MISSING 只允许在一种情况上报:TaskBundle 的
+  # inputs.contract 里也没有 contract_content(bundle 装配缺陷,责任在 Kernel)。
+  # 盘上没有 sprint 目录 ≠ 合同缺失——先查 bundle 再喊缺。
+  echo "[generator] 冻结档:从 TaskBundle 落盘合同资产到 ${SPRINT_DIR}/"
+else
+  # ── 普通 dev 档:照旧从合同分支取 ──
+  git fetch origin "${CONTRACT_BRANCH}" 2>/dev/null || true
 
-# 读合同（⚠️ harness::contract-filename 接口约定：文件名是 contract-draft.md，不是 sprint-contract.md）
-git show "origin/${CONTRACT_BRANCH}:${SPRINT_DIR}/contract-draft.md"
+  # 读合同（⚠️ harness::contract-filename 接口约定：文件名是 contract-draft.md，不是 sprint-contract.md）
+  git show "origin/${CONTRACT_BRANCH}:${SPRINT_DIR}/contract-draft.md"
 
-# 读 DoD（[ARTIFACT] + [BEHAVIOR]）
-git show "origin/${CONTRACT_BRANCH}:${SPRINT_DIR}/contract-dod.md"
+  # 读 DoD（[ARTIFACT] + [BEHAVIOR]）
+  git show "origin/${CONTRACT_BRANCH}:${SPRINT_DIR}/contract-dod.md"
 
-# 列出测试文件
-git ls-tree -r "origin/${CONTRACT_BRANCH}" -- "${SPRINT_DIR}/tests/"
+  # 列出测试文件
+  git ls-tree -r "origin/${CONTRACT_BRANCH}" -- "${SPRINT_DIR}/tests/"
+fi
 ```
 
 **只读 contract-draft.md，CONTRACT IS LAW。**
