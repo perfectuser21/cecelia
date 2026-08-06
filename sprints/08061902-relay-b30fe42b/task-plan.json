@@ -1,0 +1,23 @@
+{
+  "initiative_id": null,
+  "journey_type": "autonomous",
+  "journey_type_reason": "无 UI/agent 协议/engine 路径线索，纯后台派发链路冒烟，本地文件断言",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "落地 smoke-artifact.json 最小可断言工件（headed relay 冒烟）",
+      "scope": "在 sprints/08061902-relay-b30fe42b/ 写入 smoke-artifact.json，顶层对象仅含 task_id/smoke_tag/mode 三字段且与 task payload 字面相等，随分支 commit 留痕；零产品代码改动",
+      "dod": [
+        "[BEHAVIOR] jq -e '.task_id == \"b30fe42b-86c7-412e-9e05-eb08ac26488e\"' sprints/08061902-relay-b30fe42b/smoke-artifact.json exit 0",
+        "[BEHAVIOR] jq -e '.smoke_tag == \"claude-headed-dispatch-local-31156-4267\"' sprints/08061902-relay-b30fe42b/smoke-artifact.json exit 0",
+        "[BEHAVIOR] jq -e '.mode == \"headed\"' sprints/08061902-relay-b30fe42b/smoke-artifact.json exit 0",
+        "[BEHAVIOR] jq -e 'keys == [\"mode\",\"smoke_tag\",\"task_id\"]' sprints/08061902-relay-b30fe42b/smoke-artifact.json exit 0",
+        "[ARTIFACT] sprints/08061902-relay-b30fe42b/smoke-artifact.json 存在且被 git 跟踪"
+      ],
+      "files": ["sprints/08061902-relay-b30fe42b/smoke-artifact.json"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
