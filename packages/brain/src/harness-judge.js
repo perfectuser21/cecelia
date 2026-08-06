@@ -17,7 +17,9 @@ import path from 'node:path';
 import os from 'node:os';
 
 const DEFAULT_BASE_URL = 'https://toapis.com/v1';
-const DEFAULT_MODEL = 'deepseek-v4-flash';
+// 最终裁判的模型（TOAPIS_JUDGE_MODEL 可覆盖）。Judge 是全链路最后一道否决闸，
+// 误判一次整条链路白跑——不能比被它审查的角色（gpt-5.6-sol）更弱。
+const DEFAULT_MODEL = 'gpt-5.6-sol';
 const DEFAULT_TIMEOUT_MS = 60_000;
 const TRANSCRIPT_CAP = 16_000;
 // agent 完整 stdout 转录上限（#3345 forensics 文件，比 callback 的 4KB tail 全；
@@ -48,6 +50,11 @@ export async function resolveToapisConfig(deps = {}) {
     model: process.env.TOAPIS_JUDGE_MODEL || DEFAULT_MODEL,
   };
 }
+
+// 裁判可用的失败归类（对齐 derive.js deriveFailureClassRoute 的路由分支）：
+//   evidence_insufficient —— 证据不足/取证方式不对 → 退回 Evaluator 重新取证
+//   product_failure       —— 产品行为真的不符合合同 → 退回 Generator 改代码
+export const JUDGE_FAILURE_CLASSES = Object.freeze(['evidence_insufficient', 'product_failure']);
 
 export function normalizeJudgeVerdict(v) {
   const s = String(v || '').trim().toUpperCase();
@@ -421,8 +428,13 @@ export function buildJudgePrompt(input, brainResultOverride) {
     '- 任一 Golden Path 步骤 passed=false，或证据不足以支撑运动员的 PASS → 整体 verdict=FAIL。',
     '- 只有所有步骤都有确凿证据通过时才 verdict=PASS。',
     '',
+    '- 判 FAIL 时必须给出 failure_class，区分这两类（决定系统把活派给谁，填错会派错人）：',
+    '  · "evidence_insufficient"：产品实现可能没问题，是证据不足/取证方式不对',
+    '    （例如只有测试套件"0 失败"的汇总，没有目标命令在真实场景下的原始 stdout 与退出码）→ 系统会让 Evaluator 重新取证。',
+    '  · "product_failure"：证据充分且显示产品行为确实不符合合同/Golden Path → 系统会让 Generator 改代码。',
+    '',
     '只输出 JSON（不要任何解释文字、不要 markdown 代码围栏）：',
-    '{"verdict":"PASS"|"FAIL","coverage":[{"step":"<步骤>","passed":true,"evidence":"<证据片段>"}],"feedback":"<若FAIL，给运动员的结构化修复反馈>"}',
+    '{"verdict":"PASS"|"FAIL","failure_class":"evidence_insufficient"|"product_failure"|null,"coverage":[{"step":"<步骤>","passed":true,"evidence":"<证据片段>"}],"feedback":"<若FAIL，给运动员的结构化修复反馈>"}',
   ].join('\n');
 }
 
@@ -467,6 +479,11 @@ export async function callDeepSeekJudge(input, opts = {}) {
   return {
     verdict: normalizeJudgeVerdict(parsed.verdict),
     coverage: Array.isArray(parsed.coverage) ? parsed.coverage : [],
+    // 裁判自报的失败归类：区分"证据不足→重新取证"与"产品有 bug→改代码"，
+    // 决定 derive 把活派回 Evaluator 还是 Generator。
+    failure_class: JUDGE_FAILURE_CLASSES.includes(parsed.failure_class)
+      ? parsed.failure_class
+      : null,
     feedback: parsed.feedback || null,
   };
 }
@@ -826,6 +843,7 @@ export async function runJudgeGate(ctx, opts = {}) {
   const strict = opts.strict ?? (process.env.JUDGE_STRICT === '1');
   const judgeFn = opts.judgeFn || callDeepSeekJudge;
   const collectFn = opts.collectEvidence || collectEvidence;
+  const mechanicalGateFn = opts.mechanicalGateFn || runMechanicalGate;
 
   const stagePreflight = validateIndependentJudgeStageFacts(ctx.stageFacts);
   if (!stagePreflight.pass) {
@@ -862,7 +880,7 @@ export async function runJudgeGate(ctx, opts = {}) {
   }, opts);
 
   // 刀B：机械闸先行（纯代码，FAIL 不调 DeepSeek）——决策 dc18d43d「无闸不成文」
-  const mech = await runMechanicalGate(
+  const mech = await mechanicalGateFn(
     { ...ctx, brainResult: ev.brainResult || ctx.brainResult, agentStdout: ev.agentStdout, transcript: ev.transcript },
     opts
   );
@@ -873,8 +891,10 @@ export async function runJudgeGate(ctx, opts = {}) {
       instanceLabel: ctx.instanceLabel,
       payload: { agentVerdict, mechanicalGate: mech, finalVerdict: 'FAIL' },
     }, opts);
-    console.warn(`[judge] 机械闸 FAIL → 不调 DeepSeek：${mech.reasons.join('；')}`);
-    return { verdict: 'FAIL', feedback: fb, judged: true };
+    console.warn(`[judge] 机械闸 FAIL → 不调裁判模型：${mech.reasons.join('；')}`);
+    // 机械闸查的是证据完整性（behavior_tests 结构、L3 真机指纹等）——缺的是证据，
+    // 不是产品代码。归 evidence_insufficient 让 Evaluator 重新取证。
+    return { verdict: 'FAIL', feedback: fb, judged: true, failure_class: 'evidence_insufficient' };
   }
 
   // 证据门：无合同 E2E 段且无 Golden Path 步骤 → 裁判没有「该验什么」的独立基准，无法做覆盖对照
@@ -928,8 +948,12 @@ export async function runJudgeGate(ctx, opts = {}) {
 
   if (finalFail) {
     const fb = formatJudgeFeedback({ judgeResult, cov, agentVerdict });
-    console.warn(`[judge] 裁判终判 FAIL（agent=PASS, judge=${judgeResult.verdict}, coverage_ok=${cov.ok}）→ feedback 进 fix loop`);
-    return { verdict: 'FAIL', feedback: fb, judged: true };
+    // 兜底 evidence_insufficient（r41 实证：裁判不给分类 → derive 归 unknown 死等人工）。
+    // 保守选取证而非改码：裁判说不通过时产品实现往往是对的，只是证据没到位；
+    // 误派 Generator 改代码会动到可能本就正确的实现，误派 Evaluator 最多多跑一次取证。
+    const failureClass = judgeResult.failure_class ?? 'evidence_insufficient';
+    console.warn(`[judge] 裁判终判 FAIL（agent=PASS, judge=${judgeResult.verdict}, coverage_ok=${cov.ok}, failure_class=${failureClass}）→ 进 fix loop`);
+    return { verdict: 'FAIL', feedback: fb, judged: true, failure_class: failureClass };
   }
   console.log('[judge] 双 PASS（运动员 + 独立裁判）→ 照常 merge');
   return { verdict: 'PASS', feedback: null, judged: true };

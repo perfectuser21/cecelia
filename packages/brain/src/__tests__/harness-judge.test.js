@@ -87,16 +87,16 @@ describe('Judge FAIL 必须带 failure_class（r41 实证：null → 全部死�
   // "证据不足"（要 Evaluator 重新取证），不是"代码有 bug"（要 Generator 改码），
   // 必须能分流。
   it('LLM 裁判判 FAIL 且未给 failure_class → 兜底归 evidence_insufficient（退回取证，不误判为代码 bug）', async () => {
-    const { runIndependentJudge } = await import('../harness-judge.js');
-    const r = await runIndependentJudge(
+    const { runJudgeGate } = await import('../harness-judge.js');
+    const r = await runJudgeGate(
       {
         worktreePath: '/tmp/x',
         sprintDir: 'sprints/x',
         stageFacts: { pr_state: 'OPEN', pr_merged: false, merge_gate_approved: false },
+        agentVerdict: 'PASS',
       },
       {
-        agentVerdict: 'PASS',
-        collectFn: async () => ({
+        collectEvidence: async () => ({
           contractE2E: 'e2e script',
           goldenPathSteps: ['step1'],
           transcript: 't',
@@ -111,7 +111,6 @@ describe('Judge FAIL 必须带 failure_class（r41 实证：null → 全部死�
         }),
         persistFn: async () => {},
         mechanicalGateFn: async () => ({ pass: true, reasons: [] }),
-        stagePreflightFn: () => ({ pass: true, reasons: [] }),
       },
     );
     expect(r.verdict).toBe('FAIL');
@@ -119,16 +118,16 @@ describe('Judge FAIL 必须带 failure_class（r41 实证：null → 全部死�
   });
 
   it('LLM 裁判显式给出 product_failure → 原样透传（让 generator-fix 改代码）', async () => {
-    const { runIndependentJudge } = await import('../harness-judge.js');
-    const r = await runIndependentJudge(
+    const { runJudgeGate } = await import('../harness-judge.js');
+    const r = await runJudgeGate(
       {
         worktreePath: '/tmp/x',
         sprintDir: 'sprints/x',
         stageFacts: { pr_state: 'OPEN', pr_merged: false, merge_gate_approved: false },
+        agentVerdict: 'PASS',
       },
       {
-        agentVerdict: 'PASS',
-        collectFn: async () => ({
+        collectEvidence: async () => ({
           contractE2E: 'e2e', goldenPathSteps: ['step1'], transcript: 't', agentStdout: 's', brainResult: {},
         }),
         judgeFn: async () => ({
@@ -139,7 +138,6 @@ describe('Judge FAIL 必须带 failure_class（r41 实证：null → 全部死�
         }),
         persistFn: async () => {},
         mechanicalGateFn: async () => ({ pass: true, reasons: [] }),
-        stagePreflightFn: () => ({ pass: true, reasons: [] }),
       },
     );
     expect(r.verdict).toBe('FAIL');
@@ -147,21 +145,20 @@ describe('Judge FAIL 必须带 failure_class（r41 实证：null → 全部死�
   });
 
   it('机械闸 FAIL → 也必须带 failure_class（evidence_insufficient）', async () => {
-    const { runIndependentJudge } = await import('../harness-judge.js');
-    const r = await runIndependentJudge(
+    const { runJudgeGate } = await import('../harness-judge.js');
+    const r = await runJudgeGate(
       {
         worktreePath: '/tmp/x',
         sprintDir: 'sprints/x',
         stageFacts: { pr_state: 'OPEN', pr_merged: false, merge_gate_approved: false },
+        agentVerdict: 'PASS',
       },
       {
-        agentVerdict: 'PASS',
-        collectFn: async () => ({
+        collectEvidence: async () => ({
           contractE2E: 'e2e', goldenPathSteps: ['step1'], transcript: 't', agentStdout: 's', brainResult: {},
         }),
         persistFn: async () => {},
         mechanicalGateFn: async () => ({ pass: false, reasons: ['behavior_tests 缺失'] }),
-        stagePreflightFn: () => ({ pass: true, reasons: [] }),
       },
     );
     expect(r.verdict).toBe('FAIL');
@@ -352,7 +349,7 @@ describe('resolveToapisConfig — env 优先 → toapis.env 兜底', () => {
     const cfg = await resolveToapisConfig({ readFileFn: async () => fileContent });
     expect(cfg.apiKey).toBe('sk-test-fromfile');
     expect(cfg.baseUrl).toBe('https://toapis.com/v1');
-    expect(cfg.model).toBe('deepseek-v4-flash');
+    expect(cfg.model).toBe('gpt-5.6-sol');
   });
   it('兼容 shell source 文件的 export 前缀', async () => {
     const fileContent = [

@@ -142,8 +142,8 @@ describe('证据不足退回 Evaluator 重新取证（r41 实证：Judge 要证�
   // Judge 要"失败路径下直接执行 CLI 的原始 stdout 与退出码"，而 Evaluator 只交了
   // "回归测试套件跑绿了"。旧实现没有这条路径，Judge FAIL 全掉 unknown 死等人工。
   const judgeFail = (fc) => baseObserved({
-    evaluateVerdict: 'PASS',
-    judgeVerdict: 'FAIL',
+    evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-new' },
+    judgeVerdict: { verdict: 'FAIL', pr_head_sha: 'sha-new', failure_class: fc },
     decisionLog: [
       { hop: 1, action: 'spawn:generator', observed: {} },
       { hop: 2, action: 'verdict:evaluate', detail: { verdict: 'PASS', pr_head_sha: 'sha-new' } },
