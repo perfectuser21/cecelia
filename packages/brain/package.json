@@ -43,7 +43,7 @@
     "eslint": "^9.39.2",
     "globals": "^15.15.0",
     "supertest": "^7.2.2",
-    "vitest": "^1.6.1"
+    "vitest": "^3.2.6"
   },
   "version": "1.267.248"
 }
