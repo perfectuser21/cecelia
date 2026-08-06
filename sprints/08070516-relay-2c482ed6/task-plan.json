@@ -12,7 +12,7 @@
         "[BEHAVIOR] bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh real-miss 与 issue-real-miss → 各 exit 0（真实归属缺失恰 +1，排除不误伤）",
         "[BEHAVIOR] bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh harness-once → exit 0（harness 缺归属只计 1 次，停计+双重计数消除）",
         "[BEHAVIOR] cd packages/brain && npx vitest run src/__tests__/ledger-hygiene-m2-noise.test.js → 6 passed（合同测试红→绿）",
-        "[ARTIFACT] packages/brain/src/__tests__/ledger-hygiene-m2-noise.test.js 存在且与合同 tests/ 同源（import 路径改写为 ../ledger-hygiene.js）",
+        "[ARTIFACT] packages/brain/src/__tests__/ledger-hygiene-m2-noise.test.js 存在且与合同 tests/ 同源（仅两处改写：静态 import 语句路径与 MODULE_PATH 常量均改为 ../ledger-hygiene.js，其余逐字同源）",
         "[ARTIFACT] ledger-hygiene.js 导出 LEDGER_SELF_ISSUE_PREFIX，m2 SQL 含 smoke_tag 排除谓词与注释锚，attribution_harness 停计处注明接线恢复",
         "[ARTIFACT] codex/claude-headed-dispatch-smoke.sh 所有 harness_initiative POST body 含 smoke_tag"
       ],

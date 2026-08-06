@@ -13,8 +13,10 @@
  *     （与 raiseBreachAlerts 写入 title 及当日去重查询同源）
  *   - m2 tasks 子查询（attribution_tasks 注释锚保留）排除
  *     title LIKE '[紧急] issue: [ledger-hygiene]%'（由 '[紧急] ' + LEDGER_SELF_ATOM_PREFIX 拼接派生）
- *     与 payload->>'smoke_tag' 非空的行（debt 与 total 同步排除）
+ *     与 payload->>'smoke_tag' 非空的行（debt 与 total 同步排除：谓词置于外层 WHERE，
+ *     即注释锚之后——只在 debt 的 FILTER 内加谓词无法通过位置锚断言）
  *   - m2 issues 子查询（attribution_issues 注释锚保留）排除 title LIKE '[ledger-hygiene]%'
+ *     （debt 与 total 同步排除，位置锚同上）
  *   - attribution_harness 子查询在 ability_id 接线前不计入 m2 的 debt 与 total 求和
  *     （代码注释注明接线后恢复属后续 sprint）
  *   - m2 指标对象 shape 保持 { key, name, value, debt, enabled }
@@ -58,6 +60,12 @@ describe('m2 口径修正 — 排除谓词进 SQL', () => {
     expect(call.sql).toContain('smoke_tag');
     // 守卫自产 [紧急] task 排除（前缀 = '[紧急] ' + LEDGER_SELF_ATOM_PREFIX）
     expect(call.sql).toContain(`[紧急] ${LEDGER_SELF_ATOM_PREFIX}`);
+    // 谓词位置锚（规范§3）：排除谓词在外层 WHERE（/* attribution_tasks */ 注释锚之后），
+    // debt 与 total 同步排除——只在 debt 的 FILTER (WHERE ...) 内加谓词（FILTER 在 FROM 之前）过不了本断言
+    expect(call.sql.indexOf('smoke_tag')).toBeGreaterThan(call.sql.indexOf('attribution_tasks'));
+    expect(call.sql.indexOf(`[紧急] ${LEDGER_SELF_ATOM_PREFIX}`)).toBeGreaterThan(
+      call.sql.indexOf('attribution_tasks')
+    );
   });
 
   it('m2 issues 子查询含自产前缀排除谓词', async () => {
@@ -69,6 +77,8 @@ describe('m2 口径修正 — 排除谓词进 SQL', () => {
     const call = pool.calls.find((c) => c.sql.includes('attribution_issues'));
     expect(call).toBeTruthy();
     expect(call.sql).toContain('[ledger-hygiene]');
+    // 谓词位置锚（规范§2）：排除谓词在外层 WHERE（/* attribution_issues */ 注释锚之后），debt 与 total 同步排除
+    expect(call.sql.indexOf('[ledger-hygiene]')).toBeGreaterThan(call.sql.indexOf('attribution_issues'));
   });
 
   it('m2 求和不再计入 attribution_harness 子指标', async () => {

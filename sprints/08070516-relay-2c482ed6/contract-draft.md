@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1) — 修复 ledger-hygiene m2「归属完整率」口径失真
+# Sprint Contract Draft (Round 2) — 修复 ledger-hygiene m2「归属完整率」口径失真
 
 **Sprint**: sprints/08070516-relay-2c482ed6
 **journey_type**: autonomous
@@ -19,6 +19,8 @@ N/A — 任务无 HTTP 响应。本 sprint 是 Brain 内部守卫指标口径修
 3. **m2 tasks 子查询**（`/* attribution_tasks */`）排除两类噪声：
    - 守卫自产 [紧急] task：`AND title NOT LIKE '[紧急] ' || '${LEDGER_SELF_ATOM_PREFIX}%'` 形态（前缀 = capture-triage.js:162 的 `[紧急] ` 模板 + 既有 `LEDGER_SELF_ATOM_PREFIX`，即逐字 `[紧急] issue: [ledger-hygiene]`，代码里必须由常量拼接派生，禁止孤立第三份字面量）
    - 冒烟标记：`AND payload->>'smoke_tag' IS NULL`（标记形态判定见判定点登记表 J1）
+
+   两类排除谓词均加在子查询**外层 WHERE**（`/* attribution_tasks */` 注释锚之后），**debt 与 total 同步排除**（与§2 issues 一致，防 value 分母被噪声稀释）；禁止只在 debt 的 `FILTER (WHERE ...)` 内加谓词。该位置约束由合同测试的谓词位置锚机检（谓词出现位置必须在注释锚之后，见 tests/ledger-hygiene-m2-noise.test.js）。
 4. **attribution_harness 停计**：`/* attribution_harness */` 子查询在 ability_id 接线前不再计入 m2 的 debt 与 total 求和（删除该查询或保留但不入和均可，代码注释注明「ability_id 接线后恢复属后续 sprint」）。同一 harness 任务缺 journey_id 时仅在 tasks 子查询计 1 次 → 双重计数随之消除（PRD:22）。
 5. **既有测试同步授权**：`packages/brain/src/__tests__/ledger-hygiene.test.js:69-78` 的 m2 断言（`tasks缺2 + issues缺1 + harness缺1 → debt=4`, `value=14/18`）是旧口径的镜像，授权 Generator 将其更新为停计口径（debt=3, value=12/15），其余既有测试不得改动。
 6. **SQL 注释锚保留**：`/* attribution_tasks */`、`/* attribution_issues */` 注释保留（回归测试的 mock 路由锚）。
@@ -172,10 +174,12 @@ bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh issue-real-miss
 
 **验证命令**:
 ```bash
-cd "$(git rev-parse --show-toplevel)/packages/brain" && npx vitest run ../../sprints/08070516-relay-2c482ed6/tests/ledger-hygiene-m2-noise.test.js
+# 对落位副本执行（与 DoD B5 同一条命令）。注意：packages/brain/vitest.config.js include
+# 不覆盖 sprints/**（07-10 大扫除已移除），直接对 sprints/ 路径跑 vitest 恒 "No test files found, exit 1"
+cd "$(git rev-parse --show-toplevel)/packages/brain" && npx vitest run src/__tests__/ledger-hygiene-m2-noise.test.js
 ```
 
-**硬阈值**: vitest 全绿 exit 0
+**硬阈值**: vitest 全绿 exit 0（前置：DoD A3 副本已落位 `packages/brain/src/__tests__/`；红证据复现方式见 Test Contract 表注）
 
 ---
 
@@ -276,5 +280,7 @@ exit 1
 | m2 shape 守护 | `tests/ledger-hygiene-m2-noise.test.js` | shape 保持 | → 绿（既有行为回归守护） |
 | 棘轮骤降不误报 | `tests/ledger-hygiene-m2-noise.test.js` | 骤降不触发击穿 | → 绿（既有 evaluateRatchet 语义守护，PRD:29） |
 | 真库差分场景 | `tests/m2-noise-scenarios.sh` | noise / real-miss / issue-real-miss / harness-once | → 全场景 FAIL（排除未实现，噪声注入即涨账） |
+
+**vitest 红证据执行方式（表注）**：`packages/brain/vitest.config.js` include 不覆盖 `sprints/**`（07-10 已移除），故本表 vitest 红证据以**等深临时副本**复现：将 `tests/ledger-hygiene-m2-noise.test.js` 复制到 `packages/brain/src/__tests__/`（按 DoD A3 的两处改写点改写路径）后执行 `npx vitest run src/__tests__/ledger-hygiene-m2-noise.test.js`——起草时实证 **4 failed / 2 passed**（Reviewer r1 独立复证一致）。绿证据即 DoD B5 落位后同一条命令 exit 0。
 
 **contract-gate**: cecelia repo，packages/brain/src/lib/contract-gate.js 存在则照常过闸；本合同断言均为「真跑脚本收 exit code + 内部差分断言」与 vitest，无裸 curl / 无 `|| true` 吞错 / 计数断言均为同 tag 差分（自带时效性，历史数据无法冒充差分基线）。
