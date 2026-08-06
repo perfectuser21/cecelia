@@ -1,0 +1,29 @@
+{
+  "initiative_id": null,
+  "task_id_ref": "fde0f221-5c33-4e34-8bc9-138631209abc",
+  "journey_type": "autonomous",
+  "journey_type_reason": "只动 playground 独立 HTTP server 子项目（路由+单测），无 UI / 无 engine hook / 无远端 agent 协议（沿用 PRD 判定）",
+  "target_environment": "playground",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground 新增 GET /ping endpoint（relay smoke thin-slice）",
+      "scope": "playground server 对 GET /ping 返回 200 {\"pong\": true}；任意 query 参数忽略；非 GET 方法走 Express 默认 404；合同测试逐字毕业为 playground/tests/ping.test.js（TDD 两次 commit：commit 1 Red 只加测试，commit 2 Green 只改 server.js）",
+      "dod": [
+        "[BEHAVIOR] GET /ping 返回 200 + {pong: true}（contract-dod.md BEHAVIOR 1，manual:bash 真启 server 真 curl + jq -e）",
+        "[BEHAVIOR] 响应顶层 keys 完整性 == [\"pong\"]，禁用字段 ping/alive/ok/status/result 反向全过（BEHAVIOR 2/3）",
+        "[BEHAVIOR] 携带任意 query 参数仍 200 {pong: true}（BEHAVIOR 4）",
+        "[BEHAVIOR] POST /ping 返回 Express 默认 404（BEHAVIOR 5）",
+        "[BEHAVIOR] INV-1 改动只落 playground/ 与 sprints/（BEHAVIOR 6）",
+        "[ARTIFACT] playground/tests/ping.test.js 为合同测试逐字复制且 playground/server.js 注册 /ping 路由"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/ping.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
