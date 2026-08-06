@@ -62,7 +62,9 @@ export async function pushCapture(pool, {
       try {
         const { rows } = await pool.query(
           `INSERT INTO capture_atoms (capture_id, content, target_type, target_subtype, routed_to_table, routed_to_id, lane)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (capture_id, target_type) DO NOTHING
+           RETURNING id`,
           [captureId, truncated, targetType, targetSubtype, routedToTable, routedToId, lane]
         );
         return { captureId, atomId: rows[0]?.id ?? null };

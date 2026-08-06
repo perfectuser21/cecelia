@@ -4,8 +4,8 @@
  * 每5分钟轮询 Notion Inbox 数据库，增量拉取新增/编辑页面，
  * 通过 dedupe_key='notion:inbox:<page_id>' 幂等写入 captures + capture_atoms。
  *
- * 凭据（均从 process.env 读取，来源 ~/.credentials/notion-ccapi2026.env）：
- *   NOTION_INBOX_TOKEN  — Notion Integration Token（CCAPI2026，AI Hub workspace）
+ * 凭据（均从 process.env 读取，来源 1Password CS "Notion-juke"（bot=cc20260728））：
+ *   NOTION_INBOX_TOKEN  — Notion Integration Token（Notion-juke，workspace=Zenithjoy-July）
  *   NOTION_INBOX_DB_ID  — 个人 Inbox 数据库 ID
  *
  * 两项均为可选：未配置时静默跳过，不影响其他 job。

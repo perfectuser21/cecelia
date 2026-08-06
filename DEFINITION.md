@@ -8,12 +8,18 @@
 
 
 
-**Brain 版本**: 1.267.234
+**Brain 版本**: 1.267.235
 
 **状态**: 生产运行中
 
 ---
 
+## Brain 1.267.235 — capture_atoms 幂等修复（F6加厚 ed911a7c）
+
+- 根因：`pushCapture` 对 `capture_atoms` 的 INSERT 无冲突处理，同一 `(capture_id, target_type)` 组合二次采集时产生重复 atom 行，违反系统幂等不变式。
+- 修复：`capture-inbox.js` 的 `capture_atoms` INSERT 追加 `ON CONFLICT (capture_id, target_type) DO NOTHING RETURNING id`；Migration 390 为 `capture_atoms(capture_id, target_type)` 添加 `UNIQUE` 约束（`uq_capture_atoms_capture_target`），代码层与 DB 层双重防护。DO NOTHING 时 `atomId=null`，调用方兼容此空值。
+- 同步修正：`notion-capture-ingest.js` 与本文件凭据来源统一为 `Notion-juke（bot=cc20260728, workspace=Zenithjoy-July）`；`docker-compose.yml` 追加 `NOTION_INBOX_TOKEN` / `NOTION_INBOX_DB_ID` 占位符。
+- 回归测试永久入库：`capture-inbox.test.js` 三用例（[BEHAVIOR][BEHAVIOR-3][INV-4]）锁入 CI。
 ## Brain 1.267.234 — 合同申诉仲裁制（运动员不能自己当裁判）
 
 - #4664 的 reopen_gan_contract 缺制衡：Generator 报 CONTRACT_SELF_CONTRADICTION/CONTRACT_TEST_UNSATISFIABLE 即自动重开 GAN——被审查者可单方面触发对审查产物（合同）的推翻，存在"喊合同有问题来逃活"的偷懒后门。
@@ -42,7 +48,7 @@
 
 ## Brain 1.267.229 — Notion 个人 Inbox 增量采集（F6加厚）
 
-新增 `notion-capture-ingest` scheduler job：每5分钟增量拉取 Notion Inbox 数据库，`dedupe_key='notion:inbox:<page_id>'` 幂等写入 captures + capture_atoms，`notion_page_id` 落 captures 表（migration 388）。凭据来源 CCAPI2026（AI Hub workspace），`NOTION_INBOX_TOKEN` + `NOTION_INBOX_DB_ID` 未配置时静默跳过。
+新增 `notion-capture-ingest` scheduler job：每5分钟增量拉取 Notion Inbox 数据库，`dedupe_key='notion:inbox:<page_id>'` 幂等写入 captures + capture_atoms，`notion_page_id` 落 captures 表（migration 388）。凭据来源 Notion-juke（bot=cc20260728, workspace=Zenithjoy-July），`NOTION_INBOX_TOKEN` + `NOTION_INBOX_DB_ID` 未配置时静默跳过。
 
 ## Brain 1.267.228 — 案卷字段 null 兼容（r38 实证回归修复）
 
@@ -1773,7 +1779,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | **Schema 版本**: 389 |
+| **schema_version** | 迁移版本追踪 | **Schema 版本**: 390 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -2161,7 +2167,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '389'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '390'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

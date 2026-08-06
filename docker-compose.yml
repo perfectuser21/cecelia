@@ -151,6 +151,10 @@ services:
       # P0-fix: Brain 写发布回执到独立 zenithjoy 库（zenithjoy-db.js 依赖此变量）
       # 未设 → 静默落回 cecelia.zenithjoy schema（拆库目的失效）
       - ZENITHJOY_DB_NAME=zenithjoy
+      # Notion Inbox 采集凭据（F6加厚，notion-capture-ingest.js）
+      # 未配置时静默跳过，不影响其他 job（fail-open，非关键路径）
+      - NOTION_INBOX_TOKEN=${NOTION_INBOX_TOKEN:-}
+      - NOTION_INBOX_DB_ID=${NOTION_INBOX_DB_ID:-b45ca2cb-9c90-83f1-bc41-81ad0b86c1b1}
       # OPENAI_API_KEY is provided via env_file (.env.docker) — do NOT override here
       # Overriding with ${OPENAI_API_KEY} causes empty string when host shell has no export
       # FEISHU_OWNER_OPEN_IDS is provided via env_file (.env.docker) — same reason, do NOT override here
