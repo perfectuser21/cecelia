@@ -1,0 +1,14 @@
+{
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 9,
+    "test_is_red": 9,
+    "internal_consistency": 9,
+    "risk_registered": 8,
+    "verification_oracle_completeness": 9,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 0,
+  "feedback": "r2 复批 APPROVED：新增「真机复核适用性声明」章节内容属实（PRD 零真机关键词、范围禁产品代码、local_api，L2 如实不伪造 L3）；commit 9db7f863c0 仅 +11 行 contract-draft.md，[BEHAVIOR]/tests/DoD/E2E 零变更（DoD 勾选属 generator f72acae8ff）；关键词仅在声明段（89-96行），GP/Test: 行零命中，闸⑤满足闸④不触发；r1 七维评分维持不变。"
+}
