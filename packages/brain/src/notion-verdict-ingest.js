@@ -70,9 +70,10 @@ export async function consumeVerdictFromNotion(pool, page) {
   const properties = page?.properties ?? {};
 
   // INV-1 / INV-2: fail-closed — 检查是否包含白名单 checkbox 字段
-  const approvedValue = extractCheckbox(properties, '放行');
-  const rejectedValue = extractCheckbox(properties, '不放行');
-  const reviewRequired = extractCheckbox(properties, '需拍板');
+  const [approvedField, rejectedField, reviewField] = VERDICT_CHECKBOX_FIELDS;
+  const approvedValue = extractCheckbox(properties, approvedField);
+  const rejectedValue = extractCheckbox(properties, rejectedField);
+  const reviewRequired = extractCheckbox(properties, reviewField);
 
   // 如果白名单 checkbox 字段都不存在（undefined），说明页面没有裁决字段 → fail-closed
   if (approvedValue === undefined && rejectedValue === undefined) {

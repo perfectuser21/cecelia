@@ -223,6 +223,8 @@ cd /workspace && npx vitest run packages/brain/src/__tests__/notion-inbox-push.t
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期 Red 证据 |
 |---|---|---|---|
-| 成品推送 | `packages/brain/src/__tests__/notion-inbox-push.test.js` | INV-3/INV-4/INV-6 + FR-1 属性构造 | → 4+ failures（函数未实现时） |
-| 裁决窄口消费 | `packages/brain/src/__tests__/notion-verdict-ingest.test.js` | INV-1/INV-2/INV-3/INV-4/INV-6 | → 5+ failures（函数未实现时） |
-| 调度注册 | `packages/brain/src/__tests__/scheduler-jobs.test.js`（扩展）| FR-3 两个新 job 注册 | → 2 failures（job 未注册时） |
+| 成品推送 | `sprints/08061350-relay-58e146e1/tests/notion-inbox-push.contract.test.js` | INV-3/INV-4/INV-6/FR-1 | → 4+ failures（函数未实现时） |
+| 裁决窄口消费 | `sprints/08061350-relay-58e146e1/tests/notion-verdict-ingest.contract.test.js` | INV-1/INV-2/INV-3/INV-4/INV-6 | → 5+ failures（函数未实现时） |
+| 调度注册 | `sprints/08061350-relay-58e146e1/tests/scheduler-jobs-ws3.contract.test.js` | FR-3 | → 2 failures（job 未注册时） |
+
+> 仓库运行副本：`packages/brain/src/__tests__/notion-inbox-push.test.js` / `notion-verdict-ingest.test.js` / `scheduler-jobs-ws3.test.js`（与上表 sprint 合同测试同源，由 CI brain-unit 执行）。

@@ -4,7 +4,7 @@
 # 验证: FR-1 notion-inbox-push.js / FR-2 notion-verdict-ingest.js / FR-3 scheduler-jobs.js 注册
 set -euo pipefail
 
-BRAIN_SRC="${WORKSPACE:-/workspace}/packages/brain/src"
+BRAIN_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../src" && pwd)"
 
 echo "=== WS3 smoke: notion-inbox-push.js 文件接缝 ==="
 node -e "

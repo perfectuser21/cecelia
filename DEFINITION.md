@@ -8,11 +8,18 @@
 
 
 
-**Brain 版本**: 1.267.236
+**Brain 版本**: 1.267.237
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.237 — F5加厚 WS3 成品呈报+裁决窄口（Notion Inbox 三键回读）
+
+- 新增 `notion-inbox-push.js`：排序官产物（proposal/morning_summary/acceptance_receipt 白名单）推送主理人 Notion 个人 Inbox，成品行含 AI 摘要/建议去向/置信度/需拍板 flag；幂等键 `notion:product:<task_id>:<type>`，notion_page_id 回写 tasks。
+- 新增 `notion-verdict-ingest.js`：裁决窄口回读，仅白名单结构化字段（✅放行/❌不放行/✏️批注）一次性提交语义消费；fail-closed（非白名单/散文字段永不触发动作），消费即写 captures.consumed_at 幂等锚；放行→tasks completed + decisions 留痕，不放行→cancelled，批注→追加 description。
+- `scheduler-jobs.js` 注册 notion-product-push / notion-verdict-ingest 两个 ≤5min 轮询 job。
+- 决策 efa578b8（异步指挥模式）+ 4c595c84（裁决窄口）。
 
 ## Brain 1.267.235 — capture_atoms 幂等修复（F6加厚 ed911a7c）
 

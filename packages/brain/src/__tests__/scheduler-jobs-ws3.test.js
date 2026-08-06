@@ -9,9 +9,10 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
 
-const SCHEDULER_PATH = resolve('/workspace/packages/brain/src/scheduler-jobs.js');
+const SCHEDULER_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../scheduler-jobs.js');
 
 describe('scheduler-jobs.js — WS3 FR-3 调度注册合同测试', () => {
   it('[FR-3] JOBS 数组中包含 notion-product-push job', () => {
