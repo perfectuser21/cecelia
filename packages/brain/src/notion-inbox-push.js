@@ -32,7 +32,7 @@ async function getDbTitleKey(token, dbId) {
     for (const [key, val] of Object.entries(props)) {
       if (val.type === 'title') return key;
     }
-  } catch (e) {
+  } catch {
     // 网络失败时 fallback，不中断推送流程
   }
   return 'Title'; // fallback：WS3合同测试兼容默认值；真实库字段名通过 API 动态读取

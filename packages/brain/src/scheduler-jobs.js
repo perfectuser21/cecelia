@@ -35,8 +35,8 @@ import { maybeRunTriageOfficerRank } from './triage-officer-rank.js';
 import { runTriageOfficer15min } from './triage-officer-15min.js';
 import { runConversationTtlArchiver } from './conversation-ttl-archiver.js';
 import { runNotionCaptureIngest } from './notion-capture-ingest.js';
-import { pushProductToNotionInbox, runNotionProductPush } from './notion-inbox-push.js';
-import { consumeVerdictFromNotion, runNotionVerdictIngest } from './notion-verdict-ingest.js';
+import { runNotionProductPush } from './notion-inbox-push.js';
+import { runNotionVerdictIngest } from './notion-verdict-ingest.js';
 
 const LOOP_INTERVAL_MS = 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
