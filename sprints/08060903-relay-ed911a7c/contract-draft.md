@@ -157,6 +157,16 @@ WHERE capture_id = (
 
 ---
 
+## Test Contract
+
+| BEHAVIOR | Test File | it() 名称（子串匹配） |
+|----------|-----------|----------------------|
+| [BEHAVIOR] capture_atoms INSERT 包含 ON CONFLICT DO NOTHING（B-1） | `tests/capture-inbox-idempotent.test.js` | capture_atoms INSERT 包含 ON CONFLICT DO NOTHING |
+| [BEHAVIOR-3] ON CONFLICT DO NOTHING 时 atomId=null，函数不抛错，返回结构完整 | `tests/capture-inbox-idempotent.test.js` | ON CONFLICT DO NOTHING 时 atomId=null |
+| [INV-4] 现有 pushCapture 无 targetType 时只写 captures，不写 capture_atoms | `tests/capture-inbox-idempotent.test.js` | INV-4 |
+
+---
+
 ## 不变式约束
 
 | 不变式 | 合同验证方式 |
