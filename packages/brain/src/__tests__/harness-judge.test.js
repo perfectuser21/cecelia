@@ -80,6 +80,24 @@ describe('Judge 模型配置化（最终裁判不该是链路里最弱的模型�
   });
 });
 
+describe('callContractArbiter — URL 拼接与 judge 同规(r43 实证双 /v1 打 404)', () => {
+  it('baseUrl 已含 /v1 时不再重复拼 /v1', async () => {
+    const { callContractArbiter } = await import('../harness-judge.js');
+    let calledUrl = null;
+    await callContractArbiter(
+      { contractText: 'x', errorCode: 'E', claimSummary: 'y' },
+      {
+        config: { apiKey: 'k', baseUrl: 'https://api.example.com/v1', model: 'm' },
+        fetchFn: async (url) => {
+          calledUrl = url;
+          return { ok: true, json: async () => ({ choices: [{ message: { content: '{"upheld":false,"reasoning":"r"}' } }] }) };
+        },
+      },
+    );
+    expect(calledUrl).toBe('https://api.example.com/v1/chat/completions');
+  });
+});
+
 describe('arbitrateContractAppeal — Generator 合同申诉的独立仲裁', () => {
   // Generator 喊"合同自相矛盾"只是申诉,不能自动成立(运动员不能自己当裁判)。
   // 由独立仲裁器(与 Judge 同模型)裁定:成立→重开 GAN;驳回→打回 generator-fix。

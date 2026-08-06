@@ -8,11 +8,16 @@
 
 
 
-**Brain 版本**: 1.267.237
+**Brain 版本**: 1.267.238
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.238 — 仲裁器 URL 双 /v1 修复
+
+- r43 实证:callContractArbiter 拼 `${baseUrl}/v1/chat/completions` 而 resolveToapisConfig 的 baseUrl 已含 /v1 → POST /v1/v1/... 恒 404 → arbitrateContractAppeal 恒 upheld=null → 合同申诉恒落人工。改与 callDeepSeekJudge 同规(strip 尾斜杠 + /chat/completions),回归测试锁定 URL 形状。
+- 回退会恢复:仲裁器永远"不可用",仲裁链形同虚设。
 
 ## Brain 1.267.237 — CONTRACT_CI_SCOPE_CONFLICT 进仲裁名单
 
