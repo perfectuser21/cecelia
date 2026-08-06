@@ -239,6 +239,14 @@ node packages/quality/scripts/devgate/check-dod-mapping.cjs
 
 ---
 
+## NFR
+
+- 非功能需求：幂等修复不得引入性能回归（ON CONFLICT 无额外往返，符合）
+- 凭据不得提交 git；docker-compose.yml 使用 `${VAR:-}` 占位符形式
+- L3 smoke 脚本由 evaluator 在 local_api 环境执行（NOTION_INBOX_TOKEN 已在宿主配置）
+
+---
+
 ## 参考
 
 - PR #4661（F6 inbox homing golden path，已合并）
@@ -247,3 +255,8 @@ node packages/quality/scripts/devgate/check-dod-mapping.cjs
 - `packages/brain/src/capture-inbox.js`（bug 位置：第60-73行）
 - `packages/brain/src/notion-capture-ingest.js`（注释需同步）
 - 1Password CS item "Notion-juke"（bot=cc20260728, workspace=Zenithjoy-July）
+
+---
+
+journey_type: feature_fix
+target_environment: local_api
