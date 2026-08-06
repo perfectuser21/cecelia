@@ -78,6 +78,10 @@ task_id: 58e146e1-ff3a-4e4d-89de-17721a0ade6b
   Test: manual:bash -c 'cd /workspace && npx vitest run packages/brain/src/__tests__/notion-inbox-push.test.js packages/brain/src/__tests__/notion-verdict-ingest.test.js --reporter=verbose 2>&1 | grep -E "(INV-6|not_configured|凭据|PASS|FAIL)" | head -20'
   期望: PASS（含 INV-6 相关 test 通过）
 
+- [ ] [BEHAVIOR:INV] INV-5: scheduler job 间隔 ≤5min（推送成功→Brain流转时效）
+  Test: manual:bash -c 'node -e "const fs=require(\"fs\");const c=fs.readFileSync(\"/workspace/packages/brain/src/scheduler-jobs.js\",\"utf8\");const m=c.match(/notion-product-push[\s\S]*?interval.*?(\d+)/);const ms=m?parseInt(m[1]):null;if(!ms||ms>300000){console.error(\"FAIL: 调度间隔超过5min或未找到\");process.exit(1);}console.log(\"OK: interval=\"+ms+\"ms\")"'
+  期望: OK（interval ≤ 300000ms）
+
 ---
 
 ## BEHAVIOR:CI 条目（CI 绿才 done）
