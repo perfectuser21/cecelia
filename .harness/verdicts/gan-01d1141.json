@@ -1,0 +1,22 @@
+{
+  "phase": "gan",
+  "round": 1,
+  "sha7": "01d1141",
+  "rubric_scores": {
+    "completeness": 4,
+    "testability": 5,
+    "correctness": 5,
+    "specificity": 4,
+    "sad_path_coverage": 4,
+    "iron_law_coverage": 5,
+    "format_compliance": 5
+  },
+  "iron_laws_checked": {
+    "lines_under_60": true,
+    "no_jq_psql_node": true,
+    "probe_title_fixed": true,
+    "allowlist_registered": true
+  },
+  "verdict": "APPROVED",
+  "feedback": ""
+}
