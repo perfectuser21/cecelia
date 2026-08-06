@@ -11,35 +11,35 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] playground/tests/ping.test.js 存在且为合同测试逐字复制（含 GET /ping describe 与 pong 断言）
+- [x] [ARTIFACT] playground/tests/ping.test.js 存在且为合同测试逐字复制（含 GET /ping describe 与 pong 断言）
   Test: node -e "const c=require('fs').readFileSync('playground/tests/ping.test.js','utf8');if(!c.includes('GET /ping')||!c.includes('pong')||!c.includes('supertest'))process.exit(1)"
 
-- [ ] [ARTIFACT] playground/server.js 注册 /ping 路由
+- [x] [ARTIFACT] playground/server.js 注册 /ping 路由
   Test: node -e "const c=require('fs').readFileSync('playground/server.js','utf8');if(!c.includes('/ping'))process.exit(1)"
 
 ## BEHAVIOR 条目（playground 例外：真启本地 server 真发 HTTP，零 mock、零 Brain URL）
 
-- [ ] [BEHAVIOR] GET /ping 返回 200 + {pong: true}（对应 Golden Path Step 1 的用户可观察输出）
+- [x] [BEHAVIOR] GET /ping 返回 200 + {pong: true}（对应 Golden Path Step 1 的用户可观察输出）
   Test: manual:bash -c 'cd "$(git rev-parse --show-toplevel)"; NODE_ENV= PLAYGROUND_PORT=3151 node playground/server.js & SPID=$!; for i in 1 2 3 4 5; do curl -sf localhost:3151/health | jq -e ".ok == true" >/dev/null && break; sleep 1; done; RESP=$(curl -sf localhost:3151/ping); RC=$?; kill $SPID 2>/dev/null; [ $RC -eq 0 ] || exit 1; echo "$RESP" | jq -e ".pong == true" || exit 1; echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] 响应顶层 keys 完整性 == ["pong"]（对应 Golden Path Step 4）
+- [x] [BEHAVIOR] 响应顶层 keys 完整性 == ["pong"]（对应 Golden Path Step 4）
   Test: manual:bash -c 'cd "$(git rev-parse --show-toplevel)"; NODE_ENV= PLAYGROUND_PORT=3152 node playground/server.js & SPID=$!; for i in 1 2 3 4 5; do curl -sf localhost:3152/health | jq -e ".ok == true" >/dev/null && break; sleep 1; done; RESP=$(curl -sf localhost:3152/ping); RC=$?; kill $SPID 2>/dev/null; [ $RC -eq 0 ] || exit 1; echo "$RESP" | jq -e "keys == [\"pong\"]" || exit 1; echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] 禁用字段反向：ping/alive/ok/status/result 均不存在（对应 Golden Path Step 4，PRD 第 20 行禁用清单）
+- [x] [BEHAVIOR] 禁用字段反向：ping/alive/ok/status/result 均不存在（对应 Golden Path Step 4，PRD 第 20 行禁用清单）
   Test: manual:bash -c 'cd "$(git rev-parse --show-toplevel)"; NODE_ENV= PLAYGROUND_PORT=3153 node playground/server.js & SPID=$!; for i in 1 2 3 4 5; do curl -sf localhost:3153/health | jq -e ".ok == true" >/dev/null && break; sleep 1; done; RESP=$(curl -sf localhost:3153/ping); RC=$?; kill $SPID 2>/dev/null; [ $RC -eq 0 ] || exit 1; for k in ping alive ok status result; do echo "$RESP" | jq -e "has(\"$k\") | not" >/dev/null || exit 1; done; echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] 携带任意 query 参数 → 忽略参数仍 200 {pong: true} 且 keys == ["pong"]（对应 Golden Path Step 2，PRD 第 26 行边界）
+- [x] [BEHAVIOR] 携带任意 query 参数 → 忽略参数仍 200 {pong: true} 且 keys == ["pong"]（对应 Golden Path Step 2，PRD 第 26 行边界）
   Test: manual:bash -c 'cd "$(git rev-parse --show-toplevel)"; NODE_ENV= PLAYGROUND_PORT=3154 node playground/server.js & SPID=$!; for i in 1 2 3 4 5; do curl -sf localhost:3154/health | jq -e ".ok == true" >/dev/null && break; sleep 1; done; RESP=$(curl -sf "localhost:3154/ping?foo=bar&x=1"); RC=$?; kill $SPID 2>/dev/null; [ $RC -eq 0 ] || exit 1; echo "$RESP" | jq -e ".pong == true and (keys == [\"pong\"])" || exit 1; echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] error path — POST /ping 返回 Express 默认 404（对应 Golden Path Step 3，PRD 第 27 行边界；负向断言，只验状态码不验 body）
+- [x] [BEHAVIOR] error path — POST /ping 返回 Express 默认 404（对应 Golden Path Step 3，PRD 第 27 行边界；负向断言，只验状态码不验 body）
   Test: manual:bash -c 'cd "$(git rev-parse --show-toplevel)"; NODE_ENV= PLAYGROUND_PORT=3155 node playground/server.js & SPID=$!; for i in 1 2 3 4 5; do curl -sf localhost:3155/health | jq -e ".ok == true" >/dev/null && break; sleep 1; done; CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:3155/ping); kill $SPID 2>/dev/null; [ "$CODE" = "404" ] || exit 1; echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] INV-1 范围越界守卫：本 sprint 相对 origin/main 的改动只允许落在 playground/ 与 sprints/（覆盖铁律：CI 基础设施禁区 / 不动 Brain / 范围限定）
+- [x] [BEHAVIOR] INV-1 范围越界守卫：本 sprint 相对 origin/main 的改动只允许落在 playground/ 与 sprints/（覆盖铁律：CI 基础设施禁区 / 不动 Brain / 范围限定）
   Test: manual:bash -c 'cd "$(git rev-parse --show-toplevel)"; CHANGED=$(git diff --name-only origin/main...HEAD -- . | grep -vE "^(playground/|sprints/)"); if [ -n "$CHANGED" ]; then echo "FAIL: 越界文件: $CHANGED"; exit 1; fi; echo OK'
   期望: OK
 
