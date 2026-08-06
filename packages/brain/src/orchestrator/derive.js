@@ -291,10 +291,15 @@ function attemptCallbackRoute(observed) {
   // CONTRACT_CI_SCOPE_CONFLICT(r43 实证):合同的改动范围限定与仓库级 CI 硬要求
   // (如 test-registry.yaml 登记制)客观冲突——执行者无法在不违约的前提下修复 CI。
   const CONTRACT_FAULT_ERROR_CODES = ['CONTRACT_SELF_CONTRADICTION', 'CONTRACT_TEST_UNSATISFIABLE', 'CONTRACT_CI_SCOPE_CONFLICT'];
+  // 故障码 token 集合归一化(r43 二次实证):LLM 产码非稳定枚举——同一模型两次采样
+  // 分别报 CONTRACT_CI_SCOPE_CONFLICT / CONTRACT_SCOPE_CI_CONFLICT,词序漂移绕过
+  // 精确匹配掉回死等人工。按 '_' 切 token 排序后比对,词序免疫。
+  const faultCodeKey = (code) => String(code ?? '').toUpperCase().split('_').sort().join('_');
+  const CONTRACT_FAULT_CODE_KEYS = new Set(CONTRACT_FAULT_ERROR_CODES.map(faultCodeKey));
   if (
     role === 'generator'
     && (status === 'blocked' || (status === 'failed' && failureClass === 'semantic_refusal'))
-    && CONTRACT_FAULT_ERROR_CODES.includes(detail.error_code)
+    && CONTRACT_FAULT_CODE_KEYS.has(faultCodeKey(detail.error_code))
   ) {
     // 仲裁制(Alex 拍板 2026-08-06):Generator 的合同故障码只是"申诉",不能
     // 自动成立——被审查者不能自己触发对审查产物(合同)的推翻。独立仲裁器
