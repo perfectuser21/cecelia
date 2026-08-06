@@ -1,5 +1,6 @@
-# Sprint: sprints/08051144-relay-184c6da1 (184c6da1-ef57-4171-ba92-5b05711076e6)
-# 任务: 军师台形态对版收尾——要素页接线+拍板卡+对话修+全貌补愿景区+smoke行过滤
+# Sprint: sprints/08052244-relay-5a4a7ef1 (5a4a7ef1-461d-4c3a-b8f5-7ca8c5f638bc)
+# 任务: [重试] P0 Kernel unified DevOps blockers：Fleet transport、trusted artifact、existing PR projection
 # 开始时间: 2026-08-05
-planner: done (sprint-prd.md@1f4151e3b, invariants=6, fr=5)
-contract-proposer: done (contract-draft.md, contract-dod.md, tests/strategist-form-verify.spec.ts)
+# HARNESS_RUN_ID: 5eca6e12-7a66-4a18-90c0-5a12fca749e3
+planner: done (sprint-prd.md@e6a7011, invariants=14, fr=3)
+proposer: done (contract-draft.md, contract-dod.md, tests/kernel-devops-map.test.js — behaviors=4, tdd=red)
