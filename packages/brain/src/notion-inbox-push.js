@@ -18,6 +18,27 @@ import { notionRequest, getNotionInboxConfig } from './notion-capture-ingest.js'
 const PRODUCT_TYPE_WHITELIST = ['proposal', 'morning_summary', 'acceptance_receipt'];
 
 /**
+ * 获取目标 Notion 数据库中 title 类型属性的真实字段名
+ * 不同库的标题列名不同（如 "Ideas" vs "Title"），动态读取避免 400 错误
+ *
+ * @param {string} token - Notion Integration Token
+ * @param {string} dbId - Notion 数据库 ID
+ * @returns {Promise<string>} 字段名，fallback 为 'Ideas'
+ */
+async function getDbTitleKey(token, dbId) {
+  try {
+    const db = await notionRequest(token, `/databases/${dbId}`, 'GET');
+    const props = db.properties ?? {};
+    for (const [key, val] of Object.entries(props)) {
+      if (val.type === 'title') return key;
+    }
+  } catch (e) {
+    // 网络失败时 fallback，不中断推送流程
+  }
+  return 'Title'; // fallback：WS3合同测试兼容默认值；真实库字段名通过 API 动态读取
+}
+
+/**
  * 推送排序官归并产物到 Notion Inbox
  *
  * @param {object} pool - PostgreSQL 连接池
@@ -31,7 +52,7 @@ const PRODUCT_TYPE_WHITELIST = ['proposal', 'morning_summary', 'acceptance_recei
  * @param {boolean} product.review_required - 是否需要拍板
  * @returns {Promise<object>} 推送结果
  */
-export async function pushProductToNotionInbox(pool, product) {
+export async function pushProductToNotionInbox(pool, product, { titleKey = 'Title' } = {}) {
   const { token, dbId } = getNotionInboxConfig();
 
   // INV-6: 凭据缺失静默跳过
@@ -63,9 +84,11 @@ export async function pushProductToNotionInbox(pool, product) {
     };
   }
 
+  // titleKey 由调用方传入（runNotionProductPush 预先查 DB schema 获取），默认 'Title'（合同兼容）
+
   // 构造 Notion 页面属性
   const properties = {
-    Title: {
+    [titleKey]: {
       title: [{ text: { content: title ?? '未命名产物' } }],
     },
     AI摘要: {
@@ -110,4 +133,55 @@ export async function pushProductToNotionInbox(pool, product) {
     notion_page_id: notionPageId,
     errors: 0,
   };
+}
+
+/**
+ * 批量从 working_memory 读取排序官榜单，逐项推送到 Notion Inbox
+ * 替代 scheduler-jobs.js 中裸调 pushProductToNotionInbox(pool, {}) 的接线错误
+ *
+ * @param {object} pool - PostgreSQL 连接池
+ * @returns {Promise<object>} 汇总结果 {pushed, skipped, errors} 或 {skipped:true, reason:'empty_leaderboard'}
+ */
+export async function runNotionProductPush(pool) {
+  // 读取排序官榜单
+  let leaderboard = [];
+  try {
+    const { rows } = await pool.query(
+      `SELECT value_json FROM working_memory WHERE key = 'triage_officer_leaderboard' LIMIT 1`
+    );
+    leaderboard = rows[0]?.value_json?.leaderboard ?? [];
+  } catch (e) {
+    console.error('[notion-product-push] leaderboard read failed:', e.message);
+    return { pushed: 0, skipped: 0, errors: 1 };
+  }
+
+  if (!leaderboard.length) {
+    return { skipped: true, reason: 'empty_leaderboard' };
+  }
+
+  // 预先获取目标库的真实标题字段名，避免每项推送都查一次 Notion schema
+  const { token, dbId } = getNotionInboxConfig();
+  const titleKey = (token && dbId) ? await getDbTitleKey(token, dbId) : 'Title';
+
+  let pushed = 0, skipped = 0, errors = 0;
+  for (const item of leaderboard) {
+    try {
+      const product = {
+        task_id: item.id,
+        product_type: 'proposal',
+        title: item.title ?? '未命名任务',
+        summary: `[${item.priority ?? 'P3'}] ${item.journey_name ?? ''} 排序官Top榜单`,
+        suggested_direction: '待拍板',
+        confidence: 0.8,
+        review_required: true,
+      };
+      const result = await pushProductToNotionInbox(pool, product, { titleKey });
+      if (result.skipped) skipped++;
+      else pushed++;
+    } catch (e) {
+      console.error('[notion-product-push] push error:', e.message);
+      errors++;
+    }
+  }
+  return { pushed, skipped, errors };
 }
