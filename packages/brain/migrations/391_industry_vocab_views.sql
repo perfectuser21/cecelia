@@ -7,8 +7,9 @@
 CREATE OR REPLACE VIEW value_streams AS SELECT * FROM journeys;
 COMMENT ON VIEW value_streams IS '行业名视图（Value Stream=业务线/价值流）→ journeys；决策 a340f100';
 
-CREATE OR REPLACE VIEW capabilities AS SELECT * FROM golden_paths;
-COMMENT ON VIEW capabilities IS '行业名视图（Capability=路/Golden Path）→ golden_paths；决策 a340f100';
+-- 注：capabilities 名被 capability-scanner 老表占用（37行在用），视图取 capabilities_registry
+CREATE OR REPLACE VIEW capabilities_registry AS SELECT * FROM golden_paths;
+COMMENT ON VIEW capabilities_registry IS '行业名视图（Capability=路/Golden Path）→ golden_paths；决策 a340f100';
 
 CREATE OR REPLACE VIEW backbone_activities AS SELECT * FROM journey_steps;
 COMMENT ON VIEW backbone_activities IS '行业名视图（Backbone Activity=骨干步骤）→ journey_steps；决策 a340f100';
@@ -24,7 +25,7 @@ COMMENT ON VIEW work_items IS '行业名视图（Work Item=推进项）→ advan
 
 -- 表注释同步（老表挂新名说明，读到老名的人立刻知道正式名）
 COMMENT ON TABLE journeys IS '价值流 Value Stream（正式名，视图 value_streams）；决策 a340f100';
-COMMENT ON TABLE golden_paths IS '能力 Capability（正式名，视图 capabilities）；Golden Path 为内部别名；决策 a340f100';
+COMMENT ON TABLE golden_paths IS '能力 Capability（正式名，视图 capabilities_registry）；Golden Path 为内部别名；决策 a340f100';
 COMMENT ON TABLE journey_steps IS '主干活动 Backbone Activities（视图 backbone_activities）；决策 a340f100';
 COMMENT ON TABLE journey_features IS '特性/使能项 Features & Enablers（视图 features_registry）；kind=ability 为历史值；决策 a340f100';
 COMMENT ON TABLE journey_step_links IS '验收标准 Acceptance Criteria（视图 acceptance_criteria）；决策 a340f100';
