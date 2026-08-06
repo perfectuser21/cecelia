@@ -1170,7 +1170,9 @@ jobs:
           )
           VALUES (
             :'smoke_id'::uuid,
-            'A_planning',
+            -- migration 379：活跃 v2 run 不得指向终态 task（seed task=completed），
+            -- 终态 phase=done 语义即"已完成 relay run 留痕"，375/379 两触发器均放行
+            'done',
             'bb8cc561-b3ee-4fec-b74d-2255694bd963'::uuid,
             'v2',
             'skill-relay-claude-headed',
@@ -1228,7 +1230,9 @@ jobs:
           )
           VALUES (
             :'smoke_id'::uuid,
-            'A_planning',
+            -- migration 379：活跃 v2 run 不得指向终态 task（seed task=completed），
+            -- 终态 phase=done 语义即"已完成 relay run 留痕"，375/379 两触发器均放行
+            'done',
             'bb8cc561-b3ee-4fec-b74d-2255694bd963'::uuid,
             'v2',
             'skill-relay-codex-headed',
