@@ -1,76 +1,87 @@
 {
   "verdict": "PASS",
-  "task_id": "93161b22-9478-4695-b3e2-a01eddce78f8",
-  "attempt_id": "fc52488b-c4dd-4fc8-b96f-04f842556087",
-  "head_sha": "660d61ba01f0e33611096a9e9179692438dd121b",
-  "pr": "https://github.com/perfectuser21/cecelia/pull/4620",
-  "sprint_dir": "sprints/08042132-runner-digest-repin2",
-  "target_environment": "local_api",
-  "journey_type": "fix",
-  "verification_level": "L2",
-  "exit_code": 0,
-  "log_tail": "HEAD=660d61ba01f0e33611096a9e9179692438dd121b\nE1: PASS — git grep 5c202d56 (packages/ docker/ scripts/ excl DEFINITION.md/handoffs) = 0\nE2: PASS — verify_runner_label defined in fleet-rollout.sh\nE3: PASS — cecelia.entrypoint.sha256 label in docker/build.sh\nE4: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  ✅ All version files in sync\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nE5a facts-check: \nAll facts consistent.\nE5b dod-mapping:   \u001b[32m✅ 映射检查通过\u001b[0m (3 项)\nE6: PASS: Fleet rollout behavioral contract\nE7 vitest:  Test Files  1 passed (1)\n      Tests  22 passed (22)\n   Start at  14:28:46\n   Duration  481ms (transform 28ms, setup 0ms, collect 17ms, tests 59ms, environment 0ms, prepare 103ms)\n",
+  "task_id": "2c482ed6-730c-4221-ade8-612a501124f8",
+  "attempt_id": "",
   "failed_step": null,
   "log_excerpt": null,
+  "verification_level": "L2",
   "screenshots": [],
   "cascade_assertions": [],
   "unverifiable": [],
   "behavior_tests": [
     {
-      "command": "[ $(git grep '5c202d56' -- packages/ docker/ scripts/ | grep -v DEFINITION.md | grep -v docs/handoffs/ | wc -l) -eq 0 ] && echo PASS || echo FAIL",
+      "command": "node packages/brain/scripts/smoke-ledger-hygiene.mjs",
       "exit_code": 0,
-      "log_tail": "stale_count=0; E1: PASS — 旧 digest 5c202d56 全仓清零",
-      "verification_level": "L2",
-      "action": "git grep 检查 packages/ docker/ scripts/ 旧 digest",
-      "expected": "0 处命中，旧 digest 完全替换"
+      "log_tail": "# 账本卫生分 2026-08-06\n\n| 指标 | 值 | 欠账 | 状态 |\n|---|---|---|---|\n| FR沉淀率 | 0% | 1 | 启用 |\n| 归属完整率 | 36% | 287 | 启用 |\n| 回执核销 | — | 0 | 启用 |\n| 知识保质期 | — | 3 | 启用 |\n| 判定点活性 | 281 | 0 | 启用 |\n| evaluator门禁覆盖率 | 50% | 7 | 启用 |\n| 自主循环零产出 | {\"stratDebt\":0,\"captureDebt\":0,\"organic\":11,\"self\":1} | 0 | 启用 |\n\n## 棘轮击穿\n无\n\nEXIT_CODE=0（stderr 无输出；Golden Path Step 1 只读复现入口独立直跑，全表 markdown 完整输出）",
+      "verification_level": "L2"
     },
     {
-      "command": "(source packages/brain/scripts/fleet-worker/fleet-rollout.sh 2>/dev/null && declare -f verify_runner_label > /dev/null && echo PASS) || echo FAIL",
+      "command": "bash ev2-m2-smoke-dispatch-diff.sh（阶段1 基线: node packages/brain/scripts/smoke-ledger-hygiene.mjs | awk -F'|' '/归属完整率/{gsub(/ /,\"\",$4); print $4}' → 阶段2 psql 注入等价 headed 冒烟派发 task: INSERT INTO tasks (title, task_type, status, payload) VALUES ('headed-smoke-test','harness_initiative','completed', jsonb_build_object('e2e_tag',$TAG,'smoke_tag',$TAG)) → 阶段3 同命令重算 → trap 清理）",
       "exit_code": 0,
-      "log_tail": "E2: PASS — verify_runner_label function defined in fleet-rollout.sh",
-      "verification_level": "L2",
-      "action": "source fleet-rollout.sh + declare -f verify_runner_label",
-      "expected": "函数已实现"
+      "log_tail": "== 阶段1: 基线 m2 ==\n| 归属完整率 | 36% | 288 | 启用 |\n基线 D0=288\n== 阶段2: 注入带 smoke_tag 的 harness_initiative task（e2e_tag=ev2-22758-26138） ==\n-- 注入行回查（psql）：\n 80e19ad0-9308-4268-a440-d4771fea55d8 | headed-smoke-test | harness_initiative | completed | ev2-22758-26138\n(1 row)\n== 阶段3: 重算 m2 ==\n| 归属完整率 | 36% | 288 | 启用 |\n注入后 D1=288\nPASS: smoke_tag 冒烟派发 task 不计入 m2 债务，D0=288 D1=288（debt 不变）\n== 收尾: 清理后残留核查 ==\ntasks 残留行数=0\n✅ 证据2 通过（0 残留）\nEXIT_CODE=0",
+      "verification_level": "L2"
     },
     {
-      "command": "grep -q 'cecelia.entrypoint.sha256' docker/build.sh && echo PASS || echo FAIL",
+      "command": "bash ev3-guard-no-p1.sh（psql 注入 smoke_tag harness task + [ledger-hygiene] 前缀 P2 噪声 issue → cd packages/brain && node --input-type=module -e 跑 computeMetrics+evaluateRatchet(prev.last.m2=D0) → psql 前后各查: SELECT count(*) FROM issues WHERE title LIKE '[ledger-hygiene]%' AND priority='P1' AND created_at >= CURRENT_DATE → trap 清理）",
       "exit_code": 0,
-      "log_tail": "E3: PASS — cecelia.entrypoint.sha256 label instruction found in docker/build.sh",
-      "verification_level": "L2",
-      "action": "grep docker/build.sh 含 cecelia.entrypoint.sha256",
-      "expected": "label 写入指令存在"
+      "log_tail": "基线 m2 debt D0=288; 注入前当日 [ledger-hygiene] P1 issue 计数 p1_before=1 (psql)\n注入 1 条 smoke_tag harness_initiative task + 1 条 [ledger-hygiene] 前缀 P2 噪声 issue (e2e_tag=ev3-22929-21868)\n注入后 evaluateRatchet 输入: m2.debt=288, prev.last.m2=288 → 输出 m2 breaches=[]\nPASS: debt 未上升 → raiseBreachAlerts 不会开 m2 击穿 issue\npsql 注入后 p1_after=1 (1 row)；P1 计数 注入前=1 注入后=1 零新增\nPASS: 守卫未因噪声开 P1 击穿 issue\n收尾: tasks 残留=0 issues 残留=0 ✅ EXIT_CODE=0",
+      "verification_level": "L2"
     },
     {
-      "command": "bash scripts/check-version-sync.sh",
+      "command": "bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh noise",
       "exit_code": 0,
-      "log_tail": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  ✅ All version files in sync\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
-      "verification_level": "L2",
-      "action": "版本四处同步检查",
-      "expected": "All version files in sync — 1.267.216"
+      "log_tail": "PASS scenario=noise D0=288 D1=288 expect=288\n✅ m2 场景 noise 通过",
+      "verification_level": "L2"
     },
     {
-      "command": "node scripts/facts-check.mjs && node packages/quality/scripts/devgate/check-dod-mapping.cjs",
+      "command": "bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh real-miss",
       "exit_code": 0,
-      "log_tail": "facts: \nAll facts consistent.; dod:   \u001b[32m✅ 映射检查通过\u001b[0m (3 项)\n",
-      "verification_level": "L2",
-      "action": "DevGate 全量（facts-check + dod-mapping）",
-      "expected": "All facts consistent + 映射检查通过"
+      "log_tail": "PASS scenario=real-miss D0=288 D1=289 expect=289\n✅ m2 场景 real-miss 通过",
+      "verification_level": "L2"
     },
     {
-      "command": "bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh",
+      "command": "bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh issue-real-miss",
       "exit_code": 0,
-      "log_tail": "PASS: Fleet rollout behavioral contract\n",
-      "verification_level": "L2",
-      "action": "fleet-rollout.sh 测试（含 verify_runner_label TDD label 守卫）",
-      "expected": "PASS: Fleet rollout behavioral contract"
+      "log_tail": "PASS scenario=issue-real-miss D0=288 D1=289 expect=289\n✅ m2 场景 issue-real-miss 通过",
+      "verification_level": "L2"
     },
     {
-      "command": "cd packages/brain && npx vitest run src/orchestrator/fleet-node/node-profile.test.js 2>&1 | tail -5",
+      "command": "bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh harness-once",
       "exit_code": 0,
-      "log_tail": "RUN  v1.6.1 /workspace/packages/brain\n\n ✓ src/orchestrator/fleet-node/node-profile.test.js  (22 tests) 11ms\n\n Test Files  1 passed (1)\n      Tests  22 passed (22)",
-      "verification_level": "L2",
-      "action": "node-profile vitest run (vitest syntax, 22 tests, EXPECTED_RUNNER_DIGEST=sha256:ae2eaabba...)",
-      "expected": "22 tests passed (0 failed)"
+      "log_tail": "PASS scenario=harness-once D0=288 D1=289 expect=289\n✅ m2 场景 harness-once 通过",
+      "verification_level": "L2"
+    },
+    {
+      "command": "timeout 120 bash /tmp/e2e-verify.sh",
+      "exit_code": 0,
+      "log_tail": "PASS D0=288 D1=288 D2=289 D3=290\n✅ Golden Path m2 口径验证通过",
+      "verification_level": "L2"
+    },
+    {
+      "command": "cd packages/brain && npx vitest run src/__tests__/ledger-hygiene-m2-noise.test.js",
+      "exit_code": 0,
+      "log_tail": "Test Files  1 passed (1)\n      Tests  6 passed (6)",
+      "verification_level": "L2"
+    },
+    {
+      "command": "node -e \"import('./packages/brain/src/ledger-hygiene.js').then(m=>{ LEDGER_SELF_ISSUE_PREFIX==='[ledger-hygiene]' && LEDGER_SELF_ATOM_PREFIX==='issue: [ledger-hygiene]' })\"",
+      "exit_code": 0,
+      "log_tail": "OK",
+      "verification_level": "L2"
+    },
+    {
+      "command": "! grep -rnE '(sk-[A-Za-z0-9]{16}|ghp_[A-Za-z0-9]{16}|xoxb-[0-9]|AKIA[0-9A-Z]{12})' packages/brain/src/ledger-hygiene.js packages/brain/scripts/smoke/codex-headed-dispatch-smoke.sh packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh sprints/08070516-relay-2c482ed6/tests/ && echo OK",
+      "exit_code": 0,
+      "log_tail": "OK",
+      "verification_level": "L2"
     }
-  ]
+  ],
+  "notes": "mock_edge_check: clean（禁 mock 边清单 1 条真验边未被顶替；PR 测试内 mock pool 属合同规则C豁免登记，真验证由 B1-B4 真库场景 + E2E 补位并已全部真跑）；S3 联动: task payload 无 feature_id，跳过；注入测试数据 trap 清理核查：tasks/issues 各 0 残留；ARTIFACT A1-A4 复跑全 OK（exit 0）；补证轮（judge evidence_insufficient 补充取证，代码零改动）：三条新证据全过——①smoke-ledger-hygiene.mjs 独立直跑 exit 0 全表输出；②冒烟派发前后 m2 对照 D0=288→D1=288 debt 不变（psql 注入 smoke_tag harness_initiative task 回查有行，清理后 0 残留）；③evaluateRatchet(m2.debt=288, prev=288) breaches=[]，当日 [ledger-hygiene] P1 issue 计数注入前后 1→1 无新增；全局残留终检 tasks/issues 各 0",
+  "head_sha": "480da027aea24762e8bb8261d783e31ee5f5d1eb",
+  "pr": "https://github.com/perfectuser21/cecelia/pull/4696",
+  "sprint_dir": "sprints/08070516-relay-2c482ed6",
+  "exit_code": 0,
+  "log_tail": "证据1 smoke-ledger-hygiene.mjs 直跑 exit=0: | 归属完整率 | 36% | 287 | 启用 |；棘轮击穿 无\n证据2 冒烟派发前后对照 exit=0: D0=288 → 注入smoke_tag task → D1=288 debt不变\n证据3 守卫无P1 exit=0: evaluateRatchet m2 breaches=[]；当日P1计数 注入前=1 注入后=1 零新增；残留0\nE2E: PASS D0=288 D1=288 D2=289 D3=290 ✅ Golden Path m2 口径验证通过",
+  "target_environment": "local_api",
+  "journey_type": "autonomous"
 }
