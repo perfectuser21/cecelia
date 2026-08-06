@@ -221,8 +221,8 @@ export default function GPVersionTable({ stepId, journeyId, stepLinks, hasLedger
     return (
       <div className="p-8 flex flex-col items-center gap-3 text-center">
         <Clock className="w-6 h-6 text-slate-700" />
-        <div className="text-[12px] text-slate-600">本线暂无 GP 版本记录</div>
-        <div className="text-[10px] text-slate-700">GP 批准后自动成为版本节点</div>
+        <div className="text-[12px] text-slate-600">本价值流暂无 Capability 版本记录</div>
+        <div className="text-[10px] text-slate-700">Capability 批准后自动成为版本节点</div>
       </div>
     );
   }
@@ -234,7 +234,7 @@ export default function GPVersionTable({ stepId, journeyId, stepLinks, hasLedger
           <tr className="border-b border-slate-800/60">
             {/* 第一列：要素名标题，含 sr-only 要素名列表供 J-02 断言 */}
             <th className="text-left pl-4 pr-3 py-2 text-slate-600 font-semibold text-[10px] tracking-[0.08em] uppercase w-24 min-w-[6rem] sticky left-0 bg-slate-900/80">
-              <span>要素</span>
+              <span>DoD·NFR</span>
               {/* 将全部要素名隐藏写入 th，供 J-02 textContent 断言（FR / NFR / 判定点） */}
               <span className="sr-only"> {(elementKeys.length > 0 ? elementKeys : STANDARD_ELEMENT_KEYS).join(' ')}</span>
             </th>

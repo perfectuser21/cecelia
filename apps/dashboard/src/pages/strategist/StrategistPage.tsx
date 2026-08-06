@@ -256,7 +256,7 @@ export default function StrategistPage() {
           <div className="flex items-center gap-1.5">
             <div className="w-1.5 h-1.5 rounded-full bg-slate-400" />
             <span className="text-slate-300 font-mono">{totalLines}</span>
-            <span className="text-slate-600">条线</span>
+            <span className="text-slate-600">条价值流</span>
           </div>
           {totalRunning > 0 && (
             <div className="flex items-center gap-1.5">
@@ -282,7 +282,7 @@ export default function StrategistPage() {
       <div className="flex items-center gap-0 border-b border-slate-800/60 bg-slate-900/30 flex-shrink-0">
         {[
           { label: 'Features', value: panoNums.features, color: 'text-violet-400' },
-          { label: 'GP数', value: panoNums.gp, color: 'text-emerald-400' },
+          { label: 'Capability 数', value: panoNums.gp, color: 'text-emerald-400' },
           { label: '决策数', value: panoNums.decisions, color: 'text-amber-400' },
           { label: '在干活', value: panoNums.activeTasks, color: 'text-blue-400' },
         ].map(({ label, value, color }) => (
@@ -298,12 +298,12 @@ export default function StrategistPage() {
         {loading && areas.length === 0 && (
           <div className="flex items-center gap-2 py-8 text-slate-600 text-sm">
             <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-            加载线列表…
+            加载价值流列表…
           </div>
         )}
 
         {!loading && areas.length === 0 && (
-          <div className="py-8 text-slate-600 text-sm">暂无线数据</div>
+          <div className="py-8 text-slate-600 text-sm">暂无价值流数据</div>
         )}
 
         <div className="max-w-3xl space-y-8">
