@@ -1,4 +1,8 @@
-# Kernel Harness × Golden Path 权威地图
+# Kernel Harness × 能力（Capability）权威地图
+
+> 术语按决策 a340f100（2026-08-06）对照表书写，正本见 `packages/workflows/KERNEL_CONTEXT.md`。
+> 「能力」即旧称 Golden Path（GP 保留为内部别名），「价值流」即旧称 Line/业务线。
+> 表名 / 字段名 / skill 名 / 命令保持原样。
 
 > **本文件的铁律：只放指针，不放事实快照。**
 > 版本号、行数、覆盖率等数字放进本文件必然腐烂（2026-08-04 审计实证：AGENTS.md 版本号漂移
@@ -10,15 +14,15 @@
 
 ---
 
-## 一、Golden Path 治理体系（承诺地图）
+## 一、能力治理体系（成果地图）
 
 ### 概念定义在哪
 
 | 要查什么 | 唯一权威源 | 注意 |
 |---|---|---|
-| 什么是 Line / 路 / 骨干 / 挂片，三问法，七动作，场景八格 | zenithjoy-skills 仓库 `golden-path/references/doctrine.md` | ⚠️ 07-24 版缺"GP级7项合同"层与"11要素封版"，补课 PR 未发前以下两行为准 |
-| GP 级 7 项合同（key 清单与铁律） | zenithjoy-skills `golden-path-proposer/SKILL.md` 铁律第 8 条 | 7 个 key：fr_summary / lifelines_and_nfr / yield_order / external_commitment_changes / release_and_blast_radius / success_and_close / budget_guard，禁增第 8 个 |
-| 11 要素封版判据与拒绝话术 | Brain DB：`SELECT topic, decision FROM decisions WHERE category='governance' AND status='active'` | 07-29 主理人拍板（migration 370 seed），11 要素 = 拍板4项(FR/NFR/判定点/两轴衔接) + 机器托管7项(不变量/失败语义/死亡告警/效果确认/对抗面/保质期/账本保鲜)，封版不增补 |
+| 什么是价值流 / 能力 / 主干活动 / 特性与使能项，三问法，七动作，场景八格 | zenithjoy-skills 仓库 `golden-path/references/doctrine.md` | ⚠️ 07-24 版缺"能力级 7 项合同"层与"完成定义+非功能需求封版"，补课 PR 未发前以下两行为准 |
+| 能力级 7 项合同（key 清单与铁律） | zenithjoy-skills `golden-path-proposer/SKILL.md` 铁律第 8 条 | 7 个 key：fr_summary / lifelines_and_nfr / yield_order / external_commitment_changes / release_and_blast_radius / success_and_close / budget_guard，禁增第 8 个 |
+| 完成定义+非功能需求（DoD+NFRs，旧称 11 要素）封版判据与拒绝话术 | Brain DB：`SELECT topic, decision FROM decisions WHERE category='governance' AND status='active'` | 07-29 主理人拍板（migration 370 seed），DoD+NFRs = 拍板4项(FR/NFR/判定点/两轴衔接) + 机器托管7项(不变量/失败语义/死亡告警/效果确认/对抗面/保质期/账本保鲜)，封版不增补 |
 
 ### 分层结构（07-29 拍板终版）
 
@@ -31,20 +35,20 @@
 
 新想法分流判据（防膨胀，任何人提"加要素"先过这两句）：
 - 要素层："每步单独回答、逐步不同、且未被四区收留" 才有资格成为要素
-- 合同层："每 GP 单独回答、且必须人签字" 才有资格进合同
+- 合同层："每个能力单独回答、且必须人签字" 才有资格进合同
 
 ### 数据账本在哪（全部用 psql 现查，禁引用文档里的旧行数）
 
 | 表 | 装什么 | 常用查询 |
 |---|---|---|
-| `journeys` | Line（业务线）；WarRoom 的"Line"就是这张表 | `SELECT name, journey_type, maturity FROM journeys WHERE status='active'` |
-| `journey_steps` | 每条路的承诺式骨干（3-5 步） | 按 journey_id 查 |
-| `golden_paths` | GP 业务账本（立项→交付状态机） | `SELECT title, status FROM golden_paths` |
-| `journey_step_links` | 格子账本（11 要素 / 场景格 / 断言的落点） | cell_kind ∈ capability/element/scenario/base_ref |
+| `journeys` | 价值流（Value Stream，旧称 Line/业务线）；WarRoom 的"Line"就是这张表 | `SELECT name, journey_type, maturity FROM journeys WHERE status='active'` |
+| `journey_steps` | 每个能力的成果式主干活动（3-5 步） | 按 journey_id 查 |
+| `golden_paths` | 能力业务账本（立项→交付状态机） | `SELECT title, status FROM golden_paths` |
+| `journey_step_links` | 验收标准账本（DoD+NFRs / 场景 / 断言的落点） | cell_kind ∈ capability/element/scenario/base_ref |
 | `golden_path_contract_versions` | 7 项合同的版本+签字 | ⚠️ 2026-08-04 审计时为空表——机制已建，一笔签字未落 |
 | `decisions` (category=governance) | 封版判据等 6 条治理裁决 | 见上 |
 | `decisions` (category=invariant) | 铁律注册表（滚动增长） | `WHERE status='active'` |
-| `journey_features` | ⚠️ **旧 Ability 轴，07-24 拍板废弃**，但仍有存量与写入——待治理，禁按它做新设计 | — |
+| `journey_features` | 特性 / 使能项（Feature / Enabler）账本。⚠️ **该表原名"Ability 轴"，07-24 拍板废弃**，但仍有存量与写入——待治理，禁按它做新设计；库值 `kind=ability` 仅作历史值，术语已退役 | — |
 
 ⚠️ 命名地雷：DB 里同时存在 `golden_path`（单数，sprint 级 FR 记录）和 `golden_paths`
 （复数，GP 业务账本），不是一张表，别混。
@@ -53,13 +57,13 @@
 
 | skill | 管什么 |
 |---|---|
-| golden-path-mapper | 领域→切几条路（Mode 1）；新东西归位到哪条路哪一步（Mode 2） |
-| golden-path-proposer | 单条 GP 的提案文档 + 7 项合同起草 |
+| golden-path-mapper | 领域→切几个能力（Mode 1）；新东西归位到哪个能力哪一步（Mode 2） |
+| golden-path-proposer | 单个能力的提案文档 + 7 项合同起草 |
 | golden-path-reviewer | 对抗审查（红方），三镜头 |
-| golden-path-controller | GP 提案编排（proposer↔reviewer 多轮） |
+| golden-path-controller | 能力提案编排（proposer↔reviewer 多轮） |
 | golden-path（门面） | 判定链入口 + doctrine.md 所在地 |
 | golden-path-scoping | ⚠️ 疑与 mapper 重叠、待下架确认 |
-| harness-contract-proposer / reviewer | sprint 级合同 GAN（与 GP 级合同是两层，别混） |
+| harness-contract-proposer / reviewer | sprint 级合同 GAN（与能力级合同是两层，别混） |
 
 ---
 
@@ -128,13 +132,13 @@ curl -s localhost:5221/api/brain/warroom/lines
 
 ## 四、已知缺口（2026-08-04 审计，修一条划一条）
 
-1. `golden_path_contract_versions` 空表——合同机制上线但没有任何 GP 真的签过合同
+1. `golden_path_contract_versions` 空表——合同机制上线但没有任何能力真的签过合同
 2. `journey_features` 名废实活——账面废弃仍在写入，与 golden_paths 双轨并行
-3. "智能客服 · GP-A~F" 6 个 Journey 是历史错建（GP 被建成了独立 Journey），
-   骨干/feature/任务引用散落其中，待迁移回"智能客服"正主 + golden_paths 正表
+3. "智能客服 · GP-A~F" 6 条价值流是历史错建（能力被建成了独立价值流），
+   主干活动/特性/任务引用散落其中，待迁移回"智能客服"正主 + golden_paths 正表
 4. WarRoom Area 归类正则（`warroom-classify.js`）误分："智能客服"系/爆款视频翻拍/西安机群 被错归 Cecelia
 5. doctrine.md 缺 07-29 合同层与封版——补课 PR 待发（zenithjoy-skills）
-6. `journey_step_links` 格子最后写入早于封版拍板，未按 11 要素终版重灌
+6. `journey_step_links` 验收标准最后写入早于封版拍板，未按 DoD+NFRs 终版重灌
 7. orchestrator/ 33 文件在 system_modules 知识库覆盖率约 9%；SYSTEM_MAP 对该子系统零记载
 8. golden-path-scoping skill 疑废未下架
 9. AGENTS.md / skills-index.md / CI_PIPELINE.md / DEV_PIPELINE.md 整体过期待重写

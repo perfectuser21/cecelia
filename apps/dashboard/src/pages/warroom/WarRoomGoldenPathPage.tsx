@@ -45,7 +45,7 @@ export default function WarRoomGoldenPathPage() {
       const res = await fetch(`/api/brain/golden-path/${encodeURIComponent(gpId)}`);
       if (!res.ok) {
         if (res.status === 404) {
-          setError('GP 不存在或已归档');
+          setError('Capability 不存在或已归档');
         } else {
           const body = await res.json().catch(() => ({}));
           throw new Error(body.error || `HTTP ${res.status}`);
@@ -69,7 +69,7 @@ export default function WarRoomGoldenPathPage() {
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
         <div className="flex items-center gap-3 text-slate-400">
           <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm">加载 GP 数据…</span>
+          <span className="text-sm">加载 Capability 数据…</span>
         </div>
       </div>
     );
@@ -80,7 +80,7 @@ export default function WarRoomGoldenPathPage() {
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
         <div className="text-center space-y-3">
           <AlertCircle className="w-8 h-8 text-red-400 mx-auto" />
-          <div className="text-sm text-red-400">{error || 'GP 不存在或已归档'}</div>
+          <div className="text-sm text-red-400">{error || 'Capability 不存在或已归档'}</div>
           <button onClick={() => navigate(-1)} className="text-sm text-blue-400 hover:text-blue-300 underline">
             返回
           </button>
@@ -94,7 +94,7 @@ export default function WarRoomGoldenPathPage() {
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'overview', label: '概览', icon: <LayoutGrid className="w-3.5 h-3.5" /> },
-    { id: 'ledger',   label: '要素账本', icon: <BookOpen className="w-3.5 h-3.5" /> },
+    { id: 'ledger',   label: 'DoD 账本', icon: <BookOpen className="w-3.5 h-3.5" /> },
   ];
 
   return (
@@ -183,7 +183,7 @@ export default function WarRoomGoldenPathPage() {
                 )}
 
                 <div className="pt-2 border-t border-slate-700/40">
-                  <div className="text-[11px] text-slate-600 font-mono">GP ID: {gpId}</div>
+                  <div className="text-[11px] text-slate-600 font-mono">Capability ID: {gpId}</div>
                   {journeyId && (
                     <div className="text-[11px] text-slate-600 font-mono mt-0.5">Journey ID: {journeyId}</div>
                   )}
@@ -197,7 +197,7 @@ export default function WarRoomGoldenPathPage() {
                 <ConversationsPanel journeyId={journeyId} gpId={gpId} />
               ) : (
                 <div className="flex flex-col items-center justify-center flex-1 gap-3 py-8">
-                  <div className="text-[12px] text-slate-600 text-center">该 GP 未关联 Journey，无法加载对话</div>
+                  <div className="text-[12px] text-slate-600 text-center">该 Capability 未关联 Journey，无法加载对话</div>
                 </div>
               )}
             </div>
@@ -211,7 +211,7 @@ export default function WarRoomGoldenPathPage() {
             ) : (
               <div className="flex flex-col items-center justify-center h-full gap-3">
                 <BookOpen className="w-8 h-8 text-slate-600" />
-                <div className="text-sm text-slate-500">该 GP 未关联 Journey，无法显示要素账本</div>
+                <div className="text-sm text-slate-500">该 Capability 未关联 Journey，无法显示 DoD·NFR 账本</div>
               </div>
             )}
           </div>

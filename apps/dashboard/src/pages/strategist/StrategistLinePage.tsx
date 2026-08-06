@@ -90,7 +90,7 @@ const TABS = [
   { key: 'morning', label: '晨报', icon: FileText },
   { key: 'decision', label: '拍板', icon: CheckSquare },
   { key: 'conversation', label: '对话', icon: MessageSquare },
-  { key: 'elements', label: '要素', icon: Activity },
+  { key: 'elements', label: 'DoD', icon: Activity },
   { key: 'investment', label: '投入', icon: DollarSign },
 ] as const;
 
@@ -152,7 +152,7 @@ function CellDot({ status, size = 'sm' }: { status: CellStatus; size?: 'xs' | 's
 function CellRowDetail({ cell, onClose }: { cell: StepCell; onClose: () => void }) {
   const meta = CELL_STATUS_META[cell.cell_status] ?? CELL_STATUS_META.gray;
   const KIND_LABEL: Record<CellKind, string> = {
-    capability: '能力', element: '要素', scenario: '场景', base_ref: '基准引用',
+    capability: '特性', element: 'DoD·NFR', scenario: '场景', base_ref: '基准引用',
   };
   return (
     <div className={`mx-4 mb-2 rounded border p-3 text-[11px] font-mono ${meta.bg} border-slate-700/40`}>
@@ -181,7 +181,7 @@ function CellRowDetail({ cell, onClose }: { cell: StepCell; onClose: () => void 
           <span className="text-slate-600">{cell.assertion_revision ? `r${cell.assertion_revision}` : '—'}</span>
         </div>
         <div className="flex gap-2">
-          <span className="text-slate-600 w-20 flex-shrink-0">格子 ID</span>
+          <span className="text-slate-600 w-20 flex-shrink-0">验收标准 ID</span>
           <span className="text-slate-700">{cell.id.slice(0, 16)}…</span>
         </div>
       </div>
@@ -241,7 +241,7 @@ function StepLedgerPanel({ step, cells, onClose }: { step: JourneyStep; cells: S
               <div className="w-16 h-[3px] rounded-full bg-slate-800 overflow-hidden">
                 <div className="h-full rounded-full bg-emerald-500/60" style={{ width: `${Math.round((greenEl / elementCells.length) * 100)}%` }} />
               </div>
-              <span className="text-[10px] text-slate-600 font-mono">{greenEl}/{elementCells.length} 要素</span>
+              <span className="text-[10px] text-slate-600 font-mono">{greenEl}/{elementCells.length} DoD</span>
             </div>
           )}
         </div>
@@ -285,7 +285,7 @@ function StepLedgerPanel({ step, cells, onClose }: { step: JourneyStep; cells: S
           <div>
             <div className="flex items-center gap-2 px-4 py-1.5 bg-slate-900/30 border-b border-slate-800/30">
               <BookOpen className="w-2.5 h-2.5 text-slate-600" />
-              <span className="text-[10px] tracking-[0.1em] uppercase text-slate-600 font-semibold">要素</span>
+              <span className="text-[10px] tracking-[0.1em] uppercase text-slate-600 font-semibold">DoD·NFR</span>
               <span className="text-[10px] text-slate-700">{greenEl}/{elementCells.length}</span>
             </div>
             {elementCells.map(cell => <CellZoneRow key={cell.id} cell={cell} />)}
@@ -295,7 +295,7 @@ function StepLedgerPanel({ step, cells, onClose }: { step: JourneyStep; cells: S
           <div>
             <div className="flex items-center gap-2 px-4 py-1.5 bg-slate-900/30 border-b border-slate-800/30">
               <Zap className="w-2.5 h-2.5 text-slate-600" />
-              <span className="text-[10px] tracking-[0.1em] uppercase text-slate-600 font-semibold">能力</span>
+              <span className="text-[10px] tracking-[0.1em] uppercase text-slate-600 font-semibold">特性</span>
               <span className="text-[10px] text-slate-700">{capabilityCells.filter(c => c.cell_status === 'green').length}/{capabilityCells.length}</span>
             </div>
             {capabilityCells.map(cell => <CellZoneRow key={cell.id} cell={cell} />)}
@@ -314,7 +314,7 @@ function StepLedgerPanel({ step, cells, onClose }: { step: JourneyStep; cells: S
         {cells.length === 0 && (
           <div className="p-8 flex flex-col items-center gap-3 text-center">
             <AlertCircle className="w-6 h-6 text-slate-700" />
-            <div className="text-[12px] text-slate-600">本步骤暂无格子账本</div>
+            <div className="text-[12px] text-slate-600">本步骤暂无验收标准账本</div>
             <div className="text-[10px] text-slate-700">账本模板铺入后自动出现</div>
           </div>
         )}
@@ -366,7 +366,7 @@ function OverviewTab({ detail, lineId }: { detail: LineDetail | null; lineId: st
       .concat([...found].filter(k => !STANDARD_ELEMENT_KEYS.includes(k)));
   }, [cells]);
 
-  if (!detail) return <div className="p-6 text-slate-600 text-sm">线数据加载中…</div>;
+  if (!detail) return <div className="p-6 text-slate-600 text-sm">价值流数据加载中…</div>;
 
   const { line, tasks } = detail;
   const safeTasks = Array.isArray(tasks) ? tasks : [];
@@ -409,7 +409,7 @@ function OverviewTab({ detail, lineId }: { detail: LineDetail | null; lineId: st
             <>
               <span className="text-slate-700 mx-1">·</span>
               <span className="text-emerald-400 font-mono">{greenCells}</span>
-              <span className="text-slate-600">/{cells.length} 格覆盖</span>
+              <span className="text-slate-600">/{cells.length} AC 覆盖</span>
             </>
           )}
         </div>
@@ -421,7 +421,7 @@ function OverviewTab({ detail, lineId }: { detail: LineDetail | null; lineId: st
               <tr>
                 <th className="text-left pl-5 pr-2 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase w-8">#</th>
                 <th className="text-left pr-3 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase">步骤</th>
-                <th className="text-center px-2 py-2 text-slate-600 font-semibold w-10" title="能力">能</th>
+                <th className="text-center px-2 py-2 text-slate-600 font-semibold w-10" title="特性">能</th>
                 {elementKeys.map(key => (
                   <th key={key} className="text-center px-1.5 py-2 text-slate-600 font-semibold w-10" title={key}>
                     {key.length > 4 ? key.slice(0, 3) + '…' : key}
@@ -438,12 +438,12 @@ function OverviewTab({ detail, lineId }: { detail: LineDetail | null; lineId: st
           {ledgerLoading ? (
             <div className="flex items-center gap-2 p-6 text-slate-600 text-sm">
               <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-              加载格子账本…
+              加载验收标准账本…
             </div>
           ) : steps.length === 0 ? (
             <div className="p-8 flex flex-col items-center gap-3 text-center">
               <LayoutGrid className="w-8 h-8 text-slate-700" />
-              <div className="text-[13px] text-slate-600">本线暂无步骤账本</div>
+              <div className="text-[13px] text-slate-600">本价值流暂无步骤账本</div>
               <div className="text-[11px] text-slate-700">账本模板铺入后自动出现</div>
             </div>
           ) : (
@@ -524,7 +524,7 @@ function OverviewTab({ detail, lineId }: { detail: LineDetail | null; lineId: st
         {/* 图例 */}
         {!ledgerLoading && steps.length > 0 && (
           <div className="flex-shrink-0 flex items-center gap-4 px-5 py-2 border-t border-slate-800/40 bg-slate-900/20 text-[10px]">
-            <span className="text-slate-700">格子：</span>
+            <span className="text-slate-700">验收标准：</span>
             {(['gray', 'red', 'pending', 'green'] as CellStatus[]).map(s => (
               <div key={s} className="flex items-center gap-1">
                 <CellDot status={s} size="xs" />
@@ -769,7 +769,7 @@ function DecisionTab({ lineId }: { lineId: string }) {
                     </span>
                     {isThisLine && (
                       <span className="text-[11px] px-1.5 py-px rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 flex-shrink-0">
-                        本线
+                        本价值流
                       </span>
                     )}
                   </div>
@@ -994,7 +994,7 @@ function ElementsTab({ lineId }: { lineId: string }) {
     return (
       <div className="flex items-center gap-2 p-6 text-slate-600 text-sm">
         <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-        加载要素账本…
+        加载 DoD·NFR 账本…
       </div>
     );
   }
@@ -1004,12 +1004,12 @@ function ElementsTab({ lineId }: { lineId: string }) {
       {/* 左侧：Step × 要素矩阵 */}
       <div className={`flex flex-col min-h-0 overflow-hidden border-r border-slate-800/60 transition-all ${selectedStep ? 'w-[55%]' : 'w-full'}`}>
         <div className="flex items-center gap-3 px-5 py-2.5 border-b border-slate-800/40 bg-slate-900/30 flex-shrink-0 text-[11px]">
-          <span className="text-slate-400 font-semibold tracking-[0.08em] uppercase">要素账本</span>
+          <span className="text-slate-400 font-semibold tracking-[0.08em] uppercase">DoD·NFR 账本</span>
           {cells.length > 0 && (
             <>
               <span className="text-slate-700 mx-1">·</span>
               <span className="text-emerald-400 font-mono">{cells.filter(c => c.cell_status === 'green').length}</span>
-              <span className="text-slate-600">/{cells.length} 格覆盖</span>
+              <span className="text-slate-600">/{cells.length} AC 覆盖</span>
             </>
           )}
         </div>
@@ -1021,7 +1021,7 @@ function ElementsTab({ lineId }: { lineId: string }) {
               <tr>
                 <th className="text-left pl-5 pr-2 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase w-8">#</th>
                 <th className="text-left pr-3 py-2 text-slate-600 font-semibold tracking-[0.08em] uppercase">步骤</th>
-                <th className="text-center px-2 py-2 text-slate-600 font-semibold w-10" title="能力">能</th>
+                <th className="text-center px-2 py-2 text-slate-600 font-semibold w-10" title="特性">能</th>
                 {elementKeys.map(key => (
                   <th key={key} className="text-center px-1.5 py-2 text-slate-600 font-semibold w-10" title={key}>
                     {key.length > 4 ? key.slice(0, 3) + '…' : key}
@@ -1038,11 +1038,11 @@ function ElementsTab({ lineId }: { lineId: string }) {
           {steps.length === 0 ? (
             <div className="p-8 flex flex-col items-center gap-3 text-center">
               <LayoutGrid className="w-8 h-8 text-slate-700" />
-              <div className="text-[13px] text-slate-600">本线暂无步骤账本</div>
+              <div className="text-[13px] text-slate-600">本价值流暂无步骤账本</div>
               <div className="text-[11px] text-slate-700">账本模板铺入后自动出现</div>
               {elementKeys.length === 0 && (
                 <div className="mt-2 text-[11px] text-slate-700">
-                  要素轴：{STANDARD_ELEMENT_KEYS.slice(0, 3).join(' / ')} 等
+                  DoD·NFR 轴：{STANDARD_ELEMENT_KEYS.slice(0, 3).join(' / ')} 等
                 </div>
               )}
             </div>
@@ -1117,7 +1117,7 @@ function ElementsTab({ lineId }: { lineId: string }) {
         {/* 图例 */}
         {steps.length > 0 && (
           <div className="flex-shrink-0 flex items-center gap-4 px-5 py-2 border-t border-slate-800/40 bg-slate-900/20 text-[10px]">
-            <span className="text-slate-700">要素轴：FR / NFR / 判定点 / 不变量 / 失败语义 / 效果确认 / 两轴衔接</span>
+            <span className="text-slate-700">DoD·NFR 轴：FR / NFR / 判定点 / 不变量 / 失败语义 / 效果确认 / 两轴衔接</span>
           </div>
         )}
       </div>
@@ -1183,13 +1183,13 @@ export default function StrategistLinePage() {
         <button
           onClick={() => navigate('/strategist')}
           className="flex items-center gap-1 text-slate-500 hover:text-slate-300 transition-colors flex-shrink-0"
-          title="返回线列表"
+          title="返回价值流列表"
         >
           <ArrowLeft className="w-3 h-3" />
           <span className="text-indigo-400 font-semibold">军师台</span>
         </button>
         <span className="text-slate-700">/</span>
-        <span className="text-slate-300 font-semibold truncate min-w-0">{line?.name ?? '线空间'}</span>
+        <span className="text-slate-300 font-semibold truncate min-w-0">{line?.name ?? '价值流空间'}</span>
         {matLabel && (
           <span className="text-[11px] px-1.5 py-px rounded border border-slate-700 text-slate-500 flex-shrink-0">{matLabel}</span>
         )}
