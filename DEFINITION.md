@@ -8,11 +8,13 @@
 
 
 
-**Brain 版本**: 1.267.247
+**Brain 版本**: 1.267.248
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.248 — golden_path_proposal 路由字符串同步 capability-controller（决策 a340f100）
 
 ## Brain 1.267.247 — WS3接线修复：scheduler胶水接真实数据流+动态title字段
 
