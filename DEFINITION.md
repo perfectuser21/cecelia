@@ -8,11 +8,17 @@
 
 
 
-**Brain 版本**: 1.267.236
+**Brain 版本**: 1.267.237
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.237 — CONTRACT_CI_SCOPE_CONFLICT 进仲裁名单
+
+- r43 实证:合同限定只改 scripts/product-map/,仓库 CI Orphan Test Check 却强制登记根目录 test-registry.yaml——合同与仓库级约定客观冲突,generator/generator-fix 守约即无法修 CI,报 CONTRACT_CI_SCOPE_CONFLICT 后掉进死等人工。
+- 修法:该码加入 CONTRACT_FAULT_ERROR_CODES,走既有仲裁链(arbitrateContractAppeal 裁定→成立才重开 GAN 扩范围/驳回打回干活)。
+- 回退会恢复:范围类合同故障永远卡人工。
 
 ## Brain 1.267.235 — capture_atoms 幂等修复（F6加厚 ed911a7c）
 
