@@ -8,11 +8,17 @@
 
 
 
-**Brain 版本**: 1.267.241
+**Brain 版本**: 1.267.242
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.242 — reopen = 收敛守卫纪元切换
+
+- r43 实证:合同重开后,产品修复收敛守卫(replayProductConvergence)仍拿着重开前 blocked 的 fix intent 追讨永远不会来的回调,两拍后 generator_fix_callback_missing_after_observation 误杀 run。
+- 修法:守卫回放前先按最新 reopen_gan_contract 行切纪元,只看重开之后的行(旧修复周期随合同作废);纪元内规则一字不变。
+- 回退会恢复:每次重开合同后 run 必被收敛守卫误杀。
 
 ## Brain 1.267.240 — reopen 合同降级值修复('revision'→'draft')
 
