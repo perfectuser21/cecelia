@@ -8,11 +8,17 @@
 
 
 
-**Brain 版本**: 1.267.243
+**Brain 版本**: 1.267.244
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.244 — 重开前 APPROVED 不得复辟(GAN verdict 纪元切换)
+
+- r43 实证:reopen 后合同已降级 draft,但重开前趋势闸的 APPROVED 行仍匹配 rn/SHA(proposer 未推新轮),ganLatestRoundVerdict='APPROVED' 复活 → derive 崩溃窗口补批分支把合同原样批回 approved,重开被静默撤销,run 回到老死循环。
+- 修法:ground-truth 的 reviewer verdict 查找只认最新 reopen_gan_contract 行之后的行(与 1.267.242 收敛守卫同一纪元语义)。
+- 回退会恢复:每次重开都被崩溃窗口补批静默撤销。
 
 ## Brain 1.267.243 — F5加厚 WS3 成品呈报+裁决窄口（Notion Inbox 三键回读）
 

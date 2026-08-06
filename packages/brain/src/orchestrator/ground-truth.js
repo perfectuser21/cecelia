@@ -472,8 +472,17 @@ export async function collectGroundTruth(deps, opts) {
   const evaluateVerdict = evalRow ? asJson(evalRow.detail) : null;
   const judgeVerdict = judgeRow ? asJson(judgeRow.detail) : null;
 
-  // GAN 本轮 verdict：只认 detail.rn === 当前分支 rN 的 reviewer verdict（旧轮不算）
-  const reviewerRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_REVIEWER);
+  // GAN 本轮 verdict：只认 detail.rn === 当前分支 rN 的 reviewer verdict（旧轮不算）。
+  // 纪元规则(r43 实证):最新 reopen_gan_contract 行之前的 reviewer verdict 一律作废——
+  // 否则重开前的 APPROVED(rn/SHA 仍匹配,proposer 未推新轮)会让崩溃窗口补批分支
+  // 把刚降级的合同原样批回去,重开被静默撤销。
+  const latestReopenHop = decisionLog.reduce(
+    (max, r) => (r.action === ACTION.REOPEN_GAN_CONTRACT && Number(r.hop) > max ? Number(r.hop) : max),
+    -1,
+  );
+  const reviewerRow = latestRow(decisionLog, (r) => (
+    r.action === LOG_ACTION.VERDICT_REVIEWER && Number(r.hop) > latestReopenHop
+  ));
   const reviewerDetail = reviewerRow ? asJson(reviewerRow.detail) : null;
   const reviewerShaMatches = reviewerDetail?.contract_sha == null
     || reviewerDetail.contract_sha === proposeBranchSha;
