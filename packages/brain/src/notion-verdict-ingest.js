@@ -174,3 +174,49 @@ export async function consumeVerdictFromNotion(pool, page) {
     task_id: resolvedTaskId,
   };
 }
+
+/**
+ * 批量从 Notion Inbox DB 读取待裁决页面，逐页调用 consumeVerdictFromNotion
+ * 替代 scheduler-jobs.js 中裸调 consumeVerdictFromNotion(pool, {}) 的接线错误
+ *
+ * @param {object} pool - PostgreSQL 连接池
+ * @returns {Promise<object>} 汇总结果 {consumed, skipped_pages, errors}
+ */
+export async function runNotionVerdictIngest(pool) {
+  const { token, dbId } = getVerdictIngestConfig();
+  if (!token || !dbId) {
+    return { skipped: true, reason: 'not_configured', consumed: 0, skipped_pages: 0, errors: 0 };
+  }
+
+  // 动态 import 避免循环依赖
+  const { notionRequest } = await import('./notion-capture-ingest.js');
+  let pages = [];
+  try {
+    const resp = await notionRequest(token, `/databases/${dbId}/query`, 'POST', {
+      filter: {
+        or: [
+          { property: '放行', checkbox: { equals: true } },
+          { property: '不放行', checkbox: { equals: true } },
+        ],
+      },
+      page_size: 50,
+    });
+    pages = resp.results ?? [];
+  } catch (e) {
+    console.error('[notion-verdict-ingest] query failed:', e.message);
+    return { skipped: false, consumed: 0, skipped_pages: 0, errors: 1 };
+  }
+
+  let consumed = 0, skipped_pages = 0, errors = 0;
+  for (const page of pages) {
+    try {
+      const result = await consumeVerdictFromNotion(pool, page);
+      if (result.skipped) skipped_pages++;
+      else consumed++;
+    } catch (e) {
+      console.error('[notion-verdict-ingest] consume error:', e.message);
+      errors++;
+    }
+  }
+  return { consumed, skipped_pages, errors };
+}
