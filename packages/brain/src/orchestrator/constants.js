@@ -76,6 +76,7 @@ export const ACTION = Object.freeze({
   // 自身时,降级已批准合同回 revision、退回 GAN 让 Proposer/Reviewer 修——
   // Generator 无权改合同(CONTRACT IS LAW),不能让它扛,更不能死等人工。
   REOPEN_GAN_CONTRACT: 'reopen_gan_contract',
+  ARBITRATE_CONTRACT_FAULT: 'arbitrate:contract_fault',
 });
 
 export const ACTIONS = Object.freeze(Object.values(ACTION));
@@ -109,6 +110,8 @@ export const LOG_ACTION = Object.freeze({
   DISPATCH_RESULT: 'result:dispatch',
   // Sprint 07231527：generator-fix callback verdict（no-progress 推导依赖）
   VERDICT_GENERATOR_FIX_CALLBACK: 'verdict:generator-fix-callback',
+  // 合同申诉仲裁(2026-08-06):Generator 报合同故障码后,独立仲裁器的裁定行
+  CONTRACT_ARBITRATION: 'verdict:contract_arbitration',
 });
 
 // 案卷式 GAN（issue ce42f68f）：TaskBundle 膨胀双闸的两个常量。

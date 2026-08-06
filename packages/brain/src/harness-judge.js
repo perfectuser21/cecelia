@@ -56,6 +56,80 @@ export async function resolveToapisConfig(deps = {}) {
 //   product_failure       —— 产品行为真的不符合合同 → 退回 Generator 改代码
 export const JUDGE_FAILURE_CLASSES = Object.freeze(['evidence_insufficient', 'product_failure']);
 
+/**
+ * arbitrateContractAppeal — Generator 合同申诉的独立仲裁。
+ * Generator 报 CONTRACT_SELF_CONTRADICTION / CONTRACT_TEST_UNSATISFIABLE 只是
+ * 申诉,不能自动成立(运动员不能自己当裁判)。仲裁器用与 Judge 相同的模型独立
+ * 判定合同资产是否真的自相矛盾/不可满足。
+ * @returns {Promise<{upheld:boolean|null, reasoning:string}>}
+ *   upheld=true 申诉成立(→重开 GAN);false 驳回(→generator-fix);
+ *   null 仲裁器不可用(→人工,不缺席审判)。
+ */
+export async function arbitrateContractAppeal(input, opts = {}) {
+  const llmFn = opts.llmFn || callContractArbiter;
+  try {
+    const r = await llmFn(input, opts);
+    if (r?.upheld === true || r?.upheld === false) {
+      return { upheld: r.upheld, reasoning: String(r.reasoning ?? '') };
+    }
+    return { upheld: null, reasoning: `arbiter returned non-boolean upheld: ${JSON.stringify(r).slice(0, 200)}` };
+  } catch (err) {
+    return { upheld: null, reasoning: `arbiter unavailable: ${err.message}` };
+  }
+}
+
+export async function callContractArbiter(input, opts = {}) {
+  const cfg = opts.config || await resolveToapisConfig(opts);
+  if (!cfg.apiKey) throw new Error('toapis_key_unavailable');
+  const fetchFn = opts.fetchFn || fetch;
+  const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
+  const prompt = [
+    '你是合同申诉的独立仲裁裁判。Generator(执行者)声称批准的合同资产存在自相矛盾或不可满足的验收断言,因此无法在不作弊(私改合同)的前提下完成任务。',
+    '你的职责:只依据合同文本本身判定申诉是否成立。执行者可能夸大困难来逃避工作(畏难申诉),也可能确实撞上了合同缺陷。',
+    '- 申诉成立(upheld=true)的唯一标准:合同文本内存在客观矛盾(两条断言互斥/验收脚本与 DoD 冲突/断言在物理或逻辑上不可满足)。',
+    '- 仅仅是"难/工作量大/写法别扭" → 驳回(upheld=false)。',
+    '',
+    `## 故障码
+${input.errorCode}`,
+    '',
+    `## Generator 的申诉
+${String(input.claimSummary ?? '').slice(0, 4000)}`,
+    '',
+    `## 合同全文
+${String(input.contractText ?? '').slice(0, 24000)}`,
+    '',
+    '只输出 JSON(不要任何解释文字、不要 markdown 代码围栏):',
+    '{"upheld":true|false,"reasoning":"<引用合同原文的具体裁定理由>"}',
+  ].join('\n');
+  const resp = await fetchFn(`${cfg.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${cfg.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: cfg.model,
+      messages: [
+        { role: 'system', content: '你是严格的独立仲裁裁判,只输出合法 JSON。' },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0,
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => 'unknown');
+    throw new Error(`toapis HTTP ${resp.status}: ${String(t).slice(0, 200)}`);
+  }
+  const data = await resp.json();
+  const content = data?.choices?.[0]?.message?.content || '';
+  if (!content.trim()) throw new Error('toapis empty content');
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('arbiter returned no JSON');
+  const parsed = JSON.parse(jsonMatch[0]);
+  return { upheld: parsed.upheld, reasoning: parsed.reasoning || '' };
+}
+
 export function normalizeJudgeVerdict(v) {
   const s = String(v || '').trim().toUpperCase();
   if (s === 'PASS') return 'PASS';

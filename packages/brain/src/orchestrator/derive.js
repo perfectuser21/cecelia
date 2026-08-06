@@ -294,6 +294,33 @@ function attemptCallbackRoute(observed) {
     && (status === 'blocked' || (status === 'failed' && failureClass === 'semantic_refusal'))
     && CONTRACT_FAULT_ERROR_CODES.includes(detail.error_code)
   ) {
+    // 仲裁制(Alex 拍板 2026-08-06):Generator 的合同故障码只是"申诉",不能
+    // 自动成立——被审查者不能自己触发对审查产物(合同)的推翻。独立仲裁器
+    // (Judge 同模型)裁定后才分流:成立→重开 GAN;驳回→打回 generator-fix
+    // 继续干活;仲裁器不可用→人工,不缺席审判任何一方。
+    const arbitration = [...sortedLogRows(observed.decisionLog)].reverse().find(
+      (r) => r.action === LOG_ACTION.CONTRACT_ARBITRATION
+        && Number(callbackDetail(r).callback_hop) === Number(row.hop),
+    );
+    if (!arbitration) {
+      return {
+        phase: 'gan',
+        action: ACTION.ARBITRATE_CONTRACT_FAULT,
+        reason: 'contract_fault_appeal',
+        callbackHop: Number(row.hop),
+      };
+    }
+    const upheld = callbackDetail(arbitration).upheld;
+    if (upheld === false) {
+      return fixRoute('contract_appeal_rejected');
+    }
+    if (upheld !== true) {
+      return {
+        phase: 'review',
+        action: ACTION.WAIT_HUMAN_REVIEW,
+        reason: 'contract_arbitration_unavailable',
+      };
+    }
     const priorReopens = sortedLogRows(observed.decisionLog)
       .filter((r) => r.action === ACTION.REOPEN_GAN_CONTRACT).length;
     if (priorReopens < 1) {

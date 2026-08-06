@@ -875,6 +875,69 @@ export async function runLoop(
       await beat();
       continue;
     }
+    if (decision.action === ACTION.ARBITRATE_CONTRACT_FAULT) {
+      // 合同申诉仲裁(Alex 拍板 2026-08-06):Generator 的合同故障码只是申诉。
+      // 独立仲裁器(Judge 同模型,in-process 调用,与 kernel judge 同路径)裁定
+      // 后写 verdict:contract_arbitration 行,下一跳 derive 按 upheld 分流:
+      // true→reopen_gan_contract;false→generator-fix;null→人工。
+      const faultRow = observed.decisionLog.find(
+        (r) => Number(r.hop) === Number(decision.callbackHop),
+      );
+      const faultDetail = faultRow ? (asStructuredJson(faultRow.detail) ?? {}) : {};
+      let contractText = '';
+      if (observed.contract.id) {
+        try {
+          const { rows } = await deps.pool.query(
+            `SELECT contract_content, e2e_acceptance FROM initiative_contracts WHERE id = $1`,
+            [observed.contract.id],
+          );
+          contractText = [rows[0]?.contract_content, rows[0]?.e2e_acceptance]
+            .filter(Boolean).join('\n\n---\n\n');
+        } catch { /* 合同读取失败 → contractText 空,仲裁器将因证据不足报 null → 人工 */ }
+      }
+      let verdict;
+      if (deps.arbitrateContractAppeal) {
+        verdict = await deps.arbitrateContractAppeal({
+          contractText,
+          errorCode: faultDetail.error_code ?? null,
+          claimSummary: faultDetail.summary ?? '',
+        });
+      } else {
+        const { arbitrateContractAppeal } = await import('../harness-judge.js');
+        verdict = contractText
+          ? await arbitrateContractAppeal({
+            contractText,
+            errorCode: faultDetail.error_code ?? null,
+            claimSummary: faultDetail.summary ?? '',
+          })
+          : { upheld: null, reasoning: 'contract text unavailable for arbitration' };
+      }
+      const arbHop = await next(deps.pool, resolvedRunId);
+      try {
+        await append(deps.pool, {
+          runId: resolvedRunId,
+          hop: arbHop,
+          observed: { contract_id: observed.contract.id ?? null },
+          derivedPhase: 'gan',
+          gateVerdict: 'allow',
+          action: LOG_ACTION.CONTRACT_ARBITRATION,
+          detail: {
+            callback_hop: decision.callbackHop ?? null,
+            upheld: verdict.upheld,
+            reasoning: String(verdict.reasoning ?? '').slice(0, 2000),
+            error_code: faultDetail.error_code ?? null,
+          },
+        });
+        hops++;
+      } catch (error) {
+        if (error instanceof SingletonConflictError) {
+          return { exitReason: 'singleton_conflict', hops };
+        }
+        throw error;
+      }
+      await beat();
+      continue;
+    }
     if (decision.action === ACTION.REOPEN_GAN_CONTRACT) {
       // 合同故障重开 GAN（r40 实证）：下游执行证伪合同资产（CONTRACT_SELF_
       // CONTRADICTION / CONTRACT_TEST_UNSATISFIABLE）。三步：①写 reopen 决策行

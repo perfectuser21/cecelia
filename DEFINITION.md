@@ -8,11 +8,18 @@
 
 
 
-**Brain 版本**: 1.267.233
+**Brain 版本**: 1.267.234
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.234 — 合同申诉仲裁制（运动员不能自己当裁判）
+
+- #4664 的 reopen_gan_contract 缺制衡：Generator 报 CONTRACT_SELF_CONTRADICTION/CONTRACT_TEST_UNSATISFIABLE 即自动重开 GAN——被审查者可单方面触发对审查产物（合同）的推翻，存在"喊合同有问题来逃活"的偷懒后门。
+- 仲裁制（Alex 拍板 2026-08-06）：故障码只是申诉。新增 `arbitrate:contract_fault` 动作与 `verdict:contract_arbitration` 决策行，独立仲裁器（`arbitrateContractAppeal`，Judge 同模型）只依据合同文本裁定：客观矛盾才成立（upheld=true→重开 GAN）；"难/工作量大"一律驳回（false→打回 generator-fix）；仲裁器不可用（null→人工，不缺席审判）。
+- 每 run 重开一次的上限与案卷 E 号 blocker 留痕机制不变。
+- 回退会恢复：Generator 一句话就能推翻已批合同。
 
 ## Brain 1.267.232 — sidecar 测试 mock curl（CI 分片4 必挂 20min 根治）
 
