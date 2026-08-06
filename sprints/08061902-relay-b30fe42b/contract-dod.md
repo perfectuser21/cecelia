@@ -9,44 +9,44 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] smoke-artifact.json 存在且含 smoke_tag 字面值
+- [x] [ARTIFACT] smoke-artifact.json 存在且含 smoke_tag 字面值
   Test: node -e "const c=require('fs').readFileSync('sprints/08061902-relay-b30fe42b/smoke-artifact.json','utf8');if(!c.includes('claude-headed-dispatch-local-31156-4267'))process.exit(1)"
 
-- [ ] [ARTIFACT] tests/smoke-artifact.test.ts 存在且覆盖三字段断言
+- [x] [ARTIFACT] tests/smoke-artifact.test.ts 存在且覆盖三字段断言
   Test: node -e "const c=require('fs').readFileSync('sprints/08061902-relay-b30fe42b/tests/smoke-artifact.test.ts','utf8');if(!(c.includes('task_id')&&c.includes('smoke_tag')&&c.includes('mode')))process.exit(1)"
 
-- [ ] [ARTIFACT] INV-独享路径 合同 E2E 脚本与负向断言使用 mktemp 会话独享路径（无共享 /tmp 固定文件名）
+- [x] [ARTIFACT] INV-独享路径 合同 E2E 脚本与负向断言使用 mktemp 会话独享路径（无共享 /tmp 固定文件名）
   Test: node -e "const c=require('fs').readFileSync('sprints/08061902-relay-b30fe42b/contract-draft.md','utf8');if(!c.includes('mktemp'))process.exit(1)"
 
 ## BEHAVIOR 条目（内嵌可执行 manual: 命令，journey_type = autonomous / target_environment = local_api）
 
 > 本 sprint 无 HTTP/DB（PRD 范围限定禁止新端点与 DB 写入），BEHAVIOR 全部为本地真实文件断言——对真实落盘工件执行，工件未落地时每条必 FAIL（真红自查通过）。
 
-- [ ] [BEHAVIOR] 工件存在且为合法 JSON 顶层对象（Golden Path Step 2 的可观测输出）
+- [x] [BEHAVIOR] 工件存在且为合法 JSON 顶层对象（Golden Path Step 2 的可观测输出）
   Test: manual:bash -c 'node -e "const o=JSON.parse(require(\"fs\").readFileSync(\"sprints/08061902-relay-b30fe42b/smoke-artifact.json\",\"utf8\"));if(typeof o!==\"object\"||o===null||Array.isArray(o))process.exit(1);console.log(\"OK\")"'
   期望: OK
 
-- [ ] [BEHAVIOR] task_id 字段与 task payload 字面相等（Golden Path Step 2）
+- [x] [BEHAVIOR] task_id 字段与 task payload 字面相等（Golden Path Step 2）
   Test: manual:bash -c 'jq -e ".task_id == \"b30fe42b-86c7-412e-9e05-eb08ac26488e\"" sprints/08061902-relay-b30fe42b/smoke-artifact.json'
   期望: exit 0
 
-- [ ] [BEHAVIOR] smoke_tag 字段与 payload 值字面相等，含大小写（Golden Path Step 2）
+- [x] [BEHAVIOR] smoke_tag 字段与 payload 值字面相等，含大小写（Golden Path Step 2）
   Test: manual:bash -c 'jq -e ".smoke_tag == \"claude-headed-dispatch-local-31156-4267\"" sprints/08061902-relay-b30fe42b/smoke-artifact.json'
   期望: exit 0
 
-- [ ] [BEHAVIOR] mode 字段字面等于 headed（Golden Path Step 2）
+- [x] [BEHAVIOR] mode 字段字面等于 headed（Golden Path Step 2）
   Test: manual:bash -c 'jq -e ".mode == \"headed\"" sprints/08061902-relay-b30fe42b/smoke-artifact.json'
   期望: exit 0
 
-- [ ] [BEHAVIOR] schema 封闭性——顶层 keys 完全等于预期集合，禁止多塞字段（Golden Path Step 4）
+- [x] [BEHAVIOR] schema 封闭性——顶层 keys 完全等于预期集合，禁止多塞字段（Golden Path Step 4）
   Test: manual:bash -c 'jq -e "keys == [\"mode\",\"smoke_tag\",\"task_id\"]" sprints/08061902-relay-b30fe42b/smoke-artifact.json'
   期望: exit 0
 
-- [ ] [BEHAVIOR] error path——篡改 smoke_tag 的副本执行同一断言必 FAIL（负向自证防假绿，临时文件走 mktemp 会话独享路径，Golden Path Step 4）
+- [x] [BEHAVIOR] error path——篡改 smoke_tag 的副本执行同一断言必 FAIL（负向自证防假绿，临时文件走 mktemp 会话独享路径，Golden Path Step 4）
   Test: manual:bash -c 'TMPD=$(mktemp -d "${TMPDIR:-/tmp}/smoke-dod-b30fe42b-XXXXXX"); jq ".smoke_tag = \"tampered\"" sprints/08061902-relay-b30fe42b/smoke-artifact.json > "$TMPD/bad.json"; if jq -e ".smoke_tag == \"claude-headed-dispatch-local-31156-4267\"" "$TMPD/bad.json"; then rm -rf "$TMPD"; exit 1; fi; rm -rf "$TMPD"; echo OK'
   期望: OK
 
-- [ ] [BEHAVIOR] 工件随分支 commit 留痕——git 索引可查（Golden Path Step 3）
+- [x] [BEHAVIOR] 工件随分支 commit 留痕——git 索引可查（Golden Path Step 3）
   Test: manual:bash -c 'git ls-files --error-unmatch sprints/08061902-relay-b30fe42b/smoke-artifact.json >/dev/null && echo OK'
   期望: OK
 
