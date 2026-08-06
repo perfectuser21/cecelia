@@ -57,12 +57,35 @@ describe('合同故障重开 GAN（r40 实证：CONTRACT IS LAW 死锁出路）'
     },
   });
 
-  it('generator 报合同故障码(blocked+CONTRACT_SELF_CONTRADICTION) → reopen_gan_contract,不转人工', () => {
+  // 仲裁制(Alex 拍板 2026-08-06):Generator 喊"合同有矛盾"只是申诉,不能自动
+  // 成立——运动员不能自己当裁判。必须由独立 Judge 仲裁:成立才重开 GAN,
+  // 驳回则打回 generator-fix 继续干活。
+  const arb = (hop, cbHop, upheld) => ({
+    hop,
+    action: 'verdict:contract_arbitration',
+    detail: { callback_hop: cbHop, upheld, reasoning: 'x' },
+  });
+
+  it('generator 报合同故障码且无仲裁记录 → 先派仲裁,不直接重开', () => {
     const r = derive(baseObserved({
       pr: null,
       decisionLog: [
         { hop: 1, action: 'spawn:generator-fix', observed: {} },
         cb(3),
+      ],
+    }));
+    expect(r.action).toBe('arbitrate:contract_fault');
+    expect(r.reason).toBe('contract_fault_appeal');
+    expect(r.callbackHop).toBe(3);
+  });
+
+  it('仲裁 upheld=true → reopen_gan_contract', () => {
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator-fix', observed: {} },
+        cb(3),
+        arb(4, 3, true),
       ],
     }));
     expect(r.phase).toBe('gan');
@@ -71,12 +94,39 @@ describe('合同故障重开 GAN（r40 实证：CONTRACT IS LAW 死锁出路）'
     expect(r.callbackHop).toBe(3);
   });
 
-  it('CONTRACT_TEST_UNSATISFIABLE(r33 形态)同样重开 GAN', () => {
+  it('仲裁 upheld=false(申诉驳回) → 打回 generator-fix,合同不动', () => {
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        cb(3),
+        arb(4, 3, false),
+      ],
+    }));
+    expect(r.action).toBe('spawn:generator-fix');
+    expect(r.reason).toBe('contract_appeal_rejected');
+  });
+
+  it('仲裁 upheld=null(仲裁器不可用) → 等人工,不误判任何一方', () => {
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        cb(3),
+        arb(4, 3, null),
+      ],
+    }));
+    expect(r.action).toBe('wait:human_review');
+    expect(r.reason).toBe('contract_arbitration_unavailable');
+  });
+
+  it('CONTRACT_TEST_UNSATISFIABLE(r33 形态)+仲裁成立同样重开 GAN', () => {
     const r = derive(baseObserved({
       pr: null,
       decisionLog: [
         { hop: 1, action: 'spawn:generator', observed: {} },
         cb(3, { error_code: 'CONTRACT_TEST_UNSATISFIABLE' }),
+        arb(4, 3, true),
       ],
     }));
     expect(r.action).toBe('reopen_gan_contract');
@@ -88,9 +138,11 @@ describe('合同故障重开 GAN（r40 实证：CONTRACT IS LAW 死锁出路）'
       decisionLog: [
         { hop: 1, action: 'spawn:generator', observed: {} },
         cb(3),
-        { hop: 4, action: 'reopen_gan_contract', detail: { callback_hop: 3 } },
-        { hop: 5, action: 'spawn:generator', observed: {} },
-        cb(7),
+        arb(4, 3, true),
+        { hop: 5, action: 'reopen_gan_contract', detail: { callback_hop: 3 } },
+        { hop: 6, action: 'spawn:generator', observed: {} },
+        cb(8),
+        arb(9, 8, true),
       ],
     }));
     expect(r.action).toBe('wait:human_review');
@@ -104,7 +156,8 @@ describe('合同故障重开 GAN（r40 实证：CONTRACT IS LAW 死锁出路）'
       decisionLog: [
         { hop: 1, action: 'spawn:generator', observed: {} },
         cb(3),
-        { hop: 4, action: 'reopen_gan_contract', detail: { callback_hop: 3 } },
+        arb(4, 3, true),
+        { hop: 5, action: 'reopen_gan_contract', detail: { callback_hop: 3 } },
       ],
     }));
     expect(r.action).not.toBe('reopen_gan_contract');

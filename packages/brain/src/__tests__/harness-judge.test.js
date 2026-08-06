@@ -80,6 +80,39 @@ describe('Judge 模型配置化（最终裁判不该是链路里最弱的模型�
   });
 });
 
+describe('arbitrateContractAppeal — Generator 合同申诉的独立仲裁', () => {
+  // Generator 喊"合同自相矛盾"只是申诉,不能自动成立(运动员不能自己当裁判)。
+  // 由独立仲裁器(与 Judge 同模型)裁定:成立→重开 GAN;驳回→打回 generator-fix。
+  it('仲裁器判申诉成立 → upheld=true 带 reasoning', async () => {
+    const { arbitrateContractAppeal } = await import('../harness-judge.js');
+    const r = await arbitrateContractAppeal(
+      { contractText: 'DoD: x 必须同时 >1 且 <0', errorCode: 'CONTRACT_SELF_CONTRADICTION', claimSummary: 'x 不可能同时满足两个断言' },
+      { llmFn: async () => ({ upheld: true, reasoning: '断言互斥,申诉成立' }) },
+    );
+    expect(r.upheld).toBe(true);
+    expect(r.reasoning).toContain('互斥');
+  });
+
+  it('仲裁器判申诉不成立 → upheld=false', async () => {
+    const { arbitrateContractAppeal } = await import('../harness-judge.js');
+    const r = await arbitrateContractAppeal(
+      { contractText: 'DoD: 输出须为 JSON', errorCode: 'CONTRACT_SELF_CONTRADICTION', claimSummary: '我觉得太难了' },
+      { llmFn: async () => ({ upheld: false, reasoning: '合同无矛盾,系畏难申诉' }) },
+    );
+    expect(r.upheld).toBe(false);
+  });
+
+  it('LLM 调用失败 → upheld=null(不误判任何一方,交人工)', async () => {
+    const { arbitrateContractAppeal } = await import('../harness-judge.js');
+    const r = await arbitrateContractAppeal(
+      { contractText: 'x', errorCode: 'CONTRACT_TEST_UNSATISFIABLE', claimSummary: 'y' },
+      { llmFn: async () => { throw new Error('toapis down'); } },
+    );
+    expect(r.upheld).toBe(null);
+    expect(r.reasoning).toContain('toapis down');
+  });
+});
+
 describe('Judge FAIL 必须带 failure_class（r41 实证：null → 全部死等人工）', () => {
   // r41 实证：Judge 判 FAIL 但 failure_class=null → derive 归入 unknown 分支
   // → wait:human_review 死等。Judge 是最后一道闸，它一 FAIL 就必然卡人工，
