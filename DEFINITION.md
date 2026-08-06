@@ -8,11 +8,17 @@
 
 
 
-**Brain 版本**: 1.267.245
+**Brain 版本**: 1.267.246
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.246 — fix 终局回调=已答 + 故障码 token 归一化(r43 二次实证双修)
+
+- ①收敛守卫:generator-fix attempt 以 blocked/failed/cancelled 终局(verdict:attempt_callback,不产生 fix-callback 行)时,其出路已被仲裁/人工/重开收编——不再判 generator_fix_callback_missing_after_observation 杀 run。无终局回调的原"失踪"语义不变。
+- ②故障码匹配 token 归一化:LLM 产码非稳定枚举(同一模型两次采样 CONTRACT_CI_SCOPE_CONFLICT / CONTRACT_SCOPE_CI_CONFLICT 词序漂移),按 '_' 切 token 排序比对,词序免疫。
+- 回退会恢复:①重开后 run 仍被"回调失踪"误杀 ②拼写漂移的合同故障死等人工。
 
 ## Brain 1.267.245 — 趋势闸案卷输入纪元切换(重开撤销病最后一环)
 

@@ -142,6 +142,18 @@ export function replayProductConvergence(
       modernIntents[index + 1],
     );
     if (!callback) {
+      // 终局的 attempt 回调 = 已答(r43 二次实证):fix attempt 以 blocked/failed/
+      // cancelled 终局时走 verdict:attempt_callback(不产生 generator-fix-callback 行),
+      // 其出路已被别的路由收编(仲裁/人工/重开)——不是"回调失踪",不追讨。
+      const abortedByTerminalAttempt = rows.some((row) => {
+        if (row.action !== LOG_ACTION.ATTEMPT_CALLBACK) return false;
+        if (!(Number(row.hop) > Number(intent.hop))) return false;
+        if (modernIntents[index + 1] != null
+          && !(Number(row.hop) < Number(modernIntents[index + 1].hop))) return false;
+        const detail = asJson(row.detail) ?? {};
+        return ['blocked', 'failed', 'cancelled'].includes(detail.status);
+      });
+      if (abortedByTerminalAttempt) continue;
       if (index === modernIntents.length - 1) {
         latestMissingCallback = true;
         latestMissingCallbackObserved = rows.some((row) => (

@@ -94,6 +94,20 @@ describe('合同故障重开 GAN（r40 实证：CONTRACT IS LAW 死锁出路）'
     expect(r.action).toBe('arbitrate:contract_fault');
   });
 
+  it('故障码拼写漂移(CONTRACT_SCOPE_CI_CONFLICT 词序不同)同样命中——LLM 产码非稳定枚举(r43 二次实证)', () => {
+    // r43 实证:同一模型两次采样分别报 CONTRACT_CI_SCOPE_CONFLICT 与
+    // CONTRACT_SCOPE_CI_CONFLICT,后者绕过精确匹配掉回死等人工。
+    // 机器侧必须 token 集合归一化匹配,不能指望 LLM 拼写稳定。
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator-fix', observed: {} },
+        cb(3, { error_code: 'CONTRACT_SCOPE_CI_CONFLICT' }),
+      ],
+    }));
+    expect(r.action).toBe('arbitrate:contract_fault');
+  });
+
   it('仲裁 upheld=true → reopen_gan_contract', () => {
     const r = derive(baseObserved({
       pr: null,
