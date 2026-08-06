@@ -16,8 +16,8 @@ describe('task-router: golden_path_proposal registration', () => {
     expect(VALID_TASK_TYPES).toContain('golden_path_proposal');
   });
 
-  it('routes to /golden-path-controller skill', () => {
-    expect(SKILL_WHITELIST['golden_path_proposal']).toBe('/golden-path-controller');
+  it('routes to /capability-controller skill', () => {
+    expect(SKILL_WHITELIST['golden_path_proposal']).toBe('/capability-controller');
   });
 
   it('is located at us', () => {
@@ -31,6 +31,6 @@ describe('task-router: golden_path_proposal registration', () => {
   it('routeTaskCreate resolves full routing for golden_path_proposal', () => {
     const result = routeTaskCreate({ title: 'GP 提案', task_type: 'golden_path_proposal' });
     expect(result.location).toBe('us');
-    expect(result.skill).toBe('/golden-path-controller');
+    expect(result.skill).toBe('/capability-controller');
   });
 });
