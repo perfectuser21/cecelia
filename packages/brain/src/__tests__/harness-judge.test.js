@@ -50,6 +50,122 @@ const validStageFacts = {
   merge_gate_approved: false,
 };
 
+describe('Judge 模型配置化（最终裁判不该是链路里最弱的模型）', () => {
+  // 全链路 Planner/Proposer/Reviewer/Generator/Evaluator 都跑 gpt-5.6-sol，
+  // 唯独最后一道否决闸写死 deepseek-v4-flash。误判一次整条链路白跑。
+  it('未配置 env 时默认模型不再是 deepseek-v4-flash', async () => {
+    const prev = process.env.TOAPIS_JUDGE_MODEL;
+    delete process.env.TOAPIS_JUDGE_MODEL;
+    try {
+      const mod = await import('../harness-judge.js');
+      const cfg = await mod.resolveToapisConfig({ readFileFn: async () => '' });
+      expect(cfg.model).not.toBe('deepseek-v4-flash');
+    } finally {
+      if (prev === undefined) delete process.env.TOAPIS_JUDGE_MODEL;
+      else process.env.TOAPIS_JUDGE_MODEL = prev;
+    }
+  });
+
+  it('TOAPIS_JUDGE_MODEL 显式配置时以配置为准', async () => {
+    const prev = process.env.TOAPIS_JUDGE_MODEL;
+    process.env.TOAPIS_JUDGE_MODEL = 'custom-model-x';
+    try {
+      const mod = await import('../harness-judge.js');
+      const cfg = await mod.resolveToapisConfig({ readFileFn: async () => '' });
+      expect(cfg.model).toBe('custom-model-x');
+    } finally {
+      if (prev === undefined) delete process.env.TOAPIS_JUDGE_MODEL;
+      else process.env.TOAPIS_JUDGE_MODEL = prev;
+    }
+  });
+});
+
+describe('Judge FAIL 必须带 failure_class（r41 实证：null → 全部死等人工）', () => {
+  // r41 实证：Judge 判 FAIL 但 failure_class=null → derive 归入 unknown 分支
+  // → wait:human_review 死等。Judge 是最后一道闸，它一 FAIL 就必然卡人工，
+  // 意味着"Judge FAIL 后自动修复"这条路从来没通过。且 Judge 的 FAIL 大多是
+  // "证据不足"（要 Evaluator 重新取证），不是"代码有 bug"（要 Generator 改码），
+  // 必须能分流。
+  it('LLM 裁判判 FAIL 且未给 failure_class → 兜底归 evidence_insufficient（退回取证，不误判为代码 bug）', async () => {
+    const { runJudgeGate } = await import('../harness-judge.js');
+    const r = await runJudgeGate(
+      {
+        worktreePath: '/tmp/x',
+        sprintDir: 'sprints/x',
+        stageFacts: { pr_state: 'OPEN', pr_merged: false, merge_gate_approved: false },
+        agentVerdict: 'PASS',
+      },
+      {
+        collectEvidence: async () => ({
+          contractE2E: 'e2e script',
+          goldenPathSteps: ['step1'],
+          transcript: 't',
+          agentStdout: 's',
+          brainResult: {},
+        }),
+        judgeFn: async () => ({
+          verdict: 'FAIL',
+          coverage: [{ step: 'step1', passed: true, evidence: 'ok' }],
+          feedback: '证据不足：未见失败路径直接执行的 stdout 与退出码',
+          // 故意不给 failure_class —— 真实 DeepSeek 输出就是这样
+        }),
+        persistFn: async () => {},
+        mechanicalGateFn: async () => ({ pass: true, reasons: [] }),
+      },
+    );
+    expect(r.verdict).toBe('FAIL');
+    expect(r.failure_class, 'FAIL 必须带分类，否则 derive 归 unknown 死等人工').toBe('evidence_insufficient');
+  });
+
+  it('LLM 裁判显式给出 product_failure → 原样透传（让 generator-fix 改代码）', async () => {
+    const { runJudgeGate } = await import('../harness-judge.js');
+    const r = await runJudgeGate(
+      {
+        worktreePath: '/tmp/x',
+        sprintDir: 'sprints/x',
+        stageFacts: { pr_state: 'OPEN', pr_merged: false, merge_gate_approved: false },
+        agentVerdict: 'PASS',
+      },
+      {
+        collectEvidence: async () => ({
+          contractE2E: 'e2e', goldenPathSteps: ['step1'], transcript: 't', agentStdout: 's', brainResult: {},
+        }),
+        judgeFn: async () => ({
+          verdict: 'FAIL',
+          coverage: [{ step: 'step1', passed: false, evidence: '功能未实现' }],
+          feedback: '产品行为不符合 Golden Path',
+          failure_class: 'product_failure',
+        }),
+        persistFn: async () => {},
+        mechanicalGateFn: async () => ({ pass: true, reasons: [] }),
+      },
+    );
+    expect(r.verdict).toBe('FAIL');
+    expect(r.failure_class).toBe('product_failure');
+  });
+
+  it('机械闸 FAIL → 也必须带 failure_class（evidence_insufficient）', async () => {
+    const { runJudgeGate } = await import('../harness-judge.js');
+    const r = await runJudgeGate(
+      {
+        worktreePath: '/tmp/x',
+        sprintDir: 'sprints/x',
+        stageFacts: { pr_state: 'OPEN', pr_merged: false, merge_gate_approved: false },
+        agentVerdict: 'PASS',
+      },
+      {
+        collectEvidence: async () => ({
+          contractE2E: 'e2e', goldenPathSteps: ['step1'], transcript: 't', agentStdout: 's', brainResult: {},
+        }),
+        persistFn: async () => {},
+        mechanicalGateFn: async () => ({ pass: false, reasons: ['behavior_tests 缺失'] }),
+      },
+    );
+    expect(r.verdict).toBe('FAIL');
+    expect(r.failure_class).toBe('evidence_insufficient');
+  });
+});
+
 describe('runJudgeGate — 三权分立裁判门', () => {
   const ORIG = process.env.JUDGE_STRICT;
   afterEach(() => {
@@ -233,7 +349,7 @@ describe('resolveToapisConfig — env 优先 → toapis.env 兜底', () => {
     const cfg = await resolveToapisConfig({ readFileFn: async () => fileContent });
     expect(cfg.apiKey).toBe('sk-test-fromfile');
     expect(cfg.baseUrl).toBe('https://toapis.com/v1');
-    expect(cfg.model).toBe('deepseek-v4-flash');
+    expect(cfg.model).toBe('gpt-5.6-sol');
   });
   it('兼容 shell source 文件的 export 前缀', async () => {
     const fileContent = [

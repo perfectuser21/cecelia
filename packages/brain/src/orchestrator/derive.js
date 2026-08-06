@@ -797,6 +797,30 @@ function deriveFailureClassRoute(
     return evidenceReplayRoute(decisionLog, currentHeadSha, currentVerdict);
   }
 
+  if (fc === 'evidence_insufficient') {
+    // 证据不足 ≠ 代码有 bug（r41 实证）：Judge 说"你给的证据不支撑 PASS"时，缺的是
+    // 取证（Evaluator 的活），产品实现往往完全正确——派 Generator 改代码是改错了人，
+    // 还会动到本来对的实现。重派 Evaluator 按 Judge 的具体要求重新取证。
+    // 防死循环：同一 SHA 已因此重新取证过一次仍判证据不足 → 回落人工。
+    const alreadyRecollected = (decisionLog ?? []).some(
+      (r) => r.action === ACTION.SPAWN_EVALUATOR
+        && (asStructuredJson(r.detail) ?? {}).reason === 'judge_evidence_insufficient_recollect'
+        && (asStructuredJson(r.observed) ?? {}).trigger_sha === currentHeadSha,
+    );
+    if (alreadyRecollected) {
+      return {
+        phase: 'review',
+        action: ACTION.WAIT_HUMAN_REVIEW,
+        reason: 'evidence_insufficient_after_recollect',
+      };
+    }
+    return {
+      phase: 'evaluate',
+      action: ACTION.SPAWN_EVALUATOR,
+      reason: 'judge_evidence_insufficient_recollect',
+    };
+  }
+
   if (fc === 'needs_context' || fc === 'unknown') {
     // INV-K3：不确定原因不应默认归为产品代码失败 → 等人工介入
     return { phase: 'review', action: 'wait:human_review', reason: `${fc}:awaiting_human_review` };

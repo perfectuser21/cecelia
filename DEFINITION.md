@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.267.232
+**Brain 版本**: 1.267.233
 
 **状态**: 生产运行中
 
@@ -19,6 +19,13 @@
 - 纯测试改动:#4666 的 sidecar 独立测试执行真实 bluegreen-sidecar.sh,mock 了 docker 没 mock curl——CI 无 Brain 时 90×(curl 3s+sleep 2s) healthz 轮询每用例干等 3-7 分钟,brain-unit 分片4 必撞 timeout-minutes:20 被杀(全仓 PR 被挡);本地则把 drain-cancel POST 打到真实生产 Brain。
 - 修复:mock bin 补假 curl(断网+零睡眠);execSync 60s 保险丝;回归哨兵断言成功路径 <30s 且 curl 走 mock。
 - 回退会恢复:所有 PR 的 brain-unit (4) 重新必挂 20 分钟。
+## Brain 1.267.233 — Judge 闭环三修（r41 实证：最后一道闸从来没能自动修复）
+
+- **① Judge FAIL 缺 failure_class → 全部死等人工**：`harness-judge.js` 三个 FAIL 出口里，机械闸与 LLM 终判都不填 `failure_class`；derive 的 `deriveFailureClassRoute` 把 null 归入 unknown → `wait:human_review`。Judge 是最后一道闸，它一判 FAIL 就必然卡人工——"Judge FAIL 后自动修复"这条路从上线起就没通过（r41 实测卡死在此）。现两个出口都带分类，LLM 未给时兜底 `evidence_insufficient`。
+- **② 证据不足该退回 Evaluator，不是 Generator**：Judge 判 FAIL 多数是"你给的证据不支撑 PASS"（取证问题），产品实现往往正确。旧路由只有 `product_failure→generator-fix`，会派 Generator 去改本就正确的代码。新增 `evidence_insufficient → spawn:evaluator` 重新取证；同一 SHA 重取一次仍不足则回落人工，防取证死循环。
+- **③ 最终裁判不再是链路里最弱的模型**：`DEFAULT_MODEL` 由 `deepseek-v4-flash` 改 `gpt-5.6-sol`（`TOAPIS_JUDGE_MODEL` 可覆盖）。其余角色全跑 gpt-5.6-sol，唯独握最终否决权的裁判用最弱模型，误判一次整条链路白跑。
+- 配套：judge prompt 显式要求输出 `failure_class` 并说明两类语义（填错会派错人）；`runJudgeGate` 新增 `mechanicalGateFn` 注入点（可测性）。
+- 回退会恢复：Judge 每次 FAIL 都要人工捞，且捞回来还可能派错角色。
 
 ## Brain 1.267.231 — 合同故障自动重开 GAN（r40 死锁出路）
 

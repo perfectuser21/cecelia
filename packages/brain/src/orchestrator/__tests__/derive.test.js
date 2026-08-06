@@ -136,6 +136,42 @@ describe('合同故障重开 GAN（r40 实证：CONTRACT IS LAW 死锁出路）'
   });
 });
 
+describe('证据不足退回 Evaluator 重新取证（r41 实证：Judge 要证据却退给 Generator 改码）', () => {
+  // Judge 判 FAIL 说"你给的证据不足/取证方式不对"时，要做的是重新取证（Evaluator
+  // 的活），不是改产品代码（Generator 的活）——产品代码可能完全正确。r41 实证：
+  // Judge 要"失败路径下直接执行 CLI 的原始 stdout 与退出码"，而 Evaluator 只交了
+  // "回归测试套件跑绿了"。旧实现没有这条路径，Judge FAIL 全掉 unknown 死等人工。
+  const judgeFail = (fc) => baseObserved({
+    evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-new' },
+    judgeVerdict: { verdict: 'FAIL', pr_head_sha: 'sha-new', failure_class: fc },
+    decisionLog: [
+      { hop: 1, action: 'spawn:generator', observed: {} },
+      { hop: 2, action: 'verdict:evaluate', detail: { verdict: 'PASS', pr_head_sha: 'sha-new' } },
+      { hop: 3, action: 'verdict:judge', detail: { verdict: 'FAIL', pr_head_sha: 'sha-new', failure_class: fc, feedback: '需要失败路径直接执行的 stdout 与退出码' } },
+    ],
+  });
+
+  it('judge FAIL + evidence_insufficient → 重派 evaluator 取证，不派 generator-fix', () => {
+    const r = derive(judgeFail('evidence_insufficient'));
+    expect(r.action).toBe('spawn:evaluator');
+    expect(r.reason).toBe('judge_evidence_insufficient_recollect');
+    expect(r.phase).toBe('evaluate');
+  });
+
+  it('judge FAIL + product_failure → 仍走 generator-fix（改代码）', () => {
+    const r = derive(judgeFail('product_failure'));
+    expect(r.action).toBe('spawn:generator-fix');
+  });
+
+  it('同一 SHA 已重新取证过一次仍 evidence_insufficient → 不再重派，回落人工（防取证死循环）', () => {
+    const o = judgeFail('evidence_insufficient');
+    o.decisionLog.push({ hop: 4, action: 'spawn:evaluator', observed: { trigger_sha: 'sha-new' }, detail: { reason: 'judge_evidence_insufficient_recollect' } });
+    o.decisionLog.push({ hop: 5, action: 'verdict:judge', detail: { verdict: 'FAIL', pr_head_sha: 'sha-new', failure_class: 'evidence_insufficient' } });
+    const r = derive(o);
+    expect(r.action).toBe('wait:human_review');
+  });
+});
+
 describe('规则 0：terminal', () => {
   it('run.phase=done → terminal', () => {
     const r = derive(baseObserved({ run: { phase: 'done' } }));
