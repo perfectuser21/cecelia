@@ -1,0 +1,31 @@
+{
+  "initiative_id": "2c482ed6-730c-4221-ade8-612a501124f8",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain 守卫指标计算与冒烟脚本，纯后端无 UI/agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "修复 ledger-hygiene m2 归属完整率口径失真（自产排除/冒烟排除/attribution_harness 停计）",
+      "scope": "m2 三条子查询只统计真实归属缺失：守卫自产 issue/task 按共享常量前缀排除、payload.smoke_tag 冒烟 task 排除、attribution_harness 接线前停计（双重计数消除）；两个 headed 派发冒烟脚本所有建 task body 补齐 smoke_tag；合同回归测试红→绿落 packages/brain/src/__tests__/ 永留 CI；既有 ledger-hygiene.test.js 旧口径 m2 断言同步更新（合同规范§5 唯一授权点）。改 packages/brain 前过 DevGate 三检。",
+      "dod": [
+        "[BEHAVIOR] bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh noise → exit 0（三类噪声注入 m2 debt 不变）",
+        "[BEHAVIOR] bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh real-miss 与 issue-real-miss → 各 exit 0（真实归属缺失恰 +1，排除不误伤）",
+        "[BEHAVIOR] bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh harness-once → exit 0（harness 缺归属只计 1 次，停计+双重计数消除）",
+        "[BEHAVIOR] cd packages/brain && npx vitest run src/__tests__/ledger-hygiene-m2-noise.test.js → 6 passed（合同测试红→绿）",
+        "[ARTIFACT] packages/brain/src/__tests__/ledger-hygiene-m2-noise.test.js 存在且与合同 tests/ 同源（import 路径改写为 ../ledger-hygiene.js）",
+        "[ARTIFACT] ledger-hygiene.js 导出 LEDGER_SELF_ISSUE_PREFIX，m2 SQL 含 smoke_tag 排除谓词与注释锚，attribution_harness 停计处注明接线恢复",
+        "[ARTIFACT] codex/claude-headed-dispatch-smoke.sh 所有 harness_initiative POST body 含 smoke_tag"
+      ],
+      "files": [
+        "packages/brain/src/ledger-hygiene.js",
+        "packages/brain/src/__tests__/ledger-hygiene-m2-noise.test.js",
+        "packages/brain/src/__tests__/ledger-hygiene.test.js",
+        "packages/brain/scripts/smoke/codex-headed-dispatch-smoke.sh",
+        "packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
