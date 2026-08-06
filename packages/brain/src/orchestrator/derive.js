@@ -288,7 +288,9 @@ function attemptCallbackRoute(observed) {
   // 责任在写合同的 Proposer 与批合同的 Reviewer——自动降级合同重开 GAN 让
   // 他们修，而不是死等人工。每 run 只重开一次：第二次同类故障说明 GAN 修
   // 不动，回落人工。
-  const CONTRACT_FAULT_ERROR_CODES = ['CONTRACT_SELF_CONTRADICTION', 'CONTRACT_TEST_UNSATISFIABLE'];
+  // CONTRACT_CI_SCOPE_CONFLICT(r43 实证):合同的改动范围限定与仓库级 CI 硬要求
+  // (如 test-registry.yaml 登记制)客观冲突——执行者无法在不违约的前提下修复 CI。
+  const CONTRACT_FAULT_ERROR_CODES = ['CONTRACT_SELF_CONTRADICTION', 'CONTRACT_TEST_UNSATISFIABLE', 'CONTRACT_CI_SCOPE_CONFLICT'];
   if (
     role === 'generator'
     && (status === 'blocked' || (status === 'failed' && failureClass === 'semantic_refusal'))

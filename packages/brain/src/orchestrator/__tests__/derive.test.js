@@ -79,6 +79,21 @@ describe('合同故障重开 GAN（r40 实证：CONTRACT IS LAW 死锁出路）'
     expect(r.callbackHop).toBe(3);
   });
 
+  it('CONTRACT_CI_SCOPE_CONFLICT(r43 实证:合同范围与仓库 CI 硬要求冲突)同样进仲裁', () => {
+    // r43 实证:合同限定只改 scripts/product-map/,但仓库 CI Orphan Test Check
+    // 强制要求登记根目录 test-registry.yaml——合同与仓库级约定客观冲突,
+    // generator/generator-fix 无法在不违约的前提下修复 CI。这是合同的锅
+    // (GAN 不知道仓库约定),必须能走仲裁→重开 GAN 扩范围,不能死等人工。
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator-fix', observed: {} },
+        cb(3, { error_code: 'CONTRACT_CI_SCOPE_CONFLICT' }),
+      ],
+    }));
+    expect(r.action).toBe('arbitrate:contract_fault');
+  });
+
   it('仲裁 upheld=true → reopen_gan_contract', () => {
     const r = derive(baseObserved({
       pr: null,
