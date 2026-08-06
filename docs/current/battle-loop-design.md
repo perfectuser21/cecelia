@@ -3,6 +3,10 @@
 > SSOT 说明：本文是 2026-07-06 与主理人 8 轮拍板的定稿存档。8 条拍板决策已落 decisions 表
 > （a0870384 / 584a5946 / 542a86ee / e1eed454 / 467ced6b / 1ef6ec3e / 928c6054 / e035dad8）。
 > 阅读版：http://38.23.47.81:9998/cecelia-battle-loop-design.html
+>
+> 术语说明：2026-08-06 按决策 a340f100 词汇对照表统一用词（价值流 = 旧「线/Line」，
+> 特性 = 旧「Ability」，使能项 = 旧「Feature」）。拍板结论与数字未改动，
+> 专名（Line04 等业务线代号）、表名、字段名保持原样。
 
 ---
 
@@ -31,7 +35,7 @@
 - **发条断了。** 2026-05-04 Wave 2 调度重构后，`tick-loop.js` 只调新的纯派发 `runScheduler`，旧 `executeTick()` 里挂的**约 25 个定时总结 / 巡检 / 战略触发全部成死代码**（`tick-runner.js:1534-1710`）。时间线吻合：管家日报最后一篇 5 月 4 日，arch_review 最后一次派发 5 月 9 日，strategy_session **从未跑过一次**。
 - **就算发条修好，系统也只会「消费队列」，不会「生产目标」。** 活着的意识循环（20 分钟一次）只做「从现有任务里挑下一个」；「看战况 → 决定下一步打哪 → 生成新任务」这条回路从未上线。队列一空，系统就趴窝等你。
 
-好消息：作战记录本身一直在写。`initiative_runs` 每条 Line 的 run 数、成败、PR、裁决全在（近 7 天 26 条）；`decisions` 表甚至已有 `made_by` 字段区分系统决策（96,126 条）和用户决策（266 条）。**缺的不是史料，是史官和军师。**
+好消息：作战记录本身一直在写。`initiative_runs` 每条价值流的 run 数、成败、PR、裁决全在（近 7 天 26 条）；`decisions` 表甚至已有 `made_by` 字段区分系统决策（96,126 条）和用户决策（266 条）。**缺的不是史料，是史官和军师。**
 
 ## 二、整个东西如何成为一个 loop
 
@@ -39,9 +43,9 @@
 
 1. **① 行动 Act 〔活〕** —— 三种模式执行（见第三节）：路径 A 修 Bug / 路径 B 小改动 / 路径 C Harness Sprint。产出 PR → CI → evaluator + judge 双裁决 → merge → 部署。
    *（自动回写 ↓）*
-2. **② 记录 Observe 〔活〕** —— `initiative_runs`（每条 run 的 Line、成败、PR、verdict）+ `tasks` + `learnings` + `decisions`。数据完整，一直在写。
+2. **② 记录 Observe 〔活〕** —— `initiative_runs`（每条 run 的价值流、成败、PR、verdict）+ `tasks` + `learnings` + `decisions`。数据完整，一直在写。
    *（P2 新建 ↓）*
-3. **③ 汇总 Orient 〔缺〕** —— 按 Line 聚合战况（API 不存在）→ **每晚一页战报**（diary 机制已死，重生为战报）。已有可借力的活零件：蒸馏文档 WORLD_STATE / SELF_MODEL（24h 自动更新）。
+3. **③ 汇总 Orient 〔缺〕** —— 按价值流聚合战况（API 不存在）→ **每晚一页战报**（diary 机制已死，重生为战报）。已有可借力的活零件：蒸馏文档 WORLD_STATE / SELF_MODEL（24h 自动更新）。
    *（P3 新建 ↓）*
 4. **④ 决策 Decide 〔缺〕〔你在这里〕** —— 军师（strategy tick）读战报 + OKR 进度 + 产能预算 + **想法箱 backlog** → 生成提案。三条输入流汇入同一排期漏斗：OKR 缺口（自动）/ 巡检发现（自动）/ 你的想法（想法箱分诊）。**L0/L1 自动入队执行；L2 发决策卡给你（等你回复，不阻塞其他工作）；L3 Bark 立刻找你。**
    *（提案入队，dispatcher 派发——这部分活着 ↓）*
@@ -57,7 +61,7 @@
 |------|------|------|-----------|----------|
 | **路径 A · Bug** | 系统性 bug、回归 | 登记 Issue → 建 Task → /dev + systematic-debugging：先写能复现的 failing test → 修代码 → test 永久进 CI | 你发现、你触发 | code_review 巡检（复活后）自动发现 → 自动建 Issue + Task → **L1 自动开修**，你在战报里看到「修了什么」 |
 | **路径 B · 小改动** | 单文件级、低风险 | 建 Task（挂 journey）→ /dev 全流程 → PR → auto-merge | 你触发 | 军师提案中的小优化走这条，**L0/L1 自动跑** |
-| **路径 C · Harness** | 一个 Ability/Feature 的完整推进 | PrepPRD + 铁律清单 → Brain 建 `initiative_runs` → skill-relay 单 session 接力：planner → GAN（proposer × reviewer 对抗至共识）→ generator（TDD 两次 commit）→ evaluator 真跑验收 → judge 独立判读 → merge → report 六处回写。**1 Sprint = 1 Generator = 1 PR**，一个 Ability 可被多个 Run 反复推进 | 你 /dev 路径 C 触发；Brain tick 派发已支持但没有东西自动往里喂 | 军师按 OKR 缺口 + 各 Line 战况自动生成下一个 Sprint（`harness_mode:true`），**新 initiative 的 PRD 走 L2 决策卡**给你过目后入队 |
+| **路径 C · Harness** | 一个特性/使能项的完整推进 | PrepPRD + 铁律清单 → Brain 建 `initiative_runs` → skill-relay 单 session 接力：planner → GAN（proposer × reviewer 对抗至共识）→ generator（TDD 两次 commit）→ evaluator 真跑验收 → judge 独立判读 → merge → report 六处回写。**1 Sprint = 1 Generator = 1 PR**，一个特性可被多个 Run 反复推进 | 你 /dev 路径 C 触发；Brain tick 派发已支持但没有东西自动往里喂 | 军师按 OKR 缺口 + 各价值流战况自动生成下一个 Sprint（`harness_mode:true`），**新 initiative 的 PRD 走 L2 决策卡**给你过目后入队 |
 
 **怎么用（做完这套之后你的操作界面）：**
 
@@ -87,8 +91,8 @@
 | 级别 | 判定条件（代码写死） | 系统行为 | 例子 |
 |------|---------------------|----------|------|
 | **L0 静默** | 可逆 + 例行 + 预算内 | 直接做，只留痕 | harness run、重试、巡检、requeue、容量调度 |
-| **L1 先斩后奏** | 可逆 + 新动作（非例行） | 直接做，**写进当晚战报** | 自动开新 Sprint（已有 ability 续推）、自动修巡检发现的 bug、调任务优先级 |
-| **L2 决策卡** | 满足任一：不可逆（砍 Line / 删表 / 新对外渠道）· 超预算阈值 · OKR 层级变更（新 KR / 砍 KR）· 同一 ability 连败 N 次后换打法 · 军师生成全新 initiative 的 PRD | 飞书决策卡 + Dashboard 收件箱，**等你回复**（你每天会看）；等待期间系统其余 L0/L1 工作照常，不阻塞 | 「获客线连败 11 次，提议暂停并转投 Line04——等你拍板」 |
+| **L1 先斩后奏** | 可逆 + 新动作（非例行） | 直接做，**写进当晚战报** | 自动开新 Sprint（已有特性续推）、自动修巡检发现的 bug、调任务优先级 |
+| **L2 决策卡** | 满足任一：不可逆（砍价值流 / 删表 / 新对外渠道）· 超预算阈值 · OKR 层级变更（新 KR / 砍 KR）· 同一特性连败 N 次后换打法 · 军师生成全新 initiative 的 PRD | 飞书决策卡 + Dashboard 收件箱，**等你回复**（你每天会看）；等待期间系统其余 L0/L1 工作照常，不阻塞 | 「获客价值流连败 11 次，提议暂停并转投 Line04——等你拍板」 |
 | **L3 立即** | 生产事故（Brain down > 5min）· 凭据泄漏 · 全账号熔断 | **Bark 推送**（按既有告警规则） | 生产 5221 挂了、凭据过期全线阻塞 |
 
 ### 你的全部固定触点（总共五个）
@@ -124,15 +128,15 @@
 *约 2 个 PR · 性价比最高，一周内你就能看到战报*
 
 - **前置：证据链体检**——合并 relay pr_url 回写修复（PR #3563 尚未合并），并端到端验证一条真实 relay run 的四件套（pr_url + 截图 + verdict + handoff）齐全，验货队列才有米下锅。
-- `GET /api/brain/harness/stats?by=journey&days=30`：每条 Line 的 run 数 / 成功率 / 最近战况 / 卡点（聚合 SQL 已验证可跑，本次审计手写的就是它）。**数据卫生**：聚合过滤 smoke-* 测试任务；113 条无 journey 孤儿 run 归类或标记排除。
+- `GET /api/brain/harness/stats?by=journey&days=30`：每条价值流的 run 数 / 成功率 / 最近战况 / 卡点（聚合 SQL 已验证可跑，本次审计手写的就是它）。**数据卫生**：聚合过滤 smoke-* 测试任务；113 条无 journey 孤儿 run 归类或标记排除。
 - **每日对齐会生成器**（战报升级版）：输入 `initiative_runs` + `learnings` + 用户 `decisions` + L1 动作记录。两个部分：
   - **A. 验货队列（核心）**——昨天每件 merge 的交付逐件展示：一句人话「我们理解你要的是 X」+ 人类可见证据（截图 / URL / 演示命令；Contract 规则本就强制产出这些，harness-report 已写 Notion 带截图，这里只是聚合）。你逐件打 **✅ 对 / ❌ 不是我想的**，5-10 分钟。
-  - **B. 战况统计**——各线昨日战况 / 今日计划 + 产能利用段（两账号 5h/7d 窗口利用率、空转窗口）+ 硬件水位段（内存/磁盘/GPU）。周日版加「熵仪表」（高频修改文件 top10、重复主题 learning、重复率趋势）。
+  - **B. 战况统计**——各价值流昨日战况 / 今日计划 + 产能利用段（两账号 5h/7d 窗口利用率、空转窗口）+ 硬件水位段（内存/磁盘/GPU）。周日版加「熵仪表」（高频修改文件 top10、重复主题 learning、重复率趋势）。
   - 写 `design_docs`（type=battle_report）+ 飞书推送，格式定长可重生成。
-- **纠偏回路（防「越跑越偏」的负反馈环）**：你打 ❌ + 一句哪里不对 → 写成该 Line/ability 的 **invariant 铁律**，**先过 Invariant Gate 合规审核**（四查：与既有铁律冲突？可验证？scope 层级恰当？与累积 FR 矛盾？——PASS 生效，存疑进收件箱）→ 经既有 Context Manifest 管道（proposer / generator / evaluator 三处已接线）注入后续所有合同。**偏差最多存活一天，无法积累。** GAN/evaluator/judge 验的都是「忠于合同」；「合同是否忠于你的想象」只有你能验——这一环就是干这个的。
-- **增强既有战情室**（Dashboard `/warroom`，Line 中心化页面已在线、API 数据活跃）：顶部加「每日战报」模块；**复活 reports 页**作为战报档案库（该页现存内容停在 2026-05-04 的失败 48h 简报——与 Wave 2 同日死亡）。不新建页面。
+- **纠偏回路（防「越跑越偏」的负反馈环）**：你打 ❌ + 一句哪里不对 → 写成该价值流/特性的 **invariant 铁律**，**先过 Invariant Gate 合规审核**（四查：与既有铁律冲突？可验证？scope 层级恰当？与累积 FR 矛盾？——PASS 生效，存疑进收件箱）→ 经既有 Context Manifest 管道（proposer / generator / evaluator 三处已接线）注入后续所有合同。**偏差最多存活一天，无法积累。** GAN/evaluator/judge 验的都是「忠于合同」；「合同是否忠于你的想象」只有你能验——这一环就是干这个的。
+- **增强既有战情室**（Dashboard `/warroom`，价值流中心化页面已在线、API 数据活跃）：顶部加「每日战报」模块；**复活 reports 页**作为战报档案库（该页现存内容停在 2026-05-04 的失败 48h 简报——与 Wave 2 同日死亡）。不新建页面。
 
-**验收：** 连续 3 天早上 6 点飞书收到对齐会、点开落在 /warroom；验货队列逐件带证据可打 ✅/❌；一条 ❌ 完整走通「❌ → invariant 入库 → 下一条该 ability 的合同里出现这条铁律」；战情室能回答「Line04 这个月跑了几个 run、成了几个」。
+**验收：** 连续 3 天早上 6 点飞书收到对齐会、点开落在 /warroom；验货队列逐件带证据可打 ✅/❌；一条 ❌ 完整走通「❌ → invariant 入库 → 下一条该特性的合同里出现这条铁律」；战情室能回答「Line04 这个月跑了几个 run、成了几个」。
 
 ### P3 · 军师上岗 —— 生产下一步
 
@@ -143,7 +147,7 @@
   - **月级重构 tick**（防「陷在小 bug 里看不见大问题」）：皮层级（Opus）深度复盘，不看眼前 bug 专看积累模式——输入 = 30 天 learnings 聚类（同主题反复出现=没治本）+ 被修改最多文件 top10（同处修 5 次=设计问题）+ arch_review 漂移趋势 + 代码重复率（scan-code-dedup 基线）+ issue 重开记录 → 输出**重构/重设计提案**走 L2 卡；同场做**铁律清理**（过期/重复/引用已废弃模块的 invariant 合并或退役，退役走 superseded_by 不硬删）。**信号触发不等月底**：同一文件 30 天修 ≥5 次 / 同主题 learning ≥3 条 / 漂移连报 2 次，任一命中提前触发。executeTick 死代码带就是此病的实证——每次小改都合理，积累成系统性断链，靠的是这次人工「跳出来重看」才发现；月度重构 tick 就是把这次对话制度化。
 - 提案 schema：`{ action_type, target(journey/ability), reason, confidence, risk_level, default_action, budget_est }`，每条按既有 AI 自审规范打分。
 - 风险路由：L0/L1 → 直接建 task 入队（`harness_mode:true`，Brain 派发）；L2 → 写 `decisions`（`made_by='proposal'`, `status='pending'`）+ 发飞书卡。
-- **想法收件箱（预处理 box）**：进箱三通道（对话 capture / 飞书丢话 / 有头 plan）→ 秒级 AI 分诊四路——**紧急**→立即注册 task 插队（对齐会标注）；**不紧急任务型**→挂 Line 作 backlog；**洞察型**→沉淀 decision/铁律（过 Invariant Gate）；**方向型**（隐含改 OKR）→军师评估提案走 L2 卡。军师日 tick 把 backlog 与 OKR 缺口同桌权衡，提案必须交代每个想法的处置理由。**战报设「想法箱」段：每个想法状态永远可见（已开工/排队第N/已沉淀/建议废弃可捞回）——想法永不黑洞。**
+- **想法收件箱（预处理 box）**：进箱三通道（对话 capture / 飞书丢话 / 有头 plan）→ 秒级 AI 分诊四路——**紧急**→立即注册 task 插队（对齐会标注）；**不紧急任务型**→挂价值流作 backlog；**洞察型**→沉淀 decision/铁律（过 Invariant Gate）；**方向型**（隐含改 OKR）→军师评估提案走 L2 卡。军师日 tick 把 backlog 与 OKR 缺口同桌权衡，提案必须交代每个想法的处置理由。**战报设「想法箱」段：每个想法状态永远可见（已开工/排队第N/已沉淀/建议废弃可捞回）——想法永不黑洞。**
 - 护栏：每日提案数上限（防军师灌爆队列）；提案必须挂 journey + OKR 链条，挂不上的丢弃并记日志。
 
 **验收：** 队列清空后 24h 内系统自己生成合法提案并至少自动开出一个 L1 Sprint；L2 提案出现在收件箱且不自动执行。
@@ -177,8 +181,8 @@
 
 1. **环境 preflight**：点火前查硬依赖（RPA 需 ROG 开机、目标设备可达等），不满足→不烧 run，任务标 blocked_env 进战报；
 2. **单 run fix 轮硬上限 25**（Alex 认可 20-30 区间）——不是防失败，是防「越修越偏」的跑飞保险丝；
-3. **无进展熔断**：同一 ability 连续 3 条 run 没有 merged PR（无论何种收场）→ L2 卡问你「换打法还是先放下」。度量「没交货」，不度量「失败」；
-4. **防偏航**（Alex 真正担心的「只读 PRD 越跑越偏」）：既有四防线在线——contract-is-law（合同外一字不加）+ 独立 judge（agent 自称 PASS 不算数）+ handoff 注入（该线最近 3 份交接单自动带上）+ invariant 铁律注入；军师生成的全新 PRD 走 L2 先过你的眼，方向由你把一次关，之后靠合同锁死。
+3. **无进展熔断**：同一特性连续 3 条 run 没有 merged PR（无论何种收场）→ L2 卡问你「换打法还是先放下」。度量「没交货」，不度量「失败」；
+4. **防偏航**（Alex 真正担心的「只读 PRD 越跑越偏」）：既有四防线在线——contract-is-law（合同外一字不加）+ 独立 judge（agent 自称 PASS 不算数）+ handoff 注入（该价值流最近 3 份交接单自动带上）+ invariant 铁律注入；军师生成的全新 PRD 走 L2 先过你的眼，方向由你把一次关，之后靠合同锁死。
 
 ### 拍板 3 · 战报接收地与渠道 —— 已拍板 ✅ 2026-07-06 · decisions a0870384
 
@@ -194,7 +198,7 @@ AI 干活必须每日对齐。晨间战报升级为对齐会（验货队列 + �
 
 ### 拍板 6 · Invariant Gate 铁律合规审核 —— 已拍板 ✅ 2026-07-06 · decisions 1ef6ec3e
 
-**审计事实：** FR/NFR 都有 GAN 双保险（/dev v21 Phase 1 FR 对抗 + Phase 2 Agent D 专职 NFR；合同阶段 proposer×reviewer 7 维 rubric），**唯独 invariant 零审核**——入库端点只查 level 和 target 存在性，内容不查冲突/重复/可验证性，且无过期机制。每日 ❌→铁律上线后此洞会放大：**错合同只坑一个 sprint，错铁律注入该线之后每份合同**。
+**审计事实：** FR/NFR 都有 GAN 双保险（/dev v21 Phase 1 FR 对抗 + Phase 2 Agent D 专职 NFR；合同阶段 proposer×reviewer 7 维 rubric），**唯独 invariant 零审核**——入库端点只查 level 和 target 存在性，内容不查冲突/重复/可验证性，且无过期机制。每日 ❌→铁律上线后此洞会放大：**错合同只坑一个 sprint，错铁律注入该价值流之后每份合同**。
 
 **机制：** 新铁律入库过轻量 LLM 四查（冲突 / 可验证 / scope 恰当 / 与累积 FR 矛盾），PASS→active，存疑→pending_review 进收件箱；月度重构 tick 配套铁律清理。
 

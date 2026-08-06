@@ -56,3 +56,46 @@
 ### AI 自我检测
 23. 当输出中出现"手动/您可以/暂时禁用/等待用户/绕过/临时/跳过/忽略/先不管/稍后"这类推诿性措辞时，必须停下重新分析并自动解决问题，不能把困难推给用户。
 <!-- HARD_RULES:END -->
+
+---
+
+## 词汇对照表（决策 a340f100，2026-08-06）
+
+本表是 Cecelia 与 ZenithJoy 全体执行体（Claude / Codex / Grok）在对话、UI、文档中使用的**唯一术语标准**。
+左列为退役旧词，只在解释历史内容时可作括号注解出现，不得作为正式称呼。
+
+| 旧词（退役/别名） | 正式中文 | 正式英文 | 出处 |
+|---|---|---|---|
+| 线 / Line / lane | 价值流 | Value Stream | SAFe |
+| 路 / Golden Path / 大Ability | 能力 | Capability | SAFe（Golden Path 保留为内部别名） |
+| 骨干步骤 | 主干活动 | Backbone Activities | Story Mapping |
+| 承诺 | 成果 | Outcome | 产品管理 |
+| 挂片·客户价值件（旧 kind=ability） | 特性 | Feature | SAFe/Scrum |
+| 挂片·使能件（旧 kind=feature） | 使能项 | Enabler | SAFe |
+| 格子 | 验收标准 | Acceptance Criteria | Scrum/BDD |
+| 11 要素 | 完成定义+非功能需求 | DoD + NFRs | Scrum/ISO 25010 |
+| 贯穿 | 行走骨架 | Walking Skeleton | Cockburn |
+| 加厚 | 增量 | Increment | 敏捷通用 |
+| 厚度 | 成熟度 | Maturity | 通用 |
+| 感知者 | 用户画像 | Persona | UX |
+| 横切件 | 横切关注点 | Cross-cutting Concern | 架构 |
+| 共享前置 | 入驻流程 | Onboarding | SaaS |
+| 工厂域 | 内部平台 | Internal Platform | Team Topologies |
+| 推进项 | 工作项 | Work Item | Scrum |
+
+### 硬规则
+
+**ability / 大Ability / 小ability 全面退役，对话/UI/文档禁用；库值 `kind=ability` 仅作历史值。**
+
+### 库表映射（第三阶段视图别名）
+
+| 现有表 | 视图别名 |
+|---|---|
+| `journeys` | `value_streams` |
+| `golden_paths` | `capabilities` |
+| `journey_steps` | `backbone_activities` |
+| `journey_features` | `features`（`kind: feature \| enabler`） |
+| `journey_step_links` | `acceptance_criteria` |
+| `advancement_items` | `work_items` |
+
+> 表名 / 字段名 / API 路径 / 命令在第三阶段视图别名落地前**保持原样**，只有正文叙述用词按上表切换。

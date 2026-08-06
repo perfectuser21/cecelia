@@ -1082,7 +1082,7 @@ function LineView({
       <div className="mt-6 rounded-lg border border-slate-800/60 bg-slate-900/20 p-4">
         <div className="flex items-center gap-2 mb-3">
           <Activity className="w-4 h-4 text-emerald-400" />
-          <span className="text-[13px] tracking-[0.1em] uppercase text-slate-300 font-bold">推进项 · 完成度</span>
+          <span className="text-[13px] tracking-[0.1em] uppercase text-slate-300 font-bold">工作项 · 完成度</span>
           {advancements.length > 0 && (
             <span className="text-[12px] text-slate-600 font-mono">{advancements.length} 个 Ability</span>
           )}
@@ -1090,7 +1090,7 @@ function LineView({
         {advancementsError ? (
           <div className="text-[13px] text-amber-500/80 pl-6 py-2">进度加载失败</div>
         ) : advancements.length === 0 ? (
-          <div className="text-[13px] text-slate-700 pl-6 py-2">暂无推进项</div>
+          <div className="text-[13px] text-slate-700 pl-6 py-2">暂无工作项</div>
         ) : (
           <div className="rounded border border-slate-800/60 overflow-hidden">
             {advancements.map((a) => (
@@ -1493,7 +1493,7 @@ export default function WarRoomPage() {
           >
             <Activity className="w-3.5 h-3.5 text-cyan-500 flex-shrink-0" />
             <span className="font-semibold">全部</span>
-            <span className="ml-auto text-[11px] text-slate-600">跨线总览</span>
+            <span className="ml-auto text-[11px] text-slate-600">跨价值流总览</span>
           </button>
 
           {/* ── Area→Line 树（/warroom/lines）。PR-A 未合时 linesSupported=false，整块隐藏，回落"全部"──*/}

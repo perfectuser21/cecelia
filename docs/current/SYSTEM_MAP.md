@@ -1,14 +1,15 @@
 ---
 id: current-system-map
-version: 1.3.0
+version: 1.3.1
 created: 2026-03-10
-updated: 2026-07-19
+updated: 2026-08-06
 authority: CURRENT_STATE
 changelog:
   - 1.0.0: 初始版本，基于 main 分支代码实际审计
   - 1.1.0: Wave1 双层架构 — LLM fire-and-forget、circuit_breaker_states 持久化、brain_guidance 表
   - 1.2.0: Harness Pipeline 可视化 v2 — GET /initiative/:id/detail 端点 + Dashboard initiative 详情面板（data-testid: initiative-card/detail-panel/prd-content/step-timeline）+ reportNode step_timing/ws_issues/ws_costs 增强
   - 1.3.0: 七大机制总账(DevOps 完备性基准,2026-07-18/19 信息逻辑重建周收官)
+  - 1.3.1: 术语按决策 a340f100 词汇对照表切换（价值流/能力/主干活动/成果/增量），表名字段名不动
 ---
 
 # Cecelia 系统架构图（当前事实版）
@@ -214,7 +215,7 @@ POST /api/brain/execution-callback
 
 ---
 
-## 10. 交付轴 Golden Path（合并即上线）
+## 10. 交付轴能力 Capability（旧称 Golden Path，合并即上线）
 
 | 件 | 名称 | 实现路径 | 状态 |
 |----|------|---------|------|
@@ -233,7 +234,7 @@ POST /api/brain/execution-callback
 | # | 机制 | 回答什么 | 载体 | 状态 |
 |---|---|---|---|---|
 | 1 | 认知 | 系统有什么、谁连谁 | 照相层四表(api/db_schema/test/graph_edges)+事件扳机(rescan-if-changed)+五查询(/api/brain/graph)+账龄哨兵 | ✅ 2026-07-18 闭合(PR#4082/4085/4087/4092) |
-| 2 | 意图 | 承诺了什么 | 承诺地图(journeys/steps.promise/journey_features/golden_path)+判定点/决策表+锚点(回填进行中) | ✅ 机制在;锚点加厚中(刀C) |
+| 2 | 意图 | 要交付什么成果 | 成果地图(journeys/steps.promise/journey_features/golden_path)+判定点/决策表+锚点(回填进行中) | ✅ 机制在;锚点增量中(刀C) |
 | 3 | 生产 | 意图→代码 | /dev 三路径 + harness skill-relay(planner→GAN→generator) | ✅ 成熟(2026-07-18 B② 全自动实证) |
 | 4 | 质检 | 证明做对 | 合同层(GAN rubric/格式硬检)+代码层(TDD 闸/不可变校验/island-gate/重跑闸)+验收层(evaluator 真跑/judge 权威) | ✅ 密 |
 | 5 | 生存 | 执行体死了有人收 | harness-orphan-guard(callback 一致性闸+定时兜底,只收 generator_done 前的裸孤儿)+harness-relay-watchdog(PR 态收口:MERGED→finalize/OPEN绿→静等/红→重点火)+zombie-reaper+主仓哨兵 | ✅ 2026-07-19 守卫补链刀闭合(收权分界:开 PR 前归闸,开 PR 后归 watchdog) |
