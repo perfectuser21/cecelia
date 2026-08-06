@@ -487,3 +487,41 @@ describe('replayProductConvergence：无 claimed SHA 的 pending callback', () =
     });
   });
 });
+
+describe('replayProductConvergence:reopen_gan_contract = 纪元切换(r43 实证)', () => {
+  // r43 实证:generator-fix blocked → 仲裁成立 → reopen_gan_contract 重开合同后,
+  // 守卫仍拿着重开前的 fix intent 等一个永远不会来的 fix 回调,两拍后判
+  // generator_fix_callback_missing_after_observation 杀掉 run。
+  // 正确语义:重开合同 = 旧产品修复周期整体作废,守卫只看重开之后的行。
+  const eraSha = 'c'.repeat(40);
+
+  it('重开行之后无新 fix intent → continue,不再追讨重开前的 fix 回调', () => {
+    const rows = [
+      row(1, 'spawn:generator-fix', { trigger_sha: eraSha, failure_class: 'product_failure' }),
+      row(2, 'effect:attempt_launched', {}),
+      // blocked 回调走的是 verdict:attempt_callback,没有 generator-fix-callback 行
+      row(5, 'reopen_gan_contract', {}),
+      row(6, 'wait:generator_fix_callback', {}),
+    ];
+    const r = replayProductConvergence(rows, {
+      currentFailureSet: null,
+      currentHeadSha: eraSha,
+    });
+    expect(r.outcome).toBe('continue');
+  });
+
+  it('重开行之后的新 fix intent 照常收敛追踪(纪元内规则不变)', () => {
+    const rows = [
+      row(1, 'spawn:generator-fix', { trigger_sha: eraSha, failure_class: 'product_failure' }),
+      row(5, 'reopen_gan_contract', {}),
+      row(7, 'spawn:generator-fix', { trigger_sha: eraSha, failure_class: 'product_failure' }),
+      row(8, 'wait:generator_fix_callback', {}),
+    ];
+    const r = replayProductConvergence(rows, {
+      currentFailureSet: null,
+      currentHeadSha: eraSha,
+    });
+    expect(r.outcome).toBe('failed');
+    expect(r.reason).toBe('generator_fix_callback_missing_after_observation');
+  });
+});

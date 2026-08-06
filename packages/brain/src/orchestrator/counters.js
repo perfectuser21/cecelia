@@ -105,7 +105,17 @@ export function replayProductConvergence(
   if (!Array.isArray(logRows)) {
     throw new Error('replayProductConvergence: logRows must be an array');
   }
-  const rows = sortedUniqueRows(logRows);
+  const allRows = sortedUniqueRows(logRows);
+  // reopen_gan_contract = 纪元切换(r43 实证):合同重开后旧产品修复周期整体作废,
+  // 收敛守卫只看重开之后的行——否则会拿着重开前 blocked 的 fix intent 追讨一个
+  // 永远不会来的回调,两拍后误杀 run(generator_fix_callback_missing_after_observation)。
+  const latestReopenHop = allRows.reduce(
+    (max, r) => (r.action === ACTION.REOPEN_GAN_CONTRACT && Number(r.hop) > max ? Number(r.hop) : max),
+    -1,
+  );
+  const rows = latestReopenHop === -1
+    ? allRows
+    : allRows.filter((r) => Number(r.hop) > latestReopenHop);
   const intents = rows.filter(isProductFixIntent);
   const callbacks = rows.filter(
     (row) => row.action === LOG_ACTION.VERDICT_GENERATOR_FIX_CALLBACK,
