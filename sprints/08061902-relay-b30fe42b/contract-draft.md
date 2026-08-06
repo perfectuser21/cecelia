@@ -86,6 +86,17 @@ N/A — 本 sprint 无「设备/agent 调服务端」链路，无任何 HTTP 调
 
 ---
 
+## 真机复核适用性声明（smoke 类交付）
+
+> 本章节为文档性声明（GAN Round 2 补充），不含任何验收断言；下方各关键词均为"声明不适用"的自然语言真实陈述。
+
+- 本 sprint 为 **harness relay 链路冒烟**（headed 派发链自证）：验证 Brain headed 派发 → planner → proposer/GAN → generator → evaluator 各棒能真实接力走完，交付物仅为本地 sprint 目录工件（`smoke-artifact.json`）。
+- 本 sprint **无真机复核对象**：不涉及 RPA、不涉及 UIA、不涉及微信，不使用 `windows_wechat` 环境（xian-rog 真机），也不涉及 adb/android 等任何真机通道。PRD「范围限定」明确禁止改动产品代码路径，`target_environment` 为 `local_api`。
+- 因此本 sprint 的"真目标复核"如实定义为：**本地工件字面断言**（jq 三字段 + keys 封闭性 + git 留痕）+ **relay 链路自身推进证据**（本合同由 Brain headed 真实派发产生、由 evaluator 在真实 relay run 内执行，run 走完即链路连通性证明）。
+- **verification_level 维持 L2**：不声明 L3——本任务不存在真机执行面，无任何真机指纹证据可提交，声明 L3 属于伪造升级，故如实维持 L2。
+
+---
+
 ## Golden Path
 [Brain headed 派发] → [工件 smoke-artifact.json 落 sprint 目录] → [jq 三字段断言通过 + git commit 留痕，run 走完]
 
