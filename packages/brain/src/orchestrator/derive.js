@@ -711,7 +711,21 @@ function deriveGan(observed) {
     && (latestReviewerLogRow == null || Number(latestReopenHop) > Number(latestReviewerLogRow.hop));
 
   if (!identityPolicyBlockedCurrentSha && !reopenPendingProposerFix) {
-    const rubricTrend = detectRubricTrend(observed.caseFile);
+    // 趋势闸案卷输入按纪元切(r43 实证):重开后 reviewer 一出新 REVISION,上面的
+    // 让路守卫即解除,若仍拿重开前旧轮拼趋势,会把刚被下游证伪的合同判"震荡"
+    // 原样强批回去——重开被静默撤销。纪元起点 = 重开写入的 E 号故障轮;
+    // 纪元内不足 3 轮有效评分 → detectRubricTrend 自然判 insufficient → 回 proposer。
+    const reopenEraStartRound = latestReopenHop == null
+      ? null
+      : (observed.caseFile ?? []).reduce((max, r) => {
+        const hasEBlocker = Array.isArray(r?.blockers)
+          && r.blockers.some((b) => /^E\d+-/.test(String(b?.id ?? '')));
+        return hasEBlocker && Number(r.round) > max ? Number(r.round) : max;
+      }, -1);
+    const eraCaseFile = reopenEraStartRound == null || reopenEraStartRound === -1
+      ? observed.caseFile
+      : (observed.caseFile ?? []).filter((r) => Number(r.round) >= reopenEraStartRound);
+    const rubricTrend = detectRubricTrend(eraCaseFile);
     if (rubricTrend === 'diverging' || rubricTrend === 'oscillating') {
       return {
         phase: 'gan',
