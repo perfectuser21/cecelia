@@ -1,0 +1,14 @@
+{
+  "verdict": "APPROVED",
+  "rubric_scores": {
+    "dod_machineability": 9,
+    "scope_match_prd": 8,
+    "test_is_red": 8,
+    "internal_consistency": 8,
+    "risk_registered": 8,
+    "verification_oracle_completeness": 9,
+    "ci_workflow_alignment": 10
+  },
+  "judgments_written": 0,
+  "feedback": "Round 1 APPROVED。7 维全部 >= 7。合同严格锚定 PRD 三字段字面断言，DoD 全部为 exit-code 机检命令（jq -e/node -e/git ls-files），零 mock/stub/force_*，工件未落地时 6 个测试用例必真红。判定点登记表显式 N/A 合规（纯本地文件字面断言，无接缝）。非阻塞观察：tests 中第 6 个用例（篡改自证）断言为恒真式，真实负向 oracle 由 DoD bash 版承担，不影响验收。"
+}

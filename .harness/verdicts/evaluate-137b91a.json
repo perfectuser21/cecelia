@@ -1,0 +1,62 @@
+{
+  "verdict": "PASS",
+  "task_id": "b30fe42b-86c7-412e-9e05-eb08ac26488e",
+  "attempt_id": "",
+  "pr": 4689,
+  "head_sha": "137b91a96235efe02dd8db6fe703a754b51255d6",
+  "reeval_round": "r2",
+  "prev_verdict": "PASS@0f3f54aeae9198bc8e4f517ee91dd690ebb15e89",
+  "failed_step": null,
+  "log_excerpt": null,
+  "verification_level": "L2",
+  "exit_code": 0,
+  "log_tail": "true\ntrue\ntrue\nfalse\n✅ Golden Path 冒烟验证通过",
+  "unverifiable": [],
+  "screenshots": [],
+  "cascade_assertions": [],
+  "test_immutability": {
+    "file": "sprints/08061902-relay-b30fe42b/tests/smoke-artifact.test.ts",
+    "gan_approved_commit": "e356387614",
+    "diff_vs_head_137b91a9": "empty",
+    "commits_touching_file_after_approval": 0,
+    "ci_gate_corroboration": "测试文件不可变校验 (v1.0) = success @137b91a9",
+    "result": "PASS"
+  },
+  "incremental_diff_review": {
+    "base": "0f3f54aeae (r1 PASS 锚点)",
+    "commits": [
+      {"sha": "7f1a0775ae", "nature": "仅新增 .harness/verdicts/evaluate-0f3f54a.json（r1 evaluator verdict 归档），零代码", "confirmed": true},
+      {"sha": "9db7f863c0", "nature": "contract-draft.md +11 行「## 真机复核适用性声明（smoke 类交付）」纯文档段（GAN r2 APPROVED）；断言/tests/DoD/E2E 段零改动，diff 逐行核实", "confirmed": true},
+      {"sha": "137b91a962", "nature": "仅新增 .harness/verdicts/gan-9db7f86.json（GAN r2 rubric verdict 归档），零代码", "confirmed": true}
+    ],
+    "product_code_untouched": "packages/* 与 apps/* 全 PR 零改动（PRD 范围限定遵守）",
+    "result": "PASS"
+  },
+  "dual_gates": {
+    "artifact": {"total": 3, "passed": 3, "detail": ["A1 smoke-artifact.json 含 smoke_tag exit=0", "A2 test 覆盖三字段 exit=0", "A3 合同含 mktemp exit=0"]},
+    "anti_cheat": {"mock_edge_check": "clean（合同禁 mock 边清单 N/A 且理由合法——零产品代码改动；测试文件 grep 零 vi.mock/jest.mock/stub/mockImplementation）", "weak_oracle": "无（全部 jq -e / JSON.parse 严匹配 + keys 封闭性 + 负向自证）", "vitest_as_sole_evidence": false}
+  },
+  "contract_vitest": {"command": "npx vitest run sprints/08061902-relay-b30fe42b/tests/smoke-artifact.test.ts", "exit_code": 0, "log_tail": "✓ sprints/08061902-relay-b30fe42b/tests/smoke-artifact.test.ts (6 tests) 1ms\nTest Files  1 passed (1)\nTests  6 passed (6)"},
+  "behavior_tests": [
+    {"command": "bash -c 'node -e \"const o=JSON.parse(require(fs).readFileSync(sprints/08061902-relay-b30fe42b/smoke-artifact.json,utf8));if(typeof o!==object||o===null||Array.isArray(o))process.exit(1);console.log(OK)\"'", "exit_code": 0, "log_tail": "OK", "verification_level": "L2"},
+    {"command": "jq -e '.task_id == \"b30fe42b-86c7-412e-9e05-eb08ac26488e\"' sprints/08061902-relay-b30fe42b/smoke-artifact.json", "exit_code": 0, "log_tail": "true", "verification_level": "L2"},
+    {"command": "jq -e '.smoke_tag == \"claude-headed-dispatch-local-31156-4267\"' sprints/08061902-relay-b30fe42b/smoke-artifact.json", "exit_code": 0, "log_tail": "true", "verification_level": "L2"},
+    {"command": "jq -e '.mode == \"headed\"' sprints/08061902-relay-b30fe42b/smoke-artifact.json", "exit_code": 0, "log_tail": "true", "verification_level": "L2"},
+    {"command": "jq -e 'keys == [\"mode\",\"smoke_tag\",\"task_id\"]' sprints/08061902-relay-b30fe42b/smoke-artifact.json", "exit_code": 0, "log_tail": "true", "verification_level": "L2"},
+    {"command": "TMPD=$(mktemp -d ${TMPDIR:-/tmp}/smoke-dod-b30fe42b-XXXXXX); jq '.smoke_tag=\"tampered\"' smoke-artifact.json > $TMPD/bad.json; jq -e 断言必 FAIL（负向自证）; rm -rf $TMPD; echo OK", "exit_code": 0, "log_tail": "false\nOK", "verification_level": "L2"},
+    {"command": "git ls-files --error-unmatch sprints/08061902-relay-b30fe42b/smoke-artifact.json >/dev/null && echo OK", "exit_code": 0, "log_tail": "OK", "verification_level": "L2"},
+    {"command": "timeout 120 bash e2e-verify-36aaac8a（合同 ## E2E 验收 段 canonical 提取到会话独享 scratchpad 路径，bash -n 语法门通过后整体真跑）", "exit_code": 0, "log_tail": "true\ntrue\ntrue\nfalse\n✅ Golden Path 冒烟验证通过", "verification_level": "L2"}
+  ],
+  "golden_path_coverage": [
+    {"step": "Step 1 Brain headed 派发锚点留痕", "e2e_line": "L11 grep smoke_tag sprint-prd.md", "assertion": true},
+    {"step": "Step 2 工件落地+三字段字面相等", "e2e_line": "L14 jq empty + L17-L19 3x jq -e", "assertion": true},
+    {"step": "Step 3 工件 git commit 留痕", "e2e_line": "L33 git ls-files --error-unmatch", "assertion": true},
+    {"step": "Step 4 schema 封闭性+负向自证", "e2e_line": "L22 keys== + L25-L30 篡改副本必FAIL", "assertion": true}
+  ],
+  "required_ci": {"sha": "137b91a96235efe02dd8db6fe703a754b51255d6", "ci_passed": "success", "auto_merge": "success", "harness_v5_gate": "success", "non_required_failure": "Deploy Preview Environment = failure（非 required，宿主磁盘环境问题，r1 已披露 Notion issue 1c8a59db，本轮状态不变）"},
+  "disclosures_reviewed": {
+    "r2_doc_section": "新增「真机复核适用性声明」段复核：纯文档性声明（RPA/UIA/微信/windows_wechat/adb 等关键词均为『声明不适用』的自然语言陈述，不含断言不触发机械闸）；如实维持 L2 不伪造 L3，与本 evaluator 判定一致",
+    "url_validation_note": "B-1.5：仓库根存在 playground/server.js → 机械判定走 playground 分支（E2E 无 Brain API URL = 通过）；即便按 autonomous 真实功能分支解释，合同与 PRD 范围限定明确禁止 HTTP/DB、验证目标即 sprint 工件本体 + git 索引，GAN 已批准该 local_api 无 HTTP 变体，与 r1 结论一致，不构成 planner_drift",
+    "ci_yml_change": "r1 已复核（dod-behavior-dynamic seed SQL 适配 migration 375/379，零产品代码），本轮增量 3 commit 未再触碰 ci.yml，diff 核实"
+  }
+}

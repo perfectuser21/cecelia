@@ -1165,17 +1165,23 @@ jobs:
              AND orchestrator_host = 'skill-relay-claude-headed';
 
           INSERT INTO initiative_runs (
-            initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, started_at, updated_at
+            initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, started_at, updated_at,
+            current_task_id, created_source
           )
           VALUES (
             :'smoke_id'::uuid,
-            'A_planning',
+            -- migration 379：活跃 v2 run 不得指向终态 task（seed task=completed），
+            -- 终态 phase=done 语义即"已完成 relay run 留痕"，375/379 两触发器均放行
+            'done',
             'bb8cc561-b3ee-4fec-b74d-2255694bd963'::uuid,
             'v2',
             'skill-relay-claude-headed',
             NOW() + INTERVAL '8 hours',
             NOW(),
-            NOW()
+            NOW(),
+            -- migration 375 trg_enforce_v2_run_insert_identity：v2 行必带 current_task_id + created_source
+            :'smoke_id'::uuid,
+            'legacy_relay'
           );
           SQL
             echo "TASK_ID=$SMOKE_ID" >> "$GITHUB_ENV"
@@ -1219,17 +1225,23 @@ jobs:
              AND orchestrator_host = 'skill-relay-codex-headed';
 
           INSERT INTO initiative_runs (
-            initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, started_at, updated_at
+            initiative_id, phase, journey_id, orchestrator_version, orchestrator_host, deadline_at, started_at, updated_at,
+            current_task_id, created_source
           )
           VALUES (
             :'smoke_id'::uuid,
-            'A_planning',
+            -- migration 379：活跃 v2 run 不得指向终态 task（seed task=completed），
+            -- 终态 phase=done 语义即"已完成 relay run 留痕"，375/379 两触发器均放行
+            'done',
             'bb8cc561-b3ee-4fec-b74d-2255694bd963'::uuid,
             'v2',
             'skill-relay-codex-headed',
             NOW() + INTERVAL '8 hours',
             NOW(),
-            NOW()
+            NOW(),
+            -- migration 375 trg_enforce_v2_run_insert_identity：v2 行必带 current_task_id + created_source
+            :'smoke_id'::uuid,
+            'legacy_relay'
           );
           SQL
             echo "TASK_ID=$SMOKE_ID" >> "$GITHUB_ENV"
