@@ -7,26 +7,26 @@ task_id: 8419142d-ce38-4285-9afa-64edbe574eb4
 
 ## 验收项（DoD）
 
-[BEHAVIOR] TC-A 注册层尊重 status=blocked
+- [BEHAVIOR] TC-A 注册层尊重 status=blocked
 - 文件: packages/brain/src/__tests__/f1-registration-dispatch.test.js
 - 断言: POST /api/brain/tasks 携带 { status: "blocked", blocked_at: <ts> } 后，
   mockQuery 收到的 INSERT SQL 参数列表中 status 值为 "blocked"，blocked_at 非 null
 - [x] failing test 先于修复 commit (Red commit 先)
 
-[BEHAVIOR] TC-B dispatcher 跳过 blocked 任务
+- [BEHAVIOR] TC-B dispatcher 跳过 blocked 任务
 - 文件: packages/brain/src/__tests__/f1-registration-dispatch.test.js
 - 断言: 任务 status=blocked 时，dispatcher selectNextDispatchableTask SQL 的 WHERE 子句
   仅选 status='queued'，且 spawnSkillRelaySession 未被调用（spawnFn.mock.calls.length === 0）
 - [x] failing test 先于修复 commit (Red commit 先)
 
-[BEHAVIOR] TC-C spawn 幂等防重
+- [BEHAVIOR] TC-C spawn 幂等防重
 - 文件: packages/brain/src/__tests__/f1-registration-dispatch.test.js  
 - 断言: 同 task_id 在途容器存在（initiative_runs 有非终态行）时，
   spawnSkillRelaySession 返回 { ok: false, reason: 'active_run_guard' }，
   spawnFn 未被调用；控制台日志含 "[dispatcher][spawn-guard]" 关键词
 - [x] failing test 先于修复 commit (Red commit 先)
 
-[BEHAVIOR] TC-REG 三任务串行回归
+- [BEHAVIOR] TC-REG 三任务串行回归
 - 文件: packages/brain/src/__tests__/f1-registration-dispatch.test.js
 - 断言: 注册序列 [task1:queued, task2:blocked+depends_on_prev, task3:blocked+depends_on_prev]，
   仅 task1 被选中派发（selectNextDispatchableTask 返回 task1），
