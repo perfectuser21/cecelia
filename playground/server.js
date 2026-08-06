@@ -7,6 +7,10 @@ app.get('/health', (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/ping', (req, res) => {
+  res.json({ pong: true });
+});
+
 app.get('/sum', (req, res) => {
   const { a, b } = req.query;
   if (a === undefined || b === undefined) {
