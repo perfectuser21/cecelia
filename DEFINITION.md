@@ -8,11 +8,17 @@
 
 
 
-**Brain 版本**: 1.267.240
+**Brain 版本**: 1.267.241
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.240 — reopen 合同降级值修复('revision'→'draft')
+
+- r43 实证:#4664 reopen handler 写 `status='revision'`,违反 initiative_contracts_status_check(合法集 draft/approved/superseded),首次实弹 reopen 即 kernel_process_fatal 炸 run。
+- 修法:降级写 'draft'(derive 只看 approved 与否,draft → 回 GAN spawn:proposer)。新增源码级守卫测试:扫 orchestrator 全部合同 status 写入字面值,非法值当场红。
+- 回退会恢复:重开 GAN 永远炸在合同降级一步。
 
 ## Brain 1.267.239 — 仲裁器按故障码分裁定标准
 

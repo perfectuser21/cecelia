@@ -995,8 +995,11 @@ export async function runLoop(
         });
       }
       if (observed.contract.id) {
+        // 降级回 'draft'(schema 约束合法集: draft/approved/superseded;r43 实证
+        // 'revision' 违反 check 约束直接炸 run)。derive 只看 approved 与否,
+        // draft → !approved → 下一跳自然回 GAN spawn:proposer(revision_requested)。
         await deps.pool.query(
-          `UPDATE initiative_contracts SET status = 'revision', updated_at = $2 WHERE id = $1`,
+          `UPDATE initiative_contracts SET status = 'draft', updated_at = $2 WHERE id = $1`,
           [observed.contract.id, now()],
         );
       }
