@@ -1,5 +1,16 @@
-# Sprint: sprints/08051144-relay-184c6da1 (184c6da1-ef57-4171-ba92-5b05711076e6)
-# 任务: 军师台形态对版收尾——要素页接线+拍板卡+对话修+全貌补愿景区+smoke行过滤
-# 开始时间: 2026-08-05
-planner: done (sprint-prd.md@1f4151e3b, invariants=6, fr=5)
-contract-proposer: done (contract-draft.md, contract-dod.md, tests/strategist-form-verify.spec.ts)
+# Sprint: sprints/08060903-relay-ed911a7c (ed911a7c-d975-4986-bfe5-24d8318838a2)
+# 任务: [F6加厚] WS2 Notion事件采集器MVP:个人Inbox→capture_atoms(双token幂等)
+# 开始时间: 2026-08-06
+# Run: 5dab07d8-7abb-43f2-9a0c-2dd14ac4ef4c
+planner: done (rebuilt: sprint-prd.md@5ca089f10)
+gan: done (rebuilt: contract-draft.md@df5d54c26)
+generator: pr_opened (rebuilt: pr=#4671, head=c79e114)
+generator: done (rebuilt: pr=#4671, red=b32aa258, green=7d9bbdc8, CI 待修复)
+generator: re-anchored (rebase onto main@1.267.233, new head=dd4237325, version=1.267.234)
+fix(smoke): done (kernel-run-exact地板389→390 + root-lock 1.267.234, head=30f26650d)
+evaluator-fix: DEFINITION.md CCAPI2026 措辞修正 + push (head=cca247a93)
+evaluator: done (verdict=PASS, sha=9d11f5980, version=1.267.235, DoD=10/10)
+judge: done (verdict=PASS, fail-open, judge_cli)
+merge: done (PR #4671 MERGED, version=1.267.235)
+graduation: done (tests/regression/relay-ed911a7c/capture-inbox-idempotent.test.js)
+report: done (task=completed, relay-run phase=done)
