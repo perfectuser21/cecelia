@@ -55,7 +55,7 @@
 - 修复链：① callback 决策行投影新增 `error_code`（路由信号）；② derive：generator 报 `CONTRACT_SELF_CONTRADICTION`/`CONTRACT_TEST_UNSATISFIABLE` → `reopen_gan_contract`（每 run 限一次，第二次回落人工防合同震荡）；③ loop：写 reopen 决策行（callback_hop 消费语义防重复路由）＋把下游发现写进案卷（blocker `E<round>-1`，下一轮 proposer/reviewer 从 inputs.case_file 看到重开原因）＋合同 approved→revision；④ 趋势闸让路：reopen 行比最新 reviewer verdict 新时禁止 force_approve 把刚被证伪的合同原样再批回去。
 - 回退会恢复：合同资产缺陷 → Generator 死锁 → run 永久等人工。
 
-## Brain 1.267.232 — Notion 个人 Inbox 增量采集（F6加厚）
+## Brain 1.267.230 — Notion 个人 Inbox 增量采集（F6加厚）
 
 新增 `notion-capture-ingest` scheduler job：每5分钟增量拉取 Notion Inbox 数据库，`dedupe_key='notion:inbox:<page_id>'` 幂等写入 captures + capture_atoms，`notion_page_id` 落 captures 表（migration 388）。凭据来源 Notion-juke（bot=cc20260728, workspace=Zenithjoy-July），`NOTION_INBOX_TOKEN` + `NOTION_INBOX_DB_ID` 未配置时静默跳过。
 
