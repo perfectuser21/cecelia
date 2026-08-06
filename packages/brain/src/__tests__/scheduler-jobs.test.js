@@ -173,7 +173,7 @@ describe('scheduler-jobs 注册表', () => {
   it('哨兵用 ON CONFLICT upsert 写 working_memory，key 带前缀', async () => {
     const pool = makePool();
     await runSchedulerJobsOnce(pool);
-    const sentinelCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('working_memory'));
+    const sentinelCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('working_memory') && sql.includes('ON CONFLICT'));
     expect(sentinelCalls).toHaveLength(JOBS.length);
     const archReviewCall = sentinelCalls.find(([, params]) => params[0] === `${SENTINEL_KEY_PREFIX}arch-review`);
     expect(archReviewCall[0]).toMatch(/ON CONFLICT \(key\) DO UPDATE/);
