@@ -822,6 +822,46 @@ describe('collectGroundTruth：propose 分支 rN 解析', () => {
     expect(stale.ganLatestRoundContractSha).toBeNull();
   });
 
+  it('reopen_gan_contract 之前的 APPROVED 不再算本轮 verdict(r43 实证:重开后被崩溃窗口补批复辟)', async () => {
+    // r43 实证:reopen 后合同已降级 draft,但重开前趋势闸的 APPROVED 行仍匹配
+    // rn+SHA(proposer 尚未推新轮),ganLatestRoundVerdict='APPROVED' 复活 →
+    // derive 崩溃窗口分支把合同原样补批回 approved,重开被静默撤销。
+    // 纪元规则:verdict 查找只认最新 reopen 行之后的 reviewer 行。
+    const approvedSha = 'a'.repeat(40);
+    const branch = 'cp-harness-propose-r2-11111111-raaaaaaaa-a9';
+    const reopened = await collectGroundTruth(makeDeps({
+      exec: { lsRemote: `${approvedSha}\trefs/heads/${branch}` },
+      rows: {
+        log: [
+          {
+            hop: 4,
+            action: 'verdict:reviewer',
+            observed: {},
+            detail: { verdict: 'APPROVED', rn: 2, contract_sha: approvedSha },
+          },
+          { hop: 7, action: 'reopen_gan_contract', observed: {}, detail: { callback_hop: 6 } },
+        ],
+      },
+    }), { taskId: TASK_ID, runId: RUN_ID });
+    expect(reopened.ganLatestRoundVerdict).toBeNull();
+
+    const postReopenApproved = await collectGroundTruth(makeDeps({
+      exec: { lsRemote: `${approvedSha}\trefs/heads/${branch}` },
+      rows: {
+        log: [
+          { hop: 7, action: 'reopen_gan_contract', observed: {}, detail: { callback_hop: 6 } },
+          {
+            hop: 9,
+            action: 'verdict:reviewer',
+            observed: {},
+            detail: { verdict: 'APPROVED', rn: 2, contract_sha: approvedSha },
+          },
+        ],
+      },
+    }), { taskId: TASK_ID, runId: RUN_ID });
+    expect(postReopenApproved.ganLatestRoundVerdict).toBe('APPROVED');
+  });
+
   it('只投影与当前 round 和 SHA 匹配的最新 Reviewer 反馈', async () => {
     const contractSha = 'b'.repeat(40);
     const branch = 'cp-harness-propose-r2-11111111-raaaaaaaa-a9';
