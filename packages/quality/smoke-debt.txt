@@ -156,3 +156,4 @@ wave2-tick-scheduler-smoke.sh
 ws1-initiative-runs-journey-id-smoke.sh
 ws3-initiative-run-events-smoke.sh
 zombie-reaper-smoke.sh
+capture-atoms-idempotent-smoke.sh
