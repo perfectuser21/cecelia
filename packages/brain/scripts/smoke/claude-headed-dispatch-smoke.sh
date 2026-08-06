@@ -46,7 +46,7 @@ CODE2=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" 
 # 4. POST tasks(mode=invalid) → 400
 CODE3=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
-  -d '{"task_type":"harness_initiative","title":"invalid-mode","payload":{"orchestrator":"skill-relay","executor":"claude","mode":"turbo"}}' 2>/dev/null || echo "000")
+  -d "{\"task_type\":\"harness_initiative\",\"title\":\"invalid-mode\",\"payload\":{\"orchestrator\":\"skill-relay\",\"executor\":\"claude\",\"mode\":\"turbo\",\"smoke_tag\":\"$SMOKE_TAG\"}}" 2>/dev/null || echo "000")
 [ "$CODE3" = "400" ] \
   && ok "POST tasks(mode=invalid) → 400 拒绝" \
   || fail "POST tasks(mode=invalid) 应返 400，实际 $CODE3"
