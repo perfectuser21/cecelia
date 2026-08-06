@@ -71,11 +71,11 @@
 
 ## DoD 清单
 
-- [ ] [BEHAVIOR-1] capture_atoms 幂等：单元测试 PASS（同 dedupeKey 二次调用 capture_atoms INSERT 调用计数不增）
-- [ ] [BEHAVIOR-2] 首次写入路径正常：单元测试 PASS（captureId + atomId 均非 null）
-- [ ] [BEHAVIOR-3] DO NOTHING 返回容忍：单元测试 PASS（atomId=null，不抛错）
-- [ ] [BEHAVIOR-4] DEFINITION.md 凭据来源正确：manual:bash grep 验证通过
-- [ ] [BEHAVIOR-5] docker-compose.yml 含 Notion env 占位符：manual:bash grep 验证通过
+- [ ] [BEHAVIOR] capture_atoms 幂等（B-1）：单元测试 PASS（同 dedupeKey 二次调用 capture_atoms INSERT 调用计数不增）
+- [ ] [BEHAVIOR] 首次写入路径正常（B-2）：单元测试 PASS（captureId + atomId 均非 null）
+- [ ] [BEHAVIOR] DO NOTHING 返回容忍（B-3）：单元测试 PASS（atomId=null，不抛错）
+- [ ] [BEHAVIOR] DEFINITION.md 凭据来源正确（B-4）：manual:bash grep 验证通过
+- [ ] [BEHAVIOR] docker-compose.yml 含 Notion env 占位符（B-5）：manual:bash grep 验证通过
 - [ ] migration 390 文件存在，含 `ADD CONSTRAINT uq_capture_atoms_capture_target UNIQUE (capture_id, target_type)`
 - [ ] `capture-inbox.js` 含 `ON CONFLICT (capture_id, target_type) DO NOTHING`
 - [ ] `notion-capture-ingest.js` 注释不再引用 `notion-ccapi2026.env`，改为 `Notion-juke`
