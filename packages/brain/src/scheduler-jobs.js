@@ -35,6 +35,8 @@ import { maybeRunTriageOfficerRank } from './triage-officer-rank.js';
 import { runTriageOfficer15min } from './triage-officer-15min.js';
 import { runConversationTtlArchiver } from './conversation-ttl-archiver.js';
 import { runNotionCaptureIngest } from './notion-capture-ingest.js';
+import { pushProductToNotionInbox } from './notion-inbox-push.js';
+import { consumeVerdictFromNotion } from './notion-verdict-ingest.js';
 
 const LOOP_INTERVAL_MS = 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -80,6 +82,8 @@ export const JOBS = [
   }, description: '对话原始捕获：机械过滤~/.claude/projects/*.jsonl真人文本写入captures(source=conversation)，自带10min间隔gate（decision f64adaaf/0c9e1652）' },
   { name: 'conversation-ttl-archiver', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runConversationTtlArchiver, description: '主理人对话 TTL 归档：ttl_expires_at 到期的 active/suspended 对话软归档（10min 自gate，PR4/4 64b8c8d）' },
   { name: 'notion-capture-ingest', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runNotionCaptureIngest, description: 'Notion 个人 Inbox 增量采集：5min自gate，last_edited_time增量+notion_page_id幂等，写入captures+capture_atoms（F6加厚，CCAPI2026）' },
+  { name: 'notion-product-push', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => pushProductToNotionInbox(pool, {}), description: 'F5加厚 WS3 成品呈报：排序官归并产物（proposal/morning_summary/acceptance_receipt）→ Notion Inbox，5min自gate，幂等键notion:product:，回写tasks.notion_page_id（task:58e146e1）' },
+  { name: 'notion-verdict-ingest', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => consumeVerdictFromNotion(pool, {}), description: 'F5加厚 WS3 裁决窄口：5min轮询Notion Inbox三字段白名单（放行/不放行/批注），放行→completed+decisions，不放行→cancelled，fail-closed（task:58e146e1）' },
 ];
 
 function raceWithTimeout(promise, timeoutMs) {

@@ -10,23 +10,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ─── mock notionRequest（复用 notion-capture-ingest 的工具函数）───────────────
-vi.mock('../../../packages/brain/src/notion-capture-ingest.js', () => ({
+vi.mock('../notion-capture-ingest.js', () => ({
   notionRequest: vi.fn(),
   getNotionInboxConfig: vi.fn(),
 }));
 
 // ─── mock db.js pool ──────────────────────────────────────────────────────────
-vi.mock('../../../packages/brain/src/db.js', () => ({
+vi.mock('../db.js', () => ({
   default: { query: vi.fn() },
 }));
 
-import { notionRequest, getNotionInboxConfig } from '../../../packages/brain/src/notion-capture-ingest.js';
-import pool from '../../../packages/brain/src/db.js';
+import { notionRequest, getNotionInboxConfig } from '../notion-capture-ingest.js';
+import pool from '../db.js';
 
 // ─── 动态 import 被测模块（允许未实现时报 MODULE_NOT_FOUND 被 test 捕获）──────
 let pushProductToNotionInbox;
 try {
-  const mod = await import('../../../packages/brain/src/notion-inbox-push.js');
+  const mod = await import('../notion-inbox-push.js');
   pushProductToNotionInbox = mod.pushProductToNotionInbox;
 } catch {
   pushProductToNotionInbox = null;

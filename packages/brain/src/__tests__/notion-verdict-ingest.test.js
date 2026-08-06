@@ -10,17 +10,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ─── mock db.js pool ──────────────────────────────────────────────────────────
-vi.mock('../../../packages/brain/src/db.js', () => ({
+vi.mock('../db.js', () => ({
   default: { query: vi.fn() },
 }));
 
-import pool from '../../../packages/brain/src/db.js';
+import pool from '../db.js';
 
 // ─── 动态 import 被测模块 ─────────────────────────────────────────────────────
 let consumeVerdictFromNotion;
 let getVerdictIngestConfig;
 try {
-  const mod = await import('../../../packages/brain/src/notion-verdict-ingest.js');
+  const mod = await import('../notion-verdict-ingest.js');
   consumeVerdictFromNotion = mod.consumeVerdictFromNotion;
   getVerdictIngestConfig = mod.getVerdictIngestConfig;
 } catch {

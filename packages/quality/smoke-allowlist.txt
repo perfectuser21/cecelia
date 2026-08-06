@@ -222,6 +222,7 @@ ws3-ire-module-smoke.sh
 xian-harness-relay-smoke.sh
 zenithjoy-db-pool-smoke.sh
 zenithjoy-schema-migration-smoke.sh
+notion-inbox-ws3-smoke.sh
 
 doc-zombie-retire-smoke.sh
 nfr-decisions-assertion-ref-smoke.sh
