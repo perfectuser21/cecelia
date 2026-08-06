@@ -8,18 +8,24 @@
 
 
 
-**Brain 版本**: 1.267.240
+**Brain 版本**: 1.267.241
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.267.240 — F5加厚 WS3 成品呈报+裁决窄口（Notion Inbox 三键回读）
+## Brain 1.267.241 — F5加厚 WS3 成品呈报+裁决窄口（Notion Inbox 三键回读）
 
 - 新增 `notion-inbox-push.js`：排序官产物（proposal/morning_summary/acceptance_receipt 白名单）推送主理人 Notion 个人 Inbox，成品行含 AI 摘要/建议去向/置信度/需拍板 flag；幂等键 `notion:product:<task_id>:<type>`，notion_page_id 回写 tasks。
 - 新增 `notion-verdict-ingest.js`：裁决窄口回读，仅白名单结构化字段（✅放行/❌不放行/✏️批注）一次性提交语义消费；fail-closed（非白名单/散文字段永不触发动作），消费即写 captures.consumed_at 幂等锚；放行→tasks completed + decisions 留痕，不放行→cancelled，批注→追加 description。
 - `scheduler-jobs.js` 注册 notion-product-push / notion-verdict-ingest 两个 ≤5min 轮询 job。
 - 决策 efa578b8（异步指挥模式）+ 4c595c84（裁决窄口）。
+
+## Brain 1.267.240 — reopen 合同降级值修复('revision'→'draft')
+
+- r43 实证:#4664 reopen handler 写 `status='revision'`,违反 initiative_contracts_status_check(合法集 draft/approved/superseded),首次实弹 reopen 即 kernel_process_fatal 炸 run。
+- 修法:降级写 'draft'(derive 只看 approved 与否,draft → 回 GAN spawn:proposer)。新增源码级守卫测试:扫 orchestrator 全部合同 status 写入字面值,非法值当场红。
+- 回退会恢复:重开 GAN 永远炸在合同降级一步。
 
 ## Brain 1.267.239 — 仲裁器按故障码分裁定标准
 
