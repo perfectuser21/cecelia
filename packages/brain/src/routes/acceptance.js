@@ -8,6 +8,7 @@ import rateLimit from 'express-rate-limit';
 import { computeRunStatus } from '../acceptance-state.js';
 import { findDuplicateCheckKeys } from '../acceptance-spec.js';
 import { registerAiResultsRoute } from './acceptance-ai.js';
+import { registerReviewClosureRoutes } from './acceptance-review.js';
 
 export const ACCEPTANCE_KINDS = ['FR', 'NFR', 'Invariant', 'SOP'];
 export const ACCEPTANCE_RESULTS = ['通过', '不通过', '无法验证'];
@@ -378,6 +379,8 @@ export function createAcceptanceInternalRouter({ pool }) {
       return res.status(500).json({ error: 'internal_error' });
     }
   });
+
+  registerReviewClosureRoutes(router, { pool, safeRollback });
 
   router.get('/pending', async (_req, res) => {
     try {
