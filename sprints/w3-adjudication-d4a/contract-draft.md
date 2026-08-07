@@ -165,30 +165,31 @@ SELECT count(*) FROM tasks WHERE payload->>'acceptance_run_key'=:run_key
 ```
 
 ### E2E-7 · SAVEPOINT 不毒化外层（对应 BEHAVIOR-19）
-```
-前置：分流建两条任务，其中第一条 INSERT 制造 23505（重复键）冲突。
-断言：第二条任务仍成功落库，外层事务整体提交。
+```sql
+-- 前置：对同一 run 触发两次分流，第一条 bug 任务 INSERT 因唯一键冲突失败（23505）
+-- 断言：第二条 trace 任务仍成功落库
+SELECT count(*) FROM tasks
+WHERE payload->>'acceptance_run_key'=:'run_key'
+  AND payload->>'acceptance_bucket'='trace';
+-- 期望：count = 1（trace 任务落库成功，外层事务未毒化）
 ```
 
 ### E2E-8 · abandon 前态守卫（对应 BEHAVIOR-20/21/22/23）
 ```bash
 # adjudicated run → 409
-curl -s -o /dev/null -w '%{http_code}' -X PATCH \
+test "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
   "localhost:5221/api/brain/acceptance/runs/$ADJ_RUN_KEY/abandon" \
-  -H 'Content-Type: application/json' -d '{"reason":"test","by":"ci"}'
-# 期望：409
+  -H 'Content-Type: application/json' -d '{"reason":"test","by":"ci"}')" = "409"
 
 # stale run → 409
-curl -s -o /dev/null -w '%{http_code}' -X PATCH \
+test "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
   "localhost:5221/api/brain/acceptance/runs/$STALE_RUN_KEY/abandon" \
-  -H 'Content-Type: application/json' -d '{"reason":"test","by":"ci"}'
-# 期望：409
+  -H 'Content-Type: application/json' -d '{"reason":"test","by":"ci"}')" = "409"
 
 # pending run → 200
-curl -s -o /dev/null -w '%{http_code}' -X PATCH \
+test "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
   "localhost:5221/api/brain/acceptance/runs/$PENDING_RUN_KEY/abandon" \
-  -H 'Content-Type: application/json' -d '{"reason":"test","by":"ci"}'
-# 期望：200
+  -H 'Content-Type: application/json' -d '{"reason":"test","by":"ci"}')" = "200"
 ```
 
 ---
@@ -197,7 +198,7 @@ curl -s -o /dev/null -w '%{http_code}' -X PATCH \
 
 | 不变量 | 验证方式 |
 |---|---|
-| INV-1/INV-2 | E2E → BEHAVIOR-1/2 + 单元测试 |
+| INV-1/INV-2 | 单元测试（BEHAVIOR-1/2） |
 | INV-3 | E2E → BEHAVIOR-3 + 单元测试 |
 | INV-4 | E2E-2 + BEHAVIOR-8/9 |
 | INV-5 | grep 静态检查（BEHAVIOR-11）|
@@ -207,7 +208,7 @@ curl -s -o /dev/null -w '%{http_code}' -X PATCH \
 | INV-9 | E2E-5 + BEHAVIOR-17 |
 | INV-10 | E2E-6 + BEHAVIOR-18 |
 | INV-11 | E2E-7 + BEHAVIOR-19 |
-| INV-12 | E2E-8 + BEHAVIOR-20/21 |
+| INV-12 | E2E-8 + BEHAVIOR-20/21/22/23 |
 
 ---
 

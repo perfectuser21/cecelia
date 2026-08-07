@@ -59,6 +59,58 @@ describe('FR-3 触发时点 — BEHAVIOR-12', () => {
     expect(plan.circuitBreakerTask).toBeNull();
     expect(plan.aiRunInfraTask).toBeNull();
   });
+
+  it('BEHAVIOR-12b — run.status=human_complete 时 divertAfterAdjudicated 不执行任何 INSERT', async () => {
+    if (!divertAfterAdjudicated) {
+      console.warn('[SKIP] divertAfterAdjudicated 未导出，跳过 BEHAVIOR-12b');
+      return;
+    }
+
+    const insertCalls = [];
+    const mockClient = {
+      query: vi.fn(async (sql, params) => {
+        if (sql.includes('INSERT INTO tasks')) {
+          insertCalls.push({ sql, params });
+          return { rows: [{ id: 'task-uuid' }] };
+        }
+        if (sql.includes('SELECT') && sql.includes('acceptance_runs')) {
+          // 模拟 run.status = 'human_complete'（尚未 adjudicated）
+          return {
+            rows: [{
+              id: 'run-uuid',
+              status: 'human_complete',
+              detail: { ai_incomplete: false },
+            }],
+          };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+
+    const mockPool = {
+      connect: vi.fn(async () => mockClient),
+      query: mockClient.query,
+    };
+
+    const cells = [
+      { check_key: 'S2-c4', final_state: '红' },
+      { check_key: 'S3-c2', final_state: '未定' },
+      ...Array.from({ length: 34 }, (_, i) => ({ check_key: `S${i + 10}-c1`, final_state: '绿' })),
+    ];
+    const runDetail = { ai_incomplete: false };
+    const anchor = {
+      journey_id: '2fa4d085-1451-4f3f-8fa1-b6d4bacdb1b6',
+      gp_id: '7790f728-f490-4243-b166-03f3250a0938',
+      step_id: '817f59f5-02ff-4a70-bd81-f7ae65f77e02',
+    };
+
+    // 当 run.status='human_complete' 时，分流函数不应执行任何 INSERT
+    await divertAfterAdjudicated(mockPool, 'test-run-key', cells, runDetail, anchor).catch(() => {});
+
+    // 核心断言：human_complete 状态下不得有任何任务 INSERT
+    expect(insertCalls.length).toBe(0);
+  });
 });
 
 // ============================================================
