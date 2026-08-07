@@ -42,8 +42,8 @@ journey_type: autonomous
   Test: manual:bash -c 'bash -c "cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/liveness-never-started.integration.test.js --reporter=verbose"'
   期望: exit 0，0 failed
 
-- [ ] [BEHAVIOR] headed_manual 语义拍板写 decisions 表留痕（14 天时间窗）
-  Test: manual:bash -c 'psql "${DB_URL:-postgresql://localhost/cecelia}" -t -A -c "SELECT count(*) FROM decisions WHERE (title ILIKE '"'"'%headed_manual%'"'"' OR content ILIKE '"'"'%headed_manual%'"'"') AND created_at > NOW() - interval '"'"'14 days'"'"'" | grep -qE "^[1-9][0-9]*$"'
+- [ ] [BEHAVIOR] headed_manual 语义拍板写 decisions 表留痕（14 天时间窗；本条为该 psql 断言唯一文本源 SSOT，draft Step 5 与 E2E 第 3 段 SQL 逐字复制自此，改动只许改本条再同步）
+  Test: manual:bash -c 'psql "${DB_URL:-postgresql://localhost/cecelia}" -t -A -c "SELECT count(*) FROM decisions WHERE (topic ILIKE '"'"'%headed_manual%'"'"' OR decision ILIKE '"'"'%headed_manual%'"'"' OR reason ILIKE '"'"'%headed_manual%'"'"') AND created_at > NOW() - interval '"'"'14 days'"'"'" | grep -qE "^[1-9][0-9]*$"'
   期望: exit 0（count ≥ 1）
 
 - [ ] [BEHAVIOR] DevGate 三件套通过（Brain 改动强制门禁）

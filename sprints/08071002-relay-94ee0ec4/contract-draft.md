@@ -189,11 +189,11 @@ bash sprints/08071002-relay-94ee0ec4/tests/replay-incident.sh
 
 **验证命令**:
 ```bash
-DC=$(psql "${DB_URL:-postgresql://localhost/cecelia}" -t -A -c "SELECT count(*) FROM decisions WHERE (title ILIKE '%headed_manual%' OR content ILIKE '%headed_manual%') AND created_at > NOW() - interval '14 days'")
+DC=$(psql "${DB_URL:-postgresql://localhost/cecelia}" -t -A -c "SELECT count(*) FROM decisions WHERE (topic ILIKE '%headed_manual%' OR decision ILIKE '%headed_manual%' OR reason ILIKE '%headed_manual%') AND created_at > NOW() - interval '14 days'")
 [ "$DC" -ge 1 ] || { echo "FAIL: decisions 无 headed_manual 拍板留痕"; exit 1; }
 ```
 
-**硬阈值**: count ≥ 1，14 天时间窗内（`[AI_ADDED]` 时间窗防历史数据冒充——monorepo 此前 headed_manual 零命中，无历史可冒充，窗口取 14 天覆盖 sprint 全周期）
+**硬阈值**: count ≥ 1，14 天时间窗内（`[AI_ADDED]` 时间窗防历史数据冒充——monorepo 此前 headed_manual 零命中，无历史可冒充，窗口取 14 天覆盖 sprint 全周期）。SQL 唯一文本源为 contract-dod.md BEHAVIOR-5（SSOT），本处与 E2E 第 3 段为逐字复制，改动以 DoD 为准
 
 ---
 
@@ -254,8 +254,8 @@ curl -sf -m 10 "$BRAIN/api/brain/health" >/dev/null || { echo "FAIL: Brain 不�
 # 2. 事故形态重放：queued、无进程、无日志、headed_manual=true —— 跨两次真实 tick 不被假杀
 bash "$SPRINT_DIR/tests/replay-incident.sh" || { echo "FAIL: 事故重放断言未通过"; exit 1; }
 
-# 3. headed_manual 拍板 decisions 留痕（14 天时间窗防历史冒充）
-DC=$(psql "$DB" -t -A -c "SELECT count(*) FROM decisions WHERE (title ILIKE '%headed_manual%' OR content ILIKE '%headed_manual%') AND created_at > NOW() - interval '14 days'")
+# 3. headed_manual 拍板 decisions 留痕（14 天时间窗防历史冒充；SQL SSOT=contract-dod.md BEHAVIOR-5，逐字复制）
+DC=$(psql "$DB" -t -A -c "SELECT count(*) FROM decisions WHERE (topic ILIKE '%headed_manual%' OR decision ILIKE '%headed_manual%' OR reason ILIKE '%headed_manual%') AND created_at > NOW() - interval '14 days'")
 [ "$DC" -ge 1 ] || { echo "FAIL: decisions 表无 headed_manual 拍板留痕"; exit 1; }
 
 # 4. root-cause.md 三条根因结论 + b35bfa0c 处置节
