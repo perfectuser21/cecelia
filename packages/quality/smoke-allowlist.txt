@@ -1,4 +1,5 @@
 
+
 # 列表内脚本失败 → CI 红（棘轮闸）
 # 更新方式：在 CI 通过后从 smoke-debt.txt 迁移经确认能通过的脚本到此处
 # 新增脚本默认须加入此文件或 smoke-denylist.txt（新债不许欠）
@@ -9,6 +10,7 @@ acceptance-aging-smoke.sh
 acceptance-catalog-smoke.sh
 acceptance-endpoints-smoke.sh
 acceptance-staff-hub-internal-smoke.sh
+acceptance-two-column-smoke.sh
 admission-report-smoke.sh
 advancement-items-smoke.sh
 agent-credit-smoke.sh
@@ -51,6 +53,7 @@ direction-proposer-t4-smoke.sh
 disk-guard-smoke.sh
 dispatch-allocation-guide-smoke.sh
 dispatch-fail-autoblock-smoke.sh
+doc-zombie-retire-smoke.sh
 drift-sentinel-smoke.sh
 evaluator-evidence-bridge-smoke.sh
 evaluator-no-push-smoke.sh
@@ -65,8 +68,6 @@ factory-f6-inbox-smoke.sh
 factory-f7-memory-smoke.sh
 feature-registry-smoke.sh
 features-ledger-smoke.sh
-journeys-bizarea-smoke.sh
-ledger-unified-api-smoke.sh
 fix-markdispatched-smoke.sh
 fleet-credential-envelope-smoke.sh
 fleet-worker-workspace-smoke.sh
@@ -85,8 +86,8 @@ gp-assertion-process-smoke.sh
 gp-assertion-receipt-model-smoke.sh
 gp-assertion-receipt-schema-smoke.sh
 gp-assertion-toolchain-smoke.sh
-gp-ledger-phase3-readiness-smoke.sh
 gp-governance-decisions-smoke.sh
+gp-ledger-phase3-readiness-smoke.sh
 graph-multi-repo-smoke.sh
 graph-photo-layer-smoke.sh
 graph-query-api-smoke.sh
@@ -121,23 +122,24 @@ incidents-smoke.sh
 independent-judge-stage-evidence-smoke.sh
 initiative-lifecycle-smoke.sh
 journey-id-entry-points-smoke.sh
+journeys-bizarea-smoke.sh
 judge-api-smoke.sh
 judge-evidence-truncation-smoke.sh
 judge-level-smoke.sh
 kernel-attempt-telemetry-smoke.sh
 kernel-bounded-run-smoke.sh
 kernel-capability-gate-smoke.sh
+kernel-context-resume-action-smoke.sh
 kernel-fleet-bridge-smoke.sh
 kernel-fleet-node-admission-smoke.sh
 kernel-fleet-receipts-smoke.sh
 kernel-fleet-transport-smoke.sh
 kernel-fleet-verification-smoke.sh
 kernel-frozen-baseline-guard-smoke.sh
-kernel-runtime-resource-smoke.sh
 kernel-run-exact-api-smoke.sh
 kernel-run-identity-terminalization-smoke.sh
+kernel-runtime-resource-smoke.sh
 kernel-shared-validation-clock-smoke.sh
-kernel-context-resume-action-smoke.sh
 kernel-two-phase-launch-smoke.sh
 kr1-kr2-updater-smoke.sh
 kv-route-smoke.sh
@@ -146,6 +148,7 @@ ledger-hygiene-m2-noise-smoke.sh
 ledger-hygiene-m7-organic-smoke.sh
 ledger-hygiene-m7-window-smoke.sh
 ledger-hygiene-smoke.sh
+ledger-unified-api-smoke.sh
 line-context-smoke.sh
 line-dreaming-smoke.sh
 line-strategist-dispatch-smoke.sh
@@ -154,7 +157,9 @@ liveness-queued-never-spawned-smoke.sh
 migration-339-drop-abilities-gp-priority-smoke.sh
 migration-346-idempotent-smoke.sh
 migration-verify.sh
+nfr-decisions-assertion-ref-smoke.sh
 notion-capture-ingest-smoke.sh
+notion-inbox-ws3-smoke.sh
 okr-initiative-mirror-smoke.sh
 oom-aware-retry-smoke.sh
 ops-panorama-smoke.sh
@@ -197,6 +202,7 @@ slot-accounting-smoke.sh
 slot-admission-smoke.sh
 staging-e2e-endpoint-smoke.sh
 staging-unknown-line-smoke.sh
+strategist-form-smoke.sh
 t10-capture-atom-routing-smoke.sh
 t2-cumulative-fr-smoke.sh
 t2-liveness-four-blades-smoke.sh
@@ -225,8 +231,3 @@ ws3-ire-module-smoke.sh
 xian-harness-relay-smoke.sh
 zenithjoy-db-pool-smoke.sh
 zenithjoy-schema-migration-smoke.sh
-notion-inbox-ws3-smoke.sh
-
-doc-zombie-retire-smoke.sh
-nfr-decisions-assertion-ref-smoke.sh
-strategist-form-smoke.sh
