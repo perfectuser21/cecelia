@@ -166,7 +166,9 @@ describe('POST /ai-results 落库语义', () => {
       results: [{ check_key: 'S7-c1', ai_verdict: '通过' }, { check_key: 'S3-c1', ai_verdict: '通过' }],
     });
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('unknown check_key');
+    // 与 validateAiReason 的 'unknown_check_key'（规程里没这个格号）机械可区分：
+    // 两个码只差一个下划线的话，看日志的人分不出"规程没有"和"这张单没建"
+    expect(res.body.error).toBe('check_key_not_in_run');
     expect(res.body.missing).toEqual(['S3-c1']);
     // 同批里合法的那格也不许落库
     const { rows } = await pool.query(

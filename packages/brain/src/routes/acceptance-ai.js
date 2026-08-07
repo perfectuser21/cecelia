@@ -133,7 +133,10 @@ export function registerAiResultsRoute(router, { pool, safeRollback }) {
       const missing = keys.filter((k) => !foundKeys.has(k));
       if (missing.length > 0) {
         await safeRollback(client);
-        return res.status(400).json({ error: 'unknown check_key', missing });
+        // 刻意不叫 'unknown check_key'：validateAiReason 已经有个 'unknown_check_key'
+        // （= 规程里根本没这个格号），两者只差一个下划线，看日志时分不出「规程没有」
+        // 和「规程有、但这张单没建这一行」——后者往往意味着建单用的规程版本不对。
+        return res.status(400).json({ error: 'check_key_not_in_run', missing });
       }
 
       for (const item of results) {

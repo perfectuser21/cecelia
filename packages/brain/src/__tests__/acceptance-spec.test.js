@@ -102,14 +102,16 @@ describe('deriveSets — 四个占位符共用同一套解析（禁硬编码 19/
 });
 
 describe('spec_sha 对真实 zenithjoy 规程（本机有 repo 时才跑）', () => {
-  const REAL = process.env.ACCEPTANCE_SPEC_PATH
+  // 守卫专用 env，**不是** ACCEPTANCE_SPEC_PATH：后者被 vitest.config 全局钉在 fixture 上，
+  // 复用它会让 REAL 恒等于 FIXTURE，本条退化成"fixture 跟自己比"的恒真断言，守卫永久空转。
+  // vitest.config 刻意不设 ACCEPTANCE_REAL_SPEC_PATH，于是本机默认落到 zenithjoy 真路径，
+  // 恢复"zenithjoy 侧补完静态属性合并后，漂移守卫自动上岗"的原语义。
+  const REAL = process.env.ACCEPTANCE_REAL_SPEC_PATH
     || '/Users/administrator/perfect21/zenithjoy-workspace/acceptance-spec/line02-android.yaml';
   // 只有当本机那份真规程已经带上 D1 静态属性时，跟 fixture 比才有意义：zenithjoy 侧
   // 补 kind/scenario_class 的 PR 合并之前，主干那份还是 D1 之前的版本，stats 天然不等，
   // 那是版本差不是 fixture 漂移。合并后此条件自动成立，漂移守卫随即上岗。
-  // vitest.config.js 把 ACCEPTANCE_SPEC_PATH 全局指到了 fixture（CI 上没有 zenithjoy repo）。
-  // 那种情况下 REAL === FIXTURE，本条会退化成"fixture 和自己逐格相等"这种恒真断言——
-  // 守卫看着在跑其实已经空转。指向 fixture 时直接 skip，别装作还在守。
+  // 兜一层：万一有人把 ACCEPTANCE_REAL_SPEC_PATH 也指到 fixture，同样是恒真断言，直接 skip。
   const comparable = path.resolve(REAL) !== path.resolve(FIXTURE)
     && fs.existsSync(REAL) && buildCells(loadSpec(REAL).doc).every((c) => c.kind);
 
