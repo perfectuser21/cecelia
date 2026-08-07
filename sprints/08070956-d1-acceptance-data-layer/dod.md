@@ -59,8 +59,13 @@
 
 ## 交接与遗留
 
+controller 台账六项，逐条落位。第 2、3 项是 Task 1 的审查留痕，本刀已一并改掉，留在表里备查。
+
 1. **SAVEPOINT 回归覆盖失去触发路径**。`routes/acceptance.js` 的驳回建任务链在新状态机下对任何 run 都不触发（`PRESERVED_RUN_STATUSES` 含 `failed`，历史 failed run 算出的 next 仍是 `failed`，被 `prevStatus !== 'failed'` 挡掉）。链路休眠后，其中「23505 只回滚这一条 INSERT、不毒化外层事务」的回归覆盖也随之休眠。**D4 聚合式分流落地时必须重新覆盖**，否则这个已经付过代价的坑会在新链路上原样复发。
-2. **部署侧 `ACCEPTANCE_SPEC_PATH` 未接线**。规程 yaml 在 zenithjoy repo，Brain 容器里没有这个文件。现状是 fail-loud（缺 env 则走 `getSpecSets()` 的端点直接报错，不静默降级）。**D2 上线前必须在 volume 挂载 / 构建期拷贝 / 落库读取三者中定一个**。
-3. **D2 判官 reason 映射约束**。判官本地判出的「场景未出现」**不能直译成 `scenario_not_triggered`**——A4⑦ 把这个 reason 的合法域定成空集，任何格提交都是 400。D2 需要另立映射。
-4. **zenithjoy PR 合并后跑一次漂移守卫**，确认 `ACCEPTANCE_REAL_SPEC_PATH` 那条从 skip 变成 run。
-5. **规程 fixture 是拷贝而非引用**。`packages/brain/src/__tests__/fixtures/acceptance/line02-android.yaml` 是 Task 6 从 zenithjoy 拷入的快照，两边 yaml 漂移时靠上一条的漂移守卫发现，不会自动同步。
+2. **spec 文档回写（已完成，commit `b57bd335`）**。`docs/superpowers/specs/2026-08-07-d1-acceptance-data-layer-design.md` 单元③ 的 `computeRunStatus` 代码块原本写的是取反式判据（`!['pending','in_review'].includes(prevStatus)`），与实现的白名单版不符，已改为 `PRESERVED_RUN_STATUSES` 版并补上「为什么不能写成取反」的理由；同文件 down 脚本段补了 status 守卫的描述，与 `392_acceptance_two_column.down.sql` 的双守卫对齐。
+3. **`routes/acceptance.js` 休眠链注释（已完成，commit `b57bd335`）**。原注释称「只对 migration 392 之前的历史 failed run 生效」，是错的——`failed` 在 `PRESERVED_RUN_STATUSES` 白名单里，历史 failed run 算出的 next 仍是 `failed`，同样被挡掉。已改为「对任何 run 都不触发，纯占位待 D4 删除」并写明判据。行号已从台账记的 107 漂移：现落在 `packages/brain/src/routes/acceptance.js:30`（函数 JSDoc）与 `:158`（调用点）。
+4. **部署侧 `ACCEPTANCE_SPEC_PATH` 未接线**。规程 yaml 在 zenithjoy repo，Brain 容器里没有这个文件。现状是 fail-loud（缺 env 则走 `getSpecSets()` 的端点直接报错，不静默降级）。**D2 上线前必须在 volume 挂载 / 构建期拷贝 / 落库读取三者中定一个**。
+5. **D2 判官 reason 映射约束**。判官本地判出的「场景未出现」**不能直译成 `scenario_not_triggered`**——A4⑦ 把这个 reason 的合法域定成空集，任何格提交都是 400。D2 需要另立映射。
+6. **zenithjoy PR 合并后跑一次漂移守卫**，确认 `ACCEPTANCE_REAL_SPEC_PATH` 那条从 skip 变成 run。zenithjoy 侧分支实际是 `cp-08071200-d1-acceptance-spec-fields`（非台账早期记的 cp-08071100），测试文件是 `scripts/acceptance-spec/__tests__/spec-fields.test.js`（`.js` 非 `.mjs`）。
+
+**本刀新增的第 7 项**：规程 fixture 是拷贝而非引用。`packages/brain/src/__tests__/fixtures/acceptance/line02-android.yaml` 是 Task 6 从 zenithjoy 拷入的快照，两边 yaml 漂移时靠第 6 项的漂移守卫发现，不会自动同步。
