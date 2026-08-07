@@ -195,6 +195,24 @@ const THEATER_LIGHT_ENVS = new Set(['local_api', 'mac_web']);
 // 不是这段自述，否则声明就成了自证清白的橡皮图章。
 const THEATER_DECLARATION_HEADING = /^##\s*真机边界声明\s*$/m;
 
+// 把声明段整段摘掉（到下一个 ## 或文末为止）。声明段是「我为什么提到这些名词」的自述，
+// 不是合同的验证断言——凡是靠「合同里有没有出现真机关键词」判断的闸，都得先摘再扫。
+function stripTheaterDeclarationSection(text) {
+  const lines = String(text || '').split('\n');
+  const kept = [];
+  let inDeclaration = false;
+  for (const line of lines) {
+    if (/^##\s*真机边界声明\s*$/.test(line)) {
+      inDeclaration = true;
+      continue;
+    }
+    // 段落止于下一个 ## 标题；没有下一个标题就一直吃到文末。
+    if (inDeclaration && /^##\s/.test(line)) inDeclaration = false;
+    if (!inDeclaration) kept.push(line);
+  }
+  return kept.join('\n');
+}
+
 // 动作性词表：描述「在真机上做了什么」，与上面的名词引用表是两张表。
 // 名词表（android/真机/微信…）提到即命中，可被真机边界声明豁免；动作词命中说明合同真要动设备，
 // 声明不能洗白——所以这张表只在「已有声明」的分支里跑，且只扫 BEHAVIOR/Test 行（合同的执行面）。
@@ -887,8 +905,10 @@ export async function runMechanicalGate(ctx, deps = {}) {
   );
 
   if (metaTriggerHit && prdTextForMeta) {
-    // contract BEHAVIOR 中必须有：真机关键词 或 verification_level: L3
-    const contractLower = contractTextForMeta.toLowerCase();
+    // contract BEHAVIOR 中必须有：真机关键词 或 verification_level: L3。
+    // 先摘掉「## 真机边界声明」段再扫：那段按写法必然含 android/真机 这类名词，
+    // 留着就等于「加一段声明 = 一张 smoke 类交付的免检章」，把 ④ 的语境化变成 ⑤ 的漏洞。
+    const contractLower = stripTheaterDeclarationSection(contractTextForMeta).toLowerCase();
     const extraKwsMeta = (process.env.THEATER_KEYWORDS_EXTRA || '')
       .split(',')
       .map((k) => k.trim())

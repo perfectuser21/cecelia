@@ -341,6 +341,22 @@ describe('SC-08: 真机边界声明四象限', () => {
     expect(result.theater_declared).toBe(false);
   });
 
+  it('声明段自带的「真机」二字不得顺手洗白 meta_verification_gap', async () => {
+    // 声明段按写法必然含 android/真机 这类名词，而 ⑤ 闸认的就是「contract 里出现真机关键词」。
+    // 不把声明段从 ⑤ 的扫描面里摘掉，加一段声明就等于白送一张 smoke 类交付的免检章。
+    const ctx = baseCtx();
+    const deps = makeDeps({
+      prdContent: '# Sprint PRD — smoke 验证脚本演习\n\n## Golden Path\n\n1. 验证脚本执行\n',
+      contractContent: `${DECLARATION}\n\n[BEHAVIOR] curl localhost/api\nTest: manual:curl localhost/api`,
+      env: 'local_api',
+    });
+
+    const result = await runMechanicalGate(ctx, deps);
+
+    expect(result.pass).toBe(false);
+    expect(result.reasons.join(' ')).toMatch(/meta_verification_gap/);
+  });
+
   it('声明只在轻量环境的名词象限生效：动作词表与名词表是两张表', async () => {
     // 名词表保留 android/真机 这类"提到即命中"的词，动作表只收真机上的实际操作，
     // 两表若合一，声明要么洗白一切、要么什么都洗不白。
