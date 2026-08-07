@@ -348,6 +348,37 @@ export function createAcceptanceInternalRouter({ pool }) {
 
   registerAiResultsRoute(router, { pool, safeRollback });
 
+  /**
+   * 显式作废（A10③）。终态只由 status 表达，detail 里三项纯留痕——两者在同一条 UPDATE 里落，
+   * 不存在「detail 标了作废但 status 还活着」的中间态（A10④ 反二义断言的就是这个）。
+   */
+  router.patch('/runs/:run_key/abandon', async (req, res) => {
+    const { reason, by } = req.body || {};
+    if (!reason || !by) return res.status(400).json({ error: 'reason and by are required' });
+    try {
+      const { rows } = await pool.query(
+        `UPDATE acceptance_runs
+            SET status = 'abandoned',
+                detail = COALESCE(detail, '{}'::jsonb) || $1::jsonb,
+                updated_at = NOW()
+          WHERE run_key = $2 RETURNING run_key, status`,
+        [
+          JSON.stringify({
+            abandoned_reason: reason,
+            abandoned_by: by,
+            abandoned_at: new Date().toISOString(),
+          }),
+          req.params.run_key,
+        ]
+      );
+      if (rows.length === 0) return res.status(404).json({ error: 'run not found' });
+      return res.json({ run: rows[0] });
+    } catch (err) {
+      console.error('[acceptance] PATCH /abandon error:', err.message);
+      return res.status(500).json({ error: 'internal_error' });
+    }
+  });
+
   router.get('/pending', async (_req, res) => {
     try {
       const runs = await loadPendingRuns(pool);
