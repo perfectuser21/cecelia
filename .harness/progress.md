@@ -25,3 +25,13 @@ judge: FAIL r1 (evidence_insufficient——要求smoke-ledger-hygiene.mjs直跑�
 evaluator: 补证轮 done (verdict=PASS, behavior_tests 8→11, sha=480da02)
 judge: done (verdict=PASS, sha=480da027aea24762e8bb8261d783e31ee5f5d1eb, judged=true, r3——r1/r2为证据压缩窗口问题非实现问题)
 generator: fix-round-1 (合流main #4695+版本重排1.267.249), sha=6c60212
+
+# ===== 新任务段 =====
+# Sprint: sprints/w2-backtoback-d3 (0b7df1ca-da50-4928-9d24-bfbb8ae7cd90)
+# 任务: W2-背靠背服务端裁剪+三token分权(验收一体两面D3)
+# 开始时间: 2026-08-07
+# run_id: df6f1f0a-9fbd-4f48-996f-d95283ad56b9
+planner: done (sprint-prd.md@06ac11239, invariants=8, fr=5, lines=168/soft-limit150)
+gan: r1-done (contract-draft.md+contract-dod.md+tests/@c44c9850, branch=cp-08071034-harness-propose-r1-0b7df1ca)
+reviewer: r1-feedback (缺口A阻塞×3/B质量×1/C质量×1/D轻微×1, rubric=test_mapping:3)
+gan: r2-done (缺口A/B/C/D全修复@19b0d6e9b, branch=cp-08071034-harness-propose-r1-0b7df1ca)
