@@ -77,6 +77,11 @@ export function computeGateVerdict(cells, runDetail = {}) {
   if (runDetail.ai_incomplete) {
     return { gate_verdict: '红', red_cells: [], blocked_reason: 'ai_run_infra_error' };
   }
+  // 空输入下「没有非绿格」恒成立，闸会判绿——run 一格没建或取数挂掉就等于自动放行。
+  // 这一层是纯计算，没有「取数失败」的概念，收到空集只可能是调用方的 bug，抛错让它立刻显形。
+  if (!Array.isArray(cells) || cells.length === 0) {
+    throw new Error('computeGateVerdict: cells 为空，拿不到建行格无法判闸');
+  }
   const notGreen = cells.filter((c) => c.final_state !== '绿');
   const redCells = notGreen.filter((c) => c.hard || c.final_state === '红').map((c) => c.check_key);
   return {
@@ -95,8 +100,13 @@ export function computeGateVerdict(cells, runDetail = {}) {
  * @param {Array<{check_key:string, ai_verdict:string?, ai_reason:string?, verifiable_by:string}>} cells
  * @param {{machineDbTotal:number}} opts
  */
-export function computeAiStatus(cells, { machineDbTotal }) {
-  const decided = cells.filter((c) => c.ai_verdict === '通过' || c.ai_verdict === '不通过').length;
+export function computeAiStatus(cells, { machineDbTotal } = {}) {
+  // 分母漏传时 ceil(undefined/2) = NaN，而 `n >= NaN` 恒 false —— 条件② 会整条静默失效，
+  // 一次采证器半数故障将被判成 ok。阈值算不出来就不许往下走。
+  if (!Number.isInteger(machineDbTotal) || machineDbTotal <= 0) {
+    throw new Error(`computeAiStatus: machineDbTotal 必须是正整数，收到 ${machineDbTotal}`);
+  }
+  const decided =cells.filter((c) => c.ai_verdict === '通过' || c.ai_verdict === '不通过').length;
   const missingCells = cells.filter((c) => c.ai_verdict == null).map((c) => c.check_key);
   const machineDbFailures = cells.filter(
     (c) => c.verifiable_by === 'machine_db'

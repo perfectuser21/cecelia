@@ -102,6 +102,19 @@ describe('computeAiStatus — 哑火三条件（分母与阈值从 yaml 派生�
   });
 });
 
+describe('输入非法时 fail-fast，不得静默降级成放行', () => {
+  it('cells 为空（run 没建行/取数挂了）→ 抛错，不得判绿', () => {
+    expect(() => computeGateVerdict([], {})).toThrow(/建行格/);
+  });
+
+  it('machineDbTotal 缺失 → 抛错，不得让条件② 悄悄失效', () => {
+    const cs = Array.from({ length: 36 }, (_, i) => ({
+      check_key: `S${i + 1}-c1`, ai_verdict: '无法验证', ai_reason: 'timeout', verifiable_by: 'machine_db',
+    }));
+    expect(() => computeAiStatus(cs, {})).toThrow(/machineDbTotal/);
+  });
+});
+
 describe('缺格 → 哑火 → 闸拦：裁决通道不得成为缺格的静默放行口', () => {
   // computeCellState 把裁决排在 Q0′ 短路之前，所以一个 ai_verdict IS NULL 的缺格
   // 只要被人裁决绿，格级 final_state 就是「绿」。若闸只汇总 final_state，
