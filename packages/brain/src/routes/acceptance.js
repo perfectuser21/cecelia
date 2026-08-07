@@ -27,7 +27,7 @@ export class AcceptanceResultsError extends Error {
   }
 }
 
-/** 仅覆盖 migration 392 之前的历史 failed run；新状态机不产生 failed，D4 接管后删除 */
+/** 对任何 run 都不触发，纯占位待 D4 删除（判据见调用点注释） */
 function isLegacyRejectionTransition(prevStatus, nextStatus) {
   return prevStatus !== 'failed' && nextStatus === 'failed';
 }
@@ -155,9 +155,11 @@ export async function submitAcceptanceResults(pool, results, options = {}) {
       );
       updatedRuns.push(updated[0]);
 
-      // 新状态机永不产生 failed（computeRunStatus 的全集是 RUN_STATUSES），这段只对
-      // migration 392 之前落库的历史 failed run 生效。分流建任务由 D4 的聚合式分流接管，
-      // 届时整段删除。此处显式命名而不是留一个恒不触发的裸条件——「看起来在工作、实际
+      // 这段对任何 run 都不触发，是纯占位、待 D4 删除。判据：computeRunStatus 的返回
+      // 只可能是 RUN_STATUSES 的三个活跃值，或经 PRESERVED_RUN_STATUSES 白名单原样透传的
+      // 前态；'failed' 在白名单里，于是历史 failed run 算出的 next 仍是 'failed'，被
+      // prevStatus !== 'failed' 挡掉，其余前态则永远算不出 'failed'。分流建任务由 D4 的
+      // 聚合式分流接管。此处显式命名而不是留一个恒不触发的裸条件——「看起来在工作、实际
       // 恒不触发」的代码就是 P2-8 记的棘轮静默击穿。
       if (prev && isLegacyRejectionTransition(prev.status, status)) {
         const { rows: existingTask } = await client.query(

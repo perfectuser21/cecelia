@@ -90,6 +90,7 @@ down 按逆序执行：`DROP` 四列 + `detail` 列 → CHECK 恢复 4 值 → U
 ```sql
 DO $$
 DECLARE dup int;
+DECLARE newstat int;
 BEGIN
   SELECT count(*) INTO dup FROM (
     SELECT check_key FROM acceptance_checks GROUP BY check_key HAVING count(*) > 1
@@ -97,10 +98,19 @@ BEGIN
   IF dup > 0 THEN
     RAISE EXCEPTION '不可回滚：已存在 % 个跨 run 重复的 check_key（新格号数据）。回滚前须先清理这些 run，否则全局 UNIQUE 无法重建', dup;
   END IF;
+
+  -- 与重复格号守卫对称的第二道：status 收回 4 值同样会被新状态值的存量行挡住
+  SELECT count(*) INTO newstat FROM acceptance_runs
+   WHERE status NOT IN ('pending','in_review','passed','failed');
+  IF newstat > 0 THEN
+    RAISE EXCEPTION '不可回滚：已存在 % 个处于 7 值新状态（human_complete/adjudicated/stale/expired/abandoned）的 run。回滚前须先清理或迁走这些 run，否则 4 值 CHECK 无法重建', newstat;
+  END IF;
 END $$;
 ```
 
-即 **down 在「尚未建过任何新格号 run」时完全可逆，建过之后 fail-fast 报错说明**，而不是静默丢数据。这一点写进 migration 注释与 A10 的回归测试。
+两道守卫必须成对：只挡重复格号、不挡新状态值，回滚会在 `ADD CONSTRAINT` 处抛裸 23514「is violated by some row」，运维拿不到「该清哪些 run」的信息，只能自己去猜——这与 fail-fast 要给出清理路径的初衷相悖。
+
+即 **down 在「尚未建过任何新格号 run、也没产生过新状态值」时完全可逆，越过任一边界后 fail-fast 报错说明**，而不是静默丢数据。这一点写进 migration 注释与 A10 的回归测试。
 
 **依赖**：无（最先做）。**被依赖**：全部其余单元。
 
@@ -184,19 +194,31 @@ computeGateVerdict(cells /* 36 格的 final_state */, runDetail)
 替换 `acceptance.js:86` 的三元式。新算法**只看人列填写进度**，不看 AI 列、不看 final_state：
 
 ```js
+const RUN_STATUSES = ['pending','in_review','human_complete','adjudicated','stale','expired','abandoned'];
+const ACTIVE_RUN_STATUSES = ['pending', 'in_review'];  // 只有这两个会被「提交人列结果」改写
+
+// 提交人列这条路径必须原样保留的前态：5 个非活跃终态 + 2 个只读历史兼容值
+const PRESERVED_RUN_STATUSES = [
+  ...RUN_STATUSES.filter((s) => !ACTIVE_RUN_STATUSES.includes(s)),  // human_complete/adjudicated/stale/expired/abandoned
+  'passed', 'failed',                                               // migration 392 之前的历史值
+];
+
 function computeRunStatus(prevStatus, { total, humanFilled }) {
-  // 非活跃终态（stale/expired/abandoned/adjudicated/human_complete）由各自的显式转移路径设置，
-  // 提交人列结果这条路径不得把它们改回去
-  if (!['pending', 'in_review'].includes(prevStatus)) return prevStatus;
+  // 非活跃终态由各自的显式转移路径设置，提交人列结果这条路径不得把它们改回去
+  if (PRESERVED_RUN_STATUSES.includes(prevStatus)) return prevStatus;
   if (humanFilled === 0) return 'pending';
   if (humanFilled < total) return 'in_review';
   return 'human_complete';   // 人列填满即达，与「其中有几格不通过」无关
 }
 ```
 
+**必须是白名单，不能写成「不在活跃集里就透传」**：前态缺失（run 行被并发删掉，`prevStatus === undefined`）或库里躺着不可识别的历史值时，取反式判据会把 `undefined` 透传出去，写进 NOT NULL 的 `status` 列直接炸掉整笔提交，连带已落库的 check 结果一起回滚。白名单外的一律按填写进度重算。
+
 `human_complete` 的判据是**人列 36 格全部非 NULL**，与取值无关——这正是 A10⑤ 要堵的洞：旧三元式只要有一格「不通过」就写 `failed`，而合看页/裁决/员工回显全部以 `human_complete` 为开门条件，于是「员工判出不通过的那一轮」永远打不开后续流程。其余状态转移各有专属入口：`human_complete → adjudicated`（裁决完成，D4）；`* → stale`（sha/spec_sha 变，单元 ⑦）；`pending → expired`（48h 扫描，单元 ⑤）；`* → abandoned`（显式作废端点，单元 ⑤）。
 
-**同批必须清理的连带项**：`acceptance.js:99` 的驳回建任务触发条件是 `prev.status !== 'failed' && status === 'failed'`。新状态机下 `failed` 永不产生，这段**当场变成死代码**。处理：本刀不删（分流建任务是 D4 的范围，删了会留下一段时间的空窗），但必须把触发条件从 `status === 'failed'` 改成显式的「本刀不建任务」并加注释指向 D4——**不能留一段看起来在工作、实际恒不触发的代码**（形状同 P2-8 的棘轮击穿）。
+**同批必须清理的连带项**：`acceptance.js` 的驳回建任务触发条件是 `prev.status !== 'failed' && status === 'failed'`。这段在新状态机下**对任何 run 都不触发**：`computeRunStatus` 的返回只可能是三个活跃值，或经 `PRESERVED_RUN_STATUSES` 白名单原样透传的前态；`'failed'` 在白名单里，于是历史 failed run 算出的 next 仍是 `'failed'`，被 `prevStatus !== 'failed'` 挡掉，其余前态则永远算不出 `'failed'`。处理：本刀不删（分流建任务是 D4 的范围，删了会留下一段时间的空窗），但把条件抽成具名函数 `isLegacyRejectionTransition()` 并加注释写明「对任何 run 都不触发，纯占位待 D4 删除」——**不能留一段看起来在工作、实际恒不触发的裸条件**（形状同 P2-8 的棘轮击穿）。
+
+连带的遗留项：这段休眠后，其内部 `SAVEPOINT reject_task_insert`「23505 只回滚这一条 INSERT、不毒化外层事务」的回归覆盖也**失去触发路径**——D4 的聚合式分流落地时必须重新覆盖，否则这个已经付过代价的坑会在新链路上原样复发。
 
 **依赖**：单元 ①（CHECK 必须已扩容）。**这是本刀唯一的强同批约束，见下文。**
 
