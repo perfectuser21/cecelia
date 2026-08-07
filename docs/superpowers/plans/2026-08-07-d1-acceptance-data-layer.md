@@ -1574,7 +1574,7 @@ gh pr create --title "feat(acceptance-spec): D1 规程 yaml 静态属性收口�
 - Create: `packages/brain/src/__tests__/fixtures/acceptance/line02-android.yaml`（Task 5 产出的副本）
 - Test: `packages/brain/src/__tests__/acceptance-spec.test.js`
 
-- [ ] **Step 1: 落 fixture（CI 里没有 zenithjoy repo，单测必须自带一份规程）**
+- [x] **Step 1: 落 fixture（CI 里没有 zenithjoy repo，单测必须自带一份规程）**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -1585,7 +1585,7 @@ cp /Users/administrator/perfect21/zenithjoy-workspace/acceptance-spec/line02-and
 
 **前置：Task 5 的 Step 5-9 必须已完成**，否则拷进来的 yaml 没有 `kind`。
 
-- [ ] **Step 2: 写 failing 单测**
+- [x] **Step 2: 写 failing 单测**
 
 新建 `packages/brain/src/__tests__/acceptance-spec.test.js`：
 
@@ -1690,7 +1690,7 @@ describe('spec_sha 对真实 zenithjoy 规程（本机有 repo 时才跑）', ()
 });
 ```
 
-- [ ] **Step 3: 跑测试确认失败**
+- [x] **Step 3: 跑测试确认失败**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -1699,7 +1699,7 @@ DB_NAME=cecelia_scratch npx vitest run src/__tests__/acceptance-spec.test.js
 
 预期：FAIL，`Failed to load url ../acceptance-spec.js`。
 
-- [ ] **Step 4: 提交 Red commit**
+- [x] **Step 4: 提交 Red commit**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -1707,7 +1707,7 @@ git add packages/brain/src/__tests__/acceptance-spec.test.js packages/brain/src/
 git commit -m "test(acceptance): 建单生成器 36 行与排除集 failing test [task b35bfa0c]"
 ```
 
-- [ ] **Step 5: 实现 `src/acceptance-spec.js`**
+- [x] **Step 5: 实现 `src/acceptance-spec.js`**
 
 ```js
 /**
@@ -1782,7 +1782,7 @@ export function deriveSets(cells) {
 }
 ```
 
-- [ ] **Step 6: 实现 `scripts/acceptance/build-checks-from-spec.mjs`**
+- [x] **Step 6: 实现 `scripts/acceptance/build-checks-from-spec.mjs`**
 
 ```js
 #!/usr/bin/env node
@@ -1833,7 +1833,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 ```
 
-- [ ] **Step 7: 跑单测与 CLI 确认全绿**
+- [x] **Step 7: 跑单测与 CLI 确认全绿**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -1845,7 +1845,7 @@ node scripts/acceptance/build-checks-from-spec.mjs \
 
 预期：单测 PASS；CLI 打印 `{ total: 36, human_only: 17, machine_db: 19, hard: 8, mandatory: 5, unverifiable: 1 }`。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
