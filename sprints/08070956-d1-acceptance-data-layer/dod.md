@@ -37,8 +37,8 @@
   Test: manual:node -e "require('fs').accessSync('packages/brain/src/__tests__/acceptance-run-status.test.js')"
 - [x] DevGate 三件套通过（facts-check / check-version-sync / check-dod-mapping）
   Test: manual:bash -c "node scripts/facts-check.mjs && bash scripts/check-version-sync.sh"
-- [x] 版本四处同步 1.267.247 → 1.268.0（package.json / package-lock 两处 / .brain-versions / DEFINITION.md）
-  Test: manual:node -e "const v=require('./packages/brain/package.json').version; if(v!=='1.268.0')process.exit(1)"
+- [x] 版本四处同步 1.267.247 → 1.269.0（package.json / package-lock 两处 / .brain-versions / DEFINITION.md；原定 1.268.0 被 main 上并行 PR 抢号，merge main 时让号）
+  Test: manual:node -e "const v=require('./packages/brain/package.json').version; if(v!=='1.269.0')process.exit(1)"
 - [x] migration 392 在 scratch 库上跑通且 schema_version 记到 392
   Test: manual:psql -d cecelia_scratch -c "SELECT version FROM schema_version WHERE version='392'"
 - [ ] CI 全绿，cecelia PR 与 zenithjoy PR 同批合并
