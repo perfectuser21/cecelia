@@ -2,7 +2,7 @@
 
 **任务 ID**: 6548d9bf-79ee-440e-bcd9-fbf9dcadf8fa  
 **Sprint**: w3-adjudication-d4a  
-**版本**: v1（第 1 轮，无上轮 reviewer feedback）  
+**版本**: v2（第 2 轮修订，处理 r1 reviewer feedback）  
 **日期**: 2026-08-07  
 **目标环境**: local_api（curl + psql + npm test）  
 **仓库**: cecelia / packages/brain
@@ -39,8 +39,8 @@
 | migration 392 已含 `adjudication JSONB` 列 | 392_acceptance_two_column.sql 第 12 行 | `psql cecelia -c "\d acceptance_checks"` 含 adjudication |
 | `acceptance_runs.status` CHECK 含 `adjudicated` | 392_acceptance_two_column.sql 第 29 行 | CHECK 约束已包含 7 值 |
 | `acceptance_runs.detail JSONB` 已存在 | 392_acceptance_two_column.sql 第 22 行 | 同上 |
-| `acceptance_bucket` 列存在性 | PRD ASSUMPTION | 需在实施前 `SELECT column_name FROM information_schema.columns WHERE table_name='tasks' AND column_name='acceptance_bucket'` 确认；若不存在则建 migration 394 |
-| `acceptance_runs.anchor` 字段存在性 | PRD ASSUMPTION | 需 `SELECT column_name FROM information_schema.columns WHERE table_name='acceptance_runs' AND column_name='anchor'` 确认 |
+| `acceptance_bucket` 列存在性 | 前置确认（必须执行） | **前置检查命令**：`psql cecelia -t -A -c "SELECT column_name FROM information_schema.columns WHERE table_name='tasks' AND column_name='acceptance_bucket'"` 输出非空则列存在，直接使用；若输出为空，proposer 必须先建 migration 394（新增列：`tasks.acceptance_bucket TEXT`），不得跳过 |
+| `acceptance_runs.anchor` 字段存在性 | 前置确认（必须执行） | **前置检查命令**：`psql cecelia -t -A -c "SELECT column_name FROM information_schema.columns WHERE table_name='acceptance_runs' AND column_name='anchor'"` 输出非空则字段存在，直接使用；若输出为空，proposer 必须先在 migration 394 中同步新增 `acceptance_runs.anchor JSONB`，不得跳过 |
 | cells-map yaml 路径 | 实际路径确认 | `packages/brain/src/__tests__/fixtures/acceptance/line02-android.yaml` |
 
 ---
@@ -90,7 +90,7 @@
 ### FR-5 熔断
 
 **技术断言**:
-1. 非绿格（`final_state='红'` 或 `'未定'`）占比 > 1/3（分母 = 36 格）时，触发熔断 P0，issues 表新增记录，标题格式「验收熔断：{run_key} 非绿格 {count}/36 超阈值，疑似规程/数据源分叉」
+1. 非绿格（`final_state='红'` 或 `'未定'`）占比 > 1/3（分母 = 36 格）时，触发熔断 P0，issues 表新增记录，标题格式「验收熔断：{run_key} 非绿格 {count}/36 超阈值，疑似规程/数据源分叉」。**熔断触发时点：每次 adjudicate 调用后后端实时重算非绿格占比，超阈值即触发（非等 run 整体完成）**
 2. `detail.ai_status='哑火'` 时，走独立 `ai_run_infra_error` P0 路径（issues 表新增「AI 整轮哑火」P0），**不进**熔断计数
 3. 哑火 P0 与熔断 P0 可同轮并存（两路径相互独立）
 
@@ -263,12 +263,12 @@ curl -sf -X PATCH "$BASE/runs/$TASK_RUN/adjudicate" \
   -H "Content-Type: application/json" \
   -d "{\"check_key\":\"S1-c1\",\"verdict\":\"红\",\"by\":\"e2e\",\"reason\":\"分流测试\",\"at\":\"$ADJ_AT\"}" > /dev/null
 
-BUG_COUNT=$($PSQL "SELECT COUNT(*) FROM tasks t JOIN acceptance_runs ar ON t.payload->>'run_id'=ar.id::text WHERE ar.run_key='$TASK_RUN' AND t.payload->>'acceptance_bucket'='bug' AND t.status NOT IN ('failed','completed','cancelled')")
+BUG_COUNT=$($PSQL "SELECT COUNT(*) FROM tasks WHERE payload->>'acceptance_run_key'='$TASK_RUN' AND payload->>'acceptance_bucket'='bug' AND status NOT IN ('failed','completed','cancelled')")
 [ "$BUG_COUNT" -le "1" ] || { echo "FAIL: bug 任务数 $BUG_COUNT > 1"; exit 1; }
 echo "  分流建 bug 任务 ≤1 条 OK"
 
 # anchor 三件套验证
-ANCHOR=$($PSQL "SELECT t.payload->'anchor' FROM tasks t JOIN acceptance_runs ar ON t.payload->>'run_id'=ar.id::text WHERE ar.run_key='$TASK_RUN' AND t.payload->>'acceptance_bucket'='bug' LIMIT 1")
+ANCHOR=$($PSQL "SELECT payload->'anchor' FROM tasks WHERE payload->>'acceptance_run_key'='$TASK_RUN' AND payload->>'acceptance_bucket'='bug' LIMIT 1")
 echo "$ANCHOR" | python3 -c "import sys,json; d=json.load(sys.stdin); assert all(k in d for k in ['journey_id','gp_id','step_id']), f'anchor 缺字段: {d}'"
 echo "  payload.anchor 三件套 OK"
 
@@ -276,7 +276,7 @@ echo "  payload.anchor 三件套 OK"
 curl -sf -X PATCH "$BASE/runs/$TASK_RUN/adjudicate" \
   -H "Content-Type: application/json" \
   -d "{\"check_key\":\"S1-c1\",\"verdict\":\"红\",\"by\":\"e2e\",\"reason\":\"重复触发\",\"at\":\"$ADJ_AT\"}" > /dev/null
-BUG_COUNT_2=$($PSQL "SELECT COUNT(*) FROM tasks t JOIN acceptance_runs ar ON t.payload->>'run_id'=ar.id::text WHERE ar.run_key='$TASK_RUN' AND t.payload->>'acceptance_bucket'='bug' AND t.status NOT IN ('failed','completed','cancelled')")
+BUG_COUNT_2=$($PSQL "SELECT COUNT(*) FROM tasks WHERE payload->>'acceptance_run_key'='$TASK_RUN' AND payload->>'acceptance_bucket'='bug' AND status NOT IN ('failed','completed','cancelled')")
 [ "$BUG_COUNT_2" = "$BUG_COUNT" ] || { echo "FAIL: 重复触发后 bug 任务数从 $BUG_COUNT 变为 $BUG_COUNT_2"; exit 1; }
 echo "  查重去重验证 OK"
 
@@ -360,6 +360,7 @@ echo "=== ALL E2E PASSED ==="
 5. **鉴权全链路**：端点鉴权（Invariant 要求 `submitted_by` 白名单或 session token），本 sprint 合同仅验证功能正确性，鉴权实现细节须在代码评审时确认符合 Invariant 要求
 6. **cells-map yaml 多 GP 场景**：本 sprint 仅使用 `line02-android.yaml`（S13-c4）作为 `unverifiable_this_version` 格的测试数据来源；其他 GP 的 yaml 文件中是否存在类似格，未在本 sprint 覆盖
 7. **migration 394 条件触发**：`acceptance_bucket` 列是否实际存在于 tasks 表，需在实施前确认；若缺失则须建 migration 394，但本 sprint 合同不预建测试覆盖该 migration 本身
+8. **自产数据排除 Invariant**：不适用。adjudication 链路（adjudicate 端点 → 分流建单 → 熔断计数）不触及守卫/探针写入路径，无自产数据污染风险，无需排除前缀过滤。（对应 Invariant [自产数据排除] 豁免声明）
 
 ---
 
@@ -372,6 +373,7 @@ echo "=== ALL E2E PASSED ==="
 | SAVEPOINT 23505 不毒化外层事务 | acceptance-adjudication.test.js 集成测试 |
 | 单测租户隔离（≥2 run） | 测试文件种 2 个 run，断言裁决/分流不跨 run 污染 |
 | 无真机无 UI | 本 sprint 全部验收命令均为 curl + psql + npm test |
+| 分流建单失败记日志 | 日志验证依赖 CI 环境（stdout 捕获），本地 E2E 不强制断言；代码评审时人工确认 catch 分支含日志记录语句 |
 
 ---
 

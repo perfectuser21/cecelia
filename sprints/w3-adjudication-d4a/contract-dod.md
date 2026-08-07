@@ -1,7 +1,7 @@
 # 合同 DoD（Definition of Done）— D4a 裁决与分流后端
 
 **任务 ID**: 6548d9bf-79ee-440e-bcd9-fbf9dcadf8fa  
-**版本**: v1（第 1 轮）  
+**版本**: v2（第 2 轮修订，处理 r1 reviewer feedback）  
 **目标环境**: local_api  
 
 ---
@@ -151,6 +151,25 @@ echo "[B3 PASS] hard 格 P0 + unverifiable 例外"
 
 **覆盖 FR**: FR-4（聚合式分流建任务）
 
+**前置检查（执行 B4 前必须通过）**:
+```bash
+# 检查 tasks.acceptance_bucket 列是否存在
+AB_EXISTS=$(psql cecelia -t -A -c "SELECT column_name FROM information_schema.columns WHERE table_name='tasks' AND column_name='acceptance_bucket'")
+if [ -z "$AB_EXISTS" ]; then
+  echo "BLOCKER: tasks.acceptance_bucket 列不存在，proposer 必须先建 migration 394（新增 tasks.acceptance_bucket TEXT, acceptance_runs.anchor JSONB），不得跳过"
+  exit 1
+fi
+echo "  tasks.acceptance_bucket 列存在 OK"
+
+# 检查 acceptance_runs.anchor 字段是否存在
+AR_EXISTS=$(psql cecelia -t -A -c "SELECT column_name FROM information_schema.columns WHERE table_name='acceptance_runs' AND column_name='anchor'")
+if [ -z "$AR_EXISTS" ]; then
+  echo "BLOCKER: acceptance_runs.anchor 字段不存在，proposer 必须先在 migration 394 中新增 acceptance_runs.anchor JSONB，不得跳过"
+  exit 1
+fi
+echo "  acceptance_runs.anchor 字段存在 OK"
+```
+
 **验收命令（manual:bash）**:
 ```bash
 BASE="http://localhost:5221/api/brain/acceptance"
@@ -187,7 +206,7 @@ echo "[B4 PASS] 聚合式分流建任务"
 
 ## [BEHAVIOR] B5 — 熔断（非绿占比 >1/3 开 P0）+ 哑火独立路径
 
-**描述**: 非绿格（`final_state='红'` 或 `'未定'`）占比 > 1/3（分母 = 36）时，触发熔断 P0（issues 表新增「规程/数据源疑似分叉」P0）。`detail.ai_status='哑火'` 走独立 `ai_run_infra_error` 路径（「AI 整轮哑火」P0），不进熔断计数。两路径可同轮并存。
+**描述**: 非绿格（`final_state='红'` 或 `'未定'`）占比 > 1/3（分母 = 36）时，触发熔断 P0（issues 表新增「规程/数据源疑似分叉」P0）。`detail.ai_status='哑火'` 走独立 `ai_run_infra_error` 路径（「AI 整轮哑火」P0），不进熔断计数。两路径可同轮并存。**熔断触发时点：每次 adjudicate 调用后后端实时重算非绿格占比，超阈值即触发（非等 run 整体完成）**。
 
 **覆盖 FR**: FR-5（熔断）
 
@@ -196,7 +215,7 @@ echo "[B4 PASS] 聚合式分流建任务"
 BASE="http://localhost:5221/api/brain/acceptance"
 AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# 构造 13 格红（>36/3=12）
+# 构造 13 格红（>36/3=12），每次 adjudicate 调用后实时重算，第 13 格裁决时超阈值触发熔断 P0
 FUSE_KEY="dod-b5-$(date +%s)"
 CHECKS='['
 for i in $(seq 1 13); do
@@ -253,13 +272,13 @@ echo "[B5 PASS] 熔断 + 哑火独立路径"
 
 **验收命令（manual:bash）**:
 ```bash
-# 运行专项集成测试
+# 运行专项集成测试（npm test 等价于 npx vitest run，含 OOM 兜底）
 cd /workspace
-npx --prefix packages/brain vitest run --reporter=verbose \
+npm --prefix packages/brain test -- --reporter=verbose \
   packages/brain/tests/acceptance-adjudication.test.js 2>&1 | tail -30
 
 # 验证 SAVEPOINT 场景测试存在且通过
-npx --prefix packages/brain vitest run --reporter=verbose \
+npm --prefix packages/brain test -- --reporter=verbose \
   packages/brain/tests/acceptance-adjudication.test.js 2>&1 \
   | grep -E "PASS|FAIL|savepoint|23505|SAVEPOINT" || true
 
@@ -304,6 +323,18 @@ echo "[B7 PASS] 租户隔离：run-A 裁决不影响 run-B"
 
 ---
 
+## [BEHAVIOR] B8 — [headed 场景核对] adjudicate 端点 AI token 鉴权区分（豁免声明）
+
+**描述**（豁免条目）: Invariant 9f14c074 [headed 场景核对] 要求 adjudicate 端点须区分 AI token 与人工 token，确保 AI token 不得调用 adjudicate 端点（应返回 HTTP 403 或 401）。
+
+**D4a 合同豁免声明**: adjudicate endpoint 的 AI token 鉴权区分属 D4a 合同豁免，原因：D4a 专注功能逻辑实现（adjudication 写入、分流建单、熔断），端点鉴权层（区分 AI token / 人工 token）在 D4b 统一实施。**代码评审时须人工验证**：当前实现不得移除 D1-FR4 中 `POST /api/brain/acceptance/ai-results` 已有的 AI token only 限制，且 adjudicate 端点未来在 D4b 接入鉴权时须能正确拒绝 AI token。
+
+**验收方式**: 不在本 sprint E2E 中以命令断言，代码评审人须在 PR review 时确认：①adjudicate 端点代码中预留鉴权扩展点（注释或 TODO 标记 D4b）；②未擅自绕过 D1 已有 AI token 限制。
+
+**覆盖 FR**: Invariant 9f14c074 （D4a 豁免，D4b 实施）
+
+---
+
 ## DevGate 门禁（必须在编码前通过）
 
 ```bash
@@ -333,6 +364,7 @@ node /workspace/packages/quality/scripts/devgate/check-dod-mapping.cjs
 - [ ] B5 PASS：熔断 + 哑火独立路径
 - [ ] B6 PASS：SAVEPOINT 23505 不毒化外层事务
 - [ ] B7 PASS：租户隔离
+- [ ] B8 豁免确认：adjudicate AI token 鉴权区分代码评审人工验证（D4b 实施）
 - [ ] DevGate 三件套全 exit 0
 - [ ] `acceptance-adjudication.test.js` 全部 Green 且进 CI
 - [ ] 无临时文件、无调试 console.log、无未用 import
