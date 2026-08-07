@@ -1315,7 +1315,7 @@ git commit -m "feat(acceptance): check_key 规程格号化 + run_id 写入作用
 - Modify: `scripts/acceptance-spec/ai-run/cells-map.mjs`
 - Test: `scripts/acceptance-spec/__tests__/spec-fields.test.mjs`（新建）
 
-- [ ] **Step 1: 开分支**
+- [x] **Step 1: 开分支**
 
 ```bash
 cd /Users/administrator/perfect21/zenithjoy-workspace
@@ -1323,7 +1323,7 @@ git checkout main && git pull
 git checkout -b cp-08071100-d1-acceptance-spec-fields
 ```
 
-- [ ] **Step 2: 写 failing 测试（口径定案表逐项断言）**
+- [x] **Step 2: 写 failing 测试（口径定案表逐项断言）**
 
 新建 `scripts/acceptance-spec/__tests__/spec-fields.test.mjs`：
 
@@ -1408,7 +1408,7 @@ describe('口径定案表', () => {
 });
 ```
 
-- [ ] **Step 3: 跑测试确认失败**
+- [x] **Step 3: 跑测试确认失败**
 
 ```bash
 cd /Users/administrator/perfect21/zenithjoy-workspace
@@ -1417,7 +1417,7 @@ npx vitest run scripts/acceptance-spec/__tests__/spec-fields.test.mjs
 
 预期：`kind` / `scenario_class` / `op` / `scenario_required` 四组断言全红，行数与 hard 两条已绿。
 
-- [ ] **Step 4: 提交 Red commit**
+- [x] **Step 4: 提交 Red commit**
 
 ```bash
 cd /Users/administrator/perfect21/zenithjoy-workspace
@@ -1425,7 +1425,7 @@ git add scripts/acceptance-spec/__tests__/spec-fields.test.mjs
 git commit -m "test(acceptance-spec): 口径定案表 failing test（kind/scenario_class/op）"
 ```
 
-- [ ] **Step 5: 给 36 个建行格补 `kind`**
+- [x] **Step 5: 给 36 个建行格补 `kind`**
 
 编辑 `acceptance-spec/line02-android.yaml`。**规则：在每个建行格的 `verifiable_by:` 行的下一行，插入缩进 8 空格的 `kind: <值>`。** 例如 S1-c1：
 
@@ -1458,7 +1458,7 @@ git commit -m "test(acceptance-spec): 口径定案表 failing test（kind/scenar
 
 **外加 S14-c1 也必须补 `kind: SOP`**（红线13「员工手工回评也不能把这步改判通过」是员工规程）。它在 `fixedNa: true` 步骤下不建行，但它有 `t` 与 `verifiable_by` 而无 `na`，会走 schema 的 `else` 分支——Step 8 把 `kind` 加进 `else.required` 之后，不补它会让整份 yaml 校验失败。yaml 里带 `kind` 的格因此是 **37** 个，建行的是 36 个。
 
-- [ ] **Step 6: 给 6 个格补 `scenario_class`**
+- [x] **Step 6: 给 6 个格补 `scenario_class`**
 
 同样在 `kind:` 行下一行插入，缩进 8 空格：
 
@@ -1469,7 +1469,7 @@ git commit -m "test(acceptance-spec): 口径定案表 failing test（kind/scenar
 
 其余 30 格不带该字段（缺省 = 无场景约束）。
 
-- [ ] **Step 7: 改 S13-c4 的 `verifiable_by`、加厚两条 `op`**
+- [x] **Step 7: 改 S13-c4 的 `verifiable_by`、加厚两条 `op`**
 
 `acceptance-spec/line02-android.yaml` 中 S13-c4：
 
@@ -1496,7 +1496,7 @@ S10 的 `op` 行：
     op: 看命中视频评论区抓到的内容；用同一关键词再发起一次采集，对照同一视频评论是否被覆盖
 ```
 
-- [ ] **Step 8: 同步 schema**
+- [x] **Step 8: 同步 schema**
 
 `acceptance-spec/line02-android.schema.json` 的 `$defs.cell` 段替换为（`additionalProperties: false` 已开，不加 schema 则新字段直接校验失败）：
 
@@ -1528,7 +1528,7 @@ S10 的 `op` 行：
     }
 ```
 
-- [ ] **Step 9: 从 `cells-map.mjs` 删除 `scenario_required`**
+- [x] **Step 9: 从 `cells-map.mjs` 删除 `scenario_required`**
 
 `scripts/acceptance-spec/ai-run/cells-map.mjs`：删掉文件头注释里的这一段——
 
@@ -1540,7 +1540,7 @@ S10 的 `op` 行：
 
 以及 6 个数据项里的 `scenario_required: true,`（S4-c2 / S4-c3 / S5-c3 / S5-c4 / S10-c4 / S13-c4 各一处）。静态属性的单一 SSOT 从此在 yaml。
 
-- [ ] **Step 10: 跑测试与 schema 校验确认全绿**
+- [x] **Step 10: 跑测试与 schema 校验确认全绿**
 
 ```bash
 cd /Users/administrator/perfect21/zenithjoy-workspace
@@ -1550,7 +1550,7 @@ node scripts/acceptance-spec/cli.mjs generate
 
 预期：12 例全 PASS；`generate` 正常产出不报 schema 错。
 
-- [ ] **Step 11: 提交并开 PR（先不合，等 cecelia 侧 PR 一起）**
+- [ ] **Step 11: 提交并开 PR（先不合，等 cecelia 侧 PR 一起）**（分支已 commit，push/开 PR 由 controller 统一执行）
 
 ```bash
 cd /Users/administrator/perfect21/zenithjoy-workspace
