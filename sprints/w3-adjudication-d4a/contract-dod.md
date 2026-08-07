@@ -22,18 +22,18 @@
 ### 测试交付
 
 - [ ] `packages/brain/src/__tests__/acceptance-adjudication.test.js` 存在，覆盖：
-  - [ ] 输入校验（BEHAVIOR-1/2/3）
-  - [ ] 裁决写入 + 重算（BEHAVIOR-4/5/6/7）
-  - [ ] unverifiable 例外（BEHAVIOR-8/9/10/11）
-  - [ ] abandon 前态守卫（BEHAVIOR-20/21/22/23）
+  - [ ] [BEHAVIOR] 输入校验（[BEHAVIOR-1]/[BEHAVIOR-2]/[BEHAVIOR-3]）
+  - [ ] [BEHAVIOR] 裁决写入 + 重算（[BEHAVIOR-4]/[BEHAVIOR-5]/[BEHAVIOR-6]/[BEHAVIOR-7]）
+  - [ ] [BEHAVIOR] unverifiable 例外（[BEHAVIOR-8]/[BEHAVIOR-9]/[BEHAVIOR-10]/[BEHAVIOR-11]）
+  - [ ] [BEHAVIOR] abandon 前态守卫（[BEHAVIOR-20]/[BEHAVIOR-21]/[BEHAVIOR-22]/[BEHAVIOR-23]）
 - [ ] `packages/brain/src/__tests__/acceptance-divert.test.js` 存在，覆盖：
-  - [ ] 分流触发时点（BEHAVIOR-12）
-  - [ ] 聚合 bug/trace 任务（BEHAVIOR-13/14）
-  - [ ] bucket 独立查重（BEHAVIOR-15）
-  - [ ] anchor 三件套（BEHAVIOR-16）
-  - [ ] 熔断互斥（BEHAVIOR-17）
-  - [ ] AI 哑火路径（BEHAVIOR-18）
-  - [ ] SAVEPOINT 隔离（BEHAVIOR-19）
+  - [ ] [BEHAVIOR] 分流触发时点（[BEHAVIOR-12]）
+  - [ ] [BEHAVIOR] 聚合 bug/trace 任务（[BEHAVIOR-13]/[BEHAVIOR-14]）
+  - [ ] [BEHAVIOR] bucket 独立查重（[BEHAVIOR-15]）
+  - [ ] [BEHAVIOR] anchor 三件套（[BEHAVIOR-16]）
+  - [ ] [BEHAVIOR] 熔断互斥（[BEHAVIOR-17]）
+  - [ ] [BEHAVIOR] AI 哑火路径（[BEHAVIOR-18]）
+  - [ ] [BEHAVIOR] SAVEPOINT 隔离（[BEHAVIOR-19]）
 - [ ] 所有新增测试通过（`npm test` / `vitest run` 绿）
 
 ### CI
@@ -44,6 +44,8 @@
 ### E2E 验收（最终上线门槛）
 
 以下 8 条须 psql/curl 双证，全部通过：
+
+manual:bash: curl -s -o /dev/null -w '%{http_code}' -X PATCH localhost:5221/api/brain/acceptance/runs/$RUN_KEY/adjudicate-cell -H 'Content-Type: application/json' -d '{"verdict":"绿","by":"ci","reason":"test","at":"2026-08-07T00:00:00Z"}'
 
 - [ ] E2E-1：裁决写入四字段落库
 - [ ] E2E-2：unverifiable 例外不开 P0 + 单头注记存在 + hard 非 unverifiable 格对照开 P0

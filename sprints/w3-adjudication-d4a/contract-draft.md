@@ -89,7 +89,7 @@ run 状态为 `stale` 时返回 HTTP 409，消息含 `stale`。
 
 ---
 
-## 二、E2E 验收断言（Final E2E）
+## E2E 验收断言（Final E2E）
 
 以下全部通过 psql 直查或 curl + psql 双证，不依赖 UI。
 
