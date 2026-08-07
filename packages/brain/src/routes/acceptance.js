@@ -5,6 +5,7 @@
  */
 import express from 'express';
 import rateLimit from 'express-rate-limit';
+import { computeRunStatus } from '../acceptance-state.js';
 
 export const ACCEPTANCE_KINDS = ['FR', 'NFR', 'Invariant', 'SOP'];
 export const ACCEPTANCE_RESULTS = ['通过', '不通过', '无法验证'];
@@ -20,6 +21,11 @@ export class AcceptanceResultsError extends Error {
     this.status = status;
     this.body = body;
   }
+}
+
+/** 仅覆盖 migration 392 之前的历史 failed run；新状态机不产生 failed，D4 接管后删除 */
+function isLegacyRejectionTransition(prevStatus, nextStatus) {
+  return prevStatus !== 'failed' && nextStatus === 'failed';
 }
 
 export async function submitAcceptanceResults(pool, results) {
@@ -81,14 +87,15 @@ export async function submitAcceptanceResults(pool, results) {
            FROM acceptance_checks WHERE run_id = $1`,
         [runId]
       );
-      const { total, pass, fail, pending } = counts[0];
+      const { total, pass, pending } = counts[0];
       const passRate = total > 0 ? pass / total : 0;
-      const status = pending > 0 ? 'in_review' : fail > 0 ? 'failed' : pass === total ? 'passed' : 'in_review';
       const { rows: prevRows } = await client.query(
         'SELECT status, title, gp_id, run_key FROM acceptance_runs WHERE id = $1',
         [runId]
       );
       const prev = prevRows[0];
+      // run 级 status 独立走 7 值状态机，不由格级判定推导（格级判定见 computeCellState）
+      const status = computeRunStatus(prev?.status, { total, humanFilled: total - pending });
       const { rows: updated } = await client.query(
         `UPDATE acceptance_runs SET pass_rate = $1, status = $2, updated_at = NOW()
          WHERE id = $3 RETURNING run_key, pass_rate, status`,
@@ -96,7 +103,11 @@ export async function submitAcceptanceResults(pool, results) {
       );
       updatedRuns.push(updated[0]);
 
-      if (prev && prev.status !== 'failed' && status === 'failed') {
+      // 新状态机永不产生 failed（computeRunStatus 的全集是 RUN_STATUSES），这段只对
+      // migration 392 之前落库的历史 failed run 生效。分流建任务由 D4 的聚合式分流接管，
+      // 届时整段删除。此处显式命名而不是留一个恒不触发的裸条件——「看起来在工作、实际
+      // 恒不触发」的代码就是 P2-8 记的棘轮静默击穿。
+      if (prev && isLegacyRejectionTransition(prev.status, status)) {
         const { rows: existingTask } = await client.query(
           `SELECT 1 FROM tasks
            WHERE payload->>'acceptance_run_key' = $1
