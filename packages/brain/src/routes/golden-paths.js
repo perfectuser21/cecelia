@@ -106,6 +106,39 @@ router.post('/golden-paths', async (req, res) => {
   }
 });
 
+// GET /api/brain/golden-paths/:id — 单条 GP 详情，含 journey steps 信息（steps_count + steps[]）
+// 供 harness 诊断「GP steps_count=0」场景使用；step_id 缺失 → fail-loud（返回 steps_count=0 + warn）
+router.get('/golden-paths/:id', async (req, res) => {
+  try {
+    const { rows: gpRows } = await pool.query(
+      'SELECT * FROM golden_paths WHERE id = $1', [req.params.id]
+    );
+    if (gpRows.length === 0) return res.status(404).json({ success: false, error: 'GP not found' });
+    const gp = gpRows[0];
+
+    let steps = [];
+    let steps_count = 0;
+    if (gp.journey_id) {
+      const { rows: stepRows } = await pool.query(
+        'SELECT id, step_number, name, promise, status FROM journey_steps WHERE journey_id=$1 ORDER BY step_number',
+        [gp.journey_id]
+      );
+      steps = stepRows;
+      steps_count = stepRows.length;
+    }
+
+    // 防御：steps_count=0 时 fail-loud（warn 级别，不阻断读取但明确标记异常）
+    if (gp.journey_id && steps_count === 0) {
+      console.warn(`[golden-paths] GP=${req.params.id} journey=${gp.journey_id} steps_count=0 — anchor 无法安全引用，需立即补步骤`);
+    }
+
+    res.json({ success: true, golden_path: { ...gp, steps_count, steps } });
+  } catch (err) {
+    console.error('[golden-paths] GET /:id 失败:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.get('/golden-paths/:id/contracts', async (req, res) => {
   try {
     const { rows } = await pool.query(
