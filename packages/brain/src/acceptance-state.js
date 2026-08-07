@@ -7,6 +7,58 @@
  *   3. run 级 status（7 值状态机，只看人列填写进度）         → computeRunStatus（本文件已有）
  */
 
+export const CELL_STATES = ['绿', '红', '未定'];
+
+/** 裁决四字段齐全才算数（A6 断言 verdict/by/reason/at 全非空） */
+function validAdjudication(adj) {
+  return Boolean(adj && adj.verdict && adj.by && adj.reason && adj.at);
+}
+
+/**
+ * 格级判定（作用域 = 单个格），严格照 v7-final §九组合表，无自由发挥空间。
+ *
+ * @param {object}  cell
+ * @param {string?} cell.result         人列：'通过'|'不通过'|'无法验证'|null（未填）
+ * @param {string?} cell.ai_verdict     AI 列：同枚举；null = 未跑（Q0′）
+ * @param {object?} cell.adjudication   裁决 {verdict,by,reason,at}
+ * @param {string}  cell.verifiable_by  该格 yaml 静态属性：'human_only'|'machine_db'|'machine_visual'
+ * @param {string?} cell.scenario_class 'mandatory'|'opportunistic'|'unverifiable_this_version'|null
+ * @returns {{ final_state: '绿'|'红'|'未定' }}
+ */
+export function computeCellState({ result, ai_verdict, adjudication, verifiable_by, scenario_class }) {
+  // 裁决是人对该格的最终覆盖，AI 是否跑过与之无关，因此排在 Q0′ 之前。
+  // hard 格的唯一逃生阀，也是 unverifiable_this_version 格判绿的唯一来源（A12 棘轮计数它）。
+  if (validAdjudication(adjudication)) {
+    return { final_state: adjudication.verdict === '绿' ? '绿' : '红' };
+  }
+
+  // Q0′ 优先级最高：ai_verdict IS NULL 时在读人列之前就短路。
+  // 写成「先算人列再看 AI 是否为空」很容易在「人列通过」分支上漏掉这个短路（A5 三例专测）。
+  if (ai_verdict == null) return { final_state: '未定' };
+
+  // Q0：人列未填
+  if (result == null) return { final_state: '未定' };
+
+  let state = '未定';
+  if (result === '通过') {
+    if (ai_verdict === '通过') state = '绿';                                  // Q1
+    else if (ai_verdict === '无法验证' && verifiable_by === 'human_only') state = '绿'; // Q3 合法
+    // Q2（AI 不通过）与 Q3′（machine_db 格的无法验证 = 故障）留在「未定」
+  } else if (result === '不通过') {
+    if (ai_verdict === '不通过' || ai_verdict === '无法验证') state = '红';    // Q5 / Q6
+    // Q4 留在「未定」
+  } else if (result === '无法验证') {
+    if (ai_verdict === '不通过') state = '红';                                // Q8
+    // Q7 / Q9 留在「未定」
+  }
+
+  // 本版判定为「这一版验不了」的格（= S13-c4，频控红线）不走任何绿通道，绿只能来自裁决。
+  // 红仍然判红——「验不了」不等于「不许判坏」。
+  if (state === '绿' && scenario_class === 'unverifiable_this_version') state = '未定';
+
+  return { final_state: state };
+}
+
 /** 7 值状态机的全集；passed/failed 是只读历史兼容值，不在其中 */
 export const RUN_STATUSES = [
   'pending', 'in_review', 'human_complete', 'adjudicated', 'stale', 'expired', 'abandoned',
