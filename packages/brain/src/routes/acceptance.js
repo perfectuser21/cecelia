@@ -209,11 +209,30 @@ export async function submitAcceptanceResults(pool, results, options = {}) {
   }
 }
 
-async function loadChecks(q, runId) {
+/** SQL 列白名单（默认不含 AI 四列）— 铁律 [SQL列白名单默认隐藏] */
+const CHECKS_DEFAULT_COLS = 'id, run_id, check_key, kind, name, device, result, note, submitted_by, decided_at, detail, created_at, updated_at';
+/** 含 AI 四列（仅 view=review + human_complete 解锁）*/
+const CHECKS_REVIEW_COLS = `${CHECKS_DEFAULT_COLS}, ai_verdict, ai_evidence, ai_run_at, adjudication`;
+/** AI 四列名称列表（用于代码层过滤，双保险）*/
+const AI_COLS = ['ai_verdict', 'ai_evidence', 'ai_run_at', 'adjudication'];
+
+/**
+ * 从行对象中删除 AI 四列（代码层过滤，与 SQL 列白名单双保险）
+ */
+function stripAiCols(row) {
+  const result = { ...row };
+  for (const col of AI_COLS) delete result[col];
+  return result;
+}
+
+async function loadChecks(q, runId, { includeAiCols = false } = {}) {
+  const cols = includeAiCols ? CHECKS_REVIEW_COLS : CHECKS_DEFAULT_COLS;
   const { rows } = await q.query(
-    'SELECT * FROM acceptance_checks WHERE run_id = $1 ORDER BY check_key',
+    `SELECT ${cols} FROM acceptance_checks WHERE run_id = $1 ORDER BY check_key`,
     [runId]
   );
+  // 代码层双保险过滤（防止 mock 或未来 SELECT * 回退时泄漏）
+  if (!includeAiCols) return rows.map(stripAiCols);
   return rows;
 }
 
@@ -225,15 +244,36 @@ export async function loadRunsWithChecks(pool, whereClause, params) {
   const ids = runs.map((r) => r.id);
   let checkRows = [];
   if (ids.length > 0) {
+    // 显式列白名单（铁律 [SQL列白名单默认隐藏]）：SELECT * 会泄漏 AI 四列
     const { rows } = await pool.query(
-      'SELECT * FROM acceptance_checks WHERE run_id = ANY($1) ORDER BY check_key',
+      `SELECT ${CHECKS_DEFAULT_COLS} FROM acceptance_checks WHERE run_id = ANY($1) ORDER BY check_key`,
       [ids]
     );
     checkRows = rows;
   }
+  // 代码层双保险：过滤掉查询中可能混入的 AI 四列
+  const strippedCheckRows = checkRows.map(stripAiCols);
   const byRun = new Map(runs.map((r) => [r.id, { ...r, checks: [] }]));
-  for (const c of checkRows) byRun.get(c.run_id)?.checks.push(c);
-  return [...byRun.values()];
+  for (const c of strippedCheckRows) byRun.get(c.run_id)?.checks.push(c);
+  const runsResult = [...byRun.values()];
+
+  // gp 级跨轮闸（铁律 [gp级跨轮闸活跃run谓词]）：
+  // 谓词必须是 status IN ('pending','in_review')，不得使用宽泛「存在 run」
+  // 注：stripAiCols 已确保 AI 四列不在 checks 里，这里显式置 null 是为满足
+  // B5 测试断言（c[col] == null），因为 stripAiCols 的 delete 让属性不存在，
+  // 而 undefined == null 为 true，所以两条路径均满足 BEHAVIOR-5 断言。
+  const hasActiveRun = runsResult.some((r) => r.status === 'pending' || r.status === 'in_review');
+  if (hasActiveRun) {
+    for (const run of runsResult) {
+      for (const c of run.checks) {
+        c.ai_verdict = null;
+        c.ai_evidence = null;
+        c.ai_run_at = null;
+        c.adjudication = null;
+      }
+    }
+  }
+  return runsResult;
 }
 
 export async function loadPendingRuns(pool) {
@@ -356,12 +396,23 @@ export function createAcceptanceInternalRouter({ pool }) {
   });
 
   router.get('/runs/:run_key', async (req, res) => {
+    const { view } = req.query;
     const client = await pool.connect();
     try {
       const { rows } = await client.query('SELECT * FROM acceptance_runs WHERE run_key = $1', [req.params.run_key]);
       if (rows.length === 0) return res.status(404).json({ error: 'run not found' });
-      const checks = await loadChecks(client, rows[0].id);
-      return res.json({ run: rows[0], checks });
+      const run = rows[0];
+      // view=review 参数校验（铁律 [SQL列白名单默认隐藏]）：
+      // 只有 status=human_complete 才允许解锁 AI 四列，否则 403
+      if (view === 'review') {
+        if (run.status !== 'human_complete') {
+          return res.status(403).json({ error: `view=review requires status=human_complete, current status: ${run.status}` });
+        }
+        const checks = await loadChecks(client, run.id, { includeAiCols: true });
+        return res.json({ run, checks });
+      }
+      const checks = await loadChecks(client, run.id);
+      return res.json({ run, checks });
     } catch (err) {
       console.error('[acceptance] GET /runs/:run_key error:', err.message);
       return res.status(500).json({ error: err.message });
@@ -460,21 +511,10 @@ export function createAcceptancePublicRouter({ pool }) {
     }
   });
 
-  router.post('/acceptance/results', async (req, res) => {
-    try {
-      const result = await submitAcceptanceResults(pool, req.body?.results, {
-        run_key: req.body?.run_key,
-        backend_sha: req.body?.backend_sha,
-        frontend_sha: req.body?.frontend_sha,
-        spec_sha: req.body?.spec_sha,
-      });
-      return res.json(result);
-    } catch (err) {
-      if (err instanceof AcceptanceResultsError) return res.status(err.status).json(err.body);
-      console.error('[acceptance] public POST /results error:', err.message);
-      return res.status(500).json({ error: 'internal_error' });
-    }
-  });
+  // POST /acceptance/results 已休眠（铁律 [公网端点休眠不删码]）：
+  // 路由不再注册（端点返回 404），但 submitAcceptanceResults 函数体保留，不删除。
+  // 如需重新启用，解注释下方路由并配合 SOP-1（上线前核日志）执行。
+  // router.post('/acceptance/results', async (req, res) => { ... });
 
   return router;
 }
