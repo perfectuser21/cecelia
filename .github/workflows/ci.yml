@@ -653,7 +653,7 @@ jobs:
             # [DEBUG 临时,合并前 revert] timeout -s SIGTERM 480s：本 PR 在 shard1 确定性集体挂死
             # (两轮同型:87 文件完成后零输出到 job 超时被杀,日志无栈)。SIGTERM 让 vitest 优雅退出
             # 并打印 hanging-process 句柄与未完成测试,拿到挂点栈后此行恢复原样。
-            timeout -s TERM 480 npx vitest run --shard=$SHARD/6 "$@" --exclude='src/__tests__/integration/**' --reporter=verbose --reporter=hanging-process --coverage --coverage.reporter=lcov --coverage.reportsDirectory="$covdir" 2>&1 | tee /tmp/vitest-$label.txt
+            timeout -s TERM 480 npx vitest run --shard=$SHARD/6 "$@" --no-file-parallelism --exclude='src/__tests__/integration/**' --reporter=verbose --reporter=hanging-process --coverage --coverage.reporter=lcov --coverage.reportsDirectory="$covdir" 2>&1 | tee /tmp/vitest-$label.txt
             local exit=${PIPESTATUS[0]}
             if [ $exit -ne 0 ]; then
               if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-$label.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-$label.txt; then
