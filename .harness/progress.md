@@ -24,3 +24,4 @@ evaluator: done (verdict=PASS, sha=480da02, verdict_file=.harness/verdicts/evalu
 judge: FAIL r1 (evidence_insufficient——要求smoke-ledger-hygiene.mjs直跑证据+冒烟前后m2对照+无P1 issue断言, sha=480da02)
 evaluator: 补证轮 done (verdict=PASS, behavior_tests 8→11, sha=480da02)
 judge: done (verdict=PASS, sha=480da027aea24762e8bb8261d783e31ee5f5d1eb, judged=true, r3——r1/r2为证据压缩窗口问题非实现问题)
+generator: fix-round-1 (合流main #4695+版本重排1.267.249), sha=6c60212
