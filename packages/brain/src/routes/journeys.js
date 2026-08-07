@@ -373,6 +373,33 @@ router.get('/issues', async (req, res) => {
   }
 });
 
+// PATCH /api/brain/issues/:id — 更新 issue 状态/优先级（关闭 issue 等）
+router.patch('/issues/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const PATCHABLE = ['status', 'priority', 'title', 'body', 'pr_url', 'sub_area'];
+    const sets = [];
+    const vals = [];
+    for (const field of PATCHABLE) {
+      if (req.body[field] !== undefined) {
+        vals.push(req.body[field]);
+        sets.push(`${field}=$${vals.length}`);
+      }
+    }
+    if (sets.length === 0) return res.status(400).json({ error: 'no patchable fields provided' });
+    vals.push(id);
+    const { rows } = await pool.query(
+      `UPDATE issues SET ${sets.join(',')}, updated_at=NOW() WHERE id=$${vals.length} RETURNING *`,
+      vals
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'issue not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[journeys] PATCH /issues/:id error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/brain/journey_steps
 router.get('/journey_steps', async (req, res) => {
   try {
