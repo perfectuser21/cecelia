@@ -165,6 +165,7 @@ okr-initiative-mirror-smoke.sh
 oom-aware-retry-smoke.sh
 ops-panorama-smoke.sh
 orphan-guard-smoke.sh
+orphan-run-revival-smoke.sh
 owner-cockpit-smoke.sh
 postdeploy-verifier-smoke.sh
 preview-capacity-gate-and-destroyer-smoke.sh

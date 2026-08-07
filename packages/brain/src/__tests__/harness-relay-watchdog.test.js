@@ -571,6 +571,24 @@ describe('resumeStalledRelayRuns', () => {
     expect(execCall).toContain(`cecelia-relay-${SHORT}`);
   });
 
+  // 2026-08-07 三条 harness_initiative 全灭时,日志刷了 40 分钟的
+  // "重点火失败 initiative=xxx: undefined" —— spawnSkillRelaySession 被 spawn-guard 拒绝时
+  // 返回的是 {ok:false, deferred:true, reason:'active_run_guard'},没有 error 字段,
+  // 日志取 r.error 必然打 undefined,把唯一能指认死锁的线索抹掉了。
+  it('spawn 被守卫拒(只有 reason 没有 error)→ 日志必须说出 reason,不能打 undefined', async () => {
+    const deps = makeDeps();
+    deps.spawnFn = vi.fn().mockResolvedValue({
+      ok: false, deferred: true, reason: 'active_run_guard',
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await resumeStalledRelayRuns(deps);
+    const lines = warn.mock.calls.map((c) => c.join(' ')).filter((l) => l.includes('重点火失败'));
+    warn.mockRestore();
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines[0]).toContain('active_run_guard');
+    expect(lines[0]).not.toContain('undefined');
+  });
+
   it('有在跑容器 → 跳过不重点火', async () => {
     const deps = makeDeps({ containerRunning: true });
     const r = await resumeStalledRelayRuns(deps);

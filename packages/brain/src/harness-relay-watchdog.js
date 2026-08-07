@@ -1328,7 +1328,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
             out.resumed++;
             console.log(`[relay-watchdog][headed] 重点火 initiative=${run.initiative_id}`);
           } else {
-            console.warn(`[relay-watchdog][headed] 重点火失败 initiative=${run.initiative_id}: ${r?.error}`);
+            console.warn(`[relay-watchdog][headed] 重点火失败 initiative=${run.initiative_id}: ${r?.error ?? r?.reason ?? 'unknown'}`);
           }
         }
         continue;
@@ -1637,7 +1637,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
           console.log(`[relay-watchdog] 重点火 initiative=${run.initiative_id} attempt=${attempts + 1} container=${r.containerId}`);
         }
       } else {
-        console.warn(`[relay-watchdog] 重点火失败 initiative=${run.initiative_id}: ${r?.error}`);
+        console.warn(`[relay-watchdog] 重点火失败 initiative=${run.initiative_id}: ${r?.error ?? r?.reason ?? 'unknown'}`);
       }
     } catch (err) {
       console.warn(`[relay-watchdog] initiative=${run.initiative_id} 处理失败（non-fatal）: ${err.message}`);
