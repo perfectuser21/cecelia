@@ -126,3 +126,26 @@ describe('B9 — 入边盲区回归锁', () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// ─── B5: 测试 fixture 资产豁免（2026-08-07 盲区修复）─────────────────────────
+// __tests__ 下的非代码文件（yaml fixture 等）只被测试 readFileSync，出边判定
+// 对它无意义、入边扫描又排除测试来源——不豁免则任何测试 fixture 必判孤岛。
+describe('B5 — __tests__ 下非代码 fixture 豁免', () => {
+  it('__tests__/fixtures/ 下的 yaml → 不进孤岛判定，exit 0', () => {
+    const { exitCode, stdout, stderr } = runGate(
+      'packages/brain/src/__tests__/fixtures/acceptance/line02-android.yaml'
+    );
+    const combined = stdout + stderr;
+    expect(exitCode).toBe(0);
+    expect(combined).not.toMatch(/isolated/);
+  });
+
+  it('生产目录（非 __tests__）下的 yaml 不豁免，仍判孤岛', async () => {
+    const { exitCode, stderr } = runGate('packages/brain/src/config/some-orphan.yaml', {
+      FIXTURE_PATH_0: 'packages/brain/src/config/some-orphan.yaml',
+      FIXTURE_CONTENT_0: 'key: value',
+    });
+    expect(exitCode).toBe(1);
+    expect(stderr).toMatch(/isolated/);
+  });
+});
