@@ -1264,6 +1264,20 @@ jobs:
               echo "::warning::Could not create DoD smoke task — Brain tasks test will use default ID"
             fi
           fi
+
+          # decisions 留痕断言 seed：拍板发生在开发期的本机生产库（decisions 表是运行时数据），
+          # clean CI 库物理不可能有该行。TASK_CARD 断言 decisions 表时 seed 生产真实拍板记录的
+          # 镜像副本（非伪造——生产库同内容行已存在，此处对齐 CI 库口径）。
+          # 当前覆盖 headed_manual 拍板（PR #4702，生产 decisions id=433fb902）；
+          # 未来同类合同断言按需在此扩展。
+          if grep -q 'FROM decisions' "$TASK_CARD" && grep -q 'headed_manual' "$TASK_CARD"; then
+            psql "$DB" -v ON_ERROR_STOP=1 -c "INSERT INTO decisions (category, topic, decision, reason, status, made_by, priority, area, trigger)
+              VALUES ('invariant', 'headed_manual 任务消费语义拍板（task 94ee0ec4）',
+                'headed_manual=true 任务不进入无头自动派发与 liveness 假杀路径，保持等待有头人工执行（消费方向）。',
+                '镜像自生产 decisions 433fb902-869f-4d49-aeab-a08e2e4bc897（事故任务 b35bfa0c 假杀修复拍板），CI 库口径对齐 seed。',
+                'active', 'system', 'P1', 'brain', 'ci-seed mirror of production decision 433fb902')"
+            echo "✅ Seeded decisions mirror row (headed_manual 拍板，生产 433fb902 镜像)"
+          fi
       - name: 执行 DoD BEHAVIOR 动态命令
         if: steps.detect.outputs.has_dynamic == 'true'
         env:
@@ -1273,6 +1287,10 @@ jobs:
           DB_USER: cecelia
           DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
           DB: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
+          # DB_URL：合同 E2E 脚本（如 replay-incident.sh）的标准连接变量
+          # `DB="${DB_URL:-postgresql://localhost/cecelia}"` —— 缺失时 fallback 默认串，
+          # 在 runner 上以 OS 用户连接必然 FATAL role does not exist（PR #4702 实证）。
+          DB_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           BRAIN_URL: http://localhost:5221
           DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           TEST_DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
@@ -1280,6 +1298,11 @@ jobs:
           LOG_PATH: ${{ steps.detect.outputs.sprint_dir }}/tui.log
         run: |
           TASK_CARD="${{ steps.detect.outputs.task_card }}"
+          # psql（14/15/17 实测一致）的 -t/tuples_only 只抑制表头与 footer，不抑制
+          # INSERT/UPDATE command tag —— `TID=$(psql -t -A -c "INSERT ... RETURNING id")`
+          # 会被 "INSERT 0 1" 尾行污染。DoD 合同脚本的断言口径是数据行，QUIET 对齐该口径
+          #（只抑制信息性输出，不影响数据行/错误/退出码）。PR #4702 实证。
+          echo '\set QUIET on' >> ~/.psqlrc
           FAILED=0
           PASSED=0
           SKIPPED=0

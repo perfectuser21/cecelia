@@ -103,3 +103,27 @@ dispatcher.js:388 拒绝块改为:metadata 累加 pre_flight_fail_count;strikes 
 - Guard C:临时目录造 worktree + 假进程 cwd,断言 skip;进程死断言可删
 - dev 迁移:integration 级——mock spawn,断言 dev 派发走 triggerCeceliaRun 且 execution_attempts+1
 - 禁全量 brain vitest(环境级 OOM),CI 靠既有 shard
+
+## headed_manual 消费语义与零留痕堵死（task 94ee0ec4，2026-08-07）
+
+事故 b35bfa0c：payload.headed_manual=true 的任务被无头派发后零留痕滞留 in_progress，
+被 liveness 双确认按 never_started 假杀。三层修复（decisions 拍板 433fb902，消费方向）：
+
+1. **headed_manual 派发排除**：`selectNextDispatchableTask`（dispatch-helpers.js）派发谓词
+   排除 `payload->>'headed_manual' = 'true'`（jsonb 布尔与字符串 true 均识别）——该旗标任务
+   留给有头人工执行，不进无头自动派发；status 保持 queued 等待。
+2. **kill 授权 spawn 证据校验（零留痕堵死）**：probeTaskLiveness 双确认 DEAD 后，仅当存在
+   任一正向 spawn 证据（activeProcesses 条目 / /tmp/cecelia-{id}.log）或派发回执
+   （error_message）才允许进入 never_started/process_disappeared kill 分类；零证据任务
+   → 安全回队（status=queued，不写 watchdog_kill / error_message / failure learning），
+   并落 task_events 留痕行（watchdog_safe_requeue / watchdog_headed_requeue）。
+   started_at 单独不可靠（requeue 清空，1dfa40f7 实证），不作为证据。
+3. **处置与 spawn 失败必须留痕（fail-closed）**：watchdog 任何处置（requeue/quarantine/
+   安全回队）落 task_events 行（lib/task-event-log.js recordTaskEventSafe，写失败仅告警
+   不阻断）；dispatcher claim 后失败路径 recordDispatchResult 全部带 task_id 写
+   dispatch_events，triggerCeceliaRun spawn 失败另落 task_events(failed_dispatch) 行——
+   杜绝零留痕。
+
+回归护栏（永久入 CI，liveness-queued-never-spawned.integration.test.js）：带派发失败回执的
+从未启动任务仍分类 never_started；曾启动（进程日志存在）任务进程消失仍判 process_disappeared
+——只堵假杀，不放过真死。

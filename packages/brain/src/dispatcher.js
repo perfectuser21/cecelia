@@ -25,6 +25,7 @@ import { emit } from './event-bus.js';
 import { isAllowed, recordFailure } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
 import { recordDispatchResult } from './dispatch-stats.js';
+import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { incrementActionsToday } from './tick-stats.js';
 import { proactiveTokenCheck } from './account-usage.js';
 import { checkQuotaGuard } from './quota-guard.js';
@@ -402,7 +403,7 @@ export async function dispatchNextTask(goalIds) {
         console.error(`[dispatch] claim-leak cleanup failed (task=${nextTask.id}): ${cleanupErr.message}`);
       }
     }
-    await recordDispatchResult(pool, false, 'dispatch_exception');
+    await recordDispatchResult(pool, false, 'dispatch_exception', undefined, nextTask?.id || null);
     return { dispatched: false, reason: 'dispatch_exception', task_id: nextTask?.id, error: err.message, actions };
   };
 
@@ -608,7 +609,7 @@ export async function dispatchNextTask(goalIds) {
       } catch (anchorMarkErr) {
         console.error(`[dispatch] anchor mark failed (non-fatal): ${anchorMarkErr.message}`);
       }
-      await recordDispatchResult(pool, false, 'missing_anchor');
+      await recordDispatchResult(pool, false, 'missing_anchor', undefined, candidate.id);
       return { dispatched: false, reason: 'missing_anchor', task_id: candidate.id, actions };
     }
 
@@ -638,7 +639,7 @@ export async function dispatchNextTask(goalIds) {
             `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
             [candidate.id]
           );
-          await recordDispatchResult(pool, false, 'codex_pool_full');
+          await recordDispatchResult(pool, false, 'codex_pool_full', undefined, candidate.id);
           return { dispatched: false, reason: 'codex_pool_full', codex_running: codexSlots.running, codex_max: codexSlots.max, task_id: candidate.id, actions };
         }
 
@@ -706,7 +707,7 @@ export async function dispatchNextTask(goalIds) {
   if (needsBridgeCheck && !isAllowed('cecelia-run')) {
     await updateTask({ task_id: nextTask.id, status: 'queued' });
     await pool.query('UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1', [nextTask.id]);
-    await recordDispatchResult(pool, false, 'circuit_breaker_open');
+    await recordDispatchResult(pool, false, 'circuit_breaker_open', undefined, nextTask.id);
     return { dispatched: false, reason: 'circuit_breaker_open', actions };
   }
 
@@ -727,7 +728,7 @@ export async function dispatchNextTask(goalIds) {
       { action: 'no-executor', task_id: nextTask.id, reason: ceceliaAvailable.error },
       { success: false, warning: 'cecelia-run not available, task reverted to queued' }
     );
-    await recordDispatchResult(pool, false, 'no_executor');
+    await recordDispatchResult(pool, false, 'no_executor', undefined, nextTask.id);
 
     // HOL fix (0014cd42)：不再整个 tick 直接 return 放弃——把该候选记入跳过列表，
     // 回到候选选择循环选下一个（如豁免 bridge 的 harness_initiative）。
@@ -752,7 +753,7 @@ export async function dispatchNextTask(goalIds) {
   try {
   const fullTaskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [nextTask.id]);
   if (fullTaskResult.rows.length === 0) {
-    await recordDispatchResult(pool, false, 'task_not_found');
+    await recordDispatchResult(pool, false, 'task_not_found', undefined, nextTask.id);
     return { dispatched: false, reason: 'task_not_found', task_id: nextTask.id, actions };
   }
 
@@ -798,6 +799,13 @@ export async function dispatchNextTask(goalIds) {
   // 5a. Check if executor actually succeeded — revert to queued if not
   if (!execResult.success) {
     console.warn(`[dispatch] triggerCeceliaRun failed for task ${nextTask.id}: ${execResult.error || execResult.reason}`);
+    // fail-closed 回执（task 94ee0ec4）：claim 后 spawn 失败必须留 task_events 行，
+    // 杜绝零留痕（写失败仅告警不阻断，任务仍回 queued 可重试）。
+    await recordTaskEventSafe(pool, nextTask.id, 'failed_dispatch', {
+      reason: execResult.reason || 'executor_failed',
+      error: String(execResult.error || '').slice(0, 300) || null,
+      config_error: !!execResult.configError,
+    });
     await updateTask({ task_id: nextTask.id, status: 'queued' });
     // fabf6bd6: 必须同时释放 claim，否则 status=queued 但 claimed_by 仍设，atomic claim
     // 的 `WHERE claimed_by IS NULL` 永远选不中这个 task，等于换了个状态的同款死锁。
@@ -862,7 +870,7 @@ export async function dispatchNextTask(goalIds) {
       { action: 'executor_failed', task_id: nextTask.id, reason: execResult.reason, error: execResult.error, configError: !!execResult.configError },
       { success: false }
     );
-    await recordDispatchResult(pool, false, execResult.configError ? 'config_error' : 'executor_failed');
+    await recordDispatchResult(pool, false, execResult.configError ? 'config_error' : 'executor_failed', undefined, nextTask.id);
     return { dispatched: false, reason: execResult.configError ? 'config_error' : 'executor_failed', task_id: nextTask.id, error: execResult.error || execResult.reason, configError: !!execResult.configError, actions };
   }
   } catch (err) {
