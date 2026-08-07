@@ -25,3 +25,13 @@ judge: FAIL r1 (evidence_insufficient——要求smoke-ledger-hygiene.mjs直跑�
 evaluator: 补证轮 done (verdict=PASS, behavior_tests 8→11, sha=480da02)
 judge: done (verdict=PASS, sha=480da027aea24762e8bb8261d783e31ee5f5d1eb, judged=true, r3——r1/r2为证据压缩窗口问题非实现问题)
 generator: fix-round-1 (合流main #4695+版本重排1.267.249), sha=6c60212
+
+# ===== 新任务段 =====
+# Sprint: sprints/w3-adjudication-d4a (6548d9bf-79ee-440e-bcd9-fbf9dcadf8fa)
+# 任务: W3-裁决API+聚合分流建任务(验收一体两面D4后端)
+# 开始时间: 2026-08-07
+# run_id: 1cbc1121-71a8-4ecb-be25-3066489a2c68
+# 外部真相: 无 PR / 无本任务台账 → 新 sprint 从 Step 1 开跑
+planner: done (sprint-prd.md@304dbb23e, invariants=12, fr=7, 行数=273)
+gan-r1: REVISION (rubric=.harness/verdicts/gan-3ec3ec6c9.json, judgments_written=0 WARN)
+gan-r2: fixes_pushed (sha=eb932faf3, F1/F2/F3/F4/F5/F6全部修复)
