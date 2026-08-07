@@ -59,6 +59,67 @@ export function computeCellState({ result, ai_verdict, adjudication, verifiable_
   return { final_state: state };
 }
 
+/** 故障类 reason：AI 自己没跑成，不是这格本来就机器验不了 */
+export const AI_FAILURE_REASONS = ['page_unreachable', 'login_failed', 'timeout'];
+
+/**
+ * run 级闸判定（作用域 = 整个 run，但不是 status —— status 只看人列进度）。
+ * @param {Array<{check_key:string, hard:boolean, final_state:string}>} cells
+ * @param {{ai_incomplete?:boolean}} runDetail
+ */
+export function computeGateVerdict(cells, runDetail = {}) {
+  // AI 跑挂了要和「格判红」机械可区分：前者是基础设施故障，后者是产品缺陷，
+  // 混在一起会让一次采证器崩溃看起来像一次真实的验收失败。
+  //
+  // 这一条同时是缺格的独立拦截路径，不能降级成「汇总 final_state」的下游：
+  // computeCellState 把裁决排在 Q0′ 短路之前，缺格被裁决绿后格级就是绿，
+  // 只看 final_state 的闸会让「AI 少回写 + 人工补绿」整轮放行（v7-final:275）。
+  if (runDetail.ai_incomplete) {
+    return { gate_verdict: '红', red_cells: [], blocked_reason: 'ai_run_infra_error' };
+  }
+  const notGreen = cells.filter((c) => c.final_state !== '绿');
+  const redCells = notGreen.filter((c) => c.hard || c.final_state === '红').map((c) => c.check_key);
+  return {
+    gate_verdict: notGreen.length === 0 ? '绿' : '红',
+    red_cells: redCells,
+    blocked_reason: null,
+  };
+}
+
+/**
+ * 哑火判据三条件（任一成立即 dumb）：
+ *   ① 确定判定格数 == 0
+ *   ② machine_db 格中故障类无法验证 ≥ ceil(machineDbTotal / 2)
+ *      （19 格 → 10，Gate B 第 4 条落档 3 后 18 格 → 9；阈值从分母算，不硬编码）
+ *   ③ 缺格数 > 0（ai_verdict IS NULL）
+ * @param {Array<{check_key:string, ai_verdict:string?, ai_reason:string?, verifiable_by:string}>} cells
+ * @param {{machineDbTotal:number}} opts
+ */
+export function computeAiStatus(cells, { machineDbTotal }) {
+  const decided = cells.filter((c) => c.ai_verdict === '通过' || c.ai_verdict === '不通过').length;
+  const missingCells = cells.filter((c) => c.ai_verdict == null).map((c) => c.check_key);
+  const machineDbFailures = cells.filter(
+    (c) => c.verifiable_by === 'machine_db'
+      && c.ai_verdict === '无法验证'
+      && AI_FAILURE_REASONS.includes(c.ai_reason)
+  ).length;
+  const failureThreshold = Math.ceil(machineDbTotal / 2);
+
+  const reasons = [];
+  if (decided === 0) reasons.push('no_decided_cells');
+  if (machineDbFailures >= failureThreshold) reasons.push('machine_db_failures');
+  if (missingCells.length > 0) reasons.push('missing_cells');
+
+  return {
+    ai_status: reasons.length > 0 ? 'dumb' : 'ok',
+    ai_incomplete: reasons.length > 0,
+    reasons,
+    missing_cells: missingCells,
+    machine_db_failures: machineDbFailures,
+    failure_threshold: failureThreshold,
+  };
+}
+
 /** 7 值状态机的全集；passed/failed 是只读历史兼容值，不在其中 */
 export const RUN_STATUSES = [
   'pending', 'in_review', 'human_complete', 'adjudicated', 'stale', 'expired', 'abandoned',
