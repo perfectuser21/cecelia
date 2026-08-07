@@ -1,75 +1,68 @@
-contract_branch: cp-08070546-harness-propose-r2-2c482ed6
-sprint_dir: sprints/08070516-relay-2c482ed6
+contract_branch: cp-08061936-harness-propose-r2-94ee0ec4
+sprint_dir: sprints/08071002-relay-94ee0ec4
 
 ---
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Sprint: 修复 ledger-hygiene m2「归属完整率」口径失真
+# Contract DoD — Sprint: 修复 never_started 假杀失败模式
 
-**范围**: packages/brain/src/ledger-hygiene.js m2 三条子查询口径修正（自产排除/冒烟标记排除/attribution_harness 停计与双重计数消除）+ 冒烟派发脚本 smoke_tag 补齐 + 回归测试永留 CI。不含：guard-drill 频控、写入侧 journey_id 上牙、历史回填、棘轮机制改造、ability_id 接线（PRD 范围限定）。
-**大小**: S
+**范围**: packages/brain 派发/liveness/watchdog 链根因实证与修复 + 回归测试永久入 CI + headed_manual 消费语义落地 + 决策/处置留痕。不做 D1 工程本体、不重构 watchdog 大架构、不改其他失败分类逻辑。
+**大小**: M
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] ledger-hygiene.js 含 m2 排除谓词与停计注释：导出 LEDGER_SELF_ISSUE_PREFIX、m2 tasks/issues 子查询注释锚保留、smoke_tag 排除谓词存在、attribution_harness 停计处有「接线」恢复注释
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/ledger-hygiene.js','utf8');if(!c.includes('LEDGER_SELF_ISSUE_PREFIX'))process.exit(1);if(!c.includes('attribution_tasks'))process.exit(1);if(!c.includes('attribution_issues'))process.exit(1);if(!c.includes('smoke_tag'))process.exit(1);if(!c.includes('接线'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] root-cause.md 存在且 a/b/c 三条各有证实/证伪结论 + b35bfa0c 处置节
+  Test: node -e "const c=require('fs').readFileSync('sprints/08071002-relay-94ee0ec4/root-cause.md','utf8');if(!(c.includes('a)')&&c.includes('b)')&&c.includes('c)')&&/证实|证伪/.test(c)&&c.includes('b35bfa0c')))process.exit(1)"
 
-- [x] [ARTIFACT] 两个 headed 派发冒烟脚本所有 harness_initiative 建 task 的 POST body 均含 smoke_tag（含 invalid-mode 防御性补齐）
-  Test: node -e "const fs=require('fs');const files=['packages/brain/scripts/smoke/codex-headed-dispatch-smoke.sh','packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh'];for(const f of files){const bad=fs.readFileSync(f,'utf8').split('\n').filter(l=>l.includes('harness_initiative')&&!l.includes('smoke_tag'));if(bad.length){console.error(f,bad);process.exit(1)}}console.log('OK')"
+- [x] [ARTIFACT] 回归测试毕业入 CI 测试族目录（describe/it 名与 expect 断言与合同 tests/ 逐字不变，仅允许改 import 相对路径与去除 TS 类型标注）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/integration/liveness-queued-never-spawned.integration.test.js','utf8');if(!(c.includes('不被打 watchdog_kill 且不置 failed')&&c.includes('task_events 表有留痕行')&&c.includes('仍分类 never_started')&&c.includes('仍判 process_disappeared')))process.exit(1)"
 
-- [x] [ARTIFACT] m2 回归测试永留 CI：合同 tests/ledger-hygiene-m2-noise.test.js 已复制到 packages/brain/src/__tests__/。落位改写点**仅以下两处**（CONTRACT-IS-LAW 授权边界）：①静态 import 语句路径 `'../../../packages/brain/src/ledger-hygiene.js'` → `'../ledger-hygiene.js'`；②`MODULE_PATH` 常量值同步改为 `'../ledger-hygiene.js'`（供动态 import 在落位处正确解析）。其余逐字同源，关键 it 名齐全
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/ledger-hygiene-m2-noise.test.js','utf8');if(c.includes('../../../packages/brain'))process.exit(1);if(!c.includes(\"MODULE_PATH = '../ledger-hygiene.js'\"))process.exit(1);const its=['m2 tasks 子查询含 smoke_tag 与守卫自产','m2 issues 子查询含自产前缀排除谓词','m2 求和不再计入 attribution_harness','raiseBreachAlerts 写入 title 同源','debt 骤降不触发击穿且不重置 baseline'];for(const s of its){if(!c.includes(s)){console.error('缺 it:',s);process.exit(1)}}console.log('OK')"
+- [x] [ARTIFACT] 回归测试登记进 vitest.config.js POSTGRES_INTEGRATION_TESTS（CI brain-integration job 真 Postgres 跑，永久回归）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/vitest.config.js','utf8');if(!c.includes('liveness-queued-never-spawned.integration.test.js'))process.exit(1)"
 
-- [x] [ARTIFACT] 既有 ledger-hygiene.test.js 的旧口径 m2 断言已同步更新为停计口径（合同规范§5 唯一授权改动点；旧断言 debt=4 含 harness 子项不得残留）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/__tests__/ledger-hygiene.test.js','utf8');if(c.includes('harness缺1 → debt=4'))process.exit(1);console.log('OK')"
+- [x] [ARTIFACT] executor/liveness 契约文档同步 headed_manual 语义与零留痕堵死规则
+  Test: node -e "const c=require('fs').readFileSync('docs/architecture/2026-07-10-executor-liveness-contract/architecture.md','utf8');if(!c.includes('headed_manual'))process.exit(1)"
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令，journey_type=autonomous — 真 cecelia 库 + 只读复现脚本差分）
+## BEHAVIOR 条目
 
-> 计数断言均为同一唯一 tag 的注入→重算差分（基线在注入前几秒读取），历史数据无法冒充差分；场景脚本内置 trap 清理 + 并发漂移整场景重试 1 次（二次失败 = FAIL，非兜底放行）。
+> 场景类映射（本 sprint 无 HTTP Response Schema，四类标准场景按调度域对应）：
+> 核心行为=条 1/2，副作用留痕=条 3/5，负向反例（error path / 防修过头）=条 4，出口门禁=条 6。
 
-- [x] [BEHAVIOR] INV-10 自产/冒烟噪声全排除：注入 1 条 [ledger-hygiene] 前缀 issue（journey_id NULL）+ 1 条 [紧急] issue: [ledger-hygiene] 前缀 task + 1 条 payload.smoke_tag 非空的 harness task（均无 journey 归属）后重算，m2 debt 不变（守卫不因噪声涨账，Golden Path Step 2+3）
-  Test: manual:bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh noise
-  期望: exit 0 且输出含 PASS scenario=noise
+- [x] [BEHAVIOR] 事故形态重放（queued、无进程、无日志、headed_manual=true）跨两次真实 tick 后不被判 never_started、不被置 failed、无 watchdog_kill payload、不被无头派发翻 in_progress/dispatched
+  Test: manual:bash -c 'bash sprints/08071002-relay-94ee0ec4/tests/replay-incident.sh'
+  期望: exit 0，输出 REPLAY-PASS
 
-- [x] [BEHAVIOR] 排除不误伤（task 侧）：注入 1 条无标记、无 journey_id 的真实业务 task 后重算，m2 debt 恰 +1（真实退化仍被捕捉，Golden Path Step 5）
-  Test: manual:bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh real-miss
-  期望: exit 0 且输出含 PASS scenario=real-miss
+- [x] [BEHAVIOR] 新增回归测试修复后 Green（headed_manual 零留痕任务不被假杀 + watchdog 处置留痕 + 两条护栏，共 4 条 it 全过，真 Postgres 零 mock）
+  Test: manual:bash -c 'bash -c "cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/liveness-queued-never-spawned.integration.test.js --reporter=verbose"'
+  期望: exit 0，0 failed
 
-- [x] [BEHAVIOR] 排除不误伤（issue 侧，边界/error path）：注入 1 条 title 含 [ledger-hygiene] 字样但不以自产前缀开头、journey_id NULL 的真实 issue 后重算，m2 debt 恰 +1（前缀锚定 title 开头，禁模糊 %中缀% 匹配，Golden Path Step 5）
-  Test: manual:bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh issue-real-miss
-  期望: exit 0 且输出含 PASS scenario=issue-real-miss
+- [x] [BEHAVIOR] watchdog 处置留痕：非 headed 未 spawn 任务被 watchdog 处置后 task_events 表落行（5 分钟时间窗防历史数据冒充，现状 0 行为 Red 起点）
+  Test: manual:bash -c 'bash -c "cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/liveness-queued-never-spawned.integration.test.js -t 留痕行 --reporter=verbose"'
+  期望: exit 0，命中 ≥1 条测试且全过
 
-- [x] [BEHAVIOR] attribution_harness 停计 + 双重计数消除：注入 1 条无 smoke_tag、无 ability_id、无 journey_id 的 harness_initiative task 后重算，m2 debt 恰 +1（旧口径 +2 双重计数；PRD 验收点 5，Golden Path Step 4）
-  Test: manual:bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh harness-once
-  期望: exit 0 且输出含 PASS scenario=harness-once
+- [x] [BEHAVIOR] 防修过头反例：既有 1dfa40f7 测试族全 Green——真实 spawn 后进程立死仍判 process_disappeared、带派发失败回执的从未启动任务仍分类 never_started、error_message/failure_class 不被覆盖（铁律 56a0ba9f）
+  Test: manual:bash -c 'bash -c "cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/liveness-never-started.integration.test.js --reporter=verbose"'
+  期望: exit 0，0 failed
 
-- [x] [BEHAVIOR] m2 回归测试红→绿进 CI：合同测试在最终落位全绿（红证据见 Test Contract 表：合同起草时 4 failed / 2 passed）
-  Test: manual:bash -c 'bash -lc "cd $(git rev-parse --show-toplevel)/packages/brain && npx vitest run src/__tests__/ledger-hygiene-m2-noise.test.js"'
-  期望: exit 0，6 tests passed
+- [x] [BEHAVIOR] headed_manual 语义拍板写 decisions 表留痕（14 天时间窗；本条为该 psql 断言唯一文本源 SSOT，draft Step 5 与 E2E 第 3 段 SQL 逐字复制自此，改动只许改本条再同步）
+  Test: manual:bash -c 'psql "${DB_URL:-postgresql://localhost/cecelia}" -t -A -c "SELECT count(*) FROM decisions WHERE (topic ILIKE '"'"'%headed_manual%'"'"' OR decision ILIKE '"'"'%headed_manual%'"'"' OR reason ILIKE '"'"'%headed_manual%'"'"') AND created_at > NOW() - interval '"'"'14 days'"'"'" | grep -qE "^[1-9][0-9]*$"'
+  期望: exit 0（count ≥ 1）
 
-- [x] [BEHAVIOR] INV-2 常量同源（禁写死环境值/孤立字面量）：LEDGER_SELF_ISSUE_PREFIX 运行时导出且逐字等于 [ledger-hygiene]，与既有 LEDGER_SELF_ATOM_PREFIX 并列（排除谓词由共享常量派生，非孤立第三份字面量）
-  Test: manual:node -e "import('./packages/brain/src/ledger-hygiene.js').then(function(m){if(m.LEDGER_SELF_ISSUE_PREFIX!=='[ledger-hygiene]')process.exit(1);if(m.LEDGER_SELF_ATOM_PREFIX!=='issue: [ledger-hygiene]')process.exit(1);console.log('OK')}).catch(function(){process.exit(1)})"
-  期望: OK
+- [x] [BEHAVIOR] DevGate 三件套通过（Brain 改动强制门禁）
+  Test: manual:bash -c 'node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs'
+  期望: exit 0
 
-- [x] [BEHAVIOR] INV-5 凭据安全：本 sprint 触达文件无硬编码凭据/token 形态字符串
-  Test: manual:bash -c '! grep -rnE "(sk-[A-Za-z0-9]{16}|ghp_[A-Za-z0-9]{16}|xoxb-[0-9]|AKIA[0-9A-Z]{12})" packages/brain/src/ledger-hygiene.js packages/brain/scripts/smoke/codex-headed-dispatch-smoke.sh packages/brain/scripts/smoke/claude-headed-dispatch-smoke.sh sprints/08070516-relay-2c482ed6/tests/ && echo OK'
-  期望: OK
+## Invariant 覆盖条目（铁律清单逐条映射 — Step 1.3）
 
-## Invariant 铁律映射（PRD:60-74 逐条 — 覆盖条目或显式 N/A）
-
-- INV-1 [串行执行] N/A：本 sprint 不触及 slot/会话调度，纯指标口径修正
-- INV-2 [禁写死环境值] 覆盖于 [BEHAVIOR] INV-2（排除前缀经共享常量派生；smoke_tag 为机器标记非环境假设值，无屏幕坐标/阈值写死）
-- INV-3 [真环境验证] 覆盖于 [BEHAVIOR] noise/real-miss/issue-real-miss/harness-once 四场景（真 cecelia 库 + 真跑只读复现脚本差分）与 `## E2E 验收` 脚本；本 sprint 接缝 = 代码↔真 Postgres，全部真库验证，无 logic-done-pending 项
-- INV-4 [测试多租户] N/A：tasks/issues 表无租户维度，守卫为 Brain 单实例内部指标
-- INV-5 [凭据安全] 覆盖于 [BEHAVIOR] INV-5（触达文件无硬编码凭据；测试数据不含 secrets）
-- INV-6 [日志脱敏] N/A：守卫日志仅指标数字与 title 前缀，无 PII/聊天内容
-- INV-7 [端点鉴权] N/A：不新增/不修改任何 API 端点
-- INV-8 [租户隔离] N/A：同 INV-4
-- INV-9 [设备类型审查] N/A：无 UI/设备语义；无字段语义重叠新增
-- INV-10 [自产数据排除] 覆盖于 [BEHAVIOR] INV-10（本 sprint 核心：共享常量前缀标记 + 统计侧排除，m2 对齐 m7 既有模式）与 [ARTIFACT] A1
-- INV-11 [日历窗口] N/A：本 sprint 不新建探针时间窗；新增排除谓词均为无时间参数的字段谓词；存量 m2 7 天滚动窗依 PRD 假设 3 不改（改造记后续 sprint）
-
-## error path 说明
-
-m2 计算无 HTTP 面；口径层面的「error path」= 排除误伤防护（real-miss / issue-real-miss 双侧覆盖：排除过宽 → 差分为 +0 即 FAIL）。SQL 执行失败的降级路径（safeMetric → enabled=false 不阻断其他指标）由既有回归测试 ledger-hygiene.test.js「单指标 SQL 失败 → 该指标 enabled=false」守护，本合同不重复、不得回退。
+- [x] [BEHAVIOR] INV-1 [never_started兜底 56a0ba9f] watchdog 对从未启动进程走 never_started 分类兜底且不覆盖已有 error_message/failure_class
+  Test: manual:bash -c 'bash -c "cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/liveness-never-started.integration.test.js -t 记账覆盖 --reporter=verbose"'
+  期望: exit 0（既有 it「…不被 watchdog 记账覆盖」保持 Green）
+- [headed点火写worktree 17722a93] N/A：本 sprint 只落地「headed_manual 不进无头派发/不被假杀」的等待语义，不实现 headed 前台点火本体；如 generator 实证根因后需实现点火路径，则该铁律自动生效并须补断言。
+- [urgent建单查重 81294701] N/A：本 sprint 不触及 capture_atoms urgent 路由建单代码。
+- [x] [BEHAVIOR] INV-2 [失败分支显式 e9c7752f] spawn/处置失败路径必须显式留痕，不许静默（对应 task_events 留痕断言，同 BEHAVIOR 条 3）
+  Test: manual:bash -c 'bash -c "cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/liveness-queued-never-spawned.integration.test.js -t 留痕行 --reporter=verbose"'
+  期望: exit 0
+- [x] [BEHAVIOR] INV-3 [headed场景核对 9f14c074] headed_manual 人工接管任务不被无头链路（自动派发/liveness 假杀）处置
+  Test: manual:bash -c 'bash -c "cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/liveness-queued-never-spawned.integration.test.js -t 不被打 --reporter=verbose"'
+  期望: exit 0（it「…不被打 watchdog_kill 且不置 failed」Green）
