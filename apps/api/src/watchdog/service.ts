@@ -173,6 +173,12 @@ export async function triggerPatrol(agentId: string): Promise<{
       detached: true,
       stdio: 'ignore',
     });
+    // spawn 的 error 事件（如 PATH 无 cecelia-patrol 的 ENOENT）异步触发，无 listener
+    // 会成为 uncaught exception 崩掉整个 API 进程（CI runner 实证，main workspace-test
+    // 连续红的根因）。detached fire-and-forget 语义下降级为日志告警。
+    patrol.on('error', (err) => {
+      console.error(`[Watchdog] cecelia-patrol spawn failed for agent ${agentId}: ${err.message}`);
+    });
     patrol.unref();
 
     return {

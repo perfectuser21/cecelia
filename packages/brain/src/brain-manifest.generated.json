@@ -1039,9 +1039,9 @@
     "harness_initiative": "/harness-planner",
     "harness_task": "/_internal",
     "harness_final_e2e": "/harness-evaluator",
-    "golden_path_proposal": "/golden-path-controller"
+    "golden_path_proposal": "/capability-controller"
   },
-  "generatedAt": "2026-07-12T06:03:19.814Z",
+  "generatedAt": "2026-08-07T00:22:11.081Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

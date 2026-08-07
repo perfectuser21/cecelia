@@ -1,18 +1,21 @@
 ---
-name: golden-path-proposer
+name: capability-proposer
 description: |
-  Golden Path Proposer — GP 提案人。被 golden-path-controller 派发（Step 2 首稿 / Step 4 修订轮），
-  基于探索报告写 Golden Path 提案文档：现状标注（每步已有/半成/缺失+代码证据）、Gate 前置、
-  用户视角单线性步骤、验收断言、判定点登记表、P2 记账。修订轮逐条回应 reviewer feedback
-  （核销或带证据 REFUTE 反驳）。产物契约 = 提案 markdown 文档，不写实现代码、不开 PR、不写测试。
-  golden 样例见 examples/moments-golden-path-v2.md（朋友圈试点 v2.1，三镜头对抗收敛实证）。
-  触发：GP 提案首稿、GP 提案修订、写 golden path 提案文档。
-version: 1.3.0
+  Capability Proposer（原 Golden Path Proposer）— Capability 提案人。被 capability-controller
+  派发（Step 2 首稿 / Step 4 修订轮），基于探索报告写 Capability 提案文档：现状标注（每步已有/半成/
+  缺失+代码证据）、Gate 前置、用户视角单线性步骤、验收断言、判定点登记表、P2 记账。修订轮逐条回应
+  reviewer feedback（核销或带证据 REFUTE 反驳）。产物契约 = 提案 markdown 文档，不写实现代码、不开
+  PR、不写测试。样例见 examples/moments-golden-path-v2.md（朋友圈试点 v2.1，三镜头对抗收敛实证，
+  历史文档保留旧词原样）。
+  触发：Capability 提案首稿、Capability 提案修订、写 capability 提案文档。
+version: 1.4.0
 created: 2026-07-12
 changelog:
+  - 1.4.0: skill 改名 golden-path-proposer→capability-proposer（决策 a340f100 追加拍板），
+    触发词/description 同步换新词
   - 1.3.0: 新增 GP 级 7 项合同起草职责——提案与严格 JSON sidecar 同版产出；每条 NFR 同步建议
     lifeline/best_effort 分类、验证方式与理由；合同不侵入封版的 11 要素
-  - 1.2.0: 新增「承诺式骨干」铁律（2026-07-17 主理人拍板口径，与 golden-path-mapper 首版同批）——
+  - 1.2.0: 新增「承诺式骨干」铁律（2026-07-17 主理人拍板口径，与 capability-mapper 首版同批）——
     步骤表每行步骤名必须是客户/老板可感知承诺，工序词（识别/判定/检测/解析/校验/生成/调用等）
     禁止直接当步骤名，违者 reviewer 必打回；步骤下显式分【挂片】【分支/判定点】两栏
   - 1.1.0: 新增验证等级承诺列（决策145014a4 W3）——步骤表模板增「验证等级承诺」列（L1替身/L2服务端真验/L3真机真验）；铁律新增第6条：接缝步骤（碰真机/生产env/真实第三方）承诺必须L3，三镜头对抗审查「凭什么这步只需替身」
@@ -23,7 +26,7 @@ changelog:
 > **语言规则: 所有输出简体中文。**
 > **角色**: 提案人（作者）。你写的是「给人批、给 harness 实现」的路径蓝图，不是代码。
 
-# /golden-path-proposer — Golden Path 提案人
+# /capability-proposer — Capability 提案人
 
 ## 输入（controller 通过 prompt/env 注入）
 

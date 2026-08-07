@@ -72,6 +72,11 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
     WHERE ${goalCondition}
       AND t.status = 'queued'
       AND t.claimed_by IS NULL
+      -- headed_manual 消费语义（task 94ee0ec4，铁律 9f14c074）：建单方标记
+      -- payload.headed_manual=true（jsonb 布尔或字符串 'true' 均识别，payload->>
+      -- 对两种写法都返回文本 'true'）的任务留给有头人工执行，不进无头自动派发。
+      -- 只做收窄/排除（NFR：不放宽探测/派发基底谓词）。
+      AND COALESCE(t.payload->>'headed_manual', 'false') <> 'true'
       AND t.task_type NOT IN ('content-pipeline', 'content-export', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review',
                                'harness_ci_watch', 'harness_deploy_watch')
       ${excludeClause}

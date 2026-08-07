@@ -163,9 +163,9 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
     // circuit-breaker recordFailure 被调用
     expect(mockRecordFailure).toHaveBeenCalledWith('cecelia-run');
 
-    // dispatch stats 记录失败
+    // dispatch stats 记录失败（task 94ee0ec4 fail-closed：失败回执必须带 task_id 可归因）
     expect(mockRecordDispatchResult).toHaveBeenCalledWith(
-      expect.anything(), false, 'executor_failed'
+      expect.anything(), false, 'executor_failed', undefined, 'task-exec-fail'
     );
   });
 

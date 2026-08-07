@@ -1,17 +1,21 @@
 ---
-name: golden-path-controller
+name: capability-controller
 description: |
-  Golden Path Controller — GP 提案版单 session 编排者。消费 Brain `task_type=golden_path_proposal`
+  Capability Controller（原 Golden Path Controller）— Capability 提案版单 session 编排者。
+  消费 Brain `task_type=golden_path_proposal`
   任务（harness-skill-relay loadSkill 按 task_type 选中本 skill），一个 session 从头跑完一条
-  Golden Path 提案：探索现状 → 提案文档 → 三镜头分级扇出对抗（技术/产品/风险）→ 收敛 →
+  Capability 提案：探索现状 → 提案文档 → 三镜头分级扇出对抗（技术/产品/风险）→ 收敛 →
   HTML demo → 提交 7 项 GP 合同 → PATCH golden_paths status=converged + findings_log → 等 Owner 签字。
   产物契约 = 提案文档 + 合同 JSON + demo_url + pending_action_id，**不产 PR、不写实现代码、不写合同测试**
   （那是批准后 harness 实现阶段的事）。复用 harness-controller v2.1.0 横切纪律（append-only 台账 /
   phase-event 自报 / 文件接力 / 四态出口协议 / Step 0 装载恢复）。
-  触发：Brain 派发 golden_path_proposal 任务；人工说「跑 GP 提案」「对这条 golden path 候选做对抗收敛」。
-version: 1.1.0
+  触发：Brain 派发 golden_path_proposal 任务；人工说「跑 Capability 提案」「对这条 capability 候选做对抗收敛」。
+version: 1.2.0
 created: 2026-07-12
 changelog:
+  - 1.2.0: skill 改名 golden-path-controller→capability-controller（决策 a340f100 追加拍板），
+    触发词/description 同步换新词；Brain task_type=golden_path_proposal 字符串本体不动
+    （代码层渐进，见 [[待办] Brain task-router.js/harness-skill-relay.js 需配套 /dev 改）
   - 1.1.0: proposer/reviewer 全程传递版本化 GP_CONTRACT 和 INCIDENT_CONTEXT；收敛后提交严格
     7 项合同，拿到 pending_action_id 即停在 Owner 签字边界，不替 Owner approve
   - 1.0.0: 首版（GP loop T3，cecelia docs/architecture/2026-07-12-golden-path-mode）——骨架取自
@@ -24,13 +28,13 @@ changelog:
 > **角色**: 车间主任（编排/派活/验收），不亲自写提案。每个阶段派 fresh subagent（Task tool），
 > 自己只保留协调所需的最小上下文。
 
-# /golden-path-controller — Golden Path 提案接力编排
+# /capability-controller — Capability 提案接力编排
 
 流程主线：
 
 ```
-Step 0 装载/恢复 → 1 探索+判级 → 2 提案+合同(golden-path-proposer)
-→ 3 镜头扇出对抗(golden-path-reviewer×N) → 4 收敛循环(1v1) → 5 HTML demo
+Step 0 装载/恢复 → 1 探索+判级 → 2 提案+合同(capability-proposer)
+→ 3 镜头扇出对抗(capability-reviewer×N) → 4 收敛循环(1v1) → 5 HTML demo
 → 6 提交合同+回写 golden_paths → 6.5 等 Owner 签字 → 7 report+收尾
 ```
 
@@ -174,7 +178,7 @@ prompt: 对 GP「<title>: <one_liner>」做现状探索，产出 .harness/explor
 ## Step 2: 提案（fresh subagent，node=proposer）
 
 ```
-prompt: 调用 Skill(golden-path-proposer)。上下文：
+prompt: 调用 Skill(capability-proposer)。上下文：
   GP_TITLE=<title> GP_ONE_LINER=<one_liner> SPRINT_DIR=<dir> BRAIN_URL=<url>
   EXPLORE_REPORT=.harness/explore-report.md（读它，不重复探索）
   产出 <SPRINT_DIR>/proposal-v1.md + .harness/gp-contract-v1.json 并 commit。
@@ -186,12 +190,12 @@ prompt: 调用 Skill(golden-path-proposer)。上下文：
 提案含 Gate 前置段 ⑤ `gp-contract-v1.json` 可被 `jq -e` 解析，顶层恰好 7 项且版本与提案一致。
 完成 → 台账 append → Step 3。
 
-## Step 3: 镜头扇出对抗（golden-path-reviewer × N）
+## Step 3: 镜头扇出对抗（capability-reviewer × N）
 
 按 Step 1 判级派 reviewer fresh subagent（三镜头=3 个并行，1v1=1 个 lens=solo）：
 
 ```
-prompt: 调用 Skill(golden-path-reviewer)。上下文：
+prompt: 调用 Skill(capability-reviewer)。上下文：
   LENS=<tech|product|risk|solo> ROUND=1 SPRINT_DIR=<dir>
   PROPOSAL=<SPRINT_DIR>/proposal-v1.md  EXPLORE_REPORT=.harness/explore-report.md
   GP_CONTRACT=.harness/gp-contract-v1.json  INCIDENT_CONTEXT=<路径|unavailable>
@@ -268,8 +272,8 @@ jq -n --arg doc "$(cat <SPRINT_DIR>/proposal-v<N>.md)" --arg url "$DEMO_URL" \
 
 ```json
 {"round":1,"lens":"tech","severity":"P0","finding":"<一句话>",
- "verdict":"RESOLVED|REFUTED|P2_LOGGED","by":"golden-path-reviewer",
- "refuted_by":"golden-path-proposer","refute_evidence":"<REFUTED 时必填>"}
+ "verdict":"RESOLVED|REFUTED|P2_LOGGED","by":"capability-reviewer",
+ "refuted_by":"capability-proposer","refute_evidence":"<REFUTED 时必填>"}
 ```
 
 被 REFUTE 驳回的条目**必须保留**（含归属），本期只存不算分（对抗计分在范围外）。

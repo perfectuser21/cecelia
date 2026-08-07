@@ -33,6 +33,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/routes/__tests__/harness-attempt-verdict-pg.integration.test.js',
   'src/__tests__/integration/ledger-hygiene-m7-organic.integration.test.js',
   'src/__tests__/integration/liveness-never-started.integration.test.js',
+  'src/__tests__/integration/liveness-queued-never-spawned.integration.test.js',
   '../../tests/regression/relay-137fea96/contract-postdeploy-smoke-filter.test.ts',
   'src/__tests__/integration/ledger-hygiene-m7-beijing-window.integration.test.ts',
   'src/__tests__/integration/breach-issue-copy.integration.test.ts',

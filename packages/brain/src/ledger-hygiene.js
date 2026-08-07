@@ -26,6 +26,13 @@ export const RATCHET_KEY = 'ledger_hygiene_ratchet';
 export const LEDGER_SELF_ATOM_PREFIX = 'issue: [ledger-hygiene]';
 
 /**
+ * 守卫自产 issue 的 title 前缀（与 raiseBreachAlerts 写入 title 及当日去重查询同源）。
+ * m2 issues 子查询的自产排除谓词由本常量派生，防单边改文案使排除谓词静默失效
+ * （同 m7 的 LEDGER_SELF_ATOM_PREFIX 同源模式）。
+ */
+export const LEDGER_SELF_ISSUE_PREFIX = '[ledger-hygiene]';
+
+/**
  * m7 capture 统计的确定性窗口：北京（Asia/Shanghai）昨日自然日 [00:00:00, 24:00:00)
  * 对应的 UTC 时刻对。仅依赖 now 的北京日历日——同一北京日内任意时刻调用结果完全一致，
  * 消除 NOW()-24h 滑动窗的调度秒级漂移竞态（2026-08-03 误击穿根因）。
@@ -81,30 +88,34 @@ export async function computeMetrics(pool, now = new Date()) {
   }, { key: 'm1', name: 'FR沉淀率', value: null, debt: 0 });
 
   const m2 = await safeMetric(async () => {
-    // 归属完整率：近 7 天新建 tasks/issues 的 journey 归属 + harness 任务 ability 归属
-    const [t, i, h] = await Promise.all([
+    // 归属完整率：近 7 天新建 tasks/issues 的 journey 归属。
+    // 排除守卫自产与冒烟噪声（debt 与 total 同步排除，防分母被噪声稀释）：
+    //   - tasks：守卫击穿 → capture-triage 建的 '[紧急] issue: [ledger-hygiene]%' task
+    //     （前缀由 '[紧急] ' 模板 + LEDGER_SELF_ATOM_PREFIX 拼接派生，与写入侧同源）
+    //     与 payload.smoke_tag 非空的 headed 派发冒烟 task
+    //   - issues：守卫自产 '[ledger-hygiene]%' 前缀 issue（LEDGER_SELF_ISSUE_PREFIX 同源）
+    // attribution_harness 子指标（tasks.ability_id IS NULL）停计：ability_id 未接线
+    // （全库仅 15 行非空），恒空即纯噪声源，且 harness 任务缺 journey_id 时会被
+    // tasks/harness 两条子查询双重计数——ability_id 接线后恢复该子项属后续 sprint。
+    const [t, i] = await Promise.all([
       pool.query(
         `SELECT count(*) AS total,
                 count(*) FILTER (WHERE COALESCE(payload->>'journey_id', '') = '') AS debt
          FROM tasks /* attribution_tasks */
-         WHERE created_at >= NOW() - INTERVAL '7 days'`
+         WHERE created_at >= NOW() - INTERVAL '7 days'
+           AND title NOT LIKE '[紧急] ${LEDGER_SELF_ATOM_PREFIX}%'
+           AND payload->>'smoke_tag' IS NULL`
       ),
       pool.query(
         `SELECT count(*) AS total,
                 count(*) FILTER (WHERE journey_id IS NULL) AS debt
          FROM issues /* attribution_issues */
-         WHERE created_at >= NOW() - INTERVAL '7 days'`
-      ),
-      pool.query(
-        `SELECT count(*) AS total,
-                count(*) FILTER (WHERE ability_id IS NULL) AS debt
-         FROM tasks /* attribution_harness */
-         WHERE task_type = 'harness_initiative'
-           AND created_at >= NOW() - INTERVAL '7 days'`
+         WHERE created_at >= NOW() - INTERVAL '7 days'
+           AND title NOT LIKE '${LEDGER_SELF_ISSUE_PREFIX}%'`
       ),
     ]);
-    const total = toInt(t.rows[0]?.total) + toInt(i.rows[0]?.total) + toInt(h.rows[0]?.total);
-    const debt = toInt(t.rows[0]?.debt) + toInt(i.rows[0]?.debt) + toInt(h.rows[0]?.debt);
+    const total = toInt(t.rows[0]?.total) + toInt(i.rows[0]?.total);
+    const debt = toInt(t.rows[0]?.debt) + toInt(i.rows[0]?.debt);
     return { key: 'm2', name: '归属完整率', value: total === 0 ? 1 : (total - debt) / total, debt, enabled: true };
   }, { key: 'm2', name: '归属完整率', value: null, debt: 0 });
 
@@ -349,14 +360,14 @@ export async function raiseBreachAlerts(pool, breaches, today) {
     } else {
       deltaText = `欠账 ${b.prevDebt}→${b.debt}`;
     }
-    const title = `[ledger-hygiene] ${b.name} ${deltaText}（${today}）`;
+    const title = `${LEDGER_SELF_ISSUE_PREFIX} ${b.name} ${deltaText}（${today}）`;
     try {
       // 每指标每日最多一条 issue：当日已有同指标 issue 则跳过 INSERT 与 Bark
       const { rows: dup } = await pool.query(
         `SELECT 1 FROM issues
          WHERE title LIKE $1 AND created_at >= CURRENT_DATE
          LIMIT 1`,
-        [`[ledger-hygiene] ${b.name}%`]
+        [`${LEDGER_SELF_ISSUE_PREFIX} ${b.name}%`]
       );
       if (dup.length > 0) continue;
       const { rows: inserted } = await pool.query(

@@ -1,22 +1,25 @@
 ---
-name: golden-path-reviewer
+name: capability-reviewer
 description: |
-  Golden Path Reviewer — GP 提案审查员，镜头参数化（LENS=tech/product/risk/solo）。
-  被 golden-path-controller 派发，对抗性审查 golden-path-proposer 的提案文档：
+  Capability Reviewer（原 Golden Path Reviewer）— Capability 提案审查员，镜头参数化
+  （LENS=tech/product/risk/solo）。
+  被 capability-controller 派发，对抗性审查 capability-proposer 的提案文档：
   rubric 5 维打分（0-10）+ VERDICT（APPROVED/REVISION）结构化裁决，findings 按 P0/P1/P2 分级；
   收敛轮兼裁 proposer 的 REFUTE 反驳是否成立。审查对象是提案文档质量（现状标注真实性/
   路径完整性/断言可验证性/判定点完备/风险与门），不是代码、不是合同测试。
-  触发：GP 提案审查、镜头审查 golden path、裁决 REFUTE。
-version: 1.3.0
+  触发：Capability 提案审查、镜头审查 capability、裁决 REFUTE。
+version: 1.4.0
 created: 2026-07-12
 changelog:
+  - 1.4.0: skill 改名 golden-path-reviewer→capability-reviewer（决策 a340f100 追加拍板），
+    触发词/description 同步换新词
   - 1.3.0: 新增 GP_CONTRACT 红方攻击与 INCIDENT_CONTEXT 事故对照；不改变既有 7 维提案 rubric，
     verdict JSON 增加 contract_attack 与 incident_comparison 两个独立裁决块
   - 1.2.0: rubric 6 维扩为 7 维（2026-07-18 根因排查拍板，decision 8dbe91ee）——新增「多端完整性」
     维度：功能涉及多个 os_type/device_platform（如安卓手机 vs Windows 机器）时，验收必须确认
     展示层（列表/筛选/图标）是否区分，不区分则该维打 0 分。起因：机器管理页/账号管理页曾因
     无人检查这一维，os_type/device_platform 字段存在但前端从未接线，10天后演变成生产 bug
-  - 1.1.0: rubric 5 维扩为 6 维（2026-07-17 主理人拍板口径，与 golden-path-mapper 首版/proposer
+  - 1.1.0: rubric 5 维扩为 6 维（2026-07-17 主理人拍板口径，与 capability-mapper 首版/proposer
     1.2.0 同批）——新增「骨干承诺纯度」维度：逐步骤检查步骤名可否翻译成客户/老板感知承诺，
     发现工序词（识别/判定/检测/解析/校验/生成/调用等）当步骤名 = P1 finding，要求降级为挂片
   - 1.0.0: 首版（GP loop T3）——VERDICT+rubric 结构沿用 harness-contract-reviewer 9.4.0 骨架；
@@ -28,7 +31,7 @@ changelog:
 > **心态**: Skeptical staff engineer——不信 proposer 的每一句话，默认扣分，要证据。
 > 按 rubric 打分，不自由判断；无轮数上限，但真找不出实质漏洞时必须 APPROVED（禁凑数打回）。
 
-# /golden-path-reviewer — Golden Path 提案审查员
+# /capability-reviewer — Capability 提案审查员
 
 ## 输入（controller 注入）
 

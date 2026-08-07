@@ -70,7 +70,7 @@ describe('E2E smoke（DoD F2）：golden_path_proposal 路由→orchestrator校�
     return {
       pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
       spawnFn: vi.fn().mockResolvedValue({ containerId: 'cid', dockerStdout: 'x' }),
-      loadSkill: vi.fn().mockReturnValue('SKILL golden-path-controller 全文'),
+      loadSkill: vi.fn().mockReturnValue('SKILL capability-controller 全文'),
       ensureWt: vi.fn().mockResolvedValue('/tmp/wt/gp-smoke'),
       resolveAccountFn: vi.fn().mockImplementation(async (o) => { o.env = o.env || {}; o.env.CECELIA_CREDENTIALS = 'account1'; }),  // 新契约（5167ef48）：claude 需已解析账号
       tokenFn: vi.fn().mockResolvedValue('gh-token'),
@@ -80,22 +80,22 @@ describe('E2E smoke（DoD F2）：golden_path_proposal 路由→orchestrator校�
     };
   }
 
-  it('task-router 路由通过（us + /golden-path-controller）', () => {
+  it('task-router 路由通过（us + /capability-controller）', () => {
     const r = routeTaskCreate({ title: gpTask.title, task_type: gpTask.task_type });
     expect(r.location).toBe('us');
-    expect(r.skill).toBe('/golden-path-controller');
+    expect(r.skill).toBe('/capability-controller');
   });
 
-  it('relay spawn 全链通且 loadSkill 收到 golden-path-controller', async () => {
+  it('relay spawn 全链通且 loadSkill 收到 capability-controller', async () => {
     const deps = makeSmokeDeps();
     const r = await spawnSkillRelaySession(gpTask, deps);
     expect(r.ok).toBe(true);
-    expect(deps.loadSkill).toHaveBeenCalledWith('golden-path-controller');
+    expect(deps.loadSkill).toHaveBeenCalledWith('capability-controller');
   });
 
   it('skill 未部署 → loadSkill throw → 硬失败不 spawn 半截 session（明确报错）', async () => {
     const deps = makeSmokeDeps({
-      loadSkill: vi.fn(() => { throw new Error('loadSkillContent: SKILL.md not found for golden-path-controller'); }),
+      loadSkill: vi.fn(() => { throw new Error('loadSkillContent: SKILL.md not found for capability-controller'); }),
     });
     const r = await spawnSkillRelaySession(gpTask, deps);
     expect(r.ok).toBe(false);

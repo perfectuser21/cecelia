@@ -1,0 +1,13 @@
+{
+  "phase": "gan",
+  "round": 2,
+  "verdict": "APPROVED",
+  "rubric_scores": {"dod_machineability":9,"scope_match_prd":9,"test_is_red":9,"internal_consistency":9,"risk_registered":9,"verification_oracle_completeness":9,"ci_workflow_alignment":10},
+  "judgments_written": 3,
+  "judgments": ["J1 冒烟噪声判定=payload.smoke_tag 机器标记","J2 守卫自产判定=共享常量前缀逐字匹配","J3 attribution_harness 未接线=静态停计"],
+  "invariant_coverage": "11/11 (4覆盖/7显式N/A)",
+  "behavior_count": 11,
+  "red_evidence": "vitest 4 failed/2 passed 三方一致 + 真库差分 noise 462→466 FAIL",
+  "contract_commit": "2e47488f45",
+  "branch": "cp-08070546-harness-propose-r2-2c482ed6"
+}

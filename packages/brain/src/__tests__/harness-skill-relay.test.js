@@ -581,8 +581,8 @@ describe('spawnSkillRelaySession — sprint_dir 持久化 (issue 45dd6925)', () 
 });
 
 describe('controllerSkillFor（GP2/T2：按 task_type 选 controller skill）', () => {
-  it('golden_path_proposal → golden-path-controller', () => {
-    expect(controllerSkillFor('golden_path_proposal')).toBe('golden-path-controller');
+  it('golden_path_proposal → capability-controller', () => {
+    expect(controllerSkillFor('golden_path_proposal')).toBe('capability-controller');
   });
   it('harness_initiative / 未知类型 → harness-controller（默认不变）', () => {
     expect(controllerSkillFor('harness_initiative')).toBe('harness-controller');
@@ -590,13 +590,13 @@ describe('controllerSkillFor（GP2/T2：按 task_type 选 controller skill）', 
   });
 });
 
-describe('spawnSkillRelaySession: golden_path_proposal 选中 golden-path-controller', () => {
-  it('loadSkill 被以 golden-path-controller 调用', async () => {
+describe('spawnSkillRelaySession: golden_path_proposal 选中 capability-controller', () => {
+  it('loadSkill 被以 capability-controller 调用', async () => {
     const deps = makeDeps();
     const gpTask = { ...TASK, task_type: 'golden_path_proposal' };
     const r = await spawnSkillRelaySession(gpTask, deps);
     expect(r.ok).toBe(true);
-    expect(deps.loadSkill).toHaveBeenCalledWith('golden-path-controller');
+    expect(deps.loadSkill).toHaveBeenCalledWith('capability-controller');
   });
 
   it('harness_initiative 默认仍是 harness-controller（零回归）', async () => {
