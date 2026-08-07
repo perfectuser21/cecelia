@@ -18,6 +18,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/acceptance-scenario-gate.integration.test.js',
   'src/__tests__/integration/acceptance-aging-expire.integration.test.js',
   'src/__tests__/integration/acceptance-lifecycle.integration.test.js',
+  'src/__tests__/integration/acceptance-review-closure.integration.test.js',
   'src/__tests__/integration/golden-path-contract.integration.test.js',
   'src/__tests__/integration/migration-373-gp-ledger-data-knife.integration.test.js',
   'src/__tests__/integration/migration-374-gp-assertion-receipts.integration.test.js',
@@ -46,6 +47,9 @@ export default defineConfig({
       // zenithjoy-workspace，不给就等于所有走 getSpecSets() 的端点全 500。
       // 测试一律读仓内 fixture（Task 6 从 zenithjoy 拷入）。
       ACCEPTANCE_SPEC_PATH: path.join(__dirname, 'src/__tests__/fixtures/acceptance/line02-android.yaml'),
+      // 主理人身份（A15）：复盘闭环的「谁能关」判据读它。测试里显式给值而不是靠实现里的
+      // 默认值兜底——默认值哪天改了，测试要跟着红，不该继续靠巧合全绿。
+      ACCEPTANCE_OWNER_IDENTITY: 'alex',
     },
     environment: 'node',
     include: [
