@@ -3009,7 +3009,7 @@ git commit -m "feat(acceptance): review-ack/review-closed 端点与 24h 防死�
 - Modify: `packages/brain/src/routes/acceptance.js`（`POST /runs` 前置）
 - Test: `packages/brain/src/__tests__/integration/acceptance-create-gate.integration.test.js`
 
-- [ ] **Step 1: 写 failing 集成测试**
+- [x] **Step 1: 写 failing 集成测试**
 
 新建 `packages/brain/src/__tests__/integration/acceptance-create-gate.integration.test.js`：
 
@@ -3109,7 +3109,7 @@ describe('A15①⑥⑦ 建单前置与逃生阀', () => {
 });
 ```
 
-- [ ] **Step 2: 登记并跑红**
+- [x] **Step 2: 登记并跑红**
 
 `packages/brain/vitest.config.js` 追加：
 
@@ -3126,7 +3126,7 @@ DB_NAME=cecelia_scratch ACCEPTANCE_TENANT_ALLOWLIST=acc-verify-01,acc-verify-02 
 
 预期：FAIL（建单一律返 201）。
 
-- [ ] **Step 3: 提交 Red commit**
+- [x] **Step 3: 提交 Red commit**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -3134,7 +3134,7 @@ git add packages/brain/src/__tests__/integration/acceptance-create-gate.integrat
 git commit -m "test(acceptance): 建单前置校验与逃生阀 failing test [task b35bfa0c]"
 ```
 
-- [ ] **Step 4: 实现前置校验**
+- [x] **Step 4: 实现前置校验**
 
 在 `routes/acceptance.js` 的常量段追加：
 
@@ -3199,7 +3199,7 @@ export function loadTenantAllowlist() {
       );
 ```
 
-- [ ] **Step 5: 跑测试确认全绿**
+- [x] **Step 5: 跑测试确认全绿**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -3210,7 +3210,7 @@ DB_NAME=cecelia_scratch ACCEPTANCE_TENANT_ALLOWLIST=acc-verify-01,acc-verify-02 
 
 预期：6 例全 PASS。
 
-- [ ] **Step 6: 把两个 env 加进测试环境（不落 `.env` 文件——`.gitignore` 排除 `.env*`，落文件等于 CI 里没有）**
+- [x] **Step 6: 把两个 env 加进测试环境（不落 `.env` 文件——`.gitignore` 排除 `.env*`，落文件等于 CI 里没有）**
 
 `packages/brain/vitest.config.js` 里 Task 7 Step 3 建的 `env: {}` 块追加两行：
 
@@ -3226,7 +3226,7 @@ DB_NAME=cecelia_scratch ACCEPTANCE_TENANT_ALLOWLIST=acc-verify-01,acc-verify-02 
       detail: { tenant_account: 'acc-verify-01' },
 ```
 
-- [ ] **Step 7: 跑整个 integration 目录确认无连带破坏**
+- [x] **Step 7: 跑整个 integration 目录确认无连带破坏**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -3236,7 +3236,7 @@ DB_NAME=cecelia_scratch ACCEPTANCE_SPEC_PATH=$PWD/src/__tests__/fixtures/accepta
 
 预期：`src/__tests__/integration/` 下全部 PASS。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
