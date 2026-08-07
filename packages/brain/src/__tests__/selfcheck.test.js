@@ -200,8 +200,10 @@ describe('selfcheck', () => {
   // 390（capture_atoms unique(capture_id,target_type) — F6加厚幂等修复，ed911a7c）推进地板到 390。
   // 392（验收一体两面数据层：AI 四列 + runs.detail + 7 值 status CHECK + per-run check_key unique，
   //      D1／GP 7790f728）推进地板到 392。
-  it('EXPECTED_SCHEMA_VERSION should be 392', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('392');
+  // 393（GP 胶水参数化：golden_paths.base_repo + target_environment 两可空列，task d2567378）
+  //      推进地板到 393。
+  it('EXPECTED_SCHEMA_VERSION should be 393', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('393');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

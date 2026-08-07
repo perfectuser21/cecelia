@@ -14,6 +14,9 @@
  *   SC-05: 验证脚本类 PRD + contract 含 verification_level: L3 → 不误判
  *   SC-06: THEATER_KEYWORDS_EXTRA env 扩展自定义关键词 → theater_mismatch
  *   SC-07: GP 含 UIA 关键词（大小写变体 uia）+ local_api → theater_mismatch（大小写不敏感）
+ *
+ * 债1 语境化（task d2567378）：SC-08 四象限——合同带「## 真机边界声明」段时，
+ * 名词引用不再误杀，但 BEHAVIOR/Test 行命中动作词仍 FAIL（声明不能洗白真作弊）。
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -263,6 +266,177 @@ describe('SC-07: 大小写不敏感匹配', () => {
 
     expect(result.pass).toBe(false);
     expect(result.reasons.join(' ')).toMatch(/theater_mismatch/);
+  });
+});
+
+// ── SC-08: 真机边界声明四象限（债1 语境化，task d2567378）────────────────────
+describe('SC-08: 真机边界声明四象限', () => {
+  // 固定标题段：名词清单 + 零真机动作承诺 + 理由，三样缺一不可（人写给人看，机器只认标题）
+  const DECLARATION = [
+    '## 真机边界声明',
+    '',
+    '- 引用的真机名词：line02-android.yaml（配置文件名）、android 格号语义',
+    '- 承诺：本合同零真机动作，全部断言在 local_api 内完成',
+    '- 理由：本 sprint 只改调度器对格号字符串的解析，不驱动任何设备',
+  ].join('\n');
+
+  it('象限①无声明 + 名词引用 → 仍 FAIL（存量合同零行为变化）', async () => {
+    const ctx = baseCtx();
+    const deps = makeDeps({
+      prdContent: '## Golden Path\n\n1. 解析 line02-android.yaml 的格号语义\n',
+      contractContent: '[BEHAVIOR] node parse.js line02-android.yaml\nTest: tests/parse.test.js',
+      env: 'local_api',
+    });
+
+    const result = await runMechanicalGate(ctx, deps);
+
+    expect(result.pass).toBe(false);
+    expect(result.reasons.join(' ')).toMatch(/theater_mismatch/);
+  });
+
+  it('象限②有声明 + 纯名词引用 → PASS 且 theater_declared:true 留痕', async () => {
+    const ctx = baseCtx();
+    const deps = makeDeps({
+      prdContent: '## Golden Path\n\n1. 解析 line02-android.yaml 的格号语义\n',
+      contractContent: `${DECLARATION}\n\n[BEHAVIOR] node parse.js line02-android.yaml\nTest: tests/parse.test.js`,
+      env: 'local_api',
+    });
+
+    const result = await runMechanicalGate(ctx, deps);
+
+    expect(result.reasons.join(' ')).not.toMatch(/theater_mismatch/);
+    expect(result.pass).toBe(true);
+    expect(result.theater_declared).toBe(true);
+  });
+
+  it('象限③有声明 + BEHAVIOR 命中动作词 → 仍 FAIL 且注明命中的动作词', async () => {
+    const ctx = baseCtx();
+    const deps = makeDeps({
+      prdContent: '## Golden Path\n\n1. 解析 line02-android.yaml 的格号语义\n',
+      contractContent: `${DECLARATION}\n\n[BEHAVIOR] adb shell input tap 100 200\nTest: manual:adb shell 截图比对`,
+      env: 'local_api',
+    });
+
+    const result = await runMechanicalGate(ctx, deps);
+
+    expect(result.pass).toBe(false);
+    const reasonsText = result.reasons.join(' ');
+    expect(reasonsText).toMatch(/theater_mismatch/);
+    expect(reasonsText).toMatch(/声明存在但动作词命中/);
+    expect(reasonsText).toMatch(/adb shell/);
+    expect(result.theater_declared).not.toBe(true);
+  });
+
+  it('象限④无真机关键词 → PASS 且 theater_declared:false（回归）', async () => {
+    const ctx = baseCtx();
+    const deps = makeDeps({
+      prdContent: '## Golden Path\n\n1. 调用 API 返回 200\n',
+      contractContent: '[BEHAVIOR] curl localhost/api\nTest: manual:curl localhost/api',
+      env: 'local_api',
+    });
+
+    const result = await runMechanicalGate(ctx, deps);
+
+    expect(result.pass).toBe(true);
+    expect(result.theater_declared).toBe(false);
+  });
+
+  it('声明段自带的「真机」二字不得顺手洗白 meta_verification_gap', async () => {
+    // 声明段按写法必然含 android/真机 这类名词，而 ⑤ 闸认的就是「contract 里出现真机关键词」。
+    // 不把声明段从 ⑤ 的扫描面里摘掉，加一段声明就等于白送一张 smoke 类交付的免检章。
+    const ctx = baseCtx();
+    const deps = makeDeps({
+      prdContent: '# Sprint PRD — smoke 验证脚本演习\n\n## Golden Path\n\n1. 验证脚本执行\n',
+      contractContent: `${DECLARATION}\n\n[BEHAVIOR] curl localhost/api\nTest: manual:curl localhost/api`,
+      env: 'local_api',
+    });
+
+    const result = await runMechanicalGate(ctx, deps);
+
+    expect(result.pass).toBe(false);
+    expect(result.reasons.join(' ')).toMatch(/meta_verification_gap/);
+  });
+
+  it('声明只在轻量环境的名词象限生效：动作词表与名词表是两张表', async () => {
+    // 名词表保留 android/真机 这类"提到即命中"的词，动作表只收真机上的实际操作，
+    // 两表若合一，声明要么洗白一切、要么什么都洗不白。
+    const { THEATER_REAL_MACHINE_KEYWORDS, THEATER_ACTION_KEYWORDS } = await import('../harness-judge.js');
+    expect(THEATER_REAL_MACHINE_KEYWORDS).toContain('android');
+    expect(THEATER_ACTION_KEYWORDS).not.toContain('android');
+    expect(THEATER_ACTION_KEYWORDS.some((k) => k.toLowerCase().includes('adb shell'))).toBe(true);
+  });
+});
+
+// ── SC-09: 动作词逃逸变体（象限③ 加固，task d2567378）────────────────────────
+// 动作词表按「固定词组 substring」匹配时，换个说法就绕过去了：
+// 「在真机上执行」不含「真机执行」、「windows_wechat派发」不含「windows_wechat 派发」。
+// 声明是自证清白的入口，逃逸口留着等于把 fail-closed 打回 fail-open。
+describe('SC-09: 动作词逃逸变体一律按象限③ FAIL', () => {
+  const DECLARATION = [
+    '## 真机边界声明',
+    '',
+    '- 引用的真机名词：line02-android.yaml（配置文件名）',
+    '- 承诺：本合同零真机动作',
+    '- 理由：只改格号解析',
+  ].join('\n');
+
+  function runWithBehavior(behaviorBlock) {
+    return runMechanicalGate(baseCtx(), makeDeps({
+      prdContent: '## Golden Path\n\n1. 解析 line02-android.yaml 的格号语义\n',
+      contractContent: `${DECLARATION}\n\n${behaviorBlock}`,
+      env: 'local_api',
+    }));
+  }
+
+  it.each([
+    ['在真机上执行安装', '[BEHAVIOR] 在真机上执行安装包校验', '真机上'],
+    ['真机上点击', '[BEHAVIOR] 真机上点击「发送」按钮', '真机上'],
+    ['派发真机任务', '[BEHAVIOR] spawn 一个派发真机任务的 job', '派发真机'],
+    ['触发真机流程', '[BEHAVIOR] 触发真机回归流程', '触发真机'],
+  ])('%s → FAIL 且 reasons 注明命中的动作词', async (_label, behavior, expectedHit) => {
+    const result = await runWithBehavior(behavior);
+
+    expect(result.pass).toBe(false);
+    const reasonsText = result.reasons.join(' ');
+    expect(reasonsText).toMatch(/声明存在但动作词命中/);
+    expect(reasonsText).toContain(expectedHit);
+    expect(result.theater_declared).toBe(false);
+  });
+
+  // windows_wechat 派发类：中间有没有空格、谁在前谁在后都得拦，
+  // 单条固定词组「windows_wechat 派发」只能拦住其中一种写法。
+  it.each([
+    ['无空格', '[BEHAVIOR] windows_wechat派发一条消息'],
+    ['派发在前带介词', '[BEHAVIOR] 派发到 windows_wechat 执行'],
+    ['触发在前跟 workflow', '[BEHAVIOR] 触发 windows_wechat workflow'],
+    ['下发在前', '[BEHAVIOR] 下发至 windows_wechat 队列'],
+  ])('windows_wechat 派发类（%s）→ FAIL', async (_label, behavior) => {
+    const result = await runWithBehavior(behavior);
+
+    expect(result.pass).toBe(false);
+    expect(result.reasons.join(' ')).toMatch(/声明存在但动作词命中/);
+    expect(result.theater_declared).toBe(false);
+  });
+
+  // Test: 行的提取此前用 startsWith('Test:')，列表项前缀或缩进一加就整行漏扫，
+  // 动作词藏在 Test: 里等于白送豁免。
+  it.each([
+    ['列表项 - 前缀', '[BEHAVIOR] 解析格号\n- Test: manual:adb shell 截图比对'],
+    ['缩进两格', '[BEHAVIOR] 解析格号\n  Test: manual:adb shell 截图比对'],
+    ['列表项 * 前缀', '[BEHAVIOR] 解析格号\n* Test: manual:在真机上执行校验'],
+  ])('Test: 行带 %s 时动作词仍被抓到 → FAIL', async (_label, behavior) => {
+    const result = await runWithBehavior(behavior);
+
+    expect(result.pass).toBe(false);
+    expect(result.reasons.join(' ')).toMatch(/声明存在但动作词命中/);
+  });
+
+  it('纯名词引用仍不被逃逸变体误伤（象限② 回归）', async () => {
+    // 加固后最怕的是把「真机」相关名词一并拖进动作表，象限② 当场塌掉。
+    const result = await runWithBehavior('[BEHAVIOR] node parse.js line02-android.yaml\nTest: tests/parse.test.js');
+
+    expect(result.pass).toBe(true);
+    expect(result.theater_declared).toBe(true);
   });
 });
 

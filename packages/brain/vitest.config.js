@@ -12,6 +12,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/migration-364-kernel-local-container-naming.integration.test.js',
   'src/__tests__/integration/acceptance.integration.test.js',
   'src/__tests__/integration/migration-392-acceptance-two-column.integration.test.js',
+  'src/__tests__/integration/migration-393-gp-harness-glue.integration.test.js',
   'src/__tests__/integration/acceptance-state-machine.integration.test.js',
   'src/__tests__/integration/acceptance-run-scope.integration.test.js',
   'src/__tests__/integration/acceptance-ai-results.integration.test.js',

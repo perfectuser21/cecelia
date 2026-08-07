@@ -190,6 +190,75 @@ export const THEATER_REAL_MACHINE_KEYWORDS = [
 
 const THEATER_LIGHT_ENVS = new Set(['local_api', 'mac_web']);
 
+// 合同里承认「我引用了真机名词但一个真机动作都没有」的固定标题段。
+// 只认标题，段内的名词清单/承诺/理由是写给人看的——机器改判的依据是下面的动作词表交叉验证，
+// 不是这段自述，否则声明就成了自证清白的橡皮图章。
+const THEATER_DECLARATION_HEADING = /^##\s*真机边界声明\s*$/m;
+
+// 把声明段整段摘掉（到下一个 ## 或文末为止）。声明段是「我为什么提到这些名词」的自述，
+// 不是合同的验证断言——凡是靠「合同里有没有出现真机关键词」判断的闸，都得先摘再扫。
+function stripTheaterDeclarationSection(text) {
+  const lines = String(text || '').split('\n');
+  const kept = [];
+  let inDeclaration = false;
+  for (const line of lines) {
+    if (/^##\s*真机边界声明\s*$/.test(line)) {
+      inDeclaration = true;
+      continue;
+    }
+    // 段落止于下一个 ## 标题；没有下一个标题就一直吃到文末。
+    if (inDeclaration && /^##\s/.test(line)) inDeclaration = false;
+    if (!inDeclaration) kept.push(line);
+  }
+  return kept.join('\n');
+}
+
+// 动作性词表：描述「在真机上做了什么」，与上面的名词引用表是两张表。
+// 名词表（android/真机/微信…）提到即命中，可被真机边界声明豁免；动作词命中说明合同真要动设备，
+// 声明不能洗白——所以这张表只在「已有声明」的分支里跑，且只扫 BEHAVIOR/Test 行（合同的执行面）。
+export const THEATER_ACTION_KEYWORDS = [
+  'adb shell',
+  'adb ',
+  'uia',
+  'uiselector',
+  'uiautomator',
+  'accessibilitynodeinfo',
+  'schtasks',
+  // 「真机上」覆盖 在真机上执行 / 真机上点击 / 真机上截图 这一整族——
+  // 只收「真机执行」这种紧挨着的固定词组，加一个「上」字就绕过去了。
+  '真机上',
+  '真机执行',
+  '真机点击',
+  '真机截图',
+  '驱动真机',
+  '派发真机',
+  '触发真机',
+  '安卓端操作',
+];
+
+// 词序自由的组合式动作：windows_wechat 与派发/触发类动词同现即算真机动作，
+// 不论中间有无空格、谁前谁后。固定词组「windows_wechat 派发」只拦得住一种写法，
+// windows_wechat派发 / 派发到 windows_wechat / 触发 windows_wechat workflow 全从缝里过。
+export const THEATER_ACTION_PATTERNS = [
+  /windows_wechat\s*(派发|触发|下发|调度|spawn|dispatch)/i,
+  /(派发|触发|下发|调度|spawn|dispatch)\s*(到|至|进)?\s*windows_wechat/i,
+];
+
+/**
+ * 在 BEHAVIOR/Test 文本里找真机动作，命中则返回命中的那段原文（进 FAIL 详情）。
+ * 先查固定词组再查组合式正则；都不中返回 null。
+ */
+function findTheaterActionHit(text) {
+  const lower = String(text || '').toLowerCase();
+  const kw = THEATER_ACTION_KEYWORDS.find((k) => lower.includes(k.toLowerCase()));
+  if (kw) return kw;
+  for (const pattern of THEATER_ACTION_PATTERNS) {
+    const matched = String(text || '').match(pattern);
+    if (matched) return matched[0].trim();
+  }
+  return null;
+}
+
 // ── 刀B 机械预检（root 杠杆，决策 dc18d43d「无闸不成文」）────────────────────
 // 同步校验 brainResult 结构，任一项不满足即返回 FAIL 对象（null = 全过）。
 // 在 judge 路由最前执行，不进 AI 裁判。
@@ -781,6 +850,7 @@ export async function runMechanicalGate(ctx, deps = {}) {
 
   // ④ 戏院错配闸（theater_mismatch）FR-02
   // 仅在轻量环境（local_api / mac_web）下触发：若 sprint-prd GP 段或 contract BEHAVIOR 文本含真机关键词 → FAIL
+  let theaterDeclared = false;
   if (THEATER_LIGHT_ENVS.has(env)) {
     let prdTextForTheater = '';
     let contractTextForTheater = '';
@@ -795,8 +865,13 @@ export async function runMechanicalGate(ctx, deps = {}) {
     const gpMatch = prdTextForTheater.match(/##\s*Golden\s*Path[^\n]*\n([\s\S]*?)(?=\n##\s+|$)/i);
     const gpSection = gpMatch ? gpMatch[1] : prdTextForTheater;
 
-    // 提取 BEHAVIOR 行（contract 命令文本）
-    const behaviorLines = contractTextForTheater.split('\n').filter((l) => l.includes('[BEHAVIOR]') || l.startsWith('Test:'));
+    // 提取 BEHAVIOR 行（contract 命令文本）。Test: 行先 trimStart 再判前缀——
+    // 合同里常写成列表项「- Test: …」或带缩进，原来的 startsWith('Test:') 把这些整行漏掉，
+    // 动作词藏进 Test: 就白拿一张豁免。
+    const behaviorLines = contractTextForTheater.split('\n').filter((l) => {
+      const trimmed = l.trimStart();
+      return trimmed.includes('[BEHAVIOR]') || /^[-*+]?\s*Test:/.test(trimmed);
+    });
     const behaviorText = behaviorLines.join(' ');
 
     // 合并扫描文本
@@ -811,11 +886,29 @@ export async function runMechanicalGate(ctx, deps = {}) {
 
     const hitKw = allTheaterKws.find((kw) => theaterScanText.includes(kw.toLowerCase()));
     if (hitKw) {
-      reasons.push(
-        `theater_mismatch: GP/contract BEHAVIOR 含真机关键词「${hitKw}」，` +
-        `但 target_environment=${env}（轻量环境，不具备真机执行能力）。` +
-        `应路由至 windows_wechat / xian-rog 等真机环境。`
-      );
+      // 语境化：合同显式声明「引用了真机名词但零真机动作」时，再拿动作词表交叉验证一次。
+      // 无声明 → 走原路 FAIL，存量合同一个字都没变。
+      const hasDeclaration = THEATER_DECLARATION_HEADING.test(contractTextForTheater);
+      // 声明能豁免的只有「名词出现在文本里」，不包括合同真的写了真机操作命令。
+      // 扫描面收窄到 BEHAVIOR/Test 行：GP 段是产品叙述，动作词出现在那里不代表本合同要执行它。
+      const hitAction = hasDeclaration ? findTheaterActionHit(behaviorText) : null;
+
+      if (!hasDeclaration) {
+        reasons.push(
+          `theater_mismatch: GP/contract BEHAVIOR 含真机关键词「${hitKw}」，` +
+          `但 target_environment=${env}（轻量环境，不具备真机执行能力）。` +
+          `应路由至 windows_wechat / xian-rog 等真机环境。`
+        );
+      } else if (hitAction) {
+        reasons.push(
+          `theater_mismatch: 声明存在但动作词命中:「${hitAction}」——` +
+          `合同带「## 真机边界声明」却在 [BEHAVIOR]/Test 行写了真机动作，` +
+          `target_environment=${env}（轻量环境，不具备真机执行能力）。` +
+          `应路由至 windows_wechat / xian-rog 等真机环境，或删掉该动作。`
+        );
+      } else {
+        theaterDeclared = true;
+      }
     }
   }
 
@@ -841,8 +934,10 @@ export async function runMechanicalGate(ctx, deps = {}) {
   );
 
   if (metaTriggerHit && prdTextForMeta) {
-    // contract BEHAVIOR 中必须有：真机关键词 或 verification_level: L3
-    const contractLower = contractTextForMeta.toLowerCase();
+    // contract BEHAVIOR 中必须有：真机关键词 或 verification_level: L3。
+    // 先摘掉「## 真机边界声明」段再扫：那段按写法必然含 android/真机 这类名词，
+    // 留着就等于「加一段声明 = 一张 smoke 类交付的免检章」，把 ④ 的语境化变成 ⑤ 的漏洞。
+    const contractLower = stripTheaterDeclarationSection(contractTextForMeta).toLowerCase();
     const extraKwsMeta = (process.env.THEATER_KEYWORDS_EXTRA || '')
       .split(',')
       .map((k) => k.trim())
@@ -909,7 +1004,7 @@ export async function runMechanicalGate(ctx, deps = {}) {
     }
   }
 
-  return { pass: reasons.length === 0, reasons, env };
+  return { pass: reasons.length === 0, reasons, env, theater_declared: theaterDeclared };
 }
 
 /**
@@ -1026,6 +1121,9 @@ export async function runJudgeGate(ctx, opts = {}) {
     payload: {
       agentVerdict,
       stageFacts: ctx.stageFacts,
+      // 机械闸过了也要留痕：theater_declared:true 表示这次放行是靠合同的真机边界声明，
+      // 不落进案卷的话，事后无从区分「本来就没命中关键词」和「命中了但被声明豁免」。
+      mechanicalGate: mech,
       judge: judgeResult,
       coverageCheck: cov,
       goldenPathSteps: ev.goldenPathSteps,

@@ -10,6 +10,10 @@ import {
   validateGoldenPathContract,
 } from '../golden-path-contracts.js';
 import {
+  GP_HARNESS_BASE_REPO,
+  GP_HARNESS_TARGET_ENVIRONMENT,
+} from '../golden-path-contract-task.js';
+import {
   StatefulContractDb,
   VALID_CONTRACT,
   cloneContract,
@@ -269,6 +273,7 @@ describe('Golden Path contract signature and Harness launch', () => {
     contracts = [contractRow()],
     tasks = [],
     gpStatus = 'converged',
+    gp = {},
   } = {}) {
     return new StatefulContractDb({
       gp: {
@@ -278,6 +283,7 @@ describe('Golden Path contract signature and Harness launch', () => {
         journey_id: 'journey-1',
         proposal_doc: '# proposal',
         status: gpStatus,
+        ...gp,
       },
       contracts,
       tasks,
@@ -380,6 +386,81 @@ describe('Golden Path contract signature and Harness launch', () => {
       contentHash: 'f'.repeat(64),
       reviewer: 'owner',
     })).rejects.toMatchObject({ code: 'GP_CONTRACT_STALE' });
+    expect(db.decisions).toEqual([]);
+    expect(db.tasks).toEqual([]);
+  });
+
+  // ── 债2：GP 胶水参数化（task d2567378）────────────────────────────────────
+  // 两列 NULL = 沿用常量（存量 GP 零行为变化），有值 = 按 GP 行走（跨 repo / 真机环境可达）。
+  it('两列为 NULL 时 payload 回落到 GP_HARNESS_* 常量（存量 GP 零行为变化）', async () => {
+    const db = signingDb();
+
+    await signAndLaunchGoldenPathContract(db, {
+      goldenPathId: 'gp-1',
+      contractId: 'contract-1',
+      version: 1,
+      contentHash: db.contracts[0].content_hash,
+      reviewer: 'owner',
+    });
+
+    expect(db.tasks[0].payload).toMatchObject({
+      base_repo: GP_HARNESS_BASE_REPO,
+      target_environment: GP_HARNESS_TARGET_ENVIRONMENT,
+    });
+  });
+
+  it('两列有值时 payload 优先读 GP 行（跨 repo + 真机环境）', async () => {
+    const db = signingDb({
+      gp: {
+        base_repo: 'https://github.com/perfectuser21/zenithjoy.git',
+        target_environment: 'windows_wechat',
+      },
+    });
+
+    await signAndLaunchGoldenPathContract(db, {
+      goldenPathId: 'gp-1',
+      contractId: 'contract-1',
+      version: 1,
+      contentHash: db.contracts[0].content_hash,
+      reviewer: 'owner',
+    });
+
+    expect(db.tasks[0].payload).toMatchObject({
+      base_repo: 'https://github.com/perfectuser21/zenithjoy.git',
+      target_environment: 'windows_wechat',
+    });
+  });
+
+  it('单列有值时另一列各自独立回落（不是一有一无就整组失效）', async () => {
+    const db = signingDb({ gp: { target_environment: 'windows_cloud' } });
+
+    await signAndLaunchGoldenPathContract(db, {
+      goldenPathId: 'gp-1',
+      contractId: 'contract-1',
+      version: 1,
+      contentHash: db.contracts[0].content_hash,
+      reviewer: 'owner',
+    });
+
+    expect(db.tasks[0].payload).toMatchObject({
+      base_repo: GP_HARNESS_BASE_REPO,
+      target_environment: 'windows_cloud',
+    });
+  });
+
+  // DB 的 CHECK 只在写 golden_paths 时把关；GP 行是历史遗留或被旁路写入时，
+  // 非法值会一路带进 payload，直到 harness 派发才炸。这里在写任何一行之前先拦掉。
+  it('target_environment 非法枚举 → 抛错且不写 decision/task', async () => {
+    const db = signingDb({ gp: { target_environment: 'no_such_env' } });
+
+    await expect(signAndLaunchGoldenPathContract(db, {
+      goldenPathId: 'gp-1',
+      contractId: 'contract-1',
+      version: 1,
+      contentHash: db.contracts[0].content_hash,
+      reviewer: 'owner',
+    })).rejects.toMatchObject({ code: 'GP_TARGET_ENVIRONMENT_INVALID' });
+
     expect(db.decisions).toEqual([]);
     expect(db.tasks).toEqual([]);
   });

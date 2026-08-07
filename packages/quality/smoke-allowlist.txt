@@ -87,6 +87,7 @@ gp-assertion-receipt-model-smoke.sh
 gp-assertion-receipt-schema-smoke.sh
 gp-assertion-toolchain-smoke.sh
 gp-governance-decisions-smoke.sh
+gp-harness-glue-smoke.sh
 gp-ledger-phase3-readiness-smoke.sh
 graph-multi-repo-smoke.sh
 graph-photo-layer-smoke.sh

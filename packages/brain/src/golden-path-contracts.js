@@ -8,6 +8,7 @@ import {
   createGoldenPathSprintDir,
   GP_HARNESS_BASE_REPO,
   GP_HARNESS_TARGET_ENVIRONMENT,
+  GP_HARNESS_TARGET_ENVIRONMENTS,
 } from './golden-path-contract-task.js';
 
 export {
@@ -18,6 +19,26 @@ export {
   hashGoldenPathContract,
   validateGoldenPathContract,
 } from './golden-path-contract-schema.js';
+
+/**
+ * 从 GP 行取 harness 胶水参数（migration 393）：列有值就按列走，NULL 回落常量。
+ * 枚举校验放在这里而不是只靠 DB 的 CHECK——GP 行可能是 393 之前建的、或被旁路写入，
+ * 非法值不拦就会一路带进 payload，等 harness 派发时才炸，那时已经写了 decision 和 task。
+ */
+function resolveHarnessGlue(goldenPath) {
+  const targetEnvironment = goldenPath?.target_environment || GP_HARNESS_TARGET_ENVIRONMENT;
+  if (!GP_HARNESS_TARGET_ENVIRONMENTS.includes(targetEnvironment)) {
+    throw new GoldenPathContractError(
+      'GP_TARGET_ENVIRONMENT_INVALID',
+      `Golden Path target_environment "${targetEnvironment}" is not one of ${GP_HARNESS_TARGET_ENVIRONMENTS.join(', ')}`,
+      400,
+    );
+  }
+  return {
+    baseRepo: goldenPath?.base_repo || GP_HARNESS_BASE_REPO,
+    targetEnvironment,
+  };
+}
 
 function parseContractOrThrow(contract) {
   try {
@@ -307,6 +328,10 @@ export async function signAndLaunchGoldenPathContract(db, {
       'Unsigned Golden Path contract already has a Harness task',
     );
   }
+
+  // 先解析胶水参数再动笔：非法 target_environment 必须在写 decision / 签合同版本 / 建 task
+  // 之前拦掉，否则回滚要跨三张表。幂等分支在上面已经 return，走到这里必然要写。
+  const harnessGlue = resolveHarnessGlue(goldenPath);
   if (goldenPath.status !== 'converged') {
     throw new GoldenPathContractError(
       'GP_NOT_CONVERGED',
@@ -394,8 +419,8 @@ export async function signAndLaunchGoldenPathContract(db, {
     thin_prd: goldenPath.one_liner,
     prep_prd_body: goldenPath.proposal_doc || null,
     journey_id: goldenPath.journey_id,
-    base_repo: GP_HARNESS_BASE_REPO,
-    target_environment: GP_HARNESS_TARGET_ENVIRONMENT,
+    base_repo: harnessGlue.baseRepo,
+    target_environment: harnessGlue.targetEnvironment,
     gp_contract_id: signedVersion.id,
     gp_contract_version: signedVersion.version,
     gp_contract_hash: signedVersion.content_hash,
