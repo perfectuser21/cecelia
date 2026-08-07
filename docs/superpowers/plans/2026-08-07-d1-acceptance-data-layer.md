@@ -2577,7 +2577,7 @@ git commit -m "feat(acceptance): 48h 哨兵加厚为 pending→expired 状态转
 - Modify: `packages/brain/src/routes/acceptance.js`
 - Test: `packages/brain/src/__tests__/integration/acceptance-lifecycle.integration.test.js`
 
-- [ ] **Step 1: 写 failing 集成测试（A10③ / A10④）**
+- [x] **Step 1: 写 failing 集成测试（A10③ / A10④）**
 
 新建 `packages/brain/src/__tests__/integration/acceptance-lifecycle.integration.test.js`：
 
@@ -2657,7 +2657,7 @@ describe('A10③ 显式作废端点', () => {
 });
 ```
 
-- [ ] **Step 2: 登记并跑红**
+- [x] **Step 2: 登记并跑红**
 
 `packages/brain/vitest.config.js` 追加：
 
@@ -2673,7 +2673,7 @@ DB_NAME=cecelia_scratch npx vitest run --config vitest.integration.config.js \
 
 预期：FAIL 404（端点不存在）。
 
-- [ ] **Step 3: 提交 Red commit**
+- [x] **Step 3: 提交 Red commit**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -2681,7 +2681,7 @@ git add packages/brain/src/__tests__/integration/acceptance-lifecycle.integratio
 git commit -m "test(acceptance): 显式作废端点 failing test [task b35bfa0c]"
 ```
 
-- [ ] **Step 4: 实现作废端点**
+- [x] **Step 4: 实现作废端点**
 
 在 `createAcceptanceInternalRouter` 里 `router.post('/ai-results', …)` 之后插入：
 
@@ -2709,7 +2709,7 @@ git commit -m "test(acceptance): 显式作废端点 failing test [task b35bfa0c]
 
 留痕三项与 `status='abandoned'` 在同一条 UPDATE 里，保证 A10④ 的反二义断言恒成立——终态是 `status` 取值，`detail` 只记原因。
 
-- [ ] **Step 5: 跑测试确认全绿**
+- [x] **Step 5: 跑测试确认全绿**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -2719,7 +2719,7 @@ DB_NAME=cecelia_scratch npx vitest run --config vitest.integration.config.js \
 
 预期：4 例全 PASS。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
