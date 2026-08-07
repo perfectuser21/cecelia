@@ -3613,7 +3613,7 @@ git commit -m "chore(brain): bump 1.267.247 → 1.268.0（D1 数据层地基）[
 **Files:**
 - Create: `sprints/08070956-d1-acceptance-data-layer/dod.md`
 
-- [ ] **Step 1: 写 dod.md**
+- [x] **Step 1: 写 dod.md**
 
 新建 `sprints/08070956-d1-acceptance-data-layer/dod.md`：
 
@@ -3659,7 +3659,7 @@ git commit -m "chore(brain): bump 1.267.247 → 1.268.0（D1 数据层地基）[
   Test: manual: bash -c "gh pr checks --watch"
 ```
 
-- [ ] **Step 2: 跑 DoD 校验**
+- [x] **Step 2: 跑 DoD 校验**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -3668,7 +3668,7 @@ node packages/quality/scripts/devgate/check-dod-mapping.cjs sprints/08070956-d1-
 
 预期：所有验收项都有 Test 映射，退出码 0。
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
