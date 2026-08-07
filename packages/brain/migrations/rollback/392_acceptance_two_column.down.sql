@@ -5,12 +5,22 @@
 
 DO $$
 DECLARE dup int;
+DECLARE newstat int;
 BEGIN
   SELECT count(*) INTO dup FROM (
     SELECT check_key FROM acceptance_checks GROUP BY check_key HAVING count(*) > 1
   ) t;
   IF dup > 0 THEN
     RAISE EXCEPTION '不可回滚：已存在 % 个跨 run 重复的 check_key（新格号数据）。回滚前须先清理这些 run，否则全局 UNIQUE 无法重建', dup;
+  END IF;
+
+  -- 与上面的重复格号守卫对称：status 收回 4 值同样会被新状态值的存量行挡住。
+  -- 不加这道守卫，回滚会在 ADD CONSTRAINT 处抛裸 23514「is violated by some row」，
+  -- 运维拿不到「该清哪些 run」的信息，只能自己去猜。
+  SELECT count(*) INTO newstat FROM acceptance_runs
+   WHERE status NOT IN ('pending','in_review','passed','failed');
+  IF newstat > 0 THEN
+    RAISE EXCEPTION '不可回滚：已存在 % 个处于 7 值新状态（human_complete/adjudicated/stale/expired/abandoned）的 run。回滚前须先清理或迁走这些 run，否则 4 值 CHECK 无法重建', newstat;
   END IF;
 END $$;
 

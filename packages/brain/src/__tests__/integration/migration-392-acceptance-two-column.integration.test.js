@@ -75,12 +75,25 @@ describe('migration 392 结构断言', () => {
     expect(def).toMatch(/UNIQUE \(run_id, check_key\)/);
   });
 
+  /**
+   * 把表锁死并整回「392 之前的合法形态」——这三个 down 测试跑在共享测试库上，
+   * 集成测试文件默认并行，不锁表就会被邻居测试新插的 human_complete run / 重复格号
+   * 污染成随机红。ACCESS EXCLUSIVE 锁到事务结束，期间无人能写进来。
+   */
+  async function lockAndNormalize(client) {
+    await client.query('LOCK TABLE acceptance_runs, acceptance_checks IN ACCESS EXCLUSIVE MODE');
+    await client.query(`DELETE FROM acceptance_checks WHERE check_key IN (
+      SELECT check_key FROM acceptance_checks GROUP BY check_key HAVING count(*) > 1)`);
+    await client.query(
+      `DELETE FROM acceptance_runs WHERE status NOT IN ('pending','in_review','passed','failed')`
+    );
+  }
+
   it('down 在无跨 run 重复格号时完全可逆（事务内跑完即回滚，不动测试库）', async () => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(`DELETE FROM acceptance_checks WHERE check_key IN (
-        SELECT check_key FROM acceptance_checks GROUP BY check_key HAVING count(*) > 1)`);
+      await lockAndNormalize(client);
       await client.query(DOWN_SQL);
       const { rows } = await client.query(
         `SELECT column_name FROM information_schema.columns
@@ -97,6 +110,7 @@ describe('migration 392 结构断言', () => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      await lockAndNormalize(client);
       const mk = async (key) => {
         const { rows } = await client.query(
           `INSERT INTO acceptance_runs (run_key, title) VALUES ($1, 'down-guard') RETURNING id`, [key]
@@ -108,6 +122,25 @@ describe('migration 392 结构断言', () => {
       };
       await mk(`down-guard-a-${process.pid}`);
       await mk(`down-guard-b-${process.pid}`);
+      await expect(client.query(DOWN_SQL)).rejects.toThrow(/不可回滚/);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
+  it('down 在已有 7 值新状态 run 时同样 fail-fast，而不是抛裸 CHECK 违约', async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await lockAndNormalize(client);
+      await client.query(
+        `INSERT INTO acceptance_runs (run_key, title, status)
+         VALUES ($1, 'down-status-guard', 'human_complete')`,
+        [`down-status-guard-${process.pid}`]
+      );
+      // 没有这道守卫，回滚会在 ADD CONSTRAINT 时抛 23514「is violated by some row」，
+      // 运维看不出该清什么；守卫要把「清哪些 run」直接说出来
       await expect(client.query(DOWN_SQL)).rejects.toThrow(/不可回滚/);
     } finally {
       await client.query('ROLLBACK');
