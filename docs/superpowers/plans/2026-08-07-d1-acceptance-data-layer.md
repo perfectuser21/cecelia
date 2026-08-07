@@ -1864,7 +1864,7 @@ git commit -m "feat(acceptance): 规程 yaml → 36 行建单生成器 [task b35
 - Test: `packages/brain/src/__tests__/acceptance-ai-reason.test.js`
 - Test: `packages/brain/src/__tests__/integration/acceptance-ai-results.integration.test.js`
 
-- [ ] **Step 1: 写 failing 单测（A4③⑥⑦）**
+- [x] **Step 1: 写 failing 单测（A4③⑥⑦）**
 
 新建 `packages/brain/src/__tests__/acceptance-ai-reason.test.js`：
 
@@ -1921,7 +1921,7 @@ describe('未知格号与未知 reason', () => {
 });
 ```
 
-- [ ] **Step 2: 写 failing 集成测试（落库语义）**
+- [x] **Step 2: 写 failing 集成测试（落库语义）**
 
 新建 `packages/brain/src/__tests__/integration/acceptance-ai-results.integration.test.js`：
 
@@ -2020,7 +2020,7 @@ describe('POST /ai-results 落库语义', () => {
 });
 ```
 
-- [ ] **Step 3: 登记集成测试 + 给测试环境固定规程路径**
+- [x] **Step 3: 登记集成测试 + 给测试环境固定规程路径**
 
 `packages/brain/vitest.config.js` 的 `POSTGRES_INTEGRATION_TESTS` 追加：
 
@@ -2058,7 +2058,7 @@ DB_NAME=cecelia_scratch npx vitest run --config vitest.integration.config.js \
 
 预期：`validateAiReason is not a function`；端点 404。
 
-- [ ] **Step 4: 提交 Red commit**
+- [x] **Step 4: 提交 Red commit**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -2068,7 +2068,7 @@ git add packages/brain/src/__tests__/acceptance-ai-reason.test.js \
 git commit -m "test(acceptance): AI reason 校验与 ai-results 落库 failing test [task b35bfa0c]"
 ```
 
-- [ ] **Step 5: 实现 `validateAiReason`**
+- [x] **Step 5: 实现 `validateAiReason`**
 
 在 `packages/brain/src/routes/acceptance.js` 顶部 import 段追加：
 
@@ -2122,7 +2122,7 @@ export function validateAiReason({ check_key, reason }, sets) {
 }
 ```
 
-- [ ] **Step 6: 实现 `POST /ai-results` 端点**
+- [x] **Step 6: 实现 `POST /ai-results` 端点**
 
 在 `createAcceptanceInternalRouter` 里 `router.post('/results', …)` 之后插入：
 
@@ -2195,7 +2195,7 @@ export function validateAiReason({ check_key, reason }, sets) {
   });
 ```
 
-- [ ] **Step 7: 跑测试确认全绿**
+- [x] **Step 7: 跑测试确认全绿**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -2208,7 +2208,7 @@ DB_NAME=cecelia_scratch ACCEPTANCE_SPEC_PATH=$PWD/src/__tests__/fixtures/accepta
 
 预期：两个文件全 PASS。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
