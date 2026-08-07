@@ -1,0 +1,18 @@
+{"lens":"risk","round":1,
+ "rubric_scores":{"reality_of_status":8,"path_completeness":6,"assertion_verifiability":6,
+                  "judgment_completeness":6,"risk_gates":4,"commitment_purity":9,
+                  "multi_platform_completeness":10},
+ "verdict":"REVISION",
+ "findings":[
+  {"severity":"P0","finding":"Gate A 不是 fail-closed：三层里没有一层剥夺 AI 打表器碰真机的能力，S12 发私信这类不可逆对外触达只靠事后 SQL 发现","evidence":"J3-A 选 mac_web 执行体；packages/brain/src/spawn/host-executor.js:9-13,28-33 ssh 逃逸到宿主 administrator@host.docker.internal 用 id_ed25519 跑 claude，宿主持有 ~/.credentials/ 与连 xian-rog/xian-pc 的 ssh key；代码闸层引用的 capture.mjs:61-67 checkCellsMapComplete 只校验 CELLS_MAP 与规程 1:1，不约束 agent 的 Bash 工具；断言 A4 是事后 SQL","dimension":"risk_gates","status":"OPEN"},
+  {"severity":"P0","finding":"waive_two_column 照抄 waive_nightly 范式会一并豁免掉 J1-④ 声称不可 waive 的 8 个 hard:true 红线格","evidence":"zenithjoy-workspace/.github/workflows/promote-all-prod.yml:84-93 的 waive 实现是无条件 `exit 0` 跳过整个 step；提案 J1-④ 写红线格「不可 waive」，Step 6 分支写「照抄 :84-93」，A7 四条断言无一覆盖「红线格红 + 填了 waive → 仍 exit 1」","dimension":"risk_gates","status":"OPEN"},
+  {"severity":"P0","finding":"防锚定裁剪漏了两条已存在的 AI 列出口，A2 三条断言全部检测不到","evidence":"公网 5223 router GET /acceptance/pending（routes/acceptance.js:332-340）直接调 loadPendingRuns→loadRunsWithChecks 的 SELECT *（:157,164），与内网共用；历史页数据源 GET /runs?gp_id=（:265-274）同样走 loadRunsWithChecks 且不过滤 status，填表期的 pending run 带全量 checks 返回；A2 只查了 Staff Hub 反代、内网 5221、view=review 403","dimension":"risk_gates","status":"OPEN"},
+  {"severity":"P1","finding":"J9-A 的 dry_run 在唯一的生产放行 workflow 上开出绕过人工二次确认的分支，A7 不断言生产未被改变","evidence":"promote-all-prod.yml 文件头注释「★只能人手点★ workflow_dispatch + confirm=PROMOTE，AI 不自行 promote」，:59-66 confirm 闸是 release-gate 第一步；J9 原文「既不能不填 PROMOTE，也不能真填」暗示 dry_run 绕过 confirm；A7 四条只验 gate step 日志，无一条验 promote-backend/promote-frontend conclusion=skipped","dimension":"risk_gates","status":"OPEN"},
+  {"severity":"P1","finding":"冻结锁 backend_sha 是被测系统自报的单一来源，只验格式不做对账，J12 自陈的「数据里完全看不出来」的污染堵不住","evidence":"capture.mjs:73-80 fetch `${STAGING}/api/walking-skeleton/version` 取 j.sha||j.build；A8 只断言「非 unknown 且为 40 位/短 sha」；cecelia 侧已有 SHA 对账范式 scripts/deploy-local.sh:108-135 + drift-sentinel 可作第二源，提案未要求双源比对","dimension":"judgment_completeness","status":"OPEN"},
+  {"severity":"P1","finding":"按象限分流建任务拆掉了现有的单 run 去重护栏，规程双源不一致时会批量造垃圾任务且无熔断","evidence":"现行 acceptance.js:100-106 查重是「同 run_key 无未终态任务」→ 一个 run 至多一个 task；A6 断言 count == 双红数 + AI绿人红数，即每格一 task；员工网页部署是手工 scp（explore-report.md:76，cli.mjs:47），CI 只保证 repo 内一致，员工看的规程可与库里规程分叉，分歧可成片","dimension":"risk_gates","status":"OPEN"},
+  {"severity":"P1","finding":"waive 化摆设是提案自陈的主要失败模式，却没有任何 waive 频次的可观测或棘轮","evidence":"J1 误判后果原文「三次之后必被 waive 成摆设（release-gate.mjs 死代码前车之鉴）」；promote-all-prod.yml:84-93 现行 waive_nightly 只写 GITHUB_STEP_SUMMARY，无计数无告警；提案照抄该范式未加约束","dimension":"risk_gates","status":"OPEN"},
+  {"severity":"P1","finding":"AI 打表器误触达真人（红线7 暗号已发出）这一最不可逆故障没有恢复 SOP","evidence":"出错路径表四条只覆盖打表器挂/staging 重部署/取数失败/全格分歧；Gate A 排除真机的前提在 P0-1 成立时不成立","dimension":"path_completeness","status":"OPEN"},
+  {"severity":"P2","finding":"GET /runs/:run_key（acceptance.js:277-289 走 loadChecks 的 SELECT *）不带 view 参数时的默认态未规定，改造后前端将启用该端点","evidence":"A2 第三条只断言 ?view=review 时 403；P2-4 记账已预告该端点会被启用","dimension":"assertion_verifiability","status":"OPEN"},
+  {"severity":"P2","finding":"证据包含真实第三方 PII（S10-c1 线索昵称/评论/目标身份）且会落 acceptance-spec/runs/ 进 git","evidence":"capture.mjs:54-57 snap() 截图 + document.body.innerText 20000 字；cells-map.mjs S10-c1 route /area/acquisition/leads；Gate A 只约束「不触达」未约束「不留存」","dimension":"risk_gates","status":"OPEN"}
+ ],
+ "refute_rulings":[]}
