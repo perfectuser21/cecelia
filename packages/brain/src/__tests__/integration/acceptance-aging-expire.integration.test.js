@@ -41,6 +41,13 @@ async function seed(status, ageHours) {
 const statusOf = async () => (await pool.query(
   'SELECT status FROM acceptance_runs WHERE run_key = $1', [RUN_KEY])).rows[0].status;
 
+// 计数字段是全库口径，scratch 库里别人留下的超期行也会把它顶上去，只靠 >=1 等于没断言。
+// 告警事件里带的是 run_key 清单，用它把断言收敛到本文件自建的那一行。
+const lastAlertPayload = async () => (await pool.query(
+  `SELECT payload FROM cecelia_events
+    WHERE event_type = 'acceptance_aging_alert'
+    ORDER BY created_at DESC LIMIT 1`)).rows[0]?.payload;
+
 describe('A10② pending 48h → expired', () => {
   beforeEach(async () => {
     _resetGateForTest();
@@ -62,8 +69,9 @@ describe('A10② pending 48h → expired', () => {
     await seed('pending', 49);
     const r = await runAcceptanceAging(pool);
     expect(r.skipped).toBe(false);
-    expect(r.expired_runs).toBeGreaterThanOrEqual(1);
     expect(await statusOf()).toBe('expired');
+    // 断言打在自建行上：被转的那批里必须点名 RUN_KEY，而不是"全库转了至少 1 行"
+    expect((await lastAlertPayload()).expired).toContain(RUN_KEY);
   });
 
   it('未满 48h 的 pending run 不动', async () => {
@@ -74,9 +82,11 @@ describe('A10② pending 48h → expired', () => {
 
   it('in_review 超 48h 只告警不转 expired（有人正在填，转态会丢工作）', async () => {
     await seed('in_review', 60);
-    const r = await runAcceptanceAging(pool);
-    expect(r.overdue_runs).toBeGreaterThanOrEqual(1);
+    await runAcceptanceAging(pool);
     expect(await statusOf()).toBe('in_review');
+    const payload = await lastAlertPayload();
+    expect(payload.overdue_runs).toContain(RUN_KEY); // 告警照发
+    expect(payload.expired || []).not.toContain(RUN_KEY); // 但没被转态
   });
 
   it('human_complete / adjudicated / stale / abandoned 一律不被扫', async () => {
