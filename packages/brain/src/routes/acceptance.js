@@ -5,11 +5,77 @@
  */
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import { computeRunStatus } from '../acceptance-state.js';
+import { computeRunStatus, computeAiStatus, AI_FAILURE_REASONS } from '../acceptance-state.js';
+import { loadSpec, buildCells, deriveSets, resolveServerSpecPath } from '../acceptance-spec.js';
 
 export const ACCEPTANCE_KINDS = ['FR', 'NFR', 'Invariant', 'SOP'];
 export const ACCEPTANCE_RESULTS = ['通过', '不通过', '无法验证'];
 const SOURCES = ['manual', 'harness'];
+
+export const AI_VERDICTS = ['通过', '不通过', '无法验证'];
+
+/** 规程静态属性缓存：进程内只解析一次；改规程要重启 Brain（与 skill 缓存同一约定） */
+let _specSets = null;
+export function getSpecSets() {
+  if (!_specSets) {
+    // 路径解析放在缓存里侧：配置错的时候每次调用都重试并重新抛出可操作错误，
+    // 而不是把第一次的失败缓存成 null 然后走上静默路径。
+    const { doc, spec_sha, version } = loadSpec(resolveServerSpecPath());
+    const cells = buildCells(doc);
+    _specSets = { ...deriveSets(cells), spec_sha, version, cells };
+  }
+  return _specSets;
+}
+export function _resetSpecSetsForTest() { _specSets = null; }
+
+/**
+ * 规程读取的统一错误映射：读不出规程是服务端配置/文件问题，一律 500，
+ * 且只回 error code + 一句可操作的 hint。裸抛会被 express 默认处理器渲染成
+ * 一整段堆栈直接吐给调用方（生产上等于把服务器路径泄出去）。
+ * 返回 null = 拿到了；否则响应已发出。
+ */
+function getSpecSetsOrRespond(res) {
+  try {
+    return { sets: getSpecSets() };
+  } catch (err) {
+    console.error('[acceptance] 读规程失败:', err.message);
+    return {
+      sets: null,
+      responded: res.status(500).json({
+        error: 'spec_unavailable',
+        reason: err.reason || 'spec_load_failed',
+        hint: err.message,
+      }),
+    };
+  }
+}
+
+/**
+ * A4③⑥⑦ 服务端 reason 校验。返回 null = 放行，否则返回 {status, body}。
+ * @param {{check_key:string, reason:string?}} item
+ * @param {ReturnType<typeof deriveSets>} sets
+ */
+export function validateAiReason({ check_key, reason }, sets) {
+  const cell = sets.byKey.get(check_key);
+  if (!cell) {
+    return { status: 400, body: { error: 'unknown_check_key', check_key } };
+  }
+  // A4⑥⑦：拍板 ② 后 opportunistic = ∅，该 reason 的合法域为空集。无条件 reject——
+  // 不查上下文、不看单头是否勾了场景码，合法域为空与上下文无关。
+  if (reason === 'scenario_not_triggered') {
+    return { status: 400, body: { error: 'reason_domain_empty', check_key,
+      hint: '本版无 opportunistic 格，scenario_not_triggered 合法域为空集' } };
+  }
+  // A4③：reason 绑格的静态属性，不是 AI 说了算
+  if (reason === 'human_only' && cell.verifiable_by !== 'human_only') {
+    return { status: 400, body: { error: 'reason_not_allowed_for_cell', check_key,
+      verifiable_by: cell.verifiable_by } };
+  }
+  if (reason && reason !== 'human_only' && !AI_FAILURE_REASONS.includes(reason)) {
+    return { status: 400, body: { error: 'unknown_reason', check_key, reason } };
+  }
+  return null;
+}
 
 async function safeRollback(client) {
   try { await client.query('ROLLBACK'); } catch { /* 连接已坏，忽略 */ }
@@ -230,6 +296,16 @@ export function createAcceptanceInternalRouter({ pool }) {
         return res.status(400).json({ error: `checks[${i}].kind must be one of: ${ACCEPTANCE_KINDS.join(',')}` });
       }
     }
+    // 生成器输出里同号格重复是客户端送来的结构异常，要当场 400 说清楚是哪个格号。
+    // 不拦的话它会一路走到逐行 INSERT 撞 (run_id, check_key) 唯一约束，被下面那段
+    // 23505 分支当成「run 已存在」去重查——重查不到就回一个语焉不详的 500，
+    // 而真正的原因（规程里格号重复）一个字都没出现。
+    const dupes = [...new Set(
+      checks.map((c) => c.check_key).filter((k, i, arr) => arr.indexOf(k) !== i)
+    )];
+    if (dupes.length > 0) {
+      return res.status(400).json({ error: 'duplicate_check_key', duplicates: dupes });
+    }
     if (!SOURCES.includes(source)) return res.status(400).json({ error: `source must be one of: ${SOURCES.join(',')}` });
 
     const client = await pool.connect();
@@ -333,6 +409,79 @@ export function createAcceptanceInternalRouter({ pool }) {
       if (err instanceof AcceptanceResultsError) return res.status(err.status).json(err.body);
       console.error('[acceptance] internal POST /results error:', err.message);
       return res.status(500).json({ error: 'internal_error' });
+    }
+  });
+
+  /**
+   * AI 列回写。这个端点只写 ai_* 四列：请求体里的 result / submitted_by / note 一律忽略，
+   * 不是「顺手也写上」——人列是员工亲手填的那一列，AI 能改它就等于两列可以互相冒充，
+   * 一体两面的背靠背当场失效。人列走 POST /results。
+   */
+  router.post('/ai-results', async (req, res) => {
+    const { run_key, results } = req.body || {};
+    if (!run_key) return res.status(400).json({ error: 'run_key is required' });
+    if (!Array.isArray(results) || results.length === 0) {
+      return res.status(400).json({ error: 'results must be a non-empty array' });
+    }
+    const { sets } = getSpecSetsOrRespond(res);
+    if (!sets) return undefined;
+
+    for (const item of results) {
+      if (!AI_VERDICTS.includes(item?.ai_verdict)) {
+        return res.status(400).json({ error: `ai_verdict must be one of: ${AI_VERDICTS.join(',')}`, check_key: item?.check_key });
+      }
+      const err = validateAiReason(item, sets);
+      if (err) return res.status(err.status).json(err.body);
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: runRows } = await client.query(
+        'SELECT id, detail FROM acceptance_runs WHERE run_key = $1 FOR UPDATE', [run_key]
+      );
+      if (runRows.length === 0) {
+        await safeRollback(client);
+        return res.status(404).json({ error: 'run not found', run_key });
+      }
+      const runId = runRows[0].id;
+
+      for (const item of results) {
+        await client.query(
+          `UPDATE acceptance_checks
+              SET ai_verdict = $1, ai_evidence = $2::jsonb, ai_run_at = NOW(), updated_at = NOW()
+            WHERE run_id = $3 AND check_key = $4`,
+          [item.ai_verdict, JSON.stringify({ ...(item.evidence || {}), reason: item.reason || null }),
+           runId, item.check_key]
+        );
+      }
+
+      // 哑火判据：分母与阈值从 yaml 派生，不硬编码
+      const { rows: allCells } = await client.query(
+        'SELECT check_key, ai_verdict, ai_evidence FROM acceptance_checks WHERE run_id = $1', [runId]
+      );
+      const enriched = allCells.map((c) => ({
+        check_key: c.check_key,
+        ai_verdict: c.ai_verdict,
+        ai_reason: c.ai_evidence?.reason || null,
+        verifiable_by: sets.byKey.get(c.check_key)?.verifiable_by || 'human_only',
+      }));
+      const ai = computeAiStatus(enriched, { machineDbTotal: sets.machineDbList.length });
+      await client.query(
+        `UPDATE acceptance_runs
+            SET detail = COALESCE(detail, '{}'::jsonb) || $1::jsonb, updated_at = NOW()
+          WHERE id = $2`,
+        [JSON.stringify({ ai_status: ai.ai_status, ai_incomplete: ai.ai_incomplete,
+                          ai_dumb_reasons: ai.reasons, ai_missing_cells: ai.missing_cells }), runId]
+      );
+      await client.query('COMMIT');
+      return res.json({ updated: results.length, ai_status: ai.ai_status, ai_incomplete: ai.ai_incomplete });
+    } catch (err) {
+      await safeRollback(client);
+      console.error('[acceptance] POST /ai-results error:', err.message);
+      return res.status(500).json({ error: 'internal_error' });
+    } finally {
+      client.release();
     }
   });
 
