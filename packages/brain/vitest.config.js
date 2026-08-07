@@ -51,6 +51,9 @@ export default defineConfig({
       // 主理人身份（A15）：复盘闭环的「谁能关」判据读它。测试里显式给值而不是靠实现里的
       // 默认值兜底——默认值哪天改了，测试要跟着红，不该继续靠巧合全绿。
       ACCEPTANCE_OWNER_IDENTITY: 'alex',
+      // 建单是 fail-closed 的：白名单 env 缺失时一律 503，测试环境必须显式给值。
+      // 不落 .env 文件——.gitignore 排除 .env*，落文件等于 CI 里没有。
+      ACCEPTANCE_TENANT_ALLOWLIST: 'acc-verify-01,acc-verify-02',
     },
     environment: 'node',
     include: [

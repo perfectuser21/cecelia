@@ -13,6 +13,14 @@ function makeApp() {
 }
 
 const RUN_KEY = `itest-run-${process.pid}`;
+/**
+ * gp_id 按进程取唯一值：建单期复盘闭环闸（A15①）拿「同 gp 上一轮」说事，
+ * 借用真实 gp_id 会撞上库里别的单（本机 scratch 就躺着一条同 gp 的未闭环单），
+ * 让这条与 gp 无关的全链测试随环境红。
+ */
+const GP_ID = `itest-gp-${process.pid}`;
+/** 建单单头：租户白名单（A16②）对所有建单生效，缺 tenant_account 一律 400 */
+const HEAD = { tenant_account: 'acc-verify-01' };
 
 describe('acceptance 全链 integration', () => {
   afterAll(async () => {
@@ -26,7 +34,8 @@ describe('acceptance 全链 integration', () => {
     const create = await request(app).post('/api/brain/acceptance/runs').send({
       run_key: RUN_KEY,
       title: 'integration 测试单',
-      gp_id: 'customer_smart_acquisition',
+      gp_id: GP_ID,
+      detail: HEAD,
       checks: [
         { check_key: 'S1-c1', kind: 'FR', name: 'step1' },
         { check_key: 'S1-c3', kind: 'FR', name: 'step2' },
@@ -37,7 +46,8 @@ describe('acceptance 全链 integration', () => {
     expect(create.body.checks).toHaveLength(3);
 
     const again = await request(app).post('/api/brain/acceptance/runs').send({
-      run_key: RUN_KEY, title: '重复', checks: [{ check_key: 'S1-c1', kind: 'FR', name: 'x' }],
+      run_key: RUN_KEY, title: '重复', detail: HEAD,
+      checks: [{ check_key: 'S1-c1', kind: 'FR', name: 'x' }],
     });
     expect(again.status).toBe(200);
     expect(again.body.created).toBe(false);
@@ -87,7 +97,7 @@ describe('acceptance 全链 integration', () => {
     const runKey = `${RUN_KEY}-race`;
     const app = makeApp();
     await request(app).post('/api/brain/acceptance/runs').send({
-      run_key: runKey, title: 'race 测试单',
+      run_key: runKey, title: 'race 测试单', detail: HEAD,
       checks: [{ check_key: 'S1-c1', kind: 'FR', name: 'a' }, { check_key: 'S2-c1', kind: 'FR', name: 'b' }],
     });
     const [r1, r2] = await Promise.all([
@@ -112,7 +122,7 @@ describe('acceptance 全链 integration', () => {
     const rejectTitle = `[验收驳回] ${runKey} 标题探针`;
     const app = makeApp();
     await request(app).post('/api/brain/acceptance/runs').send({
-      run_key: runKey, title: `${runKey} 标题探针`,
+      run_key: runKey, title: `${runKey} 标题探针`, detail: HEAD,
       checks: [{ check_key: 'S1-c1', kind: 'FR', name: 'will-fail' }],
     });
     // 手工占住 idx_tasks_dedup_active（title 相同 + 未终态），模拟"标题冲突但不是本次唯一索引"的场景

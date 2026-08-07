@@ -38,6 +38,62 @@ function isLegacyRejectionTransition(prevStatus, nextStatus) {
  */
 export const CHECK_KEY_PATTERN = /^S\d+-c[1-4]$/;
 
+/** 逃生阀的门槛：按字符数算，中文按字计（A15⑥） */
+const FORCE_REASON_MIN_CHARS = 20;
+
+/**
+ * 验收专用租户白名单（A16②）。env 缺失返回 null = 拒绝一切建单，绝不降级放行——
+ * 「没配白名单」和「白名单允许所有人」是两件事，把前者当后者就是拿生产客户账号做验收。
+ */
+export function loadTenantAllowlist() {
+  const raw = process.env.ACCEPTANCE_TENANT_ALLOWLIST;
+  if (!raw || raw.trim() === '') return null;
+  return raw.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * 建单前置（A15①⑥⑦ / A16②）。返回 null = 放行；否则返回 {status, body}。
+ * 放行时可能就地给 head 补上 force 三项留痕——强开必须留痕，两者同一步完成。
+ */
+export async function checkCreateGate(pool, { gp_id, run_key, head, force_reason, force_opened_by }) {
+  const allowlist = loadTenantAllowlist();
+  if (allowlist === null) {
+    return { status: 503, body: {
+      error: 'acceptance_tenant_allowlist_unset',
+      hint: 'ACCEPTANCE_TENANT_ALLOWLIST 未配置；缺白名单时拒绝建单而非放行',
+    } };
+  }
+  if (!allowlist.includes(head.tenant_account)) {
+    return { status: 400, body: {
+      error: 'tenant_account_not_allowed', tenant_account: head.tenant_account || null,
+    } };
+  }
+
+  // A15①：同 gp 上一轮复盘没闭环就开新一轮，等于让上一轮的教训无处落地。
+  // 没有 gp_id 的单不挂在任何一条 GP 上，无「上一轮」可言，这条闸对它不适用。
+  if (!gp_id) return null;
+  const { rows: prevRuns } = await pool.query(
+    `SELECT run_key, detail FROM acceptance_runs
+      WHERE gp_id = $1 AND run_key <> $2 ORDER BY created_at DESC LIMIT 1`,
+    [gp_id, run_key]
+  );
+  const prevRun = prevRuns[0];
+  if (!prevRun || prevRun.detail?.review_closed_at) return null;
+
+  const forced = typeof force_reason === 'string' && [...force_reason].length >= FORCE_REASON_MIN_CHARS;
+  if (!forced) {
+    return { status: 409, body: {
+      error: 'previous_review_not_closed',
+      previous_run_key: prevRun.run_key,
+      hint: `上一轮复盘未闭环；如需强开请给 force_reason（≥${FORCE_REASON_MIN_CHARS} 字）`,
+    } };
+  }
+  head.force_reason = force_reason;
+  head.force_opened_by = force_opened_by || null;
+  head.force_opened_at = new Date().toISOString();
+  return null;
+}
+
 /**
  * 提交人列结果。`run_key` 是必填的写入作用域：migration 392 把 UNIQUE 从全局 check_key 换绑到
  * (run_id, check_key) 之后，同一格号可以合法地出现在多个 run 里，不带作用域的寻址会跨 run 误写。
@@ -243,6 +299,12 @@ export function createAcceptanceInternalRouter({ pool }) {
     }
     if (!SOURCES.includes(source)) return res.status(400).json({ error: `source must be one of: ${SOURCES.join(',')}` });
 
+    // 单头：v7-final 的 run 级附属信息整块落 detail（tenant_account/版本戳/scenarios_observed…）。
+    // 建单是这些字段唯一的写入侧——Task 8 的收单期推进闸读的就是这里落进去的 scenarios_observed。
+    const { detail: head = {}, force_reason, force_opened_by } = req.body || {};
+    const gateError = await checkCreateGate(pool, { gp_id, run_key, head, force_reason, force_opened_by });
+    if (gateError) return res.status(gateError.status).json(gateError.body);
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -253,9 +315,10 @@ export function createAcceptanceInternalRouter({ pool }) {
         return res.status(200).json({ run: existing.rows[0], checks: existingChecks, created: false });
       }
       const { rows: runRows } = await client.query(
-        `INSERT INTO acceptance_runs (run_key, title, gp_id, line, surface, version, source)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-        [run_key, title, gp_id || null, line || null, surface || null, version || null, source]
+        `INSERT INTO acceptance_runs (run_key, title, gp_id, line, surface, version, source, detail)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING *`,
+        [run_key, title, gp_id || null, line || null, surface || null, version || null, source,
+         JSON.stringify(head)]
       );
       const run = runRows[0];
       const createdChecks = [];

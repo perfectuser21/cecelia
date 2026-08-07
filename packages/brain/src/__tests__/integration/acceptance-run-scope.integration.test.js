@@ -19,6 +19,10 @@ const CHECKS = [
   { check_key: 'S3-c1', kind: 'FR', name: '权限三项已开启' },
   { check_key: 'S8-c4', kind: 'Invariant', name: '红线4：禁止假编号' },
 ];
+/** gp_id 按进程取唯一：复盘闭环闸看「同 gp 上一轮」，共用固定值会撞上库里别的单 */
+const GP_ID = `scope-gp-${process.pid}`;
+/** 建单单头：租户白名单（A16②）对所有建单生效 */
+const HEAD = { tenant_account: 'acc-verify-01' };
 
 async function cleanup() {
   await pool.query('DELETE FROM acceptance_runs WHERE run_key = ANY($1)', [[RUN_A, RUN_B, RUN_LEGACY]]);
@@ -32,9 +36,18 @@ describe('A1/A3 格号作用域', () => {
     const app = makeApp();
     for (const run_key of [RUN_A, RUN_B]) {
       const res = await request(app).post('/api/brain/acceptance/runs')
-        .send({ run_key, title: `两轮 ${run_key}`, gp_id: '7790f728', checks: CHECKS });
+        .send({ run_key, title: `两轮 ${run_key}`, gp_id: GP_ID, checks: CHECKS, detail: HEAD });
       expect(res.status).toBe(201);
       expect(res.body.checks.map((c) => c.check_key)).toEqual(['S3-c1', 'S8-c4']);
+      // 开下一轮前先把这一轮的复盘标成已闭环：建单期闸（A15①）要求同 gp 上一轮
+      // detail.review_closed_at 非空。这里直接写库而不走 review-closed 端点——
+      // 本用例验的是格号作用域，不该顺带把复盘闭环的主体/前置闸也搬进来。
+      await pool.query(
+        `UPDATE acceptance_runs
+            SET detail = COALESCE(detail,'{}'::jsonb) || jsonb_build_object('review_closed_at', now()::text)
+          WHERE run_key = $1`,
+        [run_key]
+      );
     }
     const { rows } = await pool.query(
       `SELECT count(*)::int AS n FROM acceptance_checks c
