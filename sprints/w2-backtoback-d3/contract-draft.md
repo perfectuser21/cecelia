@@ -122,7 +122,8 @@ D1 已上主干（cecelia 1.270.0）：ai_verdict/ai_evidence/ai_run_at 三列 /
 **可验证断言**：
 - AI token + `POST /ai-results` → HTTP 200（合法 payload）
 - gate token + `GET /acceptance/pending`（5223）→ HTTP 200
-- gate token + 任何写操作 → HTTP 401 或 404
+- gate token + `POST /acceptance/results`（5223 公网）→ HTTP 410（休眠端点，非 401；休眠优先于鉴权）
+- gate token + `POST /api/brain/acceptance/results`（5221 内网）→ HTTP 401（无内网写权限）
 - ACCEPTANCE_API_TOKEN + `POST /ai-results` → HTTP 401（AI token 独享）
 
 ---
@@ -179,6 +180,30 @@ echo "$RESP" | node -e "
 
 **预期**：脚本输出 `PASS`，exit 0。
 
+### E2E-1b：view=ai 正向验证（AI 三列出现）
+
+```bash
+GATE_TOKEN="$ACCEPTANCE_GATE_TOKEN"
+RESP=$(curl -sf -H "Authorization: Bearer $GATE_TOKEN" \
+  "http://localhost:5221/api/brain/acceptance/pending?view=ai")
+echo "$RESP" | node -e "
+  const data = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+  const checks = (data.runs || data).flatMap(r => r.checks || []);
+  if (checks.length === 0) {
+    console.log('SKIP: 无 check 数据，跳过 view=ai 验证');
+    process.exit(0);
+  }
+  const withAi = checks.filter(c => 'ai_verdict' in c);
+  if (withAi.length === 0) {
+    console.error('FAIL: view=ai + gate token 但 AI 三列未出现（checks 共', checks.length, '条）');
+    process.exit(1);
+  }
+  console.log('PASS: view=ai 返回 AI 三列，含 ai_verdict 的 check 共', withAi.length, '条');
+"
+```
+
+**预期**：脚本输出 `PASS`（或 `SKIP` 若数据库无 check），exit 0。
+
 ### E2E-2：adjudicated run 拒绝人列回写（409）
 
 ```bash
@@ -206,8 +231,18 @@ STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
   http://localhost:5221/api/brain/acceptance/runs)
 [ "$STATUS" = "409" ] && echo "PASS E2E-3a: pending run 阻拦 → 409" || echo "INFO E2E-3a: $STATUS（若无 pending run 则跳过此项）"
 
-# 3b：仅存在 adjudicated run 时建单 → 201（需人工构造或测试环境）
-echo "E2E-3b 需测试环境构造 adjudicated run，见 DoD manual:bash"
+# 3b：仅存在 adjudicated run 时建单 → 201
+# 先将当前 pending run 强制标记为 adjudicated（仅测试环境），再尝试建单
+GP_ID_ADJ="${GP_ID_ADJ:-$GP_ID}"
+TOKEN="$ACCEPTANCE_API_TOKEN"
+# 构造：将已有 run 设为 adjudicated（测试环境直接通过 psql，或通过内部接口）
+# 若已有 adjudicated run，直接建单验证
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+  -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"gp_id\":\"$GP_ID_ADJ\"}" \
+  http://localhost:5221/api/brain/acceptance/runs)
+[ "$STATUS" = "201" ] && echo "PASS E2E-3b: adjudicated run 不阻拦新建单 → 201" \
+  || echo "FAIL E2E-3b: 期望 201，实际 $STATUS（请确认 gp_id 下无 pending/in_review run）"
 ```
 
 ### E2E-4：adjudicated run 在读侧可见

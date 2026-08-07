@@ -36,7 +36,7 @@
 - `status=pending` 的 run，POST /results（合法 payload） → HTTP 200/201
 - `status=in_review` 的 run，POST /results → HTTP 200（不被误拦）
 
-**测试映射**: `acceptance-token-isolation.test.js` › "adjudicated run 拒绝 POST /results"
+**测试映射**: `acceptance-token-isolation.test.js` › "POST /results 对 adjudicated run → 409"
 
 ---
 
@@ -87,7 +87,7 @@
 - `GET localhost:5223/acceptance/pending`（携带有效 gate token）→ HTTP 200（只读端点正常）
 - 源码中 `router.post('/acceptance/results'` 保留（可 grep 验证），函数体返回 410
 
-**测试映射**: `acceptance-public-server.test.js` › "POST /acceptance/results 返回 410"（补充用例）
+**测试映射**: `acceptance-token-isolation.test.js` › "POST localhost:5223/acceptance/results → 410 Gone"
 
 ---
 
@@ -101,7 +101,7 @@
 - 数据库中 gp_id X 下同时存在 adjudicated 与 stale run 时，API 响应包含两种状态的 run
 - 响应数组中 `status=adjudicated` 的条目至少 1 条
 
-**测试映射**: `acceptance-read-outlets.test.js` › "adjudicated run 在读侧可见（反向断言）"
+**测试映射**: `acceptance-read-outlets.test.js` › "adjudicated 与 stale run 并存时，GET /runs?gp_id 包含 adjudicated run"
 
 ---
 
