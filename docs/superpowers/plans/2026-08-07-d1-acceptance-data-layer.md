@@ -3550,7 +3550,7 @@ Brain 版本四处同步（`scripts/check-version-sync.sh` 逐处校验），本
 - Modify: `.brain-versions`（追加一行）
 - Modify: `DEFINITION.md:11`
 
-- [ ] **Step 1: 改四处版本号**
+- [x] **Step 1: 改四处版本号**
 
 `packages/brain/package.json`：
 
@@ -3576,7 +3576,7 @@ Brain 版本四处同步（`scripts/check-version-sync.sh` 逐处校验），本
 **Brain 版本**: 1.268.0
 ```
 
-- [ ] **Step 2: 跑 DevGate 三件套**
+- [x] **Step 2: 跑 DevGate 三件套**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -3587,7 +3587,7 @@ node packages/quality/scripts/devgate/check-dod-mapping.cjs sprints/08070956-d1-
 
 预期：前两条全绿（`EXPECTED_SCHEMA_VERSION=392` 与 migrations 最高编号一致、四处版本相等）；第三条在 Task 15 写完 dod.md 之前会报文件不存在，**Task 15 之后回来重跑必须绿**。
 
-- [ ] **Step 3: 跑全量 brain 单测确认无连带破坏**
+- [x] **Step 3: 跑全量 brain 单测确认无连带破坏**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -3596,7 +3596,7 @@ DB_NAME=cecelia_scratch npm test
 
 预期：无新增失败（`vitest.config.js` 的 exclude 段列的 pre-existing 失败不算）。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
