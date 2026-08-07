@@ -53,6 +53,26 @@ describe('requeueOrphanTask', () => {
     const upd = pool.calls.find((c) => c.sql.includes('UPDATE tasks'));
     expect(upd.sql).toContain("status = 'failed'");
   });
+
+  // 死锁根因(2026-08-07 W1/W2/W3 全灭):收割只动 tasks 不动 initiative_runs,
+  // 打回 queued 的任务被 spawn-guard 按"还有活跃 run"一路拒到 requeue 超限。
+  it('requeue 前先把该 task 的非终态 run 打成 failed(解 spawn-guard 死锁)', async () => {
+    const pool = mockPool();
+    await requeueOrphanTask(pool, task, 'sweep-orphan');
+    const runIdx = pool.calls.findIndex((c) => c.sql.includes('UPDATE initiative_runs'));
+    const taskIdx = pool.calls.findIndex((c) => c.sql.includes('UPDATE tasks'));
+    expect(runIdx).toBeGreaterThanOrEqual(0);
+    expect(pool.calls[runIdx].sql).toContain("phase = 'failed'");
+    expect(pool.calls[runIdx].params).toContain('container_orphaned');
+    // 顺序死规矩:run 先终态化,task 才回 queued——反过来会留下"queued 但重派被拒"的窗口
+    expect(runIdx).toBeLessThan(taskIdx);
+  });
+
+  it('转 failed 那一路同样终态化 run(不留悬空活跃行)', async () => {
+    const pool = mockPool();
+    await requeueOrphanTask(pool, { ...task, payload: { orphan_requeue_count: 3 } }, 'x');
+    expect(pool.calls.some((c) => c.sql.includes('UPDATE initiative_runs'))).toBe(true);
+  });
 });
 
 describe('handleRelayExitConsistency', () => {
