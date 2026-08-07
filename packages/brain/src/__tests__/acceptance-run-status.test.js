@@ -34,6 +34,22 @@ describe('computeRunStatus — 7 值状态机（只看人列填写进度）', ()
     }
   });
 
+  it('历史兼容值 passed/failed 原样保留，不被提交路径改写', () => {
+    for (const prev of ['passed', 'failed']) {
+      expect(computeRunStatus(prev, { total: 36, humanFilled: 36 })).toBe(prev);
+    }
+  });
+
+  it('前态缺失/不可识别时按填写进度重算，绝不返回非状态值', () => {
+    // run 行被并发删掉、或库里躺着某个没人认识的历史值时，旧三元式至少还能产出合法状态；
+    // 原样透传会把 undefined 写进 NOT NULL 的 status 列，整笔提交连带已落库的 check 一起炸
+    for (const prev of [undefined, null, '', 'totally_unknown']) {
+      expect(computeRunStatus(prev, { total: 3, humanFilled: 0 })).toBe('pending');
+      expect(computeRunStatus(prev, { total: 3, humanFilled: 1 })).toBe('in_review');
+      expect(computeRunStatus(prev, { total: 3, humanFilled: 3 })).toBe('human_complete');
+    }
+  });
+
   it('RUN_STATUSES 恰为 7 个活跃/终态值，passed/failed 不在其中', () => {
     expect(RUN_STATUSES).toEqual([
       'pending', 'in_review', 'human_complete', 'adjudicated', 'stale', 'expired', 'abandoned',

@@ -74,7 +74,7 @@ describe('POST /acceptance/results', () => {
     expect(client.query).toHaveBeenCalledWith('ROLLBACK');
   });
 
-  it('合法批次：落库 + 重算 pass_rate/status（全判有挂 → failed）', async () => {
+  it('合法批次：落库 + 重算 pass_rate/status（人列填满含不通过 → human_complete）', async () => {
     const updates = [];
     const client = makeClient((sql, params) => {
       if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
@@ -97,7 +97,9 @@ describe('POST /acceptance/results', () => {
       ] });
     expect(res.status).toBe(200);
     expect(res.body.updated).toBe(2);
-    expect(res.body.runs[0].status).toBe('failed');
+    // migration 392 起 status 只反映人列填写进度：填满即 human_complete，
+    // 「这一轮通过没通过」由 gate_verdict 单独表达（旧断言写 failed）
+    expect(res.body.runs[0].status).toBe('human_complete');
     expect(res.body.runs[0].pass_rate).toBe(0.5);
     expect(updates).toHaveLength(2);
   });
@@ -121,7 +123,10 @@ describe('POST /acceptance/results', () => {
     expect(res.body.runs[0].status).toBe('in_review');
   });
 
-  it('全部已判但含"无法验证" → status 停在 in_review', async () => {
+  // 「无法验证」也是一次填写，人列因此算填满 → human_complete。
+  // 旧语义让它把 run 卡在 in_review，等于用 status 兼职表达「这格没结论」；
+  // 392 之后这件事归格级 final_state 和 run 级 gate_verdict 管，status 不掺和。
+  it('全部已判但含"无法验证" → 人列仍算填满 → human_complete', async () => {
     const client = makeClient((sql, params) => {
       if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
         return { rows: [{ check_key: 'r1:003', run_id: 'A' }] };
@@ -137,7 +142,7 @@ describe('POST /acceptance/results', () => {
       .post('/acceptance/results')
       .send({ results: [{ check_key: 'r1:003', result: '无法验证' }] });
     expect(res.status).toBe(200);
-    expect(res.body.runs[0].status).toBe('in_review');
+    expect(res.body.runs[0].status).toBe('human_complete');
   });
 
   it('同批出现重复 check_key → 400，且不占用连接', async () => {
@@ -190,12 +195,14 @@ describe('验收驳回自动开任务（主理人条件二：转变沿）', () =
       .send({ results: [{ check_key: 'r1:001', result: '不通过' }] });
   }
 
-  it('in_review → failed 转变沿：自动 INSERT 驳回任务', async () => {
+  // migration 392 起 computeRunStatus 永不产生 failed，isLegacyRejectionTransition 恒不成立，
+  // 「判不通过就自动开驳回任务」这条转变沿对新 run 已不可达（只剩存量 failed 行走它）。
+  // 分流建任务由 D4 的聚合式分流接管，届时 routes/acceptance.js 里整段删除。
+  it('判不通过不再走转变沿自动开驳回任务（D4 聚合式分流接管前的空窗）', async () => {
     const { client, taskInserts } = rejectionClient({ oldStatus: 'in_review' });
     const res = await postFail(client);
     expect(res.status).toBe(200);
-    expect(taskInserts).toHaveLength(1);
-    expect(taskInserts[0][0]).toContain('[验收驳回]');
+    expect(taskInserts).toHaveLength(0);
   });
 
   it('已是 failed（重复提交）→ 不重复开任务', async () => {
