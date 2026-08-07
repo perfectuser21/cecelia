@@ -8,11 +8,18 @@
 
 
 
-**Brain 版本**: 1.267.248
+**Brain 版本**: 1.267.249
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.267.249 — ledger-hygiene m2 口径修正：噪声排除 + harness 停计
+
+- m2 tasks 子查询排除守卫自产 [紧急] issue: [ledger-hygiene]% task（'[紧急] ' + LEDGER_SELF_ATOM_PREFIX 派生）与 payload.smoke_tag 冒烟 task（debt/total 同步排除）
+- m2 issues 子查询排除自产 [ledger-hygiene]% 前缀 issue（新导出常量 LEDGER_SELF_ISSUE_PREFIX，与 raiseBreachAlerts 写入/去重同源）
+- attribution_harness 子指标停计（ability_id 未接线恒空 + 双重计数源；接线后恢复属后续 sprint）
+- headed 派发冒烟脚本 invalid-mode 建 task 防御性补 smoke_tag
 
 ## Brain 1.267.248 — golden_path_proposal 路由字符串同步 capability-controller（决策 a340f100）
 

@@ -66,15 +66,14 @@ describe('computeMetrics — 6 项指标', () => {
     expect(m.m1.debt).toBe(0);
   });
 
-  it('m2 归属完整率：tasks缺2 + issues缺1 + harness缺1 → debt=4', async () => {
+  it('m2 归属完整率：tasks缺2 + issues缺1 → debt=3（attribution_harness 停计，接线前不入和）', async () => {
     const pool = makePool([
       { match: 'attribution_tasks', rows: [{ total: '10', debt: '2' }] },
       { match: 'attribution_issues', rows: [{ total: '5', debt: '1' }] },
-      { match: 'attribution_harness', rows: [{ total: '3', debt: '1' }] },
     ]);
     const m = await computeMetrics(pool);
-    expect(m.m2.debt).toBe(4);
-    expect(m.m2.value).toBeCloseTo(14 / 18);
+    expect(m.m2.debt).toBe(3);
+    expect(m.m2.value).toBeCloseTo(12 / 15);
   });
 
   it('m3 回执核销：表全空 → enabled=false；有行 → enabled=true, debt=超时 pending 数', async () => {

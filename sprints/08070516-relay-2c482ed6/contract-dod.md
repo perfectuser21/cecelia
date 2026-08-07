@@ -1,6 +1,3 @@
-contract_branch: cp-08070546-harness-propose-r2-2c482ed6
-sprint_dir: sprints/08070516-relay-2c482ed6
-
 ---
 skeleton: false
 journey_type: autonomous
