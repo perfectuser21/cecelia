@@ -67,3 +67,44 @@ describe('GET /api/brain/issues（T6）', () => {
     expect(res.body.error).toBe('boom');
   });
 });
+
+describe('PATCH /api/brain/issues/:id（ccf85841 关闭端点）', () => {
+  it('更新 status=Closed → 返回更新后的行', async () => {
+    queryMock.mockResolvedValue({ rows: [{ id: 'ccf85841-c005-485a-9143-c7fb68bc66a5', status: 'Closed', title: 'x' }] });
+    const res = await request(makeApp())
+      .patch('/api/brain/issues/ccf85841-c005-485a-9143-c7fb68bc66a5')
+      .send({ status: 'Closed' });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('Closed');
+    const [sql, params] = queryMock.mock.calls[0];
+    expect(sql).toMatch(/UPDATE issues SET/);
+    expect(sql).toMatch(/status=\$1/);
+    expect(params).toContain('Closed');
+  });
+
+  it('无可更新字段 → 400', async () => {
+    const res = await request(makeApp())
+      .patch('/api/brain/issues/ccf85841-c005-485a-9143-c7fb68bc66a5')
+      .send({ unknown_field: 'x' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/no patchable fields/);
+  });
+
+  it('issue 不存在 → 404', async () => {
+    queryMock.mockResolvedValue({ rows: [] });
+    const res = await request(makeApp())
+      .patch('/api/brain/issues/no-such-id')
+      .send({ status: 'Closed' });
+    expect(res.status).toBe(404);
+  });
+
+  it('可同时更新多字段（status + pr_url）', async () => {
+    queryMock.mockResolvedValue({ rows: [{ id: 'x', status: 'Closed', pr_url: 'https://github.com/x/1' }] });
+    const res = await request(makeApp())
+      .patch('/api/brain/issues/x')
+      .send({ status: 'Closed', pr_url: 'https://github.com/x/1' });
+    expect(res.status).toBe(200);
+    const [sql] = queryMock.mock.calls[0];
+    expect(sql).toMatch(/pr_url=\$2/);
+  });
+});
