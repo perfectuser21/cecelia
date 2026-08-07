@@ -102,6 +102,45 @@ describe('computeAiStatus — 哑火三条件（分母与阈值从 yaml 派生�
   });
 });
 
+describe('undecided_cells 与 blocked_reason 三态：闸判红时必须说得出卡在哪几格', () => {
+  it('非 hard 未定格 → 红 + undecided_cells 含该格 + blocked_reason=undecided_cells', () => {
+    const r = computeGateVerdict(cells(36, { overrides: { 'S9-c1': '未定' } }), {});
+    expect(r.gate_verdict).toBe('红');
+    expect(r.red_cells).toEqual([]);
+    expect(r.undecided_cells).toEqual(['S9-c1']);
+    expect(r.blocked_reason).toBe('undecided_cells');
+  });
+
+  it('hard 未定格同时进 red_cells 与 undecided_cells，理由回落格红（null）', () => {
+    const r = computeGateVerdict(
+      cells(36, { hardKeys: ['S8-c1'], overrides: { 'S8-c1': '未定' } }), {}
+    );
+    expect(r.red_cells).toContain('S8-c1');
+    expect(r.undecided_cells).toContain('S8-c1');
+    expect(r.blocked_reason).toBeNull();
+  });
+
+  it('真红格在场时 blocked_reason 保持 null，与 undecided_cells 态可区分', () => {
+    const r = computeGateVerdict(
+      cells(36, { overrides: { 'S5-c1': '红', 'S9-c1': '未定' } }), {}
+    );
+    expect(r.red_cells).toEqual(['S5-c1']);
+    expect(r.undecided_cells).toEqual(['S9-c1']);
+    expect(r.blocked_reason).toBeNull();
+  });
+
+  it('全绿 → undecided_cells 为空', () => {
+    expect(computeGateVerdict(cells(36), {}).undecided_cells).toEqual([]);
+  });
+
+  it('ai_incomplete 短路态不谈格级明细，两个清单都空且理由是 infra', () => {
+    const r = computeGateVerdict(cells(36, { overrides: { 'S9-c1': '未定' } }), { ai_incomplete: true });
+    expect(r.red_cells).toEqual([]);
+    expect(r.undecided_cells).toEqual([]);
+    expect(r.blocked_reason).toBe('ai_run_infra_error');
+  });
+});
+
 describe('输入非法时 fail-fast，不得静默降级成放行', () => {
   it('cells 为空（run 没建行/取数挂了）→ 抛错，不得判绿', () => {
     expect(() => computeGateVerdict([], {})).toThrow(/建行格/);

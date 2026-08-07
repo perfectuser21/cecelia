@@ -75,7 +75,9 @@ export function computeGateVerdict(cells, runDetail = {}) {
   // computeCellState 把裁决排在 Q0′ 短路之前，缺格被裁决绿后格级就是绿，
   // 只看 final_state 的闸会让「AI 少回写 + 人工补绿」整轮放行（v7-final:275）。
   if (runDetail.ai_incomplete) {
-    return { gate_verdict: '红', red_cells: [], blocked_reason: 'ai_run_infra_error' };
+    return {
+      gate_verdict: '红', red_cells: [], undecided_cells: [], blocked_reason: 'ai_run_infra_error',
+    };
   }
   // 空输入下「没有非绿格」恒成立，闸会判绿——run 一格没建或取数挂掉就等于自动放行。
   // 这一层是纯计算，没有「取数失败」的概念，收到空集只可能是调用方的 bug，抛错让它立刻显形。
@@ -84,10 +86,17 @@ export function computeGateVerdict(cells, runDetail = {}) {
   }
   const notGreen = cells.filter((c) => c.final_state !== '绿');
   const redCells = notGreen.filter((c) => c.hard || c.final_state === '红').map((c) => c.check_key);
+  // red_cells 的语义保持「红格」纯粹（hard 格非绿一律按红线走），未定格另开一列：
+  // 非 hard 的未定格进不了 red_cells，闸判红时若不单列出来，Step 8 承诺的
+  // 「直说卡在哪几格」就只能渲染成「红，卡在（空）」。
+  const undecidedCells = cells.filter((c) => c.final_state === '未定').map((c) => c.check_key);
+  const gateVerdict = notGreen.length === 0 ? '绿' : '红';
   return {
-    gate_verdict: notGreen.length === 0 ? '绿' : '红',
+    gate_verdict: gateVerdict,
     red_cells: redCells,
-    blocked_reason: null,
+    undecided_cells: undecidedCells,
+    // 三态机械可区分：infra 故障 / 纯未定格拦 / 格红（null）。
+    blocked_reason: gateVerdict === '红' && redCells.length === 0 ? 'undecided_cells' : null,
   };
 }
 

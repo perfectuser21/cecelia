@@ -58,7 +58,7 @@ spec「关键依赖」节写死：`acceptance.js:86` 的三元式与 CHECK 扩�
 - Test: `packages/brain/src/__tests__/integration/acceptance-state-machine.integration.test.js`
 - Test: `packages/brain/src/__tests__/acceptance-run-status.test.js`
 
-- [ ] **Step 1: 写 failing 单测（run 状态机，A10⑤ 的纯函数层）**
+- [x] **Step 1: 写 failing 单测（run 状态机，A10⑤ 的纯函数层）**
 
 新建 `packages/brain/src/__tests__/acceptance-run-status.test.js`：
 
@@ -108,7 +108,7 @@ describe('computeRunStatus — 7 值状态机（只看人列填写进度）', ()
 });
 ```
 
-- [ ] **Step 2: 写 failing 集成测试（migration 结构 + down 可逆性）**
+- [x] **Step 2: 写 failing 集成测试（migration 结构 + down 可逆性）**
 
 新建 `packages/brain/src/__tests__/integration/migration-392-acceptance-two-column.integration.test.js`：
 
@@ -232,7 +232,7 @@ describe('migration 392 结构断言', () => {
 });
 ```
 
-- [ ] **Step 3: 写 failing 集成测试（A10⑤ 端到端走真库）**
+- [x] **Step 3: 写 failing 集成测试（A10⑤ 端到端走真库）**
 
 新建 `packages/brain/src/__tests__/integration/acceptance-state-machine.integration.test.js`：
 
@@ -305,7 +305,7 @@ describe('A10⑤ 人列填满即 human_complete（本刀最重要的回归测试
 });
 ```
 
-- [ ] **Step 4: 跑测试确认全红**
+- [x] **Step 4: 跑测试确认全红**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -317,7 +317,7 @@ DB_NAME=cecelia_scratch npx vitest run --config vitest.integration.config.js \
 
 预期：单测报 `Failed to load url ../acceptance-state.js`；集成测试报 rollback 文件不存在 / 列不存在。
 
-- [ ] **Step 5: 提交 Red commit**
+- [x] **Step 5: 提交 Red commit**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -327,7 +327,7 @@ git add packages/brain/src/__tests__/acceptance-run-status.test.js \
 git commit -m "test(acceptance): D1 migration 392 结构与 7 值状态机 failing test [task b35bfa0c]"
 ```
 
-- [ ] **Step 6: 写 migration 392 up**
+- [x] **Step 6: 写 migration 392 up**
 
 新建 `packages/brain/migrations/392_acceptance_two_column.sql`：
 
@@ -378,7 +378,7 @@ VALUES ('392', 'acceptance two-column data layer: AI columns + runs.detail + 7-v
 ON CONFLICT (version) DO NOTHING;
 ```
 
-- [ ] **Step 7: 写 migration 392 down**
+- [x] **Step 7: 写 migration 392 down**
 
 新建 `packages/brain/migrations/rollback/392_acceptance_two_column.down.sql`：
 
@@ -417,7 +417,7 @@ ALTER TABLE acceptance_checks DROP COLUMN IF EXISTS ai_verdict;
 DELETE FROM schema_version WHERE version = '392';
 ```
 
-- [ ] **Step 8: 写 `acceptance-state.js` 的状态机段**
+- [x] **Step 8: 写 `acceptance-state.js` 的状态机段**
 
 新建 `packages/brain/src/acceptance-state.js`：
 
@@ -455,7 +455,7 @@ export function computeRunStatus(prevStatus, { total, humanFilled }) {
 }
 ```
 
-- [ ] **Step 9: 替换 `routes/acceptance.js:84-99` 的三元式**
+- [x] **Step 9: 替换 `routes/acceptance.js:84-99` 的三元式**
 
 把 `packages/brain/src/routes/acceptance.js` 第 84-99 行整段：
 
@@ -490,7 +490,7 @@ export function computeRunStatus(prevStatus, { total, humanFilled }) {
 import { computeRunStatus } from '../acceptance-state.js';
 ```
 
-- [ ] **Step 10: 把驳回建任务段显式标注为历史路径**
+- [x] **Step 10: 把驳回建任务段显式标注为历史路径**
 
 把 `routes/acceptance.js:99` 的条件行：
 
@@ -517,7 +517,7 @@ function isLegacyRejectionTransition(prevStatus, nextStatus) {
 }
 ```
 
-- [ ] **Step 11: bump `EXPECTED_SCHEMA_VERSION`**
+- [x] **Step 11: bump `EXPECTED_SCHEMA_VERSION`**
 
 `packages/brain/src/selfcheck.js:28`：
 
@@ -527,7 +527,7 @@ export const EXPECTED_SCHEMA_VERSION = '392';
 
 理由：`scripts/facts-check.mjs:284-297` 强校验它等于 `migrations/` 的最高编号，不同批 bump 会当场卡住 DevGate。
 
-- [ ] **Step 12: 把两个新集成测试登记进 `POSTGRES_INTEGRATION_TESTS`**
+- [x] **Step 12: 把两个新集成测试登记进 `POSTGRES_INTEGRATION_TESTS`**
 
 `packages/brain/vitest.config.js` 的 `POSTGRES_INTEGRATION_TESTS` 数组里，`'src/__tests__/integration/acceptance.integration.test.js',` 这一行后面插入：
 
@@ -538,7 +538,7 @@ export const EXPECTED_SCHEMA_VERSION = '392';
 
 不登记的后果：brain-unit job 会加载它们并因无 DB 连接报红。
 
-- [ ] **Step 13: 跑 migration 并验证全绿**
+- [x] **Step 13: 跑 migration 并验证全绿**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -551,7 +551,7 @@ DB_NAME=cecelia_scratch npx vitest run --config vitest.integration.config.js \
 
 预期：`[APPLY] 392_acceptance_two_column.sql` → `[DONE]`；三个测试文件全 PASS。
 
-- [ ] **Step 14: 在带 21 行存量数据的库上验 migration（档 1 E2E）**
+- [x] **Step 14: 在带 21 行存量数据的库上验 migration（档 1 E2E）**
 
 上面跑的 scratch 库是空表，证不了「存量 21 行不冲突」。把生产库的结构+数据 dump 进 scratch 再跑一次：
 
@@ -571,7 +571,7 @@ psql -d cecelia_scratch -c "\d acceptance_checks"
 
 预期：`checks = 21`、`runs = 2`；migrate 成功（`ADD CONSTRAINT UNIQUE (run_id, check_key)` 对旧 `{run_key}:{NNN}` 流水号天然成立，不需要任何数据清洗）；`\d` 输出里能看到 AI 四列、`detail`、`uq_acceptance_checks_run_key`、7 值 CHECK。dump 只读生产库，**全程不对 `cecelia` 跑 migrate**。
 
-- [ ] **Step 15: 跑 DevGate 并提交 Green commit**
+- [x] **Step 15: 跑 DevGate 并提交 Green commit**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -595,7 +595,7 @@ git commit -m "feat(acceptance): migration 392 + run 7 值状态机同批替换 
 - Modify: `packages/brain/src/acceptance-state.js`（追加格级段）
 - Test: `packages/brain/src/__tests__/acceptance-cell-state.test.js`
 
-- [ ] **Step 1: 写 failing 单测（A5 九组合矩阵逐行对表）**
+- [x] **Step 1: 写 failing 单测（A5 九组合矩阵逐行对表）**
 
 新建 `packages/brain/src/__tests__/acceptance-cell-state.test.js`：
 
@@ -711,7 +711,7 @@ describe('裁决判红也生效', () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -720,7 +720,7 @@ DB_NAME=cecelia_scratch npx vitest run src/__tests__/acceptance-cell-state.test.
 
 预期：FAIL，`computeCellState is not a function`。
 
-- [ ] **Step 3: 提交 Red commit**
+- [x] **Step 3: 提交 Red commit**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -728,7 +728,7 @@ git add packages/brain/src/__tests__/acceptance-cell-state.test.js
 git commit -m "test(acceptance): 格级九组合矩阵 failing test [task b35bfa0c]"
 ```
 
-- [ ] **Step 4: 实现 `computeCellState`**
+- [x] **Step 4: 实现 `computeCellState`**
 
 在 `packages/brain/src/acceptance-state.js` 的 `computeRunStatus` 之前插入：
 
@@ -786,7 +786,7 @@ export function computeCellState({ result, ai_verdict, adjudication, verifiable_
 }
 ```
 
-- [ ] **Step 5: 跑测试确认全绿**
+- [x] **Step 5: 跑测试确认全绿**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -795,7 +795,7 @@ DB_NAME=cecelia_scratch npx vitest run src/__tests__/acceptance-cell-state.test.
 
 预期：PASS（22 例）。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -811,7 +811,7 @@ git commit -m "feat(acceptance): 格级 final_state 九组合矩阵计算 [task 
 - Modify: `packages/brain/src/acceptance-state.js`（追加 run 级判定段）
 - Test: `packages/brain/src/__tests__/acceptance-gate-verdict.test.js`
 
-- [ ] **Step 1: 写 failing 单测**
+- [x] **Step 1: 写 failing 单测**
 
 新建 `packages/brain/src/__tests__/acceptance-gate-verdict.test.js`：
 
@@ -921,7 +921,7 @@ describe('computeAiStatus — 哑火三条件（分母与阈值从 yaml 派生�
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -930,7 +930,7 @@ DB_NAME=cecelia_scratch npx vitest run src/__tests__/acceptance-gate-verdict.tes
 
 预期：FAIL，`computeGateVerdict is not a function`。
 
-- [ ] **Step 3: 提交 Red commit**
+- [x] **Step 3: 提交 Red commit**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -938,7 +938,7 @@ git add packages/brain/src/__tests__/acceptance-gate-verdict.test.js
 git commit -m "test(acceptance): gate_verdict 与哑火判据 failing test [task b35bfa0c]"
 ```
 
-- [ ] **Step 4: 实现两个函数**
+- [x] **Step 4: 实现两个函数**
 
 在 `packages/brain/src/acceptance-state.js` 的 `computeRunStatus` 之前追加：
 
@@ -1001,7 +1001,7 @@ export function computeAiStatus(cells, { machineDbTotal }) {
 }
 ```
 
-- [ ] **Step 5: 跑测试确认全绿**
+- [x] **Step 5: 跑测试确认全绿**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -1010,7 +1010,7 @@ DB_NAME=cecelia_scratch npx vitest run src/__tests__/acceptance-gate-verdict.tes
 
 预期：PASS（13 例）。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
