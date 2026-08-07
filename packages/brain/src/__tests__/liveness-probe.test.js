@@ -114,12 +114,16 @@ describe('probeTaskLiveness', () => {
           id: 'task-2',
           title: 'Dead Task',
           payload: { current_run_id: 'run-dead-456', run_triggered_at: new Date(Date.now() - 120000).toISOString() },
-          started_at: new Date(Date.now() - 120000).toISOString()
+          started_at: new Date(Date.now() - 120000).toISOString(),
+          // task 94ee0ec4：kill 分类需 spawn 证据（A/B/D），本用例测既有 DEAD→requeue 路径 → 补 D（派发回执）
+          error_message: 'prior dispatch receipt (fixture)'
         }]
       })
       // requeueTask: SELECT payload, task_type, project_id, title
       .mockResolvedValueOnce({ rows: [{ payload: {}, task_type: 'dev', project_id: null, title: 'Dead Task' }] })
       // requeueTask: UPDATE tasks SET status = 'queued'
+      .mockResolvedValueOnce({ rowCount: 1 })
+      // requeueTask: INSERT INTO task_events 处置留痕（task 94ee0ec4）
       .mockResolvedValueOnce({ rowCount: 1 })
       // requeueTask: SELECT content_hash from learnings (dedup check)
       .mockResolvedValueOnce({ rows: [] })
@@ -219,11 +223,15 @@ describe('probeTaskLiveness', () => {
             run_triggered_at: triggeredAt,
           },
           started_at: triggeredAt,
+          // task 94ee0ec4：kill 分类需 spawn 证据（A/B/D），本用例测 grace 过期 DEAD→requeue → 补 D
+          error_message: 'prior dispatch receipt (fixture)',
         }]
       })
       // requeueTask: SELECT payload, task_type, project_id, title
       .mockResolvedValueOnce({ rows: [{ payload: {}, task_type: 'decomp', project_id: null, title: 'Initiative 拆解: 老任务' }] })
       // requeueTask: UPDATE tasks SET status = 'queued'
+      .mockResolvedValueOnce({ rowCount: 1 })
+      // requeueTask: INSERT INTO task_events 处置留痕（task 94ee0ec4）
       .mockResolvedValueOnce({ rowCount: 1 })
       // requeueTask: SELECT content_hash from learnings (dedup check)
       .mockResolvedValueOnce({ rows: [] })
@@ -312,11 +320,15 @@ describe('probeTaskLiveness — REVIEW 分支（codex-review-local lock 探活�
           task_type: 'arch_review',
           payload: {},
           started_at: new Date(Date.now() - 120000).toISOString(),
+          // task 94ee0ec4：kill 分类需 spawn 证据（A/B/D），本用例测 lock 缺失 DEAD→requeue → 补 D
+          error_message: 'prior dispatch receipt (fixture)',
         }]
       })
       // requeueTask: SELECT payload, task_type, project_id, title, started_at
       .mockResolvedValueOnce({ rows: [{ payload: {}, task_type: 'arch_review', project_id: null, title: 'Arch Review Missing Lock' }] })
       // requeueTask: UPDATE tasks SET status = 'queued'
+      .mockResolvedValueOnce({ rowCount: 1 })
+      // requeueTask: INSERT INTO task_events 处置留痕（task 94ee0ec4）
       .mockResolvedValueOnce({ rowCount: 1 })
       // requeueTask: SELECT content_hash from learnings (dedup check)
       .mockResolvedValueOnce({ rows: [] })
@@ -349,9 +361,13 @@ describe('probeTaskLiveness — REVIEW 分支（codex-review-local lock 探活�
           task_type: 'arch_review',
           payload: {},
           started_at: new Date(Date.now() - 120000).toISOString(),
+          // task 94ee0ec4：kill 分类需 spawn 证据（A/B/D），本用例测 lock 超龄 DEAD→requeue → 补 D
+          error_message: 'prior dispatch receipt (fixture)',
         }]
       })
       .mockResolvedValueOnce({ rows: [{ payload: {}, task_type: 'arch_review', project_id: null, title: 'Arch Review Stale Lock' }] })
+      .mockResolvedValueOnce({ rowCount: 1 })
+      // requeueTask: INSERT INTO task_events 处置留痕（task 94ee0ec4）
       .mockResolvedValueOnce({ rowCount: 1 })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rowCount: 1 });

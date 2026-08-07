@@ -36,6 +36,7 @@ import { writeDockerCallback, resolveResourceTier, isDockerAvailable, resolveBra
 import { loadSkillContent, assertSprintDir } from './harness-shared.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
+import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { classifyCodexFailure } from './lib/codex-fatal-patterns.js';
 import { raise } from './alerting.js';
 import { EXECUTOR_KIND_FOR, resolveExecutorKind } from './executor-contracts.js';
@@ -1019,6 +1020,9 @@ async function requeueTask(taskId, reason, evidence = {}) {
           ]
         );
         console.log(`[executor] Fallback quarantine: task=${taskId} prev_status=${fbStatus} retries=${fbRetryCount}`);
+        await recordTaskEventSafe(pool, taskId, 'watchdog_quarantine', {
+          reason, disposition: 'fallback_quarantine', retry_count: fbRetryCount, previous_status: fbStatus,
+        });
         return { requeued: false, quarantined: true, reason: 'fallback_quarantine' };
       } else {
         // 未超限 → 仅递增 counter（不改状态，不 requeue）
@@ -1081,6 +1085,9 @@ async function requeueTask(taskId, reason, evidence = {}) {
       if (updateResult.rowCount === 0) {
         return { requeued: false, reason: 'status_changed' };
       }
+      await recordTaskEventSafe(pool, taskId, 'watchdog_quarantine', {
+        reason, disposition: 'resource_hog', retry_count: retryCount, total_failures: failureCount,
+      });
       return { requeued: false, quarantined: true };
     }
 
@@ -1118,6 +1125,14 @@ async function requeueTask(taskId, reason, evidence = {}) {
   if (updateResult.rowCount === 0) {
     return { requeued: false, reason: 'status_changed' };
   }
+
+  // 处置留痕（合同失败语义：watchdog 处置任一任务必须落 task_events 行，写失败不阻断）
+  await recordTaskEventSafe(pool, taskId, 'watchdog_requeue', {
+    reason,
+    exit_reason: evidence?.reason || reason,
+    retry_count: retryCount,
+    next_run_at: nextRunAt,
+  });
 
   // Fix: 记录失败到 learnings 表，供 planner buildLearningPenaltyMap 使用
   // 使用 content_hash 去重，防止相同失败原因无限堆积
@@ -4030,6 +4045,53 @@ async function probeTaskLiveness() {
     // Second (or later) probe failure — confirmed dead
     console.log(`[liveness] Task ${task.id} confirmed DEAD (suspect since ${suspect.firstSeen})`);
     suspectProcesses.delete(task.id);
+
+    // ── 假杀堵死（task 94ee0ec4 / 事故任务 b35bfa0c）──────────────────────
+    // kill 分类授权前先验 spawn 证据（合同判定点登记表）：存在任一正向 spawn 证据
+    // （A: activeProcesses 条目 / B: /tmp/cecelia-{id}.log）或派发回执（D: error_message）
+    // 才允许进入 never_started/process_disappeared kill 分类；零证据（A/B/D 全无）
+    // → 不得 kill，只做带留痕的安全处置（回 queued，不写 watchdog_kill / error_message /
+    // failure learning）。C（started_at）单独不可靠（requeue 会清空，1dfa40f7 已实证）。
+    // headed_manual 消费语义（铁律 9f14c074，decisions 拍板留痕）：人工接管任务不进
+    // 无头 liveness 假杀路径——安全回队等待有头执行。
+    // 信号不完整（日志探测异常）→ 保守视为有证据，维持既有 process_disappeared 兜底。
+    let hasSpawnEvidence = Boolean(entry) || Boolean(task.error_message);
+    if (!hasSpawnEvidence) {
+      try {
+        hasSpawnEvidence = existsSync(`/tmp/cecelia-${task.id}.log`);
+      } catch {
+        hasSpawnEvidence = true;
+      }
+    }
+    const isHeadedManual =
+      task.payload?.headed_manual === true || task.payload?.headed_manual === 'true';
+    if (!hasSpawnEvidence) {
+      const safeEventType = isHeadedManual ? 'watchdog_headed_requeue' : 'watchdog_safe_requeue';
+      const safeUpdate = await pool.query(
+        `UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, started_at = NULL
+         WHERE id = $1 AND status = 'in_progress'`,
+        [task.id]
+      );
+      await recordTaskEventSafe(pool, task.id, safeEventType, {
+        reason: 'no_spawn_evidence',
+        headed_manual: isHeadedManual,
+        suspect_since: suspect.firstSeen,
+        probe_ticks: suspect.tickCount + 1,
+        evidence: { active_process: false, process_log: false, dispatch_receipt: false },
+      });
+      console.log(
+        `[liveness] Task ${task.id} 零 spawn 证据（无进程条目/无日志/无派发回执）→ 安全回队不 kill（headed_manual=${isHeadedManual}, requeued=${safeUpdate.rowCount > 0}）`
+      );
+      actions.push({
+        action: 'liveness_safe_requeue',
+        task_id: task.id,
+        title: task.title,
+        headed_manual: isHeadedManual,
+        suspect_since: suspect.firstSeen,
+      });
+      continue;
+    }
+    // ──────────────────────────────────────────────────────────────────────
 
     // Clean up activeProcesses entry
     if (entry) {

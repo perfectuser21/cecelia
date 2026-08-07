@@ -269,6 +269,8 @@ function setupQuerySequence(task, prevFailCount = 0, reachedThreshold = false) {
     .mockResolvedValueOnce({ rows: [{ id: task.id }] })
     // 4. SELECT * (full task)
     .mockResolvedValueOnce({ rows: [task] })
+    // 4.5 spawn 失败 fail-closed task_events 留痕 INSERT（task 94ee0ec4）
+    .mockResolvedValueOnce({ rows: [], rowCount: 1 })
     // 5. revert claim
     .mockResolvedValueOnce({ rows: [], rowCount: 1 })
     // 6. SELECT metadata for autoblock counter
