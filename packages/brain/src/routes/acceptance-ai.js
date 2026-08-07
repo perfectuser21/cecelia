@@ -83,6 +83,22 @@ export function validateAiReason({ check_key, reason }, sets) {
 }
 
 /**
+ * A4⑧ / A16①-b 收单期推进闸：mandatory 场景码没勾齐，这张单一格 AI 回写都不收。
+ *
+ * 规定动作没做完，AI 采证的前提就不成立——此时收 AI 回写等于把「场景压根没发生」洗成
+ * 「AI 判定通过」。所以是整 run 拒收而不是逐格拒：被跳过的是场景，不是某一格。
+ * `|| []` 这个兜底方向是刻意的：detail 里没有 scenarios_observed 字段时缺失清单为全集 →
+ * 拒收（fail-closed）。反过来把「没这个字段」当成「没有要求」就是把新建的单默认放行。
+ *
+ * @param {object|null} runDetail acceptance_runs.detail
+ * @param {ReturnType<typeof deriveSets>} sets 从规程 yaml 派生，代码里不出现格号
+ */
+export function missingMandatoryScenarios(runDetail, sets) {
+  const observed = new Set(runDetail?.scenarios_observed || []);
+  return sets.mandatoryScenarioCodes.filter((code) => !observed.has(code));
+}
+
+/**
  * AI 列回写。这个端点只写 ai_* 三列：请求体里的 result / submitted_by / note 一律忽略，
  * 不是「顺手也写上」——人列是员工亲手填的那一列，AI 能改它就等于两列可以互相冒充，
  * 一体两面的背靠背当场失效。人列走 POST /results。
@@ -120,6 +136,17 @@ export function registerAiResultsRoute(router, { pool, safeRollback }) {
         return res.status(404).json({ error: 'run not found', run_key });
       }
       const runId = runRows[0].id;
+
+      // 推进闸放在任何 UPDATE 之前：闸拦下时这一批一格都不许落库
+      const missingScenarios = missingMandatoryScenarios(runRows[0].detail, sets);
+      if (missingScenarios.length > 0) {
+        await safeRollback(client);
+        return res.status(409).json({
+          error: 'mandatory_scenarios_missing',
+          missing: missingScenarios,
+          hint: '规定动作未做完，AI 采证前提不成立；补做场景后再回写',
+        });
+      }
 
       // 规程里有这个格号 ≠ 这张单建了这一行（单只覆盖被验的那部分步骤，历史单还可能是
       // 旧流水号格号）。不先验一遍，下面的 UPDATE 匹配不到就是 0 行、PG 不报错，

@@ -260,6 +260,12 @@ describe('全链路：生成器 36 行 → 建单 → AI 全格回写 → ai_sta
     const created = await request(app).post('/api/brain/acceptance/runs')
       .send({ run_key: fullRunKey, title: '全链路', gp_id: '7790f728', checks });
     expect(created.status).toBe(201);
+    // A4⑧ 推进闸的前提：mandatory 场景码勾齐才收 AI 回写。这里直接写库而不是走建单端点，
+    // 是因为 POST /runs 眼下还不透传 detail（收单期那一刀才加），不是绕过闸。
+    await pool.query(
+      `UPDATE acceptance_runs SET detail = $2::jsonb WHERE run_key = $1`,
+      [fullRunKey, JSON.stringify(FULL_SCENARIOS)]
+    );
 
     const res = await request(app).post('/api/brain/acceptance/ai-results').send({
       run_key: fullRunKey,
