@@ -86,9 +86,15 @@ export async function captureRelayContainerLogs({
   }
   if (!logs.trim()) return { ok: false, reason: 'empty_logs' };
 
-  const target = path.join(dir, `${containerId}.log`);
+  // 白名单已拦掉 `/`，这里再做解析后路径包含校验（CodeQL js/path-injection 认的
+  // sanitizer 形态）：resolve 后必须仍落在 dir 之内，防任何字符集校验遗漏的穿越形状。
+  const resolvedDir = path.resolve(dir);
+  const target = path.resolve(resolvedDir, `${containerId}.log`);
+  if (!target.startsWith(resolvedDir + path.sep)) {
+    return { ok: false, reason: 'invalid_container_id_path' };
+  }
   try {
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(resolvedDir, { recursive: true });
     writeFileSync(target, logs, 'utf8');
   } catch (err) {
     return { ok: false, reason: err.message };
