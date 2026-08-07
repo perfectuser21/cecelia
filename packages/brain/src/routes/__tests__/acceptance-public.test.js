@@ -64,7 +64,7 @@ describe('POST /acceptance/results', () => {
 
   it('未知 check_key → 400 列出 missing，事务回滚', async () => {
     const client = makeClient((sql) => {
-      if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
+      if (sql.includes('SELECT check_key FROM acceptance_checks')) {
         return { rows: [{ check_key: 'r1:001', run_id: 'A' }] };
       }
     });
@@ -83,7 +83,7 @@ describe('POST /acceptance/results', () => {
   it('合法批次：落库 + 重算 pass_rate/status（人列填满含不通过 → human_complete）', async () => {
     const updates = [];
     const client = makeClient((sql, params) => {
-      if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
+      if (sql.includes('SELECT check_key FROM acceptance_checks')) {
         return { rows: [{ check_key: 'r1:001', run_id: 'A' }, { check_key: 'r1:002', run_id: 'A' }] };
       }
       if (sql.includes('UPDATE acceptance_checks')) { updates.push(params); return { rows: [] }; }
@@ -112,7 +112,7 @@ describe('POST /acceptance/results', () => {
 
   it('还有未判项 → status=in_review', async () => {
     const client = makeClient((sql, params) => {
-      if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
+      if (sql.includes('SELECT check_key FROM acceptance_checks')) {
         return { rows: [{ check_key: 'r1:001', run_id: 'A' }] };
       }
       if (sql.includes('UPDATE acceptance_checks')) return { rows: [] };
@@ -134,7 +134,7 @@ describe('POST /acceptance/results', () => {
   // 392 之后这件事归格级 final_state 和 run 级 gate_verdict 管，status 不掺和。
   it('全部已判但含"无法验证" → 人列仍算填满 → human_complete', async () => {
     const client = makeClient((sql, params) => {
-      if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
+      if (sql.includes('SELECT check_key FROM acceptance_checks')) {
         return { rows: [{ check_key: 'r1:003', run_id: 'A' }] };
       }
       if (sql.includes('UPDATE acceptance_checks')) return { rows: [] };
@@ -175,7 +175,7 @@ describe('验收驳回自动开任务（主理人条件二：转变沿）', () =
   function rejectionClient({ oldStatus, existingTask = false }) {
     const taskInserts = [];
     const client = makeClient((sql, params) => {
-      if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
+      if (sql.includes('SELECT check_key FROM acceptance_checks')) {
         return { rows: [{ check_key: 'r1:001', run_id: 'A' }] };
       }
       if (sql.includes('UPDATE acceptance_checks')) return { rows: [] };
@@ -255,7 +255,7 @@ describe('submitAcceptanceResults 驳回任务并发去重', () => {
     const client = {
       query: vi.fn(async (sql) => {
         if (sql.includes('SELECT id FROM acceptance_runs WHERE run_key')) return { rows: [{ id: 'run-1' }] };
-        if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
+        if (sql.includes('SELECT check_key FROM acceptance_checks')) {
           return { rows: [{ check_key: 'r1:001', run_id: 'run-1' }] };
         }
         if (sql.includes('UPDATE acceptance_checks SET result')) return { rows: [] };
@@ -290,7 +290,7 @@ describe('submitAcceptanceResults 驳回任务并发去重', () => {
     const client = {
       query: vi.fn(async (sql, params) => {
         if (sql.includes('SELECT id FROM acceptance_runs WHERE run_key')) return { rows: [{ id: 'run-1' }] };
-        if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
+        if (sql.includes('SELECT check_key FROM acceptance_checks')) {
           return { rows: [{ check_key: 'r1:001', run_id: 'run-1' }] };
         }
         if (sql.includes('UPDATE acceptance_checks SET result')) {

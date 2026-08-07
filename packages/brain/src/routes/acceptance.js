@@ -79,7 +79,7 @@ export async function submitAcceptanceResults(pool, results, { run_key } = {}) {
     }
     const scopedRunId = runRows[0].id;
     const { rows: found } = await client.query(
-      'SELECT check_key, run_id FROM acceptance_checks WHERE run_id = $1 AND check_key = ANY($2)',
+      'SELECT check_key FROM acceptance_checks WHERE run_id = $1 AND check_key = ANY($2)',
       [scopedRunId, keys]
     );
     const foundKeys = new Set(found.map((r) => r.check_key));
