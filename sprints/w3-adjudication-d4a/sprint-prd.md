@@ -254,9 +254,20 @@ test "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
 
 ---
 
+## NFR
+
+- 性能：裁决 API 单次调用 p99 < 500ms（本地 postgres，无外部 IO）
+- 一致性：分流建任务在同一事务内完成，SAVEPOINT 保证单条失败不影响整批
+- 可观测：所有错误路径（409/400/熔断/哑火）均写 console.error 含 run_key
+
 ## 七、提交规范
 
 - 改动范围：`packages/brain/src/`
 - 提交格式：`feat(brain): D4后端 裁决API+聚合分流+熔断+SAVEPOINT回归`
 - 分支：`cp-08071826-ws-6548d9bf`（当前分支）
 - CI：`brain-ci.yml` 须绿
+
+---
+
+journey_type: backend_api
+target_environment: local_api
