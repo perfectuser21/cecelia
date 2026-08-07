@@ -29,19 +29,19 @@ journey_type: autonomous
 > 计数断言均为同一唯一 tag 的注入→重算差分（基线在注入前几秒读取），历史数据无法冒充差分；场景脚本内置 trap 清理 + 并发漂移整场景重试 1 次（二次失败 = FAIL，非兜底放行）。
 
 - [x] [BEHAVIOR] INV-10 自产/冒烟噪声全排除：注入 1 条 [ledger-hygiene] 前缀 issue（journey_id NULL）+ 1 条 [紧急] issue: [ledger-hygiene] 前缀 task + 1 条 payload.smoke_tag 非空的 harness task（均无 journey 归属）后重算，m2 debt 不变（守卫不因噪声涨账，Golden Path Step 2+3）
-  Test: manual:bash tests/regression/relay-2c482ed6/m2-noise-scenarios.sh noise
+  Test: manual:bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh noise
   期望: exit 0 且输出含 PASS scenario=noise
 
 - [x] [BEHAVIOR] 排除不误伤（task 侧）：注入 1 条无标记、无 journey_id 的真实业务 task 后重算，m2 debt 恰 +1（真实退化仍被捕捉，Golden Path Step 5）
-  Test: manual:bash tests/regression/relay-2c482ed6/m2-noise-scenarios.sh real-miss
+  Test: manual:bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh real-miss
   期望: exit 0 且输出含 PASS scenario=real-miss
 
 - [x] [BEHAVIOR] 排除不误伤（issue 侧，边界/error path）：注入 1 条 title 含 [ledger-hygiene] 字样但不以自产前缀开头、journey_id NULL 的真实 issue 后重算，m2 debt 恰 +1（前缀锚定 title 开头，禁模糊 %中缀% 匹配，Golden Path Step 5）
-  Test: manual:bash tests/regression/relay-2c482ed6/m2-noise-scenarios.sh issue-real-miss
+  Test: manual:bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh issue-real-miss
   期望: exit 0 且输出含 PASS scenario=issue-real-miss
 
 - [x] [BEHAVIOR] attribution_harness 停计 + 双重计数消除：注入 1 条无 smoke_tag、无 ability_id、无 journey_id 的 harness_initiative task 后重算，m2 debt 恰 +1（旧口径 +2 双重计数；PRD 验收点 5，Golden Path Step 4）
-  Test: manual:bash tests/regression/relay-2c482ed6/m2-noise-scenarios.sh harness-once
+  Test: manual:bash sprints/08070516-relay-2c482ed6/tests/m2-noise-scenarios.sh harness-once
   期望: exit 0 且输出含 PASS scenario=harness-once
 
 - [x] [BEHAVIOR] m2 回归测试红→绿进 CI：合同测试在最终落位全绿（红证据见 Test Contract 表：合同起草时 4 failed / 2 passed）
