@@ -2402,7 +2402,7 @@ git commit -m "feat(acceptance): 收单期 mandatory 场景推进闸 [task b35bf
 - Modify: `packages/brain/src/acceptance-aging.js`
 - Test: `packages/brain/src/__tests__/integration/acceptance-aging-expire.integration.test.js`
 
-- [ ] **Step 1: 写 failing 集成测试（A10②）**
+- [x] **Step 1: 写 failing 集成测试（A10②）**
 
 新建 `packages/brain/src/__tests__/integration/acceptance-aging-expire.integration.test.js`：
 
@@ -2469,7 +2469,7 @@ describe('A10② pending 48h → expired', () => {
 });
 ```
 
-- [ ] **Step 2: 登记并跑红**
+- [x] **Step 2: 登记并跑红**
 
 `packages/brain/vitest.config.js` 的 `POSTGRES_INTEGRATION_TESTS` 追加：
 
@@ -2485,7 +2485,7 @@ DB_NAME=cecelia_scratch npx vitest run --config vitest.integration.config.js \
 
 预期：FAIL，`ORPHAN_SCAN_LEGACY_STATUSES` 未导出、`expired_runs` 为 undefined。
 
-- [ ] **Step 3: 提交 Red commit**
+- [x] **Step 3: 提交 Red commit**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -2493,7 +2493,7 @@ git add packages/brain/src/__tests__/integration/acceptance-aging-expire.integra
 git commit -m "test(acceptance): 48h 过期扫描转 expired failing test [task b35bfa0c]"
 ```
 
-- [ ] **Step 4: 加厚 `acceptance-aging.js`**
+- [x] **Step 4: 加厚 `acceptance-aging.js`**
 
 在 `packages/brain/src/acceptance-aging.js` 的 `let lastRunAt = 0;` 之前加入：
 
@@ -2551,7 +2551,7 @@ export const ORPHAN_SCAN_LEGACY_STATUSES = ['failed'];
 
 第 22 行的早退分支同样补 `expired_runs: 0`，第 73 行的 catch 分支同理。
 
-- [ ] **Step 5: 跑测试确认全绿**
+- [x] **Step 5: 跑测试确认全绿**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -2561,7 +2561,7 @@ DB_NAME=cecelia_scratch npx vitest run --config vitest.integration.config.js \
 
 预期：5 例全 PASS。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
