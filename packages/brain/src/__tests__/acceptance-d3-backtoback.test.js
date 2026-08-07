@@ -413,12 +413,46 @@ describe('W1: POST /ai-results 含 result 字段 → 人列 result 不写 DB', (
 });
 
 // ──────────────────────────────────────────────────────────────────
-// W2: 写侧过滤 — acceptance-ai.js 函数体验证
+// W2: 写侧过滤 — POST /ai-results 含 submitted_by → DB 不写
 // ──────────────────────────────────────────────────────────────────
-describe('W2: acceptance-ai.js UPDATE 只含 ai_* 三列', () => {
-  it('[BEHAVIOR-13] registerAiResultsRoute 可调用，是函数', async () => {
-    const { registerAiResultsRoute } = await import('../routes/acceptance-ai.js');
-    expect(typeof registerAiResultsRoute).toBe('function');
+describe('W2: POST /ai-results 含 submitted_by → 人列 submitted_by 不写 DB', () => {
+  it('[BEHAVIOR-13] UPDATE acceptance_checks SET 子句不含 submitted_by', async () => {
+    const sqlCalls = [];
+    const client = {
+      query: vi.fn(async (sql, _params) => {
+        sqlCalls.push(sql);
+        if (sql.includes('FOR UPDATE')) return { rows: [{ id: 'run-1', detail: {} }] };
+        if (sql.toLowerCase().includes('from acceptance_runs')) return { rows: [{ id: 'run-1', detail: {} }] };
+        if (sql.includes('acceptance_checks WHERE run_id') && sql.includes('ANY')) {
+          return { rows: [{ check_key: 'S1-c1' }] };
+        }
+        if (sql.includes('acceptance_checks WHERE run_id')) {
+          return { rows: [{ check_key: 'S1-c1', ai_verdict: null, ai_evidence: null }] };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const pool = makePool({ connect: vi.fn(async () => client) });
+    await request(makeApp(pool))
+      .post('/api/brain/acceptance/ai-results')
+      .send({
+        run_key: 'rk-1',
+        results: [{
+          check_key: 'S1-c1',
+          ai_verdict: '通过',
+          submitted_by: 'evil', // 必须被静默忽略
+        }],
+      });
+    const checkUpdateSqls = sqlCalls.filter(
+      (s) => s.trim().toUpperCase().startsWith('UPDATE') && s.includes('acceptance_checks')
+    );
+    for (const sql of checkUpdateSqls) {
+      expect(
+        sql.match(/SET\s+.*\bsubmitted_by\s*=/i),
+        'submitted_by 不应出现在 SET 子句'
+      ).toBeNull();
+    }
   });
 });
 
@@ -462,6 +496,83 @@ describe('B7: createBearerAuth 空 token → 不 throw（当前 throw，测试 F
 });
 
 // ──────────────────────────────────────────────────────────────────
+// B8: AI token 只能访问 /acceptance/ai-results
+// ──────────────────────────────────────────────────────────────────
+describe('B8: AI token 仅允许访问 /acceptance/ai-results（failing test，修复前 RED）', () => {
+  it('[BEHAVIOR-8] AI token 访问 /acceptance/gate → 401 或 404', async () => {
+    const AI_TOKEN = 'ai-token-d3';
+    const pool = makePool();
+    const res = await request(createAcceptancePublicApp({ pool, token: AI_TOKEN }))
+      .get('/acceptance/gate')
+      .set('Authorization', `Bearer ${AI_TOKEN}`);
+    // 修复后：AI token 无权访问 gate 端点 → 401 或 404
+    expect([401, 404]).toContain(res.status);
+  });
+
+  it('[BEHAVIOR-8] AI token 访问 /acceptance/catalog → 401 或 404', async () => {
+    const AI_TOKEN = 'ai-token-d3';
+    const pool = makePool();
+    const res = await request(createAcceptancePublicApp({ pool, token: AI_TOKEN }))
+      .get('/acceptance/catalog')
+      .set('Authorization', `Bearer ${AI_TOKEN}`);
+    // 修复后：AI token 无权访问 catalog 端点 → 401 或 404
+    expect([401, 404]).toContain(res.status);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────
+// B9: gate token 只能访问 /acceptance/gate
+// ──────────────────────────────────────────────────────────────────
+describe('B9: gate token 仅允许访问 /acceptance/gate（failing test，修复前 RED）', () => {
+  it('[BEHAVIOR-9] gate token 访问 /acceptance/ai-results → 401 或 404', async () => {
+    const GATE_TOKEN = 'gate-token-d3';
+    const pool = makePool();
+    const res = await request(createAcceptancePublicApp({ pool, token: GATE_TOKEN }))
+      .post('/acceptance/ai-results')
+      .set('Authorization', `Bearer ${GATE_TOKEN}`)
+      .send({ run_key: 'rk-1', results: [] });
+    // 修复后：gate token 无权访问 ai-results 端点 → 401 或 404
+    expect([401, 404]).toContain(res.status);
+  });
+
+  it('[BEHAVIOR-9] gate token 访问 /acceptance/catalog → 401 或 404', async () => {
+    const GATE_TOKEN = 'gate-token-d3';
+    const pool = makePool();
+    const res = await request(createAcceptancePublicApp({ pool, token: GATE_TOKEN }))
+      .get('/acceptance/catalog')
+      .set('Authorization', `Bearer ${GATE_TOKEN}`);
+    // 修复后：gate token 无权访问 catalog 端点 → 401 或 404
+    expect([401, 404]).toContain(res.status);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────
+// B10: api token 只能访问 /acceptance/catalog
+// ──────────────────────────────────────────────────────────────────
+describe('B10: api token 仅允许访问 /acceptance/catalog（failing test，修复前 RED）', () => {
+  it('[BEHAVIOR-10] api token 访问 /acceptance/ai-results → 401 或 404', async () => {
+    const API_TOKEN = 'api-token-d3';
+    const pool = makePool();
+    const res = await request(createAcceptancePublicApp({ pool, token: API_TOKEN }))
+      .post('/acceptance/ai-results')
+      .set('Authorization', `Bearer ${API_TOKEN}`)
+      .send({ run_key: 'rk-1', results: [] });
+    // 修复后：api token 无权访问 ai-results 端点 → 401 或 404
+    expect([401, 404]).toContain(res.status);
+  });
+
+  it('[BEHAVIOR-10] api token 访问 /acceptance/gate → 401 或 404', async () => {
+    const API_TOKEN = 'api-token-d3';
+    const pool = makePool();
+    const res = await request(createAcceptancePublicApp({ pool, token: API_TOKEN }))
+      .get('/acceptance/gate')
+      .set('Authorization', `Bearer ${API_TOKEN}`);
+    // 修复后：api token 无权访问 gate 端点 → 401 或 404
+    expect([401, 404]).toContain(res.status);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────
 // B11: 单 token 缺失 → listener 不崩
 // ──────────────────────────────────────────────────────────────────
 describe('B11: 单 token 缺失 → listener 正常启动，缺失端点 404', () => {
@@ -473,7 +584,7 @@ describe('B11: 单 token 缺失 → listener 正常启动，缺失端点 404', (
       const server = startAcceptancePublicServer({ pool, port: 0 });
       // 当前：ACCEPTANCE_API_TOKEN 存在 → server 启动
       // 修复后：改成三 token 分权后，任一缺失只降级端点，不影响 server 启动
-      expect(server).not.toBeNull();
+      expect(server, 'server must start when main token present, even if AI token missing').not.toBeNull();
       if (server) {
         await new Promise((r) => server.close(r));
       }

@@ -16,7 +16,7 @@ sprint_dir: sprints/w2-backtoback-d3
 | D5: 三 token 分权不崩 | 单元测试 B7~B11 | ✓ |
 | D6: 写侧过滤 | 单元测试 B13 + psql | ✓ |
 | D7: 公网端点函数体保留 | `grep -n "submitAcceptanceResults" acceptance-public-server.js` | ✓ |
-| D8: CI 覆盖（brain-ci.yml）| PR diff 含测试文件 + island-gate 绿 | ✓ |
+| D8: CI 覆盖（brain-ci.yml）| `npx vitest run packages/brain/src/__tests__/acceptance-d3-backtoback.test.js` | ✓ |
 | D9: 上线前核日志 SOP | 见下方 SOP 条目 | ✓ |
 | D10: 无 `console.log` 遗留 | code review | ✓ |
 
@@ -121,4 +121,4 @@ grep -n "submitAcceptanceResults\|createAcceptancePublicRouter\|acceptance/resul
 
 - `sprints/w2-backtoback-d3/contract-draft.md` ✓
 - `sprints/w2-backtoback-d3/contract-dod.md` ✓（本文件）
-- `sprints/w2-backtoback-d3/tests/acceptance-d3-backtoback.test.js` ✓
+- `packages/brain/src/__tests__/acceptance-d3-backtoback.test.js` ✓（CI 正本，sprints/ 副本已废弃）

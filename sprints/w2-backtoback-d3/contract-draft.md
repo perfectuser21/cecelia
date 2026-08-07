@@ -116,8 +116,12 @@ STATUS=$(curl -o /dev/null -w "%{http_code}" \
 [ "$STATUS" = "403" ] && echo "PASS: 403 for non-human_complete review" || echo "FAIL: got $STATUS"
 
 # ③ 写侧过滤验证（BEHAVIOR-13）
-# 需先确认 POST /acceptance/ai-results 只更新 ai_* 三列
-# 通过 psql 查验
+# 先提交含人列字段的 ai-results（期望服务端静默过滤）
+curl -sf -X POST http://localhost:5221/api/brain/acceptance/ai-results \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCEPTANCE_AI_TOKEN" \
+  -d "{\"run_key\":\"$RUN_KEY\",\"results\":[{\"check_key\":\"S1-c1\",\"ai_verdict\":\"通过\",\"result\":\"不通过\",\"submitted_by\":\"evil\"}]}"
+# 再通过 psql 确认 result 与 submitted_by 列未被改变
 psql -U cecelia cecelia -c "SELECT check_key, result, submitted_by, ai_verdict FROM acceptance_checks WHERE run_id IN (SELECT id FROM acceptance_runs WHERE run_key='$RUN_KEY');"
 ```
 
