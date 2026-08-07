@@ -2,9 +2,9 @@
  * acceptance-state.js — 验收一体两面的纯计算层（D1，零 DB 依赖）
  *
  * 三段互不推导的计算，v7-final 明写「两者不得共用同一个动词或同一段计算」：
- *   1. 格级 final_state（作用域 = 单个格，九组合矩阵）      → computeCellState
- *   2. run 级 gate_verdict（作用域 = 整个 run，但不是 status）→ computeGateVerdict
- *   3. run 级 status（7 值状态机，只看人列填写进度）         → computeRunStatus
+ *   1. 格级 final_state（作用域 = 单个格，九组合矩阵）      → computeCellState（Task 2 落地）
+ *   2. run 级 gate_verdict（作用域 = 整个 run，但不是 status）→ computeGateVerdict（Task 3 落地）
+ *   3. run 级 status（7 值状态机，只看人列填写进度）         → computeRunStatus（本文件已有）
  */
 
 /** 7 值状态机的全集；passed/failed 是只读历史兼容值，不在其中 */

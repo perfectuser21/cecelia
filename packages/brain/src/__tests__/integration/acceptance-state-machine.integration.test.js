@@ -34,7 +34,7 @@ describe('A10⑤ 人列填满即 human_complete（本刀最重要的回归测试
       { check_key: 'S1-c1', result: '通过' },
       { check_key: 'S2-c1', result: '不通过', note: '挂了' },
       { check_key: 'S3-c1', result: '通过' },
-    ], { run_key: RUN_KEY });
+    ]);
     const { rows } = await pool.query('SELECT status FROM acceptance_runs WHERE run_key = $1', [RUN_KEY]);
     expect(rows[0].status).toBe('human_complete');
   });
@@ -44,14 +44,14 @@ describe('A10⑤ 人列填满即 human_complete（本刀最重要的回归测试
     await submitAcceptanceResults(pool, [
       { check_key: 'S1-c1', result: '通过' },
       { check_key: 'S2-c1', result: '通过' },
-    ], { run_key: RUN_KEY });
+    ]);
     const { rows } = await pool.query('SELECT status FROM acceptance_runs WHERE run_key = $1', [RUN_KEY]);
     expect(rows[0].status).toBe('human_complete');
   });
 
   it('人列部分填写 → in_review', async () => {
     await seedRun(3);
-    await submitAcceptanceResults(pool, [{ check_key: 'S1-c1', result: '通过' }], { run_key: RUN_KEY });
+    await submitAcceptanceResults(pool, [{ check_key: 'S1-c1', result: '通过' }]);
     const { rows } = await pool.query('SELECT status FROM acceptance_runs WHERE run_key = $1', [RUN_KEY]);
     expect(rows[0].status).toBe('in_review');
   });

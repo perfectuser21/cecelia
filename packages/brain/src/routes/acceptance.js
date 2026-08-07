@@ -28,6 +28,13 @@ function isLegacyRejectionTransition(prevStatus, nextStatus) {
   return prevStatus !== 'failed' && nextStatus === 'failed';
 }
 
+/**
+ * 提交人列结果。签名只有 (pool, results)：整条路径按全局 check_key 寻址，没有 run 作用域入参。
+ * migration 392 把 UNIQUE 从全局 check_key 换绑到 (run_id, check_key) 之后，同一格号可以合法地
+ * 出现在多个 run 里，此时下面的 `WHERE check_key = ANY(...)` / `WHERE check_key = $4` 会跨 run
+ * 命中——**提交路径的 run 作用域寻址由 Task 4 接管**（check_key 格号化 + run_id 入参）。
+ * 在那之前不要给本函数传第三个 run 作用域参数：它会被静默忽略，制造「以为限定了 run」的假象。
+ */
 export async function submitAcceptanceResults(pool, results) {
   if (!Array.isArray(results) || results.length === 0) {
     throw new AcceptanceResultsError(400, { error: 'results must be a non-empty array' });
@@ -82,7 +89,6 @@ export async function submitAcceptanceResults(pool, results) {
       const { rows: counts } = await client.query(
         `SELECT COUNT(*)::int AS total,
                 COUNT(*) FILTER (WHERE result = '通过')::int AS pass,
-                COUNT(*) FILTER (WHERE result = '不通过')::int AS fail,
                 COUNT(*) FILTER (WHERE result IS NULL)::int AS pending
            FROM acceptance_checks WHERE run_id = $1`,
         [runId]

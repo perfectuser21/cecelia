@@ -89,28 +89,55 @@ describe('migration 392 结构断言', () => {
     );
   }
 
+  /**
+   * 起一个「跑完必回滚」的事务跑 body，撞 40P01 就整笔重来。
+   * lockAndNormalize 的加锁顺序是 runs→checks，而 submitAcceptanceResults 是先动 checks
+   * 再 `SELECT ... FROM acceptance_runs FOR UPDATE`，顺序正好相反；三个集成文件并行同库时
+   * 构成 AB-BA 死锁窗口，PG 会挑一方抛 40P01 变成偶发随机红。这不是产品缺陷——生产没有
+   * 「锁全表再回滚」这条路径，是测试自己为了隔离而引入的锁序，重试即可。
+   */
+  async function inRolledBackTxn(body, attempts = 3) {
+    for (let attempt = 1; ; attempt++) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await lockAndNormalize(client);
+        await body(client);
+        return;
+      } catch (err) {
+        if (err?.code !== '40P01' || attempt >= attempts) throw err;
+      } finally {
+        try { await client.query('ROLLBACK'); } catch { /* 事务已被 PG 中止 */ }
+        client.release();
+      }
+    }
+  }
+
+  /**
+   * 跑 down 并断言它以可读的「不可回滚」报错收场。
+   * 不用 `expect(...).rejects`：死锁若发生在 DOWN_SQL 内部的 ALTER 上，40P01 会被 expect
+   * 变成 AssertionError，重试就再也认不出它了。这里先把错误取到手，是 40P01 就原样抛给重试。
+   */
+  async function expectDownFailFast(client) {
+    const err = await client.query(DOWN_SQL).then(() => null, (e) => e);
+    if (err?.code === '40P01') throw err;
+    expect(err).toBeTruthy();
+    expect(err.message).toMatch(/不可回滚/);
+  }
+
   it('down 在无跨 run 重复格号时完全可逆（事务内跑完即回滚，不动测试库）', async () => {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await lockAndNormalize(client);
+    await inRolledBackTxn(async (client) => {
       await client.query(DOWN_SQL);
       const { rows } = await client.query(
         `SELECT column_name FROM information_schema.columns
          WHERE table_name='acceptance_checks' AND column_name='ai_verdict'`
       );
       expect(rows).toHaveLength(0);
-    } finally {
-      await client.query('ROLLBACK');
-      client.release();
-    }
+    });
   });
 
   it('down 在已有新格号跨 run 重复时 fail-fast 报错，不静默丢数据', async () => {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await lockAndNormalize(client);
+    await inRolledBackTxn(async (client) => {
       const mk = async (key) => {
         const { rows } = await client.query(
           `INSERT INTO acceptance_runs (run_key, title) VALUES ($1, 'down-guard') RETURNING id`, [key]
@@ -122,18 +149,12 @@ describe('migration 392 结构断言', () => {
       };
       await mk(`down-guard-a-${process.pid}`);
       await mk(`down-guard-b-${process.pid}`);
-      await expect(client.query(DOWN_SQL)).rejects.toThrow(/不可回滚/);
-    } finally {
-      await client.query('ROLLBACK');
-      client.release();
-    }
+      await expectDownFailFast(client);
+    });
   });
 
   it('down 在已有 7 值新状态 run 时同样 fail-fast，而不是抛裸 CHECK 违约', async () => {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await lockAndNormalize(client);
+    await inRolledBackTxn(async (client) => {
       await client.query(
         `INSERT INTO acceptance_runs (run_key, title, status)
          VALUES ($1, 'down-status-guard', 'human_complete')`,
@@ -141,10 +162,7 @@ describe('migration 392 结构断言', () => {
       );
       // 没有这道守卫，回滚会在 ADD CONSTRAINT 时抛 23514「is violated by some row」，
       // 运维看不出该清什么；守卫要把「清哪些 run」直接说出来
-      await expect(client.query(DOWN_SQL)).rejects.toThrow(/不可回滚/);
-    } finally {
-      await client.query('ROLLBACK');
-      client.release();
-    }
+      await expectDownFailFast(client);
+    });
   });
 });
