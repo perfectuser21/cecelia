@@ -261,7 +261,13 @@ describe('全链路：生成器 36 行 → 建单 → AI 全格回写 → ai_sta
     // 与租户账号）从建单端点原路落库——写入侧接上后，这里不再需要建完单再补写一次库。
     const created = await request(app).post('/api/brain/acceptance/runs').send({
       run_key: fullRunKey, title: '全链路', gp_id: `${RUN_KEY}-gp`, checks,
-      detail: { tenant_account: 'acc-verify-01', ...FULL_SCENARIOS },
+      detail: {
+        tenant_account: 'acc-verify-01',
+        backend_sha: 'a'.repeat(40), backend_sha_src2: 'a'.repeat(40),
+        frontend_sha: 'b'.repeat(40), frontend_sha_src2: 'b'.repeat(40),
+        spec_sha: 'c'.repeat(64),
+        ...FULL_SCENARIOS,
+      },
     });
     expect(created.status).toBe(201);
 

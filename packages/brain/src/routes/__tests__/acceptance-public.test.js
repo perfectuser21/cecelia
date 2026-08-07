@@ -14,8 +14,11 @@ function makeApp(pool) {
 // 存量 21 行历史数据必须还能回写（migration 392 注释「不回填/不改写」）。
 function makeClient(scripts) {
   const query = vi.fn(async (sql, params) => {
-    // run 作用域寻址：所有用例都提交给同一个 run，逐个脚本重复声明没有意义
-    if (sql.includes('SELECT id FROM acceptance_runs WHERE run_key')) return { rows: [{ id: 'A' }] };
+    // run 作用域寻址：所有用例都提交给同一个 run，逐个脚本重复声明没有意义。
+    // detail: null = 这批 run 不带版本戳，冻结锁（J12-A）对它们不适用。
+    if (/^SELECT id.*FROM acceptance_runs WHERE run_key/.test(sql)) {
+      return { rows: [{ id: 'A', status: 'pending', detail: null }] };
+    }
     return scripts(sql, params) ?? { rows: [] };
   });
   return { query, release: vi.fn() };
@@ -254,7 +257,9 @@ describe('submitAcceptanceResults 驳回任务并发去重', () => {
   it('INSERT tasks 撞 23505 时静默忽略，整体仍返回成功', async () => {
     const client = {
       query: vi.fn(async (sql) => {
-        if (sql.includes('SELECT id FROM acceptance_runs WHERE run_key')) return { rows: [{ id: 'run-1' }] };
+        if (/^SELECT id.*FROM acceptance_runs WHERE run_key/.test(sql)) {
+          return { rows: [{ id: 'run-1', status: 'pending', detail: null }] };
+        }
         if (sql.includes('SELECT check_key FROM acceptance_checks')) {
           return { rows: [{ check_key: 'r1:001', run_id: 'run-1' }] };
         }
@@ -289,7 +294,9 @@ describe('submitAcceptanceResults 驳回任务并发去重', () => {
     const updateCalls = [];
     const client = {
       query: vi.fn(async (sql, params) => {
-        if (sql.includes('SELECT id FROM acceptance_runs WHERE run_key')) return { rows: [{ id: 'run-1' }] };
+        if (/^SELECT id.*FROM acceptance_runs WHERE run_key/.test(sql)) {
+          return { rows: [{ id: 'run-1', status: 'pending', detail: null }] };
+        }
         if (sql.includes('SELECT check_key FROM acceptance_checks')) {
           return { rows: [{ check_key: 'r1:001', run_id: 'run-1' }] };
         }

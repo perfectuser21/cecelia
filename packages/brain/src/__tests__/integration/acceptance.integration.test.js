@@ -19,8 +19,15 @@ const RUN_KEY = `itest-run-${process.pid}`;
  * 让这条与 gp 无关的全链测试随环境红。
  */
 const GP_ID = `itest-gp-${process.pid}`;
-/** 建单单头：租户白名单（A16②）对所有建单生效，缺 tenant_account 一律 400 */
-const HEAD = { tenant_account: 'acc-verify-01' };
+/** 建单单头：租户白名单（A16②）与版本戳双源对账（A9）对所有建单生效 */
+const HEAD = {
+  tenant_account: 'acc-verify-01',
+  backend_sha: 'a'.repeat(40), backend_sha_src2: 'a'.repeat(40),
+  frontend_sha: 'b'.repeat(40), frontend_sha_src2: 'b'.repeat(40),
+  spec_sha: 'c'.repeat(64),
+};
+/** 带版本戳的 run 提交人列时必须自报当前 sha，否则冻结锁按 fail-closed 拒收 */
+const SHAS = { backend_sha: 'a'.repeat(40), frontend_sha: 'b'.repeat(40), spec_sha: 'c'.repeat(64) };
 
 describe('acceptance 全链 integration', () => {
   afterAll(async () => {
@@ -58,7 +65,7 @@ describe('acceptance 全链 integration', () => {
     expect(mine.checks).toHaveLength(3);
 
     const results = await request(app).post('/acceptance/results').send({
-      run_key: RUN_KEY,
+      run_key: RUN_KEY, ...SHAS,
       results: [
         { check_key: 'S1-c1', result: '通过' },
         { check_key: 'S1-c3', result: '不通过', note: '挂了' },
@@ -101,8 +108,8 @@ describe('acceptance 全链 integration', () => {
       checks: [{ check_key: 'S1-c1', kind: 'FR', name: 'a' }, { check_key: 'S2-c1', kind: 'FR', name: 'b' }],
     });
     const [r1, r2] = await Promise.all([
-      request(app).post('/acceptance/results').send({ run_key: runKey, results: [{ check_key: 'S1-c1', result: '通过' }] }),
-      request(app).post('/acceptance/results').send({ run_key: runKey, results: [{ check_key: 'S2-c1', result: '通过' }] }),
+      request(app).post('/acceptance/results').send({ run_key: runKey, ...SHAS, results: [{ check_key: 'S1-c1', result: '通过' }] }),
+      request(app).post('/acceptance/results').send({ run_key: runKey, ...SHAS, results: [{ check_key: 'S2-c1', result: '通过' }] }),
     ]);
     expect(r1.status).toBe(200);
     expect(r2.status).toBe(200);
@@ -131,7 +138,7 @@ describe('acceptance 全链 integration', () => {
       [rejectTitle]
     );
     const submit = await request(app).post('/acceptance/results').send({
-      run_key: runKey,
+      run_key: runKey, ...SHAS,
       results: [{ check_key: 'S1-c1', result: '不通过' }],
     });
     expect(submit.status).toBe(200);

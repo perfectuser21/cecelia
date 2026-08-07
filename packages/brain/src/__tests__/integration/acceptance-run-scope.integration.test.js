@@ -21,8 +21,15 @@ const CHECKS = [
 ];
 /** gp_id 按进程取唯一：复盘闭环闸看「同 gp 上一轮」，共用固定值会撞上库里别的单 */
 const GP_ID = `scope-gp-${process.pid}`;
-/** 建单单头：租户白名单（A16②）对所有建单生效 */
-const HEAD = { tenant_account: 'acc-verify-01' };
+/** 建单单头：租户白名单（A16②）与版本戳双源对账（A9）对所有建单生效 */
+const HEAD = {
+  tenant_account: 'acc-verify-01',
+  backend_sha: 'a'.repeat(40), backend_sha_src2: 'a'.repeat(40),
+  frontend_sha: 'b'.repeat(40), frontend_sha_src2: 'b'.repeat(40),
+  spec_sha: 'c'.repeat(64),
+};
+/** 带版本戳的 run 提交人列时必须自报当前 sha，否则冻结锁按 fail-closed 拒收 */
+const SHAS = { backend_sha: 'a'.repeat(40), frontend_sha: 'b'.repeat(40), spec_sha: 'c'.repeat(64) };
 
 async function cleanup() {
   await pool.query('DELETE FROM acceptance_runs WHERE run_key = ANY($1)', [[RUN_A, RUN_B, RUN_LEGACY]]);
@@ -75,7 +82,7 @@ describe('A1/A3 格号作用域', () => {
   it('A3 向 run A 提交 S3-c1 后，run B 的 S3-c1 仍为 NULL（psql 直查不经 API）', async () => {
     const app = makeApp();
     const res = await request(app).post('/api/brain/acceptance/results')
-      .send({ run_key: RUN_A, results: [{ check_key: 'S3-c1', result: '通过' }] });
+      .send({ run_key: RUN_A, ...SHAS, results: [{ check_key: 'S3-c1', result: '通过' }] });
     expect(res.status).toBe(200);
 
     const { rows } = await pool.query(

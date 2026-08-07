@@ -9,6 +9,7 @@ import { computeRunStatus } from '../acceptance-state.js';
 import { findDuplicateCheckKeys } from '../acceptance-spec.js';
 import { registerAiResultsRoute } from './acceptance-ai.js';
 import { registerReviewClosureRoutes } from './acceptance-review.js';
+import { checkCreateGate, checkFrozenStamps } from './acceptance-gates.js';
 
 export const ACCEPTANCE_KINDS = ['FR', 'NFR', 'Invariant', 'SOP'];
 export const ACCEPTANCE_RESULTS = ['通过', '不通过', '无法验证'];
@@ -38,68 +39,13 @@ function isLegacyRejectionTransition(prevStatus, nextStatus) {
  */
 export const CHECK_KEY_PATTERN = /^S\d+-c[1-4]$/;
 
-/** 逃生阀的门槛：按字符数算，中文按字计（A15⑥） */
-const FORCE_REASON_MIN_CHARS = 20;
-
-/**
- * 验收专用租户白名单（A16②）。env 缺失返回 null = 拒绝一切建单，绝不降级放行——
- * 「没配白名单」和「白名单允许所有人」是两件事，把前者当后者就是拿生产客户账号做验收。
- */
-export function loadTenantAllowlist() {
-  const raw = process.env.ACCEPTANCE_TENANT_ALLOWLIST;
-  if (!raw || raw.trim() === '') return null;
-  return raw.split(',').map((s) => s.trim()).filter(Boolean);
-}
-
-/**
- * 建单前置（A15①⑥⑦ / A16②）。返回 null = 放行；否则返回 {status, body}。
- * 放行时可能就地给 head 补上 force 三项留痕——强开必须留痕，两者同一步完成。
- */
-export async function checkCreateGate(pool, { gp_id, run_key, head, force_reason, force_opened_by }) {
-  const allowlist = loadTenantAllowlist();
-  if (allowlist === null) {
-    return { status: 503, body: {
-      error: 'acceptance_tenant_allowlist_unset',
-      hint: 'ACCEPTANCE_TENANT_ALLOWLIST 未配置；缺白名单时拒绝建单而非放行',
-    } };
-  }
-  if (!allowlist.includes(head.tenant_account)) {
-    return { status: 400, body: {
-      error: 'tenant_account_not_allowed', tenant_account: head.tenant_account || null,
-    } };
-  }
-
-  // A15①：同 gp 上一轮复盘没闭环就开新一轮，等于让上一轮的教训无处落地。
-  // 没有 gp_id 的单不挂在任何一条 GP 上，无「上一轮」可言，这条闸对它不适用。
-  if (!gp_id) return null;
-  const { rows: prevRuns } = await pool.query(
-    `SELECT run_key, detail FROM acceptance_runs
-      WHERE gp_id = $1 AND run_key <> $2 ORDER BY created_at DESC LIMIT 1`,
-    [gp_id, run_key]
-  );
-  const prevRun = prevRuns[0];
-  if (!prevRun || prevRun.detail?.review_closed_at) return null;
-
-  const forced = typeof force_reason === 'string' && [...force_reason].length >= FORCE_REASON_MIN_CHARS;
-  if (!forced) {
-    return { status: 409, body: {
-      error: 'previous_review_not_closed',
-      previous_run_key: prevRun.run_key,
-      hint: `上一轮复盘未闭环；如需强开请给 force_reason（≥${FORCE_REASON_MIN_CHARS} 字）`,
-    } };
-  }
-  head.force_reason = force_reason;
-  head.force_opened_by = force_opened_by || null;
-  head.force_opened_at = new Date().toISOString();
-  return null;
-}
-
 /**
  * 提交人列结果。`run_key` 是必填的写入作用域：migration 392 把 UNIQUE 从全局 check_key 换绑到
  * (run_id, check_key) 之后，同一格号可以合法地出现在多个 run 里，不带作用域的寻址会跨 run 误写。
  * 缺 run_key 直接 400，不回落到「按全局 check_key 猜一个」——那正是本刀要堵的洞。
  */
-export async function submitAcceptanceResults(pool, results, { run_key } = {}) {
+export async function submitAcceptanceResults(pool, results, options = {}) {
+  const { run_key } = options;
   if (!run_key) {
     throw new AcceptanceResultsError(400, { error: 'run_key is required（写入必须限定在单个 run 作用域内）' });
   }
@@ -130,13 +76,36 @@ export async function submitAcceptanceResults(pool, results, { run_key } = {}) {
     await client.query('BEGIN');
     const keys = results.map((r) => r.check_key);
     const { rows: runRows } = await client.query(
-      'SELECT id FROM acceptance_runs WHERE run_key = $1', [run_key]
+      'SELECT id, status, detail FROM acceptance_runs WHERE run_key = $1', [run_key]
     );
     if (runRows.length === 0) {
       await safeRollback(client);
       throw new AcceptanceResultsError(404, { error: 'run not found', run_key });
     }
     const scopedRunId = runRows[0].id;
+
+    // 冻结锁（J12-A）：排在任何 UPDATE 之前，拦下时这一批一格都不许落库。
+    const frozen = checkFrozenStamps(runRows[0].detail, options);
+    if (frozen.kind === 'missing') {
+      await safeRollback(client);
+      throw new AcceptanceResultsError(400, {
+        error: 'sha_required_for_freeze_check',
+        hint: '该 run 带版本戳，提交须自报 backend_sha/frontend_sha/spec_sha',
+      });
+    }
+    if (frozen.kind === 'changed') {
+      // 转 stale 要留下来（这一轮作废是既成事实），判定不能落库——所以先提交转态再抛。
+      await client.query(
+        `UPDATE acceptance_runs
+            SET status = 'stale',
+                detail = COALESCE(detail,'{}'::jsonb) || $1::jsonb,
+                updated_at = NOW()
+          WHERE id = $2`,
+        [JSON.stringify({ stale_reason: frozen.changed, stale_at: new Date().toISOString() }), scopedRunId]
+      );
+      await client.query('COMMIT');
+      throw new AcceptanceResultsError(409, { error: 'run_frozen_version_changed', changed: frozen.changed });
+    }
     const { rows: found } = await client.query(
       'SELECT check_key FROM acceptance_checks WHERE run_id = $1 AND check_key = ANY($2)',
       [scopedRunId, keys]
@@ -401,7 +370,12 @@ export function createAcceptanceInternalRouter({ pool }) {
 
   router.post('/results', async (req, res) => {
     try {
-      const result = await submitAcceptanceResults(pool, req.body?.results, { run_key: req.body?.run_key });
+      const result = await submitAcceptanceResults(pool, req.body?.results, {
+        run_key: req.body?.run_key,
+        backend_sha: req.body?.backend_sha,
+        frontend_sha: req.body?.frontend_sha,
+        spec_sha: req.body?.spec_sha,
+      });
       return res.json(result);
     } catch (err) {
       if (err instanceof AcceptanceResultsError) return res.status(err.status).json(err.body);
@@ -486,7 +460,12 @@ export function createAcceptancePublicRouter({ pool }) {
 
   router.post('/acceptance/results', async (req, res) => {
     try {
-      const result = await submitAcceptanceResults(pool, req.body?.results, { run_key: req.body?.run_key });
+      const result = await submitAcceptanceResults(pool, req.body?.results, {
+        run_key: req.body?.run_key,
+        backend_sha: req.body?.backend_sha,
+        frontend_sha: req.body?.frontend_sha,
+        spec_sha: req.body?.spec_sha,
+      });
       return res.json(result);
     } catch (err) {
       if (err instanceof AcceptanceResultsError) return res.status(err.status).json(err.body);
