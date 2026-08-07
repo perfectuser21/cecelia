@@ -1,14 +1,19 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import express from 'express';
 import request from 'supertest';
 import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
 import pool from '../../db.js';
 import { createAcceptanceInternalRouter } from '../../routes/acceptance.js';
 import { _resetSpecSetsForTest } from '../../routes/acceptance-ai.js';
+import { buildChecksFromSpec } from '../../../scripts/acceptance/build-checks-from-spec.mjs';
 
 const RUN_KEY = `ai-itest-${process.pid}`;
+const FIXTURE = path.join(
+  path.dirname(fileURLToPath(import.meta.url)), '../fixtures/acceptance/line02-android.yaml'
+);
 
 function makeApp() {
   const app = express();
@@ -238,6 +243,41 @@ describe('增项3 规程读不出来时路由层的错误映射（服务端错�
     const res = await postOne();
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('spec_unavailable');
+  });
+});
+
+describe('全链路：生成器 36 行 → 建单 → AI 全格回写 → ai_status 转 ok', () => {
+  // 其余用例全落在 dumb 分支上，'ok' 这一支一个断言都没有——哑火判据要是恒判 dumb，
+  // 上面那些测试会一条不落地全绿。这条从生成器真实产出的 36 行走完整条链把它钉住。
+  it('36 格全给确定判定 → ai_status=ok / ai_incomplete=false，且 AI 列真落到库里', async () => {
+    const fullRunKey = `${RUN_KEY}-full`;
+    const { checks } = buildChecksFromSpec(FIXTURE);
+    expect(checks).toHaveLength(36);
+
+    const app = makeApp();
+    const created = await request(app).post('/api/brain/acceptance/runs')
+      .send({ run_key: fullRunKey, title: '全链路', gp_id: '7790f728', checks });
+    expect(created.status).toBe(201);
+
+    const res = await request(app).post('/api/brain/acceptance/ai-results').send({
+      run_key: fullRunKey,
+      results: checks.map((c) => ({ check_key: c.check_key, ai_verdict: '通过' })),
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ updated: 36, ai_status: 'ok', ai_incomplete: false });
+
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n FROM acceptance_checks c JOIN acceptance_runs r ON r.id = c.run_id
+       WHERE r.run_key = $1 AND c.ai_verdict = '通过' AND c.ai_run_at IS NOT NULL`, [fullRunKey]
+    );
+    expect(rows[0].n).toBe(36);
+
+    const { rows: runRows } = await pool.query(
+      'SELECT detail, status FROM acceptance_runs WHERE run_key = $1', [fullRunKey]
+    );
+    expect(runRows[0].detail.ai_missing_cells).toEqual([]);
+    // 人列一格没填，run 仍停在 pending——AI 填满 36 格也推不动人列进度
+    expect(runRows[0].status).toBe('pending');
   });
 });
 
