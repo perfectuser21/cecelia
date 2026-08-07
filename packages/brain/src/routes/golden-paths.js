@@ -1,6 +1,7 @@
 // golden_paths（GP 蓝图级提案实体）基础端点——GP loop T1 + T7 拍板回路
 // 既有 /golden_path（单数下划线，routes/abilities.js，任务级 FR 台账）是另一实体。
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { getTotalEffectiveSlots } from '../fleet-resource-cache.js';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../golden-path-contracts.js';
 
 const router = express.Router();
+router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
 
 async function withTransaction(operation) {
   const client = await pool.connect();
