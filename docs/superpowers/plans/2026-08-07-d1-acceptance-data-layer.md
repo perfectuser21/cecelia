@@ -3259,7 +3259,7 @@ git commit -m "feat(acceptance): 建单期复盘闭环闸/逃生阀/租户白名
 - Modify: `packages/brain/src/routes/acceptance.js`（`POST /runs` 落库校验、`submitAcceptanceResults` 冻结锁）
 - Test: `packages/brain/src/__tests__/integration/acceptance-version-freeze.integration.test.js`
 
-- [ ] **Step 1: 写 failing 集成测试（A9 + 冻结锁）**
+- [x] **Step 1: 写 failing 集成测试（A9 + 冻结锁）**
 
 新建 `packages/brain/src/__tests__/integration/acceptance-version-freeze.integration.test.js`：
 
@@ -3376,7 +3376,7 @@ describe('A9 版本戳落库与冻结锁', () => {
 });
 ```
 
-- [ ] **Step 2: 登记并跑红**
+- [x] **Step 2: 登记并跑红**
 
 `packages/brain/vitest.config.js` 追加：
 
@@ -3392,7 +3392,7 @@ DB_NAME=cecelia_scratch npx vitest run --config vitest.integration.config.js \
 
 预期：双源对账与冻结锁相关的 6 例 FAIL。
 
-- [ ] **Step 3: 提交 Red commit**
+- [x] **Step 3: 提交 Red commit**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -3400,7 +3400,7 @@ git add packages/brain/src/__tests__/integration/acceptance-version-freeze.integ
 git commit -m "test(acceptance): 版本戳双源对账与冻结锁 failing test [task b35bfa0c]"
 ```
 
-- [ ] **Step 4: 实现建单期双源对账**
+- [x] **Step 4: 实现建单期双源对账**
 
 在 `routes/acceptance.js` 的常量段追加：
 
@@ -3432,7 +3432,7 @@ export function validateVersionStamps(head) {
     if (stampError) return res.status(400).json(stampError);
 ```
 
-- [ ] **Step 5: 实现收单期冻结锁**
+- [x] **Step 5: 实现收单期冻结锁**
 
 `submitAcceptanceResults` 里，取到 `scopedRunId` 的那条查询改为一并取 `status` 与 `detail`：
 
@@ -3497,7 +3497,7 @@ export async function submitAcceptanceResults(pool, results, options = {}) {
 
 `stale` 之后再提交也不会回到活跃态——`computeRunStatus` 对非活跃前态原样返回（Task 1 已实现并测过）。
 
-- [ ] **Step 6: 给两个既有集成测试补版本戳（`validateVersionStamps` 现在对所有建单生效）**
+- [x] **Step 6: 给两个既有集成测试补版本戳（`validateVersionStamps` 现在对所有建单生效）**
 
 `acceptance.integration.test.js` 与 `acceptance-run-scope.integration.test.js` 里 Task 12 加的 `detail` 补全成完整单头：
 
@@ -3518,7 +3518,7 @@ export async function submitAcceptanceResults(pool, results, options = {}) {
 
 （`submitAcceptanceResults` 走 options：`{ run_key: RUN_KEY, backend_sha: 'a'.repeat(40), frontend_sha: 'b'.repeat(40), spec_sha: 'c'.repeat(64) }`。）
 
-- [ ] **Step 7: 跑测试确认全绿**
+- [x] **Step 7: 跑测试确认全绿**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -3528,7 +3528,7 @@ DB_NAME=cecelia_scratch ACCEPTANCE_SPEC_PATH=$PWD/src/__tests__/fixtures/accepta
 
 预期：整个 integration 目录 PASS（含 9 例冻结锁）。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
