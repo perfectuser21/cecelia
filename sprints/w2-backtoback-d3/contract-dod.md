@@ -30,30 +30,30 @@ sprint_dir: sprints/w2-backtoback-d3
 
 | 编号 | 出口 | 断言内容 |
 |------|------|---------|
-| R1 | `GET /runs?gp_id=xxx` 默认 | checks 无 AI 四列 |
-| R2 | `GET /runs?gp_id=xxx` 有活跃 run（gp 级跨轮闸） | AI 四列 + adjudication 置空 |
-| R3 | `GET /runs/:run_key` 默认 | checks 无 AI 四列 |
-| R4 | `GET /runs/:run_key?view=review` + status=human_complete | checks 含 AI 四列（值可 null） |
-| R5 | `GET /runs/:run_key?view=review` + status=pending | HTTP 403 |
-| R6 | `GET /runs/:run_key?view=review` + status=in_review | HTTP 403 |
-| R7 | 内网 `GET /pending` | runs checks 无 AI 四列 |
-| R8 | `loadRunsWithChecks` SQL 使用显式列（不含 AI 四列） | SQL 字符串断言 |
-| R9 | `loadChecks` SQL 使用显式列（不含 AI 四列） | SQL 字符串断言 |
+| [BEHAVIOR] R1 | `GET /runs?gp_id=xxx` 默认 | checks 无 AI 四列 |
+| [BEHAVIOR] R2 | `GET /runs?gp_id=xxx` 有活跃 run（gp 级跨轮闸） | AI 四列 + adjudication 置空 |
+| [BEHAVIOR] R3 | `GET /runs/:run_key` 默认 | checks 无 AI 四列 |
+| [BEHAVIOR] R4 | `GET /runs/:run_key?view=review` + status=human_complete | checks 含 AI 四列（值可 null） |
+| [BEHAVIOR] R5 | `GET /runs/:run_key?view=review` + status=pending | HTTP 403 |
+| [BEHAVIOR] R6 | `GET /runs/:run_key?view=review` + status=in_review | HTTP 403 |
+| [BEHAVIOR] R7 | 内网 `GET /pending` | runs checks 无 AI 四列 |
+| [BEHAVIOR] R8 | `loadRunsWithChecks` SQL 使用显式列（不含 AI 四列） | SQL 字符串断言 |
+| [BEHAVIOR] R9 | `loadChecks` SQL 使用显式列（不含 AI 四列） | SQL 字符串断言 |
 
 ### 必须覆盖的 2 组反向断言
 
 | 编号 | 场景 | 反向断言 |
 |------|------|---------|
-| A1 | 默认读取路径 | `ai_verdict` 字段不存在 OR 为 null（不能为任何字符串值） |
-| A2 | view=review + 非 human_complete | 响应不含 checks 内容（403 before data） |
+| [BEHAVIOR] A1 | 默认读取路径 | `ai_verdict` 字段不存在 OR 为 null（不能为任何字符串值） |
+| [BEHAVIOR] A2 | view=review + 非 human_complete | 响应不含 checks 内容（403 before data） |
 
 ### 必须覆盖的 3 条写侧断言
 
 | 编号 | 场景 | 断言 |
 |------|------|------|
-| W1 | `POST /acceptance/ai-results` 含 result 字段 | DB 中 `result` 列不变 |
-| W2 | `POST /acceptance/ai-results` 含 submitted_by 字段 | DB 中 `submitted_by` 列不变 |
-| W3 | `POST /acceptance/ai-results` 含 adjudication 字段 | DB 中 `adjudication` 列不变（或为 null） |
+| [BEHAVIOR] W1 | `POST /acceptance/ai-results` 含 result 字段 | DB 中 `result` 列不变 |
+| [BEHAVIOR] W2 | `POST /acceptance/ai-results` 含 submitted_by 字段 | DB 中 `submitted_by` 列不变 |
+| [BEHAVIOR] W3 | `POST /acceptance/ai-results` 含 adjudication 字段 | DB 中 `adjudication` 列不变（或为 null） |
 
 **最低断言总数：≥ 14**
 
@@ -62,6 +62,8 @@ sprint_dir: sprints/w2-backtoback-d3
 ## DoD SOP 条目
 
 ### SOP-1：上线前核日志（[上线前核日志] 铁律）
+
+### manual:bash 验收
 
 ```bash
 # 在 hk-vps 执行（5223 日志）
