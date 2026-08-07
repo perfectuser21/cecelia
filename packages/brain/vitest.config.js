@@ -9,6 +9,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/acceptance.integration.test.js',
   'src/__tests__/integration/migration-392-acceptance-two-column.integration.test.js',
   'src/__tests__/integration/acceptance-state-machine.integration.test.js',
+  'src/__tests__/integration/acceptance-run-scope.integration.test.js',
   'src/__tests__/integration/golden-path-contract.integration.test.js',
   'src/__tests__/integration/migration-373-gp-ledger-data-knife.integration.test.js',
   'src/__tests__/integration/migration-374-gp-assertion-receipts.integration.test.js',
