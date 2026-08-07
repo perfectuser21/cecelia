@@ -647,12 +647,23 @@ jobs:
           cd packages/brain
           SHARD=${{ matrix.shard }}
           # 单次 vitest 调用 + OOM/0命中 容错封装
+          # [DEBUG 侧信道,合并前revert] 每10s抓进程/内存/内核等待点,挂死瞬间现场直接可读
+          (while true; do
+            echo "=== SIDECHANNEL $(date +%H:%M:%S) ==="
+            free -m | head -2
+            ps aux --sort=-rss | head -12
+            for pid in $(pgrep -f vitest | head -4); do
+              echo "--- pid=$pid wchan ---"; cat /proc/$pid/wchan 2>/dev/null; echo
+            done
+            sleep 10
+          done > /tmp/sidechannel.log 2>&1) &
           run_vitest() {
             local label="$1"; local covdir="$2"; shift 2
             set +e
-            npx vitest run --shard=$SHARD/6 "$@" --exclude='src/__tests__/integration/**' --reporter=verbose --coverage --coverage.reporter=lcov --coverage.reportsDirectory="$covdir" 2>&1 | tee /tmp/vitest-$label.txt
+            timeout -s TERM 420 npx vitest run --shard=$SHARD/6 "$@" --exclude='src/__tests__/integration/**' --reporter=verbose --coverage --coverage.reporter=lcov --coverage.reportsDirectory="$covdir" 2>&1 | tee /tmp/vitest-$label.txt
             local exit=${PIPESTATUS[0]}
             if [ $exit -ne 0 ]; then
+              echo "=== SIDECHANNEL DUMP ==="; tail -150 /tmp/sidechannel.log
               if grep -qE "Tests.*[0-9]+ passed" /tmp/vitest-$label.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/vitest-$label.txt; then
                 echo "[brain-unit shard $SHARD/6 · $label] OOM worker exit but all tests passed — treating as success"
                 return 0
