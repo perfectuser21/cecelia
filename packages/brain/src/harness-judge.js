@@ -224,13 +224,40 @@ export const THEATER_ACTION_KEYWORDS = [
   'uiautomator',
   'accessibilitynodeinfo',
   'schtasks',
+  // 「真机上」覆盖 在真机上执行 / 真机上点击 / 真机上截图 这一整族——
+  // 只收「真机执行」这种紧挨着的固定词组，加一个「上」字就绕过去了。
+  '真机上',
   '真机执行',
   '真机点击',
   '真机截图',
   '驱动真机',
+  '派发真机',
+  '触发真机',
   '安卓端操作',
-  'windows_wechat 派发',
 ];
+
+// 词序自由的组合式动作：windows_wechat 与派发/触发类动词同现即算真机动作，
+// 不论中间有无空格、谁前谁后。固定词组「windows_wechat 派发」只拦得住一种写法，
+// windows_wechat派发 / 派发到 windows_wechat / 触发 windows_wechat workflow 全从缝里过。
+export const THEATER_ACTION_PATTERNS = [
+  /windows_wechat\s*(派发|触发|下发|调度|spawn|dispatch)/i,
+  /(派发|触发|下发|调度|spawn|dispatch)\s*(到|至|进)?\s*windows_wechat/i,
+];
+
+/**
+ * 在 BEHAVIOR/Test 文本里找真机动作，命中则返回命中的那段原文（进 FAIL 详情）。
+ * 先查固定词组再查组合式正则；都不中返回 null。
+ */
+function findTheaterActionHit(text) {
+  const lower = String(text || '').toLowerCase();
+  const kw = THEATER_ACTION_KEYWORDS.find((k) => lower.includes(k.toLowerCase()));
+  if (kw) return kw;
+  for (const pattern of THEATER_ACTION_PATTERNS) {
+    const matched = String(text || '').match(pattern);
+    if (matched) return matched[0].trim();
+  }
+  return null;
+}
 
 // ── 刀B 机械预检（root 杠杆，决策 dc18d43d「无闸不成文」）────────────────────
 // 同步校验 brainResult 结构，任一项不满足即返回 FAIL 对象（null = 全过）。
@@ -838,8 +865,13 @@ export async function runMechanicalGate(ctx, deps = {}) {
     const gpMatch = prdTextForTheater.match(/##\s*Golden\s*Path[^\n]*\n([\s\S]*?)(?=\n##\s+|$)/i);
     const gpSection = gpMatch ? gpMatch[1] : prdTextForTheater;
 
-    // 提取 BEHAVIOR 行（contract 命令文本）
-    const behaviorLines = contractTextForTheater.split('\n').filter((l) => l.includes('[BEHAVIOR]') || l.startsWith('Test:'));
+    // 提取 BEHAVIOR 行（contract 命令文本）。Test: 行先 trimStart 再判前缀——
+    // 合同里常写成列表项「- Test: …」或带缩进，原来的 startsWith('Test:') 把这些整行漏掉，
+    // 动作词藏进 Test: 就白拿一张豁免。
+    const behaviorLines = contractTextForTheater.split('\n').filter((l) => {
+      const trimmed = l.trimStart();
+      return trimmed.includes('[BEHAVIOR]') || /^[-*+]?\s*Test:/.test(trimmed);
+    });
     const behaviorText = behaviorLines.join(' ');
 
     // 合并扫描文本
@@ -859,10 +891,7 @@ export async function runMechanicalGate(ctx, deps = {}) {
       const hasDeclaration = THEATER_DECLARATION_HEADING.test(contractTextForTheater);
       // 声明能豁免的只有「名词出现在文本里」，不包括合同真的写了真机操作命令。
       // 扫描面收窄到 BEHAVIOR/Test 行：GP 段是产品叙述，动作词出现在那里不代表本合同要执行它。
-      const behaviorTextLower = behaviorText.toLowerCase();
-      const hitAction = hasDeclaration
-        ? THEATER_ACTION_KEYWORDS.find((kw) => behaviorTextLower.includes(kw.toLowerCase()))
-        : null;
+      const hitAction = hasDeclaration ? findTheaterActionHit(behaviorText) : null;
 
       if (!hasDeclaration) {
         reasons.push(
