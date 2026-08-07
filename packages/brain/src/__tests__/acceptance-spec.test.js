@@ -69,6 +69,22 @@ describe('A14 生成器排除集回归（构造 yaml：S7 也标 fixedNa）', ()
   });
 });
 
+describe('增项2 格号重复必须 fail-fast（防建单在 (run_id,check_key) 上静默塌行）', () => {
+  it('规程里 step.n 重复 → buildCells 抛错，错误里带上重复格号', () => {
+    const doc = yaml.load(fs.readFileSync(FIXTURE, 'utf-8'));
+    doc.steps.push({ ...doc.steps.find((s) => s.n === 7) });   // 同一个 n 出现两次
+    expect(() => buildCells(doc)).toThrow(/S7-c1/);
+  });
+
+  it('规程结构异常（steps 不是数组）→ 抛可读错误，不是 "doc.steps is not iterable"', () => {
+    expect(() => buildCells({ version: '9.9.9', steps: '不是数组' })).toThrow(/steps/);
+  });
+
+  it('无重复时照常产出 36 行', () => {
+    expect(buildCells(loadSpec(FIXTURE).doc)).toHaveLength(36);
+  });
+});
+
 describe('deriveSets — 四个占位符共用同一套解析（禁硬编码 19/17/5）', () => {
   const sets = deriveSets(buildCells(loadSpec(FIXTURE).doc));
 
@@ -91,7 +107,11 @@ describe('spec_sha 对真实 zenithjoy 规程（本机有 repo 时才跑）', ()
   // 只有当本机那份真规程已经带上 D1 静态属性时，跟 fixture 比才有意义：zenithjoy 侧
   // 补 kind/scenario_class 的 PR 合并之前，主干那份还是 D1 之前的版本，stats 天然不等，
   // 那是版本差不是 fixture 漂移。合并后此条件自动成立，漂移守卫随即上岗。
-  const comparable = fs.existsSync(REAL) && buildCells(loadSpec(REAL).doc).every((c) => c.kind);
+  // vitest.config.js 把 ACCEPTANCE_SPEC_PATH 全局指到了 fixture（CI 上没有 zenithjoy repo）。
+  // 那种情况下 REAL === FIXTURE，本条会退化成"fixture 和自己逐格相等"这种恒真断言——
+  // 守卫看着在跑其实已经空转。指向 fixture 时直接 skip，别装作还在守。
+  const comparable = path.resolve(REAL) !== path.resolve(FIXTURE)
+    && fs.existsSync(REAL) && buildCells(loadSpec(REAL).doc).every((c) => c.kind);
 
   it.skipIf(!comparable)('真规程与 fixture 的建行结果逐格相等（fixture 未漂移）', () => {
     const real = buildChecksFromSpec(REAL);

@@ -1,4 +1,8 @@
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { defineConfig } from 'vitest/config';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/migration-333.test.js',
@@ -10,6 +14,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/migration-392-acceptance-two-column.integration.test.js',
   'src/__tests__/integration/acceptance-state-machine.integration.test.js',
   'src/__tests__/integration/acceptance-run-scope.integration.test.js',
+  'src/__tests__/integration/acceptance-ai-results.integration.test.js',
   'src/__tests__/integration/golden-path-contract.integration.test.js',
   'src/__tests__/integration/migration-373-gp-ledger-data-knife.integration.test.js',
   'src/__tests__/integration/migration-374-gp-assertion-receipts.integration.test.js',
@@ -33,6 +38,12 @@ export const POSTGRES_INTEGRATION_TESTS = [
 export default defineConfig({
   test: {
     globals: true,
+    env: {
+      // 服务端读规程只认这个 env（不回落到本机绝对路径）。CI runner 上没有
+      // zenithjoy-workspace，不给就等于所有走 getSpecSets() 的端点全 500。
+      // 测试一律读仓内 fixture（Task 6 从 zenithjoy 拷入）。
+      ACCEPTANCE_SPEC_PATH: path.join(__dirname, 'src/__tests__/fixtures/acceptance/line02-android.yaml'),
+    },
     environment: 'node',
     include: [
       'src/**/*.{test,spec}.?(c|m)[jt]s?(x)',
