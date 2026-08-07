@@ -9,7 +9,7 @@
  * 药:容器回调到达的那一刻(容器还没退出)就把 docker logs 落到宿主可见的持久目录。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -94,8 +94,13 @@ describe('captureRelayContainerLogs', () => {
 
   it('目录不可写 → 不抛(forensic 是尽力而为,绝不能拖累回调 ack)', async () => {
     const execFn = vi.fn(() => 'data');
+    // 不可写目录用「普通文件下的子路径」模拟(mkdir 必 ENOTDIR,跨平台快速失败)。
+    // 绝不许用 /proc/... :Linux node22 的 mkdirSync recursive 在 procfs 上无限重试
+    // 死循环(实测 CPU 100% 永不返回),曾把 CI brain-unit 整个分片挂死 5 轮——
+    // macOS 无 /proc 所以本地全绿,是纯 CI 侧陷阱。
+    writeFileSync(path.join(dir, 'plainfile'), 'x');
     const r = await captureRelayContainerLogs({
-      containerId, execFn, dir: '/proc/nonexistent-forensic-dir',
+      containerId, execFn, dir: path.join(dir, 'plainfile', 'sub'),
     });
     expect(r.ok).toBe(false);
   });
