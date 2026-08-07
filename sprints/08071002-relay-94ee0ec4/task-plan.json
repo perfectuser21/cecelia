@@ -1,0 +1,33 @@
+{
+  "initiative_id": "94ee0ec4-e0e0-48ab-8606-e829ef0d4f07",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动全部落在 packages/brain 派发/liveness/watchdog 链，纯后端无 UI，验收走 curl+psql+vitest",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "修复 never_started 假杀失败模式：根因实证 + 回归测试先行 + headed_manual 消费语义 + 处置留痕",
+      "scope": "对根因链 a/b/c 逐条一手实证并落 root-cause.md；将合同 tests/liveness-queued-never-spawned.integration.test.ts 原样毕业入 packages/brain/src/__tests__/integration/ 并登记 vitest.config.js POSTGRES_INTEGRATION_TESTS（commit 1 = Red 证据）；按实证根因修复使零 spawn 证据任务不被 liveness 假杀（headed_manual 任务不进无头派发/假杀路径，watchdog 处置写 task_events 留痕）；headed_manual 拍板写 decisions 表；b35bfa0c 数据变更（如有）留痕；既有 1dfa40f7 测试族与真死进程捕获不回退；契约文档同步；DevGate 三件套",
+      "dod": [
+        "[BEHAVIOR] 事故形态重放（queued、无进程、无日志、headed_manual=true）跨两次真实 tick 不被假杀不被无头派发：bash sprints/08071002-relay-94ee0ec4/tests/replay-incident.sh 输出 REPLAY-PASS",
+        "[BEHAVIOR] cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/liveness-queued-never-spawned.integration.test.js 全 Green（4 it）",
+        "[BEHAVIOR] cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/liveness-never-started.integration.test.js 全 Green（既有测试族不回退）",
+        "[BEHAVIOR] psql decisions 表 14 天窗内存在 headed_manual 拍板记录",
+        "[BEHAVIOR] node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs 全过",
+        "[ARTIFACT] sprints/08071002-relay-94ee0ec4/root-cause.md 含 a/b/c 证实/证伪结论 + b35bfa0c 处置节",
+        "[ARTIFACT] packages/brain/vitest.config.js POSTGRES_INTEGRATION_TESTS 登记 liveness-queued-never-spawned.integration.test.js",
+        "[ARTIFACT] docs/architecture/2026-07-10-executor-liveness-contract/architecture.md 含 headed_manual 语义"
+      ],
+      "files": [
+        "packages/brain/src/executor.js",
+        "packages/brain/src/__tests__/integration/liveness-queued-never-spawned.integration.test.js",
+        "packages/brain/vitest.config.js",
+        "sprints/08071002-relay-94ee0ec4/root-cause.md",
+        "docs/architecture/2026-07-10-executor-liveness-contract/architecture.md",
+        "packages/brain/package.json"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
