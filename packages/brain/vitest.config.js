@@ -20,6 +20,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/acceptance-lifecycle.integration.test.js',
   'src/__tests__/integration/acceptance-review-closure.integration.test.js',
   'src/__tests__/integration/acceptance-create-gate.integration.test.js',
+  'src/__tests__/integration/acceptance-version-freeze.integration.test.js',
   'src/__tests__/integration/golden-path-contract.integration.test.js',
   'src/__tests__/integration/migration-373-gp-ledger-data-knife.integration.test.js',
   'src/__tests__/integration/migration-374-gp-assertion-receipts.integration.test.js',
