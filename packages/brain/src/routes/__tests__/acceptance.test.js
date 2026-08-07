@@ -20,9 +20,19 @@ function makePool(client) {
 }
 
 const RUN_ROW = { id: 'run-uuid-1', run_key: 'r1', title: 'T', status: 'pending' };
+/**
+ * 建单单头：租户白名单（A16②）与版本戳双源对账（A9）对所有建单生效，
+ * 少任何一项都在连库之前就被 400 挡回——这几条用例验的是连库之后的行为。
+ */
+const HEAD = {
+  tenant_account: 'acc-verify-01',
+  backend_sha: 'a'.repeat(40), backend_sha_src2: 'a'.repeat(40),
+  frontend_sha: 'b'.repeat(40), frontend_sha_src2: 'b'.repeat(40),
+  spec_sha: 'c'.repeat(64),
+};
 
 describe('POST /api/brain/acceptance/runs', () => {
-  it('建新单：201，checks 生成 check_key 序号', async () => {
+  it('建新单：201，check_key 用调用方给的规程格号原样落库（不再生成流水号）', async () => {
     const inserted = [];
     const client = makeClient((sql, params) => {
       if (sql.includes('SELECT * FROM acceptance_runs WHERE run_key')) return { rows: [] };
@@ -34,13 +44,13 @@ describe('POST /api/brain/acceptance/runs', () => {
     });
     const res = await request(makeApp(makePool(client)))
       .post('/api/brain/acceptance/runs')
-      .send({ run_key: 'r1', title: 'T', checks: [
-        { kind: 'FR', name: 'step1' },
-        { kind: 'NFR', name: 'latency' },
+      .send({ run_key: 'r1', title: 'T', detail: HEAD, checks: [
+        { check_key: 'S1-c1', kind: 'FR', name: 'step1' },
+        { check_key: 'S1-c2', kind: 'NFR', name: 'latency' },
       ] });
     expect(res.status).toBe(201);
     expect(res.body.created).toBe(true);
-    expect(inserted).toEqual(['r1:001', 'r1:002']);
+    expect(inserted).toEqual(['S1-c1', 'S1-c2']);
   });
 
   it('重复 run_key：200 返回现有单，不覆盖', async () => {
@@ -50,7 +60,7 @@ describe('POST /api/brain/acceptance/runs', () => {
     });
     const res = await request(makeApp(makePool(client)))
       .post('/api/brain/acceptance/runs')
-      .send({ run_key: 'r1', title: 'T', checks: [{ kind: 'FR', name: 'x' }] });
+      .send({ run_key: 'r1', title: 'T', detail: HEAD, checks: [{ check_key: 'S1-c1', kind: 'FR', name: 'x' }] });
     expect(res.status).toBe(200);
     expect(res.body.created).toBe(false);
   });
@@ -71,7 +81,7 @@ describe('POST /api/brain/acceptance/runs', () => {
     });
     const res = await request(makeApp(makePool(client)))
       .post('/api/brain/acceptance/runs')
-      .send({ run_key: 'r1', title: 'T', checks: [{ kind: 'FR', name: 'x' }] });
+      .send({ run_key: 'r1', title: 'T', detail: HEAD, checks: [{ check_key: 'S1-c1', kind: 'FR', name: 'x' }] });
     expect(res.status).toBe(200);
     expect(res.body.created).toBe(false);
     expect(res.body.checks).toHaveLength(1);
@@ -92,7 +102,7 @@ describe('POST /api/brain/acceptance/runs', () => {
 
   it('kind 非法 → 400', async () => {
     const res = await request(makeApp(makePool(makeClient(() => undefined))))
-      .post('/api/brain/acceptance/runs').send({ run_key: 'r1', title: 'T', checks: [{ kind: 'XX', name: 'x' }] });
+      .post('/api/brain/acceptance/runs').send({ run_key: 'r1', title: 'T', checks: [{ check_key: 'S1-c1', kind: 'XX', name: 'x' }] });
     expect(res.status).toBe(400);
   });
 
@@ -108,8 +118,8 @@ describe('POST /api/brain/acceptance/runs', () => {
     });
     const res = await request(makeApp(makePool(client)))
       .post('/api/brain/acceptance/runs')
-      .send({ run_key: 'r-detail', title: 'T', checks: [
-        { kind: 'FR', name: 'step1', detail: { op: ['点击发送'], exp: '消息送达', pass: '收到回执', fail: '无回执' } },
+      .send({ run_key: 'r-detail', title: 'T', detail: HEAD, checks: [
+        { check_key: 'S1-c1', kind: 'FR', name: 'step1', detail: { op: ['点击发送'], exp: '消息送达', pass: '收到回执', fail: '无回执' } },
       ] });
     expect(res.status).toBe(201);
     expect(JSON.parse(insertedDetails[0])).toEqual({ op: ['点击发送'], exp: '消息送达', pass: '收到回执', fail: '无回执' });
@@ -163,7 +173,10 @@ describe('POST /api/brain/acceptance/catalog（目录快照上载）', () => {
 describe('POST /api/brain/acceptance/results（内网版）', () => {
   it('提交子集判定项：200，返回更新后的 run', async () => {
     const client = makeClient((sql) => {
-      if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
+      if (/^SELECT id.*FROM acceptance_runs WHERE run_key/.test(sql)) {
+        return { rows: [{ id: 'run-uuid-1', status: 'pending', detail: null }] };
+      }
+      if (sql.includes('SELECT check_key FROM acceptance_checks')) {
         return { rows: [{ check_key: 'r1:001', run_id: 'run-uuid-1' }] };
       }
       if (sql.includes('UPDATE acceptance_checks SET result')) return { rows: [] };
@@ -180,7 +193,7 @@ describe('POST /api/brain/acceptance/results（内网版）', () => {
     });
     const res = await request(makeApp(makePool(client)))
       .post('/api/brain/acceptance/results')
-      .send({ results: [{ check_key: 'r1:001', result: '通过', submitted_by: 'alice@zenjoymedia.media' }] });
+      .send({ run_key: 'r1', results: [{ check_key: 'r1:001', result: '通过', submitted_by: 'alice@zenjoymedia.media' }] });
     expect(res.status).toBe(200);
     expect(res.body.updated).toBe(1);
     expect(res.body.runs[0].status).toBe('in_review');
@@ -188,12 +201,15 @@ describe('POST /api/brain/acceptance/results（内网版）', () => {
 
   it('未知 check_key：400', async () => {
     const client = makeClient((sql) => {
-      if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) return { rows: [] };
+      if (/^SELECT id.*FROM acceptance_runs WHERE run_key/.test(sql)) {
+        return { rows: [{ id: 'run-uuid-1', status: 'pending', detail: null }] };
+      }
+      if (sql.includes('SELECT check_key FROM acceptance_checks')) return { rows: [] };
       return { rows: [] };
     });
     const res = await request(makeApp(makePool(client)))
       .post('/api/brain/acceptance/results')
-      .send({ results: [{ check_key: 'ghost:001', result: '通过' }] });
+      .send({ run_key: 'r1', results: [{ check_key: 'ghost:001', result: '通过' }] });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('unknown check_key');
   });

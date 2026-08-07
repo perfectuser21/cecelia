@@ -124,6 +124,13 @@ function hasOutEdges(content, srcPath) {
 }
 
 // ─── 获取新增文件列表 ──────────────────────────────────────────────────────────
+// __tests__ 下的非代码文件是测试 fixture 资产（yaml/json/sql…），天然只被测试
+// readFileSync——出边判定对它们无意义，入边扫描又刻意排除测试文件（保牙），
+// 不豁免则任何测试 fixture 必判孤岛。生产目录下的非代码文件不豁免，仍要人显式处理。
+export function isTestFixtureAsset(f) {
+  return /(^|\/)__tests__\//.test(f) && !/\.(js|mjs|cjs|ts)$/.test(f);
+}
+
 function getAddedFiles(args) {
   // --fixture-files= 参数（供测试 / E2E 本地验证）
   const fixtureArg = args.find((a) => a.startsWith('--fixture-files='));
@@ -134,7 +141,8 @@ function getAddedFiles(args) {
       .split(',')
       .map((f) => f.trim())
       .filter(Boolean)
-      .filter((f) => f.includes('packages/brain/src'));
+      .filter((f) => f.includes('packages/brain/src'))
+      .filter((f) => !isTestFixtureAsset(f));
   }
 
   // 真实 CI 模式: git diff
@@ -150,7 +158,8 @@ function getAddedFiles(args) {
     return out
       .split('\n')
       .map((f) => f.trim())
-      .filter((f) => f.startsWith('packages/brain/src'));
+      .filter((f) => f.startsWith('packages/brain/src'))
+      .filter((f) => !isTestFixtureAsset(f));
   } catch (e) {
     console.error('[ISLAND-GATE] git diff 失败，当作无新增文件处理:', e.message);
     return [];

@@ -1,0 +1,161 @@
+{
+  "lens": "solo",
+  "round": 2,
+  "rubric_scores": {
+    "reality_of_status": 5,
+    "path_completeness": 4,
+    "assertion_verifiability": 5,
+    "judgment_completeness": 6,
+    "risk_gates": 3,
+    "commitment_purity": 9,
+    "multi_platform_completeness": 8
+  },
+  "verdict": "REVISION",
+  "findings": [
+    {
+      "severity": "P0",
+      "id": "r2-P0-1",
+      "title": "J1-D「37 格最终态全绿」在真实规程数据上恒不可达：S14-c1 三条路全落拦，闸恒红",
+      "detail": "yaml 解析实证 37 个有效格里含 S14-c1——它属于 fixedNa:true 的第14步（公开评论区自动回复，本版没做），verifiable_by=human_only，判据原文『固定不适用。红线13：员工手工回评也不能把这步改判通过』。九组合矩阵只有 通过/不通过/无法验证 三态，没有『不适用』态；J10 只把 na:true 的 19 格排除在建行之外，未排除 fixedNa 步骤下的 c1。员工在 Staff Hub 三选一：选『不通过』→Q5/Q6→红→拦；选『通过』→违背红线13 且与现役规程冲突；选『无法验证』→Q9 双盲→拦。现役员工验收网页自己写死了这个结论：『第14步这个版本没做，固定不适用，所以完整功能验收目前必然「不通过」，只能报「前13步全部打通」』。即 REC=D 落到这一格上，复刻了 J1 给候选 A 判死刑的同一个死结（『闸恒红，三次之后必被豁免成摆设』），而 v2 取消了格级 waive，连那条退路都没有。",
+      "evidence": "acceptance-spec/line02-android.yaml 第14步 fixedNa:true + c1{t:'固定不适用…', verifiable_by: human_only}；python 解析：有效格 37，fixedNa 步骤下有效格=['S14-c1']；scripts/acceptance-spec/lib.mjs:380 原文；proposal-v2.md:122-127（Q0/闸判据）、J10（只排 na:true）",
+      "dimension": "judgment_completeness",
+      "status": "OPEN"
+    },
+    {
+      "severity": "P0",
+      "id": "r2-P0-2",
+      "title": "Gate A 假核销：四层没有一层剥夺『经 staging 后台指挥真机』的能力，而采证器本身就在下发真机采集",
+      "detail": "risk#P0-1 的落点是『没有一层剥夺 AI 打表器碰真机的能力』。v2 换执行体（mac_web→GitHub 托管 ubuntu runner）只切断了 host-executor 的宿主 ssh 逃逸这一条带外通道，带内通道原样保留：cells-map 里 S6-c3 的 action 就是 trigger_collect（『在任务页真实发起一次采集』），capture.mjs 真的填关键词点『开始采集』；该动作经 POST /api/acquisition/collect/start 落 acquisition_collect_tasks(agent_id)，由绑在该租户下的真安卓 agent 领走，用真抖音小号执行采集。常驻验收账号的注释原文就是『绑真机租户，4台安卓在线』。Gate A 第③层网络 allowlist 只放行 staging-autopilot.zenjoymedia.media——恰恰是这条指挥通道本身。所以 Gate A 声明的『不碰真机、不触达任何真实抖音账号』按 D2 保留 capture.mjs 现状即为假；且 S6-c3/S7/S8/S9/S10 这 11 个 machine_db 格的 AI 判定本来就依赖这次真实采集跑起来，不是可以顺手关掉的副作用。",
+      "evidence": "scripts/acceptance-spec/ai-run/cells-map.mjs:4-15 action 三值含 trigger_collect、:33 S6-c3 action:'trigger_collect'；capture.mjs:13-15 凭据注释『绑真机租户，4台安卓在线』、:152-163 点击『开始采集』；apps/api/src/db/connection.test.ts:46『collect/start(写DB建task) / pending-collect-tasks 间歇 500 → 安卓 agent 拿不到/派不成任务』；apps/dashboard/e2e/acquisition-cancel.spec.ts:40 acquisition_collect_tasks(tenant_id,keywords,status,agent_id)；proposal-v2.md:75-87 Gate A 四层表",
+      "dimension": "risk_gates",
+      "status": "OPEN"
+    },
+    {
+      "severity": "P0",
+      "id": "r2-P0-3",
+      "title": "背靠背在凭据层被击穿：Gate A 白名单里的 ACCEPTANCE_API_TOKEN 正是能写人列并伪造 submitted_by 的那把钥匙",
+      "detail": "Gate A 第②层把 ACCEPTANCE_API_TOKEN 列进打表器 job 的凭据白名单，并称此层为『机械剥夺』。但 5223 公网 router 只有一道 createBearerAuth(token) 的单 token 鉴权，它守的三个端点里含 POST /acceptance/results —— 走的就是 submitAcceptanceResults，写的是人列 result 字段，且 submitted_by 直接取请求体 r.submitted_by（内网/公网路由都不做身份注入，只有 Staff Hub 反代那条路才注入 staffIdentity）。于是跑在 GitHub 托管 runner 上的打表器持有的凭据，足以把 37 格人列全部写成『通过』并署名成员工。决策②『两列背靠背独立』在能力层不成立，而 A2 的九条断言全是读侧裁剪，没有一条覆盖写侧。修复方向：AI 回写走独立 token/独立 listener，或给 5223 按 token 分角色做端点白名单，并把『打表器 token 无法写 result 列』做成 A2 的第 10 条断言。",
+      "evidence": "packages/brain/src/acceptance-public-server.js:32 app.use(createBearerAuth(token)) 单 token 守全 router；routes/acceptance.js:331-345 公网 router 挂 POST /acceptance/results；:62-66 UPDATE … submitted_by = $3 取自 r.submitted_by；对比 apps/api/src/routes/staff.ts:338 才有 staffIdentity 注入；proposal-v2.md:82 Gate A 第②层白名单含 ACCEPTANCE_API_TOKEN",
+      "dimension": "risk_gates",
+      "status": "OPEN"
+    },
+    {
+      "severity": "P1",
+      "id": "r2-P1-1",
+      "title": "backend_sha 双源对账的源②选错 workflow：deploy-us-vps.yml 已停用 3 周，两源恒不等 → 首次建单即被自己的 fail-closed 拦死",
+      "detail": "A9/J12 定源②=『deploy-us-vps.yml 最近成功 run 的 headSha』。实测该 workflow 的 push 触发已被移除（文件内注释原文：『push 触发已移除（刀3-T3）：staging 部署走 deploy-staging-hk.yml』），只剩 workflow_dispatch，最近一次成功停在 2026-07-14 的 sha 233b2345；真正部署 staging API 的是 deploy-staging-hk.yml（push main on apps/api/**），最近一次 2026-08-05 sha aa540eb7。按提案原文落地，源①（staging 自报）与源②将恒不等，A9『两源不等 → 拒绝建单』会让本 GP 永远建不出第一张单。改 deploy-staging-hk.yml 即可，但不改就是死路。",
+      "evidence": "zenithjoy .github/workflows/deploy-us-vps.yml:21-23 on: 只剩 workflow_dispatch + 注释；deploy-staging-hk.yml:14-20 push branches:[main] paths:apps/api/**；gh run list 实测 deploy-us-vps 最近 success=2026-07-14T03:45:55Z/233b2345，deploy-staging-hk 最近 success=2026-08-05T03:02:57Z/aa540eb7；proposal-v2.md:64,358",
+      "dimension": "reality_of_status",
+      "status": "OPEN"
+    },
+    {
+      "severity": "P1",
+      "id": "r2-P1-2",
+      "title": "sha 绑定只闭合了后端：promote-dashboard 根本不读 inputs.sha，按执行时 origin/main 部署前端，而两列验的主要就是网页",
+      "detail": "product#P0-2 核销@A9『PROMOTE_SHA == run.backend_sha』。但 promote-all-prod.yml 的第二段 promote-dashboard 里没有 INPUT_SHA：它 git fetch 后直接 reset --hard origin/main 再 rev-parse HEAD 作为候选 sha。所以闸即使把后端 sha 绑死，被推上生产的前端仍是 promote 执行那一刻的 main HEAD，与验收单毫无关系——而员工与 AI 两列判的绝大多数格恰恰是在 staging 网页上看出来的。另有一个次生 TOCTOU：release-gate 在 GitHub runner 上解析 PROMOTE_SHA，promote-backend 在 HK VPS 上 fetch 后二次解析 origin/main，inputs.sha 为空时两次解析的时间与仓库都不同。修复方向：run 落库 frontend_sha（或统一 release_sha），闸对前后端两个 sha 都断言，并把 promote-dashboard 改为消费 inputs.sha。",
+      "evidence": "zenithjoy .github/workflows/promote-all-prod.yml:206-230 promote-dashboard『git reset --hard origin/main; SHA=$(git rev-parse HEAD)』全段无 INPUT_SHA；对比 :164-184 promote-backend 的 INPUT_SHA + DEPLOY_SHA=${INPUT_SHA:-$(git rev-parse origin/main)}（在 HK 上算）；proposal-v2.md:257-263 A9",
+      "dimension": "assertion_verifiability",
+      "status": "OPEN"
+    },
+    {
+      "severity": "P1",
+      "id": "r2-P1-3",
+      "title": "「合法 vs 故障 无法验证」由 AI 自报，A4 没把 reason 绑定到格的静态属性——J4 自陈的最坏后果原样存在",
+      "detail": "九组合矩阵的绿通道 Q3 只对『合法无法验证』开放，判据写在 ai_evidence.reason 里，而 reason 由 AI 判官自己填。A4 的三条查询：①human_only 17 格 ai_verdict 恒『无法验证』②确定判定数 ≤20 ③reason 属五值枚举——没有一条把 reason 与格的静态属性绑起来。于是任何 machine_db 格把超时/登录失败写成 reason='scenario_not_triggered' 或 'human_only'，就从 Q3′（拦）滑进 Q3（绿）。这正是 J4 误判后果原文描述的场景（『登录失效整轮哑火 → 全部落进 Q3 绿通道 → 一轮什么都没验的 run 被判定案绿』），v2 声称靠分类堵住，但分类本身没有机械约束。同时 A4 第②条 `<=20` 对整轮哑火（count=0）恒成立，三条断言没有一条能识别哑火。修复方向：reason='human_only' 只允许出现在 yaml 标 human_only 的 17 格；reason='scenario_not_triggered' 只允许出现在 6 个 scenario_required 格；machine_db 非 scenario_required 格的任何『无法验证』一律归故障类；再补一条『确定判定数 < 阈值即判整轮哑火』。",
+      "evidence": "proposal-v2.md:106-108（分类定义）、:213-224（A4 三条查询）、:308-312（J4 误判后果原文）；cells-map.mjs:23-67 scenario_required 恰 6 格（S4-c2/S4-c3/S5-c3/S5-c4/S10-c4/S13-c4）；yaml 解析 human_only=17",
+      "dimension": "assertion_verifiability",
+      "status": "OPEN"
+    },
+    {
+      "severity": "P1",
+      "id": "r2-P1-4",
+      "title": "跨轮锚定无人处理，且 A2 出口2 的无条件断言与 Step 6、A3 三者互斥",
+      "detail": "J5-A 把 check_key 改成规程格号后，S3-c1 在每一轮 run 里都叫同一个名字。员工侧边栏有『验收历史』入口，它走 Staff Hub /acceptance/history → Brain GET /runs?gp_id= → loadRunsWithChecks，一次返回该 GP 全部 run。裁剪判据是 run 级的 human_complete，但这是个多 run 响应，没有单一 run 可供服务端校验；若按逐行放行实现（历史轮已 human_complete → 带 AI 列），本轮填表期员工就能看到上一轮同格的 AI 判定与裁决理由，锚定照旧成立；若按 A2 字面实现（该端点恒不含 AI 四列），则 adjudication 也在 AI_COLS 正则里，Step 6『员工回到同一页看到主理人怎么判的』就打不开，且 A3 要求同格至少存在 2 个 run 时 A2 必假失败。三者不能同时成立。修复方向：明确『裁剪判据 = 该行所属 run 的状态』并逐行判定，同时单独规定历史轮 AI 列/裁决理由在本轮填表期的可见性（建议本轮 run 未 human_complete 时，同 gp 全部历史轮 AI 列一并隐藏），A2 出口2 的断言随之改写成带前置条件的形式。",
+      "evidence": "apps/staff-hub/src/App.tsx:49-51 『验收历史』NavLink；apps/api/src/services/acceptance.ts:64-67 fetchHistoryByGpId → /api/brain/acceptance/runs?gp_id=；packages/brain/src/routes/acceptance.js:264-274 → loadRunsWithChecks(:155-171) SELECT *；proposal-v2.md:193-203 A2（AI_COLS 含 adjudication）、:205-211 A3、:162 Step 6",
+      "dimension": "path_completeness",
+      "status": "OPEN"
+    },
+    {
+      "severity": "P1",
+      "id": "r2-P1-5",
+      "title": "员工侧两张验收表并存且第三态语义冲突：现役表是『不适用』，矩阵地基是『无法验证』",
+      "detail": "员工现在实际填的表是 acceptance-spec/generated/line02-android.html（cli.mjs generate 产出，手工 scp 到 hk-vps 文档中心），它是一张完整可填的表：有测试日期/测试人/复核人/手机型号/本轮暗号等表头字段，每格三选一，步骤红绿灯自动汇总。它的第三态是『不适用』（STATE_LABEL={ok:'通过',no:'不通过',na:'不适用'}），而 Staff Hub 的 select 与 DB CHECK 是『无法验证』。这两个词语义相反：不适用=这格本来就不该验；无法验证=该验但验不了。九组合矩阵的 Q3/Q6/Q7/Q8/Q9 全部建在『人列无法验证』上，员工被训练的却是『不适用』。提案通篇只把这张现役表当成『部署方式问题』记进 P2-3，没有登记它与 Staff Hub 的关系（收编/废弃/降级为判据说明书），决策①『一张表』在员工侧没有收口。这也是 r2-P0-1 的同一个根：S14-c1 在现役表里被锁成『固定不适用』不可填，在 Staff Hub 里却必须三选一。",
+      "evidence": "scripts/acceptance-spec/cli.mjs:32-47 generate 产出 acceptance-spec/generated/line02-android.html + scp 部署说明；lib.mjs:292-299 表头字段、:305 『每格三选一：通过/不通过/不适用』、:430 STATE_LABEL、:439 fixed-na；对比 apps/staff-hub/src/pages/AcceptanceDetailPage.tsx:141-143 三个 option 为 通过/不通过/无法验证；proposal-v2.md:424 P2-3",
+      "dimension": "path_completeness",
+      "status": "OPEN"
+    },
+    {
+      "severity": "P1",
+      "id": "r2-P1-6",
+      "title": "熔断口径与矩阵错位：AI 整轮哑火落 Q3′『未定』而非红，红格占比 >1/3 的熔断在它最该触发的场景下不触发",
+      "detail": "出错路径表第 5 行写『员工与 AI 全格分歧 → 红格占比 >1/3 自动熔断，不建 37 个任务』，A7 也按『final_state=红』的占比算熔断。但按矩阵，打表器登录失效整轮哑火时 AI 列全是故障类无法验证，人列多数通过 → 全部落 Q3′，最终态是『未定』不是『红』，红格占比=0，熔断不触发；随后 Q3′ 的规定动作是『重跑仍哑火→裁决』，主理人要逐格裁决 37 格。熔断判据应改为按『非绿格（红+未定）占比』计，或对 Q3′ 单独设整轮哑火识别。",
+      "evidence": "proposal-v2.md:115 Q3′ 最终态『未定』、:174 出错路径表第5行、:250 A7 熔断断言",
+      "dimension": "path_completeness",
+      "status": "OPEN"
+    },
+    {
+      "severity": "P2",
+      "id": "r2-P2-1",
+      "title": "『theater 闸唯一调用方 routes/harness.js:19』措辞不准（结论仍成立）",
+      "detail": "runMechanicalGate 经 runJudgeGate 暴露，除 routes/harness.js:19 外还有 orchestrator/run.js:128（judgeGate ?? judge.runJudgeGate）与 scripts/harness-judge-cli.mjs:83 两处接线。三处都在 harness 链内，所以『走 /dev 则整条闸不在路径上』的结论不变，但 J11/J13 的证据句应改为『三处接线均属 harness 链』。",
+      "evidence": "packages/brain/src/harness-judge.js:690,924,933；packages/brain/src/routes/harness.js:19,2100；packages/brain/src/orchestrator/run.js:128；scripts/harness-judge-cli.mjs:83",
+      "dimension": "reality_of_status",
+      "status": "OPEN"
+    },
+    {
+      "severity": "P2",
+      "id": "r2-P2-2",
+      "title": "D2 的『staging 新增 GET /api/version』实为把已有 /version 挂到公网 /api 前缀",
+      "detail": "apps/api 已有 app.get('/version') 返回 getBuildInfo()（优先读 BUILD_SHA 环境变量，其次 dist/build-info.json），生产 promote 冒烟已在用 /health 的 build.sha 做断言。公网 404 的原因是隧道只把 /api/* 路由到 API，而这两个端点挂在根路径（实测 /api/health 返回的是 API 自己的 JSON 404）。交付物描述应改为『把已有 build-info 暴露到 /api/version』，并顺带确认 staging 部署链真的注入了 BUILD_SHA。",
+      "evidence": "apps/api/src/app.ts:109,115；apps/api/src/build-info.ts:11-13 来源优先级；实测 https://staging-autopilot.zenjoymedia.media/api/health 返回 API 的 NOT_FOUND JSON、/api/version 404、/api/walking-skeleton/version 404",
+      "dimension": "reality_of_status",
+      "status": "OPEN"
+    },
+    {
+      "severity": "P2",
+      "id": "r2-P2-3",
+      "title": "A7 复用既有查重谓词与『≤1 bug + ≤1 trace』两桶自相矛盾",
+      "detail": "既有查重是『同 run_key 无未终态任务』且不区分 bucket（acceptance.js:100-106），照原样复用则每 run 至多一个任务，第二个桶永远建不出来。谓词需加 acceptance_bucket 维度。",
+      "evidence": "packages/brain/src/routes/acceptance.js:99-106；proposal-v2.md:239-249 A7",
+      "dimension": "assertion_verifiability",
+      "status": "OPEN"
+    },
+    {
+      "severity": "P2",
+      "id": "r2-P2-4",
+      "title": "bypass 棘轮到顶后无升级路径，重演 J15 自己否决候选 B 的理由",
+      "detail": "A12 规定近 30 天 bypass >3 次则 gate 直接 exit 1。若取数通路真的持续故障，发版被彻底堵死且没有任何登记的出口，正是 J15 用来否决候选 B（本期不提供逃生阀）的论证——『必然被人手改 workflow 绕过，更坏』。建议棘轮到顶后接一条有名有姓的升级路径（如主理人在 Brain 写一条 decision 才放行）。",
+      "evidence": "proposal-v2.md:274-281 A12、:375-379 J15",
+      "dimension": "risk_gates",
+      "status": "OPEN"
+    },
+    {
+      "severity": "P2",
+      "id": "r2-P2-5",
+      "title": "GitHub 托管 runner 跑 Playwright 登录 Cloudflare 前置的 staging 未探明，建议并进 Gate B",
+      "detail": "网络可达性本身有先例：deploy-dashboard-staging.yml 的 ubuntu-latest job 就在跑 staging-smoke.sh 打公网 staging（本机实测该域名 200，走 Cloudflare）。但先例全是 curl，没有『托管 runner 的数据中心 IP 上跑 headless chromium 完成 better-auth 登录』的实证，而 Step 2 的 L3 承诺完全押在这条路上。Gate B 目前只覆盖 5223 公网可达性，建议加一条：开工首日在托管 runner 上真跑一次 capture 登录，不通则登记回落方案（且回落不能落回 self-hosted 真机车道，那会推翻 Gate A 第①层）。",
+      "evidence": "zenithjoy .github/workflows/deploy-dashboard-staging.yml:37 runs-on ubuntu-latest + :103-106 staging-smoke.sh；deploy-lib.sh:505-513 better-auth invalid origin 前科；本机实测 https://staging-autopilot.zenjoymedia.media/ 200；proposal-v2.md:89-98 Gate B",
+      "dimension": "path_completeness",
+      "status": "OPEN"
+    },
+    {
+      "severity": "P2",
+      "id": "r2-P2-6",
+      "title": "验收窗口与 staging push-main 自动部署冲突，J16 仪式未登记冻结约束",
+      "detail": "deploy-staging-hk.yml 在 apps/api/** 有 push 到 main 就自动部署，近 14 天该路径有 22 次提交。J16 定了发起人/频率/工时（1.0-1.5 人时/轮），但没登记『验收窗口内暂停合并或暂停 staging 自动部署』。冻结锁会把冲突表现为反复 409 + 整轮重开（含重跑一次 40 分钟量级的 AI 采证），且分批草稿已落库的格如何处置未定义。",
+      "evidence": "zenithjoy .github/workflows/deploy-staging-hk.yml:14-20；git log --since='14 days ago' origin/main -- apps/api = 22；proposal-v2.md:381-385 J16、:265-266 A10",
+      "dimension": "path_completeness",
+      "status": "OPEN"
+    },
+    {
+      "severity": "P2",
+      "id": "r2-P2-7",
+      "title": "release-gate 证据① 查的 deploy-us-vps.yml 已是恒绿死证据（既有缺陷，非本提案引入）",
+      "detail": "现行 release-gate 证据① 逐个查 deploy-us-vps.yml / deploy-dashboard-staging.yml 的最近一次结论，而前者最近一次成功停在 2026-07-14，此后再没跑过——这一条断言事实上恒绿。接第三证据项时顺带修正，或至少记进账本。",
+      "evidence": "zenithjoy .github/workflows/promote-all-prod.yml:68-80；gh run list deploy-us-vps.yml 最近 success 2026-07-14",
+      "dimension": "risk_gates",
+      "status": "OPEN"
+    }
+  ],
+  "refute_rulings": []
+}

@@ -1,0 +1,61 @@
+{"lens":"solo","round":5,
+ "rubric_scores":{"reality_of_status":9,"path_completeness":8,"assertion_verifiability":6,
+                  "judgment_completeness":8,"risk_gates":7,"commitment_purity":9,
+                  "multi_platform_completeness":9},
+ "verdict":"REVISION",
+ "r4_writeoff_audit":[
+  {"id":"r4-P1-1","ruling":"RESOLVED","verify":"判据② 收窄为「活跃 run = status IN ('pending','in_review')」已落 J2 判据②/时序表 T4/D1 状态机 7 值/Step 9/A2 反向断言②/A15 补条。现成参照属实：packages/brain/src/routes/acceptance.js:174 loadPendingRuns 谓词就是 status IN ('pending','in_review')。proposer 比 finding 多做一步（补 pending run 的 expired 48h + abandoned 显式作废退出路径、并写死三态是 status 取值而非 detail 旗标 + A10④ 反二义断言），修法比 finding 更彻底，成立"},
+  {"id":"r4-P1-2","ruling":"RESOLVED（机制层面）","verify":"双闸 + scenario_class 三值 + J20 + Q3″ + A4⑥⑦⑧ 均已落地。逐格核查独立复核全部属实：cells-map.mjs 6 个 scenario_required 恰为 S4-c2/S4-c3/S5-c3/S5-c4/S10-c4/S13-c4；yaml S4.op 原文『冷启动客户端一次；重启手机一次，观察恢复』（故 S4-c2/c3 判 mandatory 成立）；S5.op『手机登录2到3个测试小号，触发一次账号扫描』不含制造掉线（opportunistic 成立）；S10.op『看命中视频评论区抓到的内容』单轮（opportunistic 成立）；S12-c2 原文『同设备10分钟内最多发3条；关注每小时不超10次、点赞不超15次』确为一条验收判据，故 S13-c4 fail-closed 论证成立。**但机制与冻结断言 A17④ 自相矛盾，见 r5-P1-1**"},
+  {"id":"r4-P1-3","ruling":"RESOLVED","verify":"主体写死发起人/主理人 + 员工 ack/异议 note + 防橡皮图章前置闸（全员 ack 或满 24h）+ 建单 409 force_reason 逃生阀 + 出错路径表两行 + A15①~⑦ 七段断言。死锁问题已答：24h 兜底是 OR 分支，员工离职/请假不会锁住发版（A15⑤ 直接构造回拨 25h 零 ack → 200）；force_reason 是第二条出口且进 A12 棘轮（>3 次 exit 1）。无新死锁"},
+  {"id":"r4-P2-21","ruling":"RESOLVED","verify":"P2-21 已重编，全表 24 条与提案头/§0 一致"},
+  {"id":"r4-P2-22","ruling":"RESOLVED","verify":"J17 对照表 C 列已拆『上限 16/19』与『常态 13/16』两行，口径自洽（常态 = 上限 − 3 个 opportunistic）。残留小瑕见 r5-P2-2"},
+  {"id":"r4-P2-23","ruling":"RESOLVED","verify":"独立解析 acceptance-spec/line02-android.yaml：36 个建行格全部带 verifiable_by，human_only 恰 16 / machine_db 恰 20，与 D1 新措辞逐字相等；cells-map.mjs 全文 verifiable_by 命中数 = 0。措辞纠正属实"},
+  {"id":"r4-P2-24","ruling":"RESOLVED","verify":"Step 3 分支 / D2 / A16③ 已统一为『run-summary.machines_online ≥ 1 且含单头 device_model 那台机』，租户字符串比对已删净"}
+ ],
+ "findings":[
+  {"severity":"P1","id":"r5-P1-1",
+   "finding":"冻结断言 A17④ 与闸② 的定义域完全重合而期望终态相反——按 A17④ 实现即在 2 个 hard 红线格（S5-c4 红线9/10、S10-c4 红线11）上重新打开 r4-P1-2 要堵的假绿口",
+   "evidence":"proposal-v5.md:91（闸②：『凡 AI 声明 scenario_not_triggered 而人列为确定判定的格 → 改写 scenario_falsified、落 Q3″』）；:129（机械化落点：『人列 ∈ (通过,不通过) → Q3″』）；:121（分类表第二行：合法 Q3 要求『闸②：human_complete 时人列非确定判定』成立）；:165（Q3″ 行）；对撞的是 :526 的 A17④『AI scenario_not_triggered + 人列通过 + 员工未勾该场景 → final_state == 绿（Q3）』。人列『通过』属于确定判定，故 A17④ 的构造正是 A17②（:519-523，期望 Q3″/未定）的子集；两条断言构造同一输入类、断言相反结果。更硬的一点：闸①（:127 已勾场景码即 400）保证任何能存活到 human_complete 的 scenario_not_triggered 必然出自『员工未勾』，即闸② 的**全部**定义域 = A17④ 的定义域，二者不可能同时为真——闸② 要么是死代码，要么 A17④ 恒失败。proposer 自己在 :103 对 S10-c4 已写明正确结论『员工填确定判定 → 闸② 证伪 AI → Q3″ → 拦；两条路都拦』，与 A17④ 直接打架",
+   "impact":"A 系列是『冻结后 AI 不可改』且按 J13 直接充当各 /dev 任务 DoD 的 [BEHAVIOR] 来源。实现者若照 A17④ 写测试（断言 final_state=='绿'），闸② 必须被削弱成只在员工已勾时触发——而那正是闸① 的职责，『闸① 挡不住漏勾』的整个立论坍塌，3 个 opportunistic 格（含 2 个 hard 红线格）回到 v4 的『AI 单方声明 + 人列通过即绿』形态",
+   "fix":"三处一起改，均为文本级：①删除或改写 A17④ 为『AI scenario_not_triggered + 人列通过 + 员工未勾该场景 → final_state == 未定（Q3″）』；②分类表第二行『享受 Q3 绿通道』列由『是』改为『否（人列非确定判定时落 Q9，人列确定判定时落 Q3″，两条都拦）』——现写法是空真命题；③把 :103 已对 S10-c4 写明的『两条路都拦』结论上提为对全部 3 个 opportunistic 格的通则，并明示代价：场景未发生的轮次这 3 格每轮各需一次处置，这正是 J20 呈批项 1（op 加厚）的紧迫性来源。注意 opportunistic 格并未被死锁——场景真发生时员工勾选 → AI 被闸① 逼出确定判定 → Q1 双绿，绿路径仍在",
+   "dimension":"assertion_verifiability","status":"OPEN"},
+
+  {"severity":"P2","id":"r5-P2-1",
+   "finding":"口径切换表脚注对 Gate B 第6条的增量算错一项：写『opportunistic +1』，而 Gate B 第6条与 J20 都写 S13-c4 升的是 mandatory 不是 opportunistic",
+   "evidence":"proposal-v5.md:154『若第6条也通，在上表基础上再 human_only −1 / machine_db +1 / opportunistic +1 / 上限 +1』 vs :71『S13-c4 的 scenario_class 由 unverifiable_this_version 升 mandatory，回 machine_db（human_only 20→19、machine_db 16→17、上限 16→17）』与 :104/:723 同向",
+   "fix":"改为『opportunistic 不变（仍 3）、故障类 +1』；否则实现期会把 S13-c4 放进 opportunistic 集合，红线8 又长出一条 scenario_not_triggered 声明口",
+   "dimension":"assertion_verifiability","status":"OPEN"},
+
+  {"severity":"P2","id":"r5-P2-2",
+   "finding":"J17 对照表 B 列『AI 确定判定上限 20 格』未按 v5 自己的口径扣掉 S13-c4",
+   "evidence":"proposal-v5.md:673（B 上限 20）与 :679（B 常态 = 20−1−3 = 16，已扣 S13-c4）。按提案自定义『上限 = machine_db 全部格数』，候选 B 之下时限三格可由采证器自行计时故回 machine_db，但 S13-c4 的不可制造与候选无关（超频发送在 B 下同样违反 S12-c2），故 B 的 machine_db = 19、上限应为 19。常态 16 的数字本身是对的（19−3），结论（13 vs 3 vs 16）不翻",
+   "dimension":"judgment_completeness","status":"OPEN"},
+
+  {"severity":"P2","id":"r5-P2-3",
+   "finding":"Q3″ 覆盖『人列不通过』时把该格从 Q6（红·自动进 bug 任务）降级为『未定』，A7 的 bug 任务分母会漏掉这些格",
+   "evidence":"proposal-v5.md:165（Q3″ 人列列写『通过/不通过』）与 :168（Q6 人列不通过 + AI 无法验证 = 红 + bug 任务）；:390 A7『bug 任务描述含全部 final_state=红 的格号』。员工判红的格若恰好被 AI 声明 scenario_not_triggered，就从『自动建 bug』变成『等主理人裁决』；裁决判红后才回到红。闸仍拦、不产生假绿，故不阻塞，但建议 A7 补一句『Q3″ 格在裁决为红后须并入同一 bug 任务』，或让 Q3″ 在人列=不通过时直接判红（AI 的场景声明被证伪，人列独判本就足以定红）",
+   "dimension":"path_completeness","status":"OPEN"},
+
+  {"severity":"P2","id":"r5-P2-4",
+   "finding":"S13-c4『绿必经裁决』与 Step 6 挂片『hard 格裁决绿自动开 P0』相乘 = 每轮固定产出一个 P0，形状同 P2-8『棘轮击穿但无人消费』",
+   "evidence":"proposal-v5.md:104/:163/:535（S13-c4 绿必经有名有姓裁决）；:253 Step 6 挂片『hard 格裁决绿自动开 P0』；:446 A12 第四项只计数、无棘轮阈值（这一点是对的，否则发版直接死锁）。但自动 P0 没有豁免：本版 S13-c4 每一轮都会走裁决绿，于是每次发版必开一个内容相同的 P0，几轮之后这条自动 P0 规则必被关掉，而它同时保护着另外 7 个 hard 格",
+   "fix":"给 unverifiable_this_version 格的裁决绿单独一条处置（只计数进 A12 第四项 + 在 run 单头注记，不开 P0），并把『开 P0』留给真正意外的 hard 格裁决绿；根治仍指向 Gate B 第6条",
+   "dimension":"risk_gates","status":"OPEN"},
+
+  {"severity":"P2","id":"r5-P2-5",
+   "finding":"状态机扩到 7 值时保留 passed/failed 为『历史兼容值』，但没有任何断言禁止新 run 再被写成 failed——现行 acceptance.js:88 正是这么算的，漏改即『员工判出不通过的那一轮永远达不到 human_complete』，合看/裁决/员工回显 403，形状与 r4-P1-1 同类",
+   "evidence":"packages/brain/migrations/369_acceptance_tables.sql:11 现 CHECK 恰为 ('pending','in_review','passed','failed')（已实测）；packages/brain/src/routes/acceptance.js:88 `status = pending>0?'in_review':fail>0?'failed':pass===total?'passed':'in_review'`（已实测）；proposal-v5.md:733 D1 只写『passed/failed 退为历史兼容值』『status 计算改按九组合矩阵算』；:415-418 A10① 只断言 CHECK 定义『含』7 值，不断言写入路径。A6 的双红截图要求间接能抓到（合看页需 human_complete 才开），但那是事后人工发现",
+   "fix":"A10 补一条正向断言：构造一个人列全填满且含『不通过』的 run，读回 status 必须 == 'human_complete'，不得为 'failed'",
+   "dimension":"path_completeness","status":"OPEN"}
+ ],
+ "refute_rulings":[],
+ "code_verifications_this_round":[
+  "packages/brain/src/zenithjoy-db.js:22-31 — `if (!process.env.ZENITHJOY_DB_NAME) return defaultPool;` 与 ZENITHJOY_DB_HOST/PORT/USER/PASSWORD 覆盖逻辑逐字属实，proposer 否决候选 C（服务端直查 staging 业务表）的证据成立",
+  "packages/brain/src/routes/acceptance.js:174 loadPendingRuns = status IN ('pending','in_review') 属实；:62-66 UPDATE 不带 run_id 属实；:88 status 计算属实；:99-106 查重谓词不区分 bucket 属实",
+  "packages/brain/migrations/369_acceptance_tables.sql:11 status CHECK 恰 4 值属实；:21 check_key 全局 UNIQUE 属实；:25 result CHECK 三值属实",
+  "zenithjoy scripts/acceptance-spec/ai-run/cells-map.mjs — 全表恰 20 格，action 计数 observe 18 / signup_flow 1 / trigger_collect 1（= S6-c3）属实；scenario_required 恰 6 格 = S4-c2/S4-c3/S5-c3/S5-c4/S10-c4/S13-c4 属实；verifiable_by 命中 0 属实",
+  "zenithjoy acceptance-spec/line02-android.yaml 独立解析 — 全表 56 格 / 步1-13 恰 52 格（与决策 fdeb48aa 原文数字精确相等）/ na 19 / 建行 36 / verifiable_by 全带且 human_only 16 : machine_db 20 / hard 恰 8 = S2-c4,S5-c4,S6-c4,S8-c4,S10-c4,S11-c4,S12-c4,S13-c4 / S14 fixedNa 且 c1 为 human_only『固定不适用。红线13』——与提案逐项相等",
+  "yaml 原文抽验 — S4.op『冷启动客户端一次；重启手机一次，观察恢复』、S4-c2.t『在约定时间窗内恢复在线，不是等半天才连上』+fails『等了很久才恢复在线』（时限格论证成立）、S5.op『手机登录2到3个测试小号，触发一次账号扫描』、S10.op『看命中视频评论区抓到的内容』、S12-c2.t『…同设备10分钟内最多发3条；关注每小时不超10次、点赞不超15次』（S13-c4 fail-closed 论证成立）",
+  "zenithjoy scripts/acceptance-spec/ai-run/capture.mjs:155-160 真填关键词点『开始采集』属实；:171 `const start = Date.now()` 确在点火之后，候选 C 下轮询计时物理失效属实",
+  "zenithjoy scripts/acceptance-spec/lib.mjs:297 `data-f=\"tenant\"` 测试用客户账号属实；:430 STATE_LABEL 第三态仍为『不适用』属实"
+ ]}

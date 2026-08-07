@@ -1,0 +1,17 @@
+{"lens":"product","round":1,
+ "rubric_scores":{"reality_of_status":6,"path_completeness":4,"assertion_verifiability":6,
+                  "judgment_completeness":6,"risk_gates":5,"commitment_purity":9,
+                  "multi_platform_completeness":7},
+ "verdict":"REVISION",
+ "findings":[
+  {"severity":"P0","finding":"人列既有第三态「无法验证」在提案里整块缺失，导致红线格可被「无法验证」绕过放行闸，且 run 永远到不了 passed","evidence":"packages/brain/src/routes/acceptance.js:10 ACCEPTANCE_RESULTS=['通过','不通过','无法验证']；AcceptanceDetailPage.tsx select 三选项；acceptance.js:88 status=pending>0?'in_review':fail>0?'failed':pass===total?'passed':'in_review'（有一格无法验证则 passed 不可达）；提案全文「无法验证」仅出现 1 次且指 AI 侧；J1-④只堵「任一红」不堵「从未验证」；8 个 hard 格中 S12-c4(human_only 真机)/S5-c4/S10-c4/S13-c4(scenario_required) 四格在真机不可用或场景未触发时两列都无确定判定","dimension":"risk_gates","status":"OPEN"},
+  {"severity":"P0","finding":"放行闸没有把「定案 run 的构建」与「正在 promote 的构建」绑定，可用旧构建的绿单放行新构建","evidence":"promote-all-prod.yml:82-138 证据②范式是「最近2次结论绿 + 最新<36h」的时间窗，无 sha 对账；提案 A7 四条日志断言无任何 sha 匹配项；J12 冻结锁只覆盖 run 内部（run 期间 sha 变→stale），run 定案后到 promote 之间 staging 再部署无任何拦截","dimension":"path_completeness","status":"OPEN"},
+  {"severity":"P1","finding":"员工没有任何「该干活了」的信号，Step 1 建单到 Step 3 员工打开验收页之间是断的","evidence":"apps/staff-hub/src/App.tsx:46-48 侧边栏「验收」是纯文本 NavLink，无待办计数；EnvBadge.tsx 是环境角标不是待办角标；PRD acceptance-one-table-prd.md:78 称「角标够用」但角标不存在，提案未把它列为任何步骤的挂片","dimension":"path_completeness","status":"OPEN"},
+  {"severity":"P1","finding":"决策⑥「员工验收=发版仪式非日常」未落地：无仪式发起人、无频率、无员工工时评估，而 Step 4 硬解锁条件是 37 格齐（含 S12 真机全程录屏私信）","evidence":"提案全文零处出现仪式/排期/派工；Step 4 挂片『解锁条件=人列 37 格齐』；explore-report.md:160 真机车道 nightly-android-fleet-pc4 近 3 晚连续 failure、e2e-line02-android-collect 近 5 次全 failure；J1 误判后果自述『三次之后必被 waive 成摆设』却未堵","dimension":"path_completeness","status":"OPEN"},
+  {"severity":"P1","finding":"裁决结论对员工不可见——员工在 Step 4 提交后骨干里再无员工视角，主理人推翻员工判红后员工看不到理由","evidence":"提案 Step 5 主体只有主理人，Step 6 只有发版人；三主体声明（发版人/验收员工/主理人）中员工只出现在 Step 3/4；A5 三张截图均为主理人视角，无员工回看态","dimension":"path_completeness","status":"OPEN"},
+  {"severity":"P1","finding":"断言 A6 的任务数分母与 Step 5 分支自相矛盾，漏掉「裁决红」","evidence":"提案 Step 5 分支写『双红/裁决红 → bug 任务』，A6 的 SQL 断言写 count(*)==双红数+AI绿人红数；一个分歧格被裁决为红时实际计数必大于该分母，断言会假失败","dimension":"assertion_verifiability","status":"OPEN"},
+  {"severity":"P1","finding":"规程 yaml 改版对在跑 run 无任何处理，冻结锁只锁了后端构建没锁判据版本","evidence":"J12 只校验 backend_sha；A8 只断言 detail->>'backend_sha'；acceptance_runs.version 列已存在但提案未用于校验；规程 line02-android.yaml 现为 v2.1.19，改版即格集合与判据变更，两列可能判的是不同规程","dimension":"judgment_completeness","status":"OPEN"},
+  {"severity":"P2","finding":"四象限/填表页未区分「需真机」「需场景」的格，员工无法预知哪些格自己也验不了","evidence":"acceptance_checks.device 列已有且 AcceptanceDetailPage.tsx 已渲染 c.device，但 scenario_required 只存在于 AI 侧 cells-map.mjs:23-67，未进入 yaml 也未进入任何员工可见展示层","dimension":"multi_platform_completeness","status":"OPEN"},
+  {"severity":"P2","finding":"提案未盘既有 run 状态机（in_review/failed/passed），Step 5『定案』与 A7『未定案时 exit 1』依赖一个当前不存在的定案态","evidence":"acceptance.js:88 状态计算只产出三态且无 adjudicated/finalized；提案 D1-D4 交付物均未列状态机改造","dimension":"reality_of_status","status":"OPEN"}
+ ],
+ "refute_rulings":[]}

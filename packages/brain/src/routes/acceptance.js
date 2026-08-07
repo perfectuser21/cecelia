@@ -5,6 +5,11 @@
  */
 import express from 'express';
 import rateLimit from 'express-rate-limit';
+import { computeRunStatus } from '../acceptance-state.js';
+import { findDuplicateCheckKeys } from '../acceptance-spec.js';
+import { registerAiResultsRoute } from './acceptance-ai.js';
+import { registerReviewClosureRoutes } from './acceptance-review.js';
+import { checkCreateGate, checkFrozenStamps } from './acceptance-gates.js';
 
 export const ACCEPTANCE_KINDS = ['FR', 'NFR', 'Invariant', 'SOP'];
 export const ACCEPTANCE_RESULTS = ['通过', '不通过', '无法验证'];
@@ -22,7 +27,28 @@ export class AcceptanceResultsError extends Error {
   }
 }
 
-export async function submitAcceptanceResults(pool, results) {
+/** 对任何 run 都不触发，纯占位待 D4 删除（判据见调用点注释） */
+function isLegacyRejectionTransition(prevStatus, nextStatus) {
+  return prevStatus !== 'failed' && nextStatus === 'failed';
+}
+
+/**
+ * 建单侧的规程格号（S{步号}-c{列号}）。只在 POST /runs 写入侧校验：
+ * migration 392 刻意不给 check_key 加 DB CHECK，因为存量 21 行是旧 {run_key}:{NNN} 流水号格式，
+ * 加约束会当场挡死它们。提交路径同样不校验格式——历史 run 必须还能正常回写判定。
+ */
+export const CHECK_KEY_PATTERN = /^S\d+-c[1-4]$/;
+
+/**
+ * 提交人列结果。`run_key` 是必填的写入作用域：migration 392 把 UNIQUE 从全局 check_key 换绑到
+ * (run_id, check_key) 之后，同一格号可以合法地出现在多个 run 里，不带作用域的寻址会跨 run 误写。
+ * 缺 run_key 直接 400，不回落到「按全局 check_key 猜一个」——那正是本刀要堵的洞。
+ */
+export async function submitAcceptanceResults(pool, results, options = {}) {
+  const { run_key } = options;
+  if (!run_key) {
+    throw new AcceptanceResultsError(400, { error: 'run_key is required（写入必须限定在单个 run 作用域内）' });
+  }
   if (!Array.isArray(results) || results.length === 0) {
     throw new AcceptanceResultsError(400, { error: 'results must be a non-empty array' });
   }
@@ -49,9 +75,40 @@ export async function submitAcceptanceResults(pool, results) {
   try {
     await client.query('BEGIN');
     const keys = results.map((r) => r.check_key);
+    const { rows: runRows } = await client.query(
+      'SELECT id, status, detail FROM acceptance_runs WHERE run_key = $1', [run_key]
+    );
+    if (runRows.length === 0) {
+      await safeRollback(client);
+      throw new AcceptanceResultsError(404, { error: 'run not found', run_key });
+    }
+    const scopedRunId = runRows[0].id;
+
+    // 冻结锁（J12-A）：排在任何 UPDATE 之前，拦下时这一批一格都不许落库。
+    const frozen = checkFrozenStamps(runRows[0].detail, options);
+    if (frozen.kind === 'missing') {
+      await safeRollback(client);
+      throw new AcceptanceResultsError(400, {
+        error: 'sha_required_for_freeze_check',
+        hint: '该 run 带版本戳，提交须自报 backend_sha/frontend_sha/spec_sha',
+      });
+    }
+    if (frozen.kind === 'changed') {
+      // 转 stale 要留下来（这一轮作废是既成事实），判定不能落库——所以先提交转态再抛。
+      await client.query(
+        `UPDATE acceptance_runs
+            SET status = 'stale',
+                detail = COALESCE(detail,'{}'::jsonb) || $1::jsonb,
+                updated_at = NOW()
+          WHERE id = $2`,
+        [JSON.stringify({ stale_reason: frozen.changed, stale_at: new Date().toISOString() }), scopedRunId]
+      );
+      await client.query('COMMIT');
+      throw new AcceptanceResultsError(409, { error: 'run_frozen_version_changed', changed: frozen.changed });
+    }
     const { rows: found } = await client.query(
-      'SELECT check_key, run_id FROM acceptance_checks WHERE check_key = ANY($1)',
-      [keys]
+      'SELECT check_key FROM acceptance_checks WHERE run_id = $1 AND check_key = ANY($2)',
+      [scopedRunId, keys]
     );
     const foundKeys = new Set(found.map((r) => r.check_key));
     const missing = keys.filter((k) => !foundKeys.has(k));
@@ -62,11 +119,13 @@ export async function submitAcceptanceResults(pool, results) {
     for (const r of results) {
       await client.query(
         `UPDATE acceptance_checks SET result = $1, note = $2, submitted_by = $3, decided_at = NOW(), updated_at = NOW()
-         WHERE check_key = $4`,
-        [r.result, r.note || null, r.submitted_by || null, r.check_key]
+         WHERE run_id = $4 AND check_key = $5`,
+        [r.result, r.note || null, r.submitted_by || null, scopedRunId, r.check_key]
       );
     }
-    const runIds = [...new Set(found.map((r) => r.run_id))];
+    // 作用域收紧后这里恒为单元素：所有 found 行都来自 scopedRunId。保留循环形态是为了不动下面
+    // 那段行锁/重算逻辑，但不再从 found 反推 run 集合——那会留下「看起来支持跨 run 批量」的假象。
+    const runIds = [scopedRunId];
     const updatedRuns = [];
     for (const runId of runIds) {
       // 并发提交同一 run 不同 check_key 时，READ COMMITTED 隔离级别下两个事务可能都读到
@@ -76,19 +135,19 @@ export async function submitAcceptanceResults(pool, results) {
       const { rows: counts } = await client.query(
         `SELECT COUNT(*)::int AS total,
                 COUNT(*) FILTER (WHERE result = '通过')::int AS pass,
-                COUNT(*) FILTER (WHERE result = '不通过')::int AS fail,
                 COUNT(*) FILTER (WHERE result IS NULL)::int AS pending
            FROM acceptance_checks WHERE run_id = $1`,
         [runId]
       );
-      const { total, pass, fail, pending } = counts[0];
+      const { total, pass, pending } = counts[0];
       const passRate = total > 0 ? pass / total : 0;
-      const status = pending > 0 ? 'in_review' : fail > 0 ? 'failed' : pass === total ? 'passed' : 'in_review';
       const { rows: prevRows } = await client.query(
         'SELECT status, title, gp_id, run_key FROM acceptance_runs WHERE id = $1',
         [runId]
       );
       const prev = prevRows[0];
+      // run 级 status 独立走 7 值状态机，不由格级判定推导（格级判定见 computeCellState）
+      const status = computeRunStatus(prev?.status, { total, humanFilled: total - pending });
       const { rows: updated } = await client.query(
         `UPDATE acceptance_runs SET pass_rate = $1, status = $2, updated_at = NOW()
          WHERE id = $3 RETURNING run_key, pass_rate, status`,
@@ -96,7 +155,13 @@ export async function submitAcceptanceResults(pool, results) {
       );
       updatedRuns.push(updated[0]);
 
-      if (prev && prev.status !== 'failed' && status === 'failed') {
+      // 这段对任何 run 都不触发，是纯占位、待 D4 删除。判据：computeRunStatus 的返回
+      // 只可能是 RUN_STATUSES 的三个活跃值，或经 PRESERVED_RUN_STATUSES 白名单原样透传的
+      // 前态；'failed' 在白名单里，于是历史 failed run 算出的 next 仍是 'failed'，被
+      // prevStatus !== 'failed' 挡掉，其余前态则永远算不出 'failed'。分流建任务由 D4 的
+      // 聚合式分流接管。此处显式命名而不是留一个恒不触发的裸条件——「看起来在工作、实际
+      // 恒不触发」的代码就是 P2-8 记的棘轮静默击穿。
+      if (prev && isLegacyRejectionTransition(prev.status, status)) {
         const { rows: existingTask } = await client.query(
           `SELECT 1 FROM tasks
            WHERE payload->>'acceptance_run_key' = $1
@@ -188,11 +253,28 @@ export function createAcceptanceInternalRouter({ pool }) {
     }
     for (const [i, c] of checks.entries()) {
       if (!c || !c.name) return res.status(400).json({ error: `checks[${i}].name is required` });
+      if (!c.check_key || !CHECK_KEY_PATTERN.test(c.check_key)) {
+        return res.status(400).json({ error: `checks[${i}].check_key must match ^S\\d+-c[1-4]$（规程格号，由建单生成器产出）` });
+      }
       if (!ACCEPTANCE_KINDS.includes(c.kind)) {
         return res.status(400).json({ error: `checks[${i}].kind must be one of: ${ACCEPTANCE_KINDS.join(',')}` });
       }
     }
+    // 生成器输出里同号格重复是客户端送来的结构异常，要当场 400 说清楚是哪个格号。
+    // 不拦的话它会一路走到逐行 INSERT 撞 (run_id, check_key) 唯一约束，被下面那段
+    // 23505 分支当成「run 已存在」去重查——重查不到就回一个语焉不详的 500，
+    // 而真正的原因（规程里格号重复）一个字都没出现。
+    const dupes = findDuplicateCheckKeys(checks.map((c) => c.check_key));
+    if (dupes.length > 0) {
+      return res.status(400).json({ error: 'duplicate_check_key', duplicates: dupes });
+    }
     if (!SOURCES.includes(source)) return res.status(400).json({ error: `source must be one of: ${SOURCES.join(',')}` });
+
+    // 单头：v7-final 的 run 级附属信息整块落 detail（tenant_account/版本戳/scenarios_observed…）。
+    // 建单是这些字段唯一的写入侧——Task 8 的收单期推进闸读的就是这里落进去的 scenarios_observed。
+    const { detail: head = {}, force_reason, force_opened_by } = req.body || {};
+    const gateError = await checkCreateGate(pool, { gp_id, run_key, head, force_reason, force_opened_by });
+    if (gateError) return res.status(gateError.status).json(gateError.body);
 
     const client = await pool.connect();
     try {
@@ -204,19 +286,18 @@ export function createAcceptanceInternalRouter({ pool }) {
         return res.status(200).json({ run: existing.rows[0], checks: existingChecks, created: false });
       }
       const { rows: runRows } = await client.query(
-        `INSERT INTO acceptance_runs (run_key, title, gp_id, line, surface, version, source)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-        [run_key, title, gp_id || null, line || null, surface || null, version || null, source]
+        `INSERT INTO acceptance_runs (run_key, title, gp_id, line, surface, version, source, detail)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING *`,
+        [run_key, title, gp_id || null, line || null, surface || null, version || null, source,
+         JSON.stringify(head)]
       );
       const run = runRows[0];
       const createdChecks = [];
-      for (let i = 0; i < checks.length; i++) {
-        const c = checks[i];
-        const checkKey = `${run_key}:${String(i + 1).padStart(3, '0')}`;
+      for (const c of checks) {
         const { rows } = await client.query(
           `INSERT INTO acceptance_checks (run_id, check_key, kind, name, device, detail)
            VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-          [run.id, checkKey, c.kind, c.name, c.device || null, c.detail ? JSON.stringify(c.detail) : null]
+          [run.id, c.check_key, c.kind, c.name, c.device || null, c.detail ? JSON.stringify(c.detail) : null]
         );
         createdChecks.push(rows[0]);
       }
@@ -291,7 +372,12 @@ export function createAcceptanceInternalRouter({ pool }) {
 
   router.post('/results', async (req, res) => {
     try {
-      const result = await submitAcceptanceResults(pool, req.body?.results);
+      const result = await submitAcceptanceResults(pool, req.body?.results, {
+        run_key: req.body?.run_key,
+        backend_sha: req.body?.backend_sha,
+        frontend_sha: req.body?.frontend_sha,
+        spec_sha: req.body?.spec_sha,
+      });
       return res.json(result);
     } catch (err) {
       if (err instanceof AcceptanceResultsError) return res.status(err.status).json(err.body);
@@ -299,6 +385,41 @@ export function createAcceptanceInternalRouter({ pool }) {
       return res.status(500).json({ error: 'internal_error' });
     }
   });
+
+  registerAiResultsRoute(router, { pool, safeRollback });
+
+  /**
+   * 显式作废（A10③）。终态只由 status 表达，detail 里三项纯留痕——两者在同一条 UPDATE 里落，
+   * 不存在「detail 标了作废但 status 还活着」的中间态（A10④ 反二义断言的就是这个）。
+   */
+  router.patch('/runs/:run_key/abandon', async (req, res) => {
+    const { reason, by } = req.body || {};
+    if (!reason || !by) return res.status(400).json({ error: 'reason and by are required' });
+    try {
+      const { rows } = await pool.query(
+        `UPDATE acceptance_runs
+            SET status = 'abandoned',
+                detail = COALESCE(detail, '{}'::jsonb) || $1::jsonb,
+                updated_at = NOW()
+          WHERE run_key = $2 RETURNING run_key, status`,
+        [
+          JSON.stringify({
+            abandoned_reason: reason,
+            abandoned_by: by,
+            abandoned_at: new Date().toISOString(),
+          }),
+          req.params.run_key,
+        ]
+      );
+      if (rows.length === 0) return res.status(404).json({ error: 'run not found' });
+      return res.json({ run: rows[0] });
+    } catch (err) {
+      console.error('[acceptance] PATCH /abandon error:', err.message);
+      return res.status(500).json({ error: 'internal_error' });
+    }
+  });
+
+  registerReviewClosureRoutes(router, { pool, safeRollback });
 
   router.get('/pending', async (_req, res) => {
     try {
@@ -341,7 +462,12 @@ export function createAcceptancePublicRouter({ pool }) {
 
   router.post('/acceptance/results', async (req, res) => {
     try {
-      const result = await submitAcceptanceResults(pool, req.body?.results);
+      const result = await submitAcceptanceResults(pool, req.body?.results, {
+        run_key: req.body?.run_key,
+        backend_sha: req.body?.backend_sha,
+        frontend_sha: req.body?.frontend_sha,
+        spec_sha: req.body?.spec_sha,
+      });
       return res.json(result);
     } catch (err) {
       if (err instanceof AcceptanceResultsError) return res.status(err.status).json(err.body);
