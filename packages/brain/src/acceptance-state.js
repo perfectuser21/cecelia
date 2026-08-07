@@ -84,6 +84,12 @@ export function computeGateVerdict(cells, runDetail = {}) {
   if (!Array.isArray(cells) || cells.length === 0) {
     throw new Error('computeGateVerdict: cells 为空，拿不到建行格无法判闸');
   }
+  // 枚举外的脏值既不等于'绿'（算进 notGreen 判红），又不是'红'也不是'未定'（两个清单都收不到它），
+  // 「红但卡在空」会换个形式复现。域外值只可能来自上游写坏，在闸这层就让它显形。
+  const bad = cells.find((c) => !CELL_STATES.includes(c.final_state));
+  if (bad) {
+    throw new Error(`computeGateVerdict: ${bad.check_key} 的 final_state 非法「${bad.final_state}」`);
+  }
   const notGreen = cells.filter((c) => c.final_state !== '绿');
   const redCells = notGreen.filter((c) => c.hard || c.final_state === '红').map((c) => c.check_key);
   // red_cells 的语义保持「红格」纯粹（hard 格非绿一律按红线走），未定格另开一列：
@@ -115,7 +121,7 @@ export function computeAiStatus(cells, { machineDbTotal } = {}) {
   if (!Number.isInteger(machineDbTotal) || machineDbTotal <= 0) {
     throw new Error(`computeAiStatus: machineDbTotal 必须是正整数，收到 ${machineDbTotal}`);
   }
-  const decided =cells.filter((c) => c.ai_verdict === '通过' || c.ai_verdict === '不通过').length;
+  const decided = cells.filter((c) => c.ai_verdict === '通过' || c.ai_verdict === '不通过').length;
   const missingCells = cells.filter((c) => c.ai_verdict == null).map((c) => c.check_key);
   const machineDbFailures = cells.filter(
     (c) => c.verifiable_by === 'machine_db'

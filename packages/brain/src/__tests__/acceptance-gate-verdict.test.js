@@ -67,6 +67,18 @@ describe('computeAiStatus — 哑火三条件（分母与阈值从 yaml 派生�
     expect(computeAiStatus(cs, { machineDbTotal: 19 }).ai_status).toBe('dumb');
   });
 
+  it('条件① 单独成立时 reasons 只含 no_decided_cells（与②③ 隔离）', () => {
+    // 上一例的全 timeout 构造会同时点着条件②（36 个 machine_db 故障 ≥ 10），
+    // 于是「条件① 判据被删掉」这种变异照样能让它绿。换成全 human_only 合法无法验证：
+    // 确定判定 0（①成立）、human_only 不计故障（②不成立）、无缺格（③不成立），条件① 才被单独钉住。
+    const cs = ok.map((c) => ({
+      ...c, verifiable_by: 'human_only', ai_verdict: '无法验证', ai_reason: 'human_only',
+    }));
+    const r = computeAiStatus(cs, { machineDbTotal: 19 });
+    expect(r.ai_status).toBe('dumb');
+    expect(r.reasons).toEqual(['no_decided_cells']);
+  });
+
   it('条件② machine_db 格故障类无法验证达到阈值（19 → 10）→ 哑火', () => {
     const cs = ok.map((c, i) => (i < 10
       ? { ...c, ai_verdict: '无法验证', ai_reason: 'page_unreachable' } : c));
@@ -144,6 +156,13 @@ describe('undecided_cells 与 blocked_reason 三态：闸判红时必须说得�
 describe('输入非法时 fail-fast，不得静默降级成放行', () => {
   it('cells 为空（run 没建行/取数挂了）→ 抛错，不得判绿', () => {
     expect(() => computeGateVerdict([], {})).toThrow(/建行格/);
+  });
+
+  it('final_state 出现 CELL_STATES 枚举外的脏值 → 抛错，不得当成非绿悄悄拦', () => {
+    // 脏值既不等于'绿'（于是算进 notGreen 判红），又不是'红'也不是'未定'（于是两个清单都收不到它），
+    // 正是「红但卡在空」换一种形式复现。域外值只可能来自上游写坏，抛错让它在闸这层就显形。
+    const cs = cells(36, { overrides: { 'S3-c1': 'PASS' } });
+    expect(() => computeGateVerdict(cs, {})).toThrow(/S3-c1/);
   });
 
   it('machineDbTotal 缺失 → 抛错，不得让条件② 悄悄失效', () => {
