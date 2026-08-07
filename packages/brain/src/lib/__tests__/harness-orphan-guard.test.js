@@ -73,6 +73,36 @@ describe('requeueOrphanTask', () => {
     await requeueOrphanTask(pool, { ...task, payload: { orphan_requeue_count: 3 } }, 'x');
     expect(pool.calls.some((c) => c.sql.includes('UPDATE initiative_runs'))).toBe(true);
   });
+
+  // 终态化没成功还照样 requeue 的话,等于亲手把死锁再造一遍:
+  // task 回 queued、run 还活着 → spawn-guard 继续拒 → 白烧一次 requeue 额度。
+  // 宁可这轮不动(任务本来就是 in_progress,是安全态),留给下一轮 sweep 重试。
+  it('终态化 run 失败 → 本轮不动 task,留 in_progress 给下轮 sweep', async () => {
+    const pool = mockPool();
+    pool.query = vi.fn(async (sql, params) => {
+      const s = String(sql);
+      pool.calls.push({ sql: s, params });
+      if (s.includes('UPDATE initiative_runs')) throw new Error('pg down');
+      return { rows: [] };
+    });
+    const r = await requeueOrphanTask(pool, task, 'sweep-orphan');
+    expect(r.action).toBe('deferred');
+    expect(r.reason).toBe('run_terminalize_failed');
+    expect(pool.calls.some((c) => c.sql.includes('UPDATE tasks'))).toBe(false);
+  });
+
+  it('终态化失败时连"转 failed"也不做(不留悬空活跃 run 挂在终态任务上)', async () => {
+    const pool = mockPool();
+    pool.query = vi.fn(async (sql, params) => {
+      const s = String(sql);
+      pool.calls.push({ sql: s, params });
+      if (s.includes('UPDATE initiative_runs')) throw new Error('pg down');
+      return { rows: [] };
+    });
+    const r = await requeueOrphanTask(pool, { ...task, payload: { orphan_requeue_count: 3 } }, 'x');
+    expect(r.action).toBe('deferred');
+    expect(pool.calls.some((c) => c.sql.includes('UPDATE tasks'))).toBe(false);
+  });
 });
 
 describe('handleRelayExitConsistency', () => {
@@ -144,6 +174,24 @@ describe('sweepOrphanHarnessTasks', () => {
     const r = await sweepOrphanHarnessTasks({ pool, execFn, idleMinutes: 15 });
     expect(r.requeued).toBe(1);
     expect(pool.calls.some((c) => c.sql.includes("status = 'queued'"))).toBe(true);
+  });
+
+  it('终态化 run 失败的任务计进 deferred,不冒充 failed', async () => {
+    const pool = mockPool();
+    pool.query = vi.fn(async (sql) => {
+      const s = String(sql);
+      pool.calls.push({ sql: s });
+      if (s.includes('SELECT') && s.includes("task_type LIKE 'harness%'")) {
+        return { rows: [{ id: 'ccccdddd-0000-0000-0000-000000000000', title: 't', payload: {}, status: 'in_progress' }] };
+      }
+      if (s.includes('initiative_run_events')) return { rows: [{ last_hb: 0 }] };
+      if (s.includes('UPDATE initiative_runs')) throw new Error('pg down');
+      return { rows: [] };
+    });
+    const r = await sweepOrphanHarnessTasks({ pool, execFn: () => '', idleMinutes: 15 });
+    expect(r.deferred).toBe(1);
+    expect(r.requeued).toBe(0);
+    expect(r.failed).toBe(0);
   });
 
   it('有活容器 → 跳过', async () => {
