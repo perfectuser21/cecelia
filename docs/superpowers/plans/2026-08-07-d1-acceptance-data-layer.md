@@ -2742,7 +2742,7 @@ git commit -m "feat(acceptance): 显式作废端点（→abandoned 三项留痕�
 - Modify: `packages/brain/src/routes/acceptance.js`
 - Test: `packages/brain/src/__tests__/integration/acceptance-review-closure.integration.test.js`
 
-- [ ] **Step 1: 写 failing 集成测试**
+- [x] **Step 1: 写 failing 集成测试**
 
 新建 `packages/brain/src/__tests__/integration/acceptance-review-closure.integration.test.js`：
 
@@ -2850,7 +2850,7 @@ describe('A15 复盘闭环', () => {
 });
 ```
 
-- [ ] **Step 2: 登记并跑红**
+- [x] **Step 2: 登记并跑红**
 
 `packages/brain/vitest.config.js` 追加：
 
@@ -2867,7 +2867,7 @@ DB_NAME=cecelia_scratch ACCEPTANCE_OWNER_IDENTITY=alex npx vitest run \
 
 预期：全 FAIL 404。
 
-- [ ] **Step 3: 提交 Red commit**
+- [x] **Step 3: 提交 Red commit**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -2875,7 +2875,7 @@ git add packages/brain/src/__tests__/integration/acceptance-review-closure.integ
 git commit -m "test(acceptance): review-ack/review-closed 六场景 failing test [task b35bfa0c]"
 ```
 
-- [ ] **Step 4: 实现两个端点**
+- [x] **Step 4: 实现两个端点**
 
 在 `routes/acceptance.js` 的常量段（`SOURCES` 之后）加入：
 
@@ -2980,7 +2980,7 @@ async function loadSubmitters(q, runId) {
   });
 ```
 
-- [ ] **Step 5: 跑测试确认全绿**
+- [x] **Step 5: 跑测试确认全绿**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -2991,7 +2991,7 @@ DB_NAME=cecelia_scratch ACCEPTANCE_OWNER_IDENTITY=alex npx vitest run \
 
 预期：8 例全 PASS。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
