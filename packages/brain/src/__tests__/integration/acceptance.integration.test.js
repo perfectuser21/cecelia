@@ -28,16 +28,16 @@ describe('acceptance 全链 integration', () => {
       title: 'integration 测试单',
       gp_id: 'customer_smart_acquisition',
       checks: [
-        { kind: 'FR', name: 'step1' },
-        { kind: 'FR', name: 'step2' },
-        { kind: 'Invariant', name: '不向未授权账号发消息' },
+        { check_key: 'S1-c1', kind: 'FR', name: 'step1' },
+        { check_key: 'S1-c3', kind: 'FR', name: 'step2' },
+        { check_key: 'S11-c4', kind: 'Invariant', name: '不向未授权账号发消息' },
       ],
     });
     expect(create.status).toBe(201);
     expect(create.body.checks).toHaveLength(3);
 
     const again = await request(app).post('/api/brain/acceptance/runs').send({
-      run_key: RUN_KEY, title: '重复', checks: [{ kind: 'FR', name: 'x' }],
+      run_key: RUN_KEY, title: '重复', checks: [{ check_key: 'S1-c1', kind: 'FR', name: 'x' }],
     });
     expect(again.status).toBe(200);
     expect(again.body.created).toBe(false);
@@ -48,10 +48,11 @@ describe('acceptance 全链 integration', () => {
     expect(mine.checks).toHaveLength(3);
 
     const results = await request(app).post('/acceptance/results').send({
+      run_key: RUN_KEY,
       results: [
-        { check_key: `${RUN_KEY}:001`, result: '通过' },
-        { check_key: `${RUN_KEY}:002`, result: '不通过', note: '挂了' },
-        { check_key: `${RUN_KEY}:003`, result: '通过' },
+        { check_key: 'S1-c1', result: '通过' },
+        { check_key: 'S1-c3', result: '不通过', note: '挂了' },
+        { check_key: 'S11-c4', result: '通过' },
       ],
     });
     expect(results.status).toBe(200);
@@ -87,11 +88,11 @@ describe('acceptance 全链 integration', () => {
     const app = makeApp();
     await request(app).post('/api/brain/acceptance/runs').send({
       run_key: runKey, title: 'race 测试单',
-      checks: [{ kind: 'FR', name: 'a' }, { kind: 'FR', name: 'b' }],
+      checks: [{ check_key: 'S1-c1', kind: 'FR', name: 'a' }, { check_key: 'S2-c1', kind: 'FR', name: 'b' }],
     });
     const [r1, r2] = await Promise.all([
-      request(app).post('/acceptance/results').send({ results: [{ check_key: `${runKey}:001`, result: '通过' }] }),
-      request(app).post('/acceptance/results').send({ results: [{ check_key: `${runKey}:002`, result: '通过' }] }),
+      request(app).post('/acceptance/results').send({ run_key: runKey, results: [{ check_key: 'S1-c1', result: '通过' }] }),
+      request(app).post('/acceptance/results').send({ run_key: runKey, results: [{ check_key: 'S2-c1', result: '通过' }] }),
     ]);
     expect(r1.status).toBe(200);
     expect(r2.status).toBe(200);
@@ -112,7 +113,7 @@ describe('acceptance 全链 integration', () => {
     const app = makeApp();
     await request(app).post('/api/brain/acceptance/runs').send({
       run_key: runKey, title: `${runKey} 标题探针`,
-      checks: [{ kind: 'FR', name: 'will-fail' }],
+      checks: [{ check_key: 'S1-c1', kind: 'FR', name: 'will-fail' }],
     });
     // 手工占住 idx_tasks_dedup_active（title 相同 + 未终态），模拟"标题冲突但不是本次唯一索引"的场景
     await pool.query(
@@ -120,7 +121,8 @@ describe('acceptance 全链 integration', () => {
       [rejectTitle]
     );
     const submit = await request(app).post('/acceptance/results').send({
-      results: [{ check_key: `${runKey}:001`, result: '不通过' }],
+      run_key: runKey,
+      results: [{ check_key: 'S1-c1', result: '不通过' }],
     });
     expect(submit.status).toBe(200);
     const final = await request(app).get(`/api/brain/acceptance/runs/${runKey}`);

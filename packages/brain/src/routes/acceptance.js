@@ -29,13 +29,21 @@ function isLegacyRejectionTransition(prevStatus, nextStatus) {
 }
 
 /**
- * 提交人列结果。签名只有 (pool, results)：整条路径按全局 check_key 寻址，没有 run 作用域入参。
- * migration 392 把 UNIQUE 从全局 check_key 换绑到 (run_id, check_key) 之后，同一格号可以合法地
- * 出现在多个 run 里，此时下面的 `WHERE check_key = ANY(...)` / `WHERE check_key = $4` 会跨 run
- * 命中——**提交路径的 run 作用域寻址由 Task 4 接管**（check_key 格号化 + run_id 入参）。
- * 在那之前不要给本函数传第三个 run 作用域参数：它会被静默忽略，制造「以为限定了 run」的假象。
+ * 建单侧的规程格号（S{步号}-c{列号}）。只在 POST /runs 写入侧校验：
+ * migration 392 刻意不给 check_key 加 DB CHECK，因为存量 21 行是旧 {run_key}:{NNN} 流水号格式，
+ * 加约束会当场挡死它们。提交路径同样不校验格式——历史 run 必须还能正常回写判定。
  */
-export async function submitAcceptanceResults(pool, results) {
+export const CHECK_KEY_PATTERN = /^S\d+-c[1-4]$/;
+
+/**
+ * 提交人列结果。`run_key` 是必填的写入作用域：migration 392 把 UNIQUE 从全局 check_key 换绑到
+ * (run_id, check_key) 之后，同一格号可以合法地出现在多个 run 里，不带作用域的寻址会跨 run 误写。
+ * 缺 run_key 直接 400，不回落到「按全局 check_key 猜一个」——那正是本刀要堵的洞。
+ */
+export async function submitAcceptanceResults(pool, results, { run_key } = {}) {
+  if (!run_key) {
+    throw new AcceptanceResultsError(400, { error: 'run_key is required（写入必须限定在单个 run 作用域内）' });
+  }
   if (!Array.isArray(results) || results.length === 0) {
     throw new AcceptanceResultsError(400, { error: 'results must be a non-empty array' });
   }
@@ -62,9 +70,17 @@ export async function submitAcceptanceResults(pool, results) {
   try {
     await client.query('BEGIN');
     const keys = results.map((r) => r.check_key);
+    const { rows: runRows } = await client.query(
+      'SELECT id FROM acceptance_runs WHERE run_key = $1', [run_key]
+    );
+    if (runRows.length === 0) {
+      await safeRollback(client);
+      throw new AcceptanceResultsError(404, { error: 'run not found', run_key });
+    }
+    const scopedRunId = runRows[0].id;
     const { rows: found } = await client.query(
-      'SELECT check_key, run_id FROM acceptance_checks WHERE check_key = ANY($1)',
-      [keys]
+      'SELECT check_key, run_id FROM acceptance_checks WHERE run_id = $1 AND check_key = ANY($2)',
+      [scopedRunId, keys]
     );
     const foundKeys = new Set(found.map((r) => r.check_key));
     const missing = keys.filter((k) => !foundKeys.has(k));
@@ -75,11 +91,13 @@ export async function submitAcceptanceResults(pool, results) {
     for (const r of results) {
       await client.query(
         `UPDATE acceptance_checks SET result = $1, note = $2, submitted_by = $3, decided_at = NOW(), updated_at = NOW()
-         WHERE check_key = $4`,
-        [r.result, r.note || null, r.submitted_by || null, r.check_key]
+         WHERE run_id = $4 AND check_key = $5`,
+        [r.result, r.note || null, r.submitted_by || null, scopedRunId, r.check_key]
       );
     }
-    const runIds = [...new Set(found.map((r) => r.run_id))];
+    // 作用域收紧后这里恒为单元素：所有 found 行都来自 scopedRunId。保留循环形态是为了不动下面
+    // 那段行锁/重算逻辑，但不再从 found 反推 run 集合——那会留下「看起来支持跨 run 批量」的假象。
+    const runIds = [scopedRunId];
     const updatedRuns = [];
     for (const runId of runIds) {
       // 并发提交同一 run 不同 check_key 时，READ COMMITTED 隔离级别下两个事务可能都读到
@@ -205,6 +223,9 @@ export function createAcceptanceInternalRouter({ pool }) {
     }
     for (const [i, c] of checks.entries()) {
       if (!c || !c.name) return res.status(400).json({ error: `checks[${i}].name is required` });
+      if (!c.check_key || !CHECK_KEY_PATTERN.test(c.check_key)) {
+        return res.status(400).json({ error: `checks[${i}].check_key must match ^S\\d+-c[1-4]$（规程格号，由建单生成器产出）` });
+      }
       if (!ACCEPTANCE_KINDS.includes(c.kind)) {
         return res.status(400).json({ error: `checks[${i}].kind must be one of: ${ACCEPTANCE_KINDS.join(',')}` });
       }
@@ -227,13 +248,11 @@ export function createAcceptanceInternalRouter({ pool }) {
       );
       const run = runRows[0];
       const createdChecks = [];
-      for (let i = 0; i < checks.length; i++) {
-        const c = checks[i];
-        const checkKey = `${run_key}:${String(i + 1).padStart(3, '0')}`;
+      for (const c of checks) {
         const { rows } = await client.query(
           `INSERT INTO acceptance_checks (run_id, check_key, kind, name, device, detail)
            VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-          [run.id, checkKey, c.kind, c.name, c.device || null, c.detail ? JSON.stringify(c.detail) : null]
+          [run.id, c.check_key, c.kind, c.name, c.device || null, c.detail ? JSON.stringify(c.detail) : null]
         );
         createdChecks.push(rows[0]);
       }
@@ -308,7 +327,7 @@ export function createAcceptanceInternalRouter({ pool }) {
 
   router.post('/results', async (req, res) => {
     try {
-      const result = await submitAcceptanceResults(pool, req.body?.results);
+      const result = await submitAcceptanceResults(pool, req.body?.results, { run_key: req.body?.run_key });
       return res.json(result);
     } catch (err) {
       if (err instanceof AcceptanceResultsError) return res.status(err.status).json(err.body);
@@ -358,7 +377,7 @@ export function createAcceptancePublicRouter({ pool }) {
 
   router.post('/acceptance/results', async (req, res) => {
     try {
-      const result = await submitAcceptanceResults(pool, req.body?.results);
+      const result = await submitAcceptanceResults(pool, req.body?.results, { run_key: req.body?.run_key });
       return res.json(result);
     } catch (err) {
       if (err instanceof AcceptanceResultsError) return res.status(err.status).json(err.body);

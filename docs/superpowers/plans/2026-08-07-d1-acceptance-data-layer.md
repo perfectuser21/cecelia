@@ -1031,7 +1031,7 @@ git commit -m "feat(acceptance): run 级 gate_verdict 与哑火判据 [task b35b
 - Modify: `packages/brain/src/__tests__/integration/acceptance.integration.test.js`
 - Test: `packages/brain/src/__tests__/integration/acceptance-run-scope.integration.test.js`
 
-- [ ] **Step 1: 写 failing 集成测试（A1 + A3）**
+- [x] **Step 1: 写 failing 集成测试（A1 + A3）**
 
 新建 `packages/brain/src/__tests__/integration/acceptance-run-scope.integration.test.js`：
 
@@ -1122,7 +1122,7 @@ describe('A1/A3 格号作用域', () => {
 });
 ```
 
-- [ ] **Step 2: 登记进 `POSTGRES_INTEGRATION_TESTS` 并跑红**
+- [x] **Step 2: 登记进 `POSTGRES_INTEGRATION_TESTS` 并跑红**
 
 `packages/brain/vitest.config.js` 的数组里，Task 1 加的两行后面再插入：
 
@@ -1138,7 +1138,7 @@ DB_NAME=cecelia_scratch npx vitest run --config vitest.integration.config.js \
 
 预期：FAIL —— 建单返 201 但格号被改写成 `scope-a-NNNN:001`。
 
-- [ ] **Step 3: 提交 Red commit**
+- [x] **Step 3: 提交 Red commit**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -1146,7 +1146,7 @@ git add packages/brain/src/__tests__/integration/acceptance-run-scope.integratio
 git commit -m "test(acceptance): 格号化与 run_id 作用域 failing test [task b35bfa0c]"
 ```
 
-- [ ] **Step 4: 给 `submitAcceptanceResults` 加 `run_key` 作用域**
+- [x] **Step 4: 给 `submitAcceptanceResults` 加 `run_key` 作用域**
 
 `packages/brain/src/routes/acceptance.js` 第 25 行签名改为：
 
@@ -1189,7 +1189,7 @@ export async function submitAcceptanceResults(pool, results, { run_key } = {}) {
     }
 ```
 
-- [ ] **Step 5: 两个 results 端点透传 `run_key`**
+- [x] **Step 5: 两个 results 端点透传 `run_key`**
 
 `routes/acceptance.js:294`（内网）与 `:344`（公网）两处的调用同样改：
 
@@ -1197,7 +1197,7 @@ export async function submitAcceptanceResults(pool, results, { run_key } = {}) {
       const result = await submitAcceptanceResults(pool, req.body?.results, { run_key: req.body?.run_key });
 ```
 
-- [ ] **Step 6: 建单改用调用方给的格号**
+- [x] **Step 6: 建单改用调用方给的格号**
 
 `routes/acceptance.js:189-194` 的 checks 校验循环追加格号校验：
 
@@ -1226,7 +1226,7 @@ export async function submitAcceptanceResults(pool, results, { run_key } = {}) {
       }
 ```
 
-- [ ] **Step 7: 同批改写既有集成测试**
+- [x] **Step 7: 同批改写既有集成测试**
 
 `packages/brain/src/__tests__/integration/acceptance.integration.test.js` 第一个用例整体替换（它建单不带 `check_key`、断言 `status='failed'`，两条在新语义下都不再成立）：
 
@@ -1279,7 +1279,7 @@ export async function submitAcceptanceResults(pool, results, { run_key } = {}) {
 
 同文件第二个用例（驳回任务去重）里所有 `submitAcceptanceResults(pool, …)` 与 `POST /acceptance/results` 调用补 `run_key`，其 `check_key` 同样换成格号；该用例断言的是唯一索引竞态，语义不变。
 
-- [ ] **Step 8: 跑全套确认绿**
+- [x] **Step 8: 跑全套确认绿**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -1291,7 +1291,7 @@ DB_NAME=cecelia_scratch npx vitest run --config vitest.integration.config.js \
 
 预期：三个文件全 PASS。
 
-- [ ] **Step 9: 提交**
+- [x] **Step 9: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf

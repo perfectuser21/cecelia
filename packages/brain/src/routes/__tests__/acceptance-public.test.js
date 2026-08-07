@@ -10,8 +10,14 @@ function makeApp(pool) {
   return app;
 }
 
+// 本文件的 check_key 沿用旧 {run_key}:{NNN} 流水号格式：提交路径刻意不校验格号，
+// 存量 21 行历史数据必须还能回写（migration 392 注释「不回填/不改写」）。
 function makeClient(scripts) {
-  const query = vi.fn(async (sql, params) => scripts(sql, params) ?? { rows: [] });
+  const query = vi.fn(async (sql, params) => {
+    // run 作用域寻址：所有用例都提交给同一个 run，逐个脚本重复声明没有意义
+    if (sql.includes('SELECT id FROM acceptance_runs WHERE run_key')) return { rows: [{ id: 'A' }] };
+    return scripts(sql, params) ?? { rows: [] };
+  });
   return { query, release: vi.fn() };
 }
 
@@ -51,7 +57,7 @@ describe('POST /acceptance/results', () => {
     const pool = { query: vi.fn(), connect: vi.fn() };
     const res = await request(makeApp(pool))
       .post('/acceptance/results')
-      .send({ results: [{ check_key: 'r1:001', result: 'yes' }] });
+      .send({ run_key: 'r1', results: [{ check_key: 'r1:001', result: 'yes' }] });
     expect(res.status).toBe(400);
     expect(pool.connect).not.toHaveBeenCalled();
   });
@@ -65,7 +71,7 @@ describe('POST /acceptance/results', () => {
     const pool = { connect: vi.fn(async () => client), query: vi.fn() };
     const res = await request(makeApp(pool))
       .post('/acceptance/results')
-      .send({ results: [
+      .send({ run_key: 'r1', results: [
         { check_key: 'r1:001', result: '通过' },
         { check_key: 'r1:999', result: '通过' },
       ] });
@@ -91,7 +97,7 @@ describe('POST /acceptance/results', () => {
     const pool = { connect: vi.fn(async () => client), query: vi.fn() };
     const res = await request(makeApp(pool))
       .post('/acceptance/results')
-      .send({ results: [
+      .send({ run_key: 'r1', results: [
         { check_key: 'r1:001', result: '通过' },
         { check_key: 'r1:002', result: '不通过', note: 'step8 挂了' },
       ] });
@@ -118,7 +124,7 @@ describe('POST /acceptance/results', () => {
     const pool = { connect: vi.fn(async () => client), query: vi.fn() };
     const res = await request(makeApp(pool))
       .post('/acceptance/results')
-      .send({ results: [{ check_key: 'r1:001', result: '通过' }] });
+      .send({ run_key: 'r1', results: [{ check_key: 'r1:001', result: '通过' }] });
     expect(res.status).toBe(200);
     expect(res.body.runs[0].status).toBe('in_review');
   });
@@ -140,7 +146,7 @@ describe('POST /acceptance/results', () => {
     const pool = { connect: vi.fn(async () => client), query: vi.fn() };
     const res = await request(makeApp(pool))
       .post('/acceptance/results')
-      .send({ results: [{ check_key: 'r1:003', result: '无法验证' }] });
+      .send({ run_key: 'r1', results: [{ check_key: 'r1:003', result: '无法验证' }] });
     expect(res.status).toBe(200);
     expect(res.body.runs[0].status).toBe('human_complete');
   });
@@ -149,7 +155,7 @@ describe('POST /acceptance/results', () => {
     const pool = { query: vi.fn(), connect: vi.fn() };
     const res = await request(makeApp(pool))
       .post('/acceptance/results')
-      .send({ results: [
+      .send({ run_key: 'r1', results: [
         { check_key: 'r1:001', result: '通过' },
         { check_key: 'r1:001', result: '不通过' },
       ] });
@@ -160,7 +166,7 @@ describe('POST /acceptance/results', () => {
 
   it('results 空/非数组 → 400', async () => {
     const pool = { query: vi.fn(), connect: vi.fn() };
-    const res = await request(makeApp(pool)).post('/acceptance/results').send({ results: [] });
+    const res = await request(makeApp(pool)).post('/acceptance/results').send({ run_key: 'r1', results: [] });
     expect(res.status).toBe(400);
   });
 });
@@ -192,7 +198,7 @@ describe('验收驳回自动开任务（主理人条件二：转变沿）', () =
   async function postFail(client) {
     const pool = { connect: vi.fn(async () => client), query: vi.fn() };
     return request(makeApp(pool)).post('/acceptance/results')
-      .send({ results: [{ check_key: 'r1:001', result: '不通过' }] });
+      .send({ run_key: 'r1', results: [{ check_key: 'r1:001', result: '不通过' }] });
   }
 
   // migration 392 起 computeRunStatus 永不产生 failed，isLegacyRejectionTransition 恒不成立，
@@ -248,6 +254,7 @@ describe('submitAcceptanceResults 驳回任务并发去重', () => {
   it('INSERT tasks 撞 23505 时静默忽略，整体仍返回成功', async () => {
     const client = {
       query: vi.fn(async (sql) => {
+        if (sql.includes('SELECT id FROM acceptance_runs WHERE run_key')) return { rows: [{ id: 'run-1' }] };
         if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
           return { rows: [{ check_key: 'r1:001', run_id: 'run-1' }] };
         }
@@ -273,7 +280,7 @@ describe('submitAcceptanceResults 驳回任务并发去重', () => {
       release: vi.fn(),
     };
     const pool = { connect: vi.fn(async () => client) };
-    const result = await submitAcceptanceResults(pool, [{ check_key: 'r1:001', result: '不通过' }]);
+    const result = await submitAcceptanceResults(pool, [{ check_key: 'r1:001', result: '不通过' }], { run_key: 'r1' });
     expect(result.updated).toBe(1);
     expect(result.runs[0].status).toBe('failed');
   });
@@ -282,6 +289,7 @@ describe('submitAcceptanceResults 驳回任务并发去重', () => {
     const updateCalls = [];
     const client = {
       query: vi.fn(async (sql, params) => {
+        if (sql.includes('SELECT id FROM acceptance_runs WHERE run_key')) return { rows: [{ id: 'run-1' }] };
         if (sql.includes('SELECT check_key, run_id FROM acceptance_checks')) {
           return { rows: [{ check_key: 'r1:001', run_id: 'run-1' }] };
         }
@@ -305,8 +313,9 @@ describe('submitAcceptanceResults 驳回任务并发去重', () => {
     const pool = { connect: vi.fn(async () => client) };
     await submitAcceptanceResults(pool, [
       { check_key: 'r1:001', result: '通过', note: 'ok', submitted_by: 'alice@zenjoymedia.media' },
-    ]);
+    ], { run_key: 'r1' });
     expect(updateCalls).toHaveLength(1);
-    expect(updateCalls[0]).toEqual(['通过', 'ok', 'alice@zenjoymedia.media', 'r1:001']);
+    // run_id 挤在 check_key 前面：UPDATE 现在按 (run_id, check_key) 定位，不再按全局格号
+    expect(updateCalls[0]).toEqual(['通过', 'ok', 'alice@zenjoymedia.media', 'run-1', 'r1:001']);
   });
 });
