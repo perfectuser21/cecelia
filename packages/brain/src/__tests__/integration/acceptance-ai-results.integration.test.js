@@ -151,6 +151,37 @@ describe('POST /ai-results 落库语义', () => {
     expect(res.body.error).toBe('run not found');
   });
 
+  it('格号在规程里、但这张单没建这一行 → 400，不谎报 updated', async () => {
+    // UPDATE ... WHERE run_id AND check_key 匹配不到就是 0 行，PG 不报错。
+    // 不查一下就直接回 {updated: results.length}，采证器会收到"写成功了"然后安心退出，
+    // 那一格永远停在 ai_verdict IS NULL——只有事后翻库才发现。
+    const res = await request(makeApp()).post('/api/brain/acceptance/ai-results').send({
+      run_key: RUN_KEY,
+      results: [{ check_key: 'S7-c1', ai_verdict: '通过' }, { check_key: 'S3-c1', ai_verdict: '通过' }],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('unknown check_key');
+    expect(res.body.missing).toEqual(['S3-c1']);
+    // 同批里合法的那格也不许落库
+    const { rows } = await pool.query(
+      `SELECT ai_verdict FROM acceptance_checks c JOIN acceptance_runs r ON r.id = c.run_id
+       WHERE r.run_key = $1 AND c.check_key = 'S7-c1'`, [RUN_KEY]
+    );
+    expect(rows[0].ai_verdict).toBeNull();
+  });
+
+  it('同一批里格号重复 → 400（后写覆盖先写是静默的）', async () => {
+    const res = await request(makeApp()).post('/api/brain/acceptance/ai-results').send({
+      run_key: RUN_KEY,
+      results: [
+        { check_key: 'S7-c1', ai_verdict: '通过' },
+        { check_key: 'S7-c1', ai_verdict: '不通过' },
+      ],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('duplicate_check_key');
+  });
+
   it('ai_verdict 不在枚举内 → 400', async () => {
     const res = await request(makeApp()).post('/api/brain/acceptance/ai-results').send({
       run_key: RUN_KEY, results: [{ check_key: 'S7-c1', ai_verdict: 'PASS' }],

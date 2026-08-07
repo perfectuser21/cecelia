@@ -12,7 +12,18 @@ export const ACCEPTANCE_KINDS = ['FR', 'NFR', 'Invariant', 'SOP'];
 export const ACCEPTANCE_RESULTS = ['通过', '不通过', '无法验证'];
 const SOURCES = ['manual', 'harness'];
 
+/**
+ * AI 列的取值域。与 ACCEPTANCE_RESULTS 眼下逐字相同，但刻意不共用一个常量：
+ * migration 392 给两列各挂了一条独立的 CHECK 约束，两列本就是可以分别演进的东西
+ * （人列加"部分通过"不该顺带让 AI 也能报它）。合并成一个常量，等于把"两列同域"
+ * 从巧合升格成约束，将来改一列时另一列会被无声地带着改。
+ */
 export const AI_VERDICTS = ['通过', '不通过', '无法验证'];
+
+/** 批内重复格号：两条路径（建单吃生成器输出 / AI 回写）共用同一个判据 */
+function findDuplicateCheckKeys(keys) {
+  return [...new Set(keys.filter((k, i, arr) => arr.indexOf(k) !== i))];
+}
 
 /** 规程静态属性缓存：进程内只解析一次；改规程要重启 Brain（与 skill 缓存同一约定） */
 let _specSets = null;
@@ -36,17 +47,15 @@ export function _resetSpecSetsForTest() { _specSets = null; }
  */
 function getSpecSetsOrRespond(res) {
   try {
-    return { sets: getSpecSets() };
+    return getSpecSets();
   } catch (err) {
     console.error('[acceptance] 读规程失败:', err.message);
-    return {
-      sets: null,
-      responded: res.status(500).json({
-        error: 'spec_unavailable',
-        reason: err.reason || 'spec_load_failed',
-        hint: err.message,
-      }),
-    };
+    res.status(500).json({
+      error: 'spec_unavailable',
+      reason: err.reason || 'spec_load_failed',
+      hint: err.message,
+    });
+    return null;
   }
 }
 
@@ -300,9 +309,7 @@ export function createAcceptanceInternalRouter({ pool }) {
     // 不拦的话它会一路走到逐行 INSERT 撞 (run_id, check_key) 唯一约束，被下面那段
     // 23505 分支当成「run 已存在」去重查——重查不到就回一个语焉不详的 500，
     // 而真正的原因（规程里格号重复）一个字都没出现。
-    const dupes = [...new Set(
-      checks.map((c) => c.check_key).filter((k, i, arr) => arr.indexOf(k) !== i)
-    )];
+    const dupes = findDuplicateCheckKeys(checks.map((c) => c.check_key));
     if (dupes.length > 0) {
       return res.status(400).json({ error: 'duplicate_check_key', duplicates: dupes });
     }
@@ -423,9 +430,13 @@ export function createAcceptanceInternalRouter({ pool }) {
     if (!Array.isArray(results) || results.length === 0) {
       return res.status(400).json({ error: 'results must be a non-empty array' });
     }
-    const { sets } = getSpecSetsOrRespond(res);
+    const sets = getSpecSetsOrRespond(res);
     if (!sets) return undefined;
 
+    const dupes = findDuplicateCheckKeys(results.map((r) => r?.check_key));
+    if (dupes.length > 0) {
+      return res.status(400).json({ error: 'duplicate_check_key', duplicates: dupes });
+    }
     for (const item of results) {
       if (!AI_VERDICTS.includes(item?.ai_verdict)) {
         return res.status(400).json({ error: `ai_verdict must be one of: ${AI_VERDICTS.join(',')}`, check_key: item?.check_key });
@@ -445,6 +456,21 @@ export function createAcceptanceInternalRouter({ pool }) {
         return res.status(404).json({ error: 'run not found', run_key });
       }
       const runId = runRows[0].id;
+
+      // 规程里有这个格号 ≠ 这张单建了这一行（单只覆盖被验的那部分步骤，历史单还可能是
+      // 旧流水号格号）。不先验一遍，下面的 UPDATE 匹配不到就是 0 行、PG 不报错，
+      // 端点照样回 {updated: N}——采证器收到"写成功"安心退出，那一格却永远停在 NULL。
+      const keys = results.map((r) => r.check_key);
+      const { rows: found } = await client.query(
+        'SELECT check_key FROM acceptance_checks WHERE run_id = $1 AND check_key = ANY($2)',
+        [runId, keys]
+      );
+      const foundKeys = new Set(found.map((r) => r.check_key));
+      const missing = keys.filter((k) => !foundKeys.has(k));
+      if (missing.length > 0) {
+        await safeRollback(client);
+        return res.status(400).json({ error: 'unknown check_key', missing });
+      }
 
       for (const item of results) {
         await client.query(
