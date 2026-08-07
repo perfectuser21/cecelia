@@ -14,7 +14,9 @@ const RUN_KEY = `aging-itest-${process.pid}`;
 
 // 过期扫描按设计是全库 UPDATE，会把 scratch 库里既有的超期 pending fixture 一并刷成
 // expired。快照-还原让本文件对共享 scratch 库无净副作用（同库还有别的实现者在跑）。
-let collateral = [];
+// 必须累加而非每次覆盖：第一个用例跑完，这批 fixture 已经不是 pending 了，
+// 后续 beforeEach 再查就是空集——直接赋值会把第一次的快照冲掉，还原就此失效。
+const collateral = new Set();
 
 async function snapshotCollateral() {
   const { rows } = await pool.query(
@@ -24,7 +26,7 @@ async function snapshotCollateral() {
         AND run_key <> $1`,
     [RUN_KEY]
   );
-  collateral = rows.map((r) => r.run_key);
+  for (const r of rows) collateral.add(r.run_key);
 }
 
 async function seed(status, ageHours) {
@@ -47,10 +49,10 @@ describe('A10② pending 48h → expired', () => {
 
   afterAll(async () => {
     await pool.query('DELETE FROM acceptance_runs WHERE run_key = $1', [RUN_KEY]);
-    if (collateral.length > 0) {
+    if (collateral.size > 0) {
       await pool.query(
         `UPDATE acceptance_runs SET status = 'pending' WHERE run_key = ANY($1)`,
-        [collateral]
+        [[...collateral]]
       );
     }
     await pool.end();
