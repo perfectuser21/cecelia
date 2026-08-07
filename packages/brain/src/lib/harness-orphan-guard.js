@@ -27,6 +27,8 @@ import {
   finalizeKernelRun,
   reconcileKernelTaskTerminal,
 } from '../orchestrator/kernel-run-store.js';
+import { terminalizeRunsForTask, ORPHAN_RUN_FAILURE_REASON } from './harness-run-guard.js';
+import { captureRelayForensicsByShortId } from './relay-forensics.js';
 
 export const WAIT_SUICIDE_PATTERN = /等\s*(?:待)?.{0,10}(?:Monitor|监控|通知)|waiting\s+for\s+.{0,12}(?:Monitor|notification|CI\b)/i;
 
@@ -148,8 +150,17 @@ async function reconcileKernelOrphan(pool, task, {
   return { handled: false };
 }
 
-/** 带封顶的孤儿 requeue。返回 {action: 'requeued'|'failed'} */
+/**
+ * 带封顶的孤儿 requeue。返回 {action: 'requeued'|'failed'}
+ *
+ * 死锁解(2026-08-07 W1/W2/W3 全灭):动 tasks 之前先把该 task 名下的非终态
+ * initiative_runs 打成 failed。原实现只改 tasks 不碰 run,打回 queued 的任务
+ * 被 spawn-guard 按"还有活跃 run"一路拒绝重派,直到 requeue 超限终态 failed。
+ * 顺序不可颠倒:先清 run 再回 queued,否则中间会留下"已 queued 但重派必被拒"的窗口。
+ */
 export async function requeueOrphanTask(pool, task, reason, extraPayloadJson = '{}') {
+  await terminalizeRunsForTask(pool, task.id, ORPHAN_RUN_FAILURE_REASON);
+
   const count = Number(task.payload?.orphan_requeue_count || 0);
   if (count >= MAX_ORPHAN_REQUEUES) {
     await pool.query(
@@ -306,6 +317,9 @@ export async function sweepOrphanHarnessTasks({
         continue;
       }
       if (await hasFreshHeartbeat(pool, task.initiative_id || task.id, idleMinutes, task)) continue;
+      // 容器死得连回调都没发出来时(如直接吃 SIGKILL),这里是抢在 janitor prune 之前
+      // 保全 docker logs 的最后机会。容器已被 prune 则拿不到,best-effort 不影响收割。
+      captureRelayForensicsByShortId({ shortId, execFn });
       const r = await requeueOrphanTask(pool, task, `sweep-orphan(idle>${idleMinutes}min,无活容器)`);
       if (r.action === 'requeued') result.requeued++;
       else result.failed++;

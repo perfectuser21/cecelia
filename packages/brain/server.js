@@ -746,6 +746,15 @@ async function onBrainListening() {
     console.log(`[startup-sync] relay orphan scan: scanned=${r.scanned} recovered=${r.recovered}`);
   }).catch(err => console.warn(`[startup-sync] relay orphan scan failed (non-fatal): ${err.message}`));
 
+  // TOP2 刀1：把死于基础设施（容器 OOM / provider 早退 / spawn-guard 死锁）的
+  // harness 任务捞回队列。上面那条 scan 只管还在 in_progress 的，已被 orphan-guard
+  // requeue 超限打成 failed 的（2026-08-07 W1/W2/W3 三条）它看不见。
+  import('./src/startup-sync.js').then(({ reviveOrphanedHarnessTasks }) =>
+    reviveOrphanedHarnessTasks({ pool })
+  ).then(r => {
+    console.log(`[startup-sync] harness revival: scanned=${r.scanned} revived=${r.revived} skipped=${r.skipped}`);
+  }).catch(err => console.warn(`[startup-sync] harness revival failed (non-fatal): ${err.message}`));
+
   // Initialize Fleet Resource Cache (全局多机器资源感知)
   startFleetRefresh();
   console.log('[Server] Fleet Resource Cache started (30s interval) - 全局资源感知');

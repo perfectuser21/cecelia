@@ -33,6 +33,7 @@ import { lookupHarnessThread } from '../lib/harness-thread-lookup.js';
 import { sendBark } from '../notifier.js';
 import pool from '../db.js';
 import { handleRelayExitConsistency } from '../lib/harness-orphan-guard.js';
+import { captureRelayContainerLogs } from '../lib/relay-forensics.js';
 import {
   createAttemptStore,
   normalizeRoleVerdict,
@@ -1049,6 +1050,12 @@ router.post('/harness/callback/:containerId', async (req, res) => {
   // stdout 落盘由 entrypoint tee 完成，状态回写由 controller 的 report 步骤走 PATCH relay-runs。
   if (containerId.startsWith('cecelia-relay-')) {
     console.log(`[harness-callback] relay 容器 ${containerId} 回调 ack（exit=${exit_code ?? '?'}，无 resume）`);
+
+    // forensic 保全（TOP2 刀1 件③）：回调是容器进程退出前最后一刻，docker logs 此时必然还在。
+    // 再晚就来不及——janitor.sh --mode frequent 每 15 分钟一次无过滤 docker container prune -f
+    // 会把退出的容器连日志一起收走（2026-08-07 三具尸体就是这么灭失的，事后只剩 exit code 可查）。
+    // best-effort：任何失败只写日志，绝不影响 200 ack。
+    captureRelayContainerLogs({ containerId });
 
     // 刀A7：exit_code 落库 → last_container_exit_code（watchdog OOM 感知重试用）
     // 仅在 exit_code 存在且可解析时写入，不影响 200 ack 行为（best-effort）
