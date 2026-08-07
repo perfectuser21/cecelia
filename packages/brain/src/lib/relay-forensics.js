@@ -14,9 +14,27 @@
  *
  * 全程 best-effort:任何失败都只返回 ok:false,绝不抛、绝不拖累回调 ack。
  */
-import { execSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * 默认取日志的方式。必须是真异步 —— 本函数在 callback 路由里被 await,
+ * 用 execSync 会把 Brain 整个事件循环按住最长 timeout 那么久。
+ */
+async function defaultDockerExec(args) {
+  // 不走 shell:execFile 传数组,容器名再怎么畸形也只是一个 argv 元素。
+  // docker logs 把容器 stderr 写到自己的 stderr,两股都要 —— 早退/崩溃的真话常在 stderr。
+  const { stdout, stderr } = await execFileAsync('docker', args, {
+    encoding: 'utf8',
+    timeout: 15000,
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  return `${stdout || ''}${stderr || ''}`;
+}
 
 /**
  * docker 容器名合法字符集。containerId 来自 HTTP 路由参数
@@ -43,11 +61,12 @@ export function relayForensicDir(env = process.env) {
 
 /**
  * 抓 docker logs 落盘。
- * @returns {{ok: boolean, path?: string, bytes?: number, reason?: string}}
+ * execFn 返回值同步异步皆可(测试注入同步桩,生产走真异步 execFile)。
+ * @returns {Promise<{ok: boolean, path?: string, bytes?: number, reason?: string}>}
  */
-export function captureRelayContainerLogs({
+export async function captureRelayContainerLogs({
   containerId,
-  execFn = (cmd) => execSync(cmd, { encoding: 'utf8', timeout: 15000, maxBuffer: 32 * 1024 * 1024 }),
+  execFn,
   dir = relayForensicDir(),
   tailLines = 5000,
 } = {}) {
@@ -57,8 +76,11 @@ export function captureRelayContainerLogs({
 
   let logs;
   try {
-    // 2>&1 合并 stderr:早退/崩溃的真话常常只写在 stderr
-    logs = execFn(`docker logs --tail ${Number(tailLines)} ${containerId} 2>&1`) || '';
+    // stderr 一并收:早退/崩溃的真话常常只写在 stderr
+    logs = (execFn
+      ? await execFn(`docker logs --tail ${Number(tailLines)} ${containerId} 2>&1`)
+      : await defaultDockerExec(['logs', '--tail', String(Number(tailLines)), containerId])
+    ) || '';
   } catch (err) {
     return { ok: false, reason: err.message };
   }
@@ -86,23 +108,22 @@ export function captureRelayContainerLogs({
  *
  * @returns {{captured: string[], reason?: string}}
  */
-export function captureRelayForensicsByShortId({ shortId, execFn, dir } = {}) {
+export async function captureRelayForensicsByShortId({ shortId, execFn, dir } = {}) {
   if (!isSafeContainerName(shortId)) return { captured: [], reason: 'unsafe_short_id' };
-
-  const exec = execFn
-    || ((cmd) => execSync(cmd, { encoding: 'utf8', timeout: 15000, maxBuffer: 32 * 1024 * 1024 }));
 
   let names;
   try {
-    names = (exec(`docker ps -a --format '{{.Names}}' --filter name=cecelia-relay-${shortId}`) || '')
-      .split('\n').map((s) => s.trim()).filter(Boolean);
+    const out = execFn
+      ? await execFn(`docker ps -a --format '{{.Names}}' --filter name=cecelia-relay-${shortId}`)
+      : await defaultDockerExec(['ps', '-a', '--format', '{{.Names}}', '--filter', `name=cecelia-relay-${shortId}`]);
+    names = (out || '').split('\n').map((s) => s.trim()).filter(Boolean);
   } catch (err) {
     return { captured: [], reason: err.message };
   }
 
   const captured = [];
   for (const name of names) {
-    const r = captureRelayContainerLogs({ containerId: name, execFn: exec, dir });
+    const r = await captureRelayContainerLogs({ containerId: name, execFn, dir });
     if (r.ok) captured.push(name);
   }
   return { captured };

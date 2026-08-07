@@ -16,6 +16,7 @@ import {
   captureRelayContainerLogs,
   relayForensicDir,
   isSafeContainerName,
+  captureRelayForensicsByShortId,
 } from '../relay-forensics.js';
 
 let dir;
@@ -55,9 +56,9 @@ describe('relayForensicDir', () => {
 describe('captureRelayContainerLogs', () => {
   const containerId = 'cecelia-relay-0b7df1ca-a66c5f93';
 
-  it('把 docker logs 落盘到 <dir>/<containerId>.log', () => {
+  it('把 docker logs 落盘到 <dir>/<containerId>.log', async () => {
     const execFn = vi.fn(() => 'line-1\nline-2\n');
-    const r = captureRelayContainerLogs({ containerId, execFn, dir });
+    const r = await captureRelayContainerLogs({ containerId, execFn, dir });
     expect(r.ok).toBe(true);
     expect(r.path).toBe(path.join(dir, `${containerId}.log`));
     expect(readFileSync(r.path, 'utf8')).toContain('line-1');
@@ -68,34 +69,75 @@ describe('captureRelayContainerLogs', () => {
     expect(cmd).toContain(containerId);
   });
 
-  it('容器名不安全 → 拒绝执行任何命令(不给注入机会)', () => {
+  it('容器名不安全 → 拒绝执行任何命令(不给注入机会)', async () => {
     const execFn = vi.fn(() => 'x');
-    const r = captureRelayContainerLogs({ containerId: 'evil; rm -rf /', execFn, dir });
+    const r = await captureRelayContainerLogs({ containerId: 'evil; rm -rf /', execFn, dir });
     expect(r.ok).toBe(false);
     expect(r.reason).toBe('unsafe_container_name');
     expect(execFn).not.toHaveBeenCalled();
   });
 
-  it('docker 报错(容器已被 prune) → 不抛,返回 ok=false', () => {
+  it('docker 报错(容器已被 prune) → 不抛,返回 ok=false', async () => {
     const execFn = vi.fn(() => { throw new Error('No such container'); });
-    const r = captureRelayContainerLogs({ containerId, execFn, dir });
+    const r = await captureRelayContainerLogs({ containerId, execFn, dir });
     expect(r.ok).toBe(false);
     expect(r.reason).toContain('No such container');
   });
 
-  it('日志为空 → 不落空文件(避免制造无信息的噪音文件)', () => {
+  it('日志为空 → 不落空文件(避免制造无信息的噪音文件)', async () => {
     const execFn = vi.fn(() => '   ');
-    const r = captureRelayContainerLogs({ containerId, execFn, dir });
+    const r = await captureRelayContainerLogs({ containerId, execFn, dir });
     expect(r.ok).toBe(false);
     expect(r.reason).toBe('empty_logs');
     expect(existsSync(path.join(dir, `${containerId}.log`))).toBe(false);
   });
 
-  it('目录不可写 → 不抛(forensic 是尽力而为,绝不能拖累回调 ack)', () => {
+  it('目录不可写 → 不抛(forensic 是尽力而为,绝不能拖累回调 ack)', async () => {
     const execFn = vi.fn(() => 'data');
-    const r = captureRelayContainerLogs({
+    const r = await captureRelayContainerLogs({
       containerId, execFn, dir: '/proc/nonexistent-forensic-dir',
     });
     expect(r.ok).toBe(false);
+  });
+
+  // 本函数在 callback 路由里被 await。取日志若走 execSync,Brain 整个事件循环
+  // 会被按住最长 timeout 那么久(15s)——一次容器回调足以把 Brain 打成假死。
+  it('取日志必须真异步,不能按住事件循环', async () => {
+    let ticked = false;
+    const execFn = () => new Promise((resolve) => setImmediate(() => {
+      ticked = true;
+      resolve('async-line\n');
+    }));
+    const r = await captureRelayContainerLogs({ containerId, execFn, dir });
+    // execFn 返回 Promise 时必须被 await 到底,而不是把 Promise 对象当字符串写盘
+    expect(ticked).toBe(true);
+    expect(r.ok).toBe(true);
+    expect(readFileSync(r.path, 'utf8')).toContain('async-line');
+  });
+});
+
+describe('captureRelayForensicsByShortId', () => {
+  // 容器真名是 cecelia-relay-<short8>-<随机后缀>,后缀在收割侧无从得知。
+  // 拿 cecelia-relay-<short8> 直接去 docker logs 只会 no such container —— 等于没做。
+  it('按前缀反查真实容器名后逐个落盘(含已退出的)', async () => {
+    const execFn = vi.fn(async (cmd) => (
+      cmd.includes('ps -a')
+        ? 'cecelia-relay-0b7df1ca-a66c5f93\ncecelia-relay-0b7df1ca-old1\n'
+        : 'body\n'
+    ));
+    const r = await captureRelayForensicsByShortId({ shortId: '0b7df1ca', execFn, dir });
+    expect(r.captured).toEqual([
+      'cecelia-relay-0b7df1ca-a66c5f93',
+      'cecelia-relay-0b7df1ca-old1',
+    ]);
+    // 必须查 ps -a：只查 running 的话尸体一个都看不见
+    expect(execFn.mock.calls[0][0]).toContain('ps -a');
+  });
+
+  it('docker 不可用 → 不抛,captured 为空', async () => {
+    const execFn = vi.fn(() => { throw new Error('docker down'); });
+    const r = await captureRelayForensicsByShortId({ shortId: '0b7df1ca', execFn, dir });
+    expect(r.captured).toEqual([]);
+    expect(r.reason).toContain('docker down');
   });
 });

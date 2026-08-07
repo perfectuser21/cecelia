@@ -319,7 +319,7 @@ export async function sweepOrphanHarnessTasks({
       if (await hasFreshHeartbeat(pool, task.initiative_id || task.id, idleMinutes, task)) continue;
       // 容器死得连回调都没发出来时(如直接吃 SIGKILL),这里是抢在 janitor prune 之前
       // 保全 docker logs 的最后机会。容器已被 prune 则拿不到,best-effort 不影响收割。
-      captureRelayForensicsByShortId({ shortId, execFn });
+      await captureRelayForensicsByShortId({ shortId, execFn });
       const r = await requeueOrphanTask(pool, task, `sweep-orphan(idle>${idleMinutes}min,无活容器)`);
       if (r.action === 'requeued') result.requeued++;
       else result.failed++;
