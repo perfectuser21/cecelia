@@ -2226,7 +2226,7 @@ git commit -m "feat(acceptance): 服务端 AI reason 校验 + ai-results 落库�
 - Modify: `packages/brain/src/routes/acceptance.js`（`ai-results` 前置）
 - Test: `packages/brain/src/__tests__/integration/acceptance-scenario-gate.integration.test.js`
 
-- [ ] **Step 1: 写 failing 集成测试（A4⑧ / A16①-b）**
+- [x] **Step 1: 写 failing 集成测试（A4⑧ / A16①-b）**
 
 新建 `packages/brain/src/__tests__/integration/acceptance-scenario-gate.integration.test.js`：
 
@@ -2314,7 +2314,7 @@ describe('A4⑧ 收单期推进闸', () => {
 });
 ```
 
-- [ ] **Step 2: 登记并跑红**
+- [x] **Step 2: 登记并跑红**
 
 `packages/brain/vitest.config.js` 的 `POSTGRES_INTEGRATION_TESTS` 追加：
 
@@ -2331,7 +2331,7 @@ DB_NAME=cecelia_scratch ACCEPTANCE_SPEC_PATH=$PWD/src/__tests__/fixtures/accepta
 
 预期：前三例 FAIL（返 200 而非 409）。
 
-- [ ] **Step 3: 提交 Red commit**
+- [x] **Step 3: 提交 Red commit**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
@@ -2339,7 +2339,7 @@ git add packages/brain/src/__tests__/integration/acceptance-scenario-gate.integr
 git commit -m "test(acceptance): 收单期推进闸 failing test [task b35bfa0c]"
 ```
 
-- [ ] **Step 4: 实现推进闸**
+- [x] **Step 4: 实现推进闸**
 
 在 `routes/acceptance.js` 的 `validateAiReason` 之后加入纯函数：
 
@@ -2370,7 +2370,7 @@ export function missingMandatoryScenarios(runDetail, sets) {
 
 放在任何 UPDATE 之前——闸拦下时一格都不能落库。
 
-- [ ] **Step 5: 跑测试确认全绿**
+- [x] **Step 5: 跑测试确认全绿**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf/packages/brain
@@ -2382,7 +2382,7 @@ DB_NAME=cecelia_scratch ACCEPTANCE_SPEC_PATH=$PWD/src/__tests__/fixtures/accepta
 
 预期：两个文件全 PASS。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/session-084aafdf
