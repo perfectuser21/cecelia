@@ -5,7 +5,8 @@ import express from 'express';
 import request from 'supertest';
 import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
 import pool from '../../db.js';
-import { createAcceptanceInternalRouter, _resetSpecSetsForTest } from '../../routes/acceptance.js';
+import { createAcceptanceInternalRouter } from '../../routes/acceptance.js';
+import { _resetSpecSetsForTest } from '../../routes/acceptance-ai.js';
 
 const RUN_KEY = `ai-itest-${process.pid}`;
 

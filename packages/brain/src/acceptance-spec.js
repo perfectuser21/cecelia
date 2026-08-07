@@ -70,6 +70,14 @@ export function loadSpec(filePath = DEFAULT_SPEC_PATH) {
 }
 
 /**
+ * 一批格号里重复出现的那些。三处共用同一个判据：规程解析（step.n 写重）、
+ * 建单端点吃生成器输出、AI 回写批——三条路径上重复格号的后果都是静默丢格。
+ */
+export function findDuplicateCheckKeys(keys) {
+  return [...new Set(keys.filter((k, i) => keys.indexOf(k) !== i))];
+}
+
+/**
  * 排除集（J10-B，逐条机械）：
  *   - 排除 cells[cX].na === true 的格；
  *   - 排除 step.fixedNa === true 步骤下的全部四格（含该步 c1 那个有 t 和 verifiable_by
@@ -104,8 +112,7 @@ export function buildCells(doc) {
   // 格号重复只可能来自规程里 step.n 写重了，而它在下游全是静默的：建单端点逐行 INSERT
   // 撞 (run_id, check_key) 唯一约束，deriveSets 的 byKey Map 后写覆盖先写——两条路都不报错，
   // 只是少几行、或者某格的静态属性被同号的另一格顶掉。在这里就炸，别让它流到库里。
-  const keys = cells.map((c) => c.check_key);
-  const dupes = [...new Set(keys.filter((k, i) => keys.indexOf(k) !== i))];
+  const dupes = findDuplicateCheckKeys(cells.map((c) => c.check_key));
   if (dupes.length > 0) {
     throw new Error(`规程内格号重复：${dupes.join(', ')}（多半是 steps 里 n 写重了）——建单会塌行丢格`);
   }

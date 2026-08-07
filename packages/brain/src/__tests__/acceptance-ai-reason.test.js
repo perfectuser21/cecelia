@@ -1,7 +1,7 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { describe, it, expect, afterEach } from 'vitest';
-import { validateAiReason, getSpecSets, _resetSpecSetsForTest } from '../routes/acceptance.js';
+import { validateAiReason, getSpecSets, _resetSpecSetsForTest } from '../routes/acceptance-ai.js';
 import { loadSpec, buildCells, deriveSets } from '../acceptance-spec.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
