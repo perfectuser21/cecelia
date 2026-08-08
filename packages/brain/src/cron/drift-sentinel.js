@@ -19,9 +19,17 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
 import pool from '../db.js';
 import { raise } from '../alerting.js';
 import { sendBark } from '../notifier.js';
+
+// 容器内 cwd = /app，scripts/ 不在镜像里；必须用 REPO_ROOT 或绝对路径定位 brain-deploy.sh
+const _filePath = fileURLToPath(import.meta.url);
+// drift-sentinel.js 在 packages/brain/src/cron/，向上 4 级到仓库根
+const REPO_ROOT = process.env.REPO_ROOT || resolve(dirname(_filePath), '../../../../..');
+const BRAIN_DEPLOY_SCRIPT = resolve(REPO_ROOT, 'scripts/brain-deploy.sh');
 
 const execAsync = promisify(exec);
 
@@ -279,8 +287,9 @@ export async function runDriftCheck({
   console.log(`[drift_check] sha_main=${shaMain} sha_prod=${shaProd2} verdict=redeploying`);
 
   // 执行 brain-deploy.sh（INV-02: 不得绕过，必须是这个脚本）
+  // cwd 必须显式设为 REPO_ROOT：容器内 cwd=/app，scripts/ 不在镜像里，相对路径 ENOENT。
   await new Promise((resolve, reject) => {
-    exec('bash scripts/brain-deploy.sh', { timeout: 300000 }, (err, stdout, stderr) => {
+    exec(`bash "${BRAIN_DEPLOY_SCRIPT}"`, { timeout: 300000, cwd: REPO_ROOT }, (err, stdout, stderr) => {
       if (err) reject(err);
       else resolve({ stdout, stderr });
     });

@@ -212,14 +212,14 @@ jobs:
           if [ -f /tmp/deploy_resp.txt ]; then cat /tmp/deploy_resp.txt; fi
           echo ""
 
-          # 409 = deploy 正在进行（deploy.yml 或另一个 Gate 3 实例）→ 跳过，非失败
+          # 409 = deploy 正在进行中（另一个 Gate3 或 deploy.yml 实例）
+          # 注意：进行中的 deploy 可能是更早触发的旧 SHA，不一定包含本次变更。
+          # 不直接 skip：把 skipped=false 写入 output，让后续 smoke 步骤继续等待，
+          # 直到正确版本上线（或 600s 预算耗尽后 assert 失败 → CI 红灯）。
           if [ "$HTTP_CODE" = "409" ]; then
-            echo "::warning::Brain deploy 已在进行中（409），跳过本次（变更已包含在进行中的 deploy 里）"
-            echo "skipped=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "::warning::Brain deploy 已在进行中（409）— 等待当前 deploy 完成后由 Smoke 步骤验证版本"
+            echo "skipped=false" >> $GITHUB_OUTPUT
+          elif [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
             echo "✅ Deploy webhook 已触发"
             echo "skipped=false" >> $GITHUB_OUTPUT
           else
