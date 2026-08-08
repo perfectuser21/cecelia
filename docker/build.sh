@@ -51,3 +51,7 @@ docker build \
 
 echo "[build.sh] 完成: $IMAGE_TAG"
 docker images "$IMAGE_TAG" --format 'table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}'
+
+# 漂移守卫：rebuild 后 pin 未同步立即见红（exit 3），禁静默漂移
+# （2026-08-08 教训：#4720 绕过守卫重建，fleet 三机准入静默全挂）
+bash "$SCRIPT_DIR/verify-digest-pin.sh" "$IMAGE_TAG"
