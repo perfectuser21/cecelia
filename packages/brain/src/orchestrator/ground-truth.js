@@ -63,9 +63,29 @@ const GENERATOR_RUNTIME_ERROR_CODES = new Set([
   'provider_timeout',
 ]);
 
-function mapCiStatus(checkRows) {
+function mapCiStatus(checkRows, mergeStateStatus = null) {
   if (!Array.isArray(checkRows) || checkRows.length === 0) return 'pending'; // CI 尚未挂上 → 视为 pending
-  if (checkRows.some((c) => CI_FAIL_STATES.has(c.state))) return 'fail';
+  const hasFail = checkRows.some((c) => CI_FAIL_STATES.has(c.state));
+  if (hasFail) {
+    // run 0955c884 案卷：非 required check（如 Deploy Preview Environment）连挂时，
+    // 一刀切判 fail 会把 required 全绿、实际可合并的 PR 推进 generator-fix 死循环
+    // （FIXED 同 sha → no_progress_same_sha 收死）。用同一次 gh 查询里的
+    // mergeStateStatus 区分：非 BLOCKED（UNSTABLE/CLEAN/BEHIND/HAS_HOOKS…）=
+    // 失败的都是非 required，不算 fail；BLOCKED 且仍有未落定 check = 可能是
+    // required 还在跑，等全部落定再裁，避免把"非 required 已红 + required 在跑"
+    // 误判成 fail 白吃 fix round。
+    if (String(mergeStateStatus ?? '').toUpperCase() !== 'BLOCKED') {
+      const settled = checkRows.filter((c) => !CI_FAIL_STATES.has(c.state));
+      if (settled.length === 0 || settled.every((c) => CI_PASS_STATES.has(c.state))) {
+        return 'pass';
+      }
+      return 'pending';
+    }
+    const hasPending = checkRows.some(
+      (c) => !CI_FAIL_STATES.has(c.state) && !CI_PASS_STATES.has(c.state),
+    );
+    return hasPending ? 'pending' : 'fail';
+  }
   if (checkRows.every((c) => CI_PASS_STATES.has(c.state))) return 'pass';
   return 'pending'; // PENDING/QUEUED/IN_PROGRESS/EXPECTED 等
 }
@@ -385,7 +405,7 @@ export async function collectGroundTruth(deps, opts) {
       merged: view.state === 'MERGED',
       head_ref: view.headRefName ?? null,
       head_sha: view.headRefOid ?? null,
-      ci: mapCiStatus(checks),
+      ci: mapCiStatus(checks, view.mergeStateStatus),
       failed_checks: failedCheckNames(checks),
     };
   }

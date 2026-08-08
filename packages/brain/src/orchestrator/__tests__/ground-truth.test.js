@@ -578,6 +578,66 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     expect(deps.execCmd.calls.some((cmd) => cmd.includes('statusCheckRollup'))).toBe(true);
   });
 
+  // run 0955c884 案卷：非 required 的 Deploy Preview Environment 连挂时，
+  // ci='fail' 触发 generator-fix 死循环（FIXED 同 sha → no_progress_same_sha 收死），
+  // 而 required 全绿的 PR 实际可合并（mergeStateStatus=UNSTABLE）。
+  it('非 required check 失败(mergeStateStatus 非 BLOCKED) → ci=pass 不触发 fix', async () => {
+    const deps = makeDeps({
+      rows: { run: { pr_url: PR_URL } },
+      exec: {
+        prView: JSON.stringify({
+          state: 'OPEN',
+          mergeStateStatus: 'UNSTABLE',
+          headRefOid: 'sha-unstable',
+          statusCheckRollup: [
+            { status: 'COMPLETED', conclusion: 'SUCCESS' },
+            { name: 'Deploy Preview Environment', status: 'COMPLETED', conclusion: 'FAILURE' },
+          ],
+        }),
+      },
+    });
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(observed.pr).toMatchObject({ head_sha: 'sha-unstable', ci: 'pass' });
+  });
+
+  it('check 失败且 mergeStateStatus=BLOCKED 且全部落定 → ci=fail', async () => {
+    const deps = makeDeps({
+      rows: { run: { pr_url: PR_URL } },
+      exec: {
+        prView: JSON.stringify({
+          state: 'OPEN',
+          mergeStateStatus: 'BLOCKED',
+          headRefOid: 'sha-truefail',
+          statusCheckRollup: [
+            { status: 'COMPLETED', conclusion: 'SUCCESS' },
+            { name: 'ci-passed', status: 'COMPLETED', conclusion: 'FAILURE' },
+          ],
+        }),
+      },
+    });
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(observed.pr).toMatchObject({ head_sha: 'sha-truefail', ci: 'fail' });
+  });
+
+  it('check 有失败但仍有 pending → ci=pending（等全部落定再裁）', async () => {
+    const deps = makeDeps({
+      rows: { run: { pr_url: PR_URL } },
+      exec: {
+        prView: JSON.stringify({
+          state: 'OPEN',
+          mergeStateStatus: 'BLOCKED',
+          headRefOid: 'sha-settling',
+          statusCheckRollup: [
+            { name: 'Deploy Preview Environment', status: 'COMPLETED', conclusion: 'FAILURE' },
+            { status: 'IN_PROGRESS', conclusion: '' },
+          ],
+        }),
+      },
+    });
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(observed.pr).toMatchObject({ head_sha: 'sha-settling', ci: 'pending' });
+  });
+
   it('把 GitHub headRefName 作为 evaluator checkout 的结构化真相返回', async () => {
     const deps = makeDeps({
       rows: { run: { pr_url: PR_URL } },

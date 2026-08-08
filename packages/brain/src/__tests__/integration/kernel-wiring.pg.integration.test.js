@@ -191,7 +191,10 @@ function externalObservation({
         const state = ci === 'pass' ? 'SUCCESS' : (ci === 'fail' ? 'FAILURE' : 'PENDING');
         return JSON.stringify({
           state: 'OPEN',
-          mergeStateStatus: 'CLEAN',
+          // v1.270.10 起 mapCiStatus 按可合并性裁决：非 BLOCKED 下的失败 =
+          // 非 required check，不判 fail。本夹具的 ci='fail' 意图是"真 CI 失败"，
+          // 必须伴随 BLOCKED（与 GitHub 真实语义一致：required 失败阻断合并）。
+          mergeStateStatus: ci === 'fail' ? 'BLOCKED' : 'CLEAN',
           headRefOid: headSha,
           statusCheckRollup: ci === 'fail'
             ? failedChecks.map((name) => ({ name, state }))
