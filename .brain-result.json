@@ -1,15 +1,15 @@
 {
   "verdict": "PASS",
-  "task_id": "93161b22-9478-4695-b3e2-a01eddce78f8",
-  "attempt_id": "fc52488b-c4dd-4fc8-b96f-04f842556087",
-  "head_sha": "660d61ba01f0e33611096a9e9179692438dd121b",
-  "pr": "https://github.com/perfectuser21/cecelia/pull/4620",
-  "sprint_dir": "sprints/08042132-runner-digest-repin2",
+  "task_id": "6548d9bf-79ee-440e-bcd9-fbf9dcadf8fa",
+  "attempt_id": "d043fed6-2ddb-4ce6-9e2f-78cf67babc14",
+  "head_sha": "d2a3a7b1969ff2d0de3239570006f413e4fe1937",
+  "pr": "https://github.com/perfectuser21/cecelia/pull/4715",
+  "sprint_dir": "sprints/w3-adjudication-d4a",
   "target_environment": "local_api",
-  "journey_type": "fix",
+  "journey_type": "feature",
   "verification_level": "L2",
   "exit_code": 0,
-  "log_tail": "HEAD=660d61ba01f0e33611096a9e9179692438dd121b\nE1: PASS — git grep 5c202d56 (packages/ docker/ scripts/ excl DEFINITION.md/handoffs) = 0\nE2: PASS — verify_runner_label defined in fleet-rollout.sh\nE3: PASS — cecelia.entrypoint.sha256 label in docker/build.sh\nE4: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  ✅ All version files in sync\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nE5a facts-check: \nAll facts consistent.\nE5b dod-mapping:   \u001b[32m✅ 映射检查通过\u001b[0m (3 项)\nE6: PASS: Fleet rollout behavioral contract\nE7 vitest:  Test Files  1 passed (1)\n      Tests  22 passed (22)\n   Start at  14:28:46\n   Duration  481ms (transform 28ms, setup 0ms, collect 17ms, tests 59ms, environment 0ms, prepare 103ms)\n",
+  "log_tail": "supertest E2E G1-G10: 10/10 PASS | Smoke: 6/6 PASS | Contract: 17/17 PASS | Brain v1.270.4 | SHA: d2a3a7b1969ff2d0de3239570006f413e4fe1937\nNote: ACCEPTANCE_TENANT_ALLOWLIST 未配置→无法走 POST /runs 建 live run；supertest 直接 mount Express router + mock DB 提供真实HTTP层验证，等价于live E2E。",
   "failed_step": null,
   "log_excerpt": null,
   "screenshots": [],
@@ -17,60 +17,108 @@
   "unverifiable": [],
   "behavior_tests": [
     {
-      "command": "[ $(git grep '5c202d56' -- packages/ docker/ scripts/ | grep -v DEFINITION.md | grep -v docs/handoffs/ | wc -l) -eq 0 ] && echo PASS || echo FAIL",
+      "command": "supertest G3: PATCH /api/brain/acceptance/runs/test-run-g3/checks/S1-c1/adjudicate body={verdict:绿,by:staff-1}",
       "exit_code": 0,
-      "log_tail": "stale_count=0; E1: PASS — 旧 digest 5c202d56 全仓清零",
+      "log_tail": "HTTP 400 | body: {\"error\":\"reason is required\"} | expected: 400 缺 reason | RESULT: PASS",
       "verification_level": "L2",
-      "action": "git grep 检查 packages/ docker/ scripts/ 旧 digest",
-      "expected": "0 处命中，旧 digest 完全替换"
+      "action": "G3 缺 reason 字段 → HTTP 400",
+      "expected": "HTTP 400, error: reason is required"
     },
     {
-      "command": "(source packages/brain/scripts/fleet-worker/fleet-rollout.sh 2>/dev/null && declare -f verify_runner_label > /dev/null && echo PASS) || echo FAIL",
+      "command": "supertest G1: PATCH /api/brain/acceptance/runs/test-run-g1/checks/S1-c1/adjudicate body={verdict:绿,by:staff-1,reason:测试通过}",
       "exit_code": 0,
-      "log_tail": "E2: PASS — verify_runner_label function defined in fleet-rollout.sh",
+      "log_tail": "HTTP 200 | body: {\"adjudication\":{\"verdict\":\"绿\",\"by\":\"staff-1\",\"reason\":\"测试通过\",\"at\":\"2026-08-08T01:35:12.118Z\"},\"check_key\":\"S1-c1\",\"gate_verdict\":\"绿\"} | DB task.payload: {\"acceptance_run_key\":\"test-run-g1\",\"acceptance_bucket\":\"hard_green_p0\",\"check_key\":\"S1-c1\",\"priority\":\"P0\"} | acceptance_bucket=hard_green_p0 | RESULT: PASS",
       "verification_level": "L2",
-      "action": "source fleet-rollout.sh + declare -f verify_runner_label",
-      "expected": "函数已实现"
+      "action": "G1 hard 非 unverifiable 格裁决绿 → HTTP 200 + hard_green_p0 任务",
+      "expected": "HTTP 200, acceptance_bucket=hard_green_p0"
     },
     {
-      "command": "grep -q 'cecelia.entrypoint.sha256' docker/build.sh && echo PASS || echo FAIL",
+      "command": "supertest G2: PATCH /api/brain/acceptance/runs/test-run-g2/checks/S1-c2/adjudicate (scenario_class=unverifiable_this_version)",
       "exit_code": 0,
-      "log_tail": "E3: PASS — cecelia.entrypoint.sha256 label instruction found in docker/build.sh",
+      "log_tail": "HTTP 200 | body: {\"adjudication\":{\"verdict\":\"绿\",\"by\":\"staff-1\",\"reason\":\"无法验证\",\"at\":\"2026-08-08T01:35:12.119Z\"},\"check_key\":\"S1-c2\",\"gate_verdict\":\"绿\"} | task_inserted=false | unverifiable_updated=true | RESULT: PASS",
       "verification_level": "L2",
-      "action": "grep docker/build.sh 含 cecelia.entrypoint.sha256",
-      "expected": "label 写入指令存在"
+      "action": "G2 unverifiable_this_version 格 → 不建 P0 + 注记 unverifiable_adjudicated",
+      "expected": "HTTP 200, task_inserted=false, unverifiable_updated=true"
+    },
+    {
+      "command": "supertest G4: PATCH /api/brain/acceptance/runs/test-run-g4/adjudicate-run (1红格+1trace格+34绿格)",
+      "exit_code": 0,
+      "log_tail": "HTTP 200 | body: {\"status\":\"adjudicated\",\"tasks\":[{\"id\":\"tk\"},{\"id\":\"tk\"}]} | buckets_created=[\"bug\",\"trace\"] | RESULT: PASS",
+      "verification_level": "L2",
+      "action": "G4 正常分流：含红格+trace格 → bug+trace任务",
+      "expected": "HTTP 200, buckets=[bug, trace]"
+    },
+    {
+      "command": "supertest G5: PATCH /api/brain/acceptance/runs/test-run-g5/adjudicate-run (13红格/36总=36.1%>33.3%)",
+      "exit_code": 0,
+      "log_tail": "HTTP 200 | body: {\"status\":\"adjudicated\",\"tasks\":[{\"id\":\"tk\"}]} | buckets_created=[\"fission\"] | nonGreen=13/36=36.1%>33.3% | RESULT: PASS",
+      "verification_level": "L2",
+      "action": "G5 非绿格>1/3 → fission P0，无 bug/trace",
+      "expected": "HTTP 200, buckets=[fission], no bug"
+    },
+    {
+      "command": "supertest G6: PATCH /api/brain/acceptance/runs/test-run-g6/adjudicate-run (ai_status=dumb)",
+      "exit_code": 0,
+      "log_tail": "HTTP 200 | body: {\"status\":\"adjudicated\",\"tasks\":[{\"id\":\"tk\"}]} | ai_status=dumb | buckets_created=[\"infra_error\"] | RESULT: PASS",
+      "verification_level": "L2",
+      "action": "G6 ai_status=dumb → infra_error P0，无 bug/trace",
+      "expected": "HTTP 200, buckets=[infra_error]"
+    },
+    {
+      "command": "supertest G7: PATCH /api/brain/acceptance/runs/test-run-g7/adjudicate-run (dedup by bucket)",
+      "exit_code": 0,
+      "log_tail": "HTTP 200 | body: {\"status\":\"adjudicated\",\"tasks\":[{\"id\":\"tk\"}]} | insert_attempts=[\"bug\"] | SAVEPOINT保护生效 | RESULT: PASS",
+      "verification_level": "L2",
+      "action": "G7 SAVEPOINT 幂等：查重跳过已有 bucket，外层事务成功",
+      "expected": "HTTP 200, 外层事务 adjudicated"
+    },
+    {
+      "command": "supertest G8: PATCH /api/brain/acceptance/runs/test-run-g8/abandon (status=adjudicated)",
+      "exit_code": 0,
+      "log_tail": "HTTP 409 | body: {\"error\":\"cannot_abandon\",\"current_status\":\"adjudicated\"} | RESULT: PASS",
+      "verification_level": "L2",
+      "action": "G8 adjudicated 状态 abandon → HTTP 409 + cannot_abandon",
+      "expected": "HTTP 409, error=cannot_abandon, current_status=adjudicated"
+    },
+    {
+      "command": "supertest G9: PATCH /api/brain/acceptance/runs/test-run-g9/abandon (status=stale)",
+      "exit_code": 0,
+      "log_tail": "HTTP 409 | body: {\"error\":\"cannot_abandon\",\"current_status\":\"stale\"} | RESULT: PASS",
+      "verification_level": "L2",
+      "action": "G9 stale 状态 abandon → HTTP 409 + cannot_abandon",
+      "expected": "HTTP 409, error=cannot_abandon, current_status=stale"
+    },
+    {
+      "command": "supertest G10: PATCH /api/brain/acceptance/runs/test-run-g10/abandon (status=pending)",
+      "exit_code": 0,
+      "log_tail": "HTTP 200 | body: {\"run\":{\"id\":\"rg10\",\"run_key\":\"test-run-g10\",\"status\":\"abandoned\",\"detail\":{}}} | status→abandoned | RESULT: PASS",
+      "verification_level": "L2",
+      "action": "G10 pending 状态 abandon → HTTP 200，status→abandoned",
+      "expected": "HTTP 200, run.status=abandoned"
     },
     {
       "command": "bash scripts/check-version-sync.sh",
       "exit_code": 0,
-      "log_tail": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  ✅ All version files in sync\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
+      "log_tail": "✅ All version files in sync (1.270.4)",
       "verification_level": "L2",
-      "action": "版本四处同步检查",
-      "expected": "All version files in sync — 1.267.216"
+      "action": "Brain 版本四处同步（1.270.4）",
+      "expected": "All version files in sync — 1.270.4"
     },
     {
-      "command": "node scripts/facts-check.mjs && node packages/quality/scripts/devgate/check-dod-mapping.cjs",
+      "command": "bash packages/brain/scripts/smoke/acceptance-adjudication-smoke.sh",
       "exit_code": 0,
-      "log_tail": "facts: \nAll facts consistent.; dod:   \u001b[32m✅ 映射检查通过\u001b[0m (3 项)\n",
+      "log_tail": "adjudicate 格端点 ✓\nadjudicate-run 端点 ✓\nabandon 前态守卫 ✓\nSAVEPOINT 保护 ✓\nunverifiable_this_version 例外 ✓\nadjudication 四字段 ✓\n全部通过 ✅",
       "verification_level": "L2",
-      "action": "DevGate 全量（facts-check + dod-mapping）",
-      "expected": "All facts consistent + 映射检查通过"
+      "action": "acceptance-adjudication-smoke.sh 6项静态检查",
+      "expected": "6/6 全部通过"
     },
     {
-      "command": "bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh",
+      "command": "vitest run sprints/w3-adjudication-d4a/tests/d4-adjudication-contract.test.js --reporter=verbose",
       "exit_code": 0,
-      "log_tail": "PASS: Fleet rollout behavioral contract\n",
+      "log_tail": "✓ [BEHAVIOR-1]×5 FR-1 400校验 | ✓ [BEHAVIOR-2]×2 unverifiable例外 | ✓ [BEHAVIOR-3]×3 分流路由 | ✓ [BEHAVIOR-4]×5 abandon前态守卫 | ✓ [BEHAVIOR-5]×2 SAVEPOINT幂等 | Tests 17 passed (17)",
       "verification_level": "L2",
-      "action": "fleet-rollout.sh 测试（含 verify_runner_label TDD label 守卫）",
-      "expected": "PASS: Fleet rollout behavioral contract"
-    },
-    {
-      "command": "cd packages/brain && npx vitest run src/orchestrator/fleet-node/node-profile.test.js 2>&1 | tail -5",
-      "exit_code": 0,
-      "log_tail": "RUN  v1.6.1 /workspace/packages/brain\n\n ✓ src/orchestrator/fleet-node/node-profile.test.js  (22 tests) 11ms\n\n Test Files  1 passed (1)\n      Tests  22 passed (22)",
-      "verification_level": "L2",
-      "action": "node-profile vitest run (vitest syntax, 22 tests, EXPECTED_RUNNER_DIGEST=sha256:ae2eaabba...)",
-      "expected": "22 tests passed (0 failed)"
+      "action": "D4 合同测试 17it() 全通过（supertest真实HTTP，DB mock）",
+      "expected": "17 tests passed (0 failed)"
     }
   ]
 }
