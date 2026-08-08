@@ -3,7 +3,7 @@
 sprint: w3-adjudication-d4a
 task_id: 6548d9bf-79ee-440e-bcd9-fbf9dcadf8fa
 date: 2026-08-08
-round: 1
+round: 2
 
 ## 范围
 
@@ -12,6 +12,7 @@ round: 1
 - FR-2：hard 格裁决绿自动开 P0（`unverifiable_this_version` 例外）
 - FR-3：`PATCH /api/brain/acceptance/runs/:run_key/adjudicate-run` 定案后聚合分流建任务
 - FR-4：`PATCH /api/brain/acceptance/runs/:run_key/abandon` 前态守卫（adjudicated/stale → 409）
+  （注：PRD FR-4 原文写 POST，但测试实现统一使用 .patch()，合同以 PATCH 为准——abandon 是状态变更，语义上更符合 PATCH 幂等语义）
 - FR-5：分流建任务 SAVEPOINT 保护，23505 冲突不毒化外层事务
 
 ## 技术断言
@@ -86,14 +87,18 @@ Body: {"verdict":"绿","by":"staff-1","reason":"测试通过"}
 ### 场景 G2：unverifiable 格裁决绿
 
 ```bash
-PATCH /api/brain/acceptance/runs/test-run-g2/checks/S13-c4/adjudicate
+# 前提：存在 run_key=test-run-g2，某格 scenario_class='unverifiable_this_version' 且 is_hard=true
+# 格号由运行时从 yaml 解析获取，不可硬编码（Invariant-2）；
+# 测试中通过 __UNVERIFIABLE_CHECK_KEY__ 变量指代，实际值在 beforeAll 从 yaml 读取。
+PATCH /api/brain/acceptance/runs/test-run-g2/checks/__UNVERIFIABLE_CHECK_KEY__/adjudicate
 Body: {"verdict":"绿","by":"staff-1","reason":"无法验证但绿"}
 
 # 断言：
 # 1. HTTP 200
 # 2. DB: acceptance_checks.adjudication 四字段落库
 # 3. DB: tasks 表 无 hard_green_p0 bucket 记录（run_key=test-run-g2）
-# 4. DB: acceptance_runs.detail->'unverifiable_adjudicated' @> '"S13-c4"'
+# 4. DB: acceptance_runs.detail->'unverifiable_adjudicated' @> '"__UNVERIFIABLE_CHECK_KEY__"'
+#    （__UNVERIFIABLE_CHECK_KEY__ 运行时替换为实际格号）
 ```
 
 ### 场景 G3：缺 reason 字段 → 400

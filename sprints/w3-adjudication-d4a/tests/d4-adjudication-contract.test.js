@@ -250,6 +250,7 @@ describe('FR-3: PATCH /runs/:run_key/adjudicate-run — 哑火路径', () => {
     }));
 
     const insertedBuckets = [];
+    const insertedPriorities = [];
     const client = makeClient((sql, params) => {
       if (/SELECT.*acceptance_runs.*WHERE run_key/i.test(sql)) return { rows: [run] };
       if (/SELECT.*acceptance_checks.*WHERE run_id/i.test(sql)) return { rows: checks };
@@ -259,6 +260,10 @@ describe('FR-3: PATCH /runs/:run_key/adjudicate-run — 哑火路径', () => {
         const payloadStr = params?.find?.((p) => typeof p === 'string' && p.includes('acceptance_bucket')) ?? '';
         const m = payloadStr.match(/"acceptance_bucket"\s*:\s*"([^"]+)"/);
         if (m) insertedBuckets.push(m[1]);
+        // 捕获 priority 字段（可能作为独立列或在 payload 中）
+        const priorityParam = params?.find?.((p) => p === 'P0') ?? null;
+        const priorityInPayload = payloadStr.match(/"priority"\s*:\s*"([^"]+)"/)?.[1] ?? null;
+        insertedPriorities.push(priorityParam ?? priorityInPayload ?? params?.[3] ?? null);
         return { rows: [{ id: `task-${insertedBuckets.length}` }] };
       }
     });
@@ -276,6 +281,110 @@ describe('FR-3: PATCH /runs/:run_key/adjudicate-run — 哑火路径', () => {
     expect(insertedBuckets).not.toContain('fission');
     // infra_error 路径建 1 个 P0
     expect(insertedBuckets.filter((b) => b === 'infra_error')).toHaveLength(1);
+    // infra_error 任务必须是 P0（通过 priority 列或 payload 中的 priority 字段验证）
+    expect(insertedPriorities.some((p) => p === 'P0')).toBe(true);
+  });
+
+  it('[BEHAVIOR-3] 非绿格 > 1/3 → 建 fission P0，不建 bug/trace', async () => {
+    const run = {
+      id: 'run-fission-uuid',
+      run_key: 'test-run-fission',
+      status: 'human_complete',
+      detail: {},
+    };
+    // 13 个红格（> 36*1/3=12），触发熔断
+    const checks = Array.from({ length: 36 }, (_, i) => ({
+      id: `chk-fs-${i}`,
+      check_key: `S${Math.floor(i / 4) + 1}-c${(i % 4) + 1}`,
+      run_id: run.id,
+      adjudication: i < 13
+        ? { verdict: '红', by: 'staff', reason: 'fail', at: new Date().toISOString() }
+        : { verdict: '绿', by: 'staff', reason: 'ok', at: new Date().toISOString() },
+      scenario_class: 'normal',
+      is_hard: false,
+    }));
+
+    const insertedBuckets = [];
+    const insertedPriorities = [];
+    const client = makeClient((sql, params) => {
+      if (/SELECT.*acceptance_runs.*WHERE run_key/i.test(sql)) return { rows: [run] };
+      if (/SELECT.*acceptance_checks.*WHERE run_id/i.test(sql)) return { rows: checks };
+      if (/UPDATE acceptance_runs/i.test(sql)) return { rows: [{ ...run, status: 'adjudicated' }] };
+      if (/SELECT.*tasks.*WHERE.*acceptance_run_key/i.test(sql)) return { rows: [] };
+      if (/INSERT INTO tasks/i.test(sql)) {
+        const payloadStr = params?.find?.((p) => typeof p === 'string' && p.includes('acceptance_bucket')) ?? '';
+        const m = payloadStr.match(/"acceptance_bucket"\s*:\s*"([^"]+)"/);
+        if (m) insertedBuckets.push(m[1]);
+        const priorityParam = params?.find?.((p) => p === 'P0') ?? null;
+        const priorityInPayload = payloadStr.match(/"priority"\s*:\s*"([^"]+)"/)?.[1] ?? null;
+        insertedPriorities.push(priorityParam ?? priorityInPayload ?? params?.[3] ?? null);
+        return { rows: [{ id: `task-fs-${insertedBuckets.length}` }] };
+      }
+    });
+
+    const app = makeApp(makePool(client));
+    const res = await request(app)
+      .patch('/api/brain/acceptance/runs/test-run-fission/adjudicate-run')
+      .set('Authorization', 'Bearer test-token')
+      .send({ by: 'adjudicator-1' });
+
+    expect(res.status).toBe(200);
+    expect(insertedBuckets).toContain('fission');
+    expect(insertedBuckets).not.toContain('bug');
+    expect(insertedBuckets).not.toContain('trace');
+    // fission 任务必须是 P0
+    expect(insertedBuckets.filter((b) => b === 'fission')).toHaveLength(1);
+    expect(insertedPriorities.some((p) => p === 'P0')).toBe(true);
+  });
+
+  it('[BEHAVIOR-3] 正常分流（有红格）→ bug 任务 = 1，trace 任务 ≤ 1', async () => {
+    const run = {
+      id: 'run-normal-uuid',
+      run_key: 'test-run-normal',
+      status: 'human_complete',
+      detail: {},
+    };
+    // 1 个红格（占比 1/36 < 1/3，不触发熔断）；1 个 trace_q4 格
+    const checks = Array.from({ length: 36 }, (_, i) => ({
+      id: `chk-nm-${i}`,
+      check_key: `S${Math.floor(i / 4) + 1}-c${(i % 4) + 1}`,
+      run_id: run.id,
+      adjudication: i === 0
+        ? { verdict: '红', by: 'staff', reason: 'fail', at: new Date().toISOString() }
+        : { verdict: '绿', by: 'staff', reason: 'ok', at: new Date().toISOString() },
+      scenario_class: i === 6 ? 'trace_q4' : 'normal',
+      is_hard: false,
+    }));
+
+    const insertedBuckets = [];
+    const client = makeClient((sql, params) => {
+      if (/SELECT.*acceptance_runs.*WHERE run_key/i.test(sql)) return { rows: [run] };
+      if (/SELECT.*acceptance_checks.*WHERE run_id/i.test(sql)) return { rows: checks };
+      if (/SAVEPOINT|ROLLBACK TO SAVEPOINT|RELEASE SAVEPOINT/i.test(sql)) return { rows: [] };
+      if (/SELECT.*tasks.*WHERE.*acceptance_run_key/i.test(sql)) return { rows: [] };
+      if (/INSERT INTO tasks/i.test(sql)) {
+        const payloadStr = params?.find?.((p) => typeof p === 'string' && p.includes('acceptance_bucket')) ?? '';
+        const m = payloadStr.match(/"acceptance_bucket"\s*:\s*"([^"]+)"/);
+        if (m) insertedBuckets.push(m[1]);
+        return { rows: [{ id: `task-nm-${insertedBuckets.length}` }] };
+      }
+      if (/UPDATE acceptance_runs/i.test(sql)) return { rows: [{ ...run, status: 'adjudicated' }] };
+    });
+
+    const app = makeApp(makePool(client));
+    const res = await request(app)
+      .patch('/api/brain/acceptance/runs/test-run-normal/adjudicate-run')
+      .set('Authorization', 'Bearer test-token')
+      .send({ by: 'adjudicator-1' });
+
+    expect(res.status).toBe(200);
+    // 有红格时 bug 任务必须 = 1（下界断言）
+    expect(insertedBuckets.filter((b) => b === 'bug')).toHaveLength(1);
+    // trace 任务上界 ≤ 1
+    expect(insertedBuckets.filter((b) => b === 'trace').length).toBeLessThanOrEqual(1);
+    // 不触发熔断
+    expect(insertedBuckets).not.toContain('fission');
+    expect(insertedBuckets).not.toContain('infra_error');
   });
 });
 
@@ -469,9 +578,8 @@ describe('FR-5: SAVEPOINT — 23505 冲突不毒化外层事务', () => {
       .send({ by: 'adjudicator-1' });
 
     expect(res.status).toBe(200);
-    // bug 和 trace 两个 bucket 都应能独立建出（查重不因 bug 存在就阻断 trace）
-    // 注：具体 bucket 名称取决于实现，但 bug 和 trace 应同时存在
-    const uniqueBuckets = [...new Set(insertedBuckets)];
-    expect(uniqueBuckets.length).toBeGreaterThanOrEqual(1); // 至少 bug 或 trace 之一
+    // bug 和 trace 两个 bucket 都必须独立建出（查重按 bucket 维度区分，不因 bug 存在就阻断 trace）
+    expect(insertedBuckets).toContain('bug');
+    expect(insertedBuckets).toContain('trace');
   });
 });
