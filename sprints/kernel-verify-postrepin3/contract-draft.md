@@ -226,7 +226,7 @@ echo "PASS: playground GET /kernel-ping 返回精确 {ok:true}，重复请求稳
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
 | 成功响应 | `sprints/kernel-verify-postrepin3/tests/kernel-ping.test.ts` | `返回 200 且响应为 {ok:true}` | 路由未实现，实际 404 |
-| schema 完整性 | `sprints/kernel-verify-postrepin3/tests/kernel-ping.test.ts` | `GET /kernel-ping 响应 keys 完整性严格等于 ["ok"]` | body 为空导致 keys 不符 |
+| schema 完整性 | `sprints/kernel-verify-postrepin3/tests/kernel-ping.test.ts` | `响应 keys 完整性严格等于` | body 为空导致 keys 不符 |
 | 禁用字段 | `sprints/kernel-verify-postrepin3/tests/kernel-ping.test.ts` | `响应不含 status、pong、result 禁用字段` | 与主成功响应一起证明 schema；基线该负向项可先绿 |
 | 重复请求 | `sprints/kernel-verify-postrepin3/tests/kernel-ping.test.ts` | `连续两次 GET /kernel-ping 每次均独立返回 {ok:true}` | 两次均实际 404 |
 | 非 GET 边界 | `sprints/kernel-verify-postrepin3/tests/kernel-ping.test.ts` | `POST /kernel-ping 不进入 GET 成功路径并返回 404` | 基线天然通过，防实现误注册 POST |
