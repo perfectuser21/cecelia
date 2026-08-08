@@ -11,6 +11,11 @@ app.get('/ping', (req, res) => {
   res.json({ pong: true });
 });
 
+app.get('/kernel-e', (req, res) => {
+  // 无参 marker 端点：忽略任意多余 query 参数，恒定同步返回 200 + {result:"ok-e"}
+  res.json({ result: 'ok-e' });
+});
+
 app.get('/sum', (req, res) => {
   const { a, b } = req.query;
   if (a === undefined || b === undefined) {
