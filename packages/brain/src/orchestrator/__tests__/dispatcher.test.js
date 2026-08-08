@@ -2905,7 +2905,7 @@ describe('createDetachedLauncher', () => {
       env: expect.objectContaining({ CLAUDE_CONFIG_DIR: '/accounts/claude/account2' }),
     });
     expect(spawnDetached.mock.calls[0][0].extraMounts).not.toContain(
-      '/accounts/claude/account2:/host-claude-config:ro',
+      '/accounts/claude/account2:/host-claude-config:rw',
     );
     expect(spawnDetached.mock.calls[1][0]).toMatchObject({
       extraMounts: [
@@ -2954,7 +2954,7 @@ describe('createDetachedLauncher', () => {
       args[index - 1] === '-v' ? [arg] : []
     ));
     expect(mounts.filter((mount) => mount.includes(':/host-claude-config:'))).toEqual([
-      '/accounts/claude/account1:/host-claude-config:ro',
+      '/accounts/claude/account1:/host-claude-config:rw',
     ]);
   });
 });

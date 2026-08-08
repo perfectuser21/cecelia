@@ -22,6 +22,7 @@ set -euo pipefail
 HOST_CFG="/host-claude-config"
 LOCAL_CFG="${CLAUDE_CONFIG_DIR:-/home/cecelia/.claude}"
 
+# config-copy:start
 # 1. 复制只读配置到可写副本（session-env 等需要运行时写入）
 #
 # issue d4e0ec91：账号 home 目录（HOST_CFG）会被多个并发容器同时挂载使用，
@@ -52,6 +53,7 @@ if [[ -d "$HOST_CFG" ]]; then
   # session-env 是运行时可写目录
   mkdir -p "$LOCAL_CFG/session-env"
 fi
+# config-copy:end
 
 # 2. 准备可写 gitconfig（GIT_CONFIG_GLOBAL 覆盖默认路径）
 # 宿主 ~/.gitconfig 通过 :ro 挂载到 /home/cecelia/.gitconfig，无法写入
