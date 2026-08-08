@@ -9,50 +9,50 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] 合同测试毕业到 playground 测试目录且保留五个同名行为
+- [x] [ARTIFACT] 合同测试毕业到 playground 测试目录且保留五个同名行为
   Test: node -e "const fs=require('fs');const c=fs.readFileSync('playground/tests/kernel-ping.test.ts','utf8');for(const s of ['返回 200 且响应为 {ok:true}','响应 keys 完整性严格等于 [\"ok\"]','响应不含 status、pong、result 禁用字段','连续两次 GET /kernel-ping 每次均独立返回 {ok:true}','POST /kernel-ping 不进入 GET 成功路径并返回 404'])if(!c.includes(s))process.exit(1)"
 
-- [ ] [ARTIFACT] 变更范围不越过 playground 路由、毕业测试与本 sprint 合同
+- [x] [ARTIFACT] 变更范围不越过 playground 路由、毕业测试与本 sprint 合同
   Test: bash -c 'BAD=$(git diff --name-only "$(git merge-base HEAD origin/main)"..HEAD | awk '\''! /^(playground\/server\.js|playground\/tests\/kernel-ping\.test\.ts|sprints\/kernel-verify-postrepin3\/)/'\''); [ -z "$BAD" ] || { echo "$BAD"; exit 1; }'
 
 ## BEHAVIOR 条目
 
-- [ ] [BEHAVIOR] [L2] B-01: GET /kernel-ping 返回 200 且响应为精确 `{ok:true}`
+- [x] [BEHAVIOR] [L2] B-01: GET /kernel-ping 返回 200 且响应为精确 `{ok:true}`
   动作: 启动真实 playground server 后，请求其自身端口的 `GET /kernel-ping`
   预期观察: 调用方收到 HTTP 200，响应 JSON 的 `ok` 为布尔值 true
   等待预算: 10s
   留证: curl 状态码与响应 JSON 输出进入 behavior_tests 前列
   Test: manual:bash -c 'set -euo pipefail; PORT=31991; NODE_ENV= PLAYGROUND_PORT=$PORT node playground/server.js >/tmp/kernel-ping-b01-$$.log 2>&1 & SPID=$!; trap '\''kill $SPID 2>/dev/null; rm -f /tmp/kernel-ping-b01-$$.log'\'' EXIT; for i in $(seq 1 10); do curl -sf --max-time 1 "http://127.0.0.1:$PORT/health" >/dev/null && break; [ "$i" = 10 ] && exit 1; sleep 1; done; RESP=$(curl -sfS --max-time 5 "http://127.0.0.1:$PORT/kernel-ping"); echo "$RESP" | jq -e '\''.ok == true'\'''
 
-- [ ] [BEHAVIOR] [L2] B-02: GET /kernel-ping 响应 keys 完整性严格等于 `["ok"]`
+- [x] [BEHAVIOR] [L2] B-02: GET /kernel-ping 响应 keys 完整性严格等于 `["ok"]`
   动作: 对真实 playground 的 `/kernel-ping` 发起 GET 并读取完整响应体
   预期观察: 顶层只有 `ok` 一个字段，没有额外字段
   等待预算: 10s
   留证: jq keys 断言输出与 exit_code
   Test: manual:bash -c 'set -euo pipefail; PORT=31992; NODE_ENV= PLAYGROUND_PORT=$PORT node playground/server.js >/tmp/kernel-ping-b02-$$.log 2>&1 & SPID=$!; trap '\''kill $SPID 2>/dev/null; rm -f /tmp/kernel-ping-b02-$$.log'\'' EXIT; for i in $(seq 1 10); do curl -sf --max-time 1 "http://127.0.0.1:$PORT/health" >/dev/null && break; [ "$i" = 10 ] && exit 1; sleep 1; done; curl -sfS --max-time 5 "http://127.0.0.1:$PORT/kernel-ping" | jq -e '\''keys == ["ok"]'\'''
 
-- [ ] [BEHAVIOR] [L2] B-03: GET /kernel-ping 响应不含 status、pong、result 禁用字段
+- [x] [BEHAVIOR] [L2] B-03: GET /kernel-ping 响应不含 status、pong、result 禁用字段
   动作: 请求真实 `/kernel-ping` 并逐一检查三个禁用字段
   预期观察: `status`、`pong`、`result` 均不存在，响应仍由实际服务产生
   等待预算: 10s
   留证: 每个禁用字段的 jq 反向断言与总 exit_code
   Test: manual:bash -c 'set -euo pipefail; PORT=31993; NODE_ENV= PLAYGROUND_PORT=$PORT node playground/server.js >/tmp/kernel-ping-b03-$$.log 2>&1 & SPID=$!; trap '\''kill $SPID 2>/dev/null; rm -f /tmp/kernel-ping-b03-$$.log'\'' EXIT; for i in $(seq 1 10); do curl -sf --max-time 1 "http://127.0.0.1:$PORT/health" >/dev/null && break; [ "$i" = 10 ] && exit 1; sleep 1; done; RESP=$(curl -sfS --max-time 5 "http://127.0.0.1:$PORT/kernel-ping"); echo "$RESP" | jq -e '\''.ok == true and (has("status")|not) and (has("pong")|not) and (has("result")|not)'\'''
 
-- [ ] [BEHAVIOR] [L2] B-04: 连续两次 GET /kernel-ping 每次均独立返回 `{ok:true}`
+- [x] [BEHAVIOR] [L2] B-04: 连续两次 GET /kernel-ping 每次均独立返回 `{ok:true}`
   动作: 在同一真实 playground 进程上连续发起两次 GET
   预期观察: 两次请求各自返回 HTTP 200 与精确单字段 JSON，不复用伪造结果
   等待预算: 15s
   留证: 两次 curl 的响应与 jq exit_code
   Test: manual:bash -c 'set -euo pipefail; PORT=31994; NODE_ENV= PLAYGROUND_PORT=$PORT node playground/server.js >/tmp/kernel-ping-b04-$$.log 2>&1 & SPID=$!; trap '\''kill $SPID 2>/dev/null; rm -f /tmp/kernel-ping-b04-$$.log'\'' EXIT; for i in $(seq 1 10); do curl -sf --max-time 1 "http://127.0.0.1:$PORT/health" >/dev/null && break; [ "$i" = 10 ] && exit 1; sleep 1; done; for n in 1 2; do RESP=$(curl -sfS --max-time 5 "http://127.0.0.1:$PORT/kernel-ping"); echo "$RESP" | jq -e '\''.ok == true and (keys == ["ok"])'\'' >/dev/null || exit 1; done'
 
-- [ ] [BEHAVIOR] [L2] B-05: POST /kernel-ping 不进入 GET 成功路径并返回 404
+- [x] [BEHAVIOR] [L2] B-05: POST /kernel-ping 不进入 GET 成功路径并返回 404
   动作: 对真实 playground 的同一路径发送 POST
   预期观察: 服务返回 HTTP 404，不把非 GET 当成功请求
   等待预算: 10s
   留证: curl 输出的 HTTP 状态码与比较 exit_code
   Test: manual:bash -c 'set -euo pipefail; PORT=31995; NODE_ENV= PLAYGROUND_PORT=$PORT node playground/server.js >/tmp/kernel-ping-b05-$$.log 2>&1 & SPID=$!; trap '\''kill $SPID 2>/dev/null; rm -f /tmp/kernel-ping-b05-$$.log'\'' EXIT; for i in $(seq 1 10); do curl -sf --max-time 1 "http://127.0.0.1:$PORT/health" >/dev/null && break; [ "$i" = 10 ] && exit 1; sleep 1; done; CODE=$(curl -sS --max-time 5 -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:$PORT/kernel-ping"); [ "$CODE" = 404 ]'
 
-- [ ] [BEHAVIOR] [L2] INV-01: 既有 playground `/health` 与 `/ping` 回归不受影响
+- [x] [BEHAVIOR] [L2] INV-01: 既有 playground `/health` 与 `/ping` 回归不受影响
   动作: 运行既有 server.test.js 与 ping.test.js 的真实 Express 回归测试
   预期观察: 两个既有测试文件全部通过，新增端点不改变其响应
   等待预算: 60s
@@ -143,7 +143,7 @@ journey_type: autonomous
 | 78 | N/A（明确沙箱豁免）：playground 是非生产本地训练服务，既有端点均无鉴权；PRD 排除鉴权变更。 |
 | 79 | N/A：无租户数据。 |
 
-- [ ] [BEHAVIOR] [L2] INV-02: 合同 Red oracle 在未实现基线上真实失败且目标解释器启动
+- [x] [BEHAVIOR] [L2] INV-02: 合同 Red oracle 在未实现基线上真实失败且目标解释器启动
   动作: 从 playground 的 vitest 配置运行 sprint 合同测试
   预期观察: 当前基线中四条 GET 成功路径因 404 失败，vitest 进程返回非零；POST 边界通过
   等待预算: 60s
