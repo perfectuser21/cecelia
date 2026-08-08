@@ -1,0 +1,24 @@
+{
+  "initiative_id": "914f9187-dc4f-4281-8cf3-e60ad1b731e8",
+  "journey_type": "autonomous",
+  "journey_type_reason": "无 UI、无持久化的本地 playground HTTP 端点，由真实进程和 API 响应验收",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现并回归验证 playground GET /kernel-ping",
+      "scope": "让 playground 的 GET /kernel-ping 返回精确 {ok:true}，保留重复请求与非 GET 边界，并永久加入回归测试",
+      "dod": [
+        "[BEHAVIOR] 真实 playground 进程上的 GET /kernel-ping 返回 HTTP 200 与精确 {ok:true}",
+        "[BEHAVIOR] 连续两次 GET 均独立返回相同精确响应，POST 返回 404",
+        "[ARTIFACT] playground/tests/kernel-ping.test.ts 永久回归测试"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/kernel-ping.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
