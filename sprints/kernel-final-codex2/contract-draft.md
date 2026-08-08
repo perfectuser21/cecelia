@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## Response Schema（推导来源: PRD 字面 + api_registry/既有 playground 模式）
 
@@ -140,11 +140,11 @@ echo "OK: playground GET /kernel-ping2 真实响应为 ok2"
 |---|---|---|---|
 | `/kernel-ping2` | `sprints/kernel-final-codex2/tests/kernel-ping2.test.ts` | `返回严格 200`、`仅含 result`、`POST 不成功`、`既有 health 不回退` | 路由未实现时前两条在具体断言行失败 |
 
-### TDD Red 证据（Round 2）
+### TDD Red 证据（Round 3）
 
-- 单行命令：`./playground/node_modules/.bin/vitest run sprints/kernel-final-codex2/tests/kernel-ping2.test.ts --reporter=verbose`
+- 单行命令：`./node_modules/.bin/vitest run sprints/kernel-final-codex2/tests/kernel-ping2.test.ts --reporter=verbose`
 - 实跑结果：exit code = 1；Vitest 成功收集并执行 4 个测试，其中 2 failed、2 passed。
-- 可归因失败：`kernel-ping2.test.ts:8` 的 `expect(res.status).toBe(200)` 实收 404；`kernel-ping2.test.ts:14` 的 `expect(Object.keys(res.body)).toEqual(['result'])` 实收空数组。失败发生在未实现路由的行为断言，不是依赖加载、配置或测试收集失败。
+- 可归因失败：根目录现存 Vitest 入口成功加载 `vitest v1.6.1` 与测试文件；`kernel-ping2.test.ts:8` 的 `expect(res.status).toBe(200)` 实收 404；`kernel-ping2.test.ts:14` 的 `expect(Object.keys(res.body)).toEqual(['result'])` 实收空数组。日志终态为 `Test Files 1 failed (1)`、`Tests 2 failed | 2 passed (4)`，失败发生在未实现路由的行为断言，不是命令不存在、依赖加载、配置或测试收集失败。
 - 永久回归命令：实现后仍以同一命令运行；只有 GET 路由返回 HTTP 200、`result=ok2` 且仅含 `result` 时前两条才能转绿。
 
 ## Notes

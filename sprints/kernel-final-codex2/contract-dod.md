@@ -45,7 +45,7 @@ target_environment: playground
 
 ## Invariant 映射
 
-- INV-1（适用）合同 manual oracle 必须真跑并记录 exit code；Red 使用 `./playground/node_modules/.bin/vitest run sprints/kernel-final-codex2/tests/kernel-ping2.test.ts --reporter=verbose`。本轮实跑 exit code=1，Vitest 成功收集 4 条测试，具体在 `kernel-ping2.test.ts:8` 因 HTTP 404≠200、在第 14 行因 keys `[]`≠`[result]` 失败；不得把依赖加载或测试收集失败当作 Red。
+- INV-1（适用）合同 manual oracle 必须真跑并记录 exit code；Red 使用仓库根目录真实存在的 `./node_modules/.bin/vitest run sprints/kernel-final-codex2/tests/kernel-ping2.test.ts --reporter=verbose`。本轮实跑 exit code=1，Vitest v1.6.1 成功加载测试文件并收集 4 条测试，具体在 `kernel-ping2.test.ts:8` 因 HTTP 404≠200、在第 14 行因 keys `[]`≠`[result]` 失败；日志终态为 1 个测试文件失败、2 failed/2 passed，不得把命令不存在、依赖加载或测试收集失败当作 Red。
 - INV-2（适用）既有 playground 行为不得回退，由 B-04 与完整 playground test suite 覆盖。
 - INV-3（适用）凭据安全、日志脱敏：实现无凭据/PII，测试日志仅含固定 smoke 响应。
 - INV-4（显式 N/A）PRD 其余 area 铁律涉及 Judge 证据窗、DB、租户、调度、生产部署、真机、第三方、后台任务或多设备；本纯 playground 无状态 GET 切片不触及这些模块。
