@@ -538,6 +538,13 @@ function createDockerAdapter({
         `type=bind,src=${workspaceAdminSource},dst=${input.workspaceAdminMount.target}`,
         input.workspaceAdminMount.readOnly ? 'readonly' : null,
       ].filter(Boolean).join(',');
+      // claude 单链凭据：宿主账号目录 rw 挂载（禁 readonly——token 刷新要写回原件）
+      const claudeConfigMountArgs = input.claudeConfigMount
+        ? [
+            '--mount',
+            `type=bind,src=${canonicalMountSource(input.claudeConfigMount.source)},dst=/host-claude-config`,
+          ]
+        : [];
       const createArgs = [
         'create',
         '--name',
@@ -553,6 +560,7 @@ function createDockerAdapter({
         workspaceAdminMount,
         '--mount',
         runtimeMount,
+        ...claudeConfigMountArgs,
         ...(isCodex
           ? [
               '--tmpfs',
@@ -1214,6 +1222,7 @@ function createAttemptRunner({
   credentialConsumer,
   githubCredentialConsumer,
   resourceManager = NO_RUNTIME_RESOURCE_MANAGER,
+  claudeAccountsRoot = null,
 } = {}) {
   validateDependencies({
     workspaceManager,
@@ -1533,6 +1542,27 @@ function createAttemptRunner({
       && ['prepared', 'starting', 'running'].includes(state.status);
   }
 
+  function resolveClaudeConfigMount(target) {
+    if (target.provider !== 'claude') return null;
+    if (!/^account[1-9]$/.test(target.account ?? '')) {
+      throw new Error('attempt_claude_account_invalid');
+    }
+    if (typeof claudeAccountsRoot !== 'string' || claudeAccountsRoot.length === 0) {
+      throw new Error('attempt_claude_home_unavailable');
+    }
+    const source = path.join(claudeAccountsRoot, `.claude-${target.account}`);
+    let stat;
+    try {
+      stat = fs.statSync(source);
+    } catch {
+      throw new Error('attempt_claude_home_unavailable');
+    }
+    if (!stat.isDirectory()) {
+      throw new Error('attempt_claude_home_unavailable');
+    }
+    return Object.freeze({ source });
+  }
+
   function consumeAttemptCredentials(request, target) {
     let credential = null;
     if (target.provider === 'codex') {
@@ -1579,8 +1609,10 @@ function createAttemptRunner({
     resources,
     credential,
     githubCredential,
+    claudeConfigMount,
   }) {
     return {
+      ...(claudeConfigMount ? { claudeConfigMount } : {}),
       attemptId: request.attempt_id,
       runId: request.run_id,
       workerId,
@@ -1661,6 +1693,11 @@ function createAttemptRunner({
         request,
         target,
       );
+      // attempt d80312c0 案卷：claude 容器此前无任何凭据来源（envelope 只服务 codex）。
+      // #4720 单链决策：claude 凭据禁复制快照——宿主账号目录 rw 挂载到
+      // /host-claude-config，entrypoint（canonical 镜像内现成逻辑）软链
+      // .credentials.json 回原件，全执行体共享单条 OAuth 链。
+      const claudeConfigMount = resolveClaudeConfigMount(target);
       const workspace = await prepareVerifiedWorkspace(request.workspace_spec, {
         nodeDeps: executionContract.runtimeRequirements.node_deps === true,
       });
@@ -1705,6 +1742,7 @@ function createAttemptRunner({
           resources,
           credential,
           githubCredential,
+          claudeConfigMount,
         }));
       } catch (error) {
         return rollbackLaunch({

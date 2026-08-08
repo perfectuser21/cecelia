@@ -408,6 +408,10 @@ function createFleetWorkerRuntime({
     credentialConsumer,
     githubCredentialConsumer,
     resourceManager,
+    // claude 单链凭据（attempt d80312c0 案卷）：宿主账号目录根 = OrbStack 属主
+    // home（installer 渲染进 plist）。仅 us-mac-m4 有 claude 账号目录；其余机器
+    // claude attempt 会在 prepare 时 loud-fail attempt_claude_home_unavailable。
+    claudeAccountsRoot: env.CECELIA_ORBSTACK_HOME ?? null,
   });
   return Object.freeze({
     attemptRunner,

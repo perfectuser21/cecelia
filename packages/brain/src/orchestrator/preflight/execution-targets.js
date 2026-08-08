@@ -24,6 +24,32 @@ export function isVerifiedExecutionTarget(target) {
   return VERIFIED_TARGET_KEYS.has(targetKey(target));
 }
 
+// run c06b79af 案卷：调用方未解析账号（account=null）的目标不在白名单，
+// 会被 isVerifiedExecutionTarget 零探针跳过。此处按 (provider, machine) 展开为
+// 白名单具体账号（保持白名单声明顺序）；显式账号目标原样保留并对展开结果去重。
+export function expandUnresolvedAccountTargets(targets = []) {
+  const expanded = [];
+  const seen = new Set();
+  const push = (target) => {
+    const key = targetKey(target);
+    if (seen.has(key)) return;
+    seen.add(key);
+    expanded.push(target);
+  };
+  for (const target of targets) {
+    if (target?.account != null) {
+      push({ ...target });
+      continue;
+    }
+    for (const verified of VERIFIED_TARGETS) {
+      if (verified.provider === target?.provider && verified.machine === target?.machine) {
+        push({ ...target, account: verified.account });
+      }
+    }
+  }
+  return expanded;
+}
+
 function isExhausted(target, exhaustedTargets) {
   const key = targetKey(target);
   return (exhaustedTargets ?? []).some((entry) => targetKey(entry) === key);

@@ -2781,3 +2781,154 @@ describe('Fleet Worker durable runtime adapters', () => {
     }
   });
 });
+
+describe('Fleet claude 单链挂载（attempt d80312c0 Not logged in 案卷回归）', () => {
+  // #4720 单链决策：claude 凭据禁复制快照（envelope=多 OAuth 链互踢），
+  // 正解=宿主账号目录 rw 挂载到 /host-claude-config，entrypoint 软链 .credentials.json 单链。
+  function claudeRequest(overrides = {}) {
+    return request({
+      provider_spec: {
+        provider: 'claude',
+        command: 'claude',
+        args: ['--print'],
+        stdin: providerPrompt(),
+        output: { format: 'jsonl' },
+      },
+      target: {
+        machine: WORKER_ID,
+        provider: 'claude',
+        account: 'account2',
+        model: null,
+        role: 'generator',
+      },
+      credential_envelope: undefined,
+      ...overrides,
+    });
+  }
+
+  it('claude prepare 把宿主账号目录作为 claudeConfigMount 传给 docker', async () => {
+    const accountsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-accounts-'));
+    fs.mkdirSync(path.join(accountsRoot, '.claude-account2'), { recursive: true });
+    const deps = dependencies();
+    const { createAttemptRunner } = loadAttemptRunner();
+    const runner = createAttemptRunner({
+      workspaceManager: deps.workspaceManager,
+      docker: deps.docker,
+      stateStore: deps.stateStore,
+      workerId: WORKER_ID,
+      runnerImageDigest: IMAGE_DIGEST,
+      credentialConsumer: deps.credentialConsumer,
+      githubCredentialConsumer: deps.githubCredentialConsumer,
+      resourceManager: deps.resourceManager,
+      claudeAccountsRoot: accountsRoot,
+    });
+
+    try {
+      await runner.prepare(claudeRequest());
+      expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
+        claudeConfigMount: {
+          source: path.join(accountsRoot, '.claude-account2'),
+        },
+      }));
+    } finally {
+      fs.rmSync(accountsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('claude 账号目录不存在时 loud-fail 拒绝 prepare', async () => {
+    const accountsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-accounts-'));
+    const deps = dependencies();
+    const { createAttemptRunner } = loadAttemptRunner();
+    const runner = createAttemptRunner({
+      workspaceManager: deps.workspaceManager,
+      docker: deps.docker,
+      stateStore: deps.stateStore,
+      workerId: WORKER_ID,
+      runnerImageDigest: IMAGE_DIGEST,
+      credentialConsumer: deps.credentialConsumer,
+      githubCredentialConsumer: deps.githubCredentialConsumer,
+      resourceManager: deps.resourceManager,
+      claudeAccountsRoot: accountsRoot,
+    });
+
+    try {
+      await expect(runner.prepare(claudeRequest()))
+        .rejects.toThrow('attempt_claude_home_unavailable');
+      expect(deps.docker.prepare).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(accountsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('codex prepare 不受影响也不产生 claudeConfigMount', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+    const input = deps.docker.prepare.mock.calls[0][0];
+    expect(input.claudeConfigMount).toBeUndefined();
+  });
+
+  it('docker adapter 为 claudeConfigMount 生成 /host-claude-config rw 挂载', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
+    const runCommand = vi.fn(async (_command, args) => {
+      if (args[0] === 'create') return { stdout: 'container-created\n' };
+      return { stdout: '' };
+    });
+    const resolveMountSource = vi.fn((source) => `/canonical${source}`);
+    const docker = createDockerAdapter({
+      runCommand,
+      runtimeRoot,
+      writeCredential: vi.fn(async () => undefined),
+      writeGitHubCredential: vi.fn(async () => undefined),
+      resolveMountSource,
+      mountAccessPrincipal: 'orbstack-owner',
+      cleanupAccessPrincipal: '_cecelia',
+    });
+
+    try {
+      await prepareAndStartContainer(docker, {
+        attemptId: ATTEMPT_ID,
+        runId: RUN_ID,
+        workerId: WORKER_ID,
+        image: IMAGE_DIGEST,
+        providerSpec: claudeRequest().provider_spec,
+        taskId: TASK_ID,
+        roleEnv: { SPRINT_DIR: 'sprints/provider-neutral', WORKSPACE_PATH: '/workspace' },
+        timeoutSeconds: 300,
+        role: 'generator',
+        model: null,
+        claudeConfigMount: { source: '/Users/administrator/.claude-account2' },
+        workspaceMount: {
+          source: `/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID}`,
+          target: '/workspace',
+          readOnly: false,
+        },
+        workspaceAdminMount: {
+          source: `/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
+          target: `/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git`,
+          readOnly: false,
+        },
+        labels: {
+          'cecelia.fleet.attempt_id': ATTEMPT_ID,
+          'cecelia.fleet.run_id': RUN_ID,
+          'cecelia.fleet.worker_id': WORKER_ID,
+        },
+        callback: { url: claudeRequest().callback_url, token: claudeRequest().callback_token },
+        lease: { owner: 'dispatcher-1', generation: 0 },
+        credential: null,
+        githubCredential: GITHUB_CREDENTIAL,
+        runtimeNetwork: `cecelia-attempt-${ATTEMPT_ID}`,
+        runtimeEnvironment: {},
+      });
+      const createCall = runCommand.mock.calls.find(([, args]) => args[0] === 'create');
+      expect(createCall[1]).toContain(
+        'type=bind,src=/canonical/Users/administrator/.claude-account2,dst=/host-claude-config',
+      );
+      expect(createCall[1].join(' ')).not.toContain('/host-claude-config,readonly');
+      expect(resolveMountSource).toHaveBeenCalledWith('/Users/administrator/.claude-account2');
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+});

@@ -299,8 +299,12 @@ async function verifyGeneratorPullRequestClaims(
       ? identity.head_ref.trim()
       : '';
     if (!headSha) return { status: 'not_found', identity: null };
+    // run b4ac3396 死结修复：服务端签发分支(cp-fleet-generator-<attempt8>)与
+    // generator SKILL 惯例分支(cp-<MMDDHHNN>-<task8>)不等值时，taskShort 包含
+    // 匹配仍证明 PR 归属本 task——与"无 expectedBranch 时"的既有放行条件等强。
+    // 无关分支（不含 taskShort 也不等于签发分支）保持拒收。
     const branchMatches = typeof expectedBranch === 'string' && expectedBranch
-      ? headRef === expectedBranch
+      ? headRef === expectedBranch || headRef.toLowerCase().includes(taskShort)
       : headRef.toLowerCase().includes(taskShort);
     if (!branchMatches) {
       return { status: 'branch_mismatch', identity: null };

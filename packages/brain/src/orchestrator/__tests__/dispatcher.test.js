@@ -2958,3 +2958,63 @@ describe('createDetachedLauncher', () => {
     ]);
   });
 });
+
+describe('dispatcher 账号展开（run c06b79af 案卷回归）', () => {
+  it('payload 无 executor_account 时 preferred/candidates 按白名单展开具体账号', async () => {
+    const order = [];
+    const deps = makeDeps(order);
+    deps.machineId = 'us-mac-m4';
+    const claudeAdapter = {
+      name: 'claude',
+      start: vi.fn(() => ({
+        provider: 'claude', command: 'claude', args: ['--print'], stdin: '{}',
+      })),
+    };
+    deps.registry.resolve = vi.fn(() => claudeAdapter);
+    deps.resolveAccountHome = vi.fn(() => '/tmp/claude-account1');
+    deps.launcher.launch.mockResolvedValue({
+      actualMachineId: 'us-mac-m4',
+      executionTransport: 'local-docker',
+      remoteJobId: null,
+      attestationStatus: 'local',
+      containerId: 'container-expand',
+      jobId: null,
+    });
+    deps.preflightGate = {
+      evaluate: vi.fn(async ({ preferred_target: preferredTarget }) => ({
+        status: 'ok',
+        snapshot: { ...preferredTarget, capability_snapshot_id: 'snapshot-expand' },
+        evidence: {},
+        to_target: preferredTarget,
+      })),
+      validateSnapshotForDispatch: vi.fn(async (snapshot) => ({ status: 'ok', snapshot })),
+    };
+    const claudeObserved = {
+      ...observed,
+      task: {
+        ...observed.task,
+        payload: { ...observed.task.payload, executor: 'claude' },
+      },
+    };
+
+    await createDispatcher(deps)('spawn:planner', {
+      taskId,
+      runId,
+      hop: 1,
+      observed: claudeObserved,
+      decision: { phase: 'planning' },
+    });
+
+    expect(deps.preflightGate.evaluate).toHaveBeenCalledWith(expect.objectContaining({
+      preferred_target: expect.objectContaining({
+        provider: 'claude',
+        account: 'account1',
+        machine: 'us-mac-m4',
+      }),
+      candidate_targets: [
+        expect.objectContaining({ account: 'account1' }),
+        expect.objectContaining({ account: 'account2' }),
+      ],
+    }));
+  });
+});
