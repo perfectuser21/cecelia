@@ -21,3 +21,4 @@ generator: fix-round-1 (合流main #4695+版本重排1.267.249), sha=6c60212
 # 外部真相: 无 PR / 无本任务台账 → 新 sprint 从 Step 1 开跑
 planner: done (sprint-prd.md@d6cc044, invariants=8, fr=6, 行数=151, branch=cp-08080746-ws-6548d9bf)
 gan: done (contract-draft.md+contract-dod.md+tests/d4-adjudication-contract.test.js, round=1, behaviors=7, e2e_section=true, manual_bash=true)
+gan: done (contract-draft.md@cp-08080746-ws-6548d9bf r2, verdict=APPROVED, 铁律覆盖=7/7, judgments_written=5, rubric=.harness/verdicts/gan-a0e1a7f.json)
