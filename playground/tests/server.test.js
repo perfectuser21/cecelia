@@ -10,6 +10,19 @@ describe('playground server', () => {
   });
 });
 
+describe('GET /kernel-ping2', () => {
+  test('GET /kernel-ping2 → 200 + strict {result:"ok2"}', async () => {
+    const res = await request(app).get('/kernel-ping2');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ result: 'ok2' });
+  });
+
+  test('POST /kernel-ping2 不冒充 GET 成功', async () => {
+    const res = await request(app).post('/kernel-ping2');
+    expect(res.status).toBeGreaterThanOrEqual(300);
+  });
+});
+
 describe('GET /sum', () => {
   test('GET /sum?a=2&b=3 → 200 + {sum:5}', async () => {
     const res = await request(app).get('/sum').query({ a: '2', b: '3' });

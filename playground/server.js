@@ -7,6 +7,10 @@ app.get('/health', (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/kernel-ping2', (req, res) => {
+  res.json({ result: 'ok2' });
+});
+
 app.get('/ping', (req, res) => {
   res.json({ pong: true });
 });
