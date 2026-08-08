@@ -16,7 +16,7 @@
 import pool from './db.js';
 import { findActiveRunBlockingSpawn } from './lib/harness-run-guard.js';
 import { execSync, spawn as nodeSpawn } from 'node:child_process';
-import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, copyFileSync, openSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -116,6 +116,23 @@ export async function launchKernelProcess({
   const runner = fileURLToPath(new URL('./orchestrator/run.js', import.meta.url));
   const args = [runner, '--task-id', taskId, '--run-id', runId];
   if (resumeToken) args.push('--resume-token', resumeToken);
+  // 刀0：detached kernel 的 stdout/stderr 落盘到宿主可见目录，替代 stdio:'ignore'。
+  // 原先零遗言——kernel 卡死/崩溃时看不到任何栈（planner 停摆 debug 不能）。
+  // 落 CECELIA_KERNEL_LOG_DIR（默认 /tmp/cecelia-kernel-logs，compose 已 bind-mount
+  // prompt 目录同款可见），文件名带 runId 便于按 run 定位；打不开日志不阻断 spawn。
+  const logDir = process.env.CECELIA_KERNEL_LOG_DIR || '/tmp/cecelia-kernel-logs';
+  let stdioSpec = 'ignore';
+  let logPath = null;
+  try {
+    mkdirSync(logDir, { recursive: true });
+    logPath = join(logDir, `kernel-${runId}.log`);
+    const logFd = openSync(logPath, 'a');
+    stdioSpec = ['ignore', logFd, logFd];
+  } catch (logErr) {
+    console.warn(
+      `[harness-skill-relay] kernel 日志落盘不可用 run=${runId}，回落 stdio:ignore: ${logErr.message}`,
+    );
+  }
   return new Promise((resolve, reject) => {
     let settled = false;
     const child = nodeSpawn(
@@ -124,8 +141,12 @@ export async function launchKernelProcess({
       {
         cwd: worktreePath,
         detached: true,
-        stdio: 'ignore',
-        env: { ...process.env, CECELIA_HARNESS_RUNTIME: 'kernel-v1' },
+        stdio: stdioSpec,
+        env: {
+          ...process.env,
+          CECELIA_HARNESS_RUNTIME: 'kernel-v1',
+          ...(logPath ? { CECELIA_KERNEL_LOG_PATH: logPath } : {}),
+        },
       },
     );
     const onSpawnError = (error) => {
