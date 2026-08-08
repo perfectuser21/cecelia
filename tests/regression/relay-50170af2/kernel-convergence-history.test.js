@@ -181,7 +181,10 @@ describe('server-owned structured CI failure set', () => {
       runId: RUN_ID,
     });
 
-    expect(observed.pr.ci).toBe('fail');
+    // v1.270.10 起：BLOCKED 且仍有 check 未落定（本夹具含 in-progress 行）→
+    // ci=pending 等全部落定再裁（防"非 required 已红 + required 在跑"误判 fail）。
+    // 本测试主旨是 failed_checks 归一化，不受 ci 裁决时机影响。
+    expect(observed.pr.ci).toBe('pending');
     expect(observed.pr.failed_checks).toEqual([
       'alpha',
       'context-check',
