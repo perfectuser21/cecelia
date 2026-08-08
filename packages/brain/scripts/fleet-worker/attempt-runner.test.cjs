@@ -2918,7 +2918,7 @@ describe('Fleet claude 单链挂载（attempt d80312c0 Not logged in 案卷回�
         lease: { owner: 'dispatcher-1', generation: 0 },
         credential: null,
         githubCredential: GITHUB_CREDENTIAL,
-        runtimeNetwork: null,
+        runtimeNetwork: `cecelia-attempt-${ATTEMPT_ID}`,
         runtimeEnvironment: {},
       });
       const createCall = runCommand.mock.calls.find(([, args]) => args[0] === 'create');
