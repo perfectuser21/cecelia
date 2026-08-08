@@ -40,7 +40,7 @@ run_copy_block() {
 
   # 从 entrypoint.sh 原样摘取该代码段，避免测试和实现脱节（脱节了就测不出回归）
   local copy_block
-  copy_block=$(sed -n '/^# 1\. 复制只读配置到可写副本/,/^fi$/p' "$ENTRYPOINT")
+  copy_block=$(sed -n '/^# config-copy:start$/,/^# config-copy:end$/p' "$ENTRYPOINT")
 
   if [[ -z "$copy_block" ]]; then
     echo "ERROR: 无法从 entrypoint.sh 提取复制代码段" >&2
