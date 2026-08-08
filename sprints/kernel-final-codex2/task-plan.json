@@ -1,0 +1,24 @@
+{
+  "initiative_id": "0e15fa0d-ff3a-448d-82a8-a26bddfc8480",
+  "journey_type": "autonomous",
+  "journey_type_reason": "playground 是纯后端 HTTP 训练切片，无 UI、DB 或远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground 新增 GET /kernel-ping2 并永久回归",
+      "scope": "让 playground GET /kernel-ping2 返回严格 JSON {result:\"ok2\"}，非 GET 不成功，且既有端点不回退",
+      "dod": [
+        "[BEHAVIOR] 真实 playground GET /kernel-ping2 返回 200、result=ok2 且 keys=[result]",
+        "[BEHAVIOR] POST /kernel-ping2 非 2xx，GET /health 仍严格返回 {ok:true}",
+        "[ARTIFACT] playground/server.js 路由与 playground/tests/server.test.js 永久回归测试"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/server.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
