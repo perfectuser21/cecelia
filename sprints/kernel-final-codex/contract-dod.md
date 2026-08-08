@@ -10,36 +10,36 @@ target_environment: playground
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `playground/server.js` 含 `/kernel-ping` GET 路由，且不修改 Brain/Dashboard/Harness 文件
+- [x] [ARTIFACT] `playground/server.js` 含 `/kernel-ping` GET 路由，且不修改 Brain/Dashboard/Harness 文件
   Test: node -e "const fs=require('fs');const c=fs.readFileSync('playground/server.js','utf8');if(!c.includes(\"app.get('/kernel-ping'\"))process.exit(1)"
 
-- [ ] [ARTIFACT] 永久回归测试位于 `playground/tests/kernel-ping.test.js` 且 Test Contract 四个覆盖名均为测试名子串
+- [x] [ARTIFACT] 永久回归测试位于 `playground/tests/kernel-ping.test.js` 且 Test Contract 四个覆盖名均为测试名子串
   Test: node -e "const fs=require('fs');const c=fs.readFileSync('playground/tests/kernel-ping.test.js','utf8');for(const s of ['GET /kernel-ping 返回 200','响应体严格等于 ok','连续两次调用稳定返回 ok','POST 保持 404 且既有 /ping 不回退'])if(!c.includes(s))process.exit(1)"
 
 ## BEHAVIOR 条目
 
-- [ ] [BEHAVIOR] [L2] B-01: GET `/kernel-ping` 请求成功结束 [接缝×2]
+- [x] [BEHAVIOR] [L2] B-01: GET `/kernel-ping` 请求成功结束 [接缝×2]
   动作: 启动真实 playground Node 服务并向 `/kernel-ping` 发起 GET
   预期观察: HTTP status 严格等于 200
   等待预算: 5s
   留证: curl 的 status code 与 `/tmp/kernel-ping-b01.log`
   Test: manual:bash -c 'set -euo pipefail; P=31991; PLAYGROUND_PORT=$P node playground/server.js >/tmp/kernel-ping-b01.log 2>&1 & PID=$!; cleanup(){ STATUS=$?; trap - EXIT; kill "$PID" 2>/dev/null || :; wait "$PID" 2>/dev/null || :; exit "$STATUS"; }; trap cleanup EXIT; D=$((SECONDS+5)); until curl -sf "http://127.0.0.1:$P/health" >/dev/null; do [ "$SECONDS" -lt "$D" ] || exit 1; sleep 1; done; CODE=$(curl -sS -o /tmp/kernel-ping-b01.body -w "%{http_code}" "http://127.0.0.1:$P/kernel-ping"); [ "$CODE" = 200 ]'
 
-- [ ] [BEHAVIOR] [L2] B-02: 调用方观察到精确 `ok` body [接缝×2]
+- [x] [BEHAVIOR] [L2] B-02: 调用方观察到精确 `ok` body [接缝×2]
   动作: 启动真实 playground 并下载 `/kernel-ping` 响应体
   预期观察: body 仅有 `ok` 两个字节，无 JSON 包装、空白或换行
   等待预算: 5s
   留证: `/tmp/kernel-ping-b02.body` 的 `od -An -tx1` 输出
   Test: manual:bash -c 'set -euo pipefail; P=31992; PLAYGROUND_PORT=$P node playground/server.js >/tmp/kernel-ping-b02.log 2>&1 & PID=$!; cleanup(){ STATUS=$?; trap - EXIT; kill "$PID" 2>/dev/null || :; wait "$PID" 2>/dev/null || :; exit "$STATUS"; }; trap cleanup EXIT; D=$((SECONDS+5)); until curl -sf "http://127.0.0.1:$P/health" >/dev/null; do [ "$SECONDS" -lt "$D" ] || exit 1; sleep 1; done; printf ok >/tmp/kernel-ping-b02.expected; curl -sf "http://127.0.0.1:$P/kernel-ping" -o /tmp/kernel-ping-b02.body; cmp -s /tmp/kernel-ping-b02.expected /tmp/kernel-ping-b02.body'
 
-- [ ] [BEHAVIOR] [L2] B-03: 连续两次调用稳定返回 `ok` [接缝×2]
+- [x] [BEHAVIOR] [L2] B-03: 连续两次调用稳定返回 `ok` [接缝×2]
   动作: 在同一真实服务进程上连续执行两次 GET `/kernel-ping`
   预期观察: 两次请求均成功，两个 body 都严格为 `ok` 且彼此一致
   等待预算: 5s
   留证: 两次 curl 响应与 cmp exit code
   Test: manual:bash -c 'set -euo pipefail; P=31993; PLAYGROUND_PORT=$P node playground/server.js >/tmp/kernel-ping-b03.log 2>&1 & PID=$!; cleanup(){ STATUS=$?; trap - EXIT; kill "$PID" 2>/dev/null || :; wait "$PID" 2>/dev/null || :; exit "$STATUS"; }; trap cleanup EXIT; D=$((SECONDS+5)); until curl -sf "http://127.0.0.1:$P/health" >/dev/null; do [ "$SECONDS" -lt "$D" ] || exit 1; sleep 1; done; A=$(curl -sf "http://127.0.0.1:$P/kernel-ping"); B=$(curl -sf "http://127.0.0.1:$P/kernel-ping"); [ "$A" = ok ] && [ "$B" = ok ] && [ "$A" = "$B" ]'
 
-- [ ] [BEHAVIOR] [L2] B-04: 非 GET 边界与既有 `/ping` 保持不变 [接缝×2]
+- [x] [BEHAVIOR] [L2] B-04: 非 GET 边界与既有 `/ping` 保持不变 [接缝×2]
   动作: 对真实服务执行 POST `/kernel-ping`，随后 GET `/ping`
   预期观察: POST 仍为 404，既有 `/ping` 仍严格返回 `{"pong":true}`
   等待预算: 5s
