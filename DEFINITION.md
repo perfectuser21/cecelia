@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.270.8
+**Brain 版本**: 1.270.9
 
 **状态**: 生产运行中
 
@@ -20,6 +20,13 @@
 - callback queue 引入带租约的单消费者 claim；HTTP 回调与 worker 不再重复消费，同一 `run_id` 只有精确匹配当前 attempt 才能结算。
 - 任务隔离后不再发送 Thalamus 重试事件，持久化 `failure_count` 成为唯一重试计数；任务失败不再击穿全局 `cecelia-run` 熔断器。
 - migration 394 为 callback queue 增加 `claimed_at` / `claimed_by` 与可领取索引；回滚脚本同步提供。
+
+## Brain 1.270.9 — kernel 收敛终局三修（run b4ac3396 案卷）
+
+- PR 投影器分支容错：含 task-short 的惯例分支不再 branch_mismatch（合法 PR 被拒收→generator-fix 死循环→no_progress_same_sha 收死的死结根治）；无关分支保持拒收。
+- dispatcher 账号展开：account=null 的目标按 VERIFIED_TARGETS 白名单展开具体账号候选（claude→account1/2、codex→team1-5、grok），不带 executor_account 的任务不再零探针 exhausted。
+- fleet claude 单链凭据：宿主账号目录 rw 挂载 /host-claude-config（对齐 #4720 单链决策，复用 canonical 镜像 entrypoint 软链逻辑），worker 脚本层实现，镜像零改动；目录缺失 loud-fail。
+- worker 版本 pin 三组同步 1.270.9（rollout 需三机同步执行）。
 
 ## Brain 1.270.7 — runner canonical 镜像 repin + 发布链守卫（kernel 准入根治）
 
