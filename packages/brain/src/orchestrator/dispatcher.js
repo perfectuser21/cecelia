@@ -11,6 +11,7 @@ import {
   sanitizeDiagnostic,
 } from './failure-persistence.js';
 import { deriveCapabilityRequirements } from './preflight/requirements.js';
+import { expandUnresolvedAccountTargets } from './preflight/execution-targets.js';
 import { HARNESS_BUNDLE_MAX_BYTES } from './constants.js';
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
@@ -608,7 +609,7 @@ export function createDispatcher(deps) {
           ...(requestedModel ? { model: requestedModel } : {}),
           machine: roleAssignment.machine ?? machineId,
         };
-    const candidateTargets = spec.role === 'judge'
+    let candidateTargets = spec.role === 'judge'
       ? []
       : spec.role === 'commander'
         ? (commanderContext.candidate_targets ?? [commanderContext.target]).map(
@@ -617,9 +618,23 @@ export function createDispatcher(deps) {
       : roleAssignment.strict_affinity === true
         ? [preferredTarget]
         : [preferredTarget, ...(roleAssignment.fallback_targets ?? [])];
-    let selectedAccount = requestedAccount;
-    let selectedMachine = preferredTarget?.machine ?? machineId;
-    let selectedTarget = preferredTarget;
+    // run c06b79af 案卷：account 未解析（null）的目标不在 VERIFIED_TARGETS，
+    // capability gate 会零探针跳过并判 all_execution_targets_exhausted。
+    // 此处按白名单展开为具体账号候选；显式指定 account 的行为不变。
+    let preferredTarget2 = preferredTarget;
+    if (spec.role !== 'judge' && candidateTargets.some((t) => t?.account == null)) {
+      candidateTargets = expandUnresolvedAccountTargets(candidateTargets);
+      if (preferredTarget?.account == null) {
+        preferredTarget2 = candidateTargets.find(
+          (t) => t.provider === preferredTarget?.provider
+            && t.machine === preferredTarget?.machine,
+        ) ?? preferredTarget;
+      }
+    }
+    const resolvedPreferredTarget = preferredTarget2;
+    let selectedAccount = resolvedPreferredTarget?.account ?? requestedAccount;
+    let selectedMachine = resolvedPreferredTarget?.machine ?? machineId;
+    let selectedTarget = resolvedPreferredTarget;
     let accountHome = null;
     const rawCapabilityRequirements = commanderContext?.capability_requirements
       ?? payload.contract_requirements
@@ -660,7 +675,7 @@ export function createDispatcher(deps) {
         spec.role,
       ) ?? [];
       const preflight = await deps.preflightGate.evaluate({
-        preferred_target: preferredTarget,
+        preferred_target: resolvedPreferredTarget,
         candidate_targets: candidateTargets,
         failed_targets: failedTargets,
         requirements: capabilityRequirements ?? {},
@@ -703,8 +718,8 @@ export function createDispatcher(deps) {
       selectedTarget = {
         provider: preflightTarget.provider,
         account: preflightTarget.account,
-        ...((preflightTarget.model ?? preferredTarget.model)
-          ? { model: preflightTarget.model ?? preferredTarget.model }
+        ...((preflightTarget.model ?? resolvedPreferredTarget.model)
+          ? { model: preflightTarget.model ?? resolvedPreferredTarget.model }
           : {}),
         machine: preflightTarget.machine,
       };

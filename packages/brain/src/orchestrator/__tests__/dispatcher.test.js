@@ -2972,6 +2972,14 @@ describe('dispatcher 账号展开（run c06b79af 案卷回归）', () => {
     };
     deps.registry.resolve = vi.fn(() => claudeAdapter);
     deps.resolveAccountHome = vi.fn(() => '/tmp/claude-account1');
+    deps.launcher.launch.mockResolvedValue({
+      actualMachineId: 'us-mac-m4',
+      executionTransport: 'local-docker',
+      remoteJobId: null,
+      attestationStatus: 'local',
+      containerId: 'container-expand',
+      jobId: null,
+    });
     deps.preflightGate = {
       evaluate: vi.fn(async ({ preferred_target: preferredTarget }) => ({
         status: 'ok',
