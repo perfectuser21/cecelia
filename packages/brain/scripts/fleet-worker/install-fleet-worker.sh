@@ -84,7 +84,25 @@ ACCESS_HELPER="$RUNTIME_DIR/refresh-fleet-worker-docker-access.sh"
 WORKTREE_ROOT="${FLEET_WORKER_REPO_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/repository}"
 FLEET_DATA_ROOT="${FLEET_WORKER_DATA_ROOT:-$SYSTEM_ROOT/var/lib/cecelia/fleet-worker}"
 WORKER_TOKEN_FILE="${FLEET_WORKER_TOKEN_FILE:-$FLEET_DATA_ROOT/worker-token}"
-ORBSTACK_HOME="${FLEET_WORKER_ORBSTACK_HOME:-/var/empty}"
+# ORBSTACK_HOME 推导链：env 覆盖 → docker.sock 属主(拒 root/_cecelia) → SUDO_USER(拒 root/_cecelia) → /var/empty
+# 2026-08-08：默认死值 /var/empty 使 _cecelia 探测不到 OrbStack，手动直跑 installer 必挂 orbstack 前置
+DOCKER_SOCKET_PATH="${FLEET_WORKER_DOCKER_SOCKET:-/var/run/docker.sock}"
+derive_orbstack_home() {
+  local owner=''
+  if [[ -e "$DOCKER_SOCKET_PATH" ]]; then
+    owner="$("$STAT" -f '%Su' "$DOCKER_SOCKET_PATH" 2>/dev/null || true)"
+  fi
+  if [[ -z "$owner" || "$owner" == root || "$owner" == _cecelia ]]; then
+    owner="${SUDO_USER:-}"
+  fi
+  if [[ -n "$owner" && "$owner" != root && "$owner" != _cecelia \
+    && "$owner" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    printf '/Users/%s' "$owner"
+  else
+    printf '/var/empty'
+  fi
+}
+ORBSTACK_HOME="${FLEET_WORKER_ORBSTACK_HOME:-$(derive_orbstack_home)}"
 SHARED_TMPDIR="${FLEET_WORKER_SHARED_TMPDIR:-$SYSTEM_ROOT/Users/Shared/cecelia-fleet-tmp}"
 
 usage() {
@@ -857,6 +875,12 @@ if [[ $# -gt 0 ]]; then
       exit 64
       ;;
   esac
+fi
+
+# 自测出口：只回答 ORBSTACK_HOME 推导结果，不做任何安装动作（供行为测试注入 mock stat 验证推导链）
+if [[ "${FLEET_WORKER_PRINT_ORBSTACK_HOME:-}" == '1' ]]; then
+  printf '%s\n' "$ORBSTACK_HOME"
+  exit 0
 fi
 
 if [[ "$mode" == 'dry-run' ]]; then
