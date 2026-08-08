@@ -64,7 +64,7 @@ describe('acceptance 全链 integration', () => {
     const mine = pending.body.runs.find((r) => r.run_key === RUN_KEY);
     expect(mine.checks).toHaveLength(3);
 
-    const results = await request(app).post('/acceptance/results').send({
+    const results = await request(app).post('/api/brain/acceptance/results').send({
       run_key: RUN_KEY, ...SHAS,
       results: [
         { check_key: 'S1-c1', result: '通过' },
@@ -108,8 +108,8 @@ describe('acceptance 全链 integration', () => {
       checks: [{ check_key: 'S1-c1', kind: 'FR', name: 'a' }, { check_key: 'S2-c1', kind: 'FR', name: 'b' }],
     });
     const [r1, r2] = await Promise.all([
-      request(app).post('/acceptance/results').send({ run_key: runKey, ...SHAS, results: [{ check_key: 'S1-c1', result: '通过' }] }),
-      request(app).post('/acceptance/results').send({ run_key: runKey, ...SHAS, results: [{ check_key: 'S2-c1', result: '通过' }] }),
+      request(app).post('/api/brain/acceptance/results').send({ run_key: runKey, ...SHAS, results: [{ check_key: 'S1-c1', result: '通过' }] }),
+      request(app).post('/api/brain/acceptance/results').send({ run_key: runKey, ...SHAS, results: [{ check_key: 'S2-c1', result: '通过' }] }),
     ]);
     expect(r1.status).toBe(200);
     expect(r2.status).toBe(200);
@@ -137,7 +137,7 @@ describe('acceptance 全链 integration', () => {
       `INSERT INTO tasks (title, task_type, status, payload) VALUES ($1, 'dev', 'queued', '{}'::jsonb)`,
       [rejectTitle]
     );
-    const submit = await request(app).post('/acceptance/results').send({
+    const submit = await request(app).post('/api/brain/acceptance/results').send({
       run_key: runKey, ...SHAS,
       results: [{ check_key: 'S1-c1', result: '不通过' }],
     });
