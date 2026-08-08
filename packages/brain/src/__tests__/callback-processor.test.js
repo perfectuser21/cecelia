@@ -106,6 +106,11 @@ vi.mock('../code-review-trigger.js', () => ({
   checkAndCreateCodeReviewTrigger: vi.fn().mockResolvedValue(null),
 }));
 
+import { processEvent as thalamusProcessEvent } from '../thalamus.js';
+import { executeDecision as executeThalamusDecision } from '../decision-executor.js';
+import { recordFailure as recordCircuitFailure } from '../circuit-breaker.js';
+import { handleTaskFailure, classifyFailure } from '../quarantine.js';
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('callback-processor — WHERE 守卫白名单（harness_evaluate 84% verdict 修复）', () => {
@@ -346,6 +351,80 @@ describe('C1/C3: 回调写库协议(updated_at + terminal 清 claim + applied)',
       mockPool
     );
     expect(ret && ret.applied).toBe(true);
+  });
+});
+
+describe('P0 回归：重复回调、隔离终态与熔断边界', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPool.connect.mockResolvedValue(mockClient);
+    mockClient.query.mockResolvedValue({ rows: [], rowCount: 1 });
+    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    handleTaskFailure.mockResolvedValue({ quarantined: false, failure_count: 1 });
+    classifyFailure.mockReturnValue({ class: 'unknown', confidence: 0.5 });
+  });
+
+  it('UPDATE 未应用的重复回调必须立即结束，不能再次计数、隔离或触发重试', async () => {
+    mockClient.query.mockImplementation(async (sql) => ({
+      rows: [],
+      rowCount: typeof sql === 'string' && sql.includes('UPDATE tasks') ? 0 : 1,
+    }));
+
+    const result = await processExecutionCallback({
+      task_id: '11111111-1111-4111-8111-111111111111',
+      run_id: '22222222-2222-4222-8222-222222222222',
+      status: 'AI Failed',
+      result: { error: 'duplicate callback' },
+      iterations: 1,
+    }, mockPool);
+
+    expect(result).toMatchObject({ applied: false, duplicate: true });
+    expect(recordCircuitFailure).not.toHaveBeenCalled();
+    expect(handleTaskFailure).not.toHaveBeenCalled();
+    expect(thalamusProcessEvent).not.toHaveBeenCalled();
+    expect(executeThalamusDecision).not.toHaveBeenCalled();
+  });
+
+  it('任务进入 quarantine 后不得再把 TASK_FAILED 交给 Thalamus 复活', async () => {
+    handleTaskFailure.mockResolvedValueOnce({ quarantined: true, failure_count: 3, result: { reason: 'repeated_failure' } });
+
+    await processExecutionCallback({
+      task_id: '33333333-3333-4333-8333-333333333333',
+      run_id: '44444444-4444-4444-8444-444444444444',
+      status: 'AI Failed',
+      result: { error: 'persistent task error' },
+      iterations: 1,
+    }, mockPool);
+
+    expect(thalamusProcessEvent).not.toHaveBeenCalled();
+    expect(executeThalamusDecision).not.toHaveBeenCalled();
+  });
+
+  it('Thalamus retry_count 使用数据库持久化 failure_count，不使用 Bridge attempt', async () => {
+    handleTaskFailure.mockResolvedValueOnce({ quarantined: false, failure_count: 2 });
+
+    await processExecutionCallback({
+      task_id: '55555555-5555-4555-8555-555555555555',
+      run_id: '66666666-6666-4666-8666-666666666666',
+      status: 'AI Failed',
+      result: { error: 'second persistent failure' },
+      iterations: 1,
+    }, mockPool);
+
+    expect(thalamusProcessEvent).toHaveBeenCalledWith(expect.objectContaining({ retry_count: 2 }));
+  });
+
+  it('task_error 只影响当前任务，不得打开 cecelia-run 全局熔断器', async () => {
+    classifyFailure.mockReturnValueOnce({ class: 'task_error', confidence: 1 });
+
+    await processExecutionCallback({
+      task_id: '77777777-7777-4777-8777-777777777777',
+      run_id: '88888888-8888-4888-8888-888888888888',
+      status: 'AI Failed',
+      result: { error: 'repository contract violation' },
+    }, mockPool);
+
+    expect(recordCircuitFailure).not.toHaveBeenCalledWith('cecelia-run');
   });
 });
 

@@ -291,6 +291,19 @@ describe('thalamus', () => {
       expect(decision.actions[0].params.reason).toBe('retry_exceeded');
     });
 
+    it('quarantined 终态不得生成 retry_task', () => {
+      const event = {
+        type: EVENT_TYPES.TASK_FAILED,
+        task_id: 'quarantined-task',
+        retry_count: 1,
+        quarantined: true,
+      };
+
+      const decision = quickRoute(event);
+      expect(decision.actions).toEqual([]);
+      expect(decision.rationale).toContain('隔离终态');
+    });
+
     it('should cancel task when retry=4 and no complex reason', () => {
       const event = { type: EVENT_TYPES.TASK_FAILED, task_id: 'def', retry_count: 4 };
       const decision = quickRoute(event);
