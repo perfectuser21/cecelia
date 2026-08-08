@@ -318,8 +318,8 @@ export function buildDockerArgs(opts, ctx = {}) {
   // 解析 CECELIA_CREDENTIALS → 注入 Anthropic 凭据（容器内无宿主凭据文件）
   //
   // 容器内 claude 统一使用 /home/cecelia/.claude（可写副本），由 entrypoint.sh
-  // 从 /host-claude-config（:ro 挂载）复制而来。
-  //   - 宿主 CLAUDE_CONFIG_DIR：docker -v {hostDir}:/host-claude-config:ro
+  // 从 /host-claude-config（:rw 挂载）复制而来。
+  //   - 宿主 CLAUDE_CONFIG_DIR：docker -v {hostDir}:/host-claude-config:rw
   //   - 容器内 env：CLAUDE_CONFIG_DIR=/home/cecelia/.claude
   // 这样 claude 能写 session-env，不再报 ENOENT: mkdir '/host-claude-config/session-env/...'
   const credName = envFinal.CECELIA_CREDENTIALS;
@@ -365,7 +365,12 @@ export function buildDockerArgs(opts, ctx = {}) {
 
   const extraVolumes = [];
   if (hostClaudeConfigDir) {
-    extraVolumes.push('-v', `${hostClaudeConfigDir}:/host-claude-config:ro`);
+    // rw 而非 ro（issue 2bf0f8ea 凭据单链）：entrypoint 把 .credentials.json 软链回
+    // 挂载源，容器内 token 刷新必须能落到宿主原件上——只读挂载会让刷新写回失败，
+    // 凭据链重新分叉成"每容器一条"，任一条刷新即作废其余全部（含宿主交互窗口）。
+    // 容器仍然只写 entrypoint 建的 /home/cecelia/.claude 副本 + 这一个凭据软链，
+    // projects/ 等并发会话目录照旧被 entrypoint 排除，不会被容器写。
+    extraVolumes.push('-v', `${hostClaudeConfigDir}:/host-claude-config:rw`);
     // Symlink target mounts：宿主 .claude-accountN/skills → ~/.claude/skills → packages/workflows/skills
     // 两级 symlink，容器里必须能解析到最终 target，否则 cp -aL 拷不到 SKILL.md，harness skills 不可见
     const sharedClaudeDir = path.join(homedir, '.claude');

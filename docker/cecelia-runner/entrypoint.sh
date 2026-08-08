@@ -2,9 +2,10 @@
 # entrypoint.sh — cecelia-runner 容器启动器
 #
 # 解决三个问题：
-#  1. Claude Code 需要写 session-env —— 宿主 ~/.claude-account1 是 :ro 挂载，
-#     会报 ENOENT: mkdir session-env。此处把只读挂载的 /host-claude-config 复制
-#     到 /home/cecelia/.claude（可写），再把 CLAUDE_CONFIG_DIR 指向副本。
+#  1. Claude Code 需要写 session-env —— 直接用宿主账号目录会让并发容器互相踩踏，
+#     此处把挂载进来的 /host-claude-config 复制到 /home/cecelia/.claude（可写），
+#     再把 CLAUDE_CONFIG_DIR 指向副本。唯一的例外是 .credentials.json：它软链回
+#     挂载源，全执行体与宿主共享同一条 OAuth 链（见下方第 1 段注释）。
 #  2. Generator 需要 git push / gh pr create —— 挂载宿主的 ~/.gitconfig 和
 #     ~/.config/gh 后，用容器内 gh 重建 credential helper，再设置 safe.directory，
 #     避免复制进来的宿主专用 helper 在 Linux Runner 内不存在。
@@ -12,8 +13,8 @@
 #     末尾参数传入；改到 entrypoint.sh 后同样把 "$@" 透传给 claude。
 #
 # 约定：
-#  - 宿主 CLAUDE_CONFIG_DIR（例如 ~/.claude-account1）以 :ro 挂载到
-#    /host-claude-config
+#  - 宿主 CLAUDE_CONFIG_DIR（例如 ~/.claude-account1）以 :rw 挂载到
+#    /host-claude-config（凭据软链需要写回，见第 1 段）
 #  - 容器内 claude 使用 /home/cecelia/.claude（可写，副本）
 #  - docker-executor 注入 CLAUDE_CONFIG_DIR=/home/cecelia/.claude（覆盖宿主路径）
 
@@ -23,7 +24,14 @@ HOST_CFG="/host-claude-config"
 LOCAL_CFG="${CLAUDE_CONFIG_DIR:-/home/cecelia/.claude}"
 
 # config-copy:start
-# 1. 复制只读配置到可写副本（session-env 等需要运行时写入）
+# 1. 复制挂载配置到可写副本（session-env 等需要运行时写入）
+#
+# issue 2bf0f8ea：.credentials.json 是唯一不许复印的文件。复印它 = 同一账号裂成
+# 多条独立演化的 OAuth 凭据链（每容器一条 + 宿主一条），任一条刷新 access token
+# 就作废其余全部（Anthropic 防盗设计）——实测容器之间互踢、宿主交互窗口也被踢下线。
+# 这里改成软链回挂载源（宿主账号目录以 rw 挂载），刷新写在唯一原件上，全执行体
+# 与宿主共享单链。Codex 从来没这个病，因为它 rw 直挂 CODEX_HOME 原件。
+# 其余配置照旧复制成容器私有副本，并发容器的会话配置互不干扰。
 #
 # issue d4e0ec91：账号 home 目录（HOST_CFG）会被多个并发容器同时挂载使用，
 # projects/ 等会话历史目录在被其他并发的活跃 session 实时读写。原先
@@ -35,6 +43,8 @@ if [[ -d "$HOST_CFG" ]]; then
   mkdir -p "$LOCAL_CFG"
   # 高频并发写入 + 容器不需要的目录：跳过，避免整树复制卡死/中途失败
   EXCLUDE_FROM_CONFIG_COPY=(projects sessions file-history telemetry shell-snapshots paste-cache cache)
+  # 单链凭据：软链回挂载源，不复制（复印 = 凭据链分叉 = 互踢）
+  CREDENTIALS_FILE_NAME=".credentials.json"
   # 逐个顶层条目复制（含隐藏文件），跳过排除列表 —— 保留 -aL 跟随 symlink
   # 拷贝真实文件的语义（skills/ 常是 symlink 指向项目 workflows 目录，配合
   # docker-executor 挂载的 symlink-target volume，harness skills 才能在容器里可见）
@@ -47,6 +57,10 @@ if [[ -d "$HOST_CFG" ]]; then
       [[ "$name" == "$ex" ]] && skip=1 && break
     done
     [[ $skip -eq 1 ]] && continue
+    if [[ "$name" == "$CREDENTIALS_FILE_NAME" ]]; then
+      ln -sfn "$HOST_CFG/$CREDENTIALS_FILE_NAME" "$LOCAL_CFG/$CREDENTIALS_FILE_NAME"
+      continue
+    fi
     cp -aL "$entry" "$LOCAL_CFG/" 2>/dev/null || true
   done
   shopt -u nullglob dotglob
@@ -326,7 +340,9 @@ prepare_evaluator_provider_identity() {
   fi
 
   if [[ -d "$LOCAL_CFG" ]]; then
-    chown -R cecelia:cecelia -- "$LOCAL_CFG" || return 1
+    # -h：.credentials.json 是指向宿主原件的软链（issue 2bf0f8ea 单链），不带 -h
+    # 会穿透软链把宿主凭据文件的属主改成容器 UID 999 —— 宿主自己就读不了了。
+    chown -R -h cecelia:cecelia -- "$LOCAL_CFG" || return 1
   fi
   if [[ -n "${CODEX_HOME:-}" && -d "$CODEX_HOME" ]]; then
     chown -R cecelia:cecelia -- "$CODEX_HOME" || return 1
