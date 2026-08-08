@@ -1,6 +1,6 @@
 # 设计：runner 镜像 canonical 发布链修复（digest repin + 漂移守卫 + installer 推导）
 
-任务：Brain task 65334686 ｜ 决策：6c74f34f ｜ PrepPRD：sprints/08082022-runner-canonical-repin/prep-prd.md
+任务：Brain task 65334686 ｜ 决策：6c74f34f ｜ PrepPRD：docs/superpowers/specs/2026-08-08-runner-canonical-repin-prep-prd.md
 
 ## 问题
 
