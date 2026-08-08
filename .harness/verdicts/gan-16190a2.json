@@ -1,0 +1,23 @@
+{
+  "round": 1,
+  "verdict": "REVISION",
+  "judgments_written": 7,
+  "rubric_scores": {
+    "correctness": {"score": 4, "reason": "技术断言与PRD基本一致，但G2场景硬编码格号违反Invariant-2，abandon端点HTTP方法POST/PATCH矛盾"},
+    "completeness": {"score": 4, "reason": "10个GP场景均有覆盖，但缺鉴权失败场景、FR-1未验证DB无变更、computeGateVerdict重算结果未验证"},
+    "verifiability": {"score": 5, "reason": "全部断言可通过单元测试或manual:bash验证，无真机依赖"},
+    "specificity": {"score": 4, "reason": "大部分具体，但FR-3分流只有上界无下界，FR-5 bucket断言过宽"},
+    "testability": {"score": 4, "reason": "结构清晰mock合理，但trace_q4约定未在PRD明确，SQL regex顺序敏感"},
+    "invariant_coverage": {"score": 4, "reason": "D4直接相关invariant均有断言，缺分母=36精确断言和fission P0字段断言"},
+    "risk_coverage": {"score": 3, "reason": "主要业务风险覆盖，缺run_key不存在404、并发幂等性、anchor三件套降级断言"}
+  },
+  "p0_issues": [
+    "G2场景硬编码格号S13-c4违反Invariant-2禁止硬编码格号",
+    "abandon端点HTTP方法矛盾：PRD FR-4写POST，contract-draft和测试用PATCH"
+  ],
+  "p1_issues": [
+    "FR-5第二个测试断言过宽(≥1 bucket)，应断言bug和trace两个bucket同时存在",
+    "FR-3正常分流缺下界断言（红格时bug任务应=1）",
+    "fission/infra_error路径缺priority=P0字段断言"
+  ]
+}
