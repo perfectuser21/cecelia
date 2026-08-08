@@ -44,6 +44,37 @@ const RUNNER_SH = process.env.RUNNER_SH
 const WORK_DIR = process.env.WORK_DIR
   || path.join(os.homedir(), 'repos/cecelia');
 
+function resolveLegacyWorkDir({ baseRepo, workDir, defaultWorkDir = WORK_DIR } = {}) {
+  if (baseRepo === 'perfectuser21/cecelia' || (!baseRepo && !workDir)) {
+    return defaultWorkDir;
+  }
+  if (baseRepo === 'perfectuser21/zenithjoy-workspace') {
+    const zenithjoyWorkDir = process.env.ZENITHJOY_WORK_DIR;
+    if (!zenithjoyWorkDir) throw new Error('legacy_workspace_not_configured:perfectuser21/zenithjoy-workspace');
+    return zenithjoyWorkDir;
+  }
+  if (!baseRepo && workDir) return workDir;
+  throw new Error(`legacy_workspace_repo_not_supported:${baseRepo}`);
+}
+
+function buildCodexExecArgs(prompt, sandbox) {
+  return ['exec', '--skip-git-repo-check', prompt, '-s', sandbox];
+}
+
+function buildCallbackPayload({ taskId, runId, checkpointId, status, output, durationMs }) {
+  const brainStatus = status === 'completed' ? 'AI Done' : status === 'failed' ? 'AI Failed' : status;
+  const rawResult = typeof output === 'string' ? output : JSON.stringify(output ?? null);
+  return {
+    task_id: taskId,
+    run_id: runId || null,
+    checkpoint_id: checkpointId,
+    status: brainStatus,
+    result: rawResult.slice(0, 50000),
+    duration_ms: durationMs,
+    executor: 'codex-bridge',
+  };
+}
+
 function kernelHealthEvidence(machineId) {
   return machineId
     ? {
@@ -228,19 +259,9 @@ function sendJSON(res, statusCode, data) {
 /**
  * 回调 Brain 执行结果
  */
-async function callbackBrain(taskId, checkpointId, status, output, durationMs) {
+async function callbackBrain(taskId, checkpointId, status, output, durationMs, runId = null) {
   const url = `${BRAIN_URL}/api/brain/execution-callback`;
-  // Brain callback 期望 status='AI Done'/'AI Failed'，result 字段（非 output）
-  const brainStatus = status === 'completed' ? 'AI Done' : status === 'failed' ? 'AI Failed' : status;
-  const resultValue = typeof output === 'string' ? output.slice(0, 50000) : JSON.stringify(output).slice(0, 50000);
-  const payload = {
-    task_id: taskId,
-    checkpoint_id: checkpointId,
-    status: brainStatus,
-    result: resultValue,
-    duration_ms: durationMs,
-    executor: 'codex-bridge',
-  };
+  const payload = buildCallbackPayload({ taskId, runId, checkpointId, status, output, durationMs });
 
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -349,9 +370,9 @@ function executeCodex(codexHome, prompt, options = {}) {
   if (timeoutMs > MAX_EXECUTION_TIMEOUT_MS) throw new RangeError('execution_timeout_exceeds_server_budget');
 
   return new Promise((resolve, reject) => {
-    const args = ['exec', prompt, '-s', sandbox];
+    const args = buildCodexExecArgs(prompt, sandbox);
     const env = Object.assign({}, process.env, { CODEX_HOME: codexHome });
-    const cwd = workDir || process.cwd();
+    const cwd = workDir || WORK_DIR;
 
     console.log(`[codex-bridge] exec: CODEX_HOME=${codexHome} cwd=${cwd}`);
     const startTime = Date.now();
@@ -514,12 +535,14 @@ async function handleBridgeRequest(
 
     // POST /run — 通用执行端点（Brain executor 路由入口）
     } else if (req.method === 'POST' && req.url === '/run') {
-      const { task_id, checkpoint_id, prompt, work_dir, sandbox, timeout_ms, task_type, accounts } = await parseBody(req);
+      const { task_id, run_id, checkpoint_id, prompt, work_dir, base_repo, sandbox, timeout_ms, task_type, accounts } = await parseBody(req);
 
       if (!task_id || !prompt) {
         sendJSON(res, 400, { ok: false, error: 'Missing task_id or prompt' });
         return;
       }
+
+      const resolvedWorkDir = resolveLegacyWorkDir({ baseRepo: base_repo, workDir: work_dir });
 
       // 账号选择：优先使用 US Brain 注入的 accounts，否则降级到本地选账号
       let primaryHome, codexHomes, tmpDir = null;
@@ -559,17 +582,17 @@ async function handleBridgeRequest(
           || `cp-${new Date().toLocaleString('zh-CN', {timeZone:'Asia/Shanghai'}).replace(/[/:\s]/g,'').slice(0,8)}-${task_id.slice(0,8)}-cx`;
 
         try {
-          const result = await executeRunner(primaryHome, task_id, branch, work_dir, {
+          const result = await executeRunner(primaryHome, task_id, branch, resolvedWorkDir, {
             timeoutMs: timeout_ms || RUNNER_TIMEOUT_MS,
             codexHomes,
           });
-          await callbackBrain(task_id, checkpoint_id, 'completed', result.output, result.elapsed);
+          await callbackBrain(task_id, checkpoint_id, 'completed', result.output, result.elapsed, run_id);
         } catch (err) {
           const elapsed = Date.now() - startTime;
           console.error(`[codex-bridge] runner 失败: task=${task_id} error=${err.error || err.message}`);
           await callbackBrain(task_id, checkpoint_id, 'failed',
             `Error: ${err.error}\nStderr: ${err.stderr || ''}\nStdout: ${err.stdout || ''}`,
-            err.elapsed || elapsed);
+            err.elapsed || elapsed, run_id);
         } finally {
           cleanupTmpDir(tmpDir);
         }
@@ -578,17 +601,17 @@ async function handleBridgeRequest(
         const effectiveSandbox = sandbox || 'read-only';
         try {
           const result = await executeCodex(primaryHome, prompt, {
-            workDir: work_dir,
+            workDir: resolvedWorkDir,
             sandbox: effectiveSandbox,
             timeoutMs: timeout_ms || DEFAULT_TIMEOUT_MS,
           });
-          await callbackBrain(task_id, checkpoint_id, 'completed', result.output, result.elapsed);
+          await callbackBrain(task_id, checkpoint_id, 'completed', result.output, result.elapsed, run_id);
         } catch (err) {
           const elapsed = Date.now() - startTime;
           console.error(`[codex-bridge] /run 失败: task=${task_id} error=${err.error || err.message}`);
           await callbackBrain(task_id, checkpoint_id, 'failed',
             `Error: ${err.error}\nStderr: ${err.stderr || ''}\nStdout: ${err.stdout || ''}`,
-            err.elapsed || elapsed);
+            err.elapsed || elapsed, run_id);
         } finally {
           cleanupTmpDir(tmpDir);
         }
@@ -750,6 +773,8 @@ function createBridgeServer(options = {}) {
 const server = createBridgeServer();
 
 module.exports = {
+  buildCallbackPayload,
+  buildCodexExecArgs,
   cleanupTmpDir,
   createBridgeServer,
   createKernelHandlerFromEnvironment,
@@ -757,6 +782,7 @@ module.exports = {
   kernelHealthEvidence,
   loadRawAuth,
   normalizeExecutionTimeoutMs,
+  resolveLegacyWorkDir,
   setupInjectedAccounts,
 };
 

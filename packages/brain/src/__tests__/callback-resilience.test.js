@@ -76,10 +76,24 @@ vi.mock('../event-bus.js', () => ({
 vi.mock('../circuit-breaker.js', () => ({
   getState: vi.fn(), reset: vi.fn(), getAllStates: vi.fn(), recordSuccess: vi.fn(), recordFailure: vi.fn(),
 }));
+const classifyFailureMock = vi.hoisted(() => vi.fn(() => ({ class: 'task_error', retry_strategy: null })));
+const handleTaskFailureMock = vi.hoisted(() => vi.fn(async () => ({ quarantined: false, failure_count: 2 })));
+vi.mock('../quarantine.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  classifyFailure: classifyFailureMock,
+  handleTaskFailure: handleTaskFailureMock,
+}));
+const thalamusProcessEventMock = vi.hoisted(() => vi.fn(async () => ({ level: 0, actions: [] })));
+vi.mock('../thalamus.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  processEvent: thalamusProcessEventMock,
+}));
 vi.mock('../notifier.js', () => ({
   notifyTaskCompleted: vi.fn(async () => {}),
   notifyTaskFailed: vi.fn(async () => {}),
 }));
+
+import { recordFailure as recordCircuitFailure } from '../circuit-breaker.js';
 
 let router;
 beforeAll(async () => {
@@ -111,7 +125,8 @@ function setupDefaultMocks({ taskStatus = 'in_progress' } = {}) {
   mockPool.query.mockImplementation((sql, params) => {
     const s = typeof sql === 'string' ? sql : '';
     // callback_queue INSERT
-    if (s.includes('callback_queue')) return Promise.resolve({ rows: [], rowCount: 1 });
+    if (s.includes('INSERT INTO callback_queue')) return Promise.resolve({ rows: [{ id: 'callback-row-1' }], rowCount: 1 });
+    if (s.includes('UPDATE callback_queue')) return Promise.resolve({ rows: [], rowCount: 1 });
     // 终态守卫查询 — SELECT status FROM tasks
     if (s.includes('SELECT status FROM tasks')) return Promise.resolve({ rows: [{ status: taskStatus }], rowCount: 1 });
     // 幂等检查 decision_log
@@ -123,7 +138,7 @@ function setupDefaultMocks({ taskStatus = 'in_progress' } = {}) {
     // 其余
     return Promise.resolve({ rows: [{ goal_id: null }], rowCount: 1 });
   });
-  mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
+  mockClient.query.mockResolvedValue({ rows: [], rowCount: 1 });
 }
 
 describe('execution-callback 韧性：updated_at / claim 清空', () => {
@@ -145,6 +160,8 @@ describe('execution-callback 韧性：updated_at / claim 清空', () => {
     );
     expect(updateCall, 'UPDATE tasks 调用未找到').toBeDefined();
     expect(updateCall[0]).toContain('updated_at = NOW()');
+    expect(updateCall[0]).toContain("payload->>'current_run_id' = $14::text");
+    expect(updateCall[0]).not.toContain("payload->>'current_run_id' IS NULL");
   });
 
   it('UPDATE tasks SQL 包含 claimed_by = NULL', async () => {
@@ -175,6 +192,52 @@ describe('execution-callback 韧性：updated_at / claim 清空', () => {
     expect(updateCall).toBeDefined();
     expect(updateCall[0]).toContain('updated_at = NOW()');
     expect(updateCall[0]).toContain('claimed_by = NULL');
+  });
+
+  it('HTTP consumer 以数据库租约占有 callback_queue 行，成功后标记 processed', async () => {
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-callback-lease',
+      run_id: 'run-callback-lease',
+      status: 'AI Done',
+      result: { result: 'ok' },
+    });
+
+    const insertCall = mockPool.query.mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO callback_queue')
+    );
+    expect(insertCall[0]).toContain('claimed_at');
+    expect(insertCall[0]).toContain('claimed_by');
+    expect(insertCall[0]).toContain('RETURNING id');
+
+    const finishCall = mockPool.query.mock.calls.find(
+      ([sql, params]) => typeof sql === 'string' && sql.includes('UPDATE callback_queue') && sql.includes('processed_at = NOW()') && params?.[0] === 'callback-row-1'
+    );
+    expect(finishCall, 'inline consumer 完成后必须收口 queue lease').toBeDefined();
+  });
+
+  it('HTTP callback 的 task_error 不得污染全局 cecelia-run 熔断器', async () => {
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-error-circuit-boundary',
+      run_id: 'run-error-circuit-boundary',
+      status: 'AI Failed',
+      result: { error: 'task contract error' },
+      iterations: 1,
+    });
+
+    expect(recordCircuitFailure).not.toHaveBeenCalledWith('cecelia-run');
+  });
+
+  it('HTTP callback 交给 Thalamus 的 retry_count 来自持久化 failure_count', async () => {
+    handleTaskFailureMock.mockResolvedValueOnce({ quarantined: false, failure_count: 2 });
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-persisted-retry-count',
+      run_id: 'run-persisted-retry-count',
+      status: 'AI Failed',
+      result: { error: 'second failure' },
+      iterations: 1,
+    });
+
+    expect(thalamusProcessEventMock).toHaveBeenCalledWith(expect.objectContaining({ retry_count: 2 }));
   });
 });
 

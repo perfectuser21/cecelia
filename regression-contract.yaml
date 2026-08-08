@@ -60,6 +60,14 @@ ci:
 # Golden Paths（must-never-break 核心断言）
 # ============================================================================
 golden_paths:
+  - id: KERNEL-LEGACY-CALLBACK-EXACTLY-ONCE-01
+    name: "Legacy Bridge 保持 provider-neutral 工作区解析、attempt 精确结算与 quarantine 终态"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    test_command: "bash -c 'cd packages/brain && npm ci --ignore-scripts && npx --no-install vitest run src/__tests__/callback-processor.test.js src/__tests__/callback-resilience.test.js src/__tests__/callback-worker.test.js src/__tests__/codex-bridge-legacy-contract.test.js src/__tests__/codex-bridge-payload-callback-url.test.js src/__tests__/codex-test-gen-description.test.js src/__tests__/thalamus.test.js src/__tests__/migration-394-callback-lease.test.js'"
+    must_never_break: true
+
   - id: CORE-001
     name: "Brain 入口 server.js 语法可解析（must-never-break 核心冒烟）"
     priority: P0

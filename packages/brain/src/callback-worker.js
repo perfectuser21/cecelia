@@ -9,9 +9,12 @@
 
 import pool from './db.js';
 import { processExecutionCallback } from './callback-processor.js';
+import os from 'node:os';
 
 const POLL_INTERVAL_MS = 2000;
 const BATCH_SIZE = 10;
+const CALLBACK_LEASE_TTL_MINUTES = 5;
+const WORKER_ID = `callback-worker:${os.hostname()}:${process.pid}`;
 
 /**
  * 从 callback_queue 行重建 data 对象，兼容两种来源：
@@ -44,28 +47,46 @@ function buildDataFromRow(row) {
   };
 }
 
-async function pollAndProcess() {
+export async function pollAndProcess() {
   let client;
   try {
     client = await pool.connect();
     const result = await client.query(`
-      SELECT * FROM callback_queue
-      WHERE processed_at IS NULL
-      ORDER BY created_at ASC
-      LIMIT ${BATCH_SIZE}
-    `);
+      WITH candidates AS (
+        SELECT id
+        FROM callback_queue
+        WHERE processed_at IS NULL
+          AND (claimed_at IS NULL OR claimed_at < NOW() - INTERVAL '${CALLBACK_LEASE_TTL_MINUTES} minutes')
+        ORDER BY created_at ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT ${BATCH_SIZE}
+      )
+      UPDATE callback_queue AS queue
+      SET claimed_at = NOW(), claimed_by = $1
+      FROM candidates
+      WHERE queue.id = candidates.id
+      RETURNING queue.*
+    `, [WORKER_ID]);
 
     for (const row of result.rows) {
       try {
         const data = buildDataFromRow(row);
         await processExecutionCallback(data, pool);
         await client.query(
-          'UPDATE callback_queue SET processed_at = NOW() WHERE id = $1',
+          'UPDATE callback_queue SET processed_at = NOW(), claimed_at = NULL, claimed_by = NULL WHERE id = $1',
           [row.id]
         );
         console.log(`[callback-worker] Processed callback_queue id=${row.id} task=${row.task_id}`);
       } catch (rowErr) {
         console.error(`[callback-worker] Failed to process row id=${row.id} task=${row.task_id}: ${rowErr.message}`);
+        await client.query(
+          `UPDATE callback_queue
+           SET claimed_at = NULL, claimed_by = NULL, retry_count = COALESCE(retry_count, 0) + 1
+           WHERE id = $1`,
+          [row.id]
+        ).catch(releaseErr => {
+          console.error(`[callback-worker] Failed to release lease id=${row.id}: ${releaseErr.message}`);
+        });
       }
     }
   } catch (pollErr) {

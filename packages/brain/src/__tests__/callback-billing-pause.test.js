@@ -206,7 +206,7 @@ describe('execution-callback billing cap handling (v1.197.0)', () => {
       if (typeof sql === 'string' && sql.includes('BEGIN')) return Promise.resolve({});
       if (typeof sql === 'string' && sql.includes('COMMIT')) return Promise.resolve({});
       if (typeof sql === 'string' && sql.includes('ROLLBACK')) return Promise.resolve({});
-      if (typeof sql === 'string' && sql.includes('UPDATE tasks SET status')) {
+      if (typeof sql === 'string' && sql.includes('UPDATE tasks') && sql.includes('status = $2')) {
         return Promise.resolve({ rows: [], rowCount: 1 });
       }
       return Promise.resolve({ rows: [], rowCount: 0 });
@@ -277,7 +277,7 @@ describe('execution-callback billing cap handling (v1.197.0)', () => {
   /**
    * DoD 4: 正常失败应调用 cbFailure（计入熔断）
    */
-  it('should call cbFailure for normal task failures', async () => {
+  it('should NOT call global cbFailure for task_error failures', async () => {
     const result = await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-normal-failure',
       run_id: 'run-normal-1',
@@ -286,7 +286,7 @@ describe('execution-callback billing cap handling (v1.197.0)', () => {
     });
 
     expect(result.statusCode).toBe(200);
-    expect(cbFailureMock).toHaveBeenCalledWith('cecelia-run');
+    expect(cbFailureMock).not.toHaveBeenCalled();
     expect(markSpendingCapMock).not.toHaveBeenCalled();
   });
 

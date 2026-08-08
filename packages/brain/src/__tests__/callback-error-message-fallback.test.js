@@ -1,13 +1,12 @@
 /**
  * callback-error-message-fallback.test.js
  *
- * 验证根因D修复：当任务被 watchdog 先隔离、execution callback 后到达时，
- * 主 UPDATE (WHERE status='in_progress') 不匹配，但分类 payload UPDATE 的
- * COALESCE(error_message, $3) 仍写入 error_message。
+ * 验证 attempt 单结算：当任务已被 watchdog 终态化、execution callback 后到达时，
+ * 主 UPDATE compare-and-set 不匹配，回调必须立即结束，不能再写分类或触发重试。
  *
  * 根因：若任务在 callback 到达前已非 in_progress（watchdog 改状态），
  * 主 UPDATE 跳过，error_message 保持 NULL，无法诊断失败原因。
- * 修复：分类 payload UPDATE 同时 COALESCE 写入 error_message。
+ * 修复：主 UPDATE rowCount=0 后提交并返回 duplicate，终止全部下游副作用。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -167,7 +166,7 @@ function mockReqRes(method, path, body = {}) {
   });
 }
 
-describe('callback error_message fallback（根因D修复）', () => {
+describe('callback compare-and-set 终态防重', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
@@ -180,10 +179,8 @@ describe('callback error_message fallback（根因D修复）', () => {
     });
   });
 
-  it('E1: 分类 payload UPDATE 包含 COALESCE(error_message, $3)', async () => {
-    // 模拟：主 UPDATE WHERE status='in_progress' 不匹配（rowCount=0）
-    // 但分类 payload UPDATE（WHERE id=$1 无状态检查）应写入 error_message
-    await mockReqRes('POST', '/execution-callback', {
+  it('E1: 主 UPDATE 未应用时返回 duplicate，且不写分类 payload', async () => {
+    const response = await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-watchdog-race',
       run_id: 'run-001',
       status: 'AI Failed',
@@ -198,7 +195,7 @@ describe('callback error_message fallback（根因D修复）', () => {
       },
     });
 
-    // 找到分类 payload UPDATE（pool.query，SQL 包含 COALESCE(error_message
+    expect(response.body).toMatchObject({ success: true, duplicate: true });
     const allPoolCalls = mockPool.query.mock.calls;
     const classificationUpdate = allPoolCalls.find(c =>
       typeof c[0] === 'string' &&
@@ -206,18 +203,11 @@ describe('callback error_message fallback（根因D修复）', () => {
       c[0].includes('UPDATE tasks')
     );
 
-    expect(classificationUpdate, '分类 payload UPDATE 应包含 COALESCE(error_message, $3)').toBeDefined();
-
-    // 验证第三个参数（$3）是 error_message 内容（error excerpt）
-    const params = classificationUpdate[1];
-    expect(params.length, '应有3个参数: task_id, payload_json, error_message').toBeGreaterThanOrEqual(3);
-    const errorMessageParam = params[2];
-    expect(typeof errorMessageParam, 'error_message 应为字符串').toBe('string');
-    expect(errorMessageParam.length, 'error_message 不应为空').toBeGreaterThan(0);
+    expect(classificationUpdate).toBeUndefined();
   });
 
-  it('E2: error_message 包含原始错误摘要（error_during_execution）', async () => {
-    await mockReqRes('POST', '/execution-callback', {
+  it('E2: 迟到失败回调不执行隔离与分类副作用', async () => {
+    const response = await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-watchdog-race-2',
       run_id: 'run-002',
       status: 'AI Failed',
@@ -231,16 +221,10 @@ describe('callback error_message fallback（根因D修复）', () => {
       },
     });
 
-    const allPoolCalls = mockPool.query.mock.calls;
-    const classificationUpdate = allPoolCalls.find(c =>
-      typeof c[0] === 'string' &&
-      c[0].includes('COALESCE(error_message,')
-    );
-
-    expect(classificationUpdate).toBeDefined();
-    const errorMsg = classificationUpdate[1][2];
-    // error_message 应包含错误信息（JSON stringified result 或 result.result 字段）
-    expect(errorMsg).toBeTruthy();
+    expect(response.body.reason).toBe('callback_compare_and_set_rejected');
+    expect(mockPool.query.mock.calls.some(c =>
+      typeof c[0] === 'string' && c[0].includes('COALESCE(error_message,')
+    )).toBe(false);
   });
 
   it('E3: 主 UPDATE 已写 error_message 时 COALESCE 不覆盖（幂等性）', async () => {

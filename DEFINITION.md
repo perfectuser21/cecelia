@@ -2,17 +2,24 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-08-07
+**最后更新**: 2026-08-08
 
 
 
 
 
-**Brain 版本**: 1.270.7
+**Brain 版本**: 1.270.8
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.270.8 — provider-neutral 回调单结算 + 跨设备工作区解析
+
+- Codex Bridge 只接收 canonical `base_repo`，在执行设备解析为本机工作区；`run_id` 从派发贯穿全部回调，Claude/Codex/Grok 共用 Kernel attempt 身份语义。
+- callback queue 引入带租约的单消费者 claim；HTTP 回调与 worker 不再重复消费，同一 `run_id` 只有精确匹配当前 attempt 才能结算。
+- 任务隔离后不再发送 Thalamus 重试事件，持久化 `failure_count` 成为唯一重试计数；任务失败不再击穿全局 `cecelia-run` 熔断器。
+- migration 394 为 callback queue 增加 `claimed_at` / `claimed_by` 与可领取索引；回滚脚本同步提供。
 
 ## Brain 1.270.7 — runner canonical 镜像 repin + 发布链守卫（kernel 准入根治）
 

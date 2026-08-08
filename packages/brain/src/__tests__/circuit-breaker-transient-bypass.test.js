@@ -199,7 +199,7 @@ describe('circuit-breaker transient API error bypass', () => {
       if (typeof sql === 'string' && sql.includes('BEGIN')) return Promise.resolve({});
       if (typeof sql === 'string' && sql.includes('COMMIT')) return Promise.resolve({});
       if (typeof sql === 'string' && sql.includes('ROLLBACK')) return Promise.resolve({});
-      if (typeof sql === 'string' && sql.includes('UPDATE tasks SET status')) {
+      if (typeof sql === 'string' && sql.includes('UPDATE tasks') && sql.includes('status = $2')) {
         return Promise.resolve({ rows: [], rowCount: 1 });
       }
       return Promise.resolve({ rows: [], rowCount: 0 });
@@ -245,7 +245,7 @@ describe('circuit-breaker transient API error bypass', () => {
     expect(cbFailureMock).not.toHaveBeenCalled();
   });
 
-  it('should call cbFailure for normal task_error failures (正常任务错误仍计入熔断)', async () => {
+  it('should NOT call cbFailure for task_error failures（任务错误不污染全局熔断）', async () => {
     const result = await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-task-error-1',
       run_id: 'run-te-1',
@@ -254,7 +254,7 @@ describe('circuit-breaker transient API error bypass', () => {
     });
 
     expect(result.statusCode).toBe(200);
-    expect(cbFailureMock).toHaveBeenCalledWith('cecelia-run');
+    expect(cbFailureMock).not.toHaveBeenCalled();
   });
 
   it('should NOT call cbFailure for billing_cap (already covered, regression test)', async () => {

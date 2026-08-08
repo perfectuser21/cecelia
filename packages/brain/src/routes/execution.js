@@ -39,6 +39,23 @@ const execAsync = promisify(exec);
 const HEARTBEAT_PATH = new URL('../../../HEARTBEAT.md', import.meta.url);
 
 router.post('/execution-callback', async (req, res) => {
+  let callbackQueueId = null;
+  let callbackQueueFinalized = false;
+  const finalizeCallbackQueue = async (processed) => {
+    if (!callbackQueueId || callbackQueueFinalized) return;
+    callbackQueueFinalized = true;
+    if (processed) {
+      await pool.query(
+        'UPDATE callback_queue SET processed_at = NOW(), claimed_at = NULL, claimed_by = NULL WHERE id = $1',
+        [callbackQueueId]
+      );
+      return;
+    }
+    await pool.query(
+      'UPDATE callback_queue SET claimed_at = NULL, claimed_by = NULL WHERE id = $1',
+      [callbackQueueId]
+    );
+  };
   try {
     const {
       task_id,
@@ -88,12 +105,14 @@ router.post('/execution-callback', async (req, res) => {
       for (let _i = 0; _i <= _retryDelays.length; _i++) {
         if (_i > 0) await new Promise(r => setTimeout(r, _retryDelays[_i - 1]));
         try {
-          await pool.query(
+          const insertResult = await pool.query(
             `INSERT INTO callback_queue
-               (task_id, checkpoint_id, run_id, status, result_json, stderr_tail, duration_ms, attempt, exit_code, failure_class)
-             VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10)`,
-            _insertArgs
+               (task_id, checkpoint_id, run_id, status, result_json, stderr_tail, duration_ms, attempt, exit_code, failure_class, claimed_at, claimed_by)
+             VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, NOW(), $11)
+             RETURNING id`,
+            [..._insertArgs, `http:${process.pid}:${String(run_id || task_id).slice(0, 64)}`]
           );
+          callbackQueueId = insertResult.rows[0]?.id || null;
           _insertErr = null;
           break;
         } catch (err) {
@@ -120,6 +139,7 @@ router.post('/execution-callback', async (req, res) => {
         );
         if (dupCheck.rows.length > 0) {
           console.log(`[execution-callback] 幂等保护: run_id=${run_id} status=${status} 已处理过，跳过`);
+          await finalizeCallbackQueue(true);
           return res.json({ success: true, duplicate: true });
         }
       } catch (idempotencyErr) {
@@ -144,6 +164,7 @@ router.post('/execution-callback', async (req, res) => {
         );
         if (taskRow.rows.length > 0 && TERMINAL_STATUSES.includes(taskRow.rows[0].status)) {
           console.log(`[execution-callback] 迟到回调跳过: task=${task_id} 已是终态 ${taskRow.rows[0].status}`);
+          await finalizeCallbackQueue(true);
           return res.json({ success: true, skipped: true, reason: 'late_callback_terminal', current_status: taskRow.rows[0].status });
         }
       } catch (terminalGuardErr) {
@@ -163,6 +184,7 @@ router.post('/execution-callback', async (req, res) => {
         );
         if (terminalCheck.rows[0]?.failure_class === 'pipeline_terminal_failure') {
           console.warn(`[execution-callback] 终态守卫命中：task=${task_id} failure_class=pipeline_terminal_failure，拒绝覆盖为 completed`);
+          await finalizeCallbackQueue(true);
           return res.json({ success: true, skipped: true, reason: 'terminal_failure_guard' });
         }
       } catch (terminalCheckErr) {
@@ -222,7 +244,8 @@ router.post('/execution-callback', async (req, res) => {
       const { errorMessage, blockedDetail } = buildFailureFields(newStatus, result, stderr, exit_code, task_id);
       const execMetaJson = buildExecMetaJson(result);
 
-      await client.query(`
+      const isTerminal = ['completed', 'completed_no_pr', 'failed', 'cancelled'].includes(newStatus);
+      const updateResult = await client.query(`
         UPDATE tasks
         SET
           status = $2,
@@ -231,7 +254,8 @@ router.post('/execution-callback', async (req, res) => {
             'run_status', $4::text,
             'pr_url', $5::text
           ) || CASE WHEN $7::text IS NOT NULL THEN jsonb_build_object('findings', $7::text) ELSE '{}'::jsonb END
-            || CASE WHEN $8::integer IS NOT NULL THEN jsonb_build_object('metadata', jsonb_build_object('pr_number', $8::integer)) ELSE '{}'::jsonb END,
+            || CASE WHEN $8::integer IS NOT NULL THEN jsonb_build_object('metadata', jsonb_build_object('pr_number', $8::integer)) ELSE '{}'::jsonb END
+            || CASE WHEN $13::boolean THEN jsonb_build_object('current_run_id', NULL) ELSE '{}'::jsonb END,
           result = CASE WHEN $12::jsonb IS NOT NULL THEN COALESCE(result, '{}'::jsonb) || $12::jsonb ELSE result END,
           completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END,
           quota_exhausted_at = CASE WHEN $11 THEN NOW() ELSE quota_exhausted_at END,
@@ -242,8 +266,16 @@ router.post('/execution-callback', async (req, res) => {
           updated_at = NOW(),
           claimed_by = NULL,
           claimed_at = NULL
-        WHERE id = $1 AND status IN ('in_progress', 'queued', 'dispatched')
-      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted, execMetaJson]);
+        WHERE id = $1
+          AND status IN ('in_progress', 'queued', 'dispatched')
+          AND ($14::text IS NULL OR payload->>'current_run_id' = $14::text)
+      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted, execMetaJson, isTerminal, run_id || null]);
+
+      if (updateResult.rowCount === 0) {
+        await client.query('COMMIT');
+        await finalizeCallbackQueue(true);
+        return res.json({ success: true, duplicate: true, reason: 'callback_compare_and_set_rejected' });
+      }
 
       // Log the execution result（带 WHERE NOT EXISTS 防重复写入）
       await client.query(`
@@ -667,6 +699,8 @@ router.post('/execution-callback', async (req, res) => {
       // === Failure Classification & Smart Retry ===
       let failureHandled = false;
       let quarantined = false;
+      let persistedFailureCount = Number(iterations) || 0;
+      let failureClass = null;
       let isBillingCap = false;
       let isTransientApiError = false;
       let isReviewTask = false;
@@ -686,6 +720,7 @@ router.post('/execution-callback', async (req, res) => {
         const taskType = taskRow.rows[0]?.task_type;
         failureTaskType = taskType;
         const classification = classifyFailure(errorMsg, { payload: taskPayload });
+        failureClass = classification.class;
         isBillingCap = classification.class === 'billing_cap';
         // rate_limit / network / timeout / server_error / auth 均不代表 cecelia-run 系统故障，跳过熔断计数：
         //   rate_limit    — 429 限流，外部 API 问题
@@ -835,9 +870,9 @@ router.post('/execution-callback', async (req, res) => {
       //   network      — 网络抖动，与 cecelia-run 健康状况无关
       //   auth         — 凭据过期/无效（OAuth token expired 等），是凭据问题而非系统故障
       //   review tasks — 走本机 Codex CLI，执行主体不是 cecelia-run
-      if (isBillingCap || isTransientApiError) {
+      if (isBillingCap || isTransientApiError || failureClass === 'task_error') {
         const bypassReason = isBillingCap ? 'billing_cap' : (isTransientApiError ? 'transient(rate_limit/network/timeout/server_error/auth)' : 'unknown');
-        console.log(`[execution-callback] 外部/凭据错误（${bypassReason}）：跳过熔断计数（task=${task_id}）`);
+        console.log(`[execution-callback] 非系统性失败（${failureClass === 'task_error' ? 'task_error' : bypassReason}）：跳过全局熔断计数（task=${task_id}）`);
       } else if (isReviewTask) {
         console.log(`[execution-callback] review 类任务（${failureTaskType}）失败，跳过 cecelia-run 熔断计数（task=${task_id}）`);
         raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(err => console.error('[routes] silent error:', err));
@@ -852,12 +887,17 @@ router.post('/execution-callback', async (req, res) => {
         try {
           const skipCount = isTransientApiError; // rate_limit / network / timeout / server_error / auth / oom_killed(exit=137)
           const quarantineResult = await handleTaskFailure(task_id, { skipCount });
+          persistedFailureCount = Number(quarantineResult.failure_count) || persistedFailureCount;
           if (quarantineResult.skipped_count) {
+            failureHandled = true;
             console.log(`[execution-callback] 外部错误跳过失败计数，任务已 requeue（task=${task_id}）`);
           } else if (quarantineResult.quarantined) {
             quarantined = true;
+            failureHandled = true;
             console.log(`[execution-callback] Task ${task_id} quarantined: ${quarantineResult.result?.reason}`);
             raise('P1', 'task_quarantined', `任务隔离：${task_id}（${quarantineResult.result?.reason || '反复失败'}）`).catch(err => console.error('[routes] silent error:', err));
+          } else if (quarantineResult.blocked) {
+            failureHandled = true;
           }
         } catch (quarantineErr) {
           console.error(`[execution-callback] Quarantine check error: ${quarantineErr.message}`);
@@ -865,14 +905,15 @@ router.post('/execution-callback', async (req, res) => {
       }
 
       // Thalamus: Analyze task failure event (more complex, may need deeper analysis)
-      if (!quarantined) {
+      if (!quarantined && !failureHandled) {
         try {
           const thalamusEvent = {
             type: EVENT_TYPES.TASK_FAILED,
             task_id,
             run_id,
             error: status,
-            retry_count: iterations || 0
+            retry_count: persistedFailureCount,
+            quarantined: false
           };
           const thalamusDecision = await thalamusProcessEvent(thalamusEvent);
           console.log(`[execution-callback] Thalamus decision for failure: level=${thalamusDecision.level}, actions=${thalamusDecision.actions.map(a => a.type).join(',')}`);
@@ -1670,6 +1711,7 @@ ${resultStr.substring(0, 2000)}
           );
           if (plannerRow.rows[0]?.status === 'cancelled') {
             console.log(`[execution-callback] harness: planner task ${plannerTaskId} is cancelled, skipping chain for ${task_id}`);
+            await finalizeCallbackQueue(true);
             return res.json({ success: true, skipped: true, reason: 'planner_cancelled' });
           }
         }
@@ -2753,6 +2795,7 @@ ${resultStr.substring(0, 2000)}
       }
     }
 
+    await finalizeCallbackQueue(true);
     res.json({
       success: true,
       task_id,
@@ -2763,6 +2806,9 @@ ${resultStr.substring(0, 2000)}
 
   } catch (err) {
     console.error('[execution-callback] Error:', err.message);
+    await finalizeCallbackQueue(false).catch(leaseErr => {
+      console.error(`[execution-callback] callback lease release failed: ${leaseErr.message}`);
+    });
     res.status(500).json({
       success: false,
       error: 'Failed to process execution callback',

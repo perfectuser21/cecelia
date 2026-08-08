@@ -1324,7 +1324,7 @@ async function handleTaskFailure(taskId, options = {}) {
 
     if (check.shouldQuarantine) {
       const result = await quarantineTask(taskId, check.reason, check.details);
-      return { quarantined: true, result };
+      return { quarantined: true, failure_count: newFailureCount, result };
     }
 
     return { quarantined: false, failure_count: newFailureCount, classification };

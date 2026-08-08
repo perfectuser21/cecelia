@@ -177,6 +177,7 @@ export async function runCodexTestGen(pool, brain_url, opts = {}) {
           status: 'queued',
           priority: 'P2',
           payload: {
+            base_repo: 'perfectuser21/cecelia',
             target_file: targetFile,
             target_file_path: targetFile,
             candidate_test_paths: candidateTestPaths,

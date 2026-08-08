@@ -154,6 +154,16 @@ describe('[B-4] priority 为合法值 P2（INV-5）', () => {
   });
 });
 
+describe('[执行合同] 入队任务携带可移植仓库身份', () => {
+  it('payload.base_repo 使用 Kernel Harness 支持的 canonical repo，不依赖机器绝对路径', async () => {
+    const postedBody = await runAndCapture();
+
+    expect(postedBody, '应有 codex_test_gen 任务入队').not.toBeNull();
+    expect(postedBody.payload?.base_repo).toBe('perfectuser21/cecelia');
+    expect(postedBody.payload).not.toHaveProperty('repo_path');
+  });
+});
+
 // ---- B-2+B-4 联合：description 含 vitest 关键词（INV-4）----
 
 describe('[B-2+B-4 联合] description 含 vitest 关键词（INV-4）', () => {

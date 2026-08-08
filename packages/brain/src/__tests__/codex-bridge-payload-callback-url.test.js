@@ -42,7 +42,8 @@ vi.mock('../trace.js', () => ({
 
 // ── 其余副作用依赖最小化 mock ────────────────────────────────────────────
 vi.mock('../decisions-context.js', () => ({ getDecisionsSummary: vi.fn(async () => '') }));
-vi.mock('../db.js', () => ({ default: { query: vi.fn(async () => ({ rows: [] })) } }));
+const dbQueryMock = vi.hoisted(() => vi.fn(async () => ({ rows: [] })));
+vi.mock('../db.js', () => ({ default: { query: dbQueryMock } }));
 vi.mock('../task-updater.js', () => ({
   updateTaskStatus: vi.fn(async () => {}),
   updateTaskProgress: vi.fn(),
@@ -122,6 +123,54 @@ describe('buildCodexBridgePayload — callback_url 必填字段', () => {
     const payload = payloads[0];
     expect(payload).toHaveProperty('callback_url');
     expect(payload.callback_url).toMatch(/\/api\/brain\/execution-callback$/);
+  });
+
+  it('bridge 请求携带同一个 run_id，并在发请求前写入 task current_run_id', async () => {
+    fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, account: 'team1' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { triggerCeceliaRun } = await import('../executor.js');
+    const result = await triggerCeceliaRun({
+      id: 'research-task-run-id-0001',
+      task_type: 'research',
+      title: '验证运行身份',
+      payload: { base_repo: 'perfectuser21/cecelia' },
+      project_id: null,
+    });
+
+    const payload = getRunPayloads(fetchMock)[0];
+    expect(payload.run_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(result.runId).toBe(payload.run_id);
+    const runInfoWriteIndex = dbQueryMock.mock.calls.findIndex(
+      ([sql, params]) => typeof sql === 'string' && sql.includes("'current_run_id'") && params?.[1] === payload.run_id
+    );
+    expect(runInfoWriteIndex, 'Bridge POST 前必须持久化 current_run_id').toBeGreaterThanOrEqual(0);
+    const runFetchIndex = fetchMock.mock.calls.findIndex(([url]) => String(url).endsWith('/run'));
+    expect(dbQueryMock.mock.invocationCallOrder[runInfoWriteIndex]).toBeLessThan(fetchMock.mock.invocationCallOrder[runFetchIndex]);
+  });
+
+  it('bridge 请求携带 canonical base_repo，且不发送源机器绝对 work_dir', async () => {
+    fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, account: 'team1' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { triggerCeceliaRun } = await import('../executor.js');
+    await triggerCeceliaRun({
+      id: 'research-task-workspace-0001',
+      task_type: 'research',
+      title: '验证跨设备 workspace',
+      payload: { base_repo: 'perfectuser21/cecelia' },
+      project_id: null,
+    });
+
+    const payload = getRunPayloads(fetchMock)[0];
+    expect(payload.base_repo).toBe('perfectuser21/cecelia');
+    expect(payload).not.toHaveProperty('work_dir');
   });
 
   it('callback_url 指向 BRAIN_URL env 配置的地址', async () => {

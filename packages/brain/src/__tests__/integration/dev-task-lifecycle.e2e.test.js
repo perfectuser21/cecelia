@@ -340,13 +340,20 @@ describe('Dev Task 全链路 E2E — docker spawn → callback → status=comple
   describe('Phase 3: processExecutionCallback — callback_queue → tasks 终态', () => {
     it('processExecutionCallback 将 dev task 迁移到 completed，pr_url 已填', async () => {
       expect(createdTaskId).toBeDefined();
+      const runId = `mock-run-${createdTaskId}`;
+      await testPool.query(
+        `UPDATE tasks
+         SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('current_run_id', $2::text)
+         WHERE id = $1`,
+        [createdTaskId, runId]
+      );
 
       // 模拟 callback-worker 从 callback_queue 取出行后调用 processExecutionCallback
       const { processExecutionCallback } = await import('../../callback-processor.js');
       const result = await processExecutionCallback(
         {
           task_id: createdTaskId,
-          run_id: `mock-run-${createdTaskId}`,
+          run_id: runId,
           status: 'success',   // docker exit_code=0 → status='success' → newStatus='completed'
           result: { pr_url: MOCK_PR_URL, result: 'Mock PR created successfully' },
           pr_url: MOCK_PR_URL,
@@ -470,12 +477,19 @@ describe('Dev Task 全链路 E2E — docker spawn → callback → status=comple
 
     it('processExecutionCallback status=failed → tasks.status=failed', async () => {
       expect(failTaskId).toBeDefined();
+      const runId = `mock-run-fail-${failTaskId}`;
+      await testPool.query(
+        `UPDATE tasks
+         SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('current_run_id', $2::text)
+         WHERE id = $1`,
+        [failTaskId, runId]
+      );
 
       const { processExecutionCallback } = await import('../../callback-processor.js');
       const result = await processExecutionCallback(
         {
           task_id: failTaskId,
-          run_id: `mock-run-fail-${failTaskId}`,
+          run_id: runId,
           status: 'failed',
           result: { result: 'CI gate failed' },
           duration_ms: 50,

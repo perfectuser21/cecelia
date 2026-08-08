@@ -329,7 +329,12 @@ function mockReqRes(method, path, body = {}) {
 describe('execution-callback 全字段皆空兜底 (no_diagnostic)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    mockClient.query.mockImplementation((sql) => {
+      if (typeof sql === 'string' && sql.includes('UPDATE tasks') && sql.includes('status = $2')) {
+        return Promise.resolve({ rows: [], rowCount: 1 });
+      }
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    });
     mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
   });
 
