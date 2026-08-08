@@ -1,12 +1,24 @@
 import express from 'express';
 import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
-import { createAcceptancePublicRouter, submitAcceptanceResults } from '../acceptance.js';
+import { createAcceptancePublicRouter, createAcceptanceInternalRouter, submitAcceptanceResults } from '../acceptance.js';
 
 function makeApp(pool) {
   const app = express();
   app.use(express.json());
   app.use(createAcceptancePublicRouter({ pool }));
+  return app;
+}
+
+/**
+ * 内网路由 app（用于 POST /acceptance/results 测试）
+ * 注：公网 POST /acceptance/results 已休眠（B12 铁律 [公网端点休眠不删码]），
+ * 内网端点仍保留；这些测试验证 submitAcceptanceResults 的核心逻辑不变。
+ */
+function makeInternalApp(pool) {
+  const app = express();
+  app.use(express.json());
+  app.use('/acceptance', createAcceptanceInternalRouter({ pool }));
   return app;
 }
 
@@ -55,10 +67,16 @@ describe('GET /acceptance/pending', () => {
   });
 });
 
-describe('POST /acceptance/results', () => {
+/**
+ * POST /acceptance/results（公网）已休眠（B12 铁律 [公网端点休眠不删码]）：
+ * 路由不再注册于 createAcceptancePublicRouter，函数体 submitAcceptanceResults 保留。
+ * 以下测试通过内网路由 POST /acceptance/results 继续验证 submitAcceptanceResults 逻辑，
+ * 确保函数体休眠期间不退化（回归保护）。
+ */
+describe('POST /acceptance/results（通过内网路由验证 submitAcceptanceResults 逻辑）', () => {
   it('result 枚举非法 → 400 整批拒绝', async () => {
     const pool = { query: vi.fn(), connect: vi.fn() };
-    const res = await request(makeApp(pool))
+    const res = await request(makeInternalApp(pool))
       .post('/acceptance/results')
       .send({ run_key: 'r1', results: [{ check_key: 'r1:001', result: 'yes' }] });
     expect(res.status).toBe(400);
@@ -72,7 +90,7 @@ describe('POST /acceptance/results', () => {
       }
     });
     const pool = { connect: vi.fn(async () => client), query: vi.fn() };
-    const res = await request(makeApp(pool))
+    const res = await request(makeInternalApp(pool))
       .post('/acceptance/results')
       .send({ run_key: 'r1', results: [
         { check_key: 'r1:001', result: '通过' },
@@ -98,7 +116,7 @@ describe('POST /acceptance/results', () => {
       }
     });
     const pool = { connect: vi.fn(async () => client), query: vi.fn() };
-    const res = await request(makeApp(pool))
+    const res = await request(makeInternalApp(pool))
       .post('/acceptance/results')
       .send({ run_key: 'r1', results: [
         { check_key: 'r1:001', result: '通过' },
@@ -125,7 +143,7 @@ describe('POST /acceptance/results', () => {
       }
     });
     const pool = { connect: vi.fn(async () => client), query: vi.fn() };
-    const res = await request(makeApp(pool))
+    const res = await request(makeInternalApp(pool))
       .post('/acceptance/results')
       .send({ run_key: 'r1', results: [{ check_key: 'r1:001', result: '通过' }] });
     expect(res.status).toBe(200);
@@ -147,7 +165,7 @@ describe('POST /acceptance/results', () => {
       }
     });
     const pool = { connect: vi.fn(async () => client), query: vi.fn() };
-    const res = await request(makeApp(pool))
+    const res = await request(makeInternalApp(pool))
       .post('/acceptance/results')
       .send({ run_key: 'r1', results: [{ check_key: 'r1:003', result: '无法验证' }] });
     expect(res.status).toBe(200);
@@ -156,7 +174,7 @@ describe('POST /acceptance/results', () => {
 
   it('同批出现重复 check_key → 400，且不占用连接', async () => {
     const pool = { query: vi.fn(), connect: vi.fn() };
-    const res = await request(makeApp(pool))
+    const res = await request(makeInternalApp(pool))
       .post('/acceptance/results')
       .send({ run_key: 'r1', results: [
         { check_key: 'r1:001', result: '通过' },
@@ -169,7 +187,7 @@ describe('POST /acceptance/results', () => {
 
   it('results 空/非数组 → 400', async () => {
     const pool = { query: vi.fn(), connect: vi.fn() };
-    const res = await request(makeApp(pool)).post('/acceptance/results').send({ run_key: 'r1', results: [] });
+    const res = await request(makeInternalApp(pool)).post('/acceptance/results').send({ run_key: 'r1', results: [] });
     expect(res.status).toBe(400);
   });
 });
@@ -200,7 +218,7 @@ describe('验收驳回自动开任务（主理人条件二：转变沿）', () =
 
   async function postFail(client) {
     const pool = { connect: vi.fn(async () => client), query: vi.fn() };
-    return request(makeApp(pool)).post('/acceptance/results')
+    return request(makeInternalApp(pool)).post('/acceptance/results')
       .send({ run_key: 'r1', results: [{ check_key: 'r1:001', result: '不通过' }] });
   }
 

@@ -8,6 +8,7 @@ abilities-api-smoke.sh
 ability-id-chain-pr2-smoke.sh
 acceptance-aging-smoke.sh
 acceptance-catalog-smoke.sh
+acceptance-d3-backtoback-smoke.sh
 acceptance-endpoints-smoke.sh
 acceptance-staff-hub-internal-smoke.sh
 acceptance-two-column-smoke.sh

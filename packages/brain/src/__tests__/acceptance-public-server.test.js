@@ -56,9 +56,13 @@ describe('startAcceptancePublicServer fail-closed', () => {
 });
 
 describe('安全加固', () => {
-  it('createBearerAuth 空/缺 token → throw', () => {
-    expect(() => createBearerAuth('')).toThrow();
-    expect(() => createBearerAuth(undefined)).toThrow();
+  // B7 铁律 [createBearerAuth容错]：空/undefined token 不 throw，返回 null（容错降级）
+  // 注：此断言由 acceptance-d3-backtoback.test.js B7 组强化；旧「期望 throw」断言已废弃
+  it('createBearerAuth 空/缺 token → 不 throw，返回 null', () => {
+    expect(() => createBearerAuth('')).not.toThrow();
+    expect(() => createBearerAuth(undefined)).not.toThrow();
+    expect(createBearerAuth('')).toBeNull();
+    expect(createBearerAuth(undefined)).toBeNull();
   });
 
   it('malformed JSON（带对 token）→ 400 bad request 不泄堆栈', async () => {

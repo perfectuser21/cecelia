@@ -56,7 +56,7 @@ describe('POST /api/brain/acceptance/runs', () => {
   it('重复 run_key：200 返回现有单，不覆盖', async () => {
     const client = makeClient((sql) => {
       if (sql.includes('SELECT * FROM acceptance_runs WHERE run_key')) return { rows: [RUN_ROW] };
-      if (sql.includes('SELECT * FROM acceptance_checks WHERE run_id')) return { rows: [{ check_key: 'r1:001' }] };
+      if (sql.includes('FROM acceptance_checks WHERE run_id')) return { rows: [{ check_key: 'r1:001' }] };
     });
     const res = await request(makeApp(makePool(client)))
       .post('/api/brain/acceptance/runs')
@@ -75,7 +75,7 @@ describe('POST /api/brain/acceptance/runs', () => {
       if (sql.includes('INSERT INTO acceptance_runs')) {
         throw Object.assign(new Error('dup'), { code: '23505' });
       }
-      if (sql.includes('SELECT * FROM acceptance_checks WHERE run_id')) {
+      if (sql.includes('FROM acceptance_checks WHERE run_id')) {
         return { rows: [{ check_key: 'r1:001' }] };
       }
     });
@@ -130,7 +130,7 @@ describe('GET /api/brain/acceptance/runs/:run_key', () => {
   it('存在 → 200 带 checks；不存在 → 404', async () => {
     const client = makeClient((sql) => {
       if (sql.includes('SELECT * FROM acceptance_runs WHERE run_key')) return { rows: [RUN_ROW] };
-      if (sql.includes('SELECT * FROM acceptance_checks WHERE run_id')) return { rows: [{ check_key: 'r1:001' }] };
+      if (sql.includes('FROM acceptance_checks WHERE run_id')) return { rows: [{ check_key: 'r1:001' }] };
     });
     const ok = await request(makeApp(makePool(client))).get('/api/brain/acceptance/runs/r1');
     expect(ok.status).toBe(200);
