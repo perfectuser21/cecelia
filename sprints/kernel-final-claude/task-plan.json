@@ -1,0 +1,24 @@
+{
+  "initiative_id": "3e0ca853-98f0-49fa-9eb0-404243efe388",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 playground 后端 express 端点，无 dashboard/agent 协议/engine，落默认 autonomous",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground 新增 GET /kernel-pong 返回 {pong:true} + 回归测试",
+      "scope": "在 playground/server.js 新增 GET /kernel-pong 路由，返回 HTTP 200 + {\"pong\": true}（沿用既有 /ping 幂等形态，忽略 query 参数）；新增 playground/tests/kernel-pong.test.js 回归测试。不改 Brain/dashboard/engine，不动既有 /ping 及其他端点。",
+      "dod": [
+        "[BEHAVIOR] GET /kernel-pong 返回 200 且 body 恰为 {\"pong\": true}，keys==[\"pong\"]（见 contract-dod.md B-01/B-02）",
+        "[BEHAVIOR] 带任意 query 参数忽略仍 200 + {\"pong\": true}（B-04）；POST /kernel-pong 返回 404（B-05）",
+        "[ARTIFACT] playground/tests/kernel-pong.test.js 存在且断言 200 + {pong:true} + keys 完整性 + POST 404"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/kernel-pong.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
