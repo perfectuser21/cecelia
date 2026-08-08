@@ -53,8 +53,8 @@ manual:bash: psql $DATABASE_URL -c "SELECT COUNT(*) FROM tasks WHERE payload->>'
 
 ## 完成标准
 
-- [ ] 所有 [BEHAVIOR-1..7] 的单元测试通过（vitest）
-- [ ] 5 条 FR-6 failing test 以独立 commit 先行入库
-- [ ] 既有 acceptance*.test.js 全部通过（无回归）
-- [ ] DevGate 三项校验通过（facts-check / version-sync / dod-mapping）
+- [x] 所有 [BEHAVIOR-1..7] 的单元测试通过（vitest）
+- [x] 5 条 FR-6 failing test 以独立 commit 先行入库（Red commit: f98e2362a）
+- [x] 既有 acceptance*.test.js 全部通过（无回归）
+- [x] DevGate 三项校验通过（facts-check / version-sync / dod-mapping）
 - [ ] PR 合并后回写 Brain tasks/{task_id} status=completed
