@@ -1,0 +1,16 @@
+{
+  "round": 2,
+  "verdict": "APPROVED",
+  "judgments_written": 5,
+  "rubric_scores": {
+    "correctness": 5,
+    "completeness": 4,
+    "verifiability": 5,
+    "specificity": 4,
+    "testability": 5,
+    "invariant_coverage": 4,
+    "risk_coverage": 4
+  },
+  "total": "31/35",
+  "r1_fixes_verified": ["P0-1 格号泛化", "P0-2 abandon PATCH统一", "P1-1 bucket双断言", "P1-2 bug下界", "P1-3 priority=P0"]
+}

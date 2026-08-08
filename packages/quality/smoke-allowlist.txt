@@ -6,6 +6,7 @@
 # Smoke PASS 基线（allowlist）
 abilities-api-smoke.sh
 ability-id-chain-pr2-smoke.sh
+acceptance-adjudication-smoke.sh
 acceptance-aging-smoke.sh
 acceptance-catalog-smoke.sh
 acceptance-d3-backtoback-smoke.sh

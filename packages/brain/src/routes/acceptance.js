@@ -439,34 +439,333 @@ export function createAcceptanceInternalRouter({ pool }) {
 
   registerAiResultsRoute(router, { pool, safeRollback });
 
+  // ─── FR-1/FR-2: 裁决写入端点 ──────────────────────────────────────────────
+  /**
+   * PATCH /runs/:run_key/checks/:check_key/adjudicate
+   * 人工裁决单格，写入 adjudication JSONB（四字段：verdict/by/reason/at）。
+   * FR-2：hard 格裁决绿自动建 hard_green_p0 任务，除非 scenario_class='unverifiable_this_version'。
+   */
+  router.patch('/runs/:run_key/checks/:check_key/adjudicate', async (req, res) => {
+    const { verdict, by, reason } = req.body || {};
+    // FR-1 400 校验：三字段必填 + verdict 枚举
+    if (!verdict) return res.status(400).json({ error: 'verdict is required' });
+    if (!by) return res.status(400).json({ error: 'by is required' });
+    if (!reason) return res.status(400).json({ error: 'reason is required' });
+    if (!['绿', '红'].includes(verdict)) {
+      return res.status(400).json({ error: 'verdict must be 绿 or 红' });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // 获取 run
+      const { rows: runRows } = await client.query(
+        'SELECT id, run_key, status, detail FROM acceptance_runs WHERE run_key = $1',
+        [req.params.run_key]
+      );
+      if (runRows.length === 0) {
+        await safeRollback(client);
+        return res.status(404).json({ error: 'run not found' });
+      }
+      const run = runRows[0];
+
+      // 获取 check
+      const { rows: checkRows } = await client.query(
+        'SELECT id, check_key, run_id, adjudication, scenario_class, is_hard FROM acceptance_checks WHERE run_id = $1 AND check_key = $2',
+        [run.id, req.params.check_key]
+      );
+      if (checkRows.length === 0) {
+        await safeRollback(client);
+        return res.status(404).json({ error: 'check not found' });
+      }
+      const check = checkRows[0];
+
+      // 写入 adjudication（四字段，at 由服务端注入）
+      const adjudication = {
+        verdict,
+        by,
+        reason,
+        at: new Date().toISOString(),
+      };
+      await client.query(
+        'UPDATE acceptance_checks SET adjudication = $1::jsonb, updated_at = NOW() WHERE id = $2',
+        [JSON.stringify(adjudication), check.id]
+      );
+
+      // FR-2: hard 格 + 裁决绿 + 非 unverifiable_this_version → 建 hard_green_p0 任务
+      if (check.is_hard && verdict === '绿') {
+        if (check.scenario_class === 'unverifiable_this_version') {
+          // 例外：只计数+注记，不建 P0
+          const currentDetail = run.detail || {};
+          const unverifiableList = currentDetail.unverifiable_adjudicated || [];
+          if (!unverifiableList.includes(check.check_key)) {
+            unverifiableList.push(check.check_key);
+          }
+          await client.query(
+            `UPDATE acceptance_runs SET detail = COALESCE(detail,'{}'::jsonb) || $1::jsonb, updated_at = NOW() WHERE id = $2`,
+            [JSON.stringify({ unverifiable_adjudicated: unverifiableList }), run.id]
+          );
+        } else {
+          // 建 hard_green_p0 任务（SAVEPOINT 保护 23505）
+          try {
+            await client.query('SAVEPOINT hard_green_p0_insert');
+            await client.query(
+              `INSERT INTO tasks (title, description, task_type, priority, status, payload)
+               VALUES ($1, $2, 'dev', 'P0', 'queued', $3::jsonb)`,
+              [
+                `[Hard格绿裁决] ${run.run_key}/${check.check_key}`,
+                `Hard 格裁决绿，需即时跟进。run: ${run.run_key}，格: ${check.check_key}`,
+                JSON.stringify({
+                  acceptance_run_key: run.run_key,
+                  acceptance_bucket: 'hard_green_p0',
+                  check_key: check.check_key,
+                  priority: 'P0',
+                }),
+              ]
+            );
+            await client.query('RELEASE SAVEPOINT hard_green_p0_insert');
+          } catch (taskErr) {
+            if (taskErr.code !== '23505') throw taskErr;
+            await client.query('ROLLBACK TO SAVEPOINT hard_green_p0_insert');
+          }
+        }
+      }
+
+      // 重算 gate_verdict（读所有格的 adjudication）
+      const { rows: allChecks } = await client.query(
+        'SELECT adjudication FROM acceptance_checks WHERE run_id = $1',
+        [run.id]
+      );
+      const allAdjudicated = allChecks.every((c) => c.adjudication != null);
+      const anyRed = allChecks.some((c) => c.adjudication?.verdict === '红');
+      const gateVerdict = allAdjudicated ? (anyRed ? '红' : '绿') : null;
+      if (gateVerdict !== null) {
+        await client.query(
+          `UPDATE acceptance_runs SET detail = COALESCE(detail,'{}'::jsonb) || $1::jsonb, updated_at = NOW() WHERE id = $2`,
+          [JSON.stringify({ gate_verdict: gateVerdict }), run.id]
+        );
+      }
+
+      await client.query('COMMIT');
+      return res.json({ adjudication, check_key: check.check_key, gate_verdict: gateVerdict });
+    } catch (err) {
+      await safeRollback(client);
+      console.error('[acceptance] PATCH /adjudicate error:', err.message);
+      return res.status(500).json({ error: 'internal_error' });
+    } finally {
+      client.release();
+    }
+  });
+
+  // ─── FR-3/FR-5: 定案后聚合分流建任务 ──────────────────────────────────────
+  /**
+   * PATCH /runs/:run_key/adjudicate-run
+   * 将 run 定案（status → adjudicated），并聚合分流建任务。
+   * 路由优先级：dumb → fission → 正常分流(bug/trace)
+   * FR-5: 每条 INSERT 包在 SAVEPOINT 里，23505 只回滚单条，不毒化外层事务。
+   */
+  router.patch('/runs/:run_key/adjudicate-run', async (req, res) => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 获取 run
+      const { rows: runRows } = await client.query(
+        'SELECT id, run_key, status, detail, gp_id, title FROM acceptance_runs WHERE run_key = $1',
+        [req.params.run_key]
+      );
+      if (runRows.length === 0) {
+        await safeRollback(client);
+        return res.status(404).json({ error: 'run not found' });
+      }
+      const run = runRows[0];
+
+      // 获取所有格
+      const { rows: checks } = await client.query(
+        'SELECT id, check_key, adjudication, scenario_class, is_hard FROM acceptance_checks WHERE run_id = $1',
+        [run.id]
+      );
+
+      const detail = run.detail || {};
+      const aiStatus = detail.ai_status;
+
+      // anchor 三件套（从 run 里取，尽量非空）
+      const anchor = {
+        gp_id: run.gp_id || '',
+        journey_id: detail.journey_id || run.gp_id || '',
+        step_id: detail.step_id || run.run_key || '',
+      };
+
+      const tasks = [];
+
+      /**
+       * 安全建任务：SAVEPOINT 保护 23505，不毒化外层事务
+       * 先查重（按 run_key+bucket 维度），有未终态任务则跳过
+       */
+      async function safeInsertTask(title, description, bucket, priority = 'P2') {
+        // 查重：按 run_key + bucket 维度
+        const { rows: existing } = await client.query(
+          `SELECT 1 FROM tasks
+            WHERE payload->>'acceptance_run_key' = $1
+              AND payload->>'acceptance_bucket' = $2
+              AND status NOT IN ('completed','failed','cancelled') LIMIT 1`,
+          [run.run_key, bucket]
+        );
+        if (existing.length > 0) return null; // 已有未终态任务，跳过
+
+        try {
+          await client.query(`SAVEPOINT task_insert_${bucket.replace(/-/g, '_')}`);
+          const { rows } = await client.query(
+            `INSERT INTO tasks (title, description, task_type, priority, status, payload)
+             VALUES ($1, $2, 'dev', $3, 'queued', $4::jsonb)
+             RETURNING id`,
+            [
+              title,
+              description,
+              priority,
+              JSON.stringify({
+                acceptance_run_key: run.run_key,
+                acceptance_bucket: bucket,
+                anchor,
+                priority,
+              }),
+            ]
+          );
+          await client.query(`RELEASE SAVEPOINT task_insert_${bucket.replace(/-/g, '_')}`);
+          return rows[0];
+        } catch (err) {
+          if (err.code === '23505') {
+            await client.query(`ROLLBACK TO SAVEPOINT task_insert_${bucket.replace(/-/g, '_')}`);
+            return null;
+          }
+          throw err;
+        }
+      }
+
+      // ① 哑火路径：ai_status=dumb → infra_error P0，独立路径不进熔断
+      if (aiStatus === 'dumb') {
+        const task = await safeInsertTask(
+          `[AI哑火] ${run.run_key}`,
+          `AI 推理哑火（ai_status=dumb），验收 run 无法正常分流，需排查 AI 基础设施。run: ${run.run_key}`,
+          'infra_error',
+          'P0'
+        );
+        if (task) tasks.push(task);
+      } else {
+        // ② 统计非绿格占比
+        const TOTAL_CHECKS = 36;
+        const nonGreen = checks.filter(
+          (c) => !c.adjudication || c.adjudication.verdict !== '绿'
+        ).length;
+        const nonGreenRatio = nonGreen / TOTAL_CHECKS;
+
+        if (nonGreenRatio > 1 / 3) {
+          // ③ 非绿格 > 1/3 → fission P0，不建 bug/trace
+          const task = await safeInsertTask(
+            `[规程疑似分叉] ${run.run_key}`,
+            `非绿格占比 ${Math.round(nonGreenRatio * 100)}%（${nonGreen}/${TOTAL_CHECKS}），超过 1/3 阈值，规程/数据源疑似分叉。run: ${run.run_key}`,
+            'fission',
+            'P0'
+          );
+          if (task) tasks.push(task);
+        } else {
+          // ④ 正常分流：bug（≤1）+ trace（≤1）
+          // bug：有红格时建 1 个聚合 bug 任务
+          const redChecks = checks.filter((c) => c.adjudication?.verdict === '红');
+          if (redChecks.length > 0) {
+            const bugDetail = redChecks.map((c) => c.check_key).join(', ');
+            const task = await safeInsertTask(
+              `[验收红格] ${run.run_key}`,
+              `人工裁决红格：${bugDetail}。run: ${run.run_key}，需修复后重验。`,
+              'bug',
+              'P1'
+            );
+            if (task) tasks.push(task);
+          }
+
+          // trace：有 trace_q4/trace_q7 等 scenario_class 时建 1 个追查任务
+          const traceChecks = checks.filter(
+            (c) => c.scenario_class && c.scenario_class.startsWith('trace_')
+          );
+          if (traceChecks.length > 0) {
+            const traceDetail = traceChecks.map((c) => c.check_key).join(', ');
+            const task = await safeInsertTask(
+              `[追查] ${run.run_key}`,
+              `需追查场景：${traceDetail}。run: ${run.run_key}`,
+              'trace',
+              'P2'
+            );
+            if (task) tasks.push(task);
+          }
+        }
+      }
+
+      // 更新 run 状态为 adjudicated
+      await client.query(
+        `UPDATE acceptance_runs SET status = 'adjudicated', updated_at = NOW() WHERE id = $1`,
+        [run.id]
+      );
+
+      await client.query('COMMIT');
+      return res.json({ status: 'adjudicated', tasks });
+    } catch (err) {
+      await safeRollback(client);
+      console.error('[acceptance] PATCH /adjudicate-run error:', err.message);
+      return res.status(500).json({ error: 'internal_error' });
+    } finally {
+      client.release();
+    }
+  });
+
   /**
    * 显式作废（A10③）。终态只由 status 表达，detail 里三项纯留痕——两者在同一条 UPDATE 里落，
    * 不存在「detail 标了作废但 status 还活着」的中间态（A10④ 反二义断言的就是这个）。
+   * FR-4：adjudicated/stale 状态禁被覆盖成 abandoned，返回 409 + body.current_status。
    */
   router.patch('/runs/:run_key/abandon', async (req, res) => {
     const { reason, by } = req.body || {};
     if (!reason || !by) return res.status(400).json({ error: 'reason and by are required' });
+    const client = await pool.connect();
     try {
-      const { rows } = await pool.query(
-        `UPDATE acceptance_runs
-            SET status = 'abandoned',
-                detail = COALESCE(detail, '{}'::jsonb) || $1::jsonb,
-                updated_at = NOW()
-          WHERE run_key = $2 RETURNING run_key, status`,
+      await client.query('BEGIN');
+      // 先查当前状态（FR-4 前态守卫）
+      const { rows: runRows } = await client.query(
+        'SELECT id, run_key, status FROM acceptance_runs WHERE run_key = $1',
+        [req.params.run_key]
+      );
+      if (runRows.length === 0) {
+        await safeRollback(client);
+        return res.status(404).json({ error: 'run not found' });
+      }
+      const currentStatus = runRows[0].status;
+      // 禁止在 adjudicated/stale 状态 abandon
+      if (currentStatus === 'adjudicated' || currentStatus === 'stale') {
+        await safeRollback(client);
+        return res.status(409).json({ error: 'cannot_abandon', current_status: currentStatus });
+      }
+      const { rows } = await client.query(
+        `UPDATE acceptance_runs SET status = 'abandoned', detail = COALESCE(detail, '{}'::jsonb) || $1::jsonb, updated_at = NOW() WHERE id = $2 RETURNING run_key, status`,
         [
           JSON.stringify({
             abandoned_reason: reason,
             abandoned_by: by,
             abandoned_at: new Date().toISOString(),
           }),
-          req.params.run_key,
+          runRows[0].id,
         ]
       );
-      if (rows.length === 0) return res.status(404).json({ error: 'run not found' });
+      if (rows.length === 0) {
+        await safeRollback(client);
+        return res.status(404).json({ error: 'run not found' });
+      }
+      await client.query('COMMIT');
       return res.json({ run: rows[0] });
     } catch (err) {
+      await safeRollback(client);
       console.error('[acceptance] PATCH /abandon error:', err.message);
       return res.status(500).json({ error: 'internal_error' });
+    } finally {
+      client.release();
     }
   });
 
