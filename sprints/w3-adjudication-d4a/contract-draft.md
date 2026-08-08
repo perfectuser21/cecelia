@@ -191,6 +191,16 @@ Body: {"reason":"test","by":"user-1"}
 # 断言：HTTP 200，DB: acceptance_runs.status = 'abandoned'
 ```
 
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| FR-1 adjudication 400 校验 | `tests/d4-adjudication-contract.test.js` | BEHAVIOR-1 缺字段/非法 verdict → 400，合法请求 → 200 | createAcceptanceInternalRouter 未实现 → 全失败，Red |
+| FR-2 unverifiable 例外 | `tests/d4-adjudication-contract.test.js` | BEHAVIOR-2 unverifiable_this_version 不建 P0；非 unverifiable 建 P0 | 同上，Red |
+| FR-3 哑火/熔断/正常分流 | `tests/d4-adjudication-contract.test.js` | BEHAVIOR-3 dumb→infra_error；>1/3→fission；正常→bug/trace | 同上，Red |
+| FR-4 abandon 前态守卫 | `tests/d4-adjudication-contract.test.js` | BEHAVIOR-4 adjudicated/stale→409；pending/in_review/expired→200 | 同上，Red |
+| FR-5 SAVEPOINT 保护 | `tests/d4-adjudication-contract.test.js` | BEHAVIOR-5 23505 冲突不毒化外层事务；两 bucket 独立建出 | 同上，Red |
+
 ## 非功能要求
 
 - 修改范围：`packages/brain/src/routes/acceptance.js`（或拆分模块）及对应测试
