@@ -225,7 +225,9 @@ describe('kernel deterministic handlers', () => {
         pr: { ...context().observed.pr, mergeStateStatus: 'BEHIND' },
       },
     }))).resolves.toMatchObject({ status: 'DONE_WITH_CONCERNS' });
-    expect(behindDeps.execCmd).toHaveBeenCalledWith(expect.stringContaining('gh pr update-branch'));
+    expect(behindDeps.execCmd).toHaveBeenCalledWith(
+      expect.stringMatching(/gh api .*update-branch.*-X PUT/),
+    );
 
     const conflictDeps = deps();
     const conflict = createKernelHandlers(conflictDeps)['merge_pr'];
@@ -236,6 +238,21 @@ describe('kernel deterministic handlers', () => {
       },
     }))).resolves.toMatchObject({ status: 'BLOCKED' });
     expect(conflictDeps.execCmd).not.toHaveBeenCalled();
+  });
+
+  it('BEHIND 补齐走版本无关 gh api PUT（run 986a51d3：gh2.45 无 update-branch 子命令）', async () => {
+    const d = deps();
+    const handler = createKernelHandlers(d)['merge_pr'];
+    await expect(handler(context({
+      observed: {
+        ...context().observed,
+        pr: { ...context().observed.pr, mergeStateStatus: 'BEHIND' },
+      },
+    }))).resolves.toMatchObject({ status: 'DONE_WITH_CONCERNS' });
+    expect(d.execCmd).toHaveBeenCalledWith(
+      expect.stringMatching(/gh api .*repos\/o\/r\/pulls\/42\/update-branch.*-X PUT/),
+    );
+    expect(d.execCmd).not.toHaveBeenCalledWith(expect.stringContaining('gh pr update-branch'));
   });
 
   it('连续三次 BEHIND 已写入快照时封顶，不再 update-branch', async () => {
