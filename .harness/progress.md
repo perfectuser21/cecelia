@@ -22,3 +22,8 @@ generator: fix-round-1 (合流main #4695+版本重排1.267.249), sha=6c60212
 planner: done (sprint-prd.md@d6cc044, invariants=8, fr=6, 行数=151, branch=cp-08080746-ws-6548d9bf)
 gan: done (contract-draft.md+contract-dod.md+tests/d4-adjudication-contract.test.js, round=1, behaviors=7, e2e_section=true, manual_bash=true)
 gan: done (contract-draft.md@cp-08080746-ws-6548d9bf r2, verdict=APPROVED, 铁律覆盖=7/7, judgments_written=5, rubric=.harness/verdicts/gan-a0e1a7f.json)
+generator: pr_opened (#4715, red=f98e2362a)
+generator: fix-round-1 (red-evidence.md + Test Contract 表格), sha=92b508195+fc4e17377
+generator: fix-round-2 (Test Contract [BEHAVIOR-N] 子串匹配修复), sha=122b4f519
+generator: fix-round-3 (version bump 1.270.2→1.270.3), sha=b350e889d
+generator: fix-round-4 (root package-lock.json 版本同步 1.270.3), sha=fb3558814
