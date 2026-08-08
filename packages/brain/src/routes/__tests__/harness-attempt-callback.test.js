@@ -1329,6 +1329,62 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     );
   });
 
+  it('含 task short-id 的惯例分支即使不等于签发分支也应 verified（run b4ac3396 死结回归）', async () => {
+    // 案卷：服务端签发 cp-fleet-generator-<attempt8>，generator 按 SKILL 惯例
+    // 自建 cp-<MMDDHHNN>-<task8> 开 PR → 严格等值比对拒收合法产出 →
+    // derive 视角 pr==null → generator-fix 死循环 → no_progress_same_sha 收死。
+    // taskShort 包含匹配与"无 expectedBranch 时"的既有放行条件等强。
+    const authoritativeBranch = `cp-fleet-generator-${attemptId.slice(0, 8)}`;
+    const conventionBranch = 'cp-08082335-33333333';
+    mocks.store.getById.mockResolvedValue({
+      ...attempt,
+      role: 'generator',
+      task_bundle: {
+        inputs: {
+          workspace_spec: {
+            repo: 'perfectuser21/cecelia',
+            branch: authoritativeBranch,
+          },
+        },
+      },
+    });
+    mocks.pool.query.mockResolvedValueOnce({
+      rows: [{
+        pr_url: null,
+        task_id: '33333333-3333-4333-8333-333333333333',
+        payload: { base_repo: 'perfectuser21/cecelia' },
+      }],
+    });
+    app.set('kernelPrIdentityResolver', vi.fn(async () => ({
+      head_sha: 'a'.repeat(40),
+      head_ref: conventionBranch,
+    })));
+
+    const response = await postCallback(app, {
+      ...validResult,
+      artifacts: [{
+        type: 'pull_request',
+        url: 'https://github.com/perfectuser21/cecelia/pull/42',
+      }],
+      decision: null,
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          artifacts: [
+            expect.objectContaining({
+              type: 'pull_request',
+              head_ref: conventionBranch,
+              verification_status: 'verified',
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
   describe('Generator 字符串 artifact 里的 PR URL', () => {
     const generatorBranch = `cp-fleet-generator-${attemptId.slice(0, 8)}`;
     const prUrl = 'https://github.com/perfectuser21/zenithjoy-workspace/pull/1578';
