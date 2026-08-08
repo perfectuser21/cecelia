@@ -194,6 +194,7 @@ relay-verdict-writeback-smoke.sh
 release-gate-smoke.sh
 review-approve-auth-smoke.sh
 rpa-dev-verify-smoke.sh
+runner-canonical-repin-smoke.sh
 scheduler-jobs-smoke.sh
 scripts/smoke/e2e/deploy-daily-drill.sh
 scripts/smoke/e2e/relay-565fa27a.sh

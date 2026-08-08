@@ -258,7 +258,7 @@ printf '%s\n' \
   'fi' \
   'source="$(cat)"' \
   'case "$source" in' \
-  '  *runner_image_digest*) printf "%s" "sha256:349c40cc901caddf7ef491ee27f7e415603450824913be74a1d99f4bf14c85ff" ;;' \
+  '  *runner_image_digest*) printf "%s" "sha256:08c904ff0dc216229b84d2ce7216760fcb9968a43351916f8495265b3956bd4f" ;;' \
   '  *runtime_resources.postgres.image_digest*) printf "%s" "postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777" ;;' \
   '  *resources.disk_min_free_gib*) printf "%s" "10" ;;' \
   '  *worker_bind_host*) printf "%s" "100.86.57.69" ;;' \
@@ -1274,5 +1274,52 @@ cmp -s "$orphan_probe" "$installed_probe" \
   || fail "invalid prior service state changed the probe mode"
 [[ "$(<"$launch_state")" == 'running' ]] \
   || fail "invalid prior service state changed the loaded service"
+
+# ---- ORBSTACK_HOME 默认值自动推导 ----
+# 2026-08-08 kernel 战役：默认 /var/empty 致 _cecelia 探测不到 OrbStack，
+# 手动直跑 installer 必须显式传 FLEET_WORKER_ORBSTACK_HOME 才能装上（rollout 正链不受影响）。
+# 推导链：env 覆盖 → docker.sock 属主(拒 root/_cecelia) → SUDO_USER(拒 root/_cecelia) → /var/empty
+derive_root="$(mktemp -d)"
+fake_socket="$derive_root/docker.sock"
+: > "$fake_socket"
+cat > "$derive_root/stat" << 'STAT_EOF'
+#!/usr/bin/env bash
+if [[ "$1" == '-f' && "$2" == '%Su' ]]; then printf 'administrator\n'; exit 0; fi
+exit 64
+STAT_EOF
+chmod +x "$derive_root/stat"
+
+derived="$(env -u FLEET_WORKER_ORBSTACK_HOME \
+  FLEET_WORKER_DOCKER_SOCKET="$fake_socket" \
+  FLEET_WORKER_STAT="$derive_root/stat" \
+  FLEET_WORKER_PRINT_ORBSTACK_HOME=1 \
+  bash "$INSTALLER" us-mac-m4 --render-to /dev/null 2>/dev/null | tail -1)" || true
+[[ "$derived" == '/Users/administrator' ]] \
+  || fail "ORBSTACK_HOME should derive /Users/administrator from socket owner, got: $derived"
+
+# 属主是 root → 拒绝，且无 SUDO_USER 时回落 /var/empty
+cat > "$derive_root/stat" << 'STAT_EOF'
+#!/usr/bin/env bash
+if [[ "$1" == '-f' && "$2" == '%Su' ]]; then printf 'root\n'; exit 0; fi
+exit 64
+STAT_EOF
+chmod +x "$derive_root/stat"
+derived="$(env -u FLEET_WORKER_ORBSTACK_HOME -u SUDO_USER \
+  FLEET_WORKER_DOCKER_SOCKET="$fake_socket" \
+  FLEET_WORKER_STAT="$derive_root/stat" \
+  FLEET_WORKER_PRINT_ORBSTACK_HOME=1 \
+  bash "$INSTALLER" us-mac-m4 --render-to /dev/null 2>/dev/null | tail -1)" || true
+[[ "$derived" == '/var/empty' ]] \
+  || fail "root socket owner without SUDO_USER should fall back to /var/empty, got: $derived"
+
+# 显式 env 覆盖永远最高优先
+derived="$(FLEET_WORKER_ORBSTACK_HOME='/Users/explicit-owner' \
+  FLEET_WORKER_DOCKER_SOCKET="$fake_socket" \
+  FLEET_WORKER_STAT="$derive_root/stat" \
+  FLEET_WORKER_PRINT_ORBSTACK_HOME=1 \
+  bash "$INSTALLER" us-mac-m4 --render-to /dev/null 2>/dev/null | tail -1)" || true
+[[ "$derived" == '/Users/explicit-owner' ]] \
+  || fail "explicit FLEET_WORKER_ORBSTACK_HOME should win, got: $derived"
+rm -rf "$derive_root"
 
 echo "PASS: Fleet Worker installer behavioral contract"

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const CANONICAL_IDS = ['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1'];
-const EXPECTED_RUNNER_DIGEST = 'sha256:349c40cc901caddf7ef491ee27f7e415603450824913be74a1d99f4bf14c85ff';
+const EXPECTED_RUNNER_DIGEST = 'sha256:08c904ff0dc216229b84d2ce7216760fcb9968a43351916f8495265b3956bd4f';
 const EXPECTED_POSTGRES_IMAGE = 'postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777';
 const EXPECTED_CAPACITIES = {
   'us-mac-m4': 7,
@@ -198,7 +198,7 @@ describe('Fleet NodeProfile registry', () => {
 
     expect(
       listNodeProfiles().map((profile) => profile.version_policy.worker),
-    ).toEqual(['1.267.100', '1.267.100', '1.267.100']);
+    ).toEqual(['1.270.7', '1.270.7', '1.270.7']);
   });
 
   it('publishes macOS 15.6.1 as the shared minimum supported version', async () => {
