@@ -1,0 +1,24 @@
+{
+  "initiative_id": "0955c884-6219-4061-9218-b96983a3185b",
+  "journey_type": "autonomous",
+  "journey_type_reason": "PRD 定义隔离 playground 的纯后端 HTTP GET 路径，无 UI、远端 agent 或开发流水线交互",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 playground GET /kernel-ping 无状态响应",
+      "scope": "新增 GET /kernel-ping，使真实 HTTP 调用稳定收到 200 与精确文本 ok，并永久覆盖重复调用和既有边界",
+      "dod": [
+        "[BEHAVIOR] 真实 playground listener 上 GET /kernel-ping 返回 HTTP 200 且 body 字节严格等于 ok",
+        "[BEHAVIOR] 连续两次调用结果一致，POST 保持 404，既有 GET /ping 不回退",
+        "[ARTIFACT] playground/tests/kernel-ping.test.js 永久保留合同测试"
+      ],
+      "files": [
+        "playground/server.js",
+        "playground/tests/kernel-ping.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
