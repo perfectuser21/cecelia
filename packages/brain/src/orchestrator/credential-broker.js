@@ -11,6 +11,7 @@ import path from 'node:path';
 
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const ACCOUNT_PATTERN = /^team[1-5]$/;
+export const CLAUDE_ACCOUNT_PATTERN = /^account[1-9]\d*$/;
 const MACHINES = new Set(['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1']);
 const MAX_AUTH_JSON_BYTES = 196_608;
 
@@ -37,6 +38,14 @@ function tokenExpiry(auth) {
   }
 }
 
+export function claudeTokenExpiry(auth) {
+  const expMs = auth?.claudeAiOauth?.expiresAt;
+  if (!Number.isInteger(expMs) || expMs <= 0) {
+    fail('credential_expiry_unavailable');
+  }
+  return expMs;
+}
+
 function parseDeadline(value, nowMs) {
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed) || parsed <= nowMs) {
@@ -52,6 +61,8 @@ function validTimestamp(value) {
 
 export function createFileCredentialLoader({
   accountHomeResolver,
+  fileName = 'auth.json',
+  accountPattern = ACCOUNT_PATTERN,
   openFile = openSync,
   fstat = fstatSync,
   readFile = readFileSync,
@@ -66,7 +77,7 @@ export function createFileCredentialLoader({
   }
 
   return async function loadFileCredential(accountId) {
-    if (!ACCOUNT_PATTERN.test(accountId ?? '')) {
+    if (!accountPattern.test(accountId ?? '')) {
       fail('credential_account_not_allowed');
     }
     let authFile;
@@ -80,7 +91,7 @@ export function createFileCredentialLoader({
       ) {
         fail('credential_source_path_invalid');
       }
-      authFile = path.join(accountHome, 'auth.json');
+      authFile = path.join(accountHome, fileName);
       descriptor = openFile(
         authFile,
         fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
@@ -126,6 +137,8 @@ export function createCredentialBroker({
   now = Date.now,
   randomUUID = nodeRandomUUID,
   safetyMarginMs = 5 * 60 * 1000,
+  accountPattern = ACCOUNT_PATTERN,
+  parseExpiry = tokenExpiry,
 } = {}) {
   if (typeof loadCredential !== 'function') {
     fail('credential_loader_required');
@@ -145,7 +158,7 @@ export function createCredentialBroker({
         fail('credential_broker_us_authority_required');
       }
       if (!UUID_PATTERN.test(attemptId ?? '')) fail('credential_attempt_invalid');
-      if (!ACCOUNT_PATTERN.test(accountId ?? '')) fail('credential_account_not_allowed');
+      if (!accountPattern.test(accountId ?? '')) fail('credential_account_not_allowed');
       if (!MACHINES.has(machineId)) fail('credential_machine_not_allowed');
 
       const nowMs = now();
@@ -167,7 +180,7 @@ export function createCredentialBroker({
       if (!auth || typeof auth !== 'object' || Array.isArray(auth)) {
         fail('credential_payload_invalid');
       }
-      const expiryMs = tokenExpiry(auth);
+      const expiryMs = parseExpiry(auth);
       if (!validTimestamp(expiryMs)) fail('credential_expiry_unavailable');
       if (expiryMs < deadlineMs + safetyMarginMs) {
         fail('credential_lifetime_insufficient');

@@ -25,6 +25,8 @@ import {
 import {
   createCredentialBroker,
   createFileCredentialLoader,
+  claudeTokenExpiry,
+  CLAUDE_ACCOUNT_PATTERN,
 } from './credential-broker.js';
 import { createGitHubCredentialBroker } from './github-credential-broker.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
@@ -229,16 +231,33 @@ export async function buildRealDeps(overrides = {}) {
     if (!launcher) {
       const resolveAccountHome = overrides.resolveAccountHome
         ?? resolveProviderAccountHome;
-      const credentialBroker = overrides.credentialBroker
-        ?? createCredentialBroker({
+      let credentialBroker = overrides.credentialBroker;
+      if (!credentialBroker) {
+        const codexBroker = createCredentialBroker({
           controllerMachineId: machineId,
           loadCredential: overrides.loadCredential
             ?? createFileCredentialLoader({
-              accountHomeResolver: (accountId) => (
-                resolveAccountHome('codex', accountId)
-              ),
+              accountHomeResolver: (accountId) => resolveAccountHome('codex', accountId),
             }),
         });
+        const claudeBroker = createCredentialBroker({
+          controllerMachineId: machineId,
+          loadCredential: overrides.claudeLoadCredential
+            ?? createFileCredentialLoader({
+              accountHomeResolver: (accountId) => resolveAccountHome('claude', accountId),
+              fileName: '.credentials.json',
+              accountPattern: CLAUDE_ACCOUNT_PATTERN,
+            }),
+          accountPattern: CLAUDE_ACCOUNT_PATTERN,
+          parseExpiry: claudeTokenExpiry,
+        });
+        credentialBroker = {
+          issue({ provider, ...rest }) {
+            if (provider === 'claude') return claudeBroker.issue(rest);
+            return codexBroker.issue(rest);
+          },
+        };
+      }
       const githubCredentialBroker = overrides.githubCredentialBroker
         ?? createGitHubCredentialBroker({
           controllerMachineId: machineId,

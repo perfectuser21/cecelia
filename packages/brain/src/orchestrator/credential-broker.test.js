@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createCredentialBroker,
   createFileCredentialLoader,
+  claudeTokenExpiry,
+  CLAUDE_ACCOUNT_PATTERN,
 } from './credential-broker.js';
 
 const ATTEMPT_ID = '11111111-1111-4111-8111-111111111111';
@@ -152,6 +154,113 @@ describe('central Codex Credential Broker', () => {
   });
 });
 
+function claudeCredentialsJson(expMs = NOW + 2 * 60 * 60 * 1000) {
+  return JSON.stringify({
+    claudeAiOauth: {
+      accessToken: 'sk-ant-test-token',
+      expiresAt: expMs,
+    },
+  });
+}
+
+function claudeBroker(overrides = {}) {
+  return createCredentialBroker({
+    controllerMachineId: 'us-mac-m4',
+    loadCredential: vi.fn(async () => claudeCredentialsJson()),
+    now: () => NOW,
+    randomUUID: () => '22222222-2222-4222-8222-222222222222',
+    safetyMarginMs: 5 * 60 * 1000,
+    accountPattern: CLAUDE_ACCOUNT_PATTERN,
+    parseExpiry: claudeTokenExpiry,
+    ...overrides,
+  });
+}
+
+describe('central Claude Credential Broker', () => {
+  it('issues one immutable envelope bound to the selected Attempt, account, and machine', async () => {
+    const loadCredential = vi.fn(async () => claudeCredentialsJson());
+    const result = await claudeBroker({ loadCredential }).issue({
+      attemptId: ATTEMPT_ID,
+      accountId: 'account1',
+      machineId: 'xian-mac-m4',
+      deadlineAt: DEADLINE,
+    });
+
+    expect(loadCredential).toHaveBeenCalledTimes(1);
+    expect(loadCredential).toHaveBeenCalledWith('account1');
+    expect(result).toMatchObject({
+      contract_version: 'credential-envelope/v1',
+      credential_ref: '22222222-2222-4222-8222-222222222222',
+      attempt_id: ATTEMPT_ID,
+      account_id: 'account1',
+      machine_id: 'xian-mac-m4',
+      issued_at: '2026-07-27T15:00:00.000Z',
+      expires_at: new Date(NOW + 2 * 60 * 60 * 1000).toISOString(),
+      payload_hash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      payload: Buffer.from(claudeCredentialsJson()).toString('base64'),
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(JSON.stringify({ payload: result.payload })).not.toContain('sk-ant-test-token');
+  });
+
+  it('rejects codex-format account id for claude pattern', async () => {
+    await expect(claudeBroker().issue({
+      attemptId: ATTEMPT_ID,
+      accountId: 'team4',
+      machineId: 'xian-mac-m4',
+      deadlineAt: DEADLINE,
+    })).rejects.toThrow('credential_account_not_allowed');
+  });
+
+  it('fails when token lifetime does not cover deadline plus margin', async () => {
+    const loadCredential = vi.fn(async () => claudeCredentialsJson(NOW + 62 * 60 * 1000));
+    await expect(claudeBroker({ loadCredential }).issue({
+      attemptId: ATTEMPT_ID,
+      accountId: 'account2',
+      machineId: 'xian-mac-m4',
+      deadlineAt: DEADLINE,
+    })).rejects.toThrow('credential_lifetime_insufficient');
+  });
+
+  it('fails when expiresAt field is missing', async () => {
+    const loadCredential = vi.fn(async () => JSON.stringify({ claudeAiOauth: {} }));
+    await expect(claudeBroker({ loadCredential }).issue({
+      attemptId: ATTEMPT_ID,
+      accountId: 'account1',
+      machineId: 'xian-mac-m4',
+      deadlineAt: DEADLINE,
+    })).rejects.toThrow('credential_expiry_unavailable');
+  });
+});
+
+describe('claudeTokenExpiry', () => {
+  it('returns millisecond timestamp from claudeAiOauth.expiresAt', () => {
+    const expMs = NOW + 2 * 60 * 60 * 1000;
+    expect(claudeTokenExpiry({ claudeAiOauth: { expiresAt: expMs } })).toBe(expMs);
+  });
+
+  it('throws credential_expiry_unavailable when field is absent', () => {
+    expect(() => claudeTokenExpiry({})).toThrow('credential_expiry_unavailable');
+    expect(() => claudeTokenExpiry({ claudeAiOauth: {} })).toThrow('credential_expiry_unavailable');
+    expect(() => claudeTokenExpiry({ claudeAiOauth: { expiresAt: 'bad' } })).toThrow('credential_expiry_unavailable');
+  });
+});
+
+describe('CLAUDE_ACCOUNT_PATTERN', () => {
+  it('accepts account1..accountN format', () => {
+    expect(CLAUDE_ACCOUNT_PATTERN.test('account1')).toBe(true);
+    expect(CLAUDE_ACCOUNT_PATTERN.test('account2')).toBe(true);
+    expect(CLAUDE_ACCOUNT_PATTERN.test('account10')).toBe(true);
+  });
+
+  it('rejects codex and non-account formats', () => {
+    expect(CLAUDE_ACCOUNT_PATTERN.test('team1')).toBe(false);
+    expect(CLAUDE_ACCOUNT_PATTERN.test('account0')).toBe(false);
+    expect(CLAUDE_ACCOUNT_PATTERN.test('')).toBe(false);
+    expect(CLAUDE_ACCOUNT_PATTERN.test('1')).toBe(false);
+  });
+});
+
 describe('protected US M4 credential source', () => {
   it('reads only the selected account auth.json from a protected regular file', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'credential-loader-'));
@@ -189,6 +298,27 @@ describe('protected US M4 credential source', () => {
 
     try {
       await expect(load('team4')).rejects.toThrow('credential_source_permissions');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reads .credentials.json when fileName option is specified', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'credential-loader-'));
+    const accountDir = path.join(root, '.claude-account1');
+    fs.mkdirSync(accountDir, { mode: 0o700 });
+    const credContent = claudeCredentialsJson();
+    fs.writeFileSync(path.join(accountDir, '.credentials.json'), credContent, { mode: 0o600 });
+    const accountHomeResolver = vi.fn((accountId) => path.join(root, `.claude-${accountId}`));
+    const load = createFileCredentialLoader({
+      accountHomeResolver,
+      fileName: '.credentials.json',
+      accountPattern: CLAUDE_ACCOUNT_PATTERN,
+    });
+
+    try {
+      await expect(load('account1')).resolves.toBe(credContent);
+      expect(accountHomeResolver).toHaveBeenCalledWith('account1');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
