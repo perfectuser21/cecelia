@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.270.9
+**Brain 版本**: 1.270.10
 
 **状态**: 生产运行中
 
@@ -20,6 +20,10 @@
 - callback queue 引入带租约的单消费者 claim；HTTP 回调与 worker 不再重复消费，同一 `run_id` 只有精确匹配当前 attempt 才能结算。
 - 任务隔离后不再发送 Thalamus 重试事件，持久化 `failure_count` 成为唯一重试计数；任务失败不再击穿全局 `cecelia-run` 熔断器。
 - migration 394 为 callback queue 增加 `claimed_at` / `claimed_by` 与可领取索引；回滚脚本同步提供。
+
+## Brain 1.270.10 — CI 观测按可合并性裁决（run 0955c884 案卷）
+
+- mapCiStatus 引入 mergeStateStatus：非 required check 失败（UNSTABLE 等非 BLOCKED 态）不再判 ci=fail——required 全绿的 PR 不再被推进 generator-fix 死循环（FIXED 同 sha → no_progress_same_sha 收死）；BLOCKED 且有 check 未落定时判 pending 等全部落定再裁。
 
 ## Brain 1.270.9 — kernel 收敛终局三修（run b4ac3396 案卷）
 
