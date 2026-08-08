@@ -168,7 +168,14 @@ export function createKernelHandlers(deps) {
           (row) => row.action === 'merge_pr' && row.observed?.pr?.mergeStateStatus === 'BEHIND',
         ).length;
         if (priorRebases >= 3) return { status: 'BLOCKED', detail: 'rebase attempt cap reached' };
-        deps.execCmd(`gh pr update-branch ${shellQuote(pr.url)}`);
+        // run 986a51d3 案卷：`gh pr update-branch` 是 gh 2.46+ 才有的子命令，生产
+        // Brain 容器 gh 2.45 报 unknown command → kernel_process_fatal 整 run 收死。
+        // 改走版本无关的 REST API（PUT /repos/{owner}/{repo}/pulls/{n}/update-branch）。
+        const prPath = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(pr.url ?? '');
+        if (!prPath) return { status: 'BLOCKED', detail: 'unparseable PR URL for update-branch' };
+        deps.execCmd(
+          `gh api ${shellQuote(`repos/${prPath[1]}/${prPath[2]}/pulls/${prPath[3]}/update-branch`)} -X PUT`,
+        );
         return { status: 'DONE_WITH_CONCERNS', detail: 'updated PR branch; rechecking gates' };
       }
       deps.execCmd(`gh pr merge ${shellQuote(pr.url)} --squash --delete-branch`);

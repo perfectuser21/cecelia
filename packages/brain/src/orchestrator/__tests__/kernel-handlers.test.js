@@ -225,7 +225,9 @@ describe('kernel deterministic handlers', () => {
         pr: { ...context().observed.pr, mergeStateStatus: 'BEHIND' },
       },
     }))).resolves.toMatchObject({ status: 'DONE_WITH_CONCERNS' });
-    expect(behindDeps.execCmd).toHaveBeenCalledWith(expect.stringContaining('gh pr update-branch'));
+    expect(behindDeps.execCmd).toHaveBeenCalledWith(
+      expect.stringMatching(/gh api .*update-branch.*-X PUT/),
+    );
 
     const conflictDeps = deps();
     const conflict = createKernelHandlers(conflictDeps)['merge_pr'];

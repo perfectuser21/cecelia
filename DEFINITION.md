@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.270.10
+**Brain 版本**: 1.270.11
 
 **状态**: 生产运行中
 
@@ -20,6 +20,10 @@
 - callback queue 引入带租约的单消费者 claim；HTTP 回调与 worker 不再重复消费，同一 `run_id` 只有精确匹配当前 attempt 才能结算。
 - 任务隔离后不再发送 Thalamus 重试事件，持久化 `failure_count` 成为唯一重试计数；任务失败不再击穿全局 `cecelia-run` 熔断器。
 - migration 394 为 callback queue 增加 `claimed_at` / `claimed_by` 与可领取索引；回滚脚本同步提供。
+
+## Brain 1.270.11 — merge BEHIND 走版本无关 gh api（run 986a51d3 案卷）
+
+- merge_pr 的 BEHIND 补齐从 `gh pr update-branch`（gh 2.46+ 子命令，生产容器 gh 2.45 直接 unknown command → kernel_process_fatal）改为 REST `PUT /repos/{owner}/{repo}/pulls/{n}/update-branch`，任何 gh 版本可用。
 
 ## Brain 1.270.10 — CI 观测按可合并性裁决（run 0955c884 案卷）
 
