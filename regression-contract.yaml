@@ -65,7 +65,7 @@ golden_paths:
     priority: P0
     trigger: [PR, Release]
     method: auto
-    test_command: "cd packages/brain && npx vitest run src/__tests__/callback-processor.test.js src/__tests__/callback-resilience.test.js src/__tests__/callback-worker.test.js src/__tests__/codex-bridge-legacy-contract.test.js src/__tests__/codex-bridge-payload-callback-url.test.js src/__tests__/codex-test-gen-description.test.js src/__tests__/thalamus.test.js src/__tests__/migration-394-callback-lease.test.js"
+    test_command: "bash -c 'cd packages/brain && npm ci --ignore-scripts && npx --no-install vitest run src/__tests__/callback-processor.test.js src/__tests__/callback-resilience.test.js src/__tests__/callback-worker.test.js src/__tests__/codex-bridge-legacy-contract.test.js src/__tests__/codex-bridge-payload-callback-url.test.js src/__tests__/codex-test-gen-description.test.js src/__tests__/thalamus.test.js src/__tests__/migration-394-callback-lease.test.js'"
     must_never_break: true
 
   - id: CORE-001
