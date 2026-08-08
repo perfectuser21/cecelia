@@ -168,4 +168,4 @@ psql -U cecelia cecelia -c "SELECT check_key, result, submitted_by, ai_verdict F
 |---|---|---|---|
 | 读侧 SQL 列白名单 + gp 级跨轮闸 + view=review 校验 | `packages/brain/src/__tests__/acceptance-d3-backtoback.test.js` | [BEHAVIOR-1]、[BEHAVIOR-2]、[BEHAVIOR-3]、[BEHAVIOR-4]、[BEHAVIOR-5]、[BEHAVIOR-6] | → R1~R9 FAIL（SELECT * 尚未改为列白名单时断言失败） |
 | 三 token 路由级分权 + createBearerAuth 容错 | `packages/brain/src/__tests__/acceptance-d3-backtoback.test.js` | [BEHAVIOR-7]、[BEHAVIOR-8]、[BEHAVIOR-9]、[BEHAVIOR-10]、[BEHAVIOR-11]、[BEHAVIOR-12] | → [BEHAVIOR-7] FAIL（空 token throw 未修改）、[BEHAVIOR-12] FAIL（路由仍挂载） |
-| AI 写侧过滤 + 反向断言 | `packages/brain/src/__tests__/acceptance-d3-backtoback.test.js` | [BEHAVIOR-13]、[BEHAVIOR-14]、[BEHAVIOR-1] 反向、[BEHAVIOR-3] 反向 | → [BEHAVIOR-13] FAIL、[BEHAVIOR-14] FAIL（SQL 未限列时 AI 四列泄漏） |
+| AI 写侧过滤 + 反向断言 | `packages/brain/src/__tests__/acceptance-d3-backtoback.test.js` | [BEHAVIOR-13]、[BEHAVIOR-14]、[BEHAVIOR-1]、[BEHAVIOR-3] | → [BEHAVIOR-13] FAIL、[BEHAVIOR-14] FAIL（SQL 未限列时 AI 四列泄漏） |
