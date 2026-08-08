@@ -148,7 +148,8 @@ describe('buildCodexBridgePayload — callback_url 必填字段', () => {
       ([sql, params]) => typeof sql === 'string' && sql.includes("'current_run_id'") && params?.[1] === payload.run_id
     );
     expect(runInfoWriteIndex, 'Bridge POST 前必须持久化 current_run_id').toBeGreaterThanOrEqual(0);
-    expect(dbQueryMock.mock.invocationCallOrder[runInfoWriteIndex]).toBeLessThan(fetchMock.mock.invocationCallOrder[0]);
+    const runFetchIndex = fetchMock.mock.calls.findIndex(([url]) => String(url).endsWith('/run'));
+    expect(dbQueryMock.mock.invocationCallOrder[runInfoWriteIndex]).toBeLessThan(fetchMock.mock.invocationCallOrder[runFetchIndex]);
   });
 
   it('bridge 请求携带 canonical base_repo，且不发送源机器绝对 work_dir', async () => {

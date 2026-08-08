@@ -159,6 +159,8 @@ describe('callback-processor — WHERE 守卫白名单（harness_evaluate 84% ve
     expect(sql, "白名单必须包含 'dispatched'").toContain("'dispatched'");
     // 不应再是严格的单一 status = 'in_progress' 匹配
     expect(sql, "不应使用严格的 AND status = 'in_progress'").not.toMatch(/AND status = 'in_progress'/);
+    expect(sql).toContain("payload->>'current_run_id' = $14::text");
+    expect(sql).not.toContain("payload->>'current_run_id' IS NULL");
   });
 
   it('harness_evaluate 收到 result callback 时，BEGIN/UPDATE/COMMIT 事务链路完整', async () => {
@@ -208,7 +210,7 @@ describe('callback-processor — docker contract status mapping', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPool.query.mockResolvedValue({ rows: [] });
-    mockClient.query.mockResolvedValue({ rows: [] });
+    mockClient.query.mockResolvedValue({ rows: [], rowCount: 1 });
     mockPool.connect.mockResolvedValue(mockClient);
   });
 

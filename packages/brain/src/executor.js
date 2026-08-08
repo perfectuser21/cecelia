@@ -2702,15 +2702,16 @@ function buildCodexRunnerConfig(task, taskBranch, isCodexDev, isCrystallize) {
 }
 
 /** Assemble the full request body for the Codex Bridge /run endpoint. */
-function buildCodexBridgePayload(task, promptContent, taskBranch, injectedAccounts, isCodexDev, isCrystallize) {
+function buildCodexBridgePayload(task, runId, promptContent, taskBranch, injectedAccounts, isCodexDev, isCrystallize) {
   const { runner, runner_args } = buildCodexRunnerConfig(task, taskBranch, isCodexDev, isCrystallize);
   const brainUrl = process.env.BRAIN_URL || 'http://localhost:5221';
   return {
     task_id: task.id,
+    run_id: runId,
     checkpoint_id: null,
     prompt: promptContent,
     task_type: task.task_type,
-    work_dir: task.payload?.repo_path,
+    base_repo: task.payload?.base_repo || 'perfectuser21/cecelia',
     timeout_ms: 10 * 60 * 1000,
     runner,
     runner_args,
@@ -2758,8 +2759,13 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
     const taskBranch = buildCodexTaskBranch(task, isCodexDev);
     const injectedAccounts = await selectCodexAccounts();
 
+    const runInfo = await updateTaskRunInfo(task.id, runId, 'triggered');
+    if (!runInfo.success) {
+      return { success: false, taskId: task.id, runId, error: runInfo.error, executor: 'codex-bridge' };
+    }
+
     const bridgeUrl = forceBridgeUrl ?? await selectBestBridge();
-    const payload = buildCodexBridgePayload(task, promptContent, taskBranch, injectedAccounts, isCodexDev, isCrystallize);
+    const payload = buildCodexBridgePayload(task, runId, promptContent, taskBranch, injectedAccounts, isCodexDev, isCrystallize);
     const response = await fetch(`${bridgeUrl}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2771,14 +2777,14 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
 
     if (!result.ok) {
       console.log(`[executor] Codex Bridge rejected: ${result.error}`);
-      return { success: false, taskId: task.id, error: result.error, executor: 'codex-bridge' };
+      return { success: false, taskId: task.id, runId, error: result.error, executor: 'codex-bridge' };
     }
 
     console.log(`[executor] Codex Bridge accepted task=${task.id} account=${result.account}`);
     return { success: true, taskId: task.id, runId, executor: 'codex-bridge', account: result.account };
   } catch (err) {
     console.error(`[executor] Codex Bridge error: ${err.message}`);
-    return { success: false, taskId: task.id, error: err.message, executor: 'codex-bridge' };
+    return { success: false, taskId: task.id, runId, error: err.message, executor: 'codex-bridge' };
   }
 }
 

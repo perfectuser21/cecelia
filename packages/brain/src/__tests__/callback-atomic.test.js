@@ -259,9 +259,9 @@ describe('execution-callback atomicity', () => {
     const updateCall = clientCalls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
     expect(updateCall).toBeDefined();
 
-    // Should have 11 params: [task_id, newStatus, lastRunResult, status, pr_url, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted]
+    // 14 params：原写入字段 + exec meta + terminal 清 run claim + run_id CAS。
     const params = updateCall[1];
-    expect(params).toHaveLength(11);
+    expect(params).toHaveLength(14);
 
     // $6 (isCompleted) must be a boolean true for 'AI Done'
     expect(typeof params[5]).toBe('boolean');
@@ -295,7 +295,7 @@ describe('execution-callback atomicity', () => {
     expect(updateCall).toBeDefined();
 
     const params = updateCall[1];
-    expect(params).toHaveLength(11);
+    expect(params).toHaveLength(14);
     // $6 must be false for failed tasks
     expect(params[5]).toBe(false);
     expect(params[1]).toBe('failed');

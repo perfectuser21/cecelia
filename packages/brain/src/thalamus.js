@@ -1029,6 +1029,15 @@ function quickRoute(event) {
 
   // 任务失败（简单失败/重试次数未超限）：直接重试
   if (event.type === EVENT_TYPES.TASK_FAILED) {
+    if (event.quarantined === true) {
+      return {
+        level: 0,
+        actions: [],
+        rationale: '任务已进入隔离终态，不再生成重试动作',
+        confidence: 1.0,
+        safety: true
+      };
+    }
     const hasComplexReason = event.complex_reason === true;
     const retryExceeded = (event.retry_count || 0) >= 3;
     if (!hasComplexReason && !retryExceeded) {

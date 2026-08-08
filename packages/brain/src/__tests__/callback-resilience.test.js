@@ -138,7 +138,7 @@ function setupDefaultMocks({ taskStatus = 'in_progress' } = {}) {
     // 其余
     return Promise.resolve({ rows: [{ goal_id: null }], rowCount: 1 });
   });
-  mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
+  mockClient.query.mockResolvedValue({ rows: [], rowCount: 1 });
 }
 
 describe('execution-callback 韧性：updated_at / claim 清空', () => {
@@ -160,6 +160,8 @@ describe('execution-callback 韧性：updated_at / claim 清空', () => {
     );
     expect(updateCall, 'UPDATE tasks 调用未找到').toBeDefined();
     expect(updateCall[0]).toContain('updated_at = NOW()');
+    expect(updateCall[0]).toContain("payload->>'current_run_id' = $14::text");
+    expect(updateCall[0]).not.toContain("payload->>'current_run_id' IS NULL");
   });
 
   it('UPDATE tasks SQL 包含 claimed_by = NULL', async () => {

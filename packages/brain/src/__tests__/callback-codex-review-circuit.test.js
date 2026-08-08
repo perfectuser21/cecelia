@@ -97,7 +97,7 @@ describe('review 类任务 callback 熔断隔离', () => {
     expect(circuitBreaker.recordFailure).not.toHaveBeenCalledWith('cecelia-run');
   });
 
-  it('task_type=dev（非 review）失败正常调用 cbFailure(cecelia-run)', async () => {
+  it('task_type=dev 的 task_error 只隔离当前任务，不污染全局 cecelia-run 熔断器', async () => {
     const { processExecutionCallback } = await import('../callback-processor.js');
 
     await processExecutionCallback({
@@ -107,6 +107,6 @@ describe('review 类任务 callback 熔断隔离', () => {
       result: { error: 'some dev task error' },
     }, makePool('dev')).catch(() => {});
 
-    expect(circuitBreaker.recordFailure).toHaveBeenCalledWith('cecelia-run');
+    expect(circuitBreaker.recordFailure).not.toHaveBeenCalledWith('cecelia-run');
   });
 });

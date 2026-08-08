@@ -113,7 +113,8 @@ export async function processExecutionCallback(data, pool) {
           'run_status', $4::text,
           'pr_url', $5::text
         ) || CASE WHEN $7::text IS NOT NULL THEN jsonb_build_object('findings', $7::text) ELSE '{}'::jsonb END
-          || CASE WHEN $8::integer IS NOT NULL THEN jsonb_build_object('metadata', jsonb_build_object('pr_number', $8::integer)) ELSE '{}'::jsonb END,
+          || CASE WHEN $8::integer IS NOT NULL THEN jsonb_build_object('metadata', jsonb_build_object('pr_number', $8::integer)) ELSE '{}'::jsonb END
+          || CASE WHEN $13::boolean THEN jsonb_build_object('current_run_id', NULL) ELSE '{}'::jsonb END,
         result = CASE WHEN result IS NULL AND $12::jsonb IS NOT NULL THEN $12::jsonb ELSE result END,
         completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END,
         quota_exhausted_at = CASE WHEN $11 THEN NOW() ELSE quota_exhausted_at END,
@@ -124,15 +125,19 @@ export async function processExecutionCallback(data, pool) {
         updated_at = NOW(),
         claimed_by = CASE WHEN $13::boolean THEN NULL ELSE claimed_by END,
         claimed_at = CASE WHEN $13::boolean THEN NULL ELSE claimed_at END
-      WHERE id = $1 AND status IN ('in_progress', 'queued', 'dispatched')
+      WHERE id = $1
+        AND status IN ('in_progress', 'queued', 'dispatched')
+        AND ($14::text IS NULL OR payload->>'current_run_id' = $14::text)
     `, [
       task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null,
       isCompleted, findingsValue, prNumber, errorMessage, blockedDetail,
-      isQuotaExhausted, execMetaJson, isTerminal,
+      isQuotaExhausted, execMetaJson, isTerminal, run_id || null,
     ]);
     applied = (updRes.rowCount ?? 0) > 0;
     if (!applied) {
       console.warn(`[callback-processor] 迟到回调被守卫拦下(task=${task_id} 已非 in_progress/queued/dispatched),status=${newStatus} 未落地`);
+      await client.query('COMMIT');
+      return { success: true, newStatus, applied: false, duplicate: true };
     }
 
     // decision_log（带 WHERE NOT EXISTS 防重复写入）
@@ -310,6 +315,8 @@ export async function processExecutionCallback(data, pool) {
     await emitEvent('task_failed', 'executor', { task_id, run_id, status });
     publishTaskFailed(task_id, run_id, status);
 
+    let quarantineResult = { quarantined: false, failure_count: Number(iterations) || 0 };
+    let failureClass = null;
     try {
       const { classifyFailure } = await import('./quarantine.js');
       const taskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
@@ -319,6 +326,7 @@ export async function processExecutionCallback(data, pool) {
         ? (result.result || result.error || result.stderr || JSON.stringify(result))
         : String(result || status);
       const classification = classifyFailure(errorMsg, { payload: taskPayload });
+      failureClass = classification.class;
       const { isTransientClass } = await import('./lib/retry-policy.js');
       const isTransientApiError = isTransientClass(classification.class);
       const isBillingCap = classification.class === 'billing_cap';
@@ -328,9 +336,9 @@ export async function processExecutionCallback(data, pool) {
       const isCodexReview = coding_type === 'codex-review';
       const isReviewTask = REVIEW_TASK_TYPES.includes(taskType);
 
-      if (isBillingCap || isTransientApiError || isOomKilled) {
+      if (isBillingCap || isTransientApiError || isOomKilled || failureClass === 'task_error') {
         const bypassReason = isBillingCap ? 'billing_cap' : (isOomKilled ? 'oom_killed(exit=137)' : 'transient(rate_limit/network/timeout/server_error/auth)');
-        console.log(`[callback-processor] 外部/资源错误（${bypassReason}）：跳过熔断计数（task=${task_id}）`);
+        console.log(`[callback-processor] 非系统性失败（${failureClass === 'task_error' ? 'task_error' : bypassReason}）：跳过全局熔断计数（task=${task_id}）`);
       } else if (isCodexReview || isReviewTask) {
         // codex-review / review 类任务走本机 Codex CLI，失败不归因 cecelia-run 熔断器
         console.log(`[callback-processor] review 类任务（${isCodexReview ? 'codex-review' : taskType}）失败，跳过 cecelia-run 熔断计数（task=${task_id}）`);
@@ -343,7 +351,7 @@ export async function processExecutionCallback(data, pool) {
       // OOM kill 与网络瞬断一样，skipCount=true：requeue 不累加失败次数
       // OOM 是资源配置问题（首次重试通常成功），不应归入"任务反复失败→隔离"路径
       const skipCount = isTransientApiError || isOomKilled;
-      const quarantineResult = await handleTaskFailure(task_id, { skipCount });
+      quarantineResult = await handleTaskFailure(task_id, { skipCount });
       if (quarantineResult.quarantined) {
         console.log(`[callback-processor] Task ${task_id} quarantined: ${quarantineResult.result?.reason}`);
         raise('P1', 'task_quarantined', `任务隔离：${task_id}`).catch(() => {});
@@ -352,16 +360,22 @@ export async function processExecutionCallback(data, pool) {
       console.error(`[callback-processor] Classification error: ${classifyErr.message}`);
     }
 
-    // Thalamus: task failed
-    try {
-      const thalamusEvent = {
-        type: EVENT_TYPES.TASK_FAILED,
-        task_id, run_id, error: status, retry_count: iterations || 0,
-      };
-      const thalamusDecision = await thalamusProcessEvent(thalamusEvent);
-      await executeThalamusDecision(thalamusDecision);
-    } catch (thalamusErr) {
-      console.error(`[callback-processor] Thalamus error on failure: ${thalamusErr.message}`);
+    const failureAlreadyHandled = quarantineResult.quarantined || quarantineResult.skipped_count || quarantineResult.blocked;
+    if (!failureAlreadyHandled) {
+      try {
+        const thalamusEvent = {
+          type: EVENT_TYPES.TASK_FAILED,
+          task_id,
+          run_id,
+          error: status,
+          retry_count: Number(quarantineResult.failure_count) || 0,
+          quarantined: false,
+        };
+        const thalamusDecision = await thalamusProcessEvent(thalamusEvent);
+        await executeThalamusDecision(thalamusDecision);
+      } catch (thalamusErr) {
+        console.error(`[callback-processor] Thalamus error on failure: ${thalamusErr.message}`);
+      }
     }
 
     updateDesireFromTask(task_id, 'failed', pool).catch(err =>
