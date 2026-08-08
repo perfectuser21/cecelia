@@ -1,0 +1,22 @@
+{
+  "initiative_id": "61def0bd-18ff-4814-83c8-ea462d0bbf72",
+  "journey_type": "autonomous",
+  "journey_type_reason": "涉及 playground/ 后端 marker 端点，无 dashboard/agent/engine 路径命中，落 autonomous 默认",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "playground 新增 GET /kernel-e 返回 200 + {result:\"ok-e\"}",
+      "scope": "在 playground/server.js 注册无参 marker 路由 GET /kernel-e，返回 {\"result\":\"ok-e\"}；忽略多余 query 参数；不改任何现有端点。新增 playground/tests/kernel-e.test.js 行为回归测试（由 sprints/kernel-final-e/tests/kernel-e.test.js 逐字复制）。",
+      "dod": [
+        "[BEHAVIOR] GET /kernel-e → 200 且 body .result==\"ok-e\"，顶层 keys==[\"result\"]，禁用字段全不存在",
+        "[BEHAVIOR] 带任意多余 query 参数仍稳定 200 + {result:\"ok-e\"}；POST /kernel-e → 404；现有端点 /ping 未回归",
+        "[ARTIFACT] playground/server.js 含 app.get('/kernel-e', ...)",
+        "[ARTIFACT] playground/tests/kernel-e.test.js 存在且 vitest 全绿 exit 0"
+      ],
+      "files": ["playground/server.js", "playground/tests/kernel-e.test.js"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
