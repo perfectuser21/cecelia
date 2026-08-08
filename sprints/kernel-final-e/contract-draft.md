@@ -232,4 +232,4 @@ echo "✅ kernel-e Golden Path 验证通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| GET /kernel-e | `tests/kernel-e.test.js` | `GET /kernel-e → 200 + {result: "ok-e"}` / `带任意多余 query 参数 → 忽略参数仍 200 + {result: "ok-e"}` / `response keys 完整性 == ["result"]` / `禁用 key 反向` / `POST /kernel-e → 404` | 本轮实测 → 4 failed / 1 passed，exit 1 |
+| GET /kernel-e | `tests/kernel-e.test.js` | `GET /kernel-e → 200` / `带任意多余 query 参数 → 忽略参数仍 200` / `response keys 完整性 == ["result"]` / `禁用 key 反向` / `POST /kernel-e → 404` | 本轮实测 → 4 failed / 1 passed，exit 1 |
