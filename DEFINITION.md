@@ -8,11 +8,19 @@
 
 
 
-**Brain 版本**: 1.270.6
+**Brain 版本**: 1.270.7
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.270.7 — runner canonical 镜像 repin + 发布链守卫（kernel 准入根治）
+
+- canonical runner 镜像正式重建：`docker/build.sh`@main aa4e45ee 构建，digest `sha256:08c904ff0dc216229b84d2ce7216760fcb9968a43351916f8495265b3956bd4f`（与 #4720 后真机验证的 84018cb1 逐层一致，label 齐全，凭据合同探针 PASS）。pin 十处一次性同步（node-profile.js / node-profile.test.js / fleet-node-profiles.json×3机 / rollout+reconcile 脚本与测试 / installer 测试 / phase4a smoke / 本文件）。
+- worker 版本 pin 同步：version_policy.worker 与 node-probe DEFAULT_WORKER_VERSION = 1.270.7（admission 严格比对，rollout 必须在本版本 commit 上执行）。
+- 新守卫①：`docker/verify-digest-pin.sh`——build.sh 构建后强制校验镜像 digest 与 pin，一致 exit 0 / 漂移 exit 3（#4720 式绕建不 repin 从此必见红）。
+- 新守卫②：`canonical-pin-consistency.test.sh`——CI 每 PR 断言全部 pin 点互锁一致（digest + worker 三组版本）。
+- installer：ORBSTACK_HOME 默认值从 docker.sock 属主自动推导（拒 root/_cecelia，回落 SUDO_USER → /var/empty）。
 
 ## Brain 1.267.249 — ledger-hygiene m2 口径修正：噪声排除 + harness 停计
 
