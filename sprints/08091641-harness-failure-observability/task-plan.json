@@ -1,0 +1,34 @@
+{
+  "initiative_id": "b24168e0-6847-49a7-978f-137df6a93558",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain 后端与 Brain API + CI lint 脚本，无 UI/远端 agent，属纯后台自主流程",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "harness terminal 失败观测地基：单一受控枚举源 + 全量写入点收敛 result.failure_class + 机械闸 + failure-stats 计量端点",
+      "scope": "新增 failure-class.js 单一受控枚举源（FAILURE_CLASSES/assertFailureClass/buildFailureResultPatch/computeFailureStats/persistTerminalFailure）；把 executor.js/orchestrator/loop.js/dispatcher.js/harness-relay-watchdog.js/harness-death-handlers.js 全量 terminal 写入点收敛为经 persistTerminalFailure 写 result.failure_class+failure_detail；新增 scripts/lint-failure-class-writes.mjs 机械闸拦漏写；在 routes/harness.js 新增 GET /harness/failure-stats?days=N。不做失败根因修复、不动 gear 分档、不动入口强制、不回填历史 241 条 null。",
+      "dod": [
+        "[BEHAVIOR] terminal 失败经 persistTerminalFailure 落库后 result->>'failure_class' 非 null 且 ∈ FAILURE_CLASSES",
+        "[BEHAVIOR] 非法枚举值经 assertFailureClass 抛错，拒绝落库自由文本",
+        "[BEHAVIOR] 机械闸对干净树 exit 0、对漏写 failure_class 的 terminal 写入 exit 1",
+        "[BEHAVIOR] GET /api/brain/harness/failure-stats?days=7 返回 200，含 failure_rate 数值 + by_class 对象 + period_days",
+        "[ARTIFACT] packages/brain/src/orchestrator/failure-class.js 存在",
+        "[ARTIFACT] scripts/lint-failure-class-writes.mjs 存在",
+        "[ARTIFACT] routes/harness.js 含 failure-stats 路由"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/failure-class.js",
+        "packages/brain/src/executor.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/dispatcher.js",
+        "packages/brain/src/harness-relay-watchdog.js",
+        "packages/brain/src/harness-death-handlers.js",
+        "packages/brain/src/routes/harness.js",
+        "scripts/lint-failure-class-writes.mjs"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
