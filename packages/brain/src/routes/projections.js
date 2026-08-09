@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { bootstrapNotionDatabases, configureNotionProjection } from '../projection/notion.js';
+import { queueLaneSql } from '../task-queue-lanes.js';
 
 const router = Router();
 router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
@@ -107,6 +108,9 @@ router.get('/workbench/summary', async (_req, res) => {
       pool.query(
         `SELECT
            COUNT(*) FILTER (WHERE status IN ('queued','pending') AND claimed_by IS NULL)::int AS waiting,
+           COUNT(*) FILTER (WHERE ${queueLaneSql('tasks')}='ready')::int AS ready,
+           COUNT(*) FILTER (WHERE ${queueLaneSql('tasks')}='ide')::int AS ide,
+           COUNT(*) FILTER (WHERE ${queueLaneSql('tasks')}='pipeline')::int AS pipeline,
            COUNT(*) FILTER (WHERE status='in_progress' AND claimed_by IS NOT NULL)::int AS in_progress,
            COUNT(*) FILTER (WHERE status IN ('blocked','paused','quarantined','failed'))::int AS blocked,
            COUNT(*) FILTER (WHERE status='completed')::int AS done,

@@ -19,6 +19,7 @@ interface Task {
   goal_id: string | null;
   claimed_by: string | null;
   executor_kind: string | null;
+  queue_lane: 'ready' | 'ide' | 'pipeline' | null;
 }
 
 interface Project {
@@ -26,11 +27,13 @@ interface Project {
   title: string;
 }
 
-type TaskView = 'all' | 'waiting' | 'in_progress' | 'blocked' | 'done' | 'dropped';
+export type TaskView = 'all' | 'ready' | 'ide' | 'pipeline' | 'in_progress' | 'blocked' | 'done' | 'dropped';
 
 const TASK_VIEWS: Array<{ id: TaskView; label: string }> = [
   { id: 'all', label: 'All' },
-  { id: 'waiting', label: 'Waiting' },
+  { id: 'ready', label: 'Brain' },
+  { id: 'ide', label: 'IDE' },
+  { id: 'pipeline', label: 'Pipeline' },
   { id: 'in_progress', label: 'In Progress' },
   { id: 'blocked', label: 'Blocked' },
   { id: 'done', label: 'Done' },
@@ -58,11 +61,26 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   research: '调研',
 };
 
+export function filterTasksByView<T extends {
+  status: string;
+  claimed_by: string | null;
+  queue_lane?: string | null;
+}>(tasks: T[], view: TaskView): T[] {
+  return tasks.filter(task => {
+    if (view === 'ready' || view === 'ide' || view === 'pipeline') return task.queue_lane === view;
+    if (view === 'in_progress') return task.status === 'in_progress' && Boolean(task.claimed_by);
+    if (view === 'blocked') return ['blocked', 'paused', 'failed', 'quarantined'].includes(task.status);
+    if (view === 'done') return task.status === 'completed';
+    if (view === 'dropped') return task.status === 'cancelled';
+    return true;
+  });
+}
+
 export default function GTDTasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<TaskView>('waiting');
+  const [view, setView] = useState<TaskView>('ready');
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -155,16 +173,11 @@ export default function GTDTasks() {
     [...tasks].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
   [tasks]);
 
-  const visibleTasks = useMemo(() => sortedTasks.filter(task => {
-    if (view === 'waiting') return ['queued', 'pending'].includes(task.status) && !task.claimed_by;
-    if (view === 'in_progress') return task.status === 'in_progress' && Boolean(task.claimed_by);
-    if (view === 'blocked') return ['blocked', 'paused', 'failed', 'quarantined'].includes(task.status);
-    if (view === 'done') return task.status === 'completed';
-    if (view === 'dropped') return task.status === 'cancelled';
-    return true;
-  }), [sortedTasks, view]);
+  const visibleTasks = useMemo(() => filterTasksByView(sortedTasks, view), [sortedTasks, view]);
 
-  const queued = tasks.filter(t => ['queued', 'pending'].includes(t.status) && !t.claimed_by).length;
+  const ready = tasks.filter(t => t.queue_lane === 'ready').length;
+  const ide = tasks.filter(t => t.queue_lane === 'ide').length;
+  const pipeline = tasks.filter(t => t.queue_lane === 'pipeline').length;
   const inProgress = tasks.filter(t => t.status === 'in_progress' && Boolean(t.claimed_by)).length;
   const completed = tasks.filter(t => t.status === 'completed').length;
 
@@ -223,7 +236,9 @@ export default function GTDTasks() {
       footer={
         <>
           <span>{tasks.length} 个 Task</span>
-          <span>{queued} 排队</span>
+          <span>{ready} Brain</span>
+          <span>{ide} IDE</span>
+          <span>{pipeline} Pipeline</span>
           <span>{inProgress} 进行中</span>
           <span>{completed} 已完成</span>
         </>
