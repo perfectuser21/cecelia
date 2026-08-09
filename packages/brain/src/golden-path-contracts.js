@@ -129,7 +129,8 @@ export async function createGoldenPathContractVersion(db, {
           SET status = 'cancelled',
               error_message = 'Golden Path contract superseded before execution',
               completed_at = now(),
-              updated_at = now()
+              updated_at = now(),
+              result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'contract_superseded', 'failure_detail', 'Golden Path contract superseded before execution')
         WHERE id = ANY($1::uuid[])
           AND status IN ('queued', 'blocked')
       RETURNING id, status`,

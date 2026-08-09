@@ -2555,6 +2555,7 @@ async function triggerCodexReview(task) {
                      claimed_by = NULL, claimed_at = NULL,
                      payload = (COALESCE(payload, '{}'::jsonb) - 'run_status')
                                || jsonb_build_object('codex_config_error_count', $2::int),
+                     result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'codex_config_error', 'failure_detail', 'codex 环境错误连续' || $2::text || '次'),
                      updated_at = NOW()
                WHERE id = $1 AND status IN ('in_progress','dispatched')`,
               [task.id, n]
@@ -3003,8 +3004,11 @@ export const MAX_INITIATIVE_FRESH_STARTS = 3;
 async function markInitiativeTerminalFailed(dbPool, taskId, failureClass, errorMessage) {
   try {
     await dbPool.query(
+      // failure_class 权威口径写 result 列（决策 e8f6134f 交付物2）；custom_props 既有镜像保留（零回归）。
       `UPDATE tasks SET status='failed', error_message=$1,
-         custom_props = jsonb_set(COALESCE(custom_props,'{}'::jsonb), '{failure_class}', $2::jsonb)
+         completed_at = COALESCE(completed_at, NOW()),
+         custom_props = jsonb_set(COALESCE(custom_props,'{}'::jsonb), '{failure_class}', $2::jsonb),
+         result = COALESCE(result,'{}'::jsonb) || jsonb_build_object('failure_class', $2::jsonb #>> '{}', 'failure_detail', $1)
        WHERE id=$3`,
       [String(errorMessage).slice(0, 500), JSON.stringify(failureClass), taskId]
     );
@@ -3479,7 +3483,8 @@ async function triggerCeceliaRun(task) {
       await pool.query(
         `UPDATE tasks SET status='failed', completed_at=NOW(),
           error_message=$2,
-          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
+          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure'),
+          result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure', 'failure_detail', $2)
          WHERE id=$1::uuid`,
         [task.id, `task_type ${task.task_type} retired (subsumed by harness_initiative full graph)`]
       );
@@ -4475,7 +4480,8 @@ async function syncOrphanTasksOnStartup() {
           `UPDATE tasks SET
             status = 'failed',
             error_message = $3,
-            payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+            payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
+            result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'infrastructure_blocked', 'failure_detail', $3)
           WHERE id = $1`,
           [
             task.id,

@@ -133,6 +133,24 @@ jobs:
           node packages/brain/scripts/ci/island-gate.mjs --fixture-files="${ADDED_FILES}"
           echo "island-gate exit: $?"
 
+  # ─── Gate 2b: harness terminal 失败必写 failure_class（决策 e8f6134f 交付物2）──────
+  # 机械闸防回归：curated harness terminal 写入点若把 tasks 打成 terminal 状态却不带
+  # failure_class 且无 lint-allow-terminal 标记 → exit 1，红 PR。纯文档约定不算数。
+  harness-terminal-failure-class-gate:
+    name: Harness Terminal Failure-Class Gate (PR)
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 扫描 harness terminal 写入点（缺 failure_class 即红）
+        run: |
+          node packages/brain/scripts/ci/harness-terminal-failure-class-gate.mjs
+          echo "harness-terminal-failure-class-gate exit: $?"
+
   # ─── Gate 3: Brain HTTP 自动部署（仅 push:main，PR 不部署）────────────────
   deploy:
     name: Deploy Brain (Gate 3)

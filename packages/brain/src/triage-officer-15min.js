@@ -44,6 +44,7 @@ export async function runTriageOfficer15min(pool) {
        UPDATE tasks
           SET status        = 'cancelled',
               error_message = '[triage-15min] 重名任务归并：保最老，取消后来者',
+              result        = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'duplicate_merged', 'failure_detail', '[triage-15min] 重名任务归并：保最老，取消后来者'),
               updated_at    = NOW()
         WHERE id IN (SELECT id FROM ranked WHERE rn > 1)
        RETURNING id, title`,

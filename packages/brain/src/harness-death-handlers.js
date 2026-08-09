@@ -36,8 +36,10 @@ export async function handleAuth(task, {
   if (authFailCount >= 2) {
     // blocked + Bark
     await pool.query(
-      `UPDATE tasks SET status='blocked', completed_at=NOW() WHERE id=$1`,
-      [task.id]
+      `UPDATE tasks SET status='blocked', completed_at=NOW(),
+         result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'auth_failure', 'failure_detail', $2)
+       WHERE id=$1`,
+      [task.id, `连续 ${authFailCount + 1} 次 auth 失败，已标 blocked`]
     );
 
     const barkMsg = `[Auth Blocked] task=${task.id} initiative=${task.id} 连续 ${authFailCount + 1} 次 auth 失败，已标 blocked。手册: docs/runbooks/codex-login.md`;

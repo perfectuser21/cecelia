@@ -351,7 +351,8 @@ export async function dispatchNextTask(goalIds) {
       `UPDATE tasks
          SET status='failed', completed_at=NOW(),
              error_message='task_type ' || task_type || ' retired (subsumed by harness_initiative full graph)',
-             payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
+             payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure'),
+             result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure', 'failure_detail', 'task_type ' || task_type || ' retired')
        WHERE status='queued'
          AND task_type = ANY($1::text[])
        RETURNING id, task_type`,
@@ -395,8 +396,15 @@ export async function dispatchNextTask(goalIds) {
           `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
           [nextTask.id]
         );
+        // harness terminal 写强制带 failure_class=dispatch_exception 落 result（决策 e8f6134f
+        // 交付物2）；非 harness task_type 沿用裸写（failure_class 由各自域负责），此处 CASE
+        // 依 task_type 判定，单语句内既含 failure_class 又不污染非 harness 行。
         await pool.query(
-          `UPDATE tasks SET status = 'failed', error_message = $2 WHERE id = $1`,
+          `UPDATE tasks SET status = 'failed', error_message = $2,
+             result = CASE WHEN task_type IN ('harness_initiative','golden_path_proposal')
+                           THEN COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'dispatch_exception', 'failure_detail', $2)
+                           ELSE result END
+           WHERE id = $1`,
           [nextTask.id, String(err.message || 'dispatch_exception').slice(0, 500)]
         );
       } catch (cleanupErr) {
@@ -451,7 +459,8 @@ export async function dispatchNextTask(goalIds) {
                blocked_reason = 'pre_flight_rejected',
                blocked_at = NOW(),
                blocked_detail = $2::jsonb,
-               metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb
+               metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+               result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'pre_flight_rejected', 'failure_detail', 'pre-flight three-strikes')
            WHERE id = $1`,
           [
             candidate.id,
@@ -511,7 +520,8 @@ export async function dispatchNextTask(goalIds) {
         await pool.query(
           `UPDATE tasks SET status='failed', completed_at=NOW(),
             error_message=$2,
-            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
+            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure'),
+            result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure', 'failure_detail', $2)
            WHERE id=$1::uuid`,
           [candidate.id, `task_type ${candidate.task_type} retired (subsumed by harness_initiative full graph)`]
         );
@@ -602,7 +612,8 @@ export async function dispatchNextTask(goalIds) {
         await pool.query(
           `UPDATE tasks SET status='failed', completed_at=NOW(),
             error_message=$2,
-            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'missing_anchor')
+            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'missing_anchor'),
+            result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'missing_anchor', 'failure_detail', $2)
            WHERE id=$1::uuid`,
           [candidate.id, anchorResult.detail]
         );

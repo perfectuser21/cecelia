@@ -209,6 +209,65 @@ router.get('/runs', async (req, res) => {
 });
 
 /**
+ * GET /failure-stats?days=N
+ * harness terminal 失败率计量（决策 e8f6134f 交付物2）。
+ * 按 result.failure_class 分组计数 + 滚动失败率，供「连续 7 天失败率 < 25%」开锁闸计量。
+ *
+ * 口径（判定点，见 contract 判定点登记表）：
+ *   - 数据源: tasks 表 task_type IN ('harness_initiative','golden_path_proposal')
+ *   - 窗口基准列: completed_at（terminal 达成时间）
+ *   - total_terminal: status IN ('failed','blocked','cancelled') 且 completed_at >= NOW()-N days
+ *   - total_failed:   上者中 status='failed'（滚动失败率分子）
+ *   - failure_rate:   total_failed / total_terminal，total_terminal=0 时定义为 0（不 NaN/null）
+ *   - by_class:       COALESCE(result->>'failure_class','unknown') 分组（历史 null 稳定归入 unknown 桶）
+ */
+router.get('/failure-stats', async (req, res) => {
+  const rawDays = req.query.days ?? '7';
+  const days = parseInt(rawDays, 10);
+  if (!Number.isInteger(days) || days < 1 || days > 365) {
+    return res.status(400).json({ error: 'days must be an integer between 1 and 365' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT COALESCE(result->>'failure_class', 'unknown') AS failure_class,
+              status,
+              COUNT(*)::int AS n
+         FROM tasks
+        WHERE task_type IN ('harness_initiative', 'golden_path_proposal')
+          AND status IN ('failed', 'blocked', 'cancelled')
+          AND completed_at >= NOW() - ($1 || ' days')::interval
+        GROUP BY 1, status`,
+      [String(days)]
+    );
+
+    let totalTerminal = 0;
+    let totalFailed = 0;
+    const byClass = {};
+    for (const r of rows) {
+      const n = Number(r.n) || 0;
+      totalTerminal += n;
+      if (r.status === 'failed') totalFailed += n;
+      const fc = r.failure_class || 'unknown';
+      byClass[fc] = (byClass[fc] || 0) + n;
+    }
+    const failureRate = totalTerminal > 0 ? Math.round((totalFailed / totalTerminal) * 10000) / 10000 : 0;
+    const windowStart = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    res.json({
+      days,
+      window_start: windowStart,
+      total_terminal: totalTerminal,
+      total_failed: totalFailed,
+      failure_rate: failureRate,
+      by_class: byClass,
+    });
+  } catch (err) {
+    console.error('[GET /harness/failure-stats]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /runs/:id
  * 按 run 自身 UUID 查单条 initiative_run 记录
  * id 非合法 UUID → 400，不存在 → 404
