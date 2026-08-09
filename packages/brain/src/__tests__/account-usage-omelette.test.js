@@ -13,7 +13,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock 外部依赖（DB / API / auth）
-vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
+vi.mock('fs', () => ({
+  readFileSync: vi.fn(() => JSON.stringify({
+    claudeAiOauth: { expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000 },
+  })),
+}));
+vi.mock('../db.js', () => ({
+  default: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+}));
 vi.mock('../event-bus.js', () => ({ emit: vi.fn(async () => {}) }));
 vi.mock('../alerting.js', () => ({ raise: vi.fn(async () => {}) }));
 vi.mock('../auth-cache.js', () => ({
