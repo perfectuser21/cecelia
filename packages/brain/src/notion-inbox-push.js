@@ -3,7 +3,7 @@
  *
  * FR-1：接受排序官归并产物对象，产物类型白名单 proposal/morning_summary/acceptance_receipt
  * 构造 Notion pages 属性（Title/AI摘要/建议去向/置信度/需拍板/产物类型/任务ID）
- * 推送后回写 Brain tasks.notion_page_id
+ * 推送后写 captures 幂等锚，并回写 Brain tasks.notion_id
  *
  * 幂等键前缀：notion:product:<task_id>:<product_type>
  *
@@ -16,6 +16,12 @@ import { notionRequest, getNotionInboxConfig } from './notion-capture-ingest.js'
 
 /** 产物类型白名单 */
 const PRODUCT_TYPE_WHITELIST = ['proposal', 'morning_summary', 'acceptance_receipt'];
+const PRODUCT_PUSH_INTERVAL_MS = 5 * 60 * 1000;
+let lastProductPushAt = 0;
+
+export function __resetNotionProductPushForTest() {
+  lastProductPushAt = 0;
+}
 
 /**
  * 获取目标 Notion 数据库中 title 类型属性的真实字段名
@@ -119,10 +125,23 @@ export async function pushProductToNotionInbox(pool, product, { titleKey = 'Titl
 
   const notionPageId = page?.id ?? null;
 
-  // 回写 Brain tasks.notion_page_id
+  // Notion 成功后必须落稳定幂等锚；否则下一分钟会再次创建新页面。
+  if (notionPageId) {
+    await pool.query(
+      `INSERT INTO captures (
+         content, source, nature, ref_task_id, dedupe_key, notion_page_id, status,
+         destination_type, destination_id
+       ) VALUES ($1, 'api', 'handoff', $2, $3, $4, 'done', 'task', $2)
+       ON CONFLICT (dedupe_key) DO UPDATE
+         SET notion_page_id = EXCLUDED.notion_page_id, updated_at = NOW()`,
+      [title ?? '未命名产物', task_id || null, dedupeKey, notionPageId]
+    );
+  }
+
+  // migration 111 的 canonical 列是 tasks.notion_id。
   if (task_id && notionPageId) {
     await pool.query(
-      `UPDATE tasks SET notion_page_id = $1 WHERE id = $2`,
+      `UPDATE tasks SET notion_id = $1, notion_synced_at = NOW() WHERE id = $2`,
       [notionPageId, task_id]
     );
   }
@@ -143,6 +162,9 @@ export async function pushProductToNotionInbox(pool, product, { titleKey = 'Titl
  * @returns {Promise<object>} 汇总结果 {pushed, skipped, errors} 或 {skipped:true, reason:'empty_leaderboard'}
  */
 export async function runNotionProductPush(pool) {
+  const now = Date.now();
+  if (now - lastProductPushAt < PRODUCT_PUSH_INTERVAL_MS) return { skipped: true, reason: 'interval_gate' };
+  lastProductPushAt = now;
   // 读取排序官榜单
   let leaderboard = [];
   try {

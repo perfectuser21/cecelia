@@ -68,7 +68,7 @@ function AppContent() {
 
   // 全高路由：不加 p-8，overflow-hidden，页面自己管理滚动
   const isFullHeightRoute = (path: string) =>
-    path.startsWith('/system') || path.startsWith('/work') || path.startsWith('/immune') ||
+    path.startsWith('/system') || path.startsWith('/workbench') || path.startsWith('/work') || path.startsWith('/immune') ||
     path.startsWith('/cecelia') || path.startsWith('/okr/review') ||
     path.startsWith('/gtd') || path.startsWith('/knowledge/doc-chat') ||
     path === '/pipeline' ||  // 战情室全屏三栏（/pipeline/:id 详情仍走带内边距布局）

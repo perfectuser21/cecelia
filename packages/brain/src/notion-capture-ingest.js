@@ -37,25 +37,44 @@ export function getNotionInboxConfig() {
 
 export async function notionRequest(token, path, method = 'GET', body = null) {
   const url = `${NOTION_API_BASE}${path}`;
-  const opts = {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Notion-Version': NOTION_VERSION,
-      'Content-Type': 'application/json',
-    },
-    signal: AbortSignal.timeout(30000),
-  };
-  if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(url, opts);
-  const data = await res.json();
-  if (!res.ok) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const opts = {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Notion-Version': NOTION_VERSION,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(30000),
+    };
+    if (body) opts.body = JSON.stringify(body);
+
+    let res;
+    try {
+      res = await fetch(url, opts);
+    } catch (error) {
+      if (attempt === 3) throw error;
+      await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+      continue;
+    }
+    const data = await res.json();
+    if (res.ok) return data;
+
+    const retryable = res.status === 429 || res.status >= 500;
+    if (retryable && attempt < 3) {
+      const retryAfterSeconds = Number.parseFloat(res.headers?.get?.('retry-after') ?? '');
+      const delayMs = Number.isFinite(retryAfterSeconds)
+        ? Math.max(0, retryAfterSeconds * 1000)
+        : 500 * (attempt + 1);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+      continue;
+    }
     const err = new Error(`Notion API ${method} ${path} → ${res.status}: ${data.message ?? 'unknown'}`);
     err.status = res.status;
     err.notionCode = data.code;
     throw err;
   }
-  return data;
+  throw new Error(`Notion API ${method} ${path} retry exhausted`);
 }
 
 /**
@@ -150,8 +169,8 @@ export async function runNotionCaptureIngest(poolOverride) {
           targetSubtype: 'notion_inbox',
         });
 
-        if (result) pushed++;
-        else skipped++;
+        if (!result || result.dedupeHit) skipped++;
+        else pushed++;
       } catch (pageErr) {
         console.warn(`[notion-capture-ingest] page ${page.id} error: ${pageErr.message}`);
         errors++;

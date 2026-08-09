@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   extractPageTitle,
   getNotionInboxConfig,
+  notionRequest,
   runNotionCaptureIngest,
   __resetNotionCaptureIngestForTest,
 } from '../notion-capture-ingest.js';
@@ -130,6 +131,31 @@ describe('getNotionInboxConfig', () => {
   });
 });
 
+describe('notionRequest retry', () => {
+  it('429 按 Retry-After 重试后成功，避免 outbox 因限流批量失败', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        headers: { get: () => '0' },
+        json: async () => ({ message: 'rate limited', code: 'rate_limited' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: async () => ({ id: 'page-after-retry' }),
+      });
+    try {
+      await expect(notionRequest('token', '/pages', 'POST', {})).resolves.toEqual({ id: 'page-after-retry' });
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      global.fetch = origFetch;
+    }
+  });
+});
+
 describe('runNotionCaptureIngest', () => {
   const origEnv = { ...process.env };
 
@@ -214,6 +240,24 @@ describe('runNotionCaptureIngest', () => {
       expect(pushCapture.mock.calls).toHaveLength(2);
       expect(pushCapture.mock.calls[0][1].dedupeKey).toBe('notion:inbox:page-dup');
       expect(pushCapture.mock.calls[1][1].dedupeKey).toBe('notion:inbox:page-dup');
+    } finally {
+      global.fetch = origFetch;
+    }
+  });
+
+  it('[REGRESSION] DB 命中 dedupe 时计入 skipped，不把旧页面误报为新采集', async () => {
+    const page = makePage('page-existing', '已经采集过的页面');
+    pushCapture.mockResolvedValueOnce({ captureId: 'cap-existing', atomId: null, dedupeHit: true });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => NOTION_DB_RESPONSE([page]),
+    });
+    const origFetch = global.fetch;
+    global.fetch = fetchMock;
+    try {
+      const result = await runNotionCaptureIngest({});
+      expect(result.pushed).toBe(0);
+      expect(result.skipped).toBe(1);
     } finally {
       global.fetch = origFetch;
     }

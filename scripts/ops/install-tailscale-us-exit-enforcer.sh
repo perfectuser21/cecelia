@@ -72,6 +72,14 @@ if [[ ! -f "$SOURCE" ]]; then
   exit 66
 fi
 
+# 安装器只允许在西安 M4/M1 上落盘。此检查只读取 Tailscale 身份，
+# 必须位于任何目录创建、文件安装、launchd 或 PF 操作之前。
+CECELIA_US_EXIT_TARGET_USER="$TARGET_USER" \
+CECELIA_US_EXIT_TARGET_UID="$TARGET_UID" \
+CECELIA_US_EXIT_TARGET_HOME="$TARGET_HOME" \
+TAILSCALE_BE_CLI=1 \
+  /usr/bin/python3 "$SOURCE" --check-client
+
 /bin/mkdir -p "$USER_CONFIG_DIR" "$AGENT_DIR"
 
 if [[ "$SYSTEM_LIBEXEC_DIR" == "/usr/local/libexec/cecelia" ]]; then

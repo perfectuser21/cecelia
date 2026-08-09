@@ -1,6 +1,6 @@
 /**
  * GTD Tasks — Notion 风格 Task 数据库视图
- * 数据源: /api/tasks/tasks + /api/tasks/projects
+ * 数据源: Brain canonical tasks + projects API
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -17,12 +17,25 @@ interface Task {
   completed_at: string | null;
   project_id: string | null;
   goal_id: string | null;
+  claimed_by: string | null;
+  executor_kind: string | null;
 }
 
 interface Project {
   id: string;
-  name: string;
+  title: string;
 }
+
+type TaskView = 'all' | 'waiting' | 'in_progress' | 'blocked' | 'done' | 'dropped';
+
+const TASK_VIEWS: Array<{ id: TaskView; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'waiting', label: 'Waiting' },
+  { id: 'in_progress', label: 'In Progress' },
+  { id: 'blocked', label: 'Blocked' },
+  { id: 'done', label: 'Done' },
+  { id: 'dropped', label: 'Dropped' },
+];
 
 function formatRelative(dateStr: string): string {
   const date = new Date(dateStr);
@@ -49,13 +62,14 @@ export default function GTDTasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<TaskView>('waiting');
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const [tasksRes, projectsRes] = await Promise.all([
-        fetch('/api/tasks/tasks?limit=500'),
-        fetch('/api/tasks/projects?limit=2000'),
+        fetch('/api/brain/tasks/tasks?limit=500'),
+        fetch('/api/brain/tasks/projects?limit=2000'),
       ]);
       setTasks(tasksRes.ok ? await tasksRes.json() : []);
       setProjects(projectsRes.ok ? await projectsRes.json() : []);
@@ -68,7 +82,7 @@ export default function GTDTasks() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const projectMap = useMemo(() => new Map(projects.map(p => [p.id, p.name])), [projects]);
+  const projectMap = useMemo(() => new Map(projects.map(p => [p.id, p.title])), [projects]);
 
   const columns: Column<Task>[] = useMemo(() => [
     {
@@ -141,16 +155,34 @@ export default function GTDTasks() {
     [...tasks].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
   [tasks]);
 
-  const queued = tasks.filter(t => t.status === 'queued').length;
-  const inProgress = tasks.filter(t => t.status === 'in_progress').length;
+  const visibleTasks = useMemo(() => sortedTasks.filter(task => {
+    if (view === 'waiting') return ['queued', 'pending'].includes(task.status) && !task.claimed_by;
+    if (view === 'in_progress') return task.status === 'in_progress' && Boolean(task.claimed_by);
+    if (view === 'blocked') return ['blocked', 'paused', 'failed', 'quarantined'].includes(task.status);
+    if (view === 'done') return task.status === 'completed';
+    if (view === 'dropped') return task.status === 'cancelled';
+    return true;
+  }), [sortedTasks, view]);
+
+  const queued = tasks.filter(t => ['queued', 'pending'].includes(t.status) && !t.claimed_by).length;
+  const inProgress = tasks.filter(t => t.status === 'in_progress' && Boolean(t.claimed_by)).length;
   const completed = tasks.filter(t => t.status === 'completed').length;
 
   return (
-    <DatabaseView
+    <div className="h-full min-h-0 flex flex-col bg-slate-900">
+      <div className="shrink-0 flex gap-1 px-4 pt-3 border-b border-slate-800">
+        {TASK_VIEWS.map(item => (
+          <button key={item.id} onClick={() => setView(item.id)} className={`px-3 py-2 text-xs rounded-t-lg transition-colors ${view === item.id ? 'bg-slate-800 text-cyan-300' : 'text-slate-500 hover:text-slate-300'}`}>
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex-1 min-h-0">
+      <DatabaseView
       title="Tasks"
       icon={<ListTodo className="w-4 h-4 text-slate-400" />}
       columns={columns}
-      data={sortedTasks}
+      data={visibleTasks}
       loading={loading}
       getRowId={(row) => row.id}
       searchFilter={(row, q) => row.title.toLowerCase().includes(q.toLowerCase())}
@@ -196,6 +228,8 @@ export default function GTDTasks() {
           <span>{completed} 已完成</span>
         </>
       }
-    />
+      />
+      </div>
+    </div>
   );
 }

@@ -2,14 +2,16 @@
  * notion-verdict-ingest.js — WS3 裁决窄口回读：从 Notion Inbox 消费主理人裁决
  *
  * FR-2：白名单字段仅三个（放行/不放行/批注），非白名单返回 skipped
- * - 放行=true → PATCH tasks status=completed + INSERT decisions + consumed_at 幂等锚
- * - 不放行=true → PATCH tasks status=cancelled + consumed_at 更新
- * - 批注非空（放行=false，不放行=false）→ UPDATE tasks description，不改 status
+ * - 放行=true → 登记 start_requested，由 Brain 决定何时创建真实 attempt
+ * - 不放行=true → 登记 cancel_requested，由 Brain 状态机校验
+ * - 批注非空 → 登记 annotate_requested
  * - 非白名单字段 → fail-closed，返回 {skipped:true}
  *
  * 幂等：检查 captures.consumed_at NOT NULL → already_consumed
  * 凭据缺失：NOTION_INBOX_TOKEN / NOTION_INBOX_DB_ID 未配置 → not_configured
- */
+*/
+
+import { recordProjectionCommand } from './projection/commands.js';
 
 /** 白名单字段名列表（checkbox 类型） */
 const VERDICT_CHECKBOX_FIELDS = ['放行', '不放行', '需拍板'];
@@ -17,6 +19,12 @@ const VERDICT_CHECKBOX_FIELDS = ['放行', '不放行', '需拍板'];
 const VERDICT_ANNOTATION_FIELD = '批注';
 /** 任务ID字段名 */
 const VERDICT_TASK_ID_FIELD = '任务ID';
+const VERDICT_INTERVAL_MS = 5 * 60 * 1000;
+let lastVerdictRunAt = 0;
+
+export function __resetNotionVerdictIngestForTest() {
+  lastVerdictRunAt = 0;
+}
 
 /**
  * 获取裁决回读凭据配置（从 process.env）
@@ -90,7 +98,7 @@ export async function consumeVerdictFromNotion(pool, page) {
 
   // INV-4: 幂等检查——查 captures 表 consumed_at
   const capResult = await pool.query(
-    `SELECT id, consumed_at, task_id FROM captures WHERE notion_page_id = $1 LIMIT 1`,
+    `SELECT id, consumed_at, ref_task_id FROM captures WHERE notion_page_id = $1 LIMIT 1`,
     [page.id]
   );
 
@@ -98,7 +106,7 @@ export async function consumeVerdictFromNotion(pool, page) {
   let capture = capResult.rows[0] ?? null;
   if (!capture && taskId) {
     const capByTask = await pool.query(
-      `SELECT id, consumed_at, task_id FROM captures WHERE task_id = $1 LIMIT 1`,
+      `SELECT id, consumed_at, ref_task_id FROM captures WHERE ref_task_id = $1 LIMIT 1`,
       [taskId]
     );
     capture = capByTask.rows[0] ?? null;
@@ -108,7 +116,7 @@ export async function consumeVerdictFromNotion(pool, page) {
     return { skipped: true, reason: 'already_consumed', action: null, task_id: taskId || null };
   }
 
-  const resolvedTaskId = taskId || capture?.task_id || null;
+  const resolvedTaskId = taskId || capture?.ref_task_id || null;
 
   // 提取批注内容
   const annotation = extractRichText(properties, VERDICT_ANNOTATION_FIELD);
@@ -116,47 +124,24 @@ export async function consumeVerdictFromNotion(pool, page) {
   let action = null;
 
   if (approvedValue === true) {
-    // 放行路径：PATCH tasks status=completed + INSERT decisions
-    action = 'approved';
-
-    if (resolvedTaskId) {
-      // 写 decisions 表
-      await pool.query(
-        `INSERT INTO decisions (task_id, decision_type, decided_at, source, description)
-         VALUES ($1, 'approved', NOW(), 'notion_verdict', '主理人通过 Notion Inbox 裁决放行')
-         ON CONFLICT DO NOTHING`,
-        [resolvedTaskId]
-      );
-
-      // 更新 tasks status
-      await pool.query(
-        `UPDATE tasks SET status = 'completed', updated_at = NOW() WHERE id = $1`,
-        [resolvedTaskId]
-      );
-    }
+    action = 'start_requested';
   } else if (rejectedValue === true) {
-    // 不放行路径：PATCH tasks status=cancelled
-    action = 'rejected';
-
-    if (resolvedTaskId) {
-      await pool.query(
-        `UPDATE tasks SET status = 'cancelled', updated_at = NOW() WHERE id = $1`,
-        [resolvedTaskId]
-      );
-    }
+    action = 'cancel_requested';
   } else if (annotation) {
-    // 批注路径：追加 description，不改 status
-    action = 'annotated';
-
-    if (resolvedTaskId) {
-      await pool.query(
-        `UPDATE tasks SET description = COALESCE(description, '') || $1, updated_at = NOW() WHERE id = $2`,
-        [`\n[Notion批注] ${annotation}`, resolvedTaskId]
-      );
-    }
+    action = 'annotate_requested';
   } else {
     // 没有任何有效裁决
     return { skipped: true, reason: 'no_verdict_fields', action: null, task_id: resolvedTaskId };
+  }
+
+  if (resolvedTaskId) {
+    await recordProjectionCommand(pool, {
+      target: 'notion',
+      externalId: page.id,
+      entityId: resolvedTaskId,
+      commandType: action,
+      payload: annotation ? { annotation } : {},
+    });
   }
 
   // 更新 captures.consumed_at 幂等锚
@@ -183,6 +168,11 @@ export async function consumeVerdictFromNotion(pool, page) {
  * @returns {Promise<object>} 汇总结果 {consumed, skipped_pages, errors}
  */
 export async function runNotionVerdictIngest(pool) {
+  const now = Date.now();
+  if (now - lastVerdictRunAt < VERDICT_INTERVAL_MS) {
+    return { skipped: true, reason: 'interval_gate', consumed: 0, skipped_pages: 0, errors: 0 };
+  }
+  lastVerdictRunAt = now;
   const { token, dbId } = getVerdictIngestConfig();
   if (!token || !dbId) {
     return { skipped: true, reason: 'not_configured', consumed: 0, skipped_pages: 0, errors: 0 };
