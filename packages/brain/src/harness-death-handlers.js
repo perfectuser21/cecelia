@@ -11,6 +11,8 @@
  *   shouldSkipDeferredTask(task) → boolean
  */
 
+import { markHarnessTerminal } from './lib/harness-failure-class.js';
+
 /**
  * BEHAVIOR-1/2: auth 处置器
  * - auth_fail_count < 2 → 换号重点火
@@ -35,12 +37,13 @@ export async function handleAuth(task, {
 
   if (authFailCount >= 2) {
     // blocked + Bark
-    await pool.query(
-      `UPDATE tasks SET status='blocked', completed_at=NOW(),
-         result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'auth_failure', 'failure_detail', $2)
-       WHERE id=$1`,
-      [task.id, `连续 ${authFailCount + 1} 次 auth 失败，已标 blocked`]
-    );
+    // 经 fail-closed 共享 helper 收口：强制写 result.failure_class（决策 e8f6134f 交付物2）。
+    await markHarnessTerminal(pool, {
+      taskId: task.id,
+      status: 'blocked',
+      failureClass: 'auth_failure',
+      failureDetail: `连续 ${authFailCount + 1} 次 auth 失败，已标 blocked`,
+    });
 
     const barkMsg = `[Auth Blocked] task=${task.id} initiative=${task.id} 连续 ${authFailCount + 1} 次 auth 失败，已标 blocked。手册: docs/runbooks/codex-login.md`;
     if (barkFn) {

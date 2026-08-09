@@ -15,7 +15,7 @@ RESP=$(curl -s "$API/harness/failure-stats?days=7")
 CODE=$(curl -s -o /dev/null -w "%{http_code}" "$API/harness/failure-stats?days=7")
 [[ "$CODE" == "200" ]] && ok "GET /failure-stats?days=7 → 200" || fail "GET /failure-stats?days=7 → 期望 200，得 $CODE"
 echo "$RESP" | jq -e '.failure_rate | type == "number"' >/dev/null 2>&1 \
-  && ok "failure_rate 为 number" || fail "failure_rate 非 number（resp=$RESP）"
+  && ok "failure_rate 为 number" || fail "failure_rate 非 number（resp=${RESP}）"
 echo "$RESP" | jq -e '.by_class | type == "object"' >/dev/null 2>&1 \
   && ok "by_class 为 object" || fail "by_class 非 object"
 echo "$RESP" | jq -e 'has("days") and has("window_start") and has("total_terminal") and has("total_failed")' >/dev/null 2>&1 \
