@@ -147,11 +147,16 @@ export function createKernelHandlers(deps) {
         return { status: 'BLOCKED', detail: `review preview failed: ${preview?.stderr ?? preview?.status}` };
       }
       const previewUrl = `${deps.previewOrigin ?? 'http://38.23.47.81'}:${port}`;
+      // run_id/pr_head_sha 让通知能带一条可直接执行的审批 curl 模板（案卷 task
+      // 31b93fd4）——不传 review_request_hop：该 hop 在这条 decision-log 行 append
+      // 之前还不存在，approve 端点已改为按 run_id+head_sha 自动解析最新待审请求。
       await deps.notifyReview({
         task_id: ctx.taskId,
         title: ctx.observed.task?.title,
         pr_url: url,
         preview_url: previewUrl,
+        run_id: ctx.runId,
+        pr_head_sha: ctx.observed.pr?.head_sha ?? null,
       });
       return { status: 'DONE', detail: `human review requested: ${previewUrl}` };
     },

@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // 评审台通知只给预览链接，操作员批准/驳回时手动 psql 直写 verdict:human_review
 // 协议行（kernel task aae92bfc/31b93fd4 案卷）——通知里没有 run_id/task_id/
-// pr_head_sha/review_request_hop，approve 端点又要求这些字段，操作员只能
-// 现挖 DB。通知必须自带一条可直接用的 curl 审批模板（不含 approver token，
-// 那是敏感凭据，不该进推送历史）。
+// pr_head_sha，approve 端点又要求这些字段，操作员只能现挖 DB。通知必须自带
+// 一条可直接用的 curl 审批模板（不含 approver token，那是敏感凭据，不该进
+// 推送历史；也不含 review_request_hop——approve 端点已改按 head_sha 自动解析）。
 process.env.BARK_TOKEN = 'test-bark-token';
 
 const mockFetch = vi.fn().mockResolvedValue({ ok: true, text: async () => '{}' });
@@ -23,7 +23,6 @@ describe('notifyHarnessReviewPending — 评审通知带可执行审批模板', 
       preview_url: 'http://38.23.47.81:5300',
       run_id: '61def0bd-18ff-4814-83c8-ea462d0bbf72',
       pr_head_sha: '7fd74f36de8227e72c0a3c9f827d0d683d8871a0',
-      review_request_hop: 33,
     });
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -31,10 +30,12 @@ describe('notifyHarnessReviewPending — 评审通知带可执行审批模板', 
     const decoded = decodeURIComponent(url);
     expect(decoded).toContain('/kernel-reviews/61def0bd-18ff-4814-83c8-ea462d0bbf72/approve');
     expect(decoded).toContain('7fd74f36de8227e72c0a3c9f827d0d683d8871a0');
-    expect(decoded).toContain('"review_request_hop":33');
+    expect(decoded).not.toContain('review_request_hop');
     expect(decoded).toContain('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
-    expect(decoded).not.toContain('x-approver-token');
-    expect(decoded).not.toMatch(/token["\s:=]+[A-Za-z0-9]{20,}/);
+    // 模板可以提及 header 名（x-approver-token 不是秘密），但绝不能带实际 token 值——
+    // 那是敏感凭据，不该进推送历史（可能同步到手机/云备份）。
+    expect(decoded).not.toMatch(/x-approver-token:\s*[A-Za-z0-9]{20,}/i);
+    expect(decoded).toContain('HARNESS_REVIEW_APPROVER_TOKEN');
   });
 
   it('info 缺审批坐标时（旧调用点）不崩，退回纯预览链接文案', async () => {

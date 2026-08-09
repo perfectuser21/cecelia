@@ -8,7 +8,10 @@ import { authenticateApprover } from './harness-pending-reviews.js';
 const router = Router();
 const approvalRateLimit = rateLimit({
   windowMs: 60_000,
-  limit: 10,
+  // 30（原 10）：approve/reject 共享同一限流桶，人工操作员重试几次（stale_sha/
+  // wrong hop 等）很容易在 60s 内摸到旧上限；token 鉴权才是主防线，限流只是
+  // 防暴力枚举 token 的纵深，30/min 对该威胁模型无实质削弱。
+  limit: 30,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   identifier: 'kernel-reviews-approval',
@@ -49,10 +52,14 @@ async function handleReviewDecision(req, res, { approved }) {
   const requestedSha = typeof req.body?.pr_head_sha === 'string'
     ? req.body.pr_head_sha.trim()
     : '';
-  const reviewRequestHop = Number(req.body?.review_request_hop);
-  if (!taskId || !requestedSha || !Number.isInteger(reviewRequestHop) || reviewRequestHop < 1) {
+  // review_request_hop 可省略（案卷 task 31b93fd4）：Bark 审批通知在 decision-log
+  // append 之前触发，那一刻真正的 hop 号还没分配，硬要求调用方带 hop 等于逼通知模板
+  // 猜一个未来才确定的数。省略时按 run_id+head_sha 反查最新一条待审请求（下方 SQL 二选一）。
+  const hopProvided = req.body?.review_request_hop !== undefined;
+  const reviewRequestHop = hopProvided ? Number(req.body.review_request_hop) : null;
+  if (!taskId || !requestedSha || (hopProvided && (!Number.isInteger(reviewRequestHop) || reviewRequestHop < 1))) {
     return res.status(400).json({
-      error: 'task_id, pr_head_sha and positive review_request_hop are required',
+      error: 'task_id, pr_head_sha are required; review_request_hop must be a positive integer if provided',
     });
   }
 
@@ -79,21 +86,33 @@ async function handleReviewDecision(req, res, { approved }) {
       });
     }
 
-    const requestResult = await dbPool.query(
-      `SELECT hop, observed, detail, created_at
-         FROM orchestrator_decision_log
-        WHERE run_id=$1::uuid
-          AND hop=$2
-          AND action='effect:human_review_requested'
-        LIMIT 1`,
-      [runId, reviewRequestHop],
-    );
+    const requestResult = hopProvided
+      ? await dbPool.query(
+        `SELECT hop, observed, detail, created_at
+           FROM orchestrator_decision_log
+          WHERE run_id=$1::uuid
+            AND hop=$2
+            AND action='effect:human_review_requested'
+          LIMIT 1`,
+        [runId, reviewRequestHop],
+      )
+      : await dbPool.query(
+        `SELECT hop, observed, detail, created_at
+           FROM orchestrator_decision_log
+          WHERE run_id=$1::uuid
+            AND action='effect:human_review_requested'
+            AND observed->'pr'->>'head_sha'=$2
+          ORDER BY hop DESC
+          LIMIT 1`,
+        [runId, currentSha],
+      );
     const requestRow = requestResult.rows[0];
     const requestObserved = asJson(requestRow?.observed);
     const requestDetail = asJson(requestRow?.detail);
     if (!requestRow || requestObserved.pr?.head_sha !== currentSha) {
       return res.status(409).json({ error: 'human_review_request_not_found_for_sha' });
     }
+    const resolvedReviewRequestHop = hopProvided ? reviewRequestHop : Number(requestRow.hop);
     const reviewClass = reviewClassForReason(requestDetail.review_reason);
 
     const transactional = typeof dbPool.connect === 'function';
@@ -116,7 +135,7 @@ async function handleReviewDecision(req, res, { approved }) {
             AND detail->>'pr_head_sha'=$2
             AND detail->>'review_request_hop'=$3
           LIMIT 1`,
-        [runId, currentSha, String(reviewRequestHop)],
+        [runId, currentSha, String(resolvedReviewRequestHop)],
       );
       if (duplicate.rowCount > 0) {
         if (transactionOpen) {
@@ -150,7 +169,7 @@ async function handleReviewDecision(req, res, { approved }) {
       const decidedAt = new Date().toISOString();
       const observed = {
         pr: { head_sha: currentSha },
-        review_request_hop: reviewRequestHop,
+        review_request_hop: resolvedReviewRequestHop,
       };
       const detail = approved
         ? {
@@ -158,7 +177,7 @@ async function handleReviewDecision(req, res, { approved }) {
             approved: true,
             review_class: reviewClass,
             pr_head_sha: currentSha,
-            review_request_hop: reviewRequestHop,
+            review_request_hop: resolvedReviewRequestHop,
             approved_by: auth.approvedBy,
             approved_at: decidedAt,
           }
@@ -168,7 +187,7 @@ async function handleReviewDecision(req, res, { approved }) {
             rejected: true,
             review_class: reviewClass,
             pr_head_sha: currentSha,
-            review_request_hop: reviewRequestHop,
+            review_request_hop: resolvedReviewRequestHop,
             rejected_by: auth.approvedBy,
             rejected_at: decidedAt,
           };
@@ -194,7 +213,7 @@ async function handleReviewDecision(req, res, { approved }) {
         run_id: runId,
         task_id: taskId,
         pr_head_sha: currentSha,
-        review_request_hop: reviewRequestHop,
+        review_request_hop: resolvedReviewRequestHop,
         review_class: reviewClass,
       };
       if (approved) {
