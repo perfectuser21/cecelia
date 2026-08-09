@@ -1,0 +1,36 @@
+{
+  "initiative_id": "9b641bd2-9451-4255-8030-f4c3a22cecd9",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅涉 packages/brain/src/orchestrator/ 纯后端状态机 + DB 列，无 UI/agent 协议/engine 路径",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "kernel 真读 gear：derive 三档分叉 + initiative_runs.gear 持久化 + 非法 gear kernel 侧 fail-closed",
+      "scope": "migration 395 给 initiative_runs 增 nullable gear 列；kernel-run-store.createKernelRun INSERT 增写 gear；harness-skill-relay 建 run 时 deriveGear(task) 读档传入；ground-truth.collectGroundTruth 把 run.gear 注入 observed.gear（可选字段，缺省 default，不进 REQUIRED_FIELDS）；derive.js 在 gear 无关守卫后、planning 门前插入 gear 分叉（hotfix→跳 planning/gan 直进 deriveTask；default/segmented→现行 planning；非法→mark_failed invalid_gear）；不建 param 档、不动入口强制、不改旧 relay prompt/env、不改 controller SKILL",
+      "dod": [
+        "[BEHAVIOR] derive(hotfix,初始态).action==='spawn:generator' 且 ≠ spawn:planner（B-01/B-02）",
+        "[BEHAVIOR] derive(default/undefined,初始态).action==='spawn:planner' 零回归，derive.test.js 全套绿（INV-1/B-03）",
+        "[BEHAVIOR] derive(segmented,初始态).action==='spawn:planner'（B-04）",
+        "[BEHAVIOR] derive(turbo).action==='mark_failed' reason='invalid_gear' fail-closed（INV-2/B-05）",
+        "[BEHAVIOR] 真 PG：initiative_runs.gear round-trip + collectGroundTruth observed.gear 注入（B-06）",
+        "[BEHAVIOR] 真 PG：hotfix run harness_attempts planner/proposer/reviewer=0 且 generator≥1（B-07）",
+        "[ARTIFACT] migration 395_initiative_runs_gear.sql（+ rollback/395_*.down.sql）",
+        "[ARTIFACT] kernel-gear-dispatch.pg.integration.test.js 登记进 POSTGRES_INTEGRATION_TESTS"
+      ],
+      "files": [
+        "packages/brain/migrations/395_initiative_runs_gear.sql",
+        "packages/brain/migrations/rollback/395_initiative_runs_gear.down.sql",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/orchestrator/__tests__/derive.test.js",
+        "packages/brain/src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js",
+        "packages/brain/vitest.config.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}

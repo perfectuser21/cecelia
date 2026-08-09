@@ -112,6 +112,9 @@ describe('spawnSkillRelaySession', () => {
       host: 'kernel-v1',
       deadlineHours: 8,
       createdSource: 'kernel_dispatch',
+      // sprint 08091640：kernel 真读 gear——建 run 时 deriveGear(task) 读档随入参持久化。
+      // TASK.payload 无 gear ⇒ 'default'（存量任务零影响，与旧行为等价）。
+      gear: 'default',
     });
     expect(deps.launchKernel).toHaveBeenCalledWith(expect.objectContaining({
       taskId: TASK.id,

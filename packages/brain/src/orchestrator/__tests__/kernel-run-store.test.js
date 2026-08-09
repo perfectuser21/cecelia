@@ -228,6 +228,7 @@ describe('Kernel run store creation authority', () => {
     expect(insert.sql).toContain('created_source');
     expect(insert.sql).toContain('record_trust_status');
     expect(insert.sql).toContain('commander_mode');
+    expect(insert.sql).toContain('gear');
     expect(insert.params).toEqual([
       INITIATIVE_ID,
       'planning',
@@ -239,6 +240,8 @@ describe('Kernel run store creation authority', () => {
       'kernel_dispatch',
       'trusted',
       'kernel-only',
+      // sprint 08091640：gear 入参缺省写 NULL（= default 语义，存量行零变化）。
+      null,
     ]);
     expect(harness.order).toEqual([
       'BEGIN',
