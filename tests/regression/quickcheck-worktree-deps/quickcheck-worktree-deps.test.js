@@ -49,4 +49,12 @@ describe('QuickCheck worktree dependency linking', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe(join(packageModules, '.bin', 'vitest'));
   });
+
+  it('never classifies a non-zero Vitest exit as passing', () => {
+    const result = spawnSync('bash', ['-c', 'source "$1"; classify_vitest_exit 1', '_', helper], {
+      encoding: 'utf8',
+    });
+
+    expect(result.status, result.stderr).toBe(1);
+  });
 });

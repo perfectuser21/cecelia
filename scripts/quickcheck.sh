@@ -121,14 +121,11 @@ for PKG in packages/engine packages/brain apps/api apps/dashboard; do
       VITEST_OUT=$(cd "$PKG" && unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE && PATH="$PKG_NM/.bin:$ROOT_NM/.bin:$PATH" NODE_OPTIONS='--max-old-space-size=2048' "$VITEST_BIN" run 2>&1)
       VITEST_EXIT=$?
       echo "$VITEST_OUT"
-      if [[ $VITEST_EXIT -eq 0 ]]; then
+      if classify_vitest_exit "$VITEST_EXIT"; then
         echo -e "  ${GREEN}✅ 通过${RESET}"
-      elif echo "$VITEST_OUT" | grep -q " FAIL "; then
-        echo -e "  ${RED}❌ 失败 — 修复后重新 push${RESET}"
-        PASS=false
       else
-        # Worker OOM 崩溃但无测试失败 — 预存在问题，不阻塞
-        echo -e "  ${YELLOW}⚠️  Worker 异常退出（OOM？），但无测试失败 — 继续${RESET}"
+        echo -e "  ${RED}❌ 失败（exit=${VITEST_EXIT}）— 修复后重新 push${RESET}"
+        PASS=false
       fi
     fi
     echo ""

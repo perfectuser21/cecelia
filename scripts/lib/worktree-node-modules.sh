@@ -30,3 +30,8 @@ resolve_package_vitest() {
     return 1
   fi
 }
+
+classify_vitest_exit() {
+  local exit_code="$1"
+  [[ "$exit_code" -eq 0 ]]
+}
