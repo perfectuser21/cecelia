@@ -40,7 +40,7 @@ jobs:
   staging_deploy_and_smoke:
     name: Deploy to Staging + Smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -53,6 +53,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: 等待 Production 同 SHA 就绪
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="$GITHUB_SHA" MAX_WAIT_SECONDS=900 POLL_INTERVAL_SECONDS=10 \
+            bash scripts/wait-for-production-sha.sh
 
       - name: 触发 Staging 部署（staging:true，绝不 promote）
         env:
