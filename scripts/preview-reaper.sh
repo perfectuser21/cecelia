@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # preview-reaper.sh — 预览环境三源对账器
 #
-# 三源并集：PREVIEW_BASE_DIR 目录 / cecelia_preview_* DB / preview_environments 表（非 inactive）
+# 四源并集：PREVIEW_BASE_DIR 目录 / 独立 npm cache / cecelia_preview_* DB /
+# preview_environments 表（非 inactive）
 # 对每个 PR 查 gh pr view --json state；MERGED/CLOSED → 回收；状态查询失败 → 跳过（保守）
 #
 # 用法：
@@ -54,13 +55,23 @@ if [ -d "$PREVIEW_BASE_DIR" ]; then
   done
 fi
 
-# 源 B：cecelia_preview_* 数据库
+# 源 B：每个预览独立的 npm cache（.npm-cache-preview-<PR>）。预览 worktree 或
+# 数据库已被其他路径清掉时，cache 仍必须能单独进入对账，否则会永久泄漏。
+if [ -d "$PREVIEW_BASE_DIR" ]; then
+  for d in "$PREVIEW_BASE_DIR"/.npm-cache-preview-*/; do
+    [ -d "$d" ] || continue
+    pr=$(basename "$d" | sed 's/^\.npm-cache-preview-//')
+    [[ "$pr" =~ ^[0-9]+$ ]] && echo "$pr" >>"$PR_LIST_FILE"
+  done
+fi
+
+# 源 C：cecelia_preview_* 数据库
 psql -h "$DB_HOST" -U "$DB_USER" -t -A \
   -c "SELECT datname FROM pg_database WHERE datname LIKE 'cecelia_preview_%';" 2>/dev/null \
   | grep -E '^cecelia_preview_[0-9]+$' \
   | sed 's/^cecelia_preview_//' >>"$PR_LIST_FILE" || true
 
-# 源 C：preview_environments 表（非 inactive）
+# 源 D：preview_environments 表（非 inactive）
 psql -h "$DB_HOST" -U "$DB_USER" -d cecelia -t -A \
   -c "SELECT DISTINCT pr_number FROM preview_environments WHERE status != 'inactive';" 2>/dev/null \
   | grep -E '^[0-9]+$' >>"$PR_LIST_FILE" || true
@@ -150,7 +161,14 @@ for pr in $UNIQUE_PRS; do
     log "  ✓ worktree 目录 ${WORK_DIR} 已删除"
   fi
 
-  # 3e. 标记表为 inactive
+  # 3e. 清理预览专属 npm cache（不依赖 worktree 是否仍存在）
+  NPM_CACHE_DIR="${PREVIEW_BASE_DIR}/.npm-cache-preview-${pr}"
+  if [ -d "$NPM_CACHE_DIR" ]; then
+    rm -rf -- "$NPM_CACHE_DIR"
+    log "  ✓ npm cache ${NPM_CACHE_DIR} 已删除"
+  fi
+
+  # 3f. 标记表为 inactive
   psql -h "$DB_HOST" -U "$DB_USER" -d cecelia \
     -c "UPDATE preview_environments SET status='inactive', updated_at=NOW() WHERE pr_number=${pr};" \
     2>/dev/null && log "  ✓ 表状态已更新为 inactive" || \
