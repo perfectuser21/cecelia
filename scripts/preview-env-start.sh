@@ -137,6 +137,10 @@ git -C "$REPO_ROOT" worktree add "$WORK_DIR" "origin/${BRANCH_NAME}" 2>>"$LOG_FI
   log "ERROR: git worktree add 失败"
   exit 1
 }
+PREVIEW_GIT_SHA=$(git -C "$WORK_DIR" rev-parse HEAD 2>>"$LOG_FILE") || {
+  log "ERROR: 无法读取预览 worktree SHA"
+  exit 1
+}
 log "  ✓ worktree 创建完成: ${WORK_DIR}"
 
 # ── 2. 构建前端 ───────────────────────────────────────────────────────────────
@@ -278,6 +282,7 @@ nohup env \
   SKIP_MIGRATIONS=false \
   CECELIA_TICK_ENABLED=false \
   GITHUB_TOKEN="${GITHUB_TOKEN:-}" \
+  GIT_SHA="$PREVIEW_GIT_SHA" \
   node "${BRAIN_SERVER}" \
   >> "$LOG_FILE" 2>&1 &
 

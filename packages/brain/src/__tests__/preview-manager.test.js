@@ -135,6 +135,12 @@ describe('live-row status transitions', () => {
       /UPDATE preview_environments SET status='active'[\s\S]*WHERE pr_number=\$\{PR_NUMBER\} AND status<>'inactive'/,
     );
   });
+
+  it('preview-env-start.sh stamps health with the checked-out preview SHA', () => {
+    const script = readFileSync(resolve(process.cwd(), '../../scripts/preview-env-start.sh'), 'utf8');
+    expect(script).toMatch(/PREVIEW_GIT_SHA=.*git -C "\$WORK_DIR" rev-parse HEAD/);
+    expect(script).toMatch(/GIT_SHA="\$PREVIEW_GIT_SHA"/);
+  });
 });
 
 describe('getPreview', () => {
