@@ -1,8 +1,10 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { bootstrapNotionDatabases, configureNotionProjection } from '../projection/notion.js';
 
 const router = Router();
+router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
 
 router.get('/projections/status', async (_req, res) => {
   try {

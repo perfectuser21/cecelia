@@ -25,4 +25,27 @@ describe('projections routes', () => {
       projection: { pending: 2, dead: 0 },
     });
   });
+
+  it('对数据库投影端点统一限流，避免无界查询压垮 Brain', async () => {
+    mocks.query.mockResolvedValue({ rows: [] });
+    const app = express();
+    app.use('/api/brain', projectionsRouter);
+    const server = await new Promise((resolve) => {
+      const listeningServer = app.listen(0, () => resolve(listeningServer));
+    });
+
+    let response;
+    try {
+      const client = request(server);
+      for (let requestIndex = 0; requestIndex < 301; requestIndex += 1) {
+        response = await client.get('/api/brain/projections/status');
+      }
+    } finally {
+      await new Promise((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+
+    expect(response.status).toBe(429);
+  });
 });

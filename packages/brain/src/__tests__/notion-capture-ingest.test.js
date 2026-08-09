@@ -132,6 +132,21 @@ describe('getNotionInboxConfig', () => {
 });
 
 describe('notionRequest retry', () => {
+  it('拒绝可能脱离 Notion API origin 的协议相对路径，且不发出请求', async () => {
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true }),
+    });
+    try {
+      await expect(notionRequest('token', '//attacker.example/path')).rejects.toThrow('Invalid Notion API path');
+      expect(global.fetch).not.toHaveBeenCalled();
+    } finally {
+      global.fetch = origFetch;
+    }
+  });
+
   it('429 按 Retry-After 重试后成功，避免 outbox 因限流批量失败', async () => {
     const origFetch = global.fetch;
     global.fetch = vi.fn()

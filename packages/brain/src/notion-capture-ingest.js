@@ -19,6 +19,7 @@ const NOTION_VERSION = '2022-06-28';
 const INTERVAL_MS = 5 * 60 * 1000;
 // 首次运行回溯窗口（防止冷启动全量拉历史记录）
 const COLD_START_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const NOTION_API_PATH = /^\/(?:pages(?:\/[A-Za-z0-9_-]+)?|databases(?:\/[A-Za-z0-9_-]+(?:\/query)?)?)$/;
 
 let lastRunAt = 0;
 let lastSyncAt = null;
@@ -36,7 +37,11 @@ export function getNotionInboxConfig() {
 }
 
 export async function notionRequest(token, path, method = 'GET', body = null) {
-  const url = `${NOTION_API_BASE}${path}`;
+  if (typeof path !== 'string' || !NOTION_API_PATH.test(path)) {
+    throw new Error('Invalid Notion API path');
+  }
+  const url = new URL(NOTION_API_BASE);
+  url.pathname = `${url.pathname}${path}`;
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const opts = {
       method,
@@ -51,7 +56,7 @@ export async function notionRequest(token, path, method = 'GET', body = null) {
 
     let res;
     try {
-      res = await fetch(url, opts);
+      res = await fetch(url.href, opts);
     } catch (error) {
       if (attempt === 3) throw error;
       await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));

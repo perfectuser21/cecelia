@@ -221,7 +221,10 @@ export async function blockTask(taskId, { reason, detail = null, until = null } 
     console.log(`[task-updater] Task ${taskId} blocked: reason=${reason}, until=${blockedUntil || 'manual'}`);
     return { success: true, task };
   } catch (err) {
-    console.error(`[task-updater] Failed to block task ${taskId}:`, err.message);
+    console.error('[task-updater] Failed to block task', {
+      task_id: taskId,
+      error: err.message,
+    });
     return { success: false, error: err.message };
   }
 }
