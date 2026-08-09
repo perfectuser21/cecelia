@@ -82,6 +82,34 @@ describe('runNotionPushSync', () => {
   });
 });
 
+describe('legacy Notion push scheduler', () => {
+  it('默认不创建旧 Workspace 写入定时器，只有显式 true 才启用', async () => {
+    const module = await import('../notion-push-sync.js');
+    expect(module.scheduleLegacyNotionPush).toBeTypeOf('function');
+    const pool = { query: mockQuery };
+    const setIntervalFn = vi.fn(() => ({ unref: vi.fn() }));
+    const run = vi.fn().mockResolvedValue(undefined);
+
+    const disabled = module.scheduleLegacyNotionPush(pool, {
+      env: {}, setIntervalFn, run, logger: { log: vi.fn(), warn: vi.fn() },
+    });
+    expect(disabled).toEqual({ enabled: false, timer: null });
+    expect(setIntervalFn).not.toHaveBeenCalled();
+
+    const enabled = module.scheduleLegacyNotionPush(pool, {
+      env: { NOTION_LEGACY_PUSH_ENABLED: 'true' },
+      setIntervalFn,
+      run,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+    expect(enabled.enabled).toBe(true);
+    expect(setIntervalFn).toHaveBeenCalledTimes(1);
+    const scheduled = setIntervalFn.mock.calls[0][0];
+    await scheduled();
+    expect(run).toHaveBeenCalledWith(pool);
+  });
+});
+
 describe('runNotionPushSync — new push functions', () => {
   beforeEach(() => {
     mockQuery.mockReset();
