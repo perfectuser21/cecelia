@@ -97,10 +97,22 @@ function createApprovalDatabase() {
         };
       }
       if (normalized.includes("action='effect:human_review_requested'")) {
-        const row = state.decisionLog.find(
-          (candidate) => candidate.hop === Number(params[1])
-            && candidate.action === 'effect:human_review_requested',
-        );
+        // 两种调用形状：显式 hop（hop=$2 精确匹配）或省略 hop（按 head_sha 取最新一条,
+        // 案卷 task 31b93fd4——Bark 通知不再要求调用方预知未来才会被分配的 hop 号）。
+        const byLatestSha = normalized.includes('ORDER BY hop DESC');
+        let row;
+        if (byLatestSha) {
+          const candidates = state.decisionLog
+            .filter((c) => c.action === 'effect:human_review_requested'
+              && c.observed?.pr?.head_sha === params[1])
+            .sort((a, b) => b.hop - a.hop);
+          row = candidates[0];
+        } else {
+          row = state.decisionLog.find(
+            (candidate) => candidate.hop === Number(params[1])
+              && candidate.action === 'effect:human_review_requested',
+          );
+        }
         return {
           rows: row ? [row] : [],
           rowCount: row ? 1 : 0,
@@ -133,14 +145,15 @@ function approvalRequest(app, {
   sha = HEAD_SHA,
   reviewRequestHop = 3,
 } = {}) {
+  const body = {
+    task_id: TASK_ID,
+    pr_head_sha: sha,
+    approved_by: 'review-owner',
+  };
+  if (reviewRequestHop !== undefined) body.review_request_hop = reviewRequestHop;
   const call = request(app)
     .post(`/kernel-reviews/${RUN_ID}/approve`)
-    .send({
-      task_id: TASK_ID,
-      pr_head_sha: sha,
-      review_request_hop: reviewRequestHop,
-      approved_by: 'review-owner',
-    });
+    .send(body);
   if (token !== null) call.set('x-approver-token', token);
   return call;
 }
@@ -207,6 +220,30 @@ describe('harness-kernel-approvals mounted Router behavior', () => {
     });
     expect(state.transactionCommands).toEqual(['BEGIN', 'COMMIT']);
     expect(state.released).toBe(true);
+  });
+
+  it('省略 review_request_hop 时按 pr_head_sha 自动解析出最新一条待审请求（案卷 task 31b93fd4）', async () => {
+    // Bark 通知触发点(kernel-handlers.js wait:human_review)在 decision-log append 之前
+    // 就要发通知，那一刻真正的 hop 号还没分配——要求调用方带 hop 会逼着通知模板猜一个
+    // 未来才确定的数。改为可省略，服务端按 run_id+head_sha 反查最新一条待审请求。
+    process.env.HARNESS_REVIEW_APPROVER_TOKEN = APPROVER_TOKEN;
+    const { database, state } = createApprovalDatabase();
+
+    const response = await approvalRequest(createApp(database, state), { reviewRequestHop: undefined });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      ok: true,
+      run_id: RUN_ID,
+      task_id: TASK_ID,
+      pr_head_sha: HEAD_SHA,
+      review_request_hop: 3,
+      approved_by: 'review-owner',
+    });
+    expect(state.insertedDetail).toMatchObject({
+      verdict: 'APPROVED',
+      review_request_hop: 3,
+    });
   });
 
   it('adds the open human-review wait back to deadline in the approval transaction', async () => {
