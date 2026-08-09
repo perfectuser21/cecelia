@@ -8,35 +8,31 @@
  *   3. 树状层级查询 /api/brain/okr/tree
  *   4. KR 进度重算 recalculate-progress
  *
- * 依赖：Brain 服务运行于 localhost:5221，PostgreSQL cecelia 数据库可访问
+ * 依赖：PostgreSQL cecelia_test 数据库可访问；路由通过进程内 Express 挂载，禁止误打生产 Brain。
  */
-import { describe as _describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import express from 'express';
+import request from 'supertest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
+import okrHierarchyRoutes from '../../routes/okr-hierarchy.js';
 
-const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
-const OKR_BASE = `${BRAIN_URL}/api/brain/okr`;
+const app = express();
+app.use(express.json());
+app.use('/api/brain/okr', okrHierarchyRoutes);
 
 // 直连 DB 用于 Vision 创建（顶层节点）和 afterAll 清理
 const testPool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
 
 async function post(path, body) {
-  const res = await fetch(`${OKR_BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  return { status: res.status, body: await res.json() };
+  const res = await request(app).post(`/api/brain/okr${path}`).send(body);
+  return { status: res.status, body: res.body };
 }
 
 async function get(path) {
-  const res = await fetch(`${OKR_BASE}${path}`);
-  return { status: res.status, body: await res.json() };
+  const res = await request(app).get(`/api/brain/okr${path}`);
+  return { status: res.status, body: res.body };
 }
-
-// 跳过条件：Brain 服务不可达时（CI 无 live Brain 服务，本地未启动时）
-const brainAvailable = await fetch(`${BRAIN_URL}/api/brain/status`).then(r => r.ok).catch(() => false);
-const describe = brainAvailable ? _describe : _describe.skip;
 
 describe('OKR 拆解端到端集成测试', () => {
   let visionId, objId, krId, projectId, scopeId, initiativeId;
@@ -133,7 +129,7 @@ describe('OKR 拆解端到端集成测试', () => {
       const { status, body } = await post('/initiatives', {
         title: '[TEST] Initiative: 写 tick-full-loop 测试',
         scope_id: scopeId,
-        status: 'planning',
+        status: 'planned',
       });
 
       expect(status).toBe(201);

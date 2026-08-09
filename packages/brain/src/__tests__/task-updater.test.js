@@ -560,10 +560,14 @@ describe('task-updater', () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       mockPool.query.mockRejectedValueOnce(new Error('db error'));
 
-      const result = await blockTask('task-001', { reason: 'rate_limit', until: new Date() });
+      const result = await blockTask('task-%s-%d', { reason: 'rate_limit', until: new Date() });
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('db error');
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[task-updater] Failed to block task',
+        expect.objectContaining({ task_id: 'task-%s-%d', error: 'db error' }),
+      );
       errorSpy.mockRestore();
     });
   });

@@ -11,38 +11,14 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { detectDomain } from '../domain-detector.js';
-import { blockTask } from '../task-updater.js';
-import { classifyFailure as _classifyFailure } from '../quarantine.js';
+import taskErrorReportRoutes from './task-error-report.js';
 
 const router = Router();
 
 // 状态机保护：已终止的任务不能回退到非终止状态（PATCH /:id 与 DELETE /:id 共用同一常量，
 // 避免两套终态定义产生语义分裂）
 const TERMINAL_STATUSES = ['completed', 'cancelled'];
-
-// classifyFailure 和 FAILURE_CLASS 懒加载（防测试 mock 不全导致初始化爆炸）
-function classifyFailure(...args) {
-  if (typeof _classifyFailure === 'function') return _classifyFailure(...args);
-  return { class: 'task_error', retry_strategy: null };
-}
-
-// TTL 映射（毫秒）— 字符串字面量 key，不依赖 FAILURE_CLASS 枚举值
-const TTL_MAP = {
-  network: 5 * 60 * 1000,
-  timeout: 5 * 60 * 1000,
-  server_error: 5 * 60 * 1000,
-  rate_limit: 10 * 60 * 1000,
-  billing_cap: 30 * 60 * 1000,
-  auth: 15 * 60 * 1000,
-  resource: 5 * 60 * 1000,
-};
-
-// FAILURE_CLASS 内联常量（不从 quarantine.js 顶层 import 以避免 vitest mock 严格检查）
-const FAILURE_CLASS = {
-  NETWORK: 'network', TIMEOUT: 'timeout', SERVER_ERROR: 'server_error', RATE_LIMIT: 'rate_limit', BILLING_CAP: 'billing_cap',
-  AUTH: 'auth', RESOURCE: 'resource', TASK_ERROR: 'task_error',
-  SYSTEMIC: 'systemic', TASK_SPECIFIC: 'task_specific', UNKNOWN: 'unknown',
-};
+const ACTIVE_DEDUP_STATUSES = ['queued', 'in_progress', 'blocked', 'paused'];
 
 // POST /tasks — 创建新任务（供外部 agent 如 /architect 注册任务到 Brain 队列）
 router.post('/', async (req, res) => {
@@ -160,48 +136,85 @@ router.post('/', async (req, res) => {
     // + 仍是活跃状态，命中则直接返回已有任务，不重新 INSERT。
     // 防止外部 agent/人工反复对同一意图重新注册 task（2026-07-09 实测 5 个重复 PR 的根因）。
     const dedupResult = await pool.query(
-      `SELECT id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, payload, created_at
-       FROM tasks
-       WHERE title = $1
-         AND (goal_id IS NOT DISTINCT FROM $2)
-         AND (project_id IS NOT DISTINCT FROM $3)
-         AND status IN ('queued', 'in_progress')
-       LIMIT 1`,
+      `WITH candidate AS (
+         SELECT * FROM tasks
+         WHERE title = $1
+           AND (goal_id IS NOT DISTINCT FROM $2)
+           AND (project_id IS NOT DISTINCT FROM $3)
+         ORDER BY CASE WHEN status IN ('queued','in_progress','blocked','paused') THEN 0 ELSE 1 END, created_at DESC
+         LIMIT 1
+       ), touched AS (
+         UPDATE tasks t
+         SET payload = COALESCE(t.payload, '{}'::jsonb) || jsonb_build_object(
+               'recurrence_requests', COALESCE((t.payload->>'recurrence_requests')::int, 0) + 1,
+               'last_duplicate_request_at', NOW()
+             ),
+             updated_at = NOW()
+         FROM candidate c
+         WHERE t.id=c.id AND c.status IN ('queued','in_progress','blocked','paused')
+         RETURNING t.*
+       )
+       SELECT * FROM touched
+       UNION ALL
+       SELECT * FROM candidate WHERE status NOT IN ('queued','in_progress','blocked','paused')`,
       [title.trim(), goal_id, project_id]
     );
-    if (dedupResult.rows.length > 0) {
+    const identityMatch = dedupResult.rows[0] ?? null;
+    if (identityMatch && ACTIVE_DEDUP_STATUSES.includes(identityMatch.status)) {
       return res.status(200).json({ ...dedupResult.rows[0], deduplicated: true });
     }
 
-    const result = await pool.query(
-      `INSERT INTO tasks (
+    const recurrenceOfTaskId = identityMatch?.id ?? null;
+    if (recurrenceOfTaskId) {
+      payload = { ...payload, recurrence_of_task_id: recurrenceOfTaskId };
+    }
+
+    let result;
+    try {
+      result = await pool.query(
+        `INSERT INTO tasks (
          title, description, priority, task_type, status,
          project_id, area_id, goal_id, location,
          payload, trigger_source, domain, okr_initiative_id, ability_id,
          blocked_at
        )
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-       RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, payload, blocked_at, created_at`,
-      [
-        title.trim(),
-        description,
-        priority,
-        task_type,
-        initialStatus,
-        project_id,
-        area_id,
-        goal_id,
-        location,
-        JSON.stringify(payload),
-        trigger_source,
-        domain,
-        okr_initiative_id,
-        ability_id,
-        initialBlockedAt,
-      ]
-    );
+         RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, payload, blocked_at, created_at`,
+        [
+          title.trim(),
+          description,
+          priority,
+          task_type,
+          initialStatus,
+          project_id,
+          area_id,
+          goal_id,
+          location,
+          JSON.stringify(payload),
+          trigger_source,
+          domain,
+          okr_initiative_id,
+          ability_id,
+          initialBlockedAt,
+        ]
+      );
+    } catch (insertError) {
+      if (insertError.code !== '23505' || insertError.constraint !== 'idx_tasks_dedup_active') throw insertError;
+      const winner = await pool.query(
+        `SELECT * FROM tasks
+         WHERE title=$1
+           AND goal_id IS NOT DISTINCT FROM $2
+           AND project_id IS NOT DISTINCT FROM $3
+           AND status IN ('queued','in_progress')
+         ORDER BY created_at DESC LIMIT 1`,
+        [title.trim(), goal_id, project_id]
+      );
+      if (!winner.rows[0]) throw insertError;
+      return res.status(200).json({ ...winner.rows[0], deduplicated: true });
+    }
 
     const responseBody = result.rows[0];
+    if (recurrenceOfTaskId) responseBody.recurrence_of_task_id = recurrenceOfTaskId;
     if (warnings.length > 0) responseBody.warnings = warnings;
     res.status(201).json(responseBody);
   } catch (err) {
@@ -243,7 +256,7 @@ router.get('/', async (req, res) => {
       params.push(journey_id);
     }
 
-    let query = 'SELECT id, title, status, priority, task_type, project_id, area_id, created_at, completed_at, updated_at FROM tasks';
+    let query = 'SELECT id, title, status, priority, task_type, project_id, area_id, claimed_by, executor_kind, created_at, completed_at, updated_at FROM tasks';
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
@@ -473,117 +486,6 @@ router.post('/:id/claim', async (req, res) => {
   }
 });
 
-// POST /tasks/:id/error-report — 错误上报端点
-// 根据错误分类自动决定处理方式：blocked（瞬时错误）/ retry（可重试）/ quarantine（永久错误）
-router.post('/:id/error-report', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const {
-      error_type,
-      error_message,
-      stack_trace,
-      context = {}
-    } = req.body;
-
-    if (!error_message) {
-      return res.status(400).json({ error: 'error_message is required' });
-    }
-
-    console.log(`[error-report] Received error report for task ${id}: ${error_message.substring(0, 100)}`);
-
-    // 1. 获取任务当前状态
-    const taskResult = await pool.query(
-      'SELECT id, title, status, payload FROM tasks WHERE id = $1',
-      [id]
-    );
-
-    if (taskResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Task not found', id });
-    }
-
-    const task = taskResult.rows[0];
-
-    // 2. 分类错误
-    const classification = classifyFailure(error_message, task);
-
-    console.log(`[error-report] Task ${id} classified as: ${classification.class}`);
-
-    // 3. 根据分类决定处理方式
-    const ttlMs = TTL_MAP[classification.class];
-    const isTransient = ttlMs !== undefined;
-
-    if (isTransient) {
-      // 瞬时错误 → 标记为 blocked（等待 TTL 自动释放）
-      const blockedUntil = new Date(Date.now() + ttlMs).toISOString();
-      const detail = {
-        error_type: error_type || classification.class,
-        error_message,
-        stack_trace,
-        context,
-        failure_classification: classification,
-      };
-
-      await blockTask(id, {
-        reason: `${classification.class} error - auto-blocked`,
-        detail,
-        until: blockedUntil,
-      });
-
-      console.log(`[error-report] Task ${id} blocked until ${blockedUntil}`);
-
-      return res.json({
-        action: 'blocked',
-        task_id: id,
-        failure_class: classification.class,
-        blocked_until: blockedUntil,
-        reason: classification.retry_strategy?.reason || 'Transient error',
-      });
-
-    } else if (classification.class === FAILURE_CLASS.TASK_ERROR) {
-      // 可重试错误 → 正常失败计数，由 execution-callback 的重试逻辑处理
-      await pool.query(
-        `UPDATE tasks SET status = 'failed', updated_at = NOW(),
-         payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-         WHERE id = $1`,
-        [id, JSON.stringify({
-          error_details: error_message,
-          failure_classification: classification,
-          last_error_at: new Date().toISOString(),
-        })]
-      );
-
-      console.log(`[error-report] Task ${id} marked as failed (retryable)`);
-
-      return res.json({
-        action: 'failed',
-        task_id: id,
-        failure_class: classification.class,
-        reason: classification.retry_strategy?.reason || 'Task error - retryable',
-      });
-
-    } else {
-      // 永久错误（其他未知类型）→ 移入 quarantine
-      const { quarantineTask } = await import('../quarantine.js');
-      await quarantineTask(id, 'permanent_error', {
-        failure_class: classification.class,
-        error_message,
-        stack_trace,
-        context,
-      });
-
-      console.log(`[error-report] Task ${id} quarantined`);
-
-      return res.json({
-        action: 'quarantined',
-        task_id: id,
-        failure_class: classification.class,
-        reason: 'Permanent error - requires human review',
-      });
-    }
-  } catch (err) {
-    console.error(`[error-report] Error processing error report:`, err.message);
-    res.status(500).json({ error: 'Failed to process error report', details: err.message });
-  }
-});
+router.use('/', taskErrorReportRoutes);
 
 export default router;

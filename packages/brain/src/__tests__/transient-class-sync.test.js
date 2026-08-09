@@ -25,8 +25,8 @@ describe('transient-class-sync：下游瞬态判定同步，被测模块 lib/ret
     expect(code).toMatch(/isTransientClass/);
   });
 
-  it('routes/task-tasks.js TTL_MAP 与 FAILURE_CLASS 常量补齐新类别', () => {
-    const code = src('routes/task-tasks.js');
+  it('routes/task-error-report.js TTL_MAP 与 FAILURE_CLASS 常量补齐新类别', () => {
+    const code = src('routes/task-error-report.js');
     expect(code).toMatch(/timeout:\s*\d/);
     expect(code).toMatch(/server_error:\s*\d/);
     expect(code).toMatch(/TIMEOUT:\s*'timeout'/);

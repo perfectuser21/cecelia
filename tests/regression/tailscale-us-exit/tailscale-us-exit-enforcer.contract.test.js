@@ -45,7 +45,14 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function makeFixture({ peers, selected = '', allowLan = false, acceptDns = false, setFails = false }) {
+function makeFixture({
+  peers,
+  selected = '',
+  allowLan = false,
+  acceptDns = false,
+  setFails = false,
+  selfIps = ['100.86.57.69'],
+}) {
   const dir = mkdtempSync(join(tmpdir(), 'tailscale-us-exit-'));
   tempDirs.push(dir);
   const statusFile = join(dir, 'status.json');
@@ -60,7 +67,7 @@ function makeFixture({ peers, selected = '', allowLan = false, acceptDns = false
     Self: {
       ID: 'xian-m4',
       HostName: 'mac-mini-m4',
-      TailscaleIPs: ['100.86.57.69'],
+      TailscaleIPs: selfIps,
       Online: true,
     },
     Peer: Object.fromEntries(peers.map((peer) => [peer.ID, peer])),
@@ -181,6 +188,7 @@ process.exit(9);
     pfRules: () => readFileSync(pfRulesFile, 'utf8'),
     pfCalls: () => readFileSync(pfCallsFile, 'utf8').trim().split('\n').filter(Boolean),
     stateFile: join(dir, 'state.json'),
+    env,
     dir,
   };
 }
@@ -299,9 +307,41 @@ describe('西安执行机美国 Exit Node 强制器', () => {
 // ubuntu-latest CI runner 上 /usr/bin/plutil 不存在直接 127，把 required
 // brain-unit 分片 3 拖红（本次案卷发现，与 task 31b93fd4 三修无关，顺手补）。
 describe.runIf(process.platform === 'darwin')('LaunchAgent 安装器', () => {
+  it('美国本机身份不在西安白名单时，在写入任何系统文件前拒绝安装', () => {
+    const fixture = makeFixture({
+      peers: [SECONDARY],
+      selfIps: ['100.71.151.105'],
+    });
+    const home = join(fixture.dir, 'home');
+    const daemonDir = join(fixture.dir, 'LaunchDaemons');
+    const libexecDir = join(fixture.dir, 'system-libexec');
+    const stateDir = join(fixture.dir, 'system-state');
+    const logDir = join(fixture.dir, 'system-log');
+
+    const result = spawnSync('/bin/bash', [
+      INSTALLER,
+      '--home', home,
+      '--system-plist-dir', daemonDir,
+      '--system-libexec-dir', libexecDir,
+      '--system-state-dir', stateDir,
+      '--system-log-dir', logDir,
+      '--no-load',
+    ], {
+      env: { ...fixture.env, CECELIA_US_EXIT_SOURCE: ENFORCER },
+      encoding: 'utf8',
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain('unapproved_client:100.71.151.105');
+    expect(existsSync(join(libexecDir, 'tailscale-us-exit-enforcer.py'))).toBe(false);
+    expect(existsSync(join(daemonDir, 'com.cecelia.tailscale-us-exit.plist'))).toBe(false);
+    expect(existsSync(stateDir)).toBe(false);
+    expect(existsSync(logDir)).toBe(false);
+  });
+
   it('默认生成 root LaunchDaemon，并为 App Store CLI 注入脚本模式', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tailscale-us-exit-install-'));
-    tempDirs.push(dir);
+    const fixture = makeFixture({ peers: [PRIMARY, SECONDARY] });
+    const dir = fixture.dir;
     const home = join(dir, 'home');
     const daemonDir = join(dir, 'LaunchDaemons');
     const libexecDir = join(dir, 'system-libexec');
@@ -316,7 +356,7 @@ describe.runIf(process.platform === 'darwin')('LaunchAgent 安装器', () => {
       '--system-log-dir', logDir,
       '--no-load',
     ], {
-      env: { ...process.env, CECELIA_US_EXIT_SOURCE: ENFORCER },
+      env: { ...fixture.env, CECELIA_US_EXIT_SOURCE: ENFORCER },
       encoding: 'utf8',
     });
 
@@ -335,8 +375,8 @@ describe.runIf(process.platform === 'darwin')('LaunchAgent 安装器', () => {
   });
 
   it('无 GUI 会话的执行机由 root LaunchDaemon 管理 PF，并携带目标用户上下文', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tailscale-us-exit-daemon-'));
-    tempDirs.push(dir);
+    const fixture = makeFixture({ peers: [PRIMARY, SECONDARY] });
+    const dir = fixture.dir;
     const home = join(dir, 'home');
     const daemonDir = join(dir, 'LaunchDaemons');
     const libexecDir = join(dir, 'system-libexec');
@@ -355,7 +395,7 @@ describe.runIf(process.platform === 'darwin')('LaunchAgent 安装器', () => {
       '--system-log-dir', logDir,
       '--no-load',
     ], {
-      env: { ...process.env, CECELIA_US_EXIT_SOURCE: ENFORCER },
+      env: { ...fixture.env, CECELIA_US_EXIT_SOURCE: ENFORCER },
       encoding: 'utf8',
     });
 
@@ -377,8 +417,8 @@ describe.runIf(process.platform === 'darwin')('LaunchAgent 安装器', () => {
   });
 
   it('加载前真实调用 enable system service，修复 launchd 持久化 disabled 状态', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tailscale-us-exit-launchctl-'));
-    tempDirs.push(dir);
+    const fixture = makeFixture({ peers: [PRIMARY, SECONDARY] });
+    const dir = fixture.dir;
     const home = join(dir, 'home');
     const daemonDir = join(dir, 'LaunchDaemons');
     const launchctlLog = join(dir, 'launchctl.log');
@@ -398,7 +438,7 @@ describe.runIf(process.platform === 'darwin')('LaunchAgent 安装器', () => {
       '--system-log-dir', join(dir, 'system-log'),
     ], {
       env: {
-        ...process.env,
+        ...fixture.env,
         CECELIA_US_EXIT_SOURCE: ENFORCER,
         CECELIA_LAUNCHCTL_BIN: fakeLaunchctl,
         CECELIA_SUDO_BIN: fakeSudo,

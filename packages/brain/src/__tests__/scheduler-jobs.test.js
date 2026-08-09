@@ -93,6 +93,30 @@ vi.mock('../conversation-ttl-archiver.js', () => ({
   runConversationTtlArchiver: vi.fn().mockResolvedValue({ skipped: true, archived: 0 }),
 }));
 
+vi.mock('../notion-capture-ingest.js', () => ({
+  runNotionCaptureIngest: vi.fn().mockResolvedValue({ skipped: true, reason: 'interval_gate' }),
+}));
+
+vi.mock('../notion-inbox-push.js', () => ({
+  runNotionProductPush: vi.fn().mockResolvedValue({ skipped: true, reason: 'empty_leaderboard' }),
+}));
+
+vi.mock('../notion-verdict-ingest.js', () => ({
+  runNotionVerdictIngest: vi.fn().mockResolvedValue({ skipped: true, reason: 'not_configured' }),
+}));
+
+vi.mock('../projection/commands.js', () => ({
+  applyProjectionCommands: vi.fn().mockResolvedValue({ claimed: 0, applied: 0, rejected: 0, errors: 0 }),
+}));
+
+vi.mock('../projection/outbox.js', () => ({
+  runProjectionOutbox: vi.fn().mockResolvedValue({ claimed: 0, done: 0, deferred: 0, failed: 0, dead: 0 }),
+}));
+
+vi.mock('../projection/notion.js', () => ({
+  runNotionTaskCommandIngest: vi.fn().mockResolvedValue({ skipped: true, reason: 'not_configured' }),
+}));
+
 import {
   runSchedulerJobsOnce,
   startSchedulerJobsLoop,

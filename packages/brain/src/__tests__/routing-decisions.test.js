@@ -4,7 +4,7 @@
  * Verifies thalamus routing decision history query API (DOD-9 to DOD-15)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 
 vi.mock('../db.js', () => ({
   default: {
@@ -27,12 +27,10 @@ const mockDecision = (overrides = {}) => ({
 
 describe('GET /routing/decisions', () => {
   let pool;
-  let app;
+  let server;
   let request;
 
-  beforeEach(async () => {
-    vi.clearAllMocks();
-    vi.resetModules();
+  beforeAll(async () => {
     const dbModule = await import('../db.js');
     pool = dbModule.default;
     const supertest = await import('supertest');
@@ -41,7 +39,20 @@ describe('GET /routing/decisions', () => {
     const testApp = express();
     testApp.use(express.json());
     testApp.use('/api/brain', routes.default);
-    request = supertest.default(testApp);
+    server = await new Promise((resolve) => {
+      const listeningServer = testApp.listen(0, () => resolve(listeningServer));
+    });
+    request = supertest.default(server);
+  });
+
+  afterAll(async () => {
+    await new Promise((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
   it('should return routing decisions with default limit', async () => {

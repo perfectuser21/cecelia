@@ -13,7 +13,7 @@ const manifest: FeatureManifest = {
 
   routes: [
     // Default route — 主理人指挥舱 (task:80a5be84)
-    { path: '/', component: 'OwnerCockpitPage', requireAuth: true },
+    { path: '/', redirect: '/workbench/overview', requireAuth: true },
     // Dashboard 退役重定向 → 军师台
     { path: '/dashboard', redirect: '/strategist' },
     { path: '/dashboard/command', redirect: '/strategist' },
@@ -33,7 +33,6 @@ const manifest: FeatureManifest = {
   components: {
     PanoramaV3: () => import('../business/pages/PanoramaV3'),
     TeamDashboardV1: () => import('../business/pages/TeamDashboardV1'),
-    OwnerCockpitPage: () => import('../../../dashboard/src/pages/owner-cockpit/OwnerCockpitPage'),
   },
 };
 

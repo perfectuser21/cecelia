@@ -8,6 +8,7 @@ import { coreInstanceConfig } from './config';
 
 // Feature manifests - 12 entries
 export const coreFeatures = {
+  'workbench': () => import('./workbench'),
   'dashboard': () => import('./dashboard'),
   'inbox': () => import('./inbox'),
   'gtd': () => import('./gtd'),

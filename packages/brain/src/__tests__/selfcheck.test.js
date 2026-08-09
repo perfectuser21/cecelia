@@ -202,8 +202,10 @@ describe('selfcheck', () => {
   //      D1／GP 7790f728）推进地板到 392。
   // 393（GP 胶水参数化：golden_paths.base_repo + target_environment 两可空列，task d2567378）
   //      推进地板到 393。
-  it('EXPECTED_SCHEMA_VERSION should be 393', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('393');
+  // 395（Workbench projection outbox/commands/targets + captures canonical destination 列）
+  //      推进地板到 395。
+  it('EXPECTED_SCHEMA_VERSION should be 395', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('395');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

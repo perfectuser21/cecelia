@@ -31,22 +31,31 @@ import pool from '../db.js';
 // ─── 动态 import 被测模块 ──────────────────────────────────────────────────────
 let runNotionVerdictIngest;
 let getVerdictIngestConfig;
+let resetNotionVerdictIngest;
 try {
   const mod = await import('../notion-verdict-ingest.js');
   runNotionVerdictIngest = mod.runNotionVerdictIngest;
   getVerdictIngestConfig = mod.getVerdictIngestConfig;
+  resetNotionVerdictIngest = mod.__resetNotionVerdictIngestForTest;
 } catch {
   runNotionVerdictIngest = undefined;
   getVerdictIngestConfig = undefined;
 }
 
 let runNotionProductPush;
+let resetNotionProductPush;
 try {
   const mod = await import('../notion-inbox-push.js');
   runNotionProductPush = mod.runNotionProductPush;
+  resetNotionProductPush = mod.__resetNotionProductPushForTest;
 } catch {
   runNotionProductPush = undefined;
 }
+
+beforeEach(() => {
+  resetNotionVerdictIngest?.();
+  resetNotionProductPush?.();
+});
 
 // ─── A1-Red/Green: 函数导出存在性 ─────────────────────────────────────────────
 

@@ -119,9 +119,16 @@ SH
 
 teardown() {
   kill -9 "$OLD_PID" 2>/dev/null || true
+  [ -n "${OLD_SCRIPT_PID:-}" ] && kill -9 "$OLD_SCRIPT_PID" 2>/dev/null || true
+  [ -n "${OLD_SCRIPT_CHILD_PID:-}" ] && kill -9 "$OLD_SCRIPT_CHILD_PID" 2>/dev/null || true
   BRAIN_PID_LEFTOVER=$(cat "$PID_FILE" 2>/dev/null || echo "")
   [ -n "$BRAIN_PID_LEFTOVER" ] && kill -9 "$BRAIN_PID_LEFTOVER" 2>/dev/null || true
-  rm -f "$LOG_FILE" "$PID_FILE" "$SCRIPT_LOCK"
+  rm -f "$LOG_FILE" "$PID_FILE"
+  if [ -d "$SCRIPT_LOCK" ]; then
+    find "$SCRIPT_LOCK" -depth -delete
+  else
+    rm -f "$SCRIPT_LOCK"
+  fi
   rm -rf "$TMP"
 }
 
@@ -157,6 +164,31 @@ elif echo "$NEUTRALIZE_CALL" | grep -q -- "-d cecelia_preview_test900001"; then
   pass "克隆后已对预览库执行 harness 任务灭活 UPDATE"
 else
   fail "灭活 UPDATE 未指向预览库" "实际调用: $NEUTRALIZE_CALL"
+fi
+teardown
+
+# ── 测试：接管同 PR 启动锁时必须终止旧脚本的完整子进程树 ─────────────────────
+# 旧脚本可能正阻塞在 npm ci。只 kill Bash 父进程会让 npm 子进程变成孤儿，随后新
+# 实例删除同一 worktree，两个流程互相破坏并产生 ENOENT/package.json。
+setup
+OLD_SCRIPT_CHILD_FILE="$TMP/old-script-child.pid"
+bash -c 'sleep 300 & echo $! >"$1"; wait' _ "$OLD_SCRIPT_CHILD_FILE" &
+OLD_SCRIPT_PID=$!
+for _wait_child in 1 2 3 4 5 6 7 8 9 10; do
+  [ -s "$OLD_SCRIPT_CHILD_FILE" ] && break
+  sleep 0.1
+done
+OLD_SCRIPT_CHILD_PID=$(cat "$OLD_SCRIPT_CHILD_FILE")
+echo "$OLD_SCRIPT_PID" > "$SCRIPT_LOCK"
+
+DB_HOST="testhost" DB_USER="testuser" DB_PASSWORD="testpw" \
+  bash "$TARGET" "$PR_NUMBER" "test-branch" "59999" "cecelia_preview_test900001" \
+  > "$TMP/stdout.log" 2>&1
+
+if ! kill -0 "$OLD_SCRIPT_PID" 2>/dev/null && ! kill -0 "$OLD_SCRIPT_CHILD_PID" 2>/dev/null; then
+  pass "同 PR 新实例接管前已终止旧脚本完整进程树"
+else
+  fail "同 PR 锁接管遗留了旧子进程" "parent=${OLD_SCRIPT_PID} child=${OLD_SCRIPT_CHILD_PID}；孤儿 npm 会继续写已被新实例删除的 worktree"
 fi
 teardown
 

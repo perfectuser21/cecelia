@@ -15,7 +15,7 @@ const manifest: FeatureManifest = {
     { path: '/work', redirect: '/gtd/area' },
     { path: '/work/okr', redirect: '/gtd/okr' },
     { path: '/work/projects', redirect: '/gtd/projects' },
-    { path: '/work/tasks', redirect: '/gtd/tasks' },
+    { path: '/work/tasks', redirect: '/workbench/tasks' },
     { path: '/work/roadmap', component: 'RoadmapView' },
     { path: '/work/streams', component: 'WorkStreams' },
     // Drill-down routes (保留)
@@ -24,9 +24,9 @@ const manifest: FeatureManifest = {
     { path: '/work/whiteboard', component: 'Whiteboard' },
     { path: '/work/okr/area/:areaId', component: 'AreaOKRDetail' },
     // Legacy redirects
-    { path: '/work/dev-tasks', redirect: '/gtd/tasks' },
+    { path: '/work/dev-tasks', redirect: '/workbench/tasks' },
     { path: '/work/panorama', redirect: '/dashboard/panorama' },
-    { path: '/tasks', redirect: '/gtd/tasks' },
+    { path: '/tasks', redirect: '/workbench/tasks' },
     { path: '/projects', redirect: '/gtd/projects' },
     { path: '/okr', redirect: '/gtd/okr' },
     { path: '/roadmap', redirect: '/work/roadmap' },

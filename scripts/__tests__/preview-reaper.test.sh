@@ -206,6 +206,22 @@ else
   fail "跳过二进制查找测试" "脚本没有 PATH 导出行"
 fi
 
+# ── 测试 9：PR npm cache 也是对账源，终态 PR 必须回收 ────────────────────────
+setup
+mkdir -p "$PREVIEW_BASE_DIR/.npm-cache-preview-107/_cacache"
+printf 'cache-data' >"$PREVIEW_BASE_DIR/.npm-cache-preview-107/_cacache/index"
+printf '#!/bin/bash\necho ""\n' >"$BIN/psql"; chmod +x "$BIN/psql"
+printf '#!/bin/bash\necho "MERGED"\n' >"$BIN/gh"; chmod +x "$BIN/gh"
+
+OUT=$(bash "$REAPER" 2>&1)
+if [ ! -d "$PREVIEW_BASE_DIR/.npm-cache-preview-107" ] \
+  && echo "$OUT" | grep -q "npm cache.*已删除"; then
+  pass "MERGED PR 的独立 npm cache 被发现并回收"
+else
+  fail "MERGED PR 的独立 npm cache 泄漏" "output=$OUT"
+fi
+teardown
+
 # ── 总结 ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "结果: PASS=${PASS}, FAIL=${FAIL}"

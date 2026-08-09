@@ -87,4 +87,23 @@ describe('quarantineTask 的 rumination 归因调用受 consciousness.enabled �
     expect(mockCallLLM).toHaveBeenCalledWith('rumination', expect.stringContaining('测试任务'), expect.objectContaining({ maxTokens: 150 }));
     expect(mockUpsertLearning).toHaveBeenCalledTimes(1);
   });
+
+  it('LLM 失败日志使用静态首参数，任务 ID 不能成为格式串', async () => {
+    mockIsConsciousnessEnabled.mockReturnValue(true);
+    mockCallLLM.mockRejectedValueOnce(new Error('provider failed'));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const taskId = 'task-%s-%d';
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [mockTaskRow(taskId, 3)] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await quarantineTask(taskId, QUARANTINE_REASONS.REPEATED_FAILURE, {});
+
+    expect(result.success).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[quarantine] LLM analysis failed',
+      expect.objectContaining({ task_id: taskId, error: 'provider failed' }),
+    );
+    warnSpy.mockRestore();
+  });
 });

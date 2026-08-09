@@ -19,6 +19,7 @@ const NOTION_VERSION = '2022-06-28';
 const INTERVAL_MS = 5 * 60 * 1000;
 // 首次运行回溯窗口（防止冷启动全量拉历史记录）
 const COLD_START_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const NOTION_API_PATH = /^\/(?:pages(?:\/[A-Za-z0-9_-]+)?|databases(?:\/[A-Za-z0-9_-]+(?:\/query)?)?)$/;
 
 let lastRunAt = 0;
 let lastSyncAt = null;
@@ -36,26 +37,49 @@ export function getNotionInboxConfig() {
 }
 
 export async function notionRequest(token, path, method = 'GET', body = null) {
-  const url = `${NOTION_API_BASE}${path}`;
-  const opts = {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Notion-Version': NOTION_VERSION,
-      'Content-Type': 'application/json',
-    },
-    signal: AbortSignal.timeout(30000),
-  };
-  if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(url, opts);
-  const data = await res.json();
-  if (!res.ok) {
+  if (typeof path !== 'string' || !NOTION_API_PATH.test(path)) {
+    throw new Error('Invalid Notion API path');
+  }
+  const url = new URL(NOTION_API_BASE);
+  url.pathname = `${url.pathname}${path}`;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const opts = {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Notion-Version': NOTION_VERSION,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(30000),
+    };
+    if (body) opts.body = JSON.stringify(body);
+
+    let res;
+    try {
+      res = await fetch(url.href, opts);
+    } catch (error) {
+      if (attempt === 3) throw error;
+      await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+      continue;
+    }
+    const data = await res.json();
+    if (res.ok) return data;
+
+    const retryable = res.status === 429 || res.status >= 500;
+    if (retryable && attempt < 3) {
+      const retryAfterSeconds = Number.parseFloat(res.headers?.get?.('retry-after') ?? '');
+      const delayMs = Number.isFinite(retryAfterSeconds)
+        ? Math.max(0, retryAfterSeconds * 1000)
+        : 500 * (attempt + 1);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+      continue;
+    }
     const err = new Error(`Notion API ${method} ${path} → ${res.status}: ${data.message ?? 'unknown'}`);
     err.status = res.status;
     err.notionCode = data.code;
     throw err;
   }
-  return data;
+  throw new Error(`Notion API ${method} ${path} retry exhausted`);
 }
 
 /**
@@ -150,8 +174,8 @@ export async function runNotionCaptureIngest(poolOverride) {
           targetSubtype: 'notion_inbox',
         });
 
-        if (result) pushed++;
-        else skipped++;
+        if (!result || result.dedupeHit) skipped++;
+        else pushed++;
       } catch (pageErr) {
         console.warn(`[notion-capture-ingest] page ${page.id} error: ${pageErr.message}`);
         errors++;
