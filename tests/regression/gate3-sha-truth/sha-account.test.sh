@@ -300,6 +300,20 @@ run_workflow_no_changed_paths() {
 # POST /api/brain/deploy body={} 返回 2xx，不含 skipped:true（BEHAVIOR-07）
 # 验证 FR-04：/deploy handler 去除了对 changed_paths 为空的跳过判据。
 # ════════════════════════════════════════════════════════════════════════════
+verify_deploy_source() {
+  local OPS_FILE="$ROOT_DIR/packages/brain/src/routes/ops.js"
+  if [[ ! -f "$OPS_FILE" ]]; then
+    fail "[BEHAVIOR-07] ops.js 不存在: $OPS_FILE"
+    return 1
+  fi
+  if grep -qE "changed_paths.*length.*===.*0.*skip|changed_paths.*empty.*skip|!changed_paths.*skip" "$OPS_FILE"; then
+    xfail "[BEHAVIOR-07] ops.js 仍含 changed_paths 为空时 skip 判据——修复后本行 PASS"
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+  pass "[BEHAVIOR-07] ops.js 无 changed_paths 为空时 skip 判据（源码层验证）"
+}
+
 run_deploy_empty_body_not_skipped() {
   echo "── [BEHAVIOR-07] POST /deploy body={} 不含 skipped:true ──"
 
@@ -307,20 +321,7 @@ run_deploy_empty_body_not_skipped() {
 
   # 检查 Brain 是否在运行
   if ! curl -s --connect-timeout 3 "${BRAIN_URL_CHECK}/api/brain/health" > /dev/null 2>&1; then
-    # Brain 未运行：降级为源码层验证（grep ops.js 确认无 changed_paths 跳过判据）
-    local OPS_FILE="$ROOT_DIR/packages/brain/src/routes/ops.js"
-    if [[ ! -f "$OPS_FILE" ]]; then
-      fail "[BEHAVIOR-07] ops.js 不存在: $OPS_FILE"
-      echo ""
-      return 1
-    fi
-    # 确认 deploy handler 不含 changed_paths 为空时跳过的判据
-    if grep -qE "changed_paths.*length.*===.*0.*skip|changed_paths.*empty.*skip|!changed_paths.*skip" "$OPS_FILE"; then
-      xfail "[BEHAVIOR-07] ops.js 仍含 changed_paths 为空时 skip 判据——修复后本行 PASS"
-      FAILED=$((FAILED + 1))
-    else
-      pass "[BEHAVIOR-07] ops.js 无 changed_paths 为空时 skip 判据（源码层验证；Brain 未运行，跳过 HTTP 验证）"
-    fi
+    verify_deploy_source
     echo ""
     return 0
   fi
@@ -331,8 +332,16 @@ run_deploy_empty_body_not_skipped() {
     -X POST "${BRAIN_URL_CHECK}/api/brain/deploy" \
     -H "Content-Type: application/json" \
     -d '{}' 2>/dev/null)
-  HTTP_BODY=$(echo "$RESPONSE" | head -n -1)
-  HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
+  HTTP_BODY=$(printf '%s\n' "$RESPONSE" | sed '$d')
+  HTTP_CODE=$(printf '%s\n' "$RESPONSE" | tail -n 1)
+
+  # 健康端点公开但 deploy 受内部鉴权保护时，401/403 不能说明部署逻辑失败。
+  # 此时回到同一实现文件做源码级契约验证，避免测试误打正在运行的生产 Brain。
+  if [[ "$HTTP_CODE" == "401" || "$HTTP_CODE" == "403" ]]; then
+    verify_deploy_source
+    echo ""
+    return 0
+  fi
 
   if [[ "$HTTP_CODE" =~ ^2 ]]; then
     pass "[BEHAVIOR-07] POST /deploy body={} → HTTP ${HTTP_CODE}（2xx）"
