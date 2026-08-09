@@ -14,6 +14,8 @@ MISSING_CMD_STATE_FILE="$STATE_DIR/brain-keepalive-nodocker.alerting"
 SILENCED_TTL=300    # 5 分钟后重试重启
 DAEMON_TTL=600      # 10 分钟后重新发 daemon 不可用告警
 RESTART_WAIT_SECONDS="${BRAIN_KEEPALIVE_RESTART_WAIT_SECONDS:-15}"
+DAEMON_WAIT_SECONDS="${BRAIN_KEEPALIVE_DAEMON_WAIT_SECONDS:-45}"
+ORBCTL_BIN="${BRAIN_KEEPALIVE_ORBCTL:-$(command -v orbctl 2>/dev/null || true)}"
 WEBHOOK_URL="${FEISHU_BOT_WEBHOOK:-}"
 LOG_PREFIX="[brain-keepalive]"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -59,15 +61,38 @@ STATUS=$(docker inspect "$CONTAINER_NAME" --format '{{.State.Status}}' 2>/dev/nu
 
 if [[ "$STATUS" != "running" ]]; then
   if ! docker info >/dev/null 2>&1; then
-    # Docker daemon 不可用 — 用独立 DAEMON_STATE_FILE（TTL 10 分钟），不触碰主 STATE_FILE
-    if [[ ! -f "$DAEMON_STATE_FILE" ]] || [[ $(file_age_seconds "$DAEMON_STATE_FILE") -gt $DAEMON_TTL ]]; then
-      echo "$LOG_PREFIX WARN: docker daemon unavailable, cannot restart Brain"
-      send_feishu "🚨 [P0] Brain 容器已停止且 Docker daemon 不可用，需人工介入"
-      touch "$DAEMON_STATE_FILE"
-    else
-      echo "$LOG_PREFIX SILENCED (daemon): docker daemon still unavailable, $(file_age_seconds "$DAEMON_STATE_FILE")s since last alert"
+    # 美国 Mac 使用 OrbStack 承载 Docker。daemon 停止时先恢复 OrbStack；orbctl
+    # 偶尔会先返回超时、随后 daemon 才可用，因此以 docker info 为最终真相。
+    if [[ -n "$ORBCTL_BIN" && -x "$ORBCTL_BIN" ]]; then
+      echo "$LOG_PREFIX Docker daemon unavailable, starting OrbStack..."
+      "$ORBCTL_BIN" start 2>&1 || true
+
+      DAEMON_RECOVERED=false
+      for ((attempt = 0; attempt <= DAEMON_WAIT_SECONDS; attempt++)); do
+        if docker info >/dev/null 2>&1; then
+          DAEMON_RECOVERED=true
+          break
+        fi
+        if [[ $attempt -lt $DAEMON_WAIT_SECONDS ]]; then sleep 1; fi
+      done
+
+      if [[ "$DAEMON_RECOVERED" == true ]]; then
+        echo "$LOG_PREFIX Docker daemon recovered via OrbStack"
+        rm -f "$DAEMON_STATE_FILE"
+      fi
     fi
-    exit 0
+
+    if ! docker info >/dev/null 2>&1; then
+      # 自动恢复失败 — 用独立 DAEMON_STATE_FILE（TTL 10 分钟），不触碰主 STATE_FILE
+      if [[ ! -f "$DAEMON_STATE_FILE" ]] || [[ $(file_age_seconds "$DAEMON_STATE_FILE") -gt $DAEMON_TTL ]]; then
+        echo "$LOG_PREFIX WARN: docker daemon unavailable after OrbStack recovery attempt"
+        send_feishu "🚨 [P0] Brain 容器已停止，OrbStack/Docker daemon 自动恢复失败"
+        touch "$DAEMON_STATE_FILE"
+      else
+        echo "$LOG_PREFIX SILENCED (daemon): docker daemon still unavailable, $(file_age_seconds "$DAEMON_STATE_FILE")s since last alert"
+      fi
+      exit 0
+    fi
   fi
 
   # Docker daemon 可用 — 清除 daemon state
