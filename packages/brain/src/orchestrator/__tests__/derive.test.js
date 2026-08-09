@@ -108,6 +108,36 @@ describe('合同故障重开 GAN（r40 实证：CONTRACT IS LAW 死锁出路）'
     expect(r.action).toBe('arbitrate:contract_fault');
   });
 
+  it('故障码带额外前缀词(APPROVED_CONTRACT_CI_CONFLICT,丢词序漂移)仍命中——F6/codexC 案卷实证', () => {
+    // run 8374ab73(codex team2)案卷:LLM 报 APPROVED_CONTRACT_CI_CONFLICT——
+    // 比 CONTRACT_CI_SCOPE_CONFLICT 多了修饰词 APPROVED、少了 SCOPE。
+    // 精确 token 集合比对(排序后整体相等)对不上，漏判掉进死等人工。
+    // 核心 token 子集匹配（reported ⊇ canonical 核心词）能扛住"多词/丢词"两种漂移。
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator-fix', observed: {} },
+        cb(3, { error_code: 'APPROVED_CONTRACT_CI_CONFLICT' }),
+      ],
+    }));
+    expect(r.action).toBe('arbitrate:contract_fault');
+  });
+
+  it('无关故障码不误判进仲裁——核心子集匹配不过度放宽', () => {
+    // 防回归：子集匹配改法必须精确到"核心词组合"，不能退化成任意包含 CONTRACT
+    // 就算数——否则会把真正的产品 bug 误路由成合同申诉。status/failure_class
+    // 与真实合同故障同款(blocked)，唯一变量是 error_code 与三个核心组合都不沾边。
+    const r = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator-fix', observed: {} },
+        cb(3, { error_code: 'CONTRACT_MISSING_FIXTURE' }),
+      ],
+    }));
+    expect(r.action).not.toBe('arbitrate:contract_fault');
+    expect(r.action).toBe('wait:human_review');
+  });
+
   it('仲裁 upheld=true → reopen_gan_contract', () => {
     const r = derive(baseObserved({
       pr: null,
