@@ -26,8 +26,11 @@ const c = fs.readFileSync('${BRAIN_SRC}/notion-verdict-ingest.js', 'utf8');
 if (!c.includes('consumeVerdictFromNotion')) { console.error('FAIL: 函数不存在'); process.exit(1); }
 if (!c.includes('already_consumed')) { console.error('FAIL: 幂等锚点 already_consumed 缺失'); process.exit(1); }
 if (!c.includes('not_configured')) { console.error('FAIL: not_configured 凭据处理缺失'); process.exit(1); }
-if (!c.includes('completed')) { console.error('FAIL: status=completed 逻辑缺失'); process.exit(1); }
-if (!c.includes('decisions')) { console.error('FAIL: decisions 写库逻辑缺失'); process.exit(1); }
+for (const command of ['start_requested','cancel_requested','annotate_requested']) {
+  if (!c.includes(command)) { console.error('FAIL: 投影命令缺失: '+command); process.exit(1); }
+}
+if (!c.includes('recordProjectionCommand')) { console.error('FAIL: durable command 写入缺失'); process.exit(1); }
+if (!c.includes('consumed_at')) { console.error('FAIL: consumed_at 幂等锚缺失'); process.exit(1); }
 console.log('OK: notion-verdict-ingest.js 接缝全通');
 "
 

@@ -10,7 +10,7 @@
 #   3. scheduler-jobs.js 中包含 morning-cockpit-bark 条目
 #   4. morning-cockpit-bark.js 中无硬编码 BARK_TOKEN
 #   5. OwnerCockpitPage.tsx 文件存在
-#   6. apps/api/features/dashboard/index.ts 路由 / 指向 OwnerCockpitPage
+#   6. apps/api/features/workbench/index.ts 注册 WorkbenchOverview → OwnerCockpitPage
 
 set -euo pipefail
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
@@ -75,12 +75,12 @@ else
   check "OwnerCockpitPage.tsx 文件存在" "文件不存在: $COCKPIT_PAGE"
 fi
 
-# 6. 路由配置
-DASHBOARD_INDEX="${REPO_ROOT}/apps/api/features/dashboard/index.ts"
-if grep -q "OwnerCockpitPage" "$DASHBOARD_INDEX" 2>/dev/null; then
-  check "apps/api/features/dashboard/index.ts 注册 OwnerCockpitPage" "PASS"
+# 6. Workbench 路由配置
+WORKBENCH_INDEX="${REPO_ROOT}/apps/api/features/workbench/index.ts"
+if grep -q "WorkbenchOverview.*OwnerCockpitPage" "$WORKBENCH_INDEX" 2>/dev/null; then
+  check "apps/api/features/workbench/index.ts 注册 WorkbenchOverview" "PASS"
 else
-  check "apps/api/features/dashboard/index.ts 注册 OwnerCockpitPage" "未找到 OwnerCockpitPage 注册"
+  check "apps/api/features/workbench/index.ts 注册 WorkbenchOverview" "未找到 OwnerCockpitPage 映射"
 fi
 
 echo ""

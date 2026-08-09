@@ -26,8 +26,8 @@ NEW_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 "${API}/value-str
 if [ "$NEW_CODE" = "404" ]; then
   echo "  WARN: 运行中 Brain 未含本 PR 代码（/value-streams 404）——CI fresh 容器会实跑"; echo "[smoke:vocab-alias] DONE"; exit 0
 fi
-OLD=$(curl -sf --max-time 8 "${API}/journeys" | head -c 2000)
-NEW=$(curl -sf --max-time 8 "${API}/value-streams" | head -c 2000)
+OLD=$(curl -sf --max-time 8 "${API}/journeys" | python3 -c 'import sys; print(sys.stdin.read()[:2000], end="")')
+NEW=$(curl -sf --max-time 8 "${API}/value-streams" | python3 -c 'import sys; print(sys.stdin.read()[:2000], end="")')
 [ -n "$NEW" ] || fail "/value-streams 无响应"
 [ "$OLD" = "$NEW" ] || fail "/value-streams 与 /journeys 返回不一致"
 echo "  PASS"
