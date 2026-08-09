@@ -1,4 +1,5 @@
 import { COMMANDER_MODES } from './commander-contract.js';
+import { buildFailureResultPatch, deriveFailureClassFromReason } from './failure-class.js';
 
 const ACTIVE_PHASES = new Set([
   'planning',
@@ -562,6 +563,12 @@ export async function finalizeKernelRun(pool, {
     }
 
     if (task.status !== taskOutcome) {
+      // 收敛：Kernel/loop terminal failed 落库时同步写 result.failure_class + failure_detail
+      // （决策 e8f6134f 交付物2）——与 status 同事务原子，供 failure-stats 按
+      // result->>'failure_class' 计量。reason 经受控枚举推导，非 failed 分支保持 result 不变。
+      const failurePatch = taskOutcome === 'failed'
+        ? JSON.stringify(buildFailureResultPatch(deriveFailureClassFromReason(reason), reason))
+        : null;
       await client.query(
         `UPDATE tasks
             SET status = $2::varchar,
@@ -569,10 +576,15 @@ export async function finalizeKernelRun(pool, {
                   WHEN $2::text = 'failed' THEN $3
                   ELSE error_message
                 END,
+                result = CASE
+                  WHEN $2::text = 'failed'
+                  THEN COALESCE(result, '{}'::jsonb) || COALESCE($4::jsonb, '{}'::jsonb)
+                  ELSE result
+                END,
                 completed_at = COALESCE(completed_at, NOW()),
                 updated_at = NOW()
           WHERE id = $1`,
-        [expectedTaskId, taskOutcome, reason],
+        [expectedTaskId, taskOutcome, reason, failurePatch],
       );
     }
 

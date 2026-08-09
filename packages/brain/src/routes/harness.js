@@ -21,6 +21,7 @@ import {
   DEFAULT_BASE_REPO,
   harnessTaskWorktreePath,
 } from '../harness-worktree.js';
+import { computeFailureStats } from '../orchestrator/failure-class.js';
 
 const router = Router();
 const judgeRateLimit = rateLimit({
@@ -1556,6 +1557,43 @@ router.get('/stats', async (req, res) => {
   } catch (err) {
     console.error('[GET /harness/stats]', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /failure-stats?days=N
+ * harness 失败可观测计量端点（决策 e8f6134f 交付物2）。按 result.failure_class 分组计数
+ * + 滚动失败率，供「连续 7 天失败率 < 25%」开锁闸计量与后续日报消费。
+ *
+ * 口径（合同锁死）：
+ *   - 数据源 task_type IN ('harness_initiative','golden_path_proposal')，窗口 created_at >= NOW()-N天。
+ *   - terminal failed = status IN ('failed','blocked','cancelled')；terminal done = status IN ('completed','done')。
+ *   - failure_rate = failed / (failed + done)，两位小数；分母为 0 → 0。
+ *   - days 缺省/非数字 → 7；<1 clamp 到 1；>365 clamp 到 365；脏参不 500。
+ */
+router.get('/failure-stats', async (req, res) => {
+  try {
+    let days = parseInt(req.query.days, 10);
+    if (!Number.isInteger(days)) days = 7; // 缺省 / 非数字回落本端点目标窗口 7
+    if (days < 1) days = 1;
+    if (days > 365) days = 365;
+
+    const { rows } = await pool.query(
+      `SELECT
+         (result->>'failure_class') AS failure_class,
+         (status IN ('failed','blocked','cancelled')) AS is_terminal_failed
+       FROM tasks
+       WHERE task_type IN ('harness_initiative','golden_path_proposal')
+         AND status IN ('failed','blocked','cancelled','completed','done')
+         AND created_at >= NOW() - make_interval(days => $1)`,
+      [days],
+    );
+
+    const stats = computeFailureStats(rows);
+    return res.json({ period_days: days, ...stats });
+  } catch (err) {
+    console.error('[GET /harness/failure-stats]', err.message);
+    return res.status(500).json({ error: err.message });
   }
 });
 

@@ -11,6 +11,8 @@
  *   shouldSkipDeferredTask(task) → boolean
  */
 
+import { persistTerminalFailure } from './orchestrator/failure-class.js';
+
 /**
  * BEHAVIOR-1/2: auth 处置器
  * - auth_fail_count < 2 → 换号重点火
@@ -38,6 +40,11 @@ export async function handleAuth(task, {
     await pool.query(
       `UPDATE tasks SET status='blocked', completed_at=NOW() WHERE id=$1`,
       [task.id]
+    );
+    // 收敛：连续 auth 失败 blocked terminal → result.failure_class（决策 e8f6134f 交付物2）
+    await persistTerminalFailure(
+      pool, task.id, 'infrastructure_blocked',
+      `auth_blocked: ${authFailCount + 1} consecutive auth failures (${cause})`,
     );
 
     const barkMsg = `[Auth Blocked] task=${task.id} initiative=${task.id} 连续 ${authFailCount + 1} 次 auth 失败，已标 blocked。手册: docs/runbooks/codex-login.md`;

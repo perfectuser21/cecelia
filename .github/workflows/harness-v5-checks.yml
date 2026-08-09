@@ -326,6 +326,11 @@ jobs:
         env:
           DB: postgresql://cecelia:cecelia@localhost:5432/cecelia
           TEST_DATABASE_URL: postgresql://cecelia:cecelia@localhost:5432/cecelia_test
+          # *.pg.integration.test.ts 型 sprint 测试读 DB_URL/DATABASE_URL 建真 pg.Pool
+          # （禁 mock 边：代码↔tasks.result 真 Postgres 验落库）。缺则 connectionString=undefined
+          # 连不上隔离测试库——显式注入 cecelia_test 连接串。
+          DB_URL: postgresql://cecelia:cecelia@localhost:5432/cecelia_test
+          DATABASE_URL: postgresql://cecelia:cecelia@localhost:5432/cecelia_test
           DB_HOST: localhost
           DB_PORT: '5432'
           DB_NAME: cecelia_test

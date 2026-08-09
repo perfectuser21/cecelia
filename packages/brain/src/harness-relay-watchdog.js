@@ -21,6 +21,7 @@ import {
   discoverPrFromGithub as _discoverPrFromGithub,
 } from './orchestrator/github-pr-discovery.js';
 import { defaultPrHeadResolver } from './orchestrator/pr-head-resolver.js';
+import { persistTerminalFailure } from './orchestrator/failure-class.js';
 import {
   generateCallbackSecret,
   hashCallbackSecret,
@@ -1803,6 +1804,12 @@ export async function scanStuckHarness(opts = {}) {
         reason: 'relay_deadline_exceeded',
       });
       if (!failedRun) continue;
+      // 收敛：relay 逾期终结 → 关联 task 写 result.failure_class（决策 e8f6134f 交付物2）
+      try {
+        await persistTerminalFailure(dbPool, row.current_task_id, 'relay_deadline_exceeded', `run ${row.id} deadline ${row.deadline_at}`);
+      } catch (fcErr) {
+        console.warn(`[relay-watchdog] scanStuckHarness persistTerminalFailure non-fatal: ${fcErr.message}`);
+      }
       await _closeSpawnEvents(dbPool, row.initiative_id, 'failed');
       console.warn(`[relay-watchdog] scanStuckHarness: overdue codex run id=${row.id} initiative=${row.initiative_id} deadline=${row.deadline_at}`);
     } catch (err) {

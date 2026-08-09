@@ -35,6 +35,7 @@ import { findDuplicateSibling } from './dispatch-dedup.js';
 import { blockTask } from './task-updater.js';
 import { raise } from './alerting.js';
 import { checkAnchor } from './anchor-check.js';
+import { persistTerminalFailure } from './orchestrator/failure-class.js';
 import { applyDispatchAllocationGuide } from './dispatch-allocation-guide.js';
 import { getLlmCapacitySnapshot } from './llm-capacity.js';
 
@@ -395,8 +396,12 @@ export async function dispatchNextTask(goalIds) {
           `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
           [nextTask.id]
         );
+        // 收敛：dispatch 后置异常 terminal → result.failure_class（决策 e8f6134f 交付物2）
+        // 内联进同一 UPDATE（不新增 query）。
         await pool.query(
-          `UPDATE tasks SET status = 'failed', error_message = $2 WHERE id = $1`,
+          `UPDATE tasks SET status = 'failed', error_message = $2,
+             result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'runtime_crash')
+           WHERE id = $1`,
           [nextTask.id, String(err.message || 'dispatch_exception').slice(0, 500)]
         );
       } catch (cleanupErr) {
@@ -445,13 +450,16 @@ export async function dispatchNextTask(goalIds) {
           suggestions: checkResult.suggestions,
           strikes: newStrikes,
         };
+        // 收敛：pre-flight 三振 blocked terminal → result.failure_class（决策 e8f6134f 交付物2）
+        // 内联进同一 UPDATE（不新增 query），与 lint「inline failure_class in same statement」一致。
         await pool.query(
           `UPDATE tasks
            SET status = 'blocked',
                blocked_reason = 'pre_flight_rejected',
                blocked_at = NOW(),
                blocked_detail = $2::jsonb,
-               metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb
+               metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+               result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'pre_flight_rejected')
            WHERE id = $1`,
           [
             candidate.id,
@@ -602,7 +610,8 @@ export async function dispatchNextTask(goalIds) {
         await pool.query(
           `UPDATE tasks SET status='failed', completed_at=NOW(),
             error_message=$2,
-            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'missing_anchor')
+            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'missing_anchor'),
+            result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'missing_anchor')
            WHERE id=$1::uuid`,
           [candidate.id, anchorResult.detail]
         );
@@ -851,6 +860,11 @@ export async function dispatchNextTask(goalIds) {
                 blocked_at_tick: new Date().toISOString(),
               },
             });
+            // 收敛：连续派发失败自动隔离 blocked terminal → result.failure_class（决策 e8f6134f 交付物2）
+            await persistTerminalFailure(
+              pool, nextTask.id, 'dispatch_fail_autoblock',
+              String(execResult.error || execResult.reason || 'executor_failed').slice(0, 500),
+            );
           } catch (blockErr) {
             console.error(`[dispatch] blockTask failed for task ${nextTask.id}: ${blockErr.message}`);
           }

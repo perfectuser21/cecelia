@@ -42,6 +42,7 @@ import { raise } from './alerting.js';
 import { EXECUTOR_KIND_FOR, resolveExecutorKind } from './executor-contracts.js';
 import { probeCodexReviewLock, CODEX_REVIEW_LOCK_DIR as CODEX_REVIEW_LOCK_DIR_SSOT } from './lib/codex-review-liveness.js';
 import { pushCaptureAtom } from './capture-inbox.js';
+import { persistTerminalFailure, isValidFailureClass } from './orchestrator/failure-class.js';
 import {
   sampleCpuUsage as platformSampleCpuUsage,
   _resetCpuSampler as platformResetCpuSampler,
@@ -3007,6 +3008,14 @@ async function markInitiativeTerminalFailed(dbPool, taskId, failureClass, errorM
          custom_props = jsonb_set(COALESCE(custom_props,'{}'::jsonb), '{failure_class}', $2::jsonb)
        WHERE id=$3`,
       [String(errorMessage).slice(0, 500), JSON.stringify(failureClass), taskId]
+    );
+    // 收敛落库助手：把 failure_class + failure_detail 写进 tasks.result，供
+    // failure-stats 端点按 result->>'failure_class' 计量（决策 e8f6134f 交付物2）。
+    await persistTerminalFailure(
+      dbPool,
+      taskId,
+      isValidFailureClass(failureClass) ? failureClass : 'unknown',
+      String(errorMessage).slice(0, 500),
     );
     // 2b-2b: 镜像同步对应 okr_initiative → failed（non-fatal，best-effort）
     try {

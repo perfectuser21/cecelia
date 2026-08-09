@@ -553,6 +553,29 @@ jobs:
       - name: Self-test (fs-guard test selection)
         run: bash .github/workflows/scripts/__tests__/list-fs-guard-tests.test.sh
 
+  # 守卫 harness terminal 写入必带 failure_class（决策 e8f6134f 交付物2 · 范围③）。
+  # 漏写 failure_class 的 terminal 写入合并即 red——纯文档约定不算数，机械闸落 CI。
+  lint-failure-class-writes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 扫描 terminal 写入点（干净树必 exit 0）
+        run: node scripts/lint-failure-class-writes.mjs
+      - name: Self-test（注入漏写 fixture 必 exit 1）
+        run: |
+          set -euo pipefail
+          F=$(mktemp --suffix=.mjs)
+          printf "export async function bad(p,i){await p.query(\"UPDATE tasks SET status='failed' WHERE id=\$1\",[i]);}\n" > "$F"
+          if node scripts/lint-failure-class-writes.mjs --extra-scan "$F"; then
+            echo "❌ 机械闸未拦下漏写 failure_class 的 terminal 写入"; rm -f "$F"; exit 1
+          fi
+          rm -f "$F"
+          echo "✅ 机械闸 self-test 通过（漏写被拦下）"
+
   # 守卫 assert-deploy-effect.sh：Gate3 部署效果确认三态判定（反"假成功"，2026-07-06）。
   # 保证 deploy webhook 假成功（容器 no-op 未重启也报 success）被 NO_OP 判定拦下。
   lint-deploy-effect-assert:
@@ -1861,7 +1884,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-failure-class-writes, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1884,6 +1907,7 @@ jobs:
           check "lint-migration-unique-version" "${{ needs.lint-migration-unique-version.result }}"
           check "lint-auto-merge-decision" "${{ needs.lint-auto-merge-decision.result }}"
           check "lint-fs-guard-selection" "${{ needs.lint-fs-guard-selection.result }}"
+          check "lint-failure-class-writes" "${{ needs.lint-failure-class-writes.result }}"
           check "lint-deploy-effect-assert" "${{ needs.lint-deploy-effect-assert.result }}"
           check "brain-unit"          "${{ needs.brain-unit.result }}"
           check "brain-unit-all"      "${{ needs.brain-unit-all.result }}"
