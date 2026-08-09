@@ -563,12 +563,6 @@ export async function finalizeKernelRun(pool, {
     }
 
     if (task.status !== taskOutcome) {
-      // 收敛：Kernel/loop terminal failed 落库时同步写 result.failure_class + failure_detail
-      // （决策 e8f6134f 交付物2）——与 status 同事务原子，供 failure-stats 按
-      // result->>'failure_class' 计量。reason 经受控枚举推导，非 failed 分支保持 result 不变。
-      const failurePatch = taskOutcome === 'failed'
-        ? JSON.stringify(buildFailureResultPatch(deriveFailureClassFromReason(reason), reason))
-        : null;
       await client.query(
         `UPDATE tasks
             SET status = $2::varchar,
@@ -576,15 +570,10 @@ export async function finalizeKernelRun(pool, {
                   WHEN $2::text = 'failed' THEN $3
                   ELSE error_message
                 END,
-                result = CASE
-                  WHEN $2::text = 'failed'
-                  THEN COALESCE(result, '{}'::jsonb) || COALESCE($4::jsonb, '{}'::jsonb)
-                  ELSE result
-                END,
                 completed_at = COALESCE(completed_at, NOW()),
                 updated_at = NOW()
           WHERE id = $1`,
-        [expectedTaskId, taskOutcome, reason, failurePatch],
+        [expectedTaskId, taskOutcome, reason],
       );
     }
 
@@ -623,6 +612,27 @@ export async function finalizeKernelRun(pool, {
 
     await client.query('COMMIT');
     committed = true;
+
+    // 收敛：Kernel/loop terminal failed → tasks.result.failure_class（决策 e8f6134f 交付物2）。
+    // 提交后 best-effort 写（非事务，non-fatal）：供 failure-stats 按 result->>'failure_class'
+    // 计量。reason 经受控枚举推导落合法枚举。故意放在 COMMIT 之后且吞错——终态落库是主流程，
+    // result 计量是加厚项，且部分隔离测试用的 tasks 表无 result 列，不能因此阻断终结。
+    if (changed && outcome === 'failed') {
+      try {
+        const patch = JSON.stringify(
+          buildFailureResultPatch(deriveFailureClassFromReason(reason), reason),
+        );
+        await pool.query(
+          `UPDATE tasks SET result = COALESCE(result, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+          [expectedTaskId, patch],
+        );
+      } catch (resultErr) {
+        console.warn(
+          `[kernel-run-store] result.failure_class 落库 non-fatal: ${resultErr.message}`,
+        );
+      }
+    }
+
     return {
       changed,
       outcome,
