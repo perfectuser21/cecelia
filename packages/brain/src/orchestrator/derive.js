@@ -34,7 +34,14 @@ const REQUIRED_FIELDS = [
   'proposeBranchRn', 'ganLatestRoundVerdict', 'generatorSpawned',
   'evaluateVerdict', 'judgeVerdict', 'reviewRequired', 'reviewApproved', 'counters',
   // noProgress / noProgressReason 可选（ground-truth 从 decisionLog 推导注入，测试可手动注入）
+  // gear 可选：ground-truth 从 initiative_runs.gear 注入（缺省 'default'），不进 REQUIRED_FIELDS——
+  //   否则 100+ 存量 derive 用例（不传 gear）全炸（零回归红线）。
 ];
+
+// harness gear 档位枚举。SSOT 是 packages/brain/src/harness-skill-relay.js 的 GEAR_VALUES；
+// derive 是纯函数状态机，刻意不 import relay（其顶层 import 了 db.js，会把 DB 依赖拖进纯函数
+// 与其纯函数测试），故此处按值复制同一枚举，两端由评审/回归守卫保持一致。
+const GEAR_VALUES = ['default', 'hotfix', 'segmented'];
 
 function assertObservedShape(observed) {
   for (const field of REQUIRED_FIELDS) {
@@ -638,6 +645,23 @@ export function derive(observed) {
     || (inflight.attempts?.length ?? 0) > 0
   ) {
     return { phase: run.phase, action: 'wait:running', reason: 'agent_inflight' };
+  }
+
+  // 0.6 harness gear 分档（sprint 08091640：kernel 真读 payload.gear）。
+  // 位置刻意在所有 gear 无关守卫（terminal / merged / human-review-reject / callbackRoute /
+  // contextRetry / noProgress / inflight）之后、planning 门之前——外部终态真相与在途观测优先，
+  // 分档只决定「从初始态往哪条相位链走」。
+  //  - 非法 gear（不在 GEAR_VALUES）：kernel 侧 fail-closed，terminal failed，不静默降级、
+  //    不进任何相位（对齐 executor.js 的 invalid_gear terminal failed）。
+  //  - hotfix：初始态（prd 未落盘 && 合同未批）跳过 planning/gan 直进 generate，保留
+  //    generator→evaluator→judge（决策 1b677ae3：免 planner/GAN 但保留评估）。
+  //  - segmented / default / 缺省：落到下面现行 planning 门（default 逐字节等价，零回归）。
+  const gear = observed.gear ?? 'default';
+  if (!GEAR_VALUES.includes(gear)) {
+    return { phase: 'failed', action: ACTION.MARK_FAILED, reason: 'invalid_gear' };
+  }
+  if (gear === 'hotfix' && !prdExists && !contract.approved) {
+    return applyHopFence(deriveTask(observed), counters);
   }
 
   // 1. planning：sprint-prd.md 落盘即真相，丢失重跑 planner（D2，plannerOutput 不持久化）

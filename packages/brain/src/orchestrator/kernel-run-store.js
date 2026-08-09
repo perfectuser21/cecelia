@@ -429,10 +429,10 @@ export async function createKernelRun(pool, input) {
       `INSERT INTO initiative_runs (
          initiative_id, phase, journey_id, orchestrator_version,
          orchestrator_host, deadline_at, ability_id, current_task_id,
-         created_source, record_trust_status, commander_mode
+         created_source, record_trust_status, commander_mode, gear
        ) VALUES (
          $1, $2, $3, 'v2', $4,
-         NOW() + ($5 * INTERVAL '1 hour'), $6, $7, $8, $9, $10
+         NOW() + ($5 * INTERVAL '1 hour'), $6, $7, $8, $9, $10, $11
        )
        RETURNING *`,
       [
@@ -446,6 +446,8 @@ export async function createKernelRun(pool, input) {
         input.createdSource,
         'trusted',
         commanderMode,
+        // gear 缺省写 NULL（= default 语义）；deriveGear 已在 relay 层保证合法枚举/非法 throw。
+        input.gear ?? null,
       ],
     );
     await client.query('COMMIT');

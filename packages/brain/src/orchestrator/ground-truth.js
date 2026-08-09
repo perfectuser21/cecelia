@@ -619,6 +619,10 @@ export async function collectGroundTruth(deps, opts) {
   return {
     run,
     task,
+    // harness gear 档位（sprint 08091640）：把持久化的 initiative_runs.gear 每跳注入 observed，
+    // 供 derive 状态机分叉。缺省（列 NULL / 存量行）→ 'default'，行为与现行逐字节等价（零回归）。
+    // gear 是 observed 的可选字段，不进 derive 的 REQUIRED_FIELDS（否则存量用例全炸）。
+    gear: run.gear ?? 'default',
     prdExists,
     prdEvidence,
     plannerPrdArtifact,
