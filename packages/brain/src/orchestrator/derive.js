@@ -290,16 +290,26 @@ function attemptCallbackRoute(observed) {
   // 不动，回落人工。
   // CONTRACT_CI_SCOPE_CONFLICT(r43 实证):合同的改动范围限定与仓库级 CI 硬要求
   // (如 test-registry.yaml 登记制)客观冲突——执行者无法在不违约的前提下修复 CI。
-  const CONTRACT_FAULT_ERROR_CODES = ['CONTRACT_SELF_CONTRADICTION', 'CONTRACT_TEST_UNSATISFIABLE', 'CONTRACT_CI_SCOPE_CONFLICT'];
-  // 故障码 token 集合归一化(r43 二次实证):LLM 产码非稳定枚举——同一模型两次采样
-  // 分别报 CONTRACT_CI_SCOPE_CONFLICT / CONTRACT_SCOPE_CI_CONFLICT,词序漂移绕过
-  // 精确匹配掉回死等人工。按 '_' 切 token 排序后比对,词序免疫。
-  const faultCodeKey = (code) => String(code ?? '').toUpperCase().split('_').sort().join('_');
-  const CONTRACT_FAULT_CODE_KEYS = new Set(CONTRACT_FAULT_ERROR_CODES.map(faultCodeKey));
+  // 核心 token 组合(F6/codexC 案卷,run 8374ab73 实证):精确 token 集合比对(排序后
+  // 整体相等)对付得了词序漂移,对付不了"多词/丢词"漂移——LLM 报
+  // APPROVED_CONTRACT_CI_CONFLICT(比 CONTRACT_CI_SCOPE_CONFLICT 多了修饰词
+  // APPROVED、少了 SCOPE),精确集合比对两头不沾直接漏判掉回死等人工。改用
+  // "报出的 token 集合是否包含某条核心组合的全部 token"子集匹配——SCOPE/其余
+  // 修饰词不是语义必需,只挑每条码里区分度最高的词做核心组合,防止过度放宽
+  // 误把无关产品 bug 路由成合同申诉。
+  const CONTRACT_FAULT_CORE_TOKENS = [
+    ['SELF', 'CONTRADICTION'], // CONTRACT_SELF_CONTRADICTION
+    ['TEST', 'UNSATISFIABLE'], // CONTRACT_TEST_UNSATISFIABLE
+    ['CI', 'CONFLICT'], // CONTRACT_CI_SCOPE_CONFLICT（SCOPE 非必需——已实证会被丢）
+  ];
+  const reportedTokens = new Set(String(detail.error_code ?? '').toUpperCase().split('_').filter(Boolean));
+  const matchesContractFaultCode = CONTRACT_FAULT_CORE_TOKENS.some(
+    (core) => core.every((token) => reportedTokens.has(token)),
+  );
   if (
     role === 'generator'
     && (status === 'blocked' || (status === 'failed' && failureClass === 'semantic_refusal'))
-    && CONTRACT_FAULT_CODE_KEYS.has(faultCodeKey(detail.error_code))
+    && matchesContractFaultCode
   ) {
     // 仲裁制(Alex 拍板 2026-08-06):Generator 的合同故障码只是"申诉",不能
     // 自动成立——被审查者不能自己触发对审查产物(合同)的推翻。独立仲裁器
