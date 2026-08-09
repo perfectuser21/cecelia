@@ -36,21 +36,24 @@ export async function pushCapture(pool, {
     // 1. 写 captures（信封）——dedupe_key 幂等，内容有变化（如同一 session 复聊后
     //    再次闲置）时 ON CONFLICT DO UPDATE 覆盖 content，不产生新行、不丢内容。
     let captureId = null;
+    let dedupeHit = false;
     {
       try {
         const { rows } = await pool.query(
           `INSERT INTO captures (content, source, nature, repo, lane, ref_task_id, ref_journey_id, ref_pr_url, dedupe_key, notion_page_id, status)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
            ON CONFLICT (dedupe_key) DO UPDATE SET content = EXCLUDED.content, updated_at = now()
-           RETURNING id`,
+          RETURNING id, (xmax = 0) AS inserted`,
           [truncated, source, nature, repo, lane, refTaskId, refJourneyId, refPrUrl, dedupeKey, notionPageId, status]
         );
         captureId = rows[0]?.id ?? null;
+        dedupeHit = rows[0]?.inserted === false;
       } catch (insertErr) {
         // dedupe_key race condition fallback
         if (insertErr.code === '23505') {
           const { rows } = await pool.query('SELECT id FROM captures WHERE dedupe_key = $1', [dedupeKey]);
           captureId = rows[0]?.id ?? null;
+          dedupeHit = true;
         } else {
           throw insertErr;
         }
@@ -67,14 +70,14 @@ export async function pushCapture(pool, {
            RETURNING id`,
           [captureId, truncated, targetType, targetSubtype, routedToTable, routedToId, lane]
         );
-        return { captureId, atomId: rows[0]?.id ?? null };
+        return { captureId, atomId: rows[0]?.id ?? null, dedupeHit };
       } catch (atomErr) {
         console.warn(`[capture-inbox] atom write failed (non-fatal): ${atomErr.message}`);
-        return { captureId, atomId: null };
+        return { captureId, atomId: null, dedupeHit };
       }
     }
 
-    return { captureId, atomId: null };
+    return { captureId, atomId: null, dedupeHit };
   } catch (err) {
     console.warn(`[capture-inbox] pushCapture failed (non-fatal): ${err.message}`);
     return null;

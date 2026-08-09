@@ -12,11 +12,14 @@ async function readSourceFile(relativePath: string): Promise<string> {
   return readFile(resolve(REPO_ROOT, relativePath), 'utf-8')
 }
 
-async function getManifestRoutes(): Promise<Array<{ path: string; component: string }>> {
-  const content = await readSourceFile('apps/api/features/dashboard/index.ts')
-  // 提取 routes 数组内容（正则匹配 path + component 对）
-  const routeMatches = [...content.matchAll(/\{[^}]*path:\s*['"]([^'"]+)['"][^}]*component:\s*['"]([^'"]+)['"][^}]*\}/gs)]
-  return routeMatches.map(m => ({ path: m[1], component: m[2] }))
+async function getManifestRoutes(relativePath: string): Promise<Array<{ path: string; component?: string; redirect?: string }>> {
+  const content = await readSourceFile(relativePath)
+  const routeMatches = [...content.matchAll(/\{[^}]*path:\s*['"]([^'"]+)['"][^}]*\}/gs)]
+  return routeMatches.map(match => {
+    const component = match[0].match(/component:\s*['"]([^'"]+)['"]/)?.[1]
+    const redirect = match[0].match(/redirect:\s*['"]([^'"]+)['"]/)?.[1]
+    return { path: match[1], component, redirect }
+  })
 }
 
 describe('OwnerCockpit 路由接线 — 防孤儿断言', () => {
@@ -25,10 +28,18 @@ describe('OwnerCockpit 路由接线 — 防孤儿断言', () => {
     expect(content).toContain('OwnerCockpitPage')
   })
 
-  it('manifest / 路由指向 OwnerCockpitPage（防孤儿 manifest 断言）', async () => {
-    const routes = await getManifestRoutes()
+  it('根路由统一进入 Workbench Overview，且 Overview 挂载 OwnerCockpit（防孤儿 manifest 断言）', async () => {
+    const routes = await getManifestRoutes('apps/api/features/dashboard/index.ts')
     const rootRoute = routes.find(r => r.path === '/')
     expect(rootRoute).toBeDefined()
-    expect(rootRoute?.component).toBe('OwnerCockpitPage')
+    expect(rootRoute?.redirect).toBe('/workbench/overview')
+
+    const workbenchRoutes = await getManifestRoutes('apps/api/features/workbench/index.ts')
+    const overviewRoute = workbenchRoutes.find(r => r.path === '/workbench/overview' && r.component)
+    expect(overviewRoute).toBeDefined()
+    expect(overviewRoute?.component).toBe('WorkbenchOverview')
+
+    const workbenchManifest = await readSourceFile('apps/api/features/workbench/index.ts')
+    expect(workbenchManifest).toContain("WorkbenchOverview: () => import('../../../dashboard/src/pages/owner-cockpit/OwnerCockpitPage')")
   })
 })

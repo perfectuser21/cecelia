@@ -1,15 +1,9 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readdirSync } from 'fs';
-
-// Mock compression to avoid requiring the package to be installed locally.
-// The real middleware is tested via integration tests against the running server.
-vi.mock('compression', () => ({
-  default: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
-}));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

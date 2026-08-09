@@ -37,6 +37,9 @@ import { runConversationTtlArchiver } from './conversation-ttl-archiver.js';
 import { runNotionCaptureIngest } from './notion-capture-ingest.js';
 import { runNotionProductPush } from './notion-inbox-push.js';
 import { runNotionVerdictIngest } from './notion-verdict-ingest.js';
+import { applyProjectionCommands } from './projection/commands.js';
+import { runProjectionOutbox } from './projection/outbox.js';
+import { runNotionTaskCommandIngest } from './projection/notion.js';
 
 const LOOP_INTERVAL_MS = 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -82,8 +85,11 @@ export const JOBS = [
   }, description: '对话原始捕获：机械过滤~/.claude/projects/*.jsonl真人文本写入captures(source=conversation)，自带10min间隔gate（decision f64adaaf/0c9e1652）' },
   { name: 'conversation-ttl-archiver', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runConversationTtlArchiver, description: '主理人对话 TTL 归档：ttl_expires_at 到期的 active/suspended 对话软归档（10min 自gate，PR4/4 64b8c8d）' },
   { name: 'notion-capture-ingest', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runNotionCaptureIngest, description: 'Notion 个人 Inbox 增量采集：5min自gate，last_edited_time增量+notion_page_id幂等，写入captures+capture_atoms（F6加厚，CCAPI2026）' },
-  { name: 'notion-product-push', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => runNotionProductPush(pool), description: 'F5加厚 WS3 成品呈报：排序官归并产物（proposal/morning_summary/acceptance_receipt）→ Notion Inbox，5min自gate，幂等键notion:product:，回写tasks.notion_page_id（task:58e146e1, 3fa3e361修复）' },
-  { name: 'notion-verdict-ingest', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => runNotionVerdictIngest(pool), description: 'F5加厚 WS3 裁决窄口：5min轮询Notion Inbox三字段白名单（放行/不放行/批注），放行→completed+decisions，不放行→cancelled，fail-closed（task:58e146e1, 3fa3e361修复）' },
+  { name: 'notion-product-push', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => runNotionProductPush(pool), description: '成品呈报到 Notion Inbox；稳定 dedupe_key 幂等并回写 tasks.notion_id' },
+  { name: 'notion-verdict-ingest', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: async (pool) => runNotionVerdictIngest(pool), description: 'Notion 裁决窄口：只登记结构化 projection command，不直接改任务执行态' },
+  { name: 'notion-task-command-ingest', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runNotionTaskCommandIngest, description: 'Notion Tasks 结构化回读：In Progress/Start → start_requested' },
+  { name: 'projection-command-apply', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: applyProjectionCommands, description: 'Brain 状态机校验并应用 projection commands；真实 attempt 才能进入 in_progress' },
+  { name: 'projection-outbox', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runProjectionOutbox, description: '本地数据库到 Notion/Obsidian 等可拆卸 projection 的通用 outbox' },
 ];
 
 function raceWithTimeout(promise, timeoutMs) {

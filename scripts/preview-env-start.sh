@@ -37,15 +37,49 @@ PID_FILE="/tmp/preview-${PR_NUMBER}.pid"
 # 并发场景：re-push 触发新 CI run 时，新 spawn 与上一 CI run 遗留的旧 spawn 同时运行，
 # 两者争抢同一 WORK_DIR/DB_NAME 会互相破坏，双方均失败退出（PR#3803 实测三次）。
 SCRIPT_LOCK="/tmp/preview-script-lock-${PR_NUMBER}"
+
+collect_descendant_pids() {
+  local parent_pid="$1"
+  local child_pid
+  for child_pid in $(pgrep -P "$parent_pid" 2>/dev/null || true); do
+    collect_descendant_pids "$child_pid"
+    printf '%s\n' "$child_pid"
+  done
+}
+
+terminate_process_tree() {
+  local root_pid="$1"
+  local descendants process_tree tree_pid tree_alive
+  descendants=$(collect_descendant_pids "$root_pid")
+  process_tree="$descendants $root_pid"
+
+  # 先终止最深层子进程，再终止父脚本，避免 npm/构建器被 reparent 后继续写旧 worktree。
+  for tree_pid in $process_tree; do
+    kill "$tree_pid" 2>/dev/null || true
+  done
+
+  for _wait_tree in 1 2 3 4 5 6 7 8 9 10; do
+    tree_alive=false
+    for tree_pid in $process_tree; do
+      if kill -0 "$tree_pid" 2>/dev/null; then
+        tree_alive=true
+        break
+      fi
+    done
+    $tree_alive || return 0
+    sleep 1
+  done
+
+  for tree_pid in $process_tree; do
+    kill -9 "$tree_pid" 2>/dev/null || true
+  done
+}
+
 if [ -f "$SCRIPT_LOCK" ]; then
   OLD_PID=$(cat "$SCRIPT_LOCK" 2>/dev/null || echo "")
   if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-    echo "[preview-start PR#${PR_NUMBER}] 杀死旧实例 PID=${OLD_PID}..." | tee -a "$LOG_FILE"
-    kill "$OLD_PID" 2>/dev/null || true
-    for i in 1 2 3 4 5; do
-      kill -0 "$OLD_PID" 2>/dev/null || break
-      sleep 1
-    done
+    echo "[preview-start PR#${PR_NUMBER}] 终止旧实例进程树 PID=${OLD_PID}..." | tee -a "$LOG_FILE"
+    terminate_process_tree "$OLD_PID"
   fi
   rm -f "$SCRIPT_LOCK"
 fi
@@ -101,6 +135,10 @@ git -C "$REPO_ROOT" fetch origin "${BRANCH_NAME}" 2>>"$LOG_FILE" || {
 }
 git -C "$REPO_ROOT" worktree add "$WORK_DIR" "origin/${BRANCH_NAME}" 2>>"$LOG_FILE" || {
   log "ERROR: git worktree add 失败"
+  exit 1
+}
+PREVIEW_GIT_SHA=$(git -C "$WORK_DIR" rev-parse HEAD 2>>"$LOG_FILE") || {
+  log "ERROR: 无法读取预览 worktree SHA"
   exit 1
 }
 log "  ✓ worktree 创建完成: ${WORK_DIR}"
@@ -244,6 +282,7 @@ nohup env \
   SKIP_MIGRATIONS=false \
   CECELIA_TICK_ENABLED=false \
   GITHUB_TOKEN="${GITHUB_TOKEN:-}" \
+  GIT_SHA="$PREVIEW_GIT_SHA" \
   node "${BRAIN_SERVER}" \
   >> "$LOG_FILE" 2>&1 &
 

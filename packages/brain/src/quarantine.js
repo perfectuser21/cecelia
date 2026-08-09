@@ -286,7 +286,10 @@ async function quarantineTask(taskId, reason, details = {}) {
           }
         } catch (analysisErr) {
           // 分析失败不影响隔离主流程
-          console.warn(`[quarantine] LLM analysis failed for task ${taskId}:`, analysisErr.message);
+          console.warn('[quarantine] LLM analysis failed', {
+            task_id: taskId,
+            error: analysisErr.message,
+          });
         }
       }
     }

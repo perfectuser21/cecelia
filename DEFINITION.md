@@ -21,6 +21,12 @@
 - 任务隔离后不再发送 Thalamus 重试事件，持久化 `failure_count` 成为唯一重试计数；任务失败不再击穿全局 `cecelia-run` 熔断器。
 - migration 394 为 callback queue 增加 `claimed_at` / `claimed_by` 与可领取索引；回滚脚本同步提供。
 
+## Brain 1.270.13 — Workbench 本地主链 + Projection/Notion 闭环
+
+- 收编 Overview、Inbox、Tasks、Activity、Projections 为统一 `/workbench`
+- 修复 captures schema 漂移、Notion 重复推送和错误任务回写列
+- 增加通用 projection outbox/link/command，Notion 回写不再直接伪造执行状态
+
 ## Brain 1.270.12 — kernel 收尾三修合一（评审台真链路+preview容量诊断+F6死规则）
 
 - **磁盘容量真相**：/preview/start 长期 503（此前误判为 token/GHA secret 未同步）——host-disk-sampler 每分钟采样，容量闸要求 ≥38.5GiB 空闲，host 因孤儿 harness worktree(~3.6GB)、旧 docker 镜像/构建缓存累积长期卡在阈值下方；已清理，闸门实测转绿(200)。无代码改动，纯运维发现。
@@ -1892,7 +1898,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | **Schema 版本**: 393 |
+| **schema_version** | 迁移版本追踪 | **Schema 版本**: 395 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -2280,7 +2286,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '393'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '395'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

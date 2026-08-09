@@ -73,6 +73,23 @@ describe('task-tasks routes — tenant scope at ingress', () => {
   });
 });
 
+describe('task-tasks routes — PATCH 参数对齐', () => {
+  let app;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    app = createApp();
+  });
+
+  it('只更新 priority 时参数必须是 priority + task id，不能产生幽灵占位参数', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'task-priority', priority: 'P0' }] });
+
+    const res = await request(app).patch('/tasks/task-priority').send({ priority: 'P0' });
+
+    expect(res.status).toBe(200);
+    expect(mockPool.query.mock.calls[0][1]).toEqual(['P0', 'task-priority']);
+  });
+});
+
 describe('task-tasks routes — B51 journey_id warning', () => {
   let app;
   beforeEach(() => {
@@ -251,6 +268,23 @@ describe('task-tasks routes — C3 服务端去重护栏（issue 655691d2）', (
     expect(mockPool.query).toHaveBeenCalledTimes(2);
   });
 
+  it('[REGRESSION] 历史 completed 同名任务保留终态，新任务写 recurrence_of_task_id', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'old-completed', title: '每周数据库巡检', status: 'completed', payload: {} }],
+    });
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'new-recurrence', title: '每周数据库巡检', status: 'queued', task_type: 'dev' }],
+    });
+
+    const res = await request(app).post('/tasks').send({ title: '每周数据库巡检' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.recurrence_of_task_id).toBe('old-completed');
+    expect(JSON.parse(mockPool.query.mock.calls[1][1][9])).toMatchObject({
+      recurrence_of_task_id: 'old-completed',
+    });
+  });
+
   it('title 不同 → 不去重，正常走 INSERT', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] }); // dedup: title 不匹配查不到
     mockPool.query.mockResolvedValueOnce({
@@ -284,6 +318,33 @@ describe('task-tasks routes — C3 服务端去重护栏（issue 655691d2）', (
     expect(res.status).toBe(200);
     expect(res.body.deduplicated).toBe(true);
     expect(res.body.status).toBe('in_progress');
+  });
+
+  it('title 命中 blocked/paused 活跃任务 → 复用原任务，不制造新的 queued 副本', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'blocked-existing', title: '等待外部凭据', status: 'blocked', payload: { recurrence_requests: 2 } }],
+    });
+
+    const res = await request(app).post('/tasks').send({ title: '等待外部凭据' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 'blocked-existing', status: 'blocked', deduplicated: true });
+    expect(mockPool.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('并发创建撞 idx_tasks_dedup_active 时读取赢家并返回 deduplicated', async () => {
+    const uniqueError = Object.assign(new Error('duplicate'), {
+      code: '23505', constraint: 'idx_tasks_dedup_active',
+    });
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockRejectedValueOnce(uniqueError)
+      .mockResolvedValueOnce({ rows: [{ id: 'winner', title: '并发任务', status: 'queued' }] });
+
+    const res = await request(app).post('/tasks').send({ title: '并发任务' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 'winner', deduplicated: true });
   });
 
   it('去重查询使用正确的参数（title + goal_id + project_id）', async () => {

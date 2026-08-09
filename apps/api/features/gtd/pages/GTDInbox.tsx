@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Inbox, RefreshCw, CheckCircle2, Archive, Clock, Atom, MessageSquare, ExternalLink, Link2 } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import QuickCapture from '../components/QuickCapture';
 import AtomReview from '../components/AtomReview';
 
@@ -31,6 +31,7 @@ const SOURCE_LABELS: Record<string, string> = {
   feishu: '飞书',
   diary: '日记',
   api: 'API',
+  notion: 'Notion',
 };
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -200,7 +201,7 @@ function KanbanColumn({ title, status, captures, updating, onUpdateStatus, onMar
                   {status === 'inbox' && (
                     <>
                       <button
-                        onClick={() => onUpdateStatus(cap.id, 'processing')}
+                        onClick={() => onUpdateStatus(cap.id, 'clarified')}
                         disabled={updating === cap.id}
                         className="p-1 rounded hover:bg-amber-500/20 text-slate-500 hover:text-amber-400 transition-colors disabled:opacity-50"
                         title="开始处理"
@@ -231,7 +232,7 @@ function KanbanColumn({ title, status, captures, updating, onUpdateStatus, onMar
                   )}
                   {(status === 'inbox' || status === 'processing') && (
                     <button
-                      onClick={() => onUpdateStatus(cap.id, 'archived')}
+                      onClick={() => onUpdateStatus(cap.id, 'dropped')}
                       disabled={updating === cap.id}
                       className="p-1 rounded hover:bg-slate-500/20 text-slate-500 hover:text-slate-300 transition-colors disabled:opacity-50"
                       title="归档"
@@ -261,10 +262,10 @@ export default function GTDInbox(): React.ReactElement {
   const fetchCaptures = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/captures');
+      const res = await fetch('/api/brain/captures');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setAllCaptures(data);
+      setAllCaptures(data.items ?? []);
     } catch {
       setAllCaptures([]);
     } finally {
@@ -292,7 +293,7 @@ export default function GTDInbox(): React.ReactElement {
   const updateStatus = async (id: string, status: string) => {
     setUpdating(id);
     try {
-      const res = await fetch(`/api/captures/${id}`, {
+      const res = await fetch(`/api/brain/captures/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
@@ -314,7 +315,7 @@ export default function GTDInbox(): React.ReactElement {
     setPendingDoneId(null);
     setUpdating(id);
     try {
-      const res = await fetch(`/api/captures/${id}`, {
+      const res = await fetch(`/api/brain/captures/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'done', destination_type: type, destination_id: destinationId }),
@@ -335,7 +336,7 @@ export default function GTDInbox(): React.ReactElement {
 
   // Kanban columns — 状态从 captured/clarified→inbox/processing，done→done
   const inbox = allCaptures.filter(c => c.status === 'inbox' || c.status === 'captured');
-  const processing = allCaptures.filter(c => c.status === 'processing' || c.status === 'clarified');
+  const processing = allCaptures.filter(c => c.status === 'clarified');
   const done = allCaptures.filter(c => c.status === 'done');
 
   const tabs: { key: TabKey; label: string; icon: React.ReactNode; badge?: number }[] = [

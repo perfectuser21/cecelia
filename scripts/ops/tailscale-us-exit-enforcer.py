@@ -388,7 +388,26 @@ def persist_state(chosen: dict[str, Any], reason: str, fail_closed: bool) -> Non
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="run one reconciliation pass")
-    parser.parse_args()
+    parser.add_argument(
+        "--check-client",
+        action="store_true",
+        help="validate that this is an approved Xi'an execution Mac without changing state",
+    )
+    args = parser.parse_args()
+
+    if args.check_client:
+        try:
+            binary = tailscale_binary()
+            status = load_status(binary)
+            validate_self(status)
+            emit(
+                "client_approved",
+                self_ips=sorted(status.get("Self", {}).get("TailscaleIPs") or []),
+            )
+            return 0
+        except (EnforcementError, OSError, subprocess.SubprocessError) as exc:
+            emit("error", error=str(exc))
+            return 3
 
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     lock_flags = os.O_RDWR | os.O_CREAT

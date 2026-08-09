@@ -176,7 +176,7 @@ describe('consumeVerdictFromNotion — FR-2 合同测试', () => {
     expect(decisions.length).toBe(0);
   });
 
-  it('[FR-2 放行路径] 放行=true → PATCH tasks status=completed + INSERT decisions + consumed_at 更新', async () => {
+  it('[REGRESSION] 放行只登记 start_requested，不得伪造 completed/in_progress', async () => {
     if (!consumeVerdictFromNotion) {
       expect.fail('consumeVerdictFromNotion 未实现');
     }
@@ -194,13 +194,17 @@ describe('consumeVerdictFromNotion — FR-2 合同测试', () => {
     const result = await consumeVerdictFromNotion(pool, page);
 
     expect(result.skipped).not.toBe(true);
-    expect(result.action).toBe('approved');
+    expect(result.action).toBe('start_requested');
 
-    // 断言 decisions 写入
-    const decisionsInsert = pool.query.mock.calls.find(c =>
-      String(c[0]).includes('decisions')
+    const commandInsert = pool.query.mock.calls.find(c =>
+      String(c[0]).includes('INSERT INTO projection_commands')
     );
-    expect(decisionsInsert).toBeTruthy();
+    expect(commandInsert).toBeTruthy();
+
+    const forgedTerminalUpdate = pool.query.mock.calls.find(c =>
+      /UPDATE tasks SET status = '(completed|in_progress)'/.test(String(c[0]))
+    );
+    expect(forgedTerminalUpdate).toBeUndefined();
 
     // 断言 consumed_at 幂等锚更新
     const consumedUpdate = pool.query.mock.calls.find(c =>
@@ -209,7 +213,7 @@ describe('consumeVerdictFromNotion — FR-2 合同测试', () => {
     expect(consumedUpdate).toBeTruthy();
   });
 
-  it('[FR-2 不放行路径] 不放行=true → PATCH tasks status=cancelled + consumed_at 更新', async () => {
+  it('[REGRESSION] 不放行登记 cancel_requested，由 Brain 状态机校验', async () => {
     if (!consumeVerdictFromNotion) {
       expect.fail('consumeVerdictFromNotion 未实现');
     }
@@ -225,14 +229,16 @@ describe('consumeVerdictFromNotion — FR-2 合同测试', () => {
     const page = makeVerdictPage({ rejected: true });
     const result = await consumeVerdictFromNotion(pool, page);
 
-    expect(result.action).toBe('rejected');
+    expect(result.action).toBe('cancel_requested');
+    expect(pool.query.mock.calls.some(c => String(c[0]).includes('INSERT INTO projection_commands'))).toBe(true);
+    expect(pool.query.mock.calls.some(c => /UPDATE tasks SET status/.test(String(c[0])))).toBe(false);
     const consumedUpdate = pool.query.mock.calls.find(c =>
       String(c[0]).includes('consumed_at')
     );
     expect(consumedUpdate).toBeTruthy();
   });
 
-  it('[FR-2 批注路径] 仅批注（放行=false，不放行=false，批注非空）→ 追加 description，不改 status，consumed_at 更新', async () => {
+  it('[REGRESSION] 批注登记 annotate_requested，不直接改 task', async () => {
     if (!consumeVerdictFromNotion) {
       expect.fail('consumeVerdictFromNotion 未实现');
     }
@@ -248,13 +254,14 @@ describe('consumeVerdictFromNotion — FR-2 合同测试', () => {
     const page = makeVerdictPage({ annotation: '请重新考虑第3点' });
     const result = await consumeVerdictFromNotion(pool, page);
 
-    expect(result.action).toBe('annotated');
+    expect(result.action).toBe('annotate_requested');
     // 不应出现 completed 或 cancelled status 变更
     const statusChanges = pool.query.mock.calls.filter(c =>
       (String(c[0]).includes('completed') || String(c[0]).includes('cancelled')) &&
       String(c[0]).includes('UPDATE')
     );
     expect(statusChanges.length).toBe(0);
+    expect(pool.query.mock.calls.some(c => String(c[0]).includes('INSERT INTO projection_commands'))).toBe(true);
     // consumed_at 应更新
     const consumedUpdate = pool.query.mock.calls.find(c =>
       String(c[0]).includes('consumed_at')

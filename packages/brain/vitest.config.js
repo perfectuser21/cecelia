@@ -43,6 +43,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/capture-atom-routing.integration.test.ts',
   'src/__tests__/integration/handoff-atom-relay.integration.test.ts',
   'src/__tests__/integration/capture-destination-link.integration.test.js',
+  'src/__tests__/integration/okr-decomposition-flow.integration.test.js',
 ];
 
 export default defineConfig({
@@ -232,6 +233,7 @@ export default defineConfig({
       // 报红；要不要真的接一条 playwright CI job 去跑它们是另一个问题，不在本次修复范围。
       '../../tests/regression/cockpit-route-wire/e2e-verify.spec.ts',
       '../../tests/regression/relay-07b2fd3b/inbox-e2e.spec.ts',
+      '../../tests/regression/capture-destination-link/capture-destination-link.spec.ts',
       // Dashboard contract imports dashboard-only test dependencies. The broad
       // regression glob must not select it in the Brain unit workspace.
       '../../tests/regression/relay-28e7c41a/OpsPanoramaCard.test.tsx',

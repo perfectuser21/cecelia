@@ -46,6 +46,20 @@ describe('pushCaptureAtom', () => {
  * 永久保留在 CI 作为 regression（合同 C3）。
  */
 describe('pushCapture 幂等（F6加厚回归 — Contract ed911a7c）', () => {
+  it('[REGRESSION] ON CONFLICT 命中已有 capture 时返回 dedupeHit=true', async () => {
+    const pool = {
+      query: vi.fn().mockResolvedValue({ rows: [{ id: 'cap-existing', inserted: false }] }),
+    };
+
+    const result = await pushCapture(pool, {
+      content: 'Notion 已存在页面',
+      source: 'notion',
+      dedupeKey: 'notion:inbox:existing-page',
+    });
+
+    expect(result).toEqual({ captureId: 'cap-existing', atomId: null, dedupeHit: true });
+  });
+
   it('[BEHAVIOR] capture_atoms INSERT 包含 ON CONFLICT DO NOTHING（B-1）', async () => {
     const pool = { query: vi.fn().mockResolvedValue({ rows: [{ id: 'cap-1' }] }) };
     await pushCapture(pool, {

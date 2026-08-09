@@ -19,7 +19,7 @@ export default function QuickCapture({ onSuccess, placeholder = '快速捕获想
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch('/api/captures', {
+      const res = await fetch('/api/brain/captures', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: text, source: 'dashboard' }),

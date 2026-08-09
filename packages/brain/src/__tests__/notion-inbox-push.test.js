@@ -102,7 +102,7 @@ describe('pushProductToNotionInbox — FR-1 合同测试', () => {
     expect(result.skipped).toBe(true);
   });
 
-  it('[FR-1] 成功推送时返回 {pushed:1, notion_page_id} 且 pool.query 含 notion_page_id 回写', async () => {
+  it('[REGRESSION] 成功推送后写稳定幂等锚，并回写真实存在的 tasks.notion_id', async () => {
     if (!pushProductToNotionInbox) {
       expect.fail('pushProductToNotionInbox 未实现');
     }
@@ -110,10 +110,11 @@ describe('pushProductToNotionInbox — FR-1 合同测试', () => {
     const result = await pushProductToNotionInbox(pool, makeProduct());
     expect(result.pushed).toBe(1);
     expect(result.notion_page_id).toBeTruthy();
-    // 断言 pool.query 中有针对 tasks 表的 notion_page_id 更新
+    // 断言本地先留幂等锚，且使用 migration 111 已存在的 tasks.notion_id。
     const queryCalls = pool.query.mock.calls.map(c => String(c[0]));
-    const hasPageIdUpdate = queryCalls.some(q => q.includes('notion_page_id'));
-    expect(hasPageIdUpdate).toBe(true);
+    expect(queryCalls.some(q => q.includes('INSERT INTO captures') && q.includes('dedupe_key'))).toBe(true);
+    expect(queryCalls.some(q => q.includes('UPDATE tasks SET notion_id'))).toBe(true);
+    expect(queryCalls.some(q => q.includes('UPDATE tasks SET notion_page_id'))).toBe(false);
   });
 
   it('[FR-1] Notion 页面属性包含白名单所有必填字段（Title/AI摘要/建议去向/置信度/需拍板/产物类型/任务ID）', async () => {
