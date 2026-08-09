@@ -12,8 +12,8 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] migration 395 新增 `initiative_runs.gear` 列（nullable）
-  Test: manual:bash -c 'ls "${REPO_ROOT:-/workspace}"/packages/brain/migrations/395_*.sql >/dev/null 2>&1 && grep -qiE "ALTER TABLE +initiative_runs" "${REPO_ROOT:-/workspace}"/packages/brain/migrations/395_*.sql && grep -qi "gear" "${REPO_ROOT:-/workspace}"/packages/brain/migrations/395_*.sql'
+- [x] [ARTIFACT] migration 396 新增 `initiative_runs.gear` 列（nullable）
+  Test: manual:bash -c 'ls "${REPO_ROOT:-/workspace}"/packages/brain/migrations/396_*.sql >/dev/null 2>&1 && grep -qiE "ALTER TABLE +initiative_runs" "${REPO_ROOT:-/workspace}"/packages/brain/migrations/396_*.sql && grep -qi "gear" "${REPO_ROOT:-/workspace}"/packages/brain/migrations/396_*.sql'
   期望: exit 0
 
 - [x] [ARTIFACT] `kernel-run-store.createKernelRun` INSERT 增写 gear 列

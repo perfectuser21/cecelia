@@ -23,7 +23,7 @@ kernel 侧漏读就让整套分档在 kernel 上形同虚设。
 
 ## 修法（三处接线，一条主干）
 
-1. **持久化**：`initiative_runs` 新增可空 `gear` 列（migration 395）；`kernel-run-store.createKernelRun`
+1. **持久化**：`initiative_runs` 新增可空 `gear` 列（migration 396）；`kernel-run-store.createKernelRun`
    INSERT 增写；`harness-skill-relay` 建 run 时 `deriveGear(task)` 读档传入。缺省写 NULL = default 语义。
 2. **注入**：`ground-truth.collectGroundTruth` 每跳把 `run.gear ?? 'default'` 注入 `observed.gear`
    （**可选**字段，不进 derive 的 REQUIRED_FIELDS——否则 100+ 存量 derive 用例全炸）。
