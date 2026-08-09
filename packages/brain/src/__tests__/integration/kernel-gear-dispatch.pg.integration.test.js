@@ -41,7 +41,10 @@ function quotedIdentifier(value) {
 
 async function createIsolatedDatabase() {
   databaseName = `kernel_gear_${process.pid}_${randomUUID().replaceAll('-', '')}`;
-  adminPool = new Pool({ ...DB_DEFAULTS, database: 'postgres', max: 1 });
+  // statement_timeout 兜底：teardown 里任何一条清理语句都不许无限挂起，超 10s 即抛错被
+  // .catch 吞掉，保证 afterAll 钩子远在 30s 上限内收尾（leaked 测试库无害——每进程库名唯一、
+  // CI postgres 服务随 job 销毁）。
+  adminPool = new Pool({ ...DB_DEFAULTS, database: 'postgres', max: 1, statement_timeout: 10_000 });
   await adminPool.query(`CREATE DATABASE ${quotedIdentifier(databaseName)}`);
   // 真跑仓库真实迁移（migrate.js 按文件名序执行至 395），gear 列由 395 落库。
   execFileSync(process.execPath, ['src/migrate.js'], {
@@ -61,24 +64,26 @@ async function createIsolatedDatabase() {
 }
 
 async function dropIsolatedDatabase() {
-  if (testPool) await testPool.end();
+  if (testPool) await testPool.end().catch(() => {});
   if (adminPool && databaseName) {
-    // pg15 DROP DATABASE ... WITH (FORCE) 直接 terminate 残留连接后落库——比自旋等
-    // pg_stat_activity 归零更确定，避免 afterAll hook 超时（dod-behavior-dynamic 实测）。
-    try {
-      await adminPool.query(
-        `DROP DATABASE IF EXISTS ${quotedIdentifier(databaseName)} WITH (FORCE)`,
-      );
-    } catch {
-      // FORCE 不可用/竞态兜底：先踢连接再普通 DROP
-      await adminPool.query(
-        'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid()',
-        [databaseName],
-      ).catch(() => {});
-      await adminPool.query(`DROP DATABASE IF EXISTS ${quotedIdentifier(databaseName)}`);
-    }
+    // 不用 DROP DATABASE ... WITH (FORCE)：FORCE 会发一个 cluster 级 ProcSignalBarrier，等待集群
+    // 内每一个 backend（含与本库无关、卡在认证阶段的连接）应答后才落库。CI 上曾有别的进程连接
+    // 卡在认证达 authentication_timeout(60s)，令 FORCE drop 挂起超过 afterAll 的 30s 钩子上限——且
+    // 语句是「挂起」而非「抛错」，原 try/catch 兜底根本轮不到（dod-behavior-dynamic 实测 hook timeout）。
+    // 改为「禁新连接 → 定向踢本库连接 → 普通 DROP」：只针对本库、无全局屏障，不受无关 backend 影响。
+    await adminPool.query(
+      'UPDATE pg_database SET datallowconn=false WHERE datname=$1',
+      [databaseName],
+    ).catch(() => {});
+    await adminPool.query(
+      'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid()',
+      [databaseName],
+    ).catch(() => {});
+    await adminPool.query(
+      `DROP DATABASE IF EXISTS ${quotedIdentifier(databaseName)}`,
+    ).catch(() => {});
   }
-  if (adminPool) await adminPool.end();
+  if (adminPool) await adminPool.end().catch(() => {});
 }
 
 async function seedTask(gear) {
