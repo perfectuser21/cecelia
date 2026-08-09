@@ -228,16 +228,133 @@ psql "$DB_URL" -tAc "SELECT column_name FROM information_schema.columns WHERE ta
 echo "OK: initiative_runs.gear 列存在"
 
 echo "== 2. derive gear 三档分叉纯函数真验（无 mock/无替身/无 DB）=="
-npx vitest run packages/brain/src/orchestrator/__tests__/derive.test.js -t 'gear' --reporter=dot >/tmp/harness-derive.log 2>&1 || true
+# 须 cd packages/brain 跑：根 vitest.config 不含 packages/brain/src/**，从仓库根跑 = No test files found。
+( cd packages/brain && npx vitest run src/orchestrator/__tests__/derive.test.js -t 'gear' --reporter=dot ) >/tmp/harness-derive.log 2>&1 || true
 grep -qE 'Tests +[0-9]+ passed' /tmp/harness-derive.log || { echo "FAIL: derive gear 套件无通过统计"; tail -30 /tmp/harness-derive.log; exit 1; }
 grep -qE '[1-9][0-9]* failed' /tmp/harness-derive.log && { echo "FAIL: derive gear 套件有失败用例"; tail -30 /tmp/harness-derive.log; exit 1; }
 echo "OK: derive gear 三档分叉全过"
 
 echo "== 3. gear 持久化 + observed 注入 + 一跳角色分布（真 PG 集成，只替身最外层 launcher）=="
-npx vitest run packages/brain/src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js --reporter=dot >/tmp/harness-gearpg.log 2>&1 || true
+# 集成套件登记在 vitest.integration.config.js 的 POSTGRES_INTEGRATION_TESTS，须 cd packages/brain 且用该
+# config 跑（根 vitest.config 不含 packages/brain/src/**，且不带 --config 时该套件不被收集 = No test files found）。
+( cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js --reporter=dot ) >/tmp/harness-gearpg.log 2>&1 || true
 grep -qE 'Tests +[0-9]+ passed' /tmp/harness-gearpg.log || { echo "FAIL: gear PG 集成套件无通过统计"; tail -40 /tmp/harness-gearpg.log; exit 1; }
 grep -qE '[1-9][0-9]* failed' /tmp/harness-gearpg.log && { echo "FAIL: gear PG 集成套件有失败用例"; tail -40 /tmp/harness-gearpg.log; exit 1; }
 echo "OK: gear PG 集成全过"
+
+echo "== 3.5 自provision：真代码路径把 hotfix→generator / default→planner 两条真实角色行落进 DB_URL（供步4/5 psql 观测）=="
+# 步4/5 的 psql 断言查的是 DB_URL 库；步3 集成套件在自建 isolated 库里跑完即 drop，不落 DB_URL。
+# 故此处用真 createKernelRun(gear)+真 collectGroundTruth+真 derive+真 attemptStore 一跳 runLoop（仅替身最外层
+# launcher）把两条真实角色行写进 DB_URL——角色由真 derive 分叉决定（hotfix→spawn:generator、default→spawn:planner），
+# 非 hardcode 假数据。写入后步4/5 才能在同一 DB_URL 库上观测到真实角色分布。
+cat > /tmp/harness-gear-provision.mjs <<'PROVISION_EOF'
+import { createHash, randomUUID } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
+
+const BRAIN = process.env.BRAIN_ROOT_ABS;
+const req = createRequire(pathToFileURL(BRAIN + '/package.json'));
+const pg = req('pg');
+
+const imp = (p) => import(pathToFileURL(BRAIN + '/src/orchestrator/' + p));
+const { createKernelRun } = await imp('kernel-run-store.js');
+const { createAttemptStore } = await imp('attempt-store.js');
+const { collectGroundTruth } = await imp('ground-truth.js');
+const { resolveAction } = await imp('dispatcher.js');
+const { runLoop } = await imp('loop.js');
+
+const pool = new pg.Pool({ connectionString: process.env.DB_URL });
+const CALLBACK_TOKEN = 'kernel-gear-e2e-provision-token';
+
+function externalObservation() {
+  return {
+    execCmd(command) {
+      if (command.startsWith('gh pr view ')) return JSON.stringify({ state: 'OPEN', statusCheckRollup: [] });
+      if (command.startsWith('git ls-remote ')) return '';
+      if (command.startsWith('docker ps ')) return '';
+      return '';
+    },
+    fileExists() { return false; },
+    readFile() { return ''; },
+    listHostPids: async () => [],
+  };
+}
+
+async function seedTask(gear) {
+  const initiativeId = randomUUID();
+  const taskId = randomUUID();
+  const payload = {
+    harness_runtime: 'kernel-v1', orchestrator: 'skill-relay',
+    sprint_dir: `sprints/08091640-gear-e2e-${taskId.slice(0, 8)}`,
+    worktree_path: '/workspace', base_repo: 'perfectuser21/cecelia',
+    initiative_id: initiativeId,
+    ...(gear === undefined ? {} : { gear }),
+  };
+  await pool.query(
+    `INSERT INTO tasks (id, title, status, priority, task_type, trigger_source, payload)
+     VALUES ($1,$2,'in_progress','P2','harness_initiative','api',$3::jsonb)`,
+    [taskId, `kernel-gear-e2e-${taskId}`, JSON.stringify(payload)],
+  );
+  return { initiativeId, taskId, payload };
+}
+
+async function collect(taskId, runId, payload) {
+  return collectGroundTruth(
+    { pool, ...externalObservation() },
+    { taskId, runId, prdPath: `${payload.sprint_dir}/sprint-prd.md`, callbackResultPath: '.kernel-gear-e2e-no-callback' },
+  );
+}
+
+class StopLoopAfterDispatch extends Error {}
+
+async function driveOneHop(gear) {
+  const { initiativeId, taskId, payload } = await seedTask(gear);
+  const created = await createKernelRun(pool, {
+    taskId, initiativeId, phase: 'planning', journeyId: null, abilityId: null,
+    host: 'kernel-v1', deadlineHours: 8, createdSource: 'kernel_dispatch',
+    ...(gear === undefined ? {} : { gear }),
+  });
+  const runId = created.run.id;
+  const attemptStore = createAttemptStore(pool);
+  let dispatchedAction = null, dispatchedRole = null;
+  try {
+    await runLoop(
+      {
+        pool,
+        collectGroundTruth: () => collect(taskId, runId, payload),
+        writeHeartbeat: async () => {},
+        now: () => new Date(),
+        host: 'kernel-gear-e2e', pid: process.pid, log: () => {}, sleep: async () => {},
+        dispatch: async (action, ctx) => {
+          dispatchedAction = action;
+          dispatchedRole = resolveAction(action).role;
+          await attemptStore.createAttempt({
+            id: randomUUID(), runId, hop: ctx.hop, phase: ctx.decision.phase,
+            role: dispatchedRole, provider: 'codex', machineId: 'us-mac-m4',
+            bundle: { inputs: { task_id: taskId, sprint_dir: payload.sprint_dir, worktree_path: '/workspace' } },
+            callbackSecretHash: createHash('sha256').update(CALLBACK_TOKEN).digest('hex'),
+          });
+          throw new StopLoopAfterDispatch();
+        },
+      },
+      { taskId, runId },
+    );
+  } catch (err) {
+    if (!(err instanceof StopLoopAfterDispatch)) throw err;
+  }
+  return { runId, gear: gear ?? null, action: dispatchedAction, role: dispatchedRole };
+}
+
+const hotfix = await driveOneHop('hotfix');
+const def = await driveOneHop('default');
+await pool.end();
+console.log(JSON.stringify({ hotfix, default: def }));
+PROVISION_EOF
+BRAIN_ROOT_ABS="$REPO_ROOT/packages/brain" node /tmp/harness-gear-provision.mjs >/tmp/harness-provision.log 2>&1 \
+  || { echo "FAIL: 自provision 驱动失败"; grep -v 'npm notice' /tmp/harness-provision.log | tail -30; exit 1; }
+grep -q '"role":"generator"' /tmp/harness-provision.log || { echo "FAIL: 自provision hotfix 未产出 generator 角色"; tail -30 /tmp/harness-provision.log; exit 1; }
+grep -q '"role":"planner"' /tmp/harness-provision.log || { echo "FAIL: 自provision default 未产出 planner 角色"; tail -30 /tmp/harness-provision.log; exit 1; }
+echo "OK: 自provision 落库（hotfix→generator / default→planner，真 derive 产出）"
 
 echo "== 4. psql 出口断言：hotfix run 无 planner/proposer/reviewer 且有 generator（时间窗防伪）=="
 BAD=$(psql "$DB_URL" -tAc "SELECT count(*) FROM harness_attempts a JOIN initiative_runs r ON r.id=a.run_id WHERE r.gear='hotfix' AND a.role IN ('planner','proposer','reviewer') AND a.created_at > NOW() - interval '10 minutes'" | tr -d ' ')
