@@ -1,0 +1,33 @@
+{
+  "initiative_id": "dbe28f5f-b783-46b8-a8b5-14ba314e271a",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅落在 packages/brain/src/orchestrator/（纯后端状态机 + DB 持久化），无 UI/无远端 agent 协议/非 engine hooks。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "kernel 真读 gear：run.js/loop 启动读取持久化 + derive.js 初始态三档分流 + 非法 fail-closed",
+      "scope": "kernel（orchestrator/run.js+loop）启动从 task.payload.gear 复用 deriveGear 归一并持久化到 initiative_runs.gear（新增列）；derive.js 初始态读 observed.gear 分叉（hotfix 跳 planning/gan 直进 generate、default/segmented 走 planner、gear 可选缺省归一 default）；非法 gear kernel 侧 fail-closed（terminal failed reason=invalid_gear，不 spawn）；新增 derive-gear 纯函数单测 + kernel-gear-dispatch 真 PG 集成测试（含 kernel-gear-testkit 驱动器）。不建 param 档、不动入口强制、不改 relay/controller SKILL、不新建平行 GEAR 枚举。",
+      "dod": [
+        "[BEHAVIOR] derive(gear=hotfix 初始态) action=spawn:generator（≠spawn:planner），default/缺省仍 spawn:planner（零回归）",
+        "[BEHAVIOR] gear 持久化到 initiative_runs.gear 列，进程启动后 psql 可查",
+        "[BEHAVIOR] hotfix run harness_attempts planner/proposer/reviewer=0 且 generator>=1；default run 三角色均>=1（真 PG）",
+        "[BEHAVIOR] 非法 gear kernel 侧 fail-closed reason=invalid_gear 且无 attempt 落库",
+        "[ARTIFACT] initiative_runs gear 列 migration + derive-gear.test.js + kernel-gear-dispatch.integration.test.js"
+      ],
+      "files": [
+        "packages/brain/migrations/395_initiative_runs_gear.sql",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/run.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/src/orchestrator/__tests__/derive-gear.test.js",
+        "packages/brain/src/orchestrator/__tests__/kernel-gear-dispatch.integration.test.js",
+        "packages/brain/src/orchestrator/__tests__/kernel-gear-testkit.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
