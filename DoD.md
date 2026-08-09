@@ -66,14 +66,14 @@ journey_type: autonomous
   预期观察: SELECT gear FROM initiative_runs = 'hotfix'；collectGroundTruth 返回 observed.gear === 'hotfix'；gear 缺省时列 NULL 且 observed.gear==='default'
   等待预算: 0s
   留证: gear PG 集成套件 vitest 输出末 10 行（含 round-trip / observed.gear 用例）
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; export DATABASE_URL="${DB_URL:?}"; L=$(npx vitest run src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js -t "round-trip" --reporter=dot 2>&1); echo "$L"; echo "$L" | grep -qE "Tests +[0-9]+ passed" && ! echo "$L" | grep -qE "[1-9][0-9]* failed"'
+  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; export DATABASE_URL="${DB_URL:?}"; L=$(npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js -t "round-trip" --reporter=dot 2>&1); echo "$L"; echo "$L" | grep -qE "Tests +[0-9]+ passed" && ! echo "$L" | grep -qE "[1-9][0-9]* failed"'
 
 - [x] [BEHAVIOR] [L2] B-07: hotfix run harness_attempts 角色分布 planner/proposer/reviewer=0 且 generator≥1（真 PG，时间窗防伪）[接缝×2]
   动作: 真 PG 一跳驱动 runLoop（真 collectGroundTruth+真 derive+真 attemptStore，仅替身最外层 launcher），产出 hotfix run 的 harness_attempts 行，再 psql 断言
   预期观察: `role IN ('planner','proposer','reviewer')` 计数=0 且 `role='generator'` 计数≥1（均带 created_at 时间窗）
   等待预算: 0s
   留证: 两条 psql 计数输出（0 与 ≥1）
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; export DATABASE_URL="${DB_URL:?}"; L=$(npx vitest run src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js -t "hotfix 首角色" --reporter=dot 2>&1); echo "$L"; echo "$L" | grep -qE "Tests +[0-9]+ passed" && ! echo "$L" | grep -qE "[1-9][0-9]* failed"'
+  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; export DATABASE_URL="${DB_URL:?}"; L=$(npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js -t "hotfix 首角色" --reporter=dot 2>&1); echo "$L"; echo "$L" | grep -qE "Tests +[0-9]+ passed" && ! echo "$L" | grep -qE "[1-9][0-9]* failed"'
 
 ## Invariant 覆盖
 
