@@ -1,7 +1,18 @@
 import express from 'express';
 import request from 'supertest';
-import { afterEach, describe, expect, it } from 'vitest';
-import approvalRouter from '../harness-kernel-approvals.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// express-rate-limit 的限流状态活在模块顶层（approvalRateLimit 是模块级单例，
+// 内存 store 跨 it() 累加，不随 vi.clearAllMocks 重置）。每 test 用
+// vi.resetModules() 强制拿一份全新路由实例，隔离限流预算——否则新增测试用例
+// 会把整份文件的请求总数顶过共享的 10/60s 上限，命中真实生产限流规则
+// （不能靠调大生产 limit 来"修"，那会削弱 kernel-wiring.pg.integration.test.js
+// 里验证暴力枚举 token 真被挡住的安全回归）。
+let approvalRouter;
+beforeEach(async () => {
+  vi.resetModules();
+  ({ default: approvalRouter } = await import('../harness-kernel-approvals.js'));
+});
 
 const APPROVER_TOKEN = 'kernel-route-approver-token';
 const RUN_ID = '11111111-1111-4111-8111-111111111111';

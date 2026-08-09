@@ -8,10 +8,7 @@ import { authenticateApprover } from './harness-pending-reviews.js';
 const router = Router();
 const approvalRateLimit = rateLimit({
   windowMs: 60_000,
-  // 30（原 10）：approve/reject 共享同一限流桶，人工操作员重试几次（stale_sha/
-  // wrong hop 等）很容易在 60s 内摸到旧上限；token 鉴权才是主防线，限流只是
-  // 防暴力枚举 token 的纵深，30/min 对该威胁模型无实质削弱。
-  limit: 30,
+  limit: 10,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   identifier: 'kernel-reviews-approval',
