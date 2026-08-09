@@ -200,7 +200,7 @@ export DATABASE_URL="$DB_URL"
 REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel)}"
 cd "$REPO_ROOT"
 
-echo "== 1. 空库跑仓库真实迁移（migrate.js 按文件名序执行至 395），机检 gear 列落库 =="
+echo "== 1. 空库跑仓库真实迁移（migrate.js 按文件名序执行至 396），机检 gear 列落库 =="
 # db-config.js 的 DB_DEFAULTS 只读离散 DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD,不读 DATABASE_URL;
 # 故先把 Fleet 注入的连接串 DB_URL 解析成离散 DB_* 变量,再按 CI 既有跑法 (cd packages/brain and node src/migrate.js) 执行,
 # 避免连回默认库 localhost/cecelia。用 node 解析 + shell 安全单引号写入可 source 的 env 文件,规避手写正则的引号地狱。
@@ -224,7 +224,7 @@ node /tmp/harness-dburl-parse.mjs || { echo "FAIL: 解析 DB_URL 为离散 DB_* 
 ( cd packages/brain && node src/migrate.js ) >/tmp/harness-migrate.log 2>&1 \
   || { echo "FAIL: migrate 失败"; tail -30 /tmp/harness-migrate.log; exit 1; }
 psql "$DB_URL" -tAc "SELECT column_name FROM information_schema.columns WHERE table_name='initiative_runs' AND column_name='gear'" | grep -qx gear \
-  || { echo "FAIL: initiative_runs.gear 列不存在（迁移 395 未生效）"; exit 1; }
+  || { echo "FAIL: initiative_runs.gear 列不存在（迁移 396 未生效）"; exit 1; }
 echo "OK: initiative_runs.gear 列存在"
 
 echo "== 2. derive gear 三档分叉纯函数真验（无 mock/无替身/无 DB）=="
@@ -404,4 +404,4 @@ node scripts/facts-check.mjs
 bash scripts/check-version-sync.sh
 node packages/quality/scripts/devgate/check-dod-mapping.cjs
 ```
-版本 bump：`packages/brain/package.json` semver（本改动 = feat，minor 或 patch 由 generator 定）。迁移回滚脚本放 `packages/brain/migrations/rollback/395_initiative_runs_gear.down.sql`（对齐 393 约定，不放主目录）。
+版本 bump：`packages/brain/package.json` semver（本改动 = feat，minor 或 patch 由 generator 定）。迁移回滚脚本放 `packages/brain/migrations/rollback/396_initiative_runs_gear.down.sql`（对齐 393 约定，不放主目录）。

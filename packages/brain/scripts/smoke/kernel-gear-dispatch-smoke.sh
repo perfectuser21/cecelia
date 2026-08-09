@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke: kernel-gear-dispatch — kernel 真读 gear 三档在 orchestrator 状态机内分流（sprint 08091640）
 # 验证：
-#   1. migration 395 给 initiative_runs 增 gear 列
+#   1. migration 396 给 initiative_runs 增 gear 列
 #   2. kernel-run-store.createKernelRun INSERT 增写 gear
 #   3. ground-truth.collectGroundTruth 注入 observed.gear
 #   4. harness-skill-relay 建 run 时 deriveGear(task) 读档传入
@@ -10,13 +10,13 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-echo "[kernel-gear-smoke] 1. migration 395 有 initiative_runs.gear 列"
-ls packages/brain/migrations/395_*.sql >/dev/null 2>&1 \
-  || { echo "FAIL: 缺 migration 395_*.sql"; exit 1; }
-grep -qiE "ALTER TABLE +initiative_runs" packages/brain/migrations/395_*.sql \
-  && grep -qi "gear" packages/brain/migrations/395_*.sql \
-  || { echo "FAIL: migration 395 未给 initiative_runs 加 gear 列"; exit 1; }
-echo "  ✓ migration 395 gear 列"
+echo "[kernel-gear-smoke] 1. migration 396 有 initiative_runs.gear 列"
+ls packages/brain/migrations/396_*.sql >/dev/null 2>&1 \
+  || { echo "FAIL: 缺 migration 396_*.sql"; exit 1; }
+grep -qiE "ALTER TABLE +initiative_runs" packages/brain/migrations/396_*.sql \
+  && grep -qi "gear" packages/brain/migrations/396_*.sql \
+  || { echo "FAIL: migration 396 未给 initiative_runs 加 gear 列"; exit 1; }
+echo "  ✓ migration 396 gear 列"
 
 echo "[kernel-gear-smoke] 2. kernel-run-store / ground-truth / harness-skill-relay 接线"
 node -e "

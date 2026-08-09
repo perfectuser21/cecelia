@@ -1,6 +1,6 @@
 /**
  * [BEHAVIOR] kernel 真读 gear：initiative_runs.gear round-trip + observed.gear 注入 +
- * hotfix 一跳角色分布（sprint 08091640）。真 Postgres 集成——真 migrate（含 395）+ 真
+ * hotfix 一跳角色分布（sprint 08091640）。真 Postgres 集成——真 migrate（含 396）+ 真
  * createKernelRun + 真 collectGroundTruth + 真 derive + 真 attemptStore，仅替身最外层 launcher。
  *
  * 禁 mock 边（合同「禁 mock 边清单」）：
@@ -46,7 +46,7 @@ async function createIsolatedDatabase() {
   // CI postgres 服务随 job 销毁）。
   adminPool = new Pool({ ...DB_DEFAULTS, database: 'postgres', max: 1, statement_timeout: 10_000 });
   await adminPool.query(`CREATE DATABASE ${quotedIdentifier(databaseName)}`);
-  // 真跑仓库真实迁移（migrate.js 按文件名序执行至 395），gear 列由 395 落库。
+  // 真跑仓库真实迁移（migrate.js 按文件名序执行至 396），gear 列由 396 落库。
   execFileSync(process.execPath, ['src/migrate.js'], {
     cwd: BRAIN_ROOT,
     env: {
