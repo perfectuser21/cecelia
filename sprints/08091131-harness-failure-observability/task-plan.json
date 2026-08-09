@@ -1,0 +1,35 @@
+{
+  "initiative_id": "20eebb17-bf8f-4edf-baf4-eb12754ae6bf",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全部改动落在 packages/brain/ 纯后端（terminal 写入点、机械闸 lint、failure-stats API），无 UI/远端 agent 参与",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "harness 失败可观测：全量 terminal 写入点强制写 result.failure_class + 机械闸 + failure-stats API",
+      "scope": "新增 lib/harness-failure-class.js（冻结枚举 FAILURE_CLASSES + assertFailureClass + fail-closed markHarnessTerminal 写 result.failure_class/failure_detail/completed_at）；把合同 Step 2 表列出的全部 in-scope harness terminal 写入点改经 helper 写 result（非 harness 写加 lint-allow-terminal 标记）；新增 scripts/ci/harness-terminal-failure-class-gate.mjs 机械闸并接入 brain-ci-deploy.yml；routes/harness.js 新增 GET /failure-stats?days=N（by_class 分组 + failure_rate 滚动失败率，窗口列 completed_at，空窗口 rate=0，非法 days 返 400）。不做失败根因修复、不动 gear 分档/入口强制、不回填历史 null。",
+      "dod": [
+        "[BEHAVIOR] 各 harness terminal 写入点经 helper 使 tasks.result->>'failure_class' 非 null 且 ∈ 枚举（B-01/B-05，真 Postgres）",
+        "[BEHAVIOR] 非法枚举 fail-closed 抛错不落库（B-08）",
+        "[BEHAVIOR] 机械闸脏 fixture exit 1 / 干净 fixture exit 0 / 真实树 exit 0（B-06）",
+        "[BEHAVIOR] GET /failure-stats?days=7 返回 200 含 failure_rate(number)+by_class(object)，days=0 返 400（B-02/B-03/B-04/B-07）",
+        "[ARTIFACT] packages/brain/src/lib/harness-failure-class.js / scripts/ci/harness-terminal-failure-class-gate.mjs 存在，routes/harness.js 注册 /failure-stats，brain-ci-deploy.yml 接入 lint"
+      ],
+      "files": [
+        "packages/brain/src/lib/harness-failure-class.js",
+        "packages/brain/src/executor.js",
+        "packages/brain/src/dispatcher.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/src/harness-relay-watchdog.js",
+        "packages/brain/src/harness-death-handlers.js",
+        "packages/brain/src/golden-path-contracts.js",
+        "packages/brain/src/triage-officer-15min.js",
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/scripts/ci/harness-terminal-failure-class-gate.mjs",
+        ".github/workflows/brain-ci-deploy.yml"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 110
+    }
+  ]
+}
