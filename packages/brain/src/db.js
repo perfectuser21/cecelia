@@ -6,8 +6,10 @@ const { Pool } = pg;
 
 const pool = new Pool(DB_DEFAULTS);
 
-// Log connection info for debugging (no password)
-console.log('PostgreSQL pool configured:', {
+// Log connection info for debugging (no password).
+// 用 stderr 而非 stdout：避免污染 `TID=$(node -e '...import db.js...process.stdout.write(id)')`
+// 这类命令替换捕获（harness DoD/E2E 依赖纯净 stdout 拿 task id）。
+console.error('PostgreSQL pool configured:', {
   host: DB_DEFAULTS.host,
   port: DB_DEFAULTS.port,
   database: DB_DEFAULTS.database,

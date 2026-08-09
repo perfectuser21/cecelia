@@ -42,7 +42,7 @@ journey_type: autonomous
   预期观察: 干净树 exit 0；含违规写入 exit 1
   等待预算: 0s
   留证: 两次 lint 退出码
-  Test: manual:bash -c 'node scripts/lint-failure-class-writes.mjs || exit 1; F=$(mktemp --suffix=.mjs); printf "export async function bad(p,i){await p.query(\"UPDATE tasks SET status=%s WHERE id=\$1\",[i]);}\n" "\x27failed\x27" > "$F"; if node scripts/lint-failure-class-writes.mjs --extra-scan "$F"; then rm -f "$F"; echo "FAIL: 违规未拦下"; exit 1; fi; rm -f "$F"; echo OK'
+  Test: manual:bash -c 'node scripts/lint-failure-class-writes.mjs || exit 1; F=$(mktemp --suffix=.mjs); printf "%s\n" "export async function bad(p,i){await p.query(\"UPDATE tasks SET status='\''failed'\'' WHERE id=\$1\",[i]);}" > "$F"; if node scripts/lint-failure-class-writes.mjs --extra-scan "$F"; then rm -f "$F"; echo "FAIL: 违规未拦下"; exit 1; fi; rm -f "$F"; echo OK'
 
 - [x] [BEHAVIOR] [L2] B-04: failure-stats 返回 200 且含 failure_rate 数值 + by_class 对象 + period_days
   动作: GET localhost:5221/api/brain/harness/failure-stats?days=7
