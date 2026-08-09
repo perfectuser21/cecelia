@@ -89,6 +89,7 @@ beforeAll(async () => {
       current_task_id UUID,
       phase TEXT NOT NULL,
       orchestrator_version TEXT,
+      gear TEXT,
       commander_mode TEXT NOT NULL DEFAULT 'kernel-only'
         CHECK (commander_mode IN ('legacy-session','kernel-only','hybrid')),
       orchestrator_host TEXT,

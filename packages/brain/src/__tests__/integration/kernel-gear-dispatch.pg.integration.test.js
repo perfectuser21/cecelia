@@ -63,17 +63,20 @@ async function createIsolatedDatabase() {
 async function dropIsolatedDatabase() {
   if (testPool) await testPool.end();
   if (adminPool && databaseName) {
-    let remainingSessions = 0;
-    for (let attempt = 0; attempt < 250; attempt += 1) {
-      const result = await adminPool.query(
-        'SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=$1',
-        [databaseName],
+    // pg15 DROP DATABASE ... WITH (FORCE) 直接 terminate 残留连接后落库——比自旋等
+    // pg_stat_activity 归零更确定，避免 afterAll hook 超时（dod-behavior-dynamic 实测）。
+    try {
+      await adminPool.query(
+        `DROP DATABASE IF EXISTS ${quotedIdentifier(databaseName)} WITH (FORCE)`,
       );
-      remainingSessions = result.rows[0].count;
-      if (remainingSessions === 0) break;
-      await new Promise(resolve => setTimeout(resolve, 20));
+    } catch {
+      // FORCE 不可用/竞态兜底：先踢连接再普通 DROP
+      await adminPool.query(
+        'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid()',
+        [databaseName],
+      ).catch(() => {});
+      await adminPool.query(`DROP DATABASE IF EXISTS ${quotedIdentifier(databaseName)}`);
     }
-    await adminPool.query(`DROP DATABASE IF EXISTS ${quotedIdentifier(databaseName)}`);
   }
   if (adminPool) await adminPool.end();
 }
