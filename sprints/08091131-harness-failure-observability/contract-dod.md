@@ -1,6 +1,3 @@
-contract_branch: cp-harness-propose-r1-b426ab41-r20eebb17-a4
-sprint_dir: sprints/08091131-harness-failure-observability
-
 ---
 skeleton: false
 journey_type: autonomous
