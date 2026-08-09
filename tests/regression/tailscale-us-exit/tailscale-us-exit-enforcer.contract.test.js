@@ -295,7 +295,10 @@ describe('西安执行机美国 Exit Node 强制器', () => {
   });
 });
 
-describe('LaunchAgent 安装器', () => {
+// #4741 引入时缺平台守卫：LaunchDaemon/plutil/launchctl 全是 macOS 专属，
+// ubuntu-latest CI runner 上 /usr/bin/plutil 不存在直接 127，把 required
+// brain-unit 分片 3 拖红（本次案卷发现，与 task 31b93fd4 三修无关，顺手补）。
+describe.runIf(process.platform === 'darwin')('LaunchAgent 安装器', () => {
   it('默认生成 root LaunchDaemon，并为 App Store CLI 注入脚本模式', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tailscale-us-exit-install-'));
     tempDirs.push(dir);

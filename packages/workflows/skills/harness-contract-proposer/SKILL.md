@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.22.0
+version: 9.23.0
 created: 2026-04-08
-updated: 2026-08-04
+updated: 2026-08-09
 changelog:
+  - 9.23.0: playground sprint 测试栈死规则（kernel 收尾三修，run 8374ab73/25eb2072 案卷）——playground 合同的 vitest 测试文件必须用 `describe/it/expect`（Vitest），**禁止 `node:test`/`assert`**：仓库 required CI（Sprint Tests 实跑、TDD Commit 顺序检查）只认 Vitest，合同批准 node:test 后 generator 无法在不越权改共享门禁的前提下让 CI 全绿，只能报合同故障码申诉，run 死循环。同段强调：playground/ 下的实现文件（如 `playground/server.js`）**是**该 sprint 唯一合法实现路径，TDD 门禁的"prod code needs a prior failing test"要求由该目录下的 `tests/*.test.ts` 满足，proposer 写 BEHAVIOR 验证命令与 vitest 测试文件时不得假设它会被识别为共享 `packages/*/src` 代码（两者判定路径不同，不要混用共享门禁措辞误导 generator）。
   - 9.22.0: 堵「橡皮 closure」口（r43 实证,与 reviewer 9.14.0 配套）——Step 1.4 closure 声明新增硬格式 quote: 字段:必须直接引用本轮合同/DoD 新增或修改后的原文片段(≥20字),无引用的声明性话术("已按合同实际内容关闭")禁用;E 号(重开)blocker 的 quote 必须来自本轮新增条款。r43 实证一句空话 closure 骗过 Reviewer 放行未改合同,下游再撞死,重开白做
   - 9.21.0: 案卷式 GAN 协议（配套 cecelia kernel 1.267.207+，与 reviewer 9.12.0 配套）——新增「案卷 closure 声明」步骤：改合同前先读 `inputs.case_file`，对上一轮 reviewer 行的每条 blocker 按编号（R<round>-<seq>）逐条输出 closure 声明（做了什么/为什么足以关闭），写进本轮结果 `case_file.blockers` 与 `feedback_md`；结果 JSON 顶层新增 `case_file:{blockers[],feedback_md}`，`decision` 新增 `contract_round` 与 push 后的 `contract_sha`（供 Kernel 案卷锚定）；bundle 有 `thin_prd`/`prep_prd_body` 时作为 PRD 正文来源优先于自行推断。
   - 9.20.0: Kernel validation identity late-binding——GAN authoring identity 只作作者 provenance，禁止把 Planner/Proposer/Reviewer 的 attempt/account/capability snapshot 固化为未来验收身份；合同必须使用 Runner 在实际执行角色中注入的 HARNESS_* / CAPABILITY_SNAPSHOT_ID，并用证据摘要串联 Evaluator 与 Judge
@@ -312,6 +313,15 @@ Generator 写代码 + vitest 单元测试
 | 任意 journey_type | `echo "ok"` / `true` 假命令 | 真实 exit code 驱动的断言 |
 
 **playground sprint 例外**（`is_skeleton: true` 且 PRD 明确写"playground 训练 sprint"）：BEHAVIOR 命令可用 `node playground/server.js`，但 final-e2e 不能混用 Brain API（evaluator B33 检测）。
+
+**playground sprint 测试栈死规则（v9.23 — run 8374ab73/25eb2072 案卷，与 kernel 三修配套）**：
+
+| 场景 | 禁止 ❌ | 必须 ✅ |
+|---|---|---|
+| playground 测试文件（`tests/*.test.ts`） | `node:test` + `assert`（仓库 required CI 不认，会让 Sprint Tests 实跑/TDD Commit 顺序检查失败） | `describe/it/expect`（Vitest）——与仓库其余测试文件同一栈 |
+| TDD commit 顺序 | 以为 `playground/server.js` 不算"实现"，跳过先写测试 | `playground/` 下的实现文件就是本 sprint 唯一合法实现路径；TDD 门禁的"先测后码"要求由 `tests/*.test.ts` 满足，红绿两次 commit 顺序不变 |
+
+r43 二次实证反面案例：批准合同要求 generator 用 `node:test`/`assert`，但仓库 required CI 只跑 Vitest；generator 无权在不越权修改共享门禁的前提下让 CI 全绿，只能报合同故障码申诉，run 陷入死循环（已配 F6 仲裁子集匹配兜底，但**根治在 proposer 一开始就不批错测试栈**）。
 
 ---
 

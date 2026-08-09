@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.270.11
+**Brain 版本**: 1.270.12
 
 **状态**: 生产运行中
 
@@ -20,6 +20,15 @@
 - callback queue 引入带租约的单消费者 claim；HTTP 回调与 worker 不再重复消费，同一 `run_id` 只有精确匹配当前 attempt 才能结算。
 - 任务隔离后不再发送 Thalamus 重试事件，持久化 `failure_count` 成为唯一重试计数；任务失败不再击穿全局 `cecelia-run` 熔断器。
 - migration 394 为 callback queue 增加 `claimed_at` / `claimed_by` 与可领取索引；回滚脚本同步提供。
+
+## Brain 1.270.12 — kernel 收尾三修合一（评审台真链路+preview容量诊断+F6死规则）
+
+- **磁盘容量真相**：/preview/start 长期 503（此前误判为 token/GHA secret 未同步）——host-disk-sampler 每分钟采样，容量闸要求 ≥38.5GiB 空闲，host 因孤儿 harness worktree(~3.6GB)、旧 docker 镜像/构建缓存累积长期卡在阈值下方；已清理，闸门实测转绿(200)。无代码改动，纯运维发现。
+- **评审台路由未挂载**：`harness-kernel-approvals.js` 的 approve/reject/context 三端点写好、单测好，从未被 `routes.js` 引用——生产 Brain 上整条路由树 404，人审只能操作员 psql 直写 verdict:human_review 绕过（本次案卷两次实测复现）。现已挂载 `/api/brain/kernel-reviews`。
+- **approve 免猜 hop**：`review_request_hop` 改为可选——省略时按 run_id+pr_head_sha 反查最新一条待审请求，消除"通知发出时 hop 号还未分配"的时序耦合。
+- **Bark 通知带可执行审批模板**：`wait:human_review` 现传 run_id/pr_head_sha 给通知，Bark 推送自带可直接复制运行的 curl 审批命令（不含 token 值，仅 shell 变量名占位）。
+- **F6 仲裁码核心子集匹配**：合同故障申诉码精确 token 集合比对扛不住"多词/丢词"漂移（run 8374ab73 案卷：`APPROVED_CONTRACT_CI_CONFLICT` 比枚举值多 APPROVED、少 SCOPE），改为核心组合子集匹配。
+- **proposer 9.23.0 死规则**：playground sprint 测试栈必须 Vitest（`describe/it/expect`），禁 `node:test`/`assert`——仓库 required CI 只认 Vitest，批错测试栈会让 generator 陷入合同故障申诉死循环（已有 F6 兜底，本次根治源头）。
 
 ## Brain 1.270.11 — merge BEHIND 走版本无关 gh api（run 986a51d3 案卷）
 
