@@ -6,6 +6,8 @@ export const PIPELINE_TASK_TYPES = [
   'content-copy-review',
   'content-generate',
   'content-image-review',
+  'content-review',
+  'content_publish',
   'harness_ci_watch',
   'harness_deploy_watch',
 ];

@@ -20,6 +20,8 @@ describe('task list queue lanes', () => {
     expect(listSql).toContain('AS queue_lane');
     expect(listSql).toContain("payload->>'headed_manual'");
     expect(listSql).toContain("task_type IN ('content-pipeline'");
+    expect(listSql).toContain("'content-review'");
+    expect(listSql).toContain("'content_publish'");
     expect(listSql).not.toMatch(/SELECT[^;]*\bpayload\b\s*(?:,|FROM)/s);
   });
 });

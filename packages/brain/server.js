@@ -915,7 +915,7 @@ async function onBrainListening() {
 
   // 旧 Workspace 多库写入器仅显式开启；canonical Tasks/Projects projection 由独立 loop 负责。
   try {
-    const { scheduleLegacyNotionPush } = await import('./src/notion-push-sync.js');
+    const { scheduleLegacyNotionPush } = await import('./src/legacy-notion-push-scheduler.js');
     scheduleLegacyNotionPush(pool);
   } catch (e) {
     console.warn('[Server] Notion Push Sync init failed (non-fatal):', e.message);
