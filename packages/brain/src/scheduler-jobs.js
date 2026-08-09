@@ -92,6 +92,15 @@ export const JOBS = [
   { name: 'projection-outbox', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runProjectionOutbox, description: '本地数据库到 Notion/Obsidian 等可拆卸 projection 的通用 outbox' },
 ];
 
+const PROJECTION_JOB_NAME_SET = new Set([
+  'notion-task-command-ingest',
+  'projection-command-apply',
+  'projection-outbox',
+]);
+
+export const PROJECTION_JOBS = JOBS.filter(job => PROJECTION_JOB_NAME_SET.has(job.name));
+export const SERIAL_JOBS = JOBS.filter(job => !PROJECTION_JOB_NAME_SET.has(job.name));
+
 function raceWithTimeout(promise, timeoutMs) {
   let timer;
   const timeout = new Promise((resolve) => {
@@ -168,7 +177,7 @@ export function startSchedulerJobsLoop(pool) {
     // 60s tick 叠加并发调用同一 handler，踩中各模块自 gate 的先查后写(TOCTOU)竞态。
     if (running) return;
     running = true;
-    runSchedulerJobsOnce(pool)
+    runSchedulerJobsOnce(pool, SERIAL_JOBS)
       .catch((e) => console.warn('[scheduler-jobs] loop iteration failed:', e.message))
       .finally(() => { running = false; });
   }, LOOP_INTERVAL_MS);
@@ -184,4 +193,37 @@ export function stopSchedulerJobsLoop() {
     loopTimer = null;
   }
   running = false;
+}
+
+let projectionLoopTimer = null;
+let projectionRunning = false;
+
+function runProjectionIteration(pool, runOnce) {
+  if (projectionRunning) return;
+  projectionRunning = true;
+  Promise.resolve(runOnce(pool, PROJECTION_JOBS))
+    .catch((error) => console.warn('[projection-jobs] loop iteration failed:', error.message))
+    .finally(() => { projectionRunning = false; });
+}
+
+/** 独立 projection loop：启动即跑，之后每 60s 一轮，不受慢速串行 job 阻塞。 */
+export function startProjectionJobsLoop(pool, { runOnce = runSchedulerJobsOnce } = {}) {
+  if (projectionLoopTimer) return projectionLoopTimer;
+  runProjectionIteration(pool, runOnce);
+  projectionLoopTimer = setInterval(
+    () => runProjectionIteration(pool, runOnce),
+    LOOP_INTERVAL_MS,
+  );
+  if (typeof projectionLoopTimer.unref === 'function') projectionLoopTimer.unref();
+  console.log(`[projection-jobs] started (${LOOP_INTERVAL_MS / 1000}s loop, ${PROJECTION_JOBS.length} jobs)`);
+  return projectionLoopTimer;
+}
+
+/** 停止独立 projection loop（测试用）。 */
+export function stopProjectionJobsLoop() {
+  if (projectionLoopTimer) {
+    clearInterval(projectionLoopTimer);
+    projectionLoopTimer = null;
+  }
+  projectionRunning = false;
 }

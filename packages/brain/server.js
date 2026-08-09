@@ -926,8 +926,9 @@ async function onBrainListening() {
 
   // scheduler-jobs：声明式定时任务注册表（作战循环 P1-PR1，恢复 Wave 2 断掉的定时任务）
   try {
-    const { startSchedulerJobsLoop } = await import('./src/scheduler-jobs.js');
+    const { startSchedulerJobsLoop, startProjectionJobsLoop } = await import('./src/scheduler-jobs.js');
     startSchedulerJobsLoop(pool);
+    startProjectionJobsLoop(pool);
   } catch (e) {
     console.warn('[Server] scheduler-jobs init failed (non-fatal):', e.message);
   }

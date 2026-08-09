@@ -124,6 +124,7 @@ import {
   JOBS,
   SENTINEL_KEY_PREFIX,
 } from '../scheduler-jobs.js';
+import * as schedulerJobsModule from '../scheduler-jobs.js';
 import { triggerArchReview, triggerCiPatrol } from '../daily-review-scheduler.js';
 import { maybeTriggerStrategySession } from '../active-goals-zero-trigger.js';
 import { scheduleDailyBackup } from '../daily-backup-scheduler.js';
@@ -267,6 +268,62 @@ describe('scheduler-jobs loop 幂等与重入守卫', () => {
     stopSchedulerJobsLoop();
     await vi.advanceTimersByTimeAsync(60 * 1000);
     expect(triggerArchReview).not.toHaveBeenCalled();
+  });
+});
+
+describe('projection 独立调度 loop', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    schedulerJobsModule.stopProjectionJobsLoop?.();
+    stopSchedulerJobsLoop();
+    vi.useRealTimers();
+  });
+
+  it('projection jobs 不进入慢速串行队列，但仍保留在总注册表和哨兵计数中', () => {
+    expect(schedulerJobsModule.SERIAL_JOBS).toBeInstanceOf(Array);
+    const independentNames = schedulerJobsModule.PROJECTION_JOBS.map(job => job.name);
+    expect(independentNames).toEqual([
+      'notion-task-command-ingest',
+      'projection-command-apply',
+      'projection-outbox',
+    ]);
+    expect(schedulerJobsModule.SERIAL_JOBS.map(job => job.name)).not.toEqual(
+      expect.arrayContaining(independentNames),
+    );
+    expect(JOBS.map(job => job.name)).toEqual(expect.arrayContaining(independentNames));
+  });
+
+  it('慢速串行 job 挂起时，projection 仍在独立 loop 立即执行并按 60s 继续', async () => {
+    expect(schedulerJobsModule.startProjectionJobsLoop).toBeTypeOf('function');
+    const pool = makePool();
+    triggerArchReview.mockImplementationOnce(() => new Promise(() => {}));
+    const projectionRunner = vi.fn().mockResolvedValue([]);
+
+    startSchedulerJobsLoop(pool);
+    schedulerJobsModule.startProjectionJobsLoop(pool, { runOnce: projectionRunner });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(projectionRunner).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    expect(triggerArchReview).toHaveBeenCalledTimes(1);
+    expect(projectionRunner).toHaveBeenCalledTimes(2);
+    expect(projectionRunner.mock.calls[0][1].map(job => job.name)).toEqual([
+      'notion-task-command-ingest',
+      'projection-command-apply',
+      'projection-outbox',
+    ]);
+  });
+
+  it('上一轮 projection 未结束时不叠加下一轮', async () => {
+    expect(schedulerJobsModule.startProjectionJobsLoop).toBeTypeOf('function');
+    const projectionRunner = vi.fn(() => new Promise(() => {}));
+    schedulerJobsModule.startProjectionJobsLoop(makePool(), { runOnce: projectionRunner });
+    await vi.advanceTimersByTimeAsync(120 * 1000);
+    expect(projectionRunner).toHaveBeenCalledTimes(1);
   });
 });
 
