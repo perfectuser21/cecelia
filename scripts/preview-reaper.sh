@@ -122,22 +122,52 @@ for pr in $UNIQUE_PRS; do
     continue
   fi
 
-  # 3a. 从表中查端口（用于 kill 进程）
-  PORT=$(psql -h "$DB_HOST" -U "$DB_USER" -d cecelia -t -A \
-    -c "SELECT port FROM preview_environments WHERE pr_number = $pr ORDER BY created_at DESC LIMIT 1;" \
-    2>/dev/null | head -1 | tr -d '[:space:]' || echo "")
+  # 3a/3b. 终止预览进程 —— 只认起环境时记录在案的 PID，绝不用 lsof 猜端口持有者。
+  #
+  # 事故根因（2026-08-09~10）：旧逻辑按端口查持有者再 SIGKILL（lsof + xargs kill -9），
+  # 而 OrbStack vmgr 做容器端口转发、正是预览端口（5300-5302）的持有者 → 每次回收都把
+  # OrbStack VM 管理器 SIGKILL 掉 → 全机 docker 中断 → 连锁打死所有 harness run。
+  # 正确 PID 早已由 preview-env-start.sh:290 写进 /tmp/preview-<pr>.pid，旧逻辑却删掉它、
+  # 改用 lsof 猜。现改为读该 PID，并在 kill 前做两道门：基础设施红线 + 身份校验。
+  # 铁律：宁可漏回收进程，不可误杀宿主基础设施。
+  PID_FILE="/tmp/preview-${pr}.pid"
+  TARGET_PID=""
+  [ -f "$PID_FILE" ] && TARGET_PID=$(head -1 "$PID_FILE" 2>/dev/null | tr -d '[:space:]')
 
-  # 3b. Kill 端口进程
-  if [ -n "$PORT" ] && [[ "$PORT" =~ ^[0-9]+$ ]]; then
-    PIDS=$(lsof -ti :"$PORT" 2>/dev/null || echo "")
-    if [ -n "$PIDS" ]; then
-      echo "$PIDS" | xargs kill 2>/dev/null || true
-      sleep 1
-      echo "$PIDS" | xargs kill -9 2>/dev/null || true
-      log "  ✓ 端口 ${PORT} 进程已终止"
+  if [ -z "$TARGET_PID" ] || ! [[ "$TARGET_PID" =~ ^[0-9]+$ ]]; then
+    # 降级：pid 文件缺失/损坏 —— 绝不回落到杀端口持有者（那正是事故根因）。
+    # 仅记日志跳过进程终止，由后续巡检/守护处理；DB/cache/worktree 回收照常进行。
+    log "  ⚠ PR#${pr} pid 文件缺失或无效（${PID_FILE}），跳过进程终止（降级：宁可漏回收，不可误杀宿主基础设施）"
+  elif ! kill -0 "$TARGET_PID" 2>/dev/null; then
+    log "  PR#${pr} 记录的 PID=${TARGET_PID} 进程已不存在，无需终止"
+  else
+    # 取进程身份：可执行名 + 完整 cmdline（argv）。
+    # Linux（CI/fleet-worker）优先读 /proc（本机精简 ps 不支持 -o）；macOS（生产）无 /proc，
+    # 回落到 ps -o command=/comm=。两端都能拿到身份，避免因取不到 cmdline 而误判/误杀。
+    if [ -r "/proc/${TARGET_PID}/cmdline" ]; then
+      PROC_ARGS=$(tr '\0' ' ' < "/proc/${TARGET_PID}/cmdline" 2>/dev/null | tr -d '\n')
+      PROC_COMM=$(cat "/proc/${TARGET_PID}/comm" 2>/dev/null | tr -d '\n')
+    else
+      PROC_ARGS=$(ps -p "$TARGET_PID" -o command= 2>/dev/null | tr -d '\n')
+      [ -z "$PROC_ARGS" ] && PROC_ARGS=$(ps -p "$TARGET_PID" -o args= 2>/dev/null | tr -d '\n')
+      PROC_COMM=$(ps -p "$TARGET_PID" -o comm= 2>/dev/null | tr -d '\n')
     fi
-    rm -f "/tmp/preview-${pr}.pid" "/tmp/preview-${pr}.branch" "/tmp/preview-${pr}.log" 2>/dev/null || true
+    PROC_IDENT="${PROC_COMM} ${PROC_ARGS}"
+
+    if echo "$PROC_IDENT" | grep -qiE 'orbstack|vmgr|com\.docker|dockerd|docker-proxy|containerd|/docker|/qemu|qemu-|runc|colima|lima|vpnkit|virtiofsd'; then
+      # 红线（不可回归）：命中 OrbStack / docker / 容器运行时 → 绝不 kill，告警。
+      log "  🚨 告警：PR#${pr} 记录的 PID=${TARGET_PID} 命中基础设施进程（${PROC_COMM:-?}）— 拒绝 kill（红线：绝不误杀宿主基础设施，见 2026-08-09 OrbStack vmgr 事故）"
+    elif ! echo "$PROC_ARGS" | grep -qE "(BRAIN_PREVIEW_PR=${pr}([^0-9]|\$)|preview-${pr}([^0-9]|/|\$))"; then
+      # 身份校验：cmdline 必须含本 PR 标识（env 标记或 worktree 路径），否则校验不过一律不杀。
+      log "  ⚠ PR#${pr} 记录的 PID=${TARGET_PID} cmdline 未含本 PR 标识，身份校验不过，跳过 kill（保守）：${PROC_ARGS}"
+    else
+      kill "$TARGET_PID" 2>/dev/null || true
+      sleep 1
+      kill -9 "$TARGET_PID" 2>/dev/null || true
+      log "  ✓ PR#${pr} 预览进程 PID=${TARGET_PID} 已终止"
+    fi
   fi
+  rm -f "/tmp/preview-${pr}.pid" "/tmp/preview-${pr}.branch" "/tmp/preview-${pr}.log" 2>/dev/null || true
 
   # 3c. Drop 数据库
   DB_NAME="cecelia_preview_${pr}"
