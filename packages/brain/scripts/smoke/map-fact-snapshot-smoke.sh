@@ -12,11 +12,11 @@ fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 NODE_EXECUTABLE="$(command -v node)"
 PSQL_EXECUTABLE="$(command -v psql)"
 REPO_ROOT_CECELIA="${REPO_ROOT_CECELIA:-$ROOT_DIR}"
-DATABASE_NAME="$($NODE_EXECUTABLE -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
+DATABASE_NAME="$("$NODE_EXECUTABLE" -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
 [[ "$DATABASE_NAME" =~ (_test|_scratch)$ ]] \
   || fail "拒绝连接非测试库: ${DATABASE_NAME:-<empty>}"
 
-ACTIVE_DATABASE="$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')"
+ACTIVE_DATABASE="$("$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')"
 [[ "$ACTIVE_DATABASE" == "$DATABASE_NAME" ]] \
   || fail "连接目标不一致: expected=$DATABASE_NAME actual=$ACTIVE_DATABASE"
 
@@ -25,22 +25,16 @@ TARGET_REVISION="$(git -C "$REPO_ROOT_CECELIA" rev-parse HEAD)"
   || fail "目标 repo HEAD 不是完整 Git object id"
 
 SMOKE_REPO="map-fact-snapshot-smoke-$$"
-STALE_ARMED=0
 cleanup() {
-  $PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
+  "$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
     -c "DELETE FROM api_registry WHERE repo = '$SMOKE_REPO'" \
     -c "DELETE FROM fact_snapshot_headers WHERE kind = 'api' AND repo = '$SMOKE_REPO'" \
     >/dev/null 2>&1 || true
-  if [[ "$STALE_ARMED" -eq 1 ]]; then
-    $PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
-      -c "UPDATE fact_snapshot_headers SET scanned_at = NOW() WHERE kind = 'api' AND repo = 'cecelia'" \
-      >/dev/null 2>&1 || true
-  fi
 }
 trap cleanup EXIT
 
 db_scalar() {
-  $PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"
+  "$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"
 }
 
 verify_headers_and_facts() {
@@ -76,6 +70,8 @@ verify_headers_and_facts() {
       || fail "$kind scanner_version 异常: $scanner"
     [[ "$header_count_value" == "$fact_count" ]] \
       || fail "$kind row_count=$header_count_value 与事实数=$fact_count 不一致"
+    [[ "$fact_count" =~ ^[0-9]+$ && "$fact_count" -gt 0 ]] \
+      || fail "$kind 事实数必须大于 0: $fact_count"
   done <<< "$header_output"
   [[ "$header_count" -eq 4 ]] || fail "cecelia header 不完整: expected=4 actual=$header_count"
 
@@ -98,8 +94,11 @@ verify_headers_and_facts() {
 verify_freshness() {
   local expected_status="$1"
   local expected_reason="${2:-}"
+  local target_repo="${3:-cecelia}"
+  local target_kinds="${4:-api,db_schema,test,graph}"
   EXPECTED_STATUS="$expected_status" EXPECTED_REASON="$expected_reason" \
-    DATABASE_URL="$DATABASE_URL" $NODE_EXECUTABLE --input-type=module <<'NODE'
+    TARGET_REPO="$target_repo" TARGET_KINDS="$target_kinds" DATABASE_URL="$DATABASE_URL" \
+    "$NODE_EXECUTABLE" --input-type=module <<'NODE'
 import pg from 'pg';
 import { computeFreshness } from './packages/brain/src/lib/registry-freshness.js';
 import { listPhotoLayer } from './packages/brain/src/lib/registry-photo-layer.js';
@@ -107,7 +106,8 @@ import { listPhotoLayer } from './packages/brain/src/lib/registry-photo-layer.js
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
 const expectedStatus = process.env.EXPECTED_STATUS;
 const expectedReason = process.env.EXPECTED_REASON || null;
-const kinds = expectedStatus === 'fresh' ? ['api', 'db_schema', 'test', 'graph'] : ['api'];
+const repo = process.env.TARGET_REPO;
+const kinds = process.env.TARGET_KINDS.split(',');
 const requiredKeys = [
   'status', 'reason_code', 'last_success_at', 'source_revision', 'scanner_version',
   'latest_scan', 'age_hours', 'stale', 'warning', 'row_count',
@@ -118,11 +118,12 @@ try {
     if (kind === 'graph') {
       const { rows } = await pool.query(
         `SELECT source_revision, scanner_version, scanned_at, row_count
-           FROM fact_snapshot_headers WHERE kind = 'graph' AND repo = 'cecelia'`,
+           FROM fact_snapshot_headers WHERE kind = 'graph' AND repo = $1`,
+        [repo],
       );
       freshness = computeFreshness(rows[0] ?? null);
     } else {
-      freshness = (await listPhotoLayer(pool, kind, { repo: 'cecelia', limit: 1 })).freshness;
+      freshness = (await listPhotoLayer(pool, kind, { repo, limit: 1 })).freshness;
     }
     for (const key of requiredKeys) {
       if (!(key in freshness)) throw new Error(`${kind} freshness 缺少 ${key}`);
@@ -169,6 +170,9 @@ METADATA_COLUMN_COUNT="$(db_scalar "
 pass '四类事实 metadata 列与 snapshot header schema'
 
 DATABASE_URL="$DATABASE_URL" REPO_ROOT_CECELIA="$REPO_ROOT_CECELIA" \
+  REPO_ROOT_ZJ_WORKSPACE='/nonexistent/map-smoke-zj-workspace' \
+  REPO_ROOT_ZJ_SKILLS='/nonexistent/map-smoke-zj-skills' \
+  GRAPH_REPOS=cecelia SKIP_GIT_PULL=1 \
   /bin/bash scripts/scan/run-all-scans.sh
 pass '四 scanner 自包含刷新'
 
@@ -179,7 +183,7 @@ verify_freshness fresh
 pass '四类 freshness shape 为 fresh'
 
 SMOKE_REPO="$SMOKE_REPO" SMOKE_REVISION="$TARGET_REVISION" DATABASE_URL="$DATABASE_URL" \
-  $NODE_EXECUTABLE --input-type=module <<'NODE'
+  "$NODE_EXECUTABLE" --input-type=module <<'NODE'
 import pg from 'pg';
 import { replaceFactSnapshot } from './packages/brain/src/lib/fact-snapshot-store.js';
 
@@ -204,22 +208,36 @@ try {
   }
   if (header.rows[0]?.row_count !== 1) throw new Error('演习 header row_count 不等于1');
 } finally {
-  await pool.query('DELETE FROM api_registry WHERE repo = $1', [repo]);
-  await pool.query(`DELETE FROM fact_snapshot_headers WHERE kind = 'api' AND repo = $1`, [repo]);
   await pool.end();
 }
 NODE
 pass '消失事实原子替换演习'
 
-db_scalar "UPDATE fact_snapshot_headers SET scanned_at = NOW() - interval '16 minutes' WHERE kind = 'api' AND repo = 'cecelia'" >/dev/null
-STALE_ARMED=1
-verify_freshness unknown snapshot_stale
+verify_freshness fresh '' "$SMOKE_REPO" api
+db_scalar "UPDATE fact_snapshot_headers SET scanned_at = NOW() - interval '16 minutes' WHERE kind = 'api' AND repo = '$SMOKE_REPO'" >/dev/null
+verify_freshness unknown snapshot_stale "$SMOKE_REPO" api
 pass '16 分钟快照 fail-closed unknown/snapshot_stale'
 
-DATABASE_URL="$DATABASE_URL" $NODE_EXECUTABLE scripts/scan/scan-api-registry.js
-STALE_ARMED=0
-verify_freshness fresh
-verify_headers_and_facts
+SMOKE_REPO="$SMOKE_REPO" SMOKE_REVISION="$TARGET_REVISION" DATABASE_URL="$DATABASE_URL" \
+  "$NODE_EXECUTABLE" --input-type=module <<'NODE'
+import pg from 'pg';
+import { replaceFactSnapshot } from './packages/brain/src/lib/fact-snapshot-store.js';
+
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+try {
+  await replaceFactSnapshot(pool, 'api', {
+    repo: process.env.SMOKE_REPO,
+    sourceRevision: process.env.SMOKE_REVISION,
+    scannerVersion: 'smoke-v1',
+    rows: [{
+      method: 'GET', path: '/kept', file_path: 'smoke.js', line_number: 1, area: 'smoke',
+    }],
+  });
+} finally {
+  await pool.end();
+}
+NODE
+verify_freshness fresh '' "$SMOKE_REPO" api
 pass '重扫恢复 fresh 且 provenance/count 保持一致'
 
 printf '%s\n' 'ALL PASS: map fact snapshot scratch smoke'
