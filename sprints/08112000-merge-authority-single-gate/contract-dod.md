@@ -38,7 +38,7 @@ journey_type: autonomous
   预期观察: 响应 owned==true 且 run_id 为字符串、pr_url 命中 seed 的 pull URL
   等待预算: 0s
   留证: curl 响应 JSON + psql seed 的 run id（进 evidence）
-  Test: manual:bash -c 'D="${DB_URL:-postgresql://localhost/cecelia}"; BR="cp-dodb01-$$-$RANDOM"; RID=$(psql "$D" -tAc "WITH t AS (INSERT INTO tasks(id,title,task_type,status,payload) VALUES(gen_random_uuid(),'"'"'dod-b01'"'"','"'"'harness_generate'"'"','"'"'in_progress'"'"',jsonb_build_object('"'"'pr_branch'"'"','"'"'$BR'"'"')) RETURNING id) INSERT INTO initiative_runs(id,initiative_id,phase,orchestrator_version,current_task_id,created_source,pr_url,started_at) SELECT t.id,gen_random_uuid(),'"'"'evaluate'"'"','"'"'v2'"'"',t.id,'"'"'kernel_dispatch'"'"','"'"'https://github.com/perfectuser21/cecelia/pull/999999'"'"',NOW() FROM t RETURNING id" | tr -d " "); trap "psql \"$D\" -q -c \"DELETE FROM initiative_runs WHERE id='"'"'$RID'"'"'\"; psql \"$D\" -q -c \"DELETE FROM tasks WHERE id='"'"'$RID'"'"'\"" EXIT; curl -sf "localhost:5221/api/brain/harness/pr-ownership?branch=$BR" | jq -e ".owned==true and (.run_id|type==\"string\") and (.pr_url|test(\"pull/999999\"))"'
+  Test: manual:bash -c 'D="${DB_URL:-postgresql://localhost/cecelia}"; BR="cp-dodb01-$$-$RANDOM"; RID=$(psql "$D" -tAc "WITH t AS (INSERT INTO tasks(id,title,task_type,status,payload) VALUES(gen_random_uuid(),'"'"'dod-b01-$BR'"'"','"'"'harness_generate'"'"','"'"'completed'"'"',jsonb_build_object('"'"'pr_branch'"'"','"'"'$BR'"'"')) RETURNING id) INSERT INTO initiative_runs(id,initiative_id,phase,orchestrator_version,current_task_id,created_source,pr_url,started_at) SELECT t.id,gen_random_uuid(),'"'"'evaluate'"'"','"'"'v2'"'"',t.id,'"'"'kernel_dispatch'"'"','"'"'https://github.com/perfectuser21/cecelia/pull/999999'"'"',NOW() FROM t RETURNING id" | tr -d " "); trap "psql \"$D\" -q -c \"DELETE FROM initiative_runs WHERE id='"'"'$RID'"'"'\"; psql \"$D\" -q -c \"DELETE FROM tasks WHERE id='"'"'$RID'"'"'\"" EXIT; curl -sf "localhost:5221/api/brain/harness/pr-ownership?branch=$BR" | jq -e ".owned==true and (.run_id|type==\"string\") and (.pr_url|test(\"pull/999999\"))"'
   期望: exit 0
 
 - [x] [BEHAVIOR] [L2] B-02: 不存在的 /dev 分支被判 owned:false（不回归 /dev 的端点侧信号）
@@ -74,11 +74,11 @@ journey_type: autonomous
   期望: 输出 kernel-check OK
 
 - [x] [BEHAVIOR] [L2] B-06: 通道1 owned=true → SKIP（用真实 stub Brain server，禁 mock HTTP 边）[接缝×2]
-  动作: 起真实 node http stub 返回 owned:true，指向它运行 should-auto-merge.sh
-  预期观察: 脚本 stdout 以 SKIP 开头（不抢跑 auto-merge，交 harness gate）
+  动作: 起真实 node http stub 返回 owned:true，用**异步子进程**（cp.execFile 回调）运行 should-auto-merge.sh —— 不可用 execFileSync 同进程阻塞，否则占死事件循环使 stub 永不响应、脚本走 fail-closed 而非 owned 路径（结构性假绿）
+  预期观察: 脚本 stdout 以 SKIP 开头**且含 `owned=true`**（真走 owned→SKIP 路径，非 fail-closed 兜底 SKIP——两者都以 SKIP 开头，故必须断言 SKIP 原因含 owned=true 才能证明 stub 真被读到）
   等待预算: 0s
   留证: 脚本 stdout 进 log_tail
-  Test: manual:bash -c 'node -e "const s=require(\"http\").createServer((q,r)=>{r.writeHead(200,{\"content-type\":\"application/json\"});r.end(JSON.stringify({owned:true,run_id:\"r1\",pr_url:\"https://x/pull/1\",matched_by:\"branch\"}))});s.listen(0,\"127.0.0.1\",()=>{const p=s.address().port;const o=require(\"child_process\").execFileSync(\"bash\",[\".github/workflows/scripts/should-auto-merge.sh\",\"cp-x-abc\",\"fix(brain): x\"],{env:{...process.env,BRAIN_URL:\"http://127.0.0.1:\"+p},encoding:\"utf8\"});s.close();if(!/^SKIP/.test(o.trim()))process.exit(1);console.log(\"stub-skip OK\")})"'
+  Test: manual:bash -c 'node -e "const http=require(\"http\");const cp=require(\"child_process\");const s=http.createServer((q,r)=>{r.writeHead(200,{\"content-type\":\"application/json\"});r.end(JSON.stringify({owned:true,run_id:\"r1\",pr_url:\"https://x/pull/1\",matched_by:\"branch\"}))});s.listen(0,\"127.0.0.1\",()=>{const p=s.address().port;cp.execFile(\"bash\",[\".github/workflows/scripts/should-auto-merge.sh\",\"cp-x-abc\",\"fix(brain): x\"],{env:{...process.env,BRAIN_URL:\"http://127.0.0.1:\"+p},encoding:\"utf8\"},(e,out)=>{s.close();const o=String(out||\"\").trim();if(!/^SKIP/.test(o)||!/owned=true/.test(o)){process.exit(1)}console.log(\"stub-skip OK\")})})"'
   期望: 输出 stub-skip OK
 
 - [x] [BEHAVIOR] [L2] B-07: 通道1 fail-closed——Brain 接受连接后超时无响应时脚本走 curl --max-time 超时路径输出 SKIP 且绝不 MERGE（红线，R1-1；与 B-04 连接被拒 exit7 是不同代码路径）[接缝×2]
