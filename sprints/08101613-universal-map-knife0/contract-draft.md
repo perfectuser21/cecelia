@@ -18,17 +18,21 @@ Knife 0 只交付通用 Map Projection Engine 的事实底座：cron-safe 扫描
 |---|---|---|
 | D1 | `scripts/__tests__/run-all-scans.test.sh` | sanitized PATH 下聚合四 scanner；单项失败仍执行其余项并最终非零；无效 repo root fail-fast |
 | D2 | `scripts/__tests__/rescan-if-changed.test.sh` | 仅在 HEAD 变化时扫描；成功后记 SHA；失败保留旧 SHA |
-| D3 | `packages/brain/src/__tests__/integration/fact-snapshot-store.integration.test.js` | api/db/test 快照持久化 repo、revision、scanner version、scanned_at 与 header |
-| D3 | `packages/brain/src/__tests__/integration/graph-store.integration.test.js` | graph 快照与 header 使用同一 provenance |
-| D3 | `packages/brain/src/__tests__/migration-397-fact-snapshot.test.js` | migration 397 幂等、遗留 Cecelia ownership 回填、repo 唯一性与 header schema |
-| D4 | `packages/brain/src/lib/__tests__/fact-snapshot-store.test.js` | 消失事实删除、失败回滚、持久化事实数写入 header |
-| D4 | `packages/brain/src/lib/__tests__/graph-store.test.js` | graph 原子替换、同 repo advisory lock 与空快照 header |
-| D4 | `packages/brain/src/lib/__tests__/consistent-read.test.js` | facts 与 header 在只读 REPEATABLE READ 中一致读取 |
-| D5 | `packages/brain/src/lib/__tests__/registry-freshness.test.js` | 15 分钟边界；缺失、陈旧、未来时间与非法 provenance 均 fail-closed |
-| D5-D6 | `packages/brain/src/lib/__tests__/registry-photo-layer.test.js` | registry facts/header 按 repo 隔离并传播 freshness |
-| D5-D6 | `packages/brain/src/routes/__tests__/graph.test.js` | graph 路由按 repo 读取同一 snapshot header 并传播 freshness |
-| D6 | `tests/regression/relay-85806b9a/scan-graph-freshness.test.mjs` | 另一 repo 的新快照不能掩盖目标 repo 的陈旧状态 |
-| D6 | `tests/regression/relay-85806b9a/graph-route-repo-param.test.mjs` | graph endpoints 统一尊重 repo 参数 |
+| D3 | `packages/brain/src/__tests__/integration/fact-snapshot-store.integration.test.js` | `重复 API composite natural key 只保留一条事实且 header row_count=1` |
+| D3 | `packages/brain/src/__tests__/integration/graph-store.integration.test.js` | `空边快照仍写入 fresh header，graph context 返回 row_count=0` |
+| D3 | `packages/brain/src/__tests__/migration-397-fact-snapshot.test.js` | `fact_snapshot_headers 具有通用 kind/repo 主键与 metadata/row_count 列` |
+| D3 | `packages/brain/src/__tests__/migration-397-fact-snapshot.test.js` | `四个 scanner 共用的 revision helper 统一执行 git -C root rev-parse HEAD` |
+| D4 | `packages/brain/src/lib/__tests__/fact-snapshot-store.test.js` | `API 快照在同一事务中 upsert 当前事实并删除同 repo 消失的旧事实` |
+| D4 | `packages/brain/src/lib/__tests__/fact-snapshot-store.test.js` | `任一步失败都会 ROLLBACK 并 rethrow，不提交半张快照` |
+| D4 | `packages/brain/src/lib/__tests__/fact-snapshot-store.test.js` | `header row_count 来自 delete 后真实表 count，而不是输入 rows.length` |
+| D4 | `packages/brain/src/lib/__tests__/graph-store.test.js` | `不同 repo 使用不同且参数化的 graph 锁键` |
+| D4 | `packages/brain/src/lib/__tests__/consistent-read.test.js` | `在同一只读 REPEATABLE READ 事务执行全部读取并提交释放` |
+| D5 | `packages/brain/src/lib/__tests__/registry-freshness.test.js` | `默认 freshness budget 为 15 分钟` |
+| D5 | `packages/brain/src/lib/__tests__/registry-freshness.test.js` | `快照超过未来 60s → unknown/snapshot_from_future` |
+| D5-D6 | `packages/brain/src/lib/__tests__/registry-photo-layer.test.js` | `带 search/repo:占位符顺延，items 与 latest metadata 查询都严格过滤 repo` |
+| D5-D6 | `packages/brain/src/routes/__tests__/graph.test.js` | `locate/related/claim/radius/island/anchor 均返回完整 metadata freshness` |
+| D6 | `tests/regression/relay-85806b9a/scan-graph-freshness.test.mjs` | `repo-X stale（无数据）时，repo-Y 活跃不影响 repo-X 的 stale 判定` |
+| D6 | `tests/regression/relay-85806b9a/graph-route-repo-param.test.mjs` | `DB 层 WHERE repo=$1 过滤：不同 repo 返回空（无数据泄露）` |
 | D8 | `packages/brain/scripts/smoke/map-fact-snapshot-smoke.sh` | scratch 四 scanner 真扫、事实消失、stale→unknown→重扫恢复、并发无残留 |
 
 ## Golden Path
