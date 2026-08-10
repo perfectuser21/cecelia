@@ -3,6 +3,8 @@
  * 默认预算 15 分钟；缺时间或 provenance 时 fail-closed 为 unknown。
  */
 export const PHOTO_STALE_THRESHOLD_HOURS = 15 / 60;
+const GIT_OBJECT_ID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
+const SCANNER_VERSION_RE = /^[a-z][a-z0-9-]*-v[1-9][0-9]*$/;
 
 function result({
   status, reasonCode, latest = null, ageHours = null, stale = true,
@@ -75,11 +77,32 @@ export function computeFreshness(snapshot, now = new Date(), thresholdHours = PH
       warning: '照相层 source_revision 为 legacy-unknown,按 unknown 处理',
     });
   }
+  if (!GIT_OBJECT_ID_RE.test(sourceRevision)) {
+    return result({
+      status: 'unknown', reasonCode: 'source_revision_invalid', latest,
+      ageHours: roundedAgeHours, sourceRevision, scannerVersion,
+      warning: '照相层 source_revision 不是完整 Git object id,按 unknown 处理',
+    });
+  }
   if (!scannerVersion) {
     return result({
       status: 'unknown', reasonCode: 'scanner_version_missing', latest,
       ageHours: roundedAgeHours, sourceRevision, scannerVersion,
       warning: '照相层缺少 scanner_version,按 unknown 处理',
+    });
+  }
+  if (scannerVersion === 'legacy') {
+    return result({
+      status: 'unknown', reasonCode: 'scanner_version_legacy', latest,
+      ageHours: roundedAgeHours, sourceRevision, scannerVersion,
+      warning: '照相层 scanner_version 为 legacy,按 unknown 处理',
+    });
+  }
+  if (!SCANNER_VERSION_RE.test(scannerVersion)) {
+    return result({
+      status: 'unknown', reasonCode: 'scanner_version_invalid', latest,
+      ageHours: roundedAgeHours, sourceRevision, scannerVersion,
+      warning: '照相层 scanner_version 格式无效,按 unknown 处理',
     });
   }
   if (ageIsStale) {
