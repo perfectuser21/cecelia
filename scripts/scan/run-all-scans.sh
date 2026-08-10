@@ -24,6 +24,9 @@ absolute_executable() {
 
 resolve_node() {
   local candidate=""
+  local fallback_paths_value
+  local normalized_fallback_paths
+  local -a fallback_paths
 
   if [[ -n "${NODE_BIN:-}" ]]; then
     candidate="$NODE_BIN"
@@ -42,18 +45,28 @@ resolve_node() {
     return 0
   fi
 
-  for candidate in /opt/homebrew/bin/node /usr/local/bin/node; do
-    if [[ -x "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
+  if [[ ${NODE_FALLBACK_PATHS+x} ]]; then
+    fallback_paths_value="$NODE_FALLBACK_PATHS"
+  else
+    fallback_paths_value="/opt/homebrew/bin/node /usr/local/bin/node"
+  fi
+  normalized_fallback_paths=${fallback_paths_value//$'\n'/ }
+  normalized_fallback_paths=${normalized_fallback_paths//$'\t'/ }
+  if [[ -n "${normalized_fallback_paths// /}" ]]; then
+    read -r -a fallback_paths <<< "$normalized_fallback_paths"
+    for candidate in "${fallback_paths[@]}"; do
+      if [[ -x "$candidate" ]]; then
+        absolute_executable "$candidate"
+        return 0
+      fi
+    done
+  fi
 
   return 1
 }
 
 if ! NODE_EXECUTABLE=$(resolve_node); then
-  echo "ERROR: 找不到可执行的 Node.js；请设置 NODE_BIN 或将 node 安装到 PATH、/opt/homebrew/bin/node 或 /usr/local/bin/node" >&2
+  echo "ERROR: 找不到可执行的 Node.js；请设置 NODE_BIN、将 node 加入 PATH，或配置可执行的 NODE_FALLBACK_PATHS" >&2
   exit 127
 fi
 
