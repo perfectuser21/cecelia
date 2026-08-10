@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 
 const upSql = readFileSync(new URL('../../migrations/397_fact_snapshot_metadata.sql', import.meta.url), 'utf8');
@@ -27,9 +27,27 @@ describe('migration 397 — versioned fact snapshot metadata', () => {
     expect(upSql).toMatch(/UNIQUE\s*\(repo,\s*file_path\)/i);
   });
 
-  it('存量 metadata 使用明确 legacy 默认值，并登记 schema 397', () => {
-    expect(upSql).toContain("DEFAULT 'legacy-unknown'");
-    expect(upSql).toContain("DEFAULT 'legacy'");
+  it.each(['api_registry', 'db_schema_registry', 'test_registry'])(
+    '%s 的 repo 默认/存量归属为 cecelia，revision 与 scanner 使用 legacy 默认',
+    (table) => {
+      const tableBlock = upSql.match(new RegExp(`ALTER TABLE\\s+${table}([\\s\\S]*?);`, 'i'))?.[1] || '';
+      expect(tableBlock).toMatch(/ADD COLUMN IF NOT EXISTS repo[\s\S]*DEFAULT 'cecelia'/i);
+      expect(tableBlock).toMatch(/ADD COLUMN IF NOT EXISTS source_revision[\s\S]*DEFAULT 'legacy-unknown'/i);
+      expect(tableBlock).toMatch(/ADD COLUMN IF NOT EXISTS scanner_version[\s\S]*DEFAULT 'legacy'/i);
+      expect(upSql).toMatch(new RegExp(
+        `UPDATE\\s+${table}\\s+SET\\s+repo\\s*=\\s*'cecelia'\\s+WHERE\\s+repo\\s*=\\s*'legacy-unknown'`,
+        'i',
+      ));
+    },
+  );
+
+  it('重跑前先删除 legacy 与 cecelia 同 natural key 的冲突行', () => {
+    expect(upSql).toMatch(/DELETE FROM api_registry[\s\S]+legacy\.repo = 'legacy-unknown'[\s\S]+owned\.repo = 'cecelia'/i);
+    expect(upSql).toMatch(/DELETE FROM db_schema_registry[\s\S]+legacy\.repo = 'legacy-unknown'[\s\S]+owned\.repo = 'cecelia'/i);
+    expect(upSql).toMatch(/DELETE FROM test_registry[\s\S]+legacy\.repo = 'legacy-unknown'[\s\S]+owned\.repo = 'cecelia'/i);
+  });
+
+  it('登记 schema 397', () => {
     expect(upSql).toMatch(/VALUES\s*\(\s*'397'/i);
   });
 
@@ -52,27 +70,92 @@ describe('migration 397 — cecelia_test 实际列与约束', () => {
   }
   const pool = new pg.Pool({ connectionString, max: 1 });
 
+  afterAll(async () => {
+    await pool.end();
+  });
+
   it('四表 metadata 列均为 NOT NULL', async () => {
-    try {
-      const { rows } = await pool.query(
-        `SELECT table_name, column_name, is_nullable
-           FROM information_schema.columns
-          WHERE table_schema = 'public'
-            AND table_name = ANY($1)
-            AND column_name = ANY($2)`,
-        [
-          ['api_registry', 'db_schema_registry', 'test_registry', 'graph_edges'],
-          ['repo', 'source_revision', 'scanner_version', 'scanned_at'],
-        ],
-      );
-      const actual = new Map(rows.map((row) => [`${row.table_name}.${row.column_name}`, row.is_nullable]));
-      for (const table of ['api_registry', 'db_schema_registry', 'test_registry', 'graph_edges']) {
-        for (const column of ['repo', 'source_revision', 'scanner_version', 'scanned_at']) {
-          expect(actual.get(`${table}.${column}`)).toBe('NO');
-        }
+    const { rows } = await pool.query(
+      `SELECT table_name, column_name, is_nullable
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = ANY($1)
+          AND column_name = ANY($2)`,
+      [
+        ['api_registry', 'db_schema_registry', 'test_registry', 'graph_edges'],
+        ['repo', 'source_revision', 'scanner_version', 'scanned_at'],
+      ],
+    );
+    const actual = new Map(rows.map((row) => [`${row.table_name}.${row.column_name}`, row.is_nullable]));
+    for (const table of ['api_registry', 'db_schema_registry', 'test_registry', 'graph_edges']) {
+      for (const column of ['repo', 'source_revision', 'scanner_version', 'scanned_at']) {
+        expect(actual.get(`${table}.${column}`)).toBe('NO');
       }
+    }
+  });
+
+  it.each(['api_registry', 'db_schema_registry', 'test_registry'])(
+    '%s 的真实 metadata 默认值符合合同',
+    async (table) => {
+      const { rows } = await pool.query(
+        `SELECT column_name, column_default
+           FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = $1
+            AND column_name = ANY($2)`,
+        [table, ['repo', 'source_revision', 'scanner_version']],
+      );
+      const defaults = new Map(rows.map((row) => [row.column_name, row.column_default]));
+      expect(defaults.get('repo')).toContain("'cecelia'");
+      expect(defaults.get('source_revision')).toContain("'legacy-unknown'");
+      expect(defaults.get('scanner_version')).toContain("'legacy'");
+    },
+  );
+
+  it('重跑 migration 会把唯一 legacy marker 回填为 cecelia', async () => {
+    const markerPath = `/__migration_397_legacy_marker_${process.pid}`;
+    try {
+      await pool.query('DELETE FROM api_registry WHERE method = $1 AND path = $2', ['GET', markerPath]);
+      await pool.query(
+        `INSERT INTO api_registry
+          (repo, method, path, file_path, area, source_revision, scanner_version)
+         VALUES ('legacy-unknown', 'GET', $1, 'migration-397.test.js', 'test', 'legacy-unknown', 'legacy')`,
+        [markerPath],
+      );
+
+      await pool.query(upSql);
+
+      const { rows } = await pool.query(
+        'SELECT repo FROM api_registry WHERE method = $1 AND path = $2', ['GET', markerPath],
+      );
+      expect(rows).toEqual([{ repo: 'cecelia' }]);
     } finally {
-      await pool.end();
+      await pool.query('DELETE FROM api_registry WHERE method = $1 AND path = $2', ['GET', markerPath]);
+    }
+  });
+
+  it('重跑 migration 遇到 legacy/cecelia 同键时保留 cecelia 行并删除 legacy 冲突', async () => {
+    const markerPath = `/__migration_397_collision_marker_${process.pid}`;
+    try {
+      await pool.query('DELETE FROM api_registry WHERE method = $1 AND path = $2', ['POST', markerPath]);
+      await pool.query(
+        `INSERT INTO api_registry
+          (repo, method, path, file_path, area, source_revision, scanner_version)
+         VALUES
+          ('legacy-unknown', 'POST', $1, 'legacy.js', 'test', 'legacy-unknown', 'legacy'),
+          ('cecelia', 'POST', $1, 'owned.js', 'test', 'owned-revision', 'api-registry-v2')`,
+        [markerPath],
+      );
+
+      await pool.query(upSql);
+
+      const { rows } = await pool.query(
+        `SELECT repo, file_path, source_revision FROM api_registry
+          WHERE method = $1 AND path = $2`,
+        ['POST', markerPath],
+      );
+      expect(rows).toEqual([{ repo: 'cecelia', file_path: 'owned.js', source_revision: 'owned-revision' }]);
+    } finally {
+      await pool.query('DELETE FROM api_registry WHERE method = $1 AND path = $2', ['POST', markerPath]);
     }
   });
 });
