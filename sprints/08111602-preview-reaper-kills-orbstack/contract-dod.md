@@ -23,6 +23,9 @@ OrbStack vmgr 负责容器端口转发、正是预览端口（5300-5302）的持
 
 ## [BEHAVIOR] 验收断言（真跑）
 
-- [x] [BEHAVIOR] reaper-kill-suite | 全套 reaper 单测（含新增杀进程逻辑用例）全绿 | Test: manual:cd "$(git rev-parse --show-toplevel)" && bash scripts/__tests__/preview-reaper.test.sh
-- [x] [BEHAVIOR] no-lsof-kill | 脚本不再用 `lsof -ti :$PORT` 作为杀进程依据 | Test: manual:cd "$(git rev-parse --show-toplevel)" && ! grep -qE 'lsof -ti :"?\$PORT' scripts/preview-reaper.sh
-- [x] [BEHAVIOR] infra-redline | 脚本含 OrbStack/docker 基础设施红线跳过分支 | Test: manual:cd "$(git rev-parse --show-toplevel)" && grep -qiE 'orbstack|vmgr|dockerd|docker-proxy|containerd' scripts/preview-reaper.sh
+- [x] [BEHAVIOR] reaper-kill-suite — 全套 reaper 单测（含新增杀进程逻辑用例）全绿
+  Test: manual:bash scripts/__tests__/preview-reaper.test.sh
+- [x] [BEHAVIOR] no-lsof-kill — 脚本不再用 lsof 端口持有者作为杀进程依据
+  Test: manual:bash -c '! grep -qE "lsof -ti :\"?\$PORT" scripts/preview-reaper.sh'
+- [x] [BEHAVIOR] infra-redline — 脚本含 OrbStack/docker 基础设施红线跳过分支
+  Test: manual:bash -c 'grep -qiE "orbstack|vmgr|dockerd|docker-proxy|containerd" scripts/preview-reaper.sh'
