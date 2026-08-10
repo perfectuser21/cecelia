@@ -1,76 +1,19 @@
 {
   "verdict": "PASS",
-  "task_id": "93161b22-9478-4695-b3e2-a01eddce78f8",
-  "attempt_id": "fc52488b-c4dd-4fc8-b96f-04f842556087",
-  "head_sha": "660d61ba01f0e33611096a9e9179692438dd121b",
-  "pr": "https://github.com/perfectuser21/cecelia/pull/4620",
-  "sprint_dir": "sprints/08042132-runner-digest-repin2",
-  "target_environment": "local_api",
-  "journey_type": "fix",
-  "verification_level": "L2",
-  "exit_code": 0,
-  "log_tail": "HEAD=660d61ba01f0e33611096a9e9179692438dd121b\nE1: PASS — git grep 5c202d56 (packages/ docker/ scripts/ excl DEFINITION.md/handoffs) = 0\nE2: PASS — verify_runner_label defined in fleet-rollout.sh\nE3: PASS — cecelia.entrypoint.sha256 label in docker/build.sh\nE4: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  ✅ All version files in sync\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nE5a facts-check: \nAll facts consistent.\nE5b dod-mapping:   \u001b[32m✅ 映射检查通过\u001b[0m (3 项)\nE6: PASS: Fleet rollout behavioral contract\nE7 vitest:  Test Files  1 passed (1)\n      Tests  22 passed (22)\n   Start at  14:28:46\n   Duration  481ms (transform 28ms, setup 0ms, collect 17ms, tests 59ms, environment 0ms, prepare 103ms)\n",
-  "failed_step": null,
-  "log_excerpt": null,
-  "screenshots": [],
-  "cascade_assertions": [],
-  "unverifiable": [],
+  "task_id": "f491a8dd-b0e3-4352-a5e0-6cb85df73d80",
+  "attempt_id": "evaluator-relay-69c0115c",
+  "sprint_dir": "sprints/08101234-cecelia-map-reorg",
+  "pr_branch": "cp-08101944-ws-f491a8dd",
+  "head_sha": "69c0115c5",
+  "target_env": "local_api",
   "behavior_tests": [
-    {
-      "command": "[ $(git grep '5c202d56' -- packages/ docker/ scripts/ | grep -v DEFINITION.md | grep -v docs/handoffs/ | wc -l) -eq 0 ] && echo PASS || echo FAIL",
-      "exit_code": 0,
-      "log_tail": "stale_count=0; E1: PASS — 旧 digest 5c202d56 全仓清零",
-      "verification_level": "L2",
-      "action": "git grep 检查 packages/ docker/ scripts/ 旧 digest",
-      "expected": "0 处命中，旧 digest 完全替换"
-    },
-    {
-      "command": "(source packages/brain/scripts/fleet-worker/fleet-rollout.sh 2>/dev/null && declare -f verify_runner_label > /dev/null && echo PASS) || echo FAIL",
-      "exit_code": 0,
-      "log_tail": "E2: PASS — verify_runner_label function defined in fleet-rollout.sh",
-      "verification_level": "L2",
-      "action": "source fleet-rollout.sh + declare -f verify_runner_label",
-      "expected": "函数已实现"
-    },
-    {
-      "command": "grep -q 'cecelia.entrypoint.sha256' docker/build.sh && echo PASS || echo FAIL",
-      "exit_code": 0,
-      "log_tail": "E3: PASS — cecelia.entrypoint.sha256 label instruction found in docker/build.sh",
-      "verification_level": "L2",
-      "action": "grep docker/build.sh 含 cecelia.entrypoint.sha256",
-      "expected": "label 写入指令存在"
-    },
-    {
-      "command": "bash scripts/check-version-sync.sh",
-      "exit_code": 0,
-      "log_tail": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  ✅ All version files in sync\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n",
-      "verification_level": "L2",
-      "action": "版本四处同步检查",
-      "expected": "All version files in sync — 1.267.216"
-    },
-    {
-      "command": "node scripts/facts-check.mjs && node packages/quality/scripts/devgate/check-dod-mapping.cjs",
-      "exit_code": 0,
-      "log_tail": "facts: \nAll facts consistent.; dod:   \u001b[32m✅ 映射检查通过\u001b[0m (3 项)\n",
-      "verification_level": "L2",
-      "action": "DevGate 全量（facts-check + dod-mapping）",
-      "expected": "All facts consistent + 映射检查通过"
-    },
-    {
-      "command": "bash packages/brain/scripts/fleet-worker/fleet-rollout.test.sh",
-      "exit_code": 0,
-      "log_tail": "PASS: Fleet rollout behavioral contract\n",
-      "verification_level": "L2",
-      "action": "fleet-rollout.sh 测试（含 verify_runner_label TDD label 守卫）",
-      "expected": "PASS: Fleet rollout behavioral contract"
-    },
-    {
-      "command": "cd packages/brain && npx vitest run src/orchestrator/fleet-node/node-profile.test.js 2>&1 | tail -5",
-      "exit_code": 0,
-      "log_tail": "RUN  v1.6.1 /workspace/packages/brain\n\n ✓ src/orchestrator/fleet-node/node-profile.test.js  (22 tests) 11ms\n\n Test Files  1 passed (1)\n      Tests  22 passed (22)",
-      "verification_level": "L2",
-      "action": "node-profile vitest run (vitest syntax, 22 tests, EXPECTED_RUNNER_DIGEST=sha256:ae2eaabba...)",
-      "expected": "22 tests passed (0 failed)"
-    }
-  ]
+    {"test_id": "B-1", "command": "psql COUNT journeys WHERE parent_journey_id IS NULL AND status=active AND biz_area=cecelia", "exit_code": 0, "log_tail": "PASS: 价值流数量 = 2 (期望 2)"},
+    {"test_id": "B-2", "command": "psql COUNT factory=6, steward=5", "exit_code": 0, "log_tail": "PASS: 工厂线=6, 管家线=5"},
+    {"test_id": "B-3", "command": "psql COUNT anchors IN (F1,G1)", "exit_code": 0, "log_tail": "PASS: 关键锚 journey 行数 = 2"},
+    {"test_id": "B-4", "command": "psql COUNT orphans=0, enablers>=7", "exit_code": 0, "log_tail": "PASS: 孤儿挂片=0, 横切件池=7"},
+    {"test_id": "B-5", "command": "psql idempotent run 397/398/399/401", "exit_code": 0, "log_tail": "PASS: 4 migrations 幂等"},
+    {"test_id": "B-6", "command": "psql schema fields=2, index=1", "exit_code": 0, "log_tail": "PASS: 字段=2, 唯一索引存在"}
+  ],
+  "verification_level": "L2",
+  "notes": "全部 B-1~B-6 manual:bash 真跑通过。verify-map-reorg.sh 11/11 PASS。migration 398 已修为 INSERT ON CONFLICT DO UPDATE 支持新建 DB。smoke timestamp 口径已修。"
 }
