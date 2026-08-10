@@ -44,6 +44,8 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/handoff-atom-relay.integration.test.ts',
   'src/__tests__/integration/capture-destination-link.integration.test.js',
   'src/__tests__/integration/okr-decomposition-flow.integration.test.js',
+  'src/__tests__/integration/blocking-states-selfheal.integration.test.js',
+  'src/__tests__/integration/alertness-blocking-states.integration.test.js',
 ];
 
 export default defineConfig({

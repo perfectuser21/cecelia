@@ -115,6 +115,44 @@ function tickLog(...args) {
   console.log(`[${ts}]`, ...args);
 }
 
+// ============================================================
+// 排空可观测兜底（PRD 需求 4 / 事故实证①）
+// ------------------------------------------------------------
+// drain 生效期间 dispatchNextTask 每轮直接 return draining，连 slot_check 日志都不出现，
+// 造成「日志里什么都没有」的排障黑洞（tick_draining 卡 2h20m 全程静默）。这里让派发器
+// 每 N 轮打印一次汇总（已排空多久 + 被挡住多少 queued 候选），把黑洞点亮。
+// env DRAIN_SUMMARY_EVERY_N 可覆盖；非法值（NaN / <1）回退默认 5。
+export const DRAIN_SUMMARY_EVERY_N = (() => {
+  const raw = parseInt(process.env.DRAIN_SUMMARY_EVERY_N || '', 10);
+  return Number.isFinite(raw) && raw >= 1 ? raw : 5;
+})();
+let _drainRoundCounter = 0;
+export function _resetDrainSummaryCounter() { _drainRoundCounter = 0; }
+
+/**
+ * 排空生效期间的汇总日志（每 N 轮一次：第 1、N+1、2N+1… 轮打印，首轮即打不完全静默）。
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<{logged:boolean, round:number, blocked?:number|null, drain_minutes?:number|null, message?:string}>}
+ */
+export async function maybeLogDrainSummary(pool) {
+  _drainRoundCounter += 1;
+  if (_drainRoundCounter % DRAIN_SUMMARY_EVERY_N !== 1) {
+    return { logged: false, round: _drainRoundCounter };
+  }
+  let blocked = null;
+  try {
+    const r = await pool.query(`SELECT COUNT(*)::int AS n FROM tasks WHERE status = 'queued'`);
+    blocked = r.rows?.[0]?.n ?? null;
+  } catch (e) {
+    console.error('[dispatch] drain summary count failed (non-fatal):', e.message);
+  }
+  const startedAt = getDrainStartedAt();
+  const mins = startedAt ? Math.round((Date.now() - Date.parse(startedAt)) / 60000) : null;
+  const message = `[dispatch] 排空生效中 ~${mins == null ? '?' : mins}min，本轮挡住 ${blocked == null ? '?' : blocked} 个 queued 候选（第 ${_drainRoundCounter} 轮，每 ${DRAIN_SUMMARY_EVERY_N} 轮汇总）`;
+  tickLog(message);
+  return { logged: true, round: _drainRoundCounter, blocked, drain_minutes: mins, message };
+}
+
 // decision_log 落盘（用于 dispatch 路径排障，CI 可 grep）
 async function logTickDecision(trigger, inputSummary, decision, result) {
   await pool.query(`
@@ -193,6 +231,8 @@ export async function dispatchNextTask(goalIds) {
   const mitigationState = getMitigationState();
 
   if (isDraining() || mitigationState.drain_mode_requested) {
+    // 可观测兜底：每 N 轮打印一次排空汇总，避免静默停摆的排障黑洞（PRD 需求 4）
+    await maybeLogDrainSummary(pool);
     await recordDispatchResult(pool, false, 'draining');
     return {
       dispatched: false,
@@ -201,6 +241,8 @@ export async function dispatchNextTask(goalIds) {
       actions
     };
   }
+  // 非排空轮：复位汇总计数器，下次进入排空重新从第 1 轮起算
+  _resetDrainSummaryCounter();
 
   // 0a-pre. Quota cooling check — 全局 quota 冷却期内跳过派发
   let _qcActive = false;

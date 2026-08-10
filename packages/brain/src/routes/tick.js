@@ -2,6 +2,7 @@ import { Router } from 'express';
 import pool from '../db.js';
 import { getTickStatus, enableTick, disableTick, executeTick as _executeTick, runTickSafe, drainTick, getDrainStatus, cancelDrain, getStartupErrors, check48hReport as _check48hReport } from '../tick.js';
 import { getCurrentAlertness, setManualOverride, clearManualOverride, evaluateAlertness, ALERTNESS_LEVELS, LEVEL_NAMES } from '../alertness/index.js';
+import { getBlockingStates } from '../blocking-states.js';
 
 const router = Router();
 
@@ -123,9 +124,21 @@ router.get('/tick/startup-errors', async (req, res) => {
 router.get('/alertness', async (req, res) => {
   try {
     const alertness = getCurrentAlertness();
+    // 健康检查红线（PRD 需求 3）：存在活跃阻断状态位时，不得报告 healthy——
+    // 必须带可判读的 blocking_states（列出每个生效阻断位及其持续时长）+ blocked/healthy 标记。
+    // 读 blocking_states 失败不能让健康端点 500，降级为空数组。
+    let blocking_states = [];
+    try {
+      blocking_states = await getBlockingStates(pool);
+    } catch (bsErr) {
+      console.error('[alertness] getBlockingStates failed (non-fatal):', bsErr.message);
+    }
     res.json({
       success: true,
       ...alertness,
+      blocking_states,
+      blocked: blocking_states.length > 0,
+      healthy: blocking_states.length === 0,
       levels: ALERTNESS_LEVELS,
       level_names: LEVEL_NAMES
     });

@@ -20,3 +20,12 @@ describe('routes/tick.js — import 路径正确性', () => {
     expect(src).toContain("'./alertness/index.js'");
   });
 });
+
+// PRD 需求 3（健康检查红线）：/api/brain/alertness 必须能看见「静默停摆」——
+// 存在活跃阻断状态位时返回 blocking_states（非空）+ 不再报 healthy。
+describe('routes/tick.js — /alertness 阻断位可见性', () => {
+  it('引用 getBlockingStates 并在响应里带 blocking_states 字段', () => {
+    expect(src).toContain('getBlockingStates');
+    expect(src).toContain('blocking_states');
+  });
+});

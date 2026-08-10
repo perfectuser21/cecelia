@@ -76,10 +76,12 @@ export async function sampleMachineVitals(pool) {
     // OrbStack data 盘与宿主同卷（APFS），docker_disk_pct 并入宿主口径（spec 约定的降级路径）
     next.docker_disk_pct = next.host_disk_pct;
     _lastGoodAt = next.sampled_at;
-    const wasAlerted = _staleAlerted;
     _staleAlerted = false;
-    if (wasAlerted && pool) {
-      await writeVitalsSentinel(pool, { recovered_at: new Date(next.sampled_at).toISOString() });
+    // 采样恢复即自愈哨兵——无条件幂等清除（PRD 需求 2 / 事故实证②：卡 2 天的根因是
+    // 旧代码只在「本进程内 _staleAlerted=true」时才清；Brain 重启后内存 flag 归零，
+    // 哨兵行却留在 working_memory，采样恢复也永不清除，持续误导排障方向）。
+    if (pool) {
+      await clearVitalsSentinelOnRecovery(pool);
     }
     // 当日容器数峰值滚动（日报 admission 吞吐段数据源，de6d3582）
     if (pool) {
@@ -133,12 +135,30 @@ export async function sampleMachineVitals(pool) {
   return next;
 }
 
+/**
+ * 采样成功后无条件清除 stale 哨兵行（幂等）。真的清掉了行（rowCount>0）才留痕——
+ * 记录 auto_recovered 事件 + 日志，避免每次成功采样都刷噪声。restart 后残留的哨兵
+ * 也能被下一次成功采样自愈（不依赖本进程内的 _staleAlerted 内存 flag）。
+ */
+async function clearVitalsSentinelOnRecovery(pool) {
+  try {
+    const del = await pool.query(`DELETE FROM working_memory WHERE key = $1`, [SENTINEL_KEY]);
+    if (del?.rowCount > 0) {
+      console.log('[machine-vitals] stale 哨兵在采样恢复后自动清除（留痕）');
+      try {
+        const { emit } = await import('./event-bus.js');
+        await emit('blocking_state_auto_recovered', 'machine-vitals', { key: SENTINEL_KEY });
+      } catch (e) {
+        console.warn('[machine-vitals] auto_recovered 留痕失败（不阻断）:', e.message);
+      }
+    }
+  } catch (e) {
+    console.warn('[machine-vitals] sentinel clear failed:', e.message);
+  }
+}
+
 async function writeVitalsSentinel(pool, record) {
   try {
-    if (record.recovered_at) {
-      await pool.query(`DELETE FROM working_memory WHERE key = $1`, [SENTINEL_KEY]);
-      return;
-    }
     await pool.query(
       `INSERT INTO working_memory (key, value_json, updated_at)
        VALUES ($1, $2, NOW())
