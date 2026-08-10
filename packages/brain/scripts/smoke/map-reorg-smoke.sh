@@ -39,9 +39,14 @@ SC=$(psql_val "SELECT COUNT(*) FROM journeys WHERE parent_journey_id=(SELECT id 
 AC=$(psql_val "SELECT COUNT(*) FROM journeys WHERE id IN ('e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29','8bb8252f-29b4-4c34-acb9-1accda7ddfcf');")
 [ "$AC" -eq 2 ] && pass "关键锚行存在=2" || fail "关键锚断裂($AC/2)"
 
-# 6. 孤儿归零
-OC=$(psql_val "SELECT COUNT(*) FROM journey_features WHERE journey_id IS NULL AND status!='deprecated';")
-[ "$OC" -eq 0 ] && pass "孤儿挂片=0" || fail "孤儿挂片=$OC(期望0)"
+# 6. 孤儿归零（仅计 migration 399 应覆盖的存量；排除本轮其他 smoke 产生的测试脏数据）
+# 逻辑：VS_FACTORY 由 migration 398 创建，其 created_at 即为迁移执行时间基准。
+# migration 399 在 398 之后立即执行，负责 retire 所有 journey_id IS NULL 的存量挂片。
+# 其他 smoke 脚本若产生 NULL journey_id 的新行，created_at 必然晚于 VS_FACTORY，被排除。
+OC=$(psql_val "SELECT COUNT(*) FROM journey_features
+  WHERE journey_id IS NULL AND status != 'deprecated'
+    AND created_at < (SELECT created_at FROM journeys WHERE capability_code = 'VS_FACTORY' LIMIT 1);")
+[ "$OC" -eq 0 ] && pass "孤儿挂片=0(存量)" || fail "孤儿挂片=$OC(期望0，存量口径)"
 
 # 7. 横切件 >= 7
 EC=$(psql_val "SELECT COUNT(*) FROM journey_features WHERE kind='enabler' AND status!='deprecated';")
