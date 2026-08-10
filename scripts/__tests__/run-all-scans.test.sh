@@ -34,8 +34,17 @@ STUB
 
 cat > "$CONTROL_BIN/git" <<'STUB'
 #!/bin/bash
+if [[ -n "${GIT_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "$GIT_LOG"
+fi
 if [[ "${1:-}" == "branch" && "${2:-}" == "--show-current" ]]; then
-  printf '%s\n' 'cp-run-all-scans-test'
+  printf '%s\n' "${GIT_BRANCH:-cp-run-all-scans-test}"
+  exit 0
+fi
+if [[ "${1:-}" == "status" && "${2:-}" == "--porcelain" ]]; then
+  exit 0
+fi
+if [[ "${1:-}" == "pull" && "${2:-}" == "--ff-only" ]]; then
   exit 0
 fi
 printf 'unexpected git invocation:' >&2
@@ -153,6 +162,24 @@ if [[ $MISSING_NODE_RC -eq 127 && ! -e "$MISSING_NODE_LOG" && "$(cat "$MISSING_N
   pass "无可用 Node 时在运行 scanner 前清晰报错并 exit 127"
 else
   fail "NODE_FALLBACK_PATHS 未限制绝对路径回退(rc=$MISSING_NODE_RC)"
+fi
+
+SKIP_PULL_LOG="$TMPD/skip-pull-git.log"
+SKIP_PULL_SCAN_LOG="$TMPD/skip-pull-scan.log"
+SKIP_PULL_OUT="$TMPD/skip-pull.out"
+SKIP_PULL_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
+  NODE_FALLBACK_PATHS="$CONTROL_BIN/missing" SCAN_LOG="$SKIP_PULL_SCAN_LOG" \
+  GIT_LOG="$SKIP_PULL_LOG" GIT_BRANCH=main SKIP_GIT_PULL=1 SCAN_SCRIPTS="probe.js" \
+  /bin/bash "$RUNNER" > "$SKIP_PULL_OUT" 2>&1 || SKIP_PULL_RC=$?
+
+if [[ $SKIP_PULL_RC -eq 0 ]] \
+  && [[ -f "$SKIP_PULL_LOG" ]] \
+  && ! grep -q '^pull --ff-only$' "$SKIP_PULL_LOG" \
+  && [[ "$(cat "$SKIP_PULL_SCAN_LOG")" == 'scripts/scan/probe.js' ]]; then
+  pass "SKIP_GIT_PULL=1 在 clean main 上禁止 git pull 且继续扫描"
+else
+  fail "SKIP_GIT_PULL=1 未阻止 git pull(rc=$SKIP_PULL_RC): $(tr '\n' ' ' < "$SKIP_PULL_OUT")"
 fi
 
 echo ""

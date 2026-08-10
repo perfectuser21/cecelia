@@ -76,6 +76,33 @@ describe('[B-1] REPOS 清单导出与结构', () => {
     expect(zj).toBeDefined();
     expect(typeof zj.root).toBe('string');
   });
+
+  it('GRAPH_REPOS 未设置时默认选择全部三仓', async () => {
+    if (!scanGraphModule) scanGraphModule = await import('../../../scripts/scan/scan-graph.mjs');
+    expect(typeof scanGraphModule.selectGraphRepos).toBe('function');
+    expect(scanGraphModule.selectGraphRepos(scanGraphModule.REPOS, undefined).map((repo) => repo.name))
+      .toEqual(['cecelia', 'zenithjoy-workspace', 'zenithjoy-skills']);
+  });
+
+  it('GRAPH_REPOS 显式选择时只返回请求仓库且保持请求顺序', async () => {
+    if (!scanGraphModule) scanGraphModule = await import('../../../scripts/scan/scan-graph.mjs');
+    expect(scanGraphModule.selectGraphRepos(
+      scanGraphModule.REPOS,
+      'zenithjoy-workspace,cecelia',
+    ).map((repo) => repo.name)).toEqual(['zenithjoy-workspace', 'cecelia']);
+  });
+
+  it('GRAPH_REPOS 空值时清晰失败', async () => {
+    if (!scanGraphModule) scanGraphModule = await import('../../../scripts/scan/scan-graph.mjs');
+    expect(() => scanGraphModule.selectGraphRepos(scanGraphModule.REPOS, '  '))
+      .toThrow(/GRAPH_REPOS.*不能为空/);
+  });
+
+  it('GRAPH_REPOS 含未知仓库时清晰失败', async () => {
+    if (!scanGraphModule) scanGraphModule = await import('../../../scripts/scan/scan-graph.mjs');
+    expect(() => scanGraphModule.selectGraphRepos(scanGraphModule.REPOS, 'cecelia,unknown-repo'))
+      .toThrow(/GRAPH_REPOS.*未知仓库.*unknown-repo/);
+  });
 });
 
 describe('[B-2 + I-5] 路径不存在时 WARN 跳过，不炸整轮', () => {
