@@ -34,6 +34,7 @@ import releaseGateRouter from './routes/release-gate.js';
 import opsPanoramaRouter from './routes/ops-panorama.js';
 import kernelReviewsRouter from './routes/harness-kernel-approvals.js';
 import impactContractsRouter from './routes/impact-contracts.js';
+import harnessGapsRouter from './routes/gaps.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -105,5 +106,9 @@ router.use('/ops-panorama', opsPanoramaRouter);
 // Impact Contract — POST/GET /tasks/:taskId/impact-contract, POST/GET /impact-contracts
 // （FR-2 Impact Contract Schema + 持久化，sprint 08110022-relay-d96c9fa0 ws2）
 router.use('/', impactContractsRouter);
+
+// Gap Ledger — GET/POST /harness/gaps, GET /harness/gaps/:id/events, PATCH /harness/gaps/:id/status
+// （FR-5 Gap 生命周期台账，sprint 08110022-relay-d96c9fa0 ws5）
+router.use('/harness/gaps', harnessGapsRouter);
 
 export default router;
