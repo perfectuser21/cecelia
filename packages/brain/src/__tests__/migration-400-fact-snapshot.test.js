@@ -187,14 +187,14 @@ describe('migration 400 — cecelia_test 实际列与约束', () => {
   );
 
   it('重跑 migration 会把唯一 legacy marker 回填为 cecelia', async () => {
-    const markerPath = `/__migration_397_legacy_marker_${process.pid}`;
+    const markerPath = `/__migration_400_legacy_marker_${process.pid}`;
     const originalHeader = await readCeceliaApiHeader();
     try {
       await pool.query('DELETE FROM api_registry WHERE method = $1 AND path = $2', ['GET', markerPath]);
       await pool.query(
         `INSERT INTO api_registry
           (repo, method, path, file_path, area, source_revision, scanner_version)
-         VALUES ('legacy-unknown', 'GET', $1, 'migration-397.test.js', 'test', 'legacy-unknown', 'legacy')`,
+         VALUES ('legacy-unknown', 'GET', $1, 'migration-400.test.js', 'test', 'legacy-unknown', 'legacy')`,
         [markerPath],
       );
 
@@ -211,7 +211,7 @@ describe('migration 400 — cecelia_test 实际列与约束', () => {
   });
 
   it('重跑 migration 遇到 legacy/cecelia 同键时保留 cecelia 行并删除 legacy 冲突', async () => {
-    const markerPath = `/__migration_397_collision_marker_${process.pid}`;
+    const markerPath = `/__migration_400_collision_marker_${process.pid}`;
     const originalHeader = await readCeceliaApiHeader();
     try {
       await pool.query('DELETE FROM api_registry WHERE method = $1 AND path = $2', ['POST', markerPath]);

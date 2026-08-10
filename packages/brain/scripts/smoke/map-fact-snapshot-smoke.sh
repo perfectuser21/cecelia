@@ -154,7 +154,7 @@ printf 'database=%s revision=%s\n' "$DATABASE_NAME" "$TARGET_REVISION"
 pass 'sanitized PATH runner 合同'
 
 [[ "$(db_scalar "SELECT to_regclass('public.fact_snapshot_headers') IS NOT NULL")" == 't' ]] \
-  || fail 'fact_snapshot_headers 不存在（scratch 尚未迁移到 397）'
+  || fail 'fact_snapshot_headers 不存在（scratch 尚未迁移到 400）'
 
 METADATA_COLUMN_COUNT="$(db_scalar "
   WITH expected(table_name, column_name) AS (VALUES

@@ -6,7 +6,7 @@
 
 ## 范围
 
-Knife 0 只交付通用 Map Projection Engine 的事实底座：cron-safe 扫描调度、版本化 repo 快照、原子替换、15 分钟 fail-closed freshness，以及按 repo 隔离的一致读取。Cecelia 是首个验收 repo；本 Knife 不交付 Manifest 解析、投影器或统一 Map API。生产库不属于迁移目标，Migration 397 的真实数据库验收只在 `cecelia_test` 与 `cecelia_scratch` 执行。
+Knife 0 只交付通用 Map Projection Engine 的事实底座：cron-safe 扫描调度、版本化 repo 快照、原子替换、15 分钟 fail-closed freshness，以及按 repo 隔离的一致读取。Cecelia 是首个验收 repo；本 Knife 不交付 Manifest 解析、投影器或统一 Map API。生产库不属于迁移目标，Migration 400 的真实数据库验收只在 `cecelia_test` 与 `cecelia_scratch` 执行。
 
 ## Test Contract
 
@@ -16,8 +16,8 @@ Knife 0 只交付通用 Map Projection Engine 的事实底座：cron-safe 扫描
 | D2 | `scripts/__tests__/rescan-if-changed.test.sh` | 仅在 HEAD 变化时扫描；成功后记 SHA；失败保留旧 SHA |
 | D3 | `packages/brain/src/__tests__/integration/fact-snapshot-store.integration.test.js` | `重复 API composite natural key 只保留一条事实且 header row_count=1` |
 | D3 | `packages/brain/src/__tests__/integration/graph-store.integration.test.js` | `空边快照仍写入 fresh header，graph context 返回 row_count=0` |
-| D3 | `packages/brain/src/__tests__/migration-397-fact-snapshot.test.js` | `fact_snapshot_headers 具有通用 kind/repo 主键与 metadata/row_count 列` |
-| D3 | `packages/brain/src/__tests__/migration-397-fact-snapshot.test.js` | `四个 scanner 共用的 revision helper 统一执行 git -C root rev-parse HEAD` |
+| D3 | `packages/brain/src/__tests__/migration-400-fact-snapshot.test.js` | `fact_snapshot_headers 具有通用 kind/repo 主键与 metadata/row_count 列` |
+| D3 | `packages/brain/src/__tests__/migration-400-fact-snapshot.test.js` | `四个 scanner 共用的 revision helper 统一执行 git -C root rev-parse HEAD` |
 | D4 | `packages/brain/src/lib/__tests__/fact-snapshot-store.test.js` | `API 快照在同一事务中 upsert 当前事实并删除同 repo 消失的旧事实` |
 | D4 | `packages/brain/src/lib/__tests__/fact-snapshot-store.test.js` | `任一步失败都会 ROLLBACK 并 rethrow，不提交半张快照` |
 | D4 | `packages/brain/src/lib/__tests__/fact-snapshot-store.test.js` | `header row_count 来自 delete 后真实表 count，而不是输入 rows.length` |

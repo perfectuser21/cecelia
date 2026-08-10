@@ -17,7 +17,7 @@ Evidence: `PASS=4 FAIL=0`，覆盖未变化、成功记账与失败不记账。
 ### [BEHAVIOR] D3：四类事实携带版本化 provenance
 
 - [x] api/db/test/graph 每条新快照携带 repo、source_revision、scanner_version、scanned_at。
-Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/integration/fact-snapshot-store.integration.test.js src/__tests__/migration-397-fact-snapshot.test.js"
+Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/integration/fact-snapshot-store.integration.test.js src/__tests__/migration-400-fact-snapshot.test.js"
 
 Evidence: Knife 0 相关 12 files `116/116 passed`；scratch 四类 facts provenance 异常数为 0。
 
@@ -44,10 +44,10 @@ Evidence: graph freshness `7/7 passed`；registry 双 repo/一致性真库回归
 
 ### [ARTIFACT] D7：版本与 schema 同步
 
-- [x] Brain 版本、schema floor、DEFINITION 和 migration 397 同步。
+- [x] Brain 版本、schema floor、DEFINITION 和 migration 400 同步。
 Test: manual:bash -c "node scripts/facts-check.mjs && bash scripts/check-version-sync.sh"
 
-Evidence: Brain `1.271.4`、schema floor/migration `397`，版本同步检查通过。
+Evidence: Brain `1.271.4`、schema floor/migration `400`，版本同步检查通过。
 
 ### [BEHAVIOR] D8：scratch 四 scanner 与 stale 恢复真验火
 

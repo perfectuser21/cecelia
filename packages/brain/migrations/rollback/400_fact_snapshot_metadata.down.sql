@@ -1,4 +1,4 @@
--- Rollback 397 is intentionally fail-safe: the old global unique keys cannot
+-- Rollback 400 is intentionally fail-safe: the old global unique keys cannot
 -- represent the same natural key in more than one repo.
 
 BEGIN;
@@ -8,17 +8,17 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM api_registry GROUP BY method, path HAVING COUNT(DISTINCT repo) > 1
   ) THEN
-    RAISE EXCEPTION 'cannot rollback 397: api_registry contains cross-repo natural-key conflicts';
+    RAISE EXCEPTION 'cannot rollback 400: api_registry contains cross-repo natural-key conflicts';
   END IF;
   IF EXISTS (
     SELECT 1 FROM db_schema_registry GROUP BY table_name HAVING COUNT(DISTINCT repo) > 1
   ) THEN
-    RAISE EXCEPTION 'cannot rollback 397: db_schema_registry contains cross-repo natural-key conflicts';
+    RAISE EXCEPTION 'cannot rollback 400: db_schema_registry contains cross-repo natural-key conflicts';
   END IF;
   IF EXISTS (
     SELECT 1 FROM test_registry GROUP BY file_path HAVING COUNT(DISTINCT repo) > 1
   ) THEN
-    RAISE EXCEPTION 'cannot rollback 397: test_registry contains cross-repo natural-key conflicts';
+    RAISE EXCEPTION 'cannot rollback 400: test_registry contains cross-repo natural-key conflicts';
   END IF;
 END $$;
 
@@ -53,6 +53,6 @@ ALTER TABLE graph_edges
   DROP COLUMN IF EXISTS source_revision,
   DROP COLUMN IF EXISTS scanner_version;
 
-DELETE FROM schema_version WHERE version = '397';
+DELETE FROM schema_version WHERE version = '400';
 
 COMMIT;

@@ -1,4 +1,4 @@
--- Migration 397: versioned fact snapshot metadata and repo-scoped identities
+-- Migration 400: versioned fact snapshot metadata and repo-scoped identities
 
 BEGIN;
 
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS fact_snapshot_headers (
   PRIMARY KEY (kind, repo)
 );
 
--- 旧版 397 曾把 registry 存量归到 legacy-unknown。重跑时先保留已经由
+-- 旧版实现曾把 registry 存量归到 legacy-unknown。重跑时先保留已经由
 -- cecelia scanner 接管的事实，再把无冲突的旧事实统一归回 cecelia。
 DELETE FROM api_registry AS legacy
 USING api_registry AS owned
@@ -56,7 +56,7 @@ UPDATE api_registry SET repo = 'cecelia' WHERE repo = 'legacy-unknown';
 UPDATE db_schema_registry SET repo = 'cecelia' WHERE repo = 'legacy-unknown';
 UPDATE test_registry SET repo = 'cecelia' WHERE repo = 'legacy-unknown';
 
--- ADD COLUMN IF NOT EXISTS 不会修正旧版 397 已存在列的默认值，必须显式收敛。
+-- ADD COLUMN IF NOT EXISTS 不会修正旧版实现已存在列的默认值，必须显式收敛。
 ALTER TABLE api_registry
   ALTER COLUMN repo SET DEFAULT 'cecelia',
   ALTER COLUMN source_revision SET DEFAULT 'legacy-unknown',
@@ -164,7 +164,7 @@ ON CONFLICT (kind, repo) DO UPDATE SET
   row_count = EXCLUDED.row_count;
 
 INSERT INTO schema_version (version, description, applied_at)
-VALUES ('397', 'Versioned fact snapshot metadata and repo-scoped identities', NOW())
+VALUES ('400', 'Versioned fact snapshot metadata and repo-scoped identities', NOW())
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
