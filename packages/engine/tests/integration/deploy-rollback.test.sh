@@ -20,6 +20,9 @@ ROLLBACK="$REPO_ROOT/scripts/rollback-cecelia.sh"
 # ── 隔离部署根（init 成真 git repo，让 brain checkout 钩子有可切的 ref）──────────
 ROOT=$(mktemp -d)
 trap 'rm -rf "$ROOT"' EXIT
+# 本测试只验证 release/rollback 生命周期；frontend 重绑由
+# release-deploy-stage.test.sh 的 fake docker 断言独立覆盖。
+export CECELIA_SKIP_FRONTEND_RECREATE=1
 DASH="$ROOT/apps/dashboard"
 mkdir -p "$DASH" "$ROOT/scripts" "$ROOT/packages/brain/migrations"
 ( cd "$ROOT" && git init -q -b main && git config user.email t@t && git config user.name t )
