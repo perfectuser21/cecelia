@@ -72,7 +72,9 @@ fi
 
 echo "=== registry photo-layer scan $(date '+%F %T %Z') ==="
 
-if [ "$(git branch --show-current)" = "main" ] && [ -z "$(git status --porcelain)" ]; then
+if [[ "${SKIP_GIT_PULL:-0}" == '1' ]]; then
+  echo "WARN: SKIP_GIT_PULL=1,跳过 git pull"
+elif [ "$(git branch --show-current)" = "main" ] && [ -z "$(git status --porcelain)" ]; then
   git pull --ff-only 2>&1 || echo "WARN: git pull 失败,用当前工作区继续"
 else
   echo "WARN: 非 main 分支或工作区不干净,跳过 git pull"

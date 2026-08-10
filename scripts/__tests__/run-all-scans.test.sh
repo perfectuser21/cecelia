@@ -173,9 +173,12 @@ env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
   GIT_LOG="$SKIP_PULL_LOG" GIT_BRANCH=main SKIP_GIT_PULL=1 SCAN_SCRIPTS="probe.js" \
   /bin/bash "$RUNNER" > "$SKIP_PULL_OUT" 2>&1 || SKIP_PULL_RC=$?
 
+PULL_CALLED=0
+if [[ -f "$SKIP_PULL_LOG" ]] && grep -q '^pull --ff-only$' "$SKIP_PULL_LOG"; then
+  PULL_CALLED=1
+fi
 if [[ $SKIP_PULL_RC -eq 0 ]] \
-  && [[ -f "$SKIP_PULL_LOG" ]] \
-  && ! grep -q '^pull --ff-only$' "$SKIP_PULL_LOG" \
+  && [[ $PULL_CALLED -eq 0 ]] \
   && [[ "$(cat "$SKIP_PULL_SCAN_LOG")" == 'scripts/scan/probe.js' ]]; then
   pass "SKIP_GIT_PULL=1 在 clean main 上禁止 git pull 且继续扫描"
 else

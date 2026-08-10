@@ -29,6 +29,32 @@ export const REPOS = [
   },
 ];
 
+/**
+ * 将 GRAPH_REPOS 解析为本轮扫描清单。未设置时保留生产默认三仓；显式设置时严格校验。
+ * @param {Array<{ name: string, root: string }>} repos
+ * @param {string | undefined} rawSelection
+ * @returns {Array<{ name: string, root: string }>}
+ */
+export function selectGraphRepos(repos, rawSelection) {
+  if (rawSelection === undefined) return repos;
+  if (rawSelection.trim() === '') {
+    throw new Error('GRAPH_REPOS 不能为空；请提供逗号分隔的仓库名');
+  }
+
+  const names = rawSelection.split(',').map((name) => name.trim());
+  if (names.some((name) => name === '')) {
+    throw new Error('GRAPH_REPOS 不能为空；逗号之间必须是仓库名');
+  }
+
+  const reposByName = new Map(repos.map((repo) => [repo.name, repo]));
+  const unknownNames = names.filter((name) => !reposByName.has(name));
+  if (unknownNames.length > 0) {
+    throw new Error(`GRAPH_REPOS 包含未知仓库: ${unknownNames.join(',')}`);
+  }
+
+  return names.map((name) => reposByName.get(name));
+}
+
 const FILE_RE = /\.(js|mjs|cjs|ts|tsx)$/;
 const SCANNER_VERSION = 'graph-v3';
 // .claude 含 worktrees，扫它会把临时分支代码污染入图谱
@@ -189,7 +215,8 @@ async function main() {
   let hasError = false;
 
   try {
-    const results = await scanRepoList(REPOS, pool);
+    const selectedRepos = selectGraphRepos(REPOS, process.env.GRAPH_REPOS);
+    const results = await scanRepoList(selectedRepos, pool);
     for (const r of results) {
       if (r.skipped || r.error) {
         hasError = true;
