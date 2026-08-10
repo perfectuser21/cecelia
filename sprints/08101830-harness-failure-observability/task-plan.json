@@ -1,0 +1,38 @@
+{
+  "initiative_id": "e674f58a-2a27-44e5-aabf-fd3f1bf51964",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅 packages/brain/ 后端 DB 写入点 + 只读 API endpoint + CI lint，无 UI、无远端 agent 协议，系统内部自治收尾。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "harness terminal 写入点统一落 result.failure_class(枚举)+failure_detail + failure-stats API + CI 机械闸",
+      "scope": "①新增 packages/brain/src/harness-failure-class.js 枚举 SSOT（FAILURE_CLASSES 冻结闭集 + classifyFailure + buildTerminalFailureResult，unknown 兜底）；②改全部 terminal harness 写入点（executor.markInitiativeTerminalFailed 及退役写、dispatcher.js 5 处 failed/blocked、harness-relay-watchdog.js 经 kernel-run-store.js patchKernelRunById）经 SSOT helper 写 tasks.result.failure_class + failure_detail；③新增 GET /api/brain/harness/failure-stats?days=N（by_class 分组 + failure_rate，空窗口 200+{}，days 非法 400）；④新增 scripts/check-harness-terminal-failure-class.mjs 机械闸 + scripts/__tests__ 自测，接入 ci.yml；⑤version bump 三处同步。不做根因修复、不动 gear 分档、不动入口强制、不回填历史。",
+      "dod": [
+        "[BEHAVIOR] failure-stats 端点返 200 + 数值 failure_rate + by_class 对象（对应 contract-dod B-01）",
+        "[BEHAVIOR] 制造 terminal failed harness 任务后 result->>'failure_class' 非 null 且为枚举（B-04）",
+        "[BEHAVIOR] 上线后新 terminal harness 任务 failure_class IS NULL = 0（B-05）",
+        "[BEHAVIOR] 机械闸真树 exit 0 且注入裸 terminal 写入触发 exit 1（B-06）",
+        "[ARTIFACT] packages/brain/src/harness-failure-class.js 导出 FAILURE_CLASSES/classifyFailure/buildTerminalFailureResult",
+        "[ARTIFACT] scripts/check-harness-terminal-failure-class.mjs + 自测 + ci.yml 接入"
+      ],
+      "files": [
+        "packages/brain/src/harness-failure-class.js",
+        "packages/brain/src/executor.js",
+        "packages/brain/src/dispatcher.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/harness-relay-watchdog.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/src/routes/harness.js",
+        "scripts/check-harness-terminal-failure-class.mjs",
+        "scripts/__tests__/check-harness-terminal-failure-class.test.sh",
+        ".github/workflows/ci.yml",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        "package-lock.json"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
