@@ -220,6 +220,14 @@ psql $DATABASE_URL -f packages/brain/migrations/397_journeys_capability_self_ref
 
 ---
 
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| map-reorg DB 验收 | `tests/verify-map-reorg.sh` | B-1 价值流=2 / B-2 工厂6+管家5 / B-3 锚点不断裂 / B-4 孤儿归零+横切件>=7 / B-5 migration幂等 / B-6 schema字段 | → FAIL（migration 未执行时 schema 不存在） |
+
+---
+
 ## 七、本合同不覆盖的内容
 
 - F1 挂片具体分拣结果（需人工确认后写入 migration 注释）

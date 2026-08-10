@@ -1,4 +1,4 @@
--- Migration 400: 横切件池 7 项以 kind='enabler' 登记到 journey_features
+-- Migration 401: 横切件池 7 项以 kind='enabler' 登记到 journey_features
 -- Sprint: 08101234-cecelia-map-reorg
 -- Task: f491a8dd-b0e3-4352-a5e0-6cb85df73d80
 -- 2026-08-10
