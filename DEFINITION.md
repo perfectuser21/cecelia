@@ -22,6 +22,16 @@
 
 ---
 
+## Brain 1.271.4-ws — F1 Impact Contract 系统接入 CI（ws 并行分支）
+
+- 新增 `src/impact-contract/` 模块群，为 Brain 每次功能变更引入结构化变更合同机制。
+- `change-kind` 四档分类：`new_capability`（全新能力）、`capability_change`（能力变更）、`bugfix`（缺陷修复）、`parameter_only`（仅参数调整）。
+- Structure Gate：校验合同 JSON Schema（change_kind/summary/affected_files/test_plan 四字段均必填），fail-closed——Schema 解析失败直接拒绝。
+- Diff Gate：对比当前合同与上一版本，检测字段级漂移，触发 `CONTRACT_IMPACT_DRIFT` 告警。
+- Gap Ledger 状态机：`open → assigned → fixing → verifying → resolved`，持久化合同执行缺口并追踪闭合状态。
+- Mapper fail-closed 原则：change-kind 映射器遇到未识别类型时返回 null 而非 fallback，强制上层显式处理未知类型。
+- 所有单元测试（6 个文件）已纳入 `src/impact-contract/__tests__/`，由 vitest `include: src/**/*.test.js` 自动收集，随 brain-unit CI job 运行。
+
 ## Brain 1.271.2 — 任务生命周期时间戳闭环
 
 - `PATCH /api/brain/tasks/:id` 在任务进入或幂等回写 `in_progress` 时持久化 `started_at`，进入或幂等回写 `completed` 时持久化 `completed_at`，并补齐历史终态任务缺失的开始时间。

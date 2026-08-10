@@ -1,6 +1,60 @@
 # Brain 模块定义
 
-**版本**: 1.267.202
+**版本**: 1.271.4
+
+## F1 Impact Contract 系统（Brain 1.271.4）
+
+Brain 1.271.4 新增结构化变更合同机制，为每次功能迭代引入可机器验证的合同轨迹。
+
+### change_kind 四档分类
+
+| 档位 | 含义 |
+|------|------|
+| `new_capability` | 全新功能模块，无历史合同基线 |
+| `capability_change` | 已有能力的接口或行为变更 |
+| `bugfix` | 缺陷修复，不新增或变更接口 |
+| `parameter_only` | 仅调整阈值/常量等参数，无逻辑变更 |
+
+Mapper fail-closed 原则：遇到未识别的 change_kind 时返回 `null`，禁止使用 fallback 默认值，强制上层显式处理未知类型。
+
+### Structure Gate
+
+- 入参：合同 JSON 对象
+- 校验字段：`change_kind`、`summary`、`affected_files`、`test_plan` 四项均必填且非空
+- fail-closed：Schema 解析异常或字段缺失时直接拒绝，不放行
+- 校验通过返回 `{ valid: true }`；失败返回 `{ valid: false, errors: [...] }`
+
+### Diff Gate
+
+- 对比当前合同与上一版本（按 `version` 字段定位历史）
+- 检测字段级漂移：任何字段值变化均记录到 drift 清单
+- 发现漂移时触发 `CONTRACT_IMPACT_DRIFT` 事件，写入 drift 日志
+- 无历史版本时视为首次提交（无漂移），直接放行
+
+### Gap Ledger 状态机
+
+```
+open → assigned → fixing → verifying → resolved
+```
+
+- `open`：检测到合同缺口，尚未分配处理人
+- `assigned`：缺口已分配给负责方
+- `fixing`：正在修复缺口
+- `verifying`：修复完成，等待验证
+- `resolved`：缺口已闭合，合同恢复一致
+
+状态只允许向前流转，禁止回退（resolved 为终态）。
+
+### 测试覆盖
+
+6 个单元测试文件位于 `src/impact-contract/__tests__/`，由 vitest glob `src/**/*.test.js` 自动收集，随 `brain-unit` CI job 运行（无需额外配置）：
+
+- `change-kind.test.js`
+- `contract-schema.test.js`
+- `contract-store.test.js`
+- `structure-gate.test.js`
+- `diff-gate.test.js`
+- `gap-store.test.js`
 
 ## Kernel preflight BLOCKED launch truth
 
