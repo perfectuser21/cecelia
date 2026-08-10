@@ -81,9 +81,6 @@ export async function scanRepo(repo, pool) {
       throw new Error(`无法读取 source revision: ${revisionError.message}`);
     }
 
-    // 切换到 repo 根目录（dependency-cruiser 需要）
-    process.chdir(repo.root);
-
     const edges = [];
 
     // 确定扫描目录
@@ -97,6 +94,7 @@ export async function scanRepo(repo, pool) {
     let importCount = 0;
     // 1) import 边：dependency-cruiser 程序化 API
     const cruiseResult = await cruise(effectiveDirs, {
+      baseDir: repo.root,
       doNotFollow: { path: 'node_modules' },
       exclude: { path: 'node_modules' },
     });
