@@ -18,6 +18,7 @@ advancement-items-smoke.sh
 agent-credit-smoke.sh
 anchor-backfill-smoke.sh
 anchor-check-smoke.sh
+auto-merge-ownership-gate-smoke.sh
 autoblock-sql-param-fix-smoke.sh
 battle-report-smoke.sh
 battle-report-v2-smoke.sh
