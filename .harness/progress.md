@@ -1,15 +1,17 @@
-# Sprint: sprints/08110001-preview-thin-clone (62c1be9a-9a86-43ba-9a14-3046550de1a6)
-# 任务: preview 环境瘦克隆：排除历史表数据，单环境 3.65GB→<1GB
+# Sprint: sprints/08101234-cecelia-map-reorg (f491a8dd-b0e3-4352-a5e0-6cb85df73d80)
+# 任务: Cecelia 承诺地图归位：2价值流·11Capability·横切件池7项落账
 # 开始时间: 2026-08-10
-# run_id: 07f5e6d7-1cb3-450e-8cdb-a3a437ec40ca
-planner: done (sprint-prd.md@571c8ead9, invariants=5, fr=7, 行数=210)
-contract: done (contract-draft.md, contract-dod.md, tests/thin-clone-unit.test.sh, tests/thin-clone-e2e.sh, BEHAVIOR=10, e2e=yes, manual:bash=yes)
-proposer: done (contract-draft.md + contract-dod.md + tests/[3 files], BEHAVIOR=10, E2E=yes, manual:bash=yes)
-gan: done (contract-draft.md@cp-08110011-ws-62c1be9a r1, verdict=APPROVED, 铁律覆盖=5/5, judgments_written=10, rubric=.harness/verdicts/gan-798467d90.json)
-coder: done (red=12d225e94, green=f2e71ab91, pr=https://github.com/perfectuser21/cecelia/pull/4778, BEHAVIOR-01/02/10=PASS=26/0, ci=running)
-generator: pr_opened (#4778, red=12d225e94)
-generator: done (pr=#4778, red=12d225e94, green=f2e71ab91, sha=b6162c8)
-generator: re-anchor (update-branch, new-sha=9959834)
-evaluator: done (verdict=PASS, sha=9959834, verdict_file=.harness/verdicts/evaluate-9959834.json)
-judge: FAIL (evidence_insufficient, BEHAVIOR-05~09 无真实 E2E 执行证据)
-e2e-fix: contract-draft.md 补充可执行 bash 块（PASS=6/FAIL=0 本地验证），准备重跑 evaluator+judge
+# run_id: 0649895c-45af-487d-a335-61325fee9aab
+# 外部真相重建 — PR #4772 (OPEN) + 分支 5e483c430 存在产物，台账从 worktree 蒸发后恢复
+
+planner: done (rebuilt: sprint-prd.md@b7a7bdf9d, invariants=5, fr=8, 行数=?)
+gan: done (rebuilt: contract-draft.md@5e483c430, verdict=APPROVED, 铁律覆盖=5/5, judgments_written=8, rubric=.harness/verdicts/gan-f491a8dd.json [重建,无历史文件])
+generator: pr_opened (#4772, branch=cp-08101944-ws-f491a8dd)
+generator: done (rebuilt: pr=#4772, head=a106745, fix轮次=3)
+generator: fix-1 (smoke FAIL: 工厂线Capability=0，migration 398 UPDATE-only 在新建DB失效，需 INSERT ON CONFLICT DO UPDATE)
+generator: fix-1 DONE (CI=success, smoke=success, HEAD=87d8b44b)
+evaluator: start
+evaluator: done (PASS, B-1~B-6全通, 11/11 verify-map-reorg.sh PASS)
+judge: done (PASS, judged=false, fail-open)
+step6: start (REVIEW_REQUIRED=true)
+merge-conflict-resolve: main合并，.harness/progress.md 保留 map-reorg（preview-thin-clone 已 merged #4780）
