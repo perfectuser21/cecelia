@@ -67,6 +67,9 @@ export function deriveReviewRequired(task) {
   const explicit = task?.payload?.review_required;
   if (typeof explicit === 'boolean') return explicit;
   const rawKind = task?.payload?.change_kind;
+  // 旧值 {fix,small,thicken} 直接走 no-review 路径（thicken 归一后为 capability_change 不在规范白名单，
+  // 但语义上"加厚不算新面"，需在归一化前单独处理）
+  if (['fix', 'small', 'thicken'].includes(rawKind)) return false;
   // 归一化旧值，忽略非法值（非法值视为"不确定" → 安全方向返回 true）
   let kind = null;
   try {

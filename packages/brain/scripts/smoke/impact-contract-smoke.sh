@@ -7,20 +7,21 @@ fail() { echo "  ❌ $1"; ((FAIL++)) || true; }
 
 echo "── impact-contract smoke ──"
 
-# Case 1: change_kind 映射正确（change_kind=bugfix 在响应体中独立存在）
+# Case 1: change_kind 映射正确（change_kind=bugfix 与 payload.gear=segmented 独立存在）
+# task_type=dev(合法枚举), change_kind=bugfix(显式), payload.gear=segmented(通过 payload 传入)
 TASK=$(curl -sf -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
-  -d '{"title":"smoke:impact-contract","task_type":"feature","change_kind":"bugfix","gear":"single"}' 2>/dev/null) || \
+  -d '{"title":"smoke:impact-contract","task_type":"dev","change_kind":"bugfix","payload":{"gear":"segmented","orchestrator":"skill-relay"}}' 2>/dev/null) || \
   { fail "POST /tasks 创建失败"; TASK="{}"; }
 
 TASK_ID=$(echo "$TASK" | jq -r '.id // empty' 2>/dev/null)
 CK=$(echo "$TASK" | jq -r '.change_kind // empty' 2>/dev/null)
-GR=$(echo "$TASK" | jq -r '.gear // empty' 2>/dev/null)
+GR=$(echo "$TASK" | jq -r '.payload.gear // empty' 2>/dev/null)
 
 [[ -n "$TASK_ID" ]] && ok "POST /tasks 返回 id=$TASK_ID" || fail "POST /tasks 无 id"
 [[ "$CK" == "bugfix" ]] && ok "change_kind=bugfix 已存储" || fail "change_kind 错误: $CK"
-[[ "$GR" == "single" ]] && ok "gear=single 已存储（与 change_kind 独立）" || fail "gear 错误: $GR"
-[[ "$CK" != "$GR" ]] && ok "change_kind 与 gear 值不同（未互相赋值）" || fail "change_kind == gear，字段可能交叉污染"
+[[ "$GR" == "segmented" ]] && ok "payload.gear=segmented 已存储（与 change_kind 独立）" || fail "gear 错误: $GR"
+[[ "$CK" != "$GR" ]] && ok "change_kind 与 payload.gear 值不同（未互相赋值）" || fail "change_kind == gear，字段可能交叉污染"
 
 # Case 2: 非法合同被 Structure Gate 拒绝（缺必填字段）
 if [[ -n "$TASK_ID" ]]; then
