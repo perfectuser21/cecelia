@@ -529,6 +529,16 @@ router.patch('/tasks/:task_id', async (req, res) => {
       }
     }
 
+    // 生命周期时间戳属于状态事实，不依赖本次是否发生状态迁移：
+    // 同状态幂等回写也要能修复历史上已经终态但时间戳为空的数据。
+    if (status === 'in_progress') {
+      setClauses.push('started_at = COALESCE(started_at, NOW())');
+    }
+    if (status === 'completed') {
+      setClauses.push('started_at = COALESCE(started_at, completed_at, NOW())');
+      setClauses.push('completed_at = COALESCE(completed_at, NOW())');
+    }
+
     if (result !== undefined) {
       setClauses.push(`result = COALESCE(result, '{}'::jsonb) || $${paramIdx++}::jsonb`);
       params.push(JSON.stringify(result));
@@ -536,7 +546,8 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
     params.push(task_id);
     const updateResult = await pool.query(
-      `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = $${paramIdx} RETURNING status, updated_at`,
+      `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = $${paramIdx}
+       RETURNING status, updated_at, started_at, completed_at`,
       params
     );
 
@@ -627,7 +638,9 @@ router.patch('/tasks/:task_id', async (req, res) => {
       ...(harnessDemoted ? { accepted: false, reason: harnessDemoteReason } : {}),
       task_id,
       status: updatedTask.status,
-      updated_at: updatedTask.updated_at
+      updated_at: updatedTask.updated_at,
+      started_at: updatedTask.started_at,
+      completed_at: updatedTask.completed_at
     });
   } catch (err) {
     console.error('Failed to update task:', err);

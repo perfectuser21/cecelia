@@ -158,10 +158,14 @@ export function hasActiveDevLock(worktreePath) {
  * 1. git worktree prune（清理无效元数据引用）
  * 2. 扫描 WORKTREE_BASE，删除不在 git worktree list 中的目录
  *
- * @param {{ repoRoot?: string, worktreeBase?: string }} [opts]
+ * @param {{ repoRoot?: string, worktreeBase?: string, cleanupLockDir?: string }} [opts]
  * @returns {Promise<{ pruned: number, removed: number, errors: string[] }>}
  */
-export async function cleanupStaleWorktrees({ repoRoot = REPO_ROOT, worktreeBase = WORKTREE_BASE } = {}) {
+export async function cleanupStaleWorktrees({
+  repoRoot = REPO_ROOT,
+  worktreeBase = WORKTREE_BASE,
+  cleanupLockDir,
+} = {}) {
   const stats = {
     pruned: 0,
     removed: 0,
@@ -174,7 +178,10 @@ export async function cleanupStaleWorktrees({ repoRoot = REPO_ROOT, worktreeBase
 
   // Brain 启动时拿锁 — 与运行中的 zombie-cleaner / zombie-sweep / cecelia-run cleanup trap
   // 互斥，否则 git worktree prune 期间别人 worktree remove 会撕坏 .git/worktrees 元数据
-  const result = await withLock({}, async () => {
+  // 生产默认继续使用全局锁；真实临时目录集成测试可显式注入隔离锁，
+  // 避免 Vitest 并行文件互相把一次清理误判成生产锁竞争。
+  const lockOptions = cleanupLockDir ? { lockDir: cleanupLockDir } : {};
+  const result = await withLock(lockOptions, async () => {
     // 1. git worktree prune
     try {
       execSync('git worktree prune', { cwd: repoRoot, timeout: 10000, stdio: 'pipe' });
