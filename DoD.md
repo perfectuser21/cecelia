@@ -1,82 +1,100 @@
-contract_branch: cp-harness-propose-r2-28d184cb-r9b641bd2-a11
-sprint_dir: sprints/08091640-kernel-gear-dispatch
+contract_branch: cp-harness-propose-r2-4eb8c202-rd80b69b6-a11
+sprint_dir: sprints/08111600-harness-failure-observability
 
 ---
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Sprint: kernel 真读 gear：三档在 orchestrator 状态机内分流
+# Contract DoD — Sprint: harness 失败可观测（terminal 必写 failure_class + 失败率计量 API）
 
-**范围**: `orchestrator/derive.js` 按 gear 三档分叉 + `initiative_runs.gear` 列 + gear 读入 run context（run 行→observed.gear）+ 非法 gear kernel 侧 fail-closed。**不在范围**：不建 gear=param 档、不动入口强制、不改旧 relay prompt/env、不改 controller SKILL。
+**范围**: harness terminal 失败写入点统一经共享 helper 写 `tasks.result.failure_class`(受控枚举)+`failure_detail`；机械闸 lint 防回归；GET /api/brain/harness/failure-stats?days=N。
 **大小**: M
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] migration 396 新增 `initiative_runs.gear` 列（nullable）
-  Test: manual:bash -c 'ls "${REPO_ROOT:-/workspace}"/packages/brain/migrations/396_*.sql >/dev/null 2>&1 && grep -qiE "ALTER TABLE +initiative_runs" "${REPO_ROOT:-/workspace}"/packages/brain/migrations/396_*.sql && grep -qi "gear" "${REPO_ROOT:-/workspace}"/packages/brain/migrations/396_*.sql'
-  期望: exit 0
+- [x] [ARTIFACT] 共享 helper 模块存在且导出枚举/规范化/终结函数
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/harness-failure-class.js','utf8');if(!/FAILURE_CLASSES/.test(c)||!/normalizeFailureClass/.test(c)||!/markHarnessTaskTerminal/.test(c))process.exit(1)"
 
-- [x] [ARTIFACT] `kernel-run-store.createKernelRun` INSERT 增写 gear 列
-  Test: manual:bash -c 'grep -q "gear" "${REPO_ROOT:-/workspace}"/packages/brain/src/orchestrator/kernel-run-store.js'
-  期望: exit 0
+- [x] [ARTIFACT] 机械闸 lint 脚本存在
+  Test: node -e "require('fs').accessSync('packages/brain/scripts/lint/lint-terminal-failure-class.mjs')"
 
-- [x] [ARTIFACT] 新集成测试登记进 vitest.config.js 的 POSTGRES_INTEGRATION_TESTS
-  Test: manual:bash -c 'grep -q "kernel-gear-dispatch.pg.integration.test.js" "${REPO_ROOT:-/workspace}"/packages/brain/vitest.config.js && echo "Tests 1 passed"'
-  期望: exit 0
+- [x] [ARTIFACT] lint 自测坏样本 fixture 存在（供 exit-1 自测）
+  Test: node -e "const c=require('fs').readFileSync('sprints/08111600-harness-failure-observability/fixtures/bad-terminal-write.snippet','utf8');if(!/status/.test(c)||!/harness/.test(c))process.exit(1)"
 
-## BEHAVIOR 条目（五行剧本 · 内嵌 manual:bash 单行命令）
+- [x] [ARTIFACT] failure-stats 路由注册在 harness.js
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('failure-stats'))process.exit(1)"
 
-- [x] [BEHAVIOR] [L2] B-01: gear=hotfix 初始态跳过 planner 直进 generate
-  动作: 调 derive({...初始态 prdExists=false, contract.approved=false, gear:'hotfix'})（经 brain-unit CI 跑 derive.test.js gear 用例）
-  预期观察: 返回 {phase:'generate', action:'spawn:generator'}，action 不等于 'spawn:planner'
+- [x] [ARTIFACT] ci.yml 新增 lint-terminal-failure-class job 且真正纳入 ci-passed 阻塞门（非孤儿 workflow、非文档约定）
+  Test: node -e "const c=require('fs').readFileSync('.github/workflows/ci.yml','utf8');const hasJob=/^\s{2}lint-terminal-failure-class:/m.test(c);const runsScript=c.includes('lint-terminal-failure-class.mjs');const gate=(c.match(/^\s{2}ci-passed:[\s\S]*?needs:\s*\[([^\]]*)\]/m)||[])[1]||'';const inGate=gate.includes('lint-terminal-failure-class');if(!hasJob||!runsScript||!inGate){console.error('FAIL '+JSON.stringify({hasJob,runsScript,inGate}));process.exit(1)}"
+
+## BEHAVIOR 条目（内嵌可执行 manual: 命令，evaluator 逐条真跑）
+
+> 说明：以下 node 断言全部用 JS 对象属性访问（`row.result.failure_class`）读 jsonb，避免 SQL 内单引号；`DB_URL` 由 Fleet 注入，node 直接读 `process.env.DB_URL`。
+
+- [x] [BEHAVIOR] [L2] B-01: 共享 helper 把 result.failure_class + failure_detail 真落库
+  动作: 对真实 Postgres 插入一条 in_progress 的 harness_initiative 任务，调用 markHarnessTaskTerminal(pool,id,{status:"failed",failureClass:"watchdog_deadline",failureDetail:"d"})
+  预期观察: 该行 status=failed，result.failure_class="watchdog_deadline"，result.failure_detail="d"
   等待预算: 0s
-  留证: vitest 输出末 5 行（含 passed 统计）
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; npx vitest run src/orchestrator/__tests__/derive.test.js -t "不等于 spawn:planner" --reporter=dot'
+  留证: node 脚本 stdout（OK 行）+ 清理 DELETE
+  Test: manual:bash -c 'node --input-type=module -e '"'"'import { markHarnessTaskTerminal } from "./packages/brain/src/harness-failure-class.js"; import pg from "pg"; const pool=new pg.Pool({connectionString:process.env.DB_URL}); const id=(await pool.query("INSERT INTO tasks(task_type,title,status,payload) VALUES($1,$2,$3,$4) RETURNING id",["harness_initiative","smoke-b01","in_progress","{}"])).rows[0].id; await markHarnessTaskTerminal(pool,id,{status:"failed",failureClass:"watchdog_deadline",failureDetail:"d"}); const r=(await pool.query("SELECT status,result FROM tasks WHERE id=$1",[id])).rows[0]; await pool.query("DELETE FROM tasks WHERE id=$1",[id]); await pool.end(); if(r.status!=="failed"||r.result.failure_class!=="watchdog_deadline"||r.result.failure_detail!=="d") throw new Error("FAIL "+JSON.stringify(r)); console.log("OK");'"'"''
+  期望: OK
 
-- [x] [BEHAVIOR] [L2] B-02: gear=hotfix 全程不派 planner/proposer/reviewer
-  动作: 调 derive(初始态 gear:'hotfix')，检查返回 action 不在三角色 spawn 集合内
-  预期观察: action ∉ {spawn:planner, spawn:proposer, spawn:reviewer}
+- [x] [BEHAVIOR] [L2] B-02: executor 真实写入点（缺 orchestrator flag）迁到 result.failure_class
+  动作: 插入 payload 无 orchestrator 的 harness_initiative 任务，真实调用 runHarnessInitiativeRouter(task,{pool})
+  预期观察: 该任务 status=failed 且 result.failure_class="missing_orchestrator_flag"（不再只写 custom_props）
   等待预算: 0s
-  留证: vitest 输出末 5 行
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; npx vitest run src/orchestrator/__tests__/derive.test.js -t "全程不派" --reporter=dot'
+  留证: node 脚本 stdout（OK + failure_class）+ 清理
+  Test: manual:bash -c 'node --input-type=module -e '"'"'import { runHarnessInitiativeRouter } from "./packages/brain/src/executor.js"; import pg from "pg"; const pool=new pg.Pool({connectionString:process.env.DB_URL}); const id=(await pool.query("INSERT INTO tasks(task_type,title,status,payload) VALUES($1,$2,$3,$4) RETURNING id",["harness_initiative","smoke-b02","in_progress","{}"])).rows[0].id; const task=(await pool.query("SELECT * FROM tasks WHERE id=$1",[id])).rows[0]; await runHarnessInitiativeRouter(task,{pool}); const r=(await pool.query("SELECT status,result FROM tasks WHERE id=$1",[id])).rows[0]; await pool.query("DELETE FROM tasks WHERE id=$1",[id]); await pool.end(); const fc=(r.status==="failed"&&r.result)?r.result.failure_class:null; if(fc!=="missing_orchestrator_flag") throw new Error("FAIL fc="+fc); console.log("OK "+fc);'"'"''
+  期望: OK missing_orchestrator_flag
 
-- [x] [BEHAVIOR] [L2] B-03: INV-1 gear=default 初始态零回归返回 spawn:planner
-  动作: 调 derive(初始态 gear:'default') 与 derive(初始态 不传 gear)，二者均应走现行 planning 门
-  预期观察: 两种情形 action 均为 'spawn:planner'，phase 'planning'（与改动前逐字节等价）
+- [x] [BEHAVIOR] [L2] B-03: 受控枚举拒绝自由文本（规范化到 unclassified）
+  动作: 调用 normalizeFailureClass 传枚举成员 / 自由文本 / null，并校验 FAILURE_CLASSES 冻结
+  预期观察: 枚举成员原样返回；自由文本与 null 归 "unclassified"；FAILURE_CLASSES 为 frozen
   等待预算: 0s
-  留证: vitest 输出末 5 行 + derive.test.js 既有 100+ 用例全绿
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; npx vitest run src/orchestrator/__tests__/derive.test.js --reporter=dot'
+  留证: node 脚本 stdout（OK 行）
+  Test: manual:bash -c 'node --input-type=module -e '"'"'import { normalizeFailureClass, FAILURE_CLASSES } from "./packages/brain/src/harness-failure-class.js"; if(!Object.isFrozen(FAILURE_CLASSES)) throw new Error("FAIL not frozen"); if(normalizeFailureClass("watchdog_deadline")!=="watchdog_deadline") throw new Error("FAIL member"); if(normalizeFailureClass("free text xyz")!=="unclassified") throw new Error("FAIL freetext"); if(normalizeFailureClass(null)!=="unclassified") throw new Error("FAIL null"); console.log("OK");'"'"''
+  期望: OK
 
-- [x] [BEHAVIOR] [L2] B-04: gear=segmented 初始态照跑 planner（≠hotfix，对齐 controller segmented）
-  动作: 调 derive(初始态 gear:'segmented')
-  预期观察: action 'spawn:planner'，phase 'planning'（planner→proposer 多段语义，段循环留待独立交付）
+- [x] [BEHAVIOR] [L2] B-04: GET /failure-stats?days=7 返回 failure_rate 数值 + by_class 分组对象
+  动作: 对运行中的 Brain 调 GET /api/brain/harness/failure-stats?days=7
+  预期观察: HTTP 200，body 含 failure_rate(number)、by_class(object)、total_tasks、terminal_failed_count；禁用字段 period_days 不出现
   等待预算: 0s
-  留证: vitest 输出末 5 行
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; npx vitest run src/orchestrator/__tests__/derive.test.js -t "segmented 初始态 照跑 planner" --reporter=dot'
+  留证: curl 响应体 + jq 断言输出
+  Test: manual:bash -c 'RESP=$(curl -sf "localhost:5221/api/brain/harness/failure-stats?days=7"); echo "$RESP" | jq -e ".failure_rate | type == \"number\"" >/dev/null && echo "$RESP" | jq -e ".by_class | type == \"object\"" >/dev/null && echo "$RESP" | jq -e "has(\"total_tasks\") and has(\"terminal_failed_count\")" >/dev/null && echo "$RESP" | jq -e "has(\"period_days\") | not" >/dev/null && echo OK || { echo "FAIL $RESP"; exit 1; }'
+  期望: OK
 
-- [x] [BEHAVIOR] [L2] B-05: INV-2 非法 gear（turbo）kernel 侧 fail-closed → mark_failed invalid_gear
-  动作: 调 derive(初始态 gear:'turbo')
-  预期观察: 返回 {phase:'failed', action:'mark_failed', reason:'invalid_gear'}（不静默降级、不进任何相位，对齐 executor.js:3097）
+- [x] [BEHAVIOR] [L2] B-05: error path — 非法 days 返回 400 + error 字段
+  动作: 调 GET /api/brain/harness/failure-stats?days=abc
+  预期观察: HTTP 400，body 含 error(string)，不 500 不静默成空口径
   等待预算: 0s
-  留证: vitest 输出末 5 行
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; npx vitest run src/orchestrator/__tests__/derive.test.js -t "fail-closed" --reporter=dot'
+  留证: http_code + 错误 body
+  Test: manual:bash -c 'CODE=$(curl -s -o /tmp/b05.json -w "%{http_code}" "localhost:5221/api/brain/harness/failure-stats?days=abc"); [ "$CODE" = "400" ] || { echo "FAIL code=$CODE"; exit 1; }; jq -e ".error | type == \"string\"" /tmp/b05.json >/dev/null || { echo "FAIL no error field"; exit 1; }; echo OK'
+  期望: OK
 
-- [x] [BEHAVIOR] [L2] B-06: gear 列 round-trip + observed.gear 注入（真 Postgres）[接缝×2]
-  动作: 真 PG 上 createKernelRun(gear='hotfix')，再 collectGroundTruth 读回该 run
-  预期观察: SELECT gear FROM initiative_runs = 'hotfix'；collectGroundTruth 返回 observed.gear === 'hotfix'；gear 缺省时列 NULL 且 observed.gear==='default'
+- [x] [BEHAVIOR] [L2] B-06: 机械闸 lint 干净树 exit 0、注入裸 terminal 写入 exit 1、还原后再 exit 0
+  动作: 跑 lint（干净树）→ cat 坏样本 fixture 追加到被扫描源码 → 再跑 lint → git 还原
+  预期观察: 干净树 exit 0；含裸 terminal harness 写入 exit 1；还原后再 exit 0
   等待预算: 0s
-  留证: gear PG 集成套件 vitest 输出末 10 行（含 round-trip / observed.gear 用例）
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; export DATABASE_URL="${DB_URL:?}"; npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js -t "round-trip" --reporter=dot'
+  留证: 三次 lint 退出码路径打印（OK/FAIL 行）
+  Test: manual:bash -c 'node packages/brain/scripts/lint/lint-terminal-failure-class.mjs || { echo "FAIL clean-not-0"; exit 1; }; cat sprints/08111600-harness-failure-observability/fixtures/bad-terminal-write.snippet >> packages/brain/src/harness-failure-class.js; if node packages/brain/scripts/lint/lint-terminal-failure-class.mjs; then git checkout -- packages/brain/src/harness-failure-class.js; echo "FAIL lint-passed-bad-write"; exit 1; fi; git checkout -- packages/brain/src/harness-failure-class.js; node packages/brain/scripts/lint/lint-terminal-failure-class.mjs && echo OK || { echo "FAIL restore-not-0"; exit 1; }'
+  期望: OK
 
-- [x] [BEHAVIOR] [L2] B-07: hotfix run harness_attempts 角色分布 planner/proposer/reviewer=0 且 generator≥1（真 PG，时间窗防伪）[接缝×2]
-  动作: 真 PG 一跳驱动 runLoop（真 collectGroundTruth+真 derive+真 attemptStore，仅替身最外层 launcher），产出 hotfix run 的 harness_attempts 行，再 psql 断言
-  预期观察: `role IN ('planner','proposer','reviewer')` 计数=0 且 `role='generator'` 计数≥1（均带 created_at 时间窗）
+- [x] [BEHAVIOR] [L2] INV-2: 口径三源防线 — stats 不恒空且 by_class 求和 == terminal_failed_count
+  动作: 用 helper 造 1 条近窗口 terminal failed harness 任务，fetch failure-stats?days=1，校验计量真实反映且无双重计数，最后清理
+  预期观察: terminal_failed_count>=1（非恒空/已接线），且 by_class 各类计数之和 == terminal_failed_count（无双重计数）
   等待预算: 0s
-  留证: 两条 psql 计数输出（0 与 ≥1）
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; export DATABASE_URL="${DB_URL:?}"; npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js -t "hotfix 首角色" --reporter=dot'
+  留证: node/fetch 输出（OK 行）+ 清理 DELETE
+  Test: manual:bash -c 'node --input-type=module -e '"'"'import { markHarnessTaskTerminal } from "./packages/brain/src/harness-failure-class.js"; import pg from "pg"; const pool=new pg.Pool({connectionString:process.env.DB_URL}); const id=(await pool.query("INSERT INTO tasks(task_type,title,status,payload) VALUES($1,$2,$3,$4) RETURNING id",["harness_initiative","smoke-inv2","in_progress","{}"])).rows[0].id; await markHarnessTaskTerminal(pool,id,{status:"failed",failureClass:"product_failure",failureDetail:"x"}); const res=await fetch("http://localhost:5221/api/brain/harness/failure-stats?days=1"); const j=await res.json(); await pool.query("DELETE FROM tasks WHERE id=$1",[id]); await pool.end(); if(!(j.terminal_failed_count>=1)) throw new Error("FAIL empty "+JSON.stringify(j)); const sum=Object.values(j.by_class).reduce((a,b)=>a+b,0); if(sum!==j.terminal_failed_count) throw new Error("FAIL sum "+sum+"!="+j.terminal_failed_count); console.log("OK");'"'"''
+  期望: OK
 
-## Invariant 覆盖
+## INV 铁律映射（历史约束三源 — 逐条）
 
-- INV-1 [零回归] gear=default derive 输出不变（决策 1b677ae3）→ B-03 覆盖（default+undefined 双路径 + 全套 derive.test.js 100+ 用例绿）
-- INV-2 [fail-closed] 非法 gear kernel 侧 terminal failed 不静默降级（决策 e8f6134f）→ B-05 覆盖
-- INV-3 [确定性] derive 分叉禁 Date.now/Math.random/new Date → N/A 断言：gear 分叉为纯 switch/枚举比对，无时间/随机源（derive 既有确定性纪律，B-01~B-05 纯函数可复跑即隐含验证）
+- INV [口径三源] 指标口径防三源失真 → 见 B-04 + INV-2（挡未接线恒空 + 双重计数；分母口径已在 contract-draft 判定点登记表 codify）
+- INV [验证实跑] 合同验证命令必须实跑确认 exit code → N/A 独立条目：本 DoD 全部 BEHAVIOR 即真执行 exit-code 断言
+- INV [证据分档] judge FAIL 分证据不足 vs 实现缺陷 → N/A：本 sprint 不触及 judge / 证据链
+
+## notes
+
+- judgment-pending-user: 滚动失败率分母口径（⚠️ 已标）— PRD 假设选「窗口内 harness 任务总数」为分母（含 in_progress），PrepPRD/对齐会未显式拍板；已在 body 同时暴露 total_tasks 与 terminal_failed_count，消费者可自算「终态口径」；如主理人要求改为「窗口内终态任务数」，仅需改路由聚合一处，不影响写入层与机械闸。
+- 未覆盖真实链路清单: N/A（本合同无 mock 豁免；所有 BEHAVIOR 真 DB / 真 Brain / 真 lint）。
+- version bump 三处同步（NFR 硬约束）：bump packages/brain/package.json 时必须同步 packages/brain/package-lock.json 与根 package-lock.json（`packages["packages/brain"].version`），push 前自查 `node -e "const l=require('./package-lock.json'),p=require('./packages/brain/package.json');if(l.packages['packages/brain'].version!==p.version)throw new Error('root lock 版本不同步')"`。
