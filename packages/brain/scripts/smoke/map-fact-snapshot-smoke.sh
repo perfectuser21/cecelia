@@ -168,6 +168,10 @@ METADATA_COLUMN_COUNT="$(db_scalar "
 [[ "$METADATA_COLUMN_COUNT" == '16' ]] || fail "metadata 列不完整: $METADATA_COLUMN_COUNT/16"
 pass '四类事实 metadata 列与 snapshot header schema'
 
+DATABASE_URL="$DATABASE_URL" REPO_ROOT_CECELIA="$REPO_ROOT_CECELIA" \
+  /bin/bash scripts/scan/run-all-scans.sh
+pass '四 scanner 自包含刷新'
+
 verify_headers_and_facts
 pass '四类 header revision/version/row_count 与事实一致'
 
