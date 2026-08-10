@@ -37,7 +37,11 @@ describe('cleanupStaleWorktrees 保护活跃 lock（W7.3 Bug #E）', () => {
     );
 
     // repoRoot = testRoot 让 git worktree prune/list 失败但不抛（指向无 .git 的目录）
-    const stats = await cleanupStaleWorktrees({ repoRoot: testRoot, worktreeBase });
+    const stats = await cleanupStaleWorktrees({
+      repoRoot: testRoot,
+      worktreeBase,
+      cleanupLockDir: join(testRoot, '.cleanup-lock'),
+    });
 
     // worktree 必须还在（保护生效）
     expect(existsSync(wt)).toBe(true);
@@ -54,7 +58,11 @@ describe('cleanupStaleWorktrees 保护活跃 lock（W7.3 Bug #E）', () => {
       JSON.stringify({ branch: 'cp-xyz', stage: 'step_2_implementation' })
     );
 
-    const stats = await cleanupStaleWorktrees({ repoRoot: testRoot, worktreeBase });
+    const stats = await cleanupStaleWorktrees({
+      repoRoot: testRoot,
+      worktreeBase,
+      cleanupLockDir: join(testRoot, '.cleanup-lock'),
+    });
 
     expect(existsSync(wt)).toBe(true);
     expect(stats.skipped_active_lock).toBeGreaterThanOrEqual(1);
@@ -70,7 +78,11 @@ describe('cleanupStaleWorktrees 保护活跃 lock（W7.3 Bug #E）', () => {
     const oldTime = (Date.now() - 25 * 3600 * 1000) / 1000;
     utimesSync(lockPath, oldTime, oldTime);
 
-    const stats = await cleanupStaleWorktrees({ repoRoot: testRoot, worktreeBase });
+    const stats = await cleanupStaleWorktrees({
+      repoRoot: testRoot,
+      worktreeBase,
+      cleanupLockDir: join(testRoot, '.cleanup-lock'),
+    });
 
     // 24h 外的 lock 不再保护，正常清理路径接管
     expect(stats.skipped_active_lock).toBe(0);
@@ -84,7 +96,11 @@ describe('cleanupStaleWorktrees 保护活跃 lock（W7.3 Bug #E）', () => {
     mkdirSync(wt);
     writeFileSync(join(wt, 'README.md'), 'stale data');
 
-    const stats = await cleanupStaleWorktrees({ repoRoot: testRoot, worktreeBase });
+    const stats = await cleanupStaleWorktrees({
+      repoRoot: testRoot,
+      worktreeBase,
+      cleanupLockDir: join(testRoot, '.cleanup-lock'),
+    });
 
     expect(existsSync(wt)).toBe(false);
     expect(stats.skipped_active_lock).toBe(0);
