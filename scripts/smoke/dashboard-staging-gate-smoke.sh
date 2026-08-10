@@ -169,7 +169,7 @@ echo ""
 
 # ════════════════════════════════════════════════════════════════════════════
 echo "[B] promote：人工放行才换入生产"
-CECELIA_DEPLOY_ROOT="$ROOT_DIR" CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 CECELIA_SKIP_GIT_TAG=1 DASHBOARD_STAGING_PORT="$PORT" bash "$PROMOTE" > "$TMP/b.log" 2>&1
+CECELIA_DEPLOY_ROOT="$ROOT_DIR" CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_FRONTEND_RECREATE=1 CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 CECELIA_SKIP_GIT_TAG=1 DASHBOARD_STAGING_PORT="$PORT" bash "$PROMOTE" > "$TMP/b.log" 2>&1
 B_RC=$?
 [[ $B_RC -eq 0 ]] && pass "promote-dashboard.sh 退 0" || { fail "promote-dashboard.sh 退 $B_RC"; sed 's/^/    /' "$TMP/b.log" | tail -20; }
 grep -q "NEW_VERSION_SENTINEL" "$LIVE_DIST/index.html" 2>/dev/null \

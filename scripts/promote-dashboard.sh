@@ -109,6 +109,16 @@ write_release_manifest() {
     mv "${RELEASE_FILE}.tmp" "$RELEASE_FILE"
 }
 
+# dist/ 通过目录 rename 原子换入后，Docker/OrbStack 的 bind mount 仍可能抓着旧目录 inode。
+# 必须只重建 frontend 让 /app 重新绑定 live dist；--no-deps 防止连带重启 Brain。
+rebind_frontend() {
+    if [[ -n "${CECELIA_SKIP_FRONTEND_RECREATE:-}" ]]; then
+        return 0
+    fi
+    docker compose --env-file "$MAIN_ROOT/.env.docker" -f "$MAIN_ROOT/docker-compose.yml" \
+        up -d --force-recreate --no-deps frontend
+}
+
 # ── release 阶段：冻结验过的产物进库 + 打 tag + 登记 manifest（不动 live/current/brain）──
 do_release() {
     read_staged
@@ -154,6 +164,7 @@ do_deploy() {
 
     local PROMOTE_FAIL=0
     local OLD_TAG="" HAD_OLD=false
+    local ROLLBACK_SRC=""
     [[ -f "$RELEASE_FILE" ]] && OLD_TAG=$(grep '^current=' "$RELEASE_FILE" | head -1 | cut -d= -f2)
     if [[ -d "$DIST_DIR" ]]; then
         rm -rf "${DIST_DIR}.old" 2>/dev/null || true
@@ -167,10 +178,12 @@ do_deploy() {
             if [[ -n "$OLD_TAG" ]]; then
                 rm -rf "${RELEASES_DIR:?}/$OLD_TAG"
                 mv "${DIST_DIR}.old" "$RELEASES_DIR/$OLD_TAG"
+                ROLLBACK_SRC="$RELEASES_DIR/$OLD_TAG"
                 echo "📦 旧版已留存：.dist-releases/$OLD_TAG"
             else
                 rm -rf "${RELEASES_DIR:?}/pre-$tag"
                 mv "${DIST_DIR}.old" "$RELEASES_DIR/pre-$tag"
+                ROLLBACK_SRC="$RELEASES_DIR/pre-$tag"
                 echo "📦 旧版（无指针历史）已留存：.dist-releases/pre-$tag"
             fi
             prune_releases
@@ -182,6 +195,18 @@ do_deploy() {
         [[ "$HAD_OLD" == true && -d "${DIST_DIR}.old" ]] && mv "${DIST_DIR}.old" "$DIST_DIR"
         exit 1
     fi
+
+    echo "🔄 重新绑定 frontend → live dist/（不重启 Brain）"
+    if ! rebind_frontend; then
+        echo "❌ frontend 重绑失败，恢复上一版 live dist/"
+        if [[ -n "$ROLLBACK_SRC" && -d "$ROLLBACK_SRC" ]]; then
+            rm -rf "${DIST_DIR:?}"
+            cp -R "$ROLLBACK_SRC" "$DIST_DIR"
+            rebind_frontend || echo "❌ 上一版 frontend 重绑也失败，5211 需要部署告警介入"
+        fi
+        exit 1
+    fi
+    echo "✅ frontend 已重新绑定 live dist/，Brain 未重启"
 
     # 写指针：current/commit/promoted_at 覆盖；manifest/history（release 已写）保留。
     local DEPLOY_COMMIT

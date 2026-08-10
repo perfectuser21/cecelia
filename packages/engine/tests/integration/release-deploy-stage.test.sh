@@ -28,7 +28,7 @@ stage() {  # <root> <content>
 }
 run() {  # <root> args...
     local R="$1"; shift
-    CECELIA_DEPLOY_ROOT="$R" CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 \
+    CECELIA_DEPLOY_ROOT="$R" CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_FRONTEND_RECREATE=1 CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 \
         bash "$PROMOTE" "$@" >/dev/null 2>&1
 }
 
@@ -70,6 +70,59 @@ A_LIVE=$(cat "$DA/dist/index.html" 2>/dev/null); B_LIVE=$(cat "$DB/dist/index.ht
 if [[ "$A_CUR" == "$B_CUR" && "$A_LIVE" == "$B_LIVE" && "$A_LIVE" == "SAME" ]]; then
     pass "★ 两步 == 无参(full) 末态一致 current=${A_CUR} live=${A_LIVE}"; else fail "★ 两步与 full 末态不一致: A(cur=${A_CUR} live=${A_LIVE}) B(cur=${B_CUR} live=${B_LIVE})"; fi
 rm -rf "$RA" "$RB"
+
+# ── 5) frontend 重绑：只重建 frontend，不连带 Brain ─────────────────────────
+R=$(new_root); D="$R/apps/dashboard"; stage "$R" "REBIND"
+mkdir -p "$R/fakebin"
+printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "$*" >> "$DOCKER_LOG"' > "$R/fakebin/docker"
+chmod +x "$R/fakebin/docker"
+run "$R" --release-only
+if PATH="$R/fakebin:$PATH" DOCKER_LOG="$R/docker.log" CECELIA_DEPLOY_ROOT="$R" \
+    CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 \
+    bash "$PROMOTE" --deploy prod-cecelia-v1 >/dev/null 2>&1; then
+    pass "frontend 重绑命令执行成功"
+else
+    fail "frontend 重绑命令执行失败"
+fi
+EXPECTED="compose --env-file $R/.env.docker -f $R/docker-compose.yml up -d --force-recreate --no-deps frontend"
+if [[ "$(cat "$R/docker.log" 2>/dev/null)" == "$EXPECTED" ]]; then
+    pass "★ frontend 重绑严格使用 --no-deps，不重启 Brain"
+else
+    fail "★ frontend 重绑命令不符合隔离契约: $(cat "$R/docker.log" 2>/dev/null)"
+fi
+rm -rf "$R"
+
+# ── 6) frontend 重绑失败：恢复旧 live，指针不前进 ────────────────────────────
+R=$(new_root); D="$R/apps/dashboard"
+mkdir -p "$D/dist" "$R/fakebin"; echo "OLD" > "$D/dist/index.html"
+printf 'current=prod-cecelia-v0\n' > "$R/.production-release"
+stage "$R" "NEW"; run "$R" --release-only
+printf '0\n' > "$R/docker-count"
+printf '%s\n' '#!/bin/sh' \
+    'n=$(cat "$DOCKER_COUNT")' \
+    'n=$((n + 1))' \
+    'printf "%s\\n" "$n" > "$DOCKER_COUNT"' \
+    '[ "$n" -eq 1 ] && exit 1' \
+    'exit 0' > "$R/fakebin/docker"
+chmod +x "$R/fakebin/docker"
+if PATH="$R/fakebin:$PATH" DOCKER_COUNT="$R/docker-count" CECELIA_DEPLOY_ROOT="$R" \
+    CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 \
+    bash "$PROMOTE" --deploy prod-cecelia-v1 >/dev/null 2>&1; then
+    fail "★ frontend 首次重绑失败却退出 0"
+else
+    pass "frontend 重绑失败时部署报红"
+fi
+if [[ "$(cat "$D/dist/index.html" 2>/dev/null)" == "OLD" ]]; then
+    pass "★ frontend 重绑失败恢复旧 live dist"
+else
+    fail "★ frontend 重绑失败未恢复旧 live dist"
+fi
+if [[ "$(grep '^current=' "$R/.production-release" | head -1)" == "current=prod-cecelia-v0" ]]; then
+    pass "★ frontend 重绑失败时生产指针不前进"
+else
+    fail "★ frontend 重绑失败却推进了生产指针"
+fi
+rm -rf "$R"
 
 echo ""
 echo "=== release-deploy-stage: $PASS PASS / $FAIL FAIL ==="
