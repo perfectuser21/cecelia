@@ -51,7 +51,7 @@ export async function cleanupStaleCaches({
   try {
     storedVersion = storage.getItem(CACHE_VERSION_KEY);
   } catch {
-    return;
+    // 隐私浏览可能禁用 Web Storage；仍须清掉会接管深链导航的旧 PWA 状态。
   }
 
   if (storedVersion === version) return;
