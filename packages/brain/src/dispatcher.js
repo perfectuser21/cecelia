@@ -446,17 +446,21 @@ export async function dispatchNextTask(goalIds) {
           strikes: newStrikes,
         };
         await pool.query(
+          // 决策 e8f6134f 交付物2：blocked 也是 terminal 失败态，写 result.failure_class(受控枚举)
+          // +failure_detail，供 GET /harness/failure-stats 计量（非 harness 任务写了无害，stats 按 task_type 过滤）。
           `UPDATE tasks
            SET status = 'blocked',
                blocked_reason = 'pre_flight_rejected',
                blocked_at = NOW(),
                blocked_detail = $2::jsonb,
+               result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'pre_flight_rejected', 'failure_detail', $4::text),
                metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb
            WHERE id = $1`,
           [
             candidate.id,
             JSON.stringify(blockedDetail),
             JSON.stringify({ pre_flight_fail_count: newStrikes, pre_flight_issues: checkResult.issues }),
+            String(checkResult.issues ? JSON.stringify(checkResult.issues) : 'pre_flight_rejected').slice(0, 500),
           ]
         );
         await alertOnPreFlightFail(pool, candidate, { ...checkResult, strikes: newStrikes, blocked: true });
@@ -600,9 +604,12 @@ export async function dispatchNextTask(goalIds) {
       tickLog(`[dispatch] task ${candidate.id} missing_anchor → terminal failed`);
       try {
         await pool.query(
+          // 决策 e8f6134f 交付物2：terminal 失败同步写 result.failure_class(受控枚举)+failure_detail，
+          // 供 GET /harness/failure-stats 按根因计量（payload.failure_class 保留兼容既有读点）。
           `UPDATE tasks SET status='failed', completed_at=NOW(),
             error_message=$2,
-            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'missing_anchor')
+            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'missing_anchor'),
+            result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_class', 'missing_anchor', 'failure_detail', $2::text)
            WHERE id=$1::uuid`,
           [candidate.id, anchorResult.detail]
         );

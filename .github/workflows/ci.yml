@@ -531,6 +531,38 @@ jobs:
       - name: Self-test (fixture cases)
         run: bash .github/workflows/scripts/__tests__/lint-migration-unique-version.test.sh
 
+  # ─── 机械闸：harness terminal 失败必写 failure_class（决策 e8f6134f 交付物2）───
+  # 扫描 packages/brain/src 裸 terminal harness 写入点（把 harness_initiative/
+  # golden_path_proposal 打成 failed/blocked/cancelled 但漏写 failure_class）→ exit 1。
+  # 自测 step 注入坏样本 fixture 断言 exit 1，防止 lint 变「永远绿」摆设。
+  # gate on brain 改动（mirror brain-integration/brain-tests-shell 的 brain 路径门），
+  # 纳入 ci-passed 的 needs+check → 真正阻塞 merge（非孤儿 workflow、非文档约定）。
+  lint-terminal-failure-class:
+    needs: [changes]
+    if: needs.changes.outputs.brain == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Lint terminal failure_class (clean tree → exit 0)
+        run: node packages/brain/scripts/lint/lint-terminal-failure-class.mjs
+      - name: Self-test (inject bad fixture → expect exit 1, then restore → exit 0)
+        run: |
+          set -e
+          SCANNED=packages/brain/src/harness-failure-class.js
+          FIXTURE=sprints/08111600-harness-failure-observability/fixtures/bad-terminal-write.snippet
+          cat "$FIXTURE" >> "$SCANNED"
+          if node packages/brain/scripts/lint/lint-terminal-failure-class.mjs; then
+            git checkout -- "$SCANNED"
+            echo "❌ 机械闸失效：注入坏样本后 lint 仍 exit 0"; exit 1
+          fi
+          git checkout -- "$SCANNED"
+          node packages/brain/scripts/lint/lint-terminal-failure-class.mjs
+          echo "✅ 机械闸自测通过（坏样本 exit 1，还原 exit 0）"
+
   # ─── Auto-merge 决策脚本自测 ───────────────────────────────────
   # 守卫 should-auto-merge.sh：确保 feat(harness): PR 被跳过（交给 harness 裁判 gate），
   # 普通 fix/feat PR 正常合并。防止未来改动误删跳过逻辑或误伤手动 /dev 流程。
@@ -1861,7 +1893,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-terminal-failure-class, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1882,6 +1914,7 @@ jobs:
           check "engine-tests-shell" "${{ needs.engine-tests-shell.result }}"
           check "dashboard-staging-gate-smoke" "${{ needs.dashboard-staging-gate-smoke.result }}"
           check "lint-migration-unique-version" "${{ needs.lint-migration-unique-version.result }}"
+          check "lint-terminal-failure-class" "${{ needs.lint-terminal-failure-class.result }}"
           check "lint-auto-merge-decision" "${{ needs.lint-auto-merge-decision.result }}"
           check "lint-fs-guard-selection" "${{ needs.lint-fs-guard-selection.result }}"
           check "lint-deploy-effect-assert" "${{ needs.lint-deploy-effect-assert.result }}"

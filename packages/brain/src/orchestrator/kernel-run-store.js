@@ -1,4 +1,20 @@
 import { COMMANDER_MODES } from './commander-contract.js';
+import { normalizeFailureClass } from '../harness-failure-class.js';
+
+/**
+ * deriveFailureClass — 从 finalizeKernelRun 的自由文本 reason 提炼受控 failure_class。
+ * 决策 e8f6134f 交付物2：harness terminal 失败必写 result.failure_class，供 failure-stats 计量。
+ * 先整体规范化；命不中枚举时取 `:`/空格 前缀再规范化（如 'evidence_invalid:sig' → 'evidence_invalid'）；
+ * 仍命不中 → 'unclassified'（兜底，绝不留 null）。
+ */
+function deriveFailureClass(reason) {
+  const raw = reason == null ? null : String(reason);
+  let fc = normalizeFailureClass(raw);
+  if (fc === 'unclassified' && raw) {
+    fc = normalizeFailureClass(raw.split(/[:\s]/)[0]);
+  }
+  return fc;
+}
 
 const ACTIVE_PHASES = new Set([
   'planning',
@@ -564,6 +580,9 @@ export async function finalizeKernelRun(pool, {
     }
 
     if (task.status !== taskOutcome) {
+      // 决策 e8f6134f 交付物2：failed 时把 failure_class(受控枚举)+failure_detail 写进
+      // result（与 status 同一 UPDATE 原子），供 GET /harness/failure-stats 按根因计量。
+      // orchestrator finalize 是 harness terminal 失败的主路径，历史 60% null 主要出在这里。
       await client.query(
         `UPDATE tasks
             SET status = $2::varchar,
@@ -571,10 +590,18 @@ export async function finalizeKernelRun(pool, {
                   WHEN $2::text = 'failed' THEN $3
                   ELSE error_message
                 END,
+                result = CASE
+                  WHEN $2::text = 'failed'
+                  THEN COALESCE(result, '{}'::jsonb) || jsonb_build_object(
+                    'failure_class', $4::text,
+                    'failure_detail', $3::text
+                  )
+                  ELSE result
+                END,
                 completed_at = COALESCE(completed_at, NOW()),
                 updated_at = NOW()
           WHERE id = $1`,
-        [expectedTaskId, taskOutcome, reason],
+        [expectedTaskId, taskOutcome, reason, deriveFailureClass(reason)],
       );
     }
 

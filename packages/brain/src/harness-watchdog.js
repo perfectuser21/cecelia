@@ -310,11 +310,17 @@ export async function resumeStalledHarnessDrivers({
       }
 
       const upd = await dbPool.query(
+        // 决策 e8f6134f 交付物2：terminal 失败必写 result.failure_class（受控枚举）+failure_detail，
+        // 供 GET /harness/failure-stats 按根因计量（never-started 归 watchdog_deadline）。
         `UPDATE tasks SET
            status = 'failed',
            claimed_by = NULL,
            claimed_at = NULL,
            error_message = 'harness_initiative never started graph (no initiative_runs row, claimed_at stale)',
+           result = COALESCE(result, '{}'::jsonb) || jsonb_build_object(
+             'failure_class', 'watchdog_deadline',
+             'failure_detail', 'harness_initiative never started graph (no initiative_runs row, claimed_at stale)'
+           ),
            updated_at = NOW()
          WHERE id = $1 AND status = 'in_progress'
          RETURNING id`,

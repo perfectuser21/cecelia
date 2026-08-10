@@ -21,6 +21,7 @@ import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import pool from './db.js';
+import { markHarnessTaskTerminal } from './harness-failure-class.js';
 import { buildLearningContext } from './learning-retriever.js';
 import { generateL0Summary } from './memory-utils.js';
 import { getDecisionsSummary } from './decisions-context.js';
@@ -2991,9 +2992,10 @@ export const MAX_INITIATIVE_FRESH_STARTS = 3;
 /**
  * markInitiativeTerminalFailed — 把 harness_initiative task 标为 terminal failed。
  *
- * 写法对齐 runHarnessInitiativeRouter 内已有的 watchdog_deadline 写法：
- * status='failed' + custom_props.failure_class=<failureClass>。terminal 失败后
- * consciousness-loop 不再 retry（status=failed 终态），杜绝无限重跑。
+ * 决策 e8f6134f 交付物2：统一经共享 helper markHarnessTaskTerminal 把
+ * failure_class(受控枚举)+failure_detail 写进 tasks.result（与 status 同一 UPDATE 原子），
+ * 取代旧的 custom_props.failure_class 写法——让 GET /harness/failure-stats 能按根因计量。
+ * terminal 失败后 consciousness-loop 不再 retry（status=failed 终态），杜绝无限重跑。
  *
  * @param {{query: Function}} dbPool
  * @param {string} taskId
@@ -3002,12 +3004,11 @@ export const MAX_INITIATIVE_FRESH_STARTS = 3;
  */
 async function markInitiativeTerminalFailed(dbPool, taskId, failureClass, errorMessage) {
   try {
-    await dbPool.query(
-      `UPDATE tasks SET status='failed', error_message=$1,
-         custom_props = jsonb_set(COALESCE(custom_props,'{}'::jsonb), '{failure_class}', $2::jsonb)
-       WHERE id=$3`,
-      [String(errorMessage).slice(0, 500), JSON.stringify(failureClass), taskId]
-    );
+    await markHarnessTaskTerminal(dbPool, taskId, {
+      status: 'failed',
+      failureClass,
+      failureDetail: errorMessage,
+    });
     // 2b-2b: 镜像同步对应 okr_initiative → failed（non-fatal，best-effort）
     try {
       const { syncOkrInitiativeStatus } = await import('./okr-initiative-sync.js');

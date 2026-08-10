@@ -79,6 +79,7 @@ beforeAll(async () => {
       task_type TEXT NOT NULL,
       status TEXT NOT NULL,
       payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      result JSONB,
       error_message TEXT,
       completed_at TIMESTAMPTZ,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
