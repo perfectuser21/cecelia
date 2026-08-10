@@ -7,7 +7,7 @@ PASS=0; FAIL=0
 ok() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
-JANITOR="$(dirname "$0")/../janitor.sh"
+JANITOR="$(dirname "$0")/../../janitor.sh"
 [ -f "$JANITOR" ] || { echo "ERROR: janitor.sh not found"; exit 1; }
 
 # 1. 豁免路径字面量在两个 kill 函数中各出现一次（共≥2处）
