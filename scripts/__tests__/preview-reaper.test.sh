@@ -222,6 +222,147 @@ else
 fi
 teardown
 
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ 杀进程逻辑（pid 文件 + 身份校验 + 基础设施红线）                            ║
+# ║ 根因：旧逻辑用 lsof -ti :$PORT 杀端口持有者，而 OrbStack vmgr 做容器端口   ║
+# ║ 转发正是端口持有者 → 每次回收 SIGKILL 掉 OrbStack VM 管理器 → 全机 docker  ║
+# ║ 中断 → 连锁打死所有 harness run（2026-08-09~10 事故，5 次 vmgrExit 逐秒对齐）║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+# 生成一个可控 argv[0] 的常驻进程（模拟被 pid 文件指向的目标进程），回显其 PID。
+spawn_labeled() {  # $1 = argv[0] 文本
+  bash -c 'exec -a "$0" sleep 300' "$1" >/dev/null 2>&1 &
+  echo "$!"
+}
+
+# 共用的 psql mock：源收集全空；port 查询返回 5301（让「旧」lsof 路径有机会开杀→红）；
+# DB 不存在（跳过 dropdb）；UPDATE inactive 成功。
+write_kill_psql_mock() {
+  cat >"$BIN/psql" <<'SH'
+#!/bin/bash
+if [[ "$*" == *"port FROM preview_environments"* ]]; then
+  echo "5301"
+else
+  echo ""
+fi
+SH
+  chmod +x "$BIN/psql"
+}
+
+# ── 测试 10：pid 指向的进程 cmdline 不含本 PR → 不杀，日志含跳过原因 ──────────
+setup
+PR=211
+mkdir -p "$PREVIEW_BASE_DIR/preview-$PR"
+write_kill_psql_mock
+printf '#!/bin/bash\necho "MERGED"\n' >"$BIN/gh"; chmod +x "$BIN/gh"
+DECOY_PID=$(spawn_labeled "unrelated-daemon no-pr-marker-here")
+echo "$DECOY_PID" >"/tmp/preview-$PR.pid"
+# 旧逻辑会用 lsof 命中该 PID 并杀之（→ 红）；新逻辑读 pid 文件、cmdline 校验不过 → 不杀
+printf '#!/bin/bash\necho "%s"\n' "$DECOY_PID" >"$BIN/lsof"; chmod +x "$BIN/lsof"
+
+OUT=$(bash "$REAPER" 2>&1)
+if kill -0 "$DECOY_PID" 2>/dev/null \
+  && echo "$OUT" | grep -qE "校验不过|未含本 PR 标识|跳过 kill"; then
+  pass "cmdline 不含本 PR 的进程不被 kill 且记录跳过原因"
+else
+  fail "cmdline 不含本 PR 的进程被误杀或无跳过日志" "alive=$(kill -0 "$DECOY_PID" 2>/dev/null && echo yes || echo no) output=$OUT"
+fi
+kill -9 "$DECOY_PID" 2>/dev/null || true
+rm -f "/tmp/preview-$PR.pid"
+teardown
+
+# ── 测试 11（红线）：pid 指向 OrbStack Helper(vmgr) → 绝不 kill，产生告警 ─────
+setup
+PR=212
+mkdir -p "$PREVIEW_BASE_DIR/preview-$PR"
+write_kill_psql_mock
+printf '#!/bin/bash\necho "MERGED"\n' >"$BIN/gh"; chmod +x "$BIN/gh"
+VMGR_PID=$(spawn_labeled "/Applications/OrbStack.app/Contents/MacOS/OrbStack Helper (vmgr)")
+echo "$VMGR_PID" >"/tmp/preview-$PR.pid"
+# 旧逻辑 lsof 命中即杀（→ 红，正是事故）；新逻辑基础设施红线拦截
+printf '#!/bin/bash\necho "%s"\n' "$VMGR_PID" >"$BIN/lsof"; chmod +x "$BIN/lsof"
+
+OUT=$(bash "$REAPER" 2>&1)
+if kill -0 "$VMGR_PID" 2>/dev/null \
+  && echo "$OUT" | grep -qiE "基础设施|orbstack|红线|拒绝 kill"; then
+  pass "OrbStack vmgr 进程被红线拦截，绝不 kill 且告警"
+else
+  # 执行了 kill → 进程死亡 → 本项失败（不可回归红线）
+  fail "OrbStack vmgr 被误杀或无告警（不可回归红线）" "alive=$(kill -0 "$VMGR_PID" 2>/dev/null && echo yes || echo no) output=$OUT"
+fi
+kill -9 "$VMGR_PID" 2>/dev/null || true
+rm -f "/tmp/preview-$PR.pid"
+teardown
+
+# ── 测试 12：pid 文件缺失 → 不调用 lsof、不 kill，走降级分支 ──────────────────
+setup
+PR=213
+mkdir -p "$PREVIEW_BASE_DIR/preview-$PR"
+write_kill_psql_mock
+printf '#!/bin/bash\necho "MERGED"\n' >"$BIN/gh"; chmod +x "$BIN/gh"
+rm -f "/tmp/preview-$PR.pid"  # 确保缺失
+LSOF_FLAG="$TMP/lsof_called"
+cat >"$BIN/lsof" <<SH
+#!/bin/bash
+touch "$LSOF_FLAG"
+echo ""
+SH
+chmod +x "$BIN/lsof"
+
+OUT=$(bash "$REAPER" 2>&1)
+if [ ! -f "$LSOF_FLAG" ] \
+  && echo "$OUT" | grep -qE "pid 文件缺失|降级|跳过进程终止"; then
+  pass "pid 文件缺失时不 lsof、不 kill，走降级分支"
+else
+  fail "pid 文件缺失时仍 lsof/回落杀端口持有者" "lsof_called=$([ -f "$LSOF_FLAG" ] && echo yes || echo no) output=$OUT"
+fi
+teardown
+
+# ── 测试 13（正常路径）：pid cmdline 含本 PR → 被终止 + DB inactive + npm cache 清 ─
+setup
+PR=214
+mkdir -p "$PREVIEW_BASE_DIR/preview-$PR"
+mkdir -p "$PREVIEW_BASE_DIR/.npm-cache-preview-$PR/_cacache"
+write_kill_psql_mock
+printf '#!/bin/bash\necho "MERGED"\n' >"$BIN/gh"; chmod +x "$BIN/gh"
+# 真实预览进程 cmdline 形态：node .../cecelia-previews/preview-<PR>/packages/brain/server.js
+GOOD_PID=$(spawn_labeled "node /Users/administrator/worktrees/cecelia-previews/preview-$PR/packages/brain/server.js")
+echo "$GOOD_PID" >"/tmp/preview-$PR.pid"
+
+OUT=$(bash "$REAPER" 2>&1)
+STILL_ALIVE=$(kill -0 "$GOOD_PID" 2>/dev/null && echo yes || echo no)
+if [ "$STILL_ALIVE" = "no" ] \
+  && [ ! -d "$PREVIEW_BASE_DIR/.npm-cache-preview-$PR" ] \
+  && echo "$OUT" | grep -qE "已终止" \
+  && echo "$OUT" | grep -qE "inactive"; then
+  pass "本 PR 预览进程被正确终止，DB 置 inactive，npm cache 清理"
+else
+  fail "正常路径未正确回收" "alive=$STILL_ALIVE cache=$([ -d "$PREVIEW_BASE_DIR/.npm-cache-preview-$PR" ] && echo left || echo gone) output=$OUT"
+fi
+kill -9 "$GOOD_PID" 2>/dev/null || true
+rm -f "/tmp/preview-$PR.pid"
+teardown
+
+# ── 测试 14（回归红线）：--dry-run 下 OrbStack vmgr PID 前后不变 ───────────────
+setup
+PR=215
+mkdir -p "$PREVIEW_BASE_DIR/preview-$PR"
+write_kill_psql_mock
+printf '#!/bin/bash\necho "MERGED"\n' >"$BIN/gh"; chmod +x "$BIN/gh"
+VMGR2_PID=$(spawn_labeled "/Applications/OrbStack.app/Contents/MacOS/OrbStack Helper (vmgr)")
+echo "$VMGR2_PID" >"/tmp/preview-$PR.pid"
+printf '#!/bin/bash\necho "%s"\n' "$VMGR2_PID" >"$BIN/lsof"; chmod +x "$BIN/lsof"
+
+bash "$REAPER" --dry-run >/dev/null 2>&1
+if kill -0 "$VMGR2_PID" 2>/dev/null; then
+  pass "--dry-run 回收不改变 OrbStack vmgr PID（未被杀）"
+else
+  fail "--dry-run 竟然杀死了 OrbStack vmgr（严重回归）" ""
+fi
+kill -9 "$VMGR2_PID" 2>/dev/null || true
+rm -f "/tmp/preview-$PR.pid"
+teardown
+
 # ── 总结 ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "结果: PASS=${PASS}, FAIL=${FAIL}"

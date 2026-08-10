@@ -1,7 +1,3 @@
-contract_branch: (none — hotfix gear, task_bundle is the contract)
-sprint_dir: sprints/08111602-preview-reaper-kills-orbstack
-task_id: ec6ad029-c7ce-4fb4-aab1-683929fbf73c
-
 # DoD — preview-reaper 停止误杀 OrbStack vmgr
 
 task_id: ec6ad029-c7ce-4fb4-aab1-683929fbf73c
