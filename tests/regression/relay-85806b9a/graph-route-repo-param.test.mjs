@@ -39,6 +39,9 @@ describe('[B-4] loadGraphContext(repo) 接受参数', () => {
 
   afterAll(async () => {
     await pool.query("DELETE FROM graph_edges WHERE repo IN ('route-test-alpha', 'route-test-beta')");
+    await pool.query(
+      "DELETE FROM fact_snapshot_headers WHERE kind = 'graph' AND repo IN ('route-test-alpha', 'route-test-beta')",
+    );
     await pool.end();
   });
 
@@ -147,6 +150,7 @@ describe('[FR-4] loadGraphContext WHERE repo 参数化验证（真实 DB）', ()
 
   afterAll(async () => {
     await pool.query("DELETE FROM graph_edges WHERE repo = 'repo-param-test'");
+    await pool.query("DELETE FROM fact_snapshot_headers WHERE kind = 'graph' AND repo = 'repo-param-test'");
     await pool.end();
   });
 

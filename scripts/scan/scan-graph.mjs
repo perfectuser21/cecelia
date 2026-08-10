@@ -146,12 +146,12 @@ export async function scanRepo(repo, pool) {
 
     // 5) per-repo freshness（I-3: 各仓独立查询，禁止跨仓合并）
     const { rows: frRows } = await pool.query(
-      `SELECT max(scanned_at) AS latest FROM graph_edges WHERE repo = $1`, [repo.name]
+      `SELECT scanned_at, source_revision, scanner_version, row_count
+         FROM fact_snapshot_headers
+        WHERE kind = 'graph' AND repo = $1`,
+      [repo.name],
     );
-    // 若仓库成功扫描但无代码边（如纯文档/skills仓库），以扫描完成时刻为 freshness 基准，
-    // 避免 null → computeFreshness → stale=true 误报（该仓库已扫描，只是无代码边）
-    const scanTime = frRows[0]?.latest ?? new Date();
-    const freshness = computeFreshness(scanTime);
+    const freshness = computeFreshness(frRows[0] ?? null);
 
     // 6) 打印每仓摘要
     console.log(

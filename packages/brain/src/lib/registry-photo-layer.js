@@ -4,6 +4,8 @@
  * spec: docs/superpowers/specs/2026-07-18-registry-photo-layer-revive-design.md
  */
 import { computeFreshness } from './registry-freshness.js';
+import { withConsistentSnapshot } from './consistent-read.js';
+import { readFactSnapshotHeader } from './fact-snapshot-header.js';
 
 const PHOTO_TABLES = {
   api: {
@@ -61,28 +63,24 @@ export async function listPhotoLayer(pool, type, {
     clauses.push(cfg.searchClause(params.length - 1, params.length));
   }
   params.push(limit, offset);
-  const { rows } = await pool.query(
-    `SELECT ${cfg.columns} FROM ${cfg.table} WHERE ${clauses.join(' AND ')}
-     ORDER BY ${cfg.orderBy}
-     LIMIT $${params.length - 1} OFFSET $${params.length}`,
-    params
-  );
-  const { rows: fr } = await pool.query(
-    `SELECT repo, scanned_at, source_revision, scanner_version
-       FROM ${cfg.table}
-      WHERE repo = $1
-      ORDER BY scanned_at DESC
-      LIMIT 1`,
-    [repo],
-  );
-  const freshness = { repo, ...computeFreshness(fr[0] ?? null) };
-  return {
-    items: rows.map(cfg.mapRow),
-    count: rows.length,
-    repo,
-    source_revision: freshness.source_revision,
-    scanner_version: freshness.scanner_version,
-    last_success_at: freshness.last_success_at,
-    freshness,
-  };
+  return withConsistentSnapshot(pool, async (client) => {
+    const { rows } = await client.query(
+      `SELECT ${cfg.columns} FROM ${cfg.table} WHERE ${clauses.join(' AND ')}
+       ORDER BY ${cfg.orderBy}
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    );
+    const header = await readFactSnapshotHeader(client, type, repo);
+    const freshness = { repo, ...computeFreshness(header) };
+    return {
+      items: rows.map(cfg.mapRow),
+      count: rows.length,
+      row_count: freshness.row_count,
+      repo,
+      source_revision: freshness.source_revision,
+      scanner_version: freshness.scanner_version,
+      last_success_at: freshness.last_success_at,
+      freshness,
+    };
+  });
 }

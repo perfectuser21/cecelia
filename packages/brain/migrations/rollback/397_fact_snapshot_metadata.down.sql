@@ -26,6 +26,7 @@ DROP INDEX IF EXISTS idx_api_registry_repo_scanned_at;
 DROP INDEX IF EXISTS idx_db_schema_registry_repo_scanned_at;
 DROP INDEX IF EXISTS idx_test_registry_repo_scanned_at;
 DROP INDEX IF EXISTS idx_graph_edges_repo_scanned_at;
+DROP TABLE IF EXISTS fact_snapshot_headers;
 
 ALTER TABLE api_registry DROP CONSTRAINT IF EXISTS api_registry_repo_method_path_key;
 ALTER TABLE api_registry ADD CONSTRAINT api_registry_method_path_key UNIQUE (method, path);

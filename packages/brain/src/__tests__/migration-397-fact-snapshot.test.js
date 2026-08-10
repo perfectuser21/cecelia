@@ -122,7 +122,7 @@ describe('migration 397 — cecelia_test 实际列与约束', () => {
       ['scanner_version', 'NO'], ['scanned_at', 'NO'], ['row_count', 'NO'],
     ]));
     const { rows: pk } = await pool.query(
-      `SELECT array_agg(a.attname ORDER BY u.ordinality) AS columns
+      `SELECT array_agg(a.attname::text ORDER BY u.ordinality) AS columns
          FROM pg_constraint c
          JOIN LATERAL unnest(c.conkey) WITH ORDINALITY u(attnum, ordinality) ON true
          JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum

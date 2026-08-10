@@ -3,7 +3,13 @@ import express from 'express';
 import request from 'supertest';
 
 const mockQuery = vi.fn();
-vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
+const mockRelease = vi.fn();
+const mockClientQuery = vi.fn(async (sql, params) => {
+  if (/^(BEGIN|COMMIT|ROLLBACK)/.test(String(sql))) return { rows: [] };
+  return mockQuery(sql, params);
+});
+const mockConnect = vi.fn(async () => ({ query: mockClientQuery, release: mockRelease }));
+vi.mock('../../db.js', () => ({ default: { query: mockQuery, connect: mockConnect } }));
 
 let app;
 const SHA_40 = 'a'.repeat(40);
@@ -97,8 +103,9 @@ describe('GET /api/brain/registry 照相层改道', () => {
     expect(res.status).toBe(200);
     expect(mockQuery.mock.calls[0][0]).toContain('WHERE repo = $1');
     expect(mockQuery.mock.calls[0][1][0]).toBe('other-repo');
-    expect(mockQuery.mock.calls[1][0]).toMatch(/WHERE repo = \$1[\s\S]+ORDER BY scanned_at DESC/);
-    expect(mockQuery.mock.calls[1][1]).toEqual(['other-repo']);
+    expect(mockQuery.mock.calls[1][0]).toContain('FROM fact_snapshot_headers');
+    expect(mockQuery.mock.calls[1][0]).toMatch(/WHERE kind = \$1 AND repo = \$2/);
+    expect(mockQuery.mock.calls[1][1]).toEqual(['api', 'other-repo']);
     expect(res.body.items[0]).toMatchObject({ repo: 'other-repo', source_revision: OTHER_SHA_40 });
     expect(res.body.freshness).toMatchObject({
       repo: 'other-repo', source_revision: OTHER_SHA_40, scanner_version: 'api-registry-v2',

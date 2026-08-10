@@ -136,6 +136,7 @@ describe('[B-2 + I-5] 路径不存在时 WARN 跳过，不炸整轮', () => {
     } finally {
       if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
       await replaceRepoEdges(pool, 'test-repo-A', []); // 清空测试数据
+      await pool.query("DELETE FROM fact_snapshot_headers WHERE kind = 'graph' AND repo = 'test-repo-A'");
       await pool.end();
     }
   });
@@ -156,6 +157,9 @@ describe('[I-1] 全量替换语义验证（真实 PG）', () => {
   afterAll(async () => {
     // 清理测试数据
     await pool.query('DELETE FROM graph_edges WHERE repo = $1', ['test-replace-repo']);
+    await pool.query(
+      "DELETE FROM fact_snapshot_headers WHERE kind = 'graph' AND repo IN ('test-replace-repo','test-repo-X','test-repo-Y')",
+    );
     await pool.end();
   });
 

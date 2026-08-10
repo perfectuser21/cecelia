@@ -152,6 +152,12 @@ describe('replaceRepoEdges 真库全量替换', () => {
       );
       const finalPaths = rows.map(({ src_path }) => src_path);
       expect([pathsA, pathsB]).toContainEqual(finalPaths);
+      const { rows: headers } = await pool.query(
+        'SELECT source_revision, row_count FROM fact_snapshot_headers WHERE kind = $1 AND repo = $2',
+        ['graph', CONCURRENT_REPO],
+      );
+      const expectedRevision = finalPaths[0].startsWith('a/') ? 'revision-a' : 'revision-b';
+      expect(headers).toEqual([{ source_revision: expectedRevision, row_count: 3 }]);
     } finally {
       await pool.query('DELETE FROM graph_edges WHERE repo = $1', [CONCURRENT_REPO]);
       await Promise.all([leftPool.end(), rightPool.end()]);

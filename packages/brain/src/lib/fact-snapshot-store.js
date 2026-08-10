@@ -1,4 +1,5 @@
 import { acquireFactSnapshotLock } from './fact-snapshot-lock.js';
+import { upsertFactSnapshotHeader } from './fact-snapshot-header.js';
 
 const KIND_CONFIG = {
   api: {
@@ -108,6 +109,12 @@ export async function replaceFactSnapshot(pool, kind, snapshot) {
     await acquireFactSnapshotLock(client, kind, snapshot.repo);
     await upsertRows(client, config, snapshot);
     const deletion = await deleteMissingRows(client, config, snapshot);
+    await upsertFactSnapshotHeader(client, kind, {
+      repo: snapshot.repo,
+      sourceRevision: snapshot.sourceRevision,
+      scannerVersion: snapshot.scannerVersion,
+      rowCount: snapshot.rows.length,
+    });
     await client.query('COMMIT');
     return { upserted: snapshot.rows.length, deleted: deletion.rowCount ?? 0 };
   } catch (error) {

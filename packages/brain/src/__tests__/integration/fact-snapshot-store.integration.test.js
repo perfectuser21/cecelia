@@ -40,12 +40,14 @@ beforeAll(async () => {
   await pool.query('DELETE FROM api_registry WHERE repo = $1', [REPO]);
   await pool.query('DELETE FROM api_registry WHERE repo = $1', [CONCURRENT_REPO]);
   await pool.query('DELETE FROM test_registry WHERE repo = $1', [REPO]);
+  await pool.query('DELETE FROM fact_snapshot_headers WHERE repo = ANY($1)', [[REPO, CONCURRENT_REPO]]);
 });
 
 afterAll(async () => {
   await pool.query('DELETE FROM api_registry WHERE repo = $1', [REPO]);
   await pool.query('DELETE FROM api_registry WHERE repo = $1', [CONCURRENT_REPO]);
   await pool.query('DELETE FROM test_registry WHERE repo = $1', [REPO]);
+  await pool.query('DELETE FROM fact_snapshot_headers WHERE repo = ANY($1)', [[REPO, CONCURRENT_REPO]]);
   await pool.end();
 });
 
@@ -83,6 +85,13 @@ describe('replaceFactSnapshot 真库合同', () => {
       source_revision: 'rev-2', scanner_version: 'api-registry-v2',
     });
     expect(rows[0].scanned_at).toBeInstanceOf(Date);
+    const header = await pool.query(
+      'SELECT source_revision, scanner_version, row_count FROM fact_snapshot_headers WHERE kind = $1 AND repo = $2',
+      ['api', REPO],
+    );
+    expect(header.rows).toEqual([{
+      source_revision: 'rev-2', scanner_version: 'api-registry-v2', row_count: 1,
+    }]);
   });
 
   it('同路径 test 刷新保留生命周期 annotation，空快照随后清空该 repo', async () => {
@@ -135,6 +144,11 @@ describe('replaceFactSnapshot 真库合同', () => {
       'SELECT method, path, source_revision FROM api_registry WHERE repo = $1', [REPO],
     );
     expect(rows).toEqual([{ method: 'GET', path: '/stable', source_revision: 'stable-rev' }]);
+    const header = await pool.query(
+      'SELECT source_revision, row_count FROM fact_snapshot_headers WHERE kind = $1 AND repo = $2',
+      ['api', REPO],
+    );
+    expect(header.rows).toEqual([{ source_revision: 'stable-rev', row_count: 1 }]);
   });
 
   it('双连接并发替换同 repo 时最终事实严格等于完整 A 或完整 B', async () => {
@@ -163,6 +177,12 @@ describe('replaceFactSnapshot 真库合同', () => {
       );
       const finalPaths = rows.map(({ path }) => path);
       expect([pathsA, pathsB]).toContainEqual(finalPaths);
+      const { rows: headers } = await pool.query(
+        'SELECT source_revision, row_count FROM fact_snapshot_headers WHERE kind = $1 AND repo = $2',
+        ['api', CONCURRENT_REPO],
+      );
+      const expectedRevision = finalPaths[0].includes('/a-') ? 'revision-a' : 'revision-b';
+      expect(headers).toEqual([{ source_revision: expectedRevision, row_count: 3 }]);
     } finally {
       await pool.query('DELETE FROM api_registry WHERE repo = $1', [CONCURRENT_REPO]);
       await Promise.all([leftPool.end(), rightPool.end()]);

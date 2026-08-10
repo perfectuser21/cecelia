@@ -3,6 +3,7 @@
  * 边无自然键,upsert 会积死边(scan-api-registry 的已知缺陷,此处不复制)。
  */
 import { acquireFactSnapshotLock } from './fact-snapshot-lock.js';
+import { upsertFactSnapshotHeader } from './fact-snapshot-header.js';
 
 const BATCH = 500;
 
@@ -35,6 +36,9 @@ export async function replaceRepoEdges(pool, repo, edges, metadata = {}) {
       );
       inserted += chunk.length;
     }
+    await upsertFactSnapshotHeader(client, 'graph', {
+      repo, sourceRevision, scannerVersion, rowCount: inserted,
+    });
     await client.query('COMMIT');
     return { inserted };
   } catch (err) {
