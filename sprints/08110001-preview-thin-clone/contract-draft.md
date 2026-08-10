@@ -211,8 +211,10 @@ else
 fi
 
 # BEHAVIOR-06：业务表行数与主库一致
+# 允许 prod - preview <= 10（克隆完成后主库可能继续写入新记录，属正常时序差异）
 echo ""
 echo "=== BEHAVIOR-06: 业务表数据完整性 ==="
+MAX_DRIFT=10
 for tbl in tasks journeys; do
   PREVIEW_CNT=$(PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -U "${DB_USER}" -d "${DB_NAME}" -tAc \
     "SELECT count(*) FROM ${tbl}" 2>/dev/null | tr -d '[:space:]' || echo "")
@@ -223,8 +225,11 @@ for tbl in tasks journeys; do
     fail "BEHAVIOR-06: ${tbl}" "无法获取行数"
   elif [ "${PREVIEW_CNT}" -ge "${PROD_CNT}" ]; then
     pass "BEHAVIOR-06: ${tbl} preview=${PREVIEW_CNT} >= prod=${PROD_CNT}"
+  elif [ "$((PROD_CNT - PREVIEW_CNT))" -le "${MAX_DRIFT}" ]; then
+    echo "  [注] prod - preview = $((PROD_CNT - PREVIEW_CNT))，在允许漂移范围（<=${MAX_DRIFT}）内（克隆后主库新写入）"
+    pass "BEHAVIOR-06: ${tbl} 数据完整（drift=$((PROD_CNT - PREVIEW_CNT)) <= ${MAX_DRIFT}）"
   else
-    fail "BEHAVIOR-06: ${tbl}" "数据丢失 preview=${PREVIEW_CNT} < prod=${PROD_CNT}"
+    fail "BEHAVIOR-06: ${tbl}" "数据丢失 preview=${PREVIEW_CNT} prod=${PROD_CNT} drift=$((PROD_CNT - PREVIEW_CNT)) > ${MAX_DRIFT}"
   fi
 done
 
