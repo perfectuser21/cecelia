@@ -1,0 +1,12 @@
+{
+  "agentVerdict": "PASS",
+  "mechanicalGate": {
+    "pass": false,
+    "reasons": [
+      "contract_tests 为 0（sprint 目录无 *.test.{ts,js,mjs,sh}，contract-dod.md/contract-draft.md 亦无 [BEHAVIOR]）"
+    ],
+    "env": "local_api",
+    "theater_declared": false
+  },
+  "finalVerdict": "FAIL"
+}

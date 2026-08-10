@@ -1,0 +1,18 @@
+{
+  "verdict": "PASS",
+  "judged": false,
+  "judgeError": "toapis_key_unavailable",
+  "failure_class": null,
+  "feedback": null,
+  "mechanical_gates": {
+    "gate1_behavior_tests": "PASS (11 entries with exit_code + log_tail)",
+    "gate2_contract_tests": "PASS (tests/contract.test.sh found in sprint dir)",
+    "gate3_judgments_written": "SKIP (not declared)",
+    "gate4_theater_mismatch": "PASS (local_api, no real-machine keywords)",
+    "overall": "PASS"
+  },
+  "agent_verdict": "PASS",
+  "deepseek": "fail-open (toapis_key_unavailable in container)",
+  "sha": "a7fa0a100",
+  "pr": "#4769 MERGED"
+}

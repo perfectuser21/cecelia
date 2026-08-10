@@ -1,0 +1,16 @@
+{
+  "verdict": "APPROVED",
+  "round": 1,
+  "total_score": 63,
+  "max_score": 70,
+  "judgments_written": 10,
+  "rubric_scores": {
+    "completeness": {"score": 9, "max": 10},
+    "correctness": {"score": 9, "max": 10},
+    "testability": {"score": 9, "max": 10},
+    "invariant_coverage": {"score": 10, "max": 10},
+    "e2e_quality": {"score": 8, "max": 10},
+    "risk_coverage": {"score": 9, "max": 10},
+    "implementability": {"score": 9, "max": 10}
+  }
+}

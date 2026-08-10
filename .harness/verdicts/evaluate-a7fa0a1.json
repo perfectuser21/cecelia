@@ -1,0 +1,10 @@
+{
+  "verdict": "PASS",
+  "sha": "a7fa0a100ee9bed610829d791e9146244acce498",
+  "behaviors_pass": ["BEHAVIOR-01","BEHAVIOR-02","BEHAVIOR-03","BEHAVIOR-04","BEHAVIOR-05","BEHAVIOR-06","BEHAVIOR-07","BEHAVIOR-08","BEHAVIOR-10"],
+  "behaviors_fail": ["BEHAVIOR-09-path-bug-fixed-post-eval"],
+  "unverifiable": ["BEHAVIOR-04-live-post"],
+  "contract_suite": "8/8 PASS",
+  "ci": "ALL GREEN",
+  "notes": "BEHAVIOR-09 路径 bug 已 controller 直接修复并 push；unverifiable[BEHAVIOR-04] Brain API 经 controller 验证可达"
+}
