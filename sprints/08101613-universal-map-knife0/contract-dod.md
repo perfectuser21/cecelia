@@ -5,7 +5,7 @@
 - [x] sanitized cron PATH 下四 scanner 全部执行，单个失败仍继续并最终退出非零。
 Test: manual:bash -c "bash scripts/__tests__/run-all-scans.test.sh"
 
-Evidence: `PASS=7 FAIL=0`，含默认四 scanner 全调用与失败后继续聚合。
+Evidence: `PASS=9 FAIL=0`，含默认四 scanner 全调用、失败后继续聚合、禁止 pull 与无效 repo root fail-fast。
 
 ### [BEHAVIOR] D2：main SHA 变化触发扫描
 
@@ -40,7 +40,7 @@ Evidence: scratch header 推至 16min 后为 `unknown/snapshot_stale/stale=true`
 - [x] 同仓 repo filter 生效，另一仓新鲜快照不能掩盖目标仓陈旧。
 Test: manual:bash -c "npx vitest run tests/regression/relay-85806b9a/scan-graph-freshness.test.mjs && cd packages/brain && npx vitest run src/__tests__/integration/registry-photo-layer.integration.test.js"
 
-Evidence: relay 三文件 `27/27 passed`；registry 双 repo/一致性真库回归通过。
+Evidence: graph freshness `7/7 passed`；registry 双 repo/一致性真库回归 `5/5 passed`。
 
 ### [ARTIFACT] D7：版本与 schema 同步
 
@@ -54,4 +54,4 @@ Evidence: Brain `1.271.4`、schema floor/migration `397`，版本同步检查通
 - [x] scratch 完成四 scanner 重拍，revision 等于当前 HEAD，freshness stale 演习可红可恢复。
 Test: manual:bash -c "DATABASE_URL=postgresql://localhost/cecelia_scratch REPO_ROOT_CECELIA=$PWD bash packages/brain/scripts/smoke/map-fact-snapshot-smoke.sh"
 
-Evidence: 四 header 均匹配 HEAD；row_count=`api 763/db 226/test 1693/graph 4924` 且逐表等于事实数；stale→重扫恢复一键 `ALL PASS`。
+Evidence: 四 header 均匹配 HEAD；row_count=`api 763/db 226/test 1695/graph 4926` 且逐表等于事实数；stale→重扫恢复一键 `ALL PASS`。
