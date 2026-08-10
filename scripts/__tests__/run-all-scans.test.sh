@@ -11,15 +11,48 @@ RUNNER="$REPO_ROOT/scripts/scan/run-all-scans.sh"
 TMPD=$(mktemp -d "${TMPDIR:-/tmp}/run-all-scans-test.XXXXXX")
 trap 'rm -rf "$TMPD"' EXIT
 
-NODE_STUB="$TMPD/node-stub"
+CONTROL_BIN="$TMPD/bin"
+mkdir -p "$CONTROL_BIN"
+
+cat > "$CONTROL_BIN/dirname" <<'STUB'
+#!/bin/bash
+path=${1%/}
+case "$path" in
+  */*)
+    directory=${path%/*}
+    [[ -n "$directory" ]] || directory=/
+    printf '%s\n' "$directory"
+    ;;
+  *) printf '.\n' ;;
+esac
+STUB
+
+cat > "$CONTROL_BIN/date" <<'STUB'
+#!/bin/bash
+printf '%s\n' '2026-08-10 00:00:00 UTC'
+STUB
+
+cat > "$CONTROL_BIN/git" <<'STUB'
+#!/bin/bash
+if [[ "${1:-}" == "branch" && "${2:-}" == "--show-current" ]]; then
+  printf '%s\n' 'cp-run-all-scans-test'
+  exit 0
+fi
+printf 'unexpected git invocation:' >&2
+printf ' %q' "$@" >&2
+printf '\n' >&2
+exit 97
+STUB
+
+NODE_STUB="$CONTROL_BIN/node-stub"
 cat > "$NODE_STUB" <<'STUB'
 #!/bin/bash
 printf '%s\n' "$1" >> "$SCAN_LOG"
-if [[ "$(basename "$1")" == "${FAIL_SCANNER:-}" ]]; then
+if [[ "${1##*/}" == "${FAIL_SCANNER:-}" ]]; then
   exit 23
 fi
 STUB
-chmod +x "$NODE_STUB"
+chmod +x "$CONTROL_BIN/dirname" "$CONTROL_BIN/date" "$CONTROL_BIN/git" "$NODE_STUB"
 
 DEFAULT_SCANS=$(cat <<'EOF'
 scripts/scan/scan-api-registry.js
@@ -34,7 +67,7 @@ echo "=== run-all-scans.sh cron PATH 测试 ==="
 SUCCESS_LOG="$TMPD/default.log"
 SUCCESS_OUT="$TMPD/default.out"
 SUCCESS_RC=0
-env -i PATH=/usr/bin:/bin NODE_BIN="$NODE_STUB" SCAN_LOG="$SUCCESS_LOG" \
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" SCAN_LOG="$SUCCESS_LOG" \
   /bin/bash "$RUNNER" > "$SUCCESS_OUT" 2>&1 || SUCCESS_RC=$?
 
 if [[ $SUCCESS_RC -eq 0 ]]; then
@@ -52,7 +85,7 @@ fi
 FAIL_LOG="$TMPD/failure.log"
 FAIL_OUT="$TMPD/failure.out"
 FAIL_RC=0
-env -i PATH=/usr/bin:/bin NODE_BIN="$NODE_STUB" SCAN_LOG="$FAIL_LOG" \
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" SCAN_LOG="$FAIL_LOG" \
   FAIL_SCANNER="fail.js" SCAN_SCRIPTS="before.js fail.js after.mjs" \
   /bin/bash "$RUNNER" > "$FAIL_OUT" 2>&1 || FAIL_RC=$?
 
@@ -72,6 +105,37 @@ if [[ -f "$FAIL_LOG" && "$(cat "$FAIL_LOG")" == "$EXPECTED_FAILURE_SCANS" ]]; th
   pass "单个 scanner 失败后其余 scanner 仍继续执行"
 else
   fail "scanner 失败后未完成全部调用"
+fi
+
+EMPTY_LOG="$TMPD/empty.log"
+EMPTY_OUT="$TMPD/empty.out"
+EMPTY_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" SCAN_LOG="$EMPTY_LOG" \
+  SCAN_SCRIPTS=$' \n\t ' /bin/bash "$RUNNER" > "$EMPTY_OUT" 2>&1 || EMPTY_RC=$?
+
+if [[ $EMPTY_RC -eq 2 && "$(cat "$EMPTY_OUT")" == *"ERROR: SCAN_SCRIPTS"* ]]; then
+  pass "SCAN_SCRIPTS 空白值清晰报错并 exit 2"
+else
+  fail "SCAN_SCRIPTS 空白值未按合同失败(rc=$EMPTY_RC)"
+fi
+
+MULTILINE_LOG="$TMPD/multiline.log"
+MULTILINE_OUT="$TMPD/multiline.out"
+MULTILINE_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" SCAN_LOG="$MULTILINE_LOG" \
+  SCAN_SCRIPTS=$'first.js\nsecond.mjs\tthird.js' \
+  /bin/bash "$RUNNER" > "$MULTILINE_OUT" 2>&1 || MULTILINE_RC=$?
+
+EXPECTED_MULTILINE_SCANS=$(cat <<'EOF'
+scripts/scan/first.js
+scripts/scan/second.mjs
+scripts/scan/third.js
+EOF
+)
+if [[ $MULTILINE_RC -eq 0 && -f "$MULTILINE_LOG" && "$(cat "$MULTILINE_LOG")" == "$EXPECTED_MULTILINE_SCANS" ]]; then
+  pass "SCAN_SCRIPTS 按所有 shell 空白解析"
+else
+  fail "SCAN_SCRIPTS 多行或 tab 解析不完整(rc=$MULTILINE_RC)"
 fi
 
 echo ""
