@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   cleanupStaleCaches,
-  createReloadOnce,
   refreshServiceWorkers,
 } from './cache-lifecycle';
 
@@ -39,15 +38,5 @@ describe('Dashboard 缓存升级生命周期', () => {
     expect(unregister).toHaveBeenCalledOnce();
     expect(deleteCache).toHaveBeenCalledWith('legacy-navigation-cache');
     expect(storage.setItem).toHaveBeenCalledWith('app-cache-version', 'new-version');
-  });
-
-  it('同一页面内 Service Worker 多次切换也只刷新一次', () => {
-    const reload = vi.fn();
-    const reloadOnce = createReloadOnce(reload);
-
-    reloadOnce();
-    reloadOnce();
-
-    expect(reload).toHaveBeenCalledOnce();
   });
 });

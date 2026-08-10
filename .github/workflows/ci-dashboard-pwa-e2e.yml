@@ -34,7 +34,7 @@ jobs:
         working-directory: .
 
       - name: Install Chromium
-        run: node ../../node_modules/@playwright/test/cli.js install chromium --with-deps
+        run: node e2e/playwright-cli.mjs install chromium --with-deps
 
       - name: Verify stale PWA upgrade
         run: npm run test:pwa-upgrade

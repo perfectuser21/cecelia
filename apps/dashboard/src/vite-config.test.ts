@@ -29,8 +29,9 @@ describe('Dashboard 客户端缓存版本', () => {
 
   it('每次启动都主动检查 Service Worker 更新，不受浏览器默认检查周期限制', () => {
     const main = readFileSync(resolve(__dirname, './main.tsx'), 'utf-8');
+    const lifecycle = readFileSync(resolve(__dirname, './cache-lifecycle.ts'), 'utf-8');
 
-    expect(main).toContain('registration.update()');
-    expect(main).toContain('await refreshServiceWorkers()');
+    expect(lifecycle).toContain('registration.update()');
+    expect(main).toContain('await refreshServiceWorkers(serviceWorkers)');
   });
 });

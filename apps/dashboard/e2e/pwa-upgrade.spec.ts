@@ -22,6 +22,7 @@ const contentTypes: Record<string, string> = {
 let serveCurrentBuild = false;
 let server: Server;
 let origin: string;
+const requestPaths: string[] = [];
 
 function safePath(root: string, requestPath: string): string {
   const relativePath = normalize(decodeURIComponent(requestPath)).replace(/^(\.\.[/\\])+/, '');
@@ -42,6 +43,7 @@ async function readResponseFile(root: string, requestPath: string, spaFallback: 
 test.beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://localhost');
+    requestPaths.push(url.pathname);
     const root = serveCurrentBuild ? currentRoot : legacyRoot;
     const file = await readResponseFile(root, url.pathname, serveCurrentBuild);
 
@@ -73,31 +75,23 @@ test.afterAll(async () => {
 test('旧版 catch-all Service Worker 升级后保留 Workbench 深层路由', async ({ page }) => {
   await page.goto(origin);
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
-  await page.reload();
   await expect(page.getByTestId('legacy-home')).toBeVisible();
 
   const legacyCaches = await page.evaluate(() => caches.keys());
   expect(legacyCaches).toContain('legacy-navigation-cache');
 
+  await page.evaluate(() => sessionStorage.setItem('legacy-page-loads', '0'));
   serveCurrentBuild = true;
-  let workbenchNavigations = 0;
-  page.on('framenavigated', (frame) => {
-    if (frame === page.mainFrame() && new URL(frame.url()).pathname === '/workbench/tasks') {
-      workbenchNavigations += 1;
-    }
-  });
 
   await page.goto(`${origin}/workbench/tasks`);
-  await page.evaluate(async () => {
-    const registration = await navigator.serviceWorker.ready;
-    await registration.update();
-  });
-  await expect(page.getByRole('heading', { name: 'Tasks', exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect.poll(() => requestPaths.filter((path) => path === '/sw.js').length).toBeGreaterThan(1);
+  await expect(page.getByRole('textbox', { name: '搜索 Task...' })).toBeVisible({ timeout: 20_000 });
   await page.waitForTimeout(1_000);
 
   expect(new URL(page.url()).pathname).toBe('/workbench/tasks');
   expect(await page.evaluate(() => localStorage.getItem('app-cache-version'))).toBe(buildVersion);
   expect(await page.evaluate(() => caches.has('legacy-navigation-cache'))).toBe(false);
   expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)).toBe(0);
-  expect(workbenchNavigations).toBeLessThanOrEqual(2);
+  expect(requestPaths.filter((path) => path === '/workbench/tasks')).toHaveLength(1);
+  expect(await page.evaluate(() => sessionStorage.getItem('legacy-page-loads'))).toBe('1');
 });
