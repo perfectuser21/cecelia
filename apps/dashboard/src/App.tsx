@@ -196,6 +196,7 @@ function AppContent() {
                             collapsed={collapsed}
                             isCore={isCore}
                             currentPath={location.pathname}
+                            onExpandSidebar={() => setCollapsed(false)}
                           />
                         );
                       }
