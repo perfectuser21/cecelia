@@ -3,7 +3,9 @@ import express from 'express';
 import request from 'supertest';
 
 const mockQuery = vi.fn();
-vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
+const mockRelease = vi.fn();
+const mockConnect = vi.fn(async () => ({ query: mockQuery, release: mockRelease }));
+vi.mock('../../db.js', () => ({ default: { query: mockQuery, connect: mockConnect } }));
 
 // 固定 fixture:边 a→b→c + 测试文件 t 依赖 b;feature F1 锚定 c.js(covered)
 const EDGE_ROWS = [
@@ -23,12 +25,17 @@ const FRESHNESS_ROW = {
 // loadGraphContext 依次三查:edges → max(scanned_at) → features;之后端点可能再查 promises/siblings
 function primeContext({ promiseRows = [], siblingRows = [] } = {}) {
   mockQuery.mockReset();
+  mockConnect.mockClear();
+  mockRelease.mockClear();
   mockQuery.mockImplementation(async (sql, _params) => {
     const s = String(sql);
+    if (/^(BEGIN|COMMIT|ROLLBACK)/.test(s)) return { rows: [] };
     if (s.includes('FROM graph_edges') && s.includes('src_path')) return { rows: EDGE_ROWS };
-    if (s.includes('max(scanned_at)')) return { rows: [{ latest: new Date() }] };
+    if (s.includes('FROM fact_snapshot_headers')) {
+      return { rows: [{ ...FRESHNESS_ROW, repo: _params?.[1] || 'cecelia', row_count: EDGE_ROWS.length }] };
+    }
     if (s.includes('FROM graph_edges') && s.includes('ORDER BY scanned_at DESC')) {
-      return { rows: [{ ...FRESHNESS_ROW, repo: _params?.[0] || 'cecelia' }] };
+      return { rows: [{ ...FRESHNESS_ROW, repo: _params?.[0] || 'cecelia', row_count: EDGE_ROWS.length }] };
     }
     if (s.includes('FROM journey_features')) return { rows: FEATURE_ROWS };
     if (s.includes('journey_step_links l') && s.includes('journey_steps')) return { rows: promiseRows };
@@ -70,13 +77,16 @@ describe('GET /locate', () => {
   it('?repo=repo-x 同时过滤 edges/latest metadata，且 metadata 来自同一最新行', async () => {
     const res = await request(app).get('/api/brain/graph/locate?q=发布&repo=repo-x');
     expect(res.status).toBe(200);
+    expect(mockConnect).toHaveBeenCalled();
     const graphCalls = mockQuery.mock.calls.filter(([sql]) => String(sql).includes('FROM graph_edges'));
-    expect(graphCalls).toHaveLength(2);
-    expect(graphCalls.every(([, params]) => params[0] === 'repo-x')).toBe(true);
-    expect(graphCalls[1][0]).toContain('source_revision');
-    expect(graphCalls[1][0]).toContain('scanner_version');
-    expect(graphCalls[1][0]).toMatch(/ORDER BY scanned_at DESC[\s\S]+LIMIT 1/);
-    expect(graphCalls[1][0]).not.toMatch(/max\s*\(/i);
+    expect(graphCalls).toHaveLength(1);
+    expect(graphCalls[0][1]).toEqual(['repo-x']);
+    const headerCall = mockQuery.mock.calls.find(([sql]) => String(sql).includes('FROM fact_snapshot_headers'));
+    expect(headerCall[0]).toContain('source_revision');
+    expect(headerCall[0]).toContain('scanner_version');
+    expect(headerCall[1]).toEqual(['graph', 'repo-x']);
+    expect(mockQuery.mock.calls.some(([sql]) => /BEGIN[\s\S]+REPEATABLE READ[\s\S]+READ ONLY/i.test(sql))).toBe(true);
+    expect(mockRelease).toHaveBeenCalled();
     expect(res.body.freshness).toMatchObject({
       repo: 'repo-x', source_revision: GRAPH_SHA_40, scanner_version: 'graph-v3',
     });

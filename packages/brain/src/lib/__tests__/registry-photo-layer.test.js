@@ -18,12 +18,19 @@ describe('isPhotoType', () => {
 describe('listPhotoLayer', () => {
   const sha40 = 'a'.repeat(40);
   function mockPool(rows, freshnessRow) {
-    return {
-      query: vi
-        .fn()
-        .mockResolvedValueOnce({ rows })
-        .mockResolvedValueOnce({ rows: freshnessRow ? [freshnessRow] : [] }),
-    };
+    const query = vi.fn(async (sql) => {
+      const text = String(sql);
+      if (/^(BEGIN|COMMIT|ROLLBACK)/.test(text)) return { rows: [] };
+      if (text.includes('fact_snapshot_headers')) {
+        return { rows: freshnessRow ? [{ ...freshnessRow, row_count: rows.length }] : [] };
+      }
+      if (text.includes('ORDER BY scanned_at DESC')) {
+        return { rows: freshnessRow ? [freshnessRow] : [] };
+      }
+      return { rows };
+    });
+    const client = { query, release: vi.fn() };
+    return { query, connect: vi.fn(async () => client), client };
   }
 
   const metadata = (repo = 'cecelia') => ({
@@ -41,10 +48,14 @@ describe('listPhotoLayer', () => {
       metadata(),
     );
     const r = await listPhotoLayer(pool, 'api', {});
-    expect(pool.query.mock.calls[0][0]).toContain('api_registry');
-    expect(pool.query.mock.calls[0][0]).toContain('WHERE repo = $1');
-    expect(pool.query.mock.calls[0][0]).toContain('LIMIT $2 OFFSET $3');
-    expect(pool.query.mock.calls[0][1]).toEqual(['cecelia', 50, 0]);
+    expect(pool.connect).toHaveBeenCalledOnce();
+    const factsCall = pool.query.mock.calls.find(([sql]) => String(sql).includes('FROM api_registry'));
+    expect(factsCall[0]).toContain('WHERE repo = $1');
+    expect(factsCall[0]).toContain('LIMIT $2 OFFSET $3');
+    expect(factsCall[1]).toEqual(['cecelia', 50, 0]);
+    expect(pool.query.mock.calls[0][0]).toMatch(/BEGIN[\s\S]+REPEATABLE READ[\s\S]+READ ONLY/i);
+    expect(pool.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+    expect(pool.client.release).toHaveBeenCalledOnce();
     expect(r.items[0].name).toBe('GET /x');
     expect(r.items[0].location).toBe('a.js:5');
     expect(r.items[0]).toMatchObject({
@@ -61,12 +72,13 @@ describe('listPhotoLayer', () => {
   it('带 search/repo:占位符顺延，items 与 latest metadata 查询都严格过滤 repo', async () => {
     const pool = mockPool([], metadata('repo-x'));
     await listPhotoLayer(pool, 'test', { repo: 'repo-x', search: 'foo', limit: 10, offset: 2 });
-    expect(pool.query.mock.calls[0][0]).toContain('WHERE repo = $1 AND');
-    expect(pool.query.mock.calls[0][0]).toContain('LIMIT $4 OFFSET $5');
-    expect(pool.query.mock.calls[0][1]).toEqual(['repo-x', '%foo%', '%foo%', 10, 2]);
-    expect(pool.query.mock.calls[1][0]).toMatch(/WHERE repo = \$1[\s\S]+ORDER BY scanned_at DESC[\s\S]+LIMIT 1/);
-    expect(pool.query.mock.calls[1][0]).not.toMatch(/max\s*\(/i);
-    expect(pool.query.mock.calls[1][1]).toEqual(['repo-x']);
+    const factsCall = pool.query.mock.calls.find(([sql]) => String(sql).includes('FROM test_registry'));
+    expect(factsCall[0]).toContain('WHERE repo = $1 AND');
+    expect(factsCall[0]).toContain('LIMIT $4 OFFSET $5');
+    expect(factsCall[1]).toEqual(['repo-x', '%foo%', '%foo%', 10, 2]);
+    const headerCall = pool.query.mock.calls.find(([sql]) => String(sql).includes('fact_snapshot_headers'));
+    expect(headerCall[0]).toMatch(/WHERE kind = \$1 AND repo = \$2/);
+    expect(headerCall[1]).toEqual(['test', 'repo-x']);
   });
 
   it('该 repo 无 snapshot → items:[] 且 freshness unknown/snapshot_missing', async () => {
