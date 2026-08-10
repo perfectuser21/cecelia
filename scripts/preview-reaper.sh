@@ -35,6 +35,45 @@ export PGPASSWORD="$DB_PASSWORD"
 
 log() { echo "[reaper $(date '+%H:%M:%S')] $*"; }
 
+# ── 进程身份工具（2026-08 OrbStack 误杀事故修复）────────────────────────────────
+# 事故根因：旧逻辑 `lsof -ti :$PORT | xargs kill -9` 把「端口持有者」当预览进程杀。
+# 但 OrbStack 做容器端口转发，转发端口 socket 由其 vmgr helper 持有——于是每次回收
+# 都 SIGKILL 掉 OrbStack 虚拟机管理器，引发全机 docker 中断、连锁打死所有 harness run。
+# 修复：改读 preview-env-start.sh 记录在案的 /tmp/preview-<pr>.pid，并在 kill 前做
+# 双重校验（身份匹配 + 基础设施红线），宁可漏回收，不可误杀宿主基础设施。
+
+# 读取指定 PID 的完整 cmdline（跨平台：macOS 有 ps 无 /proc；Linux CI 有 /proc）。
+# 优先 ps（生产 macOS 唯一可用），其次回落 /proc（Linux 容器无 ps 时可用）。
+preview_proc_cmdline() {
+  local pid="$1" out=""
+  if command -v ps >/dev/null 2>&1; then
+    out=$(ps -p "$pid" -o command= 2>/dev/null || true)
+  fi
+  if [ -z "$out" ] && [ -r "/proc/$pid/cmdline" ]; then
+    out=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)
+  fi
+  printf '%s' "$out"
+}
+
+# 红线：命中 OrbStack / docker / 容器运行时一律判为基础设施，任何路径下都不许 kill。
+# 按可执行路径前缀 / 进程名判定（大小写不敏感）。
+is_infra_process() {
+  local cmd="$1"
+  echo "$cmd" | grep -qiE 'orbstack|vmgr|com\.docker|dockerd|containerd|docker-proxy|/Docker\.app|Docker Desktop|colima|lima|qemu' \
+    && return 0
+  return 1
+}
+
+# 身份校验：cmdline 必须携带该 PR 的预览工作树标识 preview-<pr>（preview-env-start.sh
+# 的 WORK_DIR/BRAIN_SERVER 路径必含此段），或显式 BRAIN_PREVIEW_PR=<pr>。
+# 用非数字边界避免 preview-10 误匹配 preview-109。
+is_preview_process() {
+  local cmd="$1" pr="$2"
+  echo "$cmd" | grep -qE "preview-${pr}([^0-9]|$)" && return 0
+  echo "$cmd" | grep -qE "BRAIN_PREVIEW_PR[=[:space:]]+${pr}([^0-9]|$)" && return 0
+  return 1
+}
+
 # ── 1. 推断 GH_REPO ──────────────────────────────────────────────────────────
 if [ -z "$GH_REPO" ] && [ -d "$REPO_ROOT" ]; then
   GH_REPO=$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null \
@@ -122,22 +161,38 @@ for pr in $UNIQUE_PRS; do
     continue
   fi
 
-  # 3a. 从表中查端口（用于 kill 进程）
-  PORT=$(psql -h "$DB_HOST" -U "$DB_USER" -d cecelia -t -A \
-    -c "SELECT port FROM preview_environments WHERE pr_number = $pr ORDER BY created_at DESC LIMIT 1;" \
-    2>/dev/null | head -1 | tr -d '[:space:]' || echo "")
-
-  # 3b. Kill 端口进程
-  if [ -n "$PORT" ] && [[ "$PORT" =~ ^[0-9]+$ ]]; then
-    PIDS=$(lsof -ti :"$PORT" 2>/dev/null || echo "")
-    if [ -n "$PIDS" ]; then
-      echo "$PIDS" | xargs kill 2>/dev/null || true
-      sleep 1
-      echo "$PIDS" | xargs kill -9 2>/dev/null || true
-      log "  ✓ 端口 ${PORT} 进程已终止"
+  # 3b. Kill 预览进程（按 PID 文件 + 身份校验 + 基础设施红线；不再用 lsof 杀端口持有者）
+  #     旧逻辑 `lsof -ti :$PORT | xargs kill -9` 会误杀 OrbStack vmgr（端口转发持有者），
+  #     引发全机 docker 中断。改读起环境时写下的 /tmp/preview-<pr>.pid，见文件顶部工具函数。
+  PID_FILE="/tmp/preview-${pr}.pid"
+  if [ -f "$PID_FILE" ]; then
+    PREVIEW_PID=$(cat "$PID_FILE" 2>/dev/null | tr -d '[:space:]' || echo "")
+    if [ -n "$PREVIEW_PID" ] && [[ "$PREVIEW_PID" =~ ^[0-9]+$ ]]; then
+      PID_CMD=$(preview_proc_cmdline "$PREVIEW_PID")
+      if [ -z "$PID_CMD" ]; then
+        log "  ⚠ PID ${PREVIEW_PID}（PR#${pr}）进程已不存在，跳过 kill"
+      elif is_infra_process "$PID_CMD"; then
+        # 红线：命中基础设施进程，任何情况下都不 kill，并告警
+        log "  🚨 拒绝 kill：PID ${PREVIEW_PID} 命中基础设施进程（OrbStack/docker/容器运行时），跳过并告警：cmd=${PID_CMD}"
+      elif ! is_preview_process "$PID_CMD" "$pr"; then
+        # 身份校验不过：cmdline 未携带 preview-<pr> 标识，一律不 kill
+        log "  ⚠ PID ${PREVIEW_PID} cmdline 未含 preview-${pr} 标识，身份校验失败，跳过 kill：cmd=${PID_CMD}"
+      else
+        # 校验通过且非基础设施 → 安全终止
+        kill "$PREVIEW_PID" 2>/dev/null || true
+        sleep 1
+        kill -9 "$PREVIEW_PID" 2>/dev/null || true
+        log "  ✓ 预览进程 PID ${PREVIEW_PID}（PR#${pr}）已终止"
+      fi
+    else
+      log "  ⚠ PID 文件 ${PID_FILE} 内容非法（'${PREVIEW_PID}'），跳过 kill"
     fi
-    rm -f "/tmp/preview-${pr}.pid" "/tmp/preview-${pr}.branch" "/tmp/preview-${pr}.log" 2>/dev/null || true
+  else
+    # 降级：PID 文件缺失，绝不回落到「按端口杀持有者」（那正是误杀 OrbStack 的老路）。
+    # 仅记日志跳过，宁可漏回收，交后续巡检处理。
+    log "  ⚠ PID 文件 ${PID_FILE} 缺失，降级：不按端口 kill 任何进程，交后续巡检处理"
   fi
+  rm -f "$PID_FILE" "/tmp/preview-${pr}.branch" "/tmp/preview-${pr}.log" 2>/dev/null || true
 
   # 3c. Drop 数据库
   DB_NAME="cecelia_preview_${pr}"
