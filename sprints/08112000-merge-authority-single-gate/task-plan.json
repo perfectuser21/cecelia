@@ -1,0 +1,32 @@
+{
+  "initiative_id": "9806d99a-6973-4252-b298-0135086b84bf",
+  "journey_type": "autonomous",
+  "journey_type_reason": "主体改动落在 packages/brain（新归属端点 + kernel 置 check）与 CI bash 脚本，属纯后端/自治管线，无 UI 无远端 agent 协议。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "合并权收归单一裁决闸：harness-judge required check + Brain 归属求证 + 通道1 fail-closed",
+      "scope": "新增 GET /api/brain/harness/pr-ownership 归属求证端点（凭 initiative_runs.pr_url/pr_branch，fail-closed 是脚本侧职责）；should-auto-merge.sh 判据由标题换 Brain 求证并 fail-closed=SKIP；kernel merge_pr 在 gh pr merge 前置 harness-judge commit status=success（走版本无关 gh api statuses REST，仅 mergeGate 放行后到达）；ci.yml 补 harness-judge required check 登记说明并在 auto-merge job 对 not-owned PR 置 harness-judge=success；产出 engine-pr-watchdog 改造说明。不改 mergeGate 判定/evaluator/judge/gear。",
+      "dod": [
+        "[BEHAVIOR] seed 的 harness run → pr-ownership owned:true（B-01，凭 initiative_runs 非标题）",
+        "[BEHAVIOR] 不存在分支 → owned:false（B-02，/dev 不回归端点侧信号）",
+        "[BEHAVIOR] 缺参 → HTTP 400（B-03，error path）",
+        "[BEHAVIOR] Brain 不可达 → 脚本 SKIP 绝不 MERGE（B-04，fail-closed 红线）",
+        "[BEHAVIOR] kernel merge_pr 先置 harness-judge=success 后 merge（B-05，裁决唯一闸）",
+        "[BEHAVIOR] owned=true → 脚本 SKIP（B-06，真实 stub server）",
+        "[ARTIFACT] should-auto-merge.sh 含 pr-ownership+BRAIN_URL / routes/harness.js 含 pr-ownership / kernel-handlers 含 harness-judge / engine-pr-watchdog 改造说明存在"
+      ],
+      "files": [
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/src/orchestrator/kernel-handlers.js",
+        ".github/workflows/scripts/should-auto-merge.sh",
+        ".github/workflows/scripts/__tests__/should-auto-merge.test.sh",
+        ".github/workflows/ci.yml",
+        "sprints/08112000-merge-authority-single-gate/engine-pr-watchdog-改造说明.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
