@@ -190,8 +190,21 @@ if PGPASSWORD="${DB_PASSWORD:-cecelia}" pg_dump \
 
 ---
 
+## NFR
+
+- **性能**：克隆耗时目标 < 10s（原 50s+，历史表排除后磁盘 IO 大幅降低）
+- **可靠性**：若某排除表被依赖，Brain 启动失败日志明确，回退路径有文档
+- **可维护性**：排除名单集中在数组变量，修改一处即全局生效
+
+---
+
 ## 统计
 
 - **Invariants**: 5
 - **功能需求（FR）**: 7
-- **PRD 总行数**: ~140
+- **PRD 总行数**: ~207
+
+---
+
+journey_type: feature
+target_environment: local_api
