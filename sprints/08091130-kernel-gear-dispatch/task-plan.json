@@ -1,0 +1,31 @@
+{
+  "initiative_id": "e488d4dc-a10d-4fa1-a110-177f080cdbf5",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/src/orchestrator/ 纯后端状态机 + DB 列，无 UI / 无远端 agent / 非 engine hooks，验收全靠本地 vitest + 真 PG psql。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "复核确认 kernel derive() 真读 payload.gear 三档分流（default/hotfix/segmented + invalid fail-closed）",
+      "scope": "确认 derive.js gear 分档判定、initiative_runs.gear 落库、ground-truth 注入、harness_attempts 角色分布反映相位链；补齐/保留 sprint 回归测试（真实表名 harness_attempts，非 initiative_attempts）。实现已由 #4747 落地，本 ws 聚焦真跑验收断言。",
+      "dod": [
+        "[BEHAVIOR] derive() gear=hotfix 初始态 → spawn:generator（!= spawn:planner）",
+        "[BEHAVIOR] derive() gear=default/缺省/segmented 初始态 → spawn:planner（零回归）",
+        "[BEHAVIOR] derive() gear=turbo 非法 → mark_failed/invalid_gear（fail-closed）",
+        "[BEHAVIOR] 真 PG: hotfix run harness_attempts 无 planner/proposer/reviewer 且有 generator；default 有 planner",
+        "[ARTIFACT] derive.js 含 GEAR_VALUES + invalid_gear + hotfix 分支；migration 396 gear 列；ground-truth 注入 run.gear"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/__tests__/derive.test.js",
+        "packages/brain/src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js",
+        "sprints/08091130-kernel-gear-dispatch/tests/derive-gear.test.js",
+        "sprints/08091130-kernel-gear-dispatch/tests/assert-derive.mjs"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
