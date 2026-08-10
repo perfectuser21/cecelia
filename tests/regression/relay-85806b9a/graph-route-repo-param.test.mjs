@@ -8,11 +8,18 @@
  *
  * 这些测试在实现前应全部 FAIL（RED阶段）。
  */
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { readFileSync } from 'node:fs';
 import pg from 'pg';
 import { replaceRepoEdges } from '../../../packages/brain/src/lib/graph-store.js';
 
-const DB_URL = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgresql://localhost/cecelia_test';
+const DB_URL = process.env.TEST_DATABASE_URL || 'postgresql://localhost/cecelia_test';
+const DB_NAME = decodeURIComponent(new URL(DB_URL).pathname.slice(1));
+if (!/(_test|_scratch)$/.test(DB_NAME)) throw new Error(`拒绝连接非测试库: ${DB_NAME}`);
+const GRAPH_ROUTE_SOURCE = readFileSync(
+  new URL('../../../packages/brain/src/routes/graph.js', import.meta.url),
+  'utf8',
+);
 
 // ─── 直接测试 loadGraphContext 函数（需从 routes/graph.js 导出或提取到 lib）
 // 合同要求：loadGraphContext(repo) 必须接受 repo 参数
@@ -32,19 +39,15 @@ describe('[B-4] loadGraphContext(repo) 接受参数', () => {
 
   afterAll(async () => {
     await pool.query("DELETE FROM graph_edges WHERE repo IN ('route-test-alpha', 'route-test-beta')");
+    await pool.query(
+      "DELETE FROM fact_snapshot_headers WHERE kind = 'graph' AND repo IN ('route-test-alpha', 'route-test-beta')",
+    );
     await pool.end();
   });
 
   it('routes/graph.js 不再有 const REPO = \'cecelia\' 硬编码', async () => {
-    // RED: 当前有硬编码
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const content = fs.default.readFileSync(
-      path.default.resolve('/workspace/packages/brain/src/routes/graph.js'),
-      'utf8'
-    );
     // 实现后这行必须消失
-    expect(content).not.toMatch(/const REPO = ['"]cecelia['"]/);
+    expect(GRAPH_ROUTE_SOURCE).not.toMatch(/const REPO = ['"]cecelia['"]/);
   });
 
   it('loadGraphContext 必须作为具名导出从 routes/graph.js 或独立 lib 可访问', async () => {
@@ -110,50 +113,26 @@ describe('[B-4] loadGraphContext(repo) 接受参数', () => {
 
 describe('[FR-4] 路由层 repo query 参数读取', () => {
   it('GET /locate 路由从 req.query.repo 读取 repo 参数', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const content = fs.default.readFileSync(
-      path.default.resolve('/workspace/packages/brain/src/routes/graph.js'),
-      'utf8'
-    );
     // 实现后应包含从 query 读取 repo 的代码
-    expect(content).toMatch(/req\.query\.repo/);
+    expect(GRAPH_ROUTE_SOURCE).toMatch(/req\.query\.repo/);
   });
 
   it('POST /radius 路由从 req.body.repo 读取 repo 参数', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const content = fs.default.readFileSync(
-      path.default.resolve('/workspace/packages/brain/src/routes/graph.js'),
-      'utf8'
-    );
     // POST 路由需从 body 读取
-    expect(content).toMatch(/req\.body\.repo/);
+    expect(GRAPH_ROUTE_SOURCE).toMatch(/req\.body\.repo/);
   });
 
   it('loadGraphContext 被调用时传入 repo 参数（非固定字符串）', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const content = fs.default.readFileSync(
-      path.default.resolve('/workspace/packages/brain/src/routes/graph.js'),
-      'utf8'
-    );
     // 调用 loadGraphContext 时应传入变量，不是硬编码字符串
     // 匹配：loadGraphContext(repo) 而不是 loadGraphContext('cecelia') 或 loadGraphContext()
     const callPattern = /loadGraphContext\(\s*repo\s*\)/;
-    expect(content).toMatch(callPattern);
+    expect(GRAPH_ROUTE_SOURCE).toMatch(callPattern);
   });
 
   it('anchor-coverage 路由也接受 req.query.repo 参数', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const content = fs.default.readFileSync(
-      path.default.resolve('/workspace/packages/brain/src/routes/graph.js'),
-      'utf8'
-    );
     // anchor-coverage 是 GET，也应从 query 读取
     // 验证 anchor-coverage handler 内有 req.query.repo 或 _req.query.repo 读取
-    expect(content).toMatch(/req\.query\.repo|_req\.query\.repo/);
+    expect(GRAPH_ROUTE_SOURCE).toMatch(/req\.query\.repo|_req\.query\.repo/);
   });
 });
 
@@ -171,6 +150,7 @@ describe('[FR-4] loadGraphContext WHERE repo 参数化验证（真实 DB）', ()
 
   afterAll(async () => {
     await pool.query("DELETE FROM graph_edges WHERE repo = 'repo-param-test'");
+    await pool.query("DELETE FROM fact_snapshot_headers WHERE kind = 'graph' AND repo = 'repo-param-test'");
     await pool.end();
   });
 

@@ -4,19 +4,103 @@
 #   0 5 * * * cd /Users/administrator/perfect21/cecelia && bash scripts/scan/run-all-scans.sh >> /tmp/registry-scan.log 2>&1
 # 哨兵:本脚本停摆 >24h 后,GET /api/brain/registry?type=api|db_schema|test 自动 stale:true。
 set -uo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../.." || exit 1
+
+absolute_executable() {
+  local candidate="$1"
+  local candidate_dir
+  local candidate_name
+
+  if [[ "$candidate" == /* ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  candidate_dir=$(dirname "$candidate")
+  candidate_name=$(basename "$candidate")
+  candidate_dir=$(cd "$candidate_dir" 2>/dev/null && pwd -P) || return 1
+  printf '%s/%s\n' "$candidate_dir" "$candidate_name"
+}
+
+resolve_node() {
+  local candidate=""
+  local fallback_paths_value
+  local normalized_fallback_paths
+  local -a fallback_paths
+
+  if [[ -n "${NODE_BIN:-}" ]]; then
+    candidate="$NODE_BIN"
+    if [[ "$candidate" != */* ]]; then
+      candidate=$(command -v "$candidate" 2>/dev/null || true)
+    fi
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      absolute_executable "$candidate"
+      return 0
+    fi
+  fi
+
+  candidate=$(command -v node 2>/dev/null || true)
+  if [[ -n "$candidate" && -x "$candidate" ]]; then
+    absolute_executable "$candidate"
+    return 0
+  fi
+
+  if [[ ${NODE_FALLBACK_PATHS+x} ]]; then
+    fallback_paths_value="$NODE_FALLBACK_PATHS"
+  else
+    fallback_paths_value="/opt/homebrew/bin/node /usr/local/bin/node"
+  fi
+  normalized_fallback_paths=${fallback_paths_value//$'\n'/ }
+  normalized_fallback_paths=${normalized_fallback_paths//$'\t'/ }
+  if [[ -n "${normalized_fallback_paths// /}" ]]; then
+    read -r -a fallback_paths <<< "$normalized_fallback_paths"
+    for candidate in "${fallback_paths[@]}"; do
+      if [[ -x "$candidate" ]]; then
+        absolute_executable "$candidate"
+        return 0
+      fi
+    done
+  fi
+
+  return 1
+}
+
+if ! NODE_EXECUTABLE=$(resolve_node); then
+  echo "ERROR: 找不到可执行的 Node.js；请设置 NODE_BIN、将 node 加入 PATH，或配置可执行的 NODE_FALLBACK_PATHS" >&2
+  exit 127
+fi
 
 echo "=== registry photo-layer scan $(date '+%F %T %Z') ==="
 
-if [ "$(git branch --show-current)" = "main" ] && [ -z "$(git status --porcelain)" ]; then
+if [[ "${SKIP_GIT_PULL:-0}" == '1' ]]; then
+  echo "WARN: SKIP_GIT_PULL=1,跳过 git pull"
+elif [ "$(git branch --show-current)" = "main" ] && [ -z "$(git status --porcelain)" ]; then
   git pull --ff-only 2>&1 || echo "WARN: git pull 失败,用当前工作区继续"
 else
   echo "WARN: 非 main 分支或工作区不干净,跳过 git pull"
 fi
 
+DEFAULT_SCAN_SCRIPTS=(
+  scan-api-registry.js
+  scan-db-schema.js
+  scan-test-registry.js
+  scan-graph.mjs
+)
+if [[ ${SCAN_SCRIPTS+x} ]]; then
+  NORMALIZED_SCAN_SCRIPTS=${SCAN_SCRIPTS//$'\n'/ }
+  NORMALIZED_SCAN_SCRIPTS=${NORMALIZED_SCAN_SCRIPTS//$'\t'/ }
+  if [[ -z "${NORMALIZED_SCAN_SCRIPTS// /}" ]]; then
+    echo "ERROR: SCAN_SCRIPTS 不能为空白值" >&2
+    exit 2
+  fi
+  read -r -a SCANNERS <<< "$NORMALIZED_SCAN_SCRIPTS"
+else
+  SCANNERS=("${DEFAULT_SCAN_SCRIPTS[@]}")
+fi
+
 FAIL=0
-for s in scan-api-registry.js scan-db-schema.js scan-test-registry.js scan-graph.mjs; do
-  if node "scripts/scan/${s}"; then
+for s in "${SCANNERS[@]}"; do
+  if "$NODE_EXECUTABLE" "scripts/scan/${s}"; then
     echo "OK: ${s}"
   else
     echo "FAIL: ${s}"

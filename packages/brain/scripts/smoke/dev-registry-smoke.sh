@@ -46,17 +46,17 @@ else
   echo "FAIL: journey_features 接受了非法 thickness"; exit 1
 fi
 
-echo "[smoke] 验证 api_registry UNIQUE(method, path) 约束..."
+echo "[smoke] 验证 api_registry UNIQUE(repo, method, path) 约束..."
 psql "$DB" -tAc "
-  INSERT INTO api_registry (method, path, area) VALUES ('GET', '/_smoke_test_path', 'cecelia')
-  ON CONFLICT (method, path) DO UPDATE SET area=EXCLUDED.area
+  INSERT INTO api_registry (repo, method, path, area) VALUES ('_smoke_test_repo_', 'GET', '/_smoke_test_path', 'cecelia')
+  ON CONFLICT (repo, method, path) DO UPDATE SET area=EXCLUDED.area
 " >/dev/null
 # 第二次插入不应报错（ON CONFLICT DO UPDATE）
 psql "$DB" -tAc "
-  INSERT INTO api_registry (method, path, area) VALUES ('GET', '/_smoke_test_path', 'cecelia')
-  ON CONFLICT (method, path) DO UPDATE SET area=EXCLUDED.area
+  INSERT INTO api_registry (repo, method, path, area) VALUES ('_smoke_test_repo_', 'GET', '/_smoke_test_path', 'cecelia')
+  ON CONFLICT (repo, method, path) DO UPDATE SET area=EXCLUDED.area
 " >/dev/null
-psql "$DB" -tAc "DELETE FROM api_registry WHERE path='/_smoke_test_path'" >/dev/null
+psql "$DB" -tAc "DELETE FROM api_registry WHERE repo='_smoke_test_repo_' AND path='/_smoke_test_path'" >/dev/null
 echo "  ✓ api_registry UPSERT 幂等性正常"
 
 echo "[smoke] 验证 issues priority CHECK 约束..."

@@ -97,6 +97,7 @@ router.get('/', async (req, res) => {
     // 照相层三 type → 扫描表 + 账龄哨兵(刀0 2026-07-18,照相层/账本层分离)
     if (isPhotoType(req.query.type)) {
       const result = await listPhotoLayer(pool, req.query.type, {
+        repo: String(req.query.repo || 'cecelia'),
         search: req.query.search || req.query.q,
         limit,
         offset,

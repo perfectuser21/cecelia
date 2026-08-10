@@ -360,7 +360,7 @@ features:
         - packages/brain/src/__tests__/zombie-cleaner.test.js
         - packages/brain/src/__tests__/zombie-sweep.test.js
         - packages/quality/tests/hooks/metrics.test.ts
-        - packages/workflows/skills/janitor/__tests__/janitor_orphan.test.sh
+        - scripts/ops/__tests__/janitor/janitor_orphan.test.sh
       integration: []
       e2e: []
       regression: []
@@ -403,7 +403,7 @@ features:
             - packages/brain/src/__tests__/zombie-cleaner.test.js
             - packages/brain/src/__tests__/zombie-sweep.test.js
             - packages/quality/tests/hooks/metrics.test.ts
-            - packages/workflows/skills/janitor/__tests__/janitor_orphan.test.sh
+            - scripts/ops/__tests__/janitor/janitor_orphan.test.sh
           integration: []
           e2e: []
         status: active
