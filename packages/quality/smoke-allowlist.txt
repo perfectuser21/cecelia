@@ -22,6 +22,7 @@ autoblock-sql-param-fix-smoke.sh
 battle-report-smoke.sh
 battle-report-v2-smoke.sh
 blade-bc-harness-gates-smoke.sh
+blocking-state-ttl-selfheal-smoke.sh
 bluegreen-bark-nojq-smoke.sh
 callback-postprocess-smoke.sh
 canary-drill-repair-smoke.sh
