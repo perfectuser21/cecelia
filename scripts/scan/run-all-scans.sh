@@ -72,8 +72,13 @@ DEFAULT_SCAN_SCRIPTS=(
   scan-graph.mjs
 )
 if [[ ${SCAN_SCRIPTS+x} ]]; then
-  SCANNERS=()
-  read -r -a SCANNERS <<< "$SCAN_SCRIPTS"
+  NORMALIZED_SCAN_SCRIPTS=${SCAN_SCRIPTS//$'\n'/ }
+  NORMALIZED_SCAN_SCRIPTS=${NORMALIZED_SCAN_SCRIPTS//$'\t'/ }
+  if [[ -z "${NORMALIZED_SCAN_SCRIPTS// /}" ]]; then
+    echo "ERROR: SCAN_SCRIPTS 不能为空白值" >&2
+    exit 2
+  fi
+  read -r -a SCANNERS <<< "$NORMALIZED_SCAN_SCRIPTS"
 else
   SCANNERS=("${DEFAULT_SCAN_SCRIPTS[@]}")
 fi
