@@ -68,12 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "调用 Brain API /preview/start..."
-          RESP=$(curl -sf --connect-timeout 15 --max-time 30 \
-            -X POST "${BRAIN_URL}/api/brain/preview/start" \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
-            -d "{\"pr_number\":${PR_NUMBER},\"branch_name\":\"${BRANCH_NAME}\"}" \
-            2>/dev/null)
+          RESP=$(bash scripts/request-preview-start.sh)
           echo "Brain 响应: $RESP"
           PORT=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])" 2>/dev/null)
           if [ -z "$PORT" ]; then
