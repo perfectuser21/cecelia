@@ -4,13 +4,9 @@
 **Sprint**: `sprints/08101613-universal-map-knife0`  
 **Target environment**: `local_db`（仅允许 `cecelia_test` / `*_scratch`）
 
----
-
 ## 范围
 
-Knife 0 只交付通用 Map Projection Engine 的事实底座：cron-safe 扫描调度、版本化 repo 快照、原子替换、15 分钟 fail-closed freshness，以及按 repo 隔离的一致读取。Cecelia 是首个验收 repo；本 Knife 不交付 Manifest 解析、投影器或统一 Map API。
-
-生产库不属于本合同的迁移目标。Migration 397 的真实数据库验收只在 `cecelia_test` 与 `cecelia_scratch` 执行。
+Knife 0 只交付通用 Map Projection Engine 的事实底座：cron-safe 扫描调度、版本化 repo 快照、原子替换、15 分钟 fail-closed freshness，以及按 repo 隔离的一致读取。Cecelia 是首个验收 repo；本 Knife 不交付 Manifest 解析、投影器或统一 Map API。生产库不属于迁移目标，Migration 397 的真实数据库验收只在 `cecelia_test` 与 `cecelia_scratch` 执行。
 
 ## Test Contract
 
@@ -47,38 +43,17 @@ Knife 0 只交付通用 Map Projection Engine 的事实底座：cron-safe 扫描
 
 ```bash
 set -euo pipefail
-
-# DevGate 与合同映射
 node scripts/facts-check.mjs
 bash scripts/check-version-sync.sh
 node packages/quality/scripts/devgate/check-dod-mapping.cjs \
   sprints/08101613-universal-map-knife0/contract-dod.md
-
-# runner / revision 调度
 bash scripts/__tests__/run-all-scans.test.sh
 bash scripts/__tests__/rescan-if-changed.test.sh
-
-# scratch 真验火（脚本自身执行四 scanner；拒绝生产库名）
 DATABASE_URL=postgresql://localhost/cecelia_scratch \
 REPO_ROOT_CECELIA="$PWD" \
 bash packages/brain/scripts/smoke/map-fact-snapshot-smoke.sh
 ```
 
-## 判定点
-
-| ID | 断言 | 失败表现 |
-|---|---|---|
-| J-01 | 四 scanner 在 sanitized PATH 下均被调用 | runner 测试缺调用或退出码错误 |
-| J-02 | 四类 header 的 revision 等于当前 Cecelia HEAD | smoke 报 revision mismatch |
-| J-03 | 每类 header `row_count` 等于该 repo 实际事实数 | smoke 报 header/fact count mismatch |
-| J-04 | 同 repo 并发替换结果不是输入并集 | 双连接集成测试失败 |
-| J-05 | 16 分钟快照为 `unknown/snapshot_stale/stale=true` | freshness 仍返回 fresh |
-| J-06 | 重扫后 freshness 恢复为 `fresh` | smoke 重扫恢复失败 |
-| J-07 | smoke 的临时 facts/header 均清零 | smoke cleanup 计数非零 |
-| J-08 | production schema 未被迁移 | 验收范围违反数据库 guard |
-
 ## 未覆盖真实链路清单
 
-- 生产库 migration 与生产 scanner 切换：不在 Knife 0 PR 的授权范围内；合并后的部署 Knife 另行执行并记录生产验收。
-- ZenithJoy workspace：属于后续通用性验证 Knife；Knife 0 只保留通用 repo 数据契约与显式 repo 选择能力。
-- Manifest、确定性 projection 与统一 Map API：分别属于后续 Knife，本合同不以占位实现替代。
+生产库 migration/scanner 切换、ZenithJoy workspace 通用性验证，以及 Manifest、确定性 projection、统一 Map API 均属于后续 Knife；本合同不以占位实现替代。
