@@ -14,7 +14,7 @@ const lifecycleBlocks = [];
 for (let index = 0; index < lines.length; index += 1) {
   if (!lines[index].trimStart().startsWith('docker compose')) continue;
   const block = lines.slice(index, index + 4).join('\n');
-  if (/\b(?:up -d|down)\b/.test(block)) lifecycleBlocks.push(block);
+  if (/\b(?:up -d|down|stop)\b/.test(block)) lifecycleBlocks.push(block);
 }
 
 if (lifecycleBlocks.length === 0) {
