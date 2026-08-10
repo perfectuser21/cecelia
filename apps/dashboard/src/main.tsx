@@ -18,6 +18,15 @@ function mountApp() {
   );
 }
 
+async function refreshServiceWorkers(): Promise<void> {
+  if (!('serviceWorker' in navigator)) return;
+
+  const registrations = await navigator.serviceWorker.getRegistrations();
+  await Promise.allSettled(
+    registrations.map((registration) => registration.update()),
+  );
+}
+
 async function clearStaleCache(): Promise<boolean> {
   const storedVersion = localStorage.getItem(CACHE_VERSION_KEY);
   if (storedVersion !== APP_VERSION) {
@@ -60,8 +69,12 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-clearStaleCache().then((reloading) => {
+async function bootstrap() {
+  await refreshServiceWorkers();
+  const reloading = await clearStaleCache();
   if (!reloading) {
     mountApp();
   }
-});
+}
+
+bootstrap();
