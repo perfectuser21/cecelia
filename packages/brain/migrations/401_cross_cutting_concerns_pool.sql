@@ -47,8 +47,9 @@ BEGIN
       AND kind = 'enabler'
       AND status != 'deprecated'
   ) THEN
-    INSERT INTO journey_features (name, kind, status, journey_id, "group")
-    VALUES ('Brain Tick 调度引擎', 'enabler', 'live', v_factory_id, 'cross-cutting');
+    INSERT INTO journey_features (name, kind, status, journey_id, "group", guard_ref)
+    VALUES ('Brain Tick 调度引擎', 'enabler', 'live', v_factory_id, 'cross-cutting',
+            'script:packages/brain/scripts/smoke/map-reorg-smoke.sh');
   END IF;
 
   -- 2. DevGate 门禁系统
@@ -58,8 +59,9 @@ BEGIN
       AND kind = 'enabler'
       AND status != 'deprecated'
   ) THEN
-    INSERT INTO journey_features (name, kind, status, journey_id, "group")
-    VALUES ('DevGate 门禁系统', 'enabler', 'live', v_factory_id, 'cross-cutting');
+    INSERT INTO journey_features (name, kind, status, journey_id, "group", guard_ref)
+    VALUES ('DevGate 门禁系统', 'enabler', 'live', v_factory_id, 'cross-cutting',
+            'script:scripts/facts-check.mjs');
   END IF;
 
   -- 3. Harness Relay 执行链路
@@ -69,8 +71,9 @@ BEGIN
       AND kind = 'enabler'
       AND status != 'deprecated'
   ) THEN
-    INSERT INTO journey_features (name, kind, status, journey_id, "group")
-    VALUES ('Harness Relay 执行链路', 'enabler', 'live', v_factory_id, 'cross-cutting');
+    INSERT INTO journey_features (name, kind, status, journey_id, "group", guard_ref)
+    VALUES ('Harness Relay 执行链路', 'enabler', 'live', v_factory_id, 'cross-cutting',
+            'script:packages/brain/scripts/smoke/map-reorg-smoke.sh');
   END IF;
 
   -- 4. 凭据管理与安全
@@ -80,8 +83,9 @@ BEGIN
       AND kind = 'enabler'
       AND status != 'deprecated'
   ) THEN
-    INSERT INTO journey_features (name, kind, status, journey_id, "group")
-    VALUES ('凭据管理与安全', 'enabler', 'live', v_factory_id, 'cross-cutting');
+    INSERT INTO journey_features (name, kind, status, journey_id, "group", guard_ref)
+    VALUES ('凭据管理与安全', 'enabler', 'live', v_factory_id, 'cross-cutting',
+            'script:.github/workflows/brain-ci.yml');
   END IF;
 
   -- 5. CI/CD 流水线
@@ -91,8 +95,9 @@ BEGIN
       AND kind = 'enabler'
       AND status != 'deprecated'
   ) THEN
-    INSERT INTO journey_features (name, kind, status, journey_id, "group")
-    VALUES ('CI/CD 流水线', 'enabler', 'live', v_factory_id, 'cross-cutting');
+    INSERT INTO journey_features (name, kind, status, journey_id, "group", guard_ref)
+    VALUES ('CI/CD 流水线', 'enabler', 'live', v_factory_id, 'cross-cutting',
+            'script:.github/workflows/brain-ci.yml');
   END IF;
 
   -- 6. 告警与 Bark 推送
@@ -102,8 +107,9 @@ BEGIN
       AND kind = 'enabler'
       AND status != 'deprecated'
   ) THEN
-    INSERT INTO journey_features (name, kind, status, journey_id, "group")
-    VALUES ('告警与 Bark 推送', 'enabler', 'live', v_factory_id, 'cross-cutting');
+    INSERT INTO journey_features (name, kind, status, journey_id, "group", guard_ref)
+    VALUES ('告警与 Bark 推送', 'enabler', 'live', v_factory_id, 'cross-cutting',
+            'probe:http://localhost:5221/api/brain/notify/bark');
   END IF;
 
   -- 7. Memory 语义搜索
@@ -113,8 +119,25 @@ BEGIN
       AND kind = 'enabler'
       AND status != 'deprecated'
   ) THEN
-    INSERT INTO journey_features (name, kind, status, journey_id, "group")
-    VALUES ('Memory 语义搜索', 'enabler', 'live', v_factory_id, 'cross-cutting');
+    INSERT INTO journey_features (name, kind, status, journey_id, "group", guard_ref)
+    VALUES ('Memory 语义搜索', 'enabler', 'live', v_factory_id, 'cross-cutting',
+            'probe:http://localhost:5221/api/brain/memory/search');
   END IF;
+
+  -- 补丁：修复已存在但 guard_ref 为 NULL 的 enabler 行（migration 幂等兜底）
+  UPDATE journey_features SET guard_ref = 'script:packages/brain/scripts/smoke/map-reorg-smoke.sh'
+    WHERE name = 'Brain Tick 调度引擎' AND kind = 'enabler' AND guard_ref IS NULL;
+  UPDATE journey_features SET guard_ref = 'script:scripts/facts-check.mjs'
+    WHERE name = 'DevGate 门禁系统' AND kind = 'enabler' AND guard_ref IS NULL;
+  UPDATE journey_features SET guard_ref = 'script:packages/brain/scripts/smoke/map-reorg-smoke.sh'
+    WHERE name = 'Harness Relay 执行链路' AND kind = 'enabler' AND guard_ref IS NULL;
+  UPDATE journey_features SET guard_ref = 'script:.github/workflows/brain-ci.yml'
+    WHERE name = '凭据管理与安全' AND kind = 'enabler' AND guard_ref IS NULL;
+  UPDATE journey_features SET guard_ref = 'script:.github/workflows/brain-ci.yml'
+    WHERE name = 'CI/CD 流水线' AND kind = 'enabler' AND guard_ref IS NULL;
+  UPDATE journey_features SET guard_ref = 'probe:http://localhost:5221/api/brain/notify/bark'
+    WHERE name = '告警与 Bark 推送' AND kind = 'enabler' AND guard_ref IS NULL;
+  UPDATE journey_features SET guard_ref = 'probe:http://localhost:5221/api/brain/memory/search'
+    WHERE name = 'Memory 语义搜索' AND kind = 'enabler' AND guard_ref IS NULL;
 
 END $$;
