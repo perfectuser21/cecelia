@@ -16,6 +16,10 @@ mkdir -p "$CONTROL_BIN"
 
 cat > "$CONTROL_BIN/dirname" <<'STUB'
 #!/bin/bash
+if [[ ${DIRNAME_OVERRIDE+x} ]]; then
+  printf '%s\n' "$DIRNAME_OVERRIDE"
+  exit 0
+fi
 path=${1%/}
 case "$path" in
   */*)
@@ -56,6 +60,9 @@ STUB
 NODE_STUB="$CONTROL_BIN/node-stub"
 cat > "$NODE_STUB" <<'STUB'
 #!/bin/bash
+if [[ -n "${NODE_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "$NODE_LOG"
+fi
 printf '%s\n' "$1" >> "$SCAN_LOG"
 if [[ "${1##*/}" == "${FAIL_SCANNER:-}" ]]; then
   exit 23
@@ -183,6 +190,27 @@ if [[ $SKIP_PULL_RC -eq 0 ]] \
   pass "SKIP_GIT_PULL=1 在 clean main 上禁止 git pull 且继续扫描"
 else
   fail "SKIP_GIT_PULL=1 未阻止 git pull(rc=$SKIP_PULL_RC): $(tr '\n' ' ' < "$SKIP_PULL_OUT")"
+fi
+
+ROOT_FAILURE_GIT_LOG="$TMPD/root-failure-git.log"
+ROOT_FAILURE_NODE_LOG="$TMPD/root-failure-node.log"
+ROOT_FAILURE_SCAN_LOG="$TMPD/root-failure-scan.log"
+ROOT_FAILURE_OUT="$TMPD/root-failure.out"
+ROOT_FAILURE_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
+  NODE_FALLBACK_PATHS="$CONTROL_BIN/missing" \
+  DIRNAME_OVERRIDE="$TMPD/unavailable-root/scripts/scan" \
+  GIT_LOG="$ROOT_FAILURE_GIT_LOG" NODE_LOG="$ROOT_FAILURE_NODE_LOG" \
+  SCAN_LOG="$ROOT_FAILURE_SCAN_LOG" SCAN_SCRIPTS="probe.js" \
+  /bin/bash "$RUNNER" > "$ROOT_FAILURE_OUT" 2>&1 || ROOT_FAILURE_RC=$?
+
+if [[ $ROOT_FAILURE_RC -eq 1 ]] \
+  && [[ ! -e "$ROOT_FAILURE_GIT_LOG" ]] \
+  && [[ ! -e "$ROOT_FAILURE_NODE_LOG" ]] \
+  && [[ ! -e "$ROOT_FAILURE_SCAN_LOG" ]]; then
+  pass "repo root 不可用时 exit 1 且不调用 git、node 或 scanner"
+else
+  fail "repo root 不可用时仍继续执行(rc=$ROOT_FAILURE_RC): $(tr '\n' ' ' < "$ROOT_FAILURE_OUT")"
 fi
 
 echo ""
