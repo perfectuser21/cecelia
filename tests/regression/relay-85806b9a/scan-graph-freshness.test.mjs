@@ -9,11 +9,28 @@
  * 这些测试在实现前应全部 FAIL（RED阶段）。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import pg from 'pg';
 import { computeFreshness } from '../../../packages/brain/src/lib/registry-freshness.js';
 import { replaceRepoEdges } from '../../../packages/brain/src/lib/graph-store.js';
 
-const DB_URL = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgresql://localhost/cecelia_test';
+const DB_URL = process.env.TEST_DATABASE_URL || 'postgresql://localhost/cecelia_test';
+const DB_NAME = decodeURIComponent(new URL(DB_URL).pathname.slice(1));
+if (!/(_test|_scratch)$/.test(DB_NAME)) throw new Error(`拒绝连接非测试库: ${DB_NAME}`);
+
+function makeTempRepo(name) {
+  const dir = path.join('/tmp', `${name}-${Date.now()}`);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'stub.js'), 'export const x = 1;\n');
+  execFileSync('git', ['init', dir], { stdio: 'ignore' });
+  execFileSync('git', ['-C', dir, 'config', 'user.name', 'Scan Graph Test']);
+  execFileSync('git', ['-C', dir, 'config', 'user.email', 'scan-graph-test@example.invalid']);
+  execFileSync('git', ['-C', dir, 'add', 'stub.js']);
+  execFileSync('git', ['-C', dir, 'commit', '-m', 'test fixture'], { stdio: 'ignore' });
+  return dir;
+}
 
 describe('[B-3 + I-3] per-repo freshness 独立性', () => {
   let pool;
@@ -116,13 +133,9 @@ describe('[B-3 + I-3] per-repo freshness 独立性', () => {
     const scanRepoList = scanGraphModule?.scanRepoList;
     if (!scanRepoList) return;
 
-    // 用临时目录模拟一个极小的 repo
-    import('node:fs').then(async (fsModule) => {
-      const fs = fsModule.default;
-      const tmpDir = '/tmp/freshness-test-repo-' + Date.now();
-      fs.mkdirSync(tmpDir, { recursive: true });
-      fs.writeFileSync(tmpDir + '/stub.js', 'export const x = 1;\n');
-
+    // 用带真实 revision 的极小 Git repo 验证完整扫描生命周期。
+    const tmpDir = makeTempRepo('freshness-test-repo');
+    try {
       const results = await scanRepoList([
         { name: 'freshness-test-tmp', root: tmpDir },
       ], pool);
@@ -132,10 +145,10 @@ describe('[B-3 + I-3] per-repo freshness 独立性', () => {
       expect(typeof result.freshness.stale).toBe('boolean');
       expect(result.freshness.stale).toBe(false); // 刚扫完
 
-      // 清理
+    } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
       await pool.query("DELETE FROM graph_edges WHERE repo = 'freshness-test-tmp'");
-    });
+    }
   });
 });
 
