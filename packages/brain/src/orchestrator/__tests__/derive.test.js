@@ -5,6 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { derive } from '../derive.js';
+import { deriveCounters } from '../counters.js';
 import * as constants from '../constants.js';
 
 const {
@@ -661,6 +662,73 @@ describe('R9/R10: append-only attempt callback convergence', () => {
       action: 'mark_failed',
       reason: 'repeated_unknown_no_pr',
     });
+  });
+});
+
+describe('规则 0.4 no-progress：基础设施 fix 轮无事可做不终局（b19e6e6e 集成）', () => {
+  // deriveCounters → derive 全链：基础设施触发的 fix 轮 SHA 不变，不得判 no-progress
+  // 终局，而应放行到下游正常路由（CI 轮询 / verdict chain），不 mark_failed。
+  const triggerSha = 'b4d2c85e5e82d1375f6a1baa56096534007d08a3';
+  const infraFixLog = [
+    {
+      hop: 21,
+      action: 'spawn:generator-fix',
+      observed: { trigger_sha: triggerSha, failure_class: 'infrastructure_blocked' },
+    },
+    {
+      hop: 24,
+      action: 'verdict:generator-fix-callback',
+      observed: { pr_head_sha: triggerSha, trigger_hop: 21 },
+      detail: {
+        status: 'completed_with_concerns',
+        verification_status: 'verified',
+        pr_head_sha: triggerSha,
+        trigger_sha: triggerSha,
+      },
+    },
+  ];
+
+  it('基础设施场景喂 derive → action 不是 mark_failed，进入下游路由', () => {
+    const counters = deriveCounters(infraFixLog, { proposeBranchMaxRn: 0 });
+    expect(counters.noProgress).toBe(false);
+    const r = derive(baseObserved({
+      pr: { url: 'https://github.com/x/y/pull/4746', state: 'OPEN', ci: 'pass', merged: false, head_sha: triggerSha },
+      decisionLog: infraFixLog,
+      noProgress: counters.noProgress,
+      noProgressReason: counters.noProgressReason,
+    }));
+    expect(r.action).not.toBe('mark_failed');
+    expect(r.phase).not.toBe('failed');
+  });
+
+  it('反向红线：product_failure 同签名 SHA 不变 → derive 仍 mark_failed（no_progress_same_sha）', () => {
+    const productFixLog = [
+      {
+        hop: 21,
+        action: 'spawn:generator-fix',
+        observed: { trigger_sha: triggerSha, failure_class: 'product_failure' },
+      },
+      {
+        hop: 24,
+        action: 'verdict:generator-fix-callback',
+        observed: { pr_head_sha: triggerSha, trigger_hop: 21 },
+        detail: {
+          status: 'completed_with_concerns',
+          verification_status: 'verified',
+          pr_head_sha: triggerSha,
+          trigger_sha: triggerSha,
+        },
+      },
+    ];
+    const counters = deriveCounters(productFixLog, { proposeBranchMaxRn: 0 });
+    expect(counters.noProgress).toBe(true);
+    const r = derive(baseObserved({
+      pr: { url: 'https://github.com/x/y/pull/4746', state: 'OPEN', ci: 'pass', merged: false, head_sha: triggerSha },
+      decisionLog: productFixLog,
+      noProgress: counters.noProgress,
+      noProgressReason: counters.noProgressReason,
+    }));
+    expect(r).toEqual({ phase: 'failed', action: 'mark_failed', reason: 'no_progress_same_sha' });
   });
 });
 
