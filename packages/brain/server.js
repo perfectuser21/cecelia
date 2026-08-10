@@ -913,21 +913,19 @@ async function onBrainListening() {
     console.warn('[Server] Conversation Consolidator init failed (non-fatal):', e.message);
   }
 
-  // Initialize Notion Push Sync (每 5 分钟扫描 notion_synced_at=NULL，推送到 Notion)
+  // 旧 Workspace 多库写入器仅显式开启；canonical Tasks/Projects projection 由独立 loop 负责。
   try {
-    const { runNotionPushSync } = await import('./src/notion-push-sync.js');
-    setInterval(async () => {
-      try { await runNotionPushSync(pool); } catch (e) { console.warn('[Server] Notion push sync failed:', e.message); }
-    }, 5 * 60 * 1000);
-    console.log('[Server] Notion Push Sync scheduled (5min interval)');
+    const { scheduleLegacyNotionPush } = await import('./src/legacy-notion-push-scheduler.js');
+    scheduleLegacyNotionPush(pool);
   } catch (e) {
     console.warn('[Server] Notion Push Sync init failed (non-fatal):', e.message);
   }
 
   // scheduler-jobs：声明式定时任务注册表（作战循环 P1-PR1，恢复 Wave 2 断掉的定时任务）
   try {
-    const { startSchedulerJobsLoop } = await import('./src/scheduler-jobs.js');
+    const { startSchedulerJobsLoop, startProjectionJobsLoop } = await import('./src/scheduler-jobs.js');
     startSchedulerJobsLoop(pool);
+    startProjectionJobsLoop(pool);
   } catch (e) {
     console.warn('[Server] scheduler-jobs init failed (non-fatal):', e.message);
   }

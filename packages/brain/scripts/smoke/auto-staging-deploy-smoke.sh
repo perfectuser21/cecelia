@@ -16,6 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 WF="$ROOT_DIR/.github/workflows/auto-staging-deploy.yml"
 SMOKE="$ROOT_DIR/scripts/auto-staging-smoke.sh"
+WAIT_SHA="$ROOT_DIR/scripts/wait-for-production-sha.sh"
 
 FAIL=0
 pass() { printf '✓ %s\n' "$1"; }
@@ -55,14 +56,32 @@ if [ -f "$WF" ]; then
   fi
 fi
 
-# ── 4. smoke 脚本存在 ─────────────────────────────────────────────────────────
+# ── 4. staging 触发前必须先等 production 同 SHA 就绪 ─────────────────────────
+if [ -f "$WAIT_SHA" ]; then
+  pass "同 SHA 就绪等待脚本存在"
+else
+  fail "缺少 scripts/wait-for-production-sha.sh"
+fi
+if [ -f "$WF" ] && grep -q 'wait-for-production-sha.sh' "$WF" && grep -q 'EXPECTED_SHA.*GITHUB_SHA' "$WF"; then
+  WAIT_LINE=$(grep -n 'wait-for-production-sha.sh' "$WF" | head -1 | cut -d: -f1)
+  TRIGGER_LINE=$(grep -n '触发 Staging 部署（staging:true' "$WF" | head -1 | cut -d: -f1)
+  if [ -n "$WAIT_LINE" ] && [ -n "$TRIGGER_LINE" ] && [ "$WAIT_LINE" -lt "$TRIGGER_LINE" ]; then
+    pass "workflow 在 staging 触发前等待 production 同 SHA"
+  else
+    fail "同 SHA 等待步骤必须位于 staging 触发之前"
+  fi
+else
+  fail "workflow 未用 GITHUB_SHA 调同 SHA 就绪等待脚本"
+fi
+
+# ── 5. smoke 脚本存在 ─────────────────────────────────────────────────────────
 if [ -f "$SMOKE" ]; then
   pass "smoke 脚本存在: scripts/auto-staging-smoke.sh"
 else
   fail "smoke 脚本缺失: scripts/auto-staging-smoke.sh"
 fi
 
-# ── 5. smoke 不是占位符：staging 不可达时必须硬失败（exit 1）─────────────────
+# ── 6. smoke 不是占位符：staging 不可达时必须硬失败（exit 1）─────────────────
 if [ -f "$SMOKE" ]; then
   # 指向一个必然连不上的端口，smoke 必须返回非 0
   if STAGING_PORT=59999 STAGING_HOST=127.0.0.1 bash "$SMOKE" > /tmp/auto-staging-smoke-neg.log 2>&1; then

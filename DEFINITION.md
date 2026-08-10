@@ -2,17 +2,24 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-08-08
+**最后更新**: 2026-08-10
 
 
 
 
 
-**Brain 版本**: 1.271.0
+**Brain 版本**: 1.271.1
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.271.1 — 队列分层与投影调度可靠性
+
+- Workbench 将本地任务明确分为 Brain、IDE、Pipeline 三条队列，并由服务端统一计算归属，避免 waiting/inbox 混成一个无法判断的列表。
+- Tasks/Projects/Inbox 投影从主调度串行链拆出独立 60 秒循环；即使其他定时任务变慢，Notion 同步积压仍持续推进。
+- 旧版 Notion 直写器改为显式开关启用，默认关闭，避免与 projection/outbox 双写和历史 404 重试竞争。
+- Staging 部署先验证 Production 已运行当前 main 的精确 SHA，再复用同版本镜像，消除并行 workflow 抢跑导致的假失败。
 
 ## Brain 1.270.8 — provider-neutral 回调单结算 + 跨设备工作区解析
 

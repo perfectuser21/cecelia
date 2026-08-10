@@ -12,6 +12,7 @@ import { Router } from 'express';
 import pool from '../db.js';
 import { detectDomain } from '../domain-detector.js';
 import taskErrorReportRoutes from './task-error-report.js';
+import { queueLaneSql } from '../task-queue-lanes.js';
 
 const router = Router();
 
@@ -256,7 +257,10 @@ router.get('/', async (req, res) => {
       params.push(journey_id);
     }
 
-    let query = 'SELECT id, title, status, priority, task_type, project_id, area_id, claimed_by, executor_kind, created_at, completed_at, updated_at FROM tasks';
+    let query = `SELECT id, title, status, priority, task_type, project_id, area_id,
+                        claimed_by, executor_kind, created_at, completed_at, updated_at,
+                        ${queueLaneSql('tasks')} AS queue_lane
+                 FROM tasks`;
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
