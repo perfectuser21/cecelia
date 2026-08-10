@@ -31,6 +31,7 @@ import {
   getImpactContractById,
 } from '../impact-contract/contract-store.js';
 import { evaluateStructureGate } from '../impact-contract/structure-gate.js';
+import { evaluateDiffGate } from '../impact-contract/diff-gate.js';
 
 const router = Router();
 
@@ -220,6 +221,60 @@ router.post('/tasks/:taskId/impact-contract/evaluate', async (req, res) => {
     );
   } catch (err) {
     console.error('[impact-contracts] POST /tasks/:taskId/impact-contract/evaluate error:', err);
+    return res.status(500).json({ error: 'internal_server_error', message: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tasks/:taskId/impact-contract/diff-evaluate
+ * 运行 Diff Impact Gate：编码后以真实 diff 重新查询影响半径，与合同对账（FR-4）
+ *
+ * 请求 body：
+ *   { head_revision: string, changed_files?: string[], repo?: string }
+ *
+ * 响应：
+ *   pass     → 200 + { gate: 'pass', verdict: 'pass', ... }
+ *   extend   → 200 + { gate: 'extend', verdict: 'extend', added_nodes: [...], ... }
+ *   drift    → 409 + { gate: 'drift', reason_code: 'CONTRACT_IMPACT_DRIFT', added_nodes: [...], ... }
+ *   blocked  → 503 + { gate: 'impact_unknown', reason: '...', retryable: true }
+ *
+ * MJ5 STUB: Mapper 调用当前为 stub，待 MJ5 合同通过后接入真实 Mapper。
+ *
+ * sprint: 08110022-relay-d96c9fa0 ws4
+ */
+router.post('/tasks/:taskId/impact-contract/diff-evaluate', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { head_revision, changed_files, repo } = req.body ?? {};
+
+    if (!head_revision) {
+      return res.status(400).json({
+        error: 'invalid_request',
+        message: 'head_revision 是必填字段',
+      });
+    }
+
+    const result = await evaluateDiffGate({
+      db: pool,
+      taskId,
+      headRevision: head_revision,
+      changedFiles: Array.isArray(changed_files) ? changed_files : [],
+      repo: repo ?? undefined,
+    });
+
+    // 根据 gate 裁决确定 HTTP 状态码
+    let httpStatus;
+    if (result.gate === 'impact_unknown') {
+      httpStatus = 503;
+    } else if (result.gate === 'drift') {
+      httpStatus = 409;
+    } else {
+      httpStatus = 200;
+    }
+
+    return res.status(httpStatus).json(result);
+  } catch (err) {
+    console.error('[impact-contracts] POST /tasks/:taskId/impact-contract/diff-evaluate error:', err);
     return res.status(500).json({ error: 'internal_server_error', message: err.message });
   }
 });
