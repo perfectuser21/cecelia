@@ -307,6 +307,21 @@ export async function addHardDependency(db, { fromTaskId, toTaskId, gapId, edgeT
 // ---------- 读操作 ----------
 
 /**
+ * listGapsByStatus(db, status) — 按状态列出所有 gap（用于全局视图/评估器巡检）。
+ *
+ * @param {import('pg').PoolClient|import('pg').Pool} db
+ * @param {string} status
+ * @returns {Promise<object[]>}
+ */
+export async function listGapsByStatus(db, status) {
+  const result = await db.query(
+    `SELECT * FROM harness_gaps WHERE status = $1 ORDER BY created_at DESC`,
+    [status]
+  );
+  return result.rows;
+}
+
+/**
  * getGapsByTask(db, taskId) — 查询任务的所有 gap（包括作为 source 或 repair 的）。
  *
  * @param {import('pg').PoolClient|import('pg').Pool} db

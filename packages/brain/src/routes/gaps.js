@@ -33,6 +33,7 @@ import {
   getGapsByTask,
   getGapById,
   getGapEvents,
+  listGapsByStatus,
 } from '../impact-contract/gap-store.js';
 
 const router = Router();
@@ -45,17 +46,24 @@ const router = Router();
  */
 router.get('/', async (req, res) => {
   try {
-    const { task_id } = req.query;
+    const { task_id, status } = req.query;
 
-    if (!task_id) {
-      return res.status(400).json({
-        error: 'invalid_request',
-        message: 'task_id 是必填查询参数',
-      });
+    // task_id 优先：返回任务关联的所有 gap（对象形式，向后兼容）
+    if (task_id) {
+      const gaps = await getGapsByTask(pool, task_id);
+      return res.status(200).json({ gaps });
     }
 
-    const gaps = await getGapsByTask(pool, task_id);
-    return res.status(200).json({ gaps });
+    // status 过滤：全局列表（数组形式，供评估器/巡检使用）
+    if (status) {
+      const gaps = await listGapsByStatus(pool, status);
+      return res.status(200).json(gaps);
+    }
+
+    return res.status(400).json({
+      error: 'invalid_request',
+      message: 'task_id 或 status 至少提供一个',
+    });
   } catch (err) {
     console.error('[gaps] GET /gaps error:', err);
     return res.status(500).json({ error: 'internal_server_error', message: err.message });
