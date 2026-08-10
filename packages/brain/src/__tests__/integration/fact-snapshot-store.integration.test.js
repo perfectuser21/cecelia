@@ -1,13 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { replaceFactSnapshot } from '../../lib/fact-snapshot-store.js';
+import { resolveTestDatabaseUrl } from '../test-database-url.js';
 
-const connectionString = process.env.TEST_DATABASE_URL || 'postgresql://localhost/cecelia_test';
-const databaseName = decodeURIComponent(new URL(connectionString).pathname.slice(1));
-if (!/(_test|_scratch)$/.test(databaseName)) {
-  throw new Error(`fact snapshot 集成测试拒绝连接非测试库: ${databaseName}`);
-}
-
+const connectionString = resolveTestDatabaseUrl();
 const pool = new pg.Pool({ connectionString, max: 2 });
 const REPO = `fact-snapshot-itest-${process.pid}`;
 const CONCURRENT_REPO = `${REPO}-concurrent`;

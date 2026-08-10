@@ -2,13 +2,9 @@ import { describe, it, expect, afterAll } from 'vitest';
 import pg from 'pg';
 import { replaceRepoEdges } from '../../lib/graph-store.js';
 import { loadGraphContext } from '../../routes/graph.js';
+import { resolveTestDatabaseUrl } from '../test-database-url.js';
 
-const connectionString = process.env.TEST_DATABASE_URL || 'postgresql://localhost/cecelia_test';
-const databaseName = decodeURIComponent(new URL(connectionString).pathname.slice(1));
-if (!/(_test|_scratch)$/.test(databaseName)) {
-  throw new Error(`graph store 集成测试拒绝连接非测试库: ${databaseName}`);
-}
-
+const connectionString = resolveTestDatabaseUrl();
 const pool = new pg.Pool({ connectionString, max: 3 });
 const REPO = 'itest-graph-repo';
 const CONCURRENT_REPO = `itest-graph-concurrent-${process.pid}`;
