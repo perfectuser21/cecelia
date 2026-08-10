@@ -401,6 +401,64 @@ describe('deriveCounters：noVerdictStreak（尾部连续 reviewer 无 verdict�
   });
 });
 
+describe('deriveCounters：noProgress —— 基础设施 fix 轮无事可做不误判（b19e6e6e 实证）', () => {
+  // 缺陷现场：run b19e6e6e —— generator 已把活干完/推送/开 PR，只是 provider 会话
+  // 超时被判 failed；基础设施触发的 fix 轮 3 分半发现没新活可干，SHA 不变是正确行为，
+  // 却被 same-SHA no-progress 误杀整条 run。触发来源从结构化字段
+  // observed.failure_class 读取，禁止对 reason 字符串做模糊匹配。
+  const triggerSha = 'b4d2c85e5e82d1375f6a1baa56096534007d08a3';
+
+  function fixCallbackRows({ failureClass, callbackStatus }) {
+    return [
+      row(21, 'spawn:generator-fix', {
+        trigger_sha: triggerSha,
+        failure_class: failureClass,
+      }),
+      {
+        hop: 24,
+        action: 'verdict:generator-fix-callback',
+        observed: { pr_head_sha: triggerSha, trigger_hop: 21 },
+        detail: {
+          status: callbackStatus,
+          verification_status: 'verified',
+          pr_head_sha: triggerSha,
+          trigger_sha: triggerSha,
+        },
+      },
+    ];
+  }
+
+  it('基础设施触发 + fix 轮 completed_with_concerns + SHA 不变 → noProgress=false（放行下游）', () => {
+    const rows = fixCallbackRows({
+      failureClass: 'infrastructure_blocked',
+      callbackStatus: 'completed_with_concerns',
+    });
+    const c = deriveCounters(rows, { proposeBranchMaxRn: 0 });
+    expect(c.noProgress).toBe(false);
+    expect(c.noProgressReason).toBe(null);
+  });
+
+  it('反向红线：product_failure 触发 + SHA 不变 → 仍 noProgress=true（防死循环红线不削弱）', () => {
+    const rows = fixCallbackRows({
+      failureClass: 'product_failure',
+      callbackStatus: 'completed_with_concerns',
+    });
+    const c = deriveCounters(rows, { proposeBranchMaxRn: 0 });
+    expect(c.noProgress).toBe(true);
+    expect(c.noProgressReason).toBe('no_progress_same_sha');
+  });
+
+  it('回调失败：基础设施触发但 fix 轮 callback status=failed + SHA 不变 → 仍 noProgress=true（agent 没跑成就是真没进展）', () => {
+    const rows = fixCallbackRows({
+      failureClass: 'infrastructure_blocked',
+      callbackStatus: 'failed',
+    });
+    const c = deriveCounters(rows, { proposeBranchMaxRn: 0 });
+    expect(c.noProgress).toBe(true);
+    expect(c.noProgressReason).toBe('no_progress_same_sha');
+  });
+});
+
 describe('deriveCounters：入参防御', () => {
   it('缺 proposeBranchMaxRn → throw（fail-fast，禁默认猜测）', () => {
     expect(() => deriveCounters([], {})).toThrow(/proposeBranchMaxRn/);

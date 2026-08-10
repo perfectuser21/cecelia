@@ -24,7 +24,10 @@
  *   pollCount  = 从 decision log 推导：最后一次非 wait:poll_ci action 后的 wait:poll_ci 行数（持久化）
  *   blockedStreak = 从 decision log 推导：尾部连续且 failure_class 相同的
  *                   gate_verdict=deny:BLOCKED 行数
- *   noProgress = 最新 spawn:generator-fix 的 trigger_sha === verdict:generator-fix-callback 的 pr_head_sha
+ *   noProgress = 最新 spawn:generator-fix 的 trigger_sha === verdict:generator-fix-callback 的 pr_head_sha；
+ *                例外（b19e6e6e 实证）：该 fix 轮由基础设施故障触发
+ *                （intent.observed.failure_class === 'infrastructure_blocked'）且回调 status 为
+ *                completed / completed_with_concerns 时，SHA 不变是正确行为，不判 no-progress。
  *   noProgressReason = 'no_progress_same_sha' | null
  */
 import { ACTION, LOG_ACTION } from './constants.js';
@@ -570,14 +573,29 @@ export function deriveCounters(logRows, options) {
           const cbObs = asJson(lastCallback.observed) ?? {};
           const callbackSha = cbObs.pr_head_sha ?? null;
           const cbDetail = asJson(lastCallback.detail) ?? {};
+          // 基础设施故障触发的 fix 轮（intent 的 observed.failure_class ===
+          // 'infrastructure_blocked'）若正常完成（callback status = completed /
+          // completed_with_concerns），说明前一轮 generator 已把活干完并 push，这轮 fix
+          // 正确地无事可做——SHA 不变是正确行为，不判 no-progress，放行下游正常路由
+          // （CI 轮询 / verdict chain）。判定只读结构化字段（observed.failure_class +
+          // callback detail.status），不对 reason 字符串做模糊匹配。b19e6e6e 实证误杀修复。
+          // 反向红线：product_failure / ci_fail 等产品缺陷触发的 fix 轮 SHA 不变仍终局，
+          // 且基础设施触发但 fix 轮回调 status=failed（agent 没跑成）时也仍判无进展。
+          const infraTriggered = lastFixObs.failure_class === 'infrastructure_blocked';
+          const fixCallbackSucceeded = SUCCESSFUL_ROLE_STATUSES.has(cbDetail.status);
           if (
             (cbDetail.verification_status === 'verified'
               || cbDetail.verification_status == null)
             && callbackSha
             && callbackSha === triggerSha
           ) {
-            noProgress = true;
-            noProgressReason = 'no_progress_same_sha'; // 统一 reason 常量（derive 和 ground-truth 对齐）
+            if (infraTriggered && fixCallbackSucceeded) {
+              noProgress = false;
+              noProgressReason = null;
+            } else {
+              noProgress = true;
+              noProgressReason = 'no_progress_same_sha'; // 统一 reason 常量（derive 和 ground-truth 对齐）
+            }
           } else if (cbDetail.verification_status != null
               && !['verified', 'verification_pending'].includes(
                 cbDetail.verification_status,
