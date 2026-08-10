@@ -459,6 +459,11 @@ jobs:
         run: bash scripts/__tests__/anchor-sentinel.test.sh
       - name: 真跑守卫
         run: node scripts/test-pyramid-guard.mjs
+      # harness 失败可观测机械闸（决策 e8f6134f 交付物2）：拦「写 terminal 状态但不带 failure_class」的裸写
+      - name: harness terminal failure_class 机械闸（真树 exit 0）
+        run: node scripts/check-harness-terminal-failure-class.mjs
+      - name: harness terminal failure_class 机械闸自测（注入裸写 → exit 1）
+        run: bash scripts/__tests__/check-harness-terminal-failure-class.test.sh
 
   # ─── preview-reaper 对账器自测 ─────────────────────────────────
   # 验证三源收集（目录/DB/表）+ 路由决策（MERGED/CLOSED→回收，OPEN/失败→跳过）

@@ -34,6 +34,7 @@ import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { getAccountUsage } from './account-usage.js';
 import { writeDockerCallback, resolveResourceTier, isDockerAvailable, resolveBrainBaseUrl } from './docker-executor.js';
 import { loadSkillContent, assertSprintDir } from './harness-shared.js';
+import { classifyFailure, buildTerminalFailureResult } from './harness-failure-class.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
@@ -2548,6 +2549,8 @@ async function triggerCodexReview(task) {
             );
             raise('P1', 'codex_config_error', `codex 环境错误(${fatal.reason})，任务安全回队(${n}/3)：task=${task.id} ${summary}`);
           } else {
+            // failure-class-lint-ignore: 通用 codex 环境错误 blocked 路径（非 harness_initiative/
+            // golden_path_proposal terminal），超出本 sprint（决策 e8f6134f 交付物2）harness 落点范围。
             await pool.query(
               `UPDATE tasks
                  SET status = 'blocked',
@@ -3002,11 +3005,19 @@ export const MAX_INITIATIVE_FRESH_STARTS = 3;
  */
 async function markInitiativeTerminalFailed(dbPool, taskId, failureClass, errorMessage) {
   try {
+    // harness 失败可观测（决策 e8f6134f 交付物2）：terminal 收尾必写 result.failure_class(枚举)
+    // + result.failure_detail(自由文本)，落点统一到 tasks.result。保留既有 custom_props 写入
+    // 以兼容历史读取方。
+    const failureResult = buildTerminalFailureResult({
+      failureClass: classifyFailure(failureClass),
+      failureDetail: `${failureClass}: ${String(errorMessage).slice(0, 480)}`,
+    });
     await dbPool.query(
       `UPDATE tasks SET status='failed', error_message=$1,
-         custom_props = jsonb_set(COALESCE(custom_props,'{}'::jsonb), '{failure_class}', $2::jsonb)
+         custom_props = jsonb_set(COALESCE(custom_props,'{}'::jsonb), '{failure_class}', $2::jsonb),
+         result = COALESCE(result,'{}'::jsonb) || $4::jsonb
        WHERE id=$3`,
-      [String(errorMessage).slice(0, 500), JSON.stringify(failureClass), taskId]
+      [String(errorMessage).slice(0, 500), JSON.stringify(failureClass), taskId, JSON.stringify(failureResult)]
     );
     // 2b-2b: 镜像同步对应 okr_initiative → failed（non-fatal，best-effort）
     try {
@@ -3476,10 +3487,14 @@ async function triggerCeceliaRun(task) {
   if (_RETIRED_HARNESS_TYPES.has(task.task_type)) {
     console.warn(`[executor] retired task_type=${task.task_type} task=${task.id} → marking pipeline_terminal_failure`);
     try {
+      // 保留 payload.failure_class（callback-processor 终态守卫读它）+ 追加 result.failure_class(枚举)
       await pool.query(
         `UPDATE tasks SET status='failed', completed_at=NOW(),
           error_message=$2,
-          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
+          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure'),
+          result = COALESCE(result,'{}'::jsonb) || jsonb_build_object(
+            'failure_class', 'pipeline_terminal_failure',
+            'failure_detail', 'task_type ' || $2::text || ' retired (subsumed by harness_initiative full graph)')
          WHERE id=$1::uuid`,
         [task.id, `task_type ${task.task_type} retired (subsumed by harness_initiative full graph)`]
       );
@@ -4471,6 +4486,8 @@ async function syncOrphanTasksOnStartup() {
           diagnostic_info: diagnostic_info,
         };
 
+        // failure-class-lint-ignore: startup-sync 通用孤儿检测 failed 路径（覆盖任意 task_type，
+        // 非 harness terminal 专属写入点），超出本 sprint（决策 e8f6134f 交付物2）harness 落点范围。
         await pool.query(
           `UPDATE tasks SET
             status = 'failed',

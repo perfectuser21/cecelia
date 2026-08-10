@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.271.3
+**Brain 版本**: 1.271.4
 
 **状态**: 生产运行中
 
@@ -34,6 +34,12 @@
 - callback queue 引入带租约的单消费者 claim；HTTP 回调与 worker 不再重复消费，同一 `run_id` 只有精确匹配当前 attempt 才能结算。
 - 任务隔离后不再发送 Thalamus 重试事件，持久化 `failure_count` 成为唯一重试计数；任务失败不再击穿全局 `cecelia-run` 熔断器。
 - migration 394 为 callback queue 增加 `claimed_at` / `claimed_by` 与可领取索引；回滚脚本同步提供。
+
+## Brain 1.270.14 — harness 失败可观测：terminal 必写 failure_class + 失败率计量 API
+
+- 全量 terminal harness 写入点（executor/dispatcher/kernel-run-store）统一经 SSOT `harness-failure-class.js` 写 `tasks.result.failure_class`(枚举)+`failure_detail`，unknown 兜底保证 IS NULL 归零
+- 新增 `GET /api/brain/harness/failure-stats?days=N`：by_class 分组 + 滚动 failure_rate，供「连续 7 天失败率 < 25%」开锁闸计量
+- 新增 CI 机械闸 `check-harness-terminal-failure-class.mjs` 拦截「写 terminal 但不带 failure_class」的裸写回归
 
 ## Brain 1.270.13 — Workbench 本地主链 + Projection/Notion 闭环
 

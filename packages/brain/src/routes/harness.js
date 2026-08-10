@@ -2171,4 +2171,64 @@ router.post('/staging-e2e', async (req, res) => {
   }
 });
 
+/**
+ * GET /failure-stats?days=N
+ * harness 失败可观测计量口径（决策 e8f6134f 交付物2）。
+ * 返回窗口内 harness_initiative/golden_path_proposal 的按 failure_class 分组计数 +
+ * 滚动失败率，供「连续 7 天失败率 < 25%」开锁闸与日报消费。
+ *
+ * - days 非法（非整数 / <1 / >365）→ 400 { error }
+ * - 空窗口 → 200 + total:0, failed:0, failure_rate:0, by_class:{}（非错误）
+ * - 分母 total = 窗口内完结（failed+blocked+cancelled+completed）harness 任务总数
+ * - 分子 failed = 窗口内非成功 terminal（failed+blocked+cancelled）harness 任务总数
+ * - by_class 按 result->>'failure_class' 分组（对非成功 terminal 计数）
+ */
+router.get('/failure-stats', async (req, res) => {
+  const rawDays = req.query.days ?? '7';
+  const days = Number(rawDays);
+  if (!Number.isInteger(days) || days < 1 || days > 365) {
+    return res.status(400).json({ error: 'days must be an integer between 1 and 365' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `WITH windowed AS (
+         SELECT status, result->>'failure_class' AS failure_class
+           FROM tasks
+          WHERE task_type IN ('harness_initiative', 'golden_path_proposal')
+            AND status IN ('failed', 'blocked', 'cancelled', 'completed')
+            AND completed_at > NOW() - ($1::int * INTERVAL '1 day')
+       )
+       SELECT
+         (SELECT count(*) FROM windowed)::int AS total,
+         (SELECT count(*) FROM windowed WHERE status IN ('failed','blocked','cancelled'))::int AS failed,
+         COALESCE(
+           (SELECT jsonb_object_agg(fc, cnt) FROM (
+              SELECT COALESCE(failure_class, 'unknown') AS fc, count(*)::int AS cnt
+                FROM windowed
+               WHERE status IN ('failed','blocked','cancelled')
+               GROUP BY COALESCE(failure_class, 'unknown')
+           ) g),
+           '{}'::jsonb
+         ) AS by_class`,
+      [days]
+    );
+    const total = rows[0]?.total ?? 0;
+    const failed = rows[0]?.failed ?? 0;
+    const byClass = rows[0]?.by_class ?? {};
+    const failureRate = total > 0 ? Math.round((failed / total) * 10000) / 10000 : 0;
+    const windowStart = new Date(Date.now() - days * 86400000).toISOString();
+    return res.json({
+      days,
+      window_start: windowStart,
+      total,
+      failed,
+      failure_rate: failureRate,
+      by_class: byClass,
+    });
+  } catch (err) {
+    console.error('[GET /harness/failure-stats]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

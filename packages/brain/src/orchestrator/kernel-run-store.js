@@ -1,4 +1,5 @@
 import { COMMANDER_MODES } from './commander-contract.js';
+import { classifyFailure, buildTerminalFailureResult } from '../harness-failure-class.js';
 
 const ACTIVE_PHASES = new Set([
   'planning',
@@ -244,6 +245,14 @@ export async function patchKernelRunById(pool, {
         );
       }
       if (!taskIsCancelled && task.status !== taskOutcome) {
+        // harness 失败可观测（决策 e8f6134f 交付物2）：failed 收尾必写 result.failure_class(枚举)
+        // + failure_detail(原始 failure_reason)。done 收尾不动 result。
+        const failureResultPatch = taskOutcome === 'failed'
+          ? JSON.stringify(buildTerminalFailureResult({
+            failureClass: classifyFailure(failureReason),
+            failureDetail: failureReason == null ? '' : String(failureReason),
+          }))
+          : null;
         await client.query(
           `UPDATE tasks
               SET status = $2::varchar,
@@ -251,10 +260,14 @@ export async function patchKernelRunById(pool, {
                     WHEN $2::text = 'failed' THEN $3
                     ELSE error_message
                   END,
+                  result = CASE
+                    WHEN $4::jsonb IS NOT NULL THEN COALESCE(result, '{}'::jsonb) || $4::jsonb
+                    ELSE result
+                  END,
                   completed_at = COALESCE(completed_at, NOW()),
                   updated_at = NOW()
             WHERE id = $1`,
-          [identity.current_task_id, taskOutcome, failureReason],
+          [identity.current_task_id, taskOutcome, failureReason, failureResultPatch],
         );
       }
       const attemptsTerminalized = await terminalizeLockedKernelAttempts(client, {
@@ -564,6 +577,14 @@ export async function finalizeKernelRun(pool, {
     }
 
     if (task.status !== taskOutcome) {
+      // harness 失败可观测（决策 e8f6134f 交付物2）：failed 收尾必写 result.failure_class(枚举)
+      // + failure_detail(原始 reason)。done 收尾不动 result。
+      const failureResultPatch = taskOutcome === 'failed'
+        ? JSON.stringify(buildTerminalFailureResult({
+          failureClass: classifyFailure(reason),
+          failureDetail: reason == null ? '' : String(reason),
+        }))
+        : null;
       await client.query(
         `UPDATE tasks
             SET status = $2::varchar,
@@ -571,10 +592,14 @@ export async function finalizeKernelRun(pool, {
                   WHEN $2::text = 'failed' THEN $3
                   ELSE error_message
                 END,
+                result = CASE
+                  WHEN $4::jsonb IS NOT NULL THEN COALESCE(result, '{}'::jsonb) || $4::jsonb
+                  ELSE result
+                END,
                 completed_at = COALESCE(completed_at, NOW()),
                 updated_at = NOW()
           WHERE id = $1`,
-        [expectedTaskId, taskOutcome, reason],
+        [expectedTaskId, taskOutcome, reason, failureResultPatch],
       );
     }
 

@@ -32,6 +32,7 @@ import { checkQuotaGuard } from './quota-guard.js';
 import { updateTask } from './actions.js';
 import { selectNextDispatchableTask, processCortexTask } from './dispatch-helpers.js';
 import { findDuplicateSibling } from './dispatch-dedup.js';
+import { buildTerminalFailureResult } from './harness-failure-class.js';
 import { blockTask } from './task-updater.js';
 import { raise } from './alerting.js';
 import { checkAnchor } from './anchor-check.js';
@@ -351,7 +352,10 @@ export async function dispatchNextTask(goalIds) {
       `UPDATE tasks
          SET status='failed', completed_at=NOW(),
              error_message='task_type ' || task_type || ' retired (subsumed by harness_initiative full graph)',
-             payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
+             payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure'),
+             result = COALESCE(result, '{}'::jsonb) || jsonb_build_object(
+               'failure_class', 'pipeline_terminal_failure',
+               'failure_detail', 'task_type ' || task_type || ' retired (subsumed by harness_initiative full graph)')
        WHERE status='queued'
          AND task_type = ANY($1::text[])
        RETURNING id, task_type`,
@@ -395,9 +399,14 @@ export async function dispatchNextTask(goalIds) {
           `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
           [nextTask.id]
         );
+        const dispatchExcResult = buildTerminalFailureResult({
+          failureClass: 'dispatch_exception',
+          failureDetail: String(err.message || 'dispatch_exception').slice(0, 500),
+        });
         await pool.query(
-          `UPDATE tasks SET status = 'failed', error_message = $2 WHERE id = $1`,
-          [nextTask.id, String(err.message || 'dispatch_exception').slice(0, 500)]
+          `UPDATE tasks SET status = 'failed', error_message = $2,
+             result = COALESCE(result,'{}'::jsonb) || $3::jsonb WHERE id = $1`,
+          [nextTask.id, String(err.message || 'dispatch_exception').slice(0, 500), JSON.stringify(dispatchExcResult)]
         );
       } catch (cleanupErr) {
         console.error(`[dispatch] claim-leak cleanup failed (task=${nextTask.id}): ${cleanupErr.message}`);
@@ -445,18 +454,24 @@ export async function dispatchNextTask(goalIds) {
           suggestions: checkResult.suggestions,
           strikes: newStrikes,
         };
+        const preFlightResult = buildTerminalFailureResult({
+          failureClass: 'pre_flight_rejected',
+          failureDetail: `pre_flight_rejected (strikes=${newStrikes}): ${JSON.stringify(checkResult.issues).slice(0, 400)}`,
+        });
         await pool.query(
           `UPDATE tasks
            SET status = 'blocked',
                blocked_reason = 'pre_flight_rejected',
                blocked_at = NOW(),
                blocked_detail = $2::jsonb,
-               metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb
+               metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+               result = COALESCE(result, '{}'::jsonb) || $4::jsonb
            WHERE id = $1`,
           [
             candidate.id,
             JSON.stringify(blockedDetail),
             JSON.stringify({ pre_flight_fail_count: newStrikes, pre_flight_issues: checkResult.issues }),
+            JSON.stringify(preFlightResult),
           ]
         );
         await alertOnPreFlightFail(pool, candidate, { ...checkResult, strikes: newStrikes, blocked: true });
@@ -511,7 +526,9 @@ export async function dispatchNextTask(goalIds) {
         await pool.query(
           `UPDATE tasks SET status='failed', completed_at=NOW(),
             error_message=$2,
-            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
+            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure'),
+            result = COALESCE(result, '{}'::jsonb) || jsonb_build_object(
+              'failure_class', 'pipeline_terminal_failure', 'failure_detail', $2::text)
            WHERE id=$1::uuid`,
           [candidate.id, `task_type ${candidate.task_type} retired (subsumed by harness_initiative full graph)`]
         );
@@ -602,7 +619,9 @@ export async function dispatchNextTask(goalIds) {
         await pool.query(
           `UPDATE tasks SET status='failed', completed_at=NOW(),
             error_message=$2,
-            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'missing_anchor')
+            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'missing_anchor'),
+            result = COALESCE(result, '{}'::jsonb) || jsonb_build_object(
+              'failure_class', 'missing_anchor', 'failure_detail', $2::text)
            WHERE id=$1::uuid`,
           [candidate.id, anchorResult.detail]
         );
