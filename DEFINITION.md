@@ -19,7 +19,7 @@
 - Workbench 将本地任务明确分为 Brain、IDE、Pipeline 三条队列，并由服务端统一计算归属，避免 waiting/inbox 混成一个无法判断的列表。
 - Tasks/Projects/Inbox 投影从主调度串行链拆出独立 60 秒循环；即使其他定时任务变慢，Notion 同步积压仍持续推进。
 - 旧版 Notion 直写器改为显式开关启用，默认关闭，避免与 projection/outbox 双写和历史 404 重试竞争。
-- Staging 部署先验证 Production 已运行当前 main 的精确 SHA；Preview 启动请求对 Production 重启窗口做有限重试，消除并行 workflow 抢跑导致的假失败。
+- Staging 部署先验证 Production 已运行当前 main 的精确 SHA；Preview 对连接失败做有限重试，并在等待期检测 Production uptime 回退后幂等重发启动请求，消除并行部署重启导致的假失败和永久 starting。
 
 ## Brain 1.270.8 — provider-neutral 回调单结算 + 跨设备工作区解析
 

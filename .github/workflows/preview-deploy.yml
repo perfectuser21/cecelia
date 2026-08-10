@@ -68,6 +68,10 @@ jobs:
         run: |
           set -euo pipefail
           echo "调用 Brain API /preview/start..."
+          BRAIN_UPTIME=$(curl -sf --connect-timeout 5 --max-time 10 \
+            "${BRAIN_URL}/api/brain/health" 2>/dev/null \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('uptime_seconds',''))" \
+            2>/dev/null || echo "")
           RESP=$(bash scripts/request-preview-start.sh)
           echo "Brain 响应: $RESP"
           PORT=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])" 2>/dev/null)
@@ -76,6 +80,7 @@ jobs:
             exit 1
           fi
           echo "port=$PORT" >> $GITHUB_OUTPUT
+          echo "brain_uptime=$BRAIN_UPTIME" >> $GITHUB_OUTPUT
           echo "预览端口已分配: $PORT"
 
       - name: 轮询 preview 状态直到 active（max 600s）
@@ -83,27 +88,13 @@ jobs:
         if: steps.check_ts.outputs.configured == 'true'
         env:
           BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
+          BRANCH_NAME: ${{ github.head_ref }}
+          EXPECTED_PORT: ${{ steps.start_preview.outputs.port }}
+          PREVIEW_INITIAL_BRAIN_UPTIME: ${{ steps.start_preview.outputs.brain_uptime }}
         run: |
-          set -uo pipefail
-          PORT=${{ steps.start_preview.outputs.port }}
-          MAX_WAIT=600; INTERVAL=10; ELAPSED=0
-          STATUS=""
-          while [ $ELAPSED -lt $MAX_WAIT ]; do
-            STATUS=$(curl -sf --connect-timeout 5 --max-time 10 \
-              "${BRAIN_URL}/api/brain/preview/status/${PR_NUMBER}" 2>/dev/null \
-              | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
-            echo "  [${ELAPSED}s] preview status=${STATUS}"
-            if [ "$STATUS" = "active" ]; then
-              echo "预览 Brain 已就绪 (${ELAPSED}s)"
-              break
-            fi
-            sleep $INTERVAL
-            ELAPSED=$((ELAPSED + INTERVAL))
-          done
-          if [ "$STATUS" != "active" ]; then
-            echo "预览 Brain 在 ${MAX_WAIT}s 内未 active（status=${STATUS}），继续健康检查..."
-          fi
+          bash scripts/wait-preview-active.sh
 
       - name: 从 BRAIN_URL 解析主机地址
         id: get_host
