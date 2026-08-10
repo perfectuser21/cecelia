@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 'use strict';
+const path = require('path');
+const { execFileSync } = require('child_process');
 const pg = require('pg');
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://localhost/cecelia' });
+const REPO_ROOT = path.resolve(__dirname, '../..');
+const SCANNER_VERSION = 'db-schema-v2';
 
 const CECELIA_TABLES = new Set([
   'journeys','journey_steps','journey_features','api_registry',
@@ -11,14 +15,27 @@ const CECELIA_TABLES = new Set([
   'system_registry','notion_sync_log','db_schemas','okrs','key_results',
 ]);
 
+function getSourceRevision() {
+  try {
+    const revision = execFileSync('git', ['-C', REPO_ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    if (!revision) throw new Error('empty revision');
+    return revision;
+  } catch (error) {
+    throw new Error(`无法读取 cecelia source revision: ${error.message}`);
+  }
+}
+
 async function main() {
   try {
+    const sourceRevision = getSourceRevision();
+    const { replaceFactSnapshot } = await import('../../packages/brain/src/lib/fact-snapshot-store.js');
     const { rows: tables } = await pool.query(
       `SELECT table_name FROM information_schema.tables
        WHERE table_schema='public' AND table_type='BASE TABLE'
        ORDER BY table_name`,
     );
 
+    const snapshotRows = [];
     for (const { table_name } of tables) {
       const { rows: cols } = await pool.query(
         `SELECT column_name AS name, data_type AS type,
@@ -59,19 +76,13 @@ async function main() {
 
       const area = CECELIA_TABLES.has(table_name) ? 'cecelia' : 'shared';
 
-      await pool.query(
-        `INSERT INTO db_schema_registry (table_name, columns, indexes, foreign_keys, area)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (table_name) DO UPDATE
-           SET columns=$2, indexes=$3, foreign_keys=$4, area=$5, scanned_at=NOW(), updated_at=NOW()`,
-        [table_name, JSON.stringify(cols), JSON.stringify(idxs), JSON.stringify(fks), area],
-      );
+      snapshotRows.push({ table_name, columns: cols, indexes: idxs, foreign_keys: fks, area });
     }
 
-    const { rows: [{ cnt }] } = await pool.query(
-      'SELECT COUNT(*)::int AS cnt FROM db_schema_registry',
-    );
-    console.log(`db_schema_registry 填充完成，共 ${cnt} 条`);
+    await replaceFactSnapshot(pool, 'db_schema', {
+      repo: 'cecelia', sourceRevision, scannerVersion: SCANNER_VERSION, rows: snapshotRows,
+    });
+    console.log(`db_schema_registry 填充完成，共 ${snapshotRows.length} 条`);
   } finally {
     await pool.end();
   }

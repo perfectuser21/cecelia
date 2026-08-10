@@ -5,6 +5,7 @@
 // v2: 多仓库扫描扩展——cecelia / zenithjoy-workspace / zenithjoy-skills
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { cruise } from 'dependency-cruiser';
@@ -29,6 +30,7 @@ export const REPOS = [
 ];
 
 const FILE_RE = /\.(js|mjs|cjs|ts|tsx)$/;
+const SCANNER_VERSION = 'graph-v3';
 // .claude 含 worktrees，扫它会把临时分支代码污染入图谱
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'coverage', '.claude']);
 
@@ -71,6 +73,14 @@ export async function scanRepo(repo, pool) {
   }
 
   try {
+    let sourceRevision;
+    try {
+      sourceRevision = execFileSync('git', ['-C', repo.root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+      if (!sourceRevision) throw new Error('empty revision');
+    } catch (revisionError) {
+      throw new Error(`无法读取 source revision: ${revisionError.message}`);
+    }
+
     // 切换到 repo 根目录（dependency-cruiser 需要）
     process.chdir(repo.root);
 
@@ -86,30 +96,26 @@ export async function scanRepo(repo, pool) {
 
     let importCount = 0;
     // 1) import 边：dependency-cruiser 程序化 API
-    try {
-      const cruiseResult = await cruise(effectiveDirs, {
-        doNotFollow: { path: 'node_modules' },
-        exclude: { path: 'node_modules' },
-      });
-      const out = typeof cruiseResult.output === 'string'
-        ? JSON.parse(cruiseResult.output)
-        : cruiseResult.output;
-      const modules = out.modules || [];
-      for (const m of modules) {
-        if (m.source.includes('node_modules')) continue;
-        for (const d of m.dependencies || []) {
-          const dst = d.resolved || '';
-          if (d.couldNotResolve || !dst || dst.includes('node_modules')) continue;
-          if (d.dependencyTypes && d.dependencyTypes.includes('core')) continue;
-          edges.push({
-            src_path: m.source, dst_path: dst, edge_type: 'import',
-            detail: { via: 'import', dynamic: d.dynamic === true },
-          });
-          importCount++;
-        }
+    const cruiseResult = await cruise(effectiveDirs, {
+      doNotFollow: { path: 'node_modules' },
+      exclude: { path: 'node_modules' },
+    });
+    const out = typeof cruiseResult.output === 'string'
+      ? JSON.parse(cruiseResult.output)
+      : cruiseResult.output;
+    const modules = out.modules || [];
+    for (const m of modules) {
+      if (m.source.includes('node_modules')) continue;
+      for (const d of m.dependencies || []) {
+        const dst = d.resolved || '';
+        if (d.couldNotResolve || !dst || dst.includes('node_modules')) continue;
+        if (d.dependencyTypes && d.dependencyTypes.includes('core')) continue;
+        edges.push({
+          src_path: m.source, dst_path: dst, edge_type: 'import',
+          detail: { via: 'import', dynamic: d.dynamic === true },
+        });
+        importCount++;
       }
-    } catch (cruiseErr) {
-      console.warn(`WARN: repo=${repo.name} dependency-cruiser 失败: ${cruiseErr.message}，跳过 import 边`);
     }
 
     // 2) spawn/http 边：walk + 纯抽取器
@@ -142,7 +148,9 @@ export async function scanRepo(repo, pool) {
     });
 
     // 4) 全量替换写库（I-1: BEGIN;DELETE;INSERT;COMMIT）
-    const { inserted } = await replaceRepoEdges(pool, repo.name, deduped);
+    const { inserted } = await replaceRepoEdges(pool, repo.name, deduped, {
+      sourceRevision, scannerVersion: SCANNER_VERSION,
+    });
 
     // 5) per-repo freshness（I-3: 各仓独立查询，禁止跨仓合并）
     const { rows: frRows } = await pool.query(

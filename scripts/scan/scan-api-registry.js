@@ -2,10 +2,12 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const pg = require('pg');
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://localhost/cecelia' });
 const REPO_ROOT = path.resolve(__dirname, '../..');
+const SCANNER_VERSION = 'api-registry-v2';
 
 const SCAN_DIRS = [
   'apps/api/src',
@@ -50,23 +52,29 @@ function scanDir(dir) {
   return results;
 }
 
+function getSourceRevision() {
+  try {
+    const revision = execFileSync('git', ['-C', REPO_ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    if (!revision) throw new Error('empty revision');
+    return revision;
+  } catch (error) {
+    throw new Error(`无法读取 cecelia source revision: ${error.message}`);
+  }
+}
+
 async function main() {
   try {
+    const sourceRevision = getSourceRevision();
+    const { replaceFactSnapshot } = await import('../../packages/brain/src/lib/fact-snapshot-store.js');
     const routes = [];
     for (const dir of SCAN_DIRS) {
       routes.push(...scanDir(path.join(REPO_ROOT, dir)));
     }
     console.log(`扫描到 ${routes.length} 条路由`);
 
-    for (const r of routes) {
-      await pool.query(
-        `INSERT INTO api_registry (method, path, file_path, line_number, area)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (method, path) DO UPDATE
-           SET file_path=$3, line_number=$4, area=$5, scanned_at=NOW(), updated_at=NOW()`,
-        [r.method, r.path, r.file_path, r.line_number, r.area],
-      );
-    }
+    await replaceFactSnapshot(pool, 'api', {
+      repo: 'cecelia', sourceRevision, scannerVersion: SCANNER_VERSION, rows: routes,
+    });
     console.log('api_registry 填充完成');
   } finally {
     await pool.end();

@@ -4,7 +4,9 @@
  */
 const BATCH = 500;
 
-export async function replaceRepoEdges(pool, repo, edges) {
+export async function replaceRepoEdges(pool, repo, edges, metadata = {}) {
+  const sourceRevision = metadata.sourceRevision || 'legacy-unknown';
+  const scannerVersion = metadata.scannerVersion || 'legacy';
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -15,12 +17,17 @@ export async function replaceRepoEdges(pool, repo, edges) {
       const values = [];
       const params = [];
       chunk.forEach((e, j) => {
-        const base = j * 5;
-        values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`);
-        params.push(repo, e.src_path, e.dst_path, e.edge_type, JSON.stringify(e.detail || {}));
+        const base = j * 7;
+        values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`);
+        params.push(
+          repo, e.src_path, e.dst_path, e.edge_type, JSON.stringify(e.detail || {}),
+          sourceRevision, scannerVersion,
+        );
       });
       await client.query(
-        `INSERT INTO graph_edges (repo, src_path, dst_path, edge_type, detail) VALUES ${values.join(', ')}`,
+        `INSERT INTO graph_edges
+          (repo, src_path, dst_path, edge_type, detail, source_revision, scanner_version)
+         VALUES ${values.join(', ')}`,
         params
       );
       inserted += chunk.length;
