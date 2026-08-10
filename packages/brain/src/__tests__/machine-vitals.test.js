@@ -139,6 +139,21 @@ describe('machine-vitals', () => {
       expect(deleteCall[1][0]).toBe('machine_vitals_stale_alert');
       errSpy.mockRestore();
     });
+
+    // PRD 需求 2 / 事故实证②：machine_vitals_stale_alert 卡 2 天的根因——
+    // 旧代码只在「本进程内 _staleAlerted=true」时才清哨兵；Brain 重启后内存 flag 归零，
+    // 哨兵行却留在 working_memory，采样恢复也永不清除。修法：采样成功无条件幂等 DELETE 哨兵行，
+    // restart 后残留也能被下一次成功采样自愈。
+    it('采样成功无条件清除 stale 哨兵（restart 后 in-memory flag 丢失也能自愈）', async () => {
+      const pool = makePool();
+      // 全新进程、未经历本进程内告警（_staleAlerted 始终 false），直接一次成功采样
+      stubDocker({ psNames: '', memUsage: '' });
+      await sampleMachineVitals(pool);
+      const deleteCall = pool.query.mock.calls.find(
+        ([sql, params]) => sql.includes('DELETE FROM working_memory') && params?.[0] === 'machine_vitals_stale_alert',
+      );
+      expect(deleteCall).toBeTruthy();
+    });
   });
 
   describe('machine_vitals_daily_peak 峰值滚动', () => {
