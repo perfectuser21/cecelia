@@ -210,8 +210,8 @@ jobs:
           DB_USER: cecelia
           DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
         run: |
-          cd packages/brain
           npm ci
+          cd packages/brain
           node src/migrate.js
       - name: Build cecelia-brain image
         run: docker build -f packages/brain/Dockerfile -t cecelia-brain:ci .

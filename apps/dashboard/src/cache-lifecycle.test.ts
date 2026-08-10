@@ -39,4 +39,30 @@ describe('Dashboard 缓存升级生命周期', () => {
     expect(deleteCache).toHaveBeenCalledWith('legacy-navigation-cache');
     expect(storage.setItem).toHaveBeenCalledWith('app-cache-version', 'new-version');
   });
+
+  it('隐私模式拒绝 Web Storage 时仍注销旧 Service Worker 和导航缓存', async () => {
+    const storage = {
+      getItem: vi.fn(() => { throw new DOMException('denied', 'SecurityError'); }),
+      setItem: vi.fn(() => { throw new DOMException('denied', 'SecurityError'); }),
+    };
+    const unregister = vi.fn().mockResolvedValue(true);
+    const serviceWorkers = {
+      getRegistrations: vi.fn().mockResolvedValue([{ unregister }]),
+    };
+    const deleteCache = vi.fn().mockResolvedValue(true);
+    const cacheStorage = {
+      keys: vi.fn().mockResolvedValue(['legacy-navigation-cache']),
+      delete: deleteCache,
+    };
+
+    await cleanupStaleCaches({
+      version: 'new-version',
+      storage,
+      serviceWorkers,
+      cacheStorage,
+    });
+
+    expect(unregister).toHaveBeenCalledOnce();
+    expect(deleteCache).toHaveBeenCalledWith('legacy-navigation-cache');
+  });
 });
