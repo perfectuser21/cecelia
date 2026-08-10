@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import pg from 'pg';
 import { replaceRepoEdges } from '../../lib/graph-store.js';
 import { loadGraphContext } from '../../routes/graph.js';
-import { resolveTestDatabaseUrl } from '../test-database-url.js';
+import { resolveTestDatabaseUrl } from '../../../tests/helpers/test-database-url.js';
 
 const connectionString = resolveTestDatabaseUrl();
 const pool = new pg.Pool({ connectionString, max: 3 });

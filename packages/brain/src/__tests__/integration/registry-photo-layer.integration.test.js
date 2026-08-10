@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
 import { listPhotoLayer } from '../../lib/registry-photo-layer.js';
 import { replaceFactSnapshot } from '../../lib/fact-snapshot-store.js';
-import { resolveTestDatabaseUrl } from '../test-database-url.js';
+import { resolveTestDatabaseUrl } from '../../../tests/helpers/test-database-url.js';
 
 const connectionString = resolveTestDatabaseUrl();
 const pool = new pg.Pool({ connectionString, max: 3 });

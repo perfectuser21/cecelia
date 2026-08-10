@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveTestDatabaseUrl } from './test-database-url.js';
+import { resolveTestDatabaseUrl } from '../../tests/helpers/test-database-url.js';
 
 describe('resolveTestDatabaseUrl', () => {
   it('优先使用 TEST_DATABASE_URL', () => {

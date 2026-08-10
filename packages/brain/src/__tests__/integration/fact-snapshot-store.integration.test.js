@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { replaceFactSnapshot } from '../../lib/fact-snapshot-store.js';
-import { resolveTestDatabaseUrl } from '../test-database-url.js';
+import { resolveTestDatabaseUrl } from '../../../tests/helpers/test-database-url.js';
 
 const connectionString = resolveTestDatabaseUrl();
 const pool = new pg.Pool({ connectionString, max: 2 });
