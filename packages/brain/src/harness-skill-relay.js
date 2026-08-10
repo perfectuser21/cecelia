@@ -207,6 +207,12 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
     })],
   );
 
+  // harness gear 档位（sprint 08091640）：kernel 真读 payload.gear，建 run 时读档并持久化到
+  // initiative_runs.gear，供 derive 状态机每跳分叉。deriveGear 缺省/undefined/null→'default'。
+  // 非法值：executor.js 点火前已 deriveGear 校验并 terminal failed（invalid_gear），到这里 gear
+  // 必为合法枚举；此调用是二次确认（defense-in-depth）。若真抛出，发生在 createRun 之前、
+  // 无半态 run，作为 spawn 失败向上抛给调用方，仍是 fail-closed。
+  const gear = deriveGear(task);
   const createRun = deps.createKernelRun ?? createKernelRun;
   const created = await createRun(dbPool, {
     taskId: task.id,
@@ -217,6 +223,7 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
     host: 'kernel-v1',
     deadlineHours: 8,
     createdSource: 'kernel_dispatch',
+    gear,
   });
   const runId = created.run?.id;
   if (!runId) throw new Error('kernel-v1 run authority returned no id');
