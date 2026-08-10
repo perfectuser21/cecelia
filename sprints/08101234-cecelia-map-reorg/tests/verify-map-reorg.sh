@@ -131,7 +131,7 @@ MIGRATIONS=(
   "packages/brain/migrations/397_journeys_capability_self_ref.sql"
   "packages/brain/migrations/398_seed_two_value_streams_11_capabilities.sql"
   "packages/brain/migrations/399_journey_features_orphan_retire.sql"
-  "packages/brain/migrations/400_cross_cutting_concerns_pool.sql"
+  "packages/brain/migrations/401_cross_cutting_concerns_pool.sql"
 )
 
 for migration in "${MIGRATIONS[@]}"; do
