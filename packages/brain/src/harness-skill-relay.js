@@ -15,6 +15,7 @@
  */
 import pool from './db.js';
 import { findActiveRunBlockingSpawn } from './lib/harness-run-guard.js';
+import { normalizeChangeKind } from './impact-contract/change-kind.js';
 import { execSync, spawn as nodeSpawn } from 'node:child_process';
 import { existsSync, mkdirSync, copyFileSync, openSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -56,14 +57,25 @@ export function detectQuotaWall(output) {
 
 /**
  * P2-1 review 分级判定（主理人规矩：新功能人审，非新功能 auto merge——risk-based gating）。
- * 显式 payload.review_required 永远赢；fix/chore/修复/bug 类标题或 change_kind∈{fix,small,thicken} → false；
+ * 显式 payload.review_required 永远赢；fix/chore/修复/bug 类标题或
+ * change_kind∈{bugfix,parameter_only}（规范值）或旧值{fix,small,thicken}（由 normalizeChangeKind 归一）→ false；
  * 其余（新功能/判定不出）→ true（安全方向：宁可多看一眼）。
+ *
+ * change_kind 独立于 gear：本函数只读 change_kind，不读 gear，两者严格分离。
  */
 export function deriveReviewRequired(task) {
   const explicit = task?.payload?.review_required;
   if (typeof explicit === 'boolean') return explicit;
-  const kind = task?.payload?.change_kind;
-  if (['fix', 'small', 'thicken'].includes(kind)) return false;
+  const rawKind = task?.payload?.change_kind;
+  // 归一化旧值，忽略非法值（非法值视为"不确定" → 安全方向返回 true）
+  let kind = null;
+  try {
+    kind = normalizeChangeKind(rawKind);
+  } catch (_) {
+    // 非法 change_kind 不影响判定，视为未知，走 title 检测
+  }
+  // 规范值：bugfix/parameter_only → 不需要人审
+  if (['bugfix', 'parameter_only'].includes(kind)) return false;
   const title = String(task?.title || '');
   if (/^(fix|hotfix|chore)\b|^(fix|hotfix|chore)\(|修复|\bbug\b/i.test(title)) return false;
   return true;

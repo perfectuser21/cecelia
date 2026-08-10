@@ -13,6 +13,7 @@ import pool from '../db.js';
 import { detectDomain } from '../domain-detector.js';
 import taskErrorReportRoutes from './task-error-report.js';
 import { queueLaneSql } from '../task-queue-lanes.js';
+import { resolveChangeKind, CHANGE_KINDS } from '../impact-contract/change-kind.js';
 
 const router = Router();
 
@@ -43,6 +44,7 @@ router.post('/', async (req, res) => {
       ability_id = null,
       journey_id = null,
       blocked_at: blockedAtInput = null,
+      change_kind: changeKindInput = null,
     } = req.body;
 
     if (!title || title.trim() === '') {
@@ -94,6 +96,23 @@ router.post('/', async (req, res) => {
     }
     // ─── end C2 ─────────────────────────────────────────────────────
 
+    // ─── C3: change_kind 归一化（FR-1 Change Normalizer）────────────
+    // change_kind 与 gear 严格分离：两者独立计算，禁止互相赋值。
+    // 显式传入 change_kind 优先；无则从 task_type 推导；两者均无则 null。
+    // 非法值（空字符串/未知枚举）在入口层拒绝（400），不进 DB。
+    // gear 字段完全不参与本段逻辑（由 executor 层 deriveGear() 独立处理）。
+    let resolvedChangeKind;
+    try {
+      resolvedChangeKind = resolveChangeKind({ change_kind: changeKindInput, task_type });
+    } catch (ckErr) {
+      return res.status(400).json({
+        error: 'invalid_change_kind',
+        details: ckErr.message,
+        allowed: [...CHANGE_KINDS],
+      });
+    }
+    // ─── end C3 ─────────────────────────────────────────────────────
+
     // ─── B1: executor 白名单 + 组合校验 ─────────────────────────────
     const executor = payload?.executor;
     const orchestrator = payload?.orchestrator;
@@ -116,6 +135,12 @@ router.post('/', async (req, res) => {
     // 顶层 journey_id 合并进 payload（支持调用方直接传 journey_id 而非嵌套在 payload 里）
     if (journey_id) {
       payload = { ...(payload ?? {}), journey_id };
+    }
+
+    // change_kind 落入 payload（独立 key，不覆盖 gear）
+    // gear 由 executor 层 deriveGear() 独立计算，本段仅处理 change_kind。
+    if (resolvedChangeKind !== null) {
+      payload = { ...(payload ?? {}), change_kind: resolvedChangeKind };
     }
 
     // 允许创建时指定 pending_postdeploy / blocked 状态，其余状态创建时一律 queued
@@ -217,6 +242,8 @@ router.post('/', async (req, res) => {
     const responseBody = result.rows[0];
     if (recurrenceOfTaskId) responseBody.recurrence_of_task_id = recurrenceOfTaskId;
     if (warnings.length > 0) responseBody.warnings = warnings;
+    // 顶层暴露 change_kind（与 gear 独立字段，两者均来自 payload 但语义完全分离）
+    if (resolvedChangeKind !== null) responseBody.change_kind = resolvedChangeKind;
     res.status(201).json(responseBody);
   } catch (err) {
     if (err.code === '23514') {
