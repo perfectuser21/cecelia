@@ -23,6 +23,18 @@ BRANCH_NAME="${2:?BRANCH_NAME 必须提供}"
 PORT="${3:?PORT 必须提供}"
 DB_NAME="${4:?DB_NAME 必须提供}"
 
+# 瘦克隆：历史表名单（只排除数据，DDL 完整导出，不使用 --exclude-table）
+# 这些表体积大且 preview 环境不需要历史数据，排除后单环境从 3.65GB 降至 <1GB
+THIN_CLONE_EXCLUDE=(
+  memory_stream
+  cecelia_events
+  alertness_metrics
+  checkpoint_writes
+  checkpoint_blobs
+  checkpoints
+  captures
+)
+
 # 找主仓库（Brain container 内 REPO_ROOT 指向 deploy root；宿主直调走 git）
 REPO_ROOT="${REPO_ROOT:-/Users/administrator/perfect21/cecelia}"
 # 容器 /tmp 是 tmpfs:size=100M（docker-compose.yml read_only 安全边界），前端全量 npm ci
@@ -227,8 +239,16 @@ PGPASSWORD="${DB_PASSWORD:-cecelia}" createdb \
   exit 1
 }
 
+log "  瘦克隆排除历史表数据（THIN_CLONE_EXCLUDE）: ${THIN_CLONE_EXCLUDE[*]}"
+PGDUMP_EXCLUDE_ARGS=()
+for _tbl in "${THIN_CLONE_EXCLUDE[@]}"; do
+  PGDUMP_EXCLUDE_ARGS+=("--exclude-table-data=${_tbl}")
+done
+
 if PGPASSWORD="${DB_PASSWORD:-cecelia}" pg_dump \
-    -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" -Fc cecelia 2>>"$LOG_FILE" \
+    -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" -Fc \
+    "${PGDUMP_EXCLUDE_ARGS[@]}" \
+    cecelia 2>>"$LOG_FILE" \
     | PGPASSWORD="${DB_PASSWORD:-cecelia}" pg_restore \
       -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" \
       --no-owner --no-acl -d "$DB_NAME" 2>>"$LOG_FILE"; then
