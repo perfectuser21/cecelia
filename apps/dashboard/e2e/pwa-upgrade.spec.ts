@@ -23,6 +23,13 @@ let serveCurrentBuild = false;
 let server: Server;
 let origin: string;
 const requestPaths: string[] = [];
+const workbenchPaths = [
+  '/workbench/overview',
+  '/workbench/inbox',
+  '/workbench/tasks',
+  '/workbench/activity',
+  '/workbench/projections',
+] as const;
 
 function safePath(root: string, requestPath: string): string {
   const relativePath = normalize(decodeURIComponent(requestPath)).replace(/^(\.\.[/\\])+/, '');
@@ -95,3 +102,37 @@ test('旧版 catch-all Service Worker 升级后保留 Workbench 深层路由', a
   expect(requestPaths.filter((path) => path === '/workbench/tasks')).toHaveLength(1);
   expect(await page.evaluate(() => sessionStorage.getItem('legacy-page-loads'))).toBe('1');
 });
+
+for (const targetPath of workbenchPaths) {
+  test(`隐私存储受限时升级旧 Service Worker 仍保留 ${targetPath}`, async ({ browser }) => {
+    test.setTimeout(90_000);
+    serveCurrentBuild = false;
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    await page.addInitScript(() => {
+      const originalGetItem = Storage.prototype.getItem;
+      Storage.prototype.getItem = function getItem(key: string) {
+        if (location.pathname.startsWith('/workbench')) {
+          throw new DOMException('Storage is unavailable in private mode', 'SecurityError');
+        }
+        return originalGetItem.call(this, key);
+      };
+    });
+
+    await page.goto(origin);
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+    serveCurrentBuild = true;
+
+    await page.goto(`${origin}${targetPath}`);
+    await page.waitForTimeout(10_000);
+    expect(new URL(page.url()).pathname).toBe(targetPath);
+
+    await page.reload();
+    await page.waitForTimeout(10_000);
+    expect(new URL(page.url()).pathname).toBe(targetPath);
+    expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)).toBe(0);
+
+    await context.close();
+  });
+}
