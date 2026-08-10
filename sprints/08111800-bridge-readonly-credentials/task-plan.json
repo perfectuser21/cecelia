@@ -1,0 +1,32 @@
+{
+  "initiative_id": "26741ff8-b981-40d3-b227-ed8dafb5395a",
+  "journey_type": "agent_remote",
+  "journey_type_reason": "改动落在宿主 bridge（cecelia-bridge）派发 claude 的远端 agent 协议路径，非 UI/engine/纯 brain 逻辑",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "宿主 bridge 凭据只读消费：按 attempt 复制独立临时 config dir，权威文件零写入",
+      "scope": "新增 helper packages/brain/scripts/ephemeral-claude-config.cjs（mkdtemp 独立临时目录 + 复制权威目录内容，.credentials.json 为真实副本非 symlink；导出 prepareEphemeralClaudeConfig(accountId)→{configDir,authoritativeDir,cleanup}；源缺失/创建失败即 throw 不回退；cleanup 吞错记日志）；cecelia-bridge.cjs 与同源 cecelia-bridge.js 的 /llm-call spawn 路径改为经 helper 起临时目录、CLAUDE_CONFIG_DIR 指向临时副本、close 后 cleanup、创建失败返回 ok:false+告警不回退权威目录（无 accountId 默认路径同样走临时副本）；产出第 2 步书面结论 step2-conclusion.md",
+      "dod": [
+        "[BEHAVIOR] 权威 ~/.claude-account{N}/.credentials.json 经 bridge 跑完一次 attempt 后 mtime+sha256 零变化（bridge-readonly-e2e.sh redline）",
+        "[BEHAVIOR] claude 子进程 CLAUDE_CONFIG_DIR 指向临时目录且 attempt 后被清理（wiring）",
+        "[BEHAVIOR] 临时目录创建失败 → ok:false 且不回退权威目录（creation-fail）",
+        "[BEHAVIOR] 并发两 attempt 临时目录互不相同、权威零写入（concurrency）",
+        "[BEHAVIOR] 清理失败仅记日志不抛错（cleanup-fail）",
+        "[BEHAVIOR] 容器 + Codex 信封路径既有单测全绿（零回归）",
+        "[ARTIFACT] packages/brain/scripts/ephemeral-claude-config.cjs 导出 prepareEphemeralClaudeConfig",
+        "[ARTIFACT] cecelia-bridge.cjs 与 cecelia-bridge.js 均引用 ephemeral-claude-config",
+        "[ARTIFACT] step2-conclusion.md 记录宿主写入者归零后可收窄让位（含 SKIP:live_interactive_session_owns_refresh 与 4ce29c14）"
+      ],
+      "files": [
+        "packages/brain/scripts/ephemeral-claude-config.cjs",
+        "packages/brain/scripts/cecelia-bridge.cjs",
+        "packages/brain/scripts/cecelia-bridge.js",
+        "sprints/08111800-bridge-readonly-credentials/step2-conclusion.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
