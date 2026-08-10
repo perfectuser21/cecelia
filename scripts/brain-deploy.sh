@@ -381,10 +381,10 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     fi
 
     if [[ "$DRY_RUN" == true ]]; then
-        echo "  [dry-run] docker compose up -d cecelia-brain:${VERSION}"
+        echo "  [dry-run] docker compose up -d node-brain (cecelia-brain:${VERSION})"
     elif ! BRAIN_VERSION="${VERSION}" ENV_REGION="${ENV_REGION}" \
       docker compose --env-file "$ROOT_DIR/.env.docker" \
-        -f "$ROOT_DIR/docker-compose.yml" up -d; then
+        -f "$ROOT_DIR/docker-compose.yml" up -d node-brain; then
         echo ""
         echo "[FAIL] docker compose up -d failed. Rolling back..."
         if [ -f "$VERSIONS_FILE" ] && [ "$(wc -l < "$VERSIONS_FILE")" -ge 2 ]; then
@@ -392,12 +392,12 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
             echo "  Rolling back to v${PREV_VERSION}..."
             BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
               docker compose --env-file "$ROOT_DIR/.env.docker" \
-                -f "$ROOT_DIR/docker-compose.yml" up -d || true
+                -f "$ROOT_DIR/docker-compose.yml" up -d node-brain || true
             echo "  Rolled back to v${PREV_VERSION}"
         else
             echo "  No previous version found. Stopping container."
             docker compose --env-file "$ROOT_DIR/.env.docker" \
-              -f "$ROOT_DIR/docker-compose.yml" down || true
+              -f "$ROOT_DIR/docker-compose.yml" stop node-brain || true
         fi
         exit 1
     fi
@@ -642,12 +642,12 @@ else
         echo "  Rolling back to v${PREV_VERSION}..."
         BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
           docker compose --env-file "$ROOT_DIR/.env.docker" \
-            -f "$ROOT_DIR/docker-compose.yml" up -d
+            -f "$ROOT_DIR/docker-compose.yml" up -d node-brain
         echo "  Rolled back to v${PREV_VERSION}"
     else
         echo "  No previous version found. Stopping container."
         docker compose --env-file "$ROOT_DIR/.env.docker" \
-          -f "$ROOT_DIR/docker-compose.yml" down
+          -f "$ROOT_DIR/docker-compose.yml" stop node-brain
     fi
 fi
 
