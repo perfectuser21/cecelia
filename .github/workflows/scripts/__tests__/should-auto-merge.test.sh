@@ -142,12 +142,24 @@ start_mock_brain 200 '{"ok":true,"harness_owned":true,"matched_by":"branch_task_
 assert_decision "SKIP" "回归 #4755：cp-08101107-04e4690d 命中 harness run → SKIP（事故不重演）" \
   "$BRAIN_URL" "cp-08101107-04e4690d" "4755"
 
-# ── 反向红线：旧判据的漏洞形状（fix(orchestrator): 标题）在新判据下不再决定结果 ──
-# 新脚本不接收标题参数、只凭 Brain 求证；这里断言脚本签名不再依赖标题（无 $PR_TITLE 引用）。
-if grep -qE 'PR_TITLE|feat\\?\(harness\\?\):' "$SCRIPT"; then
-  echo "FAIL: 脚本仍残留标题判据（PR_TITLE / feat(harness): 前缀），未真正改向 Brain 求证"; FAIL=$((FAIL+1))
+# ── 反向红线：新脚本必须真的改向 Brain 求证，而非仍用标题判据 ──
+# 正向断言（comment-proof）：脚本调用 pr-ownership 端点、有 fail-closed 降级路径。
+if grep -q 'pr-ownership' "$SCRIPT"; then
+  echo "PASS: 脚本向 Brain /pr-ownership 端点求证归属"; PASS=$((PASS+1))
 else
-  echo "PASS: 脚本已不依赖 PR 标题判据（不再有 PR_TITLE / feat(harness): 前缀）"; PASS=$((PASS+1))
+  echo "FAIL: 脚本未调用 Brain /pr-ownership 端点，未真正改向 Brain 求证"; FAIL=$((FAIL+1))
+fi
+if grep -q 'skip_degraded' "$SCRIPT"; then
+  echo "PASS: 脚本具备 fail-closed 降级路径"; PASS=$((PASS+1))
+else
+  echo "FAIL: 脚本缺 fail-closed 降级路径"; FAIL=$((FAIL+1))
+fi
+# 负向断言：脚本不得再有「基于 PR 标题做 grep 决策」的活代码（注释里解释旧判据不算）。
+# 剥掉注释行后再 grep，避免命中说明性注释。
+if grep -vE '^[[:space:]]*#' "$SCRIPT" | grep -qE 'PR_TITLE'; then
+  echo "FAIL: 脚本活代码仍引用 PR_TITLE（未脱离标题判据）"; FAIL=$((FAIL+1))
+else
+  echo "PASS: 脚本活代码不再引用 PR_TITLE"; PASS=$((PASS+1))
 fi
 
 # ── 结构守卫（延续原有）：ci.yml auto-merge job 的越 needs 链 / 原生排队 / 最小权限 ──

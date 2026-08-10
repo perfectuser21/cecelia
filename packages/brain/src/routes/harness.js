@@ -237,6 +237,95 @@ router.get('/runs/:id', async (req, res) => {
 });
 
 /**
+ * GET /pr-ownership?branch=<b>&pr=<n> — 只读：判定某 PR / 分支是否属于某条 harness run。
+ *
+ * 决策 e8f6134f / 事故 PR #4755：CI 通用 auto-merge 曾用 PR 标题前缀 feat(harness):
+ * 识别 harness-owned PR，而标题是 LLM 自由撰写字段——标题写成 fix(orchestrator): 的
+ * harness 产出绕过 evaluator+judge 被合并。本端点提供唯一非 LLM 撰写的权威判据：
+ *   1) pr 号命中 initiative_runs.pr_url（generator 终态回调由 kernel 写入，见
+ *      orchestrator/attempt-store.js），matched_by=pr_url；
+ *   2) 分支 = workspace_spec.branch（fleet-worker 分支）命中 harness_attempts.task_bundle
+ *      （kernel dispatch 写入），matched_by=workspace_branch；
+ *   3) cp-<时间>-<8位 task 短 id> 分支：以短 id 命中 harness_attempts.task_bundle 的
+ *      inputs.task_id 前缀，或 initiative_runs.current_task_id 前缀，matched_by=branch_task_id。
+ * 任一命中 → harness_owned=true。全未命中 → harness_owned=false。
+ * DB 报错 → 500（调用方 should-auto-merge.sh 据此 fail-closed 跳过通用 auto-merge，
+ * 绝不因判定失败默认 MERGE 而架空裁判权）。
+ */
+router.get('/pr-ownership', async (req, res) => {
+  const branch = req.query.branch ? String(req.query.branch).trim() : '';
+  const prRaw = req.query.pr ? String(req.query.pr).trim() : '';
+  const pr = /^\d+$/.test(prRaw) ? prRaw : ''; // 只接受纯数字 PR 号，脏参数一律丢弃
+  if (!branch && !pr) {
+    return res.status(400).json({ ok: false, error: 'branch 或 pr（纯数字）查询参数至少给一个' });
+  }
+  try {
+    // 1) 权威：PR 号命中 initiative_runs.pr_url（kernel 回调写入，LLM 无法伪造）
+    if (pr) {
+      const { rows } = await pool.query(
+        `SELECT id FROM initiative_runs
+          WHERE pr_url LIKE '%/pull/' || $1
+             OR pr_url LIKE '%/pull/' || $1 || '/%'
+          ORDER BY updated_at DESC NULLS LAST
+          LIMIT 1`,
+        [pr]
+      );
+      if (rows.length > 0) {
+        return res.json({ ok: true, harness_owned: true, matched_by: 'pr_url', run_id: rows[0].id });
+      }
+    }
+    if (branch) {
+      // 2) fleet-worker 分支：workspace_spec.branch 精确命中 harness_attempts
+      const wb = await pool.query(
+        `SELECT run_id FROM harness_attempts
+          WHERE task_bundle->'inputs'->'workspace_spec'->>'branch' = $1
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [branch]
+      );
+      if (wb.rows.length > 0) {
+        return res.json({
+          ok: true, harness_owned: true, matched_by: 'workspace_branch', run_id: wb.rows[0].run_id,
+        });
+      }
+      // 3) cp-<时间>-<8位 task 短 id>：取短 id 命中 task_bundle inputs.task_id / run.current_task_id
+      const m = branch.match(/^cp-[0-9]{8,10}-([0-9a-f]{8})/i);
+      if (m) {
+        const shortId = m[1].toLowerCase();
+        const ta = await pool.query(
+          `SELECT run_id FROM harness_attempts
+            WHERE LEFT(LOWER(task_bundle->'inputs'->>'task_id'), 8) = $1
+            ORDER BY created_at DESC
+            LIMIT 1`,
+          [shortId]
+        );
+        if (ta.rows.length > 0) {
+          return res.json({
+            ok: true, harness_owned: true, matched_by: 'branch_task_id', run_id: ta.rows[0].run_id,
+          });
+        }
+        const ir = await pool.query(
+          `SELECT id FROM initiative_runs
+            WHERE LEFT(LOWER(current_task_id::text), 8) = $1
+            ORDER BY started_at DESC
+            LIMIT 1`,
+          [shortId]
+        );
+        if (ir.rows.length > 0) {
+          return res.json({
+            ok: true, harness_owned: true, matched_by: 'branch_task_id', run_id: ir.rows[0].id,
+          });
+        }
+      }
+    }
+    return res.json({ ok: true, harness_owned: false, matched_by: null, run_id: null });
+  } catch (err) {
+    console.error('[GET /harness/pr-ownership]', err.message);
+    return res.status(500).json({ ok: false, error: 'pr_ownership_query_failed' });
+  }
+});
+
+/**
  * GET /runs/:id/progress — B52 Pipeline 进度百分比
  *
  * 从 initiative_run_events 读已完成节点，映射到固定百分比，返回当前进度。
