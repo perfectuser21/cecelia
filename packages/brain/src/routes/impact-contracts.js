@@ -30,6 +30,7 @@ import {
   getActiveImpactContract,
   getImpactContractById,
 } from '../impact-contract/contract-store.js';
+import { evaluateStructureGate } from '../impact-contract/structure-gate.js';
 
 const router = Router();
 
@@ -160,6 +161,65 @@ router.post('/impact-contracts', async (req, res) => {
     return res.status(created ? 201 : 200).json(contract);
   } catch (err) {
     console.error('[impact-contracts] POST /impact-contracts error:', err);
+    return res.status(500).json({ error: 'internal_server_error', message: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tasks/:taskId/impact-contract/evaluate
+ * 运行 Structure Gate：编码前合同校验（FR-3）
+ *
+ * 请求 body：合同内容（与 POST impact-contract 相同格式）
+ * 成功放行：201 + { gate: 'pass', contract: {...} }
+ * Mapper unavailable：503 + { gate: 'blocked', reason: 'mapper_unavailable', retryable: true }
+ * Mapper stale：503 + { gate: 'blocked', reason: 'mapper_stale', retryable: true }
+ * Revision mismatch：409 + { gate: 'blocked', reason: 'revision_mismatch', retryable: true }
+ * change_kind 缺失：400 + { gate: 'blocked', reason: 'change_kind_missing' }
+ * Schema 非法：400 + { error, fields }
+ */
+router.post('/tasks/:taskId/impact-contract/evaluate', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const body = { ...req.body, task_id: taskId };
+
+    // Schema 验证
+    const validation = validateImpactContract(body);
+    if (!validation.success) {
+      return res.status(400).json({
+        error: '非法 Impact Contract：schema 验证失败',
+        fields: formatZodErrors(validation.error),
+      });
+    }
+
+    const parsed = validation.data;
+
+    // 构造 task 对象（含 change_kind）
+    const task = {
+      id: taskId,
+      change_kind: parsed.change_kind,
+    };
+
+    // 构造合同对象（含 contract_body）
+    const contractInput = {
+      ...parsed,
+      task_id: taskId,
+      contract_body: buildContractBody(parsed),
+    };
+
+    // 运行 Structure Gate
+    const result = await evaluateStructureGate({
+      db: pool,
+      task,
+      contract: contractInput,
+    });
+
+    return res.status(result.httpStatus).json(
+      result.gate === 'pass'
+        ? { gate: result.gate, contract: result.contract }
+        : { gate: result.gate, reason: result.reason, retryable: result.retryable ?? false }
+    );
+  } catch (err) {
+    console.error('[impact-contracts] POST /tasks/:taskId/impact-contract/evaluate error:', err);
     return res.status(500).json({ error: 'internal_server_error', message: err.message });
   }
 });
