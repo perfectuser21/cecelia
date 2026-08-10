@@ -463,7 +463,7 @@ describe('selfcheck schema version', () => {
     // 390 = capture_atoms unique(capture_id,target_type) — F6加厚幂等修复（ed911a7c）.
     // 392 = 验收一体两面数据层（AI 四列 + runs.detail + 7 值状态机 + (run_id,check_key) 唯一），故推进地板到 392。
     // 393 = GP 胶水参数化（golden_paths.base_repo + target_environment 两可空列），故推进地板到 393。
-    // 395 = Workbench projection outbox/commands/targets + captures canonical destination 列。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('395');
+    // 397 = versioned fact snapshot metadata + repo-scoped unique keys。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('397');
   });
 });

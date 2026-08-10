@@ -17,12 +17,17 @@ describe('replaceRepoEdges', () => {
       { src_path: 'a.js', dst_path: 'b.js', edge_type: 'import', detail: { via: 'import' } },
       { src_path: 'a.js', dst_path: 'cmd:git', edge_type: 'spawn', detail: { line: 3, via: 'execSync' } },
     ];
-    const r = await replaceRepoEdges(pool, 'cecelia', edges);
+    const r = await replaceRepoEdges(pool, 'cecelia', edges, {
+      sourceRevision: 'abc123', scannerVersion: 'graph-v3',
+    });
     expect(r.inserted).toBe(2);
     expect(calls[0].sql).toContain('BEGIN');
     expect(calls[1].sql).toContain('DELETE FROM graph_edges');
     expect(calls[1].params).toEqual(['cecelia']);
     expect(calls[2].sql).toContain('INSERT INTO graph_edges');
+    expect(calls[2].sql).toContain('source_revision');
+    expect(calls[2].sql).toContain('scanner_version');
+    expect(calls[2].params).toEqual(expect.arrayContaining(['abc123', 'graph-v3']));
     expect(calls[calls.length - 1].sql).toContain('COMMIT');
     expect(client.release).toHaveBeenCalled();
   });
