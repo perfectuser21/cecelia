@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import * as taskViewModule from '@features/core/gtd/pages/GTDTasks';
+import { filterTasksByView } from '@features/core/gtd/pages/task-view-filter';
 
 const tasks = [
   { id: 'ready-1', title: 'Brain 自动任务', status: 'queued', queue_lane: 'ready', claimed_by: null },
@@ -9,9 +9,9 @@ const tasks = [
 
 describe('Workbench Task queue lanes', () => {
   it('separates Brain, IDE and Pipeline queues instead of mixing them as Waiting', () => {
-    expect(taskViewModule.filterTasksByView).toBeTypeOf('function');
-    expect(taskViewModule.filterTasksByView(tasks, 'ready').map(task => task.id)).toEqual(['ready-1']);
-    expect(taskViewModule.filterTasksByView(tasks, 'ide').map(task => task.id)).toEqual(['ide-1']);
-    expect(taskViewModule.filterTasksByView(tasks, 'pipeline').map(task => task.id)).toEqual(['pipeline-1']);
+    expect(filterTasksByView).toBeTypeOf('function');
+    expect(filterTasksByView(tasks, 'ready').map(task => task.id)).toEqual(['ready-1']);
+    expect(filterTasksByView(tasks, 'ide').map(task => task.id)).toEqual(['ide-1']);
+    expect(filterTasksByView(tasks, 'pipeline').map(task => task.id)).toEqual(['pipeline-1']);
   });
 });

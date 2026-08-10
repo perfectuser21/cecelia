@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ListTodo } from 'lucide-react';
 import DatabaseView, { StatusBadge, PriorityBadge, type Column } from '../components/DatabaseView';
+import { filterTasksByView, type TaskView } from './task-view-filter';
 
 interface Task {
   id: string;
@@ -26,8 +27,6 @@ interface Project {
   id: string;
   title: string;
 }
-
-export type TaskView = 'all' | 'ready' | 'ide' | 'pipeline' | 'in_progress' | 'blocked' | 'done' | 'dropped';
 
 const TASK_VIEWS: Array<{ id: TaskView; label: string }> = [
   { id: 'all', label: 'All' },
@@ -60,21 +59,6 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   code_review: '代码审查',
   research: '调研',
 };
-
-export function filterTasksByView<T extends {
-  status: string;
-  claimed_by: string | null;
-  queue_lane?: string | null;
-}>(tasks: T[], view: TaskView): T[] {
-  return tasks.filter(task => {
-    if (view === 'ready' || view === 'ide' || view === 'pipeline') return task.queue_lane === view;
-    if (view === 'in_progress') return task.status === 'in_progress' && Boolean(task.claimed_by);
-    if (view === 'blocked') return ['blocked', 'paused', 'failed', 'quarantined'].includes(task.status);
-    if (view === 'done') return task.status === 'completed';
-    if (view === 'dropped') return task.status === 'cancelled';
-    return true;
-  });
-}
 
 export default function GTDTasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
