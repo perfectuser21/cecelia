@@ -91,11 +91,27 @@ const server = http.createServer((req, res) => {
         const { spawn } = require('child_process');
         const env = Object.assign({}, process.env);
         delete env.CLAUDECODE;
-        // 账号轮换：如果传入 accountId，用 homedir 拼出正确路径
-        if (accountId) {
-          const { homedir } = require('os');
-          const { join } = require('path');
-          env.CLAUDE_CONFIG_DIR = join(homedir(), '.claude-' + accountId);
+        // 凭据只读消费（根因修复：消除多写入者竞态，同 cecelia-bridge.cjs）——不再把 CLAUDE_CONFIG_DIR
+        // 直接指向权威账号目录 ~/.claude-account{N}；改为按 attempt 复制一份独立临时 config dir，
+        // claude 只写副本，权威文件全程只读。无 accountId 时默认 account1（同样走临时副本）。
+        const { provisionConfigDir, cleanupConfigDir } = require('./lib/claude-config-provision.cjs');
+        let provisionedConfigDir = null;
+        const cleanupConfig = () => {
+          if (provisionedConfigDir) {
+            cleanupConfigDir(provisionedConfigDir);
+            provisionedConfigDir = null;
+          }
+        };
+        try {
+          const { configDir } = provisionConfigDir({ accountId });
+          provisionedConfigDir = configDir;
+          env.CLAUDE_CONFIG_DIR = configDir;
+        } catch (provErr) {
+          // 创建失败 → 主流程失败并告警，禁止回退到直接用权威目录。
+          console.error(`[bridge] /llm-call config dir provision failed: ${provErr.message}`);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: `config dir provision failed: ${provErr.message}` }));
+          return;
         }
 
         // cwd 隔离：LLM 调用的 session 不污染 cecelia 项目的 /resume 列表
@@ -120,6 +136,7 @@ const server = http.createServer((req, res) => {
 
         child.on('close', (code) => {
           clearTimeout(timer);
+          cleanupConfig();
           const elapsed = Date.now() - startTime;
 
           if (timedOut) {
@@ -144,6 +161,7 @@ const server = http.createServer((req, res) => {
 
         child.on('error', (err) => {
           clearTimeout(timer);
+          cleanupConfig();
           const elapsed = Date.now() - startTime;
           console.error(`[bridge] /llm-call spawn error (${elapsed}ms): ${err.message}`);
           res.writeHead(500, { 'Content-Type': 'application/json' });
