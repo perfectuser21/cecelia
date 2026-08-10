@@ -1,6 +1,3 @@
-contract_branch: cp-harness-propose-r1-9b3a2609-r78493175-a4
-sprint_dir: sprints/08111930-bridge-readonly-credentials
-
 ---
 skeleton: false
 journey_type: agent_remote

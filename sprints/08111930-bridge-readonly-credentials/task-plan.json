@@ -1,0 +1,28 @@
+{
+  "initiative_id": "78493175-3659-4202-ae0e-9d2cb87f523e",
+  "journey_type": "agent_remote",
+  "journey_type_reason": "改宿主 bridge 派发执行体（claude）的凭据投递方式，命中 bridge/远端执行体协议分支",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "宿主 bridge /llm-call 凭据只读消费：按 attempt 复制独立临时 config dir + 结束清理 + 权威文件只读",
+      "scope": "新增 packages/brain/scripts/lib/claude-config-provision.cjs（provisionConfigDir/cleanupConfigDir/resolveAuthoritativeConfigDir）；cecelia-bridge.cjs 与 cecelia-bridge.js 的 /llm-call 在 spawn claude 前用该 helper 建独立临时 config dir 并令 CLAUDE_CONFIG_DIR 指向副本，child close/error/timeout 后清理副本；provision 失败转 500+告警不回退权威目录，cleanup 失败仅记日志。不动容器/Codex/gear/evaluator/judge/mergeGate，不改 infrastructure 仓库，不收窄让位逻辑。",
+      "dod": [
+        "[BEHAVIOR] INV-1 经 bridge 一次 attempt 后权威 .credentials.json mtime+sha256 完全不变（e2e redline）",
+        "[BEHAVIOR] CLAUDE_CONFIG_DIR 指向临时副本非权威目录且结束后清理（e2e isolation）",
+        "[BEHAVIOR] 创建失败抛错不回退 / 清理失败仅记日志（unit）",
+        "[BEHAVIOR] 并发两 attempt 临时目录互异且权威未写（e2e concurrency）",
+        "[BEHAVIOR] 零回归 docker-executor + credential-broker 既有单测全绿",
+        "[ARTIFACT] claude-config-provision.cjs + 两个 bridge 文件接入 provisionConfigDir"
+      ],
+      "files": [
+        "packages/brain/scripts/lib/claude-config-provision.cjs",
+        "packages/brain/scripts/cecelia-bridge.cjs",
+        "packages/brain/scripts/cecelia-bridge.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
