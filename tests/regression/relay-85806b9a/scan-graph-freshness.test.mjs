@@ -9,11 +9,30 @@
  * 这些测试在实现前应全部 FAIL（RED阶段）。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import pg from 'pg';
 import { computeFreshness } from '../../../packages/brain/src/lib/registry-freshness.js';
 import { replaceRepoEdges } from '../../../packages/brain/src/lib/graph-store.js';
 
-const DB_URL = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgresql://localhost/cecelia_test';
+const DB_URL = process.env.TEST_DATABASE_URL || 'postgresql://localhost/cecelia_test';
+const DB_NAME = decodeURIComponent(new URL(DB_URL).pathname.slice(1));
+if (!/(_test|_scratch)$/.test(DB_NAME)) throw new Error(`拒绝连接非测试库: ${DB_NAME}`);
+const REVISION_A = 'a'.repeat(40);
+const REVISION_B = 'b'.repeat(40);
+
+function makeTempRepo(name) {
+  const dir = path.join('/tmp', `${name}-${Date.now()}`);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'stub.js'), 'export const x = 1;\n');
+  execFileSync('git', ['init', dir], { stdio: 'ignore' });
+  execFileSync('git', ['-C', dir, 'config', 'user.name', 'Scan Graph Test']);
+  execFileSync('git', ['-C', dir, 'config', 'user.email', 'scan-graph-test@example.invalid']);
+  execFileSync('git', ['-C', dir, 'add', 'stub.js']);
+  execFileSync('git', ['-C', dir, 'commit', '-m', 'test fixture'], { stdio: 'ignore' });
+  return dir;
+}
 
 describe('[B-3 + I-3] per-repo freshness 独立性', () => {
   let pool;
@@ -25,6 +44,7 @@ describe('[B-3 + I-3] per-repo freshness 独立性', () => {
   afterAll(async () => {
     // 清理测试数据
     await pool.query("DELETE FROM graph_edges WHERE repo LIKE 'freshness-test-%'");
+    await pool.query("DELETE FROM fact_snapshot_headers WHERE kind = 'graph' AND repo LIKE 'freshness-test-%'");
     await pool.end();
   });
 
@@ -34,18 +54,23 @@ describe('[B-3 + I-3] per-repo freshness 独立性', () => {
     expect(f.latest_scan).toBeNull();
   });
 
-  it('computeFreshness 接受刚写入的时间戳 → stale: false', () => {
+  it('computeFreshness 接受刚写入且 provenance 完整的 metadata → fresh', () => {
     const now = new Date();
     const justNow = new Date(now.getTime() - 60_000); // 1分钟前
-    const f = computeFreshness(justNow, now);
+    const f = computeFreshness({
+      scanned_at: justNow, source_revision: REVISION_A, scanner_version: 'graph-v3',
+    }, now);
     expect(f.stale).toBe(false);
+    expect(f.status).toBe('fresh');
     expect(f.age_hours).toBeLessThan(1);
   });
 
   it('computeFreshness 接受 25h 前时间戳 → stale: true', () => {
     const now = new Date();
     const old = new Date(now.getTime() - 25 * 3600_000);
-    const f = computeFreshness(old, now);
+    const f = computeFreshness({
+      scanned_at: old, source_revision: REVISION_A, scanner_version: 'graph-v3',
+    }, now);
     expect(f.stale).toBe(true);
     expect(f.age_hours).toBeGreaterThan(24);
   });
@@ -54,26 +79,22 @@ describe('[B-3 + I-3] per-repo freshness 独立性', () => {
     // 写入两个 repo 的边（scanned_at 由 DB DEFAULT NOW() 自动设置）
     await replaceRepoEdges(pool, 'freshness-test-A', [
       { src_path: 'a1.js', dst_path: 'a2.js', edge_type: 'import', detail: {} },
-    ]);
+    ], { sourceRevision: REVISION_A, scannerVersion: 'graph-v3' });
     await replaceRepoEdges(pool, 'freshness-test-B', [
       { src_path: 'b1.js', dst_path: 'b2.js', edge_type: 'import', detail: {} },
-    ]);
+    ], { sourceRevision: REVISION_B, scannerVersion: 'graph-v3' });
 
     // 各自独立查询 max(scanned_at)
     const { rows: rowA } = await pool.query(
-      "SELECT max(scanned_at) AS latest FROM graph_edges WHERE repo = 'freshness-test-A'"
+      "SELECT scanned_at, source_revision, scanner_version FROM fact_snapshot_headers WHERE kind = 'graph' AND repo = 'freshness-test-A'"
     );
     const { rows: rowB } = await pool.query(
-      "SELECT max(scanned_at) AS latest FROM graph_edges WHERE repo = 'freshness-test-B'"
+      "SELECT scanned_at, source_revision, scanner_version FROM fact_snapshot_headers WHERE kind = 'graph' AND repo = 'freshness-test-B'"
     );
 
     // 合并查询（应该不被使用）
-    const { rows: rowAll } = await pool.query(
-      "SELECT max(scanned_at) AS latest FROM graph_edges WHERE repo IN ('freshness-test-A','freshness-test-B')"
-    );
-
-    const fA = computeFreshness(rowA[0]?.latest ?? null);
-    const fB = computeFreshness(rowB[0]?.latest ?? null);
+    const fA = computeFreshness(rowA[0] ?? null);
+    const fB = computeFreshness(rowB[0] ?? null);
 
     // 两个 repo 各自 stale=false
     expect(fA.stale).toBe(false);
@@ -116,13 +137,9 @@ describe('[B-3 + I-3] per-repo freshness 独立性', () => {
     const scanRepoList = scanGraphModule?.scanRepoList;
     if (!scanRepoList) return;
 
-    // 用临时目录模拟一个极小的 repo
-    import('node:fs').then(async (fsModule) => {
-      const fs = fsModule.default;
-      const tmpDir = '/tmp/freshness-test-repo-' + Date.now();
-      fs.mkdirSync(tmpDir, { recursive: true });
-      fs.writeFileSync(tmpDir + '/stub.js', 'export const x = 1;\n');
-
+    // 用带真实 revision 的极小 Git repo 验证完整扫描生命周期。
+    const tmpDir = makeTempRepo('freshness-test-repo');
+    try {
       const results = await scanRepoList([
         { name: 'freshness-test-tmp', root: tmpDir },
       ], pool);
@@ -131,11 +148,16 @@ describe('[B-3 + I-3] per-repo freshness 独立性', () => {
       expect(result?.freshness).toBeDefined();
       expect(typeof result.freshness.stale).toBe('boolean');
       expect(result.freshness.stale).toBe(false); // 刚扫完
+      expect(result.freshness).toMatchObject({
+        status: 'fresh', reason_code: null, scanner_version: 'graph-v3',
+      });
+      expect(result.freshness.source_revision).toMatch(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i);
 
-      // 清理
+    } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
       await pool.query("DELETE FROM graph_edges WHERE repo = 'freshness-test-tmp'");
-    });
+      await pool.query("DELETE FROM fact_snapshot_headers WHERE kind = 'graph' AND repo = 'freshness-test-tmp'");
+    }
   });
 });
 
@@ -144,7 +166,10 @@ describe('[I-3] 禁跨仓合并场景：一仓 stale 不被另一仓活跃遮蔽
     // X 无数据 → stale: true
     const fX = computeFreshness(null);
     // Y 刚扫描 → stale: false
-    const fY = computeFreshness(new Date());
+    const metadata = {
+      scanned_at: new Date(), source_revision: REVISION_A, scanner_version: 'graph-v3',
+    };
+    const fY = computeFreshness(metadata);
 
     // 关键：不能把 Y 的时间戳赋给 X
     expect(fX.stale).toBe(true);
@@ -153,7 +178,7 @@ describe('[I-3] 禁跨仓合并场景：一仓 stale 不被另一仓活跃遮蔽
     // 禁止跨仓合并（如果用 Math.max 取两者最大值，X 会得到 Y 的时间，错误地变成 stale:false）
     // 验证：拿 Y 的时间去算 X 的 freshness → 也应该是 false（这是错误行为，实现不应这么做）
     // 但我们在合同层验证：实现必须分别查，不能用同一个 latestScanAt 共享
-    const fXWrong = computeFreshness(new Date()); // 错误实现：用 Y 的时间算 X
+    const fXWrong = computeFreshness(metadata); // 错误实现：用 Y 的 metadata 算 X
     expect(fXWrong.stale).toBe(false); // 这证明跨仓合并会导致误判
     // 正确实现必须用各自独立的查询，不能复用
   });
