@@ -127,19 +127,19 @@
 
 ## Test Contract
 
-| BEHAVIOR | 覆盖描述 | Test File | 测试名称子串 |
-|----------|----------|-----------|------------|
-| BEHAVIOR-01 | 步骤8 内联孤儿分支清理，无 branch-gc.sh 引用 | scripts/ops/__tests__/janitor/test-step8-branch.sh | branch-gc.sh 无引用 |
-| BEHAVIOR-02 | 步骤9 孤儿 worktree 识别与 Guard A 三查 | scripts/ops/__tests__/janitor/test-step9-orphan-worktree.sh | 孤儿 worktree 被清理 |
-| BEHAVIOR-02 | Guard A 三查保护活 worktree | scripts/ops/__tests__/janitor/test-step9-guard-a.sh | Guard A 三查保护 |
-| BEHAVIOR-03 | N>0 但 M=0 显式 FAIL + 退出码非零 | scripts/ops/__tests__/janitor/test-fail-explicit.sh | FAIL 显式化退出非零 |
-| BEHAVIOR-04 | Brain 告警 description 非空含磁盘水位 | scripts/ops/__tests__/janitor/test-brain-alert.sh | description 非空 |
-| BEHAVIOR-06 | 运行结束追加一行到 ledger.csv | scripts/ops/__tests__/janitor/test-ledger.sh | ledger 追加一行 |
-| BEHAVIOR-07 | packages/workflows/skills/janitor/ 不存在 | scripts/ops/__tests__/janitor/test-fossil-deleted.sh | 死化石目录不存在 |
-| BEHAVIOR-09 | 既有回归测试迁入后全绿 | scripts/ops/__tests__/janitor/janitor_orphan.test.sh | janitor orphan |
-| BEHAVIOR-09 | etime 八进制修复回归 | scripts/ops/__tests__/janitor/janitor_etime_octal.test.sh | etime octal |
-| BEHAVIOR-09 | cecelia 常驻豁免回归 | scripts/ops/__tests__/janitor/janitor_kill_exempt.test.sh | kill exempt |
-| BEHAVIOR-09 | audiomxd taskpolicy 回归 | scripts/ops/__tests__/janitor/janitor_audiomxd_log_format.test.sh | audiomxd |
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|------|-----------|---------------|------------|
+| 步骤8 内联孤儿分支清理 | `tests/test-step8-branch.sh` | BEHAVIOR-01 | → FAIL（janitor.sh 缺内联分支删除逻辑） |
+| 步骤9 孤儿 worktree 识别 | `tests/test-step9-orphan-worktree.sh` | BEHAVIOR-02 | → FAIL（步骤9未扫 ~/worktrees） |
+| 步骤9 Guard A 三查保护 | `tests/test-step9-guard-a.sh` | BEHAVIOR-02 | → FAIL（Guard A 三查未实现） |
+| N>0 M=0 显式 FAIL | `tests/test-fail-explicit.sh` | BEHAVIOR-03 | → FAIL（无 FAILED_STEPS 计数） |
+| Brain 告警 description 非空 | `tests/test-brain-alert.sh` | BEHAVIOR-04 | → FAIL（description 为空） |
+| ledger.csv 追加一行 | `tests/test-ledger.sh` | BEHAVIOR-06 | → FAIL（无 ledger 写入） |
+| 死化石目录不存在 | `tests/test-fossil-deleted.sh` | BEHAVIOR-07 | → FAIL（packages/workflows/skills/janitor/ 存在） |
+| janitor orphan 回归 | `scripts/ops/__tests__/janitor/janitor_orphan.test.sh` | BEHAVIOR-09 | → FAIL（迁移前） |
+| etime 八进制修复回归 | `scripts/ops/__tests__/janitor/janitor_etime_octal.test.sh` | BEHAVIOR-09 | → FAIL（etime 修复缺失） |
+| cecelia 常驻豁免回归 | `scripts/ops/__tests__/janitor/janitor_kill_exempt.test.sh` | BEHAVIOR-09 | → FAIL（豁免逻辑缺失） |
+| audiomxd taskpolicy 回归 | `scripts/ops/__tests__/janitor/janitor_audiomxd_log_format.test.sh` | BEHAVIOR-09 | → FAIL（audiomxd 处理缺失） |
 
 ---
 
