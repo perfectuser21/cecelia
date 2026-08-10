@@ -67,7 +67,8 @@ echo "=== run-all-scans.sh cron PATH 测试 ==="
 SUCCESS_LOG="$TMPD/default.log"
 SUCCESS_OUT="$TMPD/default.out"
 SUCCESS_RC=0
-env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" SCAN_LOG="$SUCCESS_LOG" \
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
+  NODE_FALLBACK_PATHS="$CONTROL_BIN/missing" SCAN_LOG="$SUCCESS_LOG" \
   /bin/bash "$RUNNER" > "$SUCCESS_OUT" 2>&1 || SUCCESS_RC=$?
 
 if [[ $SUCCESS_RC -eq 0 ]]; then
@@ -85,7 +86,8 @@ fi
 FAIL_LOG="$TMPD/failure.log"
 FAIL_OUT="$TMPD/failure.out"
 FAIL_RC=0
-env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" SCAN_LOG="$FAIL_LOG" \
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
+  NODE_FALLBACK_PATHS="$CONTROL_BIN/missing" SCAN_LOG="$FAIL_LOG" \
   FAIL_SCANNER="fail.js" SCAN_SCRIPTS="before.js fail.js after.mjs" \
   /bin/bash "$RUNNER" > "$FAIL_OUT" 2>&1 || FAIL_RC=$?
 
@@ -110,7 +112,8 @@ fi
 EMPTY_LOG="$TMPD/empty.log"
 EMPTY_OUT="$TMPD/empty.out"
 EMPTY_RC=0
-env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" SCAN_LOG="$EMPTY_LOG" \
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
+  NODE_FALLBACK_PATHS="$CONTROL_BIN/missing" SCAN_LOG="$EMPTY_LOG" \
   SCAN_SCRIPTS=$' \n\t ' /bin/bash "$RUNNER" > "$EMPTY_OUT" 2>&1 || EMPTY_RC=$?
 
 if [[ $EMPTY_RC -eq 2 && "$(cat "$EMPTY_OUT")" == *"ERROR: SCAN_SCRIPTS"* ]]; then
@@ -122,7 +125,8 @@ fi
 MULTILINE_LOG="$TMPD/multiline.log"
 MULTILINE_OUT="$TMPD/multiline.out"
 MULTILINE_RC=0
-env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" SCAN_LOG="$MULTILINE_LOG" \
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
+  NODE_FALLBACK_PATHS="$CONTROL_BIN/missing" SCAN_LOG="$MULTILINE_LOG" \
   SCAN_SCRIPTS=$'first.js\nsecond.mjs\tthird.js' \
   /bin/bash "$RUNNER" > "$MULTILINE_OUT" 2>&1 || MULTILINE_RC=$?
 
@@ -136,6 +140,19 @@ if [[ $MULTILINE_RC -eq 0 && -f "$MULTILINE_LOG" && "$(cat "$MULTILINE_LOG")" ==
   pass "SCAN_SCRIPTS 按所有 shell 空白解析"
 else
   fail "SCAN_SCRIPTS 多行或 tab 解析不完整(rc=$MULTILINE_RC)"
+fi
+
+MISSING_NODE_LOG="$TMPD/missing-node.log"
+MISSING_NODE_OUT="$TMPD/missing-node.out"
+MISSING_NODE_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$CONTROL_BIN/missing-node" \
+  NODE_FALLBACK_PATHS="$CONTROL_BIN/missing-fallback" SCAN_LOG="$MISSING_NODE_LOG" \
+  SCAN_SCRIPTS="probe.js" /bin/bash "$RUNNER" > "$MISSING_NODE_OUT" 2>&1 || MISSING_NODE_RC=$?
+
+if [[ $MISSING_NODE_RC -eq 127 && ! -e "$MISSING_NODE_LOG" && "$(cat "$MISSING_NODE_OUT")" == *"ERROR: 找不到可执行的 Node.js"* ]]; then
+  pass "无可用 Node 时在运行 scanner 前清晰报错并 exit 127"
+else
+  fail "NODE_FALLBACK_PATHS 未限制绝对路径回退(rc=$MISSING_NODE_RC)"
 fi
 
 echo ""
