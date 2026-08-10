@@ -252,6 +252,19 @@ async function executeTick() {
   let decisionEngineResult = null;
   let thalamusResult = null;
 
+  // 0-pre. 阻断类状态位 TTL 自愈（tick_draining 等）——必须最先跑，即便本跳进入 PANIC
+  // 早退也已完成，避免「健康地停摆」。超 TTL 的 drain 会被自动解除并留痕告警（PRD 需求 1）。
+  try {
+    const { selfHealBlockingStates } = await import('./blocking-states.js');
+    const heal = await selfHealBlockingStates(pool);
+    for (const r of heal?.recovered ?? []) {
+      actionsTaken.push({ action: 'blocking_state_auto_recovered', ...r });
+      tickLog(`[tick] 阻断位自愈：${r.key} 卡住 ${r.stuck_minutes}min，已自动解除`);
+    }
+  } catch (healErr) {
+    console.error('[tick] blocking-state self-heal failed (non-fatal):', healErr.message);
+  }
+
   // 0. Evaluate alertness level
   // ALERTNESS_LEVELS: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
   publishCognitiveState({ phase: 'alertness', detail: '评估警觉等级…' });
