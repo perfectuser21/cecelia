@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { replaceFactSnapshot } from '../fact-snapshot-store.js';
 
-function mockPool({ failOn } = {}) {
+function mockPool({ failOn, factCount } = {}) {
   const calls = [];
   let factInsertCount = 0;
   const client = {
@@ -11,7 +11,7 @@ function mockPool({ failOn } = {}) {
       if (failOn && text.includes(failOn)) throw new Error('snapshot write failed');
       if (/INSERT INTO (api_registry|db_schema_registry|test_registry)/.test(text)) factInsertCount += 1;
       if (/SELECT count\(\*\)::int AS count/.test(text)) {
-        return { rows: [{ count: factInsertCount }], rowCount: 1 };
+        return { rows: [{ count: factCount ?? factInsertCount }], rowCount: 1 };
       }
       return { rows: [], rowCount: text.includes('DELETE') ? 1 : 0 };
     }),
@@ -90,10 +90,11 @@ describe('replaceFactSnapshot', () => {
       'BEGIN',
       expect.stringContaining('pg_advisory_xact_lock'),
       expect.stringContaining('DELETE FROM db_schema_registry WHERE repo = $1'),
+      expect.stringContaining('SELECT count(*)::int AS count FROM db_schema_registry WHERE repo = $1'),
       expect.stringContaining('INSERT INTO fact_snapshot_headers'),
       'COMMIT',
     ]);
-    expect(calls[3].params).toEqual(['db_schema', 'cecelia', '789abc', 'db-schema-v2', 0]);
+    expect(calls[4].params).toEqual(['db_schema', 'cecelia', '789abc', 'db-schema-v2', 0]);
     expect(result).toEqual({ upserted: 0, deleted: 1 });
   });
 
@@ -138,7 +139,7 @@ describe('replaceFactSnapshot', () => {
   });
 
   it('header row_count 来自 delete 后真实表 count，而不是输入 rows.length', async () => {
-    const { pool, calls } = mockPool();
+    const { pool, calls } = mockPool({ factCount: 1 });
     const duplicate = {
       method: 'GET', path: '/duplicate', file_path: 'duplicate.js', line_number: 1, area: 'test',
     };

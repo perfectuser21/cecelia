@@ -88,12 +88,40 @@ describe('migration 397 — cecelia_test 实际列与约束', () => {
   const pool = new pg.Pool({ connectionString, max: 1 });
   let headerBeforeMarkerTests;
 
-  beforeAll(async () => {
+  async function readCeceliaApiHeader() {
     const { rows } = await pool.query(
       `SELECT kind, repo, source_revision, scanner_version, scanned_at, row_count
          FROM fact_snapshot_headers WHERE kind = 'api' AND repo = 'cecelia'`,
     );
-    headerBeforeMarkerTests = rows;
+    return rows;
+  }
+
+  async function restoreCeceliaApiHeader(originalRows) {
+    if (originalRows.length === 0) {
+      await pool.query(
+        `DELETE FROM fact_snapshot_headers WHERE kind = 'api' AND repo = 'cecelia'`,
+      );
+      return;
+    }
+    const original = originalRows[0];
+    await pool.query(
+      `INSERT INTO fact_snapshot_headers
+        (kind, repo, source_revision, scanner_version, scanned_at, row_count)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (kind, repo) DO UPDATE SET
+         source_revision = EXCLUDED.source_revision,
+         scanner_version = EXCLUDED.scanner_version,
+         scanned_at = EXCLUDED.scanned_at,
+         row_count = EXCLUDED.row_count`,
+      [
+        original.kind, original.repo, original.source_revision,
+        original.scanner_version, original.scanned_at, original.row_count,
+      ],
+    );
+  }
+
+  beforeAll(async () => {
+    headerBeforeMarkerTests = await readCeceliaApiHeader();
   });
 
   afterAll(async () => {
@@ -160,6 +188,7 @@ describe('migration 397 — cecelia_test 实际列与约束', () => {
 
   it('重跑 migration 会把唯一 legacy marker 回填为 cecelia', async () => {
     const markerPath = `/__migration_397_legacy_marker_${process.pid}`;
+    const originalHeader = await readCeceliaApiHeader();
     try {
       await pool.query('DELETE FROM api_registry WHERE method = $1 AND path = $2', ['GET', markerPath]);
       await pool.query(
@@ -177,11 +206,13 @@ describe('migration 397 — cecelia_test 实际列与约束', () => {
       expect(rows).toEqual([{ repo: 'cecelia' }]);
     } finally {
       await pool.query('DELETE FROM api_registry WHERE method = $1 AND path = $2', ['GET', markerPath]);
+      await restoreCeceliaApiHeader(originalHeader);
     }
   });
 
   it('重跑 migration 遇到 legacy/cecelia 同键时保留 cecelia 行并删除 legacy 冲突', async () => {
     const markerPath = `/__migration_397_collision_marker_${process.pid}`;
+    const originalHeader = await readCeceliaApiHeader();
     try {
       await pool.query('DELETE FROM api_registry WHERE method = $1 AND path = $2', ['POST', markerPath]);
       await pool.query(
@@ -203,15 +234,12 @@ describe('migration 397 — cecelia_test 实际列与约束', () => {
       expect(rows).toEqual([{ repo: 'cecelia', file_path: 'owned.js', source_revision: 'owned-revision' }]);
     } finally {
       await pool.query('DELETE FROM api_registry WHERE method = $1 AND path = $2', ['POST', markerPath]);
+      await restoreCeceliaApiHeader(originalHeader);
     }
   });
 
   it('migration marker 测试结束后 api|cecelia header 与运行前完全一致', async () => {
-    const { rows } = await pool.query(
-      `SELECT kind, repo, source_revision, scanner_version, scanned_at, row_count
-         FROM fact_snapshot_headers WHERE kind = 'api' AND repo = 'cecelia'`,
-    );
-    expect(rows).toEqual(headerBeforeMarkerTests);
+    expect(await readCeceliaApiHeader()).toEqual(headerBeforeMarkerTests);
   });
 });
 

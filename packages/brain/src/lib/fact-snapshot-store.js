@@ -101,6 +101,14 @@ async function deleteMissingRows(client, config, snapshot) {
   );
 }
 
+async function countPersistedRows(client, config, repo) {
+  const { rows } = await client.query(
+    `SELECT count(*)::int AS count FROM ${config.table} WHERE repo = $1`,
+    [repo],
+  );
+  return rows[0]?.count ?? 0;
+}
+
 export async function replaceFactSnapshot(pool, kind, snapshot) {
   const config = validateSnapshot(kind, snapshot);
   const client = await pool.connect();
@@ -109,11 +117,12 @@ export async function replaceFactSnapshot(pool, kind, snapshot) {
     await acquireFactSnapshotLock(client, kind, snapshot.repo);
     await upsertRows(client, config, snapshot);
     const deletion = await deleteMissingRows(client, config, snapshot);
+    const rowCount = await countPersistedRows(client, config, snapshot.repo);
     await upsertFactSnapshotHeader(client, kind, {
       repo: snapshot.repo,
       sourceRevision: snapshot.sourceRevision,
       scannerVersion: snapshot.scannerVersion,
-      rowCount: snapshot.rows.length,
+      rowCount,
     });
     await client.query('COMMIT');
     return { upserted: snapshot.rows.length, deleted: deletion.rowCount ?? 0 };
