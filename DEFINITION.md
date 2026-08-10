@@ -8,21 +8,13 @@
 
 
 
-**Brain 版本**: 1.271.4
+**Brain 版本**: 1.271.5
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.271.4 — Versioned Fact Snapshot
-
-- API、数据库结构、测试与关系图事实携带 repo、源码 revision、scanner version 与扫描时间，支持精确溯源。
-- 三张 registry 通过共享事务写入器按 repo 原子替换整张快照，同时保留人工 annotation；关系图扫描失败时保留上一张完整快照。
-- Schema 地板推进到 400。
-
----
-
-## Brain 1.271.4-ws — F1 Impact Contract 系统接入 CI（ws 并行分支）
+## Brain 1.271.5 — F1 Impact Contract 系统接入 CI
 
 - 新增 `src/impact-contract/` 模块群，为 Brain 每次功能变更引入结构化变更合同机制。
 - `change-kind` 四档分类：`new_capability`（全新能力）、`capability_change`（能力变更）、`bugfix`（缺陷修复）、`parameter_only`（仅参数调整）。
@@ -31,6 +23,14 @@
 - Gap Ledger 状态机：`open → assigned → fixing → verifying → resolved`，持久化合同执行缺口并追踪闭合状态。
 - Mapper fail-closed 原则：change-kind 映射器遇到未识别类型时返回 null 而非 fallback，强制上层显式处理未知类型。
 - 所有单元测试（6 个文件）已纳入 `src/impact-contract/__tests__/`，由 vitest `include: src/**/*.test.js` 自动收集，随 brain-unit CI job 运行。
+
+---
+
+## Brain 1.271.4 — Versioned Fact Snapshot
+
+- API、数据库结构、测试与关系图事实携带 repo、源码 revision、scanner version 与扫描时间，支持精确溯源。
+- 三张 registry 通过共享事务写入器按 repo 原子替换整张快照，同时保留人工 annotation；关系图扫描失败时保留上一张完整快照。
+- Schema 地板推进到 400。
 
 ## Brain 1.271.2 — 任务生命周期时间戳闭环
 
