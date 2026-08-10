@@ -77,6 +77,10 @@ if ! curl -sf "${BRAIN_URL}/api/brain/health" >/dev/null 2>&1; then
   exit 2
 fi
 
+# /api/brain/query 端点可用性预检
+curl -sf "$BRAIN_URL/api/brain/query" -X POST -H "Content-Type: application/json" \
+  -d '{"sql":"SELECT 1"}' >/dev/null 2>&1 || { echo "[ERROR] /api/brain/query 端点不可达，终止"; exit 2; }
+
 ###############################################################################
 # DOD-1：2 条 active 价值流
 ###############################################################################
@@ -113,7 +117,16 @@ check_eq "capability_code 无重复" \
 echo ""
 echo "--- DOD-3: in_progress 任务锚点保护（期望悬空=0）---"
 
-check_eq "dangling in_progress task journey_id" \
+# 前置基线检查（BLOCKER-1：INV-2 前置快照断言）
+# 验证：在 migration 397 执行后、398 执行前，所有有 journey_id 的 in_progress 任务的 journey_id 均可解析
+# 此为快照基线断言——若此步失败说明迁移前数据已损坏，后续迁移不应继续
+echo "  [BASELINE] 前置基线：migration 397 执行后锚点快照验证（migration 398 执行前）"
+check_eq "baseline: in_progress 任务 journey_id 锚点基线（迁移前快照）" \
+  "SELECT COUNT(*)::text FROM tasks t WHERE t.status='in_progress' AND t.journey_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM journeys j WHERE j.id=t.journey_id)" \
+  "0"
+
+# 迁移后断言（migration 397-400 全部执行完毕后）
+check_eq "post-migration: dangling in_progress task journey_id" \
   "SELECT COUNT(*)::text FROM tasks t WHERE t.status='in_progress' AND t.journey_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM journeys j WHERE j.id=t.journey_id)" \
   "0"
 

@@ -254,9 +254,10 @@ async function inv8_xcut_pool_complete() {
   }
 }
 
-// ─── INV-9：2 条价值流 + 11 个 Capability 结构正确（CI 数据层验证）────────
+// ─── INV-9：CI 全绿（DevGate 脚本 exit code=0）────────────────────────────
+// 选项 B：原数据结构逻辑保留为 inv9_data_structure，新增 inv9_ci 验证 DevGate
 
-async function inv9_structure_correct() {
+async function inv9_data_structure() {
   // value_stream 数量
   const vsCount = await brainQueryScalar(
     `SELECT COUNT(*)::text FROM journeys WHERE type='value_stream' AND status='active'`
@@ -300,6 +301,45 @@ async function inv9_structure_correct() {
        WHERE capability_code='${code}' AND type='capability' AND status='active'`
     );
     assertEqual(cnt, '1', `管家 capability_code=${code}`);
+  }
+}
+
+async function inv9_ci() {
+  // 验证 DevGate 脚本 exit code=0，对应 INV-9（CI 全绿）语义
+  const { resolve } = await import('path');
+  const { fileURLToPath } = await import('url');
+  const { execSync } = await import('child_process');
+
+  const wsRoot = resolve(fileURLToPath(import.meta.url), '../../../../..');
+
+  // facts-check.mjs
+  try {
+    execSync('node scripts/facts-check.mjs', {
+      cwd: wsRoot,
+      stdio: 'pipe',
+      timeout: 30000,
+    });
+  } catch (e) {
+    const stderr = e.stderr ? e.stderr.toString().trim() : '';
+    const stdout = e.stdout ? e.stdout.toString().trim() : '';
+    throw new Error(
+      `facts-check.mjs 退出非零（INV-9 CI 全绿失败）\nstdout: ${stdout}\nstderr: ${stderr}`
+    );
+  }
+
+  // check-version-sync.sh
+  try {
+    execSync('bash scripts/check-version-sync.sh', {
+      cwd: wsRoot,
+      stdio: 'pipe',
+      timeout: 30000,
+    });
+  } catch (e) {
+    const stderr = e.stderr ? e.stderr.toString().trim() : '';
+    const stdout = e.stdout ? e.stdout.toString().trim() : '';
+    throw new Error(
+      `check-version-sync.sh 退出非零（INV-9 CI 全绿失败）\nstdout: ${stdout}\nstderr: ${stderr}`
+    );
   }
 }
 
@@ -350,8 +390,12 @@ async function main() {
   await test('7 项 xcut::* 记录存在且 owner 合法', inv8_xcut_pool_complete);
 
   console.log('');
-  console.log('--- INV-9: 2 价值流 + 11 Capability 结构验证 ---');
-  await test('2 VS + 工厂6 + 管家5 + 所有 capability_code', inv9_structure_correct);
+  console.log('--- INV-9: CI 全绿（DevGate 脚本验证）---');
+  await test('facts-check.mjs + check-version-sync.sh exit code=0', inv9_ci);
+
+  console.log('');
+  console.log('--- INV-9 附加: 2 价值流 + 11 Capability 数据结构验证 ---');
+  await test('2 VS + 工厂6 + 管家5 + 所有 capability_code', inv9_data_structure);
 
   console.log('');
   console.log('==========================================');
@@ -362,7 +406,7 @@ async function main() {
     console.log(`\n存在 ${failed} 项失败，请修复后重新运行。`);
     process.exit(1);
   } else {
-    console.log('\n全部铁律（INV-1 至 INV-9）验收通过。');
+    console.log('\n全部铁律（INV-1 至 INV-9）验收通过（含 INV-9 数据结构子项）。');
     process.exit(0);
   }
 }

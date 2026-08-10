@@ -144,14 +144,11 @@ ORDER BY key;
 ```
 
 **DOD-6：F1 分拣 audit 可查**
-```bash
-# migration_audit 记录（working_memory 存储）
-curl -s http://localhost:5221/api/brain/memory/search \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"query":"migration_audit feature triage"}' \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('results',[])), 'audit records')"
-# 期望：≥1 条 audit 记录，或检查 migration_audit.json 文件
+```sql
+SELECT COUNT(*) AS audit_record_count
+FROM working_memory
+WHERE key = 'migration_audit:399_orphan_triage';
+-- 期望：≥1（audit JSON 记录存在）
 ```
 
 **DOD-7：migration 文件存在（非手工 ALTER）**

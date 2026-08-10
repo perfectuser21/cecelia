@@ -91,9 +91,21 @@ WHERE key LIKE 'xcut::%'
 
 ### [BEHAVIOR]-5：in_progress 任务 journey_id 引用迁移后仍可解析（锚点保护）
 
-**触发条件**：migration 397-400 全部执行完毕。
+**触发条件（前置基线）**：migration 397 执行后、migration 398 执行前。
 
-**断言**：
+**前置基线断言（快照锁定）**：
+```sql
+-- 验证：所有有 journey_id 的 in_progress 任务，其 journey_id 在 journeys 表中均可解析
+SELECT COUNT(*) FROM tasks t
+WHERE t.status='in_progress'
+  AND t.journey_id IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM journeys j WHERE j.id=t.journey_id);
+-- 期望：0（migration 397 执行后锚点基线必须清洁，即：加字段不破坏外键可解析性）
+```
+
+此快照作为迁移前的基线锚点，后续断言以此为对照。
+
+**迁移后断言（migration 397-400 全部执行完毕后）**：
 ```sql
 SELECT t.id, t.title, j.name AS journey_name
 FROM tasks t
@@ -144,6 +156,44 @@ WHERE key = 'migration_audit:399_orphan_triage';
 **内容断言**：audit 记录中必须含有 `triage_log` 数组，每项记录 `feature_id`、`rule_matched`、`before_journey_id`、`after_journey_id`。
 
 **失败条件**：无 audit 记录，或 audit 记录无 `triage_log` 字段。
+
+---
+
+### [BEHAVIOR]-8：迁移前已知的 10 条 journey 行迁移后仍全部存在（INV-1 专项）
+
+**触发条件**：migration 397-400 全部执行完毕。
+
+**断言**：下列 10 个 journey（按 ID 前缀标识）必须在 journeys 表中仍然存在（行不得 DELETE，type/status 允许变更）：
+
+```sql
+-- 逐一验证各已知 journey 行存在（共 10 条）
+SELECT COUNT(*) FROM journeys WHERE id::text LIKE '743f0e7c%'; -- 期望：1（F0 提案拍板）
+SELECT COUNT(*) FROM journeys WHERE id::text LIKE 'e6f803f2%'; -- 期望：1（F1 开发闭环）
+SELECT COUNT(*) FROM journeys WHERE id::text LIKE '2fa4d085%'; -- 期望：1（F2 部署闭环）
+SELECT COUNT(*) FROM journeys WHERE id::text LIKE 'ec4eb591%'; -- 期望：1（F3 夜间体检）
+SELECT COUNT(*) FROM journeys WHERE id::text LIKE '91c17939%'; -- 期望：1（F4 故障自愈）
+SELECT COUNT(*) FROM journeys WHERE id::text LIKE '8bb8252f%'; -- 期望：1（F5→G1 指挥舱）
+SELECT COUNT(*) FROM journeys WHERE id::text LIKE '824ee0f5%'; -- 期望：1（F6→G2 收件箱）
+SELECT COUNT(*) FROM journeys WHERE id::text LIKE 'a824b567%'; -- 期望：1（F7→G4 记忆知识）
+SELECT COUNT(*) FROM journeys WHERE id::text LIKE '51754939%'; -- 期望：1（MJ5 承诺地图）
+SELECT COUNT(*) FROM journeys WHERE id::text LIKE '0c1f70f1%'; -- 期望：1（西安机群→deprecated）
+```
+
+**合并验证查询**（10 条全存在则返回 10）：
+```sql
+SELECT COUNT(*) FROM journeys
+WHERE id::text LIKE ANY(ARRAY[
+  '743f0e7c%','e6f803f2%','2fa4d085%','ec4eb591%','91c17939%',
+  '8bb8252f%','824ee0f5%','a824b567%','51754939%','0c1f70f1%'
+]);
+-- 期望：10
+```
+
+**约束**：仅验证行存在，type/status 变更（如 F5 改名并重挂管家、西安机群变 deprecated）均为合法迁移行为。
+
+**失败条件**：任意一个已知 ID 前缀在 journeys 表中查不到行（COUNT=0），视为违反 INV-1 禁 DELETE 铁律。
+
+**测试实现**：对应 tests/test-invariants.js inv1（`inv1_no_journey_deleted`）SQL 逻辑。
 
 ---
 
@@ -284,8 +334,8 @@ fi
 
 | INV-ID | 约束文字 | 覆盖位置 |
 |--------|---------|---------|
-| INV-1 | 已有 journey 行不得 DELETE | [BEHAVIOR]-1 + migration 模板约束（只 UPDATE/INSERT） |
-| INV-2 | in_progress journey_id 迁移后仍可解析 | [BEHAVIOR]-5 双断言 |
+| INV-1 | 已有 journey 行不得 DELETE | [BEHAVIOR]-8 专项断言（10 行 ID 前缀逐一核查） |
+| INV-2 | in_progress journey_id 迁移后仍可解析 | [BEHAVIOR]-5 前置基线 + 迁移后双断言 |
 | INV-3 | 全部 schema 变更走 migration 文件 | [BEHAVIOR]-6 + DOD-7 文件存在性 |
 | INV-4 | 23 个孤儿归位或打 deprecated，禁止 DELETE | [BEHAVIOR]-3 清零断言 |
 | INV-5 | migration 必须有 rollback SQL | 测试 test-migration-rollback.sh |
@@ -295,3 +345,5 @@ fi
 | INV-9 | CI 全绿 | DOD-9 facts-check；CI pipeline brain-ci.yml |
 
 **铁律覆盖：9/9**
+
+> [BEHAVIOR] 条目总数：8 条（[BEHAVIOR]-1 至 [BEHAVIOR]-8）
