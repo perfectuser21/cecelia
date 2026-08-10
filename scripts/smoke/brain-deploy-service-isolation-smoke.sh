@@ -17,7 +17,7 @@ function analyzeLifecycle(command) {
   if (!validPrefix.test(invocationPrefix)) return null;
 
   const composeTail = command.slice(composeMatch.index + composeMatch[0].length);
-  const actionMatch = composeTail.match(/(?:^|\s)(up|down|stop|restart|start|create|rm)(?=\s|$)/);
+  const actionMatch = composeTail.match(/(?:^|\s)(up|down|stop|restart|start|create|rm|kill|pause|unpause)(?=\s|$)/);
   if (!actionMatch) return null;
 
   const action = actionMatch[1];
@@ -46,6 +46,9 @@ const fixtures = [
   ['BRAIN_VERSION=x docker compose -f compose.yml up --detach frontend', true],
   ['docker compose -f compose.yml up -d node-brain frontend', true],
   ['docker compose -f compose.yml down', true],
+  ['docker compose -f compose.yml kill frontend', true],
+  ['docker compose -f compose.yml pause node-brain frontend', true],
+  ['docker compose -f compose.yml unpause node-brain', false],
 ];
 
 for (const [command, expectedUnsafe] of fixtures) {
