@@ -76,9 +76,11 @@ R=$(new_root); D="$R/apps/dashboard"; stage "$R" "REBIND"
 mkdir -p "$R/fakebin"
 printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "$*" >> "$DOCKER_LOG"' > "$R/fakebin/docker"
 chmod +x "$R/fakebin/docker"
+printf '%s\n' '#!/bin/sh' 'printf "called\\n" > "$BRAIN_DEPLOY_LOG"' > "$R/scripts/brain-deploy.sh"
+chmod +x "$R/scripts/brain-deploy.sh"
 run "$R" --release-only
-if PATH="$R/fakebin:$PATH" DOCKER_LOG="$R/docker.log" CECELIA_DEPLOY_ROOT="$R" \
-    CECELIA_SKIP_BRAIN_PROMOTE=1 CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 \
+if PATH="$R/fakebin:$PATH" DOCKER_LOG="$R/docker.log" BRAIN_DEPLOY_LOG="$R/brain-deploy.log" CECELIA_DEPLOY_ROOT="$R" \
+    CECELIA_SKIP_HK=1 CECELIA_SKIP_FINGERPRINT=1 \
     bash "$PROMOTE" --deploy prod-cecelia-v1 >/dev/null 2>&1; then
     pass "frontend 重绑命令执行成功"
 else
@@ -89,6 +91,11 @@ if [[ "$(cat "$R/docker.log" 2>/dev/null)" == "$EXPECTED" ]]; then
     pass "★ frontend 重绑严格使用 --no-deps，不重启 Brain"
 else
     fail "★ frontend 重绑命令不符合隔离契约: $(cat "$R/docker.log" 2>/dev/null)"
+fi
+if [[ ! -e "$R/brain-deploy.log" ]]; then
+    pass "★ Dashboard promote 不调用 Brain 部署"
+else
+    fail "★ Dashboard promote 仍调用 Brain 部署"
 fi
 rm -rf "$R"
 
@@ -121,6 +128,11 @@ if [[ "$(grep '^current=' "$R/.production-release" | head -1)" == "current=prod-
     pass "★ frontend 重绑失败时生产指针不前进"
 else
     fail "★ frontend 重绑失败却推进了生产指针"
+fi
+if [[ "$(cat "$R/docker-count" 2>/dev/null)" == "2" ]]; then
+    pass "★ frontend 重绑失败后再次重绑恢复的旧版"
+else
+    fail "★ frontend 重绑失败后未重新绑定恢复的旧版"
 fi
 rm -rf "$R"
 

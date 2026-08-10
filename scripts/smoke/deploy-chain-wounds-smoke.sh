@@ -131,5 +131,13 @@ else
 fi
 
 echo ""
+echo "A8: Dashboard promote 不部署 Brain"
+if grep -Eq 'brain-deploy\.sh|BRAIN_DEPLOY' "$PROMOTE"; then
+    fail "promote-dashboard.sh: 仍调用 Brain 部署（Dashboard 发布会中断任务调度）"
+else
+    ok "promote-dashboard.sh: 只负责 Dashboard，不调用 Brain 部署"
+fi
+
+echo ""
 echo "=== 结果：PASS=$PASS  FAIL=$FAIL ==="
 [[ $FAIL -eq 0 ]]
