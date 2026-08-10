@@ -13,12 +13,15 @@ journey_type: autonomous ｜ target_environment: local_api
 >    必须同时有 `current_task_id` 与 `created_source`，原 seed 只给前者 → INSERT 抛
 >    `v2 initiative run requires current_task_id and created_source`（dod-behavior-dynamic 实证）。
 >    补 `created_source='kernel_dispatch'`（`initiative_runs_created_source_check` 合法枚举之一）。
-> 3. **seed 幂等（repair 轮）**：原 seed 用固定 task title（`e2e-merge-gate-seed` / B-01 `dod-b01`）+
->    `status='in_progress'`，一旦上一轮 trap 清理失败留下孤儿行，下一轮 INSERT 撞
+> 3. **seed 幂等 + 非终态父任务（repair 轮）**：原 seed 用固定 task title（`e2e-merge-gate-seed` / B-01
+>    `dod-b01`），一旦上一轮 trap 清理失败留下孤儿行，下一轮 INSERT 撞
 >    `idx_tasks_dedup_active`(title,goal_id,project_id 在 queued/in_progress 唯一) → seed 失败/首跑假绿。
->    改为 title 拼接唯一分支名（`-$SEED_BR` / `-$BR`）+ `status='completed'`（该部分唯一索引仅覆盖
->    queued/in_progress，completed 行不入索引），双保险彻底消除撞键。owned 判定与 task status/title 无关
->    （端点只按 `orchestrator_version='v2'` + `pr_branch`/`pr_url` 匹配），断言强度不变。
+>    改为 title 拼接唯一分支名（`-$SEED_BR` / `-$BR`）彻底消除撞键（goal_id/project_id 均 NULL→同默认，
+>    唯一区分键即 title）。task `status` 保持非终态 `'in_progress'`：v2 run 在非终态 phase（`evaluate`）下
+>    父 task 若为 `completed`/`failed`/`cancelled` 会触发 `lock_initiative_run_insert_identity`(migration 379)
+>    抛 23514「active v2 initiative run requires nonterminal parent task」使 seed 失败——上一轮误改 `completed`
+>    正是此因被 evaluator 拦下。owned 判定与 task status/title 无关（端点只按 `orchestrator_version='v2'` +
+>    `pr_branch`/`pr_url` 匹配），断言强度不变。
 > 4. **B-06 stub 改异步子进程（repair 轮）**：原用例在 `s.listen` 回调里 `execFileSync` 同步阻塞
 >    node 事件循环，stub server 永不响应 → 脚本走 fail-closed SKIP 而非 owned→SKIP，且断言只查 `^SKIP`
 >    → 结构性假绿。改为 `cp.execFile`（异步回调）让事件循环空出来真响应 stub，并把断言收紧为
@@ -116,11 +119,13 @@ curl -sf "$BASE/api/brain/health" >/dev/null || { echo "FAIL: Brain 未就绪"; 
 # 1. seed 一条 harness-owned run（task.payload.pr_branch=$SEED_BR，v2）
 #    phase 用合法枚举 'evaluate'（'D_merge' 不在 initiative_runs_phase_check 内，seed 会 CHECK 违反）
 #    created_source='kernel_dispatch'（enforce_v2_run_insert_identity 要求 v2 run 必须有 current_task_id+created_source）
-#    title 拼唯一分支名 + status='completed'（幂等：completed 不入 idx_tasks_dedup_active 部分唯一索引，孤儿不撞键）
+#    title 拼唯一分支名 + status='in_progress'（幂等靠唯一 title 避开 idx_tasks_dedup_active；
+#    status 必须为非终态：v2 run 非终态 phase 的父 task 若为 completed/failed/cancelled 会触发
+#    lock_initiative_run_insert_identity(migration 379) 抛 23514「requires nonterminal parent task」）
 SEED_RUN=$(psql "$DB" -tAc "
   WITH t AS (
     INSERT INTO tasks (id, title, task_type, status, payload)
-    VALUES (gen_random_uuid(), 'e2e-merge-gate-seed-$SEED_BR', 'harness_generate', 'completed',
+    VALUES (gen_random_uuid(), 'e2e-merge-gate-seed-$SEED_BR', 'harness_generate', 'in_progress',
             jsonb_build_object('pr_branch','$SEED_BR'))
     RETURNING id)
   INSERT INTO initiative_runs (id, initiative_id, phase, orchestrator_version, current_task_id, created_source, pr_url, started_at)
