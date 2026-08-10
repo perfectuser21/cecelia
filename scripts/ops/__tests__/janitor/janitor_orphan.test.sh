@@ -10,7 +10,7 @@ FAIL=0
 ok() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
-JANITOR="$(dirname "$0")/../janitor.sh"
+JANITOR="$(dirname "$0")/../../janitor.sh"
 if [ ! -f "$JANITOR" ]; then
   echo "ERROR: janitor.sh not found at $JANITOR"
   exit 1
@@ -99,15 +99,16 @@ else
   fail "~/bin/janitor.sh 不是软链接"
 fi
 
-# 验证 12: 软链接指向 repo 内文件（CI 环境跳过）
+# 验证 12: 软链接指向 cecelia 仓 scripts/ops（归位决策 c14a3e6f，2026-08-10 从
+# zenithjoy-skills 迁入；旧断言指向 zenithjoy-skills 已作废）。CI 环境无宿主软链，跳过。
 if [ -n "${CI:-}" ]; then
-  ok "软链接指向 cecelia repo（CI 环境跳过）"
+  ok "软链接指向 cecelia repo scripts/ops（CI 环境跳过）"
 else
   LINK_TARGET=$(readlink "$HOME/bin/janitor.sh" 2>/dev/null || echo "")
-  if echo "$LINK_TARGET" | grep -q "zenithjoy-skills"; then
-    ok "软链接指向 zenithjoy-skills repo（skills SSOT）"
+  if echo "$LINK_TARGET" | grep -q "cecelia.*scripts/ops/janitor.sh"; then
+    ok "软链接指向 cecelia 仓 scripts/ops（DevOps 归位）"
   else
-    fail "软链接未指向 zenithjoy-skills repo: $LINK_TARGET"
+    fail "软链接未指向 cecelia 仓 scripts/ops: $LINK_TARGET"
   fi
 fi
 
