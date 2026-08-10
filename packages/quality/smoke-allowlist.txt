@@ -48,6 +48,7 @@ conversation-capture-multitool-smoke.sh
 conversation-capture-smoke.sh
 conversation-ttl-archiver-smoke.sh
 conversations-smoke.sh
+credential-freshness-preflight-smoke.sh
 decision-system-smoke.sh
 decisions-dedup-smoke.sh
 dev-env-db-guard-smoke.sh
