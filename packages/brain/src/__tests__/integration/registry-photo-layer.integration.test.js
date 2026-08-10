@@ -1,55 +1,71 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
 import { listPhotoLayer } from '../../lib/registry-photo-layer.js';
-import { DB_DEFAULTS } from '../../db-config.js';
 
-const pool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
-const MARK = 'itest-photo-layer';
-// 破坏性清库场景只在测试库执行(死规矩:禁对本地 cecelia 做 DELETE 全表)
-const isTestDb = /_test$|_scratch$/.test(DB_DEFAULTS.database || '');
+const connectionString = process.env.TEST_DATABASE_URL || 'postgresql://localhost/cecelia_test';
+const databaseName = decodeURIComponent(new URL(connectionString).pathname.slice(1));
+if (!/(_test|_scratch)$/.test(databaseName)) {
+  throw new Error(`registry photo layer 集成测试拒绝连接非测试库: ${databaseName}`);
+}
+
+const pool = new pg.Pool({ connectionString, max: 3 });
+const MARK = `itest-photo-layer-${process.pid}`;
+const REPO_A = `${MARK}-a`;
+const REPO_B = `${MARK}-b`;
+const STALE_REPO = `${MARK}-stale`;
+const LEGACY_REPO = `${MARK}-legacy`;
+const TEST_REPOS = [REPO_A, REPO_B, STALE_REPO, LEGACY_REPO];
 
 beforeAll(async () => {
-  await pool.query(`DELETE FROM api_registry WHERE file_path LIKE $1`, [`${MARK}%`]);
+  await pool.query('DELETE FROM api_registry WHERE repo = ANY($1)', [TEST_REPOS]);
   await pool.query(
-    `INSERT INTO api_registry (method, path, file_path, line_number, area, scanned_at)
-     VALUES ('GET', '/itest/fresh', $1, 1, 'cecelia', NOW()),
-            ('POST', '/itest/old', $2, 2, 'cecelia', NOW() - interval '25 hours')`,
-    [`${MARK}/fresh.js`, `${MARK}/old.js`]
+    `INSERT INTO api_registry
+       (repo, method, path, file_path, line_number, area, scanned_at, source_revision, scanner_version)
+     VALUES
+       ($1, 'GET', '/itest/a-1', $5, 1, 'test', NOW() - interval '14 minutes', 'revision-a', 'api-registry-v2'),
+       ($1, 'POST', '/itest/a-2', $6, 2, 'test', NOW() - interval '14 minutes', 'revision-a', 'api-registry-v2'),
+       ($2, 'GET', '/itest/b', $7, 3, 'test', NOW(), 'revision-b', 'api-registry-v2'),
+       ($3, 'GET', '/itest/stale', $8, 4, 'test', NOW() - interval '16 minutes', 'revision-stale', 'api-registry-v2'),
+       ($4, 'GET', '/itest/legacy', $9, 5, 'test', NOW(), 'legacy-unknown', 'legacy')`,
+    [
+      REPO_A, REPO_B, STALE_REPO, LEGACY_REPO,
+      `${MARK}/a-1.js`, `${MARK}/a-2.js`, `${MARK}/b.js`, `${MARK}/stale.js`, `${MARK}/legacy.js`,
+    ],
   );
 });
 
 afterAll(async () => {
-  await pool.query(`DELETE FROM api_registry WHERE file_path LIKE $1`, [`${MARK}%`]);
+  await pool.query('DELETE FROM api_registry WHERE repo = ANY($1)', [TEST_REPOS]);
   await pool.end();
 });
 
 describe('照相层真库查询', () => {
-  it('search 命中 marker 行,字段映射正确', async () => {
-    const r = await listPhotoLayer(pool, 'api', { search: MARK });
+  it('items 与 latest metadata 严格按 repo，较新的 repo-B 不掩盖 repo-A', async () => {
+    const r = await listPhotoLayer(pool, 'api', { repo: REPO_A, search: MARK });
     expect(r.items.length).toBe(2);
-    const fresh = r.items.find((i) => i.name === 'GET /itest/fresh');
-    expect(fresh.location).toBe(`${MARK}/fresh.js:1`);
-    expect(r.freshness).toHaveProperty('stale');
-    expect(typeof r.freshness.stale).toBe('boolean');
+    expect(r.items.every((item) => item.repo === REPO_A)).toBe(true);
+    expect(r.items.every((item) => item.source_revision === 'revision-a')).toBe(true);
+    expect(r).toMatchObject({
+      repo: REPO_A, source_revision: 'revision-a', scanner_version: 'api-registry-v2',
+    });
+    expect(r.freshness).toMatchObject({
+      repo: REPO_A, status: 'fresh', reason_code: null,
+      source_revision: 'revision-a', scanner_version: 'api-registry-v2',
+    });
+    expect(r.freshness.last_success_at).toBeTruthy();
   });
 
   it('db_schema 真表可查(至少含本库真实表)', async () => {
-    const r = await listPhotoLayer(pool, 'db_schema', { limit: 5 });
+    const r = await listPhotoLayer(pool, 'db_schema', { repo: 'cecelia', limit: 5 });
     expect(Array.isArray(r.items)).toBe(true);
     expect(r.freshness).toHaveProperty('latest_scan');
   });
 
-  it.runIf(isTestDb)('proven-to-fire:全表只剩 25h 旧行 → stale:true;插入新行 → stale:false', async () => {
-    await pool.query(`DELETE FROM api_registry WHERE file_path NOT LIKE $1`, [`${MARK}%`]);
-    await pool.query(`DELETE FROM api_registry WHERE file_path = $1`, [`${MARK}/fresh.js`]);
-    const stale = await listPhotoLayer(pool, 'api', {});
-    expect(stale.freshness.stale).toBe(true);
-    await pool.query(
-      `INSERT INTO api_registry (method, path, file_path, line_number, area, scanned_at)
-       VALUES ('GET', '/itest/fresh2', $1, 3, 'cecelia', NOW())`,
-      [`${MARK}/fresh2.js`]
-    );
-    const ok = await listPhotoLayer(pool, 'api', {});
-    expect(ok.freshness.stale).toBe(false);
+  it('16min snapshot 与 legacy revision 都 fail-closed 且 reason_code 可区分', async () => {
+    const stale = await listPhotoLayer(pool, 'api', { repo: STALE_REPO });
+    expect(stale.freshness).toMatchObject({ status: 'unknown', reason_code: 'snapshot_stale' });
+
+    const legacy = await listPhotoLayer(pool, 'api', { repo: LEGACY_REPO });
+    expect(legacy.freshness).toMatchObject({ status: 'unknown', reason_code: 'source_revision_legacy' });
   });
 });
