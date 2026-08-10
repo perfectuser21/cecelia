@@ -6,6 +6,7 @@
 # A3: promote-dashboard.sh 含 HK rsync 步骤
 # A4: frontend-proxy.js STATIC_DIR 默认 /app（非主仓库绝对路径）
 # A5: check-deploy-fingerprint.sh 存在且可执行
+# A7: promote 后强制重新绑定 frontend，且 --no-deps 不重启 Brain
 
 set -euo pipefail
 
@@ -118,6 +119,15 @@ if grep -q '/Users/administrator/perfect21/cecelia/apps/dashboard/dist.*ro' "$CO
     fail "docker-compose.yml: 仍含旧 cecelia 路径只读 mount（漂移根因未清）"
 else
     ok "docker-compose.yml: 已移除旧 cecelia dist 只读 mount"
+fi
+
+# ── A7: 原子替换 dist 后重新绑定 frontend，不连带重启 Brain ─────────────────
+echo ""
+echo "A7: promote 后 frontend bind mount 重绑"
+if grep -Eq 'up -d --force-recreate --no-deps frontend' "$PROMOTE"; then
+    ok "promote-dashboard.sh: 只重建 frontend 并重新绑定 live dist"
+else
+    fail "promote-dashboard.sh: 缺少 --force-recreate --no-deps frontend（5211 会继续读旧 inode）"
 fi
 
 echo ""
