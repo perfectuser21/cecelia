@@ -21,6 +21,7 @@ import {
   DEFAULT_BASE_REPO,
   harnessTaskWorktreePath,
 } from '../harness-worktree.js';
+import { resolvePrOwnership } from '../harness-pr-ownership.js';
 
 const router = Router();
 const judgeRateLimit = rateLimit({
@@ -178,6 +179,38 @@ router.get('/initiative-runs/:id', async (req, res) => {
   } catch (err) {
     console.error('[GET /harness/initiative-runs/:id]', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /pr-ownership — 判定一个 PR / 分支是否属于某条 harness run（只读）。
+ *
+ * CI 通用 auto-merge 的 should-auto-merge.sh 用它替代「PR 标题前缀」这个 LLM 可撰写
+ * 的不可靠判据（法源：决策 e8f6134f；事故 PR #4755）。命中即 harness-owned → 调用方
+ * SKIP 通用 auto-merge，把 merge 交回 harness 自己的 evaluator+judge gate。
+ *
+ * 入参（三选一即可，均可选，至少给一个）：
+ *   ?branch=<head_branch>  ?pr_number=<n>  ?pr_url=<full url>
+ * 返回：{ owned: boolean, run_id?, initiative_id?, matched_by?, pr_url? }
+ *
+ * 注意：本端点内部错误一律 500，让调用方按 fail-closed（视为可能 harness-owned）处理。
+ */
+router.get('/pr-ownership', async (req, res) => {
+  const branch = (req.query.branch || '').toString().trim();
+  const prNumber = (req.query.pr_number || '').toString().trim();
+  const prUrl = (req.query.pr_url || '').toString().trim();
+  if (!branch && !prNumber && !prUrl) {
+    return res.status(400).json({ error: 'branch or pr_number or pr_url required' });
+  }
+  try {
+    const result = await resolvePrOwnership(
+      (sql, params) => pool.query(sql, params),
+      { branch, prNumber, prUrl },
+    );
+    return res.json(result);
+  } catch (err) {
+    console.error('[GET /harness/pr-ownership]', err.message);
+    return res.status(500).json({ error: 'ownership check failed' });
   }
 });
 

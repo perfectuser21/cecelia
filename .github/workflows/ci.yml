@@ -1950,9 +1950,10 @@ jobs:
           # 合并决策抽到 should-auto-merge.sh（可单测，见 __tests__/should-auto-merge.test.sh）。
           # 关键：harness generator 产出的 PR 也用 cp-* 分支，但走 harness 自己的
           # evaluator+DeepSeek 裁判 gate 决定 merge。若此处仍按「cp-* + CI 绿」抢先合并，会
-          # 架空裁判裁决权（用户曾见「裁判说不放行，代码还是被 merge」）。脚本按 PR 标题
-          # feat(harness): 前缀识别 harness-owned PR 并跳过，把 merge 交还给 harness gate。
-          DECISION="$(bash .github/workflows/scripts/should-auto-merge.sh "$HEAD_BRANCH" "$PR_TITLE")"
+          # 架空裁判裁决权（用户曾见「裁判说不放行，代码还是被 merge」）。脚本向 Brain 求证
+          # PR 归属（initiative_runs.pr_url，kernel 写入，非 LLM 撰写），命中即跳过通用
+          # auto-merge，把 merge 交还给 harness gate（法源：决策 e8f6134f / 事故 #4755）。
+          DECISION="$(bash .github/workflows/scripts/should-auto-merge.sh "$HEAD_BRANCH" "$PR_TITLE" "$PR_NUMBER")"
           echo "$DECISION"
           if [[ "$DECISION" == SKIP:* ]]; then
             exit 0
