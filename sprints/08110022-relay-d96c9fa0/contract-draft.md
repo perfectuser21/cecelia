@@ -172,21 +172,21 @@ psql -U cecelia cecelia -c "SELECT g.id, g.status, array_agg(ge.event_type ORDER
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 备注 |
 |---|---|---|---|
-| ws1 | `packages/brain/src/impact-contract/__tests__/change-kind.test.js` | FR-1 四档映射 / 无效输入拒绝 / gear 分离 | permanent |
-| ws2 | `packages/brain/src/impact-contract/__tests__/contract-schema.test.js` | FR-2 Zod Schema 合法/非法验证 / 错误路径 | permanent |
-| ws2 | `packages/brain/src/impact-contract/__tests__/contract-store.test.js` | FR-2 持久化 hash 幂等 / schema 验证 | permanent |
-| ws3 | `packages/brain/src/impact-contract/__tests__/structure-gate.test.js` | FR-3 三种不可判定情形（unavailable/stale/mismatch） | permanent |
-| ws4 | `packages/brain/src/impact-contract/__tests__/diff-gate.test.js` | FR-4 pass/extend/drift 裁决 / fail-closed | permanent |
-| ws5 | `packages/brain/src/impact-contract/__tests__/gap-store.test.js` | FR-5 状态机正向/负向流转 / 幂等去重 | permanent |
-| ws3 | `packages/brain/src/impact-contract/__tests__/map-client.test.js` | map-client MJ5 stub 响应格式验证 | permanent |
-| ws5 | `packages/brain/src/routes/__tests__/gaps.test.js` | gaps 路由挂载 smoke | permanent |
-| ws2 | `packages/brain/src/routes/__tests__/impact-contracts.test.js` | impact-contracts 路由挂载 smoke | permanent |
-| ws1 | `sprints/08110022-relay-d96c9fa0/tests/change-kind.test.js` | FR-1 Change Normalizer（sprint 过渡副本） | sprint |
-| ws2 | `sprints/08110022-relay-d96c9fa0/tests/contract-schema.test.js` | FR-2 Schema（sprint 过渡副本） | sprint |
-| ws2 | `sprints/08110022-relay-d96c9fa0/tests/contract-store.test.js` | FR-2 持久化（sprint 过渡副本） | sprint |
-| ws3 | `sprints/08110022-relay-d96c9fa0/tests/structure-gate.test.js` | FR-3 Structure Gate（sprint 过渡副本） | sprint |
-| ws4 | `sprints/08110022-relay-d96c9fa0/tests/diff-gate.test.js` | FR-4 Diff Gate（sprint 过渡副本） | sprint |
-| ws5 | `sprints/08110022-relay-d96c9fa0/tests/gap-store.test.js` | FR-5 Gap Ledger（sprint 过渡副本） | sprint |
+| ws1 | `packages/brain/src/impact-contract/__tests__/change-kind.test.js` | task_type=new_feature / 非枚举值时抛出 / gear 均存在且值独立 | permanent |
+| ws2 | `packages/brain/src/impact-contract/__tests__/contract-schema.test.js` | Zod parse 不抛出 / Zod parse 抛出 ZodError / success: true | permanent |
+| ws2 | `packages/brain/src/impact-contract/__tests__/contract-store.test.js` | 相同内容计算出相同 hash / 缺少 base_revision 时验证失败 | permanent |
+| ws3 | `packages/brain/src/impact-contract/__tests__/structure-gate.test.js` | mapper_unavailable / stale / revision_mismatch | permanent |
+| ws4 | `packages/brain/src/impact-contract/__tests__/diff-gate.test.js` | 通过（pass）/ extend / CONTRACT_IMPACT_DRIFT / blocked（不放行） | permanent |
+| ws5 | `packages/brain/src/impact-contract/__tests__/gap-store.test.js` | open → assigned / validateTransition 抛出 422 / triage → assigned | permanent |
+| ws3 | `packages/brain/src/impact-contract/__tests__/map-client.test.js` | fresh stub / affected_nodes / callMapper | permanent |
+| ws5 | `packages/brain/src/routes/__tests__/gaps.test.js` | harnessGapsRouter / router 可挂载 / router 有 stack | permanent |
+| ws2 | `packages/brain/src/routes/__tests__/impact-contracts.test.js` | impactContractsRouter / router 可挂载 / router 有 stack | permanent |
+| ws1 | `sprints/08110022-relay-d96c9fa0/tests/change-kind.test.js` | task_type=new_feature / 非枚举值时抛出 / gear 均存在且值独立 | sprint |
+| ws2 | `sprints/08110022-relay-d96c9fa0/tests/contract-schema.test.js` | Zod parse 不抛出 / Zod parse 抛出 ZodError / success: true | sprint |
+| ws2 | `sprints/08110022-relay-d96c9fa0/tests/contract-store.test.js` | 相同内容计算出相同 hash / 缺少 base_revision 时验证失败 | sprint |
+| ws3 | `sprints/08110022-relay-d96c9fa0/tests/structure-gate.test.js` | mapper_unavailable / stale / revision_mismatch | sprint |
+| ws4 | `sprints/08110022-relay-d96c9fa0/tests/diff-gate.test.js` | 通过（pass）/ extend / CONTRACT_IMPACT_DRIFT / blocked（不放行） | sprint |
+| ws5 | `sprints/08110022-relay-d96c9fa0/tests/gap-store.test.js` | open → assigned / validateTransition 抛出 422 / triage → assigned | sprint |
 
 ---
 
