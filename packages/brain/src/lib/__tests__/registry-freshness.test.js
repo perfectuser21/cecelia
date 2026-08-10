@@ -42,12 +42,50 @@ describe('computeFreshness', () => {
     expect(f.warning).toContain('15min');
   });
 
+  it('恰好 15min 仍 fresh，超过 1ms 即 unknown/snapshot_stale', () => {
+    const exact = computeFreshness(metadata(15), now);
+    const over = computeFreshness(metadata(15, {
+      scanned_at: new Date(now.getTime() - 15 * 60_000 - 1),
+    }), now);
+
+    expect(exact).toMatchObject({ status: 'fresh', reason_code: null, stale: false });
+    expect(over).toMatchObject({ status: 'unknown', reason_code: 'snapshot_stale', stale: true });
+  });
+
+  it('无效 now → unknown/clock_invalid 且 fail-closed stale=true', () => {
+    const f = computeFreshness(metadata(1), new Date('not-a-date'));
+    expect(f).toMatchObject({
+      status: 'unknown', reason_code: 'clock_invalid', stale: true,
+      source_revision: sha40, scanner_version: 'api-registry-v2',
+    });
+  });
+
+  it('快照超过未来 60s → unknown/snapshot_from_future', () => {
+    const f = computeFreshness(metadata(0, {
+      scanned_at: new Date(now.getTime() + 60_001),
+    }), now);
+    expect(f).toMatchObject({
+      status: 'unknown', reason_code: 'snapshot_from_future', stale: true,
+      age_hours: 0,
+    });
+  });
+
+  it('未来 60s 容差内按 age=0 处理并保持 fresh', () => {
+    const f = computeFreshness(metadata(0, {
+      scanned_at: new Date(now.getTime() + 60_000),
+    }), now);
+    expect(f).toMatchObject({
+      status: 'fresh', reason_code: null, stale: false, age_hours: 0,
+    });
+  });
+
   it('旧 timestamp 调用仍接受并保留既有时间字段', () => {
     const f = computeFreshness('2026-07-18T11:30:00Z', now);
     expect(f.latest_scan).toBe('2026-07-18T11:30:00.000Z');
     expect(f.last_success_at).toBe('2026-07-18T11:30:00.000Z');
     expect(f.status).toBe('unknown');
     expect(f.reason_code).toBe('source_revision_missing');
+    expect(f.stale).toBe(true);
   });
 
   it('默认 freshness budget 为 15 分钟', () => {

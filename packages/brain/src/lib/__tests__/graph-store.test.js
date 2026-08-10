@@ -30,6 +30,9 @@ describe('replaceRepoEdges', () => {
     expect(calls[3].sql).toContain('source_revision');
     expect(calls[3].sql).toContain('scanner_version');
     expect(calls[3].params).toEqual(expect.arrayContaining(['abc123', 'graph-v3']));
+    const header = calls.find((call) => call.sql.includes('INSERT INTO fact_snapshot_headers'));
+    expect(header.sql).toContain('ON CONFLICT (kind, repo)');
+    expect(header.params).toEqual(['graph', 'cecelia', 'abc123', 'graph-v3', 2]);
     expect(calls[calls.length - 1].sql).toContain('COMMIT');
     expect(client.release).toHaveBeenCalled();
   });
@@ -51,6 +54,8 @@ describe('replaceRepoEdges', () => {
     const r = await replaceRepoEdges(pool, 'cecelia', []);
     expect(r.inserted).toBe(0);
     expect(calls.some((c) => c.sql.includes('DELETE'))).toBe(true);
+    const header = calls.find((c) => c.sql.includes('INSERT INTO fact_snapshot_headers'));
+    expect(header.params).toEqual(['graph', 'cecelia', 'legacy-unknown', 'legacy', 0]);
     expect(calls[calls.length - 1].sql).toContain('COMMIT');
   });
 

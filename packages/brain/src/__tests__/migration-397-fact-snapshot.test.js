@@ -51,6 +51,23 @@ describe('migration 397 — versioned fact snapshot metadata', () => {
     expect(upSql).toMatch(/VALUES\s*\(\s*'397'/i);
   });
 
+  it('建立通用 snapshot header，并从四张事实表按 repo 最新事实回填', () => {
+    expect(upSql).toMatch(/CREATE TABLE IF NOT EXISTS fact_snapshot_headers/i);
+    expect(upSql).toMatch(/PRIMARY KEY\s*\(kind,\s*repo\)/i);
+    expect(upSql).toMatch(/CHECK\s*\(kind\s+IN\s*\('api',\s*'db_schema',\s*'test',\s*'graph'\)\)/i);
+    expect(upSql).toMatch(/row_count\s+INTEGER\s+NOT NULL[\s\S]*CHECK\s*\(row_count\s*>=\s*0\)/i);
+    for (const [kind, table] of [
+      ['api', 'api_registry'], ['db_schema', 'db_schema_registry'],
+      ['test', 'test_registry'], ['graph', 'graph_edges'],
+    ]) {
+      expect(upSql).toMatch(new RegExp(
+        `INSERT INTO fact_snapshot_headers[\\s\\S]+['"]${kind}['"][\\s\\S]+FROM\\s+${table}`,
+        'i',
+      ));
+    }
+    expect(downSql).toMatch(/DROP TABLE IF EXISTS fact_snapshot_headers/i);
+  });
+
   it('rollback 在恢复旧唯一键前检测跨 repo 冲突，并撤销新增列与索引', () => {
     expect(downSql).toMatch(/RAISE EXCEPTION/i);
     expect(downSql).toMatch(/GROUP BY\s+method,\s*path/i);
@@ -92,6 +109,27 @@ describe('migration 397 — cecelia_test 实际列与约束', () => {
         expect(actual.get(`${table}.${column}`)).toBe('NO');
       }
     }
+  });
+
+  it('fact_snapshot_headers 具有通用 kind/repo 主键与 metadata/row_count 列', async () => {
+    const { rows: columns } = await pool.query(
+      `SELECT column_name, is_nullable
+         FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'fact_snapshot_headers'`,
+    );
+    expect(new Map(columns.map((row) => [row.column_name, row.is_nullable]))).toEqual(new Map([
+      ['kind', 'NO'], ['repo', 'NO'], ['source_revision', 'NO'],
+      ['scanner_version', 'NO'], ['scanned_at', 'NO'], ['row_count', 'NO'],
+    ]));
+    const { rows: pk } = await pool.query(
+      `SELECT array_agg(a.attname ORDER BY u.ordinality) AS columns
+         FROM pg_constraint c
+         JOIN LATERAL unnest(c.conkey) WITH ORDINALITY u(attnum, ordinality) ON true
+         JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum
+        WHERE c.conrelid = 'fact_snapshot_headers'::regclass AND c.contype = 'p'
+        GROUP BY c.oid`,
+    );
+    expect(pk[0]?.columns).toEqual(['kind', 'repo']);
   });
 
   it.each(['api_registry', 'db_schema_registry', 'test_registry'])(

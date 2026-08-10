@@ -44,6 +44,10 @@ describe('replaceFactSnapshot', () => {
     expect(insert.params).toEqual(expect.arrayContaining(['cecelia', 'abc123', 'api-registry-v2']));
     const deletion = calls.find((call) => call.sql.includes('DELETE FROM api_registry'));
     expect(deletion.params[0]).toBe('cecelia');
+    const header = calls.find((call) => call.sql.includes('INSERT INTO fact_snapshot_headers'));
+    expect(header.sql).toContain('ON CONFLICT (kind, repo)');
+    expect(header.params).toEqual(['api', 'cecelia', 'abc123', 'api-registry-v2', 1]);
+    expect(calls.indexOf(header)).toBeGreaterThan(calls.indexOf(deletion));
     expect(calls.at(-1).sql).toBe('COMMIT');
     expect(result).toEqual({ upserted: 1, deleted: 1 });
     expect(client.release).toHaveBeenCalledOnce();
@@ -81,8 +85,10 @@ describe('replaceFactSnapshot', () => {
       'BEGIN',
       expect.stringContaining('pg_advisory_xact_lock'),
       expect.stringContaining('DELETE FROM db_schema_registry WHERE repo = $1'),
+      expect.stringContaining('INSERT INTO fact_snapshot_headers'),
       'COMMIT',
     ]);
+    expect(calls[3].params).toEqual(['db_schema', 'cecelia', '789abc', 'db-schema-v2', 0]);
     expect(result).toEqual({ upserted: 0, deleted: 1 });
   });
 
