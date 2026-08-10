@@ -12,7 +12,7 @@
  */
 
 import { createHash } from 'crypto';
-import pool from '../db.js';
+import _pool from '../db.js';
 
 // ---------- 工具函数 ----------
 
@@ -210,7 +210,7 @@ export async function listImpactContracts(db, taskId) {
  * @param {{ taskId: string, reason?: string, expectedHash?: string }} opts
  * @returns {Promise<{ invalidated: boolean, contract: object|null }>}
  */
-export async function invalidateImpactContract(db, { taskId, reason = null, expectedHash = null }) {
+export async function invalidateImpactContract(db, { taskId, _reason = null, expectedHash = null }) {
   const client = await db.connect();
   try {
     await client.query('BEGIN');

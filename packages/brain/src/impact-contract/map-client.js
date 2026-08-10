@@ -30,7 +30,7 @@
  *   required_assertions: any[],
  * }>}
  */
-export async function queryImpactRadius({ repo, baseRevision, headRevision, changedFiles } = {}) {
+export async function queryImpactRadius({ repo, baseRevision, _headRevision, _changedFiles } = {}) {
   // MJ5 STUB: replace with real Mapper call after MJ5 contract passes
   // 真实实现将调用 POST /api/brain/map/radius，返回真实影响半径数据
   return {
@@ -42,3 +42,5 @@ export async function queryImpactRadius({ repo, baseRevision, headRevision, chan
     required_assertions: [],
   };
 }
+
+export const callMapper = queryImpactRadius;

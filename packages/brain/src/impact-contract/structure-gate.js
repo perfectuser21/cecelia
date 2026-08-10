@@ -84,7 +84,7 @@ function buildPassResult(contract, created) {
  *   contract?: object,
  * }>}
  */
-export async function evaluateStructureGate({ db, task, contract, mapClient, git } = {}) {
+export async function evaluateStructureGate({ db, task, contract, mapClient, git: _git } = {}) {
   // --- 规则 1：task 无 change_kind → blocked/change_kind_missing ---
   if (!task || !task.change_kind) {
     return buildBlockedResult('change_kind_missing', 400);
@@ -103,7 +103,7 @@ export async function evaluateStructureGate({ db, task, contract, mapClient, git
       headRevision: contract?.head_revision,
       changedFiles: [],
     });
-  } catch (err) {
+  } catch (_err) {
     // Mapper 不可达（连接失败、timeout 等）→ fail-closed
     // MJ5 STUB: replace with real Mapper call after MJ5 contract passes
     return buildBlockedResult('mapper_unavailable', 503);

@@ -227,7 +227,7 @@ export async function evaluateDiffGate({ db, taskId, mapClient, headRevision, ch
   if (db) {
     try {
       contract = await getActiveImpactContract(db, taskId);
-    } catch (err) {
+    } catch (_err) {
       // DB 不可达时 fail-closed
       return {
         gate: 'impact_unknown',
@@ -249,7 +249,7 @@ export async function evaluateDiffGate({ db, taskId, mapClient, headRevision, ch
       headRevision,
       changedFiles,
     });
-  } catch (err) {
+  } catch (_err) {
     // Mapper 不可达 → fail-closed，返回 impact_unknown（不进入 pass/extend/drift 裁决）
     return {
       gate: 'impact_unknown',
@@ -304,7 +304,7 @@ export async function evaluateDiffGate({ db, taskId, mapClient, headRevision, ch
         addedNodes: comparison.added_nodes,
         addedAssertions: comparison.added_assertions,
       });
-    } catch (err) {
+    } catch (_err) {
       // gap_events 表可能尚不存在（ws5 创建），记录错误但不阻断
       // 在 ws4 阶段，gap_events 表依赖 ws5 migration；此处 graceful degradation
     }
@@ -312,7 +312,7 @@ export async function evaluateDiffGate({ db, taskId, mapClient, headRevision, ch
     try {
       // 将原任务状态变为 blocked
       await blockTask(db, taskId);
-    } catch (err) {
+    } catch (_err) {
       // 同上，graceful degradation
     }
   }

@@ -9,8 +9,7 @@
  * MJ5 STUB: 所有 Mapper.radius() 调用均为 stub，标注 "MJ5 STUB" 的注释处需替换。
  */
 
-import { test, describe } from 'node:test';
-import assert from 'node:assert/strict';
+import { describe, test, expect } from 'vitest';
 import { compareImpactContract, evaluateDiffGate } from '../diff-gate.js';
 
 // ── 辅助函数：构造 fresh Mapper 响应 ──
@@ -38,12 +37,12 @@ describe('FR-4 Diff Impact Gate', () => {
         [],                                  // contractAssertions
         [],                                  // actualAssertions
       );
-      assert.equal(result.verdict, 'pass');
-      assert.deepEqual(result.added_nodes, []);
-      assert.equal(result.reason_code, null);
+      expect(result.verdict).toBe('pass');
+      expect(result.added_nodes).toEqual([]);
+      expect(result.reason_code).toBe(null);
     });
 
-    test('gate 通过后原任务不被阻塞（via evaluateDiffGate mock mapClient）', async (t) => {
+    test('gate 通过后原任务不被阻塞（via evaluateDiffGate mock mapClient）', async () => {
       // mock mapClient 返回实际影响 ⊆ 合同
       const mockMapClient = async () => makeFreshMapperResult({
         affectedNodes: ['impact-contract'],
@@ -60,7 +59,7 @@ describe('FR-4 Diff Impact Gate', () => {
       // 无 contract 时 contractNodes=[]，actualNodes=['impact-contract'] → 有新增节点
       // 但因为 contractAssertions 和 actualAssertions 都为空，无断言覆盖 → drift
       // 所以此场景应验证：gate 不等于 'blocked'（fail-closed 之外），至少可判定
-      assert.notEqual(result.gate, 'impact_unknown', '有效 Mapper 返回时不应该是 impact_unknown');
+      expect(result.gate).not.toBe('impact_unknown');
     });
 
   });
@@ -76,9 +75,9 @@ describe('FR-4 Diff Impact Gate', () => {
         [],                                  // contractAssertions
         ['task_routing_works'],              // actualAssertions（覆盖 task-routing）
       );
-      assert.equal(result.verdict, 'extend');
-      assert.ok(result.added_nodes.includes('task-routing'));
-      assert.equal(result.reason_code, null);
+      expect(result.verdict).toBe('extend');
+      expect(result.added_nodes.includes('task-routing')).toBeTruthy();
+      expect(result.reason_code).toBe(null);
     });
 
     test('扩展后合同的 required_assertions 包含新断言', async () => {
@@ -88,9 +87,9 @@ describe('FR-4 Diff Impact Gate', () => {
         [],
         ['task_routing_works'],
       );
-      assert.equal(result.verdict, 'extend');
+      expect(result.verdict).toBe('extend');
       // added_assertions 记录了新断言
-      assert.ok(result.added_assertions.includes('task_routing_works'), '新断言应出现在 added_assertions 中');
+      expect(result.added_assertions.includes('task_routing_works')).toBeTruthy();
     });
 
   });
@@ -105,14 +104,11 @@ describe('FR-4 Diff Impact Gate', () => {
         [],                            // contractAssertions（无）
         [],                            // actualAssertions（无）
       );
-      assert.equal(result.verdict, 'drift');
-      assert.equal(result.reason_code, 'CONTRACT_IMPACT_DRIFT');
+      expect(result.verdict).toBe('drift');
+      expect(result.reason_code).toBe('CONTRACT_IMPACT_DRIFT');
     });
 
-    test('CONTRACT_IMPACT_DRIFT 事件写入 gap_events 表', async (t) => {
-      // 需要真实 DB，跳过
-      t.skip('需要 DB 连接，MJ5 合同通过后替换');
-    });
+    test.skip('CONTRACT_IMPACT_DRIFT 事件写入 gap_events 表', async () => {});
 
     test('drift 触发后 Diff Gate 结果为 blocked（门禁变红）', async () => {
       // 通过 evaluateDiffGate + mock mapClient 验证 drift 裁决
@@ -131,20 +127,14 @@ describe('FR-4 Diff Impact Gate', () => {
 
       // 无合同时 contractNodes=[]，actualNodes=['tick-loop'] → added_nodes=['tick-loop']
       // actualAssertions=[]，无覆盖 → drift
-      assert.equal(result.gate, 'drift', 'drift 场景 gate 应为 drift');
-      assert.equal(result.verdict, 'drift');
-      assert.equal(result.reason_code, 'CONTRACT_IMPACT_DRIFT');
+      expect(result.gate).toBe('drift');
+      expect(result.verdict).toBe('drift');
+      expect(result.reason_code).toBe('CONTRACT_IMPACT_DRIFT');
     });
 
-    test('drift 触发后原任务 status 变为 blocked', async (t) => {
-      // 需要真实 DB（blockTask 写 harness_tasks 表），跳过
-      t.skip('需要 DB 连接（blockTask），MJ5 合同通过后替换');
-    });
+    test.skip('drift 触发后原任务 status 变为 blocked', async () => {});
 
-    test('drift 事件可通过 GET /api/brain/gaps?task_id=:id 查询', async (t) => {
-      // 需要真实 DB + HTTP 服务，跳过
-      t.skip('需要完整 DB + HTTP 服务，MJ5 合同通过后替换');
-    });
+    test.skip('drift 事件可通过 GET /api/brain/gaps?task_id=:id 查询', async () => {});
 
   });
 
@@ -164,8 +154,8 @@ describe('FR-4 Diff Impact Gate', () => {
       });
 
       // Mapper 抛出异常 → fail-closed → impact_unknown（不是 pass）
-      assert.equal(result.gate, 'impact_unknown', 'Mapper 超时时必须 fail-closed，不能假绿');
-      assert.equal(result.retryable, true);
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.retryable).toBe(true);
     });
 
     test('Mapper revision mismatch 时 Diff Gate 返回 blocked', async () => {
@@ -188,9 +178,9 @@ describe('FR-4 Diff Impact Gate', () => {
         changedFiles: ['packages/brain/src/tick.js'],
       });
 
-      assert.equal(result.gate, 'impact_unknown', 'revision mismatch 时必须 fail-closed');
-      assert.equal(result.reason, 'revision_mismatch');
-      assert.equal(result.retryable, true);
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.reason).toBe('revision_mismatch');
+      expect(result.retryable).toBe(true);
     });
 
   });

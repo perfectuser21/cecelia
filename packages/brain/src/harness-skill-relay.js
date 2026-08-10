@@ -71,7 +71,7 @@ export function deriveReviewRequired(task) {
   let kind = null;
   try {
     kind = normalizeChangeKind(rawKind);
-  } catch (_) {
+  } catch (_err) {
     // 非法 change_kind 不影响判定，视为未知，走 title 检测
   }
   // 规范值：bugfix/parameter_only → 不需要人审

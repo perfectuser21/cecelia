@@ -108,7 +108,6 @@ export async function openGapForDrift(db, {
     Math.abs(new Date(gap.updated_at) - new Date(gap.created_at)) < 100;
 
   // 写 discovered 事件（幂等）
-  const eventType = owner ? 'discovered' : 'discovered';
   const effectiveKey = idempotencyKey ?? `discovered:${gap.id}:${revision ?? 'no-rev'}`;
 
   await db.query(

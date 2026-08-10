@@ -8,8 +8,7 @@
  *   通过真实环境验收后，将 stub 替换为真实 Mapper 调用。
  */
 
-import { test, describe } from 'node:test';
-import assert from 'node:assert/strict';
+import { describe, test, expect } from 'vitest';
 
 import { evaluateStructureGate } from '../structure-gate.js';
 
@@ -101,7 +100,7 @@ describe('FR-3 Structure Gate', () => {
         contract: BASE_CONTRACT,
         mapClient: makeUnavailableMapClient(),
       });
-      assert.equal(result.gate, 'blocked', '不可达时 gate 应为 blocked，不放行');
+      expect(result.gate).toBe('blocked');
     });
 
     test('Mapper unavailable 响应包含 reason=mapper_unavailable', async () => {
@@ -112,7 +111,7 @@ describe('FR-3 Structure Gate', () => {
         contract: BASE_CONTRACT,
         mapClient: makeUnavailableMapClient(),
       });
-      assert.equal(result.reason, 'mapper_unavailable', 'reason 应为 mapper_unavailable');
+      expect(result.reason).toBe('mapper_unavailable');
     });
 
     test('Mapper unavailable 响应包含 retryable=true', async () => {
@@ -123,7 +122,7 @@ describe('FR-3 Structure Gate', () => {
         contract: BASE_CONTRACT,
         mapClient: makeUnavailableMapClient(),
       });
-      assert.equal(result.retryable, true, 'retryable 应为 true');
+      expect(result.retryable).toBe(true);
     });
 
     test('Mapper unavailable 不产生 impact_scope=[] 的假绿结果', async () => {
@@ -136,8 +135,8 @@ describe('FR-3 Structure Gate', () => {
         mapClient: makeUnavailableMapClient(),
       });
       // 不应返回 2xx，不应放行
-      assert.notEqual(result.gate, 'pass', 'unavailable 绝不放行（假绿）');
-      assert(result.httpStatus >= 400, `httpStatus 应为 4xx/5xx，实际得到 ${result.httpStatus}`);
+      expect(result.gate).not.toBe('pass');
+      expect(result.httpStatus >= 400).toBeTruthy();
     });
 
   });
@@ -153,7 +152,7 @@ describe('FR-3 Structure Gate', () => {
         contract: BASE_CONTRACT,
         mapClient: makeStaleFreshnessMapClient(),
       });
-      assert.equal(result.gate, 'blocked', 'stale 时 gate 应为 blocked');
+      expect(result.gate).toBe('blocked');
     });
 
     test('Mapper stale 响应包含 reason=mapper_stale', async () => {
@@ -164,7 +163,7 @@ describe('FR-3 Structure Gate', () => {
         contract: BASE_CONTRACT,
         mapClient: makeStaleFreshnessMapClient(),
       });
-      assert.equal(result.reason, 'mapper_stale', 'reason 应为 mapper_stale');
+      expect(result.reason).toBe('mapper_stale');
     });
 
     test('Mapper stale 响应包含 retryable=true', async () => {
@@ -175,7 +174,7 @@ describe('FR-3 Structure Gate', () => {
         contract: BASE_CONTRACT,
         mapClient: makeStaleFreshnessMapClient(),
       });
-      assert.equal(result.retryable, true, 'retryable 应为 true');
+      expect(result.retryable).toBe(true);
     });
 
   });
@@ -191,7 +190,7 @@ describe('FR-3 Structure Gate', () => {
         contract: BASE_CONTRACT,
         mapClient: makeRevisionMismatchMapClient(),
       });
-      assert.equal(result.httpStatus, 409, `httpStatus 应为 409，实际得到 ${result.httpStatus}`);
+      expect(result.httpStatus).toBe(409);
     });
 
     test('revision mismatch 响应包含 reason=revision_mismatch', async () => {
@@ -202,7 +201,7 @@ describe('FR-3 Structure Gate', () => {
         contract: BASE_CONTRACT,
         mapClient: makeRevisionMismatchMapClient(),
       });
-      assert.equal(result.reason, 'revision_mismatch', 'reason 应为 revision_mismatch');
+      expect(result.reason).toBe('revision_mismatch');
     });
 
     test('revision mismatch 响应包含 retryable=true', async () => {
@@ -213,7 +212,7 @@ describe('FR-3 Structure Gate', () => {
         contract: BASE_CONTRACT,
         mapClient: makeRevisionMismatchMapClient(),
       });
-      assert.equal(result.retryable, true, 'retryable 应为 true');
+      expect(result.retryable).toBe(true);
     });
 
   });
@@ -228,7 +227,7 @@ describe('FR-3 Structure Gate', () => {
         contract: BASE_CONTRACT,
         mapClient: makeNormalMapClient(),
       });
-      assert.equal(result.gate, 'pass', 'schema 合法且 Mapper 正常时应放行');
+      expect(result.gate).toBe('pass');
     });
 
   });
@@ -251,11 +250,7 @@ describe('FR-3 Structure Gate', () => {
           contract: BASE_CONTRACT,
           mapClient: scenario.mapClient,
         });
-        assert.notEqual(
-          result.gate,
-          'pass',
-          `场景 ${scenario.name}：gate 绝不应为 pass（fail-closed 原则）`
-        );
+        expect(result.gate).not.toBe('pass');
       }
     });
 
