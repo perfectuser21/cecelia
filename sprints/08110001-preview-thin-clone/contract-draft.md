@@ -145,6 +145,111 @@ SELECT pg_database_size('${DB_NAME}');
 
 本合同包含 E2E 段（BEHAVIOR-05 ~ BEHAVIOR-09），需要真实起 preview 环境验证，不可以 mock 代替。
 
+```bash
+#!/usr/bin/env bash
+# preview 瘦克隆 E2E 验收脚本（PR#4778）
+# target_environment: local_api
+# 访问路径：harness 容器 → host.docker.internal → 宿主机 PostgreSQL（port 5432）
+#           harness 容器 → host.docker.internal:5221 → 主 Brain API（查 preview 状态）
+set -uo pipefail
+
+PASS=0; FAIL=0
+pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
+fail() { echo "  FAIL: $1 — $2"; FAIL=$((FAIL+1)); }
+
+DB_HOST="${PREVIEW_DB_HOST:-host.docker.internal}"
+DB_NAME="cecelia_preview_4778"
+DB_USER="cecelia"
+DB_PASSWORD="cecelia"
+PROD_DB_NAME="cecelia"
+PR_NUMBER="4778"
+
+# 主 Brain URL（harness 容器内可达；B-1.6 会将 localhost:5221 重写为 host.docker.internal:5221）
+MAIN_BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+
+echo ""
+echo "=== preview 瘦克隆 E2E 验收 DB=${DB_NAME} PR=${PR_NUMBER} ==="
+
+# BEHAVIOR-05：preview 库总大小 < 1GB（manual:bash 证据点）
+echo ""
+echo "=== BEHAVIOR-05: pg_database_size ==="
+DB_SIZE=$(PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -U "${DB_USER}" -d "${DB_NAME}" -tAc \
+  "SELECT pg_database_size('${DB_NAME}')" 2>/dev/null | tr -d '[:space:]' || echo "")
+if [ -z "${DB_SIZE}" ]; then
+  fail "BEHAVIOR-05" "无法查询 pg_database_size（${DB_HOST}/${DB_NAME}）"
+elif [ "${DB_SIZE}" -lt 1073741824 ]; then
+  echo "  [PR证据] pg_database_size('${DB_NAME}') = ${DB_SIZE} bytes"
+  pass "BEHAVIOR-05: ${DB_SIZE} bytes < 1073741824 (1GB)"
+else
+  fail "BEHAVIOR-05" "${DB_SIZE} bytes >= 1073741824 (1GB)"
+fi
+
+# BEHAVIOR-06：业务表行数与主库一致
+echo ""
+echo "=== BEHAVIOR-06: 业务表数据完整性 ==="
+for tbl in tasks journeys; do
+  PREVIEW_CNT=$(PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -U "${DB_USER}" -d "${DB_NAME}" -tAc \
+    "SELECT count(*) FROM ${tbl}" 2>/dev/null | tr -d '[:space:]' || echo "")
+  PROD_CNT=$(PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -U "${DB_USER}" -d "${PROD_DB_NAME}" -tAc \
+    "SELECT count(*) FROM ${tbl}" 2>/dev/null | tr -d '[:space:]' || echo "")
+  echo "  [PR证据] ${tbl}: prod=${PROD_CNT:-N/A} preview=${PREVIEW_CNT:-N/A}"
+  if [ -z "${PREVIEW_CNT}" ] || [ -z "${PROD_CNT}" ]; then
+    fail "BEHAVIOR-06: ${tbl}" "无法获取行数"
+  elif [ "${PREVIEW_CNT}" -ge "${PROD_CNT}" ]; then
+    pass "BEHAVIOR-06: ${tbl} preview=${PREVIEW_CNT} >= prod=${PROD_CNT}"
+  else
+    fail "BEHAVIOR-06: ${tbl}" "数据丢失 preview=${PREVIEW_CNT} < prod=${PROD_CNT}"
+  fi
+done
+
+# BEHAVIOR-07：preview Brain health（通过主 Brain preview status API 验证）
+echo ""
+echo "=== BEHAVIOR-07: preview Brain health ==="
+PREVIEW_STATUS=$(curl -sf --connect-timeout 5 --max-time 10 \
+  "${MAIN_BRAIN_URL}/api/brain/preview/status/${PR_NUMBER}" 2>/dev/null || echo "")
+echo "  [证据] preview/status/${PR_NUMBER}: ${PREVIEW_STATUS}"
+if echo "${PREVIEW_STATUS}" | grep -q '"status":"active"'; then
+  pass "BEHAVIOR-07: preview status=active（Brain 进程健康运行）"
+else
+  fail "BEHAVIOR-07" "preview status 非 active: ${PREVIEW_STATUS}"
+fi
+
+# BEHAVIOR-08：preview Brain schema 无错误
+# 验证：preview DB schema_version 最大版本与主库一致（migrations 运行正常）
+echo ""
+echo "=== BEHAVIOR-08: preview Brain schema 验证 ==="
+PREVIEW_SCHEMA_VER=$(PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -U "${DB_USER}" -d "${DB_NAME}" -tAc \
+  "SELECT max(version::int) FROM schema_version" 2>/dev/null | tr -d '[:space:]' || echo "")
+PROD_SCHEMA_VER=$(PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -U "${DB_USER}" -d "${PROD_DB_NAME}" -tAc \
+  "SELECT max(version::int) FROM schema_version" 2>/dev/null | tr -d '[:space:]' || echo "")
+echo "  [证据] preview schema_version=${PREVIEW_SCHEMA_VER:-N/A} prod=${PROD_SCHEMA_VER:-N/A}"
+if [ -z "${PREVIEW_SCHEMA_VER}" ]; then
+  fail "BEHAVIOR-08" "无法查询 preview schema_migrations（migrations 未运行）"
+elif [ "${PREVIEW_SCHEMA_VER}" = "${PROD_SCHEMA_VER}" ]; then
+  pass "BEHAVIOR-08: schema_version=${PREVIEW_SCHEMA_VER} 与主库一致，无 schema 错误"
+else
+  fail "BEHAVIOR-08" "schema 版本不一致 preview=${PREVIEW_SCHEMA_VER} prod=${PROD_SCHEMA_VER}"
+fi
+
+# BEHAVIOR-09：既有冒烟测试（通过主 Brain API）
+echo ""
+echo "=== BEHAVIOR-09: 既有冒烟测试 ==="
+SMOKE="packages/brain/scripts/smoke/preview-environments-smoke.sh"
+if [ ! -f "${SMOKE}" ]; then
+  fail "BEHAVIOR-09" "冒烟脚本不存在: ${SMOKE}"
+elif BRAIN_URL="${MAIN_BRAIN_URL}" bash "${SMOKE}" 2>&1; then
+  pass "BEHAVIOR-09: preview-environments-smoke 通过"
+else
+  fail "BEHAVIOR-09" "冒烟测试 exit 非 0"
+fi
+
+echo ""
+echo "==============================="
+echo "E2E 结果: PASS=${PASS}, FAIL=${FAIL}"
+echo "==============================="
+[ "${FAIL}" -eq 0 ] || exit 1
+```
+
 ---
 
 ## manual:bash 段声明
