@@ -8,11 +8,17 @@
 
 
 
-**Brain 版本**: 1.271.1
+**Brain 版本**: 1.271.2
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.271.2 — 任务生命周期时间戳闭环
+
+- `PATCH /api/brain/tasks/:id` 在任务进入或幂等回写 `in_progress` 时持久化 `started_at`，进入或幂等回写 `completed` 时持久化 `completed_at`，并补齐历史终态任务缺失的开始时间。
+- 更新响应返回 `started_at` 与 `completed_at`，让 Workbench、Notion Projection 和外部执行器读取同一份生命周期事实。
+- 回归测试覆盖 queued → in_progress、in_progress → completed 与历史 completed 空时间戳修复三条路径。
 
 ## Brain 1.271.1 — 队列分层与投影调度可靠性
 
