@@ -26,11 +26,24 @@ const REPO_ROOT = path.resolve(__dirname, '../../..');
 // 权威运行守护进程是 cecelia-bridge.cjs（bridge-keepalive-check.sh + launchd com.cecelia.bridge，port 3457）；
 // cecelia-bridge.js 为同源第二实现（type:module 下无法直接 node 启动），须同步同一模式但 E2E 打真实 .cjs。
 const BRIDGE_JS = path.join(REPO_ROOT, 'packages/brain/scripts/cecelia-bridge.cjs');
-const PORT = parseInt(process.env.E2E_BRIDGE_PORT || '34571', 10);
 
 function sha256(p) { return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex'); }
 function fail(msg) { console.error(`FAIL: ${msg}`); process.exit(1); }
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+// 每段独立端口：向内核申请一个空闲端口（listen 0 → 读回分配值 → 立即释放）。
+// 修复 evaluator FAIL 根因——三段原共用固定端口 34571，teardown 不等 bridge 退出即释放，
+// 端口复用竞态导致并发段 socket hang up / ECONNRESET（10 跑 5 FAIL）。
+function getFreePort() {
+  return new Promise((resolve, reject) => {
+    const srv = require('net').createServer();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+  });
+}
 
 function post(port, bodyObj) {
   return new Promise((resolve, reject) => {
@@ -58,6 +71,7 @@ async function waitPort(port, tries = 80) {
 }
 
 async function setup() {
+  const port = await getFreePort();
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-e2e-'));
   const fakeHome = path.join(work, 'home');
   const authDir = path.join(fakeHome, '.claude-account1');
@@ -82,21 +96,34 @@ async function setup() {
 
   // bridge 用 spawn(CLAUDE_BIN, args) 直接执行 CLAUDE_BIN，故 CLAUDE_BIN 必须是可执行文件本身
   const bridge = spawn(process.execPath, [BRIDGE_JS], {
-    env: { ...process.env, HOME: fakeHome, BRIDGE_PORT: String(PORT), CLAUDE_BIN: fakeClaude, E2E_MARKER: marker },
+    env: { ...process.env, HOME: fakeHome, BRIDGE_PORT: String(port), CLAUDE_BIN: fakeClaude, E2E_MARKER: marker },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';
   bridge.stdout.on('data', (d) => (log += d));
   bridge.stderr.on('data', (d) => (log += d));
 
-  const ready = await waitPort(PORT);
-  if (!ready) { try { bridge.kill(); } catch {} fail(`bridge 未在预算内就绪 port=${PORT}\n${log}`); }
-  return { work, fakeHome, authDir, authFile, marker, bridge, logRef: () => log };
+  const ready = await waitPort(port);
+  if (!ready) { try { bridge.kill(); } catch {} fail(`bridge 未在预算内就绪 port=${port}\n${log}`); }
+  return { work, fakeHome, authDir, authFile, marker, bridge, port, logRef: () => log };
 }
 
+// 等待 bridge 进程真正退出后再返回，确保端口在下一段 setup 前已释放（消除端口复用竞态）。
 function teardown(ctx) {
-  try { ctx.bridge.kill(); } catch {}
-  try { fs.rmSync(ctx.work, { recursive: true, force: true }); } catch {}
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try { fs.rmSync(ctx.work, { recursive: true, force: true }); } catch {}
+      resolve();
+    };
+    const b = ctx && ctx.bridge;
+    if (!b || b.exitCode !== null || b.signalCode !== null) { finish(); return; }
+    b.once('exit', finish);
+    try { b.kill(); } catch { finish(); }
+    setTimeout(finish, 3000); // 兜底：exit 事件未触发也不挂死
+  });
 }
 
 function pointedDirs(marker) {
@@ -108,7 +135,7 @@ async function runRedline() {
   try {
     const mtimeBefore = fs.statSync(ctx.authFile).mtimeMs;
     const shaBefore = sha256(ctx.authFile);
-    const resp = await post(PORT, { prompt: 'hello', model: 'haiku', accountId: 'account1' });
+    const resp = await post(ctx.port, { prompt: 'hello', model: 'haiku', accountId: 'account1' });
     if (resp.status !== 200) fail(`/llm-call 非 200: ${resp.status} ${resp.body}`);
     await sleep(300);
     const mtimeAfter = fs.statSync(ctx.authFile).mtimeMs;
@@ -116,13 +143,13 @@ async function runRedline() {
     if (shaAfter !== shaBefore) fail(`核心红线：权威 .credentials.json sha256 变化 before=${shaBefore} after=${shaAfter}（bridge 仍在回写权威文件）`);
     if (mtimeAfter !== mtimeBefore) fail(`核心红线：权威 .credentials.json mtime 变化 ${mtimeBefore}→${mtimeAfter}`);
     console.log('OK: redline — 权威文件 mtime + sha256 attempt 前后完全不变');
-  } finally { teardown(ctx); }
+  } finally { await teardown(ctx); }
 }
 
 async function runIsolation() {
   const ctx = await setup();
   try {
-    const resp = await post(PORT, { prompt: 'hello', model: 'haiku', accountId: 'account1' });
+    const resp = await post(ctx.port, { prompt: 'hello', model: 'haiku', accountId: 'account1' });
     if (resp.status !== 200) fail(`/llm-call 非 200: ${resp.status} ${resp.body}`);
     const dirs = pointedDirs(ctx.marker);
     if (dirs.length < 1) fail('fake-claude 未记录到任何 CLAUDE_CONFIG_DIR（claude 未被真实 spawn？）');
@@ -133,7 +160,7 @@ async function runIsolation() {
     for (let i = 0; i < 25; i++) { if (!fs.existsSync(pointed)) { cleaned = true; break; } await sleep(200); }
     if (!cleaned) fail(`attempt 结束后临时目录未清理: ${pointed}`);
     console.log(`OK: isolation — CLAUDE_CONFIG_DIR 指向临时副本(${pointed}) 非权威目录，且结束后已清理`);
-  } finally { teardown(ctx); }
+  } finally { await teardown(ctx); }
 }
 
 async function runConcurrency() {
@@ -142,8 +169,8 @@ async function runConcurrency() {
     const mtimeBefore = fs.statSync(ctx.authFile).mtimeMs;
     const shaBefore = sha256(ctx.authFile);
     const [r1, r2] = await Promise.all([
-      post(PORT, { prompt: 'a', model: 'haiku', accountId: 'account1' }),
-      post(PORT, { prompt: 'b', model: 'haiku', accountId: 'account1' }),
+      post(ctx.port, { prompt: 'a', model: 'haiku', accountId: 'account1' }),
+      post(ctx.port, { prompt: 'b', model: 'haiku', accountId: 'account1' }),
     ]);
     if (r1.status !== 200 || r2.status !== 200) fail(`并发 /llm-call 非 200: ${r1.status}/${r2.status}`);
     await sleep(300);
@@ -154,7 +181,7 @@ async function runConcurrency() {
     for (const d of uniq) if (path.resolve(d) === path.resolve(ctx.authDir)) fail(`并发中出现指向权威目录: ${d}`);
     if (sha256(ctx.authFile) !== shaBefore || fs.statSync(ctx.authFile).mtimeMs !== mtimeBefore) fail('并发后权威文件被写');
     console.log(`OK: concurrency — 两 attempt 临时目录互异(${uniq.length}) 且权威文件仍未被写`);
-  } finally { teardown(ctx); }
+  } finally { await teardown(ctx); }
 }
 
 (async () => {
