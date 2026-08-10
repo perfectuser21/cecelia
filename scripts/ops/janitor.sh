@@ -288,7 +288,7 @@ if [ "$MODE" = "frequent" ]; then
     elapsed=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ')
     [ -z "$elapsed" ] && return
     secs=$(etime_to_secs "$elapsed")
-    [ -z "$secs" ] && { echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] etime_to_secs 解析失败 elapsed=$elapsed pid=$pid，保守跳过"; secs=0; }
+    [ -z "$secs" ] && { echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] etime_to_secs 解析失败 elapsed=$elapsed pid=${pid}，保守跳过"; secs=0; }
     [ "$secs" -lt "$threshold" ] && return
 
     # cecelia 常驻服务豁免（fleet-worker/toolchain 等）
@@ -353,7 +353,7 @@ if [ "$MODE" = "frequent" ]; then
     elapsed=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ')
     [ -z "$elapsed" ] && return
     secs=$(etime_to_secs "$elapsed")
-    [ -z "$secs" ] && { echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] etime_to_secs 解析失败 elapsed=$elapsed pid=$pid，保守跳过"; secs=0; }
+    [ -z "$secs" ] && { echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] etime_to_secs 解析失败 elapsed=$elapsed pid=${pid}，保守跳过"; secs=0; }
     [ "$secs" -lt "$threshold" ] && return
 
     # cecelia 常驻服务豁免（同 kill_if_orphan）
@@ -586,7 +586,7 @@ if [ -d "$CECELIA_REPO/.git" ]; then
         branch_cleaned=$((branch_cleaned + 1))
         log "  ↳ 删除分支: $branch"
       else
-        log "  ↳ 无法删除分支: $branch（跳过）"
+        log "  ↳ 无法删除分支: ${branch}（跳过）"
       fi
     fi
   done < <(git branch 2>/dev/null | grep -E "cp-|worktree-|feature/" | grep -v "^\*")
@@ -660,7 +660,7 @@ for scan_dir in "$HOME/worktrees/cecelia" "$HOME/worktrees/zenithjoy"; do
         wt_cleaned=$((wt_cleaned + 1))
         log "  ↳ 删除孤儿 worktree: $wt_path"
       else
-        log "  ↳ 无法删除: $wt_path（跳过）"
+        log "  ↳ 无法删除: ${wt_path}（跳过）"
       fi
     fi
   done
