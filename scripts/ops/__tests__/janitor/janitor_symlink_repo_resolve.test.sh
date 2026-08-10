@@ -3,7 +3,7 @@
 #
 # 事故（2026-08-10 真跑验收实证）：生产 cron 走 ~/bin/janitor.sh 软链调用，
 # $0 = /Users/administrator/bin/janitor.sh，旧逻辑 `$(dirname "$0")/../..`
-# 反推出 $HOME（无 .git）→ 步骤 8 "✗ 跳过（git 仓库不存在）"静默失效。
+# 反推出 ${HOME}（无 .git）→ 步骤 8 "✗ 跳过（git 仓库不存在）"静默失效。
 # CI 用真实路径调用测不到这个接缝——本测试用软链调用复现。
 # 先例：packages/brain/scripts/cecelia-run.sh:417 同构 bug 的生产验证修法。
 
