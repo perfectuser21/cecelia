@@ -217,7 +217,7 @@ ROOT_DEPS_OK=1
 for WORKFLOW in .github/workflows/{ci-smoke-glob-runner,ci,nightly-regression}.yml; do
   awk '/name: Install Brain deps/{n=12} n && /cd packages\/brain/{exit 1} n && /^[[:space:]]+(run: )?npm ci$/{exit 0} n && n-- == 1{exit 1}' "$WORKFLOW" || ROOT_DEPS_OK=0
 done
-[[ $ROOT_DEPS_OK -eq 1 ]] && pass "真实 smoke CI 安装 graph scanner 的根依赖" || fail "真实 smoke CI 仅安装 Brain 依赖"
+if [[ $ROOT_DEPS_OK -eq 1 ]]; then pass "真实 smoke CI 安装 graph scanner 的根依赖"; else fail "真实 smoke CI 仅安装 Brain 依赖"; fi
 
 echo ""
 echo "结果: PASS=$PASS FAIL=$ERRORS"
