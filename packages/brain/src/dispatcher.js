@@ -14,6 +14,7 @@
 import pool from './db.js';
 import { isGlobalQuotaCooling, getQuotaCoolingState } from './quota-cooling.js';
 import { isDraining, getDrainStartedAt } from './drain.js';
+import { reconcileBlockingStates, maybeLogDrainSummary } from './blocking-states.js';
 import {
   triggerCeceliaRun,
   checkCeceliaRunAvailable,
@@ -187,12 +188,30 @@ export async function dispatchNextTask(goalIds) {
   const actions = [];
   let llmCapacitySnapshot = null;
 
+  // 0-pre. 阻断类状态位 TTL 自愈——排空置位超 TTL 无人续期则自动解除 + 留痕 + 告警，
+  // 避免「健康地停摆」（2026-08-10 tick_draining 卡 2h20m、5 条 P0 零派发事故）。
+  // 放在 drain 闸之前：同一轮解除后下面 queued 任务即可正常被派发。
+  try {
+    await reconcileBlockingStates(pool);
+  } catch (reconcileErr) {
+    console.error('[dispatch] blocking-state reconcile failed (non-fatal):', reconcileErr.message);
+  }
+
   // 0. Drain check — skip dispatch if draining (let in_progress tasks finish)
   // Also check alertness-requested drain mode
   const { getMitigationState } = await import('./alertness-actions.js');
   const mitigationState = getMitigationState();
 
   if (isDraining() || mitigationState.drain_mode_requested) {
+    // 可观测兜底：排空生效期每 N 轮打印一条汇总（已排空多久 + 挡住多少候选），
+    // 消除「排空期间日志里什么都没有」的排障黑洞（事故①连 slot_check 都不出现）。
+    if (isDraining()) {
+      try {
+        await maybeLogDrainSummary(pool);
+      } catch (summaryErr) {
+        console.error('[dispatch] drain summary log failed (non-fatal):', summaryErr.message);
+      }
+    }
     await recordDispatchResult(pool, false, 'draining');
     return {
       dispatched: false,

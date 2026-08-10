@@ -2,6 +2,7 @@ import { Router } from 'express';
 import pool from '../db.js';
 import { getTickStatus, enableTick, disableTick, executeTick as _executeTick, runTickSafe, drainTick, getDrainStatus, cancelDrain, getStartupErrors, check48hReport as _check48hReport } from '../tick.js';
 import { getCurrentAlertness, setManualOverride, clearManualOverride, evaluateAlertness, ALERTNESS_LEVELS, LEVEL_NAMES } from '../alertness/index.js';
+import { getBlockingStates, buildAlertnessView } from '../blocking-states.js';
 
 const router = Router();
 
@@ -123,9 +124,14 @@ router.get('/tick/startup-errors', async (req, res) => {
 router.get('/alertness', async (req, res) => {
   try {
     const alertness = getCurrentAlertness();
+    // 阻断类状态位可见性（2026-08-10 事故：draining 卡 2h20m 期间此端点报 CALM/healthy）。
+    // 存在活跃阻断位时 healthy=false 且不再报 CALM——把「静默停摆」暴露给健康检查。
+    const blockingStates = await getBlockingStates();
+    const view = buildAlertnessView(alertness, blockingStates, { ALERTNESS_LEVELS, LEVEL_NAMES });
     res.json({
       success: true,
       ...alertness,
+      ...view,
       levels: ALERTNESS_LEVELS,
       level_names: LEVEL_NAMES
     });

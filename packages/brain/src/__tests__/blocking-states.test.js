@@ -42,6 +42,7 @@ import {
   reconcileBlockingStates,
   maybeLogDrainSummary,
   summarizeHealth,
+  buildAlertnessView,
   getDrainTtlMs,
   DEFAULT_DRAIN_TTL_MS,
   _resetBlockingStatesForTest,
@@ -209,12 +210,13 @@ describe('maybeLogDrainSummary — 可观测兜底（验收：每 N 轮至少一
       // N=2 → 3 轮（N+1）
       if (await maybeLogDrainSummary()) logged += 1;
     }
-    logSpy.mockRestore();
-
-    expect(logged).toBeGreaterThanOrEqual(1);
+    // 先在 restore 之前取出 calls（restore 会清空 mock.calls）
     const summaryLines = logSpy.mock.calls
       .map((c) => c.join(' '))
       .filter((l) => l.includes('drain') && (l.includes('候选') || l.includes('candidate')));
+    logSpy.mockRestore();
+
+    expect(logged).toBeGreaterThanOrEqual(1);
     expect(summaryLines.length).toBeGreaterThanOrEqual(1);
     // 汇总必须含被挡候选数（来自 queued 计数）
     expect(summaryLines.join('\n')).toMatch(/5/);
@@ -253,5 +255,35 @@ describe('summarizeHealth — 健康检查红线（验收：有阻断位不得�
     expect(h.blocking_summary).toMatch(/tick_draining/);
     // 摘要必须带持续时长（可判读）
     expect(h.blocking_summary).toMatch(/3m/);
+  });
+});
+
+describe('buildAlertnessView — 组装 /api/brain/alertness 阻断可见性字段', () => {
+  const LEVELS = { ALERTNESS_LEVELS: { SLEEPING: 0, CALM: 1, AWARE: 2, ALERT: 3, PANIC: 4 }, LEVEL_NAMES: ['SLEEPING', 'CALM', 'AWARE', 'ALERT', 'PANIC'] };
+
+  it('无阻断位 → healthy=true，保留原等级（不抬级）', () => {
+    const view = buildAlertnessView({ level: 1, levelName: 'CALM', reason: 'ok' }, [], LEVELS);
+    expect(view.healthy).toBe(true);
+    expect(view.blocking_states).toEqual([]);
+    // 不注入 level 覆盖，路由 spread 后仍是原 CALM
+    expect(view.level).toBeUndefined();
+  });
+
+  it('有阻断位 + 原 CALM → healthy=false 且抬级到 AWARE（不再报 CALM）', () => {
+    const states = [{ key: 'tick_draining', duration_ms: 40 * MIN, duration_human: '40m' }];
+    const view = buildAlertnessView({ level: 1, levelName: 'CALM', reason: 'System is healthy' }, states, LEVELS);
+    expect(view.healthy).toBe(false);
+    expect(view.level).toBe(2);
+    expect(view.levelName).toBe('AWARE');
+    expect(view.levelName).not.toBe('CALM');
+    expect(view.reason).toMatch(/阻断状态位生效/);
+    expect(view.blocking_states).toBe(states);
+  });
+
+  it('有阻断位 + 原等级已高于 AWARE → 保留更高等级（取 max，不降级）', () => {
+    const states = [{ key: 'tick_draining', duration_ms: MIN, duration_human: '1m' }];
+    const view = buildAlertnessView({ level: 4, levelName: 'PANIC', reason: 'x' }, states, LEVELS);
+    expect(view.level).toBe(4);
+    expect(view.levelName).toBe('PANIC');
   });
 });
