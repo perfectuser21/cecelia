@@ -16,6 +16,7 @@ describe('isPhotoType', () => {
 });
 
 describe('listPhotoLayer', () => {
+  const sha40 = 'a'.repeat(40);
   function mockPool(rows, freshnessRow) {
     return {
       query: vi
@@ -26,7 +27,7 @@ describe('listPhotoLayer', () => {
   }
 
   const metadata = (repo = 'cecelia') => ({
-    repo, scanned_at: new Date(), source_revision: 'abc123', scanner_version: 'api-registry-v2',
+    repo, scanned_at: new Date(), source_revision: sha40, scanner_version: 'api-registry-v2',
   });
 
   it('无 search:repo 默认 cecelia，items 与 freshness 传播 metadata', async () => {
@@ -35,7 +36,7 @@ describe('listPhotoLayer', () => {
       [{
         id: 1, repo: 'cecelia', method: 'GET', path: '/x', file_path: 'a.js', line_number: 5,
         area: 'cecelia', description: null, scanned_at: now,
-        source_revision: 'abc123', scanner_version: 'api-registry-v2',
+        source_revision: sha40, scanner_version: 'api-registry-v2',
       }],
       metadata(),
     );
@@ -47,13 +48,13 @@ describe('listPhotoLayer', () => {
     expect(r.items[0].name).toBe('GET /x');
     expect(r.items[0].location).toBe('a.js:5');
     expect(r.items[0]).toMatchObject({
-      repo: 'cecelia', source_revision: 'abc123', scanner_version: 'api-registry-v2',
+      repo: 'cecelia', source_revision: sha40, scanner_version: 'api-registry-v2',
       last_success_at: now,
     });
     expect(r.count).toBe(1);
-    expect(r).toMatchObject({ repo: 'cecelia', source_revision: 'abc123', scanner_version: 'api-registry-v2' });
+    expect(r).toMatchObject({ repo: 'cecelia', source_revision: sha40, scanner_version: 'api-registry-v2' });
     expect(r.freshness).toMatchObject({
-      repo: 'cecelia', status: 'fresh', source_revision: 'abc123', scanner_version: 'api-registry-v2',
+      repo: 'cecelia', status: 'fresh', source_revision: sha40, scanner_version: 'api-registry-v2',
     });
   });
 

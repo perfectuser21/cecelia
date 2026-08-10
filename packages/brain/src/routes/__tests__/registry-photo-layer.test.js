@@ -6,8 +6,10 @@ const mockQuery = vi.fn();
 vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
 
 let app;
+const SHA_40 = 'a'.repeat(40);
+const OTHER_SHA_40 = 'b'.repeat(40);
 const metadata = (repo = 'cecelia') => ({
-  repo, scanned_at: new Date(), source_revision: 'abc123', scanner_version: 'api-registry-v2',
+  repo, scanned_at: new Date(), source_revision: SHA_40, scanner_version: 'api-registry-v2',
 });
 
 beforeEach(async () => {
@@ -24,7 +26,7 @@ describe('GET /api/brain/registry 照相层改道', () => {
       .mockResolvedValueOnce({ rows: [{
         id: 1, repo: 'cecelia', method: 'GET', path: '/api/brain/context',
         file_path: 'packages/brain/src/routes.js', line_number: 42, area: 'cecelia', description: null,
-        scanned_at: new Date(), source_revision: 'abc123', scanner_version: 'api-registry-v2',
+        scanned_at: new Date(), source_revision: SHA_40, scanner_version: 'api-registry-v2',
       }] })
       .mockResolvedValueOnce({ rows: [metadata()] });
     const res = await request(app).get('/api/brain/registry?type=api');
@@ -34,10 +36,10 @@ describe('GET /api/brain/registry 照相层改道', () => {
     expect(res.body.items[0].name).toBe('GET /api/brain/context');
     expect(res.body.items[0].location).toBe('packages/brain/src/routes.js:42');
     expect(res.body.items[0]).toMatchObject({
-      repo: 'cecelia', source_revision: 'abc123', scanner_version: 'api-registry-v2',
+      repo: 'cecelia', source_revision: SHA_40, scanner_version: 'api-registry-v2',
     });
     expect(res.body).toMatchObject({
-      repo: 'cecelia', source_revision: 'abc123', scanner_version: 'api-registry-v2',
+      repo: 'cecelia', source_revision: SHA_40, scanner_version: 'api-registry-v2',
     });
     expect(res.body.freshness).toMatchObject({ repo: 'cecelia', status: 'fresh', stale: false });
     expect(res.body.count).toBe(1);
@@ -84,11 +86,11 @@ describe('GET /api/brain/registry 照相层改道', () => {
       .mockResolvedValueOnce({ rows: [{
         id: 4, repo: 'other-repo', method: 'GET', path: '/other', file_path: 'other.js',
         line_number: 1, area: 'other', description: null, scanned_at: new Date(),
-        source_revision: 'other-sha', scanner_version: 'api-registry-v2',
+        source_revision: OTHER_SHA_40, scanner_version: 'api-registry-v2',
       }] })
       .mockResolvedValueOnce({ rows: [{
         repo: 'other-repo', scanned_at: new Date(),
-        source_revision: 'other-sha', scanner_version: 'api-registry-v2',
+        source_revision: OTHER_SHA_40, scanner_version: 'api-registry-v2',
       }] });
 
     const res = await request(app).get('/api/brain/registry?type=api&repo=other-repo');
@@ -97,9 +99,9 @@ describe('GET /api/brain/registry 照相层改道', () => {
     expect(mockQuery.mock.calls[0][1][0]).toBe('other-repo');
     expect(mockQuery.mock.calls[1][0]).toMatch(/WHERE repo = \$1[\s\S]+ORDER BY scanned_at DESC/);
     expect(mockQuery.mock.calls[1][1]).toEqual(['other-repo']);
-    expect(res.body.items[0]).toMatchObject({ repo: 'other-repo', source_revision: 'other-sha' });
+    expect(res.body.items[0]).toMatchObject({ repo: 'other-repo', source_revision: OTHER_SHA_40 });
     expect(res.body.freshness).toMatchObject({
-      repo: 'other-repo', source_revision: 'other-sha', scanner_version: 'api-registry-v2',
+      repo: 'other-repo', source_revision: OTHER_SHA_40, scanner_version: 'api-registry-v2',
     });
   });
 

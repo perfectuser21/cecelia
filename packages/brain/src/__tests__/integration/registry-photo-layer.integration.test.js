@@ -15,6 +15,9 @@ const REPO_B = `${MARK}-b`;
 const STALE_REPO = `${MARK}-stale`;
 const LEGACY_REPO = `${MARK}-legacy`;
 const TEST_REPOS = [REPO_A, REPO_B, STALE_REPO, LEGACY_REPO];
+const REVISION_A = 'a'.repeat(40);
+const REVISION_B = 'b'.repeat(40);
+const REVISION_STALE = 'c'.repeat(40);
 
 beforeAll(async () => {
   await pool.query('DELETE FROM api_registry WHERE repo = ANY($1)', [TEST_REPOS]);
@@ -22,14 +25,15 @@ beforeAll(async () => {
     `INSERT INTO api_registry
        (repo, method, path, file_path, line_number, area, scanned_at, source_revision, scanner_version)
      VALUES
-       ($1, 'GET', '/itest/a-1', $5, 1, 'test', NOW() - interval '14 minutes', 'revision-a', 'api-registry-v2'),
-       ($1, 'POST', '/itest/a-2', $6, 2, 'test', NOW() - interval '14 minutes', 'revision-a', 'api-registry-v2'),
-       ($2, 'GET', '/itest/b', $7, 3, 'test', NOW(), 'revision-b', 'api-registry-v2'),
-       ($3, 'GET', '/itest/stale', $8, 4, 'test', NOW() - interval '16 minutes', 'revision-stale', 'api-registry-v2'),
+       ($1, 'GET', '/itest/a-1', $5, 1, 'test', NOW() - interval '14 minutes', $10, 'api-registry-v2'),
+       ($1, 'POST', '/itest/a-2', $6, 2, 'test', NOW() - interval '14 minutes', $10, 'api-registry-v2'),
+       ($2, 'GET', '/itest/b', $7, 3, 'test', NOW(), $11, 'api-registry-v2'),
+       ($3, 'GET', '/itest/stale', $8, 4, 'test', NOW() - interval '16 minutes', $12, 'api-registry-v2'),
        ($4, 'GET', '/itest/legacy', $9, 5, 'test', NOW(), 'legacy-unknown', 'legacy')`,
     [
       REPO_A, REPO_B, STALE_REPO, LEGACY_REPO,
       `${MARK}/a-1.js`, `${MARK}/a-2.js`, `${MARK}/b.js`, `${MARK}/stale.js`, `${MARK}/legacy.js`,
+      REVISION_A, REVISION_B, REVISION_STALE,
     ],
   );
 });
@@ -44,13 +48,13 @@ describe('照相层真库查询', () => {
     const r = await listPhotoLayer(pool, 'api', { repo: REPO_A, search: MARK });
     expect(r.items.length).toBe(2);
     expect(r.items.every((item) => item.repo === REPO_A)).toBe(true);
-    expect(r.items.every((item) => item.source_revision === 'revision-a')).toBe(true);
+    expect(r.items.every((item) => item.source_revision === REVISION_A)).toBe(true);
     expect(r).toMatchObject({
-      repo: REPO_A, source_revision: 'revision-a', scanner_version: 'api-registry-v2',
+      repo: REPO_A, source_revision: REVISION_A, scanner_version: 'api-registry-v2',
     });
     expect(r.freshness).toMatchObject({
       repo: REPO_A, status: 'fresh', reason_code: null,
-      source_revision: 'revision-a', scanner_version: 'api-registry-v2',
+      source_revision: REVISION_A, scanner_version: 'api-registry-v2',
     });
     expect(r.freshness.last_success_at).toBeTruthy();
   });

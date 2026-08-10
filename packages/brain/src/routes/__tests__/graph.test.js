@@ -15,8 +15,9 @@ const FEATURE_ROWS = [
   { id: 'f1', name: '发布能力', unit_test_path: 'c.js', workflow_ref: null, guard_ref: null },
   { id: 'f2', name: '客服能力', unit_test_path: null, workflow_ref: 'publishers/zj/p.js', guard_ref: null },
 ];
+const GRAPH_SHA_40 = 'c'.repeat(40);
 const FRESHNESS_ROW = {
-  repo: 'cecelia', scanned_at: new Date(), source_revision: 'graph-sha', scanner_version: 'graph-v3',
+  repo: 'cecelia', scanned_at: new Date(), source_revision: GRAPH_SHA_40, scanner_version: 'graph-v3',
 };
 
 // loadGraphContext 依次三查:edges → max(scanned_at) → features;之后端点可能再查 promises/siblings
@@ -62,7 +63,7 @@ describe('GET /locate', () => {
     expect(res.body.anchor_coverage).toEqual({ total_features: 2, anchored: 2, covered_by_graph: 1 });
     expect(res.body.freshness).toMatchObject({
       repo: 'cecelia', status: 'fresh', stale: false,
-      source_revision: 'graph-sha', scanner_version: 'graph-v3',
+      source_revision: GRAPH_SHA_40, scanner_version: 'graph-v3',
     });
   });
 
@@ -77,7 +78,7 @@ describe('GET /locate', () => {
     expect(graphCalls[1][0]).toMatch(/ORDER BY scanned_at DESC[\s\S]+LIMIT 1/);
     expect(graphCalls[1][0]).not.toMatch(/max\s*\(/i);
     expect(res.body.freshness).toMatchObject({
-      repo: 'repo-x', source_revision: 'graph-sha', scanner_version: 'graph-v3',
+      repo: 'repo-x', source_revision: GRAPH_SHA_40, scanner_version: 'graph-v3',
     });
   });
 
@@ -194,7 +195,7 @@ describe('所有 graph endpoints 传播 fail-closed freshness shape', () => {
       expect(response.status).toBe(200);
       expect(response.body.freshness).toMatchObject({
         repo: 'cecelia', status: 'fresh', reason_code: null,
-        source_revision: 'graph-sha', scanner_version: 'graph-v3',
+        source_revision: GRAPH_SHA_40, scanner_version: 'graph-v3',
       });
       expect(response.body.freshness.last_success_at).toBeTruthy();
     }
