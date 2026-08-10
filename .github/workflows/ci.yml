@@ -1964,17 +1964,27 @@ jobs:
           # 直接内联进 run 脚本存在 shell 注入面（GHA 已知问题）。
           PR_TITLE: ${{ github.event.pull_request.title }}
           HEAD_BRANCH: ${{ github.head_ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           # 合并决策抽到 should-auto-merge.sh（可单测，见 __tests__/should-auto-merge.test.sh）。
-          # 关键：harness generator 产出的 PR 也用 cp-* 分支，但走 harness 自己的
-          # evaluator+DeepSeek 裁判 gate 决定 merge。若此处仍按「cp-* + CI 绿」抢先合并，会
-          # 架空裁判裁决权（用户曾见「裁判说不放行，代码还是被 merge」）。脚本按 PR 标题
-          # feat(harness): 前缀识别 harness-owned PR 并跳过，把 merge 交还给 harness gate。
+          # 关键：harness generator 产出的 PR 也用 cp-* 分支，走 harness kernel 的
+          # evaluator+裁判 gate 决定 merge。若此处仍按「cp-* + CI 绿」抢先合并，会架空裁判裁决权
+          # （2026-08-10 #4755/#4759 实证）。脚本已改为向 Brain 归属端点求证 harness-owned（凭
+          # initiative_runs 记录，非标题），owned→SKIP、Brain 异常→fail-closed SKIP。
           DECISION="$(bash .github/workflows/scripts/should-auto-merge.sh "$HEAD_BRANCH" "$PR_TITLE")"
           echo "$DECISION"
           if [[ "$DECISION" == SKIP:* ]]; then
             exit 0
           fi
+
+          # DECISION==MERGE ⇒ Brain 明确 not-owned（非 harness 的手动 /dev PR）。
+          # harness-judge 一旦登记为分支保护 required check 会作用于**所有** PR；/dev PR 拿不到
+          # success 会被永久卡死（[不回归/dev] 红线）。故这里主动对 not-owned PR 的 head SHA 置
+          # harness-judge=success，令 required check 满足后再交 GitHub 原生 auto-merge 排队。
+          # harness-owned PR 走上面 SKIP 分支，绝不会到这里被置 success（裁决闸不被旁路）。
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$PR_HEAD_SHA" \
+            -X POST -f state=success -f context=harness-judge \
+            -f description="not harness-owned: /dev PR cleared for general auto-merge" || true
 
           if gh pr merge "$PR_NUMBER" --auto --squash --delete-branch --repo "$GITHUB_REPOSITORY"; then
             echo "✅ Auto-merge 已排队；GitHub 将在全部分支保护条件满足后合并"

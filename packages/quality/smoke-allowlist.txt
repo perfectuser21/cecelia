@@ -240,3 +240,4 @@ xian-harness-relay-smoke.sh
 zenithjoy-db-pool-smoke.sh
 zenithjoy-schema-migration-smoke.sh
 scripts/ops/janitor.sh
+pr-ownership-smoke.sh
