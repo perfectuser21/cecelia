@@ -239,3 +239,4 @@ ws3-ire-module-smoke.sh
 xian-harness-relay-smoke.sh
 zenithjoy-db-pool-smoke.sh
 zenithjoy-schema-migration-smoke.sh
+map-reorg-smoke.sh
