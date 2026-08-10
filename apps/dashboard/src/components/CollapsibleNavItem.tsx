@@ -69,6 +69,7 @@ export default function CollapsibleNavItem({
     return (
       <button
         type="button"
+        aria-expanded={false}
         onClick={() => {
           setExpanded(true);
           onExpandSidebar();
@@ -135,6 +136,9 @@ export default function CollapsibleNavItem({
         </Link>
         {/* Chevron toggle */}
         <button
+          type="button"
+          aria-label={`${expanded ? 'Collapse' : 'Expand'} ${item.label}`}
+          aria-expanded={expanded}
           onClick={toggleExpand}
           className={`ml-1 p-0.5 rounded transition-all duration-200 flex-shrink-0 ${
             isCore

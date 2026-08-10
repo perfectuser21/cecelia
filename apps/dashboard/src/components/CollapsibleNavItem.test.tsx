@@ -72,6 +72,7 @@ describe('CollapsibleNavItem', () => {
 
     const collapsedParent = screen.getByTitle('Workbench');
     expect(collapsedParent.tagName).toBe('BUTTON');
+    expect(collapsedParent).toHaveAttribute('aria-expanded', 'false');
 
     fireEvent.click(collapsedParent);
 
