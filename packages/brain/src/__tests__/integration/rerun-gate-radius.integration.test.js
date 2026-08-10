@@ -2,7 +2,7 @@
  * rerun-gate-radius 集成测试
  *
  * 覆盖路径：
- *   场景 A（正常路径）：输入 blast-radius.integration.test.js，radius 返回 CRM feature
+ *   场景 A（正常路径）：输入 Cecelia 文件时，radius 不泄漏 ZenithJoy CRM feature
  *   场景 B（radius 停摆）：doMock callRadius → null，cascade-list 回退格子路径 + WARN
  *   场景 C（stale 回退）：doMock callRadius → stale=true，同回退路径
  *
@@ -23,16 +23,16 @@ const BLAST_RADIUS_TEST_FILE =
   'packages/brain/src/__tests__/integration/blast-radius.integration.test.js';
 const WARN_SENTINEL = '[WARN][rerun-gate] radius unavailable or stale — falling back to journey_step_links';
 
-// ─── 场景 A：正常路径（radius 引擎命中 CRM）─────────────────────────────────────
+// ─── 场景 A：正常路径（radius 按 repo 隔离）──────────────────────────────────────
 // 注意：不使用 vi.mock（会被 hoist 影响整个文件），直接 import 真实实现
-describe('场景A：radius 正常路径 — CRM feature 命中', () => {
+describe('场景A：radius 正常路径 — repo 隔离', () => {
   it(
-    'blast-radius.integration.test.js 作为输入时，affected_features 含 CRM feature_id',
+    '默认 cecelia 查询不泄漏锚定在 ZenithJoy 路径上的 CRM feature',
     async (ctx) => {
       const { callRadius } = await import('../../lib/radius-client.js');
       const result = await callRadius([BLAST_RADIUS_TEST_FILE]);
       if (result === null) ctx.skip();
-      expect(result.affected_features.map(f => f.feature_id)).toContain(CRM_FEATURE_ID);
+      expect(result.affected_features.map(f => f.feature_id)).not.toContain(CRM_FEATURE_ID);
     },
     10_000
   );
@@ -49,17 +49,13 @@ describe('场景A：radius 正常路径 — CRM feature 命中', () => {
   );
 
   it(
-    'CRM feature 的 promises 中至少一条 journey_name 包含"智能客服"',
+    '默认 cecelia 查询不携带 ZenithJoy CRM promise',
     async (ctx) => {
       const { callRadius } = await import('../../lib/radius-client.js');
       const result = await callRadius([BLAST_RADIUS_TEST_FILE]);
       if (result === null) ctx.skip();
       const crmFeature = result.affected_features.find(f => f.feature_id === CRM_FEATURE_ID);
-      expect(crmFeature).toBeDefined();
-      const hasJourneyName = (crmFeature.promises || []).some(
-        p => p.journey_name && p.journey_name.includes('智能客服')
-      );
-      expect(hasJourneyName).toBe(true);
+      expect(crmFeature).toBeUndefined();
     },
     10_000
   );

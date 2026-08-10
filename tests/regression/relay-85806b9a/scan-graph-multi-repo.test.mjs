@@ -12,16 +12,24 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import pg from 'pg';
 import { replaceRepoEdges } from '../../../packages/brain/src/lib/graph-store.js';
 
-const DB_URL = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgresql://localhost/cecelia_test';
+const DB_URL = process.env.TEST_DATABASE_URL || 'postgresql://localhost/cecelia_test';
+const DB_NAME = decodeURIComponent(new URL(DB_URL).pathname.slice(1));
+if (!/(_test|_scratch)$/.test(DB_NAME)) throw new Error(`拒绝连接非测试库: ${DB_NAME}`);
 
 // ─── 辅助：创建临时 repo 目录（包含一个 JS 文件，避免 walk 报错）
 function makeTempRepo(name) {
   const dir = path.join('/tmp', `scan-test-${name}-${Date.now()}`);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'index.js'), `// test stub for ${name}\nexport const x = 1;\n`);
+  execFileSync('git', ['init', dir], { stdio: 'ignore' });
+  execFileSync('git', ['-C', dir, 'config', 'user.name', 'Scan Graph Test']);
+  execFileSync('git', ['-C', dir, 'config', 'user.email', 'scan-graph-test@example.invalid']);
+  execFileSync('git', ['-C', dir, 'add', 'index.js']);
+  execFileSync('git', ['-C', dir, 'commit', '-m', 'test fixture'], { stdio: 'ignore' });
   return dir;
 }
 
@@ -68,6 +76,33 @@ describe('[B-1] REPOS 清单导出与结构', () => {
     expect(zj).toBeDefined();
     expect(typeof zj.root).toBe('string');
   });
+
+  it('GRAPH_REPOS 未设置时默认选择全部三仓', async () => {
+    if (!scanGraphModule) scanGraphModule = await import('../../../scripts/scan/scan-graph.mjs');
+    expect(typeof scanGraphModule.selectGraphRepos).toBe('function');
+    expect(scanGraphModule.selectGraphRepos(scanGraphModule.REPOS, undefined).map((repo) => repo.name))
+      .toEqual(['cecelia', 'zenithjoy-workspace', 'zenithjoy-skills']);
+  });
+
+  it('GRAPH_REPOS 显式选择时只返回请求仓库且保持请求顺序', async () => {
+    if (!scanGraphModule) scanGraphModule = await import('../../../scripts/scan/scan-graph.mjs');
+    expect(scanGraphModule.selectGraphRepos(
+      scanGraphModule.REPOS,
+      'zenithjoy-workspace,cecelia',
+    ).map((repo) => repo.name)).toEqual(['zenithjoy-workspace', 'cecelia']);
+  });
+
+  it('GRAPH_REPOS 空值时清晰失败', async () => {
+    if (!scanGraphModule) scanGraphModule = await import('../../../scripts/scan/scan-graph.mjs');
+    expect(() => scanGraphModule.selectGraphRepos(scanGraphModule.REPOS, '  '))
+      .toThrow(/GRAPH_REPOS.*不能为空/);
+  });
+
+  it('GRAPH_REPOS 含未知仓库时清晰失败', async () => {
+    if (!scanGraphModule) scanGraphModule = await import('../../../scripts/scan/scan-graph.mjs');
+    expect(() => scanGraphModule.selectGraphRepos(scanGraphModule.REPOS, 'cecelia,unknown-repo'))
+      .toThrow(/GRAPH_REPOS.*未知仓库.*unknown-repo/);
+  });
 });
 
 describe('[B-2 + I-5] 路径不存在时 WARN 跳过，不炸整轮', () => {
@@ -102,6 +137,7 @@ describe('[B-2 + I-5] 路径不存在时 WARN 跳过，不炸整轮', () => {
 
     // 用真实 PG 连接
     const pool = new pg.Pool({ connectionString: DB_URL });
+    let tmpDir;
     try {
       // 先插入已知数据到 test-repo-A
       const fakeEdges = [
@@ -110,7 +146,7 @@ describe('[B-2 + I-5] 路径不存在时 WARN 跳过，不炸整轮', () => {
       await replaceRepoEdges(pool, 'test-repo-A', fakeEdges);
 
       // 扫描：test-repo-A 真实存在（临时目录），bad-repo 路径不存在
-      const tmpDir = makeTempRepo('good-A');
+      tmpDir = makeTempRepo('good-A');
       const results = await scanRepoList([
         { name: 'test-repo-A', root: tmpDir },   // 会被真实扫描并全量替换
         { name: 'bad-repo-B', root: '/nonexistent_bad_path_999' }, // 应跳过
@@ -124,10 +160,10 @@ describe('[B-2 + I-5] 路径不存在时 WARN 跳过，不炸整轮', () => {
       const goodResult = results.find((r) => r.name === 'test-repo-A');
       expect(goodResult?.error).toBeUndefined();
 
-      // 清理
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-      await replaceRepoEdges(pool, 'test-repo-A', []); // 清空测试数据
     } finally {
+      if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+      await replaceRepoEdges(pool, 'test-repo-A', []); // 清空测试数据
+      await pool.query("DELETE FROM fact_snapshot_headers WHERE kind = 'graph' AND repo = 'test-repo-A'");
       await pool.end();
     }
   });
@@ -148,6 +184,9 @@ describe('[I-1] 全量替换语义验证（真实 PG）', () => {
   afterAll(async () => {
     // 清理测试数据
     await pool.query('DELETE FROM graph_edges WHERE repo = $1', ['test-replace-repo']);
+    await pool.query(
+      "DELETE FROM fact_snapshot_headers WHERE kind = 'graph' AND repo IN ('test-replace-repo','test-repo-X','test-repo-Y')",
+    );
     await pool.end();
   });
 

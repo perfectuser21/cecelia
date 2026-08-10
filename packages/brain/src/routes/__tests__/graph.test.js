@@ -3,7 +3,9 @@ import express from 'express';
 import request from 'supertest';
 
 const mockQuery = vi.fn();
-vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
+const mockRelease = vi.fn();
+const mockConnect = vi.fn(async () => ({ query: mockQuery, release: mockRelease }));
+vi.mock('../../db.js', () => ({ default: { query: mockQuery, connect: mockConnect } }));
 
 // 固定 fixture:边 a→b→c + 测试文件 t 依赖 b;feature F1 锚定 c.js(covered)
 const EDGE_ROWS = [
@@ -15,14 +17,26 @@ const FEATURE_ROWS = [
   { id: 'f1', name: '发布能力', unit_test_path: 'c.js', workflow_ref: null, guard_ref: null },
   { id: 'f2', name: '客服能力', unit_test_path: null, workflow_ref: 'publishers/zj/p.js', guard_ref: null },
 ];
+const GRAPH_SHA_40 = 'c'.repeat(40);
+const FRESHNESS_ROW = {
+  repo: 'cecelia', scanned_at: new Date(), source_revision: GRAPH_SHA_40, scanner_version: 'graph-v3',
+};
 
 // loadGraphContext 依次三查:edges → max(scanned_at) → features;之后端点可能再查 promises/siblings
 function primeContext({ promiseRows = [], siblingRows = [] } = {}) {
   mockQuery.mockReset();
+  mockConnect.mockClear();
+  mockRelease.mockClear();
   mockQuery.mockImplementation(async (sql, _params) => {
     const s = String(sql);
+    if (/^(BEGIN|COMMIT|ROLLBACK)/.test(s)) return { rows: [] };
     if (s.includes('FROM graph_edges') && s.includes('src_path')) return { rows: EDGE_ROWS };
-    if (s.includes('max(scanned_at)')) return { rows: [{ latest: new Date() }] };
+    if (s.includes('FROM fact_snapshot_headers')) {
+      return { rows: [{ ...FRESHNESS_ROW, repo: _params?.[1] || 'cecelia', row_count: EDGE_ROWS.length }] };
+    }
+    if (s.includes('FROM graph_edges') && s.includes('ORDER BY scanned_at DESC')) {
+      return { rows: [{ ...FRESHNESS_ROW, repo: _params?.[0] || 'cecelia', row_count: EDGE_ROWS.length }] };
+    }
     if (s.includes('FROM journey_features')) return { rows: FEATURE_ROWS };
     if (s.includes('journey_step_links l') && s.includes('journey_steps')) return { rows: promiseRows };
     if (s.includes('l2.step_id = l1.step_id')) return { rows: siblingRows };
@@ -54,7 +68,28 @@ describe('GET /locate', () => {
     expect(res.body.features[0].status).toBe('covered');
     expect(res.body.features[0].promises[0].promise).toContain('得体');
     expect(res.body.anchor_coverage).toEqual({ total_features: 2, anchored: 2, covered_by_graph: 1 });
-    expect(res.body.freshness.stale).toBe(false);
+    expect(res.body.freshness).toMatchObject({
+      repo: 'cecelia', status: 'fresh', stale: false,
+      source_revision: GRAPH_SHA_40, scanner_version: 'graph-v3',
+    });
+  });
+
+  it('?repo=repo-x 同时过滤 edges/latest metadata，且 metadata 来自同一最新行', async () => {
+    const res = await request(app).get('/api/brain/graph/locate?q=发布&repo=repo-x');
+    expect(res.status).toBe(200);
+    expect(mockConnect).toHaveBeenCalled();
+    const graphCalls = mockQuery.mock.calls.filter(([sql]) => String(sql).includes('FROM graph_edges'));
+    expect(graphCalls).toHaveLength(1);
+    expect(graphCalls[0][1]).toEqual(['repo-x']);
+    const headerCall = mockQuery.mock.calls.find(([sql]) => String(sql).includes('FROM fact_snapshot_headers'));
+    expect(headerCall[0]).toContain('source_revision');
+    expect(headerCall[0]).toContain('scanner_version');
+    expect(headerCall[1]).toEqual(['graph', 'repo-x']);
+    expect(mockQuery.mock.calls.some(([sql]) => /BEGIN[\s\S]+REPEATABLE READ[\s\S]+READ ONLY/i.test(sql))).toBe(true);
+    expect(mockRelease).toHaveBeenCalled();
+    expect(res.body.freshness).toMatchObject({
+      repo: 'repo-x', source_revision: GRAPH_SHA_40, scanner_version: 'graph-v3',
+    });
   });
 
   it('q 命中图节点路径 → files 返回', async () => {
@@ -152,5 +187,27 @@ describe('GET /anchor-coverage', () => {
     expect(res.body.anchor_coverage).toEqual({ total_features: 2, anchored: 2, covered_by_graph: 1 });
     expect(res.body.broken).toBe(1);
     expect(res.body.freshness.stale).toBe(false);
+  });
+});
+
+describe('所有 graph endpoints 传播 fail-closed freshness shape', () => {
+  it('locate/related/claim/radius/island/anchor 均返回完整 metadata freshness', async () => {
+    const responses = [
+      await request(app).get('/api/brain/graph/locate?q=发布'),
+      await request(app).get('/api/brain/graph/related?path=b.js'),
+      await request(app).get('/api/brain/graph/claim-status?path=a.js'),
+      await request(app).post('/api/brain/graph/radius').send({ files: ['c.js'] }),
+      await request(app).post('/api/brain/graph/island-check').send({ files: ['a.js'] }),
+      await request(app).get('/api/brain/graph/anchor-coverage'),
+    ];
+
+    for (const response of responses) {
+      expect(response.status).toBe(200);
+      expect(response.body.freshness).toMatchObject({
+        repo: 'cecelia', status: 'fresh', reason_code: null,
+        source_revision: GRAPH_SHA_40, scanner_version: 'graph-v3',
+      });
+      expect(response.body.freshness.last_success_at).toBeTruthy();
+    }
   });
 });
