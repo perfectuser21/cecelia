@@ -10,14 +10,41 @@ if (!/(_test|_scratch)$/.test(databaseName)) {
 
 const pool = new pg.Pool({ connectionString, max: 2 });
 const REPO = `fact-snapshot-itest-${process.pid}`;
+const CONCURRENT_REPO = `${REPO}-concurrent`;
+
+function synchronizeTransactionBegins(...pools) {
+  let begun = 0;
+  let releaseBarrier;
+  const barrier = new Promise((resolve) => { releaseBarrier = resolve; });
+
+  return pools.map((sourcePool) => ({
+    async connect() {
+      const client = await sourcePool.connect();
+      return {
+        async query(sql, params) {
+          const result = await client.query(sql, params);
+          if (sql === 'BEGIN') {
+            begun += 1;
+            if (begun === pools.length) releaseBarrier();
+            await barrier;
+          }
+          return result;
+        },
+        release() { client.release(); },
+      };
+    },
+  }));
+}
 
 beforeAll(async () => {
   await pool.query('DELETE FROM api_registry WHERE repo = $1', [REPO]);
+  await pool.query('DELETE FROM api_registry WHERE repo = $1', [CONCURRENT_REPO]);
   await pool.query('DELETE FROM test_registry WHERE repo = $1', [REPO]);
 });
 
 afterAll(async () => {
   await pool.query('DELETE FROM api_registry WHERE repo = $1', [REPO]);
+  await pool.query('DELETE FROM api_registry WHERE repo = $1', [CONCURRENT_REPO]);
   await pool.query('DELETE FROM test_registry WHERE repo = $1', [REPO]);
   await pool.end();
 });
@@ -108,5 +135,37 @@ describe('replaceFactSnapshot 真库合同', () => {
       'SELECT method, path, source_revision FROM api_registry WHERE repo = $1', [REPO],
     );
     expect(rows).toEqual([{ method: 'GET', path: '/stable', source_revision: 'stable-rev' }]);
+  });
+
+  it('双连接并发替换同 repo 时最终事实严格等于完整 A 或完整 B', async () => {
+    const leftPool = new pg.Pool({ connectionString, max: 1 });
+    const rightPool = new pg.Pool({ connectionString, max: 1 });
+    const [left, right] = synchronizeTransactionBegins(leftPool, rightPool);
+    const pathsA = ['/concurrent/a-1', '/concurrent/a-2', '/concurrent/a-3'];
+    const pathsB = ['/concurrent/b-1', '/concurrent/b-2', '/concurrent/b-3'];
+    const snapshot = (revision, paths) => ({
+      repo: CONCURRENT_REPO,
+      sourceRevision: revision,
+      scannerVersion: 'api-registry-v2',
+      rows: paths.map((path, index) => ({
+        method: 'GET', path, file_path: `${revision}-${index}.js`, line_number: index + 1, area: 'test',
+      })),
+    });
+
+    try {
+      await Promise.all([
+        replaceFactSnapshot(left, 'api', snapshot('revision-a', pathsA)),
+        replaceFactSnapshot(right, 'api', snapshot('revision-b', pathsB)),
+      ]);
+
+      const { rows } = await pool.query(
+        'SELECT path FROM api_registry WHERE repo = $1 ORDER BY path', [CONCURRENT_REPO],
+      );
+      const finalPaths = rows.map(({ path }) => path);
+      expect([pathsA, pathsB]).toContainEqual(finalPaths);
+    } finally {
+      await pool.query('DELETE FROM api_registry WHERE repo = $1', [CONCURRENT_REPO]);
+      await Promise.all([leftPool.end(), rightPool.end()]);
+    }
   });
 });

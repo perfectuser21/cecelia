@@ -22,12 +22,14 @@ describe('replaceRepoEdges', () => {
     });
     expect(r.inserted).toBe(2);
     expect(calls[0].sql).toContain('BEGIN');
-    expect(calls[1].sql).toContain('DELETE FROM graph_edges');
-    expect(calls[1].params).toEqual(['cecelia']);
-    expect(calls[2].sql).toContain('INSERT INTO graph_edges');
-    expect(calls[2].sql).toContain('source_revision');
-    expect(calls[2].sql).toContain('scanner_version');
-    expect(calls[2].params).toEqual(expect.arrayContaining(['abc123', 'graph-v3']));
+    expect(calls[1].sql).toMatch(/pg_advisory_xact_lock/);
+    expect(calls[1].params).toEqual(['fact-snapshot:graph_edges:cecelia']);
+    expect(calls[2].sql).toContain('DELETE FROM graph_edges');
+    expect(calls[2].params).toEqual(['cecelia']);
+    expect(calls[3].sql).toContain('INSERT INTO graph_edges');
+    expect(calls[3].sql).toContain('source_revision');
+    expect(calls[3].sql).toContain('scanner_version');
+    expect(calls[3].params).toEqual(expect.arrayContaining(['abc123', 'graph-v3']));
     expect(calls[calls.length - 1].sql).toContain('COMMIT');
     expect(client.release).toHaveBeenCalled();
   });
@@ -50,5 +52,19 @@ describe('replaceRepoEdges', () => {
     expect(r.inserted).toBe(0);
     expect(calls.some((c) => c.sql.includes('DELETE'))).toBe(true);
     expect(calls[calls.length - 1].sql).toContain('COMMIT');
+  });
+
+  it('不同 repo 使用不同且参数化的 graph 锁键', async () => {
+    const first = mockPool();
+    const second = mockPool();
+    await replaceRepoEdges(first.pool, 'repo-a', []);
+    await replaceRepoEdges(second.pool, 'repo-b', []);
+
+    const firstLock = first.calls.find(({ sql }) => /pg_advisory_xact_lock/.test(sql));
+    const secondLock = second.calls.find(({ sql }) => /pg_advisory_xact_lock/.test(sql));
+    expect(firstLock.params).toEqual(['fact-snapshot:graph_edges:repo-a']);
+    expect(secondLock.params).toEqual(['fact-snapshot:graph_edges:repo-b']);
+    expect(firstLock.sql).not.toContain('repo-a');
+    expect(secondLock.sql).not.toContain('repo-b');
   });
 });

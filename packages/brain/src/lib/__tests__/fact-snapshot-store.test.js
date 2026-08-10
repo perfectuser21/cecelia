@@ -31,6 +31,8 @@ describe('replaceFactSnapshot', () => {
     });
 
     expect(calls[0].sql).toBe('BEGIN');
+    expect(calls[1].sql).toMatch(/pg_advisory_xact_lock/);
+    expect(calls[1].params).toEqual(['fact-snapshot:api:cecelia']);
     const insert = calls.find((call) => call.sql.includes('INSERT INTO api_registry'));
     expect(insert.sql).toContain('repo, method, path');
     expect(insert.sql).toContain('source_revision');
@@ -77,6 +79,7 @@ describe('replaceFactSnapshot', () => {
 
     expect(calls.map((call) => call.sql)).toEqual([
       'BEGIN',
+      expect.stringContaining('pg_advisory_xact_lock'),
       expect.stringContaining('DELETE FROM db_schema_registry WHERE repo = $1'),
       'COMMIT',
     ]);
@@ -104,5 +107,22 @@ describe('replaceFactSnapshot', () => {
     await expect(replaceFactSnapshot(pool, 'api', { ...metadata, sourceRevision: '', rows: [] }))
       .rejects.toThrow(/sourceRevision/i);
     expect(pool.connect).not.toHaveBeenCalled();
+  });
+
+  it('不同 kind 或 repo 使用不同且参数化的锁键', async () => {
+    const first = mockPool();
+    const second = mockPool();
+
+    await replaceFactSnapshot(first.pool, 'api', { ...metadata, rows: [] });
+    await replaceFactSnapshot(second.pool, 'test', {
+      ...metadata, repo: 'other-repo', scannerVersion: 'test-registry-v2', rows: [],
+    });
+
+    const firstLock = first.calls.find(({ sql }) => /pg_advisory_xact_lock/.test(sql));
+    const secondLock = second.calls.find(({ sql }) => /pg_advisory_xact_lock/.test(sql));
+    expect(firstLock.params).toEqual(['fact-snapshot:api:cecelia']);
+    expect(secondLock.params).toEqual(['fact-snapshot:test:other-repo']);
+    expect(firstLock.sql).not.toContain('cecelia');
+    expect(secondLock.sql).not.toContain('other-repo');
   });
 });
