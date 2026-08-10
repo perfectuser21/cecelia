@@ -5,7 +5,7 @@
 #   --release-only        冻结验过的 staging 产物进 .dist-releases/<vX> + 打 git tag vX +
 #                         登记 manifest（不动 live、不动 current、不动 brain）。stdout 输出 RELEASE_TAG=<vX>。
 #   --deploy <vX>         从 .dist-releases/<vX> 原子换入 live dist/（5211）+ 旧版留存 + 写 current +
-#                         brain-deploy + 停 staging。源不在库 → 报错退（不猜，与 rollback 一致）。
+#                         只重绑 frontend + 停 staging。源不在库 → 报错退（不猜，与 rollback 一致）。
 #   (无参)                = release-only 取 tag → deploy <tag>（向后兼容，手动用）。
 #
 # deploy-local.sh 把新版本停在 staging + 写 .staging-pending 后，主理人/harness 跑本脚本放行。
@@ -109,6 +109,16 @@ write_release_manifest() {
     mv "${RELEASE_FILE}.tmp" "$RELEASE_FILE"
 }
 
+# dist/ 通过目录 rename 原子换入后，Docker/OrbStack 的 bind mount 仍可能抓着旧目录 inode。
+# 必须只重建 frontend 让 /app 重新绑定 live dist；--no-deps 防止连带重启 Brain。
+rebind_frontend() {
+    if [[ -n "${CECELIA_SKIP_FRONTEND_RECREATE:-}" ]]; then
+        return 0
+    fi
+    docker compose --env-file "$MAIN_ROOT/.env.docker" -f "$MAIN_ROOT/docker-compose.yml" \
+        up -d --force-recreate --no-deps frontend
+}
+
 # ── release 阶段：冻结验过的产物进库 + 打 tag + 登记 manifest（不动 live/current/brain）──
 do_release() {
     read_staged
@@ -141,7 +151,7 @@ do_release() {
     echo "RELEASE_TAG=$RELEASE_TAG"
 }
 
-# ── deploy 阶段：从产物库把 <tag> 原子换入 live 5211 + 旧版留存 + 写 current + brain-deploy + 停 staging ──
+# ── deploy 阶段：从产物库把 <tag> 原子换入 live 5211 + 旧版留存 + 重绑 frontend + 停 staging ──
 do_deploy() {
     local tag="$1"
     local SRC="$RELEASES_DIR/$tag"
@@ -154,6 +164,7 @@ do_deploy() {
 
     local PROMOTE_FAIL=0
     local OLD_TAG="" HAD_OLD=false
+    local ROLLBACK_SRC=""
     [[ -f "$RELEASE_FILE" ]] && OLD_TAG=$(grep '^current=' "$RELEASE_FILE" | head -1 | cut -d= -f2)
     if [[ -d "$DIST_DIR" ]]; then
         rm -rf "${DIST_DIR}.old" 2>/dev/null || true
@@ -167,13 +178,14 @@ do_deploy() {
             if [[ -n "$OLD_TAG" ]]; then
                 rm -rf "${RELEASES_DIR:?}/$OLD_TAG"
                 mv "${DIST_DIR}.old" "$RELEASES_DIR/$OLD_TAG"
+                ROLLBACK_SRC="$RELEASES_DIR/$OLD_TAG"
                 echo "📦 旧版已留存：.dist-releases/$OLD_TAG"
             else
                 rm -rf "${RELEASES_DIR:?}/pre-$tag"
                 mv "${DIST_DIR}.old" "$RELEASES_DIR/pre-$tag"
+                ROLLBACK_SRC="$RELEASES_DIR/pre-$tag"
                 echo "📦 旧版（无指针历史）已留存：.dist-releases/pre-$tag"
             fi
-            prune_releases
         fi
         echo "✅ 本机 5211 已指向 $tag"
     else
@@ -182,6 +194,19 @@ do_deploy() {
         [[ "$HAD_OLD" == true && -d "${DIST_DIR}.old" ]] && mv "${DIST_DIR}.old" "$DIST_DIR"
         exit 1
     fi
+
+    echo "🔄 重新绑定 frontend → live dist/（不重启 Brain）"
+    if ! rebind_frontend; then
+        echo "❌ frontend 重绑失败，恢复上一版 live dist/"
+        if [[ -n "$ROLLBACK_SRC" && -d "$ROLLBACK_SRC" ]]; then
+            rm -rf "${DIST_DIR:?}"
+            cp -R "$ROLLBACK_SRC" "$DIST_DIR"
+            rebind_frontend || echo "❌ 上一版 frontend 重绑也失败，5211 需要部署告警介入"
+        fi
+        exit 1
+    fi
+    echo "✅ frontend 已重新绑定 live dist/，Brain 未重启"
+    prune_releases
 
     # 写指针：current/commit/promoted_at 覆盖；manifest/history（release 已写）保留。
     local DEPLOY_COMMIT
@@ -194,15 +219,6 @@ do_deploy() {
     } > "${RELEASE_FILE}.tmp"
     mv "${RELEASE_FILE}.tmp" "$RELEASE_FILE"
     echo "📌 指针已更新：.production-release current=${tag}"
-
-    # brain 也到该版（git checkout tag + 重启容器）；测试/接缝钩子可跳过。
-    if [[ -z "${CECELIA_SKIP_BRAIN_PROMOTE:-}" ]]; then
-        local BRAIN_DEPLOY="$MAIN_ROOT/scripts/brain-deploy.sh"
-        if [[ -f "$BRAIN_DEPLOY" ]]; then
-            echo "🧠 brain → 重启到 $tag"
-            bash "$BRAIN_DEPLOY" || echo "⚠️  brain-deploy 失败（dashboard 已上线，brain 保持原状）"
-        fi
-    fi
 
     # 停常驻 staging 服务 + 清放行标记/通知（防重复 promote）。
     if [[ -n "${STAGED_PID:-}" ]]; then kill "$STAGED_PID" 2>/dev/null || true; fi
