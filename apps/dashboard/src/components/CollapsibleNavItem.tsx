@@ -8,6 +8,7 @@ interface CollapsibleNavItemProps {
   collapsed: boolean;
   isCore: boolean;
   currentPath: string;
+  onExpandSidebar: () => void;
 }
 
 export default function CollapsibleNavItem({
@@ -15,6 +16,7 @@ export default function CollapsibleNavItem({
   collapsed,
   isCore,
   currentPath,
+  onExpandSidebar,
 }: CollapsibleNavItemProps) {
   const Icon = item.icon;
   const children = item.children || [];
@@ -65,8 +67,12 @@ export default function CollapsibleNavItem({
   // Sidebar collapsed: just show icon, no children
   if (collapsed) {
     return (
-      <Link
-        to={item.path}
+      <button
+        type="button"
+        onClick={() => {
+          setExpanded(true);
+          onExpandSidebar();
+        }}
         title={item.label}
         className={`group relative flex items-center justify-center px-2 py-2.5 text-sm font-medium rounded-xl transition-all duration-200 ${
           isParentActive
@@ -89,8 +95,8 @@ export default function CollapsibleNavItem({
             : isCore
               ? 'text-slate-500 group-hover:text-white group-hover:scale-110'
               : 'text-blue-300/60 group-hover:text-white group-hover:scale-110'
-        }`} />
-      </Link>
+            }`} />
+      </button>
     );
   }
 
