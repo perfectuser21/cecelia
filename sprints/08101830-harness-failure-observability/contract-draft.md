@@ -364,3 +364,15 @@ echo "✅ Golden Path 全程验证通过"
 - 中途中断: 探针 task 在 queued→failed 迁移窗口内被并发 tick 处理 → 不得出现 failure_class 半写（result 有 detail 无 class 或反之）
 - 边界值: 空窗口（`days=1` 且窗口内无完结 harness）→ 200 + `by_class:{}`, `failure_rate:0`（非 500、非 null）；`failure_rate` 分母为 0 时不得 NaN/除零
 发现分级: P0/P1（failure_class 落 null / 端点 500 / 除零 NaN / 机械闸可被绕过）→ 阻塞 merge；P2/P3 → 记 findings 不阻塞
+
+---
+
+## Test Contract
+
+> 测试棋盘登记表（Harness v5 — 测试金字塔守卫 A1 消费）：声明本 sprint 冻结测试文件与其
+> BEHAVIOR 覆盖，供 `scripts/test-pyramid-guard.mjs` 认定为「已登记过渡测试」而非孤儿。
+> 登记指向的是 commit 1 已冻结的契约测试文件本身，不改动其断言（CONTRACT IS LAW 不变）。
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| ws1 | `tests/harness-failure-class.test.js` | FAILURE_CLASSES 冻结闭集含 unknown / isValidFailureClass 枚举校验 / classifyFailure 已知→枚举 & 未知→unknown / buildTerminalFailureResult 合并保留既有字段 & 非法 class 降级 unknown | → 全红（被测 SSOT 模块 `packages/brain/src/harness-failure-class.js` 尚未创建，import 失败无法加载） |
