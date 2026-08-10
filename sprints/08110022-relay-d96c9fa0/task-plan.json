@@ -1,0 +1,167 @@
+{
+  "gear": "segmented",
+  "sprint_id": "08110022-relay-d96c9fa0",
+  "task_id": "d96c9fa0-83bd-40dc-b731-4f541c43af32",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Change Normalizer + change_kind/gear 分离",
+      "depends_on": [],
+      "mj5_required": false,
+      "scope": {
+        "description": "实现 change_kind 四档归一化（new_capability/capability_change/bugfix/parameter_only）。change_kind 与 gear 严格分离、分别计算、分别留痕，禁止互相赋值。在 harness_tasks 表中增加 change_kind 独立列。DevGate 三连（facts-check + version-sync + dod-mapping）通过后方可开工。",
+        "devgate_required": true,
+        "files": [
+          "packages/brain/src/impact-contract/change-kind.js",
+          "packages/brain/src/routes/task-tasks.js",
+          "packages/brain/src/harness-skill-relay.js"
+        ],
+        "migrations": [],
+        "tests": [
+          "sprints/08110022-relay-d96c9fa0/tests/change-kind.test.js",
+          "packages/brain/src/impact-contract/__tests__/change-kind.test.js"
+        ],
+        "dod": [
+          "normalizeChangeKind() 正确映射四档",
+          "无效输入返回 400",
+          "change_kind 与 gear 在 DB 和 payload 中独立存在",
+          "change-kind.test.js 全部 GREEN"
+        ]
+      }
+    },
+    {
+      "task_id": "ws2",
+      "title": "Impact Contract Schema + 持久化",
+      "depends_on": ["ws1"],
+      "mj5_required": false,
+      "scope": {
+        "description": "实现 Impact Contract 的 Zod schema 校验与 DB 持久化。创建 migration 401_impact_contracts.sql（harness_impact_contracts 表）。开工前扫描已用 migration 编号，确认 401 未被占用，碰撞时整体顺延。实现 POST/GET /api/brain/impact-contracts 路由。幂等性通过唯一约束（task_id, base_revision）保证。DevGate 三连通过后方可开工。",
+        "devgate_required": true,
+        "files": [
+          "packages/brain/src/impact-contract/contract-schema.js",
+          "packages/brain/src/routes/impact-contracts.js"
+        ],
+        "migrations": [
+          "packages/brain/src/db/migrations/401_impact_contracts.sql"
+        ],
+        "tests": [
+          "sprints/08110022-relay-d96c9fa0/tests/contract-schema.test.js",
+          "sprints/08110022-relay-d96c9fa0/tests/contract-store.test.js"
+        ],
+        "dod": [
+          "合法合同 POST → 201 + id",
+          "非法合同 POST → 400 + 字段错误",
+          "同一 (task_id, base_revision) 重复 POST → 200 + 已有 id",
+          "GET /api/brain/impact-contracts/:id 返回完整合同",
+          "contract-schema.test.js + contract-store.test.js 全部 GREEN"
+        ]
+      }
+    },
+    {
+      "task_id": "ws3",
+      "title": "Structure Gate（Mapper stub → 真实 MJ5）",
+      "depends_on": ["ws2"],
+      "mj5_required": "partial",
+      "mj5_note": "ws3 前半（stub）可独立推进；真实 Mapper 接入需 MJ5 合同（/api/brain/map/radius + projection_digest + freshness）通过真实环境验收后方可继续",
+      "scope": {
+        "description": "实现 Structure Gate 三种不可判定情形的拒绝逻辑：Mapper unavailable（503 + mapper_unavailable）、Mapper stale（503 + mapper_stale）、revision mismatch（409 + revision_mismatch）。前期使用受控 stub，stub 使用处标注 MJ5 STUB 注释。MJ5 完成后替换为真实 Mapper 调用。fail-closed 原则：三种不可判定情形均不放行，绝不产生假绿。DevGate 三连通过后方可开工。",
+        "devgate_required": true,
+        "files": [
+          "packages/brain/src/impact-contract/structure-gate.js",
+          "packages/brain/src/routes/impact-contracts.js"
+        ],
+        "migrations": [],
+        "tests": [
+          "sprints/08110022-relay-d96c9fa0/tests/structure-gate.test.js"
+        ],
+        "dod": [
+          "三种不可判定情形均返回正确 HTTP 状态码和 reason",
+          "三种情形响应均含 retryable=true",
+          "任何不可判定情形下 gate 结果绝不为 pass",
+          "stub 使用处标注 MJ5 STUB 注释",
+          "structure-gate.test.js 全部 GREEN"
+        ]
+      }
+    },
+    {
+      "task_id": "ws4",
+      "title": "Diff Impact Gate + drift 仲裁",
+      "depends_on": ["ws3"],
+      "mj5_required": true,
+      "mj5_note": "ws4 全程依赖 MJ5 合同（/api/brain/map/radius + projection_digest + freshness fail-closed）通过真实环境验收，MJ5 未完成禁止开工",
+      "scope": {
+        "description": "编码后以真实 diff 重新查询 POST /api/brain/map/radius，与合同对账。三路仲裁：实际影响 ⊆ 声明影响 → 通过；新增影响有断言 → 扩展合同并通过；新增影响无断言 → 触发 CONTRACT_IMPACT_DRIFT → Gap Ledger → 原任务 blocked。Mapper 异常一律 fail-closed，不产生假绿。DevGate 三连通过后方可开工。",
+        "devgate_required": true,
+        "files": [
+          "packages/brain/src/impact-contract/diff-gate.js",
+          "packages/brain/src/routes/impact-contracts.js"
+        ],
+        "migrations": [],
+        "tests": [
+          "sprints/08110022-relay-d96c9fa0/tests/diff-gate.test.js"
+        ],
+        "dod": [
+          "实际影响 ⊆ 声明影响时门禁通过",
+          "新增影响有断言时扩展合同并通过",
+          "新增影响无断言时触发 CONTRACT_IMPACT_DRIFT，原任务 blocked",
+          "drift 事件写入 gap_events 表",
+          "Mapper 异常时不产生假绿",
+          "diff-gate.test.js 全部 GREEN"
+        ]
+      }
+    },
+    {
+      "task_id": "ws5",
+      "title": "Gap Ledger + 依赖 + 恢复闭环",
+      "depends_on": ["ws4"],
+      "mj5_required": true,
+      "mj5_note": "ws5 全程依赖 MJ5 合同（同 ws4），且依赖 ws4 的 gap 建立机制完整实现",
+      "scope": {
+        "description": "实现 Gap Ledger 完整生命周期。创建 migration 402_harness_gaps.sql（harness_gaps + gap_events + task_dependencies 三表）。开工前确认 402 未被占用。状态机单向强制：open→assigned→fixing→verifying→resolved；验真失败 verifying→reopened→assigned。gap 修复完成且当前 revision 断言 PASS 后原任务自动从 blocked 恢复 in_progress。幂等去重、分诊告警、gap_events 可观测。DevGate 三连通过后方可开工。",
+        "devgate_required": true,
+        "files": [
+          "packages/brain/src/impact-contract/gap-ledger.js",
+          "packages/brain/src/routes/gaps.js"
+        ],
+        "migrations": [
+          "packages/brain/src/db/migrations/402_harness_gaps.sql"
+        ],
+        "tests": [
+          "sprints/08110022-relay-d96c9fa0/tests/gap-store.test.js"
+        ],
+        "dod": [
+          "状态机单向流转：合法路径成功，非法路径返回 422",
+          "验真失败：verifying→reopened→assigned 路径可用",
+          "修复完成 + 断言 PASS → 原任务自动从 blocked 恢复 in_progress",
+          "重复恢复回调幂等去重",
+          "owner 不存在时进入分诊队列并触发告警",
+          "gap-store.test.js 全部 GREEN"
+        ]
+      }
+    },
+    {
+      "task_id": "ws6",
+      "title": "全链演练 + CI 入账",
+      "depends_on": ["ws5"],
+      "mj5_required": true,
+      "mj5_note": "ws6 依赖 ws1-ws5 全部完成，全链依赖 MJ5 合同通过真实环境验收",
+      "scope": {
+        "description": "端到端全链演练：任意实际 diff → 影响裁决 → 未声明影响 → gap 建立 → 依赖阻塞 → 修复 → 恢复，每步均有 DB 记录可查。验证 Mapper stale/unavailable/revision mismatch 三种情形均不产生假绿。全链回归测试永久纳入 brain-ci.yml，CI GREEN 才允许合并。合并 PR 后回写 Brain 任务状态为 completed。DevGate 三连通过后方可开工。",
+        "devgate_required": true,
+        "files": [
+          ".github/workflows/brain-ci.yml"
+        ],
+        "migrations": [],
+        "tests": [
+          "packages/brain/src/impact-contract/__tests__/e2e-impact-contract.test.js"
+        ],
+        "dod": [
+          "端到端流程每步有 DB 记录可查",
+          "三种 Mapper 异常情形均不假绿",
+          "全链回归测试纳入 brain-ci.yml 且 CI GREEN",
+          "PR 合并后 Brain 任务状态回写为 completed"
+        ]
+      }
+    }
+  ]
+}
