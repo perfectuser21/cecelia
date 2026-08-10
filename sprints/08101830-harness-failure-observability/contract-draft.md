@@ -375,4 +375,4 @@ echo "✅ Golden Path 全程验证通过"
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| ws1 | `tests/harness-failure-class.test.js` | FAILURE_CLASSES 冻结闭集含 unknown / isValidFailureClass 枚举校验 / classifyFailure 已知→枚举 & 未知→unknown / buildTerminalFailureResult 合并保留既有字段 & 非法 class 降级 unknown | → 全红（被测 SSOT 模块 `packages/brain/src/harness-failure-class.js` 尚未创建，import 失败无法加载） |
+| ws1 | `tests/harness-failure-class.test.js` | FAILURE_CLASSES is a non-empty frozen closed set / isValidFailureClass accepts enum members / classifyFailure maps a known reason to an enum member / classifyFailure falls back to unknown / buildTerminalFailureResult writes failure_class and failure_detail / buildTerminalFailureResult coerces an invalid class to unknown | → 全红（被测 SSOT 模块 `packages/brain/src/harness-failure-class.js` 尚未创建，import 失败无法加载） |
