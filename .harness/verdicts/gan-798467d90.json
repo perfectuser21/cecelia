@@ -1,0 +1,18 @@
+{
+  "verdict": "APPROVED",
+  "round": 1,
+  "total_score": 66,
+  "max_score": 70,
+  "pct": 94.3,
+  "judgments_written": 10,
+  "rubric_scores": {
+    "coverage": {"score": 9, "max": 10},
+    "e2e_authenticity": {"score": 10, "max": 10},
+    "manual_bash_clarity": {"score": 9, "max": 10},
+    "invariant_coverage": {"score": 10, "max": 10},
+    "test_file_quality": {"score": 9, "max": 10},
+    "dod_mapping": {"score": 10, "max": 10},
+    "regression_safety": {"score": 9, "max": 10}
+  },
+  "concerns": ["B03/B04 集成存根无 CI 衔接时静默通过（中优先级）", "thin-clone-e2e.sh 触发机制未锚定（低优先级）"]
+}
