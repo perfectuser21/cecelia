@@ -5,13 +5,13 @@
 // v2: 多仓库扫描扩展——cecelia / zenithjoy-workspace / zenithjoy-skills
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { cruise } from 'dependency-cruiser';
 import { extractSpawnEdges, extractHttpEdges } from '../../packages/brain/src/lib/graph-extract.js';
 import { replaceRepoEdges } from '../../packages/brain/src/lib/graph-store.js';
 import { computeFreshness } from '../../packages/brain/src/lib/registry-freshness.js';
+import { readGitRevision } from '../../packages/brain/src/lib/git-revision.js';
 
 // 多仓库清单：每项支持环境变量覆盖
 export const REPOS = [
@@ -73,13 +73,7 @@ export async function scanRepo(repo, pool) {
   }
 
   try {
-    let sourceRevision;
-    try {
-      sourceRevision = execFileSync('git', ['-C', repo.root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-      if (!sourceRevision) throw new Error('empty revision');
-    } catch (revisionError) {
-      throw new Error(`无法读取 source revision: ${revisionError.message}`);
-    }
+    const sourceRevision = readGitRevision(repo.root);
 
     const edges = [];
 

@@ -2,6 +2,8 @@
  * graph_edges 写库层(刀A1):按 repo 全量替换。
  * 边无自然键,upsert 会积死边(scan-api-registry 的已知缺陷,此处不复制)。
  */
+import { acquireFactSnapshotLock } from './fact-snapshot-lock.js';
+
 const BATCH = 500;
 
 export async function replaceRepoEdges(pool, repo, edges, metadata = {}) {
@@ -10,6 +12,7 @@ export async function replaceRepoEdges(pool, repo, edges, metadata = {}) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await acquireFactSnapshotLock(client, 'graph_edges', repo);
     await client.query('DELETE FROM graph_edges WHERE repo = $1', [repo]);
     let inserted = 0;
     for (let i = 0; i < edges.length; i += BATCH) {

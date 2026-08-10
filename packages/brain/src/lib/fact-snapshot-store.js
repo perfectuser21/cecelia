@@ -1,3 +1,5 @@
+import { acquireFactSnapshotLock } from './fact-snapshot-lock.js';
+
 const KIND_CONFIG = {
   api: {
     table: 'api_registry',
@@ -103,6 +105,7 @@ export async function replaceFactSnapshot(pool, kind, snapshot) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await acquireFactSnapshotLock(client, kind, snapshot.repo);
     await upsertRows(client, config, snapshot);
     const deletion = await deleteMissingRows(client, config, snapshot);
     await client.query('COMMIT');

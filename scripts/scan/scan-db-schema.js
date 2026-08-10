@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 'use strict';
 const path = require('path');
-const { execFileSync } = require('child_process');
 const pg = require('pg');
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://localhost/cecelia' });
@@ -15,19 +14,10 @@ const CECELIA_TABLES = new Set([
   'system_registry','notion_sync_log','db_schemas','okrs','key_results',
 ]);
 
-function getSourceRevision() {
-  try {
-    const revision = execFileSync('git', ['-C', REPO_ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-    if (!revision) throw new Error('empty revision');
-    return revision;
-  } catch (error) {
-    throw new Error(`无法读取 cecelia source revision: ${error.message}`);
-  }
-}
-
 async function main() {
   try {
-    const sourceRevision = getSourceRevision();
+    const { readGitRevision } = await import('../../packages/brain/src/lib/git-revision.js');
+    const sourceRevision = readGitRevision(REPO_ROOT);
     const { replaceFactSnapshot } = await import('../../packages/brain/src/lib/fact-snapshot-store.js');
     const { rows: tables } = await pool.query(
       `SELECT table_name FROM information_schema.tables

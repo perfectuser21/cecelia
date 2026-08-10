@@ -165,6 +165,7 @@ describe('scanner snapshot contract', () => {
   const db = readFileSync(new URL('../../../../scripts/scan/scan-db-schema.js', import.meta.url), 'utf8');
   const test = readFileSync(new URL('../../../../scripts/scan/scan-test-registry.js', import.meta.url), 'utf8');
   const graph = readFileSync(new URL('../../../../scripts/scan/scan-graph.mjs', import.meta.url), 'utf8');
+  const gitRevision = readFileSync(new URL('../lib/git-revision.js', import.meta.url), 'utf8');
 
   it.each([
     [api, 'api-registry-v2'],
@@ -172,8 +173,12 @@ describe('scanner snapshot contract', () => {
     [test, 'test-registry-v2'],
     [graph, 'graph-v3'],
   ])('scanner 在写库合同中携带 git revision 与固定 scanner version', (source, scannerVersion) => {
-    expect(source).toMatch(/rev-parse['"`,\s]+HEAD/);
+    expect(source).toContain('readGitRevision');
     expect(source).toContain(scannerVersion);
+  });
+
+  it('四个 scanner 共用的 revision helper 统一执行 git -C root rev-parse HEAD', () => {
+    expect(gitRevision).toMatch(/['"]git['"][\s\S]+['"]-C['"][\s\S]+['"]rev-parse['"][\s\S]+['"]HEAD['"]/);
   });
 
   it('三张 registry scanner 统一调用 replaceFactSnapshot，repo 固定 cecelia', () => {
