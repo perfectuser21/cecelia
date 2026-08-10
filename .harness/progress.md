@@ -5,3 +5,5 @@
 # 外部真相: 无 PR / 无本任务台账 → 新 sprint 从 Step 1 开跑
 planner: done (sprint-prd.md@631e98060, invariants=5, fr=0, 行数=107)
 proposer: done (contract-draft.md + contract-dod.md + tests/[8 files], BEHAVIOR=10, E2E=yes, manual:bash=yes)
+gan: done (contract-draft.md@cp-08101913-ws-61f7a4dd r1, verdict=APPROVED, 铁律覆盖=5/5, judgments_written=10, rubric=.harness/verdicts/gan-45789beeb.json)
+generator: pr_opened (#4769, red=815ebc24)

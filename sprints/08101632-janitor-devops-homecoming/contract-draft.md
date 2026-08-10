@@ -125,6 +125,24 @@
 
 ---
 
+## Test Contract
+
+| BEHAVIOR | 覆盖描述 | Test File | 测试名称子串 |
+|----------|----------|-----------|------------|
+| BEHAVIOR-01 | 步骤8 内联孤儿分支清理，无 branch-gc.sh 引用 | scripts/ops/__tests__/janitor/test-step8-branch.sh | branch-gc.sh 无引用 |
+| BEHAVIOR-02 | 步骤9 孤儿 worktree 识别与 Guard A 三查 | scripts/ops/__tests__/janitor/test-step9-orphan-worktree.sh | 孤儿 worktree 被清理 |
+| BEHAVIOR-02 | Guard A 三查保护活 worktree | scripts/ops/__tests__/janitor/test-step9-guard-a.sh | Guard A 三查保护 |
+| BEHAVIOR-03 | N>0 但 M=0 显式 FAIL + 退出码非零 | scripts/ops/__tests__/janitor/test-fail-explicit.sh | FAIL 显式化退出非零 |
+| BEHAVIOR-04 | Brain 告警 description 非空含磁盘水位 | scripts/ops/__tests__/janitor/test-brain-alert.sh | description 非空 |
+| BEHAVIOR-06 | 运行结束追加一行到 ledger.csv | scripts/ops/__tests__/janitor/test-ledger.sh | ledger 追加一行 |
+| BEHAVIOR-07 | packages/workflows/skills/janitor/ 不存在 | scripts/ops/__tests__/janitor/test-fossil-deleted.sh | 死化石目录不存在 |
+| BEHAVIOR-09 | 既有回归测试迁入后全绿 | scripts/ops/__tests__/janitor/janitor_orphan.test.sh | janitor orphan |
+| BEHAVIOR-09 | etime 八进制修复回归 | scripts/ops/__tests__/janitor/janitor_etime_octal.test.sh | etime octal |
+| BEHAVIOR-09 | cecelia 常驻豁免回归 | scripts/ops/__tests__/janitor/janitor_kill_exempt.test.sh | kill exempt |
+| BEHAVIOR-09 | audiomxd taskpolicy 回归 | scripts/ops/__tests__/janitor/janitor_audiomxd_log_format.test.sh | audiomxd |
+
+---
+
 ## 累积 FR 守护（不得回退）
 
 本 sprint 为首次 sprint（journey 91c17939 golden-paths 为空），无历史 FR 守护要求。
