@@ -1,83 +1,194 @@
 /**
- * FR-2 Impact Contract Schema（Zod）骨架测试
+ * FR-2 Impact Contract Schema（Zod）测试
  * 覆盖：合法合同通过验证、非法合同被拒绝、必填字段完整性
  *
- * 状态：RED — 实现尚未存在，所有测试预期失败
- * 文件路径：packages/brain/src/impact-contract/contract-schema.js（待创建）
+ * 文件路径：packages/brain/src/impact-contract/contract-schema.js
+ * sprint: 08110022-relay-d96c9fa0 ws2
  */
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { ImpactContractSchema, validateImpactContract, parseImpactContract } from '../contract-schema.js';
 
-// TODO: 实现完成后取消注释
-// import { ImpactContractSchema } from '../../../packages/brain/src/impact-contract/contract-schema.js';
+// ---------- 合法合同 fixture ----------
 
+/** 包含所有必填字段的最小合法合同 */
+function minimalValidContract(overrides = {}) {
+  return {
+    task_id: '550e8400-e29b-41d4-a716-446655440000',
+    change_kind: 'bugfix',
+    base_revision: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
+    affected_capabilities: [
+      { capability_id: 'cap-001', capability_name: 'user-auth', impact_level: 'direct' },
+    ],
+    required_assertions: [
+      { assertion_id: 'assert-001', command: 'npm test -- --testPathPattern=auth' },
+    ],
+    ...overrides,
+  };
+}
+
+// ============================================================
 describe('FR-2 Impact Contract Schema', () => {
 
+  // -------------------------------------------------------
   describe('合法合同通过 schema 验证', () => {
 
-    test('包含所有必填字段的合同通过 Zod parse 不抛出异常', async () => {
-      // TODO: implement
-      // 必填字段：task_id, change_kind, base_revision, affected_capabilities, required_assertions
-      assert.fail('RED: not yet implemented');
+    test('包含所有必填字段的合同通过 Zod parse 不抛出异常', () => {
+      const data = minimalValidContract();
+      assert.doesNotThrow(() => parseImpactContract(data));
     });
 
-    test('change_kind 为四档之一时合同有效', async () => {
-      // TODO: implement — 四档：new_capability/capability_change/bugfix/parameter_only
-      assert.fail('RED: not yet implemented');
+    test('change_kind 为四档之一时合同有效', () => {
+      const kinds = ['new_capability', 'capability_change', 'bugfix', 'parameter_only'];
+      for (const kind of kinds) {
+        const result = validateImpactContract(minimalValidContract({ change_kind: kind }));
+        assert.equal(result.success, true, `change_kind=${kind} 应有效`);
+      }
     });
 
-    test('affected_capabilities 为非空数组时合同有效', async () => {
-      // TODO: implement
-      assert.fail('RED: not yet implemented');
+    test('affected_capabilities 为非空数组时合同有效', () => {
+      const data = minimalValidContract({
+        affected_capabilities: [
+          { capability_id: 'cap-001' },
+          { capability_id: 'cap-002', impact_level: 'indirect' },
+        ],
+      });
+      const result = validateImpactContract(data);
+      assert.equal(result.success, true);
     });
 
-    test('inapplicable_items 为空数组时合同有效', async () => {
-      // TODO: implement
-      assert.fail('RED: not yet implemented');
+    test('inapplicable_items 为空数组时合同有效', () => {
+      const data = minimalValidContract({ inapplicable_items: [] });
+      const result = validateImpactContract(data);
+      assert.equal(result.success, true);
     });
 
-    test('freshness_evidence 为 null 时合同有效（MJ5 stub 期间可为 null）', async () => {
-      // TODO: implement — freshness_evidence 在 MJ5 前为可选字段
-      assert.fail('RED: not yet implemented');
+    test('freshness_evidence 为 null 时合同有效（MJ5 stub 期间可为 null）', () => {
+      const data = minimalValidContract({ freshness_evidence: null });
+      const result = validateImpactContract(data);
+      assert.equal(result.success, true);
+    });
+
+    test('freshness_evidence 不传时合同有效（字段可选）', () => {
+      const data = minimalValidContract();
+      // minimalValidContract 未包含 freshness_evidence，应可通过
+      const result = validateImpactContract(data);
+      assert.equal(result.success, true);
+    });
+
+    test('required_assertions 为空数组时合同有效', () => {
+      const data = minimalValidContract({ required_assertions: [] });
+      const result = validateImpactContract(data);
+      assert.equal(result.success, true);
+    });
+
+    test('parse 后 schema_version 有默认值 1', () => {
+      const data = minimalValidContract();
+      const parsed = parseImpactContract(data);
+      assert.equal(parsed.schema_version, 1);
+    });
+
+    test('parse 后 inapplicable_items 默认为空数组', () => {
+      const data = minimalValidContract();
+      const parsed = parseImpactContract(data);
+      assert.deepEqual(parsed.inapplicable_items, []);
     });
 
   });
 
+  // -------------------------------------------------------
   describe('非法合同被 schema 拒绝', () => {
 
-    test('缺少 task_id 时 Zod parse 抛出 ZodError', async () => {
-      // TODO: implement
-      assert.fail('RED: not yet implemented');
+    test('缺少 task_id 时 Zod parse 抛出 ZodError', () => {
+      const data = minimalValidContract();
+      delete data.task_id;
+      assert.throws(() => parseImpactContract(data), (err) => {
+        assert.equal(err.constructor.name, 'ZodError');
+        return true;
+      });
     });
 
-    test('缺少 base_revision 时 Zod parse 抛出 ZodError', async () => {
-      // TODO: implement
-      assert.fail('RED: not yet implemented');
+    test('缺少 base_revision 时 Zod parse 抛出 ZodError', () => {
+      const data = minimalValidContract();
+      delete data.base_revision;
+      assert.throws(() => parseImpactContract(data), (err) => {
+        assert.equal(err.constructor.name, 'ZodError');
+        return true;
+      });
     });
 
-    test('change_kind 为无效枚举值时 Zod parse 抛出 ZodError', async () => {
-      // TODO: implement — 例如 change_kind="invalid"
-      assert.fail('RED: not yet implemented');
+    test('change_kind 为无效枚举值时 Zod parse 抛出 ZodError', () => {
+      const data = minimalValidContract({ change_kind: 'invalid' });
+      assert.throws(() => parseImpactContract(data), (err) => {
+        assert.equal(err.constructor.name, 'ZodError');
+        return true;
+      });
     });
 
-    test('affected_capabilities 为空数组时 Zod parse 抛出 ZodError', async () => {
-      // TODO: implement — 至少需要声明一个受影响 Capability
-      assert.fail('RED: not yet implemented');
+    test('affected_capabilities 为空数组时 Zod parse 抛出 ZodError', () => {
+      const data = minimalValidContract({ affected_capabilities: [] });
+      assert.throws(() => parseImpactContract(data), (err) => {
+        assert.equal(err.constructor.name, 'ZodError');
+        return true;
+      });
     });
 
-    test('required_assertions 缺失时 Zod parse 抛出 ZodError', async () => {
-      // TODO: implement
-      assert.fail('RED: not yet implemented');
+    test('required_assertions 缺失时 Zod parse 抛出 ZodError', () => {
+      const data = minimalValidContract();
+      delete data.required_assertions;
+      assert.throws(() => parseImpactContract(data), (err) => {
+        assert.equal(err.constructor.name, 'ZodError');
+        return true;
+      });
+    });
+
+    test('task_id 为空字符串时抛出 ZodError', () => {
+      const data = minimalValidContract({ task_id: '' });
+      assert.throws(() => parseImpactContract(data), (err) => {
+        assert.equal(err.constructor.name, 'ZodError');
+        return true;
+      });
     });
 
   });
 
+  // -------------------------------------------------------
   describe('schema 错误信息可读性', () => {
 
-    test('ZodError.errors 包含缺失字段的路径信息', async () => {
-      // TODO: implement — 确保错误信息可以被 API 层面格式化为用户友好的 400 响应
-      assert.fail('RED: not yet implemented');
+    test('ZodError.issues 包含缺失字段的路径信息', () => {
+      const data = minimalValidContract();
+      delete data.task_id;
+      delete data.base_revision;
+
+      const result = validateImpactContract(data);
+      assert.equal(result.success, false);
+
+      // Zod 4.x 使用 .issues（不是 .errors）
+      const issues = result.error.issues;
+      assert.ok(Array.isArray(issues), 'ZodError.issues 应是数组');
+      const paths = issues.map((e) => (Array.isArray(e.path) ? e.path.join('.') : ''));
+      assert.ok(
+        paths.some((p) => p === 'task_id' || p.includes('task_id')),
+        `错误路径应包含 task_id，实际: ${JSON.stringify(paths)}`
+      );
+    });
+
+    test('validateImpactContract 返回 { success, error } 结构', () => {
+      const invalid = { change_kind: 'bugfix' };
+      const result = validateImpactContract(invalid);
+      assert.equal(result.success, false);
+      assert.ok(result.error, 'result.error 应存在');
+      // Zod 4.x ZodError 使用 .issues
+      assert.ok(Array.isArray(result.error.issues), 'error.issues 应是数组');
+    });
+
+    test('validateImpactContract 合法时返回 { success: true, data }', () => {
+      const data = minimalValidContract();
+      const result = validateImpactContract(data);
+      assert.equal(result.success, true);
+      assert.ok(result.data, 'result.data 应存在');
+      assert.equal(result.data.task_id, data.task_id);
     });
 
   });
