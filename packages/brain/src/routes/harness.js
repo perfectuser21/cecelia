@@ -182,6 +182,62 @@ router.get('/initiative-runs/:id', async (req, res) => {
 });
 
 /**
+ * GET /pr-ownership — PR 归属求证（合并权单一裁决闸）
+ *
+ * 判断某个 PR 是否被某条 harness run 认领（harness-owned）。归属**只凭 kernel 写入的
+ * `initiative_runs.pr_url` / 关联 task 的 `payload->>'pr_branch'`**——不看 PR 标题、不看
+ * 分支正则（`^cp-` / `^feat\(harness\):` 一律不作正向 owned 判据）。2026-08-10 #4755 实证：
+ * 标题是 LLM 自由撰写字段，按标题判会漏判非 feat(harness): 的 harness 产出。
+ *
+ * Query（branch 与 pr_url 至少给一个）:
+ *   - pr_url  优先判据（精确匹配 initiative_runs.pr_url）
+ *   - branch  head 分支名（匹配 tasks.payload->>'pr_branch' 或 pr_url LIKE %branch%）
+ * 200: { owned, run_id, pr_url, matched_by }   400: { error }（两者均缺）
+ *
+ * 只读 SELECT，无写路径。fail-closed 是脚本侧（should-auto-merge.sh）职责：本端点
+ * 干净返回 owned:true/false 或 500；脚本对任意异常按 harness-owned 处理（SKIP）。
+ */
+router.get('/pr-ownership', async (req, res) => {
+  const branch = typeof req.query.branch === 'string' ? req.query.branch.trim() : '';
+  const prUrl = typeof req.query.pr_url === 'string' ? req.query.pr_url.trim() : '';
+  if (!branch && !prUrl) {
+    return res.status(400).json({ error: 'branch 或 pr_url 至少提供一个' });
+  }
+  try {
+    // 复用 pr-callback-handler.js 已验证的 branch→run 解析约定（pr_url LIKE / payload.pr_branch）。
+    // 参数化 SQL（$1=branch $2=pr_url），branch/pr_url 仅作查询值，绝不字符串拼接。
+    const { rows } = await pool.query(
+      `SELECT r.id AS run_id,
+              r.pr_url AS pr_url,
+              CASE WHEN $2 <> '' AND r.pr_url = $2 THEN 'pr_url' ELSE 'branch' END AS matched_by
+         FROM initiative_runs r
+         LEFT JOIN tasks t ON t.id = r.current_task_id
+        WHERE r.orchestrator_version = 'v2'
+          AND (
+            ($2 <> '' AND r.pr_url = $2)
+            OR ($1 <> '' AND r.pr_url LIKE '%' || $1 || '%')
+            OR ($1 <> '' AND t.payload->>'pr_branch' = $1)
+          )
+        ORDER BY r.started_at DESC NULLS LAST
+        LIMIT 1`,
+      [branch, prUrl]
+    );
+    if (rows.length === 0) {
+      return res.json({ owned: false, run_id: null, pr_url: null, matched_by: null });
+    }
+    return res.json({
+      owned: true,
+      run_id: rows[0].run_id,
+      pr_url: rows[0].pr_url ?? null,
+      matched_by: rows[0].matched_by ?? null,
+    });
+  } catch (err) {
+    console.error('[GET /harness/pr-ownership]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /runs
  * 返回最近 harness pipeline 运行列表
  * ?limit=N 默认 20，范围 1-100，按 started_at DESC

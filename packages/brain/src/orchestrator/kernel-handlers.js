@@ -183,6 +183,20 @@ export function createKernelHandlers(deps) {
         );
         return { status: 'DONE_WITH_CONCERNS', detail: 'updated PR branch; rechecking gates' };
       }
+      // 合并权单一裁决闸（PRD「必须实现」第 1 条）：harness-owned PR 上的 `harness-judge`
+      // required check 默认非 success，三条合并通道（CI 通用 auto-merge / engine-pr-watchdog
+      // / kernel 自身）都得等它 success 才能合并。这里是唯一置 success 的执行点——只有走完
+      // mergeGate（loop.js F6 双保险已校验 allow）到达 merge_pr 才会执行，且必须在真正
+      // `gh pr merge` **之前**发出，保证「judge PASS 前物理不可合并」。
+      // 走版本无关 REST（gh api statuses），对齐 update-branch 的 gh 2.45 教训。
+      const statusPath = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(pr.url ?? '');
+      if (pr.head_sha && statusPath) {
+        deps.execCmd(
+          `gh api ${shellQuote(`repos/${statusPath[1]}/${statusPath[2]}/statuses/${pr.head_sha}`)} ` +
+            `-X POST -f state=success -f context=harness-judge ` +
+            `-f ${shellQuote('description=harness kernel mergeGate passed (evaluate+judge)')}`,
+        );
+      }
       deps.execCmd(`gh pr merge ${shellQuote(pr.url)} --squash --delete-branch`);
       return { status: 'DONE', detail: 'merge requested' };
     },
