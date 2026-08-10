@@ -3,31 +3,44 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DEPLOY_SCRIPT="$ROOT_DIR/scripts/brain-deploy.sh"
+ROLLBACK_SCRIPT="$ROOT_DIR/scripts/brain-rollback.sh"
 
-node --input-type=module - "$DEPLOY_SCRIPT" <<'NODE'
+node --input-type=module - "$DEPLOY_SCRIPT" "$ROLLBACK_SCRIPT" <<'NODE'
 import { readFileSync } from 'node:fs';
 
-const source = readFileSync(process.argv[2], 'utf8');
-const lines = source.split('\n');
-const lifecycleBlocks = [];
+const lifecycleCommands = [];
 
-for (let index = 0; index < lines.length; index += 1) {
-  if (!lines[index].trimStart().startsWith('docker compose')) continue;
-  const block = lines.slice(index, index + 4).join('\n');
-  if (/\b(?:up -d|down|stop)\b/.test(block)) lifecycleBlocks.push(block);
+for (const scriptPath of process.argv.slice(2)) {
+  const lines = readFileSync(scriptPath, 'utf8').split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!lines[index].trimStart().startsWith('docker compose')) continue;
+    const commandLines = [lines[index]];
+    while (commandLines.at(-1).trimEnd().endsWith('\\') && index + 1 < lines.length) {
+      index += 1;
+      commandLines.push(lines[index]);
+    }
+    const command = commandLines.join(' ').replaceAll('\\', '').replace(/\s+/g, ' ').trim();
+    if (/\b(?:up -d|down|stop|restart|start|create|rm)\b/.test(command)) {
+      lifecycleCommands.push({ scriptPath, command });
+    }
+  }
 }
 
-if (lifecycleBlocks.length === 0) {
-  console.error('FAIL: brain-deploy.sh 中未找到 compose 生命周期命令');
+if (lifecycleCommands.length === 0) {
+  console.error('FAIL: Brain 部署与回滚脚本中未找到 compose 生命周期命令');
   process.exit(1);
 }
 
-const unscoped = lifecycleBlocks.filter(block => !/\bnode-brain\b/.test(block));
+const unscoped = lifecycleCommands.filter(({ command }) => {
+  if (/\bdown\b/.test(command)) return true;
+  const match = command.match(/\b(?:up -d|stop|restart|start|create|rm(?:\s+-[a-z]+)*)\s+([^;&|]+)/);
+  return !match || match[1].trim() !== 'node-brain';
+});
 if (unscoped.length > 0) {
-  console.error(`FAIL: ${unscoped.length} 个 Brain 部署命令未限定 node-brain，会重建 frontend`);
-  for (const block of unscoped) console.error(`---\n${block}`);
+  console.error(`FAIL: ${unscoped.length} 个 Brain 生命周期命令未严格限定为 node-brain`);
+  for (const { scriptPath, command } of unscoped) console.error(`--- ${scriptPath}\n${command}`);
   process.exit(1);
 }
 
-console.log(`PASS: ${lifecycleBlocks.length} 个 Brain compose 生命周期命令均限定 node-brain`);
+console.log(`PASS: ${lifecycleCommands.length} 个 Brain compose 生命周期命令均只操作 node-brain`);
 NODE
