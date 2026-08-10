@@ -26,4 +26,11 @@ describe('Dashboard 客户端缓存版本', () => {
     expect(main).not.toContain("const APP_VERSION = '2026-05-21-v2'");
     expect(viteEnv).toContain('declare const __APP_VERSION__: string');
   });
+
+  it('每次启动都主动检查 Service Worker 更新，不受浏览器默认检查周期限制', () => {
+    const main = readFileSync(resolve(__dirname, './main.tsx'), 'utf-8');
+
+    expect(main).toContain('registration.update()');
+    expect(main).toContain('await refreshServiceWorkers()');
+  });
 });
