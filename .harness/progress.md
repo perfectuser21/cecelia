@@ -6,3 +6,6 @@
 
 ## 进度
 - [x] Step 1: harness-planner → sprint-prd.md 生成（2026-08-10）
+planner: done (sprint-prd.md@6a3dc8bbe, invariants=9, fr=8, 行数=285)
+- [x] Step 2: harness-contract-proposer → contract-draft.md + contract-dod.md + tests/ 生成（2026-08-10）
+proposer: done (round=1, behaviors=7, e2e=yes, manual_bash=yes, invariants=9/9)
