@@ -52,6 +52,47 @@ afterAll(async () => {
 });
 
 describe('replaceFactSnapshot 真库合同', () => {
+  it('重复 API composite natural key 只保留一条事实且 header row_count=1', async () => {
+    await replaceFactSnapshot(pool, 'api', {
+      repo: REPO, sourceRevision: 'duplicate-api-rev', scannerVersion: 'api-registry-v2',
+      rows: [
+        { method: 'GET', path: '/duplicate', file_path: 'first.js', line_number: 1, area: 'test' },
+        { method: 'GET', path: '/duplicate', file_path: 'second.js', line_number: 2, area: 'test' },
+      ],
+    });
+
+    const facts = await pool.query(
+      'SELECT file_path FROM api_registry WHERE repo = $1 AND method = $2 AND path = $3',
+      [REPO, 'GET', '/duplicate'],
+    );
+    expect(facts.rows).toEqual([{ file_path: 'second.js' }]);
+    const header = await pool.query(
+      'SELECT row_count FROM fact_snapshot_headers WHERE kind = $1 AND repo = $2',
+      ['api', REPO],
+    );
+    expect(header.rows).toEqual([{ row_count: 1 }]);
+  });
+
+  it('重复 test single natural key 只保留一条事实且 header row_count=1', async () => {
+    await replaceFactSnapshot(pool, 'test', {
+      repo: REPO, sourceRevision: 'duplicate-test-rev', scannerVersion: 'test-registry-v2',
+      rows: [
+        { file_path: 'duplicate.test.js', test_count: 1, covered_behaviors: ['first'], area: 'test', test_type: 'unit' },
+        { file_path: 'duplicate.test.js', test_count: 2, covered_behaviors: ['second'], area: 'test', test_type: 'unit' },
+      ],
+    });
+
+    const facts = await pool.query(
+      'SELECT test_count FROM test_registry WHERE repo = $1 AND file_path = $2', [REPO, 'duplicate.test.js'],
+    );
+    expect(facts.rows).toEqual([{ test_count: 2 }]);
+    const header = await pool.query(
+      'SELECT row_count FROM fact_snapshot_headers WHERE kind = $1 AND repo = $2',
+      ['test', REPO],
+    );
+    expect(header.rows).toEqual([{ row_count: 1 }]);
+  });
+
   it('第二张 API 快照会删除旧事实，并保留同键人工 annotation', async () => {
     await replaceFactSnapshot(pool, 'api', {
       repo: REPO, sourceRevision: 'rev-1', scannerVersion: 'api-registry-v2',

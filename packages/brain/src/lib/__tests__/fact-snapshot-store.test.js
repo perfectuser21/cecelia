@@ -3,11 +3,16 @@ import { replaceFactSnapshot } from '../fact-snapshot-store.js';
 
 function mockPool({ failOn } = {}) {
   const calls = [];
+  let factInsertCount = 0;
   const client = {
     query: vi.fn(async (sql, params) => {
       const text = String(sql);
       calls.push({ sql: text, params });
       if (failOn && text.includes(failOn)) throw new Error('snapshot write failed');
+      if (/INSERT INTO (api_registry|db_schema_registry|test_registry)/.test(text)) factInsertCount += 1;
+      if (/SELECT count\(\*\)::int AS count/.test(text)) {
+        return { rows: [{ count: factInsertCount }], rowCount: 1 };
+      }
       return { rows: [], rowCount: text.includes('DELETE') ? 1 : 0 };
     }),
     release: vi.fn(),
@@ -130,5 +135,23 @@ describe('replaceFactSnapshot', () => {
     expect(secondLock.params).toEqual(['fact-snapshot:test:other-repo']);
     expect(firstLock.sql).not.toContain('cecelia');
     expect(secondLock.sql).not.toContain('other-repo');
+  });
+
+  it('header row_count 来自 delete 后真实表 count，而不是输入 rows.length', async () => {
+    const { pool, calls } = mockPool();
+    const duplicate = {
+      method: 'GET', path: '/duplicate', file_path: 'duplicate.js', line_number: 1, area: 'test',
+    };
+
+    await replaceFactSnapshot(pool, 'api', {
+      ...metadata, rows: [duplicate, { ...duplicate, file_path: 'latest.js' }],
+    });
+
+    const count = calls.find((call) => /SELECT count\(\*\)::int AS count/.test(call.sql));
+    expect(count.sql).toContain('FROM api_registry');
+    expect(count.sql).toContain('WHERE repo = $1');
+    expect(count.params).toEqual(['cecelia']);
+    const header = calls.find((call) => call.sql.includes('INSERT INTO fact_snapshot_headers'));
+    expect(header.params.at(-1)).toBe(1);
   });
 });

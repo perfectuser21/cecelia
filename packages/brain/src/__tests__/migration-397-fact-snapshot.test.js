@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 
 const upSql = readFileSync(new URL('../../migrations/397_fact_snapshot_metadata.sql', import.meta.url), 'utf8');
@@ -86,6 +86,15 @@ describe('migration 397 — cecelia_test 实际列与约束', () => {
     throw new Error(`migration 397 测试拒绝连接非测试库: ${databaseName}`);
   }
   const pool = new pg.Pool({ connectionString, max: 1 });
+  let headerBeforeMarkerTests;
+
+  beforeAll(async () => {
+    const { rows } = await pool.query(
+      `SELECT kind, repo, source_revision, scanner_version, scanned_at, row_count
+         FROM fact_snapshot_headers WHERE kind = 'api' AND repo = 'cecelia'`,
+    );
+    headerBeforeMarkerTests = rows;
+  });
 
   afterAll(async () => {
     await pool.end();
@@ -195,6 +204,14 @@ describe('migration 397 — cecelia_test 实际列与约束', () => {
     } finally {
       await pool.query('DELETE FROM api_registry WHERE method = $1 AND path = $2', ['POST', markerPath]);
     }
+  });
+
+  it('migration marker 测试结束后 api|cecelia header 与运行前完全一致', async () => {
+    const { rows } = await pool.query(
+      `SELECT kind, repo, source_revision, scanner_version, scanned_at, row_count
+         FROM fact_snapshot_headers WHERE kind = 'api' AND repo = 'cecelia'`,
+    );
+    expect(rows).toEqual(headerBeforeMarkerTests);
   });
 });
 
