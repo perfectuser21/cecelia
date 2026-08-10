@@ -262,3 +262,24 @@ WHERE t.status='in_progress';
 | 西安机群 journey | `journeys.id = 0c1f70f1-...` |
 | 当前 schema 版本 | 395（selfcheck.js EXPECTED_SCHEMA_VERSION） |
 | 下一个 migration 号 | 397（396 已被 initiative_runs_gear 占用） |
+
+---
+
+## 九、Invariant 约束
+
+以下约束是全链不可违背的红线，proposer/generator/evaluator 必须全部覆盖：
+
+| ID | 约束 |
+|----|------|
+| INV-1 | 迁移期间任何已有 journey 行不得 DELETE（只允许 status 变更） |
+| INV-2 | in_progress 任务的 journey_id FK 迁移后必须仍可解析（行还在，不受 parent_journey_id 新增影响） |
+| INV-3 | 全部 schema 变更必须走 migration 文件（397-400），禁止手工 ALTER |
+| INV-4 | 23 个 journey_id=NULL 孤儿必须归位或打 status=deprecated，禁止 DELETE |
+| INV-5 | migration 必须有 rollback SQL（up/down 对称） |
+| INV-6 | selfcheck.js EXPECTED_SCHEMA_VERSION 必须随 migration 400 同步更新到 400 |
+| INV-7 | F1 挂片分拣规则必须机器可核查（migration_audit 记录），禁止"人工判断"静默过关 |
+| INV-8 | 横切件池 7 项必须有可查询登记记录（主管 Capability + 守卫现状） |
+| INV-9 | CI 全绿（facts-check + version-sync + brain-ci 全部通过） |
+
+journey_type: capability_hierarchy
+target_environment: local_api
