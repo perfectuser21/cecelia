@@ -2,10 +2,10 @@ import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 
-const upSql = readFileSync(new URL('../../migrations/397_fact_snapshot_metadata.sql', import.meta.url), 'utf8');
-const downSql = readFileSync(new URL('../../migrations/rollback/397_fact_snapshot_metadata.down.sql', import.meta.url), 'utf8');
+const upSql = readFileSync(new URL('../../migrations/400_fact_snapshot_metadata.sql', import.meta.url), 'utf8');
+const downSql = readFileSync(new URL('../../migrations/rollback/400_fact_snapshot_metadata.down.sql', import.meta.url), 'utf8');
 
-describe('migration 397 — versioned fact snapshot metadata', () => {
+describe('migration 400 — versioned fact snapshot metadata', () => {
   it.each(['api_registry', 'db_schema_registry', 'test_registry'])(
     '%s 增加 repo/source_revision/scanner_version 并建立 repo + scanned_at 索引',
     (table) => {
@@ -47,8 +47,8 @@ describe('migration 397 — versioned fact snapshot metadata', () => {
     expect(upSql).toMatch(/DELETE FROM test_registry[\s\S]+legacy\.repo = 'legacy-unknown'[\s\S]+owned\.repo = 'cecelia'/i);
   });
 
-  it('登记 schema 397', () => {
-    expect(upSql).toMatch(/VALUES\s*\(\s*'397'/i);
+  it('登记 schema 400', () => {
+    expect(upSql).toMatch(/VALUES\s*\(\s*'400'/i);
   });
 
   it('建立通用 snapshot header，并从四张事实表按 repo 最新事实回填', () => {
@@ -79,11 +79,11 @@ describe('migration 397 — versioned fact snapshot metadata', () => {
   });
 });
 
-describe('migration 397 — cecelia_test 实际列与约束', () => {
+describe('migration 400 — cecelia_test 实际列与约束', () => {
   const connectionString = process.env.TEST_DATABASE_URL || 'postgresql://localhost/cecelia_test';
   const databaseName = decodeURIComponent(new URL(connectionString).pathname.slice(1));
   if (!/(_test|_scratch)$/.test(databaseName)) {
-    throw new Error(`migration 397 测试拒绝连接非测试库: ${databaseName}`);
+    throw new Error(`migration 400 测试拒绝连接非测试库: ${databaseName}`);
   }
   const pool = new pg.Pool({ connectionString, max: 1 });
   let headerBeforeMarkerTests;
