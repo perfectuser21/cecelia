@@ -18,7 +18,11 @@ export async function loadGraphContext(repo = 'cecelia') {
   const { rows: edges } = await pool.query(
     `SELECT src_path, dst_path, edge_type FROM graph_edges WHERE repo = $1`, [repo]);
   const { rows: fr } = await pool.query(
-    `SELECT max(scanned_at) AS latest FROM graph_edges WHERE repo = $1`, [repo]);
+    `SELECT repo, scanned_at, source_revision, scanner_version
+       FROM graph_edges
+      WHERE repo = $1
+      ORDER BY scanned_at DESC
+      LIMIT 1`, [repo]);
   const { rows: features } = await pool.query(
     `SELECT id, name, unit_test_path, workflow_ref, guard_ref FROM journey_features`);
   const adj = buildAdjacency(edges);
@@ -29,7 +33,10 @@ export async function loadGraphContext(repo = 'cecelia') {
     anchored: classified.filter((c) => c.status !== 'unanchored').length,
     covered_by_graph: classified.filter((c) => c.status === 'covered').length,
   };
-  return { adj, nodeSet, classified, anchor_coverage, freshness: computeFreshness(fr[0]?.latest ?? null) };
+  return {
+    adj, nodeSet, classified, anchor_coverage,
+    freshness: { repo, ...computeFreshness(fr[0] ?? null) },
+  };
 }
 
 async function promisesForFeatures(featureIds) {

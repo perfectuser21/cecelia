@@ -1,35 +1,97 @@
 /**
  * 照相层账龄哨兵(刀0,spec: docs/superpowers/specs/2026-07-18-registry-photo-layer-revive-design.md)
- * cron 停摆 >24h 时所有消费方响应自动带 stale:true——哨兵即守卫,无需额外监控件。
+ * 默认预算 15 分钟；缺时间或 provenance 时 fail-closed 为 unknown。
  */
-export const PHOTO_STALE_THRESHOLD_HOURS = 24;
+export const PHOTO_STALE_THRESHOLD_HOURS = 15 / 60;
 
-export function computeFreshness(latestScanAt, now = new Date(), thresholdHours = PHOTO_STALE_THRESHOLD_HOURS) {
-  if (!latestScanAt) {
-    return {
-      latest_scan: null,
-      age_hours: null,
-      stale: true,
-      warning: '照相层无数据:扫描器从未运行,先跑 scripts/scan/run-all-scans.sh',
-    };
-  }
-  const latest = latestScanAt instanceof Date ? latestScanAt : new Date(latestScanAt);
-  if (Number.isNaN(latest.getTime())) {
-    return {
-      latest_scan: null,
-      age_hours: null,
-      stale: true,
-      warning: `照相层 scanned_at 无效(${String(latestScanAt)}),按 stale 处理`,
-    };
-  }
-  const ageHours = (now.getTime() - latest.getTime()) / 3600000;
-  const stale = ageHours > thresholdHours;
+function result({
+  status, reasonCode, latest = null, ageHours = null, stale = true,
+  warning, sourceRevision = null, scannerVersion = null,
+}) {
+  const lastSuccessAt = latest ? latest.toISOString() : null;
   return {
-    latest_scan: latest.toISOString(),
-    age_hours: Math.round(ageHours * 10) / 10,
+    status,
+    reason_code: reasonCode,
+    last_success_at: lastSuccessAt,
+    source_revision: sourceRevision,
+    scanner_version: scannerVersion,
+    latest_scan: lastSuccessAt,
+    age_hours: ageHours,
     stale,
-    warning: stale
-      ? `照相层已 ${Math.round(ageHours)}h 未刷新(阈值 ${thresholdHours}h),检查 host cron: registry-scan`
-      : null,
+    warning,
   };
+}
+
+export function computeFreshness(snapshot, now = new Date(), thresholdHours = PHOTO_STALE_THRESHOLD_HOURS) {
+  if (!snapshot) {
+    return result({
+      status: 'unknown',
+      reasonCode: 'snapshot_missing',
+      warning: '照相层无数据:扫描器从未运行,先跑 scripts/scan/run-all-scans.sh',
+    });
+  }
+
+  const isMetadata = typeof snapshot === 'object' && !(snapshot instanceof Date);
+  const scannedAt = isMetadata ? snapshot.scanned_at : snapshot;
+  const sourceRevision = isMetadata && typeof snapshot.source_revision === 'string'
+    ? snapshot.source_revision.trim()
+    : null;
+  const scannerVersion = isMetadata && typeof snapshot.scanner_version === 'string'
+    ? snapshot.scanner_version.trim()
+    : null;
+
+  if (!scannedAt) {
+    return result({
+      status: 'unknown', reasonCode: 'snapshot_missing', sourceRevision, scannerVersion,
+      warning: '照相层无数据:扫描器从未运行,先跑 scripts/scan/run-all-scans.sh',
+    });
+  }
+
+  const latest = scannedAt instanceof Date ? scannedAt : new Date(scannedAt);
+  if (Number.isNaN(latest.getTime())) {
+    return result({
+      status: 'unknown', reasonCode: 'snapshot_time_invalid', sourceRevision, scannerVersion,
+      warning: `照相层 scanned_at 无效(${String(scannedAt)}),按 unknown 处理`,
+    });
+  }
+
+  const ageHours = (now.getTime() - latest.getTime()) / 3600000;
+  const roundedAgeHours = Math.round(ageHours * 10) / 10;
+  const ageIsStale = ageHours > thresholdHours;
+  const thresholdMinutes = Math.round(thresholdHours * 60);
+
+  if (!sourceRevision) {
+    return result({
+      status: 'unknown', reasonCode: 'source_revision_missing', latest,
+      ageHours: roundedAgeHours, stale: isMetadata ? true : ageIsStale,
+      sourceRevision, scannerVersion,
+      warning: '照相层缺少 source_revision,按 unknown 处理',
+    });
+  }
+  if (sourceRevision === 'legacy-unknown') {
+    return result({
+      status: 'unknown', reasonCode: 'source_revision_legacy', latest,
+      ageHours: roundedAgeHours, sourceRevision, scannerVersion,
+      warning: '照相层 source_revision 为 legacy-unknown,按 unknown 处理',
+    });
+  }
+  if (!scannerVersion) {
+    return result({
+      status: 'unknown', reasonCode: 'scanner_version_missing', latest,
+      ageHours: roundedAgeHours, sourceRevision, scannerVersion,
+      warning: '照相层缺少 scanner_version,按 unknown 处理',
+    });
+  }
+  if (ageIsStale) {
+    return result({
+      status: 'unknown', reasonCode: 'snapshot_stale', latest,
+      ageHours: roundedAgeHours, sourceRevision, scannerVersion,
+      warning: `照相层已 ${Math.round(ageHours * 60)}min 未刷新(阈值 ${thresholdMinutes}min),检查 host cron: registry-scan`,
+    });
+  }
+
+  return result({
+    status: 'fresh', reasonCode: null, latest, ageHours: roundedAgeHours,
+    stale: false, warning: null, sourceRevision, scannerVersion,
+  });
 }
