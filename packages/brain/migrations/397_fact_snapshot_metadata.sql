@@ -3,23 +3,62 @@
 BEGIN;
 
 ALTER TABLE api_registry
-  ADD COLUMN IF NOT EXISTS repo VARCHAR(100) NOT NULL DEFAULT 'legacy-unknown',
+  ADD COLUMN IF NOT EXISTS repo VARCHAR(100) NOT NULL DEFAULT 'cecelia',
   ADD COLUMN IF NOT EXISTS source_revision TEXT NOT NULL DEFAULT 'legacy-unknown',
   ADD COLUMN IF NOT EXISTS scanner_version VARCHAR(100) NOT NULL DEFAULT 'legacy';
 
 ALTER TABLE db_schema_registry
-  ADD COLUMN IF NOT EXISTS repo VARCHAR(100) NOT NULL DEFAULT 'legacy-unknown',
+  ADD COLUMN IF NOT EXISTS repo VARCHAR(100) NOT NULL DEFAULT 'cecelia',
   ADD COLUMN IF NOT EXISTS source_revision TEXT NOT NULL DEFAULT 'legacy-unknown',
   ADD COLUMN IF NOT EXISTS scanner_version VARCHAR(100) NOT NULL DEFAULT 'legacy';
 
 ALTER TABLE test_registry
-  ADD COLUMN IF NOT EXISTS repo VARCHAR(100) NOT NULL DEFAULT 'legacy-unknown',
+  ADD COLUMN IF NOT EXISTS repo VARCHAR(100) NOT NULL DEFAULT 'cecelia',
   ADD COLUMN IF NOT EXISTS source_revision TEXT NOT NULL DEFAULT 'legacy-unknown',
   ADD COLUMN IF NOT EXISTS scanner_version VARCHAR(100) NOT NULL DEFAULT 'legacy';
 
 ALTER TABLE graph_edges
   ADD COLUMN IF NOT EXISTS source_revision TEXT NOT NULL DEFAULT 'legacy-unknown',
   ADD COLUMN IF NOT EXISTS scanner_version VARCHAR(100) NOT NULL DEFAULT 'legacy';
+
+-- 旧版 397 曾把 registry 存量归到 legacy-unknown。重跑时先保留已经由
+-- cecelia scanner 接管的事实，再把无冲突的旧事实统一归回 cecelia。
+DELETE FROM api_registry AS legacy
+USING api_registry AS owned
+WHERE legacy.repo = 'legacy-unknown'
+  AND owned.repo = 'cecelia'
+  AND legacy.method = owned.method
+  AND legacy.path = owned.path;
+
+DELETE FROM db_schema_registry AS legacy
+USING db_schema_registry AS owned
+WHERE legacy.repo = 'legacy-unknown'
+  AND owned.repo = 'cecelia'
+  AND legacy.table_name = owned.table_name;
+
+DELETE FROM test_registry AS legacy
+USING test_registry AS owned
+WHERE legacy.repo = 'legacy-unknown'
+  AND owned.repo = 'cecelia'
+  AND legacy.file_path = owned.file_path;
+
+UPDATE api_registry SET repo = 'cecelia' WHERE repo = 'legacy-unknown';
+UPDATE db_schema_registry SET repo = 'cecelia' WHERE repo = 'legacy-unknown';
+UPDATE test_registry SET repo = 'cecelia' WHERE repo = 'legacy-unknown';
+
+-- ADD COLUMN IF NOT EXISTS 不会修正旧版 397 已存在列的默认值，必须显式收敛。
+ALTER TABLE api_registry
+  ALTER COLUMN repo SET DEFAULT 'cecelia',
+  ALTER COLUMN source_revision SET DEFAULT 'legacy-unknown',
+  ALTER COLUMN scanner_version SET DEFAULT 'legacy';
+ALTER TABLE db_schema_registry
+  ALTER COLUMN repo SET DEFAULT 'cecelia',
+  ALTER COLUMN source_revision SET DEFAULT 'legacy-unknown',
+  ALTER COLUMN scanner_version SET DEFAULT 'legacy';
+ALTER TABLE test_registry
+  ALTER COLUMN repo SET DEFAULT 'cecelia',
+  ALTER COLUMN source_revision SET DEFAULT 'legacy-unknown',
+  ALTER COLUMN scanner_version SET DEFAULT 'legacy';
 
 ALTER TABLE api_registry
   DROP CONSTRAINT IF EXISTS api_registry_method_path_key,
