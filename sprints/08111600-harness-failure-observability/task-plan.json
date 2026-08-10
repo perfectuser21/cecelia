@@ -1,0 +1,39 @@
+{
+  "initiative_id": "4eb8c202-1314-4627-8c81-70c5980fd489",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅 packages/brain 后端（executor/orchestrator/dispatcher/watchdog/路由 + CI lint），无 UI、无远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "harness terminal 失败写入点统一写 result.failure_class + 机械闸 lint + failure-stats API",
+      "scope": "①新增 packages/brain/src/harness-failure-class.js（FAILURE_CLASSES 冻结枚举 + normalizeFailureClass + markHarnessTaskTerminal 写 tasks.result.failure_class/failure_detail）；②枚举全量 harness terminal 失败写入点（executor.js markInitiativeTerminalFailed、orchestrator/loop.js mark_failed、dispatcher.js dispatch-fail-autoblock/pipeline_terminal_failure/missing_anchor、harness-relay-watchdog.js 超时终结）改为经 helper 写 result；③新增 packages/brain/scripts/lint/lint-terminal-failure-class.mjs 机械闸 + fixtures/bad-terminal-write.snippet 坏样本 + brain-ci.yml 加 lint 步；④packages/brain/src/routes/harness.js 新增 GET /api/brain/harness/failure-stats?days=N；⑤version bump 三处同步。",
+      "dod": [
+        "[BEHAVIOR] markHarnessTaskTerminal 真库写 result.failure_class + failure_detail（B-01）",
+        "[BEHAVIOR] runHarnessInitiativeRouter 缺 orchestrator 真实写入点写 result.failure_class=missing_orchestrator_flag（B-02）",
+        "[BEHAVIOR] normalizeFailureClass 非枚举归 unclassified 且 FAILURE_CLASSES 冻结（B-03）",
+        "[BEHAVIOR] GET /failure-stats?days=7 返回 failure_rate number + by_class object（B-04）",
+        "[BEHAVIOR] GET /failure-stats?days=abc 返回 400 error（B-05）",
+        "[BEHAVIOR] lint 干净树 exit 0、注入坏样本 exit 1、还原 exit 0（B-06）",
+        "[BEHAVIOR] INV-2 stats 不恒空且 by_class 求和 == terminal_failed_count",
+        "[ARTIFACT] harness-failure-class.js / lint 脚本 / fixture / failure-stats 路由 / brain-ci.yml lint 步 均存在"
+      ],
+      "files": [
+        "packages/brain/src/harness-failure-class.js",
+        "packages/brain/src/executor.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/dispatcher.js",
+        "packages/brain/src/harness-relay-watchdog.js",
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/scripts/lint/lint-terminal-failure-class.mjs",
+        "sprints/08111600-harness-failure-observability/fixtures/bad-terminal-write.snippet",
+        ".github/workflows/brain-ci.yml",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        "package-lock.json"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 110
+    }
+  ]
+}
