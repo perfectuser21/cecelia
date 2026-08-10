@@ -117,6 +117,8 @@ apps/dashboard/.staging-slot.log
 apps/dashboard/.staging-notify.log
 # dev 即时预览（perfect21:5225 蓝 DEV 旗）运行时文件
 apps/dashboard/.dist-dev/
+apps/dashboard/.dist-pwa-e2e/
+apps/screenshots/
 apps/dashboard/.dev-preview.pid
 apps/dashboard/.dev-preview.log
 

@@ -1,12 +1,23 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
 import { execSync } from 'child_process'
 import type { Plugin } from 'vite'
 
 // Core features — point to api's features directory (monorepo: core → api)
 const coreFeaturesPath = path.resolve(__dirname, '../api/features')
+
+function resolveBuildSha(): string {
+  if (process.env.GIT_SHA) return process.env.GIT_SHA
+
+  try {
+    return execSync('git rev-parse HEAD', { cwd: __dirname }).toString().trim()
+  } catch {
+    return 'unknown'
+  }
+}
+
+const buildSha = resolveBuildSha()
 
 // 产物自报身份：把构建时的 git sha 烙进 build-info.json（deploy-local.sh 判变对账用）。
 // emitFile 自动跟随 --outDir（deploy-local 构建到 .dist-staging，写死 dist/ 不行）。
@@ -15,24 +26,19 @@ function buildInfoPlugin(): Plugin {
   return {
     name: 'build-info',
     generateBundle() {
-      let sha = process.env.GIT_SHA || ''
-      if (!sha) {
-        try {
-          sha = execSync('git rev-parse HEAD', { cwd: __dirname }).toString().trim()
-        } catch {
-          sha = 'unknown'
-        }
-      }
       this.emitFile({
         type: 'asset',
         fileName: 'build-info.json',
-        source: JSON.stringify({ git_sha: sha, built_at: new Date().toISOString() }, null, 2),
+        source: JSON.stringify({ git_sha: buildSha, built_at: new Date().toISOString() }, null, 2),
       })
     },
   }
 }
 
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(buildSha),
+  },
   resolve: {
     alias: [
       { find: '@features/core', replacement: coreFeaturesPath },
@@ -58,85 +64,6 @@ export default defineConfig({
   plugins: [
     react(),
     buildInfoPlugin(),
-    VitePWA({
-      registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'logo-color.png', 'logo-white.png'],
-      manifest: {
-        name: 'Cecelia',
-        short_name: 'Cecelia',
-        description: 'Cecelia - AI Butler System',
-        theme_color: '#1e3a8a',
-        background_color: '#0f172a',
-        display: 'standalone',
-        orientation: 'portrait',
-        scope: '/',
-        start_url: '/',
-        icons: [
-          {
-            src: '/logo-color.png',
-            sizes: '512x512',
-            type: 'image/png',
-            purpose: 'any maskable'
-          },
-          {
-            src: '/logo-white.png',
-            sizes: '512x512',
-            type: 'image/png',
-            purpose: 'monochrome'
-          }
-        ]
-      },
-      workbox: {
-        // Exclude html — index.html must come from network so browsers always
-        // get updated bundle filenames on every deploy. NavigationRoute disabled.
-        navigateFallback: null,
-        globPatterns: ['**/*.{js,css,ico,png,svg,woff2}'],
-        runtimeCaching: [
-          {
-            urlPattern: /^https:\/\/.*\.zenjoymedia\.media\/api\/.*/i,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-cache',
-              expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 60 * 60 * 24
-              },
-              cacheableResponse: {
-                statuses: [0, 200]
-              }
-            }
-          },
-          {
-            urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'google-fonts-cache',
-              expiration: {
-                maxEntries: 10,
-                maxAgeSeconds: 60 * 60 * 24 * 365
-              },
-              cacheableResponse: {
-                statuses: [0, 200]
-              }
-            }
-          },
-          {
-            urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp)$/,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'images-cache',
-              expiration: {
-                maxEntries: 50,
-                maxAgeSeconds: 60 * 60 * 24 * 30
-              }
-            }
-          }
-        ]
-      },
-      devOptions: {
-        enabled: false
-      }
-    })
   ],
   server: {
     port: 5211,

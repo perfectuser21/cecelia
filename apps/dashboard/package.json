@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "test:pwa-upgrade": "GIT_SHA=pwa-upgrade-e2e vite build --outDir .dist-pwa-e2e && node e2e/playwright-cli.mjs test e2e/pwa-upgrade.spec.ts"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
@@ -29,6 +30,7 @@
     "tslib": "^2.8.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^14.0.0",
     "@types/react": "^18.2.43",
@@ -42,7 +44,6 @@
     "tailwindcss": "^3.3.6",
     "typescript": "^5.3.3",
     "vite": "^5.0.8",
-    "vite-plugin-pwa": "^1.2.0",
     "vitest": "^4.0.18"
   }
 }
