@@ -1,0 +1,17 @@
+{
+  "verdict": "PASS",
+  "anchored_sha": "99598340df3115d0b12d2c4cf704e5d95f8d72c0",
+  "artifact_door": "PASS (26/26 unit tests)",
+  "contract_gate": "PASS (no mock bypass)",
+  "unverifiable": [
+    "BEHAVIOR-05: pg_database_size 真实测量（需 preview DB 连接）",
+    "BEHAVIOR-06: tasks/journeys 行数主库对比（需双 DB 连接）",
+    "BEHAVIOR-08: selfcheck endpoint 404 on preview Brain",
+    "BEHAVIOR-09: 冒烟脚本需 preview Brain 进程直接执行"
+  ],
+  "confirmed": [
+    "BEHAVIOR-07: health 200 confirmed (git_sha=99598340 匹配 PR HEAD)",
+    "BEHAVIOR-01~04/10: 单元/静态测试 26/26 PASS"
+  ],
+  "controller_decision": "unverifiable 项属合同预期（E2E 需真实 preview 环境），Deploy Preview CI 成功 + health 200 确认，放行 PASS"
+}

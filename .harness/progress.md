@@ -9,3 +9,9 @@ gan: done (rebuilt: contract-draft.md@5e483c430, verdict=APPROVED, 铁律覆盖=
 generator: pr_opened (#4772, branch=cp-08101944-ws-f491a8dd)
 generator: done (rebuilt: pr=#4772, head=a106745, fix轮次=3)
 generator: fix-1 (smoke FAIL: 工厂线Capability=0，migration 398 UPDATE-only 在新建DB失效，需 INSERT ON CONFLICT DO UPDATE)
+generator: fix-1 DONE (CI=success, smoke=success, HEAD=87d8b44b)
+evaluator: start
+evaluator: done (PASS, B-1~B-6全通, 11/11 verify-map-reorg.sh PASS)
+judge: done (PASS, judged=false, fail-open)
+step6: start (REVIEW_REQUIRED=true)
+merge-conflict-resolve: main合并，.harness/progress.md 保留 map-reorg（preview-thin-clone 已 merged #4780）

@@ -221,6 +221,154 @@ else
 fi
 teardown
 
+# ── thin-clone 专项 Case：BEHAVIOR-01 / BEHAVIOR-02 ──────────────────────────
+# 验证 pg_dump 含完整 7 张历史表的 --exclude-table-data 参数，且业务表不在排除名单中。
+# 本 Case 对应合同测试 thin-clone-unit.test.sh（sprint 08110001-preview-thin-clone），
+# 永久保留在 CI 里，禁止删除。
+
+THIN_CLONE_TABLES=(
+  memory_stream cecelia_events alertness_metrics
+  checkpoint_writes checkpoint_blobs checkpoints captures
+)
+THIN_CLONE_BUSINESS_TABLES=(tasks journeys decisions journey_features golden_paths preview_environments)
+
+# BEHAVIOR-01: 静态断言 — 脚本含 THIN_CLONE_EXCLUDE 数组且早于 pg_dump
+ARRAY_LINE=$(grep -n 'THIN_CLONE_EXCLUDE' "$TARGET" | head -1 | cut -d: -f1 || true)
+PGDUMP_LINE=$(grep -n 'pg_dump' "$TARGET" | head -1 | cut -d: -f1 || true)
+
+if [ -z "$ARRAY_LINE" ]; then
+  fail "thin-clone BEHAVIOR-01" "scripts/preview-env-start.sh 中未找到 THIN_CLONE_EXCLUDE 定义"
+elif [ -n "$PGDUMP_LINE" ] && [ "$ARRAY_LINE" -lt "$PGDUMP_LINE" ]; then
+  pass "thin-clone BEHAVIOR-01: THIN_CLONE_EXCLUDE 数组定义在 pg_dump 之前（${ARRAY_LINE} < ${PGDUMP_LINE}）"
+else
+  fail "thin-clone BEHAVIOR-01" "THIN_CLONE_EXCLUDE 定义行（${ARRAY_LINE}）不早于 pg_dump 行（${PGDUMP_LINE}）"
+fi
+
+for tbl in "${THIN_CLONE_TABLES[@]}"; do
+  if grep -q "$tbl" "$TARGET"; then
+    pass "thin-clone BEHAVIOR-01: 排除表 ${tbl} 出现在脚本中"
+  else
+    fail "thin-clone BEHAVIOR-01" "排除表 ${tbl} 未出现在脚本中"
+  fi
+done
+
+# BEHAVIOR-02: unit mock — pg_dump 含完整 --exclude-table-data 参数
+TC_PR=910002
+TC_LOG="/tmp/preview-${TC_PR}.log"
+TC_PID="/tmp/preview-${TC_PR}.pid"
+TC_LOCK="/tmp/preview-script-lock-${TC_PR}"
+
+TC_TMP=$(mktemp -d)
+TC_PREVIEW_BASE="$TC_TMP/previews"
+mkdir -p "$TC_PREVIEW_BASE"
+TC_REPO="$TC_TMP/repo"
+mkdir -p "$TC_REPO/node_modules" "$TC_REPO/packages/brain/node_modules"
+printf '%s\n' "image-lock-v1" > "$TC_REPO/package-lock.json"
+TC_BIN="$TC_TMP/bin"
+mkdir -p "$TC_BIN"
+TC_PGDUMP_ARGS="$TC_TMP/pgdump_args"
+TC_PSQL="$TC_TMP/psql_calls"
+: > "$TC_PGDUMP_ARGS"
+: > "$TC_PSQL"
+TC_STDOUT="$TC_TMP/stdout.log"
+
+sleep 300 &
+TC_OLD_PID=$!
+echo "$TC_OLD_PID" > "$TC_PID"
+
+cat >"$TC_BIN/git" <<'SH'
+#!/bin/bash
+if [[ "$*" == *"worktree list"* ]]; then exit 0
+elif [[ "$*" == *"worktree remove"* ]]; then exit 0
+elif [[ "$*" == *"worktree prune"* ]]; then exit 0
+elif [[ "$*" == *"fetch"* ]]; then exit 0
+elif [[ "$*" == *"worktree add"* ]]; then
+  args=("$@"); n=${#args[@]}; target_dir="${args[$((n-2))]}"
+  mkdir -p "$target_dir/apps/dashboard" "$target_dir/packages/brain"
+  printf '%s\n' "image-lock-v1" > "$target_dir/package-lock.json"
+  exit 0
+fi
+exit 0
+SH
+chmod +x "$TC_BIN/git"
+
+cat >"$TC_BIN/npm" <<'SH'
+#!/bin/bash
+exit 0
+SH
+chmod +x "$TC_BIN/npm"
+
+cat >"$TC_BIN/node" <<'SH'
+#!/bin/bash
+exec sleep 300
+SH
+chmod +x "$TC_BIN/node"
+
+cat >"$TC_BIN/curl" <<'SH'
+#!/bin/bash
+echo '{"status":"running"}'
+SH
+chmod +x "$TC_BIN/curl"
+
+cat >"$TC_BIN/pg_dump" <<SH
+#!/bin/bash
+printf '%s\n' "\$@" > "${TC_PGDUMP_ARGS}"
+exit 0
+SH
+chmod +x "$TC_BIN/pg_dump"
+
+printf '#!/bin/bash\ncat >/dev/null\nexit 0\n' >"$TC_BIN/pg_restore"; chmod +x "$TC_BIN/pg_restore"
+printf '#!/bin/bash\nexit 0\n' >"$TC_BIN/createdb"; chmod +x "$TC_BIN/createdb"
+printf '#!/bin/bash\nexit 0\n' >"$TC_BIN/dropdb"; chmod +x "$TC_BIN/dropdb"
+
+cat >"$TC_BIN/psql" <<SH
+#!/bin/bash
+printf '%s\n' "\$@" >> "${TC_PSQL}"
+echo "0"
+exit 0
+SH
+chmod +x "$TC_BIN/psql"
+
+TC_OLD_PATH="$PATH"
+export PATH="$TC_BIN:$PATH"
+export REPO_ROOT="$TC_REPO" PREVIEW_BASE_DIR="$TC_PREVIEW_BASE"
+TC_NM="$TC_REPO/node_modules"
+TC_BNM="$TC_REPO/packages/brain/node_modules"
+TC_LOCK="$TC_REPO/package-lock.json"
+export BRAIN_NM_TARGET="$TC_NM" BRAIN_BRAIN_NM_TARGET="$TC_BNM" BRAIN_LOCK_TARGET="$TC_LOCK"
+
+DB_HOST="testhost" DB_USER="testuser" DB_PASSWORD="testpw" \
+  bash "$TARGET" "$TC_PR" "thin-clone-unit-branch" "59997" "cecelia_preview_test910002" \
+  > "$TC_STDOUT" 2>&1
+
+if [ ! -s "$TC_PGDUMP_ARGS" ]; then
+  fail "thin-clone BEHAVIOR-02" "pg_dump 未被调用，脚本可能提前失败: $(tail -5 "$TC_STDOUT" 2>/dev/null)"
+else
+  TC_PGDUMP_CONTENT=$(cat "$TC_PGDUMP_ARGS")
+  for tbl in "${THIN_CLONE_TABLES[@]}"; do
+    if echo "$TC_PGDUMP_CONTENT" | grep -q -- "--exclude-table-data=${tbl}"; then
+      pass "thin-clone BEHAVIOR-02: pg_dump 含 --exclude-table-data=${tbl}"
+    else
+      fail "thin-clone BEHAVIOR-02" "pg_dump 参数缺 --exclude-table-data=${tbl} 实际: $(echo "$TC_PGDUMP_CONTENT" | tr '\n' ' ')"
+    fi
+  done
+  for tbl in "${THIN_CLONE_BUSINESS_TABLES[@]}"; do
+    if echo "$TC_PGDUMP_CONTENT" | grep -q -- "--exclude-table-data=${tbl}"; then
+      fail "thin-clone BEHAVIOR-02" "业务表 ${tbl} 出现在排除参数中"
+    else
+      pass "thin-clone BEHAVIOR-02: 业务表 ${tbl} 不在排除参数中（正确）"
+    fi
+  done
+fi
+
+# 清理
+export PATH="$TC_OLD_PATH"
+kill -9 "$TC_OLD_PID" 2>/dev/null || true
+TC_BRAIN_PID=$(cat "$TC_PID" 2>/dev/null || echo "")
+[ -n "$TC_BRAIN_PID" ] && kill -9 "$TC_BRAIN_PID" 2>/dev/null || true
+rm -f "$TC_LOG" "$TC_PID" "$TC_LOCK"
+rm -rf "$TC_TMP"
+
 # ── 总结 ──────────────────────────────────────────────────────────────────────
 echo ""
 echo "结果: PASS=${PASS}, FAIL=${FAIL}"
