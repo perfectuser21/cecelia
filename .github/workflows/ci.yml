@@ -410,6 +410,24 @@ jobs:
             echo "::endgroup::"
           done
 
+  # ─── Ops shell 测试（scripts/ops/__tests__/）────────────────────
+  # janitor 等宿主 DevOps 脚本的回归测试。glob 模式：目录内新加 *.test.sh 自动接 CI。
+  # 背景：2026-08-10 发现该目录 4 个测试自迁入起零执行（无 job 引用），本 job 补上。
+  ops-tests-shell:
+    name: Ops Shell Tests (janitor 套)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ops shell tests
+        run: |
+          for t in scripts/ops/__tests__/janitor/*.test.sh; do
+            [[ -f "$t" ]] || continue
+            echo "::group::$(basename "$t")"
+            bash "$t" || exit 1
+            echo "::endgroup::"
+          done
+
   # ─── Dashboard 部署放行闸 smoke（repo 根 scripts/smoke/）──────
   # 守 deploy-local.sh 的两段式部署：自检 → 起常驻 staging + 写放行标记 →【停住】，
   # 人工跑 promote-dashboard.sh 才换入生产。fixture 模式（不跑 vite build），真链路。

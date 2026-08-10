@@ -36,7 +36,12 @@ done
 # cron 默认 PATH 只有 /usr/bin:/bin，找不到装在 /opt/homebrew/bin 的 npm/brew/docker
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-CECELIA_REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+# 生产经 ~/bin/janitor.sh 软链调用时 $0 是链接自身路径，dirname 反推会落到 $HOME
+# 而非仓库根（2026-08-10 实证：步骤8因此静默跳过）。先穿透软链再反推。
+# 先例：packages/brain/scripts/cecelia-run.sh:417（同构 bug 的生产验证修法）。
+SCRIPT_PATH="$0"
+[[ -L "$SCRIPT_PATH" ]] && SCRIPT_PATH="$(readlink -f "$SCRIPT_PATH" 2>/dev/null || echo "$SCRIPT_PATH")"
+CECELIA_REPO="$(cd "$(dirname "$SCRIPT_PATH")/../.." && pwd)"
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 TOTAL_STEPS=10
 # 磁盘用量查数据卷；APFS 下 / 是只读系统卷 firmlink，数据在 /System/Volumes/Data
@@ -602,7 +607,9 @@ if [ -d "$CECELIA_REPO/.git" ]; then
     fi
   fi
 else
+  # 环境断裂不许静默：仓库根解析失败 = 步骤8整体失效，必须计入 FAILED_STEPS
   log "  ✗ 跳过（git 仓库不存在）"
+  step_fail "8" "git 仓库不存在（CECELIA_REPO=${CECELIA_REPO} 解析失败，疑软链/路径问题）"
 fi
 
 # 9. 残留 worktree 清理（扫描 ~/worktrees/{cecelia,zenithjoy}，Guard A 三查）
