@@ -153,12 +153,9 @@ BEHAVIOR-05（pg_database_size 实测）要求人工或 CI 步骤记录原始数
 
 ---
 
-## 测试文件映射
+## Test Contract
 
-| BEHAVIOR | 测试文件 | 类型 |
-|----------|---------|------|
-| BEHAVIOR-01 | `sprints/08110001-preview-thin-clone/tests/thin-clone-unit.test.sh` | static-assert |
-| BEHAVIOR-02 | `sprints/08110001-preview-thin-clone/tests/thin-clone-unit.test.sh` | unit |
-| BEHAVIOR-03,04 | `sprints/08110001-preview-thin-clone/tests/thin-clone-unit.test.sh` | integration (stub) |
-| BEHAVIOR-05~09 | `sprints/08110001-preview-thin-clone/tests/thin-clone-e2e.sh` | e2e |
-| BEHAVIOR-10 | `sprints/08110001-preview-thin-clone/tests/thin-clone-unit.test.sh` | unit |
+| WS | Test File | BEHAVIOR 覆盖 | 说明 |
+|---|---|---|---|
+| thin-clone-unit | `tests/thin-clone-unit.test.sh` | BEHAVIOR-01/BEHAVIOR-02/BEHAVIOR-03/BEHAVIOR-04/BEHAVIOR-10 | pg_dump 参数 + 排除名单 + 日志 |
+| thin-clone-e2e | `tests/thin-clone-e2e.sh` | BEHAVIOR-05/BEHAVIOR-06/BEHAVIOR-07/BEHAVIOR-08/BEHAVIOR-09 | E2E 真验（DB 大小/schema/数据/health/selfcheck） |
