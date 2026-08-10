@@ -104,10 +104,10 @@ if [ -n "${CI:-}" ]; then
   ok "软链接指向 cecelia repo（CI 环境跳过）"
 else
   LINK_TARGET=$(readlink "$HOME/bin/janitor.sh" 2>/dev/null || echo "")
-  if echo "$LINK_TARGET" | grep -q "cecelia"; then
-    ok "软链接指向 cecelia repo"
+  if echo "$LINK_TARGET" | grep -q "zenithjoy-skills"; then
+    ok "软链接指向 zenithjoy-skills repo（skills SSOT）"
   else
-    fail "软链接未指向 cecelia repo: $LINK_TARGET"
+    fail "软链接未指向 zenithjoy-skills repo: $LINK_TARGET"
   fi
 fi
 
@@ -130,6 +130,62 @@ if grep -A 40 "kill_if_claude_orphan()" "$JANITOR" 2>/dev/null | grep -q "notify
   ok "kill_if_claude_orphan 调用了 notify_brain_orphan_killed"
 else
   fail "kill_if_claude_orphan 未调用 notify_brain_orphan_killed"
+fi
+
+# 验证 16: daily 模式第 10 步已存在（docker 容器/镜像清理，2026-07-17 结构性缺口修复）
+if grep -q 'TOTAL_STEPS=10' "$JANITOR" 2>/dev/null; then
+  ok "TOTAL_STEPS=10（daily 清单已扩到 10 项）"
+else
+  fail "TOTAL_STEPS 未更新为 10"
+fi
+
+# 验证 17: docker container prune 存在
+if grep -q "docker container prune -f" "$JANITOR" 2>/dev/null; then
+  ok "docker container prune -f 存在"
+else
+  fail "docker container prune -f 缺失"
+fi
+
+# 验证 18: 保护 latest / blue-fallback tag 不被删
+if grep -q "cecelia-brain:latest|cecelia-brain:blue-fallback" "$JANITOR" 2>/dev/null; then
+  ok "latest/blue-fallback tag 保护逻辑存在"
+else
+  fail "latest/blue-fallback tag 保护逻辑缺失"
+fi
+
+# 验证 19: 只删未被任何容器引用的镜像（in_use_ids 比对）
+if grep -q "in_use_ids" "$JANITOR" 2>/dev/null; then
+  ok "in_use_ids 引用检查逻辑存在（不删仍被容器引用的镜像）"
+else
+  fail "in_use_ids 引用检查逻辑缺失"
+fi
+
+# 验证 20: docker 不可用时优雅跳过，不中断其余步骤
+if grep -A 2 '\[10/\$TOTAL_STEPS\] Docker' "$JANITOR" 2>/dev/null | grep -q 'command -v docker'; then
+  ok "docker 不可用时优雅跳过逻辑存在"
+else
+  fail "docker 不可用时的跳过逻辑缺失"
+fi
+
+# 验证 21: audiomxd 死循环兜底清理阈值存在（2026-07-28）
+if grep -q "AUDIOMXD_CPU_THRESHOLD=80" "$JANITOR" 2>/dev/null; then
+  ok "AUDIOMXD_CPU_THRESHOLD=80 已定义"
+else
+  fail "AUDIOMXD_CPU_THRESHOLD 未定义"
+fi
+
+# 验证 22: audiomxd E核监狱逻辑存在（v2 决策 db79a1d3：taskpolicy 绝对路径，不再 kill）
+if grep -q "sudo -n /usr/sbin/taskpolicy -b -p \"\$audiomxd_pid\"" "$JANITOR" 2>/dev/null; then
+  ok "audiomxd E核监狱逻辑存在（taskpolicy 绝对路径）"
+else
+  fail "audiomxd E核监狱逻辑缺失"
+fi
+
+# 验证 23: audiomxd 进程扫描用 pgrep -x 精确匹配进程名（避免 ps|grep 子串误命中）
+if grep -q "pgrep -x audiomxd" "$JANITOR" 2>/dev/null; then
+  ok "audiomxd 扫描用 pgrep -x 精确匹配"
+else
+  fail "audiomxd 扫描未使用 pgrep -x 精确匹配"
 fi
 
 echo ""
