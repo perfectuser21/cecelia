@@ -12,10 +12,10 @@
 
 ### 代码变更
 
-- [ ] **DOD-C1**: `scripts/preview-env-start.sh` 顶部常量区新增 `THIN_CLONE_EXCLUDE` 数组，包含 7 张历史表
-- [ ] **DOD-C2**: pg_dump 命令通过循环追加 `--exclude-table-data` 参数，不使用内联硬编码字符串
-- [ ] **DOD-C3**: 脚本日志输出排除表名单（log 行含表名列表）
-- [ ] **DOD-C4**: 无 `--exclude-table` 参数（保留 schema，只排数据）
+- [ ] **DOD-C1** `[BEHAVIOR]`: `scripts/preview-env-start.sh` 顶部常量区新增 `THIN_CLONE_EXCLUDE` 数组，包含 7 张历史表
+- [ ] **DOD-C2** `[BEHAVIOR]`: pg_dump 命令通过循环追加 `--exclude-table-data` 参数，不使用内联硬编码字符串
+- [ ] **DOD-C3** `[BEHAVIOR]`: 脚本日志输出排除表名单（log 行含表名列表）
+- [ ] **DOD-C4** `[BEHAVIOR]`: 无 `--exclude-table` 参数（保留 schema，只排数据）
 
 ### 单元测试
 
@@ -30,7 +30,7 @@
 
 ### E2E 验证（真实 preview 环境）
 
-- [ ] **DOD-E1**: `psql -c "SELECT pg_database_size('${DB_NAME}')"` 返回值 < 1073741824，原始数字附入 PR 描述
+- [ ] **DOD-E1** `[BEHAVIOR]` `manual:bash`: `psql -c "SELECT pg_database_size('${DB_NAME}')"` 返回值 < 1073741824，原始数字附入 PR 描述
 - [ ] **DOD-E2**: preview Brain health endpoint 返回 200 + `"status":"running"`
 - [ ] **DOD-E3**: preview Brain selfcheck 无 schema_version 错误
 - [ ] **DOD-E4**: 既有冒烟脚本 exit 0

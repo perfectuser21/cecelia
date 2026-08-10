@@ -141,7 +141,7 @@ SELECT pg_database_size('${DB_NAME}');
 
 ---
 
-## E2E 段声明
+## E2E 验收
 
 本合同包含 E2E 段（BEHAVIOR-05 ~ BEHAVIOR-09），需要真实起 preview 环境验证，不可以 mock 代替。
 
