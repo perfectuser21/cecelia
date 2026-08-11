@@ -5,6 +5,7 @@ import {
   activateMapManifest,
   submitMapManifest,
 } from '../map-manifest-store.js';
+import { digestMapManifest } from '../map-manifest-schema.js';
 
 const fixtureUrl = new URL('../../../config/map-manifests/cecelia.v1.json', import.meta.url);
 const loadManifest = () => JSON.parse(readFileSync(fixtureUrl, 'utf8'));
@@ -66,27 +67,70 @@ describe('activateMapManifest', () => {
     expect(pool.connect).not.toHaveBeenCalled();
   });
 
-  it('默认 projector unavailable 时 rollback，不切 active', async () => {
+  it('默认 projector 写完整 projection 后才切 active 并 commit', async () => {
+    const manifest = loadManifest();
     const draft = {
       id: '54b9ec3d-9ad5-4db0-99b3-7bbbeec34bf9', scope_key: 'cecelia', version: 1,
-      source_decision_id: '4bc109e9-3b70-4b17-a1b4-bcd01bfae776', digest: 'a'.repeat(64),
-      status: 'draft', manifest: loadManifest(), created_at: new Date(), activated_at: null,
+      source_decision_id: '4bc109e9-3b70-4b17-a1b4-bcd01bfae776', digest: digestMapManifest(manifest),
+      status: 'draft', manifest, created_at: new Date(), activated_at: null,
     };
+    const projectionRunId = '67f4ffb8-a24d-4cce-b312-f057134910cc';
+    const active = { ...draft, status: 'active', activated_at: new Date() };
     const { pool, client } = fakePool(async (sql, params) => {
       if (/FROM map_manifest_versions[\s\S]*WHERE id = \$1/i.test(sql)) return { rows: [draft] };
       if (/FROM decisions/i.test(sql)) return { rows: [{ id: params[0] }] };
-      return { rows: [] };
+      if (/INSERT INTO map_projection_runs/i.test(sql)) return { rows: [{ id: projectionRunId }], rowCount: 1 };
+      if (/INSERT INTO map_projection_nodes/i.test(sql)) return { rows: [], rowCount: JSON.parse(params[1]).length };
+      if (/INSERT INTO map_projection_edges/i.test(sql)) return { rows: [], rowCount: JSON.parse(params[1]).length };
+      if (/UPDATE map_projection_runs[\s\S]*status = 'active'/i.test(sql)) {
+        return { rows: [{ id: projectionRunId, status: 'active' }], rowCount: 1 };
+      }
+      if (/UPDATE map_manifest_versions[\s\S]*SET status = 'active'/i.test(sql)) {
+        return { rows: [active], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
     });
 
-    await expect(activateMapManifest(pool, draft.id)).rejects.toMatchObject({
-      code: 'MAP_PROJECTOR_UNAVAILABLE', status: 503,
+    await expect(activateMapManifest(pool, draft.id)).resolves.toMatchObject({
+      activated: true, manifest_version: { status: 'active' },
     });
     const statements = client.query.mock.calls.map(([sql]) => sql.trim());
-    expect(statements).toContain('ROLLBACK');
-    expect(statements).not.toEqual(expect.arrayContaining([
-      expect.stringMatching(/SET status = 'active'/i),
+    expect(statements).toContain('COMMIT');
+    expect(statements).toEqual(expect.arrayContaining([
+      expect.stringMatching(/INSERT INTO map_projection_runs/i),
+      expect.stringMatching(/INSERT INTO map_projection_nodes/i),
+      expect.stringMatching(/INSERT INTO map_projection_edges/i),
     ]));
+    const runInsert = client.query.mock.calls.find(([sql]) => /INSERT INTO map_projection_runs/i.test(sql));
+    expect(JSON.parse(runInsert[1][3])).toEqual({});
     expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('激活以 activation 模式调用 projector', async () => {
+    const manifest = loadManifest();
+    const draft = {
+      id: '54b9ec3d-9ad5-4db0-99b3-7bbbeec34bf9', scope_key: 'cecelia', version: 1,
+      source_decision_id: '4bc109e9-3b70-4b17-a1b4-bcd01bfae776', digest: digestMapManifest(manifest),
+      status: 'draft', manifest, created_at: new Date(), activated_at: null,
+    };
+    const active = { ...draft, status: 'active', activated_at: new Date() };
+    const projector = vi.fn(async () => {});
+    const { pool } = fakePool(async (sql, params) => {
+      if (/FROM map_manifest_versions[\s\S]*WHERE id = \$1/i.test(sql)) return { rows: [draft] };
+      if (/FROM decisions/i.test(sql)) return { rows: [{ id: params[0] }] };
+      if (/UPDATE map_manifest_versions[\s\S]*SET status = 'active'/i.test(sql)) {
+        return { rows: [active], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    await activateMapManifest(pool, draft.id, { projector });
+
+    expect(projector).toHaveBeenCalledWith({
+      client: expect.objectContaining({ query: expect.any(Function) }),
+      manifestVersion: draft,
+      mode: 'activation',
+    });
   });
 
   it('MapManifestError 保留稳定 HTTP 合同', () => {

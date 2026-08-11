@@ -162,6 +162,7 @@ liveness-never-started-smoke.sh
 liveness-queued-never-spawned-smoke.sh
 map-fact-snapshot-smoke.sh
 map-manifest-smoke.sh
+map-projection-smoke.sh
 migration-339-drop-abilities-gp-priority-smoke.sh
 migration-346-idempotent-smoke.sh
 migration-verify.sh
