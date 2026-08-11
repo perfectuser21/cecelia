@@ -1,0 +1,31 @@
+{
+  "initiative_id": "7cfc4855-11a2-4768-85f4-e6fefe4f5c59",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ 后端派发器与选号逻辑，无 UI / 远端 agent 协议 / engine hooks",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "账号 CAPPED 判定接线：kernel 选号剔除 capped + seven_day 硬过滤 + five_hour 次级排序 + 人工钉号透传",
+      "scope": "expandUnresolvedAccountTargets 增加额度感知 opts（capped 谓词 + seven_day 硬过滤 >=95 + five_hour 次级排序，缺省零回归）；account-usage 导出 SEVEN_DAY_CAP_PCT/isAccountSevenDayCapped 单一事实源；dispatcher 从 account-usage 注入 is_account_capped 谓词与用量到候选展开；harness-skill-relay 构造 acctOpts 携带 payload.CECELIA_CREDENTIALS；补 pg 集成测试并登记进 POSTGRES_INTEGRATION_TESTS（真 PG 验 harness_attempts.account_id 落非 capped 账号）",
+      "dod": [
+        "[BEHAVIOR] B-01 核心红线：account1 CAPPED 时解析出 account2（解析出 account1 即失败）",
+        "[BEHAVIOR] B-02 seven_day 硬过滤：seven_day=100/five_hour=0/omelette 缺失账号被排除",
+        "[BEHAVIOR] B-03 次级排序：seven_day 均低仅 five_hour 不同 → five_hour 升序",
+        "[BEHAVIOR] B-04/B-05 降级铁律：无 opts 保声明顺序、谓词抛错不 crash",
+        "[BEHAVIOR] B-06 人工钉号：payload.CECELIA_CREDENTIALS 透传到 resolveAccount",
+        "[BEHAVIOR] B-07 零回归：dispatcher/execution-targets/account-usage/account-rotation 既有单测全绿",
+        "[ARTIFACT] account-usage 导出 SEVEN_DAY_CAP_PCT + isAccountSevenDayCapped；harness-skill-relay acctOpts 携带 CECELIA_CREDENTIALS"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/preflight/execution-targets.js",
+        "packages/brain/src/account-usage.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/vitest.config.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
