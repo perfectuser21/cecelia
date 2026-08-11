@@ -1269,6 +1269,21 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs.runtime_resources).toEqual({ postgres: false, node_deps: true });
   });
 
+  it('运行时依赖预装：evaluator TaskBundle 默认注入 runtime_resources.node_deps=true', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed: { ...observed },
+      decision: { phase: 'evaluate', reason: 'verify_pr' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.runtime_resources).toEqual({ postgres: false, node_deps: true });
+  });
+
   it('generator bundle 从已批准合同导出 contract_branch，供 launcher 注入环境', async () => {
     const deps = makeDeps();
 
