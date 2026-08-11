@@ -36,4 +36,16 @@ describe.skipIf(!TEST_DB_URL)('db pool', () => {
     const result = await query(pool, 'SELECT pg_sleep(0.3), 42 as answer', [], { timeoutMs: 2000 });
     expect(result.rows[0].answer).toBe(42);
   });
+
+  it('timeoutMs 携带 SQL 注入载荷时拒绝执行，而不是把恶意语句拼进 SET 命令', async () => {
+    // query() 内部用字符串拼接构造 `SET statement_timeout = ${timeoutMs}`，
+    // 且这是单字符串形式的 client.query() 调用（走 PG simple-query 协议，
+    // 允许用分号分隔多条语句）——params 数组完全保护不到这里，因为
+    // timeoutMs 根本没有走 params。传一个恶意字符串必须在拼接前被拒绝。
+    const maliciousTimeout = '5000; DROP TABLE mcp_readonly_injection_probe --';
+
+    await expect(
+      query(pool, 'SELECT 1', [], { timeoutMs: maliciousTimeout })
+    ).rejects.toThrow('invalid timeoutMs');
+  });
 });
