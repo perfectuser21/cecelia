@@ -3,10 +3,18 @@
 const fs = require('fs');
 const path = require('path');
 const pg = require('pg');
+const { execSync } = require('child_process');
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://localhost/cecelia' });
 const REPO_ROOT = path.resolve(__dirname, '../..');
-const SCANNER_VERSION = 'test-registry-v2';
+const SCANNER_VERSION = '2.0.0'; // 刀0
+
+function getGitSha(dir) {
+  try { return execSync('git rev-parse HEAD', { cwd: dir, encoding: 'utf8', timeout: 5000 }).trim(); }
+  catch (_) { return null; }
+}
+
+const AREA_REPO = { zenithjoy: 'zenithjoy-workspace', cecelia: 'cecelia', unknown: 'cecelia' };
 
 const AREA_MAP = [
   ['apps/api', 'zenithjoy'],
@@ -55,19 +63,27 @@ function scanDir(dir) {
 
 async function main() {
   try {
-    const { readGitRevision } = await import('../../packages/brain/src/lib/git-revision.js');
-    const sourceRevision = readGitRevision(REPO_ROOT);
-    const { replaceFactSnapshot } = await import('../../packages/brain/src/lib/fact-snapshot-store.js');
     const scanDirs = ['packages', 'apps', 'sprints'];
     const files = [];
     for (const d of scanDirs) files.push(...scanDir(path.join(REPO_ROOT, d)));
 
     console.log(`扫描到 ${files.length} 个测试文件`);
 
-    await replaceFactSnapshot(pool, 'test', {
-      repo: 'cecelia', sourceRevision, scannerVersion: SCANNER_VERSION, rows: files,
-    });
-    console.log('test_registry 填充完成');
+    const sourceRevision = getGitSha(REPO_ROOT);
+
+    for (const f of files) {
+      const repoKey = AREA_REPO[f.area] || 'cecelia';
+      await pool.query(
+        `INSERT INTO test_registry (file_path, test_count, covered_behaviors, area, test_type, repo, source_revision, scanner_version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (file_path) DO UPDATE
+           SET test_count=$2, covered_behaviors=$3, area=$4, test_type=$5,
+               repo=$6, source_revision=$7, scanner_version=$8,
+               scanned_at=NOW(), updated_at=NOW()`,
+        [f.file_path, f.test_count, f.covered_behaviors, f.area, f.test_type, repoKey, sourceRevision, SCANNER_VERSION],
+      );
+    }
+    console.log(`test_registry 填充完成 revision=${sourceRevision?.slice(0,8) ?? 'unknown'}`);
   } finally {
     await pool.end();
   }
