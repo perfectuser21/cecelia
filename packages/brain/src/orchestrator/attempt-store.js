@@ -672,6 +672,7 @@ export function createAttemptStore(pool) {
       leaseOwner,
       leaseGeneration,
       result,
+      beforeCommit = null,
     }) {
       if (typeof pool.connect !== 'function') {
         throw new Error('recordCallbackTerminal requires a transactional PostgreSQL pool');
@@ -878,6 +879,10 @@ export function createAttemptStore(pool) {
                 WHERE id = $1`,
               [runId, ATTEMPT_COST_ACCRUAL_USD],
             );
+          }
+
+          if (typeof beforeCommit === 'function') {
+            await beforeCommit(client, { attempt: terminalAttempt, result });
           }
         }
 

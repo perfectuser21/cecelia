@@ -48,9 +48,13 @@ services:
       - /etc/timezone:/etc/timezone:ro
     env_file:
       - .env.staging
+      - path: ${CECELIA_INTERNAL_ENV_FILE:-/Users/administrator/.credentials/cecelia-internal.env}
+        required: false
     environment:
+      - NODE_ENV=production
       - TZ=Asia/Shanghai
       - ENV_REGION=${ENV_REGION:-us}
+      - CECELIA_MAP_REPO_SCOPES=${CECELIA_MAP_REPO_SCOPES:-perfectuser21/cecelia=cecelia,cecelia=cecelia}
       - DB_HOST=${DB_HOST:-localhost}
       - DB_PORT=${DB_PORT:-5432}
       - DB_NAME=cecelia_staging

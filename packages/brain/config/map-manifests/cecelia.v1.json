@@ -8,13 +8,17 @@
   ],
   "capabilities": [
     { "key": "F0", "name": "提案打磨", "value_stream_key": "factory", "order": 1 },
-    { "key": "F1", "name": "开发闭环", "value_stream_key": "factory", "order": 2 },
-    { "key": "F2", "name": "部署闭环", "value_stream_key": "factory", "order": 3 },
-    { "key": "F3", "name": "夜间体检", "value_stream_key": "factory", "order": 4 },
-    { "key": "F4", "name": "故障自愈", "value_stream_key": "factory", "order": 5 },
-    { "key": "MJ5", "name": "承诺地图", "value_stream_key": "factory", "order": 6 },
-    { "key": "G1", "name": "指挥舱", "value_stream_key": "butler", "order": 1, "aliases": ["F5"] },
-    { "key": "G2", "name": "收件箱", "value_stream_key": "butler", "order": 2, "aliases": ["F6"] },
+    {
+      "key": "F1", "name": "开发闭环", "value_stream_key": "factory", "order": 2,
+      "path_prefixes": ["packages/brain/", "packages/engine/", "packages/quality/", "docker/cecelia-runner/", "packages/workflows/skills/harness-", "scripts/", "sprints/"],
+      "exact_paths": [".brain-versions", "DEFINITION.md", "package.json", "package-lock.json", "packages/brain/DEFINITION.md", "packages/brain/package.json"]
+    },
+    { "key": "F2", "name": "部署闭环", "value_stream_key": "factory", "order": 3, "path_prefixes": ["scripts/deploy/"], "exact_paths": ["docker-compose.yml", "docker-compose.staging.yml", "scripts/brain-deploy.sh", "scripts/staging-deploy.sh", "scripts/lib/brain-auth-headers.cjs", "scripts/lib/internal-auth-token.sh", "scripts/__tests__/internal-auth-deployment.test.sh"] },
+    { "key": "F3", "name": "夜间体检", "value_stream_key": "factory", "order": 4, "path_prefixes": ["scripts/health/"] },
+    { "key": "F4", "name": "故障自愈", "value_stream_key": "factory", "order": 5, "path_prefixes": ["packages/brain/src/self-healing/"] },
+    { "key": "MJ5", "name": "承诺地图", "value_stream_key": "factory", "order": 6, "path_prefixes": ["packages/brain/src/map/", "scripts/map/", "scripts/scan/"], "exact_paths": ["scripts/__tests__/run-all-scans.test.sh", "scripts/__tests__/rescan-if-changed.test.sh"] },
+    { "key": "G1", "name": "指挥舱", "value_stream_key": "butler", "order": 1, "aliases": ["F5"], "path_prefixes": ["apps/dashboard/"] },
+    { "key": "G2", "name": "收件箱", "value_stream_key": "butler", "order": 2, "aliases": ["F6"], "exact_paths": ["scripts/notion-create-issue.js"] },
     { "key": "G3", "name": "晨报感知", "value_stream_key": "butler", "order": 3 },
     { "key": "G4", "name": "记忆知识", "value_stream_key": "butler", "order": 4, "aliases": ["F7"] },
     { "key": "G5", "name": "战略 OKR", "value_stream_key": "butler", "order": 5 }

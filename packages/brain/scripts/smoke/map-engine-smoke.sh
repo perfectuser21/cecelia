@@ -8,6 +8,20 @@ BRAIN="${BRAIN_URL:-http://localhost:5221}"
 CURL_EXECUTABLE="${CURL_EXECUTABLE:-$(command -v curl)}"
 JQ_EXECUTABLE="${JQ_EXECUTABLE:-$(command -v jq)}"
 MANIFEST_PATH="$ROOT_DIR/packages/brain/config/map-manifests/cecelia.v1.json"
+INTERNAL_AUTH_HELPER="$ROOT_DIR/scripts/lib/internal-auth-token.sh"
+INTERNAL_AUTH_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:-$HOME/.credentials/cecelia-internal.env}"
+if [[ -z "${CECELIA_INTERNAL_TOKEN:-}" && -f "$INTERNAL_AUTH_HELPER" ]]; then
+  # shellcheck source=../../../../scripts/lib/internal-auth-token.sh
+  source "$INTERNAL_AUTH_HELPER"
+  load_cecelia_internal_token "$INTERNAL_AUTH_ENV_FILE" || true
+fi
+brain_curl() {
+  if [[ -n "${CECELIA_INTERNAL_TOKEN:-}" ]]; then
+    "$CURL_EXECUTABLE" -H "Authorization: Bearer ${CECELIA_INTERNAL_TOKEN}" "$@"
+  else
+    "$CURL_EXECUTABLE" "$@"
+  fi
+}
 SMOKE_SCOPE="map-engine-smoke-$$"
 PASS=0; FAIL=0
 ok()   { echo "  ✅ $1"; ((PASS++)) || true; }
@@ -16,7 +30,7 @@ fail() { echo "  ❌ $1"; ((FAIL++)) || true; }
 echo "── map-engine smoke ──"
 
 # 1. /health 对不存在的独立 scope 也必须 fail-closed 返回 degraded envelope。
-h="$($CURL_EXECUTABLE -fsS --get "$BRAIN/api/brain/map/health" \
+h="$(brain_curl -fsS --get "$BRAIN/api/brain/map/health" \
   --data-urlencode "scope=$SMOKE_SCOPE")" || { fail "GET /health 不可达"; h="{}"; }
 # jq 变量通过 --arg 传入，不由 Bash 展开。
 # shellcheck disable=SC2016
@@ -31,7 +45,7 @@ else
 fi
 
 # 2. POST /manifests/validate 使用冻结 Manifest，避免伪造一个已过期的 schema 子集。
-v="$($CURL_EXECUTABLE -fsS -X POST "$BRAIN/api/brain/map/manifests/validate" \
+v="$(brain_curl -fsS -X POST "$BRAIN/api/brain/map/manifests/validate" \
   -H 'Content-Type: application/json' --data-binary "@$MANIFEST_PATH")" \
   || { fail "POST /validate 不可达"; v="{}"; }
 if echo "$v" | "$JQ_EXECUTABLE" -e '.valid == true and .errors == []' >/dev/null 2>&1; then

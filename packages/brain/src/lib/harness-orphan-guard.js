@@ -151,6 +151,43 @@ async function reconcileKernelOrphan(pool, task, {
 }
 
 /**
+ * generator 已经创建 PR，但退出前没来得及把 generator_done 写回 task 时，
+ * 以 initiative_runs.pr_url 为持久证据补齐交接，避免把有效交付误判为裸孤儿。
+ */
+async function reconcileGeneratedPrEvidence(pool, taskId) {
+  const { rows } = await pool.query(
+    `WITH latest_run AS (
+       SELECT id, pr_url
+       FROM initiative_runs
+       WHERE current_task_id = $1
+       ORDER BY started_at DESC NULLS LAST, id DESC
+       LIMIT 1
+     ),
+     pr_evidence AS (
+       SELECT pr_url
+       FROM latest_run
+       WHERE pr_url IS NOT NULL
+         AND BTRIM(pr_url) <> ''
+     )
+     UPDATE tasks AS t
+     SET pr_url = pr_evidence.pr_url,
+         payload = COALESCE(t.payload, '{}'::jsonb)
+                   || jsonb_build_object(
+                        'generator_done', true,
+                        'generator_done_at', NOW()::text,
+                        'pr_url', pr_evidence.pr_url
+                      ),
+         updated_at = NOW()
+     FROM pr_evidence
+     WHERE t.id = $1
+       AND t.status = 'in_progress'
+     RETURNING t.id, t.pr_url`,
+    [taskId],
+  );
+  return rows?.[0]?.pr_url ? rows[0] : null;
+}
+
+/**
  * 带封顶的孤儿 requeue。返回 {action: 'requeued'|'failed'|'deferred'}
  *
  * 死锁解(2026-08-07 W1/W2/W3 全灭):动 tasks 之前先把该 task 名下的非终态
@@ -228,6 +265,16 @@ export async function handleRelayExitConsistency({
     // (它有 PR 态感知:MERGED→finalize/OPEN+绿→静等/红→重点火);本闸只收开 PR 前的裸孤儿。
     if (task.payload?.generator_done === true) return { action: 'noop' };
 
+    const generatedPr = await reconcileGeneratedPrEvidence(pool, task.id);
+    if (generatedPr) {
+      console.warn(`[orphan-guard] task=${task.id} 从 run.pr_url 补齐 generator_done`);
+      return {
+        action: 'noop',
+        reason: 'generated_pr_reconciled',
+        prUrl: generatedPr.pr_url,
+      };
+    }
+
     let live;
     try {
       live = findLiveRelayContainers(execFn, shortId, containerId);
@@ -281,6 +328,7 @@ export async function sweepOrphanHarnessTasks({
     kernelHeld: 0,
     terminalReconciled: 0,
     kernelUnresolved: 0,
+    prHandoffs: 0,
     errors: [],
   };
   let rows;
@@ -316,6 +364,11 @@ export async function sweepOrphanHarnessTasks({
         continue; // fail-open
       }
       if (live.length > 0) continue;
+      const generatedPr = await reconcileGeneratedPrEvidence(pool, task.id);
+      if (generatedPr) {
+        result.prHandoffs++;
+        continue;
+      }
       const kernel = await reconcileKernelOrphan(pool, task, {
         assessKernel,
         reconcileKernelTerminal,
@@ -348,6 +401,7 @@ export async function sweepOrphanHarnessTasks({
       + ` kernelHeld=${result.kernelHeld}`
       + ` terminalReconciled=${result.terminalReconciled}`
       + ` kernelUnresolved=${result.kernelUnresolved}`
+      + ` prHandoffs=${result.prHandoffs}`
     );
   }
   return result;

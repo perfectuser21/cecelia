@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * harness-report.mjs — 7-step harness report script
+ * harness-report.mjs — Harness report artifact script
  *
  * Usage:
  *   node packages/brain/scripts/harness-report.mjs \
@@ -15,17 +15,16 @@
  *   S3: Generate learning.md
  *   S4: Generate index.html
  *   S5: PATCH tasks.result via Brain API (harness/complete)
- *   S6: PATCH journey_features.status=done via Brain API (skip if feature-id empty)
+ *   S6: Feature 状态与锚点由已认证的 Brain callback 写回
  *   S7: POST note via Brain API
  *
  * Exit:
  *   0 = success or partial HTTP non-2xx (non-fatal)
- *   1 = PARTIAL_FAIL (Brain API unreachable / connection error on S5/S6/S7)
+ *   1 = PARTIAL_FAIL (Brain API unreachable / connection error on S5/S7)
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, resolve } from 'path';
-import { execFileSync } from 'child_process';
 
 // ── CLI argument parsing ─────────────────────────────────────────────────────
 function parseArgs(argv) {
@@ -52,7 +51,6 @@ if (missing.length) {
 const SPRINT_DIR = resolve(cliArgs['sprint-dir']);
 const TASK_ID    = cliArgs['task-id'];
 const PR_URL     = cliArgs['pr-url'];
-const FEATURE_ID = cliArgs['feature-id'] ?? '';
 const BRAIN_URL  = process.env.BRAIN_URL || 'http://localhost:5221';
 
 // ── S1: Read sprint-dir artifacts ────────────────────────────────────────────
@@ -178,16 +176,6 @@ async function brainPost(path, body) {
   return resp;
 }
 
-async function brainPatch(path, body) {
-  const url = `${BRAIN_URL}/api/brain${path}`;
-  const resp = await fetch(url, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  return resp;
-}
-
 // ── S5: PATCH tasks.result via harness/complete ──────────────────────────────
 try {
   const resp = await brainPost('/harness/complete', {
@@ -206,67 +194,9 @@ try {
   connectionErrors.push(`S5: ${err.message}`);
 }
 
-// ── S6: PATCH journey_features.status=done ───────────────────────────────────
-if (FEATURE_ID) {
-  try {
-    const resp = await brainPatch(`/journey_features/${FEATURE_ID}`, { status: 'done' });
-    if (resp.ok) {
-      console.log(`[S6] journey_features.status=done`);
-    } else {
-      console.warn(`[S6] journey_features update returned HTTP ${resp.status} — non-fatal`);
-    }
-  } catch (err) {
-    console.error(`[S6] FAIL: ${err.message}`);
-    connectionErrors.push(`S6: ${err.message}`);
-  }
-} else {
-  console.log('[S6] feature-id empty, skipping');
-}
-
-// ── S6b: 锚点自动焊(merge自动焊)——三锚字段皆空时用PR changed files回填unit_test_path ──
-function getPrChangedFiles(prUrl) {
-  const ghCmd = process.env.GH_CMD || 'gh';
-  try {
-    const out = execFileSync(ghCmd, ['pr', 'view', prUrl, '--json', 'files', '-q', '.files[].path'], {
-      encoding: 'utf8',
-    });
-    return out.split('\n').map((l) => l.trim()).filter(Boolean);
-  } catch (err) {
-    console.warn(`[S6b] gh pr view 失败(非致命): ${err.message}`);
-    return [];
-  }
-}
-
-if (FEATURE_ID) {
-  try {
-    const getResp = await fetch(`${BRAIN_URL}/api/brain/journey_features/${FEATURE_ID}`);
-    if (getResp.ok) {
-      const feature = await getResp.json();
-      const hasAnyAnchor = feature.unit_test_path || feature.workflow_ref || feature.guard_ref;
-      if (!hasAnyAnchor) {
-        const changedFiles = getPrChangedFiles(PR_URL);
-        const testFile = changedFiles.find((f) => /\.(test|spec)\.[jt]sx?$|_test\.py$|test_.*\.py$/.test(f));
-        if (testFile) {
-          const patchResp = await brainPatch(`/journey_features/${FEATURE_ID}`, { unit_test_path: testFile });
-          if (patchResp.ok) {
-            console.log(`[S6b] 锚点自动焊: unit_test_path=${testFile}`);
-          } else {
-            console.warn(`[S6b] 锚点回填 PATCH 返回 HTTP ${patchResp.status} — non-fatal`);
-          }
-        } else {
-          console.log('[S6b] PR changed files 中未找到测试文件，跳过自动焊');
-        }
-      } else {
-        console.log('[S6b] feature 已有锚点，不覆盖');
-      }
-    } else {
-      console.warn(`[S6b] GET journey_features 返回 HTTP ${getResp.status} — 跳过自动焊`);
-    }
-  } catch (err) {
-    console.error(`[S6b] FAIL: ${err.message}`);
-    connectionErrors.push(`S6b: ${err.message}`);
-  }
-}
+// ── S6: Journey Feature 权威写回 ────────────────────────────────────────────
+// Report Runner 不持有 Cecelia 内部通用凭据。Feature done 与测试锚点由收到
+// authenticated terminal callback 的 Brain 进程统一写回，避免候选代码越权改地图。
 
 // ── S7: POST notes ────────────────────────────────────────────────────────────
 try {

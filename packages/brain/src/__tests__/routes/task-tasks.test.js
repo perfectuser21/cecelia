@@ -180,6 +180,7 @@ describe('task-tasks routes', () => {
         depends_on: ['task-a', 'task-b'],
         architecture_ref: 'arch.md',
         tenant_id: 'default',
+        change_kind: 'capability_change',
       });
     });
 

@@ -64,6 +64,10 @@ function transactionPool({
         order.push('active-run');
         return { rows: activeRun ? [activeRun] : [] };
       }
+      if (/FROM harness_impact_contracts/.test(sql)) {
+        order.push('impact-contract');
+        return { rows: [] };
+      }
       if (/INSERT INTO initiative_runs/.test(sql)) {
         order.push('insert-run');
         return {
@@ -229,6 +233,7 @@ describe('Kernel run store creation authority', () => {
     expect(insert.sql).toContain('record_trust_status');
     expect(insert.sql).toContain('commander_mode');
     expect(insert.sql).toContain('gear');
+    expect(insert.sql).toContain('impact_contract_policy');
     expect(insert.params).toEqual([
       INITIATIVE_ID,
       'planning',
@@ -242,6 +247,9 @@ describe('Kernel run store creation authority', () => {
       'kernel-only',
       // sprint 08091640：gear 入参缺省写 NULL（= default 语义，存量行零变化）。
       null,
+      'legacy_exempt',
+      'MJ5 map/radius dependency is not active for this task',
+      'f69c2f91',
     ]);
     expect(harness.order).toEqual([
       'BEGIN',
@@ -249,6 +257,7 @@ describe('Kernel run store creation authority', () => {
       'advisory-lock',
       'task-lock',
       'active-run',
+      'impact-contract',
       'insert-run',
       'COMMIT',
       'release',
@@ -272,10 +281,33 @@ describe('Kernel run store creation authority', () => {
       'advisory-lock',
       'task-lock',
       'active-run',
+      'impact-contract',
       'insert-run',
       'COMMIT',
       'release',
     ]);
+  });
+
+  it('固化受管 run 的 Impact Contract required policy', async () => {
+    const harness = transactionPool({
+      task: {
+        id: TASK_ID,
+        task_type: 'harness_initiative',
+        status: 'in_progress',
+        payload: {
+          initiative_id: INITIATIVE_ID,
+          impact_contract_required: true,
+        },
+      },
+    });
+
+    await createKernelRun(harness.pool, VALID_INPUT);
+
+    const insert = harness.calls.find(({ sql }) => /INSERT INTO initiative_runs/.test(sql));
+    expect(insert.params).toEqual(expect.arrayContaining([
+      'required',
+      'task payload requires Impact Contract',
+    ]));
   });
 
   it('returns an existing active run without inserting', async () => {
@@ -480,6 +512,40 @@ describe('Legacy run mutation serialization', () => {
 });
 
 describe('Kernel run/task terminalization authority', () => {
+  it('在同一终态事务内完成 repair gap 收口，失败则整体回滚', async () => {
+    const harness = finalizationPool();
+    const afterTaskFinalized = vi.fn(async (client, context) => {
+      expect(client).toBe(harness.client);
+      expect(context).toEqual({ runId: RUN_ID, taskId: TASK_ID, outcome: 'done' });
+      harness.order.push('repair-gap-resolution');
+    });
+
+    await finalizeKernelRun(harness.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'done',
+      afterTaskFinalized,
+    });
+
+    expect(afterTaskFinalized).toHaveBeenCalledOnce();
+    expect(harness.order.indexOf('task-update')).toBeLessThan(
+      harness.order.indexOf('repair-gap-resolution'),
+    );
+    expect(harness.order.indexOf('repair-gap-resolution')).toBeLessThan(
+      harness.order.indexOf('COMMIT'),
+    );
+
+    const rollbackHarness = finalizationPool();
+    await expect(finalizeKernelRun(rollbackHarness.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'done',
+      afterTaskFinalized: vi.fn(async () => { throw new Error('gap resolution failed'); }),
+    })).rejects.toThrow('gap resolution failed');
+    expect(rollbackHarness.order).toContain('ROLLBACK');
+    expect(rollbackHarness.order).not.toContain('COMMIT');
+  });
+
   it('closes active attempts under task-run-attempt lock order', async () => {
     const attempt = {
       id: '44444444-4444-4444-8444-444444444444',

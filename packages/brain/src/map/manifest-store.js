@@ -8,13 +8,12 @@
  * - 同一 scope_key 最多一份 active manifest（DB 唯一索引保障）
  */
 
-import crypto from 'crypto';
 import pool from '../db.js';
+import { digestMapManifest } from '../lib/map-manifest-schema.js';
 
 /** 计算 manifest 的 canonical SHA-256 digest */
 export function computeManifestDigest(manifest) {
-  const canonical = JSON.stringify(manifest, Object.keys(manifest).sort());
-  return crypto.createHash('sha256').update(canonical, 'utf8').digest('hex');
+  return digestMapManifest(manifest);
 }
 
 /**
@@ -35,12 +34,19 @@ async function nextVersion(client, scopeKey) {
  * @param {{ scopeKey, manifest, sourceDecisionId? }} opts
  * @returns {{ id, version, digest, status, isNew }}
  */
-export async function submitManifestDraft({ scopeKey, manifest, sourceDecisionId }) {
+export async function submitManifestDraft(
+  { scopeKey, manifest, sourceDecisionId },
+  { db = pool } = {},
+) {
   const digest = computeManifestDigest(manifest);
 
-  const client = await pool.connect();
+  const client = await db.connect();
   try {
     await client.query('BEGIN');
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+      [`map-manifest:${scopeKey}`],
+    );
 
     // 幂等：已存在相同 digest
     const existing = await client.query(
@@ -76,21 +82,37 @@ export async function submitManifestDraft({ scopeKey, manifest, sourceDecisionId
  * @param {{ manifestId, scopeKey }} opts
  * @returns {{ id, version, scope_key, digest, status }}
  */
-export async function activateManifest({ manifestId, scopeKey }) {
-  const client = await pool.connect();
+export async function activateManifest(
+  { manifestId, scopeKey },
+  { projector = null, db = pool } = {},
+) {
+  const client = await db.connect();
   try {
     await client.query('BEGIN');
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+      [`map-activation:${scopeKey}`],
+    );
 
     // 获取要激活的 manifest
     const { rows: target } = await client.query(
-      `SELECT id, scope_key, version, digest, status, source_decision_id
-       FROM map_manifest_versions WHERE id = $1`,
+      `SELECT id, scope_key, version, digest, status, source_decision_id,
+              manifest, activated_at
+       FROM map_manifest_versions WHERE id = $1 FOR UPDATE`,
       [manifestId]
     );
     if (target.length === 0) throw new Error(`manifest 不存在: ${manifestId}`);
     const m = target[0];
     if (m.scope_key !== scopeKey) throw new Error(`scope_key 不匹配: ${m.scope_key} vs ${scopeKey}`);
-    if (m.status === 'active') return m; // 已经是 active，幂等
+    let projection = null;
+    if (projector) {
+      projection = await projector({ client, manifestVersion: m, mode: 'activation' });
+    }
+
+    if (m.status === 'active') {
+      await client.query('COMMIT');
+      return { ...m, projection };
+    }
 
     // 旧 active → superseded
     await client.query(
@@ -109,7 +131,7 @@ export async function activateManifest({ manifestId, scopeKey }) {
     );
 
     await client.query('COMMIT');
-    return rows[0];
+    return { ...rows[0], projection };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -128,6 +150,19 @@ export async function getActiveManifest(scopeKey) {
      WHERE scope_key = $1 AND status = 'active'
      LIMIT 1`,
     [scopeKey]
+  );
+  return rows[0] || null;
+}
+
+/** 获取 projection 已锁定的历史 manifest 版本。 */
+export async function getManifestById(manifestId) {
+  const { rows } = await pool.query(
+    `SELECT id, scope_key, version, manifest, digest, status,
+            source_decision_id, activated_at, created_at
+       FROM map_manifest_versions
+      WHERE id = $1
+      LIMIT 1`,
+    [manifestId],
   );
   return rows[0] || null;
 }

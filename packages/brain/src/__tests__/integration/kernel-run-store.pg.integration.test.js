@@ -92,6 +92,9 @@ beforeAll(async () => {
       gear TEXT,
       commander_mode TEXT NOT NULL DEFAULT 'kernel-only'
         CHECK (commander_mode IN ('legacy-session','kernel-only','hybrid')),
+      impact_contract_policy TEXT NOT NULL DEFAULT 'legacy_exempt',
+      impact_contract_policy_reason TEXT,
+      impact_contract_policy_decision_id TEXT,
       orchestrator_host TEXT,
       orchestrator_heartbeat_at TIMESTAMPTZ,
       orchestrator_pid INTEGER,
@@ -102,6 +105,12 @@ beforeAll(async () => {
       started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       completed_at TIMESTAMPTZ
+    );
+    CREATE TABLE harness_impact_contracts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      task_id UUID NOT NULL REFERENCES tasks(id),
+      status TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1
     );
     CREATE TABLE orchestrator_decision_log (
       run_id UUID NOT NULL,

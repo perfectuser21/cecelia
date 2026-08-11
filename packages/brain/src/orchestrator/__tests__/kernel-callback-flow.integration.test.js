@@ -304,6 +304,11 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       now: () => new Date('2026-07-22T00:01:00Z'),
       host: 'integration-host',
       pid: 4242,
+      impactGate: {
+        beforeGenerate: async () => ({ gate: 'pass', stage: 'callback-flow-fixture' }),
+        beforeEvaluate: async () => ({ gate: 'pass', stage: 'callback-flow-fixture' }),
+        beforeMerge: async () => ({ gate: 'pass', stage: 'callback-flow-fixture' }),
+      },
     }, { taskId: TASK_ID, runId: RUN_ID });
 
     expect(result.exitReason).toBe('task_aborted');

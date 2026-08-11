@@ -66,6 +66,32 @@ function classify(ref) {
   if (SMOKE.test(ref)) return { kind: 'bash', path: ref };
   fail('ASSERTION_NOT_RUNNABLE');
 }
+function assertCanonicalLedgerPath(pathRef) {
+  if (!pathRef || isAbsolute(pathRef) || pathRef.includes('\0')
+    || !/^[A-Za-z0-9_./@+-]+$/.test(pathRef)) {
+    fail('UNSAFE_ASSERTION_PATH');
+  }
+  const segments = pathRef.split('/');
+  if (segments.some(segment => !segment || segment === '.' || segment === '..'
+    || segment.startsWith('-'))) fail('UNSAFE_ASSERTION_PATH');
+  return pathRef;
+}
+export function canonicalAssertionCommandText(assertionRef) {
+  const shape = classify(assertionRef);
+  const pathRef = assertCanonicalLedgerPath(shape.path);
+  if (shape.kind === 'vitest') return `npx vitest run ${pathRef}`;
+  if (shape.kind === 'pytest') return `python3 -m pytest ${pathRef}`;
+  if (shape.kind === 'bash') return `bash ${pathRef}`;
+  fail('ASSERTION_NOT_RUNNABLE');
+}
+export function canonicalAssertionArgv(assertionRef) {
+  const shape = classify(assertionRef);
+  const pathRef = assertCanonicalLedgerPath(shape.path);
+  if (shape.kind === 'vitest') return ['npx', 'vitest', 'run', pathRef];
+  if (shape.kind === 'pytest') return ['python3', '-m', 'pytest', pathRef];
+  if (shape.kind === 'bash') return ['bash', pathRef];
+  fail('ASSERTION_NOT_RUNNABLE');
+}
 const matchesKind = (kind, path) => (
   { vitest: VITEST, pytest: PYTEST, bash: SMOKE }[kind].test(path));
 async function pinnedTools(toolchains, names, realpathFn) {

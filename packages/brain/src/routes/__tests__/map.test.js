@@ -17,7 +17,7 @@ const envelope = {
   freshness: { status: 'fresh' },
 };
 
-function makeHarness(overrides = {}) {
+function makeHarness(overrides = {}, routerOptions = {}) {
   const client = { query: vi.fn(async () => ({ rows: [] })), release: vi.fn() };
   const pool = { connect: vi.fn(async () => client) };
   const services = {
@@ -31,7 +31,12 @@ function makeHarness(overrides = {}) {
   };
   const app = express();
   app.use(express.json());
-  app.use('/api/brain/map', createMapRouter({ pool, services, now: () => now }));
+  app.use('/api/brain/map', createMapRouter({
+    pool,
+    services,
+    now: () => now,
+    ...routerOptions,
+  }));
   return { app, client, pool, services };
 }
 
@@ -115,6 +120,59 @@ describe('Unified Map read router', () => {
       changedFiles: [],
       startNodeKeys: ['F0'],
     }));
+  });
+
+  it('Harness Impact 请求由 revision-locked resolver 裁决，不降级成浏览半径', async () => {
+    const impactResult = {
+      scope_key: 'cecelia',
+      manifest_digest: '1'.repeat(64),
+      projection_digest: '2'.repeat(64),
+      fact_revisions: { 'perfectuser21/cecelia': 'a'.repeat(40) },
+      freshness: { status: 'fresh', reason_code: null },
+      affected_nodes: [],
+      required_assertions: [],
+    };
+    const impactRadius = vi.fn(async () => impactResult);
+    const { app, pool, services } = makeHarness({}, { impactRadius });
+    const body = {
+      repo: 'perfectuser21/cecelia',
+      base_revision: 'a'.repeat(40),
+      head_revision: 'b'.repeat(40),
+      changed_files: ['packages/brain/src/routes/map.js'],
+    };
+
+    const response = await request(app).post('/api/brain/map/radius').send(body).expect(200);
+
+    expect(response.body).toEqual(impactResult);
+    expect(impactRadius).toHaveBeenCalledWith(body);
+    expect(services.readRadius).not.toHaveBeenCalled();
+    expect(pool.connect).not.toHaveBeenCalled();
+  });
+
+  it('生产 token 配置后只允许只读浏览半径，Impact 裁决与 rebuild 拒绝匿名代理', async () => {
+    const prior = process.env.CECELIA_INTERNAL_TOKEN;
+    process.env.CECELIA_INTERNAL_TOKEN = 'map-test-token';
+    try {
+      const { app, services } = makeHarness();
+      await request(app).post('/api/brain/map/radius').send({
+        scope: 'cecelia',
+        repo: 'cecelia',
+        changed_files: [],
+        node_keys: ['F0'],
+      }).expect(200);
+      await request(app).post('/api/brain/map/radius').send({
+        repo: 'perfectuser21/cecelia',
+        base_revision: 'a'.repeat(40),
+        head_revision: 'b'.repeat(40),
+        changed_files: ['packages/brain/src/routes/map.js'],
+      }).expect(401);
+      await request(app).post('/api/brain/map/rebuild').send({ scope_key: 'cecelia' }).expect(401);
+      expect(services.readRadius).toHaveBeenCalledOnce();
+      expect(services.rebuild).not.toHaveBeenCalled();
+    } finally {
+      if (prior === undefined) delete process.env.CECELIA_INTERNAL_TOKEN;
+      else process.env.CECELIA_INTERNAL_TOKEN = prior;
+    }
   });
 
   it('缺失参数返回稳定 400，服务不连接数据库', async () => {

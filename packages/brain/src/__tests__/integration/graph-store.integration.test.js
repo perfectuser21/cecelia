@@ -66,6 +66,12 @@ afterAll(async () => {
   await pool.query('DELETE FROM fact_snapshot_headers WHERE kind = $1 AND repo = ANY($2)', [
     'graph', [REPO, CONCURRENT_REPO, EMPTY_REPO, CONSISTENT_REPO],
   ]);
+  await pool.query('DELETE FROM graph_edge_snapshots WHERE repo = ANY($1)', [
+    [REPO, CONCURRENT_REPO, EMPTY_REPO, CONSISTENT_REPO],
+  ]);
+  await pool.query('DELETE FROM graph_snapshot_versions WHERE repo = ANY($1)', [
+    [REPO, CONCURRENT_REPO, EMPTY_REPO, CONSISTENT_REPO],
+  ]);
   await pool.end();
 });
 
@@ -73,14 +79,24 @@ describe('replaceRepoEdges 真库全量替换', () => {
   it('第二批写入后第一批消失,只剩第二批', async () => {
     await replaceRepoEdges(pool, REPO, [
       { src_path: 'old/a.js', dst_path: 'old/b.js', edge_type: 'import', detail: {} },
-    ]);
+    ], { sourceRevision: REVISION_A, scannerVersion: 'graph-v3' });
     await replaceRepoEdges(pool, REPO, [
       { src_path: 'new/x.js', dst_path: 'cmd:git', edge_type: 'spawn', detail: { line: 1, via: 'spawn' } },
       { src_path: 'new/x.js', dst_path: '/api/brain/tasks', edge_type: 'http', detail: { line: 2 } },
-    ]);
+    ], { sourceRevision: REVISION_B, scannerVersion: 'graph-v3' });
     const { rows } = await pool.query('SELECT src_path, edge_type FROM graph_edges WHERE repo = $1 ORDER BY src_path', [REPO]);
     expect(rows.length).toBe(2);
     expect(rows.every((r) => r.src_path.startsWith('new/'))).toBe(true);
+    const snapshots = await pool.query(
+      `SELECT source_revision, count(*)::integer AS row_count
+         FROM graph_edge_snapshots WHERE repo = $1
+        GROUP BY source_revision ORDER BY source_revision`,
+      [REPO],
+    );
+    expect(snapshots.rows).toEqual([
+      { source_revision: REVISION_A, row_count: 1 },
+      { source_revision: REVISION_B, row_count: 2 },
+    ]);
   });
 
   it('空边快照仍写入 fresh header，graph context 返回 row_count=0', async () => {

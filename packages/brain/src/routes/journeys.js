@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { buildCascadeReport } from '../cascade-list.js';
@@ -15,7 +16,7 @@ const VALID_SOFTNESS      = ['hard', 'soft'];
 const VALID_CELL_STATUS   = ['gray', 'red', 'pending', 'green'];
 
 // POST /api/brain/journeys
-router.post('/journeys', async (req, res) => {
+router.post('/journeys', internalAuthOrLoopback, async (req, res) => {
   try {
     const { name, journey_type, description, maturity, status, e2e_test_path, area, steps,
             home, trigger, endpoint } = req.body;
@@ -107,7 +108,7 @@ router.get('/journeys/:id', async (req, res) => {
 });
 
 // PATCH /api/brain/journeys/:id — 承诺地图字段（mapper 落账用）
-router.patch('/journeys/:id', async (req, res) => {
+router.patch('/journeys/:id', internalAuthOrLoopback, async (req, res) => {
   try {
     const { home, domain, trigger, endpoint, description, maturity } = req.body;
     if (home && !VALID_HOME.includes(home)) {
@@ -206,7 +207,7 @@ router.get('/journey_features/:id', async (req, res) => {
 });
 
 // POST /api/brain/journey_features
-router.post('/journey_features', async (req, res) => {
+router.post('/journey_features', internalAuthOrLoopback, async (req, res) => {
   try {
     const { name, journey_id, thickness, status, area, unit_test_path, version, kind,
             workflow_ref, guard_ref, softness } = req.body;
@@ -270,7 +271,7 @@ router.post('/journey_features', async (req, res) => {
 });
 
 // PATCH /api/brain/journey_features/:id
-router.patch('/journey_features/:id', async (req, res) => {
+router.patch('/journey_features/:id', internalAuthOrLoopback, async (req, res) => {
   try {
     const { thickness, status, unit_test_path, version, guard_ref, softness, group, workflow_ref } = req.body;
     if (thickness && !VALID_THICKNESS.includes(thickness)) {
@@ -311,7 +312,7 @@ router.patch('/journey_features/:id', async (req, res) => {
 });
 
 // POST /api/brain/issues
-router.post('/issues', async (req, res) => {
+router.post('/issues', internalAuthOrLoopback, async (req, res) => {
   try {
     const { title, priority, status, sub_area, body: bodyText, pr_url, journey_id } = req.body;
     if (!title) return res.status(400).json({ error: 'title is required' });
@@ -376,7 +377,7 @@ router.get('/issues', async (req, res) => {
 });
 
 // PATCH /api/brain/issues/:id — 更新 issue 状态/优先级（关闭 issue 等）
-router.patch('/issues/:id', async (req, res) => {
+router.patch('/issues/:id', internalAuthOrLoopback, async (req, res) => {
   try {
     const { id } = req.params;
     const PATCHABLE = ['status', 'priority', 'title', 'body', 'pr_url', 'sub_area'];
@@ -423,7 +424,7 @@ router.get('/journey_steps', async (req, res) => {
 });
 
 // POST /api/brain/journey_steps
-router.post('/journey_steps', async (req, res) => {
+router.post('/journey_steps', internalAuthOrLoopback, async (req, res) => {
   try {
     const { journey_id, name, step_number, description, status, promise, backbone_version } = req.body;
     if (!journey_id || !name || step_number === undefined) {
@@ -476,7 +477,7 @@ router.get('/journey_step_links', async (req, res) => {
 });
 
 // POST /api/brain/journey_step_links —— legacy 连接行 + 格子行双通道
-router.post('/journey_step_links', async (req, res) => {
+router.post('/journey_step_links', internalAuthOrLoopback, async (req, res) => {
   try {
     const {
       journey_id, step_id, step_order, status,
@@ -546,7 +547,7 @@ router.post('/journey_step_links', async (req, res) => {
 // PATCH /api/brain/journey_step_links/:id — 格子状态回写（evaluator S3联动 + S4保鲜用）
 // fail-closed: cell_status='green' 时必须有 assertion_ref（现有行或本次请求）
 // 决策 df1ccf5a §③：机器托管，军师只提案不点绿；无 assertion_ref 拒收
-router.patch('/journey_step_links/:id', async (req, res) => {
+router.patch('/journey_step_links/:id', internalAuthOrLoopback, async (req, res) => {
   try {
     const { cell_status, assertion_ref, na_reason, cell_kind } = req.body;
     if (cell_status && !VALID_CELL_STATUS.includes(cell_status)) {
@@ -784,7 +785,7 @@ router.get('/features/:id/blast-radius', async (req, res) => {
 // POST /api/brain/cascade-list — S3 联动清单（thin档）
 // 输入：changed_files[]（PR 改动文件路径）
 // 输出：被影响的格子断言列表 + 分类摘要（可跑/待 nightly/未登记）
-router.post('/cascade-list', async (req, res) => {
+router.post('/cascade-list', internalAuthOrLoopback, async (req, res) => {
   try {
     const { changed_files } = req.body;
     if (!Array.isArray(changed_files) || changed_files.length === 0) {

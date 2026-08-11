@@ -27,7 +27,10 @@ vi.mock('../alertness/index.js', () => ({
   getDispatchRate: vi.fn().mockReturnValue(1), ALERTNESS_LEVELS: { GREEN: 'GREEN' }, LEVEL_NAMES: {}
 }));
 vi.mock('../alertness/metrics.js', () => ({ recordTickTime: vi.fn(), recordOperation: vi.fn() }));
-vi.mock('../planner.js', () => ({ planNextTask: vi.fn().mockResolvedValue({ reason: 'no_tasks' }) }));
+vi.mock('../planner.js', () => ({
+  planNextTask: vi.fn().mockResolvedValue({ reason: 'no_tasks' }),
+  checkPrPlansCompletion: vi.fn().mockResolvedValue([]),
+}));
 vi.mock('../decision.js', () => ({
   compareGoalProgress: vi.fn().mockResolvedValue([]),
   generateDecision: vi.fn().mockResolvedValue(null),
@@ -38,7 +41,8 @@ vi.mock('../executor.js', () => ({
   getActiveProcessCount: vi.fn().mockReturnValue(0), killProcess: vi.fn(),
   cleanupOrphanProcesses: vi.fn().mockResolvedValue([]),
   checkServerResources: vi.fn().mockResolvedValue({ ok: true }),
-  probeTaskLiveness: vi.fn().mockResolvedValue(null),
+  probeTaskLiveness: vi.fn().mockResolvedValue([]),
+  getActiveProcesses: vi.fn().mockReturnValue([]),
   syncOrphanTasksOnStartup: vi.fn().mockResolvedValue(0),
   killProcessTwoStage: vi.fn(), requeueTask: vi.fn(),
   MAX_SEATS: 4, INTERACTIVE_RESERVE: 1, getBillingPause: vi.fn().mockResolvedValue(false)
@@ -51,7 +55,10 @@ vi.mock('../circuit-breaker.js', () => ({
 vi.mock('../events/taskEvents.js', () => ({
   publishTaskStarted: vi.fn(), publishExecutorStatus: vi.fn(), publishCognitiveState: vi.fn()
 }));
-vi.mock('../thalamus.js', () => ({ processEvent: vi.fn().mockResolvedValue(null), EVENT_TYPES: {} }));
+vi.mock('../thalamus.js', () => ({
+  processEvent: vi.fn().mockResolvedValue({ actions: [] }),
+  EVENT_TYPES: {},
+}));
 vi.mock('../decision-executor.js', () => ({
   executeDecision: vi.fn(), expireStaleProposals: vi.fn().mockResolvedValue(0)
 }));
@@ -61,13 +68,19 @@ vi.mock('../quarantine.js', () => ({
 }));
 vi.mock('../dispatch-stats.js', () => ({ recordDispatchResult: vi.fn(), getDispatchStats: vi.fn().mockResolvedValue({}) }));
 vi.mock('../health-monitor.js', () => ({ runLayer2HealthCheck: vi.fn().mockResolvedValue({ summary: 'ok' }) }));
-vi.mock('../dept-heartbeat.js', () => ({ triggerDeptHeartbeats: vi.fn().mockResolvedValue({}) }));
+vi.mock('../dept-heartbeat.js', () => ({
+  triggerDeptHeartbeats: vi.fn().mockResolvedValue({}),
+  tick: vi.fn().mockResolvedValue({ triggered: 0, skipped: 0, results: [] }),
+}));
 // executeTick 在心跳窗口会动态调用 LLM。本测试只验证 Goal Outer Loop，
-// 必须隔离外部账号/网络，避免全套并发时被 30s 超时污染。
+// 必须隔离外部账号/网络，避免全套并发时被超时污染。
 vi.mock('../heartbeat-plugin.js', () => ({
   tick: vi.fn().mockResolvedValue({ skipped: true, reason: 'test_isolation' }),
 }));
-vi.mock('../daily-review-scheduler.js', () => ({ triggerDailyReview: vi.fn().mockResolvedValue({}) }));
+vi.mock('../daily-review-scheduler.js', () => ({
+  triggerDailyReview: vi.fn().mockResolvedValue({}),
+  fetchAllLineLedgersDigest: vi.fn().mockResolvedValue(''),
+}));
 vi.mock('../desire/index.js', () => ({ runDesireSystem: vi.fn().mockResolvedValue({}) }));
 vi.mock('../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue({}) }));
 vi.mock('../suggestion-triage.js', () => ({
@@ -79,7 +92,24 @@ vi.mock('../progress-ledger.js', () => ({ evaluateProgressInTick: vi.fn().mockRe
 vi.mock('../initiative-closer.js', () => ({
   checkInitiativeCompletion: vi.fn().mockResolvedValue({ closedCount: 0 }),
   checkProjectCompletion: vi.fn().mockResolvedValue({ closedCount: 0 }),
+  checkScopeCompletion: vi.fn().mockResolvedValue({ closedCount: 0 }),
   activateNextInitiatives: vi.fn().mockResolvedValue({ activatedCount: 0 }),
+}));
+vi.mock('../heartbeat-plugin.js', () => ({
+  tick: vi.fn().mockResolvedValue({ ran: false, actions: [] }),
+}));
+vi.mock('../zombie-sweep.js', () => ({
+  zombieSweep: vi.fn().mockResolvedValue({
+    worktrees: { removed: 0 },
+    processes: { killed: 0 },
+    lock_slots: { removed: 0 },
+  }),
+}));
+vi.mock('../zombie-cleaner.js', () => ({
+  runZombieCleanup: vi.fn().mockResolvedValue({ slotsReclaimed: 0, worktreesRemoved: 0 }),
+}));
+vi.mock('../harness-worktree.js', () => ({
+  cleanupStaleHarnessWorktrees: vi.fn().mockResolvedValue({ cleaned: 0 }),
 }));
 
 // ── Setup ─────────────────────────────────────────────────────────────────────

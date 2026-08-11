@@ -46,6 +46,18 @@ vi.mock('../slot-allocator.js', () => ({
   shouldBypassBackpressure: vi.fn(() => false),
 }));
 vi.mock('../token-budget-planner.js', () => ({ shouldDowngrade: mocks.shouldDowngrade }));
+vi.mock('../llm-capacity.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  getLlmCapacitySnapshot: vi.fn().mockResolvedValue({
+    sampled_at: '2026-08-11T00:00:00.000Z',
+    sentinel: 'dispatcher-dev-no-langgraph-test',
+    vendors: {
+      claude: { available_count: 1, total_count: 1, poller: 'ok', accounts: [] },
+      codex: { available_count: 1, total_count: 1, poller: 'ok', accounts: [] },
+      grok: { available_count: 0, total_count: 1, poller: 'ok', accounts: [] },
+    },
+  }),
+}));
 vi.mock('../event-bus.js', () => ({
   emit: vi.fn().mockResolvedValue(undefined),
   ensureEventsTable: vi.fn().mockResolvedValue(undefined),
