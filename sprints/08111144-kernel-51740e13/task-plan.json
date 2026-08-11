@@ -1,0 +1,32 @@
+{
+  "initiative_id": "06e4566c-ebe6-47d5-894b-e0385c4df3ef",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain（归属端点 + kernel merge 流程）与 CI 脚本，纯后端/调度闭环，无 UI、无远端 agent 协议。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "合并权收归单一裁决闸：harness-judge required check + 归属端点 + 通道1改判据",
+      "scope": "新增 Brain GET /api/brain/harness/pr-ownership 归属端点（凭 initiative_runs.pr_url 精确匹配 /pull/<n> 结尾，返回 {owned,run_id,pr_number,reason}，非法 pr_number 返 400）；should-auto-merge.sh 判据从 feat(harness): 标题正则换成 Brain 求证（curl 带 --max-time，owned:true→SKIP / owned:false→MERGE / 超时·非200·非法JSON·owned缺失→fail-closed SKIP），签名改 <head_branch> <pr_number>；ci.yml auto-merge step 实参 $PR_TITLE 改 $PR_NUMBER；kernel-handlers.js merge_pr 在 CLEAN 合并路径 gh pr merge 之前置 harness-judge status=success（gh api statuses），不改 mergeGate/evaluator/judge/gear；产出 engine-pr-watchdog 改造说明。永久回归测试落仓内（脚本 bash 单测五态+结构、端点单测、kernel-handlers 置闸断言）。过 DevGate（facts-check/version-sync 含 brain version bump/dod-mapping），不新增 migration。",
+      "dod": [
+        "[BEHAVIOR] 归属端点对已写 pr_url 的 PR 返 owned:true、未写返 owned:false、非法 pr_number 返 400（见 contract-dod.md B-01/B-02/B-03）",
+        "[BEHAVIOR] should-auto-merge.sh fail-closed 三态与决策三态正确（failclosed-check.sh / decision-check.sh 全绿）",
+        "[BEHAVIOR] 回归 #4755/#4759 两分支经真 Brain 均 SKIP（B-06）",
+        "[BEHAVIOR] kernel merge_pr 在 gh pr merge 前置 harness-judge=success 且 kernel-handlers 全量单测绿（B-07）",
+        "[ARTIFACT] engine-pr-watchdog-retrofit.md + 归属端点注册 + ci.yml 实参改 $PR_NUMBER"
+      ],
+      "files": [
+        "packages/brain/src/routes/harness.js",
+        "packages/brain/src/orchestrator/kernel-handlers.js",
+        "packages/brain/src/orchestrator/__tests__/kernel-handlers.test.js",
+        "packages/brain/src/routes/__tests__/harness-pr-ownership.test.js",
+        ".github/workflows/scripts/should-auto-merge.sh",
+        ".github/workflows/scripts/__tests__/should-auto-merge.test.sh",
+        ".github/workflows/ci.yml",
+        "packages/brain/package.json"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
