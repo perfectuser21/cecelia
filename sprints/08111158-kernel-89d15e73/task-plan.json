@@ -1,0 +1,27 @@
+{
+  "initiative_id": "89d15e73-e12b-4f7e-bc94-b73692ac2699",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅改 packages/brain 派发层（dispatcher/task-router）纯后端调度逻辑，无 UI/远端 agent 协议。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "dispatcher/task-router 收归改代码任务进 kernel harness：分类 + 打标 + reroute + 幂等",
+      "scope": "task-router.js 新增 CODE_CHANGE_TASK_TYPES 白名单（dev/codex_dev）+ classifyCodeChange(task)（白名单或 payload.code_change=true → code_change:true）+ resolveDispatchChannel(task)（→ 'kernel'|'legacy'）纯函数；dispatcher.js 在 triggerCeceliaRun 之前对 channel=kernel 的任务 merge 打标 payload{code_change:true, gear=deriveGear(task), origin_task_type} 并 reroute task_type='harness_initiative'（复用现有 harness full-graph spawn），幂等（已在 harness_initiative/已标 code_change 不二次处理、不覆盖 origin_task_type），非改代码任务行为不变。",
+      "dod": [
+        "[BEHAVIOR] classifyCodeChange/resolveDispatchChannel 对 dev/codex_dev → code_change+kernel，对 research/arch_review → false+legacy（coding-route-kernel.test.js）",
+        "[BEHAVIOR] dispatchNextTask 派发 dev 任务 → triggerCeceliaRun 收到 task_type=harness_initiative + payload.code_change=true + gear + origin_task_type=dev",
+        "[BEHAVIOR] 非改代码 research 派发行为不变；幂等重复派发不二次 reroute",
+        "[BEHAVIOR] dispatcher-dev-no-langgraph.test.js 6 例回归全绿",
+        "[ARTIFACT] task-router.js 导出 classifyCodeChange/resolveDispatchChannel/CODE_CHANGE_TASK_TYPES"
+      ],
+      "files": [
+        "packages/brain/src/task-router.js",
+        "packages/brain/src/dispatcher.js",
+        "packages/brain/src/__tests__/coding-route-kernel.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
