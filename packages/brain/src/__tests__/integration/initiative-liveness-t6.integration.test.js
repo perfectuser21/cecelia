@@ -175,7 +175,13 @@ describe('I1: dev task 集成派发路径（迁离 LangGraph）', () => {
 
     expect(result.dispatched).toBe(true);
     expect(mocks.triggerCeceliaRun).toHaveBeenCalledTimes(1);
-    expect(mocks.triggerCeceliaRun.mock.calls[0][0].task_type).toBe('dev');
+    // coding 路由收归 kernel（决策 bf361265）：改代码(dev)任务在 spawn 前被 reroute 到
+    // kernel harness 通道（task_type='harness_initiative'）并打标 code_change，不再以 dev
+    // 直通。本用例本意是「走 triggerCeceliaRun（不走 LangGraph）」——该语义仍成立
+    // （triggerCeceliaRun 单次调用、runtime≠v2），只是 spawn 层收到的是收归后的 task_type。
+    expect(mocks.triggerCeceliaRun.mock.calls[0][0].task_type).toBe('harness_initiative');
+    expect(mocks.triggerCeceliaRun.mock.calls[0][0].payload?.code_change).toBe(true);
+    expect(mocks.triggerCeceliaRun.mock.calls[0][0].payload?.origin_task_type).toBe('dev');
   });
 
   it('dev 派发 → triggerCeceliaRun 接收到正确的 task id', async () => {
