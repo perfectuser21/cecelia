@@ -29,7 +29,7 @@ read -r LAST_SHA LAST_SCAN_EPOCH < "$STATE_FILE" 2>/dev/null || {
   LAST_SCAN_EPOCH=0
 }
 if [[ -z "${LAST_SCAN_EPOCH:-}" || ! "$LAST_SCAN_EPOCH" =~ ^[0-9]+$ ]]; then
-  LAST_SCAN_EPOCH=$(stat -f %m "$STATE_FILE" 2>/dev/null || stat -c %Y "$STATE_FILE" 2>/dev/null || echo 0)
+  LAST_SCAN_EPOCH=$(stat -c %Y "$STATE_FILE" 2>/dev/null || stat -f %m "$STATE_FILE" 2>/dev/null || echo 0)
 fi
 SCAN_AGE=$((NOW_EPOCH - LAST_SCAN_EPOCH))
 if [ "$REMOTE_SHA" = "$LAST_SHA" ] && (( SCAN_AGE < MAX_SCAN_AGE_SECONDS )); then
