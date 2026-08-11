@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { getSchemaVersion, getDeploymentStatus } from '../src/tools/schema-and-deployment.js';
 import { getMapSummary } from '../src/tools/map-summary.js';
 import { getMapNodes, getMapEdges, ValidationError, NODE_TYPES, EDGE_TYPES } from '../src/tools/map-nodes-edges.js';
+import { getServiceLogs, SERVICE_LOG_WHITELIST } from '../src/tools/service-logs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -172,6 +173,37 @@ function extractCheckInValues(sql, column) {
     .map((token) => token.trim().replace(/^'|'$/g, ''))
     .filter(Boolean);
 }
+
+describe('getServiceLogs', () => {
+  it('service 不在白名单抛 ValidationError', async () => {
+    const fakeReadLog = vi.fn();
+    await expect(
+      getServiceLogs(fakeReadLog, { service: 'random-service', lines: 50 })
+    ).rejects.toThrow(ValidationError);
+    expect(fakeReadLog).not.toHaveBeenCalled();
+  });
+
+  it('合法 service 返回脱敏后的日志行', async () => {
+    const fakeReadLog = vi.fn().mockResolvedValue([
+      'normal log line',
+      'token=ghp_1234567890abcdefghijklmnopqrstuv leaked here',
+    ]);
+    const result = await getServiceLogs(fakeReadLog, { service: 'cecelia-brain', lines: 50 });
+    expect(result.lines[0]).toBe('normal log line');
+    expect(result.lines[1]).toContain('ghp_****');
+    expect(result.lines[1]).not.toContain('1234567890abcdefghijklmnopqrstuv');
+  });
+
+  it('lines 超过 200 会被 clamp', async () => {
+    const fakeReadLog = vi.fn().mockResolvedValue([]);
+    await getServiceLogs(fakeReadLog, { service: 'cecelia-brain', lines: 9999 });
+    expect(fakeReadLog.mock.calls[0][1]).toBe(200);
+  });
+
+  it('SERVICE_LOG_WHITELIST 本次只含 cecelia-brain', () => {
+    expect(Object.keys(SERVICE_LOG_WHITELIST)).toEqual(['cecelia-brain']);
+  });
+});
 
 describe('NODE_TYPES / EDGE_TYPES 与 405 migration CHECK 约束同步', () => {
   const migrationSql = fs.readFileSync(
