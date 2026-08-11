@@ -16,4 +16,3 @@ Anchor Resolver + Query-time State Resolver + Impact Radius。只接现有 Proje
 ## Excluded
 
 HTTP 统一读入口、Dashboard 消费、ZenithJoy adapter 与 Harness/Island Gate 收权，分别由 Knife 4/5 验收。
-

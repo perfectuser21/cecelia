@@ -81,4 +81,3 @@
 - [ ] Run targeted suite, three DevGate commands, DoD mapping, smoke ratchet, full Brain suite, and `git diff --check`.
 - [ ] Bump Brain patch version and schema floor consistently.
 - [ ] Commit, request review, push PR, wait CI, merge normally, and verify production rebuild without direct production schema mutation.
-
