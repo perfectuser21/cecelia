@@ -31,7 +31,7 @@ changelog:
 
 ## 角色边界（2.0 变化说明）
 
-旧版（1.x）：切分领域 → 拍板后写 `golden_paths/journeys` 账本  
+旧版（1.x）：切分领域 → 拍板后写 `golden_paths/journeys` 账本
 **新版（2.0）**：切分领域 → 产出完整 `Map Manifest` JSON 草案 → 拍板后一次性提交激活
 
 Manifest 激活后，系统自动生成所有 Capability、Value Stream、Boundary、Cross-cut 节点和边，
