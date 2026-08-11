@@ -51,3 +51,28 @@ describe('bearerAuth', () => {
     expect(next).not.toHaveBeenCalled();
   });
 });
+
+// fail-closed 回归测试：expectedToken 未配置（服务器端 MCP_BEARER_TOKEN 环境变量
+// 没接线）时，之前的实现会在 safeCompare() 内部对 undefined 调用 Buffer.from()
+// 抛出未捕获 TypeError（500 崩溃），而不是明确的 401 拒绝。这里覆盖 undefined 和
+// 空字符串两种"未配置"取值，且都用一个看起来合法的 Bearer header 触发（最容易
+// 命中崩溃分支的场景——如果没有 token 直接短路 401，根本走不到 safeCompare）。
+describe('bearerAuth fail-closed（expectedToken 未配置）', () => {
+  it('expectedToken 为 undefined 时，带 token 的请求返回 401 而不是抛异常', () => {
+    const middleware = bearerAuth(undefined);
+    const { req, res, next } = mockReqRes('Bearer some-token');
+    expect(() => middleware(req, res, next)).not.toThrow();
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({ error: 'unauthorized' });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("expectedToken 为空字符串 '' 时，带 token 的请求返回 401 而不是抛异常", () => {
+    const middleware = bearerAuth('');
+    const { req, res, next } = mockReqRes('Bearer some-token');
+    expect(() => middleware(req, res, next)).not.toThrow();
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({ error: 'unauthorized' });
+    expect(next).not.toHaveBeenCalled();
+  });
+});

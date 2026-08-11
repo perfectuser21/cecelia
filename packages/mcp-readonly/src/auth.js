@@ -16,6 +16,17 @@ function safeCompare(a, b) {
 // 中间件是安全关键路径。
 export function bearerAuth(expectedToken, { onFailure } = {}) {
   return function (req, res, next) {
+    // fail-closed：expectedToken 未配置（undefined/''，比如 MCP_BEARER_TOKEN
+    // 环境变量没接线）时，任何请求——包括带了看起来合法 token 的请求——都必须
+    // 明确拒绝为 401，而不是往下走到 safeCompare()。之前的实现没有这道守卫，
+    // `Buffer.from(expectedToken)` 在 expectedToken 是 undefined 时会直接抛
+    // TypeError，一路冒泡成未捕获异常，Express 兜底把它变成 500——本该是
+    // "拒绝访问"的鉴权失败，被误变成"服务器炸了"，还完全没有 401 该有的
+    // 明确拒绝语义。这是安全关键路径，宁可整个服务因为配置错误而对外全部
+    // 拒绝（fail-closed），也不能带病放行或者以未定义行为（崩溃）收场。
+    if (!expectedToken) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
     const header = req.headers.authorization;
     if (!header || !header.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'unauthorized' });
