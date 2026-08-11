@@ -84,8 +84,8 @@ async function main() {
       await pool.query(
         `INSERT INTO db_schema_registry (table_name, columns, indexes, foreign_keys, area, repo, source_revision, scanner_version)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (table_name) DO UPDATE
-           SET columns=$2, indexes=$3, foreign_keys=$4, area=$5, repo=$6,
+         ON CONFLICT (repo, table_name) DO UPDATE
+           SET columns=$2, indexes=$3, foreign_keys=$4, area=$5,
                source_revision=$7, scanner_version=$8,
                scanned_at=NOW(), updated_at=NOW()`,
         [table_name, JSON.stringify(cols), JSON.stringify(idxs), JSON.stringify(fks), area, 'cecelia', sourceRevision, SCANNER_VERSION],
@@ -95,7 +95,7 @@ async function main() {
     const { rows: [{ cnt }] } = await pool.query(
       'SELECT COUNT(*)::int AS cnt FROM db_schema_registry',
     );
-    await replaceFactSnapshot(pool, 'db', {
+    await replaceFactSnapshot(pool, 'db_schema', {
       repo: 'cecelia',
       sourceRevision,
       scannerVersion: SCANNER_VERSION,

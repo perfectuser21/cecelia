@@ -24,9 +24,9 @@ async function replaceFactSnapshot(pool, kind, { repo, sourceRevision, scannerVe
       await client.query(
         `INSERT INTO test_registry (file_path, test_count, covered_behaviors, area, test_type, repo, source_revision, scanner_version)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (file_path) DO UPDATE
+         ON CONFLICT (repo, file_path) DO UPDATE
            SET test_count=$2, covered_behaviors=$3, area=$4, test_type=$5,
-               repo=$6, source_revision=$7, scanner_version=$8,
+               source_revision=$7, scanner_version=$8,
                scanned_at=NOW(), updated_at=NOW()`,
         [f.file_path, f.test_count, f.covered_behaviors, f.area, f.test_type, repo, sourceRevision, scannerVersion],
       );
