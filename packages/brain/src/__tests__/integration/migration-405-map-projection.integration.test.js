@@ -70,6 +70,22 @@ describe('migration 405 — 真实 PostgreSQL projection schema', () => {
     ))).toBe(true);
   });
 
+  it('run 以 composite FK 绑定 manifest id、scope 与 digest', async () => {
+    const { rows } = await pool.query(
+      `SELECT conname, pg_get_constraintdef(oid) AS definition
+         FROM pg_constraint
+        WHERE conrelid = to_regclass('public.map_projection_runs')`,
+    );
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        conname: 'map_projection_manifest_identity_fk',
+        definition: expect.stringMatching(
+          /FOREIGN KEY \(manifest_version_id, scope_key, manifest_digest\) REFERENCES map_manifest_versions\(id, scope_key, digest\)/i,
+        ),
+      }),
+    ]));
+  });
+
   it('schema_version 包含 405', async () => {
     const { rows } = await pool.query("SELECT version FROM schema_version WHERE version='405'");
     expect(rows).toEqual([{ version: '405' }]);

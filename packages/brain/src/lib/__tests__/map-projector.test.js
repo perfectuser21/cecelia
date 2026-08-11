@@ -65,6 +65,22 @@ describe('Universal Map deterministic structure projector', () => {
     expect(projection.nodes.filter(({ node_type }) => node_type === 'capability')).toHaveLength(11);
   });
 
+  it('Cross-cut 可直接 serves Capability 节点', () => {
+    const input = structuredClone(manifest);
+    input.crosscut_pool[0].serves = ['F1'];
+    const projection = build(input);
+    const capability = projection.nodes.find(({ node_key }) => node_key === 'F1');
+    const crosscut = projection.nodes.find(({ node_key }) => node_key === input.crosscut_pool[0].key);
+
+    expect(projection.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        edge_type: 'serves',
+        from_node_id: crosscut.node_id,
+        to_node_id: capability.node_id,
+      }),
+    ]));
+  });
+
   it('shared prerequisite 不适用时不造节点和 requires 边', () => {
     const projection = build();
 

@@ -1,8 +1,8 @@
 # Universal Map Projection Engine — Knife 2 Contract Draft
 
-**Sprint**：`sprints/08111015-universal-map-knife2/`  
-**Task ID**：`8c6e3ff5-5a27-401a-8cfc-95a8836c7bb4`  
-**PR 序号**：Knife 2/5  
+**Sprint**：`sprints/08111015-universal-map-knife2/`
+**Task ID**：`8c6e3ff5-5a27-401a-8cfc-95a8836c7bb4`
+**PR 序号**：Knife 2/5
 **起草日期**：2026-08-11
 
 ## 范围

@@ -134,6 +134,35 @@ describe('Map Manifest JSON Schema', () => {
       expect.objectContaining({ path: 'boundaries', code: 'cycle_detected' }),
     ]));
   });
+
+  it.each([
+    ['crosscut', (manifest) => { manifest.crosscut_pool[0].serves = ['factory', 'factory']; }, 'crosscut_pool.0.serves'],
+    ['shared prerequisite', (manifest) => {
+      manifest.shared_prerequisites = {
+        applicable: true,
+        items: [{ key: 'bootstrap', name: '共享前置', serves: ['factory', 'factory'] }],
+      };
+    }, 'shared_prerequisites.items.0.serves'],
+  ])('JSON Schema 在投影前拒绝 %s 重复 serves', (_name, mutate, path) => {
+    const manifest = loadManifest();
+    mutate(manifest);
+
+    const jsonResult = validateMapManifestJsonSchema(manifest);
+    const runtimeResult = validateMapManifest(manifest);
+
+    expect(jsonResult.valid).toBe(false);
+    expect(runtimeResult.valid).toBe(false);
+    expect(runtimeResult.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path, code: 'uniqueItems' }),
+    ]));
+  });
+
+  it('Cross-cut serves 可引用 Capability，不局限于 Value Stream', () => {
+    const manifest = loadManifest();
+    manifest.crosscut_pool[0].serves = ['F1'];
+
+    expect(validateMapManifest(manifest)).toEqual({ valid: true, errors: [], manifest });
+  });
 });
 
 describe('Map Manifest canonical digest', () => {

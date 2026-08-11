@@ -18,7 +18,8 @@ describe('migration 405 — rebuildable map projection core', () => {
   });
 
   it('run 固定 manifest/fact/projector/digest provenance 与单 active 约束', () => {
-    expect(upSql).toMatch(/manifest_version_id UUID NOT NULL REFERENCES map_manifest_versions\s*\(id\)/i);
+    expect(upSql).toMatch(/CONSTRAINT map_manifest_projection_identity_unique UNIQUE \(id, scope_key, digest\)/i);
+    expect(upSql).toMatch(/FOREIGN KEY \(manifest_version_id, scope_key, manifest_digest\)[\s\S]*REFERENCES map_manifest_versions\s*\(id, scope_key, digest\)/i);
     expect(upSql).toMatch(/manifest_digest TEXT NOT NULL CHECK \(manifest_digest ~ '\^\[0-9a-f\]\{64\}\$'\)/i);
     expect(upSql).toMatch(/fact_revisions JSONB NOT NULL/i);
     expect(upSql).toMatch(/projector_version TEXT NOT NULL/i);
@@ -51,6 +52,7 @@ describe('migration 405 — rebuildable map projection core', () => {
     expect(downSql.indexOf('map_projection_edges')).toBeLessThan(downSql.indexOf('map_projection_nodes'));
     expect(downSql.indexOf('map_projection_nodes')).toBeLessThan(downSql.indexOf('map_projection_runs'));
     expect(downSql).toMatch(/DELETE FROM schema_version WHERE version = '405'/i);
+    expect(downSql).toMatch(/DROP CONSTRAINT IF EXISTS map_manifest_projection_identity_unique/i);
   });
 
   it('登记 schema 405', () => {

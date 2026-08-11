@@ -125,6 +125,72 @@ describe('Map Projection Store — 真实 PostgreSQL', () => {
     ]);
   });
 
+  it('旧 manifest 缓存不能在新版本激活后抢回 active projection', async () => {
+    const scopeKey = `${scopePrefix}-stale-rebuild`;
+    const { manifest_version: first } = await submitMapManifest(pool, manifest(scopeKey));
+    await activateMapManifest(pool, first.id);
+    const { manifest_version: second } = await submitMapManifest(
+      pool,
+      manifest(scopeKey, '第二版工厂'),
+    );
+    await activateMapManifest(pool, second.id);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await expect(projectMapManifest({ client, manifestVersion: first })).rejects.toMatchObject({
+        code: 'MAP_PROJECTION_MANIFEST_STALE',
+      });
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
+
+    const activeManifest = await pool.query(
+      `SELECT id FROM map_manifest_versions WHERE scope_key=$1 AND status='active'`,
+      [scopeKey],
+    );
+    const activeProjection = await pool.query(
+      `SELECT manifest_version_id FROM map_projection_runs WHERE scope_key=$1 AND status='active'`,
+      [scopeKey],
+    );
+    expect(activeManifest.rows).toEqual([{ id: second.id }]);
+    expect(activeProjection.rows).toEqual([{ manifest_version_id: second.id }]);
+  });
+
+  it('数据库拒绝 run 伪造 manifest scope 或 digest provenance', async () => {
+    const scopeKey = `${scopePrefix}-provenance`;
+    const { manifest_version: version } = await submitMapManifest(pool, manifest(scopeKey));
+
+    await expect(pool.query(
+      `INSERT INTO map_projection_runs
+        (scope_key, manifest_version_id, manifest_digest, fact_revisions,
+         projector_version, projection_digest, status)
+       VALUES ($1, $2, $3, '{}'::jsonb, 'map-projector-v1', $4, 'building')`,
+      [`${scopeKey}-forged`, version.id, 'f'.repeat(64), 'e'.repeat(64)],
+    )).rejects.toMatchObject({ code: '23503' });
+  });
+
+  it('真实激活把 Cross-cut serves 连接到 Capability 节点', async () => {
+    const scopeKey = `${scopePrefix}-capability-serves`;
+    const input = manifest(scopeKey);
+    input.crosscut_pool[0].serves = ['F1'];
+    const { manifest_version: draft } = await submitMapManifest(pool, input);
+    await activateMapManifest(pool, draft.id);
+
+    const { rows } = await pool.query(
+      `SELECT target.node_type
+         FROM map_projection_runs run
+         JOIN map_projection_edges edge ON edge.run_id=run.id AND edge.edge_type='serves'
+         JOIN map_projection_nodes target
+           ON target.run_id=edge.run_id AND target.node_id=edge.to_node_id
+        WHERE run.scope_key=$1 AND run.status='active'
+          AND edge.edge_key=$2`,
+      [scopeKey, `${input.crosscut_pool[0].key}:F1`],
+    );
+    expect(rows).toEqual([{ node_type: 'capability' }]);
+  });
+
   it('边写入失败时 Manifest 与旧完整 projection 均保持 active', async () => {
     const scopeKey = `${scopePrefix}-rollback`;
     const { manifest_version: first } = await submitMapManifest(pool, manifest(scopeKey));
