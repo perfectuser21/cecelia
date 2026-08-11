@@ -1,0 +1,25 @@
+{
+  "initiative_id": "be8babea-82f8-4ca6-9e57-11eb75dff348",
+  "journey_type": "user_facing",
+  "journey_type_reason": "Safari/WebKit 用户可见深链与双节点 Dashboard 生产发布主链需要真实浏览器验收",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "修复 Dashboard-only HK/US 官方发布主链",
+      "scope": "让既有 Dashboard-only 入口复用双节点发布与失败终验，并永久保留先红后绿回归",
+      "dod": [
+        "[BEHAVIOR] Dashboard-only 成功调用既有 promote 主链且 HK/终验失败向上返回非零",
+        "[BEHAVIOR] 真实 HK/US 四类资源等于 PR head，WebKit 深链刷新后不变且入口日志 Referer 正确",
+        "[ARTIFACT] 永久 Vitest CI 回归测试"
+      ],
+      "files": [
+        "scripts/deploy.sh",
+        "packages/quality/",
+        "sprints/08111145-kernel-be8babea/tests/dashboard-only-production-chain.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}

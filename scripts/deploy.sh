@@ -82,6 +82,16 @@ if [[ "$DASHBOARD_CHANGED" == true ]]; then
         exit 1
     }
     echo ""
+
+    if [[ "$DASHBOARD_ONLY" == true ]]; then
+        echo "--- Promoting Dashboard to US/HK ---"
+        bash "$SCRIPT_DIR/promote-dashboard.sh" || {
+            echo ""
+            echo "[FAIL] promote-dashboard.sh 失败，中止部署"
+            exit 1
+        }
+        echo ""
+    fi
 fi
 
 # ── Smoke ────────────────────────────────────────────────────────────────────
