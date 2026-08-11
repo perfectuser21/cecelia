@@ -51,6 +51,11 @@ interface NodeResponse extends Envelope {
   affected_nodes: MapNode[];
 }
 
+interface RadiusResponse extends Envelope {
+  affected_business_nodes: Array<{ node_key: string; name?: string }>;
+  must_run_assertions: Array<{ node_key: string; assertion_ref: string }>;
+}
+
 const stateStyles: Record<MapState, string> = {
   green: 'bg-emerald-100 text-emerald-800',
   red: 'bg-red-100 text-red-800',
@@ -104,6 +109,16 @@ async function getJson<T>(url: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(response.statusText);
+  return response.json() as Promise<T>;
+}
+
 function collectDescendants(root: string, edges: MapEdge[], nodes: MapNode[]) {
   const nodeByKey = new Map(nodes.map((node) => [node.key, node]));
   const found = new Map<string, MapNode>();
@@ -128,12 +143,14 @@ export default function MapPage() {
   const [health, setHealth] = useState<string>('读取中');
   const [selectedCapability, setSelectedCapability] = useState<NodeResponse | null>(null);
   const [selectedEvidence, setSelectedEvidence] = useState<NodeResponse | null>(null);
+  const [radius, setRadius] = useState<RadiusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadMap = useCallback(async (nextScope: string) => {
     setError(null);
     setSelectedCapability(null);
     setSelectedEvidence(null);
+    setRadius(null);
     try {
       const [mapResult, healthResult] = await Promise.all([
         getJson<MapResponse>(`/api/brain/map?scope=${encodeURIComponent(nextScope)}`),
@@ -152,19 +169,29 @@ export default function MapPage() {
 
   const openNode = useCallback(async (node: MapNode, level: 2 | 3) => {
     try {
-      const detail = await getJson<NodeResponse>(
-        `/api/brain/map/nodes/${encodeURIComponent(node.key)}?scope=${encodeURIComponent(scope)}`,
-      );
+      const detailUrl = `/api/brain/map/nodes/${encodeURIComponent(node.key)}?scope=${encodeURIComponent(scope)}`;
       if (level === 2) {
+        const repo = Object.keys(map?.fact_revisions ?? {})[0];
+        const [detail, impact] = await Promise.all([
+          getJson<NodeResponse>(detailUrl),
+          postJson<RadiusResponse>('/api/brain/map/radius', {
+            scope,
+            repo,
+            node_keys: [node.key],
+            changed_files: [],
+          }),
+        ]);
         setSelectedCapability(detail);
+        setRadius(impact);
         setSelectedEvidence(null);
       } else {
+        const detail = await getJson<NodeResponse>(detailUrl);
         setSelectedEvidence(detail);
       }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
     }
-  }, [scope]);
+  }, [map, scope]);
 
   const streams = useMemo(() => map?.nodes.filter(({ type }) => type === 'value_stream').sort(compareNodes) ?? [], [map]);
   const capabilities = useMemo(() => map?.nodes.filter(({ type }) => type === 'capability').sort(compareNodes) ?? [], [map]);
@@ -194,6 +221,16 @@ export default function MapPage() {
   }, [capabilities, capabilityForStream, streams]);
 
   const receipt = selectedEvidence?.node.state_details?.receipt as Record<string, unknown> | undefined;
+  const capabilityCrosscuts = useMemo(() => {
+    if (!map || !selectedCapability) return [];
+    const parentStreams = new Set(selectedCapability.upstream
+      .filter(({ type }) => ['contains', 'owns'].includes(type))
+      .map(({ from }) => from));
+    const crosscutKeys = new Set(map.edges
+      .filter(({ type, to }) => type === 'serves' && parentStreams.has(to))
+      .map(({ from }) => from));
+    return map.nodes.filter(({ key, type }) => type === 'crosscut' && crosscutKeys.has(key));
+  }, [map, selectedCapability]);
 
   return (
     <main className="min-h-screen bg-slate-50 p-6 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
@@ -297,6 +334,26 @@ export default function MapPage() {
               <ul className="space-y-1 text-sm">
                 {selectedCapability.boundaries.map((edge) => <li key={`${edge.from}-${edge.to}`}>{String(edge.attributes.statement ?? `${edge.from} → ${edge.to}`)}</li>)}
               </ul>
+              <div className="mt-5 grid gap-5 lg:grid-cols-3">
+                <article>
+                  <h3 className="mb-2 font-semibold">上游与下游</h3>
+                  <p className="text-sm">上游：{selectedCapability.upstream.map(({ from }) => from).join('、') || '无'}</p>
+                  <p className="text-sm">下游：{selectedCapability.downstream.map(({ to }) => to).join('、') || '无'}</p>
+                </article>
+                <article>
+                  <h3 className="mb-2 font-semibold">横切影响</h3>
+                  <ul className="space-y-1 text-sm">
+                    {capabilityCrosscuts.map((node) => <li key={node.key}>{node.key} · {node.name}</li>)}
+                  </ul>
+                </article>
+                <article>
+                  <h3 className="mb-2 font-semibold">影响半径</h3>
+                  <p className="text-sm">{radius?.affected_business_nodes.map(({ node_key: key }) => key).join(' → ') || '无受影响节点'}</p>
+                  <ul className="mt-2 space-y-1 text-sm">
+                    {radius?.must_run_assertions.map((item) => <li key={item.node_key}>必跑：{item.assertion_ref}</li>)}
+                  </ul>
+                </article>
+              </div>
             </section>
           )}
 
