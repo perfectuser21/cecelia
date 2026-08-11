@@ -13,15 +13,18 @@ function readGitRevision(dir) {
 }
 
 async function replaceFactSnapshot(pool, kind, { repo, sourceRevision, scannerVersion }) {
+  const { rows: [{ cnt }] } = await pool.query(
+    `SELECT COUNT(*)::int AS cnt FROM db_schema_registry WHERE repo = $1`, [repo],
+  );
   await pool.query(
     `INSERT INTO fact_snapshot_headers (kind, repo, source_revision, scanner_version, scanned_at, row_count)
-     VALUES ($1, $2, $3, $4, NOW(), (SELECT COUNT(*)::int FROM db_schema_registry WHERE repo = $2))
+     VALUES ($1, $2, $3, $4, NOW(), $5)
      ON CONFLICT (kind, repo) DO UPDATE
        SET source_revision = EXCLUDED.source_revision,
            scanner_version = EXCLUDED.scanner_version,
            scanned_at = EXCLUDED.scanned_at,
            row_count = EXCLUDED.row_count`,
-    [kind, repo, sourceRevision, scannerVersion],
+    [kind, repo, sourceRevision, scannerVersion, cnt],
   );
 }
 
