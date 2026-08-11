@@ -354,6 +354,45 @@ describe('runJudgeGate — 三权分立裁判门', () => {
     expect(res.judged).toBe(false);
     expect(judgeFn).not.toHaveBeenCalled();
   });
+
+  it('精确 PR 验收只有 required_command_evidence 时仍必须进入独立裁判', async () => {
+    const commands = ['npm test', 'bash scripts/smoke.sh'];
+    const judgeFn = vi.fn().mockResolvedValue({
+      verdict: 'PASS',
+      coverage: commands.map((step) => ({ step, passed: true, evidence: `${step} exit 0` })),
+      feedback: null,
+    });
+    const commandEvidence = async () => ({
+      contractE2E: '',
+      goldenPathSteps: [],
+      transcript: 'commands completed',
+      brainResult: {
+        verdict: 'PASS',
+        behavior_tests: commands.map((command) => ({ command, exit_code: 0, log_tail: 'passed' })),
+      },
+    });
+
+    const res = await runJudgeGate(
+      {
+        ...baseCtx,
+        agentVerdict: 'PASS',
+        agentFeedback: null,
+        requiredCommandEvidence: commands,
+      },
+      {
+        judgeFn,
+        collectEvidence: commandEvidence,
+        mechanicalGateFn: async () => ({ pass: true, reasons: [] }),
+        ...noopWrite,
+      },
+    );
+
+    expect(res).toMatchObject({ verdict: 'PASS', judged: true });
+    expect(judgeFn).toHaveBeenCalledWith(
+      expect.objectContaining({ goldenPathSteps: commands }),
+      expect.any(Object),
+    );
+  });
 });
 
 describe('validateCoverage — 代码判 coverage 覆盖（不信裁判文字）', () => {
