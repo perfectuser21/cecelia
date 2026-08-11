@@ -1,6 +1,14 @@
 # Brain 模块定义
 
-**版本**: 1.272.12
+**版本**: 1.272.15
+
+## Blue-green internal auth credential closure
+
+- Blue-green sidecar 只读挂载共享 internal token SSOT；Gate 3 通过敏感入口匿名 401 验证生产容器真实启用鉴权。
+
+## Evaluator workspace dependencies
+
+- Evaluator TaskBundle 与 proposer/reviewer 一样声明 `runtime_resources.node_deps=true`，Fleet checkout 后会先执行受限的 `npm ci`，再运行仓库验收命令。
 
 ## Unified Map API and dashboard authority
 
