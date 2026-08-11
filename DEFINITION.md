@@ -8,21 +8,13 @@
 
 
 
-**Brain 版本**: 1.272.6
+**Brain 版本**: 1.272.7
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.6 — Dynamic Evaluator Provider Identity
-
-- Evaluator 的可信 root 取证阶段不再假定镜像内 `cecelia` 固定为 UID 999；运行时读取并校验真实非 root UID/GID，再用 `setpriv` 移除 capabilities 后启动 Provider。
-- WebKit OS 依赖新增系统账户导致 `cecelia` 实际 UID 变为 997 时，Evaluator 不再被错误判定为无法建立权限边界。
-- canonical Runner digest 更新为 `sha256:e958b6abeba555622a2206075b456d679e550cd854b6a9600d6fe68d0908b347`，Fleet worker pin 同步到 1.272.6；回归测试永久禁止重新写死 UID。
-
----
-
-## Brain 1.272.5 — Impact Contract 不可变证据闭环与 Evaluator WebKit Runtime
+## Brain 1.272.7 — Impact Contract 不可变证据闭环
 
 - 关系图按 Git revision 保留不可变快照；同 revision 出现不同边时扫描事务 fail-closed，在途合同始终读取原 base revision 对应的 projection 与图。
 - Impact radius 以显式 repo→scope 白名单、manifest digest、projection digest 锁定证据，拒绝 basename 碰撞与同 SHA 下的投影偷换。
@@ -37,6 +29,18 @@
 - Capability Mapper 在 Runner 只产 manifest artifact，拍板后的提交/激活统一走读取 credentials SSOT 的受信宿主 adapter。
 - 扫描只允许 clean main/exact SHA；批末复核 checkout 与四类 header revision，同 SHA 每 10 分钟保鲜。
 - Schema 地板推进到 410。
+
+---
+
+## Brain 1.272.6 — Dynamic Evaluator Provider Identity
+
+- Evaluator 的可信 root 取证阶段不再假定镜像内 `cecelia` 固定为 UID 999；运行时读取并校验真实非 root UID/GID，再用 `setpriv` 移除 capabilities 后启动 Provider。
+- WebKit OS 依赖新增系统账户导致 `cecelia` 实际 UID 变为 997 时，Evaluator 不再被错误判定为无法建立权限边界。
+- canonical Runner digest 更新为 `sha256:e958b6abeba555622a2206075b456d679e550cd854b6a9600d6fe68d0908b347`，Fleet worker pin 同步到 1.272.6；回归测试永久禁止重新写死 UID。
+
+---
+
+## Brain 1.272.5 — Evaluator WebKit Runtime and Dashboard Loopback
 - canonical Runner 固化 Playwright 1.58.0 与 WebKit OS 依赖，受限 UID 共享 `/ms-playwright`，Evaluator 不再因浏览器动态库缺失而无法验证真实页面。
 - Evaluator 容器专属 `localhost:5211` relay 指向宿主 Cecelia Dashboard；Generator/Dev 容器不占用该端口，避免与本地开发服务冲突。
 - canonical Runner digest 更新为 `sha256:6cef182dbec266157f7f2c731eaf596bb99450bb511b55d6526db102234198e3`，Fleet worker pin 同步到 1.272.5；回归合同覆盖 WebKit 安装与 5211 relay。

@@ -185,6 +185,12 @@ psql -U cecelia cecelia -c "SELECT g.id, g.status, array_agg(ge.event_type ORDER
 | ws5 | `packages/brain/src/impact-contract/__tests__/gap-state-machine.test.js` | 状态集合完整且 resolved 为终态 / 相同非法跳转稳定产生相同错误码 | permanent |
 | ws6 | `packages/brain/src/__tests__/integration/impact-contract-loop.integration.test.js` | 持久化合同、建立硬依赖，并在当前 revision 断言 PASS 后恢复原任务 | permanent |
 | Kernel | `packages/brain/src/impact-contract/__tests__/harness-gates.test.js` | generator 前以 active 声明重跑 Structure Gate 新鲜度校验 / evaluator 前按 active contract base 与 PR head 读取真实 diff / merge 前在当前 source contract 上重验可信回执围栏 | permanent |
+| Red ws1 | `sprints/08110022-relay-d96c9fa0/tests/change-kind.test.js` | task_type=new_feature → change_kind=new_capability | frozen Red evidence（只登记、不进入执行池） |
+| Red ws2 | `sprints/08110022-relay-d96c9fa0/tests/contract-schema.test.js` | 包含所有必填字段的合同通过 Zod parse 不抛出异常 | frozen Red evidence（只登记、不进入执行池） |
+| Red ws2 | `sprints/08110022-relay-d96c9fa0/tests/contract-store.test.js` | 相同内容计算出相同 hash | frozen Red evidence（只登记、不进入执行池） |
+| Red ws3 | `sprints/08110022-relay-d96c9fa0/tests/structure-gate.test.js` | Mapper 不可达时 Structure Gate 返回失败（不放行） | frozen Red evidence（只登记、不进入执行池） |
+| Red ws4 | `sprints/08110022-relay-d96c9fa0/tests/diff-gate.test.js` | 实际影响完全被声明覆盖时 Diff Gate 通过（pass） | frozen Red evidence（只登记、不进入执行池） |
+| Red ws5 | `sprints/08110022-relay-d96c9fa0/tests/gap-store.test.js` | open → assigned 转换成功 | frozen Red evidence（只登记、不进入执行池） |
 
 ---
 
@@ -196,6 +202,6 @@ psql -U cecelia cecelia -c "SELECT g.id, g.status, array_agg(ge.event_type ORDER
 | 2 | Migration 号无碰撞：主线使用至 407，本方案使用 408/409/410 | contract-dod.md 检查正式目录；ws2 使用 `408_impact_contracts.sql`，ws5 使用 `409_harness_gap_ledger.sql`，版本图快照使用 `410_versioned_graph_snapshots.sql` |
 | 3 | change_kind / gear 严格分离：两字段分别计算、分别留痕，禁止互相赋值 | FR-1 验收标准第3条"字段独立存在"；change-kind.test.js 包含交叉赋值的负向测试 |
 | 4 | Mapper fail-closed 原则：stale/unavailable/revision mismatch/无 freshness 均判 impact_unknown，门禁不放行 | FR-3 验收标准第1-3条；structure-gate.test.js 含三种不可判定情形测试；contract-dod.md BEHAVIOR-3 |
-| 5 | Red-then-Green 顺序：先保留 failing test（RED），再写最小实现（GREEN），测试永久留 CI | 回归测试已毕业到 `packages/brain/src/**/__tests__` 与 `tests/regression`，Sprint 占位测试已删除 |
+| 5 | Red-then-Green 顺序：先保留 failing test（RED），再写最小实现（GREEN），测试永久留 CI | 冻结 Red evidence 原样保留并登记为非执行法源；可执行回归已毕业到 `packages/brain/src/**/__tests__` 与 `tests/regression` |
 | 6 | MJ5 依赖边界：门禁接线可先落地，但真实 Mapper 合同未验收时必须 fail-closed | ws1/ws2 无 MJ5 依赖；ws3-ws6 已接权威边界，MJ5 不可用时不得产生 active 合同或 PASS 回执 |
 | 7 | Gap 状态机单向流转：open→assigned→fixing→verifying→resolved；验真失败→reopened→assigned；关闭必须引用当前 revision 断言 | FR-5 验收标准第1条；gap-store.test.js 含状态逆向流转的负向测试；contract-dod.md BEHAVIOR-4 |
