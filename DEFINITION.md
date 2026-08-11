@@ -8,20 +8,40 @@
 
 
 
-**Brain 版本**: 1.271.5
+**Brain 版本**: 1.271.8
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.271.5 — F1 Impact Contract 系统接入 CI
+## Brain 1.271.8 — F1 Impact Contract Harness 强制闭环
 
 - `change_kind` 统一为 `new_capability` / `capability_change` / `bugfix` / `parameter_only`，存入任务 payload；`gear` 保持独立执行强度字段。
 - 正式迁移 403/404 建立 `harness_impact_contracts`、`harness_gaps`、`gap_events`，并加厚既有 `task_dependencies`，所有外键引用真实 `tasks` 表。
 - 所有合同写入口强制经过 Structure Gate；真实 `/api/brain/map/radius` 不可用、陈旧、响应不合法或 revision 不一致时 fail-closed，不创建 active 合同。
-- Diff Gate 以 HEAD 与 changed files 复算影响；未声明影响写入 Gap Ledger 并阻塞原任务。当前 revision 的断言回执为 PASS 且所有 gap 关闭后，硬依赖置为 satisfied，原任务恢复执行。
+- Diff Gate 以 HEAD 与 changed files 复算影响；未声明影响写入 Gap Ledger、创建修复任务和硬依赖，真实断言回执通过且所有 gap 关闭后恢复原任务。
+- evaluator Runner 在 exact-SHA 独立只读 worktree 中去密、降权、限时执行 required assertions；receipt 与 attempt 终态同事务提交，Provider 无法持有 callback 凭据伪造结果。
+- merge fence 绑定当前合同、当前 Journey 断言版本、completed evaluator attempt 与精确 PR HEAD，并在合并命令中使用 `--match-head-commit` 消除竞态。
 - Harness 孤儿守卫会从 `initiative_runs.pr_url` 补齐 `generator_done` 交接证据，避免已产出 PR 的 run 被误终态化和重复派发。
 - 单元回归、正式迁移检查、真实 PostgreSQL 闭环及 real-env smoke 已纳入 CI。
+
+---
+
+## Brain 1.271.7 — Deterministic Universal Map Projection Core
+
+- 完整 Manifest 激活在同一事务内生成 projection run、稳定节点与关系边，写入失败时旧 active Manifest/Projection 保持不变。
+- Value Stream、Capability、Cross-cut 与 Shared Prerequisite 由通用规则确定性投影；Boundary 只生成 `hands_off_to` 边。
+- Node/Edge stable ID 与 projection digest 可重复重建，核心不含 Cecelia 或 ZenithJoy 领域身份常量。
+- Schema 地板推进到 405。
+
+---
+
+## Brain 1.271.5 — Versioned Universal Map Manifest
+
+- 新增完整 Map Manifest 的机器可读 schema、稳定引用校验与 canonical SHA-256；非法输入一次返回全部错误。
+- Manifest 以 decision 绑定的不可变版本写入，scope 内版本分配与 digest 幂等受事务锁保护。
+- validate/submit/activate 统一写入口已建立；Projector 在下一刀接入前，激活 fail-closed 且 draft/旧 active 不变。
+- Schema 地板推进到 402。
 
 ---
 

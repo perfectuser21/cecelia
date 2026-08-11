@@ -19,6 +19,17 @@ describe('Dockerfile config/ 拷贝（kernel bootstrap 依赖）', () => {
     expect(dockerfile).toMatch(/^COPY\s+packages\/brain\/config\/\s+\.\/config\/\s*$/m);
   });
 
+  it('Dockerfile 把 workspace 本地生产依赖合并进 /app 并在构建期验证启动导入', () => {
+    const dockerfile = readFileSync(join(brainRoot, 'Dockerfile'), 'utf8');
+    expect(dockerfile).toMatch(
+      /^COPY --from=deps \/repo\/node_modules \/app\/node_modules$/m,
+    );
+    expect(dockerfile).toMatch(
+      /^COPY --from=deps \/repo\/packages\/brain\/node_modules \/app\/node_modules$/m,
+    );
+    expect(dockerfile).toContain("await import('./src/lib/map-manifest-schema.js')");
+  });
+
   it('node-profile.js 解析路径与镜像布局一致（../../../config/ 相对 src/orchestrator/fleet-node/）', () => {
     const source = readFileSync(
       join(brainRoot, 'src/orchestrator/fleet-node/node-profile.js'),

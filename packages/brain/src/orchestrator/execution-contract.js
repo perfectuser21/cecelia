@@ -37,6 +37,28 @@ const PROVIDER_UNAVAILABLE_CODES = new Set([
   'provider_unavailable',
 ]);
 
+// 配额耗尽类失败信号（issue 7c9f427e）：account1 撞 Anthropic 周限时 runner 回调携带
+// 429 + 配额语义消息。区别于普通 runner_failure——它不是代码/运行器的错，是账号额度用尽，
+// derive 据此在同一 run 内轮换到下一个可用账号而非判 run 终态。
+// 强配额语义消息（账号周限/额度耗尽的确定信号，命中即账号耗尽，不看 code）。
+const QUOTA_STRONG_MESSAGE = /weekly limit|hit your weekly|spending cap|credit balance is too low/i;
+// 429 限流语义（需与 429 code/message 组合命中，避免把偶发限流误判为账号耗尽）。
+const RATE_LIMIT_MESSAGE = /rate.?limit/i;
+
+// 判定某 failed 结果的 error 是否为「账号配额耗尽」（判定点登记表 B∪C）：
+//   C. error.message 命中强配额语义（weekly limit / spending cap / credit balance too low）；或
+//   B. error.code/message 含 429 且 message 命中 rate limit 语义。
+// 裸 429（Too Many Requests 无配额关键词）不命中 → 仍 runner_failure（PRD 边界：偶发限流不过度轮换）。
+// error 为 null/字符串/缺 message 时安全回落 false，不 crash。
+function isAccountExhaustedError(error) {
+  if (!error || typeof error !== 'object') return false;
+  const code = String(error.code ?? '').trim().toLowerCase();
+  const message = String(error.message ?? '');
+  if (QUOTA_STRONG_MESSAGE.test(message)) return true;
+  const has429 = code.includes('429') || /\b429\b/.test(message);
+  return has429 && RATE_LIMIT_MESSAGE.test(message);
+}
+
 const PROVIDER_NATIVE_INSTRUCTION = /(?:\bTask\s+tool\b|Skill\s*\(|\bspawn_agent\b)/i;
 
 const skillSchema = z.object({
@@ -122,6 +144,7 @@ const harnessResultSchema = z.object({
     'semantic_refusal',
     'runner_failure',
     'needs_context',
+    'account_exhausted',
   ]).optional(),
   provider_metadata: z.object({
     provider: z.string().min(1),
@@ -187,9 +210,9 @@ export function parseHarnessResult(
     const errorCode = parsed.error && typeof parsed.error === 'object'
       ? String(parsed.error.code ?? '').trim().toLowerCase()
       : '';
-    return PROVIDER_UNAVAILABLE_CODES.has(errorCode)
-      ? 'infrastructure_blocked'
-      : 'runner_failure';
+    if (PROVIDER_UNAVAILABLE_CODES.has(errorCode)) return 'infrastructure_blocked';
+    if (isAccountExhaustedError(parsed.error)) return 'account_exhausted';
+    return 'runner_failure';
   })();
   const classified = failureClass == null
     ? parsed

@@ -72,6 +72,11 @@ vi.mock('../dept-heartbeat.js', () => ({
   triggerDeptHeartbeats: vi.fn().mockResolvedValue({}),
   tick: vi.fn().mockResolvedValue({ triggered: 0, skipped: 0, results: [] }),
 }));
+// executeTick 在心跳窗口会动态调用 LLM。本测试只验证 Goal Outer Loop，
+// 必须隔离外部账号/网络，避免全套并发时被超时污染。
+vi.mock('../heartbeat-plugin.js', () => ({
+  tick: vi.fn().mockResolvedValue({ skipped: true, reason: 'test_isolation' }),
+}));
 vi.mock('../daily-review-scheduler.js', () => ({
   triggerDailyReview: vi.fn().mockResolvedValue({}),
   fetchAllLineLedgersDigest: vi.fn().mockResolvedValue(''),

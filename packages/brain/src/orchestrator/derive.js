@@ -290,6 +290,25 @@ function attemptCallbackRoute(observed) {
       reason: 'callback_infrastructure_blocked',
     };
   }
+  // 账号配额耗尽类失败（issue 7c9f427e）：某 attempt 撞 429 周限/额度耗尽，根因不是
+  // 代码/运行器错，而是该账号额度用尽——不判 run 终态，在同一 run 内重派同角色（选目标时
+  // 由 resolveExecutionTarget 消费 account-usage CAPPED 判定轮换到下一可用账号）。
+  // 复用 INFRA_RETRY_ACTION_BY_ROLE 的非终态重试相位/动作，仅 reason 区分为 account_exhausted。
+  if (status === 'failed' && failureClass === 'account_exhausted') {
+    const retry = INFRA_RETRY_ACTION_BY_ROLE[role];
+    if (!retry) {
+      return {
+        phase: 'review',
+        action: ACTION.WAIT_HUMAN_REVIEW,
+        reason: 'callback_account_exhausted_route_unknown',
+      };
+    }
+    return {
+      phase: retry.phase,
+      action: retry.action,
+      reason: 'callback_account_exhausted',
+    };
+  }
   // 合同故障重开 GAN（r40 实证）：Generator 报出的故障根因在合同资产自身
   // （伪 RED 占位桩 / final-E2E 脚本缺陷），它受 CONTRACT IS LAW 约束无权修。
   // 责任在写合同的 Proposer 与批合同的 Reviewer——自动降级合同重开 GAN 让

@@ -1,82 +1,115 @@
-contract_branch: cp-harness-propose-r2-28d184cb-r9b641bd2-a11
-sprint_dir: sprints/08091640-kernel-gear-dispatch
+contract_branch: cp-harness-propose-r1-be8babea-r88f76b1d-a4
+sprint_dir: sprints/08111145-kernel-be8babea
 
 ---
 skeleton: false
-journey_type: autonomous
+journey_type: user_facing
 ---
-# Contract DoD — Sprint: kernel 真读 gear：三档在 orchestrator 状态机内分流
+# Contract DoD — Dashboard HK/US 官方发布主链
 
-**范围**: `orchestrator/derive.js` 按 gear 三档分叉 + `initiative_runs.gear` 列 + gear 读入 run context（run 行→observed.gear）+ 非法 gear kernel 侧 fail-closed。**不在范围**：不建 gear=param 档、不动入口强制、不改旧 relay prompt/env、不改 controller SKILL。
+**范围**: `scripts/deploy.sh --dashboard-only` 复用既有 promote、双节点指纹与真实 WebKit/日志验收。
 **大小**: M
+
+gate-allow: env-missing Playwright WebKit 在 PRD 指定的 mac_web evaluator 上运行；docker 命令经 ssh 在 HK 生产节点执行，不要求合同起草容器本地具备。
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] migration 396 新增 `initiative_runs.gear` 列（nullable）
-  Test: manual:bash -c 'ls "${REPO_ROOT:-/workspace}"/packages/brain/migrations/396_*.sql >/dev/null 2>&1 && grep -qiE "ALTER TABLE +initiative_runs" "${REPO_ROOT:-/workspace}"/packages/brain/migrations/396_*.sql && grep -qi "gear" "${REPO_ROOT:-/workspace}"/packages/brain/migrations/396_*.sql'
-  期望: exit 0
+- [x] [ARTIFACT] 永久 Vitest CI 回归存在且使用 `describe/it/expect`，覆盖成功接力与失败传播
+  Test: node -e "const c=require('fs').readFileSync('sprints/08111145-kernel-be8babea/tests/dashboard-only-production-chain.test.ts','utf8');if(!c.includes('describe(')||!c.includes('it(')||!c.includes('expect('))process.exit(1)"
+- [x] [ARTIFACT] `scripts/deploy.sh` 是唯一修改的官方入口，复用既有 `promote-dashboard.sh`，不新增第三份前端
+  Test: git diff --name-only origin/main...HEAD | grep -E '^(scripts/deploy.sh|packages/quality/|sprints/08111145-kernel-be8babea/)' >/dev/null
 
-- [x] [ARTIFACT] `kernel-run-store.createKernelRun` INSERT 增写 gear 列
-  Test: manual:bash -c 'grep -q "gear" "${REPO_ROOT:-/workspace}"/packages/brain/src/orchestrator/kernel-run-store.js'
-  期望: exit 0
+## BEHAVIOR 条目
 
-- [x] [ARTIFACT] 新集成测试登记进 vitest.config.js 的 POSTGRES_INTEGRATION_TESTS
-  Test: manual:bash -c 'grep -q "kernel-gear-dispatch.pg.integration.test.js" "${REPO_ROOT:-/workspace}"/packages/brain/vitest.config.js && echo "Tests 1 passed"'
-  期望: exit 0
+- [x] [BEHAVIOR] [L2] B-01: Dashboard-only 成功路径必须调用既有双节点 promote 主链
+  动作: 在隔离 fixture 执行 `scripts/deploy.sh --dashboard-only --skip-smoke`
+  预期观察: rebuild 成功后 promote 恰好调用一次，发布命令退出 0
+  等待预算: 10s
+  留证: Vitest verbose 输出中的成功用例与调用次数
+  Test: manual:bash -c 'npx vitest run sprints/08111145-kernel-be8babea/tests/dashboard-only-production-chain.test.ts -t "Dashboard-only 成功路径必须调用既有双节点 promote 主链" --reporter=verbose'
 
-## BEHAVIOR 条目（五行剧本 · 内嵌 manual:bash 单行命令）
+- [x] [BEHAVIOR] [L2] B-02: HK 同步或终验失败必须让 Dashboard-only 发布非零退出
+  动作: 在隔离 fixture 令 promote 主链返回 23，再执行 Dashboard-only 发布
+  预期观察: deploy 返回非零并显示发布失败，不能静默成功
+  等待预算: 10s
+  留证: Vitest verbose 输出中的 exit code 与错误输出断言
+  Test: manual:bash -c 'npx vitest run sprints/08111145-kernel-be8babea/tests/dashboard-only-production-chain.test.ts -t "HK 同步或终验失败必须让 Dashboard-only 发布非零退出" --reporter=verbose'
 
-- [x] [BEHAVIOR] [L2] B-01: gear=hotfix 初始态跳过 planner 直进 generate
-  动作: 调 derive({...初始态 prdExists=false, contract.approved=false, gear:'hotfix'})（经 brain-unit CI 跑 derive.test.js gear 用例）
-  预期观察: 返回 {phase:'generate', action:'spawn:generator'}，action 不等于 'spawn:planner'
+- [x] [BEHAVIOR] [L3] B-03: HK 与 US 四类生产资源等于真实 PR head [接缝×2]
+  动作: 发布后分别请求 HK/US 的 build-info、index、sw.js 与 `/workbench/tasks`
+  预期观察: 两端均可达、SHA 等于 PR head、四类响应一致且无旧 PWA 注册
+  等待预算: 120s
+  留证: `${SPRINT_DIR}/hk-us-fingerprint.log` 与四类响应 SHA-256
+  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#B-03
+
+- [x] [BEHAVIOR] [L3] B-04: HK 生产入口 WebKit 私密新上下文等待刷新后保持 /workbench/tasks [接缝×2]
+  动作: 用 Playwright WebKit 新 context 直达 HK 深链，等待 10 秒并刷新再等 10 秒
+  预期观察: 三次 pathname 都是 `/workbench/tasks` 且 service worker 注册数为 0
+  等待预算: 60s
+  留证: `${SPRINT_DIR}/screenshots/hk-workbench-tasks.png` 与 Playwright line report
+  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#B-04
+
+- [x] [BEHAVIOR] [L3] B-05: 本轮真实入口日志 Referer 保持深链
+  动作: WebKit 请求后读取 HK 入口容器从 `E2E_STARTED_AT` 起的新日志
+  预期观察: 至少一条 `/workbench/tasks` 请求的 Referer 仍含 `/workbench/tasks`，且无凭据字段
+  等待预算: 30s
+  留证: `${SPRINT_DIR}/hk-entry.log`
+  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#B-05
+
+## Invariant 映射
+
+- [x] [BEHAVIOR] [L3] INV-1: 真环境验证必须真实访问 HK/US 与 WebKit
+  动作: 执行 B-03、B-04、B-05，不提供离线替代入口
+  预期观察: 任一真实能力不可用时命令非零
+  等待预算: 120s
+  留证: 三条 L3 evidence 与 exit code
+  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-1
+
+- [x] [BEHAVIOR] [L2] INV-2: validation identity 仅从 Runner late-bound
+  动作: evaluator 启动前检查当前角色身份变量
+  预期观察: HARNESS attempt 与 capability snapshot 均非空，合同无 UUID 固化
   等待预算: 0s
-  留证: vitest 输出末 5 行（含 passed 统计）
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; npx vitest run src/orchestrator/__tests__/derive.test.js -t "不等于 spawn:planner" --reporter=dot'
+  留证: provenance JSON
+  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-2
 
-- [x] [BEHAVIOR] [L2] B-02: gear=hotfix 全程不派 planner/proposer/reviewer
-  动作: 调 derive(初始态 gear:'hotfix')，检查返回 action 不在三角色 spawn 集合内
-  预期观察: action ∉ {spawn:planner, spawn:proposer, spawn:reviewer}
+- [x] [BEHAVIOR] [L2] INV-3: deploy 失败禁止 warning 降级
+  动作: 令 promote fixture 返回 23 并运行 Dashboard-only
+  预期观察: deploy 返回非零
+  等待预算: 10s
+  留证: Vitest 失败传播用例输出
+  Test: manual:bash -c 'npx vitest run sprints/08111145-kernel-be8babea/tests/dashboard-only-production-chain.test.ts -t "HK 同步或终验失败必须让 Dashboard-only 发布非零退出" --reporter=verbose'
+
+- [x] [BEHAVIOR] [L3] INV-4: 判变使用生产自报 build-info
+  动作: 分别读取 HK/US 生产 build-info
+  预期观察: 两端 git_sha 都等于真实 PR head
+  等待预算: 30s
+  留证: 两端 JSON 响应
+  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-4
+
+- [x] [BEHAVIOR] [L3] INV-5: 判变端与终验端使用相同版本语义
+  动作: 对两端 build-info 执行同一精确比较
+  预期观察: git_sha 非 unknown 且完全一致
+  等待预算: 30s
+  留证: jq/cmp 输出
+  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-5
+
+- [x] [BEHAVIOR] [L2] INV-6: 验证命令真实产生 Red exit code
+  动作: 在未修实现上运行永久 Vitest 回归
+  预期观察: 当前基线至少一条失败且进程非零
+  等待预算: 30s
+  留证: `/tmp/sprint-red.log`
+  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-6
+
+- [x] [BEHAVIOR] [L1] INV-7: 合同与测试不固化凭据
+  动作: 扫描本 sprint 交付物中的常见真实凭据格式
+  预期观察: 无私钥块、GitHub token 或 Bearer token
   等待预算: 0s
-  留证: vitest 输出末 5 行
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; npx vitest run src/orchestrator/__tests__/derive.test.js -t "全程不派" --reporter=dot'
+  留证: 扫描 exit code
+  Test: manual:bash -c 'if rg -n '\''BEGIN (RSA |OPENSSH )?PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,}|Bearer [A-Za-z0-9._-]{20,}'\'' sprints/08111145-kernel-be8babea; then exit 1; fi'
 
-- [x] [BEHAVIOR] [L2] B-03: INV-1 gear=default 初始态零回归返回 spawn:planner
-  动作: 调 derive(初始态 gear:'default') 与 derive(初始态 不传 gear)，二者均应走现行 planning 门
-  预期观察: 两种情形 action 均为 'spawn:planner'，phase 'planning'（与改动前逐字节等价）
+- [x] [BEHAVIOR] [L3] INV-8: 入口日志证据必须脱敏
+  动作: 对本轮 HK 入口日志扫描凭据字段
+  预期观察: cookie、authorization、token 等号字段 0 条
   等待预算: 0s
-  留证: vitest 输出末 5 行 + derive.test.js 既有 100+ 用例全绿
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; npx vitest run src/orchestrator/__tests__/derive.test.js --reporter=dot'
-
-- [x] [BEHAVIOR] [L2] B-04: gear=segmented 初始态照跑 planner（≠hotfix，对齐 controller segmented）
-  动作: 调 derive(初始态 gear:'segmented')
-  预期观察: action 'spawn:planner'，phase 'planning'（planner→proposer 多段语义，段循环留待独立交付）
-  等待预算: 0s
-  留证: vitest 输出末 5 行
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; npx vitest run src/orchestrator/__tests__/derive.test.js -t "segmented 初始态 照跑 planner" --reporter=dot'
-
-- [x] [BEHAVIOR] [L2] B-05: INV-2 非法 gear（turbo）kernel 侧 fail-closed → mark_failed invalid_gear
-  动作: 调 derive(初始态 gear:'turbo')
-  预期观察: 返回 {phase:'failed', action:'mark_failed', reason:'invalid_gear'}（不静默降级、不进任何相位，对齐 executor.js:3097）
-  等待预算: 0s
-  留证: vitest 输出末 5 行
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; npx vitest run src/orchestrator/__tests__/derive.test.js -t "fail-closed" --reporter=dot'
-
-- [x] [BEHAVIOR] [L2] B-06: gear 列 round-trip + observed.gear 注入（真 Postgres）[接缝×2]
-  动作: 真 PG 上 createKernelRun(gear='hotfix')，再 collectGroundTruth 读回该 run
-  预期观察: SELECT gear FROM initiative_runs = 'hotfix'；collectGroundTruth 返回 observed.gear === 'hotfix'；gear 缺省时列 NULL 且 observed.gear==='default'
-  等待预算: 0s
-  留证: gear PG 集成套件 vitest 输出末 10 行（含 round-trip / observed.gear 用例）
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; export DATABASE_URL="${DB_URL:?}"; npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js -t "round-trip" --reporter=dot'
-
-- [x] [BEHAVIOR] [L2] B-07: hotfix run harness_attempts 角色分布 planner/proposer/reviewer=0 且 generator≥1（真 PG，时间窗防伪）[接缝×2]
-  动作: 真 PG 一跳驱动 runLoop（真 collectGroundTruth+真 derive+真 attemptStore，仅替身最外层 launcher），产出 hotfix run 的 harness_attempts 行，再 psql 断言
-  预期观察: `role IN ('planner','proposer','reviewer')` 计数=0 且 `role='generator'` 计数≥1（均带 created_at 时间窗）
-  等待预算: 0s
-  留证: 两条 psql 计数输出（0 与 ≥1）
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; export DATABASE_URL="${DB_URL:?}"; npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js -t "hotfix 首角色" --reporter=dot'
-
-## Invariant 覆盖
-
-- INV-1 [零回归] gear=default derive 输出不变（决策 1b677ae3）→ B-03 覆盖（default+undefined 双路径 + 全套 derive.test.js 100+ 用例绿）
-- INV-2 [fail-closed] 非法 gear kernel 侧 terminal failed 不静默降级（决策 e8f6134f）→ B-05 覆盖
-- INV-3 [确定性] derive 分叉禁 Date.now/Math.random/new Date → N/A 断言：gear 分叉为纯 switch/枚举比对，无时间/随机源（derive 既有确定性纪律，B-01~B-05 纯函数可复跑即隐含验证）
+  留证: `${SPRINT_DIR}/hk-entry.log` 扫描结果
+  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-8
