@@ -447,6 +447,64 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).not.toHaveProperty('prep_prd_body');
   });
 
+  it('把 payload.required_command_evidence 只读复制进 evaluator TaskBundle', async () => {
+    const deps = makeDeps();
+    const required = ['npm test', 'bash scripts/smoke.sh'];
+    const withRequiredEvidence = {
+      ...observed,
+      task: {
+        ...observed.task,
+        payload: {
+          ...observed.task.payload,
+          required_command_evidence: required,
+        },
+      },
+      pr: {
+        url: 'https://github.com/o/r/pull/42',
+        head_ref: 'cp-evidence-target',
+        head_sha: 'sha-1',
+        ci: 'pass',
+      },
+    };
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 7,
+      observed: withRequiredEvidence,
+      decision: { phase: 'evaluate', reason: 'ci_pass' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.required_command_evidence).toEqual(required);
+    expect(created.bundle.inputs.required_command_evidence).not.toBe(required);
+  });
+
+  it('required_command_evidence 类型非法时仍送入 TaskBundle 供 Judge fail-closed', async () => {
+    const deps = makeDeps();
+    const withInvalidRequiredEvidence = {
+      ...observed,
+      task: {
+        ...observed.task,
+        payload: {
+          ...observed.task.payload,
+          required_command_evidence: 'npm test',
+        },
+      },
+    };
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 7,
+      observed: withInvalidRequiredEvidence,
+      decision: { phase: 'evaluate', reason: 'ci_pass' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.required_command_evidence).toBe('npm test');
+  });
+
   it('passes the verified planner Git artifact into the proposer TaskBundle', async () => {
     const deps = makeDeps();
     const plannerPrdArtifact = {

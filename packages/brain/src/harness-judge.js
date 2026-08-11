@@ -15,6 +15,7 @@
 import { readFile, writeFile, mkdir, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { reconcileRequiredCommandEvidence } from './orchestrator/required-command-evidence.js';
 
 const DEFAULT_BASE_URL = 'https://toapis.com/v1';
 // 最终裁判的模型（TOAPIS_JUDGE_MODEL 可覆盖）。Judge 是全链路最后一道否决闸，
@@ -801,6 +802,18 @@ export async function runMechanicalGate(ctx, deps = {}) {
     }
   }
 
+  const requiredEvidence = reconcileRequiredCommandEvidence(
+    ctx.requiredCommandEvidence,
+    behaviorTests,
+  );
+  if (requiredEvidence.provided && !requiredEvidence.valid) {
+    reasons.push(requiredEvidence.invalidReason);
+  } else if (requiredEvidence.valid && !requiredEvidence.complete) {
+    for (const command of requiredEvidence.missing) {
+      reasons.push(`required_command_evidence 未有成功执行证据: ${command}`);
+    }
+  }
+
   // ② sprint 测试文件存在性：文件扫描 + kernel 合同 [BEHAVIOR] fallback，两者全 0 → FAIL。
   // Kernel 的 proposer 真相文件是 contract-draft.md；旧 controller 仍可能产出 contract-dod.md，
   // 所以两者都读，避免有真实合同却被误判 contract_tests=0。
@@ -820,7 +833,7 @@ export async function runMechanicalGate(ctx, deps = {}) {
         } catch { /* missing contract variant */ }
       }
     }
-    if (behaviorCount === 0) {
+    if (behaviorCount === 0 && !requiredEvidence.complete) {
       reasons.push('contract_tests 为 0（sprint 目录无 *.test.{ts,js,mjs,sh}，contract-dod.md/contract-draft.md 亦无 [BEHAVIOR]）');
     }
   }

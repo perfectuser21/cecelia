@@ -14,8 +14,11 @@
 
 ---
 
-## Brain 1.272.10 — Unified Map 多仓与 Impact Contract 不可变证据闭环
+## Brain 1.272.10 — Impact Contract 不可变证据闭环与 Exact-PR Evidence Bridge
 
+- 精确 PR 验收任务的 `required_command_evidence` 进入 Evaluator 与 Judge TaskBundle。
+- Evaluator 必须逐条原样执行并写结构化证据；Judge 只接受命令逐字一致、退出码为 0、日志非空的结果。
+- 无 sprint 合同文件的验证专用任务可以用这份严格对账后的命令清单作为合同测试，缺项仍 fail-closed。
 - 整图、节点、浏览影响半径、健康度与未归属事实统一由同一个 Map read service 在只读 `REPEATABLE READ` 快照内返回，并携带 Manifest/Projection digest、repo revision 与 freshness。
 - Dashboard `/map` 只消费 Unified Map API，提供 Value Stream → Capability → Assertion/receipt 三层下钻；重复旧页面和旧 feature 注册已移除。
 - Harness 的 revision-locked `/map/radius` 请求继续由 Impact resolver 裁决，不降级成 Dashboard 浏览半径。
@@ -33,6 +36,14 @@
 - Capability Mapper 在 Runner 只产 manifest artifact，拍板后的提交/激活统一走读取 credentials SSOT 的受信宿主 adapter。
 - 扫描只允许 clean main/exact SHA；批末复核 checkout 与四类 header revision，同 SHA 每 10 分钟保鲜。
 - Schema 地板推进到 410。
+
+---
+
+## Brain 1.272.9 — Universal Map Second-repo Wiring
+
+- `product-map-adapter` 把既有 `apps → lines → golden_paths` SSOT 转为完整 Manifest。
+- API/DB/Test/Graph 扫描器接受显式 repo/root，稳定 SHA 也按 10 分钟预算持续重拍。
+- Planner、Proposer 与 Island Gate 统一消费 Map API；Map 页面不再假定 Cecelia revision。
 
 ---
 
