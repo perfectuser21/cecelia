@@ -37,6 +37,8 @@ import { raise } from './alerting.js';
 import { checkAnchor } from './anchor-check.js';
 import { applyDispatchAllocationGuide } from './dispatch-allocation-guide.js';
 import { getLlmCapacitySnapshot } from './llm-capacity.js';
+import { resolveDispatchChannel } from './task-router.js';
+import { deriveGear } from './harness-skill-relay.js';
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
@@ -792,6 +794,32 @@ export async function dispatchNextTask(goalIds) {
     }
   } catch (err) {
     console.warn(`[dispatch] allocation guide failed: ${err.message}, proceeding with original executor`);
+  }
+
+  // ── coding 路由收归 kernel（决策 bf361265）─────────────────────────────────
+  // 改代码任务（task_type 白名单 dev/codex_dev，或 payload.code_change 显式标）在 spawn 前
+  // reroute 到 kernel harness 通道（task_type='harness_initiative' → executor 内
+  // runHarnessInitiativeRouter → initiative_runs 裁决线），并 merge 打标 code_change+gear+
+  // origin_task_type，不再走 legacy dev 直通 spawn。幂等：已在 harness_initiative 的任务不
+  // 二次 reroute、不覆盖 origin_task_type。merge（非覆盖）保留 executor/orchestrator/provider
+  // 等既有 payload 字段（skill-relay 降级 executor=codex 不被冲掉）。非改代码任务行为不变。
+  if (
+    resolveDispatchChannel(taskToDispatch) === 'kernel'
+    && taskToDispatch.task_type !== 'harness_initiative'
+  ) {
+    const gear = deriveGear(taskToDispatch);
+    const originTaskType = taskToDispatch.task_type;
+    taskToDispatch = {
+      ...taskToDispatch,
+      task_type: 'harness_initiative',
+      payload: {
+        ...(taskToDispatch.payload || {}),
+        code_change: true,
+        gear,
+        origin_task_type: originTaskType,
+      },
+    };
+    tickLog(`[dispatch] coding-route→kernel task=${String(nextTask.id).slice(0, 8)} origin=${originTaskType} gear=${gear} (reroute harness_initiative)`);
   }
 
   execResult = await triggerCeceliaRun(taskToDispatch);

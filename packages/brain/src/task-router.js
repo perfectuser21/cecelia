@@ -62,6 +62,37 @@ const VALID_TASK_TYPES = [
   'strategist_decision',  // Line 军师决策：task 落终态后按 line 派发（line-strategist-dispatch-plugin.js）
 ];
 
+// ── coding 路由收归 kernel（决策 bf361265，2026-08-11）───────────────────────────
+// 改代码任务白名单：命中即在派发层打标 code_change 并强制进 kernel harness 裁决线
+// （dispatcher 将 reroute 到 harness_initiative full-graph），不再走 legacy dev 直通 spawn。
+// 第一版识别规则 = task_type 字面白名单；payload.code_change===true 为显式扩展点，
+// 供白名单外任务手动收归。非白名单且无显式标 → 非改代码，派发行为不变（走 legacy）。
+const CODE_CHANGE_TASK_TYPES = new Set([
+  'dev',        // 标准改代码任务（/dev）
+  'codex_dev',  // Codex Provider 跑 /dev（同 skill，不同 provider）
+]);
+
+/**
+ * classifyCodeChange(task) — 纯判定，是否为「改代码」任务。
+ * 命中 CODE_CHANGE_TASK_TYPES 白名单，或 payload.code_change===true 显式标记 → { code_change: true }。
+ * 其余（research/arch_review/talk/data 等）→ { code_change: false }。
+ * 纯函数，无副作用、不抛错、白名单精确匹配（不做大小写/空格归一，避免误判）。
+ */
+export function classifyCodeChange(task) {
+  const explicit = task?.payload?.code_change === true;
+  const whitelisted = CODE_CHANGE_TASK_TYPES.has(task?.task_type);
+  return { code_change: explicit || whitelisted };
+}
+
+/**
+ * resolveDispatchChannel(task) — 改代码 → 'kernel'（进 harness 裁决线），否则 'legacy'（保守回退，行为不变）。
+ */
+export function resolveDispatchChannel(task) {
+  return classifyCodeChange(task).code_change ? 'kernel' : 'legacy';
+}
+
+export { CODE_CHANGE_TASK_TYPES };
+
 // 支持 P2P 异步回调的任务类型
 // 当飞书 P2P 创建这些类型的任务后，自动注册 task_interest 订阅，任务完成时回调用户
 // 扩展新能力：在此 Set 中加一行，无需改 ops.js
