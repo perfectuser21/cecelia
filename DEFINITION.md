@@ -8,9 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.1
+**Brain 版本**: 1.272.2
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.272.2 — Kernel Declared PR Ground Truth
+
+- Kernel Ground Truth 在 `initiative_runs.pr_url` 尚未落库时，优先读取任务 payload 中格式严格合法的 GitHub PR URL，并直接查询 GitHub 实时状态。
+- 已有 PR 接管不再依赖 PR 标题或分支碰巧包含 task 短 ID；Evaluator 仍须通过 URL 与 40 位 head SHA 双重精确匹配。
+- 非严格 GitHub pull URL 的 payload 声明 fail closed，不进入 shell 或 PR 观测链。
 
 ---
 
