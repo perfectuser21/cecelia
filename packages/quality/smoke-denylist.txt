@@ -3,6 +3,9 @@
 # 原则：仅用于"CI 环境根本无法提供所需服务"的脚本
 # 清偿方式：要么改造脚本使其 CI 可用，要么确认永久依赖外部服务后保留此处
 
+# === 需要 Brain map 路由（PR #4786 合并后移入 allowlist）===
+map-engine-smoke.sh
+
 # === 需要 Notion API 凭据 ===
 clips-notion-smoke.sh
 notion-brain-first-smoke.sh
