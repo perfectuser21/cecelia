@@ -8,9 +8,17 @@
 
 
 
-**Brain 版本**: 1.271.7
+**Brain 版本**: 1.272.0
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.272.0 — 合并权收归单一裁决闸（harness-judge required check）
+
+- 新增 Brain GET /api/brain/harness/pr-ownership 归属端点（凭 initiative_runs.pr_url 精确匹配 /pull/<n>）。
+- 通道 1 should-auto-merge.sh 判据从 PR 标题换成 Brain 归属求证 + fail-closed；ci.yml auto-merge 改传 PR_NUMBER。
+- kernel merge_pr CLEAN 路径合并前置 harness-judge status=success，三条合并通道经 GitHub required check 收敛到单一裁决闸。
 
 ---
 

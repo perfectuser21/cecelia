@@ -183,6 +183,18 @@ export function createKernelHandlers(deps) {
         );
         return { status: 'DONE_WITH_CONCERNS', detail: 'updated PR branch; rechecking gates' };
       }
+      // 合并权收归单一裁决闸（#4755/#4759 修法）：CLEAN 路径真正 merge 前，先把
+      // harness-judge required status check 置为 success。三条合并通道（CI 通用 auto-merge、
+      // engine-pr-watchdog 的 --auto、本 kernel）都受 GitHub required check 排队，只有走完
+      // mergeGate（本 handler 被派发即代表 evaluate PASS + judge PASS + verdict SHA 锚定 +
+      // 人审如需）才置 success → 裁判放行前 PR 物理不可合并。必须先置 success 再 gh pr merge。
+      const statusPath = /github\.com\/([^/]+)\/([^/]+)\/pull\/\d+/.exec(pr.url ?? '');
+      if (statusPath && pr.head_sha) {
+        deps.execCmd(
+          `gh api ${shellQuote(`repos/${statusPath[1]}/${statusPath[2]}/statuses/${pr.head_sha}`)}` +
+            ` -X POST -f state=success -f context=harness-judge`,
+        );
+      }
       deps.execCmd(`gh pr merge ${shellQuote(pr.url)} --squash --delete-branch`);
       return { status: 'DONE', detail: 'merge requested' };
     },

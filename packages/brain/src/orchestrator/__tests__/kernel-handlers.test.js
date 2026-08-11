@@ -240,6 +240,47 @@ describe('kernel deterministic handlers', () => {
     expect(conflictDeps.execCmd).not.toHaveBeenCalled();
   });
 
+  it('CLEAN 合并前先置 harness-judge status=success（合并权收归单一裁决闸 #4755/#4759）', async () => {
+    const d = deps();
+    const calls = [];
+    d.execCmd = vi.fn((cmd) => { calls.push(cmd); return ''; });
+    await expect(createKernelHandlers(d).merge_pr(context())).resolves.toMatchObject({ status: 'DONE' });
+
+    // 置 status 的 gh api 调用：statuses/<head_sha> state=success context=harness-judge
+    const statusIdx = calls.findIndex((c) =>
+      /gh api .*repos\/o\/r\/statuses\/sha-1/.test(c) &&
+      c.includes('state=success') &&
+      c.includes('context=harness-judge'),
+    );
+    const mergeIdx = calls.findIndex((c) => c.includes('gh pr merge'));
+    expect(statusIdx).toBeGreaterThanOrEqual(0);
+    expect(mergeIdx).toBeGreaterThanOrEqual(0);
+    // 序号：先置 success，再 gh pr merge（裁判放行前 PR 物理不可合并）
+    expect(statusIdx).toBeLessThan(mergeIdx);
+  });
+
+  it('BEHIND / CONFLICTING 路径不置 harness-judge status（未真正合并，不放行）', async () => {
+    const behindDeps = deps();
+    await expect(createKernelHandlers(behindDeps).merge_pr(context({
+      observed: {
+        ...context().observed,
+        pr: { ...context().observed.pr, mergeStateStatus: 'BEHIND' },
+      },
+    }))).resolves.toMatchObject({ status: 'DONE_WITH_CONCERNS' });
+    expect(behindDeps.execCmd).not.toHaveBeenCalledWith(
+      expect.stringContaining('context=harness-judge'),
+    );
+
+    const conflictDeps = deps();
+    await expect(createKernelHandlers(conflictDeps).merge_pr(context({
+      observed: {
+        ...context().observed,
+        pr: { ...context().observed.pr, mergeStateStatus: 'CONFLICTING' },
+      },
+    }))).resolves.toMatchObject({ status: 'BLOCKED' });
+    expect(conflictDeps.execCmd).not.toHaveBeenCalled();
+  });
+
   it('BEHIND 补齐走版本无关 gh api PUT（run 986a51d3：gh2.45 无 update-branch 子命令）', async () => {
     const d = deps();
     const handler = createKernelHandlers(d)['merge_pr'];

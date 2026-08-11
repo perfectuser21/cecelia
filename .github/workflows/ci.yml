@@ -1960,17 +1960,17 @@ jobs:
           BRAIN_URL: ${{ vars.BRAIN_URL || 'http://localhost:5221' }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BODY: ${{ github.event.pull_request.body }}
-          # PR_TITLE / HEAD_BRANCH 走 env 而非内联 ${{ }}：分支名和标题是用户可控输入，
-          # 直接内联进 run 脚本存在 shell 注入面（GHA 已知问题）。
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          # HEAD_BRANCH 走 env 而非内联 ${{ }}：分支名是用户可控输入，直接内联进 run 脚本
+          # 存在 shell 注入面（GHA 已知问题）。归属判据已从 PR_TITLE 换成 Brain 求证 PR_NUMBER。
           HEAD_BRANCH: ${{ github.head_ref }}
         run: |
           # 合并决策抽到 should-auto-merge.sh（可单测，见 __tests__/should-auto-merge.test.sh）。
-          # 关键：harness generator 产出的 PR 也用 cp-* 分支，但走 harness 自己的
-          # evaluator+DeepSeek 裁判 gate 决定 merge。若此处仍按「cp-* + CI 绿」抢先合并，会
-          # 架空裁判裁决权（用户曾见「裁判说不放行，代码还是被 merge」）。脚本按 PR 标题
-          # feat(harness): 前缀识别 harness-owned PR 并跳过，把 merge 交还给 harness gate。
-          DECISION="$(bash .github/workflows/scripts/should-auto-merge.sh "$HEAD_BRANCH" "$PR_TITLE")"
+          # 关键：harness generator 产出的 PR 也用 cp-* 分支，但走 harness kernel 的
+          # evaluator+judge mergeGate 决定 merge。若此处仍按「cp-* + CI 绿」抢先合并，会
+          # 架空裁判裁决权（#4755/#4759 实证「裁判说不放行，代码还是被 merge」）。脚本改向
+          # Brain 求证归属（查 initiative_runs.pr_url，非 LLM 标题），harness-owned 则跳过，
+          # 把 merge 交还给 kernel mergeGate（fail-closed：Brain 不可达一律 SKIP）。
+          DECISION="$(bash .github/workflows/scripts/should-auto-merge.sh "$HEAD_BRANCH" "$PR_NUMBER")"
           echo "$DECISION"
           if [[ "$DECISION" == SKIP:* ]]; then
             exit 0
