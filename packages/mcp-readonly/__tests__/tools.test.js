@@ -200,6 +200,15 @@ describe('getServiceLogs', () => {
     expect(fakeReadLog.mock.calls[0][1]).toBe(200);
   });
 
+  it('SERVICE_LOG_WHITELIST 的值是 docker 容器名，不是文件路径（回归测试：曾经错猜成文件路径语义）', () => {
+    // 生产 Brain 跑在 docker-compose.yml 的 node-brain 服务里（container_name:
+    // cecelia-node-brain），不是 host LaunchDaemon 直跑 node server.js。值必须是容器名，
+    // 不能又漂回一个绝对文件路径——否则真实 readLogFn 接线后会读到一份宿主机上早已停更的
+    // 僵尸日志文件而不报错，比直接失败更危险。
+    expect(SERVICE_LOG_WHITELIST['cecelia-brain']).toBe('cecelia-node-brain');
+    expect(SERVICE_LOG_WHITELIST['cecelia-brain']).not.toMatch(/^\//);
+  });
+
   it('SERVICE_LOG_WHITELIST 本次只含 cecelia-brain', () => {
     expect(Object.keys(SERVICE_LOG_WHITELIST)).toEqual(['cecelia-brain']);
   });
