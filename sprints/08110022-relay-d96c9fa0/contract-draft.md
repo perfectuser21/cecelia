@@ -193,7 +193,7 @@ psql -U cecelia cecelia -c "SELECT g.id, g.status, array_agg(ge.event_type ORDER
 | # | Invariant（来自 sprint-prd.md） | 合同对应条款 |
 |---|---|----|
 | 1 | Brain 改动门禁（DevGate 三连）：facts-check + version-sync + dod-mapping，任一失败禁止继续编码 | ws1-ws6 每段 scope.devgate_required = true；task-plan.json 中每段 description 均注明必须先通过 DevGate 三连 |
-| 2 | Migration 号无碰撞：Universal Map 使用至 405，本方案使用 406/407 | contract-dod.md 检查正式目录；ws2 使用 `406_impact_contracts.sql`，ws5 使用 `407_harness_gap_ledger.sql` |
+| 2 | Migration 号无碰撞：主线使用至 407，本方案使用 408/409/410 | contract-dod.md 检查正式目录；ws2 使用 `408_impact_contracts.sql`，ws5 使用 `409_harness_gap_ledger.sql`，版本图快照使用 `410_versioned_graph_snapshots.sql` |
 | 3 | change_kind / gear 严格分离：两字段分别计算、分别留痕，禁止互相赋值 | FR-1 验收标准第3条"字段独立存在"；change-kind.test.js 包含交叉赋值的负向测试 |
 | 4 | Mapper fail-closed 原则：stale/unavailable/revision mismatch/无 freshness 均判 impact_unknown，门禁不放行 | FR-3 验收标准第1-3条；structure-gate.test.js 含三种不可判定情形测试；contract-dod.md BEHAVIOR-3 |
 | 5 | Red-then-Green 顺序：先保留 failing test（RED），再写最小实现（GREEN），测试永久留 CI | 回归测试已毕业到 `packages/brain/src/**/__tests__` 与 `tests/regression`，Sprint 占位测试已删除 |

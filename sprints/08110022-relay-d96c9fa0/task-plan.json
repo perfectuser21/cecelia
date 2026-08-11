@@ -34,14 +34,14 @@
       "depends_on": ["ws1"],
       "mj5_required": false,
       "scope": {
-        "description": "实现 Impact Contract 的 Zod schema 校验与 DB 持久化。创建正式 migration 406_impact_contracts.sql（harness_impact_contracts 表）。实现 POST/GET /api/brain/impact-contracts 路由。幂等性通过合同哈希与任务行锁保证。DevGate 三连通过后方可开工。",
+        "description": "实现 Impact Contract 的 Zod schema 校验与 DB 持久化。创建正式 migration 408_impact_contracts.sql（harness_impact_contracts 表）。实现 POST/GET /api/brain/impact-contracts 路由。幂等性通过合同哈希与任务行锁保证。DevGate 三连通过后方可开工。",
         "devgate_required": true,
         "files": [
           "packages/brain/src/impact-contract/contract-schema.js",
           "packages/brain/src/routes/impact-contracts.js"
         ],
         "migrations": [
-          "packages/brain/migrations/406_impact_contracts.sql"
+          "packages/brain/migrations/408_impact_contracts.sql"
         ],
         "tests": [
           "packages/brain/src/impact-contract/__tests__/contract-schema.test.js",
@@ -118,14 +118,14 @@
       "mj5_required": true,
       "mj5_note": "ws5 全程依赖 MJ5 合同（同 ws4），且依赖 ws4 的 gap 建立机制完整实现",
       "scope": {
-        "description": "实现 Gap Ledger 完整生命周期。创建正式 migration 407_harness_gap_ledger.sql（harness_gaps + gap_events + harness_gap_dependencies，并加厚既有 task_dependencies）。状态机单向强制：open→assigned→fixing→verifying→resolved；验真失败 verifying→reopened→assigned。repair task completed 且可信当前 revision 回执 PASS 后，原任务从 blocked 恢复 queued、清除旧 claim 并重新派发。幂等去重、分诊告警、gap_events 可观测。DevGate 三连通过后方可开工。",
+        "description": "实现 Gap Ledger 完整生命周期。创建正式 migration 409_harness_gap_ledger.sql（harness_gaps + gap_events + harness_gap_dependencies，并加厚既有 task_dependencies）。状态机单向强制：open→assigned→fixing→verifying→resolved；验真失败 verifying→reopened→assigned。repair task completed 且可信当前 revision 回执 PASS 后，原任务从 blocked 恢复 queued、清除旧 claim 并重新派发。幂等去重、分诊告警、gap_events 可观测。DevGate 三连通过后方可开工。",
         "devgate_required": true,
         "files": [
           "packages/brain/src/impact-contract/gap-store.js",
           "packages/brain/src/routes/gaps.js"
         ],
         "migrations": [
-          "packages/brain/migrations/407_harness_gap_ledger.sql"
+          "packages/brain/migrations/409_harness_gap_ledger.sql"
         ],
         "tests": [
           "packages/brain/src/impact-contract/__tests__/gap-store.test.js",

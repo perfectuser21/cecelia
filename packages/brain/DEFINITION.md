@@ -13,7 +13,7 @@
 - PostgreSQL 冻结 Impact Contract 语义字段与 Gap 权威身份，未解决 Gap 不可改归属或删除。
 - Harness Report Runner 不再写 Journey；Feature done 与测试锚点由已认证 Brain callback 回写。
 - 生产内部写接口使用共享 credentials token；scanner、Compose、蓝绿和 staging 使用同一 SSOT。
-- Schema 地板为 408。
+- Schema 地板为 410。
 
 ## F1 Impact Contract 系统（Brain 1.272.1）
 

@@ -206,10 +206,10 @@ describe('selfcheck', () => {
   // 403（事实池 source_revision + scanner_version + repo 字段补齐）推进地板到 403。
   // 404（Universal Map projection runs/nodes/edges 三派生表）推进地板到 404。
   // 405（rebuildable Map Projection core）推进地板到 405。
-  // 406/407（Impact Contract + Gap Ledger 强制闭环）推进地板到 407。
-  // 408（revision-indexed immutable graph snapshots）推进地板到 408。
-  it('EXPECTED_SCHEMA_VERSION should be 408', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('408');
+  // 408/409（Impact Contract + Gap Ledger 强制闭环）推进地板到 409。
+  // 410（revision-indexed immutable graph snapshots）推进地板到 410。
+  it('EXPECTED_SCHEMA_VERSION should be 410', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('410');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

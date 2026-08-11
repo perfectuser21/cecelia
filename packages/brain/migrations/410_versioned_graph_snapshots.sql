@@ -48,7 +48,7 @@ SELECT edge.repo, edge.source_revision, edge.src_path, edge.dst_path,
 ON CONFLICT DO NOTHING;
 
 INSERT INTO schema_version (version, description, applied_at)
-VALUES ('408', 'Immutable revision-indexed graph snapshots', NOW())
+VALUES ('410', 'Immutable revision-indexed graph snapshots', NOW())
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

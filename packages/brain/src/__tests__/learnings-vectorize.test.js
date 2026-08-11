@@ -466,8 +466,8 @@ describe('selfcheck schema version', () => {
     // 402 = immutable Universal Map Manifest versions。
     // 403 = 事实池 source_revision + scanner_version + repo 字段补齐；
     // 404 = Universal Map projection runs/nodes/edges 三派生表。
-    // 405 = rebuildable Universal Map Projection core；406/407 = Impact Contract + Gap Ledger；
-    // 408 = revision-indexed immutable graph snapshots，保证旧合同仍可按 base revision 裁决。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('408');
+    // 405 = rebuildable Universal Map Projection core；406/407 = 主线既有 migration；
+    // 408/409 = Impact Contract + Gap Ledger；410 = revision-indexed immutable graph snapshots。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('410');
   });
 });
