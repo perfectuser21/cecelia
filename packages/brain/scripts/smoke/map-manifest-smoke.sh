@@ -25,6 +25,7 @@ cleanup() {
   "$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
     -c "DELETE FROM map_projection_runs WHERE scope_key = '$SMOKE_SCOPE'" \
     -c "DELETE FROM map_manifest_versions WHERE scope_key = '$SMOKE_SCOPE'" \
+    -c "DELETE FROM map_scope_repositories WHERE scope_key = '$SMOKE_SCOPE'" \
     -c "DELETE FROM decisions WHERE id = '$SMOKE_DECISION_ID'" \
     >/dev/null 2>&1 || true
 }
@@ -37,11 +38,13 @@ db_scalar() {
 printf '%s\n' '── map manifest scratch smoke ──'
 printf 'database=%s scope=%s\n' "$DATABASE_NAME" "$SMOKE_SCOPE"
 
-[[ "$(db_scalar "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='402')")" == 't' ]] \
-  || fail 'schema_version 402 不存在'
+[[ "$(db_scalar "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='406')")" == 't' ]] \
+  || fail 'schema_version 406 不存在'
 [[ "$(db_scalar "SELECT to_regclass('public.map_manifest_versions') IS NOT NULL")" == 't' ]] \
   || fail 'map_manifest_versions 不存在'
-pass 'migration 402 与 manifest version table'
+[[ "$(db_scalar "SELECT to_regclass('public.map_scope_repositories') IS NOT NULL")" == 't' ]] \
+  || fail 'map_scope_repositories 不存在'
+pass 'migration 402/406 与 manifest/repo adapter tables'
 
 DATABASE_URL="$DATABASE_URL" SMOKE_SCOPE="$SMOKE_SCOPE" SMOKE_DECISION_ID="$SMOKE_DECISION_ID" \
   "$NODE_EXECUTABLE" --input-type=module <<'NODE'
@@ -72,6 +75,13 @@ try {
      VALUES ($1, 'feature', 'map-manifest-smoke', 'scratch fixture',
        'verify map manifest contract', 'active', 'codex', 'user', 'P2')`,
     [process.env.SMOKE_DECISION_ID],
+  );
+  await pool.query(
+    `INSERT INTO map_scope_repositories
+      (scope_key, repo, adapter_key, adapter_config)
+     VALUES ($1, $1, 'legacy-ledger-v1',
+       '{"ledger_partition":"infrastructure"}'::jsonb)`,
+    [process.env.SMOKE_SCOPE],
   );
 
   const first = await submitMapManifest(pool, manifest);
@@ -117,8 +127,10 @@ RESIDUE="$(db_scalar "
   SELECT
     (SELECT count(*) FROM map_manifest_versions WHERE scope_key='$SMOKE_SCOPE')::text
     || '|' ||
+    (SELECT count(*) FROM map_scope_repositories WHERE scope_key='$SMOKE_SCOPE')::text
+    || '|' ||
     (SELECT count(*) FROM decisions WHERE id='$SMOKE_DECISION_ID')::text")"
-[[ "$RESIDUE" == '0|0' ]] || fail "fixture 残留: $RESIDUE"
+[[ "$RESIDUE" == '0|0|0' ]] || fail "fixture 残留: $RESIDUE"
 pass 'scratch fixture 清理'
 
 printf '%s\n' 'ALL PASS'
