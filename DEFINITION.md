@@ -8,9 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.0
+**Brain 版本**: 1.272.1
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.272.1 — Kernel Verified Existing PR Adoption
+
+- `gear=hotfix` 可显式接管已有 PR：只有任务声明的 PR URL 与 40 位 head SHA 都和 GitHub 实时观测完全一致时，首个 Evaluator intent 才能建立共享 validation clock。
+- 已接管路径的 Judge 复用该 append-only clock；普通下游角色、URL/SHA 缺失或不一致仍以 `validation_clock_required` fail closed。
+- 不伪造 Generator intent，不允许角色级时钟重置。
 
 ---
 

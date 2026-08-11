@@ -27,7 +27,10 @@ import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
 import { materializeApprovedContract } from './contract-store.js';
 import { insertCaseFileRow } from './case-file-store.js';
 import { evaluateValidationIdentityPolicy } from './validation-identity-policy.js';
-import { resolveValidationClock } from './validation-clock.js';
+import {
+  resolveValidationClock,
+  VERIFIED_EXISTING_PR_ORIGIN,
+} from './validation-clock.js';
 import {
   ACTION,
   LOG_ACTION,
@@ -72,6 +75,25 @@ function asPayload(value) {
   if (!value) return {};
   if (typeof value === 'object') return value;
   try { return JSON.parse(value); } catch { return {}; }
+}
+
+const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
+function allowsVerifiedExistingPrEvaluatorOrigin(observed, action) {
+  if (action !== ACTION.SPAWN_EVALUATOR || observed.gear !== 'hotfix') return false;
+  if (observed.generatorSpawned === true) return false;
+  if ((observed.decisionLog ?? []).some((row) => (
+    ['spawn:generator', 'spawn:generator-fix'].includes(row?.action)
+    || asPayload(row?.detail).validation_origin === VERIFIED_EXISTING_PR_ORIGIN
+  ))) return false;
+
+  const payload = asPayload(observed.task?.payload);
+  const declaredUrl = payload.pr_url;
+  const declaredHeadSha = payload.pr_head_sha;
+  return typeof declaredUrl === 'string'
+    && declaredUrl.length > 0
+    && declaredUrl === observed.pr?.url
+    && GIT_SHA_PATTERN.test(declaredHeadSha ?? '')
+    && declaredHeadSha === observed.pr?.head_sha;
 }
 
 function jsonValue(value) {
@@ -1292,11 +1314,16 @@ export async function runLoop(
     }
     const intentAt = now();
     const taskPayload = asPayload(observed.task?.payload);
+    const allowEvaluatorOrigin = allowsVerifiedExistingPrEvaluatorOrigin(
+      observed,
+      decision.action,
+    );
     const validationClock = resolveValidationClock({
       action: decision.action,
       decisionLog: observed.decisionLog,
       intentAt,
       timeoutSeconds: Number(taskPayload.timeout_seconds ?? 5400),
+      allowEvaluatorOrigin,
     });
 
     try {
@@ -1316,6 +1343,9 @@ export async function runLoop(
           reason: decision.reason,
           crossCheckMismatch: counters.crossCheckMismatch,
           ...(validationClock ?? {}),
+          ...(allowEvaluatorOrigin
+            ? { validation_origin: VERIFIED_EXISTING_PR_ORIGIN }
+            : {}),
           ...humanReviewDetail(observed, decision.reason),
         },
       });
