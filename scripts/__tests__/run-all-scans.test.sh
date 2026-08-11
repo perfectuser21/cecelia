@@ -68,7 +68,15 @@ if [[ "${1##*/}" == "${FAIL_SCANNER:-}" ]]; then
   exit 23
 fi
 STUB
-chmod +x "$CONTROL_BIN/dirname" "$CONTROL_BIN/date" "$CONTROL_BIN/git" "$NODE_STUB"
+
+cat > "$CONTROL_BIN/curl" <<'STUB'
+#!/bin/bash
+if [[ -n "${CURL_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "$CURL_LOG"
+fi
+printf '%s\n' '{"status":"active"}'
+STUB
+chmod +x "$CONTROL_BIN/dirname" "$CONTROL_BIN/date" "$CONTROL_BIN/git" "$CONTROL_BIN/curl" "$NODE_STUB"
 
 DEFAULT_SCANS=$(cat <<'EOF'
 scripts/scan/scan-api-registry.js
@@ -81,10 +89,12 @@ EOF
 echo "=== run-all-scans.sh cron PATH 测试 ==="
 
 SUCCESS_LOG="$TMPD/default.log"
+SUCCESS_CURL_LOG="$TMPD/default-curl.log"
 SUCCESS_OUT="$TMPD/default.out"
 SUCCESS_RC=0
 env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
   NODE_FALLBACK_PATHS="$CONTROL_BIN/missing" SCAN_LOG="$SUCCESS_LOG" \
+  CURL_LOG="$SUCCESS_CURL_LOG" \
   /bin/bash "$RUNNER" > "$SUCCESS_OUT" 2>&1 || SUCCESS_RC=$?
 
 if [[ $SUCCESS_RC -eq 0 ]]; then
@@ -99,11 +109,21 @@ else
   fail "默认 scanner 调用不完整"
 fi
 
+if [[ -f "$SUCCESS_CURL_LOG" ]] \
+  && grep -q -- '-X POST http://localhost:5221/api/brain/map/rebuild' "$SUCCESS_CURL_LOG" \
+  && grep -q -- 'scope_key.*cecelia' "$SUCCESS_CURL_LOG"; then
+  pass "全部事实扫描成功后按 scope 原子重建 active Map projection"
+else
+  fail "扫描成功后未重建 cecelia Map projection"
+fi
+
 FAIL_LOG="$TMPD/failure.log"
+FAIL_CURL_LOG="$TMPD/failure-curl.log"
 FAIL_OUT="$TMPD/failure.out"
 FAIL_RC=0
 env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
   NODE_FALLBACK_PATHS="$CONTROL_BIN/missing" SCAN_LOG="$FAIL_LOG" \
+  CURL_LOG="$FAIL_CURL_LOG" \
   FAIL_SCANNER="fail.js" SCAN_SCRIPTS="before.js fail.js after.mjs" \
   /bin/bash "$RUNNER" > "$FAIL_OUT" 2>&1 || FAIL_RC=$?
 
@@ -111,6 +131,12 @@ if [[ $FAIL_RC -ne 0 ]]; then
   pass "scanner 失败时 runner 聚合返回非零"
 else
   fail "scanner 失败时 runner 错误返回 0"
+fi
+
+if [[ ! -s "$FAIL_CURL_LOG" ]]; then
+  pass "任一 scanner 失败时不发布混合 revision projection"
+else
+  fail "scanner 失败后仍调用 Map rebuild"
 fi
 
 EXPECTED_FAILURE_SCANS=$(cat <<'EOF'

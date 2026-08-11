@@ -1,4 +1,4 @@
--- Migration 404: Gap Ledger，并加厚既有 task_dependencies
+-- Migration 407: Gap Ledger，并加厚既有 task_dependencies
 
 CREATE TABLE IF NOT EXISTS harness_gaps (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -311,5 +311,5 @@ COMMENT ON TABLE harness_gap_dependencies IS
   '逐 Gap 的硬依赖权威关联；task_dependencies 仅保留任务对汇总边。';
 
 INSERT INTO schema_version (version, description)
-VALUES (404, 'harness_gap_ledger')
+VALUES (407, 'harness_gap_ledger')
 ON CONFLICT DO NOTHING;

@@ -84,6 +84,21 @@ describe('map-client', () => {
     }
   });
 
+  it('接受显式 stale 的旧 revision 证据，让 Gate 返回 mapper_stale 而非误报不可达', async () => {
+    const stale = {
+      ...freshResponse(),
+      fact_revisions: { 'perfectuser21/cecelia': request.baseRevision },
+      freshness: { status: 'stale', reason_code: 'projection_revision_mismatch' },
+    };
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => stale,
+    }));
+
+    await expect(queryImpactRadius(request, { fetchImpl })).resolves.toEqual(stale);
+  });
+
   it('畸形影响节点或断言不能被解释为空影响', async () => {
     for (const body of [
       { ...freshResponse(), affected_nodes: [{}] },

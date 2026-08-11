@@ -21,8 +21,8 @@ const EXPECTED = {
     sha256: 'f0f6adeeab7ad498c8f78831761beddec117cdf021e0ca690a6ca06af5f5b12e',
   },
   'capability-mapper': {
-    version: '1.3.0',
-    sha256: '30fa2d73c2f974a24a8662747672c4e0862bb62b5c0494bdf025ebfa82a9d394',
+    version: '2.0.0',
+    sha256: '58a6e6c514928740b869013242c06b644ababa77822826a499450acf899ff8cf',
   },
   'capability-controller': {
     version: '1.2.0',

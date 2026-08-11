@@ -1,0 +1,58 @@
+{
+  "scope_key": "zenithjoy",
+  "schema_version": 1,
+  "_comment": "示例 manifest — 刀5 通用性验收。激活前须替换 source_decision_id 为真实决策 UUID。",
+  "value_streams": [
+    {
+      "key": "content",
+      "name": "内容创作",
+      "perceiver": "内容创作者",
+      "order": 1
+    },
+    {
+      "key": "distribution",
+      "name": "内容分发",
+      "perceiver": "受众 / 平台",
+      "order": 2
+    }
+  ],
+  "capabilities": [
+    { "key": "C1", "name": "素材采集", "value_stream_key": "content", "order": 1 },
+    { "key": "C2", "name": "AI 创作", "value_stream_key": "content", "order": 2 },
+    { "key": "C3", "name": "内容审核", "value_stream_key": "content", "order": 3 },
+    { "key": "D1", "name": "多平台发布", "value_stream_key": "distribution", "order": 1 },
+    { "key": "D2", "name": "数据洞察", "value_stream_key": "distribution", "order": 2 }
+  ],
+  "boundaries": [
+    {
+      "key": "C3_TO_D1",
+      "from": "C3",
+      "to": "D1",
+      "statement": "审核通过是 C3 终点；跨平台推送从已审核内容起步是 D1 起点"
+    }
+  ],
+  "crosscut_pool": [
+    {
+      "key": "account_chain",
+      "name": "账号体系",
+      "serves": ["content", "distribution"]
+    },
+    {
+      "key": "ai_engine",
+      "name": "AI 引擎",
+      "serves": ["content", "distribution"],
+      "owner": "C2"
+    },
+    {
+      "key": "data_foundation",
+      "name": "数据基础层",
+      "serves": ["content", "distribution"],
+      "owner": "D2"
+    }
+  ],
+  "shared_prerequisites": {
+    "applicable": false,
+    "items": [],
+    "reason": "内容创作与内容分发的感知者不同，不存在统一一次性入场前置"
+  }
+}

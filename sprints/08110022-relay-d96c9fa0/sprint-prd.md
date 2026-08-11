@@ -60,7 +60,7 @@
 
 **文件：**
 - 新建 `packages/brain/src/impact-contract/contract-schema.js`（Zod schema）
-- 新建正式 migration `403_impact_contracts.sql`（`harness_impact_contracts` 表）
+- 新建正式 migration `406_impact_contracts.sql`（`harness_impact_contracts` 表）
 - 新建 `packages/brain/src/routes/impact-contracts.js`
 
 **合同字段：** 变更目标、`change_kind`、base revision、manifest/projection digest、受影响 Capability/Feature/AC、必跑断言、freshness 证据、不适用项及理由。
@@ -91,7 +91,7 @@
 ### FR-5 Gap Ledger（Segment 4–5，需 MJ5 合同）
 
 **文件：**
-- 正式 migration `404_harness_gap_ledger.sql`（新建 `harness_gaps` / `gap_events`，加厚既有 `task_dependencies`）
+- 正式 migration `407_harness_gap_ledger.sql`（新建 `harness_gaps` / `gap_events`，加厚既有 `task_dependencies`）
 - `packages/brain/src/impact-contract/gap-store.js`
 
 **行为：** 记录开发过程中发现的缺口生命周期（发现→认领→修复→验真→关闭）。gap 修复任务完成且可信的当前 revision 断言回执 PASS 后，原任务恢复为 `queued`、清除旧 claim，并由 Dispatcher 重新派发。

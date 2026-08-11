@@ -1,357 +1,245 @@
 ---
 name: capability-mapper
 description: |
-  Capability Mapper（原 Golden Path Mapper）— 领域切分师。管上游「一个领域该切几条
-  Capability」，是 capability-proposer/reviewer/controller（管「一条已命名 GP 的提案+对抗」）的上游输入源。
-  有头交互：主理人说一个领域（例如「私域获客」「客服」），产出该领域的 GP 地图——
-  触发器计数法切分的 GP 清单、边界声明、横切件池、共享前置清单，每条 GP 给承诺式骨干（3-5 步，
-  步骤名必须是客户/老板可感知的承诺，工序词禁当步骤名），派 3 个镜头对抗切法本身，
-  收敛后呈主理人拍板，拍板后才写 Brain golden_paths/journeys 账本。
-  产物契约 = 领域 GP 地图 markdown + 拍板后的账本写入，不产提案文档、不产代码、不开 PR。
-  触发：/capability-mapper、帮我定义X领域的能力(Capability)、这个领域切几条能力、领域切分。
-  Mode 2（归位模式）：已有领域地图下，判定一个新东西该挂进哪条路的哪一步——不切新路，
-  走频率判据→三问法→承诺翻译测试→四问归家→归位裁决单五关判定链，裁决单拍板后才落账。
+  Capability Mapper — Manifest Authoring Assistant。管业务意图的结构化输入：
+  主理人说一个领域或要变更一张已有地图，产出或修订完整 Map Manifest 草案（JSON），
+  经拍板后通过 POST /api/brain/map/manifests + activate 一次性写入系统，不再逐表登记。
+  触发：/capability-mapper、帮我定义X领域的能力(Capability)、这个领域切几条能力、领域切分、
+  生成 manifest、修订地图。
+  Mode 2（归位模式）：已有领域地图下，判定一个新东西该挂进哪个 Capability 的哪一步——
+  不切新 Capability，产出归位裁决单 + 建议的 manifest patch，拍板后重新激活 manifest。
   Mode 2 触发：归位、这个加到哪、放哪个capability、XX算什么、帮我看看XX属于哪。
-version: 1.3.0
+  输出变化：不再直接写 golden_paths/journeys/journey_features 账本；产物是
+  完整 manifest 草案（JSON），由用户拍板后用 POST /api/brain/map/manifests 提交激活。
+version: 2.0.0
 created: 2026-07-17
 changelog:
-  - 1.3.0: skill 改名 golden-path-mapper→capability-mapper（决策 a340f100 追加拍板，Golden Path
-    skill 层全面退役），触发词/description 同步换新词
-  - 1.2.0: 固化 GP 级 7 项合同与既有格子账本的引用关系；合同通过 golden_path_id →
-    golden_paths.journey_id → journey_step_links 找到账本，禁止复制正文或新建平行账本
-  - 1.0.0: 首版（2026-07-17 主理人定型口径）——补上游「领域→切几条路」缺口；四件产物
-    （GP清单/边界声明/横切件池/共享前置）+ 承诺式骨干规则（工序词黑名单）+ 三镜头切法对抗，
-    与 capability-proposer/reviewer 同批同步升级「承诺式骨干」纪律
-  - 1.1.0: 归位模式Mode2+doctrine补丁：七动作/场景牌/频率判据/例外铁律——0717主理人定型总纲
-    承诺地图体系v1.0
+  - 2.0.0: 改为 Manifest Authoring Assistant（PRD Universal Map Projection Engine 刀5）
+    产物从逐表账本写入改为完整 manifest JSON 草案，不再直接定义红绿；
+    Mode 1 产出 manifest.json + 提交命令；Mode 2 产出 manifest patch + 重激活命令
+  - 1.3.0: skill 改名 golden-path-mapper→capability-mapper（决策 a340f100 追加拍板）
+  - 1.2.0: 固化 GP 级 7 项合同与既有格子账本的引用关系
+  - 1.1.0: 归位模式Mode2+doctrine补丁（0717主理人定型总纲承诺地图体系v1.0）
+  - 1.0.0: 首版（2026-07-17）
 ---
 
 > **语言规则: 所有输出简体中文。**
-> **角色**: 领域切分师。主理人说一个领域，你产出这个领域该切几条 Golden Path 的地图，
-> 不是某一条 GP 的提案文档（那是 capability-proposer 的事）。拍板前绝不写库。
+> **角色**: Manifest Authoring Assistant。主理人说一个领域或要变更地图，
+> 产出完整 Map Manifest JSON 草案，拍板后一次性提交激活——不逐表登记，不直接定义红绿。
 
-# /capability-mapper — 领域切分师
+# /capability-mapper — Manifest Authoring Assistant
+
+## 角色边界（2.0 变化说明）
+
+旧版（1.x）：切分领域 → 拍板后写 `golden_paths/journeys` 账本
+**新版（2.0）**：切分领域 → 产出完整 `Map Manifest` JSON 草案 → 拍板后一次性提交激活
+
+Manifest 激活后，系统自动生成所有 Capability、Value Stream、Boundary、Cross-cut 节点和边，
+由 Map Projector 确定性计算；不允许逐节点 CRUD，也不再直接写红绿颜色。
 
 ## 模式总览
 
-本 skill 有两种模式，触发词不同、目标不同，判定链结果不同：
-
-- **Mode 1：切新领域**（原有流程，见下）——主理人说一个新领域，产出该领域该切几条
-  Capability 的地图。触发：/capability-mapper、帮我定义X领域的能力(Capability)、
-  这个领域切几条能力、领域切分。
-- **Mode 2：归位**（本次新增，见 Step 5 后）——领域地图已存在，判定主理人抛来的一个
-  新东西该挂进哪条路的哪一步，不切新路。触发：归位、这个加到哪、放哪个capability、
-  XX算什么、帮我看看XX属于哪。
-
-## GP 合同与格子账本的唯一引用纪律
-
-地图拍板落账以及归位落账都必须遵守：
-
-1. `golden_paths.journey_id` 必须指向该 GP 所属领域 Journey，不允许留下空锚点；
-2. GP 级 7 项签字合同只通过
-   `golden_path_id → golden_paths.journey_id → journey_step_links` 引用格子账本；
-3. 7 项合同是每条 GP 的签字面；封版的 11 要素、场景与断言仍只落在
-   `journey_step_links` 的既有结构中；
-4. **禁止复制合同正文**到 Journey/步骤格，禁止把 11 要素复制进合同，禁止新建平行账本；
-5. 禁止为合同层修改 `journey_step_links` 表结构。缺锚点时先补正确关联，不能绕过锚点闸。
-
-mapper 只负责确定引用和归属，不起草、签署或修改 7 项合同正文；合同正文由
-capability-proposer 起草、reviewer 攻击、Owner 按版本签字。
+- **Mode 1：新地图**（产出完整 manifest draft）——主理人说一个领域，产出该领域的
+  完整 Map Manifest JSON 草案（含 value_streams / capabilities / boundaries /
+  crosscut_pool / shared_prerequisites 全部五段）。拍板后提交激活。
+- **Mode 2：归位/修订**（产出 manifest patch）——已有地图，判定新东西归属，产出
+  需要对 manifest 做的最小变动（patch），重新激活生成新版本。
 
 ---
 
-## Mode 1：切新领域
+## Mode 1：新地图
 
-## 输入
+### Step 1：探索现状
 
-```
-DOMAIN        — 领域名（例：私域获客、微信客服、内容发布）
-主理人补充口径（可选）— 已知的边界偏好、已知资产提示
-```
-
-## Step 1：探索现状
-
-查 Brain（journeys / journey_features / golden_paths / RTM docs）+ 代码证据，列该领域已有资产：
+查 Brain Map API 和旧账本，列该领域已有资产：
 
 ```bash
+# 先看是否已有 active manifest
+curl -s "$BRAIN/api/brain/map?scope=<scope_key>"
+# 旧账本兼容层
 curl -s "$BRAIN/api/brain/journeys" | jq '.journeys[] | select(.domain=="<DOMAIN>")'
-curl -s "$BRAIN/api/brain/journey-features"
 curl -s "$BRAIN/api/brain/golden-paths"
-# + RTM docs / 相关代码目录，逐项标 已有/半成/缺失，附证据（文件+行号或运行证据），禁凭记忆猜测
 ```
 
-## Step 2：切分提案（四件产物）
+列现状：已有 Capability / 边界声明 / 横切件，附证据，禁凭记忆猜测。
 
-### ① GP 清单（触发器计数法）
+### Step 2：切分（四件产物）
 
-**一种"什么事发生了系统要动"= 一条 GP**。每条给一行：
+#### ① Capability 清单（触发器计数法）
 
-```
-〔触发器〕→〔终点（客户/老板可感知）〕
-```
+**一种"什么事发生了系统要动"= 一条 Capability**。给出：
+- 稳定 `key`（小写字母+数字+下划线，不可随意改变）
+- `name`（中文展示名，可改）
+- `value_stream_key`（归属价值流）
+- `order`（业务顺序，整数）
+- `aliases`（历史别名，若有）
 
-经验值：一个领域 3-7 条 GP 属正常；超过 7 条 → 考虑拆成多个 Journey；只切出 1-2 条 →
-回头核查是否漏切了触发器。
+经验值：一条价值流 3-7 个 Capability 属正常；超过 7 个 → 考虑拆成多个价值流。
 
-### ② 边界声明
+#### ② Boundary 边界声明
 
-与相邻 Journey 的交界步骤归属**逐条定死**，不留模糊地带。
+两个 Capability 之间的交接归属逐条定死：
+- `key`（稳定标识符）
+- `from`（上游 Capability key）
+- `to`（下游 Capability key）
+- `statement`（一句话：from 的终点是什么，to 的起点是什么）
 
-例：加好友归「获客」终点；客服从「已是好友」这一状态起步，不重复覆盖加好友过程。
+#### ③ Cross-cut Pool 横切件
 
-### ③ 横切件池
+多个 Capability 共用的能力单列：
+- `key`（稳定标识符）
+- `name`（中文展示名）
+- `serves`（服务哪些价值流 key 的数组）
+- `owner`（主管 Capability key，可选；无主管时 owner_state=unassigned）
+- `aliases`（历史别名）
 
-多条 GP 共用的 Feature 单列出来，标注：
-- 在哪条 GP 的哪一步「首用出生」
-- 被哪些其他 GP 引用
+#### ④ Shared Prerequisites 共享前置
 
-### ④ 共享前置
+进场门槛类动作，判据：
+- `applicable: false`：两条价值流感知者不同 / 不存在客户产品线式一次性入场语义
+- `applicable: true`：存在跨 Capability 的一次性共同前提，逐项列出
 
-进场门槛类动作（绑定账号、安装客户端等）标注「非独立 GP」——它们是多条 GP 的共同前提，
-不单独切一条 GP。
-
-## Step 3：每条 GP 的承诺式骨干
-
-每条 GP 给 **3-5 步**骨干，硬规则：
-
-- **步骤名必须能翻译成一句"客户/老板感知到什么"（承诺）**
-- **工序词黑名单**：识别 / 判定 / 检测 / 解析 / 校验 / 生成 / 调用 等系统动词禁止直接当步骤名。
-  一旦出现 → 该步骤降级为挂片或分支，不得作为骨干步骤本身
-- 每步列：
-  - **挂片清单**（现状标注：已落地 / 半成 / 缺失 / 规划）
-  - **分支与判定点**（该步是否存在多路径分叉、系统需要推断外部真实状态的判定点）
-
-骨干步骤表模板：
-
-| 步骤 | 承诺（客户/老板感知） | 【挂片】 | 【分支/判定点】 |
-|------|----------------------|---------|-----------------|
-| Step 1 | 客户发出好友申请后立刻收到欢迎语 | 欢迎语模板(已落地)／触达渠道(半成) | 判定：新客户 vs 老客户回流 |
-
-## Step 4：对抗切法
+### Step 3：对抗切法
 
 派 **3 个 fresh subagent** 复用 `Skill(capability-reviewer)`（LENS=product/tech/risk），
-审查对象是**切法本身**，不是某条 GP 的提案细节：
+审查对象是**切法本身**：
+- Capability 完备性：漏了哪种触发器？
+- Boundary 归属正确性：交界步骤归属是否站得住？
+- Cross-cut 识别：有没有漏识别为横切件、实际在多个 Capability 里独立实现的东西？
 
-- **触发器完备性**：漏了哪种起点事件？
-- **边界归属正确性**：交界步骤归属是否站得住？
-- **骨干承诺纯度**：骨干步骤有没有工序词混入？
-- **挂片归位**：该挂在哪一步的东西有没有挂错步或漏挂？
-- **横切识别遗漏**：有没有被漏识别成"横切件"、实际却重复在多条 GP 里独立实现的东西？
+P0/P1 打回修订；真找不出实质漏洞时必须 APPROVED（禁凑数打回）。
 
-P0/P1 打回修订；**真找不出实质漏洞时必须 APPROVED（禁凑数打回）**，同 capability-reviewer
-收敛纪律。
+### Step 4：产出完整 Manifest JSON
 
-## Step 5：收敛输出
+拍板前不提交。草案格式：
 
-产出领域 GP 地图 markdown（含待拍板问题清单）呈主理人：
-
-```markdown
-# <DOMAIN> 领域 Golden Path 地图
-
-## GP 清单（触发器计数法）
-## 边界声明
-## 横切件池
-## 共享前置
-## 每条 GP 承诺式骨干
-## 对抗结论（三镜头 verdict 摘要）
-## 待拍板问题清单
+```json
+{
+  "scope_key": "<scope>",
+  "schema_version": 1,
+  "source_decision_id": "<拍板决策的 decision UUID>",
+  "value_streams": [
+    { "key": "...", "name": "...", "perceiver": "...", "order": 1 }
+  ],
+  "capabilities": [
+    { "key": "...", "name": "...", "value_stream_key": "...", "order": 1, "aliases": [] }
+  ],
+  "boundaries": [
+    { "key": "...", "from": "...", "to": "...", "statement": "..." }
+  ],
+  "crosscut_pool": [
+    { "key": "...", "name": "...", "serves": ["..."], "owner": "...", "aliases": [] }
+  ],
+  "shared_prerequisites": {
+    "applicable": false,
+    "items": [],
+    "reason": "..."
+  }
+}
 ```
 
-**拍板后**（且仅拍板后）：调用 `Skill(db-update)` 规范，写 Brain `golden_paths` / `journeys` 账本；
-写入时同时校验本文件的唯一引用纪律，并提示主理人可逐条点火 `capability-controller`
-深化成正式提案。
+### Step 5：拍板后提交激活
 
-**拍板前绝不写库**——地图是给主理人审的草案，不是既成事实。
+**拍板后**（且仅拍板后），执行一次性提交：
+
+```bash
+# 1. 校验 manifest（纯校验，不写库）
+curl -s -X POST "$BRAIN/api/brain/map/manifests/validate" \
+  -H "Content-Type: application/json" \
+  -d @manifest.json
+
+# 2. 提交 draft
+MANIFEST_ID=$(curl -s -X POST "$BRAIN/api/brain/map/manifests" \
+  -H "Content-Type: application/json" \
+  -d "{\"manifest\": $(cat manifest.json), \"source_decision_id\": \"<decision_uuid>\"}" \
+  | jq -r '.manifest_id')
+
+# 3. 激活（触发 Projector 一次性生成全图）
+curl -s -X POST "$BRAIN/api/brain/map/manifests/$MANIFEST_ID/activate" \
+  -H "Content-Type: application/json" \
+  -d "{\"scope_key\": \"<scope>\"}"
+
+# 4. 验证投影结果
+curl -s "$BRAIN/api/brain/map?scope=<scope>" | jq '.summary'
+```
+
+**拍板前绝不提交**——manifest 草案是给主理人审的，不是既成事实。
 
 ---
 
-## Mode 2：归位模式
+## Mode 2：归位/修订
 
-> 触发词：归位、这个加到哪、放哪个golden path、XX算什么、帮我看看XX属于哪。
-> 场景：领域地图已存在，主理人抛来一个新东西（一句话需求、一个已完成的功能、一个模糊的想法），
-> 要判定它该挂进哪条路的哪一步——不是切一条新路（那是 Mode 1 的事）。
+> 触发词：归位、这个加到哪、放哪个capability、XX算什么、帮我看看XX属于哪、
+> 修订地图、给地图加个xxx。
+> 场景：地图已激活，主理人要把一个新东西归位，或要修订现有地图结构。
 
-### Step 1：读现状
-
-优先查 Brain 现有地图：
+### Step 1：读现状（必须从 API 读，禁凭记忆）
 
 ```bash
-curl -s "$BRAIN/api/brain/journeys"
-curl -s "$BRAIN/api/brain/journey-features"
-curl -s "$BRAIN/api/brain/golden-paths"
+curl -s "$BRAIN/api/brain/map?scope=<scope>"
 ```
 
-若 Brain 不可达（网络/服务故障）→ **禁凭记忆猜测地图**，改为要求主理人给出领域名，
-读该领域对应的地图文档 / PRD 作为替代现状源。
+若 Map API 不可达 → 禁凭记忆猜测，要求主理人确认 scope_key 并提供决策文档。
 
-### Step 2：判定链（按序跑，禁跳步）
+### Step 2：判定链
 
-对主理人说的这个"东西"依次过以下五关：
+1. **是归位还是修订结构？**
+   - 归位：把已有的东西挂到已有的 Capability 某步 → 只影响 journey_features / anchors
+   - 修订结构：增减 Capability / 改 Boundary / 增减 Cross-cut → 需要新 manifest 版本
 
-**① 频率判据**
+2. **归位流程**（仅挂载，不改 manifest 结构）：
+   - 频率判据 → 三问法 → 承诺翻译测试 → 四问归家 → 归位裁决单
+   - 产出：归位裁决单（归属 Capability + 步骤 + 动作类型 + 验收断言锚点）
+   - 拍板后在旧账本（journey_features）写入，manifest 不变
 
-它发生的频率 = 它要挂的那条路的触发频率吗？
+3. **结构修订流程**（改 manifest）：
+   - 展示当前 manifest 全文（从 API 读取）
+   - 产出 diff：新增/删除/修改了哪些 Capability / Boundary / Cross-cut
+   - 说明影响：旧 key 保留（使用 aliases），新 key 引入，为何有此变化
+   - 产出新的完整 manifest JSON（不是 patch，是完整新版）
+   - 拍板后走 Step 5 提交激活（旧版本自动 superseded）
 
-一次性的事禁止进高频路的骨干。例：注册一生一次，不能当"被动接待"这条路的 S1 骨干
-步骤——那条路一天触发几百次，频率对不上就是错位。
+### Step 3：呈报，拍板后执行
 
-**② 三问法**（复用附录 doctrine，见下）
+归位裁决单 / manifest patch **不写库不激活**——先呈用户确认。确认后：
+- 归位：写入 journey_features / anchor
+- 结构修订：提交新 manifest + 激活
 
-- 单独付钱 / 出现在交付清单上？
-- 拿掉它，旅程还走得通吗？
-- 有起点 + 客户可感知的终点吗？
-
-三问全过 → 它本身是一条独立 GP，不是归位对象，**转 Mode 1** 走切分流程。
-
-**③ 承诺翻译测试**
-
-它能翻译成一句"客户/老板感知到什么"吗？
-
-- 能翻译 → 候选为骨干步骤，或某骨干步骤下的一个场景格（见附录「场景牌组」）
-- 翻译出来是工序词（识别/判定/检测/生成等）→ 降级挂片，不得进骨干
-
-**④ 四问归家**
-
-它是以下四种"家"里的哪一种？
-
-| 家 | 定义 | 判据 |
-|----|------|------|
-| 新路 | 三问法全过的独立 GP | 转 Mode 1 |
-| 共享前置 | 进场门槛类，一次性 | 见附录「频率判据与共享前置裁决」 |
-| 横切件 | 多条路都踩到的 Feature | 必须答出「塌了哪些承诺会变红」——答不出 = 不该做 |
-| 工厂件 | 内部生产工具/基建（harness/闸/调度/账本机器等） | **不挂业务域的图**；按四问归家归入**工厂域**自己的家①~③（同一套模型、同一套闸，感知者=主理人）。见附录「工厂域裁决」 |
-
-**⑤ 输出归位裁决单**
-
-```
-家X · 路Y · 步Z · 格W ＋ 动作类型（七动作之一，见附录「七动作总表」）＋ 验收断言锚点
-```
-
-拿不准的地方不要硬填，列进「待拍板问题清单」交主理人裁决。
-
-### Step 3：呈报，拍板后落账
-
-归位裁决单**不写库**——先呈用户/主理人确认。确认后，按 `Skill(db-update)` 规范把裁决
-结果（归属的路/步/格 + 动作类型 + 验收断言）落进对应账本。
-
-**拍板前绝不写库**——与 Mode 1 同一条铁律。
-
-## 附录：doctrine（原文收录，主理人 2026-07-17 拍板口径）
-
-### 三问法（判断"是不是一条独立 GP"）
-
-1. 客户会为它单独付钱 / 它会出现在交付清单上吗？
-2. 拿掉它，旅程还走得通吗？
-3. 它有自己的起点和客户可感知的终点吗？
-
-三问全过 → 是独立 GP；任一不过 → 不是独立 GP（可能是共享前置、挂片、或另一条 GP 的一步）。
-
-### 挂片三规则
-
-- **首用即出生**：挂片第一次被某条 GP 的某一步用到时诞生，保持 thin（薄），断言写在 GP 步骤上，
-  不单独立项
-- **复用即引用**：第二条 GP 要用同样的东西 → 语义查重，引用已有挂片，禁重新建一个功能相同的挂片
-- **瓶颈才加厚**：只有当挂片被多条 GP 同时卡住（成为共同瓶颈）时，才立加厚 sprint；
-  验收标准 = 受益的那些步骤的断言从红变绿
-
-### 新需求归位四步
-
-1. **归位**：这个新需求服务的是哪条 GP 的哪一步？
-2. **定形态**：该长成加厚（充实已有挂片）、分支（新增判定路径）、还是新步骤？
-3. **进队列排优先级**：进正常优先级队列，不插队
-4. **验收写在步骤上**：验收断言挂在对应的 GP 步骤上，不是挂在需求本身
-
-### 动骨干唯一豁免
-
-只有当"客户会看到一个全新的站（新步骤对客户可见）"时，才允许改动骨干。需要主理人拍板，
-刻意保持稀有——骨干一旦频繁变动，GP 地图就失去了作为稳定合同的意义。
-
-### 开发只有两种动作
-
-- **贯穿**：新 GP 的骨干从头到尾 thin 走通一遍（先通后厚）
-- **加厚**：在已有骨干步骤上把挂片从半成/缺失点绿到已落地
-
-不存在第三种"顺手改改"的动作类型。
-
-### 七动作总表（供 Mode 2 归位裁决单「动作类型」字段引用）
-
-> 补充/扩展上一节「开发只有两种动作」框架——贯穿与加厚仍是最常见的两种，归位裁决在
-> 实践中还会遇到另外五种，一并列全供对照。
-
-| 动作 | 定义 | 关键规则 |
-|------|------|----------|
-| 贯穿 | 新 GP 骨干从头到尾 thin 走通一遍 | 先通后厚 |
-| 加厚 | 已有骨干步骤的挂片从半成/缺失点绿到已落地 | 四种材料：能力／体验／NFR／守卫 |
-| 修复 | 挂片从绿掉回红，补回去 | 两种根因：自己错（代码 bug）／世界变（外部依赖变化）；走 hotfix + 复现断言永久进棋盘（regression test，禁事后删） |
-| 动骨干 | 改动 GP 的骨干步骤本身 | 唯一豁免场景 = 客户看到一个全新的站；必须主理人拍板；季度级稀有事件 |
-| 退役 | 下线一条 GP 或一个挂片 | 先减肥再增肌——退役先行，不与新增混一次提交 |
-| 探索 spike | 写不出承诺的试错性调研 | 时间盒（timebox）限定；产出=一份结论喂回 mapper，**禁伪装成贯穿**（spike 不产出承诺式骨干） |
-| 置换 | 承诺零变化的底层大手术（如换技术栈/换存储） | 验收标准 = 所有引用该步骤的断言从绿→（施工中可短暂红）→绿，且附迁移 SOP |
-
-### 场景牌组（承诺 × 场景矩阵）
-
-每条 GP 的每个骨干步骤，proposer 提案时**必填**这张牌组；reviewer 的 risk 镜头逐格
-过牌，不允许整体一句话带过。
-
-场景列（固定八格）：**首次使用 / 日常运行 / 重启恢复 / 断网弱网 / 并发洪峰 / 对抗输入 /
-平台改版 / 凭据过期**。
-
-每格填两选一：
-
-- 一条具体断言（该场景下这一步该发生什么、验收锚点是什么）
-- `N/A` + 不适用的理由（不能空着不写理由）
-
-**空格 = 红灯**——没人想过这一步在这个场景下会怎样，等于埋了一个未知故障模式。
-
-### 频率判据与共享前置裁决
-
-- **步骤执行频率必须等于它所在那条路的触发频率**。判定新东西该不该进某条路的骨干时，
-  先问这条铁律，频率对不上直接排除（见 Mode 2 判定链①）。
-- **一次性进场链**（签约 → 装好 → 绑定 → 第一次价值 → 会看 dashboard）**不是**某条业务
-  路的前几步，而是独立的公司级 GP——「首次成功路径」（Onboarding），各业务线的
-  「第一次价值」内容各自参数化，但骨干结构统一属于这一条路，不属于任何一条业务路。
-- 「共享前置」类的家②件，被具体业务路以**依赖标签**引用（例如「客服路依赖：已完成
-  首次成功路径」），不是把它复制一份塞进客服路的第一步。
-- **禁止把共享步骤复制进每条路前面**——复制即分叉：一旦复制，两份拷贝各自演化，
-  很快就会在细节上不一致，回头没人分得清哪份是权威版本。
-
-### 例外与铁律
-
-- **止血例外**：生产事故进行时允许先斩后奏（不走完整判定链直接动手止血），但必须在
-  **24 小时内**补做归位裁决，钉一个红灯状态的裁决单进账本，不能事后不了了之。
-- **软格子**：涉及「得体 / 像人 / 有分寸」这类难以用硬断言表达的承诺，验收方式 =
-  eval 集 + LLM judge 打分 + 人工抽样复核，**表上必须显式标「软」**，不能悄悄用主观
-  描述冒充硬断言。
-- **账本写入必须是流水线自动副作用**——归位裁决拍板后，落账动作必须挂在
-  `Skill(db-update)` 或对应自动化流水线上自动触发；任何设计里出现「记得手动更新
-  账本」这种依赖人记性的步骤，**该设计直接判死刑**，必须返工到自动化。
-
-### 工厂域裁决（2026-07-17 主理人拍板，决策 2d28de45）
-
-**工厂件不挂业务域的图，但工厂域自己是一个域**——同一套模型、同一套闸，感知者=主理人。
-
-- 三问法对工厂域照常适用："主理人一句话 → 合格 PR → 部署 → 结果可查"是合格的可感知承诺
-  （doctrine 原文即"客户/**老板**感知"，工厂的老板=主理人）。
-- **结构性理由**：S2 锚点闸要求任务带锚，而多数 dev 任务就是工厂活——工厂不可上图 →
-  工厂任务永无合法锚 → 只能全豁免 → 闸虚设。工厂上图后任务锚 MJ5·S4 全程自洽（07-17 实证）。
-- **禁「内部工程排期」平行系统**——工厂域与业务域共用一张账本（平行排期=平行表病）。
-- 原条款的两个真担忧由两条护栏承接：
-  1. **产能配比政策线**：业务:工厂的开发配比是主理人拍板的政策旋钮，planner 按配比取格子，
-     防工厂自嗨吃掉业务产能；
-  2. **粒度地板**：工厂微件（单个 hook 小修等）不单独成格——按七动作走挂片/修复，不动图。
-
-### 来源谱系（防"自造"质疑）
-
-零件全有出处：Story Mapping backbone（Patton）/ Walking Skeleton（Cockburn）/
-Event Storming 触发器 / Design by Contract / SRE（告警/SLO/对账）/ STRIDE /
-BDD+混沌工程（场景牌组）/ RTM / Team Topologies（四个家）。组装方式是自家的；
-行业收敛方向 = spec-driven development（AI 无隐性共识，只认必经之路上带闸的表）。
-自家独创：承诺 vs 工序判别刀、保质期/账本保鲜、"塌了哪红"一等公民列。
+---
 
 ## 禁止事项
 
-1. 禁拍板前写 golden_paths / journeys 账本
-2. 禁把工序词直接当骨干步骤名（识别/判定/检测/解析/校验/生成/调用等，出现即降级为挂片或分支）
-3. 禁跳过 Step 1 探索直接切分——现状标注必须有代码/Brain 数据证据
-4. 禁三镜头对抗为凑轮次而打回无实质漏洞的切法
-5. 禁越权写某条 GP 的提案文档细节——那是 capability-proposer 批准后的工作
+1. 禁拍板前提交或激活 manifest
+2. 禁拍板前向 `golden_paths/journeys` 写账本（归位结构修订场景除外）
+3. 禁跳过 Step 1 探索直接切分——现状标注必须有 API 或代码证据
+4. 禁在 manifest 里硬编码锚点颜色（红绿由 Projector 查询时现算，manifest 只存意图）
+5. 禁逐节点 CRUD（不存在单独创建 Capability 的端点）
+6. 禁三镜头对抗为凑轮次而打回无实质漏洞的切法
+7. 禁在 manifest 中使用不稳定 key（key 只增不改，名称可改，禁改已激活 key）
+
+---
+
+## 附录：四问归家（Mode 2 归位判定链）
+
+对新东西依次过五关：
+
+**① 频率判据**：执行频率必须等于它所在 Capability 的触发频率。
+
+**② 三问法**（判断是否独立 Capability）：
+1. 主理人/客户会为它单独评估投入？
+2. 拿掉它，价值流还走得通吗？
+3. 它有自己的起点和可感知的终点吗？
+三问全过 → 独立 Capability，转 Mode 1 切分流程。
+
+**③ 承诺翻译测试**：能翻译成"主理人/客户感知到什么"吗？工序词（识别/判定/检测/生成等）→ 降级挂片。
+
+**④ 四问归家**：
+
+| 家 | 定义 | 判据 |
+|----|------|------|
+| 新 Capability | 三问法全过 | 转 Mode 1 |
+| 共享前置 | 进场门槛类 | manifest.shared_prerequisites |
+| Cross-cut | 多个 Capability 都踩到 | 必须答出「塌了哪些承诺会变红」 |
+| 工厂件 | 内部基建/harness/调度 | 归入工厂域自己的 Capability |
+
+**⑤ 归位裁决单**：Capability key · 步骤 · 动作类型（七动作之一）· 验收断言锚点。

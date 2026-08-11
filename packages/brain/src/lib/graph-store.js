@@ -1,19 +1,18 @@
 /**
  * graph_edges 写库层(刀A1):按 repo 全量替换。
  * 边无自然键,upsert 会积死边(scan-api-registry 的已知缺陷,此处不复制)。
+ * 刀0扩展：支持 source_revision + scanner_version 字段
  */
-import { acquireFactSnapshotLock } from './fact-snapshot-lock.js';
-import { upsertFactSnapshotHeader } from './fact-snapshot-header.js';
-
 const BATCH = 500;
 
-export async function replaceRepoEdges(pool, repo, edges, metadata = {}) {
-  const sourceRevision = metadata.sourceRevision || 'legacy-unknown';
-  const scannerVersion = metadata.scannerVersion || 'legacy';
+export async function replaceRepoEdges(pool, repo, edges, { sourceRevision, scannerVersion } = {}) {
+  const rev = sourceRevision || 'legacy-unknown';
+  const ver = scannerVersion || 'legacy';
+  const lockKey = `fact-snapshot:graph_edges:${repo}`;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await acquireFactSnapshotLock(client, 'graph_edges', repo);
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [lockKey]);
     await client.query('DELETE FROM graph_edges WHERE repo = $1', [repo]);
     let inserted = 0;
     for (let i = 0; i < edges.length; i += BATCH) {
@@ -23,22 +22,25 @@ export async function replaceRepoEdges(pool, repo, edges, metadata = {}) {
       chunk.forEach((e, j) => {
         const base = j * 7;
         values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`);
-        params.push(
-          repo, e.src_path, e.dst_path, e.edge_type, JSON.stringify(e.detail || {}),
-          sourceRevision, scannerVersion,
-        );
+        params.push(repo, e.src_path, e.dst_path, e.edge_type, JSON.stringify(e.detail || {}), rev, ver);
       });
       await client.query(
-        `INSERT INTO graph_edges
-          (repo, src_path, dst_path, edge_type, detail, source_revision, scanner_version)
+        `INSERT INTO graph_edges (repo, src_path, dst_path, edge_type, detail, source_revision, scanner_version)
          VALUES ${values.join(', ')}`,
         params
       );
       inserted += chunk.length;
     }
-    await upsertFactSnapshotHeader(client, 'graph', {
-      repo, sourceRevision, scannerVersion, rowCount: inserted,
-    });
+    await client.query(
+      `INSERT INTO fact_snapshot_headers (kind, repo, source_revision, scanner_version, scanned_at, row_count)
+       VALUES ($1, $2, $3, $4, NOW(), $5)
+       ON CONFLICT (kind, repo) DO UPDATE
+         SET source_revision = EXCLUDED.source_revision,
+             scanner_version = EXCLUDED.scanner_version,
+             scanned_at = EXCLUDED.scanned_at,
+             row_count = EXCLUDED.row_count`,
+      ['graph', repo, rev, ver, inserted]
+    );
     await client.query('COMMIT');
     return { inserted };
   } catch (err) {

@@ -1,10 +1,10 @@
 # Brain 模块定义
 
-**版本**: 1.271.8
+**版本**: 1.272.1
 
-## F1 Impact Contract 系统（Brain 1.271.8）
+## F1 Impact Contract 系统（Brain 1.272.1）
 
-Brain 1.271.8 新增结构化变更合同机制，为每次功能迭代引入可机器验证的合同轨迹。
+Brain 1.272.1 新增结构化变更合同机制，为每次功能迭代引入可机器验证的合同轨迹。
 
 ### change_kind 四档分类
 
@@ -23,6 +23,8 @@ Mapper fail-closed 原则：遇到未识别的 change_kind 时返回 `null`，�
 - 任务 payload 中的 `change_kind` 是事实源，请求体不一致时返回 `change_kind_mismatch`
 - 所有 POST 写入口调用真实 `/api/brain/map/radius`；unavailable / stale / 合同异常 / revision mismatch 均 fail-closed
 - 只有 Mapper 返回新鲜 manifest/projection digest 后才持久化 active 合同
+- Radius 以 graph anchor 机械归位 capability，并从当前 `journey_step_links` 生成带 link ID、revision、digest 的必跑断言；未归位文件返回 unknown
+- fact scanner 批次全绿后调用 Map rebuild 切换 exact-SHA projection；批次失败保留旧 projection 并由 freshness 拒绝
 
 ### Diff Gate
 

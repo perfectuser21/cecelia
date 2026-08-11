@@ -15,6 +15,7 @@ class ImpactMapError extends Error {
 
 function assertMapperContract(value, { repo, baseRevision, headRevision } = {}) {
   const expectedRevision = headRevision ?? baseRevision;
+  const freshnessStatus = value?.freshness?.status;
   const validNodes = Array.isArray(value?.affected_nodes)
     && value.affected_nodes.every((node) => (
       node
@@ -51,9 +52,9 @@ function assertMapperContract(value, { repo, baseRevision, headRevision } = {}) 
     && !Array.isArray(value.fact_revisions)
     && typeof repo === 'string'
     && typeof expectedRevision === 'string'
-    && value.fact_revisions[repo] === expectedRevision
     && value.freshness
-    && typeof value.freshness.status === 'string'
+    && ['fresh', 'stale', 'unknown'].includes(freshnessStatus)
+    && (freshnessStatus !== 'fresh' || value.fact_revisions[repo] === expectedRevision)
     && validNodes
     && validAssertions;
 

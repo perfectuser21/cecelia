@@ -8,17 +8,31 @@
 
 
 
-**Brain 版本**: 1.271.8
+**Brain 版本**: 1.272.1
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.271.8 — F1 Impact Contract Harness 强制闭环
+## Brain 1.272.0 — Universal Map Projection Engine
+
+- 引入 Map Manifest JSON Schema（scope × value_streams × capabilities × boundaries × crosscut_pool）作为业务意图的机器可读载体。
+- 确定性投影引擎：business intent × implementation facts → digest-locked projection run，节点/边原子切换，读者不见半张图。
+- 统一 Map API（`/api/brain/map`）作为唯一读接口；island-gate 集成未归位文件探测。
+- 完整 Manifest 激活在同一事务内生成 projection run、稳定节点与关系边，写入失败时旧 active Manifest/Projection 保持不变。
+- Value Stream、Capability、Cross-cut 与 Shared Prerequisite 由通用规则确定性投影；Boundary 只生成 `hands_off_to` 边。
+- Node/Edge stable ID 与 projection digest 可重复重建，核心不含 Cecelia 或 ZenithJoy 领域身份常量。
+- Schema 地板推进到 405。
+
+---
+
+## Brain 1.272.1 — F1 Impact Contract Harness 强制闭环
 
 - `change_kind` 统一为 `new_capability` / `capability_change` / `bugfix` / `parameter_only`，存入任务 payload；`gear` 保持独立执行强度字段。
-- 正式迁移 403/404 建立 `harness_impact_contracts`、`harness_gaps`、`gap_events`，并加厚既有 `task_dependencies`，所有外键引用真实 `tasks` 表。
+- 正式迁移 406/407 建立 `harness_impact_contracts`、`harness_gaps`、`gap_events`，并加厚既有 `task_dependencies`，所有外键引用真实 `tasks` 表。
 - 所有合同写入口强制经过 Structure Gate；真实 `/api/brain/map/radius` 不可用、陈旧、响应不合法或 revision 不一致时 fail-closed，不创建 active 合同。
+- `/api/brain/map/radius` 与 Impact Gate 共享 revision-locked 合同：repo 自动归一到 Map scope，graph anchor 投影为 capability，Journey cell 投影为不可变 assertion；未归位文件返回 unknown，禁止解释成零影响。
+- 四类事实扫描全部成功后才原子 rebuild active Map projection；任一扫描失败保留旧 projection，由 freshness 门禁拒绝旧 SHA。
 - Diff Gate 以 HEAD 与 changed files 复算影响；未声明影响写入 Gap Ledger、创建修复任务和硬依赖，真实断言回执通过且所有 gap 关闭后恢复原任务。
 - evaluator Runner 在 exact-SHA 独立只读 worktree 中去密、降权、限时执行 required assertions；receipt 与 attempt 终态同事务提交，Provider 无法持有 callback 凭据伪造结果。
 - merge fence 绑定当前合同、当前 Journey 断言版本、completed evaluator attempt 与精确 PR HEAD，并在合并命令中使用 `--match-head-commit` 消除竞态。
@@ -32,7 +46,7 @@
 - 完整 Manifest 激活在同一事务内生成 projection run、稳定节点与关系边，写入失败时旧 active Manifest/Projection 保持不变。
 - Value Stream、Capability、Cross-cut 与 Shared Prerequisite 由通用规则确定性投影；Boundary 只生成 `hands_off_to` 边。
 - Node/Edge stable ID 与 projection digest 可重复重建，核心不含 Cecelia 或 ZenithJoy 领域身份常量。
-- Schema 地板推进到 405。
+- Schema 地板推进到 407。
 
 ---
 
@@ -1949,7 +1963,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | **Schema 版本**: 400 |
+| **schema_version** | 迁移版本追踪 | **Schema 版本**: 404 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -2337,7 +2351,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '400'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '407'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

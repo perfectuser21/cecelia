@@ -37,7 +37,7 @@ echo "PASS: DevGate 三连全部通过"
 
 # 验收命令二：migration 编号无碰撞检查
 ls /workspace/packages/brain/migrations/ | grep -E '^[0-9]+' | sort -n | tail -5
-# 预期：包含 403_impact_contracts.sql 与 404_harness_gap_ledger.sql
+# 预期：包含 406_impact_contracts.sql 与 407_harness_gap_ledger.sql
 
 # 验收命令三：change_kind 映射端到端验证
 curl -s -X POST http://localhost:5221/api/brain/tasks \
@@ -80,7 +80,7 @@ FROM tasks;
 ### ws2 — Impact Contract Schema + 持久化
 
 - [x] `packages/brain/src/impact-contract/contract-schema.js` 已创建（Zod schema）
-- [x] 正式 migration `403_impact_contracts.sql` 已创建，包含 `harness_impact_contracts` 表
+- [x] 正式 migration `406_impact_contracts.sql` 已创建，包含 `harness_impact_contracts` 表
 - [x] `packages/brain/src/routes/impact-contracts.js` 已创建，含 POST/GET 路由
 - [ ] 合法合同 POST → 201 + id
 - [x] 非法合同 POST → 400 + 字段错误描述
@@ -109,7 +109,7 @@ FROM tasks;
 
 ### ws5 — Gap Ledger（需 MJ5）
 
-- [x] 正式 migration `404_harness_gap_ledger.sql` 已创建：`harness_gaps` + `gap_events`，并加厚既有 `task_dependencies`
+- [x] 正式 migration `407_harness_gap_ledger.sql` 已创建：`harness_gaps` + `gap_events`，并加厚既有 `task_dependencies`
 - [x] `packages/brain/src/impact-contract/gap-store.js` 已创建
 - [x] 状态机：`open → assigned → fixing → verifying → resolved` 单向强制
 - [x] 验真失败：`verifying → reopened → assigned` 路径可用，其余路径返回 422

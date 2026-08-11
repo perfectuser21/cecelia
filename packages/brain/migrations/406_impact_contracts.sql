@@ -1,4 +1,4 @@
--- Migration 403: Impact Contract 不可变版本表
+-- Migration 406: Impact Contract 不可变版本表
 
 CREATE TABLE IF NOT EXISTS harness_impact_contracts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -43,5 +43,5 @@ COMMENT ON TABLE harness_impact_contracts IS
   'Impact Contract 不可变版本表；记录开发任务声明的影响范围、断言和 Mapper 证据。';
 
 INSERT INTO schema_version (version, description)
-VALUES (403, 'impact_contracts')
+VALUES (406, 'impact_contracts')
 ON CONFLICT DO NOTHING;
