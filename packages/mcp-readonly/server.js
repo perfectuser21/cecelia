@@ -12,6 +12,7 @@ import { getSchemaVersion, getDeploymentStatus } from './src/tools/schema-and-de
 import { getMapSummary } from './src/tools/map-summary.js';
 import { getMapNodes, getMapEdges, NODE_TYPES, EDGE_TYPES } from './src/tools/map-nodes-edges.js';
 import { getServiceLogs, SERVICE_LOG_WHITELIST } from './src/tools/service-logs.js';
+import { assertReadonly } from './src/self-check.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -206,6 +207,21 @@ export function createApp({ skipDbInit = false, bearerToken = process.env.MCP_BE
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  // 启动自检（Task 12，见 src/self-check.js）：用一条独立、短生命周期的连接池探测
+  // mcp_readonly 账号是不是真的只读，探测完立刻关闭——不复用 createApp() 内部会
+  // 建的那个服务用连接池，两者职责分开：这里只负责"敢不敢启动"，服务用连接池的
+  // 生命周期跟着 app 走。自检失败（账号意外可写，或探测本身出了意外错误）时打印
+  // 清晰的中文错误信息并以非零状态码退出，不能带病启动。
+  const selfCheckPool = createReadonlyPool(process.env.MCP_READONLY_DATABASE_URL, { max: 1 });
+  try {
+    await assertReadonly((sql) => query(selfCheckPool, sql, []));
+  } catch (err) {
+    console.error(`[mcp-readonly] 启动自检失败，拒绝启动：${err.message}`);
+    await selfCheckPool.end();
+    process.exit(1);
+  }
+  await selfCheckPool.end();
+
   const app = createApp();
   const port = process.env.MCP_PORT || 8787;
   app.listen(port, () => {
