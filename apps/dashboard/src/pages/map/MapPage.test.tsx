@@ -49,6 +49,13 @@ describe('Universal Map 页面权威', () => {
   beforeEach(() => {
     vi.mocked(global.fetch).mockImplementation(async (input) => {
       const url = String(input);
+      if (url.includes('/radius')) {
+        return json({
+          ...envelope,
+          affected_business_nodes: [{ node_key: 'F0' }, { node_key: 'G1' }],
+          must_run_assertions: [{ node_key: 'assertion-1', assertion_ref: 'map.test.js' }],
+        });
+      }
       if (url.includes('/nodes/assertion-1')) {
         return json({
           ...envelope,
@@ -132,6 +139,12 @@ describe('Universal Map 页面权威', () => {
     expect(screen.getByRole('button', { name: /投影摘要稳定/ })).toBeInTheDocument();
     expect(screen.getByText('map.test.js')).toBeInTheDocument();
     expect(screen.getByText('投影交给统一查询')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '上游与下游' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '横切影响' })).toBeInTheDocument();
+    expect(screen.getByText('heartbeat_bus · 心跳总线')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '影响半径' })).toBeInTheDocument();
+    expect(screen.getByText('F0 → G1')).toBeInTheDocument();
+    expect(global.fetch).toHaveBeenCalledWith('/api/brain/map/radius', expect.objectContaining({ method: 'POST' }));
 
     fireEvent.click(screen.getByRole('button', { name: /投影摘要稳定/ }));
     expect(await screen.findByRole('heading', { name: 'Level 3 · 验收证据' })).toBeInTheDocument();
