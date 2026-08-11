@@ -192,6 +192,36 @@ function readFileContent(filePath) {
   return null;
 }
 
+// ─── Map API 影响半径查询（fail-open：Brain 不可达不影响 CI）────────────────────
+// 刀5：CI Island Gate 改读 Unified Map API，识别未归属业务 Capability 的新文件。
+async function queryMapRadius(changedFiles, scope = 'cecelia') {
+  const BRAIN = process.env.BRAIN_URL || 'http://localhost:5221';
+  try {
+    const { default: http } = await import('http');
+    const body = JSON.stringify({ scope, repo: scope, changed_files: changedFiles });
+    const result = await new Promise((resolve, reject) => {
+      const req = http.request(`${BRAIN}/api/brain/map/radius`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        timeout: 3000,
+      }, (res) => {
+        let data = '';
+        res.on('data', (c) => { data += c; });
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)); } catch { resolve(null); }
+        });
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+      req.write(body);
+      req.end();
+    });
+    return result;
+  } catch {
+    return null; // fail-open：Brain 不可达时跳过
+  }
+}
+
 // ─── 主逻辑 ───────────────────────────────────────────────────────────────────
 async function main() {
   const args = process.argv.slice(2);
@@ -281,6 +311,30 @@ async function main() {
       console.error(`  - ${f}`);
     }
     process.exit(1);
+  }
+
+  // 刀5：可选 Map API 影响半径查询（fail-open）
+  // 向 Unified Map API 查询哪些业务 Capability 受到新文件影响；Brain 不可达时静默跳过。
+  if (!noDb && addedFiles.length > 0) {
+    const scope = process.env.MAP_SCOPE || 'cecelia';
+    const radius = await queryMapRadius(addedFiles, scope);
+    if (radius) {
+      if (radius.affected_nodes?.length > 0) {
+        console.log(`[ISLAND-GATE] MAP: 新增文件影响 ${radius.affected_nodes.length} 个业务节点:`);
+        for (const n of radius.affected_nodes) {
+          console.log(`  - [${n.type}] ${n.key} ${n.name}`);
+        }
+      } else {
+        console.log('[ISLAND-GATE] MAP: 新增文件暂无已归属的业务 Capability（unclaimed）');
+        console.log('  → 建议：通过 /capability-mapper 归位或更新 Map Manifest');
+      }
+      if (radius.must_run_tests?.length > 0) {
+        console.log(`[ISLAND-GATE] MAP: 建议跑以下测试（受影响）:`);
+        for (const t of radius.must_run_tests.slice(0, 10)) {
+          console.log(`  - ${t.file_path}`);
+        }
+      }
+    }
   }
 
   console.log('[ISLAND-GATE] PASS: 所有新增文件均已连通或无新增文件');
