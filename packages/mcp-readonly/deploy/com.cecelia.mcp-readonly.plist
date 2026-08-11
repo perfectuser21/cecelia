@@ -11,6 +11,18 @@
   </array>
   <key>WorkingDirectory</key>
   <string>/Users/administrator/perfect21/cecelia/packages/mcp-readonly</string>
+  <!--
+    凭据注入方式说明：MCP_BEARER_TOKEN / MCP_READONLY_DATABASE_URL / BARK_TOKEN
+    故意不写在这个 EnvironmentVariables 字典里。原因：/Library/LaunchDaemons/ 下的
+    plist 是明文文件，任何本机用户都能 `cat` 到（不像 ~/.credentials/*.env 有
+    chmod 600 保护），把密钥塞进 EnvironmentVariables 等于把生产 Bearer Token 和
+    数据库密码摆在系统级明文配置里，违反本仓库"凭据一律不进明文配置/不进git"
+    的规则。改用 server.js 顶部的 `import 'dotenv/config'` 在进程启动时从
+    WorkingDirectory 下的 .env 读取（该 .env 由 deploy.sh 在部署时从
+    ~/.credentials/mcp-bearer.env + ~/.credentials/mcp-readonly.env + 已有的
+    ~/.credentials/bark.env 拼装生成，chmod 600，且被 .gitignore 的 `.env` 规则
+    排除，不会被误 commit）。这里只保留 NODE_ENV/HOME/PATH 这类非敏感环境变量。
+  -->
   <key>EnvironmentVariables</key>
   <dict>
     <key>NODE_ENV</key>
