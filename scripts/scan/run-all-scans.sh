@@ -6,7 +6,7 @@
 #
 # 环境变量合同：
 #   NODE_BIN           — 直接指定 node 可执行路径（优先级最高）
-#   NODE_FALLBACK_PATHS — 冒号分隔的 node 候选绝对路径（不含 $HOME）
+#   NODE_FALLBACK_PATHS — 冒号分隔的 node 候选绝对路径（不含 ${HOME}）
 #   SCAN_SCRIPTS       — 空白分隔的 scanner 文件名列表（相对于 scripts/scan/）；
 #                        未设置 = 默认四个；设置为空白 = exit 2
 #   SCAN_REPO_SPECS    — 分号分隔的 name|root|source_database_url；设置后每仓运行四扫描器
@@ -22,7 +22,7 @@ cd "$REPO_ROOT" || exit 1
 
 echo "=== registry photo-layer scan $(date '+%F %T %Z') ==="
 
-# 2. 确定 node 可执行路径（不依赖 $HOME）
+# 2. 确定 node 可执行路径（不依赖 ${HOME}）
 if [[ -z "${NODE_BIN:-}" ]]; then
   NODE_BIN=""
   if [[ -n "${NODE_FALLBACK_PATHS:-}" ]]; then
