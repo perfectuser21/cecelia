@@ -1,0 +1,30 @@
+{
+  "initiative_id": "intent:cdad746e-2775-4a62-b9c5-7f3d18ba3e1f:4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "根因与修复全在 packages/brain 纯后端 orchestrator（纯函数/纯状态机），无 UI/agent 协议/engine 介入。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "kernel 配额失败识别 account_exhausted + derive 非终态轮换 + resolveExecutionTarget 消费 account-usage CAPPED",
+      "scope": "让配额类失败(429 weekly/rate limit)被识别为账号耗尽类而非 run 终态失败，并在选目标时跳过已 CAPPED 账号轮换到下一可用 claude 账号；不改生产安全参数、不动 codex/grok target 语义、不合并两套账号系统。",
+      "dod": [
+        "[BEHAVIOR] parseHarnessResult 对 429 weekly limit 的 failed 结果返回 failure_class=account_exhausted，偶发 429 无配额语义仍 runner_failure",
+        "[BEHAVIOR] derive 对 account_exhausted attempt callback 返回非终态重派(spawn:generator-fix, reason=callback_account_exhausted)，runner_failure 仍 mark_failed 终态",
+        "[BEHAVIOR] resolveExecutionTarget 消费 is_account_capped：跳过 CAPPED account1 选 account2；全 CAPPED→blocked；判定抛错降级静态顺序不 crash",
+        "[BEHAVIOR] 既有 orchestrator 测试零回归（execution-contract/derive/execution-targets）",
+        "[ARTIFACT] execution-contract.js / derive.js / execution-targets.js 三处源码改动落地"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/execution-contract.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/preflight/execution-targets.js",
+        "packages/brain/src/orchestrator/__tests__/quota-exhaustion-classify.test.js",
+        "packages/brain/src/orchestrator/__tests__/derive-account-exhausted.test.js",
+        "packages/brain/src/orchestrator/preflight/execution-targets-capped.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}
