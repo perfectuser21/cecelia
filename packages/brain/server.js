@@ -91,6 +91,7 @@ import rpaDevVerifyRouter from './src/routes/rpa-dev-verify.js';
 import deployDevRouter from './src/routes/deploy-dev.js';
 import incidentsRouter from './src/routes/incidents.js';
 import graphRoutes from './src/routes/graph.js';
+import { createMapManifestRouter } from './src/routes/map-manifests.js';
 import opsPanoramaRoutes from './src/routes/ops-panorama.js';
 import { createAcceptanceInternalRouter } from './src/routes/acceptance.js';
 import { startAcceptancePublicServer } from './src/acceptance-public-server.js';
@@ -364,6 +365,7 @@ app.get('/api/brain/decisions', async (req, res) => {
 });
 app.use('/api/brain/capture-atoms', captureAtomsRoutes);
 app.use('/api/brain/captures', capturesRoutes);
+app.use('/api/brain/map/manifests', createMapManifestRouter({ pool }));
 app.use('/api/brain', projectionsRoutes);
 // Notion 写入端点：POST /notes, POST /notion/project, POST /notion/task
 app.use('/api/brain', notesRoutes);
