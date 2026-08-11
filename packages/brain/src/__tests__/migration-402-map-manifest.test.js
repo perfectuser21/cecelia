@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 
 const upSql = readFileSync(new URL('../../migrations/402_map_manifest_versions.sql', import.meta.url), 'utf8');
@@ -41,6 +41,10 @@ describe('migration 402 — cecelia_test 实际 schema', () => {
   }
   const pool = new pg.Pool({ connectionString, max: 1 });
 
+  afterAll(async () => {
+    await pool.end();
+  });
+
   it('真实表具有所需列、约束、active unique index 与 decision FK', async () => {
     const { rows: columns } = await pool.query(
       `SELECT column_name, is_nullable
@@ -71,6 +75,5 @@ describe('migration 402 — cecelia_test 实际 schema', () => {
   it('schema_version 包含 402', async () => {
     const { rows } = await pool.query("SELECT version FROM schema_version WHERE version='402'");
     expect(rows).toEqual([{ version: '402' }]);
-    await pool.end();
   });
 });
