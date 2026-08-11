@@ -14,13 +14,16 @@
 
 ---
 
-## Brain 1.272.2 — Exact Map Anchors and Query-time State
+## Brain 1.272.2 — Exact Map State + Kernel Declared PR Ground Truth
 
 - scope、repo 与 legacy ledger partition 通过显式 adapter 配置连接，未配置 scope fail-closed，核心不做同名猜测。
 - Feature UUID、测试/API/DB/代码路径稳定标识确定性进入 active projection；名称模糊匹配和歧义候选不污染正式地图。
 - 状态按 15 分钟 freshness、当前 repo revision 与 immutable receipt 查询时现算 green/red/gray/unknown/not_applicable，旧 `cell_status` 不再具权威性。
 - 影响半径按 repo 的 graph snapshot 反向遍历，回溯业务节点与必跑断言，并展开 Cross-cut `serves` 关系。
 - Schema 地板推进到 406。
+- Kernel Ground Truth 在 `initiative_runs.pr_url` 尚未落库时，优先读取任务 payload 中格式严格合法的 GitHub PR URL，并直接查询 GitHub 实时状态。
+- 已有 PR 接管不再依赖 PR 标题或分支碰巧包含 task 短 ID；Evaluator 仍须通过 URL 与 40 位 head SHA 双重精确匹配。
+- 非严格 GitHub pull URL 的 payload 声明 fail closed，不进入 shell 或 PR 观测链。
 
 ---
 
