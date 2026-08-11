@@ -38,6 +38,7 @@ MAIN_SCRIPTS="$MAIN_ROOT/scripts"
 DRY_RUN=false
 CHANGED_FILES=""
 BASE_BRANCH="main"
+DASHBOARD_ONLY=false
 
 for arg in "$@"; do
     case $arg in
@@ -48,6 +49,9 @@ for arg in "$@"; do
             # 将空格分隔的文件列表转为换行符分隔（与 git diff --name-only 输出格式一致）
             CHANGED_FILES="${arg#*=}"
             CHANGED_FILES="${CHANGED_FILES// /$'\n'}"
+            ;;
+        --dashboard-only)
+            DASHBOARD_ONLY=true
             ;;
         --*)
             ;;
@@ -213,6 +217,14 @@ done <<< "$CHANGED_FILES"
 # Dashboard 对账结果叠加（webhook changed_paths 降级为并集提示，不再是唯一判据）
 [[ "$DASHBOARD_SHA_MISMATCH" == true ]] && NEED_DASHBOARD=true
 
+# 显式 dashboard-only 模式只允许构建 Dashboard staging，避免 changed-files
+# 中的 Brain/Skills 路径把本次发布扩展成完整生产部署。
+if [[ "$DASHBOARD_ONLY" == true ]]; then
+    NEED_BRAIN=false
+    NEED_DASHBOARD=true
+    NEED_WORKFLOW_SKILLS=false
+fi
+
 # ── 去重闸：staging 已就绪等放行时不重建（防刀2前保守构建 + Bark 风暴）──────
 if [[ "$NEED_DASHBOARD" == true ]]; then
     DEDUP_PENDING="$MAIN_ROOT/apps/dashboard/.staging-pending"
@@ -284,7 +296,7 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
     SLOT_LOG_FILE="$DASH_DIR/.staging-slot.log"
     SELFCHECK="$MAIN_SCRIPTS/dashboard-staging-selfcheck.sh"
     SLOT_SERVER="$MAIN_SCRIPTS/dashboard-slot-server.cjs"
-    STAGING_SLOT_PORT="${DASHBOARD_STAGING_PORT:-5223}"
+    STAGING_SLOT_PORT="${DASHBOARD_STAGING_PORT:-5251}"
 
     echo "🖥️  Dashboard 改动 → 构建到 staging slot（自检 → 起常驻 staging → 停住等放行）"
     if [[ "$DRY_RUN" == true ]]; then

@@ -28,7 +28,7 @@ import { sendFeishu, sendBark } from './notifier.js';
 
 export const STAGING_PORT = 5222;
 // A 方案：内部线交付 dashboard，staging 用 deploy-local.sh 起的 dashboard 预览端口。
-export const DASHBOARD_STAGING_PORT = 5223;
+export const DASHBOARD_STAGING_PORT = 5251;
 // ZenithJoy 蓝绿护栏：:5200=生产，:5201=staging（ZenithJoy CI push:main→:5201 自动部署）。
 export const ZJ_STAGING_PORT = 5201;
 // ZenithJoy develop 环境端口占位（FR-06 / Sprint 07131922）。
@@ -56,7 +56,7 @@ export async function deployStaging(opts = {}) {
   // 容器内 cwd=/app，部署脚本在 bind-mount 的 repo 根 scripts/；用绝对路径。
   // REPO_ROOT env（容器=bind-mount repo 根）优先；getRepoRoot() 仅本地直跑兜底（容器内返回 /）。
   const repoRoot = opts.cwd || process.env.REPO_ROOT || getRepoRoot();
-  // A 方案：内部线交付 dashboard → 用 deploy-local.sh 构建 dashboard 到 staging（:5223）
+  // A 方案：内部线交付 dashboard → 用 deploy-local.sh 构建 dashboard 到 staging（:5251）
   // + 写 .staging-pending（promote 步靠它）；非内部线沿用 staging-deploy.sh（brain :5222）。
   const internal = opts.line === 'internal';
   const customer = opts.line === 'customer';
@@ -166,7 +166,7 @@ export function runStagingCommand(command, opts = {}) {
   // host.docker.internal（容器内访问 host 的 staging :5222）。env STAGING_HOST 可覆盖（host 直跑传 localhost）。
   const host = opts.host || process.env.STAGING_HOST || 'host.docker.internal';
   // 端口重写按线区分。
-  // 内部线 dashboard staging（port=5223）：5174(dashboard)→:5223，5221(brain) 保持活 brain。
+  // 内部线 dashboard staging（port=5251）：5174(dashboard)→:5251，5221(brain) 保持活 brain。
   // ZenithJoy staging（port=5201）：5200(production)→:5201（合同针对 production 写，重写到 staging）。
   // 非内部线 brain staging（port=5222）：5221→:5222（原行为）。
   let cmd;
@@ -714,7 +714,7 @@ export async function runStagingE2E(task, opts = {}) {
     const acceptance = await loadAcceptance(dbPool, initiativeId);
     if (!acceptance) return await finalize('SKIP', 'no_contract');
 
-    // 2. 部署 staging：内部线(cecelia)走 deploy-local.sh 构建 dashboard 到 :5223；
+    // 2. 部署 staging：内部线(cecelia)走 deploy-local.sh 构建 dashboard 到 :5251；
     //    非内部线走 staging-deploy.sh 部署 brain 到 :5222。
     const line = resolveLine(baseRepo);
 

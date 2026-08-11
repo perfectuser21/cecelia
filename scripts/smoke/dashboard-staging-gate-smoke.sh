@@ -14,7 +14,7 @@
 # 测试钩子（实现侧需支持）：
 #   STAGING_FIXTURE_DIST=<dir>  deploy-local.sh 跳过 npm build，直接把该目录当构建产物
 #   CECELIA_SKIP_HK=1           promote 跳过 HK ssh 同步（smoke 只验本机 dist/ swap）
-#   DASHBOARD_STAGING_PORT=<p>  常驻 staging 端口（默认 5223）
+#   DASHBOARD_STAGING_PORT=<p>  常驻 staging 端口（默认 5251）
 #
 # 用法： bash scripts/smoke/dashboard-staging-gate-smoke.sh
 # 退出码： 0=全绿  1=有红

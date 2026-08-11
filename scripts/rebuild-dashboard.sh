@@ -8,6 +8,12 @@ set -e
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$REPO_ROOT/apps/dashboard/dist"
 
+# Dashboard-only 生产主链要求先生成 staging + 放行标记，不能提前覆盖 live dist。
+# 保留 rebuild-dashboard.sh 作为统一构建入口，--staging 委托既有 staging gate。
+if [[ "${1:-}" == "--staging" ]]; then
+  exec bash "$REPO_ROOT/scripts/deploy-local.sh" --dashboard-only
+fi
+
 echo "[rebuild-dashboard] 开始重建 Dashboard..."
 echo "[rebuild-dashboard] 仓库根目录: $REPO_ROOT"
 

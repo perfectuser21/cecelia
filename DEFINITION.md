@@ -8,11 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.17
+**Brain 版本**: 1.272.18
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.18 — Dashboard Staging Port Ownership
+
+- Dashboard staging 默认端口统一迁移到 `5251`，不再与 Brain Acceptance/Harness 的宿主端口 `5223` 冲突。
+- 官方 Dashboard 发布链和 staging E2E runner 共享同一端口常量；回归测试直接校验 Docker 宿主端口与 staging 默认端口互斥。
+- 生产 Dashboard 仍使用 `5211`，Brain API 仍使用 `5221`，现有端口职责不变。
 
 ## Brain 1.272.17 — Exact-PR Judge Evidence Basis
 

@@ -1,7 +1,7 @@
 /**
  * A 方案 — harness 内部线 staging→promote 接缝对齐 dashboard。
- * 改动1：deployStaging 内部线走 deploy-local.sh（构建 dashboard + 写 .staging-pending），返回 stagingPort 5223。
- * 改动2：staging E2E scenario 用 deploy 返回的 stagingPort（内部线打 5223）。
+ * 改动1：deployStaging 内部线走 deploy-local.sh（构建 dashboard + 写 .staging-pending），返回 stagingPort 5251。
+ * 改动2：staging E2E scenario 用 deploy 返回的 stagingPort（内部线打 5251）。
  * 改动3：handlePromote 未注入 promoteExec 时，defaultPromoteExec 用 process.env.REPO_ROOT（非裸 getRepoRoot=容器内/）。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -30,14 +30,14 @@ describe('deployStaging — 内部线走 deploy-local.sh（改动1）', () => {
     if (origEnv === undefined) delete process.env.REPO_ROOT; else process.env.REPO_ROOT = origEnv;
   });
 
-  it('internal → deploy-local.sh --changed=apps/dashboard + stagingPort 5223', async () => {
+  it('internal → deploy-local.sh --changed=apps/dashboard + stagingPort 5251', async () => {
     const exec = vi.fn(() => '');
     const r = await deployStaging({ exec, line: 'internal' });
     const [cmd, optsArg] = exec.mock.calls[0];
     expect(cmd).toContain('/fake/repo/scripts/deploy-local.sh');
     expect(cmd).toContain('--changed=apps/dashboard');
     expect(optsArg.cwd).toBe('/fake/repo');
-    expect(r.stagingPort).toBe(5223);
+    expect(r.stagingPort).toBe(5251);
   });
 
   it('非内部线 → staging-deploy.sh + stagingPort 5222（不回归 brain 路径）', async () => {
@@ -48,7 +48,7 @@ describe('deployStaging — 内部线走 deploy-local.sh（改动1）', () => {
   });
 });
 
-describe('runStagingE2E 内部线 — repoRoot 用 REPO_ROOT + 验 5223', () => {
+describe('runStagingE2E 内部线 — repoRoot 用 REPO_ROOT + 验 5251', () => {
   let origEnv;
   beforeEach(() => {
     vi.clearAllMocks();
@@ -60,7 +60,7 @@ describe('runStagingE2E 内部线 — repoRoot 用 REPO_ROOT + 验 5223', () => 
 
   it('未注入 promoteExec → defaultPromoteExec 用 process.env.REPO_ROOT（改动3 路径 bug）', async () => {
     const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
-    const deploy = vi.fn(() => ({ status: 'success', output: 'deployed', stagingPort: 5223 }));
+    const deploy = vi.fn(() => ({ status: 'success', output: 'deployed', stagingPort: 5251 }));
     const loadAcceptance = vi.fn(async () => ({ scenarios: [{ name: 's1', commands: [{ cmd: 'echo ok' }] }] }));
     const exec = vi.fn(() => 'ok');
     const task = { id: 't-int', payload: { initiative_id: 'i1', pr_url: 'https://pr/int', base_repo: 'perfectuser21/cecelia' } };
@@ -70,24 +70,24 @@ describe('runStagingE2E 内部线 — repoRoot 用 REPO_ROOT + 验 5223', () => 
     expect(defaultPromoteExec).toHaveBeenCalledWith('/fake/repo');
   });
 
-  it('内部线 staging E2E：dashboard 断言(5174) 打 staging 槽位 5223（用 deploy 返回的 stagingPort，改动2）', async () => {
+  it('内部线 staging E2E：dashboard 断言(5174) 打 staging 槽位 5251（用 deploy 返回的 stagingPort，改动2）', async () => {
     const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
-    const deploy = vi.fn(() => ({ status: 'success', output: 'deployed', stagingPort: 5223 }));
-    // P1#5：内部线 dashboard 断言引用 localhost:5174（dashboard dev）→ 映射到 staging 槽位 5223。
-    // （旧 fixture 误用 localhost:5221(brain) 并断言→5223，编码的正是被修掉的"brain 打到静态站"bug。）
+    const deploy = vi.fn(() => ({ status: 'success', output: 'deployed', stagingPort: 5251 }));
+    // P1#5：内部线 dashboard 断言引用 localhost:5174（dashboard dev）→ 映射到 staging 槽位 5251。
+    // （旧 fixture 误用 localhost:5221(brain) 并断言→5251，编码的正是被修掉的"brain 打到静态站"bug。）
     const loadAcceptance = vi.fn(async () => ({ scenarios: [{ name: 's1', commands: [{ cmd: 'curl -s localhost:5174/' }] }] }));
     const execCmds = [];
     const exec = vi.fn((cmd) => { execCmds.push(cmd); return 'ok'; });
     const task = { id: 't-int2', payload: { initiative_id: 'i1', pr_url: 'https://pr/int', base_repo: 'perfectuser21/cecelia' } };
 
     await runStagingE2E(task, { pool, deploy, loadAcceptance, exec, promoteExec: vi.fn(() => ({ ok: true, output: 'x' })) });
-    expect(execCmds.some((c) => c.includes(':5223'))).toBe(true);
+    expect(execCmds.some((c) => c.includes(':5251'))).toBe(true);
     expect(execCmds.some((c) => c.includes(':5222'))).toBe(false);
   });
 
   it('internal line 经 runStagingE2E 时给 deploy 传 line=internal', async () => {
     const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
-    const deploy = vi.fn(() => ({ status: 'success', output: 'deployed', stagingPort: 5223 }));
+    const deploy = vi.fn(() => ({ status: 'success', output: 'deployed', stagingPort: 5251 }));
     const loadAcceptance = vi.fn(async () => ({ scenarios: [{ name: 's1', commands: [{ cmd: 'echo ok' }] }] }));
     const task = { id: 't-int3', payload: { initiative_id: 'i1', pr_url: 'https://pr/int', base_repo: 'perfectuser21/cecelia' } };
 
