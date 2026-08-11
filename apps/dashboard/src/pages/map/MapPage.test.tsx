@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import planningManifest from '@features/core/planning';
 import MapPage from '@features/core/planning/pages/MapPage';
+import systemHubManifest from '@features/core/system-hub';
 
 const revision = 'c'.repeat(40);
 
@@ -98,6 +99,8 @@ describe('Universal Map 页面权威', () => {
       navItem: expect.objectContaining({ label: '地图' }),
     }));
     expect(planningManifest.components.MapPage).toBeTypeOf('function');
+    expect(systemHubManifest.routes.filter(({ path }) => path.startsWith('/map'))).toEqual([]);
+    expect(systemHubManifest.components.MapPage).toBeUndefined();
     expect(existsSync(new URL('./MapPage.tsx', import.meta.url))).toBe(false);
   });
 
@@ -105,7 +108,7 @@ describe('Universal Map 页面权威', () => {
     render(<MapPage />);
 
     expect(await screen.findByRole('heading', { name: '通用地图' })).toBeInTheDocument();
-    expect(screen.getByText('Manifest v1')).toBeInTheDocument();
+    expect(await screen.findByText('Manifest v1')).toBeInTheDocument();
     expect(screen.getByText(`投影 ${'b'.repeat(12)}`)).toBeInTheDocument();
     expect(screen.getByText(`cecelia ${revision.slice(0, 12)}`)).toBeInTheDocument();
     expect(screen.getByText('新鲜')).toBeInTheDocument();
@@ -123,7 +126,7 @@ describe('Universal Map 页面权威', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /F0 事实投影/ }));
     await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/nodes/F0?scope=cecelia')));
-    expect(screen.getByRole('heading', { name: 'Level 2 · 事实投影' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Level 2 · 事实投影' })).toBeInTheDocument();
     expect(screen.getByText('投影骨干')).toBeInTheDocument();
     expect(screen.getByText('确定性投影')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /投影摘要稳定/ })).toBeInTheDocument();
