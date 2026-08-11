@@ -75,19 +75,27 @@ fi
 
 # ── Dashboard 构建 ──────────────────────────────────────────────────────────
 if [[ "$DASHBOARD_CHANGED" == true ]]; then
-    echo "--- Building Dashboard ---"
-    bash "$SCRIPT_DIR/rebuild-dashboard.sh" || {
-        echo ""
-        echo "[FAIL] rebuild-dashboard.sh 失败"
-        exit 1
-    }
-    echo ""
-
     if [[ "$DASHBOARD_ONLY" == true ]]; then
+        echo "--- Building Dashboard in staging ---"
+        bash "$SCRIPT_DIR/rebuild-dashboard.sh" --staging || {
+            echo ""
+            echo "[FAIL] rebuild-dashboard.sh --staging 失败"
+            exit 1
+        }
+        echo ""
+
         echo "--- Promoting Dashboard to US/HK ---"
         bash "$SCRIPT_DIR/promote-dashboard.sh" || {
             echo ""
             echo "[FAIL] promote-dashboard.sh 失败，中止部署"
+            exit 1
+        }
+        echo ""
+    else
+        echo "--- Building Dashboard ---"
+        bash "$SCRIPT_DIR/rebuild-dashboard.sh" || {
+            echo ""
+            echo "[FAIL] rebuild-dashboard.sh 失败"
             exit 1
         }
         echo ""
