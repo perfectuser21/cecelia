@@ -203,8 +203,10 @@ describe('selfcheck', () => {
   // 393（GP 胶水参数化：golden_paths.base_repo + target_environment 两可空列，task d2567378）
   //      推进地板到 393。
   // 402（immutable Map Manifest versions）推进地板到 402。
-  it('EXPECTED_SCHEMA_VERSION should be 402', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('402');
+  // 403（事实池 source_revision + scanner_version + repo 字段补齐）推进地板到 403。
+  // 404（Universal Map projection runs/nodes/edges 三派生表）推进地板到 404。
+  it('EXPECTED_SCHEMA_VERSION should be 404', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('404');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
