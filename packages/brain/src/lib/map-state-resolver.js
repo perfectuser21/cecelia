@@ -105,6 +105,21 @@ export function aggregateMapStates(children) {
   return state('gray', 'children_incomplete');
 }
 
+export function aggregateFeatureEvidence({ artifactStates = [], assertionStates = [] }) {
+  const applicableAssertions = assertionStates.filter(({ status }) => status !== 'not_applicable');
+  if (applicableAssertions.length === 0) {
+    if (assertionStates.length > 0) {
+      return state('not_applicable', 'assertions_not_applicable');
+    }
+    const artifactState = aggregateMapStates(artifactStates);
+    if (artifactState.status === 'green') {
+      return state('unknown', 'receipt_missing');
+    }
+    return artifactState;
+  }
+  return aggregateMapStates([...artifactStates, ...assertionStates]);
+}
+
 function factIdentity(repo, value) {
   return `${repo}\u0000${value}`;
 }
@@ -278,13 +293,22 @@ export async function loadMapNodeStates(client, { scopeKey, now = new Date() }) 
   }
 
   for (const node of nodes.filter(({ node_type: nodeType }) => nodeType === 'feature')) {
-    const children = incomingChildren(
+    const artifactStates = incomingChildren(
       node,
       edges,
       resolvedById,
-      new Set(['implements', 'proves']),
+      new Set(['implements']),
     );
-    resolvedById.set(node.node_id, aggregateMapStates(children));
+    const assertionStates = incomingChildren(
+      node,
+      edges,
+      resolvedById,
+      new Set(['proves']),
+    );
+    resolvedById.set(node.node_id, aggregateFeatureEvidence({
+      artifactStates,
+      assertionStates,
+    }));
   }
   for (const node of nodes.filter(({ node_type: nodeType }) => nodeType === 'capability')) {
     const children = incomingChildren(node, edges, resolvedById, new Set(['implements']));

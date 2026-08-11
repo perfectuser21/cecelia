@@ -41,19 +41,19 @@ async function deleteFixtures() {
   await pool.query('DELETE FROM fact_snapshot_headers WHERE repo LIKE $1', [`${scopePrefix}%`]);
   await pool.query(
     `DELETE FROM journey_features f USING journeys j
-      WHERE f.journey_id=j.id AND j.biz_area LIKE $1`,
+      WHERE f.journey_id=j.id AND j.name LIKE $1`,
     [`${scopePrefix}%`],
   );
-  await pool.query('DELETE FROM journeys WHERE biz_area LIKE $1', [`${scopePrefix}%`]);
+  await pool.query('DELETE FROM journeys WHERE name LIKE $1', [`${scopePrefix}%`]);
   await pool.query('DELETE FROM map_scope_repositories WHERE scope_key LIKE $1', [`${scopePrefix}%`]);
 }
 
 async function submitConfiguredManifest(input) {
   await pool.query(
     `INSERT INTO map_scope_repositories (scope_key, repo, adapter_key, adapter_config)
-     VALUES ($1, $1, 'legacy-ledger-v1', '{"ledger_partition":"infrastructure"}'::jsonb)
+     VALUES ($1, $1, 'legacy-ledger-v1', $2::jsonb)
      ON CONFLICT (scope_key, repo) DO NOTHING`,
-    [input.scope_key],
+    [input.scope_key, JSON.stringify({ ledger_partition: 'infrastructure' })],
   );
   return submitMapManifest(pool, input);
 }
@@ -266,8 +266,8 @@ describe('Map Projection Store — 真实 PostgreSQL', () => {
 
     const journey = await pool.query(
       `INSERT INTO journeys (name, biz_area, capability_code)
-       VALUES ('integration capability', $1, $2) RETURNING id`,
-      ['infrastructure', capabilityKey],
+       VALUES ($1, $2, $3) RETURNING id`,
+      [scopeKey, 'infrastructure', capabilityKey],
     );
     const step = await pool.query(
       `INSERT INTO journey_steps (journey_id, name, step_number)
@@ -281,15 +281,15 @@ describe('Map Projection Store — 真实 PostgreSQL', () => {
     );
     const assertion = await pool.query(
       `INSERT INTO journey_step_links
-        (journey_id, step_id, feature_id, cell_kind, cell_key, assertion_ref)
-       VALUES ($1, $2, $3, 'capability', $4, $5) RETURNING id`,
+        (journey_id, step_id, feature_id, cell_kind, cell_key, assertion_ref, notion_synced_at)
+       VALUES ($1, $2, $3, 'capability', $4, $5, NOW()) RETURNING id`,
       [journey.rows[0].id, step.rows[0].id, feature.rows[0].id, capabilityKey, testPath],
     );
     const { rows: ownedJourneys } = await pool.query(
-      'SELECT biz_area FROM journeys WHERE id=$1',
+      'SELECT name, biz_area FROM journeys WHERE id=$1',
       [journey.rows[0].id],
     );
-    expect(ownedJourneys).toEqual([{ biz_area: scopeKey }]);
+    expect(ownedJourneys).toEqual([{ name: scopeKey, biz_area: 'infrastructure' }]);
     await pool.query(
       `INSERT INTO test_registry
         (repo, file_path, source_revision, scanner_version, scanned_at)
