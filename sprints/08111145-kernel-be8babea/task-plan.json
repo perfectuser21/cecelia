@@ -1,25 +1,21 @@
 {
   "initiative_id": "be8babea-82f8-4ca6-9e57-11eb75dff348",
   "journey_type": "user_facing",
-  "journey_type_reason": "Safari/WebKit 用户可见深链与双节点 Dashboard 生产发布主链需要真实浏览器验收",
+  "journey_type_reason": "只读复验三地 Dashboard 资源与 WebKit 用户可见深链",
   "tasks": [
     {
       "task_id": "ws1",
-      "title": "修复 Dashboard-only HK/US 官方发布主链",
-      "scope": "让既有 Dashboard-only 入口复用双节点发布与失败终验，并永久保留先红后绿回归",
+      "title": "只读复验 PR #4794 精确 head",
+      "scope": "严格串行原样运行七条 required_command_evidence，并将逐条 exit code 与非空 log_tail 交独立 Judge；禁止生成或修改代码",
       "dod": [
-        "[BEHAVIOR] Dashboard-only 成功调用既有 promote 主链且 HK/终验失败向上返回非零",
-        "[BEHAVIOR] 真实 HK/US 四类资源等于 PR head，WebKit 深链刷新后不变且入口日志 Referer 正确",
-        "[ARTIFACT] 永久 Vitest CI 回归测试"
+        "[BEHAVIOR] 七条精确命令全部 exit 0 且 log_tail 非空",
+        "[BEHAVIOR] 三地四资源逐字一致且 WebKit 私密深链等待刷新后保持",
+        "[ARTIFACT] Evaluator 七项证据与 Judge 独立裁决"
       ],
-      "files": [
-        "scripts/deploy.sh",
-        "packages/quality/",
-        "sprints/08111145-kernel-be8babea/tests/dashboard-only-production-chain.test.ts"
-      ],
+      "files": [],
       "depends_on": [],
-      "complexity": "M",
-      "estimated_minutes": 90
+      "complexity": "S",
+      "estimated_minutes": 30
     }
   ]
 }
