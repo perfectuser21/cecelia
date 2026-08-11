@@ -1307,9 +1307,8 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).toMatchObject({
       contract_branch: 'cp-harness-propose-r2-aaaaaaaa-a6',
     });
-    // 运行时依赖预装只对 proposer/reviewer 默认开——generator 不该被塞
-    // runtime_resources.node_deps（design doc §运行时依赖，决策 ba33fc68 只覆盖
-    // GAN 双方角色）。
+    // 运行时依赖预装只对 proposer/reviewer/evaluator 默认开——generator 不该被塞
+    // runtime_resources.node_deps；generator 仍由自身实现过程按需安装/构建。
     expect(created.bundle.inputs).not.toHaveProperty('runtime_resources');
   });
 
