@@ -122,6 +122,18 @@ describe('Unified Map read router', () => {
       .expect(404);
     expect(services.rebuild).not.toHaveBeenCalled();
   });
+
+  it('rebuild 保留为唯一投影重建写入口并返回同一 envelope', async () => {
+    const { app, pool, services } = makeHarness();
+
+    const response = await request(app)
+      .post('/api/brain/map/rebuild')
+      .send({ scope_key: 'cecelia' })
+      .expect(200);
+
+    expect(response.body).toMatchObject({ ...envelope, rebuilt: true });
+    expect(services.rebuild).toHaveBeenCalledWith(pool, { scopeKey: 'cecelia', now });
+  });
 });
 
 describe('server Map 路由权威顺序', () => {

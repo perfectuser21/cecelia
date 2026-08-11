@@ -7,6 +7,13 @@ import { DB_DEFAULTS } from '../../db-config.js';
 import { digestMapManifest } from '../../lib/map-manifest-schema.js';
 import { loadMapImpactRadius } from '../../lib/map-impact-radius.js';
 import { projectMapManifest } from '../../lib/map-projection-store.js';
+import {
+  readHealth,
+  readMap,
+  readNode,
+  readRadius,
+  readUnclaimed,
+} from '../../lib/map-read-service.js';
 import { loadMapNodeStates } from '../../lib/map-state-resolver.js';
 
 const testConnectionString = process.env.TEST_DATABASE_URL;
@@ -133,6 +140,14 @@ beforeAll(async () => {
      VALUES ('graph', $1, $2, 'graph-v3', $3, 1)`,
     [repo, revision, now],
   );
+  await client.query(
+    `INSERT INTO fact_snapshot_headers
+      (kind, repo, source_revision, scanner_version, scanned_at, row_count)
+     VALUES
+      ('api', $1, $2, 'api-registry-v2', $3, 0),
+      ('db_schema', $1, $2, 'db-schema-v2', $3, 0)`,
+    [repo, revision, now],
+  );
 
   const manifest = structuredClone(fixtureManifest);
   manifest.scope_key = scopeKey;
@@ -242,5 +257,88 @@ describe('Map State Resolver — 真实 PostgreSQL', () => {
     expect(crosscut.affected_business_nodes.length).toBeGreaterThan(1);
     expect(crosscut.affected_business_nodes.map(({ node_key }) => node_key))
       .toContain('heartbeat_bus');
+  });
+
+  it('Unified Map 五个读服务在同一真实 projection 上返回一致 envelope 与精确结构', async () => {
+    const readAt = new Date(now.getTime() + 7000);
+    await client.query(
+      'UPDATE fact_snapshot_headers SET scanned_at=$2 WHERE repo=$1',
+      [repo, new Date(readAt.getTime() - 1000)],
+    );
+    const map = await readMap(client, { scopeKey, now: readAt });
+
+    expect(map).toMatchObject({
+      scope_key: scopeKey,
+      manifest_version: 1,
+      manifest_digest: expect.stringMatching(/^[0-9a-f]{64}$/),
+      projection_digest: expect.stringMatching(/^[0-9a-f]{64}$/),
+      fact_revisions: { [repo]: revision },
+      generated_at: readAt.toISOString(),
+      freshness: { status: 'fresh' },
+      summary: {
+        value_streams: 2,
+        capabilities: 11,
+        boundaries: 2,
+        crosscuts: 7,
+        prerequisites: 0,
+      },
+      shared_prerequisites: { applicable: false },
+    });
+
+    const detail = await readNode(client, {
+      scopeKey, nodeKey: capabilityKey, now: readAt,
+    });
+    expect(detail).toMatchObject({
+      scope_key: scopeKey,
+      manifest_digest: map.manifest_digest,
+      projection_digest: map.projection_digest,
+      node: { key: capabilityKey, type: 'capability' },
+    });
+    expect(detail.boundaries).toHaveLength(1);
+
+    const crosscut = await readNode(client, {
+      scopeKey, nodeKey: 'heartbeat_bus', now: readAt,
+    });
+    expect(crosscut.affected_nodes.length).toBeGreaterThan(0);
+    expect(crosscut.affected_nodes.map(({ key }) => key)).toEqual(['butler', 'factory']);
+    expect(crosscut.affected_nodes.every(({ type }) => type === 'value_stream')).toBe(true);
+
+    const radius = await readRadius(client, {
+      scopeKey,
+      repo,
+      changedFiles: [sourcePath],
+      startNodeKeys: [],
+      maxDepth: 10,
+      now: readAt,
+    });
+    expect(radius).toMatchObject({
+      scope_key: scopeKey,
+      manifest_digest: map.manifest_digest,
+      projection_digest: map.projection_digest,
+      freshness: { status: 'fresh' },
+    });
+    expect(radius.must_run_assertions).toEqual([
+      { node_key: assertionId, assertion_ref: testPath },
+    ]);
+
+    const health = await readHealth(client, { scopeKey, now: readAt });
+    expect(health).toMatchObject({
+      scope_key: scopeKey,
+      manifest_digest: map.manifest_digest,
+      projection_digest: map.projection_digest,
+      overall: 'healthy',
+      freshness: { status: 'fresh' },
+    });
+
+    const unclaimed = await readUnclaimed(client, { scopeKey, now: readAt });
+    expect(unclaimed).toMatchObject({
+      scope_key: scopeKey,
+      manifest_digest: map.manifest_digest,
+      projection_digest: map.projection_digest,
+      freshness: { status: 'fresh' },
+    });
+    expect(unclaimed.unclaimed).toEqual(expect.arrayContaining([
+      expect.objectContaining({ repo, fact_kind: 'graph', stable_ref: sourcePath }),
+    ]));
   });
 });
