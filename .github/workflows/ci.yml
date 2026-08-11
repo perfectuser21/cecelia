@@ -35,6 +35,7 @@ jobs:
       compose: ${{ steps.detect.outputs.compose }}
       dod: ${{ steps.detect.outputs.dod }}
       quality: ${{ steps.detect.outputs.quality }}
+      mcp_readonly: ${{ steps.detect.outputs.mcp_readonly }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,6 +48,7 @@ jobs:
             echo "engine=true" >> $GITHUB_OUTPUT
             echo "workspace=true" >> $GITHUB_OUTPUT
             echo "compose=true" >> $GITHUB_OUTPUT
+            echo "mcp_readonly=true" >> $GITHUB_OUTPUT
             exit 0
           fi
           # 改动 A：push 事件（含 push 到 main）直接全量，不依赖恒空的 diff
@@ -57,6 +59,7 @@ jobs:
             echo "compose=true"  >> $GITHUB_OUTPUT
             echo "dod=true"      >> $GITHUB_OUTPUT
             echo "quality=true"  >> $GITHUB_OUTPUT
+            echo "mcp_readonly=true" >> $GITHUB_OUTPUT
             exit 0
           fi
           CHANGED=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || echo "")
@@ -68,6 +71,7 @@ jobs:
             echo "compose=true"  >> $GITHUB_OUTPUT
             echo "dod=true"      >> $GITHUB_OUTPUT
             echo "quality=true"  >> $GITHUB_OUTPUT
+            echo "mcp_readonly=true" >> $GITHUB_OUTPUT
             exit 0
           fi
           # brain=true 触发 brain-unit 等。sprints/ 的 test 文件不再触发（07-10 断源）：
@@ -78,6 +82,7 @@ jobs:
           echo "compose=$(echo "$CHANGED" | grep -qE '^(docker-compose\.yml|packages/brain/Dockerfile|scripts/brain-(docker-up|docker-down|build)\.sh)$' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "dod=$(echo "$CHANGED" | grep -qE '^(DoD\.md|DoD\.cp-|task-card\.md|task-card-|\.task-|\.dod-|TASK_CARD\.cp-|PRD\.cp-)' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "quality=$(echo "$CHANGED" | grep -qE '^packages/quality/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "mcp_readonly=$(echo "$CHANGED" | grep -qE '^packages/mcp-readonly/' && echo true || echo false)" >> $GITHUB_OUTPUT
 
   # ─── Docker Infrastructure Smoke ──────────────────────────
   # 保护 Brain 容器化基础设施（compose / Dockerfile / up/down 脚本）
@@ -1500,6 +1505,26 @@ jobs:
       - name: Quality Package Tests
         run: cd packages/quality && npm ci && npm test
 
+  # ─── MCP Readonly: Unit Tests ──────────────────────────────
+  # 只读 MCP Server（Notion AI 查询 Cecelia 状态用），此前零 CI 覆盖（08-11
+  # 跨任务整体审查发现的结构性缺口）。DB 相关测试（db.test.js / 部分
+  # server.test.js）用 describe.skipIf(!TEST_DATABASE_URL) 设计，CI 无
+  # TEST_DATABASE_URL 时自动跳过——不在此另起 Postgres service，保持这个
+  # 包现有"无库环境也能跑单测"的既定设计，不新建集成基础设施。
+  mcp-readonly-tests:
+    needs: changes
+    if: needs.changes.outputs.mcp_readonly == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: MCP Readonly Package Tests
+        run: cd packages/mcp-readonly && npm ci && npx vitest run
+
   # ─── Real-Env Smoke (起真 brain docker container + 真 postgres，跑 smoke.sh) ─
   # 与单测 / integration 互补：单测 mock 一切；integration 起 node server 直跑；
   # real-env-smoke 起 cecelia-brain image 真容器，验真容器化部署链路 + smoke.sh 行为。
@@ -1879,7 +1904,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, mcp-readonly-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1933,6 +1958,7 @@ jobs:
           check "real-env-smoke"         "${{ needs.real-env-smoke.result }}"
           check "workspace-api-smoke"    "${{ needs.workspace-api-smoke.result }}"
           check "quality-tests"         "${{ needs.quality-tests.result }}"
+          check "mcp-readonly-tests"    "${{ needs.mcp-readonly-tests.result }}"
           check "dispatch-worker-test"   "${{ needs.dispatch-worker-test.result }}"
           check "brain-version-bump-gate" "${{ needs.brain-version-bump-gate.result }}"
           check "brain-tests-shell"      "${{ needs.brain-tests-shell.result }}"
