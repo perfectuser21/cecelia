@@ -106,6 +106,7 @@ harness-detail-smoke.sh
 harness-echo-smoke.sh
 harness-evaluator-gate-smoke.sh
 harness-gear-smoke.sh
+harness-judge-gate-smoke.sh
 harness-lifecycle-gates-smoke.sh
 harness-ping-smoke.sh
 harness-planner-async-smoke.sh

@@ -182,6 +182,61 @@ router.get('/initiative-runs/:id', async (req, res) => {
 });
 
 /**
+ * GET /pr-ownership?pr_number=<n>
+ *
+ * 合并权收归单一裁决闸（#4755/#4759 修法）。给定一个 PR 号，查 initiative_runs.pr_url
+ * 是否存在精确匹配（/pull/<n> 结尾），回答该 PR 是否属于某个 harness run。归属只凭
+ * pr_url（由 kernel/relay-watchdog 写入），不看标题/分支名（LLM 自由字段，#4755 实证漏过）。
+ *
+ * 调用方：CI 通用 auto-merge 的 should-auto-merge.sh —— owned:true 则跳过通用 auto-merge，
+ * 把 merge 交还给 kernel mergeGate（脚本侧对 curl 失败/非 200/非法 JSON 一律 fail-closed→SKIP）。
+ *
+ * 精确匹配：pr_url 用正则 /pull/<n>(/|$) 锚定结尾，pr_number=475 不得误命中 .../pull/4755，
+ * 且允许 .../pull/4755 / .../pull/4755/ / .../pull/4755/files 三种形态命中 4755。
+ *
+ * 200 {owned:true, run_id:<uuid>, pr_number, reason} —— 属于某 harness run
+ * 200 {owned:false, run_id:null, pr_number, reason} —— 不属于任何 harness run（真手动 /dev）
+ * 400 {error} —— pr_number 非正整数
+ * 500 {error} —— DB 异常（脚本侧 fail-closed 兜住）
+ */
+router.get('/pr-ownership', async (req, res) => {
+  const raw = req.query.pr_number;
+  // 只接受正整数（防注入 + 语义正确）；参数化 SQL 再叠一层防线。
+  if (typeof raw !== 'string' || !/^[0-9]+$/.test(raw) || Number(raw) < 1) {
+    return res.status(400).json({ error: 'pr_number must be a positive integer' });
+  }
+  const prNumber = Number(raw);
+  try {
+    // 精确到 /pull/<n> 结尾：正则用 (/|$) 锚定，避免 475 前缀误命中 4755。
+    const { rows } = await pool.query(
+      `SELECT id
+         FROM initiative_runs
+        WHERE pr_url ~ $1
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [`/pull/${prNumber}(/|$)`]
+    );
+    if (rows.length > 0) {
+      return res.json({
+        owned: true,
+        run_id: rows[0].id,
+        pr_number: prNumber,
+        reason: 'matched initiative_runs.pr_url',
+      });
+    }
+    return res.json({
+      owned: false,
+      run_id: null,
+      pr_number: prNumber,
+      reason: 'no initiative_runs.pr_url matches',
+    });
+  } catch (err) {
+    console.error('[GET /harness/pr-ownership]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /runs
  * 返回最近 harness pipeline 运行列表
  * ?limit=N 默认 20，范围 1-100，按 started_at DESC

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # 验证 should-auto-merge.sh 的合并决策逻辑。
-# 背景：CI 通用 auto-merge 与 harness 自己的 evaluator+DeepSeek 裁判 gate 是两条
-# 独立的 PR 合并通道。harness generator 产出的 PR 也用 cp-* 分支命名，会触发同一个
-# ci.yml；通用通道只看「cp-* 分支 + CI 绿」就 squash merge，比裁判 gate 快，会抢先
-# 合并、架空裁判裁决权。此脚本把「该不该由通用 auto-merge 合并」的判据抽出来单独测。
+# 背景：CI 通用 auto-merge、harness kernel mergeGate、engine-pr-watchdog 是三条互不知晓的
+# PR 合并通道。harness generator 产出的 PR 也用 cp-* 分支命名，会触发同一个 ci.yml；通用
+# 通道只看「cp-* 分支 + CI 绿」就 squash merge，比 kernel 的 evaluator+judge gate 快，会
+# 抢先合并、架空裁判裁决权（#4755/#4759 实证）。
+# 2026-08 收敛：判据从「PR 标题 feat(harness): 前缀」（LLM 自由字段，#4755 漏过）换成向
+# Brain 求证归属（查 initiative_runs.pr_url）。本脚本用 PATH 注入 fake curl 控制 Brain 应答，
+# 断言脚本按归属决策，并覆盖 fail-closed 三态。
 set -euo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/should-auto-merge.sh"
@@ -15,11 +18,27 @@ AUTO_MERGE_JOB="$(awk '
 ' "$WORKFLOW")"
 PASS=0; FAIL=0
 
-# assert_decision <期望关键词> <描述> <head_branch> <pr_title>
+# fake curl：脚本约定 curl -w $'\n%{http_code}'，故输出 body\n<code>；由 FAKE_MODE 控制应答。
+FAKE_DIR="$(mktemp -d)"
+trap 'rm -rf "$FAKE_DIR"' EXIT
+cat > "$FAKE_DIR/curl" <<'FAKE'
+#!/usr/bin/env bash
+case "${FAKE_MODE:-}" in
+  owned)    printf '{"owned":true,"run_id":"11111111-1111-4111-8111-111111111111","pr_number":4755,"reason":"matched"}\n200' ;;
+  notowned) printf '{"owned":false,"run_id":null,"pr_number":123,"reason":"no match"}\n200' ;;
+  5xx)      printf '{"error":"boom"}\n500' ;;
+  badjson)  printf 'not-json-at-all\n200' ;;
+  timeout)  exit 28 ;;
+  *)        printf '\n000' ;;
+esac
+FAKE
+chmod +x "$FAKE_DIR/curl"
+
+# assert_decision <期望关键词> <描述> <FAKE_MODE> <head_branch> <pr_number>
 assert_decision() {
-  local expect="$1" desc="$2" branch="$3" title="$4"
+  local expect="$1" desc="$2" mode="$3" branch="$4" prnum="$5"
   local out
-  out="$(bash "$SCRIPT" "$branch" "$title" 2>&1)"
+  out="$(FAKE_MODE="$mode" PATH="$FAKE_DIR:$PATH" BRAIN_URL="http://brain.local" bash "$SCRIPT" "$branch" "$prnum" 2>&1 || true)"
   if echo "$out" | grep -q "$expect"; then
     echo "PASS: $desc"; PASS=$((PASS+1))
   else
@@ -27,27 +46,35 @@ assert_decision() {
   fi
 }
 
-# harness generator 产出的 PR（标题 feat(harness): 前缀）→ 跳过通用 auto-merge，
-# 交给 harness 自己的 gate。这是本次 bug 修复的核心断言。
-assert_decision "SKIP" "harness PR（feat(harness):）→ 跳过 auto-merge" \
-  "cp-0704084753-abc" "feat(harness): 抖音发布 skeleton"
+# ── 归属决策（不看标题，只看 Brain 求证）─────────────────────────────────────
+# harness-owned（Brain owned:true）→ 跳过通用 auto-merge，交给 kernel mergeGate。核心断言。
+assert_decision "SKIP" "Brain owned:true（harness-owned）→ 跳过 auto-merge" \
+  "owned" "cp-08101107-04e4690d" "4755"
 
-# 普通手动 /dev 的 fix 类 PR → 正常走 auto-merge（不能误伤 /dev 流程，关键）。
-assert_decision "MERGE" "普通 fix(brain) PR → 正常 auto-merge" \
-  "cp-0704084753-abc" "fix(brain): 修复调度队头阻塞"
+# 手动 /dev 的 cp-* PR（Brain owned:false）→ 正常走 auto-merge（不能误伤 /dev 流程，红线）。
+assert_decision "MERGE" "Brain owned:false（手动 /dev）→ 正常 auto-merge" \
+  "notowned" "cp-manual-dev" "123"
 
-# 手动 /dev 的 fix(ci) PR（就是本次这个 PR 的类型）→ 正常走 auto-merge。
-assert_decision "MERGE" "fix(ci) PR → 正常 auto-merge" \
-  "cp-0704084753-abc" "fix(ci): auto-merge 跳过 harness PR"
-
-# feat 类但非 harness 的手动 PR → 正常走 auto-merge（只拦 feat(harness): 精确前缀）。
-assert_decision "MERGE" "普通 feat(dashboard) PR → 正常 auto-merge" \
-  "cp-0704084753-abc" "feat(dashboard): 新增设备页字段"
-
-# 非 cp-* 分支 → 跳过（保留原有行为，stop hook 删除后统一由 cp-* 判据处理）。
+# 非 cp-* 分支 → 跳过（保留原有行为）。curl 之前就短路，FAKE_MODE 无关。
 assert_decision "SKIP" "非 cp-* 分支 → 跳过 auto-merge" \
-  "feature/manual-branch" "fix(brain): 随便改"
+  "owned" "feature/manual-branch" "999"
 
+# ── fail-closed 三态（Brain 5xx / 非法 JSON / 超时）一律 SKIP（任一 MERGE 即失败，红线）──
+assert_decision "SKIP" "fail-closed: Brain 5xx → SKIP" \
+  "5xx" "cp-08101107-04e4690d" "4755"
+assert_decision "SKIP" "fail-closed: 非法 JSON → SKIP" \
+  "badjson" "cp-08101107-04e4690d" "4755"
+assert_decision "SKIP" "fail-closed: curl 超时 → SKIP" \
+  "timeout" "cp-08101107-04e4690d" "4755"
+
+# ── auto-merge step 结构断言：以 $PR_NUMBER（非 $PR_TITLE）调脚本 ─────────────────
+if echo "$AUTO_MERGE_JOB" | grep -Fq 'should-auto-merge.sh "$HEAD_BRANCH" "$PR_NUMBER"'; then
+  echo "PASS: auto-merge step 以 \$PR_NUMBER 调脚本（Brain 求证归属）"; PASS=$((PASS+1))
+else
+  echo "FAIL: auto-merge step 未以 \$PR_NUMBER 调脚本（归属判据回退风险）"; FAIL=$((FAIL+1))
+fi
+
+# ── workflow 结构断言（保留不动）───────────────────────────────────────────────
 # ci-passed 的依赖包含按路径跳过的 jobs。GitHub 会把 skip 沿 needs 链传播，
 # 所以下游 auto-merge 必须显式使用 always()，再自行检查 ci-passed 的结果。
 if grep -Fq "if: always() && needs.ci-passed.result == 'success' && github.event_name == 'pull_request'" "$WORKFLOW"; then
