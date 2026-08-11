@@ -44,5 +44,12 @@ echo "old-sha-000" > "$STATE"; rm -f "$MARK"
 RC=0; RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_FAIL" bash "$SCRIPT" >/dev/null 2>&1 || RC=$?
 if [[ $RC -ne 0 && "$(cat "$STATE")" == "old-sha-000" ]]; then pass "扫描失败:SHA 不记账且 exit 非 0"; else fail "失败路径异常(rc=$RC, state=$(cat "$STATE"))"; fi
 
+# 5 SHA 稳定但最近一次成功扫描超过 10 分钟 → 仍重拍，防 15 分钟 freshness 腐烂
+echo "old-sha-000 0" > "$STATE"; rm -f "$MARK"
+RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_OK" RESCAN_NOW_EPOCH=1000 bash "$SCRIPT" >/dev/null 2>&1
+rm -f "$MARK"
+RC=0; RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_OK" RESCAN_NOW_EPOCH=1601 bash "$SCRIPT" >/dev/null 2>&1 || RC=$?
+if [[ $RC -eq 0 && -f "$MARK" ]]; then pass "SHA 稳定但扫描账龄超过10分钟:仍触发刷新"; else fail "稳定 SHA 超龄后未刷新(rc=$RC,state=$(cat "$STATE"))"; fi
+
 echo ""; echo "结果: PASS=$PASS FAIL=$ERRORS"
 [[ $ERRORS -eq 0 ]] || exit 1
