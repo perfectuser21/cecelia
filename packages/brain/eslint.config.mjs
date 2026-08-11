@@ -23,7 +23,7 @@ export default [
       },
     },
     rules: {
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }],
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       'no-undef': 'warn',
       'no-constant-condition': 'warn',
       'no-empty': ['warn', { allowEmptyCatch: true }],

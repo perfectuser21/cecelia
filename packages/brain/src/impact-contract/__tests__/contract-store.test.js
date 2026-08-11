@@ -9,8 +9,8 @@
  * sprint: 08110022-relay-d96c9fa0 ws2
  */
 
-import { describe, test, expect } from 'vitest';
-import { computeContractHash } from '../contract-store.js';
+import { describe, test, expect, vi } from 'vitest';
+import { computeContractHash, persistImpactContract } from '../contract-store.js';
 import { validateImpactContract } from '../contract-schema.js';
 
 // ---------- 合法合同 fixture ----------
@@ -24,7 +24,14 @@ function minimalValidContract(overrides = {}) {
       { capability_id: 'cap-001', capability_name: 'user-auth', impact_level: 'direct' },
     ],
     required_assertions: [
-      { assertion_id: 'assert-001', command: 'npm test -- --testPathPattern=auth' },
+      {
+        assertion_id: 'assert-001',
+        command: 'npm test -- --testPathPattern=auth',
+        covers_capability_ids: ['cap-001'],
+        journey_step_link_id: '11111111-1111-4111-8111-111111111111',
+        assertion_revision: 1,
+        assertion_digest: 'a'.repeat(64),
+      },
     ],
     ...overrides,
   };
@@ -64,6 +71,26 @@ describe('FR-2 Impact Contract 持久化', () => {
       const h1 = computeContractHash(body1);
       const h2 = computeContractHash(body2);
       expect(h1).toBe(h2);
+    });
+
+    test('嵌套 Capability 或断言变化必须改变 hash', () => {
+      const body1 = minimalValidContract();
+      const body2 = minimalValidContract({
+        affected_capabilities: [
+          { capability_id: 'cap-002', capability_name: 'billing', impact_level: 'direct' },
+        ],
+      });
+      expect(computeContractHash(body1)).not.toBe(computeContractHash(body2));
+    });
+
+    test('freshness checked_at 不进入稳定语义 hash', () => {
+      const first = minimalValidContract({
+        freshness_evidence: { status: 'fresh', checked_at: '2026-08-11T00:00:00Z' },
+      });
+      const second = minimalValidContract({
+        freshness_evidence: { status: 'fresh', checked_at: '2026-08-11T00:01:00Z' },
+      });
+      expect(computeContractHash(first)).toBe(computeContractHash(second));
     });
 
   });
@@ -113,34 +140,6 @@ describe('FR-2 Impact Contract 持久化', () => {
   });
 
   // -------------------------------------------------------
-  describe('合法合同写入与查询（需要 DB）', () => {
-
-    test.skip('符合 schema 的合同写入 DB 后可通过 id 查询', async () => {
-      // TODO: 集成测试，需要 TEST_DB_AVAILABLE=1 环境变量
-      // 预期：persistImpactContract(pool, payload) → { contract: { id, task_id, ... }, created: true }
-      //       getImpactContractById(pool, id) → 同一对象
-    });
-
-    test.skip('created_at 字段由 DB 自动生成', async () => {
-      // TODO: 需要 DB
-    });
-
-  });
-
-  // -------------------------------------------------------
-  describe('API 端点行为（需要 Brain 运行）', () => {
-
-    test.skip('POST /api/brain/impact-contracts 合法请求返回 201 + 合同 ID', async () => {});
-
-    test.skip('POST /api/brain/impact-contracts 非法请求返回 400 + 字段错误描述', async () => {});
-
-    test.skip('GET /api/brain/impact-contracts/:id 返回完整合同 JSON', async () => {});
-
-    test.skip('GET /api/brain/impact-contracts/:id 对不存在的 id 返回 404', async () => {});
-
-  });
-
-  // -------------------------------------------------------
   describe('幂等性去重', () => {
 
     test('同一 contract_body 计算出的 hash 相同（幂等基础）', () => {
@@ -150,8 +149,36 @@ describe('FR-2 Impact Contract 持久化', () => {
       expect(h1).toBe(h2);
     });
 
-    test.skip('幂等重复后 DB 中该 (task_id, base_revision) 仍只有一条记录', async () => {
-      // TODO: 需要 DB
+    test('历史 superseded hash 再次成为当前语义时创建新版本，不把旧版本冒充 active', async () => {
+      const contractBody = minimalValidContract();
+      const db = {
+        query: vi.fn(async (sql) => {
+          const s = String(sql);
+          if (s.startsWith('SELECT id FROM tasks')) return { rows: [{ id: contractBody.task_id }] };
+          if (s.includes('contract_hash = $2')) {
+            return { rows: [{ id: 'old-contract', version: 1, status: 'superseded' }] };
+          }
+          if (s.includes('SELECT MAX(version)')) {
+            return { rows: [{ max_version: 2, active_id: 'current-contract' }] };
+          }
+          if (s.includes('INSERT INTO harness_impact_contracts')) {
+            return { rows: [{ id: 'reactivated-contract', version: 3, status: 'active' }] };
+          }
+          return { rows: [] };
+        }),
+      };
+
+      const result = await persistImpactContract(db, {
+        task_id: contractBody.task_id,
+        change_kind: contractBody.change_kind,
+        base_revision: contractBody.base_revision,
+        manifest_digest: '1'.repeat(64),
+        projection_digest: '2'.repeat(64),
+        contract_body: contractBody,
+      });
+
+      expect(result.created).toBe(true);
+      expect(result.contract).toMatchObject({ version: 3, status: 'active' });
     });
 
   });
@@ -159,13 +186,41 @@ describe('FR-2 Impact Contract 持久化', () => {
   // -------------------------------------------------------
   describe('Mapper 不可达处理', () => {
 
-    test.skip('Structure Gate Mapper 不可达时合同创建返回 503', async () => {
-      // MJ5 STUB: 使用 mock Mapper 模拟不可达情形
-      // 替换条件：MJ5 合同通过真实环境验收后，换为真实 Mapper 调用
+    test('持久层拒绝绕开 Structure API 写入 schema 非法的 active 合同', async () => {
+      const db = { query: vi.fn() };
+      await expect(persistImpactContract(db, {
+        task_id: minimalValidContract().task_id,
+        change_kind: 'bugfix',
+        base_revision: minimalValidContract().base_revision,
+        manifest_digest: '1'.repeat(64),
+        projection_digest: '2'.repeat(64),
+        contract_body: minimalValidContract({ affected_capabilities: [] }),
+      })).rejects.toMatchObject({ code: 'impact_contract_schema_invalid' });
+      expect(db.query).not.toHaveBeenCalled();
     });
 
-    test.skip('503 响应 body 包含 retryable=true', async () => {
-      // MJ5 STUB: 同上
+    test('缺少 Mapper digest 时持久层拒绝创建 active 合同', async () => {
+      const db = { query: vi.fn() };
+      await expect(persistImpactContract(db, {
+        task_id: minimalValidContract().task_id,
+        change_kind: 'bugfix',
+        base_revision: minimalValidContract().base_revision,
+        contract_body: minimalValidContract(),
+      })).rejects.toMatchObject({ code: 'mapper_evidence_missing' });
+      expect(db.query).not.toHaveBeenCalled();
+    });
+
+    test('非 64 位十六进制 Mapper digest 被拒绝', async () => {
+      const db = { query: vi.fn() };
+      await expect(persistImpactContract(db, {
+        task_id: minimalValidContract().task_id,
+        change_kind: 'bugfix',
+        base_revision: minimalValidContract().base_revision,
+        manifest_digest: 'short',
+        projection_digest: '2'.repeat(64),
+        contract_body: minimalValidContract(),
+      })).rejects.toMatchObject({ code: 'mapper_evidence_invalid' });
+      expect(db.query).not.toHaveBeenCalled();
     });
 
   });

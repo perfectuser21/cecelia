@@ -305,6 +305,12 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     if (payload.github_evidence_request) {
       common.github_evidence_request = payload.github_evidence_request;
     }
+    if (ctx.impactGateReceipt) {
+      common.impact_gate = ctx.impactGateReceipt;
+      if (Array.isArray(ctx.impactGateReceipt.required_assertions)) {
+        common.required_assertions = ctx.impactGateReceipt.required_assertions;
+      }
+    }
   }
   if (spec.role === 'judge') {
     common.evaluator_result = observed.evaluateVerdict ?? observed.callbackResult ?? null;
@@ -1083,6 +1089,15 @@ export function createDetachedLauncher({
       if (attempt.role === 'evaluator' && bundle.inputs.pr_head_sha) {
         roleEnv.PR_HEAD_SHA = String(bundle.inputs.pr_head_sha);
       }
+      if (
+        attempt.role === 'evaluator'
+        && Array.isArray(bundle.inputs.required_assertions)
+        && bundle.inputs.required_assertions.length > 0
+      ) {
+        roleEnv.HARNESS_REQUIRED_ASSERTIONS_JSON = JSON.stringify(
+          bundle.inputs.required_assertions,
+        );
+      }
       const extraMounts = [];
       if (spec.provider === 'codex' && providerEnv.CODEX_HOME) {
         extraMounts.push(`${providerEnv.CODEX_HOME}:/home/cecelia/.codex:rw`);
@@ -1131,6 +1146,7 @@ export function createDetachedLauncher({
             ...providerEnv,
             ...roleEnv,
             CECELIA_EXECUTOR: spec.provider,
+            CECELIA_MACHINE_ID: machineId,
             CECELIA_TASK_ID: bundle.inputs.task_id,
             HARNESS_TASK_ID: bundle.inputs.task_id,
             HARNESS_NODE: attempt.role,

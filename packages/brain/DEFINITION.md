@@ -19,17 +19,16 @@ Mapper fail-closed 原则：遇到未识别的 change_kind 时返回 `null`，�
 
 ### Structure Gate
 
-- 入参：合同 JSON 对象
-- 校验字段：`change_kind`、`summary`、`affected_files`、`test_plan` 四项均必填且非空
-- fail-closed：Schema 解析异常或字段缺失时直接拒绝，不放行
-- 校验通过返回 `{ valid: true }`；失败返回 `{ valid: false, errors: [...] }`
+- 合同必填 `task_id`、`change_kind`、`base_revision`、`affected_capabilities`、`required_assertions`
+- 任务 payload 中的 `change_kind` 是事实源，请求体不一致时返回 `change_kind_mismatch`
+- 所有 POST 写入口调用真实 `/api/brain/map/radius`；unavailable / stale / 合同异常 / revision mismatch 均 fail-closed
+- 只有 Mapper 返回新鲜 manifest/projection digest 后才持久化 active 合同
 
 ### Diff Gate
 
-- 对比当前合同与上一版本（按 `version` 字段定位历史）
-- 检测字段级漂移：任何字段值变化均记录到 drift 清单
-- 发现漂移时触发 `CONTRACT_IMPACT_DRIFT` 事件，写入 drift 日志
-- 无历史版本时视为首次提交（无漂移），直接放行
+- 以真实 HEAD revision 与 changed files 重新查询影响半径
+- 无 active 合同或 Mapper 不可判定时不放行
+- 新增影响缺少断言时，为每个影响节点建立 `harness_gaps` 记录及 `CONTRACT_IMPACT_DRIFT` 事件，并阻塞 `tasks` 原任务
 
 ### Gap Ledger 状态机
 
@@ -41,13 +40,13 @@ open → assigned → fixing → verifying → resolved
 - `assigned`：缺口已分配给负责方
 - `fixing`：正在修复缺口
 - `verifying`：修复完成，等待验证
-- `resolved`：缺口已闭合，合同恢复一致
+- `resolved`：仅接受当前 revision 且 `assertion_receipt.status=pass` 的验真证据
 
-状态只允许向前流转，禁止回退（resolved 为终态）。
+验真失败走 `verifying → reopened → assigned`；最后一个 gap resolved 后依赖置为 satisfied，原任务从 blocked 恢复 in_progress。
 
 ### 测试覆盖
 
-6 个单元测试文件位于 `src/impact-contract/__tests__/`，由 vitest glob `src/**/*.test.js` 自动收集，随 `brain-unit` CI job 运行（无需额外配置）：
+单元测试位于 `src/impact-contract/__tests__/`；真实 PostgreSQL 闭环位于 `src/__tests__/integration/impact-contract-loop.integration.test.js`：
 
 - `change-kind.test.js`
 - `contract-schema.test.js`

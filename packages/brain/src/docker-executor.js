@@ -442,6 +442,9 @@ export function buildDockerArgs(opts, ctx = {}) {
     '--cidfile', cidfile,
     `--memory=${memoryMB}m`,
     `--cpus=${cpuCores}`,
+    // Evaluator Runner 必须先以 root 建立独立 worktree、证据目录与降权身份；
+    // Provider/断言进程随后由 entrypoint 用 setpriv 去密降权执行。
+    ...(taskType === 'harness_evaluator' ? ['--user', 'root'] : []),
     ...labelsToArgs(opts.labels),
     '-v', `${worktreePath}:/workspace${opts.readOnlyWorktree ? ':ro' : ''}`,
     // mount 源路径用 HOST_PROMPT_DIR（宿主解析），目标路径固定 /tmp/cecelia-prompts（容器内）

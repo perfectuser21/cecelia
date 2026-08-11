@@ -34,6 +34,7 @@ import {
   getGapById,
   getGapEvents,
   listGapsByStatus,
+  assignRepairTaskWithDependency,
 } from '../impact-contract/gap-store.js';
 
 const router = Router();
@@ -173,6 +174,30 @@ router.post('/', async (req, res) => {
   }
 });
 
+// ---------- POST /gaps/:id/repair-task — 绑定修复任务与硬依赖 ----------
+
+router.post('/:id/repair-task', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { repair_task_id: repairTaskId } = req.body ?? {};
+    if (!repairTaskId) {
+      return res.status(400).json({
+        error: 'invalid_request',
+        message: 'repair_task_id 是必填字段',
+      });
+    }
+
+    const result = await assignRepairTaskWithDependency(pool, id, repairTaskId);
+    return res.status(200).json(result);
+  } catch (err) {
+    if (err.code === 'gap_not_found') {
+      return res.status(404).json({ error: 'not_found', message: err.message });
+    }
+    console.error('[gaps] POST /gaps/:id/repair-task error:', err);
+    return res.status(500).json({ error: 'internal_server_error', message: err.message });
+  }
+});
+
 // ---------- PATCH /gaps/:id/status — 状态机跳转 ----------
 
 /**
@@ -186,8 +211,8 @@ router.post('/', async (req, res) => {
  *   idempotency_key?: string,
  *   resolution_evidence?: {    // resolved 必填
  *     assertion_id: string,
- *     assertion_receipt?: object,
- *     revision?: string,
+ *     receipt_id: string,
+ *     revision: string,
  *   },
  * }
  */
@@ -236,6 +261,12 @@ router.patch('/:id/status', async (req, res) => {
     if (err.code === 'missing_resolution_evidence') {
       return res.status(422).json({
         error: 'missing_resolution_evidence',
+        message: err.message,
+      });
+    }
+    if (err.code === 'invalid_resolution_evidence' || err.code === 'revision_mismatch') {
+      return res.status(err.httpStatus ?? 422).json({
+        error: err.code,
         message: err.message,
       });
     }

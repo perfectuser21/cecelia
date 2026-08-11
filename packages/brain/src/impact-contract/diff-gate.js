@@ -9,16 +9,18 @@
  *   drift   — 新增节点缺少断言 → CONTRACT_IMPACT_DRIFT
  *   blocked — Mapper 不可判定（unavailable/stale/revision mismatch）
  *
- * MJ5 STUB: evaluateDiffGate 中对 Mapper 的调用依赖 MJ5 合同通过后替换。
- * 当前 stub 行为：如果未注入 mapClient，使用默认 stub 客户端（返回空影响节点）。
- *
  * fail-closed 原则：Mapper 任何不可判定情形均返回 blocked，绝不假绿。
  *
  * sprint: 08110022-relay-d96c9fa0 ws4
  */
 
 import { queryImpactRadius } from './map-client.js';
-import { getActiveImpactContract } from './contract-store.js';
+import { getActiveImpactContract, persistImpactContract } from './contract-store.js';
+import {
+  createRepairTaskForGap,
+  openGapForDrift,
+  transitionGapStatus,
+} from './gap-store.js';
 
 // ---------- 对账逻辑 ----------
 
@@ -54,6 +56,28 @@ function extractAssertionIds(assertions) {
   return ids;
 }
 
+function extractRunnableAssertionCoverage(assertions) {
+  const coveredCapabilityIds = new Set();
+  if (!Array.isArray(assertions)) return coveredCapabilityIds;
+  for (const assertion of assertions) {
+    if (
+      assertion
+      && typeof assertion === 'object'
+      && typeof assertion.assertion_id === 'string'
+      && assertion.assertion_id
+      && typeof assertion.command === 'string'
+      && assertion.command.trim()
+    ) {
+      for (const capabilityId of assertion.covers_capability_ids ?? []) {
+        if (typeof capabilityId === 'string' && capabilityId) {
+          coveredCapabilityIds.add(capabilityId);
+        }
+      }
+    }
+  }
+  return coveredCapabilityIds;
+}
+
 /**
  * compareImpactContract(contractNodes, actualNodes, contractAssertions, actualAssertions) — 核心对账函数。
  *
@@ -74,6 +98,10 @@ export function compareImpactContract(contractNodes, actualNodes, contractAssert
   const actualIds = extractNodeIds(actualNodes);
   const contractAssertionIds = extractAssertionIds(contractAssertions);
   const actualAssertionIds = extractAssertionIds(actualAssertions);
+  const runnableAssertionCoverage = new Set([
+    ...extractRunnableAssertionCoverage(contractAssertions),
+    ...extractRunnableAssertionCoverage(actualAssertions),
+  ]);
 
   // 计算新增节点（实际 - 合同）
   const addedNodes = [];
@@ -106,20 +134,8 @@ export function compareImpactContract(contractNodes, actualNodes, contractAssert
   }
 
   // 情形二/三：有新增节点
-  // 检查所有新增节点是否都已有对应断言覆盖
-  // 判定方式：新增节点中存在对应 assertion_id（格式 node_<id>_works 或直接匹配）
-  const allNewNodesCovered = addedNodes.every((nodeId) => {
-    // 检查 contractAssertionIds 或 actualAssertionIds 中是否有覆盖此节点的断言
-    // 覆盖规则：assertion_id 与 nodeId 相关，或 actualAssertions 中包含对应断言
-    return (
-      contractAssertionIds.has(nodeId) ||
-      actualAssertionIds.has(nodeId) ||
-      // 也接受断言 ID 中包含节点 ID 的形式（如 'task_routing_works' 覆盖 'task-routing'）
-      [...contractAssertionIds, ...actualAssertionIds].some(
-        (aid) => aid.includes(nodeId.replace(/-/g, '_')) || nodeId.replace(/-/g, '_').includes(aid.replace(/_works$/, ''))
-      )
-    );
-  });
+  // 断言名称不是能力覆盖证据。新增节点必须由可执行断言显式声明 covers_capability_ids。
+  const allNewNodesCovered = addedNodes.every((nodeId) => runnableAssertionCoverage.has(nodeId));
 
   if (allNewNodesCovered) {
     // 情形二：新增影响有对应断言 → extend
@@ -151,24 +167,42 @@ export function compareImpactContract(contractNodes, actualNodes, contractAssert
  * @param {{ taskId: string, contractId?: string, addedNodes: string[], addedAssertions: string[] }} opts
  * @returns {Promise<object>}
  */
-async function recordDriftEvent(db, { taskId, contractId, addedNodes, addedAssertions }) {
-  const res = await db.query(
-    `INSERT INTO gap_events (
-       task_id, event_type, payload, created_at
-     ) VALUES (
-       $1, 'CONTRACT_IMPACT_DRIFT', $2::jsonb, NOW()
-     ) RETURNING *`,
-    [
-      taskId,
-      JSON.stringify({
-        reason_code: 'CONTRACT_IMPACT_DRIFT',
-        contract_id: contractId ?? null,
-        added_nodes: addedNodes,
-        added_assertions: addedAssertions,
-      }),
-    ]
-  );
-  return res.rows[0];
+async function recordDriftGaps(db, {
+  taskId,
+  contractId,
+  addedNodes,
+  revision,
+  actualNodes,
+  repo,
+}) {
+  const gaps = [];
+  const nodeById = new Map((actualNodes ?? []).map((node) => [
+    node?.capability_id ?? node?.id ?? node,
+    node,
+  ]));
+  for (const nodeId of addedNodes) {
+    const node = nodeById.get(nodeId);
+    const { gap } = await openGapForDrift(db, {
+      sourceTaskId: taskId,
+      impactNodeId: nodeId,
+      owner: node?.owner ?? null,
+      severity: node?.severity ?? 'medium',
+      revision,
+      idempotencyKey: `contract-drift:${contractId ?? 'none'}:${revision ?? 'none'}:${nodeId}`,
+    });
+    if (gap.owner) {
+      await createRepairTaskForGap(db, gap, { repo });
+      if (gap.status === 'open') {
+        await transitionGapStatus(db, gap.id, 'assigned', {
+          actor: gap.owner,
+          idempotencyKey: `auto-assigned:${gap.id}`,
+          detail: { source: 'impact_diff_gate' },
+        });
+      }
+    }
+    gaps.push(gap);
+  }
+  return gaps;
 }
 
 /**
@@ -180,9 +214,32 @@ async function recordDriftEvent(db, { taskId, contractId, addedNodes, addedAsser
  */
 async function blockTask(db, taskId) {
   await db.query(
-    `UPDATE harness_tasks SET status = 'blocked' WHERE id = $1`,
+    `UPDATE tasks
+     SET status = 'blocked',
+         blocked_at = COALESCE(blocked_at, NOW()),
+         blocked_reason = 'contract_impact_drift',
+         blocked_detail = jsonb_build_object('source', 'impact_diff_gate'),
+         updated_at = NOW()
+     WHERE id = $1 AND status NOT IN ('completed', 'cancelled', 'canceled', 'failed')`,
     [taskId]
   );
+}
+
+async function recordDriftAndBlockTask(db, input) {
+  const isPool = typeof db.connect === 'function' && db.constructor?.name !== 'Client';
+  const client = isPool ? await db.connect() : db;
+  try {
+    if (isPool) await client.query('BEGIN');
+    const gaps = await recordDriftGaps(client, input);
+    await blockTask(client, input.taskId);
+    if (isPool) await client.query('COMMIT');
+    return gaps;
+  } catch (error) {
+    if (isPool) await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    if (isPool) client.release();
+  }
 }
 
 // ---------- 主函数 ----------
@@ -197,8 +254,6 @@ async function blockTask(db, taskId) {
  *   4. compareImpactContract 对账
  *   5. 根据裁决执行副作用（drift → 写 gap_events + block 任务）
  *   6. 返回 gate verdict
- *
- * MJ5 STUB: mapClient 参数当前为 stub（返回固定空数据），待 MJ5 合同通过后替换为真实 Mapper。
  *
  * @param {{
  *   db: import('pg').Pool,
@@ -221,13 +276,21 @@ async function blockTask(db, taskId) {
  *   retryable?: boolean,
  * }>}
  */
-export async function evaluateDiffGate({ db, taskId, mapClient, headRevision, changedFiles = [], repo } = {}) {
+export async function evaluateDiffGate({
+  db,
+  taskId,
+  mapClient,
+  headRevision,
+  changedFiles = [],
+  repo,
+  persistContract = persistImpactContract,
+} = {}) {
   // --- 步骤 1：读取 active contract ---
   let contract = null;
   if (db) {
     try {
       contract = await getActiveImpactContract(db, taskId);
-    } catch (_err) {
+    } catch {
       // DB 不可达时 fail-closed
       return {
         gate: 'impact_unknown',
@@ -235,10 +298,16 @@ export async function evaluateDiffGate({ db, taskId, mapClient, headRevision, ch
         retryable: true,
       };
     }
+    if (!contract) {
+      return {
+        gate: 'impact_unknown',
+        reason: 'contract_missing',
+        retryable: false,
+      };
+    }
   }
 
   // --- 步骤 2：调用 Mapper 复算影响半径 ---
-  // MJ5 STUB: replace with real Mapper call after MJ5 contract passes
   const mapperFn = mapClient || queryImpactRadius;
 
   let mapperResult;
@@ -249,7 +318,7 @@ export async function evaluateDiffGate({ db, taskId, mapClient, headRevision, ch
       headRevision,
       changedFiles,
     });
-  } catch (_err) {
+  } catch {
     // Mapper 不可达 → fail-closed，返回 impact_unknown（不进入 pass/extend/drift 裁决）
     return {
       gate: 'impact_unknown',
@@ -270,17 +339,22 @@ export async function evaluateDiffGate({ db, taskId, mapClient, headRevision, ch
   }
 
   // 3b. revision mismatch（fact_revisions 与 headRevision 不对齐）→ impact_unknown
-  if (headRevision && mapperResult.fact_revisions) {
-    const repoKey = repo || contract?.repo || Object.keys(mapperResult.fact_revisions)[0];
-    if (repoKey && mapperResult.fact_revisions[repoKey] !== undefined) {
-      const mapperRevision = mapperResult.fact_revisions[repoKey];
-      if (mapperRevision !== headRevision) {
-        return {
-          gate: 'impact_unknown',
-          reason: 'revision_mismatch',
-          retryable: true,
-        };
-      }
+  if (headRevision) {
+    const repoKey = repo || contract?.repo || Object.keys(mapperResult.fact_revisions ?? {})[0];
+    if (!repoKey || mapperResult.fact_revisions?.[repoKey] === undefined) {
+      return {
+        gate: 'impact_unknown',
+        reason: 'revision_evidence_missing',
+        retryable: true,
+      };
+    }
+    const mapperRevision = mapperResult.fact_revisions[repoKey];
+    if (mapperRevision !== headRevision) {
+      return {
+        gate: 'impact_unknown',
+        reason: 'revision_mismatch',
+        retryable: true,
+      };
     }
   }
 
@@ -295,25 +369,58 @@ export async function evaluateDiffGate({ db, taskId, mapClient, headRevision, ch
   // --- 步骤 5：执行副作用 ---
   let gapEvent = null;
 
+  if (comparison.verdict === 'extend' && db) {
+    const toCapability = (node) => (
+      typeof node === 'string' ? { capability_id: node } : node
+    );
+    const priorBody = contract.contract_body || {};
+    const extendedBody = {
+      ...priorBody,
+      affected_capabilities: (mapperResult.affected_nodes || []).map(toCapability),
+      required_assertions: mapperResult.required_assertions || [],
+      manifest_digest: mapperResult.manifest_digest,
+      projection_digest: mapperResult.projection_digest,
+      fact_revisions: mapperResult.fact_revisions,
+      freshness_evidence: mapperResult.freshness,
+    };
+    try {
+      const persisted = await persistContract(db, {
+        task_id: taskId,
+        change_kind: contract.change_kind,
+        repo: repo || contract.repo || null,
+        base_revision: contract.base_revision,
+        head_revision: headRevision || null,
+        manifest_digest: mapperResult.manifest_digest,
+        projection_digest: mapperResult.projection_digest,
+        contract_body: extendedBody,
+      });
+      contract = persisted.contract;
+    } catch {
+      return {
+        gate: 'impact_unknown',
+        reason: 'contract_extend_write_failed',
+        retryable: true,
+      };
+    }
+  }
+
   if (comparison.verdict === 'drift' && db) {
     try {
-      // 写入 gap_events 表
-      gapEvent = await recordDriftEvent(db, {
+      const gaps = await recordDriftAndBlockTask(db, {
         taskId,
         contractId: contract?.id ?? null,
         addedNodes: comparison.added_nodes,
-        addedAssertions: comparison.added_assertions,
+        actualNodes: mapperResult.affected_nodes,
+        repo: repo || contract?.repo,
+        revision: headRevision,
       });
-    } catch (_err) {
-      // gap_events 表可能尚不存在（ws5 创建），记录错误但不阻断
-      // 在 ws4 阶段，gap_events 表依赖 ws5 migration；此处 graceful degradation
-    }
-
-    try {
-      // 将原任务状态变为 blocked
-      await blockTask(db, taskId);
-    } catch (_err) {
-      // 同上，graceful degradation
+      gapEvent = gaps[0] ?? null;
+    } catch {
+      return {
+        gate: 'impact_unknown',
+        reason: 'gap_ledger_write_failed',
+        retryable: true,
+      };
     }
   }
 
@@ -327,6 +434,7 @@ export async function evaluateDiffGate({ db, taskId, mapClient, headRevision, ch
     added_nodes: comparison.added_nodes,
     removed_nodes: comparison.removed_nodes,
     added_assertions: comparison.added_assertions,
+    required_assertions: contract?.contract_body?.required_assertions ?? [],
     contract: contract ?? null,
     gap_event: gapEvent,
     retryable: false,

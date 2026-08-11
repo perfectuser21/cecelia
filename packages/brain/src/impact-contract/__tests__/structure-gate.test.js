@@ -2,13 +2,11 @@
  * FR-3 Structure Gate 测试
  * 覆盖：三种不可判定情形均拒绝放行、不可判定不等于零影响
  *
- * MJ5 STUB 说明：
- *   本文件中所有 Mapper 调用均使用受控 stub，stub 位置以注释标注。
- *   MJ5 合同（/api/brain/map/radius + projection_digest + freshness）
- *   通过真实环境验收后，将 stub 替换为真实 Mapper 调用。
+ * 单元测试通过注入受控 Mapper fixture 覆盖成功、不可达、过期与 revision 冲突；
+ * HTTP 客户端和 PostgreSQL 真闭环由各自集成测试覆盖。
  */
 
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, vi } from 'vitest';
 
 import { evaluateStructureGate } from '../structure-gate.js';
 
@@ -36,21 +34,19 @@ const BASE_CONTRACT = {
   },
 };
 
-// MJ5 STUB: replace with real Mapper call after MJ5 contract passes
-// stub：模拟 Mapper 正常响应
+// 模拟 Mapper 正常响应
 function makeNormalMapClient() {
-  return async ({ repo, baseRevision }) => ({
+  return async ({ repo, baseRevision, headRevision }) => ({
     manifest_digest: 'stub_manifest_digest',
     projection_digest: 'stub_projection_digest',
-    fact_revisions: { [repo || 'cecelia']: baseRevision || 'stub_revision' },
+    fact_revisions: { [repo || 'cecelia']: headRevision || baseRevision || 'stub_revision' },
     freshness: { status: 'fresh', reason_code: null },
     affected_nodes: [],
     required_assertions: [],
   });
 }
 
-// MJ5 STUB: replace with real Mapper call after MJ5 contract passes
-// stub：模拟 Mapper 不可达（抛出连接错误）
+// 模拟 Mapper 不可达（抛出连接错误）
 function makeUnavailableMapClient() {
   return async () => {
     const err = new Error('connect ECONNREFUSED 127.0.0.1:9999');
@@ -59,8 +55,7 @@ function makeUnavailableMapClient() {
   };
 }
 
-// MJ5 STUB: replace with real Mapper call after MJ5 contract passes
-// stub：模拟 Mapper 返回 stale freshness
+// 模拟 Mapper 返回 stale freshness
 function makeStaleFreshnessMapClient() {
   return async ({ repo, baseRevision }) => ({
     manifest_digest: 'stub_manifest_digest',
@@ -72,8 +67,7 @@ function makeStaleFreshnessMapClient() {
   });
 }
 
-// MJ5 STUB: replace with real Mapper call after MJ5 contract passes
-// stub：模拟 Mapper 返回 revision mismatch（fact_revisions 与合同 base_revision 不同）
+// 模拟 Mapper 返回 revision mismatch（fact_revisions 与合同 base_revision 不同）
 function makeRevisionMismatchMapClient() {
   return async ({ repo }) => ({
     manifest_digest: 'stub_manifest_digest',
@@ -92,8 +86,7 @@ describe('FR-3 Structure Gate', () => {
   describe('不可判定情形一：Mapper unavailable', () => {
 
     test('Mapper 不可达时 Structure Gate 返回失败（不放行）', async () => {
-      // MJ5 STUB: mock Mapper 返回 connection refused
-      // 替换条件：MJ5 合同通过后换为真实 Mapper 调用
+      // 注入连接失败，验证真实门禁的 fail-closed 分支
       const result = await evaluateStructureGate({
         db: null,
         task: BASE_TASK,
@@ -104,7 +97,6 @@ describe('FR-3 Structure Gate', () => {
     });
 
     test('Mapper unavailable 响应包含 reason=mapper_unavailable', async () => {
-      // MJ5 STUB: 同上
       const result = await evaluateStructureGate({
         db: null,
         task: BASE_TASK,
@@ -115,7 +107,6 @@ describe('FR-3 Structure Gate', () => {
     });
 
     test('Mapper unavailable 响应包含 retryable=true', async () => {
-      // MJ5 STUB: 同上
       const result = await evaluateStructureGate({
         db: null,
         task: BASE_TASK,
@@ -127,7 +118,6 @@ describe('FR-3 Structure Gate', () => {
 
     test('Mapper unavailable 不产生 impact_scope=[] 的假绿结果', async () => {
       // 关键约束：fail-closed 原则，unavailable ≠ 零影响
-      // MJ5 STUB: 同上
       const result = await evaluateStructureGate({
         db: null,
         task: BASE_TASK,
@@ -144,8 +134,7 @@ describe('FR-3 Structure Gate', () => {
   describe('不可判定情形二：Mapper stale（freshness 超时）', () => {
 
     test('Mapper 返回 stale freshness 时 Structure Gate 返回失败', async () => {
-      // MJ5 STUB: mock Mapper 返回 freshness 超时标记
-      // 替换条件：MJ5 freshness fail-closed 合同通过后换为真实检查
+      // 注入 freshness 超时标记
       const result = await evaluateStructureGate({
         db: null,
         task: BASE_TASK,
@@ -156,7 +145,6 @@ describe('FR-3 Structure Gate', () => {
     });
 
     test('Mapper stale 响应包含 reason=mapper_stale', async () => {
-      // MJ5 STUB: 同上
       const result = await evaluateStructureGate({
         db: null,
         task: BASE_TASK,
@@ -167,7 +155,6 @@ describe('FR-3 Structure Gate', () => {
     });
 
     test('Mapper stale 响应包含 retryable=true', async () => {
-      // MJ5 STUB: 同上
       const result = await evaluateStructureGate({
         db: null,
         task: BASE_TASK,
@@ -181,9 +168,31 @@ describe('FR-3 Structure Gate', () => {
 
   describe('不可判定情形三：revision mismatch', () => {
 
+    test('fact_revisions 缺少目标 repo 时 Structure Gate fail-closed', async () => {
+      const result = await evaluateStructureGate({
+        db: null,
+        task: BASE_TASK,
+        contract: BASE_CONTRACT,
+        mapClient: async () => ({
+          manifest_digest: 'stub_manifest_digest',
+          projection_digest: 'stub_projection_digest',
+          fact_revisions: {},
+          freshness: { status: 'fresh', reason_code: null },
+          affected_nodes: [],
+          required_assertions: [],
+        }),
+      });
+
+      expect(result).toMatchObject({
+        gate: 'blocked',
+        reason: 'revision_evidence_missing',
+        retryable: true,
+      });
+    });
+
     test('合同 base_revision 与 HEAD 不匹配时 Structure Gate 返回 409', async () => {
       // 构造：合同中 base_revision = "abc...", Mapper 返回的 fact_revisions 包含不同 revision
-      // MJ5 STUB: revision 检查使用固定 fixture，MJ5 后接入真实 HEAD
+      // 使用固定投影事实验证 revision 对账
       const result = await evaluateStructureGate({
         db: null,
         task: BASE_TASK,
@@ -194,7 +203,6 @@ describe('FR-3 Structure Gate', () => {
     });
 
     test('revision mismatch 响应包含 reason=revision_mismatch', async () => {
-      // MJ5 STUB: 同上
       const result = await evaluateStructureGate({
         db: null,
         task: BASE_TASK,
@@ -205,7 +213,6 @@ describe('FR-3 Structure Gate', () => {
     });
 
     test('revision mismatch 响应包含 retryable=true', async () => {
-      // MJ5 STUB: 同上
       const result = await evaluateStructureGate({
         db: null,
         task: BASE_TASK,
@@ -220,7 +227,7 @@ describe('FR-3 Structure Gate', () => {
   describe('放行条件（正向）', () => {
 
     test('schema 合法 + Mapper 可达 + freshness 新鲜 + revision 匹配时 Structure Gate 放行', async () => {
-      // MJ5 STUB: mock Mapper 返回正常响应
+      // 注入正常 Mapper 响应
       const result = await evaluateStructureGate({
         db: null,
         task: BASE_TASK,
@@ -230,13 +237,38 @@ describe('FR-3 Structure Gate', () => {
       expect(result.gate).toBe('pass');
     });
 
+    test('持久化合同必须固化 Mapper digest、fact revisions 与 freshness', async () => {
+      const persistContract = vi.fn(async (_db, input) => ({
+        contract: { id: 'contract-1', ...input },
+        created: true,
+      }));
+      const result = await evaluateStructureGate({
+        db: {},
+        task: BASE_TASK,
+        contract: BASE_CONTRACT,
+        mapClient: makeNormalMapClient(),
+        persistContract,
+      });
+
+      expect(result.gate).toBe('pass');
+      const input = persistContract.mock.calls[0][1];
+      expect(input.manifest_digest).toBe('stub_manifest_digest');
+      expect(input.projection_digest).toBe('stub_projection_digest');
+      expect(input.contract_body).toMatchObject({
+        manifest_digest: 'stub_manifest_digest',
+        projection_digest: 'stub_projection_digest',
+        freshness_evidence: { status: 'fresh' },
+      });
+      expect(input.contract_body.fact_revisions).toBeDefined();
+    });
+
   });
 
   describe('fail-closed 原则兜底', () => {
 
     test('任何不可判定情形下 gate 结果绝不为 pass', async () => {
       // 遍历三种不可判定情形，验证每种情形的 gate 结果 !== "pass"
-      // MJ5 STUB: 三种 stub 场景
+      // 三种不可判定场景
       const scenarios = [
         { name: 'unavailable', mapClient: makeUnavailableMapClient() },
         { name: 'stale', mapClient: makeStaleFreshnessMapClient() },

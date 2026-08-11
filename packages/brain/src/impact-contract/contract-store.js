@@ -4,7 +4,8 @@
  * 提供 Impact Contract 的 CRUD 操作，封装事务逻辑与幂等去重。
  *
  * 持久化规则：
- * - 同 (task_id, contract_hash) 幂等：返回已有记录，不重复插入
+ * - 同 active (task_id, contract_hash) 幂等：返回已有记录，不重复插入
+ * - 历史 superseded hash 再次生效时创建新版本，保留完整版本链
  * - 新 hash：将同 task 旧 active 合同标为 superseded，再插入 version+1
  * - 所有写操作在事务内执行
  *
@@ -13,6 +14,7 @@
 
 import { createHash } from 'crypto';
 import _pool from '../db.js';
+import { validateImpactContract } from './contract-schema.js';
 
 // ---------- 工具函数 ----------
 
@@ -23,7 +25,20 @@ import _pool from '../db.js';
  * @returns {string} hex 字符串
  */
 export function computeContractHash(contractBody) {
-  const canonical = JSON.stringify(contractBody, Object.keys(contractBody).sort());
+  const normalize = (value) => {
+    if (Array.isArray(value)) return value.map(normalize);
+    if (value && typeof value === 'object') {
+      return Object.keys(value)
+        .sort()
+        .reduce((result, key) => {
+          if (key === 'checked_at') return result;
+          if (value[key] !== undefined) result[key] = normalize(value[key]);
+          return result;
+        }, {});
+    }
+    return value;
+  };
+  const canonical = JSON.stringify(normalize(contractBody));
   return createHash('sha256').update(canonical).digest('hex');
 }
 
@@ -33,7 +48,8 @@ export function computeContractHash(contractBody) {
  * persistImpactContract(db, input) — 持久化 Impact Contract。
  *
  * 幂等语义：
- * - 若 (task_id, contract_hash) 已存在 → 返回 { contract, created: false }
+ * - 若相同 hash 当前仍 active → 返回 { contract, created: false }
+ * - 若相同 hash 只存在于历史版本 → 创建新的 active 版本
  * - 若 hash 不同 → 旧 active 标为 superseded，插入新版本
  *
  * @param {import('pg').PoolClient|import('pg').Pool} db  DB 连接或 pool
@@ -61,6 +77,35 @@ export async function persistImpactContract(db, input) {
     contract_body,
   } = input;
 
+  if (
+    typeof manifest_digest !== 'string'
+    || manifest_digest.length === 0
+    || typeof projection_digest !== 'string'
+    || projection_digest.length === 0
+  ) {
+    const err = new Error('active Impact Contract 缺少 Mapper manifest/projection digest');
+    err.code = 'mapper_evidence_missing';
+    throw err;
+  }
+  if (!/^[0-9a-f]{64}$/.test(manifest_digest) || !/^[0-9a-f]{64}$/.test(projection_digest)) {
+    const err = new Error('Mapper manifest/projection digest 必须是 64 位十六进制 SHA-256');
+    err.code = 'mapper_evidence_invalid';
+    throw err;
+  }
+
+  const validation = validateImpactContract(contract_body);
+  if (
+    !validation.success
+    || validation.data.task_id !== task_id
+    || validation.data.change_kind !== change_kind
+    || validation.data.base_revision !== base_revision
+  ) {
+    const err = new Error('Impact Contract schema 或身份绑定非法');
+    err.code = 'impact_contract_schema_invalid';
+    err.issues = validation.success ? [] : validation.error.issues;
+    throw err;
+  }
+
   const contract_hash = computeContractHash(contract_body);
 
   // 使用事务（若 db 为 Pool，先 connect；若为 Client 则直接用）
@@ -70,17 +115,31 @@ export async function persistImpactContract(db, input) {
   try {
     if (isPool) await client.query('BEGIN');
 
+    // 以 tasks 行作为同一任务合同版本的串行化锁，防止并发请求同时算出相同 version。
+    const taskLock = await client.query(
+      'SELECT id FROM tasks WHERE id = $1 FOR UPDATE',
+      [task_id],
+    );
+    if (taskLock.rows.length === 0) {
+      const err = new Error(`task_not_found: ${task_id}`);
+      err.code = 'task_not_found';
+      throw err;
+    }
+
     // 幂等检查：同 (task_id, contract_hash) 是否已存在
     const existingRes = await client.query(
       `SELECT * FROM harness_impact_contracts
        WHERE task_id = $1 AND contract_hash = $2
+       ORDER BY version DESC
        LIMIT 1`,
       [task_id, contract_hash]
     );
 
     if (existingRes.rows.length > 0) {
-      if (isPool) await client.query('COMMIT');
-      return { contract: existingRes.rows[0], created: false };
+      if (existingRes.rows[0].status === 'active') {
+        if (isPool) await client.query('COMMIT');
+        return { contract: existingRes.rows[0], created: false };
+      }
     }
 
     // 查当前最大 version 及 active 合同

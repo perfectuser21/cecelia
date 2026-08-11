@@ -1,18 +1,71 @@
-/**
- * map-client.js — MJ5 Mapper stub client（FR-3 Structure Gate）
- *
- * 提供与 Mapper 服务（/api/brain/map/radius）交互的接口。
- * 当前为 MJ5 stub，返回固定的合法响应。
- *
- * MJ5 STUB: replace with real Mapper call after MJ5 contract passes
- *
- * sprint: 08110022-relay-d96c9fa0 ws3
- */
+/** MJ5 Universal Mapper /map/radius 客户端。任何不可用或合同异常都必须 fail-closed。 */
+
+const DEFAULT_ENDPOINT = process.env.CECELIA_MAP_RADIUS_URL
+  || 'http://localhost:5221/api/brain/map/radius';
+const DEFAULT_TIMEOUT_MS = 10_000;
+
+class ImpactMapError extends Error {
+  constructor(code, message, status) {
+    super(message);
+    this.name = 'ImpactMapError';
+    this.code = code;
+    if (status !== undefined) this.status = status;
+  }
+}
+
+function assertMapperContract(value, { repo, baseRevision, headRevision } = {}) {
+  const expectedRevision = headRevision ?? baseRevision;
+  const validNodes = Array.isArray(value?.affected_nodes)
+    && value.affected_nodes.every((node) => (
+      node
+      && typeof node === 'object'
+      && typeof (node.capability_id ?? node.id) === 'string'
+      && (node.capability_id ?? node.id).trim().length > 0
+      && typeof node.owner === 'string'
+      && node.owner.trim().length > 0
+    ));
+  const validAssertions = Array.isArray(value?.required_assertions)
+    && value.required_assertions.every((assertion) => (
+      assertion
+      && typeof assertion === 'object'
+      && typeof assertion.assertion_id === 'string'
+      && assertion.assertion_id.trim().length > 0
+      && typeof assertion.command === 'string'
+      && assertion.command.trim().length > 0
+      && Array.isArray(assertion.covers_capability_ids)
+      && assertion.covers_capability_ids.length > 0
+      && assertion.covers_capability_ids.every((id) => typeof id === 'string' && id.trim())
+      && /^[0-9a-f]{64}$/.test(assertion.assertion_digest ?? '')
+      && /^[0-9a-f-]{36}$/i.test(assertion.journey_step_link_id ?? '')
+      && Number.isInteger(assertion.assertion_revision)
+      && assertion.assertion_revision > 0
+    ));
+  const valid = value
+    && typeof value === 'object'
+    && typeof value.manifest_digest === 'string'
+    && /^[0-9a-f]{64}$/.test(value.manifest_digest)
+    && typeof value.projection_digest === 'string'
+    && /^[0-9a-f]{64}$/.test(value.projection_digest)
+    && value.fact_revisions
+    && typeof value.fact_revisions === 'object'
+    && !Array.isArray(value.fact_revisions)
+    && typeof repo === 'string'
+    && typeof expectedRevision === 'string'
+    && value.fact_revisions[repo] === expectedRevision
+    && value.freshness
+    && typeof value.freshness.status === 'string'
+    && validNodes
+    && validAssertions;
+
+  if (!valid) {
+    throw new ImpactMapError('mapper_contract_invalid', 'Mapper 响应不符合 /map/radius 合同');
+  }
+}
 
 /**
  * queryImpactRadius({ repo, baseRevision, headRevision, changedFiles }) — 查询影响半径。
  *
- * MJ5 STUB: real implementation will call POST /api/brain/map/radius
+ * 调用 POST /api/brain/map/radius；不可达或响应合同异常时抛出结构化错误。
  * 返回标准格式：freshness.status='fresh', revision 对齐
  *
  * @param {{
@@ -30,17 +83,48 @@
  *   required_assertions: any[],
  * }>}
  */
-export async function queryImpactRadius({ repo, baseRevision, _headRevision, _changedFiles } = {}) {
-  // MJ5 STUB: replace with real Mapper call after MJ5 contract passes
-  // 真实实现将调用 POST /api/brain/map/radius，返回真实影响半径数据
-  return {
-    manifest_digest: 'stub_manifest_digest',
-    projection_digest: 'stub_projection_digest',
-    fact_revisions: { [repo || 'stub_repo']: baseRevision || 'stub_revision' },
-    freshness: { status: 'fresh', reason_code: null },
-    affected_nodes: [],
-    required_assertions: [],
-  };
+export async function queryImpactRadius(
+  { repo, baseRevision, headRevision, changedFiles = [] } = {},
+  { fetchImpl = globalThis.fetch, endpoint = DEFAULT_ENDPOINT, timeoutMs = DEFAULT_TIMEOUT_MS } = {},
+) {
+  if (typeof fetchImpl !== 'function') {
+    throw new ImpactMapError('mapper_unavailable', '运行环境没有可用的 fetch');
+  }
+
+  let response;
+  try {
+    response = await fetchImpl(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        repo,
+        base_revision: baseRevision,
+        head_revision: headRevision,
+        changed_files: changedFiles,
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    if (error instanceof ImpactMapError) throw error;
+    throw new ImpactMapError('mapper_unavailable', `Mapper 请求失败: ${error.message}`);
+  }
+
+  if (!response.ok) {
+    throw new ImpactMapError(
+      'mapper_unavailable',
+      `Mapper 返回 HTTP ${response.status}`,
+      response.status,
+    );
+  }
+
+  let body;
+  try {
+    body = await response.json();
+  } catch (error) {
+    throw new ImpactMapError('mapper_contract_invalid', `Mapper 响应不是合法 JSON: ${error.message}`);
+  }
+  assertMapperContract(body, { repo, baseRevision, headRevision });
+  return body;
 }
 
 export const callMapper = queryImpactRadius;

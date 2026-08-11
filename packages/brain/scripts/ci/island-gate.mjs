@@ -131,12 +131,6 @@ export function isTestFixtureAsset(f) {
   return /(^|\/)__tests__\//.test(f) && !/\.(js|mjs|cjs|ts)$/.test(f);
 }
 
-// SQL migration 文件由 migrate.js 通过 readdirSync 动态读取，无静态 import 出边，
-// 但它们通过 migrate.js 连通，不是孤岛——豁免静态边检测。
-export function isMigrationFile(f) {
-  return /\/db\/migrations\/.*\.sql$/.test(f);
-}
-
 function getAddedFiles(args) {
   // --fixture-files= 参数（供测试 / E2E 本地验证）
   const fixtureArg = args.find((a) => a.startsWith('--fixture-files='));
@@ -148,8 +142,7 @@ function getAddedFiles(args) {
       .map((f) => f.trim())
       .filter(Boolean)
       .filter((f) => f.includes('packages/brain/src'))
-      .filter((f) => !isTestFixtureAsset(f))
-      .filter((f) => !isMigrationFile(f));
+      .filter((f) => !isTestFixtureAsset(f));
   }
 
   // 真实 CI 模式: git diff
@@ -166,8 +159,7 @@ function getAddedFiles(args) {
       .split('\n')
       .map((f) => f.trim())
       .filter((f) => f.startsWith('packages/brain/src'))
-      .filter((f) => !isTestFixtureAsset(f))
-      .filter((f) => !isMigrationFile(f));
+      .filter((f) => !isTestFixtureAsset(f));
   } catch (e) {
     console.error('[ISLAND-GATE] git diff 失败，当作无新增文件处理:', e.message);
     return [];

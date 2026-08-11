@@ -2,267 +2,493 @@
  * FR-5 Gap Ledger 测试
  * 覆盖：Gap 状态机单向流转、幂等去重、状态机纯逻辑验证
  *
- * 策略：
- *   - isValidTransition / validateTransition（纯函数）→ 直接测试，无需 DB
- *   - openGapForDrift / transitionGapStatus（需要 DB）→ SKIP（与 contract-store.test.js 一致）
- *
- * 状态：
- *   纯逻辑测试：GREEN（可直接运行）
- *   DB 相关测试：SKIP（无 PostgreSQL 环境时跳过）
- *
- * MJ5 STUB: 断言验证接口（revision 级别 assertion PASS/FAIL 回执）使用 stub。
+ * 单元层通过数据库 fixture 验证 SQL 与状态机，真实 PostgreSQL 闭环由集成测试覆盖。
  *
  * sprint: 08110022-relay-d96c9fa0 ws5
  */
 
-import { describe, test, expect } from 'vitest';
+import { createHash } from 'node:crypto';
+import { describe, test, expect, vi } from 'vitest';
 
 import {
-  VALID_TRANSITIONS,
-  isValidTransition,
-  validateTransition,
+  addHardDependency,
+  assignRepairTaskWithDependency,
+  createRepairTaskForGap,
+  openGapForDrift,
+  transitionGapStatus,
 } from '../gap-store.js';
 
 // ---------- 纯逻辑：状态机测试 ----------
 
 describe('FR-5 Gap Ledger', () => {
 
-  describe('状态机正向流转', () => {
+  test('drift 自动创建可由 Kernel/Harness 执行的 repair task', async () => {
+    const gap = {
+      id: 'gap-auto',
+      source_task_id: 'source-task',
+      impact_node_id: 'billing',
+      current_revision: 'a'.repeat(40),
+      owner: 'factory',
+      severity: 'high',
+    };
+    const db = {
+      query: vi.fn(async (sql) => {
+        const s = String(sql);
+        if (s.includes('FROM tasks WHERE id')) {
+          return { rows: [{
+            title: 'Source', goal_id: 'goal', project_id: 'project', domain: 'factory',
+            payload: {
+              initiative_id: 'source-task',
+              base_repo: 'perfectuser21/cecelia',
+              sprint_dir: 'sprints/source',
+            },
+          }] };
+        }
+        if (s.includes('INSERT INTO tasks')) return { rows: [{ id: 'repair-task' }] };
+        if (s.includes('SELECT * FROM harness_gaps')) return { rows: [gap] };
+        if (s.includes('UPDATE harness_gaps')) {
+          return { rows: [{ ...gap, repair_task_id: 'repair-task' }] };
+        }
+        if (s.includes('INSERT INTO task_dependencies')) {
+          return { rows: [{ created: true }] };
+        }
+        return { rows: [] };
+      }),
+    };
 
-    test('open → assigned 转换成功', () => {
-      expect(isValidTransition('open', 'assigned')).toBe(true);
+    await createRepairTaskForGap(db, gap, { repo: 'perfectuser21/cecelia' });
+
+    const insert = db.query.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO tasks'));
+    const payload = JSON.parse(insert[1][5]);
+    expect(payload).toMatchObject({
+      change_kind: 'bugfix',
+      harness_gap_id: gap.id,
+      source_task_id: gap.source_task_id,
+      base_repo: 'perfectuser21/cecelia',
+      sprint_dir: 'sprints/source',
+      impact_contract_required: true,
     });
-
-    test('assigned → fixing 转换成功', () => {
-      expect(isValidTransition('assigned', 'fixing')).toBe(true);
-    });
-
-    test('fixing → verifying 转换成功', () => {
-      expect(isValidTransition('fixing', 'verifying')).toBe(true);
-    });
-
-    test('verifying → resolved 转换成功（断言 PASS 时）', () => {
-      // MJ5 STUB: 实际场景需 mock 断言验证返回 PASS
-      // 此处测试状态机纯逻辑：verifying → resolved 合法
-      expect(isValidTransition('verifying', 'resolved')).toBe(true);
-    });
-
-    test('完整正向路径每一跳均合法', () => {
-      const path = ['open', 'assigned', 'fixing', 'verifying', 'resolved'];
-      for (let i = 0; i < path.length - 1; i++) {
-        const from = path[i];
-        const to = path[i + 1];
-        expect(isValidTransition(from, to)).toBe(true);
-      }
-    });
-
+    expect(payload).not.toHaveProperty('initiative_id');
   });
 
-  describe('状态机负向约束：单向流转不可逆', () => {
+  test('幂等重投必须使用数据库插入标记，不能用时间差误判为新建', async () => {
+    const now = new Date().toISOString();
+    const db = {
+      query: vi.fn(async (sql) => {
+        if (String(sql).includes('INSERT INTO harness_gaps')) {
+          return {
+            rows: [{
+              id: 'existing-gap',
+              source_task_id: 'source',
+              impact_node_id: 'node',
+              created_at: now,
+              updated_at: now,
+              created: false,
+            }],
+          };
+        }
+        return { rows: [] };
+      }),
+    };
 
-    test('尝试从 verifying 直接回到 open 时 validateTransition 抛出 422', () => {
-      // 关键：状态机单向，验真期间不允许退回到 open
-      expect(isValidTransition('verifying', 'open')).toBe(false);
-
-      let err;
-      try {
-        validateTransition('verifying', 'open');
-        throw new Error('期望 validateTransition 抛出错误，但没有');
-      } catch (e) { err = e; }
-      expect(err.code).toBe('invalid_transition');
-      expect(err.httpStatus).toBe(422);
-      expect(err.from).toBe('verifying');
-      expect(err.to).toBe('open');
+    const result = await openGapForDrift(db, {
+      sourceTaskId: 'source',
+      impactNodeId: 'node',
+      owner: 'factory',
+      revision: 'abc123',
     });
 
-    test('尝试从 resolved 转为 fixing 时抛出 invalid_transition（已关闭终态）', () => {
-      expect(isValidTransition('resolved', 'fixing')).toBe(false);
-
-      let err;
-      try {
-        validateTransition('resolved', 'fixing');
-        throw new Error('期望抛出错误');
-      } catch (e) { err = e; }
-      expect(err.code).toBe('invalid_transition');
-      expect(err.allowed).toEqual([]);
-    });
-
-    test('尝试从 assigned 直接转为 resolved 时抛出 invalid_transition（必须经过 fixing + verifying）', () => {
-      expect(isValidTransition('assigned', 'resolved')).toBe(false);
-
-      let err;
-      try {
-        validateTransition('assigned', 'resolved');
-        throw new Error('期望抛出错误');
-      } catch (e) { err = e; }
-      expect(err.code).toBe('invalid_transition');
-      expect(err.from).toBe('assigned');
-      expect(err.to).toBe('resolved');
-    });
-
-    test('从 open 直接跳 fixing 应为非法', () => {
-      expect(isValidTransition('open', 'fixing')).toBe(false);
-    });
-
-    test('从 fixing 直接跳 resolved 应为非法', () => {
-      expect(isValidTransition('fixing', 'resolved')).toBe(false);
-    });
-
+    expect(result.created).toBe(false);
+    expect(result.gap).not.toHaveProperty('created');
   });
 
-  describe('验真失败路径：reopened → assigned', () => {
+  test('新建 gap 与 discovered 事件必须在同一事务提交', async () => {
+    const calls = [];
+    const client = {
+      query: vi.fn(async (sql) => {
+        const statement = String(sql);
+        calls.push(statement);
+        if (statement.includes('INSERT INTO harness_gaps')) {
+          return {
+            rows: [{
+              id: 'gap-atomic',
+              source_task_id: 'source',
+              impact_node_id: 'node',
+              created: true,
+            }],
+          };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(async () => client) };
 
-    test('验真失败时 verifying → reopened 合法', () => {
-      // MJ5 STUB: mock 断言验证返回 FAIL
-      expect(isValidTransition('verifying', 'reopened')).toBe(true);
+    await openGapForDrift(pool, {
+      sourceTaskId: 'source',
+      impactNodeId: 'node',
+      owner: 'factory',
+      revision: 'abc123',
     });
 
-    test('reopened → assigned 转换成功', () => {
-      expect(isValidTransition('reopened', 'assigned')).toBe(true);
-    });
-
-    test('尝试从 reopened 转为 open 时返回 invalid_transition（只能回到 assigned）', () => {
-      expect(isValidTransition('reopened', 'open')).toBe(false);
-
-      let err;
-      try {
-        validateTransition('reopened', 'open');
-        throw new Error('期望抛出错误');
-      } catch (e) { err = e; }
-      expect(err.code).toBe('invalid_transition');
-      expect(err.allowed).toEqual(['assigned']);
-    });
-
-    test('关闭 gap 必须引用当前 revision 的断言回执（通过 resolution_evidence 携带）', () => {
-      // MJ5 STUB: assertion_receipt 使用固定 fixture
-      // 此测试验证 resolution_evidence 结构约束
-      const validEvidence = {
-        assertion_id: 'assert-001',
-        assertion_receipt: { status: 'pass', timestamp: '2026-08-10T00:00:00Z' },
-        revision: 'abc123def456',
-      };
-
-      // 合法 evidence 含 assertion_id
-      expect(validEvidence.assertion_id).toBeTruthy();
-      expect(validEvidence.revision).toBeTruthy();
-
-      // 非法 evidence：缺少 assertion_id
-      const invalidEvidence = { assertion_receipt: { status: 'pass' } };
-      expect(!invalidEvidence.assertion_id).toBeTruthy();
-    });
-
+    expect(calls[0]).toBe('BEGIN');
+    expect(calls.at(-1)).toBe('COMMIT');
+    expect(calls.some((sql) => sql.includes('INSERT INTO gap_events'))).toBe(true);
+    expect(client.release).toHaveBeenCalledOnce();
   });
 
-  describe('VALID_TRANSITIONS 结构完整性', () => {
+  test('硬依赖同时写 DAG 汇总边与逐 gap 独立关联', async () => {
+    const db = {
+      query: vi.fn(async (sql) => {
+        if (String(sql).includes('INSERT INTO task_dependencies')) {
+          return { rows: [{ from_task_id: 'source', to_task_id: 'repair', created: true }] };
+        }
+        return { rows: [{ gap_id: 'gap', source_task_id: 'source', repair_task_id: 'repair' }] };
+      }),
+    };
 
-    test('所有状态都在跳转表中有定义', () => {
-      const expectedStates = ['open', 'triage', 'assigned', 'fixing', 'verifying', 'resolved', 'reopened'];
-      for (const state of expectedStates) {
-        expect(
-          Object.prototype.hasOwnProperty.call(VALID_TRANSITIONS, state)
-        ).toBeTruthy();
-      }
+    await addHardDependency(db, {
+      fromTaskId: 'source',
+      toTaskId: 'repair',
+      gapId: 'gap',
     });
 
-    test('resolved 为终态（无任何允许的跳转）', () => {
-      expect(VALID_TRANSITIONS.resolved).toEqual([]);
-    });
-
-    test('跳转表值均为数组', () => {
-      for (const [state, targets] of Object.entries(VALID_TRANSITIONS)) {
-        expect(Array.isArray(targets)).toBeTruthy();
-      }
-    });
-
+    const statements = db.query.mock.calls.map(([sql]) => String(sql));
+    expect(statements[0]).toContain('ON CONFLICT (from_task_id, to_task_id)');
+    expect(statements.some((sql) => sql.includes('INSERT INTO harness_gap_dependencies'))).toBe(true);
+    expect(statements.some((sql) => sql.includes('ON CONFLICT (gap_id)'))).toBe(true);
   });
 
-  describe('幂等去重（纯逻辑验证）', () => {
+  test('绑定 repair task 与硬依赖在同一事务内提交', async () => {
+    const calls = [];
+    const client = {
+      query: vi.fn(async (sql) => {
+        const s = String(sql);
+        calls.push(s);
+        if (s.includes('SELECT * FROM harness_gaps')) {
+          return { rows: [{ id: 'gap', source_task_id: 'source', repair_task_id: null }] };
+        }
+        if (s.includes('UPDATE harness_gaps')) {
+          return { rows: [{ id: 'gap', source_task_id: 'source', repair_task_id: 'repair' }] };
+        }
+        if (s.includes('INSERT INTO task_dependencies')) {
+          return { rows: [{ gap_id: 'gap', created: true }] };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(async () => client) };
 
-    test('validateTransition 对相同入参结果确定性一致', () => {
-      // 合法跳转多次调用不抛错
-      expect(() => validateTransition('open', 'assigned')).not.toThrow();
-      expect(() => validateTransition('open', 'assigned')).not.toThrow();
-    });
+    const result = await assignRepairTaskWithDependency(pool, 'gap', 'repair');
 
-    test('validateTransition 对非法跳转稳定抛出 invalid_transition', () => {
-      let err1, err2;
-      try { validateTransition('resolved', 'open'); } catch (e) { err1 = e; }
-      try { validateTransition('resolved', 'open'); } catch (e) { err2 = e; }
-
-      expect(err1.code).toBe('invalid_transition');
-      expect(err2.code).toBe('invalid_transition');
-      expect(err1.code).toBe(err2.code);
-    });
-
+    expect(result.gap.repair_task_id).toBe('repair');
+    expect(calls[0]).toBe('BEGIN');
+    expect(calls.at(-1)).toBe('COMMIT');
+    expect(client.release).toHaveBeenCalledOnce();
   });
 
-  describe('原任务自动恢复（纯逻辑契约）', () => {
+  test('改派 repair task 时取消旧 gap 关联，且不误伤仍被其他 gap 使用的 DAG 边', async () => {
+    const calls = [];
+    const client = {
+      query: vi.fn(async (sql) => {
+        const s = String(sql);
+        calls.push(s);
+        if (s.includes('SELECT * FROM harness_gaps')) {
+          return { rows: [{ id: 'gap', source_task_id: 'source', repair_task_id: 'repair-old' }] };
+        }
+        if (s.includes('UPDATE harness_gaps')) {
+          return { rows: [{ id: 'gap', source_task_id: 'source', repair_task_id: 'repair-new' }] };
+        }
+        if (s.includes('INSERT INTO task_dependencies')) {
+          return { rows: [{ from_task_id: 'source', to_task_id: 'repair-new', created: true }] };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const pool = { connect: vi.fn(async () => client) };
 
-    test('gap resolved 后 task_dependencies 应被标记为 satisfied（契约描述）', () => {
-      // MJ5 STUB: mock 断言验证返回 PASS
-      // 此测试验证逻辑约定：gap resolved → task_dependencies.status = 'satisfied'
-      // DB 操作部分在 gap-store.js transitionGapStatus 中实现（SKIP 真实 DB 测试）
-      const expectedBehavior = 'gap resolved 后 task_dependencies 中 pending 记录变 satisfied';
-      expect(expectedBehavior).toBeTruthy();
-    });
+    await assignRepairTaskWithDependency(pool, 'gap', 'repair-new');
 
+    expect(calls.some((sql) => (
+      sql.includes('UPDATE harness_gap_dependencies') && sql.includes("status = 'cancelled'")
+    ))).toBe(true);
+    const oldEdgeUpdate = calls.find((sql) => (
+      sql.includes('UPDATE task_dependencies') && sql.includes("status = 'cancelled'")
+    ));
+    expect(oldEdgeUpdate).toContain('NOT EXISTS');
+    expect(oldEdgeUpdate).toContain('harness_gap_dependencies');
   });
 
-  describe('gap_events 可观测性（纯逻辑契约）', () => {
+  test('resolved 必须携带当前 revision 的 PASS 回执', async () => {
+    const db = {
+      query: vi.fn(async (sql) => {
+        if (String(sql).startsWith('SELECT * FROM harness_gaps')) {
+          return { rows: [{ id: 'gap', status: 'verifying', current_revision: 'abc123' }] };
+        }
+        return { rows: [] };
+      }),
+    };
 
-    test('CONTRACT_IMPACT_DRIFT 是合法事件类型', () => {
-      // 验证 gap_events 表中包含 CONTRACT_IMPACT_DRIFT 事件类型
-      // （schema 定义在 402_harness_gaps.sql 中）
-      const validEventTypes = [
-        'discovered',
-        'assigned',
-        'fix_started',
-        'verification_started',
-        'resolved',
-        'reopened',
-        'CONTRACT_IMPACT_DRIFT',
-      ];
-      expect(validEventTypes.includes('CONTRACT_IMPACT_DRIFT')).toBeTruthy();
-    });
+    await expect(transitionGapStatus(db, 'gap', 'resolved', {
+      resolutionEvidence: {
+        assertion_id: 'assertion-1',
+        assertion_receipt: { status: 'fail' },
+        revision: 'abc123',
+      },
+    })).rejects.toMatchObject({ code: 'invalid_resolution_evidence' });
 
-    test('状态变更事件类型映射关系正确', () => {
-      // 验证状态 → 事件类型的映射语义
-      const EVENT_TYPE_MAP = {
-        assigned: 'assigned',
-        fixing: 'fix_started',
-        verifying: 'verification_started',
-        resolved: 'resolved',
-        reopened: 'reopened',
-      };
+    await expect(transitionGapStatus(db, 'gap', 'resolved', {
+      resolutionEvidence: {
+        assertion_id: 'assertion-1',
+        assertion_receipt: { status: 'pass' },
+        revision: 'abc123',
+      },
+    })).rejects.toMatchObject({ code: 'invalid_resolution_evidence' });
 
-      // 每个状态变更都应有对应事件
-      for (const [status, eventType] of Object.entries(EVENT_TYPE_MAP)) {
-        expect(eventType).toBeTruthy();
-      }
-    });
-
+    await expect(transitionGapStatus(db, 'gap', 'resolved', {
+      resolutionEvidence: {
+        assertion_id: 'assertion-1',
+        assertion_receipt: { status: 'pass' },
+        revision: 'different',
+      },
+    })).rejects.toMatchObject({ code: 'revision_mismatch' });
   });
 
-  describe('分诊告警：owner 不存在（纯逻辑契约）', () => {
+  test('最后一个 gap resolved 后恢复 source task', async () => {
+    const calls = [];
+    const assertionId = 'assertion-1';
+    const assertionDigest = createHash('sha256').update(assertionId).digest('hex');
+    const journeyStepLinkId = '11111111-1111-4111-8111-111111111111';
+    const contractId = '22222222-2222-4222-8222-222222222222';
+    const contractHash = 'c'.repeat(64);
+    const revision = 'a'.repeat(40);
+    const completedAt = '2026-08-11T04:00:00.000Z';
+    const db = {
+      query: vi.fn(async (sql, params) => {
+        const s = String(sql);
+        calls.push({ sql: s, params });
+        if (s.startsWith('SELECT * FROM harness_gaps')) {
+          return {
+            rows: [{
+              id: 'gap',
+              source_task_id: 'source-task',
+              repair_task_id: 'repair-task',
+              impact_node_id: 'billing',
+              status: 'verifying',
+              current_revision: revision,
+            }],
+          };
+        }
+        if (s.startsWith('SELECT id FROM tasks')) return { rows: [{ id: 'source-task' }] };
+        if (s.startsWith('SELECT status, completed_at FROM tasks')) {
+          return { rows: [{ status: 'completed', completed_at: completedAt }] };
+        }
+        if (s.includes('FROM harness_impact_contracts')) {
+          return { rows: [{
+            id: contractId,
+            contract_hash: contractHash,
+            repo: 'perfectuser21/cecelia', contract_body: { required_assertions: [{
+            assertion_id: assertionId,
+            command: 'npm test',
+            covers_capability_ids: ['billing'],
+            journey_step_link_id: journeyStepLinkId,
+            assertion_revision: 1,
+            assertion_digest: assertionDigest,
+          }] },
+          }] };
+        }
+        if (s.includes('MAX(created_at) AS verification_started_at')) {
+          return { rows: [{ verification_started_at: completedAt }] };
+        }
+        if (s.includes('FROM journey_assertion_receipts')) {
+          return { rows: [{
+            id: 'receipt-1',
+            journey_step_link_id: journeyStepLinkId,
+            verdict: 'PASS',
+            exit_code: 0,
+            synthetic: false,
+            executor_kind: 'brain_assertion_runner',
+            machine_id: 'runner-1',
+            source_repo: 'perfectuser21/cecelia',
+            source_sha: revision,
+            impact_contract_id: contractId,
+            impact_contract_hash: contractHash,
+            verification_task_id: 'repair-task',
+            assertion_ref_snapshot: assertionId,
+            current_assertion_ref: assertionId,
+            assertion_revision: 1,
+            current_assertion_revision: 1,
+            assertion_digest: assertionDigest,
+            command_argv: ['bash', '-lc', 'npm test'],
+            completed_at: completedAt,
+            output_digest: 'a'.repeat(64),
+            scenario_count: 1,
+            scenario_evidence: { passed: 1 },
+          }] };
+        }
+        if (s.includes('UPDATE harness_gaps')) {
+          return { rows: [{ id: 'gap', source_task_id: 'source-task', status: 'resolved' }] };
+        }
+        if (s.includes('INSERT INTO gap_events')) return { rows: [{ id: 'event' }] };
+        return { rows: [] };
+      }),
+    };
 
-    test('owner 为 null 时初始 status 应为 triage', () => {
-      // 验证 openGapForDrift 的逻辑约定
-      // 当 owner = null 时，gap 应进入 triage 而非 open
-      const owner = null;
-      const initialStatus = owner ? 'open' : 'triage';
-      expect(initialStatus).toBe('triage');
+    await transitionGapStatus(db, 'gap', 'resolved', {
+      resolutionEvidence: {
+        assertion_id: assertionId,
+        receipt_id: 'receipt-1',
+        revision,
+      },
     });
 
-    test('owner 存在时初始 status 应为 open', () => {
-      const owner = 'dev-team';
-      const initialStatus = owner ? 'open' : 'triage';
-      expect(initialStatus).toBe('open');
+    const resume = calls.find(({ sql }) => sql.includes('UPDATE tasks') && sql.includes("status = 'queued'"));
+    expect(resume).toBeDefined();
+    expect(resume.sql).toContain('NOT EXISTS');
+    expect(resume.params).toContain('source-task');
+  });
+
+  test('不能用另一条 Journey Step Link 的 PASS 回执关闭 gap', async () => {
+    const assertionId = 'assertion-1';
+    const assertionDigest = createHash('sha256').update(assertionId).digest('hex');
+    const contractLinkId = '11111111-1111-4111-8111-111111111111';
+    const receiptLinkId = '22222222-2222-4222-8222-222222222222';
+    const db = {
+      query: vi.fn(async (sql) => {
+        const s = String(sql);
+        if (s.startsWith('SELECT * FROM harness_gaps')) {
+          return { rows: [{
+            id: 'gap',
+            source_task_id: 'source-task',
+            repair_task_id: 'repair-task',
+            impact_node_id: 'billing',
+            status: 'verifying',
+            current_revision: 'abc123',
+          }] };
+        }
+        if (s.startsWith('SELECT id FROM tasks')) return { rows: [{ id: 'source-task' }] };
+        if (s.startsWith('SELECT status, completed_at FROM tasks')) {
+          return { rows: [{ status: 'completed', completed_at: new Date().toISOString() }] };
+        }
+        if (s.includes('FROM harness_impact_contracts')) {
+          return { rows: [{ contract_body: { required_assertions: [{
+            assertion_id: assertionId,
+            covers_capability_ids: ['billing'],
+            journey_step_link_id: contractLinkId,
+            assertion_revision: 1,
+            assertion_digest: assertionDigest,
+          }] } }] };
+        }
+        if (s.includes('MAX(created_at) AS verification_started_at')) {
+          return { rows: [{ verification_started_at: new Date().toISOString() }] };
+        }
+        if (s.includes('FROM journey_assertion_receipts')) {
+          return { rows: [{
+            id: 'receipt-other-link',
+            journey_step_link_id: receiptLinkId,
+            verdict: 'PASS',
+            exit_code: 0,
+            synthetic: false,
+            executor_kind: 'brain_assertion_runner',
+            source_sha: 'abc123',
+            assertion_ref_snapshot: assertionId,
+            current_assertion_ref: assertionId,
+            assertion_revision: 1,
+            current_assertion_revision: 1,
+            assertion_digest: assertionDigest,
+            output_digest: 'a'.repeat(64),
+            scenario_count: 1,
+            scenario_evidence: { passed: 1 },
+          }] };
+        }
+        return { rows: [] };
+      }),
+    };
+
+    await expect(transitionGapStatus(db, 'gap', 'resolved', {
+      resolutionEvidence: {
+        assertion_id: assertionId,
+        receipt_id: 'receipt-other-link',
+        revision: 'abc123',
+      },
+    })).rejects.toMatchObject({ code: 'invalid_resolution_evidence' });
+  });
+
+  test('断言不覆盖当前 impact node 时不能关闭 gap', async () => {
+    const assertionId = 'assertion-1';
+    const assertionDigest = createHash('sha256').update(assertionId).digest('hex');
+    const db = {
+      query: vi.fn(async (sql) => {
+        const s = String(sql);
+        if (s.startsWith('SELECT * FROM harness_gaps')) {
+          return { rows: [{
+            id: 'gap',
+            source_task_id: 'source-task',
+            repair_task_id: 'repair-task',
+            impact_node_id: 'billing',
+            status: 'verifying',
+            current_revision: 'abc123',
+          }] };
+        }
+        if (s.startsWith('SELECT id FROM tasks')) return { rows: [{ id: 'source-task' }] };
+        if (s.startsWith('SELECT status, completed_at FROM tasks')) {
+          return { rows: [{ status: 'completed', completed_at: new Date().toISOString() }] };
+        }
+        if (s.includes('FROM harness_impact_contracts')) {
+          return { rows: [{ contract_body: { required_assertions: [{
+            assertion_id: assertionId,
+            covers_capability_ids: ['task-routing'],
+            journey_step_link_id: '11111111-1111-4111-8111-111111111111',
+            assertion_revision: 1,
+            assertion_digest: assertionDigest,
+          }] } }] };
+        }
+        return { rows: [] };
+      }),
+    };
+
+    await expect(transitionGapStatus(db, 'gap', 'resolved', {
+      resolutionEvidence: {
+        assertion_id: assertionId,
+        receipt_id: 'receipt-1',
+        revision: 'abc123',
+      },
+    })).rejects.toMatchObject({ code: 'assertion_not_covering_gap' });
+  });
+
+  test('相同 idempotency key 的 resolved 回调可重复投递', async () => {
+    const existingEvent = { id: 'event-1', idempotency_key: 'resolve-once' };
+    const db = {
+      query: vi.fn(async (sql) => {
+        const s = String(sql);
+        if (s.startsWith('SELECT * FROM harness_gaps')) {
+          return {
+            rows: [{
+              id: 'gap',
+              source_task_id: 'source-task',
+              status: 'resolved',
+              current_revision: 'abc123',
+            }],
+          };
+        }
+        if (s.startsWith('SELECT * FROM gap_events')) return { rows: [existingEvent] };
+        return { rows: [] };
+      }),
+    };
+
+    const result = await transitionGapStatus(db, 'gap', 'resolved', {
+      idempotencyKey: 'resolve-once',
+      resolutionEvidence: {
+        assertion_id: 'assertion-1',
+        assertion_receipt: { status: 'pass' },
+        revision: 'abc123',
+      },
     });
 
-    test('triage → assigned 跳转合法（分诊后可分配）', () => {
-      expect(isValidTransition('triage', 'assigned')).toBe(true);
-    });
-
+    expect(result.event).toEqual(existingEvent);
+    expect(db.query.mock.calls.some(([sql]) => String(sql).includes('UPDATE harness_gaps'))).toBe(false);
   });
 
 });

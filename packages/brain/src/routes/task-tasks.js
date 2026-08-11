@@ -14,6 +14,7 @@ import { detectDomain } from '../domain-detector.js';
 import taskErrorReportRoutes from './task-error-report.js';
 import { queueLaneSql } from '../task-queue-lanes.js';
 import { resolveChangeKind, CHANGE_KINDS } from '../impact-contract/change-kind.js';
+import { registerTaskPatchRoute } from './task-task-patch.js';
 
 const router = Router();
 
@@ -317,133 +318,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// PATCH /tasks/:id — 更新 task 字段
-router.patch('/:id', async (req, res) => {
-  try {
-    const { status, priority, title, okr_initiative_id, pr_url, result: taskResult, description } = req.body;
-
-    const _VALID_STATUSES = ['queued', 'in_progress', 'completed', 'cancelled', 'failed', 'blocked'];
-    let harnessDemoted = false;
-    let harnessDemoteReason = null;
-    if (status !== undefined) {
-      const current = await pool.query(
-        "SELECT status, task_type, payload->>'orchestrator' AS orchestrator FROM tasks WHERE id = $1",
-        [req.params.id]
-      );
-      if (!current.rows.length) {
-        return res.status(404).json({ error: 'Task not found', id: req.params.id });
-      }
-      const currentStatus = current.rows[0].status;
-      if (TERMINAL_STATUSES.includes(currentStatus) && !TERMINAL_STATUSES.includes(status)) {
-        return res.status(409).json({
-          error: 'State machine violation',
-          details: `Cannot transition from terminal status '${currentStatus}' to '${status}'`,
-        });
-      }
-      // 收账权收归（决策 dc18d43d）：harness_initiative(skill-relay) completed 一律申请，
-      // 外部真相核验不过 → 不写 status/时间戳，200 accepted:false，交给 watchdog 收口。
-      if (status === 'completed'
-          && current.rows[0].task_type === 'harness_initiative'
-          && current.rows[0].orchestrator === 'skill-relay') {
-        const { finalizeHarnessTask } = await import('../lib/harness-finalize.js');
-        const fin = await finalizeHarnessTask(req.params.id, { pool });
-        if (fin.applies && !fin.allow) { harnessDemoted = true; harnessDemoteReason = fin.reason; }
-      }
-    }
-
-    const setClauses = [];
-    const params = [];
-    let paramIndex = 1;
-
-    if (status !== undefined && !harnessDemoted) {
-      setClauses.push(`status = $${paramIndex++}`);
-      params.push(status);
-      // 自动设置时间戳
-      if (status === 'in_progress') {
-        setClauses.push(`started_at = COALESCE(started_at, NOW())`);
-        // 认领协议统一（T4）: in_progress 时补写 claimed_by + executor_kind
-        // 防止 dispatcher 重复抢跑（07-10 事故：注册后未 claim，Brain 几分钟内重复派发）
-        setClauses.push(`claimed_by = COALESCE(claimed_by, $${paramIndex++})`);
-        params.push(`session:${req.headers?.['x-session-id'] || 'engine-patch'}`);
-        setClauses.push(`claimed_at = COALESCE(claimed_at, NOW())`);
-        setClauses.push(`executor_kind = COALESCE(executor_kind, $${paramIndex++})`);
-        params.push('headed-session');
-      }
-      if (status === 'completed') {
-        setClauses.push(`completed_at = COALESCE(completed_at, NOW())`);
-      }
-    }
-    if (priority !== undefined) {
-      setClauses.push(`priority = $${paramIndex++}`);
-      params.push(priority);
-    }
-    if (title !== undefined) {
-      setClauses.push(`title = $${paramIndex++}`);
-      params.push(title);
-    }
-    if (description !== undefined) {
-      setClauses.push(`description = $${paramIndex++}`);
-      params.push(description);
-    }
-    if (okr_initiative_id !== undefined) {
-      setClauses.push(`okr_initiative_id = $${paramIndex++}`);
-      params.push(okr_initiative_id);
-    }
-    if (pr_url !== undefined) {
-      setClauses.push(`pr_url = $${paramIndex++}`);
-      params.push(pr_url);
-    }
-    if (taskResult !== undefined) {
-      setClauses.push(`success_metrics = $${paramIndex++}`);
-      params.push(JSON.stringify(taskResult));
-    }
-
-    if (setClauses.length === 0 && !harnessDemoted) {
-      return res.status(400).json({ error: 'No fields to update' });
-    }
-
-    // 复活路径：description 被补齐时，若任务因 pre-flight 三振被 blocked，自动回 queued 并清零计数
-    if (description !== undefined && description) {
-      const currentTask = await pool.query(
-        'SELECT status, blocked_reason, metadata FROM tasks WHERE id = $1',
-        [req.params.id]
-      );
-      if (currentTask.rows.length > 0) {
-        const t = currentTask.rows[0];
-        if (t.status === 'blocked' && t.blocked_reason === 'pre_flight_rejected') {
-          setClauses.push(`status = 'queued'`);
-          setClauses.push(`blocked_reason = NULL`);
-          setClauses.push(`blocked_at = NULL`);
-          setClauses.push(`blocked_detail = NULL`);
-          const cleanedMeta = Object.assign({}, t.metadata || {});
-          delete cleanedMeta.pre_flight_fail_count;
-          delete cleanedMeta.pre_flight_failed;
-          delete cleanedMeta.pre_flight_issues;
-          delete cleanedMeta.pre_flight_suggestions;
-          setClauses.push(`metadata = $${paramIndex++}::jsonb`);
-          params.push(JSON.stringify(cleanedMeta));
-        }
-      }
-    }
-
-    setClauses.push(`updated_at = NOW()`);
-    params.push(req.params.id);
-
-    const result = await pool.query(
-      `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
-      params
-    );
-
-    if (!result.rows.length) {
-      return res.status(404).json({ error: 'Task not found', id: req.params.id });
-    }
-    res.json(harnessDemoted
-      ? { ...result.rows[0], accepted: false, reason: harnessDemoteReason }
-      : result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to update task', details: err.message });
-  }
-});
+registerTaskPatchRoute(router, { pool, terminalStatuses: TERMINAL_STATUSES });
 
 // DELETE /tasks/:id — 软删除（status='cancelled'）。复用 PATCH 同一套 TERMINAL_STATUSES
 // 状态机保护：不存在 → 404；已终态（completed/cancelled）→ 409（防误删历史记录，幂等）；

@@ -121,6 +121,7 @@ harness-xian-relay-smoke.sh
 healthz-smoke.sh
 inbox-p1-migration-verify.sh
 inbox-p1-smoke.sh
+impact-contract-smoke.sh
 incidents-smoke.sh
 independent-judge-stage-evidence-smoke.sh
 initiative-lifecycle-smoke.sh

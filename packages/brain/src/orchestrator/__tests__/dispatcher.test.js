@@ -1466,6 +1466,13 @@ describe('createDispatcher', () => {
         },
       },
       decision: { phase: 'evaluate', reason: 'ci_pass' },
+      impactGateReceipt: {
+        stage: 'diff',
+        gate: 'extend',
+        head_revision: 'sha-1',
+        contract_hash: 'c'.repeat(64),
+        required_assertions: [{ assertion_id: 'new-check', command: 'npm test' }],
+      },
     });
 
     const created = deps.attemptStore.createAttempt.mock.calls[0][0];
@@ -1473,6 +1480,8 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).toMatchObject({
       pr_branch: 'cp-evaluator-target',
       pr_head_sha: 'sha-1',
+      impact_gate: expect.objectContaining({ gate: 'extend', contract_hash: 'c'.repeat(64) }),
+      required_assertions: [{ assertion_id: 'new-check', command: 'npm test' }],
     });
     expect(deps.launcher.launch).toHaveBeenCalledWith(expect.objectContaining({
       bundle: expect.objectContaining({ constraints: expect.objectContaining({ read_only: false }) }),
@@ -2640,6 +2649,7 @@ describe('createDetachedLauncher', () => {
           worktree_path: '/tmp/worktree',
           pr_branch: 'cp-evaluator-target',
           pr_head_sha: 'sha-1',
+          required_assertions: [{ assertion_id: 'exact-check', command: 'npm test' }],
         },
         constraints: { read_only: false },
       },
@@ -2655,8 +2665,12 @@ describe('createDetachedLauncher', () => {
         GIT_CONFIG_KEY_0: 'remote.origin.pushurl',
         GIT_CONFIG_VALUE_0: 'blocked-by-harness://evaluator',
         BRAIN_RESULT_FILE: '/tmp/cecelia-prompts/brain-result.json',
+        CECELIA_MACHINE_ID: 'us-mac-m4',
         PR_BRANCH: 'cp-evaluator-target',
         PR_HEAD_SHA: 'sha-1',
+        HARNESS_REQUIRED_ASSERTIONS_JSON: JSON.stringify([
+          { assertion_id: 'exact-check', command: 'npm test' },
+        ]),
       }),
     }));
   });

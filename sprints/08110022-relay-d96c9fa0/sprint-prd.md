@@ -26,7 +26,7 @@
    - `node packages/quality/scripts/devgate/check-dod-mapping.cjs`
    任一失败禁止继续编码。
 
-2. **Migration 号无碰撞：** migration `400` 已被 Universal Mapper 分支占用，本计划从 `401` 起。开工前重新扫描已用编号；碰撞时整体顺延。
+2. **Migration 号无碰撞：** main 已使用到 `401`，Universal Mapper 分支预留 `402`；本方案使用正式迁移 `403`、`404`。
 
 3. **change_kind / gear 严格分离：** `change_kind` 只表达变化语义，`gear` 只表达执行强度，禁止互相赋值或混用字段。
 
@@ -34,7 +34,7 @@
 
 5. **Red-then-Green 顺序：** 每个行为变化先保留 failing test（RED），再写最小实现（GREEN），测试永久留在 CI，不得删除。
 
-6. **MJ5 依赖边界：** Segment 1–2 可独立推进；Segment 3–6 必须等待 `/api/brain/map/radius`、`projection_digest`、freshness fail-closed 合同通过真实环境验收后方可继续。
+6. **MJ5 依赖边界：** Segment 1–2 可独立运行；Segment 3–6 的 Kernel 接线可先落地，但 `/api/brain/map/radius`、digest、freshness 未通过真实环境验收时必须 fail-closed，不能生成 active 合同或 PASS 回执。
 
 7. **Gap 状态机单向流转：** `open → assigned → fixing → verifying → resolved`；验真失败进入 `reopened`，只能回到 `assigned`。关闭必须引用当前 revision 的真实断言回执。
 
@@ -60,7 +60,7 @@
 
 **文件：**
 - 新建 `packages/brain/src/impact-contract/contract-schema.js`（Zod schema）
-- 新建 migration `401_impact_contracts.sql`（`harness_impact_contracts` 表）
+- 新建正式 migration `403_impact_contracts.sql`（`harness_impact_contracts` 表）
 - 新建 `packages/brain/src/routes/impact-contracts.js`
 
 **合同字段：** 变更目标、`change_kind`、base revision、manifest/projection digest、受影响 Capability/Feature/AC、必跑断言、freshness 证据、不适用项及理由。
@@ -91,10 +91,10 @@
 ### FR-5 Gap Ledger（Segment 4–5，需 MJ5 合同）
 
 **文件：**
-- migration `402_harness_gaps.sql`（`harness_gaps` / `gap_events` / `task_dependencies` 三表）
-- `packages/brain/src/impact-contract/gap-ledger.js`
+- 正式 migration `404_harness_gap_ledger.sql`（新建 `harness_gaps` / `gap_events`，加厚既有 `task_dependencies`）
+- `packages/brain/src/impact-contract/gap-store.js`
 
-**行为：** 记录开发过程中发现的缺口生命周期（发现→认领→修复→验真→关闭）。gap 修复任务完成且当前 revision 断言 PASS 后，原任务自动恢复。
+**行为：** 记录开发过程中发现的缺口生命周期（发现→认领→修复→验真→关闭）。gap 修复任务完成且可信的当前 revision 断言回执 PASS 后，原任务恢复为 `queued`、清除旧 claim，并由 Dispatcher 重新派发。
 
 **验收：** 修复任务完成后原任务恢复；回调重复时幂等去重；gap owner 不存在时进入分诊队列并告警。
 
@@ -110,7 +110,7 @@
 
 ## NFR
 
-- 幂等性：合同建立、gap 事件均通过幂等键去重，防止重复触发。
+- 幂等性：相同 active 合同语义 hash、gap 事件与 gap/repair 关联均幂等；历史合同版本保持 append-only。
 - 稳定性：Mapper 不可达不导致 Brain crash，返回可重试错误码。
 - 可观测：`CONTRACT_IMPACT_DRIFT` 事件写入 `gap_events`，可被 cockpit 展示。
 - 性能：Structure Gate 响应 < 500ms（不含 Mapper 网络时延）。

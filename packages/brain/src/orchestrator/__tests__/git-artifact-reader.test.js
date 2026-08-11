@@ -55,8 +55,9 @@ describe('readGitArtifact', () => {
     git(consumer, 'remote', 'add', 'origin', remote);
     expect(() => git(consumer, 'cat-file', '-e', `${approvedSha}^{commit}`)).toThrow();
 
-    const { readGitArtifact } = await import('../git-artifact-reader.js');
+    const { ensureGitCommit, readGitArtifact } = await import('../git-artifact-reader.js');
 
+    expect(ensureGitCommit(approvedSha, { cwd: consumer })).toBe(approvedSha);
     expect(readGitArtifact(approvedSha, 'contract.md', { cwd: consumer }))
       .toBe('approved remote content\n');
     expect(git(consumer, 'cat-file', '-e', `${approvedSha}^{commit}`)).toBe('');

@@ -6,10 +6,12 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.35.1
+version: 1.36.1
 created: 2026-05-06
-updated: 2026-08-03
+updated: 2026-08-11
 changelog:
+  - 1.36.1: required assertions 移出模型执行边界——Evaluator 只完成常规 E2E 并返回结果；Provider 退出后由镜像内 Harness Runner 在 exact PR head 上执行 Kernel 注入命令、计算完整输出摘要并覆盖 checks，任一失败强制 FAIL
+  - 1.36.0: Impact Contract 可信断言回执——TaskBundle 含 `required_assertions` 时逐项执行精确命令，HarnessResult `checks` 必须返回 assertion_id、规范 argv、退出码、输出 SHA-256、场景证据和起止时间；缺项或命令漂移直接 FAIL，供已认证 callback 写 append-only receipt
   - 1.35.1: Kernel 只读结果通道——最终 verdict 优先写 Runner 注入的 `BRAIN_RESULT_FILE`，未注入才回退工作树 `.brain-result.json`；仓库读取/E2E 仍使用 WORKSPACE，Reviewer/Evaluator 无需为结构化结果放宽只读挂载
   - 1.35.0: Kernel A 可信胶囊加固——GitHub artifact 由 Provider 前可信阶段按成员数/单文件/总量/压缩比限额流式解包，跨目录、symlink、重复成员、加密包与 ZIP bomb 全部 fail-closed；manifest 为每个 `extracted_files` 绑定 SHA-256，root 封存后 Evaluator 只读现成证据，不再自行解包到可写 `/tmp`
   - 1.34.0: Kernel A 安全边界——Evaluator 不再触发、轮询或下载 GitHub Actions；US M4 可信取证前置按 repo/PR/exact head/workflow/run/artifact 生成哈希证据胶囊并销毁凭据，Evaluator 只消费 `HARNESS_EVIDENCE_CAPSULE_DIR`，本地 HEAD 或 manifest 身份不一致直接 FAIL
@@ -98,6 +100,7 @@ generator 写代码 + push PR
 | `SPRINT_DIR` | Sprint 目录，如 `sprints/run-20260506-1400` |
 | `TASK_ID` | Brain 中当前 evaluate task 的 UUID |
 | `HARNESS_ATTEMPT_ID` | kernel 当前 evaluator attempt 的 UUID；注入时 verdict JSON 顶层 `attempt_id` 必须逐字一致，禁止沿用旧 attempt 证据 |
+| `HARNESS_REQUIRED_ASSERTIONS_JSON` | Kernel 从 TaskBundle `inputs.required_assertions` 逐字序列化的 JSON；Evaluator 只可读取理解，禁止自行伪造 `checks`；Provider 退出后由 Harness Runner 独立执行并生成可信回执 |
 | `HARNESS_EVIDENCE_CAPSULE_DIR` | Kernel 可信取证前置生成的只读/验后复核目录；远端 Windows/Android 验收必须读取其中 `github-evidence-capsule/v1` manifest 与 artifact，Evaluator 无 GitHub 凭据 |
 | `PR_BRANCH` | 待验证 PR 分支名——Brain evaluateContractNode 注入 / relay prompt 提供（Step 0a 消费）（EVA v2 E7 补） |
 | `JOURNEY_TYPE` | `user_facing` / `autonomous` / `dev_pipeline` / `agent_remote` |
@@ -168,6 +171,39 @@ RESULT_FILE="${BRAIN_RESULT_FILE:-$WORKSPACE/.brain-result.json}"
 - **输出格式**：最后一条消息必须是 **纯 JSON 对象**，不加 markdown 代码块
 - **角色边界**：FAIL 报告由 Brain 编排层接收，Brain 负责决定是否重新 dispatch Generator（最多 3 次）；Evaluator 本身无需计数轮次
 - **Evaluator 禁止 commit/push**：可写 worktree 仅用于安装依赖、启动服务、生成临时证据；禁止修改、提交或推送被评 PR。永久回归资产由 Generator 入库，Evaluator 只验证并报告缺口
+
+### Impact Contract required_assertions（Kernel 强制模式）
+
+当 TaskBundle `inputs.required_assertions` 为非空数组时，本节是合并门禁，不是提示信息。对每个条目逐项执行，禁止用总 E2E 的一次成功代替：
+
+1. 只允许按 `command_argv=["bash","-lc", assertion.command]` 执行原命令；不得改写、拼接或选择近似命令。
+2. 每项执行前后记录 RFC3339 UTC `started_at` / `completed_at`，完整 stdout+stderr 写独立日志文件。
+3. 每项生成一个 HarnessResult `checks[]` 条目，字段必须齐全：`assertion_id`、`command_argv`、`exit_code`、完整输出的 `output_digest`（小写 SHA-256）、`output_tail`、`scenario_count`、非空对象 `scenario_evidence`、`started_at`、`completed_at`。
+4. `scenario_count` 至少为 1；`scenario_evidence` 至少写本次 exact PR head、执行环境和每个场景结果。输出摘要不能代替真实日志摘要。
+5. 任一命令非零、字段缺失、时间倒序或 assertion 身份不匹配，整体 `decision.outcome="FAIL"`，禁止 PASS。
+6. 缺少任一 required_assertion 的逐项证据时必须 FAIL；不得把它放进 `unverifiable` 后继续放行。
+
+Kernel 结构化输出示例（`checks` 是 HarnessResult 顶层字段）：
+
+```json
+{
+  "status": "completed",
+  "checks": [{
+    "assertion_id": "task-routing-current",
+    "command_argv": ["bash", "-lc", "npm test -- task-routing"],
+    "exit_code": 0,
+    "output_digest": "<64位小写sha256>",
+    "output_tail": "<真实输出末尾>",
+    "scenario_count": 1,
+    "scenario_evidence": {"pr_head_sha": "<40位sha>", "machine": "<machine-id>", "cases": ["default"]},
+    "started_at": "2026-08-11T04:00:00.000Z",
+    "completed_at": "2026-08-11T04:01:00.000Z"
+  }],
+  "decision": {"outcome": "PASS", "reason": "all required assertions passed"}
+}
+```
+
+`required_assertions` 的可信执行边界在 Provider 进程结束之后。Harness Runner 会核对工作树 `HEAD == PR_HEAD_SHA`，逐项以精确 argv `bash -lc <command>` 执行，计算完整日志 SHA-256，并写入 assertion/link/revision/digest、机器身份和起止时间。Evaluator 不得自行执行这组命令后填充 `checks`，也不得把 required assertion 写入 `unverifiable`；Runner 的任一结构错误、SHA 漂移或非零退出都会把最终 decision 强制改为 FAIL。
 
 ### 反作弊红线（v1.1 强制 — 不要让 evaluator 过度通过）
 
@@ -1005,7 +1041,7 @@ if jq -e \
   and .task_id == $task_id
   and .attempt_id == $attempt_id
   and (.command | type == "string" and length > 0)
-  and (.exit_code | type == "number")
+  and .exit_code == 0
 ' "$E2E_EXECUTION_FILE" >/dev/null 2>&1; then
   EXECUTION_METADATA_VALID=1
   EXECUTION_COMMAND="$(jq -r '.command' "$E2E_EXECUTION_FILE")"
@@ -1038,7 +1074,12 @@ else
     --arg log_tail "$E2E_LOG_TAIL" \
     --argjson screenshots "$SCREENSHOTS_VALUE" \
     --argjson cascade_assertions "$CASCADE_ASSERTIONS_VALUE" \
-    '{verdict:"PASS", task_id:$task_id, attempt_id:$attempt_id,
+    --arg provider "${CECELIA_EXECUTOR:-unknown}" \
+    '{contract_version:"1.0", status:"completed", summary:"all evaluator checks passed",
+      artifacts:[], checks:[],
+      decision:{outcome:"PASS", reason:"provider E2E passed; Runner owns required assertions"},
+      error:null, provider_metadata:{provider:$provider, session_id:null}, case_file:null,
+      verdict:"PASS", task_id:$task_id, attempt_id:$attempt_id,
       failed_step:null, log_excerpt:null, screenshots:$screenshots,
       cascade_assertions:$cascade_assertions,
       behavior_tests:[{command:$command, exit_code:$exit_code, log_tail:$log_tail}]}' \
@@ -1166,6 +1207,8 @@ BREOF
 ```
 
 整体 verdict **只由可验证项决定**。这是治"evaluator 把验不了的东西判 FAIL → generator 无限 fix loop"的结构性修法（对齐 Superpowers 6.0 的 Cannot-verify-from-diff 裁决）。
+
+例外：Kernel 注入的 `required_assertions` 不适用第三态。任一 required assertion 无法执行或缺证据时必须 FAIL，不能写入 `unverifiable` 后产出 PASS。
 
 ### 2. RELAY_STATUS 尾行
 

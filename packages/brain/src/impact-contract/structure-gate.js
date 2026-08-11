@@ -84,14 +84,20 @@ function buildPassResult(contract, created) {
  *   contract?: object,
  * }>}
  */
-export async function evaluateStructureGate({ db, task, contract, mapClient, git: _git } = {}) {
+export async function evaluateStructureGate({
+  db,
+  task,
+  contract,
+  mapClient,
+  persistContract = persistImpactContract,
+  git: _git,
+} = {}) {
   // --- 规则 1：task 无 change_kind → blocked/change_kind_missing ---
   if (!task || !task.change_kind) {
     return buildBlockedResult('change_kind_missing', 400);
   }
 
-  // --- 使用注入的 mapClient 或默认 stub ---
-  // MJ5 STUB: replace with real Mapper call after MJ5 contract passes
+  // --- 使用注入的测试客户端或默认真实 Mapper 客户端 ---
   const mapperFn = mapClient || queryImpactRadius;
 
   // --- 规则 2/3/4：调用 Mapper，处理不可判定情形 ---
@@ -103,9 +109,8 @@ export async function evaluateStructureGate({ db, task, contract, mapClient, git
       headRevision: contract?.head_revision,
       changedFiles: [],
     });
-  } catch (_err) {
+  } catch {
     // Mapper 不可达（连接失败、timeout 等）→ fail-closed
-    // MJ5 STUB: replace with real Mapper call after MJ5 contract passes
     return buildBlockedResult('mapper_unavailable', 503);
   }
 
@@ -115,28 +120,38 @@ export async function evaluateStructureGate({ db, task, contract, mapClient, git
   }
 
   // --- 规则 4：revision mismatch ---
-  // 检查 Mapper 返回的 fact_revisions 与合同 base_revision 是否匹配
-  if (contract?.base_revision && mapperResult.fact_revisions) {
-    const repo = contract.repo || Object.keys(mapperResult.fact_revisions)[0];
-    if (repo && mapperResult.fact_revisions[repo] !== undefined) {
-      const mapperRevision = mapperResult.fact_revisions[repo];
-      if (mapperRevision !== contract.base_revision) {
-        return buildBlockedResult('revision_mismatch', 409);
-      }
+  // 初次生成按 base；fix/extend 后按当前 head。两端必须与 Mapper 请求语义一致。
+  const expectedRevision = contract?.head_revision ?? contract?.base_revision;
+  if (expectedRevision) {
+    const repo = contract.repo || Object.keys(mapperResult.fact_revisions ?? {})[0];
+    if (!repo || mapperResult.fact_revisions?.[repo] === undefined) {
+      return buildBlockedResult('revision_evidence_missing', 409);
+    }
+    const mapperRevision = mapperResult.fact_revisions[repo];
+    if (mapperRevision !== expectedRevision) {
+      return buildBlockedResult('revision_mismatch', 409);
     }
   }
 
   // --- 放行：schema + Mapper 均通过 → 持久化合同 ---
   if (db && contract) {
-    const contractBody = contract.contract_body || contract;
-    const { contract: persisted, created } = await persistImpactContract(db, {
+    const manifestDigest = mapperResult.manifest_digest;
+    const projectionDigest = mapperResult.projection_digest;
+    const contractBody = {
+      ...(contract.contract_body || contract),
+      manifest_digest: manifestDigest,
+      projection_digest: projectionDigest,
+      fact_revisions: mapperResult.fact_revisions,
+      freshness_evidence: mapperResult.freshness,
+    };
+    const { contract: persisted, created } = await persistContract(db, {
       task_id: contract.task_id || task.id,
       change_kind: contract.change_kind,
       repo: contract.repo || null,
       base_revision: contract.base_revision,
       head_revision: contract.head_revision || null,
-      manifest_digest: contract.manifest_digest || mapperResult.manifest_digest || null,
-      projection_digest: contract.projection_digest || mapperResult.projection_digest || null,
+      manifest_digest: manifestDigest,
+      projection_digest: projectionDigest,
       contract_body: contractBody,
     });
 

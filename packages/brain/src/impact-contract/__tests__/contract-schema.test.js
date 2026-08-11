@@ -21,7 +21,14 @@ function minimalValidContract(overrides = {}) {
       { capability_id: 'cap-001', capability_name: 'user-auth', impact_level: 'direct' },
     ],
     required_assertions: [
-      { assertion_id: 'assert-001', command: 'npm test -- --testPathPattern=auth' },
+      {
+        assertion_id: 'assert-001',
+        command: 'npm test -- --testPathPattern=auth',
+        covers_capability_ids: ['cap-001'],
+        journey_step_link_id: '11111111-1111-4111-8111-111111111111',
+        assertion_revision: 1,
+        assertion_digest: 'a'.repeat(64),
+      },
     ],
     ...overrides,
   };
@@ -99,6 +106,13 @@ describe('FR-2 Impact Contract Schema', () => {
   // -------------------------------------------------------
   describe('非法合同被 schema 拒绝', () => {
 
+    test('非空断言缺少 capability 覆盖与不可变 Journey 绑定时无效', () => {
+      const data = minimalValidContract({
+        required_assertions: [{ assertion_id: 'assert-loose', command: 'npm test' }],
+      });
+      expect(validateImpactContract(data).success).toBe(false);
+    });
+
     test('缺少 task_id 时 Zod parse 抛出 ZodError', () => {
       const data = minimalValidContract();
       delete data.task_id;
@@ -148,6 +162,16 @@ describe('FR-2 Impact Contract Schema', () => {
       try { parseImpactContract(data); } catch(e) { caughtErr = e; }
       expect(caughtErr).toBeDefined();
       expect(caughtErr.constructor.name).toBe('ZodError');
+    });
+
+    test('task_id 不是 UUID 时验证失败', () => {
+      const result = validateImpactContract(minimalValidContract({ task_id: 'task-123' }));
+      expect(result.success).toBe(false);
+    });
+
+    test('base_revision 不是 40 位 Git SHA 时验证失败', () => {
+      const result = validateImpactContract(minimalValidContract({ base_revision: 'abc123' }));
+      expect(result.success).toBe(false);
     });
 
   });

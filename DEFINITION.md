@@ -16,13 +16,12 @@
 
 ## Brain 1.271.5 — F1 Impact Contract 系统接入 CI
 
-- 新增 `src/impact-contract/` 模块群，为 Brain 每次功能变更引入结构化变更合同机制。
-- `change-kind` 四档分类：`new_capability`（全新能力）、`capability_change`（能力变更）、`bugfix`（缺陷修复）、`parameter_only`（仅参数调整）。
-- Structure Gate：校验合同 JSON Schema（change_kind/summary/affected_files/test_plan 四字段均必填），fail-closed——Schema 解析失败直接拒绝。
-- Diff Gate：对比当前合同与上一版本，检测字段级漂移，触发 `CONTRACT_IMPACT_DRIFT` 告警。
-- Gap Ledger 状态机：`open → assigned → fixing → verifying → resolved`，持久化合同执行缺口并追踪闭合状态。
-- Mapper fail-closed 原则：change-kind 映射器遇到未识别类型时返回 null 而非 fallback，强制上层显式处理未知类型。
-- 所有单元测试（6 个文件）已纳入 `src/impact-contract/__tests__/`，由 vitest `include: src/**/*.test.js` 自动收集，随 brain-unit CI job 运行。
+- `change_kind` 统一为 `new_capability` / `capability_change` / `bugfix` / `parameter_only`，存入任务 payload；`gear` 保持独立执行强度字段。
+- 正式迁移 403/404 建立 `harness_impact_contracts`、`harness_gaps`、`gap_events`，并加厚既有 `task_dependencies`，所有外键引用真实 `tasks` 表。
+- 所有合同写入口强制经过 Structure Gate；真实 `/api/brain/map/radius` 不可用、陈旧、响应不合法或 revision 不一致时 fail-closed，不创建 active 合同。
+- Diff Gate 以 HEAD 与 changed files 复算影响；未声明影响写入 Gap Ledger 并阻塞原任务。当前 revision 的断言回执为 PASS 且所有 gap 关闭后，硬依赖置为 satisfied，原任务恢复执行。
+- Harness 孤儿守卫会从 `initiative_runs.pr_url` 补齐 `generator_done` 交接证据，避免已产出 PR 的 run 被误终态化和重复派发。
+- 单元回归、正式迁移检查、真实 PostgreSQL 闭环及 real-env smoke 已纳入 CI。
 
 ---
 

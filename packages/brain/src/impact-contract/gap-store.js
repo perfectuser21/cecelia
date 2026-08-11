@@ -8,11 +8,13 @@
  * 规则：
  * - 非法跳转 → 抛出 { code: 'invalid_transition' } 错误
  * - 重复回调（同 idempotency_key）→ 幂等返回，不重复建事件
- * - verifying → resolved 需要 resolution_evidence（含 assertion_id / assertion_receipt / revision）
+ * - verifying → resolved 只接受当前合同绑定的不可变 receipt_id
  * - owner 不存在 → gap 进入 triage 状态，写告警记录
  *
  * sprint: 08110022-relay-d96c9fa0 ws5
- */
+*/
+
+import { createHash } from 'node:crypto';
 
 // ---------- 状态机定义 ----------
 
@@ -89,52 +91,64 @@ export async function openGapForDrift(db, {
   revision = null,
   idempotencyKey = null,
 }) {
-  // 若 owner 为空则进入 triage
-  const initialStatus = owner ? 'open' : 'triage';
+  const isPool = typeof db.connect === 'function' && db.constructor?.name !== 'Client';
+  const client = isPool ? await db.connect() : db;
 
-  // 幂等插入（ON CONFLICT 返回已有记录）
-  const insertResult = await db.query(
-    `INSERT INTO harness_gaps
-       (source_task_id, impact_node_id, owner, severity, status, current_revision)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (source_task_id, impact_node_id, current_revision)
-       DO UPDATE SET updated_at = NOW()
-     RETURNING *`,
-    [sourceTaskId, impactNodeId, owner, severity, initialStatus, revision]
-  );
+  try {
+    if (isPool) await client.query('BEGIN');
 
-  const gap = insertResult.rows[0];
-  const created = gap.updated_at === gap.created_at ||
-    Math.abs(new Date(gap.updated_at) - new Date(gap.created_at)) < 100;
+    // 若 owner 为空则进入 triage
+    const initialStatus = owner ? 'open' : 'triage';
 
-  // 写 discovered 事件（幂等）
-  const effectiveKey = idempotencyKey ?? `discovered:${gap.id}:${revision ?? 'no-rev'}`;
+    // 幂等插入（ON CONFLICT 返回已有记录）
+    const insertResult = await client.query(
+      `INSERT INTO harness_gaps
+         (source_task_id, impact_node_id, owner, severity, status, current_revision)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (source_task_id, impact_node_id, current_revision)
+         DO UPDATE SET updated_at = NOW()
+       RETURNING *, (xmax = 0) AS created`,
+      [sourceTaskId, impactNodeId, owner, severity, initialStatus, revision]
+    );
 
-  await db.query(
-    `INSERT INTO gap_events (gap_id, event_type, idempotency_key, actor, detail, revision)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (gap_id, idempotency_key) DO NOTHING`,
-    [gap.id, 'CONTRACT_IMPACT_DRIFT', effectiveKey, owner, { impact_node_id: impactNodeId, severity }, revision]
-  );
+    const { created: inserted, ...gap } = insertResult.rows[0];
+    const created = Boolean(inserted);
 
-  // 若 triage，写告警（gap_events 类型复用 discovered，携带告警详情）
-  if (initialStatus === 'triage') {
-    await db.query(
+    // 写 discovered 事件（幂等）
+    const effectiveKey = idempotencyKey ?? `discovered:${gap.id}:${revision ?? 'no-rev'}`;
+
+    await client.query(
       `INSERT INTO gap_events (gap_id, event_type, idempotency_key, actor, detail, revision)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (gap_id, idempotency_key) DO NOTHING`,
-      [
-        gap.id,
-        'discovered',
-        `triage-alert:${gap.id}`,
-        null,
-        { alert: 'owner_not_found', message: `Gap ${gap.id} 无 owner，进入分诊队列` },
-        revision,
-      ]
+      [gap.id, 'CONTRACT_IMPACT_DRIFT', effectiveKey, owner, { impact_node_id: impactNodeId, severity }, revision]
     );
-  }
 
-  return { gap, created };
+    // 若 triage，写告警（gap_events 类型复用 discovered，携带告警详情）
+    if (initialStatus === 'triage') {
+      await client.query(
+        `INSERT INTO gap_events (gap_id, event_type, idempotency_key, actor, detail, revision)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (gap_id, idempotency_key) DO NOTHING`,
+        [
+          gap.id,
+          'discovered',
+          `triage-alert:${gap.id}`,
+          null,
+          { alert: 'owner_not_found', message: `Gap ${gap.id} 无 owner，进入分诊队列` },
+          revision,
+        ]
+      );
+    }
+
+    if (isPool) await client.query('COMMIT');
+    return { gap, created };
+  } catch (error) {
+    if (isPool) await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    if (isPool) client.release();
+  }
 }
 
 /**
@@ -151,7 +165,7 @@ export async function openGapForDrift(db, {
  * }} options
  * @returns {Promise<{ gap: object, event: object | null }>}
  */
-export async function transitionGapStatus(db, gapId, newStatus, {
+async function transitionGapStatusOnClient(db, gapId, newStatus, {
   actor = null,
   detail = null,
   idempotencyKey = null,
@@ -159,7 +173,7 @@ export async function transitionGapStatus(db, gapId, newStatus, {
 } = {}) {
   // 读取当前 gap
   const gapResult = await db.query(
-    'SELECT * FROM harness_gaps WHERE id = $1',
+    'SELECT * FROM harness_gaps WHERE id = $1 FOR UPDATE',
     [gapId]
   );
 
@@ -173,6 +187,17 @@ export async function transitionGapStatus(db, gapId, newStatus, {
   const gap = gapResult.rows[0];
   const currentStatus = gap.status;
 
+  // 幂等性必须先于状态机校验：首次 resolved 已改变状态，重复回调仍应返回原事件。
+  if (idempotencyKey) {
+    const existingEvent = await db.query(
+      'SELECT * FROM gap_events WHERE gap_id = $1 AND idempotency_key = $2',
+      [gapId, idempotencyKey]
+    );
+    if (existingEvent.rows.length > 0) {
+      return { gap, event: existingEvent.rows[0] };
+    }
+  }
+
   // 状态机校验（抛出 invalid_transition）
   validateTransition(currentStatus, newStatus);
 
@@ -184,16 +209,140 @@ export async function transitionGapStatus(db, gapId, newStatus, {
       err.httpStatus = 422;
       throw err;
     }
-  }
+    if (!resolutionEvidence.revision || resolutionEvidence.revision !== gap.current_revision) {
+      const err = new Error('resolution_evidence.revision 与 gap current_revision 不一致');
+      err.code = 'revision_mismatch';
+      err.httpStatus = 409;
+      throw err;
+    }
+    if (!resolutionEvidence.receipt_id || resolutionEvidence.assertion_receipt) {
+      const err = new Error('resolved 状态只接受不可变 assertion receipt_id');
+      err.code = 'invalid_resolution_evidence';
+      err.httpStatus = 422;
+      throw err;
+    }
 
-  // 幂等性：同 idempotencyKey 已存在则直接返回
-  if (idempotencyKey) {
-    const existingEvent = await db.query(
-      'SELECT * FROM gap_events WHERE gap_id = $1 AND idempotency_key = $2',
-      [gapId, idempotencyKey]
+    if (!gap.repair_task_id) {
+      const err = new Error('resolved 状态需要已绑定的 repair task');
+      err.code = 'repair_task_missing';
+      err.httpStatus = 409;
+      throw err;
+    }
+    await db.query('SELECT id FROM tasks WHERE id = $1 FOR UPDATE', [gap.source_task_id]);
+    const repairResult = await db.query(
+      'SELECT status, completed_at FROM tasks WHERE id = $1',
+      [gap.repair_task_id]
     );
-    if (existingEvent.rows.length > 0) {
-      return { gap, event: existingEvent.rows[0] };
+    const repairTask = repairResult.rows[0];
+    if (repairTask?.status !== 'completed' || !repairTask.completed_at) {
+      const err = new Error('repair task 尚未完成');
+      err.code = 'repair_task_incomplete';
+      err.httpStatus = 409;
+      throw err;
+    }
+
+    const contractResult = await db.query(
+      `SELECT id, contract_hash, repo, contract_body
+       FROM harness_impact_contracts
+       WHERE task_id = $1 AND status = 'active'
+       ORDER BY version DESC
+       LIMIT 1
+       FOR UPDATE`,
+      [gap.source_task_id]
+    );
+    const contractAssertions = contractResult.rows[0]?.contract_body?.required_assertions ?? [];
+    const contractAssertion = contractAssertions.find((assertion) => (
+      assertion
+      && typeof assertion === 'object'
+      && assertion.assertion_id === resolutionEvidence.assertion_id
+    ));
+    if (!contractAssertion) {
+      const err = new Error('assertion 不属于当前 active Impact Contract');
+      err.code = 'assertion_not_in_contract';
+      err.httpStatus = 409;
+      throw err;
+    }
+    if (
+      !contractAssertion.journey_step_link_id
+      || !Number.isInteger(contractAssertion.assertion_revision)
+      || !/^[0-9a-f]{64}$/.test(contractAssertion.assertion_digest ?? '')
+    ) {
+      const err = new Error('active Impact Contract 缺少不可变断言绑定');
+      err.code = 'assertion_binding_missing';
+      err.httpStatus = 409;
+      throw err;
+    }
+    if (!contractAssertion.covers_capability_ids?.includes(gap.impact_node_id)) {
+      const err = new Error('assertion 未覆盖当前 gap 的 impact node');
+      err.code = 'assertion_not_covering_gap';
+      err.httpStatus = 409;
+      throw err;
+    }
+
+    const verificationResult = await db.query(
+      `SELECT MAX(created_at) AS verification_started_at
+       FROM gap_events
+       WHERE gap_id = $1 AND event_type = 'verification_started'`,
+      [gapId]
+    );
+    const verificationStartedAt = verificationResult.rows[0]?.verification_started_at;
+    if (!verificationStartedAt) {
+      const err = new Error('缺少 verification_started 事件');
+      err.code = 'verification_not_started';
+      err.httpStatus = 409;
+      throw err;
+    }
+
+    const receiptResult = await db.query(
+      `SELECT receipt.*,
+              link.assertion_ref AS current_assertion_ref,
+              link.assertion_revision AS current_assertion_revision,
+              verification_run.current_task_id AS verification_task_id
+       FROM journey_assertion_receipts AS receipt
+       JOIN journey_step_links AS link ON link.id = receipt.journey_step_link_id
+       LEFT JOIN initiative_runs AS verification_run
+         ON verification_run.id::text = receipt.run_id
+       WHERE receipt.id = $1`,
+      [resolutionEvidence.receipt_id]
+    );
+    const receipt = receiptResult.rows[0];
+    const expectedDigest = createHash('sha256')
+      .update(String(receipt?.assertion_ref_snapshot ?? ''))
+      .digest('hex');
+    const receiptTrusted = receipt
+      && receipt.verdict === 'PASS'
+      && receipt.exit_code === 0
+      && receipt.synthetic === false
+      && receipt.executor_kind === 'brain_assertion_runner'
+      && typeof receipt.machine_id === 'string'
+      && receipt.machine_id.trim().length > 0
+      && receipt.source_repo === contractResult.rows[0]?.repo
+      && /^[0-9a-f]{40}$/.test(receipt.source_sha ?? '')
+      && receipt.source_sha === gap.current_revision
+      && receipt.impact_contract_id === contractResult.rows[0]?.id
+      && receipt.impact_contract_hash === contractResult.rows[0]?.contract_hash
+      && receipt.verification_task_id === gap.repair_task_id
+      && receipt.journey_step_link_id === contractAssertion.journey_step_link_id
+      && receipt.assertion_ref_snapshot === resolutionEvidence.assertion_id
+      && receipt.current_assertion_ref === receipt.assertion_ref_snapshot
+      && Number(receipt.assertion_revision) === contractAssertion.assertion_revision
+      && Number(receipt.current_assertion_revision) === Number(receipt.assertion_revision)
+      && receipt.assertion_digest === contractAssertion.assertion_digest
+      && receipt.assertion_digest === expectedDigest
+      && JSON.stringify(receipt.command_argv) === JSON.stringify([
+        'bash', '-lc', contractAssertion.command,
+      ])
+      && Date.parse(receipt.completed_at) >= Date.parse(verificationStartedAt)
+      && typeof receipt.output_digest === 'string'
+      && /^[0-9a-f]{64}$/.test(receipt.output_digest)
+      && Number(receipt.scenario_count) > 0
+      && receipt.scenario_evidence
+      && Object.keys(receipt.scenario_evidence).length > 0;
+    if (!receiptTrusted) {
+      const err = new Error('assertion receipt 不可信、已过期或 revision 不匹配');
+      err.code = 'invalid_resolution_evidence';
+      err.httpStatus = 422;
+      throw err;
     }
   }
 
@@ -244,14 +393,66 @@ export async function transitionGapStatus(db, gapId, newStatus, {
   // resolved 后更新 task_dependencies
   if (newStatus === 'resolved') {
     await db.query(
-      `UPDATE task_dependencies
-       SET status = 'satisfied'
+      `UPDATE harness_gap_dependencies
+       SET status = 'satisfied', updated_at = NOW()
        WHERE gap_id = $1 AND status = 'pending'`,
       [gapId]
+    );
+    await db.query(
+      `UPDATE task_dependencies AS dependency
+       SET status = 'satisfied'
+       WHERE dependency.from_task_id = $1
+         AND dependency.to_task_id = $2
+         AND dependency.status = 'pending'
+         AND NOT EXISTS (
+           SELECT 1
+           FROM harness_gap_dependencies AS pending_gap
+           WHERE pending_gap.source_task_id = dependency.from_task_id
+             AND pending_gap.repair_task_id = dependency.to_task_id
+             AND pending_gap.status = 'pending'
+         )`,
+      [gap.source_task_id, gap.repair_task_id]
+    );
+    await db.query(
+      `UPDATE tasks AS source
+       SET status = 'queued',
+           claimed_by = NULL,
+           claimed_at = NULL,
+           blocked_at = NULL,
+           blocked_reason = NULL,
+           blocked_detail = NULL,
+           blocked_until = NULL,
+           started_at = NULL,
+           updated_at = NOW()
+       WHERE source.id = $1
+         AND source.status = 'blocked'
+         AND NOT EXISTS (
+           SELECT 1
+           FROM harness_gaps AS unresolved
+           WHERE unresolved.source_task_id = source.id
+             AND unresolved.status <> 'resolved'
+         )`,
+      [gap.source_task_id]
     );
   }
 
   return { gap: updatedGap, event };
+}
+
+export async function transitionGapStatus(db, gapId, newStatus, options = {}) {
+  const isPool = typeof db.connect === 'function' && db.constructor?.name !== 'Client';
+  const client = isPool ? await db.connect() : db;
+  try {
+    if (isPool) await client.query('BEGIN');
+    const result = await transitionGapStatusOnClient(client, gapId, newStatus, options);
+    if (isPool) await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    if (isPool) await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    if (isPool) client.release();
+  }
 }
 
 /**
@@ -262,127 +463,14 @@ export async function transitionGapStatus(db, gapId, newStatus, {
  * @param {string} repairTaskId
  * @returns {Promise<object>} 更新后的 gap
  */
-export async function assignRepairTask(db, gapId, repairTaskId) {
-  const result = await db.query(
-    `UPDATE harness_gaps SET repair_task_id = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-    [repairTaskId, gapId]
-  );
-
-  if (result.rows.length === 0) {
-    const err = new Error(`gap_not_found: ${gapId}`);
-    err.code = 'gap_not_found';
-    err.httpStatus = 404;
-    throw err;
-  }
-
-  return result.rows[0];
-}
-
-/**
- * addHardDependency(db, input) — 为原任务添加硬依赖阻塞。
- *
- * @param {import('pg').PoolClient|import('pg').Pool} db
- * @param {{
- *   fromTaskId: string,   // 被阻塞的原任务
- *   toTaskId: string,     // 修复任务（解锁条件）
- *   gapId: string,
- *   edgeType?: string,    // 'hard' | 'soft'
- * }} input
- * @returns {Promise<{ dep: object, created: boolean }>}
- */
-export async function addHardDependency(db, { fromTaskId, toTaskId, gapId, edgeType = 'hard' }) {
-  const result = await db.query(
-    `INSERT INTO task_dependencies (from_task_id, to_task_id, gap_id, edge_type)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (from_task_id, to_task_id, gap_id)
-       DO UPDATE SET status = 'pending', edge_type = EXCLUDED.edge_type
-     RETURNING *, (xmax = 0) AS created`,
-    [fromTaskId, toTaskId, gapId, edgeType]
-  );
-
-  const row = result.rows[0];
-  return { dep: row, created: row.created };
-}
-
-// ---------- 读操作 ----------
-
-/**
- * listGapsByStatus(db, status) — 按状态列出所有 gap（用于全局视图/评估器巡检）。
- *
- * @param {import('pg').PoolClient|import('pg').Pool} db
- * @param {string} status
- * @returns {Promise<object[]>}
- */
-export async function listGapsByStatus(db, status) {
-  const result = await db.query(
-    `SELECT * FROM harness_gaps WHERE status = $1 ORDER BY created_at DESC`,
-    [status]
-  );
-  return result.rows;
-}
-
-/**
- * getGapsByTask(db, taskId) — 查询任务的所有 gap（包括作为 source 或 repair 的）。
- *
- * @param {import('pg').PoolClient|import('pg').Pool} db
- * @param {string} taskId
- * @returns {Promise<object[]>}
- */
-export async function getGapsByTask(db, taskId) {
-  const result = await db.query(
-    `SELECT * FROM harness_gaps
-     WHERE source_task_id = $1 OR repair_task_id = $1
-     ORDER BY created_at DESC`,
-    [taskId]
-  );
-  return result.rows;
-}
-
-/**
- * getGapById(db, gapId) — 按 id 获取单个 gap。
- *
- * @param {import('pg').PoolClient|import('pg').Pool} db
- * @param {string} gapId
- * @returns {Promise<object|null>}
- */
-export async function getGapById(db, gapId) {
-  const result = await db.query(
-    'SELECT * FROM harness_gaps WHERE id = $1',
-    [gapId]
-  );
-  return result.rows[0] ?? null;
-}
-
-/**
- * getGapEvents(db, gapId) — 查询 gap 的完整事件链。
- *
- * @param {import('pg').PoolClient|import('pg').Pool} db
- * @param {string} gapId
- * @returns {Promise<object[]>}
- */
-export async function getGapEvents(db, gapId) {
-  const result = await db.query(
-    `SELECT * FROM gap_events
-     WHERE gap_id = $1
-     ORDER BY created_at ASC`,
-    [gapId]
-  );
-  return result.rows;
-}
-
-/**
- * getDependenciesByTask(db, taskId) — 查询任务的硬依赖关系。
- *
- * @param {import('pg').PoolClient|import('pg').Pool} db
- * @param {string} taskId
- * @returns {Promise<object[]>}
- */
-export async function getDependenciesByTask(db, taskId) {
-  const result = await db.query(
-    `SELECT * FROM task_dependencies
-     WHERE from_task_id = $1 OR to_task_id = $1
-     ORDER BY created_at DESC`,
-    [taskId]
-  );
-  return result.rows;
-}
+export {
+  addHardDependency,
+  assignRepairTask,
+  assignRepairTaskWithDependency,
+  createRepairTaskForGap,
+  getDependenciesByTask,
+  getGapById,
+  getGapEvents,
+  getGapsByTask,
+  listGapsByStatus,
+} from './gap-dependencies.js';

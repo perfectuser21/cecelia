@@ -1,34 +1,101 @@
-/**
- * map-client (MJ5 stub) 测试
- * stub 响应格式验证 — 真实 Mapper 接入后替换为集成测试
- *
- * MJ5 STUB: replace with real Mapper call after MJ5 contract passes
- * sprint: 08110022-relay-d96c9fa0 ws3
- */
-import { describe, test, expect } from 'vitest';
-import { queryImpactRadius, callMapper } from '../map-client.js';
+import { describe, expect, it, vi } from 'vitest';
+import { queryImpactRadius } from '../map-client.js';
 
-describe('map-client (MJ5 stub)', () => {
-  test('queryImpactRadius 返回 fresh stub 响应', async () => {
-    const result = await queryImpactRadius({ repo: 'cecelia', baseRevision: 'abc123' });
-    expect(result).toBeDefined();
-    expect(result.freshness).toBeDefined();
-    expect(result.freshness.status).toBe('fresh');
+const request = {
+  repo: 'perfectuser21/cecelia',
+  baseRevision: 'a'.repeat(40),
+  headRevision: 'b'.repeat(40),
+  changedFiles: ['packages/brain/src/example.js'],
+};
+
+function freshResponse() {
+  return {
+    manifest_digest: '1'.repeat(64),
+    projection_digest: '2'.repeat(64),
+    fact_revisions: { 'perfectuser21/cecelia': request.headRevision },
+    freshness: { status: 'fresh', reason_code: null },
+    affected_nodes: [],
+    required_assertions: [],
+  };
+}
+
+describe('map-client', () => {
+  it('把 revision 与 changed files 发送到 MJ5 radius 合同', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => freshResponse(),
+    }));
+
+    const result = await queryImpactRadius(request, {
+      fetchImpl,
+      endpoint: 'http://mapper.test/api/brain/map/radius',
+      timeoutMs: 50,
+    });
+
+    expect(result.projection_digest).toBe('2'.repeat(64));
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe('http://mapper.test/api/brain/map/radius');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({
+      repo: request.repo,
+      base_revision: request.baseRevision,
+      head_revision: request.headRevision,
+      changed_files: request.changedFiles,
+    });
+    expect(init.signal).toBeDefined();
   });
 
-  test('stub 响应包含 affected_nodes 数组', async () => {
-    const result = await queryImpactRadius({ repo: 'cecelia', baseRevision: 'abc123' });
-    expect(Array.isArray(result.affected_nodes)).toBe(true);
+  it('Mapper HTTP 失败时抛出 mapper_unavailable，不能伪造 fresh 空影响', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: 'not_found' }),
+    }));
+
+    await expect(queryImpactRadius(request, { fetchImpl }))
+      .rejects.toMatchObject({ code: 'mapper_unavailable', status: 404 });
   });
 
-  test('stub 响应包含 required_assertions 数组', async () => {
-    const result = await queryImpactRadius({ repo: 'cecelia', baseRevision: 'abc123' });
-    expect(Array.isArray(result.required_assertions)).toBe(true);
+  it('Mapper 响应缺少 digest/freshness 时 fail-closed', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ affected_nodes: [], required_assertions: [] }),
+    }));
+
+    await expect(queryImpactRadius(request, { fetchImpl }))
+      .rejects.toMatchObject({ code: 'mapper_contract_invalid' });
   });
 
-  test('callMapper 是 queryImpactRadius 的别名', async () => {
-    const r1 = await queryImpactRadius({ repo: 'cecelia', baseRevision: 'abc' });
-    const r2 = await callMapper({ repo: 'cecelia', baseRevision: 'abc' });
-    expect(r1.freshness.status).toBe(r2.freshness.status);
+  it('短 digest 或缺少请求 repo revision 时 fail-closed', async () => {
+    for (const body of [
+      { ...freshResponse(), projection_digest: 'short' },
+      { ...freshResponse(), fact_revisions: {} },
+    ]) {
+      const fetchImpl = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => body,
+      }));
+      await expect(queryImpactRadius(request, { fetchImpl }))
+        .rejects.toMatchObject({ code: 'mapper_contract_invalid' });
+    }
+  });
+
+  it('畸形影响节点或断言不能被解释为空影响', async () => {
+    for (const body of [
+      { ...freshResponse(), affected_nodes: [{}] },
+      { ...freshResponse(), required_assertions: [{}] },
+    ]) {
+      const fetchImpl = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => body,
+      }));
+      await expect(queryImpactRadius(request, { fetchImpl }))
+        .rejects.toMatchObject({ code: 'mapper_contract_invalid' });
+    }
   });
 });

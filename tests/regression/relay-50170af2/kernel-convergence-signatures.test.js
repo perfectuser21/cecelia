@@ -196,6 +196,11 @@ function makeLoop(log, currentObserved, dispatch = async () => ({ status: 'DONE'
     }),
     writeHeartbeat: vi.fn(async () => {}),
     dispatch: dispatchSpy,
+    impactGate: {
+      beforeGenerate: vi.fn(async () => ({ gate: 'pass', stage: 'convergence-fixture' })),
+      beforeEvaluate: vi.fn(async () => ({ gate: 'pass', stage: 'convergence-fixture' })),
+      beforeMerge: vi.fn(async () => ({ gate: 'pass', stage: 'convergence-fixture' })),
+    },
     finalizeRun: vi.fn(async (_pool, {
       runId,
       expectedTaskId,

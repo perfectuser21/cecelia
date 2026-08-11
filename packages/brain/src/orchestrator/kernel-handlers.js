@@ -183,7 +183,21 @@ export function createKernelHandlers(deps) {
         );
         return { status: 'DONE_WITH_CONCERNS', detail: 'updated PR branch; rechecking gates' };
       }
-      deps.execCmd(`gh pr merge ${shellQuote(pr.url)} --squash --delete-branch`);
+      if (ctx.impactGateReceipt?.contract_hash && deps.verifyImpactMerge) {
+        const fence = await deps.verifyImpactMerge({
+          taskId: ctx.impactGateReceipt.source_task_id ?? ctx.taskId,
+          runId: ctx.runId,
+          headRevision: pr.head_sha,
+          expectedContractHash: ctx.impactGateReceipt.contract_hash,
+        });
+        if (fence.gate !== 'pass') {
+          return { status: 'BLOCKED', detail: fence.reason ?? 'impact merge fence failed' };
+        }
+      }
+      deps.execCmd(
+        `gh pr merge ${shellQuote(pr.url)} --squash --delete-branch `
+        + `--match-head-commit ${shellQuote(pr.head_sha)}`,
+      );
       return { status: 'DONE', detail: 'merge requested' };
     },
 
@@ -219,11 +233,21 @@ export function createKernelHandlers(deps) {
       await deps.cleanup(ctx.runId);
 
       const finalizeRun = deps.finalizeRun ?? finalizeKernelRun;
-      await finalizeRun(deps.pool, {
+      const finalization = {
         runId: ctx.runId,
         expectedTaskId: ctx.taskId,
         outcome: 'done',
-      });
+      };
+      if (payload.harness_gap_id) {
+        if (typeof deps.resolveCompletedRepairGaps !== 'function') {
+          throw new Error('repair gap resolution authority is unavailable');
+        }
+        finalization.afterTaskFinalized = (client) => deps.resolveCompletedRepairGaps(client, {
+          repairTaskId: ctx.taskId,
+          runId: ctx.runId,
+        });
+      }
+      await finalizeRun(deps.pool, finalization);
       return { status: 'DONE', detail: 'report chain completed' };
     },
   });

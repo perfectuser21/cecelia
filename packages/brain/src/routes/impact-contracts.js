@@ -26,7 +26,6 @@ import { Router } from 'express';
 import pool from '../db.js';
 import { validateImpactContract } from '../impact-contract/contract-schema.js';
 import {
-  persistImpactContract,
   getActiveImpactContract,
   getImpactContractById,
 } from '../impact-contract/contract-store.js';
@@ -61,6 +60,76 @@ function buildContractBody(parsedData) {
   return parsedData;
 }
 
+/**
+ * 所有合同写入口共用的 Structure Gate。任务自己的 change_kind 是事实源，
+ * 请求体不能覆盖；Mapper 判定完成前也不能直接写 active 合同。
+ */
+export async function evaluateImpactContractSubmission({
+  db,
+  taskId,
+  body,
+  structureGate = evaluateStructureGate,
+}) {
+  const candidate = { ...body, task_id: taskId };
+  const validation = validateImpactContract(candidate);
+  if (!validation.success) {
+    return {
+      httpStatus: 400,
+      body: {
+        error: '非法 Impact Contract：schema 验证失败',
+        fields: formatZodErrors(validation.error),
+      },
+    };
+  }
+
+  const { rows } = await db.query(
+    `SELECT id, payload->>'change_kind' AS change_kind
+     FROM tasks
+     WHERE id = $1`,
+    [taskId],
+  );
+  const task = rows[0];
+  if (!task) {
+    return { httpStatus: 404, body: { error: 'task_not_found' } };
+  }
+
+  const parsed = validation.data;
+  if (task.change_kind && parsed.change_kind !== task.change_kind) {
+    return {
+      httpStatus: 409,
+      body: {
+        gate: 'blocked',
+        reason: 'change_kind_mismatch',
+        expected: task.change_kind,
+        received: parsed.change_kind,
+        retryable: false,
+      },
+    };
+  }
+
+  const result = await structureGate({
+    db,
+    task,
+    contract: {
+      ...parsed,
+      task_id: taskId,
+      contract_body: buildContractBody(parsed),
+    },
+  });
+
+  if (result.gate !== 'pass') {
+    return {
+      httpStatus: result.httpStatus,
+      body: {
+        gate: result.gate,
+        reason: result.reason,
+        retryable: result.retryable ?? false,
+      },
+    };
+  }
+  return { httpStatus: result.httpStatus, body: result.contract };
+}
+
 // ---------- 路由：按 taskId 创建/获取合同 ----------
 
 /**
@@ -70,32 +139,12 @@ function buildContractBody(parsedData) {
 router.post('/tasks/:taskId/impact-contract', async (req, res) => {
   try {
     const { taskId } = req.params;
-    const body = { ...req.body, task_id: taskId };
-
-    // Schema 验证
-    const validation = validateImpactContract(body);
-    if (!validation.success) {
-      return res.status(400).json({
-        error: '非法 Impact Contract：schema 验证失败',
-        fields: formatZodErrors(validation.error),
-      });
-    }
-
-    const parsed = validation.data;
-    const contract_body = buildContractBody(parsed);
-
-    const { contract, created } = await persistImpactContract(pool, {
-      task_id: taskId,
-      change_kind: parsed.change_kind,
-      repo: parsed.repo,
-      base_revision: parsed.base_revision,
-      head_revision: parsed.head_revision,
-      manifest_digest: parsed.manifest_digest,
-      projection_digest: parsed.projection_digest,
-      contract_body,
+    const result = await evaluateImpactContractSubmission({
+      db: pool,
+      taskId,
+      body: req.body,
     });
-
-    return res.status(created ? 201 : 200).json(contract);
+    return res.status(result.httpStatus).json(result.body);
   } catch (err) {
     console.error('[impact-contracts] POST /tasks/:taskId/impact-contract error:', err);
     return res.status(500).json({ error: 'internal_server_error', message: err.message });
@@ -134,32 +183,13 @@ router.get('/tasks/:taskId/impact-contract', async (req, res) => {
  */
 router.post('/impact-contracts', async (req, res) => {
   try {
-    const body = req.body;
-
-    // Schema 验证
-    const validation = validateImpactContract(body);
-    if (!validation.success) {
-      return res.status(400).json({
-        error: '非法 Impact Contract：schema 验证失败',
-        fields: formatZodErrors(validation.error),
-      });
-    }
-
-    const parsed = validation.data;
-    const contract_body = buildContractBody(parsed);
-
-    const { contract, created } = await persistImpactContract(pool, {
-      task_id: parsed.task_id,
-      change_kind: parsed.change_kind,
-      repo: parsed.repo,
-      base_revision: parsed.base_revision,
-      head_revision: parsed.head_revision,
-      manifest_digest: parsed.manifest_digest,
-      projection_digest: parsed.projection_digest,
-      contract_body,
+    const taskId = req.body?.task_id;
+    const result = await evaluateImpactContractSubmission({
+      db: pool,
+      taskId,
+      body: req.body,
     });
-
-    return res.status(created ? 201 : 200).json(contract);
+    return res.status(result.httpStatus).json(result.body);
   } catch (err) {
     console.error('[impact-contracts] POST /impact-contracts error:', err);
     return res.status(500).json({ error: 'internal_server_error', message: err.message });
@@ -181,44 +211,15 @@ router.post('/impact-contracts', async (req, res) => {
 router.post('/tasks/:taskId/impact-contract/evaluate', async (req, res) => {
   try {
     const { taskId } = req.params;
-    const body = { ...req.body, task_id: taskId };
-
-    // Schema 验证
-    const validation = validateImpactContract(body);
-    if (!validation.success) {
-      return res.status(400).json({
-        error: '非法 Impact Contract：schema 验证失败',
-        fields: formatZodErrors(validation.error),
-      });
-    }
-
-    const parsed = validation.data;
-
-    // 构造 task 对象（含 change_kind）
-    const task = {
-      id: taskId,
-      change_kind: parsed.change_kind,
-    };
-
-    // 构造合同对象（含 contract_body）
-    const contractInput = {
-      ...parsed,
-      task_id: taskId,
-      contract_body: buildContractBody(parsed),
-    };
-
-    // 运行 Structure Gate
-    const result = await evaluateStructureGate({
+    const result = await evaluateImpactContractSubmission({
       db: pool,
-      task,
-      contract: contractInput,
+      taskId,
+      body: req.body,
     });
-
-    return res.status(result.httpStatus).json(
-      result.gate === 'pass'
-        ? { gate: result.gate, contract: result.contract }
-        : { gate: result.gate, reason: result.reason, retryable: result.retryable ?? false }
-    );
+    const responseBody = result.httpStatus < 300
+      ? { gate: 'pass', contract: result.body }
+      : result.body;
+    return res.status(result.httpStatus).json(responseBody);
   } catch (err) {
     console.error('[impact-contracts] POST /tasks/:taskId/impact-contract/evaluate error:', err);
     return res.status(500).json({ error: 'internal_server_error', message: err.message });
@@ -237,8 +238,6 @@ router.post('/tasks/:taskId/impact-contract/evaluate', async (req, res) => {
  *   extend   → 200 + { gate: 'extend', verdict: 'extend', added_nodes: [...], ... }
  *   drift    → 409 + { gate: 'drift', reason_code: 'CONTRACT_IMPACT_DRIFT', added_nodes: [...], ... }
  *   blocked  → 503 + { gate: 'impact_unknown', reason: '...', retryable: true }
- *
- * MJ5 STUB: Mapper 调用当前为 stub，待 MJ5 合同通过后接入真实 Mapper。
  *
  * sprint: 08110022-relay-d96c9fa0 ws4
  */

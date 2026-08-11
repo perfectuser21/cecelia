@@ -23,4 +23,11 @@ describe('gaps route', () => {
     expect(harnessGapsRouter.stack).toBeDefined();
     expect(harnessGapsRouter.stack.length).toBeGreaterThan(0);
   });
+
+  test('暴露 repair-task 绑定入口', () => {
+    const paths = harnessGapsRouter.stack
+      .map((layer) => layer.route?.path)
+      .filter(Boolean);
+    expect(paths).toContain('/:id/repair-task');
+  });
 });

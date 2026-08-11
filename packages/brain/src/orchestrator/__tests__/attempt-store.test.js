@@ -139,6 +139,57 @@ describe('attempt store', () => {
     expect(client.release).toHaveBeenCalledOnce();
   });
 
+  it('可信 receipt 投影失败时回滚 Attempt 终态与 callback event', async () => {
+    const callbackResult = {
+      status: 'completed',
+      summary: 'ok',
+      artifacts: [],
+      provider_metadata: { provider: 'codex' },
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'evaluate',
+      role: 'evaluator',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      result: null,
+    };
+    const completed = { ...running, status: 'completed', result: callbackResult };
+    const client = {
+      query: vi.fn(async (sql) => {
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') return {};
+        if (String(sql).includes('WITH decision_lock AS MATERIALIZED')) {
+          return { rows: [running] };
+        }
+        if (String(sql).includes('UPDATE harness_attempts')) {
+          return { rows: [completed], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+    const beforeCommit = vi.fn(async () => {
+      throw new Error('receipt insert failed');
+    });
+
+    await expect(createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+      beforeCommit,
+    })).rejects.toThrow('receipt insert failed');
+
+    expect(beforeCommit).toHaveBeenCalledOnce();
+    expect(client.query.mock.calls.at(-1)[0]).toBe('ROLLBACK');
+    expect(client.query.mock.calls.some(([sql]) => sql === 'COMMIT')).toBe(false);
+  });
+
   it('rejects an active callback after its exact parent run is terminal', async () => {
     const client = {
       query: vi.fn()

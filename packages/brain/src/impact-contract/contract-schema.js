@@ -23,6 +23,10 @@ const AffectedCapabilitySchema = z.object({
 const RequiredAssertionSchema = z.object({
   assertion_id: z.string().min(1),
   command: z.string().min(1),
+  covers_capability_ids: z.array(z.string().min(1)).min(1),
+  journey_step_link_id: z.string().uuid(),
+  assertion_revision: z.number().int().positive(),
+  assertion_digest: z.string().regex(/^[0-9a-f]{64}$/),
   owner: z.string().optional(),
   tags: z.array(z.string()).optional(),
 });
@@ -70,7 +74,7 @@ export const ImpactContractSchema = z.object({
   schema_version: z.number().int().positive().default(1),
 
   // 关联任务（UUID 格式校验，接受标准 UUID 字符串）
-  task_id: z.string().min(1, { message: 'task_id 不能为空' }),
+  task_id: z.string().uuid({ message: 'task_id 必须是有效 UUID' }),
 
   // 变更分档（四档枚举）
   change_kind: z.enum(
@@ -88,8 +92,7 @@ export const ImpactContractSchema = z.object({
   // base commit（40 位 hex）
   base_revision: z
     .string()
-    .min(1, { message: 'base_revision 不能为空' })
-    .regex(/^[0-9a-f]+$/i, { message: 'base_revision 必须是有效的 hex 字符串' }),
+    .regex(/^[0-9a-f]{40}$/i, { message: 'base_revision 必须是 40 位 Git SHA' }),
 
   // Mapper 生成摘要（MJ5 前允许 null）
   manifest_digest: z.string().nullable().optional(),
