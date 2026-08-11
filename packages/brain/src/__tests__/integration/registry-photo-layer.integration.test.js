@@ -46,8 +46,8 @@ beforeAll(async () => {
     `INSERT INTO api_registry
        (repo, method, path, file_path, line_number, area, scanned_at, source_revision, scanner_version)
      VALUES
-       ($1, 'GET', '/itest/a-1', $5, 1, 'test', NOW() - interval '14 minutes', $10, 'api-registry-v2'),
-       ($1, 'POST', '/itest/a-2', $6, 2, 'test', NOW() - interval '14 minutes', $10, 'api-registry-v2'),
+       ($1, 'GET', '/itest/a-1', $5, 1, 'test', NOW() - interval '9 minutes', $10, 'api-registry-v2'),
+       ($1, 'POST', '/itest/a-2', $6, 2, 'test', NOW() - interval '9 minutes', $10, 'api-registry-v2'),
        ($2, 'GET', '/itest/b', $7, 3, 'test', NOW(), $11, 'api-registry-v2'),
        ($3, 'GET', '/itest/stale', $8, 4, 'test', NOW() - interval '16 minutes', $12, 'api-registry-v2'),
        ($4, 'GET', '/itest/legacy', $9, 5, 'test', NOW(), 'legacy-unknown', 'legacy')`,
@@ -61,7 +61,7 @@ beforeAll(async () => {
     `INSERT INTO fact_snapshot_headers
        (kind, repo, source_revision, scanner_version, scanned_at, row_count)
      VALUES
-       ('api', $1, $5, 'api-registry-v2', NOW() - interval '14 minutes', 2),
+       ('api', $1, $5, 'api-registry-v2', NOW() - interval '9 minutes', 2),
        ('api', $2, $6, 'api-registry-v2', NOW(), 1),
        ('api', $3, $7, 'api-registry-v2', NOW() - interval '16 minutes', 1),
        ('api', $4, 'legacy-unknown', 'legacy', NOW(), 1)

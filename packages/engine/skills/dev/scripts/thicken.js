@@ -4,6 +4,8 @@
 //                       --reason "升级证据" \
 //                       --replaces-old-thin "apps/api/src/mocks/X.ts"
 
+import { brainInternalAuthHeaders } from './brain-auth.js';
+
 function parseArgs(argv) {
   const args = {};
   for (let i = 2; i < argv.length; i++) {
@@ -51,7 +53,7 @@ const order = ['thin', 'medium', 'thick', 'mature'];
 
   const resp = await fetch(`${BRAIN_URL}/api/brain/journey_features/${args['feature-id']}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...brainInternalAuthHeaders() },
     body: JSON.stringify({ thickness: args.to }),
   });
 

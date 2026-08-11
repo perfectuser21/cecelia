@@ -8,16 +8,38 @@
 
 
 
-**Brain 版本**: 1.272.12
+**Brain 版本**: 1.272.13
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.12 — Evaluator Workspace Dependencies
+## Brain 1.272.13 — Evaluator Workspace Dependencies
 
 - Harness Evaluator 与 proposer/reviewer 使用同一条 provider 无关的 `runtime_resources.node_deps=true` 契约，Fleet checkout 后会先执行受限的 `npm ci`，再让 Claude Code、Codex 或 Grok 执行仓库验收命令。
 - 修复真实 Evaluator Attempt 在 Dashboard 深链已通过 WebKit 的情况下，仍因工作区缺少 `vitest/config` 而误判失败的问题；回归测试永久覆盖 Evaluator TaskBundle 的依赖声明。
+
+---
+
+## Brain 1.272.12 — Impact Contract 不可变证据闭环
+
+- 整图、节点、浏览影响半径、健康度与未归属事实统一由同一个 Map read service 在只读 `REPEATABLE READ` 快照内返回，并携带 Manifest/Projection digest、repo revision 与 freshness。
+- Dashboard `/map` 只消费 Unified Map API，提供 Value Stream → Capability → Assertion/receipt 三层下钻；重复旧页面和旧 feature 注册已移除。
+- Harness 的 revision-locked `/map/radius` 请求继续由 Impact resolver 裁决，不降级成 Dashboard 浏览半径。
+- 关系图按 Git revision 保留不可变快照；同 revision 出现不同边时扫描事务 fail-closed，在途合同始终读取原 base revision 对应的 projection 与图。
+- Impact radius 以显式 repo→scope 白名单、manifest digest、projection digest 锁定证据，拒绝 basename 碰撞与同 SHA 下的投影偷换。
+- `product-map-adapter` 把 ZenithJoy 既有 `apps → lines → golden_paths` SSOT 转为完整 Manifest；Planner、Proposer、Island Gate 与 Map 页面统一消费不假定 Cecelia revision 的 Map API。
+- API/DB/Test/Graph 扫描器接受显式 repo/root，多仓各自锁定 revision 并在稳定 SHA 下按 10 分钟预算持续重拍。
+- 同一 canonical assertion 可聚合多个 Journey source binding；Runner 只执行一次，但为每个 link/revision 写独立 receipt，任一绑定漂移都会换版。
+- 每个受影响 Capability 必须有当前 runnable assertion 覆盖；新增、移除或换版断言均会刷新合同或形成 Gap，不能把无法验收的范围放成假 pass。
+- Runner 用独立 nobody 身份、空白环境、只读 HOME 与镜像固定工具链执行无 shell 断言；Provider 无法用 profile/PATH 污染伪造 receipt。
+- Capability Manifest 持久化 path_prefixes/exact_paths；新增文件与治理文件按锁定版本的最长路径所有权归位，未登记路径继续 fail-closed。
+- Impact Contract 语义字段与 Gap 权威身份由 PostgreSQL trigger 冻结；未解决 Gap 不可改归属或删除，无法经直写绕过任务阻塞。
+- Harness Report Runner 只产报告 artifact；Feature 完成态与测试锚点由已认证的 Brain terminal callback 可信写回。
+- Map/Impact/Journey 写入口使用共享 internal token；生产 Compose、蓝绿 canary、staging 与跨 checkout scanner 读取同一宿主 credentials SSOT。
+- Capability Mapper 在 Runner 只产 manifest artifact，拍板后的提交/激活统一走读取 credentials SSOT 的受信宿主 adapter。
+- 扫描只允许 clean main/exact SHA；批末复核 checkout 与四类 header revision，同 SHA 每 10 分钟保鲜。
+- Schema 地板推进到 410。
 
 ---
 
@@ -55,10 +77,8 @@
 
 ## Brain 1.272.7 — Unified Map Read Authority
 
-- 整图、节点、影响半径、健康度与未归属事实统一由同一个 Map read service 在只读
-  `REPEATABLE READ` 快照内返回，并携带 Manifest/Projection digest、repo revision 与 freshness。
-- Dashboard `/map` 只消费 Unified Map API，提供 Value Stream → Capability → Assertion/receipt
-  三层下钻；重复旧页面和旧 feature 注册已移除，页面不写历史颜色。
+- 整图、节点、影响半径、健康度与未归属事实统一由同一个 Map read service 在只读 `REPEATABLE READ` 快照内返回，并携带 Manifest/Projection digest、repo revision 与 freshness。
+- Dashboard `/map` 只消费 Unified Map API，提供 Value Stream → Capability → Assertion/receipt 三层下钻；重复旧页面和旧 feature 注册已移除，页面不写历史颜色。
 - Schema 地板保持 407；回退到 `1.272.6` 会恢复分裂读权威与旧 Map 页面。
 
 ---
@@ -72,7 +92,6 @@
 ---
 
 ## Brain 1.272.5 — Evaluator WebKit Runtime and Dashboard Loopback
-
 - canonical Runner 固化 Playwright 1.58.0 与 WebKit OS 依赖，受限 UID 共享 `/ms-playwright`，Evaluator 不再因浏览器动态库缺失而无法验证真实页面。
 - Evaluator 容器专属 `localhost:5211` relay 指向宿主 Cecelia Dashboard；Generator/Dev 容器不占用该端口，避免与本地开发服务冲突。
 - canonical Runner digest 更新为 `sha256:6cef182dbec266157f7f2c731eaf596bb99450bb511b55d6526db102234198e3`，Fleet worker pin 同步到 1.272.5；回归合同覆盖 WebKit 安装与 5211 relay。
@@ -130,7 +149,7 @@
 - 完整 Manifest 激活在同一事务内生成 projection run、稳定节点与关系边，写入失败时旧 active Manifest/Projection 保持不变。
 - Value Stream、Capability、Cross-cut 与 Shared Prerequisite 由通用规则确定性投影；Boundary 只生成 `hands_off_to` 边。
 - Node/Edge stable ID 与 projection digest 可重复重建，核心不含 Cecelia 或 ZenithJoy 领域身份常量。
-- Schema 地板推进到 405。
+- Schema 地板推进到 407。
 
 ---
 
@@ -148,9 +167,6 @@
 - API、数据库结构、测试与关系图事实携带 repo、源码 revision、scanner version 与扫描时间，支持精确溯源。
 - 三张 registry 通过共享事务写入器按 repo 原子替换整张快照，同时保留人工 annotation；关系图扫描失败时保留上一张完整快照。
 - Schema 地板推进到 400。
-
----
-
 
 ## Brain 1.271.2 — 任务生命周期时间戳闭环
 
@@ -2438,7 +2454,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '404'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '410'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

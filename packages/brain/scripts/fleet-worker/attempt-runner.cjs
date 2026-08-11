@@ -1008,6 +1008,7 @@ function taskExecutionContract(providerSpec, request, target) {
   }
 
   const roleEnv = {
+    CECELIA_MACHINE_ID: target.machine,
     ...(inputs.sprint_dir
       ? { SPRINT_DIR: String(inputs.sprint_dir) }
       : {}),
@@ -1040,6 +1041,11 @@ function taskExecutionContract(providerSpec, request, target) {
       : {}),
     ...(target.role === 'evaluator' && inputs.pr_head_sha
       ? { PR_HEAD_SHA: String(inputs.pr_head_sha) }
+      : {}),
+    ...(target.role === 'evaluator'
+      && Array.isArray(inputs.required_assertions)
+      && inputs.required_assertions.length > 0
+      ? { HARNESS_REQUIRED_ASSERTIONS_JSON: JSON.stringify(inputs.required_assertions) }
       : {}),
     ...(target.role === 'evaluator'
       ? {

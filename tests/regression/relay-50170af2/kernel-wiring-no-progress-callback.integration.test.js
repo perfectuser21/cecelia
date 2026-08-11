@@ -282,6 +282,13 @@ describe('kernel wiring: generator fix callback feeds no-progress terminal', () 
       sleep: async () => {},
       now: () => new Date(),
       log: () => {},
+      impactGate: {
+        beforeGenerate: async () => ({
+          allowed: true,
+          gate: 'pass',
+          stage: 'structure',
+        }),
+      },
       finalizeRun: async (_pool, input) => {
         failureReason = input.reason;
         expect(input).toMatchObject({

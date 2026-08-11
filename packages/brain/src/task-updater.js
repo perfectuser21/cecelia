@@ -250,7 +250,21 @@ export async function unblockTask(taskId) {
           blocked_until = NULL,
           started_at = NULL,
           updated_at = NOW()
-      WHERE id = $1 AND status = 'blocked'
+      WHERE id = $1
+        AND status = 'blocked'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM harness_gaps
+          WHERE source_task_id = tasks.id
+            AND status <> 'resolved'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM task_dependencies
+          WHERE from_task_id = tasks.id
+            AND edge_type = 'hard'
+            AND status = 'pending'
+        )
       RETURNING *
     `, [taskId]);
 

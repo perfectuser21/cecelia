@@ -75,14 +75,14 @@ describe('harness-report.mjs unit — 文件生成', () => {
   });
 });
 
-describe('harness-report.mjs S6b — 锚点自动焊', () => {
+describe('harness-report.mjs — 不受信 Report Runner 不写权威 Feature', () => {
   let server, dir;
   afterEach(() => {
     if (server) server.close();
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('feature 三锚字段皆空 → 用PR changed files里的测试文件回填unit_test_path', async () => {
+  it('feature 三锚字段皆空时也不读取或 PATCH Journey API', async () => {
     let patchedBody = null;
     server = createServer((req, res) => {
       let body = '';
@@ -115,10 +115,10 @@ describe('harness-report.mjs S6b — 锚点自动焊', () => {
       { BRAIN_URL: `http://localhost:${port}`, GH_CMD: ghStubPath }
     );
 
-    expect(patchedBody).toEqual({ unit_test_path: 'src/__tests__/foo.test.ts' });
+    expect(patchedBody).toBeNull();
   });
 
-  it('feature 已有锚点 → 不覆盖,不调用PATCH', async () => {
+  it('feature 已有锚点时同样不调用 PATCH', async () => {
     let patchCalled = false;
     server = createServer((req, res) => {
       let body = '';
@@ -128,13 +128,7 @@ describe('harness-report.mjs S6b — 锚点自动焊', () => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ id: 'feat-anchored', unit_test_path: 'already/set.test.ts', workflow_ref: null, guard_ref: null }));
         } else if (req.method === 'PATCH' && req.url.includes('/journey_features/feat-anchored')) {
-          // 注意：S6（既有逻辑）对任何 feature-id 都会无条件 PATCH {status:'done'}，
-          // 与本测试要验证的 S6b「不覆盖已有锚点」是两回事。只有 body 里带
-          // unit_test_path 字段才代表 S6b 真的做了锚点覆盖，才计为 patchCalled。
-          const parsed = JSON.parse(body || '{}');
-          if (Object.prototype.hasOwnProperty.call(parsed, 'unit_test_path')) {
-            patchCalled = true;
-          }
+          patchCalled = true;
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({}));
         } else {

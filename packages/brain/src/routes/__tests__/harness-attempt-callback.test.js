@@ -16,7 +16,9 @@ const mocks = vi.hoisted(() => ({
     markRunning: vi.fn(),
   },
   pool: { query: vi.fn() },
+  transactionClient: { query: vi.fn() },
   terminalize: vi.fn(),
+  receiptWriter: vi.fn(),
 }));
 
 vi.mock('../../orchestrator/attempt-store.js', () => ({
@@ -204,8 +206,11 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     mocks.store.getById.mockResolvedValue(attempt);
     mocks.store.assertFreshRoleSession.mockResolvedValue(true);
     let callbackCount = 0;
-    mocks.store.recordCallbackTerminal.mockImplementation(async ({ result }) => {
+    mocks.store.recordCallbackTerminal.mockImplementation(async ({ result, beforeCommit }) => {
       callbackCount += 1;
+      if (typeof beforeCommit === 'function') {
+        await beforeCommit(mocks.transactionClient);
+      }
       return {
         attempt: { ...attempt, status: result.status, result },
         deduped: callbackCount > 1,
@@ -220,6 +225,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       actual_machine_id: remoteMachineId,
       attestation_status: 'verified',
     });
+    mocks.receiptWriter.mockResolvedValue([]);
     mocks.pool.query.mockImplementation(async (sql) => {
       if (String(sql).includes('FROM initiative_runs r')) {
         return {
@@ -238,6 +244,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     app = express();
     app.set('kernelFleetBridgeToken', fleetSecret);
     app.set('kernelFleetTerminalizer', mocks.terminalize);
+    app.set('kernelAssertionReceiptWriter', mocks.receiptWriter);
     app.use(express.json());
     app.use('/api/brain', router);
   });
@@ -895,6 +902,24 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       role: 'evaluator',
       sessionId: 'thread-1',
     });
+  });
+
+  it('evaluator receipt 与 Attempt 终态在同一事务内原子提交', async () => {
+    mocks.receiptWriter.mockImplementationOnce(async (transactionClient, input) => {
+      expect(transactionClient).toBe(mocks.transactionClient);
+      expect(input.attempt.id).toBe(attemptId);
+      expect(input.result.decision.outcome).toBe('PASS');
+      expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledOnce();
+      return [{ id: 'receipt-1' }];
+    });
+
+    const response = await postCallback(app);
+
+    expect(response.status).toBe(200);
+    expect(mocks.receiptWriter).toHaveBeenCalledOnce();
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(expect.objectContaining({
+      beforeCommit: expect.any(Function),
+    }));
   });
 
   it('无密钥或错密钥的 callback 返回 401，伪造 reviewer APPROVED 不得写 verdict', async () => {
@@ -1966,6 +1991,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       runId,
       leaseOwner,
       leaseGeneration: 0,
+      beforeCommit: expect.any(Function),
       result: expect.objectContaining({
         status: 'failed',
         failure_class: 'runner_failure',

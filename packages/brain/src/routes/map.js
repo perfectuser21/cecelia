@@ -7,6 +7,8 @@ import {
   mapReadServices,
   runConsistentMapRead,
 } from '../lib/map-read-service.js';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
+import { MapRadiusError, resolveImpactRadius } from '../map/radius.js';
 
 function errorStatus(error) {
   if (Number.isInteger(error?.status)) return error.status;
@@ -32,9 +34,19 @@ function validationError(res, code, message) {
   return res.status(400).json({ error: { code, message } });
 }
 
+function isImpactContractRadius(body) {
+  return body?.base_revision !== undefined || body?.head_revision !== undefined;
+}
+
+function protectImpactContractRadius(req, res, next) {
+  if (!isImpactContractRadius(req.body)) return next();
+  return internalAuthOrLoopback(req, res, next);
+}
+
 export function createMapRouter({
   pool: databasePool = pool,
   services = mapReadServices,
+  impactRadius = resolveImpactRadius,
   now = () => new Date(),
 } = {}) {
   const router = Router();
@@ -72,7 +84,19 @@ export function createMapRouter({
     }));
   });
 
-  router.post('/radius', async (req, res) => {
+  router.post('/radius', protectImpactContractRadius, async (req, res) => {
+    if (isImpactContractRadius(req.body)) {
+      try {
+        return res.json(await impactRadius(req.body));
+      } catch (error) {
+        const status = error instanceof MapRadiusError ? error.httpStatus : 500;
+        return res.status(status).json({
+          error: error.message,
+          code: error.code ?? 'map_radius_failed',
+        });
+      }
+    }
+
     const {
       scope: scopeKey,
       repo,
@@ -114,7 +138,7 @@ export function createMapRouter({
     return consistentRead(res, (client) => services.readUnclaimed(client, { scopeKey, now: readAt }));
   });
 
-  router.post('/rebuild', async (req, res) => {
+  router.post('/rebuild', internalAuthOrLoopback, async (req, res) => {
     const scopeKey = req.body?.scope_key;
     if (!scopeKey) return validationError(res, 'MAP_SCOPE_REQUIRED', 'scope_key is required');
     try {

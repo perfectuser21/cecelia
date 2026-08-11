@@ -61,6 +61,29 @@ export function internalAuth(req, res, next) {
   next();
 }
 
+function isLoopback(address) {
+  const value = String(address ?? '').toLowerCase();
+  return value === '127.0.0.1' || value === '::1' || value === '::ffff:127.0.0.1';
+}
+
+/**
+ * 敏感内部入口：token 已配置时所有来源都严格验 token；未配置时只保留同机
+ * loopback。生产 frontend/Vite 会把外部请求代理成 127.0.0.1，因此 token 配置后
+ * 绝不能信任 socket loopback。
+ */
+export function internalAuthOrLoopback(req, res, next) {
+  if (process.env.CECELIA_INTERNAL_TOKEN) return internalAuth(req, res, next);
+  if (process.env.NODE_ENV !== 'production' && isLoopback(req.socket?.remoteAddress)) return next();
+  return res.status(503).json({
+    success: false,
+    data: null,
+    error: {
+      code: 'INTERNAL_AUTH_NOT_CONFIGURED',
+      message: '敏感内部入口未配置 token，仅允许 loopback 调用',
+    },
+  });
+}
+
 // 测试辅助：重置"首次告警"标记
 export function _resetInternalAuthWarning() {
   _warnedOnceNoToken = false;

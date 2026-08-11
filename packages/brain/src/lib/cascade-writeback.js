@@ -5,6 +5,8 @@
  * 所有失败均为非致命，不阻塞主流程
  */
 
+import { internalServiceHeaders } from './internal-service-auth.js';
+
 export async function writeCascadeCellStatuses(cascadeAssertions) {
   if (!Array.isArray(cascadeAssertions) || cascadeAssertions.length === 0) {
     return { written: 0, skipped: 0 };
@@ -25,7 +27,7 @@ export async function writeCascadeCellStatuses(cascadeAssertions) {
         `http://localhost:5221/api/brain/journey_step_links/${item.link_id}`,
         {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
+          headers: internalServiceHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify(body),
         }
       );

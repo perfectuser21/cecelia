@@ -108,6 +108,36 @@ describe('envToArgs', () => {
 });
 
 describe('buildDockerArgs labels', () => {
+  it('本地 Docker evaluator 以 root 启动 Runner，再由 Runner 降权启动 Provider', () => {
+    const built = __test__.buildDockerArgs({
+      task: { id: 'task-evaluator-root', task_type: 'harness_evaluator' },
+      prompt: '{}',
+      worktreePath: '/tmp/worktree',
+    }, {
+      homedir: '/tmp/no-home',
+      existsSyncFn: () => false,
+    });
+
+    const imageIndex = built.args.indexOf(built.image);
+    const userIndex = built.args.indexOf('--user');
+    expect(userIndex).toBeGreaterThan(-1);
+    expect(built.args[userIndex + 1]).toBe('root');
+    expect(userIndex).toBeLessThan(imageIndex);
+  });
+
+  it('非 evaluator 保持镜像默认用户', () => {
+    const built = __test__.buildDockerArgs({
+      task: { id: 'task-generator-user', task_type: 'harness_generator' },
+      prompt: '{}',
+      worktreePath: '/tmp/worktree',
+    }, {
+      homedir: '/tmp/no-home',
+      existsSyncFn: () => false,
+    });
+
+    expect(built.args).not.toContain('--user');
+  });
+
   it('把 Harness run/hop/role labels 传给 docker run，供 ground-truth 防双 spawn', () => {
     const built = __test__.buildDockerArgs({
       task: { id: 'task-labels', task_type: 'harness_evaluator' },

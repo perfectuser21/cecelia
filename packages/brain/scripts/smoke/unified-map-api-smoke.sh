@@ -14,6 +14,20 @@ NODE_EXECUTABLE="$(command -v node)"
 PSQL_EXECUTABLE="$(command -v psql)"
 CURL_EXECUTABLE="$(command -v curl)"
 JQ_EXECUTABLE="$(command -v jq)"
+INTERNAL_AUTH_HELPER="$ROOT_DIR/scripts/lib/internal-auth-token.sh"
+INTERNAL_AUTH_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:-$HOME/.credentials/cecelia-internal.env}"
+if [[ -z "${CECELIA_INTERNAL_TOKEN:-}" && -f "$INTERNAL_AUTH_HELPER" ]]; then
+  # shellcheck source=../../../../scripts/lib/internal-auth-token.sh
+  source "$INTERNAL_AUTH_HELPER"
+  load_cecelia_internal_token "$INTERNAL_AUTH_ENV_FILE" || true
+fi
+brain_curl() {
+  if [[ -n "${CECELIA_INTERNAL_TOKEN:-}" ]]; then
+    "$CURL_EXECUTABLE" -H "Authorization: Bearer ${CECELIA_INTERNAL_TOKEN}" "$@"
+  else
+    "$CURL_EXECUTABLE" "$@"
+  fi
+}
 DATABASE_NAME="$($NODE_EXECUTABLE -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
 [[ "$DATABASE_NAME" =~ (_test|_scratch)$ ]] || fail "拒绝连接非测试库: ${DATABASE_NAME:-<empty>}"
 [[ "$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')" == "$DATABASE_NAME" ]] \
@@ -90,7 +104,7 @@ try {
 NODE
 pass '独立 scope 的 Manifest、四类事实头和 Projection 已激活'
 
-MAP_JSON="$($CURL_EXECUTABLE -fsS --get "$BRAIN_URL/api/brain/map" --data-urlencode "scope=$SMOKE_SCOPE")"
+MAP_JSON="$(brain_curl -fsS --get "$BRAIN_URL/api/brain/map" --data-urlencode "scope=$SMOKE_SCOPE")"
 # jq variables are passed with --arg, not expanded by Bash.
 # shellcheck disable=SC2016
 printf '%s' "$MAP_JSON" | "$JQ_EXECUTABLE" -e \
@@ -107,7 +121,7 @@ printf '%s' "$MAP_JSON" | "$JQ_EXECUTABLE" -e \
 ORIGINAL_DIGEST="$(printf '%s' "$MAP_JSON" | "$JQ_EXECUTABLE" -r '.projection_digest')"
 pass 'GET /map 返回 2×11×2×7、统一 envelope 与 fresh 状态'
 
-NODE_JSON="$($CURL_EXECUTABLE -fsS --get "$BRAIN_URL/api/brain/map/nodes/F0" --data-urlencode "scope=$SMOKE_SCOPE")"
+NODE_JSON="$(brain_curl -fsS --get "$BRAIN_URL/api/brain/map/nodes/F0" --data-urlencode "scope=$SMOKE_SCOPE")"
 printf '%s' "$NODE_JSON" | "$JQ_EXECUTABLE" -e '
   .node.key == "F0"
   and .node.type == "capability"
@@ -116,7 +130,7 @@ printf '%s' "$NODE_JSON" | "$JQ_EXECUTABLE" -e '
   || fail 'GET /nodes/F0 未返回节点或 F0→G1 边界'
 pass 'GET /nodes/F0 返回能力详情与 F0→G1 边界'
 
-RADIUS_JSON="$($CURL_EXECUTABLE -fsS -X POST "$BRAIN_URL/api/brain/map/radius" \
+RADIUS_JSON="$(brain_curl -fsS -X POST "$BRAIN_URL/api/brain/map/radius" \
   -H 'Content-Type: application/json' \
   -d "{\"scope\":\"$SMOKE_SCOPE\",\"repo\":\"$SMOKE_REPO\",\"changed_files\":[],\"node_keys\":[\"heartbeat_bus\"]}")"
 printf '%s' "$RADIUS_JSON" | "$JQ_EXECUTABLE" -e '
@@ -127,7 +141,7 @@ printf '%s' "$RADIUS_JSON" | "$JQ_EXECUTABLE" -e '
   || fail 'POST /radius 未返回 Cross-cut 影响范围'
 pass 'POST /radius 仅用 node_key 返回 Cross-cut 影响范围'
 
-HEALTH_JSON="$($CURL_EXECUTABLE -fsS --get "$BRAIN_URL/api/brain/map/health" --data-urlencode "scope=$SMOKE_SCOPE")"
+HEALTH_JSON="$(brain_curl -fsS --get "$BRAIN_URL/api/brain/map/health" --data-urlencode "scope=$SMOKE_SCOPE")"
 printf '%s' "$HEALTH_JSON" | "$JQ_EXECUTABLE" -e '
   .overall == "healthy"
   and .layers.manifest.status == "ok"
@@ -137,7 +151,7 @@ printf '%s' "$HEALTH_JSON" | "$JQ_EXECUTABLE" -e '
   || fail 'GET /health 未返回四层 healthy'
 pass 'GET /health 四层均 healthy'
 
-UNCLAIMED_JSON="$($CURL_EXECUTABLE -fsS --get "$BRAIN_URL/api/brain/map/unclaimed" --data-urlencode "scope=$SMOKE_SCOPE")"
+UNCLAIMED_JSON="$(brain_curl -fsS --get "$BRAIN_URL/api/brain/map/unclaimed" --data-urlencode "scope=$SMOKE_SCOPE")"
 printf '%s' "$UNCLAIMED_JSON" | "$JQ_EXECUTABLE" -e '
   (.unclaimed_count | type == "number")
   and (.unclaimed | type == "array")
@@ -145,7 +159,7 @@ printf '%s' "$UNCLAIMED_JSON" | "$JQ_EXECUTABLE" -e '
   || fail 'GET /unclaimed 未返回统一 envelope'
 pass 'GET /unclaimed 返回统一 envelope'
 
-REBUILD_JSON="$($CURL_EXECUTABLE -fsS -X POST "$BRAIN_URL/api/brain/map/rebuild" \
+REBUILD_JSON="$(brain_curl -fsS -X POST "$BRAIN_URL/api/brain/map/rebuild" \
   -H 'Content-Type: application/json' -d "{\"scope_key\":\"$SMOKE_SCOPE\"}")"
 # jq variables are passed with --arg, not expanded by Bash.
 # shellcheck disable=SC2016

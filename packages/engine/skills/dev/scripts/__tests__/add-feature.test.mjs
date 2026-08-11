@@ -31,8 +31,10 @@ describe('add-feature.js --workflow-ref/--guard-ref 透传', () => {
 
   it('透传 workflow_ref 和 guard_ref 到 POST body', async () => {
     let capturedBody = null;
+    let capturedAuthorization = null;
     server = await withFakeBrain((req, body, res) => {
       capturedBody = body;
+      capturedAuthorization = req.headers.authorization;
       res.writeHead(201, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ id: 'f1', name: body.name, thickness: body.thickness }));
     });
@@ -41,10 +43,18 @@ describe('add-feature.js --workflow-ref/--guard-ref 透传', () => {
     await execFileAsync('node', [
       SCRIPT, '--name', 'Test Feature', '--journey-id', 'j1',
       '--workflow-ref', 'e2e/foo.spec.ts', '--guard-ref', 'script:bar.ts',
-    ], { env: { ...process.env, BRAIN_URL: `http://127.0.0.1:${port}` }, encoding: 'utf8', timeout: 10000 });
+    ], {
+      env: {
+        ...process.env,
+        BRAIN_URL: `http://127.0.0.1:${port}`,
+        CECELIA_INTERNAL_TOKEN: 'test-internal-token',
+      },
+      encoding: 'utf8', timeout: 10000,
+    });
 
     expect(capturedBody.workflow_ref).toBe('e2e/foo.spec.ts');
     expect(capturedBody.guard_ref).toBe('script:bar.ts');
+    expect(capturedAuthorization).toBe('Bearer test-internal-token');
   });
 
   it('不传时 workflow_ref/guard_ref 为 null(向后兼容)', async () => {

@@ -188,6 +188,8 @@ redact_provider_credential_text() {
 EVALUATOR_EVIDENCE_MANIFEST_DIGEST=""
 GITHUB_CREDENTIAL_DESTROYED=false
 PROVIDER_IDENTITY_PREFIX=()
+PROVIDER_TRUST_BOUNDARY_ENV=()
+ASSERTION_IDENTITY_PREFIX=()
 
 build_attempt_heartbeat_body() {
   local provider_session_id="${1:-}"
@@ -330,6 +332,8 @@ seal_evaluator_evidence_capsule() {
 prepare_evaluator_provider_identity() {
   is_evaluator_task_bundle || {
     PROVIDER_IDENTITY_PREFIX=()
+    PROVIDER_TRUST_BOUNDARY_ENV=()
+    ASSERTION_IDENTITY_PREFIX=()
     return 0
   }
   local provider_uid=""
@@ -364,7 +368,50 @@ prepare_evaluator_provider_identity() {
     --ambient-caps=-all
     --
   )
+  ASSERTION_IDENTITY_PREFIX=(
+    setpriv
+    --reuid=nobody
+    --regid=nogroup
+    --clear-groups
+    --no-new-privs
+    --bounding-set=-all
+    --inh-caps=-all
+    --ambient-caps=-all
+    --
+  )
+  PROVIDER_TRUST_BOUNDARY_ENV=(
+    env
+    -u BRAIN_URL
+    -u HARNESS_CALLBACK_URL
+    -u HARNESS_CALLBACK_TOKEN
+    -u HARNESS_LEASE_OWNER
+    -u HARNESS_LEASE_GENERATION
+  )
   echo "[entrypoint] Evaluator Provider constrained to UID ${provider_uid} without capabilities"
+}
+
+terminate_evaluator_provider_processes() {
+  is_evaluator_task_bundle || return 0
+  if [[ "$(id -u)" != "0" ]] || ! command -v pkill >/dev/null 2>&1; then
+    echo "[entrypoint] Evaluator Provider process cleanup unavailable" >&2
+    return 1
+  fi
+
+  # Provider may exit successfully while leaving descendants under its runtime UID.
+  # Sweep that untrusted identity before any trusted checkout or dependency
+  # directory exists, then prove the sweep reached a fixed point.
+  pkill -TERM -u cecelia >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5; do
+    pgrep -u cecelia >/dev/null 2>&1 || return 0
+    sleep 0.1
+  done
+  pkill -KILL -u cecelia >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5; do
+    pgrep -u cecelia >/dev/null 2>&1 || return 0
+    sleep 0.1
+  done
+  echo "[entrypoint] Evaluator Provider descendants survived cleanup" >&2
+  return 1
 }
 # evaluator-evidence-boundary:end
 
@@ -975,6 +1022,239 @@ prepare_evaluator_evidence() {
   EVALUATOR_EVIDENCE_PREPARED=1
 }
 
+runner_evidence_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+runner_evidence_timestamp() {
+  node -e 'process.stdout.write(new Date().toISOString())'
+}
+
+runner_assertion_budget_seconds() {
+  node - "${HARNESS_DEADLINE_AT:-}" "${HARNESS_TIMEOUT_SECONDS:-1800}" <<'NODE'
+const deadline = Date.parse(process.argv[2]);
+const configured = Number(process.argv[3]);
+const fallback = Number.isSafeInteger(configured) && configured > 0 ? configured : 1800;
+const remaining = Number.isFinite(deadline)
+  ? Math.floor((deadline - Date.now()) / 1000)
+  : fallback;
+process.stdout.write(String(Math.max(1, Math.min(1800, remaining))));
+NODE
+}
+
+merge_required_assertion_evidence() {
+  local normalized_result_file="$1"
+  local assertions_json="${HARNESS_REQUIRED_ASSERTIONS_JSON:-[]}"
+  local workspace="${WORKTREE_PATH:-$PWD}"
+  local assertion_workspace=""
+  local expected_sha="${PR_HEAD_SHA:-}"
+  local machine="${CECELIA_MACHINE_ID:-${HOSTNAME:-}}"
+  local merged_result_file="${normalized_result_file}.required-assertions"
+  local -a assertion_identity_prefix=(env)
+  local use_isolated_identity=0
+  local assertion_executor="/usr/local/lib/cecelia/assertion-exec.mjs"
+  local node_bin="/usr/local/bin/node"
+  local evidence_dir checks_file assertion_home npm_cache tracked_paths_file
+  local validation_error=""
+
+  jq -e '
+    .status == "completed"
+    and (.decision.outcome as $outcome | ["PASS", "FIXED"] | index($outcome)) != null
+  ' "$normalized_result_file" >/dev/null 2>&1 || return 0
+
+  if ! jq -e '
+    type == "array"
+    and length > 0
+    and (map(.assertion_id) | unique | length) == length
+    and (map(.journey_step_link_id) | unique | length) == length
+    and all(.[];
+      type == "object"
+      and (.assertion_id | type == "string" and length > 0)
+      and (.command | type == "string" and length > 0)
+      and (.covers_capability_ids | type == "array" and length > 0
+        and all(.[]; type == "string" and length > 0))
+      and (.journey_step_link_id | type == "string"
+        and test("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"; "i"))
+      and (.assertion_revision | type == "number" and floor == . and . > 0)
+      and (.assertion_digest | type == "string" and test("^[0-9a-f]{64}$"))
+    )
+  ' <<< "$assertions_json" >/dev/null 2>&1; then
+    validation_error="required assertion payload is invalid or contains duplicate identities"
+  elif [[ ! "$expected_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    validation_error="required assertion PR head is not a canonical SHA"
+  elif [[ -z "$machine" ]]; then
+    validation_error="required assertion runner machine identity is missing"
+  else
+    local actual_sha
+    actual_sha="$(git -C "$workspace" rev-parse HEAD 2>/dev/null || true)"
+    if [[ "$actual_sha" != "$expected_sha" ]]; then
+      validation_error="required assertion workspace HEAD does not match PR head"
+    elif ! git -C "$workspace" diff --quiet --ignore-submodules -- \
+      || ! git -C "$workspace" diff --cached --quiet --ignore-submodules --; then
+      validation_error="required assertion workspace tracked files were mutated by provider"
+    fi
+  fi
+
+  if [[ -n "$validation_error" ]]; then
+    jq --arg reason "$validation_error" \
+      '.checks = [] | .decision.outcome = "FAIL" | .decision.reason = $reason' \
+      "$normalized_result_file" > "$merged_result_file" &&
+      mv "$merged_result_file" "$normalized_result_file"
+    return 0
+  fi
+
+  evidence_dir="$(mktemp -d "${TMPDIR:-/tmp}/cecelia-required-assertions.XXXXXX")"
+  chmod 0700 "$evidence_dir"
+  if [[ -n "${ASSERTION_IDENTITY_PREFIX[0]-}" ]]; then
+    assertion_identity_prefix=("${ASSERTION_IDENTITY_PREFIX[@]}")
+  else
+    assertion_executor="${RUNNER_ASSERTION_EXECUTOR:-$assertion_executor}"
+    node_bin="${RUNNER_ASSERTION_NODE_BIN:-$node_bin}"
+  fi
+  if [[ -n "${ASSERTION_IDENTITY_PREFIX[0]-}" ]]; then
+    use_isolated_identity=1
+  fi
+  assertion_home="$evidence_dir/assertion-home"
+  npm_cache="$evidence_dir/npm-cache"
+  mkdir -p "$assertion_home" "$npm_cache"
+  chmod 0555 "$assertion_home"
+  assertion_workspace="$evidence_dir/worktree"
+  if ! git -C "$workspace" worktree add --detach "$assertion_workspace" "$expected_sha" \
+    > "$evidence_dir/worktree-setup.log" 2>&1; then
+    jq '.checks = []
+        | .decision.outcome = "FAIL"
+        | .decision.reason = "trusted assertion checkout creation failed"' \
+      "$normalized_result_file" > "$merged_result_file"
+    mv "$merged_result_file" "$normalized_result_file"
+    rm -rf "$evidence_dir"
+    return 0
+  fi
+  if (( use_isolated_identity == 1 )); then
+    chmod 0711 "$evidence_dir"
+    chown -R nobody:nogroup "$assertion_workspace"
+    chown -R nobody:nogroup "$npm_cache"
+  fi
+  if [[ -f "$assertion_workspace/package-lock.json" ]] \
+    && ! (cd "$assertion_workspace" && \
+      "${RUNNER_ASSERTION_TIMEOUT_BIN:-timeout}" --signal=TERM --kill-after=10s \
+        "$(runner_assertion_budget_seconds)s" \
+        "${ASSERTION_IDENTITY_PREFIX[@]}" \
+        env -i HOME="$assertion_home" PATH=/usr/local/bin:/usr/bin:/bin \
+        LANG=C.UTF-8 NPM_CONFIG_CACHE="$npm_cache" \
+        "$node_bin" /usr/local/lib/node_modules/npm/bin/npm-cli.js \
+        ci --ignore-scripts --no-audit --no-fund) \
+      > "$evidence_dir/dependency-install.log" 2>&1; then
+    jq '.checks = []
+        | .decision.outcome = "FAIL"
+        | .decision.reason = "trusted assertion dependency install failed"' \
+      "$normalized_result_file" > "$merged_result_file"
+    mv "$merged_result_file" "$normalized_result_file"
+    git -C "$workspace" worktree remove --force "$assertion_workspace" >/dev/null 2>&1 || true
+    rm -rf "$evidence_dir"
+    return 0
+  fi
+  if (( use_isolated_identity == 1 )); then
+    chown -R root:root "$assertion_workspace"
+  fi
+  git -C "$assertion_workspace" reset --hard "$expected_sha" >/dev/null 2>&1
+  git -C "$assertion_workspace" clean -ffd >/dev/null 2>&1
+  tracked_paths_file="$evidence_dir/tracked-paths"
+  git -C "$assertion_workspace" ls-files -z > "$tracked_paths_file"
+  chmod 0444 "$tracked_paths_file"
+  if (( use_isolated_identity == 1 )); then
+    chmod -R a-w "$assertion_workspace"
+  fi
+  checks_file="$evidence_dir/checks.json"
+  printf '[]\n' > "$checks_file"
+
+  local assertion_encoded assertion_json assertion_id assertion_command assertion_argv
+  local assertion_link assertion_revision assertion_digest log_file
+  local started_at completed_at exit_code output_digest output_tail check_json
+  local failed_assertion=""
+  while IFS= read -r assertion_encoded; do
+    assertion_json="$(printf '%s' "$assertion_encoded" | base64 --decode 2>/dev/null \
+      || printf '%s' "$assertion_encoded" | base64 -D)"
+    assertion_id="$(jq -r '.assertion_id' <<< "$assertion_json")"
+    assertion_command="$(jq -r '.command' <<< "$assertion_json")"
+    assertion_link="$(jq -r '.journey_step_link_id' <<< "$assertion_json")"
+    assertion_revision="$(jq -r '.assertion_revision' <<< "$assertion_json")"
+    assertion_digest="$(jq -r '.assertion_digest' <<< "$assertion_json")"
+    log_file="$evidence_dir/$(printf '%s' "$assertion_id" | shasum -a 256 | awk '{print $1}').log"
+    started_at="$(runner_evidence_timestamp)"
+    assertion_argv='null'
+    if ! assertion_argv="$(cd "$assertion_workspace" && \
+      "${assertion_identity_prefix[@]}" \
+      env -i HOME="$assertion_home" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+      CECELIA_ASSERTION_TRACKED_PATHS_FILE="$tracked_paths_file" \
+      "$node_bin" "$assertion_executor" --describe "$assertion_json" 2> "$log_file")"; then
+      assertion_argv='null'
+      exit_code=64
+      [[ -n "$failed_assertion" ]] || failed_assertion="$assertion_id"
+    elif (cd "$assertion_workspace" && \
+      "${RUNNER_ASSERTION_TIMEOUT_BIN:-timeout}" --signal=TERM --kill-after=10s \
+        "$(runner_assertion_budget_seconds)s" \
+        "${assertion_identity_prefix[@]}" \
+        env -i HOME="$assertion_home" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+        CECELIA_ASSERTION_TRACKED_PATHS_FILE="$tracked_paths_file" \
+        "$node_bin" "$assertion_executor" --run "$assertion_json") > "$log_file" 2>&1; then
+      exit_code=0
+    else
+      exit_code=$?
+      [[ -n "$failed_assertion" ]] || failed_assertion="$assertion_id"
+    fi
+    completed_at="$(runner_evidence_timestamp)"
+    output_digest="$(runner_evidence_sha256 "$log_file")"
+    output_tail="$(tail -c 8000 "$log_file" | LC_ALL=C tr -d '\000')"
+    check_json="$(jq -cn \
+      --arg assertion_id "$assertion_id" \
+      --arg command "$assertion_command" \
+      --arg journey_step_link_id "$assertion_link" \
+      --argjson assertion_revision "$assertion_revision" \
+      --arg assertion_digest "$assertion_digest" \
+      --argjson command_argv "$assertion_argv" \
+      --argjson exit_code "$exit_code" \
+      --arg output_digest "$output_digest" \
+      --arg output_tail "$output_tail" \
+      --arg pr_head_sha "$expected_sha" \
+      --arg machine "$machine" \
+      --arg started_at "$started_at" \
+      --arg completed_at "$completed_at" \
+      '{assertion_id:$assertion_id,
+        command_argv:$command_argv,
+        journey_step_link_id:$journey_step_link_id,
+        assertion_revision:$assertion_revision,
+        assertion_digest:$assertion_digest,
+        exit_code:$exit_code,
+        output_digest:$output_digest,
+        output_tail:$output_tail,
+        scenario_count:1,
+        scenario_evidence:{pr_head_sha:$pr_head_sha, machine:$machine, cases:[$assertion_id]},
+        started_at:$started_at,
+        completed_at:$completed_at}')"
+    jq --argjson check "$check_json" '. + [$check]' "$checks_file" \
+      > "${checks_file}.next"
+    mv "${checks_file}.next" "$checks_file"
+  done < <(jq -r '.[] | @base64' <<< "$assertions_json")
+
+  if [[ -n "$failed_assertion" ]]; then
+    jq --slurpfile checks "$checks_file" --arg assertion_id "$failed_assertion" \
+      '.checks = $checks[0]
+       | .decision.outcome = "FAIL"
+       | .decision.reason = ("required assertion failed: " + $assertion_id)' \
+      "$normalized_result_file" > "$merged_result_file"
+  else
+    jq --slurpfile checks "$checks_file" '.checks = $checks[0]' \
+      "$normalized_result_file" > "$merged_result_file"
+  fi
+  mv "$merged_result_file" "$normalized_result_file"
+  git -C "$workspace" worktree remove --force "$assertion_workspace" >/dev/null 2>&1 || true
+  rm -rf "$evidence_dir"
+}
+
 merge_evaluator_evidence() {
   local normalized_result_file="$1"
   local brain_result_file="${BRAIN_RESULT_FILE:-${WORKTREE_PATH:-$PWD}/.brain-result.json}"
@@ -982,7 +1262,12 @@ merge_evaluator_evidence() {
 
   [[ "${HARNESS_NODE:-}" == "evaluator" ]] || return 0
   [[ "$EVALUATOR_EVIDENCE_PREPARED" == "1" ]] || return 0
-  [[ -f "$normalized_result_file" && -f "$brain_result_file" ]] || return 0
+  [[ -f "$normalized_result_file" ]] || return 0
+  if [[ -n "${HARNESS_REQUIRED_ASSERTIONS_JSON+x}" ]]; then
+    merge_required_assertion_evidence "$normalized_result_file"
+    return $?
+  fi
+  [[ -f "$brain_result_file" ]] || return 0
   jq -e \
     --arg task_id "${CECELIA_TASK_ID:-}" \
     --arg attempt_id "${HARNESS_ATTEMPT_ID:-}" '
@@ -1700,6 +1985,7 @@ run_provider_contract() {
     run_with_attempt_timeout \
       "$attempt_timeout_seconds" \
       "${PROVIDER_IDENTITY_PREFIX[@]}" \
+      "${PROVIDER_TRUST_BOUNDARY_ENV[@]}" \
       "${FROZEN_BASELINE_PROVIDER_ENV[@]}" \
       "${codex_command[@]}" "${codex_args[@]}" < "$task_bundle_file" 2>&1 \
       | while IFS= read -r line || [[ -n "$line" ]]; do
@@ -1733,6 +2019,7 @@ run_provider_contract() {
     run_with_attempt_timeout \
       "$attempt_timeout_seconds" \
       "${PROVIDER_IDENTITY_PREFIX[@]}" \
+      "${PROVIDER_TRUST_BOUNDARY_ENV[@]}" \
       "${FROZEN_BASELINE_PROVIDER_ENV[@]}" \
       claude "${claude_args[@]}" < "$task_bundle_file" 2>&1 \
       | while IFS= read -r line || [[ -n "$line" ]]; do
@@ -1768,6 +2055,7 @@ run_provider_contract() {
     run_with_attempt_timeout \
       "$attempt_timeout_seconds" \
       "${PROVIDER_IDENTITY_PREFIX[@]}" \
+      "${PROVIDER_TRUST_BOUNDARY_ENV[@]}" \
       "${FROZEN_BASELINE_PROVIDER_ENV[@]}" \
       grok -p "$(cat "$task_bundle_file")" "${grok_args[@]}" 2>&1 \
       | while IFS= read -r line || [[ -n "$line" ]]; do
@@ -1797,6 +2085,10 @@ run_provider_contract() {
     provider_exit=0
     echo "[entrypoint] recovered completed Codex turn from CLI exit $provider_cli_exit_code" >&2
   fi
+  if ! terminate_evaluator_provider_processes; then
+    provider_exit=1
+    printf '%s\n' '{"error":"provider_descendant_cleanup_failed"}' >> "$STDOUT_FILE"
+  fi
   if ! verify_evaluator_evidence_capsule; then
     provider_exit=1
     printf '%s\n' '{"error":"github_evidence_capsule_tampered"}' >> "$STDOUT_FILE"
@@ -1806,11 +2098,6 @@ run_provider_contract() {
   # Persist the session before the terminal callback. If callback delivery fails after
   # the CLI exits, watchdog can still reclaim and resume this exact attempt/session.
   [[ -z "$provider_session_id" ]] || persist_provider_session "$provider_session_id" || true
-
-  if [[ -n "$heartbeat_pid" ]]; then
-    kill "$heartbeat_pid" >/dev/null 2>&1 || true
-    wait "$heartbeat_pid" 2>/dev/null || true
-  fi
 
   if [[ "$provider" == "codex" ]]; then
     record_codex_credential_mutation
@@ -1866,7 +2153,18 @@ run_provider_contract() {
       "$provider_exit" \
       "$STDOUT_FILE"
   fi
-  merge_evaluator_evidence "$NORMALIZED_RESULT_FILE" || true
+  if ! merge_evaluator_evidence "$NORMALIZED_RESULT_FILE"; then
+    jq '
+      .checks = []
+      | .decision.outcome = "FAIL"
+      | .decision.reason = "trusted evaluator evidence merge failed"
+    ' "$NORMALIZED_RESULT_FILE" > "${NORMALIZED_RESULT_FILE}.evidence-failure"
+    mv "${NORMALIZED_RESULT_FILE}.evidence-failure" "$NORMALIZED_RESULT_FILE"
+  fi
+  if [[ -n "$heartbeat_pid" ]]; then
+    kill "$heartbeat_pid" >/dev/null 2>&1 || true
+    wait "$heartbeat_pid" 2>/dev/null || true
+  fi
   return "$provider_exit"
 }
 # provider-neutral:end

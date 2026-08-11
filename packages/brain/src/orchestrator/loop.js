@@ -49,6 +49,7 @@ import {
 } from './convergence-signatures.js';
 import { finalizeKernelRun, persistKernelRunPhase } from './kernel-run-store.js';
 import { oldestExpiredAttempt } from './expired-attempt-reconciler.js';
+import { sanitizeDiagnostic } from './failure-persistence.js';
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -1301,6 +1302,45 @@ export async function runLoop(
       continue;
     }
     let gateVerdict = 'allow';
+    let impactGateReceipt = null;
+    const impactGateMethod = [ACTION.SPAWN_GENERATOR, ACTION.SPAWN_GENERATOR_FIX]
+      .includes(decision.action)
+      ? 'beforeGenerate'
+      : [ACTION.SPAWN_EVALUATOR, ACTION.SPAWN_EVALUATOR_EVIDENCE_REPAIR]
+        .includes(decision.action)
+        ? 'beforeEvaluate'
+        : decision.action === ACTION.MERGE_PR
+          ? 'beforeMerge'
+          : null;
+    if (impactGateMethod) {
+      try {
+        const evaluator = deps.impactGate?.[impactGateMethod];
+        impactGateReceipt = typeof evaluator === 'function'
+          ? await evaluator({
+              task: observed.task,
+              pr: observed.pr,
+              decisionLog: observed.decisionLog,
+              run: observed.run,
+            })
+          : {
+              stage: impactGateMethod,
+              gate: 'blocked',
+              reason: 'impact_gate_unavailable',
+              retryable: true,
+            };
+      } catch (error) {
+        impactGateReceipt = {
+          stage: impactGateMethod,
+          gate: 'blocked',
+          reason: 'impact_gate_error',
+          retryable: true,
+          error: sanitizeDiagnostic(error?.message ?? String(error)),
+        };
+      }
+      if (!['pass', 'extend'].includes(impactGateReceipt?.gate)) {
+        gateVerdict = `deny:impact:${impactGateReceipt?.reason ?? 'unknown'}`;
+      }
+    }
     if (decision.action === ACTION.MERGE_PR) {
       // F6 双保险：derive 说 merge，仍过一遍 mergeGate（唯一 merge 权威）
       const gate = mergeGate({
@@ -1310,7 +1350,9 @@ export async function runLoop(
         reviewRequired: observed.reviewRequired,
         reviewApproved: observed.reviewApproved,
       });
-      gateVerdict = gate.allow ? 'allow' : `deny:${gate.reason}`;
+      if (gateVerdict === 'allow') {
+        gateVerdict = gate.allow ? 'allow' : `deny:${gate.reason}`;
+      }
     }
     const intentAt = now();
     const taskPayload = asPayload(observed.task?.payload);
@@ -1347,6 +1389,7 @@ export async function runLoop(
             ? { validation_origin: VERIFIED_EXISTING_PR_ORIGIN }
             : {}),
           ...humanReviewDetail(observed, decision.reason),
+          ...(impactGateReceipt ? { impact_gate: impactGateReceipt } : {}),
         },
       });
     } catch (err) {
@@ -1368,7 +1411,15 @@ export async function runLoop(
 
     // gateVerdict deny（derive 与 mergeGate 意见不一致 = 观测竞态）→ 不派发，按 BLOCKED 同态处理
     const result = gateVerdict?.startsWith('deny:')
-      ? { status: 'BLOCKED', detail: gateVerdict }
+      ? {
+          status: 'BLOCKED',
+          detail: gateVerdict,
+          failure_class: impactGateReceipt?.reason === 'CONTRACT_IMPACT_DRIFT'
+            || impactGateReceipt?.reason === 'gap_dependencies'
+            ? 'gap_dependencies'
+            : 'infrastructure_blocked',
+          evidence: impactGateReceipt,
+        }
       : await deps.dispatch(decision.action, {
           taskId,
           runId: resolvedRunId,
@@ -1378,6 +1429,7 @@ export async function runLoop(
           ...(validationClock ? { validationClock } : {}),
           ...(commanderDispatchContext ? { commander: commanderDispatchContext } : {}),
           ...(retryDispatchContext ? { retry: retryDispatchContext } : {}),
+          ...(impactGateReceipt ? { impactGateReceipt } : {}),
         });
     const controlStatus = result.control_status ?? result.status;
 
@@ -1474,7 +1526,7 @@ export async function runLoop(
 
     if (controlStatus === 'NEEDS_CONTEXT' || controlStatus === 'BLOCKED') {
       const failureClass = result.failure_class ?? null;
-      if (controlStatus === 'BLOCKED' && failureClass === 'infrastructure_blocked') {
+      if (controlStatus === 'BLOCKED' && ['infrastructure_blocked', 'gap_dependencies'].includes(failureClass)) {
         log(
           `[orchestrator] hop ${hop} ${decision.action} → BLOCKED `
           + `(infrastructure backoff): ${result.detail ?? ''}`,

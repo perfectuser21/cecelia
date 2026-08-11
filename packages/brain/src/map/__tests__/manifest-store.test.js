@@ -2,8 +2,14 @@
  * 刀1: manifest-store.js 纯函数测试（无需 DB）
  * 覆盖：computeManifestDigest 确定性和格式
  */
-import { describe, it, expect } from 'vitest';
-import { computeManifestDigest } from '../manifest-store.js';
+import { describe, it, expect, vi } from 'vitest';
+
+const mockPool = vi.hoisted(() => ({
+  connect: vi.fn(),
+}));
+vi.mock('../../db.js', () => ({ default: mockPool }));
+
+import { activateManifest, computeManifestDigest } from '../manifest-store.js';
 
 const SAMPLE = {
   scope_key: 'test',
@@ -33,5 +39,42 @@ describe('computeManifestDigest', () => {
   it('不同内容 → 不同 digest', () => {
     const other = { ...SAMPLE, scope_key: 'other' };
     expect(computeManifestDigest(SAMPLE)).not.toBe(computeManifestDigest(other));
+  });
+
+  it('嵌套 Capability 内容变化必须改变 digest', () => {
+    const changed = structuredClone(SAMPLE);
+    changed.capabilities[0].name = 'Changed nested capability';
+
+    expect(computeManifestDigest(SAMPLE)).not.toBe(computeManifestDigest(changed));
+  });
+});
+
+describe('activateManifest 原子投影', () => {
+  it('projector 失败时回滚，manifest 不得提前切 active', async () => {
+    const queries = [];
+    const client = {
+      query: vi.fn(async (sql) => {
+        queries.push(sql.trim());
+        if (/SELECT id, scope_key/i.test(sql)) {
+          return { rows: [{
+            id: 'manifest-1', scope_key: 'cecelia', version: 2,
+            digest: 'a'.repeat(64), status: 'draft', manifest: SAMPLE,
+          }] };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+      release: vi.fn(),
+    };
+    mockPool.connect.mockResolvedValue(client);
+    const projector = vi.fn(async () => { throw new Error('projection failed'); });
+
+    await expect(activateManifest(
+      { manifestId: 'manifest-1', scopeKey: 'cecelia' },
+      { projector },
+    )).rejects.toThrow('projection failed');
+
+    expect(queries).toContain('ROLLBACK');
+    expect(queries.some((sql) => /SET status = 'active'/.test(sql))).toBe(false);
+    expect(client.release).toHaveBeenCalledOnce();
   });
 });
