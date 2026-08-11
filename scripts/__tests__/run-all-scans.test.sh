@@ -63,6 +63,10 @@ cat > "$NODE_STUB" <<'STUB'
 if [[ -n "${NODE_LOG:-}" ]]; then
   printf '%s\n' "$*" >> "$NODE_LOG"
 fi
+if [[ -n "${ENV_LOG:-}" ]]; then
+  printf '%s|%s|%s|%s\n' "${SCAN_REPO_NAME:-}" "${SCAN_REPO_ROOT:-}" \
+    "${SOURCE_DATABASE_URL:-}" "${GRAPH_REPOS:-}" >> "$ENV_LOG"
+fi
 printf '%s\n' "$1" >> "$SCAN_LOG"
 if [[ "${1##*/}" == "${FAIL_SCANNER:-}" ]]; then
   exit 23
@@ -190,6 +194,23 @@ if [[ $SKIP_PULL_RC -eq 0 ]] \
   pass "SKIP_GIT_PULL=1 在 clean main 上禁止 git pull 且继续扫描"
 else
   fail "SKIP_GIT_PULL=1 未阻止 git pull(rc=$SKIP_PULL_RC): $(tr '\n' ' ' < "$SKIP_PULL_OUT")"
+fi
+
+mkdir -p "$TMPD/repo-a" "$TMPD/repo-b"
+MULTI_REPO_LOG="$TMPD/multi-repo.log"
+MULTI_REPO_SCAN_LOG="$TMPD/multi-repo-scans.log"
+MULTI_REPO_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" SKIP_GIT_PULL=1 \
+  SCAN_LOG="$MULTI_REPO_SCAN_LOG" ENV_LOG="$MULTI_REPO_LOG" \
+  SCAN_REPO_SPECS="repo-a|$TMPD/repo-a|postgresql://source/a;repo-b|$TMPD/repo-b|postgresql://source/b" \
+  /bin/bash "$RUNNER" >/dev/null 2>&1 || MULTI_REPO_RC=$?
+if [[ $MULTI_REPO_RC -eq 0 ]] \
+  && [[ "$(wc -l < "$MULTI_REPO_LOG" | tr -d ' ')" == '8' ]] \
+  && grep -q "repo-a|$TMPD/repo-a|postgresql://source/a|repo-a" "$MULTI_REPO_LOG" \
+  && grep -q "repo-b|$TMPD/repo-b|postgresql://source/b|repo-b" "$MULTI_REPO_LOG"; then
+  pass "SCAN_REPO_SPECS 为每个仓库向四 scanner 注入独立 repo/root/source DB"
+else
+  fail "SCAN_REPO_SPECS 多仓扫描合同失败(rc=$MULTI_REPO_RC)"
 fi
 
 ROOT_FAILURE_GIT_LOG="$TMPD/root-failure-git.log"
