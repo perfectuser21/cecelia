@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { execSync, spawn } = require('child_process');
+const { provisionConfigDir, cleanupConfigDir } = require('./lib/claude-config-provision.cjs');
 
 // MIME → 文件扩展名（/llm-call 图片临时文件使用）
 const MIME_TO_EXT = {
@@ -121,6 +122,15 @@ const server = http.createServer((req, res) => {
         }
       };
 
+      // 凭据只读消费：本次 attempt 的临时 config dir（在 close/error/timeout 回调里清理）
+      let provisionedConfigDir = null;
+      const cleanupConfig = () => {
+        if (provisionedConfigDir) {
+          cleanupConfigDir(provisionedConfigDir);
+          provisionedConfigDir = null;
+        }
+      };
+
       try {
         const { prompt, model, timeout, accountId, image_base64, image_mime } = JSON.parse(body);
         if (!prompt) {
@@ -162,18 +172,19 @@ const server = http.createServer((req, res) => {
         let timedOut = false;
         const env = Object.assign({}, process.env);
         delete env.CLAUDECODE;
-        const { homedir } = require('os');
-        const { join } = require('path');
-        if (accountId) {
-          env.CLAUDE_CONFIG_DIR = join(homedir(), '.claude-' + accountId);
-        } else {
-          // 无 accountId 时用默认账号，防止 claude -p 因 CLAUDE_CONFIG_DIR 未设置而报 "Not logged in"
-          const DEFAULT_CLAUDE_CONFIG_DIR = process.env.DEFAULT_CLAUDE_CONFIG_DIR
-            || join(homedir(), '.claude-account1');
-          if (!env.CLAUDE_CONFIG_DIR) {
-            env.CLAUDE_CONFIG_DIR = DEFAULT_CLAUDE_CONFIG_DIR;
-            console.log(`[bridge] /llm-call 无 accountId，使用默认 CLAUDE_CONFIG_DIR=${DEFAULT_CLAUDE_CONFIG_DIR}`);
-          }
+        // 凭据只读消费（根因修复：消除多写入者竞态）——不再把 CLAUDE_CONFIG_DIR 直接指向权威账号
+        // 目录 ~/.claude-account{N}。改为按 attempt 复制一份独立临时 config dir，claude 只写副本，
+        // 权威文件全程只读。无 accountId 时默认 account1（同样走临时副本，不直用权威目录）。
+        try {
+          const { configDir } = provisionConfigDir({ accountId });
+          provisionedConfigDir = configDir;
+          env.CLAUDE_CONFIG_DIR = configDir;
+        } catch (provErr) {
+          // 创建失败 → 主流程失败并告警，禁止回退到直接用权威目录（回退 = 重新引入回写风险）。
+          console.error(`[bridge] /llm-call config dir provision failed: ${provErr.message}`);
+          cleanupImage();
+          safeRespond(res, 500, { ok: false, error: `config dir provision failed: ${provErr.message}` });
+          return;
         }
 
         const llmWorkDir = '/tmp/cecelia-llm';
@@ -198,6 +209,7 @@ const server = http.createServer((req, res) => {
         child.on('close', (code) => {
           clearTimeout(timer);
           cleanupImage();
+          cleanupConfig();
           const elapsed = Date.now() - startTime;
 
           if (timedOut) {
@@ -221,6 +233,7 @@ const server = http.createServer((req, res) => {
         child.on('error', (err) => {
           clearTimeout(timer);
           cleanupImage();
+          cleanupConfig();
           const elapsed = Date.now() - startTime;
           console.error(`[bridge] /llm-call spawn error (${elapsed}ms): ${err.message}`);
           safeRespond(res, 500, { ok: false, error: err.message, elapsed_ms: elapsed });
