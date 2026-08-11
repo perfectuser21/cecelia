@@ -62,6 +62,11 @@ vi.mock('../quarantine.js', () => ({
 vi.mock('../dispatch-stats.js', () => ({ recordDispatchResult: vi.fn(), getDispatchStats: vi.fn().mockResolvedValue({}) }));
 vi.mock('../health-monitor.js', () => ({ runLayer2HealthCheck: vi.fn().mockResolvedValue({ summary: 'ok' }) }));
 vi.mock('../dept-heartbeat.js', () => ({ triggerDeptHeartbeats: vi.fn().mockResolvedValue({}) }));
+// executeTick 在心跳窗口会动态调用 LLM。本测试只验证 Goal Outer Loop，
+// 必须隔离外部账号/网络，避免全套并发时被 30s 超时污染。
+vi.mock('../heartbeat-plugin.js', () => ({
+  tick: vi.fn().mockResolvedValue({ skipped: true, reason: 'test_isolation' }),
+}));
 vi.mock('../daily-review-scheduler.js', () => ({ triggerDailyReview: vi.fn().mockResolvedValue({}) }));
 vi.mock('../desire/index.js', () => ({ runDesireSystem: vi.fn().mockResolvedValue({}) }));
 vi.mock('../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue({}) }));

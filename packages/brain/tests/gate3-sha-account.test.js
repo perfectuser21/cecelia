@@ -30,6 +30,9 @@ it('sha-account shell tests pass (BEHAVIOR-01..07)', () => {
       cwd: ROOT,
       stdio: 'inherit',
       timeout: 60_000,
+      // 全套测试不得把本机正在运行的 Brain 当成 fixture，更不得 POST 真实 /deploy。
+      // 指向确定性的不可达端口，shell 合同会走同一源码验证分支。
+      env: { ...process.env, BRAIN_URL: 'http://127.0.0.1:1' },
     });
   } catch (err) {
     exitCode = err.status ?? 1;
