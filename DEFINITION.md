@@ -24,6 +24,14 @@
 
 ---
 
+## Brain 1.272.3 — Harness Account Exhaustion Callback Recovery
+
+- Harness Provider 的 weekly/rate-limit 429 保持为可恢复的 `account_exhausted` 控制类，不再因数据库约束漂移导致 callback 无限重试。
+- `harness_attempts_failure_class_check` 继续严格拒绝未知值，仅补齐 execution contract 已声明的 `account_exhausted`。
+- 真实 PostgreSQL 回归覆盖迁移前 23514 复现、迁移后落库、幂等执行与非法值拒绝；Schema 地板推进到 406。
+
+---
+
 ## Brain 1.272.2 — Kernel Declared PR Ground Truth
 
 - Kernel Ground Truth 在 `initiative_runs.pr_url` 尚未落库时，优先读取任务 payload 中格式严格合法的 GitHub PR URL，并直接查询 GitHub 实时状态。
