@@ -105,6 +105,26 @@ describe('kernel deterministic handlers', () => {
     }), expect.any(Object));
   });
 
+  it('judge receives required command declarations for exact-PR evidence reconciliation', async () => {
+    const d = deps();
+    const requiredCommandEvidence = ['npm test', 'bash scripts/smoke.sh'];
+    const ctx = context({
+      bundle: {
+        inputs: {
+          worktree_path: '/tmp/wt',
+          sprint_dir: 'sprints/x',
+          required_command_evidence: requiredCommandEvidence,
+        },
+      },
+    });
+
+    await createKernelHandlers(d)['spawn:judge'](ctx);
+
+    expect(d.judgeGate).toHaveBeenCalledWith(expect.objectContaining({
+      requiredCommandEvidence,
+    }), expect.any(Object));
+  });
+
   it('judge 必须是真正独立判定，写 attempt 与 SHA 锚定 verdict', async () => {
     const d = deps();
     const handlers = createKernelHandlers(d);

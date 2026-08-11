@@ -8,9 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.9
+**Brain 版本**: 1.272.10
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.272.10 — Exact-PR Required Evidence Bridge
+
+- 精确 PR 验收任务的 `required_command_evidence` 进入 Evaluator 与 Judge TaskBundle。
+- Evaluator 必须逐条原样执行并写结构化证据；Judge 只接受命令逐字一致、退出码为 0、日志非空的结果。
+- 无 sprint 合同文件的验证专用任务可以用这份严格对账后的命令清单作为合同测试，缺项仍 fail-closed。
 
 ---
 
