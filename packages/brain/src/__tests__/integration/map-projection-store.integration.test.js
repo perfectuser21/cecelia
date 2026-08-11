@@ -285,6 +285,11 @@ describe('Map Projection Store — 真实 PostgreSQL', () => {
        VALUES ($1, $2, $3, 'capability', $4, $5) RETURNING id`,
       [journey.rows[0].id, step.rows[0].id, feature.rows[0].id, capabilityKey, testPath],
     );
+    const { rows: ownedJourneys } = await pool.query(
+      'SELECT biz_area FROM journeys WHERE id=$1',
+      [journey.rows[0].id],
+    );
+    expect(ownedJourneys).toEqual([{ biz_area: scopeKey }]);
     await pool.query(
       `INSERT INTO test_registry
         (repo, file_path, source_revision, scanner_version, scanned_at)

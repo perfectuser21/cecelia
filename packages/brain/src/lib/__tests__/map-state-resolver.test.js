@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  aggregateFeatureEvidence,
   aggregateMapStates,
   resolveEvidenceState,
   selectCurrentReceipt,
@@ -140,5 +141,19 @@ describe('aggregateMapStates', () => {
     expect(aggregateMapStates([])).toMatchObject({
       status: 'gray', reason_code: 'children_missing',
     });
+  });
+});
+
+describe('aggregateFeatureEvidence', () => {
+  it('artifact 存在但没有当前 assertion receipt 时不得冒充 green', () => {
+    expect(aggregateFeatureEvidence({
+      artifactStates: [{ status: 'green', reason_code: 'anchor_target_present' }],
+      assertionStates: [],
+    })).toMatchObject({ status: 'unknown', reason_code: 'receipt_missing' });
+
+    expect(aggregateFeatureEvidence({
+      artifactStates: [{ status: 'green', reason_code: 'anchor_target_present' }],
+      assertionStates: [{ status: 'green', reason_code: 'receipt_pass' }],
+    })).toMatchObject({ status: 'green', reason_code: 'children_green' });
   });
 });
