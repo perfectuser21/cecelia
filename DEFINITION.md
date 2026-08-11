@@ -8,14 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.7
+**Brain 版本**: 1.272.8
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.7 — Impact Contract 不可变证据闭环
+## Brain 1.272.8 — Unified Map 与 Impact Contract 不可变证据闭环
 
+- 整图、节点、浏览影响半径、健康度与未归属事实统一由同一个 Map read service 在只读 `REPEATABLE READ` 快照内返回，并携带 Manifest/Projection digest、repo revision 与 freshness。
+- Dashboard `/map` 只消费 Unified Map API，提供 Value Stream → Capability → Assertion/receipt 三层下钻；重复旧页面和旧 feature 注册已移除。
+- Harness 的 revision-locked `/map/radius` 请求继续由 Impact resolver 裁决，不降级成 Dashboard 浏览半径。
 - 关系图按 Git revision 保留不可变快照；同 revision 出现不同边时扫描事务 fail-closed，在途合同始终读取原 base revision 对应的 projection 与图。
 - Impact radius 以显式 repo→scope 白名单、manifest digest、projection digest 锁定证据，拒绝 basename 碰撞与同 SHA 下的投影偷换。
 - 当前仅激活 Cecelia repo→scope；ZenithJoy 在其 manifest/projection/scan 上线前保持未受管，避免宣称不存在的权威证据。

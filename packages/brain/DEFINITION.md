@@ -1,8 +1,15 @@
 # Brain 模块定义
 
-**版本**: 1.272.5
+**版本**: 1.272.8
 
-## Impact Contract 不可变证据闭环（Brain 1.272.5）
+## Unified Map API and dashboard authority
+
+- 五个 Map 读面与健康度共享一致性快照、统一 envelope 和查询时状态，不再消费旧 `src/map` 实现。
+- Dashboard 的唯一 `/map` 注册展示三层业务地图、事实锚点与 revision-bound receipt。
+- Harness 的 revision-locked radius 与 Dashboard 浏览 radius 在同一路由按合同字段机械分流，前者不降级成浏览裁决。
+- Schema 地板推进到 410。
+
+## Impact Contract 不可变证据闭环（Brain 1.272.8）
 
 - Map radius 读取 revision-indexed graph/projection 快照，并锁定 manifest/projection digest 与显式 repo→scope 身份绑定。
 - 默认 repo→scope 只激活已有 projection 的 Cecelia；未部署投影的仓库保持 fail-closed。

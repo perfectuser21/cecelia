@@ -6,6 +6,7 @@ import {
   activateMapManifest,
   submitMapManifest,
 } from '../lib/map-manifest-store.js';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 
 function sendError(res, error) {
   if (error instanceof MapManifestError) {
@@ -29,6 +30,7 @@ function sendError(res, error) {
 
 export function createMapManifestRouter({ pool, projector, services } = {}) {
   const router = Router();
+  router.use(internalAuthOrLoopback);
   const validate = services?.validate ?? validateMapManifest;
   const submit = services?.submit ?? submitMapManifest;
   const activate = services?.activate ?? activateMapManifest;
