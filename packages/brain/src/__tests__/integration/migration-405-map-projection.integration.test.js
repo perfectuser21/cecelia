@@ -7,7 +7,7 @@ const databaseName = testConnectionString
   ? decodeURIComponent(new URL(testConnectionString).pathname.slice(1))
   : DB_DEFAULTS.database;
 if (!/(_test|_scratch)$/.test(databaseName)) {
-  throw new Error(`migration 403 integration test 拒绝连接非测试库: ${databaseName}`);
+  throw new Error(`migration 405 integration test 拒绝连接非测试库: ${databaseName}`);
 }
 const pool = new pg.Pool(testConnectionString
   ? { connectionString: testConnectionString, max: 1 }
@@ -17,7 +17,7 @@ afterAll(async () => {
   await pool.end();
 });
 
-describe('migration 403 — 真实 PostgreSQL projection schema', () => {
+describe('migration 405 — 真实 PostgreSQL projection schema', () => {
   it('三张表存在且列合同完整', async () => {
     const expectedColumns = new Map([
       ['map_projection_runs', [
@@ -70,8 +70,8 @@ describe('migration 403 — 真实 PostgreSQL projection schema', () => {
     ))).toBe(true);
   });
 
-  it('schema_version 包含 403', async () => {
-    const { rows } = await pool.query("SELECT version FROM schema_version WHERE version='403'");
-    expect(rows).toEqual([{ version: '403' }]);
+  it('schema_version 包含 405', async () => {
+    const { rows } = await pool.query("SELECT version FROM schema_version WHERE version='405'");
+    expect(rows).toEqual([{ version: '405' }]);
   });
 });

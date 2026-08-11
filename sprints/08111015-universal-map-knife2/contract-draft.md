@@ -45,8 +45,8 @@
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| Migration | `packages/brain/src/__tests__/migration-403-map-projection.test.js` | 三张派生表及 run-scoped FK/active 约束 | migration 403 不存在 |
-| Real schema | `packages/brain/src/__tests__/integration/migration-403-map-projection.integration.test.js` | 真实 PostgreSQL 约束生效 | 三张表不存在 |
+| Migration | `packages/brain/src/__tests__/migration-405-map-projection.test.js` | 三张派生表及 run-scoped FK/active 约束 | migration 405 不存在 |
+| Real schema | `packages/brain/src/__tests__/integration/migration-405-map-projection.integration.test.js` | 真实 PostgreSQL 约束生效 | 三张表不存在 |
 | Topology | `packages/brain/src/lib/__tests__/map-projector.test.js` | 2×11×2×7、Boundary/Cross-cut/Prerequisite 规则 | projector 模块不存在 |
 | Determinism | `packages/brain/src/lib/__tests__/map-projector.test.js` | 稳定 ID 与 projection digest 可重复 | 缺 stable identity/digest |
 | Atomicity | `packages/brain/src/__tests__/integration/map-projection-store.integration.test.js` | 激活、替换、失败回滚、无半张图 | projection store 不存在 |

@@ -2,8 +2,8 @@
 
 ### [ARTIFACT] D1：可重建 Projection 三表
 
-- [ ] migration 403 建立 runs/nodes/edges，约束稳定类型、digest、run-scoped FK 与每 scope 单 active。
-  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-403-map-projection.test.js src/__tests__/integration/migration-403-map-projection.integration.test.js"
+- [ ] migration 405 建立 runs/nodes/edges，约束稳定类型、digest、run-scoped FK 与每 scope 单 active。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-405-map-projection.test.js src/__tests__/integration/migration-405-map-projection.integration.test.js"
 
 ### [BEHAVIOR] D2：完整 Manifest 一次生成 Cecelia 结构
 
@@ -37,5 +37,5 @@
 
 ### [ARTIFACT] D8：Brain 版本、schema floor 与 smoke 基线同步
 
-- [ ] Brain=1.271.6、schema floor=403，版本文件同步，projection smoke 登记为 allowlist 必过项。
+- [ ] Brain=1.271.6、schema floor=405，版本文件同步，projection smoke 登记为 allowlist 必过项。
   Test: manual:bash -c "node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && grep -Fx map-projection-smoke.sh packages/quality/smoke-allowlist.txt"

@@ -2,15 +2,15 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const upSql = readFileSync(
-  new URL('../../migrations/403_map_projection_core.sql', import.meta.url),
+  new URL('../../migrations/405_map_projection_core.sql', import.meta.url),
   'utf8',
 );
 const downSql = readFileSync(
-  new URL('../../migrations/rollback/403_map_projection_core.down.sql', import.meta.url),
+  new URL('../../migrations/rollback/405_map_projection_core.down.sql', import.meta.url),
   'utf8',
 );
 
-describe('migration 403 — rebuildable map projection core', () => {
+describe('migration 405 — rebuildable map projection core', () => {
   it('建立 run、node、edge 三张派生表', () => {
     expect(upSql).toMatch(/CREATE TABLE IF NOT EXISTS map_projection_runs/i);
     expect(upSql).toMatch(/CREATE TABLE IF NOT EXISTS map_projection_nodes/i);
@@ -50,10 +50,10 @@ describe('migration 403 — rebuildable map projection core', () => {
   it('rollback 按依赖逆序移除三表并撤销 schema marker', () => {
     expect(downSql.indexOf('map_projection_edges')).toBeLessThan(downSql.indexOf('map_projection_nodes'));
     expect(downSql.indexOf('map_projection_nodes')).toBeLessThan(downSql.indexOf('map_projection_runs'));
-    expect(downSql).toMatch(/DELETE FROM schema_version WHERE version = '403'/i);
+    expect(downSql).toMatch(/DELETE FROM schema_version WHERE version = '405'/i);
   });
 
-  it('登记 schema 403', () => {
-    expect(upSql).toMatch(/VALUES\s*\(\s*'403'/i);
+  it('登记 schema 405', () => {
+    expect(upSql).toMatch(/VALUES\s*\(\s*'405'/i);
   });
 });

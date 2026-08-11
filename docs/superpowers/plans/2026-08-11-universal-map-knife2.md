@@ -13,15 +13,15 @@
 ### Task 1: Projection migration 与稳定关系合同
 
 **Files:**
-- Create: `packages/brain/migrations/403_map_projection_core.sql`
-- Create: `packages/brain/migrations/rollback/403_map_projection_core.down.sql`
-- Create: `packages/brain/src/__tests__/migration-403-map-projection.test.js`
-- Create: `packages/brain/src/__tests__/integration/migration-403-map-projection.integration.test.js`
+- Create: `packages/brain/migrations/405_map_projection_core.sql`
+- Create: `packages/brain/migrations/rollback/405_map_projection_core.down.sql`
+- Create: `packages/brain/src/__tests__/migration-405-map-projection.test.js`
+- Create: `packages/brain/src/__tests__/integration/migration-405-map-projection.integration.test.js`
 
 - [ ] 写 RED：三表、类型约束、active partial unique、run-scoped FK、digest 约束和级联删除。
-- [ ] 运行 RED：`cd packages/brain && npx vitest run src/__tests__/migration-403-map-projection.test.js src/__tests__/integration/migration-403-map-projection.integration.test.js`
+- [ ] 运行 RED：`cd packages/brain && npx vitest run src/__tests__/migration-405-map-projection.test.js src/__tests__/integration/migration-405-map-projection.integration.test.js`
 - [ ] 提交 RED：`test(brain): define map projection persistence contract`。
-- [ ] 实现 migration 403，仅迁移 `cecelia_test` 与 `cecelia_scratch`，运行 GREEN。
+- [ ] 实现 migration 405，仅迁移 `cecelia_test` 与 `cecelia_scratch`，运行 GREEN。
 - [ ] 提交 GREEN：`feat(brain): add rebuildable map projection tables`。
 
 ### Task 2: 纯确定性结构 Projector
@@ -69,7 +69,7 @@
 
 - [ ] 写 RED smoke：scratch 提交并激活一个完整 Manifest；DB 精确验证 2×11×2×7、Boundary 是边、Cross-cut 是节点、Shared Prerequisite 不造节点；清空并重建后 digest 相同。
 - [ ] 提交 RED：`test(brain): define projection scratch acceptance`。
-- [ ] Brain 升 `1.271.6`、schema floor 升 `403`，同步全部版本文件并登记 smoke allowlist。
+- [ ] Brain 升 `1.271.6`、schema floor 升 `405`，同步全部版本文件并登记 smoke allowlist。
 - [ ] scratch GREEN：`DATABASE_URL=postgresql://localhost/cecelia_scratch bash packages/brain/scripts/smoke/map-projection-smoke.sh`，连续两次通过且 fixture 清零。
 - [ ] 跑定向、完整 Brain 回归、三项 DevGate、精确 DoD mapping、light evaluator、`git diff --check`。
 - [ ] 请求代码审查；修复 Critical/Important 后 push、PR、全 CI、正常 merge。
