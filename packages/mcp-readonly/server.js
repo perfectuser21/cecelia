@@ -13,16 +13,47 @@ import { getMapSummary } from './src/tools/map-summary.js';
 import { getMapNodes, getMapEdges, NODE_TYPES, EDGE_TYPES } from './src/tools/map-nodes-edges.js';
 import { getServiceLogs, SERVICE_LOG_WHITELIST } from './src/tools/service-logs.js';
 import { assertReadonly } from './src/self-check.js';
+import { AlertTracker, sendBarkAlert, defaultRestartLogPath } from './src/alerting.js';
 
 const execFileAsync = promisify(execFile);
+
+// Task 14 Bark 告警：单个模块级 AlertTracker，跟着进程生命周期走（不是每次
+// createApp() 调用都新建一个——测试里 createApp() 会被反复调用，但告警阈值
+// 状态理应是"这个进程"级别的，不是"这次 app 装配"级别的）。sendBark 钩子
+// 抄自 packages/brain/src/notifier.js 的 sendBark() 写法，见 src/alerting.js
+// 顶部注释；这里只是把标题固定成服务名。
+const alertTracker = new AlertTracker({
+  sendBark: (message) => sendBarkAlert('Cecelia MCP Readonly', message),
+});
+
+// 把 db.js 的 query() 包一层 DB 故障告警埋点："连续3次DB查询失败触发Bark"/
+// "失败后一次成功即重置计数"这两条规则由 AlertTracker.recordDbFailure() /
+// recordDbSuccess() 自己实现，这里只负责把每一次真实查询的成功/失败结果喂
+// 给它。用包装函数而不是直接改 db.js 的 query()，是因为 db.js 是所有只读
+// 查询的公共基础设施（自己有锁定的 db.test.js），本次任务只是给"调用点"加
+// 一层观测，不该改变 query() 本身的语义或签名；trackedQuery 对外的行为跟原始
+// query() 完全一致（同样的参数、同样的返回值、失败时同样原样 throw），调用方
+// （tool 模块）无感知。
+function makeTrackedQuery(rawQuery, tracker) {
+  return async function trackedQuery(pool, sql, params, opts) {
+    try {
+      const result = await rawQuery(pool, sql, params, opts);
+      tracker.recordDbSuccess();
+      return result;
+    } catch (err) {
+      await tracker.recordDbFailure();
+      throw err;
+    }
+  };
+}
 
 // map_projection_runs 同一 scope_key 同一时刻最多一条 active（唯一部分索引，
 // 见 map-summary.js 顶部注释），取最新 activated_at 即为"当前生效"的 run。
 // 查不到时返回 null（不是 undefined）——但注意这个 null 只代表"系统当前没有
 // active run"这一件事，不代表调用方想跨全部历史查询，两者不能混为一谈，见
 // withActiveRun() 的处理。
-async function getActiveRunId(pool) {
-  const result = await query(
+async function getActiveRunId(pool, queryFn) {
+  const result = await queryFn(
     pool,
     `SELECT id FROM map_projection_runs WHERE status = 'active' ORDER BY activated_at DESC LIMIT 1`,
     []
@@ -42,8 +73,8 @@ async function getActiveRunId(pool) {
 // 短路返回空结果 + no_active_run 标记，不真的去查历史数据；后置的 computeFn 参数
 // 只在确实存在 active run 时才会被调用，因此永远不会把 null 传给 getMapNodes/
 // getMapEdges——它们的 undefined fail-closed 分支目前也不会被这里触发到。
-async function withActiveRun(pool, computeFn) {
-  const activeRunId = await getActiveRunId(pool);
+async function withActiveRun(pool, queryFn, computeFn) {
+  const activeRunId = await getActiveRunId(pool, queryFn);
   if (activeRunId === null) {
     return { rows: [], no_active_run: true };
   }
@@ -103,7 +134,7 @@ async function gitExecFn(cmd) {
   return execFileAsync(command, args);
 }
 
-function buildMcpServer({ pool, startedAt }) {
+function buildMcpServer({ pool, startedAt, queryFn }) {
   const server = new McpServer({ name: 'cecelia-readonly', version: '1.0.0' });
 
   server.registerTool(
@@ -113,7 +144,7 @@ function buildMcpServer({ pool, startedAt }) {
       inputSchema: {},
     },
     async () => ({
-      content: [{ type: 'text', text: JSON.stringify(await getSchemaVersion(pool, query)) }],
+      content: [{ type: 'text', text: JSON.stringify(await getSchemaVersion(pool, queryFn)) }],
     })
   );
 
@@ -124,7 +155,7 @@ function buildMcpServer({ pool, startedAt }) {
       inputSchema: {},
     },
     async () => ({
-      content: [{ type: 'text', text: JSON.stringify(await getMapSummary(pool, query)) }],
+      content: [{ type: 'text', text: JSON.stringify(await getMapSummary(pool, queryFn)) }],
     })
   );
 
@@ -135,8 +166,8 @@ function buildMcpServer({ pool, startedAt }) {
       inputSchema: { node_type: z.string(), limit: z.number().optional() },
     },
     async ({ node_type, limit }) => {
-      const payload = await withActiveRun(pool, (activeRunId) =>
-        getMapNodes(pool, query, { node_type, limit }, NODE_TYPES, activeRunId)
+      const payload = await withActiveRun(pool, queryFn, (activeRunId) =>
+        getMapNodes(pool, queryFn, { node_type, limit }, NODE_TYPES, activeRunId)
       );
       return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
     }
@@ -149,8 +180,8 @@ function buildMcpServer({ pool, startedAt }) {
       inputSchema: { edge_type: z.string(), limit: z.number().optional() },
     },
     async ({ edge_type, limit }) => {
-      const payload = await withActiveRun(pool, (activeRunId) =>
-        getMapEdges(pool, query, { edge_type, limit }, EDGE_TYPES, activeRunId)
+      const payload = await withActiveRun(pool, queryFn, (activeRunId) =>
+        getMapEdges(pool, queryFn, { edge_type, limit }, EDGE_TYPES, activeRunId)
       );
       return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
     }
@@ -191,10 +222,19 @@ export function createApp({ skipDbInit = false, bearerToken = process.env.MCP_BE
 
   const pool = skipDbInit ? null : createReadonlyPool(process.env.MCP_READONLY_DATABASE_URL, { max: 5 });
   const startedAt = Date.now();
+  const trackedQuery = makeTrackedQuery(query, alertTracker);
 
-  const mcpServer = buildMcpServer({ pool, startedAt });
+  const mcpServer = buildMcpServer({ pool, startedAt, queryFn: trackedQuery });
 
-  app.use('/mcp', bearerAuth(bearerToken), createRateLimiter({ windowMs: 60_000, max: 20 }));
+  app.use(
+    '/mcp',
+    bearerAuth(bearerToken, { onFailure: (token) => alertTracker.recordAuthFailure(token) }),
+    createRateLimiter({
+      windowMs: 60_000,
+      max: 20,
+      onRateLimited: (token) => alertTracker.recordRateLimited(token),
+    })
+  );
 
   app.post('/mcp', async (req, res) => {
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -207,6 +247,14 @@ export function createApp({ skipDbInit = false, bearerToken = process.env.MCP_BE
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  // 重启风暴检测（Task 14）：故意放在自检之前、整个启动流程最开头。原因：
+  // 如果这台服务反复崩溃重启的根因恰好是自检本身持续失败（比如
+  // MCP_READONLY_DATABASE_URL 配错、账号权限被意外改写），那"1小时内重启
+  // >3次"这个信号最有价值的时刻就是自检失败导致的 crash loop——放在自检
+  // 之后就永远等不到这次机会。recordRestartPersisted 内部对文件读写失败
+  // 已经做了容错（不会抛出、不会阻塞），不会拖慢正常启动。
+  await alertTracker.recordRestartPersisted(defaultRestartLogPath());
+
   // 启动自检（Task 12，见 src/self-check.js）：用一条独立、短生命周期的连接池探测
   // mcp_readonly 账号是不是真的只读，探测完立刻关闭——不复用 createApp() 内部会
   // 建的那个服务用连接池，两者职责分开：这里只负责"敢不敢启动"，服务用连接池的
