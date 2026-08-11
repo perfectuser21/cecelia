@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.272.8
+**版本**: 1.272.11
 
 ## Unified Map API and dashboard authority
 

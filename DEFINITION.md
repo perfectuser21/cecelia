@@ -8,9 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.10
+**Brain 版本**: 1.272.11
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.272.11 — Canonical Runner Recovery
+
+- 磁盘清理误删 canonical Runner 后，从当前 main 的 `docker/cecelia-runner/` 重建镜像，固定为 `sha256:5b304402ac167aa6bac4011f6e66ad2dbf8106473a5bb4e32e40498620cfb31d`。
+- Runner digest 在 NodeProfile、三机配置、rollout/reconcile、安装器测试和 smoke 中一次性同步；Fleet worker 基线升级为 1.272.11。
+- `verify-digest-pin.sh` 继续 fail-closed，确保镜像实际摘要与代码 pin 漂移时无法静默准入。
 
 ---
 
