@@ -69,6 +69,22 @@ afterEach(async () => {
 });
 
 describe('Dashboard-only staging/promote 合同', () => {
+  it('Dashboard staging 默认端口不得占用 Brain 的宿主端口', async () => {
+    const [compose, deployLocal] = await Promise.all([
+      readFile(new URL('../../docker-compose.yml', import.meta.url), 'utf8'),
+      readFile(new URL('../../scripts/deploy-local.sh', import.meta.url), 'utf8'),
+    ]);
+    const brainPorts = new Set(
+      [...compose.matchAll(/^\s*-\s*"(\d+):\d+"/gm)].map((match) => Number(match[1])),
+    );
+    const dashboardPort = Number(
+      deployLocal.match(/STAGING_SLOT_PORT="\$\{DASHBOARD_STAGING_PORT:-(\d+)\}"/)?.[1],
+    );
+
+    expect(dashboardPort).toBeGreaterThan(0);
+    expect(brainPorts.has(dashboardPort)).toBe(false);
+  });
+
   it('必须先生成 staging 放行标记再调用双节点 promote', async () => {
     const { result, calls } = await stagingContractFixture();
     expect(result.status).toBe(0);
