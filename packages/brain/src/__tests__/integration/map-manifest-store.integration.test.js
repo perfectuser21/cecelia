@@ -3,16 +3,21 @@ import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { activateMapManifest, submitMapManifest } from '../../lib/map-manifest-store.js';
+import { DB_DEFAULTS } from '../../db-config.js';
 
-const connectionString = process.env.TEST_DATABASE_URL || 'postgresql://localhost/cecelia_test';
-const databaseName = decodeURIComponent(new URL(connectionString).pathname.slice(1));
+const testConnectionString = process.env.TEST_DATABASE_URL;
+const databaseName = testConnectionString
+  ? decodeURIComponent(new URL(testConnectionString).pathname.slice(1))
+  : DB_DEFAULTS.database;
 if (!/(_test|_scratch)$/.test(databaseName)) {
   throw new Error(`Map manifest integration test 拒绝连接非测试库: ${databaseName}`);
 }
 
 const fixtureUrl = new URL('../../../config/map-manifests/cecelia.v1.json', import.meta.url);
 const baseManifest = JSON.parse(readFileSync(fixtureUrl, 'utf8'));
-const pool = new pg.Pool({ connectionString, max: 4 });
+const pool = new pg.Pool(testConnectionString
+  ? { connectionString: testConnectionString, max: 4 }
+  : { ...DB_DEFAULTS, max: 4 });
 const decisionId = randomUUID();
 const scopePrefix = `map-manifest-itest-${process.pid}`;
 

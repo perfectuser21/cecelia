@@ -54,18 +54,22 @@ WORKDIR /app
 # 向上找 /repo/node_modules）
 COPY --from=deps /repo/node_modules /repo/node_modules
 COPY --from=deps /repo/packages/brain/node_modules /repo/packages/brain/node_modules
+# Brain 源码运行在 /app；把 hoisted 依赖与 workspace-local 冲突版本合并到
+# /app/node_modules，避免 ajv 等只能落在 packages/brain/node_modules 的直接依赖不可见。
+COPY --from=deps /repo/node_modules /app/node_modules
+COPY --from=deps /repo/packages/brain/node_modules /app/node_modules
 # 预览环境用根 lock 对账分支依赖；没有这个不可变指纹时只能为每个 PR 重装依赖。
 COPY --from=deps /repo/package.json /repo/package.json
 COPY --from=deps /repo/package-lock.json /repo/package-lock.json
-# 运行期仍走 /app（server.js 期待此路径），把 node_modules 也链到 /app
-RUN ln -s /repo/node_modules /app/node_modules
-
 # 源代码
 COPY packages/brain/server.js ./
 COPY packages/brain/src/ ./src/
 COPY packages/brain/config/ ./config/
 COPY packages/brain/migrations/ ./migrations/
 COPY packages/brain/package.json ./
+
+# 构建期启动导入守卫：新增 workspace-local runtime 依赖时，镜像必须当场失败而非部署后秒死。
+RUN node --input-type=module -e "await import('./src/lib/map-manifest-schema.js')"
 
 # Root user: 容器内需要访问 /var/run/docker.sock 调 dockerd spawn 兄弟容器。
 # macOS 宿主没有 docker group，gid 映射不稳定；direct root 最简单。
