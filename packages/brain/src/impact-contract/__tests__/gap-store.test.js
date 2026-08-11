@@ -258,7 +258,7 @@ describe('FR-5 Gap Ledger', () => {
 
   test('最后一个 gap resolved 后恢复 source task', async () => {
     const calls = [];
-    const assertionId = 'assertion-1';
+    const assertionId = 'packages/brain/src/assertion-1.test.js';
     const assertionDigest = createHash('sha256').update(assertionId).digest('hex');
     const journeyStepLinkId = '11111111-1111-4111-8111-111111111111';
     const contractId = '22222222-2222-4222-8222-222222222222';
@@ -291,7 +291,7 @@ describe('FR-5 Gap Ledger', () => {
             contract_hash: contractHash,
             repo: 'perfectuser21/cecelia', contract_body: { required_assertions: [{
             assertion_id: assertionId,
-            command: 'npm test',
+            command: `npx vitest run ${assertionId}`,
             covers_capability_ids: ['billing'],
             journey_step_link_id: journeyStepLinkId,
             assertion_revision: 1,
@@ -321,7 +321,7 @@ describe('FR-5 Gap Ledger', () => {
             assertion_revision: 1,
             current_assertion_revision: 1,
             assertion_digest: assertionDigest,
-            command_argv: ['bash', '-lc', 'npm test'],
+            command_argv: ['npx', 'vitest', 'run', assertionId],
             completed_at: completedAt,
             output_digest: 'a'.repeat(64),
             scenario_count: 1,
@@ -348,6 +348,65 @@ describe('FR-5 Gap Ledger', () => {
     expect(resume).toBeDefined();
     expect(resume.sql).toContain('NOT EXISTS');
     expect(resume.params).toContain('source-task');
+  });
+
+  test('聚合断言缺少任一 source binding 的可信回执时不得 resolved', async () => {
+    const assertionId = 'packages/brain/src/example.test.js';
+    const assertionDigest = createHash('sha256').update(assertionId).digest('hex');
+    const primaryLinkId = '11111111-1111-4111-8111-111111111111';
+    const secondaryLinkId = '22222222-2222-4222-8222-222222222222';
+    const contractId = '33333333-3333-4333-8333-333333333333';
+    const contractHash = 'c'.repeat(64);
+    const revision = 'a'.repeat(40);
+    const completedAt = '2026-08-11T04:00:00.000Z';
+    const db = {
+      query: vi.fn(async (sql) => {
+        const s = String(sql);
+        if (s.startsWith('SELECT * FROM harness_gaps')) return { rows: [{
+          id: 'gap', source_task_id: 'source-task', repair_task_id: 'repair-task',
+          impact_node_id: 'billing', status: 'verifying', current_revision: revision,
+        }] };
+        if (s.startsWith('SELECT id FROM tasks')) return { rows: [{ id: 'source-task' }] };
+        if (s.startsWith('SELECT status, completed_at FROM tasks')) {
+          return { rows: [{ status: 'completed', completed_at: completedAt }] };
+        }
+        if (s.includes('FROM harness_impact_contracts')) return { rows: [{
+          id: contractId, contract_hash: contractHash, repo: 'perfectuser21/cecelia',
+          contract_body: { required_assertions: [{
+            assertion_id: assertionId,
+            command: `npx vitest run ${assertionId}`,
+            covers_capability_ids: ['billing'],
+            journey_step_link_id: primaryLinkId, assertion_revision: 1,
+            assertion_digest: assertionDigest,
+            source_bindings: [
+              { journey_step_link_id: primaryLinkId, assertion_revision: 1, assertion_digest: assertionDigest },
+              { journey_step_link_id: secondaryLinkId, assertion_revision: 2, assertion_digest: assertionDigest },
+            ],
+          }] },
+        }] };
+        if (s.includes('MAX(created_at) AS verification_started_at')) {
+          return { rows: [{ verification_started_at: completedAt }] };
+        }
+        if (s.includes('FROM journey_assertion_receipts')) return { rows: [{
+          id: 'receipt-primary', journey_step_link_id: primaryLinkId,
+          verdict: 'PASS', exit_code: 0, synthetic: false,
+          executor_kind: 'brain_assertion_runner', machine_id: 'runner-1',
+          source_repo: 'perfectuser21/cecelia', source_sha: revision,
+          impact_contract_id: contractId, impact_contract_hash: contractHash,
+          verification_task_id: 'repair-task', assertion_ref_snapshot: assertionId,
+          current_assertion_ref: assertionId, assertion_revision: 1,
+          current_assertion_revision: 1, assertion_digest: assertionDigest,
+          command_argv: ['npx', 'vitest', 'run', assertionId], completed_at: completedAt,
+          output_digest: 'a'.repeat(64), scenario_count: 1,
+          scenario_evidence: { passed: 1 },
+        }] };
+        return { rows: [] };
+      }),
+    };
+
+    await expect(transitionGapStatus(db, 'gap', 'resolved', {
+      resolutionEvidence: { assertion_id: assertionId, receipt_id: 'receipt-primary', revision },
+    })).rejects.toMatchObject({ code: 'invalid_resolution_evidence' });
   });
 
   test('不能用另一条 Journey Step Link 的 PASS 回执关闭 gap', async () => {

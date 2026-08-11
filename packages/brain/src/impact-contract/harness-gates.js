@@ -2,6 +2,7 @@ import { evaluateDiffGate } from './diff-gate.js';
 import { getActiveImpactContract } from './contract-store.js';
 import { getGapById, transitionGapStatus } from './gap-store.js';
 import { evaluateStructureGate } from './structure-gate.js';
+import { canonicalAssertionArgv } from '../lib/gp-assertion-command.js';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 
@@ -123,15 +124,23 @@ export async function verifyImpactMergeFence(db, {
         AND receipt.executor_kind = 'brain_assertion_runner'`,
     [runId, headRevision, active.id, active.contract_hash],
   );
-  const allCovered = assertions.every((assertion) => receiptResult.rows.some((receipt) => (
-    receipt.journey_step_link_id === assertion.journey_step_link_id
-    && Number(receipt.assertion_revision) === assertion.assertion_revision
-    && receipt.assertion_digest === assertion.assertion_digest
-    && receipt.assertion_ref_snapshot === assertion.assertion_id
-    && Number(receipt.current_assertion_revision) === assertion.assertion_revision
-    && receipt.current_assertion_ref === assertion.assertion_id
-    && JSON.stringify(receipt.command_argv) === JSON.stringify(['bash', '-lc', assertion.command])
-  )));
+  const allCovered = assertions.every((assertion) => {
+    const bindings = assertion.source_bindings ?? [{
+      journey_step_link_id: assertion.journey_step_link_id,
+      assertion_revision: assertion.assertion_revision,
+      assertion_digest: assertion.assertion_digest,
+    }];
+    return bindings.every((binding) => receiptResult.rows.some((receipt) => (
+      receipt.journey_step_link_id === binding.journey_step_link_id
+      && Number(receipt.assertion_revision) === binding.assertion_revision
+      && receipt.assertion_digest === binding.assertion_digest
+      && receipt.assertion_ref_snapshot === assertion.assertion_id
+      && Number(receipt.current_assertion_revision) === binding.assertion_revision
+      && receipt.current_assertion_ref === assertion.assertion_id
+      && JSON.stringify(receipt.command_argv)
+        === JSON.stringify(canonicalAssertionArgv(assertion.assertion_id))
+    )));
+  });
   return allCovered
     ? { gate: 'pass', contract: active }
     : { gate: 'blocked', reason: 'impact_assertion_receipts_missing' };

@@ -1,22 +1,7 @@
-/**
- * gap-store.js — Gap Ledger 持久化层（FR-5）
- *
- * 实现 Gap 生命周期状态机：
- *   open → assigned → fixing → verifying → resolved（终态）
- *   verifying → reopened → assigned（验证失败回滚）
- *
- * 规则：
- * - 非法跳转 → 抛出 { code: 'invalid_transition' } 错误
- * - 重复回调（同 idempotency_key）→ 幂等返回，不重复建事件
- * - verifying → resolved 只接受当前合同绑定的不可变 receipt_id
- * - owner 不存在 → gap 进入 triage 状态，写告警记录
- *
- * sprint: 08110022-relay-d96c9fa0 ws5
-*/
+/** Gap Ledger 状态机与持久化；resolved 只接受当前合同的可信 receipt。 */
 
 import { createHash } from 'node:crypto';
-
-// ---------- 状态机定义 ----------
+import { canonicalAssertionArgv } from '../lib/gp-assertion-command.js';
 
 /**
  * VALID_TRANSITIONS — 状态机合法跳转表。
@@ -63,6 +48,17 @@ export function validateTransition(from, to) {
     err.httpStatus = 422;
     throw err;
   }
+}
+
+function assertionSourceBindings(assertion) {
+  const bindings = Array.isArray(assertion?.source_bindings) && assertion.source_bindings.length > 0
+    ? assertion.source_bindings
+    : [{
+      journey_step_link_id: assertion?.journey_step_link_id,
+      assertion_revision: assertion?.assertion_revision,
+      assertion_digest: assertion?.assertion_digest,
+    }];
+  return bindings;
 }
 
 // ---------- 写操作 ----------
@@ -262,11 +258,12 @@ async function transitionGapStatusOnClient(db, gapId, newStatus, {
       err.httpStatus = 409;
       throw err;
     }
-    if (
-      !contractAssertion.journey_step_link_id
-      || !Number.isInteger(contractAssertion.assertion_revision)
-      || !/^[0-9a-f]{64}$/.test(contractAssertion.assertion_digest ?? '')
-    ) {
+    const sourceBindings = assertionSourceBindings(contractAssertion);
+    if (sourceBindings.some((binding) => (
+      !binding?.journey_step_link_id
+      || !Number.isInteger(binding.assertion_revision)
+      || !/^[0-9a-f]{64}$/.test(binding.assertion_digest ?? '')
+    ))) {
       const err = new Error('active Impact Contract 缺少不可变断言绑定');
       err.code = 'assertion_binding_missing';
       err.httpStatus = 409;
@@ -300,16 +297,34 @@ async function transitionGapStatusOnClient(db, gapId, newStatus, {
               verification_run.current_task_id AS verification_task_id
        FROM journey_assertion_receipts AS receipt
        JOIN journey_step_links AS link ON link.id = receipt.journey_step_link_id
-       LEFT JOIN initiative_runs AS verification_run
+       JOIN initiative_runs AS verification_run
          ON verification_run.id::text = receipt.run_id
-       WHERE receipt.id = $1`,
-      [resolutionEvidence.receipt_id]
+        AND verification_run.current_task_id = $2
+       JOIN harness_attempts AS attempt
+         ON attempt.id = receipt.harness_attempt_id
+        AND attempt.run_id::text = receipt.run_id
+        AND attempt.role = 'evaluator'
+        AND attempt.status = 'completed'
+        AND attempt.result->'decision'->>'outcome' IN ('PASS', 'FIXED')
+       WHERE receipt.assertion_ref_snapshot = $1
+         AND receipt.impact_contract_id = $3
+         AND receipt.impact_contract_hash = $4
+         AND receipt.source_repo = $5
+         AND receipt.source_sha = $6`,
+      [
+        resolutionEvidence.assertion_id,
+        gap.repair_task_id,
+        contractResult.rows[0]?.id,
+        contractResult.rows[0]?.contract_hash,
+        contractResult.rows[0]?.repo,
+        gap.current_revision,
+      ]
     );
-    const receipt = receiptResult.rows[0];
     const expectedDigest = createHash('sha256')
-      .update(String(receipt?.assertion_ref_snapshot ?? ''))
+      .update(String(resolutionEvidence.assertion_id))
       .digest('hex');
-    const receiptTrusted = receipt
+    const trustedReceipts = receiptResult.rows.filter((receipt) => (
+      receipt
       && receipt.verdict === 'PASS'
       && receipt.exit_code === 0
       && receipt.synthetic === false
@@ -322,23 +337,28 @@ async function transitionGapStatusOnClient(db, gapId, newStatus, {
       && receipt.impact_contract_id === contractResult.rows[0]?.id
       && receipt.impact_contract_hash === contractResult.rows[0]?.contract_hash
       && receipt.verification_task_id === gap.repair_task_id
-      && receipt.journey_step_link_id === contractAssertion.journey_step_link_id
       && receipt.assertion_ref_snapshot === resolutionEvidence.assertion_id
       && receipt.current_assertion_ref === receipt.assertion_ref_snapshot
-      && Number(receipt.assertion_revision) === contractAssertion.assertion_revision
       && Number(receipt.current_assertion_revision) === Number(receipt.assertion_revision)
-      && receipt.assertion_digest === contractAssertion.assertion_digest
       && receipt.assertion_digest === expectedDigest
-      && JSON.stringify(receipt.command_argv) === JSON.stringify([
-        'bash', '-lc', contractAssertion.command,
-      ])
+      && JSON.stringify(receipt.command_argv)
+        === JSON.stringify(canonicalAssertionArgv(contractAssertion.assertion_id))
       && Date.parse(receipt.completed_at) >= Date.parse(verificationStartedAt)
       && typeof receipt.output_digest === 'string'
       && /^[0-9a-f]{64}$/.test(receipt.output_digest)
       && Number(receipt.scenario_count) > 0
       && receipt.scenario_evidence
-      && Object.keys(receipt.scenario_evidence).length > 0;
-    if (!receiptTrusted) {
+      && Object.keys(receipt.scenario_evidence).length > 0
+    ));
+    const submittedReceiptTrusted = trustedReceipts.some(
+      (receipt) => receipt.id === resolutionEvidence.receipt_id,
+    );
+    const allBindingsCovered = sourceBindings.every((binding) => trustedReceipts.some((receipt) => (
+      receipt.journey_step_link_id === binding.journey_step_link_id
+      && Number(receipt.assertion_revision) === binding.assertion_revision
+      && receipt.assertion_digest === binding.assertion_digest
+    )));
+    if (!submittedReceiptTrusted || !allBindingsCovered) {
       const err = new Error('assertion receipt 不可信、已过期或 revision 不匹配');
       err.code = 'invalid_resolution_evidence';
       err.httpStatus = 422;

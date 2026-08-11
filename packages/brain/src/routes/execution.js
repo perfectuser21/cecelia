@@ -20,6 +20,8 @@ import { triggerCeceliaRun } from '../executor.js';
 import { REVIEW_TASK_TYPES } from '../lib/review-task-types.js';
 import { serialUnlockNext, writeReviewResult, promoteRegressionOnHarnessMerged } from '../lib/callback-postprocess.js';
 import { writeCascadeCellStatuses } from '../lib/cascade-writeback.js';
+import { internalServiceHeaders } from '../lib/internal-service-auth.js';
+import { finalizeHarnessReportFeature } from '../lib/harness-report-writeback.js';
 import { updateDesireFromTask } from '../desire-feedback.js';
 import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
 import { resolveRelatedFailureMemories } from './shared.js';
@@ -2369,7 +2371,7 @@ ${resultStr.substring(0, 2000)}
               try {
                 const patchResp = await fetch(`http://localhost:5221/api/brain/journey_features/${featureId}`, {
                   method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
+                  headers: internalServiceHeaders({ 'Content-Type': 'application/json' }),
                   body: JSON.stringify({ thickness: 'medium' }),
                 });
                 if (patchResp.ok) {
@@ -2440,6 +2442,15 @@ ${resultStr.substring(0, 2000)}
 
         // harness_report 失败自动重试（result=null 表示 session 崩溃）
         if (harnessType === 'harness_report') {
+          if (result !== null && newStatus === 'completed' && harnessPayload.feature_id) {
+            const writeback = await finalizeHarnessReportFeature(pool, {
+              featureId: harnessPayload.feature_id,
+              prUrl: harnessPayload.pr_url,
+            });
+            if (!writeback.updated) {
+              throw new Error(`harness report Feature 回写失败: ${writeback.reason}`);
+            }
+          }
           if (result === null) {
             const retry_count = harnessPayload.retry_count || 0;
             if (retry_count >= 3) {

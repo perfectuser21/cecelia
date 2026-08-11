@@ -44,6 +44,16 @@ describe('Universal Map deterministic structure projector', () => {
     expect(projection.nodes.every(({ node_id }) => /^[0-9a-f]{64}$/.test(node_id))).toBe(true);
   });
 
+  it('旧 projector 保留 Capability 路径归属，供 radius 做机械锚定', () => {
+    const projection = build();
+    const f1 = projection.nodes.find(({ node_key }) => node_key === 'F1');
+
+    expect(f1.attributes).toMatchObject({
+      path_prefixes: expect.arrayContaining(['packages/brain/']),
+      exact_paths: expect.arrayContaining(['.brain-versions', 'DEFINITION.md']),
+    });
+  });
+
   it('Boundary 只生成 hands_off_to 边，不生成 Boundary 节点', () => {
     const projection = build();
     const boundaries = projection.edges.filter(({ edge_type }) => edge_type === 'hands_off_to');

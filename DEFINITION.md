@@ -8,21 +8,27 @@
 
 
 
-**Brain 版本**: 1.272.1
+**Brain 版本**: 1.272.2
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.0 — Universal Map Projection Engine
+## Brain 1.272.2 — Impact Contract 不可变证据闭环
 
-- 引入 Map Manifest JSON Schema（scope × value_streams × capabilities × boundaries × crosscut_pool）作为业务意图的机器可读载体。
-- 确定性投影引擎：business intent × implementation facts → digest-locked projection run，节点/边原子切换，读者不见半张图。
-- 统一 Map API（`/api/brain/map`）作为唯一读接口；island-gate 集成未归位文件探测。
-- 完整 Manifest 激活在同一事务内生成 projection run、稳定节点与关系边，写入失败时旧 active Manifest/Projection 保持不变。
-- Value Stream、Capability、Cross-cut 与 Shared Prerequisite 由通用规则确定性投影；Boundary 只生成 `hands_off_to` 边。
-- Node/Edge stable ID 与 projection digest 可重复重建，核心不含 Cecelia 或 ZenithJoy 领域身份常量。
-- Schema 地板推进到 405。
+- 关系图按 Git revision 保留不可变快照；同 revision 出现不同边时扫描事务 fail-closed，在途合同始终读取原 base revision 对应的 projection 与图。
+- Impact radius 以显式 repo→scope 白名单、manifest digest、projection digest 锁定证据，拒绝 basename 碰撞与同 SHA 下的投影偷换。
+- 当前仅激活 Cecelia repo→scope；ZenithJoy 在其 manifest/projection/scan 上线前保持未受管，避免宣称不存在的权威证据。
+- 同一 canonical assertion 可聚合多个 Journey source binding；Runner 只执行一次，但为每个 link/revision 写独立 receipt，任一绑定漂移都会换版。
+- 每个受影响 Capability 必须有当前 runnable assertion 覆盖；新增、移除或换版断言均会刷新合同或形成 Gap，不能把无法验收的范围放成假 pass。
+- Runner 用独立 nobody 身份、空白环境、只读 HOME 与镜像固定工具链执行无 shell 断言；Provider 无法用 profile/PATH 污染伪造 receipt。
+- Capability Manifest 持久化 path_prefixes/exact_paths；新增文件与治理文件按锁定版本的最长路径所有权归位，未登记路径继续 fail-closed。
+- Impact Contract 语义字段与 Gap 权威身份由 PostgreSQL trigger 冻结；未解决 Gap 不可改归属或删除，无法经直写绕过任务阻塞。
+- Harness Report Runner 只产报告 artifact；Feature 完成态与测试锚点由已认证的 Brain terminal callback 可信写回。
+- Map/Impact/Journey 写入口使用共享 internal token；生产 Compose、蓝绿 canary、staging 与跨 checkout scanner 读取同一宿主 credentials SSOT。
+- Capability Mapper 在 Runner 只产 manifest artifact，拍板后的提交/激活统一走读取 credentials SSOT 的受信宿主 adapter。
+- 扫描只允许 clean main/exact SHA；批末复核 checkout 与四类 header revision，同 SHA 每 10 分钟保鲜。
+- Schema 地板推进到 408。
 
 ---
 
@@ -38,6 +44,16 @@
 - merge fence 绑定当前合同、当前 Journey 断言版本、completed evaluator attempt 与精确 PR HEAD，并在合并命令中使用 `--match-head-commit` 消除竞态。
 - Harness 孤儿守卫会从 `initiative_runs.pr_url` 补齐 `generator_done` 交接证据，避免已产出 PR 的 run 被误终态化和重复派发。
 - 单元回归、正式迁移检查、真实 PostgreSQL 闭环及 real-env smoke 已纳入 CI。
+
+## Brain 1.272.0 — Universal Map Projection Engine
+
+- 引入 Map Manifest JSON Schema（scope × value_streams × capabilities × boundaries × crosscut_pool）作为业务意图的机器可读载体。
+- 确定性投影引擎：business intent × implementation facts → digest-locked projection run，节点/边原子切换，读者不见半张图。
+- 统一 Map API（`/api/brain/map`）作为唯一读接口；island-gate 集成未归位文件探测。
+- 完整 Manifest 激活在同一事务内生成 projection run、稳定节点与关系边，写入失败时旧 active Manifest/Projection 保持不变。
+- Value Stream、Capability、Cross-cut 与 Shared Prerequisite 由通用规则确定性投影；Boundary 只生成 `hands_off_to` 边。
+- Node/Edge stable ID 与 projection digest 可重复重建，核心不含 Cecelia 或 ZenithJoy 领域身份常量。
+- Schema 地板推进到 405。
 
 ---
 
@@ -2351,7 +2367,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '407'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '408'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

@@ -30,4 +30,17 @@ describe('gaps route', () => {
       .filter(Boolean);
     expect(paths).toContain('/:id/repair-task');
   });
+
+  test('所有 Gap 写入口都挂 internalAuthOrLoopback，匿名远端不能制造阻塞', () => {
+    const writeRoutes = harnessGapsRouter.stack.filter((layer) => (
+      layer.route && ['post', 'patch'].some((method) => layer.route.methods[method])
+    ));
+    expect(writeRoutes.map((layer) => layer.route.path)).toEqual(expect.arrayContaining([
+      '/', '/:id/repair-task', '/:id/status',
+    ]));
+    for (const layer of writeRoutes) {
+      expect(layer.route.stack.map((handler) => handler.handle.name))
+        .toContain('internalAuthOrLoopback');
+    }
+  });
 });

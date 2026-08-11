@@ -10,11 +10,13 @@ describe('writeCascadeCellStatuses — S3 格子状态回写', () => {
   let fetchMock;
 
   beforeEach(() => {
+    process.env.CECELIA_INTERNAL_TOKEN = 'cascade-test-token';
     fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal('fetch', fetchMock);
   });
 
   afterEach(() => {
+    delete process.env.CECELIA_INTERNAL_TOKEN;
     vi.unstubAllGlobals();
   });
 
@@ -28,6 +30,7 @@ describe('writeCascadeCellStatuses — S3 格子状态回写', () => {
       'http://localhost:5221/api/brain/journey_step_links/l1',
       expect.objectContaining({
         method: 'PATCH',
+        headers: expect.objectContaining({ Authorization: 'Bearer cascade-test-token' }),
         body: JSON.stringify({ cell_status: 'green', assertion_ref: 'tests/crm.test.ts' }),
       })
     );

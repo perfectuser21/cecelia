@@ -8,6 +8,9 @@ const LINK_ID = '33333333-3333-4333-8333-333333333333';
 const CONTRACT_ID = '44444444-4444-4444-8444-444444444444';
 const HEAD_SHA = 'a'.repeat(40);
 const DIGEST = 'b'.repeat(64);
+const ASSERTION_ID = 'packages/brain/src/assert-1.test.js';
+const ASSERTION_COMMAND = `npx vitest run ${ASSERTION_ID}`;
+const ASSERTION_ARGV = ['npx', 'vitest', 'run', ASSERTION_ID];
 
 function attempt() {
   return {
@@ -24,8 +27,8 @@ function attempt() {
           repo: 'perfectuser21/cecelia',
         },
         required_assertions: [{
-          assertion_id: 'assert-1',
-          command: 'npm test',
+          assertion_id: ASSERTION_ID,
+          command: ASSERTION_COMMAND,
           covers_capability_ids: ['brain'],
           journey_step_link_id: LINK_ID,
           assertion_revision: 1,
@@ -41,8 +44,8 @@ function result(check = {}) {
     status: 'completed',
     decision: { outcome: 'PASS' },
     checks: [{
-      assertion_id: 'assert-1',
-      command_argv: ['bash', '-lc', 'npm test'],
+      assertion_id: ASSERTION_ID,
+      command_argv: ASSERTION_ARGV,
       journey_step_link_id: LINK_ID,
       assertion_revision: 1,
       assertion_digest: DIGEST,
@@ -53,7 +56,7 @@ function result(check = {}) {
       scenario_evidence: {
         pr_head_sha: HEAD_SHA,
         machine: 'us-mac-m4',
-        cases: ['assert-1'],
+        cases: [ASSERTION_ID],
       },
       started_at: '2026-08-11T04:00:00.000Z',
       completed_at: '2026-08-11T04:01:00.000Z',
@@ -89,6 +92,27 @@ describe('trusted evaluator assertion receipt writer', () => {
     expect(db.query).toHaveBeenCalledOnce();
   });
 
+  it('同一命令一次可信执行为所有 Journey source binding 写独立 receipt', async () => {
+    const secondLink = '55555555-5555-4555-8555-555555555555';
+    const aggregated = attempt();
+    aggregated.task_bundle.inputs.required_assertions[0].source_bindings = [
+      { journey_step_link_id: LINK_ID, assertion_revision: 1, assertion_digest: DIGEST },
+      { journey_step_link_id: secondLink, assertion_revision: 3, assertion_digest: DIGEST },
+    ];
+    const db = { query: vi.fn()
+      .mockResolvedValueOnce({ rows: [{ id: 'receipt-1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'receipt-2' }] }) };
+
+    const receipts = await persistTrustedEvaluatorReceipts(db, {
+      attempt: aggregated,
+      result: result(),
+    });
+
+    expect(receipts).toEqual([{ id: 'receipt-1' }, { id: 'receipt-2' }]);
+    expect(db.query).toHaveBeenCalledTimes(2);
+    expect(db.query.mock.calls[1][1]).toEqual(expect.arrayContaining([secondLink, 3]));
+  });
+
   it('缺断言证据或命令被替换时拒绝 evaluator PASS', async () => {
     const db = { query: vi.fn() };
     await expect(persistTrustedEvaluatorReceipts(db, {
@@ -97,7 +121,7 @@ describe('trusted evaluator assertion receipt writer', () => {
     })).rejects.toMatchObject({ code: 'assertion_receipt_evidence_invalid' });
     await expect(persistTrustedEvaluatorReceipts(db, {
       attempt: attempt(),
-      result: result({ command_argv: ['bash', '-lc', 'true'] }),
+      result: result({ command_argv: ['bash', 'scripts/smoke/other.sh'] }),
     })).rejects.toMatchObject({ code: 'assertion_receipt_evidence_invalid' });
     expect(db.query).not.toHaveBeenCalled();
   });

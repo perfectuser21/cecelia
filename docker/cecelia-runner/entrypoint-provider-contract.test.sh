@@ -30,7 +30,7 @@ PROPOSER_FINALIZER_SECTION="$(sed -n '/proposer-finalizer:start/,/proposer-final
   echo 'missing proposer finalizer' >&2
   exit 1
 }
-grep -Fq 'npm ci --ignore-scripts --no-audit --no-fund' "$ENTRYPOINT" || {
+grep -Fq 'ci --ignore-scripts --no-audit --no-fund' "$ENTRYPOINT" || {
   echo 'runner dependency install can execute candidate lifecycle scripts' >&2
   exit 1
 }
@@ -213,6 +213,8 @@ if ! grep -q 'HARNESS_CALLBACK_TOKEN' <<<"$SECTION"; then
 fi
 
 eval "$SECTION"
+RUNNER_ASSERTION_EXECUTOR="$SCRIPT_DIR/assertion-exec.mjs"
+RUNNER_ASSERTION_NODE_BIN="$(command -v node)"
 type provider_result_schema_json >/dev/null 2>&1 || {
   echo 'missing Provider result schema selector' >&2
   exit 1
@@ -637,18 +639,38 @@ jq -e '.checks == [{"command":"npm test","exit_code":0,"log_tail":"12 tests pass
 
 # Impact Contract assertions are executed by the authenticated runner after the
 # provider returns. The model cannot manufacture these receipts in its output.
+if [[ "${RUNNER_CONTRACT_REAL_IDENTITIES:-0}" == "1" ]]; then
+  [[ "$(id -u)" == "0" ]] || {
+    echo 'real identity contract requires root' >&2
+    exit 1
+  }
+  PROVIDER_IDENTITY_PREFIX=(
+    setpriv --reuid=cecelia --regid=cecelia --init-groups --no-new-privs
+    --bounding-set=-all --inh-caps=-all --ambient-caps=-all --
+  )
+  ASSERTION_IDENTITY_PREFIX=(
+    setpriv --reuid=nobody --regid=nogroup --clear-groups --no-new-privs
+    --bounding-set=-all --inh-caps=-all --ambient-caps=-all --
+  )
+  RUNNER_ASSERTION_EXECUTOR=/usr/local/lib/cecelia/assertion-exec.mjs
+  RUNNER_ASSERTION_NODE_BIN=/usr/local/bin/node
+fi
 git -C "$EVIDENCE_TMP" init -q
 git -C "$EVIDENCE_TMP" config user.email runner-test@cecelia.local
 git -C "$EVIDENCE_TMP" config user.name cecelia-runner-test
 printf 'baseline\n' > "$EVIDENCE_TMP/tracked.txt"
-printf '#!/usr/bin/env bash\nexit 9\n' > "$EVIDENCE_TMP/assertion.sh"
-git -C "$EVIDENCE_TMP" add tracked.txt assertion.sh
+mkdir -p "$EVIDENCE_TMP/scripts/smoke"
+printf '#!/usr/bin/env bash\nprintf "runner-proof\\n"\n' \
+  > "$EVIDENCE_TMP/scripts/smoke/runner-proof.sh"
+printf '#!/usr/bin/env bash\nexit 9\n' > "$EVIDENCE_TMP/scripts/smoke/assertion.sh"
+printf '#!/usr/bin/env bash\nprintf "failure\\n" >&2\nexit 7\n' \
+  > "$EVIDENCE_TMP/scripts/smoke/failure.sh"
+git -C "$EVIDENCE_TMP" add tracked.txt scripts/smoke
 git -C "$EVIDENCE_TMP" -c core.hooksPath=/dev/null commit -qm baseline
 RUNNER_ASSERTION_SHA="$(git -C "$EVIDENCE_TMP" rev-parse HEAD)"
-RUNNER_ASSERTIONS_JSON="$(jq -cn --arg command \
-  'test -z "${HARNESS_CALLBACK_TOKEN:-}" && printf "runner-proof\n"' '[{
-  assertion_id:"runner-proof",
-  command:$command,
+RUNNER_ASSERTIONS_JSON="$(jq -cn '[{
+  assertion_id:"scripts/smoke/runner-proof.sh",
+  command:"bash scripts/smoke/runner-proof.sh",
   covers_capability_ids:["capability-proof"],
   journey_step_link_id:"11111111-1111-4111-8111-111111111111",
   assertion_revision:1,
@@ -666,13 +688,13 @@ EXPECTED_RUNNER_DIGEST="$(printf 'runner-proof\n' | shasum -a 256 | awk '{print 
 jq -e --arg sha "$RUNNER_ASSERTION_SHA" --arg digest "$EXPECTED_RUNNER_DIGEST" '
   .decision.outcome == "PASS"
   and (.checks | length) == 1
-  and .checks[0].assertion_id == "runner-proof"
-  and .checks[0].command_argv == ["bash", "-lc", "test -z \"${HARNESS_CALLBACK_TOKEN:-}\" && printf \"runner-proof\\n\""]
+  and .checks[0].assertion_id == "scripts/smoke/runner-proof.sh"
+  and .checks[0].command_argv == ["bash", "scripts/smoke/runner-proof.sh"]
   and .checks[0].exit_code == 0
   and .checks[0].output_digest == $digest
   and .checks[0].scenario_evidence.pr_head_sha == $sha
   and .checks[0].scenario_evidence.machine == "runner-machine"
-  and .checks[0].scenario_evidence.cases == ["runner-proof"]
+  and .checks[0].scenario_evidence.cases == ["scripts/smoke/runner-proof.sh"]
   and (.checks[0].started_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))
   and (.checks[0].completed_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))
 ' "$EVIDENCE_TMP/result.json" >/dev/null || {
@@ -680,16 +702,56 @@ jq -e --arg sha "$RUNNER_ASSERTION_SHA" --arg digest "$EXPECTED_RUNNER_DIGEST" '
   exit 1
 }
 
+# Provider 与 assertion 若共用 HOME，登录 shell 会加载 Provider 写入的 profile，
+# 从而用假 npx 把不存在的测试伪造成 PASS。Runner 必须使用干净 HOME、固定工具链、
+# 非 shell argv 执行，使该攻击稳定 FAIL。
+PROVIDER_HOME="$EVIDENCE_TMP/provider-home"
+FAKE_BIN="$EVIDENCE_TMP/fake-bin"
+mkdir -p "$PROVIDER_HOME" "$FAKE_BIN"
+cat > "$FAKE_BIN/npx" <<'SH'
+#!/usr/bin/env bash
+printf 'FORGED_ASSERTION_TOOL\n'
+exit 0
+SH
+chmod +x "$FAKE_BIN/npx"
+printf 'export PATH="%s:$PATH"\n' "$FAKE_BIN" > "$PROVIDER_HOME/.bash_profile"
+HOME_POISON_ASSERTIONS_JSON="$(jq -cn '[{
+  assertion_id:"packages/brain/src/never-exists.test.js",
+  command:"npx vitest run packages/brain/src/never-exists.test.js",
+  covers_capability_ids:["capability-proof"],
+  journey_step_link_id:"44444444-4444-4444-8444-444444444444",
+  assertion_revision:1,
+  assertion_digest:("d" * 64)
+}]')"
+cat > "$EVIDENCE_TMP/result.json" <<'JSON'
+{"status":"completed","checks":[],"decision":{"outcome":"PASS","reason":"provider verified"}}
+JSON
+HOME="$PROVIDER_HOME" HARNESS_NODE=evaluator EVALUATOR_EVIDENCE_PREPARED=1 \
+  WORKTREE_PATH="$EVIDENCE_TMP" PR_HEAD_SHA="$RUNNER_ASSERTION_SHA" \
+  CECELIA_MACHINE_ID=runner-machine \
+  HARNESS_REQUIRED_ASSERTIONS_JSON="$HOME_POISON_ASSERTIONS_JSON" \
+  merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
+jq -e '
+  .decision.outcome == "FAIL"
+  and (.checks | length) == 1
+  and .checks[0].assertion_id == "packages/brain/src/never-exists.test.js"
+  and .checks[0].exit_code != 0
+  and (.checks[0].output_tail | contains("FORGED_ASSERTION_TOOL") | not)
+' "$EVIDENCE_TMP/result.json" >/dev/null || {
+  echo 'runner trusted Provider-controlled HOME/PATH for required assertions' >&2
+  exit 1
+}
+
 HIDDEN_MUTATION_ASSERTIONS_JSON="$(jq -cn '[{
-  assertion_id:"hidden-mutation",
-  command:"bash assertion.sh",
+  assertion_id:"scripts/smoke/assertion.sh",
+  command:"bash scripts/smoke/assertion.sh",
   covers_capability_ids:["capability-proof"],
   journey_step_link_id:"33333333-3333-4333-8333-333333333333",
   assertion_revision:1,
   assertion_digest:("c" * 64)
 }]')"
-git -C "$EVIDENCE_TMP" update-index --assume-unchanged assertion.sh
-printf '#!/usr/bin/env bash\nexit 0\n' > "$EVIDENCE_TMP/assertion.sh"
+git -C "$EVIDENCE_TMP" update-index --assume-unchanged scripts/smoke/assertion.sh
+printf '#!/usr/bin/env bash\nexit 0\n' > "$EVIDENCE_TMP/scripts/smoke/assertion.sh"
 cat > "$EVIDENCE_TMP/result.json" <<'JSON'
 {"status":"completed","checks":[],"decision":{"outcome":"PASS","reason":"provider verified"}}
 JSON
@@ -700,14 +762,14 @@ HARNESS_NODE=evaluator EVALUATOR_EVIDENCE_PREPARED=1 \
   merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
 jq -e '
   .decision.outcome == "FAIL"
-  and .checks[0].assertion_id == "hidden-mutation"
+  and .checks[0].assertion_id == "scripts/smoke/assertion.sh"
   and .checks[0].exit_code == 9
 ' "$EVIDENCE_TMP/result.json" >/dev/null || {
   echo 'runner executed an assume-unchanged provider mutation instead of the exact commit' >&2
   exit 1
 }
-git -C "$EVIDENCE_TMP" update-index --no-assume-unchanged assertion.sh
-git -C "$EVIDENCE_TMP" restore assertion.sh
+git -C "$EVIDENCE_TMP" update-index --no-assume-unchanged scripts/smoke/assertion.sh
+git -C "$EVIDENCE_TMP" restore scripts/smoke/assertion.sh
 
 printf 'provider mutation\n' > "$EVIDENCE_TMP/tracked.txt"
 cat > "$EVIDENCE_TMP/result.json" <<'JSON'
@@ -743,8 +805,8 @@ jq -e '
 }
 
 FAILING_ASSERTIONS_JSON="$(jq -cn '[{
-  assertion_id:"runner-failure",
-  command:"printf failure >&2; exit 7",
+  assertion_id:"scripts/smoke/failure.sh",
+  command:"bash scripts/smoke/failure.sh",
   covers_capability_ids:["capability-proof"],
   journey_step_link_id:"22222222-2222-4222-8222-222222222222",
   assertion_revision:1,
@@ -759,7 +821,7 @@ HARNESS_NODE=evaluator EVALUATOR_EVIDENCE_PREPARED=1 \
   merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
 jq -e '
   .decision.outcome == "FAIL"
-  and (.decision.reason | contains("runner-failure"))
+  and (.decision.reason | contains("scripts/smoke/failure.sh"))
   and .checks[0].exit_code == 7
 ' "$EVIDENCE_TMP/result.json" >/dev/null || {
   echo 'runner allowed a failed required assertion to retain PASS' >&2

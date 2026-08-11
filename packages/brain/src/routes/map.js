@@ -32,6 +32,7 @@ import {
 } from '../map/state-resolver.js';
 import { MapRadiusError, resolveImpactRadius } from '../map/radius.js';
 import pool from '../db.js';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 
 const router = Router();
 
@@ -61,7 +62,7 @@ function buildEnvelope(scopeKey, extra = {}) {
  * POST /api/brain/map/manifests/validate
  * 纯校验，不写库
  */
-router.post('/manifests/validate', async (req, res) => {
+router.post('/manifests/validate', internalAuthOrLoopback, async (req, res) => {
   try {
     const manifest = req.body;
     const schemaValid = validateSchema(manifest);
@@ -86,7 +87,7 @@ router.post('/manifests/validate', async (req, res) => {
  * POST /api/brain/map/manifests
  * 提交完整 manifest draft，要求 source_decision_id
  */
-router.post('/manifests', async (req, res) => {
+router.post('/manifests', internalAuthOrLoopback, async (req, res) => {
   try {
     const { manifest, source_decision_id } = req.body;
     if (!manifest) return res.status(400).json({ error: 'manifest 必填' });
@@ -127,24 +128,22 @@ router.post('/manifests', async (req, res) => {
  * POST /api/brain/map/manifests/:id/activate
  * 原子激活并触发 projector
  */
-router.post('/manifests/:id/activate', async (req, res) => {
+router.post('/manifests/:id/activate', internalAuthOrLoopback, async (req, res) => {
   try {
     const { id } = req.params;
     const { scope_key } = req.body;
     if (!scope_key) return res.status(400).json({ error: 'scope_key 必填' });
 
-    const activated = await activateManifest({ manifestId: id, scopeKey: scope_key });
-
-    // 获取 manifest 内容并运行投影器
-    const activeManifest = await getActiveManifest(scope_key);
-    if (!activeManifest) throw new Error('激活后找不到 active manifest，内部错误');
-
-    const projResult = await runProjection({
-      manifestId: activeManifest.id,
-      manifestDigest: activeManifest.digest,
-      scopeKey: scope_key,
-      manifest: activeManifest.manifest,
+    const activated = await activateManifest({ manifestId: id, scopeKey: scope_key }, {
+      projector: ({ client, manifestVersion }) => runProjection({
+        client,
+        manifestId: manifestVersion.id,
+        manifestDigest: manifestVersion.digest,
+        scopeKey: scope_key,
+        manifest: manifestVersion.manifest,
+      }),
     });
+    const projResult = activated.projection;
 
     res.json({
       ...buildEnvelope(scope_key),
@@ -164,7 +163,7 @@ router.post('/manifests/:id/activate', async (req, res) => {
  * POST /api/brain/map/rebuild
  * 基于当前 active manifest 与最新 facts 幂等重建
  */
-router.post('/rebuild', async (req, res) => {
+router.post('/rebuild', internalAuthOrLoopback, async (req, res) => {
   try {
     const { scope_key } = req.body;
     if (!scope_key) return res.status(400).json({ error: 'scope_key 必填' });
@@ -336,7 +335,7 @@ router.get('/nodes/:key', async (req, res) => {
  * POST /api/brain/map/radius
  * 输入 repo + changed files，返回受影响业务节点与必跑断言
  */
-router.post('/radius', async (req, res) => {
+router.post('/radius', internalAuthOrLoopback, async (req, res) => {
   try {
     res.json(await resolveImpactRadius(req.body));
   } catch (err) {

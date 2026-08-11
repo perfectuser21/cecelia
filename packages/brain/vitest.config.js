@@ -51,6 +51,7 @@ export default defineConfig({
   test: {
     globals: true,
     env: {
+      CECELIA_MAP_REPO_SCOPES: 'perfectuser21/cecelia=cecelia,cecelia=cecelia',
       // 服务端读规程只认这个 env（不回落到本机绝对路径）。CI runner 上没有
       // zenithjoy-workspace，不给就等于所有走 getSpecSets() 的端点全 500。
       // 测试一律读仓内 fixture（Task 6 从 zenithjoy 拷入）。

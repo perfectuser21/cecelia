@@ -20,7 +20,7 @@ function isCanonicalIsoTimestamp(value) {
 }
 
 function validateCheck(assertion, check, { sourceSha, machineId }) {
-  const expectedArgv = ['bash', '-lc', assertion.command];
+  const expectedArgv = canonicalAssertionArgv(assertion.assertion_id);
   const started = Date.parse(check?.started_at);
   const completed = Date.parse(check?.completed_at);
   const cases = check?.scenario_evidence?.cases;
@@ -51,6 +51,14 @@ function validateCheck(assertion, check, { sourceSha, machineId }) {
     throw evidenceError(`invalid assertion evidence: ${assertion.assertion_id}`);
   }
   return { ...check, expectedArgv };
+}
+
+function sourceBindings(assertion) {
+  return assertion.source_bindings ?? [{
+    journey_step_link_id: assertion.journey_step_link_id,
+    assertion_revision: assertion.assertion_revision,
+    assertion_digest: assertion.assertion_digest,
+  }];
 }
 
 export async function persistTrustedEvaluatorReceipts(db, { attempt, result }) {
@@ -94,7 +102,8 @@ export async function persistTrustedEvaluatorReceipts(db, { attempt, result }) {
       checks.find((candidate) => candidate?.assertion_id === assertion.assertion_id),
       { sourceSha, machineId },
     );
-    const receiptResult = await db.query(
+    for (const binding of sourceBindings(assertion)) {
+      const receiptResult = await db.query(
       `WITH inserted AS (
          INSERT INTO journey_assertion_receipts (
            journey_step_link_id, run_id, assertion_revision,
@@ -121,11 +130,11 @@ export async function persistTrustedEvaluatorReceipts(db, { attempt, result }) {
          AND NOT EXISTS (SELECT 1 FROM inserted)
        LIMIT 1`,
       [
-        assertion.journey_step_link_id,
+        binding.journey_step_link_id,
         attempt.run_id,
-        assertion.assertion_revision,
+        binding.assertion_revision,
         assertion.assertion_id,
-        assertion.assertion_digest,
+        binding.assertion_digest,
         impactGate.repo,
         sourceSha,
         impactGate.contract_id,
@@ -141,7 +150,9 @@ export async function persistTrustedEvaluatorReceipts(db, { attempt, result }) {
         String(check.output_tail ?? '').slice(-8_000),
       ],
     );
-    receipts.push(receiptResult.rows[0]);
+      receipts.push(receiptResult.rows[0]);
+    }
   }
   return receipts;
 }
+import { canonicalAssertionArgv } from '../lib/gp-assertion-command.js';

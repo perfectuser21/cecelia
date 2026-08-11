@@ -189,6 +189,7 @@ EVALUATOR_EVIDENCE_MANIFEST_DIGEST=""
 GITHUB_CREDENTIAL_DESTROYED=false
 PROVIDER_IDENTITY_PREFIX=()
 PROVIDER_TRUST_BOUNDARY_ENV=()
+ASSERTION_IDENTITY_PREFIX=()
 
 build_attempt_heartbeat_body() {
   local provider_session_id="${1:-}"
@@ -332,6 +333,7 @@ prepare_evaluator_provider_identity() {
   is_evaluator_task_bundle || {
     PROVIDER_IDENTITY_PREFIX=()
     PROVIDER_TRUST_BOUNDARY_ENV=()
+    ASSERTION_IDENTITY_PREFIX=()
     return 0
   }
   if [[ "$(id -u)" != "0" ]] \
@@ -354,6 +356,17 @@ prepare_evaluator_provider_identity() {
     --reuid=cecelia
     --regid=cecelia
     --init-groups
+    --no-new-privs
+    --bounding-set=-all
+    --inh-caps=-all
+    --ambient-caps=-all
+    --
+  )
+  ASSERTION_IDENTITY_PREFIX=(
+    setpriv
+    --reuid=nobody
+    --regid=nogroup
+    --clear-groups
     --no-new-privs
     --bounding-set=-all
     --inh-caps=-all
@@ -1004,15 +1017,9 @@ merge_required_assertion_evidence() {
   local merged_result_file="${normalized_result_file}.required-assertions"
   local -a assertion_identity_prefix=(env)
   local use_provider_identity=0
-  local -a assertion_secret_fence=(
-    env
-    -u BRAIN_URL
-    -u HARNESS_CALLBACK_URL
-    -u HARNESS_CALLBACK_TOKEN
-    -u HARNESS_LEASE_OWNER
-    -u HARNESS_LEASE_GENERATION
-  )
-  local evidence_dir checks_file
+  local assertion_executor="/usr/local/lib/cecelia/assertion-exec.mjs"
+  local node_bin="/usr/local/bin/node"
+  local evidence_dir checks_file assertion_home npm_cache tracked_paths_file
   local validation_error=""
 
   jq -e '
@@ -1063,10 +1070,19 @@ merge_required_assertion_evidence() {
 
   evidence_dir="$(mktemp -d "${TMPDIR:-/tmp}/cecelia-required-assertions.XXXXXX")"
   chmod 0700 "$evidence_dir"
+  if [[ -n "${ASSERTION_IDENTITY_PREFIX[0]-}" ]]; then
+    assertion_identity_prefix=("${ASSERTION_IDENTITY_PREFIX[@]}")
+  else
+    assertion_executor="${RUNNER_ASSERTION_EXECUTOR:-$assertion_executor}"
+    node_bin="${RUNNER_ASSERTION_NODE_BIN:-$node_bin}"
+  fi
   if [[ -n "${PROVIDER_IDENTITY_PREFIX[0]-}" ]]; then
-    assertion_identity_prefix=("${PROVIDER_IDENTITY_PREFIX[@]}")
     use_provider_identity=1
   fi
+  assertion_home="$evidence_dir/assertion-home"
+  npm_cache="$evidence_dir/npm-cache"
+  mkdir -p "$assertion_home" "$npm_cache"
+  chmod 0555 "$assertion_home"
   assertion_workspace="$evidence_dir/worktree"
   if ! git -C "$workspace" worktree add --detach "$assertion_workspace" "$expected_sha" \
     > "$evidence_dir/worktree-setup.log" 2>&1; then
@@ -1081,14 +1097,17 @@ merge_required_assertion_evidence() {
   if (( use_provider_identity == 1 )); then
     chmod 0711 "$evidence_dir"
     chown -R cecelia:cecelia "$assertion_workspace"
+    chown -R cecelia:cecelia "$npm_cache"
   fi
   if [[ -f "$assertion_workspace/package-lock.json" ]] \
     && ! (cd "$assertion_workspace" && \
       "${RUNNER_ASSERTION_TIMEOUT_BIN:-timeout}" --signal=TERM --kill-after=10s \
         "$(runner_assertion_budget_seconds)s" \
-        "${assertion_identity_prefix[@]}" \
-        "${assertion_secret_fence[@]}" \
-        npm ci --ignore-scripts --no-audit --no-fund) \
+        "${PROVIDER_IDENTITY_PREFIX[@]}" \
+        env -i HOME="$assertion_home" PATH=/usr/local/bin:/usr/bin:/bin \
+        LANG=C.UTF-8 NPM_CONFIG_CACHE="$npm_cache" \
+        "$node_bin" /usr/local/lib/node_modules/npm/bin/npm-cli.js \
+        ci --ignore-scripts --no-audit --no-fund) \
       > "$evidence_dir/dependency-install.log" 2>&1; then
     jq '.checks = []
         | .decision.outcome = "FAIL"
@@ -1099,16 +1118,21 @@ merge_required_assertion_evidence() {
     rm -rf "$evidence_dir"
     return 0
   fi
-  git -C "$assertion_workspace" reset --hard "$expected_sha" >/dev/null 2>&1
-  git -C "$assertion_workspace" clean -ffd >/dev/null 2>&1
   if (( use_provider_identity == 1 )); then
     chown -R root:root "$assertion_workspace"
+  fi
+  git -C "$assertion_workspace" reset --hard "$expected_sha" >/dev/null 2>&1
+  git -C "$assertion_workspace" clean -ffd >/dev/null 2>&1
+  tracked_paths_file="$evidence_dir/tracked-paths"
+  git -C "$assertion_workspace" ls-files -z > "$tracked_paths_file"
+  chmod 0444 "$tracked_paths_file"
+  if (( use_provider_identity == 1 )); then
     chmod -R a-w "$assertion_workspace"
   fi
   checks_file="$evidence_dir/checks.json"
   printf '[]\n' > "$checks_file"
 
-  local assertion_encoded assertion_json assertion_id assertion_command
+  local assertion_encoded assertion_json assertion_id assertion_command assertion_argv
   local assertion_link assertion_revision assertion_digest log_file
   local started_at completed_at exit_code output_digest output_tail check_json
   local failed_assertion=""
@@ -1122,12 +1146,22 @@ merge_required_assertion_evidence() {
     assertion_digest="$(jq -r '.assertion_digest' <<< "$assertion_json")"
     log_file="$evidence_dir/$(printf '%s' "$assertion_id" | shasum -a 256 | awk '{print $1}').log"
     started_at="$(runner_evidence_timestamp)"
-    if (cd "$assertion_workspace" && \
+    assertion_argv='null'
+    if ! assertion_argv="$(cd "$assertion_workspace" && \
+      "${assertion_identity_prefix[@]}" \
+      env -i HOME="$assertion_home" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+      CECELIA_ASSERTION_TRACKED_PATHS_FILE="$tracked_paths_file" \
+      "$node_bin" "$assertion_executor" --describe "$assertion_json" 2> "$log_file")"; then
+      assertion_argv='null'
+      exit_code=64
+      [[ -n "$failed_assertion" ]] || failed_assertion="$assertion_id"
+    elif (cd "$assertion_workspace" && \
       "${RUNNER_ASSERTION_TIMEOUT_BIN:-timeout}" --signal=TERM --kill-after=10s \
         "$(runner_assertion_budget_seconds)s" \
         "${assertion_identity_prefix[@]}" \
-        "${assertion_secret_fence[@]}" \
-        bash -lc "$assertion_command") > "$log_file" 2>&1; then
+        env -i HOME="$assertion_home" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+        CECELIA_ASSERTION_TRACKED_PATHS_FILE="$tracked_paths_file" \
+        "$node_bin" "$assertion_executor" --run "$assertion_json") > "$log_file" 2>&1; then
       exit_code=0
     else
       exit_code=$?
@@ -1142,6 +1176,7 @@ merge_required_assertion_evidence() {
       --arg journey_step_link_id "$assertion_link" \
       --argjson assertion_revision "$assertion_revision" \
       --arg assertion_digest "$assertion_digest" \
+      --argjson command_argv "$assertion_argv" \
       --argjson exit_code "$exit_code" \
       --arg output_digest "$output_digest" \
       --arg output_tail "$output_tail" \
@@ -1150,7 +1185,7 @@ merge_required_assertion_evidence() {
       --arg started_at "$started_at" \
       --arg completed_at "$completed_at" \
       '{assertion_id:$assertion_id,
-        command_argv:["bash", "-lc", $command],
+        command_argv:$command_argv,
         journey_step_link_id:$journey_step_link_id,
         assertion_revision:$assertion_revision,
         assertion_digest:$assertion_digest,

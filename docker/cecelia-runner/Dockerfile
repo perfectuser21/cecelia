@@ -108,12 +108,14 @@ RUN chmod +x /opt/cecelia-skills/*.sh
 # 绑定 exact PR head 的哈希胶囊，运行期不持有 GitHub 凭据。
 COPY github-evidence-preflight.cjs /usr/local/lib/cecelia/github-evidence-preflight.cjs
 COPY github-evidence-extract.py /usr/local/lib/cecelia/github-evidence-extract.py
+COPY assertion-exec.mjs /usr/local/lib/cecelia/assertion-exec.mjs
 
 # 入口脚本：复制 host-claude-config → 可写副本 + safe.directory + 启动 claude
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     /usr/local/lib/cecelia/github-evidence-preflight.cjs \
     /usr/local/lib/cecelia/github-evidence-extract.py \
+    /usr/local/lib/cecelia/assertion-exec.mjs \
   && mkdir -p /home/cecelia/.claude /home/cecelia/.config/gh \
   && chown -R cecelia:cecelia /home/cecelia
 

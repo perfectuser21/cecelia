@@ -1,6 +1,19 @@
 # Brain 模块定义
 
-**版本**: 1.272.1
+**版本**: 1.272.2
+
+## Impact Contract 不可变证据闭环（Brain 1.272.2）
+
+- Map radius 读取 revision-indexed graph/projection 快照，并锁定 manifest/projection digest 与显式 repo→scope 身份绑定。
+- 默认 repo→scope 只激活已有 projection 的 Cecelia；未部署投影的仓库保持 fail-closed。
+- canonical assertion 按命令聚合多个 Journey source binding；一次 Runner 执行为每个 link/revision 生成独立 receipt。
+- 每个受影响 Capability 都必须有 runnable assertion 覆盖；断言 revision、覆盖、binding 变化会换版，缺失会产生 Gap 并阻塞。
+- Runner 以独立 nobody、空白环境、只读 HOME 和镜像固定 argv 工具链执行断言，receipt 不再接受 `bash -lc`。
+- Manifest 的 path_prefixes/exact_paths 用最长匹配归属新文件与治理文件，未知路径仍拒绝裁决。
+- PostgreSQL 冻结 Impact Contract 语义字段与 Gap 权威身份，未解决 Gap 不可改归属或删除。
+- Harness Report Runner 不再写 Journey；Feature done 与测试锚点由已认证 Brain callback 回写。
+- 生产内部写接口使用共享 credentials token；scanner、Compose、蓝绿和 staging 使用同一 SSOT。
+- Schema 地板为 408。
 
 ## F1 Impact Contract 系统（Brain 1.272.1）
 

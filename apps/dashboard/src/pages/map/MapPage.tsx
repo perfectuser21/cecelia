@@ -189,18 +189,6 @@ export default function MapPage() {
     } catch (_) { /* ignore */ }
   }, [scope]);
 
-  const handleRebuild = useCallback(async () => {
-    if (!window.confirm(`重建 ${scope} 的投影？这将基于当前 manifest 和最新事实重新计算。`)) return;
-    try {
-      const res = await fetch(`${BRAIN_API}/api/brain/map/rebuild`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scope_key: scope }),
-      });
-      if (res.ok) await fetchMap(scope);
-    } catch (_) { /* ignore */ }
-  }, [scope, fetchMap]);
-
   // 按 value_stream 分组 capabilities
   const valueStreams = mapData?.nodes.filter((n) => n.type === 'value_stream').sort((a, b) => (a.display_order ?? 99) - (b.display_order ?? 99)) ?? [];
   const capabilities = mapData?.nodes.filter((n) => n.type === 'capability') ?? [];
@@ -242,13 +230,6 @@ export default function MapPage() {
             className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
             加载
-          </button>
-          <button
-            onClick={handleRebuild}
-            disabled={loading || !mapData}
-            className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg dark:border-gray-600 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
-          >
-            重建
           </button>
         </div>
         <div className="flex gap-1">

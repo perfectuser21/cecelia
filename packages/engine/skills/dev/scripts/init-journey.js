@@ -2,6 +2,8 @@
 // init-journey.js — 创建一条新 Journey (Brain-first)
 // 用法：node init-journey.js --name "X" --area "ZenithJoy" --type "user_facing" --description "..." --e2e-path "..." --steps "step1|step2|step3"
 
+import { brainInternalAuthHeaders } from './brain-auth.js';
+
 function parseArgs(argv) {
   const args = {};
   for (let i = 2; i < argv.length; i++) {
@@ -32,7 +34,7 @@ const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
 
   const resp = await fetch(`${BRAIN_URL}/api/brain/journeys`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...brainInternalAuthHeaders() },
     body: JSON.stringify({
       name: args.name,
       journey_type: args.type,

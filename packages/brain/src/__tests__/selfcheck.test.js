@@ -207,8 +207,9 @@ describe('selfcheck', () => {
   // 404（Universal Map projection runs/nodes/edges 三派生表）推进地板到 404。
   // 405（rebuildable Map Projection core）推进地板到 405。
   // 406/407（Impact Contract + Gap Ledger 强制闭环）推进地板到 407。
-  it('EXPECTED_SCHEMA_VERSION should be 407', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('407');
+  // 408（revision-indexed immutable graph snapshots）推进地板到 408。
+  it('EXPECTED_SCHEMA_VERSION should be 408', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('408');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

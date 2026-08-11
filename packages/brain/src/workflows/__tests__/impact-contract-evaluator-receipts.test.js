@@ -17,9 +17,10 @@ describe('harness-evaluator Impact Contract assertion receipts', () => {
     expect(skill).toContain('Harness Runner');
     expect(skill).not.toContain('required-assertions-executor:start');
     expect(runner).toContain('merge_required_assertion_evidence');
-    expect(runner).toContain('bash -lc "$assertion_command"');
+    expect(runner).toContain('assertion-exec.mjs');
+    expect(runner).not.toContain('bash -lc "$assertion_command"');
     expect(runner).toContain('runner_evidence_sha256');
-    expect(runner).toContain('command_argv:["bash", "-lc", $command]');
+    expect(runner).toContain('command_argv:$command_argv');
     expect(runner).toContain('scenario_evidence:{pr_head_sha:$pr_head_sha, machine:$machine');
     expect(runner).toContain('required assertion workspace HEAD does not match PR head');
     expect(runner).toContain('.decision.outcome = "FAIL"');

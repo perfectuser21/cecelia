@@ -8,6 +8,9 @@
 
 import { describe, test, expect } from 'vitest';
 import { ImpactContractSchema, validateImpactContract, parseImpactContract } from '../contract-schema.js';
+import { assertionDigest } from '../../lib/journey-assertion-receipt.js';
+
+const ASSERTION_REF = 'packages/brain/src/impact-contract/__tests__/contract-schema.test.js';
 
 // ---------- 合法合同 fixture ----------
 
@@ -22,12 +25,12 @@ function minimalValidContract(overrides = {}) {
     ],
     required_assertions: [
       {
-        assertion_id: 'assert-001',
-        command: 'npm test -- --testPathPattern=auth',
+        assertion_id: ASSERTION_REF,
+        command: `npx vitest run ${ASSERTION_REF}`,
         covers_capability_ids: ['cap-001'],
         journey_step_link_id: '11111111-1111-4111-8111-111111111111',
         assertion_revision: 1,
-        assertion_digest: 'a'.repeat(64),
+        assertion_digest: assertionDigest(ASSERTION_REF),
       },
     ],
     ...overrides,
@@ -105,6 +108,12 @@ describe('FR-2 Impact Contract Schema', () => {
 
   // -------------------------------------------------------
   describe('非法合同被 schema 拒绝', () => {
+
+    test('调用方不能把任意 shell command 声明成可信断言', () => {
+      const data = minimalValidContract();
+      data.required_assertions[0].command = 'true';
+      expect(validateImpactContract(data).success).toBe(false);
+    });
 
     test('非空断言缺少 capability 覆盖与不可变 Journey 绑定时无效', () => {
       const data = minimalValidContract({

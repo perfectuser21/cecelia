@@ -1,5 +1,8 @@
 /** MJ5 Universal Mapper /map/radius 客户端。任何不可用或合同异常都必须 fail-closed。 */
 
+import { canonicalAssertionCommandText } from '../lib/gp-assertion-command.js';
+import { assertionDigest } from '../lib/journey-assertion-receipt.js';
+
 const DEFAULT_ENDPOINT = process.env.CECELIA_MAP_RADIUS_URL
   || 'http://localhost:5221/api/brain/map/radius';
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -13,8 +16,14 @@ class ImpactMapError extends Error {
   }
 }
 
-function assertMapperContract(value, { repo, baseRevision, headRevision } = {}) {
-  const expectedRevision = headRevision ?? baseRevision;
+function assertMapperContract(value, {
+  repo,
+  baseRevision,
+  headRevision: _headRevision,
+  manifestDigest,
+  projectionDigest,
+} = {}) {
+  const expectedRevision = baseRevision;
   const freshnessStatus = value?.freshness?.status;
   const validNodes = Array.isArray(value?.affected_nodes)
     && value.affected_nodes.every((node) => (
@@ -40,6 +49,28 @@ function assertMapperContract(value, { repo, baseRevision, headRevision } = {}) 
       && /^[0-9a-f-]{36}$/i.test(assertion.journey_step_link_id ?? '')
       && Number.isInteger(assertion.assertion_revision)
       && assertion.assertion_revision > 0
+      && (assertion.source_bindings === undefined || (
+        Array.isArray(assertion.source_bindings)
+        && assertion.source_bindings.length > 0
+        && new Set(assertion.source_bindings.map(item => item?.journey_step_link_id)).size
+          === assertion.source_bindings.length
+        && assertion.source_bindings.every(item => (
+          /^[0-9a-f-]{36}$/i.test(item?.journey_step_link_id ?? '')
+          && Number.isInteger(item?.assertion_revision)
+          && item.assertion_revision > 0
+          && item.assertion_digest === assertion.assertion_digest
+        ))
+        && assertion.source_bindings[0].journey_step_link_id === assertion.journey_step_link_id
+        && assertion.source_bindings[0].assertion_revision === assertion.assertion_revision
+      ))
+      && (() => {
+        try {
+          return assertion.command === canonicalAssertionCommandText(assertion.assertion_id)
+            && assertion.assertion_digest === assertionDigest(assertion.assertion_id);
+        } catch {
+          return false;
+        }
+      })()
     ));
   const valid = value
     && typeof value === 'object'
@@ -47,6 +78,8 @@ function assertMapperContract(value, { repo, baseRevision, headRevision } = {}) 
     && /^[0-9a-f]{64}$/.test(value.manifest_digest)
     && typeof value.projection_digest === 'string'
     && /^[0-9a-f]{64}$/.test(value.projection_digest)
+    && (!manifestDigest || value.manifest_digest === manifestDigest)
+    && (!projectionDigest || value.projection_digest === projectionDigest)
     && value.fact_revisions
     && typeof value.fact_revisions === 'object'
     && !Array.isArray(value.fact_revisions)
@@ -74,6 +107,7 @@ function assertMapperContract(value, { repo, baseRevision, headRevision } = {}) 
  *   baseRevision?: string,
  *   headRevision?: string,
  *   changedFiles?: string[],
+ *   capabilityIds?: string[],
  * }} params
  * @returns {Promise<{
  *   manifest_digest: string,
@@ -85,7 +119,10 @@ function assertMapperContract(value, { repo, baseRevision, headRevision } = {}) 
  * }>}
  */
 export async function queryImpactRadius(
-  { repo, baseRevision, headRevision, changedFiles = [] } = {},
+  {
+    repo, baseRevision, headRevision, changedFiles = [], capabilityIds = [],
+    manifestDigest, projectionDigest,
+  } = {},
   { fetchImpl = globalThis.fetch, endpoint = DEFAULT_ENDPOINT, timeoutMs = DEFAULT_TIMEOUT_MS } = {},
 ) {
   if (typeof fetchImpl !== 'function') {
@@ -96,12 +133,20 @@ export async function queryImpactRadius(
   try {
     response = await fetchImpl(endpoint, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(process.env.CECELIA_INTERNAL_TOKEN
+          ? { authorization: `Bearer ${process.env.CECELIA_INTERNAL_TOKEN}` }
+          : {}),
+      },
       body: JSON.stringify({
         repo,
         base_revision: baseRevision,
         head_revision: headRevision,
         changed_files: changedFiles,
+        capability_ids: capabilityIds,
+        manifest_digest: manifestDigest,
+        projection_digest: projectionDigest,
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -124,7 +169,9 @@ export async function queryImpactRadius(
   } catch (error) {
     throw new ImpactMapError('mapper_contract_invalid', `Mapper 响应不是合法 JSON: ${error.message}`);
   }
-  assertMapperContract(body, { repo, baseRevision, headRevision });
+  assertMapperContract(body, {
+    repo, baseRevision, headRevision, manifestDigest, projectionDigest,
+  });
   return body;
 }
 

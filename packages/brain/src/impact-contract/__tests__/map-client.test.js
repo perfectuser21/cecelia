@@ -6,13 +6,16 @@ const request = {
   baseRevision: 'a'.repeat(40),
   headRevision: 'b'.repeat(40),
   changedFiles: ['packages/brain/src/example.js'],
+  capabilityIds: ['F1'],
+  manifestDigest: '1'.repeat(64),
+  projectionDigest: '2'.repeat(64),
 };
 
 function freshResponse() {
   return {
     manifest_digest: '1'.repeat(64),
     projection_digest: '2'.repeat(64),
-    fact_revisions: { 'perfectuser21/cecelia': request.headRevision },
+    fact_revisions: { 'perfectuser21/cecelia': request.baseRevision },
     freshness: { status: 'fresh', reason_code: null },
     affected_nodes: [],
     required_assertions: [],
@@ -20,6 +23,22 @@ function freshResponse() {
 }
 
 describe('map-client', () => {
+  it('Brain 内部 radius 调用携带进程 token，不能依赖 loopback 信任', async () => {
+    const prior = process.env.CECELIA_INTERNAL_TOKEN;
+    process.env.CECELIA_INTERNAL_TOKEN = 'map-client-token';
+    const fetchImpl = vi.fn(async () => ({
+      ok: true, status: 200, json: async () => freshResponse(),
+    }));
+    try {
+      await queryImpactRadius(request, { fetchImpl });
+      expect(fetchImpl.mock.calls[0][1].headers)
+        .toMatchObject({ authorization: 'Bearer map-client-token' });
+    } finally {
+      if (prior === undefined) delete process.env.CECELIA_INTERNAL_TOKEN;
+      else process.env.CECELIA_INTERNAL_TOKEN = prior;
+    }
+  });
+
   it('把 revision 与 changed files 发送到 MJ5 radius 合同', async () => {
     const fetchImpl = vi.fn(async () => ({
       ok: true,
@@ -43,6 +62,9 @@ describe('map-client', () => {
       base_revision: request.baseRevision,
       head_revision: request.headRevision,
       changed_files: request.changedFiles,
+      capability_ids: request.capabilityIds,
+      manifest_digest: request.manifestDigest,
+      projection_digest: request.projectionDigest,
     });
     expect(init.signal).toBeDefined();
   });
@@ -87,7 +109,7 @@ describe('map-client', () => {
   it('接受显式 stale 的旧 revision 证据，让 Gate 返回 mapper_stale 而非误报不可达', async () => {
     const stale = {
       ...freshResponse(),
-      fact_revisions: { 'perfectuser21/cecelia': request.baseRevision },
+      fact_revisions: { 'perfectuser21/cecelia': 'c'.repeat(40) },
       freshness: { status: 'stale', reason_code: 'projection_revision_mismatch' },
     };
     const fetchImpl = vi.fn(async () => ({
@@ -103,6 +125,12 @@ describe('map-client', () => {
     for (const body of [
       { ...freshResponse(), affected_nodes: [{}] },
       { ...freshResponse(), required_assertions: [{}] },
+      { ...freshResponse(), required_assertions: [{
+        assertion_id: 'packages/brain/src/example.test.js', command: 'true',
+        covers_capability_ids: ['F1'],
+        journey_step_link_id: '11111111-1111-4111-8111-111111111111',
+        assertion_revision: 1, assertion_digest: 'a'.repeat(64),
+      }] },
     ]) {
       const fetchImpl = vi.fn(async () => ({
         ok: true,

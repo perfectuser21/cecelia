@@ -31,6 +31,7 @@ import {
 } from '../impact-contract/contract-store.js';
 import { evaluateStructureGate } from '../impact-contract/structure-gate.js';
 import { evaluateDiffGate } from '../impact-contract/diff-gate.js';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 
 const router = Router();
 
@@ -136,7 +137,7 @@ export async function evaluateImpactContractSubmission({
  * POST /api/brain/tasks/:taskId/impact-contract
  * 创建或更新 Impact Contract（幂等）
  */
-router.post('/tasks/:taskId/impact-contract', async (req, res) => {
+router.post('/tasks/:taskId/impact-contract', internalAuthOrLoopback, async (req, res) => {
   try {
     const { taskId } = req.params;
     const result = await evaluateImpactContractSubmission({
@@ -181,7 +182,7 @@ router.get('/tasks/:taskId/impact-contract', async (req, res) => {
  * 直接创建合同（body 中包含 task_id）
  * 供 contract-dod.md 验收命令行使用
  */
-router.post('/impact-contracts', async (req, res) => {
+router.post('/impact-contracts', internalAuthOrLoopback, async (req, res) => {
   try {
     const taskId = req.body?.task_id;
     const result = await evaluateImpactContractSubmission({
@@ -208,7 +209,7 @@ router.post('/impact-contracts', async (req, res) => {
  * change_kind 缺失：400 + { gate: 'blocked', reason: 'change_kind_missing' }
  * Schema 非法：400 + { error, fields }
  */
-router.post('/tasks/:taskId/impact-contract/evaluate', async (req, res) => {
+router.post('/tasks/:taskId/impact-contract/evaluate', internalAuthOrLoopback, async (req, res) => {
   try {
     const { taskId } = req.params;
     const result = await evaluateImpactContractSubmission({
@@ -241,7 +242,7 @@ router.post('/tasks/:taskId/impact-contract/evaluate', async (req, res) => {
  *
  * sprint: 08110022-relay-d96c9fa0 ws4
  */
-router.post('/tasks/:taskId/impact-contract/diff-evaluate', async (req, res) => {
+router.post('/tasks/:taskId/impact-contract/diff-evaluate', internalAuthOrLoopback, async (req, res) => {
   try {
     const { taskId } = req.params;
     const { head_revision, changed_files, repo } = req.body ?? {};

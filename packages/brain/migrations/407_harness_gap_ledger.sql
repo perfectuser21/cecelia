@@ -1,5 +1,24 @@
 -- Migration 407: Gap Ledger，并加厚既有 task_dependencies
 
+CREATE OR REPLACE FUNCTION harness_assertion_command_argv(command_text TEXT)
+RETURNS JSONB AS $$
+BEGIN
+  IF command_text ~ '^npx vitest run [A-Za-z0-9_./@+-]+$' THEN
+    RETURN jsonb_build_array(
+      'npx', 'vitest', 'run', substring(command_text FROM 16)
+    );
+  ELSIF command_text ~ '^python3 -m pytest [A-Za-z0-9_./@+-]+$' THEN
+    RETURN jsonb_build_array(
+      'python3', '-m', 'pytest', substring(command_text FROM 19)
+    );
+  ELSIF command_text ~ '^bash [A-Za-z0-9_./@+-]+$' THEN
+    RETURN jsonb_build_array('bash', substring(command_text FROM 6));
+  END IF;
+  RAISE EXCEPTION 'non-canonical harness assertion command'
+    USING ERRCODE = 'check_violation';
+END;
+$$ LANGUAGE plpgsql IMMUTABLE STRICT;
+
 CREATE TABLE IF NOT EXISTS harness_gaps (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   source_task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -180,6 +199,37 @@ CREATE TRIGGER trg_prevent_unresolved_harness_gap_unblock
   BEFORE UPDATE OF status ON tasks
   FOR EACH ROW EXECUTE FUNCTION prevent_unresolved_harness_gap_unblock();
 
+CREATE OR REPLACE FUNCTION prevent_harness_gap_identity_escape()
+RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.status <> 'resolved' THEN
+      RAISE EXCEPTION 'unresolved harness gap cannot be deleted'
+        USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN OLD;
+  END IF;
+
+  IF ROW(NEW.source_task_id, NEW.impact_node_id, NEW.created_at)
+     IS DISTINCT FROM ROW(OLD.source_task_id, OLD.impact_node_id, OLD.created_at) THEN
+    RAISE EXCEPTION 'harness gap authority identity is immutable'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  IF NEW.current_revision IS DISTINCT FROM OLD.current_revision
+     AND OLD.status NOT IN ('fixing', 'verifying') THEN
+    RAISE EXCEPTION 'harness gap revision can only advance during repair verification'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_prevent_harness_gap_identity_escape ON harness_gaps;
+CREATE TRIGGER trg_prevent_harness_gap_identity_escape
+  BEFORE UPDATE OR DELETE ON harness_gaps
+  FOR EACH ROW EXECUTE FUNCTION prevent_harness_gap_identity_escape();
+
 CREATE OR REPLACE FUNCTION enforce_harness_gap_transition()
 RETURNS trigger AS $$
 DECLARE
@@ -191,7 +241,10 @@ DECLARE
   active_contract_hash TEXT;
   active_contract_repo TEXT;
   contract_assertion JSONB;
-  receipt RECORD;
+  contract_binding JSONB;
+  binding_receipt RECORD;
+  submitted_run_id TEXT;
+  submitted_receipt_seen BOOLEAN := FALSE;
 BEGIN
   IF NEW.status = OLD.status THEN
     RETURN NEW;
@@ -258,38 +311,84 @@ BEGIN
         USING ERRCODE = 'check_violation';
     END IF;
 
-    SELECT r.*, link.assertion_ref AS current_assertion_ref,
-           link.assertion_revision AS current_assertion_revision
-      INTO receipt
+    SELECT r.run_id
+      INTO submitted_run_id
       FROM journey_assertion_receipts AS r
-      JOIN journey_step_links AS link ON link.id = r.journey_step_link_id
-     WHERE r.id = assertion_receipt_id;
+     WHERE r.id = assertion_receipt_id
+       AND r.assertion_ref_snapshot = contract_assertion->>'assertion_id'
+       AND r.source_repo = active_contract_repo
+       AND r.source_sha = NEW.current_revision
+       AND r.impact_contract_id = active_contract_id
+       AND r.impact_contract_hash = active_contract_hash;
+    IF submitted_run_id IS NULL THEN
+      RAISE EXCEPTION 'resolved gap submitted receipt is not bound to active contract'
+        USING ERRCODE = 'check_violation';
+    END IF;
 
-    IF receipt.id IS NULL
-       OR receipt.verdict <> 'PASS'
-       OR receipt.exit_code <> 0
-       OR receipt.synthetic
-       OR receipt.executor_kind <> 'brain_assertion_runner'
-       OR receipt.source_repo IS DISTINCT FROM active_contract_repo
-       OR receipt.source_sha IS DISTINCT FROM NEW.current_revision
-       OR receipt.impact_contract_id IS DISTINCT FROM active_contract_id
-       OR receipt.impact_contract_hash IS DISTINCT FROM active_contract_hash
-       OR receipt.journey_step_link_id::TEXT IS DISTINCT FROM contract_assertion->>'journey_step_link_id'
-       OR receipt.assertion_revision IS DISTINCT FROM (contract_assertion->>'assertion_revision')::BIGINT
-       OR receipt.current_assertion_revision IS DISTINCT FROM receipt.assertion_revision
-       OR receipt.assertion_ref_snapshot IS DISTINCT FROM contract_assertion->>'assertion_id'
-       OR receipt.current_assertion_ref IS DISTINCT FROM receipt.assertion_ref_snapshot
-       OR receipt.assertion_digest IS DISTINCT FROM contract_assertion->>'assertion_digest'
-       OR receipt.command_argv IS DISTINCT FROM jsonb_build_array(
-            'bash', '-lc', contract_assertion->>'command'
+    FOR contract_binding IN
+      SELECT value
+        FROM jsonb_array_elements(
+          COALESCE(
+            contract_assertion->'source_bindings',
+            jsonb_build_array(jsonb_build_object(
+              'journey_step_link_id', contract_assertion->>'journey_step_link_id',
+              'assertion_revision', (contract_assertion->>'assertion_revision')::BIGINT,
+              'assertion_digest', contract_assertion->>'assertion_digest'
+            ))
           )
-       OR receipt.completed_at < verification_started_at
-       OR NOT EXISTS (
-         SELECT 1 FROM initiative_runs AS verification_run
-          WHERE verification_run.id::TEXT = receipt.run_id
-            AND verification_run.current_task_id = NEW.repair_task_id
-       ) THEN
-      RAISE EXCEPTION 'resolved gap receipt is stale or not bound to repair execution'
+        )
+    LOOP
+      SELECT r.*, link.assertion_ref AS current_assertion_ref,
+             link.assertion_revision AS current_assertion_revision
+        INTO binding_receipt
+        FROM journey_assertion_receipts AS r
+        JOIN journey_step_links AS link ON link.id = r.journey_step_link_id
+        JOIN initiative_runs AS verification_run
+          ON verification_run.id::TEXT = r.run_id
+         AND verification_run.current_task_id = NEW.repair_task_id
+        JOIN harness_attempts AS attempt
+          ON attempt.id = r.harness_attempt_id
+         AND attempt.run_id::TEXT = r.run_id
+         AND attempt.role = 'evaluator'
+         AND attempt.status = 'completed'
+         AND attempt.result->'decision'->>'outcome' IN ('PASS', 'FIXED')
+       WHERE r.run_id = submitted_run_id
+         AND r.journey_step_link_id::TEXT = contract_binding->>'journey_step_link_id'
+         AND r.assertion_revision = (contract_binding->>'assertion_revision')::BIGINT
+         AND r.assertion_ref_snapshot = contract_assertion->>'assertion_id'
+         AND r.assertion_digest = contract_binding->>'assertion_digest'
+         AND r.source_repo = active_contract_repo
+         AND r.source_sha = NEW.current_revision
+         AND r.impact_contract_id = active_contract_id
+         AND r.impact_contract_hash = active_contract_hash
+       ORDER BY r.completed_at DESC
+       LIMIT 1;
+
+      IF binding_receipt.id IS NULL
+         OR binding_receipt.verdict <> 'PASS'
+         OR binding_receipt.exit_code <> 0
+         OR binding_receipt.synthetic
+         OR binding_receipt.executor_kind <> 'brain_assertion_runner'
+         OR binding_receipt.machine_id IS NULL
+         OR btrim(binding_receipt.machine_id) = ''
+         OR binding_receipt.current_assertion_revision IS DISTINCT FROM binding_receipt.assertion_revision
+         OR binding_receipt.current_assertion_ref IS DISTINCT FROM binding_receipt.assertion_ref_snapshot
+         OR binding_receipt.command_argv IS DISTINCT FROM
+              harness_assertion_command_argv(contract_assertion->>'command')
+         OR binding_receipt.completed_at < verification_started_at
+         OR binding_receipt.output_digest !~ '^[0-9a-f]{64}$'
+         OR binding_receipt.scenario_count <= 0
+         OR binding_receipt.scenario_evidence IS NULL THEN
+        RAISE EXCEPTION 'resolved gap is missing a trusted source binding receipt'
+          USING ERRCODE = 'check_violation';
+      END IF;
+      IF binding_receipt.id = assertion_receipt_id THEN
+        submitted_receipt_seen := TRUE;
+      END IF;
+    END LOOP;
+
+    IF NOT submitted_receipt_seen THEN
+      RAISE EXCEPTION 'resolved gap submitted receipt does not identify a required source binding'
         USING ERRCODE = 'check_violation';
     END IF;
   END IF;

@@ -99,6 +99,9 @@ export async function evaluateStructureGate({
 
   // --- 使用注入的测试客户端或默认真实 Mapper 客户端 ---
   const mapperFn = mapClient || queryImpactRadius;
+  const declaredCapabilities = (
+    contract?.contract_body?.affected_capabilities ?? contract?.affected_capabilities ?? []
+  ).map(item => (typeof item === 'string' ? item : item?.capability_id)).filter(Boolean);
 
   // --- 规则 2/3/4：调用 Mapper，处理不可判定情形 ---
   let mapperResult;
@@ -108,6 +111,7 @@ export async function evaluateStructureGate({
       baseRevision: contract?.base_revision,
       headRevision: contract?.head_revision,
       changedFiles: [],
+      capabilityIds: declaredCapabilities,
     });
   } catch {
     // Mapper 不可达（连接失败、timeout 等）→ fail-closed
@@ -120,8 +124,8 @@ export async function evaluateStructureGate({
   }
 
   // --- 规则 4：revision mismatch ---
-  // 初次生成按 base；fix/extend 后按当前 head。两端必须与 Mapper 请求语义一致。
-  const expectedRevision = contract?.head_revision ?? contract?.base_revision;
+  // 投影来自合并基线；head_revision 只标识候选 diff，不能冒充已扫描事实。
+  const expectedRevision = contract?.base_revision;
   if (expectedRevision) {
     const repo = contract.repo || Object.keys(mapperResult.fact_revisions ?? {})[0];
     if (!repo || mapperResult.fact_revisions?.[repo] === undefined) {
@@ -139,6 +143,12 @@ export async function evaluateStructureGate({
     const projectionDigest = mapperResult.projection_digest;
     const contractBody = {
       ...(contract.contract_body || contract),
+      affected_capabilities: (mapperResult.affected_nodes || []).map(node => ({
+        capability_id: node.capability_id ?? node.id,
+        ...(node.capability_name ? { capability_name: node.capability_name } : {}),
+        ...(node.impact_level ? { impact_level: node.impact_level } : {}),
+      })),
+      required_assertions: mapperResult.required_assertions || [],
       manifest_digest: manifestDigest,
       projection_digest: projectionDigest,
       fact_revisions: mapperResult.fact_revisions,

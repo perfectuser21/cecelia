@@ -2,6 +2,8 @@
 // add-feature.js — 挂一个 Feature 到指定 Journey (Brain-first)
 // 用法：node add-feature.js --name "X" --journey-id "<id>" --area "ZenithJoy" [--thickness thin] [--unit-test-path "..."] [--reason "为何不是 thin"]
 
+import { brainInternalAuthHeaders } from './brain-auth.js';
+
 function parseArgs(argv) {
   const args = {};
   for (let i = 2; i < argv.length; i++) {
@@ -37,7 +39,7 @@ const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
 (async () => {
   const resp = await fetch(`${BRAIN_URL}/api/brain/journey_features`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...brainInternalAuthHeaders() },
     body: JSON.stringify({
       name: args.name,
       journey_id: args['journey-id'] || null,

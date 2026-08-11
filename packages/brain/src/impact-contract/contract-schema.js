@@ -9,6 +9,55 @@
 
 import { z } from 'zod';
 import { CHANGE_KINDS } from './change-kind.js';
+import { canonicalAssertionCommandText } from '../lib/gp-assertion-command.js';
+import { assertionDigest } from '../lib/journey-assertion-receipt.js';
+
+export function hasTrustedImpactAssertions(contractBody) {
+  const capabilities = new Set(
+    (contractBody?.affected_capabilities ?? []).map(item => item?.capability_id),
+  );
+  const assertions = contractBody?.required_assertions;
+  if (!Array.isArray(assertions)) return false;
+  const seen = new Set();
+  const seenBindings = new Set();
+  const coveredCapabilities = new Set();
+  const assertionsTrusted = assertions.every(assertion => {
+    if (!assertion || seen.has(assertion.assertion_id)) return false;
+    seen.add(assertion.assertion_id);
+    let canonical;
+    try {
+      canonical = canonicalAssertionCommandText(assertion.assertion_id);
+    } catch {
+      return false;
+    }
+    const bindings = assertion.source_bindings ?? [{
+      journey_step_link_id: assertion.journey_step_link_id,
+      assertion_revision: assertion.assertion_revision,
+      assertion_digest: assertion.assertion_digest,
+    }];
+    const bindingsTrusted = bindings.length > 0 && bindings.every(binding => {
+      if (!binding?.journey_step_link_id || seenBindings.has(binding.journey_step_link_id)) return false;
+      seenBindings.add(binding.journey_step_link_id);
+      return Number.isInteger(binding.assertion_revision)
+        && binding.assertion_revision > 0
+        && binding.assertion_digest === assertionDigest(assertion.assertion_id);
+    });
+    const primary = bindings[0];
+    const trusted = assertion.command === canonical
+      && assertion.assertion_digest === assertionDigest(assertion.assertion_id)
+      && bindingsTrusted
+      && assertion.journey_step_link_id === primary.journey_step_link_id
+      && assertion.assertion_revision === primary.assertion_revision
+      && assertion.assertion_digest === primary.assertion_digest
+      && assertion.covers_capability_ids.every(id => capabilities.has(id));
+    if (trusted) {
+      for (const id of assertion.covers_capability_ids) coveredCapabilities.add(id);
+    }
+    return trusted;
+  });
+  return assertionsTrusted
+    && [...capabilities].every(capabilityId => coveredCapabilities.has(capabilityId));
+}
 
 // ---------- 子 schema ----------
 
@@ -19,6 +68,12 @@ const AffectedCapabilitySchema = z.object({
   impact_level: z.enum(['direct', 'indirect', 'unknown']).optional(),
 });
 
+const AssertionBindingSchema = z.object({
+  journey_step_link_id: z.string().uuid(),
+  assertion_revision: z.number().int().positive(),
+  assertion_digest: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
 /** 必跑断言条目 */
 const RequiredAssertionSchema = z.object({
   assertion_id: z.string().min(1),
@@ -27,8 +82,40 @@ const RequiredAssertionSchema = z.object({
   journey_step_link_id: z.string().uuid(),
   assertion_revision: z.number().int().positive(),
   assertion_digest: z.string().regex(/^[0-9a-f]{64}$/),
+  source_bindings: z.array(AssertionBindingSchema).min(1).optional(),
   owner: z.string().optional(),
   tags: z.array(z.string()).optional(),
+}).superRefine((value, ctx) => {
+  let canonical;
+  try {
+    canonical = canonicalAssertionCommandText(value.assertion_id);
+  } catch {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['assertion_id'], message: '断言引用不可机械执行' });
+    return;
+  }
+  if (value.command !== canonical) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['command'], message: 'command 必须由 assertion_id 机械派生' });
+  }
+  if (value.assertion_digest !== assertionDigest(value.assertion_id)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['assertion_digest'], message: 'assertion_digest 与 assertion_id 不匹配' });
+  }
+  const bindings = value.source_bindings ?? [{
+    journey_step_link_id: value.journey_step_link_id,
+    assertion_revision: value.assertion_revision,
+    assertion_digest: value.assertion_digest,
+  }];
+  if (new Set(bindings.map(item => item.journey_step_link_id)).size !== bindings.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['source_bindings'], message: 'source binding 必须唯一' });
+  }
+  if (bindings.some(item => item.assertion_digest !== assertionDigest(value.assertion_id))) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['source_bindings'], message: 'source binding digest 不匹配' });
+  }
+  const primary = bindings[0];
+  if (primary.journey_step_link_id !== value.journey_step_link_id
+    || primary.assertion_revision !== value.assertion_revision
+    || primary.assertion_digest !== value.assertion_digest) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['source_bindings'], message: '顶层绑定必须等于首个 source binding' });
+  }
 });
 
 /** 不适用项条目（声明本次变更为何不影响某 Capability） */

@@ -29,7 +29,7 @@ export async function resolveCompletedRepairGaps(db, {
         AND receipt.assertion_revision = (assertion.value->>'assertion_revision')::BIGINT
         AND receipt.assertion_ref_snapshot = assertion.value->>'assertion_id'
         AND receipt.assertion_digest = assertion.value->>'assertion_digest'
-        AND receipt.command_argv = jsonb_build_array('bash', '-lc', assertion.value->>'command')
+        AND receipt.command_argv = harness_assertion_command_argv(assertion.value->>'command')
         AND receipt.verdict = 'PASS'
         AND receipt.exit_code = 0
         AND receipt.synthetic = false
@@ -40,12 +40,62 @@ export async function resolveCompletedRepairGaps(db, {
       WHERE gap.repair_task_id = $1
         AND gap.status = 'verifying'
         AND assertion.value->'covers_capability_ids' ? gap.impact_node_id
-        AND EXISTS (
-          SELECT 1 FROM gap_events AS event
-           WHERE event.gap_id = gap.id
-             AND event.event_type = 'verification_started'
-             AND receipt.completed_at >= event.created_at
-        )
+         AND EXISTS (
+           SELECT 1 FROM gap_events AS event
+            WHERE event.gap_id = gap.id
+              AND event.event_type = 'verification_started'
+              AND receipt.completed_at >= event.created_at
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM jsonb_array_elements(
+               COALESCE(
+                 assertion.value->'source_bindings',
+                 jsonb_build_array(jsonb_build_object(
+                   'journey_step_link_id', assertion.value->>'journey_step_link_id',
+                   'assertion_revision', (assertion.value->>'assertion_revision')::BIGINT,
+                   'assertion_digest', assertion.value->>'assertion_digest'
+                 ))
+               )
+             ) AS missing_binding(value)
+            WHERE NOT EXISTS (
+              SELECT 1
+                FROM journey_assertion_receipts AS binding_receipt
+                JOIN journey_step_links AS binding_link
+                  ON binding_link.id = binding_receipt.journey_step_link_id
+                JOIN initiative_runs AS binding_run
+                  ON binding_run.id::TEXT = binding_receipt.run_id
+                 AND binding_run.current_task_id = gap.repair_task_id
+                JOIN harness_attempts AS binding_attempt
+                  ON binding_attempt.id = binding_receipt.harness_attempt_id
+                 AND binding_attempt.run_id::TEXT = binding_receipt.run_id
+                 AND binding_attempt.role = 'evaluator'
+                 AND binding_attempt.status = 'completed'
+                 AND binding_attempt.result->'decision'->>'outcome' IN ('PASS', 'FIXED')
+               WHERE binding_receipt.run_id = $2
+                 AND binding_receipt.source_repo = contract.repo
+                 AND binding_receipt.source_sha = gap.current_revision
+                 AND binding_receipt.impact_contract_id = contract.id
+                 AND binding_receipt.impact_contract_hash = contract.contract_hash
+                 AND binding_receipt.journey_step_link_id::TEXT = missing_binding.value->>'journey_step_link_id'
+                 AND binding_receipt.assertion_revision = (missing_binding.value->>'assertion_revision')::BIGINT
+                 AND binding_receipt.assertion_ref_snapshot = assertion.value->>'assertion_id'
+                 AND binding_receipt.assertion_digest = missing_binding.value->>'assertion_digest'
+                 AND binding_receipt.command_argv = harness_assertion_command_argv(assertion.value->>'command')
+                 AND binding_receipt.verdict = 'PASS'
+                 AND binding_receipt.exit_code = 0
+                 AND binding_receipt.synthetic = false
+                 AND binding_receipt.executor_kind = 'brain_assertion_runner'
+                 AND binding_receipt.completed_at >= (
+                   SELECT MAX(event.created_at)
+                     FROM gap_events AS event
+                    WHERE event.gap_id = gap.id
+                      AND event.event_type = 'verification_started'
+                 )
+                 AND binding_link.assertion_ref = binding_receipt.assertion_ref_snapshot
+                 AND binding_link.assertion_revision = binding_receipt.assertion_revision
+            )
+         )
       ORDER BY gap.id, receipt.completed_at DESC`,
     [repairTaskId, runId],
   );

@@ -335,8 +335,8 @@ describe('Harness Impact Gate 生产接线适配器', () => {
 
   it('merge receipt 必须绑定 completed evaluator attempt 与当前 Journey 断言版本', async () => {
     const assertion = {
-      assertion_id: 'assert-brain',
-      command: 'npm test',
+      assertion_id: 'packages/brain/src/assert-brain.test.js',
+      command: 'npx vitest run packages/brain/src/assert-brain.test.js',
       journey_step_link_id: '11111111-1111-4111-8111-111111111111',
       assertion_revision: 2,
       assertion_digest: 'd'.repeat(64),
@@ -354,7 +354,7 @@ describe('Harness Impact Gate 生产接线适配器', () => {
           assertion_revision: assertion.assertion_revision,
           assertion_digest: assertion.assertion_digest,
           assertion_ref_snapshot: assertion.assertion_id,
-          command_argv: ['bash', '-lc', assertion.command],
+          command_argv: ['npx', 'vitest', 'run', assertion.assertion_id],
           current_assertion_revision: assertion.assertion_revision,
           current_assertion_ref: assertion.assertion_id,
         }] }),
@@ -373,5 +373,47 @@ describe('Harness Impact Gate 生产接线适配器', () => {
     expect(receiptSql).toMatch(/JOIN journey_step_links AS link/i);
     expect(receiptSql).toMatch(/attempt\.status = 'completed'/i);
     expect(receiptSql).toMatch(/outcome' IN \('PASS', 'FIXED'\)/i);
+  });
+
+  it('聚合断言的每个 Journey source binding 都必须有当前 receipt', async () => {
+    const linkA = '11111111-1111-4111-8111-111111111111';
+    const linkB = '33333333-3333-4333-8333-333333333333';
+    const assertion = {
+      assertion_id: 'packages/brain/src/assert-brain.test.js',
+      command: 'npx vitest run packages/brain/src/assert-brain.test.js',
+      journey_step_link_id: linkA, assertion_revision: 2, assertion_digest: 'd'.repeat(64),
+      source_bindings: [
+        { journey_step_link_id: linkA, assertion_revision: 2, assertion_digest: 'd'.repeat(64) },
+        { journey_step_link_id: linkB, assertion_revision: 3, assertion_digest: 'd'.repeat(64) },
+      ],
+    };
+    const active = {
+      id: '22222222-2222-4222-8222-222222222222', contract_hash: 'c'.repeat(64),
+      contract_body: { required_assertions: [assertion] },
+    };
+    const receipt = (link, revision) => ({
+      journey_step_link_id: link, assertion_revision: revision,
+      assertion_digest: assertion.assertion_digest,
+      assertion_ref_snapshot: assertion.assertion_id,
+      command_argv: ['npx', 'vitest', 'run', assertion.assertion_id],
+      current_assertion_revision: revision,
+      current_assertion_ref: assertion.assertion_id,
+    });
+    const db = { query: vi.fn()
+      .mockResolvedValueOnce({ rows: [active] })
+      .mockResolvedValueOnce({ rows: [receipt(linkA, 2)] }) };
+
+    await expect(verifyImpactMergeFence(db, {
+      taskId: TASK_ID, runId: RUN_ID, headRevision: HEAD_SHA,
+      expectedContractHash: active.contract_hash,
+    })).resolves.toMatchObject({ gate: 'blocked', reason: 'impact_assertion_receipts_missing' });
+
+    db.query.mockReset()
+      .mockResolvedValueOnce({ rows: [active] })
+      .mockResolvedValueOnce({ rows: [receipt(linkA, 2), receipt(linkB, 3)] });
+    await expect(verifyImpactMergeFence(db, {
+      taskId: TASK_ID, runId: RUN_ID, headRevision: HEAD_SHA,
+      expectedContractHash: active.contract_hash,
+    })).resolves.toMatchObject({ gate: 'pass' });
   });
 });

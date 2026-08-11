@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { transitionGapStatus } from '../gap-store.js';
 
 const REVISION = 'a'.repeat(40);
-const ASSERTION_ID = 'assertion-1';
+const ASSERTION_ID = 'packages/brain/src/assertion-1.test.js';
 const ASSERTION_DIGEST = createHash('sha256').update(ASSERTION_ID).digest('hex');
 const LINK_ID = '11111111-1111-4111-8111-111111111111';
 const CONTRACT_ID = '22222222-2222-4222-8222-222222222222';
@@ -36,7 +36,7 @@ function resolutionDb(receiptOverrides = {}) {
           repo: 'perfectuser21/cecelia',
           contract_body: { required_assertions: [{
             assertion_id: ASSERTION_ID,
-            command: 'npm test',
+            command: `npx vitest run ${ASSERTION_ID}`,
             covers_capability_ids: ['billing'],
             journey_step_link_id: LINK_ID,
             assertion_revision: 1,
@@ -66,7 +66,7 @@ function resolutionDb(receiptOverrides = {}) {
           assertion_revision: 1,
           current_assertion_revision: 1,
           assertion_digest: ASSERTION_DIGEST,
-          command_argv: ['bash', '-lc', 'npm test'],
+          command_argv: ['npx', 'vitest', 'run', ASSERTION_ID],
           completed_at: '2026-08-11T04:01:00.000Z',
           output_digest: 'b'.repeat(64),
           scenario_count: 1,
@@ -106,7 +106,9 @@ describe('Gap resolution 不可变回执信任边界', () => {
   });
 
   it('拒绝未执行合同命令的 PASS 回执', async () => {
-    await expect(resolveWith(resolutionDb({ command_argv: ['bash', '-lc', 'true'] })))
+    await expect(resolveWith(resolutionDb({
+      command_argv: ['bash', 'scripts/smoke/other.sh'],
+    })))
       .rejects.toMatchObject({ code: 'invalid_resolution_evidence' });
   });
 });

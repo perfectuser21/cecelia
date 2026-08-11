@@ -14,7 +14,7 @@
 
 import { createHash } from 'crypto';
 import _pool from '../db.js';
-import { validateImpactContract } from './contract-schema.js';
+import { hasTrustedImpactAssertions, validateImpactContract } from './contract-schema.js';
 
 // ---------- 工具函数 ----------
 
@@ -103,6 +103,11 @@ export async function persistImpactContract(db, input) {
     const err = new Error('Impact Contract schema 或身份绑定非法');
     err.code = 'impact_contract_schema_invalid';
     err.issues = validation.success ? [] : validation.error.issues;
+    throw err;
+  }
+  if (!hasTrustedImpactAssertions(contract_body)) {
+    const err = new Error('Impact Contract assertion command 不是 Mapper 权威机械派生值');
+    err.code = 'impact_assertion_authority_invalid';
     throw err;
   }
 

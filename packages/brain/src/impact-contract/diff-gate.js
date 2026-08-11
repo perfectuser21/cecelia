@@ -21,142 +21,8 @@ import {
   openGapForDrift,
   transitionGapStatus,
 } from './gap-store.js';
-
-// ---------- 对账逻辑 ----------
-
-/**
- * extractNodeIds(nodes) — 从节点列表提取 capability_id 集合。
- *
- * @param {any[]} nodes
- * @returns {Set<string>}
- */
-function extractNodeIds(nodes) {
-  const ids = new Set();
-  if (!Array.isArray(nodes)) return ids;
-  for (const node of nodes) {
-    const id = node?.capability_id ?? node?.id ?? node;
-    if (typeof id === 'string' && id) ids.add(id);
-  }
-  return ids;
-}
-
-/**
- * extractAssertionIds(assertions) — 从断言列表提取 assertion_id 集合。
- *
- * @param {any[]} assertions
- * @returns {Set<string>}
- */
-function extractAssertionIds(assertions) {
-  const ids = new Set();
-  if (!Array.isArray(assertions)) return ids;
-  for (const a of assertions) {
-    const id = a?.assertion_id ?? a?.id ?? a;
-    if (typeof id === 'string' && id) ids.add(id);
-  }
-  return ids;
-}
-
-function extractRunnableAssertionCoverage(assertions) {
-  const coveredCapabilityIds = new Set();
-  if (!Array.isArray(assertions)) return coveredCapabilityIds;
-  for (const assertion of assertions) {
-    if (
-      assertion
-      && typeof assertion === 'object'
-      && typeof assertion.assertion_id === 'string'
-      && assertion.assertion_id
-      && typeof assertion.command === 'string'
-      && assertion.command.trim()
-    ) {
-      for (const capabilityId of assertion.covers_capability_ids ?? []) {
-        if (typeof capabilityId === 'string' && capabilityId) {
-          coveredCapabilityIds.add(capabilityId);
-        }
-      }
-    }
-  }
-  return coveredCapabilityIds;
-}
-
-/**
- * compareImpactContract(contractNodes, actualNodes, contractAssertions, actualAssertions) — 核心对账函数。
- *
- * @param {any[]} contractNodes      合同声明的 affected_capabilities 节点列表
- * @param {any[]} actualNodes        Mapper 返回的实际影响节点列表
- * @param {any[]} contractAssertions 合同声明的 required_assertions
- * @param {any[]} actualAssertions   Mapper 返回的 required_assertions
- * @returns {{
- *   verdict: 'pass'|'extend'|'drift',
- *   added_nodes: string[],
- *   removed_nodes: string[],
- *   added_assertions: string[],
- *   reason_code: null|'CONTRACT_IMPACT_DRIFT',
- * }}
- */
-export function compareImpactContract(contractNodes, actualNodes, contractAssertions = [], actualAssertions = []) {
-  const contractIds = extractNodeIds(contractNodes);
-  const actualIds = extractNodeIds(actualNodes);
-  const contractAssertionIds = extractAssertionIds(contractAssertions);
-  const actualAssertionIds = extractAssertionIds(actualAssertions);
-  const runnableAssertionCoverage = new Set([
-    ...extractRunnableAssertionCoverage(contractAssertions),
-    ...extractRunnableAssertionCoverage(actualAssertions),
-  ]);
-
-  // 计算新增节点（实际 - 合同）
-  const addedNodes = [];
-  for (const id of actualIds) {
-    if (!contractIds.has(id)) addedNodes.push(id);
-  }
-
-  // 计算减少节点（合同 - 实际）
-  const removedNodes = [];
-  for (const id of contractIds) {
-    if (!actualIds.has(id)) removedNodes.push(id);
-  }
-
-  // 计算新增断言（实际 - 合同）
-  const addedAssertions = [];
-  for (const id of actualAssertionIds) {
-    if (!contractAssertionIds.has(id)) addedAssertions.push(id);
-  }
-
-  // 情形一：无新增节点 → pass（影响减少或相等）
-  // 影响减少时保留原断言，不删除，仅记录 removed_nodes 作为差异证据
-  if (addedNodes.length === 0) {
-    return {
-      verdict: 'pass',
-      added_nodes: [],
-      removed_nodes: removedNodes,
-      added_assertions: [],
-      reason_code: null,
-    };
-  }
-
-  // 情形二/三：有新增节点
-  // 断言名称不是能力覆盖证据。新增节点必须由可执行断言显式声明 covers_capability_ids。
-  const allNewNodesCovered = addedNodes.every((nodeId) => runnableAssertionCoverage.has(nodeId));
-
-  if (allNewNodesCovered) {
-    // 情形二：新增影响有对应断言 → extend
-    return {
-      verdict: 'extend',
-      added_nodes: addedNodes,
-      removed_nodes: removedNodes,
-      added_assertions: addedAssertions,
-      reason_code: null,
-    };
-  }
-
-  // 情形三：新增影响缺少断言 → drift
-  return {
-    verdict: 'drift',
-    added_nodes: addedNodes,
-    removed_nodes: removedNodes,
-    added_assertions: addedAssertions,
-    reason_code: 'CONTRACT_IMPACT_DRIFT',
-  };
-}
+import { compareImpactContract } from './diff-compare.js';
+export { compareImpactContract } from './diff-compare.js';
 
 // ---------- 副作用操作 ----------
 
@@ -317,6 +183,8 @@ export async function evaluateDiffGate({
       baseRevision: contract?.base_revision,
       headRevision,
       changedFiles,
+      manifestDigest: contract?.manifest_digest,
+      projectionDigest: contract?.projection_digest,
     });
   } catch {
     // Mapper 不可达 → fail-closed，返回 impact_unknown（不进入 pass/extend/drift 裁决）
@@ -338,8 +206,9 @@ export async function evaluateDiffGate({
     };
   }
 
-  // 3b. revision mismatch（fact_revisions 与 headRevision 不对齐）→ impact_unknown
-  if (headRevision) {
+  // 3b. revision mismatch（事实投影必须与合同 base revision 对齐）→ impact_unknown
+  const expectedFactRevision = contract?.base_revision;
+  if (expectedFactRevision) {
     const repoKey = repo || contract?.repo || Object.keys(mapperResult.fact_revisions ?? {})[0];
     if (!repoKey || mapperResult.fact_revisions?.[repoKey] === undefined) {
       return {
@@ -349,13 +218,19 @@ export async function evaluateDiffGate({
       };
     }
     const mapperRevision = mapperResult.fact_revisions[repoKey];
-    if (mapperRevision !== headRevision) {
+    if (mapperRevision !== expectedFactRevision) {
       return {
         gate: 'impact_unknown',
         reason: 'revision_mismatch',
         retryable: true,
       };
     }
+  }
+  if (contract?.manifest_digest && mapperResult.manifest_digest !== contract.manifest_digest) {
+    return { gate: 'impact_unknown', reason: 'manifest_digest_mismatch', retryable: true };
+  }
+  if (contract?.projection_digest && mapperResult.projection_digest !== contract.projection_digest) {
+    return { gate: 'impact_unknown', reason: 'projection_digest_mismatch', retryable: true };
   }
 
   // --- 步骤 4：对账 ---
@@ -409,7 +284,9 @@ export async function evaluateDiffGate({
       const gaps = await recordDriftAndBlockTask(db, {
         taskId,
         contractId: contract?.id ?? null,
-        addedNodes: comparison.added_nodes,
+        addedNodes: comparison.drift_nodes?.length
+          ? comparison.drift_nodes
+          : comparison.added_nodes,
         actualNodes: mapperResult.affected_nodes,
         repo: repo || contract?.repo,
         revision: headRevision,
@@ -434,6 +311,8 @@ export async function evaluateDiffGate({
     added_nodes: comparison.added_nodes,
     removed_nodes: comparison.removed_nodes,
     added_assertions: comparison.added_assertions,
+    changed_assertions: comparison.changed_assertions,
+    removed_assertions: comparison.removed_assertions,
     required_assertions: contract?.contract_body?.required_assertions ?? [],
     contract: contract ?? null,
     gap_event: gapEvent,

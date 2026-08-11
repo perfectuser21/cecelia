@@ -27,6 +27,7 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import {
   openGapForDrift,
   transitionGapStatus,
@@ -140,7 +141,7 @@ router.get('/:id/events', async (req, res) => {
  *   idempotency_key?: string,
  * }
  */
-router.post('/', async (req, res) => {
+router.post('/', internalAuthOrLoopback, async (req, res) => {
   try {
     const {
       source_task_id,
@@ -176,7 +177,7 @@ router.post('/', async (req, res) => {
 
 // ---------- POST /gaps/:id/repair-task — 绑定修复任务与硬依赖 ----------
 
-router.post('/:id/repair-task', async (req, res) => {
+router.post('/:id/repair-task', internalAuthOrLoopback, async (req, res) => {
   try {
     const { id } = req.params;
     const { repair_task_id: repairTaskId } = req.body ?? {};
@@ -216,7 +217,7 @@ router.post('/:id/repair-task', async (req, res) => {
  *   },
  * }
  */
-router.patch('/:id/status', async (req, res) => {
+router.patch('/:id/status', internalAuthOrLoopback, async (req, res) => {
   try {
     const { id } = req.params;
     const {

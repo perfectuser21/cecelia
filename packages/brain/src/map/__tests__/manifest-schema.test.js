@@ -3,6 +3,7 @@
  * 覆盖：JSON Schema 校验、语义校验、digest 确定性
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { MANIFEST_SCHEMA_V1, validateManifestSemantics } from '../manifest-schema.js';
 import { computeManifestDigest } from '../manifest-store.js';
 import Ajv from 'ajv';
@@ -57,6 +58,16 @@ describe('Manifest JSON Schema 校验', () => {
     const valid = validateSchema(CECELIA_MANIFEST);
     if (!valid) console.error('Schema errors:', validateSchema.errors);
     expect(valid).toBe(true);
+  });
+
+  it('生产 Cecelia manifest 的路径归属同时通过 schema 与语义校验', () => {
+    const productionManifest = JSON.parse(readFileSync(
+      new URL('../../../config/map-manifests/cecelia.v1.json', import.meta.url),
+      'utf8',
+    ));
+
+    expect(validateSchema(productionManifest)).toBe(true);
+    expect(validateManifestSemantics(productionManifest)).toEqual({ valid: true, errors: [] });
   });
 
   it('缺少必填字段 scope_key 时报错', () => {
@@ -128,6 +139,21 @@ describe('Manifest 语义校验', () => {
     };
     const result = validateManifestSemantics(bad);
     expect(result.valid).toBe(false);
+  });
+
+  it('拒绝逃逸或 option-shaped 的 Capability 路径所有权', () => {
+    const bad = {
+      ...CECELIA_MANIFEST,
+      capabilities: CECELIA_MANIFEST.capabilities.map((capability, index) => (
+        index === 0
+          ? { ...capability, path_prefixes: ['../outside/'], exact_paths: ['-config'] }
+          : capability
+      )),
+    };
+    expect(validateManifestSemantics(bad).errors).toEqual(expect.arrayContaining([
+      expect.stringContaining('path_prefixes'),
+      expect.stringContaining('exact_paths'),
+    ]));
   });
 
   it('精确验证 2 条 Value Stream、11 个 Capability', () => {

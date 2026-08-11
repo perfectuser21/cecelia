@@ -36,10 +36,10 @@ const BASE_CONTRACT = {
 
 // 模拟 Mapper 正常响应
 function makeNormalMapClient() {
-  return async ({ repo, baseRevision, headRevision }) => ({
+  return async ({ repo, baseRevision }) => ({
     manifest_digest: 'stub_manifest_digest',
     projection_digest: 'stub_projection_digest',
-    fact_revisions: { [repo || 'cecelia']: headRevision || baseRevision || 'stub_revision' },
+    fact_revisions: { [repo || 'cecelia']: baseRevision || 'stub_revision' },
     freshness: { status: 'fresh', reason_code: null },
     affected_nodes: [],
     required_assertions: [],
@@ -225,6 +225,57 @@ describe('FR-3 Structure Gate', () => {
   });
 
   describe('放行条件（正向）', () => {
+
+    test('调用方 command 不能进入可信合同，必须由 Mapper 权威描述替换', async () => {
+      const persistContract = vi.fn(async (_db, input) => ({
+        contract: { id: 'contract-authority', ...input }, created: true,
+      }));
+      const malicious = {
+        ...BASE_CONTRACT,
+        contract_body: {
+          ...BASE_CONTRACT.contract_body,
+          required_assertions: [{
+            assertion_id: 'trusted.test.js', command: 'true',
+            covers_capability_ids: ['cap-001'],
+            journey_step_link_id: '11111111-1111-4111-8111-111111111111',
+            assertion_revision: 1, assertion_digest: 'a'.repeat(64),
+          }],
+        },
+      };
+      const authoritative = {
+        assertion_id: 'trusted.test.js',
+        command: 'npx vitest run trusted.test.js',
+        covers_capability_ids: ['cap-001'],
+        journey_step_link_id: '11111111-1111-4111-8111-111111111111',
+        assertion_revision: 1, assertion_digest: 'a'.repeat(64), owner: 'cap-001',
+      };
+      const mapClient = vi.fn(async () => ({
+        manifest_digest: 'stub_manifest_digest',
+        projection_digest: 'stub_projection_digest',
+        fact_revisions: { cecelia: BASE_CONTRACT.base_revision },
+        freshness: { status: 'fresh', reason_code: null },
+        affected_nodes: [{
+          capability_id: 'cap-001', capability_name: 'Capability 1',
+          owner: 'cap-001', impact_level: 'direct',
+        }],
+        required_assertions: [authoritative],
+      }));
+
+      const result = await evaluateStructureGate({
+        db: {}, task: BASE_TASK, contract: malicious, mapClient, persistContract,
+      });
+
+      expect(result.gate).toBe('pass');
+      expect(mapClient).toHaveBeenCalledWith(expect.objectContaining({
+        capabilityIds: ['cap-001'],
+      }));
+      const body = persistContract.mock.calls[0][1].contract_body;
+      expect(body.required_assertions).toEqual([authoritative]);
+      expect(body.required_assertions[0].command).not.toBe('true');
+      expect(body.affected_capabilities).toEqual([{
+        capability_id: 'cap-001', capability_name: 'Capability 1', impact_level: 'direct',
+      }]);
+    });
 
     test('schema 合法 + Mapper 可达 + freshness 新鲜 + revision 匹配时 Structure Gate 放行', async () => {
       // 注入正常 Mapper 响应

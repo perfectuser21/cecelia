@@ -37,7 +37,21 @@ describe('map routes', () => {
     expect(res.status).not.toBe(500);
   });
 
+  it('高成本 radius 在生产 token 配置后拒绝代理成 loopback 的匿名调用', async () => {
+    const prior = process.env.CECELIA_INTERNAL_TOKEN;
+    process.env.CECELIA_INTERNAL_TOKEN = 'map-test-token';
+    try {
+      const app = await makeApp();
+      const res = await (await req())(app).post('/api/brain/map/radius').send({});
+      expect(res.status).toBe(401);
+    } finally {
+      if (prior === undefined) delete process.env.CECELIA_INTERNAL_TOKEN;
+      else process.env.CECELIA_INTERNAL_TOKEN = prior;
+    }
+  });
+
   it('POST /radius — 与 Impact Gate 使用同一 revision-locked 合同', async () => {
+    const baseRevision = 'a'.repeat(40);
     const headRevision = 'b'.repeat(40);
     const assertionLinkId = '11111111-1111-4111-8111-111111111111';
     mockQuery.mockImplementation(async (sql) => {
@@ -51,17 +65,21 @@ describe('map routes', () => {
         return { rows: [{
           id: 'projection-1', scope_key: 'cecelia', status: 'active',
           manifest_digest: '1'.repeat(64), projection_digest: '2'.repeat(64),
-          fact_revisions: { cecelia: headRevision },
+          fact_revisions: { cecelia: baseRevision },
         }] };
       }
       if (sql.includes('MAX(scanned_at)')) {
         return { rows: [{ latest: new Date() }] };
       }
-      if (sql.includes('SELECT src_path, dst_path, edge_type FROM graph_edges')) {
+      if (sql.includes('FROM graph_snapshot_versions AS snapshot')) {
         return { rows: [{
+          snapshot_revision: baseRevision,
           src_path: 'packages/brain/src/impact-contract/diff-gate.js',
           dst_path: 'packages/brain/src/routes/map.js', edge_type: 'import',
         }] };
+      }
+      if (sql.includes('FROM map_projection_nodes')) {
+        return { rows: [{ node_key: 'F1', name: '工厂 · F1 开发闭环' }] };
       }
       if (sql.includes('FROM journey_features')) {
         return { rows: [{
@@ -87,7 +105,7 @@ describe('map routes', () => {
       .post('/api/brain/map/radius')
       .send({
         repo: 'perfectuser21/cecelia',
-        base_revision: 'a'.repeat(40),
+        base_revision: baseRevision,
         head_revision: headRevision,
         changed_files: ['packages/brain/src/routes/map.js'],
       });
@@ -97,7 +115,7 @@ describe('map routes', () => {
       scope_key: 'cecelia',
       manifest_digest: '1'.repeat(64),
       projection_digest: '2'.repeat(64),
-      fact_revisions: { 'perfectuser21/cecelia': headRevision },
+      fact_revisions: { 'perfectuser21/cecelia': baseRevision },
       freshness: { status: 'fresh', reason_code: null },
       affected_nodes: [{
         capability_id: 'F1', capability_name: '工厂 · F1 开发闭环', owner: 'F1',

@@ -39,6 +39,48 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_harness_impact_contracts_one_active
   ON harness_impact_contracts (task_id)
   WHERE status = 'active';
 
+CREATE OR REPLACE FUNCTION prevent_impact_contract_semantic_mutation()
+RETURNS trigger AS $$
+BEGIN
+  IF ROW(
+    NEW.task_id, NEW.version, NEW.schema_version, NEW.change_kind, NEW.repo,
+    NEW.base_revision, NEW.head_revision, NEW.manifest_digest,
+    NEW.projection_digest, NEW.contract_hash, NEW.contract_body,
+    NEW.supersedes_id, NEW.created_at
+  ) IS DISTINCT FROM ROW(
+    OLD.task_id, OLD.version, OLD.schema_version, OLD.change_kind, OLD.repo,
+    OLD.base_revision, OLD.head_revision, OLD.manifest_digest,
+    OLD.projection_digest, OLD.contract_hash, OLD.contract_body,
+    OLD.supersedes_id, OLD.created_at
+  ) THEN
+    RAISE EXCEPTION 'Impact Contract semantic fields are immutable'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  IF NEW.status IS DISTINCT FROM OLD.status
+     AND NOT (
+       (OLD.status = 'draft' AND NEW.status IN ('active', 'invalidated'))
+       OR (OLD.status = 'active' AND NEW.status IN ('superseded', 'invalidated'))
+     ) THEN
+    RAISE EXCEPTION 'invalid Impact Contract status transition: % -> %', OLD.status, NEW.status
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  IF NEW.invalidated_at IS DISTINCT FROM OLD.invalidated_at
+     AND NEW.status <> 'invalidated' THEN
+    RAISE EXCEPTION 'invalidated_at may only change while invalidating a contract'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_prevent_impact_contract_semantic_mutation
+  ON harness_impact_contracts;
+CREATE TRIGGER trg_prevent_impact_contract_semantic_mutation
+  BEFORE UPDATE ON harness_impact_contracts
+  FOR EACH ROW EXECUTE FUNCTION prevent_impact_contract_semantic_mutation();
+
 COMMENT ON TABLE harness_impact_contracts IS
   'Impact Contract 不可变版本表；记录开发任务声明的影响范围、断言和 Mapper 证据。';
 

@@ -11,9 +11,10 @@ description: |
   Mode 2 触发：归位、这个加到哪、放哪个capability、XX算什么、帮我看看XX属于哪。
   输出变化：不再直接写 golden_paths/journeys/journey_features 账本；产物是
   完整 manifest 草案（JSON），由用户拍板后用 POST /api/brain/map/manifests 提交激活。
-version: 2.0.0
+version: 2.0.1
 created: 2026-07-17
 changelog:
+  - 2.0.1: 拍板后的写入统一交给受信宿主 product-map-adapter；Runner 只产草案，不持有内部通用 token
   - 2.0.0: 改为 Manifest Authoring Assistant（PRD Universal Map Projection Engine 刀5）
     产物从逐表账本写入改为完整 manifest JSON 草案，不再直接定义红绿；
     Mode 1 产出 manifest.json + 提交命令；Mode 2 产出 manifest patch + 重激活命令
@@ -140,28 +141,19 @@ P0/P1 打回修订；真找不出实质漏洞时必须 APPROVED（禁凑数打�
 
 ### Step 5：拍板后提交激活
 
-**拍板后**（且仅拍板后），执行一次性提交：
+**拍板后**（且仅拍板后），把草案交给受信宿主 adapter 一次性校验、提交并激活：
 
 ```bash
-# 1. 校验 manifest（纯校验，不写库）
-curl -s -X POST "$BRAIN/api/brain/map/manifests/validate" \
-  -H "Content-Type: application/json" \
-  -d @manifest.json
-
-# 2. 提交 draft
-MANIFEST_ID=$(curl -s -X POST "$BRAIN/api/brain/map/manifests" \
-  -H "Content-Type: application/json" \
-  -d "{\"manifest\": $(cat manifest.json), \"source_decision_id\": \"<decision_uuid>\"}" \
-  | jq -r '.manifest_id')
-
-# 3. 激活（触发 Projector 一次性生成全图）
-curl -s -X POST "$BRAIN/api/brain/map/manifests/$MANIFEST_ID/activate" \
-  -H "Content-Type: application/json" \
-  -d "{\"scope_key\": \"<scope>\"}"
-
-# 4. 验证投影结果
-curl -s "$BRAIN/api/brain/map?scope=<scope>" | jq '.summary'
+node scripts/map/product-map-adapter.mjs \
+  --input manifest.json \
+  --scope <scope> \
+  --decision-id <decision_uuid> \
+  --submit
 ```
+
+Runner/Provider 环境只负责产出 `manifest.json` artifact；不得读取或请求
+`CECELIA_INTERNAL_TOKEN`。若当前执行体不是受信宿主，返回 artifact 路径，由 Brain/宿主
+执行上面的 adapter 命令，禁止退回匿名 curl。
 
 **拍板前绝不提交**——manifest 草案是给主理人审的，不是既成事实。
 

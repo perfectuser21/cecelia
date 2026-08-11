@@ -10,6 +10,7 @@
  */
 
 import { describe, test, expect, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { computeContractHash, persistImpactContract } from '../contract-store.js';
 import { validateImpactContract } from '../contract-schema.js';
 
@@ -23,16 +24,7 @@ function minimalValidContract(overrides = {}) {
     affected_capabilities: [
       { capability_id: 'cap-001', capability_name: 'user-auth', impact_level: 'direct' },
     ],
-    required_assertions: [
-      {
-        assertion_id: 'assert-001',
-        command: 'npm test -- --testPathPattern=auth',
-        covers_capability_ids: ['cap-001'],
-        journey_step_link_id: '11111111-1111-4111-8111-111111111111',
-        assertion_revision: 1,
-        assertion_digest: 'a'.repeat(64),
-      },
-    ],
+    required_assertions: [],
     ...overrides,
   };
 }
@@ -98,6 +90,24 @@ describe('FR-2 Impact Contract 持久化', () => {
   // -------------------------------------------------------
   describe('validateImpactContract — schema 验证与持久化前置检查', () => {
 
+    test('持久化层拒绝未由 assertion_id 机械派生的 command', async () => {
+      const contractBody = minimalValidContract({
+        required_assertions: [{
+          assertion_id: 'packages/brain/src/example.test.js', command: 'true',
+          covers_capability_ids: ['cap-001'],
+          journey_step_link_id: '11111111-1111-4111-8111-111111111111',
+          assertion_revision: 1, assertion_digest: 'a'.repeat(64),
+        }],
+      });
+      await expect(persistImpactContract({ query: vi.fn() }, {
+        task_id: contractBody.task_id,
+        change_kind: contractBody.change_kind,
+        base_revision: contractBody.base_revision,
+        manifest_digest: '1'.repeat(64), projection_digest: '2'.repeat(64),
+        contract_body: contractBody,
+      })).rejects.toMatchObject({ code: 'impact_contract_schema_invalid' });
+    });
+
     test('符合 schema 的合同验证通过', () => {
       const payload = minimalValidContract();
       const result = validateImpactContract(payload);
@@ -150,7 +160,17 @@ describe('FR-2 Impact Contract 持久化', () => {
     });
 
     test('历史 superseded hash 再次成为当前语义时创建新版本，不把旧版本冒充 active', async () => {
-      const contractBody = minimalValidContract();
+      const assertionId = 'packages/brain/src/impact-contract/__tests__/contract-store.test.js';
+      const contractBody = minimalValidContract({
+        required_assertions: [{
+          assertion_id: assertionId,
+          command: `npx vitest run ${assertionId}`,
+          covers_capability_ids: ['cap-001'],
+          journey_step_link_id: '11111111-1111-4111-8111-111111111111',
+          assertion_revision: 1,
+          assertion_digest: createHash('sha256').update(assertionId).digest('hex'),
+        }],
+      });
       const db = {
         query: vi.fn(async (sql) => {
           const s = String(sql);
@@ -185,6 +205,20 @@ describe('FR-2 Impact Contract 持久化', () => {
 
   // -------------------------------------------------------
   describe('Mapper 不可达处理', () => {
+
+    test('持久层拒绝受影响 Capability 没有可执行断言覆盖的 active 合同', async () => {
+      const db = { query: vi.fn() };
+      const contractBody = minimalValidContract({ required_assertions: [] });
+      await expect(persistImpactContract(db, {
+        task_id: contractBody.task_id,
+        change_kind: contractBody.change_kind,
+        base_revision: contractBody.base_revision,
+        manifest_digest: '1'.repeat(64),
+        projection_digest: '2'.repeat(64),
+        contract_body: contractBody,
+      })).rejects.toMatchObject({ code: 'impact_assertion_authority_invalid' });
+      expect(db.query).not.toHaveBeenCalled();
+    });
 
     test('持久层拒绝绕开 Structure API 写入 schema 非法的 active 合同', async () => {
       const db = { query: vi.fn() };

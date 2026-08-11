@@ -27,6 +27,9 @@ describe('completed repair gap resolution', () => {
     const [sql, params] = db.query.mock.calls[0];
     expect(sql).toContain('verification_run.current_task_id = gap.repair_task_id');
     expect(sql).toContain("gap.status = 'verifying'");
+    expect(sql).toContain("assertion.value->'source_bindings'");
+    expect(sql).toContain('NOT EXISTS');
+    expect(sql).toContain('missing_binding');
     expect(params).toEqual([REPAIR_TASK_ID, RUN_ID]);
     expect(transitionGap).toHaveBeenCalledWith(db, GAP_ID, 'resolved', {
       actor: 'cecelia-brain',

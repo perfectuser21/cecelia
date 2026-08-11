@@ -42,13 +42,25 @@ if [[ -n "${GIT_LOG:-}" ]]; then
   printf '%s\n' "$*" >> "$GIT_LOG"
 fi
 if [[ "${1:-}" == "branch" && "${2:-}" == "--show-current" ]]; then
-  printf '%s\n' "${GIT_BRANCH:-cp-run-all-scans-test}"
+  printf '%s\n' "${GIT_BRANCH:-main}"
   exit 0
 fi
 if [[ "${1:-}" == "status" && "${2:-}" == "--porcelain" ]]; then
   exit 0
 fi
 if [[ "${1:-}" == "pull" && "${2:-}" == "--ff-only" ]]; then
+  exit 0
+fi
+if [[ "${1:-}" == "rev-parse" && "${2:-}" == "HEAD" ]]; then
+  if [[ -n "${HEAD_CHANGE_MARKER:-}" && -f "$HEAD_CHANGE_MARKER" ]]; then
+    printf '%s\n' "${GIT_HEAD_AFTER_SCAN:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+  else
+    printf '%s\n' "${GIT_HEAD_SHA:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+  fi
+  exit 0
+fi
+if [[ "${1:-}" == "rev-parse" && "${2:-}" == "origin/main" ]]; then
+  printf '%s\n' "${GIT_REMOTE_SHA:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
   exit 0
 fi
 printf 'unexpected git invocation:' >&2
@@ -63,7 +75,12 @@ cat > "$NODE_STUB" <<'STUB'
 if [[ -n "${NODE_LOG:-}" ]]; then
   printf '%s\n' "$*" >> "$NODE_LOG"
 fi
+if [[ "${1##*/}" == "verify-scan-batch.mjs" ]]; then
+  printf '%s\n' "${2:-}" > "$VERIFY_LOG"
+  exit "${VERIFY_EXIT:-0}"
+fi
 printf '%s\n' "$1" >> "$SCAN_LOG"
+if [[ -n "${HEAD_CHANGE_MARKER:-}" ]]; then : > "$HEAD_CHANGE_MARKER"; fi
 if [[ "${1##*/}" == "${FAIL_SCANNER:-}" ]]; then
   exit 23
 fi
@@ -95,12 +112,20 @@ SUCCESS_RC=0
 env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
   NODE_FALLBACK_PATHS="$CONTROL_BIN/missing" SCAN_LOG="$SUCCESS_LOG" \
   CURL_LOG="$SUCCESS_CURL_LOG" \
+  VERIFY_LOG="$TMPD/default-verify.log" \
   /bin/bash "$RUNNER" > "$SUCCESS_OUT" 2>&1 || SUCCESS_RC=$?
 
 if [[ $SUCCESS_RC -eq 0 ]]; then
   pass "cron PATH 下使用 NODE_BIN 完成默认扫描"
 else
   fail "cron PATH 下默认扫描失败(rc=$SUCCESS_RC): $(tr '\n' ' ' < "$SUCCESS_OUT")"
+fi
+
+if [[ -f "$TMPD/default-verify.log" ]] \
+  && [[ "$(cat "$TMPD/default-verify.log")" == aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]]; then
+  pass "rebuild 前机械核对四类 header revision"
+else
+  fail "默认扫描未执行 batch revision 核对"
 fi
 
 if [[ -f "$SUCCESS_LOG" && "$(cat "$SUCCESS_LOG")" == "$DEFAULT_SCANS" ]]; then
@@ -115,6 +140,22 @@ if [[ -f "$SUCCESS_CURL_LOG" ]] \
   pass "全部事实扫描成功后按 scope 原子重建 active Map projection"
 else
   fail "扫描成功后未重建 cecelia Map projection"
+fi
+
+TOKEN_ENV="$TMPD/internal-auth.env"
+printf '%s\n' 'CECELIA_INTERNAL_TOKEN=test-internal-token-0123456789abcdef' > "$TOKEN_ENV"
+TOKEN_CURL_LOG="$TMPD/token-curl.log"
+TOKEN_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
+  NODE_FALLBACK_PATHS="$CONTROL_BIN/missing" SCAN_LOG="$TMPD/token-scan.log" \
+  CURL_LOG="$TOKEN_CURL_LOG" VERIFY_LOG="$TMPD/token-verify.log" \
+  CECELIA_INTERNAL_ENV_FILE="$TOKEN_ENV" \
+  /bin/bash "$RUNNER" > "$TMPD/token.out" 2>&1 || TOKEN_RC=$?
+if [[ $TOKEN_RC -eq 0 ]] \
+  && grep -q -- 'Authorization: Bearer test-internal-token-0123456789abcdef' "$TOKEN_CURL_LOG"; then
+  pass "宿主 cron 从受保护 env 文件加载内部 token 并鉴权 Map rebuild"
+else
+  fail "宿主 cron 未携带内部 token(rc=$TOKEN_RC): $(tr '\n' ' ' < "$TMPD/token.out")"
 fi
 
 FAIL_LOG="$TMPD/failure.log"
@@ -216,6 +257,48 @@ if [[ $SKIP_PULL_RC -eq 0 ]] \
   pass "SKIP_GIT_PULL=1 在 clean main 上禁止 git pull 且继续扫描"
 else
   fail "SKIP_GIT_PULL=1 未阻止 git pull(rc=$SKIP_PULL_RC): $(tr '\n' ' ' < "$SKIP_PULL_OUT")"
+fi
+
+UNSAFE_BRANCH_SCAN_LOG="$TMPD/unsafe-branch-scan.log"
+UNSAFE_BRANCH_OUT="$TMPD/unsafe-branch.out"
+UNSAFE_BRANCH_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
+  NODE_FALLBACK_PATHS="$CONTROL_BIN/missing" SCAN_LOG="$UNSAFE_BRANCH_SCAN_LOG" \
+  GIT_BRANCH=feature/unsafe SCAN_SCRIPTS="probe.js" \
+  /bin/bash "$RUNNER" > "$UNSAFE_BRANCH_OUT" 2>&1 || UNSAFE_BRANCH_RC=$?
+if [[ $UNSAFE_BRANCH_RC -eq 3 && ! -e "$UNSAFE_BRANCH_SCAN_LOG" ]]; then
+  pass "非 main checkout 在 scanner 启动前 fail-closed"
+else
+  fail "非 main checkout 仍被扫描(rc=$UNSAFE_BRANCH_RC)"
+fi
+
+MISMATCH_SCAN_LOG="$TMPD/mismatch-scan.log"
+MISMATCH_OUT="$TMPD/mismatch.out"
+MISMATCH_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
+  NODE_FALLBACK_PATHS="$CONTROL_BIN/missing" SCAN_LOG="$MISMATCH_SCAN_LOG" \
+  GIT_HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  EXPECTED_SCAN_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  SKIP_GIT_PULL=1 SCAN_SCRIPTS="probe.js" \
+  /bin/bash "$RUNNER" > "$MISMATCH_OUT" 2>&1 || MISMATCH_RC=$?
+if [[ $MISMATCH_RC -eq 3 && ! -e "$MISMATCH_SCAN_LOG" ]]; then
+  pass "扫描 HEAD 与事件扳机 SHA 不一致时 fail-closed"
+else
+  fail "错误 revision 仍被记为目标快照(rc=$MISMATCH_RC)"
+fi
+
+MIDSCAN_MARKER="$TMPD/midscan-head-changed"
+MIDSCAN_CURL_LOG="$TMPD/midscan-curl.log"
+MIDSCAN_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" \
+  NODE_FALLBACK_PATHS="$CONTROL_BIN/missing" SCAN_LOG="$TMPD/midscan-scan.log" \
+  VERIFY_LOG="$TMPD/midscan-verify.log" CURL_LOG="$MIDSCAN_CURL_LOG" \
+  HEAD_CHANGE_MARKER="$MIDSCAN_MARKER" \
+  /bin/bash "$RUNNER" > "$TMPD/midscan.out" 2>&1 || MIDSCAN_RC=$?
+if [[ $MIDSCAN_RC -eq 3 && ! -s "$MIDSCAN_CURL_LOG" ]]; then
+  pass "扫描过程中 checkout revision 改变时拒绝 rebuild"
+else
+  fail "扫描中 revision 漂移仍发布 projection(rc=$MIDSCAN_RC)"
 fi
 
 ROOT_FAILURE_GIT_LOG="$TMPD/root-failure-git.log"

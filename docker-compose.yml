@@ -84,9 +84,15 @@ services:
       - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env.docker
+      # 所有 checkout / cron / 蓝绿部署共用宿主凭据 SSOT；首次部署自动生成。
+      - path: ${CECELIA_INTERNAL_ENV_FILE:-/Users/administrator/.credentials/cecelia-internal.env}
+        required: false
     environment:
+      - NODE_ENV=production
       - TZ=Asia/Shanghai
       - ENV_REGION=${ENV_REGION:-us}
+      # Universal Map repo→scope 身份绑定；拒绝仅 basename 相同的跨仓证据冒用。
+      - CECELIA_MAP_REPO_SCOPES=${CECELIA_MAP_REPO_SCOPES:-perfectuser21/cecelia=cecelia,cecelia=cecelia}
       # Kernel controller 固定留在 US M4；Docker hostname 不是可调度机器身份。
       - CECELIA_MACHINE_ID=${CECELIA_MACHINE_ID:-us-mac-m4}
       # Fleet Node admission is mandatory. Brain accepts only these canonical

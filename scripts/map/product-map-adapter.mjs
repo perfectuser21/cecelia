@@ -16,6 +16,10 @@
 
 import { readFileSync, writeFileSync } from 'fs';
 import { parseArgs } from 'util';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const { brainAuthHeaders } = require('../lib/brain-auth-headers.cjs');
 
 // ─── CLI args ────────────────────────────────────────────────────────────────
 
@@ -26,6 +30,7 @@ const { values: args } = parseArgs({
     scope: { type: 'string', default: 'zenithjoy' },
     'decision-id': { type: 'string' },
     output: { type: 'string' },
+    submit: { type: 'boolean', default: false },
     help: { type: 'boolean', default: false },
   },
 });
@@ -40,13 +45,15 @@ Usage:
     --scope <scope_key>         (default: zenithjoy)
     --decision-id <uuid>        (required for activation)
     --output <out.json>         (optional; prints to stdout if omitted)
+    --submit                    (trusted host only: validate + submit + activate)
 
 Example:
   node scripts/map/product-map-adapter.mjs \\
     --input ~/zenithjoy/product-map/product-map.yaml \\
     --scope zenithjoy \\
     --decision-id "some-decision-uuid" \\
-    --output /tmp/zenithjoy-manifest.json
+    --output /tmp/zenithjoy-manifest.json \
+    --submit
 `);
   process.exit(0);
 }
@@ -243,6 +250,7 @@ async function main() {
   const scopeKey = args.scope || 'zenithjoy';
   const decisionId = args['decision-id'];
   const outputPath = args.output;
+  const shouldSubmit = args.submit;
 
   let rawText;
   try {
@@ -285,6 +293,51 @@ async function main() {
     console.log(output);
   }
 
+  if (shouldSubmit) {
+    if (!decisionId) {
+      throw new Error('--submit 必须同时提供 --decision-id，拒绝无拍板法源激活');
+    }
+    const authHeaders = brainAuthHeaders();
+    if (!authHeaders.Authorization) {
+      throw new Error(
+        '受信提交缺少 CECELIA_INTERNAL_TOKEN；请在宿主 credentials SSOT 配置后重试',
+      );
+    }
+    const brainUrl = process.env.BRAIN_URL || 'http://localhost:5221';
+    const requestJson = async (path, options = {}) => {
+      const response = await fetch(`${brainUrl}${path}`, {
+        ...options,
+        headers: {
+          ...authHeaders,
+          'Content-Type': 'application/json',
+          ...(options.headers ?? {}),
+        },
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(`${path} 返回 HTTP ${response.status}: ${JSON.stringify(body)}`);
+      }
+      return body;
+    };
+    const validation = await requestJson('/api/brain/map/manifests/validate', {
+      method: 'POST',
+      body: JSON.stringify(manifest),
+    });
+    if (validation.valid !== true) throw new Error('Brain 拒绝 manifest 校验');
+    const submitted = await requestJson('/api/brain/map/manifests', {
+      method: 'POST',
+      body: JSON.stringify({ manifest, source_decision_id: decisionId }),
+    });
+    const activated = await requestJson(
+      `/api/brain/map/manifests/${submitted.manifest_id}/activate`,
+      { method: 'POST', body: JSON.stringify({ scope_key: scopeKey }) },
+    );
+    console.error(
+      `[adapter] manifest ${submitted.manifest_id} 已激活，projection=${activated.projection?.projection_digest ?? 'unknown'}`,
+    );
+    return;
+  }
+
   // Print submission instructions
   const BRAIN = process.env.BRAIN_URL || 'http://localhost:5221';
   console.error(`
@@ -292,17 +345,20 @@ async function main() {
 
 1. 校验：
    curl -s -X POST ${BRAIN}/api/brain/map/manifests/validate \\
+     -H "Authorization: Bearer \${CECELIA_INTERNAL_TOKEN}" \\
      -H "Content-Type: application/json" \\
      -d @${outputPath || '<manifest.json>'}
 
 2. 提交：
    MANIFEST_ID=$(curl -s -X POST ${BRAIN}/api/brain/map/manifests \\
+     -H "Authorization: Bearer \${CECELIA_INTERNAL_TOKEN}" \\
      -H "Content-Type: application/json" \\
      -d '{"manifest": $(cat ${outputPath || '<manifest.json>'}), "source_decision_id": "${decisionId || '<uuid>'}"}' \\
      | jq -r '.manifest_id')
 
 3. 激活：
    curl -s -X POST ${BRAIN}/api/brain/map/manifests/$MANIFEST_ID/activate \\
+     -H "Authorization: Bearer \${CECELIA_INTERNAL_TOKEN}" \\
      -H "Content-Type: application/json" \\
      -d '{"scope_key": "${scopeKey}"}'
 

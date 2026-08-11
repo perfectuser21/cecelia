@@ -13,14 +13,14 @@ import { describe, test, expect, vi } from 'vitest';
 import { compareImpactContract, evaluateDiffGate } from '../diff-gate.js';
 
 // ── 辅助函数：构造 fresh Mapper 响应 ──
-function makeFreshMapperResult({ affectedNodes = [], requiredAssertions = [], headRevision } = {}) {
+function makeFreshMapperResult({ affectedNodes = [], requiredAssertions = [], baseRevision } = {}) {
   const result = {
     freshness: { status: 'fresh' },
     affected_nodes: affectedNodes,
     required_assertions: requiredAssertions,
   };
-  if (headRevision) {
-    result.fact_revisions = { 'cecelia': headRevision };
+  if (baseRevision) {
+    result.fact_revisions = { 'cecelia': baseRevision };
   }
   return result;
 }
@@ -29,17 +29,59 @@ describe('FR-4 Diff Impact Gate', () => {
 
   describe('情形一：实际影响 ⊆ 声明影响', () => {
 
-    test('实际影响完全被声明覆盖时 Diff Gate 通过（pass）', async () => {
+    test('实际影响完全被声明且被可执行断言覆盖时 Diff Gate 通过（pass）', async () => {
       // 合同声明 ['impact-contract', 'task-routing']，实际只影响 ['impact-contract']
+      const assertion = {
+        assertion_id: 'impact-contract.test.js',
+        command: 'npm test',
+        covers_capability_ids: ['impact-contract'],
+      };
       const result = compareImpactContract(
         ['impact-contract', 'task-routing'], // contractNodes
         ['impact-contract'],                 // actualNodes（⊆ 合同）
-        [],                                  // contractAssertions
-        [],                                  // actualAssertions
+        [assertion],                         // contractAssertions
+        [assertion],                         // actualAssertions
       );
       expect(result.verdict).toBe('pass');
       expect(result.added_nodes).toEqual([]);
       expect(result.reason_code).toBe(null);
+    });
+
+    test('影响缩小时，仅覆盖已移除节点的合同断言不制造假 drift', () => {
+      const retainedAssertion = {
+        assertion_id: 'impact-contract.test.js',
+        command: 'npm test',
+        covers_capability_ids: ['impact-contract'],
+      };
+      const result = compareImpactContract(
+        ['impact-contract', 'task-routing'],
+        ['impact-contract'],
+        [retainedAssertion, {
+          assertion_id: 'task-routing.test.js',
+          command: 'npm test',
+          covers_capability_ids: ['task-routing'],
+        }],
+        [retainedAssertion],
+      );
+
+      expect(result.verdict).toBe('pass');
+      expect(result.removed_nodes).toEqual(['task-routing']);
+      expect(result.removed_assertions).toEqual([]);
+    });
+
+    test('已有受影响 Capability 没有任何可执行断言时也必须 drift', () => {
+      const result = compareImpactContract(
+        ['impact-contract'],
+        ['impact-contract'],
+        [],
+        [],
+      );
+
+      expect(result).toMatchObject({
+        verdict: 'drift',
+        reason_code: 'CONTRACT_IMPACT_DRIFT',
+        drift_nodes: ['impact-contract'],
+      });
     });
 
     test('没有 active contract 时 fail-closed，且不调用 Mapper', async () => {
@@ -73,11 +115,16 @@ describe('FR-4 Diff Impact Gate', () => {
     test('新增影响已有断言时 Diff Gate 扩展合同并通过（extend）', async () => {
       // 合同只声明 ['impact-contract']，实际还影响 ['task-routing']
       // 但 actualAssertions 中有覆盖 task-routing 的断言
+      const existingAssertion = {
+        assertion_id: 'impact_contract_works',
+        command: 'npm test',
+        covers_capability_ids: ['impact-contract'],
+      };
       const result = compareImpactContract(
         ['impact-contract'],                 // contractNodes
         ['impact-contract', 'task-routing'], // actualNodes（新增 task-routing）
-        [],                                  // contractAssertions
-        [{
+        [existingAssertion],                 // contractAssertions
+        [existingAssertion, {
           assertion_id: 'task_routing_works',
           command: 'npm test',
           covers_capability_ids: ['task-routing'],
@@ -89,11 +136,16 @@ describe('FR-4 Diff Impact Gate', () => {
     });
 
     test('扩展后合同的 required_assertions 包含新断言', async () => {
+      const existingAssertion = {
+        assertion_id: 'impact_contract_works',
+        command: 'npm test',
+        covers_capability_ids: ['impact-contract'],
+      };
       const result = compareImpactContract(
         ['impact-contract'],
         ['impact-contract', 'task-routing'],
-        [],
-        [{
+        [existingAssertion],
+        [existingAssertion, {
           assertion_id: 'task_routing_works',
           command: 'npm test',
           covers_capability_ids: ['task-routing'],
@@ -102,6 +154,57 @@ describe('FR-4 Diff Impact Gate', () => {
       expect(result.verdict).toBe('extend');
       // added_assertions 记录了新断言
       expect(result.added_assertions.includes('task_routing_works')).toBeTruthy();
+    });
+
+    test('同一 assertion_ref 的 Journey revision 漂移也必须 extend', () => {
+      const baseAssertion = {
+        assertion_id: 'packages/brain/src/example.test.js',
+        command: 'npx vitest run packages/brain/src/example.test.js',
+        covers_capability_ids: ['impact-contract'],
+        journey_step_link_id: '11111111-1111-4111-8111-111111111111',
+        assertion_revision: 1,
+        assertion_digest: 'a'.repeat(64),
+      };
+      const result = compareImpactContract(
+        ['impact-contract'],
+        ['impact-contract'],
+        [baseAssertion],
+        [{ ...baseAssertion, assertion_revision: 2 }],
+      );
+
+      expect(result.verdict).toBe('extend');
+      expect(result.changed_assertions).toEqual(['packages/brain/src/example.test.js']);
+    });
+
+    test('节点不变但 Mapper 新增断言时也必须刷新合同', () => {
+      const assertion = {
+        assertion_id: 'packages/brain/src/example.test.js',
+        command: 'npx vitest run packages/brain/src/example.test.js',
+        covers_capability_ids: ['impact-contract'],
+        journey_step_link_id: '11111111-1111-4111-8111-111111111111',
+        assertion_revision: 1,
+        assertion_digest: 'a'.repeat(64),
+      };
+      const result = compareImpactContract(
+        ['impact-contract'], ['impact-contract'], [], [assertion],
+      );
+
+      expect(result.verdict).toBe('extend');
+      expect(result.added_assertions).toEqual([assertion.assertion_id]);
+    });
+
+    test('Mapper 移除合同断言时必须 drift，不能保留旧合同后假 pass', () => {
+      const assertion = {
+        assertion_id: 'packages/brain/src/example.test.js', command: 'npm test',
+        covers_capability_ids: ['impact-contract'],
+      };
+      const result = compareImpactContract(
+        ['impact-contract'], ['impact-contract'], [assertion], [],
+      );
+
+      expect(result.verdict).toBe('drift');
+      expect(result.removed_assertions).toEqual([assertion.assertion_id]);
+      expect(result.drift_nodes).toEqual(['impact-contract']);
     });
 
     test('只有 assertion_id 没有可执行 command 不能把新增影响判成已覆盖', () => {
@@ -115,6 +218,11 @@ describe('FR-4 Diff Impact Gate', () => {
     });
 
     test('extend 裁决持久化包含新增节点、断言和最新 digest 的合同版本', async () => {
+      const existingAssertion = {
+        assertion_id: 'impact_contract_works',
+        command: 'npm test',
+        covers_capability_ids: ['impact-contract'],
+      };
       const db = {
         query: vi.fn(async (sql) => {
           if (String(sql).includes('FROM harness_impact_contracts')) {
@@ -126,7 +234,7 @@ describe('FR-4 Diff Impact Gate', () => {
                 base_revision: 'base',
                 contract_body: {
                   affected_capabilities: [{ capability_id: 'impact-contract' }],
-                  required_assertions: [],
+                  required_assertions: [existingAssertion],
                 },
               }],
             };
@@ -146,10 +254,10 @@ describe('FR-4 Diff Impact Gate', () => {
         mapClient: async () => ({
           manifest_digest: 'manifest-2',
           projection_digest: 'projection-2',
-          fact_revisions: { cecelia: 'head' },
+          fact_revisions: { cecelia: 'base' },
           freshness: { status: 'fresh' },
           affected_nodes: ['impact-contract', 'task-routing'],
-          required_assertions: [{
+          required_assertions: [existingAssertion, {
             assertion_id: 'task_routing_works',
             command: 'npm test',
             covers_capability_ids: ['task-routing'],
@@ -168,6 +276,69 @@ describe('FR-4 Diff Impact Gate', () => {
       expect(input.contract_body.required_assertions).toEqual(expect.arrayContaining([
         expect.objectContaining({ assertion_id: 'task_routing_works', command: 'npm test' }),
       ]));
+    });
+
+    test('只有 assertion revision 更新时仍持久化 Mapper 最新合同', async () => {
+      const oldAssertion = {
+        assertion_id: 'packages/brain/src/example.test.js',
+        command: 'npx vitest run packages/brain/src/example.test.js',
+        covers_capability_ids: ['impact-contract'],
+        journey_step_link_id: '11111111-1111-4111-8111-111111111111',
+        assertion_revision: 1,
+        assertion_digest: 'a'.repeat(64),
+      };
+      const db = { query: vi.fn(async () => ({ rows: [{
+        id: 'contract-old', repo: 'cecelia', change_kind: 'bugfix', base_revision: 'base',
+        contract_body: {
+          affected_capabilities: [{ capability_id: 'impact-contract' }],
+          required_assertions: [oldAssertion],
+        },
+      }] })) };
+      const persistContract = vi.fn(async (_db, input) => ({
+        contract: { id: 'contract-new', contract_body: input.contract_body }, created: true,
+      }));
+      const result = await evaluateDiffGate({
+        db, taskId: 'task-revision', repo: 'cecelia', headRevision: 'head', persistContract,
+        mapClient: async () => ({
+          manifest_digest: '1'.repeat(64), projection_digest: '2'.repeat(64),
+          fact_revisions: { cecelia: 'base' }, freshness: { status: 'fresh' },
+          affected_nodes: [{ capability_id: 'impact-contract' }],
+          required_assertions: [{ ...oldAssertion, assertion_revision: 2 }],
+        }),
+      });
+
+      expect(result.gate).toBe('extend');
+      expect(persistContract).toHaveBeenCalledOnce();
+      expect(persistContract.mock.calls[0][1].contract_body.required_assertions[0])
+        .toMatchObject({ assertion_revision: 2 });
+      expect(result.required_assertions[0]).toMatchObject({ assertion_revision: 2 });
+    });
+
+    test('同一 base revision 的 projection digest 漂移时刷新合同版本', async () => {
+      const db = { query: vi.fn(async () => ({ rows: [{
+        id: 'contract-old', repo: 'cecelia', change_kind: 'bugfix', base_revision: 'base',
+        manifest_digest: '1'.repeat(64), projection_digest: '2'.repeat(64),
+        contract_body: { affected_capabilities: [{ capability_id: 'impact-contract' }], required_assertions: [] },
+      }] })) };
+      const persistContract = vi.fn(async (_db, input) => ({
+        contract: { id: 'contract-new', contract_body: input.contract_body }, created: true,
+      }));
+      const mapClient = vi.fn(async () => ({
+        manifest_digest: '3'.repeat(64), projection_digest: '4'.repeat(64),
+        fact_revisions: { cecelia: 'base' }, freshness: { status: 'fresh' },
+        affected_nodes: [{ capability_id: 'impact-contract' }], required_assertions: [],
+      }));
+      const result = await evaluateDiffGate({
+        db, taskId: 'task-digest', repo: 'cecelia', headRevision: 'head', mapClient, persistContract,
+      });
+
+      expect(mapClient).toHaveBeenCalledWith(expect.objectContaining({
+        manifestDigest: '1'.repeat(64), projectionDigest: '2'.repeat(64),
+      }));
+      expect(result).toMatchObject({
+        gate: 'impact_unknown', reason: 'manifest_digest_mismatch', retryable: true,
+      });
+      expect(persistContract).not.toHaveBeenCalled();
     });
 
   });
@@ -223,7 +394,7 @@ describe('FR-4 Diff Impact Gate', () => {
         manifest_digest: 'manifest',
         projection_digest: 'projection',
         freshness: { status: 'fresh' },
-        fact_revisions: { cecelia: 'head' },
+        fact_revisions: { cecelia: 'base' },
         affected_nodes: ['impact-contract', 'tick-loop'],
         required_assertions: [],
       });
@@ -241,6 +412,7 @@ describe('FR-4 Diff Impact Gate', () => {
       expect(calls.some(({ sql }) => sql.includes('UPDATE tasks') && sql.includes("status = 'blocked'"))).toBe(true);
       const taskBlock = calls.find(({ sql }) => sql.includes('UPDATE tasks') && sql.includes("status = 'blocked'"));
       expect(taskBlock.sql).toContain("blocked_reason = 'contract_impact_drift'");
+      expect(taskBlock.sql.match(/blocked_reason\s*=/g)).toHaveLength(1);
       expect(calls.some(({ sql }) => sql.includes('harness_tasks'))).toBe(false);
     });
 
@@ -293,7 +465,7 @@ describe('FR-4 Diff Impact Gate', () => {
           manifest_digest: 'manifest',
           projection_digest: 'projection',
           freshness: { status: 'fresh' },
-          fact_revisions: { cecelia: 'head' },
+          fact_revisions: { cecelia: 'base' },
           affected_nodes: ['impact-contract', 'tick-loop'],
           required_assertions: [],
         }),
@@ -369,12 +541,15 @@ describe('FR-4 Diff Impact Gate', () => {
         freshness: { status: 'fresh' },
         affected_nodes: ['tick-loop'],
         required_assertions: [],
-        // fact_revisions 与 headRevision 不对齐
+        // fact_revisions 与合同 base_revision 不对齐
         fact_revisions: { 'cecelia': 'stale999' },
       });
 
       const result = await evaluateDiffGate({
-        db: null,
+        db: { query: vi.fn(async () => ({ rows: [{
+          id: 'contract-revision', repo: 'cecelia', base_revision: 'base123',
+          contract_body: { affected_capabilities: [], required_assertions: [] },
+        }] })) },
         taskId: 'task-004',
         mapClient: mockMapClient,
         headRevision: HEAD,
