@@ -8,9 +8,16 @@
 
 
 
-**Brain 版本**: 1.272.13
+**Brain 版本**: 1.272.14
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.272.14 — Evaluator Workspace Dependencies
+
+- Harness Evaluator 与 proposer/reviewer 使用同一条 provider 无关的 `runtime_resources.node_deps=true` 契约，Fleet checkout 后会先执行受限的 `npm ci`，再让 Claude Code、Codex 或 Grok 执行仓库验收命令。
+- 修复真实 Evaluator Attempt 在 Dashboard 深链已通过 WebKit 的情况下，仍因工作区缺少 `vitest/config` 而误判失败的问题；回归测试永久覆盖 Evaluator TaskBundle 的依赖声明。
 
 ---
 
@@ -400,7 +407,7 @@
 
 ## Brain 1.267.211 — GAN role workspace node deps (案卷式 GAN PR-C)
 
-- bundle `runtime_resources.node_deps`（proposer/reviewer 默认开）→ fleet workspace prepare 在 checkout 后 `npm ci --ignore-scripts --no-audit --no-fund`（npm_config_cache 钉机器级可写目录，120s 超时 + 8MiB buffer，失败不炸 prepare，状态进日志与 inspect()）。修 r17 的 ajv 类"工作区不装依赖"病。
+- bundle `runtime_resources.node_deps`（proposer/reviewer/evaluator 默认开）→ fleet workspace prepare 在 checkout 后 `npm ci --ignore-scripts --no-audit --no-fund`（npm_config_cache 钉机器级可写目录，120s 超时 + 8MiB buffer，失败不炸 prepare，状态进日志与 inspect()）。修 r17 的 ajv 类"工作区不装依赖"病，并确保验收角色能运行仓库测试。
 - provision 只见 postgres（node_deps 进 provision 会炸 attempt_runtime_resource_unsupported——现网 34 条带 postgres 任务的回归防线）；runtime_resources 比对改键序无关。
 - provider 会话续接本期不实现：fleet 容器 CODEX_HOME=per-container tmpfs，resume 物理不可能（决策 ea03d361，案卷降级即主机制，持久卷方案另立任务 5b5a98f0）。
 - 部署面：fleet-worker（attempt-runner/workspace-manager）需 launchd 手动重装才生效；runner 镜像无需重建（entrypoint 0 diff）。

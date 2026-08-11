@@ -152,7 +152,7 @@ describe('server-owned capability requirements', () => {
     expect(launcher.launch).toHaveBeenCalledWith(expect.objectContaining({
       bundle: expect.objectContaining({
         inputs: expect.objectContaining({
-          runtime_resources: { postgres: true },
+          runtime_resources: { postgres: true, node_deps: true },
         }),
       }),
     }));
