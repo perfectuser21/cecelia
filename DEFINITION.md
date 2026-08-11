@@ -8,17 +8,29 @@
 
 
 
-**Brain 版本**: 1.272.7
+**Brain 版本**: 1.272.8
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.7 — Audited Manual Kernel Capacity Override
+## Brain 1.272.8 — Audited Manual Kernel Capacity Override
 
 - `/tasks/:id/dispatch` 写入的 `manually_dispatched` 服务端审计标记会传入 Kernel TaskBundle，确保手动派发合同贯穿内部 capability preflight。
 - 当节点仍在线、已准入且至少有一个有效/物理基础槽时，手动派发允许重角色权重从 0 提升为 1；真实零容量、排空、健康或凭据闸仍保持 fail-closed。
 - capability evidence 记录实际 machine capacity 与 override 标志，便于事后追溯强制执行。
+
+---
+
+## Brain 1.272.7 — Unified Map Read Authority
+
+- 整图、节点、影响半径、健康度与未归属事实统一由同一个 Map read service 在只读
+  `REPEATABLE READ` 快照内返回，并携带 Manifest/Projection digest、repo revision 与 freshness。
+- Dashboard `/map` 只消费 Unified Map API，提供 Value Stream → Capability → Assertion/receipt
+  三层下钻；重复旧页面和旧 feature 注册已移除，页面不写历史颜色。
+- Schema 地板保持 407；回退到 `1.272.6` 会恢复分裂读权威与旧 Map 页面。
+
+---
 
 ## Brain 1.272.6 — Dynamic Evaluator Provider Identity
 
