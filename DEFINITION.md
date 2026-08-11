@@ -8,9 +8,16 @@
 
 
 
-**Brain 版本**: 1.272.14
+**Brain 版本**: 1.272.15
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.272.15 — Linux Runner Dependency Target
+
+- Fleet workspace 的受限 `npm ci` 继续在 macOS ARM64 宿主执行，但依赖解析目标显式固定为 canonical Linux ARM64/glibc runner，确保 Rollup 等 optional native package 与真实执行容器一致。
+- 永久回归测试锁定 npm 的 OS/CPU/libc 目标，防止出现“安装返回成功、容器运行仍缺平台包”的假绿。
 
 ---
 
