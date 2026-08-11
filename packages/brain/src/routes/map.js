@@ -80,12 +80,13 @@ export function createMapRouter({
       node_keys: startNodeKeys = [],
       max_depth: maxDepth = 10,
     } = req.body ?? {};
-    if (!scopeKey || !repo || !Array.isArray(changedFiles) || changedFiles.length === 0
-      || !Array.isArray(startNodeKeys) || !Number.isInteger(maxDepth) || maxDepth < 1) {
+    if (!scopeKey || !repo || !Array.isArray(changedFiles) || !Array.isArray(startNodeKeys)
+      || (changedFiles.length === 0 && startNodeKeys.length === 0)
+      || !Number.isInteger(maxDepth) || maxDepth < 1) {
       return validationError(
         res,
         'MAP_RADIUS_INPUT_INVALID',
-        'scope, repo, and non-empty changed_files are required',
+        'scope, repo, and at least one changed_file or node_key are required',
       );
     }
     const readAt = now();
