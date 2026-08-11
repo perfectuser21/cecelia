@@ -8,16 +8,24 @@
 
 
 
-**Brain 版本**: 1.272.13
+**Brain 版本**: 1.272.14
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.13 — 蓝绿内部鉴权凭据闭环
+## Brain 1.272.14 — 蓝绿内部鉴权凭据闭环
 
 - 蓝绿 sidecar 以只读挂载读取共享 internal token SSOT，并把同一路径显式传给容器内 Compose；凭据缺失时保留旧 Brain、拒绝切换。
 - Gate 3 在版本与真重启之外，要求生产敏感入口匿名请求返回 401；token 未注入的 503 与鉴权未生效的业务响应均阻断部署。
+
+---
+
+## Brain 1.272.13 — Cecelia Runner UID Pin
+
+- 1.272.11 的 canonical Runner 重建仍继承了 `useradd -r` 动态分配 `cecelia` 账户 UID/GID 的老问题——webkit playwright 系统依赖挤占，UID 从历史值 999 漂移到 997，非 evaluator 角色容器无 `--user root` 可自愈，`.codex`/`.config/gh` 凭据 tmpfs 挂载（worker 侧硬编码 uid=999,gid=999）属主对不上，GitHub 凭据 FIFO 写入失败，本机 harness 派发 9 连尸。
+- Dockerfile 显式钉死 `cecelia` UID/GID=5999（不选 999：本地构建实测该基座已被 `systemd-journal` 组占用 GID 999），worker 两处硬编码同步，镜像重建为 `sha256:3ac5b30e0681d545f880386a9645f22850e7f047dcae7444c7ce61c98bcf50b5`，digest 全仓九处 pin 一次性同步。
+- `canonical-pin-consistency.test.sh` 互锁校验九处 pin 点，防未来再漏改任何一处。
 
 ---
 
