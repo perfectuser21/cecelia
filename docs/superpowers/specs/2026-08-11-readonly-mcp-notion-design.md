@@ -67,7 +67,7 @@ Express 中间件，校验 `Authorization: Bearer <token>` 完全匹配环境变
 - LaunchDaemon plist（本机死规矩，常驻服务不用 launchctl load 临时方式）
 - Cloudflare Tunnel：新增 public hostname ingress 规则指向 `localhost:<mcp端口>`（Zero Trust 后台操作，不改本地 nginx）
 - 启动自检：探测 `mcp_readonly` 角色是否真的只读（尝试 INSERT 到一次性临时表后立即 ROLLBACK，报错才算自检通过；不报错 = 权限配错 = 拒绝启动）
-- **资源隔离（macOS 修正）**：`oom_score_adj` 是 Linux 专属机制，目标机器是 macOS（Darwin/ARM64），没有对应的用户可调 OOM 优先级接口。改用 **LaunchDaemon plist 的 `SoftResourceLimits`/`HardResourceLimits`（`ulimit -v` 等价物）给 MCP 进程本身设内存硬上限**（如 512MB）——进程碰顶自己崩溃重启（走既有崩溃限速重启逻辑），而不是依赖系统在内存紧张时"选择性"杀它。效果等价（保护 Brain 不被拖垮），机制换成 macOS 原生支持的。PrepPRD 里"人为制造内存压力确认真的是 MCP 先被杀"这条验收标准相应改为"人为制造 MCP 内存增长，确认碰到 ulimit 硬顶后进程自己重启，且 Brain 进程内存/响应不受影响"。
+- **资源隔离（macOS 修正）**：`oom_score_adj` 是 Linux 专属机制，目标机器是 macOS（Darwin/ARM64），没有对应的用户可调 OOM 优先级接口。改用 LaunchDaemon plist 的 `SoftResourceLimits`/`HardResourceLimits` 里的 `ResidentSetSize`（**不是** `MemoryLimit`——这个 key 在 launchd.plist schema 里根本不存在，`man launchd.plist` 实测过 macOS 15.7.4，`ResidentSetSize` 才是真实存在的等价 key）给 MCP 进程设置 512MB 参考值。但这是 **advisory 机制，不是确定性硬顶**：man page 原文——"if memory is tight, the system will prefer to take memory from processes that are exceeding their declared resident set size"——只有系统整体内存紧张时才会被"优先"回收，进程超限不会被立即杀死重启，跟 Linux cgroups 那种确定性 kill 不是一回事。因此保护 Brain 不受拖累不能单靠这一层，实际是纵深防御组合：DB 连接池 max 5 + 限流（20 次/分钟/token）+ statement_timeout 分级 + `ResidentSetSize` advisory 兜底 + 崩溃限速重启（既有逻辑）+ Task 14 的重启风暴告警，多层叠加降低风险，而不是单一硬限制提供确定性保证。PrepPRD 里"人为制造内存压力确认真的是 MCP 先被杀"这条验收标准相应改为"确认 `ResidentSetSize` 配置存在且 `plutil -lint` 通过；如需验证实际内存回收行为需要在系统级内存压力下测试，非确定性触发，不作为可靠验收依据"。
 
 ## 测试策略
 
