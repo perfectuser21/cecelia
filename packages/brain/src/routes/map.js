@@ -415,7 +415,7 @@ router.get('/health', async (req, res) => {
     ]);
 
     const manifestHealth = activeManifest ? 'ok' : 'missing';
-    const projectionHealth = activeProjection?.status === 'success' ? 'ok' : (activeProjection ? activeProjection.status : 'missing');
+    const projectionHealth = activeProjection?.status === 'active' ? 'ok' : (activeProjection ? activeProjection.status : 'missing');
 
     res.json({
       ...buildEnvelope(scopeKey),
@@ -434,9 +434,7 @@ router.get('/health', async (req, res) => {
           status: projectionHealth,
           run_id: activeProjection?.id || null,
           projection_digest: activeProjection?.projection_digest || null,
-          node_count: activeProjection?.node_count || 0,
-          edge_count: activeProjection?.edge_count || 0,
-          completed_at: activeProjection?.completed_at || null,
+          activated_at: activeProjection?.activated_at || null,
         },
         state_resolver: {
           status: (activeProjection && activeManifest) ? 'ok' : 'degraded',

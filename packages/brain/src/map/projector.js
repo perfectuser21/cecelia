@@ -13,6 +13,14 @@ import pool from '../db.js';
 
 const PROJECTOR_VERSION = '1.0.0';
 
+function stableNodeId(scopeKey, nodeType, nodeKey) {
+  return crypto.createHash('sha256').update(`${scopeKey}:${nodeType}:${nodeKey}`).digest('hex');
+}
+
+function stableEdgeId(scopeKey, edgeType, edgeKey) {
+  return crypto.createHash('sha256').update(`${scopeKey}:${edgeType}:${edgeKey}`).digest('hex');
+}
+
 /**
  * 计算 projection digest（确定性：同输入 → 同 digest）
  */
@@ -20,8 +28,8 @@ function computeProjectionDigest(nodes, edges, manifestDigest, factRevisions) {
   const payload = {
     manifest_digest: manifestDigest,
     fact_revisions: factRevisions,
-    nodes: nodes.map((n) => ({ key: n.node_key, type: n.node_type, name: n.name })).sort((a, b) => a.key.localeCompare(b.key)),
-    edges: edges.map((e) => ({ from: e.from_key, to: e.to_key, type: e.edge_type, key: e.edge_key })).sort((a, b) => (a.key || '').localeCompare(b.key || '')),
+    nodes: nodes.map((n) => ({ id: n.node_id, type: n.node_type, key: n.node_key })).sort((a, b) => a.id.localeCompare(b.id)),
+    edges: edges.map((e) => ({ id: e.edge_id, type: e.edge_type, key: e.edge_key })).sort((a, b) => a.id.localeCompare(b.id)),
   };
   return crypto.createHash('sha256').update(JSON.stringify(payload), 'utf8').digest('hex');
 }
@@ -29,108 +37,102 @@ function computeProjectionDigest(nodes, edges, manifestDigest, factRevisions) {
 /**
  * 从 manifest 生成节点和边（确定性）
  * @param {object} manifest - 已激活的 manifest 对象
+ * @param {string} scopeKey - scope 标识
  * @returns {{ nodes: object[], edges: object[] }}
  */
-export function buildStructuralProjection(manifest) {
+export function buildStructuralProjection(manifest, scopeKey) {
   const nodes = [];
   const edges = [];
+  const nodeIdByKey = new Map();
+
+  function registerNode(nodeType, nodeKey, name, attributes = {}) {
+    const nodeId = stableNodeId(scopeKey, nodeType, nodeKey);
+    nodes.push({
+      node_id: nodeId,
+      node_type: nodeType,
+      node_key: nodeKey,
+      name,
+      attributes: JSON.stringify(attributes),
+      source_refs: JSON.stringify([]),
+    });
+    nodeIdByKey.set(nodeKey, nodeId);
+    return nodeId;
+  }
+
+  function resolveNodeId(key) {
+    return nodeIdByKey.get(key) || stableNodeId(scopeKey, 'unknown', key);
+  }
 
   // 1. Value Stream 节点
   for (const vs of manifest.value_streams) {
-    nodes.push({
-      node_key: vs.key,
-      node_type: 'value_stream',
-      name: vs.name,
-      attributes: { perceiver: vs.perceiver, order: vs.order },
-      source_refs: [],
-      aliases: [],
-      display_order: vs.order,
-    });
+    registerNode('value_stream', vs.key, vs.name, { perceiver: vs.perceiver, order: vs.order });
   }
 
   // 2. Capability 节点 + contains 边
   for (const cap of manifest.capabilities) {
-    nodes.push({
-      node_key: cap.key,
-      node_type: 'capability',
-      name: cap.name,
-      attributes: { value_stream_key: cap.value_stream_key, order: cap.order },
-      source_refs: [],
-      aliases: cap.aliases || [],
-      display_order: cap.order,
-    });
-    // value_stream contains capability
+    const capId = registerNode('capability', cap.key, cap.name, { value_stream_key: cap.value_stream_key, order: cap.order });
+    const edgeKey = `${cap.value_stream_key}_contains_${cap.key}`;
     edges.push({
-      edge_key: `${cap.value_stream_key}_contains_${cap.key}`,
-      from_key: cap.value_stream_key,
-      to_key: cap.key,
+      edge_id: stableEdgeId(scopeKey, 'contains', edgeKey),
+      edge_key: edgeKey,
       edge_type: 'contains',
-      attributes: {},
+      from_node_id: resolveNodeId(cap.value_stream_key),
+      to_node_id: capId,
+      source_refs: JSON.stringify([]),
+      attributes: JSON.stringify({}),
     });
   }
 
   // 3. Boundary 边（hands_off_to）
   for (const b of manifest.boundaries) {
+    const edgeId = stableEdgeId(scopeKey, 'hands_off_to', b.key);
     edges.push({
+      edge_id: edgeId,
       edge_key: b.key,
-      from_key: b.from,
-      to_key: b.to,
       edge_type: 'hands_off_to',
-      attributes: { statement: b.statement },
+      from_node_id: resolveNodeId(b.from),
+      to_node_id: resolveNodeId(b.to),
+      source_refs: JSON.stringify([]),
+      attributes: JSON.stringify({ statement: b.statement }),
     });
   }
 
-  // 4. Cross-cut 节点 + serves 边
-  const vsByKey = new Map(manifest.value_streams.map((v) => [v.key, v]));
+  // 4. Cross-cut 节点 + owned_by / serves 边
   for (const cc of manifest.crosscut_pool) {
-    const ownerState = cc.owner ? 'assigned' : 'unassigned';
-    nodes.push({
-      node_key: cc.key,
-      node_type: 'crosscut',
-      name: cc.name,
-      attributes: { owner: cc.owner || null, owner_state: ownerState },
-      source_refs: [],
-      aliases: cc.aliases || [],
-      display_order: null,
-    });
+    const ccId = registerNode('crosscut', cc.key, cc.name, { owner: cc.owner || null });
 
-    // owned_by 边（有主管 Capability 时）
     if (cc.owner) {
+      const edgeKey = `${cc.key}_owned_by_${cc.owner}`;
       edges.push({
-        edge_key: `${cc.key}_owned_by_${cc.owner}`,
-        from_key: cc.key,
-        to_key: cc.owner,
+        edge_id: stableEdgeId(scopeKey, 'owned_by', edgeKey),
+        edge_key: edgeKey,
         edge_type: 'owned_by',
-        attributes: {},
+        from_node_id: ccId,
+        to_node_id: resolveNodeId(cc.owner),
+        source_refs: JSON.stringify([]),
+        attributes: JSON.stringify({}),
       });
     }
 
-    // serves 边（针对每条 value stream）
-    for (const vsKey of cc.serves) {
-      if (vsByKey.has(vsKey)) {
-        edges.push({
-          edge_key: `${cc.key}_serves_${vsKey}`,
-          from_key: cc.key,
-          to_key: vsKey,
-          edge_type: 'serves',
-          attributes: {},
-        });
-      }
+    for (const vsKey of (cc.serves || [])) {
+      const edgeKey = `${cc.key}_serves_${vsKey}`;
+      edges.push({
+        edge_id: stableEdgeId(scopeKey, 'serves', edgeKey),
+        edge_key: edgeKey,
+        edge_type: 'serves',
+        from_node_id: ccId,
+        to_node_id: resolveNodeId(vsKey),
+        source_refs: JSON.stringify([]),
+        attributes: JSON.stringify({}),
+      });
     }
   }
 
   // 5. Shared Prerequisites
-  if (manifest.shared_prerequisites.applicable && manifest.shared_prerequisites.items.length > 0) {
+  if (manifest.shared_prerequisites?.applicable && manifest.shared_prerequisites.items?.length > 0) {
     for (const item of manifest.shared_prerequisites.items) {
-      nodes.push({
-        node_key: `prereq_${item.key || crypto.randomBytes(4).toString('hex')}`,
-        node_type: 'prerequisite',
-        name: item.name || String(item.key),
-        attributes: item,
-        source_refs: [],
-        aliases: [],
-        display_order: null,
-      });
+      const nodeKey = `prereq_${item.key || crypto.randomBytes(4).toString('hex')}`;
+      registerNode('prerequisite', nodeKey, item.name || String(item.key || 'prereq'), item);
     }
   }
 
@@ -161,82 +163,71 @@ async function getFactRevisions(scopeKey) {
 
 /**
  * 运行投影器（原子切换 active run）
+ * 使用 migration 405 schema: manifest_version_id, status='building'/'active', activated_at
  * @param {{ manifestId, manifestDigest, scopeKey, manifest }} opts
  * @returns {{ runId, projectionDigest, nodeCount, edgeCount }}
  */
 export async function runProjection({ manifestId, manifestDigest, scopeKey, manifest }) {
   const factRevisions = await getFactRevisions(scopeKey);
-  const { nodes, edges } = buildStructuralProjection(manifest);
+  const { nodes, edges } = buildStructuralProjection(manifest, scopeKey);
   const projectionDigest = computeProjectionDigest(nodes, edges, manifestDigest, factRevisions);
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // 创建投影 run 记录
+    // 创建投影 run 记录（migration 405: manifest_version_id, 'building' status）
     const { rows: runRows } = await client.query(
       `INSERT INTO map_projection_runs
-         (scope_key, manifest_id, manifest_digest, fact_revisions, projector_version, status)
-       VALUES ($1, $2, $3, $4, $5, 'running')
+         (scope_key, manifest_version_id, manifest_digest, fact_revisions, projector_version, projection_digest, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'building')
        RETURNING id`,
-      [scopeKey, manifestId, manifestDigest, JSON.stringify(factRevisions), PROJECTOR_VERSION]
+      [scopeKey, manifestId, manifestDigest, JSON.stringify(factRevisions), PROJECTOR_VERSION, projectionDigest]
     );
     const runId = runRows[0].id;
 
-    // 写入节点
+    // 写入节点（migration 405: node_id TEXT, PRIMARY KEY(run_id, node_id)）
     for (const n of nodes) {
       await client.query(
         `INSERT INTO map_projection_nodes
-           (run_id, scope_key, node_key, node_type, name, attributes, source_refs, aliases, display_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         ON CONFLICT (run_id, node_key) DO NOTHING`,
-        [
-          runId, scopeKey, n.node_key, n.node_type, n.name,
-          JSON.stringify(n.attributes), JSON.stringify(n.source_refs),
-          n.aliases, n.display_order,
-        ]
+           (run_id, node_id, node_type, node_key, name, source_refs, attributes)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
+         ON CONFLICT (run_id, node_type, node_key) DO NOTHING`,
+        [runId, n.node_id, n.node_type, n.node_key, n.name, n.source_refs, n.attributes]
       );
     }
 
-    // 写入边
+    // 写入边（migration 405: edge_id TEXT, from_node_id, to_node_id）
     for (const e of edges) {
       await client.query(
         `INSERT INTO map_projection_edges
-           (run_id, scope_key, edge_key, from_key, to_key, edge_type, attributes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT DO NOTHING`,
-        [runId, scopeKey, e.edge_key || null, e.from_key, e.to_key, e.edge_type, JSON.stringify(e.attributes)]
+           (run_id, edge_id, edge_type, edge_key, from_node_id, to_node_id, source_refs, attributes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
+         ON CONFLICT (run_id, edge_type, edge_key) DO NOTHING`,
+        [runId, e.edge_id, e.edge_type, e.edge_key, e.from_node_id, e.to_node_id, e.source_refs, e.attributes]
       );
     }
 
-    // 标记 run 成功 + 更新统计
+    // 原子切换 active run（旧 active → superseded，新 run → active + activated_at）
     await client.query(
-      `UPDATE map_projection_runs
-       SET status = 'success', projection_digest = $1,
-           node_count = $2, edge_count = $3, completed_at = NOW()
-       WHERE id = $4`,
-      [projectionDigest, nodes.length, edges.length, runId]
-    );
-
-    // 原子切换 active run（旧 active → false，新 run → true）
-    await client.query(
-      `UPDATE map_projection_runs SET is_active = false WHERE scope_key = $1 AND is_active = true`,
+      `UPDATE map_projection_runs SET status = 'superseded' WHERE scope_key = $1 AND status = 'active'`,
       [scopeKey]
     );
     await client.query(
-      `UPDATE map_projection_runs SET is_active = true WHERE id = $1`,
+      `UPDATE map_projection_runs SET status = 'active', activated_at = NOW() WHERE id = $1`,
       [runId]
     );
 
     await client.query('COMMIT');
     return { runId, projectionDigest, nodeCount: nodes.length, edgeCount: edges.length };
   } catch (err) {
-    await client.query('ROLLBACK');
-    // 记录失败
-    await pool.query(
-      `UPDATE map_projection_runs SET status = 'failed', error = $1, completed_at = NOW() WHERE id = $2`,
-      [err.message, err.runId]
-    ).catch(() => {});
+    try { await client.query('ROLLBACK'); } catch {}
+    try {
+      await pool.query(
+        `UPDATE map_projection_runs SET status = 'failed', error = $1::jsonb WHERE id = $2`,
+        [JSON.stringify({ message: err.message }), err.runId]
+      );
+    } catch {}
     throw err;
   } finally {
     client.release();
@@ -245,14 +236,15 @@ export async function runProjection({ manifestId, manifestDigest, scopeKey, mani
 
 /**
  * 获取 scope_key 的当前 active projection run 信息
+ * migration 405 schema: status='active', manifest_version_id, activated_at
  */
 export async function getActiveProjection(scopeKey) {
   const { rows } = await pool.query(
-    `SELECT r.id, r.scope_key, r.manifest_id, r.manifest_digest, r.fact_revisions,
-            r.projector_version, r.status, r.projection_digest, r.node_count, r.edge_count,
-            r.created_at, r.completed_at
+    `SELECT r.id, r.scope_key, r.manifest_version_id, r.manifest_digest, r.fact_revisions,
+            r.projector_version, r.status, r.projection_digest,
+            r.created_at, r.activated_at
      FROM map_projection_runs r
-     WHERE r.scope_key = $1 AND r.is_active = true
+     WHERE r.scope_key = $1 AND r.status = 'active'
      LIMIT 1`,
     [scopeKey]
   );
@@ -260,7 +252,7 @@ export async function getActiveProjection(scopeKey) {
 }
 
 /**
- * 获取 active projection 的所有节点
+ * 获取 active projection 的所有节点（migration 405 schema）
  */
 export async function getProjectionNodes(scopeKey, nodeType = null) {
   const run = await getActiveProjection(scopeKey);
@@ -272,14 +264,16 @@ export async function getProjectionNodes(scopeKey, nodeType = null) {
     params.push(nodeType);
   }
   const { rows } = await pool.query(
-    `SELECT n.* FROM map_projection_nodes n ${where} ORDER BY n.display_order NULLS LAST, n.node_key`,
+    `SELECT n.run_id, n.node_id, n.node_type, n.node_key, n.name, n.source_refs, n.attributes
+     FROM map_projection_nodes n ${where}
+     ORDER BY n.node_type, n.node_key`,
     params
   );
   return rows;
 }
 
 /**
- * 获取 active projection 的所有边
+ * 获取 active projection 的所有边（migration 405 schema）
  */
 export async function getProjectionEdges(scopeKey, edgeType = null) {
   const run = await getActiveProjection(scopeKey);
@@ -291,7 +285,9 @@ export async function getProjectionEdges(scopeKey, edgeType = null) {
     params.push(edgeType);
   }
   const { rows } = await pool.query(
-    `SELECT e.* FROM map_projection_edges e ${where} ORDER BY e.edge_type, e.from_key, e.to_key`,
+    `SELECT e.run_id, e.edge_id, e.edge_type, e.edge_key, e.from_node_id, e.to_node_id, e.attributes
+     FROM map_projection_edges e ${where}
+     ORDER BY e.edge_type, e.edge_key`,
     params
   );
   return rows;
