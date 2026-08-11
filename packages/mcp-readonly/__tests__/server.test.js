@@ -125,3 +125,29 @@ describe.skipIf(!TEST_DB_URL)('POST /mcp 合法 token 完整工具调用（真�
     expect(typeof payload.current_version).toBe('number');
   });
 });
+
+describe('GET/DELETE /mcp 协议方法覆盖（bug: 之前只注册了POST，MCP客户端握手用到的GET/DELETE直接404）', () => {
+  it('鉴权通过后 GET /mcp 返回 405（不是404），且是合法的JSON-RPC错误信封', async () => {
+    const app = createApp({ skipDbInit: true, bearerToken: 'test-token' });
+    const res = await request(app).get('/mcp').set('Authorization', 'Bearer test-token');
+    expect(res.status).toBe(405);
+    const body = JSON.parse(res.text);
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.error).toBeDefined();
+  });
+
+  it('鉴权通过后 DELETE /mcp 返回 405（不是404），且是合法的JSON-RPC错误信封', async () => {
+    const app = createApp({ skipDbInit: true, bearerToken: 'test-token' });
+    const res = await request(app).delete('/mcp').set('Authorization', 'Bearer test-token');
+    expect(res.status).toBe(405);
+    const body = JSON.parse(res.text);
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.error).toBeDefined();
+  });
+
+  it('无 token 的 GET /mcp 仍然先被鉴权中间件拦截，返回401而不是405', async () => {
+    const app = createApp({ skipDbInit: true, bearerToken: 'test-token' });
+    const res = await request(app).get('/mcp');
+    expect(res.status).toBe(401);
+  });
+});

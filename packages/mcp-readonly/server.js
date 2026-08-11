@@ -252,6 +252,22 @@ export function createApp({ skipDbInit = false, bearerToken = process.env.MCP_BE
     await transport.handleRequest(req, res, req.body);
   });
 
+  // 本服务是无状态模式（sessionIdGenerator: undefined），不支持服务端发起的
+  // SSE 流/会话终止，但 MCP 客户端（如 Notion）握手时仍会尝试 GET（开流）/
+  // DELETE（关session）。之前完全没注册这两个方法，Express 直接 404，
+  // Cloudflare 边缘对此表现为 502，导致客户端连接失败。
+  // 按官方 SDK 无状态服务器示例的做法：显式返回 405 + 合法 JSON-RPC 错误信封，
+  // 让客户端明确知道"这个方法不支持"而不是"这个端点不存在"。
+  const methodNotAllowed = (_req, res) => {
+    res.status(405).json({
+      jsonrpc: '2.0',
+      error: { code: -32000, message: 'Method not allowed.' },
+      id: null,
+    });
+  };
+  app.get('/mcp', methodNotAllowed);
+  app.delete('/mcp', methodNotAllowed);
+
   return app;
 }
 
