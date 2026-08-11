@@ -8,19 +8,27 @@
 
 
 
-**Brain 版本**: 1.272.6
+**Brain 版本**: 1.272.7
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.6 — Unified Map Read Authority
+## Brain 1.272.7 — Unified Map Read Authority
 
 - 整图、节点、影响半径、健康度与未归属事实统一由同一个 Map read service 在只读
   `REPEATABLE READ` 快照内返回，并携带 Manifest/Projection digest、repo revision 与 freshness。
 - Dashboard `/map` 只消费 Unified Map API，提供 Value Stream → Capability → Assertion/receipt
   三层下钻；重复旧页面和旧 feature 注册已移除，页面不写历史颜色。
-- Schema 地板保持 407；回退到 `1.272.5` 会恢复分裂读权威与旧 Map 页面。
+- Schema 地板保持 407；回退到 `1.272.6` 会恢复分裂读权威与旧 Map 页面。
+
+---
+
+## Brain 1.272.6 — Dynamic Evaluator Provider Identity
+
+- Evaluator 的可信 root 取证阶段不再假定镜像内 `cecelia` 固定为 UID 999；运行时读取并校验真实非 root UID/GID，再用 `setpriv` 移除 capabilities 后启动 Provider。
+- WebKit OS 依赖新增系统账户导致 `cecelia` 实际 UID 变为 997 时，Evaluator 不再被错误判定为无法建立权限边界。
+- canonical Runner digest 更新为 `sha256:e958b6abeba555622a2206075b456d679e550cd854b6a9600d6fe68d0908b347`，Fleet worker pin 同步到 1.272.6；回归测试永久禁止重新写死 UID。
 
 ---
 

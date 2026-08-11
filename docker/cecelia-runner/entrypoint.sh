@@ -332,16 +332,22 @@ prepare_evaluator_provider_identity() {
     PROVIDER_IDENTITY_PREFIX=()
     return 0
   }
+  local provider_uid=""
+  local provider_gid=""
+  provider_uid="$(id -u cecelia 2>/dev/null)" || true
+  provider_gid="$(id -g cecelia 2>/dev/null)" || true
   if [[ "$(id -u)" != "0" ]] \
       || ! command -v setpriv >/dev/null 2>&1 \
-      || [[ "$(id -u cecelia 2>/dev/null)" != "999" ]]; then
+      || [[ ! "$provider_uid" =~ ^[0-9]+$ ]] \
+      || [[ ! "$provider_gid" =~ ^[0-9]+$ ]] \
+      || [[ "$provider_uid" == "0" ]]; then
     echo "[entrypoint] Evaluator Provider privilege boundary unavailable" >&2
     return 1
   fi
 
   if [[ -d "$LOCAL_CFG" ]]; then
     # -h：.credentials.json 是指向宿主原件的软链（issue 2bf0f8ea 单链），不带 -h
-    # 会穿透软链把宿主凭据文件的属主改成容器 UID 999 —— 宿主自己就读不了了。
+    # 会穿透软链把宿主凭据文件的属主改成容器 Provider UID —— 宿主自己就读不了了。
     chown -R -h cecelia:cecelia -- "$LOCAL_CFG" || return 1
   fi
   if [[ -n "${CODEX_HOME:-}" && -d "$CODEX_HOME" ]]; then
@@ -349,8 +355,8 @@ prepare_evaluator_provider_identity() {
   fi
   PROVIDER_IDENTITY_PREFIX=(
     setpriv
-    --reuid=cecelia
-    --regid=cecelia
+    --reuid="$provider_uid"
+    --regid="$provider_gid"
     --init-groups
     --no-new-privs
     --bounding-set=-all
@@ -358,7 +364,7 @@ prepare_evaluator_provider_identity() {
     --ambient-caps=-all
     --
   )
-  echo "[entrypoint] Evaluator Provider constrained to UID 999 without capabilities"
+  echo "[entrypoint] Evaluator Provider constrained to UID ${provider_uid} without capabilities"
 }
 # evaluator-evidence-boundary:end
 
@@ -1258,7 +1264,7 @@ publish_provider_result_schema() {
 
   printf '%s' "$schema_json" > "$schema_file" || return 1
   # Evaluator preflight runs as root so it can own the immutable evidence
-  # capsule, then Provider execution drops to UID 999. The schema is public
+  # capsule, then Provider execution drops to the image-defined non-root UID. The schema is public
   # contract metadata, not evidence or a credential, and must cross that UID
   # boundary as read-only data.
   chmod 0444 "$schema_file"
