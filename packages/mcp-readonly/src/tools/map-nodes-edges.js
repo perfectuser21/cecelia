@@ -12,12 +12,20 @@
 //   的明细"跟 getMapSummary 的统计一样，理论上也应该限定在当前 active run 范围内，
 //   否则会把历史上跑过的所有 run（含已废弃）的行混在一起返回。
 //
-//   这里的取舍：activeRunId 作为可选的第 5 个参数存在——调用方（server.js，Task 11）
-//   会先查一次 map_projection_runs 的 active 行拿到 id 再传进来，由这一层把它拼进
-//   WHERE 条件；本函数自己不去查 active run（避免每次调用这两个工具都多打一次 DB，
-//   server.js 可以在一次请求里查一次 active run 后被多个工具复用）。activeRunId 省略
-//   或传 null 时不加这层过滤，语义上等价于"跨全部 run 查询"，留给明确需要这种查法的
-//   调用方；Task 11 接线时应当始终传入 active run id 以保证"当前状态快照"语义。
+//   这里的取舍：activeRunId 作为第 5 个参数存在——调用方（server.js，Task 11）会先查
+//   一次 map_projection_runs 的 active 行拿到 id 再传进来，由这一层把它拼进 WHERE 条件；
+//   本函数自己不去查 active run（避免每次调用这两个工具都多打一次 DB，server.js 可以
+//   在一次请求里查一次 active run 后被多个工具复用）。
+//
+//   fail-closed：`undefined`（调用方根本没传这个参数——最常见的疏忽场景）与显式 `null`
+//   （调用方明确要"跨全部 run 查询历史"）是两种不同语义，不能混为一谈，否则 Task 11
+//   接线时如果忘了传第 5 个参数，不会报错、不会崩溃，只会安静地把历史 superseded run
+//   的节点/边也混进结果——这跟 map-summary.js 里 getMapSummary 内部强制查 active run
+//   的 fail-closed 做法不一致，是有安全隐患的默认值。所以这里强制每个调用点做出有意识
+//   的选择：
+//     - activeRunId === undefined → 抛 ValidationError，逼调用方显式决定
+//     - activeRunId === null      → 不加 run_id 过滤，跨全部 run 查询（有意为之）
+//     - activeRunId 是具体值      → 加 `AND run_id = $N`
 export class ValidationError extends Error {
   constructor(message) {
     super(message);
@@ -60,10 +68,16 @@ function normalizeLimit(limit) {
 }
 
 function buildRunScopedQuery(table, typeColumn, typeValue, safeLimit, activeRunId) {
+  if (activeRunId === undefined) {
+    throw new ValidationError(
+      '必须显式指定 activeRunId，若要跨全部 run 查询请显式传 null'
+    );
+  }
+
   const conditions = [`${typeColumn} = $1`];
   const params = [typeValue];
 
-  if (activeRunId !== undefined && activeRunId !== null) {
+  if (activeRunId !== null) {
     params.push(activeRunId);
     conditions.push(`run_id = $${params.length}`);
   }

@@ -1,7 +1,12 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi } from 'vitest';
 import { getSchemaVersion, getDeploymentStatus } from '../src/tools/schema-and-deployment.js';
 import { getMapSummary } from '../src/tools/map-summary.js';
-import { getMapNodes, getMapEdges, ValidationError } from '../src/tools/map-nodes-edges.js';
+import { getMapNodes, getMapEdges, ValidationError, NODE_TYPES, EDGE_TYPES } from '../src/tools/map-nodes-edges.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 describe('getSchemaVersion', () => {
   it('返回 pool 查询到的最新版本号', async () => {
@@ -47,10 +52,10 @@ const VALID_NODE_TYPES = ['value_stream', 'capability', 'cross_cut', 'boundary']
 const VALID_EDGE_TYPES = ['contains', 'depends_on', 'crosses'];
 
 describe('getMapNodes', () => {
-  it('合法 node_type + limit 返回查询结果', async () => {
+  it('合法 node_type + limit 返回查询结果（显式传 null 表示跨全部 run 查询）', async () => {
     const fakePool = {};
     const fakeQuery = vi.fn().mockResolvedValue({ rows: [{ id: 'n1', name: 'X' }] });
-    const result = await getMapNodes(fakePool, fakeQuery, { node_type: 'capability', limit: 50 }, VALID_NODE_TYPES);
+    const result = await getMapNodes(fakePool, fakeQuery, { node_type: 'capability', limit: 50 }, VALID_NODE_TYPES, null);
     expect(result.rows).toHaveLength(1);
   });
 
@@ -82,18 +87,18 @@ describe('getMapNodes', () => {
   it('limit 超过 200 会被 clamp 到 200', async () => {
     const fakePool = {};
     const fakeQuery = vi.fn().mockResolvedValue({ rows: [] });
-    await getMapNodes(fakePool, fakeQuery, { node_type: 'capability', limit: 9999 }, VALID_NODE_TYPES);
+    await getMapNodes(fakePool, fakeQuery, { node_type: 'capability', limit: 9999 }, VALID_NODE_TYPES, null);
     expect(fakeQuery.mock.calls[0][2]).toContain(200);
   });
 
   it('limit 缺省时用 50', async () => {
     const fakePool = {};
     const fakeQuery = vi.fn().mockResolvedValue({ rows: [] });
-    await getMapNodes(fakePool, fakeQuery, { node_type: 'capability' }, VALID_NODE_TYPES);
+    await getMapNodes(fakePool, fakeQuery, { node_type: 'capability' }, VALID_NODE_TYPES, null);
     expect(fakeQuery.mock.calls[0][2]).toContain(50);
   });
 
-  it('传入 activeRunId 时 SQL 限定 run_id，并把值带进查询参数', async () => {
+  it('传入 activeRunId 具体值时 SQL 限定 run_id，并把值带进查询参数', async () => {
     const fakePool = {};
     const fakeQuery = vi.fn().mockResolvedValue({ rows: [] });
     await getMapNodes(fakePool, fakeQuery, { node_type: 'capability', limit: 10 }, VALID_NODE_TYPES, 'run-abc');
@@ -101,18 +106,20 @@ describe('getMapNodes', () => {
     expect(fakeQuery.mock.calls[0][2]).toContain('run-abc');
   });
 
-  it('不传 activeRunId 时不限定 run_id（跨全部 run 查询）', async () => {
-    const fakePool = {};
-    const fakeQuery = vi.fn().mockResolvedValue({ rows: [] });
-    await getMapNodes(fakePool, fakeQuery, { node_type: 'capability', limit: 10 }, VALID_NODE_TYPES);
-    expect(fakeQuery.mock.calls[0][1]).not.toMatch(/run_id/);
-  });
-
-  it('activeRunId 显式传 null 时同样不限定 run_id', async () => {
+  it('activeRunId 显式传 null 时不限定 run_id（有意跨全部 run 查询）', async () => {
     const fakePool = {};
     const fakeQuery = vi.fn().mockResolvedValue({ rows: [] });
     await getMapNodes(fakePool, fakeQuery, { node_type: 'capability', limit: 10 }, VALID_NODE_TYPES, null);
     expect(fakeQuery.mock.calls[0][1]).not.toMatch(/run_id/);
+  });
+
+  it('不传 activeRunId（undefined）时 fail-closed 抛 ValidationError，不发起查询', async () => {
+    const fakePool = {};
+    const fakeQuery = vi.fn();
+    await expect(
+      getMapNodes(fakePool, fakeQuery, { node_type: 'capability', limit: 10 }, VALID_NODE_TYPES)
+    ).rejects.toThrow(ValidationError);
+    expect(fakeQuery).not.toHaveBeenCalled();
   });
 });
 
@@ -126,18 +133,57 @@ describe('getMapEdges', () => {
     expect(fakeQuery).not.toHaveBeenCalled();
   });
 
-  it('合法 edge_type 返回查询结果', async () => {
+  it('合法 edge_type 返回查询结果（显式传 null 表示跨全部 run 查询）', async () => {
     const fakePool = {};
     const fakeQuery = vi.fn().mockResolvedValue({ rows: [{ id: 'e1' }] });
-    const result = await getMapEdges(fakePool, fakeQuery, { edge_type: 'contains', limit: 50 }, VALID_EDGE_TYPES);
+    const result = await getMapEdges(fakePool, fakeQuery, { edge_type: 'contains', limit: 50 }, VALID_EDGE_TYPES, null);
     expect(result.rows).toHaveLength(1);
   });
 
-  it('传入 activeRunId 时 SQL 限定 run_id', async () => {
+  it('传入 activeRunId 具体值时 SQL 限定 run_id', async () => {
     const fakePool = {};
     const fakeQuery = vi.fn().mockResolvedValue({ rows: [] });
     await getMapEdges(fakePool, fakeQuery, { edge_type: 'contains', limit: 10 }, VALID_EDGE_TYPES, 'run-xyz');
     expect(fakeQuery.mock.calls[0][1]).toMatch(/run_id/);
     expect(fakeQuery.mock.calls[0][2]).toContain('run-xyz');
+  });
+
+  it('不传 activeRunId（undefined）时 fail-closed 抛 ValidationError，不发起查询', async () => {
+    const fakePool = {};
+    const fakeQuery = vi.fn();
+    await expect(
+      getMapEdges(fakePool, fakeQuery, { edge_type: 'contains', limit: 10 }, VALID_EDGE_TYPES)
+    ).rejects.toThrow(ValidationError);
+    expect(fakeQuery).not.toHaveBeenCalled();
+  });
+});
+
+// 回归测试：NODE_TYPES/EDGE_TYPES 是从 405 migration 的 CHECK 约束抄过来的静态数组，
+// 如果以后 migration 改了合法值而这两个常量没跟着改，校验逻辑会用过时的白名单——
+// 这里直接读 migration 源文件解析出 CHECK (... IN (...)) 的真实值做比对，而不是
+// 拿另一份手抄的字面量互相比较（那样两边同时漂移也测不出来）。
+function extractCheckInValues(sql, column) {
+  const match = sql.match(new RegExp(`${column} IN \\(([^)]*)\\)`));
+  if (!match) {
+    throw new Error(`未在 migration 里找到 ${column} 的 CHECK IN 约束`);
+  }
+  return match[1]
+    .split(',')
+    .map((token) => token.trim().replace(/^'|'$/g, ''))
+    .filter(Boolean);
+}
+
+describe('NODE_TYPES / EDGE_TYPES 与 405 migration CHECK 约束同步', () => {
+  const migrationSql = fs.readFileSync(
+    path.join(__dirname, '../../brain/migrations/405_map_projection_core.sql'),
+    'utf8'
+  );
+
+  it('NODE_TYPES 精确等于 map_projection_nodes.node_type 的 CHECK 约束', () => {
+    expect(NODE_TYPES).toEqual(extractCheckInValues(migrationSql, 'node_type'));
+  });
+
+  it('EDGE_TYPES 精确等于 map_projection_edges.edge_type 的 CHECK 约束', () => {
+    expect(EDGE_TYPES).toEqual(extractCheckInValues(migrationSql, 'edge_type'));
   });
 });
