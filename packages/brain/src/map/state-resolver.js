@@ -11,7 +11,7 @@
 import pool from '../db.js';
 
 /** 事实源陈旧预算（秒）：超出则状态降为 unknown */
-const FRESHNESS_BUDGET_SECONDS = 15 * 60; // 15 分钟
+const FRESHNESS_BUDGET_SECONDS = 10 * 60; // 与扫描保鲜 SSOT 一致：10 分钟
 
 /**
  * 计算事实源 freshness

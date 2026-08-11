@@ -2,7 +2,7 @@
  * 刀3: state-resolver.js 纯函数测试（无需 DB）
  * 覆盖：aggregateCapabilityState 规则、computeSnapshotFreshness 时间计算
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { aggregateCapabilityState, computeSnapshotFreshness } from '../state-resolver.js';
 
 describe('aggregateCapabilityState', () => {
@@ -43,9 +43,19 @@ describe('computeSnapshotFreshness', () => {
     expect(fresh).toBe(true);
   });
 
-  it('超过 15 分钟 → not fresh', () => {
+  it('超过 10 分钟 → not fresh', () => {
     const old = new Date(Date.now() - 20 * 60 * 1000); // 20 分钟前
     const { fresh } = computeSnapshotFreshness(old);
     expect(fresh).toBe(false);
+  });
+
+  it('10 分钟整仍 fresh，超过 1 秒立即 stale', () => {
+    const now = Date.parse('2026-08-11T10:00:00.000Z');
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+
+    expect(computeSnapshotFreshness(new Date(now - 600_000)).fresh).toBe(true);
+    expect(computeSnapshotFreshness(new Date(now - 601_000)).fresh).toBe(false);
+
+    vi.restoreAllMocks();
   });
 });

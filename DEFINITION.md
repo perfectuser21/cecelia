@@ -2,19 +2,19 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-08-10
+**最后更新**: 2026-08-11
 
 
 
 
 
-**Brain 版本**: 1.272.2
+**Brain 版本**: 1.272.5
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.2 — Impact Contract 不可变证据闭环
+## Brain 1.272.5 — Impact Contract 不可变证据闭环
 
 - 关系图按 Git revision 保留不可变快照；同 revision 出现不同边时扫描事务 fail-closed，在途合同始终读取原 base revision 对应的 projection 与图。
 - Impact radius 以显式 repo→scope 白名单、manifest digest、projection digest 锁定证据，拒绝 basename 碰撞与同 SHA 下的投影偷换。
@@ -32,18 +32,39 @@
 
 ---
 
-## Brain 1.272.1 — F1 Impact Contract Harness 强制闭环
+## Brain 1.272.4 — Exact Map Anchors and Query-time State
 
-- `change_kind` 统一为 `new_capability` / `capability_change` / `bugfix` / `parameter_only`，存入任务 payload；`gear` 保持独立执行强度字段。
-- 正式迁移 406/407 建立 `harness_impact_contracts`、`harness_gaps`、`gap_events`，并加厚既有 `task_dependencies`，所有外键引用真实 `tasks` 表。
-- 所有合同写入口强制经过 Structure Gate；真实 `/api/brain/map/radius` 不可用、陈旧、响应不合法或 revision 不一致时 fail-closed，不创建 active 合同。
-- `/api/brain/map/radius` 与 Impact Gate 共享 revision-locked 合同：repo 自动归一到 Map scope，graph anchor 投影为 capability，Journey cell 投影为不可变 assertion；未归位文件返回 unknown，禁止解释成零影响。
-- 四类事实扫描全部成功后才原子 rebuild active Map projection；任一扫描失败保留旧 projection，由 freshness 门禁拒绝旧 SHA。
-- Diff Gate 以 HEAD 与 changed files 复算影响；未声明影响写入 Gap Ledger、创建修复任务和硬依赖，真实断言回执通过且所有 gap 关闭后恢复原任务。
-- evaluator Runner 在 exact-SHA 独立只读 worktree 中去密、降权、限时执行 required assertions；receipt 与 attempt 终态同事务提交，Provider 无法持有 callback 凭据伪造结果。
-- merge fence 绑定当前合同、当前 Journey 断言版本、completed evaluator attempt 与精确 PR HEAD，并在合并命令中使用 `--match-head-commit` 消除竞态。
-- Harness 孤儿守卫会从 `initiative_runs.pr_url` 补齐 `generator_done` 交接证据，避免已产出 PR 的 run 被误终态化和重复派发。
-- 单元回归、正式迁移检查、真实 PostgreSQL 闭环及 real-env smoke 已纳入 CI。
+- scope、repo 与 legacy ledger partition 通过显式 adapter 配置连接，未配置 scope fail-closed，核心不做同名猜测。
+- Feature UUID、测试/API/DB/代码路径稳定标识确定性进入 active projection；名称模糊匹配和歧义候选不污染正式地图。
+- 状态按 15 分钟 freshness、当前 repo revision 与 immutable receipt 查询时现算 green/red/gray/unknown/not_applicable，旧 `cell_status` 不再具权威性。
+- 影响半径按 repo 的 graph snapshot 反向遍历，回溯业务节点与必跑断言，并展开 Cross-cut `serves` 关系。
+- Schema 地板推进到 407。
+
+---
+
+## Brain 1.272.3 — Harness Account Exhaustion Callback Recovery
+
+- Harness Provider 的 weekly/rate-limit 429 保持为可恢复的 `account_exhausted` 控制类，不再因数据库约束漂移导致 callback 无限重试。
+- `harness_attempts_failure_class_check` 继续严格拒绝未知值，仅补齐 execution contract 已声明的 `account_exhausted`。
+- 真实 PostgreSQL 回归覆盖迁移前 23514 复现、迁移后落库、幂等执行与非法值拒绝；Schema 地板推进到 406。
+
+---
+
+## Brain 1.272.2 — Kernel Declared PR Ground Truth
+
+- Kernel Ground Truth 在 `initiative_runs.pr_url` 尚未落库时，优先读取任务 payload 中格式严格合法的 GitHub PR URL，并直接查询 GitHub 实时状态。
+- 已有 PR 接管不再依赖 PR 标题或分支碰巧包含 task 短 ID；Evaluator 仍须通过 URL 与 40 位 head SHA 双重精确匹配。
+- 非严格 GitHub pull URL 的 payload 声明 fail closed，不进入 shell 或 PR 观测链。
+
+---
+
+## Brain 1.272.1 — Kernel Verified Existing PR Adoption
+
+- `gear=hotfix` 可显式接管已有 PR：只有任务声明的 PR URL 与 40 位 head SHA 都和 GitHub 实时观测完全一致时，首个 Evaluator intent 才能建立共享 validation clock。
+- 已接管路径的 Judge 复用该 append-only clock；普通下游角色、URL/SHA 缺失或不一致仍以 `validation_clock_required` fail closed。
+- 不伪造 Generator intent，不允许角色级时钟重置。
+
+---
 
 ## Brain 1.272.0 — Universal Map Projection Engine
 

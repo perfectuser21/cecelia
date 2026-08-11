@@ -379,11 +379,17 @@ export async function collectGroundTruth(deps, opts) {
 
   // ---- PR 状态（gh 封装）----
   let pr = null;
-  let prUrl = run.pr_url;
+  const taskPayload = asJson(task.payload) ?? {};
+  const declaredPrUrl = taskPayload.pr_url;
+  const verifiedDeclaredPrUrl = (
+    typeof declaredPrUrl === 'string'
+    && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(declaredPrUrl)
+  ) ? declaredPrUrl : null;
+  let prUrl = run.pr_url ?? verifiedDeclaredPrUrl;
   if (!prUrl) {
     try {
       prUrl = discoverPrFromGithub(
-        { ...task, payload: asJson(task.payload) ?? {} },
+        { ...task, payload: taskPayload },
         String(taskId).slice(0, 8),
         execCmd,
       )?.url ?? null;
@@ -435,7 +441,7 @@ export async function collectGroundTruth(deps, opts) {
       // Invalid historical TaskBundles cannot authorize a legacy branch.
     }
   }
-  const taskRepo = parseBaseRepo(asJson(task.payload)?.base_repo);
+  const taskRepo = parseBaseRepo(taskPayload.base_repo);
   const proposalRemote = GITHUB_REPO_PATTERN.test(taskRepo ?? '')
     ? `"https://github.com/${taskRepo}.git"`
     : 'origin';

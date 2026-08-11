@@ -34,6 +34,30 @@ grep -Fq 'ci --ignore-scripts --no-audit --no-fund' "$ENTRYPOINT" || {
   echo 'runner dependency install can execute candidate lifecycle scripts' >&2
   exit 1
 }
+grep -Fq 'terminate_evaluator_provider_processes' "$ENTRYPOINT" || {
+  echo 'runner does not terminate Provider descendants before trusted assertions' >&2
+  exit 1
+}
+grep -Fq 'pkill -KILL -u cecelia' "$ENTRYPOINT" || {
+  echo 'runner does not sweep escaped Provider UID processes' >&2
+  exit 1
+}
+CODEX_RECOVERY_LINE="$(grep -n 'recovered completed Codex turn' "$ENTRYPOINT" | cut -d: -f1)"
+PROVIDER_SWEEP_LINE="$(grep -n 'if ! terminate_evaluator_provider_processes' "$ENTRYPOINT" | cut -d: -f1)"
+if [[ -z "$CODEX_RECOVERY_LINE" || -z "$PROVIDER_SWEEP_LINE" \
+    || "$PROVIDER_SWEEP_LINE" -le "$CODEX_RECOVERY_LINE" ]]; then
+  echo 'Codex terminal recovery can overwrite Provider descendant cleanup failure' >&2
+  exit 1
+fi
+DEPENDENCY_INSTALL_SECTION="$(sed -n '/package-lock.json/,/trusted assertion dependency install failed/p' "$ENTRYPOINT")"
+grep -Fq '"${ASSERTION_IDENTITY_PREFIX[@]}"' <<<"$DEPENDENCY_INSTALL_SECTION" || {
+  echo 'runner dependency install does not use the isolated assertion identity' >&2
+  exit 1
+}
+if grep -Fq '"${PROVIDER_IDENTITY_PREFIX[@]}"' <<<"$DEPENDENCY_INSTALL_SECTION"; then
+  echo 'runner dependency install reuses the untrusted Provider identity' >&2
+  exit 1
+fi
 
 # A host-only credential helper copied into the Linux runner must be replaced
 # with the gh binary that actually exists inside the runner.

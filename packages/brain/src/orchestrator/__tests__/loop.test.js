@@ -239,6 +239,91 @@ describe('runLoop：全链 planning→done', () => {
     });
   });
 
+  it('hotfix 精确绑定已有 PR URL/SHA 时由 Evaluator 建立共享 validation clock', async () => {
+    const prUrl = 'https://github.com/perfectuser21/cecelia/pull/4794';
+    const prHeadSha = '34713556aa18228cfcf937eb88597790ee384fd4';
+    const adopted = obs({
+      gear: 'hotfix',
+      prdExists: false,
+      contract: { approved: false, id: CONTRACT_ID },
+      task: {
+        id: TASK_ID,
+        status: 'in_progress',
+        payload: {
+          gear: 'hotfix',
+          pr_url: prUrl,
+          pr_head_sha: prHeadSha,
+          timeout_seconds: 7200,
+        },
+      },
+      generatorSpawned: false,
+      pr: {
+        url: prUrl,
+        state: 'OPEN',
+        mergeStateStatus: 'CLEAN',
+        ci: 'pass',
+        merged: false,
+        head_sha: prHeadSha,
+      },
+    });
+    const { deps, appended } = makeEnv({
+      observedSeq: [
+        adopted,
+        obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+      ],
+    });
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(deps.dispatch).toHaveBeenCalledWith(
+      'spawn:evaluator',
+      expect.objectContaining({
+        validationClock: {
+          pipeline_started_at: '2026-07-04T12:00:00.000Z',
+          deadline_at: '2026-07-04T14:00:00.000Z',
+        },
+      }),
+    );
+    expect(appended[0].detail).toMatchObject({
+      validation_origin: 'verified_existing_pr',
+      pipeline_started_at: '2026-07-04T12:00:00.000Z',
+      deadline_at: '2026-07-04T14:00:00.000Z',
+    });
+  });
+
+  it('hotfix 已有 PR 的声明 SHA 与 GitHub 观测不一致时仍 fail closed', async () => {
+    const prUrl = 'https://github.com/perfectuser21/cecelia/pull/4794';
+    const observed = obs({
+      gear: 'hotfix',
+      prdExists: false,
+      contract: { approved: false, id: CONTRACT_ID },
+      task: {
+        id: TASK_ID,
+        status: 'in_progress',
+        payload: {
+          gear: 'hotfix',
+          pr_url: prUrl,
+          pr_head_sha: '34713556aa18228cfcf937eb88597790ee384fd4',
+          timeout_seconds: 7200,
+        },
+      },
+      generatorSpawned: false,
+      pr: {
+        url: prUrl,
+        state: 'OPEN',
+        mergeStateStatus: 'CLEAN',
+        ci: 'pass',
+        merged: false,
+        head_sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      },
+    });
+    const { deps } = makeEnv({ observedSeq: [observed] });
+
+    await expect(runLoop(deps, { taskId: TASK_ID, runId: RUN_ID }))
+      .rejects.toThrow('validation_clock_required');
+    expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+
   it('每个派发 hop：先 appendHop 再 dispatch（intent-before-dispatch 顺序）', async () => {
     const order = [];
     const observedSeq = [

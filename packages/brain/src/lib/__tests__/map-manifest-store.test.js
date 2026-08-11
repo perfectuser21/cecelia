@@ -79,6 +79,14 @@ describe('activateMapManifest', () => {
     const { pool, client } = fakePool(async (sql, params) => {
       if (/FROM map_manifest_versions[\s\S]*WHERE id = \$1/i.test(sql)) return { rows: [draft] };
       if (/FROM decisions/i.test(sql)) return { rows: [{ id: params[0] }] };
+      if (/FROM map_scope_repositories/i.test(sql)) {
+        return { rows: [{
+          scope_key: 'cecelia',
+          repo: 'cecelia',
+          adapter_key: 'legacy-ledger-v1',
+          adapter_config: { ledger_partition: 'cecelia' },
+        }] };
+      }
       if (/INSERT INTO map_projection_runs/i.test(sql)) return { rows: [{ id: projectionRunId }], rowCount: 1 };
       if (/INSERT INTO map_projection_nodes/i.test(sql)) return { rows: [], rowCount: JSON.parse(params[1]).length };
       if (/INSERT INTO map_projection_edges/i.test(sql)) return { rows: [], rowCount: JSON.parse(params[1]).length };

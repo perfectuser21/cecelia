@@ -70,6 +70,26 @@ describe('Manifest JSON Schema 校验', () => {
     expect(validateManifestSemantics(productionManifest)).toEqual({ valid: true, errors: [] });
   });
 
+  it('生产 Cecelia manifest 为开发治理与 Sprint 新文件预登记 F1 所有权', () => {
+    const productionManifest = JSON.parse(readFileSync(
+      new URL('../../../config/map-manifests/cecelia.v1.json', import.meta.url),
+      'utf8',
+    ));
+    const f1 = productionManifest.capabilities.find(({ key }) => key === 'F1');
+    const f2 = productionManifest.capabilities.find(({ key }) => key === 'F2');
+    const mj5 = productionManifest.capabilities.find(({ key }) => key === 'MJ5');
+    const g2 = productionManifest.capabilities.find(({ key }) => key === 'G2');
+
+    expect(f1.path_prefixes).toEqual(expect.arrayContaining(['scripts/', 'sprints/']));
+    expect(f2.exact_paths).toEqual(expect.arrayContaining([
+      'scripts/brain-deploy.sh',
+      'scripts/lib/internal-auth-token.sh',
+      'scripts/__tests__/internal-auth-deployment.test.sh',
+    ]));
+    expect(mj5.path_prefixes).toEqual(expect.arrayContaining(['scripts/map/', 'scripts/scan/']));
+    expect(g2.exact_paths).toContain('scripts/notion-create-issue.js');
+  });
+
   it('缺少必填字段 scope_key 时报错', () => {
     const bad = { ...CECELIA_MANIFEST };
     delete bad.scope_key;

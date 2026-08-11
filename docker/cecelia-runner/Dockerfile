@@ -35,6 +35,7 @@ RUN apt-get update \
        jq \
        openssh-client \
        postgresql-client \
+       procps \
        python3 \
        python3-minimal \
        socat \

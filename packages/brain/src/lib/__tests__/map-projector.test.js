@@ -13,6 +13,7 @@ const manifest = JSON.parse(readFileSync(
   new URL('../../../config/map-manifests/cecelia.v1.json', import.meta.url),
   'utf8',
 ));
+const revision = 'a'.repeat(40);
 
 function build(input = manifest, factRevisions = {}) {
   return buildMapProjection({
@@ -21,6 +22,35 @@ function build(input = manifest, factRevisions = {}) {
     factRevisions,
   });
 }
+
+const anchorProjection = {
+  nodes: [
+    {
+      node_id: stableMapNodeId('cecelia', 'feature', '11111111-1111-4111-8111-111111111111'),
+      node_type: 'feature',
+      node_key: '11111111-1111-4111-8111-111111111111',
+      name: 'Anchored feature',
+      source_refs: [{ source: 'legacy-ledger', id: '11111111-1111-4111-8111-111111111111' }],
+      attributes: { capability_key: 'F1' },
+    },
+  ],
+  edges: [
+    {
+      edge_id: stableMapEdgeId(
+        'cecelia', 'implements',
+        '11111111-1111-4111-8111-111111111111:F1',
+      ),
+      edge_type: 'implements',
+      edge_key: '11111111-1111-4111-8111-111111111111:F1',
+      from_node_id: stableMapNodeId(
+        'cecelia', 'feature', '11111111-1111-4111-8111-111111111111',
+      ),
+      to_node_id: stableMapNodeId('cecelia', 'capability', 'F1'),
+      source_refs: [{ source: 'legacy-ledger', id: '11111111-1111-4111-8111-111111111111' }],
+      attributes: {},
+    },
+  ],
+};
 
 function reverseObjectKeys(value) {
   if (Array.isArray(value)) return value.map(reverseObjectKeys);
@@ -145,6 +175,28 @@ describe('Universal Map deterministic structure projector', () => {
     expect(changedFacts.projection_digest).not.toBe(first.projection_digest);
     expect(build(changedBoundary, { repo: 'a'.repeat(40) }).projection_digest)
       .not.toBe(first.projection_digest);
+  });
+
+  it('锚点投影参与 canonical nodes/edges 与 digest，输入顺序不影响结果', () => {
+    const first = buildMapProjection({
+      manifest,
+      manifestDigest: digestMapManifest(manifest),
+      factRevisions: { cecelia: revision },
+      anchorProjection,
+    });
+    const second = buildMapProjection({
+      manifest,
+      manifestDigest: digestMapManifest(manifest),
+      factRevisions: { cecelia: revision },
+      anchorProjection: {
+        nodes: [...anchorProjection.nodes].reverse(),
+        edges: [...anchorProjection.edges].reverse(),
+      },
+    });
+
+    expect(first.nodes).toEqual(expect.arrayContaining(anchorProjection.nodes));
+    expect(first.edges).toEqual(expect.arrayContaining(anchorProjection.edges));
+    expect(first.projection_digest).toBe(second.projection_digest);
   });
 
   it('核心实现不包含首验域或第二验收域身份常量', () => {

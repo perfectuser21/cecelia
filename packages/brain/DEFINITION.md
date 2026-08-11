@@ -1,8 +1,8 @@
 # Brain 模块定义
 
-**版本**: 1.272.2
+**版本**: 1.272.5
 
-## Impact Contract 不可变证据闭环（Brain 1.272.2）
+## Impact Contract 不可变证据闭环（Brain 1.272.5）
 
 - Map radius 读取 revision-indexed graph/projection 快照，并锁定 manifest/projection digest 与显式 repo→scope 身份绑定。
 - 默认 repo→scope 只激活已有 projection 的 Cecelia；未部署投影的仓库保持 fail-closed。
@@ -69,6 +69,12 @@ open → assigned → fixing → verifying → resolved
 - `structure-gate.test.js`
 - `diff-gate.test.js`
 - `gap-store.test.js`
+## Universal Map exact anchors and query-time state（Brain 1.272.4）
+
+- 显式 scope/repo/ledger adapter 替代同名推断，Feature/Artifact/Assertion 以稳定键进入 active projection。
+- snapshot freshness、当前 revision receipt 与目标存在性在查询时现算五态；旧账本颜色不参与权威判断。
+- repo 隔离 reverse graph radius 返回受影响业务节点、必跑断言与 Cross-cut 扩展。
+- Schema 地板为 407；回退到 `1.272.3` 会失去锚点投影、现算状态与通用影响半径。
 
 ## Kernel preflight BLOCKED launch truth
 

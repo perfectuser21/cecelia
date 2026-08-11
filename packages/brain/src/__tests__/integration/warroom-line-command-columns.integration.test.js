@@ -14,8 +14,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import pool from '../db.js';
-import routes from '../routes/warroom.js';
+import pool from '../../db.js';
+import routes from '../../routes/warroom.js';
 
 const JOURNEY_ID = 'beefbeef-0001-4000-8000-000000000001';
 const JF_ABILITY_ID = 'beefbeef-0002-4000-8000-000000000002';

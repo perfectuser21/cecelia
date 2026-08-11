@@ -383,6 +383,30 @@ prepare_evaluator_provider_identity() {
   )
   echo "[entrypoint] Evaluator Provider constrained to UID 999 without capabilities"
 }
+
+terminate_evaluator_provider_processes() {
+  is_evaluator_task_bundle || return 0
+  if [[ "$(id -u)" != "0" ]] || ! command -v pkill >/dev/null 2>&1; then
+    echo "[entrypoint] Evaluator Provider process cleanup unavailable" >&2
+    return 1
+  fi
+
+  # Provider may exit successfully while leaving UID 999 descendants behind.
+  # Sweep that untrusted identity before any trusted checkout or dependency
+  # directory exists, then prove the sweep reached a fixed point.
+  pkill -TERM -u cecelia >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5; do
+    pgrep -u cecelia >/dev/null 2>&1 || return 0
+    sleep 0.1
+  done
+  pkill -KILL -u cecelia >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5; do
+    pgrep -u cecelia >/dev/null 2>&1 || return 0
+    sleep 0.1
+  done
+  echo "[entrypoint] Evaluator Provider descendants survived cleanup" >&2
+  return 1
+}
 # evaluator-evidence-boundary:end
 
 if [[ -n "${CECELIA_GITHUB_CREDENTIAL_REF:-}" \
@@ -1016,7 +1040,7 @@ merge_required_assertion_evidence() {
   local machine="${CECELIA_MACHINE_ID:-${HOSTNAME:-}}"
   local merged_result_file="${normalized_result_file}.required-assertions"
   local -a assertion_identity_prefix=(env)
-  local use_provider_identity=0
+  local use_isolated_identity=0
   local assertion_executor="/usr/local/lib/cecelia/assertion-exec.mjs"
   local node_bin="/usr/local/bin/node"
   local evidence_dir checks_file assertion_home npm_cache tracked_paths_file
@@ -1076,8 +1100,8 @@ merge_required_assertion_evidence() {
     assertion_executor="${RUNNER_ASSERTION_EXECUTOR:-$assertion_executor}"
     node_bin="${RUNNER_ASSERTION_NODE_BIN:-$node_bin}"
   fi
-  if [[ -n "${PROVIDER_IDENTITY_PREFIX[0]-}" ]]; then
-    use_provider_identity=1
+  if [[ -n "${ASSERTION_IDENTITY_PREFIX[0]-}" ]]; then
+    use_isolated_identity=1
   fi
   assertion_home="$evidence_dir/assertion-home"
   npm_cache="$evidence_dir/npm-cache"
@@ -1094,16 +1118,16 @@ merge_required_assertion_evidence() {
     rm -rf "$evidence_dir"
     return 0
   fi
-  if (( use_provider_identity == 1 )); then
+  if (( use_isolated_identity == 1 )); then
     chmod 0711 "$evidence_dir"
-    chown -R cecelia:cecelia "$assertion_workspace"
-    chown -R cecelia:cecelia "$npm_cache"
+    chown -R nobody:nogroup "$assertion_workspace"
+    chown -R nobody:nogroup "$npm_cache"
   fi
   if [[ -f "$assertion_workspace/package-lock.json" ]] \
     && ! (cd "$assertion_workspace" && \
       "${RUNNER_ASSERTION_TIMEOUT_BIN:-timeout}" --signal=TERM --kill-after=10s \
         "$(runner_assertion_budget_seconds)s" \
-        "${PROVIDER_IDENTITY_PREFIX[@]}" \
+        "${ASSERTION_IDENTITY_PREFIX[@]}" \
         env -i HOME="$assertion_home" PATH=/usr/local/bin:/usr/bin:/bin \
         LANG=C.UTF-8 NPM_CONFIG_CACHE="$npm_cache" \
         "$node_bin" /usr/local/lib/node_modules/npm/bin/npm-cli.js \
@@ -1118,7 +1142,7 @@ merge_required_assertion_evidence() {
     rm -rf "$evidence_dir"
     return 0
   fi
-  if (( use_provider_identity == 1 )); then
+  if (( use_isolated_identity == 1 )); then
     chown -R root:root "$assertion_workspace"
   fi
   git -C "$assertion_workspace" reset --hard "$expected_sha" >/dev/null 2>&1
@@ -1126,7 +1150,7 @@ merge_required_assertion_evidence() {
   tracked_paths_file="$evidence_dir/tracked-paths"
   git -C "$assertion_workspace" ls-files -z > "$tracked_paths_file"
   chmod 0444 "$tracked_paths_file"
-  if (( use_provider_identity == 1 )); then
+  if (( use_isolated_identity == 1 )); then
     chmod -R a-w "$assertion_workspace"
   fi
   checks_file="$evidence_dir/checks.json"
@@ -2045,6 +2069,10 @@ run_provider_contract() {
     terminal_receipt='turn.completed'
     provider_exit=0
     echo "[entrypoint] recovered completed Codex turn from CLI exit $provider_cli_exit_code" >&2
+  fi
+  if ! terminate_evaluator_provider_processes; then
+    provider_exit=1
+    printf '%s\n' '{"error":"provider_descendant_cleanup_failed"}' >> "$STDOUT_FILE"
   fi
   if ! verify_evaluator_evidence_capsule; then
     provider_exit=1
