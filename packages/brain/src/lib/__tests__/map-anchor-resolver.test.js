@@ -16,6 +16,7 @@ function input(overrides = {}) {
     capabilityKeys: ['CAP_A'],
     repoAdapters: [{
       scope_key: 'product-scope', repo: 'repo-a', adapter_key: 'legacy-ledger-v1',
+      adapter_config: { ledger_partition: 'cecelia' },
     }],
     features: [{
       id: featureId,
@@ -95,8 +96,14 @@ describe('resolveMapAnchors', () => {
   it('路径锚点命中多个 repo 时不任选候选，输出 ambiguous_anchor 且不造 artifact 边', () => {
     const ambiguous = input({
       repoAdapters: [
-        { scope_key: 'product-scope', repo: 'repo-a', adapter_key: 'legacy-ledger-v1' },
-        { scope_key: 'product-scope', repo: 'repo-b', adapter_key: 'registry-v1' },
+        {
+          scope_key: 'product-scope', repo: 'repo-a', adapter_key: 'legacy-ledger-v1',
+          adapter_config: { ledger_partition: 'cecelia' },
+        },
+        {
+          scope_key: 'product-scope', repo: 'repo-b', adapter_key: 'registry-v1',
+          adapter_config: {},
+        },
       ],
       features: [{
         ...input().features[0], guard_ref: null, assertions: [],
@@ -138,6 +145,7 @@ describe('loadMapAnchorProjection', () => {
         if (/FROM map_scope_repositories/i.test(sql)) {
           return { rows: [{
             scope_key: 'product-scope', repo: 'repo-a', adapter_key: 'legacy-ledger-v1',
+            adapter_config: { ledger_partition: 'infrastructure' },
           }] };
         }
         return { rows: [] };
@@ -151,6 +159,9 @@ describe('loadMapAnchorProjection', () => {
     expect(sql).toMatch(/j\.biz_area\s*=\s*\$1/i);
     expect(sql).toMatch(/j\.capability_code\s*=\s*ANY\s*\(\$2/i);
     expect(sql).not.toMatch(/ILIKE|LOWER\s*\(\s*j\.name/i);
+    expect(client.query.mock.calls).toEqual(expect.arrayContaining([
+      [expect.stringMatching(/j\.biz_area\s*=\s*\$1/i), ['infrastructure', ['CAP_A']]],
+    ]));
   });
 
   it('核心 resolver 源码不含首验域、第二验收域或能力码常量', () => {

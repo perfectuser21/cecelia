@@ -221,7 +221,47 @@ function addPrerequisiteEdges(manifest, ids, edges) {
   }
 }
 
-export function buildMapProjection({ manifest: input, manifestDigest, factRevisions = {} }) {
+function mergeAnchorProjection(scopeKey, nodes, edges, anchorProjection) {
+  if (!anchorProjection) return;
+  if (!Array.isArray(anchorProjection.nodes) || !Array.isArray(anchorProjection.edges)) {
+    throw new MapProjectionError(
+      'MAP_PROJECTION_ANCHORS_INVALID',
+      'anchorProjection must contain nodes and edges arrays',
+    );
+  }
+  const nodeIds = new Set(nodes.map(({ node_id: nodeId }) => nodeId));
+  for (const node of anchorProjection.nodes) {
+    const expectedId = stableMapNodeId(scopeKey, node.node_type, node.node_key);
+    if (node.node_id !== expectedId || nodeIds.has(node.node_id)) {
+      throw new MapProjectionError(
+        'MAP_PROJECTION_ANCHOR_NODE_INVALID',
+        `Anchor node identity is invalid or duplicated: ${node.node_key}`,
+      );
+    }
+    nodes.push(sortJson(node));
+    nodeIds.add(node.node_id);
+  }
+  const edgeIds = new Set(edges.map(({ edge_id: edgeId }) => edgeId));
+  for (const edge of anchorProjection.edges) {
+    const expectedId = stableMapEdgeId(scopeKey, edge.edge_type, edge.edge_key);
+    if (edge.edge_id !== expectedId || edgeIds.has(edge.edge_id)
+      || !nodeIds.has(edge.from_node_id) || !nodeIds.has(edge.to_node_id)) {
+      throw new MapProjectionError(
+        'MAP_PROJECTION_ANCHOR_EDGE_INVALID',
+        `Anchor edge identity or endpoint is invalid: ${edge.edge_key}`,
+      );
+    }
+    edges.push(sortJson(edge));
+    edgeIds.add(edge.edge_id);
+  }
+}
+
+export function buildMapProjection({
+  manifest: input,
+  manifestDigest,
+  factRevisions = {},
+  anchorProjection = undefined,
+}) {
   const manifest = requireManifest(input, manifestDigest);
   const normalizedFacts = normalizeFacts(factRevisions);
   const nodes = [];
@@ -233,6 +273,7 @@ export function buildMapProjection({ manifest: input, manifestDigest, factRevisi
   addBoundaryEdges(manifest, ids, edges);
   addCrosscutEdges(manifest, ids, edges);
   addPrerequisiteEdges(manifest, ids, edges);
+  mergeAnchorProjection(manifest.scope_key, nodes, edges, anchorProjection);
 
   nodes.sort((left, right) => left.node_id.localeCompare(right.node_id));
   edges.sort((left, right) => left.edge_id.localeCompare(right.edge_id));

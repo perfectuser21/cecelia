@@ -37,6 +37,25 @@ function manifest(scopeKey, streamName = '工厂') {
 async function deleteFixtures() {
   await pool.query('DELETE FROM map_projection_runs WHERE scope_key LIKE $1', [`${scopePrefix}%`]);
   await pool.query('DELETE FROM map_manifest_versions WHERE scope_key LIKE $1', [`${scopePrefix}%`]);
+  await pool.query('DELETE FROM test_registry WHERE repo LIKE $1', [`${scopePrefix}%`]);
+  await pool.query('DELETE FROM fact_snapshot_headers WHERE repo LIKE $1', [`${scopePrefix}%`]);
+  await pool.query(
+    `DELETE FROM journey_features f USING journeys j
+      WHERE f.journey_id=j.id AND j.biz_area LIKE $1`,
+    [`${scopePrefix}%`],
+  );
+  await pool.query('DELETE FROM journeys WHERE biz_area LIKE $1', [`${scopePrefix}%`]);
+  await pool.query('DELETE FROM map_scope_repositories WHERE scope_key LIKE $1', [`${scopePrefix}%`]);
+}
+
+async function submitConfiguredManifest(input) {
+  await pool.query(
+    `INSERT INTO map_scope_repositories (scope_key, repo, adapter_key, adapter_config)
+     VALUES ($1, $1, 'legacy-ledger-v1', '{"ledger_partition":"infrastructure"}'::jsonb)
+     ON CONFLICT (scope_key, repo) DO NOTHING`,
+    [input.scope_key],
+  );
+  return submitMapManifest(pool, input);
 }
 
 beforeAll(async () => {
@@ -60,7 +79,7 @@ afterAll(async () => {
 describe('Map Projection Store — 真实 PostgreSQL', () => {
   it('默认 Manifest 激活一次原子生成 20 节点与 31 边', async () => {
     const scopeKey = `${scopePrefix}-activate`;
-    const { manifest_version: draft } = await submitMapManifest(pool, manifest(scopeKey));
+    const { manifest_version: draft } = await submitConfiguredManifest(manifest(scopeKey));
 
     const activated = await activateMapManifest(pool, draft.id);
     expect(activated).toMatchObject({ activated: true, manifest_version: { status: 'active' } });
@@ -85,7 +104,7 @@ describe('Map Projection Store — 真实 PostgreSQL', () => {
   it('相同 manifest/facts 重建得到同 digest 与同 stable IDs', async () => {
     const scopeKey = `${scopePrefix}-rebuild`;
     const input = manifest(scopeKey);
-    const { manifest_version: draft } = await submitMapManifest(pool, input);
+    const { manifest_version: draft } = await submitConfiguredManifest(input);
     await activateMapManifest(pool, draft.id);
 
     const before = await pool.query(
@@ -127,10 +146,9 @@ describe('Map Projection Store — 真实 PostgreSQL', () => {
 
   it('旧 manifest 缓存不能在新版本激活后抢回 active projection', async () => {
     const scopeKey = `${scopePrefix}-stale-rebuild`;
-    const { manifest_version: first } = await submitMapManifest(pool, manifest(scopeKey));
+    const { manifest_version: first } = await submitConfiguredManifest(manifest(scopeKey));
     await activateMapManifest(pool, first.id);
-    const { manifest_version: second } = await submitMapManifest(
-      pool,
+    const { manifest_version: second } = await submitConfiguredManifest(
       manifest(scopeKey, '第二版工厂'),
     );
     await activateMapManifest(pool, second.id);
@@ -160,7 +178,7 @@ describe('Map Projection Store — 真实 PostgreSQL', () => {
 
   it('数据库拒绝 run 伪造 manifest scope 或 digest provenance', async () => {
     const scopeKey = `${scopePrefix}-provenance`;
-    const { manifest_version: version } = await submitMapManifest(pool, manifest(scopeKey));
+    const { manifest_version: version } = await submitConfiguredManifest(manifest(scopeKey));
 
     await expect(pool.query(
       `INSERT INTO map_projection_runs
@@ -175,7 +193,7 @@ describe('Map Projection Store — 真实 PostgreSQL', () => {
     const scopeKey = `${scopePrefix}-capability-serves`;
     const input = manifest(scopeKey);
     input.crosscut_pool[0].serves = ['F1'];
-    const { manifest_version: draft } = await submitMapManifest(pool, input);
+    const { manifest_version: draft } = await submitConfiguredManifest(input);
     await activateMapManifest(pool, draft.id);
 
     const { rows } = await pool.query(
@@ -193,10 +211,9 @@ describe('Map Projection Store — 真实 PostgreSQL', () => {
 
   it('边写入失败时 Manifest 与旧完整 projection 均保持 active', async () => {
     const scopeKey = `${scopePrefix}-rollback`;
-    const { manifest_version: first } = await submitMapManifest(pool, manifest(scopeKey));
+    const { manifest_version: first } = await submitConfiguredManifest(manifest(scopeKey));
     await activateMapManifest(pool, first.id);
-    const { manifest_version: second } = await submitMapManifest(
-      pool,
+    const { manifest_version: second } = await submitConfiguredManifest(
       manifest(scopeKey, '改名后的工厂'),
     );
 
@@ -230,5 +247,91 @@ describe('Map Projection Store — 真实 PostgreSQL', () => {
       [scopeKey],
     );
     expect(projection.rows).toEqual([{ status: 'active', node_count: 20, edge_count: 31 }]);
+  });
+
+  it('真实账本 UUID 与 test fact 精确投影 feature/artifact/assertion', async () => {
+    const scopeKey = `${scopePrefix}-anchors`;
+    const repo = scopeKey;
+    const capabilityKey = `IT_${randomUUID().replaceAll('-', '')}`;
+    const testPath = `tests/${randomUUID()}.test.js`;
+    const sourceRevision = 'a'.repeat(40);
+    const input = manifest(scopeKey);
+    const oldCapabilityKey = input.capabilities[0].key;
+    input.capabilities[0].key = capabilityKey;
+    input.boundaries = input.boundaries.map((boundary) => ({
+      ...boundary,
+      from: boundary.from === oldCapabilityKey ? capabilityKey : boundary.from,
+      to: boundary.to === oldCapabilityKey ? capabilityKey : boundary.to,
+    }));
+
+    const journey = await pool.query(
+      `INSERT INTO journeys (name, biz_area, capability_code)
+       VALUES ('integration capability', $1, $2) RETURNING id`,
+      ['infrastructure', capabilityKey],
+    );
+    const step = await pool.query(
+      `INSERT INTO journey_steps (journey_id, name, step_number)
+       VALUES ($1, 'integration step', 1) RETURNING id`,
+      [journey.rows[0].id],
+    );
+    const feature = await pool.query(
+      `INSERT INTO journey_features (journey_id, step_id, name, unit_test_path)
+       VALUES ($1, $2, 'integration feature', $3) RETURNING id`,
+      [journey.rows[0].id, step.rows[0].id, testPath],
+    );
+    const assertion = await pool.query(
+      `INSERT INTO journey_step_links
+        (journey_id, step_id, feature_id, cell_kind, cell_key, assertion_ref)
+       VALUES ($1, $2, $3, 'capability', $4, $5) RETURNING id`,
+      [journey.rows[0].id, step.rows[0].id, feature.rows[0].id, capabilityKey, testPath],
+    );
+    await pool.query(
+      `INSERT INTO test_registry
+        (repo, file_path, source_revision, scanner_version, scanned_at)
+       VALUES ($1, $2, $3, 'test-registry-v2', NOW())`,
+      [repo, testPath, sourceRevision],
+    );
+    await pool.query(
+      `INSERT INTO fact_snapshot_headers
+        (kind, repo, source_revision, scanner_version, scanned_at, row_count)
+       VALUES ('test', $1, $2, 'test-registry-v2', NOW(), 1)`,
+      [repo, sourceRevision],
+    );
+
+    const { manifest_version: draft } = await submitConfiguredManifest(input);
+    await activateMapManifest(pool, draft.id);
+
+    const { rows: nodes } = await pool.query(
+      `SELECT node_type, node_key, attributes
+         FROM map_projection_nodes n
+         JOIN map_projection_runs r ON r.id=n.run_id
+        WHERE r.scope_key=$1 AND r.status='active'
+          AND n.node_type IN ('feature', 'artifact', 'assertion')
+        ORDER BY node_type, node_key`,
+      [scopeKey],
+    );
+    expect(nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ node_type: 'feature', node_key: feature.rows[0].id }),
+      expect.objectContaining({
+        node_type: 'artifact',
+        node_key: `${repo}:test:${testPath}`,
+        attributes: expect.objectContaining({ target_exists: true }),
+      }),
+      expect.objectContaining({ node_type: 'assertion', node_key: assertion.rows[0].id }),
+    ]));
+    const { rows: edges } = await pool.query(
+      `SELECT edge_type, count(*)::int AS count
+         FROM map_projection_edges e
+         JOIN map_projection_runs r ON r.id=e.run_id
+        WHERE r.scope_key=$1 AND r.status='active'
+          AND e.edge_type IN ('implements', 'proves', 'affects')
+        GROUP BY edge_type ORDER BY edge_type`,
+      [scopeKey],
+    );
+    expect(edges).toEqual([
+      { edge_type: 'affects', count: 1 },
+      { edge_type: 'implements', count: 2 },
+      { edge_type: 'proves', count: 1 },
+    ]);
   });
 });

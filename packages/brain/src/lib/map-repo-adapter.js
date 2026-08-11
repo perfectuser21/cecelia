@@ -26,7 +26,7 @@ export async function loadMapRepoAdapters(client, scopeKey) {
   }
   const normalizedScopeKey = requireScopeKey(scopeKey);
   const { rows } = await client.query(
-    `SELECT scope_key, repo, adapter_key
+    `SELECT scope_key, repo, adapter_key, adapter_config
        FROM map_scope_repositories
       WHERE scope_key = $1
       ORDER BY repo ASC`,
@@ -40,6 +40,11 @@ export async function loadMapRepoAdapters(client, scopeKey) {
     );
   }
   return rows
-    .map(({ scope_key, repo, adapter_key }) => ({ scope_key, repo, adapter_key }))
+    .map(({ scope_key, repo, adapter_key, adapter_config }) => ({
+      scope_key,
+      repo,
+      adapter_key,
+      adapter_config: adapter_config ?? {},
+    }))
     .sort((left, right) => left.repo.localeCompare(right.repo));
 }

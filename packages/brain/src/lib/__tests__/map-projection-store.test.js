@@ -17,6 +17,9 @@ const manifestVersion = {
   status: 'active',
 };
 const runId = '67f4ffb8-a24d-4cce-b312-f057134910cc';
+const emptyAnchorProjection = async () => ({
+  nodes: [], edges: [], issues: [], fact_revisions: {},
+});
 
 function successfulClient() {
   return {
@@ -43,7 +46,9 @@ describe('projectMapManifest', () => {
   it('以批量节点/边写入完整 run，最后才切 active', async () => {
     const client = successfulClient();
     const factRevisions = { repo_b: 'b'.repeat(40), repo_a: 'a'.repeat(40) };
-    const result = await projectMapManifest({ client, manifestVersion, factRevisions });
+    const result = await projectMapManifest({
+      client, manifestVersion, factRevisions, loadAnchorProjection: emptyAnchorProjection,
+    });
 
     expect(result).toMatchObject({
       projection_run: { id: runId, status: 'active' },
@@ -81,7 +86,9 @@ describe('projectMapManifest', () => {
       return { rows: [], rowCount: 0 };
     });
 
-    await expect(projectMapManifest({ client, manifestVersion })).rejects.toMatchObject({
+    await expect(projectMapManifest({
+      client, manifestVersion, loadAnchorProjection: emptyAnchorProjection,
+    })).rejects.toMatchObject({
       code: 'MAP_PROJECTION_WRITE_INCOMPLETE',
     });
     expect(client.query.mock.calls.some(([sql]) => /INSERT INTO map_projection_edges/i.test(sql))).toBe(false);
@@ -99,7 +106,9 @@ describe('projectMapManifest', () => {
       return { rows: [], rowCount: 0 };
     });
 
-    await expect(projectMapManifest({ client, manifestVersion })).rejects.toMatchObject({
+    await expect(projectMapManifest({
+      client, manifestVersion, loadAnchorProjection: emptyAnchorProjection,
+    })).rejects.toMatchObject({
       code: 'MAP_PROJECTION_MANIFEST_STALE',
     });
     expect(client.query.mock.calls.some(([sql]) => /INSERT INTO map_projection_runs/i.test(sql)))

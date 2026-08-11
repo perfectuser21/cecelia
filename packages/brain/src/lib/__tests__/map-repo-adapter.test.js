@@ -7,15 +7,27 @@ describe('loadMapRepoAdapters', () => {
     const client = {
       query: vi.fn(async () => ({
         rows: [
-          { scope_key: 'cecelia', repo: 'zenithjoy-workspace', adapter_key: 'registry-v1' },
-          { scope_key: 'cecelia', repo: 'cecelia', adapter_key: 'legacy-ledger-v1' },
+          {
+            scope_key: 'cecelia', repo: 'zenithjoy-workspace', adapter_key: 'registry-v1',
+            adapter_config: {},
+          },
+          {
+            scope_key: 'cecelia', repo: 'cecelia', adapter_key: 'legacy-ledger-v1',
+            adapter_config: { ledger_partition: 'cecelia' },
+          },
         ],
       })),
     };
 
     await expect(loadMapRepoAdapters(client, 'cecelia')).resolves.toEqual([
-      { scope_key: 'cecelia', repo: 'cecelia', adapter_key: 'legacy-ledger-v1' },
-      { scope_key: 'cecelia', repo: 'zenithjoy-workspace', adapter_key: 'registry-v1' },
+      {
+        scope_key: 'cecelia', repo: 'cecelia', adapter_key: 'legacy-ledger-v1',
+        adapter_config: { ledger_partition: 'cecelia' },
+      },
+      {
+        scope_key: 'cecelia', repo: 'zenithjoy-workspace', adapter_key: 'registry-v1',
+        adapter_config: {},
+      },
     ]);
     expect(client.query).toHaveBeenCalledWith(
       expect.stringMatching(/WHERE scope_key = \$1[\s\S]*ORDER BY repo ASC/i),

@@ -1,3 +1,4 @@
+import { loadMapAnchorProjection } from './map-anchor-resolver.js';
 import { buildMapProjection, MAP_PROJECTOR_VERSION } from './map-projector.js';
 
 export class MapProjectionStoreError extends Error {
@@ -169,9 +170,10 @@ async function activateRun(client, scopeKey, runId) {
 export async function projectMapManifest({
   client,
   manifestVersion,
-  factRevisions = {},
+  factRevisions = undefined,
   mode = 'rebuild',
   buildProjection = buildMapProjection,
+  loadAnchorProjection = loadMapAnchorProjection,
 }) {
   if (!client?.query) {
     throw new MapProjectionStoreError(
@@ -183,10 +185,15 @@ export async function projectMapManifest({
   await lockScope(client, 'map-manifest', manifestVersion.scope_key);
   await lockScope(client, 'map-projection', manifestVersion.scope_key);
   const authoritativeManifest = await readAuthoritativeManifest(client, manifestVersion, mode);
+  const anchorProjection = await loadAnchorProjection(client, {
+    scopeKey: authoritativeManifest.scope_key,
+    capabilityKeys: authoritativeManifest.manifest.capabilities.map(({ key }) => key),
+  });
   const projection = buildProjection({
     manifest: authoritativeManifest.manifest,
     manifestDigest: authoritativeManifest.digest,
-    factRevisions,
+    factRevisions: factRevisions ?? anchorProjection.fact_revisions,
+    anchorProjection,
   });
   if (projection.projector_version !== MAP_PROJECTOR_VERSION) {
     throw new MapProjectionStoreError(

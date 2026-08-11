@@ -16,11 +16,12 @@ describe('migration 406 — explicit map scope repositories', () => {
     expect(upSql).toMatch(/scope_key TEXT NOT NULL/i);
     expect(upSql).toMatch(/repo TEXT NOT NULL/i);
     expect(upSql).toMatch(/adapter_key TEXT NOT NULL/i);
+    expect(upSql).toMatch(/adapter_config JSONB NOT NULL/i);
     expect(upSql).toMatch(/PRIMARY KEY \(scope_key, repo\)/i);
   });
 
   it('种入 Cecelia 首个验收域的显式映射，不定义隐式同名规则', () => {
-    expect(upSql).toMatch(/VALUES\s*\(\s*'cecelia',\s*'cecelia',\s*'legacy-ledger-v1'/i);
+    expect(upSql).toMatch(/VALUES\s*\(\s*'cecelia',\s*'cecelia',\s*'legacy-ledger-v1',[\s\S]*ledger_partition/i);
     expect(upSql).not.toMatch(/scope_key\s*=\s*repo/i);
   });
 
