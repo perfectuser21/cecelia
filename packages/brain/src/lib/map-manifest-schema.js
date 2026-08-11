@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 
+import Ajv2020 from 'ajv/dist/2020.js';
 import { z } from 'zod';
 
 const STABLE_KEY_PATTERN = '^[A-Za-z][A-Za-z0-9_-]*$';
@@ -62,7 +63,7 @@ const manifestSchema = z.object({
 }).strict();
 
 const stableKeyJsonSchema = { type: 'string', minLength: 1, pattern: STABLE_KEY_PATTERN };
-const nonEmptyJsonSchema = { type: 'string', minLength: 1 };
+const nonEmptyJsonSchema = { type: 'string', minLength: 1, pattern: '\\S' };
 const aliasesJsonSchema = { type: 'array', items: stableKeyJsonSchema };
 
 export const MAP_MANIFEST_JSON_SCHEMA = Object.freeze({
@@ -133,21 +134,51 @@ export const MAP_MANIFEST_JSON_SCHEMA = Object.freeze({
       properties: {
         applicable: { type: 'boolean' },
         items: { type: 'array', items: { $ref: '#/$defs/prerequisite' } },
-        reason: { type: 'string' },
+        reason: { type: 'string', pattern: '\\S' },
       },
       allOf: [{
         if: { properties: { applicable: { const: false } }, required: ['applicable'] },
         then: {
-          properties: { items: { maxItems: 0 }, reason: { type: 'string', minLength: 1 } },
+          properties: { items: { type: 'array', maxItems: 0 }, reason: { type: 'string', minLength: 1 } },
           required: ['reason'],
         },
+        else: { properties: { items: { type: 'array', minItems: 1 } } },
       }],
     },
   },
 });
 
+const ajv = new Ajv2020({ allErrors: true, strict: true });
+ajv.addFormat('uuid', /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+const validateJsonSchema = ajv.compile(MAP_MANIFEST_JSON_SCHEMA);
+
 function pathString(path) {
   return path.map(String).join('.');
+}
+
+function pointerPath(pointer) {
+  if (!pointer) return '';
+  return pointer.slice(1).split('/').map((segment) => (
+    segment.replaceAll('~1', '/').replaceAll('~0', '~')
+  )).join('.');
+}
+
+export function validateMapManifestJsonSchema(input) {
+  const valid = validateJsonSchema(input);
+  const errors = valid ? [] : (validateJsonSchema.errors ?? []).map((error) => {
+    let path = pointerPath(error.instancePath);
+    if (error.keyword === 'additionalProperties') {
+      path = [path, error.params.additionalProperty].filter(Boolean).join('.');
+    } else if (error.keyword === 'required') {
+      path = [path, error.params.missingProperty].filter(Boolean).join('.');
+    }
+    return {
+      path,
+      code: error.keyword === 'additionalProperties' ? 'unrecognized_keys' : error.keyword,
+      message: error.message ?? 'JSON Schema validation failed',
+    };
+  });
+  return { valid, errors };
 }
 
 function structuralErrors(zodIssues) {
@@ -182,6 +213,7 @@ function addUniquePrimaryKeys(manifest, errors) {
   ];
   for (const [groupName, items] of groups) {
     items.forEach((item, index) => {
+      if (typeof item.key !== 'string') return;
       const path = `${groupName}.${index}.key`;
       if (seen.has(item.key)) {
         pushError(errors, path, 'duplicate_key', `Stable key already used at ${seen.get(item.key)}`);
@@ -192,7 +224,8 @@ function addUniquePrimaryKeys(manifest, errors) {
   }
   for (const [groupName, items] of groups.filter(([name]) => name !== 'boundaries')) {
     items.forEach((item, index) => {
-      (item.aliases ?? []).forEach((alias, aliasIndex) => {
+      (Array.isArray(item.aliases) ? item.aliases : []).forEach((alias, aliasIndex) => {
+        if (typeof alias !== 'string') return;
         const path = `${groupName}.${index}.aliases.${aliasIndex}`;
         if (seen.has(alias)) {
           pushError(errors, path, 'duplicate_alias', `Alias already used at ${seen.get(alias)}`);
@@ -207,6 +240,7 @@ function addUniquePrimaryKeys(manifest, errors) {
 function addDuplicateOrderErrors(manifest, errors) {
   const seenStreams = new Map();
   manifest.value_streams.forEach((item, index) => {
+    if (typeof item.order !== 'number') return;
     if (seenStreams.has(item.order)) {
       pushError(errors, `value_streams.${index}.order`, 'duplicate_order', 'Value Stream order must be unique');
     } else seenStreams.set(item.order, index);
@@ -214,6 +248,7 @@ function addDuplicateOrderErrors(manifest, errors) {
 
   const seenCapabilities = new Map();
   manifest.capabilities.forEach((item, index) => {
+    if (typeof item.value_stream_key !== 'string' || typeof item.order !== 'number') return;
     const groupOrder = `${item.value_stream_key}:${item.order}`;
     if (seenCapabilities.has(groupOrder)) {
       pushError(errors, `capabilities.${index}.order`, 'duplicate_order', 'Capability order must be unique within its Value Stream');
@@ -222,9 +257,10 @@ function addDuplicateOrderErrors(manifest, errors) {
 }
 
 function addReferenceErrors(manifest, errors) {
-  const streams = new Set(manifest.value_streams.map(({ key }) => key));
-  const capabilities = new Set(manifest.capabilities.map(({ key }) => key));
+  const streams = new Set(manifest.value_streams.map(({ key }) => key).filter((key) => typeof key === 'string'));
+  const capabilities = new Set(manifest.capabilities.map(({ key }) => key).filter((key) => typeof key === 'string'));
   const requireRef = (exists, value, path, type) => {
+    if (typeof value !== 'string') return;
     if (!exists.has(value)) pushError(errors, path, 'reference_not_found', `${type} does not exist: ${value}`);
   };
 
@@ -236,13 +272,13 @@ function addReferenceErrors(manifest, errors) {
     requireRef(capabilities, item.to, `boundaries.${index}.to`, 'Capability');
   });
   manifest.crosscut_pool.forEach((item, index) => {
-    item.serves.forEach((stream, servesIndex) => {
+    (Array.isArray(item.serves) ? item.serves : []).forEach((stream, servesIndex) => {
       requireRef(streams, stream, `crosscut_pool.${index}.serves.${servesIndex}`, 'Value Stream');
     });
     if (item.owner) requireRef(capabilities, item.owner, `crosscut_pool.${index}.owner`, 'Capability');
   });
   manifest.shared_prerequisites.items.forEach((item, index) => {
-    item.serves.forEach((stream, servesIndex) => {
+    (Array.isArray(item.serves) ? item.serves : []).forEach((stream, servesIndex) => {
       requireRef(streams, stream, `shared_prerequisites.items.${index}.serves.${servesIndex}`, 'Value Stream');
     });
   });
@@ -251,6 +287,7 @@ function addReferenceErrors(manifest, errors) {
 function boundariesContainCycle(boundaries) {
   const adjacency = new Map();
   for (const { from, to } of boundaries) {
+    if (typeof from !== 'string' || typeof to !== 'string') continue;
     if (!adjacency.has(from)) adjacency.set(from, []);
     adjacency.get(from).push(to);
   }
@@ -274,29 +311,67 @@ function semanticErrors(manifest) {
   addDuplicateOrderErrors(manifest, errors);
   addReferenceErrors(manifest, errors);
 
-  if (!manifest.shared_prerequisites.applicable) {
+  if (manifest.shared_prerequisites.applicable === false) {
     if (manifest.shared_prerequisites.items.length > 0) {
       pushError(errors, 'shared_prerequisites.items', 'not_applicable_items', 'Items must be empty when shared prerequisites are not applicable');
     }
     if (!manifest.shared_prerequisites.reason?.trim()) {
       pushError(errors, 'shared_prerequisites.reason', 'not_applicable_reason', 'Reason is required when shared prerequisites are not applicable');
     }
-  } else if (manifest.shared_prerequisites.items.length === 0) {
+  } else if (manifest.shared_prerequisites.applicable === true
+    && manifest.shared_prerequisites.items.length === 0) {
     pushError(errors, 'shared_prerequisites.items', 'applicable_items_required', 'Applicable shared prerequisites require at least one item');
   }
 
+  // PRD §6.1 requires the projector input to reject cyclic boundary graphs.
   if (boundariesContainCycle(manifest.boundaries)) {
     pushError(errors, 'boundaries', 'cycle_detected', 'Boundary graph must be acyclic');
   }
   return errors;
 }
 
+function objectItems(value) {
+  return Array.isArray(value)
+    ? value.filter((item) => item && typeof item === 'object' && !Array.isArray(item))
+    : [];
+}
+
+function semanticView(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const shared = input.shared_prerequisites;
+  const sharedObject = shared && typeof shared === 'object' && !Array.isArray(shared) ? shared : {};
+  return {
+    value_streams: objectItems(input.value_streams),
+    capabilities: objectItems(input.capabilities),
+    boundaries: objectItems(input.boundaries),
+    crosscut_pool: objectItems(input.crosscut_pool),
+    shared_prerequisites: {
+      applicable: sharedObject.applicable,
+      items: objectItems(sharedObject.items),
+      reason: sharedObject.reason,
+    },
+  };
+}
+
+function uniqueErrors(errors) {
+  const seen = new Set();
+  return errors.filter((error) => {
+    const identity = `${error.path}:${error.code}`;
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+}
+
 export function validateMapManifest(input) {
+  const jsonResult = validateMapManifestJsonSchema(input);
   const parsed = manifestSchema.safeParse(input);
-  if (!parsed.success) {
-    return { valid: false, errors: structuralErrors(parsed.error.issues) };
-  }
-  const errors = semanticErrors(parsed.data);
+  const view = semanticView(input);
+  const errors = uniqueErrors([
+    ...jsonResult.errors,
+    ...(parsed.success ? [] : structuralErrors(parsed.error.issues)),
+    ...(view ? semanticErrors(view) : []),
+  ]);
   return errors.length > 0
     ? { valid: false, errors }
     : { valid: true, errors: [], manifest: parsed.data };

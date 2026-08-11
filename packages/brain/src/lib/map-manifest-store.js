@@ -1,5 +1,7 @@
 import { digestMapManifest, validateMapManifest } from './map-manifest-schema.js';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export class MapManifestError extends Error {
   constructor(code, message, status = 400, details = undefined) {
     super(message);
@@ -131,6 +133,13 @@ export async function activateMapManifest(
   id,
   { projector = unavailableProjector } = {},
 ) {
+  if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
+    throw new MapManifestError(
+      'MAP_MANIFEST_ID_INVALID',
+      'Map manifest version id must be a UUID',
+      422,
+    );
+  }
   const client = await pool.connect();
   try {
     await begin(client);
