@@ -12,7 +12,8 @@
 #   SKIP_GIT_PULL      — 非空时跳过 git pull（仍校验 clean main 与 exact SHA）
 #   EXPECTED_SCAN_SHA  — 本批必须扫描的 revision；默认 origin/main
 #   FACT_SNAPSHOT_TEST_MODE — 仅隔离 smoke 可跳过宿主 checkout 守卫
-#   MAP_REBUILD_SCOPES — 扫描成功后原子重建的 Map scope；默认 cecelia
+#   SCAN_REPO_SPECS    — 分号分隔的 name|root|source_database_url；设置后每仓运行四扫描器
+#   MAP_REBUILD_SCOPES — 扫描成功后原子重建的 Map scope；默认单仓 cecelia、多仓 repo name
 #   MAP_REBUILD_DISABLED — 仅事实快照隔离测试可设为 1；生产默认重建
 #   BRAIN_URL          — Brain 地址；默认 http://localhost:5221
 #   CECELIA_INTERNAL_ENV_FILE — 内部鉴权共享 env；默认宿主 credentials SSOT
@@ -23,7 +24,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." 2>/dev/null && pwd)" || {
   echo "ERROR: repo root 不可用" >&2
   exit 1
 }
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 
 # Docker bridge 会把宿主 localhost 请求呈现为网关地址，不能依赖 socket loopback。
 # cron 从 production env 精确读取这一项，不 source 其余凭据或执行文件内容。
@@ -110,17 +111,87 @@ fi
 
 # 5. 运行所有 scanner（一个失败不中断其余，聚合非零退出）
 FAIL=0
-for _s in "${SCANNERS[@]}"; do
-  if "$NODE_BIN" "scripts/scan/${_s}"; then
-    echo "OK: ${_s}"
+
+run_scanner() {
+  local scanner="$1" repo_name="${2:-}" repo_root="${3:-}" source_database_url="${4:-}"
+  if [[ -n "$repo_name" ]]; then
+    SCAN_REPO_NAME="$repo_name" SCAN_REPO_ROOT="$repo_root" \
+      SOURCE_DATABASE_URL="${source_database_url:-${DATABASE_URL:-}}" \
+      GRAPH_REPOS="$repo_name" "$NODE_BIN" "scripts/scan/${scanner}"
   else
-    echo "FAIL: ${_s}"
-    FAIL=1
+    "$NODE_BIN" "scripts/scan/${scanner}"
   fi
+}
+
+prepare_repo() {
+  local repo_root="$1"
+  PREPARED_HEAD="$SCAN_HEAD"
+  [[ "${FACT_SNAPSHOT_TEST_MODE:-}" == "1" ]] && return 0
+  if [[ "$(git -C "$repo_root" branch --show-current 2>/dev/null)" != "main" ]] \
+    || [[ -n "$(git -C "$repo_root" status --porcelain 2>/dev/null)" ]]; then
+    echo "ERROR: 目标事实仓必须是 clean main: $repo_root" >&2
+    return 3
+  fi
+  if [[ -z "${SKIP_GIT_PULL:-}" && "$repo_root" != "$REPO_ROOT" ]]; then
+    git -C "$repo_root" pull --ff-only 2>&1 || {
+      echo "ERROR: $repo_root git pull --ff-only 失败" >&2
+      return 3
+    }
+  fi
+  PREPARED_HEAD="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)"
+  [[ "$PREPARED_HEAD" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "ERROR: 目标事实仓 revision 非法: $repo_root" >&2
+    return 3
+  }
+}
+
+TARGET_NAMES=()
+TARGET_ROOTS=()
+TARGET_DATABASE_URLS=()
+TARGET_HEADS=()
+
+if [[ -n "${SCAN_REPO_SPECS+x}" ]]; then
+  IFS=';' read -ra _REPO_SPECS <<< "$SCAN_REPO_SPECS"
+  [[ ${#_REPO_SPECS[@]} -gt 0 ]] || { echo "ERROR: SCAN_REPO_SPECS 为空" >&2; exit 2; }
+  for _spec in "${_REPO_SPECS[@]}"; do
+    IFS='|' read -r _repo_name _repo_root _source_database_url <<< "$_spec"
+    if [[ -z "$_repo_name" || ! "$_repo_name" =~ ^[A-Za-z0-9._-]+$ ]] \
+      || [[ -z "$_repo_root" || ! -d "$_repo_root" ]]; then
+      echo "ERROR: 无效 SCAN_REPO_SPECS 项: $_spec" >&2
+      FAIL=1
+      continue
+    fi
+    if ! prepare_repo "$_repo_root"; then FAIL=1; continue; fi
+    TARGET_NAMES+=("$_repo_name")
+    TARGET_ROOTS+=("$_repo_root")
+    TARGET_DATABASE_URLS+=("$_source_database_url")
+    TARGET_HEADS+=("$PREPARED_HEAD")
+  done
+else
+  TARGET_NAMES+=("cecelia")
+  TARGET_ROOTS+=("$REPO_ROOT")
+  TARGET_DATABASE_URLS+=("")
+  TARGET_HEADS+=("$EXPECTED_HEAD")
+fi
+
+[[ ${#TARGET_NAMES[@]} -gt 0 ]] || {
+  echo "ERROR: 没有可扫描的有效 repo" >&2
+  exit 3
+}
+
+for _target_index in "${!TARGET_NAMES[@]}"; do
+  for _s in "${SCANNERS[@]}"; do
+    if run_scanner "$_s" "${TARGET_NAMES[$_target_index]}" \
+      "${TARGET_ROOTS[$_target_index]}" "${TARGET_DATABASE_URLS[$_target_index]}"; then
+      echo "OK: repo=${TARGET_NAMES[$_target_index]} ${_s}"
+    else
+      echo "FAIL: repo=${TARGET_NAMES[$_target_index]} ${_s}"
+      FAIL=1
+    fi
+  done
 done
 
-# 6. 只有整批事实同 revision 扫描成功，才切换 active projection。
-# 任一 scanner 失败时保留旧 projection，读面会按 freshness fail-closed。
+# 6. 只有所有 repo 的整批事实均锁定 revision，才切换 active projection。
 if [[ $FAIL -ne 0 ]]; then
   echo "WARN: scanner 批次不完整，保留旧 Map projection"
   exit "$FAIL"
@@ -132,18 +203,37 @@ if [[ "$FINAL_HEAD" != "$EXPECTED_HEAD" ]] \
   echo "ERROR: 扫描期间 checkout revision 或工作区状态发生变化，拒绝发布" >&2
   exit 3
 fi
-if [[ $DEFAULT_BATCH -eq 1 ]] \
-  && ! "$NODE_BIN" scripts/scan/verify-scan-batch.mjs "$EXPECTED_HEAD"; then
-  echo "ERROR: 四类事实未锁定到同一 revision，拒绝发布" >&2
-  exit 3
-fi
+
+for _target_index in "${!TARGET_NAMES[@]}"; do
+  if [[ "${FACT_SNAPSHOT_TEST_MODE:-}" != "1" ]] \
+    && [[ "${TARGET_ROOTS[$_target_index]}" != "$REPO_ROOT" ]]; then
+    _final_target_head="$(git -C "${TARGET_ROOTS[$_target_index]}" rev-parse HEAD 2>/dev/null || true)"
+    if [[ "$_final_target_head" != "${TARGET_HEADS[$_target_index]}" ]] \
+      || [[ -n "$(git -C "${TARGET_ROOTS[$_target_index]}" status --porcelain 2>/dev/null)" ]]; then
+      echo "ERROR: repo=${TARGET_NAMES[$_target_index]} 扫描期间 revision 或工作区漂移" >&2
+      exit 3
+    fi
+  fi
+  if [[ $DEFAULT_BATCH -eq 1 ]] \
+    && ! SCAN_REPO="${TARGET_NAMES[$_target_index]}" \
+      "$NODE_BIN" scripts/scan/verify-scan-batch.mjs "${TARGET_HEADS[$_target_index]}"; then
+    echo "ERROR: repo=${TARGET_NAMES[$_target_index]} 四类事实未锁定到同一 revision" >&2
+    exit 3
+  fi
+done
 
 if [[ -n "${MAP_REBUILD_DISABLED:-}" ]]; then
   echo "INFO: explicit fact-snapshot-only run; Map projection unchanged"
   exit 0
 fi
 
-MAP_SCOPES_RAW="${MAP_REBUILD_SCOPES:-cecelia}"
+if [[ -n "${MAP_REBUILD_SCOPES+x}" ]]; then
+  MAP_SCOPES_RAW="$MAP_REBUILD_SCOPES"
+elif [[ -n "${SCAN_REPO_SPECS+x}" ]]; then
+  MAP_SCOPES_RAW="${TARGET_NAMES[*]}"
+else
+  MAP_SCOPES_RAW="cecelia"
+fi
 MAP_SCOPES=()
 for _scope in $MAP_SCOPES_RAW; do
   [[ -n "${_scope//[[:space:]]/}" ]] && MAP_SCOPES+=("$_scope")

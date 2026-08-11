@@ -41,18 +41,33 @@ cat > "$CONTROL_BIN/git" <<'STUB'
 if [[ -n "${GIT_LOG:-}" ]]; then
   printf '%s\n' "$*" >> "$GIT_LOG"
 fi
+TARGET_REPO=0
+if [[ "${1:-}" == "-C" ]]; then
+  TARGET_REPO=1
+  shift 2
+fi
 if [[ "${1:-}" == "branch" && "${2:-}" == "--show-current" ]]; then
-  printf '%s\n' "${GIT_BRANCH:-main}"
+  if [[ $TARGET_REPO -eq 1 ]]; then
+    printf '%s\n' "${GIT_TARGET_BRANCH:-main}"
+  else
+    printf '%s\n' "${GIT_BRANCH:-main}"
+  fi
   exit 0
 fi
 if [[ "${1:-}" == "status" && "${2:-}" == "--porcelain" ]]; then
+  if [[ $TARGET_REPO -eq 1 && -n "${GIT_TARGET_DIRTY:-}" ]]; then printf '%s\n' ' M changed'; fi
   exit 0
 fi
 if [[ "${1:-}" == "pull" && "${2:-}" == "--ff-only" ]]; then
   exit 0
 fi
 if [[ "${1:-}" == "rev-parse" && "${2:-}" == "HEAD" ]]; then
-  if [[ -n "${HEAD_CHANGE_MARKER:-}" && -f "$HEAD_CHANGE_MARKER" ]]; then
+  if [[ $TARGET_REPO -eq 1 && -n "${TARGET_HEAD_CHANGE_MARKER:-}" \
+    && -f "$TARGET_HEAD_CHANGE_MARKER" ]]; then
+    printf '%s\n' "${GIT_TARGET_HEAD_AFTER_SCAN:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+  elif [[ $TARGET_REPO -eq 1 ]]; then
+    printf '%s\n' "${GIT_TARGET_HEAD_SHA:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+  elif [[ -n "${HEAD_CHANGE_MARKER:-}" && -f "$HEAD_CHANGE_MARKER" ]]; then
     printf '%s\n' "${GIT_HEAD_AFTER_SCAN:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
   else
     printf '%s\n' "${GIT_HEAD_SHA:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
@@ -76,11 +91,16 @@ if [[ -n "${NODE_LOG:-}" ]]; then
   printf '%s\n' "$*" >> "$NODE_LOG"
 fi
 if [[ "${1##*/}" == "verify-scan-batch.mjs" ]]; then
-  printf '%s\n' "${2:-}" > "$VERIFY_LOG"
+  if [[ -n "${VERIFY_LOG:-}" ]]; then printf '%s\n' "${2:-}" > "$VERIFY_LOG"; fi
   exit "${VERIFY_EXIT:-0}"
+fi
+if [[ -n "${ENV_LOG:-}" ]]; then
+  printf '%s|%s|%s|%s\n' "${SCAN_REPO_NAME:-}" "${SCAN_REPO_ROOT:-}" \
+    "${SOURCE_DATABASE_URL:-}" "${GRAPH_REPOS:-}" >> "$ENV_LOG"
 fi
 printf '%s\n' "$1" >> "$SCAN_LOG"
 if [[ -n "${HEAD_CHANGE_MARKER:-}" ]]; then : > "$HEAD_CHANGE_MARKER"; fi
+if [[ -n "${TARGET_HEAD_CHANGE_MARKER:-}" ]]; then : > "$TARGET_HEAD_CHANGE_MARKER"; fi
 if [[ "${1##*/}" == "${FAIL_SCANNER:-}" ]]; then
   exit 23
 fi
@@ -299,6 +319,37 @@ if [[ $MIDSCAN_RC -eq 3 && ! -s "$MIDSCAN_CURL_LOG" ]]; then
   pass "扫描过程中 checkout revision 改变时拒绝 rebuild"
 else
   fail "扫描中 revision 漂移仍发布 projection(rc=$MIDSCAN_RC)"
+fi
+
+mkdir -p "$TMPD/repo-a" "$TMPD/repo-b"
+MULTI_REPO_LOG="$TMPD/multi-repo.log"
+MULTI_REPO_SCAN_LOG="$TMPD/multi-repo-scans.log"
+MULTI_REPO_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" SKIP_GIT_PULL=1 \
+  SCAN_LOG="$MULTI_REPO_SCAN_LOG" ENV_LOG="$MULTI_REPO_LOG" \
+  SCAN_REPO_SPECS="repo-a|$TMPD/repo-a|postgresql://source/a;repo-b|$TMPD/repo-b|postgresql://source/b" \
+  /bin/bash "$RUNNER" >/dev/null 2>&1 || MULTI_REPO_RC=$?
+if [[ $MULTI_REPO_RC -eq 0 ]] \
+  && [[ "$(wc -l < "$MULTI_REPO_LOG" | tr -d ' ')" == '8' ]] \
+  && grep -q "repo-a|$TMPD/repo-a|postgresql://source/a|repo-a" "$MULTI_REPO_LOG" \
+  && grep -q "repo-b|$TMPD/repo-b|postgresql://source/b|repo-b" "$MULTI_REPO_LOG"; then
+  pass "SCAN_REPO_SPECS 为每个仓库向四 scanner 注入独立 repo/root/source DB"
+else
+  fail "SCAN_REPO_SPECS 多仓扫描合同失败(rc=$MULTI_REPO_RC)"
+fi
+
+TARGET_DRIFT_MARKER="$TMPD/target-head-changed"
+TARGET_DRIFT_CURL_LOG="$TMPD/target-drift-curl.log"
+TARGET_DRIFT_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" SKIP_GIT_PULL=1 \
+  SCAN_LOG="$TMPD/target-drift-scans.log" CURL_LOG="$TARGET_DRIFT_CURL_LOG" \
+  TARGET_HEAD_CHANGE_MARKER="$TARGET_DRIFT_MARKER" \
+  SCAN_REPO_SPECS="repo-a|$TMPD/repo-a|postgresql://source/a" \
+  /bin/bash "$RUNNER" > "$TMPD/target-drift.out" 2>&1 || TARGET_DRIFT_RC=$?
+if [[ $TARGET_DRIFT_RC -eq 3 && ! -s "$TARGET_DRIFT_CURL_LOG" ]]; then
+  pass "目标 repo 扫描中 revision 漂移时拒绝 rebuild"
+else
+  fail "目标 repo revision 漂移仍发布 projection(rc=$TARGET_DRIFT_RC)"
 fi
 
 ROOT_FAILURE_GIT_LOG="$TMPD/root-failure-git.log"

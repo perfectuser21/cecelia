@@ -17,6 +17,7 @@
 import { readFileSync, writeFileSync } from 'fs';
 import { parseArgs } from 'util';
 import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
 
 const require = createRequire(import.meta.url);
 const { brainAuthHeaders } = require('../lib/brain-auth-headers.cjs');
@@ -127,7 +128,7 @@ function parseValue(v) {
  * If the file already matches manifest format, pass-through with validation.
  * If it has a different structure (legacy ZenithJoy format), attempt conversion.
  */
-function convertToManifest(raw, scopeKey, decisionId) {
+export function convertToManifest(raw, scopeKey, decisionId) {
   // If it already has manifest structure, use it directly
   if (raw.schema_version && raw.value_streams) {
     return {
@@ -137,8 +138,63 @@ function convertToManifest(raw, scopeKey, decisionId) {
     };
   }
 
-  // Legacy ZenithJoy format conversion
-  // product-map.yaml typically has: lines, capabilities, cross-cuts, boundaries
+  // Product Map SSOT：apps[].lines[] 定义价值流，非 deprecated golden_paths 定义能力。
+  if (Array.isArray(raw.apps) && Array.isArray(raw.golden_paths)) {
+    const valueStreams = [];
+    const lineOwners = new Map();
+    for (const app of raw.apps) {
+      for (const line of app.lines ?? []) {
+        valueStreams.push({
+          key: line.id,
+          name: line.name,
+          perceiver: app.name,
+          order: valueStreams.length + 1,
+        });
+        lineOwners.set(line.id, app.id);
+      }
+    }
+
+    const lineOrders = new Map();
+    const capabilities = raw.golden_paths
+      .filter((goldenPath) => goldenPath.status !== 'deprecated')
+      .map((goldenPath) => {
+        const order = (lineOrders.get(goldenPath.line_id) ?? 0) + 1;
+        lineOrders.set(goldenPath.line_id, order);
+        return {
+          key: goldenPath.id,
+          name: goldenPath.name,
+          value_stream_key: goldenPath.line_id,
+          order,
+        };
+      });
+
+    for (const goldenPath of raw.golden_paths) {
+      if (goldenPath.status === 'deprecated') continue;
+      if (!lineOwners.has(goldenPath.line_id)) {
+        throw new Error(`golden_path '${goldenPath.id}' 引用了不存在的 line '${goldenPath.line_id}'`);
+      }
+      if (goldenPath.app_id && goldenPath.app_id !== lineOwners.get(goldenPath.line_id)) {
+        throw new Error(`golden_path '${goldenPath.id}' 的 app_id 与 line 归属不一致`);
+      }
+    }
+
+    return {
+      scope_key: scopeKey,
+      schema_version: 1,
+      source_decision_id: decisionId,
+      value_streams: valueStreams,
+      capabilities,
+      boundaries: [],
+      crosscut_pool: [],
+      shared_prerequisites: {
+        applicable: false,
+        items: [],
+        reason: 'product-map.yaml 未声明跨价值流共享前置',
+      },
+    };
+  }
+
+  // 兼容已有的 lines/capabilities 结构。
   const manifest = {
     scope_key: scopeKey,
     schema_version: 1,
@@ -220,7 +276,7 @@ function convertToManifest(raw, scopeKey, decisionId) {
 
 // ─── Validate output manifest ─────────────────────────────────────────────────
 
-function validateManifest(manifest) {
+export function validateManifest(manifest) {
   const errors = [];
   if (!manifest.scope_key) errors.push('scope_key 必填');
   if (manifest.schema_version !== 1) errors.push('schema_version 必须为 1');
@@ -326,14 +382,16 @@ async function main() {
     if (validation.valid !== true) throw new Error('Brain 拒绝 manifest 校验');
     const submitted = await requestJson('/api/brain/map/manifests', {
       method: 'POST',
-      body: JSON.stringify({ manifest, source_decision_id: decisionId }),
+      body: JSON.stringify(manifest),
     });
+    const manifestId = submitted.manifest_version?.id;
+    if (!manifestId) throw new Error('Brain manifest 提交响应缺少 manifest_version.id');
     const activated = await requestJson(
-      `/api/brain/map/manifests/${submitted.manifest_id}/activate`,
-      { method: 'POST', body: JSON.stringify({ scope_key: scopeKey }) },
+      `/api/brain/map/manifests/${manifestId}/activate`,
+      { method: 'POST' },
     );
     console.error(
-      `[adapter] manifest ${submitted.manifest_id} 已激活，projection=${activated.projection?.projection_digest ?? 'unknown'}`,
+      `[adapter] manifest ${manifestId} 已激活，status=${activated.manifest_version?.status ?? 'unknown'}`,
     );
     return;
   }
@@ -341,7 +399,7 @@ async function main() {
   // Print submission instructions
   const BRAIN = process.env.BRAIN_URL || 'http://localhost:5221';
   console.error(`
-下一步（Brain 重启并加载 migrations 后执行）：
+下一步：
 
 1. 校验：
    curl -s -X POST ${BRAIN}/api/brain/map/manifests/validate \\
@@ -353,21 +411,22 @@ async function main() {
    MANIFEST_ID=$(curl -s -X POST ${BRAIN}/api/brain/map/manifests \\
      -H "Authorization: Bearer \${CECELIA_INTERNAL_TOKEN}" \\
      -H "Content-Type: application/json" \\
-     -d '{"manifest": $(cat ${outputPath || '<manifest.json>'}), "source_decision_id": "${decisionId || '<uuid>'}"}' \\
-     | jq -r '.manifest_id')
+     -d @${outputPath || '<manifest.json>'} \\
+     | jq -r '.manifest_version.id')
 
 3. 激活：
    curl -s -X POST ${BRAIN}/api/brain/map/manifests/$MANIFEST_ID/activate \\
      -H "Authorization: Bearer \${CECELIA_INTERNAL_TOKEN}" \\
-     -H "Content-Type: application/json" \\
-     -d '{"scope_key": "${scopeKey}"}'
+     -H "Content-Type: application/json"
 
 4. 验证：
    curl -s "${BRAIN}/api/brain/map?scope=${scopeKey}" | jq '.summary'
 `);
 }
 
-main().catch((err) => {
-  console.error('[adapter] 致命错误:', err.message);
-  process.exit(1);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error('[adapter] 致命错误:', err.message);
+    process.exit(1);
+  });
+}

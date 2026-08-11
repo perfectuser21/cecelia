@@ -12,11 +12,11 @@
 # 测试注入:RESCAN_STATE_FILE / RESCAN_SCAN_CMD
 # =============================================================================
 set -uo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../.." || exit 1
 
 STATE_FILE="${RESCAN_STATE_FILE:-/tmp/registry-scan-last-sha}"
 SCAN_CMD="${RESCAN_SCAN_CMD:-bash scripts/scan/run-all-scans.sh}"
-MAX_AGE_SEC="${RESCAN_MAX_AGE_SEC:-600}"
+MAX_AGE_SEC="${RESCAN_MAX_AGE_SEC:-${RESCAN_MAX_AGE_SECONDS:-600}}"
 NOW_EPOCH="${RESCAN_NOW_EPOCH:-$(date +%s)}"
 
 REMOTE_SHA=$(git ls-remote origin refs/heads/main 2>/dev/null | awk '{print $1}')
@@ -25,11 +25,15 @@ if [ -z "$REMOTE_SHA" ]; then
 fi
 
 STATE_VALUE=$(cat "$STATE_FILE" 2>/dev/null || echo "none|0")
-LAST_SHA="${STATE_VALUE%%|*}"
 if [[ "$STATE_VALUE" == *"|"* ]]; then
+  LAST_SHA="${STATE_VALUE%%|*}"
   LAST_SCAN_EPOCH="${STATE_VALUE#*|}"
 else
-  LAST_SCAN_EPOCH=0
+  read -r LAST_SHA LAST_SCAN_EPOCH <<< "$STATE_VALUE"
+fi
+if [[ -z "${LAST_SCAN_EPOCH:-}" || ! "$LAST_SCAN_EPOCH" =~ ^[0-9]+$ ]]; then
+  LAST_SCAN_EPOCH=$(stat -c %Y "$STATE_FILE" 2>/dev/null \
+    || stat -f %m "$STATE_FILE" 2>/dev/null || echo 0)
 fi
 [[ "$LAST_SCAN_EPOCH" =~ ^[0-9]+$ ]] || LAST_SCAN_EPOCH=0
 AGE_SEC=$((NOW_EPOCH - LAST_SCAN_EPOCH))
@@ -37,7 +41,7 @@ if [ "$REMOTE_SHA" = "$LAST_SHA" ] && (( AGE_SEC < MAX_AGE_SEC )); then
   exit 0
 fi
 
-echo "=== rescan-if-changed: main ${LAST_SHA:0:9} -> ${REMOTE_SHA:0:9} $(date '+%F %T %Z') ==="
+echo "=== rescan-if-changed: main ${LAST_SHA:0:9} -> ${REMOTE_SHA:0:9} age=${AGE_SEC}s $(date '+%F %T %Z') ==="
 if EXPECTED_SCAN_SHA="$REMOTE_SHA" $SCAN_CMD; then
   STATE_TMP="${STATE_FILE}.tmp.$$"
   printf '%s|%s\n' "$REMOTE_SHA" "$NOW_EPOCH" > "$STATE_TMP"

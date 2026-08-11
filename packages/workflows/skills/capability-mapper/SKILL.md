@@ -6,18 +6,18 @@ description: |
   经拍板后通过 POST /api/brain/map/manifests + activate 一次性写入系统，不再逐表登记。
   触发：/capability-mapper、帮我定义X领域的能力(Capability)、这个领域切几条能力、领域切分、
   生成 manifest、修订地图。
-  Mode 2（归位模式）：已有领域地图下，判定一个新东西该挂进哪个 Capability 的哪一步——
-  不切新 Capability，产出归位裁决单 + 建议的 manifest patch，拍板后重新激活 manifest。
+  Mode 2（归位模式）：已有领域地图下，判定一个新东西该挂进哪个 Capability——
+  不切新 Capability，产出归位裁决单 + 新的完整 manifest 草案，拍板后重新激活。
   Mode 2 触发：归位、这个加到哪、放哪个capability、XX算什么、帮我看看XX属于哪。
   输出变化：不再直接写 golden_paths/journeys/journey_features 账本；产物是
   完整 manifest 草案（JSON），由用户拍板后用 POST /api/brain/map/manifests 提交激活。
-version: 2.0.1
+version: 2.1.1
 created: 2026-07-17
 changelog:
-  - 2.0.1: 拍板后的写入统一交给受信宿主 product-map-adapter；Runner 只产草案，不持有内部通用 token
+  - 2.1.1: 拍板后的写入统一交给受信宿主 product-map-adapter；Runner 只产草案，不持有内部通用 token
+  - 2.1.0: Mode 2 统一产出完整 Manifest；删除直接写旧 journey_features/golden_paths 账本与局部 patch 的矛盾路径
   - 2.0.0: 改为 Manifest Authoring Assistant（PRD Universal Map Projection Engine 刀5）
-    产物从逐表账本写入改为完整 manifest JSON 草案，不再直接定义红绿；
-    Mode 1 产出 manifest.json + 提交命令；Mode 2 产出 manifest patch + 重激活命令
+    产物从逐表账本写入改为完整 manifest JSON 草案，不再直接定义红绿
   - 1.3.0: skill 改名 golden-path-mapper→capability-mapper（决策 a340f100 追加拍板）
   - 1.2.0: 固化 GP 级 7 项合同与既有格子账本的引用关系
   - 1.1.0: 归位模式Mode2+doctrine补丁（0717主理人定型总纲承诺地图体系v1.0）
@@ -43,8 +43,8 @@ Manifest 激活后，系统自动生成所有 Capability、Value Stream、Bounda
 - **Mode 1：新地图**（产出完整 manifest draft）——主理人说一个领域，产出该领域的
   完整 Map Manifest JSON 草案（含 value_streams / capabilities / boundaries /
   crosscut_pool / shared_prerequisites 全部五段）。拍板后提交激活。
-- **Mode 2：归位/修订**（产出 manifest patch）——已有地图，判定新东西归属，产出
-  需要对 manifest 做的最小变动（patch），重新激活生成新版本。
+- **Mode 2：归位/修订**（产出完整 manifest draft）——已有地图，判定新东西归属，产出
+  包含全部五段的完整新版，重新激活生成新版本。
 
 ---
 
@@ -176,13 +176,13 @@ curl -s "$BRAIN/api/brain/map?scope=<scope>"
 ### Step 2：判定链
 
 1. **是归位还是修订结构？**
-   - 归位：把已有的东西挂到已有的 Capability 某步 → 只影响 journey_features / anchors
+   - 归位：保持 Capability key 不变，在归位裁决单里声明目标 Capability 与事实证据
    - 修订结构：增减 Capability / 改 Boundary / 增减 Cross-cut → 需要新 manifest 版本
 
-2. **归位流程**（仅挂载，不改 manifest 结构）：
+2. **归位流程**（结构不变，仍输出完整 manifest）：
    - 频率判据 → 三问法 → 承诺翻译测试 → 四问归家 → 归位裁决单
-   - 产出：归位裁决单（归属 Capability + 步骤 + 动作类型 + 验收断言锚点）
-   - 拍板后在旧账本（journey_features）写入，manifest 不变
+   - 产出：归位裁决单（归属 Capability + 事实证据 + 验收断言）
+   - 同时输出从 Map API 读取并保持全部五段的完整 manifest 草案；事实证据由 repo adapter 解析，不直写旧账本
 
 3. **结构修订流程**（改 manifest）：
    - 展示当前 manifest 全文（从 API 读取）
@@ -193,16 +193,14 @@ curl -s "$BRAIN/api/brain/map?scope=<scope>"
 
 ### Step 3：呈报，拍板后执行
 
-归位裁决单 / manifest patch **不写库不激活**——先呈用户确认。确认后：
-- 归位：写入 journey_features / anchor
-- 结构修订：提交新 manifest + 激活
+归位裁决单 / 完整 manifest 草案 **不写库不激活**——先呈用户确认。确认后统一提交完整 manifest + 激活；事实锚点继续由 repo 事实与 adapter 自动解析。
 
 ---
 
 ## 禁止事项
 
 1. 禁拍板前提交或激活 manifest
-2. 禁拍板前向 `golden_paths/journeys` 写账本（归位结构修订场景除外）
+2. 禁直接向旧分类账本写结构或归位数据；唯一结构写入口是完整 manifest 激活
 3. 禁跳过 Step 1 探索直接切分——现状标注必须有 API 或代码证据
 4. 禁在 manifest 里硬编码锚点颜色（红绿由 Projector 查询时现算，manifest 只存意图）
 5. 禁逐节点 CRUD（不存在单独创建 Capability 的端点）
