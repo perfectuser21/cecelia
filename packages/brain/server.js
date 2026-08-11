@@ -92,6 +92,7 @@ import deployDevRouter from './src/routes/deploy-dev.js';
 import incidentsRouter from './src/routes/incidents.js';
 import graphRoutes from './src/routes/graph.js';
 import { createMapManifestRouter } from './src/routes/map-manifests.js';
+import mapRoutes from './src/routes/map.js';
 import opsPanoramaRoutes from './src/routes/ops-panorama.js';
 import { createAcceptanceInternalRouter } from './src/routes/acceptance.js';
 import { startAcceptancePublicServer } from './src/acceptance-public-server.js';
@@ -281,6 +282,7 @@ app.use('/api/brain/memory', memoryRoutes);
 app.use('/api/brain/settings', settingsRoutes);
 app.use('/api/brain/quality', qualityRoutes);
 app.use('/api/brain/graph', graphRoutes);
+app.use('/api/brain/map', mapRoutes);
 
 // KV 读写统一走 src/routes/kv.js（经 routes.js 挂 /api/brain/kv）。
 // 旧 app 级 GET（available 语义 + 连字符转下划线取键）已删：与 kv.js 双实现分脑——
