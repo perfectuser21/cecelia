@@ -56,6 +56,49 @@ function verdictForSha(verdictRow, headSha) {
   return verdictRow && verdictRow.pr_head_sha === headSha ? verdictRow : null;
 }
 
+/**
+ * decisionLog 里锚定 currentHeadSha 的某类 verdict 行的最大 hop（无则 null）。
+ * passOnly=true 时只计 PASS verdict 行。issue dbea513f：用于比较 evaluate/judge verdict 新旧时序。
+ */
+function latestVerdictHop(decisionLog, verdictAction, currentHeadSha, passOnly = false) {
+  let maxHop = null;
+  for (const row of sortedLogRows(decisionLog)) {
+    if (row.action !== verdictAction) continue;
+    const detail = asStructuredJson(row.detail) ?? {};
+    if (detail.pr_head_sha !== currentHeadSha) continue;
+    if (passOnly && !isPassVerdict(detail.verdict)) continue;
+    const hop = Number(row.hop);
+    if (maxHop == null || hop > maxHop) maxHop = hop;
+  }
+  return maxHop;
+}
+
+/**
+ * recollect 收敛护栏（issue dbea513f 缺陷2）：补证后是否产出了【晚于】最新 judge verdict 的
+ * evaluate PASS。为真表示 Evaluator 已按 Judge 要求重新取证成功，陈旧 judge FAIL 不应再遮蔽
+ * 新证据——应派 judge 复核而非再进 failure_class 重派 evaluator。均按 currentHeadSha 锚定 +
+ * decisionLog verdict 行 hop 时序（纯函数唯一确定性可比信号，禁 Date/时间戳）。
+ */
+function hasNewerEvaluatePassThanJudge(decisionLog, currentHeadSha) {
+  const evalHop = latestVerdictHop(decisionLog, LOG_ACTION.VERDICT_EVALUATE, currentHeadSha, true);
+  if (evalHop == null) return false;
+  const judgeHop = latestVerdictHop(decisionLog, LOG_ACTION.VERDICT_JUDGE, currentHeadSha, false);
+  // 无 judge verdict 行 → 无遮蔽问题（由 4b「无 judge 记录」路径处理），不在此触发
+  if (judgeHop == null) return false;
+  return evalHop > judgeHop;
+}
+
+/**
+ * recollect 落库快照是否锚定在 currentHeadSha（issue dbea513f 缺陷1）：
+ * 生产实证 spawn:evaluator 落库 observed 快照顶层【缺】trigger_sha（只有 pr.head_sha），
+ * 故 trigger_sha 优先、缺失时回退 observed.pr.head_sha 兜底匹配，防死循环 guard 才能触发。
+ */
+function recollectSnapshotMatchesHead(observedSnapshot, currentHeadSha) {
+  const snapshot = asStructuredJson(observedSnapshot) ?? {};
+  const sha = snapshot.trigger_sha ?? snapshot.pr?.head_sha ?? null;
+  return sha === currentHeadSha;
+}
+
 /** fix 分路统一出口；fixRound 只作观测，终止由结构化收敛探测器决定。 */
 function fixRoute(reason) {
   return { phase: 'generate', action: 'spawn:generator-fix', reason };
@@ -906,7 +949,7 @@ function deriveFailureClassRoute(
     const alreadyRecollected = (decisionLog ?? []).some(
       (r) => r.action === ACTION.SPAWN_EVALUATOR
         && (asStructuredJson(r.detail) ?? {}).reason === 'judge_evidence_insufficient_recollect'
-        && (asStructuredJson(r.observed) ?? {}).trigger_sha === currentHeadSha,
+        && recollectSnapshotMatchesHead(r.observed, currentHeadSha),
     );
     if (alreadyRecollected) {
       return {
@@ -979,6 +1022,12 @@ function deriveVerdictChain(observed) {
 
   // 4c. judge FAIL(本 sha) → 按 failure_class 显式分支；缺失分类归 unknown 等人工。
   if (!isPassVerdict(judgeRow.verdict)) {
+    // recollect 收敛护栏（issue dbea513f 缺陷2）：若补证后产出了【晚于】最新 judge 的 evaluate
+    // PASS，说明 Evaluator 已按 Judge 要求重新取证成功，此时陈旧 judge FAIL 不应再遮蔽新证据——
+    // 派 judge 复核新证据（evaluate_passed_awaiting_judge），而非再进 failure_class 重派 evaluator。
+    if (hasNewerEvaluatePassThanJudge(observed.decisionLog, pr.head_sha)) {
+      return { phase: 'evaluate', action: 'spawn:judge', reason: 'evaluate_passed_awaiting_judge' };
+    }
     if (judgeRow.failure_class == null) {
       return deriveFailureClassRoute(
         'unknown',
