@@ -1,0 +1,26 @@
+{
+  "initiative_id": "7c779331-8cc8-4f13-ba21-7f8f94d1a154",
+  "journey_type": "user_facing",
+  "journey_type_reason": "Dashboard 生产入口需要 WebKit 真实浏览器验证用户可见深链",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "修复 Dashboard HK/US 单一发布主链",
+      "scope": "让 scripts/deploy.sh --dashboard-only 复用既有 Dashboard promote、HK 同步与指纹核验，并永久保留先红后绿回归测试",
+      "dod": [
+        "[BEHAVIOR] dashboard-only 子链任一失败时顶层非零，HK/US 不可静默分叉",
+        "[BEHAVIOR] 真实 HK/US PR head、PWA、WebKit 深链与 Referer 验收通过",
+        "[ARTIFACT] Vitest 回归测试进入 CI"
+      ],
+      "files": [
+        "scripts/deploy.sh",
+        "scripts/promote-dashboard.sh",
+        "scripts/check-deploy-fingerprint.sh",
+        "packages/quality/tests/regression/dashboard-dual-node-deploy.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
