@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.35.1
+version: 1.35.2
 created: 2026-05-06
-updated: 2026-08-03
+updated: 2026-08-11
 changelog:
+  - 1.35.2: 精确 PR 验收证据桥——TaskBundle inputs 含 `required_command_evidence` 时逐条原样执行，任何失败都判 FAIL；每条命令必须以逐字一致的 command、真实 exit_code 与非空 log_tail 单独进入 checks，供 Judge 机械逐项对账，禁止只在 summary 声称已执行
   - 1.35.1: Kernel 只读结果通道——最终 verdict 优先写 Runner 注入的 `BRAIN_RESULT_FILE`，未注入才回退工作树 `.brain-result.json`；仓库读取/E2E 仍使用 WORKSPACE，Reviewer/Evaluator 无需为结构化结果放宽只读挂载
   - 1.35.0: Kernel A 可信胶囊加固——GitHub artifact 由 Provider 前可信阶段按成员数/单文件/总量/压缩比限额流式解包，跨目录、symlink、重复成员、加密包与 ZIP bomb 全部 fail-closed；manifest 为每个 `extracted_files` 绑定 SHA-256，root 封存后 Evaluator 只读现成证据，不再自行解包到可写 `/tmp`
   - 1.34.0: Kernel A 安全边界——Evaluator 不再触发、轮询或下载 GitHub Actions；US M4 可信取证前置按 repo/PR/exact head/workflow/run/artifact 生成哈希证据胶囊并销毁凭据，Evaluator 只消费 `HARNESS_EVIDENCE_CAPSULE_DIR`，本地 HEAD 或 manifest 身份不一致直接 FAIL
@@ -142,6 +143,10 @@ RESULT_FILE="${BRAIN_RESULT_FILE:-$WORKSPACE/.brain-result.json}"
 ### relay 下不许跳过的事（红线接回）
 
 **主体流程 Step 0a → B-3 在 relay 下照跑，一步不少**：切 PR 分支、E2E 段提取到 `/tmp`（B-1）、位置词验证（B-1.5）、环境预检（B-1.6）、Golden Path 覆盖对照表（B-1.8）、领域死规则、真跑 E2E 脚本（B-2）、结果文件写入。**「反作弊红线」四条在 relay 路径同等生效**（见下节加粗段）。relay 不是简化模式——它只改变参数来源，不改变验收标准。
+
+### TaskBundle `required_command_evidence` 逐条证据合同
+
+当 `task_bundle.inputs.required_command_evidence` 是数组时，按数组顺序逐条执行，任何一条非零退出都必须整体 FAIL。每条命令单独写入 checks，且 `command 字段必须与声明字符串逐字一致`，同时记录真实 `exit_code` 和非空 `log_tail`。禁止把多条声明合并成摘要、改写命令字符串，或只在 summary 声称执行过；Judge 会逐条机械对账。
 
 ### SEGMENT_EVAL 段级轻验收（segmented 档位 — harness gear 一体化 60a80ddc 决策5）
 

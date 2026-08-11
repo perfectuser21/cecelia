@@ -194,6 +194,11 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   if (typeof payload.prep_prd_body === 'string' && payload.prep_prd_body.trim()) {
     common.prep_prd_body = payload.prep_prd_body;
   }
+  if (Object.prototype.hasOwnProperty.call(payload, 'required_command_evidence')) {
+    common.required_command_evidence = Array.isArray(payload.required_command_evidence)
+      ? [...payload.required_command_evidence]
+      : payload.required_command_evidence;
+  }
   if (
     ['generator', 'evaluator', 'judge'].includes(spec.role)
     && ctx.validationClock
