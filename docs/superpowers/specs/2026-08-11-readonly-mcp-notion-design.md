@@ -67,11 +67,12 @@ Express 中间件，校验 `Authorization: Bearer <token>` 完全匹配环境变
 - LaunchDaemon plist（本机死规矩，常驻服务不用 launchctl load 临时方式）
 - Cloudflare Tunnel：新增 public hostname ingress 规则指向 `localhost:<mcp端口>`（Zero Trust 后台操作，不改本地 nginx）
 - 启动自检：探测 `mcp_readonly` 角色是否真的只读（尝试 INSERT 到一次性临时表后立即 ROLLBACK，报错才算自检通过；不报错 = 权限配错 = 拒绝启动）
+- **资源隔离（macOS 修正）**：`oom_score_adj` 是 Linux 专属机制，目标机器是 macOS（Darwin/ARM64），没有对应的用户可调 OOM 优先级接口。改用 **LaunchDaemon plist 的 `SoftResourceLimits`/`HardResourceLimits`（`ulimit -v` 等价物）给 MCP 进程本身设内存硬上限**（如 512MB）——进程碰顶自己崩溃重启（走既有崩溃限速重启逻辑），而不是依赖系统在内存紧张时"选择性"杀它。效果等价（保护 Brain 不被拖垮），机制换成 macOS 原生支持的。PrepPRD 里"人为制造内存压力确认真的是 MCP 先被杀"这条验收标准相应改为"人为制造 MCP 内存增长，确认碰到 ulimit 硬顶后进程自己重启，且 Brain 进程内存/响应不受影响"。
 
 ## 测试策略
 
 - **单元测试**（vitest，跟 brain 一致）：`auth.js` 鉴权逻辑（合法/缺失/畸形 token）、`redact.js` 脱敏正则、每个 tool 的参数校验（非法 node_type/limit 越界/非白名单 service → 抛 400 类错误，不查库）
-- **集成测试**：起本地测试 DB（复用 brain 现有测试 DB 约定），跑 `get_schema_version`/`get_map_summary` 真实查询，验证只读账号对 INSERT 报错
+- **集成测试**：起本地测试 DB（复用 brain 现有测试 DB 约定），跑 `get_schema_version`/`get_map_summary` 真实查询，验证只读账号对 INSERT 报错；额外一条：把测试用只读账号临时改成可写权限，验证启动自检探测到后主动拒绝启动（覆盖 PrepPRD 验收标准第5条，此前遗漏）
 - **手动/CI 冒烟**（manual: 白名单命令）：启动服务后 curl 六个工具端点，验证 200/400/401 分支；`psql` 直接验证 `mcp_readonly` 角色权限
 - 不做：真实 Notion 集成的端到端测试（Notion 侧不可控），MCP 协议层用官方 SDK 的 Streamable HTTP transport，信任其协议实现，只测我们自己的业务逻辑
 

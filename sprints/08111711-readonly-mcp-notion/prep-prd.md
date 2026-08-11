@@ -42,7 +42,7 @@ Alex 想让 Notion AI 直接了解 Cecelia 生产状态（schema 版本、map �
 ### 资源隔离（与生产 Brain 共机运行的硬要求）
 - 独立日志文件，按天+10MB 双阈值轮转，保留 14 份，不写入 Brain 主日志
 - 进程走 LaunchDaemon 常驻（本机死规矩），崩溃限速重启（5次/分钟后退避）
-- OOM 场景通过 `oom_score_adj` 调低 MCP 进程优先级，让它比 Brain 先被杀；**实现阶段必须真实验证一次**（人为制造内存压力，确认真的是 MCP 先被杀，不能只信配置文件）
+- 资源隔离改用 macOS 原生机制：LaunchDaemon plist 的 `SoftResourceLimits`/`HardResourceLimits` 给 MCP 进程设内存硬上限（如 512MB，`oom_score_adj` 是 Linux 专属，目标机是 macOS 不适用），碰顶自己崩溃重启，不拖累 Brain；**实现阶段必须真实验证一次**（人为制造 MCP 内存增长，确认碰到硬顶后进程自己重启且 Brain 不受影响，不能只信配置文件）
 - 限流：20 次/分钟/token（人在回路问答场景的富余量，收窄 token 泄露后的滥用半径）
 
 ### 告警（Bark，不走飞书）
@@ -64,6 +64,7 @@ Alex 想让 Notion AI 直接了解 Cecelia 生产状态（schema 版本、map �
 - [ ] 只读 DB 账号对 INSERT/UPDATE/DELETE 实测报错（不是仅信任 GRANT 语句）
 - [ ] 非白名单 service / 非法 node_type / limit 越界 → 400，不返回数据
 - [ ] 启动自检：故意把 DB 账号配成可写，确认服务拒绝启动
+- [ ] 人为制造 MCP 进程内存增长，确认碰到 ulimit 硬顶后进程自己崩溃重启，且 Brain 进程内存/响应不受影响
 - [ ] 5221/5222 现有服务在 MCP 服务部署前后响应无劣化（跑一次对比 smoke）
 - [ ] Bark 告警四条阈值各手动触发一次，确认真的报警（proven-to-fire）
 - [ ] CI 全绿
