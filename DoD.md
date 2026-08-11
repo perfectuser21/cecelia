@@ -1,82 +1,51 @@
-contract_branch: cp-harness-propose-r2-28d184cb-r9b641bd2-a11
-sprint_dir: sprints/08091640-kernel-gear-dispatch
+contract_branch: cp-harness-propose-r1-356449b7-rcdad746e-a4
+sprint_dir: sprints/08111036-kernel-356449b7
 
 ---
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Sprint: kernel 真读 gear：三档在 orchestrator 状态机内分流
+# Contract DoD — Sprint: kernel 账号选择接入用量数据（429 周限触发 target 轮换而非 run 终态）
 
-**范围**: `orchestrator/derive.js` 按 gear 三档分叉 + `initiative_runs.gear` 列 + gear 读入 run context（run 行→observed.gear）+ 非法 gear kernel 侧 fail-closed。**不在范围**：不建 gear=param 档、不动入口强制、不改旧 relay prompt/env、不改 controller SKILL。
+**范围**: packages/brain 纯函数/纯状态机三点改动——(1) execution-contract 配额失败分类 account_exhausted；(2) derive account_exhausted 非终态重试；(3) resolveExecutionTarget 消费 account-usage CAPPED 判定。不改生产安全参数，不动 codex/grok target 语义，不合并两套账号系统。
 **大小**: M
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] migration 396 新增 `initiative_runs.gear` 列（nullable）
-  Test: manual:bash -c 'ls "${REPO_ROOT:-/workspace}"/packages/brain/migrations/396_*.sql >/dev/null 2>&1 && grep -qiE "ALTER TABLE +initiative_runs" "${REPO_ROOT:-/workspace}"/packages/brain/migrations/396_*.sql && grep -qi "gear" "${REPO_ROOT:-/workspace}"/packages/brain/migrations/396_*.sql'
-  期望: exit 0
+- [x] [ARTIFACT] execution-contract.js 新增 account_exhausted failure_class 枚举 + 配额分类逻辑
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/execution-contract.js','utf8');if(!c.includes('account_exhausted'))process.exit(1)"
+- [x] [ARTIFACT] derive.js attemptCallbackRoute 处理 account_exhausted 非终态分支
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/derive.js','utf8');if(!c.includes('account_exhausted')||!c.includes('callback_account_exhausted'))process.exit(1)"
+- [x] [ARTIFACT] execution-targets.js resolveExecutionTarget 接入 is_account_capped 判定
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/preflight/execution-targets.js','utf8');if(!c.includes('is_account_capped'))process.exit(1)"
 
-- [x] [ARTIFACT] `kernel-run-store.createKernelRun` INSERT 增写 gear 列
-  Test: manual:bash -c 'grep -q "gear" "${REPO_ROOT:-/workspace}"/packages/brain/src/orchestrator/kernel-run-store.js'
-  期望: exit 0
+## Invariant 覆盖条目（历史铁律映射）
 
-- [x] [ARTIFACT] 新集成测试登记进 vitest.config.js 的 POSTGRES_INTEGRATION_TESTS
-  Test: manual:bash -c 'grep -q "kernel-gear-dispatch.pg.integration.test.js" "${REPO_ROOT:-/workspace}"/packages/brain/vitest.config.js && echo "Tests 1 passed"'
-  期望: exit 0
+- [x] [BEHAVIOR] [L2] INV-1 [vitest 范围] 三个新增回归测试落在 vitest.config.js include(`src/**/*.test.js`) 且不在 exclude，exit code 真实反映真回归
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/preflight/execution-targets-capped.test.js src/orchestrator/__tests__/quota-exhaustion-classify.test.js src/orchestrator/__tests__/derive-account-exhausted.test.js --reporter=dot'
 
-## BEHAVIOR 条目（五行剧本 · 内嵌 manual:bash 单行命令）
+## BEHAVIOR 条目（内嵌可执行 manual: 命令 — 五行剧本，L2 服务端真验）
 
-- [x] [BEHAVIOR] [L2] B-01: gear=hotfix 初始态跳过 planner 直进 generate
-  动作: 调 derive({...初始态 prdExists=false, contract.approved=false, gear:'hotfix'})（经 brain-unit CI 跑 derive.test.js gear 用例）
-  预期观察: 返回 {phase:'generate', action:'spawn:generator'}，action 不等于 'spawn:planner'
-  等待预算: 0s
-  留证: vitest 输出末 5 行（含 passed 统计）
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; npx vitest run src/orchestrator/__tests__/derive.test.js -t "不等于 spawn:planner" --reporter=dot'
+- [x] [BEHAVIOR] [L2] B-01: 429 weekly limit 归类 account_exhausted（Golden Path Step 1）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/__tests__/quota-exhaustion-classify.test.js -t "429 weekly limit 的 failed 结果归类为 account_exhausted" --reporter=dot'
 
-- [x] [BEHAVIOR] [L2] B-02: gear=hotfix 全程不派 planner/proposer/reviewer
-  动作: 调 derive(初始态 gear:'hotfix')，检查返回 action 不在三角色 spawn 集合内
-  预期观察: action ∉ {spawn:planner, spawn:proposer, spawn:reviewer}
-  等待预算: 0s
-  留证: vitest 输出末 5 行
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; npx vitest run src/orchestrator/__tests__/derive.test.js -t "全程不派" --reporter=dot'
+- [x] [BEHAVIOR] [L2] B-02: 偶发 429 无配额语义保持 runner_failure（Golden Path Step 2，边界）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/__tests__/quota-exhaustion-classify.test.js -t "偶发 429 无配额语义关键词" --reporter=dot'
 
-- [x] [BEHAVIOR] [L2] B-03: INV-1 gear=default 初始态零回归返回 spawn:planner
-  动作: 调 derive(初始态 gear:'default') 与 derive(初始态 不传 gear)，二者均应走现行 planning 门
-  预期观察: 两种情形 action 均为 'spawn:planner'，phase 'planning'（与改动前逐字节等价）
-  等待预算: 0s
-  留证: vitest 输出末 5 行 + derive.test.js 既有 100+ 用例全绿
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; npx vitest run src/orchestrator/__tests__/derive.test.js --reporter=dot'
+- [x] [BEHAVIOR] [L2] B-03: account_exhausted 不判 run 终态·同 run 重派（Golden Path Step 3）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/__tests__/derive-account-exhausted.test.js -t "account_exhausted 的 attempt callback" --reporter=dot'
 
-- [x] [BEHAVIOR] [L2] B-04: gear=segmented 初始态照跑 planner（≠hotfix，对齐 controller segmented）
-  动作: 调 derive(初始态 gear:'segmented')
-  预期观察: action 'spawn:planner'，phase 'planning'（planner→proposer 多段语义，段循环留待独立交付）
-  等待预算: 0s
-  留证: vitest 输出末 5 行
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; npx vitest run src/orchestrator/__tests__/derive.test.js -t "segmented 初始态 照跑 planner" --reporter=dot'
+- [x] [BEHAVIOR] [L2] B-04: runner_failure 仍判 run 终态（Golden Path Step 4，回归护栏）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/__tests__/derive-account-exhausted.test.js -t "普通 runner_failure 仍判 run 终态" --reporter=dot'
 
-- [x] [BEHAVIOR] [L2] B-05: INV-2 非法 gear（turbo）kernel 侧 fail-closed → mark_failed invalid_gear
-  动作: 调 derive(初始态 gear:'turbo')
-  预期观察: 返回 {phase:'failed', action:'mark_failed', reason:'invalid_gear'}（不静默降级、不进任何相位，对齐 executor.js:3097）
-  等待预算: 0s
-  留证: vitest 输出末 5 行
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; npx vitest run src/orchestrator/__tests__/derive.test.js -t "fail-closed" --reporter=dot'
+- [x] [BEHAVIOR] [L2] B-05: 选目标跳过 CAPPED account1 轮换到 account2（Golden Path Step 5）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/preflight/execution-targets-capped.test.js -t "CAPPED 的 preferred 账号被跳过" --reporter=dot'
 
-- [x] [BEHAVIOR] [L2] B-06: gear 列 round-trip + observed.gear 注入（真 Postgres）[接缝×2]
-  动作: 真 PG 上 createKernelRun(gear='hotfix')，再 collectGroundTruth 读回该 run
-  预期观察: SELECT gear FROM initiative_runs = 'hotfix'；collectGroundTruth 返回 observed.gear === 'hotfix'；gear 缺省时列 NULL 且 observed.gear==='default'
-  等待预算: 0s
-  留证: gear PG 集成套件 vitest 输出末 10 行（含 round-trip / observed.gear 用例）
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; export DATABASE_URL="${DB_URL:?}"; npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js -t "round-trip" --reporter=dot'
+- [x] [BEHAVIOR] [L2] B-06: 两账号均 CAPPED → blocked 不静默假死（Golden Path Step 6，边界）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/preflight/execution-targets-capped.test.js -t "两账号均 CAPPED" --reporter=dot'
 
-- [x] [BEHAVIOR] [L2] B-07: hotfix run harness_attempts 角色分布 planner/proposer/reviewer=0 且 generator≥1（真 PG，时间窗防伪）[接缝×2]
-  动作: 真 PG 一跳驱动 runLoop（真 collectGroundTruth+真 derive+真 attemptStore，仅替身最外层 launcher），产出 hotfix run 的 harness_attempts 行，再 psql 断言
-  预期观察: `role IN ('planner','proposer','reviewer')` 计数=0 且 `role='generator'` 计数≥1（均带 created_at 时间窗）
-  等待预算: 0s
-  留证: 两条 psql 计数输出（0 与 ≥1）
-  Test: manual:bash -c 'cd "${REPO_ROOT:-/workspace}/packages/brain"; export DATABASE_URL="${DB_URL:?}"; npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js -t "hotfix 首角色" --reporter=dot'
+- [x] [BEHAVIOR] [L2] B-07: account-usage 不可达降级静态顺序不 crash（Golden Path Step 7，边界）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/preflight/execution-targets-capped.test.js -t "抛错时降级为静态白名单顺序" --reporter=dot'
 
-## Invariant 覆盖
-
-- INV-1 [零回归] gear=default derive 输出不变（决策 1b677ae3）→ B-03 覆盖（default+undefined 双路径 + 全套 derive.test.js 100+ 用例绿）
-- INV-2 [fail-closed] 非法 gear kernel 侧 terminal failed 不静默降级（决策 e8f6134f）→ B-05 覆盖
-- INV-3 [确定性] derive 分叉禁 Date.now/Math.random/new Date → N/A 断言：gear 分叉为纯 switch/枚举比对，无时间/随机源（derive 既有确定性纪律，B-01~B-05 纯函数可复跑即隐含验证）
+- [x] [BEHAVIOR] [L2] B-08: 既有 orchestrator 测试零回归（白名单基数 18 + 既有分类/路由不回退）
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/__tests__/execution-contract.test.js src/orchestrator/__tests__/derive.test.js src/orchestrator/preflight/execution-targets.test.js --reporter=dot'
