@@ -1,115 +1,97 @@
-contract_branch: cp-harness-propose-r1-be8babea-r88f76b1d-a4
-sprint_dir: sprints/08111145-kernel-be8babea
+contract_branch: cp-harness-propose-r2-51740e13-r06e4566c-a11
+sprint_dir: sprints/08111144-kernel-51740e13
 
 ---
 skeleton: false
-journey_type: user_facing
+journey_type: autonomous
 ---
-# Contract DoD — Dashboard HK/US 官方发布主链
+# Contract DoD — Sprint: 合并权收归单一裁决闸（harness-judge required check）
 
-**范围**: `scripts/deploy.sh --dashboard-only` 复用既有 promote、双节点指纹与真实 WebKit/日志验收。
+**范围**: 新增 Brain `GET /harness/pr-ownership` 归属端点（凭 initiative_runs.pr_url）；通道 1 `should-auto-merge.sh` 判据从标题正则换 Brain 求证（fail-closed）+ ci.yml 实参改 `$PR_NUMBER`；kernel `merge_pr` 合并前置 `harness-judge` status=success；产出通道 3 改造说明。**不改** mergeGate/evaluator/judge/gear。
 **大小**: M
-
-gate-allow: env-missing Playwright WebKit 在 PRD 指定的 mac_web evaluator 上运行；docker 命令经 ssh 在 HK 生产节点执行，不要求合同起草容器本地具备。
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] 永久 Vitest CI 回归存在且使用 `describe/it/expect`，覆盖成功接力与失败传播
-  Test: node -e "const c=require('fs').readFileSync('sprints/08111145-kernel-be8babea/tests/dashboard-only-production-chain.test.ts','utf8');if(!c.includes('describe(')||!c.includes('it(')||!c.includes('expect('))process.exit(1)"
-- [x] [ARTIFACT] `scripts/deploy.sh` 是唯一修改的官方入口，复用既有 `promote-dashboard.sh`，不新增第三份前端
-  Test: git diff --name-only origin/main...HEAD | grep -E '^(scripts/deploy.sh|packages/quality/|sprints/08111145-kernel-be8babea/)' >/dev/null
+- [x] [ARTIFACT] Brain 归属端点已注册于 harness 路由
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/routes/harness.js','utf8');if(!c.includes('pr-ownership'))process.exit(1)"
 
-## BEHAVIOR 条目
+- [x] [ARTIFACT] should-auto-merge.sh 已改为 Brain 求证（curl pr-ownership 归属端点）
+  Test: node -e "const c=require('fs').readFileSync('.github/workflows/scripts/should-auto-merge.sh','utf8');if(!c.includes('pr-ownership')||!c.includes('--max-time'))process.exit(1)"
 
-- [x] [BEHAVIOR] [L2] B-01: Dashboard-only 成功路径必须调用既有双节点 promote 主链
-  动作: 在隔离 fixture 执行 `scripts/deploy.sh --dashboard-only --skip-smoke`
-  预期观察: rebuild 成功后 promote 恰好调用一次，发布命令退出 0
-  等待预算: 10s
-  留证: Vitest verbose 输出中的成功用例与调用次数
-  Test: manual:bash -c 'npx vitest run sprints/08111145-kernel-be8babea/tests/dashboard-only-production-chain.test.ts -t "Dashboard-only 成功路径必须调用既有双节点 promote 主链" --reporter=verbose'
+- [x] [ARTIFACT] ci.yml auto-merge step 以 $PR_NUMBER（非 $PR_TITLE）调脚本
+  Test: grep -Fq 'should-auto-merge.sh "$HEAD_BRANCH" "$PR_NUMBER"' .github/workflows/ci.yml
 
-- [x] [BEHAVIOR] [L2] B-02: HK 同步或终验失败必须让 Dashboard-only 发布非零退出
-  动作: 在隔离 fixture 令 promote 主链返回 23，再执行 Dashboard-only 发布
-  预期观察: deploy 返回非零并显示发布失败，不能静默成功
-  等待预算: 10s
-  留证: Vitest verbose 输出中的 exit code 与错误输出断言
-  Test: manual:bash -c 'npx vitest run sprints/08111145-kernel-be8babea/tests/dashboard-only-production-chain.test.ts -t "HK 同步或终验失败必须让 Dashboard-only 发布非零退出" --reporter=verbose'
+- [x] [ARTIFACT] kernel merge_pr 置 harness-judge status
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/kernel-handlers.js','utf8');if(!c.includes('harness-judge')||!c.includes('statuses'))process.exit(1)"
 
-- [x] [BEHAVIOR] [L3] B-03: HK 与 US 四类生产资源等于真实 PR head [接缝×2]
-  动作: 发布后分别请求 HK/US 的 build-info、index、sw.js 与 `/workbench/tasks`
-  预期观察: 两端均可达、SHA 等于 PR head、四类响应一致且无旧 PWA 注册
+- [x] [ARTIFACT] 通道 3 engine-pr-watchdog 改造说明 + Brain 端点契约文档
+  Test: node -e "const c=require('fs').readFileSync('sprints/08111144-kernel-51740e13/engine-pr-watchdog-retrofit.md','utf8');if(!c.includes('pr-ownership')||!c.includes('gh pr merge'))process.exit(1)"
+
+## Invariant 覆盖（铁律逐条映射）
+
+- [x] [BEHAVIOR] [L2] INV-1 裁判前不可合并：无 judge PASS 时 mergeGate 拒绝（kernel 不置 success）
+  动作: 以 judgeVerdict=null 调用 mergeGate 纯函数
+  预期观察: allow=false，reason=judge_verdict_missing
+  等待预算: 0s
+  留证: node 断言输出
+  Test: manual:bash -c 'node --input-type=module -e "import {mergeGate} from \"./packages/brain/src/orchestrator/gates.js\"; const g=mergeGate({evaluateVerdict:{verdict:\"PASS\",pr_head_sha:\"s\"},judgeVerdict:null,prHeadSha:\"s\",reviewRequired:false,reviewApproved:false}); process.exit(g.allow===false&&g.reason===\"judge_verdict_missing\"?0:1)"'
+
+- [x] [BEHAVIOR] [L2] INV-5 不动裁决内核：kernel-handlers 既有 CLEAN/BEHIND/CONFLICTING 全部断言仍绿（mergeGate 条件不改）
+  动作: 真跑 kernel-handlers 全量单测
+  预期观察: 既有 merge 处理断言 + 新增置闸断言全过
   等待预算: 120s
-  留证: `${SPRINT_DIR}/hk-us-fingerprint.log` 与四类响应 SHA-256
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#B-03
+  留证: vitest 末 20 行
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/__tests__/kernel-handlers.test.js 2>&1 | tail -20 | grep -E "passed|✓"'
 
-- [x] [BEHAVIOR] [L3] B-04: HK 生产入口 WebKit 私密新上下文等待刷新后保持 /workbench/tasks [接缝×2]
-  动作: 用 Playwright WebKit 新 context 直达 HK 深链，等待 10 秒并刷新再等 10 秒
-  预期观察: 三次 pathname 都是 `/workbench/tasks` 且 service worker 注册数为 0
-  等待预算: 60s
-  留证: `${SPRINT_DIR}/screenshots/hk-workbench-tasks.png` 与 Playwright line report
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#B-04
+> INV-2（fail-closed）→ B-04；INV-3（不误拦 /dev）→ B-05/B-02；INV-4（归属只信 pr_url）→ B-01；INV-6（judge FAIL 先辨证据）→ N/A：本 sprint 不触及 judge 判定/证据流程。
 
-- [x] [BEHAVIOR] [L3] B-05: 本轮真实入口日志 Referer 保持深链
-  动作: WebKit 请求后读取 HK 入口容器从 `E2E_STARTED_AT` 起的新日志
-  预期观察: 至少一条 `/workbench/tasks` 请求的 Referer 仍含 `/workbench/tasks`，且无凭据字段
-  等待预算: 30s
-  留证: `${SPRINT_DIR}/hk-entry.log`
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#B-05
+## BEHAVIOR 条目（五行剧本 + 内嵌 manual:bash 单行命令）
 
-## Invariant 映射
+- [x] [BEHAVIOR] [L2] B-01: 归属端点对已写入 pr_url 的 harness PR 返回 owned:true（归属只信 pr_url）
+  动作: 向 $DB_URL 空库 seed 一条 initiative_runs（pr_url=.../pull/4755），curl 归属端点 pr_number=4755
+  预期观察: HTTP 200，owned=true，run_id 为 UUID 字符串，pr_number 回显 4755
+  等待预算: 0s
+  留证: curl 响应 JSON 进 evidence
+  Test: manual:bash -c 'psql "$DB_URL" -c "INSERT INTO initiative_runs (initiative_id, pr_url) VALUES (gen_random_uuid(), '"'"'https://github.com/perfectuser21/cecelia/pull/4755'"'"')" >/dev/null; curl -sf "localhost:5221/api/brain/harness/pr-ownership?pr_number=4755" | jq -e ".owned==true and (.run_id|type==\"string\") and .pr_number==4755"'
 
-- [x] [BEHAVIOR] [L3] INV-1: 真环境验证必须真实访问 HK/US 与 WebKit
-  动作: 执行 B-03、B-04、B-05，不提供离线替代入口
-  预期观察: 任一真实能力不可用时命令非零
+- [x] [BEHAVIOR] [L2] B-02: 未写入 pr_url 的 cp-* PR 返回 owned:false（真手动 /dev 不误拦）
+  动作: curl 归属端点一个从未 seed 的高位 pr_number
+  预期观察: HTTP 200，owned=false，run_id=null
+  等待预算: 0s
+  留证: curl 响应 JSON
+  Test: manual:bash -c 'curl -sf "localhost:5221/api/brain/harness/pr-ownership?pr_number=99900001" | jq -e ".owned==false and .run_id==null"'
+
+- [x] [BEHAVIOR] [L2] B-03: error path — pr_number 非法返回 400 + error 字段
+  动作: curl 归属端点 pr_number=abc
+  预期观察: HTTP 400，body 含 error 字符串
+  等待预算: 0s
+  留证: http_code + body
+  Test: manual:bash -c 'CODE=$(curl -s -o /tmp/o.json -w "%{http_code}" "localhost:5221/api/brain/harness/pr-ownership?pr_number=abc"); [ "$CODE" = "400" ] && jq -e ".error|type==\"string\"" /tmp/o.json'
+
+- [x] [BEHAVIOR] [L1] B-04: 脚本 fail-closed 三态（Brain 5xx / 非法 JSON / 超时）均 SKIP（任一 MERGE 即失败）
+  动作: PATH 注入 fake curl 制造三种故障，跑 should-auto-merge.sh
+  预期观察: 三态 stdout 均以 SKIP 开头
+  等待预算: 0s
+  留证: failclosed-check.sh 逐态 PASS 行
+  Test: manual:bash -c 'bash sprints/08111144-kernel-51740e13/tests/failclosed-check.sh'
+
+- [x] [BEHAVIOR] [L1] B-05: 脚本决策三态 owned→SKIP / not_owned→MERGE / 非cp-*→SKIP（不看标题）
+  动作: PATH 注入 fake curl 控制 Brain 应答，跑 should-auto-merge.sh 三种输入
+  预期观察: owned→SKIP、not_owned→MERGE、非cp-*→SKIP
+  等待预算: 0s
+  留证: decision-check.sh 逐条 PASS 行
+  Test: manual:bash -c 'bash sprints/08111144-kernel-51740e13/tests/decision-check.sh'
+
+- [x] [BEHAVIOR] [L2] B-06: 回归红线——#4755/#4759 两分支经真 Brain 均判 owned → 脚本 SKIP（当天事故不重演）[接缝×2]
+  动作: seed 两条 run（pr_url→/pull/4755、/pull/4759），以两 PR 号经真 Brain 跑脚本
+  预期观察: 4755、4759 两次 stdout 均以 SKIP 开头
+  等待预算: 0s
+  留证: 两次脚本 stdout
+  Test: manual:bash -c 'psql "$DB_URL" -c "INSERT INTO initiative_runs (initiative_id, pr_url) VALUES (gen_random_uuid(),'"'"'https://github.com/perfectuser21/cecelia/pull/4759'"'"')" >/dev/null; A=$(BRAIN_URL=http://localhost:5221 bash .github/workflows/scripts/should-auto-merge.sh cp-08101107-04e4690d 4755); B=$(BRAIN_URL=http://localhost:5221 bash .github/workflows/scripts/should-auto-merge.sh cp-08101246-643b5302 4759); echo "$A"|grep -q "^SKIP" && echo "$B"|grep -q "^SKIP"'
+
+- [x] [BEHAVIOR] [L2] B-07: kernel merge_pr 在 gh pr merge 之前置 harness-judge status=success（CLEAN 路径）
+  动作: 真跑 kernel-handlers 单测（含新增置闸顺序断言）
+  预期观察: execCmd 被以 statuses/<sha> state=success context=harness-judge 调用，且序号 < gh pr merge；全量单测绿
   等待预算: 120s
-  留证: 三条 L3 evidence 与 exit code
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-1
-
-- [x] [BEHAVIOR] [L2] INV-2: validation identity 仅从 Runner late-bound
-  动作: evaluator 启动前检查当前角色身份变量
-  预期观察: HARNESS attempt 与 capability snapshot 均非空，合同无 UUID 固化
-  等待预算: 0s
-  留证: provenance JSON
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-2
-
-- [x] [BEHAVIOR] [L2] INV-3: deploy 失败禁止 warning 降级
-  动作: 令 promote fixture 返回 23 并运行 Dashboard-only
-  预期观察: deploy 返回非零
-  等待预算: 10s
-  留证: Vitest 失败传播用例输出
-  Test: manual:bash -c 'npx vitest run sprints/08111145-kernel-be8babea/tests/dashboard-only-production-chain.test.ts -t "HK 同步或终验失败必须让 Dashboard-only 发布非零退出" --reporter=verbose'
-
-- [x] [BEHAVIOR] [L3] INV-4: 判变使用生产自报 build-info
-  动作: 分别读取 HK/US 生产 build-info
-  预期观察: 两端 git_sha 都等于真实 PR head
-  等待预算: 30s
-  留证: 两端 JSON 响应
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-4
-
-- [x] [BEHAVIOR] [L3] INV-5: 判变端与终验端使用相同版本语义
-  动作: 对两端 build-info 执行同一精确比较
-  预期观察: git_sha 非 unknown 且完全一致
-  等待预算: 30s
-  留证: jq/cmp 输出
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-5
-
-- [x] [BEHAVIOR] [L2] INV-6: 验证命令真实产生 Red exit code
-  动作: 在未修实现上运行永久 Vitest 回归
-  预期观察: 当前基线至少一条失败且进程非零
-  等待预算: 30s
-  留证: `/tmp/sprint-red.log`
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-6
-
-- [x] [BEHAVIOR] [L1] INV-7: 合同与测试不固化凭据
-  动作: 扫描本 sprint 交付物中的常见真实凭据格式
-  预期观察: 无私钥块、GitHub token 或 Bearer token
-  等待预算: 0s
-  留证: 扫描 exit code
-  Test: manual:bash -c 'if rg -n '\''BEGIN (RSA |OPENSSH )?PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,}|Bearer [A-Za-z0-9._-]{20,}'\'' sprints/08111145-kernel-be8babea; then exit 1; fi'
-
-- [x] [BEHAVIOR] [L3] INV-8: 入口日志证据必须脱敏
-  动作: 对本轮 HK 入口日志扫描凭据字段
-  预期观察: cookie、authorization、token 等号字段 0 条
-  等待预算: 0s
-  留证: `${SPRINT_DIR}/hk-entry.log` 扫描结果
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-8
+  留证: vitest 末 20 行含 passed
+  Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/__tests__/kernel-handlers.test.js 2>&1 | tail -20 | grep -E "passed|✓"'
