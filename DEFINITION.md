@@ -8,9 +8,61 @@
 
 
 
-**Brain 版本**: 1.272.3
+**Brain 版本**: 1.272.9
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.272.9 — Universal Map Second-repo Wiring
+
+- `product-map-adapter` 把既有 `apps → lines → golden_paths` SSOT 转为完整 Manifest。
+- API/DB/Test/Graph 扫描器接受显式 repo/root，稳定 SHA 也按 10 分钟预算持续重拍。
+- Planner、Proposer 与 Island Gate 统一消费 Map API；Map 页面不再假定 Cecelia revision。
+
+---
+
+## Brain 1.272.8 — Audited Manual Kernel Capacity Override
+
+- `/tasks/:id/dispatch` 写入的 `manually_dispatched` 服务端审计标记会传入 Kernel TaskBundle，确保手动派发合同贯穿内部 capability preflight。
+- 当节点仍在线、已准入且至少有一个有效/物理基础槽时，手动派发允许重角色权重从 0 提升为 1；真实零容量、排空、健康或凭据闸仍保持 fail-closed。
+- capability evidence 记录实际 machine capacity 与 override 标志，便于事后追溯强制执行。
+
+---
+
+## Brain 1.272.7 — Unified Map Read Authority
+
+- 整图、节点、影响半径、健康度与未归属事实统一由同一个 Map read service 在只读
+  `REPEATABLE READ` 快照内返回，并携带 Manifest/Projection digest、repo revision 与 freshness。
+- Dashboard `/map` 只消费 Unified Map API，提供 Value Stream → Capability → Assertion/receipt
+  三层下钻；重复旧页面和旧 feature 注册已移除，页面不写历史颜色。
+- Schema 地板保持 407；回退到 `1.272.6` 会恢复分裂读权威与旧 Map 页面。
+
+---
+
+## Brain 1.272.6 — Dynamic Evaluator Provider Identity
+
+- Evaluator 的可信 root 取证阶段不再假定镜像内 `cecelia` 固定为 UID 999；运行时读取并校验真实非 root UID/GID，再用 `setpriv` 移除 capabilities 后启动 Provider。
+- WebKit OS 依赖新增系统账户导致 `cecelia` 实际 UID 变为 997 时，Evaluator 不再被错误判定为无法建立权限边界。
+- canonical Runner digest 更新为 `sha256:e958b6abeba555622a2206075b456d679e550cd854b6a9600d6fe68d0908b347`，Fleet worker pin 同步到 1.272.6；回归测试永久禁止重新写死 UID。
+
+---
+
+## Brain 1.272.5 — Evaluator WebKit Runtime and Dashboard Loopback
+
+- canonical Runner 固化 Playwright 1.58.0 与 WebKit OS 依赖，受限 UID 共享 `/ms-playwright`，Evaluator 不再因浏览器动态库缺失而无法验证真实页面。
+- Evaluator 容器专属 `localhost:5211` relay 指向宿主 Cecelia Dashboard；Generator/Dev 容器不占用该端口，避免与本地开发服务冲突。
+- canonical Runner digest 更新为 `sha256:6cef182dbec266157f7f2c731eaf596bb99450bb511b55d6526db102234198e3`，Fleet worker pin 同步到 1.272.5；回归合同覆盖 WebKit 安装与 5211 relay。
+
+---
+
+## Brain 1.272.4 — Exact Map Anchors and Query-time State
+
+- scope、repo 与 legacy ledger partition 通过显式 adapter 配置连接，未配置 scope fail-closed，核心不做同名猜测。
+- Feature UUID、测试/API/DB/代码路径稳定标识确定性进入 active projection；名称模糊匹配和歧义候选不污染正式地图。
+- 状态按 15 分钟 freshness、当前 repo revision 与 immutable receipt 查询时现算 green/red/gray/unknown/not_applicable，旧 `cell_status` 不再具权威性。
+- 影响半径按 repo 的 graph snapshot 反向遍历，回溯业务节点与必跑断言，并展开 Cross-cut `serves` 关系。
+- Schema 地板推进到 407。
 
 ---
 
@@ -47,6 +99,8 @@
 - Value Stream、Capability、Cross-cut 与 Shared Prerequisite 由通用规则确定性投影；Boundary 只生成 `hands_off_to` 边。
 - Node/Edge stable ID 与 projection digest 可重复重建，核心不含 Cecelia 或 ZenithJoy 领域身份常量。
 - Schema 地板推进到 405。
+
+---
 
 ## Brain 1.271.7 — Deterministic Universal Map Projection Core
 

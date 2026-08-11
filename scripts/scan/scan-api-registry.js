@@ -1,96 +1,34 @@
 #!/usr/bin/env node
 'use strict';
-const fs = require('fs');
-const path = require('path');
+
+const fs = require('node:fs');
+const path = require('node:path');
 const pg = require('pg');
-const { execSync } = require('child_process');
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://localhost/cecelia' });
-const REPO_ROOT = path.resolve(__dirname, '../..');
-
+const TARGET_DATABASE_URL = process.env.DATABASE_URL || 'postgresql://localhost/cecelia';
+const SCAN_REPO_ROOT = path.resolve(process.env.SCAN_REPO_ROOT || path.resolve(__dirname, '../..'));
+const SCAN_REPO_NAME = process.env.SCAN_REPO_NAME || 'cecelia';
 const SCANNER_VERSION = 'api-registry-v2';
-
-function readGitRevision(dir) {
-  try { return execSync('git rev-parse HEAD', { cwd: dir, encoding: 'utf8', timeout: 5000 }).trim(); }
-  catch { return null; }
-}
-
-async function replaceFactSnapshot(pool, kind, { repo, sourceRevision, scannerVersion, rows }) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    for (const r of rows) {
-      await client.query(
-        `INSERT INTO api_registry (method, path, file_path, line_number, area, repo, source_revision, scanner_version)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (repo, method, path) DO UPDATE
-           SET file_path=$3, line_number=$4, area=$5,
-               source_revision=$7, scanner_version=$8,
-               scanned_at=NOW(), updated_at=NOW()`,
-        [r.method, r.path, r.file_path, r.line_number, r.area, repo, sourceRevision, scannerVersion],
-      );
-    }
-    // 用事务内真实 COUNT 避免 ON CONFLICT 去重后 row_count 与事实数不一致
-    const { rows: [{ cnt }] } = await client.query(
-      `SELECT COUNT(*)::int AS cnt FROM api_registry WHERE repo = $1`, [repo],
-    );
-    await client.query(
-      `INSERT INTO fact_snapshot_headers (kind, repo, source_revision, scanner_version, scanned_at, row_count)
-       VALUES ($1, $2, $3, $4, NOW(), $5)
-       ON CONFLICT (kind, repo) DO UPDATE
-         SET source_revision = EXCLUDED.source_revision,
-             scanner_version = EXCLUDED.scanner_version,
-             scanned_at = EXCLUDED.scanned_at,
-             row_count = EXCLUDED.row_count`,
-      [kind, repo, sourceRevision, scannerVersion, cnt],
-    );
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
-}
-
-// repo 归属：area → scope_key
-const AREA_REPO = { zenithjoy: 'zenithjoy-workspace', cecelia: 'cecelia', unknown: 'cecelia' };
-
-const SCAN_DIRS = [
-  'apps/api/src',
-  'packages/brain/src',
-];
-
+const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'coverage', '.worktrees']);
 const ROUTE_RE = /\.(get|post|put|patch|delete|options)\s*\(\s*['"`]([^'"`]+)['"`]/gi;
-const AREA_MAP = { 'apps/api': 'zenithjoy', 'packages/brain': 'cecelia' };
-
-function inferArea(filePath) {
-  for (const [prefix, area] of Object.entries(AREA_MAP)) {
-    if (filePath.includes(prefix)) return area;
-  }
-  return 'unknown';
-}
 
 function scanDir(dir) {
   const results = [];
   if (!fs.existsSync(dir)) return results;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory() && !entry.name.includes('node_modules')) {
+    if (entry.isDirectory() && !SKIP_DIRS.has(entry.name)) {
       results.push(...scanDir(full));
-    } else if (entry.isFile() && /\.(js|ts)$/.test(entry.name) && !entry.name.includes('.test.')) {
+    } else if (entry.isFile() && /\.(js|mjs|cjs|ts)$/.test(entry.name) && !/\.(test|spec)\./.test(entry.name)) {
       const content = fs.readFileSync(full, 'utf8');
       let match;
       while ((match = ROUTE_RE.exec(content)) !== null) {
-        const method = match[1].toUpperCase();
-        const routePath = match[2];
-        const lineNumber = content.slice(0, match.index).split('\n').length;
         results.push({
-          method,
-          path: routePath,
-          file_path: path.relative(REPO_ROOT, full),
-          line_number: lineNumber,
-          area: inferArea(full),
+          method: match[1].toUpperCase(),
+          path: match[2],
+          file_path: path.relative(SCAN_REPO_ROOT, full),
+          line_number: content.slice(0, match.index).split('\n').length,
+          area: SCAN_REPO_NAME,
         });
       }
       ROUTE_RE.lastIndex = 0;
@@ -99,26 +37,34 @@ function scanDir(dir) {
   return results;
 }
 
+function selectedRoots() {
+  const configured = (process.env.SCAN_API_DIRS || 'apps/api/src packages/brain/src')
+    .split(/\s+/).filter(Boolean)
+    .map((relativePath) => path.join(SCAN_REPO_ROOT, relativePath))
+    .filter((candidate) => fs.existsSync(candidate));
+  return configured.length > 0 ? configured : [SCAN_REPO_ROOT];
+}
+
 async function main() {
+  if (!fs.existsSync(SCAN_REPO_ROOT)) throw new Error(`scanner root 不存在: ${SCAN_REPO_ROOT}`);
+  const [{ replaceFactSnapshot }, { readGitRevision }] = await Promise.all([
+    import('../../packages/brain/src/lib/fact-snapshot-store.js'),
+    import('../../packages/brain/src/lib/git-revision.js'),
+  ]);
+  const pool = new pg.Pool({ connectionString: TARGET_DATABASE_URL });
   try {
-    const routes = [];
-    for (const dir of SCAN_DIRS) {
-      routes.push(...scanDir(path.join(REPO_ROOT, dir)));
-    }
-    console.log(`扫描到 ${routes.length} 条路由`);
-
-    const sourceRevision = readGitRevision(REPO_ROOT);
-
+    const routes = selectedRoots().flatMap(scanDir);
+    const sourceRevision = readGitRevision(SCAN_REPO_ROOT);
     await replaceFactSnapshot(pool, 'api', {
-      repo: 'cecelia',
+      repo: SCAN_REPO_NAME,
       sourceRevision,
       scannerVersion: SCANNER_VERSION,
       rows: routes,
     });
-    console.log(`api_registry 填充完成 revision=${sourceRevision?.slice(0,8) ?? 'unknown'}`);
+    console.log(`api_registry repo=${SCAN_REPO_NAME} rows=${routes.length} revision=${sourceRevision.slice(0, 8)}`);
   } finally {
     await pool.end();
   }
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+main().catch((error) => { console.error(error); process.exit(1); });

@@ -161,10 +161,13 @@ line-dreaming-smoke.sh
 line-strategist-dispatch-smoke.sh
 liveness-never-started-smoke.sh
 liveness-queued-never-spawned-smoke.sh
+map-anchor-state-smoke.sh
 map-engine-smoke.sh
 map-fact-snapshot-smoke.sh
 map-manifest-smoke.sh
 map-projection-smoke.sh
+map-second-repo-smoke.sh
+unified-map-api-smoke.sh
 migration-339-drop-abilities-gp-priority-smoke.sh
 migration-346-idempotent-smoke.sh
 migration-verify.sh
