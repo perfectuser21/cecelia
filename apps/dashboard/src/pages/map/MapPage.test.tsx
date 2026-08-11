@@ -153,4 +153,50 @@ describe('Universal Map 页面权威', () => {
     expect(screen.getByText(revision)).toBeInTheDocument();
     expect(screen.getByText('2026-08-11T09:58:00.000Z')).toBeInTheDocument();
   });
+
+  it('第二个 scope 的证据缺 receipt 时回退到该 repo revision', async () => {
+    const zenithjoyRevision = 'd'.repeat(40);
+    const zenithjoyEnvelope = {
+      ...envelope,
+      scope_key: 'zenithjoy-workspace',
+      fact_revisions: { 'zenithjoy-workspace': zenithjoyRevision },
+    };
+    vi.mocked(global.fetch).mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/radius')) {
+        return json({ ...zenithjoyEnvelope, affected_business_nodes: [], must_run_assertions: [] });
+      }
+      if (url.includes('/nodes/')) {
+        const key = decodeURIComponent(url.split('/nodes/')[1].split('?')[0]);
+        return json({
+          ...zenithjoyEnvelope,
+          node: {
+            ...nodes.find((node) => node.key === key),
+            state_details: { status: 'gray', reason_code: 'receipt_missing' },
+          },
+          upstream: edges.filter((edge) => edge.to === key),
+          downstream: edges.filter((edge) => edge.from === key),
+          boundaries: [],
+          affected_nodes: [],
+        });
+      }
+      if (url.includes('/health')) return json({ ...zenithjoyEnvelope, overall: 'healthy' });
+      return json({
+        ...zenithjoyEnvelope,
+        shared_prerequisites: { applicable: false, reason: '未声明' },
+        nodes,
+        edges,
+        summary: { value_streams: 2, capabilities: 11, boundaries: 2, crosscuts: 7, prerequisites: 0 },
+      });
+    });
+
+    render(<MapPage />);
+    fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'zenithjoy-workspace' } });
+    fireEvent.click(screen.getByRole('button', { name: '加载' }));
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledWith('/api/brain/map?scope=zenithjoy-workspace'));
+
+    fireEvent.click(await screen.findByRole('button', { name: /F0 事实投影/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /投影摘要稳定/ }));
+    expect(await screen.findByText(zenithjoyRevision)).toBeInTheDocument();
+  });
 });

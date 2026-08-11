@@ -8,9 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.8
+**Brain 版本**: 1.272.9
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.272.9 — Universal Map Second-repo Wiring
+
+- `product-map-adapter` 把既有 `apps → lines → golden_paths` SSOT 转为完整 Manifest。
+- API/DB/Test/Graph 扫描器接受显式 repo/root，稳定 SHA 也按 10 分钟预算持续重拍。
+- Planner、Proposer 与 Island Gate 统一消费 Map API；Map 页面不再假定 Cecelia revision。
 
 ---
 

@@ -364,7 +364,7 @@ export default function MapPage() {
                 <div><dt className="text-slate-500">Assertion</dt><dd>{selectedEvidence.node.key} · {selectedEvidence.node.name}</dd></div>
                 <div><dt className="text-slate-500">Verdict</dt><dd>{String(receipt?.verdict ?? selectedEvidence.node.state)}</dd></div>
                 <div><dt className="text-slate-500">Reason code</dt><dd>{String(selectedEvidence.node.state_details?.reason_code ?? selectedEvidence.node.state_reason ?? 'unknown')}</dd></div>
-                <div><dt className="text-slate-500">Revision</dt><dd className="break-all font-mono">{String(receipt?.source_sha ?? map.fact_revisions.cecelia ?? 'unknown')}</dd></div>
+                <div><dt className="text-slate-500">Revision</dt><dd className="break-all font-mono">{String(receipt?.source_sha ?? Object.values(map.fact_revisions)[0] ?? 'unknown')}</dd></div>
                 <div><dt className="text-slate-500">Completed at</dt><dd>{String(receipt?.completed_at ?? 'unknown')}</dd></div>
               </dl>
             </section>

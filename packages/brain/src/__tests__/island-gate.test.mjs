@@ -149,3 +149,28 @@ describe('B5 — __tests__ 下非代码 fixture 豁免', () => {
     expect(stderr).toMatch(/isolated/);
   });
 });
+
+describe('Unified Map radius 消费合同', () => {
+  it('使用显式 scope/repo 构造查询，不把 scope 猜成 repo', async () => {
+    const { buildMapRadiusRequest } = await import('../../scripts/ci/island-gate.mjs');
+    expect(buildMapRadiusRequest(['packages/brain/src/new.js'], {
+      scope: 'product-map',
+      repo: 'zenithjoy-workspace',
+    })).toEqual({
+      scope: 'product-map',
+      repo: 'zenithjoy-workspace',
+      changed_files: ['packages/brain/src/new.js'],
+    });
+  });
+
+  it('读取 Unified Map 的 affected_business_nodes 与 must_run_assertions 字段', async () => {
+    const { summarizeMapRadius } = await import('../../scripts/ci/island-gate.mjs');
+    expect(summarizeMapRadius({
+      affected_business_nodes: [{ node_key: 'F1', type: 'capability', name: '开发闭环' }],
+      must_run_assertions: [{ node_key: 'a1', assertion_ref: 'map.test.js' }],
+    })).toEqual({
+      businessNodes: [{ node_key: 'F1', type: 'capability', name: '开发闭环' }],
+      assertions: [{ node_key: 'a1', assertion_ref: 'map.test.js' }],
+    });
+  });
+});
