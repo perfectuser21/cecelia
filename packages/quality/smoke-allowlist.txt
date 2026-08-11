@@ -145,6 +145,7 @@ kernel-run-exact-api-smoke.sh
 kernel-run-identity-terminalization-smoke.sh
 kernel-runtime-resource-smoke.sh
 kernel-shared-validation-clock-smoke.sh
+kernel-existing-pr-validation-clock-smoke.sh
 kernel-stdio-capture-smoke.sh
 kernel-two-phase-launch-smoke.sh
 kr1-kr2-updater-smoke.sh
