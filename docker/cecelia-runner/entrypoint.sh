@@ -410,6 +410,15 @@ if [[ "${HARNESS_CANARY:-false}" != "true" ]] \
   fi
   socat TCP-LISTEN:5221,bind=127.0.0.1,fork,reuseaddr TCP:host.docker.internal:${BRAIN_TARGET_PORT} &
   echo "[entrypoint] loopback forward 127.0.0.1:5221 -> host.docker.internal:${BRAIN_TARGET_PORT} (pid $!)"
+
+  # evaluator 的验收合同会把美国 Dashboard origin 写成 localhost:5211。
+  # 在容器里 localhost 是 sandbox 自身，不做这层转发就会把健康的宿主 5211
+  # 误判成 HTTP 000。仅 evaluator 开启，避免 generator/dev 在容器内自起 5211
+  # 时发生端口占用或把写路径意外导向生产 Dashboard。
+  if [[ "${HARNESS_NODE:-}" == "evaluator" ]]; then
+    socat TCP-LISTEN:5211,bind=127.0.0.1,fork,reuseaddr TCP:host.docker.internal:5211 &
+    echo "[entrypoint] evaluator loopback forward 127.0.0.1:5211 -> host.docker.internal:5211 (pid $!)"
+  fi
 fi
 
 # 3.5 v6 P1-D：容器内 git remote 自动重写

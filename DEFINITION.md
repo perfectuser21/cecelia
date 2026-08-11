@@ -8,19 +8,27 @@
 
 
 
-**Brain 版本**: 1.272.5
+**Brain 版本**: 1.272.6
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.5 — Unified Map Read Authority
+## Brain 1.272.6 — Unified Map Read Authority
 
 - 整图、节点、影响半径、健康度与未归属事实统一由同一个 Map read service 在只读
   `REPEATABLE READ` 快照内返回，并携带 Manifest/Projection digest、repo revision 与 freshness。
 - Dashboard `/map` 只消费 Unified Map API，提供 Value Stream → Capability → Assertion/receipt
   三层下钻；重复旧页面和旧 feature 注册已移除，页面不写历史颜色。
-- Schema 地板保持 407；回退到 `1.272.4` 会恢复分裂读权威与旧 Map 页面。
+- Schema 地板保持 407；回退到 `1.272.5` 会恢复分裂读权威与旧 Map 页面。
+
+---
+
+## Brain 1.272.5 — Evaluator WebKit Runtime and Dashboard Loopback
+
+- canonical Runner 固化 Playwright 1.58.0 与 WebKit OS 依赖，受限 UID 共享 `/ms-playwright`，Evaluator 不再因浏览器动态库缺失而无法验证真实页面。
+- Evaluator 容器专属 `localhost:5211` relay 指向宿主 Cecelia Dashboard；Generator/Dev 容器不占用该端口，避免与本地开发服务冲突。
+- canonical Runner digest 更新为 `sha256:6cef182dbec266157f7f2c731eaf596bb99450bb511b55d6526db102234198e3`，Fleet worker pin 同步到 1.272.5；回归合同覆盖 WebKit 安装与 5211 relay。
 
 ---
 

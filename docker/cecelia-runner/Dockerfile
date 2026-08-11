@@ -72,6 +72,16 @@ RUN npm i -g @openai/codex && codex --version
 # runner images do not depend on an interactive curl installer or host binary.
 RUN npm i -g @xai-official/grok && grok --version
 
+# Harness evaluator 浏览器 oracle 必须在与 Provider 相同的受限 Runner 内真跑。
+# 固定 Playwright 版本并预装 WebKit + Debian 系统依赖，避免 evaluator 运行期
+# `npx playwright install webkit` 只有浏览器二进制、却因缺 libatk 等共享库启动失败。
+# 共享路径对 root 构建阶段和 UID 999 的受限 Provider 都可读；运行期 npx 的同版本
+# Playwright 也会复用该浏览器，不再临时下载或依赖宿主浏览器。
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN npm install -g playwright@1.58.0 \
+  && playwright install --with-deps webkit \
+  && chmod -R a+rX /ms-playwright
+
 # V6 图生成依赖 — 全局装 linux 版 @resvg/resvg-js
 # 用途：content pipeline generate 节点调 ~/claude-output/scripts/gen-v6-person.mjs
 # 渲染 9 张卡片 PNG。宿主 node_modules 是 Mac darwin-arm64 二进制，容器 Linux 无法加载。
