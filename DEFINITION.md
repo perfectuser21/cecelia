@@ -8,9 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.5
+**Brain 版本**: 1.272.6
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.272.6 — Dynamic Evaluator Provider Identity
+
+- Evaluator 的可信 root 取证阶段不再假定镜像内 `cecelia` 固定为 UID 999；运行时读取并校验真实非 root UID/GID，再用 `setpriv` 移除 capabilities 后启动 Provider。
+- WebKit OS 依赖新增系统账户导致 `cecelia` 实际 UID 变为 997 时，Evaluator 不再被错误判定为无法建立权限边界。
+- canonical Runner digest 更新为 `sha256:e958b6abeba555622a2206075b456d679e550cd854b6a9600d6fe68d0908b347`，Fleet worker pin 同步到 1.272.6；回归测试永久禁止重新写死 UID。
 
 ---
 

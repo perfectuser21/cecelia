@@ -73,6 +73,14 @@ grep -q 'chmod 0711 -- "$capsule_parent"' <<< "$evidence_block"
 grep -q -- '--no-new-privs' <<< "$evidence_block"
 grep -q -- '--bounding-set=-all' <<< "$evidence_block"
 
+# Playwright 的系统依赖会改变 Debian 动态分配的 system UID。Evaluator 只需确认
+# Provider 用户真实存在且不是 root，不能把某次镜像里的 UID（历史上是 999）写死。
+grep -q 'provider_uid="$(id -u cecelia 2>/dev/null)"' <<< "$evidence_block"
+if grep -Eq 'UID 999|!= "999"' <<< "$evidence_block"; then
+  echo "Evaluator Provider identity still hard-codes UID 999" >&2
+  exit 1
+fi
+
 if ! grep -q '"${PROVIDER_IDENTITY_PREFIX\[@\]}"' "$ENTRYPOINT"; then
   echo "Provider commands do not cross the evaluator UID boundary" >&2
   exit 1
