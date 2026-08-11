@@ -177,14 +177,14 @@ psql -U cecelia cecelia -c "SELECT g.id, g.status, array_agg(ge.event_type ORDER
 | ws2 | `packages/brain/src/impact-contract/__tests__/contract-store.test.js` | 相同内容计算出相同 hash / 缺少 base_revision 时验证失败 | permanent |
 | ws3 | `packages/brain/src/impact-contract/__tests__/structure-gate.test.js` | mapper_unavailable / stale / revision_mismatch | permanent |
 | ws4 | `packages/brain/src/impact-contract/__tests__/diff-gate.test.js` | 通过（pass）/ extend / CONTRACT_IMPACT_DRIFT / blocked（不放行） | permanent |
-| ws5 | `packages/brain/src/impact-contract/__tests__/gap-store.test.js` | open → assigned / validateTransition 抛出 422 / triage → assigned | permanent |
-| ws3 | `packages/brain/src/impact-contract/__tests__/map-client.test.js` | 真实请求合同 / HTTP 失败 / 响应畸形 fail-closed | permanent |
+| ws5 | `packages/brain/src/impact-contract/__tests__/gap-store.test.js` | 新建 gap 与 discovered 事件必须在同一事务提交 / resolved 必须携带当前 revision 的 PASS 回执 / 最后一个 gap resolved 后恢复 source task | permanent |
+| ws3 | `packages/brain/src/impact-contract/__tests__/map-client.test.js` | 把 revision 与 changed files 发送到 MJ5 radius 合同 / Mapper HTTP 失败时抛出 mapper_unavailable，不能伪造 fresh 空影响 / Mapper 响应缺少 digest/freshness 时 fail-closed | permanent |
 | ws5 | `packages/brain/src/routes/__tests__/gaps.test.js` | harnessGapsRouter / router 可挂载 / router 有 stack | permanent |
 | ws2 | `packages/brain/src/routes/__tests__/impact-contracts.test.js` | impactContractsRouter / router 可挂载 / router 有 stack | permanent |
-| ws5 | `packages/brain/src/impact-contract/__tests__/gap-receipt-trust.test.js` | 不可信/过期/错合同回执拒绝，可信当前回执放行 | permanent |
-| ws5 | `packages/brain/src/impact-contract/__tests__/gap-state-machine.test.js` | 多 gap 独立关闭与 source task queued 恢复 | permanent |
-| ws6 | `packages/brain/src/__tests__/integration/impact-contract-loop.integration.test.js` | 真实 PostgreSQL 合同→drift→gap→可信回执→恢复 | permanent |
-| Kernel | `packages/brain/src/impact-contract/__tests__/harness-gates.test.js` | generate/evaluate/merge 三段权威门禁 | permanent |
+| ws5 | `packages/brain/src/impact-contract/__tests__/gap-receipt-trust.test.js` | 拒绝缺少 machine_id 的 PASS 回执 / 拒绝 verification_started 前的旧 PASS 回执 / 拒绝未执行合同命令的 PASS 回执 | permanent |
+| ws5 | `packages/brain/src/impact-contract/__tests__/gap-state-machine.test.js` | 状态集合完整且 resolved 为终态 / 相同非法跳转稳定产生相同错误码 | permanent |
+| ws6 | `packages/brain/src/__tests__/integration/impact-contract-loop.integration.test.js` | 持久化合同、建立硬依赖，并在当前 revision 断言 PASS 后恢复原任务 | permanent |
+| Kernel | `packages/brain/src/impact-contract/__tests__/harness-gates.test.js` | generator 前以 active 声明重跑 Structure Gate 新鲜度校验 / evaluator 前按 active contract base 与 PR head 读取真实 diff / merge 前在当前 source contract 上重验可信回执围栏 | permanent |
 
 ---
 
