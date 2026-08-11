@@ -57,6 +57,10 @@ describe('Map Manifest JSON Schema', () => {
     ]));
   });
 
+  it('Map core schema 不携带 Cecelia 或 ZenithJoy 领域硬编码', () => {
+    expect(JSON.stringify(MAP_MANIFEST_JSON_SCHEMA)).not.toMatch(/cecelia|zenithjoy|\bF[0-9]\b|\bG[0-9]\b/i);
+  });
+
   it('同一次校验返回全部重复 key、悬空引用与不适用合同错误', () => {
     const manifest = loadManifest();
     manifest.value_streams.push({ ...manifest.value_streams[0] });
