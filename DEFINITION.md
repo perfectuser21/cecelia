@@ -8,17 +8,14 @@
 
 
 
-**Brain 版本**: 1.272.11
+**Brain 版本**: 1.272.12
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.11 — Impact Contract 不可变证据闭环与 Exact-PR Evidence Bridge
+## Brain 1.272.12 — Impact Contract 不可变证据闭环
 
-- 精确 PR 验收任务的 `required_command_evidence` 进入 Evaluator 与 Judge TaskBundle。
-- Evaluator 必须逐条原样执行并写结构化证据；Judge 只接受命令逐字一致、退出码为 0、日志非空的结果。
-- 无 sprint 合同文件的验证专用任务可以用这份严格对账后的命令清单作为合同测试，缺项仍 fail-closed。
 - 整图、节点、浏览影响半径、健康度与未归属事实统一由同一个 Map read service 在只读 `REPEATABLE READ` 快照内返回，并携带 Manifest/Projection digest、repo revision 与 freshness。
 - Dashboard `/map` 只消费 Unified Map API，提供 Value Stream → Capability → Assertion/receipt 三层下钻；重复旧页面和旧 feature 注册已移除。
 - Harness 的 revision-locked `/map/radius` 请求继续由 Impact resolver 裁决，不降级成 Dashboard 浏览半径。
@@ -36,6 +33,22 @@
 - Capability Mapper 在 Runner 只产 manifest artifact，拍板后的提交/激活统一走读取 credentials SSOT 的受信宿主 adapter。
 - 扫描只允许 clean main/exact SHA；批末复核 checkout 与四类 header revision，同 SHA 每 10 分钟保鲜。
 - Schema 地板推进到 410。
+
+---
+
+## Brain 1.272.11 — Canonical Runner Recovery
+
+- 磁盘清理误删 canonical Runner 后，从当前 main 的 `docker/cecelia-runner/` 重建镜像，固定为 `sha256:5b304402ac167aa6bac4011f6e66ad2dbf8106473a5bb4e32e40498620cfb31d`。
+- Runner digest 在 NodeProfile、三机配置、rollout/reconcile、安装器测试和 smoke 中一次性同步；Fleet worker 基线升级为 1.272.11。
+- `verify-digest-pin.sh` 继续 fail-closed，确保镜像实际摘要与代码 pin 漂移时无法静默准入。
+
+---
+
+## Brain 1.272.10 — Exact-PR Required Evidence Bridge
+
+- 精确 PR 验收任务的 `required_command_evidence` 进入 Evaluator 与 Judge TaskBundle。
+- Evaluator 必须逐条原样执行并写结构化证据；Judge 只接受命令逐字一致、退出码为 0、日志非空的结果。
+- 无 sprint 合同文件的验证专用任务可以用这份严格对账后的命令清单作为合同测试，缺项仍 fail-closed。
 
 ---
 
