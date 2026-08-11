@@ -14,9 +14,9 @@ const fixtureUrl = new URL('../../../config/map-manifests/cecelia.v1.json', impo
 const baseManifest = JSON.parse(readFileSync(fixtureUrl, 'utf8'));
 const pool = new pg.Pool({ connectionString, max: 4 });
 const decisionId = randomUUID();
-const scopeKey = `map-manifest-itest-${process.pid}`;
+const scopePrefix = `map-manifest-itest-${process.pid}`;
 
-function manifest(name = '工厂') {
+function manifest(name = '工厂', scopeKey = `${scopePrefix}-default`) {
   return {
     ...structuredClone(baseManifest),
     scope_key: scopeKey,
@@ -29,7 +29,7 @@ function manifest(name = '工厂') {
 }
 
 beforeAll(async () => {
-  await pool.query('DELETE FROM map_manifest_versions WHERE scope_key = $1', [scopeKey]);
+  await pool.query('DELETE FROM map_manifest_versions WHERE scope_key LIKE $1', [`${scopePrefix}-%`]);
   await pool.query('DELETE FROM decisions WHERE id = $1', [decisionId]);
   await pool.query(
     `INSERT INTO decisions
@@ -41,16 +41,17 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await pool.query('DELETE FROM map_manifest_versions WHERE scope_key = $1', [scopeKey]);
+  await pool.query('DELETE FROM map_manifest_versions WHERE scope_key LIKE $1', [`${scopePrefix}-%`]);
   await pool.query('DELETE FROM decisions WHERE id = $1', [decisionId]);
   await pool.end();
 });
 
 describe('Map Manifest Store — 真实 PostgreSQL', () => {
   it('同一完整 manifest 并发提交只创建一个 draft/version', async () => {
+    const scopeKey = `${scopePrefix}-concurrent`;
     const [left, right] = await Promise.all([
-      submitMapManifest(pool, manifest()),
-      submitMapManifest(pool, manifest()),
+      submitMapManifest(pool, manifest('工厂', scopeKey)),
+      submitMapManifest(pool, manifest('工厂', scopeKey)),
     ]);
 
     expect(left.manifest_version.id).toBe(right.manifest_version.id);
@@ -64,7 +65,9 @@ describe('Map Manifest Store — 真实 PostgreSQL', () => {
   });
 
   it('不同 digest 单调增加版本，数据库 trigger 拒绝修改完整 manifest', async () => {
-    const second = await submitMapManifest(pool, manifest('软件工厂'));
+    const scopeKey = `${scopePrefix}-versioning`;
+    await submitMapManifest(pool, manifest('工厂', scopeKey));
+    const second = await submitMapManifest(pool, manifest('软件工厂', scopeKey));
     expect(second).toMatchObject({ created: true, manifest_version: { version: 2, status: 'draft' } });
 
     await expect(pool.query(
@@ -75,7 +78,8 @@ describe('Map Manifest Store — 真实 PostgreSQL', () => {
   });
 
   it('projector 与 active 切换同事务；失败保留旧 active，成功后只留一个 active', async () => {
-    const { manifest_version: first } = await submitMapManifest(pool, manifest());
+    const scopeKey = `${scopePrefix}-activation`;
+    const { manifest_version: first } = await submitMapManifest(pool, manifest('工厂', scopeKey));
     const firstActive = await activateMapManifest(pool, first.id, {
       projector: async ({ client, manifestVersion }) => {
         const { rows } = await client.query('SELECT $1::text AS projected', [manifestVersion.digest]);
@@ -84,7 +88,7 @@ describe('Map Manifest Store — 真实 PostgreSQL', () => {
     });
     expect(firstActive.manifest_version.status).toBe('active');
 
-    const { manifest_version: second } = await submitMapManifest(pool, manifest('软件工厂'));
+    const { manifest_version: second } = await submitMapManifest(pool, manifest('软件工厂', scopeKey));
     await expect(activateMapManifest(pool, second.id, {
       projector: async () => { throw new Error('projection failed'); },
     })).rejects.toThrow('projection failed');

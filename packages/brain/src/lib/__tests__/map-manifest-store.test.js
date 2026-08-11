@@ -57,6 +57,15 @@ describe('submitMapManifest', () => {
 });
 
 describe('activateMapManifest', () => {
+  it('非法 UUID 在连接数据库前返回稳定 422', async () => {
+    const pool = { connect: vi.fn() };
+
+    await expect(activateMapManifest(pool, 'not-a-uuid')).rejects.toMatchObject({
+      code: 'MAP_MANIFEST_ID_INVALID', status: 422,
+    });
+    expect(pool.connect).not.toHaveBeenCalled();
+  });
+
   it('默认 projector unavailable 时 rollback，不切 active', async () => {
     const draft = {
       id: '54b9ec3d-9ad5-4db0-99b3-7bbbeec34bf9', scope_key: 'cecelia', version: 1,

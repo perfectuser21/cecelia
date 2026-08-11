@@ -96,6 +96,23 @@ describe('POST /api/brain/map/manifests', () => {
 });
 
 describe('POST /api/brain/map/manifests/:id/activate', () => {
+  it('非法 UUID 返回 422，且不连接数据库', async () => {
+    const pool = { connect: vi.fn(), query: vi.fn() };
+    const { app } = createApp({ pool });
+
+    const response = await request(app)
+      .post('/api/brain/map/manifests/not-a-uuid/activate')
+      .expect(422);
+
+    expect(response.body).toEqual({
+      error: {
+        code: 'MAP_MANIFEST_ID_INVALID',
+        message: 'Map manifest version id must be a UUID',
+      },
+    });
+    expect(pool.connect).not.toHaveBeenCalled();
+  });
+
   it('projector unavailable 映射为 503 与稳定 reason code', async () => {
     const services = {
       validate: vi.fn(),

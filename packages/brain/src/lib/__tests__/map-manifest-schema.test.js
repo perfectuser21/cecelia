@@ -4,6 +4,7 @@ import {
   MAP_MANIFEST_JSON_SCHEMA,
   digestMapManifest,
   validateMapManifest,
+  validateMapManifestJsonSchema,
 } from '../map-manifest-schema.js';
 
 const fixtureUrl = new URL('../../../config/map-manifests/cecelia.v1.json', import.meta.url);
@@ -85,6 +86,35 @@ describe('Map Manifest JSON Schema', () => {
       expect.objectContaining({ path: 'shared_prerequisites.items', code: 'not_applicable_items' }),
       expect.objectContaining({ path: 'shared_prerequisites.reason', code: 'not_applicable_reason' }),
     ]));
+  });
+
+  it('未知字段不遮蔽同一请求中的重复 key 与悬空引用', () => {
+    const manifest = loadManifest();
+    manifest.consumer_color = 'green';
+    manifest.capabilities.push({ ...manifest.capabilities[0] });
+    manifest.boundaries[0].to = 'missing-capability';
+
+    const result = validateMapManifest(manifest);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'consumer_color', code: 'unrecognized_keys' }),
+      expect.objectContaining({ path: 'capabilities.11.key', code: 'duplicate_key' }),
+      expect.objectContaining({ path: 'boundaries.0.to', code: 'reference_not_found' }),
+    ]));
+  });
+
+  it.each([
+    ['空白展示名', (manifest) => { manifest.value_streams[0].name = '   '; }],
+    ['applicable 但 items 为空', (manifest) => {
+      manifest.shared_prerequisites = { applicable: true, items: [] };
+    }],
+  ])('机器 JSON Schema 与运行时验证一致拒绝：%s', (_name, mutate) => {
+    const manifest = loadManifest();
+    mutate(manifest);
+
+    expect(validateMapManifestJsonSchema(manifest).valid).toBe(false);
+    expect(validateMapManifest(manifest).valid).toBe(false);
   });
 
   it('拒绝稳定 key/alias 冲突、同组 order 冲突与 Boundary 环', () => {
