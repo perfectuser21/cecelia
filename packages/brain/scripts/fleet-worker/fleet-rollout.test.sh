@@ -34,7 +34,7 @@ artifact_log="$test_root/artifacts.log"
 transport_log="$test_root/transport.log"
 node_log="$test_root/node.log"
 worker_token="$test_root/worker-token"
-expected_runner_digest='sha256:6cef182dbec266157f7f2c731eaf596bb99450bb511b55d6526db102234198e3'
+expected_runner_digest='sha256:e958b6abeba555622a2206075b456d679e550cd854b6a9600d6fe68d0908b347'
 touch "$artifact_log" "$transport_log" "$node_log"
 printf 'fleet-worker-transport-token-at-least-32-bytes\n' > "$worker_token"
 chmod 0600 "$worker_token"
@@ -338,7 +338,7 @@ grep -Fq 'docker save --output' "$artifact_log" \
   || fail "rollout did not export the Runner image"
 grep -Fq 'docker image tag postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777 postgres:16-alpine' "$artifact_log" \
   || fail "rollout did not preserve the pinned PostgreSQL repository tag"
-grep -Eq 'docker save --output .* sha256:6cef182dbec266157f7f2c731eaf596bb99450bb511b55d6526db102234198e3 postgres:16-alpine$' "$artifact_log" \
+grep -Eq 'docker save --output .* sha256:e958b6abeba555622a2206075b456d679e550cd854b6a9600d6fe68d0908b347 postgres:16-alpine$' "$artifact_log" \
   || fail "rollout archive did not save the tagged PostgreSQL reference"
 grep -Fq 'docker run --rm --entrypoint sh' "$artifact_log" \
   && fail "rollout still uses a static source-string image contract"
