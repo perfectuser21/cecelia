@@ -210,7 +210,7 @@ async function main() {
   try {
     const results = await scanRepoList(REPOS, pool);
     for (const r of results) {
-      if (r.skipped || r.error) {
+      if (r.error) {
         hasError = true;
       }
     }
