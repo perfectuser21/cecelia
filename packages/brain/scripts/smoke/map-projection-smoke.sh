@@ -38,14 +38,14 @@ db_scalar() {
 printf '%s\n' '── map projection scratch smoke ──'
 printf 'database=%s scope=%s\n' "$DATABASE_NAME" "$SMOKE_SCOPE"
 
-[[ "$(db_scalar "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='406')")" == 't' ]] \
-  || fail 'schema_version 406 不存在'
+[[ "$(db_scalar "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='407')")" == 't' ]] \
+  || fail 'schema_version 407 不存在'
 TABLE_COUNT="$(db_scalar "
   SELECT count(*) FROM information_schema.tables
    WHERE table_schema='public'
      AND table_name IN ('map_projection_runs','map_projection_nodes','map_projection_edges')")"
 [[ "$TABLE_COUNT" == '3' ]] || fail "projection 表不完整: $TABLE_COUNT/3"
-pass 'migration 406 adapter 与 projection 三表'
+pass 'migration 407 adapter 与 projection 三表'
 
 DATABASE_URL="$DATABASE_URL" SMOKE_SCOPE="$SMOKE_SCOPE" SMOKE_DECISION_ID="$SMOKE_DECISION_ID" \
   "$NODE_EXECUTABLE" --input-type=module <<'NODE'

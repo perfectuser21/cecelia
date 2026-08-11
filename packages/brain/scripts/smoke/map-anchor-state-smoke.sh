@@ -15,8 +15,8 @@ DATABASE_NAME="$($NODE_EXECUTABLE -e "const u=new URL(process.argv[1]); process.
 [[ "$DATABASE_NAME" =~ (_test|_scratch)$ ]] || fail "拒绝连接非测试库: ${DATABASE_NAME:-<empty>}"
 [[ "$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')" == "$DATABASE_NAME" ]] \
   || fail '数据库连接目标不一致'
-[[ "$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='406')")" == 't' ]] \
-  || fail 'schema_version 406 不存在'
+[[ "$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='407')")" == 't' ]] \
+  || fail 'schema_version 407 不存在'
 
 SMOKE_SCOPE="map-anchor-state-smoke-$$"
 SMOKE_REPO="${SMOKE_SCOPE}-repo"

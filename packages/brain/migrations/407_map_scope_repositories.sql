@@ -1,4 +1,4 @@
--- Migration 406: Explicit scope-to-repository adapter configuration for Universal Map.
+-- Migration 407: Explicit scope-to-repository adapter configuration for Universal Map.
 
 CREATE TABLE IF NOT EXISTS map_scope_repositories (
   scope_key TEXT NOT NULL CHECK (length(btrim(scope_key)) > 0),
@@ -15,5 +15,5 @@ VALUES ('cecelia', 'cecelia', 'legacy-ledger-v1', '{"ledger_partition":"cecelia"
 ON CONFLICT (scope_key, repo) DO NOTHING;
 
 INSERT INTO schema_version (version, description)
-VALUES ('406', 'Explicit Universal Map scope repository adapters')
+VALUES ('407', 'Explicit Universal Map scope repository adapters')
 ON CONFLICT (version) DO NOTHING;

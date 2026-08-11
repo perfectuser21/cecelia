@@ -2,11 +2,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const upSql = readFileSync(
-  new URL('../../migrations/406_map_scope_repositories.sql', import.meta.url),
+  new URL('../../migrations/407_map_scope_repositories.sql', import.meta.url),
   'utf8',
 );
 const downSql = readFileSync(
-  new URL('../../migrations/rollback/406_map_scope_repositories.down.sql', import.meta.url),
+  new URL('../../migrations/rollback/407_map_scope_repositories.down.sql', import.meta.url),
   'utf8',
 );
 

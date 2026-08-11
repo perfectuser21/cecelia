@@ -38,13 +38,13 @@ db_scalar() {
 printf '%s\n' '── map manifest scratch smoke ──'
 printf 'database=%s scope=%s\n' "$DATABASE_NAME" "$SMOKE_SCOPE"
 
-[[ "$(db_scalar "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='406')")" == 't' ]] \
-  || fail 'schema_version 406 不存在'
+[[ "$(db_scalar "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='407')")" == 't' ]] \
+  || fail 'schema_version 407 不存在'
 [[ "$(db_scalar "SELECT to_regclass('public.map_manifest_versions') IS NOT NULL")" == 't' ]] \
   || fail 'map_manifest_versions 不存在'
 [[ "$(db_scalar "SELECT to_regclass('public.map_scope_repositories') IS NOT NULL")" == 't' ]] \
   || fail 'map_scope_repositories 不存在'
-pass 'migration 402/406 与 manifest/repo adapter tables'
+pass 'migration 402/407 与 manifest/repo adapter tables'
 
 DATABASE_URL="$DATABASE_URL" SMOKE_SCOPE="$SMOKE_SCOPE" SMOKE_DECISION_ID="$SMOKE_DECISION_ID" \
   "$NODE_EXECUTABLE" --input-type=module <<'NODE'
