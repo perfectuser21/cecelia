@@ -10,6 +10,7 @@
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import Ajv from 'ajv';
 import { MANIFEST_SCHEMA_V1, validateManifestSemantics } from '../map/manifest-schema.js';
 import {
@@ -33,8 +34,11 @@ import pool from '../db.js';
 
 const router = Router();
 
+router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
+
 // AJV 实例（JSON Schema 校验）
-const ajv = new Ajv({ allErrors: true, strict: false });
+// allErrors: false — 遇第一个错误即停，防止深度嵌套输入触发 DoS。
+const ajv = new Ajv({ allErrors: false, strict: false });
 const validateSchema = ajv.compile(MANIFEST_SCHEMA_V1);
 
 /**
