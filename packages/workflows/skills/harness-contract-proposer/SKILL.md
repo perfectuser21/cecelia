@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.23.0
+version: 9.24.0
 created: 2026-04-08
-updated: 2026-08-09
+updated: 2026-08-11
 changelog:
+  - 9.24.0: 从 task.payload.map_scope/map_repo 读取 Unified Map 与 radius，合同必跑断言改用 must_run_assertions，不再由 registry 各自猜当前地图
   - 9.23.0: playground sprint 测试栈死规则（kernel 收尾三修，run 8374ab73/25eb2072 案卷）——playground 合同的 vitest 测试文件必须用 `describe/it/expect`（Vitest），**禁止 `node:test`/`assert`**：仓库 required CI（Sprint Tests 实跑、TDD Commit 顺序检查）只认 Vitest，合同批准 node:test 后 generator 无法在不越权改共享门禁的前提下让 CI 全绿，只能报合同故障码申诉，run 死循环。同段强调：playground/ 下的实现文件（如 `playground/server.js`）**是**该 sprint 唯一合法实现路径，TDD 门禁的"prod code needs a prior failing test"要求由该目录下的 `tests/*.test.ts` 满足，proposer 写 BEHAVIOR 验证命令与 vitest 测试文件时不得假设它会被识别为共享 `packages/*/src` 代码（两者判定路径不同，不要混用共享门禁措辞误导 generator）。
   - 9.22.0: 堵「橡皮 closure」口（r43 实证,与 reviewer 9.14.0 配套）——Step 1.4 closure 声明新增硬格式 quote: 字段:必须直接引用本轮合同/DoD 新增或修改后的原文片段(≥20字),无引用的声明性话术("已按合同实际内容关闭")禁用;E 号(重开)blocker 的 quote 必须来自本轮新增条款。r43 实证一句空话 closure 骗过 Reviewer 放行未改合同,下游再撞死,重开白做
   - 9.21.0: 案卷式 GAN 协议（配套 cecelia kernel 1.267.207+，与 reviewer 9.12.0 配套）——新增「案卷 closure 声明」步骤：改合同前先读 `inputs.case_file`，对上一轮 reviewer 行的每条 blocker 按编号（R<round>-<seq>）逐条输出 closure 声明（做了什么/为什么足以关闭），写进本轮结果 `case_file.blockers` 与 `feedback_md`；结果 JSON 顶层新增 `case_file:{blockers[],feedback_md}`，`decision` 新增 `contract_round` 与 push 后的 `contract_sha`（供 Kernel 案卷锚定）；bundle 有 `thin_prd`/`prep_prd_body` 时作为 PRD 正文来源优先于自行推断。
@@ -498,6 +499,33 @@ JOURNEY_TYPE=$(grep -m1 "^## journey_type:" "${SPRINT_DIR}/sprint-prd.md" | sed 
 ```
 
 **PRD 正文来源优先级（v9.21）**：bundle `inputs.thin_prd` / `inputs.prep_prd_body` 有值时，是比 `sprint-prd.md` 更精炼的 PRD 正文，起草合同时优先以其为准（`sprint-prd.md` 仍读作补充上下文，不冲突时两者一致）；两者都缺失才完全依赖 `sprint-prd.md` 自行推断。
+
+### Step 1.0: 读取 Unified Map 当前结构与影响半径
+
+```bash
+TASK_JSON=$(curl -sf "localhost:5221/api/brain/tasks/$TASK_ID" || echo '{}')
+MAP_SCOPE=$(echo "$TASK_JSON" | jq -r '.payload.map_scope // ""')
+MAP_REPO=$(echo "$TASK_JSON" | jq -r '.payload.map_repo // ""')
+EXPECTED_FILES=$(echo "$TASK_JSON" | jq -c '.payload.expected_files // []')
+
+if [[ -n "$MAP_SCOPE" && -n "$MAP_REPO" ]]; then
+  curl -sf "localhost:5221/api/brain/map?scope=${MAP_SCOPE}" > /tmp/unified_map.json
+  if [[ "$(echo "$EXPECTED_FILES" | jq 'length')" -gt 0 ]]; then
+    jq -n --arg scope "$MAP_SCOPE" --arg repo "$MAP_REPO" --argjson files "$EXPECTED_FILES" \
+      '{scope:$scope,repo:$repo,changed_files:$files}' \
+      | curl -sf -X POST "localhost:5221/api/brain/map/radius" \
+          -H 'Content-Type: application/json' -d @- > /tmp/unified_map_radius.json
+    jq '{affected_business_nodes,must_run_assertions}' /tmp/unified_map_radius.json
+  else
+    echo '{"affected_business_nodes":[],"must_run_assertions":[]}' > /tmp/unified_map_radius.json
+  fi
+else
+  echo '{"status":"not_configured"}' > /tmp/unified_map.json
+  echo '{"affected_business_nodes":[],"must_run_assertions":[]}' > /tmp/unified_map_radius.json
+fi
+```
+
+`must_run_assertions` 必须进入合同的已知回归约束；`fact_revisions` 与 `freshness` 必须进入合同证据来源。scope/repo 缺失时明确标 `[MAP_NOT_CONFIGURED]`，禁止回退到领域硬编码。
 
 ---
 

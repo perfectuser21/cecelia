@@ -7,10 +7,11 @@ description: |
   人类启动 harness/sprint 通过 /dev 路径C（POST localhost:5221/api/brain/tasks，payload 必须带 orchestrator=skill-relay）。
   直接调本 skill = 绕过 controller 接力链，违反 zero-human-gate 原则。
   （2026-07-05 cecelia #3554 起 LangGraph 图编排已废弃，"Brain executor Layer 1 节点"为过时语义。）
-version: 8.16.0
+version: 8.17.0
 created: 2026-04-08
-updated: 2026-07-29
+updated: 2026-08-11
 changelog:
+  - 8.17.0: 从 task.payload.map_scope/map_repo 读取 Unified Map，作为 scope 锚定的唯一当前地图；缺显式映射时如实记录未配置，不做领域猜测
   - 8.16.0: 修复 #4406 快照同步误revert的 android_realmachine 枚举（原 #3996 洞①修复，本地 cecelia 快照被从 SSOT 覆盖后丢失，回归测试harness-android-target-environment.test.ts 4条断言里的planner 2条转红）——PRD模板枚举行+发货前机械闸正则同步补回；后续需把该枚举回补进 zenithjoy-skills 真身SSOT，否则下次快照同步会再次丢失
   - 8.15.0: EVA v2 审计五修 — ① 修 Step 0.3 THIN_PRD 引用未定义变量 bug（TASK_PAYLOAD→TASK_JSON）；② Step 2 后新增「发货前机械闸」（journey_type/target_environment 枚举 + Invariant/累积FR/NFR/journey_id/step_id 五段结构 + thin-slice 行数自查，任一 FAIL 禁进 Step 3，恢复/重跑同样过闸——d063b3e5 实证 299 行 PRD 穿透）；③ 执行规则加防漂移铁律（输入真相只来自 task payload API，Step 0-3 不可跳）；④ 累积 FR 段加语义反例（禁表格、禁写本 sprint 新行为）；⑤ Step 3 出口 JSON 增 status 四态（DONE/DONE_WITH_CONCERNS/NEEDS_CONTEXT/BLOCKED）
   - 8.14.0: 跨 repo 化刀3 — Step 0.5 环境映射加前置护栏：路径→环境映射表仅适用 base_repo=cecelia；zenithjoy 走既有布局约定（apps/dashboard→windows_cloud 等）；其他第三方 repo 禁止路径猜测，target_environment 必须由 payload 显式提供，缺失时 PRD 标注 environment: unresolved 交 controller 上报；映射表本体与 Brain API（localhost:5221）调用不动
@@ -199,6 +200,17 @@ TASK_ID=<本次任务参数里的 task_id>
 TASK_JSON=$(curl -sf "localhost:5221/api/brain/tasks/$TASK_ID" || echo '{}')
 ABILITY_ID=$(echo "$TASK_JSON" | jq -r '.ability_id // .payload.ability_id // ""')
 JOURNEY_ID=$(echo "$TASK_JSON" | jq -r '.payload.journey_id // ""')
+MAP_SCOPE=$(echo "$TASK_JSON" | jq -r '.payload.map_scope // ""')
+MAP_REPO=$(echo "$TASK_JSON" | jq -r '.payload.map_repo // ""')
+
+# Unified Map 是当前结构与事实 revision 的唯一权威；scope/repo 必须来自 payload。
+if [[ -n "$MAP_SCOPE" && -n "$MAP_REPO" ]]; then
+  curl -sf "localhost:5221/api/brain/map?scope=${MAP_SCOPE}" > /tmp/unified_map.json
+  jq --arg repo "$MAP_REPO" '{scope_key,manifest_version,projection_digest,
+    repo_revision:.fact_revisions[$repo],freshness,summary}' /tmp/unified_map.json
+else
+  echo '{"status":"not_configured","reason":"task.payload.map_scope/map_repo missing"}' > /tmp/unified_map.json
+fi
 
 # ① step 级 NFR：本 ability golden_path 各步骤上挂的 NFR（副源）
 curl -sf "localhost:5221/api/brain/tasks/$TASK_ID/golden-path-decisions?category=nfr" \

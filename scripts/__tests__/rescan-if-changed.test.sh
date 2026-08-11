@@ -37,7 +37,7 @@ if [[ $RC -eq 0 && ! -f "$MARK" ]]; then pass "SHA 未变:exit 0 且未触发扫
 # 3 SHA 变了 → 触发扫描且成功后记账
 echo "old-sha-000" > "$STATE"; rm -f "$MARK"
 RC=0; RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_OK" bash "$SCRIPT" >/dev/null 2>&1 || RC=$?
-if [[ $RC -eq 0 && -f "$MARK" && "$(cat "$STATE")" == "$CUR_SHA" ]]; then pass "SHA 变化:触发扫描且记账新 SHA"; else fail "SHA 变化路径异常(rc=$RC, mark=$([[ -f $MARK ]] && echo y || echo n), state=$(cat "$STATE"))"; fi
+if [[ $RC -eq 0 && -f "$MARK" && "$(awk '{print $1}' "$STATE")" == "$CUR_SHA" ]]; then pass "SHA 变化:触发扫描且记账新 SHA"; else fail "SHA 变化路径异常(rc=$RC, mark=$([[ -f $MARK ]] && echo y || echo n), state=$(cat "$STATE"))"; fi
 
 # 4 扫描失败 → 不记账(下轮重试)且退出非 0
 echo "old-sha-000" > "$STATE"; rm -f "$MARK"
