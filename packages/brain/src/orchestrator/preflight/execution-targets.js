@@ -55,15 +55,34 @@ function isExhausted(target, exhaustedTargets) {
   return (exhaustedTargets ?? []).some((entry) => targetKey(entry) === key);
 }
 
+// account-usage CAPPED 活数据消费（issue 7c9f427e）：is_account_capped 谓词由调用方从
+// account-usage 单一事实源注入（消除双系统裂脑）。CAPPED 的 target 视为不可用，与 exhausted
+// 同等跳过。降级铁律（PRD 边界）：未注入/抛错 → 按 !capped 语义安全处理，绝不因取用量数据
+// 失败而 crash 或误跳过好账号；仅显式返回真值时才跳过（undefined/未注入=可用）。
+function makeCappedCheck(isAccountCapped) {
+  if (typeof isAccountCapped !== 'function') return () => false;
+  return (target) => {
+    try {
+      return isAccountCapped(target);
+    } catch {
+      return false;
+    }
+  };
+}
+
 export function resolveExecutionTarget({
   preferred_target: preferredTarget,
   candidates = [],
   exhausted_targets: exhaustedTargets = [],
   failure_class: failureClass = 'none',
+  is_account_capped: isAccountCapped,
   task_bundle: taskBundle,
 } = {}) {
+  const isCapped = makeCappedCheck(isAccountCapped);
+
   if (isVerifiedExecutionTarget(preferredTarget)
-      && !isExhausted(preferredTarget, exhaustedTargets)) {
+      && !isExhausted(preferredTarget, exhaustedTargets)
+      && !isCapped(preferredTarget)) {
     return {
       status: 'ok',
       target: { ...preferredTarget },
@@ -73,7 +92,9 @@ export function resolveExecutionTarget({
   }
 
   const target = candidates.find((candidate) => (
-    isVerifiedExecutionTarget(candidate) && !isExhausted(candidate, exhaustedTargets)
+    isVerifiedExecutionTarget(candidate)
+      && !isExhausted(candidate, exhaustedTargets)
+      && !isCapped(candidate)
   ));
   if (!target) {
     return {
