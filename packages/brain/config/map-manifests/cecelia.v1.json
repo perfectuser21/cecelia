@@ -1,0 +1,50 @@
+{
+  "scope_key": "cecelia",
+  "schema_version": 1,
+  "source_decision_id": "4bc109e9-3b70-4b17-a1b4-bcd01bfae776",
+  "value_streams": [
+    { "key": "factory", "name": "工厂", "perceiver": "待造软件", "order": 1 },
+    { "key": "butler", "name": "管家", "perceiver": "主理人本人", "order": 2 }
+  ],
+  "capabilities": [
+    { "key": "F0", "name": "提案打磨", "value_stream_key": "factory", "order": 1 },
+    { "key": "F1", "name": "开发闭环", "value_stream_key": "factory", "order": 2 },
+    { "key": "F2", "name": "部署闭环", "value_stream_key": "factory", "order": 3 },
+    { "key": "F3", "name": "夜间体检", "value_stream_key": "factory", "order": 4 },
+    { "key": "F4", "name": "故障自愈", "value_stream_key": "factory", "order": 5 },
+    { "key": "MJ5", "name": "承诺地图", "value_stream_key": "factory", "order": 6 },
+    { "key": "G1", "name": "指挥舱", "value_stream_key": "butler", "order": 1, "aliases": ["F5"] },
+    { "key": "G2", "name": "收件箱", "value_stream_key": "butler", "order": 2, "aliases": ["F6"] },
+    { "key": "G3", "name": "晨报感知", "value_stream_key": "butler", "order": 3 },
+    { "key": "G4", "name": "记忆知识", "value_stream_key": "butler", "order": 4, "aliases": ["F7"] },
+    { "key": "G5", "name": "战略 OKR", "value_stream_key": "butler", "order": 5 }
+  ],
+  "boundaries": [
+    {
+      "key": "F0_TO_G1",
+      "from": "F0",
+      "to": "G1",
+      "statement": "提案备好呈报是 F0 终点；拍板动作归 G1"
+    },
+    {
+      "key": "F3_TO_G3",
+      "from": "F3",
+      "to": "G3",
+      "statement": "体检报告落账本是 F3 终点；主理人一屏消费是 G3 终点"
+    }
+  ],
+  "crosscut_pool": [
+    { "key": "heartbeat_bus", "name": "心跳传送带", "serves": ["factory", "butler"] },
+    { "key": "credential_chain", "name": "凭据链", "serves": ["factory", "butler"] },
+    { "key": "execution_pool", "name": "执行资源池", "aliases": ["infrastructure", "F8"], "serves": ["factory", "butler"] },
+    { "key": "skill_distribution", "name": "Skill 分发链", "owner": "F1", "serves": ["factory", "butler"] },
+    { "key": "alert_chain", "name": "告警链", "owner": "F4", "serves": ["factory", "butler"] },
+    { "key": "database_foundation", "name": "数据库", "owner": "F1", "serves": ["factory", "butler"] },
+    { "key": "network_foundation", "name": "网络", "owner": "F1", "serves": ["factory", "butler"] }
+  ],
+  "shared_prerequisites": {
+    "applicable": false,
+    "items": [],
+    "reason": "工厂与管家的感知者分别为待造软件和主理人本人，不存在客户产品线式一次性入场语义"
+  }
+}
