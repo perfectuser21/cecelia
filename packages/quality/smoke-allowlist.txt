@@ -101,6 +101,7 @@ harness-commander-phase1-smoke.sh
 harness-commander-phase2-smoke.sh
 harness-contract-sha-freeze-smoke.sh
 harness-death-classifier-smoke.sh
+harness-failure-stats-smoke.sh
 harness-death-handlers-smoke.sh
 harness-detail-smoke.sh
 harness-echo-smoke.sh

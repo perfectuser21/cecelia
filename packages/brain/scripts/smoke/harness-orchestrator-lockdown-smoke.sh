@@ -93,7 +93,7 @@ console.log('[smoke] L3 PASS: 无 orchestrator 的 harness_initiative 被立即 
 
 # 验证 tasks 表真被写回 failed + failure_class
 STATUS=$(psql "$DB" -tAc "SELECT status FROM tasks WHERE id='$TID'::uuid")
-FAILURE_CLASS=$(psql "$DB" -tAc "SELECT custom_props->>'failure_class' FROM tasks WHERE id='$TID'::uuid")
+FAILURE_CLASS=$(psql "$DB" -tAc "SELECT result->>'failure_class' FROM tasks WHERE id='$TID'::uuid")
 
 if [[ "$STATUS" != "failed" ]]; then
   echo "[smoke] L3 FAIL: tasks.status='$STATUS' (期望 'failed')"

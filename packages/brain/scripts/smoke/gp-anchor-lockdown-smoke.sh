@@ -100,7 +100,7 @@ console.log('[smoke] L3 PASS: base_repo含zenithjoy-workspace且无gp_anchor的h
 " "$RESULT" || exit 1
 
 STATUS=$(psql "$DB" -tAc "SELECT status FROM tasks WHERE id='$TID'::uuid")
-FAILURE_CLASS=$(psql "$DB" -tAc "SELECT custom_props->>'failure_class' FROM tasks WHERE id='$TID'::uuid")
+FAILURE_CLASS=$(psql "$DB" -tAc "SELECT result->>'failure_class' FROM tasks WHERE id='$TID'::uuid")
 
 if [[ "$STATUS" != "failed" ]]; then
   echo "[smoke] L3 FAIL: tasks.status='$STATUS' (期望 'failed')"

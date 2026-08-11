@@ -16,6 +16,7 @@ import { join, resolve, relative, isAbsolute, delimiter } from 'path';
 import { homedir, tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import pool from '../db.js';
+import { parseFailureStatsDays, buildFailureStats } from '../lib/harness-failure-stats.js';
 import { runJudgeGate, runMechanicalPreflightChecks, checkJudgmentsWritten } from '../harness-judge.js';
 import {
   DEFAULT_BASE_REPO,
@@ -1555,6 +1556,52 @@ router.get('/stats', async (req, res) => {
     });
   } catch (err) {
     console.error('[GET /harness/stats]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /failure-stats?days=N
+ * harness 失败可观测计量（决策 e8f6134f 交付物2）：按 failure_class 分组计数 + 滚动失败率。
+ *
+ * 分母口径（判定点登记表选 A）：窗口内 harness 任务总数（含 in_progress），
+ * created_at >= NOW() - N days，task_type IN (harness_initiative, golden_path_proposal)。
+ * 分子/分组：窗口内 terminal 失败态（failed/blocked/cancelled）任务，
+ * 按 COALESCE(result->>'failure_class','unclassified') 分组。by_class 各类之和 == terminal_failed_count（无双重计数）。
+ * days 非整数 / 越界（<1 或 >365）→ 400；窗口空 → 200 空口径（rate=0, by_class={}），不 500。
+ */
+router.get('/failure-stats', async (req, res) => {
+  try {
+    const parsed = parseFailureStatsDays(req.query.days);
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
+    const { days } = parsed;
+
+    // 分母：窗口内 harness 任务总数（含 in_progress）
+    const { rows: totalRows } = await pool.query(
+      `SELECT COUNT(*) AS total
+         FROM tasks
+        WHERE task_type IN ('harness_initiative', 'golden_path_proposal')
+          AND created_at >= NOW() - make_interval(days => $1)`,
+      [days]
+    );
+
+    // 分子 + 分组：窗口内 terminal 失败态（failed/blocked/cancelled），按 failure_class 分组
+    const { rows: classRows } = await pool.query(
+      `SELECT COALESCE(result->>'failure_class', 'unclassified') AS failure_class,
+              COUNT(*) AS cnt
+         FROM tasks
+        WHERE task_type IN ('harness_initiative', 'golden_path_proposal')
+          AND status IN ('failed', 'blocked', 'cancelled')
+          AND created_at >= NOW() - make_interval(days => $1)
+        GROUP BY 1`,
+      [days]
+    );
+
+    res.json(buildFailureStats(days, totalRows[0]?.total ?? 0, classRows));
+  } catch (err) {
+    console.error('[GET /harness/failure-stats]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
