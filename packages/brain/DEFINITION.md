@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**版本**: 1.272.8
+**版本**: 1.272.11
+
+## Dashboard staging port ownership
+
+- Dashboard staging 与 Harness staging E2E 统一使用 `5251`。
+- Brain Acceptance/Harness 继续独占宿主端口 `5223`，两类服务不再争抢 listener。
 
 ## Unified Map API and dashboard authority
 

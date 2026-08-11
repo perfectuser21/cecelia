@@ -6,7 +6,7 @@
 # 看的是"未必提交、未必过 CI 的草稿"，合适了再走 PR → CI → staging → 放行 → 生产。
 #
 # 与 deploy-local.sh(staging) / promote-dashboard.sh(生产) 完全独立：
-#   - 独立端口 5225、独立产物目录 .dist-dev，绝不碰 live dist/(5211) 和 .dist-staging(5223)。
+#   - 独立端口 5225、独立产物目录 .dist-dev，绝不碰 live dist/(5211) 和 .dist-staging(5251)。
 #
 # 用法：
 #   bash scripts/dev-preview.sh              # build 当前 dashboard → 起 5225 蓝 DEV 旗

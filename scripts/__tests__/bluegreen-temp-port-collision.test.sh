@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 回归测试：bluegreen TEMP_PORT 默认值不能与 dashboard-slot-server SLOT_PORT 默认值撞车。
 #
-# 背景：dashboard-slot-server.cjs 是常驻 staging 预览服务(默认绑 0.0.0.0:5223)。
+# 背景：dashboard-slot-server.cjs 是常驻 staging 预览服务(默认绑 0.0.0.0:5251)。
 # Brain 蓝绿部署 green canary 探测走 host.docker.internal:${TEMP_PORT}，该路径在 OrbStack
-# 下会绕过容器间端口转发、直接命中宿主机原生监听进程 —— 如果 TEMP_PORT 也是 5223，
+# 下会绕过容器间端口转发、直接命中宿主机原生监听进程 —— 如果 TEMP_PORT 与它相同，
 # green canary 的 pre-swap smoke 会误判为失败（打到 slot-server 的前端 HTML 而非
 # green Brain 的 JSON）。此测试锁死两个默认端口不能相等。
 set -uo pipefail
@@ -17,7 +17,7 @@ SLOT_SERVER_JS="$REPO_ROOT/scripts/dashboard-slot-server.cjs"
 
 FAIL=0
 
-# 提取 bluegreen.sh 里 TEMP_PORT 的默认值：local port="${TEMP_PORT:-5223}"
+# 提取 bluegreen.sh 里 TEMP_PORT 的默认值。
 bluegreen_port=$(grep -oE 'TEMP_PORT:-[0-9]+' "$BLUEGREEN_SH" | head -1 | grep -oE '[0-9]+$')
 if [ -z "$bluegreen_port" ]; then
   echo "FAIL: 未能从 $BLUEGREEN_SH 提取 TEMP_PORT 默认值"

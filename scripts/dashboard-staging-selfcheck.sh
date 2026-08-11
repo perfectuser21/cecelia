@@ -17,7 +17,7 @@
 #
 # 用法：
 #   bash scripts/dashboard-staging-selfcheck.sh <DIST_DIR> [PORT]
-#   DIST_DIR 默认 apps/dashboard/dist，PORT 默认 5223（非生产）
+#   DIST_DIR 默认 apps/dashboard/dist，PORT 默认 5251（非生产）
 #
 # 退出码：
 #   0 = STAGING_SELFCHECK_OK（全绿，可 promote）
@@ -29,7 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 DIST_DIR="${1:-$ROOT_DIR/apps/dashboard/dist}"
-SLOT_PORT="${2:-5223}"
+SLOT_PORT="${2:-5251}"
 
 # 关键 env：缺了/空了 dashboard 会功能受损（Vite 在 build 时把 import.meta.env 内联进 bundle，
 # 所以"缺 env"= bundle 里对应位置是空串/undefined）。

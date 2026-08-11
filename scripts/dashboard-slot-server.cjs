@@ -22,7 +22,7 @@
  *
  * 环境变量：
  *   DIST_DIR        — 要 serve 的构建产物目录（必填）
- *   SLOT_PORT       — 监听端口（默认 5223，非生产）
+ *   SLOT_PORT       — 监听端口（默认 5251，非生产）
  *   SLOT_HOST       — 监听地址（默认 0.0.0.0 对外；自检可设 127.0.0.1）
  *   STAGING_BANNER  — =1 时注入 STAGING 角旗（常驻 staging 用；自检不设）
  *   STAGING_COMMIT  — 角旗 title 悬停显示的本次 commit（可选）
@@ -32,7 +32,7 @@ const fs = require('fs');
 const path = require('path');
 
 const STATIC_DIR = process.env.DIST_DIR;
-const PORT = parseInt(process.env.SLOT_PORT || '5223', 10);
+const PORT = parseInt(process.env.SLOT_PORT || '5251', 10);
 const HOST = process.env.SLOT_HOST || '0.0.0.0';
 const BANNER_ON = process.env.STAGING_BANNER === '1';
 const STAGING_COMMIT = process.env.STAGING_COMMIT || 'unknown';

@@ -296,7 +296,7 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
     SLOT_LOG_FILE="$DASH_DIR/.staging-slot.log"
     SELFCHECK="$MAIN_SCRIPTS/dashboard-staging-selfcheck.sh"
     SLOT_SERVER="$MAIN_SCRIPTS/dashboard-slot-server.cjs"
-    STAGING_SLOT_PORT="${DASHBOARD_STAGING_PORT:-5223}"
+    STAGING_SLOT_PORT="${DASHBOARD_STAGING_PORT:-5251}"
 
     echo "🖥️  Dashboard 改动 → 构建到 staging slot（自检 → 起常驻 staging → 停住等放行）"
     if [[ "$DRY_RUN" == true ]]; then

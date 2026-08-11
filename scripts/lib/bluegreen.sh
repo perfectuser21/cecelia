@@ -139,7 +139,7 @@ bluegreen_wait_for_stable_http() {
 
 # bluegreen_swap：green canary 验证后原子切。入参走 env：
 #   BLUE_NAME(默认 cecelia-node-brain) / GREEN_NAME(默认 cecelia-node-brain-green)
-#   TEMP_PORT(默认 5233，故意避开 dashboard-slot-server.cjs 的默认端口 5223——两者曾撞车导致
+#   TEMP_PORT(默认 5233，故意避开 dashboard-slot-server.cjs 的默认端口 5251——两者曾撞车导致
 #   green canary pre-swap smoke 恒败，见 scripts/__tests__/bluegreen-temp-port-collision.test.sh)
 #   / TARGET_VERSION(必填，镜像 tag) / HEALTH_TIMEOUT(默认 60)
 #   GREEN_RUN_ARGS(可选，起 green 的额外 docker run 参数：env/mounts 等)
