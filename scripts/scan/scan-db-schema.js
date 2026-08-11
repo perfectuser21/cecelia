@@ -5,11 +5,24 @@ const { execSync } = require('child_process');
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://localhost/cecelia' });
 const REPO_ROOT = require('path').resolve(__dirname, '../..');
-const SCANNER_VERSION = '2.0.0'; // 刀0
+const SCANNER_VERSION = 'db-schema-v2';
 
-function getGitSha(dir) {
+function readGitRevision(dir) {
   try { return execSync('git rev-parse HEAD', { cwd: dir, encoding: 'utf8', timeout: 5000 }).trim(); }
-  catch (_) { return null; }
+  catch { return null; }
+}
+
+async function replaceFactSnapshot(pool, kind, { repo, sourceRevision, scannerVersion }) {
+  await pool.query(
+    `INSERT INTO fact_snapshot_headers (kind, repo, source_revision, scanner_version, scanned_at, row_count)
+     VALUES ($1, $2, $3, $4, NOW(), (SELECT COUNT(*)::int FROM db_schema_registry WHERE repo = $2))
+     ON CONFLICT (kind, repo) DO UPDATE
+       SET source_revision = EXCLUDED.source_revision,
+           scanner_version = EXCLUDED.scanner_version,
+           scanned_at = EXCLUDED.scanned_at,
+           row_count = EXCLUDED.row_count`,
+    [kind, repo, sourceRevision, scannerVersion],
+  );
 }
 
 const CECELIA_TABLES = new Set([
@@ -20,7 +33,7 @@ const CECELIA_TABLES = new Set([
 ]);
 
 async function main() {
-  const sourceRevision = getGitSha(REPO_ROOT);
+  const sourceRevision = readGitRevision(REPO_ROOT);
   try {
     const { rows: tables } = await pool.query(
       `SELECT table_name FROM information_schema.tables
@@ -82,6 +95,11 @@ async function main() {
     const { rows: [{ cnt }] } = await pool.query(
       'SELECT COUNT(*)::int AS cnt FROM db_schema_registry',
     );
+    await replaceFactSnapshot(pool, 'db', {
+      repo: 'cecelia',
+      sourceRevision,
+      scannerVersion: SCANNER_VERSION,
+    });
     console.log(`db_schema_registry 填充完成，共 ${cnt} 条 revision=${sourceRevision?.slice(0,8) ?? 'unknown'}`);
   } finally {
     await pool.end();

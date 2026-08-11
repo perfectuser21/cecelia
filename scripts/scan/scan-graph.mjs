@@ -13,13 +13,13 @@ import { extractSpawnEdges, extractHttpEdges } from '../../packages/brain/src/li
 import { replaceRepoEdges } from '../../packages/brain/src/lib/graph-store.js';
 import { computeFreshness } from '../../packages/brain/src/lib/registry-freshness.js';
 
-const SCANNER_VERSION = '2.0.0'; // 刀0: 新增 source_revision 支持
+const SCANNER_VERSION = 'graph-v3';
 
 /** 获取指定路径的 git HEAD SHA（失败时返回 null） */
-function getGitSha(repoRoot) {
+function readGitRevision(repoRoot) {
   try {
     return execSync('git rev-parse HEAD', { cwd: repoRoot, encoding: 'utf8', timeout: 5000 }).trim();
-  } catch (_) {
+  } catch {
     return null;
   }
 }
@@ -121,7 +121,7 @@ export async function scanRepo(repo, pool) {
         }
       }
     } catch (cruiseErr) {
-      console.warn(`WARN: repo=${repo.name} dependency-cruiser 失败: ${cruiseErr.message}，跳过 import 边`);
+      console.warn(`WARN: repo=${repo.name} dependency-cruiser 失败: ${cruiseErr.message}`);
     }
 
     // 2) spawn/http 边：walk + 纯抽取器
@@ -154,7 +154,7 @@ export async function scanRepo(repo, pool) {
     });
 
     // 4) 获取 source_revision（刀0：source_revision 必须来自 git SHA，禁止用 mtime）
-    const sourceRevision = getGitSha(repo.root);
+    const sourceRevision = readGitRevision(repo.root);
 
     // 5) 全量替换写库（I-1: BEGIN;DELETE;INSERT;COMMIT），携带 revision 信息
     const { inserted } = await replaceRepoEdges(pool, repo.name, deduped, {
