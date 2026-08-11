@@ -40,7 +40,7 @@ const CANONICAL_BASELINE = Object.freeze({
     orbstack: '2.2.1',
     worker_protocol: 'kernel-harness/v1',
     worker_contract: 'fleet-node-health/v1',
-    worker: '1.272.4',
+    worker: '1.272.5',
     runner: 'cecelia-runner/v1',
     git: '2.39.5',
     node: '25.8.0',

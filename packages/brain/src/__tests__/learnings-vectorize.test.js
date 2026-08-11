@@ -465,9 +465,10 @@ describe('selfcheck schema version', () => {
     // 393 = GP 胶水参数化（golden_paths.base_repo + target_environment 两可空列），故推进地板到 393。
     // 402 = immutable Universal Map Manifest versions。
     // 403 = 事实池 source_revision + scanner_version + repo 字段补齐；
-    // 404 = Universal Map projection runs/nodes/edges 三派生表。
+    // 404 = Universal Map projection compatibility placeholder；
     // 405 = rebuildable Universal Map Projection core。
-    // 406 = Harness attempt account_exhausted callback control class。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('406');
+    // 406 = Harness attempt account_exhausted callback control class；
+    // 407 = explicit Universal Map repo adapters（406 已由 account_exhausted migration 占用）。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('407');
   });
 });
