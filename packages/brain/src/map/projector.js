@@ -28,8 +28,12 @@ function computeProjectionDigest(nodes, edges, manifestDigest, factRevisions) {
   const payload = {
     manifest_digest: manifestDigest,
     fact_revisions: factRevisions,
-    nodes: nodes.map((n) => ({ id: n.node_id, type: n.node_type, key: n.node_key })).sort((a, b) => a.id.localeCompare(b.id)),
-    edges: edges.map((e) => ({ id: e.edge_id, type: e.edge_type, key: e.edge_key })).sort((a, b) => a.id.localeCompare(b.id)),
+    nodes: nodes
+      .map((n) => ({ id: n.node_id, type: n.node_type, key: n.node_key }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    edges: edges
+      .map((e) => ({ id: e.edge_id, type: e.edge_type, key: e.edge_key }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
   };
   return crypto.createHash('sha256').update(JSON.stringify(payload), 'utf8').digest('hex');
 }
@@ -52,8 +56,8 @@ export function buildStructuralProjection(manifest, scopeKey) {
       node_type: nodeType,
       node_key: nodeKey,
       name,
-      attributes: JSON.stringify(attributes),
-      source_refs: JSON.stringify([]),
+      attributes,      // plain object; DB layer serializes
+      source_refs: [],
     });
     nodeIdByKey.set(nodeKey, nodeId);
     return nodeId;
@@ -76,10 +80,12 @@ export function buildStructuralProjection(manifest, scopeKey) {
       edge_id: stableEdgeId(scopeKey, 'contains', edgeKey),
       edge_key: edgeKey,
       edge_type: 'contains',
+      from_key: cap.value_stream_key,
+      to_key: cap.key,
       from_node_id: resolveNodeId(cap.value_stream_key),
       to_node_id: capId,
-      source_refs: JSON.stringify([]),
-      attributes: JSON.stringify({}),
+      source_refs: [],
+      attributes: {},
     });
   }
 
@@ -90,16 +96,19 @@ export function buildStructuralProjection(manifest, scopeKey) {
       edge_id: edgeId,
       edge_key: b.key,
       edge_type: 'hands_off_to',
+      from_key: b.from,
+      to_key: b.to,
       from_node_id: resolveNodeId(b.from),
       to_node_id: resolveNodeId(b.to),
-      source_refs: JSON.stringify([]),
-      attributes: JSON.stringify({ statement: b.statement }),
+      source_refs: [],
+      attributes: { statement: b.statement },
     });
   }
 
   // 4. Cross-cut 节点 + owned_by / serves 边
   for (const cc of manifest.crosscut_pool) {
-    const ccId = registerNode('crosscut', cc.key, cc.name, { owner: cc.owner || null });
+    const ownerState = cc.owner ? 'assigned' : 'unassigned';
+    const ccId = registerNode('crosscut', cc.key, cc.name, { owner: cc.owner || null, owner_state: ownerState });
 
     if (cc.owner) {
       const edgeKey = `${cc.key}_owned_by_${cc.owner}`;
@@ -107,10 +116,12 @@ export function buildStructuralProjection(manifest, scopeKey) {
         edge_id: stableEdgeId(scopeKey, 'owned_by', edgeKey),
         edge_key: edgeKey,
         edge_type: 'owned_by',
+        from_key: cc.key,
+        to_key: cc.owner,
         from_node_id: ccId,
         to_node_id: resolveNodeId(cc.owner),
-        source_refs: JSON.stringify([]),
-        attributes: JSON.stringify({}),
+        source_refs: [],
+        attributes: {},
       });
     }
 
@@ -120,10 +131,12 @@ export function buildStructuralProjection(manifest, scopeKey) {
         edge_id: stableEdgeId(scopeKey, 'serves', edgeKey),
         edge_key: edgeKey,
         edge_type: 'serves',
+        from_key: cc.key,
+        to_key: vsKey,
         from_node_id: ccId,
         to_node_id: resolveNodeId(vsKey),
-        source_refs: JSON.stringify([]),
-        attributes: JSON.stringify({}),
+        source_refs: [],
+        attributes: {},
       });
     }
   }
@@ -193,7 +206,8 @@ export async function runProjection({ manifestId, manifestDigest, scopeKey, mani
            (run_id, node_id, node_type, node_key, name, source_refs, attributes)
          VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
          ON CONFLICT (run_id, node_type, node_key) DO NOTHING`,
-        [runId, n.node_id, n.node_type, n.node_key, n.name, n.source_refs, n.attributes]
+        [runId, n.node_id, n.node_type, n.node_key, n.name,
+         JSON.stringify(n.source_refs), JSON.stringify(n.attributes)]
       );
     }
 
@@ -204,7 +218,8 @@ export async function runProjection({ manifestId, manifestDigest, scopeKey, mani
            (run_id, edge_id, edge_type, edge_key, from_node_id, to_node_id, source_refs, attributes)
          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
          ON CONFLICT (run_id, edge_type, edge_key) DO NOTHING`,
-        [runId, e.edge_id, e.edge_type, e.edge_key, e.from_node_id, e.to_node_id, e.source_refs, e.attributes]
+        [runId, e.edge_id, e.edge_type, e.edge_key, e.from_node_id, e.to_node_id,
+         JSON.stringify(e.source_refs), JSON.stringify(e.attributes)]
       );
     }
 
