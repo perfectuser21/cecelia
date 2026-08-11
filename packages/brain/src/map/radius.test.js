@@ -63,6 +63,13 @@ describe('Impact radius authority boundary', () => {
     expect(scopeForRepo('attacker/cecelia', bindings)).toBeNull();
   });
 
+  it('rejects adversarial slash runs without polynomial-time normalization', () => {
+    const maliciousRepo = `https://github.com/a${'/'.repeat(50_000)}z`;
+    const startedAt = performance.now();
+    expect(scopeForRepo(maliciousRepo, 'perfectuser21/cecelia=cecelia')).toBeNull();
+    expect(performance.now() - startedAt).toBeLessThan(250);
+  });
+
   it('does not advertise ZenithJoy before a ZenithJoy projection is deployed', () => {
     expect(scopeForRepo('perfectuser21/zenithjoy-workspace')).toBeNull();
   });

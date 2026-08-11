@@ -18,6 +18,14 @@ const MAX_PATH_LENGTH = 1024;
 const MAX_TOTAL_PATH_BYTES = 128 * 1024;
 const MAX_CAPABILITY_IDS = 256;
 
+function trimOuterSlashes(value) {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === 47) start += 1;
+  while (end > start && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(start, end);
+}
+
 export class MapRadiusError extends Error {
   constructor(code, message, httpStatus = 500) {
     super(message);
@@ -33,14 +41,14 @@ function normalizeRepoIdentity(value) {
   if (raw.includes('://')) {
     try {
       const url = new URL(raw);
-      const path = url.pathname.replace(/^\/+|\/+$/g, '').toLowerCase();
+      const path = trimOuterSlashes(url.pathname).toLowerCase();
       return url.hostname.toLowerCase() === 'github.com'
         ? path
         : `${url.hostname.toLowerCase()}/${path}`;
     } catch { return null; }
   }
   const githubPath = raw.match(/^github\.com[/:](.+)$/i)?.[1];
-  const normalized = (githubPath ?? raw).replace(/^\/+|\/+$/g, '').toLowerCase();
+  const normalized = trimOuterSlashes(githubPath ?? raw).toLowerCase();
   return /^[a-z0-9_.-]+(?:\/[a-z0-9_.-]+)?$/.test(normalized) ? normalized : null;
 }
 

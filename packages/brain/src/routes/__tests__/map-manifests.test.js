@@ -47,6 +47,26 @@ describe('Map manifest 写入口鉴权', () => {
       else process.env.CECELIA_INTERNAL_TOKEN = prior;
     }
   });
+
+  it('限制同一来源一分钟内的 manifest 请求数量', async () => {
+    const services = {
+      validate: vi.fn(() => ({ valid: true, errors: [], manifest: loadManifest() })),
+      submit: vi.fn(),
+      activate: vi.fn(),
+    };
+    const { app } = createApp({ services });
+
+    for (let requestNumber = 1; requestNumber <= 300; requestNumber += 1) {
+      await request(app)
+        .post('/api/brain/map/manifests/validate')
+        .send(loadManifest())
+        .expect(200);
+    }
+    await request(app)
+      .post('/api/brain/map/manifests/validate')
+      .send(loadManifest())
+      .expect(429);
+  });
 });
 
 describe('POST /api/brain/map/manifests/validate', () => {

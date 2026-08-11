@@ -6,7 +6,7 @@
 #
 # 环境变量合同：
 #   NODE_BIN           — 直接指定 node 可执行路径（优先级最高）
-#   NODE_FALLBACK_PATHS — 冒号分隔的 node 候选绝对路径（不含 $HOME）
+#   NODE_FALLBACK_PATHS — 冒号分隔的 node 候选绝对路径（不含 ${HOME}）
 #   SCAN_SCRIPTS       — 空白分隔的 scanner 文件名列表（相对于 scripts/scan/）；
 #                        未设置 = 默认四个；设置为空白 = exit 2
 #   SKIP_GIT_PULL      — 非空时跳过 git pull（仍校验 clean main 与 exact SHA）
@@ -39,7 +39,7 @@ fi
 
 echo "=== registry photo-layer scan $(date '+%F %T %Z') ==="
 
-# 2. 确定 node 可执行路径（不依赖 $HOME）
+# 2. 确定 node 可执行路径（不依赖 ${HOME}）
 if [[ -z "${NODE_BIN:-}" ]]; then
   NODE_BIN=""
   if [[ -n "${NODE_FALLBACK_PATHS:-}" ]]; then
