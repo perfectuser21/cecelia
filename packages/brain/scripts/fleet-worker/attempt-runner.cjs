@@ -561,16 +561,20 @@ function createDockerAdapter({
         '--mount',
         runtimeMount,
         ...claudeConfigMountArgs,
+        // uid/gid 5999 与 docker/cecelia-runner/Dockerfile 钉死的 cecelia 账户同源
+        // （08-11 实证：useradd -r 动态分配曾被 webkit playwright 系统依赖挤占，
+        // cecelia UID 漂移 999→997，非 evaluator 角色无 --user root 可自愈，凭据
+        // 目录属主对不上，GitHub 凭据 FIFO 写入失败，本机 harness 派发瘫痪）。
         ...(isCodex
           ? [
               '--tmpfs',
-              '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700,uid=999,gid=999',
+              '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700,uid=5999,gid=5999',
             ]
           : []),
         ...(needsGitHubCredential
           ? [
               '--tmpfs',
-              '/home/cecelia/.config/gh:rw,noexec,nosuid,nodev,mode=0700,uid=999,gid=999',
+              '/home/cecelia/.config/gh:rw,noexec,nosuid,nodev,mode=0700,uid=5999,gid=5999',
             ]
           : []),
         '--add-host',

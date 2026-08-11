@@ -8,16 +8,24 @@
 
 
 
-**Brain 版本**: 1.272.13
+**Brain 版本**: 1.272.14
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.13 — Evaluator Workspace Dependencies
+## Brain 1.272.14 — Evaluator Workspace Dependencies
 
 - Harness Evaluator 与 proposer/reviewer 使用同一条 provider 无关的 `runtime_resources.node_deps=true` 契约，Fleet checkout 后会先执行受限的 `npm ci`，再让 Claude Code、Codex 或 Grok 执行仓库验收命令。
 - 修复真实 Evaluator Attempt 在 Dashboard 深链已通过 WebKit 的情况下，仍因工作区缺少 `vitest/config` 而误判失败的问题；回归测试永久覆盖 Evaluator TaskBundle 的依赖声明。
+
+---
+
+## Brain 1.272.13 — Cecelia Runner UID Pin
+
+- 1.272.11 的 canonical Runner 重建仍继承了 `useradd -r` 动态分配 `cecelia` 账户 UID/GID 的老问题——webkit playwright 系统依赖挤占，UID 从历史值 999 漂移到 997，非 evaluator 角色容器无 `--user root` 可自愈，`.codex`/`.config/gh` 凭据 tmpfs 挂载（worker 侧硬编码 uid=999,gid=999）属主对不上，GitHub 凭据 FIFO 写入失败，本机 harness 派发 9 连尸。
+- Dockerfile 显式钉死 `cecelia` UID/GID=5999（不选 999：本地构建实测该基座已被 `systemd-journal` 组占用 GID 999），worker 两处硬编码同步，镜像重建为 `sha256:3ac5b30e0681d545f880386a9645f22850e7f047dcae7444c7ce61c98bcf50b5`，digest 全仓九处 pin 一次性同步。
+- `canonical-pin-consistency.test.sh` 互锁校验九处 pin 点，防未来再漏改任何一处。
 
 ---
 
