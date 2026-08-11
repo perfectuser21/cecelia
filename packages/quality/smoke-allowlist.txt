@@ -36,6 +36,7 @@ circuit-breaker-persist-smoke.sh
 circuit-breaker-reset-smoke.sh
 claude-headed-dispatch-smoke.sh
 cockpit-route-wire-smoke.sh
+coding-route-kernel-smoke.sh
 codex-cred-isolation-smoke.sh
 codex-gen-description-fix-smoke.sh
 codex-grok-launcher-supervisor-smoke.sh
