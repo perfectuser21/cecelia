@@ -17,8 +17,9 @@ const execFileAsync = promisify(execFile);
 
 // map_projection_runs 同一 scope_key 同一时刻最多一条 active（唯一部分索引，
 // 见 map-summary.js 顶部注释），取最新 activated_at 即为"当前生效"的 run。
-// 拿不到时传 null（跨全部 run 查询），不是 undefined ——undefined 会被
-// getMapNodes/getMapEdges fail-closed 拒绝（见 map-nodes-edges.js）。
+// 查不到时返回 null（不是 undefined）——但注意这个 null 只代表"系统当前没有
+// active run"这一件事，不代表调用方想跨全部历史查询，两者不能混为一谈，见
+// withActiveRun() 的处理。
 async function getActiveRunId(pool) {
   const result = await query(
     pool,
@@ -26,6 +27,27 @@ async function getActiveRunId(pool) {
     []
   );
   return result.rows[0]?.id ?? null;
+}
+
+// map-nodes-edges.js 里 activeRunId 的语义是三态的：undefined=拒绝（调用方没想清楚）、
+// null=调用方有意跨全部历史查询、具体 id=限定某次 run。但 get_map_nodes/get_map_edges
+// 的 inputSchema 根本没有暴露参数让 Notion AI 表达"我要查全部历史"这个意图——所以
+// 唯一会走到 getActiveRunId() 返回 null 的场景，就是"系统当前没有 active projection
+// run"这个退化态，不是有意选择。如果这里直接把 null 转发给 getMapNodes/getMapEdges，
+// 会安静触发它们的"跨全部历史查询"分支，把历史上所有（含已废弃 run 的）节点/边当
+// 正常结果返回给 Notion AI，且没有任何标记说明"这不是当前状态快照"——跟
+// get_map_summary 遇到同样情况时显式返回 projection_status:'none' 的做法不一致。
+// 所以在这一层就把"没有 active run"和"调用方明确要查全部历史"分开处理：前者直接
+// 短路返回空结果 + no_active_run 标记，不真的去查历史数据；后置的 computeFn 参数
+// 只在确实存在 active run 时才会被调用，因此永远不会把 null 传给 getMapNodes/
+// getMapEdges——它们的 undefined fail-closed 分支目前也不会被这里触发到。
+async function withActiveRun(pool, computeFn) {
+  const activeRunId = await getActiveRunId(pool);
+  if (activeRunId === null) {
+    return { rows: [], no_active_run: true };
+  }
+  const result = await computeFn(activeRunId);
+  return { rows: result.rows };
 }
 
 // 真实 get_service_logs readLogFn：跑 `docker logs <container> --tail <N> 2>&1`。
@@ -70,8 +92,11 @@ async function dockerReadLogFn(containerName, tailLines) {
 // （PROD_SHA 来自 curl brain /health，不是读本地 git）。宿主机 checkout 与容器实际
 // 运行版本在部署链路的中间态下可能不一致（构建了镜像但没更新 checkout，或反过来）。
 // getDeploymentStatus() 本身在 Task 7 已实现并测试通过，签名是 execFn 型（git 命令），
-// 本次组装不改它的实现，只如实记录这个风险；更可靠的实现应改为查询 Brain 自己的
-// /health 端点，留给后续任务处理。
+// 本次组装不改它的实现，只如实记录这个风险。不修的原因不是"怕破坏测试"——
+// getDeploymentStatus 是依赖注入设计，换一个 execFn/新增查询源不需要碰现成测试；
+// 真正的原因是更可靠的实现（改查 Brain 自己的 /api/brain/health 拿 git_sha）需要
+// 新建一个前置任务（Task 1-10）未交付的 HTTP 查询模块，超出 Task 11"组装现成模块"
+// 的范围，留给后续任务处理。
 async function gitExecFn(cmd) {
   const [command, ...args] = cmd.split(' ');
   return execFileAsync(command, args);
@@ -109,9 +134,10 @@ function buildMcpServer({ pool, startedAt }) {
       inputSchema: { node_type: z.string(), limit: z.number().optional() },
     },
     async ({ node_type, limit }) => {
-      const activeRunId = await getActiveRunId(pool);
-      const result = await getMapNodes(pool, query, { node_type, limit }, NODE_TYPES, activeRunId);
-      return { content: [{ type: 'text', text: JSON.stringify(result.rows) }] };
+      const payload = await withActiveRun(pool, (activeRunId) =>
+        getMapNodes(pool, query, { node_type, limit }, NODE_TYPES, activeRunId)
+      );
+      return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
     }
   );
 
@@ -122,9 +148,10 @@ function buildMcpServer({ pool, startedAt }) {
       inputSchema: { edge_type: z.string(), limit: z.number().optional() },
     },
     async ({ edge_type, limit }) => {
-      const activeRunId = await getActiveRunId(pool);
-      const result = await getMapEdges(pool, query, { edge_type, limit }, EDGE_TYPES, activeRunId);
-      return { content: [{ type: 'text', text: JSON.stringify(result.rows) }] };
+      const payload = await withActiveRun(pool, (activeRunId) =>
+        getMapEdges(pool, query, { edge_type, limit }, EDGE_TYPES, activeRunId)
+      );
+      return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
     }
   );
 
