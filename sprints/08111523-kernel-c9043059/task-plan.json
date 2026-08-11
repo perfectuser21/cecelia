@@ -1,0 +1,27 @@
+{
+  "initiative_id": "intent:0dfcdf41-3559-4032-8a8e-4be0f8261771:12",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅改 packages/brain orchestrator derive.js 决策逻辑，无 UI / 无远端 agent 协议，local_api 纯函数验收",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "derive 取证死循环双修：recollect 后新 evaluate PASS 必派 judge + guard trigger_sha/pr.head_sha 兜底",
+      "scope": "改 packages/brain/src/orchestrator/derive.js：(1) deriveVerdictChain 规则 4c 前，当存在晚于最新 judge verdict 的 evaluate PASS(按 decisionLog verdict 行 hop 时序、同 currentHeadSha)时走 evaluate_passed_awaiting_judge 派 spawn:judge；(2) evidence_insufficient 防死循环 guard 兜底：observed.trigger_sha 优先、缺失时回退 observed.pr.head_sha 匹配 currentHeadSha。并把两条复现断言 port 进 __tests__/derive.test.js 作永久 CI 回归。不动 gates/dispatcher/execution-contract、decision_log 触发器，不引入轮数上限常量。",
+      "dod": [
+        "[BEHAVIOR] recollect 返回更晚 evaluate PASS → derive action=spawn:judge, reason=evaluate_passed_awaiting_judge",
+        "[BEHAVIOR] recollect 后仍不足(trigger_sha 缺失 pr.head_sha 兜底) → action=wait:human_review, reason=evidence_insufficient_after_recollect, 非第三次 recollect",
+        "[BEHAVIOR] 首次 evidence_insufficient(evaluate 不晚于 judge) → 仍 spawn:evaluator 首次补证(INV-1 不回归)",
+        "[BEHAVIOR] 现有 derive.test.js 全量 95 用例不回归",
+        "[ARTIFACT] tests/derive-recollect-loop.test.ts 双序列断言存在且入 derive.test.js 永久回归"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/__tests__/derive.test.js",
+        "sprints/08111523-kernel-c9043059/tests/derive-recollect-loop.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
