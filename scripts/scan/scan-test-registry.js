@@ -7,11 +7,47 @@ const { execSync } = require('child_process');
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://localhost/cecelia' });
 const REPO_ROOT = path.resolve(__dirname, '../..');
-const SCANNER_VERSION = '2.0.0'; // 刀0
+const SCANNER_VERSION = 'test-registry-v2';
 
-function getGitSha(dir) {
+function readGitRevision(dir) {
   try { return execSync('git rev-parse HEAD', { cwd: dir, encoding: 'utf8', timeout: 5000 }).trim(); }
-  catch (_) { return null; }
+  catch { return null; }
+}
+
+async function replaceFactSnapshot(pool, kind, { repo, sourceRevision, scannerVersion, rows }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`fact-snapshot:test_registry:${repo}`]);
+    await client.query(`DELETE FROM test_registry WHERE repo = $1`, [repo]);
+    for (const f of rows) {
+      await client.query(
+        `INSERT INTO test_registry (file_path, test_count, covered_behaviors, area, test_type, repo, source_revision, scanner_version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (file_path) DO UPDATE
+           SET test_count=$2, covered_behaviors=$3, area=$4, test_type=$5,
+               repo=$6, source_revision=$7, scanner_version=$8,
+               scanned_at=NOW(), updated_at=NOW()`,
+        [f.file_path, f.test_count, f.covered_behaviors, f.area, f.test_type, repo, sourceRevision, scannerVersion],
+      );
+    }
+    await client.query(
+      `INSERT INTO fact_snapshot_headers (kind, repo, source_revision, scanner_version, scanned_at, row_count)
+       VALUES ($1, $2, $3, $4, NOW(), $5)
+       ON CONFLICT (kind, repo) DO UPDATE
+         SET source_revision = EXCLUDED.source_revision,
+             scanner_version = EXCLUDED.scanner_version,
+             scanned_at = EXCLUDED.scanned_at,
+             row_count = EXCLUDED.row_count`,
+      [kind, repo, sourceRevision, scannerVersion, rows.length],
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 const AREA_REPO = { zenithjoy: 'zenithjoy-workspace', cecelia: 'cecelia', unknown: 'cecelia' };
@@ -69,20 +105,14 @@ async function main() {
 
     console.log(`扫描到 ${files.length} 个测试文件`);
 
-    const sourceRevision = getGitSha(REPO_ROOT);
+    const sourceRevision = readGitRevision(REPO_ROOT);
 
-    for (const f of files) {
-      const repoKey = AREA_REPO[f.area] || 'cecelia';
-      await pool.query(
-        `INSERT INTO test_registry (file_path, test_count, covered_behaviors, area, test_type, repo, source_revision, scanner_version)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (file_path) DO UPDATE
-           SET test_count=$2, covered_behaviors=$3, area=$4, test_type=$5,
-               repo=$6, source_revision=$7, scanner_version=$8,
-               scanned_at=NOW(), updated_at=NOW()`,
-        [f.file_path, f.test_count, f.covered_behaviors, f.area, f.test_type, repoKey, sourceRevision, SCANNER_VERSION],
-      );
-    }
+    await replaceFactSnapshot(pool, 'test', {
+      repo: 'cecelia',
+      sourceRevision,
+      scannerVersion: SCANNER_VERSION,
+      rows: files,
+    });
     console.log(`test_registry 填充完成 revision=${sourceRevision?.slice(0,8) ?? 'unknown'}`);
   } finally {
     await pool.end();
