@@ -8,9 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.4
+**Brain 版本**: 1.272.5
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.272.5 — Evaluator WebKit Runtime and Dashboard Loopback
+
+- canonical Runner 固化 Playwright 1.58.0 与 WebKit OS 依赖，受限 UID 共享 `/ms-playwright`，Evaluator 不再因浏览器动态库缺失而无法验证真实页面。
+- Evaluator 容器专属 `localhost:5211` relay 指向宿主 Cecelia Dashboard；Generator/Dev 容器不占用该端口，避免与本地开发服务冲突。
+- canonical Runner digest 更新为 `sha256:6cef182dbec266157f7f2c731eaf596bb99450bb511b55d6526db102234198e3`，Fleet worker pin 同步到 1.272.5；回归合同覆盖 WebKit 安装与 5211 relay。
 
 ---
 
