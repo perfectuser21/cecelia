@@ -45,12 +45,12 @@
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| Migration | `packages/brain/src/__tests__/migration-405-map-projection.test.js` | 三张派生表及 run-scoped FK/active 约束 | migration 405 不存在 |
-| Real schema | `packages/brain/src/__tests__/integration/migration-405-map-projection.integration.test.js` | 真实 PostgreSQL 约束生效 | 三张表不存在 |
-| Topology | `packages/brain/src/lib/__tests__/map-projector.test.js` | 2×11×2×7、Boundary/Cross-cut/Prerequisite 规则 | projector 模块不存在 |
-| Determinism | `packages/brain/src/lib/__tests__/map-projector.test.js` | 稳定 ID 与 projection digest 可重复 | 缺 stable identity/digest |
-| Atomicity | `packages/brain/src/__tests__/integration/map-projection-store.integration.test.js` | 激活、替换、失败回滚、无半张图 | projection store 不存在 |
-| Activation | `packages/brain/src/lib/__tests__/map-manifest-store.test.js` | 默认激活调用真实 projector，不再 503 | 默认 projector unavailable |
+| Migration | `packages/brain/src/__tests__/migration-405-map-projection.test.js` | 建立 run、run-scoped 引用 | migration 405 不存在 |
+| Real schema | `packages/brain/src/__tests__/integration/migration-405-map-projection.integration.test.js` | 三张表存在、composite FK、每 scope 最多一个 active run | 三张表不存在 |
+| Topology | `packages/brain/src/lib/__tests__/map-projector.test.js` | 一次完整输入精确生成、Boundary 只生成、Cross-cut 生成、shared prerequisite 不适用 | projector 模块不存在 |
+| Determinism | `packages/brain/src/lib/__tests__/map-projector.test.js` | stable ID 只由、相同输入和 fact revisions 重建 | 缺 stable identity/digest |
+| Atomicity | `packages/brain/src/__tests__/integration/map-projection-store.integration.test.js` | 默认 Manifest 激活一次原子生成、旧 manifest 缓存不能、边写入失败时 Manifest | projection store 不存在 |
+| Activation | `packages/brain/src/lib/__tests__/map-manifest-store.test.js` | 默认 projector 写完整 projection 后才切 active | 默认 projector unavailable |
 | Smoke | `packages/brain/scripts/smoke/map-projection-smoke.sh` | scratch 激活、DB 数量、清空重建 digest | schema/store/projector 未交付 |
 
 ## 验收
