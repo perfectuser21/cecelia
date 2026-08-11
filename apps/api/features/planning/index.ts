@@ -16,6 +16,11 @@ const manifest: FeatureManifest = {
       component: 'BrainDashboard',
       navItem: { label: 'Brain', icon: 'Brain', group: 'execution', order: 0 },
     },
+    {
+      path: '/map',
+      component: 'MapPage',
+      navItem: { label: '地图', icon: 'Map', group: 'execution', order: 1 },
+    },
     // OKR → 重定向到 GTD
     { path: '/okr', redirect: '/gtd/okr' },
     // OKR 全树视图
@@ -59,6 +64,7 @@ const manifest: FeatureManifest = {
 
   components: {
     BrainDashboard: () => import('./pages/BrainDashboard'),
+    MapPage: () => import('./pages/MapPage'),
     OKRPage: () => import('./pages/OKRPage'),
     OKRTreePage: () => import('./pages/OKRTreePage'),
     Tasks: () => import('./pages/Tasks'),
