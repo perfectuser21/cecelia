@@ -5,6 +5,7 @@ import pg from 'pg';
 
 import { DB_DEFAULTS } from '../../db-config.js';
 import { digestMapManifest } from '../../lib/map-manifest-schema.js';
+import { loadMapImpactRadius } from '../../lib/map-impact-radius.js';
 import { projectMapManifest } from '../../lib/map-projection-store.js';
 import { loadMapNodeStates } from '../../lib/map-state-resolver.js';
 
@@ -27,6 +28,7 @@ const scopeKey = `map-state-itest-${process.pid}-${randomUUID().slice(0, 8)}`;
 const repo = `${scopeKey}-repo`;
 const capabilityKey = `IT_${randomUUID().replaceAll('-', '')}`;
 const testPath = `tests/${randomUUID()}.test.js`;
+const sourcePath = `src/${randomUUID()}.js`;
 const revision = 'a'.repeat(40);
 const now = new Date();
 let client;
@@ -119,6 +121,18 @@ beforeAll(async () => {
      VALUES ('test', $1, $2, 'test-registry-v2', $3, 1)`,
     [repo, revision, now],
   );
+  await client.query(
+    `INSERT INTO graph_edges
+      (repo, src_path, dst_path, edge_type, source_revision, scanner_version, scanned_at)
+     VALUES ($1, $2, $3, 'import', $4, 'graph-v3', $5)`,
+    [repo, testPath, sourcePath, revision, now],
+  );
+  await client.query(
+    `INSERT INTO fact_snapshot_headers
+      (kind, repo, source_revision, scanner_version, scanned_at, row_count)
+     VALUES ('graph', $1, $2, 'graph-v3', $3, 1)`,
+    [repo, revision, now],
+  );
 
   const manifest = structuredClone(fixtureManifest);
   manifest.scope_key = scopeKey;
@@ -201,5 +215,32 @@ describe('Map State Resolver — 真实 PostgreSQL', () => {
     expect(findState(unknown, assertionId)).toMatchObject({
       status: 'unknown', reason_code: 'snapshot_stale',
     });
+  });
+
+  it('真实 graph snapshot 按 repo 回溯到业务节点和必跑断言，Cross-cut radius 非空', async () => {
+    const radius = await loadMapImpactRadius(client, {
+      scopeKey,
+      repo,
+      changedFiles: [sourcePath],
+      now: new Date(now.getTime() + 7000),
+    });
+    expect(radius.freshness).toMatchObject({ status: 'fresh', source_revision: revision });
+    expect(radius.affected_tests).toEqual([testPath]);
+    expect(radius.affected_business_nodes.map(({ node_key }) => node_key)).toEqual(
+      expect.arrayContaining([capabilityKey, featureId]),
+    );
+    expect(radius.must_run_assertions).toEqual([
+      { node_key: assertionId, assertion_ref: testPath },
+    ]);
+
+    const crosscut = await loadMapImpactRadius(client, {
+      scopeKey,
+      repo,
+      startNodeKeys: ['heartbeat_bus'],
+      now: new Date(now.getTime() + 7000),
+    });
+    expect(crosscut.affected_business_nodes.length).toBeGreaterThan(1);
+    expect(crosscut.affected_business_nodes.map(({ node_key }) => node_key))
+      .toContain('heartbeat_bus');
   });
 });
