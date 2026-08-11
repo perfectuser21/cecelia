@@ -1,6 +1,12 @@
 # Brain 模块定义
 
-**版本**: 1.271.8
+**版本**: 1.272.6
+
+## Unified Map API and dashboard authority
+
+- 五个 Map 读面与健康度共享一致性快照、统一 envelope 和查询时状态，不再消费旧 `src/map` 实现。
+- Dashboard 的唯一 `/map` 注册展示三层业务地图、事实锚点与 revision-bound receipt。
+- Schema 地板保持 407；回退到 `1.272.5` 会恢复分裂的 Map 读面和重复页面注册。
 
 ## Universal Map exact anchors and query-time state
 

@@ -8,9 +8,19 @@
 
 
 
-**Brain 版本**: 1.272.6
+**Brain 版本**: 1.272.7
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.272.7 — Unified Map Read Authority
+
+- 整图、节点、影响半径、健康度与未归属事实统一由同一个 Map read service 在只读
+  `REPEATABLE READ` 快照内返回，并携带 Manifest/Projection digest、repo revision 与 freshness。
+- Dashboard `/map` 只消费 Unified Map API，提供 Value Stream → Capability → Assertion/receipt
+  三层下钻；重复旧页面和旧 feature 注册已移除，页面不写历史颜色。
+- Schema 地板保持 407；回退到 `1.272.6` 会恢复分裂读权威与旧 Map 页面。
 
 ---
 
