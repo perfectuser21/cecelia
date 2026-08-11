@@ -51,7 +51,7 @@ Evidence: smoke 连续两次 `ALL PASS`；每次在单事务清空后重建，st
 
 ### [ARTIFACT] D8：Brain 版本、schema floor 与 smoke 基线同步
 
-- [x] Brain=1.271.6、schema floor=405，版本文件同步，projection smoke 登记为 allowlist 必过项。
+- [x] Brain=1.271.7、schema floor=405，版本文件同步，projection smoke 登记为 allowlist 必过项。
 Test: manual:bash -c "node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && grep -Fx map-projection-smoke.sh packages/quality/smoke-allowlist.txt"
 
 Evidence: facts-check、version-sync 与精确 DoD mapping 均 exit 0；审查修复后定向 11 files/63 tests 通过。
