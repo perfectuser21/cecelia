@@ -13,11 +13,10 @@
   Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/map-state-resolver.test.js src/__tests__/integration/map-state-resolver.integration.test.js"
 
 - [ ] 影响半径按 repo 隔离、确定排序，返回受影响业务节点和必跑断言，Cross-cut radius 非空。
-  Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/map-impact-radius.test.js src/__tests__/integration/map-impact-radius.integration.test.js"
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/map-impact-radius.test.js src/__tests__/integration/map-state-resolver.integration.test.js"
 
 - [ ] scratch 真验火证明 PASS→green、删除测试重扫→gray、当前 revision FAIL→red、快照陈旧→unknown，且 fixture 全清零。
   Test: manual:bash -c "DATABASE_URL=postgresql://localhost/cecelia_scratch bash packages/brain/scripts/smoke/map-anchor-state-smoke.sh"
 
 - [ ] 三项 DevGate、版本同步、smoke allowlist、全量 Brain 测试和真实 PostgreSQL integration 全绿。
   Test: manual:bash -c "node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs sprints/08111325-universal-map-knife3/contract-dod.md && grep -Fx map-anchor-state-smoke.sh packages/quality/smoke-allowlist.txt"
-
