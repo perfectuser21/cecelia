@@ -12,6 +12,7 @@
  */
 
 const path = require('path');
+const { brainAuthHeaders } = require('./lib/brain-auth-headers.cjs');
 
 const PATH_TO_SUB_AREA = [
   [/packages\/brain/, 'brain'],
@@ -62,7 +63,7 @@ async function main() {
 
   const resp = await fetch(`${BRAIN_URL}/api/brain/issues`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...brainAuthHeaders() },
     body: JSON.stringify({
       title: args.title,
       priority,

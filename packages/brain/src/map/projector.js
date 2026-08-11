@@ -76,7 +76,12 @@ export function buildStructuralProjection(manifest, scopeKey) {
 
   // 2. Capability 节点 + contains 边
   for (const cap of manifest.capabilities) {
-    const capId = registerNode('capability', cap.key, cap.name, { value_stream_key: cap.value_stream_key, order: cap.order }, cap.aliases);
+    const capId = registerNode('capability', cap.key, cap.name, {
+      value_stream_key: cap.value_stream_key,
+      order: cap.order,
+      path_prefixes: cap.path_prefixes ?? [],
+      exact_paths: cap.exact_paths ?? [],
+    }, cap.aliases);
     const edgeKey = `${cap.value_stream_key}_contains_${cap.key}`;
     edges.push({
       edge_id: stableEdgeId(scopeKey, 'contains', edgeKey),
@@ -157,14 +162,13 @@ export function buildStructuralProjection(manifest, scopeKey) {
 /**
  * 获取各 repo 的当前 git HEAD SHA（用于事实版本记录）
  */
-async function getFactRevisions(scopeKey) {
+async function getFactRevisions(scopeKey, queryable = pool) {
   const revisions = {};
   try {
-    const { rows } = await pool.query(
-      `SELECT DISTINCT repo, MAX(source_revision) AS revision
-       FROM graph_edges
-       WHERE repo = $1 AND source_revision IS NOT NULL
-       GROUP BY repo`,
+    const { rows } = await queryable.query(
+      `SELECT repo, source_revision AS revision
+         FROM fact_snapshot_headers
+        WHERE kind = 'graph' AND repo = $1`,
       [scopeKey]
     );
     for (const r of rows) {
@@ -182,14 +186,23 @@ async function getFactRevisions(scopeKey) {
  * @param {{ manifestId, manifestDigest, scopeKey, manifest }} opts
  * @returns {{ runId, projectionDigest, nodeCount, edgeCount }}
  */
-export async function runProjection({ manifestId, manifestDigest, scopeKey, manifest }) {
-  const factRevisions = await getFactRevisions(scopeKey);
+export async function runProjection({
+  manifestId,
+  manifestDigest,
+  scopeKey,
+  manifest,
+  client: transactionClient = null,
+  factRevisions: suppliedFactRevisions = null,
+}) {
+  const factRevisions = suppliedFactRevisions
+    ?? await getFactRevisions(scopeKey, transactionClient ?? pool);
   const { nodes, edges } = buildStructuralProjection(manifest, scopeKey);
   const projectionDigest = computeProjectionDigest(nodes, edges, manifestDigest, factRevisions);
 
-  const client = await pool.connect();
+  const ownsTransaction = !transactionClient;
+  const client = transactionClient ?? await pool.connect();
   try {
-    await client.query('BEGIN');
+    if (ownsTransaction) await client.query('BEGIN');
 
     // 创建投影 run 记录（migration 405: manifest_version_id, 'building' status）
     const { rows: runRows } = await client.query(
@@ -235,19 +248,15 @@ export async function runProjection({ manifestId, manifestDigest, scopeKey, mani
       [runId]
     );
 
-    await client.query('COMMIT');
+    if (ownsTransaction) await client.query('COMMIT');
     return { runId, projectionDigest, nodeCount: nodes.length, edgeCount: edges.length };
   } catch (err) {
-    try { await client.query('ROLLBACK'); } catch {}
-    try {
-      await pool.query(
-        `UPDATE map_projection_runs SET status = 'failed', error = $1::jsonb WHERE id = $2`,
-        [JSON.stringify({ message: err.message }), err.runId]
-      );
-    } catch {}
+    if (ownsTransaction) {
+      try { await client.query('ROLLBACK'); } catch {}
+    }
     throw err;
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
 
@@ -264,6 +273,28 @@ export async function getActiveProjection(scopeKey) {
      WHERE r.scope_key = $1 AND r.status = 'active'
      LIMIT 1`,
     [scopeKey]
+  );
+  return rows[0] || null;
+}
+
+/** 获取精确事实 revision 对应的 active/superseded 不可变投影。 */
+export async function getProjectionForRevision(scopeKey, revision, {
+  manifestDigest = null,
+  projectionDigest = null,
+} = {}) {
+  const { rows } = await pool.query(
+    `SELECT r.id, r.scope_key, r.manifest_version_id, r.manifest_digest, r.fact_revisions,
+            r.projector_version, r.status, r.projection_digest,
+            r.created_at, r.activated_at
+       FROM map_projection_runs AS r
+      WHERE r.scope_key = $1
+        AND r.status IN ('active', 'superseded')
+        AND r.fact_revisions->>$1 = $2
+        AND ($3::text IS NULL OR r.manifest_digest = $3)
+        AND ($4::text IS NULL OR r.projection_digest = $4)
+      ORDER BY r.created_at DESC
+      LIMIT 1`,
+    [scopeKey, revision, manifestDigest, projectionDigest],
   );
   return rows[0] || null;
 }

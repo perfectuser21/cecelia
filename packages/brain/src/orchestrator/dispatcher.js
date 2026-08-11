@@ -279,7 +279,7 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   }
   // 运行时依赖预装（design doc §运行时依赖，r17 实证：fleet workspace clone
   // 后不装依赖，proposer 的 product-map:check 因缺 ajv 每轮红——ajv 本在
-  // workspace package.json）。dispatcher 对 proposer/reviewer 默认开启
+  // workspace package.json）。dispatcher 对 proposer/reviewer/evaluator 默认开启
   // node_deps，让 workspace-manager checkout 后自动 npm ci。两个字段都显式
   // 写出（而不是只写 node_deps），方便 fleet 侧的 request/bundle 一致性校验
   // 稳定匹配（attempt-runner.cjs taskExecutionContract）。
@@ -293,7 +293,7 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   // 会话持久卷 + 真实错误文案验证过的降级启发式 + 毒会话熔断，这些都还没
   // 有，独立立项后续再做；当前"案卷（case_file）全量历轮反馈"就是唯一的
   // 跨轮记忆机制，读案卷本身不是"降级"，是本期设计好的常态路径。
-  if (['proposer', 'reviewer'].includes(spec.role)) {
+  if (['proposer', 'reviewer', 'evaluator'].includes(spec.role)) {
     common.runtime_resources = { postgres: false, node_deps: true };
   }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
@@ -316,6 +316,12 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     common.pr_head_sha = observed.pr?.head_sha ?? null;
     if (payload.github_evidence_request) {
       common.github_evidence_request = payload.github_evidence_request;
+    }
+    if (ctx.impactGateReceipt) {
+      common.impact_gate = ctx.impactGateReceipt;
+      if (Array.isArray(ctx.impactGateReceipt.required_assertions)) {
+        common.required_assertions = ctx.impactGateReceipt.required_assertions;
+      }
     }
   }
   if (spec.role === 'judge') {
@@ -747,7 +753,7 @@ export function createDispatcher(deps) {
           ...bundle.inputs,
           ...(capabilityRequirements.postgres
             ? {
-                // node_deps 可能已经被 buildInputs 对 proposer/reviewer 默认置
+                // node_deps 可能已经被 buildInputs 对仓库验证角色默认置
                 // true（见上）——这里只加 postgres:true，不能整体替换掉
                 // runtime_resources，否则会把刚设好的 node_deps 冲掉。
                 runtime_resources: {
@@ -1095,6 +1101,15 @@ export function createDetachedLauncher({
       if (attempt.role === 'evaluator' && bundle.inputs.pr_head_sha) {
         roleEnv.PR_HEAD_SHA = String(bundle.inputs.pr_head_sha);
       }
+      if (
+        attempt.role === 'evaluator'
+        && Array.isArray(bundle.inputs.required_assertions)
+        && bundle.inputs.required_assertions.length > 0
+      ) {
+        roleEnv.HARNESS_REQUIRED_ASSERTIONS_JSON = JSON.stringify(
+          bundle.inputs.required_assertions,
+        );
+      }
       const extraMounts = [];
       if (spec.provider === 'codex' && providerEnv.CODEX_HOME) {
         extraMounts.push(`${providerEnv.CODEX_HOME}:/home/cecelia/.codex:rw`);
@@ -1143,6 +1158,7 @@ export function createDetachedLauncher({
             ...providerEnv,
             ...roleEnv,
             CECELIA_EXECUTOR: spec.provider,
+            CECELIA_MACHINE_ID: machineId,
             CECELIA_TASK_ID: bundle.inputs.task_id,
             HARNESS_TASK_ID: bundle.inputs.task_id,
             HARNESS_NODE: attempt.role,

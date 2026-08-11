@@ -2,7 +2,7 @@
  * Route tests: /api/brain/goals (task-goals.js)
  * 已迁移到新 OKR 表：objectives + key_results
  */
-import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
@@ -11,11 +11,24 @@ vi.mock('../../db.js', () => ({ default: mockPool }));
 
 // isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
 let router;
+let app;
 
 beforeAll(async () => {
   vi.resetModules();
   const mod = await import('../../routes/task-goals.js');
   router = mod.default;
+  // 全量套件并发运行时，为每个 request(app) 反复创建临时监听 socket 会偶发
+  // ECONNRESET。文件级复用一个真实 server，同时保留逐例 mock 隔离。
+  app = await new Promise((resolve) => {
+    const server = createApp().listen(0, () => resolve(server));
+  });
+});
+
+afterAll(async () => {
+  if (!app) return;
+  await new Promise((resolve, reject) => {
+    app.close((error) => (error ? reject(error) : resolve()));
+  });
 });
 
 function createApp() {
@@ -26,11 +39,10 @@ function createApp() {
 }
 
 describe('task-goals routes', () => {
-  let app;
-
   beforeEach(() => {
-    vi.clearAllMocks();
-    app = createApp();
+    // clearAllMocks 只清调用记录，不清未消费的 mockResolvedValueOnce 队列；
+    // 前一例若在查询前断开，旧返回值会串进后一例并放大为级联失败。
+    mockPool.query.mockReset();
   });
 
   describe('GET /goals', () => {

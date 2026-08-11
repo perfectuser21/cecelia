@@ -86,11 +86,11 @@ const taskBundleSchema = z.object({
     runtime_resources: z.object({
       // F8（复审）：postgres 恢复原必填语义——放宽成 optional 没有必要，
       // 所有写 runtime_resources 的调用方（preflightGate postgres 分支、
-      // dispatcher 对 proposer/reviewer 的默认注入）都会显式给出这个字段。
+      // dispatcher 对 proposer/reviewer/evaluator 的默认注入）都会显式给出这个字段。
       postgres: z.boolean(),
       // node_deps（案卷式 GAN 运行时依赖，r17 实证 ajv 缺失）：fleet workspace
       // clone 后是否自动 npm ci。可选——只有 dispatcher 显式声明的角色（当前
-      // proposer/reviewer）才会带这个字段，其余角色沿用旧的 {postgres} 独占形状。
+      // proposer/reviewer/evaluator）才会带这个字段，其余角色沿用旧的 {postgres} 独占形状。
       node_deps: z.boolean().optional(),
     }).strict().optional(),
     artifacts: z.array(z.unknown()).default([]),

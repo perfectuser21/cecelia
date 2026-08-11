@@ -24,12 +24,16 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BRAIN_DIR="$ROOT_DIR/packages/brain"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/internal-auth-token.sh"
 STAGING_PORT=5222
 STAGING_CONTAINER="cecelia-node-brain-staging"
 STAGING_DB="cecelia_staging"
 
 VERSION=$(node -e "console.log(require('$BRAIN_DIR/package.json').version)")
 ENV_REGION="${ENV_REGION:-us}"
+CECELIA_INTERNAL_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:-/Users/administrator/.credentials/cecelia-internal.env}"
+export CECELIA_INTERNAL_ENV_FILE
 
 DRY_RUN=false
 for arg in "$@"; do
@@ -80,6 +84,12 @@ if [[ ! -f "$ROOT_DIR/.env.staging" ]]; then
         echo "STAGING_SKIP_REASON=no_env"
         exit 0
     fi
+fi
+
+if [[ "$DRY_RUN" == true ]]; then
+    echo "[dry-run] ensure_cecelia_internal_token $CECELIA_INTERNAL_ENV_FILE"
+else
+    ensure_cecelia_internal_token "$CECELIA_INTERNAL_ENV_FILE" || exit 1
 fi
 
 # ── 检查镜像是否存在（复用 production 同版本镜像，不重新 build）──────────────

@@ -7,7 +7,7 @@
 # Case 4: POST /journey_features 出生即焊校验（status非planned强制带锚点）
 # Case 5: apply-anchors.mjs 三个导出函数存在
 # Case 6: anchor-sentinel-check.mjs 读 anchor-coverage 端点
-# Case 7: harness-report.mjs 含 S6b 锚点自动焊逻辑
+# Case 7: Brain 可信 callback 含 Feature 状态与锚点自动焊逻辑
 # Case 8: (真环境，Brain 可达时) 30 条批准锚点已落库校验（unit_test_path 字段，不依赖本次待部署的 workflow_ref）
 set -euo pipefail
 
@@ -17,7 +17,8 @@ JOURNEYS_ROUTE="$BRAIN_ROOT/src/routes/journeys.js"
 GRAPH_ROUTE="$BRAIN_ROOT/src/routes/graph.js"
 APPLY_ANCHORS="$BRAIN_ROOT/scripts/apply-anchors.mjs"
 SENTINEL_CHECK="$BRAIN_ROOT/scripts/anchor-sentinel-check.mjs"
-HARNESS_REPORT="$BRAIN_ROOT/scripts/harness-report.mjs"
+HARNESS_REPORT_WRITEBACK="$BRAIN_ROOT/src/lib/harness-report-writeback.js"
+EXECUTION_ROUTE="$BRAIN_ROOT/src/routes/execution.js"
 
 echo "[smoke:anchor-backfill] Case 1: PATCH /journey_features/:id 支持 workflow_ref"
 node -e "
@@ -68,12 +69,17 @@ if (!/\/api\/brain\/graph\/anchor-coverage/.test(js)) throw new Error('Case 6 FA
 console.log('  PASS: anchor-sentinel-check.mjs 已接线 anchor-coverage');
 "
 
-echo "[smoke:anchor-backfill] Case 7: harness-report.mjs 含 S6b 锚点自动焊"
+echo "[smoke:anchor-backfill] Case 7: Brain 可信 callback 含 Feature 状态与锚点自动焊"
 node -e "
-const js = require('fs').readFileSync('$HARNESS_REPORT', 'utf8');
-if (!/S6b/.test(js)) throw new Error('Case 7 FAIL: 未找到 S6b 标记');
-if (!/getPrChangedFiles/.test(js)) throw new Error('Case 7 FAIL: 未找到 getPrChangedFiles 函数');
-console.log('  PASS: harness-report.mjs 含 S6b 逻辑');
+const fs = require('fs');
+const writeback = fs.readFileSync('$HARNESS_REPORT_WRITEBACK', 'utf8');
+const execution = fs.readFileSync('$EXECUTION_ROUTE', 'utf8');
+if (!/export async function finalizeHarnessReportFeature/.test(writeback)) throw new Error('Case 7 FAIL: 缺少可信 Feature 回写函数');
+if (!/readPullRequestFiles/.test(writeback)) throw new Error('Case 7 FAIL: 缺少 PR changed files 读取');
+if (!/status = 'done'/.test(writeback) || !/unit_test_path = CASE/.test(writeback)) throw new Error('Case 7 FAIL: 状态或锚点未在同一可信写回中');
+if (!/import \{ finalizeHarnessReportFeature \}/.test(execution)) throw new Error('Case 7 FAIL: execution callback 未导入可信写回');
+if (!/await finalizeHarnessReportFeature\(pool,/.test(execution)) throw new Error('Case 7 FAIL: execution callback 未调用可信写回');
+console.log('  PASS: Brain callback 可信写回 Feature 状态与锚点');
 "
 
 echo "[smoke:anchor-backfill] Case 8: 真环境 — 已落库锚点校验（Brain 可达时）"

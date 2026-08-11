@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 
 import { validateMapManifest } from '../lib/map-manifest-schema.js';
 import {
@@ -6,6 +7,7 @@ import {
   activateMapManifest,
   submitMapManifest,
 } from '../lib/map-manifest-store.js';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 
 function sendError(res, error) {
   if (error instanceof MapManifestError) {
@@ -29,6 +31,13 @@ function sendError(res, error) {
 
 export function createMapManifestRouter({ pool, projector, services } = {}) {
   const router = Router();
+  router.use(rateLimit({
+    windowMs: 60_000,
+    limit: 300,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+  }));
+  router.use(internalAuthOrLoopback);
   const validate = services?.validate ?? validateMapManifest;
   const submit = services?.submit ?? submitMapManifest;
   const activate = services?.activate ?? activateMapManifest;

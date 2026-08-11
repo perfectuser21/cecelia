@@ -22,30 +22,30 @@ describe('computeFreshness', () => {
     expect(f.warning).toContain('run-all-scans');
   });
 
-  it('完整 metadata 14min 前 → fresh，并传播 provenance', () => {
-    const f = computeFreshness(metadata(14), now);
+  it('完整 metadata 9min 前 → fresh，并传播 provenance', () => {
+    const f = computeFreshness(metadata(9), now);
     expect(f).toMatchObject({
       status: 'fresh', reason_code: null, stale: false,
       age_hours: 0.2, source_revision: sha40, scanner_version: 'api-registry-v2',
-      latest_scan: '2026-07-18T11:46:00.000Z', last_success_at: '2026-07-18T11:46:00.000Z',
+      latest_scan: '2026-07-18T11:51:00.000Z', last_success_at: '2026-07-18T11:51:00.000Z',
       warning: null,
     });
   });
 
-  it('完整 metadata 16min 前 → unknown/snapshot_stale', () => {
-    const f = computeFreshness(metadata(16), now);
+  it('完整 metadata 11min 前 → unknown/snapshot_stale', () => {
+    const f = computeFreshness(metadata(11), now);
     expect(f).toMatchObject({
       status: 'unknown', reason_code: 'snapshot_stale', stale: true,
-      last_success_at: '2026-07-18T11:44:00.000Z', source_revision: sha40,
+      last_success_at: '2026-07-18T11:49:00.000Z', source_revision: sha40,
       scanner_version: 'api-registry-v2',
     });
-    expect(f.warning).toContain('15min');
+    expect(f.warning).toContain('10min');
   });
 
-  it('恰好 15min 仍 fresh，超过 1ms 即 unknown/snapshot_stale', () => {
-    const exact = computeFreshness(metadata(15), now);
-    const over = computeFreshness(metadata(15, {
-      scanned_at: new Date(now.getTime() - 15 * 60_000 - 1),
+  it('恰好 10min 仍 fresh，超过 1ms 即 unknown/snapshot_stale', () => {
+    const exact = computeFreshness(metadata(10), now);
+    const over = computeFreshness(metadata(10, {
+      scanned_at: new Date(now.getTime() - 10 * 60_000 - 1),
     }), now);
 
     expect(exact).toMatchObject({ status: 'fresh', reason_code: null, stale: false });
@@ -88,8 +88,8 @@ describe('computeFreshness', () => {
     expect(f.stale).toBe(true);
   });
 
-  it('默认 freshness budget 为 15 分钟', () => {
-    expect(PHOTO_STALE_THRESHOLD_HOURS).toBe(15 / 60);
+  it('默认 freshness budget 为 10 分钟', () => {
+    expect(PHOTO_STALE_THRESHOLD_HOURS).toBe(10 / 60);
   });
 
   it('无效 scanned_at → unknown/snapshot_time_invalid', () => {

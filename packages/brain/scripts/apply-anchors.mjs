@@ -9,6 +9,9 @@ import { readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../src/db-config.js';
+import brainAuth from '../../../scripts/lib/brain-auth-headers.cjs';
+
+const { brainAuthHeaders } = brainAuth;
 
 const ANCHOR_FIELDS = ['unit_test_path', 'workflow_ref', 'guard_ref'];
 
@@ -87,7 +90,7 @@ async function main() {
       }
       const resp = await fetch(`${BRAIN_URL}/api/brain/journey_features/${featureId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...brainAuthHeaders() },
         body: JSON.stringify(payload),
       });
       if (!resp.ok) {

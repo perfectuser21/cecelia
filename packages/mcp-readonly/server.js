@@ -233,8 +233,6 @@ export function createApp({ skipDbInit = false, bearerToken = process.env.MCP_BE
   const startedAt = Date.now();
   const trackedQuery = makeTrackedQuery(query, alertTracker);
 
-  const mcpServer = buildMcpServer({ pool, startedAt, queryFn: trackedQuery });
-
   app.use(
     '/mcp',
     bearerAuth(bearerToken, { onFailure: (token) => alertTracker.recordAuthFailure(token) }),
@@ -245,12 +243,54 @@ export function createApp({ skipDbInit = false, bearerToken = process.env.MCP_BE
     })
   );
 
+  // bug 修复（生产实测：Notion 并发调用时 502）：不能像修复前那样在 createApp()
+  // 里只 buildMcpServer() 一次、所有请求共享同一个 McpServer 实例反复
+  // connect(新transport)——SDK 的 Server.connect() 一旦发现"已经连接过一个
+  // transport"会直接 throw（"Already connected to a transport"），并发的第二
+  // 个请求必炸。按官方 SDK 无状态模式示例（examples/server/
+  // simpleStatelessStreamableHttp.js）的做法：每个请求都 new 一个全新的
+  // McpServer + transport，互不共享状态，天然不会有并发冲突。
+  // 同时补上示例里就有、我们之前漏掉的 try/catch 兜底：没有它的话，
+  // handleRequest 内部任何异常都会变成未处理的 Promise rejection，请求会
+  // 直接挂死不返回任何 HTTP 响应——这正是 Cloudflare 报 502（源站无响应）而
+  // 不是一个干净的 4xx/5xx 的根本原因。
   app.post('/mcp', async (req, res) => {
+    const mcpServer = buildMcpServer({ pool, startedAt, queryFn: trackedQuery });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    res.on('close', () => transport.close());
-    await mcpServer.connect(transport);
-    await transport.handleRequest(req, res, req.body);
+    res.on('close', () => {
+      transport.close();
+      mcpServer.close();
+    });
+    try {
+      await mcpServer.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } catch (err) {
+      console.error('[mcp-readonly] /mcp 请求处理异常:', err.message);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: { code: -32603, message: 'Internal server error' },
+          id: null,
+        });
+      }
+    }
   });
+
+  // 本服务是无状态模式（sessionIdGenerator: undefined），不支持服务端发起的
+  // SSE 流/会话终止，但 MCP 客户端（如 Notion）握手时仍会尝试 GET（开流）/
+  // DELETE（关session）。之前完全没注册这两个方法，Express 直接 404，
+  // Cloudflare 边缘对此表现为 502，导致客户端连接失败。
+  // 按官方 SDK 无状态服务器示例的做法：显式返回 405 + 合法 JSON-RPC 错误信封，
+  // 让客户端明确知道"这个方法不支持"而不是"这个端点不存在"。
+  const methodNotAllowed = (_req, res) => {
+    res.status(405).json({
+      jsonrpc: '2.0',
+      error: { code: -32000, message: 'Method not allowed.' },
+      id: null,
+    });
+  };
+  app.get('/mcp', methodNotAllowed);
+  app.delete('/mcp', methodNotAllowed);
 
   return app;
 }

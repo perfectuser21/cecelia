@@ -1269,6 +1269,21 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs.runtime_resources).toEqual({ postgres: false, node_deps: true });
   });
 
+  it('运行时依赖预装：evaluator TaskBundle 默认注入 runtime_resources.node_deps=true', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed: { ...observed },
+      decision: { phase: 'evaluate', reason: 'verify_pr' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.runtime_resources).toEqual({ postgres: false, node_deps: true });
+  });
+
   it('generator bundle 从已批准合同导出 contract_branch，供 launcher 注入环境', async () => {
     const deps = makeDeps();
 
@@ -1292,9 +1307,8 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).toMatchObject({
       contract_branch: 'cp-harness-propose-r2-aaaaaaaa-a6',
     });
-    // 运行时依赖预装只对 proposer/reviewer 默认开——generator 不该被塞
-    // runtime_resources.node_deps（design doc §运行时依赖，决策 ba33fc68 只覆盖
-    // GAN 双方角色）。
+    // 运行时依赖预装只对 proposer/reviewer/evaluator 默认开——generator 不该被塞
+    // runtime_resources.node_deps；generator 仍由自身实现过程按需安装/构建。
     expect(created.bundle.inputs).not.toHaveProperty('runtime_resources');
   });
 
@@ -1558,6 +1572,13 @@ describe('createDispatcher', () => {
         },
       },
       decision: { phase: 'evaluate', reason: 'ci_pass' },
+      impactGateReceipt: {
+        stage: 'diff',
+        gate: 'extend',
+        head_revision: 'sha-1',
+        contract_hash: 'c'.repeat(64),
+        required_assertions: [{ assertion_id: 'new-check', command: 'npm test' }],
+      },
     });
 
     const created = deps.attemptStore.createAttempt.mock.calls[0][0];
@@ -1565,6 +1586,8 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).toMatchObject({
       pr_branch: 'cp-evaluator-target',
       pr_head_sha: 'sha-1',
+      impact_gate: expect.objectContaining({ gate: 'extend', contract_hash: 'c'.repeat(64) }),
+      required_assertions: [{ assertion_id: 'new-check', command: 'npm test' }],
     });
     expect(deps.launcher.launch).toHaveBeenCalledWith(expect.objectContaining({
       bundle: expect.objectContaining({ constraints: expect.objectContaining({ read_only: false }) }),
@@ -2732,6 +2755,7 @@ describe('createDetachedLauncher', () => {
           worktree_path: '/tmp/worktree',
           pr_branch: 'cp-evaluator-target',
           pr_head_sha: 'sha-1',
+          required_assertions: [{ assertion_id: 'exact-check', command: 'npm test' }],
         },
         constraints: { read_only: false },
       },
@@ -2747,8 +2771,12 @@ describe('createDetachedLauncher', () => {
         GIT_CONFIG_KEY_0: 'remote.origin.pushurl',
         GIT_CONFIG_VALUE_0: 'blocked-by-harness://evaluator',
         BRAIN_RESULT_FILE: '/tmp/cecelia-prompts/brain-result.json',
+        CECELIA_MACHINE_ID: 'us-mac-m4',
         PR_BRANCH: 'cp-evaluator-target',
         PR_HEAD_SHA: 'sha-1',
+        HARNESS_REQUIRED_ASSERTIONS_JSON: JSON.stringify([
+          { assertion_id: 'exact-check', command: 'npm test' },
+        ]),
       }),
     }));
   });

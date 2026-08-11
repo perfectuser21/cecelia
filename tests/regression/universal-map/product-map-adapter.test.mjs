@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { afterAll, describe, expect, it } from 'vitest';
@@ -59,5 +60,70 @@ describe('product-map.yaml adapter', () => {
       items: [],
       reason: 'product-map.yaml 未声明跨价值流共享前置',
     });
+  });
+
+  it('受信提交按 Brain 当前合同发送完整 manifest 并激活返回的版本 id', async () => {
+    const requests = [];
+    const manifestId = '54b9ec3d-9ad5-4db0-99b3-7bbbeec34bf9';
+    const server = createServer((req, res) => {
+      let body = '';
+      req.setEncoding('utf8');
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        requests.push({
+          method: req.method,
+          path: req.url,
+          authorization: req.headers.authorization,
+          body: body ? JSON.parse(body) : null,
+        });
+        res.setHeader('Content-Type', 'application/json');
+        if (req.url === '/api/brain/map/manifests/validate') {
+          res.end(JSON.stringify({ valid: true }));
+        } else if (req.url === '/api/brain/map/manifests') {
+          res.end(JSON.stringify({ manifest_version: { id: manifestId } }));
+        } else {
+          res.end(JSON.stringify({ manifest_version: { id: manifestId, status: 'active' } }));
+        }
+      });
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+
+    try {
+      const address = server.address();
+      const result = await new Promise((resolve) => {
+        const child = spawn(process.execPath, [
+          script,
+          '--input', fixture,
+          '--scope', 'zenithjoy-workspace',
+          '--decision-id', decisionId,
+          '--submit',
+        ], {
+          encoding: 'utf8',
+          cwd: repoRoot,
+          env: {
+            ...process.env,
+            BRAIN_URL: `http://127.0.0.1:${address.port}`,
+            CECELIA_INTERNAL_TOKEN: 'adapter-test-token',
+          },
+        });
+        let stderr = '';
+        child.stderr.on('data', chunk => { stderr += chunk; });
+        child.on('close', status => resolve({ status, stderr }));
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(requests.map(({ path }) => path)).toEqual([
+        '/api/brain/map/manifests/validate',
+        '/api/brain/map/manifests',
+        `/api/brain/map/manifests/${manifestId}/activate`,
+      ]);
+      expect(requests[1].body.scope_key).toBe('zenithjoy-workspace');
+      expect(requests[1].body).not.toHaveProperty('manifest');
+      expect(requests.every(({ authorization }) => (
+        authorization === 'Bearer adapter-test-token'
+      ))).toBe(true);
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
   });
 });

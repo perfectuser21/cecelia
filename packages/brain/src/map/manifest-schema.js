@@ -53,6 +53,16 @@ export const MANIFEST_SCHEMA_V1 = {
           value_stream_key: { type: 'string', pattern: '^[a-z0-9_-]+$', minLength: 1 },
           order: { type: 'integer', minimum: 1 },
           aliases: { type: 'array', items: { type: 'string' }, default: [] },
+          path_prefixes: {
+            type: 'array',
+            uniqueItems: true,
+            items: { type: 'string', minLength: 2, pattern: '^[A-Za-z0-9_./@+-]+$' },
+          },
+          exact_paths: {
+            type: 'array',
+            uniqueItems: true,
+            items: { type: 'string', minLength: 1, pattern: '^[A-Za-z0-9_./@+-]+$' },
+          },
         },
       },
     },
@@ -109,6 +119,16 @@ export const MANIFEST_SCHEMA_V1 = {
  */
 export function validateManifestSemantics(manifest) {
   const errors = [];
+  const safeOwnedPath = (value, { prefix = false } = {}) => {
+    if (typeof value !== 'string' || !value || value.startsWith('/') || value.includes('\\')) {
+      return false;
+    }
+    const candidate = prefix && value.endsWith('/') ? value.slice(0, -1) : value;
+    if (!candidate || (!prefix && value.endsWith('/'))) return false;
+    return candidate.split('/').every(segment => (
+      segment && segment !== '.' && segment !== '..' && !segment.startsWith('-')
+    ));
+  };
 
   const vsKeys = new Set(manifest.value_streams.map((v) => v.key));
   const capKeys = new Set(manifest.capabilities.map((c) => c.key));
@@ -117,6 +137,11 @@ export function validateManifestSemantics(manifest) {
   for (const cap of manifest.capabilities) {
     if (!vsKeys.has(cap.value_stream_key)) {
       errors.push(`capability '${cap.key}' 引用了不存在的 value_stream_key='${cap.value_stream_key}'`);
+    }
+    for (const key of ['path_prefixes', 'exact_paths']) {
+      if ((cap[key] ?? []).some(value => !safeOwnedPath(value, { prefix: key === 'path_prefixes' }))) {
+        errors.push(`capability '${cap.key}' 的 ${key} 含不安全路径`);
+      }
     }
   }
 

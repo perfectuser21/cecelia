@@ -103,6 +103,11 @@ function makeEnv({ observedSeq, dispatch, finalizeRun } = {}) {
       heartbeats.push(entry);
     }),
     dispatch: vi.fn(dispatch ?? (async () => ({ status: 'DONE', detail: 'ok' }))),
+    impactGate: {
+      beforeGenerate: vi.fn(async () => ({ gate: 'pass', stage: 'structure' })),
+      beforeEvaluate: vi.fn(async () => ({ gate: 'pass', stage: 'diff' })),
+      beforeMerge: vi.fn(async () => ({ gate: 'pass', stage: 'merge' })),
+    },
     finalizeRun: vi.fn(finalizeRun ?? (async () => ({
       changed: true,
       outcome: 'failed',
@@ -198,6 +203,40 @@ describe('runLoop：全链 planning→done', () => {
     const mergeEntry = appended.find((e) => e.action === 'merge_pr');
     expect(mergeEntry.gateVerdict).toBe('allow');
     expect(mergeEntry.observed.pr.mergeStateStatus).toBe('CLEAN');
+    expect(deps.impactGate.beforeGenerate).toHaveBeenCalled();
+    expect(deps.impactGate.beforeEvaluate).toHaveBeenCalled();
+    expect(deps.impactGate.beforeMerge).toHaveBeenCalled();
+  });
+
+  it('Diff Gate 未放行时不创建 evaluator attempt，并把裁决写入 decision log', async () => {
+    const headSha = 'b'.repeat(40);
+    const observedSeq = [
+      obs({
+        generatorSpawned: true,
+        pr: { url: 'u', state: 'OPEN', ci: 'pass', merged: false, head_sha: headSha },
+        decisionLog: [{ hop: 1, action: 'spawn:generator', created_at: '2026-07-04T12:00:00Z' }],
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, appended, setHopBase } = makeEnv({ observedSeq });
+    setHopBase(1);
+    deps.impactGate.beforeEvaluate.mockResolvedValue({
+      gate: 'impact_unknown',
+      stage: 'diff',
+      reason: 'mapper_stale',
+      head_revision: headSha,
+    });
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(deps.dispatch).not.toHaveBeenCalledWith('spawn:evaluator', expect.anything());
+    const intent = appended.find((entry) => entry.action === 'spawn:evaluator');
+    expect(intent.gateVerdict).toBe('deny:impact:mapper_stale');
+    expect(intent.detail.impact_gate).toMatchObject({
+      gate: 'impact_unknown',
+      stage: 'diff',
+      head_revision: headSha,
+    });
   });
 
   it('hotfix 精确绑定已有 PR URL/SHA 时由 Evaluator 建立共享 validation clock', async () => {

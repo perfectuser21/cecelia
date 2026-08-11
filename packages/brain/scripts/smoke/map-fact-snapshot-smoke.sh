@@ -172,8 +172,8 @@ pass '四类事实 metadata 列与 snapshot header schema'
 DATABASE_URL="$DATABASE_URL" REPO_ROOT_CECELIA="$REPO_ROOT_CECELIA" \
   REPO_ROOT_ZJ_WORKSPACE='/nonexistent/map-smoke-zj-workspace' \
   REPO_ROOT_ZJ_SKILLS='/nonexistent/map-smoke-zj-skills' \
-  GRAPH_REPOS=cecelia SKIP_GIT_PULL=1 \
-  /bin/bash scripts/scan/run-all-scans.sh
+  GRAPH_REPOS=cecelia SKIP_GIT_PULL=1 MAP_REBUILD_DISABLED=1 \
+  FACT_SNAPSHOT_TEST_MODE=1 /bin/bash scripts/scan/run-all-scans.sh
 pass '四 scanner 自包含刷新'
 
 verify_headers_and_facts

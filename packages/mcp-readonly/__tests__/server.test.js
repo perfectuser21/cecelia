@@ -125,3 +125,117 @@ describe.skipIf(!TEST_DB_URL)('POST /mcp 合法 token 完整工具调用（真�
     expect(typeof payload.current_version).toBe('number');
   });
 });
+
+describe('GET/DELETE /mcp 协议方法覆盖（bug: 之前只注册了POST，MCP客户端握手用到的GET/DELETE直接404）', () => {
+  it('鉴权通过后 GET /mcp 返回 405（不是404），且是合法的JSON-RPC错误信封', async () => {
+    const app = createApp({ skipDbInit: true, bearerToken: 'test-token' });
+    const res = await request(app).get('/mcp').set('Authorization', 'Bearer test-token');
+    expect(res.status).toBe(405);
+    const body = JSON.parse(res.text);
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.error).toBeDefined();
+  });
+
+  it('鉴权通过后 DELETE /mcp 返回 405（不是404），且是合法的JSON-RPC错误信封', async () => {
+    const app = createApp({ skipDbInit: true, bearerToken: 'test-token' });
+    const res = await request(app).delete('/mcp').set('Authorization', 'Bearer test-token');
+    expect(res.status).toBe(405);
+    const body = JSON.parse(res.text);
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.error).toBeDefined();
+  });
+
+  it('无 token 的 GET /mcp 仍然先被鉴权中间件拦截，返回401而不是405', async () => {
+    const app = createApp({ skipDbInit: true, bearerToken: 'test-token' });
+    const res = await request(app).get('/mcp');
+    expect(res.status).toBe(401);
+  });
+});
+
+// bug 复现：生产实测 Notion 真实调用序列——tools/list 成功一次，随后连续几次
+// tools/call（按 value_stream/capability/cross_cut/boundary 依次查）以及再一次
+// tools/list 全部 502。根因：createApp() 只 buildMcpServer() 一次，全部请求共享
+// 同一个 McpServer 实例，每个请求都对它重新 connect(新transport)——SDK 官方
+// examples/server/simpleStatelessStreamableHttp.js 的无状态模式示例明确是
+// "每个请求都 new 一个 McpServer"，不是共享实例反复 connect。共享实例被
+// connect 几次后内部状态错乱，加上请求处理没有 try/catch 兜底，出错时连接
+// 直接挂掉不返回任何 HTTP 响应——这正是 Cloudflare 报 502（源站无响应）的成因。
+describe.skipIf(!TEST_DB_URL)('POST /mcp 同一个 app 实例连续/并发多次调用（复现共享server退化）', () => {
+  function makeApp() {
+    const prevUrl = process.env.MCP_READONLY_DATABASE_URL;
+    process.env.MCP_READONLY_DATABASE_URL = TEST_DB_URL;
+    try {
+      return createApp({ bearerToken: 'test-token' });
+    } finally {
+      process.env.MCP_READONLY_DATABASE_URL = prevUrl;
+    }
+  }
+
+  const call = (app, body) =>
+    request(app)
+      .post('/mcp')
+      .set('Authorization', 'Bearer test-token')
+      .set('Accept', 'application/json, text/event-stream')
+      .send(body);
+
+  it('连续6次调用（模拟 tools/list→4次tools/call→tools/list）全部成功，不因为复用同一个app而退化', async () => {
+    const app = makeApp();
+    const sequence = [
+      { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
+      {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'get_map_nodes', arguments: { node_type: 'value_stream' } },
+      },
+      {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'get_map_nodes', arguments: { node_type: 'capability' } },
+      },
+      {
+        jsonrpc: '2.0',
+        id: 4,
+        method: 'tools/call',
+        params: { name: 'get_map_nodes', arguments: { node_type: 'crosscut' } },
+      },
+      {
+        jsonrpc: '2.0',
+        id: 5,
+        method: 'tools/call',
+        params: { name: 'get_map_edges', arguments: { edge_type: 'contains' } },
+      },
+      { jsonrpc: '2.0', id: 6, method: 'tools/list', params: {} },
+    ];
+
+    for (const [i, body] of sequence.entries()) {
+      const res = await call(app, body);
+      expect(res.status, `第${i + 1}次请求(method=${body.method})应返回200，实际${res.status}`).toBe(200);
+      const rpc = parseSseJsonRpc(res.text);
+      expect(rpc.error, `第${i + 1}次请求不应返回JSON-RPC错误：${JSON.stringify(rpc.error)}`).toBeUndefined();
+    }
+  });
+
+  // 生产实测的真实触发条件：Notion 客户端并发（不是严格串行）打了多个 tools/call。
+  // 修复前，第二个并发请求 mcpServer.connect() 会抛 SDK 自己的错误
+  // "Already connected to a transport"，且没有 try/catch 兜底，请求直接挂死
+  // 不返回任何 HTTP 响应——Cloudflare 边缘对此表现为 502。
+  it('4个 tools/call 并发打过去，全部拿到 HTTP 200 和合法 JSON-RPC 响应（不因共享server并发冲突而失败）', async () => {
+    const app = makeApp();
+    const bodies = [
+      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_map_nodes', arguments: { node_type: 'value_stream' } } },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'get_map_nodes', arguments: { node_type: 'capability' } } },
+      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'get_map_nodes', arguments: { node_type: 'crosscut' } } },
+      { jsonrpc: '2.0', id: 4, method: 'tools/list', params: {} },
+    ];
+
+    const results = await Promise.all(bodies.map((body) => call(app, body)));
+
+    results.forEach((res, i) => {
+      expect(res.status, `并发第${i + 1}个请求应返回200，实际${res.status}，body=${res.text}`).toBe(200);
+      const rpc = parseSseJsonRpc(res.text);
+      expect(rpc.error, `并发第${i + 1}个请求不应返回JSON-RPC错误：${JSON.stringify(rpc.error)}`).toBeUndefined();
+    });
+  });
+});

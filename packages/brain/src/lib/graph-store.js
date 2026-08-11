@@ -5,6 +5,30 @@
  */
 const BATCH = 500;
 
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === 'object') {
+    return Object.keys(value).sort().reduce((result, key) => {
+      result[key] = stableValue(value[key]);
+      return result;
+    }, {});
+  }
+  return value;
+}
+
+function canonicalEdges(edges) {
+  return edges.map(edge => JSON.stringify([
+    edge.src_path, edge.dst_path, edge.edge_type, stableValue(edge.detail || {}),
+  ])).sort();
+}
+
+function immutableSnapshotError(repo, revision) {
+  return Object.assign(
+    new Error(`graph snapshot drift: ${repo}@${revision}`),
+    { code: 'GRAPH_SNAPSHOT_IMMUTABILITY_VIOLATION' },
+  );
+}
+
 export async function replaceRepoEdges(pool, repo, edges, { sourceRevision, scannerVersion } = {}) {
   const rev = sourceRevision || 'legacy-unknown';
   const ver = scannerVersion || 'legacy';
@@ -13,6 +37,46 @@ export async function replaceRepoEdges(pool, repo, edges, { sourceRevision, scan
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [lockKey]);
+    const existingVersion = await client.query(
+      `SELECT row_count FROM graph_snapshot_versions
+        WHERE repo = $1 AND source_revision = $2 FOR UPDATE`,
+      [repo, rev],
+    );
+    if (existingVersion.rows.length > 0) {
+      const existingEdges = await client.query(
+        `SELECT src_path, dst_path, edge_type, detail
+           FROM graph_edge_snapshots
+          WHERE repo = $1 AND source_revision = $2`,
+        [repo, rev],
+      );
+      if (Number(existingVersion.rows[0].row_count) !== edges.length
+        || JSON.stringify(canonicalEdges(existingEdges.rows)) !== JSON.stringify(canonicalEdges(edges))) {
+        throw immutableSnapshotError(repo, rev);
+      }
+    } else {
+      await client.query(
+        `INSERT INTO graph_snapshot_versions
+           (repo, source_revision, scanner_version, scanned_at, row_count)
+         VALUES ($1, $2, $3, NOW(), $4)`,
+        [repo, rev, ver, edges.length],
+      );
+      for (let i = 0; i < edges.length; i += BATCH) {
+        const chunk = edges.slice(i, i + BATCH);
+        const values = [];
+        const params = [];
+        chunk.forEach((edge, index) => {
+          const base = index * 6;
+          values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`);
+          params.push(repo, rev, edge.src_path, edge.dst_path, edge.edge_type, JSON.stringify(edge.detail || {}));
+        });
+        await client.query(
+          `INSERT INTO graph_edge_snapshots
+             (repo, source_revision, src_path, dst_path, edge_type, detail)
+           VALUES ${values.join(', ')}`,
+          params,
+        );
+      }
+    }
     await client.query('DELETE FROM graph_edges WHERE repo = $1', [repo]);
     let inserted = 0;
     for (let i = 0; i < edges.length; i += BATCH) {

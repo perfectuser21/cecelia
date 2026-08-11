@@ -34,7 +34,7 @@ import { codexAdapter } from './providers/codex.js';
 import { grokAdapter } from './providers/grok.js';
 import { loadSkillBundle } from './skill-bundle.js';
 import { createKernelHandlers } from './kernel-handlers.js';
-import { readGitArtifact } from './git-artifact-reader.js';
+import { ensureGitCommit, readGitArtifact } from './git-artifact-reader.js';
 import { createCapabilityGate } from './preflight/capability-gate.js';
 import { createProductionCapabilityProbes } from './preflight/production-probes.js';
 import {
@@ -47,6 +47,11 @@ import { createRunEventStore } from './run-event-store.js';
 import { parseBaseRepo } from './github-pr-discovery.js';
 import { activateQueuedKernelTask, finalizeKernelRun } from './kernel-run-store.js';
 import { sanitizeDiagnostic } from './failure-persistence.js';
+import {
+  createHarnessImpactGates,
+  verifyImpactMergeFence,
+} from '../impact-contract/harness-gates.js';
+import { resolveCompletedRepairGaps } from '../impact-contract/gap-resolution.js';
 import {
   createExpiredAttemptAuthority,
   reconcileExpiredAttempt,
@@ -135,6 +140,8 @@ export async function buildDefaultHandlers({ pool, execCmd, attemptStore, judgeG
     syncOkr: okr.syncOkrInitiativeStatus,
     spawnStaging,
     cleanup: cleanup.killInitiativeContainers,
+    verifyImpactMerge: (input) => verifyImpactMergeFence(pool, input),
+    resolveCompletedRepairGaps,
   });
 }
 
@@ -201,6 +208,32 @@ export async function buildRealDeps(overrides = {}) {
   }
   let dispatch = overrides.dispatch;
   let launcher = overrides.launcher;
+  const resolveRepoHead = overrides.resolveRepoHead
+    ?? (async (repo) => {
+      const remote = execFileSync(
+        'git',
+        ['remote', 'get-url', 'origin'],
+        {
+          cwd: repoRoot,
+          encoding: 'utf8',
+          maxBuffer: 1024 * 1024,
+          timeout: 10_000,
+        },
+      ).trim();
+      if (parseBaseRepo(remote) !== repo) {
+        throw new Error(`workspace_repo_not_supported:${String(repo)}`);
+      }
+      return execFileSync(
+        'git',
+        ['rev-parse', '--verify', 'origin/main^{commit}'],
+        {
+          cwd: repoRoot,
+          encoding: 'utf8',
+          maxBuffer: 1024 * 1024,
+          timeout: 10_000,
+        },
+      ).trim();
+    });
   if (!dispatch) {
     const registry = overrides.registry ?? createProviderRegistry([claudeAdapter, codexAdapter, grokAdapter]);
     const createProductionCapabilityProbesFn = overrides.createProductionCapabilityProbesFn
@@ -263,33 +296,6 @@ export async function buildRealDeps(overrides = {}) {
     const shouldResolveWorkspace = overrides.resolveWorkspaceSpec !== undefined
       || typeof overrides.resolveRepoHead === 'function'
       || !overrides.launcher;
-    const resolveRepoHead = overrides.resolveRepoHead
-      ?? (async (repo) => {
-        const repoRoot = process.cwd();
-        const remote = execFileSync(
-          'git',
-          ['remote', 'get-url', 'origin'],
-          {
-            cwd: repoRoot,
-            encoding: 'utf8',
-            maxBuffer: 1024 * 1024,
-            timeout: 10_000,
-          },
-        ).trim();
-        if (parseBaseRepo(remote) !== repo) {
-          throw new Error(`workspace_repo_not_supported:${String(repo)}`);
-        }
-        return execFileSync(
-          'git',
-          ['rev-parse', '--verify', 'origin/main^{commit}'],
-          {
-            cwd: repoRoot,
-            encoding: 'utf8',
-            maxBuffer: 1024 * 1024,
-            timeout: 10_000,
-          },
-        ).trim();
-      });
     const resolveWorkspaceSpec = overrides.resolveWorkspaceSpec
       ?? (shouldResolveWorkspace
         ? createWorkspaceSpecResolver({ resolveRepoHead })
@@ -336,6 +342,25 @@ export async function buildRealDeps(overrides = {}) {
       ...(resolveWorkspaceSpec ? { resolveWorkspaceSpec } : {}),
     });
   }
+  const readImpactChangedFiles = overrides.readImpactChangedFiles
+    ?? (async (baseRevision, headRevision, repo) => {
+      ensureGitCommit(baseRevision, { cwd: repoRoot, repo });
+      ensureGitCommit(headRevision, { cwd: repoRoot, repo });
+      return execFileSync(
+        'git',
+        ['diff', '--name-only', `${baseRevision}...${headRevision}`],
+        {
+          cwd: repoRoot,
+          encoding: 'utf8',
+          maxBuffer: 16 * 1024 * 1024,
+          timeout: 60_000,
+        },
+      ).split('\n').map((line) => line.trim()).filter(Boolean);
+    });
+  const impactGate = overrides.impactGate ?? createHarnessImpactGates({
+    db: pool,
+    readChangedFiles: readImpactChangedFiles,
+  });
   let reconcileExpired = overrides.reconcileExpiredAttempt;
   if (!reconcileExpired && launcher) {
     let expiredAttemptAuthority = overrides.expiredAttemptAuthority ?? null;
@@ -362,6 +387,7 @@ export async function buildRealDeps(overrides = {}) {
         cwd: repoRoot,
         repo: opts.repo ?? null,
       })),
+    impactGate,
     dispatch,
     commanderCoordinator,
     commanderDirectiveExecutor,

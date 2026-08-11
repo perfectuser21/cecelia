@@ -761,6 +761,10 @@ describe('unblockTask', () => {
     expect(sql).toContain('blocked_reason = NULL');
     expect(sql).toContain('blocked_detail = NULL');
     expect(sql).toContain('blocked_until = NULL');
+    expect(sql).toContain('harness_gaps');
+    expect(sql).toContain("status <> 'resolved'");
+    expect(sql).toContain('task_dependencies');
+    expect(sql).toContain("status = 'pending'");
   });
 
   it('应当 emit task:unblocked 事件', async () => {

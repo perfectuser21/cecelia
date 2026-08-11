@@ -328,7 +328,7 @@ describe('Fleet Worker workspace manager', () => {
   // nodeDeps 打开且 package.json 存在则跑 `npm ci`。真 npm 从不在单测里
   // 执行——注入的 runCommand 拦截 'npm' 调用，其余命令（git）转发给真实实现。
   describe('运行时依赖预装（node_deps）', () => {
-    it('nodeDeps=true 且 package.json 存在 → prepare 后跑 npm ci --no-audit --no-fund --ignore-scripts', async () => {
+    it('nodeDeps=true 且 package.json 存在 → 为 Linux ARM64 runner 安装依赖', async () => {
       const pkgFixture = createFixture({ withPackageJson: true });
       try {
         const npmCalls = [];
@@ -354,6 +354,12 @@ describe('Fleet Worker workspace manager', () => {
         // process.env 展开（不能只传 {npm_config_cache} 丢光 PATH）。
         expect(call.options.env.npm_config_cache).toBe(manager.roots.npmCache);
         expect(call.options.env.PATH).toBe(process.env.PATH);
+        // Fleet worker 跑在 macOS ARM64 宿主，workspace 最终挂进 Linux ARM64
+        // runner。npm 默认按宿主平台筛 optionalDependencies，会漏掉 Rollup
+        // 等 Linux 原生包；安装目标必须与实际执行容器一致。
+        expect(call.options.env.npm_config_os).toBe('linux');
+        expect(call.options.env.npm_config_cpu).toBe('arm64');
+        expect(call.options.env.npm_config_libc).toBe('glibc');
         // F7：超时 120s（180s prepare 预算内留 60s 余量）+ 8MiB 输出缓冲。
         expect(call.options.timeout).toBe(120_000);
         expect(call.options.maxBuffer).toBe(8 * 1024 * 1024);

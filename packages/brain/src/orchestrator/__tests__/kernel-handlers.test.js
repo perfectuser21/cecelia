@@ -236,6 +236,9 @@ describe('kernel deterministic handlers', () => {
     const clean = createKernelHandlers(cleanDeps)['merge_pr'];
     await expect(clean(context())).resolves.toMatchObject({ status: 'DONE' });
     expect(cleanDeps.execCmd).toHaveBeenCalledWith(expect.stringContaining('gh pr merge'));
+    expect(cleanDeps.execCmd).toHaveBeenCalledWith(
+      expect.stringContaining("--match-head-commit 'sha-1'"),
+    );
 
     const behindDeps = deps();
     const behind = createKernelHandlers(behindDeps)['merge_pr'];
@@ -258,6 +261,32 @@ describe('kernel deterministic handlers', () => {
       },
     }))).resolves.toMatchObject({ status: 'BLOCKED' });
     expect(conflictDeps.execCmd).not.toHaveBeenCalled();
+  });
+
+  it('真实 merge 副作用前再次校验 active contract 与 assertion receipts', async () => {
+    const d = deps();
+    d.verifyImpactMerge = vi.fn().mockResolvedValue({
+      gate: 'blocked',
+      reason: 'impact_assertion_receipts_missing',
+    });
+    const ctx = context({
+      impactGateReceipt: {
+        contract_hash: 'c'.repeat(64),
+        source_task_id: 'source-task-id',
+      },
+    });
+
+    await expect(createKernelHandlers(d).merge_pr(ctx)).resolves.toMatchObject({
+      status: 'BLOCKED',
+      detail: 'impact_assertion_receipts_missing',
+    });
+    expect(d.verifyImpactMerge).toHaveBeenCalledWith({
+      taskId: 'source-task-id',
+      runId,
+      headRevision: 'sha-1',
+      expectedContractHash: 'c'.repeat(64),
+    });
+    expect(d.execCmd).not.toHaveBeenCalled();
   });
 
   it('BEHIND 补齐走版本无关 gh api PUT（run 986a51d3：gh2.45 无 update-branch 子命令）', async () => {
@@ -315,6 +344,32 @@ describe('kernel deterministic handlers', () => {
     });
     expect(d.pool.connect).not.toHaveBeenCalled();
     expect(result.status).toBe('DONE');
+  });
+
+  it('repair report 在终态事务内自动关闭 gap', async () => {
+    const d = deps();
+    const transactionClient = { query: vi.fn() };
+    d.resolveCompletedRepairGaps = vi.fn().mockResolvedValue({ resolved: 1 });
+    d.finalizeRun.mockImplementationOnce(async (_pool, input) => {
+      await input.afterTaskFinalized(transactionClient);
+      return { changed: true, outcome: 'done', runId, taskId };
+    });
+    const repairContext = context({
+      observed: {
+        ...context().observed,
+        task: {
+          ...context().observed.task,
+          payload: { ...context().observed.task.payload, harness_gap_id: 'gap-1' },
+        },
+      },
+    });
+
+    await createKernelHandlers(d).report(repairContext);
+
+    expect(d.resolveCompletedRepairGaps).toHaveBeenCalledWith(transactionClient, {
+      repairTaskId: taskId,
+      runId,
+    });
   });
 
   it('report 统一终态事务失败时向上抛出，不伪报 DONE', async () => {

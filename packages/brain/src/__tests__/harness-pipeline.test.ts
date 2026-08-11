@@ -158,6 +158,13 @@ describe('harness pipeline — Proposer 去重', () => {
 });
 
 describe('harness pipeline — report 失败自动重试', () => {
+  it('report 成功后的 Feature 状态与锚点由 Brain callback 可信回写', () => {
+    const idx = execSrc.indexOf("harnessType === 'harness_report'");
+    const block = execSrc.substring(idx, idx + 1800);
+    expect(block).toContain('finalizeHarnessReportFeature');
+    expect(block).toMatch(/newStatus\s*===\s*'completed'/);
+  });
+
   it('harness_report 分支存在且含有 createHarnessTask 调用', () => {
     const idx = execSrc.indexOf("harnessType === 'harness_report'");
     expect(idx).toBeGreaterThan(0);
