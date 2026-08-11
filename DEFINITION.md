@@ -8,9 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.7
+**Brain 版本**: 1.272.8
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.272.8 — Audited Manual Kernel Capacity Override
+
+- `/tasks/:id/dispatch` 写入的 `manually_dispatched` 服务端审计标记会传入 Kernel TaskBundle，确保手动派发合同贯穿内部 capability preflight。
+- 当节点仍在线、已准入且至少有一个有效/物理基础槽时，手动派发允许重角色权重从 0 提升为 1；真实零容量、排空、健康或凭据闸仍保持 fail-closed。
+- capability evidence 记录实际 machine capacity 与 override 标志，便于事后追溯强制执行。
 
 ---
 
