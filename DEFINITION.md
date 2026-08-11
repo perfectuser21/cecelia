@@ -8,11 +8,15 @@
 
 
 
-**Brain 版本**: 1.272.15
+**Brain 版本**: 1.272.16
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.16 — Exact-PR Judge Evidence Basis
+
+- 精确 PR 验收在无 Sprint 合同/Golden Path 时，将已完整对账的 `required_command_evidence` 作为独立 Judge 的裁决步骤，避免 Evaluator PASS 后 Judge 误报 `needs_context`。
 
 ## Brain 1.272.15 — Linux Runner Dependency Target
 
