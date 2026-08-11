@@ -206,9 +206,9 @@ describe('selfcheck', () => {
   // 403（事实池 source_revision + scanner_version + repo 字段补齐）推进地板到 403。
   // 404（Universal Map projection compatibility placeholder）推进地板到 404。
   // 405（rebuildable Map Projection core）推进地板到 405。
-  // 406（explicit Map repo adapters）推进地板到 406。
-  it('EXPECTED_SCHEMA_VERSION should be 406', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('406');
+  // 407（explicit Map repo adapters；406 为 account_exhausted）推进地板到 407。
+  it('EXPECTED_SCHEMA_VERSION should be 407', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('407');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

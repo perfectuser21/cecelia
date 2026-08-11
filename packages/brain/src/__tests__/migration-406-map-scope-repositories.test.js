@@ -10,7 +10,7 @@ const downSql = readFileSync(
   'utf8',
 );
 
-describe('migration 406 — explicit map scope repositories', () => {
+describe('migration 407 — explicit map scope repositories', () => {
   it('建立 scope 到 repo 的显式多对多配置与 adapter key', () => {
     expect(upSql).toMatch(/CREATE TABLE IF NOT EXISTS map_scope_repositories/i);
     expect(upSql).toMatch(/scope_key TEXT NOT NULL/i);
@@ -27,10 +27,10 @@ describe('migration 406 — explicit map scope repositories', () => {
 
   it('rollback 移除配置表和 schema marker', () => {
     expect(downSql).toMatch(/DROP TABLE IF EXISTS map_scope_repositories/i);
-    expect(downSql).toMatch(/DELETE FROM schema_version WHERE version = '406'/i);
+    expect(downSql).toMatch(/DELETE FROM schema_version WHERE version = '407'/i);
   });
 
-  it('登记 schema 406', () => {
-    expect(upSql).toMatch(/VALUES\s*\(\s*'406'/i);
+  it('登记 schema 407', () => {
+    expect(upSql).toMatch(/VALUES\s*\(\s*'407'/i);
   });
 });
