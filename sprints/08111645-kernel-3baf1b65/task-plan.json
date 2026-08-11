@@ -1,0 +1,23 @@
+{
+  "initiative_id": "intent:11172ed5-c4d8-418c-8711-5196f290bab5:4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "Kernel Harness 内部 DB 约束修复 + 回归测试，无用户界面/浏览器交互，纯后端自治链路",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增代码↔schema 奇偶回归测试，守护 zod failure_class 枚举全集 ⊆ DB 约束接受集",
+      "scope": "在 packages/brain/src/__tests__/integration/ 新增 harness-failure-class-code-schema-parity.integration.test.js：真 PG、隔离 schema 应用迁移链 357→366→378→406，从 execution-contract.js zod schema 动态读 failure_class 枚举全集逐值断言 DB 接受，并断言枚外脏值被拒(23514)。不改 execution-contract.js/derive.js；迁移 406、既有 integration/class 测试、selfcheck 版本作为回归 oracle 保留。",
+      "dod": [
+        "[BEHAVIOR] 奇偶 integration 测试通过：zod 枚举全集(≥5)逐值 UPDATE 被 DB 约束接受、枚外脏值抛 23514（真 PG）",
+        "[BEHAVIOR] 既有 migration-406 integration + class 测试仍全绿（回归不退化）",
+        "[ARTIFACT] harness-failure-class-code-schema-parity.integration.test.js 存在且 import execution-contract zod schema（非硬编码复制枚举）"
+      ],
+      "files": [
+        "packages/brain/src/__tests__/integration/harness-failure-class-code-schema-parity.integration.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
