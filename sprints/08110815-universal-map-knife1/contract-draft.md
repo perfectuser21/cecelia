@@ -64,6 +64,19 @@ Manifest 顶层必须包含：
 - Shared Prerequisite `applicable=false`
 - `source_decision_id=4bc109e9-3b70-4b17-a1b4-bcd01bfae776`
 
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| Schema | `packages/brain/src/lib/__tests__/map-manifest-schema.test.js` | 同一次校验返回全部重复 key | 实现前缺 Manifest Schema 与全量语义错误 |
+| Canonical | `packages/brain/src/lib/__tests__/map-manifest-schema.test.js` | 忽略 object key 排列差异 | 实现前缺 canonical digest |
+| Frozen input | `packages/brain/src/lib/__tests__/map-manifest-schema.test.js` | 冻结的 Cecelia v1 输入精确表达 2×11×2×7 | 实现前缺冻结 Manifest |
+| Store | `packages/brain/src/__tests__/integration/map-manifest-store.integration.test.js` | 同一完整 manifest 并发提交只创建一个 draft | 实现前缺表与 store |
+| Activation | `packages/brain/src/__tests__/integration/map-manifest-store.integration.test.js` | projector 与 active 切换同事务 | 实现前缺事务激活流程 |
+| HTTP | `packages/brain/src/routes/__tests__/map-manifests.test.js` | 不存在局部 PATCH 或逐实体创建端点 | 实现前统一 Map Manifest 路由不存在 |
+| Migration | `packages/brain/src/__tests__/migration-402-map-manifest.test.js` | 建立版本表 | 实现前 migration 402 不存在 |
+| Smoke | `packages/brain/scripts/smoke/map-manifest-smoke.sh` | scratch 真实提交与 fail-closed 激活 | scratch schema 迁移前验火失败 |
+
 ## 验收
 
 行为与证据以同目录 `contract-dod.md` 的 D1–D8 为准。除定向和完整 Brain 测试外，必须在 `cecelia_scratch` 真实提交两次冻结 Manifest，证明只生成一个 draft；激活返回 503，且不产生 active，结束后 fixture 清零。
