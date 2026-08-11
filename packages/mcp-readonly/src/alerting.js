@@ -109,6 +109,20 @@ export class AlertTracker {
   // 是"同时活着几个进程"而不是"多久内重启了几次"，语义不对。文件读写失败
   // （文件不存在、内容损坏、目录不存在）一律当作"没有历史记录"处理，不能因为
   // 这个旁路告警机制本身出故障就拖慢或搞挂服务启动。
+  //
+  // 已知局限：这套机制只能捕捉"跑到了 server.js 启动 IIFE 里这一行代码"的
+  // 重启。如果崩溃发生得更早——比如模块加载阶段的语法错误、import 解析失败、
+  // 依赖缺失导致进程在 require/import 阶段就直接退出——本方法根本不会被
+  // 调用到，这类重启不会被计入。这是"进程内自己记账"这种方案的天然边界，
+  // 要覆盖这类更早期的崩溃，需要进程外部、supervisor 级别的兜底（比如按
+  // launchd 的 exit code / 重启次数计数），不是本任务范围要解决的问题。
+  //
+  // 读→剪→写不是原子操作：理论上如果同一时刻有两个进程实例并发调用本方法
+  // （两次读到同一份旧内容、各自独立写回，后写的会覆盖先写的），存在计数
+  // 竞态。生产环境靠 launchd 的 KeepAlive 单实例语义 + ThrottleInterval=12s
+  // （见下方"触发后清零"处注释）天然避免了真正并发的多进程同时跑这段代码，
+  // 实际风险很低；如果以后需要更严格的正确性保证，可以升级成 temp 文件写入
+  // 再 rename 的原子写模式。
   async recordRestartPersisted(filePath) {
     let timestamps = [];
     try {
@@ -125,6 +139,11 @@ export class AlertTracker {
     timestamps = this._prune(timestamps, ONE_HOUR);
     timestamps.push(this.now());
 
+    // 触发后清零（跟其它三类告警一致）：结合 launchd KeepAlive 的
+    // ThrottleInterval=12s（进程崩溃后至少等 12s 才会被拉起下一次），crash
+    // loop 场景下大约每 48 秒（4 次重启才会再次凑够阈值）才会收到下一次
+    // Bark。这是权衡后的结论——清零是为了不让同一次 crash loop 疯狂刷屏
+    // 告警，48 秒的复发间隔在故障还没解决前依然能持续提醒，不是漏想的坑。
     const triggered = timestamps.length > 3;
     const toPersist = triggered ? [] : timestamps;
 

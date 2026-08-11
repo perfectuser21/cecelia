@@ -34,14 +34,22 @@ const alertTracker = new AlertTracker({
 // 一层观测，不该改变 query() 本身的语义或签名；trackedQuery 对外的行为跟原始
 // query() 完全一致（同样的参数、同样的返回值、失败时同样原样 throw），调用方
 // （tool 模块）无感知。
-function makeTrackedQuery(rawQuery, tracker) {
+// recordDbFailure() 是 fire-and-forget，不 await——跟 auth.js 的 onFailure、
+// rate-limit.js 的 onRateLimited 保持同一模式。原因：recordDbFailure() 达到
+// 阈值时会内部 await this.sendBark()，而 sendBarkAlert() 有 8s 超时（见
+// alerting.js）。DB 已经下线、调用方最需要快速拿到失败结果去做降级处理的
+// 时刻，恰恰不能因为"顺便发个告警"被拖慢最长 8 秒——告警是旁路观测，不能
+// 反过来拖累主路径的失败传播速度。
+export function makeTrackedQuery(rawQuery, tracker) {
   return async function trackedQuery(pool, sql, params, opts) {
     try {
       const result = await rawQuery(pool, sql, params, opts);
       tracker.recordDbSuccess();
       return result;
     } catch (err) {
-      await tracker.recordDbFailure();
+      tracker.recordDbFailure().catch((e) => {
+        console.error('[mcp-readonly] recordDbFailure 异常:', e.message);
+      });
       throw err;
     }
   };

@@ -1,7 +1,8 @@
 // packages/mcp-readonly/__tests__/server.test.js
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
-import { createApp } from '../server.js';
+import { createApp, makeTrackedQuery } from '../server.js';
+import { AlertTracker } from '../src/alerting.js';
 
 describe('POST /mcp 鉴权', () => {
   it('无 token 调用 /mcp 返回 401', async () => {
@@ -17,6 +18,63 @@ describe('POST /mcp 鉴权', () => {
       .set('Authorization', 'Bearer wrong')
       .send({});
     expect(res.status).toBe(401);
+  });
+});
+
+// makeTrackedQuery 此前完全没有单测覆盖（code-review 发现的 Important 问题）。
+// 核心行为要保证两点：①失败/成功如实转发给 AlertTracker；②DB 故障时 Bark
+// 告警是 fire-and-forget——不能因为 sendBark 内部卡住（真实场景是 8s 网络
+// 超时）就拖慢 trackedQuery 本该立刻 reject 的失败传播，这正是 DB 已经不可用、
+// 调用方最需要快速拿到失败结果去做降级处理的时刻。
+describe('makeTrackedQuery（DB 故障告警埋点）', () => {
+  it('查询成功时透传结果并调用 recordDbSuccess', async () => {
+    const tracker = { recordDbSuccess: vi.fn(), recordDbFailure: vi.fn() };
+    const rawQuery = vi.fn().mockResolvedValue({ rows: [{ ok: 1 }] });
+    const trackedQuery = makeTrackedQuery(rawQuery, tracker);
+
+    const result = await trackedQuery({}, 'SELECT 1', []);
+
+    expect(result).toEqual({ rows: [{ ok: 1 }] });
+    expect(tracker.recordDbSuccess).toHaveBeenCalledOnce();
+    expect(tracker.recordDbFailure).not.toHaveBeenCalled();
+  });
+
+  it('查询失败时原样 throw，并调用 recordDbFailure', async () => {
+    const tracker = { recordDbSuccess: vi.fn(), recordDbFailure: vi.fn().mockResolvedValue(undefined) };
+    const rawQuery = vi.fn().mockRejectedValue(new Error('db down'));
+    const trackedQuery = makeTrackedQuery(rawQuery, tracker);
+
+    await expect(trackedQuery({}, 'SELECT 1', [])).rejects.toThrow('db down');
+    expect(tracker.recordDbFailure).toHaveBeenCalledOnce();
+    expect(tracker.recordDbSuccess).not.toHaveBeenCalled();
+  });
+
+  it('DB持续故障、Bark发送卡住不返回时，trackedQuery仍立即reject（fire-and-forget，不等sendBark）', async () => {
+    let releaseBark;
+    const barkPending = new Promise((resolve) => {
+      releaseBark = resolve;
+    });
+    const sendBark = vi.fn(() => barkPending);
+    const tracker = new AlertTracker({ sendBark });
+    const rawQuery = vi.fn().mockRejectedValue(new Error('db down'));
+    const trackedQuery = makeTrackedQuery(rawQuery, tracker);
+
+    // 先打两次，还没到 recordDbFailure 的阈值（3次），不会碰 sendBark
+    await expect(trackedQuery({}, 'SELECT 1', [])).rejects.toThrow('db down');
+    await expect(trackedQuery({}, 'SELECT 1', [])).rejects.toThrow('db down');
+
+    const start = Date.now();
+    // 第3次达到阈值，AlertTracker 内部会调用 sendBark——它返回的 Promise 被
+    // 卡住永远不 resolve。如果 trackedQuery 内部是 `await tracker.recordDbFailure()`
+    // 才 throw，这一句会一路等到 sendBark resolve（本测试里等于挂到 vitest
+    // 默认超时才失败）；只有真正 fire-and-forget，reject 才会在几毫秒内发生。
+    await expect(trackedQuery({}, 'SELECT 1', [])).rejects.toThrow('db down');
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeLessThan(50);
+    expect(sendBark).toHaveBeenCalledOnce();
+
+    releaseBark(); // 清理，避免遗留 pending promise
   });
 });
 
