@@ -1025,6 +1025,40 @@ describe('createDispatcher', () => {
     expect(evaluatedBundle.inputs.logical_cycle_id).toBe(created.logicalCycleId);
   });
 
+  it('propagates the manual dispatch audit marker into capability preflight', async () => {
+    const deps = makeDeps();
+    deps.preflightGate = {
+      evaluate: vi.fn(async () => ({
+        status: 'ok',
+        snapshot: {
+          provider: 'codex',
+          account: null,
+          machine: 'brain-1',
+          capability_snapshot_id: 'snapshot-manual-dispatch',
+        },
+        evidence: {},
+      })),
+      validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
+    };
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 3,
+      observed: {
+        ...observed,
+        task: {
+          ...observed.task,
+          metadata: { manually_dispatched: true },
+        },
+      },
+      decision: { phase: 'evaluate', reason: 'manual_dispatch' },
+    });
+
+    const evaluatedBundle = deps.preflightGate.evaluate.mock.calls[0][0].task_bundle;
+    expect(evaluatedBundle.inputs.manual_dispatch).toBe(true);
+  });
+
   it('preserves the source logical cycle for an L0-authorized role retry', async () => {
     const deps = makeDeps();
     const sourceAttemptId = '33333333-3333-4333-8333-333333333333';

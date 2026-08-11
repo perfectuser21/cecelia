@@ -166,6 +166,7 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   const { observed } = ctx;
   const task = observed.task;
   const payload = asObject(task.payload);
+  const metadata = asObject(task.metadata);
   const common = {
     task_id: task.id ?? ctx.taskId,
     sprint_dir: payload.sprint_dir ?? task.sprint_dir,
@@ -179,6 +180,12 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     attempt_kind: attemptMetadata.attemptKind,
     workstream_key: attemptMetadata.workstreamKey,
   };
+  // POST /tasks/:id/dispatch promises to bypass slot checks. Preserve that
+  // audited server-owned marker inside the TaskBundle so the Kernel preflight
+  // can honor the same contract without trusting caller-controlled payload.
+  if (metadata.manually_dispatched === true) {
+    common.manual_dispatch = true;
+  }
   // GAN 收敛的 PRD 锚（issue ce42f68f）：r17 实证 payload 缺 thin_prd 时 Planner
   // 只能凭一句话 description 推断 PRD，"覆盖完 PRD 即收敛"失去锚点。有值才注入。
   if (typeof payload.thin_prd === 'string' && payload.thin_prd.trim()) {

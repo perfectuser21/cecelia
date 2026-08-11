@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.272.8
+**版本**: 1.272.9
 
 ## Unified Map API and dashboard authority
 
@@ -9,7 +9,7 @@
 - Harness 的 revision-locked radius 与 Dashboard 浏览 radius 在同一路由按合同字段机械分流，前者不降级成浏览裁决。
 - Schema 地板推进到 410。
 
-## Impact Contract 不可变证据闭环（Brain 1.272.8）
+## Impact Contract 不可变证据闭环（Brain 1.272.9）
 
 - Map radius 读取 revision-indexed graph/projection 快照，并锁定 manifest/projection digest 与显式 repo→scope 身份绑定。
 - 默认 repo→scope 只激活已有 projection 的 Cecelia；未部署投影的仓库保持 fail-closed。
