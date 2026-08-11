@@ -282,7 +282,6 @@ app.use('/api/brain/memory', memoryRoutes);
 app.use('/api/brain/settings', settingsRoutes);
 app.use('/api/brain/quality', qualityRoutes);
 app.use('/api/brain/graph', graphRoutes);
-app.use('/api/brain/map', mapRoutes);
 
 // KV 读写统一走 src/routes/kv.js（经 routes.js 挂 /api/brain/kv）。
 // 旧 app 级 GET（available 语义 + 连字符转下划线取键）已删：与 kv.js 双实现分脑——
@@ -368,6 +367,7 @@ app.get('/api/brain/decisions', async (req, res) => {
 app.use('/api/brain/capture-atoms', captureAtomsRoutes);
 app.use('/api/brain/captures', capturesRoutes);
 app.use('/api/brain/map/manifests', createMapManifestRouter({ pool }));
+app.use('/api/brain/map', mapRoutes);
 app.use('/api/brain', projectionsRoutes);
 // Notion 写入端点：POST /notes, POST /notion/project, POST /notion/task
 app.use('/api/brain', notesRoutes);
