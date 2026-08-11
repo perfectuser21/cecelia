@@ -554,6 +554,65 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     expect(deps.execCmd.calls.some((c) => c.includes('gh pr'))).toBe(false);
   });
 
+  it('run.pr_url 为空但 task payload 声明精确 PR → 直接验证声明 URL，不依赖 task 短 ID 发现', async () => {
+    const declaredHeadSha = '7a07d99439c04fd01c3cd61407b040282d2846cf';
+    const deps = makeDeps({
+      rows: {
+        run: { pr_url: null },
+        tasks: [{
+          id: TASK_ID,
+          status: 'in_progress',
+          payload: {
+            base_repo: 'https://github.com/o/r.git',
+            pr_url: PR_URL,
+            pr_head_sha: declaredHeadSha,
+          },
+        }],
+      },
+      exec: {
+        prList: '[]',
+        prView: JSON.stringify({
+          number: 42,
+          state: 'OPEN',
+          mergeStateStatus: 'CLEAN',
+          headRefName: 'cp-unrelated-to-task-id',
+          headRefOid: declaredHeadSha,
+          statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
+        }),
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.pr).toMatchObject({
+      url: PR_URL,
+      head_sha: declaredHeadSha,
+      ci: 'pass',
+    });
+    expect(deps.execCmd.calls.some((cmd) => cmd.includes(`gh pr view ${PR_URL}`))).toBe(true);
+    expect(deps.execCmd.calls.some((cmd) => cmd.includes('gh pr list'))).toBe(false);
+  });
+
+  it('task payload 的 pr_url 不是严格 GitHub PR URL → fail closed，不把声明值交给 shell', async () => {
+    const deps = makeDeps({
+      rows: {
+        run: { pr_url: null },
+        tasks: [{
+          id: TASK_ID,
+          status: 'in_progress',
+          payload: {
+            pr_url: 'https://github.com/o/r/pull/42; touch /tmp/injected',
+          },
+        }],
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.pr).toBeNull();
+    expect(deps.execCmd.calls.some((cmd) => cmd.includes('gh pr'))).toBe(false);
+  });
+
   it('gh 2.45 不支持 pr checks --json 时，直接用 pr view statusCheckRollup 采集 CI，不触发 fatal', async () => {
     const deps = makeDeps({
       rows: { run: { pr_url: PR_URL } },
