@@ -67,7 +67,7 @@ const aliasesJsonSchema = { type: 'array', items: stableKeyJsonSchema };
 
 export const MAP_MANIFEST_JSON_SCHEMA = Object.freeze({
   $schema: 'https://json-schema.org/draft/2020-12/schema',
-  $id: 'https://cecelia.local/schemas/map-manifest-v1.json',
+  $id: 'urn:universal-map:manifest:v1',
   title: 'Universal Map Manifest v1',
   type: 'object',
   additionalProperties: false,
