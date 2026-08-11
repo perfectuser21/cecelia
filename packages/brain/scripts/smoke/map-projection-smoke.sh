@@ -25,6 +25,7 @@ cleanup() {
   "$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
     -c "DELETE FROM map_projection_runs WHERE scope_key = '$SMOKE_SCOPE'" \
     -c "DELETE FROM map_manifest_versions WHERE scope_key = '$SMOKE_SCOPE'" \
+    -c "DELETE FROM map_scope_repositories WHERE scope_key = '$SMOKE_SCOPE'" \
     -c "DELETE FROM decisions WHERE id = '$SMOKE_DECISION_ID'" \
     >/dev/null 2>&1 || true
 }
@@ -37,8 +38,8 @@ db_scalar() {
 printf '%s\n' '── map projection scratch smoke ──'
 printf 'database=%s scope=%s\n' "$DATABASE_NAME" "$SMOKE_SCOPE"
 
-[[ "$(db_scalar "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='405')")" == 't' ]] \
-  || fail 'schema_version 405 不存在'
+[[ "$(db_scalar "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='406')")" == 't' ]] \
+  || fail 'schema_version 406 不存在'
 TABLE_COUNT="$(db_scalar "
   SELECT count(*) FROM information_schema.tables
    WHERE table_schema='public'
@@ -95,6 +96,13 @@ try {
      VALUES ($1, 'feature', 'map-projection-smoke', 'scratch fixture',
        'verify deterministic projection', 'active', 'codex', 'user', 'P2')`,
     [manifest.source_decision_id],
+  );
+  await pool.query(
+    `INSERT INTO map_scope_repositories
+      (scope_key, repo, adapter_key, adapter_config)
+     VALUES ($1, $1, 'legacy-ledger-v1',
+       '{"ledger_partition":"infrastructure"}'::jsonb)`,
+    [manifest.scope_key],
   );
 
   const submitted = await submitMapManifest(pool, manifest);
@@ -180,8 +188,10 @@ RESIDUE="$(db_scalar "
     || '|' ||
     (SELECT count(*) FROM map_manifest_versions WHERE scope_key='$SMOKE_SCOPE')::text
     || '|' ||
+    (SELECT count(*) FROM map_scope_repositories WHERE scope_key='$SMOKE_SCOPE')::text
+    || '|' ||
     (SELECT count(*) FROM decisions WHERE id='$SMOKE_DECISION_ID')::text")"
-[[ "$RESIDUE" == '0|0|0' ]] || fail "fixture 残留: $RESIDUE"
+[[ "$RESIDUE" == '0|0|0|0' ]] || fail "fixture 残留: $RESIDUE"
 pass 'scratch fixture 清理'
 
 printf '%s\n' 'ALL PASS'

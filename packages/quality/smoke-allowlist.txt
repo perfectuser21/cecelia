@@ -159,6 +159,7 @@ line-dreaming-smoke.sh
 line-strategist-dispatch-smoke.sh
 liveness-never-started-smoke.sh
 liveness-queued-never-spawned-smoke.sh
+map-anchor-state-smoke.sh
 map-fact-snapshot-smoke.sh
 map-manifest-smoke.sh
 map-projection-smoke.sh
