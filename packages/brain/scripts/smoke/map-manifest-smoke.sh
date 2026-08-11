@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scratch-only 真验火：完整 Map Manifest 校验、幂等 draft 与激活 fail-closed。
+# scratch-only 真验火：完整 Map Manifest 校验、幂等 draft 与原子激活。
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
@@ -23,6 +23,7 @@ SMOKE_DECISION_ID="$($NODE_EXECUTABLE -e "process.stdout.write(require('node:cry
 
 cleanup() {
   "$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
+    -c "DELETE FROM map_projection_runs WHERE scope_key = '$SMOKE_SCOPE'" \
     -c "DELETE FROM map_manifest_versions WHERE scope_key = '$SMOKE_SCOPE'" \
     -c "DELETE FROM decisions WHERE id = '$SMOKE_DECISION_ID'" \
     >/dev/null 2>&1 || true
@@ -92,28 +93,23 @@ try {
     throw new Error(`unexpected draft counts: ${JSON.stringify(beforeActivation.rows[0])}`);
   }
 
-  let activationError;
-  try {
-    await activateMapManifest(pool, first.manifest_version.id);
-  } catch (error) {
-    activationError = error;
-  }
-  if (activationError?.code !== 'MAP_PROJECTOR_UNAVAILABLE' || activationError?.status !== 503) {
-    throw new Error(`activation did not fail closed: ${activationError?.code}`);
+  const activation = await activateMapManifest(pool, first.manifest_version.id);
+  if (!activation.activated || activation.manifest_version.status !== 'active') {
+    throw new Error('manifest activation did not produce an active version');
   }
 
   const afterActivation = await pool.query(
     `SELECT status, activated_at FROM map_manifest_versions WHERE scope_key=$1`,
     [process.env.SMOKE_SCOPE],
   );
-  if (afterActivation.rows[0]?.status !== 'draft' || afterActivation.rows[0]?.activated_at !== null) {
-    throw new Error(`failed activation mutated draft: ${JSON.stringify(afterActivation.rows)}`);
+  if (afterActivation.rows[0]?.status !== 'active' || afterActivation.rows[0]?.activated_at === null) {
+    throw new Error(`activation did not persist active state: ${JSON.stringify(afterActivation.rows)}`);
   }
 } finally {
   await pool.end();
 }
 NODE
-pass '冻结 2×11×2×7 manifest 校验、幂等 draft 与激活 fail-closed'
+pass '冻结 2×11×2×7 manifest 校验、幂等 draft 与原子激活'
 
 cleanup
 trap - EXIT
