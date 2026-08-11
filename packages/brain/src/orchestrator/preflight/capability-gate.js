@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto';
 import {
   isVerifiedExecutionTarget,
 } from './execution-targets.js';
+import {
+  CREDENTIAL_FRESHNESS_BLOCK_REASONS,
+} from './credential-freshness.js';
 
 const SECRET_KEYS = /(?:^|_)(?:authorization|token|password|cookie)(?:$|_)/i;
 const TRANSIENT_HTTP_STATUSES = new Set([500, 502, 503, 504]);
@@ -145,6 +148,7 @@ export function createCapabilityGate(deps = {}) {
     let fallbackReason = 'all_execution_targets_exhausted';
     let lastProviderProbe = null;
     let lastNodeProbe = null;
+    let lastCredentialProbe = null;
     let selectedTarget = null;
     let providerAuth = null;
 
@@ -185,6 +189,40 @@ export function createCapabilityGate(deps = {}) {
       if (exhaustedAccounts.has(accountCycleKey)) {
         fallbackReason = 'logical_cycle_retry_exhausted';
         continue;
+      }
+
+      // 派发前只读凭据新鲜度闸（事故 2026-08-10）：token 过期/将过期时不选此 account，
+      // 让 run 走 infrastructure backoff 退避等待而非空烧 attempt。纯本地只读，早于
+      // （网络）provider-auth 探针，凭据不新鲜就跳过、连探针都不发。
+      if (deps.checkCredentialFreshness) {
+        let freshness;
+        try {
+          freshness = await deps.checkCredentialFreshness({
+            provider: candidate.provider,
+            account: candidate.account,
+            machine: candidate.machine,
+            task_bundle: taskBundle,
+          });
+        } catch (error) {
+          freshness = {
+            fresh: false,
+            reason: 'credential_probe_error',
+            message: error?.message ?? String(error),
+          };
+        }
+        if (freshness && freshness.fresh === false) {
+          lastCredentialProbe = {
+            provider: candidate.provider,
+            account: candidate.account,
+            machine: candidate.machine,
+            credential_reason: freshness.reason ?? 'credential_not_fresh',
+            remaining_ms: freshness.remainingMs ?? null,
+            expires_at_ms: freshness.expiresAtMs ?? null,
+            message: freshness.message ?? null,
+          };
+          fallbackReason = freshness.reason ?? 'credential_not_fresh';
+          continue;
+        }
       }
 
       try {
@@ -252,6 +290,8 @@ export function createCapabilityGate(deps = {}) {
         ? 'credential_probe_mismatch'
         : fallbackReason === 'preflight_timeout'
           ? 'preflight_timeout'
+          : (lastCredentialProbe && CREDENTIAL_FRESHNESS_BLOCK_REASONS.has(fallbackReason))
+            ? fallbackReason
           : NODE_ADMISSION_SIGNATURES.has(fallbackReason) && !lastProviderProbe
             ? fallbackReason
           : 'all_execution_targets_exhausted';
@@ -259,7 +299,7 @@ export function createCapabilityGate(deps = {}) {
         snapshotId,
         fromTarget: preferredTarget,
         fallbackReason: reason,
-        probeDetail: lastProviderProbe ?? lastNodeProbe,
+        probeDetail: lastProviderProbe ?? lastCredentialProbe ?? lastNodeProbe,
       });
       await deps.emitAlert?.({
         kind: 'kernel_capability_preflight_blocked',

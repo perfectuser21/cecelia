@@ -36,6 +36,7 @@ import { loadSkillBundle } from './skill-bundle.js';
 import { createKernelHandlers } from './kernel-handlers.js';
 import { readGitArtifact } from './git-artifact-reader.js';
 import { createCapabilityGate } from './preflight/capability-gate.js';
+import { createCredentialFreshnessCheck } from './preflight/credential-freshness.js';
 import { createProductionCapabilityProbes } from './preflight/production-probes.js';
 import {
   createProductionExecutionTransport,
@@ -217,9 +218,21 @@ export async function buildRealDeps(overrides = {}) {
         nodeAdmissionRequestTimeoutMs: overrides.preflightNodeAdmissionTimeoutMs ?? 20_000,
       });
     const createCapabilityGateFn = overrides.createCapabilityGateFn ?? createCapabilityGate;
+    // 派发前只读凭据新鲜度闸（事故 2026-08-10）：只管 Claude OAuth 凭据（当事方），
+    // 其它 provider 无本地凭据路径 → 跳过。纯只读，绝不写/刷新 credentials.json。
+    const resolveAccountHomeForCred = overrides.resolveAccountHome ?? resolveProviderAccountHome;
+    const checkCredentialFreshness = overrides.checkCredentialFreshness
+      ?? createCredentialFreshnessCheck({
+        env,
+        resolveCredentialPath: (provider, account) => {
+          if (provider !== 'claude' || !account) return null;
+          return `${resolveAccountHomeForCred(provider, account)}/.credentials.json`;
+        },
+      });
     const preflightGate = overrides.preflightGate
       ?? createCapabilityGateFn({
         ...productionProbes,
+        checkCredentialFreshness,
         probeTimeoutMs: overrides.preflightProbeTimeoutMs ?? 25_000,
         snapshotTtlMs: overrides.preflightSnapshotTtlMs ?? 1_000,
       });
