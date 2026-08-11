@@ -18,7 +18,7 @@ describe('migration 405 — rebuildable map projection core', () => {
   });
 
   it('run 固定 manifest/fact/projector/digest provenance 与单 active 约束', () => {
-    expect(upSql).toMatch(/CONSTRAINT map_manifest_projection_identity_unique UNIQUE \(id, scope_key, digest\)/i);
+    expect(upSql).toMatch(/CONSTRAINT map_manifest_projection_identity_unique\s+UNIQUE \(id, scope_key, digest\)/i);
     expect(upSql).toMatch(/FOREIGN KEY \(manifest_version_id, scope_key, manifest_digest\)[\s\S]*REFERENCES map_manifest_versions\s*\(id, scope_key, digest\)/i);
     expect(upSql).toMatch(/manifest_digest TEXT NOT NULL CHECK \(manifest_digest ~ '\^\[0-9a-f\]\{64\}\$'\)/i);
     expect(upSql).toMatch(/fact_revisions JSONB NOT NULL/i);

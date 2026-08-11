@@ -84,7 +84,9 @@ describe('projectMapManifest', () => {
       code: 'MAP_PROJECTION_WRITE_INCOMPLETE',
     });
     expect(client.query.mock.calls.some(([sql]) => /INSERT INTO map_projection_edges/i.test(sql))).toBe(false);
-    expect(client.query.mock.calls.some(([sql]) => /status = 'active'/i.test(sql))).toBe(false);
+    expect(client.query.mock.calls.some(([sql]) => (
+      /UPDATE map_projection_runs[\s\S]*SET status = 'active'/i.test(sql)
+    ))).toBe(false);
   });
 
   it('重建只接受当前 active manifest，拒绝缓存中的旧版本', async () => {

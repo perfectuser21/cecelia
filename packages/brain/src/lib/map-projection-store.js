@@ -9,24 +9,11 @@ export class MapProjectionStoreError extends Error {
   }
 }
 
-async function lockScope(client, scopeKey) {
+async function lockScope(client, lockNamespace, scopeKey) {
   await client.query(
     'SELECT pg_advisory_xact_lock(hashtext($1::text))',
-    [`map-projection:${scopeKey}`],
+    [`${lockNamespace}:${scopeKey}`],
   );
-}
-
-async function readFactRevisions(client, scopeKey) {
-  const { rows } = await client.query(
-    `SELECT kind, source_revision
-       FROM fact_snapshot_headers
-      WHERE repo = $1 AND source_revision IS NOT NULL
-      ORDER BY kind`,
-    [scopeKey],
-  );
-  return Object.fromEntries(rows.map(({ kind, source_revision: revision }) => (
-    [kind, revision]
-  )));
 }
 
 function assertManifestVersion(manifestVersion) {
@@ -37,6 +24,55 @@ function assertManifestVersion(manifestVersion) {
       'Projector requires a persisted manifest version with id, scope, manifest, and digest',
     );
   }
+}
+
+async function readAuthoritativeManifest(client, manifestVersion, mode) {
+  if (mode === 'activation') {
+    const { rows } = await client.query(
+      `SELECT id, scope_key, version, source_decision_id, manifest, digest,
+              status, created_at, activated_at
+         FROM map_manifest_versions
+        WHERE id = $1 AND scope_key = $2 AND digest = $3
+        FOR KEY SHARE`,
+      [manifestVersion.id, manifestVersion.scope_key, manifestVersion.digest],
+    );
+    if (!rows[0] || rows[0].status !== 'draft') {
+      throw new MapProjectionStoreError(
+        'MAP_PROJECTION_MANIFEST_STALE',
+        'Activation projection requires the authoritative draft manifest version',
+        { manifest_version_id: manifestVersion.id, scope_key: manifestVersion.scope_key },
+      );
+    }
+    return rows[0];
+  }
+  if (mode !== 'rebuild') {
+    throw new MapProjectionStoreError(
+      'MAP_PROJECTION_MODE_INVALID',
+      `Unsupported projection mode: ${mode}`,
+    );
+  }
+
+  const { rows } = await client.query(
+    `SELECT id, scope_key, version, source_decision_id, manifest, digest,
+            status, created_at, activated_at
+       FROM map_manifest_versions
+      WHERE scope_key = $1 AND status = 'active'
+      FOR KEY SHARE`,
+    [manifestVersion.scope_key],
+  );
+  const active = rows[0];
+  if (!active || active.id !== manifestVersion.id || active.digest !== manifestVersion.digest) {
+    throw new MapProjectionStoreError(
+      'MAP_PROJECTION_MANIFEST_STALE',
+      'Rebuild projection requires the current active manifest version',
+      {
+        requested_manifest_version_id: manifestVersion.id,
+        active_manifest_version_id: active?.id ?? null,
+        scope_key: manifestVersion.scope_key,
+      },
+    );
+  }
+  return active;
 }
 
 async function insertRun(client, manifestVersion, projection) {
@@ -133,7 +169,8 @@ async function activateRun(client, scopeKey, runId) {
 export async function projectMapManifest({
   client,
   manifestVersion,
-  factRevisions,
+  factRevisions = {},
+  mode = 'rebuild',
   buildProjection = buildMapProjection,
 }) {
   if (!client?.query) {
@@ -143,14 +180,13 @@ export async function projectMapManifest({
     );
   }
   assertManifestVersion(manifestVersion);
-  await lockScope(client, manifestVersion.scope_key);
-  const facts = factRevisions === undefined
-    ? await readFactRevisions(client, manifestVersion.scope_key)
-    : factRevisions;
+  await lockScope(client, 'map-manifest', manifestVersion.scope_key);
+  await lockScope(client, 'map-projection', manifestVersion.scope_key);
+  const authoritativeManifest = await readAuthoritativeManifest(client, manifestVersion, mode);
   const projection = buildProjection({
-    manifest: manifestVersion.manifest,
-    manifestDigest: manifestVersion.digest,
-    factRevisions: facts,
+    manifest: authoritativeManifest.manifest,
+    manifestDigest: authoritativeManifest.digest,
+    factRevisions,
   });
   if (projection.projector_version !== MAP_PROJECTOR_VERSION) {
     throw new MapProjectionStoreError(
@@ -159,9 +195,9 @@ export async function projectMapManifest({
     );
   }
 
-  const runId = await insertRun(client, manifestVersion, projection);
+  const runId = await insertRun(client, authoritativeManifest, projection);
   await insertNodes(client, runId, projection.nodes);
   await insertEdges(client, runId, projection.edges);
-  const projectionRun = await activateRun(client, manifestVersion.scope_key, runId);
+  const projectionRun = await activateRun(client, authoritativeManifest.scope_key, runId);
   return { projection_run: projectionRun, projection };
 }

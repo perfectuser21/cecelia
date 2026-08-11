@@ -1,10 +1,14 @@
 -- Migration 405: Rebuildable Universal Map projection runs, nodes, and edges.
 -- Projection data is derived and may be deleted/rebuilt without mutating truth sources.
 
+ALTER TABLE map_manifest_versions
+  ADD CONSTRAINT map_manifest_projection_identity_unique
+  UNIQUE (id, scope_key, digest);
+
 CREATE TABLE IF NOT EXISTS map_projection_runs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   scope_key TEXT NOT NULL,
-  manifest_version_id UUID NOT NULL REFERENCES map_manifest_versions(id),
+  manifest_version_id UUID NOT NULL,
   manifest_digest TEXT NOT NULL CHECK (manifest_digest ~ '^[0-9a-f]{64}$'),
   fact_revisions JSONB NOT NULL CHECK (jsonb_typeof(fact_revisions) = 'object'),
   projector_version TEXT NOT NULL,
@@ -21,7 +25,10 @@ CREATE TABLE IF NOT EXISTS map_projection_runs (
   CONSTRAINT map_projection_run_error_shape CHECK (
     (status = 'failed' AND error IS NOT NULL)
     OR (status <> 'failed' AND error IS NULL)
-  )
+  ),
+  CONSTRAINT map_projection_manifest_identity_fk
+    FOREIGN KEY (manifest_version_id, scope_key, manifest_digest)
+    REFERENCES map_manifest_versions (id, scope_key, digest)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_map_projection_one_active_per_scope

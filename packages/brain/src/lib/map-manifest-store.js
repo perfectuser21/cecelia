@@ -160,7 +160,7 @@ export async function activateMapManifest(
     }
 
     await lockSourceDecision(client, manifestVersion.source_decision_id);
-    await projector({ client, manifestVersion });
+    await projector({ client, manifestVersion, mode: 'activation' });
 
     await client.query(
       `UPDATE map_manifest_versions
