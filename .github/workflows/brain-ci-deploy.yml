@@ -292,6 +292,12 @@ jobs:
             exit 1
           fi
 
+      - name: Smoke — Brain 内部鉴权效果确认
+        if: steps.sha_check.outputs.deploy_needed == 'true' && steps.trigger.outputs.skipped != 'true'
+        run: |
+          VERDICT=$(bash scripts/ci/assert-internal-auth-ready.sh "${BRAIN_URL}")
+          echo "$VERDICT"
+
   # ─── L1 SHA 对账串链测试（PR + push 都跑，INV-03）────────────────────────
   sha-account-l1:
     name: L1 SHA Account Tests (Gate3)
