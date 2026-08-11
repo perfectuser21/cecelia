@@ -464,6 +464,8 @@ describe('selfcheck schema version', () => {
     // 392 = 验收一体两面数据层（AI 四列 + runs.detail + 7 值状态机 + (run_id,check_key) 唯一），故推进地板到 392。
     // 393 = GP 胶水参数化（golden_paths.base_repo + target_environment 两可空列），故推进地板到 393。
     // 402 = immutable Universal Map Manifest versions。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('402');
+    // 403 = 事实池 source_revision + scanner_version + repo 字段补齐；
+    // 404 = Universal Map projection runs/nodes/edges 三派生表。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('404');
   });
 });

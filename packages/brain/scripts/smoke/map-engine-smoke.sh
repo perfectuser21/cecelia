@@ -16,8 +16,8 @@ echo "$h" | jq -e '.scope_key == "cecelia"' >/dev/null 2>&1 \
   || fail "GET /health 结构异常"
 
 # 2. /manifests 列表端点
-m=$(curl -sf "$BRAIN/api/brain/map/manifests?scope=cecelia") || { fail "GET /manifests 不可达"; m="[]"; }
-echo "$m" | jq -e 'type == "array"' >/dev/null 2>&1 \
+m=$(curl -sf "$BRAIN/api/brain/map/manifests?scope=cecelia") || { fail "GET /manifests 不可达"; m="{}"; }
+echo "$m" | jq -e '.manifests | type == "array"' >/dev/null 2>&1 \
   && ok "GET /manifests 返回数组" \
   || fail "GET /manifests 结构异常"
 

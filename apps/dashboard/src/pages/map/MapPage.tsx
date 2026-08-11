@@ -13,7 +13,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { FC } from 'react';
 
-const BRAIN_API = 'http://localhost:5221';
+const BRAIN_API = '';
 
 // ─── 类型定义 ────────────────────────────────────────────────────────────────
 
