@@ -41,6 +41,7 @@
 - 磁盘清理误删 canonical Runner 后，从当前 main 的 `docker/cecelia-runner/` 重建镜像，固定为 `sha256:5b304402ac167aa6bac4011f6e66ad2dbf8106473a5bb4e32e40498620cfb31d`。
 - Runner digest 在 NodeProfile、三机配置、rollout/reconcile、安装器测试和 smoke 中一次性同步；Fleet worker 基线升级为 1.272.11。
 - `verify-digest-pin.sh` 继续 fail-closed，确保镜像实际摘要与代码 pin 漂移时无法静默准入。
+- 08-11 追修：上面这次重建仍继承了 `useradd -r` 动态分配 `cecelia` 账户 UID/GID 的老问题——webkit playwright 系统依赖挤占，UID 从历史值 999 漂移到 997，非 evaluator 角色容器无 `--user root` 可自愈，`.codex`/`.config/gh` 凭据 tmpfs 挂载（worker 侧硬编码 uid=999,gid=999）属主对不上，GitHub 凭据 FIFO 写入失败，本机 harness 派发 9 连尸。改为 Dockerfile 显式钉死 `cecelia` UID/GID=5999（不选 999：本地构建实测该基座已被 `systemd-journal` 组占用 GID 999），worker 两处硬编码同步，镜像重建为 `sha256:3ac5b30e0681d545f880386a9645f22850e7f047dcae7444c7ce61c98bcf50b5`，digest 全仓九处 pin 一次性同步。
 
 ---
 
