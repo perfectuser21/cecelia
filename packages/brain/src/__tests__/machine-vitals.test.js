@@ -139,6 +139,20 @@ describe('machine-vitals', () => {
       expect(deleteCall[1][0]).toBe('machine_vitals_stale_alert');
       errSpy.mockRestore();
     });
+
+    // 重启鲁棒性（2026-08-08 machine_vitals_stale_alert 卡 2 天事故根因）：
+    // Brain 重启后 in-memory _staleAlerted 丢失（=false），旧代码的 `wasAlerted && pool`
+    // 门下"恢复即清"永不触发，DB 残留哨兵永远清不掉，持续误导排障 2 天。
+    // 修法：首次成功采样无条件清一次 DB 哨兵，与内存标志解耦。
+    it('重启残留自愈：首次成功采样即清 DB 哨兵（in-memory 标志已丢失也清）', async () => {
+      const pool = makePool();
+      stubDocker({ psNames: '', memUsage: '' });
+      // 全程无失败 → _staleAlerted 一直是 false，模拟重启后残留哨兵场景
+      await sampleMachineVitals(pool);
+      const deleteCall = pool.query.mock.calls.find(([sql]) => sql.includes('DELETE FROM working_memory'));
+      expect(deleteCall).toBeTruthy();
+      expect(deleteCall[1][0]).toBe('machine_vitals_stale_alert');
+    });
   });
 
   describe('machine_vitals_daily_peak 峰值滚动', () => {

@@ -19,7 +19,8 @@ let _cache = null;                            // { sampled_at, relay_containers,
 let _lastGoodAt = 0;
 let _firstAttemptAt = 0;                      // never-good 基线：模块首次采样尝试时间
 let _staleAlerted = false;
-let _peakState = null;                        // { date:'YYYY-MM-DD', peak:number } 当日容器数峰值内存镜像（de6d3582 T1）
+let _residueSentinelCleared = false;          // 重启残留自愈：本进程是否已至少清过一次 DB 哨兵
+let _peakState = null;                         // { date:'YYYY-MM-DD', peak:number } 当日容器数峰值内存镜像（de6d3582 T1）
 
 function run(cmd, args) {
   return new Promise((resolve, reject) => {
@@ -78,7 +79,13 @@ export async function sampleMachineVitals(pool) {
     _lastGoodAt = next.sampled_at;
     const wasAlerted = _staleAlerted;
     _staleAlerted = false;
-    if (wasAlerted && pool) {
+    // 恢复即清哨兵。两种触发：
+    //   wasAlerted            → 同进程内「告警→恢复」的常规路径
+    //   !_residueSentinelCleared → 首次成功采样无条件清一次，覆盖 Brain 重启后
+    //     in-memory _staleAlerted 丢失、DB 残留哨兵永不清除的场景
+    //     （2026-08-08 machine_vitals_stale_alert 卡 2 天事故根因）。
+    if (pool && (wasAlerted || !_residueSentinelCleared)) {
+      _residueSentinelCleared = true;
       await writeVitalsSentinel(pool, { recovered_at: new Date(next.sampled_at).toISOString() });
     }
     // 当日容器数峰值滚动（日报 admission 吞吐段数据源，de6d3582）
@@ -155,5 +162,5 @@ export function getMachineVitals() {
   return { ..._cache, stale: Date.now() - _cache.sampled_at > STALE_MS };
 }
 
-export function _resetVitalsCacheForTest() { _cache = null; _lastGoodAt = 0; _firstAttemptAt = 0; _staleAlerted = false; _peakState = null; }
+export function _resetVitalsCacheForTest() { _cache = null; _lastGoodAt = 0; _firstAttemptAt = 0; _staleAlerted = false; _residueSentinelCleared = false; _peakState = null; }
 export function _setVitalsCacheForTest(obj) { _cache = obj; }
