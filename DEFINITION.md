@@ -2,15 +2,23 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-08-10
+**最后更新**: 2026-08-11
 
 
 
 
 
-**Brain 版本**: 1.272.2
+**Brain 版本**: 1.272.3
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.272.3 — Harness Account Exhaustion Callback Recovery
+
+- Harness Provider 的 weekly/rate-limit 429 保持为可恢复的 `account_exhausted` 控制类，不再因数据库约束漂移导致 callback 无限重试。
+- `harness_attempts_failure_class_check` 继续严格拒绝未知值，仅补齐 execution contract 已声明的 `account_exhausted`。
+- 真实 PostgreSQL 回归覆盖迁移前 23514 复现、迁移后落库、幂等执行与非法值拒绝；Schema 地板推进到 406。
 
 ---
 

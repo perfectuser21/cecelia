@@ -206,8 +206,9 @@ describe('selfcheck', () => {
   // 403（事实池 source_revision + scanner_version + repo 字段补齐）推进地板到 403。
   // 404（Universal Map projection runs/nodes/edges 三派生表）推进地板到 404。
   // 405（rebuildable Map Projection core）推进地板到 405。
-  it('EXPECTED_SCHEMA_VERSION should be 405', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('405');
+  // 406（Harness attempt account_exhausted callback control class）推进地板到 406。
+  it('EXPECTED_SCHEMA_VERSION should be 406', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('406');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

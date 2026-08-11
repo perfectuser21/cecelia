@@ -467,6 +467,7 @@ describe('selfcheck schema version', () => {
     // 403 = 事实池 source_revision + scanner_version + repo 字段补齐；
     // 404 = Universal Map projection runs/nodes/edges 三派生表。
     // 405 = rebuildable Universal Map Projection core。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('405');
+    // 406 = Harness attempt account_exhausted callback control class。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('406');
   });
 });
