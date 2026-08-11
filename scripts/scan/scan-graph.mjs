@@ -6,12 +6,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
 import pg from 'pg';
 import { cruise } from 'dependency-cruiser';
 import { extractSpawnEdges, extractHttpEdges } from '../../packages/brain/src/lib/graph-extract.js';
 import { replaceRepoEdges } from '../../packages/brain/src/lib/graph-store.js';
 import { computeFreshness } from '../../packages/brain/src/lib/registry-freshness.js';
-import { readGitRevision } from '../../packages/brain/src/lib/git-revision.js';
+
+const SCANNER_VERSION = '2.0.0'; // 刀0: 新增 source_revision 支持
+
+/** 获取指定路径的 git HEAD SHA（失败时返回 null） */
+function getGitSha(repoRoot) {
+  try {
+    return execSync('git rev-parse HEAD', { cwd: repoRoot, encoding: 'utf8', timeout: 5000 }).trim();
+  } catch (_) {
+    return null;
+  }
+}
 
 // 多仓库清单：每项支持环境变量覆盖
 export const REPOS = [
@@ -29,34 +40,7 @@ export const REPOS = [
   },
 ];
 
-/**
- * 将 GRAPH_REPOS 解析为本轮扫描清单。未设置时保留生产默认三仓；显式设置时严格校验。
- * @param {Array<{ name: string, root: string }>} repos
- * @param {string | undefined} rawSelection
- * @returns {Array<{ name: string, root: string }>}
- */
-export function selectGraphRepos(repos, rawSelection) {
-  if (rawSelection === undefined) return repos;
-  if (rawSelection.trim() === '') {
-    throw new Error('GRAPH_REPOS 不能为空；请提供逗号分隔的仓库名');
-  }
-
-  const names = rawSelection.split(',').map((name) => name.trim());
-  if (names.some((name) => name === '')) {
-    throw new Error('GRAPH_REPOS 不能为空；逗号之间必须是仓库名');
-  }
-
-  const reposByName = new Map(repos.map((repo) => [repo.name, repo]));
-  const unknownNames = names.filter((name) => !reposByName.has(name));
-  if (unknownNames.length > 0) {
-    throw new Error(`GRAPH_REPOS 包含未知仓库: ${unknownNames.join(',')}`);
-  }
-
-  return names.map((name) => reposByName.get(name));
-}
-
 const FILE_RE = /\.(js|mjs|cjs|ts|tsx)$/;
-const SCANNER_VERSION = 'graph-v3';
 // .claude 含 worktrees，扫它会把临时分支代码污染入图谱
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'coverage', '.claude']);
 
@@ -99,7 +83,8 @@ export async function scanRepo(repo, pool) {
   }
 
   try {
-    const sourceRevision = readGitRevision(repo.root);
+    // 切换到 repo 根目录（dependency-cruiser 需要）
+    process.chdir(repo.root);
 
     const edges = [];
 
@@ -113,27 +98,30 @@ export async function scanRepo(repo, pool) {
 
     let importCount = 0;
     // 1) import 边：dependency-cruiser 程序化 API
-    const cruiseResult = await cruise(effectiveDirs, {
-      baseDir: repo.root,
-      doNotFollow: { path: 'node_modules' },
-      exclude: { path: 'node_modules' },
-    });
-    const out = typeof cruiseResult.output === 'string'
-      ? JSON.parse(cruiseResult.output)
-      : cruiseResult.output;
-    const modules = out.modules || [];
-    for (const m of modules) {
-      if (m.source.includes('node_modules')) continue;
-      for (const d of m.dependencies || []) {
-        const dst = d.resolved || '';
-        if (d.couldNotResolve || !dst || dst.includes('node_modules')) continue;
-        if (d.dependencyTypes && d.dependencyTypes.includes('core')) continue;
-        edges.push({
-          src_path: m.source, dst_path: dst, edge_type: 'import',
-          detail: { via: 'import', dynamic: d.dynamic === true },
-        });
-        importCount++;
+    try {
+      const cruiseResult = await cruise(effectiveDirs, {
+        doNotFollow: { path: 'node_modules' },
+        exclude: { path: 'node_modules' },
+      });
+      const out = typeof cruiseResult.output === 'string'
+        ? JSON.parse(cruiseResult.output)
+        : cruiseResult.output;
+      const modules = out.modules || [];
+      for (const m of modules) {
+        if (m.source.includes('node_modules')) continue;
+        for (const d of m.dependencies || []) {
+          const dst = d.resolved || '';
+          if (d.couldNotResolve || !dst || dst.includes('node_modules')) continue;
+          if (d.dependencyTypes && d.dependencyTypes.includes('core')) continue;
+          edges.push({
+            src_path: m.source, dst_path: dst, edge_type: 'import',
+            detail: { via: 'import', dynamic: d.dynamic === true },
+          });
+          importCount++;
+        }
       }
+    } catch (cruiseErr) {
+      console.warn(`WARN: repo=${repo.name} dependency-cruiser 失败: ${cruiseErr.message}，跳过 import 边`);
     }
 
     // 2) spawn/http 边：walk + 纯抽取器
@@ -165,27 +153,32 @@ export async function scanRepo(repo, pool) {
       return true;
     });
 
-    // 4) 全量替换写库（I-1: BEGIN;DELETE;INSERT;COMMIT）
+    // 4) 获取 source_revision（刀0：source_revision 必须来自 git SHA，禁止用 mtime）
+    const sourceRevision = getGitSha(repo.root);
+
+    // 5) 全量替换写库（I-1: BEGIN;DELETE;INSERT;COMMIT），携带 revision 信息
     const { inserted } = await replaceRepoEdges(pool, repo.name, deduped, {
-      sourceRevision, scannerVersion: SCANNER_VERSION,
+      sourceRevision,
+      scannerVersion: SCANNER_VERSION,
     });
 
-    // 5) per-repo freshness（I-3: 各仓独立查询，禁止跨仓合并）
+    // 6) per-repo freshness（I-3: 各仓独立查询，禁止跨仓合并）
     const { rows: frRows } = await pool.query(
-      `SELECT scanned_at, source_revision, scanner_version, row_count
-         FROM fact_snapshot_headers
-        WHERE kind = 'graph' AND repo = $1`,
-      [repo.name],
+      `SELECT max(scanned_at) AS latest FROM graph_edges WHERE repo = $1`, [repo.name]
     );
-    const freshness = computeFreshness(frRows[0] ?? null);
+    // 若仓库成功扫描但无代码边（如纯文档/skills仓库），以扫描完成时刻为 freshness 基准，
+    // 避免 null → computeFreshness → stale=true 误报（该仓库已扫描，只是无代码边）
+    const scanTime = frRows[0]?.latest ?? new Date();
+    const freshness = computeFreshness(scanTime);
 
-    // 6) 打印每仓摘要
+    // 7) 打印每仓摘要
     console.log(
       `repo=${repo.name} import=${importCount} spawn=${spawnCount} http=${httpCount}` +
-      ` 入库=${inserted} stale=${freshness.stale} age_hours=${freshness.age_hours ?? 'N/A'}`
+      ` 入库=${inserted} stale=${freshness.stale} age_hours=${freshness.age_hours ?? 'N/A'}` +
+      ` revision=${sourceRevision?.slice(0, 8) ?? 'unknown'}`
     );
 
-    return { name: repo.name, inserted, freshness };
+    return { name: repo.name, inserted, freshness, sourceRevision };
   } catch (err) {
     console.error(`ERROR: repo=${repo.name} 扫描失败: ${err.message}`);
     return { name: repo.name, error: err };
@@ -215,8 +208,7 @@ async function main() {
   let hasError = false;
 
   try {
-    const selectedRepos = selectGraphRepos(REPOS, process.env.GRAPH_REPOS);
-    const results = await scanRepoList(selectedRepos, pool);
+    const results = await scanRepoList(REPOS, pool);
     for (const r of results) {
       if (r.skipped || r.error) {
         hasError = true;
