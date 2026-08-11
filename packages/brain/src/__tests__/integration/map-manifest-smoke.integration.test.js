@@ -6,10 +6,8 @@ import { describe, expect, it } from 'vitest';
 const repositoryRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
 const databaseUrl = process.env.DATABASE_URL ?? process.env.TEST_DATABASE_URL;
 
-describe('Map Manifest scratch smoke', () => {
+describe.skipIf(!databaseUrl)('Map Manifest scratch smoke', () => {
   it('为临时 scope 配置 repo adapter 后完成激活并清理全部夹具', () => {
-    expect(databaseUrl).toBeTruthy();
-
     const result = spawnSync(
       'bash',
       ['packages/brain/scripts/smoke/map-manifest-smoke.sh'],
