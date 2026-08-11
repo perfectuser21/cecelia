@@ -49,16 +49,18 @@ export function buildStructuralProjection(manifest, scopeKey) {
   const edges = [];
   const nodeIdByKey = new Map();
 
-  function registerNode(nodeType, nodeKey, name, attributes = {}) {
+  function registerNode(nodeType, nodeKey, name, attributes = {}, aliases = undefined) {
     const nodeId = stableNodeId(scopeKey, nodeType, nodeKey);
-    nodes.push({
+    const node = {
       node_id: nodeId,
       node_type: nodeType,
       node_key: nodeKey,
       name,
       attributes,      // plain object; DB layer serializes
       source_refs: [],
-    });
+    };
+    if (aliases?.length) node.aliases = aliases;
+    nodes.push(node);
     nodeIdByKey.set(nodeKey, nodeId);
     return nodeId;
   }
@@ -74,7 +76,7 @@ export function buildStructuralProjection(manifest, scopeKey) {
 
   // 2. Capability 节点 + contains 边
   for (const cap of manifest.capabilities) {
-    const capId = registerNode('capability', cap.key, cap.name, { value_stream_key: cap.value_stream_key, order: cap.order });
+    const capId = registerNode('capability', cap.key, cap.name, { value_stream_key: cap.value_stream_key, order: cap.order }, cap.aliases);
     const edgeKey = `${cap.value_stream_key}_contains_${cap.key}`;
     edges.push({
       edge_id: stableEdgeId(scopeKey, 'contains', edgeKey),
