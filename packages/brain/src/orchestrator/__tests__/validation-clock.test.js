@@ -72,6 +72,40 @@ describe('resolveValidationClock', () => {
     })).toThrow('validation_clock_required');
   });
 
+  it('starts one shared window at a verified existing-PR Evaluator intent', () => {
+    expect(resolveValidationClock({
+      action: 'spawn:evaluator',
+      decisionLog: [],
+      intentAt: startedAt,
+      timeoutSeconds: 7200,
+      allowEvaluatorOrigin: true,
+    })).toEqual({
+      pipeline_started_at: startedAt,
+      deadline_at: deadlineAt,
+    });
+  });
+
+  it('reuses the persisted verified existing-PR Evaluator clock for Judge', () => {
+    expect(resolveValidationClock({
+      action: 'spawn:judge',
+      decisionLog: [{
+        hop: 70,
+        action: 'spawn:evaluator',
+        created_at: startedAt,
+        detail: {
+          validation_origin: 'verified_existing_pr',
+          pipeline_started_at: startedAt,
+          deadline_at: deadlineAt,
+        },
+      }],
+      intentAt: '2026-08-03T19:30:00.000Z',
+      timeoutSeconds: 7200,
+    })).toEqual({
+      pipeline_started_at: startedAt,
+      deadline_at: deadlineAt,
+    });
+  });
+
   it('fails closed when the persisted clock is malformed', () => {
     expect(() => resolveValidationClock({
       action: 'spawn:judge',

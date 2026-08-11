@@ -8,19 +8,27 @@
 
 
 
-**Brain 版本**: 1.272.1
+**Brain 版本**: 1.272.2
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.1 — Exact Map Anchors and Query-time State
+## Brain 1.272.2 — Exact Map Anchors and Query-time State
 
 - scope、repo 与 legacy ledger partition 通过显式 adapter 配置连接，未配置 scope fail-closed，核心不做同名猜测。
 - Feature UUID、测试/API/DB/代码路径稳定标识确定性进入 active projection；名称模糊匹配和歧义候选不污染正式地图。
 - 状态按 15 分钟 freshness、当前 repo revision 与 immutable receipt 查询时现算 green/red/gray/unknown/not_applicable，旧 `cell_status` 不再具权威性。
 - 影响半径按 repo 的 graph snapshot 反向遍历，回溯业务节点与必跑断言，并展开 Cross-cut `serves` 关系。
 - Schema 地板推进到 406。
+
+---
+
+## Brain 1.272.1 — Kernel Verified Existing PR Adoption
+
+- `gear=hotfix` 可显式接管已有 PR：只有任务声明的 PR URL 与 40 位 head SHA 都和 GitHub 实时观测完全一致时，首个 Evaluator intent 才能建立共享 validation clock。
+- 已接管路径的 Judge 复用该 append-only clock；普通下游角色、URL/SHA 缺失或不一致仍以 `validation_clock_required` fail closed。
+- 不伪造 Generator intent，不允许角色级时钟重置。
 
 ---
 

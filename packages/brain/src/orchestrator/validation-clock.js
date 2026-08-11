@@ -11,6 +11,8 @@ const GENERATOR_ACTIONS = new Set([
   'spawn:generator-fix',
 ]);
 
+export const VERIFIED_EXISTING_PR_ORIGIN = 'verified_existing_pr';
+
 function asObject(value) {
   if (!value) return {};
   if (typeof value === 'object') return value;
@@ -54,13 +56,23 @@ export function resolveValidationClock({
   decisionLog = [],
   intentAt,
   timeoutSeconds,
+  allowEvaluatorOrigin = false,
 }) {
   if (!VALIDATION_ACTIONS.has(action)) return null;
-  const firstGeneratorIntent = [...decisionLog]
-    .filter((row) => GENERATOR_ACTIONS.has(row?.action))
+  const firstValidationOrigin = [...decisionLog]
+    .filter((row) => (
+      GENERATOR_ACTIONS.has(row?.action)
+      || (
+        row?.action === 'spawn:evaluator'
+        && asObject(row?.detail).validation_origin === VERIFIED_EXISTING_PR_ORIGIN
+      )
+    ))
     .sort((a, b) => Number(a.hop) - Number(b.hop))[0];
-  if (firstGeneratorIntent) {
-    return persistedClock(firstGeneratorIntent, timeoutSeconds);
+  if (firstValidationOrigin) {
+    return persistedClock(firstValidationOrigin, timeoutSeconds);
+  }
+  if (action === 'spawn:evaluator' && allowEvaluatorOrigin === true) {
+    return exactClock(intentAt, timeoutSeconds);
   }
   if (!GENERATOR_ACTIONS.has(action)) {
     throw new Error('validation_clock_required');
@@ -71,4 +83,5 @@ export function resolveValidationClock({
 export const __test__ = Object.freeze({
   VALIDATION_ACTIONS,
   GENERATOR_ACTIONS,
+  VERIFIED_EXISTING_PR_ORIGIN,
 });
