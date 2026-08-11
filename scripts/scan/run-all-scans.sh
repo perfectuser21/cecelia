@@ -31,6 +31,14 @@ if [[ -z "${NODE_BIN:-}" ]]; then
     done
   fi
   if [[ -z "$NODE_BIN" ]]; then
+    _h="${HOME:-}"
+    for _cand in \
+      "${_h}/.nvm/versions/node/$(cat "${_h}/.nvmrc" 2>/dev/null || echo 'v20')/bin/node" \
+      "${_h}/.asdf/shims/node"; do
+      if [[ -x "$_cand" ]]; then NODE_BIN="$_cand"; break; fi
+    done
+  fi
+  if [[ -z "$NODE_BIN" ]]; then
     NODE_BIN="$(command -v node 2>/dev/null || true)"
   fi
 fi
