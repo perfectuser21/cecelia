@@ -99,6 +99,24 @@ describe('Unified Map read router', () => {
     });
   });
 
+  it('radius 允许只用 node_keys 下钻 Cross-cut 或 Capability 影响范围', async () => {
+    const { app, services } = makeHarness();
+
+    await request(app).post('/api/brain/map/radius').send({
+      scope: 'cecelia',
+      repo: 'cecelia',
+      changed_files: [],
+      node_keys: ['F0'],
+    }).expect(200);
+
+    expect(services.readRadius).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      scopeKey: 'cecelia',
+      repo: 'cecelia',
+      changedFiles: [],
+      startNodeKeys: ['F0'],
+    }));
+  });
+
   it('缺失参数返回稳定 400，服务不连接数据库', async () => {
     const { app, pool } = makeHarness();
 
