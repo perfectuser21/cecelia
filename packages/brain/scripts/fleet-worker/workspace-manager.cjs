@@ -397,7 +397,17 @@ function createWorkspaceManager({
               ['ci', '--no-audit', '--no-fund', '--ignore-scripts'],
               {
                 cwd: workspacePath,
-                env: { ...process.env, npm_config_cache: npmCacheRoot },
+                // workspace 随后 bind-mount 到 canonical Linux ARM64/glibc
+                // runner。Fleet 宿主是 macOS ARM64；若让 npm 按宿主平台筛选
+                // optionalDependencies，会漏装 @rollup/rollup-linux-arm64-gnu
+                // 等容器执行期原生包，即使 npm ci 本身返回 0。
+                env: {
+                  ...process.env,
+                  npm_config_cache: npmCacheRoot,
+                  npm_config_os: 'linux',
+                  npm_config_cpu: 'arm64',
+                  npm_config_libc: 'glibc',
+                },
                 // F7：120s 封顶 + 8MiB 输出缓冲（见文件顶部常量注释）；超时被
                 // execFile 的 timeout 机制杀掉进程后作为 reject 落进下面的
                 // catch，按普通失败处理，不特殊短路、不炸 prepare。
