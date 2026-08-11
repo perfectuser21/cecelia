@@ -459,6 +459,42 @@ describe('Impact Contract → Gap → 修复 → 恢复真实 PostgreSQL 闭环'
         headRevision: revision,
         expectedContractHash: contract.contract_hash,
       })).resolves.toMatchObject({ gate: 'pass' });
+      const bindingTrust = await client.query(
+        `SELECT receipt.journey_step_link_id,
+                receipt.completed_at >= event.verification_started_at AS after_verification,
+                receipt.command_argv = harness_assertion_command_argv($2) AS canonical_command,
+                link.assertion_ref = receipt.assertion_ref_snapshot AS current_ref,
+                link.assertion_revision = receipt.assertion_revision AS current_revision,
+                attempt.status = 'completed' AS completed_attempt
+           FROM journey_assertion_receipts AS receipt
+           JOIN journey_step_links AS link ON link.id = receipt.journey_step_link_id
+           JOIN harness_attempts AS attempt ON attempt.id = receipt.harness_attempt_id
+           CROSS JOIN LATERAL (
+             SELECT MAX(created_at) AS verification_started_at
+               FROM gap_events WHERE gap_id = $1 AND event_type = 'verification_started'
+           ) AS event
+          WHERE receipt.run_id = $3
+          ORDER BY receipt.assertion_revision`,
+        [gap.id, `npx vitest run ${assertionId}`, repairRunId],
+      );
+      expect(bindingTrust.rows).toEqual([
+        expect.objectContaining({
+          journey_step_link_id: journeyStepLinkId,
+          after_verification: true,
+          canonical_command: true,
+          current_ref: true,
+          current_revision: true,
+          completed_attempt: true,
+        }),
+        expect.objectContaining({
+          journey_step_link_id: secondaryJourneyStepLinkId,
+          after_verification: true,
+          canonical_command: true,
+          current_ref: true,
+          current_revision: true,
+          completed_attempt: true,
+        }),
+      ]);
       await transitionGapStatus(client, gap.id, 'resolved', {
         idempotencyKey: `resolved:${gap.id}:${revision}`,
         resolutionEvidence: {
