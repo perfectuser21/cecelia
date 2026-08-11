@@ -31,7 +31,12 @@ SELECT format('CREATE ROLE mcp_readonly WITH LOGIN PASSWORD %L', :'mcp_readonly_
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mcp_readonly')
 \gexec
 
-GRANT CONNECT ON DATABASE cecelia TO mcp_readonly;
+-- 不能写死字面量库名 `cecelia`：.sh 包装脚本宣称支持 DB_NAME/DATABASE_URL 指向任意目标库，
+-- 硬编码 `GRANT CONNECT ON DATABASE cecelia` 会在连到别的库名（比如测试库）时静默把
+-- CONNECT 权限错授到本机真正叫 cecelia 的库上，而不是当前实际连接的目标库。
+-- 改用 current_database() 动态取当前连接的库名，走 \gexec 顶层替换。
+SELECT format('GRANT CONNECT ON DATABASE %I TO mcp_readonly', current_database())
+\gexec
 GRANT USAGE ON SCHEMA public TO mcp_readonly;
 GRANT SELECT ON schema_version TO mcp_readonly;
 GRANT SELECT ON map_manifest_versions TO mcp_readonly;
