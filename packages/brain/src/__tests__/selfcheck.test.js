@@ -205,8 +205,9 @@ describe('selfcheck', () => {
   // 402（immutable Map Manifest versions）推进地板到 402。
   // 403（事实池 source_revision + scanner_version + repo 字段补齐）推进地板到 403。
   // 404（Universal Map projection runs/nodes/edges 三派生表）推进地板到 404。
-  it('EXPECTED_SCHEMA_VERSION should be 404', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('404');
+  // 405（rebuildable Map Projection core）推进地板到 405。
+  it('EXPECTED_SCHEMA_VERSION should be 405', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('405');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

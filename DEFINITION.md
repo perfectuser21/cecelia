@@ -19,7 +19,17 @@
 - 引入 Map Manifest JSON Schema（scope × value_streams × capabilities × boundaries × crosscut_pool）作为业务意图的机器可读载体。
 - 确定性投影引擎：business intent × implementation facts → digest-locked projection run，节点/边原子切换，读者不见半张图。
 - 统一 Map API（`/api/brain/map`）作为唯一读接口；island-gate 集成未归位文件探测。
-- Schema 地板推进到 404。
+- 完整 Manifest 激活在同一事务内生成 projection run、稳定节点与关系边，写入失败时旧 active Manifest/Projection 保持不变。
+- Value Stream、Capability、Cross-cut 与 Shared Prerequisite 由通用规则确定性投影；Boundary 只生成 `hands_off_to` 边。
+- Node/Edge stable ID 与 projection digest 可重复重建，核心不含 Cecelia 或 ZenithJoy 领域身份常量。
+- Schema 地板推进到 405。
+
+## Brain 1.271.7 — Deterministic Universal Map Projection Core
+
+- 完整 Manifest 激活在同一事务内生成 projection run、稳定节点与关系边，写入失败时旧 active Manifest/Projection 保持不变。
+- Value Stream、Capability、Cross-cut 与 Shared Prerequisite 由通用规则确定性投影；Boundary 只生成 `hands_off_to` 边。
+- Node/Edge stable ID 与 projection digest 可重复重建，核心不含 Cecelia 或 ZenithJoy 领域身份常量。
+- Schema 地板推进到 405。
 
 ---
 

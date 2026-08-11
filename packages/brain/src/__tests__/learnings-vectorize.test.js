@@ -466,6 +466,7 @@ describe('selfcheck schema version', () => {
     // 402 = immutable Universal Map Manifest versions。
     // 403 = 事实池 source_revision + scanner_version + repo 字段补齐；
     // 404 = Universal Map projection runs/nodes/edges 三派生表。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('404');
+    // 405 = rebuildable Universal Map Projection core。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('405');
   });
 });
