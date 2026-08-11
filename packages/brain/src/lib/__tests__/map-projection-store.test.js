@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 
 import { digestMapManifest } from '../map-manifest-schema.js';
+import { stableMapEdgeId, stableMapNodeId } from '../map-projector.js';
 import { projectMapManifest } from '../map-projection-store.js';
 
 const manifest = JSON.parse(readFileSync(
@@ -16,6 +17,9 @@ const manifestVersion = {
   status: 'active',
 };
 const runId = '67f4ffb8-a24d-4cce-b312-f057134910cc';
+const emptyAnchorProjection = async () => ({
+  nodes: [], edges: [], issues: [], fact_revisions: {},
+});
 
 function successfulClient() {
   return {
@@ -42,7 +46,9 @@ describe('projectMapManifest', () => {
   it('以批量节点/边写入完整 run，最后才切 active', async () => {
     const client = successfulClient();
     const factRevisions = { repo_b: 'b'.repeat(40), repo_a: 'a'.repeat(40) };
-    const result = await projectMapManifest({ client, manifestVersion, factRevisions });
+    const result = await projectMapManifest({
+      client, manifestVersion, factRevisions, loadAnchorProjection: emptyAnchorProjection,
+    });
 
     expect(result).toMatchObject({
       projection_run: { id: runId, status: 'active' },
@@ -80,7 +86,9 @@ describe('projectMapManifest', () => {
       return { rows: [], rowCount: 0 };
     });
 
-    await expect(projectMapManifest({ client, manifestVersion })).rejects.toMatchObject({
+    await expect(projectMapManifest({
+      client, manifestVersion, loadAnchorProjection: emptyAnchorProjection,
+    })).rejects.toMatchObject({
       code: 'MAP_PROJECTION_WRITE_INCOMPLETE',
     });
     expect(client.query.mock.calls.some(([sql]) => /INSERT INTO map_projection_edges/i.test(sql))).toBe(false);
@@ -98,10 +106,55 @@ describe('projectMapManifest', () => {
       return { rows: [], rowCount: 0 };
     });
 
-    await expect(projectMapManifest({ client, manifestVersion })).rejects.toMatchObject({
+    await expect(projectMapManifest({
+      client, manifestVersion, loadAnchorProjection: emptyAnchorProjection,
+    })).rejects.toMatchObject({
       code: 'MAP_PROJECTION_MANIFEST_STALE',
     });
     expect(client.query.mock.calls.some(([sql]) => /INSERT INTO map_projection_runs/i.test(sql)))
       .toBe(false);
+  });
+
+  it('同一事务加载 anchor projection，并把事实 revision 固定进 run', async () => {
+    const client = successfulClient();
+    const featureKey = '11111111-1111-4111-8111-111111111111';
+    const featureNodeId = stableMapNodeId('cecelia', 'feature', featureKey);
+    const capabilityNodeId = stableMapNodeId('cecelia', 'capability', 'F1');
+    const loadAnchorProjection = vi.fn(async () => ({
+      fact_revisions: { cecelia: 'a'.repeat(40) },
+      nodes: [{
+        node_id: featureNodeId,
+        node_type: 'feature',
+        node_key: featureKey,
+        name: 'Exact feature',
+        source_refs: [{ source: 'legacy-ledger', id: featureKey }],
+        attributes: { capability_key: 'F1' },
+      }],
+      edges: [{
+        edge_id: stableMapEdgeId('cecelia', 'implements', `${featureKey}:F1`),
+        edge_type: 'implements',
+        edge_key: `${featureKey}:F1`,
+        from_node_id: featureNodeId,
+        to_node_id: capabilityNodeId,
+        source_refs: [{ source: 'legacy-ledger', id: featureKey }],
+        attributes: {},
+      }],
+      issues: [],
+    }));
+
+    const result = await projectMapManifest({
+      client,
+      manifestVersion,
+      loadAnchorProjection,
+    });
+
+    expect(loadAnchorProjection).toHaveBeenCalledWith(client, {
+      scopeKey: 'cecelia',
+      capabilityKeys: manifest.capabilities.map(({ key }) => key),
+    });
+    expect(result.projection.fact_revisions).toEqual({ cecelia: 'a'.repeat(40) });
+    expect(result.projection.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ node_type: 'feature', node_key: featureKey }),
+    ]));
   });
 });

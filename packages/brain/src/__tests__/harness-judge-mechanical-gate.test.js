@@ -73,6 +73,42 @@ describe('runMechanicalGate（刀B：DeepSeek 前纯代码闸）', () => {
     expect(r.pass).toBe(false);
     expect(r.reasons.join()).toMatch(/contract_tests/);
   });
+  it('精确 PR 验收任务声明的 required_command_evidence 均有成功执行证据时可替代 sprint 合同文件', async () => {
+    const deps = makeDeps({ testFiles: [] });
+    deps.readFileFn = vi.fn(async () => { throw new Error('ENOENT'); });
+    const ctx = goodCtx({
+      requiredCommandEvidence: ['npm test', 'bash scripts/smoke.sh'],
+      brainResult: {
+        behavior_tests: [
+          { command: 'npm test', exit_code: 0, log_tail: 'tests passed' },
+          { command: 'bash scripts/smoke.sh', exit_code: 0, log_tail: 'smoke passed' },
+        ],
+      },
+    });
+
+    const r = await runMechanicalGate(ctx, deps);
+
+    expect(r.pass).toBe(true);
+    expect(r.reasons.join()).not.toMatch(/contract_tests/);
+  });
+  it('required_command_evidence 有任一项未成功执行时仍拒绝放行', async () => {
+    const deps = makeDeps({ testFiles: [] });
+    deps.readFileFn = vi.fn(async () => { throw new Error('ENOENT'); });
+    const ctx = goodCtx({
+      requiredCommandEvidence: ['npm test', 'bash scripts/smoke.sh'],
+      brainResult: {
+        behavior_tests: [
+          { command: 'npm test', exit_code: 0, log_tail: 'tests passed' },
+          { command: 'bash scripts/smoke.sh', exit_code: 1, log_tail: 'smoke failed' },
+        ],
+      },
+    });
+
+    const r = await runMechanicalGate(ctx, deps);
+
+    expect(r.pass).toBe(false);
+    expect(r.reasons.join()).toMatch(/required_command_evidence.*bash scripts\/smoke\.sh/);
+  });
   it('kernel contract-draft 含 [BEHAVIOR] 时不因缺 contract-dod 误判 contract_tests=0', async () => {
     const deps = makeDeps({ testFiles: [] });
     deps.readFileFn = vi.fn(async (p) => {

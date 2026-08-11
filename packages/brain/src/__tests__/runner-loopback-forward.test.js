@@ -23,4 +23,11 @@ describe('runner 镜像回环转发', () => {
     expect(ep).toMatch(/socat\s+TCP-LISTEN:5221/);
     expect(ep).toMatch(/host\.docker\.internal:5221/);
   });
+
+  it('evaluator 起 127.0.0.1:5211 → 宿主 Dashboard 5211 转发', () => {
+    const ep = readFileSync(path.join(ROOT, 'docker/cecelia-runner/entrypoint.sh'), 'utf8');
+    expect(ep).toMatch(/HARNESS_NODE[^\n]+evaluator/);
+    expect(ep).toMatch(/socat\s+TCP-LISTEN:5211/);
+    expect(ep).toMatch(/host\.docker\.internal:5211/);
+  });
 });

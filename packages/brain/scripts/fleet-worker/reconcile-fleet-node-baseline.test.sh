@@ -254,7 +254,7 @@ write_executable "$fake_bin/codesign" \
 
 write_executable "$fake_bin/docker" \
   '#!/usr/bin/env bash' \
-  'runner_digest="sha256:08c904ff0dc216229b84d2ce7216760fcb9968a43351916f8495265b3956bd4f"' \
+  'runner_digest="sha256:e958b6abeba555622a2206075b456d679e550cd854b6a9600d6fe68d0908b347"' \
   'postgres_digest="sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777"' \
   'postgres_reference="postgres:16-alpine@$postgres_digest"' \
   'postgres_tag="postgres:16-alpine"' \

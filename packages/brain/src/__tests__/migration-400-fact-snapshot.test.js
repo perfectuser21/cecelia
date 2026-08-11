@@ -264,10 +264,11 @@ describe('scanner snapshot contract', () => {
     expect(gitRevision).toMatch(/['"]git['"][\s\S]+['"]-C['"][\s\S]+['"]rev-parse['"][\s\S]+['"]HEAD['"]/);
   });
 
-  it('三张 registry scanner 统一调用 replaceFactSnapshot，repo 固定 cecelia', () => {
+  it('三张 registry scanner 统一调用 replaceFactSnapshot，repo 默认 cecelia 且可显式配置', () => {
     for (const source of [api, db, test]) {
       expect(source).toContain('replaceFactSnapshot');
-      expect(source).toMatch(/repo:\s*['"]cecelia['"]/);
+      expect(source).toMatch(/SCAN_REPO_NAME\s*=\s*process\.env\.SCAN_REPO_NAME\s*\|\|\s*['"]cecelia['"]/);
+      expect(source).toMatch(/repo:\s*SCAN_REPO_NAME/);
     }
   });
 

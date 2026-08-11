@@ -1,6 +1,19 @@
 # Brain 模块定义
 
-**版本**: 1.267.202
+**版本**: 1.272.8
+
+## Unified Map API and dashboard authority
+
+- 五个 Map 读面与健康度共享一致性快照、统一 envelope 和查询时状态，不再消费旧 `src/map` 实现。
+- Dashboard 的唯一 `/map` 注册展示三层业务地图、事实锚点与 revision-bound receipt。
+- Schema 地板保持 407；回退到 `1.272.5` 会恢复分裂的 Map 读面和重复页面注册。
+
+## Universal Map exact anchors and query-time state
+
+- 显式 scope/repo/ledger adapter 替代同名推断，Feature/Artifact/Assertion 以稳定键进入 active projection。
+- snapshot freshness、当前 revision receipt 与目标存在性在查询时现算五态；旧账本颜色不参与权威判断。
+- repo 隔离 reverse graph radius 返回受影响业务节点、必跑断言与 Cross-cut 扩展。
+- Schema 地板为 406；回退到 `1.271.7` 会失去锚点投影、现算状态与通用影响半径。
 
 ## Kernel preflight BLOCKED launch truth
 

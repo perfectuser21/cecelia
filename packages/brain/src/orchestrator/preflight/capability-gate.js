@@ -368,6 +368,7 @@ export function createCapabilityGate(deps = {}) {
       capability_snapshot_id: snapshotId,
       from_target: preferredTarget,
       to_target: selectedTarget,
+      machine_capacity: capacity,
       fallback_reason: fallbackReason,
       failure_class: targetKey(selectedTarget) === targetKey(preferredTarget)
         ? 'none'
