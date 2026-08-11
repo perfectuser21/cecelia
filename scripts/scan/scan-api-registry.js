@@ -30,6 +30,10 @@ async function replaceFactSnapshot(pool, kind, { repo, sourceRevision, scannerVe
         [r.method, r.path, r.file_path, r.line_number, r.area, repo, sourceRevision, scannerVersion],
       );
     }
+    // 用事务内真实 COUNT 避免 ON CONFLICT 去重后 row_count 与事实数不一致
+    const { rows: [{ cnt }] } = await client.query(
+      `SELECT COUNT(*)::int AS cnt FROM api_registry WHERE repo = $1`, [repo],
+    );
     await client.query(
       `INSERT INTO fact_snapshot_headers (kind, repo, source_revision, scanner_version, scanned_at, row_count)
        VALUES ($1, $2, $3, $4, NOW(), $5)
@@ -38,7 +42,7 @@ async function replaceFactSnapshot(pool, kind, { repo, sourceRevision, scannerVe
              scanner_version = EXCLUDED.scanner_version,
              scanned_at = EXCLUDED.scanned_at,
              row_count = EXCLUDED.row_count`,
-      [kind, repo, sourceRevision, scannerVersion, rows.length],
+      [kind, repo, sourceRevision, scannerVersion, cnt],
     );
     await client.query('COMMIT');
   } catch (err) {
