@@ -8,9 +8,18 @@
 
 
 
-**Brain 版本**: 1.271.6
+**Brain 版本**: 1.271.7
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.271.7 — Deterministic Universal Map Projection Core
+
+- 完整 Manifest 激活在同一事务内生成 projection run、稳定节点与关系边，写入失败时旧 active Manifest/Projection 保持不变。
+- Value Stream、Capability、Cross-cut 与 Shared Prerequisite 由通用规则确定性投影；Boundary 只生成 `hands_off_to` 边。
+- Node/Edge stable ID 与 projection digest 可重复重建，核心不含 Cecelia 或 ZenithJoy 领域身份常量。
+- Schema 地板推进到 405。
 
 ---
 

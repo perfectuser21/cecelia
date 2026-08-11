@@ -117,7 +117,7 @@ export const MAP_MANIFEST_JSON_SCHEMA = Object.freeze({
       properties: {
         key: stableKeyJsonSchema, name: nonEmptyJsonSchema, aliases: aliasesJsonSchema,
         owner: stableKeyJsonSchema,
-        serves: { type: 'array', minItems: 1, items: stableKeyJsonSchema },
+        serves: { type: 'array', minItems: 1, uniqueItems: true, items: stableKeyJsonSchema },
       },
     },
     prerequisite: {
@@ -125,7 +125,7 @@ export const MAP_MANIFEST_JSON_SCHEMA = Object.freeze({
       required: ['key', 'name', 'serves'],
       properties: {
         key: stableKeyJsonSchema, name: nonEmptyJsonSchema, aliases: aliasesJsonSchema,
-        serves: { type: 'array', minItems: 1, items: stableKeyJsonSchema },
+        serves: { type: 'array', minItems: 1, uniqueItems: true, items: stableKeyJsonSchema },
       },
     },
     shared_prerequisites: {
@@ -259,6 +259,7 @@ function addDuplicateOrderErrors(manifest, errors) {
 function addReferenceErrors(manifest, errors) {
   const streams = new Set(manifest.value_streams.map(({ key }) => key).filter((key) => typeof key === 'string'));
   const capabilities = new Set(manifest.capabilities.map(({ key }) => key).filter((key) => typeof key === 'string'));
+  const structuralTargets = new Set([...streams, ...capabilities]);
   const requireRef = (exists, value, path, type) => {
     if (typeof value !== 'string') return;
     if (!exists.has(value)) pushError(errors, path, 'reference_not_found', `${type} does not exist: ${value}`);
@@ -272,8 +273,13 @@ function addReferenceErrors(manifest, errors) {
     requireRef(capabilities, item.to, `boundaries.${index}.to`, 'Capability');
   });
   manifest.crosscut_pool.forEach((item, index) => {
-    (Array.isArray(item.serves) ? item.serves : []).forEach((stream, servesIndex) => {
-      requireRef(streams, stream, `crosscut_pool.${index}.serves.${servesIndex}`, 'Value Stream');
+    (Array.isArray(item.serves) ? item.serves : []).forEach((target, servesIndex) => {
+      requireRef(
+        structuralTargets,
+        target,
+        `crosscut_pool.${index}.serves.${servesIndex}`,
+        'Value Stream or Capability',
+      );
     });
     if (item.owner) requireRef(capabilities, item.owner, `crosscut_pool.${index}.owner`, 'Capability');
   });
