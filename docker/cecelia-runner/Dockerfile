@@ -89,7 +89,18 @@ RUN npm install -g playwright@1.58.0 \
 RUN npm install -g @resvg/resvg-js
 
 # 非 root 用户 — Claude Code 拒绝 root + --dangerously-skip-permissions
-RUN groupadd -r cecelia && useradd -r -g cecelia -m -d /home/cecelia -s /bin/bash cecelia
+# UID/GID 显式钉 5999（不交给 useradd -r 系统账户段动态分配）：Fleet Worker 侧
+# attempt-runner.cjs 的 --tmpfs 挂载对 .codex / .config/gh 凭据目录硬编码固定
+# uid/gid；useradd -r 动态分配曾在 08-11 被上面 webkit 系统依赖新增的账户挤占，
+# cecelia 从历史值漂移到 997——非 evaluator 角色容器无 --user root 可自愈，
+# 直接以漂移后的 UID 启动，凭据目录属主对不上，GitHub 凭据 FIFO 写入失败
+# （attempt_github_credential_fifo_write_failed），本机 harness 派发瘫痪。
+# 未选 999：实测该镜像基座已被 systemd-journal 组占用（`groupadd -g 999` 构建期
+# 报错），999 本就在 useradd -r 的系统账户动态段内，天然会被未来的 apt 依赖
+# 再次抢占。5999 在系统账户段（通常 ≤999）与 node 用户（1000）之上，任何系统
+# 依赖都不会分配到这个区间；若真撞车，useradd 在此构建期报错（响亮失败），
+# 不会静默漂移到生产。
+RUN groupadd -g 5999 cecelia && useradd -u 5999 -g 5999 -m -d /home/cecelia -s /bin/bash cecelia
 
 # V6 运行时目录（容器内副本，避开挂载的 Mac node_modules）
 # 原因：~/claude-output/scripts/node_modules/@resvg 是 darwin-arm64 Mac 二进制，
