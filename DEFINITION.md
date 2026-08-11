@@ -8,9 +8,18 @@
 
 
 
-**Brain 版本**: 1.271.4
+**Brain 版本**: 1.271.5
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.271.5 — Versioned Universal Map Manifest
+
+- 新增完整 Map Manifest 的机器可读 schema、稳定引用校验与 canonical SHA-256；非法输入一次返回全部错误。
+- Manifest 以 decision 绑定的不可变版本写入，scope 内版本分配与 digest 幂等受事务锁保护。
+- validate/submit/activate 统一写入口已建立；Projector 在下一刀接入前，激活 fail-closed 且 draft/旧 active 不变。
+- Schema 地板推进到 402。
 
 ---
 

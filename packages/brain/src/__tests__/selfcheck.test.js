@@ -202,9 +202,9 @@ describe('selfcheck', () => {
   //      D1／GP 7790f728）推进地板到 392。
   // 393（GP 胶水参数化：golden_paths.base_repo + target_environment 两可空列，task d2567378）
   //      推进地板到 393。
-  // 400（versioned fact snapshot metadata + repo-scoped unique keys）推进地板到 400。
-  it('EXPECTED_SCHEMA_VERSION should be 400', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('400');
+  // 402（immutable Map Manifest versions）推进地板到 402。
+  it('EXPECTED_SCHEMA_VERSION should be 402', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('402');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
