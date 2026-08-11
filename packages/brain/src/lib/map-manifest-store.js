@@ -1,4 +1,5 @@
 import { digestMapManifest, validateMapManifest } from './map-manifest-schema.js';
+import { projectMapManifest } from './map-projection-store.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -109,14 +110,6 @@ export async function submitMapManifest(pool, input) {
   }
 }
 
-async function unavailableProjector() {
-  throw new MapManifestError(
-    'MAP_PROJECTOR_UNAVAILABLE',
-    'Map projector is not installed; manifest remains draft',
-    503,
-  );
-}
-
 async function selectManifestVersion(client, id, lock = false) {
   const { rows } = await client.query(
     `SELECT id, scope_key, version, source_decision_id, manifest, digest,
@@ -131,7 +124,7 @@ async function selectManifestVersion(client, id, lock = false) {
 export async function activateMapManifest(
   pool,
   id,
-  { projector = unavailableProjector } = {},
+  { projector = projectMapManifest } = {},
 ) {
   if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
     throw new MapManifestError(

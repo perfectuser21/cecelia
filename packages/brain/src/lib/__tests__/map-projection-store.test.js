@@ -21,8 +21,8 @@ function successfulClient() {
     query: vi.fn(async (sql, params) => {
       if (/FROM fact_snapshot_headers/i.test(sql)) {
         return { rows: [
-          { snapshot_kind: 'test', source_revision: 'b'.repeat(40) },
-          { snapshot_kind: 'api', source_revision: 'a'.repeat(40) },
+          { kind: 'test', source_revision: 'b'.repeat(40) },
+          { kind: 'api', source_revision: 'a'.repeat(40) },
         ] };
       }
       if (/INSERT INTO map_projection_runs/i.test(sql)) return { rows: [{ id: runId }], rowCount: 1 };
@@ -58,7 +58,7 @@ describe('projectMapManifest', () => {
     expect(index(/INSERT INTO map_projection_runs/i)).toBeLessThan(index(/INSERT INTO map_projection_nodes/i));
     expect(index(/INSERT INTO map_projection_nodes/i)).toBeLessThan(index(/INSERT INTO map_projection_edges/i));
     expect(index(/INSERT INTO map_projection_edges/i)).toBeLessThan(index(/status = 'superseded'/i));
-    expect(index(/status = 'superseded'/i)).toBeLessThan(index(/status = 'active'/i));
+    expect(index(/SET status = 'superseded'/i)).toBeLessThan(index(/SET status = 'active'/i));
     expect(statements.some((sql) => /\bBEGIN\b|\bCOMMIT\b|\bROLLBACK\b/i.test(sql))).toBe(false);
   });
 
