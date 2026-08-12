@@ -58,7 +58,7 @@ describe('collectApprovedContractArtifacts', () => {
       byte_length: Buffer.byteLength(deps.files[artifact.path], 'utf8'),
       source_revision: REVISION,
     })));
-    expect(deps.listGitFiles).toHaveBeenCalledWith(REVISION, `${SPRINT_DIR}/tests`, {
+    expect(deps.listGitFiles).toHaveBeenCalledWith(REVISION, SPRINT_DIR, {
       repo: 'perfectuser21/cecelia',
     });
     expect(deps.readGitFile.mock.calls.every(([revision]) => revision === REVISION)).toBe(true);

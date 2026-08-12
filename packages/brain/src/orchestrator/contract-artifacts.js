@@ -35,6 +35,7 @@ function artifactFor(pathValue, content, sourceRevision) {
 
 export function validateContractArtifacts(artifacts, {
   requireTests = false,
+  requireCore = false,
   maxBytes = CONTRACT_ARTIFACT_MAX_BYTES,
 } = {}) {
   if (!Array.isArray(artifacts)) {
@@ -43,6 +44,8 @@ export function validateContractArtifacts(artifacts, {
   let totalBytes = 0;
   let previousPath = null;
   let testCount = 0;
+  const sourceRevisions = new Set();
+  const paths = new Set();
   for (const artifact of artifacts) {
     if (!artifact || typeof artifact !== 'object' || Array.isArray(artifact)) {
       throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:shape');
@@ -52,6 +55,7 @@ export function validateContractArtifacts(artifacts, {
       throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:order_or_duplicate');
     }
     previousPath = artifactPath;
+    paths.add(artifactPath);
     if (typeof artifact.content !== 'string') {
       throw new Error(`FROZEN_CONTRACT_ARTIFACT_INVALID:content:${artifactPath}`);
     }
@@ -67,13 +71,29 @@ export function validateContractArtifacts(artifacts, {
       throw new Error(`FROZEN_CONTRACT_ARTIFACT_INVALID:integrity:${artifactPath}`);
     }
     totalBytes += actualLength;
+    sourceRevisions.add(artifact.source_revision);
     if (totalBytes > maxBytes) {
       throw new Error(`FROZEN_CONTRACT_ARTIFACT_SIZE_LIMIT:${totalBytes}`);
     }
     if (artifactPath.includes('/tests/')) testCount++;
   }
+  if (sourceRevisions.size > 1) {
+    throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:source_revision_set');
+  }
   if (requireTests && testCount === 0) {
     throw new Error('FROZEN_CONTRACT_ARTIFACTS_MISSING:tests');
+  }
+  if (requireCore) {
+    const draftPath = [...paths].find((artifactPath) => artifactPath.endsWith('/contract-draft.md'));
+    const root = draftPath?.slice(0, -'/contract-draft.md'.length);
+    const corePaths = root ? [
+      `${root}/sprint-prd.md`,
+      `${root}/contract-draft.md`,
+      `${root}/contract-dod.md`,
+    ] : [];
+    if (corePaths.length === 0 || corePaths.some((artifactPath) => !paths.has(artifactPath))) {
+      throw new Error('FROZEN_CONTRACT_ARTIFACTS_MISSING:core');
+    }
   }
   return Object.freeze([...artifacts]);
 }
@@ -98,17 +118,22 @@ export function collectApprovedContractArtifacts({
     `${sprintDir}/contract-draft.md`,
     `${sprintDir}/contract-dod.md`,
   ];
-  let testPaths;
+  let listedSprintPaths;
   try {
-    testPaths = listGitFiles(sourceRevision, `${sprintDir}/tests`, { repo });
+    listedSprintPaths = listGitFiles(sourceRevision, sprintDir, { repo });
   } catch (error) {
     throw new Error(`FROZEN_CONTRACT_ARTIFACTS_MISSING:tests:${error.message}`);
   }
+  const testPrefix = `${sprintDir}/tests/`;
+  const testPaths = Array.isArray(listedSprintPaths)
+    ? listedSprintPaths.filter((filePath) => filePath.startsWith(testPrefix))
+    : [];
   if (!Array.isArray(testPaths) || testPaths.length === 0) {
     throw new Error('FROZEN_CONTRACT_ARTIFACTS_MISSING:tests');
   }
   const optionalPath = `${sprintDir}/task-plan.md`;
-  const candidatePaths = [...requiredPaths, optionalPath, ...testPaths];
+  const optionalPaths = listedSprintPaths.includes(optionalPath) ? [optionalPath] : [];
+  const candidatePaths = [...requiredPaths, ...optionalPaths, ...testPaths];
   const uniquePaths = [...new Set(candidatePaths)].sort();
   if (uniquePaths.length !== candidatePaths.length) {
     throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:duplicate_path');
@@ -123,12 +148,11 @@ export function collectApprovedContractArtifacts({
         sourceRevision,
       ));
     } catch (error) {
-      if (filePath === optionalPath) continue;
       if (String(error.message).startsWith('FROZEN_CONTRACT_ARTIFACT_INVALID')) throw error;
       throw new Error(`FROZEN_CONTRACT_ARTIFACTS_MISSING:${filePath}`);
     }
   }
-  validateContractArtifacts(artifacts, { requireTests: true });
+  validateContractArtifacts(artifacts, { requireTests: true, requireCore: true });
   const byPath = new Map(artifacts.map((artifact) => [artifact.path, artifact.content]));
   return Object.freeze({
     artifacts: Object.freeze(artifacts),

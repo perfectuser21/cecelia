@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
@@ -10,13 +11,21 @@ let client;
 const runId = '11111111-1111-4111-8111-111111111111';
 const initiativeId = '22222222-2222-4222-8222-222222222222';
 const revision = '6faaa9f55e9789ffd29fd2760a9b5994df272e86';
-const artifact = Object.freeze({
-  path: 'sprints/router/tests/routing.test.mjs',
-  content: 'test("routing", () => {})',
-  sha256: 'd515f6b2330034cfb924ad4d403970f70c42914e2514e0f6a2cb8b7f0528d848',
-  byte_length: 25,
-  source_revision: revision,
-});
+function artifact(path, content) {
+  return Object.freeze({
+    path,
+    content,
+    sha256: createHash('sha256').update(content).digest('hex'),
+    byte_length: Buffer.byteLength(content),
+    source_revision: revision,
+  });
+}
+const artifacts = Object.freeze([
+  artifact('sprints/router/contract-dod.md', '# DoD'),
+  artifact('sprints/router/contract-draft.md', '# Contract'),
+  artifact('sprints/router/sprint-prd.md', '# PRD'),
+  artifact('sprints/router/tests/routing.test.mjs', 'test("routing", () => {})'),
+]);
 
 const HAS_REAL_POSTGRES = Boolean(process.env.DATABASE_URL || process.env.DB);
 
@@ -55,6 +64,13 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
         created_at timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (contract_id, path)
       ) ON COMMIT DROP;
+      CREATE TEMP TABLE initiative_contract_artifact_seals (
+        contract_id uuid PRIMARY KEY REFERENCES initiative_contracts(id),
+        artifact_count integer NOT NULL,
+        manifest_sha256 text NOT NULL,
+        source_revision text NOT NULL,
+        sealed_at timestamptz NOT NULL DEFAULT now()
+      ) ON COMMIT DROP;
     `);
     await client.query(
       'INSERT INTO initiative_runs (id, initiative_id) VALUES ($1::uuid, $2::uuid)',
@@ -83,7 +99,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       branch: 'cp-harness-propose-r2-22222222-a8',
       prdContent: '# PRD',
       contractContent: '# Contract\n\n# DoD',
-      artifacts: [artifact],
+      artifacts,
       approvedAt,
     });
 
@@ -110,7 +126,18 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
         WHERE contract_id = $1::uuid`,
       [contract.id],
     );
-    expect(frozen.rows).toEqual([artifact]);
+    expect(frozen.rows).toEqual(artifacts);
+    const sealed = await client.query(
+      `SELECT artifact_count, source_revision, length(manifest_sha256) AS digest_length
+         FROM initiative_contract_artifact_seals
+        WHERE contract_id = $1::uuid`,
+      [contract.id],
+    );
+    expect(sealed.rows).toEqual([{
+      artifact_count: 4,
+      source_revision: revision,
+      digest_length: 64,
+    }]);
 
     await expect(materializeApprovedContract(client, {
       runId,
@@ -118,7 +145,9 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       branch: 'cp-harness-propose-r2-22222222-a8',
       prdContent: '# PRD',
       contractContent: '# Contract\n\n# DoD',
-      artifacts: [{ ...artifact, content: 'mutated' }],
+      artifacts: artifacts.map((item) => item.path.endsWith('/tests/routing.test.mjs')
+        ? { ...item, content: 'mutated' }
+        : item),
       approvedAt,
     })).rejects.toThrow(/FROZEN_CONTRACT_ARTIFACT_INVALID|immutable/i);
 
@@ -126,7 +155,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       'SELECT content FROM initiative_contract_artifacts WHERE contract_id = $1::uuid',
       [contract.id],
     );
-    expect(unchanged.rows).toEqual([{ content: artifact.content }]);
+    expect(unchanged.rows).toEqual(artifacts.map(({ content }) => ({ content })));
 
     await expect(materializeApprovedContract(client, {
       runId,
@@ -134,7 +163,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       branch: 'cp-harness-propose-r2-22222222-a8',
       prdContent: '# MUTATED PRD',
       contractContent: '# Contract\n\n# DoD',
-      artifacts: [artifact],
+      artifacts: undefined,
       approvedAt,
     })).rejects.toThrow(/approved_contract_immutable_mismatch/i);
 
@@ -144,7 +173,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       branch: 'cp-different-branch',
       prdContent: '# PRD',
       contractContent: '# Contract\n\n# DoD',
-      artifacts: [artifact],
+      artifacts,
       approvedAt,
     })).rejects.toThrow(/approved_contract_immutable_mismatch/i);
 

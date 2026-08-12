@@ -1,4 +1,26 @@
+import { createHash } from 'node:crypto';
 import { validateContractArtifacts } from './contract-artifacts.js';
+
+function artifactManifestDigest(artifacts) {
+  const manifest = artifacts.map((artifact) => ({
+    path: artifact.path,
+    sha256: artifact.sha256,
+    byte_length: artifact.byte_length,
+    source_revision: artifact.source_revision,
+  }));
+  return createHash('sha256').update(JSON.stringify(manifest), 'utf8').digest('hex');
+}
+
+function assertArtifactProjection(artifacts, prdContent, contractContent) {
+  const byPath = new Map(artifacts.map((artifact) => [artifact.path, artifact.content]));
+  const draftPath = artifacts.find(({ path }) => path.endsWith('/contract-draft.md'))?.path;
+  const root = draftPath?.slice(0, -'/contract-draft.md'.length);
+  const expectedPrd = byPath.get(`${root}/sprint-prd.md`);
+  const expectedContract = `${byPath.get(`${root}/contract-draft.md`)}\n\n${byPath.get(`${root}/contract-dod.md`)}`;
+  if (prdContent !== expectedPrd || contractContent !== expectedContract) {
+    throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:contract_projection');
+  }
+}
 
 /**
  * Atomically freeze an approved Git contract into DB and attach it to its run.
@@ -22,8 +44,11 @@ export async function materializeApprovedContract(db, {
   }
   const artifactsProvided = artifacts !== undefined;
   const frozenArtifacts = artifactsProvided
-    ? validateContractArtifacts(artifacts, { requireTests: true })
+    ? validateContractArtifacts(artifacts, { requireTests: true, requireCore: true })
     : [];
+  if (artifactsProvided) assertArtifactProjection(frozenArtifacts, prdContent, contractContent);
+  const manifestDigest = artifactsProvided ? artifactManifestDigest(frozenArtifacts) : null;
+  const sourceRevision = artifactsProvided ? frozenArtifacts[0].source_revision : null;
 
   const { rows } = await db.query(
     `WITH run_row AS (
@@ -39,13 +64,26 @@ export async function materializeApprovedContract(db, {
               $2::integer, $6::timestamptz, $3::text, $6::timestamptz, $6::timestamptz
          FROM run_row
        ON CONFLICT (initiative_id, version) DO UPDATE
-         SET status = 'approved',
+         SET status = CASE
+               WHEN initiative_contracts.status = 'draft' THEN 'approved'
+               ELSE initiative_contracts.status
+             END,
              prd_content = COALESCE(EXCLUDED.prd_content, initiative_contracts.prd_content),
              contract_content = COALESCE(EXCLUDED.contract_content, initiative_contracts.contract_content),
              review_rounds = GREATEST(initiative_contracts.review_rounds, EXCLUDED.review_rounds),
-             approved_at = EXCLUDED.approved_at,
-             branch = EXCLUDED.branch,
-             updated_at = EXCLUDED.updated_at
+             approved_at = COALESCE(initiative_contracts.approved_at, EXCLUDED.approved_at),
+             branch = COALESCE(initiative_contracts.branch, EXCLUDED.branch),
+             updated_at = CASE
+               WHEN initiative_contracts.status = 'draft' THEN EXCLUDED.updated_at
+               ELSE initiative_contracts.updated_at
+             END
+       WHERE initiative_contracts.status IN ('draft', 'approved')
+         AND (initiative_contracts.branch IS NULL
+           OR initiative_contracts.branch = EXCLUDED.branch)
+         AND (initiative_contracts.prd_content IS NULL
+           OR initiative_contracts.prd_content IS NOT DISTINCT FROM EXCLUDED.prd_content)
+         AND (initiative_contracts.contract_content IS NULL
+           OR initiative_contracts.contract_content IS NOT DISTINCT FROM EXCLUDED.contract_content)
        RETURNING id, initiative_id, version, status, branch
      ), artifact_input AS (
        SELECT path, content, sha256, byte_length, source_revision
@@ -92,12 +130,40 @@ export async function materializeApprovedContract(db, {
          FROM approved_contract AS approved
          CROSS JOIN artifact_input AS input
          CROSS JOIN artifact_guard
+        WHERE NOT EXISTS (
+          SELECT 1 FROM initiative_contract_artifact_seals AS seal
+           WHERE seal.contract_id = approved.id
+        )
        ON CONFLICT (contract_id, path) DO NOTHING
        RETURNING contract_id, path
+     ), persisted_artifact_barrier AS (
+       SELECT count(*) AS inserted_count FROM persisted_artifacts
+     ), persisted_seal AS (
+       INSERT INTO initiative_contract_artifact_seals
+         (contract_id, artifact_count, manifest_sha256, source_revision, sealed_at)
+       SELECT approved.id, (SELECT count(*) FROM artifact_input),
+              $9::text, $10::text, $6::timestamptz
+         FROM approved_contract AS approved
+         CROSS JOIN artifact_guard
+         CROSS JOIN persisted_artifact_barrier
+        WHERE $8::boolean
+       ON CONFLICT (contract_id) DO NOTHING
+       RETURNING contract_id
+     ), seal_guard AS (
+       SELECT 1 / CASE WHEN $8::boolean AND EXISTS (
+         SELECT 1
+           FROM approved_contract AS approved
+           JOIN initiative_contract_artifact_seals AS seal
+             ON seal.contract_id = approved.id
+          WHERE seal.artifact_count <> (SELECT count(*) FROM artifact_input)
+             OR seal.manifest_sha256 <> $9::text
+             OR seal.source_revision <> $10::text
+       ) THEN 0 ELSE 1 END AS ok
      ), superseded AS (
        UPDATE initiative_contracts AS prior
           SET status = 'superseded', updated_at = $6::timestamptz
          FROM approved_contract AS approved
+         CROSS JOIN seal_guard
         WHERE prior.initiative_id = approved.initiative_id
           AND prior.id <> approved.id
           AND prior.status <> 'superseded'
@@ -106,6 +172,7 @@ export async function materializeApprovedContract(db, {
         SET contract_id = approved.id, updated_at = $6::timestamptz
        FROM approved_contract AS approved
        CROSS JOIN artifact_guard
+       CROSS JOIN seal_guard
       WHERE run.id = $1::uuid
      RETURNING approved.id, approved.version, approved.status, approved.branch`,
     [
@@ -117,10 +184,22 @@ export async function materializeApprovedContract(db, {
       approvedAt,
       JSON.stringify(frozenArtifacts),
       artifactsProvided,
+      manifestDigest,
+      sourceRevision,
     ],
   );
 
   if (!rows[0]) {
+    const diagnostic = await db.query(
+      `SELECT 1
+         FROM initiative_contracts AS contract
+         JOIN initiative_runs AS run ON run.initiative_id = contract.initiative_id
+        WHERE run.id = $1::uuid AND contract.version = $2::integer`,
+      [runId, version],
+    );
+    if (diagnostic.rows[0]) {
+      throw new Error('approved_contract_immutable_mismatch');
+    }
     throw new Error(`cannot materialize approved contract: run ${runId} not found`);
   }
   return rows[0];

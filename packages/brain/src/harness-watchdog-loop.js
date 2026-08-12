@@ -138,7 +138,6 @@ export function stopHarnessWatchdogLoop() {
     clearInterval(_loopTimer);
     _loopTimer = null;
   }
-  _isRunning = false;
 }
 
 export default {

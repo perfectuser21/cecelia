@@ -1045,7 +1045,7 @@ describe('runLoop：控制 action 自消费', () => {
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
 
     expect(result.exitReason).toBe('run_done');
-    expect(deps.listGitFiles).toHaveBeenCalledWith(approvedSha, `${sprintDir}/tests`, {
+    expect(deps.listGitFiles).toHaveBeenCalledWith(approvedSha, sprintDir, {
       repo: null,
     });
     const materializeSql = sqls.find(([sql]) => sql.includes('INSERT INTO initiative_contracts'));
@@ -1179,7 +1179,7 @@ describe('runLoop：控制 action 自消费', () => {
 
     await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
 
-    expect(deps.listGitFiles).toHaveBeenCalledWith(approvedSha, `${sprintDir}/tests`, {
+    expect(deps.listGitFiles).toHaveBeenCalledWith(approvedSha, sprintDir, {
       repo: null,
     });
     const materializeSql = sqls.find(([sql]) => sql.includes('INSERT INTO initiative_contracts'));
@@ -1229,7 +1229,7 @@ describe('runLoop：控制 action 自消费', () => {
 
     await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
 
-    expect(deps.listGitFiles).toHaveBeenCalledWith(approvedSha, `${sprintDir}/tests`, {
+    expect(deps.listGitFiles).toHaveBeenCalledWith(approvedSha, sprintDir, {
       repo: null,
     });
     expect(sqls.some(([sql]) => sql.includes('INSERT INTO initiative_contracts'))).toBe(true);
