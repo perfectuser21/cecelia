@@ -1130,6 +1130,99 @@ describe('runLoop：控制 action 自消费', () => {
     expect(deps.readGitFile).not.toHaveBeenCalled();
   });
 
+  it('APPROVED 崩溃恢复也按批准 SHA 冻结完整 artifact 集合，不直接改状态', async () => {
+    const approvedSha = '1'.repeat(40);
+    const sprintDir = 'sprints/crash-recovery-contract';
+    const observedSeq = [
+      obs({
+        run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+        task: { status: 'in_progress', payload: { sprint_dir: sprintDir } },
+        contract: {
+          approved: false,
+          id: CONTRACT_ID,
+          row: { version: 4, branch: 'cp-harness-propose-r4-11111111-a9' },
+        },
+        proposeBranch: 'cp-harness-propose-r4-11111111-a9',
+        proposeBranchSha: approvedSha,
+        proposeBranchRn: 4,
+        ganLatestRoundVerdict: 'APPROVED',
+        ganLatestRoundContractSha: approvedSha,
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, sqls } = makeEnv({ observedSeq });
+    const files = {
+      [`${sprintDir}/sprint-prd.md`]: '# PRD',
+      [`${sprintDir}/contract-draft.md`]: '# Contract',
+      [`${sprintDir}/contract-dod.md`]: '# DoD',
+      [`${sprintDir}/tests/recovery.test.mjs`]: 'test("recovery", () => {})',
+    };
+    deps.listGitFiles = vi.fn(() => [`${sprintDir}/tests/recovery.test.mjs`]);
+    deps.readGitFile = vi.fn((_sha, filePath) => {
+      if (!Object.hasOwn(files, filePath)) throw new Error(`missing ${filePath}`);
+      return files[filePath];
+    });
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(deps.listGitFiles).toHaveBeenCalledWith(approvedSha, `${sprintDir}/tests`, {
+      repo: null,
+    });
+    const materializeSql = sqls.find(([sql]) => sql.includes('INSERT INTO initiative_contracts'));
+    expect(materializeSql).toBeTruthy();
+    expect(JSON.parse(materializeSql[1][6])).toHaveLength(4);
+    expect(sqls.some(([sql]) => /^UPDATE initiative_contracts SET status = 'approved'/.test(sql)))
+      .toBe(false);
+  });
+
+  it('force approval 崩溃恢复也冻结 artifact 后再记录副作用', async () => {
+    const approvedSha = '2'.repeat(40);
+    const sprintDir = 'sprints/force-recovery-contract';
+    const caseFile = [
+      { round: 1, author_role: 'reviewer', rubric_scores: { dod_machineability: 8 } },
+      { round: 2, author_role: 'reviewer', rubric_scores: { dod_machineability: 7 } },
+      { round: 3, author_role: 'reviewer', rubric_scores: { dod_machineability: 6 } },
+    ];
+    const observedSeq = [
+      obs({
+        run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+        task: { status: 'in_progress', payload: { sprint_dir: sprintDir } },
+        contract: {
+          approved: false,
+          id: CONTRACT_ID,
+          row: { version: 3, branch: 'cp-harness-propose-r3-11111111-a8' },
+        },
+        proposeBranch: 'cp-harness-propose-r3-11111111-a8',
+        proposeBranchSha: approvedSha,
+        proposeBranchRn: 3,
+        ganLatestRoundVerdict: 'REVISION',
+        caseFile,
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, sqls } = makeEnv({ observedSeq });
+    const files = {
+      [`${sprintDir}/sprint-prd.md`]: '# PRD',
+      [`${sprintDir}/contract-draft.md`]: '# Contract',
+      [`${sprintDir}/contract-dod.md`]: '# DoD',
+      [`${sprintDir}/tests/force.test.mjs`]: 'test("force", () => {})',
+    };
+    deps.listGitFiles = vi.fn(() => [`${sprintDir}/tests/force.test.mjs`]);
+    deps.readGitFile = vi.fn((_sha, filePath) => {
+      if (!Object.hasOwn(files, filePath)) throw new Error(`missing ${filePath}`);
+      return files[filePath];
+    });
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(deps.listGitFiles).toHaveBeenCalledWith(approvedSha, `${sprintDir}/tests`, {
+      repo: null,
+    });
+    expect(sqls.some(([sql]) => sql.includes('INSERT INTO initiative_contracts'))).toBe(true);
+    expect(sqls.some(([sql]) => /^UPDATE initiative_contracts SET status = 'approved'/.test(sql)))
+      .toBe(false);
+  });
+
   it('force_approve_contract：案卷 rubric 趋势 diverging → 跳过 reviewer 直接物化合同 + 写决策日志 + P1 告警 + cecelia_events 落库（F3）', async () => {
     const approvedSha = 'e'.repeat(40);
     const caseFile = [

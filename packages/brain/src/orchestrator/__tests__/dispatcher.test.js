@@ -1407,6 +1407,65 @@ describe('createDispatcher', () => {
     expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
   });
 
+  it('Fleet Worker 装配拒绝时保留失败 Attempt 审计，但不启动 Provider 并返回精确 assembly fault', async () => {
+    const deps = makeDeps();
+    const content = 'test("materialize", () => {})';
+    const frozenArtifacts = [{
+      path: 'sprints/router/tests/materialize.test.mjs',
+      content,
+      sha256: createHash('sha256').update(content).digest('hex'),
+      byte_length: Buffer.byteLength(content),
+      source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+    }];
+    deps.resolveWorkspaceSpec = vi.fn(async () => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: 'cp-artifact-materialization-failure',
+      expected_head_sha: null,
+      mode: 'read-write',
+      run_id: runId,
+      attempt_id: attemptId,
+    }));
+    deps.launcher.prepare = vi.fn(async () => {
+      throw new Error('FROZEN_CONTRACT_ARTIFACT_DIGEST_MISMATCH:sprints/router/tests/materialize.test.mjs');
+    });
+    deps.launcher.start = vi.fn();
+    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cleaned', attempt_id: attemptId });
+
+    const result = await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-approved-contract' },
+          artifacts: frozenArtifacts,
+        },
+      },
+      decision: { phase: 'generate', reason: 'contract_approved' },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'FROZEN_CONTRACT_ARTIFACT_DIGEST_MISMATCH',
+      should_create_attempt: true,
+      should_enter_generator_fix: false,
+    });
+    expect(deps.attemptStore.createAttempt).toHaveBeenCalledOnce();
+    expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
+      code: 'FROZEN_CONTRACT_ARTIFACT_DIGEST_MISMATCH',
+      message: expect.stringContaining('materialize.test.mjs'),
+      failureClass: 'assembly_fault',
+    }, {
+      leaseOwner: 'dispatcher-test:4242',
+      leaseGeneration: 0,
+    });
+    expect(deps.launcher.start).not.toHaveBeenCalled();
+  });
+
   it('copies the Controller-owned validation clock into the Generator TaskBundle', async () => {
     const deps = makeDeps();
     const validationClock = {

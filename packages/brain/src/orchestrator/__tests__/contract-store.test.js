@@ -127,5 +127,34 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       [contract.id],
     );
     expect(unchanged.rows).toEqual([{ content: artifact.content }]);
+
+    await expect(materializeApprovedContract(client, {
+      runId,
+      version: 2,
+      branch: 'cp-harness-propose-r2-22222222-a8',
+      prdContent: '# MUTATED PRD',
+      contractContent: '# Contract\n\n# DoD',
+      artifacts: [artifact],
+      approvedAt,
+    })).rejects.toThrow(/approved_contract_immutable_mismatch/i);
+
+    await expect(materializeApprovedContract(client, {
+      runId,
+      version: 2,
+      branch: 'cp-different-branch',
+      prdContent: '# PRD',
+      contractContent: '# Contract\n\n# DoD',
+      artifacts: [artifact],
+      approvedAt,
+    })).rejects.toThrow(/approved_contract_immutable_mismatch/i);
+
+    const immutableContract = await client.query(
+      'SELECT branch, prd_content FROM initiative_contracts WHERE id = $1::uuid',
+      [contract.id],
+    );
+    expect(immutableContract.rows).toEqual([{
+      branch: 'cp-harness-propose-r2-22222222-a8',
+      prd_content: '# PRD',
+    }]);
   });
 });

@@ -20,12 +20,16 @@ describe('migration 411 initiative contract artifacts', () => {
     expect(sql).toMatch(/REFERENCES initiative_contracts\s*\(id\)\s+ON DELETE RESTRICT/i);
     expect(sql).toMatch(/CHECK\s*\(byte_length\s*>=\s*0\)/i);
     expect(sql).toMatch(/BEFORE UPDATE OR DELETE ON initiative_contract_artifacts/i);
+    expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS initiative_contract_artifact_seals/i);
+    expect(sql).toMatch(/BEFORE INSERT ON initiative_contract_artifacts/i);
+    expect(sql).toMatch(/initiative_contract_artifact_seals/i);
     expect(sql).toMatch(/VALUES\s*\(\s*'411'/i);
   });
 
   it('rollback 只撤销 411 自有表与 schema marker', () => {
     const sql = readFileSync(rollbackPath, 'utf8');
     expect(sql).toMatch(/DROP TABLE IF EXISTS initiative_contract_artifacts/i);
+    expect(sql).toMatch(/DROP TABLE IF EXISTS initiative_contract_artifact_seals/i);
     expect(sql).toMatch(/DELETE FROM schema_version WHERE version = '411'/i);
     expect(sql).not.toMatch(/DROP TABLE IF EXISTS initiative_contracts/i);
   });
