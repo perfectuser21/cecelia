@@ -238,7 +238,10 @@ export function createApp({ skipDbInit = false, bearerToken = process.env.MCP_BE
     bearerAuth(bearerToken, { onFailure: (token) => alertTracker.recordAuthFailure(token) }),
     createRateLimiter({
       windowMs: 60_000,
-      max: 20,
+      // 生产实测：20/分钟是按"人在回路单次问答"估的，没算上 Notion 真实探索
+      // 会话（连续查4类地图对象+工具发现+重连重试）在1分钟内的正常突发量，
+      // 误伤了真实使用场景。60/分钟给3倍余量，仍然是有界值，不是放开不限。
+      max: 60,
       onRateLimited: (token) => alertTracker.recordRateLimited(token),
     })
   );
