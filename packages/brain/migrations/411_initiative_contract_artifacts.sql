@@ -41,6 +41,12 @@ RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended(
+      'initiative_contract_artifacts:' || NEW.contract_id::text,
+      0
+    )
+  );
   IF EXISTS (
     SELECT 1
       FROM initiative_contract_artifact_seals

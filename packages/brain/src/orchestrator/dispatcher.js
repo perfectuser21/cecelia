@@ -297,6 +297,9 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     common.runtime_resources = { postgres: false, node_deps: true };
   }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
+    if (observed.contract?.artifact_error) {
+      throw new Error(observed.contract.artifact_error);
+    }
     common.contract = observed.contract?.row ?? null;
     if (Array.isArray(observed.contract?.artifacts)) {
       if (spec.role === 'generator' && observed.contract.artifacts.length === 0) {

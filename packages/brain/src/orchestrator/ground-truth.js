@@ -28,6 +28,10 @@ import { parseHarnessResult, parseTaskBundle } from './execution-contract.js';
 import { sanitizeDiagnostic } from './failure-persistence.js';
 import { loadCaseFile } from './case-file-store.js';
 import { CASE_FILE_FULL_TEXT_ROUNDS } from './constants.js';
+import {
+  contractArtifactManifestDigest,
+  validateContractArtifacts,
+} from './contract-artifacts.js';
 
 /** gh check state → 三态 ci 映射 */
 const CI_FAIL_STATES = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
@@ -253,23 +257,57 @@ export async function collectGroundTruth(deps, opts) {
 
   let contractRow = null;
   let contractArtifacts = [];
+  let contractArtifactError = null;
   if (run.contract_id) {
     const cRes = await pool.query('SELECT * FROM initiative_contracts WHERE id = $1', [run.contract_id]);
     contractRow = cRes.rows[0] ?? null;
     const artifactRes = await pool.query(
-      `SELECT path, content, sha256, byte_length, source_revision
-         FROM initiative_contract_artifacts
-        WHERE contract_id = $1
+      `SELECT artifact.path,
+              artifact.content,
+              artifact.sha256,
+              artifact.byte_length,
+              artifact.source_revision,
+              seal.artifact_count AS sealed_artifact_count,
+              seal.manifest_sha256 AS sealed_manifest_sha256,
+              seal.source_revision AS sealed_source_revision
+         FROM initiative_contract_artifacts AS artifact
+         LEFT JOIN initiative_contract_artifact_seals AS seal
+           ON seal.contract_id = artifact.contract_id
+        WHERE artifact.contract_id = $1
         ORDER BY path`,
       [run.contract_id],
     );
-    contractArtifacts = artifactRes.rows;
+    contractArtifacts = artifactRes.rows.map(({
+      sealed_artifact_count: _sealedArtifactCount,
+      sealed_manifest_sha256: _sealedManifestSha256,
+      sealed_source_revision: _sealedSourceRevision,
+      ...artifact
+    }) => artifact);
+    if (contractRow?.status === 'approved' && contractArtifacts.length > 0) {
+      try {
+        validateContractArtifacts(contractArtifacts, { requireTests: true, requireCore: true });
+        const manifestDigest = contractArtifactManifestDigest(contractArtifacts);
+        const sealRowsMatch = artifactRes.rows.every((row) => (
+          Number(row.sealed_artifact_count) === contractArtifacts.length
+          && row.sealed_manifest_sha256 === manifestDigest
+          && row.sealed_source_revision === contractArtifacts[0].source_revision
+        ));
+        if (!sealRowsMatch) {
+          throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:seal_mismatch');
+        }
+      } catch (error) {
+        contractArtifactError = String(error?.message ?? error).startsWith('FROZEN_CONTRACT_ARTIFACT')
+          ? String(error.message)
+          : 'FROZEN_CONTRACT_ARTIFACT_INVALID:seal_mismatch';
+      }
+    }
   }
   const contract = {
     approved: contractRow?.status === 'approved',
     id: run.contract_id ?? null,
     row: contractRow,
     artifacts: contractArtifacts,
+    artifact_error: contractArtifactError,
   };
 
   const tRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [taskId]);

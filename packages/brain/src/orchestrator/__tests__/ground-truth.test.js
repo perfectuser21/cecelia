@@ -3,6 +3,7 @@
  * 不测真外部：pool/execCmd/fileExists/readFile 全注入。
  * 重点：PR json 解析 / ci 状态映射 / rN 解析 / inflight label 过滤 / lastAgentExit hop 作用域（P0-3）。
  */
+import { createHash } from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
 import { collectGroundTruth } from '../ground-truth.js';
 import { derive } from '../derive.js';
@@ -153,19 +154,26 @@ describe('collectGroundTruth：DB 通道组装', () => {
   });
 
   it('artifact 行数与 seal 不一致时标记 frozen contract 读取失败', async () => {
+    const revision = '6faaa9f55e9789ffd29fd2760a9b5994df272e86';
+    const artifact = (path, content) => ({
+      path,
+      content,
+      sha256: createHash('sha256').update(content).digest('hex'),
+      byte_length: Buffer.byteLength(content),
+      source_revision: revision,
+      sealed_artifact_count: 3,
+      sealed_manifest_sha256: 'b'.repeat(64),
+      sealed_source_revision: revision,
+    });
     const deps = makeDeps({
       rows: {
         contracts: [{ id: CONTRACT_ID, status: 'approved' }],
-        contractArtifacts: [{
-          path: 'sprints/router/tests/appended.test.mjs',
-          content: 'test("appended", () => {})',
-          sha256: 'a'.repeat(64),
-          byte_length: 27,
-          source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
-          sealed_artifact_count: 0,
-          sealed_manifest_sha256: 'b'.repeat(64),
-          sealed_source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
-        }],
+        contractArtifacts: [
+          artifact('sprints/router/contract-dod.md', '# DoD'),
+          artifact('sprints/router/contract-draft.md', '# Contract'),
+          artifact('sprints/router/sprint-prd.md', '# PRD'),
+          artifact('sprints/router/tests/appended.test.mjs', 'test("appended", () => {})'),
+        ],
       },
     });
 

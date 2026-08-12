@@ -5,6 +5,16 @@ export const CONTRACT_ARTIFACT_MAX_BYTES = 256 * 1024;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 
+export function contractArtifactManifestDigest(artifacts) {
+  const manifest = artifacts.map((artifact) => ({
+    path: artifact.path,
+    sha256: artifact.sha256,
+    byte_length: artifact.byte_length,
+    source_revision: artifact.source_revision,
+  }));
+  return createHash('sha256').update(JSON.stringify(manifest), 'utf8').digest('hex');
+}
+
 export function assertContractArtifactPath(value) {
   if (
     typeof value !== 'string'

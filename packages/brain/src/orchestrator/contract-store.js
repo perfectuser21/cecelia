@@ -1,15 +1,7 @@
-import { createHash } from 'node:crypto';
-import { validateContractArtifacts } from './contract-artifacts.js';
-
-function artifactManifestDigest(artifacts) {
-  const manifest = artifacts.map((artifact) => ({
-    path: artifact.path,
-    sha256: artifact.sha256,
-    byte_length: artifact.byte_length,
-    source_revision: artifact.source_revision,
-  }));
-  return createHash('sha256').update(JSON.stringify(manifest), 'utf8').digest('hex');
-}
+import {
+  contractArtifactManifestDigest,
+  validateContractArtifacts,
+} from './contract-artifacts.js';
 
 function assertArtifactProjection(artifacts, prdContent, contractContent) {
   const byPath = new Map(artifacts.map((artifact) => [artifact.path, artifact.content]));
@@ -47,7 +39,9 @@ export async function materializeApprovedContract(db, {
     ? validateContractArtifacts(artifacts, { requireTests: true, requireCore: true })
     : [];
   if (artifactsProvided) assertArtifactProjection(frozenArtifacts, prdContent, contractContent);
-  const manifestDigest = artifactsProvided ? artifactManifestDigest(frozenArtifacts) : null;
+  const manifestDigest = artifactsProvided
+    ? contractArtifactManifestDigest(frozenArtifacts)
+    : null;
   const sourceRevision = artifactsProvided ? frozenArtifacts[0].source_revision : null;
 
   const { rows } = await db.query(
@@ -94,6 +88,14 @@ export async function materializeApprovedContract(db, {
            byte_length integer,
            source_revision text
          )
+     ), contract_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(
+                hashtextextended(
+                  'initiative_contract_artifacts:' || approved.id::text,
+                  0
+                )
+              ) AS locked
+         FROM approved_contract AS approved
      ), artifact_guard AS (
        SELECT 1 / CASE WHEN $8::boolean AND EXISTS (
          SELECT 1
@@ -122,6 +124,7 @@ export async function materializeApprovedContract(db, {
               )
             )
        ) THEN 0 ELSE 1 END AS ok
+         FROM contract_lock
      ), persisted_artifacts AS (
        INSERT INTO initiative_contract_artifacts
          (contract_id, path, content, sha256, byte_length, source_revision, created_at)
