@@ -800,15 +800,25 @@ export async function dispatchNextTask(goalIds) {
   const codeRouting = classifyCodeChange(taskToDispatch);
   if (codeRouting.isCodeChange) {
     const gear = deriveGearForTask(taskToDispatch);
-    taskToDispatch = {
-      ...taskToDispatch,
-      task_type: 'harness_initiative',
-      payload: {
-        ...taskToDispatch.payload,
-        ...buildHarnessRoutingPayload(taskToDispatch, gear),
-      },
-    };
-    tickLog(`[dispatch] code_change_routing task=${taskToDispatch.id} origin_type=dev → harness_initiative gear=${gear}`);
+    const routingPayload = buildHarnessRoutingPayload(taskToDispatch, gear);
+    try {
+      await pool.query(
+        `UPDATE tasks
+           SET task_type = 'harness_initiative',
+               payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
+               updated_at = NOW()
+         WHERE id = $1`,
+        [taskToDispatch.id, JSON.stringify(routingPayload)]
+      );
+      taskToDispatch = {
+        ...taskToDispatch,
+        task_type: 'harness_initiative',
+        payload: { ...taskToDispatch.payload, ...routingPayload },
+      };
+      tickLog(`[dispatch] code_change_routing task=${taskToDispatch.id} origin_type=dev → harness_initiative gear=${gear}`);
+    } catch (persistErr) {
+      console.warn(`[dispatch] code_change_routing DB persist failed, falling back to legacy dispatch for task=${taskToDispatch.id}: ${persistErr.message}`);
+    }
   }
 
   execResult = await triggerCeceliaRun(taskToDispatch);
