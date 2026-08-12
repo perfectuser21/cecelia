@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Response Schema（推导来源: PRD 字面 + api_registry）
 
@@ -104,7 +104,7 @@ notes: judgment-pending-user 不适用；以上判定点已在批准设计中拍
 
 **可观测行为**: credential-bearing origin 与等价无凭据 origin 匹配；所有日志脱敏；活跃 detached Kernel cwd 保留，真正孤儿可清理。
 
-**验证命令**: `npx vitest run sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts -t "凭据 origin 归一化、日志脱敏且保护活跃 Kernel 工作区"`
+**验证命令**: `npx vitest run sprints/08121555-unified-work-router/tests/recovery-workspace-contract.test.ts packages/brain/src/harness-worktree.integration.test.js`
 
 **硬阈值**: 两次接缝执行均通过，日志中凭据命中数 0，active cwd 删除数 0。
 
@@ -113,7 +113,7 @@ notes: judgment-pending-user 不适用；以上判定点已在批准设计中拍
 
 **可观测行为**: coding mutation 原子得到 append-only receipt 与 `harness_initiative`；四个 change kind 只正向映射，unknown coding 按 write，repo 歧义阻塞。
 
-**验证命令**: `npx vitest run sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts -t "原子创建 receipt 并只按四档正向映射"`
+**验证命令**: `DB_URL="$DB_URL" npx vitest run sprints/08121555-unified-work-router/tests/knife01-routing-contract.test.ts packages/brain/src/__tests__/integration/work-routing-store.integration.test.js packages/brain/src/__tests__/work-router-entrypoints.test.js`
 
 **硬阈值**: 四档 4/4 命中；task/receipt 同生同灭；70 类型与入口 inventory 从 SSOT 动态核验，无重复或漏项。
 
@@ -122,7 +122,7 @@ notes: judgment-pending-user 不适用；以上判定点已在批准设计中拍
 
 **可观测行为**: 计划或生成前绑定同 repo fresh Map/baseline revision 与 active Impact Contract；异常不创建 Provider；map_recovery 仅单次窄化恢复。
 
-**验证命令**: `npx vitest run sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts -t "fresh Map 建立 Impact Contract 且异常 fail closed"`
+**验证命令**: `DB_URL="$DB_URL" npx vitest run sprints/08121555-unified-work-router/tests/knife3-map-contract.test.ts packages/brain/src/orchestrator/preflight/map-impact-contract.integration.test.js`
 
 **硬阈值**: fresh=放行；missing/stale/revision/scanner/repo mismatch=全部拒绝；所有新 coding run policy=`required`，新增 legacy_exempt=0。
 
@@ -131,7 +131,7 @@ notes: judgment-pending-user 不适用；以上判定点已在批准设计中拍
 
 **可观测行为**: 有头/无头共享 receipt 合同；写动作前校验完整上下文；Generator frozen baseline、pushurl、setpriv、env 剥离均实际生效。
 
-**验证命令**: `npx vitest run sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts -t "有头无头动作闸与 Generator trust boundary"`
+**验证命令**: `bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh && npx vitest run sprints/08121555-unified-work-router/tests/knife4-guards-contract.test.ts packages/brain/src/orchestrator/__tests__/dispatcher-routing-receipt.test.js && bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh`
 
 **硬阈值**: 所有无效情形写动作 exit 2 或拒绝 executor；只读 exit 0；Provider push 必败且敏感 env 可见数 0。
 
@@ -140,7 +140,7 @@ notes: judgment-pending-user 不适用；以上判定点已在批准设计中拍
 
 **可观测行为**: API/Intent/Capture 三个 coding 请求全走 Harness/Map/Impact；content/research/review 不误路由；stale 阻断后 refresh/resume 保留审计。
 
-**验证命令**: `bash packages/brain/scripts/smoke/unified-work-router-smoke.sh`
+**验证命令**: `DB_URL="$DB_URL" bash packages/brain/scripts/smoke/unified-work-router-smoke.sh && DB_URL="$DB_URL" npx vitest run sprints/08121555-unified-work-router/tests/knife5-acceptance-contract.test.ts packages/brain/src/__tests__/work-routing-observability.test.js`
 
 **硬阈值**: coding 3/3 receipt+Harness+正确 Map+active Impact；对照 3/3 正确 pipeline；direct coding dev=0；命令 exit 0。
 
@@ -170,8 +170,15 @@ bash scripts/check-version-sync.sh
 node packages/quality/scripts/devgate/check-dod-mapping.cjs
 bash packages/brain/scripts/smoke/unified-work-router-smoke.sh
 
-# 本轮数据库副作用必须在时间窗内，且三入口全部建立 receipt/impact contract。
+# 本轮数据库副作用必须在时间窗内，且三入口全部建立 receipt、run、正确 repo Map 与 active Impact Contract。
 psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc "SELECT count(*) >= 3 FROM work_routing_receipts WHERE created_at > NOW() - interval '5 minutes' AND work_kind='coding_mutation' AND canonical_task_type='harness_initiative'" | grep -qx t
+psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc "SELECT count(DISTINCT r.task_id)=3 FROM work_routing_receipts r JOIN initiative_runs ir ON ir.task_id=r.task_id JOIN harness_impact_contracts ic ON ic.task_id=r.task_id AND ic.status='active' JOIN map_scope_repositories msr ON msr.scope_key=r.map_scope->>0 AND msr.repo=r.repo WHERE r.created_at > NOW()-interval '5 minutes' AND r.source IN ('api','thalamus','capture') AND ir.impact_contract_policy='required'" | grep -qx t
+# 对照 pipeline 与 review 派生修复路径逐项验证，不用汇总数量代替。
+psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc "SELECT bool_and((source='content-smoke' AND pipeline='content') OR (source='research-smoke' AND pipeline='research') OR (source='review-smoke' AND pipeline='code_review') OR (source='review-fix-smoke' AND pipeline='harness')) FROM work_routing_receipts WHERE created_at > NOW()-interval '5 minutes' AND source IN ('content-smoke','research-smoke','review-smoke','review-fix-smoke')" | grep -qx t
+# stale 阻断必须发生在 Provider 前，refresh/resume 后成功且原失败审计仍存在。
+psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc "SELECT EXISTS(SELECT 1 FROM work_routing_acceptance_events WHERE scenario='stale_resume' AND preflight_reason_code='map_stale' AND provider_attempts_before_refresh=0 AND resumed_after_refresh AND failure_audit_preserved AND created_at > NOW()-interval '5 minutes')" | grep -qx t
+# runner 容器实弹 receipt：敏感凭据不可见、Provider push 必败、Judge 后 trusted transport 真发布。
+psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc "SELECT EXISTS(SELECT 1 FROM work_routing_acceptance_events WHERE scenario='generator_trust_boundary' AND callback_token_visible=false AND lease_credentials_visible=false AND provider_push_succeeded=false AND non_privileged_uid=true AND capabilities_empty=true AND trusted_transport_published=true AND created_at > NOW()-interval '5 minutes')" | grep -qx t
 psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc "SELECT count(*) = 0 FROM tasks WHERE created_at > NOW() - interval '5 minutes' AND task_type='dev' AND payload->>'mutation_intent'='write'" | grep -qx t
 
 # 当前 validation identity 只取 Runner late-bound 注入；证据留存摘要，不输出 secrets。
@@ -193,10 +200,11 @@ jq -e '.status=="passed" and (.attempt_id|length>0) and (.capability_snapshot_id
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 恢复前置 | `sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts` | 凭据 origin 归一化、日志脱敏且保护活跃 Kernel 工作区 | 目标模块/导出尚不存在 |
-| 路由与四档 | `sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts` | 原子创建 receipt 并只按四档正向映射 | Work Router 尚不存在 |
-| Map/Impact | `sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts` | fresh Map 建立 Impact Contract 且异常 fail closed | preflight 尚未强制 |
-| 动作闸/隔离 | `sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts` | 有头无头动作闸与 Generator trust boundary | guard/trust boundary 未完整接线 |
+| 恢复前置 | `tests/recovery-workspace-contract.test.ts` | 真实 Git origin 含凭据时仍归一化、日志脱敏并保护活跃 Kernel cwd | 缺 canonicalize/redact/protect 导出 |
+| Knife 0-2 | `tests/knife01-routing-contract.test.ts` | 四档正向映射且禁止 gear/stage/task type 反推 change_kind；冻结入口逐项覆盖并永久锁定三个既有陷阱 | Work Router/inventory 尚不存在 |
+| Knife 3 | `tests/knife3-map-contract.test.ts` | fresh 同 repo Map 才放行且 map_recovery 只能单次窄化消费 | preflight/recovery 尚不存在 |
+| Knife 4 | `tests/knife4-guards-contract.test.ts` | receipt 无效时动作前 fail closed，Generator 无 push/callback/lease 能力 | guard/trust boundary 尚不存在 |
+| Knife 5 | `tests/knife5-acceptance-contract.test.ts` | smoke receipt 明确证明三 coding、三对照、stale/resume 与审计 | scratch acceptance receipt 尚不存在 |
 
 ## Contract Notes
 
