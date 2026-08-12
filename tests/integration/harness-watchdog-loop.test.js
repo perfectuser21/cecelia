@@ -49,15 +49,15 @@ describe('startHarnessWatchdogLoop — 独立 setInterval，不依赖 tick body'
 
     startHarnessWatchdogLoop({ intervalMs: 1000 });
 
-    // 第一次周期触发
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(mockScan).toHaveBeenCalledTimes(1);
-    expect(mockResume).toHaveBeenCalledTimes(1);
-
-    // 第二次周期触发 —— 证明是真正的周期循环，不是一次性
+    // 启动 eager scan + 第一次周期触发
     await vi.advanceTimersByTimeAsync(1000);
     expect(mockScan).toHaveBeenCalledTimes(2);
     expect(mockResume).toHaveBeenCalledTimes(2);
+
+    // 第二次周期触发 —— 证明是真正的周期循环，不是一次性
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mockScan).toHaveBeenCalledTimes(3);
+    expect(mockResume).toHaveBeenCalledTimes(3);
   });
 
   it('重复 start 返回 false（防止双循环）', () => {

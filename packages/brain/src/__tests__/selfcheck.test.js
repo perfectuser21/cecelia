@@ -209,9 +209,9 @@ describe('selfcheck', () => {
   // 406（Harness attempt account_exhausted callback control class）推进地板到 406。
   // 407（explicit Map repo adapters；406 为 account_exhausted）推进地板到 407。
   // 408/409（Impact Contract + Gap Ledger 强制闭环）推进地板到 409。
-  // 410（revision-indexed immutable graph snapshots）推进地板到 410。
-  it('EXPECTED_SCHEMA_VERSION should be 410', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('410');
+  // 410（revision-indexed immutable graph snapshots）；411（approved Harness contract artifact manifests）。
+  it('EXPECTED_SCHEMA_VERSION should be 411', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('411');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
