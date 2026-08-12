@@ -235,8 +235,13 @@ describe('reconcileTerminalOpenPRs — GitHub OPEN/CONFLICTING → 保持原状'
 
     await reconcileTerminalOpenPRs(pool);
 
-    // OPEN/CONFLICTING → 不写任何 UPDATE
-    expect(updates.length).toBe(0);
+    // OPEN/CONFLICTING → 不更新 pr_status/retry 等业务字段（不能在 SET 子句中出现）
+    // I3 修复后：cursor UPDATE（last_reconcile_checked_at）会写入，用于公平轮转
+    const statusUpdates = updates.filter(u => /SET\s+pr_status|SET\s+retry_count|SET\s+pr_merged_at/.test(u.sql));
+    expect(statusUpdates.length).toBe(0);
+    // cursor UPDATE 是预期行为（OPEN 任务需要轮转到下一批）
+    const cursorUpdates = updates.filter(u => /last_reconcile_checked_at/.test(u.sql));
+    expect(cursorUpdates.length).toBe(1);
   });
 
   it('GitHub CI_PENDING → 不重排，不更新状态', async () => {

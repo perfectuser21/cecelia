@@ -44,19 +44,33 @@ export function isValidGithubPrUrl(url) {
   return typeof url === 'string' && GITHUB_PR_URL_RE.test(url.trim());
 }
 
+/**
+ * 按优先级返回第一个合法的 GitHub PR URL。
+ * 每个候选独立 trim + validate，非法 truthy 值不能遮蔽后续合法值。
+ */
+export function firstValidGithubPrUrl(...candidates) {
+  for (const candidate of candidates) {
+    const trimmed = typeof candidate === 'string' ? candidate.trim() : null;
+    if (isValidGithubPrUrl(trimmed)) return trimmed;
+  }
+  return null;
+}
+
 function _isValidGithubPrUrl(url) { return isValidGithubPrUrl(url); }
 
 /**
  * 纯函数：从 explicit URL + task row 解析权威 pr_url（无 DB 查询）。
  * 优先级：explicit > task.pr_url > task.payload.pr_url > task.payload.existing_pr_url
+ * 每项独立 trim+validate，invalid 高优先级不遮蔽合法低优先级。
  * 供 docker-executor 直接传入已有 task 对象使用。
  */
 export function resolveCanonicalPrUrlSync(explicitUrl, taskRow) {
-  if (isValidGithubPrUrl(explicitUrl)) return explicitUrl;
-  const candidate = taskRow?.pr_url
-    || taskRow?.payload?.pr_url
-    || taskRow?.payload?.existing_pr_url;
-  return isValidGithubPrUrl(candidate) ? candidate : null;
+  return firstValidGithubPrUrl(
+    explicitUrl,
+    taskRow?.pr_url,
+    taskRow?.payload?.pr_url,
+    taskRow?.payload?.existing_pr_url,
+  );
 }
 
 /**
@@ -69,9 +83,8 @@ export function resolveCanonicalPrUrlSync(explicitUrl, taskRow) {
  * @returns {Promise<string|null>} 合法的 GitHub PR URL 或 null
  */
 export async function resolveCanonicalPrUrl(callbackPrUrl, task_id, pool) {
-  // Priority 1: explicit callback/stdout
-  const trimmedExplicit = typeof callbackPrUrl === 'string' ? callbackPrUrl.trim() : null;
-  if (_isValidGithubPrUrl(trimmedExplicit)) return trimmedExplicit;
+  const explicit = firstValidGithubPrUrl(callbackPrUrl);
+  if (explicit) return explicit;
 
   try {
     const { rows } = await pool.query(
@@ -81,19 +94,11 @@ export async function resolveCanonicalPrUrl(callbackPrUrl, task_id, pool) {
     const row = rows[0];
     if (!row) return null;
 
-    // Priority 2: tasks.pr_url（独立校验，不用 || 短路）
-    const trimmedTaskPrUrl = typeof row.pr_url === 'string' ? row.pr_url.trim() : null;
-    if (_isValidGithubPrUrl(trimmedTaskPrUrl)) return trimmedTaskPrUrl;
-
-    // Priority 3: payload.pr_url
-    const trimmedPayloadPrUrl = typeof row.payload?.pr_url === 'string' ? row.payload.pr_url.trim() : null;
-    if (_isValidGithubPrUrl(trimmedPayloadPrUrl)) return trimmedPayloadPrUrl;
-
-    // Priority 4: payload.existing_pr_url
-    const trimmedExistingUrl = typeof row.payload?.existing_pr_url === 'string' ? row.payload.existing_pr_url.trim() : null;
-    if (_isValidGithubPrUrl(trimmedExistingUrl)) return trimmedExistingUrl;
-
-    return null;
+    return firstValidGithubPrUrl(
+      row.pr_url,
+      row.payload?.pr_url,
+      row.payload?.existing_pr_url,
+    );
   } catch {
     return null;
   }

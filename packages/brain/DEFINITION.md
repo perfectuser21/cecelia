@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.272.23
+**版本**: 1.272.25
 
 ## Blue-green internal auth credential closure
 
