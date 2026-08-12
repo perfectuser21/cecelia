@@ -43,14 +43,21 @@ target_environment: local_api
   留证: preflight reason_code、Provider attempt 计数、Impact Contract 与 scanner revision 查询
   Test: manual:bash -c 'DB_URL="$DB_URL" npx vitest run sprints/08121555-unified-work-router/tests/knife3-map-contract.test.ts packages/brain/src/orchestrator/preflight/map-impact-contract.integration.test.js packages/brain/src/orchestrator/__tests__/map-recovery-contract.test.js'
 
-- [ ] [BEHAVIOR] [L2] B-05: Knife 4 有头无头动作闸与 Generator trust boundary [接缝×2]
+- [ ] [BEHAVIOR] [L2] B-05: receipt validation API 真实认证、完整 schema 与稳定 reason_code [接缝×2]
+  动作: 以无 token、错误 Bearer token、有效 `CECELIA_INTERNAL_TOKEN` 和 superseded receipt 四次真实 HTTP 请求 validation API；有效请求逐字段携带 task/run/repo/branch/base_sha
+  预期观察: 前两次 HTTP 401 且分别为 auth_required/auth_invalid；有效请求 HTTP 200、exact keys 与六个上下文字段匹配；superseded 请求 HTTP 409 且 reason_code=receipt_superseded
+  等待预算: 20s
+  留证: 四次 HTTP status 与脱敏 JSON body（不得记录 token）
+  Test: manual:bash -c ': "${CECELIA_INTERNAL_TOKEN:?}"; : "${ROUTING_RECEIPT_ID:?}"; : "${SUPERSEDED_ROUTING_RECEIPT_ID:?}"; : "${ROUTING_TASK_ID:?}"; : "${ROUTING_RUN_ID:?}"; : "${ROUTING_REPO:?}"; : "${ROUTING_BRANCH:?}"; : "${ROUTING_BASE_SHA:?}"; U="http://127.0.0.1:5221/api/brain/work-routing/receipts/$ROUTING_RECEIPT_ID/validate?task_id=$ROUTING_TASK_ID&run_id=$ROUTING_RUN_ID&repo=$ROUTING_REPO&branch=$ROUTING_BRANCH&base_sha=$ROUTING_BASE_SHA"; A=$(mktemp); I=$(mktemp); S=$(mktemp); X=$(mktemp); trap '"'"'rm -f "$A" "$I" "$S" "$X"'"'"' EXIT; [ "$(curl -sS -o "$A" -w "%{http_code}" "$U")" = 401 ] && jq -e '"'"'keys==["error","reason_code","valid"] and .valid==false and .reason_code=="auth_required" and (.error|type=="string" and length>0)'"'"' "$A"; [ "$(curl -sS -H "Authorization: Bearer invalid-contract-token" -o "$I" -w "%{http_code}" "$U")" = 401 ] && jq -e '"'"'keys==["error","reason_code","valid"] and .valid==false and .reason_code=="auth_invalid"'"'"' "$I"; [ "$(curl -sS -H "Authorization: Bearer $CECELIA_INTERNAL_TOKEN" -o "$S" -w "%{http_code}" "$U")" = 200 ] && jq -e --arg rid "$ROUTING_RECEIPT_ID" --arg tid "$ROUTING_TASK_ID" --arg run "$ROUTING_RUN_ID" --arg repo "$ROUTING_REPO" --arg branch "$ROUTING_BRANCH" --arg sha "$ROUTING_BASE_SHA" '"'"'keys==["base_sha","branch","repo","routing_receipt_id","run_id","task_id","valid"] and .valid==true and .routing_receipt_id==$rid and .task_id==$tid and .run_id==$run and .repo==$repo and .branch==$branch and .base_sha==$sha'"'"' "$S"; V="http://127.0.0.1:5221/api/brain/work-routing/receipts/$SUPERSEDED_ROUTING_RECEIPT_ID/validate?task_id=$ROUTING_TASK_ID&run_id=$ROUTING_RUN_ID&repo=$ROUTING_REPO&branch=$ROUTING_BRANCH&base_sha=$ROUTING_BASE_SHA"; [ "$(curl -sS -H "Authorization: Bearer $CECELIA_INTERNAL_TOKEN" -o "$X" -w "%{http_code}" "$V")" = 409 ] && jq -e '"'"'keys==["error","reason_code","valid"] and .valid==false and .reason_code=="receipt_superseded"'"'"' "$X"'
+
+- [ ] [BEHAVIOR] [L2] B-06: Knife 4 有头无头动作闸与 Generator trust boundary [接缝×2]
   动作: 真实 worktree 对合法/缺失/过期/superseded/mismatch receipt 执行读写工具，并启动 Generator 容器命令链
   预期观察: 无效写动作前 exit 2 或 Dispatcher 拒绝 executor；只读通过；Generator push 失败且 callback/lease 凭据不可见
   等待预算: 90s
   留证: hook exit code、route_violation、容器 uid/capability/env/push 输出
-  Test: manual:bash -c 'bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh && npx vitest run sprints/08121555-unified-work-router/tests/knife4-guards-contract.test.ts packages/brain/src/orchestrator/__tests__/dispatcher-routing-receipt.test.js && bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh'
+  Test: manual:bash -c 'bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh && npx vitest run sprints/08121555-unified-work-router/tests/knife4-guards-contract.test.ts packages/brain/src/routes/__tests__/work-routing-validation.integration.test.js packages/brain/src/orchestrator/__tests__/dispatcher-routing-receipt.test.js && bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh'
 
-- [ ] [BEHAVIOR] [L2] B-06: Knife 5 scratch 多入口、stale/resume、迁移与可观测性真实验收 [接缝×2]
+- [ ] [BEHAVIOR] [L2] B-07: Knife 5 scratch 多入口、stale/resume、迁移与可观测性真实验收 [接缝×2]
   动作: 在 attempt-scoped DB 从 API、Intent、Capture 建 coding，并建 content、research、read-only review 对照，随后制造 stale Map、refresh 并 resume
   预期观察: coding 3/3 有 receipt/Harness/正确 Map/active Impact；对照不误路由；stale 不进 Provider且恢复保留审计
   等待预算: 180s
@@ -74,7 +81,7 @@ target_environment: local_api
 ## 铁律显式 N/A
 
 - 租户隔离/双租户：路由 receipt 不承载租户业务数据；真实 DB 测试仍创建至少两个 source 并断言不串。
-- 端点鉴权：receipt validation API 必须沿用受认证 Brain API；未认证请求是 B-04 的无效路径。
+- 端点鉴权：receipt validation API 的真实 Bearer 认证、成功 exact schema 与稳定错误 reason_code 由 B-05 独立机检。
 - 真机/RPA、视频、发布：本 Sprint 不涉及，N/A。
 - 周期扫描付费第三方 API、后台 job consumer、OS 多端 UI：本 Sprint 不涉及，N/A。
 

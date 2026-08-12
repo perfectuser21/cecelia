@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## Response Schema（推导来源: PRD 字面 + api_registry）
 
@@ -8,9 +8,11 @@
 
 ### Endpoint: GET /api/brain/work-routing/receipts/:id/validate
 
-**Success (HTTP 200)**：`{"valid":true,"task_id":"<uuid>","routing_receipt_id":"<uuid>","repo":"<repo>","branch":"<branch>","base_sha":"<sha>"}`。
+**认证与真实调用 shape**：调用方必须发送 `Authorization: Bearer ${CECELIA_INTERNAL_TOKEN}`（与 `packages/brain/src/middleware/internal-auth.js` 一致），并逐字段发送 query `task_id`、`run_id`、`repo`、`branch`、`base_sha`。token 缺失或错误必须在 receipt 查询前返回 HTTP 401；不得接受 body token、payload receipt 投影或匿名 localhost 旁路。
 
-**Error (HTTP 4xx/503)**：`{"error":"<string>","reason_code":"<stable_code>"}`。未知枚举、receipt 缺失/过期/superseded、Brain 不可达或上下文不匹配不得返回 `valid:true`。
+**Success (HTTP 200)**：顶层 keys 必须完全等于 `['base_sha','branch','repo','routing_receipt_id','run_id','task_id','valid']`，其中 `valid=true`，六个上下文字段逐字等于请求与专用 receipt/active run 的交叉校验结果。
+
+**Error (HTTP 4xx/503)**：顶层 keys 必须完全等于 `['error','reason_code','valid']`，`valid=false`、`error` 为非空 string；稳定 `reason_code` 至少包括 `auth_required`、`auth_invalid`、`receipt_not_found`、`receipt_expired`、`receipt_superseded`、`task_mismatch`、`run_mismatch`、`repo_mismatch`、`branch_mismatch`、`base_sha_mismatch`、`brain_unavailable`。认证错误为 401，not found 为 404，过期/被取代/上下文不匹配为 409，依赖不可用为 503；任何错误不得返回 HTTP 200 或 `valid:true`。
 
 **禁用字段名**：`skill` 作为 `task_type`、payload 内伪造 receipt 作为事实源、第五种 `change_kind`。
 
@@ -70,7 +72,7 @@ notes: judgment-pending-user 不适用；以上判定点已在批准设计中拍
 
 ## 真实调用方请求 shape
 
-- 有头 hook：从 `.dev-lock.<branch>` 读取 `task_id/routing_receipt_id/run_id/repo/branch/base_sha`，通过受认证 Brain API 请求 validation；不得从当前 tool 反推 change kind。
+- 有头 hook：从 `.dev-lock.<branch>` 读取 `task_id/routing_receipt_id/run_id/repo/branch/base_sha`，以 `Authorization: Bearer ${CECELIA_INTERNAL_TOKEN}` 调用 `GET /api/brain/work-routing/receipts/:id/validate`，六个 lock 字段按上述 query shape 逐字段发送；不得从当前 tool 反推 change kind。
 - 无头 Dispatcher：以 task id 和 receipt id 查询专用表，核对 canonical type/pipeline/repo/run；payload 投影不是事实源。
 - Generator：执行身份只从 Runner 注入的 `HARNESS_ATTEMPT_ID`、`HARNESS_PROVIDER`、`HARNESS_ACCOUNT`、`HARNESS_MACHINE`、`HARNESS_MODEL`、`HARNESS_RUNNER_DIGEST`、`CAPABILITY_SNAPSHOT_ID` 读取；本合同不固化 Proposer identity。
 
@@ -131,9 +133,9 @@ notes: judgment-pending-user 不适用；以上判定点已在批准设计中拍
 
 **可观测行为**: 有头/无头共享 receipt 合同；写动作前校验完整上下文；Generator frozen baseline、pushurl、setpriv、env 剥离均实际生效。
 
-**验证命令**: `bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh && npx vitest run sprints/08121555-unified-work-router/tests/knife4-guards-contract.test.ts packages/brain/src/orchestrator/__tests__/dispatcher-routing-receipt.test.js && bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh`
+**验证命令**: `bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh && npx vitest run sprints/08121555-unified-work-router/tests/knife4-guards-contract.test.ts packages/brain/src/routes/__tests__/work-routing-validation.integration.test.js packages/brain/src/orchestrator/__tests__/dispatcher-routing-receipt.test.js && bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh`
 
-**硬阈值**: 所有无效情形写动作 exit 2 或拒绝 executor；只读 exit 0；Provider push 必败且敏感 env 可见数 0。
+**硬阈值**: validation API 匿名/错 token 均 HTTP 401 且分别返回 `auth_required`/`auth_invalid`；有效 Bearer 请求 HTTP 200、响应 keys 完整且六字段逐字匹配；superseded receipt HTTP 409 且 `reason_code=receipt_superseded`；其余无效情形写动作 exit 2 或拒绝 executor；只读 exit 0；Provider push 必败且敏感 env 可见数 0。
 
 ### Step 5: scratch 多入口真实验收
 **来源**: `[FROM_PRD]` — 设计 §16.6、Knife 5。

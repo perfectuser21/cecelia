@@ -8,7 +8,7 @@
       "title": "恢复并完整交付 Unified Work Router Knife 0-5",
       "scope": "先完成 credential origin、日志脱敏和活跃 Kernel workspace 的 RED/GREEN 回归，再按冻结 PRD 实现统一路由、不可变 receipt、全入口收敛、Map/Impact 强制门禁、动作闸、Generator 信任边界、迁移与 scratch 验收",
       "dod": [
-        "[BEHAVIOR] contract-dod.md 的 B-01 至 B-06 与 INV-01/02 全部通过",
+        "[BEHAVIOR] contract-dod.md 的 B-01 至 B-07 与 INV-01/02 全部通过，包括 receipt validation API 的真实 Bearer 认证、exact response schema 与稳定 reason_code",
         "[BEHAVIOR] 五份永久 Vitest RED 合同分别锁定 Recovery Addendum、Knife 0-2、Knife 3、Knife 4、Knife 5",
         "[BEHAVIOR] packages/brain/scripts/smoke/unified-work-router-smoke.sh 在 attempt-scoped DB 证明真实 receipt/run/Map/Impact/stale-resume/trust-boundary 后 exit 0",
         "[ARTIFACT] Work Router、migration 411、receipt API、Map preflight、Engine hook、runner trust boundary、Dashboard 审计视图与 smoke 完整交付"
