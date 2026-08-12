@@ -1,0 +1,35 @@
+{
+  "initiative_id": "a8da7da7-8305-4c70-a5db-7a8f84342bff",
+  "journey_type": "autonomous",
+  "journey_type_reason": "后台路由、数据库、Git 与 Kernel Harness 治理链由 API/smoke 真实验收，无用户界面 Golden Path",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "恢复并交付 Unified Work Router Knife 0-5",
+      "scope": "先修复 Harness 工作区凭据归一化、脱敏和活跃目录保护，再完成统一路由、不可变 receipt、全入口收敛、Map/Impact Contract、动作闸、Generator 隔离、迁移与 scratch 真实验收",
+      "dod": [
+        "[BEHAVIOR] credential-bearing origin 不误判 orphan、日志无凭据、active Kernel cwd 不删除",
+        "[BEHAVIOR] coding 多入口均原子获得 receipt 并进入 required Map/Impact Contract 的 Kernel Harness",
+        "[BEHAVIOR] frozen baseline 是候选 HEAD 祖先且 Generator trust boundary 真生效",
+        "[ARTIFACT] Work Router、migration 411、入口 inventory、Map preflight、动作闸与 smoke 永久测试齐全"
+      ],
+      "files": [
+        "packages/brain/src/harness-worktree.js",
+        "packages/brain/src/work-router.js",
+        "packages/brain/src/work-routing-store.js",
+        "packages/brain/src/routes/work-routing.js",
+        "packages/brain/migrations/411_work_routing_receipts.sql",
+        "packages/brain/src/orchestrator/preflight/map-impact-contract.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/engine/hooks/dev-mode-tool-guard.sh",
+        "docker/cecelia-runner/entrypoint.sh",
+        "packages/brain/scripts/smoke/unified-work-router-smoke.sh",
+        "packages/brain/scripts/verify-unified-work-router-tdd-history.mjs"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
