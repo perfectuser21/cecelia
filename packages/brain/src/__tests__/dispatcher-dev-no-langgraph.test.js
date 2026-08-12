@@ -160,7 +160,7 @@ describe('F7: dev 派发迁离 LangGraph', () => {
     mocks.shouldDowngrade.mockReturnValue(false);
   });
 
-  it('dev task 派发 → triggerCeceliaRun 被调', async () => {
+  it('dev task（无 bugfix/large 关键词，默认仓库）派发 → 改道 harness_initiative，triggerCeceliaRun 收到改写后的任务', async () => {
     const task = makeDevTask();
     setupDispatch(task);
 
@@ -168,7 +168,71 @@ describe('F7: dev 派发迁离 LangGraph', () => {
 
     expect(result.dispatched).toBe(true);
     expect(mocks.triggerCeceliaRun).toHaveBeenCalledTimes(1);
-    expect(mocks.triggerCeceliaRun.mock.calls[0][0].id).toBe(task.id);
+    const dispatched = mocks.triggerCeceliaRun.mock.calls[0][0];
+    expect(dispatched.id).toBe(task.id);
+    expect(dispatched.task_type).toBe('harness_initiative');
+    expect(dispatched.payload.orchestrator).toBe('skill-relay');
+    expect(dispatched.payload.code_change).toBe(true);
+    expect(dispatched.payload.gear).toBe('default');
+    expect(dispatched.payload.origin_task_type).toBe('dev');
+    expect(dispatched.payload.thin_prd).toContain(task.title);
+  });
+
+  it('命中改代码路由时，task_type 改写必须真的落库（不能只存在于内存对象）', async () => {
+    const task = makeDevTask({ id: 'dev-task-db-persist-001' });
+    setupDispatch(task);
+
+    await dispatchNextTask(['goal-1']);
+
+    const updateCall = mocks.query.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('UPDATE tasks') && call[0].includes("task_type = 'harness_initiative'")
+    );
+    expect(updateCall).toBeDefined();
+    expect(updateCall[1][0]).toBe(task.id);
+    expect(JSON.parse(updateCall[1][1])).toMatchObject({ orchestrator: 'skill-relay', code_change: true, origin_task_type: 'dev' });
+  });
+
+  it('dev task 标题含"修复bug" → 改道 harness_initiative 且 gear=hotfix', async () => {
+    const task = makeDevTask({ id: 'dev-task-hotfix-001', title: '修复bug：派发死锁' });
+    setupDispatch(task);
+
+    const result = await dispatchNextTask(['goal-1']);
+
+    expect(result.dispatched).toBe(true);
+    const dispatched = mocks.triggerCeceliaRun.mock.calls[0][0];
+    expect(dispatched.task_type).toBe('harness_initiative');
+    expect(dispatched.payload.gear).toBe('hotfix');
+  });
+
+  it('dev task 非默认仓库（v1范围限制）→ 不改道，task_type 保持 dev，且不发出 harness_initiative 落库 UPDATE', async () => {
+    const task = makeDevTask({ id: 'dev-task-other-repo-001', payload: { repo: 'zenithjoy' } });
+    setupDispatch(task);
+
+    const result = await dispatchNextTask(['goal-1']);
+
+    expect(result.dispatched).toBe(true);
+    const dispatched = mocks.triggerCeceliaRun.mock.calls[0][0];
+    expect(dispatched.task_type).toBe('dev');
+    expect(dispatched.payload.orchestrator).toBeUndefined();
+    const updateCall = mocks.query.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes("task_type = 'harness_initiative'")
+    );
+    expect(updateCall).toBeUndefined();
+  });
+
+  it('dev task 纯文档标题（docs:）→ 不改道，task_type 保持 dev，且不发出 harness_initiative 落库 UPDATE', async () => {
+    const task = makeDevTask({ id: 'dev-task-docs-001', title: 'docs: 更新 README' });
+    setupDispatch(task);
+
+    const result = await dispatchNextTask(['goal-1']);
+
+    expect(result.dispatched).toBe(true);
+    const dispatched = mocks.triggerCeceliaRun.mock.calls[0][0];
+    expect(dispatched.task_type).toBe('dev');
+    const updateCall = mocks.query.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes("task_type = 'harness_initiative'")
+    );
+    expect(updateCall).toBeUndefined();
   });
 
   it('LangGraph workflow runtime 物理不存在（graph-runtime / workflow-registry 已删除）', async () => {

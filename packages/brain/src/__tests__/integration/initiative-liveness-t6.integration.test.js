@@ -175,7 +175,11 @@ describe('I1: dev task 集成派发路径（迁离 LangGraph）', () => {
 
     expect(result.dispatched).toBe(true);
     expect(mocks.triggerCeceliaRun).toHaveBeenCalledTimes(1);
-    expect(mocks.triggerCeceliaRun.mock.calls[0][0].task_type).toBe('dev');
+    // 决策 bf361265（2026-08-12）：该 fixture 是默认仓库、无 doc/bugfix/large 关键词的 dev 任务，
+    // 命中 classifyCodeChange 改道 harness_initiative——这不是 LangGraph 复活（LangGraph 已物理删除，
+    // 见本文件顶部注释），只是从 legacy docker-executor 换成 kernel skill-relay，仍然不经过 LangGraph，
+    // 本用例的回归意图（"不经过 LangGraph"）依然成立，只是 task_type 断言需要同步更新。
+    expect(mocks.triggerCeceliaRun.mock.calls[0][0].task_type).toBe('harness_initiative');
   });
 
   it('dev 派发 → triggerCeceliaRun 接收到正确的 task id', async () => {
