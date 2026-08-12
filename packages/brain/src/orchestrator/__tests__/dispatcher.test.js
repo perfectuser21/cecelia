@@ -1344,6 +1344,34 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs.artifacts).toEqual([]);
   });
 
+  it('approved contract 资产为空时在 Attempt 创建前返回精确 assembly fault', async () => {
+    const deps = makeDeps();
+
+    const result = await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-approved-contract' },
+          artifacts: [],
+        },
+      },
+      decision: { phase: 'generate', reason: 'contract_approved' },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'FROZEN_CONTRACT_ARTIFACTS_MISSING',
+      should_create_attempt: false,
+    });
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
+  });
+
   it('copies the Controller-owned validation clock into the Generator TaskBundle', async () => {
     const deps = makeDeps();
     const validationClock = {

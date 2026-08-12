@@ -239,6 +239,54 @@ describe('runLoop：全链 planning→done', () => {
     });
   });
 
+  it('Impact schema 确定性错误精确终止且不进入基础设施重试', async () => {
+    const observedSeq = [obs({ generatorSpawned: false })];
+    const { deps, sleeps } = makeEnv({ observedSeq });
+    const error = Object.assign(new Error('Impact Contract schema 或身份绑定非法'), {
+      code: 'impact_contract_schema_invalid',
+    });
+    deps.impactGate.beforeGenerate.mockRejectedValue(error);
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('impact_gate_deterministic');
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(sleeps).toEqual([]);
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'impact_gate_deterministic:impact_contract_schema_invalid',
+    });
+  });
+
+  it('Dispatcher assembly fault 一次精确终止，不消耗同态 BLOCKED 次数', async () => {
+    const observedSeq = [obs({ generatorSpawned: false })];
+    const { deps, sleeps } = makeEnv({
+      observedSeq,
+      dispatch: async () => ({
+        status: 'DONE_WITH_CONCERNS',
+        control_status: 'BLOCKED',
+        detail: 'FROZEN_CONTRACT_ARTIFACTS_MISSING:approved_contract',
+        failure_class: 'assembly_fault',
+        fallback_reason: 'FROZEN_CONTRACT_ARTIFACTS_MISSING',
+        should_create_attempt: false,
+      }),
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('assembly_fault');
+    expect(deps.dispatch).toHaveBeenCalledOnce();
+    expect(sleeps).toEqual([]);
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'assembly_fault:FROZEN_CONTRACT_ARTIFACTS_MISSING',
+    });
+  });
+
   it('hotfix 精确绑定已有 PR URL/SHA 时由 Evaluator 建立共享 validation clock', async () => {
     const prUrl = 'https://github.com/perfectuser21/cecelia/pull/4794';
     const prHeadSha = '34713556aa18228cfcf937eb88597790ee384fd4';
