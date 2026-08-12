@@ -1,4 +1,11 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
+
+## Round 1 blocker closure
+
+- R1-1：锁定 RED 测试改为执行真实临时 Git remote/workspace、真实 PostgreSQL、真实 Map/Provider 计数、真实 hook/Dispatcher 和真实 runner 子进程断言，不再以导出符号存在作为通过条件。
+- R1-2：Golden Path 新增 Knife 5 旧任务迁移、事件、Dashboard 与生产只读指标步骤，DoD B-08/B-09 对 dry-run、running attempt、事件和指标分别给出可执行 oracle。
+- R1-3：Routing Receipt 数据合同改为允许同一 task 多个 receipt，并以 partial unique current-receipt 约束与 supersedes 链测试保证后继历史。
+- R1-4：新增 TDD commit ledger 条款和 B-10，逐 Knife 检查 RED commit 祖先早于对应 GREEN commit，且 RED 树上的指定 Vitest 必须非零、GREEN 树上必须为零。
 
 ## 证据来源与已知约束
 
@@ -104,9 +111,9 @@ notes: judgment-pending-user: coding mutation 判定、repo 唯一性（设计�
 
 ### Step 2: 原子创建不可变 Routing Receipt 并正向选择四档
 **来源**: `[FROM_PRD]` — Golden Path 第 2 步、PrepPRD §7-9、Knife 0-1。
-**可观测行为**: 同一事务创建 task+receipt；失败全回滚；receipt UPDATE/DELETE 被拒；四个 change_kind 唯一映射默认 profile，反向推导和降档失败。
+**可观测行为**: 同一事务创建 task+receipt；失败全回滚；receipt UPDATE/DELETE 被拒；同一 task 可通过新增 receipt 形成 `supersedes_receipt_id` 历史链，且任一时刻只有一个未被 supersede 的 current receipt；四个 change_kind 唯一映射默认 profile，反向推导和降档失败。
 **验证命令**: `cd packages/brain && npx vitest run src/__tests__/work-router.test.js src/__tests__/integration/work-routing-store.integration.test.js`
-**硬阈值**: 4/4 映射正确、0 个部分写入、UPDATE/DELETE 100% 拒绝；由测试和 DB 行数断言机检。
+**硬阈值**: 4/4 映射正确、0 个部分写入、UPDATE/DELETE 100% 拒绝、同 task 两个 receipt 构成长度 2 的无环链且 current receipt 恰为 1；由测试和 DB 行数断言机检。Migration 禁止 `task_id UNIQUE`，改用 current receipt 的 partial unique index。
 
 ### Step 3: 全部可执行任务入口收敛
 **来源**: `[FROM_PRD]` — Golden Path 第 3 步、Knife 2。
@@ -132,11 +139,17 @@ notes: judgment-pending-user: coding mutation 判定、repo 唯一性（设计�
 **验证命令**: `DB_URL="$DB_URL" bash packages/brain/scripts/smoke/unified-work-router-smoke.sh`
 **硬阈值**: coding coverage=100%、新 legacy_exempt=0、对照误路由=0、stale 时 Provider=0；smoke 内 psql 时间窗查询机检。
 
-### Step 7: DevGate、版本与 CI 收口
+### Step 7: 旧任务迁移与可观测性收口
+**来源**: `[FROM_PRD]` — PrepPRD §13、§14、§17 与实施计划 Task 5。
+**可观测行为**: dry-run 报告 queued/blocked/paused coding 分类、repo 解析率和阻塞清单且不写库；apply 保留 task id/payload 并追加 receipt；running attempt 只写 legacy_execution_audit；事件和 Dashboard 展示 work kind/pipeline/repo/Map/Impact Contract/reason；生产只读指标可查询。
+**验证命令**: `cd packages/brain && DB_URL="$DB_URL" npx vitest run src/__tests__/work-routing-migration-observability.integration.test.js --reporter=verbose && cd ../.. && npx vitest run apps/dashboard/src/pages/warroom/WarRoomPage.test.tsx --reporter=verbose`
+**硬阈值**: dry-run 前后 DB checksum 相同；未开始 coding 任务 id/payload 保持且新增后继 receipt；running task 状态/attempt 不变且 audit=1；六类事件/指标断言和 Dashboard 可见字段全部通过。
+
+### Step 8: RED→GREEN 提交账本与 DevGate、CI 收口
 **来源**: `[FROM_PRD]` — DoD 第 8 条与实施计划 Task 5。
-**可观测行为**: Brain patch version/DEFINITION 同步，三项 DevGate、smoke、diff check 与 required CI 全绿。
-**验证命令**: `node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs && bash packages/brain/scripts/smoke/unified-work-router-smoke.sh && git diff --check`
-**硬阈值**: 每条命令 exit 0；任一失败即不满足合同。
+**可观测行为**: RECOVERY 与 Knife 0-5 每项均有独立 RED commit 早于对应 GREEN commit；RED 树执行锁定测试非零，GREEN 树同测试为零；Brain patch version/DEFINITION 同步，三项 DevGate、smoke、diff check 与 required CI 全绿。
+**验证命令**: `bash packages/brain/scripts/verify/unified-work-router-tdd-history.sh && node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs && bash packages/brain/scripts/smoke/unified-work-router-smoke.sh && git diff --check`
+**硬阈值**: ledger 覆盖 `recovery,knife0,knife1,knife2,knife3,knife4,knife5` 七项；每项 `git merge-base --is-ancestor RED GREEN` 为真、SHA 不同、RED 测试 exit!=0、GREEN 测试 exit=0；其余每条命令 exit 0。
 
 ## 探索提示（L3 探索层 — evaluator 剧本全过后执行）
 
@@ -170,6 +183,7 @@ node packages/quality/scripts/devgate/check-dod-mapping.cjs
 DB_URL="$DB_URL" HARNESS_ATTEMPT_ID="$HARNESS_ATTEMPT_ID" CAPABILITY_SNAPSHOT_ID="$CAPABILITY_SNAPSHOT_ID" bash packages/brain/scripts/smoke/unified-work-router-smoke.sh | tee /tmp/unified-work-router-e2e.log
 grep -q 'SCRATCH_ACCEPTANCE_OK' /tmp/unified-work-router-e2e.log
 psql "$DB_URL" -tAc "SELECT count(*) FROM work_routing_receipts WHERE created_at >= '$STARTED_AT'" | awk '$1 >= 3 {ok=1} END {exit !ok}'
+bash packages/brain/scripts/verify/unified-work-router-tdd-history.sh
 git diff --check
 ```
 
@@ -184,4 +198,5 @@ git diff --check
 | 数据与入口 | `tests/routing-receipt.integration.test.ts` | task 与 Routing Receipt 原子创建且 append-only、入口委托统一边界 | store/migration 不存在而失败 |
 | Map 与动作闸 | `tests/map-action-gates.integration.test.ts` | stale Map 在 Provider 前失败、有头无头 receipt 均在动作前验证 | preflight/validation API 不存在而失败 |
 | 信任边界 | `tests/generator-trust-boundary.test.ts` | Generator 不持有 push callback lease 凭据 | 统一隔离尚未接线而失败 |
-
+| 迁移与可观测性 | `tests/migration-observability.integration.test.ts` | dry-run 不写库、未开始任务追加 receipt、running attempt 只审计、事件指标可见 | 迁移与观测实现不存在而失败 |
+| TDD 历史 | `tests/tdd-history.test.ts` | 七项 RED commit 均早于 GREEN 且在各自树上红/绿 | ledger/对应 commits 不存在而失败 |

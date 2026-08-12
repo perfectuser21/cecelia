@@ -44,9 +44,9 @@ journey_type: autonomous
   留证: Vitest 每个 case 的结果
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/work-router.test.js --reporter=verbose'
 
-- [ ] [BEHAVIOR] [L2] B-03: task 与 append-only Routing Receipt 在真实 PostgreSQL 原子创建 [接缝×2]
-  动作: 对 attempt-scoped DB 执行 migration，再并发提交相同 source key，并制造 receipt 写入失败
-  预期观察: 成功路径只有一个当前 task/receipt，失败路径无半条记录，UPDATE/DELETE 被拒
+- [ ] [BEHAVIOR] [L2] B-03: task 与 append-only Routing Receipt 在真实 PostgreSQL 原子创建并可追加后继 [接缝×2]
+  动作: 对 attempt-scoped DB 执行 migration，再并发提交相同 source key、制造 receipt 写入失败，并对同一 task 新增 superseding receipt
+  预期观察: 成功路径只有一个当前 task/receipt，失败路径无半条记录，UPDATE/DELETE 被拒；同 task 两个 receipt 构成无环历史链且 current 恰为一个
   等待预算: 30s
   留证: integration test 输出与带五分钟时间窗的 DB 查询
   Test: manual:bash -c ': "${DB_URL:?}"; cd packages/brain && DB_URL="$DB_URL" npx vitest run src/__tests__/integration/work-routing-store.integration.test.js --reporter=verbose'
@@ -86,3 +86,16 @@ journey_type: autonomous
   留证: 五条命令退出码与输出末尾
   Test: manual:bash -c 'node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs && DB_URL="$DB_URL" bash packages/brain/scripts/smoke/unified-work-router-smoke.sh && git diff --check'
 
+- [ ] [BEHAVIOR] [L2] B-09: 旧任务 dry-run/apply、running audit 与可观测性完整 [接缝×2]
+  动作: 在 scratch DB 放入 queued/blocked/paused/running 旧 coding 与非 coding 对照，先 dry-run 再 apply，并查询事件、指标和 Dashboard API
+  预期观察: dry-run 不写库；未开始 coding 保留 task id/payload 并追加 receipt；running attempt 不改执行模型只新增 audit；六类事件和核心指标可见
+  等待预算: 60s
+  留证: dry-run JSON、迁移前后 DB checksum、receipt 链、legacy_execution_audit、事件指标与 Dashboard 测试输出
+  Test: manual:bash -c ': "${DB_URL:?}"; cd packages/brain && DB_URL="$DB_URL" npx vitest run src/__tests__/work-routing-migration-observability.integration.test.js --reporter=verbose && cd ../.. && npx vitest run apps/dashboard/src/pages/warroom/WarRoomPage.test.tsx --reporter=verbose'
+
+- [ ] [BEHAVIOR] [L2] B-10: RECOVERY 与 Knife 0-5 均证明 RED commit 早于 GREEN commit
+  动作: 读取版本化 TDD ledger，对七项逐一 checkout 对应 RED/GREEN tree 并运行同一锁定测试
+  预期观察: 每个 RED SHA 是 GREEN SHA 祖先且不同，RED tree 测试非零、GREEN tree 测试为零，不接受仅凭 commit message 判定
+  等待预算: 300s
+  留证: 每项 red_sha/green_sha、merge-base 结果与两次测试退出码
+  Test: manual:bash -c 'bash packages/brain/scripts/verify/unified-work-router-tdd-history.sh'

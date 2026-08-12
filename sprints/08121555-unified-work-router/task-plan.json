@@ -8,7 +8,7 @@
       "title": "完成 Unified Work Router RECOVERY ADDENDUM 与 Knife 0-5",
       "scope": "恢复工作区安全，统一所有 coding 创建和动作入口，强制 Map/Impact Contract 与 Generator trust boundary，并完成 scratch 真实验收",
       "dod": [
-        "[BEHAVIOR] contract-dod.md 的 B-01 至 B-08 全部真实通过",
+        "[BEHAVIOR] contract-dod.md 的 B-01 至 B-10 全部真实通过",
         "[ARTIFACT] Work Router、Routing Receipt、Map preflight、动作闸、runner trust boundary 与 smoke 产物齐全"
       ],
       "files": [
@@ -22,6 +22,8 @@
         "packages/engine/skills/dev/scripts/worktree-manage.sh",
         "docker/cecelia-runner/entrypoint.sh",
         "packages/brain/scripts/smoke/unified-work-router-smoke.sh",
+        "packages/brain/scripts/verify/unified-work-router-tdd-history.sh",
+        "packages/brain/src/work-routing-legacy-migration.js",
         "apps/dashboard/src/pages/warroom/WarRoomPage.tsx",
         "packages/brain/DEFINITION.md",
         ".brain-versions"
