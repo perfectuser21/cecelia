@@ -61,7 +61,7 @@ journey_type: dev_pipeline
   预期观察: merge-base 祖先检查通过且最终 HEAD 不等于 baseline；receipt/Map/Impact source_revision 仍等于 baseline
   等待预算: 10s
   留证: git SHA 与 scratch DB 查询输出
-  Test: manual:bash -c 'BASELINE_SHA=dbc3e80f486b7c06c6f7be2a4ea76f59044e2b97; git merge-base --is-ancestor "$BASELINE_SHA" HEAD && test "$(git rev-parse HEAD)" != "$BASELINE_SHA"'
+  Test: manual:bash -c 'BASELINE_SHA=2b4b83c75f7ad12f9450631fce554fd2d1784d21; git merge-base --is-ancestor "$BASELINE_SHA" HEAD && test "$(git rev-parse HEAD)" != "$BASELINE_SHA"'
 
 - [ ] [BEHAVIOR] [L2] B-08: Generator trust boundary 在真实 runner 命令链生效 [接缝×2]
   动作: 启动 runner 合同测试，尝试 Provider push、读取 callback/lease 环境并检查 UID/capabilities/hook 路径

@@ -1,9 +1,9 @@
-# Sprint Contract Draft（Round 3）
+# Sprint Contract Draft（Round 4）
 
 ## 证据来源与边界
 
 - 冻结 PRD：`sprint-prd.md`、bundle `thin_prd` 与 `prep_prd_body`；冲突时 Recovery Contract Correction 优先。
-- 冻结实现基线（唯一权威值）：`dbc3e80f486b7c06c6f7be2a4ea76f59044e2b97`，来源为 Round 2 冻结合同分支的 `contract_sha`，并按本轮 Reviewer 裁定作为 Generator 实现血统与治理证据基点。合同、DoD、冻结测试、task-plan、Routing Receipt、Universal Map 与 Impact Contract 必须只使用该值。该权威基线不是完成态 HEAD；最终产出必须在其后追加并永久保留 RED/GREEN commits。
+- 冻结实现基线（唯一权威值）：`2b4b83c75f7ad12f9450631fce554fd2d1784d21`，来源为本轮冻结 bundle 的 `contract_sha` 与 Round 3 Reviewer 明确裁定。它只定义 Generator 实现血统与治理证据基点，绝不是 GAN authoring identity 或完成态 HEAD。合同、DoD、冻结测试、task-plan、Routing Receipt、Universal Map 与 Impact Contract 必须只使用该值；最终产出必须在其后追加并永久保留 RED/GREEN commits。
 - Universal Map：scope=`cecelia`，查询时 freshness=`fresh`；四类 scanner 为 `api-registry-v2/db-schema-v2/graph-v3/test-registry-v2`。事实 revision 为 `5d1d7417bd015c5c1018718e3c53e827c2a106f1`，与冻结实现基线不同，故实现运行必须重新刷新并把本次 Impact Contract 的 `base_sha/source_revision` 锚定到冻结基线。
 - `[MAP_NOT_CONFIGURED]`：task payload 有 `map_scope=cecelia`，但 `map_repo` 为空，因此 radius 未成立，`must_run_assertions=[]`；禁止以领域硬编码补造 radius 断言。
 - Registry：api/db_schema/test 均可查询；字段以 PRD 字面合同优先。
@@ -94,7 +94,7 @@ bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh &&
 
 **验证命令**:
 ```bash
-bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh && BASELINE_SHA=dbc3e80f486b7c06c6f7be2a4ea76f59044e2b97 git merge-base --is-ancestor "$BASELINE_SHA" HEAD
+bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh && BASELINE_SHA=2b4b83c75f7ad12f9450631fce554fd2d1784d21 git merge-base --is-ancestor "$BASELINE_SHA" HEAD
 ```
 **硬阈值**: ancestry exit 0 且 `git rev-parse HEAD` 可以、并应在实现完成后不同于 baseline；RED/GREEN commits 永久存在。
 
@@ -201,7 +201,7 @@ set -euo pipefail
 : "${DB_URL:?Fleet must inject an attempt-scoped scratch DB_URL}"
 : "${HARNESS_ATTEMPT_ID:?Runner must inject current execution identity}"
 : "${CAPABILITY_SNAPSHOT_ID:?Runner must inject current capability snapshot}"
-BASELINE_SHA=dbc3e80f486b7c06c6f7be2a4ea76f59044e2b97
+BASELINE_SHA=2b4b83c75f7ad12f9450631fce554fd2d1784d21
 STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 export DATABASE_URL="$DB_URL"
 cleanup() { test -z "${BRAIN_PID:-}" || kill "$BRAIN_PID" 2>/dev/null || true; }

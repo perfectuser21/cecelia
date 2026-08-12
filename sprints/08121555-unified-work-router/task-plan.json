@@ -9,7 +9,7 @@
       "scope": "先永久修复工作区 origin 凭据归一化、日志脱敏和活跃 Kernel cwd 保护，再交付唯一 Work Router、不可变 Routing Receipt、全入口收敛、Map/Impact 强制门禁、有头/无头动作闸、Generator 信任边界、迁移与 scratch 真实验收",
       "dod": [
         "[BEHAVIOR] Recovery、四形式、入口、Map、动作闸、runner、旧任务迁移、review 派生修复、观测与 scratch 合同全部真实通过",
-        "[BEHAVIOR] baseline dbc3e80f486b7c06c6f7be2a4ea76f59044e2b97 是最终 HEAD 的祖先且 receipt/Map/Impact 精确锚定该 baseline",
+        "[BEHAVIOR] baseline 2b4b83c75f7ad12f9450631fce554fd2d1784d21 是最终 HEAD 的祖先且 receipt/Map/Impact 精确锚定该 baseline",
         "[ARTIFACT] contract-draft.md 与 contract-dod.md 列出的实现、测试、migration 和 smoke 产物完整"
       ],
       "files": [

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 
-const baseline = 'dbc3e80f486b7c06c6f7be2a4ea76f59044e2b97';
+const baseline = '2b4b83c75f7ad12f9450631fce554fd2d1784d21';
 
 describe('Unified Work Router contract [BEHAVIOR]', () => {
   it('credential-bearing origin 不得误判 orphan', async () => {
