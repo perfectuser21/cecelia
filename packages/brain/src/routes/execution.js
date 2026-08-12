@@ -32,7 +32,7 @@ import {
   isBridgeSessionCrash,
   handleEvaluateSessionCrash,
 } from '../execution.js';
-import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from '../lib/callback-utils.js';
+import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, resolveCanonicalPrUrl, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from '../lib/callback-utils.js';
 import { isTransientClass } from '../lib/retry-policy.js';
 import { checkAnchor } from '../anchor-check.js';
 
@@ -153,8 +153,11 @@ router.post('/execution-callback', async (req, res) => {
     // 1. Determine new status
     let newStatus = normalizeCallbackStatus(status);
 
-    // P1-1: Dev task completed without PR → completed_no_pr
-    newStatus = await maybeMarkCompletedNoPr(newStatus, pr_url, task_id, pool, 'execution-callback');
+    // 权威 pr_url：callback/stdout > tasks.pr_url > payload.pr_url > payload.existing_pr_url
+    const resolvedPrUrl = await resolveCanonicalPrUrl(pr_url, task_id, pool);
+
+    // P1-1: Dev task completed without PR → completed_no_pr（传 resolvedPrUrl 避免二次 DB 查）
+    newStatus = await maybeMarkCompletedNoPr(newStatus, resolvedPrUrl, task_id, pool, 'execution-callback');
 
     // 通用终态幂等守卫：任务已 terminal 时迟到回调返回 200 跳过，不报错
     // 场景：brain-deploy 蓝绿 10s 不可用 → 执行者重试 → 任务已被 zombie-reaper 标 failed → 回调应静默接受
@@ -226,7 +229,7 @@ router.post('/execution-callback', async (req, res) => {
     }
 
     // 2. Build the update payload
-    const lastRunResult = buildLastRunResult({ run_id, checkpoint_id, status, duration_ms, iterations, pr_url, result });
+    const lastRunResult = buildLastRunResult({ run_id, checkpoint_id, status, duration_ms, iterations, pr_url: resolvedPrUrl, result });
 
     // 3. ATOMIC: DB update + activeProcess cleanup in a single transaction
     const client = await pool.connect();
@@ -240,7 +243,7 @@ router.post('/execution-callback', async (req, res) => {
         console.warn(`[execution-callback] Task ${task_id} completed with empty findings/result`);
       }
 
-      const prNumber = extractPrNumber(pr_url);
+      const prNumber = extractPrNumber(resolvedPrUrl);
 
       const isQuotaExhausted = newStatus === 'quota_exhausted';
       const { errorMessage, blockedDetail } = buildFailureFields(newStatus, result, stderr, exit_code, task_id);
@@ -271,7 +274,7 @@ router.post('/execution-callback', async (req, res) => {
         WHERE id = $1
           AND status IN ('in_progress', 'queued', 'dispatched')
           AND ($14::text IS NULL OR payload->>'current_run_id' = $14::text)
-      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted, execMetaJson, isTerminal, run_id || null]);
+      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, resolvedPrUrl || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted, execMetaJson, isTerminal, run_id || null]);
 
       if (updateResult.rowCount === 0) {
         await client.query('COMMIT');
@@ -317,7 +320,7 @@ router.post('/execution-callback', async (req, res) => {
           errorCode: isSuccessfulExecution ? null : 'execution_failed',
           errorMessage: isSuccessfulExecution ? null : `Task execution failed with status: ${status}`,
           retryCount: iterations || 0,
-          artifacts: { pr_url: pr_url || null },
+          artifacts: { pr_url: resolvedPrUrl || null },
           metadata: {
             checkpoint_id: checkpoint_id || null,
             original_status: status
@@ -557,7 +560,7 @@ router.post('/execution-callback', async (req, res) => {
       }).catch(err => console.error('[routes] silent error:', err));
 
       // Publish WebSocket event: task completed
-      publishTaskCompleted(task_id, run_id, { pr_url, duration_ms, iterations });
+      publishTaskCompleted(task_id, run_id, { pr_url: resolvedPrUrl, duration_ms, iterations });
 
       // Thalamus: Analyze task completion event
       try {
@@ -1547,12 +1550,12 @@ ${resultStr.substring(0, 2000)}
       );
 
       // 5c11. 串行调度: dev task 完成 → 解锁下一个 blocked 串行 task（共享后处理管道）
-      await serialUnlockNext(task_id, result, pr_url, pool).catch(err =>
+      await serialUnlockNext(task_id, result, resolvedPrUrl, pool).catch(err =>
         console.error(`[execution-callback] serialUnlockNext 失败 (non-fatal): ${err.message}`)
       );
 
       // T2. harness merged 终态 → 累积 FR 冻结（共享后处理管道，dbOnly）
-      await promoteRegressionOnHarnessMerged(task_id, result, pr_url, pool).catch(err =>
+      await promoteRegressionOnHarnessMerged(task_id, result, resolvedPrUrl, pool).catch(err =>
         console.error(`[execution-callback] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${err.message}`)
       );
 

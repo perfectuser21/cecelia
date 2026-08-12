@@ -307,6 +307,87 @@ export async function shepherdOpenPRs(pool) {
 }
 
 /**
+ * 终态任务 PR 对账（missed-webhook reconciliation）
+ *
+ * 扫描 status=completed + pr_url IS NOT NULL + pr_status IN ('open','ci_pending','ci_passed')
+ * + pr_merged_at IS NULL 的任务，向 GitHub 读取外部真相：
+ *   - state=MERGED → 写 pr_status=merged, pr_merged_at, payload.run_status=merged, 清 current_run_id
+ *   - 仍 OPEN/CONFLICTING/CI pending → 保持原状，等待下次 reconcile
+ *
+ * 禁止：requeue、retry_count+1、executeMerge、生成新 Run。
+ *
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<{ processed: number, reconciled: number, errors: number }>}
+ */
+export async function reconcileTerminalOpenPRs(pool) {
+  const result = { processed: 0, reconciled: 0, errors: 0 };
+
+  let rows;
+  try {
+    const queryResult = await pool.query(`
+      SELECT id, title, pr_url, pr_status, payload
+      FROM tasks
+      WHERE pr_url IS NOT NULL
+        AND status = 'completed'
+        AND pr_status IN ('open', 'ci_pending', 'ci_passed')
+        AND pr_merged_at IS NULL
+        AND COALESCE(payload->>'harness_mode', 'false') NOT IN ('true', 't')
+      ORDER BY updated_at ASC
+      LIMIT 20
+    `);
+    rows = queryResult.rows;
+  } catch (dbErr) {
+    console.error('[shepherd:reconcile] DB query failed (non-fatal):', dbErr.message);
+    return result;
+  }
+
+  if (rows.length === 0) return result;
+
+  console.log(`[shepherd:reconcile] 对账 ${rows.length} 个 terminal+open PR 任务...`);
+
+  for (const task of rows) {
+    result.processed++;
+    try {
+      let prState;
+      try {
+        const out = execSync(
+          `gh pr view "${task.pr_url}" --json state,mergeable,mergedAt`,
+          { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }
+        );
+        prState = JSON.parse(out);
+      } catch (ghErr) {
+        console.warn(`[shepherd:reconcile] gh pr view 失败 (non-fatal): ${task.pr_url} — ${ghErr.message}`);
+        result.errors++;
+        continue;
+      }
+
+      if (prState.state === 'MERGED') {
+        const mergedAt = prState.mergedAt || new Date().toISOString();
+        await pool.query(
+          `UPDATE tasks
+           SET pr_status = 'merged',
+               pr_merged_at = $2::timestamptz,
+               payload = COALESCE(payload, '{}'::jsonb)
+                 || jsonb_build_object('run_status', 'merged', 'current_run_id', NULL)
+           WHERE id = $1
+             AND pr_merged_at IS NULL`,
+          [task.id, mergedAt]
+        );
+        console.log(`[shepherd:reconcile] missed-webhook 补账: ${task.title} (${task.pr_url})`);
+        result.reconciled++;
+      }
+      // OPEN/CONFLICTING/CI pending → 不处理，保持原状等待下次 tick
+    } catch (taskErr) {
+      console.error(`[shepherd:reconcile] 对账失败 (non-fatal): ${task.title} - ${taskErr.message}`);
+      result.errors++;
+    }
+  }
+
+  console.log(`[shepherd:reconcile] 完成: processed=${result.processed} reconciled=${result.reconciled} errors=${result.errors}`);
+  return result;
+}
+
+/**
  * 根据 CI 失败类型构建重试上下文
  * @param {string} failType
  * @param {string[]} failedChecks

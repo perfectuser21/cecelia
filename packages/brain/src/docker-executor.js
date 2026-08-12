@@ -28,6 +28,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync, readdir
 import path from 'path';
 import os from 'os';
 import pool from './db.js';
+import { resolveCanonicalPrUrlSync } from './lib/callback-utils.js';
 import { runDocker } from './spawn/middleware/docker-run.js';
 import { resolveAccount } from './spawn/middleware/account-rotation.js';
 import { resolveCascade } from './spawn/middleware/cascade.js';
@@ -585,7 +586,8 @@ export function resolveBrainBaseUrl(env = process.env) {
  * @param {string|null} checkpointId
  * @param {Object} result — executeInDocker 返回值
  */
-export async function writeDockerCallback(task, runId, checkpointId, result) {
+export async function writeDockerCallback(task, runId, checkpointId, result, _poolOverride) {
+  const dbPool = _poolOverride || pool;
   // env_broken 探测：claude 找不到 dispatch 用的 skill 时输出
   // "Unknown skill: dev. Did you mean new?" + end_turn (exit_code=0)。
   // 不识别 → 当成 success → task 留在 queued + watchdog 反复 requeue
@@ -605,8 +607,13 @@ export async function writeDockerCallback(task, runId, checkpointId, result) {
   // 下游 (routePrUrlToTasks) 能从 result_json._meta.pr_url 回填 tasks.pr_url，
   // shepherd/harness_ci_watch 才拿得到 URL。
   const parsedStdout = parseDockerOutput(result.stdout || '');
-  const prUrl = extractField(parsedStdout, 'pr_url');
+  const stdoutPrUrl = extractField(parsedStdout, 'pr_url');
   const verdict = extractField(parsedStdout, 'verdict');
+
+  // 权威 pr_url 优先级：stdout > tasks.pr_url > payload.pr_url > payload.existing_pr_url
+  // 当 Agent 只输出 "PR #4827" 而未写完整 URL 时，从已知的 task 字段兜底，
+  // 避免 callback_queue 写入 null → maybeMarkCompletedNoPr 误判 completed_no_pr。
+  const canonicalPrUrl = resolveCanonicalPrUrlSync(stdoutPrUrl, task);
 
   // result_json 兼容 callback-worker 的 buildDataFromRow：_meta 存附加字段
   const resultJson = {
@@ -620,7 +627,7 @@ export async function writeDockerCallback(task, runId, checkpointId, result) {
     _meta: {
       executor: 'docker',
       tier: resolveResourceTier(task.task_type || 'dev').tier,
-      pr_url: prUrl || null,
+      pr_url: canonicalPrUrl,
       verdict: verdict || null,
     },
   };
@@ -667,7 +674,7 @@ export async function writeDockerCallback(task, runId, checkpointId, result) {
   for (let _i = 0; _i <= _retryDelays.length; _i++) {
     if (_i > 0) await new Promise(r => setTimeout(r, _retryDelays[_i - 1]));
     try {
-      await pool.query(
+      await dbPool.query(
         `INSERT INTO callback_queue
            (task_id, checkpoint_id, run_id, status, result_json, stderr_tail,
             duration_ms, attempt, exit_code, failure_class)
