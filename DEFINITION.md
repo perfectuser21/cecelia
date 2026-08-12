@@ -8,11 +8,19 @@
 
 
 
-**Brain 版本**: 1.272.18
+**Brain 版本**: 1.272.19
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.19 — 同 PR+SHA 唯一权威 Run + 终态收账三修
+
+- shepherd 主 SELECT 排除 failed/completed 终态任务，防止已结案任务被 CI 失败重排路径回退到 queued（场景一回归）。
+- shepherd re-queue UPDATE 新增 `AND status NOT IN (terminal)` WHERE 守卫，双重保险防终态回写。
+- shepherd `mergeable=UNKNOWN` 不再无限等待：与 MERGEABLE 同等处理（尝试合并，GitHub 返回真实错误），消除 GitHub 对 OPEN PR 暂未计算 mergeability 时的无限轮询（场景三回归）。
+- pr-callback-handler GitHub Webhook 合并路径清除 `current_run_id` 并设 `run_status='merged'`，消除 PR 已 MERGED 但 task payload 仍显示活跃 run 标记的状态漂移（场景二回归）。
+- 三个修复均以 TDD 回归测试永久锁入 CI（shepherd-terminal-guard.test.js + pr-callback-run-status-clear.test.js），覆盖 Claude/Codex/Grok 三 provider。
 
 ## Brain 1.272.18 — Derive 取证死循环双修（recollect 护栏 + evaluate PASS 必派 judge）
 
