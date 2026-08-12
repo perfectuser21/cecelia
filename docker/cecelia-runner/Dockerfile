@@ -35,6 +35,7 @@ RUN apt-get update \
        jq \
        openssh-client \
        postgresql-client \
+       procps \
        python3 \
        python3-minimal \
        socat \
@@ -75,7 +76,7 @@ RUN npm i -g @xai-official/grok && grok --version
 # Harness evaluator 浏览器 oracle 必须在与 Provider 相同的受限 Runner 内真跑。
 # 固定 Playwright 版本并预装 WebKit + Debian 系统依赖，避免 evaluator 运行期
 # `npx playwright install webkit` 只有浏览器二进制、却因缺 libatk 等共享库启动失败。
-# 共享路径对 root 构建阶段和 UID 999 的受限 Provider 都可读；运行期 npx 的同版本
+# 共享路径对 root 构建阶段和 动态非 root UID 的受限 Provider 都可读；运行期 npx 的同版本
 # Playwright 也会复用该浏览器，不再临时下载或依赖宿主浏览器。
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npm install -g playwright@1.58.0 \
@@ -88,7 +89,18 @@ RUN npm install -g playwright@1.58.0 \
 RUN npm install -g @resvg/resvg-js
 
 # 非 root 用户 — Claude Code 拒绝 root + --dangerously-skip-permissions
-RUN groupadd -r cecelia && useradd -r -g cecelia -m -d /home/cecelia -s /bin/bash cecelia
+# UID/GID 显式钉 5999（不交给 useradd -r 系统账户段动态分配）：Fleet Worker 侧
+# attempt-runner.cjs 的 --tmpfs 挂载对 .codex / .config/gh 凭据目录硬编码固定
+# uid/gid；useradd -r 动态分配曾在 08-11 被上面 webkit 系统依赖新增的账户挤占，
+# cecelia 从历史值漂移到 997——非 evaluator 角色容器无 --user root 可自愈，
+# 直接以漂移后的 UID 启动，凭据目录属主对不上，GitHub 凭据 FIFO 写入失败
+# （attempt_github_credential_fifo_write_failed），本机 harness 派发瘫痪。
+# 未选 999：实测该镜像基座已被 systemd-journal 组占用（`groupadd -g 999` 构建期
+# 报错），999 本就在 useradd -r 的系统账户动态段内，天然会被未来的 apt 依赖
+# 再次抢占。5999 在系统账户段（通常 ≤999）与 node 用户（1000）之上，任何系统
+# 依赖都不会分配到这个区间；若真撞车，useradd 在此构建期报错（响亮失败），
+# 不会静默漂移到生产。
+RUN groupadd -g 5999 cecelia && useradd -u 5999 -g 5999 -m -d /home/cecelia -s /bin/bash cecelia
 
 # V6 运行时目录（容器内副本，避开挂载的 Mac node_modules）
 # 原因：~/claude-output/scripts/node_modules/@resvg 是 darwin-arm64 Mac 二进制，
@@ -118,12 +130,14 @@ RUN chmod +x /opt/cecelia-skills/*.sh
 # 绑定 exact PR head 的哈希胶囊，运行期不持有 GitHub 凭据。
 COPY github-evidence-preflight.cjs /usr/local/lib/cecelia/github-evidence-preflight.cjs
 COPY github-evidence-extract.py /usr/local/lib/cecelia/github-evidence-extract.py
+COPY assertion-exec.mjs /usr/local/lib/cecelia/assertion-exec.mjs
 
 # 入口脚本：复制 host-claude-config → 可写副本 + safe.directory + 启动 claude
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     /usr/local/lib/cecelia/github-evidence-preflight.cjs \
     /usr/local/lib/cecelia/github-evidence-extract.py \
+    /usr/local/lib/cecelia/assertion-exec.mjs \
   && mkdir -p /home/cecelia/.claude /home/cecelia/.config/gh \
   && chown -R cecelia:cecelia /home/cecelia
 

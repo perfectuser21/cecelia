@@ -121,6 +121,7 @@ harness-xian-relay-smoke.sh
 healthz-smoke.sh
 inbox-p1-migration-verify.sh
 inbox-p1-smoke.sh
+impact-contract-smoke.sh
 incidents-smoke.sh
 independent-judge-stage-evidence-smoke.sh
 initiative-lifecycle-smoke.sh
@@ -165,6 +166,8 @@ map-engine-smoke.sh
 map-fact-snapshot-smoke.sh
 map-manifest-smoke.sh
 map-projection-smoke.sh
+map-second-repo-smoke.sh
+unified-map-api-smoke.sh
 migration-339-drop-abilities-gp-priority-smoke.sh
 migration-346-idempotent-smoke.sh
 migration-verify.sh

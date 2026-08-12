@@ -88,6 +88,25 @@ describe('task-tasks routes — PATCH 参数对齐', () => {
     expect(res.status).toBe(200);
     expect(mockPool.query.mock.calls[0][1]).toEqual(['P0', 'task-priority']);
   });
+
+  it('blocked task 存在 unresolved Harness gap 时拒绝直写为 queued', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{
+      id: 'task-gap-blocked',
+      status: 'blocked',
+      task_type: 'dev',
+      orchestrator: null,
+      has_unresolved_harness_gaps: true,
+      has_pending_hard_dependencies: true,
+    }] });
+
+    const res = await request(app)
+      .patch('/tasks/task-gap-blocked')
+      .send({ status: 'queued' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('harness_gap_dependencies_unresolved');
+    expect(mockPool.query).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('task-tasks routes — B51 journey_id warning', () => {

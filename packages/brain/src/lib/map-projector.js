@@ -125,6 +125,8 @@ function addStructuralNodes(manifest, nodes) {
     nodes.push(createNode(scopeKey, 'capability', capability, 'capabilities', {
       aliases: aliasesOf(capability),
       order: capability.order,
+      path_prefixes: capability.path_prefixes ?? [],
+      exact_paths: capability.exact_paths ?? [],
     }));
   }
   for (const crosscut of manifest.crosscut_pool) {

@@ -39,6 +39,7 @@ import {
   normalizeRoleVerdict,
 } from '../orchestrator/attempt-store.js';
 import { parseHarnessResult } from '../orchestrator/execution-contract.js';
+import { persistTrustedEvaluatorReceipts } from '../impact-contract/assertion-receipts.js';
 import { verifyCallbackSecret } from '../orchestrator/callback-auth.js';
 import { verifyMachineAttestation } from '../orchestrator/machine-attestation.js';
 import {
@@ -984,12 +985,15 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
   };
 
   try {
+    const receiptWriter = req.app.get('kernelAssertionReceiptWriter')
+      || persistTrustedEvaluatorReceipts;
     const outcome = await attemptStore.recordCallbackTerminal({
       attemptId,
       runId: attempt.run_id,
       leaseOwner,
       leaseGeneration,
       result: verifiedResult,
+      beforeCommit: (client) => receiptWriter(client, { attempt, result: verifiedResult }),
     });
     if (!outcome.attempt) {
       return res.status(409).json({
@@ -999,6 +1003,9 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
     }
     return res.json({ ok: true, attemptId, deduped: outcome.deduped });
   } catch (error) {
+    if (error.code === 'assertion_receipt_evidence_invalid') {
+      return res.status(error.httpStatus ?? 409).json({ ok: false, error: error.code });
+    }
     console.error(`[harness-attempt-callback] attempt=${attemptId}: ${error.message}`);
     return res.status(500).json({ ok: false, error: 'attempt callback persistence failed' });
   }

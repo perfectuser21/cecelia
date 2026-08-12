@@ -11,7 +11,7 @@ function mockPool() {
 }
 
 describe('replaceRepoEdges', () => {
-  it('事务次序:BEGIN → DELETE(带 repo 参数) → INSERT → COMMIT,返回 inserted 数', async () => {
+  it('同时写 live graph 与 revision-indexed immutable snapshot', async () => {
     const { pool, calls, client } = mockPool();
     const edges = [
       { src_path: 'a.js', dst_path: 'b.js', edge_type: 'import', detail: { via: 'import' } },
@@ -24,17 +24,33 @@ describe('replaceRepoEdges', () => {
     expect(calls[0].sql).toContain('BEGIN');
     expect(calls[1].sql).toMatch(/pg_advisory_xact_lock/);
     expect(calls[1].params).toEqual(['fact-snapshot:graph_edges:cecelia']);
-    expect(calls[2].sql).toContain('DELETE FROM graph_edges');
-    expect(calls[2].params).toEqual(['cecelia']);
-    expect(calls[3].sql).toContain('INSERT INTO graph_edges');
-    expect(calls[3].sql).toContain('source_revision');
-    expect(calls[3].sql).toContain('scanner_version');
-    expect(calls[3].params).toEqual(expect.arrayContaining(['abc123', 'graph-v3']));
+    expect(calls.some(call => call.sql.includes('INSERT INTO graph_edge_snapshots'))).toBe(true);
+    expect(calls.some(call => call.sql.includes('INSERT INTO graph_snapshot_versions'))).toBe(true);
+    const liveDelete = calls.find(call => call.sql.includes('DELETE FROM graph_edges'));
+    expect(liveDelete.params).toEqual(['cecelia']);
+    const liveInsert = calls.find(call => call.sql.includes('INSERT INTO graph_edges'));
+    expect(liveInsert.params).toEqual(expect.arrayContaining(['abc123', 'graph-v3']));
     const header = calls.find((call) => call.sql.includes('INSERT INTO fact_snapshot_headers'));
     expect(header.sql).toContain('ON CONFLICT (kind, repo)');
     expect(header.params).toEqual(['graph', 'cecelia', 'abc123', 'graph-v3', 2]);
     expect(calls[calls.length - 1].sql).toContain('COMMIT');
     expect(client.release).toHaveBeenCalled();
+  });
+
+  it('同一 repo/revision 已有不同边时拒绝覆盖 immutable snapshot', async () => {
+    const { pool, client } = mockPool();
+    client.query.mockImplementation(async (sql) => {
+      const text = String(sql);
+      if (text.includes('FROM graph_snapshot_versions')) return { rows: [{ row_count: 1 }] };
+      if (text.includes('FROM graph_edge_snapshots')) return { rows: [{
+        src_path: 'old.js', dst_path: 'target.js', edge_type: 'import', detail: {},
+      }] };
+      return { rows: [] };
+    });
+    await expect(replaceRepoEdges(pool, 'cecelia', [{
+      src_path: 'new.js', dst_path: 'target.js', edge_type: 'import', detail: {},
+    }], { sourceRevision: 'a'.repeat(40), scannerVersion: 'graph-v3' }))
+      .rejects.toMatchObject({ code: 'GRAPH_SNAPSHOT_IMMUTABILITY_VIOLATION' });
   });
 
   it('INSERT 抛错 → ROLLBACK 且 rethrow,client 释放', async () => {

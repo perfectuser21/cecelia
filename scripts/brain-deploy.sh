@@ -10,9 +10,13 @@ DEPLOY_STATUS_FILE="/tmp/cecelia-deploy-status.json"
 # 蓝绿切换 + Bark 告警工具（顶层 source，保证 Docker/launchd 两模式都有 send_bark/bluegreen_swap）
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/bluegreen.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/internal-auth-token.sh"
 
 VERSION=$(node -e "console.log(require('$BRAIN_DIR/package.json').version)")
 ENV_REGION="${ENV_REGION:-us}"
+CECELIA_INTERNAL_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:-/Users/administrator/.credentials/cecelia-internal.env}"
+export CECELIA_INTERNAL_ENV_FILE
 
 # ── 部署状态文件：供 Brain 重启后感知 deploy 结果 ──────────────────────────
 DEPLOY_SUCCESS=false
@@ -94,6 +98,42 @@ run_post_deploy_smoke() {
         echo "  Post-deploy smoke 总计：跑 $ran 条，失败 $failed 条"
     fi
     return 0
+}
+
+# Impact Gate 依赖 active manifest 中的路径归属。代码部署成功但 manifest 未激活时，
+# 新文件与强制治理文件都会被永久判成 impact_anchor_missing，因此激活属于部署事务。
+activate_cecelia_map_manifest() {
+    local manifest_file="$ROOT_DIR/packages/brain/config/map-manifests/cecelia.v1.json"
+    local adapter="$ROOT_DIR/scripts/map/product-map-adapter.mjs"
+    local decision_id=""
+
+    [[ -f "$manifest_file" && -f "$adapter" ]] || {
+        echo "[map-activation] 缺少 Cecelia manifest 或受信 adapter，拒绝完成部署" >&2
+        return 1
+    }
+    load_cecelia_internal_token "$CECELIA_INTERNAL_ENV_FILE" || {
+        echo "[map-activation] 无法从共享 SSOT 加载内部 token" >&2
+        return 1
+    }
+    decision_id=$(node -e '
+      const fs = require("node:fs");
+      const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      process.stdout.write(manifest.source_decision_id || "");
+    ' "$manifest_file")
+    [[ "$decision_id" =~ ^[0-9a-fA-F-]{36}$ ]] || {
+        echo "[map-activation] Cecelia manifest 缺少合法 source_decision_id" >&2
+        return 1
+    }
+
+    echo "[map-activation] 提交并激活 Cecelia 权威 manifest..."
+    BRAIN_URL="http://localhost:5221" \
+      CECELIA_INTERNAL_ENV_FILE="$CECELIA_INTERNAL_ENV_FILE" \
+      node "$adapter" \
+        --input "$manifest_file" \
+        --scope cecelia \
+        --decision-id "$decision_id" \
+        --submit >/dev/null
+    echo "[map-activation] Cecelia manifest 与 projection 已激活"
 }
 
 # ── drain_before_swap：swap 前停派发 + 等回调收尾 ────────────────────────────
@@ -247,9 +287,20 @@ if [[ "$DRY_RUN" == true ]]; then
     echo ""
 fi
 
+if [[ "$DRY_RUN" == false ]]; then
+    ensure_cecelia_internal_token "$CECELIA_INTERNAL_ENV_FILE" || exit 1
+fi
+
 # ─── Docker 模式 ─────────────────────────────────────────────────────────────
 
 if [[ "$DEPLOY_MODE" == "docker" ]]; then
+
+    # Docker 端口转发不是 socket loopback；宿主 cron 与 Brain 必须共享显式凭据。
+    if [[ "$DRY_RUN" == true ]]; then
+        echo "[dry-run] ensure_cecelia_internal_token $CECELIA_INTERNAL_ENV_FILE"
+    else
+        ensure_cecelia_internal_token "$CECELIA_INTERNAL_ENV_FILE" || exit 1
+    fi
 
     # 1. Build image
     echo "[1/7] Building image..."
@@ -339,6 +390,7 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     TARGET_IMG=$(docker inspect "cecelia-brain:${VERSION}" --format '{{.Id}}' 2>/dev/null || echo "")
     if [[ "$DRY_RUN" == false && -n "$CURRENT_IMG" && -n "$TARGET_IMG" && "$CURRENT_IMG" == "$TARGET_IMG" ]]; then
         echo "  [skip] 容器已在 v${VERSION}（image SHA 一致），跳过 recreate"
+        activate_cecelia_map_manifest
         DEPLOY_SUCCESS=true
         exit 0
     fi
@@ -364,7 +416,9 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         # 不加 --network host（否则 green 抢占 host 5221 与 blue 冲突）。
         GREEN_ENV=$(docker inspect cecelia-node-brain --format '{{range .Config.Env}}-e {{.}} {{end}}' 2>/dev/null || echo "")
         GREEN_VOL=$(docker inspect cecelia-node-brain --format '{{range .Mounts}}-v {{.Source}}:{{.Destination}}{{if not .RW}}:ro{{end}} {{end}}' 2>/dev/null || echo "")
-        export GREEN_RUN_ARGS="${GREEN_ENV} ${GREEN_VOL}"
+        # 最后的 `-e CECELIA_INTERNAL_TOKEN` 从当前部署进程复制刚校验的值，
+        # 覆盖旧 blue 中可能存在的旧 token，且不把 secret 本身放进 argv。
+        export GREEN_RUN_ARGS="${GREEN_ENV} ${GREEN_VOL} -e CECELIA_INTERNAL_TOKEN"
         # sidecar 需要知道部署根和 region（bluegreen.sh 通过 env 读取）
         export DEPLOY_ROOT_DIR="$ROOT_DIR"
         if ! TARGET_VERSION="${VERSION}" BLUE_NAME=cecelia-node-brain \
@@ -507,7 +561,6 @@ while [ $TRIES -lt $MAX_TRIES ]; do
   sleep 5
   TRIES=$((TRIES + 1))
   if curl -sf http://localhost:5221/api/brain/tick/status > /dev/null 2>&1; then
-    DEPLOY_SUCCESS=true
     echo ""
     echo "=== Deploy SUCCESS: cecelia-brain v${VERSION} is healthy (${DEPLOY_MODE}) ==="
 
@@ -555,6 +608,11 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     else
         echo "[S6] ⚠️  无法获取 EXPECTED_SHA（非 git repo 环境），跳过 SHA 校验"
     fi
+
+    echo ""
+    echo "[S6.5] 激活 Cecelia Map manifest（Impact Gate 上线前置）..."
+    activate_cecelia_map_manifest
+    DEPLOY_SUCCESS=true
 
     # 8. Update cecelia-run on host (self-update: keeps executor in sync with repo)
     echo ""

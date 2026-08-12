@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.cecelia.mcp-readonly</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/Users/administrator/perfect21/cecelia/packages/mcp-readonly/server.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/administrator/perfect21/cecelia/packages/mcp-readonly</string>
+  <!--
+    凭据注入方式说明：MCP_BEARER_TOKEN / MCP_READONLY_DATABASE_URL / BARK_TOKEN
+    故意不写在这个 EnvironmentVariables 字典里。原因：/Library/LaunchDaemons/ 下的
+    plist 是明文文件，任何本机用户都能 `cat` 到（不像 ~/.credentials/*.env 有
+    chmod 600 保护），把密钥塞进 EnvironmentVariables 等于把生产 Bearer Token 和
+    数据库密码摆在系统级明文配置里，违反本仓库"凭据一律不进明文配置/不进git"
+    的规则。改用 server.js 顶部的 `import 'dotenv/config'` 在进程启动时从
+    WorkingDirectory 下的 .env 读取（该 .env 由 deploy.sh 在部署时从
+    ~/.credentials/mcp-bearer.env + ~/.credentials/mcp-readonly.env + 已有的
+    ~/.credentials/bark.env 拼装生成，chmod 600，且被 .gitignore 的 `.env` 规则
+    排除，不会被误 commit）。这里只保留 NODE_ENV/HOME/PATH 这类非敏感环境变量。
+  -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_ENV</key>
+    <string>production</string>
+    <key>HOME</key>
+    <string>/Users/administrator</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/opt/homebrew/opt/postgresql@17/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>UserName</key>
+  <string>administrator</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+    <key>Crashed</key>
+    <true/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>12</integer>
+  <!--
+    内存硬顶调查结论（本次任务实测，2026-08-11，macOS 15.7.4 / Darwin 24.6.0）：
+    `man launchd.plist` 里 SoftResourceLimits/HardResourceLimits 允许的 key 只有
+    Core / CPU / Data / FileSize / MemoryLock / NumberOfFiles / NumberOfProcesses /
+    ResidentSetSize / Stack —— 根本没有 "MemoryLimit" 这个 key。PrepPRD 模板里写的
+    MemoryLimit 是编出来的、不存在于 schema 里，plutil -lint 不会报错（它只查 XML/plist
+    语法，不查 launchd 是否认得这个 key），但 launchd 运行时会静默忽略这个未知 key，
+    不会有任何限制生效。
+    改用 schema 里真实存在、语义最接近"内存硬顶"的 ResidentSetSize。但即便用这个
+    合法 key，也必须如实说明：macOS/XNU 对 RLIMIT_RSS 只是"建议值"（advisory），
+    不像 Linux cgroups 那样强制杀进程——man 原文："if memory is tight, the system
+    will prefer to take memory from processes that are exceeding their declared
+    resident set size"。也就是说进程超过这个数值不会被立即 kill，只有在系统整体
+    内存紧张时才会被优先回收。这不等于 PrepPRD 要求的"硬顶保护生产 Brain"那种
+    确定性上限。如果要真正的硬顶（进程超限直接被杀重启），需要额外一层监控脚本
+    （轮询进程 RSS，超限主动 kill -9 触发 KeepAlive 重启），本次任务未实现，如实
+    留痕，不假装 ResidentSetSize 等价于硬顶。
+  -->
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>ResidentSetSize</key>
+    <integer>536870912</integer>
+  </dict>
+  <key>HardResourceLimits</key>
+  <dict>
+    <key>ResidentSetSize</key>
+    <integer>536870912</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/administrator/perfect21/cecelia/logs/mcp-readonly.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/administrator/perfect21/cecelia/logs/mcp-readonly.error.log</string>
+</dict>
+</plist>

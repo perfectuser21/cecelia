@@ -1034,6 +1034,7 @@ describe('Fleet Worker Attempt runner', () => {
         contract_branch: 'cp-harness-propose-r2-aaaaaaaa-a17',
         pr_branch: 'cp-07310943-ws-0e82adad',
         pr_head_sha: '0123456789abcdef0123456789abcdef01234567',
+        required_assertions: [{ assertion_id: 'runner-proof', command: 'npm test' }],
       },
       expected: {
         SPRINT_DIR: 'sprints/provider-neutral',
@@ -1042,6 +1043,9 @@ describe('Fleet Worker Attempt runner', () => {
         CONTRACT_BRANCH: 'cp-harness-propose-r2-aaaaaaaa-a17',
         PR_BRANCH: 'cp-07310943-ws-0e82adad',
         PR_HEAD_SHA: '0123456789abcdef0123456789abcdef01234567',
+        HARNESS_REQUIRED_ASSERTIONS_JSON: JSON.stringify([
+          { assertion_id: 'runner-proof', command: 'npm test' },
+        ]),
         GIT_CONFIG_COUNT: '1',
         GIT_CONFIG_KEY_0: 'remote.origin.pushurl',
         GIT_CONFIG_VALUE_0: 'blocked-by-harness://evaluator',
@@ -1066,7 +1070,10 @@ describe('Fleet Worker Attempt runner', () => {
 
       expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
         taskId: TASK_ID,
-        roleEnv: expect.objectContaining(expected),
+        roleEnv: expect.objectContaining({
+          CECELIA_MACHINE_ID: WORKER_ID,
+          ...expected,
+        }),
       }));
     },
   );
@@ -2454,8 +2461,8 @@ describe('Fleet Worker durable runtime adapters', () => {
       );
       expect(createArgs.join(' ')).not.toContain('/Users/operator');
       expect(createArgs).toEqual(expect.arrayContaining([
-        '--tmpfs', '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700,uid=999,gid=999',
-        '--tmpfs', '/home/cecelia/.config/gh:rw,noexec,nosuid,nodev,mode=0700,uid=999,gid=999',
+        '--tmpfs', '/home/cecelia/.codex:rw,noexec,nosuid,nodev,mode=0700,uid=5999,gid=5999',
+        '--tmpfs', '/home/cecelia/.config/gh:rw,noexec,nosuid,nodev,mode=0700,uid=5999,gid=5999',
         '--label', `cecelia.fleet.attempt_id=${ATTEMPT_ID}`,
         '--label', `cecelia.fleet.run_id=${RUN_ID}`,
         '--label', `cecelia.fleet.worker_id=${WORKER_ID}`,

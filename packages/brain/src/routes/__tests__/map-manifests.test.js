@@ -27,6 +27,48 @@ const draft = {
   activated_at: null,
 };
 
+describe('Map manifest 写入口鉴权', () => {
+  it('生产 token 配置后拒绝 frontend 代理形成的匿名 loopback 请求', async () => {
+    const prior = process.env.CECELIA_INTERNAL_TOKEN;
+    process.env.CECELIA_INTERNAL_TOKEN = 'manifest-test-token';
+    try {
+      const services = {
+        validate: vi.fn(), submit: vi.fn(), activate: vi.fn(),
+      };
+      const { app } = createApp({ services });
+
+      await request(app)
+        .post('/api/brain/map/manifests/validate')
+        .send(loadManifest())
+        .expect(401);
+      expect(services.validate).not.toHaveBeenCalled();
+    } finally {
+      if (prior === undefined) delete process.env.CECELIA_INTERNAL_TOKEN;
+      else process.env.CECELIA_INTERNAL_TOKEN = prior;
+    }
+  });
+
+  it('限制同一来源一分钟内的 manifest 请求数量', async () => {
+    const services = {
+      validate: vi.fn(() => ({ valid: true, errors: [], manifest: loadManifest() })),
+      submit: vi.fn(),
+      activate: vi.fn(),
+    };
+    const { app } = createApp({ services });
+
+    for (let requestNumber = 1; requestNumber <= 300; requestNumber += 1) {
+      await request(app)
+        .post('/api/brain/map/manifests/validate')
+        .send(loadManifest())
+        .expect(200);
+    }
+    await request(app)
+      .post('/api/brain/map/manifests/validate')
+      .send(loadManifest())
+      .expect(429);
+  });
+});
+
 describe('POST /api/brain/map/manifests/validate', () => {
   it('纯校验完整 manifest，不连接或查询数据库', async () => {
     const services = {

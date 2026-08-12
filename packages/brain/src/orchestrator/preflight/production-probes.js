@@ -198,10 +198,21 @@ export function createProductionCapabilityProbes(deps = {}) {
         baseCapacity: physicalBaseSlots,
         role,
       });
+      // Manual dispatch is a server-owned, audited override written by the
+      // dispatch endpoint. It may consume the final admitted base slot even
+      // when role weighting rounds the capacity to zero, but it must never
+      // revive a drained/offline or genuinely zero-capacity machine.
+      const manualCapacityOverride = taskBundle?.inputs?.manual_dispatch === true
+        && effectiveBaseSlots > 0
+        && physicalBaseSlots > 0
+        && availableCapacity.capacity < 1;
       return {
         ok: row?.online === true,
-        available: availableCapacity.capacity,
-        physical_capacity: physicalCapacity.capacity,
+        available: manualCapacityOverride ? 1 : availableCapacity.capacity,
+        physical_capacity: manualCapacityOverride
+          ? Math.max(1, physicalCapacity.capacity)
+          : physicalCapacity.capacity,
+        ...(manualCapacityOverride ? { manual_capacity_override: true } : {}),
         role,
         role_weight: availableCapacity.weight,
         effective_base_slots: effectiveBaseSlots,

@@ -447,6 +447,64 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).not.toHaveProperty('prep_prd_body');
   });
 
+  it('把 payload.required_command_evidence 只读复制进 evaluator TaskBundle', async () => {
+    const deps = makeDeps();
+    const required = ['npm test', 'bash scripts/smoke.sh'];
+    const withRequiredEvidence = {
+      ...observed,
+      task: {
+        ...observed.task,
+        payload: {
+          ...observed.task.payload,
+          required_command_evidence: required,
+        },
+      },
+      pr: {
+        url: 'https://github.com/o/r/pull/42',
+        head_ref: 'cp-evidence-target',
+        head_sha: 'sha-1',
+        ci: 'pass',
+      },
+    };
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 7,
+      observed: withRequiredEvidence,
+      decision: { phase: 'evaluate', reason: 'ci_pass' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.required_command_evidence).toEqual(required);
+    expect(created.bundle.inputs.required_command_evidence).not.toBe(required);
+  });
+
+  it('required_command_evidence 类型非法时仍送入 TaskBundle 供 Judge fail-closed', async () => {
+    const deps = makeDeps();
+    const withInvalidRequiredEvidence = {
+      ...observed,
+      task: {
+        ...observed.task,
+        payload: {
+          ...observed.task.payload,
+          required_command_evidence: 'npm test',
+        },
+      },
+    };
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 7,
+      observed: withInvalidRequiredEvidence,
+      decision: { phase: 'evaluate', reason: 'ci_pass' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.required_command_evidence).toBe('npm test');
+  });
+
   it('passes the verified planner Git artifact into the proposer TaskBundle', async () => {
     const deps = makeDeps();
     const plannerPrdArtifact = {
@@ -1025,6 +1083,40 @@ describe('createDispatcher', () => {
     expect(evaluatedBundle.inputs.logical_cycle_id).toBe(created.logicalCycleId);
   });
 
+  it('propagates the manual dispatch audit marker into capability preflight', async () => {
+    const deps = makeDeps();
+    deps.preflightGate = {
+      evaluate: vi.fn(async () => ({
+        status: 'ok',
+        snapshot: {
+          provider: 'codex',
+          account: null,
+          machine: 'brain-1',
+          capability_snapshot_id: 'snapshot-manual-dispatch',
+        },
+        evidence: {},
+      })),
+      validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
+    };
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 3,
+      observed: {
+        ...observed,
+        task: {
+          ...observed.task,
+          metadata: { manually_dispatched: true },
+        },
+      },
+      decision: { phase: 'evaluate', reason: 'manual_dispatch' },
+    });
+
+    const evaluatedBundle = deps.preflightGate.evaluate.mock.calls[0][0].task_bundle;
+    expect(evaluatedBundle.inputs.manual_dispatch).toBe(true);
+  });
+
   it('preserves the source logical cycle for an L0-authorized role retry', async () => {
     const deps = makeDeps();
     const sourceAttemptId = '33333333-3333-4333-8333-333333333333';
@@ -1177,6 +1269,21 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs.runtime_resources).toEqual({ postgres: false, node_deps: true });
   });
 
+  it('运行时依赖预装：evaluator TaskBundle 默认注入 runtime_resources.node_deps=true', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 5,
+      observed: { ...observed },
+      decision: { phase: 'evaluate', reason: 'verify_pr' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.runtime_resources).toEqual({ postgres: false, node_deps: true });
+  });
+
   it('generator bundle 从已批准合同导出 contract_branch，供 launcher 注入环境', async () => {
     const deps = makeDeps();
 
@@ -1200,9 +1307,8 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).toMatchObject({
       contract_branch: 'cp-harness-propose-r2-aaaaaaaa-a6',
     });
-    // 运行时依赖预装只对 proposer/reviewer 默认开——generator 不该被塞
-    // runtime_resources.node_deps（design doc §运行时依赖，决策 ba33fc68 只覆盖
-    // GAN 双方角色）。
+    // 运行时依赖预装只对 proposer/reviewer/evaluator 默认开——generator 不该被塞
+    // runtime_resources.node_deps；generator 仍由自身实现过程按需安装/构建。
     expect(created.bundle.inputs).not.toHaveProperty('runtime_resources');
   });
 
@@ -1466,6 +1572,13 @@ describe('createDispatcher', () => {
         },
       },
       decision: { phase: 'evaluate', reason: 'ci_pass' },
+      impactGateReceipt: {
+        stage: 'diff',
+        gate: 'extend',
+        head_revision: 'sha-1',
+        contract_hash: 'c'.repeat(64),
+        required_assertions: [{ assertion_id: 'new-check', command: 'npm test' }],
+      },
     });
 
     const created = deps.attemptStore.createAttempt.mock.calls[0][0];
@@ -1473,6 +1586,8 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).toMatchObject({
       pr_branch: 'cp-evaluator-target',
       pr_head_sha: 'sha-1',
+      impact_gate: expect.objectContaining({ gate: 'extend', contract_hash: 'c'.repeat(64) }),
+      required_assertions: [{ assertion_id: 'new-check', command: 'npm test' }],
     });
     expect(deps.launcher.launch).toHaveBeenCalledWith(expect.objectContaining({
       bundle: expect.objectContaining({ constraints: expect.objectContaining({ read_only: false }) }),
@@ -2640,6 +2755,7 @@ describe('createDetachedLauncher', () => {
           worktree_path: '/tmp/worktree',
           pr_branch: 'cp-evaluator-target',
           pr_head_sha: 'sha-1',
+          required_assertions: [{ assertion_id: 'exact-check', command: 'npm test' }],
         },
         constraints: { read_only: false },
       },
@@ -2655,8 +2771,12 @@ describe('createDetachedLauncher', () => {
         GIT_CONFIG_KEY_0: 'remote.origin.pushurl',
         GIT_CONFIG_VALUE_0: 'blocked-by-harness://evaluator',
         BRAIN_RESULT_FILE: '/tmp/cecelia-prompts/brain-result.json',
+        CECELIA_MACHINE_ID: 'us-mac-m4',
         PR_BRANCH: 'cp-evaluator-target',
         PR_HEAD_SHA: 'sha-1',
+        HARNESS_REQUIRED_ASSERTIONS_JSON: JSON.stringify([
+          { assertion_id: 'exact-check', command: 'npm test' },
+        ]),
       }),
     }));
   });

@@ -8,14 +8,115 @@
 
 
 
-**Brain 版本**: 1.272.6
+**Brain 版本**: 1.272.18
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.5 — Evaluator WebKit Runtime and Dashboard Loopback
+## Brain 1.272.18 — Derive 取证死循环双修（recollect 护栏 + evaluate PASS 必派 judge）
 
+- recollect 护栏兜底：spawn:evaluator 落库快照缺顶层 trigger_sha 时，改用 observed.pr.head_sha 匹配 currentHeadSha，防止 evidence_insufficient 死循环。
+- stale judge FAIL 不遮蔽同 SHA 新 evaluate PASS：补证后产出晚于最新 judge 的 evaluate PASS，下一动作必须派 judge 复核（evaluate_passed_awaiting_judge），而非再次 spawn:evaluator。
+- 两条修复均以 TDD 回归测试永久锁入 CI（derive-recollect-loop.test.ts + derive.test.js）。
+
+## Brain 1.272.17 — Exact-PR Judge Evidence Basis
+
+- 精确 PR 验收在无 Sprint 合同/Golden Path 时，将已完整对账的 `required_command_evidence` 作为独立 Judge 的裁决步骤，避免 Evaluator PASS 后 Judge 误报 `needs_context`。
+
+## Brain 1.272.15 — Linux Runner Dependency Target
+
+- Fleet workspace 的受限 `npm ci` 继续在 macOS ARM64 宿主执行，但依赖解析目标显式固定为 canonical Linux ARM64/glibc runner，确保 Rollup 等 optional native package 与真实执行容器一致。
+- 永久回归测试锁定 npm 的 OS/CPU/libc 目标，防止出现“安装返回成功、容器运行仍缺平台包”的假绿。
+
+---
+
+## Brain 1.272.14 — Evaluator Workspace Dependencies
+
+- Harness Evaluator 与 proposer/reviewer 使用同一条 provider 无关的 `runtime_resources.node_deps=true` 契约，Fleet checkout 后会先执行受限的 `npm ci`，再让 Claude Code、Codex 或 Grok 执行仓库验收命令。
+- 修复真实 Evaluator Attempt 在 Dashboard 深链已通过 WebKit 的情况下，仍因工作区缺少 `vitest/config` 而误判失败的问题；回归测试永久覆盖 Evaluator TaskBundle 的依赖声明。
+
+---
+
+## Brain 1.272.13 — Cecelia Runner UID Pin
+
+- 1.272.11 的 canonical Runner 重建仍继承了 `useradd -r` 动态分配 `cecelia` 账户 UID/GID 的老问题——webkit playwright 系统依赖挤占，UID 从历史值 999 漂移到 997，非 evaluator 角色容器无 `--user root` 可自愈，`.codex`/`.config/gh` 凭据 tmpfs 挂载（worker 侧硬编码 uid=999,gid=999）属主对不上，GitHub 凭据 FIFO 写入失败，本机 harness 派发 9 连尸。
+- Dockerfile 显式钉死 `cecelia` UID/GID=5999（不选 999：本地构建实测该基座已被 `systemd-journal` 组占用 GID 999），worker 两处硬编码同步，镜像重建为 `sha256:3ac5b30e0681d545f880386a9645f22850e7f047dcae7444c7ce61c98bcf50b5`，digest 全仓九处 pin 一次性同步。
+- `canonical-pin-consistency.test.sh` 互锁校验九处 pin 点，防未来再漏改任何一处。
+
+---
+
+## Brain 1.272.12 — Impact Contract 不可变证据闭环
+
+- 整图、节点、浏览影响半径、健康度与未归属事实统一由同一个 Map read service 在只读 `REPEATABLE READ` 快照内返回，并携带 Manifest/Projection digest、repo revision 与 freshness。
+- Dashboard `/map` 只消费 Unified Map API，提供 Value Stream → Capability → Assertion/receipt 三层下钻；重复旧页面和旧 feature 注册已移除。
+- Harness 的 revision-locked `/map/radius` 请求继续由 Impact resolver 裁决，不降级成 Dashboard 浏览半径。
+- 关系图按 Git revision 保留不可变快照；同 revision 出现不同边时扫描事务 fail-closed，在途合同始终读取原 base revision 对应的 projection 与图。
+- Impact radius 以显式 repo→scope 白名单、manifest digest、projection digest 锁定证据，拒绝 basename 碰撞与同 SHA 下的投影偷换。
+- `product-map-adapter` 把 ZenithJoy 既有 `apps → lines → golden_paths` SSOT 转为完整 Manifest；Planner、Proposer、Island Gate 与 Map 页面统一消费不假定 Cecelia revision 的 Map API。
+- API/DB/Test/Graph 扫描器接受显式 repo/root，多仓各自锁定 revision 并在稳定 SHA 下按 10 分钟预算持续重拍。
+- 同一 canonical assertion 可聚合多个 Journey source binding；Runner 只执行一次，但为每个 link/revision 写独立 receipt，任一绑定漂移都会换版。
+- 每个受影响 Capability 必须有当前 runnable assertion 覆盖；新增、移除或换版断言均会刷新合同或形成 Gap，不能把无法验收的范围放成假 pass。
+- Runner 用独立 nobody 身份、空白环境、只读 HOME 与镜像固定工具链执行无 shell 断言；Provider 无法用 profile/PATH 污染伪造 receipt。
+- Capability Manifest 持久化 path_prefixes/exact_paths；新增文件与治理文件按锁定版本的最长路径所有权归位，未登记路径继续 fail-closed。
+- Impact Contract 语义字段与 Gap 权威身份由 PostgreSQL trigger 冻结；未解决 Gap 不可改归属或删除，无法经直写绕过任务阻塞。
+- Harness Report Runner 只产报告 artifact；Feature 完成态与测试锚点由已认证的 Brain terminal callback 可信写回。
+- Map/Impact/Journey 写入口使用共享 internal token；生产 Compose、蓝绿 canary、staging 与跨 checkout scanner 读取同一宿主 credentials SSOT。
+- Capability Mapper 在 Runner 只产 manifest artifact，拍板后的提交/激活统一走读取 credentials SSOT 的受信宿主 adapter。
+- 扫描只允许 clean main/exact SHA；批末复核 checkout 与四类 header revision，同 SHA 每 10 分钟保鲜。
+- Schema 地板推进到 410。
+
+---
+
+## Brain 1.272.11 — Canonical Runner Recovery
+
+- 磁盘清理误删 canonical Runner 后，从当前 main 的 `docker/cecelia-runner/` 重建镜像，固定为 `sha256:5b304402ac167aa6bac4011f6e66ad2dbf8106473a5bb4e32e40498620cfb31d`。
+- Runner digest 在 NodeProfile、三机配置、rollout/reconcile、安装器测试和 smoke 中一次性同步；Fleet worker 基线升级为 1.272.11。
+- `verify-digest-pin.sh` 继续 fail-closed，确保镜像实际摘要与代码 pin 漂移时无法静默准入。
+
+---
+
+## Brain 1.272.10 — Exact-PR Required Evidence Bridge
+
+- 精确 PR 验收任务的 `required_command_evidence` 进入 Evaluator 与 Judge TaskBundle。
+- Evaluator 必须逐条原样执行并写结构化证据；Judge 只接受命令逐字一致、退出码为 0、日志非空的结果。
+- 无 sprint 合同文件的验证专用任务可以用这份严格对账后的命令清单作为合同测试，缺项仍 fail-closed。
+
+---
+
+## Brain 1.272.9 — Universal Map Second-repo Wiring
+
+- `product-map-adapter` 把既有 `apps → lines → golden_paths` SSOT 转为完整 Manifest。
+- API/DB/Test/Graph 扫描器接受显式 repo/root，稳定 SHA 也按 10 分钟预算持续重拍。
+- Planner、Proposer 与 Island Gate 统一消费 Map API；Map 页面不再假定 Cecelia revision。
+
+---
+
+## Brain 1.272.8 — Audited Manual Kernel Capacity Override
+
+- `/tasks/:id/dispatch` 写入的 `manually_dispatched` 服务端审计标记会传入 Kernel TaskBundle，确保手动派发合同贯穿内部 capability preflight。
+- 当节点仍在线、已准入且至少有一个有效/物理基础槽时，手动派发允许重角色权重从 0 提升为 1；真实零容量、排空、健康或凭据闸仍保持 fail-closed。
+- capability evidence 记录实际 machine capacity 与 override 标志，便于事后追溯强制执行。
+
+---
+
+## Brain 1.272.7 — Unified Map Read Authority
+
+- 整图、节点、影响半径、健康度与未归属事实统一由同一个 Map read service 在只读 `REPEATABLE READ` 快照内返回，并携带 Manifest/Projection digest、repo revision 与 freshness。
+- Dashboard `/map` 只消费 Unified Map API，提供 Value Stream → Capability → Assertion/receipt 三层下钻；重复旧页面和旧 feature 注册已移除，页面不写历史颜色。
+- Schema 地板保持 407；回退到 `1.272.6` 会恢复分裂读权威与旧 Map 页面。
+
+---
+
+## Brain 1.272.6 — Dynamic Evaluator Provider Identity
+
+- Evaluator 的可信 root 取证阶段不再假定镜像内 `cecelia` 固定为 UID 999；运行时读取并校验真实非 root UID/GID，再用 `setpriv` 移除 capabilities 后启动 Provider。
+- WebKit OS 依赖新增系统账户导致 `cecelia` 实际 UID 变为 997 时，Evaluator 不再被错误判定为无法建立权限边界。
+- canonical Runner digest 更新为 `sha256:e958b6abeba555622a2206075b456d679e550cd854b6a9600d6fe68d0908b347`，Fleet worker pin 同步到 1.272.6；回归测试永久禁止重新写死 UID。
+
+---
+
+## Brain 1.272.5 — Evaluator WebKit Runtime and Dashboard Loopback
 - canonical Runner 固化 Playwright 1.58.0 与 WebKit OS 依赖，受限 UID 共享 `/ms-playwright`，Evaluator 不再因浏览器动态库缺失而无法验证真实页面。
 - Evaluator 容器专属 `localhost:5211` relay 指向宿主 Cecelia Dashboard；Generator/Dev 容器不占用该端口，避免与本地开发服务冲突。
 - canonical Runner digest 更新为 `sha256:6cef182dbec266157f7f2c731eaf596bb99450bb511b55d6526db102234198e3`，Fleet worker pin 同步到 1.272.5；回归合同覆盖 WebKit 安装与 5211 relay。
@@ -73,7 +174,7 @@
 - 完整 Manifest 激活在同一事务内生成 projection run、稳定节点与关系边，写入失败时旧 active Manifest/Projection 保持不变。
 - Value Stream、Capability、Cross-cut 与 Shared Prerequisite 由通用规则确定性投影；Boundary 只生成 `hands_off_to` 边。
 - Node/Edge stable ID 与 projection digest 可重复重建，核心不含 Cecelia 或 ZenithJoy 领域身份常量。
-- Schema 地板推进到 405。
+- Schema 地板推进到 407。
 
 ---
 
@@ -91,9 +192,6 @@
 - API、数据库结构、测试与关系图事实携带 repo、源码 revision、scanner version 与扫描时间，支持精确溯源。
 - 三张 registry 通过共享事务写入器按 repo 原子替换整张快照，同时保留人工 annotation；关系图扫描失败时保留上一张完整快照。
 - Schema 地板推进到 400。
-
----
-
 
 ## Brain 1.271.2 — 任务生命周期时间戳闭环
 
@@ -326,7 +424,7 @@
 
 ## Brain 1.267.211 — GAN role workspace node deps (案卷式 GAN PR-C)
 
-- bundle `runtime_resources.node_deps`（proposer/reviewer 默认开）→ fleet workspace prepare 在 checkout 后 `npm ci --ignore-scripts --no-audit --no-fund`（npm_config_cache 钉机器级可写目录，120s 超时 + 8MiB buffer，失败不炸 prepare，状态进日志与 inspect()）。修 r17 的 ajv 类"工作区不装依赖"病。
+- bundle `runtime_resources.node_deps`（proposer/reviewer/evaluator 默认开）→ fleet workspace prepare 在 checkout 后 `npm ci --ignore-scripts --no-audit --no-fund`（npm_config_cache 钉机器级可写目录，120s 超时 + 8MiB buffer，失败不炸 prepare，状态进日志与 inspect()）。修 r17 的 ajv 类"工作区不装依赖"病，并确保验收角色能运行仓库测试。
 - provision 只见 postgres（node_deps 进 provision 会炸 attempt_runtime_resource_unsupported——现网 34 条带 postgres 任务的回归防线）；runtime_resources 比对改键序无关。
 - provider 会话续接本期不实现：fleet 容器 CODEX_HOME=per-container tmpfs，resume 物理不可能（决策 ea03d361，案卷降级即主机制，持久卷方案另立任务 5b5a98f0）。
 - 部署面：fleet-worker（attempt-runner/workspace-manager）需 launchd 手动重装才生效；runner 镜像无需重建（entrypoint 0 diff）。
@@ -2381,7 +2479,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '404'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '410'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

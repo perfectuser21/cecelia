@@ -216,8 +216,14 @@ function externalObservation({
 }
 
 function loopDeps(options = {}) {
+  const passImpactGate = async () => ({ gate: 'pass', stage: 'kernel-wiring-fixture' });
   return {
     pool: testPool,
+    impactGate: {
+      beforeGenerate: passImpactGate,
+      beforeEvaluate: passImpactGate,
+      beforeMerge: passImpactGate,
+    },
     ...externalObservation(options),
     writeHeartbeat: async (db, heartbeat) => {
       await db.query(

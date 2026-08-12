@@ -58,8 +58,8 @@ function assertRepositoryRelative(filePath) {
   }
 }
 
-/** Read an immutable blob from Git without invoking a shell. */
-export function readGitArtifact(commitSha, filePath, {
+/** Ensure an immutable commit exists locally, fetching the exact SHA when needed. */
+export function ensureGitCommit(commitSha, {
   cwd = process.cwd(),
   repo = null,
   remoteUrlForRepo = defaultRemoteUrlForRepo,
@@ -67,9 +67,7 @@ export function readGitArtifact(commitSha, filePath, {
   if (typeof commitSha !== 'string' || !COMMIT_SHA.test(commitSha)) {
     throw new Error(`git artifact ref must be a full commit SHA: ${String(commitSha)}`);
   }
-  assertRepositoryRelative(filePath);
   const remote = resolveFetchRemote(cwd, repo, remoteUrlForRepo);
-
   try {
     execFileSync('git', ['cat-file', '-e', `${commitSha}^{commit}`], {
       cwd,
@@ -83,6 +81,17 @@ export function readGitArtifact(commitSha, filePath, {
       { cwd, ...GIT_OPTIONS },
     );
   }
+  return commitSha;
+}
+
+/** Read an immutable blob from Git without invoking a shell. */
+export function readGitArtifact(commitSha, filePath, {
+  cwd = process.cwd(),
+  repo = null,
+  remoteUrlForRepo = defaultRemoteUrlForRepo,
+} = {}) {
+  assertRepositoryRelative(filePath);
+  ensureGitCommit(commitSha, { cwd, repo, remoteUrlForRepo });
 
   return execFileSync('git', ['show', `${commitSha}:${filePath}`], {
     cwd,

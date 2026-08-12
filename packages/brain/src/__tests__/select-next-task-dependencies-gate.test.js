@@ -60,6 +60,9 @@ describe('selectNextDispatchableTask — task_dependencies 表依赖门禁 SQL',
     expect(sql).toContain('completed');
     expect(sql).toContain('cancelled');
     expect(sql).toContain('canceled');
+    expect(sql).not.toMatch(/d\.status\s*=\s*'pending'\s+OR\s+dep\.status/);
+    expect(sql).toContain('harness_gap_dependencies');
+    expect(sql).toContain("gap_dep.status = 'pending'");
   });
 
   it('goalIds=null（无 goal 过滤）时 SQL 仍含 task_dependencies 门禁', async () => {

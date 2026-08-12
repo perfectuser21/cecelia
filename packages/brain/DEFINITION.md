@@ -1,13 +1,95 @@
 # Brain 模块定义
 
-**版本**: 1.271.8
+**版本**: 1.272.15
 
-## Universal Map exact anchors and query-time state
+## Linux runner dependency target
+
+- Fleet worker 在 macOS ARM64 宿主准备 workspace 时，明确按 canonical Linux ARM64/glibc runner 平台解析 npm optionalDependencies，避免宿主安装成功但容器缺少 Rollup 等平台原生包。
+
+## Evaluator workspace dependencies
+
+- Evaluator TaskBundle 与 proposer/reviewer 一样声明 `runtime_resources.node_deps=true`，Fleet checkout 后会先执行受限的 `npm ci`，再运行仓库验收命令。
+
+## Unified Map API and dashboard authority
+
+- 五个 Map 读面与健康度共享一致性快照、统一 envelope 和查询时状态，不再消费旧 `src/map` 实现。
+- Dashboard 的唯一 `/map` 注册展示三层业务地图、事实锚点与 revision-bound receipt。
+- Harness 的 revision-locked radius 与 Dashboard 浏览 radius 在同一路由按合同字段机械分流，前者不降级成浏览裁决。
+- Schema 地板推进到 410。
+
+## Impact Contract 不可变证据闭环（Brain 1.272.9）
+
+- Map radius 读取 revision-indexed graph/projection 快照，并锁定 manifest/projection digest 与显式 repo→scope 身份绑定。
+- 默认 repo→scope 只激活已有 projection 的 Cecelia；未部署投影的仓库保持 fail-closed。
+- canonical assertion 按命令聚合多个 Journey source binding；一次 Runner 执行为每个 link/revision 生成独立 receipt。
+- 每个受影响 Capability 都必须有 runnable assertion 覆盖；断言 revision、覆盖、binding 变化会换版，缺失会产生 Gap 并阻塞。
+- Runner 以独立 nobody、空白环境、只读 HOME 和镜像固定 argv 工具链执行断言，receipt 不再接受 `bash -lc`。
+- Manifest 的 path_prefixes/exact_paths 用最长匹配归属新文件与治理文件，未知路径仍拒绝裁决。
+- PostgreSQL 冻结 Impact Contract 语义字段与 Gap 权威身份，未解决 Gap 不可改归属或删除。
+- Harness Report Runner 不再写 Journey；Feature done 与测试锚点由已认证 Brain callback 回写。
+- 生产内部写接口使用共享 credentials token；scanner、Compose、蓝绿和 staging 使用同一 SSOT。
+- Schema 地板为 410。
+
+## F1 Impact Contract 系统（Brain 1.272.1）
+
+Brain 1.272.1 新增结构化变更合同机制，为每次功能迭代引入可机器验证的合同轨迹。
+
+### change_kind 四档分类
+
+| 档位 | 含义 |
+|------|------|
+| `new_capability` | 全新功能模块，无历史合同基线 |
+| `capability_change` | 已有能力的接口或行为变更 |
+| `bugfix` | 缺陷修复，不新增或变更接口 |
+| `parameter_only` | 仅调整阈值/常量等参数，无逻辑变更 |
+
+Mapper fail-closed 原则：遇到未识别的 change_kind 时返回 `null`，禁止使用 fallback 默认值，强制上层显式处理未知类型。
+
+### Structure Gate
+
+- 合同必填 `task_id`、`change_kind`、`base_revision`、`affected_capabilities`、`required_assertions`
+- 任务 payload 中的 `change_kind` 是事实源，请求体不一致时返回 `change_kind_mismatch`
+- 所有 POST 写入口调用真实 `/api/brain/map/radius`；unavailable / stale / 合同异常 / revision mismatch 均 fail-closed
+- 只有 Mapper 返回新鲜 manifest/projection digest 后才持久化 active 合同
+- Radius 以 graph anchor 机械归位 capability，并从当前 `journey_step_links` 生成带 link ID、revision、digest 的必跑断言；未归位文件返回 unknown
+- fact scanner 批次全绿后调用 Map rebuild 切换 exact-SHA projection；批次失败保留旧 projection 并由 freshness 拒绝
+
+### Diff Gate
+
+- 以真实 HEAD revision 与 changed files 重新查询影响半径
+- 无 active 合同或 Mapper 不可判定时不放行
+- 新增影响缺少断言时，为每个影响节点建立 `harness_gaps` 记录及 `CONTRACT_IMPACT_DRIFT` 事件，并阻塞 `tasks` 原任务
+
+### Gap Ledger 状态机
+
+```
+open → assigned → fixing → verifying → resolved
+```
+
+- `open`：检测到合同缺口，尚未分配处理人
+- `assigned`：缺口已分配给负责方
+- `fixing`：正在修复缺口
+- `verifying`：修复完成，等待验证
+- `resolved`：仅接受当前 revision 且 `assertion_receipt.status=pass` 的验真证据
+
+验真失败走 `verifying → reopened → assigned`；最后一个 gap resolved 后依赖置为 satisfied，原任务从 blocked 恢复 in_progress。
+
+### 测试覆盖
+
+单元测试位于 `src/impact-contract/__tests__/`；真实 PostgreSQL 闭环位于 `src/__tests__/integration/impact-contract-loop.integration.test.js`：
+
+- `change-kind.test.js`
+- `contract-schema.test.js`
+- `contract-store.test.js`
+- `structure-gate.test.js`
+- `diff-gate.test.js`
+- `gap-store.test.js`
+## Universal Map exact anchors and query-time state（Brain 1.272.4）
 
 - 显式 scope/repo/ledger adapter 替代同名推断，Feature/Artifact/Assertion 以稳定键进入 active projection。
 - snapshot freshness、当前 revision receipt 与目标存在性在查询时现算五态；旧账本颜色不参与权威判断。
 - repo 隔离 reverse graph radius 返回受影响业务节点、必跑断言与 Cross-cut 扩展。
-- Schema 地板为 406；回退到 `1.271.7` 会失去锚点投影、现算状态与通用影响半径。
+- Schema 地板为 407；回退到 `1.272.3` 会失去锚点投影、现算状态与通用影响半径。
 
 ## Kernel preflight BLOCKED launch truth
 

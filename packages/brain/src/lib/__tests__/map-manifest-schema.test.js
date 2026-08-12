@@ -163,6 +163,22 @@ describe('Map Manifest JSON Schema', () => {
 
     expect(validateMapManifest(manifest)).toEqual({ valid: true, errors: [], manifest });
   });
+
+  it('旧 store 校验链接受安全路径归属，并拒绝逃逸或命令形态路径', () => {
+    const manifest = loadManifest();
+
+    expect(validateMapManifest(manifest)).toEqual({ valid: true, errors: [], manifest });
+
+    manifest.capabilities[1].path_prefixes = ['../outside/'];
+    manifest.capabilities[1].exact_paths = ['-config'];
+    const result = validateMapManifest(manifest);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'capabilities.1.path_prefixes.0' }),
+      expect.objectContaining({ path: 'capabilities.1.exact_paths.0' }),
+    ]));
+  });
 });
 
 describe('Map Manifest canonical digest', () => {

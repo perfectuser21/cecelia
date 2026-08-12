@@ -105,7 +105,14 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
         SELECT 1 FROM task_dependencies d
         JOIN tasks dep ON dep.id = d.to_task_id
         WHERE d.from_task_id = t.id
+          AND d.edge_type = 'hard'
           AND dep.status NOT IN ('completed', 'cancelled', 'canceled')
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM harness_gap_dependencies AS gap_dep
+        WHERE gap_dep.source_task_id = t.id
+          AND gap_dep.status = 'pending'
       )
     ORDER BY
       CASE t.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,

@@ -155,6 +155,11 @@ async function driveOneHop({ taskId, runId, payload }) {
         pid: process.pid,
         log: () => {},
         sleep: async () => {},
+        impactGate: {
+          beforeGenerate: async () => ({ gate: 'pass', stage: 'kernel-gear-fixture' }),
+          beforeEvaluate: async () => ({ gate: 'pass', stage: 'kernel-gear-fixture' }),
+          beforeMerge: async () => ({ gate: 'pass', stage: 'kernel-gear-fixture' }),
+        },
         dispatch: async (action, ctx) => {
           dispatchedAction = action;
           dispatchedRole = resolveAction(action).role; // 真 dispatcher 的 action→role 映射

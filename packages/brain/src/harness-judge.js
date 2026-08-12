@@ -15,6 +15,7 @@
 import { readFile, writeFile, mkdir, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { reconcileRequiredCommandEvidence } from './orchestrator/required-command-evidence.js';
 
 const DEFAULT_BASE_URL = 'https://toapis.com/v1';
 // 最终裁判的模型（TOAPIS_JUDGE_MODEL 可覆盖）。Judge 是全链路最后一道否决闸，
@@ -801,6 +802,18 @@ export async function runMechanicalGate(ctx, deps = {}) {
     }
   }
 
+  const requiredEvidence = reconcileRequiredCommandEvidence(
+    ctx.requiredCommandEvidence,
+    behaviorTests,
+  );
+  if (requiredEvidence.provided && !requiredEvidence.valid) {
+    reasons.push(requiredEvidence.invalidReason);
+  } else if (requiredEvidence.valid && !requiredEvidence.complete) {
+    for (const command of requiredEvidence.missing) {
+      reasons.push(`required_command_evidence 未有成功执行证据: ${command}`);
+    }
+  }
+
   // ② sprint 测试文件存在性：文件扫描 + kernel 合同 [BEHAVIOR] fallback，两者全 0 → FAIL。
   // Kernel 的 proposer 真相文件是 contract-draft.md；旧 controller 仍可能产出 contract-dod.md，
   // 所以两者都读，避免有真实合同却被误判 contract_tests=0。
@@ -820,7 +833,7 @@ export async function runMechanicalGate(ctx, deps = {}) {
         } catch { /* missing contract variant */ }
       }
     }
-    if (behaviorCount === 0) {
+    if (behaviorCount === 0 && !requiredEvidence.complete) {
       reasons.push('contract_tests 为 0（sprint 目录无 *.test.{ts,js,mjs,sh}，contract-dod.md/contract-draft.md 亦无 [BEHAVIOR]）');
     }
   }
@@ -1079,10 +1092,21 @@ export async function runJudgeGate(ctx, opts = {}) {
     return { verdict: 'FAIL', feedback: fb, judged: true, failure_class: 'evidence_insufficient' };
   }
 
+  const requiredEvidence = reconcileRequiredCommandEvidence(
+    ctx.requiredCommandEvidence,
+    ev.brainResult?.behavior_tests,
+  );
+  const adjudicationSteps = ev.goldenPathSteps?.length
+    ? ev.goldenPathSteps
+    : requiredEvidence.complete
+      ? ctx.requiredCommandEvidence.map((command) => command.trim())
+      : [];
+
   // 证据门：无合同 E2E 段且无 Golden Path 步骤 → 裁判没有「该验什么」的独立基准，无法做覆盖对照
   // → fail-open 保留 agent verdict（不浪费裁判调用，也不在缺证据时凭空否决运动员）。
-  // Fleet 路径从批准后的 TaskBundle 读取锁版本文本；旧本地路径回退读取 sprint 文件。
-  if (!ev.contractE2E && (!ev.goldenPathSteps || ev.goldenPathSteps.length === 0)) {
+  // Fleet 路径从批准后的 TaskBundle 读取锁版本文本；精确 PR 验收可以用已完整对账的
+  // required_command_evidence 作为裁判步骤；旧本地路径回退读取 sprint 文件。
+  if (!ev.contractE2E && adjudicationSteps.length === 0) {
     console.log('[judge] 无合同/Golden Path 证据可独立判读 → 跳过裁判，保留 agent verdict');
     return { verdict: agentVerdict, feedback: agentFeedback || null, judged: false };
   }
@@ -1091,7 +1115,7 @@ export async function runJudgeGate(ctx, opts = {}) {
   try {
     judgeResult = await judgeFn({
       contractE2E: ev.contractE2E,
-      goldenPathSteps: ev.goldenPathSteps,
+      goldenPathSteps: adjudicationSteps,
       agentVerdict,
       transcript: ev.transcript,
       agentStdout: ev.agentStdout,
@@ -1112,7 +1136,7 @@ export async function runJudgeGate(ctx, opts = {}) {
     return { verdict: agentVerdict, feedback: agentFeedback || null, judged: false, judgeError: err.message };
   }
 
-  const cov = validateCoverage(judgeResult.coverage, ev.goldenPathSteps);
+  const cov = validateCoverage(judgeResult.coverage, adjudicationSteps);
   const finalFail = judgeResult.verdict === 'FAIL' || !cov.ok;
 
   await persistJudgeArtifact({
@@ -1126,7 +1150,7 @@ export async function runJudgeGate(ctx, opts = {}) {
       mechanicalGate: mech,
       judge: judgeResult,
       coverageCheck: cov,
-      goldenPathSteps: ev.goldenPathSteps,
+      goldenPathSteps: adjudicationSteps,
       finalVerdict: finalFail ? 'FAIL' : 'PASS',
     },
   }, opts);

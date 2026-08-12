@@ -1,8 +1,8 @@
 /**
  * 照相层账龄哨兵(刀0,spec: docs/superpowers/specs/2026-07-18-registry-photo-layer-revive-design.md)
- * 默认预算 15 分钟；缺时间或 provenance 时 fail-closed 为 unknown。
+ * 默认预算 10 分钟；缺时间或 provenance 时 fail-closed 为 unknown。
  */
-export const PHOTO_STALE_THRESHOLD_HOURS = 15 / 60;
+export const PHOTO_STALE_THRESHOLD_HOURS = 10 / 60;
 export const SNAPSHOT_FUTURE_TOLERANCE_MS = 60_000;
 const GIT_OBJECT_ID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 const SCANNER_VERSION_RE = /^[a-z][a-z0-9-]*-v[1-9][0-9]*$/;

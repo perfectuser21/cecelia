@@ -8,6 +8,7 @@ const SCOPE_KEY_PATTERN = '^[a-z][a-z0-9-]*$';
 const nonEmptyText = z.string().trim().min(1);
 const stableKey = nonEmptyText.regex(new RegExp(STABLE_KEY_PATTERN));
 const aliases = z.array(stableKey);
+const ownedPaths = z.array(nonEmptyText);
 
 const valueStreamSchema = z.object({
   key: stableKey,
@@ -23,6 +24,8 @@ const capabilitySchema = z.object({
   value_stream_key: stableKey,
   order: z.number().int().positive(),
   aliases: aliases.optional(),
+  path_prefixes: ownedPaths.optional(),
+  exact_paths: ownedPaths.optional(),
 }).strict();
 
 const boundarySchema = z.object({
@@ -65,6 +68,11 @@ const manifestSchema = z.object({
 const stableKeyJsonSchema = { type: 'string', minLength: 1, pattern: STABLE_KEY_PATTERN };
 const nonEmptyJsonSchema = { type: 'string', minLength: 1, pattern: '\\S' };
 const aliasesJsonSchema = { type: 'array', items: stableKeyJsonSchema };
+const ownedPathsJsonSchema = {
+  type: 'array',
+  uniqueItems: true,
+  items: { type: 'string', minLength: 1, pattern: '^[A-Za-z0-9_./@+-]+$' },
+};
 
 export const MAP_MANIFEST_JSON_SCHEMA = Object.freeze({
   $schema: 'https://json-schema.org/draft/2020-12/schema',
@@ -101,6 +109,8 @@ export const MAP_MANIFEST_JSON_SCHEMA = Object.freeze({
       properties: {
         key: stableKeyJsonSchema, name: nonEmptyJsonSchema, value_stream_key: stableKeyJsonSchema,
         order: { type: 'integer', minimum: 1 }, aliases: aliasesJsonSchema,
+        path_prefixes: ownedPathsJsonSchema,
+        exact_paths: ownedPathsJsonSchema,
       },
     },
     boundary: {
@@ -290,6 +300,34 @@ function addReferenceErrors(manifest, errors) {
   });
 }
 
+function isSafeOwnedPath(value, { prefix = false } = {}) {
+  if (typeof value !== 'string' || !value || value.startsWith('/') || value.includes('\\')) {
+    return false;
+  }
+  const candidate = prefix && value.endsWith('/') ? value.slice(0, -1) : value;
+  if (!candidate || (!prefix && value.endsWith('/'))) return false;
+  return candidate.split('/').every((segment) => (
+    segment && segment !== '.' && segment !== '..' && !segment.startsWith('-')
+  ));
+}
+
+function addOwnedPathErrors(manifest, errors) {
+  manifest.capabilities.forEach((capability, capabilityIndex) => {
+    for (const [field, prefix] of [['path_prefixes', true], ['exact_paths', false]]) {
+      (Array.isArray(capability[field]) ? capability[field] : []).forEach((value, pathIndex) => {
+        if (!isSafeOwnedPath(value, { prefix })) {
+          pushError(
+            errors,
+            `capabilities.${capabilityIndex}.${field}.${pathIndex}`,
+            'unsafe_owned_path',
+            'Owned paths must be safe repository-relative paths',
+          );
+        }
+      });
+    }
+  });
+}
+
 function boundariesContainCycle(boundaries) {
   const adjacency = new Map();
   for (const { from, to } of boundaries) {
@@ -316,6 +354,7 @@ function semanticErrors(manifest) {
   addUniquePrimaryKeys(manifest, errors);
   addDuplicateOrderErrors(manifest, errors);
   addReferenceErrors(manifest, errors);
+  addOwnedPathErrors(manifest, errors);
 
   if (manifest.shared_prerequisites.applicable === false) {
     if (manifest.shared_prerequisites.items.length > 0) {

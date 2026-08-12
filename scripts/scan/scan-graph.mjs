@@ -6,26 +6,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
 import pg from 'pg';
 import { cruise } from 'dependency-cruiser';
 import { extractSpawnEdges, extractHttpEdges } from '../../packages/brain/src/lib/graph-extract.js';
 import { replaceRepoEdges } from '../../packages/brain/src/lib/graph-store.js';
 import { computeFreshness } from '../../packages/brain/src/lib/registry-freshness.js';
+import { readGitRevision } from '../../packages/brain/src/lib/git-revision.js';
 
 const SCANNER_VERSION = 'graph-v3';
 
-/** 获取指定路径的 git HEAD SHA（失败时返回 null） */
-function readGitRevision(repoRoot) {
-  try {
-    return execSync('git rev-parse HEAD', { cwd: repoRoot, encoding: 'utf8', timeout: 5000 }).trim();
-  } catch {
-    return null;
-  }
-}
-
 // 多仓库清单：每项支持环境变量覆盖
-export const REPOS = [
+const DEFAULT_REPOS = [
   {
     name: 'cecelia',
     root: process.env.REPO_ROOT_CECELIA || '/Users/administrator/perfect21/cecelia',
@@ -39,6 +30,20 @@ export const REPOS = [
     root: process.env.REPO_ROOT_ZJ_SKILLS || '/Users/administrator/perfect21/zenithjoy-skills',
   },
 ];
+export const REPOS = process.env.SCAN_REPO_NAME && process.env.SCAN_REPO_ROOT
+  ? [{ name: process.env.SCAN_REPO_NAME, root: process.env.SCAN_REPO_ROOT }]
+  : DEFAULT_REPOS;
+
+export function selectGraphRepos(repos, rawSelection) {
+  if (rawSelection === undefined) return repos;
+  if (rawSelection.trim() === '') throw new Error('GRAPH_REPOS 不能为空；请提供逗号分隔的仓库名');
+  const names = rawSelection.split(',').map((name) => name.trim());
+  if (names.some((name) => name === '')) throw new Error('GRAPH_REPOS 不能为空；逗号之间必须是仓库名');
+  const byName = new Map(repos.map((repo) => [repo.name, repo]));
+  const unknown = names.filter((name) => !byName.has(name));
+  if (unknown.length > 0) throw new Error(`GRAPH_REPOS 包含未知仓库: ${unknown.join(',')}`);
+  return names.map((name) => byName.get(name));
+}
 
 const FILE_RE = /\.(js|mjs|cjs|ts|tsx)$/;
 // .claude 含 worktrees，扫它会把临时分支代码污染入图谱
@@ -83,8 +88,7 @@ export async function scanRepo(repo, pool) {
   }
 
   try {
-    // 切换到 repo 根目录（dependency-cruiser 需要）
-    process.chdir(repo.root);
+    const sourceRevision = readGitRevision(repo.root);
 
     const edges = [];
 
@@ -98,30 +102,27 @@ export async function scanRepo(repo, pool) {
 
     let importCount = 0;
     // 1) import 边：dependency-cruiser 程序化 API
-    try {
-      const cruiseResult = await cruise(effectiveDirs, {
-        doNotFollow: { path: 'node_modules' },
-        exclude: { path: 'node_modules' },
-      });
-      const out = typeof cruiseResult.output === 'string'
-        ? JSON.parse(cruiseResult.output)
-        : cruiseResult.output;
-      const modules = out.modules || [];
-      for (const m of modules) {
-        if (m.source.includes('node_modules')) continue;
-        for (const d of m.dependencies || []) {
-          const dst = d.resolved || '';
-          if (d.couldNotResolve || !dst || dst.includes('node_modules')) continue;
-          if (d.dependencyTypes && d.dependencyTypes.includes('core')) continue;
-          edges.push({
-            src_path: m.source, dst_path: dst, edge_type: 'import',
-            detail: { via: 'import', dynamic: d.dynamic === true },
-          });
-          importCount++;
-        }
+    const cruiseResult = await cruise(effectiveDirs, {
+      baseDir: repo.root,
+      doNotFollow: { path: 'node_modules' },
+      exclude: { path: 'node_modules' },
+    });
+    const out = typeof cruiseResult.output === 'string'
+      ? JSON.parse(cruiseResult.output)
+      : cruiseResult.output;
+    const modules = out.modules || [];
+    for (const m of modules) {
+      if (m.source.includes('node_modules')) continue;
+      for (const d of m.dependencies || []) {
+        const dst = d.resolved || '';
+        if (d.couldNotResolve || !dst || dst.includes('node_modules')) continue;
+        if (d.dependencyTypes && d.dependencyTypes.includes('core')) continue;
+        edges.push({
+          src_path: m.source, dst_path: dst, edge_type: 'import',
+          detail: { via: 'import', dynamic: d.dynamic === true },
+        });
+        importCount++;
       }
-    } catch (cruiseErr) {
-      console.warn(`WARN: repo=${repo.name} dependency-cruiser 失败: ${cruiseErr.message}`);
     }
 
     // 2) spawn/http 边：walk + 纯抽取器
@@ -153,23 +154,18 @@ export async function scanRepo(repo, pool) {
       return true;
     });
 
-    // 4) 获取 source_revision（刀0：source_revision 必须来自 git SHA，禁止用 mtime）
-    const sourceRevision = readGitRevision(repo.root);
-
-    // 5) 全量替换写库（I-1: BEGIN;DELETE;INSERT;COMMIT），携带 revision 信息
+    // 4) 全量替换写库（I-1: BEGIN;DELETE;INSERT;COMMIT），携带 revision 信息
     const { inserted } = await replaceRepoEdges(pool, repo.name, deduped, {
       sourceRevision,
       scannerVersion: SCANNER_VERSION,
     });
 
-    // 6) per-repo freshness（I-3: 各仓独立查询，禁止跨仓合并）
+    // 5) per-repo freshness（I-3: 各仓独立查询，禁止跨仓合并）
     const { rows: frRows } = await pool.query(
-      `SELECT max(scanned_at) AS latest FROM graph_edges WHERE repo = $1`, [repo.name]
+      `SELECT scanned_at, source_revision, scanner_version, row_count
+         FROM fact_snapshot_headers WHERE kind='graph' AND repo=$1`, [repo.name]
     );
-    // 若仓库成功扫描但无代码边（如纯文档/skills仓库），以扫描完成时刻为 freshness 基准，
-    // 避免 null → computeFreshness → stale=true 误报（该仓库已扫描，只是无代码边）
-    const scanTime = frRows[0]?.latest ?? new Date();
-    const freshness = computeFreshness(scanTime);
+    const freshness = computeFreshness(frRows[0] ?? null);
 
     // 7) 打印每仓摘要
     console.log(
@@ -208,9 +204,10 @@ async function main() {
   let hasError = false;
 
   try {
-    const results = await scanRepoList(REPOS, pool);
+    const selectedRepos = selectGraphRepos(REPOS, process.env.GRAPH_REPOS);
+    const results = await scanRepoList(selectedRepos, pool);
     for (const r of results) {
-      if (r.error) {
+      if (r.skipped || r.error) {
         hasError = true;
       }
     }

@@ -425,14 +425,37 @@ export async function createKernelRun(pool, input) {
       return { created: false, run: active };
     }
 
+    const activeImpactContract = await client.query(
+      `SELECT id
+       FROM harness_impact_contracts
+       WHERE task_id = $1 AND status = 'active'
+       ORDER BY version DESC
+       LIMIT 1`,
+      [input.taskId],
+    );
+    const impactContractRequired = task.payload?.impact_contract_required === true
+      || activeImpactContract.rows.length > 0;
+    const impactContractPolicy = impactContractRequired ? 'required' : 'legacy_exempt';
+    const impactContractPolicyReason = impactContractRequired
+      ? (activeImpactContract.rows.length > 0
+        ? 'active Impact Contract exists before Kernel run creation'
+        : 'task payload requires Impact Contract')
+      : 'MJ5 map/radius dependency is not active for this task';
+    const impactContractPolicyDecisionId = impactContractRequired
+      ? (task.payload?.impact_contract_decision_id ?? '4bc109e9')
+      : 'f69c2f91';
+
     const { rows } = await client.query(
       `INSERT INTO initiative_runs (
          initiative_id, phase, journey_id, orchestrator_version,
          orchestrator_host, deadline_at, ability_id, current_task_id,
-         created_source, record_trust_status, commander_mode, gear
+         created_source, record_trust_status, commander_mode, gear,
+         impact_contract_policy, impact_contract_policy_reason,
+         impact_contract_policy_decision_id
        ) VALUES (
          $1, $2, $3, 'v2', $4,
-         NOW() + ($5 * INTERVAL '1 hour'), $6, $7, $8, $9, $10, $11
+         NOW() + ($5 * INTERVAL '1 hour'), $6, $7, $8, $9, $10, $11,
+         $12, $13, $14
        )
        RETURNING *`,
       [
@@ -448,6 +471,9 @@ export async function createKernelRun(pool, input) {
         commanderMode,
         // gear 缺省写 NULL（= default 语义）；deriveGear 已在 relay 层保证合法枚举/非法 throw。
         input.gear ?? null,
+        impactContractPolicy,
+        impactContractPolicyReason,
+        impactContractPolicyDecisionId,
       ],
     );
     await client.query('COMMIT');
@@ -468,6 +494,7 @@ export async function finalizeKernelRun(pool, {
   requireNoActiveSibling = false,
   outcome,
   reason = null,
+  afterTaskFinalized = null,
 }) {
   if (!['done', 'failed'].includes(outcome)) {
     throw new Error(`invalid Kernel terminal outcome: ${outcome}`);
@@ -576,6 +603,14 @@ export async function finalizeKernelRun(pool, {
           WHERE id = $1`,
         [expectedTaskId, taskOutcome, reason],
       );
+    }
+
+    if (outcome === 'done' && typeof afterTaskFinalized === 'function') {
+      await afterTaskFinalized(client, {
+        runId,
+        taskId: expectedTaskId,
+        outcome,
+      });
     }
 
     const attemptsTerminalized = await terminalizeLockedKernelAttempts(client, {

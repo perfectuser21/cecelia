@@ -315,6 +315,60 @@ describe('production capability probes', () => {
     });
   });
 
+  it('honors an audited manual dispatch when role-weighted slots round to zero', async () => {
+    const createProductionCapabilityProbes = await loadFactory();
+    const productionProbes = createProductionCapabilityProbes({
+      pool: { query: vi.fn() },
+      registry: { get: vi.fn() },
+      fetchFn: vi.fn(async () => response({
+        fleet: [{
+          id: 'us-mac-m4',
+          online: true,
+          effective_slots: 1,
+          physical_capacity: 2,
+          pressure: 0.27,
+        }],
+      })),
+      env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
+      nodeAdmissionClient: {
+        getAdmission: vi.fn(async () => ({
+          state: 'base_admitted',
+          base_admitted: true,
+          dispatch_ready: true,
+          reasons: [],
+        })),
+      },
+    });
+    const gate = createCapabilityGate({
+      ...productionProbes,
+      probeTimeoutMs: 100,
+    });
+
+    await expect(gate.evaluate({
+      preferred_target: {
+        provider: 'claude',
+        account: 'account1',
+        machine: 'us-mac-m4',
+      },
+      requirements: {},
+      task_bundle: {
+        role: 'evaluator',
+        logical_cycle: 'manual-dispatch-capacity',
+        inputs: { manual_dispatch: true },
+      },
+    })).resolves.toMatchObject({
+      status: 'ok',
+      evidence: {
+        machine_capacity: {
+          available: 1,
+          physical_capacity: 1,
+          manual_capacity_override: true,
+          role_weight: 4,
+        },
+      },
+    });
+  });
+
   it('fails closed on missing canonical identity and GitHub rejection without leaking token', async () => {
     const createProductionCapabilityProbes = await loadFactory();
     const fetchFn = vi.fn(async (url, options) => {
