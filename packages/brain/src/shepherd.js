@@ -355,7 +355,10 @@ export function _resetReconcileGateForTesting() {
 export async function reconcileTerminalOpenPRs(pool, opts = {}) {
   // Fix B: 低频 gate — 生产约 78 候选，每次串行 30s×20 会拖垮 tick
   const budgetMs = opts.budget_ms ?? RECONCILE_DEFAULT_BUDGET_MS;
-  const batchLimit = opts.batch_limit ?? RECONCILE_BATCH_LIMIT;
+  const requestedBatchLimit = opts.batch_limit ?? RECONCILE_BATCH_LIMIT;
+  const batchLimit = Number.isInteger(requestedBatchLimit) && requestedBatchLimit > 0
+    ? Math.min(requestedBatchLimit, 100)
+    : RECONCILE_BATCH_LIMIT;
   // I4: 注入时钟函数（测试用）或使用真实 Date.now()
   const _elapsedMsFn = opts._elapsedMsFn || null;
 
@@ -393,7 +396,13 @@ export async function reconcileTerminalOpenPRs(pool, opts = {}) {
           AND pr_status IN ('open', 'ci_pending', 'ci_passed')
           AND pr_merged_at IS NULL
           AND COALESCE(payload->>'harness_mode', 'false') NOT IN ('true', 't')
-        ORDER BY COALESCE((payload->>'last_reconcile_checked_at')::timestamptz, to_timestamp(0)) ASC
+        ORDER BY CASE
+          WHEN COALESCE(payload->>'last_reconcile_checked_at', '')
+            ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
+          THEN payload->>'last_reconcile_checked_at'
+          ELSE ''
+        END ASC,
+        id ASC
         LIMIT ${batchLimit}
       `);
       rows = queryResult.rows;

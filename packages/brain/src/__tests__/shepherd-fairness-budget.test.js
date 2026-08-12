@@ -342,4 +342,46 @@ describe('[I4] reconcileTerminalOpenPRs — spawn timeout=min(perCallCap, remain
     expect(capturedTimeouts[0]).not.toBe(30000);
     expect(capturedTimeouts[0]).toBeLessThanOrEqual(25000);
   });
+
+  it('[I4-5] remaining 大于 30 秒时，单次调用仍封顶 30000ms', async () => {
+    vi.mocked(spawnSync).mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify({ state: 'OPEN' }),
+      stderr: '',
+    });
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (/FROM tasks/i.test(sql) && !/UPDATE/i.test(sql)) {
+          return { rows: [{ id: 'task-cap', title: 'cap', pr_url: VALID_PR_URL, pr_status: 'open', payload: {} }] };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+
+    await reconcileTerminalOpenPRs(pool, { budget_ms: 60000, _elapsedMsFn: () => 0 });
+
+    expect(vi.mocked(spawnSync).mock.calls[0][2].timeout).toBe(30000);
+  });
+
+  it('[I4-6] spawn 超时 status=null 时 fail closed，并计入 errors', async () => {
+    const timeoutError = Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
+    vi.mocked(spawnSync).mockReturnValue({
+      status: null,
+      stdout: '',
+      stderr: '',
+      error: timeoutError,
+    });
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (/FROM tasks/i.test(sql) && !/UPDATE/i.test(sql)) {
+          return { rows: [{ id: 'task-timeout', title: 'timeout', pr_url: VALID_PR_URL, pr_status: 'open', payload: {} }] };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+
+    const result = await reconcileTerminalOpenPRs(pool, { budget_ms: 5000, _elapsedMsFn: () => 0 });
+
+    expect(result).toMatchObject({ processed: 1, reconciled: 0, errors: 1 });
+  });
 });
