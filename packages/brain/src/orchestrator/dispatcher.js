@@ -406,6 +406,9 @@ function enforceBundleSizeLimit(bundle) {
 
   const finalBytes = bundleByteLength(trimmedBundle);
   if (finalBytes > HARNESS_BUNDLE_MAX_BYTES) {
+    if ((trimmedBundle.inputs?.contract_artifacts?.length ?? 0) > 0) {
+      throw new Error(`FROZEN_CONTRACT_ARTIFACT_SIZE_LIMIT:task_bundle:${finalBytes}`);
+    }
     console.warn(
       `[dispatcher] TaskBundle exceeds ${HARNESS_BUNDLE_MAX_BYTES} bytes after trimming `
       + `case_file feedback_md (run_id=${trimmedBundle.run_id} attempt_id=${trimmedBundle.attempt_id} `
@@ -794,7 +797,23 @@ export function createDispatcher(deps) {
       accountHome = resolveAccountHome(adapter.name, selectedAccount);
     }
 
-    bundle = enforceBundleSizeLimit(bundle);
+    try {
+      bundle = enforceBundleSizeLimit(bundle);
+    } catch (error) {
+      const code = String(error?.message ?? '').split(':', 1)[0];
+      if (code.startsWith('FROZEN_CONTRACT_ARTIFACT')) {
+        return {
+          status: 'DONE_WITH_CONCERNS',
+          control_status: 'BLOCKED',
+          detail: error.message,
+          failure_class: 'assembly_fault',
+          fallback_reason: code,
+          should_create_attempt: false,
+          should_enter_generator_fix: false,
+        };
+      }
+      throw error;
+    }
 
     const persisted = await deps.attemptStore.createAttempt({
       id: attemptId,

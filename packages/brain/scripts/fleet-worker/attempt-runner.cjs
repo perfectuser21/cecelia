@@ -1157,16 +1157,46 @@ function validateContractArtifacts(value) {
 }
 
 function materializeContractArtifacts(workspacePath, artifacts) {
+  if (artifacts.length === 0) return;
+  const workspaceRoot = fs.realpathSync(workspacePath);
   for (const artifact of artifacts) {
-    const destination = path.resolve(workspacePath, artifact.path);
-    const workspacePrefix = `${path.resolve(workspacePath)}${path.sep}`;
+    const destination = path.resolve(workspaceRoot, artifact.path);
+    const workspacePrefix = `${workspaceRoot}${path.sep}`;
     if (!destination.startsWith(workspacePrefix)) {
       throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:path_escape');
     }
+    let writeFd = null;
+    let readFd = null;
     try {
-      fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
-      fs.writeFileSync(destination, artifact.content, { encoding: 'utf8', mode: 0o600 });
-      const written = fs.readFileSync(destination, 'utf8');
+      let current = workspaceRoot;
+      for (const segment of path.dirname(artifact.path).split('/')) {
+        current = path.join(current, segment);
+        let stat;
+        try {
+          stat = fs.lstatSync(current);
+        } catch (error) {
+          if (error?.code !== 'ENOENT') throw error;
+          fs.mkdirSync(current, { mode: 0o700 });
+          stat = fs.lstatSync(current);
+        }
+        if (stat.isSymbolicLink() || !stat.isDirectory()) {
+          throw new Error('symlink_or_non_directory_parent');
+        }
+      }
+      const noFollow = fs.constants.O_NOFOLLOW ?? 0;
+      writeFd = fs.openSync(
+        destination,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | noFollow,
+        0o600,
+      );
+      fs.writeFileSync(writeFd, artifact.content, { encoding: 'utf8' });
+      fs.fsyncSync(writeFd);
+      fs.closeSync(writeFd);
+      writeFd = null;
+      readFd = fs.openSync(destination, fs.constants.O_RDONLY | noFollow);
+      const written = fs.readFileSync(readFd, 'utf8');
+      fs.closeSync(readFd);
+      readFd = null;
       const digest = crypto.createHash('sha256').update(written, 'utf8').digest('hex');
       if (digest !== artifact.sha256 || Buffer.byteLength(written, 'utf8') !== artifact.byte_length) {
         throw new Error('post_write_integrity');
@@ -1175,6 +1205,9 @@ function materializeContractArtifacts(workspacePath, artifacts) {
       throw new Error(`FROZEN_CONTRACT_ARTIFACT_MATERIALIZATION_FAILED:${artifact.path}`, {
         cause: error,
       });
+    } finally {
+      if (writeFd != null) fs.closeSync(writeFd);
+      if (readFd != null) fs.closeSync(readFd);
     }
   }
 }

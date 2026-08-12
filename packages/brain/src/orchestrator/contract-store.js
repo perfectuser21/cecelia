@@ -1,3 +1,5 @@
+import { validateContractArtifacts } from './contract-artifacts.js';
+
 /**
  * Atomically freeze an approved Git contract into DB and attach it to its run.
  * Git remains the source artifact; this row is the durable gate snapshot used by
@@ -123,4 +125,3 @@ export async function materializeApprovedContract(db, {
   }
   return rows[0];
 }
-import { validateContractArtifacts } from './contract-artifacts.js';
