@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## Notes
 
@@ -7,7 +7,7 @@
 - gp-anchor: skipped (product-map.json not found)
 - Unified Map：scope=`cecelia`，repo=`perfectuser21/cecelia`；查询时 freshness=`fresh`，fact revision=`d4956f25993a2e389d9b06f3e807b15df7f2b268`。任务未声明 expected_files，radius 返回无 `must_run_assertions`，因此没有额外 Map 回归断言；不得用领域硬编码补造。
 - 本合同只 late-bind 执行身份：Evaluator/Judge 证据分别读取 Runner 注入的 `HARNESS_ATTEMPT_ID`、`HARNESS_PROVIDER`、`HARNESS_ACCOUNT`、`HARNESS_MACHINE`、`HARNESS_MODEL`、`HARNESS_RUNNER_DIGEST`、`CAPABILITY_SNAPSHOT_ID`；各角色保留各自 provenance，并以 SHA-256 串联证据，禁止共用起草角色身份。
-- Round 1 案卷修订：Recovery 测试改为调用真实 `ensureHarnessWorktree` 并驱动真临时 Git remote；新增逐切片 TDD 历史验证器；Final E2E 在任何业务测试前对 attempt 空库运行仓库真实 migration 并机检目标表。
+- Round 2 案卷修订：冻结 checkout 现已永久包含 `tests/unified-work-router-contract.test.ts`；本轮实跑该文件得到 6 failed / 1 passed 的真实 RED。TDD 账本的七行均改为可从仓库根目录直接复制执行的完整命令，历史验证器必须逐 SHA 使用这些精确命令复跑。
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -91,15 +91,15 @@ Generator 必须按下列顺序为每个切片永久保留一对独立提交；�
 
 | 切片 | RED commit subject | GREEN commit subject | 必须复跑的测试 |
 |---|---|---|---|
-| Recovery | `test(brain): reproduce harness worktree recovery failures` | `fix(brain): protect active harness worktrees and redact origins` | `src/__tests__/harness-worktree-recovery.test.js` |
-| Knife 0-1 | `test(brain): define unified work routing contracts` | `feat(brain): add transactional unified work router` | Router、migration 411、真 PG store 测试组 |
-| Knife 2 | `test(brain): expose legacy task creation routing defects` | `refactor(brain): route all executable task creation through one boundary` | inventory、entrypoints、capture 测试组 |
-| Knife 3 | `test(brain): require map governed harness preflight` | `feat(brain): enforce map governed four-form harness runs` | change-kind、Map preflight、recovery contract 测试组 |
-| Knife 4 headed | `test(engine): require routing receipt before mutation` | `feat(engine): enforce routing receipt at mutation time` | `dev-mode-routing-receipt-guard.test.sh` |
-| Knife 4 headless | `test(harness): expose generator and dispatcher trust gaps` | `feat(harness): gate headless coding and generator capabilities` | dispatcher 与 runner trust-boundary 测试组 |
-| Knife 5 | `test(brain): define unified router scratch acceptance` | `feat(cecelia): enforce unified work routing across all coding` | scratch smoke、observability、WarRoom 测试组 |
+| Recovery | `test(brain): reproduce harness worktree recovery failures` | `fix(brain): protect active harness worktrees and redact origins` | `npx vitest run sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts -t 'Unified Work Router Recovery RED' --reporter=verbose` |
+| Knife 0-1 | `test(brain): define unified work routing contracts` | `feat(brain): add transactional unified work router` | `cd packages/brain && DB_URL="$DB_URL" npx vitest run src/__tests__/work-router.test.js src/__tests__/work-routing-entry.test.js src/__tests__/migration-411-work-routing.test.js src/__tests__/integration/work-routing-store.integration.test.js --reporter=verbose` |
+| Knife 2 | `test(brain): expose legacy task creation routing defects` | `refactor(brain): route all executable task creation through one boundary` | `cd packages/brain && npx vitest run src/__tests__/task-creation-inventory.test.js src/__tests__/work-router-entrypoints.test.js src/routes/__tests__/capture-atoms-routing.test.js --reporter=verbose` |
+| Knife 3 | `test(brain): require map governed harness preflight` | `feat(brain): enforce map governed four-form harness runs` | `cd packages/brain && DB_URL="$DB_URL" BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 npx vitest run src/orchestrator/__tests__/change-kind-profiles.test.js src/orchestrator/preflight/map-impact-contract.test.js src/orchestrator/__tests__/map-recovery-contract.test.js --reporter=verbose` |
+| Knife 4 headed | `test(engine): require routing receipt before mutation` | `feat(engine): enforce routing receipt at mutation time` | `bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh` |
+| Knife 4 headless | `test(harness): expose generator and dispatcher trust gaps` | `feat(harness): gate headless coding and generator capabilities` | `cd packages/brain && npx vitest run src/orchestrator/__tests__/dispatcher-routing-receipt.test.js --reporter=verbose && cd ../.. && bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh` |
+| Knife 5 | `test(brain): define unified router scratch acceptance` | `feat(cecelia): enforce unified work routing across all coding` | `DB_URL="$DB_URL" BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 bash packages/brain/scripts/smoke/unified-work-router-smoke.sh && cd packages/brain && npx vitest run src/__tests__/work-routing-observability.test.js --reporter=verbose` |
 
-验证命令：`node packages/brain/scripts/verify-unified-work-router-tdd-history.mjs 310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 HEAD`。硬阈值：7/7 对均存在；每对 `merge-base --is-ancestor RED GREEN` 为真；每个 RED checkout 对应测试 exit≠0；每个 GREEN checkout同一测试 exit=0；任何缺失、顺序反转或仅 subject 匹配均 exit 1。
+验证命令：`node packages/brain/scripts/verify-unified-work-router-tdd-history.mjs 310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 HEAD`。验证器须把表中命令作为精确 argv/shell command 合同，在隔离临时 worktree 中逐 SHA 执行；需要 PostgreSQL 的行使用同一 attempt-scoped `DB_URL`。硬阈值：7/7 对均存在；每对 `merge-base --is-ancestor RED GREEN` 为真；每个 RED checkout 对应完整命令 exit≠0；每个 GREEN checkout 同一完整命令 exit=0；任何缺失、顺序反转、命令缺省或仅 subject 匹配均 exit 1。
 
 ## Golden Path
 
