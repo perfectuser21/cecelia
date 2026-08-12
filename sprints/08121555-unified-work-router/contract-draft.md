@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -37,7 +37,7 @@ cd packages/brain && npx vitest run src/orchestrator/__tests__/kernel-workspace-
 ```
 **硬阈值**: 三项永久回归全部通过，日志中 token/userinfo 命中数为 0；验证命令 exit 0。
 
-**RED 合同**: `tests/unified-work-router-contract.test.ts` 必须同时创建真实 bare remote、credential-bearing origin 与 detached worktree，并以 active `initiative_runs`/attempt 绑定调用 `ensureHarnessWorktree()` 两次；在修复前至少因 canonicalizer 缺失、凭据日志泄露或 active cwd 被删除之一失败。仅测试 URL 字符串转换不算本步骤 RED。
+**RED 合同**: `tests/unified-work-router-contract.test.ts` 必须创建带首个 commit 的真实 bare remote，再从它 clone 真实 detached workspace；将 workspace 的 `origin` 改成带 userinfo credential 的同仓库 URL，并把该 cwd 通过真实 `initiative_runs.workspace_path`、`status='running'` 与 active attempt 绑定。测试须调用生产 `ensureHarnessWorktree()`/orphan cleanup 两次，并逐次断言：canonical origin 与无凭据 origin 相等、workspace 内 sentinel 与 `.git` 仍存在、cleanup 删除计数为 0、收集到的全部日志不含 username/token/原始 credential-bearing URL。缺任一行为断言不算 Recovery Addendum 的 RED；仅测字符串 helper、静态文件存在或手写 marker 均不算 RED。
 
 ### Step 1: 统一分类并原子写入 receipt
 **来源**: `[FROM_PRD]` — PRD「Knife 0-1」与数据合同。
@@ -72,7 +72,7 @@ cd packages/brain && npx vitest run src/orchestrator/__tests__/change-kind-profi
 ```
 **硬阈值**: missing/stale/revision mismatch/scanner invalid/cross-repo 在 Provider attempt 创建前全部稳定失败；新 coding run 的 `legacy_exempt` 数为 0；命令 exit 0。
 
-**冻结 baseline 机检**: 本 Sprint 的唯一 baseline 是 `a9f612148e227df9fcd1481f9b39d38dd40f791f`；Map `source_revision`、Routing Receipt `base_sha`、workspace spec `base_sha` 与 Impact Contract baseline 必须逐字相等，任一不等在 Provider attempt 创建前返回非零并记录稳定 `reason_code=map_revision_mismatch`。
+**冻结 baseline 机检**: PRD NFR 冻结的实现/验收 baseline 是 `310ab9e704d4e3f866e6ce7beb25b79dd0f9d524`；task bundle 的 `workspace_spec.base_sha=a9f612148e227df9fcd1481f9b39d38dd40f791f` 仅是本轮合同起草 workspace 的 authoring base，不得冒充 Generator frozen baseline。Generator workspace HEAD、Map `source_revision`、Routing Receipt `base_sha` 与 Impact Contract baseline 必须逐字等于 `310ab9e704d4e3f866e6ce7beb25b79dd0f9d524`，任一不等在 Provider attempt 创建前返回非零并记录稳定 `reason_code=map_revision_mismatch`。
 
 ### Step 4: 有头与无头动作前安全闸
 **来源**: `[FROM_PRD]` — PRD「Golden Path 5」「Knife 4」。
@@ -201,8 +201,8 @@ export DATABASE_URL="$DB_URL"
 # 本 attempt 空库先跑仓库真实 migration，并机检本 Sprint 依赖的业务表；禁止依赖 Fleet 预置 schema。
 (cd packages/brain && DATABASE_URL="$DB_URL" node src/migrate.js)
 psql "$DB_URL" -tAc "SELECT to_regclass('public.tasks') IS NOT NULL AND to_regclass('public.initiative_runs') IS NOT NULL AND to_regclass('public.work_routing_receipts') IS NOT NULL" | grep -qx t
-BASELINE_SHA='a9f612148e227df9fcd1481f9b39d38dd40f791f'
-test "$(git rev-parse "$BASELINE_SHA^{commit}")" = "$BASELINE_SHA"
+BASELINE_SHA='310ab9e704d4e3f866e6ce7beb25b79dd0f9d524'
+test "$(git rev-parse HEAD)" = "$BASELINE_SHA"
 node scripts/facts-check.mjs
 bash scripts/check-version-sync.sh
 node packages/quality/scripts/devgate/check-dod-mapping.cjs

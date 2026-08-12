@@ -17,8 +17,8 @@ gate-allow: domain/db-no-time-window `SELECT current_database()` 仅校验 Fleet
 ## BEHAVIOR 条目
 
 - [ ] [BEHAVIOR] [L2] B-00: credential-bearing origin 归一化且日志脱敏，active workspace 不被误删 [接缝×2]
-  动作: 用真实临时 bare remote 创建含 userinfo 与无 userinfo 两种 origin，并把 detached worktree 绑定 active initiative_runs/attempt 后调用 ensureHarnessWorktree 两次
-  预期观察: 两种 origin 判为同仓库，日志无 userinfo/token，active worktree 两次均存在
+  动作: 用带首个 commit 的真实 bare remote clone detached workspace，将 origin 改成 credential-bearing 同仓库 URL，以真实 initiative_runs.workspace_path/status/attempt 绑定后调用生产 ensureHarnessWorktree/orphan cleanup 两次
+  预期观察: 两种 origin canonical key 相等；两轮 cleanup 删除数均为 0；workspace 的 .git 与 sentinel 均保留；全部日志不含 username、token 或原始 credential-bearing URL
   等待预算: 20s
   留证: Vitest verbose 输出与脱敏日志
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/__tests__/kernel-workspace-recovery.test.js --reporter=verbose'
@@ -52,11 +52,11 @@ gate-allow: domain/db-no-time-window `SELECT current_database()` 仅校验 Fleet
   Test: manual:bash -c ': "${DB_URL:?}"; cd packages/brain && DATABASE_URL="$DB_URL" npx vitest run src/orchestrator/preflight/map-impact-contract.test.js src/orchestrator/__tests__/map-recovery-contract.test.js --reporter=verbose'
 
 - [ ] [BEHAVIOR] [L2] B-04A: Map revision 与冻结 baseline SHA 逐字一致
-  动作: 以固定 baseline a9f612148e227df9fcd1481f9b39d38dd40f791f 分别提交同 revision 与 mismatch revision 的 Map preflight
+  动作: 以 PRD NFR 固定 baseline 310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 分别提交同 revision 与 mismatch revision 的 Map preflight，并拒绝把 authoring workspace base a9f612148e227df9fcd1481f9b39d38dd40f791f 当作 Generator baseline
   预期观察: 同 revision 进入 Structure Gate；mismatch 在 Provider 前以 map_revision_mismatch 失败
   等待预算: 20s
   留证: preflight 日志中的 baseline、source_revision、reason_code 与 provider_attempt_created=false
-  Test: manual:bash -c 'BASE=a9f612148e227df9fcd1481f9b39d38dd40f791f; test "$(git rev-parse "$BASE^{commit}")" = "$BASE"; cd packages/brain && BASELINE_SHA="$BASE" npx vitest run src/orchestrator/preflight/map-impact-contract.test.js -t "冻结 baseline SHA 与 Map revision 一致" --reporter=verbose'
+  Test: manual:bash -c 'BASE=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524; AUTHORING_BASE=a9f612148e227df9fcd1481f9b39d38dd40f791f; test "$BASE" != "$AUTHORING_BASE"; test "${HARNESS_FROZEN_BASE_SHA:?}" = "$BASE"; test "$(git rev-parse HEAD)" = "$BASE"; cd packages/brain && BASELINE_SHA="$BASE" npx vitest run src/orchestrator/preflight/map-impact-contract.test.js -t "冻结 baseline SHA 与 Map revision 一致" --reporter=verbose'
 
 - [ ] [BEHAVIOR] [L2] B-05: 有头与无头 mutation 在动作前验证同一 receipt [接缝×2]
   动作: 真实临时 worktree 运行 hook，并让 Dispatcher 分别消费合法、缺失、过期、superseded、repo/HEAD 不匹配 receipt
@@ -70,14 +70,14 @@ gate-allow: domain/db-no-time-window `SELECT current_database()` 仅校验 Fleet
   预期观察: 容器内 push 被熔断，Provider UID 非 0 且 capabilities 为空，敏感环境不可见，真实 hook 路径触发，lineage mismatch 非零，Judge 前 transport 不发布
   等待预算: 180s
   留证: docker build/run 输出、容器内 UID/capability/env/hook/push exit 与镜像 digest
-  Test: manual:bash -c ': "${DB_URL:?}"; BASE=a9f612148e227df9fcd1481f9b39d38dd40f791f; DB_URL="$DB_URL" BASELINE_SHA="$BASE" bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.container.test.sh'
+  Test: manual:bash -c ': "${DB_URL:?}"; BASE=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524; DB_URL="$DB_URL" BASELINE_SHA="$BASE" bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.container.test.sh'
 
 - [ ] [BEHAVIOR] [L2] B-07: scratch 三入口与三对照完成真实出口验收 [接缝×2]
   动作: 在 scratch DB 从 API、Intent、Capture 创建 coding，并创建 content、research、read-only 对照，执行 stale→refresh→resume 与可信 transport 路径
   预期观察: 三个 coding 均有 receipt/Harness/正确 Map/Impact Contract；对照路由正确；覆盖率 100%，coding dev 与 legacy_exempt 新增均为 0
   等待预算: 180s
   留证: smoke 日志与带五分钟时间窗的 DB 查询结果
-  Test: manual:bash -c ': "${DB_URL:?}"; N=$(psql "$DB_URL" -tAc "select current_database()"); [[ "$N" == cecelia_test || "$N" == *_scratch ]] || exit 1; (cd packages/brain && DATABASE_URL="$DB_URL" node src/migrate.js); psql "$DB_URL" -tAc "SELECT to_regclass('"'"'public.tasks'"'"') IS NOT NULL AND to_regclass('"'"'public.initiative_runs'"'"') IS NOT NULL AND to_regclass('"'"'public.work_routing_receipts'"'"') IS NOT NULL" | grep -qx t; BASELINE_SHA=a9f612148e227df9fcd1481f9b39d38dd40f791f DB_URL="$DB_URL" bash packages/brain/scripts/smoke/unified-work-router-smoke.sh'
+  Test: manual:bash -c ': "${DB_URL:?}"; N=$(psql "$DB_URL" -tAc "select current_database()"); [[ "$N" == cecelia_test || "$N" == *_scratch ]] || exit 1; (cd packages/brain && DATABASE_URL="$DB_URL" node src/migrate.js); psql "$DB_URL" -tAc "SELECT to_regclass('"'"'public.tasks'"'"') IS NOT NULL AND to_regclass('"'"'public.initiative_runs'"'"') IS NOT NULL AND to_regclass('"'"'public.work_routing_receipts'"'"') IS NOT NULL" | grep -qx t; BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 DB_URL="$DB_URL" bash packages/brain/scripts/smoke/unified-work-router-smoke.sh'
 
 ## Invariant 覆盖
 
@@ -107,4 +107,4 @@ gate-allow: domain/db-no-time-window `SELECT current_database()` 仅校验 Fleet
   预期观察: 每项实现前有 RED commit；无越权共享 CI 修改；Generator 无发布能力；validation clock fail closed
   等待预算: 90s
   留证: git commit 拓扑、runner 与 CI policy 输出
-  Test: manual:bash -c ': "${DB_URL:?}"; DB_URL="$DB_URL" BASELINE_SHA=a9f612148e227df9fcd1481f9b39d38dd40f791f bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.container.test.sh; git log --format=%s -- sprints/08121555-unified-work-router/tests packages/brain/src | grep -q "^test"'
+  Test: manual:bash -c ': "${DB_URL:?}"; DB_URL="$DB_URL" BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.container.test.sh; git log --format=%s -- sprints/08121555-unified-work-router/tests packages/brain/src | grep -q "^test"'
