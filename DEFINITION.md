@@ -18,6 +18,8 @@
 
 - Kernel 从精确 approved SHA 冻结完整合同测试资产，通过不可变数据库行进入 TaskBundle。
 - Fleet Runner 在 Provider 启动前验证路径、摘要、长度与 source revision，物化后回读校验。
+- 确定性 assembly/Impact 错误不再误入人审或无限重试；Harness watchdog 启动即扫描。
+- Impact Contract 对 schema 解析结果计算稳定 hash，空扩展字段不再触发伪换版。
 - Schema 地板推进到 411。
 
 ## Brain 1.272.25 — Impact Gate fresh 证据规范化

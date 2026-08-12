@@ -307,6 +307,25 @@ function attemptCallbackRoute(observed) {
   if (!row) return null;
   const detail = callbackDetail(row);
   const { status, failure_class: failureClass, role } = detail;
+  const assemblyFailureReasons = new Map([
+    ['FROZEN_CONTRACT_ARTIFACTS_MISSING', 'frozen_contract_artifacts_missing'],
+    ['FROZEN_CONTRACT_ARTIFACT_INVALID', 'frozen_contract_artifact_invalid'],
+    [
+      'FROZEN_CONTRACT_ARTIFACT_MATERIALIZATION_FAILED',
+      'frozen_contract_artifact_materialization_failed',
+    ],
+  ]);
+  const assemblyFailureReason = assemblyFailureReasons.get(
+    String(detail.error_code ?? '').toUpperCase(),
+  );
+
+  if (assemblyFailureReason) {
+    return {
+      phase: 'failed',
+      action: ACTION.MARK_FAILED,
+      reason: assemblyFailureReason,
+    };
+  }
 
   if (status === 'needs_context') {
     return {

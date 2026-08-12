@@ -566,15 +566,32 @@ export function createDispatcher(deps) {
         : (action === 'spawn:generator-fix' ? 'fix' : 'initial'),
       workstreamKey: payload.workstream_index ?? payload.workstream_key ?? 'ws1',
     };
-    let bundle = buildBundle(
-      action,
-      spec,
-      ctx,
-      attemptId,
-      skill,
-      attemptMetadata,
-      { deferWorkspaceValidation: typeof deps.resolveWorkspaceSpec === 'function' },
-    );
+    let bundle;
+    try {
+      bundle = buildBundle(
+        action,
+        spec,
+        ctx,
+        attemptId,
+        skill,
+        attemptMetadata,
+        { deferWorkspaceValidation: typeof deps.resolveWorkspaceSpec === 'function' },
+      );
+    } catch (error) {
+      const code = String(error?.message ?? '').split(':', 1)[0];
+      if (code.startsWith('FROZEN_CONTRACT_ARTIFACT')) {
+        return {
+          status: 'DONE_WITH_CONCERNS',
+          control_status: 'BLOCKED',
+          detail: error.message,
+          failure_class: 'assembly_fault',
+          fallback_reason: code,
+          should_create_attempt: false,
+          should_enter_generator_fix: false,
+        };
+      }
+      throw error;
+    }
     if (typeof deps.resolveWorkspaceSpec === 'function') {
       const workspaceSpec = await deps.resolveWorkspaceSpec({
         action,

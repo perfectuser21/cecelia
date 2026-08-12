@@ -6,6 +6,8 @@
 
 - Kernel 从精确 approved SHA 冻结 PRD、合同、DoD、task-plan 与 tests，并原子持久化到不可变合同资产表。
 - TaskBundle 携带路径、SHA-256、UTF-8 字节数和 source revision；Fleet Runner 在 Provider 启动前校验、物化并回读验证。
+- 合同资产与 Impact schema 确定性错误保留原错误码并一次收尾；watchdog 在 Brain 启动时立即执行受 lease/CAS 保护的恢复扫描。
+- Impact Contract 先按 schema 规范化再计算 hash，空的非 schema 字段不再制造伪版本。
 - Schema 地板推进到 411。
 
 ## Blue-green internal auth credential closure

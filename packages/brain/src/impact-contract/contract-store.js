@@ -105,13 +105,14 @@ export async function persistImpactContract(db, input) {
     err.issues = validation.success ? [] : validation.error.issues;
     throw err;
   }
-  if (!hasTrustedImpactAssertions(contract_body)) {
+  const canonicalContractBody = validation.data;
+  if (!hasTrustedImpactAssertions(canonicalContractBody)) {
     const err = new Error('Impact Contract assertion command 不是 Mapper 权威机械派生值');
     err.code = 'impact_assertion_authority_invalid';
     throw err;
   }
 
-  const contract_hash = computeContractHash(contract_body);
+  const contract_hash = computeContractHash(canonicalContractBody);
 
   // 使用事务（若 db 为 Pool，先 connect；若为 Client 则直接用）
   const isPool = typeof db.connect === 'function' && typeof db.query === 'function' && db.constructor?.name !== 'Client';
@@ -196,7 +197,7 @@ export async function persistImpactContract(db, input) {
         manifest_digest,
         projection_digest,
         contract_hash,
-        JSON.stringify(contract_body),
+        JSON.stringify(canonicalContractBody),
         activeId,
       ]
     );

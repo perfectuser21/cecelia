@@ -80,6 +80,13 @@ function asPayload(value) {
 }
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
+const DETERMINISTIC_IMPACT_ERROR_CODES = new Set([
+  'impact_contract_schema_invalid',
+  'impact_assertion_authority_invalid',
+  'mapper_evidence_invalid',
+  'mapper_evidence_missing',
+  'task_not_found',
+]);
 function allowsVerifiedExistingPrEvaluatorOrigin(observed, action) {
   if (action !== ACTION.SPAWN_EVALUATOR || observed.gear !== 'hotfix') return false;
   if (observed.generatorSpawned === true) return false;
@@ -1349,11 +1356,16 @@ export async function runLoop(
               retryable: true,
             };
       } catch (error) {
+        const errorCode = String(error?.code ?? 'impact_gate_error');
+        const deterministic = DETERMINISTIC_IMPACT_ERROR_CODES.has(errorCode);
         impactGateReceipt = {
           stage: impactGateMethod,
           gate: 'blocked',
-          reason: 'impact_gate_error',
-          retryable: true,
+          reason: deterministic ? errorCode : 'impact_gate_error',
+          retryable: !deterministic,
+          failure_class: deterministic
+            ? 'impact_contract_invalid'
+            : 'infrastructure_blocked',
           error: sanitizeDiagnostic(error?.message ?? String(error)),
         };
       }
@@ -1437,7 +1449,10 @@ export async function runLoop(
           failure_class: impactGateReceipt?.reason === 'CONTRACT_IMPACT_DRIFT'
             || impactGateReceipt?.reason === 'gap_dependencies'
             ? 'gap_dependencies'
-            : 'infrastructure_blocked',
+            : impactGateReceipt?.retryable === false
+              ? 'impact_contract_invalid'
+              : 'infrastructure_blocked',
+          fallback_reason: impactGateReceipt?.reason ?? null,
           evidence: impactGateReceipt,
         }
       : await deps.dispatch(decision.action, {
@@ -1546,6 +1561,26 @@ export async function runLoop(
 
     if (controlStatus === 'NEEDS_CONTEXT' || controlStatus === 'BLOCKED') {
       const failureClass = result.failure_class ?? null;
+      if (controlStatus === 'BLOCKED' && failureClass === 'assembly_fault') {
+        const reason = result.fallback_reason ?? 'FROZEN_CONTRACT_ARTIFACT_INVALID';
+        await markRunFailed(
+          deps,
+          resolvedRunId,
+          taskId,
+          `assembly_fault:${reason}`,
+        );
+        return { exitReason: 'assembly_fault', hops };
+      }
+      if (controlStatus === 'BLOCKED' && failureClass === 'impact_contract_invalid') {
+        const reason = result.fallback_reason ?? 'impact_gate_error';
+        await markRunFailed(
+          deps,
+          resolvedRunId,
+          taskId,
+          `impact_gate_deterministic:${reason}`,
+        );
+        return { exitReason: 'impact_gate_deterministic', hops };
+      }
       if (controlStatus === 'BLOCKED' && ['infrastructure_blocked', 'gap_dependencies'].includes(failureClass)) {
         log(
           `[orchestrator] hop ${hop} ${decision.action} → BLOCKED `
