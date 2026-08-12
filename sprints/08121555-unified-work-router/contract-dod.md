@@ -16,8 +16,8 @@ gate-allow: env-missing/docker 该命中来自仓库目录名 `docker/cecelia-ru
   Test: node -e "for(const p of ['packages/brain/src/work-router.js','packages/brain/src/work-routing-store.js','packages/brain/src/routes/work-routing.js','packages/brain/migrations/411_work_routing_receipts.sql','packages/brain/src/task-creation-inventory.js','packages/brain/scripts/smoke/unified-work-router-smoke.sh'])require('fs').accessSync(p)"
 - [ ] [ARTIFACT] Brain 版本与 DEFINITION 同步更新，Recovery 与 Knife RED/GREEN commits 永久保留
   Test: bash scripts/check-version-sync.sh
-- [ ] [ARTIFACT] 冻结基线治理 SQL 对 receipt、四类 Map header 与 active Impact Contract 做精确值断言
-  Test: node -e "const s=require('fs').readFileSync('sprints/08121555-unified-work-router/tests/baseline-governance.sql','utf8');for(const x of ['work_routing_receipts','fact_snapshot_headers','harness_impact_contracts','base_sha','source_revision','base_revision'])if(!s.includes(x))process.exit(1)"
+- [ ] [ARTIFACT] 冻结基线治理 SQL 以 smoke 三个 task id 绑定 receipt、四类 Map header 与 active Impact Contract
+  Test: node -e "const s=require('fs').readFileSync('sprints/08121555-unified-work-router/tests/baseline-governance.sql','utf8');for(const x of ['task_ids_csv','count(DISTINCT target.task_id) FROM target) = 3','work_routing_receipts','fact_snapshot_headers','harness_impact_contracts','base_sha','source_revision','base_revision'])if(!s.includes(x))process.exit(1)"
 
 ## BEHAVIOR 条目
 
@@ -26,7 +26,7 @@ gate-allow: env-missing/docker 该命中来自仓库目录名 `docker/cecelia-ru
   预期观察: worktree 被复用、活跃 cwd 未删除，所有日志均不含 credential
   等待预算: 15s
   留证: Vitest 输出与脱敏日志
-  Test: manual:bash -c 'cd packages/brain && npx vitest run src/__tests__/harness-worktree-recovery-contract.test.js'
+  Test: manual:bash -c 'npx vitest run sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts packages/brain/src/__tests__/harness-worktree-recovery-contract.test.js'
 
 - [ ] [BEHAVIOR] [L2] B-01: 三个真实入口原子创建 Harness task 与不可变 receipt [接缝×2]
   动作: 对 attempt 隔离空库运行真实 migration，再执行 70 类型、33 入口、Planner/Proposal/Capture 三陷阱及 API/Intent/Capture 原子创建回归
@@ -58,17 +58,17 @@ gate-allow: env-missing/docker 该命中来自仓库目录名 `docker/cecelia-ru
 
 - [ ] [BEHAVIOR] [L2] B-05: Generator 隔离与 frozen baseline lineage 在真实命令链生效 [接缝×2]
   动作: 启动 Generator entrypoint 合同测试，尝试 Provider push、读取 callback token，并验证候选 HEAD 血统
-  预期观察: push 被熔断、凭据不可见、容器 hook 可达，冻结基线是 HEAD 祖先但 HEAD 不等于基线；receipt/Map/Impact Contract 三类治理记录精确锚定该基线
+  预期观察: push 被熔断、凭据不可见、容器 hook 可达，冻结基线是 HEAD 祖先但 HEAD 不等于基线
   等待预算: 60s
   留证: runner shell 输出与 git merge-base 输出
-  Test: manual:bash -c 'BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524; bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh && git merge-base --is-ancestor "$BASELINE_SHA" HEAD && [ "$(git rev-parse HEAD)" != "$BASELINE_SHA" ] && psql "$DB_URL" -v ON_ERROR_STOP=1 -v baseline="$BASELINE_SHA" -f sprints/08121555-unified-work-router/tests/baseline-governance.sql'
+  Test: manual:bash -c 'BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524; bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh && git merge-base --is-ancestor "$BASELINE_SHA" HEAD && [ "$(git rev-parse HEAD)" != "$BASELINE_SHA" ]'
 
 - [ ] [BEHAVIOR] [L2] B-06: scratch 多入口真实链路满足全部业务阈值 [接缝×2]
   动作: 在 attempt 隔离 DB 运行 scratch smoke，制造 stale 后刷新并 resume，同时建立 content/research/review 对照
-  预期观察: coding 3/3 有 receipt/Harness/正确 Map/Impact Contract；对照不误路由；失败审计保留
+  预期观察: smoke-targets.json 精确列出 API/Intent/Capture 三个 task id；三项均有 receipt/Harness/正确 Map/Impact Contract 且治理基线精确；对照不误路由；失败审计保留
   等待预算: 180s
   留证: smoke stdout 与带五分钟时间窗的 DB 查询结果
-  Test: manual:bash -c 'DB_URL="$DB_URL" BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 bash packages/brain/scripts/smoke/unified-work-router-smoke.sh'
+  Test: manual:bash -c 'SMOKE_TARGETS_FILE=sprints/08121555-unified-work-router/smoke-targets.json DB_URL="$DB_URL" BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 bash packages/brain/scripts/smoke/unified-work-router-smoke.sh; TASK_IDS=$(jq -er '\''[.api.task_id,.intent.task_id,.capture.task_id] | if length==3 and all(. != null) then join(",") else error("three task ids required") end'\'' sprints/08121555-unified-work-router/smoke-targets.json); psql "$DB_URL" -v ON_ERROR_STOP=1 -v baseline="$BASELINE_SHA" -v task_ids_csv="$TASK_IDS" -f sprints/08121555-unified-work-router/tests/baseline-governance.sql'
 
 - [ ] [BEHAVIOR] [L2] B-07: Required DevGate 与完整差异检查通过
   动作: 在候选 HEAD 依次运行 facts、version、DoD mapping 和 diff whitespace 检查

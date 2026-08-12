@@ -1,10 +1,9 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
-## Round 1 blocker closure
+## Round 2 blocker closure
 
-- R1-1：Final E2E 现在先以 `DATABASE_URL="$DB_URL" node packages/brain/src/migrate.js` 对 attempt 空库执行仓库真实 migration，再用 `to_regclass` 机检 `tasks`、`fact_snapshot_headers`、`harness_impact_contracts` 与 `work_routing_receipts`。这使空库 schema 缺失必定失败。
-- R1-2：B-01 现在明确执行 70/33 inventory、Planner、Proposal、Capture 三个永久回归对应的完整测试集，不再只覆盖统一入口的子集。
-- R1-3：B-05 与 Final E2E 现在查询 receipt、四类 Universal Map header、active Impact Contract 三类治理记录，并逐项断言其基线字段精确等于 `310ab9e704d4e3f866e6ce7beb25b79dd0f9d524`。
+- R2-1：冻结 RED 测试改为创建真实临时 Git source/clone，直接调用 `ensureHarnessWorktree()`，断言带凭据 origin 与干净 origin 同仓、活跃 cwd 没有进入删除回调、日志不含 secret；B-00 与 Final E2E 均执行该 Sprint 测试。quote: `在真实临时 Git repo 建立带 credential 的同仓 origin，并把 detached cwd 标为活跃 run 后调用 worktree ensure/cleanup`。这使三个 Recovery 行为任何一个未实现都会保持 RED，且永久进入 DoD。
+- R2-2：scratch smoke 必须写出本轮 API/Intent/Capture 三个 task id，治理 SQL 以 `task_ids_csv` 精确绑定这三项，分别要求 3 个 receipt、3 个 active Impact Contract 和每个 repo 的四类 Map header。quote: `治理 SQL 从 smoke-targets.json 读取本轮 API/Intent/Capture 三个 task id，逐项验证 receipt、Map 与 active Impact Contract`。不再以“最近一项 Harness task”代替验收对象。
 
 ## 证据来源与基线
 
@@ -42,9 +41,9 @@ N/A — 本任务跨内部路由、DB、hook 与 Kernel 执行链，不定义一
 
 **验证命令**:
 ```bash
-cd packages/brain && npx vitest run src/__tests__/harness-worktree-recovery-contract.test.js
+cd packages/brain && npx vitest run ../../sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts src/__tests__/harness-worktree-recovery-contract.test.js
 ```
-**硬阈值**: 三个回归场景全绿、0 个 credential 泄漏；以上命令 exit 0。
+**硬阈值**: 冻结 Sprint RED 与永久实现回归均全绿；真实临时 clone 未删除、0 个 credential 泄漏；以上命令 exit 0。
 
 ### Step 1: 所有入口获得不可变 Routing Receipt
 **来源**: `[FROM_PRD]` — §3、§8、§12 与 Knife 0-2。
@@ -82,24 +81,24 @@ bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh &&
 ### Step 4: Generator frozen baseline 与 trust boundary 生效
 **来源**: `[FROM_PRD]` — Knife 3-4、Recovery Contract Correction。
 
-**可观测行为**: Generator 不能 push/callback，hook 在容器内可达；产出 HEAD 是冻结实现基线的后代，而非等于基线。Receipt/Map/Impact Contract 的 `base_sha/source_revision` 精确为冻结实现基线。
+**可观测行为**: Generator 不能 push/callback，hook 在容器内可达；产出 HEAD 是冻结实现基线的后代，而非等于基线。
 
 **验证命令**:
 ```bash
-BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 bash -c 'bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh && git merge-base --is-ancestor "$BASELINE_SHA" HEAD && [ "$(git rev-parse HEAD)" != "$BASELINE_SHA" ] && psql "$DB_URL" -v ON_ERROR_STOP=1 -v baseline="$BASELINE_SHA" -f sprints/08121555-unified-work-router/tests/baseline-governance.sql'
+BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 bash -c 'bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh && git merge-base --is-ancestor "$BASELINE_SHA" HEAD && [ "$(git rev-parse HEAD)" != "$BASELINE_SHA" ]'
 ```
-**硬阈值**: blocked push 非 0、Provider 无 callback token、lineage 命令 exit 0 且 `HEAD != BASELINE_SHA`；本轮 task 的 Routing Receipt `base_sha`、api/db_schema/graph/test 四类 Map header `source_revision`、active Impact Contract `base_revision` 均逐字等于实现基线，查询缺行或异值即非 0。
+**硬阈值**: blocked push 非 0、Provider 无 callback token、lineage 命令 exit 0 且 `HEAD != BASELINE_SHA`。
 
 ### Step 5: scratch 多入口真实产出
 **来源**: `[FROM_PRD]` — §16.6 与 Knife 5。
 
-**可观测行为**: API/Intent/Capture 三个 coding 请求均有 receipt、Harness run、正确 repo Map、active Impact Contract；content/research/review 对照不误路由；stale 后阻塞、刷新后恢复且审计保留。
+**可观测行为**: API/Intent/Capture 三个 coding 请求均有 receipt、Harness run、正确 repo Map、active Impact Contract；smoke 输出精确 task id 清单；content/research/review 对照不误路由；stale 后阻塞、刷新后恢复且审计保留。
 
 **验证命令**:
 ```bash
-DB_URL="$DB_URL" BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 bash packages/brain/scripts/smoke/unified-work-router-smoke.sh
+DB_URL="$DB_URL" BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 SMOKE_TARGETS_FILE=sprints/08121555-unified-work-router/smoke-targets.json bash packages/brain/scripts/smoke/unified-work-router-smoke.sh && TASK_IDS=$(jq -er '[.api.task_id,.intent.task_id,.capture.task_id] | if length==3 and all(. != null) then join(",") else error("three task ids required") end' sprints/08121555-unified-work-router/smoke-targets.json) && psql "$DB_URL" -v ON_ERROR_STOP=1 -v baseline=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 -v task_ids_csv="$TASK_IDS" -f sprints/08121555-unified-work-router/tests/baseline-governance.sql
 ```
-**硬阈值**: coding 3/3、receipt 3/3、Impact Contract 3/3、错误路由 0、`legacy_exempt` 新增 0；命令 exit 0。
+**硬阈值**: 精确 task id 3/3、receipt 3/3、Impact Contract 3/3、每个目标 repo 的 api/db_schema/graph/test Map 4/4 且三类基线字段逐字等于实现基线；错误路由 0、`legacy_exempt` 新增 0；命令 exit 0。
 
 ## 实现血统与 TDD 提交合同
 
@@ -202,10 +201,12 @@ node packages/quality/scripts/devgate/check-dod-mapping.cjs
 cd packages/brain
 npx vitest run src/__tests__/harness-worktree-recovery-contract.test.js src/__tests__/work-router.test.js src/__tests__/work-routing-entry.test.js src/__tests__/migration-411-work-routing.test.js src/__tests__/integration/work-routing-store.integration.test.js src/__tests__/task-creation-inventory.test.js src/__tests__/work-router-entrypoints.test.js src/__tests__/planner-task-type-regression.test.js src/__tests__/proposal-task-type-regression.test.js src/routes/__tests__/capture-atoms-routing.test.js src/orchestrator/__tests__/change-kind-profiles.test.js src/orchestrator/preflight/map-impact-contract.test.js src/orchestrator/__tests__/map-recovery-contract.test.js src/orchestrator/__tests__/dispatcher-routing-receipt.test.js
 cd ../..
+npx vitest run sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts
 bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh
 bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh
-DB_URL="$DB_URL" BASELINE_SHA="$BASELINE_SHA" bash packages/brain/scripts/smoke/unified-work-router-smoke.sh
-psql "$DB_URL" -v ON_ERROR_STOP=1 -v baseline="$BASELINE_SHA" -f sprints/08121555-unified-work-router/tests/baseline-governance.sql
+SMOKE_TARGETS_FILE=sprints/08121555-unified-work-router/smoke-targets.json DB_URL="$DB_URL" BASELINE_SHA="$BASELINE_SHA" bash packages/brain/scripts/smoke/unified-work-router-smoke.sh
+TASK_IDS=$(jq -er '[.api.task_id,.intent.task_id,.capture.task_id] | if length==3 and all(. != null) then join(",") else error("three task ids required") end' sprints/08121555-unified-work-router/smoke-targets.json)
+psql "$DB_URL" -v ON_ERROR_STOP=1 -v baseline="$BASELINE_SHA" -v task_ids_csv="$TASK_IDS" -f sprints/08121555-unified-work-router/tests/baseline-governance.sql
 git diff --check "$BASELINE_SHA"..HEAD
 ```
 
@@ -216,7 +217,7 @@ git diff --check "$BASELINE_SHA"..HEAD
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
 | Recovery 前置 | `tests/unified-work-router-contract.test.ts` | credential-bearing origin 不泄漏且不删除活跃 cwd | 当前 origin 原字符串比较/日志输出导致失败 |
-| 路由与血统 | `tests/unified-work-router-contract.test.ts` | 冻结 baseline 是产出 HEAD 祖先且 receipt 锚定 baseline | 当前统一 router/receipt 合同不存在 |
+| 路由与治理绑定 | `tests/unified-work-router-contract.test.ts` | 三入口治理记录逐项锚定 baseline | 旧 SQL 只选最近一项任务且不绑定三入口 |
 
 ## staging 预览闸
 
