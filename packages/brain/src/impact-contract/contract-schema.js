@@ -12,6 +12,12 @@ import { CHANGE_KINDS } from './change-kind.js';
 import { canonicalAssertionCommandText } from '../lib/gp-assertion-command.js';
 import { assertionDigest } from '../lib/journey-assertion-receipt.js';
 
+export function normalizeFreshnessEvidence(evidence) {
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) return evidence;
+  const { reason_code: reasonCode, ...normalized } = evidence;
+  return reasonCode == null ? normalized : { ...normalized, reason_code: reasonCode };
+}
+
 export function hasTrustedImpactAssertions(contractBody) {
   const capabilities = new Set(
     (contractBody?.affected_capabilities ?? []).map(item => item?.capability_id),

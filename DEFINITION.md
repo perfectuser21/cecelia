@@ -8,11 +8,16 @@
 
 
 
-**Brain 版本**: 1.272.22
+**Brain 版本**: 1.272.23
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.23 — Impact Gate fresh 证据规范化
+
+- Structure Gate 与 Diff Gate 在持久化 Impact Contract 前统一省略 fresh 证据中的 `reason_code: null`，保持 schema 合法与合同 hash 幂等。
+- 增加真实 Mapper fresh 响应形状回归，覆盖 Structure Gate 持久化边界。
 
 ## Brain 1.272.22 — authority 安全与 Tick 活性四修（P0 hotfix）
 

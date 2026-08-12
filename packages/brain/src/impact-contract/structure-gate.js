@@ -18,6 +18,7 @@
 
 import { queryImpactRadius } from './map-client.js';
 import { persistImpactContract } from './contract-store.js';
+import { normalizeFreshnessEvidence } from './contract-schema.js';
 
 // ---------- 结果构建工具 ----------
 
@@ -152,7 +153,7 @@ export async function evaluateStructureGate({
       manifest_digest: manifestDigest,
       projection_digest: projectionDigest,
       fact_revisions: mapperResult.fact_revisions,
-      freshness_evidence: mapperResult.freshness,
+      freshness_evidence: normalizeFreshnessEvidence(mapperResult.freshness),
     };
     const { contract: persisted, created } = await persistContract(db, {
       task_id: contract.task_id || task.id,
