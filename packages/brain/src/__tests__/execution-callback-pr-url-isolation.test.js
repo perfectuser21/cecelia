@@ -551,6 +551,54 @@ describe('[I2 regression] harness PR URL 必须全链路 canonical，且不能�
       expect.any(Object),
     );
   });
+
+  it('harness_evaluate 首次 merge 失败后切到远端 PR head，rebase/push 后二次 merge', async () => {
+    const { capturedCreateTaskCalls } = await setupHarnessTest({
+      taskType: 'harness_evaluate',
+      existingPrUrl: VALID_PR_URL,
+      verdict: 'PASS',
+    });
+    const { spawnSync } = await import('child_process');
+    let mergeAttempts = 0;
+    vi.mocked(spawnSync).mockImplementation((command, args) => {
+      if (command === 'gh' && args[0] === 'pr' && args[1] === 'merge') {
+        mergeAttempts += 1;
+        if (mergeAttempts === 1) {
+          return { status: 1, stdout: '', stderr: 'merge conflict' };
+        }
+      }
+      if (command === 'gh' && args[0] === 'pr' && args[1] === 'view') {
+        return { status: 0, stdout: 'cp-safe-branch\n', stderr: '' };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    });
+
+    const resp = await request(app)
+      .post('/api/brain/execution-callback')
+      .send({
+        task_id: TASK_ID,
+        run_id: `${RUN_ID}-evaluate-rebase`,
+        status: 'AI Done',
+        pr_url: null,
+        result: { verdict: 'PASS' },
+        duration_ms: 1,
+        iterations: 1,
+        exit_code: 0,
+      });
+
+    expect(resp.status).toBe(200);
+    expect(mergeAttempts).toBe(2);
+    const commandArgv = vi.mocked(spawnSync).mock.calls.map(([command, args]) => [command, args]);
+    expect(commandArgv).toEqual(expect.arrayContaining([
+      ['git', ['fetch', 'origin']],
+      ['git', ['switch', '--detach', 'origin/cp-safe-branch']],
+      ['git', ['rebase', 'origin/main']],
+      ['git', ['push', '--force-with-lease', 'origin', 'HEAD:cp-safe-branch']],
+    ]));
+    expect(commandArgv).not.toContainEqual(['git', ['checkout', '--', 'cp-safe-branch']]);
+    expect(capturedCreateTaskCalls.filter(c => c.task_type === 'harness_fix')).toHaveLength(0);
+    expect(capturedCreateTaskCalls.filter(c => c.task_type === 'harness_report')).toHaveLength(1);
+  });
 });
 
 // ════════════════════════════════════════════════════════════════
