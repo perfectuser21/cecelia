@@ -1,0 +1,32 @@
+{
+  "initiative_id": "b0443bf7-001f-4ae3-9b3b-4c7178bbcd49",
+  "journey_type": "autonomous",
+  "journey_type_reason": "核心交付是 Brain、Engine hook、Kernel runner 与真实数据库的自主后端链路",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "恢复并完整交付 Unified Work Router Knife 0-5",
+      "scope": "先完成 credential origin、日志脱敏和活跃 Kernel workspace 的 RED/GREEN 回归，再按冻结 PRD 实现统一路由、不可变 receipt、全入口收敛、Map/Impact 强制门禁、动作闸、Generator 信任边界、迁移与 scratch 验收",
+      "dod": [
+        "[BEHAVIOR] contract-dod.md 的 B-01 至 B-05 与 INV-01/02 全部通过",
+        "[BEHAVIOR] packages/brain/scripts/smoke/unified-work-router-smoke.sh 在 attempt-scoped DB exit 0",
+        "[ARTIFACT] Work Router、migration 411、receipt API、Map preflight、Engine hook、runner trust boundary、Dashboard 审计视图与 smoke 完整交付"
+      ],
+      "files": [
+        "packages/brain/src/work-router.js",
+        "packages/brain/src/work-routing-store.js",
+        "packages/brain/src/routes/work-routing.js",
+        "packages/brain/migrations/411_work_routing_receipts.sql",
+        "packages/brain/src/orchestrator/",
+        "packages/engine/hooks/dev-mode-tool-guard.sh",
+        "packages/engine/skills/dev/scripts/worktree-manage.sh",
+        "docker/cecelia-runner/entrypoint.sh",
+        "apps/dashboard/src/pages/warroom/WarRoomPage.tsx",
+        "packages/brain/scripts/smoke/unified-work-router-smoke.sh"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
