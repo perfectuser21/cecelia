@@ -1,0 +1,33 @@
+{
+  "initiative_id": "6bc89b3c-9228-46bb-aa68-88171261e94e",
+  "journey_type": "autonomous",
+  "journey_type_reason": "工作主体是 Brain、Engine 与 Kernel Harness 的后端自治路由和治理链路",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "完成 Unified Work Router Recovery 与 Knife 0-5",
+      "scope": "在权威实现基线之后先完成 origin/workspace Recovery RED-GREEN，再实现统一路由、全入口收敛、Map/Impact Contract、动作闸、Generator 信任边界、迁移观测与 scratch 真验",
+      "dod": [
+        "[BEHAVIOR] Recovery origin 归一化、日志脱敏且 active Kernel cwd 不被删除",
+        "[BEHAVIOR] coding mutation 全入口获得不可变 receipt 并进入 Harness 2.0",
+        "[BEHAVIOR] fresh Map、required Impact Contract、四形式、动作闸与 Generator trust boundary 真验通过",
+        "[BEHAVIOR] scratch API/Intent/Capture 与对照 Pipeline、stale-resume 验收通过",
+        "[ARTIFACT] Recovery 与 Knife 0-5 RED/GREEN commits、migration、tests、smoke、版本与 DEFINITION 永久保留"
+      ],
+      "files": [
+        "packages/brain/src/",
+        "packages/brain/migrations/411_work_routing_receipts.sql",
+        "packages/engine/hooks/dev-mode-tool-guard.sh",
+        "packages/engine/skills/dev/scripts/worktree-manage.sh",
+        "docker/cecelia-runner/entrypoint.sh",
+        "packages/brain/scripts/smoke/unified-work-router-smoke.sh",
+        "apps/dashboard/src/pages/warroom/WarRoomPage.tsx",
+        "packages/brain/DEFINITION.md",
+        ".brain-versions"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
