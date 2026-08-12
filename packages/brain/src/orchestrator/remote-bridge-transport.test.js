@@ -32,6 +32,17 @@ const GITHUB_ENVELOPE = Object.freeze({
   payload_hash: `sha256:${'b'.repeat(64)}`,
   payload: 'Z2l0aHViX3BhdF90ZXN0',
 });
+const CLAUDE_ENVELOPE = Object.freeze({
+  contract_version: 'credential-envelope/v1',
+  credential_ref: '55555555-5555-4555-8555-555555555555',
+  attempt_id: 'attempt-1',
+  account_id: 'account1',
+  machine_id: MACHINE,
+  issued_at: '2026-07-27T12:00:00.000Z',
+  expires_at: '2026-07-27T14:00:00.000Z',
+  payload_hash: `sha256:${'c'.repeat(64)}`,
+  payload: 'eyJjbGF1ZGVBaU9hdXRoIjp7ImFjY2Vzc1Rva2VuIjoic2stYW50LXRlc3QifX0=',
+});
 
 function jsonResponse(status, body) {
   return {
@@ -446,7 +457,43 @@ describe('remote Bridge prepare', () => {
       accountId: 'team3',
       machineId: MACHINE,
       deadlineAt: '2026-07-27T13:00:00.000Z',
+      provider: 'codex',
     });
+  });
+
+  it('binds one Claude credential envelope to the selected attempt, account, machine, and deadline', async () => {
+    const issue = vi.fn(async () => CLAUDE_ENVELOPE);
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse()));
+    const transport = createTransport({ fetchFn, credentialBroker: { issue } });
+
+    await transport.prepare(prepareInput({
+      spec: { provider: 'claude', command: 'claude' },
+      target: { provider: 'claude', account: 'account1' },
+    }));
+
+    expect(issue).toHaveBeenCalledOnce();
+    expect(issue).toHaveBeenCalledWith({
+      attemptId: 'attempt-1',
+      accountId: 'account1',
+      machineId: MACHINE,
+      deadlineAt: '2026-07-27T13:00:00.000Z',
+      provider: 'claude',
+    });
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body)).toHaveProperty(
+      'credential_envelope',
+      CLAUDE_ENVELOPE,
+    );
+  });
+
+  it('fails closed before contacting the Worker when a Claude credential broker is unavailable', async () => {
+    const fetchFn = vi.fn();
+    const transport = createTransport({ fetchFn, credentialBroker: undefined });
+
+    await expect(transport.prepare(prepareInput({
+      spec: { provider: 'claude', command: 'claude' },
+      target: { provider: 'claude', account: 'account1' },
+    }))).rejects.toThrow('remote_bridge_credential_broker_unavailable');
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it.each(['planner', 'proposer', 'generator', 'evaluator'])(
@@ -554,14 +601,14 @@ describe('remote Bridge prepare', () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it('does not issue or send a Codex credential envelope for another provider', async () => {
+  it('does not issue or send a credential envelope for non-oauth provider (grok)', async () => {
     const issue = vi.fn();
     const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse()));
     const transport = createTransport({ fetchFn, credentialBroker: { issue } });
 
     await transport.prepare(prepareInput({
-      spec: { provider: 'claude', command: 'claude' },
-      target: { provider: 'claude', account: 'claude-team1' },
+      spec: { provider: 'grok', command: 'grok' },
+      target: { provider: 'grok', account: null },
     }));
 
     expect(issue).not.toHaveBeenCalled();

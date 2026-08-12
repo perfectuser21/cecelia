@@ -282,8 +282,9 @@ export function createRemoteBridgeTransport({
         throw new Error('remote_bridge_invalid_attempt_timeout');
       }
       const needsGitHubCredential = GITHUB_CREDENTIAL_ROLES.has(bundle?.role);
+      const needsCredential = target?.provider === 'codex' || target?.provider === 'claude';
       let deadlineAt;
-      if (target?.provider === 'codex' || needsGitHubCredential) {
+      if (needsCredential || needsGitHubCredential) {
         const nowMs = configuredNow();
         if (!Number.isFinite(nowMs)) {
           throw new Error('remote_bridge_invalid_clock');
@@ -298,7 +299,7 @@ export function createRemoteBridgeTransport({
         deadlineAt = new Date(deadlineMs).toISOString();
       }
       let credentialEnvelope;
-      if (target?.provider === 'codex') {
+      if (needsCredential) {
         if (typeof configuredCredentialBroker?.issue !== 'function') {
           throw new Error('remote_bridge_credential_broker_unavailable');
         }
@@ -307,6 +308,7 @@ export function createRemoteBridgeTransport({
           accountId: target?.account,
           machineId: machine,
           deadlineAt,
+          provider: target?.provider,
         });
         if (
           !credentialEnvelope
