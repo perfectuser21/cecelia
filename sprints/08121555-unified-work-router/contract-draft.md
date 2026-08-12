@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 2)
+# Sprint Contract Draft (Round 3)
 
 ## 证据来源与运行边界
 
@@ -93,10 +93,10 @@ bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh &&
 
 **验证命令**:
 ```bash
-bash packages/brain/scripts/smoke/unified-work-router-smoke.sh
+DB_URL="$DB_URL" node --input-type=module -e 'import pg from "pg"; import { runMigrations } from "./packages/brain/src/migrate.js"; const pool=new pg.Pool({connectionString:process.env.DB_URL}); await runMigrations(pool); await pool.end()' && psql "$DB_URL" -tAc "SELECT to_regclass('public.tasks') IS NOT NULL AND to_regclass('public.work_routing_receipts') IS NOT NULL AND to_regclass('public.map_recovery_contracts') IS NOT NULL" | grep -qx t && DATABASE_URL="$DB_URL" bash packages/brain/scripts/smoke/unified-work-router-smoke.sh
 ```
 
-**硬阈值**: exit 0；scratch 本轮记录时间窗内 coding receipt coverage=100%、coding `dev` 直派=0、新增 `legacy_exempt=0`；所有断言来自脚本创建的 scratch 数据而非历史数据。
+**硬阈值**: exit 0；先对 Fleet 注入的 attempt-scoped 空库运行仓库真实 `runMigrations()`，再机检 `tasks`、`work_routing_receipts`、`map_recovery_contracts` 三张目标表存在；随后 scratch 本轮记录时间窗内 coding receipt coverage=100%、coding `dev` 直派=0、新增 `legacy_exempt=0`；所有断言来自脚本创建的 scratch 数据而非历史数据。
 
 ### Step 6: 基线血统与发货门禁
 **来源**: `[FROM_PRD]` — Recovery Contract Correction 与 PRD DoD 第 2、8 项。
@@ -201,6 +201,9 @@ set -euo pipefail
 export DATABASE_URL="$DB_URL"
 BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524
 START_EPOCH=$(date +%s)
+# Fleet 只注入 attempt-scoped 空库；先以仓库真实 migration runner 完整自举，禁止假设预置 schema。
+DB_URL="$DB_URL" node --input-type=module -e 'import pg from "pg"; import { runMigrations } from "./packages/brain/src/migrate.js"; const pool=new pg.Pool({connectionString:process.env.DB_URL}); await runMigrations(pool); await pool.end()'
+psql "$DB_URL" -tAc "SELECT to_regclass('public.tasks') IS NOT NULL AND to_regclass('public.work_routing_receipts') IS NOT NULL AND to_regclass('public.map_recovery_contracts') IS NOT NULL" | grep -qx t
 git merge-base --is-ancestor "$BASELINE_SHA" HEAD
 test "$(git rev-parse HEAD)" != "" 
 node scripts/facts-check.mjs

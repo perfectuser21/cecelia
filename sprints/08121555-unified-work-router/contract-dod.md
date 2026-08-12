@@ -32,11 +32,11 @@ target_environment: local_api
   Test: manual:bash -c 'cd packages/brain && npx vitest run src/orchestrator/__tests__/change-kind-profiles.test.js --reporter=verbose'
 
 - [ ] [BEHAVIOR] [L2] B-03: task 与不可变 Routing Receipt 原子创建 [接缝×2]
-  动作: 对 attempt-scoped scratch PostgreSQL 执行成功、故障回滚、并发幂等、UPDATE/DELETE 拒绝集成测试。
-  预期观察: task/receipt 同生同灭，receipt append-only，同幂等键只有一个有效结果，跨租户/跨 repo 不串线。
+  动作: 先对 Fleet 注入的 attempt-scoped 空库运行仓库真实 migration runner 并机检目标表，再执行成功、故障回滚、并发幂等、UPDATE/DELETE 拒绝集成测试。
+  预期观察: tasks、work_routing_receipts、map_recovery_contracts 三表真实存在；task/receipt 同生同灭，receipt append-only，同幂等键只有一个有效结果，跨租户/跨 repo 不串线。
   等待预算: 60s
   留证: integration Vitest 输出与本轮 DB 查询结果。
-  Test: manual:bash -c 'test -n "$DB_URL" && cd packages/brain && DATABASE_URL="$DB_URL" npx vitest run src/__tests__/integration/work-routing-store.integration.test.js src/__tests__/migration-411-work-routing.test.js --reporter=verbose'
+  Test: manual:bash -c 'test -n "$DB_URL" && DB_URL="$DB_URL" node --input-type=module -e '"'"'import pg from "pg"; import { runMigrations } from "./packages/brain/src/migrate.js"; const pool=new pg.Pool({connectionString:process.env.DB_URL}); await runMigrations(pool); await pool.end()'"'"' && psql "$DB_URL" -tAc "SELECT to_regclass('"'"'public.tasks'"'"') IS NOT NULL AND to_regclass('"'"'public.work_routing_receipts'"'"') IS NOT NULL AND to_regclass('"'"'public.map_recovery_contracts'"'"') IS NOT NULL" | grep -qx t && cd packages/brain && DATABASE_URL="$DB_URL" npx vitest run src/__tests__/integration/work-routing-store.integration.test.js src/__tests__/migration-411-work-routing.test.js --reporter=verbose'
 
 - [ ] [BEHAVIOR] [L2] B-04: 所有可执行入口收敛到唯一路由边界
   动作: 运行 inventory 与 API/Intent/Capture/Planner/Proposal 三陷阱入口合同。
@@ -67,11 +67,11 @@ target_environment: local_api
   Test: manual:bash -c 'bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh'
 
 - [ ] [BEHAVIOR] [L2] B-08: scratch 三 coding 入口与对照 Pipeline 真实验收 [接缝×2]
-  动作: 在 attempt-scoped scratch DB 从 API、Intent、Capture 创建 coding，并创建 content/research/read-only/review-fix 对照，制造 stale Map 后刷新 resume。
-  预期观察: coding 三项均有 receipt/Harness/正确 Map/active Impact Contract；对照不误入；review fix 进入 Harness；stale 阻断且恢复保留失败审计。
+  动作: 对 attempt-scoped 空库运行仓库真实 migrations 并确认三张路由目标表后，从 API、Intent、Capture 创建 coding，再创建 content/research/read-only/review-fix 对照，制造 stale Map 后刷新 resume。
+  预期观察: 空库 schema 自举完成；coding 三项均有 receipt/Harness/正确 Map/active Impact Contract；对照不误入；review fix 进入 Harness；stale 阻断且恢复保留失败审计。
   等待预算: 300s
   留证: smoke stdout、带 5 分钟时间窗的 scratch DB 查询及 stale→refresh 审计链。
-  Test: manual:bash -c 'test -n "$DB_URL" && DATABASE_URL="$DB_URL" bash packages/brain/scripts/smoke/unified-work-router-smoke.sh'
+  Test: manual:bash -c 'test -n "$DB_URL" && DB_URL="$DB_URL" node --input-type=module -e '"'"'import pg from "pg"; import { runMigrations } from "./packages/brain/src/migrate.js"; const pool=new pg.Pool({connectionString:process.env.DB_URL}); await runMigrations(pool); await pool.end()'"'"' && psql "$DB_URL" -tAc "SELECT to_regclass('"'"'public.tasks'"'"') IS NOT NULL AND to_regclass('"'"'public.work_routing_receipts'"'"') IS NOT NULL AND to_regclass('"'"'public.map_recovery_contracts'"'"') IS NOT NULL" | grep -qx t && DATABASE_URL="$DB_URL" bash packages/brain/scripts/smoke/unified-work-router-smoke.sh'
 
 - [ ] [BEHAVIOR] [L2] B-09: 权威实现基线是祖先且四条发货门禁全绿
   动作: 对完成态 HEAD 验证 merge-base 祖先关系并依次执行 facts、version、DoD mapping 与 smoke。
