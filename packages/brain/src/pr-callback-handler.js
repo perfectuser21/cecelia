@@ -56,51 +56,78 @@ export function verifyWebhookSignature(secret, signature, body) {
  * @param {string} branchName - 分支名（如 cp-xxx 或 feature/xxx）
  * @returns {Promise<object|null>} 匹配的任务行，或 null
  */
-export async function matchTaskByBranchOrUrl(pool, branchName) {
-  if (!branchName) return null;
+export async function matchTaskByBranchOrUrl(pool, branchName, prUrl) {
+  if (!branchName && !prUrl) return null;
 
-  // 1. 优先匹配 in_progress 任务（by branch 名）
-  const inProgressResult = await pool.query(`
-    SELECT
-      id, title, status, project_id, goal_id,
-      metadata, payload, task_type
-    FROM tasks
-    WHERE status = 'in_progress'
-      AND (
-        metadata->>'branch' = $1
-        OR payload->>'pr_branch' = $1
-      )
-    ORDER BY updated_at DESC
-    LIMIT 1
-  `, [branchName]);
-
-  if (inProgressResult.rows.length > 0) {
-    return inProgressResult.rows[0];
+  // 1. in_progress by branch name
+  if (branchName) {
+    const r = await pool.query(`
+      SELECT id, title, status, project_id, goal_id, metadata, payload, task_type
+      FROM tasks
+      WHERE status = 'in_progress'
+        AND (
+          metadata->>'branch' = $1
+          OR payload->>'pr_branch' = $1
+          OR payload->>'expected_branch' = $1
+        )
+      ORDER BY updated_at DESC LIMIT 1
+    `, [branchName]);
+    if (r.rows.length > 0) return r.rows[0];
   }
 
-  // 2. 匹配 completed 且 pr_merged_at IS NULL 的任务（by pr_url 含 branch 名）
-  const completedResult = await pool.query(`
-    SELECT
-      id, title, status, project_id, goal_id,
-      metadata, payload, task_type
-    FROM tasks
-    WHERE status = 'completed'
-      AND pr_merged_at IS NULL
-      AND (
-        pr_url LIKE '%' || $1 || '%'
-        OR metadata->>'branch' = $1
-        OR payload->>'pr_branch' = $1
-      )
-    ORDER BY updated_at DESC
-    LIMIT 1
-  `, [branchName]);
-
-  if (completedResult.rows.length === 0) {
-    console.warn(`[pr-callback] 无匹配任务: branch=${branchName}（可能是手动创建的 PR）`);
-    return null;
+  // 2. in_progress by prUrl (exact match on pr_url column or payload fields)
+  if (prUrl) {
+    const r = await pool.query(`
+      SELECT id, title, status, project_id, goal_id, metadata, payload, task_type
+      FROM tasks
+      WHERE status = 'in_progress'
+        AND (
+          pr_url = $1
+          OR payload->>'existing_pr_url' = $1
+          OR payload->>'pr_url' = $1
+        )
+      ORDER BY updated_at DESC LIMIT 1
+    `, [prUrl]);
+    if (r.rows.length > 0) return r.rows[0];
   }
 
-  return completedResult.rows[0];
+  // 3. completed / completed_no_pr by branch name（pr_merged_at IS NULL 防重复）
+  if (branchName) {
+    const r = await pool.query(`
+      SELECT id, title, status, project_id, goal_id, metadata, payload, task_type
+      FROM tasks
+      WHERE status IN ('completed', 'completed_no_pr')
+        AND pr_merged_at IS NULL
+        AND (
+          pr_url LIKE '%' || $1 || '%'
+          OR metadata->>'branch' = $1
+          OR payload->>'pr_branch' = $1
+          OR payload->>'expected_branch' = $1
+        )
+      ORDER BY updated_at DESC LIMIT 1
+    `, [branchName]);
+    if (r.rows.length > 0) return r.rows[0];
+  }
+
+  // 4. completed / completed_no_pr by prUrl (exact)
+  if (prUrl) {
+    const r = await pool.query(`
+      SELECT id, title, status, project_id, goal_id, metadata, payload, task_type
+      FROM tasks
+      WHERE status IN ('completed', 'completed_no_pr')
+        AND pr_merged_at IS NULL
+        AND (
+          pr_url = $1
+          OR payload->>'existing_pr_url' = $1
+          OR payload->>'pr_url' = $1
+        )
+      ORDER BY updated_at DESC LIMIT 1
+    `, [prUrl]);
+    if (r.rows.length > 0) return r.rows[0];
+  }
+
+  console.warn(`[pr-callback] 无匹配任务: branch=${branchName} prUrl=${prUrl}（可能是手动创建的 PR）`);
+  return null;
 }
 
 /**
@@ -133,7 +160,7 @@ export async function handlePrMerged(pool, prInfo) {
   console.log(`[pr-callback] PR 合并事件: repo=${repo} pr=#${prNumber} branch=${branchName}`);
 
   // 1. 匹配任务（in_progress 优先，其次 completed）
-  const task = await matchTaskByBranchOrUrl(pool, branchName);
+  const task = await matchTaskByBranchOrUrl(pool, branchName, prUrl);
   if (!task) {
     // 无任务匹配：仍写入 dev_records（task_id=null），保留 PR 历史记录
     try {
@@ -154,8 +181,10 @@ export async function handlePrMerged(pool, prInfo) {
   const taskTitle = task.title;
   console.log(`[pr-callback] 匹配到任务: id=${taskId} title="${taskTitle}" status=${task.status}`);
 
-  // 2. 分支处理：已完成任务只更新 pr_merged_at，不改 status 也不触发 KR 进度
-  if (task.status === 'completed') {
+  // 2. 分支处理：已完成任务（含 completed_no_pr）只更新 pr_merged_at，不触发 KR 进度
+  // completed_no_pr 是 PR URL 丢失导致的误判终态，GitHub MERGED 是权威真相，
+  // 此处将其提升为 completed 并写入 pr_merged_at / pr_status=merged。
+  if (task.status === 'completed' || task.status === 'completed_no_pr') {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -163,12 +192,15 @@ export async function handlePrMerged(pool, prInfo) {
       const updateResult = await client.query(`
         UPDATE tasks
         SET
+          status = 'completed',
           pr_url = COALESCE(pr_url, $2),
           pr_merged_at = $3,
           pr_status = 'merged',
+          payload = (COALESCE(payload, '{}'::jsonb)
+            || jsonb_build_object('run_status', 'merged')) - 'current_run_id',
           updated_at = NOW()
         WHERE id = $1
-          AND status = 'completed'
+          AND status IN ('completed', 'completed_no_pr')
           AND pr_merged_at IS NULL
         RETURNING id
       `, [taskId, prUrl, mergedAt]);
@@ -181,7 +213,7 @@ export async function handlePrMerged(pool, prInfo) {
       }
 
       await client.query('COMMIT');
-      console.log(`[pr-callback] 已完成任务 ${taskId} pr_merged_at 已更新（via PR #${prNumber}）`);
+      console.log(`[pr-callback] 任务 ${taskId}(${task.status}) pr_merged_at 已更新（via PR #${prNumber}）`);
     } catch (err) {
       try { await client.query('ROLLBACK'); } catch { /* ignore */ }
       console.error(`[pr-callback] pr_merged_at 更新失败: ${err.message}`);
