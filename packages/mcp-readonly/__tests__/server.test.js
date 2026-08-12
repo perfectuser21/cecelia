@@ -238,4 +238,19 @@ describe.skipIf(!TEST_DB_URL)('POST /mcp 同一个 app 实例连续/并发多次
       expect(rpc.error, `并发第${i + 1}个请求不应返回JSON-RPC错误：${JSON.stringify(rpc.error)}`).toBeUndefined();
     });
   });
+
+  // 生产实测：Notion 一次探索性会话（查完 value_stream/capability/cross_cut/boundary
+  // 四类对象 + tools/list + 若干次重连时的 OAuth discovery 重试）在1分钟内轻松打出
+  // 25+次 /mcp 请求，被旧限流值(20次/分钟/token)拦了一部分，报429。这条测试锁定
+  // "一次正常的多对象类型探索会话不应该被限流打断"这个真实使用场景。
+  it('25次连续/mcp请求（模拟一次多对象类型探索会话）一个429都不应该出现', async () => {
+    const app = makeApp();
+    const results = [];
+    for (let i = 0; i < 25; i++) {
+      const res = await call(app, { jsonrpc: '2.0', id: i, method: 'tools/list', params: {} });
+      results.push(res.status);
+    }
+    const rateLimited = results.filter((s) => s === 429);
+    expect(rateLimited.length, `25次请求里有${rateLimited.length}次被429拦截，状态码列表：${JSON.stringify(results)}`).toBe(0);
+  });
 });
