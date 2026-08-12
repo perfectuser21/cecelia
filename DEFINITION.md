@@ -8,11 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.29
+**Brain 版本**: 1.272.30
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.30 — Harness 重跑合同版本隔离
+
+- 同一 initiative 再次批准相同 GAN 轮次时，在事务化 initiative 锁内分配新的不可变合同版本，禁止历史审批 SHA 与新冻结制品被合并成混合合同。
+- 同 run、同证据重入幂等复用已附着合同；同 run、不同证据 fail-closed，两个并发 run 串行分配不同版本。
+- PostgreSQL 回归覆盖历史 r3 合同与新 r3 审批碰撞、同 run 重入和双连接并发，验证旧合同仅 supersede 且证据不被改写。
 
 ## Brain 1.272.29 — approved contract artifact transport
 

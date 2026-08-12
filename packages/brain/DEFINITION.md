@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**版本**: 1.272.29
+**版本**: 1.272.30
+
+## Harness rerun contract version isolation
+
+- Re-approving the same GAN round allocates a new immutable initiative contract version under a transactional initiative task lock, while exact same-run retries reuse the attached contract and mismatched retries fail closed.
 
 ## Frozen contract Runner rollout
 

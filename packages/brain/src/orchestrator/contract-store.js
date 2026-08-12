@@ -48,25 +48,74 @@ export async function materializeApprovedContract(db, {
 
   try {
     if (ownsClient) await client.query('BEGIN');
-    // This must be a separate statement before the materialization statement.
-    // PostgreSQL fixes a statement snapshot before a contended advisory lock
-    // returns, so acquiring the lock inside the CTE would still miss a writer
-    // that committed while materialization was waiting.
-    await client.query(
-      `SELECT pg_advisory_xact_lock(
-                hashtextextended(
-                  'initiative_contract_artifacts:'
-                    || run.initiative_id::text
-                    || ':'
-                    || $2::integer::text,
-                  0
-                )
-              ) AS locked
+    // Lock the initiative in a separate statement. PostgreSQL fixes a statement
+    // snapshot before a contended lock returns, so version allocation must use
+    // a later statement and a fresh snapshot.
+    const runResult = await client.query(
+      `SELECT run.initiative_id, run.contract_id
          FROM initiative_runs AS run
+         JOIN tasks AS task ON task.id = run.initiative_id
         WHERE run.id = $1::uuid
-        FOR UPDATE`,
-      [runId, version],
+        FOR UPDATE OF run, task`,
+      [runId],
     );
+    const run = runResult.rows[0];
+    if (!run) {
+      throw new Error(`cannot materialize approved contract: run ${runId} not found`);
+    }
+    if (run.contract_id) {
+      const existing = await client.query(
+        `SELECT contract.id, contract.version, contract.status, contract.branch,
+                contract.approved_sha IS NOT DISTINCT FROM $2::text
+                  AND contract.review_rounds = $3::integer
+                  AND contract.branch = $4::text
+                  AND contract.prd_content IS NOT DISTINCT FROM $5::text
+                  AND contract.contract_content IS NOT DISTINCT FROM $6::text
+                  AND (
+                    ($7::boolean = false AND seal.contract_id IS NULL)
+                    OR ($7::boolean = true
+                      AND seal.artifact_count = $8::integer
+                      AND seal.manifest_sha256 = $9::text
+                      AND seal.source_revision = $2::text)
+                  ) AS evidence_matches
+           FROM initiative_contracts AS contract
+           LEFT JOIN initiative_contract_artifact_seals AS seal
+             ON seal.contract_id = contract.id
+          WHERE contract.id = $1::uuid`,
+        [
+          run.contract_id,
+          sourceRevision,
+          version,
+          branch,
+          prdContent ?? null,
+          contractContent ?? null,
+          artifactsProvided,
+          frozenArtifacts.length,
+          manifestDigest,
+        ],
+      );
+      if (!existing.rows[0]) {
+        throw new Error(`attached approved contract ${run.contract_id} not found`);
+      }
+      if (!existing.rows[0].evidence_matches) {
+        throw new Error(`attached approved contract evidence mismatch for run ${runId}`);
+      }
+      delete existing.rows[0].evidence_matches;
+      if (ownsClient) await client.query('COMMIT');
+      return existing.rows[0];
+    }
+
+    const versionResult = await client.query(
+      `SELECT CASE
+                WHEN bool_or(existing.version = $2::integer AND existing.status = 'draft')
+                  THEN $2::integer
+                ELSE GREATEST($2::integer, COALESCE(MAX(existing.version), 0) + 1)
+              END AS version
+         FROM initiative_contracts AS existing
+        WHERE existing.initiative_id = $1::uuid`,
+      [run.initiative_id, version],
+    );
+    const storedVersion = versionResult.rows[0].version;
 
     const { rows } = await client.query(
     `WITH run_row AS (
@@ -79,7 +128,7 @@ export async function materializeApprovedContract(db, {
          (initiative_id, version, status, prd_content, contract_content,
           approved_sha, review_rounds, approved_at, branch,
           created_at, updated_at)
-       SELECT initiative_id, $2::integer, 'approved', $4::text, $5::text,
+       SELECT initiative_id, $11::integer, 'approved', $4::text, $5::text,
               $10::text, $2::integer, $6::timestamptz, $3::text,
               $6::timestamptz, $6::timestamptz
          FROM run_row
@@ -209,6 +258,7 @@ export async function materializeApprovedContract(db, {
       artifactsProvided,
       manifestDigest,
       sourceRevision,
+      storedVersion,
     ],
   );
 
@@ -218,7 +268,7 @@ export async function materializeApprovedContract(db, {
            FROM initiative_contracts AS contract
            JOIN initiative_runs AS run ON run.initiative_id = contract.initiative_id
           WHERE run.id = $1::uuid AND contract.version = $2::integer`,
-        [runId, version],
+        [runId, storedVersion],
       );
       if (diagnostic.rows[0]) {
         throw new Error('approved_contract_immutable_mismatch');
