@@ -3,7 +3,7 @@
 BEGIN;
 
 CREATE TABLE IF NOT EXISTS initiative_contract_artifacts (
-  contract_id UUID NOT NULL REFERENCES initiative_contracts(id) ON DELETE CASCADE,
+  contract_id UUID NOT NULL REFERENCES initiative_contracts(id) ON DELETE RESTRICT,
   path TEXT NOT NULL,
   content TEXT NOT NULL,
   sha256 CHAR(64) NOT NULL CHECK (sha256 ~ '^[a-f0-9]{64}$'),
@@ -25,7 +25,7 @@ $$;
 DROP TRIGGER IF EXISTS initiative_contract_artifacts_immutable
   ON initiative_contract_artifacts;
 CREATE TRIGGER initiative_contract_artifacts_immutable
-BEFORE UPDATE ON initiative_contract_artifacts
+BEFORE UPDATE OR DELETE ON initiative_contract_artifacts
 FOR EACH ROW EXECUTE FUNCTION reject_initiative_contract_artifact_update();
 
 INSERT INTO schema_version (version, description, applied_at)
