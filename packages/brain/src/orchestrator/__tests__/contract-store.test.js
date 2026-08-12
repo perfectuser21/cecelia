@@ -222,3 +222,32 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
     }]);
   });
 });
+
+describe('materializeApprovedContract concurrency contract', () => {
+  it('写 artifact 与 seal 前获取同一 contract 级事务锁', async () => {
+    const db = {
+      query: async (sql) => {
+        expect(sql).toMatch(/pg_advisory_xact_lock/i);
+        expect(sql).toMatch(/initiative_contract_artifacts:/i);
+        return {
+          rows: [{
+            id: '33333333-3333-4333-8333-333333333333',
+            version: 2,
+            status: 'approved',
+            branch: 'cp-harness-propose-r2-22222222-a8',
+          }],
+        };
+      },
+    };
+
+    await expect(materializeApprovedContract(db, {
+      runId,
+      version: 2,
+      branch: 'cp-harness-propose-r2-22222222-a8',
+      prdContent: '# PRD',
+      contractContent: '# Contract\n\n# DoD',
+      artifacts,
+      approvedAt: new Date('2026-07-22T15:00:00Z'),
+    })).resolves.toMatchObject({ status: 'approved' });
+  });
+});

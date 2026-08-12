@@ -1372,6 +1372,43 @@ describe('createDispatcher', () => {
     expect(deps.launcher.launch).not.toHaveBeenCalled();
   });
 
+  it('approved contract seal 核验失败时在 Attempt 创建前返回精确 assembly fault', async () => {
+    const deps = makeDeps();
+    const artifactContent = 'test("routing", () => {})';
+    const sealedArtifacts = [{
+      path: 'sprints/router/tests/routing.test.mjs',
+      content: artifactContent,
+      sha256: createHash('sha256').update(artifactContent).digest('hex'),
+      byte_length: Buffer.byteLength(artifactContent),
+      source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+    }];
+
+    const result = await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-approved-contract' },
+          artifacts: sealedArtifacts,
+          artifact_error: 'FROZEN_CONTRACT_ARTIFACT_INVALID:seal_mismatch',
+        },
+      },
+      decision: { phase: 'generate', reason: 'contract_approved' },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'FROZEN_CONTRACT_ARTIFACT_INVALID',
+      should_create_attempt: false,
+    });
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
+  });
+
   it('合同资产使完整 TaskBundle 超过传输上限时硬失败，不创建 Attempt', async () => {
     const deps = makeDeps();
     const content = 'a'.repeat(255 * 1024);

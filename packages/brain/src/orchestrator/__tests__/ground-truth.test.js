@@ -152,6 +152,30 @@ describe('collectGroundTruth：DB 通道组装', () => {
     expect(params).toEqual([CONTRACT_ID]);
   });
 
+  it('artifact 行数与 seal 不一致时标记 frozen contract 读取失败', async () => {
+    const deps = makeDeps({
+      rows: {
+        contracts: [{ id: CONTRACT_ID, status: 'approved' }],
+        contractArtifacts: [{
+          path: 'sprints/router/tests/appended.test.mjs',
+          content: 'test("appended", () => {})',
+          sha256: 'a'.repeat(64),
+          byte_length: 27,
+          source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+          sealed_artifact_count: 0,
+          sealed_manifest_sha256: 'b'.repeat(64),
+          sealed_source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+        }],
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.contract.artifact_error).toBe(
+      'FROZEN_CONTRACT_ARTIFACT_INVALID:seal_mismatch',
+    );
+  });
+
   it('contract status=draft → approved:false；contract_id 为空 → 不查 contracts、approved:false', async () => {
     const deps1 = makeDeps();
     const o1 = await collectGroundTruth(deps1, { taskId: TASK_ID, runId: RUN_ID });
