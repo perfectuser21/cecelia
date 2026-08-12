@@ -204,7 +204,7 @@ describe('F7: dev 派发迁离 LangGraph', () => {
     expect(dispatched.payload.gear).toBe('hotfix');
   });
 
-  it('dev task 非默认仓库（v1范围限制）→ 不改道，task_type 保持 dev', async () => {
+  it('dev task 非默认仓库（v1范围限制）→ 不改道，task_type 保持 dev，且不发出 harness_initiative 落库 UPDATE', async () => {
     const task = makeDevTask({ id: 'dev-task-other-repo-001', payload: { repo: 'zenithjoy' } });
     setupDispatch(task);
 
@@ -214,9 +214,13 @@ describe('F7: dev 派发迁离 LangGraph', () => {
     const dispatched = mocks.triggerCeceliaRun.mock.calls[0][0];
     expect(dispatched.task_type).toBe('dev');
     expect(dispatched.payload.orchestrator).toBeUndefined();
+    const updateCall = mocks.query.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes("task_type = 'harness_initiative'")
+    );
+    expect(updateCall).toBeUndefined();
   });
 
-  it('dev task 纯文档标题（docs:）→ 不改道，task_type 保持 dev', async () => {
+  it('dev task 纯文档标题（docs:）→ 不改道，task_type 保持 dev，且不发出 harness_initiative 落库 UPDATE', async () => {
     const task = makeDevTask({ id: 'dev-task-docs-001', title: 'docs: 更新 README' });
     setupDispatch(task);
 
@@ -225,6 +229,10 @@ describe('F7: dev 派发迁离 LangGraph', () => {
     expect(result.dispatched).toBe(true);
     const dispatched = mocks.triggerCeceliaRun.mock.calls[0][0];
     expect(dispatched.task_type).toBe('dev');
+    const updateCall = mocks.query.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes("task_type = 'harness_initiative'")
+    );
+    expect(updateCall).toBeUndefined();
   });
 
   it('LangGraph workflow runtime 物理不存在（graph-runtime / workflow-registry 已删除）', async () => {
