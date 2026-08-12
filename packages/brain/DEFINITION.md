@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**版本**: 1.272.15
+**版本**: 1.272.20
+
+## Blue-green internal auth credential closure
+
+- Blue-green sidecar 只读挂载共享 internal token SSOT；Gate 3 通过敏感入口匿名 401 验证生产容器真实启用鉴权。
 
 ## Linux runner dependency target
 

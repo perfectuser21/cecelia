@@ -50,6 +50,19 @@ else
   fail "生产蓝绿部署没有闭环内部 token"
 fi
 
+if grep -q 'assert-internal-auth-ready.sh' "$REPO_ROOT/.github/workflows/brain-ci-deploy.yml"; then
+  pass "Gate 3 校验生产容器真实启用内部鉴权"
+else
+  fail "Gate 3 只验版本与重启，仍会放过未注入 token 的容器"
+fi
+
+if grep -q -- '-e "CECELIA_INTERNAL_ENV_FILE=' "$REPO_ROOT/scripts/lib/bluegreen.sh" \
+  && grep -q -- ':${CECELIA_INTERNAL_ENV_FILE}:ro' "$REPO_ROOT/scripts/lib/bluegreen.sh"; then
+  pass "蓝绿 sidecar 挂载并转发共享凭据 SSOT"
+else
+  fail "蓝绿 sidecar 无法读取宿主凭据 SSOT，Compose 会静默丢失 token"
+fi
+
 if grep -q 'ensure_cecelia_internal_token.*CECELIA_INTERNAL_ENV_FILE' "$REPO_ROOT/scripts/staging-deploy.sh"; then
   pass "staging 部署确保共享 SSOT token"
 else

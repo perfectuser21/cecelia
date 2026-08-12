@@ -254,6 +254,11 @@ bluegreen_swap() {
   local sidecar_name="cecelia-bluegreen-sidecar"
 
   if [[ -n "$root_dir" ]]; then
+    if [[ -z "${CECELIA_INTERNAL_ENV_FILE:-}" || ! -f "$CECELIA_INTERNAL_ENV_FILE" ]]; then
+      echo "[bluegreen] ❌ sidecar 无法读取内部鉴权凭据 SSOT，终止切换（blue 保留）"
+      send_bark "⚠️ 蓝绿 sidecar 缺少内部鉴权凭据 SSOT v${version}，已保留 blue（5221 仍可用）"
+      return 1
+    fi
     docker rm -f "$sidecar_name" >/dev/null 2>&1 || true  # 清理上次残留
 
     # ── 打 blue-fallback 快照（sidecar compose up 失败时回退用）──────────────
@@ -280,10 +285,12 @@ bluegreen_swap() {
         --name "$sidecar_name" \
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v "${root_dir}:${root_dir}:rw" \
+        -v "${CECELIA_INTERNAL_ENV_FILE}:${CECELIA_INTERNAL_ENV_FILE}:ro" \
         -w "${root_dir}" \
         -e "BRAIN_VERSION=${version}" \
         -e "ENV_REGION=${env_region}" \
         -e "DEPLOY_ROOT=${root_dir}" \
+        -e "CECELIA_INTERNAL_ENV_FILE=${CECELIA_INTERNAL_ENV_FILE}" \
         -e "BARK_TOKEN=${bark_token}" \
         "cecelia-brain:${version}" \
         bash "${root_dir}/scripts/lib/bluegreen-sidecar.sh" >/dev/null 2>&1; then
