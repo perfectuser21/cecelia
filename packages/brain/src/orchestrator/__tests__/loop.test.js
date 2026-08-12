@@ -68,6 +68,12 @@ function makeEnv({ observedSeq, dispatch, finalizeRun } = {}) {
     pool: {
       query: vi.fn(async (sql, params) => {
         sqls.push([sql, params]);
+        if (sql.includes('FOR UPDATE OF run, task')) {
+          return { rows: [{ initiative_id: TASK_ID, contract_id: null }] };
+        }
+        if (sql.includes('GREATEST($2::integer')) {
+          return { rows: [{ version: params[1] }] };
+        }
         if (sql.includes('INSERT INTO initiative_contracts')) {
           return {
             rows: [{ id: CONTRACT_ID, version: params[1], status: 'approved', branch: params[2] }],

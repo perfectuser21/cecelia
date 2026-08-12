@@ -10,6 +10,11 @@ let client;
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const initiativeId = '22222222-2222-4222-8222-222222222222';
+const rerunId = '33333333-3333-4333-8333-333333333333';
+const concurrentRunA = '44444444-4444-4444-8444-444444444444';
+const concurrentRunB = '55555555-5555-4555-8555-555555555555';
+const concurrentInitiativeId = '66666666-6666-4666-8666-666666666666';
+const concurrencySchema = `contract_store_${process.pid}`;
 const revision = '6faaa9f55e9789ffd29fd2760a9b5994df272e86';
 function artifact(path, content) {
   return Object.freeze({
@@ -32,6 +37,49 @@ const HAS_REAL_POSTGRES = Boolean(process.env.DATABASE_URL || process.env.DB);
 describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contract', () => {
   beforeAll(async () => {
     client = await pool.connect();
+    await client.query(`
+      CREATE SCHEMA ${concurrencySchema};
+      CREATE TABLE ${concurrencySchema}.initiative_contracts (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        initiative_id uuid NOT NULL,
+        version integer NOT NULL,
+        status text NOT NULL DEFAULT 'draft',
+        prd_content text,
+        contract_content text,
+        approved_sha text,
+        frozen_artifacts jsonb NOT NULL DEFAULT '[]'::jsonb,
+        review_rounds integer DEFAULT 0,
+        approved_at timestamptz,
+        branch text,
+        created_at timestamptz DEFAULT now(),
+        updated_at timestamptz DEFAULT now(),
+        UNIQUE (initiative_id, version)
+      );
+      CREATE TABLE ${concurrencySchema}.initiative_runs (
+        id uuid PRIMARY KEY,
+        initiative_id uuid NOT NULL,
+        contract_id uuid,
+        updated_at timestamptz DEFAULT now()
+      );
+      CREATE TABLE ${concurrencySchema}.tasks (id uuid PRIMARY KEY);
+      CREATE TABLE ${concurrencySchema}.initiative_contract_artifacts (
+        contract_id uuid NOT NULL REFERENCES ${concurrencySchema}.initiative_contracts(id),
+        path text NOT NULL,
+        content text NOT NULL,
+        sha256 text NOT NULL,
+        byte_length integer NOT NULL,
+        source_revision text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (contract_id, path)
+      );
+      CREATE TABLE ${concurrencySchema}.initiative_contract_artifact_seals (
+        contract_id uuid PRIMARY KEY REFERENCES ${concurrencySchema}.initiative_contracts(id),
+        artifact_count integer NOT NULL,
+        manifest_sha256 text NOT NULL,
+        source_revision text NOT NULL,
+        sealed_at timestamptz NOT NULL DEFAULT now()
+      );
+    `);
     await client.query('BEGIN');
     await client.query(`
       CREATE TEMP TABLE initiative_contracts (
@@ -56,6 +104,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
         contract_id uuid,
         updated_at timestamptz DEFAULT now()
       ) ON COMMIT DROP;
+      CREATE TEMP TABLE tasks (id uuid PRIMARY KEY) ON COMMIT DROP;
       CREATE TEMP TABLE initiative_contract_artifacts (
         contract_id uuid NOT NULL REFERENCES initiative_contracts(id),
         path text NOT NULL,
@@ -91,9 +140,11 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       BEFORE INSERT ON initiative_contract_artifacts
       FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_sealed_artifact_append();
     `);
+    await client.query('INSERT INTO tasks (id) VALUES ($1::uuid)', [initiativeId]);
     await client.query(
-      'INSERT INTO initiative_runs (id, initiative_id) VALUES ($1::uuid, $2::uuid)',
-      [runId, initiativeId],
+      `INSERT INTO initiative_runs (id, initiative_id)
+       VALUES ($1::uuid, $3::uuid), ($2::uuid, $3::uuid)`,
+      [runId, rerunId, initiativeId],
     );
     await client.query(
       `INSERT INTO initiative_contracts (initiative_id, version, status, branch)
@@ -107,10 +158,11 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       await client.query('ROLLBACK');
       client.release();
     }
+    await pool.query(`DROP SCHEMA IF EXISTS ${concurrencySchema} CASCADE`);
     await pool.end();
   });
 
-  it('upserts the approved version, supersedes older versions, and attaches the run atomically', async () => {
+  it('materializes the approved version, supersedes older versions, and attaches the run atomically', async () => {
     const approvedAt = new Date('2026-07-22T15:00:00Z');
     const contract = await materializeApprovedContract(client, {
       runId,
@@ -210,7 +262,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       contractContent: '# Contract\n\n# DoD',
       artifacts: undefined,
       approvedAt,
-    })).rejects.toThrow(/approved_contract_immutable_mismatch/i);
+    })).rejects.toThrow(/evidence mismatch|approved_contract_immutable_mismatch/i);
 
     await expect(materializeApprovedContract(client, {
       runId,
@@ -220,7 +272,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       contractContent: '# Contract\n\n# DoD',
       artifacts,
       approvedAt,
-    })).rejects.toThrow(/approved_contract_immutable_mismatch/i);
+    })).rejects.toThrow(/evidence mismatch|approved_contract_immutable_mismatch/i);
 
     const immutableContract = await client.query(
       'SELECT branch, prd_content FROM initiative_contracts WHERE id = $1::uuid',
@@ -231,6 +283,104 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       prd_content: '# PRD',
     }]);
   });
+
+  it('allocates a new immutable version when a rerun approves the same GAN round', async () => {
+    const oldRevision = 'c'.repeat(40);
+    const newRevision = 'd'.repeat(40);
+    const rerunArtifacts = artifacts.map((item) => ({
+      ...item,
+      source_revision: newRevision,
+    }));
+    await client.query(
+      `INSERT INTO initiative_contracts
+         (initiative_id, version, status, approved_sha, branch)
+       VALUES ($1::uuid, 3, 'approved', $2, 'cp-old-r3')`,
+      [initiativeId, oldRevision],
+    );
+
+    const contract = await materializeApprovedContract(client, {
+      runId: rerunId,
+      version: 3,
+      branch: 'cp-new-r3',
+      prdContent: '# PRD',
+      contractContent: '# Contract\n\n# DoD',
+      artifacts: rerunArtifacts,
+    });
+
+    expect(contract).toMatchObject({ version: 4, status: 'approved', branch: 'cp-new-r3' });
+    const contracts = await client.query(
+      `SELECT version, status, approved_sha,
+              id = (SELECT contract_id FROM initiative_runs WHERE id = $2::uuid) AS attached
+         FROM initiative_contracts
+        WHERE initiative_id = $1::uuid AND version >= 3
+        ORDER BY version`,
+      [initiativeId, rerunId],
+    );
+    expect(contracts.rows).toEqual([
+      { version: 3, status: 'superseded', approved_sha: oldRevision, attached: false },
+      { version: 4, status: 'approved', approved_sha: newRevision, attached: true },
+    ]);
+  });
+
+  it('serializes concurrent approvals for one initiative onto distinct versions', async () => {
+    const poolOptions = {
+      ...DB_DEFAULTS,
+      max: 1,
+      options: `-c search_path=${concurrencySchema},public`,
+    };
+    const firstPool = new Pool(poolOptions);
+    const secondPool = new Pool(poolOptions);
+    const firstRevision = 'e'.repeat(40);
+    const secondRevision = 'f'.repeat(40);
+    const artifactsFor = (sourceRevision) => artifacts.map((item) => ({
+      ...item,
+      source_revision: sourceRevision,
+    }));
+    try {
+      await firstPool.query('INSERT INTO tasks (id) VALUES ($1::uuid)', [concurrentInitiativeId]);
+      await firstPool.query(
+        `INSERT INTO initiative_runs (id, initiative_id)
+         VALUES ($2::uuid, $1::uuid), ($3::uuid, $1::uuid)`,
+        [concurrentInitiativeId, concurrentRunA, concurrentRunB],
+      );
+      const [first, second] = await Promise.all([
+        materializeApprovedContract(firstPool, {
+          runId: concurrentRunA,
+          version: 3,
+          branch: 'cp-concurrent-a-r3',
+          prdContent: '# PRD',
+          contractContent: '# Contract\n\n# DoD',
+          artifacts: artifactsFor(firstRevision),
+        }),
+        materializeApprovedContract(secondPool, {
+          runId: concurrentRunB,
+          version: 3,
+          branch: 'cp-concurrent-b-r3',
+          prdContent: '# PRD',
+          contractContent: '# Contract\n\n# DoD',
+          artifacts: artifactsFor(secondRevision),
+        }),
+      ]);
+      expect([first.version, second.version].sort()).toEqual([3, 4]);
+      const contracts = await firstPool.query(
+        `SELECT contract.version, contract.status, seal.source_revision
+           FROM initiative_contracts AS contract
+           JOIN initiative_contract_artifact_seals AS seal ON seal.contract_id = contract.id
+          WHERE contract.initiative_id = $1::uuid
+          ORDER BY contract.version`,
+        [concurrentInitiativeId],
+      );
+      expect(contracts.rows).toEqual([
+        expect.objectContaining({ version: 3, status: 'superseded' }),
+        expect.objectContaining({ version: 4, status: 'approved' }),
+      ]);
+      expect(new Set(contracts.rows.map((row) => row.source_revision))).toEqual(
+        new Set([firstRevision, secondRevision]),
+      );
+    } finally {
+      await Promise.all([firstPool.end(), secondPool.end()]);
+    }
+  });
 });
 
 describe('materializeApprovedContract concurrency contract', () => {
@@ -239,6 +389,12 @@ describe('materializeApprovedContract concurrency contract', () => {
     const client = {
       query: async (sql) => {
         queries.push(sql);
+        if (/FOR UPDATE OF run, task/i.test(sql)) {
+          return { rows: [{ initiative_id: initiativeId, contract_id: null }] };
+        }
+        if (/GREATEST\(\$2::integer/i.test(sql)) {
+          return { rows: [{ version: 2 }] };
+        }
         if (/UPDATE initiative_runs AS run/i.test(sql)) {
           return {
             rows: [{
@@ -249,7 +405,7 @@ describe('materializeApprovedContract concurrency contract', () => {
             }],
           };
         }
-        return { rows: [{ locked: true }] };
+        return { rows: [] };
       },
       release: vi.fn(),
     };
@@ -266,10 +422,9 @@ describe('materializeApprovedContract concurrency contract', () => {
     })).resolves.toMatchObject({ status: 'approved' });
 
     expect(queries[0]).toBe('BEGIN');
-    expect(queries[1]).toMatch(/pg_advisory_xact_lock/i);
-    expect(queries[1]).toMatch(/initiative_contract_artifacts:/i);
-    expect(queries[1]).toMatch(/initiative_runs/i);
-    expect(queries[2]).toMatch(/UPDATE initiative_runs AS run/i);
+    expect(queries[1]).toMatch(/FOR UPDATE OF run, task/i);
+    expect(queries[2]).toMatch(/GREATEST\(\$2::integer/i);
+    expect(queries[3]).toMatch(/UPDATE initiative_runs AS run/i);
     expect(queries.at(-1)).toBe('COMMIT');
     expect(client.release).toHaveBeenCalledOnce();
   });
@@ -279,10 +434,16 @@ describe('materializeApprovedContract concurrency contract', () => {
     const client = {
       query: vi.fn(async (sql) => {
         queries.push(sql);
+        if (/FOR UPDATE OF run, task/i.test(sql)) {
+          return { rows: [{ initiative_id: initiativeId, contract_id: null }] };
+        }
+        if (/GREATEST\(\$2::integer/i.test(sql)) {
+          return { rows: [{ version: 2 }] };
+        }
         if (/UPDATE initiative_runs AS run/i.test(sql)) {
           throw Object.assign(new Error('division by zero'), { code: '22012' });
         }
-        return { rows: [{ locked: true }] };
+        return { rows: [] };
       }),
       release: vi.fn(),
     };
