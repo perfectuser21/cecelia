@@ -176,6 +176,14 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   const normalizedContractArtifacts = Array.isArray(observed.contract?.artifacts)
     ? observed.contract.artifacts
     : null;
+  // 合同批准后，冻结 artifacts 已经是 PRD/合同/DoD 的唯一权威正文。
+  // Generator/Evaluator/Judge 若继续携带入口 description/thin_prd/prep_prd_body，
+  // 会把同一份长 PRD 重复装进 TaskBundle；Evaluator skill 加入后尤其容易越过
+  // 256KB 传输闸。只对已批准且确有冻结 artifacts 的下游角色去重，Planner/GAN
+  // 仍保留入口正文，避免批准前丢失需求上下文。
+  const frozenContractIsCanonical = observed.contract?.approved === true
+    && normalizedContractArtifacts !== null
+    && ['generator', 'evaluator', 'judge'].includes(spec.role);
   const compatibilityArtifacts = Array.isArray(ctx.frozenContractArtifacts)
     ? ctx.frozenContractArtifacts
     : (normalizedContractArtifacts ?? [])
@@ -194,7 +202,9 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     artifacts: compatibilityArtifacts,
     task: {
       title: task.title ?? '',
-      description: task.description ?? '',
+      ...(!frozenContractIsCanonical
+        ? { description: task.description ?? '' }
+        : {}),
     },
     logical_cycle_id: attemptMetadata.logicalCycleId,
     attempt_kind: attemptMetadata.attemptKind,
@@ -218,10 +228,18 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   }
   // GAN 收敛的 PRD 锚（issue ce42f68f）：r17 实证 payload 缺 thin_prd 时 Planner
   // 只能凭一句话 description 推断 PRD，"覆盖完 PRD 即收敛"失去锚点。有值才注入。
-  if (typeof payload.thin_prd === 'string' && payload.thin_prd.trim()) {
+  if (
+    !frozenContractIsCanonical
+    && typeof payload.thin_prd === 'string'
+    && payload.thin_prd.trim()
+  ) {
     common.thin_prd = payload.thin_prd;
   }
-  if (typeof payload.prep_prd_body === 'string' && payload.prep_prd_body.trim()) {
+  if (
+    !frozenContractIsCanonical
+    && typeof payload.prep_prd_body === 'string'
+    && payload.prep_prd_body.trim()
+  ) {
     common.prep_prd_body = payload.prep_prd_body;
   }
   if (Object.prototype.hasOwnProperty.call(payload, 'required_command_evidence')) {

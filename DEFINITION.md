@@ -8,11 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.31
+**Brain 版本**: 1.272.32
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.32 — 已批准合同 TaskBundle 去重
+
+- Generator、Evaluator、Judge 在冻结合同成为正文 SSOT 后，不再重复装载入口
+  description、thin PRD 与 PrepPRD，避免真实大合同触发 256KB 装配上限。
+- Planner 与 GAN 仍保留入口需求正文；冻结合同的完整性、摘要和来源 revision 校验不变。
 
 ## Brain 1.272.31 — Harness 实现基线与角色检出点解耦
 
