@@ -131,6 +131,156 @@ describe('collectGroundTruth：DB 通道组装', () => {
     expect(o.authCircuit).toEqual([{ account_id: 'account2', is_auth_failed: true, auth_fail_count: 2 }]);
   });
 
+  it('未显式固定基线时，从本 Run 最早的合法 WorkspaceSpec 恢复稳定实现基线', async () => {
+    const baselineSha = '1'.repeat(40);
+    const laterContractSha = '2'.repeat(40);
+    const plannerAttemptId = '22222222-2222-4222-8222-222222222222';
+    const reviewerAttemptId = '33333333-3333-4333-8333-333333333333';
+    const taskBundle = ({ attemptId, hop, role, baseSha, mode, branch }) => ({
+      contract_version: '1.0',
+      run_id: RUN_ID,
+      attempt_id: attemptId,
+      hop,
+      phase: role === 'planner' ? 'planning' : 'gan',
+      role,
+      objective: `Run the ${role} role.`,
+      skill: null,
+      inputs: {
+        task_id: TASK_ID,
+        sprint_dir: 'sprints/stable-baseline',
+        execution_surface: 'fleet-worker',
+        workspace_spec: {
+          repo: 'perfectuser21/cecelia',
+          base_sha: baseSha,
+          branch,
+          expected_head_sha: role === 'reviewer' ? baseSha : null,
+          mode,
+          run_id: RUN_ID,
+          attempt_id: attemptId,
+          frozen_baseline: false,
+        },
+        artifacts: [],
+      },
+      constraints: {
+        read_only: mode === 'read-only',
+        fresh_session: true,
+        timeout_seconds: 5400,
+      },
+      expected_output: `harness-result/${role}-v1`,
+    });
+    const deps = makeDeps({
+      rows: {
+        tasks: [{ id: TASK_ID, status: 'in_progress', payload: {} }],
+        attempts: [
+          {
+            id: reviewerAttemptId,
+            run_id: RUN_ID,
+            hop: 4,
+            role: 'reviewer',
+            status: 'completed',
+            task_bundle: taskBundle({
+              attemptId: reviewerAttemptId,
+              hop: 4,
+              role: 'reviewer',
+              baseSha: laterContractSha,
+              mode: 'read-only',
+              branch: 'cp-harness-propose-r1-contract',
+            }),
+          },
+          {
+            id: plannerAttemptId,
+            run_id: RUN_ID,
+            hop: 1,
+            role: 'planner',
+            status: 'completed',
+            task_bundle: taskBundle({
+              attemptId: plannerAttemptId,
+              hop: 1,
+              role: 'planner',
+              baseSha: baselineSha,
+              mode: 'read-write',
+              branch: 'cp-harness-prd-stable-baseline',
+            }),
+          },
+        ],
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.implementationBaseline).toEqual({
+      repo: 'perfectuser21/cecelia',
+      base_sha: baselineSha,
+      source: 'initial_workspace',
+      frozen: false,
+    });
+  });
+
+  it('最早历史 TaskBundle 损坏时 fail-closed，不得从后续 Reviewer 合同 SHA 重建实现基线', async () => {
+    const reviewerAttemptId = '33333333-3333-4333-8333-333333333333';
+    const reviewerContractSha = '2'.repeat(40);
+    const deps = makeDeps({
+      rows: {
+        tasks: [{ id: TASK_ID, status: 'in_progress', payload: {} }],
+        attempts: [
+          {
+            id: reviewerAttemptId,
+            run_id: RUN_ID,
+            hop: 4,
+            role: 'reviewer',
+            status: 'completed',
+            task_bundle: {
+              contract_version: '1.0',
+              run_id: RUN_ID,
+              attempt_id: reviewerAttemptId,
+              hop: 4,
+              phase: 'gan',
+              role: 'reviewer',
+              objective: 'Review the contract.',
+              skill: null,
+              inputs: {
+                task_id: TASK_ID,
+                sprint_dir: 'sprints/stable-baseline',
+                execution_surface: 'fleet-worker',
+                workspace_spec: {
+                  repo: 'perfectuser21/cecelia',
+                  base_sha: reviewerContractSha,
+                  branch: 'cp-harness-propose-r1-contract',
+                  expected_head_sha: reviewerContractSha,
+                  mode: 'read-only',
+                  run_id: RUN_ID,
+                  attempt_id: reviewerAttemptId,
+                  frozen_baseline: false,
+                },
+                artifacts: [],
+              },
+              constraints: {
+                read_only: true,
+                fresh_session: true,
+                timeout_seconds: 5400,
+              },
+              expected_output: 'harness-result/reviewer-v1',
+            },
+          },
+          {
+            id: '22222222-2222-4222-8222-222222222222',
+            run_id: RUN_ID,
+            hop: 1,
+            role: 'planner',
+            status: 'completed',
+            task_bundle: { corrupted: true },
+          },
+        ],
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.implementationBaseline).toBeNull();
+    expect(observed.implementationBaselineError)
+      .toBe('implementation_baseline_unrecoverable');
+  });
+
   it('approved contract 从不可变资产表读取按 path 排序的 TaskBundle 真相', async () => {
     const artifacts = [
       { path: 'sprints/router/tests/a.test.mjs', sha256: 'a'.repeat(64) },

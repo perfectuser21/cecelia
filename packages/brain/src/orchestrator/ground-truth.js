@@ -25,6 +25,7 @@ import {
 import { normalizeFailureSet } from './convergence-signatures.js';
 import { getVerifiedRemotePlannerPrdArtifact } from './planner-artifact-receipt.js';
 import { parseHarnessResult, parseTaskBundle } from './execution-contract.js';
+import { resolveImplementationBaseline } from './implementation-baseline.js';
 import { sanitizeDiagnostic } from './failure-persistence.js';
 import { loadCaseFile } from './case-file-store.js';
 import { CASE_FILE_FULL_TEXT_ROUNDS } from './constants.js';
@@ -432,6 +433,19 @@ export async function collectGroundTruth(deps, opts) {
   // ---- PR 状态（gh 封装）----
   let pr = null;
   const taskPayload = asJson(task.payload) ?? {};
+  let implementationBaseline = null;
+  let implementationBaselineError = null;
+  try {
+    implementationBaseline = resolveImplementationBaseline({
+      taskPayload,
+      attemptRows,
+      runId,
+      taskId,
+    });
+  } catch (error) {
+    if (error?.message !== 'implementation_baseline_unrecoverable') throw error;
+    implementationBaselineError = error.message;
+  }
   const declaredPrUrl = taskPayload.pr_url;
   const verifiedDeclaredPrUrl = (
     typeof declaredPrUrl === 'string'
@@ -684,6 +698,8 @@ export async function collectGroundTruth(deps, opts) {
     prdExists,
     prdEvidence,
     plannerPrdArtifact,
+    implementationBaseline,
+    implementationBaselineError,
     contract,
     pr,
     inflight: {

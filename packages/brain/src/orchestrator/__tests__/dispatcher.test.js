@@ -1228,6 +1228,67 @@ describe('createDispatcher', () => {
     });
   });
 
+  it('GAN 每轮保持实现基线稳定，Reviewer 的合同检出 SHA 不得覆盖它', async () => {
+    const implementationBaseSha = 'b'.repeat(40);
+    const contractSha = 'a'.repeat(40);
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 8,
+      observed: {
+        ...observed,
+        proposeBranchSha: contractSha,
+        task: {
+          ...observed.task,
+          payload: {
+            ...observed.task.payload,
+            base_repo: 'perfectuser21/cecelia',
+            base_sha: implementationBaseSha,
+          },
+        },
+      },
+      decision: { phase: 'gan', reason: 'review' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.contract_sha).toBe(contractSha);
+    expect(created.bundle.inputs.implementation_baseline).toEqual({
+      repo: 'perfectuser21/cecelia',
+      base_sha: implementationBaseSha,
+      source: 'task_payload',
+      frozen: true,
+    });
+    expect(created.bundle.objective).toContain('inputs.implementation_baseline');
+    expect(created.bundle.objective).toContain('workspace_spec.base_sha');
+  });
+
+  it('历史实现基线不可恢复时，在创建下一角色 Attempt 前 fail-closed', async () => {
+    const deps = makeDeps();
+
+    const result = await createDispatcher(deps)('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 8,
+      observed: {
+        ...observed,
+        implementationBaseline: null,
+        implementationBaselineError: 'implementation_baseline_unrecoverable',
+      },
+      decision: { phase: 'gan', reason: 'review' },
+    });
+
+    expect(result).toMatchObject({
+      status: 'DONE_WITH_CONCERNS',
+      control_status: 'BLOCKED',
+      fallback_reason: 'TASK_BUNDLE_ASSEMBLY_FAILED',
+    });
+    expect(result.detail).toContain('implementation_baseline_unrecoverable');
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
+  });
+
   it('案卷式 GAN：reviewer TaskBundle 也注入 observed.caseFile 全量历轮行', async () => {
     const deps = makeDeps();
     const caseFile = [
