@@ -17,6 +17,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('child_process', () => ({
+  spawnSync: vi.fn(),
   execSync: vi.fn(),
   spawn: vi.fn(),
 }));
@@ -24,17 +25,17 @@ vi.mock('../quarantine.js', () => ({
   quarantineTask: vi.fn().mockResolvedValue({ success: true }),
 }));
 
-import { execSync } from 'child_process';
-import { reconcileTerminalOpenPRs } from '../shepherd.js';
+import { spawnSync } from 'child_process';
+import { reconcileTerminalOpenPRs, _resetReconcileGateForTesting } from '../shepherd.js';
 
 const PR_URL = 'https://github.com/perfectuser21/cecelia/pull/4830';
 
 // ─── 场景 1: completed+open+GitHub MERGED → 补账 ─────────────────────────
 describe('reconcileTerminalOpenPRs — completed+open+GitHub MERGED → 补账', () => {
-  beforeEach(() => vi.mocked(execSync).mockReset());
+  beforeEach(() => { vi.mocked(spawnSync).mockReset(); _resetReconcileGateForTesting(); });
 
   it('调用 gh 查询 PR 状态（只读，不调用 gh pr merge）', async () => {
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' }));
+    vi.mocked(spawnSync).mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' }), stderr: '' });
 
     const updates = [];
     const pool = {
@@ -61,18 +62,18 @@ describe('reconcileTerminalOpenPRs — completed+open+GitHub MERGED → 补账',
     await reconcileTerminalOpenPRs(pool);
 
     // 必须查询 gh pr view（获取 state）
-    expect(execSync).toHaveBeenCalled();
-    const ghCall = vi.mocked(execSync).mock.calls[0][0];
-    expect(ghCall).toMatch(/gh pr view/);
-    expect(ghCall).toMatch(/state/);
+    expect(spawnSync).toHaveBeenCalled();
+    const [cmd, args] = vi.mocked(spawnSync).mock.calls[0];
+    expect(cmd).toBe('gh');
+    expect(args).toContain('state,mergeable,mergedAt');
 
     // 不得调用 gh pr merge
-    const mergeCalls = vi.mocked(execSync).mock.calls.filter(c => /gh pr merge/.test(c[0]));
+    const mergeCalls = vi.mocked(spawnSync).mock.calls.filter(c => Array.isArray(c[1]) && c[1].includes('merge'));
     expect(mergeCalls.length).toBe(0);
   });
 
   it('GitHub MERGED → pr_status=merged，pr_merged_at 非空，current_run_id=null', async () => {
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN', mergedAt: '2026-08-12T10:00:00Z' }));
+    vi.mocked(spawnSync).mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN', mergedAt: '2026-08-12T10:00:00Z' }), stderr: '' });
 
     const updates = [];
     const pool = {
@@ -109,7 +110,7 @@ describe('reconcileTerminalOpenPRs — completed+open+GitHub MERGED → 补账',
   });
 
   it('payload.run_status 被写为 merged', async () => {
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN', mergedAt: '2026-08-12T10:00:00Z' }));
+    vi.mocked(spawnSync).mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN', mergedAt: '2026-08-12T10:00:00Z' }), stderr: '' });
 
     const updates = [];
     const pool = {
@@ -141,7 +142,7 @@ describe('reconcileTerminalOpenPRs — completed+open+GitHub MERGED → 补账',
   });
 
   it('不得 requeue（status 不改变，不写 queued）', async () => {
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' }));
+    vi.mocked(spawnSync).mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' }), stderr: '' });
 
     const updates = [];
     const pool = {
@@ -172,7 +173,7 @@ describe('reconcileTerminalOpenPRs — completed+open+GitHub MERGED → 补账',
   });
 
   it('不得 retry_count+1', async () => {
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' }));
+    vi.mocked(spawnSync).mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' }), stderr: '' });
 
     const updates = [];
     const pool = {
@@ -205,10 +206,10 @@ describe('reconcileTerminalOpenPRs — completed+open+GitHub MERGED → 补账',
 
 // ─── 场景 2: completed+GitHub OPEN/CONFLICTING → 不重排 ──────────────────
 describe('reconcileTerminalOpenPRs — GitHub OPEN/CONFLICTING → 保持原状', () => {
-  beforeEach(() => vi.mocked(execSync).mockReset());
+  beforeEach(() => { vi.mocked(spawnSync).mockReset(); _resetReconcileGateForTesting(); });
 
   it('GitHub OPEN → 不更新 pr_status，不 requeue', async () => {
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'CONFLICTING' }));
+    vi.mocked(spawnSync).mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'OPEN', mergeable: 'CONFLICTING' }), stderr: '' });
 
     const updates = [];
     const pool = {
@@ -239,9 +240,9 @@ describe('reconcileTerminalOpenPRs — GitHub OPEN/CONFLICTING → 保持原状'
   });
 
   it('GitHub CI_PENDING → 不重排，不更新状态', async () => {
-    vi.mocked(execSync)
-      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
-      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'ci', conclusion: null, status: 'IN_PROGRESS' }] }));
+    vi.mocked(spawnSync)
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }), stderr: '' })
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ statusCheckRollup: [{ name: 'ci', conclusion: null, status: 'IN_PROGRESS' }] }), stderr: '' });
 
     const updates = [];
     const pool = {
@@ -275,6 +276,8 @@ describe('reconcileTerminalOpenPRs — GitHub OPEN/CONFLICTING → 保持原状'
 
 // ─── 场景 3: failed/cancelled → 不碰 ──────────────────────────────────────
 describe('reconcileTerminalOpenPRs — SELECT 只选 completed 任务', () => {
+  beforeEach(() => { vi.mocked(spawnSync).mockReset(); _resetReconcileGateForTesting(); });
+
   it('SELECT SQL 中 status = completed（只对账 terminal completed）', async () => {
     const queryCalls = [];
     const pool = {
@@ -298,7 +301,7 @@ describe('reconcileTerminalOpenPRs — SELECT 只选 completed 任务', () => {
 
 // ─── 场景 4: 幂等 replay ──────────────────────────────────────────────────
 describe('reconcileTerminalOpenPRs — 幂等 replay', () => {
-  beforeEach(() => vi.mocked(execSync).mockReset());
+  beforeEach(() => { vi.mocked(spawnSync).mockReset(); _resetReconcileGateForTesting(); });
 
   it('已有 pr_merged_at 的任务被 SELECT 排除，gh 不被调用', async () => {
     // 修复后 SELECT 带 pr_merged_at IS NULL，所以幂等任务不出现在结果中
@@ -312,11 +315,11 @@ describe('reconcileTerminalOpenPRs — 幂等 replay', () => {
 
     await reconcileTerminalOpenPRs(pool);
 
-    expect(execSync).not.toHaveBeenCalled();
+    expect(spawnSync).not.toHaveBeenCalled();
   });
 
   it('UPDATE rowCount=0（pr_merged_at 已有值）→ 幂等跳过，不报错', async () => {
-    vi.mocked(execSync).mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN', mergedAt: '2026-08-12T10:00:00Z' }));
+    vi.mocked(spawnSync).mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN', mergedAt: '2026-08-12T10:00:00Z' }), stderr: '' });
 
     const pool = {
       query: vi.fn(async (sql, params) => {

@@ -62,10 +62,17 @@ export function resolveCanonicalPrUrlSync(explicitUrl, taskRow) {
 /**
  * 解析权威 pr_url：callback/stdout > tasks.pr_url > payload.pr_url > payload.existing_pr_url。
  * 单一 resolver，Docker queue、callback-processor、HTTP fallback 共用。
+ *
+ * Fix C: 逐项独立校验，invalid 高优先级不遮蔽合法低优先级。
+ * 每个来源先 trim 再校验；返回首个通过校验的 trimmed URL。
+ *
  * @returns {Promise<string|null>} 合法的 GitHub PR URL 或 null
  */
 export async function resolveCanonicalPrUrl(callbackPrUrl, task_id, pool) {
-  if (_isValidGithubPrUrl(callbackPrUrl)) return callbackPrUrl;
+  // Priority 1: explicit callback/stdout
+  const trimmedExplicit = typeof callbackPrUrl === 'string' ? callbackPrUrl.trim() : null;
+  if (_isValidGithubPrUrl(trimmedExplicit)) return trimmedExplicit;
+
   try {
     const { rows } = await pool.query(
       'SELECT pr_url, payload FROM tasks WHERE id = $1',
@@ -73,10 +80,20 @@ export async function resolveCanonicalPrUrl(callbackPrUrl, task_id, pool) {
     );
     const row = rows[0];
     if (!row) return null;
-    const candidate = row.pr_url
-      || row.payload?.pr_url
-      || row.payload?.existing_pr_url;
-    return _isValidGithubPrUrl(candidate) ? candidate : null;
+
+    // Priority 2: tasks.pr_url（独立校验，不用 || 短路）
+    const trimmedTaskPrUrl = typeof row.pr_url === 'string' ? row.pr_url.trim() : null;
+    if (_isValidGithubPrUrl(trimmedTaskPrUrl)) return trimmedTaskPrUrl;
+
+    // Priority 3: payload.pr_url
+    const trimmedPayloadPrUrl = typeof row.payload?.pr_url === 'string' ? row.payload.pr_url.trim() : null;
+    if (_isValidGithubPrUrl(trimmedPayloadPrUrl)) return trimmedPayloadPrUrl;
+
+    // Priority 4: payload.existing_pr_url
+    const trimmedExistingUrl = typeof row.payload?.existing_pr_url === 'string' ? row.payload.existing_pr_url.trim() : null;
+    if (_isValidGithubPrUrl(trimmedExistingUrl)) return trimmedExistingUrl;
+
+    return null;
   } catch {
     return null;
   }
@@ -96,12 +113,14 @@ export async function maybeMarkCompletedNoPr(newStatus, pr_url, task_id, pool, p
     if (taskType === 'dev' && !isDecomposition) {
       const isHarness = row.payload?.harness_mode;
       if (!isHarness) {
-        // 权威 pr_url 兜底：callback 没有 URL 时检查 DB 已知字段。
-        // 场景：Agent stdout 只写 "PR #4827"，tasks.payload.existing_pr_url 有完整 URL。
-        const canonicalUrl = row.pr_url
-          || row.payload?.pr_url
-          || row.payload?.existing_pr_url;
-        if (_isValidGithubPrUrl(canonicalUrl)) {
+        // Fix C: 逐项独立校验（invalid tasks.pr_url 不遮蔽合法 payload.existing_pr_url）
+        // 场景：Agent stdout 只写 "PR #4827"，tasks.pr_url="PR #4827"（非法），
+        //       tasks.payload.existing_pr_url 有完整合法 URL。
+        const t1 = typeof row.pr_url === 'string' ? row.pr_url.trim() : null;
+        const t2 = typeof row.payload?.pr_url === 'string' ? row.payload.pr_url.trim() : null;
+        const t3 = typeof row.payload?.existing_pr_url === 'string' ? row.payload.existing_pr_url.trim() : null;
+        const hasCanonical = _isValidGithubPrUrl(t1) || _isValidGithubPrUrl(t2) || _isValidGithubPrUrl(t3);
+        if (hasCanonical) {
           console.log(`[${prefix}] Dev task ${task_id} has canonical pr_url from DB/payload → skip completed_no_pr`);
           return newStatus;
         }
