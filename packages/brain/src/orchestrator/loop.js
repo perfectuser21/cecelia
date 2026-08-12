@@ -844,83 +844,74 @@ export async function runLoop(
       return { exitReason: decision.reason, hops };
     }
     if (decision.action === ACTION.PERSIST_CONTRACT_APPROVAL) {
-      if (!observed.contract.id) {
-        if (!observed.proposeBranch || !Number.isInteger(observed.proposeBranchRn)
-            || observed.proposeBranchRn < 1) {
-          await markRunFailed(deps, resolvedRunId, taskId, 'approved_but_no_contract_branch');
-          return { exitReason: 'approved_but_no_contract_branch', hops };
-        }
-        const approvedSha = observed.ganLatestRoundContractSha ?? null;
-        if (!approvedSha) {
-          await markRunFailed(deps, resolvedRunId, taskId, 'approved_but_no_contract_sha');
-          return { exitReason: 'approved_but_no_contract_sha', hops };
-        }
-        const artifacts = frozenContractArtifacts(
+      if (!observed.proposeBranch || !Number.isInteger(observed.proposeBranchRn)
+          || observed.proposeBranchRn < 1) {
+        await markRunFailed(deps, resolvedRunId, taskId, 'approved_but_no_contract_branch');
+        return { exitReason: 'approved_but_no_contract_branch', hops };
+      }
+      const approvedSha = observed.ganLatestRoundContractSha ?? null;
+      if (!approvedSha) {
+        await markRunFailed(deps, resolvedRunId, taskId, 'approved_but_no_contract_sha');
+        return { exitReason: 'approved_but_no_contract_sha', hops };
+      }
+      const artifacts = frozenContractArtifacts(
+        deps,
+        observed,
+        groundTruthPaths,
+        approvedSha,
+      );
+      if (artifacts.missing.length > 0) {
+        await markRunFailed(
           deps,
-          observed,
-          groundTruthPaths,
-          approvedSha,
+          resolvedRunId,
+          taskId,
+          'approved_but_contract_artifacts_missing',
         );
-        if (artifacts.missing.length > 0) {
-          await markRunFailed(
-            deps,
-            resolvedRunId,
-            taskId,
-            'approved_but_contract_artifacts_missing',
-          );
-          return { exitReason: 'approved_but_contract_artifacts_missing', hops };
-        }
-        const identityPolicy = evaluateValidationIdentityPolicy(artifacts.contractContent);
-        if (!identityPolicy.ok) {
-          const policyHop = await next(deps.pool, resolvedRunId);
-          try {
-            await append(deps.pool, {
-              runId: resolvedRunId,
-              hop: policyHop,
-              observed: {
-                proposeBranchRn: observed.proposeBranchRn,
-                proposeBranchSha: approvedSha,
-              },
-              derivedPhase: 'gan',
-              gateVerdict: 'deny:premature_validation_identity_binding',
-              action: LOG_ACTION.VERDICT_REVIEWER,
-              detail: {
-                rn: observed.proposeBranchRn,
-                contract_sha: approvedSha,
-                verdict: 'REVISION',
-                summary: '合同在执行角色产生前硬编码了可变 validation identity。',
-                reason: '删除 GAN authoring attempt/capability snapshot 字面值；使用 Runner 注入的 HARNESS_ATTEMPT_ID、CAPABILITY_SNAPSHOT_ID 与当前角色 attestation late-bound，并让后续角色以证据摘要串联。',
-                source: 'validation_identity_policy',
-                violations: identityPolicy.violations,
-              },
-            });
-            hops++;
-          } catch (error) {
-            if (error instanceof SingletonConflictError) {
-              return { exitReason: 'singleton_conflict', hops };
-            }
-            throw error;
+        return { exitReason: 'approved_but_contract_artifacts_missing', hops };
+      }
+      const identityPolicy = evaluateValidationIdentityPolicy(artifacts.contractContent);
+      if (!identityPolicy.ok) {
+        const policyHop = await next(deps.pool, resolvedRunId);
+        try {
+          await append(deps.pool, {
+            runId: resolvedRunId,
+            hop: policyHop,
+            observed: {
+              proposeBranchRn: observed.proposeBranchRn,
+              proposeBranchSha: approvedSha,
+            },
+            derivedPhase: 'gan',
+            gateVerdict: 'deny:premature_validation_identity_binding',
+            action: LOG_ACTION.VERDICT_REVIEWER,
+            detail: {
+              rn: observed.proposeBranchRn,
+              contract_sha: approvedSha,
+              verdict: 'REVISION',
+              summary: '合同在执行角色产生前硬编码了可变 validation identity。',
+              reason: '删除 GAN authoring attempt/capability snapshot 字面值；使用 Runner 注入的 HARNESS_ATTEMPT_ID、CAPABILITY_SNAPSHOT_ID 与当前角色 attestation late-bound，并让后续角色以证据摘要串联。',
+              source: 'validation_identity_policy',
+              violations: identityPolicy.violations,
+            },
+          });
+          hops++;
+        } catch (error) {
+          if (error instanceof SingletonConflictError) {
+            return { exitReason: 'singleton_conflict', hops };
           }
-          await beat();
-          continue;
+          throw error;
         }
-        await materializeApprovedContract(deps.pool, {
-          runId: resolvedRunId,
-          version: observed.proposeBranchRn,
-          branch: observed.proposeBranch,
-          prdContent: artifacts.prdContent,
-          contractContent: artifacts.contractContent,
-          ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
-          approvedAt: now(),
-        });
         await beat();
         continue;
       }
-      // 崩溃窗口补落库（reviewer APPROVED 已出但 contract 未 approved），补完继续下一跳
-      await deps.pool.query(
-        `UPDATE initiative_contracts SET status = 'approved', approved_at = $2, updated_at = $2 WHERE id = $1`,
-        [observed.contract.id, now()],
-      );
+      await materializeApprovedContract(deps.pool, {
+        runId: resolvedRunId,
+        version: observed.proposeBranchRn,
+        branch: observed.proposeBranch,
+        prdContent: artifacts.prdContent,
+        contractContent: artifacts.contractContent,
+        ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
+        approvedAt: now(),
+      });
       await beat();
       continue;
     }
@@ -1201,11 +1192,41 @@ export async function runLoop(
         continue;
       }
       // 崩溃窗口对称分支（force 落库前进程中断，contract 行已建但未 approved）
-      await deps.pool.query(
-        `UPDATE initiative_contracts SET status = 'approved', approved_at = $2, updated_at = $2 WHERE id = $1`,
-        [observed.contract.id, now()],
+      const approvedSha = observed.proposeBranchSha ?? null;
+      if (!approvedSha) {
+        await markRunFailed(deps, resolvedRunId, taskId, 'force_approve_but_no_contract_sha');
+        return { exitReason: 'force_approve_but_no_contract_sha', hops };
+      }
+      const artifacts = frozenContractArtifacts(
+        deps,
+        observed,
+        groundTruthPaths,
+        approvedSha,
       );
-      await recordForcedApprovalSideEffects(observed.proposeBranchSha ?? null);
+      if (artifacts.missing.length > 0) {
+        await markRunFailed(
+          deps,
+          resolvedRunId,
+          taskId,
+          'force_approve_but_contract_artifacts_missing',
+        );
+        return { exitReason: 'force_approve_but_contract_artifacts_missing', hops };
+      }
+      const identityPolicy = evaluateValidationIdentityPolicy(artifacts.contractContent);
+      if (!identityPolicy.ok) {
+        await markRunFailed(deps, resolvedRunId, taskId, 'force_approve_contract_identity_invalid');
+        return { exitReason: 'force_approve_contract_identity_invalid', hops };
+      }
+      await materializeApprovedContract(deps.pool, {
+        runId: resolvedRunId,
+        version: observed.proposeBranchRn,
+        branch: observed.proposeBranch,
+        prdContent: artifacts.prdContent,
+        contractContent: artifacts.contractContent,
+        ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
+        approvedAt: now(),
+      });
+      await recordForcedApprovalSideEffects(approvedSha);
       await beat();
       continue;
     }

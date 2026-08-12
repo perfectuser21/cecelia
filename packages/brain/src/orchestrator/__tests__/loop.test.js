@@ -127,6 +127,7 @@ function makeEnv({ observedSeq, dispatch, finalizeRun } = {}) {
 
 describe('runLoop：全链 planning→done', () => {
   it('逐跳推进 planner→proposer→reviewer→persist→generator→poll→evaluator→judge→merge→report→exit', async () => {
+    const approvedSha = '9'.repeat(40);
     const prMeta = {
       url: 'u', state: 'OPEN', mergeStateStatus: 'CLEAN', merged: false, head_sha: 'sha-1',
     };
@@ -138,7 +139,15 @@ describe('runLoop：全链 planning→done', () => {
       // 3. r1 合同已 push，无本轮 verdict → spawn:reviewer
       obs({ contract: { approved: false, id: CONTRACT_ID }, proposeBranchRn: 1 }),
       // 4. APPROVED 已出但未落库 → persist_contract_approval（控制 action，不派发）
-      obs({ contract: { approved: false, id: CONTRACT_ID }, proposeBranchRn: 1, ganLatestRoundVerdict: 'APPROVED' }),
+      obs({
+        task: { status: 'in_progress', payload: { sprint_dir: 'sprints/full-chain' } },
+        contract: { approved: false, id: CONTRACT_ID },
+        proposeBranch: 'cp-harness-propose-r1-11111111-a4',
+        proposeBranchSha: approvedSha,
+        proposeBranchRn: 1,
+        ganLatestRoundVerdict: 'APPROVED',
+        ganLatestRoundContractSha: approvedSha,
+      }),
       // 5. contract approved，无 PR，generator 未派过 → spawn:generator
       obs({ generatorSpawned: false }),
       // 6. PR 出现，ci pending → wait:poll_ci（不派发不 append）
@@ -164,6 +173,11 @@ describe('runLoop：全链 planning→done', () => {
       obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
     ];
     const { deps, appended, heartbeats, sqls, sleeps } = makeEnv({ observedSeq });
+    deps.readGitFile = vi.fn((_sha, filePath) => ({
+      'sprints/full-chain/sprint-prd.md': '# PRD',
+      'sprints/full-chain/contract-draft.md': '# Contract',
+      'sprints/full-chain/contract-dod.md': '# DoD',
+    })[filePath]);
 
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
 
@@ -194,9 +208,9 @@ describe('runLoop：全链 planning→done', () => {
     // persist 控制跳 + wait 跳也要心跳：8 派发 + 1 persist + 1 wait = 10
     expect(heartbeats).toHaveLength(10);
     // persist_contract_approval 落库 initiative_contracts
-    const persistSql = sqls.find(([sql]) => sql.includes('initiative_contracts'));
-    expect(persistSql[0]).toMatch(/status\s*=\s*'approved'/);
-    expect(persistSql[1]).toContain(CONTRACT_ID);
+    const persistSql = sqls.find(([sql]) => sql.includes('INSERT INTO initiative_contracts'));
+    expect(persistSql[0]).toMatch(/status.*approved/s);
+    expect(persistSql[1]).toContain(RUN_ID);
     // wait:poll_ci 只睡一次，不 append 不 dispatch
     expect(sleeps).toHaveLength(1);
     // merge_pr 跳带 gateVerdict=allow
