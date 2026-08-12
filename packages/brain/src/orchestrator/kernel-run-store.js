@@ -433,14 +433,11 @@ export async function createKernelRun(pool, input) {
        LIMIT 1`,
       [input.taskId],
     );
-    const impactContractRequired = task.payload?.impact_contract_required === true
-      || activeImpactContract.rows.length > 0;
-    const impactContractPolicy = impactContractRequired ? 'required' : 'legacy_exempt';
-    const impactContractPolicyReason = impactContractRequired
-      ? (activeImpactContract.rows.length > 0
-        ? 'active Impact Contract exists before Kernel run creation'
-        : 'task payload requires Impact Contract')
-      : 'MJ5 map/radius dependency is not active for this task';
+    const impactContractRequired = true;
+    const impactContractPolicy = 'required';
+    const impactContractPolicyReason = activeImpactContract.rows.length > 0
+      ? 'active Impact Contract exists before Kernel run creation'
+      : 'Kernel coding runs require Map and Impact Contract preflight';
     const impactContractPolicyDecisionId = impactContractRequired
       ? (task.payload?.impact_contract_decision_id ?? '4bc109e9')
       : 'f69c2f91';
