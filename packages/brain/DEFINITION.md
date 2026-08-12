@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**版本**: 1.272.31
+**版本**: 1.272.32
+
+## Approved contract TaskBundle deduplication
+
+- Generator、Evaluator 与 Judge 以冻结 contract artifacts 为批准后正文 SSOT，不再重复携带入口 PRD 文本。
+- Planner/GAN 输入语义不变；合同 artifact 的完整性与 256KB 独立上限保持 fail-closed。
 
 ## Harness stable implementation baseline
 
