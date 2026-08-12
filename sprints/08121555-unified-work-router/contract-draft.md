@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## 证据来源与运行边界
 
@@ -101,14 +101,14 @@ bash packages/brain/scripts/smoke/unified-work-router-smoke.sh
 ### Step 6: 基线血统与发货门禁
 **来源**: `[FROM_PRD]` — Recovery Contract Correction 与 PRD DoD 第 2、8 项。
 
-**可观测行为**: 完成态 HEAD 是权威实现基线的后代，并在基线之后保留可定位 RED/GREEN commits；四条发货命令全部返回 0。
+**可观测行为**: 完成态 HEAD 是权威实现基线的后代；Recovery、Knife 0、Knife 1、Knife 2、Knife 3、Knife 4、Knife 5 各自都在 commit body 保留唯一 `Harness-Slice` 与 `Harness-Phase: RED|GREEN` trailer，且每一对 RED 都是对应 GREEN 的祖先；四条发货命令全部返回 0。
 
 **验证命令**:
 ```bash
-BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524; git merge-base --is-ancestor "$BASELINE_SHA" HEAD && node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs && bash packages/brain/scripts/smoke/unified-work-router-smoke.sh
+BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524; git merge-base --is-ancestor "$BASELINE_SHA" HEAD && for SLICE in recovery knife0 knife1 knife2 knife3 knife4 knife5; do RED=$(git log -1 --format=%H --all-match --grep="^Harness-Slice: $SLICE$" --grep="^Harness-Phase: RED$" "$BASELINE_SHA..HEAD"); GREEN=$(git log -1 --format=%H --all-match --grep="^Harness-Slice: $SLICE$" --grep="^Harness-Phase: GREEN$" "$BASELINE_SHA..HEAD"); test -n "$RED" && test -n "$GREEN" && git merge-base --is-ancestor "$RED" "$GREEN" || exit 1; done && node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs && bash packages/brain/scripts/smoke/unified-work-router-smoke.sh
 ```
 
-**硬阈值**: 整条命令 exit 0；禁止以 `git rev-parse HEAD == BASELINE_SHA` 作为通过条件。
+**硬阈值**: 整条命令 exit 0；七个 slice 均有非空 RED/GREEN SHA 且 RED 是 GREEN 的祖先；禁止以 `git rev-parse HEAD == BASELINE_SHA` 作为通过条件。实现提交必须用 Conventional Commit 标题，并在 body 写上述两个 trailer。
 
 ## 真实调用方请求 shape
 
@@ -223,4 +223,3 @@ echo "validation_attempt=$HARNESS_ATTEMPT_ID provider=$HARNESS_PROVIDER snapshot
 | Recovery 安全修复 | `tests/unified-work-router-contract.test.ts` | `归一化含凭据 origin 且不泄露 secret`、`保护 active detached Kernel workspace` | 缺 recovery API/行为，断言失败 |
 | 四形式与基线 | `tests/unified-work-router-contract.test.ts` | `只接受四种 change_kind 正向映射`、`实现基线保持冻结且 HEAD 只需为其后代` | 新统一模块不存在或旧逻辑反推 |
 | Map/receipt/trust boundary | `tests/unified-work-router-contract.test.ts` | `coding mutation 强制 receipt 与 required Impact Contract`、`Generator Provider 不获得发布与回调能力` | 新合同尚未实现，断言失败 |
-
