@@ -136,50 +136,24 @@ function frozenContractArtifacts(deps, observed, groundTruthPaths, approvedSha) 
   if (requestedRepo != null && requestedRepo !== '' && repo == null) {
     return { missing: paths };
   }
-  if (typeof deps.listGitFiles === 'function') {
-    try {
-      return {
-        missing: [],
-        ...collectApprovedContractArtifacts({
-          sourceRevision: approvedSha,
-          sprintDir,
-          prdPath,
-          repo,
-          readGitFile: deps.readGitFile,
-          listGitFiles: deps.listGitFiles,
-        }),
-      };
-    } catch (error) {
-      return { missing: [boundedText(error.message)] };
-    }
-  }
-  const contents = [];
-  for (const filePath of paths) {
-    try {
-      contents.push(deps.readGitFile(approvedSha, filePath, { repo }));
-    } catch {
-      return { missing: [filePath] };
-    }
-  }
-  const [prdContent, contractDraft, contractDod] = contents;
-  let frozenArtifacts;
-  try {
-    frozenArtifacts = collectFrozenContractArtifacts({
-      approvedSha,
-      sprintDir,
-      repo,
-      listGitFiles: deps.listGitFiles,
-      readGitFile: deps.readGitFile,
-    });
-  } catch {
+  if (typeof deps.listGitFiles !== 'function') {
     return { missing: [`${sprintDir}/tests/`] };
   }
-  return {
-    missing: [],
-    prdContent,
-    contractContent: `${contractDraft}\n\n${contractDod}`,
-    frozenArtifacts,
-  };
+  try {
+    return {
+      missing: [],
+      ...collectApprovedContractArtifacts({
+        sourceRevision: approvedSha,
+        sprintDir,
+        prdPath,
+        repo,
+        readGitFile: deps.readGitFile,
+        listGitFiles: deps.listGitFiles,
+      }),
+    };
+  } catch (error) {
+    return { missing: [boundedText(error.message)] };
+  }
 }
 
 async function resolveGroundTruthPaths(pool, taskId) {
