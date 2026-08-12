@@ -33,7 +33,7 @@ updated: 2026-08-12
 | CI 流水线（L1-L4） | `docs/current/CI_PIPELINE.md` | ⚠️ 过期待重写（2026-03旧结构），仅存档参考 |
 | /dev 工作流 | `docs/current/DEV_PIPELINE.md` | ⚠️ 过期待重写（2026-03旧结构），仅存档参考 |
 | PR 学习记录 | `docs/learnings/cp-MMDDHHNN-xxx.md` | 每个PR自动写 |
-| 架构审查结果 | `docs/arch-reviews/YYYY-MM-DD.md` | 最新：2026-08-12 08:01 UTC，CRITICAL（9 高/17 中；internal auth 与 PR 权威链已闭环，但 staging 副作用 loops、review 终态、schema parity、MJ5 台账与三条 nightly 仍未闭合） |
+| 架构审查结果 | `docs/arch-reviews/YYYY-MM-DD.md` | 最新：2026-08-12 12:02 UTC，CRITICAL（9 高/17 中；1.272.24 同 SHA 部署与 PR 权威链健康，但 staging 副作用 loops/health、review 原子身份、tick 互斥、schema parity、MJ5 台账与三条 nightly 仍未闭合） |
 | 操作手册（技能/功能） | `docs/instruction-book/` | 用户/AI 操作参考 |
 | 已知缺口 | `docs/gaps/` | 记录未覆盖区域 |
 | 历史文档 | `docs/archive/` | 不读，已过期 |
