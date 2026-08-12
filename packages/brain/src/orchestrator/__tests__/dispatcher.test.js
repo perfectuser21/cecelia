@@ -1466,6 +1466,50 @@ describe('createDispatcher', () => {
     expect(deps.launcher.start).not.toHaveBeenCalled();
   });
 
+  it('Fleet workspace 解析后发现数据库 artifact 损坏时在 Attempt 前精确收尾', async () => {
+    const deps = makeDeps();
+    const content = 'test("corrupt", () => {})';
+    deps.resolveWorkspaceSpec = vi.fn(async () => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: 'cp-corrupt-artifact',
+      expected_head_sha: null,
+      mode: 'read-write',
+      run_id: runId,
+      attempt_id: attemptId,
+    }));
+
+    const result = await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-approved-contract' },
+          artifacts: [{
+            path: 'sprints/router/tests/corrupt.test.mjs',
+            content,
+            sha256: '0'.repeat(64),
+            byte_length: Buffer.byteLength(content),
+            source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+          }],
+        },
+      },
+      decision: { phase: 'generate', reason: 'contract_approved' },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'FROZEN_CONTRACT_ARTIFACT_INVALID',
+      should_create_attempt: false,
+    });
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+    expect(deps.launcher.prepare).not.toHaveBeenCalled();
+  });
+
   it('copies the Controller-owned validation clock into the Generator TaskBundle', async () => {
     const deps = makeDeps();
     const validationClock = {
