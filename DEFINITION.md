@@ -8,11 +8,19 @@
 
 
 
-**Brain 版本**: 1.272.19
+**Brain 版本**: 1.272.20
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.20 — existing PR 权威字段贯通与终态收账
+
+- `writeDockerCallback`：stdout 无完整 URL 时，按优先级（stdout > tasks.pr_url > payload.pr_url > payload.existing_pr_url）兜底解析 canonical pr_url 写入 callback_queue._meta，防止 "PR #XXXX" 短输出导致 pr_url=null。
+- `maybeMarkCompletedNoPr`：检查 DB `tasks.pr_url`、`payload.pr_url`、`payload.existing_pr_url` 三路兜底；已知 existing PR 的 success 不再误标 `completed_no_pr`、不再递增 retry_count。
+- `matchTaskByBranchOrUrl`：新增 prUrl 参数，支持按 exact pr_url / existing_pr_url 精确匹配；覆盖 `completed_no_pr` 状态（原仅 completed）。
+- `handlePrMerged`：传入 prUrl 兜底匹配；`completed_no_pr` 任务在 GitHub MERGED 时升级为 `completed` + 写 pr_merged_at/pr_status=merged，清除 current_run_id。
+- TDD 回归测试永久锁入 CI（existing-pr-authority.test.js），覆盖 writeDockerCallback/maybeMarkCompletedNoPr/matchTaskByBranchOrUrl/handlePrMerged/幂等 五个断言组。
 
 ## Brain 1.272.19 — 同 PR+SHA 唯一权威 Run + 终态收账三修
 

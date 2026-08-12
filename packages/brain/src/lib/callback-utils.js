@@ -38,15 +38,34 @@ export function extractPrNumber(pr_url) {
  *
  * @returns {Promise<string>} 可能已更新的 newStatus
  */
+const GITHUB_PR_URL_RE_UTILS = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
+function _isValidGithubPrUrl(url) {
+  return typeof url === 'string' && GITHUB_PR_URL_RE_UTILS.test(url.trim());
+}
+
 export async function maybeMarkCompletedNoPr(newStatus, pr_url, task_id, pool, prefix) {
   if (newStatus !== 'completed' || pr_url) return newStatus;
   try {
-    const taskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
-    const taskType = taskRow.rows[0]?.task_type;
-    const isDecomposition = taskRow.rows[0]?.payload?.decomposition;
+    const taskRow = await pool.query(
+      'SELECT task_type, pr_url, payload FROM tasks WHERE id = $1',
+      [task_id]
+    );
+    const row = taskRow.rows[0];
+    if (!row) return newStatus;
+    const taskType = row.task_type;
+    const isDecomposition = row.payload?.decomposition;
     if (taskType === 'dev' && !isDecomposition) {
-      const isHarness = taskRow.rows[0]?.payload?.harness_mode;
+      const isHarness = row.payload?.harness_mode;
       if (!isHarness) {
+        // 权威 pr_url 兜底：callback 没有 URL 时检查 DB 已知字段。
+        // 场景：Agent stdout 只写 "PR #4827"，tasks.payload.existing_pr_url 有完整 URL。
+        const canonicalUrl = row.pr_url
+          || row.payload?.pr_url
+          || row.payload?.existing_pr_url;
+        if (_isValidGithubPrUrl(canonicalUrl)) {
+          console.log(`[${prefix}] Dev task ${task_id} has canonical pr_url from DB/payload → skip completed_no_pr`);
+          return newStatus;
+        }
         console.warn(`[${prefix}] Dev task ${task_id} completed without PR → completed_no_pr`);
         return 'completed_no_pr';
       }
