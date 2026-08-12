@@ -8,13 +8,13 @@
 
 
 
-**Brain 版本**: 1.272.26
+**Brain 版本**: 1.272.27
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.26 — 冻结合同测试制品进入 TaskBundle
+## Brain 1.272.27 — 冻结合同测试制品进入 TaskBundle
 
 - GAN 批准时从精确审批 SHA 冻结合同测试的路径、原文与 SHA-256 摘要，Generator、Evaluator、Judge 消费同一份不可变制品。
 - 存量在途合同从追加式 reviewer 决策日志恢复审批 SHA，再从该 SHA 一次性补齐测试制品；数据库触发器禁止已冻结证据被改写。

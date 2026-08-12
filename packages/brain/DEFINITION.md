@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.272.26
+**版本**: 1.272.27
 
 ## Frozen contract test artifacts
 
