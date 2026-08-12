@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const { EventEmitter } = require('node:events');
 const os = require('node:os');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { Writable } = require('node:stream');
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
@@ -311,6 +312,64 @@ async function prepareAndStartContainer(docker, input) {
 }
 
 describe('Fleet Worker Attempt runner', () => {
+  it('在 Provider prepare 前校验并物化 approved contract artifacts', async () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'contract-artifacts-'));
+    const content = 'test("routing", () => {})';
+    const artifact = {
+      path: 'sprints/router/tests/routing.test.mjs',
+      content,
+      sha256: crypto.createHash('sha256').update(content).digest('hex'),
+      byte_length: Buffer.byteLength(content),
+      source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+    };
+    const deps = dependencies();
+    deps.workspace.path = workspaceRoot;
+    const runner = createRunner(deps);
+
+    try {
+      await runner.prepare(request({
+        provider_spec: {
+          ...request().provider_spec,
+          stdin: providerPrompt('generator', { contract_artifacts: [artifact] }),
+        },
+      }));
+
+      const materialized = path.join(workspaceRoot, artifact.path);
+      expect(fs.readFileSync(materialized, 'utf8')).toBe(content);
+      expect(deps.events.indexOf('workspace.prepare'))
+        .toBeLessThan(deps.events.indexOf('docker.prepare'));
+      expect(deps.docker.prepare).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['path traversal', { path: '../escape.test.mjs' }, 'FROZEN_CONTRACT_ARTIFACT_INVALID'],
+    ['digest mismatch', { sha256: '0'.repeat(64) }, 'FROZEN_CONTRACT_ARTIFACT_INVALID'],
+    ['length mismatch', { byte_length: 999 }, 'FROZEN_CONTRACT_ARTIFACT_INVALID'],
+  ])('拒绝 %s 且不启动 Provider', async (_name, override, errorCode) => {
+    const content = 'test("routing", () => {})';
+    const artifact = {
+      path: 'sprints/router/tests/routing.test.mjs',
+      content,
+      sha256: crypto.createHash('sha256').update(content).digest('hex'),
+      byte_length: Buffer.byteLength(content),
+      source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+      ...override,
+    };
+    const deps = dependencies();
+    const runner = createRunner(deps);
+
+    await expect(runner.prepare(request({
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: providerPrompt('generator', { contract_artifacts: [artifact] }),
+      },
+    }))).rejects.toThrow(errorCode);
+    expect(deps.docker.prepare).not.toHaveBeenCalled();
+  });
+
   it('prepares and persists a stopped Attempt without starting provider code', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);

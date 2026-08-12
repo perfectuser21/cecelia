@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -1310,6 +1311,37 @@ describe('createDispatcher', () => {
     // 运行时依赖预装只对 proposer/reviewer/evaluator 默认开——generator 不该被塞
     // runtime_resources.node_deps；generator 仍由自身实现过程按需安装/构建。
     expect(created.bundle.inputs).not.toHaveProperty('runtime_resources');
+  });
+
+  it('generator bundle 只传输数据库冻结的 approved contract artifacts', async () => {
+    const deps = makeDeps();
+    const artifactContent = 'test("routing", () => {})';
+    const frozenArtifacts = [{
+      path: 'sprints/router/tests/routing.test.mjs',
+      content: artifactContent,
+      sha256: createHash('sha256').update(artifactContent).digest('hex'),
+      byte_length: Buffer.byteLength(artifactContent),
+      source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+    }];
+
+    await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-approved-contract' },
+          artifacts: frozenArtifacts,
+        },
+      },
+      decision: { phase: 'generate', reason: 'contract_approved' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.contract_artifacts).toEqual(frozenArtifacts);
+    expect(created.bundle.inputs.artifacts).toEqual([]);
   });
 
   it('copies the Controller-owned validation clock into the Generator TaskBundle', async () => {
