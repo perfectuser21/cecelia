@@ -11,7 +11,7 @@ target_environment: local_api
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] Recovery 与 Knife 0-5 每项都有永久 RED commit 先于对应 GREEN commit，且完成 HEAD 为 `310ab9e704d4e3f866e6ce7beb25b79dd0f9d524` 后代。
-  Test: git merge-base --is-ancestor 310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 HEAD
+  Test: bash -c 'BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524; git merge-base --is-ancestor "$BASELINE_SHA" HEAD && for SLICE in recovery knife0 knife1 knife2 knife3 knife4 knife5; do RED=$(git log -1 --format=%H --all-match --grep="^Harness-Slice: $SLICE$" --grep="^Harness-Phase: RED$" "$BASELINE_SHA..HEAD"); GREEN=$(git log -1 --format=%H --all-match --grep="^Harness-Slice: $SLICE$" --grep="^Harness-Phase: GREEN$" "$BASELINE_SHA..HEAD"); test -n "$RED" && test -n "$GREEN" && git merge-base --is-ancestor "$RED" "$GREEN" || exit 1; done'
 - [ ] [ARTIFACT] migration、Work Router/store/API、inventory、Map preflight、动作闸、runner trust boundary、scratch smoke、版本与 DEFINITION 产物齐备。
   Test: node -e "const fs=require('fs');['packages/brain/src/work-router.js','packages/brain/src/work-routing-store.js','packages/brain/src/routes/work-routing.js','packages/brain/migrations/411_work_routing_receipts.sql','packages/brain/src/task-creation-inventory.js','packages/brain/src/orchestrator/preflight/map-impact-contract.js','packages/brain/scripts/smoke/unified-work-router-smoke.sh'].forEach(p=>fs.accessSync(p))"
 
@@ -136,7 +136,7 @@ target_environment: local_api
   预期观察: Recovery 与每个 Knife 均可定位 RED 后 GREEN，提交顺序无倒置。
   等待预算: 10s
   留证: 基线后 git log 摘要。
-  Test: manual:bash -c 'git merge-base --is-ancestor 310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 HEAD && git log --format="%s" 310ab9e704d4e3f866e6ce7beb25b79dd0f9d524..HEAD | grep -Eq "^(test|feat|fix|refactor)\("'
+  Test: manual:bash -c 'BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524; git merge-base --is-ancestor "$BASELINE_SHA" HEAD && for SLICE in recovery knife0 knife1 knife2 knife3 knife4 knife5; do RED=$(git log -1 --format=%H --all-match --grep="^Harness-Slice: $SLICE$" --grep="^Harness-Phase: RED$" "$BASELINE_SHA..HEAD"); GREEN=$(git log -1 --format=%H --all-match --grep="^Harness-Slice: $SLICE$" --grep="^Harness-Phase: GREEN$" "$BASELINE_SHA..HEAD"); test -n "$RED" && test -n "$GREEN" && git merge-base --is-ancestor "$RED" "$GREEN" || { echo "FAIL: $SLICE 缺少有序 RED/GREEN pair"; exit 1; }; done'
 
 - [ ] [BEHAVIOR] [L3] INV-9: Generator Provider 隔离
   动作: 在真实 runner 命令链尝试读取 callback/lease、获得特权和 push。
