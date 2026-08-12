@@ -224,21 +224,26 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
 });
 
 describe('materializeApprovedContract concurrency contract', () => {
-  it('写 artifact 与 seal 前获取同一 contract 级事务锁', async () => {
-    const db = {
+  it('Pool 路径在独立事务中先锁逻辑 contract，再用新语句 snapshot 物化', async () => {
+    const queries = [];
+    const client = {
       query: async (sql) => {
-        expect(sql).toMatch(/pg_advisory_xact_lock/i);
-        expect(sql).toMatch(/initiative_contract_artifacts:/i);
-        return {
-          rows: [{
-            id: '33333333-3333-4333-8333-333333333333',
-            version: 2,
-            status: 'approved',
-            branch: 'cp-harness-propose-r2-22222222-a8',
-          }],
-        };
+        queries.push(sql);
+        if (/UPDATE initiative_runs AS run/i.test(sql)) {
+          return {
+            rows: [{
+              id: '33333333-3333-4333-8333-333333333333',
+              version: 2,
+              status: 'approved',
+              branch: 'cp-harness-propose-r2-22222222-a8',
+            }],
+          };
+        }
+        return { rows: [{ locked: true }] };
       },
+      release: vi.fn(),
     };
+    const db = { connect: vi.fn(async () => client) };
 
     await expect(materializeApprovedContract(db, {
       runId,
@@ -249,5 +254,13 @@ describe('materializeApprovedContract concurrency contract', () => {
       artifacts,
       approvedAt: new Date('2026-07-22T15:00:00Z'),
     })).resolves.toMatchObject({ status: 'approved' });
+
+    expect(queries[0]).toBe('BEGIN');
+    expect(queries[1]).toMatch(/pg_advisory_xact_lock/i);
+    expect(queries[1]).toMatch(/initiative_contract_artifacts:/i);
+    expect(queries[1]).toMatch(/initiative_runs/i);
+    expect(queries[2]).toMatch(/UPDATE initiative_runs AS run/i);
+    expect(queries.at(-1)).toBe('COMMIT');
+    expect(client.release).toHaveBeenCalledOnce();
   });
 });

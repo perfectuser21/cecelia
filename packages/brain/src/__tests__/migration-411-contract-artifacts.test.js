@@ -24,6 +24,7 @@ describe('migration 411 initiative contract artifacts', () => {
     expect(sql).toMatch(/BEFORE INSERT ON initiative_contract_artifacts/i);
     expect(sql).toMatch(/pg_advisory_xact_lock/i);
     expect(sql).toMatch(/initiative_contract_artifacts:/i);
+    expect(sql).toMatch(/FROM initiative_contracts/i);
     expect(sql).toMatch(/initiative_contract_artifact_seals/i);
     expect(sql).toMatch(/VALUES\s*\(\s*'411'/i);
   });
