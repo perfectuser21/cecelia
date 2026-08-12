@@ -348,6 +348,23 @@ async function markRunFailed(deps, runId, taskId, reason) {
   });
 }
 
+function frozenArtifactErrorCode(error) {
+  return String(error?.message ?? '').match(/FROZEN_CONTRACT_ARTIFACT[A-Z_]*/)?.[0] ?? null;
+}
+
+async function materializeApprovedContractOrFail(deps, params, { runId, taskId }) {
+  const materialize = deps.materializeApprovedContract ?? materializeApprovedContract;
+  try {
+    await materialize(deps.pool, params);
+    return null;
+  } catch (error) {
+    const code = frozenArtifactErrorCode(error);
+    if (!code) throw error;
+    await markRunFailed(deps, runId, taskId, `assembly_fault:${code}`);
+    return code;
+  }
+}
+
 async function markRunPaused(pool, runId, observed) {
   const callback = [...(observed.decisionLog ?? [])]
     .sort((a, b) => Number(b.hop) - Number(a.hop))
@@ -903,7 +920,7 @@ export async function runLoop(
         await beat();
         continue;
       }
-      await materializeApprovedContract(deps.pool, {
+      const artifactFailure = await materializeApprovedContractOrFail(deps, {
         runId: resolvedRunId,
         version: observed.proposeBranchRn,
         branch: observed.proposeBranch,
@@ -911,7 +928,8 @@ export async function runLoop(
         contractContent: artifacts.contractContent,
         ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
         approvedAt: now(),
-      });
+      }, { runId: resolvedRunId, taskId });
+      if (artifactFailure) return { exitReason: 'assembly_fault', hops };
       await beat();
       continue;
     }
@@ -1178,7 +1196,7 @@ export async function runLoop(
           }
           throw error;
         }
-        await materializeApprovedContract(deps.pool, {
+        const artifactFailure = await materializeApprovedContractOrFail(deps, {
           runId: resolvedRunId,
           version: observed.proposeBranchRn,
           branch: observed.proposeBranch,
@@ -1186,7 +1204,8 @@ export async function runLoop(
           contractContent: artifacts.contractContent,
           ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
           approvedAt: now(),
-        });
+        }, { runId: resolvedRunId, taskId });
+        if (artifactFailure) return { exitReason: 'assembly_fault', hops };
         await recordForcedApprovalSideEffects(approvedSha);
         await beat();
         continue;
@@ -1217,7 +1236,7 @@ export async function runLoop(
         await markRunFailed(deps, resolvedRunId, taskId, 'force_approve_contract_identity_invalid');
         return { exitReason: 'force_approve_contract_identity_invalid', hops };
       }
-      await materializeApprovedContract(deps.pool, {
+      const artifactFailure = await materializeApprovedContractOrFail(deps, {
         runId: resolvedRunId,
         version: observed.proposeBranchRn,
         branch: observed.proposeBranch,
@@ -1225,7 +1244,8 @@ export async function runLoop(
         contractContent: artifacts.contractContent,
         ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
         approvedAt: now(),
-      });
+      }, { runId: resolvedRunId, taskId });
+      if (artifactFailure) return { exitReason: 'assembly_fault', hops };
       await recordForcedApprovalSideEffects(approvedSha);
       await beat();
       continue;

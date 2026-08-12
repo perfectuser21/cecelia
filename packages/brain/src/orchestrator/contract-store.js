@@ -230,6 +230,13 @@ export async function materializeApprovedContract(db, {
         // Preserve the materialization root cause; the pool discards broken clients.
       }
     }
+    if (error?.code === '22012') {
+      const artifactError = new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:seal_mismatch', {
+        cause: error,
+      });
+      artifactError.code = 'FROZEN_CONTRACT_ARTIFACT_INVALID';
+      throw artifactError;
+    }
     throw error;
   } finally {
     if (ownsClient) client.release();
