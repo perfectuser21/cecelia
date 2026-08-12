@@ -1,0 +1,33 @@
+{
+  "initiative_id": "b0443bf7-001f-4ae3-9b3b-4c7178bbcd49",
+  "journey_type": "autonomous",
+  "journey_type_reason": "核心交付是 Brain、Kernel、Engine hook 与 runner 的后端治理链路，并以 local_api scratch 环境验收",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "交付 Recovery Addendum 与 Unified Work Router Knife 0-5",
+      "scope": "先以永久 RED/GREEN 修复 origin 凭据归一化、日志脱敏和 active Kernel workspace 保护，再实现唯一 Work Router、不可变 receipt、全入口收敛、Map/Impact Gate、双动作闸、Generator 信任边界及 scratch 真实验收",
+      "dod": [
+        "[BEHAVIOR] credential-bearing origin 与无凭据 origin 等价、日志零泄露且 active workspace 不被清理",
+        "[BEHAVIOR] 三个 coding 真实入口均有 receipt/Harness/fresh Map/Impact Contract，覆盖率 100% 且 coding dev/legacy_exempt 新增为 0",
+        "[ARTIFACT] Work Router、migration 411、入口 inventory、Map preflight、动作闸、runner trust test 与 scratch smoke"
+      ],
+      "files": [
+        "packages/brain/src/",
+        "packages/brain/migrations/411_work_routing_receipts.sql",
+        "packages/engine/hooks/dev-mode-tool-guard.sh",
+        "packages/engine/skills/dev/scripts/worktree-manage.sh",
+        "docker/cecelia-runner/entrypoint.sh",
+        "apps/dashboard/src/pages/warroom/WarRoomPage.tsx",
+        "packages/brain/scripts/smoke/unified-work-router-smoke.sh",
+        "packages/brain/DEFINITION.md",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
