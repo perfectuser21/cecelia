@@ -9,6 +9,14 @@ let client;
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const initiativeId = '22222222-2222-4222-8222-222222222222';
+const revision = '6faaa9f55e9789ffd29fd2760a9b5994df272e86';
+const artifact = Object.freeze({
+  path: 'sprints/router/tests/routing.test.mjs',
+  content: 'test("routing", () => {})',
+  sha256: 'd515f6b2330034cfb924ad4d403970f70c42914e2514e0f6a2cb8b7f0528d848',
+  byte_length: 25,
+  source_revision: revision,
+});
 
 const HAS_REAL_POSTGRES = Boolean(process.env.DATABASE_URL || process.env.DB);
 
@@ -36,6 +44,16 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
         initiative_id uuid NOT NULL,
         contract_id uuid,
         updated_at timestamptz DEFAULT now()
+      ) ON COMMIT DROP;
+      CREATE TEMP TABLE initiative_contract_artifacts (
+        contract_id uuid NOT NULL REFERENCES initiative_contracts(id),
+        path text NOT NULL,
+        content text NOT NULL,
+        sha256 text NOT NULL,
+        byte_length integer NOT NULL CHECK (byte_length >= 0),
+        source_revision text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (contract_id, path)
       ) ON COMMIT DROP;
     `);
     await client.query(
@@ -65,6 +83,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       branch: 'cp-harness-propose-r2-22222222-a8',
       prdContent: '# PRD',
       contractContent: '# Contract\n\n# DoD',
+      artifacts: [artifact],
       approvedAt,
     });
 
@@ -84,5 +103,29 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       { version: 1, status: 'superseded', attached: false },
       { version: 2, status: 'approved', attached: true },
     ]);
+
+    const frozen = await client.query(
+      `SELECT path, content, sha256, byte_length, source_revision
+         FROM initiative_contract_artifacts
+        WHERE contract_id = $1::uuid`,
+      [contract.id],
+    );
+    expect(frozen.rows).toEqual([artifact]);
+
+    await expect(materializeApprovedContract(client, {
+      runId,
+      version: 2,
+      branch: 'cp-harness-propose-r2-22222222-a8',
+      prdContent: '# PRD',
+      contractContent: '# Contract\n\n# DoD',
+      artifacts: [{ ...artifact, content: 'mutated' }],
+      approvedAt,
+    })).rejects.toThrow(/FROZEN_CONTRACT_ARTIFACT_INVALID|immutable/i);
+
+    const unchanged = await client.query(
+      'SELECT content FROM initiative_contract_artifacts WHERE contract_id = $1::uuid',
+      [contract.id],
+    );
+    expect(unchanged.rows).toEqual([{ content: artifact.content }]);
   });
 });
