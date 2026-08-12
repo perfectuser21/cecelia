@@ -8,11 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.17
+**Brain 版本**: 1.272.18
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.18 — Derive 取证死循环双修（recollect 护栏 + evaluate PASS 必派 judge）
+
+- recollect 护栏兜底：spawn:evaluator 落库快照缺顶层 trigger_sha 时，改用 observed.pr.head_sha 匹配 currentHeadSha，防止 evidence_insufficient 死循环。
+- stale judge FAIL 不遮蔽同 SHA 新 evaluate PASS：补证后产出晚于最新 judge 的 evaluate PASS，下一动作必须派 judge 复核（evaluate_passed_awaiting_judge），而非再次 spawn:evaluator。
+- 两条修复均以 TDD 回归测试永久锁入 CI（derive-recollect-loop.test.ts + derive.test.js）。
 
 ## Brain 1.272.17 — Exact-PR Judge Evidence Basis
 

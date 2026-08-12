@@ -322,6 +322,31 @@ describe('证据不足退回 Evaluator 重新取证（r41 实证：Judge 要证�
     const r = derive(o);
     expect(r.action).toBe('wait:human_review');
   });
+
+  // === 永久回归 port（issue dbea513f / run 06e4566c 取证死循环双修，bug-fix 死规矩）===
+  // 与 sprints/08111523-kernel-c9043059/tests/derive-recollect-loop.test.ts 的 B-01/B-02 同构，
+  // 入 derive.test.js 作 CI 常驻回归，防护栏再破。
+
+  it('recollect 后更晚 evaluate PASS 遮蔽陈旧 judge FAIL → 派 judge 复核（evaluate_passed_awaiting_judge）', () => {
+    const o = judgeFail('evidence_insufficient');
+    // 补证：晚于最新 judge(hop3) 的 evaluate PASS(hop5)
+    o.decisionLog.push({ hop: 4, action: 'spawn:evaluator', observed: { pr: { head_sha: 'sha-new' } }, detail: { reason: 'judge_evidence_insufficient_recollect' } });
+    o.decisionLog.push({ hop: 5, action: 'verdict:evaluate', detail: { verdict: 'PASS', pr_head_sha: 'sha-new' } });
+    const r = derive(o);
+    expect(r.action).toBe('spawn:judge');
+    expect(r.reason).toBe('evaluate_passed_awaiting_judge');
+  });
+
+  it('recollect 快照缺 trigger_sha 仅 pr.head_sha，重审仍不足 → guard 兜底落人审（evidence_insufficient_after_recollect）', () => {
+    const o = judgeFail('evidence_insufficient');
+    // spawn:evaluator 快照顶层缺 trigger_sha（生产实证），只有 pr.head_sha
+    o.decisionLog.push({ hop: 4, action: 'spawn:evaluator', observed: { pr: { head_sha: 'sha-new' } }, detail: { reason: 'judge_evidence_insufficient_recollect' } });
+    o.decisionLog.push({ hop: 5, action: 'verdict:evaluate', detail: { verdict: 'PASS', pr_head_sha: 'sha-new' } });
+    o.decisionLog.push({ hop: 6, action: 'verdict:judge', detail: { verdict: 'FAIL', pr_head_sha: 'sha-new', failure_class: 'evidence_insufficient' } });
+    const r = derive(o);
+    expect(r.action).toBe('wait:human_review');
+    expect(r.reason).toBe('evidence_insufficient_after_recollect');
+  });
 });
 
 describe('规则 0：terminal', () => {
