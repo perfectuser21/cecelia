@@ -8,13 +8,13 @@
 
 
 
-**Brain 版本**: 1.272.28
+**Brain 版本**: 1.272.29
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.28 — approved contract artifact transport
+## Brain 1.272.29 — approved contract artifact transport
 
 - Kernel 从精确 approved SHA 冻结完整合同测试资产，通过不可变数据库行进入 TaskBundle。
 - Fleet Runner 在 Provider 启动前验证路径、摘要、长度与 source revision，物化后回读校验。
@@ -22,6 +22,13 @@
 - Impact Contract 对 schema 解析结果计算稳定 hash，空扩展字段不再触发伪换版。
 - 保留 1.272.27 的冻结测试兼容通道；新合同以 sealed artifact manifest 为唯一持久化事实。
 - Schema 地板推进到 412。
+
+## Brain 1.272.28 — 冻结合同 Runner 三机发布
+
+- 从已合并 main `a28bdb1f` 构建 canonical Runner `sha256:689b4694e3397b30eff54c8fb0ad59bc3a42c8179f9f07cfad313afc5fe7414b`，冻结制品 helper 与源码 SHA-256 一致。
+- NodeProfile、三机配置、rollout/reconcile、安装器测试与 smoke 同步新 digest；Fleet Worker 基线升级为 1.272.12。
+
+## Brain 1.272.27 — 冻结合同测试制品进入 TaskBundle
 
 ## Brain 1.272.25 — Impact Gate fresh 证据规范化
 

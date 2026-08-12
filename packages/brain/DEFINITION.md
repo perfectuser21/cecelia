@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**版本**: 1.272.28
+**版本**: 1.272.29
+
+## Frozen contract Runner rollout
+
+- Canonical Runner 固定为从 main `a28bdb1f` 构建的 `sha256:689b4694e3397b30eff54c8fb0ad59bc3a42c8179f9f07cfad313afc5fe7414b`；Fleet Worker 基线升级为 1.272.12。
 
 ## Approved contract artifact transport
 
