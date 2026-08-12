@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const migrationPath = new URL('../../migrations/411_initiative_contract_artifacts.sql', import.meta.url);
-const rollbackPath = new URL('../../migrations/rollback/411_initiative_contract_artifacts.down.sql', import.meta.url);
+const migrationPath = new URL('../../migrations/412_initiative_contract_artifacts.sql', import.meta.url);
+const rollbackPath = new URL('../../migrations/rollback/412_initiative_contract_artifacts.down.sql', import.meta.url);
 
-describe('migration 411 initiative contract artifacts', () => {
+describe('migration 412 initiative contract artifacts', () => {
   it('创建 contract 归属、路径主键、摘要、长度和 source revision 合同', () => {
     const sql = readFileSync(migrationPath, 'utf8');
 
@@ -26,14 +26,14 @@ describe('migration 411 initiative contract artifacts', () => {
     expect(sql).toMatch(/initiative_contract_artifacts:/i);
     expect(sql).toMatch(/FROM initiative_contracts/i);
     expect(sql).toMatch(/initiative_contract_artifact_seals/i);
-    expect(sql).toMatch(/VALUES\s*\(\s*'411'/i);
+    expect(sql).toMatch(/VALUES\s*\(\s*'412'/i);
   });
 
-  it('rollback 只撤销 411 自有表与 schema marker', () => {
+  it('rollback 只撤销 412 自有表与 schema marker', () => {
     const sql = readFileSync(rollbackPath, 'utf8');
     expect(sql).toMatch(/DROP TABLE IF EXISTS initiative_contract_artifacts/i);
     expect(sql).toMatch(/DROP TABLE IF EXISTS initiative_contract_artifact_seals/i);
-    expect(sql).toMatch(/DELETE FROM schema_version WHERE version = '411'/i);
+    expect(sql).toMatch(/DELETE FROM schema_version WHERE version = '412'/i);
     expect(sql).not.toMatch(/DROP TABLE IF EXISTS initiative_contracts/i);
   });
 });

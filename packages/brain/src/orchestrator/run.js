@@ -39,6 +39,7 @@ import {
   listGitArtifacts,
   readGitArtifact,
 } from './git-artifact-reader.js';
+import { createFrozenContractArtifactResolver } from './frozen-contract-artifacts.js';
 import { createCapabilityGate } from './preflight/capability-gate.js';
 import { createProductionCapabilityProbes } from './preflight/production-probes.js';
 import {
@@ -343,6 +344,18 @@ export async function buildRealDeps(overrides = {}) {
       onFailurePersistenceFailed,
       leaseOwner,
       leaseSeconds: overrides.leaseSeconds,
+      resolveFrozenContractArtifacts: overrides.resolveFrozenContractArtifacts
+        ?? createFrozenContractArtifactResolver({
+          db: pool,
+          readGitFile: (sha, filePath, opts = {}) => readGitArtifact(sha, filePath, {
+            cwd: repoRoot,
+            repo: opts.repo ?? null,
+          }),
+          listGitFiles: (sha, prefix, opts = {}) => listGitArtifacts(sha, prefix, {
+            cwd: repoRoot,
+            repo: opts.repo ?? null,
+          }),
+        }),
       ...(resolveWorkspaceSpec ? { resolveWorkspaceSpec } : {}),
     });
   }

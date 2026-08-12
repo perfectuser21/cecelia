@@ -105,11 +105,12 @@ export function listGitArtifacts(commitSha, prefix, {
   repo = null,
   remoteUrlForRepo = defaultRemoteUrlForRepo,
 } = {}) {
-  assertRepositoryRelative(prefix);
+  const normalizedPrefix = String(prefix).replace(/\/+$/, '');
+  assertRepositoryRelative(normalizedPrefix);
   ensureGitCommit(commitSha, { cwd, repo, remoteUrlForRepo });
   const output = execFileSync(
     'git',
-    ['ls-tree', '-r', commitSha, '--', prefix],
+    ['ls-tree', '-r', commitSha, '--', normalizedPrefix],
     { cwd, ...GIT_OPTIONS },
   );
   return String(output)
@@ -119,7 +120,10 @@ export function listGitArtifacts(commitSha, prefix, {
       const match = line.match(/^(100644|100755) blob [a-f0-9]+\t(.+)$/);
       return match?.[2] ?? null;
     })
-    .filter((filePath) => filePath?.startsWith(`${prefix}/`))
+    .filter((filePath) => (
+      filePath === normalizedPrefix
+      || filePath?.startsWith(`${normalizedPrefix}/`)
+    ))
     .sort();
 }
 

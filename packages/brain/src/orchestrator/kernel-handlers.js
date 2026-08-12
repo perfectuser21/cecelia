@@ -80,6 +80,7 @@ export function createKernelHandlers(deps) {
         sprintDir: ctx.bundle.inputs.sprint_dir,
         contractText: contract.contract_content ?? null,
         prdText: contract.prd_content ?? null,
+        frozenContractArtifacts: ctx.bundle.inputs.artifacts,
         requiredCommandEvidence: ctx.bundle.inputs.required_command_evidence,
         taskId: ctx.taskId,
         instanceLabel: `kernel-${String(ctx.attempt.id).slice(0, 8)}`,

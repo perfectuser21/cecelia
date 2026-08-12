@@ -77,9 +77,11 @@ export async function materializeApprovedContract(db, {
      ), approved_contract AS (
        INSERT INTO initiative_contracts
          (initiative_id, version, status, prd_content, contract_content,
-          review_rounds, approved_at, branch, created_at, updated_at)
+          approved_sha, review_rounds, approved_at, branch,
+          created_at, updated_at)
        SELECT initiative_id, $2::integer, 'approved', $4::text, $5::text,
-              $2::integer, $6::timestamptz, $3::text, $6::timestamptz, $6::timestamptz
+              $10::text, $2::integer, $6::timestamptz, $3::text,
+              $6::timestamptz, $6::timestamptz
          FROM run_row
        ON CONFLICT (initiative_id, version) DO UPDATE
          SET status = CASE
@@ -88,6 +90,7 @@ export async function materializeApprovedContract(db, {
              END,
              prd_content = COALESCE(EXCLUDED.prd_content, initiative_contracts.prd_content),
              contract_content = COALESCE(EXCLUDED.contract_content, initiative_contracts.contract_content),
+             approved_sha = COALESCE(initiative_contracts.approved_sha, EXCLUDED.approved_sha),
              review_rounds = GREATEST(initiative_contracts.review_rounds, EXCLUDED.review_rounds),
              approved_at = COALESCE(initiative_contracts.approved_at, EXCLUDED.approved_at),
              branch = COALESCE(initiative_contracts.branch, EXCLUDED.branch),
@@ -102,6 +105,8 @@ export async function materializeApprovedContract(db, {
            OR initiative_contracts.prd_content IS NOT DISTINCT FROM EXCLUDED.prd_content)
          AND (initiative_contracts.contract_content IS NULL
            OR initiative_contracts.contract_content IS NOT DISTINCT FROM EXCLUDED.contract_content)
+         AND (initiative_contracts.approved_sha IS NULL
+           OR initiative_contracts.approved_sha IS NOT DISTINCT FROM EXCLUDED.approved_sha)
        RETURNING id, initiative_id, version, status, branch
      ), artifact_input AS (
        SELECT path, content, sha256, byte_length, source_revision

@@ -173,10 +173,12 @@ describe('runLoop：全链 planning→done', () => {
       obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
     ];
     const { deps, appended, heartbeats, sqls, sleeps } = makeEnv({ observedSeq });
+    deps.listGitFiles = vi.fn(() => ['sprints/full-chain/tests/golden-path.test.mjs']);
     deps.readGitFile = vi.fn((_sha, filePath) => ({
       'sprints/full-chain/sprint-prd.md': '# PRD',
       'sprints/full-chain/contract-draft.md': '# Contract',
       'sprints/full-chain/contract-dod.md': '# DoD',
+      'sprints/full-chain/tests/golden-path.test.mjs': 'test("golden path", () => {});',
     })[filePath]);
 
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
@@ -929,7 +931,9 @@ describe('runLoop：控制 action 自消费', () => {
       'sprints/kernel-contract/sprint-prd.md': '# PRD',
       'sprints/kernel-contract/contract-draft.md': '# Contract',
       'sprints/kernel-contract/contract-dod.md': '# DoD',
+      'sprints/kernel-contract/tests/red.test.js': 'throw new Error("RED");',
     };
+    deps.listGitFiles = vi.fn(() => ['sprints/kernel-contract/tests/red.test.js']);
     deps.fileExists = vi.fn(() => false);
     deps.readGitFile = vi.fn((sha, filePath) => {
       expect(sha).toBe(approvedSha);
@@ -943,9 +947,10 @@ describe('runLoop：控制 action 自消费', () => {
     expect(deps.dispatch).toHaveBeenCalledWith('spawn:generator', expect.any(Object));
     expect(sleeps).toHaveLength(0);
     expect(deps.readGitFile.mock.calls).toEqual([
-      [approvedSha, 'sprints/kernel-contract/sprint-prd.md', { repo: null }],
-      [approvedSha, 'sprints/kernel-contract/contract-draft.md', { repo: null }],
       [approvedSha, 'sprints/kernel-contract/contract-dod.md', { repo: null }],
+      [approvedSha, 'sprints/kernel-contract/contract-draft.md', { repo: null }],
+      [approvedSha, 'sprints/kernel-contract/sprint-prd.md', { repo: null }],
+      [approvedSha, 'sprints/kernel-contract/tests/red.test.js', { repo: null }],
     ]);
     const materializeSql = sqls.find(([sql]) => sql.includes('INSERT INTO initiative_contracts'));
     expect(materializeSql).toBeTruthy();
@@ -972,10 +977,12 @@ describe('runLoop：控制 action 自消费', () => {
       ganLatestRoundContractSha: approvedSha,
     })];
     const { deps, sleeps } = makeEnv({ observedSeq });
+    deps.listGitFiles = vi.fn(() => ['sprints/kernel-contract/tests/red.test.js']);
     deps.readGitFile = vi.fn((_sha, filePath) => ({
       'sprints/kernel-contract/sprint-prd.md': '# PRD',
       'sprints/kernel-contract/contract-draft.md': '# Contract',
       'sprints/kernel-contract/contract-dod.md': '# DoD',
+      'sprints/kernel-contract/tests/red.test.js': 'throw new Error("RED");',
     })[filePath]);
     deps.materializeApprovedContract = vi.fn(async () => {
       throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:seal_mismatch');
@@ -1018,6 +1025,7 @@ describe('runLoop：控制 action 自消费', () => {
       obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
     ];
     const { deps, appended, sqls } = makeEnv({ observedSeq });
+    deps.listGitFiles = vi.fn(() => ['sprints/kernel-contract/tests/red.test.js']);
     deps.readGitFile = vi.fn((_sha, filePath) => ({
       'sprints/kernel-contract/sprint-prd.md': '# PRD',
       'sprints/kernel-contract/contract-draft.md': [
@@ -1028,6 +1036,7 @@ describe('runLoop：控制 action 自消费', () => {
         '# DoD',
         'capability_snapshot_id=13eb5828-b09a-4e76-ba5e-14309f842263',
       ].join('\n'),
+      'sprints/kernel-contract/tests/red.test.js': 'throw new Error("RED");',
     })[filePath]);
 
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
@@ -1119,6 +1128,7 @@ describe('runLoop：控制 action 自消费', () => {
     ];
     const { deps } = makeEnv({ observedSeq });
     deps.fileExists = vi.fn(() => false);
+    deps.listGitFiles = vi.fn(() => ['sprints/kernel-contract/tests/red.test.js']);
     deps.readGitFile = vi.fn(() => '# frozen artifact');
 
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
@@ -1127,7 +1137,7 @@ describe('runLoop：控制 action 自消费', () => {
     for (const call of deps.readGitFile.mock.calls) {
       expect(call[2]).toEqual({ repo: 'perfectuser21/zenithjoy-workspace' });
     }
-    expect(deps.readGitFile).toHaveBeenCalledTimes(3);
+    expect(deps.readGitFile).toHaveBeenCalledTimes(4);
   });
 
   it('persist_contract_approval 显式 base_repo 无法解析时 fail closed，不回退本仓 origin', async () => {
@@ -1298,7 +1308,9 @@ describe('runLoop：控制 action 自消费', () => {
       'sprints/kernel-contract/sprint-prd.md': '# PRD',
       'sprints/kernel-contract/contract-draft.md': '# Contract',
       'sprints/kernel-contract/contract-dod.md': '# DoD',
+      'sprints/kernel-contract/tests/red.test.js': 'throw new Error("RED");',
     };
+    deps.listGitFiles = vi.fn(() => ['sprints/kernel-contract/tests/red.test.js']);
     deps.fileExists = vi.fn(() => false);
     deps.readGitFile = vi.fn((sha, filePath) => {
       expect(sha).toBe(approvedSha);
@@ -1369,10 +1381,12 @@ describe('runLoop：控制 action 自消费', () => {
     ];
     const { deps, sqls } = makeEnv({ observedSeq });
     deps.fileExists = vi.fn(() => false);
+    deps.listGitFiles = vi.fn(() => ['sprints/kernel-contract/tests/red.test.js']);
     deps.readGitFile = vi.fn((_sha, filePath) => ({
       'sprints/kernel-contract/sprint-prd.md': '# PRD',
       'sprints/kernel-contract/contract-draft.md': '# Contract',
       'sprints/kernel-contract/contract-dod.md': '# DoD',
+      'sprints/kernel-contract/tests/red.test.js': 'throw new Error("RED");',
     })[filePath]);
     const originalQuery = deps.pool.query;
     deps.pool.query = vi.fn(async (sql, params) => {

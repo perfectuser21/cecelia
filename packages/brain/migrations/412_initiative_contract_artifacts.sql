@@ -85,7 +85,7 @@ BEFORE UPDATE OR DELETE ON initiative_contract_artifact_seals
 FOR EACH ROW EXECUTE FUNCTION reject_initiative_contract_artifact_seal_mutation();
 
 INSERT INTO schema_version (version, description, applied_at)
-VALUES ('411', 'Immutable approved Harness contract artifacts', NOW())
+VALUES ('412', 'Immutable approved Harness contract artifacts', NOW())
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

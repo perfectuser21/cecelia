@@ -654,7 +654,7 @@ describe('createDispatcher', () => {
     ]);
   });
 
-  it('P2-3 膨胀闸2：全部丢完 feedback_md 仍超限时只 console.warn 不阻断派发', async () => {
+  it('P2-3 膨胀闸2：全部丢完 feedback_md 仍超限时 fail closed，不创建 Attempt', async () => {
     const deps = makeDeps();
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const caseFile = [
@@ -662,7 +662,7 @@ describe('createDispatcher', () => {
     ];
     const hugeDescription = 'y'.repeat(300 * 1024);
 
-    await createDispatcher(deps)('spawn:proposer', {
+    await expect(createDispatcher(deps)('spawn:proposer', {
       taskId,
       runId,
       hop: 6,
@@ -672,10 +672,10 @@ describe('createDispatcher', () => {
         task: { ...observed.task, description: hugeDescription },
       },
       decision: { phase: 'gan', reason: 'revision_requested' },
-    });
+    })).rejects.toThrow(/task_bundle_size_limit_exceeded/);
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('TaskBundle exceeds'));
-    expect(deps.attemptStore.createAttempt).toHaveBeenCalledTimes(1);
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
     warnSpy.mockRestore();
   });
 
@@ -1341,7 +1341,13 @@ describe('createDispatcher', () => {
 
     const created = deps.attemptStore.createAttempt.mock.calls[0][0];
     expect(created.bundle.inputs.contract_artifacts).toEqual(frozenArtifacts);
-    expect(created.bundle.inputs.artifacts).toEqual([]);
+    expect(created.bundle.inputs.artifacts).toEqual([{
+      type: 'frozen_contract_test',
+      path: frozenArtifacts[0].path,
+      content: frozenArtifacts[0].content,
+      sha256: frozenArtifacts[0].sha256,
+      source_sha: frozenArtifacts[0].source_revision,
+    }]);
   });
 
   it('approved contract 资产为空时在 Attempt 创建前返回精确 assembly fault', async () => {
@@ -1746,6 +1752,40 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).toMatchObject({
       contract_branch: 'cp-harness-propose-r2-production-schema',
     });
+  });
+
+  it('generator bundle carries exact frozen tests resolved from the approved contract SHA', async () => {
+    const deps = makeDeps();
+    const frozenArtifacts = [{
+      type: 'frozen_contract_test',
+      path: 'sprints/provider-neutral/tests/red.test.js',
+      content: 'it("starts red", () => { throw new Error("RED") });\n',
+      sha256: 'd'.repeat(64),
+      source_sha: 'c'.repeat(40),
+    }];
+    deps.resolveFrozenContractArtifacts = vi.fn(async () => frozenArtifacts);
+
+    await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: {
+            id: '33333333-3333-4333-8333-333333333333',
+            branch: 'cp-harness-propose-r2-production-schema',
+            approved_sha: 'c'.repeat(40),
+          },
+        },
+      },
+      decision: { phase: 'implement', reason: 'contract_approved' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(deps.resolveFrozenContractArtifacts).toHaveBeenCalledOnce();
+    expect(created.bundle.inputs.artifacts).toEqual(frozenArtifacts);
   });
 
   it('proposer bundle 指定下一轮规范分支，避免产物落到共享任务分支', async () => {

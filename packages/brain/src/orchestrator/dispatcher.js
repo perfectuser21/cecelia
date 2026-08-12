@@ -167,11 +167,25 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   const task = observed.task;
   const payload = asObject(task.payload);
   const metadata = asObject(task.metadata);
+  const normalizedContractArtifacts = Array.isArray(observed.contract?.artifacts)
+    ? observed.contract.artifacts
+    : null;
+  const compatibilityArtifacts = Array.isArray(ctx.frozenContractArtifacts)
+    ? ctx.frozenContractArtifacts
+    : (normalizedContractArtifacts ?? [])
+      .filter(({ path: artifactPath }) => artifactPath.includes('/tests/'))
+      .map((artifact) => ({
+        type: 'frozen_contract_test',
+        path: artifact.path,
+        content: artifact.content,
+        sha256: artifact.sha256,
+        source_sha: artifact.source_revision,
+      }));
   const common = {
     task_id: task.id ?? ctx.taskId,
     sprint_dir: payload.sprint_dir ?? task.sprint_dir,
     worktree_path: payload.worktree_path ?? ctx.worktreePath,
-    artifacts: [],
+    artifacts: compatibilityArtifacts,
     task: {
       title: task.title ?? '',
       description: task.description ?? '',
@@ -300,12 +314,33 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     if (observed.contract?.artifact_error) {
       throw new Error(observed.contract.artifact_error);
     }
-    common.contract = observed.contract?.row ?? null;
-    if (Array.isArray(observed.contract?.artifacts)) {
-      if (spec.role === 'generator' && observed.contract.artifacts.length === 0) {
+    const {
+      frozen_artifacts: _frozenArtifacts,
+      ...contractRow
+    } = observed.contract?.row ?? {};
+    common.contract = observed.contract?.row
+      ? {
+          ...contractRow,
+          ...(common.artifacts[0]?.source_sha
+            ? { approved_sha: common.artifacts[0].source_sha }
+            : {}),
+          frozen_artifact_manifest: common.artifacts.map((artifact) => ({
+            type: artifact.type,
+            path: artifact.path,
+            sha256: artifact.sha256,
+            source_sha: artifact.source_sha,
+          })),
+        }
+      : null;
+    if (normalizedContractArtifacts) {
+      if (
+        spec.role === 'generator'
+        && normalizedContractArtifacts.length === 0
+        && common.artifacts.length === 0
+      ) {
         throw new Error('FROZEN_CONTRACT_ARTIFACTS_MISSING:approved_contract');
       }
-      common.contract_artifacts = observed.contract.artifacts.map((artifact) => ({ ...artifact }));
+      common.contract_artifacts = normalizedContractArtifacts.map((artifact) => ({ ...artifact }));
     }
     common.contract_branch = observed.contract?.row?.branch
       ?? observed.contract?.row?.propose_branch
@@ -427,13 +462,14 @@ function enforceBundleSizeLimit(bundle) {
 
   const finalBytes = bundleByteLength(trimmedBundle);
   if (finalBytes > HARNESS_BUNDLE_MAX_BYTES) {
-    if ((trimmedBundle.inputs?.contract_artifacts?.length ?? 0) > 0) {
+    if (
+      (trimmedBundle.inputs?.contract_artifacts?.length ?? 0) > 0
+      || (trimmedBundle.inputs?.artifacts?.length ?? 0) > 0
+    ) {
       throw new Error(`FROZEN_CONTRACT_ARTIFACT_SIZE_LIMIT:task_bundle:${finalBytes}`);
     }
-    console.warn(
-      `[dispatcher] TaskBundle exceeds ${HARNESS_BUNDLE_MAX_BYTES} bytes after trimming `
-      + `case_file feedback_md (run_id=${trimmedBundle.run_id} attempt_id=${trimmedBundle.attempt_id} `
-      + `bytes=${finalBytes})`,
+    throw new Error(
+      `task_bundle_size_limit_exceeded:${finalBytes}>${HARNESS_BUNDLE_MAX_BYTES}`,
     );
   }
   return trimmedBundle;
@@ -579,6 +615,18 @@ export function createDispatcher(deps) {
       : randomUUID();
     const callbackSecret = createCallbackSecret();
     const skill = spec.skill ? deps.loadSkill(spec.skill) : null;
+    const normalizedArtifacts = ctx.observed.contract?.artifacts;
+    const frozenContractArtifacts = (
+      ['generator', 'evaluator', 'judge'].includes(spec.role)
+      && ctx.observed.contract?.row?.id
+      && (!Array.isArray(normalizedArtifacts) || normalizedArtifacts.length === 0)
+      && typeof deps.resolveFrozenContractArtifacts === 'function'
+    )
+      ? await deps.resolveFrozenContractArtifacts({ action, role: spec.role, ctx })
+      : null;
+    const preparedCtx = frozenContractArtifacts == null
+      ? ctx
+      : { ...ctx, frozenContractArtifacts };
     const payload = asObject(ctx.observed.task.payload);
     const attemptMetadata = {
       logicalCycleId: commanderContext?.logical_cycle_id
@@ -595,7 +643,7 @@ export function createDispatcher(deps) {
       bundle = buildBundle(
         action,
         spec,
-        ctx,
+        preparedCtx,
         attemptId,
         skill,
         attemptMetadata,
@@ -613,7 +661,7 @@ export function createDispatcher(deps) {
           role: spec.role,
           readOnly: spec.readOnly,
           attemptId,
-          ctx,
+          ctx: preparedCtx,
           bundle,
         });
         const {

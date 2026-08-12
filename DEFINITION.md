@@ -8,19 +8,20 @@
 
 
 
-**Brain 版本**: 1.272.26
+**Brain 版本**: 1.272.28
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.26 — approved contract artifact transport
+## Brain 1.272.28 — approved contract artifact transport
 
 - Kernel 从精确 approved SHA 冻结完整合同测试资产，通过不可变数据库行进入 TaskBundle。
 - Fleet Runner 在 Provider 启动前验证路径、摘要、长度与 source revision，物化后回读校验。
 - 确定性 assembly/Impact 错误不再误入人审或无限重试；Harness watchdog 启动即扫描。
 - Impact Contract 对 schema 解析结果计算稳定 hash，空扩展字段不再触发伪换版。
-- Schema 地板推进到 411。
+- 保留 1.272.27 的冻结测试兼容通道；新合同以 sealed artifact manifest 为唯一持久化事实。
+- Schema 地板推进到 412。
 
 ## Brain 1.272.25 — Impact Gate fresh 证据规范化
 
@@ -2149,7 +2150,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | **Schema 版本**: 404 |
+| **schema_version** | 迁移版本追踪 | **Schema 版本**: 411 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |

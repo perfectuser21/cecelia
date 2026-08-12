@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { materializeApprovedContract } from '../contract-store.js';
@@ -41,6 +41,8 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
         status text NOT NULL DEFAULT 'draft',
         prd_content text,
         contract_content text,
+        approved_sha text,
+        frozen_artifacts jsonb NOT NULL DEFAULT '[]'::jsonb,
         review_rounds integer DEFAULT 0,
         approved_at timestamptz,
         branch text,
@@ -126,15 +128,23 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       branch: 'cp-harness-propose-r2-22222222-a8',
     });
     const { rows } = await client.query(`
-      SELECT c.version, c.status, r.contract_id = c.id AS attached
+      SELECT c.version, c.status, r.contract_id = c.id AS attached,
+             c.approved_sha, c.frozen_artifacts
       FROM initiative_contracts c
       CROSS JOIN initiative_runs r
       WHERE r.id = $1::uuid
       ORDER BY c.version
     `, [runId]);
     expect(rows).toEqual([
-      { version: 1, status: 'superseded', attached: false },
-      { version: 2, status: 'approved', attached: true },
+      {
+        version: 1, status: 'superseded', attached: false,
+        approved_sha: null, frozen_artifacts: [],
+      },
+      {
+        version: 2, status: 'approved', attached: true,
+        approved_sha: revision,
+        frozen_artifacts: [],
+      },
     ]);
 
     const frozen = await client.query(

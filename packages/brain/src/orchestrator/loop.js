@@ -162,10 +162,23 @@ function frozenContractArtifacts(deps, observed, groundTruthPaths, approvedSha) 
     }
   }
   const [prdContent, contractDraft, contractDod] = contents;
+  let frozenArtifacts;
+  try {
+    frozenArtifacts = collectFrozenContractArtifacts({
+      approvedSha,
+      sprintDir,
+      repo,
+      listGitFiles: deps.listGitFiles,
+      readGitFile: deps.readGitFile,
+    });
+  } catch {
+    return { missing: [`${sprintDir}/tests/`] };
+  }
   return {
     missing: [],
     prdContent,
     contractContent: `${contractDraft}\n\n${contractDod}`,
+    frozenArtifacts,
   };
 }
 

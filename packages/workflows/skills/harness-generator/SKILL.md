@@ -5,10 +5,11 @@ description: |
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。一个 Sprint = 一个 Generator = 一个 PR。
-version: 7.13.0
+version: 7.14.0
 created: 2026-04-08
-updated: 2026-08-02
+updated: 2026-08-12
 changelog:
+  - 7.14.0: 冻结测试制品协议闭环——冻结档测试的唯一来源改为 TaskBundle `inputs.artifacts[]` 的 `frozen_contract_test` 描述；Runner 在 Provider 前按 approved SHA + SHA-256 原样落盘、Provider 后复验，Generator 只消费现成文件并拒绝自行重建
   - 7.13.0: 冻结档合同来源死锁修复（r42 实证 FROZEN_CONTRACT_ARTIFACTS_MISSING 拒工）——Step 1 原文只有 git fetch/show 合同分支一条路，与冻结档「禁 fetch 任何分支」自相矛盾且合同分支本就不在远端，模型守规则=必死、自作主张=侥幸活（r41/r42 同条件二象性实证）。修法：Step 1 按 HARNESS_FROZEN_BASELINE 分叉，冻结档下合同资产一律从 TaskBundle inputs.contract（Brain 锁定版）原样落盘到 ${SPRINT_DIR}/，这是官方来源不算重写；FROZEN_CONTRACT_ARTIFACTS_MISSING 只允许在 bundle 内也无合同内容时上报
   - 7.12.0: 冻结基线档（生产 run d9785137 / attempt 3aa00156 事故修法）——Step 0.5 从「无条件 rebase 到最新 main」改为按 Kernel 注入的 `HARNESS_FROZEN_BASELINE` 二选一：冻结/对比任务以 `HARNESS_WORKSPACE_START_SHA` 为唯一边界，禁 fetch/rebase/merge/cherry-pick/pull 任何其他候选血统、禁 force push、禁 --no-verify，只许在起始 SHA 之上追加；Step 7 CI 轮询里 BEHIND 在冻结档下不做 `gh pr update-branch`（merge 会把对照候选带进来，血统闸看不出）；普通 dev 档 latest-main rebase 一字不变。三层机械执行：Runner pre-push 血统闸 + Provider 退出后血统断言 + Brain callback 服务端 lineage 校验
   - 7.11.0: gear 档位：Step 0 IS_SKELETON 检测旁新增 WORKSTREAM_INDEX 检测（移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策7）——segmented 档位下存在时只实现 task-plan.json 对应段的 scope/files，禁碰其他段实现文件；测试棋盘共享只许点绿禁改断言（CONTRACT IS LAW 不变）；TDD 两 commit 纪律照旧；default（未设置）保持现行整份 Sprint 一口气实现不变
@@ -205,13 +206,16 @@ if [[ "${HARNESS_FROZEN_BASELINE:-false}" == "true" ]]; then
   # 装配官方资产,与 git show 取文件完全等价:
   #   contract_content → ${SPRINT_DIR}/contract-draft.md(全文原样)
   #   合同文内声明的 DoD 段 → ${SPRINT_DIR}/contract-dod.md(原样抽取)
-  #   合同文内声明的测试文件(tests/*.test.*)→ 按声明路径原样落盘,一字不改
+  #   inputs.artifacts[type=frozen_contract_test] → Runner 已按 path/content 原样落盘，
+  #     并在 Provider 前后核对 approved_sha/source_sha/sha256；Generator 只能读取、
+  #     git add、执行这些文件，禁止改写、补写或根据合同描述自行重建
   # 落盘后照常进入 Red 阶段;这些文件受 CONTRACT IS LAW 约束,commit 1 后不可修改。
   #
   # FROZEN_CONTRACT_ARTIFACTS_MISSING 只允许在一种情况上报:TaskBundle 的
-  # inputs.contract 里也没有 contract_content(bundle 装配缺陷,责任在 Kernel)。
+  # inputs.contract 里没有 contract_content，或 inputs.artifacts 为空/摘要不合法
+  # （Runner 会在 Provider 启动前拦截；若仍进入本步骤则属 bundle 装配缺陷）。
   # 盘上没有 sprint 目录 ≠ 合同缺失——先查 bundle 再喊缺。
-  echo "[generator] 冻结档:从 TaskBundle 落盘合同资产到 ${SPRINT_DIR}/"
+  echo "[generator] 冻结档:读取 Runner 已验真的 TaskBundle 合同与测试制品"
 else
   # ── 普通 dev 档:照旧从合同分支取 ──
   git fetch origin "${CONTRACT_BRANCH}" 2>/dev/null || true
