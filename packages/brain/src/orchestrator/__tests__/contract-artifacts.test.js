@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   CONTRACT_ARTIFACT_MAX_BYTES,
   collectApprovedContractArtifacts,
+  validateContractArtifacts,
 } from '../contract-artifacts.js';
 
 const REVISION = '6faaa9f55e9789ffd29fd2760a9b5994df272e86';
@@ -78,6 +79,42 @@ describe('collectApprovedContractArtifacts', () => {
 
     expect(result.artifacts.map(({ path }) => path)).not.toContain(`${SPRINT_DIR}/task-plan.md`);
     expect(result.artifacts).toHaveLength(5);
+  });
+
+  it('task-plan 已被 Git 列出但读取失败时 fail closed', () => {
+    const deps = fixture();
+    deps.readGitFile.mockImplementation((_revision, path) => {
+      if (path === `${SPRINT_DIR}/task-plan.md`) throw new Error('ETIMEDOUT');
+      return deps.files[path];
+    });
+
+    expect(() => collectApprovedContractArtifacts({
+      sourceRevision: REVISION,
+      sprintDir: SPRINT_DIR,
+      readGitFile: deps.readGitFile,
+      listGitFiles: deps.listGitFiles,
+    })).toThrow(/FROZEN_CONTRACT_ARTIFACTS_MISSING.*task-plan/i);
+  });
+
+  it('持久化边界拒绝缺核心三件套或混合 source revision 的资产集合', () => {
+    const deps = fixture();
+    const complete = collectApprovedContractArtifacts({
+      sourceRevision: REVISION,
+      sprintDir: SPRINT_DIR,
+      readGitFile: deps.readGitFile,
+      listGitFiles: deps.listGitFiles,
+    }).artifacts;
+
+    expect(() => validateContractArtifacts(
+      complete.filter(({ path }) => !path.endsWith('/contract-dod.md')),
+      { requireTests: true, requireCore: true },
+    )).toThrow(/FROZEN_CONTRACT_ARTIFACTS_MISSING:core/);
+    expect(() => validateContractArtifacts(
+      complete.map((artifact, index) => index === 0
+        ? { ...artifact, source_revision: 'a'.repeat(40) }
+        : artifact),
+      { requireTests: true, requireCore: true },
+    )).toThrow(/FROZEN_CONTRACT_ARTIFACT_INVALID:source_revision_set/);
   });
 
   it.each([

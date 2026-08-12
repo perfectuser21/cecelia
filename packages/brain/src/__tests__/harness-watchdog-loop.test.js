@@ -53,6 +53,34 @@ describe('runHarnessWatchdogOnce — 可观测性 + 独立 try-catch', () => {
     await vi.advanceTimersByTimeAsync(300_000);
     expect(runOnce).toHaveBeenCalledTimes(2);
   });
+  it('首轮仍执行时 stop→start 不会并发两轮，也不会让旧轮清掉新实例守卫', async () => {
+    vi.useFakeTimers();
+    let releaseFirst;
+    let active = 0;
+    let maxActive = 0;
+    const firstPending = new Promise((resolve) => { releaseFirst = resolve; });
+    const runOnce = vi.fn(async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      if (runOnce.mock.calls.length === 1) await firstPending;
+      active--;
+      return { scanned: 1 };
+    });
+
+    startHarnessWatchdogLoop({ intervalMs: 300_000, runOnce });
+    await vi.waitFor(() => expect(runOnce).toHaveBeenCalledTimes(1));
+    stopHarnessWatchdogLoop();
+    startHarnessWatchdogLoop({ intervalMs: 300_000, runOnce });
+    await Promise.resolve();
+    expect(runOnce).toHaveBeenCalledTimes(1);
+
+    releaseFirst();
+    await vi.waitFor(() => expect(active).toBe(0));
+    await vi.advanceTimersByTimeAsync(300_000);
+
+    expect(runOnce).toHaveBeenCalledTimes(2);
+    expect(maxActive).toBe(1);
+  });
   it('resumed=0 时仍无条件输出 [harness-watchdog] scanned=N flagged=F resumed=M', async () => {
     mockScan.mockResolvedValue({ scanned: 0, flagged: [] });
     mockResume.mockResolvedValue({ scanned: 1, resumed: [] });
