@@ -198,12 +198,11 @@ describe('callback-processor 集成测试', () => {
     it('dev 任务 AI Done 且无 pr_url → completed_no_pr', async () => {
       const { processExecutionCallback } = await import('../../callback-processor.js');
 
-      // 第一次 pool.query：terminal check 返回无 failure_class
-      // 第二次 pool.query：dev check 返回 task_type = dev（普通dev任务，无harness_mode）
+      // resolveCanonicalPrUrl 先查 DB（pr_url 未定义，无效 URL），再 maybeMarkCompletedNoPr 查 task_type
       mockPool.query
-        .mockResolvedValueOnce({ rows: [{ task_type: 'dev', payload: {} }] }) // completed_no_pr check
-        .mockResolvedValueOnce({ rows: [{ failure_class: null }] })            // terminal check
-        .mockResolvedValue({ rows: [] });
+        .mockResolvedValueOnce({ rows: [{ pr_url: null, payload: {} }] })                    // resolveCanonicalPrUrl SELECT
+        .mockResolvedValueOnce({ rows: [{ task_type: 'dev', pr_url: null, payload: {} }] })  // maybeMarkCompletedNoPr SELECT
+        .mockResolvedValue({ rows: [] }); // newStatus=completed_no_pr → terminalCheck 不执行
 
       const result = await processExecutionCallback({
         task_id: 'task-005',
