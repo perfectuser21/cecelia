@@ -428,6 +428,24 @@ function frozenArtifactAssemblyFault(error, { attemptCreated = false } = {}) {
   };
 }
 
+function preAttemptAssemblyFault(error, fallbackReason) {
+  const message = String(error?.message ?? error ?? 'assembly failed');
+  const frozenCode = frozenArtifactErrorCode(error);
+  const legacyFrozenCode = message.match(/frozen_contract_[a-z0-9_]+/i)?.[0]?.toUpperCase();
+  const bundleSizeCode = message.startsWith('task_bundle_size_limit_exceeded')
+    ? 'TASK_BUNDLE_SIZE_LIMIT_EXCEEDED'
+    : null;
+  return {
+    status: 'DONE_WITH_CONCERNS',
+    control_status: 'BLOCKED',
+    detail: message,
+    failure_class: 'assembly_fault',
+    fallback_reason: frozenCode ?? legacyFrozenCode ?? bundleSizeCode ?? fallbackReason,
+    should_create_attempt: false,
+    should_enter_generator_fix: false,
+  };
+}
+
 /**
  * TaskBundle 膨胀闸2（P2-3，review CHANGES REQUESTED）：闸1（case-file-store.js
  * loadCaseFile 的 fullTextRounds SQL 投影）已经把大部分 feedback_md 全文收窄
@@ -615,18 +633,6 @@ export function createDispatcher(deps) {
       : randomUUID();
     const callbackSecret = createCallbackSecret();
     const skill = spec.skill ? deps.loadSkill(spec.skill) : null;
-    const normalizedArtifacts = ctx.observed.contract?.artifacts;
-    const frozenContractArtifacts = (
-      ['generator', 'evaluator', 'judge'].includes(spec.role)
-      && ctx.observed.contract?.row?.id
-      && (!Array.isArray(normalizedArtifacts) || normalizedArtifacts.length === 0)
-      && typeof deps.resolveFrozenContractArtifacts === 'function'
-    )
-      ? await deps.resolveFrozenContractArtifacts({ action, role: spec.role, ctx })
-      : null;
-    const preparedCtx = frozenContractArtifacts == null
-      ? ctx
-      : { ...ctx, frozenContractArtifacts };
     const payload = asObject(ctx.observed.task.payload);
     const attemptMetadata = {
       logicalCycleId: commanderContext?.logical_cycle_id
@@ -639,7 +645,20 @@ export function createDispatcher(deps) {
       workstreamKey: payload.workstream_index ?? payload.workstream_key ?? 'ws1',
     };
     let bundle;
+    let preparedCtx;
     try {
+      const normalizedArtifacts = ctx.observed.contract?.artifacts;
+      const frozenContractArtifacts = (
+        ['generator', 'evaluator', 'judge'].includes(spec.role)
+        && ctx.observed.contract?.row?.id
+        && (!Array.isArray(normalizedArtifacts) || normalizedArtifacts.length === 0)
+        && typeof deps.resolveFrozenContractArtifacts === 'function'
+      )
+        ? await deps.resolveFrozenContractArtifacts({ action, role: spec.role, ctx })
+        : null;
+      preparedCtx = frozenContractArtifacts == null
+        ? ctx
+        : { ...ctx, frozenContractArtifacts };
       bundle = buildBundle(
         action,
         spec,
@@ -650,9 +669,7 @@ export function createDispatcher(deps) {
         { deferWorkspaceValidation: typeof deps.resolveWorkspaceSpec === 'function' },
       );
     } catch (error) {
-      const assemblyFault = frozenArtifactAssemblyFault(error);
-      if (assemblyFault) return assemblyFault;
-      throw error;
+      return preAttemptAssemblyFault(error, 'TASK_BUNDLE_ASSEMBLY_FAILED');
     }
     if (typeof deps.resolveWorkspaceSpec === 'function') {
       try {
@@ -677,9 +694,7 @@ export function createDispatcher(deps) {
           },
         });
       } catch (error) {
-        const assemblyFault = frozenArtifactAssemblyFault(error);
-        if (assemblyFault) return assemblyFault;
-        throw error;
+        return preAttemptAssemblyFault(error, 'WORKSPACE_RESOLUTION_FAILED');
       }
     }
     const roleAssignment = spec.role === 'commander'
@@ -865,9 +880,7 @@ export function createDispatcher(deps) {
     try {
       bundle = enforceBundleSizeLimit(bundle);
     } catch (error) {
-      const assemblyFault = frozenArtifactAssemblyFault(error);
-      if (assemblyFault) return assemblyFault;
-      throw error;
+      return preAttemptAssemblyFault(error, 'TASK_BUNDLE_SIZE_LIMIT_EXCEEDED');
     }
 
     const persisted = await deps.attemptStore.createAttempt({

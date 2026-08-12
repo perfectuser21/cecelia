@@ -92,7 +92,6 @@ function approvedShaFromObserved(observed, contract) {
 }
 
 export function createFrozenContractArtifactResolver({
-  db,
   readGitFile,
   listGitFiles,
 }) {
@@ -120,23 +119,6 @@ export function createFrozenContractArtifactResolver({
       listGitFiles,
       readGitFile,
     });
-    const { rows } = await db.query(
-      `UPDATE initiative_contracts
-          SET approved_sha = COALESCE(approved_sha, $2),
-              frozen_artifacts = CASE
-                WHEN jsonb_array_length(frozen_artifacts) = 0 THEN $3::jsonb
-                ELSE frozen_artifacts
-              END,
-              updated_at = NOW()
-        WHERE id = $1::uuid
-          AND (approved_sha IS NULL OR approved_sha = $2)
-        RETURNING approved_sha, frozen_artifacts`,
-      [contract.id, approvedSha, JSON.stringify(artifacts)],
-    );
-    const frozen = rows[0]?.frozen_artifacts;
-    if (!validateFrozenContractArtifacts(frozen, approvedSha)) {
-      throw new Error('frozen_contract_artifacts_persist_failed');
-    }
-    return frozen;
+    return artifacts;
   };
 }
