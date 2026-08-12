@@ -2,17 +2,23 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-08-11
+**最后更新**: 2026-08-13
 
 
 
 
 
-**Brain 版本**: 1.272.30
+**Brain 版本**: 1.272.31
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.31 — Harness 实现基线与角色检出点解耦
+
+- TaskBundle 新增整个 Run 内稳定的 `implementation_baseline`，显式任务基线优先，否则从最早的合法 WorkspaceSpec 恢复。
+- `workspace_spec.base_sha` 只负责当前角色的代码检出，Reviewer 合同 SHA 与 Evaluator PR SHA 不再污染实现基线。
+- Planner、Proposer、Reviewer、Generator、Evaluator 与 Judge 收到同一语义说明，禁止跨 GAN 轮次移动合同治理基点。
 
 ## Brain 1.272.30 — Harness 重跑合同版本隔离
 

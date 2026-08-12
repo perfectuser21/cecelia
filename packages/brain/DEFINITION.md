@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**版本**: 1.272.30
+**版本**: 1.272.31
+
+## Harness stable implementation baseline
+
+- TaskBundle 将 Run 级实现基线与角色 WorkspaceSpec 检出点分离；显式任务基线优先，否则只从最早合法 Attempt 恢复。
+- 有历史 Attempt 却无法恢复初始基线时 fail-closed，禁止用 Reviewer 合同 SHA 或 Evaluator PR SHA 重建移动基线。
 
 ## Harness rerun contract version isolation
 

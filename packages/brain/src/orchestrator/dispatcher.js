@@ -13,6 +13,12 @@ import {
 import { deriveCapabilityRequirements } from './preflight/requirements.js';
 import { expandUnresolvedAccountTargets } from './preflight/execution-targets.js';
 import { HARNESS_BUNDLE_MAX_BYTES } from './constants.js';
+import {
+  implementationBaselineFromTaskPayload,
+  implementationBaselineFromWorkspace,
+  objectiveWithImplementationBaseline,
+  parseImplementationBaseline,
+} from './implementation-baseline.js';
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const MAX_EVALUATOR_FEEDBACK_CHECKS = 20;
@@ -194,6 +200,16 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     attempt_kind: attemptMetadata.attemptKind,
     workstream_key: attemptMetadata.workstreamKey,
   };
+  if (observed.implementationBaselineError) {
+    throw new Error(observed.implementationBaselineError);
+  }
+  const implementationBaseline = implementationBaselineFromTaskPayload(payload)
+    ?? (observed.implementationBaseline
+      ? parseImplementationBaseline(observed.implementationBaseline)
+      : null);
+  if (implementationBaseline) {
+    common.implementation_baseline = implementationBaseline;
+  }
   // POST /tasks/:id/dispatch promises to bypass slot checks. Preserve that
   // audited server-owned marker inside the TaskBundle so the Kernel preflight
   // can honor the same contract without trusting caller-controlled payload.
@@ -391,9 +407,9 @@ function buildBundle(
     hop: ctx.hop,
     phase: ctx.decision?.phase ?? ctx.observed.run?.phase ?? 'unknown',
     role: spec.role,
-    objective: action === 'spawn:generator-fix'
+    objective: objectiveWithImplementationBaseline(action === 'spawn:generator-fix'
       ? `${OBJECTIVES.generator} This is a repair attempt; preserve the current pull request.`
-      : spec.objective ?? OBJECTIVES[spec.role],
+      : spec.objective ?? OBJECTIVES[spec.role], inputs.implementation_baseline),
     skill,
     inputs,
     constraints: {
@@ -685,12 +701,19 @@ export function createDispatcher(deps) {
           worktree_path: _discardedCallerPath,
           ...pathFreeInputs
         } = bundle.inputs;
+        const implementationBaseline = pathFreeInputs.implementation_baseline
+          ?? implementationBaselineFromWorkspace(workspaceSpec);
         bundle = parseTaskBundle({
           ...bundle,
+          objective: objectiveWithImplementationBaseline(
+            bundle.objective,
+            implementationBaseline,
+          ),
           inputs: {
             ...pathFreeInputs,
             execution_surface: 'fleet-worker',
             workspace_spec: workspaceSpec,
+            implementation_baseline: implementationBaseline,
           },
         });
       } catch (error) {
