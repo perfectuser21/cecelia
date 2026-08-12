@@ -8,11 +8,16 @@
 
 
 
-**Brain 版本**: 1.272.27
+**Brain 版本**: 1.272.28
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.28 — 冻结合同 Runner 三机发布
+
+- 从已合并 main `a28bdb1f` 构建 canonical Runner `sha256:689b4694e3397b30eff54c8fb0ad59bc3a42c8179f9f07cfad313afc5fe7414b`，冻结制品 helper 与源码 SHA-256 一致。
+- NodeProfile、三机配置、rollout/reconcile、安装器测试与 smoke 同步新 digest；Fleet Worker 基线升级为 1.272.12。
 
 ## Brain 1.272.27 — 冻结合同测试制品进入 TaskBundle
 
