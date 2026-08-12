@@ -8,11 +8,16 @@
 
 
 
-**Brain 版本**: 1.272.20
+**Brain 版本**: 1.272.21
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.21 — CI 夹具与 resolveCanonicalPrUrl 新 SELECT 对齐
+
+- `callback-processor.integration.test.js`：修复 resolveCanonicalPrUrl 新增 authority SELECT 导致的 mockResolvedValueOnce 顺序错位；按 SQL 意图分别返回 authority row 与 completed_no_pr row，保留无 PR dev → completed_no_pr 路径。
+- `harness-completion-authority.test.js`：将非法 `https://x/pr/9` 替换为合法 GitHub PR URL，保留 completed 预期，不削弱生产 URL 校验。
 
 ## Brain 1.272.20 — existing PR 权威字段贯通 + 蓝绿内部鉴权凭据闭环
 
