@@ -228,6 +228,15 @@ is_evaluator_task_bundle() {
     && [[ "$(jq -r '.task_bundle.role // empty' "$task_bundle_file" 2>/dev/null)" == "evaluator" ]]
 }
 
+is_generator_task_bundle() {
+  [[ -f "${HARNESS_TASK_BUNDLE_FILE:-}" ]] || return 1
+  [[ "$(jq -r '.role // empty' "$HARNESS_TASK_BUNDLE_FILE" 2>/dev/null)" == "generator" ]]
+}
+
+is_untrusted_provider_task_bundle() {
+  is_evaluator_task_bundle || is_generator_task_bundle
+}
+
 prepare_evaluator_evidence_capsule() {
   is_evaluator_task_bundle || return 0
 
@@ -330,7 +339,7 @@ seal_evaluator_evidence_capsule() {
 }
 
 prepare_evaluator_provider_identity() {
-  is_evaluator_task_bundle || {
+  is_untrusted_provider_task_bundle || {
     PROVIDER_IDENTITY_PREFIX=()
     PROVIDER_TRUST_BOUNDARY_ENV=()
     ASSERTION_IDENTITY_PREFIX=()
@@ -387,7 +396,12 @@ prepare_evaluator_provider_identity() {
     -u HARNESS_LEASE_OWNER
     -u HARNESS_LEASE_GENERATION
   )
-  echo "[entrypoint] Evaluator Provider constrained to UID ${provider_uid} without capabilities"
+  if is_generator_task_bundle; then
+    # Provider cannot publish refs. A trusted post-Judge transport restores and
+    # uses the canonical URL; remote.origin.pushurl makes provider push fail closed.
+    git -C "$PWD" config remote.origin.pushurl "file:///nonexistent/harness-provider-push-disabled" || return 1
+  fi
+  echo "[entrypoint] Provider constrained to UID ${provider_uid} without capabilities"
 }
 
 terminate_evaluator_provider_processes() {

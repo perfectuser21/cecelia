@@ -18,6 +18,19 @@ const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const MAX_EVALUATOR_FEEDBACK_CHECKS = 20;
 const RUNTIME_RESULT_ROLES = new Set(['reviewer', 'evaluator', 'judge', 'reporter']);
 
+export function assertDispatchRoutingReceipt(task, receipt) {
+  const isCoding = task?.task_type === 'dev' || task?.task_type === 'harness_initiative' || task?.payload?.work_kind === 'coding_mutation';
+  if (!isCoding) return true;
+  if (!receipt
+      || receipt.id !== task.payload?.routing_receipt_id
+      || receipt.task_id !== task.id
+      || receipt.pipeline !== 'harness'
+      || receipt.canonical_task_type !== 'harness_initiative') {
+    throw new Error('route_violation');
+  }
+  return true;
+}
+
 const ACTION_SPECS = Object.freeze({
   'spawn:planner': {
     role: 'planner', skill: 'harness-planner', readOnly: false,
