@@ -15,6 +15,7 @@ import taskErrorReportRoutes from './task-error-report.js';
 import { queueLaneSql } from '../task-queue-lanes.js';
 import { resolveChangeKind, CHANGE_KINDS } from '../impact-contract/change-kind.js';
 import { registerTaskPatchRoute } from './task-task-patch.js';
+import { createRoutedTask } from '../work-routing-store.js';
 
 const router = Router();
 

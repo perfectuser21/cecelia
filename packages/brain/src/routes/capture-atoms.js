@@ -8,6 +8,7 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
+import { createRoutedTask } from '../work-routing-store.js';
 
 const router = Router();
 
@@ -212,21 +213,20 @@ async function routeAtomToTarget(client, atom, targetType, targetSubtype, areaId
     }
 
     case 'task': {
-      const r = await client.query(
-        `INSERT INTO tasks (title, description, status, task_type, priority)
-         VALUES ($1, $2, 'pending', 'dev', 'p2')
-         RETURNING id`,
-        [atom.content.slice(0, 200), atom.content]
-      );
-      return { routedTable: 'tasks', routedId: r.rows[0].id };
+      const routed = await createRoutedTask(client, {
+        source: 'inbox', source_id: String(atom.id), title: atom.content.slice(0, 200),
+        description: atom.content, mutation_intent: 'unknown', declared_change_kind: 'new_capability',
+        repo_hint: atom.metadata?.repo || 'perfectuser21/cecelia', metadata: { priority: 'P2' },
+      });
+      return { routedTable: 'tasks', routedId: routed.task_id };
     }
 
     case 'decision': {
       const r = await client.query(
-        `INSERT INTO decisions (title, description, status, area_id)
-         VALUES ($1, $2, 'active', $3)
+        `INSERT INTO decisions (category, topic, decision, reason, status)
+         VALUES ('capture', $1, $2, $3, 'active')
          RETURNING id`,
-        [atom.content.slice(0, 200), atom.content, areaId || null]
+        [atom.content.slice(0, 200), atom.content, targetSubtype || 'captured decision']
       );
       return { routedTable: 'decisions', routedId: r.rows[0].id };
     }
