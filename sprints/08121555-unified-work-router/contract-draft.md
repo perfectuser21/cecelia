@@ -1,4 +1,10 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
+
+## Round 1 blocker closure
+
+- R1-1：Final E2E 现在先以 `DATABASE_URL="$DB_URL" node packages/brain/src/migrate.js` 对 attempt 空库执行仓库真实 migration，再用 `to_regclass` 机检 `tasks`、`fact_snapshot_headers`、`harness_impact_contracts` 与 `work_routing_receipts`。这使空库 schema 缺失必定失败。
+- R1-2：B-01 现在明确执行 70/33 inventory、Planner、Proposal、Capture 三个永久回归对应的完整测试集，不再只覆盖统一入口的子集。
+- R1-3：B-05 与 Final E2E 现在查询 receipt、四类 Universal Map header、active Impact Contract 三类治理记录，并逐项断言其基线字段精确等于 `310ab9e704d4e3f866e6ce7beb25b79dd0f9d524`。
 
 ## 证据来源与基线
 
@@ -47,9 +53,9 @@ cd packages/brain && npx vitest run src/__tests__/harness-worktree-recovery-cont
 
 **验证命令**:
 ```bash
-cd packages/brain && npx vitest run src/__tests__/work-router.test.js src/__tests__/work-routing-entry.test.js src/__tests__/task-creation-inventory.test.js src/__tests__/work-router-entrypoints.test.js src/routes/__tests__/capture-atoms-routing.test.js src/__tests__/integration/work-routing-store.integration.test.js
+cd packages/brain && npx vitest run src/__tests__/work-router.test.js src/__tests__/work-routing-entry.test.js src/__tests__/migration-411-work-routing.test.js src/__tests__/integration/work-routing-store.integration.test.js src/__tests__/task-creation-inventory.test.js src/__tests__/work-router-entrypoints.test.js src/__tests__/planner-task-type-regression.test.js src/__tests__/proposal-task-type-regression.test.js src/routes/__tests__/capture-atoms-routing.test.js
 ```
-**硬阈值**: inventory 每项有入口合同、coding 覆盖率 100%、receipt UPDATE/DELETE 均失败；命令 exit 0。
+**硬阈值**: `VALID_TASK_TYPES` 动态计数与 unique 均为 70、inventory 逐项恰为 33，Planner INSERT 含 task_type、Proposal 不把 change.skill 当 task_type、Capture 只写真实 decisions 列；coding 覆盖率 100%、receipt UPDATE/DELETE 均失败；命令 exit 0。
 
 ### Step 2: fresh Map 与 Impact Contract 成为 Kernel 启动门禁
 **来源**: `[FROM_PRD]` — §10、§10.1 与 Knife 3。
@@ -80,9 +86,9 @@ bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh &&
 
 **验证命令**:
 ```bash
-bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh && BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 git merge-base --is-ancestor "$BASELINE_SHA" HEAD
+BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 bash -c 'bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh && git merge-base --is-ancestor "$BASELINE_SHA" HEAD && [ "$(git rev-parse HEAD)" != "$BASELINE_SHA" ] && psql "$DB_URL" -v ON_ERROR_STOP=1 -v baseline="$BASELINE_SHA" -f sprints/08121555-unified-work-router/tests/baseline-governance.sql'
 ```
-**硬阈值**: blocked push 非 0、Provider 无 callback token、lineage 命令 exit 0 且 `HEAD != BASELINE_SHA`。
+**硬阈值**: blocked push 非 0、Provider 无 callback token、lineage 命令 exit 0 且 `HEAD != BASELINE_SHA`；本轮 task 的 Routing Receipt `base_sha`、api/db_schema/graph/test 四类 Map header `source_revision`、active Impact Contract `base_revision` 均逐字等于实现基线，查询缺行或异值即非 0。
 
 ### Step 5: scratch 多入口真实产出
 **来源**: `[FROM_PRD]` — §16.6 与 Knife 5。
@@ -187,15 +193,19 @@ set -euo pipefail
 BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524
 git merge-base --is-ancestor "$BASELINE_SHA" HEAD
 [ "$(git rev-parse HEAD)" != "$BASELINE_SHA" ]
+export DATABASE_URL="$DB_URL"
+node packages/brain/src/migrate.js
+psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc "SELECT to_regclass('tasks') IS NOT NULL AND to_regclass('fact_snapshot_headers') IS NOT NULL AND to_regclass('harness_impact_contracts') IS NOT NULL AND to_regclass('work_routing_receipts') IS NOT NULL" | grep -qx t
 node scripts/facts-check.mjs
 bash scripts/check-version-sync.sh
 node packages/quality/scripts/devgate/check-dod-mapping.cjs
 cd packages/brain
-npx vitest run src/__tests__/harness-worktree-recovery-contract.test.js src/__tests__/work-router.test.js src/__tests__/work-routing-entry.test.js src/__tests__/task-creation-inventory.test.js src/__tests__/work-router-entrypoints.test.js src/orchestrator/__tests__/change-kind-profiles.test.js src/orchestrator/preflight/map-impact-contract.test.js src/orchestrator/__tests__/map-recovery-contract.test.js src/orchestrator/__tests__/dispatcher-routing-receipt.test.js
+npx vitest run src/__tests__/harness-worktree-recovery-contract.test.js src/__tests__/work-router.test.js src/__tests__/work-routing-entry.test.js src/__tests__/migration-411-work-routing.test.js src/__tests__/integration/work-routing-store.integration.test.js src/__tests__/task-creation-inventory.test.js src/__tests__/work-router-entrypoints.test.js src/__tests__/planner-task-type-regression.test.js src/__tests__/proposal-task-type-regression.test.js src/routes/__tests__/capture-atoms-routing.test.js src/orchestrator/__tests__/change-kind-profiles.test.js src/orchestrator/preflight/map-impact-contract.test.js src/orchestrator/__tests__/map-recovery-contract.test.js src/orchestrator/__tests__/dispatcher-routing-receipt.test.js
 cd ../..
 bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh
 bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh
 DB_URL="$DB_URL" BASELINE_SHA="$BASELINE_SHA" bash packages/brain/scripts/smoke/unified-work-router-smoke.sh
+psql "$DB_URL" -v ON_ERROR_STOP=1 -v baseline="$BASELINE_SHA" -f sprints/08121555-unified-work-router/tests/baseline-governance.sql
 git diff --check "$BASELINE_SHA"..HEAD
 ```
 

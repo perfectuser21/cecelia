@@ -8,7 +8,7 @@
       "title": "恢复并完成 Unified Work Router Knife 0-5",
       "scope": "先修复 Harness worktree origin/cwd 恢复缺陷，再按批准设计交付统一路由、不可变 receipt、Map/Impact Gate、动作闸、Generator 隔离与 scratch 真实验收",
       "dod": [
-        "[BEHAVIOR] contract-dod.md 的 B-00 至 B-07 全部通过",
+        "[BEHAVIOR] contract-dod.md 的 B-00 至 B-07 全部通过，含空库 migration、70/33 与三陷阱回归、三类治理记录精确基线 oracle",
         "[ARTIFACT] Work Router、migration 411、入口 inventory 与 scratch smoke 完整存在"
       ],
       "files": [
@@ -21,7 +21,8 @@
         "packages/brain/src/orchestrator/",
         "packages/engine/hooks/dev-mode-tool-guard.sh",
         "docker/cecelia-runner/entrypoint.sh",
-        "packages/brain/scripts/smoke/unified-work-router-smoke.sh"
+        "packages/brain/scripts/smoke/unified-work-router-smoke.sh",
+        "sprints/08121555-unified-work-router/tests/baseline-governance.sql"
       ],
       "depends_on": [],
       "complexity": "L",
