@@ -71,6 +71,23 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
         source_revision text NOT NULL,
         sealed_at timestamptz NOT NULL DEFAULT now()
       ) ON COMMIT DROP;
+      CREATE OR REPLACE FUNCTION pg_temp.reject_sealed_artifact_append()
+      RETURNS trigger
+      LANGUAGE plpgsql
+      AS $trigger$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM initiative_contract_artifact_seals
+           WHERE contract_id = NEW.contract_id
+        ) THEN
+          RAISE EXCEPTION 'initiative_contract_artifacts are sealed after approval';
+        END IF;
+        RETURN NEW;
+      END;
+      $trigger$;
+      CREATE TRIGGER initiative_contract_artifacts_no_append
+      BEFORE INSERT ON initiative_contract_artifacts
+      FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_sealed_artifact_append();
     `);
     await client.query(
       'INSERT INTO initiative_runs (id, initiative_id) VALUES ($1::uuid, $2::uuid)',
@@ -138,6 +155,24 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       source_revision: revision,
       digest_length: 64,
     }]);
+    await client.query('SAVEPOINT sealed_append_probe');
+    await expect(client.query(
+      `INSERT INTO initiative_contract_artifacts
+         (contract_id, path, content, sha256, byte_length, source_revision)
+       VALUES ($1::uuid, 'sprints/router/tests/appended.test.mjs', 'x', $2, 1, $3)`,
+      [contract.id, createHash('sha256').update('x').digest('hex'), revision],
+    )).rejects.toThrow(/sealed after approval/i);
+    await client.query('ROLLBACK TO SAVEPOINT sealed_append_probe');
+
+    await expect(materializeApprovedContract(client, {
+      runId,
+      version: 2,
+      branch: 'cp-harness-propose-r2-22222222-a8',
+      prdContent: '# PRD',
+      contractContent: '# Contract\n\n# DoD',
+      artifacts,
+      approvedAt,
+    })).resolves.toMatchObject({ id: contract.id, status: 'approved' });
 
     await expect(materializeApprovedContract(client, {
       runId,
