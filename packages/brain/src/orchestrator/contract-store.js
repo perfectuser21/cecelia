@@ -43,8 +43,32 @@ export async function materializeApprovedContract(db, {
     ? contractArtifactManifestDigest(frozenArtifacts)
     : null;
   const sourceRevision = artifactsProvided ? frozenArtifacts[0].source_revision : null;
+  const ownsClient = typeof db.connect === 'function' && typeof db.release !== 'function';
+  const client = ownsClient ? await db.connect() : db;
 
-  const { rows } = await db.query(
+  try {
+    if (ownsClient) await client.query('BEGIN');
+    // This must be a separate statement before the materialization statement.
+    // PostgreSQL fixes a statement snapshot before a contended advisory lock
+    // returns, so acquiring the lock inside the CTE would still miss a writer
+    // that committed while materialization was waiting.
+    await client.query(
+      `SELECT pg_advisory_xact_lock(
+                hashtextextended(
+                  'initiative_contract_artifacts:'
+                    || run.initiative_id::text
+                    || ':'
+                    || $2::integer::text,
+                  0
+                )
+              ) AS locked
+         FROM initiative_runs AS run
+        WHERE run.id = $1::uuid
+        FOR UPDATE`,
+      [runId, version],
+    );
+
+    const { rows } = await client.query(
     `WITH run_row AS (
        SELECT initiative_id
          FROM initiative_runs
@@ -88,14 +112,6 @@ export async function materializeApprovedContract(db, {
            byte_length integer,
            source_revision text
          )
-     ), contract_lock AS MATERIALIZED (
-       SELECT pg_advisory_xact_lock(
-                hashtextextended(
-                  'initiative_contract_artifacts:' || approved.id::text,
-                  0
-                )
-              ) AS locked
-         FROM approved_contract AS approved
      ), artifact_guard AS (
        SELECT 1 / CASE WHEN $8::boolean AND EXISTS (
          SELECT 1
@@ -124,7 +140,6 @@ export async function materializeApprovedContract(db, {
               )
             )
        ) THEN 0 ELSE 1 END AS ok
-         FROM contract_lock
      ), persisted_artifacts AS (
        INSERT INTO initiative_contract_artifacts
          (contract_id, path, content, sha256, byte_length, source_revision, created_at)
@@ -192,18 +207,31 @@ export async function materializeApprovedContract(db, {
     ],
   );
 
-  if (!rows[0]) {
-    const diagnostic = await db.query(
-      `SELECT 1
-         FROM initiative_contracts AS contract
-         JOIN initiative_runs AS run ON run.initiative_id = contract.initiative_id
-        WHERE run.id = $1::uuid AND contract.version = $2::integer`,
-      [runId, version],
-    );
-    if (diagnostic.rows[0]) {
-      throw new Error('approved_contract_immutable_mismatch');
+    if (!rows[0]) {
+      const diagnostic = await client.query(
+        `SELECT 1
+           FROM initiative_contracts AS contract
+           JOIN initiative_runs AS run ON run.initiative_id = contract.initiative_id
+          WHERE run.id = $1::uuid AND contract.version = $2::integer`,
+        [runId, version],
+      );
+      if (diagnostic.rows[0]) {
+        throw new Error('approved_contract_immutable_mismatch');
+      }
+      throw new Error(`cannot materialize approved contract: run ${runId} not found`);
     }
-    throw new Error(`cannot materialize approved contract: run ${runId} not found`);
+    if (ownsClient) await client.query('COMMIT');
+    return rows[0];
+  } catch (error) {
+    if (ownsClient) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // Preserve the materialization root cause; the pool discards broken clients.
+      }
+    }
+    throw error;
+  } finally {
+    if (ownsClient) client.release();
   }
-  return rows[0];
 }

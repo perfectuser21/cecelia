@@ -43,10 +43,15 @@ AS $$
 BEGIN
   PERFORM pg_advisory_xact_lock(
     hashtextextended(
-      'initiative_contract_artifacts:' || NEW.contract_id::text,
+      'initiative_contract_artifacts:'
+        || contract.initiative_id::text
+        || ':'
+        || contract.version::text,
       0
     )
-  );
+  )
+    FROM initiative_contracts AS contract
+   WHERE contract.id = NEW.contract_id;
   IF EXISTS (
     SELECT 1
       FROM initiative_contract_artifact_seals
