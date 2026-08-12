@@ -1816,7 +1816,16 @@ function createAttemptRunner({
       const workspace = await prepareVerifiedWorkspace(request.workspace_spec, {
         nodeDeps: executionContract.runtimeRequirements.node_deps === true,
       });
-      materializeContractArtifacts(workspace.path, executionContract.contractArtifacts);
+      try {
+        materializeContractArtifacts(workspace.path, executionContract.contractArtifacts);
+      } catch (error) {
+        return rollbackLaunch({
+          error,
+          workspace,
+          attemptId: request.attempt_id,
+          resources: EMPTY_RUNTIME_RESOURCES,
+        });
+      }
       // F4（复审）：node_deps 失败/跳过不炸 prepare（设计明确要求），但不能
       // 因此变得不可观测——最少落一条 fleet-worker 日志，运维排查"这个
       // attempt 为什么 product-map:check 又红了"时不用先去挖 attempt 落库。
