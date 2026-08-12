@@ -1372,6 +1372,41 @@ describe('createDispatcher', () => {
     expect(deps.launcher.launch).not.toHaveBeenCalled();
   });
 
+  it('合同资产使完整 TaskBundle 超过传输上限时硬失败，不创建 Attempt', async () => {
+    const deps = makeDeps();
+    const content = 'a'.repeat(255 * 1024);
+    const artifact = {
+      path: 'sprints/router/tests/large.test.mjs',
+      content,
+      sha256: createHash('sha256').update(content).digest('hex'),
+      byte_length: Buffer.byteLength(content),
+      source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+    };
+
+    const result = await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-approved-contract' },
+          artifacts: [artifact],
+        },
+      },
+      decision: { phase: 'generate', reason: 'contract_approved' },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'FROZEN_CONTRACT_ARTIFACT_SIZE_LIMIT',
+      should_create_attempt: false,
+    });
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+  });
+
   it('copies the Controller-owned validation clock into the Generator TaskBundle', async () => {
     const deps = makeDeps();
     const validationClock = {

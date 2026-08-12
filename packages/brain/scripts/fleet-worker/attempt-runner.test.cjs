@@ -370,6 +370,38 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.docker.prepare).not.toHaveBeenCalled();
   });
 
+  it('拒绝 workspace 内符号链接父目录，资产不能写出 workspace', async () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'contract-symlink-workspace-'));
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'contract-symlink-outside-'));
+    fs.mkdirSync(path.join(workspaceRoot, 'sprints/router'), { recursive: true });
+    fs.symlinkSync(outsideRoot, path.join(workspaceRoot, 'sprints/router/tests'));
+    const content = 'test("routing", () => {})';
+    const artifact = {
+      path: 'sprints/router/tests/routing.test.mjs',
+      content,
+      sha256: crypto.createHash('sha256').update(content).digest('hex'),
+      byte_length: Buffer.byteLength(content),
+      source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+    };
+    const deps = dependencies();
+    deps.workspace.path = workspaceRoot;
+    const runner = createRunner(deps);
+
+    try {
+      await expect(runner.prepare(request({
+        provider_spec: {
+          ...request().provider_spec,
+          stdin: providerPrompt('generator', { contract_artifacts: [artifact] }),
+        },
+      }))).rejects.toThrow('FROZEN_CONTRACT_ARTIFACT_MATERIALIZATION_FAILED');
+      expect(fs.existsSync(path.join(outsideRoot, 'routing.test.mjs'))).toBe(false);
+      expect(deps.docker.prepare).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+      fs.rmSync(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
   it('prepares and persists a stopped Attempt without starting provider code', async () => {
     const deps = dependencies();
     const runner = createRunner(deps);
