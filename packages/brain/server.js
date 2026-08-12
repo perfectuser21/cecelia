@@ -26,6 +26,7 @@ import taskProjectsRoutes from './src/routes/task-projects.js';
 import taskGoalsRoutes from './src/routes/task-goals.js';
 import taskAreasRoutes from './src/routes/task-areas.js';
 import taskTasksRoutes from './src/routes/task-tasks.js';
+import workRoutingRoutes from './src/routes/work-routing.js';
 import innerLifeRoutes from './src/routes/inner-life.js';
 import intentMatchRoutes from './src/routes/intent-match.js';
 import selfReportsRoutes from './src/routes/self-reports.js';
@@ -437,6 +438,7 @@ app.get('/api/brain/autonomous/sessions', createAutonomousRouter(join(dirname(fi
 // POST /api/brain/tasks fallback: brainRoutes 无 POST /tasks handler，此处补齐
 // 必须在 brainRoutes 之后，避免干扰已有 GET/PATCH /api/brain/tasks
 app.use('/api/brain/tasks', taskTasksRoutes);
+app.use('/api/brain/work-routing', workRoutingRoutes);
 
 app.use('/api/brain', licenseRoutes);
 app.use('/api/brain', agentCreditRoutes);
