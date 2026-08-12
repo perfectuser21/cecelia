@@ -8,11 +8,16 @@
 
 
 
-**Brain 版本**: 1.272.25
+**Brain 版本**: 1.272.26
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.26 — 冻结合同测试制品进入 TaskBundle
+
+- GAN 批准时从精确审批 SHA 冻结合同测试的路径、原文与 SHA-256 摘要，Generator、Evaluator、Judge 消费同一份不可变制品。
+- 存量在途合同从追加式 reviewer 决策日志恢复审批 SHA，再从该 SHA 一次性补齐测试制品；数据库触发器禁止已冻结证据被改写。
 
 ## Brain 1.272.25 — Impact Gate fresh 证据规范化
 
@@ -2141,7 +2146,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | **Schema 版本**: 404 |
+| **schema_version** | 迁移版本追踪 | **Schema 版本**: 411 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |

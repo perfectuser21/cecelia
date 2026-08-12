@@ -1,3 +1,5 @@
+import { validateFrozenContractArtifacts } from './frozen-contract-artifacts.js';
+
 /**
  * Atomically freeze an approved Git contract into DB and attach it to its run.
  * Git remains the source artifact; this row is the durable gate snapshot used by
@@ -9,6 +11,8 @@ export async function materializeApprovedContract(db, {
   branch,
   prdContent,
   contractContent,
+  approvedSha,
+  frozenArtifacts = [],
   approvedAt = new Date(),
 }) {
   if (!Number.isInteger(version) || version < 1) {
@@ -16,6 +20,9 @@ export async function materializeApprovedContract(db, {
   }
   if (typeof branch !== 'string' || !branch) {
     throw new Error('approved contract branch is required');
+  }
+  if (!validateFrozenContractArtifacts(frozenArtifacts, approvedSha)) {
+    throw new Error('approved contract requires valid frozen test artifacts');
   }
 
   const { rows } = await db.query(
@@ -27,14 +34,22 @@ export async function materializeApprovedContract(db, {
      ), approved_contract AS (
        INSERT INTO initiative_contracts
          (initiative_id, version, status, prd_content, contract_content,
-          review_rounds, approved_at, branch, created_at, updated_at)
+          approved_sha, frozen_artifacts, review_rounds, approved_at, branch,
+          created_at, updated_at)
        SELECT initiative_id, $2::integer, 'approved', $4::text, $5::text,
-              $2::integer, $6::timestamptz, $3::text, $6::timestamptz, $6::timestamptz
+              $7::text, $8::jsonb, $2::integer, $6::timestamptz, $3::text,
+              $6::timestamptz, $6::timestamptz
          FROM run_row
        ON CONFLICT (initiative_id, version) DO UPDATE
          SET status = 'approved',
              prd_content = COALESCE(EXCLUDED.prd_content, initiative_contracts.prd_content),
              contract_content = COALESCE(EXCLUDED.contract_content, initiative_contracts.contract_content),
+             approved_sha = COALESCE(initiative_contracts.approved_sha, EXCLUDED.approved_sha),
+             frozen_artifacts = CASE
+               WHEN jsonb_array_length(initiative_contracts.frozen_artifacts) = 0
+                 THEN EXCLUDED.frozen_artifacts
+               ELSE initiative_contracts.frozen_artifacts
+             END,
              review_rounds = GREATEST(initiative_contracts.review_rounds, EXCLUDED.review_rounds),
              approved_at = EXCLUDED.approved_at,
              branch = EXCLUDED.branch,
@@ -53,7 +68,16 @@ export async function materializeApprovedContract(db, {
        FROM approved_contract AS approved
       WHERE run.id = $1::uuid
      RETURNING approved.id, approved.version, approved.status, approved.branch`,
-    [runId, version, branch, prdContent ?? null, contractContent ?? null, approvedAt],
+    [
+      runId,
+      version,
+      branch,
+      prdContent ?? null,
+      contractContent ?? null,
+      approvedAt,
+      approvedSha ?? null,
+      JSON.stringify(frozenArtifacts),
+    ],
   );
 
   if (!rows[0]) {

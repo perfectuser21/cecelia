@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**版本**: 1.272.25
+**版本**: 1.272.26
+
+## Frozen contract test artifacts
+
+- GAN 批准时把精确审批 SHA 下的合同测试原文与 SHA-256 摘要冻结进合同快照；Generator、Evaluator、Judge 的 TaskBundle 消费同一份不可变制品。
+- 存量在途合同从追加式 reviewer 决策日志恢复审批 SHA，再从该 SHA 一次性补齐测试制品；制品冻结后数据库触发器禁止改写。
 
 ## Blue-green internal auth credential closure
 
