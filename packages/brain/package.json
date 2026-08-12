@@ -22,7 +22,6 @@
     "@opentelemetry/exporter-otlp-http": "^0.26.0",
     "@opentelemetry/exporter-prometheus": "^0.218.0",
     "@opentelemetry/sdk-node": "^0.218.0",
-    "@rollup/rollup-linux-arm64-gnu": "^4.62.4",
     "ajv": "^8.20.0",
     "bullmq": "^5.28.2",
     "dotenv": "^16.4.0",
