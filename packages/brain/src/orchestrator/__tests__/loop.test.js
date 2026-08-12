@@ -959,6 +959,41 @@ describe('runLoop：控制 action 自消费', () => {
     expect(materializeSql[1].join('\n')).toContain('# DoD');
   });
 
+  it('批准物化发现 seal mismatch 时一次终结为 assembly fault，不持久重试', async () => {
+    const approvedSha = 'a'.repeat(40);
+    const observedSeq = [obs({
+      run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+      task: { status: 'in_progress', payload: { sprint_dir: 'sprints/kernel-contract' } },
+      contract: { approved: false, id: null },
+      proposeBranch: 'cp-harness-propose-r1-11111111-a3',
+      proposeBranchSha: approvedSha,
+      proposeBranchRn: 1,
+      ganLatestRoundVerdict: 'APPROVED',
+      ganLatestRoundContractSha: approvedSha,
+    })];
+    const { deps, sleeps } = makeEnv({ observedSeq });
+    deps.readGitFile = vi.fn((_sha, filePath) => ({
+      'sprints/kernel-contract/sprint-prd.md': '# PRD',
+      'sprints/kernel-contract/contract-draft.md': '# Contract',
+      'sprints/kernel-contract/contract-dod.md': '# DoD',
+    })[filePath]);
+    deps.materializeApprovedContract = vi.fn(async () => {
+      throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:seal_mismatch');
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result).toEqual({ exitReason: 'assembly_fault', hops: 0 });
+    expect(sleeps).toEqual([]);
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'assembly_fault:FROZEN_CONTRACT_ARTIFACT_INVALID',
+    });
+  });
+
   it('批准落库前把硬编码 GAN attempt/snapshot 改判 REVISION，不进入 Generator', async () => {
     const approvedSha = 'b'.repeat(40);
     const observedSeq = [

@@ -263,4 +263,32 @@ describe('materializeApprovedContract concurrency contract', () => {
     expect(queries.at(-1)).toBe('COMMIT');
     expect(client.release).toHaveBeenCalledOnce();
   });
+
+  it('writer-first manifest 冲突回滚后返回稳定 assembly fault，而非 SQL 除零错误', async () => {
+    const queries = [];
+    const client = {
+      query: vi.fn(async (sql) => {
+        queries.push(sql);
+        if (/UPDATE initiative_runs AS run/i.test(sql)) {
+          throw Object.assign(new Error('division by zero'), { code: '22012' });
+        }
+        return { rows: [{ locked: true }] };
+      }),
+      release: vi.fn(),
+    };
+    const db = { connect: vi.fn(async () => client) };
+
+    await expect(materializeApprovedContract(db, {
+      runId,
+      version: 2,
+      branch: 'cp-harness-propose-r2-22222222-a8',
+      prdContent: '# PRD',
+      contractContent: '# Contract\n\n# DoD',
+      artifacts,
+      approvedAt: new Date('2026-07-22T15:00:00Z'),
+    })).rejects.toThrow('FROZEN_CONTRACT_ARTIFACT_INVALID:seal_mismatch');
+
+    expect(queries.at(-1)).toBe('ROLLBACK');
+    expect(client.release).toHaveBeenCalledOnce();
+  });
 });
