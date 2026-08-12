@@ -950,6 +950,53 @@ describe('runLoop：控制 action 自消费', () => {
     expect(sqls.some(([sql]) => sql.includes('INSERT INTO initiative_contracts'))).toBe(false);
   });
 
+  it('批准时把 approved SHA 下的 tests 一并冻结进 contract store', async () => {
+    const approvedSha = 'e'.repeat(40);
+    const sprintDir = 'sprints/kernel-contract-artifacts';
+    const observedSeq = [
+      obs({
+        run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+        task: { status: 'in_progress', payload: { sprint_dir: sprintDir } },
+        contract: { approved: false, id: null },
+        proposeBranch: 'cp-harness-propose-r1-11111111-a3',
+        proposeBranchSha: approvedSha,
+        proposeBranchRn: 1,
+        ganLatestRoundVerdict: 'APPROVED',
+        ganLatestRoundContractSha: approvedSha,
+      }),
+      obs({ contract: { approved: true, id: CONTRACT_ID }, generatorSpawned: false }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, sqls } = makeEnv({ observedSeq });
+    const files = {
+      [`${sprintDir}/sprint-prd.md`]: '# PRD',
+      [`${sprintDir}/contract-draft.md`]: '# Contract',
+      [`${sprintDir}/contract-dod.md`]: '# DoD',
+      [`${sprintDir}/tests/router.test.mjs`]: 'test("router", () => {})',
+    };
+    deps.listGitFiles = vi.fn(() => [`${sprintDir}/tests/router.test.mjs`]);
+    deps.readGitFile = vi.fn((_sha, filePath) => {
+      if (!Object.hasOwn(files, filePath)) throw new Error(`missing ${filePath}`);
+      return files[filePath];
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.listGitFiles).toHaveBeenCalledWith(approvedSha, `${sprintDir}/tests`, {
+      repo: null,
+    });
+    const materializeSql = sqls.find(([sql]) => sql.includes('INSERT INTO initiative_contracts'));
+    const frozen = JSON.parse(materializeSql[1][6]);
+    expect(frozen.map(({ path }) => path)).toEqual([
+      `${sprintDir}/contract-dod.md`,
+      `${sprintDir}/contract-draft.md`,
+      `${sprintDir}/sprint-prd.md`,
+      `${sprintDir}/tests/router.test.mjs`,
+    ]);
+    expect(frozen.every(({ source_revision: revision }) => revision === approvedSha)).toBe(true);
+  });
+
   it('persist_contract_approval 按 payload.base_repo 从跨仓库权威仓库读取批准产物', async () => {
     // 生产实弹 run 4925488b：base_repo=zenithjoy-workspace，批准 SHA 只在该仓库存在
     const approvedSha = 'c'.repeat(40);

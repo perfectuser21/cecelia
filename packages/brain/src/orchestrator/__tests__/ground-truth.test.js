@@ -21,6 +21,7 @@ function fakePool(rowsByTable = {}) {
       calls.push([sql, params]);
       if (sql.includes('FROM initiative_runs')) return { rows: rowsByTable.initiative_runs ?? [] };
       if (sql.includes('FROM initiative_contracts')) return { rows: rowsByTable.initiative_contracts ?? [] };
+      if (sql.includes('FROM initiative_contract_artifacts')) return { rows: rowsByTable.initiative_contract_artifacts ?? [] };
       if (sql.includes('FROM tasks')) return { rows: rowsByTable.tasks ?? [] };
       if (sql.includes('FROM harness_attempts')) {
         if (sql.includes("role = 'evaluator'")) {
@@ -86,6 +87,7 @@ function makeDeps({ rows = {}, exec = {}, files = {}, readAuthCircuit } = {}) {
   const pool = fakePool({
     initiative_runs: [runRow],
     initiative_contracts: rows.contracts ?? [{ id: CONTRACT_ID, status: 'draft' }],
+    initiative_contract_artifacts: rows.contractArtifacts ?? [],
     tasks: rows.tasks ?? [{ id: TASK_ID, status: 'in_progress', payload: {} }],
     harness_attempts: rows.attempts ?? [],
     harness_evaluator_attempts: rows.evaluatorAttempts ?? rows.attempts ?? [],
@@ -126,6 +128,28 @@ describe('collectGroundTruth：DB 通道组装', () => {
     expect(o.contract.id).toBe(CONTRACT_ID);
     expect(o.decisionLog).toEqual([]);
     expect(o.authCircuit).toEqual([{ account_id: 'account2', is_auth_failed: true, auth_fail_count: 2 }]);
+  });
+
+  it('approved contract 从不可变资产表读取按 path 排序的 TaskBundle 真相', async () => {
+    const artifacts = [
+      { path: 'sprints/router/tests/a.test.mjs', sha256: 'a'.repeat(64) },
+      { path: 'sprints/router/tests/z.test.mjs', sha256: 'b'.repeat(64) },
+    ];
+    const deps = makeDeps({
+      rows: {
+        contracts: [{ id: CONTRACT_ID, status: 'approved' }],
+        contractArtifacts: artifacts,
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.contract.artifacts).toEqual(artifacts);
+    const [sql, params] = deps.pool.calls.find(([query]) => (
+      query.includes('FROM initiative_contract_artifacts')
+    ));
+    expect(sql).toMatch(/ORDER BY path/);
+    expect(params).toEqual([CONTRACT_ID]);
   });
 
   it('contract status=draft → approved:false；contract_id 为空 → 不查 contracts、approved:false', async () => {
