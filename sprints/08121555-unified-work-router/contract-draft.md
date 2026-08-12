@@ -1,9 +1,9 @@
-# Sprint Contract Draft（Round 5）
+# Sprint Contract Draft（Round 6）
 
 ## 证据来源与边界
 
 - 冻结 PRD：`sprint-prd.md`、bundle `thin_prd` 与 `prep_prd_body`；冲突时 Recovery Contract Correction 优先。
-- 冻结实现基线（唯一权威值）：`22a62578f0aab77c58e1e0be25a6c321a78b35ad`，直接来源为本轮 task bundle 的冻结 `workspace_spec.base_sha`；Round 4 的 `184453544ab29c4395f2c1d2b098e34306df061e` 是 GAN authoring contract SHA，不得充当实现 baseline。该基线只定义 Generator 实现血统与治理证据基点，绝不是完成态 HEAD。合同、DoD、冻结测试、task-plan、Routing Receipt、Universal Map 与 Impact Contract 必须只使用该值；最终产出必须在其后追加并永久保留 RED/GREEN commits。
+- 冻结实现基线（唯一权威值）：`22a62578f0aab77c58e1e0be25a6c321a78b35ad`，直接来源为本轮 task bundle 的冻结 `workspace_spec.base_sha`，并与 `planner_head_sha` 一致；历轮不断变化的 proposer/reviewer `contract_sha` 仅标识 GAN authoring provenance，不得充当实现 baseline。该基线只定义 Generator 实现血统与治理证据基点，绝不是完成态 HEAD。合同、DoD、冻结测试、task-plan、Routing Receipt、Universal Map 与 Impact Contract 必须只使用该值；最终产出必须在其后追加并永久保留 RED/GREEN commits。
 - Universal Map：scope=`cecelia`，查询时 freshness=`fresh`；四类 scanner 为 `api-registry-v2/db-schema-v2/graph-v3/test-registry-v2`。事实 revision 为 `5d1d7417bd015c5c1018718e3c53e827c2a106f1`，与冻结实现基线不同，故实现运行必须重新刷新并把本次 Impact Contract 的 `base_sha/source_revision` 锚定到冻结基线。
 - `[MAP_NOT_CONFIGURED]`：task payload 有 `map_scope=cecelia`，但 `map_repo` 为空，因此 radius 未成立，`must_run_assertions=[]`；禁止以领域硬编码补造 radius 断言。
 - Registry：api/db_schema/test 均可查询；字段以 PRD 字面合同优先。
