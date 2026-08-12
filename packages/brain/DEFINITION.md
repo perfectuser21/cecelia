@@ -1,10 +1,14 @@
 # Brain 模块定义
 
-**版本**: 1.272.15
+**版本**: 1.272.20
 
 ## Blue-green internal auth credential closure
 
 - Blue-green sidecar 只读挂载共享 internal token SSOT；Gate 3 通过敏感入口匿名 401 验证生产容器真实启用鉴权。
+
+## Linux runner dependency target
+
+- Fleet worker 在 macOS ARM64 宿主准备 workspace 时，明确按 canonical Linux ARM64/glibc runner 平台解析 npm optionalDependencies，避免宿主安装成功但容器缺少 Rollup 等平台原生包。
 
 ## Evaluator workspace dependencies
 

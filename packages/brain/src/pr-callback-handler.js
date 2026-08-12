@@ -222,9 +222,10 @@ export async function handlePrMerged(pool, prInfo) {
       completed_via: 'github_webhook'
     };
 
-    // 构建更新的 payload（追加 pr_url）
+    // 构建更新的 payload（追加 pr_url；清除活跃 run 标记：run_status → 'merged'，current_run_id → 移除）
     const payloadUpdate = {
       pr_url: prUrl,
+      run_status: 'merged',
       last_run_result: {
         pr_url: prUrl,
         completed_at: mergedAt,
@@ -243,7 +244,7 @@ export async function handlePrMerged(pool, prInfo) {
         pr_merged_at = COALESCE($6::timestamp, NOW()),
         pr_status = 'merged',
         metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
-        payload = COALESCE(payload, '{}'::jsonb) || $4::jsonb
+        payload = (COALESCE(payload, '{}'::jsonb) || $4::jsonb) - 'current_run_id'
       WHERE id = $1
         AND status = 'in_progress'
       RETURNING id, goal_id, project_id, pr_url, pr_merged_at

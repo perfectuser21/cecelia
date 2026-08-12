@@ -8,16 +8,39 @@
 
 
 
-**Brain 版本**: 1.272.15
+**Brain 版本**: 1.272.20
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.15 — 蓝绿内部鉴权凭据闭环
+## Brain 1.272.20 — 蓝绿内部鉴权凭据闭环
 
 - 蓝绿 sidecar 以只读挂载读取共享 internal token SSOT，并把同一路径显式传给容器内 Compose；凭据缺失时保留旧 Brain、拒绝切换。
 - Gate 3 在版本与真重启之外，要求生产敏感入口匿名请求返回 401；token 未注入的 503 与鉴权未生效的业务响应均阻断部署。
+
+## Brain 1.272.19 — 同 PR+SHA 唯一权威 Run + 终态收账三修
+
+- shepherd 主 SELECT 排除 failed/completed 终态任务，防止已结案任务被 CI 失败重排路径回退到 queued（场景一回归）。
+- shepherd re-queue UPDATE 新增 `AND status NOT IN (terminal)` WHERE 守卫，双重保险防终态回写。
+- shepherd `mergeable=UNKNOWN` 不再无限等待：与 MERGEABLE 同等处理（尝试合并，GitHub 返回真实错误），消除 GitHub 对 OPEN PR 暂未计算 mergeability 时的无限轮询（场景三回归）。
+- pr-callback-handler GitHub Webhook 合并路径清除 `current_run_id` 并设 `run_status='merged'`，消除 PR 已 MERGED 但 task payload 仍显示活跃 run 标记的状态漂移（场景二回归）。
+- 三个修复均以 TDD 回归测试永久锁入 CI（shepherd-terminal-guard.test.js + pr-callback-run-status-clear.test.js），覆盖 Claude/Codex/Grok 三 provider。
+
+## Brain 1.272.18 — Derive 取证死循环双修（recollect 护栏 + evaluate PASS 必派 judge）
+
+- recollect 护栏兜底：spawn:evaluator 落库快照缺顶层 trigger_sha 时，改用 observed.pr.head_sha 匹配 currentHeadSha，防止 evidence_insufficient 死循环。
+- stale judge FAIL 不遮蔽同 SHA 新 evaluate PASS：补证后产出晚于最新 judge 的 evaluate PASS，下一动作必须派 judge 复核（evaluate_passed_awaiting_judge），而非再次 spawn:evaluator。
+- 两条修复均以 TDD 回归测试永久锁入 CI（derive-recollect-loop.test.ts + derive.test.js）。
+
+## Brain 1.272.17 — Exact-PR Judge Evidence Basis
+
+- 精确 PR 验收在无 Sprint 合同/Golden Path 时，将已完整对账的 `required_command_evidence` 作为独立 Judge 的裁决步骤，避免 Evaluator PASS 后 Judge 误报 `needs_context`。
+
+## Brain 1.272.15 — Linux Runner Dependency Target
+
+- Fleet workspace 的受限 `npm ci` 继续在 macOS ARM64 宿主执行，但依赖解析目标显式固定为 canonical Linux ARM64/glibc runner，确保 Rollup 等 optional native package 与真实执行容器一致。
+- 永久回归测试锁定 npm 的 OS/CPU/libc 目标，防止出现“安装返回成功、容器运行仍缺平台包”的假绿。
 
 ---
 

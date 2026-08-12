@@ -1092,10 +1092,21 @@ export async function runJudgeGate(ctx, opts = {}) {
     return { verdict: 'FAIL', feedback: fb, judged: true, failure_class: 'evidence_insufficient' };
   }
 
+  const requiredEvidence = reconcileRequiredCommandEvidence(
+    ctx.requiredCommandEvidence,
+    ev.brainResult?.behavior_tests,
+  );
+  const adjudicationSteps = ev.goldenPathSteps?.length
+    ? ev.goldenPathSteps
+    : requiredEvidence.complete
+      ? ctx.requiredCommandEvidence.map((command) => command.trim())
+      : [];
+
   // 证据门：无合同 E2E 段且无 Golden Path 步骤 → 裁判没有「该验什么」的独立基准，无法做覆盖对照
   // → fail-open 保留 agent verdict（不浪费裁判调用，也不在缺证据时凭空否决运动员）。
-  // Fleet 路径从批准后的 TaskBundle 读取锁版本文本；旧本地路径回退读取 sprint 文件。
-  if (!ev.contractE2E && (!ev.goldenPathSteps || ev.goldenPathSteps.length === 0)) {
+  // Fleet 路径从批准后的 TaskBundle 读取锁版本文本；精确 PR 验收可以用已完整对账的
+  // required_command_evidence 作为裁判步骤；旧本地路径回退读取 sprint 文件。
+  if (!ev.contractE2E && adjudicationSteps.length === 0) {
     console.log('[judge] 无合同/Golden Path 证据可独立判读 → 跳过裁判，保留 agent verdict');
     return { verdict: agentVerdict, feedback: agentFeedback || null, judged: false };
   }
@@ -1104,7 +1115,7 @@ export async function runJudgeGate(ctx, opts = {}) {
   try {
     judgeResult = await judgeFn({
       contractE2E: ev.contractE2E,
-      goldenPathSteps: ev.goldenPathSteps,
+      goldenPathSteps: adjudicationSteps,
       agentVerdict,
       transcript: ev.transcript,
       agentStdout: ev.agentStdout,
@@ -1125,7 +1136,7 @@ export async function runJudgeGate(ctx, opts = {}) {
     return { verdict: agentVerdict, feedback: agentFeedback || null, judged: false, judgeError: err.message };
   }
 
-  const cov = validateCoverage(judgeResult.coverage, ev.goldenPathSteps);
+  const cov = validateCoverage(judgeResult.coverage, adjudicationSteps);
   const finalFail = judgeResult.verdict === 'FAIL' || !cov.ok;
 
   await persistJudgeArtifact({
@@ -1139,7 +1150,7 @@ export async function runJudgeGate(ctx, opts = {}) {
       mechanicalGate: mech,
       judge: judgeResult,
       coverageCheck: cov,
-      goldenPathSteps: ev.goldenPathSteps,
+      goldenPathSteps: adjudicationSteps,
       finalVerdict: finalFail ? 'FAIL' : 'PASS',
     },
   }, opts);

@@ -1,115 +1,63 @@
-contract_branch: cp-harness-propose-r1-be8babea-r88f76b1d-a4
-sprint_dir: sprints/08111145-kernel-be8babea
+contract_branch: cp-harness-propose-r1-c9043059-r0dfcdf41-a12
+sprint_dir: sprints/08111523-kernel-c9043059
 
 ---
 skeleton: false
-journey_type: user_facing
+journey_type: autonomous
 ---
-# Contract DoD — Dashboard HK/US 官方发布主链
+# Contract DoD — Sprint: derive 取证死循环双修（recollect 护栏 trigger_sha 兜底 + 新 evaluate PASS 必派 judge）
 
-**范围**: `scripts/deploy.sh --dashboard-only` 复用既有 promote、双节点指纹与真实 WebKit/日志验收。
-**大小**: M
+**范围**: 仅 `packages/brain/src/orchestrator/derive.js` 失败类路由/护栏字段/状态排序 + 其 `__tests__` 单测
+**大小**: S
 
-gate-allow: env-missing Playwright WebKit 在 PRD 指定的 mac_web evaluator 上运行；docker 命令经 ssh 在 HK 生产节点执行，不要求合同起草容器本地具备。
+## Invariant 覆盖（铁律三源映射）
+
+- **INV-1 [证据不足补证]** judge FAIL evidence_insufficient 优先走 evaluator 补证轮 → 由下方
+  **B-03** 把守（首次 evidence_insufficient 仍走首次 spawn:evaluator，不改错人派 generator）。
+- **INV-2 [验证时钟 fail-closed]** → **N/A**：本 sprint 不触及 validation_clock / gates.js。
+- **INV-3 [证据窗口 前8×600]** → **N/A**：本 sprint 不改 judge 证据消费窗口。
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] 永久 Vitest CI 回归存在且使用 `describe/it/expect`，覆盖成功接力与失败传播
-  Test: node -e "const c=require('fs').readFileSync('sprints/08111145-kernel-be8babea/tests/dashboard-only-production-chain.test.ts','utf8');if(!c.includes('describe(')||!c.includes('it(')||!c.includes('expect('))process.exit(1)"
-- [x] [ARTIFACT] `scripts/deploy.sh` 是唯一修改的官方入口，复用既有 `promote-dashboard.sh`，不新增第三份前端
-  Test: git diff --name-only origin/main...HEAD | grep -E '^(scripts/deploy.sh|packages/quality/|sprints/08111145-kernel-be8babea/)' >/dev/null
+- [x] [ARTIFACT] 复现回归测试文件存在且含双序列断言（awaiting_judge + after_recollect）
+  Test: node -e "const c=require('fs').readFileSync('sprints/08111523-kernel-c9043059/tests/derive-recollect-loop.test.ts','utf8');if(!c.includes('evaluate_passed_awaiting_judge')||!c.includes('evidence_insufficient_after_recollect'))process.exit(1)"
 
-## BEHAVIOR 条目
+- [x] [ARTIFACT] 两条复现断言已 port 进 derive.test.js 作永久 CI 回归（bug-fix 死规矩）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/__tests__/derive.test.js','utf8');if(!c.includes('evaluate_passed_awaiting_judge')||!c.includes('evidence_insufficient_after_recollect'))process.exit(1)"
 
-- [x] [BEHAVIOR] [L2] B-01: Dashboard-only 成功路径必须调用既有双节点 promote 主链
-  动作: 在隔离 fixture 执行 `scripts/deploy.sh --dashboard-only --skip-smoke`
-  预期观察: rebuild 成功后 promote 恰好调用一次，发布命令退出 0
-  等待预算: 10s
-  留证: Vitest verbose 输出中的成功用例与调用次数
-  Test: manual:bash -c 'npx vitest run sprints/08111145-kernel-be8babea/tests/dashboard-only-production-chain.test.ts -t "Dashboard-only 成功路径必须调用既有双节点 promote 主链" --reporter=verbose'
+## BEHAVIOR 条目（真调 derive 纯函数，无 mock 被改的决策边）
 
-- [x] [BEHAVIOR] [L2] B-02: HK 同步或终验失败必须让 Dashboard-only 发布非零退出
-  动作: 在隔离 fixture 令 promote 主链返回 23，再执行 Dashboard-only 发布
-  预期观察: deploy 返回非零并显示发布失败，不能静默成功
-  等待预算: 10s
-  留证: Vitest verbose 输出中的 exit code 与错误输出断言
-  Test: manual:bash -c 'npx vitest run sprints/08111145-kernel-be8babea/tests/dashboard-only-production-chain.test.ts -t "HK 同步或终验失败必须让 Dashboard-only 发布非零退出" --reporter=verbose'
-
-- [x] [BEHAVIOR] [L3] B-03: HK 与 US 四类生产资源等于真实 PR head [接缝×2]
-  动作: 发布后分别请求 HK/US 的 build-info、index、sw.js 与 `/workbench/tasks`
-  预期观察: 两端均可达、SHA 等于 PR head、四类响应一致且无旧 PWA 注册
-  等待预算: 120s
-  留证: `${SPRINT_DIR}/hk-us-fingerprint.log` 与四类响应 SHA-256
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#B-03
-
-- [x] [BEHAVIOR] [L3] B-04: HK 生产入口 WebKit 私密新上下文等待刷新后保持 /workbench/tasks [接缝×2]
-  动作: 用 Playwright WebKit 新 context 直达 HK 深链，等待 10 秒并刷新再等 10 秒
-  预期观察: 三次 pathname 都是 `/workbench/tasks` 且 service worker 注册数为 0
-  等待预算: 60s
-  留证: `${SPRINT_DIR}/screenshots/hk-workbench-tasks.png` 与 Playwright line report
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#B-04
-
-- [x] [BEHAVIOR] [L3] B-05: 本轮真实入口日志 Referer 保持深链
-  动作: WebKit 请求后读取 HK 入口容器从 `E2E_STARTED_AT` 起的新日志
-  预期观察: 至少一条 `/workbench/tasks` 请求的 Referer 仍含 `/workbench/tasks`，且无凭据字段
-  等待预算: 30s
-  留证: `${SPRINT_DIR}/hk-entry.log`
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#B-05
-
-## Invariant 映射
-
-- [x] [BEHAVIOR] [L3] INV-1: 真环境验证必须真实访问 HK/US 与 WebKit
-  动作: 执行 B-03、B-04、B-05，不提供离线替代入口
-  预期观察: 任一真实能力不可用时命令非零
-  等待预算: 120s
-  留证: 三条 L3 evidence 与 exit code
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-1
-
-- [x] [BEHAVIOR] [L2] INV-2: validation identity 仅从 Runner late-bound
-  动作: evaluator 启动前检查当前角色身份变量
-  预期观察: HARNESS attempt 与 capability snapshot 均非空，合同无 UUID 固化
+- [x] [BEHAVIOR] [L2] B-01: recollect 返回更晚的 evaluate PASS → 派 judge 复核（run 06e4566c 死循环点）
+  动作: 喂 derive「judge FAIL evidence_insufficient(hop3) → spawn:evaluator 补证(hop4) → evaluate PASS(hop5，晚于最新 judge)」序列
+  预期观察: derive 返回 action=spawn:judge, reason=evaluate_passed_awaiting_judge（而非再次 spawn:evaluator）
   等待预算: 0s
-  留证: provenance JSON
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-2
+  留证: /tmp/derive-loop-e2e.log（含该用例 PASS 行）
+  Test: manual:bash -c 'W="${WORKSPACE_PATH:-/workspace}"; [ -x "$W/node_modules/.bin/vitest" ] || (cd "$W" && npm ci --no-audit --no-fund >/dev/null 2>&1); cd "$W" && node_modules/.bin/vitest run sprints/08111523-kernel-c9043059/tests/derive-recollect-loop.test.ts -t "派 judge 复核" 2>&1 | sed "s/\x1b\[[0-9;]*[mK]//g" | tee /tmp/derive-b01.out; grep -qE "Tests +1 passed" /tmp/derive-b01.out && ! grep -qE "[1-9][0-9]* failed" /tmp/derive-b01.out || { echo "FAIL B-01"; exit 1; }; echo OK'
 
-- [x] [BEHAVIOR] [L2] INV-3: deploy 失败禁止 warning 降级
-  动作: 令 promote fixture 返回 23 并运行 Dashboard-only
-  预期观察: deploy 返回非零
-  等待预算: 10s
-  留证: Vitest 失败传播用例输出
-  Test: manual:bash -c 'npx vitest run sprints/08111145-kernel-be8babea/tests/dashboard-only-production-chain.test.ts -t "HK 同步或终验失败必须让 Dashboard-only 发布非零退出" --reporter=verbose'
-
-- [x] [BEHAVIOR] [L3] INV-4: 判变使用生产自报 build-info
-  动作: 分别读取 HK/US 生产 build-info
-  预期观察: 两端 git_sha 都等于真实 PR head
-  等待预算: 30s
-  留证: 两端 JSON 响应
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-4
-
-- [x] [BEHAVIOR] [L3] INV-5: 判变端与终验端使用相同版本语义
-  动作: 对两端 build-info 执行同一精确比较
-  预期观察: git_sha 非 unknown 且完全一致
-  等待预算: 30s
-  留证: jq/cmp 输出
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-5
-
-- [x] [BEHAVIOR] [L2] INV-6: 验证命令真实产生 Red exit code
-  动作: 在未修实现上运行永久 Vitest 回归
-  预期观察: 当前基线至少一条失败且进程非零
-  等待预算: 30s
-  留证: `/tmp/sprint-red.log`
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-6
-
-- [x] [BEHAVIOR] [L1] INV-7: 合同与测试不固化凭据
-  动作: 扫描本 sprint 交付物中的常见真实凭据格式
-  预期观察: 无私钥块、GitHub token 或 Bearer token
+- [x] [BEHAVIOR] [L2] B-02: recollect 后仍不足(trigger_sha 缺失，pr.head_sha 兜底) → 落人审 非第三次 recollect
+  动作: 喂 derive「补证后 judge 重审仍 evidence_insufficient(hop6，最新)，且 spawn:evaluator 快照缺顶层 trigger_sha 仅 pr.head_sha」序列
+  预期观察: derive 返回 action=wait:human_review, reason=evidence_insufficient_after_recollect（护栏兜底触发，不第三次 spawn:evaluator）
   等待预算: 0s
-  留证: 扫描 exit code
-  Test: manual:bash -c 'if rg -n '\''BEGIN (RSA |OPENSSH )?PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,}|Bearer [A-Za-z0-9._-]{20,}'\'' sprints/08111145-kernel-be8babea; then exit 1; fi'
+  留证: /tmp/derive-loop-e2e.log（含该用例 PASS 行）
+  Test: manual:bash -c 'W="${WORKSPACE_PATH:-/workspace}"; [ -x "$W/node_modules/.bin/vitest" ] || (cd "$W" && npm ci --no-audit --no-fund >/dev/null 2>&1); cd "$W" && node_modules/.bin/vitest run sprints/08111523-kernel-c9043059/tests/derive-recollect-loop.test.ts -t "落人审 非第三次 recollect" 2>&1 | sed "s/\x1b\[[0-9;]*[mK]//g" | tee /tmp/derive-b02.out; grep -qE "Tests +1 passed" /tmp/derive-b02.out && ! grep -qE "[1-9][0-9]* failed" /tmp/derive-b02.out || { echo "FAIL B-02"; exit 1; }; echo OK'
 
-- [x] [BEHAVIOR] [L3] INV-8: 入口日志证据必须脱敏
-  动作: 对本轮 HK 入口日志扫描凭据字段
-  预期观察: cookie、authorization、token 等号字段 0 条
+- [x] [BEHAVIOR] [L2] B-03: 首次 evidence_insufficient(evaluate 不晚于 judge) → 首次 spawn:evaluator 补证（INV-1 不回归，awaiting_judge 不过度触发）
+  动作: 喂 derive「judge FAIL evidence_insufficient(hop3，最新)，无更晚 evaluate、无既往 recollect」序列
+  预期观察: derive 返回 action=spawn:evaluator, reason=judge_evidence_insufficient_recollect（首轮补证语义不变）
   等待预算: 0s
-  留证: `${SPRINT_DIR}/hk-entry.log` 扫描结果
-  Test: contract:sprints/08111145-kernel-be8babea/contract-dod.md#INV-8
+  留证: /tmp/derive-loop-e2e.log（含该用例 PASS 行）
+  Test: manual:bash -c 'W="${WORKSPACE_PATH:-/workspace}"; [ -x "$W/node_modules/.bin/vitest" ] || (cd "$W" && npm ci --no-audit --no-fund >/dev/null 2>&1); cd "$W" && node_modules/.bin/vitest run sprints/08111523-kernel-c9043059/tests/derive-recollect-loop.test.ts -t "不误判 awaiting_judge" 2>&1 | sed "s/\x1b\[[0-9;]*[mK]//g" | tee /tmp/derive-b03.out; grep -qE "Tests +1 passed" /tmp/derive-b03.out && ! grep -qE "[1-9][0-9]* failed" /tmp/derive-b03.out || { echo "FAIL B-03"; exit 1; }; echo OK'
+
+- [x] [BEHAVIOR] [L2] B-04: 显式 trigger_sha 护栏路径不回归 → 重审仍不足落人审
+  动作: 喂 derive「spawn:evaluator 快照【含】trigger_sha=sha-new 且 judge 重审(hop6)仍 evidence_insufficient」序列
+  预期观察: derive 返回 action=wait:human_review, reason=evidence_insufficient_after_recollect（既有显式路径不因兜底改动而回归）
+  等待预算: 0s
+  留证: /tmp/derive-loop-e2e.log（含该用例 PASS 行）
+  Test: manual:bash -c 'W="${WORKSPACE_PATH:-/workspace}"; [ -x "$W/node_modules/.bin/vitest" ] || (cd "$W" && npm ci --no-audit --no-fund >/dev/null 2>&1); cd "$W" && node_modules/.bin/vitest run sprints/08111523-kernel-c9043059/tests/derive-recollect-loop.test.ts -t "显式路径不回归" 2>&1 | sed "s/\x1b\[[0-9;]*[mK]//g" | tee /tmp/derive-b04.out; grep -qE "Tests +1 passed" /tmp/derive-b04.out && ! grep -qE "[1-9][0-9]* failed" /tmp/derive-b04.out || { echo "FAIL B-04"; exit 1; }; echo OK'
+
+- [x] [BEHAVIOR] [L2] B-05: 现有 derive 全量单测不回归（基线 95 用例含 evidence_insufficient/product_failure 分支）
+  动作: 跑 packages/brain 现有 derive.test.js 全量
+  预期观察: 全部用例通过，无 failed；evidence_insufficient/product_failure 既有分支断言保持绿
+  等待预算: 0s
+  留证: /tmp/derive-full-e2e.log（Test Files 1 passed）
+  Test: manual:bash -c 'W="${WORKSPACE_PATH:-/workspace}"; cd "$W/packages/brain"; { [ -x node_modules/.bin/vitest ] && node_modules/.bin/vitest run src/orchestrator/__tests__/derive.test.js || npx vitest run src/orchestrator/__tests__/derive.test.js; } 2>&1 | sed "s/\x1b\[[0-9;]*[mK]//g" | tee /tmp/derive-b05.out; grep -qE "Test Files +1 passed" /tmp/derive-b05.out && ! grep -qE "[1-9][0-9]* failed" /tmp/derive-b05.out || { echo "FAIL B-05"; exit 1; }; echo OK'
