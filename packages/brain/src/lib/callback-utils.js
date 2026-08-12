@@ -49,14 +49,23 @@ function _isValidGithubPrUrl(url) { return isValidGithubPrUrl(url); }
 /**
  * 纯函数：从 explicit URL + task row 解析权威 pr_url（无 DB 查询）。
  * 优先级：explicit > task.pr_url > task.payload.pr_url > task.payload.existing_pr_url
+ * 每项独立 trim+validate，invalid 高优先级不遮蔽合法低优先级。
  * 供 docker-executor 直接传入已有 task 对象使用。
  */
 export function resolveCanonicalPrUrlSync(explicitUrl, taskRow) {
-  if (isValidGithubPrUrl(explicitUrl)) return explicitUrl;
-  const candidate = taskRow?.pr_url
-    || taskRow?.payload?.pr_url
-    || taskRow?.payload?.existing_pr_url;
-  return isValidGithubPrUrl(candidate) ? candidate : null;
+  const t0 = typeof explicitUrl === 'string' ? explicitUrl.trim() : null;
+  if (isValidGithubPrUrl(t0)) return t0;
+
+  const t1 = typeof taskRow?.pr_url === 'string' ? taskRow.pr_url.trim() : null;
+  if (isValidGithubPrUrl(t1)) return t1;
+
+  const t2 = typeof taskRow?.payload?.pr_url === 'string' ? taskRow.payload.pr_url.trim() : null;
+  if (isValidGithubPrUrl(t2)) return t2;
+
+  const t3 = typeof taskRow?.payload?.existing_pr_url === 'string' ? taskRow.payload.existing_pr_url.trim() : null;
+  if (isValidGithubPrUrl(t3)) return t3;
+
+  return null;
 }
 
 /**

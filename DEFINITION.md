@@ -8,11 +8,18 @@
 
 
 
-**Brain 版本**: 1.272.22
+**Brain 版本**: 1.272.23
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.23 — sync resolver 独立校验 + shepherd 公平轮转 + 预算超时 + HTTP 路由隔离（P0 hotfix）
+
+- **[I1]** `lib/callback-utils.js`：`resolveCanonicalPrUrlSync` 逐项独立 trim+validate，invalid 高优先级不遮蔽合法低优先级 `existing_pr_url`。
+- **[I2]** `routes/execution.js`：harness_generate/fix/evaluate 三段均从 `resolvedPrUrl` 读取权威 pr_url，禁止再读 raw `pr_url`，确保 `existing_pr_url` 兜底路径畅通。
+- **[I3]** `shepherd.js`：`reconcileTerminalOpenPRs` 改用 `last_reconcile_checked_at` payload cursor 轮转排序（`COALESCE ... ASC`），OPEN 任务不重复占位，第 6+ 任务可在下轮处理。
+- **[I4]** `shepherd.js`：per-call spawn timeout = `min(PER_CALL_CAP_MS=30000, remainingBudget)`；remaining≤0 提前退出；支持 `_elapsedMsFn` 注入供测试精确断言。
 
 ## Brain 1.272.22 — authority 安全与 Tick 活性四修（P0 hotfix）
 

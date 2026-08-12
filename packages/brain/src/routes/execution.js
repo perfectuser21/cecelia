@@ -1980,8 +1980,8 @@ ${resultStr.substring(0, 2000)}
         // Layer 3a: harness_generate 完成 → 创建 harness_ci_watch（等 CI 通过再 evaluate）
         if (harnessType === 'harness_generate') {
           // 从 Generator 的 result 中提取 pr_url
-          // 层次 1: callback payload 直接携带
-          let prUrl = pr_url || null;
+          // 层次 1: 使用已解析的权威 pr_url（resolvedPrUrl 覆盖 callback > DB.pr_url > payload.pr_url > payload.existing_pr_url）
+          let prUrl = resolvedPrUrl || null;
           // 层次 2: 从 DB 任务的 pr_url 列读取（Generator 自己 PATCH 过的情况，最可靠）
           if (!prUrl) {
             try {
@@ -2139,8 +2139,8 @@ ${resultStr.substring(0, 2000)}
 
         // Layer 3c: harness_fix 完成 → 直接创建 harness_report（CI 由 /dev 自身保证）
         if (harnessType === 'harness_fix') {
-          // pr_url 提取：优先 payload（从上游传入），然后 callback result，最后 dev_records
-          let prUrl = harnessPayload.pr_url || pr_url || null;
+          // pr_url 提取：优先 payload（从上游传入），然后 resolvedPrUrl，最后 dev_records
+          let prUrl = harnessPayload.pr_url || resolvedPrUrl || null;
           if (!prUrl && result !== null && typeof result === 'object') {
             prUrl = result.pr_url || result?.result?.pr_url || null;
           }
@@ -2222,7 +2222,7 @@ ${resultStr.substring(0, 2000)}
         // Layer 3d: harness_evaluate 完成 → PASS→report / FAIL→fix（v5.0 对抗性 E2E 验收）
         if (harnessType === 'harness_evaluate') {
           const evalRound = harnessPayload.eval_round || 1;
-          let prUrl = harnessPayload.pr_url || pr_url || null;
+          let prUrl = harnessPayload.pr_url || resolvedPrUrl || null;
           if (!prUrl && result !== null && typeof result === 'object') {
             prUrl = result.pr_url || null;
           }

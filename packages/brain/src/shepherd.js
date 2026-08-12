@@ -26,6 +26,8 @@ let _lastReconcileAt = 0;
 const RECONCILE_MIN_INTERVAL_MS = 5 * 60 * 1000; // 最多每 5 分钟运行一次
 const RECONCILE_BATCH_LIMIT = 5;               // 单次最多处理任务数（Fix B: 小批）
 const RECONCILE_DEFAULT_BUDGET_MS = 25000;     // 单次总预算（Fix B: 严格短预算）
+// I4: 单次 gh 调用最长允许时间；实际 timeout = min(PER_CALL_CAP_MS, remainingBudget)
+const RECONCILE_PER_CALL_CAP_MS = 30000;
 
 // CI check 失败类型分类关键词
 const CI_FAIL_PATTERNS = {
@@ -341,6 +343,7 @@ export async function shepherdOpenPRs(pool) {
  * @param {number} [opts.budget_ms] - 单次总预算 ms（超限后跳过剩余任务）
  * @param {number} [opts.batch_limit] - 单次最多处理数量
  * @param {boolean} [opts._testForceGate] - 测试用：强制触发低频 gate 检查（跳过）
+ * @param {function} [opts._elapsedMsFn] - 测试用：注入时钟函数，返回已耗时 ms（替代 Date.now()-startMs）
  * @returns {Promise<{ processed: number, reconciled: number, errors: number }>}
  */
 /** 仅用于测试：重置模块级 gate 状态 */
@@ -353,6 +356,8 @@ export async function reconcileTerminalOpenPRs(pool, opts = {}) {
   // Fix B: 低频 gate — 生产约 78 候选，每次串行 30s×20 会拖垮 tick
   const budgetMs = opts.budget_ms ?? RECONCILE_DEFAULT_BUDGET_MS;
   const batchLimit = opts.batch_limit ?? RECONCILE_BATCH_LIMIT;
+  // I4: 注入时钟函数（测试用）或使用真实 Date.now()
+  const _elapsedMsFn = opts._elapsedMsFn || null;
 
   // Fix B: 非重入 guard
   if (_reconcileRunning) {
@@ -377,6 +382,9 @@ export async function reconcileTerminalOpenPRs(pool, opts = {}) {
   try {
     let rows;
     try {
+      // I3: ORDER BY last_reconcile_checked_at ASC NULLS FIRST 实现公平轮转
+      // 每次检查后写入 payload->>'last_reconcile_checked_at'，已检查的任务排到后面，
+      // 使得 OPEN 不推进的任务不会永远霸占前 batchLimit 个位置。
       const queryResult = await pool.query(`
         SELECT id, title, pr_url, pr_status, payload
         FROM tasks
@@ -385,7 +393,7 @@ export async function reconcileTerminalOpenPRs(pool, opts = {}) {
           AND pr_status IN ('open', 'ci_pending', 'ci_passed')
           AND pr_merged_at IS NULL
           AND COALESCE(payload->>'harness_mode', 'false') NOT IN ('true', 't')
-        ORDER BY updated_at ASC
+        ORDER BY COALESCE((payload->>'last_reconcile_checked_at')::timestamptz, to_timestamp(0)) ASC
         LIMIT ${batchLimit}
       `);
       rows = queryResult.rows;
@@ -399,11 +407,17 @@ export async function reconcileTerminalOpenPRs(pool, opts = {}) {
     console.log(`[shepherd:reconcile] 对账 ${rows.length} 个 terminal+open PR 任务 (budget=${budgetMs}ms)...`);
 
     for (const task of rows) {
-      // Fix B: 严格短总预算 — 超限后提前退出
-      if (budgetMs > 0 && (Date.now() - startMs) >= budgetMs) {
+      // I4: 计算剩余预算（支持注入时钟函数用于测试）
+      const elapsedMs = _elapsedMsFn ? _elapsedMsFn() : (Date.now() - startMs);
+      const remainingMs = Math.max(0, budgetMs - elapsedMs);
+
+      if (remainingMs <= 0) {
         console.log(`[shepherd:reconcile] 总预算 ${budgetMs}ms 耗尽，提前退出（剩余 ${rows.length - result.processed} 任务延后）`);
         break;
       }
+
+      // I4: per-call timeout = min(PER_CALL_CAP_MS, remainingBudget)，绝不超过剩余预算
+      const spawnTimeout = Math.min(RECONCILE_PER_CALL_CAP_MS, remainingMs);
 
       result.processed++;
       try {
@@ -411,21 +425,32 @@ export async function reconcileTerminalOpenPRs(pool, opts = {}) {
         if (!isValidGithubPrUrl(task.pr_url)) {
           console.error(`[shepherd:reconcile] 非法 pr_url 已拒绝（fail closed）: ${String(task.pr_url).slice(0, 80)}`);
           result.errors++;
+          // I3: 即使 URL 非法也标记 checked，防止永久卡头部
+          await pool.query(
+            `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('last_reconcile_checked_at', $2::text) WHERE id = $1 AND pr_merged_at IS NULL`,
+            [task.id, new Date().toISOString()]
+          ).catch(() => {});
           continue;
         }
 
         let prState;
         try {
           // Fix A: spawnSync with args array（无 shell 展开）
+          // I4: timeout = min(perCallCap, remainingBudget)
           const sp = spawnSync(
             'gh', ['pr', 'view', task.pr_url, '--json', 'state,mergeable,mergedAt'],
-            { encoding: 'utf-8', timeout: 30000 }
+            { encoding: 'utf-8', timeout: spawnTimeout }
           );
           if (sp.status !== 0) throw new Error(sp.stderr || 'gh exited non-zero');
           prState = JSON.parse(sp.stdout);
         } catch (ghErr) {
           console.warn(`[shepherd:reconcile] gh pr view 失败 (non-fatal): ${task.pr_url} — ${ghErr.message}`);
           result.errors++;
+          // I3: gh 失败也标记 checked，避免同一任务永远排首位
+          await pool.query(
+            `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('last_reconcile_checked_at', $2::text) WHERE id = $1 AND pr_merged_at IS NULL`,
+            [task.id, new Date().toISOString()]
+          ).catch(() => {});
           continue;
         }
 
@@ -446,8 +471,13 @@ export async function reconcileTerminalOpenPRs(pool, opts = {}) {
             console.log(`[shepherd:reconcile] missed-webhook 补账: ${task.title} (${task.pr_url})`);
             result.reconciled++;
           }
+        } else {
+          // I3: OPEN/CONFLICTING/CI pending → 标记 last_reconcile_checked_at 实现轮转
+          await pool.query(
+            `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('last_reconcile_checked_at', $2::text) WHERE id = $1 AND pr_merged_at IS NULL`,
+            [task.id, new Date().toISOString()]
+          ).catch(err => console.warn(`[shepherd:reconcile] cursor 写入失败 (non-fatal): ${err.message}`));
         }
-        // OPEN/CONFLICTING/CI pending → 不处理，保持原状等待下次 tick
       } catch (taskErr) {
         console.error(`[shepherd:reconcile] 对账失败 (non-fatal): ${task.title} - ${taskErr.message}`);
         result.errors++;
