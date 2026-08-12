@@ -39,7 +39,7 @@ describe('[I3] reconcileTerminalOpenPRs — 公平性：cursor 轮转确保第6+
     const allTasks = Array.from({ length: 6 }, (_, i) => ({
       id: `task-fair-${i + 1}`,
       title: `task ${i + 1}`,
-      pr_url: VALID_PR_URL,
+      pr_url: `https://github.com/perfectuser21/cecelia/pull/${i + 1}`,
       pr_status: 'open',
       payload: {},
     }));
@@ -53,26 +53,31 @@ describe('[I3] reconcileTerminalOpenPRs — 公平性：cursor 轮转确保第6+
 
     let selectCallCount = 0;
     const updatedCheckedIds = new Set();
-    // 收集每次 SELECT 返回的任务 IDs（通过 spawnSync 调用间接验证）
-    const processedInRound = [[], []];
-    let currentRound = 0;
 
     const pool = {
       query: vi.fn(async (sql, args) => {
         if (/FROM tasks/i.test(sql) && !/UPDATE/i.test(sql)) {
           selectCallCount++;
-          currentRound = selectCallCount - 1;
-          if (selectCallCount === 1) {
-            // 第1轮：返回前5个任务（last_reconcile_checked_at 为 null）
-            return { rows: allTasks.slice(0, 5) };
-          } else {
-            // 第2轮：返回第6个任务（前5个已有 last_reconcile_checked_at，被排到后面）
-            return { rows: allTasks.slice(5, 6) };
-          }
+          // 有状态 fake：保存 cursor，并按生产语义重新排序；不是预编排“第二轮直接返回第6条”。
+          const rows = [...allTasks]
+            .sort((a, b) => {
+              const aCursor = typeof a.payload.last_reconcile_checked_at === 'string'
+                && /^\d{4}-\d{2}-\d{2}T/.test(a.payload.last_reconcile_checked_at)
+                ? a.payload.last_reconcile_checked_at : '';
+              const bCursor = typeof b.payload.last_reconcile_checked_at === 'string'
+                && /^\d{4}-\d{2}-\d{2}T/.test(b.payload.last_reconcile_checked_at)
+                ? b.payload.last_reconcile_checked_at : '';
+              return aCursor.localeCompare(bCursor) || a.id.localeCompare(b.id);
+            })
+            .slice(0, 5);
+          return { rows };
         }
         if (/UPDATE tasks SET payload/i.test(sql) && /last_reconcile_checked_at/i.test(sql)) {
-          // 记录哪些任务被标记了 checked
-          if (args?.[0]) updatedCheckedIds.add(args[0]);
+          const task = allTasks.find(row => row.id === args?.[0]);
+          if (task) {
+            task.payload.last_reconcile_checked_at = args[1];
+            updatedCheckedIds.add(task.id);
+          }
           return { rows: [], rowCount: 0 };
         }
         return { rows: [], rowCount: 0 };
@@ -96,11 +101,9 @@ describe('[I3] reconcileTerminalOpenPRs — 公平性：cursor 轮转确保第6+
     // Round 2
     const r2 = await reconcileTerminalOpenPRs(pool);
 
-    // 第2轮应该处理任务6（DB mock 返回 task-fair-6）
-    expect(r2.processed).toBe(1);
-
-    // spawnSync 第2轮被调用（处理 task-fair-6）
-    expect(vi.mocked(spawnSync).mock.calls.length).toBeGreaterThanOrEqual(1);
+    // 第2轮首个必须是此前未检查的任务6；随后才可回到旧任务。
+    expect(r2.processed).toBe(5);
+    expect(vi.mocked(spawnSync).mock.calls[0][1]).toContain('https://github.com/perfectuser21/cecelia/pull/6');
 
     // 总共两次 SELECT
     expect(selectCallCount).toBe(2);
@@ -121,6 +124,9 @@ describe('[I3] reconcileTerminalOpenPRs — 公平性：cursor 轮转确保第6+
     const selectSql = capturedSqls.find(s => /FROM tasks/i.test(s) && !/INSERT|UPDATE/i.test(s)) || '';
     // 必须包含 last_reconcile_checked_at 排序
     expect(selectSql.toLowerCase()).toContain('last_reconcile_checked_at');
+    // payload 是通用 JSON，脏值不能通过强制 timestamptz cast 拖垮整批查询。
+    expect(selectSql.toLowerCase()).not.toContain('::timestamptz');
+    expect(selectSql).toMatch(/COALESCE\(payload->>'last_reconcile_checked_at',\s*''\)/i);
   });
 
   it('[I3-3] 处理完任务后写入 last_reconcile_checked_at（确保 payload 元数据更新）', async () => {
