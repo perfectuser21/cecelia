@@ -241,6 +241,7 @@ workbench-projection-smoke.sh
 warroom-line-command-smoke.sh
 warroom-readonly-api-smoke.sh
 warroom-smoke.sh
+unified-work-router-smoke.sh
 watchdog-deadlock-resume-smoke.sh
 watchdog-gh-compat-smoke.sh
 watchdog-pr-title-smoke.sh
