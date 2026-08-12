@@ -43,6 +43,29 @@ function _isValidGithubPrUrl(url) {
   return typeof url === 'string' && GITHUB_PR_URL_RE_UTILS.test(url.trim());
 }
 
+/**
+ * 解析权威 pr_url：callback/stdout > tasks.pr_url > payload.pr_url > payload.existing_pr_url。
+ * 单一 resolver，Docker queue、callback-processor、HTTP fallback 共用。
+ * @returns {Promise<string|null>} 合法的 GitHub PR URL 或 null
+ */
+export async function resolveCanonicalPrUrl(callbackPrUrl, task_id, pool) {
+  if (_isValidGithubPrUrl(callbackPrUrl)) return callbackPrUrl;
+  try {
+    const { rows } = await pool.query(
+      'SELECT pr_url, payload FROM tasks WHERE id = $1',
+      [task_id]
+    );
+    const row = rows[0];
+    if (!row) return null;
+    const candidate = row.pr_url
+      || row.payload?.pr_url
+      || row.payload?.existing_pr_url;
+    return _isValidGithubPrUrl(candidate) ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function maybeMarkCompletedNoPr(newStatus, pr_url, task_id, pool, prefix) {
   if (newStatus !== 'completed' || pr_url) return newStatus;
   try {

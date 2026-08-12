@@ -442,3 +442,94 @@ describe('handlePrMerged — 按 prUrl 兜底匹配 completed_no_pr 任务', () 
     expect(result.krProgressUpdated).toBe(false);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue B: 非法 URL 拒绝 — stdout 含无效 pr_url 时 _meta.pr_url 必须为 null
+// （确认 Bug：docker-executor.js 中 `(stdoutPrUrl || null)` 会将无效 URL 写入）
+// ─────────────────────────────────────────────────────────────────────────────
+describe('writeDockerCallback — 非法 URL 必须被拒绝为 null', () => {
+  function makeInvalidUrlPool() {
+    const insertedRows = [];
+    const mockPool = {
+      query: vi.fn(async (sql, params) => {
+        if (/INSERT INTO callback_queue/i.test(sql)) {
+          insertedRows.push({ sql, params });
+          return { rows: [], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+      insertedRows,
+    };
+    return mockPool;
+  }
+
+  const baseTask = {
+    task_type: 'dev',
+    pr_url: null,
+    payload: {},
+  };
+
+  const baseDockerResult = {
+    exit_code: 0,
+    timed_out: false,
+    stderr: '',
+    container: 'container-invalid',
+    started_at: '2026-08-12T05:00:00Z',
+    ended_at: '2026-08-12T05:05:00Z',
+    duration_ms: 300000,
+  };
+
+  it('stdout pr_url: garbage → _meta.pr_url 必须为 null（已确认 bug: stdoutPrUrl || null 会保留无效值）', async () => {
+    const pool = makeInvalidUrlPool();
+    const task = { ...baseTask, id: 'task-invalid-garbage' };
+    const result = { ...baseDockerResult, stdout: 'pr_url: garbage\n任务完成' };
+
+    const { writeDockerCallback } = await import('../docker-executor.js');
+    await writeDockerCallback(task, 'run-b1', null, result, pool);
+
+    expect(pool.insertedRows.length).toBeGreaterThan(0);
+    const resultJson = JSON.parse(pool.insertedRows[0].params[4]);
+    // 修复前：_meta.pr_url = 'garbage'
+    // 修复后：_meta.pr_url = null（非法 URL 被拒绝）
+    expect(resultJson._meta.pr_url).toBeNull();
+  });
+
+  it('stdout pr_url: javascript:alert(1) → _meta.pr_url 必须为 null', async () => {
+    const pool = makeInvalidUrlPool();
+    const task = { ...baseTask, id: 'task-invalid-js' };
+    const result = { ...baseDockerResult, stdout: 'pr_url: javascript:alert(1)' };
+
+    const { writeDockerCallback } = await import('../docker-executor.js');
+    await writeDockerCallback(task, 'run-b2', null, result, pool);
+
+    expect(pool.insertedRows.length).toBeGreaterThan(0);
+    const resultJson = JSON.parse(pool.insertedRows[0].params[4]);
+    expect(resultJson._meta.pr_url).toBeNull();
+  });
+
+  it('stdout pr_url: https://gitlab.com/x/y/pull/1 (非 github.com URL) → _meta.pr_url 必须为 null', async () => {
+    const pool = makeInvalidUrlPool();
+    const task = { ...baseTask, id: 'task-invalid-gitlab' };
+    const result = { ...baseDockerResult, stdout: 'pr_url: https://gitlab.com/x/y/pull/1\n完成' };
+
+    const { writeDockerCallback } = await import('../docker-executor.js');
+    await writeDockerCallback(task, 'run-b3', null, result, pool);
+
+    expect(pool.insertedRows.length).toBeGreaterThan(0);
+    const resultJson = JSON.parse(pool.insertedRows[0].params[4]);
+    expect(resultJson._meta.pr_url).toBeNull();
+  });
+
+  it('stdout pr_url: https://github.com/x/y/issues/1 (非 PR URL) → _meta.pr_url 必须为 null', async () => {
+    const pool = makeInvalidUrlPool();
+    const task = { ...baseTask, id: 'task-invalid-issue' };
+    const result = { ...baseDockerResult, stdout: 'pr_url: https://github.com/x/y/issues/1' };
+
+    const { writeDockerCallback } = await import('../docker-executor.js');
+    await writeDockerCallback(task, 'run-b4', null, result, pool);
+
+    expect(pool.insertedRows.length).toBeGreaterThan(0);
+    const resultJson = JSON.parse(pool.insertedRows[0].params[4]);
+    expect(resultJson._meta.pr_url).toBeNull();
+  });
+});

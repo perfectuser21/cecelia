@@ -621,7 +621,7 @@ export async function writeDockerCallback(task, runId, checkpointId, result, _po
     : isValidGithubPrUrl(task.pr_url) ? task.pr_url
     : isValidGithubPrUrl(task.payload?.pr_url) ? task.payload.pr_url
     : isValidGithubPrUrl(task.payload?.existing_pr_url) ? task.payload.existing_pr_url
-    : (stdoutPrUrl || null);
+    : null;
 
   // result_json 兼容 callback-worker 的 buildDataFromRow：_meta 存附加字段
   const resultJson = {

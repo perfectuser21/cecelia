@@ -538,3 +538,137 @@ describe('5c11 回归: callback-processor 路径串行解锁', () => {
     expect(blockedQuery, '独立 task 不应触发串行解锁查询').toBeUndefined();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue A: HTTP authority materialization
+// callback body pr_url=null，DB existing_pr_url 有值 → SQL $5 和 lastRunResult.pr_url
+// 必须使用权威 URL，tasks.pr_url / payload.last_run_result.pr_url 均非 null
+// ─────────────────────────────────────────────────────────────────────────────
+describe('processExecutionCallback — HTTP authority materialization（callback pr_url=null, DB 有 existing_pr_url）', () => {
+  const CANONICAL_URL = 'https://github.com/perfectuser21/cecelia/pull/4830';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPool.connect.mockResolvedValue(mockClient);
+    // 默认所有 pool.query 返回空（各测试内部覆盖需要的 SQL）
+    mockPool.query.mockResolvedValue({ rows: [] });
+    // 默认所有 client.query 返回空（各测试内部覆盖 UPDATE）
+    mockClient.query.mockImplementation(async (sql) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT') return {};
+      if (typeof sql === 'string' && /UPDATE\s+tasks/i.test(sql)) {
+        return { rowCount: 1, rows: [{ id: 'task-authority-123' }] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+  });
+
+  it('SQL $5（pr_url 参数）必须为 canonical URL，不得为 null（修复前为 null 因为 callback pr_url=null）', async () => {
+    // 配置 pool.query：resolveCanonicalPrUrl / maybeMarkCompletedNoPr 的 SELECT 均返回含 existing_pr_url 的 task
+    mockPool.query.mockImplementation(async (sql) => {
+      if (typeof sql === 'string' && sql.includes('payload') && /FROM\s+tasks/i.test(sql) && !sql.includes('failure_class') && !sql.includes('status')) {
+        return { rows: [{ task_type: 'dev', pr_url: null, payload: { existing_pr_url: CANONICAL_URL } }] };
+      }
+      if (typeof sql === 'string' && sql.includes('failure_class')) {
+        return { rows: [{ failure_class: null, task_type: 'dev', orchestrator: null }] };
+      }
+      return { rows: [] };
+    });
+
+    const { processExecutionCallback } = await import('../callback-processor.js');
+    await processExecutionCallback(
+      {
+        task_id: 'task-authority-123',
+        run_id: 'run-authority-1',
+        status: 'AI Done',
+        pr_url: null,          // callback 无 URL
+        result: { result: 'Fixed the PR' },
+        duration_ms: 5000,
+        iterations: 3,
+      },
+      mockPool
+    );
+
+    const clientCalls = mockClient.query.mock.calls;
+    const updateCall = clientCalls.find(c => typeof c[0] === 'string' && /UPDATE\s+tasks/i.test(c[0]));
+    expect(updateCall, 'UPDATE tasks 必须被执行').toBeDefined();
+
+    const params = updateCall[1];
+    // 参数顺序: [task_id, newStatus, lastRunResultJson, status, pr_url, ...]
+    // $5（index 4）= pr_url 参数
+    // 修复前：null（callback pr_url || null）
+    // 修复后：CANONICAL_URL（从 DB existing_pr_url 兜底）
+    expect(params[4]).toBe(CANONICAL_URL);
+  });
+
+  it('lastRunResult.pr_url 必须为 canonical URL（$3 JSON），不得为 null', async () => {
+    mockPool.query.mockImplementation(async (sql) => {
+      if (typeof sql === 'string' && sql.includes('payload') && /FROM\s+tasks/i.test(sql) && !sql.includes('failure_class') && !sql.includes('status')) {
+        return { rows: [{ task_type: 'dev', pr_url: null, payload: { existing_pr_url: CANONICAL_URL } }] };
+      }
+      if (typeof sql === 'string' && sql.includes('failure_class')) {
+        return { rows: [{ failure_class: null, task_type: 'dev', orchestrator: null }] };
+      }
+      return { rows: [] };
+    });
+
+    const { processExecutionCallback } = await import('../callback-processor.js');
+    await processExecutionCallback(
+      {
+        task_id: 'task-authority-456',
+        run_id: 'run-authority-2',
+        status: 'AI Done',
+        pr_url: null,
+        result: { result: 'PR merged' },
+        duration_ms: 3000,
+        iterations: 2,
+      },
+      mockPool
+    );
+
+    const clientCalls = mockClient.query.mock.calls;
+    const updateCall = clientCalls.find(c => typeof c[0] === 'string' && /UPDATE\s+tasks/i.test(c[0]));
+    expect(updateCall).toBeDefined();
+
+    const params = updateCall[1];
+    // $3（index 2）= JSON.stringify(lastRunResult)
+    // 修复前：lastRunResult.pr_url = null
+    // 修复后：lastRunResult.pr_url = CANONICAL_URL
+    const lastRunResult = JSON.parse(params[2]);
+    expect(lastRunResult.pr_url).toBe(CANONICAL_URL);
+  });
+
+  it('status 必须为 completed（不是 completed_no_pr），retry_count 不增长', async () => {
+    mockPool.query.mockImplementation(async (sql) => {
+      if (typeof sql === 'string' && sql.includes('payload') && /FROM\s+tasks/i.test(sql) && !sql.includes('failure_class') && !sql.includes('status')) {
+        return { rows: [{ task_type: 'dev', pr_url: null, payload: { existing_pr_url: CANONICAL_URL } }] };
+      }
+      if (typeof sql === 'string' && sql.includes('failure_class')) {
+        return { rows: [{ failure_class: null, task_type: 'dev', orchestrator: null }] };
+      }
+      return { rows: [] };
+    });
+
+    const { processExecutionCallback } = await import('../callback-processor.js');
+    const res = await processExecutionCallback(
+      {
+        task_id: 'task-authority-789',
+        run_id: 'run-authority-3',
+        status: 'AI Done',
+        pr_url: null,
+        result: { result: 'Done' },
+        duration_ms: 2000,
+        iterations: 1,
+      },
+      mockPool
+    );
+
+    // newStatus 应为 completed
+    expect(res.newStatus).toBe('completed');
+
+    // UPDATE 参数中 $2（index 1）= newStatus
+    const clientCalls = mockClient.query.mock.calls;
+    const updateCall = clientCalls.find(c => typeof c[0] === 'string' && /UPDATE\s+tasks/i.test(c[0]));
+    const params = updateCall[1];
+    expect(params[1]).toBe('completed');
+  });
+});
