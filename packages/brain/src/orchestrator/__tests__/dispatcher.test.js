@@ -1468,6 +1468,7 @@ describe('createDispatcher', () => {
 
   it('Fleet workspace 解析后发现数据库 artifact 损坏时在 Attempt 前精确收尾', async () => {
     const deps = makeDeps();
+    deps.launcher.prepare = vi.fn();
     const content = 'test("corrupt", () => {})';
     deps.resolveWorkspaceSpec = vi.fn(async () => ({
       repo: 'perfectuser21/cecelia',

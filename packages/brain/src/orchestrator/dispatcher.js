@@ -372,6 +372,24 @@ function bundleByteLength(bundle) {
   return Buffer.byteLength(JSON.stringify(bundle));
 }
 
+function frozenArtifactErrorCode(error) {
+  return String(error?.message ?? '').match(/FROZEN_CONTRACT_ARTIFACT[A-Z_]*/)?.[0] ?? null;
+}
+
+function frozenArtifactAssemblyFault(error, { attemptCreated = false } = {}) {
+  const code = frozenArtifactErrorCode(error);
+  if (!code) return null;
+  return {
+    status: 'DONE_WITH_CONCERNS',
+    control_status: 'BLOCKED',
+    detail: error.message,
+    failure_class: 'assembly_fault',
+    fallback_reason: code,
+    should_create_attempt: attemptCreated,
+    should_enter_generator_fix: false,
+  };
+}
+
 /**
  * TaskBundle 膨胀闸2（P2-3，review CHANGES REQUESTED）：闸1（case-file-store.js
  * loadCaseFile 的 fullTextRounds SQL 投影）已经把大部分 feedback_md 全文收窄
@@ -581,41 +599,37 @@ export function createDispatcher(deps) {
         { deferWorkspaceValidation: typeof deps.resolveWorkspaceSpec === 'function' },
       );
     } catch (error) {
-      const code = String(error?.message ?? '').split(':', 1)[0];
-      if (code.startsWith('FROZEN_CONTRACT_ARTIFACT')) {
-        return {
-          status: 'DONE_WITH_CONCERNS',
-          control_status: 'BLOCKED',
-          detail: error.message,
-          failure_class: 'assembly_fault',
-          fallback_reason: code,
-          should_create_attempt: false,
-          should_enter_generator_fix: false,
-        };
-      }
+      const assemblyFault = frozenArtifactAssemblyFault(error);
+      if (assemblyFault) return assemblyFault;
       throw error;
     }
     if (typeof deps.resolveWorkspaceSpec === 'function') {
-      const workspaceSpec = await deps.resolveWorkspaceSpec({
-        action,
-        role: spec.role,
-        readOnly: spec.readOnly,
-        attemptId,
-        ctx,
-        bundle,
-      });
-      const {
-        worktree_path: _discardedCallerPath,
-        ...pathFreeInputs
-      } = bundle.inputs;
-      bundle = parseTaskBundle({
-        ...bundle,
-        inputs: {
-          ...pathFreeInputs,
-          execution_surface: 'fleet-worker',
-          workspace_spec: workspaceSpec,
-        },
-      });
+      try {
+        const workspaceSpec = await deps.resolveWorkspaceSpec({
+          action,
+          role: spec.role,
+          readOnly: spec.readOnly,
+          attemptId,
+          ctx,
+          bundle,
+        });
+        const {
+          worktree_path: _discardedCallerPath,
+          ...pathFreeInputs
+        } = bundle.inputs;
+        bundle = parseTaskBundle({
+          ...bundle,
+          inputs: {
+            ...pathFreeInputs,
+            execution_surface: 'fleet-worker',
+            workspace_spec: workspaceSpec,
+          },
+        });
+      } catch (error) {
+        const assemblyFault = frozenArtifactAssemblyFault(error);
+        if (assemblyFault) return assemblyFault;
+        throw error;
+      }
     }
     const roleAssignment = spec.role === 'commander'
       ? {}
@@ -800,18 +814,8 @@ export function createDispatcher(deps) {
     try {
       bundle = enforceBundleSizeLimit(bundle);
     } catch (error) {
-      const code = String(error?.message ?? '').split(':', 1)[0];
-      if (code.startsWith('FROZEN_CONTRACT_ARTIFACT')) {
-        return {
-          status: 'DONE_WITH_CONCERNS',
-          control_status: 'BLOCKED',
-          detail: error.message,
-          failure_class: 'assembly_fault',
-          fallback_reason: code,
-          should_create_attempt: false,
-          should_enter_generator_fix: false,
-        };
-      }
+      const assemblyFault = frozenArtifactAssemblyFault(error);
+      if (assemblyFault) return assemblyFault;
       throw error;
     }
 
@@ -925,11 +929,16 @@ export function createDispatcher(deps) {
         errorMessage(error),
         cancelDiagnostic,
       ].filter(Boolean).join('; ');
+      const assemblyFault = fleetLaunch
+        ? frozenArtifactAssemblyFault(error, { attemptCreated: true })
+        : null;
       try {
         await deps.attemptStore.fail(attempt.id, {
-          code: 'launch_failed',
+          code: assemblyFault?.fallback_reason ?? 'launch_failed',
           message,
-          ...(spec.role === 'commander'
+          ...(assemblyFault
+            ? { failureClass: 'assembly_fault' }
+            : spec.role === 'commander'
             ? { failureClass: 'infrastructure_blocked' }
             : {}),
         }, {
@@ -944,6 +953,7 @@ export function createDispatcher(deps) {
           persistenceError: failError,
         });
       }
+      if (assemblyFault) return { ...assemblyFault, detail: message };
       throw error;
     }
 
