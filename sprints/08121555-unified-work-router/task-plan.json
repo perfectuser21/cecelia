@@ -1,0 +1,38 @@
+{
+  "initiative_id": "275d3ba3-b261-4571-b2ac-3e8e51aefc92",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "该 Sprint 改造 Coding 任务的统一路由、Harness 启动门禁和执行信任边界",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "完成 Unified Work Router Recovery Addendum 与 Knife 0-5",
+      "scope": "先永久修复工作区 origin 凭据归一化、日志脱敏和活跃 Kernel cwd 保护，再交付唯一 Work Router、不可变 Routing Receipt、全入口收敛、Map/Impact 强制门禁、有头/无头动作闸、Generator 信任边界、迁移与 scratch 真实验收",
+      "dod": [
+        "[BEHAVIOR] Recovery、四形式、入口、Map、动作闸、runner、旧任务迁移、review 派生修复、观测与 scratch 合同全部真实通过",
+        "[BEHAVIOR] baseline 22a62578 是最终 HEAD 的祖先且 receipt/Map/Impact 精确锚定该 baseline",
+        "[ARTIFACT] contract-draft.md 与 contract-dod.md 列出的实现、测试、migration 和 smoke 产物完整"
+      ],
+      "files": [
+        "packages/brain/src/harness-worktree.js",
+        "packages/brain/src/work-router.js",
+        "packages/brain/src/work-routing-store.js",
+        "packages/brain/src/routes/work-routing.js",
+        "packages/brain/migrations/411_work_routing_receipts.sql",
+        "packages/brain/src/task-creation-inventory.js",
+        "packages/brain/src/orchestrator/preflight/map-impact-contract.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/engine/hooks/dev-mode-tool-guard.sh",
+        "packages/engine/skills/dev/scripts/worktree-manage.sh",
+        "docker/cecelia-runner/entrypoint.sh",
+        "packages/brain/scripts/smoke/unified-work-router-smoke.sh",
+        "packages/brain/DEFINITION.md",
+        ".brain-versions"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
