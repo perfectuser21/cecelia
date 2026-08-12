@@ -51,7 +51,7 @@ describe('collectFrozenContractArtifacts', () => {
     })).toThrow(/frozen_contract_test_unreadable/);
   });
 
-  it('recovers an in-flight approved SHA from the append-only reviewer receipt', async () => {
+  it('recovers an in-flight approved SHA without writing the legacy JSONB cache', async () => {
     const filePath = `${SPRINT_DIR}/tests/red.test.js`;
     const content = 'throw new Error("RED");\n';
     const persisted = [{
@@ -88,6 +88,6 @@ describe('collectFrozenContractArtifacts', () => {
         },
       },
     })).resolves.toEqual(persisted);
-    expect(db.query).toHaveBeenCalledOnce();
+    expect(db.query).not.toHaveBeenCalled();
   });
 });

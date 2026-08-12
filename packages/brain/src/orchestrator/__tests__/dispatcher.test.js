@@ -662,7 +662,7 @@ describe('createDispatcher', () => {
     ];
     const hugeDescription = 'y'.repeat(300 * 1024);
 
-    await expect(createDispatcher(deps)('spawn:proposer', {
+    const result = await createDispatcher(deps)('spawn:proposer', {
       taskId,
       runId,
       hop: 6,
@@ -672,8 +672,14 @@ describe('createDispatcher', () => {
         task: { ...observed.task, description: hugeDescription },
       },
       decision: { phase: 'gan', reason: 'revision_requested' },
-    })).rejects.toThrow(/task_bundle_size_limit_exceeded/);
+    });
 
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'TASK_BUNDLE_SIZE_LIMIT_EXCEEDED',
+      should_create_attempt: false,
+    });
     expect(warnSpy).not.toHaveBeenCalled();
     expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
     warnSpy.mockRestore();
@@ -1786,6 +1792,64 @@ describe('createDispatcher', () => {
     const created = deps.attemptStore.createAttempt.mock.calls[0][0];
     expect(deps.resolveFrozenContractArtifacts).toHaveBeenCalledOnce();
     expect(created.bundle.inputs.artifacts).toEqual(frozenArtifacts);
+  });
+
+  it('legacy artifact resolver failure is an assembly fault before Attempt creation', async () => {
+    const deps = makeDeps();
+    deps.resolveFrozenContractArtifacts = vi.fn(async () => {
+      throw new Error('frozen_contract_tests_missing');
+    });
+
+    const result = await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: {
+            id: '33333333-3333-4333-8333-333333333333',
+            branch: 'cp-harness-propose-r2-production-schema',
+            approved_sha: 'c'.repeat(40),
+          },
+        },
+      },
+      decision: { phase: 'implement', reason: 'contract_approved' },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'FROZEN_CONTRACT_TESTS_MISSING',
+      should_create_attempt: false,
+    });
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
+  });
+
+  it('workspace resolution failure is an assembly fault before Attempt creation', async () => {
+    const deps = makeDeps();
+    deps.resolveWorkspaceSpec = vi.fn(async () => {
+      throw new Error('workspace checkout failed');
+    });
+
+    const result = await createDispatcher(deps)('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 2,
+      observed,
+      decision: { phase: 'gan', reason: 'awaiting_review' },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'WORKSPACE_RESOLUTION_FAILED',
+      should_create_attempt: false,
+    });
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
   });
 
   it('proposer bundle 指定下一轮规范分支，避免产物落到共享任务分支', async () => {
