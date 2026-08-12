@@ -204,11 +204,16 @@ const RUN_ID = 'run-001-xxxx-yyyy-zzzz';
 /**
  * 构建一个持有合法 pr_url 的 harness_generate 任务（模拟 DB 返回）
  */
-function makeHarnessTask({ existingPrUrl = VALID_PR_URL } = {}) {
+function makeHarnessTask({
+  taskType = 'harness_generate',
+  payloadPrUrl = null,
+  existingPrUrl = VALID_PR_URL,
+  devTaskId = 'dev-task-001',
+} = {}) {
   return {
     id: TASK_ID,
-    title: 'Test harness_generate task',
-    task_type: 'harness_generate',
+    title: `Test ${taskType} task`,
+    task_type: taskType,
     status: 'in_progress',
     pr_url: null, // tasks.pr_url 为空（Generator 还未写回）
     pr_status: null,
@@ -218,7 +223,9 @@ function makeHarnessTask({ existingPrUrl = VALID_PR_URL } = {}) {
       harness_mode: true,
       planner_task_id: 'plan-task-001',
       sprint_dir: 'sprints/test',
-      existing_pr_url: existingPrUrl,  // 合法 existing_pr_url
+      dev_task_id: devTaskId,
+      ...(payloadPrUrl === null ? {} : { pr_url: payloadPrUrl }),
+      ...(existingPrUrl === null ? {} : { existing_pr_url: existingPrUrl }),
     },
     project_id: 'proj-001',
     goal_id: 'goal-001',
@@ -232,12 +239,19 @@ function makeHarnessTask({ existingPrUrl = VALID_PR_URL } = {}) {
  * 设置 pool mock 以支持 harness_generate 回调流程
  * 返回 capturedCreateTaskCalls 供后续断言
  */
-async function setupHarnessTest({ rawPrUrl = null, existingPrUrl = VALID_PR_URL } = {}) {
+async function setupHarnessTest({
+  taskType = 'harness_generate',
+  payloadPrUrl = null,
+  existingPrUrl = VALID_PR_URL,
+  devRecordPrUrl = null,
+  verdict = null,
+} = {}) {
   const { default: pool } = await import('../db.js');
   const { createTask } = await import('../actions.js');
   const { execSync, spawnSync } = await import('child_process');
+  const { readVerdictWithRetry } = await import('../execution.js');
 
-  const harnessTask = makeHarnessTask({ existingPrUrl });
+  const harnessTask = makeHarnessTask({ taskType, payloadPrUrl, existingPrUrl });
   const mockClient = {
     query: vi.fn(async (sql) => {
       if (/BEGIN|COMMIT|ROLLBACK/i.test(sql)) return { rows: [], rowCount: 0 };
@@ -259,13 +273,27 @@ async function setupHarnessTest({ rawPrUrl = null, existingPrUrl = VALID_PR_URL 
     if (/SELECT.*decision_log/i.test(sql)) return { rows: [], rowCount: 0 };
 
     // 终态检查
-    if (/SELECT.*status.*FROM tasks/i.test(sql) || (/SELECT.*tasks/i.test(sql) && /status/i.test(sql))) {
-      return { rows: [{ status: 'in_progress', task_type: 'harness_generate', payload: harnessTask.payload, failure_class: null }], rowCount: 1 };
+    if (/SELECT\s+status\s+FROM tasks/i.test(sql)) {
+      return { rows: [{ status: 'in_progress' }], rowCount: 1 };
+    }
+
+    // terminal failure guard
+    if (/SELECT\s+payload->>'failure_class'/i.test(sql)) {
+      return { rows: [{ failure_class: null }], rowCount: 1 };
+    }
+
+    // postdeploy guard
+    if (/SELECT\s+task_type,\s*payload\s+FROM tasks/i.test(sql)) {
+      return { rows: [{ task_type: harnessTask.task_type, payload: harnessTask.payload }], rowCount: 1 };
     }
 
     // resolveCanonicalPrUrl：SELECT pr_url, payload FROM tasks WHERE id = $1
     if (/SELECT.*pr_url.*payload.*FROM tasks/i.test(sql)) {
-      return { rows: [{ pr_url: existingPrUrl, payload: harnessTask.payload }], rowCount: 1 };
+      return { rows: [{ pr_url: null, payload: harnessTask.payload }], rowCount: 1 };
+    }
+
+    if (/SELECT\s+pr_url,\s*branch\s+FROM dev_records/i.test(sql)) {
+      return { rows: devRecordPrUrl ? [{ pr_url: devRecordPrUrl, branch: null }] : [], rowCount: devRecordPrUrl ? 1 : 0 };
     }
 
     // harness task fetch (SELECT id, title, ... FROM tasks WHERE id)
@@ -288,6 +316,7 @@ async function setupHarnessTest({ rawPrUrl = null, existingPrUrl = VALID_PR_URL 
 
   // execSync: git remote + gh pr list
   execSync.mockReturnValue('');
+  readVerdictWithRetry.mockResolvedValue({ verdict, timedOut: false });
 
   const capturedCreateTaskCalls = [];
   createTask.mockImplementation(async (params) => {
@@ -415,6 +444,112 @@ describe('[I2] execution-callback route — harness_generate 使用 resolvedPrUr
         expect(harnessCall.payload.pr_url).toMatch(/^https:\/\/github\.com\//);
       }
     }
+  });
+});
+
+describe('[I2 regression] harness PR URL 必须全链路 canonical，且不能进入 shell', () => {
+  let app;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { default: router } = await import('../routes/execution.js');
+    app = express();
+    app.use(express.json());
+    app.use('/api/brain', router);
+  });
+
+  it('harness_generate 跳过恶意 result.pr_url，继续使用合法 dev_records fallback', async () => {
+    const maliciousUrl = 'https://github.com/o/r/pull/1$(id)';
+    const { capturedCreateTaskCalls } = await setupHarnessTest({
+      taskType: 'harness_generate',
+      existingPrUrl: null,
+      devRecordPrUrl: VALID_PR_URL,
+    });
+
+    const resp = await request(app)
+      .post('/api/brain/execution-callback')
+      .send({
+        task_id: TASK_ID,
+        run_id: `${RUN_ID}-generate-malicious`,
+        status: 'AI Done',
+        pr_url: null,
+        result: { pr_url: maliciousUrl },
+        duration_ms: 1,
+        iterations: 1,
+        exit_code: 0,
+      });
+
+    expect(resp.status).toBe(200);
+    const evaluateCalls = capturedCreateTaskCalls.filter(c => c.task_type === 'harness_evaluate');
+    expect(evaluateCalls).toHaveLength(1);
+    expect(evaluateCalls[0].payload.pr_url).toBe(VALID_PR_URL);
+  });
+
+  it('harness_fix 跳过恶意 payload.pr_url，使用合法 existing_pr_url', async () => {
+    const maliciousUrl = 'https://github.com/o/r/pull/1$(id)';
+    const { capturedCreateTaskCalls } = await setupHarnessTest({
+      taskType: 'harness_fix',
+      payloadPrUrl: maliciousUrl,
+      existingPrUrl: VALID_PR_URL,
+    });
+
+    const resp = await request(app)
+      .post('/api/brain/execution-callback')
+      .send({
+        task_id: TASK_ID,
+        run_id: `${RUN_ID}-fix-malicious`,
+        status: 'AI Done',
+        pr_url: null,
+        result: {},
+        duration_ms: 1,
+        iterations: 1,
+        exit_code: 0,
+      });
+
+    expect(resp.status).toBe(200);
+    const evaluateCalls = capturedCreateTaskCalls.filter(c => c.task_type === 'harness_evaluate');
+    expect(evaluateCalls).toHaveLength(1);
+    expect(evaluateCalls[0].payload.pr_url).toBe(VALID_PR_URL);
+  });
+
+  it('harness_evaluate PASS 只把 canonical URL 作为 argv，恶意 payload 不进入子进程', async () => {
+    const maliciousUrl = 'https://github.com/o/r/pull/1$(id)';
+    const { capturedCreateTaskCalls } = await setupHarnessTest({
+      taskType: 'harness_evaluate',
+      payloadPrUrl: maliciousUrl,
+      existingPrUrl: VALID_PR_URL,
+      verdict: 'PASS',
+    });
+    const { execSync, spawnSync } = await import('child_process');
+
+    const resp = await request(app)
+      .post('/api/brain/execution-callback')
+      .send({
+        task_id: TASK_ID,
+        run_id: `${RUN_ID}-evaluate-malicious`,
+        status: 'AI Done',
+        pr_url: null,
+        result: { verdict: 'PASS' },
+        duration_ms: 1,
+        iterations: 1,
+        exit_code: 0,
+      });
+
+    expect(resp.status).toBe(200);
+    const reportCalls = capturedCreateTaskCalls.filter(c => c.task_type === 'harness_report');
+    expect(reportCalls).toHaveLength(1);
+    expect(reportCalls[0].payload.pr_url).toBe(VALID_PR_URL);
+
+    const allProcessArgs = [
+      ...vi.mocked(execSync).mock.calls.flat(),
+      ...vi.mocked(spawnSync).mock.calls.flat(),
+    ];
+    expect(JSON.stringify(allProcessArgs)).not.toContain('$(id)');
+    expect(vi.mocked(spawnSync)).toHaveBeenCalledWith(
+      'gh',
+      expect.arrayContaining(['pr', 'merge', VALID_PR_URL]),
+      expect.any(Object),
+    );
   });
 });
 
