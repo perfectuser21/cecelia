@@ -132,6 +132,62 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
+  it('批准合同后不重复装载入口 PRD，Evaluator 大合同仍可派发', async () => {
+    const deps = makeDeps();
+    const sourceRevision = '6faaa9f55e9789ffd29fd2760a9b5994df272e86';
+    const artifact = (path, content) => ({
+      path,
+      content,
+      sha256: createHash('sha256').update(content).digest('hex'),
+      byte_length: Buffer.byteLength(content),
+      source_revision: sourceRevision,
+    });
+    const contractArtifacts = [
+      artifact('sprints/router/contract-dod.md', 'd'.repeat(20 * 1024)),
+      artifact('sprints/router/contract-draft.md', 'c'.repeat(70 * 1024)),
+      artifact('sprints/router/sprint-prd.md', 'p'.repeat(70 * 1024)),
+      artifact('sprints/router/tests/router.test.mjs', 'test("router", () => {})'),
+    ];
+    const largeApproved = {
+      ...observed,
+      task: {
+        ...observed.task,
+        description: '入口 PRD '.repeat(12_000),
+        payload: {
+          ...observed.task.payload,
+          thin_prd: 'thin '.repeat(12_000),
+          prep_prd_body: 'prep '.repeat(24_000),
+        },
+      },
+      contract: {
+        approved: true,
+        row: { branch: 'cp-approved-contract' },
+        artifacts: contractArtifacts,
+      },
+      pr: {
+        url: 'https://github.com/perfectuser21/cecelia/pull/4851',
+        head_ref: 'cp-approved-contract',
+        head_sha: sourceRevision,
+        ci: 'pass',
+      },
+    };
+
+    const result = await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: largeApproved,
+      decision: { phase: 'evaluate', reason: 'no_evaluate_verdict_for_head_sha' },
+    });
+
+    expect(result).toMatchObject({ status: 'LAUNCHED' });
+    const bundle = deps.attemptStore.createAttempt.mock.calls[0][0].bundle;
+    expect(bundle.inputs.contract_artifacts).toHaveLength(4);
+    expect(bundle.inputs).not.toHaveProperty('prep_prd_body');
+    expect(bundle.inputs).not.toHaveProperty('thin_prd');
+    expect(bundle.inputs.task).toEqual({ title: 'Provider-neutral Harness' });
+  });
+
   it('does not start a Fleet Runner until its attested receipt commit resolves', async () => {
     const calls = [];
     let resolveReceipt;
