@@ -396,6 +396,7 @@ describe('Fleet Worker Attempt runner', () => {
       }))).rejects.toThrow('FROZEN_CONTRACT_ARTIFACT_MATERIALIZATION_FAILED');
       expect(fs.existsSync(path.join(outsideRoot, 'routing.test.mjs'))).toBe(false);
       expect(deps.docker.prepare).not.toHaveBeenCalled();
+      expect(deps.workspaceManager.cleanup).toHaveBeenCalledWith(deps.workspace);
     } finally {
       fs.rmSync(workspaceRoot, { recursive: true, force: true });
       fs.rmSync(outsideRoot, { recursive: true, force: true });
