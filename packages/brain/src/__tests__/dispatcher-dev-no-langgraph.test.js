@@ -178,6 +178,20 @@ describe('F7: dev 派发迁离 LangGraph', () => {
     expect(dispatched.payload.thin_prd).toContain(task.title);
   });
 
+  it('命中改代码路由时，task_type 改写必须真的落库（不能只存在于内存对象）', async () => {
+    const task = makeDevTask({ id: 'dev-task-db-persist-001' });
+    setupDispatch(task);
+
+    await dispatchNextTask(['goal-1']);
+
+    const updateCall = mocks.query.mock.calls.find(
+      (call) => typeof call[0] === 'string' && call[0].includes('UPDATE tasks') && call[0].includes("task_type = 'harness_initiative'")
+    );
+    expect(updateCall).toBeDefined();
+    expect(updateCall[1][0]).toBe(task.id);
+    expect(JSON.parse(updateCall[1][1])).toMatchObject({ orchestrator: 'skill-relay', code_change: true, origin_task_type: 'dev' });
+  });
+
   it('dev task 标题含"修复bug" → 改道 harness_initiative 且 gear=hotfix', async () => {
     const task = makeDevTask({ id: 'dev-task-hotfix-001', title: '修复bug：派发死锁' });
     setupDispatch(task);
