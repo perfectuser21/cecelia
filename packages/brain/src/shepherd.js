@@ -143,7 +143,7 @@ export async function shepherdOpenPRs(pool) {
       FROM tasks
       WHERE pr_url IS NOT NULL
         AND pr_status IN ('open', 'ci_pending', 'ci_passed')
-        AND status NOT IN ('quarantined', 'cancelled')
+        AND status NOT IN ('quarantined', 'cancelled', 'failed', 'completed')
         -- Sprint 1: harness_mode PR 由 sub-graph merge_pr node 自管，shepherd 不动
         AND COALESCE(payload->>'harness_mode', 'false') NOT IN ('true', 't')
       ORDER BY updated_at ASC
@@ -183,8 +183,11 @@ export async function shepherdOpenPRs(pool) {
         await pool.query(`UPDATE tasks SET pr_status = 'closed' WHERE id = $1`, [task.id]);
         console.log(`[shepherd] PR 已关闭: ${task.title}`);
 
-      } else if (prInfo.ciStatus === 'ci_passed' && prInfo.mergeable === 'MERGEABLE') {
-        // CI 全通过且可合并 → 执行 auto-merge，再 reload PR state 推进 status
+      } else if (prInfo.ciStatus === 'ci_passed' && (prInfo.mergeable === 'MERGEABLE' || prInfo.mergeable === 'UNKNOWN')) {
+        // CI 全通过且可合并（MERGEABLE）或 GitHub 尚未计算 mergeability（UNKNOWN）→ 尝试 auto-merge。
+        // GitHub 对 OPEN PR 在未计算 mergeability 或 PR 刚被合并时均会返回 UNKNOWN；
+        // UNKNOWN 是瞬态值，不代表有冲突——应尝试合并，让 GitHub 返回真实错误（若有）。
+        // 若不尝试，UNKNOWN 会导致 shepherd 无限轮询永不收口（回归场景三）。
         try {
           executeMerge(task.pr_url);
           // 重读 PR 最新 state；若已 MERGED 则推进 status=completed
@@ -254,7 +257,8 @@ export async function shepherdOpenPRs(pool) {
                   retry_count = retry_count + 1,
                   completed_at = NULL,
                   payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-             WHERE id = $1`,
+             WHERE id = $1
+               AND status NOT IN ('completed', 'failed', 'cancelled', 'quarantined')`,
             [task.id, JSON.stringify({
               ci_fix_retry: true,
               ci_fix_context: retryContext,
@@ -286,10 +290,10 @@ export async function shepherdOpenPRs(pool) {
         }
         result.pending++;
 
-      } else if (prInfo.ciStatus === 'ci_passed' && prInfo.mergeable !== 'MERGEABLE') {
-        // CI 通过但有冲突或 mergeable 未知，暂不处理
+      } else if (prInfo.ciStatus === 'ci_passed' && prInfo.mergeable === 'CONFLICTING') {
+        // CI 通过但有合并冲突 → 不尝试合并，等 agent 解决冲突后重新提交
         await pool.query(`UPDATE tasks SET pr_status = 'ci_passed' WHERE id = $1`, [task.id]);
-        console.log(`[shepherd] CI 通过但 mergeable=${prInfo.mergeable}: ${task.title}`);
+        console.log(`[shepherd] CI 通过但 PR 有合并冲突 mergeable=CONFLICTING: ${task.title}`);
       }
 
     } catch (prErr) {
