@@ -134,6 +134,7 @@ judge-level-smoke.sh
 kernel-attempt-telemetry-smoke.sh
 kernel-bounded-run-smoke.sh
 kernel-capability-gate-smoke.sh
+kernel-contract-artifacts-smoke.sh
 kernel-context-resume-action-smoke.sh
 kernel-fleet-bridge-smoke.sh
 kernel-fleet-node-admission-smoke.sh
