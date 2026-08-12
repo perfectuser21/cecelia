@@ -4,6 +4,7 @@ import {
   parseCommanderBundle,
   parseCommanderDirective,
 } from './commander-contract.js';
+import { validateContractArtifacts } from './contract-artifacts.js';
 
 export const TASK_CONTRACT_VERSION = '1.0';
 export const RESULT_CONTRACT_VERSION = '1.0';
@@ -94,6 +95,13 @@ const taskBundleSchema = z.object({
       node_deps: z.boolean().optional(),
     }).strict().optional(),
     artifacts: z.array(z.unknown()).default([]),
+    contract_artifacts: z.array(z.object({
+      path: z.string().min(1),
+      content: z.string(),
+      sha256: z.string(),
+      byte_length: z.number().int().nonnegative(),
+      source_revision: z.string(),
+    }).strict()).default([]),
   }).passthrough(),
   constraints: z.object({
     read_only: z.boolean(),
@@ -155,6 +163,13 @@ const harnessResultSchema = z.object({
 
 export function parseTaskBundle(value) {
   const parsed = taskBundleSchema.parse(value);
+  try {
+    parsed.inputs.contract_artifacts = validateContractArtifacts(
+      parsed.inputs.contract_artifacts,
+    );
+  } catch (error) {
+    throw new Error(`contract_artifact_invalid:${error.message}`);
+  }
   if (parsed.inputs.execution_surface === 'fleet-worker') {
     if (!parsed.inputs.workspace_spec) {
       throw new Error('workspace_spec_required');

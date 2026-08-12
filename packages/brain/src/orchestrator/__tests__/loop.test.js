@@ -127,6 +127,7 @@ function makeEnv({ observedSeq, dispatch, finalizeRun } = {}) {
 
 describe('runLoop：全链 planning→done', () => {
   it('逐跳推进 planner→proposer→reviewer→persist→generator→poll→evaluator→judge→merge→report→exit', async () => {
+    const approvedSha = '9'.repeat(40);
     const prMeta = {
       url: 'u', state: 'OPEN', mergeStateStatus: 'CLEAN', merged: false, head_sha: 'sha-1',
     };
@@ -138,7 +139,15 @@ describe('runLoop：全链 planning→done', () => {
       // 3. r1 合同已 push，无本轮 verdict → spawn:reviewer
       obs({ contract: { approved: false, id: CONTRACT_ID }, proposeBranchRn: 1 }),
       // 4. APPROVED 已出但未落库 → persist_contract_approval（控制 action，不派发）
-      obs({ contract: { approved: false, id: CONTRACT_ID }, proposeBranchRn: 1, ganLatestRoundVerdict: 'APPROVED' }),
+      obs({
+        task: { status: 'in_progress', payload: { sprint_dir: 'sprints/full-chain' } },
+        contract: { approved: false, id: CONTRACT_ID },
+        proposeBranch: 'cp-harness-propose-r1-11111111-a4',
+        proposeBranchSha: approvedSha,
+        proposeBranchRn: 1,
+        ganLatestRoundVerdict: 'APPROVED',
+        ganLatestRoundContractSha: approvedSha,
+      }),
       // 5. contract approved，无 PR，generator 未派过 → spawn:generator
       obs({ generatorSpawned: false }),
       // 6. PR 出现，ci pending → wait:poll_ci（不派发不 append）
@@ -164,6 +173,13 @@ describe('runLoop：全链 planning→done', () => {
       obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
     ];
     const { deps, appended, heartbeats, sqls, sleeps } = makeEnv({ observedSeq });
+    deps.listGitFiles = vi.fn(() => ['sprints/full-chain/tests/golden-path.test.mjs']);
+    deps.readGitFile = vi.fn((_sha, filePath) => ({
+      'sprints/full-chain/sprint-prd.md': '# PRD',
+      'sprints/full-chain/contract-draft.md': '# Contract',
+      'sprints/full-chain/contract-dod.md': '# DoD',
+      'sprints/full-chain/tests/golden-path.test.mjs': 'test("golden path", () => {});',
+    })[filePath]);
 
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
 
@@ -194,9 +210,9 @@ describe('runLoop：全链 planning→done', () => {
     // persist 控制跳 + wait 跳也要心跳：8 派发 + 1 persist + 1 wait = 10
     expect(heartbeats).toHaveLength(10);
     // persist_contract_approval 落库 initiative_contracts
-    const persistSql = sqls.find(([sql]) => sql.includes('initiative_contracts'));
-    expect(persistSql[0]).toMatch(/status\s*=\s*'approved'/);
-    expect(persistSql[1]).toContain(CONTRACT_ID);
+    const persistSql = sqls.find(([sql]) => sql.includes('INSERT INTO initiative_contracts'));
+    expect(persistSql[0]).toMatch(/status.*approved/s);
+    expect(persistSql[1]).toContain(RUN_ID);
     // wait:poll_ci 只睡一次，不 append 不 dispatch
     expect(sleeps).toHaveLength(1);
     // merge_pr 跳带 gateVerdict=allow
@@ -236,6 +252,54 @@ describe('runLoop：全链 planning→done', () => {
       gate: 'impact_unknown',
       stage: 'diff',
       head_revision: headSha,
+    });
+  });
+
+  it('Impact schema 确定性错误精确终止且不进入基础设施重试', async () => {
+    const observedSeq = [obs({ generatorSpawned: false })];
+    const { deps, sleeps } = makeEnv({ observedSeq });
+    const error = Object.assign(new Error('Impact Contract schema 或身份绑定非法'), {
+      code: 'impact_contract_schema_invalid',
+    });
+    deps.impactGate.beforeGenerate.mockRejectedValue(error);
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('impact_gate_deterministic');
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(sleeps).toEqual([]);
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'impact_gate_deterministic:impact_contract_schema_invalid',
+    });
+  });
+
+  it('Dispatcher assembly fault 一次精确终止，不消耗同态 BLOCKED 次数', async () => {
+    const observedSeq = [obs({ generatorSpawned: false })];
+    const { deps, sleeps } = makeEnv({
+      observedSeq,
+      dispatch: async () => ({
+        status: 'DONE_WITH_CONCERNS',
+        control_status: 'BLOCKED',
+        detail: 'FROZEN_CONTRACT_ARTIFACTS_MISSING:approved_contract',
+        failure_class: 'assembly_fault',
+        fallback_reason: 'FROZEN_CONTRACT_ARTIFACTS_MISSING',
+        should_create_attempt: false,
+      }),
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('assembly_fault');
+    expect(deps.dispatch).toHaveBeenCalledOnce();
+    expect(sleeps).toEqual([]);
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'assembly_fault:FROZEN_CONTRACT_ARTIFACTS_MISSING',
     });
   });
 
@@ -883,9 +947,9 @@ describe('runLoop：控制 action 自消费', () => {
     expect(deps.dispatch).toHaveBeenCalledWith('spawn:generator', expect.any(Object));
     expect(sleeps).toHaveLength(0);
     expect(deps.readGitFile.mock.calls).toEqual([
-      [approvedSha, 'sprints/kernel-contract/sprint-prd.md', { repo: null }],
-      [approvedSha, 'sprints/kernel-contract/contract-draft.md', { repo: null }],
       [approvedSha, 'sprints/kernel-contract/contract-dod.md', { repo: null }],
+      [approvedSha, 'sprints/kernel-contract/contract-draft.md', { repo: null }],
+      [approvedSha, 'sprints/kernel-contract/sprint-prd.md', { repo: null }],
       [approvedSha, 'sprints/kernel-contract/tests/red.test.js', { repo: null }],
     ]);
     const materializeSql = sqls.find(([sql]) => sql.includes('INSERT INTO initiative_contracts'));
@@ -898,6 +962,43 @@ describe('runLoop：控制 action 自消费', () => {
     ]));
     expect(materializeSql[1].join('\n')).toContain('# Contract');
     expect(materializeSql[1].join('\n')).toContain('# DoD');
+  });
+
+  it('批准物化发现 seal mismatch 时一次终结为 assembly fault，不持久重试', async () => {
+    const approvedSha = 'a'.repeat(40);
+    const observedSeq = [obs({
+      run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+      task: { status: 'in_progress', payload: { sprint_dir: 'sprints/kernel-contract' } },
+      contract: { approved: false, id: null },
+      proposeBranch: 'cp-harness-propose-r1-11111111-a3',
+      proposeBranchSha: approvedSha,
+      proposeBranchRn: 1,
+      ganLatestRoundVerdict: 'APPROVED',
+      ganLatestRoundContractSha: approvedSha,
+    })];
+    const { deps, sleeps } = makeEnv({ observedSeq });
+    deps.listGitFiles = vi.fn(() => ['sprints/kernel-contract/tests/red.test.js']);
+    deps.readGitFile = vi.fn((_sha, filePath) => ({
+      'sprints/kernel-contract/sprint-prd.md': '# PRD',
+      'sprints/kernel-contract/contract-draft.md': '# Contract',
+      'sprints/kernel-contract/contract-dod.md': '# DoD',
+      'sprints/kernel-contract/tests/red.test.js': 'throw new Error("RED");',
+    })[filePath]);
+    deps.materializeApprovedContract = vi.fn(async () => {
+      throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:seal_mismatch');
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result).toEqual({ exitReason: 'assembly_fault', hops: 0 });
+    expect(sleeps).toEqual([]);
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'assembly_fault:FROZEN_CONTRACT_ARTIFACT_INVALID',
+    });
   });
 
   it('批准落库前把硬编码 GAN attempt/snapshot 改判 REVISION，不进入 Generator', async () => {
@@ -953,6 +1054,53 @@ describe('runLoop：控制 action 自消费', () => {
     expect(deps.dispatch).toHaveBeenCalledWith('spawn:proposer', expect.any(Object));
     expect(deps.dispatch).not.toHaveBeenCalledWith('spawn:generator', expect.any(Object));
     expect(sqls.some(([sql]) => sql.includes('INSERT INTO initiative_contracts'))).toBe(false);
+  });
+
+  it('批准时把 approved SHA 下的 tests 一并冻结进 contract store', async () => {
+    const approvedSha = 'e'.repeat(40);
+    const sprintDir = 'sprints/kernel-contract-artifacts';
+    const observedSeq = [
+      obs({
+        run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+        task: { status: 'in_progress', payload: { sprint_dir: sprintDir } },
+        contract: { approved: false, id: null },
+        proposeBranch: 'cp-harness-propose-r1-11111111-a3',
+        proposeBranchSha: approvedSha,
+        proposeBranchRn: 1,
+        ganLatestRoundVerdict: 'APPROVED',
+        ganLatestRoundContractSha: approvedSha,
+      }),
+      obs({ contract: { approved: true, id: CONTRACT_ID }, generatorSpawned: false }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, sqls } = makeEnv({ observedSeq });
+    const files = {
+      [`${sprintDir}/sprint-prd.md`]: '# PRD',
+      [`${sprintDir}/contract-draft.md`]: '# Contract',
+      [`${sprintDir}/contract-dod.md`]: '# DoD',
+      [`${sprintDir}/tests/router.test.mjs`]: 'test("router", () => {})',
+    };
+    deps.listGitFiles = vi.fn(() => [`${sprintDir}/tests/router.test.mjs`]);
+    deps.readGitFile = vi.fn((_sha, filePath) => {
+      if (!Object.hasOwn(files, filePath)) throw new Error(`missing ${filePath}`);
+      return files[filePath];
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.listGitFiles).toHaveBeenCalledWith(approvedSha, sprintDir, {
+      repo: null,
+    });
+    const materializeSql = sqls.find(([sql]) => sql.includes('INSERT INTO initiative_contracts'));
+    const frozen = JSON.parse(materializeSql[1][6]);
+    expect(frozen.map(({ path }) => path)).toEqual([
+      `${sprintDir}/contract-dod.md`,
+      `${sprintDir}/contract-draft.md`,
+      `${sprintDir}/sprint-prd.md`,
+      `${sprintDir}/tests/router.test.mjs`,
+    ]);
+    expect(frozen.every(({ source_revision: revision }) => revision === approvedSha)).toBe(true);
   });
 
   it('persist_contract_approval 按 payload.base_repo 从跨仓库权威仓库读取批准产物', async () => {
@@ -1039,6 +1187,99 @@ describe('runLoop：控制 action 自消费', () => {
 
     expect(result.exitReason).toBe('approved_but_no_contract_sha');
     expect(deps.readGitFile).not.toHaveBeenCalled();
+  });
+
+  it('APPROVED 崩溃恢复也按批准 SHA 冻结完整 artifact 集合，不直接改状态', async () => {
+    const approvedSha = '1'.repeat(40);
+    const sprintDir = 'sprints/crash-recovery-contract';
+    const observedSeq = [
+      obs({
+        run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+        task: { status: 'in_progress', payload: { sprint_dir: sprintDir } },
+        contract: {
+          approved: false,
+          id: CONTRACT_ID,
+          row: { version: 4, branch: 'cp-harness-propose-r4-11111111-a9' },
+        },
+        proposeBranch: 'cp-harness-propose-r4-11111111-a9',
+        proposeBranchSha: approvedSha,
+        proposeBranchRn: 4,
+        ganLatestRoundVerdict: 'APPROVED',
+        ganLatestRoundContractSha: approvedSha,
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, sqls } = makeEnv({ observedSeq });
+    const files = {
+      [`${sprintDir}/sprint-prd.md`]: '# PRD',
+      [`${sprintDir}/contract-draft.md`]: '# Contract',
+      [`${sprintDir}/contract-dod.md`]: '# DoD',
+      [`${sprintDir}/tests/recovery.test.mjs`]: 'test("recovery", () => {})',
+    };
+    deps.listGitFiles = vi.fn(() => [`${sprintDir}/tests/recovery.test.mjs`]);
+    deps.readGitFile = vi.fn((_sha, filePath) => {
+      if (!Object.hasOwn(files, filePath)) throw new Error(`missing ${filePath}`);
+      return files[filePath];
+    });
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(deps.listGitFiles).toHaveBeenCalledWith(approvedSha, sprintDir, {
+      repo: null,
+    });
+    const materializeSql = sqls.find(([sql]) => sql.includes('INSERT INTO initiative_contracts'));
+    expect(materializeSql).toBeTruthy();
+    expect(JSON.parse(materializeSql[1][6])).toHaveLength(4);
+    expect(sqls.some(([sql]) => /^UPDATE initiative_contracts SET status = 'approved'/.test(sql)))
+      .toBe(false);
+  });
+
+  it('force approval 崩溃恢复也冻结 artifact 后再记录副作用', async () => {
+    const approvedSha = '2'.repeat(40);
+    const sprintDir = 'sprints/force-recovery-contract';
+    const caseFile = [
+      { round: 1, author_role: 'reviewer', rubric_scores: { dod_machineability: 8 } },
+      { round: 2, author_role: 'reviewer', rubric_scores: { dod_machineability: 7 } },
+      { round: 3, author_role: 'reviewer', rubric_scores: { dod_machineability: 6 } },
+    ];
+    const observedSeq = [
+      obs({
+        run: { id: RUN_ID, initiative_id: TASK_ID, phase: 'gan', cost_usd: 0 },
+        task: { status: 'in_progress', payload: { sprint_dir: sprintDir } },
+        contract: {
+          approved: false,
+          id: CONTRACT_ID,
+          row: { version: 3, branch: 'cp-harness-propose-r3-11111111-a8' },
+        },
+        proposeBranch: 'cp-harness-propose-r3-11111111-a8',
+        proposeBranchSha: approvedSha,
+        proposeBranchRn: 3,
+        ganLatestRoundVerdict: 'REVISION',
+        caseFile,
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, sqls } = makeEnv({ observedSeq });
+    const files = {
+      [`${sprintDir}/sprint-prd.md`]: '# PRD',
+      [`${sprintDir}/contract-draft.md`]: '# Contract',
+      [`${sprintDir}/contract-dod.md`]: '# DoD',
+      [`${sprintDir}/tests/force.test.mjs`]: 'test("force", () => {})',
+    };
+    deps.listGitFiles = vi.fn(() => [`${sprintDir}/tests/force.test.mjs`]);
+    deps.readGitFile = vi.fn((_sha, filePath) => {
+      if (!Object.hasOwn(files, filePath)) throw new Error(`missing ${filePath}`);
+      return files[filePath];
+    });
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(deps.listGitFiles).toHaveBeenCalledWith(approvedSha, sprintDir, {
+      repo: null,
+    });
+    expect(sqls.some(([sql]) => sql.includes('INSERT INTO initiative_contracts'))).toBe(true);
+    expect(sqls.some(([sql]) => /^UPDATE initiative_contracts SET status = 'approved'/.test(sql)))
+      .toBe(false);
   });
 
   it('force_approve_contract：案卷 rubric 趋势 diverging → 跳过 reviewer 直接物化合同 + 写决策日志 + P1 告警 + cecelia_events 落库（F3）', async () => {

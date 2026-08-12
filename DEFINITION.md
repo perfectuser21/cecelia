@@ -8,11 +8,20 @@
 
 
 
-**Brain 版本**: 1.272.28
+**Brain 版本**: 1.272.29
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.29 — approved contract artifact transport
+
+- Kernel 从精确 approved SHA 冻结完整合同测试资产，通过不可变数据库行进入 TaskBundle。
+- Fleet Runner 在 Provider 启动前验证路径、摘要、长度与 source revision，物化后回读校验。
+- 确定性 assembly/Impact 错误不再误入人审或无限重试；Harness watchdog 启动即扫描。
+- Impact Contract 对 schema 解析结果计算稳定 hash，空扩展字段不再触发伪换版。
+- 保留 1.272.27 的冻结测试兼容通道；新合同以 sealed artifact manifest 为唯一持久化事实。
+- Schema 地板推进到 412。
 
 ## Brain 1.272.28 — 冻结合同 Runner 三机发布
 
@@ -20,9 +29,6 @@
 - NodeProfile、三机配置、rollout/reconcile、安装器测试与 smoke 同步新 digest；Fleet Worker 基线升级为 1.272.12。
 
 ## Brain 1.272.27 — 冻结合同测试制品进入 TaskBundle
-
-- GAN 批准时从精确审批 SHA 冻结合同测试的路径、原文与 SHA-256 摘要，Generator、Evaluator、Judge 消费同一份不可变制品。
-- 存量在途合同从追加式 reviewer 决策日志恢复审批 SHA，再从该 SHA 一次性补齐测试制品；数据库触发器禁止已冻结证据被改写。
 
 ## Brain 1.272.25 — Impact Gate fresh 证据规范化
 
@@ -124,7 +130,7 @@
 - Map/Impact/Journey 写入口使用共享 internal token；生产 Compose、蓝绿 canary、staging 与跨 checkout scanner 读取同一宿主 credentials SSOT。
 - Capability Mapper 在 Runner 只产 manifest artifact，拍板后的提交/激活统一走读取 credentials SSOT 的受信宿主 adapter。
 - 扫描只允许 clean main/exact SHA；批末复核 checkout 与四类 header revision，同 SHA 每 10 分钟保鲜。
-- Schema 地板推进到 410。
+- Schema 地板推进到 411。
 
 ---
 
@@ -2539,7 +2545,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '410'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '411'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

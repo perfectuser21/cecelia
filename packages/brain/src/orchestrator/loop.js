@@ -25,7 +25,7 @@ import { collectGroundTruth as defaultCollect } from './ground-truth.js';
 import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConflictError } from './decision-log.js';
 import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
 import { materializeApprovedContract } from './contract-store.js';
-import { collectFrozenContractArtifacts } from './frozen-contract-artifacts.js';
+import { collectApprovedContractArtifacts } from './contract-artifacts.js';
 import { insertCaseFileRow } from './case-file-store.js';
 import { evaluateValidationIdentityPolicy } from './validation-identity-policy.js';
 import {
@@ -80,6 +80,13 @@ function asPayload(value) {
 }
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
+const DETERMINISTIC_IMPACT_ERROR_CODES = new Set([
+  'impact_contract_schema_invalid',
+  'impact_assertion_authority_invalid',
+  'mapper_evidence_invalid',
+  'mapper_evidence_missing',
+  'task_not_found',
+]);
 function allowsVerifiedExistingPrEvaluatorOrigin(observed, action) {
   if (action !== ACTION.SPAWN_EVALUATOR || observed.gear !== 'hotfix') return false;
   if (observed.generatorSpawned === true) return false;
@@ -129,33 +136,24 @@ function frozenContractArtifacts(deps, observed, groundTruthPaths, approvedSha) 
   if (requestedRepo != null && requestedRepo !== '' && repo == null) {
     return { missing: paths };
   }
-  const contents = [];
-  for (const filePath of paths) {
-    try {
-      contents.push(deps.readGitFile(approvedSha, filePath, { repo }));
-    } catch {
-      return { missing: [filePath] };
-    }
-  }
-  const [prdContent, contractDraft, contractDod] = contents;
-  let frozenArtifacts;
-  try {
-    frozenArtifacts = collectFrozenContractArtifacts({
-      approvedSha,
-      sprintDir,
-      repo,
-      listGitFiles: deps.listGitFiles,
-      readGitFile: deps.readGitFile,
-    });
-  } catch {
+  if (typeof deps.listGitFiles !== 'function') {
     return { missing: [`${sprintDir}/tests/`] };
   }
-  return {
-    missing: [],
-    prdContent,
-    contractContent: `${contractDraft}\n\n${contractDod}`,
-    frozenArtifacts,
-  };
+  try {
+    return {
+      missing: [],
+      ...collectApprovedContractArtifacts({
+        sourceRevision: approvedSha,
+        sprintDir,
+        prdPath,
+        repo,
+        readGitFile: deps.readGitFile,
+        listGitFiles: deps.listGitFiles,
+      }),
+    };
+  } catch (error) {
+    return { missing: [boundedText(error.message)] };
+  }
 }
 
 async function resolveGroundTruthPaths(pool, taskId) {
@@ -335,6 +333,23 @@ async function markRunFailed(deps, runId, taskId, reason) {
     outcome: 'failed',
     reason,
   });
+}
+
+function frozenArtifactErrorCode(error) {
+  return String(error?.message ?? '').match(/FROZEN_CONTRACT_ARTIFACT[A-Z_]*/)?.[0] ?? null;
+}
+
+async function materializeApprovedContractOrFail(deps, params, { runId, taskId }) {
+  const materialize = deps.materializeApprovedContract ?? materializeApprovedContract;
+  try {
+    await materialize(deps.pool, params);
+    return null;
+  } catch (error) {
+    const code = frozenArtifactErrorCode(error);
+    if (!code) throw error;
+    await markRunFailed(deps, runId, taskId, `assembly_fault:${code}`);
+    return code;
+  }
 }
 
 async function markRunPaused(pool, runId, observed) {
@@ -833,84 +848,75 @@ export async function runLoop(
       return { exitReason: decision.reason, hops };
     }
     if (decision.action === ACTION.PERSIST_CONTRACT_APPROVAL) {
-      if (!observed.contract.id) {
-        if (!observed.proposeBranch || !Number.isInteger(observed.proposeBranchRn)
-            || observed.proposeBranchRn < 1) {
-          await markRunFailed(deps, resolvedRunId, taskId, 'approved_but_no_contract_branch');
-          return { exitReason: 'approved_but_no_contract_branch', hops };
-        }
-        const approvedSha = observed.ganLatestRoundContractSha ?? null;
-        if (!approvedSha) {
-          await markRunFailed(deps, resolvedRunId, taskId, 'approved_but_no_contract_sha');
-          return { exitReason: 'approved_but_no_contract_sha', hops };
-        }
-        const artifacts = frozenContractArtifacts(
+      if (!observed.proposeBranch || !Number.isInteger(observed.proposeBranchRn)
+          || observed.proposeBranchRn < 1) {
+        await markRunFailed(deps, resolvedRunId, taskId, 'approved_but_no_contract_branch');
+        return { exitReason: 'approved_but_no_contract_branch', hops };
+      }
+      const approvedSha = observed.ganLatestRoundContractSha ?? null;
+      if (!approvedSha) {
+        await markRunFailed(deps, resolvedRunId, taskId, 'approved_but_no_contract_sha');
+        return { exitReason: 'approved_but_no_contract_sha', hops };
+      }
+      const artifacts = frozenContractArtifacts(
+        deps,
+        observed,
+        groundTruthPaths,
+        approvedSha,
+      );
+      if (artifacts.missing.length > 0) {
+        await markRunFailed(
           deps,
-          observed,
-          groundTruthPaths,
-          approvedSha,
+          resolvedRunId,
+          taskId,
+          'approved_but_contract_artifacts_missing',
         );
-        if (artifacts.missing.length > 0) {
-          await markRunFailed(
-            deps,
-            resolvedRunId,
-            taskId,
-            'approved_but_contract_artifacts_missing',
-          );
-          return { exitReason: 'approved_but_contract_artifacts_missing', hops };
-        }
-        const identityPolicy = evaluateValidationIdentityPolicy(artifacts.contractContent);
-        if (!identityPolicy.ok) {
-          const policyHop = await next(deps.pool, resolvedRunId);
-          try {
-            await append(deps.pool, {
-              runId: resolvedRunId,
-              hop: policyHop,
-              observed: {
-                proposeBranchRn: observed.proposeBranchRn,
-                proposeBranchSha: approvedSha,
-              },
-              derivedPhase: 'gan',
-              gateVerdict: 'deny:premature_validation_identity_binding',
-              action: LOG_ACTION.VERDICT_REVIEWER,
-              detail: {
-                rn: observed.proposeBranchRn,
-                contract_sha: approvedSha,
-                verdict: 'REVISION',
-                summary: '合同在执行角色产生前硬编码了可变 validation identity。',
-                reason: '删除 GAN authoring attempt/capability snapshot 字面值；使用 Runner 注入的 HARNESS_ATTEMPT_ID、CAPABILITY_SNAPSHOT_ID 与当前角色 attestation late-bound，并让后续角色以证据摘要串联。',
-                source: 'validation_identity_policy',
-                violations: identityPolicy.violations,
-              },
-            });
-            hops++;
-          } catch (error) {
-            if (error instanceof SingletonConflictError) {
-              return { exitReason: 'singleton_conflict', hops };
-            }
-            throw error;
+        return { exitReason: 'approved_but_contract_artifacts_missing', hops };
+      }
+      const identityPolicy = evaluateValidationIdentityPolicy(artifacts.contractContent);
+      if (!identityPolicy.ok) {
+        const policyHop = await next(deps.pool, resolvedRunId);
+        try {
+          await append(deps.pool, {
+            runId: resolvedRunId,
+            hop: policyHop,
+            observed: {
+              proposeBranchRn: observed.proposeBranchRn,
+              proposeBranchSha: approvedSha,
+            },
+            derivedPhase: 'gan',
+            gateVerdict: 'deny:premature_validation_identity_binding',
+            action: LOG_ACTION.VERDICT_REVIEWER,
+            detail: {
+              rn: observed.proposeBranchRn,
+              contract_sha: approvedSha,
+              verdict: 'REVISION',
+              summary: '合同在执行角色产生前硬编码了可变 validation identity。',
+              reason: '删除 GAN authoring attempt/capability snapshot 字面值；使用 Runner 注入的 HARNESS_ATTEMPT_ID、CAPABILITY_SNAPSHOT_ID 与当前角色 attestation late-bound，并让后续角色以证据摘要串联。',
+              source: 'validation_identity_policy',
+              violations: identityPolicy.violations,
+            },
+          });
+          hops++;
+        } catch (error) {
+          if (error instanceof SingletonConflictError) {
+            return { exitReason: 'singleton_conflict', hops };
           }
-          await beat();
-          continue;
+          throw error;
         }
-        await materializeApprovedContract(deps.pool, {
-          runId: resolvedRunId,
-          version: observed.proposeBranchRn,
-          branch: observed.proposeBranch,
-          prdContent: artifacts.prdContent,
-          contractContent: artifacts.contractContent,
-          approvedSha,
-          frozenArtifacts: artifacts.frozenArtifacts,
-          approvedAt: now(),
-        });
         await beat();
         continue;
       }
-      // 崩溃窗口补落库（reviewer APPROVED 已出但 contract 未 approved），补完继续下一跳
-      await deps.pool.query(
-        `UPDATE initiative_contracts SET status = 'approved', approved_at = $2, updated_at = $2 WHERE id = $1`,
-        [observed.contract.id, now()],
-      );
+      const artifactFailure = await materializeApprovedContractOrFail(deps, {
+        runId: resolvedRunId,
+        version: observed.proposeBranchRn,
+        branch: observed.proposeBranch,
+        prdContent: artifacts.prdContent,
+        contractContent: artifacts.contractContent,
+        ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
+        approvedAt: now(),
+      }, { runId: resolvedRunId, taskId });
+      if (artifactFailure) return { exitReason: 'assembly_fault', hops };
       await beat();
       continue;
     }
@@ -1177,26 +1183,57 @@ export async function runLoop(
           }
           throw error;
         }
-        await materializeApprovedContract(deps.pool, {
+        const artifactFailure = await materializeApprovedContractOrFail(deps, {
           runId: resolvedRunId,
           version: observed.proposeBranchRn,
           branch: observed.proposeBranch,
           prdContent: artifacts.prdContent,
           contractContent: artifacts.contractContent,
-          approvedSha,
-          frozenArtifacts: artifacts.frozenArtifacts,
+          ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
           approvedAt: now(),
-        });
+        }, { runId: resolvedRunId, taskId });
+        if (artifactFailure) return { exitReason: 'assembly_fault', hops };
         await recordForcedApprovalSideEffects(approvedSha);
         await beat();
         continue;
       }
       // 崩溃窗口对称分支（force 落库前进程中断，contract 行已建但未 approved）
-      await deps.pool.query(
-        `UPDATE initiative_contracts SET status = 'approved', approved_at = $2, updated_at = $2 WHERE id = $1`,
-        [observed.contract.id, now()],
+      const approvedSha = observed.proposeBranchSha ?? null;
+      if (!approvedSha) {
+        await markRunFailed(deps, resolvedRunId, taskId, 'force_approve_but_no_contract_sha');
+        return { exitReason: 'force_approve_but_no_contract_sha', hops };
+      }
+      const artifacts = frozenContractArtifacts(
+        deps,
+        observed,
+        groundTruthPaths,
+        approvedSha,
       );
-      await recordForcedApprovalSideEffects(observed.proposeBranchSha ?? null);
+      if (artifacts.missing.length > 0) {
+        await markRunFailed(
+          deps,
+          resolvedRunId,
+          taskId,
+          'force_approve_but_contract_artifacts_missing',
+        );
+        return { exitReason: 'force_approve_but_contract_artifacts_missing', hops };
+      }
+      const identityPolicy = evaluateValidationIdentityPolicy(artifacts.contractContent);
+      if (!identityPolicy.ok) {
+        await markRunFailed(deps, resolvedRunId, taskId, 'force_approve_contract_identity_invalid');
+        return { exitReason: 'force_approve_contract_identity_invalid', hops };
+      }
+      const artifactFailure = await materializeApprovedContractOrFail(deps, {
+        runId: resolvedRunId,
+        version: observed.proposeBranchRn,
+        branch: observed.proposeBranch,
+        prdContent: artifacts.prdContent,
+        contractContent: artifacts.contractContent,
+        ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
+        approvedAt: now(),
+      }, { runId: resolvedRunId, taskId });
+      if (artifactFailure) return { exitReason: 'assembly_fault', hops };
+      await recordForcedApprovalSideEffects(approvedSha);
       await beat();
       continue;
     }
@@ -1347,11 +1384,16 @@ export async function runLoop(
               retryable: true,
             };
       } catch (error) {
+        const errorCode = String(error?.code ?? 'impact_gate_error');
+        const deterministic = DETERMINISTIC_IMPACT_ERROR_CODES.has(errorCode);
         impactGateReceipt = {
           stage: impactGateMethod,
           gate: 'blocked',
-          reason: 'impact_gate_error',
-          retryable: true,
+          reason: deterministic ? errorCode : 'impact_gate_error',
+          retryable: !deterministic,
+          failure_class: deterministic
+            ? 'impact_contract_invalid'
+            : 'infrastructure_blocked',
           error: sanitizeDiagnostic(error?.message ?? String(error)),
         };
       }
@@ -1435,7 +1477,10 @@ export async function runLoop(
           failure_class: impactGateReceipt?.reason === 'CONTRACT_IMPACT_DRIFT'
             || impactGateReceipt?.reason === 'gap_dependencies'
             ? 'gap_dependencies'
-            : 'infrastructure_blocked',
+            : impactGateReceipt?.retryable === false
+              ? 'impact_contract_invalid'
+              : 'infrastructure_blocked',
+          fallback_reason: impactGateReceipt?.reason ?? null,
           evidence: impactGateReceipt,
         }
       : await deps.dispatch(decision.action, {
@@ -1544,6 +1589,26 @@ export async function runLoop(
 
     if (controlStatus === 'NEEDS_CONTEXT' || controlStatus === 'BLOCKED') {
       const failureClass = result.failure_class ?? null;
+      if (controlStatus === 'BLOCKED' && failureClass === 'assembly_fault') {
+        const reason = result.fallback_reason ?? 'FROZEN_CONTRACT_ARTIFACT_INVALID';
+        await markRunFailed(
+          deps,
+          resolvedRunId,
+          taskId,
+          `assembly_fault:${reason}`,
+        );
+        return { exitReason: 'assembly_fault', hops };
+      }
+      if (controlStatus === 'BLOCKED' && failureClass === 'impact_contract_invalid') {
+        const reason = result.fallback_reason ?? 'impact_gate_error';
+        await markRunFailed(
+          deps,
+          resolvedRunId,
+          taskId,
+          `impact_gate_deterministic:${reason}`,
+        );
+        return { exitReason: 'impact_gate_deterministic', hops };
+      }
       if (controlStatus === 'BLOCKED' && ['infrastructure_blocked', 'gap_dependencies'].includes(failureClass)) {
         log(
           `[orchestrator] hop ${hop} ${decision.action} → BLOCKED `

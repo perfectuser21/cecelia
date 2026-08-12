@@ -85,6 +85,48 @@ describe('FR-2 Impact Contract 持久化', () => {
       expect(computeContractHash(first)).toBe(computeContractHash(second));
     });
 
+    test('持久化先按 schema canonicalize，head_revision:null 不制造新合同版本', async () => {
+      const assertionId = 'packages/brain/src/impact-contract/__tests__/contract-store.test.js';
+      const contractBody = minimalValidContract({
+        head_revision: null,
+        required_assertions: [{
+          assertion_id: assertionId,
+          command: `npx vitest run ${assertionId}`,
+          covers_capability_ids: ['cap-001'],
+          journey_step_link_id: '11111111-1111-4111-8111-111111111111',
+          assertion_revision: 1,
+          assertion_digest: createHash('sha256').update(assertionId).digest('hex'),
+        }],
+      });
+      const parsed = validateImpactContract(contractBody);
+      expect(parsed.success).toBe(true);
+      expect(parsed.data).not.toHaveProperty('head_revision');
+      const expectedHash = computeContractHash(parsed.data);
+      const db = {
+        query: vi.fn(async (sql, params) => {
+          const text = String(sql);
+          if (text.startsWith('SELECT id FROM tasks')) return { rows: [{ id: contractBody.task_id }] };
+          if (text.includes('contract_hash = $2')) {
+            expect(params[1]).toBe(expectedHash);
+            return { rows: [{ id: 'active-contract', status: 'active', contract_hash: expectedHash }] };
+          }
+          return { rows: [] };
+        }),
+      };
+
+      const result = await persistImpactContract(db, {
+        task_id: contractBody.task_id,
+        change_kind: contractBody.change_kind,
+        base_revision: contractBody.base_revision,
+        manifest_digest: '1'.repeat(64),
+        projection_digest: '2'.repeat(64),
+        contract_body: contractBody,
+      });
+
+      expect(result.created).toBe(false);
+      expect(result.contract.id).toBe('active-contract');
+    });
+
   });
 
   // -------------------------------------------------------

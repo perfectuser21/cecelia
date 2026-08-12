@@ -67,6 +67,23 @@ describe('合同故障重开 GAN（r40 实证：CONTRACT IS LAW 死锁出路）'
     detail: { callback_hop: cbHop, upheld, reasoning: 'x' },
   });
 
+  it.each([
+    ['FROZEN_CONTRACT_ARTIFACTS_MISSING', 'frozen_contract_artifacts_missing'],
+    ['FROZEN_CONTRACT_ARTIFACT_INVALID', 'frozen_contract_artifact_invalid'],
+    ['FROZEN_CONTRACT_ARTIFACT_MATERIALIZATION_FAILED', 'frozen_contract_artifact_materialization_failed'],
+  ])('approved artifact assembly fault %s 精确终止，不进入 human review', (errorCode, reason) => {
+    const result = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        cb(3, { error_code: errorCode }),
+      ],
+    }));
+
+    expect(result.action).toBe('mark_failed');
+    expect(result.reason).toBe(reason);
+  });
+
   it('generator 报合同故障码且无仲裁记录 → 先派仲裁,不直接重开', () => {
     const r = derive(baseObserved({
       pr: null,

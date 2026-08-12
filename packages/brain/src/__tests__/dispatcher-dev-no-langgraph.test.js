@@ -123,7 +123,7 @@ function makeDevTask(overrides = {}) {
   };
 }
 
-function setupDispatch(task) {
+function setupDispatch(task, { failCodeRoutingPersist = false } = {}) {
   mocks.selectNextDispatchableTask.mockResolvedValueOnce(task);
   mocks.query.mockImplementation((sql) => {
     if (typeof sql === 'string' && sql.includes('SELECT * FROM tasks')) {
@@ -134,6 +134,9 @@ function setupDispatch(task) {
       return Promise.resolve({ rows: [{ id: task.id }], rowCount: 1 });
     }
     if (typeof sql === 'string' && sql.includes('UPDATE tasks')) {
+      if (failCodeRoutingPersist && sql.includes("task_type = 'harness_initiative'")) {
+        return Promise.reject(new Error('routing receipt write failed'));
+      }
       return Promise.resolve({ rows: [], rowCount: 1 });
     }
     return Promise.resolve({ rows: [] });
@@ -190,6 +193,20 @@ describe('F7: dev 派发迁离 LangGraph', () => {
     expect(updateCall).toBeDefined();
     expect(updateCall[1][0]).toBe(task.id);
     expect(JSON.parse(updateCall[1][1])).toMatchObject({ orchestrator: 'skill-relay', code_change: true, origin_task_type: 'dev' });
+  });
+
+  it('命中改代码路由但落库失败时 fail closed，绝不退回 legacy dev 执行链', async () => {
+    const task = makeDevTask({ id: 'dev-task-routing-persist-failure' });
+    setupDispatch(task, { failCodeRoutingPersist: true });
+
+    const result = await dispatchNextTask(['goal-1']);
+
+    expect(result).toMatchObject({
+      dispatched: false,
+      reason: 'dispatch_exception',
+      error: 'code_change_routing_persist_failed:routing receipt write failed',
+    });
+    expect(mocks.triggerCeceliaRun).not.toHaveBeenCalled();
   });
 
   it('dev task 标题含"修复bug" → 改道 harness_initiative 且 gear=hotfix', async () => {

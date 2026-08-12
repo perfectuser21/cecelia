@@ -167,13 +167,25 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   const task = observed.task;
   const payload = asObject(task.payload);
   const metadata = asObject(task.metadata);
+  const normalizedContractArtifacts = Array.isArray(observed.contract?.artifacts)
+    ? observed.contract.artifacts
+    : null;
+  const compatibilityArtifacts = Array.isArray(ctx.frozenContractArtifacts)
+    ? ctx.frozenContractArtifacts
+    : (normalizedContractArtifacts ?? [])
+      .filter(({ path: artifactPath }) => artifactPath.includes('/tests/'))
+      .map((artifact) => ({
+        type: 'frozen_contract_test',
+        path: artifact.path,
+        content: artifact.content,
+        sha256: artifact.sha256,
+        source_sha: artifact.source_revision,
+      }));
   const common = {
     task_id: task.id ?? ctx.taskId,
     sprint_dir: payload.sprint_dir ?? task.sprint_dir,
     worktree_path: payload.worktree_path ?? ctx.worktreePath,
-    artifacts: Array.isArray(ctx.frozenContractArtifacts)
-      ? ctx.frozenContractArtifacts
-      : [],
+    artifacts: compatibilityArtifacts,
     task: {
       title: task.title ?? '',
       description: task.description ?? '',
@@ -299,6 +311,9 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     common.runtime_resources = { postgres: false, node_deps: true };
   }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
+    if (observed.contract?.artifact_error) {
+      throw new Error(observed.contract.artifact_error);
+    }
     const {
       frozen_artifacts: _frozenArtifacts,
       ...contractRow
@@ -317,6 +332,16 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
           })),
         }
       : null;
+    if (normalizedContractArtifacts) {
+      if (
+        spec.role === 'generator'
+        && normalizedContractArtifacts.length === 0
+        && common.artifacts.length === 0
+      ) {
+        throw new Error('FROZEN_CONTRACT_ARTIFACTS_MISSING:approved_contract');
+      }
+      common.contract_artifacts = normalizedContractArtifacts.map((artifact) => ({ ...artifact }));
+    }
     common.contract_branch = observed.contract?.row?.branch
       ?? observed.contract?.row?.propose_branch
       ?? null;
@@ -385,6 +410,42 @@ function bundleByteLength(bundle) {
   return Buffer.byteLength(JSON.stringify(bundle));
 }
 
+function frozenArtifactErrorCode(error) {
+  return String(error?.message ?? '').match(/FROZEN_CONTRACT_ARTIFACT[A-Z_]*/)?.[0] ?? null;
+}
+
+function frozenArtifactAssemblyFault(error, { attemptCreated = false } = {}) {
+  const code = frozenArtifactErrorCode(error);
+  if (!code) return null;
+  return {
+    status: 'DONE_WITH_CONCERNS',
+    control_status: 'BLOCKED',
+    detail: error.message,
+    failure_class: 'assembly_fault',
+    fallback_reason: code,
+    should_create_attempt: attemptCreated,
+    should_enter_generator_fix: false,
+  };
+}
+
+function preAttemptAssemblyFault(error, fallbackReason) {
+  const message = String(error?.message ?? error ?? 'assembly failed');
+  const frozenCode = frozenArtifactErrorCode(error);
+  const legacyFrozenCode = message.match(/frozen_contract_[a-z0-9_]+/i)?.[0]?.toUpperCase();
+  const bundleSizeCode = message.startsWith('task_bundle_size_limit_exceeded')
+    ? 'TASK_BUNDLE_SIZE_LIMIT_EXCEEDED'
+    : null;
+  return {
+    status: 'DONE_WITH_CONCERNS',
+    control_status: 'BLOCKED',
+    detail: message,
+    failure_class: 'assembly_fault',
+    fallback_reason: frozenCode ?? legacyFrozenCode ?? bundleSizeCode ?? fallbackReason,
+    should_create_attempt: false,
+    should_enter_generator_fix: false,
+  };
+}
+
 /**
  * TaskBundle 膨胀闸2（P2-3，review CHANGES REQUESTED）：闸1（case-file-store.js
  * loadCaseFile 的 fullTextRounds SQL 投影）已经把大部分 feedback_md 全文收窄
@@ -419,6 +480,12 @@ function enforceBundleSizeLimit(bundle) {
 
   const finalBytes = bundleByteLength(trimmedBundle);
   if (finalBytes > HARNESS_BUNDLE_MAX_BYTES) {
+    if (
+      (trimmedBundle.inputs?.contract_artifacts?.length ?? 0) > 0
+      || (trimmedBundle.inputs?.artifacts?.length ?? 0) > 0
+    ) {
+      throw new Error(`FROZEN_CONTRACT_ARTIFACT_SIZE_LIMIT:task_bundle:${finalBytes}`);
+    }
     throw new Error(
       `task_bundle_size_limit_exceeded:${finalBytes}>${HARNESS_BUNDLE_MAX_BYTES}`,
     );
@@ -566,16 +633,6 @@ export function createDispatcher(deps) {
       : randomUUID();
     const callbackSecret = createCallbackSecret();
     const skill = spec.skill ? deps.loadSkill(spec.skill) : null;
-    const frozenContractArtifacts = (
-      ['generator', 'evaluator', 'judge'].includes(spec.role)
-      && ctx.observed.contract?.row?.id
-      && typeof deps.resolveFrozenContractArtifacts === 'function'
-    )
-      ? await deps.resolveFrozenContractArtifacts({ action, role: spec.role, ctx })
-      : null;
-    const preparedCtx = frozenContractArtifacts == null
-      ? ctx
-      : { ...ctx, frozenContractArtifacts };
     const payload = asObject(ctx.observed.task.payload);
     const attemptMetadata = {
       logicalCycleId: commanderContext?.logical_cycle_id
@@ -587,36 +644,58 @@ export function createDispatcher(deps) {
         : (action === 'spawn:generator-fix' ? 'fix' : 'initial'),
       workstreamKey: payload.workstream_index ?? payload.workstream_key ?? 'ws1',
     };
-    let bundle = buildBundle(
-      action,
-      spec,
-      preparedCtx,
-      attemptId,
-      skill,
-      attemptMetadata,
-      { deferWorkspaceValidation: typeof deps.resolveWorkspaceSpec === 'function' },
-    );
-    if (typeof deps.resolveWorkspaceSpec === 'function') {
-      const workspaceSpec = await deps.resolveWorkspaceSpec({
+    let bundle;
+    let preparedCtx;
+    try {
+      const normalizedArtifacts = ctx.observed.contract?.artifacts;
+      const frozenContractArtifacts = (
+        ['generator', 'evaluator', 'judge'].includes(spec.role)
+        && ctx.observed.contract?.row?.id
+        && (!Array.isArray(normalizedArtifacts) || normalizedArtifacts.length === 0)
+        && typeof deps.resolveFrozenContractArtifacts === 'function'
+      )
+        ? await deps.resolveFrozenContractArtifacts({ action, role: spec.role, ctx })
+        : null;
+      preparedCtx = frozenContractArtifacts == null
+        ? ctx
+        : { ...ctx, frozenContractArtifacts };
+      bundle = buildBundle(
         action,
-        role: spec.role,
-        readOnly: spec.readOnly,
+        spec,
+        preparedCtx,
         attemptId,
-        ctx: preparedCtx,
-        bundle,
-      });
-      const {
-        worktree_path: _discardedCallerPath,
-        ...pathFreeInputs
-      } = bundle.inputs;
-      bundle = parseTaskBundle({
-        ...bundle,
-        inputs: {
-          ...pathFreeInputs,
-          execution_surface: 'fleet-worker',
-          workspace_spec: workspaceSpec,
-        },
-      });
+        skill,
+        attemptMetadata,
+        { deferWorkspaceValidation: typeof deps.resolveWorkspaceSpec === 'function' },
+      );
+    } catch (error) {
+      return preAttemptAssemblyFault(error, 'TASK_BUNDLE_ASSEMBLY_FAILED');
+    }
+    if (typeof deps.resolveWorkspaceSpec === 'function') {
+      try {
+        const workspaceSpec = await deps.resolveWorkspaceSpec({
+          action,
+          role: spec.role,
+          readOnly: spec.readOnly,
+          attemptId,
+          ctx: preparedCtx,
+          bundle,
+        });
+        const {
+          worktree_path: _discardedCallerPath,
+          ...pathFreeInputs
+        } = bundle.inputs;
+        bundle = parseTaskBundle({
+          ...bundle,
+          inputs: {
+            ...pathFreeInputs,
+            execution_surface: 'fleet-worker',
+            workspace_spec: workspaceSpec,
+          },
+        });
+      } catch (error) {
+        return preAttemptAssemblyFault(error, 'WORKSPACE_RESOLUTION_FAILED');
+      }
     }
     const roleAssignment = spec.role === 'commander'
       ? {}
@@ -798,7 +877,11 @@ export function createDispatcher(deps) {
       accountHome = resolveAccountHome(adapter.name, selectedAccount);
     }
 
-    bundle = enforceBundleSizeLimit(bundle);
+    try {
+      bundle = enforceBundleSizeLimit(bundle);
+    } catch (error) {
+      return preAttemptAssemblyFault(error, 'TASK_BUNDLE_SIZE_LIMIT_EXCEEDED');
+    }
 
     const persisted = await deps.attemptStore.createAttempt({
       id: attemptId,
@@ -910,11 +993,16 @@ export function createDispatcher(deps) {
         errorMessage(error),
         cancelDiagnostic,
       ].filter(Boolean).join('; ');
+      const assemblyFault = fleetLaunch
+        ? frozenArtifactAssemblyFault(error, { attemptCreated: true })
+        : null;
       try {
         await deps.attemptStore.fail(attempt.id, {
-          code: 'launch_failed',
+          code: assemblyFault?.fallback_reason ?? 'launch_failed',
           message,
-          ...(spec.role === 'commander'
+          ...(assemblyFault
+            ? { failureClass: 'assembly_fault' }
+            : spec.role === 'commander'
             ? { failureClass: 'infrastructure_blocked' }
             : {}),
         }, {
@@ -929,6 +1017,7 @@ export function createDispatcher(deps) {
           persistenceError: failError,
         });
       }
+      if (assemblyFault) return { ...assemblyFault, detail: message };
       throw error;
     }
 

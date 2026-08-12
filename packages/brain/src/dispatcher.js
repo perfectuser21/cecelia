@@ -817,7 +817,10 @@ export async function dispatchNextTask(goalIds) {
       };
       tickLog(`[dispatch] code_change_routing task=${taskToDispatch.id} origin_type=dev → harness_initiative gear=${gear}`);
     } catch (persistErr) {
-      console.warn(`[dispatch] code_change_routing DB persist failed, falling back to legacy dispatch for task=${taskToDispatch.id}: ${persistErr.message}`);
+      throw new Error(
+        `code_change_routing_persist_failed:${persistErr.message}`,
+        { cause: persistErr },
+      );
     }
   }
 

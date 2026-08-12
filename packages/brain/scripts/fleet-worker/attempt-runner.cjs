@@ -5,6 +5,7 @@ const { execFile, spawn } = require('node:child_process');
 const { createHash, randomBytes } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { promisify } = require('node:util');
 
 const execFileAsync = promisify(execFile);
@@ -986,6 +987,7 @@ function taskExecutionContract(providerSpec, request, target) {
   }
 
   const validationRole = ['generator', 'evaluator', 'judge'].includes(target.role);
+  const contractArtifacts = validateContractArtifacts(inputs.contract_artifacts ?? []);
   let validationClockEnv = {};
   if (validationRole) {
     const pipelineStartedAt = inputs.pipeline_started_at;
@@ -1093,6 +1095,7 @@ function taskExecutionContract(providerSpec, request, target) {
   }
   return Object.freeze({
     taskId: inputs.task_id,
+    contractArtifacts,
     roleEnv: Object.freeze(roleEnv),
     runtimeRequirements: Object.freeze({
       postgres: runtimeRequirements.postgres === true,
@@ -1105,6 +1108,108 @@ function taskExecutionContract(providerSpec, request, target) {
         : {}),
     }),
   });
+}
+
+const CONTRACT_ARTIFACT_MAX_BYTES = 256 * 1024;
+
+function validateContractArtifacts(value) {
+  if (!Array.isArray(value)) {
+    throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:not_array');
+  }
+  let previousPath = null;
+  let totalBytes = 0;
+  return Object.freeze(value.map((artifact) => {
+    if (!artifact || typeof artifact !== 'object' || Array.isArray(artifact)) {
+      throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:shape');
+    }
+    const artifactPath = artifact.path;
+    if (
+      typeof artifactPath !== 'string'
+      || artifactPath.length === 0
+      || artifactPath.includes('\0')
+      || artifactPath.includes('\\')
+      || path.posix.isAbsolute(artifactPath)
+      || artifactPath.split('/').some((part) => part === '' || part === '.' || part === '..')
+      || (previousPath != null && artifactPath <= previousPath)
+    ) {
+      throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:path');
+    }
+    previousPath = artifactPath;
+    const content = artifact.content;
+    const actualLength = typeof content === 'string' ? Buffer.byteLength(content, 'utf8') : -1;
+    const actualDigest = typeof content === 'string'
+      ? crypto.createHash('sha256').update(content, 'utf8').digest('hex')
+      : '';
+    if (
+      typeof content !== 'string'
+      || artifact.sha256 !== actualDigest
+      || artifact.byte_length !== actualLength
+      || !/^[a-f0-9]{40}$/.test(artifact.source_revision ?? '')
+    ) {
+      throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:integrity');
+    }
+    totalBytes += actualLength;
+    if (totalBytes > CONTRACT_ARTIFACT_MAX_BYTES) {
+      throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:size_limit');
+    }
+    return Object.freeze({ ...artifact });
+  }));
+}
+
+function materializeContractArtifacts(workspacePath, artifacts) {
+  if (artifacts.length === 0) return;
+  const workspaceRoot = fs.realpathSync(workspacePath);
+  for (const artifact of artifacts) {
+    const destination = path.resolve(workspaceRoot, artifact.path);
+    const workspacePrefix = `${workspaceRoot}${path.sep}`;
+    if (!destination.startsWith(workspacePrefix)) {
+      throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:path_escape');
+    }
+    let writeFd = null;
+    let readFd = null;
+    try {
+      let current = workspaceRoot;
+      for (const segment of path.dirname(artifact.path).split('/')) {
+        current = path.join(current, segment);
+        let stat;
+        try {
+          stat = fs.lstatSync(current);
+        } catch (error) {
+          if (error?.code !== 'ENOENT') throw error;
+          fs.mkdirSync(current, { mode: 0o700 });
+          stat = fs.lstatSync(current);
+        }
+        if (stat.isSymbolicLink() || !stat.isDirectory()) {
+          throw new Error('symlink_or_non_directory_parent');
+        }
+      }
+      const noFollow = fs.constants.O_NOFOLLOW ?? 0;
+      writeFd = fs.openSync(
+        destination,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | noFollow,
+        0o600,
+      );
+      fs.writeFileSync(writeFd, artifact.content, { encoding: 'utf8' });
+      fs.fsyncSync(writeFd);
+      fs.closeSync(writeFd);
+      writeFd = null;
+      readFd = fs.openSync(destination, fs.constants.O_RDONLY | noFollow);
+      const written = fs.readFileSync(readFd, 'utf8');
+      fs.closeSync(readFd);
+      readFd = null;
+      const digest = crypto.createHash('sha256').update(written, 'utf8').digest('hex');
+      if (digest !== artifact.sha256 || Buffer.byteLength(written, 'utf8') !== artifact.byte_length) {
+        throw new Error('post_write_integrity');
+      }
+    } catch (error) {
+      throw new Error(`FROZEN_CONTRACT_ARTIFACT_MATERIALIZATION_FAILED:${artifact.path}`, {
+        cause: error,
+      });
+    } finally {
+      if (writeFd != null) fs.closeSync(writeFd);
+      if (readFd != null) fs.closeSync(readFd);
+    }
+  }
 }
 
 function validateLaunchRequest(value) {
@@ -1711,6 +1816,16 @@ function createAttemptRunner({
       const workspace = await prepareVerifiedWorkspace(request.workspace_spec, {
         nodeDeps: executionContract.runtimeRequirements.node_deps === true,
       });
+      try {
+        materializeContractArtifacts(workspace.path, executionContract.contractArtifacts);
+      } catch (error) {
+        return rollbackLaunch({
+          error,
+          workspace,
+          attemptId: request.attempt_id,
+          resources: EMPTY_RUNTIME_RESOURCES,
+        });
+      }
       // F4（复审）：node_deps 失败/跳过不炸 prepare（设计明确要求），但不能
       // 因此变得不可观测——最少落一条 fleet-worker 日志，运维排查"这个
       // attempt 为什么 product-map:check 又红了"时不用先去挖 attempt 落库。

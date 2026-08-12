@@ -83,36 +83,48 @@ export async function runHarnessWatchdogOnce({ pool: dbPool = pool } = {}) {
   return { scanned, flagged, resumed, relay };
 }
 
+async function runGuardedWatchdogCycle(runOnce, dbPool) {
+  if (_isRunning) {
+    console.warn('[harness-watchdog] 上次看门狗未完成，跳过本次');
+    return false;
+  }
+  _isRunning = true;
+  try {
+    await runOnce({ pool: dbPool });
+  } catch (err) {
+    console.warn(`[harness-watchdog] loop tick failed (non-fatal): ${err.message}`);
+  } finally {
+    _isRunning = false;
+  }
+  return true;
+}
+
 /**
  * 启动独立看门狗循环（默认每 5 分钟，env CECELIA_HARNESS_WATCHDOG_INTERVAL_MS 可覆盖）。
  * @param {{ intervalMs?: number }} [opts]
  * @returns {boolean} false 表示已在运行
  */
-export function startHarnessWatchdogLoop({ intervalMs = HARNESS_WATCHDOG_INTERVAL_MS } = {}) {
+export function startHarnessWatchdogLoop({
+  intervalMs = HARNESS_WATCHDOG_INTERVAL_MS,
+  runOnce = runHarnessWatchdogOnce,
+  pool: dbPool = pool,
+} = {}) {
   if (_loopTimer) {
     console.log('[harness-watchdog] 循环已在运行，跳过重复启动');
     return false;
   }
 
-  _loopTimer = setInterval(async () => {
-    if (_isRunning) {
-      // 重入保护：上一轮 scan/resume 还没跑完（极少见，SQL 慢），跳过本轮
-      console.warn('[harness-watchdog] 上次看门狗未完成，跳过本次');
-      return;
-    }
-    _isRunning = true;
-    try {
-      await runHarnessWatchdogOnce();
-    } catch (err) {
-      // runHarnessWatchdogOnce 内部已 swallow，这里是最后兜底，绝不让异常杀掉 interval
-      console.warn(`[harness-watchdog] loop tick failed (non-fatal): ${err.message}`);
-    } finally {
-      _isRunning = false;
-    }
-  }, intervalMs);
+  _loopTimer = setInterval(
+    () => runGuardedWatchdogCycle(runOnce, dbPool),
+    intervalMs,
+  );
 
   // 不阻止进程退出
   if (_loopTimer.unref) _loopTimer.unref();
+
+  // 启动恢复不等待首个 5 分钟周期。底层 resume 使用既有 lease/CAS/staleness
+  // 守卫，多实例并发启动只会有一个实例取得恢复权。
+  void runGuardedWatchdogCycle(runOnce, dbPool);
 
   console.log(`[harness-watchdog] 独立看门狗循环已启动（间隔 ${Math.round(intervalMs / 60000)} 分钟）`);
   return true;
@@ -126,7 +138,6 @@ export function stopHarnessWatchdogLoop() {
     clearInterval(_loopTimer);
     _loopTimer = null;
   }
-  _isRunning = false;
 }
 
 export default {

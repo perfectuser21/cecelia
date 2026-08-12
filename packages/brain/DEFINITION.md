@@ -1,15 +1,19 @@
 # Brain 模块定义
 
-**版本**: 1.272.28
+**版本**: 1.272.29
 
 ## Frozen contract Runner rollout
 
 - Canonical Runner 固定为从 main `a28bdb1f` 构建的 `sha256:689b4694e3397b30eff54c8fb0ad59bc3a42c8179f9f07cfad313afc5fe7414b`；Fleet Worker 基线升级为 1.272.12。
 
-## Frozen contract test artifacts
+## Approved contract artifact transport
 
-- GAN 批准时把精确审批 SHA 下的合同测试原文与 SHA-256 摘要冻结进合同快照；Generator、Evaluator、Judge 的 TaskBundle 消费同一份不可变制品。
-- 存量在途合同从追加式 reviewer 决策日志恢复审批 SHA，再从该 SHA 一次性补齐测试制品；制品冻结后数据库触发器禁止改写。
+- Kernel 从精确 approved SHA 冻结 PRD、合同、DoD、task-plan 与 tests，并原子持久化到不可变合同资产表。
+- TaskBundle 携带路径、SHA-256、UTF-8 字节数和 source revision；Fleet Runner 在 Provider 启动前校验、物化并回读验证。
+- 合同资产与 Impact schema 确定性错误保留原错误码并一次收尾；watchdog 在 Brain 启动时立即执行受 lease/CAS 保护的恢复扫描。
+- Impact Contract 先按 schema 规范化再计算 hash，空的非 schema 字段不再制造伪版本。
+- 兼容 1.272.27 的冻结测试 TaskBundle，同时以 versioned rows + sealed manifest 作为新批准合同的唯一持久化事实。
+- Schema 地板推进到 412。
 
 ## Blue-green internal auth credential closure
 
@@ -28,7 +32,7 @@
 - 五个 Map 读面与健康度共享一致性快照、统一 envelope 和查询时状态，不再消费旧 `src/map` 实现。
 - Dashboard 的唯一 `/map` 注册展示三层业务地图、事实锚点与 revision-bound receipt。
 - Harness 的 revision-locked radius 与 Dashboard 浏览 radius 在同一路由按合同字段机械分流，前者不降级成浏览裁决。
-- Schema 地板推进到 410。
+- Schema 地板推进到 411。
 
 ## Impact Contract 不可变证据闭环（Brain 1.272.9）
 
@@ -41,7 +45,7 @@
 - PostgreSQL 冻结 Impact Contract 语义字段与 Gap 权威身份，未解决 Gap 不可改归属或删除。
 - Harness Report Runner 不再写 Journey；Feature done 与测试锚点由已认证 Brain callback 回写。
 - 生产内部写接口使用共享 credentials token；scanner、Compose、蓝绿和 staging 使用同一 SSOT。
-- Schema 地板为 410。
+- Schema 地板为 411。
 
 ## F1 Impact Contract 系统（Brain 1.272.1）
 
