@@ -469,7 +469,8 @@ describe('selfcheck schema version', () => {
     // 405 = rebuildable Universal Map Projection core。
     // 406 = Harness attempt account_exhausted callback control class；
     // 407 = explicit Universal Map repo adapters（406 已由 account_exhausted migration 占用）。
-    // 408/409 = Impact Contract + Gap Ledger；410 = revision-indexed immutable graph snapshots。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('410');
+    // 408/409 = Impact Contract + Gap Ledger；410 = revision-indexed immutable graph snapshots；
+    // 411 = reviewer-approved SHA 下的冻结合同测试制品。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('411');
   });
 });

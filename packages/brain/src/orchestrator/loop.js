@@ -25,6 +25,7 @@ import { collectGroundTruth as defaultCollect } from './ground-truth.js';
 import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConflictError } from './decision-log.js';
 import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
 import { materializeApprovedContract } from './contract-store.js';
+import { collectFrozenContractArtifacts } from './frozen-contract-artifacts.js';
 import { insertCaseFileRow } from './case-file-store.js';
 import { evaluateValidationIdentityPolicy } from './validation-identity-policy.js';
 import {
@@ -137,10 +138,23 @@ function frozenContractArtifacts(deps, observed, groundTruthPaths, approvedSha) 
     }
   }
   const [prdContent, contractDraft, contractDod] = contents;
+  let frozenArtifacts;
+  try {
+    frozenArtifacts = collectFrozenContractArtifacts({
+      approvedSha,
+      sprintDir,
+      repo,
+      listGitFiles: deps.listGitFiles,
+      readGitFile: deps.readGitFile,
+    });
+  } catch {
+    return { missing: [`${sprintDir}/tests/`] };
+  }
   return {
     missing: [],
     prdContent,
     contractContent: `${contractDraft}\n\n${contractDod}`,
+    frozenArtifacts,
   };
 }
 
@@ -885,6 +899,8 @@ export async function runLoop(
           branch: observed.proposeBranch,
           prdContent: artifacts.prdContent,
           contractContent: artifacts.contractContent,
+          approvedSha,
+          frozenArtifacts: artifacts.frozenArtifacts,
           approvedAt: now(),
         });
         await beat();
@@ -1167,6 +1183,8 @@ export async function runLoop(
           branch: observed.proposeBranch,
           prdContent: artifacts.prdContent,
           contractContent: artifacts.contractContent,
+          approvedSha,
+          frozenArtifacts: artifacts.frozenArtifacts,
           approvedAt: now(),
         });
         await recordForcedApprovalSideEffects(approvedSha);

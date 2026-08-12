@@ -38,6 +38,10 @@ grep -Fq 'terminate_evaluator_provider_processes' "$ENTRYPOINT" || {
   echo 'runner does not terminate Provider descendants before trusted assertions' >&2
   exit 1
 }
+if [[ "$(grep -c 'materialize-frozen-contract-artifacts.cjs' "$ENTRYPOINT")" -lt 2 ]]; then
+  echo 'runner does not verify frozen contract tests both before and after Provider execution' >&2
+  exit 1
+fi
 grep -Fq 'pkill -KILL -u cecelia' "$ENTRYPOINT" || {
   echo 'runner does not sweep escaped Provider UID processes' >&2
   exit 1

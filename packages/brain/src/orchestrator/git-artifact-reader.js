@@ -99,4 +99,18 @@ export function readGitArtifact(commitSha, filePath, {
   });
 }
 
+/** List immutable paths below a repository-relative prefix at an exact commit. */
+export function listGitArtifacts(commitSha, prefix, {
+  cwd = process.cwd(),
+  repo = null,
+  remoteUrlForRepo = defaultRemoteUrlForRepo,
+} = {}) {
+  assertRepositoryRelative(prefix);
+  ensureGitCommit(commitSha, { cwd, repo, remoteUrlForRepo });
+  return execFileSync('git', ['ls-tree', '-r', '--name-only', commitSha, '--', prefix], {
+    cwd,
+    ...GIT_OPTIONS,
+  }).split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
 export const __test__ = { COMMIT_SHA, assertRepositoryRelative };

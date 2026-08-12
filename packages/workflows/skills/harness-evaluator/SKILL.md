@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.36.1
+version: 1.36.2
 created: 2026-05-06
-updated: 2026-08-11
+updated: 2026-08-12
 changelog:
+  - 1.36.2: 冻结合同测试进入人形验收——Runner 在 Evaluator Provider 前要求 PR 内每份 frozen_contract_test 与 TaskBundle approved SHA/路径/原文/SHA-256 完全一致，Provider 后再次复验；Evaluator 必须把这些现成测试当作批准 oracle，缺失或漂移直接 FAIL，禁止自行生成替代测试
   - 1.36.1: required assertions 移出模型执行边界——Evaluator 只完成常规 E2E 并返回结果；Provider 退出后由镜像内 Harness Runner 在 exact PR head 上执行 Kernel 注入命令、计算完整输出摘要并覆盖 checks，任一失败强制 FAIL
   - 1.36.0: Impact Contract 可信断言回执——TaskBundle 含 `required_assertions` 时逐项执行精确命令，HarnessResult `checks` 必须返回 assertion_id、规范 argv、退出码、输出 SHA-256、场景证据和起止时间；缺项或命令漂移直接 FAIL，供已认证 callback 写 append-only receipt
   - 1.35.2: 精确 PR 验收证据桥——TaskBundle inputs 含 `required_command_evidence` 时逐条原样执行，任何失败都判 FAIL；每条命令必须以逐字一致的 command、真实 exit_code 与非空 log_tail 单独进入 checks，供 Judge 机械逐项对账，禁止只在 summary 声称已执行
@@ -150,6 +151,10 @@ RESULT_FILE="${BRAIN_RESULT_FILE:-$WORKSPACE/.brain-result.json}"
 ### TaskBundle `required_command_evidence` 逐条证据合同
 
 当 `task_bundle.inputs.required_command_evidence` 是数组时，按数组顺序逐条执行，任何一条非零退出都必须整体 FAIL。每条命令单独写入 checks，且 `command 字段必须与声明字符串逐字一致`，同时记录真实 `exit_code` 和非空 `log_tail`。禁止把多条声明合并成摘要、改写命令字符串，或只在 summary 声称执行过；Judge 会逐条机械对账。
+
+### TaskBundle 冻结合同测试
+
+`task_bundle.inputs.artifacts[]` 中的 `frozen_contract_test` 是 GAN 在精确审批 SHA 下冻结的测试原文，不是 Generator 自写证据。Runner 已在 Provider 启动前逐项核对 `contract.approved_sha == source_sha`、内容 SHA-256 与 PR 工作区文件，并在 Provider 退出后复验。Evaluator 必须读取并执行这些现成测试，把失败与真实行为验收一起纳入 verdict；任一文件缺失、内容漂移或摘要不一致都必须 FAIL，禁止生成近似测试替代批准 oracle。
 
 ### SEGMENT_EVAL 段级轻验收（segmented 档位 — harness gear 一体化 60a80ddc 决策5）
 

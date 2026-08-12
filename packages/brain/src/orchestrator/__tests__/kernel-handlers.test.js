@@ -92,6 +92,13 @@ describe('kernel deterministic handlers', () => {
             contract_content: '## E2E 验收\nembedded',
             prd_content: '## Golden Path\n1. embedded',
           },
+          artifacts: [{
+            type: 'frozen_contract_test',
+            path: 'sprints/x/tests/red.test.js',
+            content: 'throw new Error("RED");',
+            sha256: 'a'.repeat(64),
+            source_sha: 'b'.repeat(40),
+          }],
         },
       },
     });
@@ -102,6 +109,7 @@ describe('kernel deterministic handlers', () => {
       worktreePath: undefined,
       contractText: '## E2E 验收\nembedded',
       prdText: '## Golden Path\n1. embedded',
+      frozenContractArtifacts: fleetContext.bundle.inputs.artifacts,
     }), expect.any(Object));
   });
 

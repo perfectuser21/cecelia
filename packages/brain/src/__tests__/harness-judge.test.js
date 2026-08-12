@@ -393,6 +393,64 @@ describe('runJudgeGate — 三权分立裁判门', () => {
       expect.any(Object),
     );
   });
+
+  it('冻结合同测试摘要不匹配时在调用 AI 裁判前 fail-closed', async () => {
+    const judgeFn = vi.fn();
+    const res = await runJudgeGate(
+      {
+        ...baseCtx,
+        agentVerdict: 'PASS',
+        stageFacts: validStageFacts,
+        frozenContractArtifacts: [{
+          type: 'frozen_contract_test',
+          path: 'sprints/x/tests/red.test.js',
+          content: 'FROZEN_RED_ORACLE',
+          sha256: '0'.repeat(64),
+          source_sha: 'b'.repeat(40),
+        }],
+      },
+      { judgeFn, collectEvidence: fakeEvidence(), ...noopWrite },
+    );
+
+    expect(res).toMatchObject({
+      verdict: 'FAIL',
+      judged: true,
+      failure_class: 'evidence_invalid',
+    });
+    expect(res.feedback).toContain('冻结合同测试证据');
+    expect(judgeFn).not.toHaveBeenCalled();
+  });
+
+  it('合法冻结合同测试作为独立验收基准透传给 AI 裁判', async () => {
+    const artifact = {
+      type: 'frozen_contract_test',
+      path: 'sprints/x/tests/red.test.js',
+      content: 'FROZEN_RED_ORACLE',
+      sha256: 'bd43f4e711b5800e5c24440402d8b3c860a66cce322d0af07b893467aedee117',
+      source_sha: 'b'.repeat(40),
+    };
+    const judgeFn = vi.fn().mockResolvedValue({
+      verdict: 'PASS',
+      coverage: [{ step: 'step A', passed: true }, { step: 'step B', passed: true }],
+      feedback: null,
+    });
+
+    const res = await runJudgeGate(
+      {
+        ...baseCtx,
+        agentVerdict: 'PASS',
+        stageFacts: validStageFacts,
+        frozenContractArtifacts: [artifact],
+      },
+      { judgeFn, collectEvidence: fakeEvidence(), ...noopWrite },
+    );
+
+    expect(res).toMatchObject({ verdict: 'PASS', judged: true });
+    expect(judgeFn).toHaveBeenCalledWith(
+      expect.objectContaining({ frozenContractArtifacts: [artifact] }),
+      expect.any(Object),
+    );
+  });
 });
 
 describe('validateCoverage — 代码判 coverage 覆盖（不信裁判文字）', () => {
