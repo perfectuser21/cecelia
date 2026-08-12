@@ -100,7 +100,7 @@ export async function processExecutionCallback(data, pool) {
       console.warn(`[callback-processor] Task ${task_id} completed with empty findings/result`);
     }
 
-    const prNumber = extractPrNumber(pr_url);
+    const prNumber = extractPrNumber(resolvedPrUrl);
 
     const isQuotaExhausted = newStatus === 'quota_exhausted';
     const isTerminal = TERMINAL_CALLBACK_STATUSES.has(newStatus);
@@ -250,7 +250,7 @@ export async function processExecutionCallback(data, pool) {
     notifyTaskCompleted({ task_id, title: `Task ${task_id}`, run_id, duration_ms }).catch(err =>
       console.error('[callback-processor] notifyTaskCompleted error:', err.message)
     );
-    publishTaskCompleted(task_id, run_id, { pr_url, duration_ms, iterations });
+    publishTaskCompleted(task_id, run_id, { pr_url: resolvedPrUrl, duration_ms, iterations });
 
     // Thalamus: task completed
     try {
@@ -305,12 +305,12 @@ export async function processExecutionCallback(data, pool) {
     );
 
     // 5c11. 串行调度：dev task 完成 → 解锁下一个 blocked 串行 task（共享后处理管道）
-    await serialUnlockNext(task_id, result, pr_url, pool).catch(err =>
+    await serialUnlockNext(task_id, result, resolvedPrUrl, pool).catch(err =>
       console.error(`[callback-processor] serialUnlockNext 失败 (non-fatal): ${err.message}`)
     );
 
     // T2. harness merged 终态 → 累积 FR 冻结（共享后处理管道，dbOnly）
-    await promoteRegressionOnHarnessMerged(task_id, result, pr_url, pool).catch(err =>
+    await promoteRegressionOnHarnessMerged(task_id, result, resolvedPrUrl, pool).catch(err =>
       console.error(`[callback-processor] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${err.message}`)
     );
 

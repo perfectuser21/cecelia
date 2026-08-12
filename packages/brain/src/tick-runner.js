@@ -933,6 +933,21 @@ async function executeTick() {
     console.error('[tick] PR shepherd failed (non-fatal):', shepherdErr.message);
   }
 
+  // 0.14b. Missed-webhook 对账：扫描 completed+pr_status=open+pr_merged_at=null 任务，读 GitHub 外部真相补账
+  try {
+    const { reconcileTerminalOpenPRs } = await import('./shepherd.js');
+    const reconcileResult = await reconcileTerminalOpenPRs(pool);
+    if (reconcileResult.reconciled > 0) {
+      actionsTaken.push({
+        action: 'missed_webhook_reconcile',
+        processed: reconcileResult.processed,
+        reconciled: reconcileResult.reconciled,
+      });
+    }
+  } catch (reconcileErr) {
+    console.error('[tick] missed-webhook reconcile failed (non-fatal):', reconcileErr.message);
+  }
+
   // 0.15. Harness Watcher: retired in Sprint 1
   // sub-graph harness-task.graph poll_ci/merge_pr nodes 取代了 harness_ci_watch 轮询逻辑。
   // 老数据派的 harness_ci_watch task 由 executor.js _RETIRED_HARNESS_TYPES 标 terminal。

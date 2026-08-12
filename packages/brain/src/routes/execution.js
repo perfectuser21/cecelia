@@ -243,7 +243,7 @@ router.post('/execution-callback', async (req, res) => {
         console.warn(`[execution-callback] Task ${task_id} completed with empty findings/result`);
       }
 
-      const prNumber = extractPrNumber(pr_url);
+      const prNumber = extractPrNumber(resolvedPrUrl);
 
       const isQuotaExhausted = newStatus === 'quota_exhausted';
       const { errorMessage, blockedDetail } = buildFailureFields(newStatus, result, stderr, exit_code, task_id);
@@ -560,7 +560,7 @@ router.post('/execution-callback', async (req, res) => {
       }).catch(err => console.error('[routes] silent error:', err));
 
       // Publish WebSocket event: task completed
-      publishTaskCompleted(task_id, run_id, { pr_url, duration_ms, iterations });
+      publishTaskCompleted(task_id, run_id, { pr_url: resolvedPrUrl, duration_ms, iterations });
 
       // Thalamus: Analyze task completion event
       try {
@@ -1550,12 +1550,12 @@ ${resultStr.substring(0, 2000)}
       );
 
       // 5c11. 串行调度: dev task 完成 → 解锁下一个 blocked 串行 task（共享后处理管道）
-      await serialUnlockNext(task_id, result, pr_url, pool).catch(err =>
+      await serialUnlockNext(task_id, result, resolvedPrUrl, pool).catch(err =>
         console.error(`[execution-callback] serialUnlockNext 失败 (non-fatal): ${err.message}`)
       );
 
       // T2. harness merged 终态 → 累积 FR 冻结（共享后处理管道，dbOnly）
-      await promoteRegressionOnHarnessMerged(task_id, result, pr_url, pool).catch(err =>
+      await promoteRegressionOnHarnessMerged(task_id, result, resolvedPrUrl, pool).catch(err =>
         console.error(`[execution-callback] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${err.message}`)
       );
 
