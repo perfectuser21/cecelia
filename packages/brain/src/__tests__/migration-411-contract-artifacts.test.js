@@ -17,7 +17,9 @@ describe('migration 411 initiative contract artifacts', () => {
     expect(sql).toMatch(/source_revision\s+(?:CHAR\(40\)|TEXT)\s+NOT NULL/i);
     expect(sql).toMatch(/PRIMARY KEY\s*\(contract_id,\s*path\)/i);
     expect(sql).toMatch(/REFERENCES initiative_contracts\s*\(id\)/i);
+    expect(sql).toMatch(/REFERENCES initiative_contracts\s*\(id\)\s+ON DELETE RESTRICT/i);
     expect(sql).toMatch(/CHECK\s*\(byte_length\s*>=\s*0\)/i);
+    expect(sql).toMatch(/BEFORE UPDATE OR DELETE ON initiative_contract_artifacts/i);
     expect(sql).toMatch(/VALUES\s*\(\s*'411'/i);
   });
 
