@@ -298,6 +298,12 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
     common.contract = observed.contract?.row ?? null;
+    if (Array.isArray(observed.contract?.artifacts)) {
+      if (spec.role === 'generator' && observed.contract.artifacts.length === 0) {
+        throw new Error('FROZEN_CONTRACT_ARTIFACTS_MISSING:approved_contract');
+      }
+      common.contract_artifacts = observed.contract.artifacts.map((artifact) => ({ ...artifact }));
+    }
     common.contract_branch = observed.contract?.row?.branch
       ?? observed.contract?.row?.propose_branch
       ?? null;

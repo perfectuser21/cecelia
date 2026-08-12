@@ -1,6 +1,12 @@
 # Brain 模块定义
 
-**版本**: 1.272.25
+**版本**: 1.272.26
+
+## Approved contract artifact transport
+
+- Kernel 从精确 approved SHA 冻结 PRD、合同、DoD、task-plan 与 tests，并原子持久化到不可变合同资产表。
+- TaskBundle 携带路径、SHA-256、UTF-8 字节数和 source revision；Fleet Runner 在 Provider 启动前校验、物化并回读验证。
+- Schema 地板推进到 411。
 
 ## Blue-green internal auth credential closure
 
@@ -19,7 +25,7 @@
 - 五个 Map 读面与健康度共享一致性快照、统一 envelope 和查询时状态，不再消费旧 `src/map` 实现。
 - Dashboard 的唯一 `/map` 注册展示三层业务地图、事实锚点与 revision-bound receipt。
 - Harness 的 revision-locked radius 与 Dashboard 浏览 radius 在同一路由按合同字段机械分流，前者不降级成浏览裁决。
-- Schema 地板推进到 410。
+- Schema 地板推进到 411。
 
 ## Impact Contract 不可变证据闭环（Brain 1.272.9）
 
@@ -32,7 +38,7 @@
 - PostgreSQL 冻结 Impact Contract 语义字段与 Gap 权威身份，未解决 Gap 不可改归属或删除。
 - Harness Report Runner 不再写 Journey；Feature done 与测试锚点由已认证 Brain callback 回写。
 - 生产内部写接口使用共享 credentials token；scanner、Compose、蓝绿和 staging 使用同一 SSOT。
-- Schema 地板为 410。
+- Schema 地板为 411。
 
 ## F1 Impact Contract 系统（Brain 1.272.1）
 

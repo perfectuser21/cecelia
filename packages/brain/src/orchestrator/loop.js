@@ -25,6 +25,7 @@ import { collectGroundTruth as defaultCollect } from './ground-truth.js';
 import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConflictError } from './decision-log.js';
 import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
 import { materializeApprovedContract } from './contract-store.js';
+import { collectApprovedContractArtifacts } from './contract-artifacts.js';
 import { insertCaseFileRow } from './case-file-store.js';
 import { evaluateValidationIdentityPolicy } from './validation-identity-policy.js';
 import {
@@ -127,6 +128,23 @@ function frozenContractArtifacts(deps, observed, groundTruthPaths, approvedSha) 
   const repo = parseBaseRepo(requestedRepo);
   if (requestedRepo != null && requestedRepo !== '' && repo == null) {
     return { missing: paths };
+  }
+  if (typeof deps.listGitFiles === 'function') {
+    try {
+      return {
+        missing: [],
+        ...collectApprovedContractArtifacts({
+          sourceRevision: approvedSha,
+          sprintDir,
+          prdPath,
+          repo,
+          readGitFile: deps.readGitFile,
+          listGitFiles: deps.listGitFiles,
+        }),
+      };
+    } catch (error) {
+      return { missing: [boundedText(error.message)] };
+    }
   }
   const contents = [];
   for (const filePath of paths) {
@@ -885,6 +903,7 @@ export async function runLoop(
           branch: observed.proposeBranch,
           prdContent: artifacts.prdContent,
           contractContent: artifacts.contractContent,
+          ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
           approvedAt: now(),
         });
         await beat();
@@ -1167,6 +1186,7 @@ export async function runLoop(
           branch: observed.proposeBranch,
           prdContent: artifacts.prdContent,
           contractContent: artifacts.contractContent,
+          ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
           approvedAt: now(),
         });
         await recordForcedApprovalSideEffects(approvedSha);

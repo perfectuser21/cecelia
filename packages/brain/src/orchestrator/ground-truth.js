@@ -252,11 +252,25 @@ export async function collectGroundTruth(deps, opts) {
   if (!run) throw new Error(`collectGroundTruth: initiative_runs 无此 run 行: ${runId}`);
 
   let contractRow = null;
+  let contractArtifacts = [];
   if (run.contract_id) {
     const cRes = await pool.query('SELECT * FROM initiative_contracts WHERE id = $1', [run.contract_id]);
     contractRow = cRes.rows[0] ?? null;
+    const artifactRes = await pool.query(
+      `SELECT path, content, sha256, byte_length, source_revision
+         FROM initiative_contract_artifacts
+        WHERE contract_id = $1
+        ORDER BY path`,
+      [run.contract_id],
+    );
+    contractArtifacts = artifactRes.rows;
   }
-  const contract = { approved: contractRow?.status === 'approved', id: run.contract_id ?? null, row: contractRow };
+  const contract = {
+    approved: contractRow?.status === 'approved',
+    id: run.contract_id ?? null,
+    row: contractRow,
+    artifacts: contractArtifacts,
+  };
 
   const tRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
   const task = tRes.rows[0] ?? null;

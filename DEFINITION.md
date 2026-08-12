@@ -8,11 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.25
+**Brain 版本**: 1.272.26
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.26 — approved contract artifact transport
+
+- Kernel 从精确 approved SHA 冻结完整合同测试资产，通过不可变数据库行进入 TaskBundle。
+- Fleet Runner 在 Provider 启动前验证路径、摘要、长度与 source revision，物化后回读校验。
+- Schema 地板推进到 411。
 
 ## Brain 1.272.25 — Impact Gate fresh 证据规范化
 
@@ -114,7 +120,7 @@
 - Map/Impact/Journey 写入口使用共享 internal token；生产 Compose、蓝绿 canary、staging 与跨 checkout scanner 读取同一宿主 credentials SSOT。
 - Capability Mapper 在 Runner 只产 manifest artifact，拍板后的提交/激活统一走读取 credentials SSOT 的受信宿主 adapter。
 - 扫描只允许 clean main/exact SHA；批末复核 checkout 与四类 header revision，同 SHA 每 10 分钟保鲜。
-- Schema 地板推进到 410。
+- Schema 地板推进到 411。
 
 ---
 
