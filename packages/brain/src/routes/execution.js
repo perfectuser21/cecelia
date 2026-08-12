@@ -550,7 +550,7 @@ router.post('/execution-callback', async (req, res) => {
             title: taskRow.rows[0].title,
             task_type: taskRow.rows[0].task_type,
             duration_ms,
-            pr_url,
+            pr_url: resolvedPrUrl,  // Fix D: use effectivePrUrl, not raw pr_url
             result: taskFindings
           });
           // 通知后删除订阅记录
@@ -847,7 +847,7 @@ router.post('/execution-callback', async (req, res) => {
               try {
                 const { diagnoseCiFailure } = await import('../ci-diagnostics.js');
                 const ciDiagnosis = await diagnoseCiFailure(
-                  { prUrl: pr_url, taskId: task_id },
+                  { prUrl: resolvedPrUrl, taskId: task_id },  // Fix D: use effectivePrUrl
                   {} // 使用默认 execFn（真实 gh 命令）
                 );
                 if (ciDiagnosis) {
@@ -2764,7 +2764,7 @@ ${resultStr.substring(0, 2000)}
           metadata: {
             run_id,
             duration_ms,
-            pr_url: pr_url || null
+            pr_url: resolvedPrUrl || null  // Fix D: use effectivePrUrl
           }
         });
 

@@ -8,11 +8,19 @@
 
 
 
-**Brain 版本**: 1.272.21
+**Brain 版本**: 1.272.22
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.22 — authority 安全与 Tick 活性四修（P0 hotfix）
+
+- **[Fix A]** `shepherd.js`：`checkPrStatus`/`executeMerge`/`reconcileTerminalOpenPRs` 全部从 `execSync` 迁移到 `spawnSync` args array，pr_url 先经 `isValidGithubPrUrl` 校验，非法 URL fail closed（errors++ 跳过）。
+- **[Fix B]** `reconcileTerminalOpenPRs`：增加模块级低频 gate（最短 5 分钟间隔）、非重入 guard、严格总预算（默认 25s）、小批约束（LIMIT 5）。
+- **[Fix C]** `resolveCanonicalPrUrl`：逐项独立校验（explicit → tasks.pr_url → payload.pr_url → payload.existing_pr_url），返回 trimmed 值；`maybeMarkCompletedNoPr` 同步修正，invalid 高优先级不再遮蔽合法低优先级。
+- **[Fix D]** `routes/execution.js`：generic HTTP callback 确定 `resolvedPrUrl` 后，CI diagnosis 与主动通知均使用 `resolvedPrUrl`，禁止再读 raw `pr_url`。
+- **[Fix E]** `reconcileTerminalOpenPRs`：UPDATE rowCount=0（幂等跳过）时不计入 `reconciled`。
 
 ## Brain 1.272.21 — CI 夹具与 resolveCanonicalPrUrl 新 SELECT 对齐
 

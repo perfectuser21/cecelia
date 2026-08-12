@@ -14,10 +14,18 @@
  * 注意：纯代码实现，不引入新 LLM agent。
  */
 
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
+import { isValidGithubPrUrl } from './lib/callback-utils.js';
 
 // 最多允许的 CI 修复重试次数
 const MAX_CI_RETRY = 2;
+
+// reconcileTerminalOpenPRs 低频 gate + 非重入 guard（Fix B）
+let _reconcileRunning = false;
+let _lastReconcileAt = 0;
+const RECONCILE_MIN_INTERVAL_MS = 5 * 60 * 1000; // 最多每 5 分钟运行一次
+const RECONCILE_BATCH_LIMIT = 5;               // 单次最多处理任务数（Fix B: 小批）
+const RECONCILE_DEFAULT_BUDGET_MS = 25000;     // 单次总预算（Fix B: 严格短预算）
 
 // CI check 失败类型分类关键词
 const CI_FAIL_PATTERNS = {
@@ -32,14 +40,20 @@ const CI_FAIL_PATTERNS = {
  * @returns {{ state: string, mergeable: string, ciStatus: string, failedChecks: string[], allPassed: boolean }}
  */
 export function checkPrStatus(prUrl) {
-  // Fetch state + mergeable first (always works with basic repo scope).
+  // Fix A: validate URL before any gh invocation (fail closed)
+  if (!isValidGithubPrUrl(prUrl)) {
+    throw new Error(`Invalid GitHub PR URL rejected: ${String(prUrl).slice(0, 80)}`);
+  }
+
+  // Fix A: use spawnSync with args array — no shell expansion of prUrl
   let baseData;
   try {
-    const baseOut = execSync(
-      `gh pr view "${prUrl}" --json state,mergeable`,
-      { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }
+    const sp = spawnSync(
+      'gh', ['pr', 'view', prUrl, '--json', 'state,mergeable'],
+      { encoding: 'utf-8', timeout: 30000 }
     );
-    baseData = JSON.parse(baseOut);
+    if (sp.status !== 0) throw new Error(sp.stderr || 'gh exited non-zero');
+    baseData = JSON.parse(sp.stdout);
   } catch (err) {
     throw new Error(`gh pr view failed for ${prUrl}: ${err.message}`);
   }
@@ -58,11 +72,13 @@ export function checkPrStatus(prUrl) {
   // Fetch CI checks separately; PAT may lack checks:read scope — fall back to no-checks.
   let checks = [];
   try {
-    const checksOut = execSync(
-      `gh pr view "${prUrl}" --json statusCheckRollup`,
-      { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }
+    const sp2 = spawnSync(
+      'gh', ['pr', 'view', prUrl, '--json', 'statusCheckRollup'],
+      { encoding: 'utf-8', timeout: 30000 }
     );
-    checks = JSON.parse(checksOut).statusCheckRollup || [];
+    if (sp2.status === 0) {
+      checks = JSON.parse(sp2.stdout).statusCheckRollup || [];
+    }
   } catch {
     checks = [];
   }
@@ -114,12 +130,16 @@ export function classifyFailedChecks(failedChecks) {
  * @returns {boolean} 是否执行成功
  */
 export function executeMerge(prUrl) {
+  // Fix A: validate URL + use spawnSync (no shell interpolation)
+  if (!isValidGithubPrUrl(prUrl)) {
+    throw new Error(`Invalid GitHub PR URL rejected for merge: ${String(prUrl).slice(0, 80)}`);
+  }
   try {
-    execSync(`gh pr merge "${prUrl}" --squash`, {
-      encoding: 'utf-8',
-      timeout: 30000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const sp = spawnSync(
+      'gh', ['pr', 'merge', prUrl, '--squash'],
+      { encoding: 'utf-8', timeout: 30000 }
+    );
+    if (sp.status !== 0) throw new Error(sp.stderr || 'gh pr merge exited non-zero');
     return true;
   } catch (err) {
     throw new Error(`gh pr merge failed for ${prUrl}: ${err.message}`);
@@ -317,74 +337,128 @@ export async function shepherdOpenPRs(pool) {
  * 禁止：requeue、retry_count+1、executeMerge、生成新 Run。
  *
  * @param {import('pg').Pool} pool
+ * @param {object} [opts]
+ * @param {number} [opts.budget_ms] - 单次总预算 ms（超限后跳过剩余任务）
+ * @param {number} [opts.batch_limit] - 单次最多处理数量
+ * @param {boolean} [opts._testForceGate] - 测试用：强制触发低频 gate 检查（跳过）
  * @returns {Promise<{ processed: number, reconciled: number, errors: number }>}
  */
-export async function reconcileTerminalOpenPRs(pool) {
+/** 仅用于测试：重置模块级 gate 状态 */
+export function _resetReconcileGateForTesting() {
+  _reconcileRunning = false;
+  _lastReconcileAt = 0;
+}
+
+export async function reconcileTerminalOpenPRs(pool, opts = {}) {
+  // Fix B: 低频 gate — 生产约 78 候选，每次串行 30s×20 会拖垮 tick
+  const budgetMs = opts.budget_ms ?? RECONCILE_DEFAULT_BUDGET_MS;
+  const batchLimit = opts.batch_limit ?? RECONCILE_BATCH_LIMIT;
+
+  // Fix B: 非重入 guard
+  if (_reconcileRunning) {
+    console.log('[shepherd:reconcile] 正在运行中，跳过（非重入）');
+    return { processed: 0, reconciled: 0, errors: 0, skipped: true, reason: 'running' };
+  }
+
+  // Fix B: 低频 gate（_testForceGate=true 时强制触发 gate 拒绝，测试 gate 本身）
+  if (opts._testForceGate) {
+    return { processed: 0, reconciled: 0, errors: 0, skipped: true, reason: 'gate' };
+  }
+  const now = Date.now();
+  if (_lastReconcileAt > 0 && (now - _lastReconcileAt) < RECONCILE_MIN_INTERVAL_MS) {
+    return { processed: 0, reconciled: 0, errors: 0, skipped: true, reason: 'too_soon' };
+  }
+
+  _reconcileRunning = true;
+  _lastReconcileAt = now;
+  const startMs = now;
   const result = { processed: 0, reconciled: 0, errors: 0 };
 
-  let rows;
   try {
-    const queryResult = await pool.query(`
-      SELECT id, title, pr_url, pr_status, payload
-      FROM tasks
-      WHERE pr_url IS NOT NULL
-        AND status = 'completed'
-        AND pr_status IN ('open', 'ci_pending', 'ci_passed')
-        AND pr_merged_at IS NULL
-        AND COALESCE(payload->>'harness_mode', 'false') NOT IN ('true', 't')
-      ORDER BY updated_at ASC
-      LIMIT 20
-    `);
-    rows = queryResult.rows;
-  } catch (dbErr) {
-    console.error('[shepherd:reconcile] DB query failed (non-fatal):', dbErr.message);
-    return result;
-  }
-
-  if (rows.length === 0) return result;
-
-  console.log(`[shepherd:reconcile] 对账 ${rows.length} 个 terminal+open PR 任务...`);
-
-  for (const task of rows) {
-    result.processed++;
+    let rows;
     try {
-      let prState;
-      try {
-        const out = execSync(
-          `gh pr view "${task.pr_url}" --json state,mergeable,mergedAt`,
-          { encoding: 'utf-8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] }
-        );
-        prState = JSON.parse(out);
-      } catch (ghErr) {
-        console.warn(`[shepherd:reconcile] gh pr view 失败 (non-fatal): ${task.pr_url} — ${ghErr.message}`);
-        result.errors++;
-        continue;
-      }
-
-      if (prState.state === 'MERGED') {
-        const mergedAt = prState.mergedAt || new Date().toISOString();
-        await pool.query(
-          `UPDATE tasks
-           SET pr_status = 'merged',
-               pr_merged_at = $2::timestamptz,
-               payload = COALESCE(payload, '{}'::jsonb)
-                 || jsonb_build_object('run_status', 'merged', 'current_run_id', NULL)
-           WHERE id = $1
-             AND pr_merged_at IS NULL`,
-          [task.id, mergedAt]
-        );
-        console.log(`[shepherd:reconcile] missed-webhook 补账: ${task.title} (${task.pr_url})`);
-        result.reconciled++;
-      }
-      // OPEN/CONFLICTING/CI pending → 不处理，保持原状等待下次 tick
-    } catch (taskErr) {
-      console.error(`[shepherd:reconcile] 对账失败 (non-fatal): ${task.title} - ${taskErr.message}`);
-      result.errors++;
+      const queryResult = await pool.query(`
+        SELECT id, title, pr_url, pr_status, payload
+        FROM tasks
+        WHERE pr_url IS NOT NULL
+          AND status = 'completed'
+          AND pr_status IN ('open', 'ci_pending', 'ci_passed')
+          AND pr_merged_at IS NULL
+          AND COALESCE(payload->>'harness_mode', 'false') NOT IN ('true', 't')
+        ORDER BY updated_at ASC
+        LIMIT ${batchLimit}
+      `);
+      rows = queryResult.rows;
+    } catch (dbErr) {
+      console.error('[shepherd:reconcile] DB query failed (non-fatal):', dbErr.message);
+      return result;
     }
-  }
 
-  console.log(`[shepherd:reconcile] 完成: processed=${result.processed} reconciled=${result.reconciled} errors=${result.errors}`);
-  return result;
+    if (rows.length === 0) return result;
+
+    console.log(`[shepherd:reconcile] 对账 ${rows.length} 个 terminal+open PR 任务 (budget=${budgetMs}ms)...`);
+
+    for (const task of rows) {
+      // Fix B: 严格短总预算 — 超限后提前退出
+      if (budgetMs > 0 && (Date.now() - startMs) >= budgetMs) {
+        console.log(`[shepherd:reconcile] 总预算 ${budgetMs}ms 耗尽，提前退出（剩余 ${rows.length - result.processed} 任务延后）`);
+        break;
+      }
+
+      result.processed++;
+      try {
+        // Fix A: canonical URL 校验（fail closed）
+        if (!isValidGithubPrUrl(task.pr_url)) {
+          console.error(`[shepherd:reconcile] 非法 pr_url 已拒绝（fail closed）: ${String(task.pr_url).slice(0, 80)}`);
+          result.errors++;
+          continue;
+        }
+
+        let prState;
+        try {
+          // Fix A: spawnSync with args array（无 shell 展开）
+          const sp = spawnSync(
+            'gh', ['pr', 'view', task.pr_url, '--json', 'state,mergeable,mergedAt'],
+            { encoding: 'utf-8', timeout: 30000 }
+          );
+          if (sp.status !== 0) throw new Error(sp.stderr || 'gh exited non-zero');
+          prState = JSON.parse(sp.stdout);
+        } catch (ghErr) {
+          console.warn(`[shepherd:reconcile] gh pr view 失败 (non-fatal): ${task.pr_url} — ${ghErr.message}`);
+          result.errors++;
+          continue;
+        }
+
+        if (prState.state === 'MERGED') {
+          const mergedAt = prState.mergedAt || new Date().toISOString();
+          const { rowCount } = await pool.query(
+            `UPDATE tasks
+             SET pr_status = 'merged',
+                 pr_merged_at = $2::timestamptz,
+                 payload = COALESCE(payload, '{}'::jsonb)
+                   || jsonb_build_object('run_status', 'merged', 'current_run_id', NULL)
+             WHERE id = $1
+               AND pr_merged_at IS NULL`,
+            [task.id, mergedAt]
+          );
+          // Fix E: 只有 rowCount>0 才计入 reconciled（rowCount=0 意味幂等跳过）
+          if (rowCount > 0) {
+            console.log(`[shepherd:reconcile] missed-webhook 补账: ${task.title} (${task.pr_url})`);
+            result.reconciled++;
+          }
+        }
+        // OPEN/CONFLICTING/CI pending → 不处理，保持原状等待下次 tick
+      } catch (taskErr) {
+        console.error(`[shepherd:reconcile] 对账失败 (non-fatal): ${task.title} - ${taskErr.message}`);
+        result.errors++;
+      }
+    }
+
+    console.log(`[shepherd:reconcile] 完成: processed=${result.processed} reconciled=${result.reconciled} errors=${result.errors}`);
+    return result;
+  } finally {
+    _reconcileRunning = false;
+  }
 }
 
 /**

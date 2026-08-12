@@ -8,46 +8,47 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('child_process', () => ({
+  spawnSync: vi.fn(),
   execSync: vi.fn(),
   spawn: vi.fn(),
 }));
 
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { checkPrStatus } from '../shepherd.js';
 
 describe('checkPrStatus — 无 CI check 分类', () => {
-  beforeEach(() => vi.mocked(execSync).mockReset());
+  beforeEach(() => vi.mocked(spawnSync).mockReset());
 
   it('0 check + OPEN + MERGEABLE → ci_no_checks（不是 ci_pending）', () => {
-    vi.mocked(execSync).mockReturnValue(JSON.stringify({
+    vi.mocked(spawnSync).mockReturnValue({ status: 0, stdout: JSON.stringify({
       state: 'OPEN', mergeable: 'MERGEABLE', statusCheckRollup: [],
-    }));
+    }), stderr: '' });
     const r = checkPrStatus('https://github.com/x/y/pull/1');
     expect(r.ciStatus).toBe('ci_no_checks');
     expect(r.mergeable).toBe('MERGEABLE');
   });
 
   it('有 pending check → 仍 ci_pending（不受影响）', () => {
-    vi.mocked(execSync).mockReturnValue(JSON.stringify({
+    vi.mocked(spawnSync).mockReturnValue({ status: 0, stdout: JSON.stringify({
       state: 'OPEN', mergeable: 'MERGEABLE',
       statusCheckRollup: [{ status: 'IN_PROGRESS', conclusion: null, name: 'ci' }],
-    }));
-    expect(checkPrStatus('u').ciStatus).toBe('ci_pending');
+    }), stderr: '' });
+    expect(checkPrStatus('https://github.com/x/y/pull/2').ciStatus).toBe('ci_pending');
   });
 
   it('有 check 全通过 → ci_passed（不受影响）', () => {
-    vi.mocked(execSync).mockReturnValue(JSON.stringify({
+    vi.mocked(spawnSync).mockReturnValue({ status: 0, stdout: JSON.stringify({
       state: 'OPEN', mergeable: 'MERGEABLE',
       statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS', name: 'ci' }],
-    }));
-    expect(checkPrStatus('u').ciStatus).toBe('ci_passed');
+    }), stderr: '' });
+    expect(checkPrStatus('https://github.com/x/y/pull/3').ciStatus).toBe('ci_passed');
   });
 
   it('有 check 失败 → ci_failed（不受影响）', () => {
-    vi.mocked(execSync).mockReturnValue(JSON.stringify({
+    vi.mocked(spawnSync).mockReturnValue({ status: 0, stdout: JSON.stringify({
       state: 'OPEN', mergeable: 'MERGEABLE',
       statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'FAILURE', name: 'ci' }],
-    }));
-    expect(checkPrStatus('u').ciStatus).toBe('ci_failed');
+    }), stderr: '' });
+    expect(checkPrStatus('https://github.com/x/y/pull/4').ciStatus).toBe('ci_failed');
   });
 });
