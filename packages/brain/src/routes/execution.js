@@ -2324,7 +2324,7 @@ ${resultStr.substring(0, 2000)}
                   const prBranch = runSyncCommand('gh', ['pr', 'view', prUrl, '--json', 'headRefName', '-q', '.headRefName'], { timeout: 10000 });
                   if (!prBranch) throw new Error('PR headRefName is empty');
                   runSyncCommand('git', ['fetch', 'origin'], { timeout: 30000 });
-                  runSyncCommand('git', ['checkout', '--', prBranch], { timeout: 30000 });
+                  runSyncCommand('git', ['switch', '--detach', `origin/${prBranch}`], { timeout: 30000 });
                   runSyncCommand('git', ['rebase', 'origin/main'], { timeout: 30000 });
                   runSyncCommand('git', ['push', '--force-with-lease', 'origin', `HEAD:${prBranch}`], { timeout: 30000 });
                   runSyncCommand('gh', ['pr', 'merge', prUrl, '--squash', '--delete-branch'], { timeout: 30000 });
