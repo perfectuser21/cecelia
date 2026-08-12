@@ -32,7 +32,8 @@ import {
   isBridgeSessionCrash,
   handleEvaluateSessionCrash,
 } from '../execution.js';
-import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, resolveCanonicalPrUrl, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from '../lib/callback-utils.js';
+import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, resolveCanonicalPrUrl, firstValidGithubPrUrl, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from '../lib/callback-utils.js';
+import { runSyncCommand } from '../lib/safe-sync-command.js';
 import { isTransientClass } from '../lib/retry-policy.js';
 import { checkAnchor } from '../anchor-check.js';
 
@@ -1572,12 +1573,12 @@ ${resultStr.substring(0, 2000)}
       async function checkPrCiStatus(prUrl) {
         if (!prUrl) return null; // 无法检查
         try {
-          const prNumber = prUrl.match(/\/pull\/(\d+)/)?.[1];
-          if (!prNumber) return null;
-          const output = execSync(
-            `gh pr checks ${prNumber} --json name,state 2>/dev/null || echo "[]"`,
-            { encoding: 'utf-8', timeout: 15000 }
-          ).trim();
+          const canonicalPrUrl = firstValidGithubPrUrl(prUrl);
+          if (!canonicalPrUrl) return null;
+          const output = runSyncCommand(
+            'gh', ['pr', 'checks', canonicalPrUrl, '--json', 'name,state'],
+            { timeout: 15000 }
+          );
           const checks = JSON.parse(output);
           if (!Array.isArray(checks) || checks.length === 0) return null; // 无 CI 检查
           const failed = checks.some(c => c.state === 'FAILURE' || c.state === 'ERROR');
@@ -1980,28 +1981,28 @@ ${resultStr.substring(0, 2000)}
         // Layer 3a: harness_generate 完成 → 创建 harness_ci_watch（等 CI 通过再 evaluate）
         if (harnessType === 'harness_generate') {
           // 从 Generator 的 result 中提取 pr_url
-          // 层次 1: callback payload 直接携带
-          let prUrl = pr_url || null;
+          // 层次 1: 使用已解析的权威 pr_url（resolvedPrUrl 覆盖 callback > DB.pr_url > payload.pr_url > payload.existing_pr_url）
+          let prUrl = firstValidGithubPrUrl(resolvedPrUrl);
           // 层次 2: 从 DB 任务的 pr_url 列读取（Generator 自己 PATCH 过的情况，最可靠）
           if (!prUrl) {
             try {
               const dbPrRow = await pool.query('SELECT pr_url FROM tasks WHERE id=$1', [task_id]);
-              prUrl = dbPrRow.rows[0]?.pr_url || null;
+              prUrl = firstValidGithubPrUrl(prUrl, dbPrRow.rows[0]?.pr_url);
             } catch {}
           }
           // 层次 3: result 对象顶层或 result.result 对象（Generator 正确输出 JSON 时）
           if (!prUrl && result !== null && typeof result === 'object') {
-            prUrl = result.pr_url || result?.result?.pr_url || null;
+            prUrl = firstValidGithubPrUrl(prUrl, result.pr_url, result?.result?.pr_url);
             // 层次 4: result.result 是字符串时，尝试 JSON 解析（Generator 输出 JSON verdict 文本）
             if (!prUrl && typeof result.result === 'string') {
               try {
                 const parsed = JSON.parse(result.result.trim());
-                prUrl = parsed.pr_url || null;
+                prUrl = firstValidGithubPrUrl(prUrl, parsed.pr_url);
               } catch {}
               // 层次 5: 从文本中正则提取完整 GitHub URL
               if (!prUrl) {
                 const m = result.result.match(/https:\/\/github\.com\/[^\s"']+\/pull\/\d+/);
-                if (m) prUrl = m[0];
+                if (m) prUrl = firstValidGithubPrUrl(prUrl, m[0]);
               }
               // 层次 5.5: 从文本中提取 PR # 并构造完整 URL（覆盖 "PR #2074" 格式）
               if (!prUrl) {
@@ -2010,7 +2011,7 @@ ${resultStr.substring(0, 2000)}
                   try {
                     const repoUrl = execSync('git remote get-url origin', { encoding: 'utf-8', timeout: 5000 }).trim()
                       .replace(/\.git$/, '').replace(/^git@github\.com:/, 'https://github.com/');
-                    prUrl = `${repoUrl}/pull/${prNumMatch[1]}`;
+                    prUrl = firstValidGithubPrUrl(prUrl, `${repoUrl}/pull/${prNumMatch[1]}`);
                   } catch {}
                 }
               }
@@ -2019,19 +2020,19 @@ ${resultStr.substring(0, 2000)}
           // 层次 6: result 本身是字符串时正则提取
           if (!prUrl && typeof result === 'string') {
             const prMatch = result.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/);
-            if (prMatch) prUrl = prMatch[0];
+            if (prMatch) prUrl = firstValidGithubPrUrl(prUrl, prMatch[0]);
           }
           // 层次 7: 从 dev_records 查（Generator /dev 会写 dev_records）
           if (!prUrl) {
             try {
               const devRecRow = await pool.query('SELECT pr_url, branch FROM dev_records WHERE task_id=$1 ORDER BY created_at DESC LIMIT 1', [task_id]);
-              prUrl = devRecRow.rows[0]?.pr_url || null;
+              prUrl = firstValidGithubPrUrl(prUrl, devRecRow.rows[0]?.pr_url);
               // 层次 7b: dev_records 有 branch 但没 pr_url → 从 gh pr list 查
               if (!prUrl && devRecRow.rows[0]?.branch) {
                 try {
-                  const ghOut = execSync(`gh pr list --head "${devRecRow.rows[0].branch}" --json url --limit 1`, { encoding: 'utf-8', timeout: 10000 }).trim();
+                  const ghOut = runSyncCommand('gh', ['pr', 'list', '--head', devRecRow.rows[0].branch, '--json', 'url', '--limit', '1'], { timeout: 10000 });
                   const ghPrs = JSON.parse(ghOut);
-                  if (ghPrs.length > 0) prUrl = ghPrs[0].url;
+                  if (ghPrs.length > 0) prUrl = firstValidGithubPrUrl(prUrl, ghPrs[0].url);
                 } catch {}
               }
               if (prUrl) console.log(`[execution-callback] harness: pr_url recovered from dev_records/gh: ${prUrl}`);
@@ -2041,14 +2042,14 @@ ${resultStr.substring(0, 2000)}
           if (!prUrl) {
             try {
               const taskIdShort = task_id.substring(0, 8);
-              const branches = execSync(`git branch -r --list "origin/cp-*" --sort=-committerdate | head -20`, { encoding: 'utf-8', timeout: 5000 })
+              const branches = runSyncCommand('git', ['for-each-ref', '--sort=-committerdate', '--format=%(refname:short)', '--count=20', 'refs/remotes/origin/cp-*'], { timeout: 5000 })
                 .trim().split('\n').map(b => b.trim().replace('origin/', ''));
               const matchBranch = branches.find(b => b.includes(taskIdShort));
               if (matchBranch) {
-                const ghOut = execSync(`gh pr list --head "${matchBranch}" --json url --limit 1`, { encoding: 'utf-8', timeout: 10000 }).trim();
+                const ghOut = runSyncCommand('gh', ['pr', 'list', '--head', matchBranch, '--json', 'url', '--limit', '1'], { timeout: 10000 });
                 const ghPrs = JSON.parse(ghOut);
                 if (ghPrs.length > 0) {
-                  prUrl = ghPrs[0].url;
+                  prUrl = firstValidGithubPrUrl(prUrl, ghPrs[0].url);
                   console.log(`[execution-callback] harness: pr_url recovered from git branch ${matchBranch}: ${prUrl}`);
                 }
               }
@@ -2139,25 +2140,25 @@ ${resultStr.substring(0, 2000)}
 
         // Layer 3c: harness_fix 完成 → 直接创建 harness_report（CI 由 /dev 自身保证）
         if (harnessType === 'harness_fix') {
-          // pr_url 提取：优先 payload（从上游传入），然后 callback result，最后 dev_records
-          let prUrl = harnessPayload.pr_url || pr_url || null;
+          // resolvedPrUrl 已按 callback/DB/payload 逐项校验；其余来源也必须独立校验。
+          let prUrl = firstValidGithubPrUrl(resolvedPrUrl, harnessPayload.pr_url);
           if (!prUrl && result !== null && typeof result === 'object') {
-            prUrl = result.pr_url || result?.result?.pr_url || null;
+            prUrl = firstValidGithubPrUrl(prUrl, result.pr_url, result?.result?.pr_url);
           }
           if (!prUrl && typeof result === 'string') {
             const prMatch = result.match(/https:\/\/github\.com\/[^\s"]+\/pull\/\d+/);
-            if (prMatch) prUrl = prMatch[0];
+            if (prMatch) prUrl = firstValidGithubPrUrl(prUrl, prMatch[0]);
           }
           // fallback: 从 dev_records 或 gh pr list 查
           if (!prUrl) {
             try {
               const devRecRow = await pool.query('SELECT pr_url, branch FROM dev_records WHERE task_id=$1 ORDER BY created_at DESC LIMIT 1', [task_id]);
-              prUrl = devRecRow.rows[0]?.pr_url || null;
+              prUrl = firstValidGithubPrUrl(prUrl, devRecRow.rows[0]?.pr_url);
               if (!prUrl && devRecRow.rows[0]?.branch) {
                 try {
-                  const ghOut = execSync(`gh pr list --head "${devRecRow.rows[0].branch}" --json url --limit 1`, { encoding: 'utf-8', timeout: 10000 }).trim();
+                  const ghOut = runSyncCommand('gh', ['pr', 'list', '--head', devRecRow.rows[0].branch, '--json', 'url', '--limit', '1'], { timeout: 10000 });
                   const ghPrs = JSON.parse(ghOut);
-                  if (ghPrs.length > 0) prUrl = ghPrs[0].url;
+                  if (ghPrs.length > 0) prUrl = firstValidGithubPrUrl(prUrl, ghPrs[0].url);
                 } catch {}
               }
               if (prUrl) console.log(`[execution-callback] harness_fix: pr_url recovered from dev_records/gh: ${prUrl}`);
@@ -2222,20 +2223,20 @@ ${resultStr.substring(0, 2000)}
         // Layer 3d: harness_evaluate 完成 → PASS→report / FAIL→fix（v5.0 对抗性 E2E 验收）
         if (harnessType === 'harness_evaluate') {
           const evalRound = harnessPayload.eval_round || 1;
-          let prUrl = harnessPayload.pr_url || pr_url || null;
+          let prUrl = firstValidGithubPrUrl(resolvedPrUrl, harnessPayload.pr_url);
           if (!prUrl && result !== null && typeof result === 'object') {
-            prUrl = result.pr_url || null;
+            prUrl = firstValidGithubPrUrl(prUrl, result.pr_url);
           }
           // fallback: 从 dev_task_id 的 dev_records 或 gh 查 PR
           if (!prUrl && harnessPayload.dev_task_id) {
             try {
               const devRecRow = await pool.query('SELECT pr_url, branch FROM dev_records WHERE task_id=$1 ORDER BY created_at DESC LIMIT 1', [harnessPayload.dev_task_id]);
-              prUrl = devRecRow.rows[0]?.pr_url || null;
+              prUrl = firstValidGithubPrUrl(prUrl, devRecRow.rows[0]?.pr_url);
               if (!prUrl && devRecRow.rows[0]?.branch) {
                 try {
-                  const ghOut = execSync(`gh pr list --head "${devRecRow.rows[0].branch}" --json url --limit 1`, { encoding: 'utf-8', timeout: 10000 }).trim();
+                  const ghOut = runSyncCommand('gh', ['pr', 'list', '--head', devRecRow.rows[0].branch, '--json', 'url', '--limit', '1'], { timeout: 10000 });
                   const ghPrs = JSON.parse(ghOut);
-                  if (ghPrs.length > 0) prUrl = ghPrs[0].url;
+                  if (ghPrs.length > 0) prUrl = firstValidGithubPrUrl(prUrl, ghPrs[0].url);
                 } catch {}
               }
               if (prUrl) console.log(`[execution-callback] harness_evaluate: pr_url recovered: ${prUrl}`);
@@ -2314,15 +2315,19 @@ ${resultStr.substring(0, 2000)}
             // Step 1: Merge PR
             if (prUrl) {
               try {
-                execSync(`gh pr merge "${prUrl}" --squash --delete-branch`, { encoding: 'utf-8', timeout: 30000 });
+                runSyncCommand('gh', ['pr', 'merge', prUrl, '--squash', '--delete-branch'], { timeout: 30000 });
                 console.log(`[execution-callback] harness: Evaluator PASS → PR merged: ${prUrl}`);
               } catch (mergeErr) {
                 // Merge 失败（冲突等）→ 尝试 rebase
                 console.warn(`[execution-callback] harness: PR merge failed, attempting rebase: ${mergeErr.message}`);
                 try {
-                  const prBranch = execSync(`gh pr view "${prUrl}" --json headRefName -q '.headRefName'`, { encoding: 'utf-8', timeout: 10000 }).trim();
-                  execSync(`git fetch origin && git checkout ${prBranch} && git rebase origin/main && git push -f origin ${prBranch}`, { encoding: 'utf-8', timeout: 30000 });
-                  execSync(`gh pr merge "${prUrl}" --squash --delete-branch`, { encoding: 'utf-8', timeout: 30000 });
+                  const prBranch = runSyncCommand('gh', ['pr', 'view', prUrl, '--json', 'headRefName', '-q', '.headRefName'], { timeout: 10000 });
+                  if (!prBranch) throw new Error('PR headRefName is empty');
+                  runSyncCommand('git', ['fetch', 'origin'], { timeout: 30000 });
+                  runSyncCommand('git', ['switch', '--detach', `origin/${prBranch}`], { timeout: 30000 });
+                  runSyncCommand('git', ['rebase', 'origin/main'], { timeout: 30000 });
+                  runSyncCommand('git', ['push', '--force-with-lease', 'origin', `HEAD:${prBranch}`], { timeout: 30000 });
+                  runSyncCommand('gh', ['pr', 'merge', prUrl, '--squash', '--delete-branch'], { timeout: 30000 });
                   console.log(`[execution-callback] harness: PR rebased and merged: ${prUrl}`);
                 } catch (rebaseErr) {
                   console.error(`[execution-callback] harness: PR rebase+merge failed: ${rebaseErr.message}`);
@@ -2448,7 +2453,7 @@ ${resultStr.substring(0, 2000)}
           if (result !== null && newStatus === 'completed' && harnessPayload.feature_id) {
             const writeback = await finalizeHarnessReportFeature(pool, {
               featureId: harnessPayload.feature_id,
-              prUrl: harnessPayload.pr_url,
+              prUrl: firstValidGithubPrUrl(resolvedPrUrl, harnessPayload.pr_url),
             });
             if (!writeback.updated) {
               throw new Error(`harness report Feature 回写失败: ${writeback.reason}`);
@@ -2469,7 +2474,7 @@ ${resultStr.substring(0, 2000)}
               trigger_source: 'execution_callback_harness',
               payload: {
                 sprint_dir: harnessPayload.sprint_dir,
-                pr_url: harnessPayload.pr_url,
+                pr_url: firstValidGithubPrUrl(resolvedPrUrl, harnessPayload.pr_url),
                 dev_task_id: harnessPayload.dev_task_id,
                 planner_task_id: harnessPayload.planner_task_id,
                 retry_count: retry_count + 1,

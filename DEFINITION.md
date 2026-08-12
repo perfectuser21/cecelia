@@ -8,11 +8,25 @@
 
 
 
-**Brain 版本**: 1.272.22
+**Brain 版本**: 1.272.24
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.24 — harness PR URL 全链路 canonical + argv-only 子进程（P0 hotfix）
+
+- harness_generate/fix/evaluate 对 callback、payload、result、DB、dev_records 候选逐项 trim + validate，非法 truthy 值不再遮蔽合法 fallback
+- Evaluator merge/rebase 与 harness CI/PR 查询改为无 shell 的 argv 调用，阻断恶意 PR URL 命令注入
+- terminal PR 对账 cursor 使用校验后的 ISO 文本排序，脏 payload 不再因 timestamptz cast 拖垮整批；batch limit 限制为正整数且封顶 100
+- 真实 HTTP route 回归覆盖 generate/fix/evaluate，断言 canonical URL 进入下游且恶意值不进入任何子进程
+
+## Brain 1.272.23 — sync resolver 独立校验 + shepherd 公平轮转 + 预算超时 + HTTP 路由隔离（P0 hotfix）
+
+- **[I1]** `lib/callback-utils.js`：`resolveCanonicalPrUrlSync` 逐项独立 trim+validate，invalid 高优先级不遮蔽合法低优先级 `existing_pr_url`。
+- **[I2]** `routes/execution.js`：harness_generate/fix/evaluate 三段均从 `resolvedPrUrl` 读取权威 pr_url，禁止再读 raw `pr_url`，确保 `existing_pr_url` 兜底路径畅通。
+- **[I3]** `shepherd.js`：`reconcileTerminalOpenPRs` 改用 `last_reconcile_checked_at` payload cursor 轮转排序（`COALESCE ... ASC`），OPEN 任务不重复占位，第 6+ 任务可在下轮处理。
+- **[I4]** `shepherd.js`：per-call spawn timeout = `min(PER_CALL_CAP_MS=30000, remainingBudget)`；remaining≤0 提前退出；支持 `_elapsedMsFn` 注入供测试精确断言。
 
 ## Brain 1.272.22 — authority 安全与 Tick 活性四修（P0 hotfix）
 
