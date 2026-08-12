@@ -21,6 +21,24 @@ function normalizeRemoteCloneSource(source) {
   return source;
 }
 
+function canonicalRemoteUrl(source) {
+  const value = String(source || '').trim();
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      parsed.username = '';
+      parsed.password = '';
+      return parsed.toString().replace(/\/$/, '');
+    }
+  } catch { /* local paths and scp-like remotes are compared verbatim */ }
+  return value;
+}
+
+function redactRemoteUrl(source) {
+  const canonical = canonicalRemoteUrl(source);
+  return canonical || '<unknown>';
+}
+
 const execFile = promisify(execFileCb);
 
 export const DEFAULT_BASE_REPO = '/Users/administrator/perfect21/cecelia';
@@ -120,6 +138,7 @@ export async function ensureHarnessWorktree(opts) {
   const rmFn = opts.rmFn || defaultRm;
   const logFn = opts.logFn || ((msg) => console.warn(msg));
   const tokenFn = opts.tokenFn || resolveGitHubToken;
+  const isKernelWorkspaceActive = opts.isKernelWorkspaceActive || (async () => false);
   const cloneSourceIsLocal = await statFn(requestedCloneSource).catch(() => false);
   const cloneSource = cloneSourceIsLocal
     ? requestedCloneSource
@@ -156,10 +175,13 @@ export async function ensureHarnessWorktree(opts) {
             const { stdout: gh } = await execFn('git', ['-C', cloneSource, 'remote', 'get-url', 'origin']);
             baseRepoGithubUrl = String(gh || '').trim();
           } catch { /* cloneSource origin 读不到，下面只校 cloneSource 路径 */ }
-          const matchesBaseRepo = url && url.includes(cloneSource);
-          const matchesGithub = baseRepoGithubUrl && url === baseRepoGithubUrl;
+          const canonicalUrl = canonicalRemoteUrl(url);
+          const canonicalCloneSource = canonicalRemoteUrl(cloneSource);
+          const canonicalGithubUrl = canonicalRemoteUrl(baseRepoGithubUrl);
+          const matchesBaseRepo = canonicalUrl && canonicalUrl === canonicalCloneSource;
+          const matchesGithub = canonicalGithubUrl && canonicalUrl === canonicalGithubUrl;
           if (!matchesBaseRepo && !matchesGithub) {
-            logFn(`[harness-worktree] orphan worktree at ${wtPath}: origin='${url}' matches neither cloneSource='${cloneSource}' nor GitHub='${baseRepoGithubUrl}'; rebuilding`);
+            logFn(`[harness-worktree] orphan worktree at ${wtPath}: origin='${redactRemoteUrl(url)}' matches neither cloneSource='${redactRemoteUrl(cloneSource)}' nor GitHub='${redactRemoteUrl(baseRepoGithubUrl)}'; rebuilding`);
             isOrphan = true;
           }
         } catch (err) {
@@ -188,6 +210,10 @@ export async function ensureHarnessWorktree(opts) {
       return wtPath;
     }
 
+    if (await isKernelWorkspaceActive(wtPath)) {
+      logFn(`[harness-worktree] refusing to remove active Kernel workspace at ${wtPath}`);
+      return wtPath;
+    }
     await rmFn(wtPath);
   }
 
