@@ -38,6 +38,38 @@ CWD=$(parse_string_field cwd)
 MAIN_REPO=$(git -C "$CWD" worktree list --porcelain 2>/dev/null | head -1 | awk '/^worktree /{print $2; exit}' || true)
 [[ -z "$MAIN_REPO" ]] && exit 0  # 不在 git → 放行
 
+# 所有可能写仓的工具在动作前共用 Work Router receipt 安全闸。未知 Bash
+# 命令按写入处理；只读诊断工具保持可用，便于修复失效凭证。
+case "$TOOL_NAME" in
+    Edit|Write|MultiEdit|NotebookEdit|Bash) MUTATION_CAPABLE=true ;;
+    *) MUTATION_CAPABLE=false ;;
+esac
+if [[ "$MUTATION_CAPABLE" == "true" ]]; then
+    BRANCH=$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+    LOCK_FILE="$MAIN_REPO/.dev-lock.$BRANCH"
+    if [[ ! -f "$LOCK_FILE" ]]; then
+        echo '{"decision":"block","reason":"route_violation: live /dev routing receipt lock required"}'
+        exit 2
+    fi
+    routing_receipt_id=$(jq -r '.routing_receipt_id // empty' "$LOCK_FILE" 2>/dev/null || true)
+    task_id=$(jq -r '.task_id // empty' "$LOCK_FILE" 2>/dev/null || true)
+    run_id=$(jq -r '.run_id // empty' "$LOCK_FILE" 2>/dev/null || true)
+    repo=$(jq -r '.repo // empty' "$LOCK_FILE" 2>/dev/null || true)
+    base_sha=$(jq -r '.base_sha // empty' "$LOCK_FILE" 2>/dev/null || true)
+    if [[ -z "$routing_receipt_id" || -z "$task_id" || -z "$run_id" || -z "$repo" || -z "$base_sha" ]]; then
+        echo '{"decision":"block","reason":"route_violation: incomplete routing receipt lock"}'
+        exit 2
+    fi
+    validation=$(curl -fsS --max-time 5 -X POST "${BRAIN_URL:-http://localhost:5221}/api/brain/work-routing/validate" \
+        -H 'Content-Type: application/json' \
+        ${BRAIN_AUTH_TOKEN:+-H "Authorization: Bearer $BRAIN_AUTH_TOKEN"} \
+        -d "$(jq -nc --arg routing_receipt_id "$routing_receipt_id" --arg task_id "$task_id" --arg repo "$repo" --arg branch "$BRANCH" --arg base_sha "$base_sha" '{routing_receipt_id:$routing_receipt_id,task_id:$task_id,repo:$repo,branch:$branch,base_sha:$base_sha}')" 2>/dev/null || true)
+    if [[ "$(printf '%s' "$validation" | jq -r '.valid // false' 2>/dev/null)" != "true" ]]; then
+        echo '{"decision":"block","reason":"route_violation: receipt validation failed"}'
+        exit 2
+    fi
+fi
+
 # 检测 .cecelia/lights/*.live 是否存在且 mtime 新鲜（与 stop-dev.sh 同源）
 LIGHTS_DIR="$MAIN_REPO/.cecelia/lights"
 [[ ! -d "$LIGHTS_DIR" ]] && exit 0
