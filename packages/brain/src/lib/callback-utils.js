@@ -38,9 +38,25 @@ export function extractPrNumber(pr_url) {
  *
  * @returns {Promise<string>} 可能已更新的 newStatus
  */
-const GITHUB_PR_URL_RE_UTILS = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
-function _isValidGithubPrUrl(url) {
-  return typeof url === 'string' && GITHUB_PR_URL_RE_UTILS.test(url.trim());
+const GITHUB_PR_URL_RE = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
+
+export function isValidGithubPrUrl(url) {
+  return typeof url === 'string' && GITHUB_PR_URL_RE.test(url.trim());
+}
+
+function _isValidGithubPrUrl(url) { return isValidGithubPrUrl(url); }
+
+/**
+ * 纯函数：从 explicit URL + task row 解析权威 pr_url（无 DB 查询）。
+ * 优先级：explicit > task.pr_url > task.payload.pr_url > task.payload.existing_pr_url
+ * 供 docker-executor 直接传入已有 task 对象使用。
+ */
+export function resolveCanonicalPrUrlSync(explicitUrl, taskRow) {
+  if (isValidGithubPrUrl(explicitUrl)) return explicitUrl;
+  const candidate = taskRow?.pr_url
+    || taskRow?.payload?.pr_url
+    || taskRow?.payload?.existing_pr_url;
+  return isValidGithubPrUrl(candidate) ? candidate : null;
 }
 
 /**

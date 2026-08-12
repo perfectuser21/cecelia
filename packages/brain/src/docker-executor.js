@@ -28,6 +28,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync, readdir
 import path from 'path';
 import os from 'os';
 import pool from './db.js';
+import { resolveCanonicalPrUrlSync } from './lib/callback-utils.js';
 import { runDocker } from './spawn/middleware/docker-run.js';
 import { resolveAccount } from './spawn/middleware/account-rotation.js';
 import { resolveCascade } from './spawn/middleware/cascade.js';
@@ -585,11 +586,6 @@ export function resolveBrainBaseUrl(env = process.env) {
  * @param {string|null} checkpointId
  * @param {Object} result — executeInDocker 返回值
  */
-const GITHUB_PR_URL_RE = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
-function isValidGithubPrUrl(url) {
-  return typeof url === 'string' && GITHUB_PR_URL_RE.test(url.trim());
-}
-
 export async function writeDockerCallback(task, runId, checkpointId, result, _poolOverride) {
   const dbPool = _poolOverride || pool;
   // env_broken 探测：claude 找不到 dispatch 用的 skill 时输出
@@ -617,11 +613,7 @@ export async function writeDockerCallback(task, runId, checkpointId, result, _po
   // 权威 pr_url 优先级：stdout > tasks.pr_url > payload.pr_url > payload.existing_pr_url
   // 当 Agent 只输出 "PR #4827" 而未写完整 URL 时，从已知的 task 字段兜底，
   // 避免 callback_queue 写入 null → maybeMarkCompletedNoPr 误判 completed_no_pr。
-  const canonicalPrUrl = isValidGithubPrUrl(stdoutPrUrl) ? stdoutPrUrl
-    : isValidGithubPrUrl(task.pr_url) ? task.pr_url
-    : isValidGithubPrUrl(task.payload?.pr_url) ? task.payload.pr_url
-    : isValidGithubPrUrl(task.payload?.existing_pr_url) ? task.payload.existing_pr_url
-    : null;
+  const canonicalPrUrl = resolveCanonicalPrUrlSync(stdoutPrUrl, task);
 
   // result_json 兼容 callback-worker 的 buildDataFromRow：_meta 存附加字段
   const resultJson = {
