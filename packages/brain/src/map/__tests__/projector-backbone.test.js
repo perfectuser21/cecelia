@@ -130,7 +130,7 @@ function makeMockClient(backboneRows) {
 // 当前 runProjection 未查 journey_steps，所以 backbone 节点数 = 0，断言 = 4 会 FAIL
 // ──────────────────────────────────────────────
 describe('[RED→GREEN] runProjection() backbone 层装配', () => {
-  it('FAIL: runProjection() 后 backbone 节点数应 = 4（当前未实现返回 0）', async () => {
+  it('backbone 节点数 = step 数，边类型为 contains，from_key = capability_code', async () => {
     const client = makeMockClient(BACKBONE_ROWS);
 
     await runProjection({
@@ -147,7 +147,7 @@ describe('[RED→GREEN] runProjection() backbone 层装配', () => {
     expect(backboneNodes).toHaveLength(4);
   });
 
-  it('FAIL: backbone 节点 attributes 应含 promise/status/display_order/step_key', async () => {
+  it('backbone 节点 `attributes` 含 `promise`、`status`、`display_order`、`step_key` 字段', async () => {
     const client = makeMockClient(BACKBONE_ROWS);
 
     await runProjection({
@@ -171,7 +171,7 @@ describe('[RED→GREEN] runProjection() backbone 层装配', () => {
     }
   });
 
-  it('FAIL: capability → backbone contains 边数应 >= 5（1 capability + 4 backbone）', async () => {
+  it('capability → backbone contains 边数应 >= 5', async () => {
     const client = makeMockClient(BACKBONE_ROWS);
 
     await runProjection({

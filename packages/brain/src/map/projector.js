@@ -250,8 +250,6 @@ export async function runProjection({
       [scopeKey]
     );
 
-    let backboneNodeCount = 0;
-    let backboneEdgeCount = 0;
     for (const row of backboneRows) {
       const backboneNodeId = stableNodeId(scopeKey, 'backbone', row.step_key);
       // backbone 节点
@@ -275,8 +273,6 @@ export async function runProjection({
           }),
         ]
       );
-      backboneNodeCount++;
-
       // capability → backbone contains 边
       const capabilityNodeId = stableNodeId(scopeKey, 'capability', row.capability_code);
       const edgeKey = `${row.capability_code}_contains_${row.step_key}`;
@@ -296,7 +292,6 @@ export async function runProjection({
           JSON.stringify({}),
         ]
       );
-      backboneEdgeCount++;
     }
 
     // 原子切换 active run（旧 active → superseded，新 run → active + activated_at）

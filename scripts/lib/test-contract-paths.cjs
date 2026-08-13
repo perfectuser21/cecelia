@@ -95,7 +95,7 @@ function isWithinRoot(root, candidate) {
 }
 
 function repositoryRelativePath(testFile) {
-  return /^(?:sprints|packages|scripts)\//.test(testFile) ||
+  return /^(?:sprints|packages|scripts|apps)\//.test(testFile) ||
     testFile.startsWith("tests/regression/")
     ? testFile
     : null;
