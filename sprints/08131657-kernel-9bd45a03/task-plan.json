@@ -1,0 +1,34 @@
+{
+  "initiative_id": "9bd45a03-60e8-4790-9616-44f516ef0270",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅 packages/brain/ 纯后端进程编排（Controller/Kernel 生命周期），无 UI 无远端 agent 协议。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "真身 Session Controller 常驻监护进程：spawn 先于 Kernel + lease 续租 + 监护 fatal 分类 + 人审 push 冻结 + 终局回写",
+      "scope": "让 _spawnKernelRuntime 先 spawn 本机 detached 真身 Controller 守护进程（取 ownership 写 controller_session_id/pid/host 后再拉 Kernel）；Controller 周期续租 lease、监护 Kernel 存活按 failure_class 分类决策（resume/结构化终止/unknown-wait）、人审期冻结 PR 分支 push、守到 merged 回写 tasks.result(pr_url/merged/summary) 才退出，失败终局结构化回传。Controller 只监护不执行，不绕 Gate 不改 Kernel 状态机权威；orphan-guard 降级为后备保持不动。",
+      "dod": [
+        "[BEHAVIOR] B-01 spawn Controller before Kernel and record ownership（真进程 + 真 PG ownership 落库、ordering）",
+        "[BEHAVIOR] B-02 lease renewed across two cycles（renewControllerLease 真 PG 单调递增）",
+        "[BEHAVIOR] B-03 kill Kernel classified fatal action（resume/terminate/unknown-wait，真 kill -9 + 真 PG）",
+        "[BEHAVIOR] B-04 human review push freeze rejects push and unfreezes after verdict（真 bare git remote）",
+        "[BEHAVIOR] B-05 final writeback pr_url merged before exit（真 PG tasks.result + 失败终局结构化脱敏）",
+        "[BEHAVIOR] B-06 kill Controller lease expires orphan-guard reclaims（后备回归不回退）",
+        "[ARTIFACT] kernel-controller-daemon.js 真身入口 + kernel-controller-lifecycle.js 四新函数 + migration(controller_pid/host/frozen_head/push_frozen_at) + vitest.config.js 登记 + .harness/ 出 repo"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/kernel-controller-daemon.js",
+        "packages/brain/src/orchestrator/kernel-controller-lifecycle.js",
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/migrations/416_initiative_run_controller_daemon.sql",
+        "packages/brain/src/__tests__/integration/kernel-controller-daemon.pg.integration.test.js",
+        "packages/brain/vitest.config.js",
+        "packages/brain/scripts/run-controller-daemon-test.sh",
+        ".gitignore"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 110
+    }
+  ]
+}
