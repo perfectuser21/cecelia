@@ -83,6 +83,8 @@ describe('runKernelMain fatal convergence', () => {
     await expect(runKernelMain({
       taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       runId: '11111111-1111-4111-8111-111111111111',
+      controllerSessionId: '22222222-2222-4222-8222-222222222222',
+      controllerGeneration: 7,
       resumeToken: null,
       dryRun: false,
     }, {
@@ -94,6 +96,8 @@ describe('runKernelMain fatal convergence', () => {
     expect(finalizeRun).toHaveBeenCalledWith(pool, {
       runId: '11111111-1111-4111-8111-111111111111',
       expectedTaskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      expectedControllerSessionId: '22222222-2222-4222-8222-222222222222',
+      expectedControllerGeneration: 7,
       outcome: 'failed',
       reason: 'kernel_process_fatal:workspace_repo_not_supported',
       closeControllerSession:false,

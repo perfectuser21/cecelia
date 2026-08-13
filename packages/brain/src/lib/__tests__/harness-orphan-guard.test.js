@@ -3,8 +3,28 @@ import {
   requeueOrphanTask,
   handleRelayExitConsistency,
   sweepOrphanHarnessTasks,
+  startHarnessOrphanGuard,
   WAIT_SUICIDE_PATTERN,
 } from '../harness-orphan-guard.js';
+
+describe('startHarnessOrphanGuard', () => {
+  it('接流量前立即完成一次 ownerless Kernel 收敛', async () => {
+    vi.useFakeTimers();
+    const reconcileOwnerless = vi.fn(async () => []);
+    try {
+      const timer = await startHarnessOrphanGuard({
+        pool: {},
+        execFn: vi.fn(),
+        reconcileOwnerless,
+        intervalMs: 300_000,
+      });
+      expect(reconcileOwnerless).toHaveBeenCalledOnce();
+      clearInterval(timer);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 function mockPool(taskRow) {
   const calls = [];

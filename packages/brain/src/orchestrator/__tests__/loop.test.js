@@ -132,6 +132,64 @@ function makeEnv({ observedSeq, dispatch, finalizeRun } = {}) {
 }
 
 describe('runLoop：全链 planning→done', () => {
+  it('首个可观察动作前必须证明 exact Controller ownership', async () => {
+    const { deps } = makeEnv({
+      observedSeq: [obs({
+        run: {
+          id: RUN_ID,
+          phase: 'generate',
+          cost_usd: 0,
+          deadline_at: '2026-07-04T11:59:00.000Z',
+        },
+      })],
+    });
+    deps.writeHeartbeat = vi.fn(async () => {
+      throw new Error('controller_lease_renewal_lost');
+    });
+
+    const result = await runLoop(deps, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      controllerSessionId: '22222222-2222-4222-8222-222222222222',
+      controllerGeneration: 2,
+    });
+
+    expect(result).toEqual({ exitReason: 'singleton_conflict', hops: 0 });
+    expect(deps.writeHeartbeat).toHaveBeenCalledOnce();
+    expect(deps.collectGroundTruth).not.toHaveBeenCalled();
+    expect(deps.finalizeRun).not.toHaveBeenCalled();
+  });
+
+  it('deadline 终态写携带 exact Controller ownership fence', async () => {
+    const { deps } = makeEnv({
+      observedSeq: [obs({
+        run: {
+          id: RUN_ID,
+          phase: 'generate',
+          cost_usd: 0,
+          deadline_at: '2026-07-04T11:59:00.000Z',
+        },
+      })],
+    });
+
+    const result = await runLoop(deps, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      controllerSessionId: '22222222-2222-4222-8222-222222222222',
+      controllerGeneration: 2,
+    });
+
+    expect(result).toEqual({ exitReason: 'automation_deadline_exceeded', hops: 0 });
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      expectedControllerSessionId: '22222222-2222-4222-8222-222222222222',
+      expectedControllerGeneration: 2,
+      outcome: 'failed',
+      reason: 'automation_deadline_exceeded',
+    });
+  });
+
   it('逐跳推进 planner→proposer→reviewer→persist→generator→poll→evaluator→judge→merge→report→exit', async () => {
     const approvedSha = '9'.repeat(40);
     const prMeta = {
