@@ -1,5 +1,4 @@
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 import express from 'express';
@@ -209,7 +208,6 @@ async function ensureKernelRuns(tasks) {
       host: 'uwr-scratch-smoke',
       deadlineHours: 1,
       createdSource: 'kernel_dispatch',
-      controllerSessionId: randomUUID(),
     });
     invariant(run.run.impact_contract_policy === 'required', `${task.id} run is not required`);
     runs.push(run.run);
@@ -277,7 +275,6 @@ async function staleAndResume(app) {
       taskId: task.id, initiativeId: task.id, phase: 'generate', journeyId: null,
       abilityId: null, host: 'uwr-scratch-smoke', deadlineHours: 1,
       createdSource: 'kernel_dispatch',
-      controllerSessionId: randomUUID(),
     });
   } catch (error) {
     blockedReason = error.message;

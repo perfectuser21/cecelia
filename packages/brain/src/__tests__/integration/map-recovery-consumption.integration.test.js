@@ -31,6 +31,7 @@ describeDb('map recovery PostgreSQL consumption', () => {
     const taskId = randomUUID();
     const receiptId = randomUUID();
     const runId = randomUUID();
+    const controllerSessionId = randomUUID();
     const attemptId = randomUUID();
     const baseSha = 'a'.repeat(40);
     const assertionId = 'packages/brain/src/orchestrator/preflight/map-impact-contract.test.js';
@@ -106,13 +107,24 @@ describeDb('map recovery PostgreSQL consumption', () => {
     });
 
     await client.query(
+      `INSERT INTO kernel_controller_sessions (
+         id,task_id,generation,source,status,last_heartbeat_at,lease_expires_at
+       ) VALUES ($1,$2,1,'integration','active',NOW(),NOW()+INTERVAL '30 minutes')`,
+      [controllerSessionId,taskId],
+    );
+    await client.query(
       `INSERT INTO initiative_runs (
          id,initiative_id,phase,current_task_id,orchestrator_version,
          created_source,record_trust_status,impact_contract_policy,
-         impact_contract_policy_reason,map_recovery_contract_id
-       ) VALUES ($1,$2,'generate',$2,'v2','kernel_dispatch','trusted','required',$3,$4)`,
-      [runId, taskId, 'map recovery integration', preflight.recovery_contract.id],
+         impact_contract_policy_reason,map_recovery_contract_id,
+         controller_session_id,controller_generation,controller_lease_expires_at
+       ) VALUES ($1,$2,'generate',$2,'v2','kernel_dispatch','trusted','required',$3,$4,
+         $5,1,(SELECT lease_expires_at FROM kernel_controller_sessions WHERE id=$5))`,
+      [runId, taskId, 'map recovery integration', preflight.recovery_contract.id,
+        controllerSessionId],
     );
+    await client.query('UPDATE kernel_controller_sessions SET run_id=$2 WHERE id=$1',
+      [controllerSessionId,runId]);
     const attempt = await createAttemptStore(client).createAttempt({
       id: attemptId,
       runId,

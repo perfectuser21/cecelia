@@ -15,7 +15,7 @@ DATABASE_NAME="$($NODE_EXECUTABLE -e "const u=new URL(process.argv[1]);process.s
 ACTIVE_DATABASE="$($PSQL_EXECUTABLE "$DB_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')"
 [[ "$ACTIVE_DATABASE" == "$DATABASE_NAME" ]] || fail "连接目标不一致: $ACTIVE_DATABASE"
 SCHEMA_VERSION="$($PSQL_EXECUTABLE "$DB_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT max(version) FROM schema_version')"
-[[ "$SCHEMA_VERSION" -ge 417 ]] || fail "schema_version=$SCHEMA_VERSION, expected>=417"
+[[ "$SCHEMA_VERSION" -ge 422 ]] || fail "schema_version=$SCHEMA_VERSION, expected>=422"
 
 printf '%s\n' '── Unified Work Router scratch smoke ──'
 printf 'database=%s baseline=%s\n' "$DATABASE_NAME" "${BASELINE_SHA:-<unset>}"
