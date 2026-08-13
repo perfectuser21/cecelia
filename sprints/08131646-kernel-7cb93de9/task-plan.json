@@ -1,0 +1,27 @@
+{
+  "initiative_id": "0606d50b-e3f4-4230-8465-8ab799846513",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain orchestrator bundle 组装逻辑，无 UI、无远端 agent 协议，vitest 单测层验收。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "dispatcher 注入 judge_feedback 回填下轮 evaluator TaskBundle + evaluator skill 消费侧指引",
+      "scope": "在 orchestrator/dispatcher.js buildInputs 的 role=evaluator 分支，读取 observed.judgeVerdict 最近一次 FAIL 裁决，注入 inputs.judge_feedback（verdict/summary/failure_class/round，经 sanitizeDiagnostic 脱敏+截断）；无 judge verdict/PASS/非 evaluator 角色不注入；同步 harness-evaluator SKILL.md 消费侧提示词（含 judge_feedback 时优先补齐点名证据），snapshot 按流程 sync；保留 proposer 写的 dispatcher-judge-feedback.test.js 永久进 CI。",
+      "dod": [
+        "[BEHAVIOR] judge FAIL 存在时 evaluator bundle inputs.judge_feedback 含 summary 与 failure_class（dispatcher-judge-feedback.test.js 全绿）",
+        "[BEHAVIOR] 无 judge verdict/PASS/非 evaluator 角色不注入 judge_feedback",
+        "[BEHAVIOR] 超长 summary 截断且完整 bundle ≤ 256KB",
+        "[BEHAVIOR] 既有 dispatcher.test.js 回归全绿",
+        "[ARTIFACT] harness-evaluator/SKILL.md 含 judge_feedback 优先补齐点名证据指引"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/__tests__/dispatcher-judge-feedback.test.js",
+        "packages/workflows/skills/harness-evaluator/SKILL.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
