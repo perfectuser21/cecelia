@@ -2229,6 +2229,46 @@ describe('createDispatcher', () => {
     }));
   });
 
+  it('Evaluator 有未发布候选时用候选 SHA 绑定 PR_HEAD_SHA，而不是旧远端 PR 头', async () => {
+    const deps = makeDeps();
+    const stalePrHead = 'a'.repeat(40);
+    const candidateHead = 'b'.repeat(40);
+    const candidate = {
+      type: 'git_candidate',
+      verification_status: 'verified',
+      source_attempt_id: '33333333-3333-4333-8333-333333333333',
+      repo: 'perfectuser21/cecelia',
+      branch: 'cp-local-candidate',
+      base_sha: stalePrHead,
+      head_sha: candidateHead,
+      machine_id: 'brain-1',
+    };
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 7,
+      observed: {
+        ...observed,
+        candidate,
+        pr: {
+          url: 'https://github.com/o/r/pull/42',
+          head_ref: 'cp-remote-stale',
+          head_sha: stalePrHead,
+          ci: 'pass',
+        },
+      },
+      decision: { phase: 'evaluate', reason: 'candidate_ready' },
+    });
+
+    const inputs = deps.attemptStore.createAttempt.mock.calls[0][0].bundle.inputs;
+    expect(inputs).toMatchObject({
+      candidate,
+      pr_branch: candidate.branch,
+      pr_head_sha: candidateHead,
+    });
+  });
+
   it('只把结构化 GitHub 取证请求交给 evaluator TaskBundle', async () => {
     const deps = makeDeps();
     const headSha = 'b8be843d8a35064690a40e885eb235fc8523ea62';

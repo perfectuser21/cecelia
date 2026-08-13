@@ -79,6 +79,49 @@ describe('Fleet Judge callback verifier', () => {
     });
   });
 
+  it('远端 PR 落后于 retained candidate 时 Judge 锚定候选 SHA', async () => {
+    const candidateHead = 'b'.repeat(40);
+    const stalePrHead = 'a'.repeat(40);
+    const attempt = {
+      id: '22222222-2222-4222-8222-222222222222',
+      role: 'judge',
+      task_bundle: { inputs: {
+        task_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        sprint_dir: 'sprints/x',
+        candidate: { head_sha: candidateHead },
+        pull_request: {
+          state: 'OPEN',
+          merged: false,
+          head_sha: stalePrHead,
+        },
+        evaluator_result: {
+          status: 'completed',
+          checks: [{ command: 'npm test', exit_code: 0, log_tail: 'passed' }],
+          decision: { outcome: 'PASS', reason: 'verified' },
+        },
+        contract: { contract_content: 'contract', prd_content: 'prd' },
+        artifacts: [],
+      } },
+    };
+
+    await verifyJudgeCallbackResult({
+      attempt,
+      result: {
+        status: 'completed',
+        summary: 'provider judge passed',
+        decision: { outcome: 'PASS', reason: 'covered', coverage: [] },
+      },
+      dbPool: {},
+    });
+
+    expect(mocks.runJudgeGate).toHaveBeenCalledWith(expect.objectContaining({
+      stageFacts: expect.objectContaining({
+        current_stage: 'local_candidate',
+        head_sha: candidateHead,
+      }),
+    }), expect.any(Object));
+  });
+
   it('非 Judge 或非成功终态不调用机械闸', async () => {
     const failed = { status: 'failed', decision: null };
     await expect(verifyJudgeCallbackResult({
