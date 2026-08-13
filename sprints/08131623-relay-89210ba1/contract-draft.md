@@ -131,3 +131,20 @@ if (task.payload?.harness_runtime === 'kernel-v1') {
 - 幂等：活跃 run 存在时，kernel-v1 再打必须返回 `{ok:false, deferred:true, reason:'active_run_guard'}`
 - 可观测：executor 白名单拦截必须打 `[skill-relay][ALERT]` 日志
 - 测试隔离：集成测试真打 spawnSkillRelaySession + 真 DB，禁 mock createKernelRun / pool.query
+
+---
+
+## E2E 验收
+
+**验收脚本**：`sprints/08131623-relay-89210ba1/e2e-verify.sh`
+
+**验收步骤**：
+1. 确保 Brain 服务运行（localhost:5221）
+2. 执行集成测试套件
+3. 验证 4 个判定点全部通过
+
+**通过标准**：
+- AP-1: executor=auto + kernel-v1 → {ok:false, error:'unsupported executor: auto'}
+- AP-2: 活跃 run + kernel-v1 重打 → {ok:false, deferred:true, reason:'active_run_guard'}
+- AP-3: 合法路径 + kernel-v1 → {ok:true} + controller_session_id 非空
+- AP-4: createKernelRun 无 controllerSessionId → 抛 /missing controller ownership/

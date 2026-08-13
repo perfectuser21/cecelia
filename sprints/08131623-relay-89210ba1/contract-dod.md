@@ -6,9 +6,11 @@
 
 ## 判定点清单
 
-### DOD-1：executor 白名单校验覆盖 kernel-v1 路径（INV-6）
+### [BEHAVIOR] DOD-1：executor 白名单校验覆盖 kernel-v1 路径（INV-6）
 
 **验收命令**：
+
+manual:bash
 ```bash
 cd /workspace && node packages/brain/node_modules/.bin/vitest run \
   --config packages/brain/vitest.integration.config.js \
@@ -29,9 +31,11 @@ cd /workspace && node packages/brain/node_modules/.bin/vitest run \
 
 ---
 
-### DOD-2：DB 幂等防重覆盖 kernel-v1 路径（INV-5）
+### [BEHAVIOR] DOD-2：DB 幂等防重覆盖 kernel-v1 路径（INV-5）
 
 **验收命令**：
+
+manual:bash
 ```bash
 cd /workspace && node packages/brain/node_modules/.bin/vitest run \
   --config packages/brain/vitest.integration.config.js \
@@ -51,9 +55,11 @@ cd /workspace && node packages/brain/node_modules/.bin/vitest run \
 
 ---
 
-### DOD-3：合法路径 + kernel-v1 → controller_session_id 非空（INV-1 + INV-8）
+### [BEHAVIOR] DOD-3：合法路径 + kernel-v1 → controller_session_id 非空（INV-1 + INV-8）
 
 **验收命令**：
+
+manual:bash
 ```bash
 cd /workspace && node packages/brain/node_modules/.bin/vitest run \
   --config packages/brain/vitest.integration.config.js \
@@ -73,9 +79,11 @@ cd /workspace && node packages/brain/node_modules/.bin/vitest run \
 
 ---
 
-### DOD-4：createKernelRun 无 controllerSessionId → fail-closed 回归（INV-4）
+### [BEHAVIOR] DOD-4：createKernelRun 无 controllerSessionId → fail-closed 回归（INV-4）
 
 **验收命令**：
+
+manual:bash
 ```bash
 cd /workspace && node packages/brain/node_modules/.bin/vitest run \
   --config packages/brain/vitest.integration.config.js \
