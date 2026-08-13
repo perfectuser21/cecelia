@@ -125,6 +125,7 @@ import {
   SENTINEL_KEY_PREFIX,
 } from '../scheduler-jobs.js';
 import * as schedulerJobsModule from '../scheduler-jobs.js';
+const { startProjectionJobsLoop, stopProjectionJobsLoop } = schedulerJobsModule;
 import { triggerArchReview, triggerCiPatrol } from '../daily-review-scheduler.js';
 import { maybeTriggerStrategySession } from '../active-goals-zero-trigger.js';
 import { scheduleDailyBackup } from '../daily-backup-scheduler.js';
@@ -352,5 +353,61 @@ describe('conversation-ttl-archiver job 注册', () => {
     expect(job).toBeTruthy();
     expect(job.needsPool).toBe(true);
     expect(typeof job.handler).toBe('function');
+  });
+});
+
+// [BEHAVIOR] B-1~B-4: Preview Brain 隔离守卫
+// 防并发重复派发：BRAIN_PREVIEW=1 时 scheduler-jobs loop 不启动
+describe('scheduler-jobs Preview Brain 隔离（BRAIN_PREVIEW=1 幂等保护）', () => {
+  let consoleSpy;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    delete process.env.BRAIN_PREVIEW;
+  });
+
+  afterEach(() => {
+    stopSchedulerJobsLoop();
+    stopProjectionJobsLoop?.();
+    vi.useRealTimers();
+    consoleSpy.mockRestore();
+    delete process.env.BRAIN_PREVIEW;
+  });
+
+  // [BEHAVIOR] B-1
+  it('BRAIN_PREVIEW=1 时 startSchedulerJobsLoop 返回 null，不启动 setInterval', () => {
+    process.env.BRAIN_PREVIEW = '1';
+    const pool = makePool();
+    const timer = startSchedulerJobsLoop(pool);
+    expect(timer).toBeNull();
+  });
+
+  // [BEHAVIOR] B-2
+  it('BRAIN_PREVIEW=1 时 startProjectionJobsLoop 返回 null，不启动 setInterval', () => {
+    process.env.BRAIN_PREVIEW = '1';
+    const pool = makePool();
+    const timer = startProjectionJobsLoop(pool);
+    expect(timer).toBeNull();
+  });
+
+  // [BEHAVIOR] B-3: 非 Preview 时正常启动（零回归）
+  it('BRAIN_PREVIEW 未设置时 startSchedulerJobsLoop 正常启动，前进 60s 触发 handler', async () => {
+    const pool = makePool();
+    const timer = startSchedulerJobsLoop(pool);
+    expect(timer).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    const { triggerArchReview } = await import('../daily-review-scheduler.js');
+    expect(triggerArchReview).toHaveBeenCalledTimes(1);
+  });
+
+  // [BEHAVIOR] B-4: Preview 模式打印含 "BRAIN_PREVIEW" 字样的日志
+  it('BRAIN_PREVIEW=1 时 startSchedulerJobsLoop 打印含 BRAIN_PREVIEW 的日志', () => {
+    process.env.BRAIN_PREVIEW = '1';
+    const pool = makePool();
+    startSchedulerJobsLoop(pool);
+    const logged = consoleSpy.mock.calls.flat().join(' ');
+    expect(logged).toMatch(/BRAIN_PREVIEW/);
   });
 });
