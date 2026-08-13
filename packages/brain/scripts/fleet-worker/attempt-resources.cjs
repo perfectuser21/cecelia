@@ -237,6 +237,11 @@ function createAttemptResourceManager({
           environment: Object.freeze({
             DB_URL: dbUrl,
             DATABASE_URL: dbUrl,
+            DB_HOST: 'postgres',
+            DB_PORT: '5432',
+            DB_USER: username,
+            DB_PASSWORD: password,
+            DB_NAME: database,
           }),
           networkName,
         });

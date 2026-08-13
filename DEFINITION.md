@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.10
+**Brain 版本**: 1.273.11
+
+## Brain 1.273.11 — Canonical Attempt PostgreSQL Environment
+
+- Fleet PostgreSQL sidecar 同时注入连接串与标准 `DB_*` 变量，使 Brain 连接池、迁移器和真实 smoke 始终连接同一个 attempt-scoped scratch 数据库。
 
 ## Brain 1.273.10 — Scratch-safe Attempt Database
 

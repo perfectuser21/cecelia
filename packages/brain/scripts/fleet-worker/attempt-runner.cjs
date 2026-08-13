@@ -43,7 +43,15 @@ const MAX_STATE_BYTES = 1_048_576;
 const MAX_GITHUB_TOKEN_BYTES = 16_384;
 const RUNTIME_NETWORK_PATTERN = /^cecelia-attempt-[a-f0-9-]{36}$/;
 const ROUTING_REPO_PATTERN = /^[A-Za-z0-9._/-]+$/;
-const RUNTIME_ENVIRONMENT_FIELDS = new Set(['DB_URL', 'DATABASE_URL']);
+const RUNTIME_ENVIRONMENT_FIELDS = new Set([
+  'DB_URL',
+  'DATABASE_URL',
+  'DB_HOST',
+  'DB_PORT',
+  'DB_USER',
+  'DB_PASSWORD',
+  'DB_NAME',
+]);
 const EMPTY_RUNTIME_RESOURCES = Object.freeze({
   runtime: Object.freeze({}),
   environment: Object.freeze({}),
