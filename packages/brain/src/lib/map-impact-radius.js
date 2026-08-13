@@ -120,6 +120,8 @@ export function computeMapImpactRadius({
     .map((node) => ({
       node_key: node.node_key,
       assertion_ref: node.attributes?.assertion_ref ?? null,
+      assertion_revision: Number(node.attributes?.assertion_revision),
+      journey_step_link_id: node.node_key,
     }))
     .filter(({ assertion_ref: assertionRef }) => Boolean(assertionRef))
     .sort((left, right) => lexical(left.node_key, right.node_key));

@@ -1,26 +1,41 @@
 import { routeWork } from './work-router.js';
 
-export async function createRoutedTask(db, request, repositoryFacts = [], options = {}) {
-  const decision = routeWork(request, repositoryFacts);
+async function loadRepositoryFacts(client) {
+  const result = await client.query(
+    `SELECT scope_key, repo, adapter_config
+       FROM map_scope_repositories
+      ORDER BY scope_key, repo`,
+  );
+  return result.rows.map((row) => ({
+    scope_key: row.scope_key,
+    repo: row.repo,
+    path: row.adapter_config?.path ?? null,
+    aliases: Array.isArray(row.adapter_config?.aliases) ? row.adapter_config.aliases : [],
+  }));
+}
+
+export async function createRoutedTask(db, request, repositoryFacts = null, options = {}) {
   const ownsTransaction = options.transaction !== 'existing';
   const client = ownsTransaction && typeof db.connect === 'function'
     ? await db.connect()
     : db;
-  const task = request.task ?? {};
-  const payload = {
-    ...(request.metadata || {}),
-    ...(task.payload || {}),
-    work_kind: decision.work_kind,
-    change_kind: decision.change_kind,
-    requested_task_type: request.requested_task_type ?? task.task_type ?? null,
-    default_execution_profile: decision.default_execution_profile,
-    execution_profile_override: decision.execution_profile_override ?? null,
-    repo: decision.repo,
-    map_scope: decision.map_scope,
-    impact_contract_required: decision.impact_contract_required,
-  };
   try {
     if (ownsTransaction) await client.query('BEGIN');
+    const facts = repositoryFacts ?? await loadRepositoryFacts(client);
+    const decision = routeWork(request, facts);
+    const task = request.task ?? {};
+    const payload = {
+      ...(request.metadata || {}),
+      ...(task.payload || {}),
+      work_kind: decision.work_kind,
+      change_kind: decision.change_kind,
+      requested_task_type: request.requested_task_type ?? task.task_type ?? null,
+      default_execution_profile: decision.default_execution_profile,
+      execution_profile_override: decision.execution_profile_override ?? null,
+      repo: decision.repo,
+      map_scope: decision.map_scope,
+      impact_contract_required: decision.impact_contract_required,
+    };
     await client.query(
       'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
       [`work-route:${request.source}:${request.source_id}:${decision.router_version}`],

@@ -719,7 +719,12 @@ export async function collectGroundTruth(deps, opts) {
   // review gate：required 来自 tasks.payload（harness-initiative 透传 review_required）；
   // approved 权威 = 决策日志 verdict:human_review 行，锚定当前 head_sha（stale 批准不放行）
   const payload = asJson(task.payload) ?? {};
-  const reviewRequired = payload.review_required === true;
+  const effectiveProfile = routingReceipt
+    ? (routingReceipt.execution_profile_override ?? routingReceipt.default_execution_profile)
+    : null;
+  const reviewRequired = routingReceipt
+    ? ['new-capability-v1', 'capability-change-v1'].includes(effectiveProfile)
+    : payload.review_required === true;
   const mergeApproval = latestRow(decisionLog, (row) => {
     if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW || !pr) return false;
     const detail = asJson(row.detail);

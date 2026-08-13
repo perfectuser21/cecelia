@@ -42,6 +42,12 @@ const REQUIRED_FIELDS = [
 // derive 是纯函数状态机，刻意不 import relay（其顶层 import 了 db.js，会把 DB 依赖拖进纯函数
 // 与其纯函数测试），故此处按值复制同一枚举，两端由评审/回归守卫保持一致。
 const GEAR_VALUES = ['default', 'hotfix', 'segmented'];
+const EXECUTION_PROFILES = new Set([
+  'new-capability-v1',
+  'capability-change-v1',
+  'hotfix-v1',
+  'parameter-only-v1',
+]);
 
 function assertObservedShape(observed) {
   for (const field of REQUIRED_FIELDS) {
@@ -737,7 +743,37 @@ export function derive(observed) {
   //  - hotfix：初始态（prd 未落盘 && 合同未批）跳过 planning/gan 直进 generate，保留
   //    generator→evaluator→judge（决策 1b677ae3：免 planner/GAN 但保留评估）。
   //  - segmented / default / 缺省：落到下面现行 planning 门（default 逐字节等价，零回归）。
-  const gear = observed.gear ?? 'default';
+  const hasReceiptObservation = Object.hasOwn(observed, 'routingReceipt');
+  const receipt = observed.routingReceipt;
+  if (hasReceiptObservation && !receipt) {
+    return { phase: 'failed', action: ACTION.MARK_FAILED, reason: 'routing_receipt_missing' };
+  }
+  const executionProfile = receipt
+    ? (receipt.execution_profile_override ?? receipt.default_execution_profile)
+    : null;
+  if (receipt && !EXECUTION_PROFILES.has(executionProfile)) {
+    return { phase: 'failed', action: ACTION.MARK_FAILED, reason: 'invalid_execution_profile' };
+  }
+  if (executionProfile === 'hotfix-v1' || executionProfile === 'parameter-only-v1') {
+    return applyHopFence(deriveTask(observed), counters);
+  }
+  if (executionProfile === 'capability-change-v1') {
+    if (!prdExists) {
+      return applyHopFence(
+        { phase: 'planning', action: ACTION.SPAWN_PLANNER, reason: 'profile_light_planner_required' },
+        counters,
+      );
+    }
+    if (!contract.approved) {
+      const decision = observed.proposeBranchRn >= 1
+        ? { phase: 'gan', action: ACTION.FORCE_APPROVE_CONTRACT, reason: 'profile_direct_contract_convergence' }
+        : { phase: 'gan', action: ACTION.SPAWN_PROPOSER, reason: 'profile_direct_contract_proposal' };
+      return applyHopFence(decision, counters);
+    }
+    return applyHopFence(deriveTask(observed), counters);
+  }
+
+  const gear = receipt ? 'default' : (observed.gear ?? 'default');
   if (!GEAR_VALUES.includes(gear)) {
     return { phase: 'failed', action: ACTION.MARK_FAILED, reason: 'invalid_gear' };
   }

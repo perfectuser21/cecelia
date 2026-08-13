@@ -18,6 +18,9 @@ async function buildApp(capturedInserts) {
       if (sql.includes('INSERT INTO work_routing_receipts')) {
         return { rows: [{ id: 'receipt-test' }] };
       }
+      if (sql.includes('FROM map_scope_repositories')) {
+        return { rows: [{ scope_key: 'cecelia', repo: 'cecelia', adapter_config: { aliases: ['perfectuser21/cecelia'] } }] };
+      }
       return { rows: [] };
     }),
   };

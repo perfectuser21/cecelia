@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import { computeMapImpactRadius } from '../map-impact-radius.js';
 
+const ASSERTION_LINK_ID = '11111111-1111-4111-8111-111111111111';
 const nodes = [
   { node_id: 'artifact-a', node_type: 'artifact', node_key: 'repo-a:graph:src/api.js', attributes: { repo: 'repo-a', stable_ref: 'src/api.js' } },
   { node_id: 'artifact-b', node_type: 'artifact', node_key: 'repo-b:graph:src/api.js', attributes: { repo: 'repo-b', stable_ref: 'src/api.js' } },
   { node_id: 'feature-a', node_type: 'feature', node_key: 'feature-a', attributes: {} },
-  { node_id: 'assertion-a', node_type: 'assertion', node_key: 'assertion-a', attributes: { assertion_ref: 'tests/core.test.js' } },
+  { node_id: 'assertion-a', node_type: 'assertion', node_key: ASSERTION_LINK_ID, attributes: { assertion_ref: 'tests/core.test.js', assertion_revision: 2 } },
   { node_id: 'cap-a', node_type: 'capability', node_key: 'CAP_A', attributes: {} },
   { node_id: 'stream-a', node_type: 'value_stream', node_key: 'stream-a', attributes: {} },
   { node_id: 'crosscut-a', node_type: 'crosscut', node_key: 'crosscut-a', attributes: {} },
@@ -36,7 +37,12 @@ describe('computeMapImpactRadius', () => {
       'CAP_A', 'crosscut-a', 'feature-a', 'stream-a',
     ]);
     expect(result.must_run_assertions).toEqual([
-      { node_key: 'assertion-a', assertion_ref: 'tests/core.test.js' },
+      {
+        node_key: ASSERTION_LINK_ID,
+        assertion_ref: 'tests/core.test.js',
+        assertion_revision: 2,
+        journey_step_link_id: ASSERTION_LINK_ID,
+      },
     ]);
     expect(result.affected_tests).toEqual(['tests/core.test.js']);
   });

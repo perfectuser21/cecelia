@@ -22,11 +22,14 @@ describe('Map Impact Contract preflight', () => {
       nodes: [{ key: 'cap-router', type: 'capability', name: 'Router' }],
     }));
     const readRadius = vi.fn(async () => ({
-      freshness: { status: 'fresh', source_revision: baseSha },
+      freshness: {
+        status: 'fresh',
+        repos: { cecelia: { status: 'fresh', source_revision: baseSha } },
+      },
       affected_business_nodes: [{ node_key: 'cap-router', node_type: 'capability', name: 'Router' }],
       must_run_assertions: [{
         node_key: '11111111-1111-4111-8111-111111111111',
-        assertion_ref: 'test:router',
+        assertion_ref: 'src/router.test.js',
         assertion_revision: 1,
       }],
     }));
@@ -34,7 +37,10 @@ describe('Map Impact Contract preflight', () => {
       created: true,
       contract: { id: 'contract-1', ...input, status: 'active' },
     }));
-    const result = await ensureMapImpactPreflight({ query: vi.fn() }, {
+    const client = {
+      query: vi.fn(async () => ({ rows: [{ scope_key: 'cecelia' }] })),
+    };
+    const result = await ensureMapImpactPreflight(client, {
       task: { id: '22222222-2222-4222-8222-222222222222' },
       receipt: {
         repo: 'cecelia',
@@ -53,7 +59,10 @@ describe('Map Impact Contract preflight', () => {
 
   it('fails before contract persistence for stale Map evidence', async () => {
     const persistContract = vi.fn();
-    await expect(ensureMapImpactPreflight({ query: vi.fn() }, {
+    const client = {
+      query: vi.fn(async () => ({ rows: [{ scope_key: 'cecelia' }] })),
+    };
+    await expect(ensureMapImpactPreflight(client, {
       task: { id: '22222222-2222-4222-8222-222222222222' },
       receipt: {
         repo: 'cecelia', change_kind: 'bugfix', map_scope: ['cap-router'],

@@ -11,6 +11,7 @@ import { derive } from '../derive.js';
 const RUN_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const TASK_ID = '11111111-2222-4333-8444-555555555555';
 const CONTRACT_ID = '99999999-8888-4777-8666-555555555555';
+const ROUTING_RECEIPT_ID = '77777777-6666-4555-8444-333333333333';
 const PR_URL = 'https://github.com/o/r/pull/42';
 
 /** 按 SQL 表名路由的 fake pool */
@@ -27,6 +28,7 @@ function fakePool(rowsByTable = {}) {
       if (sql.includes('FROM initiative_contracts')) return { rows: rowsByTable.initiative_contracts ?? [] };
       if (sql.includes('FROM initiative_contract_artifacts')) return { rows: rowsByTable.initiative_contract_artifacts ?? [] };
       if (sql.includes('FROM tasks')) return { rows: rowsByTable.tasks ?? [] };
+      if (sql.includes('FROM work_routing_receipts')) return { rows: rowsByTable.work_routing_receipts ?? [] };
       if (sql.includes('FROM harness_attempts')) {
         if (sql.includes("role = 'evaluator'")) {
           return { rows: rowsByTable.harness_evaluator_attempts ?? [] };
@@ -88,11 +90,34 @@ function makeDeps({ rows = {}, exec = {}, files = {}, readAuthCircuit } = {}) {
     cost_usd: '1.50', current_task_id: TASK_ID,
     ...(rows.run ?? {}),
   };
+  const taskRows = (rows.tasks ?? [{ id: TASK_ID, status: 'in_progress', payload: {} }])
+    .map((task) => {
+      const payload = {
+        ...(typeof task.payload === 'string' ? JSON.parse(task.payload) : (task.payload ?? {})),
+        routing_receipt_id: ROUTING_RECEIPT_ID,
+      };
+      return {
+        ...task,
+        payload: typeof task.payload === 'string' ? JSON.stringify(payload) : payload,
+      };
+    });
   const pool = fakePool({
     initiative_runs: [runRow],
     initiative_contracts: rows.contracts ?? [{ id: CONTRACT_ID, status: 'draft' }],
     initiative_contract_artifacts: rows.contractArtifacts ?? [],
-    tasks: rows.tasks ?? [{ id: TASK_ID, status: 'in_progress', payload: {} }],
+    tasks: taskRows,
+    work_routing_receipts: rows.routingReceipts ?? [{
+      id: ROUTING_RECEIPT_ID,
+      task_id: TASK_ID,
+      work_kind: 'coding_mutation',
+      change_kind: 'new_capability',
+      pipeline: 'harness',
+      canonical_task_type: 'harness_initiative',
+      default_execution_profile: 'new-capability-v1',
+      execution_profile_override: null,
+      repo: 'cecelia',
+      superseded: false,
+    }],
     harness_attempts: rows.attempts ?? [],
     harness_evaluator_attempts: rows.evaluatorAttempts ?? rows.attempts ?? [],
     orchestrator_decision_log: rows.log ?? [],

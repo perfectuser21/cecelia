@@ -37,6 +37,13 @@ export function normalizeWorkRequest(input = {}) {
   if (request.decided_at != null && !Number.isFinite(Date.parse(request.decided_at))) {
     throw new Error('invalid_decided_at');
   }
+  if (request.map_scope_hint != null && (
+    !Array.isArray(request.map_scope_hint)
+    || request.map_scope_hint.some((item) => typeof item !== 'string' || item.trim().length === 0)
+  )) {
+    throw new Error('invalid_map_scope');
+  }
+  request.map_scope_hint = [...new Set((request.map_scope_hint ?? []).map((item) => item.trim()))].sort();
   request.repo_hint = normalizeRepoHint(request.repo_hint);
   return request;
 }
@@ -48,8 +55,11 @@ export function classifyWork(request) {
 
 export function resolveRepo(request, repositoryFacts = []) {
   const hint = normalizeRepoHint(request.repo_hint);
-  const matches = repositoryFacts.filter(f => f.repo === hint || f.path === hint);
-  if (hint && matches.length === 0 && repositoryFacts.length === 0 && /^[\w.-]+\/[\w.-]+$/.test(hint)) return hint;
+  const matches = repositoryFacts.filter((fact) => (
+    fact.repo === hint
+    || fact.path === hint
+    || fact.aliases?.includes(hint)
+  ));
   if (matches.length !== 1) throw new Error('repo_unknown');
   return matches[0].repo;
 }

@@ -44,6 +44,9 @@ beforeEach(() => {
       return { rows: [{ id: 'task-new', title: 't', status: 'queued', task_type: 'harness_initiative', priority: 'P2', payload: {}, created_at: '2026-07-10T00:00:00Z' }] };
     }
     if (/INSERT INTO work_routing_receipts/.test(sql)) return { rows: [{ id: 'receipt-new' }] };
+    if (/FROM map_scope_repositories/.test(sql)) {
+      return { rows: [{ scope_key: 'cecelia', repo: 'cecelia', adapter_config: { aliases: ['perfectuser21/cecelia'] } }] };
+    }
     return { rows: [] };
   });
 });

@@ -1,4 +1,5 @@
 import { COMMANDER_MODES } from './commander-contract.js';
+import { ensureMapImpactPreflight } from './preflight/map-impact-contract.js';
 
 const ACTIVE_PHASES = new Set([
   'planning',
@@ -377,7 +378,7 @@ export async function patchLegacyKernelRunByInitiative(pool, {
   }
 }
 
-export async function createKernelRun(pool, input) {
+export async function createKernelRun(pool, input, deps = {}) {
   const { commanderMode } = validateCreateInput(input);
   const client = await pool.connect();
   let committed = false;
@@ -425,22 +426,39 @@ export async function createKernelRun(pool, input) {
       return { created: false, run: active };
     }
 
-    const activeImpactContract = await client.query(
-      `SELECT id
-       FROM harness_impact_contracts
-       WHERE task_id = $1 AND status = 'active'
-       ORDER BY version DESC
-       LIMIT 1`,
-      [input.taskId],
+    const receiptId = task.payload?.routing_receipt_id;
+    if (!receiptId) throw new Error('routing_receipt_missing');
+    const { rows: receiptRows } = await client.query(
+      `SELECT receipt.*,
+              EXISTS (
+                SELECT 1 FROM work_routing_receipts successor
+                 WHERE successor.supersedes_receipt_id = receipt.id
+              ) AS superseded
+         FROM work_routing_receipts receipt
+        WHERE receipt.id = $1
+          AND receipt.task_id = $2`,
+      [receiptId, input.taskId],
     );
-    const impactContractRequired = true;
+    const receipt = receiptRows[0];
+    if (
+      !receipt
+      || receipt.superseded
+      || receipt.work_kind !== 'coding_mutation'
+      || receipt.pipeline !== 'harness'
+      || receipt.canonical_task_type !== 'harness_initiative'
+      || receipt.impact_contract_required !== true
+    ) {
+      throw new Error('routing_receipt_invalid');
+    }
+    const runPreflight = deps.ensureMapImpactPreflight ?? ensureMapImpactPreflight;
+    const preflight = await runPreflight(client, { task, receipt });
+    if (!preflight?.contract?.id || preflight.contract.status !== 'active') {
+      throw new Error('impact_contract_inactive');
+    }
+
     const impactContractPolicy = 'required';
-    const impactContractPolicyReason = activeImpactContract.rows.length > 0
-      ? 'active Impact Contract exists before Kernel run creation'
-      : 'Kernel coding runs require Map and Impact Contract preflight';
-    const impactContractPolicyDecisionId = impactContractRequired
-      ? (task.payload?.impact_contract_decision_id ?? '4bc109e9')
-      : 'f69c2f91';
+    const impactContractPolicyReason = `Map fresh and active Impact Contract ${preflight.contract.id}`;
+    const impactContractPolicyDecisionId = '4bc109e9';
 
     const { rows } = await client.query(
       `INSERT INTO initiative_runs (

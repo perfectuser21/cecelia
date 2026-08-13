@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS work_routing_receipts (
 );
 CREATE INDEX IF NOT EXISTS idx_work_routing_receipts_task_created
   ON work_routing_receipts(task_id, created_at DESC);
+UPDATE map_scope_repositories
+   SET adapter_config = adapter_config || '{"aliases":["perfectuser21/cecelia","https://github.com/perfectuser21/cecelia"]}'::jsonb
+ WHERE scope_key = 'cecelia' AND repo = 'cecelia';
 CREATE TABLE IF NOT EXISTS map_recovery_contracts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), receipt_id uuid NOT NULL REFERENCES work_routing_receipts(id),
   task_id uuid NOT NULL REFERENCES tasks(id), repo text NOT NULL, branch text NOT NULL, base_sha text NOT NULL,

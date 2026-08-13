@@ -4,6 +4,11 @@ import pg from 'pg';
 import { createRoutedTask } from '../../work-routing-store.js';
 
 const { Pool } = pg;
+const REPOSITORY_FACTS = [{
+  scope_key: 'cecelia',
+  repo: 'cecelia',
+  aliases: ['perfectuser21/cecelia'],
+}];
 
 describe('routing store transaction contract', () => {
   it('creates task and immutable receipt in one client transaction', async () => {
@@ -14,7 +19,7 @@ describe('routing store transaction contract', () => {
       if (String(sql).includes('INSERT INTO work_routing_receipts')) return { rows: [{ id: 'receipt-1' }] };
       return { rows: [] };
     }};
-    const result = await createRoutedTask(client, { source: 'api', source_id: '1', title: 'fix', mutation_intent: 'write', declared_change_kind: 'bugfix', repo_hint: 'perfectuser21/cecelia' });
+    const result = await createRoutedTask(client, { source: 'api', source_id: '1', title: 'fix', mutation_intent: 'write', declared_change_kind: 'bugfix', repo_hint: 'perfectuser21/cecelia' }, REPOSITORY_FACTS);
     expect(result).toMatchObject({ task_id: 'task-1', routing_receipt_id: 'receipt-1' });
     expect(calls.map(([sql]) => sql)).toEqual(expect.arrayContaining(['BEGIN', 'COMMIT']));
   });
@@ -44,7 +49,7 @@ describe('routing store transaction contract', () => {
       declared_change_kind: 'bugfix',
       repo_hint: 'perfectuser21/cecelia',
       task: { priority: 'P0', project_id: 'project-1', status: 'queued' },
-    });
+    }, REPOSITORY_FACTS);
 
     expect(pool.connect).toHaveBeenCalledOnce();
     expect(client.release).toHaveBeenCalledOnce();
@@ -69,7 +74,7 @@ describe('routing store transaction contract', () => {
     await createRoutedTask(client, {
       source: 'inbox', source_id: 'atom-3', title: 'fix', mutation_intent: 'unknown',
       declared_change_kind: 'bugfix', repo_hint: 'perfectuser21/cecelia',
-    }, [], { transaction: 'existing' });
+    }, REPOSITORY_FACTS, { transaction: 'existing' });
 
     expect(calls).not.toContain('BEGIN');
     expect(calls).not.toContain('COMMIT');
@@ -94,7 +99,7 @@ describe('routing store transaction contract', () => {
         repo_hint: 'perfectuser21/cecelia',
         branch: 'cp-routing-pg',
         base_sha: 'a'.repeat(40),
-      }, [], { transaction: 'existing' });
+      }, REPOSITORY_FACTS, { transaction: 'existing' });
 
       const persisted = await client.query(
         `SELECT task.task_type, task.payload->>'routing_receipt_id' AS projected_receipt_id,
@@ -109,7 +114,7 @@ describe('routing store transaction contract', () => {
         projected_receipt_id: created.routing_receipt_id,
         pipeline: 'harness',
         change_kind: 'bugfix',
-        repo: 'perfectuser21/cecelia',
+        repo: 'cecelia',
       });
 
       await client.query('SAVEPOINT immutable_probe');
