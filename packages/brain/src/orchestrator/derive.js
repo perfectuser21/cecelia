@@ -866,6 +866,7 @@ function deriveTask(observed) {
     pr,
     lastAgentExit,
     generatorSpawned,
+    evaluateVerdict,
     counters,
     decisionLog,
   } = observed;
@@ -924,6 +925,25 @@ function deriveTask(observed) {
   }
 
   // 4. ci pass —— verdict 全部锚定当前 head SHA（P0-2）
+  // 非 hotfix 的现有 PR 不能越过当前 Run 的 Generator 信任边界。跨 Run
+  // 恢复时，task payload/旧 Run 可能仍声明 generator_done，但当前 HEAD 已经
+  // 推进；若在尚无 Evaluator verdict 时直接派 Evaluator，validation clock
+  // 又没有本 Run 的 Generator 原点，loop 会以 validation_clock_required
+  // 进程级失败。先让 generator-fix 对当前 PR HEAD 重新封印并建立本 Run 的
+  // 共享时钟。放在 exit/auth 与 CI 分路之后，避免覆盖更具体的故障事实；已有
+  // verdict 继续由下游锚定 SHA 的状态机裁决。hotfix 的 verified-existing-PR
+  // 窄通道仍由 loop 的 URL+SHA 精确绑定执法。
+  if (
+    !generatorSpawned
+    && evaluateVerdict == null
+    && (observed.gear ?? 'default') !== 'hotfix'
+  ) {
+    return {
+      phase: 'generate',
+      action: ACTION.SPAWN_GENERATOR_FIX,
+      reason: 'current_run_generator_required_for_existing_pr',
+    };
+  }
   return deriveVerdictChain(observed);
 }
 

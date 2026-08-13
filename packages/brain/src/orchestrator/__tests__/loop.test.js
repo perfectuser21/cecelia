@@ -361,6 +361,56 @@ describe('runLoop：全链 planning→done', () => {
     });
   });
 
+  it('default 恢复 Run 已有 PR 时先由 generator-fix 建钟，再让 Evaluator 复用同一时钟', async () => {
+    const pr = {
+      url: 'https://github.com/perfectuser21/cecelia/pull/4851',
+      state: 'OPEN',
+      mergeStateStatus: 'CLEAN',
+      ci: 'pass',
+      merged: false,
+      head_sha: '5fcb7b48b7f6cff567da93e79b6e7b463ace29e8',
+    };
+    const task = {
+      id: TASK_ID,
+      status: 'in_progress',
+      payload: { gear: 'default', timeout_seconds: 7200 },
+    };
+    const { deps, appended } = makeEnv({
+      observedSeq: [
+        obs({ gear: 'default', task, generatorSpawned: false, pr }),
+        obs({ gear: 'default', task, generatorSpawned: true, pr }),
+        obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+      ],
+    });
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(deps.dispatch).toHaveBeenNthCalledWith(
+      1,
+      'spawn:generator-fix',
+      expect.objectContaining({
+        validationClock: {
+          pipeline_started_at: '2026-07-04T12:00:00.000Z',
+          deadline_at: '2026-07-04T14:00:00.000Z',
+        },
+      }),
+    );
+    expect(deps.dispatch).toHaveBeenNthCalledWith(
+      2,
+      'spawn:evaluator',
+      expect.objectContaining({
+        validationClock: {
+          pipeline_started_at: '2026-07-04T12:00:00.000Z',
+          deadline_at: '2026-07-04T14:00:00.000Z',
+        },
+      }),
+    );
+    expect(appended.slice(0, 2).map((entry) => entry.action)).toEqual([
+      'spawn:generator-fix',
+      'spawn:evaluator',
+    ]);
+  });
+
   it('hotfix 已有 PR 的声明 SHA 与 GitHub 观测不一致时仍 fail closed', async () => {
     const prUrl = 'https://github.com/perfectuser21/cecelia/pull/4794';
     const observed = obs({
