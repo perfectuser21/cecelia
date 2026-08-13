@@ -17,7 +17,7 @@ const CANONICAL_BASELINE = Object.freeze({
     'xian-mac-m4': 'http://100.71.151.105:5221/api/brain/health',
     'xian-mac-m1': 'http://100.71.151.105:5221/api/brain/health',
   }),
-  runner_image_digest: 'sha256:bc0889dc1bea1354cbf80f7f46cd5152cd8fc7089b29bb1888c9d659d4fa55cc',
+  runner_image_digest: 'sha256:2102fb112d1d0f809ce2e7b08d152e58294541e89bc0a6d790ad32dbf4802108',
   runtime_resources: Object.freeze({
     postgres: Object.freeze({
       image_digest: 'postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777',
@@ -40,7 +40,7 @@ const CANONICAL_BASELINE = Object.freeze({
     orbstack: '2.2.1',
     worker_protocol: 'kernel-harness/v1',
     worker_contract: 'fleet-node-health/v1',
-    worker: '1.272.13',
+    worker: '1.272.14',
     runner: 'cecelia-runner/v1',
     git: '2.39.5',
     node: '25.8.0',

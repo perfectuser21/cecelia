@@ -12,7 +12,7 @@
 
 - Judge 通过同机 Fleet/Runner 读取精确 candidate，callback 再经服务端机械闸后原子写入 SHA 锚定 verdict；Generator-fix 从 retained candidate 继续并释放被替代工作区。
 - Work Router 在 coding task 提交前可信冻结 branch/base SHA，幂等重放同时比较完整 evidence；批准合同只允许单向进入 superseded，禁止降级绕过不可变性。
-- Runner 真实镜像固定为 `sha256:bc0889dc1bea1354cbf80f7f46cd5152cd8fc7089b29bb1888c9d659d4fa55cc`；Fleet Worker `1.272.13` 与 Codex CLI `0.147.0` 作为三机准入基线。
+- Runner 真实镜像固定为 `sha256:2102fb112d1d0f809ce2e7b08d152e58294541e89bc0a6d790ad32dbf4802108`；Fleet Worker `1.272.14` 与 Codex CLI `0.147.0` 作为三机准入基线。
 
 ## Judge-gated Candidate Publishing（Brain 1.272.64）
 
