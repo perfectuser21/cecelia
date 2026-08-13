@@ -14,6 +14,7 @@ type install_routing_action_gate >/dev/null
 git init -b cp-action-gate "$TEST_ROOT/workspace" >/dev/null
 git -C "$TEST_ROOT/workspace" config user.name 'Routing Gate Test'
 git -C "$TEST_ROOT/workspace" config user.email routing@example.invalid
+git -C "$TEST_ROOT/workspace" config core.hooksPath /dev/null
 printf 'base\n' > "$TEST_ROOT/workspace/base.txt"
 git -C "$TEST_ROOT/workspace" add base.txt
 git -C "$TEST_ROOT/workspace" commit -m base >/dev/null
@@ -37,10 +38,10 @@ jq -e --arg base "$BASE_SHA" '
 ' "$LOCK" >/dev/null
 
 rm "$LOCK"
-CECELIA_RUN_ID='' ! install_routing_action_gate >/dev/null 2>&1
+(export CECELIA_RUN_ID=''; ! install_routing_action_gate >/dev/null 2>&1)
 test ! -e "$LOCK"
 
-CECELIA_BRANCH=cp-wrong ! install_routing_action_gate >/dev/null 2>&1
+(export CECELIA_BRANCH=cp-wrong; ! install_routing_action_gate >/dev/null 2>&1)
 test ! -e "$LOCK"
 
 echo 'entrypoint routing action gate PASS'

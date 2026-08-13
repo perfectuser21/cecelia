@@ -888,6 +888,75 @@ finalize_planner_output() {
 }
 # planner-finalizer:end
 
+# routing-action-gate:start
+# A routed coding Provider may only start with a lock projected by the trusted
+# Runner from the server-issued Attempt identity. The Provider never chooses
+# these fields and cannot turn a non-routed task into an authorized one.
+install_routing_action_gate() {
+  local workspace="${WORKTREE_PATH:-/workspace}"
+  local identity_values=(
+    "${CECELIA_TASK_ID:-}"
+    "${CECELIA_ROUTING_RECEIPT_ID:-}"
+    "${CECELIA_RUN_ID:-}"
+    "${CECELIA_REPO:-}"
+    "${CECELIA_BRANCH:-}"
+    "${CECELIA_BASE_SHA:-}"
+  )
+  local present=0
+  local value=""
+  for value in "${identity_values[@]}"; do
+    [[ -z "$value" ]] || present=$((present + 1))
+  done
+  [[ $present -eq 0 ]] && return 0
+  if [[ $present -ne ${#identity_values[@]} ]]; then
+    echo "[entrypoint] routing action identity is incomplete" >&2
+    return 1
+  fi
+  if [[ ! "${CECELIA_TASK_ID}" =~ ^[0-9a-f-]{36}$ ]] \
+      || [[ ! "${CECELIA_ROUTING_RECEIPT_ID}" =~ ^[0-9a-f-]{36}$ ]] \
+      || [[ ! "${CECELIA_RUN_ID}" =~ ^[0-9a-f-]{36}$ ]] \
+      || [[ ! "${CECELIA_REPO}" =~ ^[A-Za-z0-9._/-]+$ ]] \
+      || [[ ! "${CECELIA_BRANCH}" =~ ^cp-[a-z0-9][a-z0-9._-]{0,126}$ ]] \
+      || [[ ! "${CECELIA_BASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "[entrypoint] routing action identity is malformed" >&2
+    return 1
+  fi
+  if [[ ! -d "$workspace" ]] || ! git -C "$workspace" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "[entrypoint] routing action workspace is unavailable" >&2
+    return 1
+  fi
+  local actual_branch actual_root
+  actual_branch=$(git -C "$workspace" branch --show-current 2>/dev/null || true)
+  actual_root=$(git -C "$workspace" rev-parse --show-toplevel 2>/dev/null || true)
+  if [[ "$actual_branch" != "$CECELIA_BRANCH" ]] \
+      || [[ -z "$actual_root" ]] \
+      || ! git -C "$actual_root" cat-file -e "${CECELIA_BASE_SHA}^{commit}" 2>/dev/null \
+      || ! git -C "$actual_root" merge-base --is-ancestor "$CECELIA_BASE_SHA" HEAD 2>/dev/null; then
+    echo "[entrypoint] routing action workspace does not match server identity" >&2
+    return 1
+  fi
+  local lock="$actual_root/.dev-lock.$actual_branch"
+  local lock_tmp="$lock.tmp.$$"
+  if ! jq -n \
+      --arg task_id "$CECELIA_TASK_ID" \
+      --arg routing_receipt_id "$CECELIA_ROUTING_RECEIPT_ID" \
+      --arg run_id "$CECELIA_RUN_ID" \
+      --arg repo "$CECELIA_REPO" \
+      --arg branch "$actual_branch" \
+      --arg base_sha "$CECELIA_BASE_SHA" \
+      --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '{task_id:$task_id,routing_receipt_id:$routing_receipt_id,run_id:$run_id,
+        repo:$repo,branch:$branch,base_sha:$base_sha,created_at:$created_at}' \
+      > "$lock_tmp"; then
+    rm -f "$lock_tmp"
+    return 1
+  fi
+  chmod 0444 "$lock_tmp" || { rm -f "$lock_tmp"; return 1; }
+  mv -f "$lock_tmp" "$lock" || { rm -f "$lock_tmp"; return 1; }
+  echo "[entrypoint] routing action gate armed for receipt=$CECELIA_ROUTING_RECEIPT_ID"
+}
+# routing-action-gate:end
+
 # frozen-baseline-guard:start
 # 生产 run d9785137 / attempt 3aa00156：任务 payload.base_sha 钉死了盲测冻结基线，
 # Generator 仍按 SKILL Step 0.5 无条件 rebase 到 origin/main，把对照候选的血统带进
@@ -1884,6 +1953,15 @@ run_provider_contract() {
       "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
       'Frozen contract tests rejected' frozen_contract_artifacts_invalid \
       'runner could not materialize or verify exact approved contract tests' \
+      "${CREDENTIAL_REF:-}" "${CREDENTIAL_COPY_MUTATED:-false}"
+    return 1
+  fi
+
+  if ! install_routing_action_gate; then
+    write_provider_bootstrap_failure \
+      "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
+      'Routing action gate rejected' routing_action_gate_invalid \
+      'runner could not bind the Provider workspace to its canonical receipt' \
       "${CREDENTIAL_REF:-}" "${CREDENTIAL_COPY_MUTATED:-false}"
     return 1
   fi
