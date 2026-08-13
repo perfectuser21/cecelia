@@ -1984,19 +1984,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT_BOT || secrets.GITHUB_TOKEN }}
           BRAIN_URL: ${{ vars.BRAIN_URL || 'http://localhost:5221' }}
+          BRAIN_BASE_URL: ${{ vars.BRAIN_URL || 'http://localhost:5221' }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BODY: ${{ github.event.pull_request.body }}
           # PR_TITLE / HEAD_BRANCH 走 env 而非内联 ${{ }}：分支名和标题是用户可控输入，
           # 直接内联进 run 脚本存在 shell 注入面（GHA 已知问题）。
           PR_TITLE: ${{ github.event.pull_request.title }}
           HEAD_BRANCH: ${{ github.head_ref }}
+          # head_sha 是 entitlement 精确绑定三元组之一（force-push 后旧 entitlement 立即失效）。
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           # 合并决策抽到 should-auto-merge.sh（可单测，见 __tests__/should-auto-merge.test.sh）。
           # 关键：harness generator 产出的 PR 也用 cp-* 分支，但走 harness 自己的
           # evaluator+DeepSeek 裁判 gate 决定 merge。若此处仍按「cp-* + CI 绿」抢先合并，会
-          # 架空裁判裁决权（用户曾见「裁判说不放行，代码还是被 merge」）。脚本按 PR 标题
-          # feat(harness): 前缀识别 harness-owned PR 并跳过，把 merge 交还给 harness gate。
-          DECISION="$(bash .github/workflows/scripts/should-auto-merge.sh "$HEAD_BRANCH" "$PR_TITLE")"
+          # 架空裁判裁决权（用户曾见「裁判说不放行，代码还是被 merge」）。#4870 后脚本改为
+          # entitlement + fail-closed 身份闸：非 harness 的 cp-* 也须受信通道签发、精确绑定
+          # repo+PR+head_sha 的 entitlement 才 MERGE，故此处补齐 repo/pr_number/head_sha 绑定参数
+          # （缺则脚本 fail-closed 输出 SKIP: entitlement_unverifiable，拦停所有 /dev auto-merge）。
+          DECISION="$(bash .github/workflows/scripts/should-auto-merge.sh "$HEAD_BRANCH" "$PR_TITLE" "$GITHUB_REPOSITORY" "$PR_NUMBER" "$HEAD_SHA")"
           echo "$DECISION"
           if [[ "$DECISION" == SKIP:* ]]; then
             exit 0
