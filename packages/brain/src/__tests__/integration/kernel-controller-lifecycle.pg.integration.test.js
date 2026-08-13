@@ -83,6 +83,20 @@ async function dropIsolatedDatabase() {
   if (adminPool) await adminPool.end().catch(() => {});
 }
 
+async function waitForBackendLock(applicationName) {
+  const deadline=Date.now()+3_000;
+  while (Date.now()<deadline) {
+    const {rows}=await testPool.query(
+      `SELECT wait_event_type FROM pg_stat_activity
+        WHERE datname=$1 AND application_name=$2 AND state<>'idle'`,
+      [databaseName,applicationName],
+    );
+    if (rows.some((row)=>row.wait_event_type==='Lock')) return;
+    await new Promise((resolve)=>setTimeout(resolve,20));
+  }
+  throw new Error(`backend did not enter lock wait: ${applicationName}`);
+}
+
 async function seedTask() {
   return seedRoutedKernelTask(testPool, {
     titlePrefix: 'kernel-ctllife',
@@ -344,6 +358,57 @@ describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（�
     );
     expect(fresh.rows[0]).toMatchObject({expired:true});
     expect(fresh.rows[0].orchestrator_host).not.toBe('stale');
+  });
+
+  it('heartbeat 与 sweeper 同时竞争时无死锁且只有一方取得终态',async()=>{
+    const {initiativeId,taskId}=await seedTask();
+    const created=await createRoutedKernelRun(testPool,{taskId,initiativeId,phase:'planning',
+      journeyId:null,abilityId:null,host:'kernel-v1',deadlineHours:8,createdSource:'kernel_dispatch'});
+    const boundary=new Date(Date.now()+60_000);
+    await testPool.query(
+      `UPDATE kernel_controller_sessions SET lease_expires_at=$2 WHERE id=$1`,
+      [created.run.controller_session_id,boundary],
+    );
+    await testPool.query(
+      `UPDATE initiative_runs SET controller_lease_expires_at=$2 WHERE id=$1`,
+      [created.run.id,boundary],
+    );
+
+    const blocker=await testPool.connect();
+    const heartbeatPool=new Pool({...DB_DEFAULTS,database:databaseName,max:1,
+      application_name:'ctllife-heartbeat-race'});
+    const sweeperPool=new Pool({...DB_DEFAULTS,database:databaseName,max:1,
+      application_name:'ctllife-sweeper-race'});
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('SELECT id FROM kernel_controller_sessions WHERE id=$1 FOR UPDATE',
+        [created.run.controller_session_id]);
+      const heartbeat=writeHeartbeat(heartbeatPool,{
+        runId:created.run.id,controllerSessionId:created.run.controller_session_id,
+        controllerGeneration:created.run.controller_generation,host:'race-heartbeat',pid:123,
+        now:new Date(boundary.getTime()-1_000),leaseSeconds:120,
+      });
+      await waitForBackendLock('ctllife-heartbeat-race');
+      const sweep=reconcileOwnerlessKernelRuns(sweeperPool,{
+        now:new Date(boundary.getTime()+1_000),
+      });
+      await waitForBackendLock('ctllife-sweeper-race');
+      await blocker.query('COMMIT');
+      const [heartbeatResult,sweepResult]=await Promise.allSettled([heartbeat,sweep]);
+      const failures=[heartbeatResult,sweepResult]
+        .filter((result)=>result.status==='rejected')
+        .map((result)=>result.reason);
+      expect(failures.some((error)=>error?.code==='40P01')).toBe(false);
+      const renewed=heartbeatResult.status==='fulfilled';
+      const recovered=sweepResult.status==='fulfilled'
+        && sweepResult.value.some((row)=>row.runId===created.run.id);
+      expect(Number(renewed)+Number(recovered)).toBe(1);
+    } finally {
+      await blocker.query('ROLLBACK').catch(()=>{});
+      blocker.release();
+      await heartbeatPool.end();
+      await sweeperPool.end();
+    }
   });
 
   it('runKernelMain 真生产 fatal 路径保留 Controller authority',async()=>{
