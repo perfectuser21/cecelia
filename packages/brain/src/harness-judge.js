@@ -663,8 +663,11 @@ export function buildJudgePrompt(input, brainResultOverride) {
     '    （例如只有测试套件"0 失败"的汇总，没有目标命令在真实场景下的原始 stdout 与退出码）→ 系统会让 Evaluator 重新取证。',
     '  · "product_failure"：证据充分且显示产品行为确实不符合合同/Golden Path → 系统会让 Generator 改代码。',
     '',
+    '- failure_class=evidence_insufficient 时，用 missing_evidence 数组逐条列出"还缺哪些证据"',
+    '  （每条是一句可执行的取证要求，例如"缺 psql 建/查隔离库的 stdout 与退出码"），供下一轮定向补证。',
+    '',
     '只输出 JSON（不要任何解释文字、不要 markdown 代码围栏）：',
-    '{"verdict":"PASS"|"FAIL","failure_class":"evidence_insufficient"|"product_failure"|null,"coverage":[{"step":"<步骤>","passed":true,"evidence":"<证据片段>"}],"feedback":"<若FAIL，给运动员的结构化修复反馈>"}',
+    '{"verdict":"PASS"|"FAIL","failure_class":"evidence_insufficient"|"product_failure"|null,"coverage":[{"step":"<步骤>","passed":true,"evidence":"<证据片段>"}],"missing_evidence":["<缺证条目>"],"feedback":"<若FAIL，给运动员的结构化修复反馈>"}',
   ].join('\n');
 }
 
@@ -715,7 +718,30 @@ export async function callDeepSeekJudge(input, opts = {}) {
       ? parsed.failure_class
       : null,
     feedback: parsed.feedback || null,
+    // 结构化缺证清单（供 recollect 定向补证）：裁判可直接产出 missing_evidence 数组。
+    missing_evidence: Array.isArray(parsed.missing_evidence)
+      ? parsed.missing_evidence.map((item) => String(item).trim()).filter(Boolean)
+      : [],
   };
+}
+
+/**
+ * evidence_insufficient 缺证清单结构化（本 sprint）：把机械闸 reasons、coverage 缺步/未过步、
+ * 裁判自报的 missing_evidence 合成为非空 string[]，落库供 recollect 消费（打破同构重跑）。
+ * 判 evidence_insufficient 却一条都没有 → 兜底一条占位，保证「非空数组」的 Invariant。
+ */
+export function buildMissingEvidence({ mech, cov, judgeResult } = {}) {
+  const items = [];
+  if (mech && Array.isArray(mech.reasons)) items.push(...mech.reasons);
+  if (cov) {
+    for (const m of cov.missing ?? []) items.push(`Golden Path 缺步 #${m.index}: ${m.step}`);
+    for (const f of cov.failed ?? []) {
+      items.push(`Golden Path 未通过 #${f.index}: ${f.step}${f.evidence ? `（证据：${f.evidence}）` : ''}`);
+    }
+  }
+  if (judgeResult && Array.isArray(judgeResult.missing_evidence)) items.push(...judgeResult.missing_evidence);
+  const cleaned = [...new Set(items.map((s) => String(s).trim()).filter(Boolean))];
+  return cleaned.length ? cleaned : ['judge 判定证据不足，但未产出结构化缺证条目（请补真环境取证）'];
 }
 
 // ── coverage 覆盖校验（代码判，不信裁判文字） ────────────────────────────────
@@ -1184,7 +1210,13 @@ export async function runJudgeGate(ctx, opts = {}) {
     console.warn(`[judge] 机械闸 FAIL → 不调裁判模型：${mech.reasons.join('；')}`);
     // 机械闸查的是证据完整性（behavior_tests 结构、L3 真机指纹等）——缺的是证据，
     // 不是产品代码。归 evidence_insufficient 让 Evaluator 重新取证。
-    return { verdict: 'FAIL', feedback: fb, judged: true, failure_class: 'evidence_insufficient' };
+    return {
+      verdict: 'FAIL',
+      feedback: fb,
+      judged: true,
+      failure_class: 'evidence_insufficient',
+      missing_evidence: buildMissingEvidence({ mech }),
+    };
   }
 
   const requiredEvidence = reconcileRequiredCommandEvidence(
@@ -1258,7 +1290,16 @@ export async function runJudgeGate(ctx, opts = {}) {
     // 误派 Generator 改代码会动到可能本就正确的实现，误派 Evaluator 最多多跑一次取证。
     const failureClass = judgeResult.failure_class ?? 'evidence_insufficient';
     console.warn(`[judge] 裁判终判 FAIL（agent=PASS, judge=${judgeResult.verdict}, coverage_ok=${cov.ok}, failure_class=${failureClass}）→ 进 fix loop`);
-    return { verdict: 'FAIL', feedback: fb, judged: true, failure_class: failureClass };
+    return {
+      verdict: 'FAIL',
+      feedback: fb,
+      judged: true,
+      failure_class: failureClass,
+      // evidence_insufficient 才需要结构化缺证清单（recollect 消费）；product_failure 走改码，无需。
+      ...(failureClass === 'evidence_insufficient'
+        ? { missing_evidence: buildMissingEvidence({ mech, cov, judgeResult }) }
+        : {}),
+    };
   }
   console.log('[judge] 双 PASS（运动员 + 独立裁判）→ 照常 merge');
   return { verdict: 'PASS', feedback: null, judged: true };

@@ -14,7 +14,6 @@
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
@@ -23,9 +22,8 @@ import { resolveAction, __test__ as dispatcherTest } from '../../orchestrator/di
 
 const { Pool } = pg;
 const { buildInputs } = dispatcherTest;
-const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
-// 会话独享隔离库名：单一 databaseName 变量贯穿建库/连接/销毁（禁写死库名）
+// 会话独享隔离库名：单一 databaseName 变量贯穿建库/连接/psql/销毁（禁写死库名，写入侧=校验侧同一变量）
 const databaseName = `harness_pg_recollect_${process.pid}_${randomUUID().replaceAll('-', '')}`;
 let adminPool;
 let testPool;
@@ -37,23 +35,38 @@ function quotedIdentifier(value) {
   return `"${value}"`;
 }
 
+// 最小真实 schema（orchestrator_decision_log 真表 + 上游 FK）：与 migration 312 的 decision log
+// 结构对齐（run_id FK → initiative_runs、UNIQUE(run_id,hop)），但不跑全量 migrate（其含 pgvector
+// 依赖，Fleet PG 不一定装 vector 扩展）。落的仍是真 PostgreSQL 行，禁 mock pg/Pool 的要求满足。
+const MINIMAL_SCHEMA_SQL = `
+CREATE TABLE tasks (id uuid PRIMARY KEY, title text, status text);
+CREATE TABLE initiative_runs (
+  id uuid PRIMARY KEY,
+  initiative_id uuid,
+  phase text,
+  current_task_id uuid,
+  orchestrator_version text,
+  created_source text,
+  record_trust_status text
+);
+CREATE TABLE orchestrator_decision_log (
+  id bigserial PRIMARY KEY,
+  run_id uuid NOT NULL REFERENCES initiative_runs(id),
+  hop int NOT NULL,
+  observed jsonb NOT NULL,
+  derived_phase text,
+  gate_verdict text,
+  action text NOT NULL,
+  detail jsonb,
+  created_at timestamptz DEFAULT now(),
+  CONSTRAINT uq_orchestrator_decision_log_run_hop UNIQUE (run_id, hop)
+);`;
+
 beforeAll(async () => {
   adminPool = new Pool({ ...DB_DEFAULTS, database: 'postgres', max: 1 });
   await adminPool.query(`CREATE DATABASE ${quotedIdentifier(databaseName)}`);
-  execFileSync(process.execPath, ['src/migrate.js'], {
-    cwd: BRAIN_ROOT,
-    env: {
-      ...process.env,
-      NODE_ENV: 'test',
-      DB_HOST: DB_DEFAULTS.host,
-      DB_PORT: String(DB_DEFAULTS.port),
-      DB_USER: DB_DEFAULTS.user,
-      DB_PASSWORD: DB_DEFAULTS.password,
-      DB_NAME: databaseName,
-    },
-    stdio: 'pipe',
-  });
   testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 4 });
+  await testPool.query(MINIMAL_SCHEMA_SQL);
 }, 60_000);
 
 afterAll(async () => {
