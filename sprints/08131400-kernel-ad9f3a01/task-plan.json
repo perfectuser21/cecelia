@@ -1,0 +1,37 @@
+{
+  "initiative_id": "intent:61b34e3b-dfe8-4a90-8553-c8d2a9748378:4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动集中在 packages/brain Harness orchestrator（dispatcher/derive/judge/preflight/execution-contract），无 UI、无远端 agent 协议，属 Brain 内部自治调度闭环。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Harness Evaluator 真环境取证闭环：PG runtime 机械派生 + fail-closed + Judge 反馈回灌 + unverifiable 禁 PASS + 同 SHA 一次收敛",
+      "scope": "合同可执行验收要求机械派生 PG capability 并注入 runtime_resources.postgres；PG 不可供给时 dispatcher fail-closed 返回 control_status=BLOCKED；execution-contract 出口守卫在必验项 unverifiable 时禁 PASS；harness-judge evidence_insufficient 结构化落库 missing_evidence；dispatcher recollect 轮把 judge 缺证清单+原始反馈注入下一轮 Evaluator TaskBundle inputs.judge_feedback；derive 锁定同 SHA 一次 recollect 后收敛 wait:human_review。含真库 PG 集成测试。",
+      "dod": [
+        "[BEHAVIOR] contractRequiresPostgres/deriveCapabilityRequirements 从含 psql 合同机械派生 postgres=true（B-01），无 PG 合同为 false（B-02）",
+        "[BEHAVIOR] PG 不可供给时 dispatch 返回 control_status=BLOCKED 且未创建 attempt（B-03）",
+        "[BEHAVIOR] Evaluator 执行位真跑 PG 留 exit code，集成测试真库跑通（B-04）",
+        "[BEHAVIOR] 必验项 unverifiable 时 execution-contract 守卫强制 verdict!=PASS（B-05）",
+        "[BEHAVIOR] judge evidence_insufficient 结构化落库 missing_evidence 且 recollect bundle inputs.judge_feedback 非空（B-06）",
+        "[BEHAVIOR] 同 SHA 已 recollect 一次仍不足 → derive 收敛 wait:human_review（B-07）",
+        "[ARTIFACT] 新 PG 集成测试注册进 POSTGRES_INTEGRATION_TESTS，隔离库名含 pid 会话独享"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/preflight/requirements.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/execution-contract.js",
+        "packages/brain/src/harness-judge.js",
+        "packages/brain/vitest.config.js",
+        "packages/brain/src/orchestrator/preflight/requirements-contract-pg.test.js",
+        "packages/brain/src/orchestrator/__tests__/dispatcher-pg-capability.test.js",
+        "packages/brain/src/orchestrator/__tests__/derive-recollect-convergence.test.js",
+        "packages/brain/src/orchestrator/execution-contract-unverifiable.test.js",
+        "packages/brain/src/__tests__/integration/harness-evaluator-pg-recollect.pg.integration.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 110
+    }
+  ]
+}
