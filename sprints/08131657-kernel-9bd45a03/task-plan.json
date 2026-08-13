@@ -1,0 +1,37 @@
+{
+  "initiative_id": null,
+  "journey_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全部改动落 packages/brain/（纯后端进程编排），无 UI/agent 协议/engine 触点",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "真身 Session Controller——每条 kernel run 一个常驻只监护守护进程",
+      "scope": "新增 kernel-controller-daemon.js 守护进程入口 + 扩展 kernel-controller-lifecycle.js（classifyControllerRecovery/isPushFrozenForRun/renewControllerLease/finalizeControllerTaskResult/never_started 兜底）；改 harness-skill-relay._spawnKernelRuntime 先 spawn Controller 取 ownership 再拉起 Kernel；human_review 期 push 冻结；终局 task.result 回写后退出；.harness/ 入 gitignore；新增/扩展 PG 集成测试并登记 vitest.config.js。Controller 只监护不执行，不改 Kernel 状态机权威、不重写 orphan-guard 判据。",
+      "dod": [
+        "[BEHAVIOR] createKernelRun 后真身 Controller 存活取得 ownership，lease 周期续租跨 ≥2 周期（scenario-ownership-lease）",
+        "[BEHAVIOR] kill -9 Kernel 按 failure_class 分流 resume/结构化终止，run 不进无主态（scenario-kill-kernel-*）",
+        "[BEHAVIOR] kill -9 Controller → lease 过期 → 既有 orphan-guard 兜底 fail-closed（scenario-kill-controller）",
+        "[BEHAVIOR] human_review 期 push 冻结 true→裁决后 false，真 git push 验拒止/恢复（scenario-human-review-freeze）",
+        "[BEHAVIOR] 守到 merged → 回写 task.result(pr_url+merged+summary) 后 Controller 退出（scenario-finalize）",
+        "[ARTIFACT] packages/brain/src/orchestrator/kernel-controller-daemon.js 存在",
+        "[ARTIFACT] .harness/ 入 .gitignore 且新增 PG 集成测试登记 vitest.config.js"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/kernel-controller-daemon.js",
+        "packages/brain/src/orchestrator/kernel-controller-lifecycle.js",
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/lib/kernel-liveness.js",
+        "packages/brain/src/orchestrator/human-review-class.js",
+        "packages/brain/src/orchestrator/pr-head-resolver.js",
+        "packages/brain/scripts/controller-e2e-driver.mjs",
+        "packages/brain/src/__tests__/integration/kernel-controller-daemon.pg.integration.test.js",
+        "packages/brain/vitest.config.js",
+        ".gitignore"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 110
+    }
+  ]
+}
