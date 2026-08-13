@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.12
+**Brain 版本**: 1.273.13
+
+## Brain 1.273.13 — Candidate-bound Evaluator Verdict
+
+- Evaluator callback 优先以 Attempt 冻结的 retained candidate SHA 写入 Verdict，远端 PR 落后时不再把真实结果误判为 stale。
 
 ## Brain 1.273.12 — Intent Routing Identity Freeze
 

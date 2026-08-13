@@ -505,7 +505,7 @@ export async function appendAttemptVerdict(attempt, result, db = pool) {
     : {
         attempt_id: attempt.id,
         verdict: normalizeRoleVerdict(attempt.role, result.decision.outcome),
-        pr_head_sha: inputs.pull_request?.head_sha ?? null,
+        pr_head_sha: inputs.pr_head_sha ?? inputs.pull_request?.head_sha ?? null,
         failure_class: result.decision.failure_class ?? null,
         ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
         feedback: result.decision.reason,
