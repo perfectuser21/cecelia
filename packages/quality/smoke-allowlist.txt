@@ -253,3 +253,4 @@ zenithjoy-db-pool-smoke.sh
 zenithjoy-schema-migration-smoke.sh
 map-reorg-smoke.sh
 scripts/ops/janitor.sh
+harness-pg-forensics-closure-smoke.sh
