@@ -1908,6 +1908,58 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.stateStore.states.has(ATTEMPT_ID)).toBe(false);
   });
 
+  it('generator-fix 产出新 candidate 后释放被替代的 source candidate', async () => {
+    let resolveExit;
+    const containerExit = new Promise((resolve) => {
+      resolveExit = resolve;
+    });
+    const deps = dependencies();
+    const sourceWorkspace = { ...deps.workspace, owner: {
+      run_id: RUN_ID,
+      attempt_id: ATTEMPT_ID,
+    } };
+    deps.stateStore.states.set(ATTEMPT_ID, {
+      attempt_id: ATTEMPT_ID,
+      run_id: RUN_ID,
+      worker_id: WORKER_ID,
+      role: 'generator',
+      status: 'candidate',
+      workspace: sourceWorkspace,
+    });
+    deps.workspaceManager.prepare.mockResolvedValueOnce({
+      ...deps.workspace,
+      owner: { run_id: RUN_ID, attempt_id: OTHER_ATTEMPT_ID },
+      source_attempt_id: ATTEMPT_ID,
+    });
+    deps.docker.wait.mockReturnValueOnce(containerExit);
+    const runner = createRunner(deps);
+    const fixPrompt = JSON.parse(providerPrompt('generator'));
+    fixPrompt.task_bundle.attempt_id = OTHER_ATTEMPT_ID;
+
+    await prepareAndStart(runner, request({
+      attempt_id: OTHER_ATTEMPT_ID,
+      workspace_spec: {
+        ...request().workspace_spec,
+        attempt_id: OTHER_ATTEMPT_ID,
+        source_attempt_id: ATTEMPT_ID,
+      },
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: JSON.stringify(fixPrompt),
+      },
+    }));
+    resolveExit({ statusCode: 0 });
+
+    await vi.waitFor(() => {
+      expect(deps.stateStore.states.get(OTHER_ATTEMPT_ID)).toMatchObject({
+        status: 'candidate',
+        role: 'generator',
+      });
+    });
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledWith(sourceWorkspace);
+    expect(deps.stateStore.states.has(ATTEMPT_ID)).toBe(false);
+  });
+
   it('single-flights cancel with the docker waiter it wakes up', async () => {
     let resolveExit;
     const containerExit = new Promise((resolve) => {
