@@ -10,6 +10,7 @@ import { reconcileStaleAttempts } from '../../../scripts/kernel-stale-attempt-re
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createAttemptStore } from '../../orchestrator/attempt-store.js';
 import { finalizeKernelRun } from '../../orchestrator/kernel-run-store.js';
+import { seedOwnedActiveV2Run } from './helpers/controller-authority-fixture.js';
 
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -112,15 +113,7 @@ describe('kernel stale attempt reconciliation on real PostgreSQL', () => {
        VALUES ($1, 'callback finalize race', 'in_progress')`,
       [taskId],
     );
-    await testPool.query(
-      `INSERT INTO initiative_runs (
-         id, initiative_id, phase, current_task_id, orchestrator_version,
-         created_source, record_trust_status
-       ) VALUES (
-         $1, $2, 'generate', $3, 'v2', 'kernel_dispatch', 'trusted'
-       )`,
-      [runId, randomUUID(), taskId],
-    );
+    await seedOwnedActiveV2Run(testPool, { runId, taskId, phase: 'generate' });
     const store = createAttemptStore(testPool);
     await store.createAttempt({
       id: attemptId,
@@ -221,15 +214,7 @@ describe('kernel stale attempt reconciliation on real PostgreSQL', () => {
        VALUES ($1, 'callback approval race', 'in_progress')`,
       [taskId],
     );
-    await testPool.query(
-      `INSERT INTO initiative_runs (
-         id, initiative_id, phase, current_task_id, orchestrator_version,
-         created_source, record_trust_status
-       ) VALUES (
-         $1, $2, 'planning', $3, 'v2', 'kernel_dispatch', 'trusted'
-       )`,
-      [runId, randomUUID(), taskId],
-    );
+    await seedOwnedActiveV2Run(testPool, { runId, taskId, phase: 'planning' });
     const store = createAttemptStore(testPool);
     await store.createAttempt({
       id: attemptId,
@@ -337,18 +322,12 @@ describe('kernel stale attempt reconciliation on real PostgreSQL', () => {
       `INSERT INTO initiative_runs (
          id, initiative_id, phase, current_task_id, orchestrator_version,
          created_source, completed_at, record_trust_status
-       ) VALUES
-         ($1, $3, 'failed', $4, 'v2', 'kernel_dispatch', NOW(), 'trusted'),
-         ($2, $5, 'generate', $6, 'v2', 'kernel_dispatch', NULL, 'trusted')`,
-      [
-        liveRunId,
-        activeRunId,
-        randomUUID(),
-        liveTaskId,
-        randomUUID(),
-        activeTaskId,
-      ],
+       ) VALUES ($1, $2, 'failed', $3, 'v2', 'kernel_dispatch', NOW(), 'trusted')`,
+      [liveRunId,randomUUID(),liveTaskId],
     );
+    await seedOwnedActiveV2Run(testPool, {
+      runId: activeRunId, taskId: activeTaskId, phase: 'generate',
+    });
     await testPool.query(
       `INSERT INTO harness_attempts (
          id, run_id, hop, phase, role, task_bundle, callback_secret_hash,

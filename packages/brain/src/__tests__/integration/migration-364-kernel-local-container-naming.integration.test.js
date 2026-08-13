@@ -37,12 +37,19 @@ beforeAll(async () => {
     CREATE TABLE initiative_runs (
       id UUID PRIMARY KEY,
       phase TEXT NOT NULL DEFAULT 'planning',
+      map_recovery_contract_id UUID,
       orchestrator_version TEXT NOT NULL DEFAULT 'v1'
         CHECK (orchestrator_version IN ('v1','v2'))
     );
   `);
   await client.query(migration357);
   await client.query(migration362);
+  await client.query(`
+    CREATE TABLE map_recovery_consumptions (
+      contract_id UUID PRIMARY KEY,
+      attempt_id UUID UNIQUE REFERENCES harness_attempts(id)
+    );
+  `);
   await client.query(`
     ALTER TABLE harness_attempts
       ADD COLUMN requested_machine_id TEXT,

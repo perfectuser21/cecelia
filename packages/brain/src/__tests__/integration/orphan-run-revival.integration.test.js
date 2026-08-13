@@ -22,6 +22,7 @@ import {
   reviveOrphanedHarnessTasks,
   REVIVAL_ERROR_SIGNATURE,
 } from '../../startup-sync.js';
+import { seedOwnedActiveV2Run } from './helpers/controller-authority-fixture.js';
 
 // 固定命名空间,避免与 scratch 库里其它实现者的 fixture 互踩
 const NS = `orphan-revival-itest-${process.pid}`;
@@ -50,14 +51,26 @@ async function seed({ taskStatus, errorMessage = null, payload = {}, runPhase = 
      VALUES ($1, $2, 'in_progress', 'harness_initiative', $3::jsonb, NOW() - INTERVAL '30 minutes')`,
     [TASK_ID, NS, JSON.stringify({ orchestrator: 'skill-relay', ...payload })]
   );
-  await pool.query(
-    `INSERT INTO initiative_runs
-       (id, initiative_id, current_task_id, phase, orchestrator_version,
-        orchestrator_host, created_source, deadline_at)
-     VALUES ($1, $2, $2, $3, 'v2', 'skill-relay-session', 'legacy_relay',
-             NOW() + INTERVAL '6 hours')`,
-    [RUN_ID, TASK_ID, runPhase]
-  );
+  if (runPhase === 'done') {
+    await pool.query(
+      `INSERT INTO initiative_runs
+         (id, initiative_id, current_task_id, phase, orchestrator_version,
+          orchestrator_host, created_source, deadline_at)
+       VALUES ($1, $2, $2, $3, 'v2', 'skill-relay-session', 'legacy_relay',
+               NOW() + INTERVAL '6 hours')`,
+      [RUN_ID, TASK_ID, runPhase]
+    );
+  } else {
+    await seedOwnedActiveV2Run(pool, {
+      runId: RUN_ID,
+      initiativeId: TASK_ID,
+      taskId: TASK_ID,
+      phase: runPhase,
+      createdSource: 'legacy_relay',
+      orchestratorHost: 'skill-relay-session',
+      deadlineAt: new Date(Date.now() + 6 * 60 * 60 * 1000),
+    });
+  }
   if (taskStatus !== 'in_progress') {
     await pool.query(
       `UPDATE tasks SET status = $2, error_message = $3,

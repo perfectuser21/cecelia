@@ -100,8 +100,6 @@ function runInput(taskId, initiativeId, createdSource = 'kernel_dispatch') {
     host: 'kernel-v1',
     deadlineHours: 8,
     createdSource,
-    // Session Controller ownership（sprint 08131104）：createKernelRun 现要求非空 controllerSessionId。
-    controllerSessionId: randomUUID(),
   };
 }
 
@@ -158,10 +156,23 @@ beforeAll(async () => {
       deadline_at TIMESTAMPTZ,
       failure_reason TEXT,
       controller_session_id TEXT,
+      controller_generation BIGINT,
       controller_lease_expires_at TIMESTAMPTZ,
       started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       completed_at TIMESTAMPTZ
+    );
+    CREATE TABLE kernel_controller_sessions (
+      id TEXT PRIMARY KEY,
+      run_id UUID REFERENCES initiative_runs(id) ON DELETE CASCADE,
+      task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      generation BIGINT NOT NULL DEFAULT 1,
+      source TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      last_heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      lease_expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE TABLE harness_impact_contracts (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

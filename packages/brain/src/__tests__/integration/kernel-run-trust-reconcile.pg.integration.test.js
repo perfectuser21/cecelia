@@ -8,6 +8,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { reconcileRunTrust } from '../../../scripts/kernel-run-trust-reconcile.mjs';
 import { DB_DEFAULTS } from '../../db-config.js';
+import { seedOwnedActiveV2Run } from './helpers/controller-authority-fixture.js';
 
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -95,29 +96,36 @@ describe('kernel trust reconciliation on real PostgreSQL', () => {
     );
     const historicalStartedAt = new Date(cutoff.getTime() - 60_000);
     const postCutoverStartedAt = new Date(cutoff.getTime() + 1_000);
+    const initiativeId = randomUUID();
     await testPool.query(
        `INSERT INTO initiative_runs (
          id, initiative_id, phase, current_task_id, orchestrator_version,
          created_source, started_at, completed_at,
          record_trust_status, record_trust_reason
        ) VALUES
-         ($1, $5, 'done', $6, 'v2', 'historical_reconstruction', $7, $8, 'untrusted', NULL),
-         ($2, $5, 'generate', $10, 'v2', 'historical_reconstruction', $7, NULL, 'untrusted', NULL),
-         ($3, $5, 'failed', $6, 'v2', 'historical_reconstruction', $9, $8, 'untrusted', NULL),
-         ($4, $5, 'done', $6, 'v2', 'kernel_dispatch', $7, $8, 'trusted', 'native_writer')`,
+         ($1, $4, 'done', $5, 'v2', 'historical_reconstruction', $6, $7, 'untrusted', NULL),
+         ($2, $4, 'failed', $5, 'v2', 'historical_reconstruction', $8, $7, 'untrusted', NULL),
+         ($3, $4, 'done', $5, 'v2', 'kernel_dispatch', $6, $7, 'trusted', 'native_writer')`,
       [
         historicalRunId,
-        activeRunId,
         postCutoverRunId,
         nativeTrustedRunId,
-        randomUUID(),
+        initiativeId,
         historicalTaskId,
         historicalStartedAt,
         cutoff,
         postCutoverStartedAt,
-        activeTaskId,
       ],
     );
+    await seedOwnedActiveV2Run(testPool, {
+      runId: activeRunId,
+      initiativeId,
+      taskId: activeTaskId,
+      phase: 'generate',
+      createdSource: 'historical_reconstruction',
+      recordTrustStatus: 'untrusted',
+      startedAt: historicalStartedAt,
+    });
     await testPool.query(
       `UPDATE initiative_runs
           SET completed_at = completed_at + INTERVAL '525 microseconds'
