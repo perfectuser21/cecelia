@@ -47,4 +47,41 @@ describe('unified work router', () => {
       aliases: ['perfectuser21/cecelia'],
     }])).toMatchObject({ repo: 'cecelia' });
   });
+
+  it('keeps registered non-coding entry types inside their selected pipeline', () => {
+    expect(selectPipeline({
+      work_kind: 'operations',
+      requested_task_type: 'platform_scraper',
+    })).toMatchObject({
+      pipeline: 'operations',
+      canonical_task_type: 'platform_scraper',
+      orchestrator: 'operations',
+    });
+    expect(selectPipeline({
+      work_kind: 'content_creation',
+      requested_task_type: 'content_publish',
+    })).toMatchObject({ pipeline: 'content', canonical_task_type: 'content_publish' });
+    expect(selectPipeline({
+      work_kind: 'coding_review',
+      requested_task_type: 'ci_patrol',
+    })).toMatchObject({ pipeline: 'code_review', canonical_task_type: 'ci_patrol' });
+  });
+
+  it('classifies explicit operations without weakening coding mutation routing', () => {
+    expect(routeWork({
+      source: 'scheduler', source_id: 'ops-1', title: 'collect metrics',
+      mutation_intent: 'none', declared_domain: 'operations',
+      requested_task_type: 'platform_scraper',
+      decided_at: '2026-08-13T00:00:00.000Z',
+    })).toMatchObject({ work_kind: 'operations', canonical_task_type: 'platform_scraper' });
+    expect(routeWork({
+      source: 'scheduler', source_id: 'code-1', title: 'repair scraper',
+      mutation_intent: 'write', declared_domain: 'operations',
+      requested_task_type: 'platform_scraper', declared_change_kind: 'bugfix',
+      repo_hint: 'cecelia', map_scope_hint: ['F4'],
+      decided_at: '2026-08-13T00:00:00.000Z',
+    }, [{ repo: 'cecelia' }])).toMatchObject({
+      work_kind: 'coding_mutation', canonical_task_type: 'harness_initiative',
+    });
+  });
 });
