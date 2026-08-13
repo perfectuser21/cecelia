@@ -21,6 +21,8 @@ import {
 } from './implementation-baseline.js';
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_EVALUATOR_FEEDBACK_CHECKS = 20;
 const RUNTIME_RESULT_ROLES = new Set(['reviewer', 'evaluator', 'judge', 'reporter']);
 
@@ -97,6 +99,29 @@ function asObject(value) {
   if (!value) return {};
   if (typeof value === 'object') return value;
   try { return JSON.parse(value); } catch { return {}; }
+}
+
+function gpContractIdentity(payload) {
+  const anchor = asObject(payload.anchor);
+  const values = {
+    id: payload.gp_contract_id,
+    version: payload.gp_contract_version,
+    hash: payload.gp_contract_hash,
+    golden_path_id: payload.golden_path_id ?? anchor.gp_id,
+    journey_id: payload.journey_id,
+    step_id: anchor.step_id,
+  };
+  if (Object.values(values).every((value) => value == null || value === '')) return null;
+  const valid = UUID_PATTERN.test(values.id ?? '')
+    && Number.isInteger(Number(values.version))
+    && Number(values.version) > 0
+    && SHA256_PATTERN.test(values.hash ?? '')
+    && UUID_PATTERN.test(values.golden_path_id ?? '')
+    && UUID_PATTERN.test(values.journey_id ?? '')
+    && UUID_PATTERN.test(values.step_id ?? '')
+    && (!anchor.gp_id || anchor.gp_id === values.golden_path_id);
+  if (!valid) throw new Error('GP_CONTRACT_IDENTITY_INVALID');
+  return Object.freeze({ ...values, version: Number(values.version) });
 }
 
 function buildEvaluatorFeedback(observed) {
@@ -210,6 +235,10 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     attempt_kind: attemptMetadata.attemptKind,
     workstream_key: attemptMetadata.workstreamKey,
   };
+  if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
+    const gpContract = gpContractIdentity(payload);
+    if (gpContract) common.gp_contract = gpContract;
+  }
   if (observed.implementationBaselineError) {
     throw new Error(observed.implementationBaselineError);
   }
