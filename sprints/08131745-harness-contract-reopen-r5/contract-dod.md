@@ -1,6 +1,3 @@
-contract_branch: cp-harness-propose-r1-8f0aca1e-ra2e10f0f-a4
-sprint_dir: sprints/08131745-harness-contract-reopen-r5
-
 ---
 skeleton: false
 journey_type: autonomous
