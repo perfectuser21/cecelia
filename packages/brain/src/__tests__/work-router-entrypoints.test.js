@@ -8,6 +8,7 @@ describe('legacy routing defects', () => {
     const tasks = await readFile(new URL('../routes/task-tasks.js', import.meta.url), 'utf8');
     expect(planner).toContain('task_type');
     expect(proposal).not.toContain('task_type: change.skill');
-    expect(tasks).toContain('createRoutedTask');
+    expect(tasks).toMatch(/createRoutedTask\s*\(/);
+    expect(tasks).not.toMatch(/INSERT\s+INTO\s+tasks/i);
   });
 });
