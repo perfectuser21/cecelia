@@ -11,6 +11,10 @@ const dispatchSmokeSource = readFileSync(
   'utf8',
 );
 const completeSmokeSource = `${smokeSource}\n${dispatchSmokeSource}`;
+const intentSource = readFileSync(
+  new URL('../intent.js', import.meta.url),
+  'utf8',
+);
 
 describe('Unified Work Router scratch smoke contract', () => {
   it('保留 scratch、Map 刷新和三个真实入口合同', () => {
@@ -47,5 +51,10 @@ describe('Unified Work Router scratch smoke contract', () => {
     expect(smokeSource).toContain('process.env.BASELINE_SHA');
     expect(completeSmokeSource).toContain('merge-base');
     expect(smokeSource).toContain('sourceRevision');
+  });
+
+  it('Intent 入口把批准分支绑定到每个不可变 Routing Receipt', () => {
+    expect(smokeSource).toMatch(/parseAndCreate[\s\S]*?branch,/);
+    expect(intentSource).toContain('branch: options.branch');
   });
 });
