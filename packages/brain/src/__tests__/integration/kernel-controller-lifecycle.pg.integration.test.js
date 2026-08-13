@@ -20,6 +20,7 @@ import { DB_DEFAULTS } from '../../db-config.js';
 import { createKernelRun } from '../../orchestrator/kernel-run-store.js';
 import { writeHeartbeat } from '../../orchestrator/heartbeat.js';
 import { runKernelMain } from '../../orchestrator/run.js';
+import { createKernelHandlers } from '../../orchestrator/kernel-handlers.js';
 import {
   handleKernelProcessFatal,
   reconcileOwnerlessKernelRuns,
@@ -394,6 +395,48 @@ describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（�
     );
     expect(result.rows[0]).toEqual({phase:'planning',failure_reason:null,
       controller_session_id:replacement,status:'active'});
+  });
+
+  it('失权 Kernel 的 report 在真实 PG proof 前不产生成功收尾副作用',async()=>{
+    const {initiativeId,taskId}=await seedTask();
+    const created=await createRoutedKernelRun(testPool,{taskId,initiativeId,phase:'planning',
+      journeyId:null,abilityId:null,host:'kernel-v1',deadlineHours:8,createdSource:'kernel_dispatch'});
+    const oldSession=created.run.controller_session_id;
+    const replacement=randomUUID();
+    await testPool.query('UPDATE kernel_controller_sessions SET status=\'closed\' WHERE id=$1',[oldSession]);
+    await testPool.query(
+      `INSERT INTO kernel_controller_sessions(id,run_id,task_id,generation,source,status,last_heartbeat_at,lease_expires_at)
+       VALUES($1,$2,$3,2,'takeover','active',NOW(),NOW()+INTERVAL '30 minutes')`,
+      [replacement,created.run.id,taskId],
+    );
+    await testPool.query(
+      `UPDATE initiative_runs SET controller_session_id=$2,controller_generation=2,
+       controller_lease_expires_at=(SELECT lease_expires_at FROM kernel_controller_sessions WHERE id=$2)
+       WHERE id=$1`,
+      [created.run.id,replacement],
+    );
+    const effects=[];
+    const handlers=createKernelHandlers({
+      pool:testPool,
+      promote:async()=>effects.push('promote'),
+      buildHandoff:(value)=>value,
+      saveHandoff:async()=>effects.push('handoff'),
+      syncOkr:async()=>effects.push('okr'),
+      spawnStaging:async()=>effects.push('staging'),
+      cleanup:async()=>effects.push('cleanup'),
+    });
+
+    await expect(handlers.report({
+      taskId,runId:created.run.id,controllerSessionId:oldSession,controllerGeneration:1,
+      observed:{task:{id:taskId,title:'stale report',payload:{}},
+        run:{id:created.run.id,initiative_id:initiativeId,orchestrator_host:'kernel-v1'},
+        pr:{url:'https://github.com/perfectuser21/cecelia/pull/1'}},
+    })).rejects.toThrow('orchestrator singleton conflict');
+
+    expect(effects).toEqual([]);
+    const row=await testPool.query(
+      'SELECT phase,controller_session_id FROM initiative_runs WHERE id=$1',[created.run.id]);
+    expect(row.rows[0]).toEqual({phase:'planning',controller_session_id:replacement});
   });
 
   it('active run 不能借用另一个 task 的 Controller authority',async()=>{

@@ -57,6 +57,8 @@ describe('runKernelMain fatal convergence', () => {
     await expect(runKernelMain({
       taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       runId: '11111111-1111-4111-8111-111111111111',
+      controllerSessionId: '22222222-2222-4222-8222-222222222222',
+      controllerGeneration: 3,
       resumeToken: null,
       dryRun: false,
     }, {
@@ -68,6 +70,8 @@ describe('runKernelMain fatal convergence', () => {
     expect(finalizeRun).toHaveBeenCalledWith(pool, {
       runId: '11111111-1111-4111-8111-111111111111',
       expectedTaskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      expectedControllerSessionId: '22222222-2222-4222-8222-222222222222',
+      expectedControllerGeneration: 3,
       outcome: 'failed',
       reason: 'kernel_process_fatal:dependency_assembly_failed',
       closeControllerSession:false,
@@ -112,6 +116,8 @@ describe('runKernelMain fatal convergence', () => {
     await expect(runKernelMain({
       taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       runId: '11111111-1111-4111-8111-111111111111',
+      controllerSessionId: '22222222-2222-4222-8222-222222222222',
+      controllerGeneration: 5,
       resumeToken: null,
       dryRun: false,
     }, {
@@ -125,6 +131,23 @@ describe('runKernelMain fatal convergence', () => {
     const persisted = finalizeRun.mock.calls[0][1].reason;
     expect(persisted).toContain('[REDACTED]');
     expect(persisted).not.toContain('raw-bridge-secret');
+  });
+
+  it('非 dry-run 缺 Controller identity 时不组装依赖也不终结 run', async () => {
+    const buildDeps = vi.fn();
+    const finalizeRun = vi.fn();
+
+    await expect(runKernelMain({
+      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      runId: '11111111-1111-4111-8111-111111111111',
+      controllerSessionId: null,
+      controllerGeneration: null,
+      resumeToken: null,
+      dryRun: false,
+    }, { buildDeps, finalizeRun })).rejects.toThrow('controller_lease_identity_missing');
+
+    expect(buildDeps).not.toHaveBeenCalled();
+    expect(finalizeRun).not.toHaveBeenCalled();
   });
 });
 
