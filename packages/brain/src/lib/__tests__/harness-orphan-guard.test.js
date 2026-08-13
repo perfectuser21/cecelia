@@ -147,7 +147,9 @@ describe('handleRelayExitConsistency', () => {
     const execFn = vi.fn(() => `cecelia-relay-${shortId}-alive1\n`);
     const r = await handleRelayExitConsistency({ pool, execFn, containerId, exitCode: 1, resultText: '' });
     expect(r.action).toBe('noop');
-    expect(execFn).toHaveBeenCalled();
+    expect(execFn).toHaveBeenCalledWith('docker', [
+      'ps', '--format', '{{.Names}}', '--filter', `name=cecelia-relay-${shortId}`,
+    ]);
   });
 
   it('任务 in_progress 且无活容器 → requeue', async () => {

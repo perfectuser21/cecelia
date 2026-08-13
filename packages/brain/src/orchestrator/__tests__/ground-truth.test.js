@@ -5,7 +5,7 @@
  */
 import { createHash } from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
-import { collectGroundTruth } from '../ground-truth.js';
+import { collectGroundTruth, isLegacyProposalBranchForTask } from '../ground-truth.js';
 import { derive } from '../derive.js';
 import { contractArtifactManifestDigest } from '../contract-artifacts.js';
 
@@ -14,6 +14,14 @@ const TASK_ID = '11111111-2222-4333-8444-555555555555';
 const CONTRACT_ID = '99999999-8888-4777-8666-555555555555';
 const ROUTING_RECEIPT_ID = '77777777-6666-4555-8444-333333333333';
 const PR_URL = 'https://github.com/o/r/pull/42';
+
+describe('legacy proposal branch parser', () => {
+  it('匹配固定语法并按值绑定 task，不从 task id 构造动态正则', () => {
+    expect(isLegacyProposalBranchForTask('cp-harness-propose-r12-11111111-a3', TASK_ID)).toBe(true);
+    expect(isLegacyProposalBranchForTask('cp-harness-propose-r12-aaaaaaaa-a3', TASK_ID)).toBe(false);
+    expect(isLegacyProposalBranchForTask('cp-harness-propose-r12-11111111-a3/../../x', TASK_ID)).toBe(false);
+  });
+});
 
 /** 按 SQL 表名路由的 fake pool */
 function fakePool(rowsByTable = {}) {
