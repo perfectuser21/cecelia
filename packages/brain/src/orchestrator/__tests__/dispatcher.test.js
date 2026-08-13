@@ -1921,6 +1921,7 @@ describe('createDispatcher', () => {
     const deps = makeDeps();
     const evaluatorAttemptId = '33333333-3333-4333-8333-333333333333';
     const prHeadSha = 'b'.repeat(40);
+    const staleRemoteHeadSha = 'a'.repeat(40);
 
     await createDispatcher(deps)('spawn:generator-fix', {
       taskId,
@@ -1931,7 +1932,13 @@ describe('createDispatcher', () => {
         pr: {
           number: 1571,
           head_ref: 'cp-android-cancel',
+          head_sha: staleRemoteHeadSha,
+        },
+        candidate: {
+          type: 'git_candidate',
+          branch: 'cp-android-cancel',
           head_sha: prHeadSha,
+          verification_status: 'verified',
         },
         contract: {
           approved: true,
