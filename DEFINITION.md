@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.7
+**Brain 版本**: 1.273.8
+
+## Brain 1.273.8 — Retained Candidate Identity
+
+- Evaluator 与 Judge 在远端 PR 落后时统一锚定 Runner 已验证的 retained candidate SHA，避免旧 PR 头覆盖真实候选身份。
 
 ## Brain 1.273.7 — Retained Candidate Diff Evidence
 

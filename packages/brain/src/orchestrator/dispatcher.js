@@ -460,8 +460,8 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
       ?? null;
   }
   if (action === 'spawn:generator-fix') {
-    common.pr_branch = observed.pr?.head_ref ?? observed.candidate?.branch ?? null;
-    common.pr_head_sha = observed.pr?.head_sha ?? observed.candidate?.head_sha ?? null;
+    common.pr_branch = observed.candidate?.branch ?? observed.pr?.head_ref ?? null;
+    common.pr_head_sha = observed.candidate?.head_sha ?? observed.pr?.head_sha ?? null;
     if (observed.candidate) common.candidate = { ...observed.candidate };
     const evaluatorFeedback = buildEvaluatorFeedback(observed);
     if (evaluatorFeedback) common.evaluator_feedback = evaluatorFeedback;
@@ -473,8 +473,10 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     common.pull_request = observed.pr ?? null;
   }
   if (spec.role === 'evaluator') {
-    common.pr_branch = observed.pr?.head_ref ?? observed.candidate?.branch ?? null;
-    common.pr_head_sha = observed.pr?.head_sha ?? observed.candidate?.head_sha ?? null;
+    // retained Generator candidate 是本轮实际验收对象。远端 PR 可能仍指向
+    // Generator 启动前的旧头，不能用它覆盖 Runner 已验证的候选身份。
+    common.pr_branch = observed.candidate?.branch ?? observed.pr?.head_ref ?? null;
+    common.pr_head_sha = observed.candidate?.head_sha ?? observed.pr?.head_sha ?? null;
     if (payload.github_evidence_request) {
       common.github_evidence_request = payload.github_evidence_request;
     }

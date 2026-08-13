@@ -28,7 +28,9 @@ export async function verifyJudgeCallbackResult({ attempt, result, dbPool }) {
   const evaluator = evaluatorBrainResult(inputs.evaluator_result);
   const candidateHeadSha = inputs.candidate?.head_sha ?? null;
   const pr = inputs.pull_request ?? null;
-  const targetHeadSha = pr?.head_sha ?? candidateHeadSha;
+  const unpublishedCandidate = candidateHeadSha != null
+    && candidateHeadSha !== pr?.head_sha;
+  const targetHeadSha = unpublishedCandidate ? candidateHeadSha : pr?.head_sha ?? candidateHeadSha;
   const providerDecision = result.decision ?? {};
   const judged = await runJudgeGate({
     agentVerdict: normalizeEvaluatorPassVerdict(evaluator?.verdict),
@@ -43,9 +45,9 @@ export async function verifyJudgeCallbackResult({ attempt, result, dbPool }) {
     taskId: inputs.task_id,
     instanceLabel: `fleet-judge-${String(attempt.id).slice(0, 8)}`,
     stageFacts: {
-      current_stage: pr ? 'independent_judge' : 'local_candidate',
-      pr_state: pr?.state ?? null,
-      pr_merged: pr?.merged === true,
+      current_stage: pr && !unpublishedCandidate ? 'independent_judge' : 'local_candidate',
+      pr_state: pr && !unpublishedCandidate ? pr.state ?? null : null,
+      pr_merged: pr && !unpublishedCandidate ? pr.merged === true : false,
       head_sha: targetHeadSha,
       merge_gate_approved: false,
     },
