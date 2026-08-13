@@ -346,6 +346,42 @@ describe('Fleet Worker Attempt runner', () => {
     }));
   });
 
+  it('允许 Proposer 的角色工作分支与不可变路由分支不同', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    const workspaceSpec = {
+      ...request().workspace_spec,
+      branch: 'cp-harness-propose-r1-task-run-a1',
+    };
+
+    await runner.prepare(request({
+      workspace_spec: workspaceSpec,
+      target: {
+        ...request().target,
+        role: 'proposer',
+      },
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: providerPrompt('proposer', {
+          workspace_spec: workspaceSpec,
+          routing_identity: {
+            routing_receipt_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+            repo: 'cecelia',
+            branch: 'cp-08122220-task-route',
+            base_sha: workspaceSpec.base_sha,
+          },
+        }),
+      },
+    }));
+
+    expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
+      roleEnv: expect.objectContaining({
+        CECELIA_BRANCH: workspaceSpec.branch,
+        CECELIA_BASE_SHA: workspaceSpec.base_sha,
+      }),
+    }));
+  });
+
   it('在 Provider prepare 前校验并物化 approved contract artifacts', async () => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'contract-artifacts-'));
     const content = 'test("routing", () => {})';
