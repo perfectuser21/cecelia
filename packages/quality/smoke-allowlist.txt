@@ -252,3 +252,4 @@ zenithjoy-db-pool-smoke.sh
 zenithjoy-schema-migration-smoke.sh
 map-reorg-smoke.sh
 scripts/ops/janitor.sh
+f1-capability-certification-smoke.sh
