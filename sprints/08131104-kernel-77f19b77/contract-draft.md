@@ -220,6 +220,7 @@ echo "✅ Golden Path 全程验证通过（四档 Profile + ownership fail-close
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
+| 四档 change_kind Profile（proposer 红留档） | `sprints/08131104-kernel-77f19b77/tests/kernel-change-kind-profile.test.js` | proposer round1 红证据：bugfix/parameter_only 期望 generate 实得 planning | 见 tests/red-evidence.md（2 failed \| 1 passed） |
 | 四档 change_kind Profile 分派 | `packages/brain/src/__tests__/kernel-change-kind-profile.test.js` | bugfix 跳 planning 直进 generate；parameter_only 跳 planning；new_capability 全链 planning；四档均保留 evaluate+judge | derive 现不消费 change_kind → bugfix/parameter_only 现返回 planning（已实证 RED，见 tests/red-evidence.md） |
 | Controller ownership + fail-closed + migration 413 | `packages/brain/src/__tests__/integration/kernel-controller-ownership.pg.integration.test.js` | createKernelRun 无 controllerSessionId fail-closed；harness_runtime=kernel-v1 直打不产生无 Controller run；initiative_runs 有 controller_session_id/controller_lease_expires_at 列 | 413 未建、createKernelRun 无 ownership 校验 → 列不存在 + 无主 run 可建（RED） |
 | Controller/Kernel 生命周期隔离 | `packages/brain/src/__tests__/integration/kernel-controller-lifecycle.pg.integration.test.js` | Kernel fatal→Controller 存活；Controller fatal→Kernel 不无主；无主历史 run fail-closed 进恢复 | Kernel detached 现无主，fatal 后 ownership 消失（RED） |
