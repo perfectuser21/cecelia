@@ -6,6 +6,7 @@
 
 - Fleet 的隔离 PostgreSQL 运行时固定为与 Cecelia migration 契约一致的 `pgvector/pgvector:pg15` 镜像；Evaluator 声明 `runtime_resources.postgres=true` 时可完整执行包含 `CREATE EXTENSION vector` 的全库 bootstrap。
 - NodeProfile、Worker、Probe、rollout、reconciler 与 runtime smoke 共用同一不可变 digest，镜像漂移继续 fail closed。
+- 下游 TaskBundle 结构化透传冻结 GP Contract identity；Evaluator PASS receipt 只有在该 identity 命中 signed `golden_path_contract_versions` 与所属 Journey 时才会写入 `gp_contract_id/hash`。
 
 ## Frozen contract artifact deterministic ordering
 

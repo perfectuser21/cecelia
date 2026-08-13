@@ -132,6 +132,43 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
+  it('把冻结 GP Contract 身份结构化注入下游 TaskBundle', async () => {
+    const deps = makeDeps();
+    const gpObserved = {
+      ...observed,
+      task: {
+        ...observed.task,
+        payload: {
+          ...observed.task.payload,
+          golden_path_id: '77777777-7777-4777-8777-777777777777',
+          gp_contract_id: '66666666-6666-4666-8666-666666666666',
+          gp_contract_version: 1,
+          gp_contract_hash: 'e'.repeat(64),
+          journey_id: '88888888-8888-4888-8888-888888888888',
+          anchor: { step_id: '99999999-9999-4999-8999-999999999999' },
+        },
+      },
+    };
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: gpObserved,
+      decision: { phase: 'evaluate', reason: 'gp_identity' },
+    });
+
+    const bundle = deps.attemptStore.createAttempt.mock.calls[0][0].bundle;
+    expect(bundle.inputs.gp_contract).toEqual({
+      id: '66666666-6666-4666-8666-666666666666',
+      version: 1,
+      hash: 'e'.repeat(64),
+      golden_path_id: '77777777-7777-4777-8777-777777777777',
+      journey_id: '88888888-8888-4888-8888-888888888888',
+      step_id: '99999999-9999-4999-8999-999999999999',
+    });
+  });
+
   it('批准合同后不重复装载入口 PRD，Evaluator 大合同仍可派发', async () => {
     const deps = makeDeps();
     const sourceRevision = '6faaa9f55e9789ffd29fd2760a9b5994df272e86';

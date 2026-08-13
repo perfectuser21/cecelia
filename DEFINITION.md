@@ -18,6 +18,7 @@
 
 - Fleet 的隔离 PostgreSQL 基线改为固定 digest 的 `pgvector/pgvector:pg15`，与 migration 028 的 `CREATE EXTENSION vector` 要求一致。
 - NodeProfile、Worker、Probe、rollout、reconciler 与 runtime smoke 统一引用同一镜像，漂移继续 fail closed。
+- Generator、Evaluator、Judge 的 TaskBundle 结构化携带冻结 GP Contract 身份；可信 Evaluator writer 写 receipt 前必须回查 signed 合同 SSOT，并把同一 `gp_contract_id/hash` 精确落账。
 
 ## Brain 1.272.36 — 冻结合同资产确定性排序
 

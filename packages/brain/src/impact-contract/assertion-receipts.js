@@ -1,5 +1,6 @@
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function asObject(value) {
   if (value && typeof value === 'object') return value;
@@ -95,27 +96,69 @@ export async function persistTrustedEvaluatorReceipts(db, { attempt, result }) {
   ) {
     throw evidenceError('assertion evidence set is not an exact bijection');
   }
-  const receipts = [];
-  for (const assertion of assertions) {
-    const check = validateCheck(
+  const validatedChecks = new Map(assertions.map((assertion) => [
+    assertion.assertion_id,
+    validateCheck(
       assertion,
       checks.find((candidate) => candidate?.assertion_id === assertion.assertion_id),
       { sourceSha, machineId },
+    ),
+  ]));
+
+  const gpContract = asObject(inputs.gp_contract);
+  const hasGpContract = Object.keys(gpContract).length > 0;
+  let gpContractId = null;
+  let gpContractHash = null;
+  if (hasGpContract) {
+    const validIdentity = UUID_PATTERN.test(gpContract.id ?? '')
+      && Number.isInteger(Number(gpContract.version))
+      && Number(gpContract.version) > 0
+      && DIGEST_PATTERN.test(gpContract.hash ?? '')
+      && UUID_PATTERN.test(gpContract.golden_path_id ?? '')
+      && UUID_PATTERN.test(gpContract.journey_id ?? '')
+      && UUID_PATTERN.test(gpContract.step_id ?? '');
+    if (!validIdentity) throw evidenceError('GP Contract receipt identity is incomplete');
+    const signedContract = await db.query(
+      `SELECT v.id
+         FROM golden_path_contract_versions v
+         JOIN golden_paths gp ON gp.id = v.golden_path_id
+        WHERE v.id = $1 AND v.version = $2 AND v.content_hash = $3
+          AND v.status = 'signed' AND v.golden_path_id = $4
+          AND gp.journey_id = $5
+        LIMIT 1`,
+      [
+        gpContract.id,
+        Number(gpContract.version),
+        gpContract.hash,
+        gpContract.golden_path_id,
+        gpContract.journey_id,
+      ],
     );
+    if (signedContract.rows.length !== 1) {
+      throw evidenceError('GP Contract receipt identity does not match signed SSOT');
+    }
+    gpContractId = gpContract.id;
+    gpContractHash = gpContract.hash;
+  }
+
+  const receipts = [];
+  for (const assertion of assertions) {
+    const check = validatedChecks.get(assertion.assertion_id);
     for (const binding of sourceBindings(assertion)) {
       const receiptResult = await db.query(
       `WITH inserted AS (
          INSERT INTO journey_assertion_receipts (
            journey_step_link_id, run_id, assertion_revision,
            assertion_ref_snapshot, assertion_digest, source_repo, source_sha,
+           gp_contract_id, gp_contract_hash,
            impact_contract_id, impact_contract_hash, harness_attempt_id, command_argv,
            scenario_count, scenario_evidence, verdict, exit_code,
            started_at, completed_at, machine_id, output_digest, output_tail,
            executor_kind, synthetic
          ) VALUES (
            $1, $2, $3, $4, $5, $6, $7,
-           $8, $9, $10, $11::jsonb, $12, $13::jsonb, 'PASS', 0,
-           $14, $15, $16, $17, $18, 'brain_assertion_runner', false
+           $8, $9, $10, $11, $12, $13::jsonb, $14, $15::jsonb, 'PASS', 0,
+           $16, $17, $18, $19, $20, 'brain_assertion_runner', false
          )
          ON CONFLICT (
            run_id, journey_step_link_id, source_sha, impact_contract_hash
@@ -126,7 +169,7 @@ export async function persistTrustedEvaluatorReceipts(db, { attempt, result }) {
        UNION ALL
        SELECT * FROM journey_assertion_receipts
        WHERE run_id = $2 AND journey_step_link_id = $1
-         AND source_sha = $7 AND impact_contract_hash = $9
+         AND source_sha = $7 AND impact_contract_hash = $11
          AND NOT EXISTS (SELECT 1 FROM inserted)
        LIMIT 1`,
       [
@@ -137,6 +180,8 @@ export async function persistTrustedEvaluatorReceipts(db, { attempt, result }) {
         binding.assertion_digest,
         impactGate.repo,
         sourceSha,
+        gpContractId,
+        gpContractHash,
         impactGate.contract_id,
         impactGate.contract_hash,
         attempt.id,
