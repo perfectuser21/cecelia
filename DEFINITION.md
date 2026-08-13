@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.8
+**Brain 版本**: 1.273.9
+
+## Brain 1.273.9 — Evaluator Isolated PostgreSQL
+
+- Evaluator 默认申请 attempt-scoped PostgreSQL，并由 Fleet Runner 注入隔离 `DB_URL`/`DATABASE_URL`，支持迁移与真库 Golden Path 验收。
 
 ## Brain 1.273.8 — Retained Candidate Identity
 

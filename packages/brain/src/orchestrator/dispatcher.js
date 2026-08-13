@@ -407,7 +407,9 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   // 运行时依赖预装（design doc §运行时依赖，r17 实证：fleet workspace clone
   // 后不装依赖，proposer 的 product-map:check 因缺 ajv 每轮红——ajv 本在
   // workspace package.json）。dispatcher 对 proposer/reviewer/evaluator 默认开启
-  // node_deps，让 workspace-manager checkout 后自动 npm ci。两个字段都显式
+  // node_deps，让 workspace-manager checkout 后自动 npm ci；Evaluator 还必须
+  // 申请 attempt-scoped PostgreSQL，Golden Path 的迁移与真库行为验收不能回退
+  // 到宿主默认库，也不能用冻结单测替代。两个字段都显式
   // 写出（而不是只写 node_deps），方便 fleet 侧的 request/bundle 一致性校验
   // 稳定匹配（attempt-runner.cjs taskExecutionContract）。
   //
@@ -421,7 +423,7 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   // 有，独立立项后续再做；当前"案卷（case_file）全量历轮反馈"就是唯一的
   // 跨轮记忆机制，读案卷本身不是"降级"，是本期设计好的常态路径。
   if (['proposer', 'reviewer', 'evaluator'].includes(spec.role)) {
-    common.runtime_resources = { postgres: false, node_deps: true };
+    common.runtime_resources = { postgres: spec.role === 'evaluator', node_deps: true };
   }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
     if (observed.contract?.artifact_error) {
