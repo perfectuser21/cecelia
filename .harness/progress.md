@@ -4,4 +4,4 @@
 # run_id: e8658f9b-5767-46df-8a51-fe230dfae7ac
 # gear: default
 planner: done (sprint-prd.md@0f4ea7c5e7, invariants=6, fr=6)
-gan: done (contract-draft.md@ r1, verdict=APPROVED, 铁律覆盖=6/6, judgments_written=7, rubric=.harness/verdicts/gan-.json)
+gan: done (contract-draft.md@698d3eabd4 r1, verdict=APPROVED, 铁律覆盖=6/6, judgments_written=7, rubric=.harness/verdicts/gan-698d3eabd4.json)
