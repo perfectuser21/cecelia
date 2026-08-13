@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.4
+**Brain 版本**: 1.273.5
+
+## Brain 1.273.5 — Routed Provenance Width
+
+- `tasks.trigger_source` 改为 `text`，完整保留 Work Router 调度来源。
 
 ## Brain 1.273.4 — Kernel Controller Authority
 
@@ -2675,7 +2679,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '422'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '423'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
