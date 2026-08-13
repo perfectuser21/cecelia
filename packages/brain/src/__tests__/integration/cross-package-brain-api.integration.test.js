@@ -120,6 +120,8 @@ async function createTestTask(app, overrides = {}) {
         mutation_intent: 'write',
         change_kind: 'capability_change',
         repo_hint: 'cecelia',
+        branch: 'cp-cross-package-fixture',
+        base_sha: 'a'.repeat(40),
       }
     : {};
   const res = await request(app)

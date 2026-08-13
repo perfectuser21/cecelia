@@ -192,9 +192,12 @@ echo "Unified Work Router Golden Path PASS"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| Recovery 前置 | `tests/unified-work-router-contract.test.ts` | `credential-bearing origin canonicalization`；`active Kernel workspace protection` | 当前导出/保护合同不存在 |
-| Router/基线 | `tests/unified-work-router-contract.test.ts` | `four change kinds map forward only`；`frozen baseline is an ancestor, not final HEAD` | 当前 Work Router 与新 receipt migration 不存在 |
-| Map/边界 | `tests/unified-work-router-contract.test.ts` | `coding run requires Map and Impact Contract`；`Generator trust boundary removes privileged channels` | 当前强制 wiring 未完成 |
+| Recovery 前置 | `tests/unified-work-router-contract.test.ts` | `credential-bearing origin canonicalization` | 当前 origin 规范化合同不存在 |
+| Recovery 前置 | `tests/unified-work-router-contract.test.ts` | `active detached Kernel workspace protection` | 当前 active workspace 保护合同不存在 |
+| Router/基线 | `tests/unified-work-router-contract.test.ts` | `four change kinds map forward only through one router` | 当前 Work Router 与新 receipt migration 不存在 |
+| Router/基线 | `tests/unified-work-router-contract.test.ts` | `frozen baseline is an ancestor, not final HEAD` | 当前 frozen baseline lineage 合同不存在 |
+| Map/边界 | `tests/unified-work-router-contract.test.ts` | `coding run requires Map and Impact Contract before Provider creation` | 当前强制 Map/Impact wiring 未完成 |
+| Map/边界 | `tests/unified-work-router-contract.test.ts` | `Generator trust boundary removes privileged channels` | 当前 Generator trust boundary 未完成 |
 
 ## 探索提示（L3 探索层 — evaluator 剧本全过后执行）
 

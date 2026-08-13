@@ -9,6 +9,10 @@ const REPOSITORY_FACTS = [{
   repo: 'cecelia',
   aliases: ['perfectuser21/cecelia'],
 }];
+const ROUTING_EVIDENCE = Object.freeze({
+  branch: 'cp-routing-fixture',
+  base_sha: 'a'.repeat(40),
+});
 
 describe('routing store transaction contract', () => {
   it('creates task and immutable receipt in one client transaction', async () => {
@@ -19,7 +23,7 @@ describe('routing store transaction contract', () => {
       if (String(sql).includes('INSERT INTO work_routing_receipts')) return { rows: [{ id: 'receipt-1' }] };
       return { rows: [] };
     }};
-    const result = await createRoutedTask(client, { source: 'api', source_id: '1', title: 'fix', mutation_intent: 'write', declared_change_kind: 'bugfix', repo_hint: 'perfectuser21/cecelia' }, REPOSITORY_FACTS);
+    const result = await createRoutedTask(client, { source: 'api', source_id: '1', title: 'fix', mutation_intent: 'write', declared_change_kind: 'bugfix', repo_hint: 'perfectuser21/cecelia', ...ROUTING_EVIDENCE }, REPOSITORY_FACTS);
     expect(result).toMatchObject({ task_id: 'task-1', routing_receipt_id: 'receipt-1' });
     expect(calls.map(([sql]) => sql)).toEqual(expect.arrayContaining(['BEGIN', 'COMMIT']));
     expect(calls.some(([sql, args]) => (
@@ -51,6 +55,7 @@ describe('routing store transaction contract', () => {
       mutation_intent: 'write',
       declared_change_kind: 'bugfix',
       repo_hint: 'perfectuser21/cecelia',
+      ...ROUTING_EVIDENCE,
       task: {
         priority: 'P0', project_id: 'project-1', status: 'queued',
         tags: ['router'], prd_content: 'frozen prd', execution_profile: 'US_CODEX',
@@ -93,6 +98,7 @@ describe('routing store transaction contract', () => {
     await createRoutedTask(client, {
       source: 'inbox', source_id: 'atom-3', title: 'fix', mutation_intent: 'unknown',
       declared_change_kind: 'bugfix', repo_hint: 'perfectuser21/cecelia',
+      ...ROUTING_EVIDENCE,
     }, REPOSITORY_FACTS, { transaction: 'existing' });
 
     expect(calls).not.toContain('BEGIN');
@@ -182,11 +188,13 @@ describe('routing store transaction contract', () => {
         source: 'api', source_id: sourceId, title: 'routing identity',
         mutation_intent: 'write', declared_change_kind: 'bugfix',
         repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['cecelia'],
+        ...ROUTING_EVIDENCE,
       }, REPOSITORY_FACTS, { transaction: 'existing' });
       const replay = await createRoutedTask(client, {
         source: 'api', source_id: sourceId, title: 'routing identity',
         mutation_intent: 'write', declared_change_kind: 'bugfix',
         repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['cecelia'],
+        ...ROUTING_EVIDENCE,
       }, REPOSITORY_FACTS, { transaction: 'existing' });
       expect(replay).toMatchObject({
         deduplicated: true,
@@ -198,6 +206,7 @@ describe('routing store transaction contract', () => {
         source: 'api', source_id: sourceId, title: 'routing identity',
         mutation_intent: 'write', declared_change_kind: 'new_capability',
         repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['cecelia'],
+        ...ROUTING_EVIDENCE,
       }, REPOSITORY_FACTS, { transaction: 'existing' })).rejects.toThrow(/work_route_idempotency_conflict/);
 
       await expect(createRoutedTask(client, {

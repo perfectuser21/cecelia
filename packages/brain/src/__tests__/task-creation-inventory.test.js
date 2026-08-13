@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { TASK_CREATION_INVENTORY } from '../task-creation-inventory.js';
+import {
+  TASK_CREATION_INVENTORY,
+  TASK_CREATION_INVENTORY_VERSION,
+} from '../task-creation-inventory.js';
+import { ROUTER_VERSION } from '../work-router.js';
 
 async function listProductionModules(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -21,6 +25,7 @@ async function listProductionModules(directory) {
 
 describe('task creation inventory', () => {
   it('records each executable creation boundary', () => {
+    expect(TASK_CREATION_INVENTORY_VERSION).toBe(ROUTER_VERSION);
     expect(TASK_CREATION_INVENTORY.length).toBeGreaterThanOrEqual(33);
     for (const row of TASK_CREATION_INVENTORY) expect(row).toMatchObject({ module: expect.any(String), source: expect.any(String), creates_executable_task: expect.any(Boolean), migration_status: expect.any(String) });
   });

@@ -3,9 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildCeceliaMutationRoute, buildMutationRoute } from '../system-coding-route.js';
 
 describe('system coding route', () => {
-  it('binds an explicit four-form change, Map scope and source revision', () => {
+  it('binds four-form, Map scope and source revision without leaking checkout branch', () => {
     const revisionReader = vi.fn().mockReturnValue('a'.repeat(40));
-    const branchReader = vi.fn().mockReturnValue('cp-router-fix');
+    const branchReader = vi.fn(() => { throw new Error('detached HEAD'); });
 
     const route = buildCeceliaMutationRoute({
       change_kind: 'bugfix',
@@ -21,11 +21,10 @@ describe('system coding route', () => {
       declared_change_kind: 'bugfix',
       repo_hint: 'cecelia',
       map_scope_hint: ['F1'],
-      branch: 'cp-router-fix',
       base_sha: 'a'.repeat(40),
     });
     expect(revisionReader).toHaveBeenCalledWith('/repo');
-    expect(branchReader).toHaveBeenCalledWith('/repo');
+    expect(branchReader).not.toHaveBeenCalled();
   });
 
   it('rejects missing explicit Map scope', () => {
@@ -38,7 +37,7 @@ describe('system coding route', () => {
 
   it('binds an arbitrary registered repo hint to its actual revision', () => {
     const revisionReader = vi.fn().mockReturnValue('b'.repeat(40));
-    const branchReader = vi.fn().mockReturnValue('cp-zj-change');
+    const branchReader = vi.fn(() => { throw new Error('main is not a task branch'); });
 
     expect(buildMutationRoute({
       change_kind: 'capability_change',
@@ -51,8 +50,19 @@ describe('system coding route', () => {
       declared_change_kind: 'capability_change',
       repo_hint: 'zenithjoy-workspace',
       map_scope_hint: ['Z1'],
-      branch: 'cp-zj-change',
       base_sha: 'b'.repeat(40),
     });
+    expect(branchReader).not.toHaveBeenCalled();
+  });
+
+  it('preserves an explicitly supplied canonical task branch', () => {
+    expect(buildMutationRoute({
+      change_kind: 'bugfix',
+      map_scope: ['F1'],
+      repo_hint: 'cecelia',
+      repo_root: '/repo',
+      branch: 'cp-explicit-task',
+      revision_reader: vi.fn().mockReturnValue('c'.repeat(40)),
+    })).toMatchObject({ branch: 'cp-explicit-task' });
   });
 });

@@ -15,7 +15,7 @@ export function canonicalRoutingReceipt(task) {
     id: task.payload.routing_receipt_id,
     task_id: task.id,
     superseded: false,
-    router_version: 'work-router-v1',
+    router_version: ROUTER_VERSION,
     work_kind: 'coding_mutation',
     change_kind: task.payload.change_kind,
     repo: task.payload.repo,
@@ -24,3 +24,4 @@ export function canonicalRoutingReceipt(task) {
     impact_contract_required: true,
   };
 }
+import { ROUTER_VERSION } from '../../work-router.js';

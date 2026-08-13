@@ -37,7 +37,7 @@ describe('SCRAPE_PLATFORMS', () => {
 });
 
 describe('scheduleDailyScrape()', () => {
-  let mockPool: any;
+  let mockPool;
 
   beforeEach(() => {
     mockPool = {
