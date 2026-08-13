@@ -184,6 +184,7 @@ describe('collectGroundTruth：DB 通道组装', () => {
       base_sha: baseSha,
       head_sha: headSha,
       machine_id: 'us-mac-m4',
+      changed_files: ['docker/cecelia-runner/entrypoint.sh'],
     };
     const deps = makeDeps({ rows: { attempts: [{
       id: attemptId,
@@ -211,6 +212,26 @@ describe('collectGroundTruth：DB 通道组装', () => {
     const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
 
     expect(observed.candidate).toEqual(artifact);
+  });
+
+  it('拒绝带不安全 diff 路径的本地候选', async () => {
+    const attemptId = '22222222-2222-4222-8222-222222222222';
+    const deps = makeDeps({ rows: { attempts: [{
+      id: attemptId, run_id: RUN_ID, hop: 3, role: 'generator', status: 'completed',
+      actual_machine_id: 'us-mac-m4',
+      task_bundle: { inputs: { task_id: TASK_ID, workspace_spec: {
+        repo: 'perfectuser21/cecelia', branch: 'cp-local-candidate', base_sha: 'a'.repeat(40),
+      } } },
+      result: { status: 'completed', artifacts: [{
+        type: 'git_candidate', verification_status: 'verified',
+        source_attempt_id: attemptId, repo: 'perfectuser21/cecelia',
+        branch: 'cp-local-candidate', base_sha: 'a'.repeat(40),
+        head_sha: 'b'.repeat(40), machine_id: 'us-mac-m4', changed_files: ['../escape'],
+      }] },
+    }] } });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(observed.candidate).toBeNull();
   });
 
   it('拒绝 Provider 伪造或 machine 不一致的 git_candidate', async () => {

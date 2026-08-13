@@ -226,6 +226,34 @@ describe('Harness Impact Gate 生产接线适配器', () => {
     }));
   });
 
+  it('evaluator 对 Runner 验证的本地候选使用冻结 changed_files，不要求 Brain 拥有候选对象', async () => {
+    const active = {
+      id: 'contract-1', repo: 'perfectuser21/cecelia',
+      base_revision: BASE_SHA, contract_hash: 'c'.repeat(64),
+    };
+    const diffGate = vi.fn().mockResolvedValue({ gate: 'pass', contract: active });
+    const readChangedFiles = vi.fn().mockRejectedValue(new Error('candidate object is remote'));
+    const gates = createHarnessImpactGates({
+      db: {}, getActiveContract: vi.fn().mockResolvedValue(active), diffGate, readChangedFiles,
+    });
+
+    const result = await gates.beforeEvaluate({
+      task: { id: TASK_ID, payload: {} },
+      pr: {
+        head_sha: HEAD_SHA,
+        type: 'git_candidate',
+        verification_status: 'verified',
+        changed_files: ['docker/cecelia-runner/entrypoint.sh'],
+      },
+    });
+
+    expect(result.gate).toBe('pass');
+    expect(readChangedFiles).not.toHaveBeenCalled();
+    expect(diffGate).toHaveBeenCalledWith(expect.objectContaining({
+      changedFiles: ['docker/cecelia-runner/entrypoint.sh'],
+    }));
+  });
+
   it('repair task 使用 source task 的 active contract，并推进 assigned → fixing', async () => {
     const active = {
       id: 'contract-source',
