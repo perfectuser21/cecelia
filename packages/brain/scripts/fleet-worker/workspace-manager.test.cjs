@@ -268,6 +268,24 @@ describe('Fleet Worker workspace manager', () => {
     expect(git(['rev-parse', 'HEAD'], workspace.path)).toBe(branchSha);
   });
 
+  it('binds a read-only role workspace to its server-approved branch', async () => {
+    const branch = 'cp-harness-propose-r1-reviewer';
+    git(
+      ['--git-dir', fixture.remote, 'branch', branch, fixture.sha],
+      fixture.root,
+    );
+    const manager = createManager(fixture);
+
+    const workspace = await manager.prepare(spec(fixture, {
+      branch,
+      expected_head_sha: fixture.sha,
+      mode: 'read-only',
+    }));
+
+    expect(git(['branch', '--show-current'], workspace.path)).toBe(branch);
+    expect(git(['rev-parse', 'HEAD'], workspace.path)).toBe(fixture.sha);
+  });
+
   it('removes an owned worktree idempotently', async () => {
     const manager = createManager(fixture);
     const workspace = await manager.prepare(spec(fixture));
