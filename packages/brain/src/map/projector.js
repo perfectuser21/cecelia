@@ -240,13 +240,16 @@ export async function runProjection({
 
     // 追加 backbone 层：查 journey_steps JOIN journeys，生成 backbone 节点和 capability→backbone contains 边
     const { rows: backboneRows } = await client.query(
-      `SELECT js.id, js.step_key, js.name, js.promise, js.status, js.display_order,
+      `SELECT js.id,
+              LOWER(j.capability_code) || '-step-' || js.step_number AS step_key,
+              js.name, js.promise, js.status,
+              js.step_number AS display_order,
               j.capability_code
          FROM journey_steps js
          JOIN journeys j ON j.id = js.journey_id
         WHERE j.biz_area = $1
           AND j.capability_code IS NOT NULL
-        ORDER BY j.capability_code, js.display_order`,
+        ORDER BY j.capability_code, js.step_number`,
       [scopeKey]
     );
 
