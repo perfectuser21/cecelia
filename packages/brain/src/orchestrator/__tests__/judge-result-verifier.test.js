@@ -1,3 +1,8 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ runJudgeGate: vi.fn() }));
@@ -80,5 +85,84 @@ describe('Fleet Judge callback verifier', () => {
       attempt: { role: 'judge' }, result: failed, dbPool: {},
     })).resolves.toBe(failed);
     expect(mocks.runJudgeGate).not.toHaveBeenCalled();
+  });
+
+  it('Evaluator FIXED 仍必须经过独立 Judge，Provider FAIL 不得被覆盖', async () => {
+    const candidateHead = 'c'.repeat(40);
+    const attempt = {
+      id: '33333333-3333-4333-8333-333333333333',
+      role: 'judge',
+      task_bundle: { inputs: {
+        task_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        sprint_dir: 'sprints/x',
+        candidate: { head_sha: candidateHead },
+        evaluator_result: {
+          status: 'completed',
+          summary: 'fixed and verified',
+          checks: [{ command: 'npm test', exit_code: 0, log_tail: 'passed' }],
+          decision: { outcome: 'FIXED', reason: 'fix verified' },
+        },
+        contract: { contract_content: 'contract', prd_content: 'prd' },
+        artifacts: [],
+      } },
+    };
+    const result = {
+      status: 'completed',
+      summary: 'provider rejected evidence',
+      decision: {
+        outcome: 'FAIL', reason: 'coverage gap',
+        coverage: [{ step: 'contract', passed: false }],
+        failure_class: 'evidence_insufficient',
+      },
+    };
+    mocks.runJudgeGate.mockImplementationOnce(async (ctx, opts) => {
+      expect(ctx.agentVerdict).toBe('PASS');
+      const provider = await opts.judgeFn();
+      expect(provider.verdict).toBe('FAIL');
+      return {
+        verdict: 'FAIL', feedback: provider.feedback, judged: true,
+        failure_class: provider.failure_class,
+      };
+    });
+
+    const verified = await verifyJudgeCallbackResult({ attempt, result, dbPool: {} });
+
+    expect(mocks.runJudgeGate).toHaveBeenCalledOnce();
+    expect(verified.decision).toMatchObject({
+      outcome: 'FAIL',
+      failure_class: 'evidence_insufficient',
+    });
+  });
+
+  it('Runner Judge schema 保留 coverage、failure_class 与 failure_signature', () => {
+    const entrypointPath = new URL(
+      '../../../../../docker/cecelia-runner/entrypoint.sh',
+      import.meta.url,
+    );
+    const source = readFileSync(entrypointPath, 'utf8');
+    const fn = source.match(
+      /provider_result_schema_json\(\) \{[\s\S]*?\n\}\n\npublish_provider_result_schema\(\)/,
+    )?.[0].replace(/\n\npublish_provider_result_schema\(\)$/, '');
+    expect(fn).toBeTruthy();
+    const root = mkdtempSync(path.join(tmpdir(), 'judge-schema-'));
+    try {
+      const bundle = path.join(root, 'bundle.json');
+      writeFileSync(bundle, JSON.stringify({
+        task_bundle: { expected_output: 'harness-result/judge-v1', role: 'judge' },
+      }));
+      const schema = JSON.parse(execFileSync('/bin/bash', [
+        '-c', `${fn}\nprovider_result_schema_json "$1"`, '_', bundle,
+      ], { encoding: 'utf8' }));
+      const decision = schema.properties.decision.anyOf[0];
+      expect(decision.required).toEqual(expect.arrayContaining([
+        'outcome', 'reason', 'coverage', 'failure_class', 'failure_signature',
+      ]));
+      expect(decision.properties.coverage.items.required)
+        .toEqual(['step', 'passed', 'evidence']);
+      expect(decision.properties.failure_class.anyOf[0].enum)
+        .toEqual(['evidence_insufficient', 'product_failure', 'evidence_invalid']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
