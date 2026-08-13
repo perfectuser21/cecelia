@@ -133,11 +133,9 @@ async function insertRawRun({
      ) VALUES (
        $1, $2, $3, 'v2', 'historical_reconstruction',
        NOW() + INTERVAL '8 hours', $4, ${controllerSessionId ? '1' : 'NULL'},
-       ${leaseOffsetSeconds == null ? 'NULL' : `NOW() + ($5 * INTERVAL '1 second')`}
+       ${leaseOffsetSeconds == null ? 'NULL' : `(SELECT lease_expires_at FROM kernel_controller_sessions WHERE id=$4)`}
      ) RETURNING id`,
-    leaseOffsetSeconds == null
-      ? [initiativeId, taskId, phase, controllerSessionId]
-      : [initiativeId, taskId, phase, controllerSessionId, leaseOffsetSeconds],
+    [initiativeId,taskId,phase,controllerSessionId],
     ));
   } finally {
     if (!controllerSessionId) {
@@ -346,7 +344,8 @@ describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（�
     );
     await testPool.query(
       `UPDATE initiative_runs SET controller_session_id=$2,controller_generation=2,
-       controller_lease_expires_at=NOW()-INTERVAL '1 second' WHERE id=$1`,
+       controller_lease_expires_at=(SELECT lease_expires_at FROM kernel_controller_sessions WHERE id=$2)
+       WHERE id=$1`,
       [created.run.id,replacement],
     );
     await expect(writeHeartbeat(testPool,{runId:created.run.id,

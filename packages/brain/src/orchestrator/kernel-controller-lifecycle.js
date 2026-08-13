@@ -72,9 +72,11 @@ export function isOwnerlessRun(runRow, now) {
  * @param {{runId:string, expectedTaskId:string, failureCode:string}} params
  * @returns {Promise<{controllerAlive:boolean, failureReason:string, run:object}>}
  */
-export async function handleKernelProcessFatal(pool, { runId, expectedTaskId, failureCode }) {
+export async function handleKernelProcessFatal(pool, {
+  runId,expectedTaskId,failureCode,finalizeRun=finalizeKernelRun,
+}) {
   const failureReason = structuredFailureReason(KERNEL_FATAL_REASON_PREFIX, failureCode);
-  const result = await finalizeKernelRun(pool, {
+  const result = await finalizeRun(pool, {
     runId,
     expectedTaskId,
     outcome: 'failed',

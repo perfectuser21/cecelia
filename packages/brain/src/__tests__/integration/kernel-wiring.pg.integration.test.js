@@ -146,7 +146,8 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
         controller_generation,controller_lease_expires_at)
      VALUES (
        $1, $2, $3, 'evaluate', $4, $5, 'v2', 'kernel_dispatch',
-       NOW() + INTERVAL '120 minutes',$6,1,NOW()+INTERVAL '2 hours'
+       NOW() + INTERVAL '120 minutes',$6,1,
+       (SELECT lease_expires_at FROM kernel_controller_sessions WHERE id=$6)
      )`,
     [runId, initiativeId, contractId, taskId, PR_URL,controllerSessionId],
   );

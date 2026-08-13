@@ -535,6 +535,8 @@ export async function runLoop(
   {
     taskId,
     runId,
+    controllerSessionId = null,
+    controllerGeneration = null,
     resumeToken = null,
     dryRun = false,
   },
@@ -571,7 +573,9 @@ export async function runLoop(
     : {};
 
   let hops = 0;
-  const beat = () => heartbeat(deps.pool, { runId: resolvedRunId, host, pid, now: now() });
+  const beat = () => heartbeat(deps.pool, {
+    runId:resolvedRunId,controllerSessionId,controllerGeneration,host,pid,now:now(),
+  });
 
   // deadline fence 辅助：检查 run.deadline_at 是否已超过当前时间
   function deadlineExceeded(run) {

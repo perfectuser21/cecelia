@@ -6,27 +6,47 @@
  * now 从参数注入（确定性纪律：本文件不自取时间）。
  */
 
-export async function writeHeartbeat(pool, { runId, host, pid, now, leaseSeconds = 1800 }) {
-  const { rows } = await pool.query(
-    `WITH authority AS (
-       SELECT run.controller_session_id,run.controller_generation FROM initiative_runs run
-       JOIN kernel_controller_sessions session ON session.id=run.controller_session_id
-        AND session.generation=run.controller_generation AND session.status='active'
-       WHERE run.id=$1 AND run.phase NOT IN ('done','failed')
-     ), renewed AS (
-       UPDATE kernel_controller_sessions session
-       SET last_heartbeat_at=$2::timestamptz,
-           lease_expires_at=$2::timestamptz+($5*INTERVAL '1 second'),
-           updated_at=$2::timestamptz
-       FROM authority WHERE session.id=authority.controller_session_id
-        AND session.generation=authority.controller_generation AND session.status='active'
-       RETURNING session.id,session.generation,session.lease_expires_at
-     )
-     UPDATE initiative_runs run SET orchestrator_heartbeat_at=$2::timestamptz,orchestrator_host=$3,
-       orchestrator_pid=$4,controller_lease_expires_at=renewed.lease_expires_at
-     FROM renewed WHERE run.id=$1 AND run.controller_session_id=renewed.id
-       AND run.controller_generation=renewed.generation RETURNING run.id`,
-    [runId,now,host,pid,leaseSeconds],
-  );
-  if (rows.length !== 1) throw new Error('controller_lease_renewal_lost');
+export async function writeHeartbeat(pool, {
+  runId,controllerSessionId,controllerGeneration,host,pid,now,leaseSeconds=1800,
+}) {
+  const expectedGeneration=Number(controllerGeneration);
+  if (!controllerSessionId || !Number.isSafeInteger(expectedGeneration) || expectedGeneration<1) {
+    throw new Error('controller_lease_identity_missing');
+  }
+  const client=await pool.connect();
+  let committed=false;
+  try {
+    await client.query('BEGIN');
+    const task=await client.query(
+      `SELECT current_task_id FROM initiative_runs WHERE id=$1`,[runId],
+    );
+    if (!task.rows[0]) throw new Error('controller_lease_renewal_lost');
+    await client.query('SELECT id FROM tasks WHERE id=$1 FOR UPDATE',[task.rows[0].current_task_id]);
+    const run=await client.query(
+      `SELECT controller_session_id,controller_generation FROM initiative_runs
+        WHERE id=$1 AND phase NOT IN ('done','failed') FOR UPDATE`,[runId],
+    );
+    if (run.rows[0]?.controller_session_id!==controllerSessionId
+        || Number(run.rows[0]?.controller_generation)!==expectedGeneration) {
+      throw new Error('controller_lease_renewal_lost');
+    }
+    const session=await client.query(
+      `UPDATE kernel_controller_sessions SET last_heartbeat_at=$2::timestamptz,
+         lease_expires_at=$2::timestamptz+($3*INTERVAL '1 second'),updated_at=$2::timestamptz
+       WHERE id=$1 AND generation=$4 AND run_id=$5 AND status='active'
+         AND lease_expires_at >= $2::timestamptz
+       RETURNING lease_expires_at`,
+      [controllerSessionId,now,leaseSeconds,expectedGeneration,runId],
+    );
+    if (session.rows.length!==1) throw new Error('controller_lease_renewal_lost');
+    await client.query(
+      `UPDATE initiative_runs SET orchestrator_heartbeat_at=$2,orchestrator_host=$3,
+       orchestrator_pid=$4,controller_lease_expires_at=$5 WHERE id=$1`,
+      [runId,now,host,pid,session.rows[0].lease_expires_at],
+    );
+    await client.query('COMMIT');committed=true;
+  } catch(error) {
+    if (!committed) await client.query('ROLLBACK');
+    throw error;
+  } finally { client.release(); }
 }

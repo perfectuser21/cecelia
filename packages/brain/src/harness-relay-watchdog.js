@@ -12,6 +12,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
+import { hostname } from 'node:os';
 
 import pool from './db.js';
 import { createAttemptStore } from './orchestrator/attempt-store.js';
@@ -42,6 +43,7 @@ import {
   DEFAULT_LOCAL_MACHINE_ID,
 } from './orchestrator/production-transport.js';
 import { patchKernelRunById } from './orchestrator/kernel-run-store.js';
+import { writeHeartbeat } from './orchestrator/heartbeat.js';
 
 export { _parseBaseRepo, _discoverPrFromGithub };
 
@@ -949,6 +951,8 @@ async function _recoverKernelRun(run, task, deps, out) {
   const launched = await launchKernel({
     taskId: task.id,
     runId: run.id,
+    controllerSessionId:run.controller_session_id,
+    controllerGeneration:Number(run.controller_generation),
     worktreePath: task.payload?.worktree_path,
   });
   if (launched) {
@@ -1023,6 +1027,8 @@ export async function _resumePausedKernelContext(run, task, deps, out) {
     launched = await launchKernel({
       taskId: task.id,
       runId: run.id,
+      controllerSessionId:run.controller_session_id,
+      controllerGeneration:Number(run.controller_generation),
       worktreePath: task.payload?.worktree_path,
       resumeToken,
     });
@@ -1171,6 +1177,7 @@ export async function resumeStalledRelayRuns(deps = {}) {
        SELECT r.id, r.initiative_id, r.current_task_id,
             phase, deadline_at, pr_url, orchestrator_host,
             orchestrator_heartbeat_at, completed_at, tmux_killed_at, started_at,
+            controller_session_id, controller_generation,
             (
               SELECT jsonb_build_object(
                 'context_request_hop', request.hop,
@@ -1292,6 +1299,25 @@ export async function resumeStalledRelayRuns(deps = {}) {
       if (task.payload?.defer_until && task.payload.defer_until > Date.now()) {
         console.log(`[relay-watchdog] defer_until 未到期，跳过 initiative=${run.initiative_id}`);
         continue;
+      }
+
+      if (task.payload?.harness_runtime === 'kernel-v1'
+          && HEADED_HOST_VALUES.includes(run.orchestrator_host)) {
+        const headed=await _handleHeadedRun(run,task,{dbPool,execFn,short:shortId(task.id)});
+        if (headed.alive) {
+          const writeControllerHeartbeat=deps.writeControllerHeartbeat ?? writeHeartbeat;
+          await writeControllerHeartbeat(dbPool,{
+            runId:run.id,
+            controllerSessionId:run.controller_session_id,
+            controllerGeneration:Number(run.controller_generation),
+            host:`headed-watchdog:${(deps.hostname ?? hostname)()}`,
+            pid:deps.watchdogPid ?? process.pid,
+            now:deps.now?.() ?? new Date(),
+          });
+          continue;
+        }
+        // SSH 不可达时 fail-open，不能把 headed 会话静默改成 headless。
+        if (!headed.needsRefire) continue;
       }
 
       if (task.payload?.harness_runtime === 'kernel-v1') {
@@ -1673,7 +1699,7 @@ async function _handleHeadedRun(run, task, { dbPool, execFn, short }) {
   if (run.phase === 'done') {
     // 幂等：已收窗跳过
     if (run.tmux_killed_at) {
-      return { needsRefire: false };
+      return { needsRefire: false, alive: false };
     }
     const completedAt = run.completed_at ? new Date(run.completed_at).getTime() : 0;
     if (completedAt && Date.now() - completedAt > HEADED_KILL_AFTER_MS) {
@@ -1692,7 +1718,7 @@ async function _handleHeadedRun(run, task, { dbPool, execFn, short }) {
       );
       console.log(`[relay-watchdog][headed] tmux_killed_at 已写入 initiative=${run.initiative_id}`);
     }
-    return { needsRefire: false };
+    return { needsRefire: false, alive: false };
   }
 
   // 存活检测：非终态活跃阶段（planning/gan/generate 等）→ ssh tmux has-session（fail-open on ssh 连接错误）
@@ -1703,7 +1729,7 @@ async function _handleHeadedRun(run, task, { dbPool, execFn, short }) {
     try {
       execFn(`ssh ${sshHost} "tmux has-session -t ${tmuxSession}"`);
       // exit 0 → session 存在，正常
-      return { needsRefire: false };
+      return { needsRefire: false, alive: true };
     } catch (err) {
       // 区分 ssh 连接失败（fail-open）vs tmux session 消失（触发重点火）
       const isSshFailure = err.message?.includes('Connection refused')
@@ -1715,15 +1741,15 @@ async function _handleHeadedRun(run, task, { dbPool, execFn, short }) {
       if (isSshFailure) {
         // ssh 本身失败：fail-open，跳过（不重点火）
         console.warn(`[relay-watchdog][headed] ssh 失败 fail-open，initiative=${run.initiative_id}: ${err.message}`);
-        return { needsRefire: false };
+        return { needsRefire: false, alive: false };
       }
       // session 消失（tmux has-session exit 1）→ 需要重点火
       console.log(`[relay-watchdog][headed] session 消失，触发重点火 initiative=${run.initiative_id}`);
-      return { needsRefire: true };
+      return { needsRefire: true, alive: false };
     }
   }
 
-  return { needsRefire: false };
+  return { needsRefire: false, alive: false };
 }
 
 // ─── end headed ──────────────────────────────────────────────────────────────

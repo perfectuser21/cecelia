@@ -53,6 +53,7 @@ import { createRunEventStore } from './run-event-store.js';
 import { parseBaseRepo } from './github-pr-discovery.js';
 import { activateQueuedKernelTask, finalizeKernelRun } from './kernel-run-store.js';
 import { sanitizeDiagnostic } from './failure-persistence.js';
+import { handleKernelProcessFatal } from './kernel-controller-lifecycle.js';
 import {
   createHarnessImpactGates,
   verifyImpactMergeFence,
@@ -74,6 +75,8 @@ export function parseArgs(argv) {
   const args = {
     taskId: null,
     runId: null,
+    controllerSessionId: null,
+    controllerGeneration: null,
     resumeToken: null,
     dryRun: false,
   };
@@ -81,6 +84,8 @@ export function parseArgs(argv) {
     const a = argv[i];
     if (a === '--task-id') args.taskId = argv[++i];
     else if (a === '--run-id') args.runId = argv[++i];
+    else if (a === '--controller-session-id') args.controllerSessionId = argv[++i];
+    else if (a === '--controller-generation') args.controllerGeneration = Number(argv[++i]);
     else if (a === '--resume-token') args.resumeToken = argv[++i];
     else if (a === '--dry-run') args.dryRun = true;
   }
@@ -423,6 +428,8 @@ export async function buildRealDeps(overrides = {}) {
 export async function runKernelMain({
   taskId,
   runId,
+  controllerSessionId,
+  controllerGeneration,
   resumeToken,
   dryRun,
 }, {
@@ -455,17 +462,19 @@ export async function runKernelMain({
     return await runLoopFn(deps, {
       taskId,
       runId,
+      controllerSessionId,
+      controllerGeneration,
       resumeToken,
       dryRun,
     });
   } catch (error) {
     if (pool && runId && !dryRun) {
       try {
-        await finalizeRun(pool, {
+        await handleKernelProcessFatal(pool, {
           runId,
           expectedTaskId: taskId,
-          outcome: 'failed',
-          reason: `kernel_process_fatal:${sanitizeDiagnostic(error?.message)}`,
+          failureCode:sanitizeDiagnostic(error?.message),
+          finalizeRun,
         });
       } catch (finalizeError) {
         logError(
@@ -485,12 +494,16 @@ async function main() {
   const {
     taskId,
     runId,
+    controllerSessionId,
+    controllerGeneration,
     resumeToken,
     dryRun,
   } = args;
   const result = await runKernelMain({
     taskId,
     runId,
+    controllerSessionId,
+    controllerGeneration,
     resumeToken,
     dryRun,
   });

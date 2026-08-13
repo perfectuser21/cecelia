@@ -127,11 +127,21 @@ export function shortId(id) {
 export async function launchKernelProcess({
   taskId,
   runId,
+  controllerSessionId,
+  controllerGeneration,
   worktreePath,
   resumeToken = null,
 }) {
+  const expectedGeneration=Number(controllerGeneration);
+  if (!controllerSessionId || !Number.isSafeInteger(expectedGeneration) || expectedGeneration<1) {
+    throw new Error('controller_lease_identity_missing');
+  }
   const runner = fileURLToPath(new URL('./orchestrator/run.js', import.meta.url));
   const args = [runner, '--task-id', taskId, '--run-id', runId];
+  args.push(
+    '--controller-session-id',controllerSessionId,
+    '--controller-generation',String(expectedGeneration),
+  );
   if (resumeToken) args.push('--resume-token', resumeToken);
   // 刀0：detached kernel 的 stdout/stderr 落盘到宿主可见目录，替代 stdio:'ignore'。
   // 原先零遗言——kernel 卡死/崩溃时看不到任何栈（planner 停摆 debug 不能）。
@@ -264,7 +274,11 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
 
   const launchKernel = deps.launchKernel || launchKernelProcess;
   try {
-    const launched = await launchKernel({ taskId: task.id, runId, worktreePath });
+    const launched = await launchKernel({
+      taskId:task.id,runId,worktreePath,
+      controllerSessionId:created.run.controller_session_id,
+      controllerGeneration:Number(created.run.controller_generation),
+    });
     console.log(`[skill-relay][kernel-v1] launched run=${runId} pid=${launched.pid ?? '?'}`);
     return { ok: true, mode: 'kernel-v1', runId, ...launched, sprintDir, worktreePath };
   } catch (error) {
@@ -293,13 +307,13 @@ async function _spawnHeadedKernelRuntime(task, context) {
     initiativeId,
     deps,
     gear: deriveGear(task),
-    spawnSession: ({ runId, createAttempt }) => _spawnHeadedSession(task, {
+    spawnSession: ({ runId,controllerSessionId,controllerGeneration,createAttempt }) => _spawnHeadedSession(task, {
       dbPool,
       now,
       short,
       initiativeId,
       deps: { ...deps, createHeadedAttempt: createAttempt },
-      kernelAuthority: { runId },
+      kernelAuthority: { runId,controllerSessionId,controllerGeneration },
     }),
   });
 }
@@ -1148,6 +1162,8 @@ async function _spawnHeadedSession(task, {
       ? ` CECELIA_TASK_ID=${task.id}`
         + ` CECELIA_ROUTING_RECEIPT_ID=${task.payload.routing_receipt_id}`
         + ` CECELIA_RUN_ID=${kernelAuthority.runId}`
+        + ` CECELIA_CONTROLLER_SESSION_ID=${kernelAuthority.controllerSessionId}`
+        + ` CECELIA_CONTROLLER_GENERATION=${kernelAuthority.controllerGeneration}`
         + ` CECELIA_REPO=${task.payload.repo}`
         + ` CECELIA_BRANCH=${task.payload.branch}`
         + ` CECELIA_BASE_SHA=${task.payload.base_sha}`

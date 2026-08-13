@@ -109,7 +109,12 @@ export async function spawnHeadedKernelRuntime({
     createHeadedKernelAttempt(dbPool, input)
   ));
   try {
-    const result = await spawnSession({ runId, createAttempt });
+    const result = await spawnSession({
+      runId,
+      controllerSessionId:created.run.controller_session_id,
+      controllerGeneration:Number(created.run.controller_generation),
+      createAttempt,
+    });
     if (result.ok) return result;
     return {
       ...await terminalizeLaunchFailure({
