@@ -90,7 +90,10 @@ describe('watchdog headed 分支', () => {
       if (/FROM harness_attempts/.test(sql)) return {rows:[]};
       return {rows:[]};
     })};
-    const writeControllerHeartbeat=vi.fn(async()=>{});
+    const writeControllerHeartbeat=vi.fn(async(_pool,{host})=>{
+      // 模拟真实 heartbeat 把 reporter host 写回 run；第二轮必须仍识别 headed。
+      run.orchestrator_host=host;
+    });
     const launchKernel=vi.fn(async()=>({pid:123}));
     const execFn=vi.fn(()=> 'TMUX_ALIVE');
 
@@ -99,12 +102,18 @@ describe('watchdog headed 分支', () => {
       now:()=>new Date('2026-08-13T10:00:00.000Z'),
       hostname:()=> 'watchdog-host',watchdogPid:4321,
     });
+    await resumeStalledRelayRuns({
+      pool,execFn,writeControllerHeartbeat,launchKernel,
+      now:()=>new Date('2026-08-13T10:10:00.000Z'),
+      hostname:()=> 'watchdog-host',watchdogPid:4321,
+    });
 
     expect(execFn).toHaveBeenCalledWith(expect.stringContaining('tmux has-session'));
     expect(writeControllerHeartbeat).toHaveBeenCalledWith(pool,expect.objectContaining({
       runId:run.id,controllerSessionId,controllerGeneration:4,
       host:'skill-relay-codex-headed',pid:4321,
     }));
+    expect(writeControllerHeartbeat).toHaveBeenCalledTimes(2);
     expect(launchKernel).not.toHaveBeenCalled();
   });
 

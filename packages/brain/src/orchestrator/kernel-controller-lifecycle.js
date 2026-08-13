@@ -50,6 +50,7 @@ export function structuredFailureReason(prefix, code) {
 export function isOwnerlessRun(runRow, now) {
   if (!runRow) return false;
   if (TERMINAL_PHASES.has(runRow.phase)) return false;
+  if (runRow.controller_authority_mismatch === true) return true;
   // A. 从未取 ownership（含迁移前无 controller_session_id 的历史 run）
   const sid = runRow.controller_session_id;
   if (sid == null || String(sid).trim() === '') return true;
@@ -73,7 +74,9 @@ export function isOwnerlessRun(runRow, now) {
  * @returns {Promise<{controllerAlive:boolean, failureReason:string, run:object}>}
  */
 export async function handleKernelProcessFatal(pool, {
-  runId,expectedTaskId,failureCode,finalizeRun=finalizeKernelRun,
+  runId,expectedTaskId,failureCode,
+  expectedControllerSessionId=null,expectedControllerGeneration=null,
+  finalizeRun=finalizeKernelRun,
 }) {
   const failureReason = structuredFailureReason(KERNEL_FATAL_REASON_PREFIX, failureCode);
   const result = await finalizeRun(pool, {
@@ -82,7 +85,14 @@ export async function handleKernelProcessFatal(pool, {
     outcome: 'failed',
     reason: failureReason,
     closeControllerSession: false,
+    ...(expectedControllerSessionId !== null ? {
+      expectedControllerSessionId,
+      expectedControllerGeneration,
+    } : {}),
   });
+  if (result?.ownershipChanged) {
+    return { controllerAlive: false, ownershipChanged: true, failureReason, run: null };
+  }
   // finalizeKernelRun 不清 controller_session_id → Controller ownership 记录存活。
   return { controllerAlive: true, failureReason, run: result?.run ?? null };
 }
@@ -99,18 +109,34 @@ export async function handleKernelProcessFatal(pool, {
  */
 export async function reconcileOwnerlessKernelRuns(pool, { now = new Date() } = {}) {
   const { rows } = await pool.query(
-    `SELECT id, current_task_id, phase,
-            controller_session_id, controller_generation,
-            controller_lease_expires_at
-       FROM initiative_runs
-      WHERE orchestrator_version = 'v2'
-        AND phase NOT IN ('done', 'failed')
+    `SELECT run.id, run.current_task_id, run.phase,
+            run.controller_session_id, run.controller_generation,
+            run.controller_lease_expires_at,
+            (
+              session.id IS NULL
+              OR session.run_id IS DISTINCT FROM run.id
+              OR session.task_id IS DISTINCT FROM run.current_task_id
+              OR session.generation IS DISTINCT FROM run.controller_generation
+              OR session.status IS DISTINCT FROM 'active'
+              OR session.lease_expires_at IS DISTINCT FROM run.controller_lease_expires_at
+            ) AS controller_authority_mismatch
+       FROM initiative_runs run
+       LEFT JOIN kernel_controller_sessions session
+         ON session.id=run.controller_session_id
+      WHERE run.orchestrator_version = 'v2'
+        AND run.phase NOT IN ('done', 'failed')
         AND (
-          controller_session_id IS NULL
-          OR controller_lease_expires_at IS NULL
-          OR controller_lease_expires_at < $1
+          run.controller_session_id IS NULL
+          OR run.controller_lease_expires_at IS NULL
+          OR run.controller_lease_expires_at < $1
+          OR session.id IS NULL
+          OR session.run_id IS DISTINCT FROM run.id
+          OR session.task_id IS DISTINCT FROM run.current_task_id
+          OR session.generation IS DISTINCT FROM run.controller_generation
+          OR session.status IS DISTINCT FROM 'active'
+          OR session.lease_expires_at IS DISTINCT FROM run.controller_lease_expires_at
         )
-      ORDER BY id`,
+      ORDER BY run.id`,
     [now],
   );
 
@@ -118,9 +144,11 @@ export async function reconcileOwnerlessKernelRuns(pool, { now = new Date() } = 
   for (const run of rows) {
     // 二次纯谓词确认（同一 now 语义），避免与并发续租竞态误伤。
     if (!isOwnerlessRun(run, now)) continue;
-    const cause = (run.controller_session_id == null || String(run.controller_session_id).trim() === '')
-      ? 'no_controller_ownership'
-      : 'controller_lease_expired';
+    const cause = run.controller_authority_mismatch
+      ? 'controller_authority_mismatch'
+      : (run.controller_session_id == null || String(run.controller_session_id).trim() === '')
+        ? 'no_controller_ownership'
+        : 'controller_lease_expired';
     const failureReason = structuredFailureReason(OWNERLESS_RECOVERED_REASON_PREFIX, cause);
     try {
       const finalized = await finalizeKernelRun(pool, {
@@ -130,7 +158,8 @@ export async function reconcileOwnerlessKernelRuns(pool, { now = new Date() } = 
         reason: failureReason,
         expectedControllerSessionId: run.controller_session_id,
         expectedControllerGeneration: run.controller_generation,
-        controllerExpiredAt: now,
+        enforceControllerOwnership: true,
+        ...(cause === 'controller_lease_expired' ? { controllerExpiredAt: now } : {}),
       });
       if (!finalized.changed) continue;
       recovered.push({

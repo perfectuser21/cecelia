@@ -608,6 +608,7 @@ export async function finalizeKernelRun(pool, {
   afterTaskFinalized = null,
   expectedControllerSessionId = null,
   expectedControllerGeneration = null,
+  enforceControllerOwnership = false,
   controllerExpiredAt = null,
   closeControllerSession = true,
 }) {
@@ -671,7 +672,7 @@ export async function finalizeKernelRun(pool, {
       );
     }
 
-    if (expectedControllerSessionId !== null) {
+    if (enforceControllerOwnership || expectedControllerSessionId !== null) {
       const lease = run.controller_lease_expires_at == null
         ? null : new Date(run.controller_lease_expires_at);
       const cutoff = controllerExpiredAt == null ? null : new Date(controllerExpiredAt);

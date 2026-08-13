@@ -1310,7 +1310,9 @@ export async function resumeStalledRelayRuns(deps = {}) {
             runId:run.id,
             controllerSessionId:run.controller_session_id,
             controllerGeneration:Number(run.controller_generation),
-            host:`headed-watchdog:${(deps.hostname ?? hostname)()}`,
+            // orchestrator_host 是执行形态与 tmux locator，不是 heartbeat reporter。
+            // 保持原值，避免下一轮把仍存活的 headed 会话误判成 headless。
+            host:run.orchestrator_host,
             pid:deps.watchdogPid ?? process.pid,
             now:deps.now?.() ?? new Date(),
           });

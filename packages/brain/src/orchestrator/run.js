@@ -474,6 +474,8 @@ export async function runKernelMain({
           runId,
           expectedTaskId: taskId,
           failureCode:sanitizeDiagnostic(error?.message),
+          expectedControllerSessionId:controllerSessionId,
+          expectedControllerGeneration:controllerGeneration,
           finalizeRun,
         });
       } catch (finalizeError) {

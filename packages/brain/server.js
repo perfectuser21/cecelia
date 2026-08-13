@@ -658,6 +658,16 @@ if (!process.env.VITEST) {
   // launch 失败只记日志、绝不阻断 brain 启动。放 listen 之前，确保 tick 路由时 DBOS 已就绪。
   await bootDurable();
 
+  // migration 422 会把无法证明存活 authority 的旧 active v2 run 留为 ownerless。
+  // 在 listener 接受任何请求前先 fail-closed 收敛，定时 orphan guard 只做后备。
+  const { reconcileOwnerlessKernelRuns } = await import(
+    './src/orchestrator/kernel-controller-lifecycle.js'
+  );
+  const startupRecovered = await reconcileOwnerlessKernelRuns(pool);
+  if (startupRecovered.length > 0) {
+    console.log(`[Server] startup ownerless Kernel runs recovered=${startupRecovered.length}`);
+  }
+
   await listenWithRetry(server, Number(PORT), { maxAttempts: 3, retryDelayMs: 2_000 });
 
   // Acceptance 公网 listener（刀 1，决策 c08c2173）：token 未配置时静默不启动
@@ -972,7 +982,7 @@ async function onBrainListening() {
     const { startZombieReaper } = await import('./src/zombie-reaper.js');
     startZombieReaper();
     const { startHarnessOrphanGuard } = await import('./src/lib/harness-orphan-guard.js');
-    startHarnessOrphanGuard();
+    await startHarnessOrphanGuard();
     console.log('[Server] Zombie Reaper started (5min interval) - auto-reap in_progress tasks idle >30min');
   } catch (e) {
     console.warn('[Server] Zombie Reaper init failed (non-fatal):', e.message);

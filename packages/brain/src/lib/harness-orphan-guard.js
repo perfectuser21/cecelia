@@ -409,7 +409,18 @@ export async function sweepOrphanHarnessTasks({
 }
 
 /** 定时器(与 zombie-reaper 同节奏 5 分钟,由 server.js 启动)。 */
-export function startHarnessOrphanGuard({ pool = defaultPool, execFn = defaultExecFn, idleMinutes = 15, intervalMs = 5 * 60 * 1000 } = {}) {
+export async function startHarnessOrphanGuard({
+  pool = defaultPool,
+  execFn = defaultExecFn,
+  idleMinutes = 15,
+  intervalMs = 5 * 60 * 1000,
+  reconcileOwnerless = reconcileOwnerlessKernelRuns,
+} = {}) {
+  // 启动首轮是接流量前的安全闸；timer 仅为后备巡检。
+  const initialRecovered = await reconcileOwnerless(pool);
+  if (initialRecovered.length > 0) {
+    console.log(`[orphan-guard] startup ownerless kernel runs recovered=${initialRecovered.length}`);
+  }
   const timer = setInterval(async () => {
     try {
       await sweepOrphanHarnessTasks({ pool, execFn, idleMinutes });
@@ -419,7 +430,7 @@ export function startHarnessOrphanGuard({ pool = defaultPool, execFn = defaultEx
     // Session Controller 生命周期恢复（sprint 08131104）：无主 Kernel Run（Controller fatal /
     // lease 过期 / 迁移前无主历史 run）fail-closed 进恢复，绝不静默放行。与孤儿巡检同节奏。
     try {
-      const recovered = await reconcileOwnerlessKernelRuns(pool);
+      const recovered = await reconcileOwnerless(pool);
       if (recovered.length > 0) {
         console.log(`[orphan-guard] ownerless kernel runs recovered=${recovered.length}`);
       }

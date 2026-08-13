@@ -339,21 +339,32 @@ function humanReviewDetail(observed, reason) {
   return { review_reason: reason };
 }
 
-async function markRunFailed(deps, runId, taskId, reason) {
+async function markRunFailed(deps, runId, taskId, reason, {
+  controllerSessionId = null,
+  controllerGeneration = null,
+} = {}) {
   const finalizeRun = deps.finalizeRun ?? finalizeKernelRun;
-  await finalizeRun(deps.pool, {
+  const result = await finalizeRun(deps.pool, {
     runId,
     expectedTaskId: taskId,
+    ...(controllerSessionId !== null ? {
+      expectedControllerSessionId: controllerSessionId,
+      expectedControllerGeneration: controllerGeneration,
+    } : {}),
     outcome: 'failed',
     reason,
   });
+  if (result?.ownershipChanged) {
+    throw new SingletonConflictError(runId, 'controller-ownership', null);
+  }
+  return result;
 }
 
 function frozenArtifactErrorCode(error) {
   return String(error?.message ?? '').match(/FROZEN_CONTRACT_ARTIFACT[A-Z_]*/)?.[0] ?? null;
 }
 
-async function materializeApprovedContractOrFail(deps, params, { runId, taskId }) {
+async function materializeApprovedContractOrFail(deps, params, { runId, taskId, failRun }) {
   const materialize = deps.materializeApprovedContract ?? materializeApprovedContract;
   try {
     await materialize(deps.pool, params);
@@ -361,7 +372,7 @@ async function materializeApprovedContractOrFail(deps, params, { runId, taskId }
   } catch (error) {
     const code = frozenArtifactErrorCode(error);
     if (!code) throw error;
-    await markRunFailed(deps, runId, taskId, `assembly_fault:${code}`);
+    await failRun(`assembly_fault:${code}`);
     return code;
   }
 }
@@ -530,7 +541,7 @@ export async function activateContextResume(pool, {
  * hops = 本进程实际派发（appendHop 成功）的跳数。
  * dryRun（F5 前台雏形）：只观测+推导+打印，单跳即返回，零写入零派发。
  */
-export async function runLoop(
+async function runLoopOwned(
   deps,
   {
     taskId,
@@ -555,6 +566,28 @@ export async function runLoop(
   const pid = deps.pid ?? process.pid;
 
   const resolvedRunId = runId ?? (await resolveRunId(deps.pool, taskId));
+  let hops = 0;
+  const beat = () => heartbeat(deps.pool, {
+    runId:resolvedRunId,controllerSessionId,controllerGeneration,host,pid,now:now(),
+  });
+  const failRun = (reason) => markRunFailed(deps, resolvedRunId, taskId, reason, {
+    controllerSessionId,
+    controllerGeneration,
+  });
+
+  // Controller proof 必须是首个可观察动作。旧 generation 在这里立即让位，
+  // 不能先 collect、resume 或写 terminal 状态。
+  if (!dryRun && (controllerSessionId !== null || heartbeat === defaultWriteHeartbeat)) {
+    try {
+      await beat();
+    } catch (error) {
+      if (['controller_lease_renewal_lost', 'controller_lease_identity_missing']
+        .includes(error?.message)) {
+        return { exitReason: 'singleton_conflict', hops };
+      }
+      throw error;
+    }
+  }
   if (resumeToken) {
     const activate = deps.activateContextResume ?? activateContextResume;
     const activated = await activate(deps.pool, {
@@ -572,11 +605,6 @@ export async function runLoop(
     ? await resolveGroundTruthPaths(deps.pool, taskId)
     : {};
 
-  let hops = 0;
-  const beat = () => heartbeat(deps.pool, {
-    runId:resolvedRunId,controllerSessionId,controllerGeneration,host,pid,now:now(),
-  });
-
   // deadline fence 辅助：检查 run.deadline_at 是否已超过当前时间
   function deadlineExceeded(run) {
     if (!run || !run.deadline_at) return false;
@@ -591,7 +619,7 @@ export async function runLoop(
       || deadlineState.open_human_review === 'true'
       || deadlineState.review_request_hop != null;
     if (deadlineExceeded(deadlineState) && !hasOpenHumanReview) {
-      await markRunFailed(deps, resolvedRunId, taskId, 'automation_deadline_exceeded');
+      await failRun('automation_deadline_exceeded');
       return { exitReason: 'automation_deadline_exceeded', hops };
     }
 
@@ -693,7 +721,7 @@ export async function runLoop(
     // ---- Deadline fence 2：derive 后 ----
     // wait/control 分支都在此 fence 之后，不能绕开硬上限。
     if (deadlineExceeded(observed.run) && !deadlinePaused && !decisionIsTerminal) {
-      await markRunFailed(deps, resolvedRunId, taskId, 'automation_deadline_exceeded');
+      await failRun('automation_deadline_exceeded');
       return { exitReason: 'automation_deadline_exceeded', hops };
     }
 
@@ -858,7 +886,7 @@ export async function runLoop(
       return { exitReason: decision.reason, hops };
     }
     if (decision.action === ACTION.MARK_FAILED) {
-      await markRunFailed(deps, resolvedRunId, taskId, decision.reason);
+      await failRun(decision.reason);
       return { exitReason: decision.reason, hops };
     }
     if (decision.action === ACTION.PAUSE_RUN) {
@@ -868,12 +896,12 @@ export async function runLoop(
     if (decision.action === ACTION.PERSIST_CONTRACT_APPROVAL) {
       if (!observed.proposeBranch || !Number.isInteger(observed.proposeBranchRn)
           || observed.proposeBranchRn < 1) {
-        await markRunFailed(deps, resolvedRunId, taskId, 'approved_but_no_contract_branch');
+        await failRun('approved_but_no_contract_branch');
         return { exitReason: 'approved_but_no_contract_branch', hops };
       }
       const approvedSha = observed.ganLatestRoundContractSha ?? null;
       if (!approvedSha) {
-        await markRunFailed(deps, resolvedRunId, taskId, 'approved_but_no_contract_sha');
+        await failRun('approved_but_no_contract_sha');
         return { exitReason: 'approved_but_no_contract_sha', hops };
       }
       const artifacts = frozenContractArtifacts(
@@ -883,12 +911,7 @@ export async function runLoop(
         approvedSha,
       );
       if (artifacts.missing.length > 0) {
-        await markRunFailed(
-          deps,
-          resolvedRunId,
-          taskId,
-          'approved_but_contract_artifacts_missing',
-        );
+        await failRun('approved_but_contract_artifacts_missing');
         return { exitReason: 'approved_but_contract_artifacts_missing', hops };
       }
       const identityPolicy = evaluateValidationIdentityPolicy(artifacts.contractContent);
@@ -933,7 +956,7 @@ export async function runLoop(
         contractContent: artifacts.contractContent,
         ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
         approvedAt: now(),
-      }, { runId: resolvedRunId, taskId });
+      }, { runId: resolvedRunId, taskId, failRun });
       if (artifactFailure) return { exitReason: 'assembly_fault', hops };
       await beat();
       continue;
@@ -1115,12 +1138,12 @@ export async function runLoop(
       if (!observed.contract.id) {
         if (!observed.proposeBranch || !Number.isInteger(observed.proposeBranchRn)
             || observed.proposeBranchRn < 1) {
-          await markRunFailed(deps, resolvedRunId, taskId, 'force_approve_but_no_contract_branch');
+          await failRun('force_approve_but_no_contract_branch');
           return { exitReason: 'force_approve_but_no_contract_branch', hops };
         }
         const approvedSha = observed.proposeBranchSha ?? null;
         if (!approvedSha) {
-          await markRunFailed(deps, resolvedRunId, taskId, 'force_approve_but_no_contract_sha');
+          await failRun('force_approve_but_no_contract_sha');
           return { exitReason: 'force_approve_but_no_contract_sha', hops };
         }
         const artifacts = frozenContractArtifacts(
@@ -1130,12 +1153,7 @@ export async function runLoop(
           approvedSha,
         );
         if (artifacts.missing.length > 0) {
-          await markRunFailed(
-            deps,
-            resolvedRunId,
-            taskId,
-            'force_approve_but_contract_artifacts_missing',
-          );
+          await failRun('force_approve_but_contract_artifacts_missing');
           return { exitReason: 'force_approve_but_contract_artifacts_missing', hops };
         }
         // 硬安全门不因"强制批准"而豁免：合同硬编码了可变 validation identity 时仍判 REVISION，
@@ -1209,7 +1227,7 @@ export async function runLoop(
           contractContent: artifacts.contractContent,
           ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
           approvedAt: now(),
-        }, { runId: resolvedRunId, taskId });
+        }, { runId: resolvedRunId, taskId, failRun });
         if (artifactFailure) return { exitReason: 'assembly_fault', hops };
         await recordForcedApprovalSideEffects(approvedSha);
         await beat();
@@ -1218,7 +1236,7 @@ export async function runLoop(
       // 崩溃窗口对称分支（force 落库前进程中断，contract 行已建但未 approved）
       const approvedSha = observed.proposeBranchSha ?? null;
       if (!approvedSha) {
-        await markRunFailed(deps, resolvedRunId, taskId, 'force_approve_but_no_contract_sha');
+        await failRun('force_approve_but_no_contract_sha');
         return { exitReason: 'force_approve_but_no_contract_sha', hops };
       }
       const artifacts = frozenContractArtifacts(
@@ -1228,17 +1246,12 @@ export async function runLoop(
         approvedSha,
       );
       if (artifacts.missing.length > 0) {
-        await markRunFailed(
-          deps,
-          resolvedRunId,
-          taskId,
-          'force_approve_but_contract_artifacts_missing',
-        );
+        await failRun('force_approve_but_contract_artifacts_missing');
         return { exitReason: 'force_approve_but_contract_artifacts_missing', hops };
       }
       const identityPolicy = evaluateValidationIdentityPolicy(artifacts.contractContent);
       if (!identityPolicy.ok) {
-        await markRunFailed(deps, resolvedRunId, taskId, 'force_approve_contract_identity_invalid');
+        await failRun('force_approve_contract_identity_invalid');
         return { exitReason: 'force_approve_contract_identity_invalid', hops };
       }
       const artifactFailure = await materializeApprovedContractOrFail(deps, {
@@ -1249,7 +1262,7 @@ export async function runLoop(
         contractContent: artifacts.contractContent,
         ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
         approvedAt: now(),
-      }, { runId: resolvedRunId, taskId });
+      }, { runId: resolvedRunId, taskId, failRun });
       if (artifactFailure) return { exitReason: 'assembly_fault', hops };
       await recordForcedApprovalSideEffects(approvedSha);
       await beat();
@@ -1491,7 +1504,7 @@ export async function runLoop(
     // ---- Deadline fence 3：dispatch 前 ----
     // intent 持久化与真实副作用之间仍可能跨过 deadline；此时保留审计 intent，但不派发。
     if (deadlineExceeded(observed.run) && !deadlinePaused) {
-      await markRunFailed(deps, resolvedRunId, taskId, 'automation_deadline_exceeded');
+      await failRun('automation_deadline_exceeded');
       return { exitReason: 'automation_deadline_exceeded', hops };
     }
 
@@ -1617,22 +1630,12 @@ export async function runLoop(
       const failureClass = result.failure_class ?? null;
       if (controlStatus === 'BLOCKED' && failureClass === 'assembly_fault') {
         const reason = result.fallback_reason ?? 'FROZEN_CONTRACT_ARTIFACT_INVALID';
-        await markRunFailed(
-          deps,
-          resolvedRunId,
-          taskId,
-          `assembly_fault:${reason}`,
-        );
+        await failRun(`assembly_fault:${reason}`);
         return { exitReason: 'assembly_fault', hops };
       }
       if (controlStatus === 'BLOCKED' && failureClass === 'impact_contract_invalid') {
         const reason = result.fallback_reason ?? 'impact_gate_error';
-        await markRunFailed(
-          deps,
-          resolvedRunId,
-          taskId,
-          `impact_gate_deterministic:${reason}`,
-        );
+        await failRun(`impact_gate_deterministic:${reason}`);
         return { exitReason: 'impact_gate_deterministic', hops };
       }
       if (controlStatus === 'BLOCKED' && ['infrastructure_blocked', 'gap_dependencies'].includes(failureClass)) {
@@ -1651,12 +1654,7 @@ export async function runLoop(
       const streak = currentBlockedStreak + 1; // 本轮实际 streak
       log(`[orchestrator] hop ${hop} ${decision.action} → ${controlStatus} (streak ${streak}): ${result.detail ?? ''}`);
       if (streak >= BLOCKED_SAME_STATE_CAP) {
-        await markRunFailed(
-          deps,
-          resolvedRunId,
-          taskId,
-          `blocked_same_state:${controlStatus}`,
-        );
+        await failRun(`blocked_same_state:${controlStatus}`);
         return { exitReason: 'blocked_same_state', hops };
       }
     } else {
@@ -1668,10 +1666,21 @@ export async function runLoop(
     // ---- Deadline fence 3：DONE 心跳后检查（崩溃窗口补丁）----
     // INV-K1：三道 fence，防止在 deadline 后派遣下一轮 intent（即使 dispatch 已返回 DONE）
     if (deadlineExceeded(observed.run) && !deadlinePaused) {
-      await markRunFailed(deps, resolvedRunId, taskId, 'automation_deadline_exceeded');
+      await failRun('automation_deadline_exceeded');
       return { exitReason: 'automation_deadline_exceeded', hops };
     }
 
     await beat();
+  }
+}
+
+export async function runLoop(deps, params) {
+  try {
+    return await runLoopOwned(deps, params);
+  } catch (error) {
+    if (error instanceof SingletonConflictError) {
+      return { exitReason: 'singleton_conflict', hops: 0 };
+    }
+    throw error;
   }
 }
