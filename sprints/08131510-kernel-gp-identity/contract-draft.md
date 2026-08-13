@@ -117,3 +117,17 @@ function gpContractIdentity(payload) {
 1. **[验证时钟 fail-closed]**：本次修复不涉及 validation_clock；现有 fail-closed 行为保持不变。
 2. **[证据窗口]**：本次修复不涉及 judge 证据消费；窗口逻辑保持不变。
 3. **[合同验证命令实跑]**：合同验证命令（见 DoD）已在本地通过 `vitest` 验证 exit code = 0。
+
+---
+
+## E2E 验收
+
+运行以下命令验证全量修复（target_environment: local_api，vitest 单测）：
+
+```bash
+npx vitest run packages/brain/src/orchestrator/__tests__/dispatcher.test.js --reporter=verbose
+```
+
+验收通过标准：
+- 全部测试绿态（exit code = 0）
+- 含三路行为覆盖：journey-only 不再 assembly_fault、部分 GP 身份 fail-closed、完整 GP 路径回归不回退
