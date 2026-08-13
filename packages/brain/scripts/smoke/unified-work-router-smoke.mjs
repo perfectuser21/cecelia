@@ -327,6 +327,7 @@ try {
     mapScope,
     repoHint: 'cecelia',
     repoRoot,
+    branch,
     sourceIdPrefix: `${sourceNamespace}:intent`,
     taskTitlePrefix: titlePrefix,
   });

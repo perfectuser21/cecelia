@@ -1014,9 +1014,10 @@ async function parseAndCreate(input, options = {}) {
       ? buildMutationRoute({
           change_kind: options.changeKind || inferredChangeKind,
           map_scope: options.mapScope,
-          repo_hint: options.repoHint,
-          repo_root: options.repoRoot || options.repoHint,
-        })
+           repo_hint: options.repoHint,
+           repo_root: options.repoRoot || options.repoHint,
+           branch: options.branch,
+         })
       : {};
 
     for (const [taskIndex, task] of parsedIntent.tasks.entries()) {

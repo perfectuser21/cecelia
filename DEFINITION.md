@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.11
+**Brain 版本**: 1.273.12
+
+## Brain 1.273.12 — Intent Routing Identity Freeze
+
+- Intent 入口把调用方批准的规范分支传播到每个不可变 Routing Receipt，防止同一 coding 请求被拆成多个随机分支身份。
 
 ## Brain 1.273.11 — Canonical Attempt PostgreSQL Environment
 
