@@ -262,12 +262,15 @@ describe('createDispatcher', () => {
       decision: { phase: 'generate', reason: 'approved' },
     });
 
-    expect(deps.attemptStore.createAttempt.mock.calls[0][0].bundle.inputs.routing_identity).toEqual({
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.routing_identity).toEqual({
       routing_receipt_id: receiptId,
       repo: 'cecelia',
       branch: 'cp-server-branch',
       base_sha: baseSha,
     });
+    expect(created.bundle.objective).toContain('local candidate');
+    expect(created.bundle.objective).not.toContain('pull request artifact');
   });
 
   it('批准合同后不重复装载入口 PRD，Evaluator 大合同仍可派发', async () => {
