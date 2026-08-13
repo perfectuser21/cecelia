@@ -1,0 +1,24 @@
+{
+  "initiative_id": "intent:2e9f6c6c-767c-4e9e-b87f-0ff2f44f2c1a:4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅在 packages/brain/ 后端 dispatcher 组包判定逻辑，无 UI、无远端 agent 协议。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "gpContractIdentity 触发判定剥离 journey_id + journey-only 永久回归",
+      "scope": "把 journey_id 从 gpContractIdentity 的『任一字段出现即触发全字段校验』判定中剥离，改为仅当出现任一 GP 合同身份触发字段（gp_contract_id/gp_contract_version/gp_contract_hash/golden_path_id/step_id）时才进入全字段校验；journey_id 在全字段校验里仍需齐全合法。移植 5 条断言进 packages/brain/src/orchestrator/__tests__/dispatcher.test.js 作永久回归。",
+      "dod": [
+        "[BEHAVIOR] 仅 journey_id 的 spawn:generator-fix 组包成功、不注入 gp_contract、不返回 TASK_BUNDLE_ASSEMBLY_FAILED（node sprints/08131510-kernel-gp-identity/tests/gp-identity-assembly.mjs journey-only）",
+        "[BEHAVIOR] 部分 GP 身份继续 fail-closed（partial-gp），完整 GP 身份透传不变（complete-gp）",
+        "[ARTIFACT] packages/brain/src/orchestrator/__tests__/dispatcher.test.js 含 journey-only 永久回归断言"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/__tests__/dispatcher.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
