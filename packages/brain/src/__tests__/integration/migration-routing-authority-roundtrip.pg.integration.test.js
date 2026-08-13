@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll,beforeAll,describe,expect,it } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
+import { reconcileOwnerlessKernelRuns } from '../../orchestrator/kernel-controller-lifecycle.js';
 
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../',import.meta.url));
@@ -76,7 +77,29 @@ describe('production 413–415 anchors → PR migrations 往返（真 PG）',()=
       `SELECT version FROM schema_version WHERE version::int BETWEEN 413 AND 422 ORDER BY version::int`,
     );
     expect(anchors.rows.map(({version})=>Number(version))).toEqual([413,414,415]);
+    const legacyTaskId=randomUUID();
+    const legacyRunId=randomUUID();
+    await pool.query(
+      `INSERT INTO tasks(id,title,status,priority,task_type,trigger_source,payload)
+       VALUES($1,'pre-422-ownerless','in_progress','P2','harness_initiative','integration',$2::jsonb)`,
+      [legacyTaskId,JSON.stringify({initiative_id:legacyTaskId})],
+    );
+    await pool.query(
+      `INSERT INTO initiative_runs(id,initiative_id,current_task_id,phase,orchestrator_version,
+         created_source,deadline_at,controller_session_id,controller_lease_expires_at)
+       VALUES($1,$2,$2,'generate','v2','historical_reconstruction',NOW()+INTERVAL '1 hour',NULL,NULL)`,
+      [legacyRunId,legacyTaskId],
+    );
     migrate();
     await assertAuthority();
+    const migrated = await pool.query(
+      `SELECT controller_session_id,controller_generation,controller_lease_expires_at
+         FROM initiative_runs WHERE id=$1`,
+      [legacyRunId],
+    );
+    expect(migrated.rows[0]).toEqual({controller_session_id:null,
+      controller_generation:null,controller_lease_expires_at:null});
+    const recovered=await reconcileOwnerlessKernelRuns(pool,{now:new Date()});
+    expect(recovered.map(({runId})=>runId)).toContain(legacyRunId);
   });
 });
