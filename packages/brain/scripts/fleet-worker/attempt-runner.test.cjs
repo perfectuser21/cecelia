@@ -2718,7 +2718,7 @@ describe('Fleet Worker durable runtime adapters', () => {
         `type=bind,src=/canonical/var/lib/cecelia/fleet-worker/worktrees/${ATTEMPT_ID},dst=/workspace,readonly`,
       );
       expect(createArgs).toContain(
-        `type=bind,src=/canonical/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,dst=/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,readonly`,
+        `type=bind,src=/canonical/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,dst=/canonical/var/lib/cecelia/fleet-worker/worktrees/.admin/${ATTEMPT_ID}.git,readonly`,
       );
       expect(createArgs).toContain(
         `type=bind,src=/canonical${path.join(runtimeRoot, ATTEMPT_ID)},dst=/tmp/cecelia-prompts`,
