@@ -92,6 +92,7 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
   const initiativeId = randomUUID();
   const contractId = randomUUID();
   const taskId = randomUUID();
+  const receiptId = randomUUID();
   const runId = randomUUID();
   const payload = {
     harness_runtime: 'kernel-v1',
@@ -101,18 +102,34 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
     review_required: reviewRequired,
     executor: 'codex',
     test_ci: ci,
+    routing_receipt_id: receiptId,
+    repo: 'cecelia',
+    change_kind: 'bugfix',
   };
   await testPool.query(
     `INSERT INTO initiative_contracts
-       (id, initiative_id, version, status, prd_content, contract_content, approved_at)
-     VALUES ($1, $2, 1, 'approved', 'prd', 'contract', NOW())`,
-    [contractId, initiativeId],
+       (id, initiative_id, version, status, prd_content, contract_content, approved_sha, approved_at)
+     VALUES ($1, $2, 1, 'approved', 'prd', 'contract', $3, NOW())`,
+    [contractId, initiativeId, HEAD_SHA],
   );
   await testPool.query(
     `INSERT INTO tasks
        (id, title, status, priority, task_type, trigger_source, payload)
      VALUES ($1, $2, 'in_progress', 'P2', 'harness_initiative', 'api', $3::jsonb)`,
     [taskId, `kernel-pg-${taskId}`, JSON.stringify(payload)],
+  );
+  await testPool.query(
+    `INSERT INTO work_routing_receipts
+       (id, task_id, source, source_id, work_kind, change_kind, pipeline,
+        canonical_task_type, default_execution_profile, repo, map_scope,
+        impact_contract_required, orchestrator, router_version, route_reason, evidence)
+     VALUES ($1, $2, 'api', $3, 'coding_mutation', 'bugfix', 'harness',
+             'harness_initiative', 'hotfix-v1', 'cecelia', '["cecelia"]'::jsonb,
+             true, 'kernel-harness-v2', 'work-router-v1', 'kernel-pg-fixture', $4::jsonb)`,
+    [receiptId, taskId, `kernel-pg:${taskId}`, JSON.stringify({
+      branch: `cp-kernel-pg-${taskId}`,
+      base_sha: HEAD_SHA,
+    })],
   );
   await testPool.query(
     `INSERT INTO initiative_runs
@@ -124,7 +141,7 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
      )`,
     [runId, initiativeId, contractId, taskId, PR_URL],
   );
-  return { initiativeId, contractId, taskId, runId, payload };
+  return { initiativeId, contractId, taskId, receiptId, runId, payload };
 }
 
 async function seedCallbackAttempt(runId, {

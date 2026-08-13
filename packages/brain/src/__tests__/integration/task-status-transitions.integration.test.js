@@ -20,6 +20,7 @@ import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
+import { cleanupRoutedTasks } from '../helpers/routed-task-cleanup.js';
 
 // ─── Mock 外部依赖（只测路由 + DB 链路，不测 AI/事件发布）──────────────────
 
@@ -86,7 +87,7 @@ describe('Task 状态流转 Integration Test（queued → in_progress → comple
   afterAll(async () => {
     // 直接 DB 删除清理（completed 是 terminal status，无法通过 PATCH 清理）
     if (insertedTaskIds.length > 0) {
-      await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [insertedTaskIds]);
+      await cleanupRoutedTasks(testPool, insertedTaskIds);
     }
     await testPool.end();
   });
@@ -101,7 +102,7 @@ describe('Task 状态流转 Integration Test（queued → in_progress → comple
       .send({
         title: TEST_TITLE,
         description: 'Brain 状态流转集成测试，测试完毕后自动清理',
-        task_type: 'dev',
+        task_type: 'research',
         priority: 'P2',
         trigger_source: 'test',
       })

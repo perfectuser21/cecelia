@@ -12,6 +12,8 @@ const mockPool = {
   query: vi.fn().mockResolvedValue({ rows: [] }),
 };
 vi.mock('../db.js', () => ({ default: mockPool }));
+const mockCreateTask = vi.hoisted(() => vi.fn());
+vi.mock('../actions.js', () => ({ createTask: mockCreateTask }));
 
 // 动态导入被测模块（避免 top-level await 问题）
 let advanceCrystallizeStage;
@@ -25,6 +27,7 @@ beforeEach(async () => {
   CRYSTALLIZE_STAGES = mod.CRYSTALLIZE_STAGES;
   vi.clearAllMocks();
   mockPool.query.mockResolvedValue({ rows: [] });
+  mockCreateTask.mockResolvedValue({ task: { id: 'crystallize-child' } });
 });
 
 describe('advanceCrystallizeStage', () => {
@@ -47,6 +50,10 @@ describe('advanceCrystallizeStage', () => {
               pipeline_stage: 'crystallize_forge',
               pipeline_target: target,
               retry_count: 0,
+              repo_hint: 'cecelia',
+              repo_root: process.cwd(),
+              map_scope: ['test-automation-scenario'],
+              change_kind: 'bugfix',
             },
           }],
         };
@@ -61,13 +68,9 @@ describe('advanceCrystallizeStage', () => {
     await advanceCrystallizeStage(forgeTaskId, 'completed', { script_path: '/tmp/test.cjs' });
 
     // 验证创建了子任务（task_type 在参数中，不在 SQL 文本里）
-    const insertCall = mockPool.query.mock.calls.find(
-      ([sql, params]) => sql.includes('INSERT INTO tasks') && Array.isArray(params) && params.includes('crystallize_verify')
-    );
-    expect(insertCall).toBeDefined();
-
-    // 验证 script_path 被传递到下一阶段的 payload（payload 是第8个参数，index=7）
-    const insertPayload = JSON.parse(insertCall[1][7]);
+    const createInput = mockCreateTask.mock.calls[0][0];
+    expect(createInput.task_type).toBe('crystallize_verify');
+    const insertPayload = createInput.payload;
     expect(insertPayload.parent_crystallize_id).toBe(pipelineId);
     expect(insertPayload.pipeline_stage).toBe('crystallize_verify');
     expect(insertPayload.script_path).toBe('/tmp/test.cjs');
@@ -103,6 +106,9 @@ describe('advanceCrystallizeStage', () => {
               pipeline_target: target,
               retry_count: 0,
               script_path: '/tmp/test.cjs',
+              repo_hint: 'cecelia',
+              repo_root: process.cwd(),
+              map_scope: ['test-automation-scenario'],
             },
           }],
         };
@@ -112,11 +118,9 @@ describe('advanceCrystallizeStage', () => {
 
     await advanceCrystallizeStage(verifyTaskId, 'completed', { verify_passed: false, feedback: 'assertion failed' });
 
-    const retryCall = mockPool.query.mock.calls.find(
-      ([sql, params]) => sql.includes('INSERT INTO tasks') && Array.isArray(params) && params.includes('crystallize_forge')
-    );
-    expect(retryCall).toBeDefined();
-    const retryPayload = JSON.parse(retryCall[1][7]);
+    const retryInput = mockCreateTask.mock.calls[0][0];
+    expect(retryInput.task_type).toBe('crystallize_forge');
+    const retryPayload = retryInput.payload;
     expect(retryPayload.retry_count).toBe(1);
     expect(retryPayload.verify_feedback).toBe('assertion failed');
   });

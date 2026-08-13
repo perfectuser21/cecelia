@@ -18,7 +18,7 @@ describe('arch_review task payload 含 prd_summary ≥ 20 字符', () => {
 
     // 找 arch_review 的 INSERT：VALUES ($1, 'arch_review', ...) 的位置
     // 该字符串唯一标识 arch_review 的 INSERT 语句
-    const archInsertValuesIndex = src.indexOf("VALUES ($1, 'arch_review'");
+    const archInsertValuesIndex = src.indexOf("task_type: 'arch_review'");
     expect(archInsertValuesIndex).toBeGreaterThan(-1);
 
     // 向后截取足够的内容（payload JSON 在 VALUES 后面的参数数组里）

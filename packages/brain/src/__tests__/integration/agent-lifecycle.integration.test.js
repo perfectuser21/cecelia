@@ -22,6 +22,7 @@ import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
+import { cleanupRoutedTasks } from '../helpers/routed-task-cleanup.js';
 
 // ─── Mock 外部依赖（不测 AI 调用，只测任务状态机链路）──────────────────────
 
@@ -117,7 +118,7 @@ describe('Agent Lifecycle — queued → in_progress → completed（真实 Post
 
   afterAll(async () => {
     if (insertedTaskIds.length > 0) {
-      await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [insertedTaskIds]);
+      await cleanupRoutedTasks(testPool, insertedTaskIds);
     }
     await testPool.end();
   });
@@ -130,7 +131,7 @@ describe('Agent Lifecycle — queued → in_progress → completed（真实 Post
       .send({
         title: '[agent-lifecycle-test] e2e smoke task',
         description: 'CI e2e-smoke job 自动创建，测试后清理',
-        task_type: 'dev',
+        task_type: 'research',
         priority: 'P2',
         trigger_source: 'api',
       })

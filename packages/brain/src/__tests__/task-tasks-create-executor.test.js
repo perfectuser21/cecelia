@@ -36,6 +36,16 @@ function makeApp() {
   return app;
 }
 
+const routeFields = {
+  task_type: 'dev',
+  change_kind: 'bugfix',
+  mutation_intent: 'write',
+  repo_hint: 'perfectuser21/cecelia',
+  map_scope_hint: ['cecelia'],
+  branch: 'cp-executor-contract',
+  base_sha: 'a'.repeat(40),
+};
+
 beforeEach(() => {
   queryMock.mockReset();
   // 创建链路默认 mock：dedup SELECT 返回空（无重复），INSERT 返回新任务行
@@ -55,7 +65,7 @@ describe('POST /api/brain/tasks — B1 executor/mode 白名单', () => {
   it('executor=claude + mode=headed → 不再 400（有头 claude 已解锁）', async () => {
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: '有头dev任务', repo_hint: 'perfectuser21/cecelia', payload: { executor: 'claude', mode: 'headed' } });
+      .send({ title: '有头dev任务', ...routeFields, payload: { executor: 'claude', mode: 'headed' } });
     expect(res.status).toBe(201);
     expect(res.body.error).toBeUndefined();
   });
@@ -63,7 +73,7 @@ describe('POST /api/brain/tasks — B1 executor/mode 白名单', () => {
   it('executor=codex + mode=headed → 由 Router 统一进入 Kernel Harness', async () => {
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: 'codex任务', repo_hint: 'perfectuser21/cecelia', payload: { executor: 'codex', mode: 'headed' } });
+      .send({ title: 'codex任务', ...routeFields, payload: { executor: 'codex', mode: 'headed' } });
     expect(res.status).toBe(201);
     expect(res.body.task_type).toBe('harness_initiative');
   });
@@ -71,14 +81,14 @@ describe('POST /api/brain/tasks — B1 executor/mode 白名单', () => {
   it('executor=claude + mode=headless → 合法', async () => {
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: '无头claude任务', repo_hint: 'perfectuser21/cecelia', payload: { executor: 'claude', mode: 'headless' } });
+      .send({ title: '无头claude任务', ...routeFields, payload: { executor: 'claude', mode: 'headless' } });
     expect(res.status).toBe(201);
   });
 
   it('mode=xxx 非白名单值 → 仍 400', async () => {
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: '非法mode任务', payload: { executor: 'claude', mode: 'xxx' } });
+      .send({ title: '非法mode任务', ...routeFields, payload: { executor: 'claude', mode: 'xxx' } });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/mode must be headless or headed/);
   });
@@ -86,7 +96,7 @@ describe('POST /api/brain/tasks — B1 executor/mode 白名单', () => {
   it('executor 非 claude/codex → 仍 400（白名单不回归）', async () => {
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: '非法executor任务', payload: { executor: 'gpt' } });
+      .send({ title: '非法executor任务', ...routeFields, payload: { executor: 'gpt' } });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/executor must be claude or codex/);
   });

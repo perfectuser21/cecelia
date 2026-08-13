@@ -5,6 +5,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { matchesCron, calculateNextRunAt, checkRecurringTasks } from '../recurring.js';
 
+const mockCreateTask = vi.hoisted(() => vi.fn());
+vi.mock('../actions.js', () => ({ createTask: mockCreateTask }));
+
 // Mock db.js
 vi.mock('../db.js', () => ({
   default: {
@@ -154,6 +157,8 @@ describe('recurring tasks', () => {
       const dbModule = await import('../db.js');
       pool = dbModule.default;
       pool.query.mockReset();
+      mockCreateTask.mockReset();
+      mockCreateTask.mockResolvedValue({ task: { id: 'task-new-1', title: 'Daily QA Check' } });
     });
 
     it('should create task instance when recurring task is due', async () => {
@@ -180,10 +185,6 @@ describe('recurring tasks', () => {
         })
         // Mock: check existing tasks (dedup)
         .mockResolvedValueOnce({ rows: [] })
-        // Mock: insert task
-        .mockResolvedValueOnce({
-          rows: [{ id: 'task-new-1', title: 'Daily QA Check' }]
-        })
         // Mock: update recurring task
         .mockResolvedValueOnce({ rows: [] });
 

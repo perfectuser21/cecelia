@@ -230,7 +230,7 @@ export async function checkRecurringTasks(now = new Date()) {
           repo_root: template.repo_root || template.repo_path,
         })
       : {};
-    const created = await createTask({
+    const creation = await createTask({
       db: pool,
       source: 'scheduler',
       source_id: `recurring:${rt.id}:${now.toISOString()}`,
@@ -253,7 +253,7 @@ export async function checkRecurringTasks(now = new Date()) {
       ...mutationRoute,
     });
 
-    const createdTask = created.task;
+    const createdTask = creation.task;
     console.log(`[recurring] Created task instance: ${createdTask.title} (id=${createdTask.id}) from recurring=${rt.id}`);
 
     // Update recurring task with last_run_at, next_run_at, last_run_status

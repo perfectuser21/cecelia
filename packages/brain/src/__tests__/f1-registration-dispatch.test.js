@@ -13,6 +13,8 @@ import request from 'supertest';
 // ─── 公共 mock（TC-A/TC-B/TC-REG 共用）──────────────────────────────────────
 const queryMock = vi.fn();
 vi.mock('../db.js', () => ({ default: { query: (...a) => queryMock(...a) } }));
+const routedTaskMock = vi.hoisted(() => vi.fn());
+vi.mock('../work-routing-store.js', () => ({ createRoutedTask: routedTaskMock }));
 
 // TC-B 需要的额外 mock（selectNextDispatchableTask 依赖）
 vi.mock('../alertness-actions.js', () => ({
@@ -71,6 +73,10 @@ function makeInsertResult(status = 'queued', blockedAt = null) {
 describe('TC-A: POST /tasks status=blocked 注册', () => {
   beforeEach(() => {
     queryMock.mockReset();
+    routedTaskMock.mockReset();
+    routedTaskMock.mockImplementation(async (_db, input) => ({
+      task: makeInsertResult(input.task.status, input.task.blocked_at).rows[0],
+    }));
     // 第 1 次：dedup SELECT 返回空（无重复），第 2 次：INSERT 返回
     queryMock
       .mockResolvedValueOnce({ rows: [] })  // dedup 查询
@@ -83,13 +89,11 @@ describe('TC-A: POST /tasks status=blocked 注册', () => {
   });
 
   it('TC-A-1: 携带 status=blocked 时，INSERT 的 $5 参数应为 "blocked"', async () => {
-    let capturedParams = null;
     queryMock.mockReset();
     queryMock
       .mockResolvedValueOnce({ rows: [] }) // dedup
       .mockImplementation(async (sql, params) => {
         if (/INSERT INTO tasks/i.test(sql)) {
-          capturedParams = params;
           return makeInsertResult('blocked', new Date().toISOString());
         }
         return { rows: [] };
@@ -97,26 +101,22 @@ describe('TC-A: POST /tasks status=blocked 注册', () => {
 
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: '被阻断任务', status: 'blocked' });
+      .send({ title: '被阻断任务', task_type: 'research', status: 'blocked' });
 
     // 断言：HTTP 成功（201）
     expect(res.status).toBe(201);
 
     // 断言：INSERT params 中 status 位置（$5）应为 'blocked'，不能被改成 'queued'
     // params 顺序：title, description, priority, task_type, status, project_id, ...
-    expect(capturedParams).not.toBeNull();
-    const statusParam = capturedParams[4]; // $5 = index 4
-    expect(statusParam).toBe('blocked'); // ← 当前代码 FAIL：会变成 'queued'
+    expect(routedTaskMock.mock.calls[0][1].task.status).toBe('blocked');
   });
 
   it('TC-A-2: 携带 status=blocked 时，INSERT SQL 必须含 blocked_at 字段', async () => {
-    let capturedSql = null;
     queryMock.mockReset();
     queryMock
       .mockResolvedValueOnce({ rows: [] }) // dedup
       .mockImplementation(async (sql, params) => {
         if (/INSERT INTO tasks/i.test(sql)) {
-          capturedSql = sql;
           return makeInsertResult('blocked', new Date().toISOString());
         }
         return { rows: [] };
@@ -124,13 +124,12 @@ describe('TC-A: POST /tasks status=blocked 注册', () => {
 
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: '被阻断任务B', status: 'blocked' });
+      .send({ title: '被阻断任务B', task_type: 'research', status: 'blocked' });
 
     expect(res.status).toBe(201);
 
     // 断言：INSERT SQL 中含 blocked_at 列
-    expect(capturedSql).not.toBeNull();
-    expect(capturedSql).toMatch(/blocked_at/i); // ← 当前代码 FAIL：INSERT 无 blocked_at
+    expect(routedTaskMock.mock.calls[0][1].task.blocked_at).toBeTruthy();
   });
 
   it('TC-A-3: status=queued 正常注册（回归保护，不得破坏）', async () => {
@@ -141,7 +140,7 @@ describe('TC-A: POST /tasks status=blocked 注册', () => {
 
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: '普通任务' });
+      .send({ title: '普通任务', task_type: 'research' });
 
     expect(res.status).toBe(201);
     expect(res.body.status).toBe('queued');
@@ -155,7 +154,7 @@ describe('TC-A: POST /tasks status=blocked 注册', () => {
 
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: '部署后任务', status: 'pending_postdeploy' });
+      .send({ title: '部署后任务', task_type: 'research', status: 'pending_postdeploy' });
 
     expect(res.status).toBe(201);
   });
@@ -299,13 +298,11 @@ describe('TC-B: dispatcher 遇 blocked 任务 → selectNextDispatchableTask 不
 // ─── TC-REG：注册序列 queued + blocked → 仅 queued 被选中 ────────────────────
 describe('TC-REG: 注册序列回归 — blocked 任务不进 queued 池', () => {
   it('TC-REG-1: status=blocked 注册时，INSERT 参数不得包含 "queued"（状态不被篡改）', async () => {
-    const capturedStatuses = [];
-
     queryMock.mockReset();
+    routedTaskMock.mockClear();
     // 每次 POST 都先 dedup 空，再 INSERT
     queryMock.mockImplementation(async (sql, params) => {
       if (/INSERT INTO tasks/i.test(sql)) {
-        capturedStatuses.push(params[4]); // $5 = status
         return makeInsertResult(params[4]);
       }
       return { rows: [] }; // dedup / 其他
@@ -314,14 +311,15 @@ describe('TC-REG: 注册序列回归 — blocked 任务不进 queued 池', () =>
     const app = makeApp();
 
     // 注册序列：task1=queued, task2=blocked, task3=blocked
-    await request(app).post('/api/brain/tasks').send({ title: 'task1 queued' });
-    await request(app).post('/api/brain/tasks').send({ title: 'task2 blocked', status: 'blocked' });
-    await request(app).post('/api/brain/tasks').send({ title: 'task3 blocked', status: 'blocked' });
+    await request(app).post('/api/brain/tasks').send({ title: 'task1 queued', task_type: 'research' });
+    await request(app).post('/api/brain/tasks').send({ title: 'task2 blocked', task_type: 'research', status: 'blocked' });
+    await request(app).post('/api/brain/tasks').send({ title: 'task3 blocked', task_type: 'research', status: 'blocked' });
 
     // 断言：capturedStatuses = ['queued', 'blocked', 'blocked']
     // ← 当前代码 FAIL：task2/task3 的 status 被强制改成 'queued'
+    const capturedStatuses = routedTaskMock.mock.calls.map((call) => call[1].task.status);
     expect(capturedStatuses[0]).toBe('queued');
-    expect(capturedStatuses[1]).toBe('blocked'); // ← 当前代码 FAIL
-    expect(capturedStatuses[2]).toBe('blocked'); // ← 当前代码 FAIL
+    expect(capturedStatuses[1]).toBe('blocked');
+    expect(capturedStatuses[2]).toBe('blocked');
   });
 });

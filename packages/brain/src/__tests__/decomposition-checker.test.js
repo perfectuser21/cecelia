@@ -28,12 +28,16 @@ vi.mock('../task-quality-gate.js', () => ({
   validateTaskDescription: () => ({ valid: true, reasons: [] }),
 }));
 
+const mockCreateTask = vi.hoisted(() => vi.fn());
+vi.mock('../actions.js', () => ({ createTask: mockCreateTask }));
+
 describe('decomposition-checker v2.0', () => {
   let pool;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.resetModules();
+    mockCreateTask.mockResolvedValue({ task: { id: 'task-1', title: 'routed task' } });
     const dbModule = await import('../db.js');
     pool = dbModule.default;
   });
@@ -54,11 +58,6 @@ describe('decomposition-checker v2.0', () => {
 
       // canCreateDecompositionTask → under WIP limit
       pool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
-
-      // createDecompositionTask INSERT
-      pool.query.mockResolvedValueOnce({
-        rows: [{ id: 'task-1', title: 'KR 拆解: Test KR' }]
-      });
 
       // UPDATE key_results status → decomposing
       pool.query.mockResolvedValueOnce({ rows: [] });
@@ -219,10 +218,7 @@ describe('decomposition-checker v2.0', () => {
       // canCreateDecompositionTask → under WIP limit
       pool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
 
-      // createDecompositionTask INSERT
-      pool.query.mockResolvedValueOnce({
-        rows: [{ id: 'task-c1', title: 'KR 拆解（修复）: Orphan KR' }]
-      });
+      mockCreateTask.mockResolvedValueOnce({ task: { id: 'task-c1', title: 'KR 拆解（修复）: Orphan KR' } });
 
       // UPDATE key_results status → decomposing
       pool.query.mockResolvedValueOnce({ rows: [] });
@@ -297,10 +293,7 @@ describe('decomposition-checker v2.0', () => {
       // hasExistingStrategicMeetingTask → no existing
       pool.query.mockResolvedValueOnce({ rows: [] });
 
-      // INSERT strategic_meeting task
-      pool.query.mockResolvedValueOnce({
-        rows: [{ id: 'task-d1', title: '战略会议: 为「Big Vision」制定 KR' }]
-      });
+      mockCreateTask.mockResolvedValueOnce({ task: { id: 'task-d1', title: '战略会议: 为「Big Vision」制定 KR' } });
 
       const actions = await checkObjectiveWithoutKR();
 

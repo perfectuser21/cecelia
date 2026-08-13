@@ -13,6 +13,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { dispatchStrategistDecisions } from '../../line-strategist-dispatch.js';
+import { cleanupRoutedTasks } from '../helpers/routed-task-cleanup.js';
 
 const testPool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
 
@@ -20,9 +21,7 @@ const insertedTaskIds = [];
 
 describe('dispatchStrategistDecisions Integration Test（真实 PostgreSQL）', () => {
   afterAll(async () => {
-    if (insertedTaskIds.length > 0) {
-      await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [insertedTaskIds]);
-    }
+    await cleanupRoutedTasks(testPool, insertedTaskIds);
     await testPool.end();
   });
 

@@ -1,6 +1,14 @@
 # Brain 模块定义
 
-**版本**: 1.272.47
+**Brain 版本**: 1.272.48
+
+## Routed Regression Closure（Brain 1.272.48）
+
+- 修复 Git 断言命令在模块加载期静态绑定 `execFile`，避免只提供 `spawn` 的 Harness 运行时/测试环境在未执行 Git 断言前崩溃。
+- 修复 proposal 创建任务时未定义的 change index，以及 recurring 创建结果覆盖累计数组的真实运行时错误。
+- 修复共享任务创建在 `pg.Client` 上误开第二连接，以及部门 heartbeat 未透传统一 task creator 的事务/接线回归。
+- Planner 自动生成 coding architecture task 时补齐显式 `new_capability`、Map scope、repo、branch 与冻结 base SHA 路由字段。
+- 全部任务创建回归夹具改为验证统一 Work Router / Routing Receipt；coding mutation 继续严格要求 change kind、repo、Map scope、branch 与 base SHA。
 
 ## Recovery Lineage Binding（Brain 1.272.47）
 

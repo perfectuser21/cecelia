@@ -16,10 +16,14 @@ describe('dept-heartbeat task_type constraint (migration 070)', () => {
   let capturedSQL;
   let capturedParams;
   let mockPool;
+  let mockTaskCreator;
 
   beforeEach(() => {
     capturedSQL = [];
     capturedParams = [];
+    mockTaskCreator = vi.fn(async (input) => ({
+      task: { id: input.goal_id ? 'test-heartbeat-task-id' : 'task-no-goal' },
+    }));
 
     mockPool = {
       query: vi.fn(async (sql, params) => {
@@ -54,41 +58,28 @@ describe('dept-heartbeat task_type constraint (migration 070)', () => {
   describe('createDeptHeartbeatTask', () => {
     it('should use dept_heartbeat as task_type in INSERT', async () => {
       const dept = { dept_name: 'zenithjoy', repo_path: '/home/xx/perfect21/zenithjoy', max_llm_slots: 2 };
-      const result = await createDeptHeartbeatTask(mockPool, dept);
+      const result = await createDeptHeartbeatTask(mockPool, dept, mockTaskCreator);
 
       expect(result.created).toBe(true);
       expect(result.task_id).toBe('test-heartbeat-task-id');
 
-      // 找到 INSERT INTO tasks 的 SQL
-      const insertSQL = capturedSQL.find(sql => sql.includes('INSERT INTO tasks'));
-      expect(insertSQL).toBeDefined();
-      expect(insertSQL).toContain("'dept_heartbeat'");
+      expect(mockTaskCreator).toHaveBeenCalledWith(expect.objectContaining({
+        task_type: 'dept_heartbeat',
+      }));
     });
 
     it('should include description in INSERT', async () => {
       const dept = { dept_name: 'zenithjoy', repo_path: '/home/xx/perfect21/zenithjoy', max_llm_slots: 2 };
-      await createDeptHeartbeatTask(mockPool, dept);
-
-      const insertIdx = capturedSQL.findIndex(sql => sql.includes('INSERT INTO tasks'));
-      expect(insertIdx).toBeGreaterThanOrEqual(0);
-
-      const insertSQL = capturedSQL[insertIdx];
-      expect(insertSQL).toContain('description');
-
-      const insertParams = capturedParams[insertIdx];
-      // $2 = description
-      expect(insertParams[1]).toContain('zenithjoy');
-      expect(insertParams[1]).toContain('dept-heartbeat');
+      await createDeptHeartbeatTask(mockPool, dept, mockTaskCreator);
+      const input = mockTaskCreator.mock.calls[0][0];
+      expect(input.description).toContain('zenithjoy');
+      expect(input.description).toContain('dept-heartbeat');
     });
 
     it('should include goal_id in INSERT when goals exist', async () => {
       const dept = { dept_name: 'zenithjoy', repo_path: '/home/xx/perfect21/zenithjoy', max_llm_slots: 2 };
-      await createDeptHeartbeatTask(mockPool, dept);
-
-      const insertIdx = capturedSQL.findIndex(sql => sql.includes('INSERT INTO tasks'));
-      const insertParams = capturedParams[insertIdx];
-      // $4 = goal_id
-      expect(insertParams[3]).toBe('test-goal-id');
+      await createDeptHeartbeatTask(mockPool, dept, mockTaskCreator);
+      expect(mockTaskCreator.mock.calls[0][0].goal_id).toBe('test-goal-id');
     });
 
     it('should set goal_id to null when no goals found for dept', async () => {
@@ -106,14 +97,15 @@ describe('dept-heartbeat task_type constraint (migration 070)', () => {
       });
 
       const dept = { dept_name: 'newdept', repo_path: '/tmp/newdept', max_llm_slots: 1 };
-      const result = await createDeptHeartbeatTask(mockPool, dept);
+      const result = await createDeptHeartbeatTask(mockPool, dept, mockTaskCreator);
 
       expect(result.created).toBe(true);
+      expect(mockTaskCreator.mock.calls[0][0].goal_id).toBeNull();
     });
 
     it('should check for existing dept_heartbeat tasks before inserting', async () => {
       const dept = { dept_name: 'zenithjoy', repo_path: '/tmp/test', max_llm_slots: 2 };
-      await createDeptHeartbeatTask(mockPool, dept);
+      await createDeptHeartbeatTask(mockPool, dept, mockTaskCreator);
 
       const checkSQL = capturedSQL.find(sql => sql.includes('dept_heartbeat') && sql.includes('status IN'));
       expect(checkSQL).toBeDefined();
@@ -130,7 +122,7 @@ describe('dept-heartbeat task_type constraint (migration 070)', () => {
       });
 
       const dept = { dept_name: 'zenithjoy', repo_path: '/tmp/test', max_llm_slots: 2 };
-      const result = await createDeptHeartbeatTask(mockPool, dept);
+      const result = await createDeptHeartbeatTask(mockPool, dept, mockTaskCreator);
 
       expect(result.created).toBe(false);
       expect(result.reason).toBe('already_active');
@@ -143,14 +135,8 @@ describe('dept-heartbeat task_type constraint (migration 070)', () => {
 
     it('should include dept_name and repo_path in task payload', async () => {
       const dept = { dept_name: 'zenithjoy', repo_path: '/home/xx/perfect21/zenithjoy', max_llm_slots: 2 };
-      await createDeptHeartbeatTask(mockPool, dept);
-
-      const insertIdx = capturedSQL.findIndex(sql => sql.includes('INSERT INTO tasks'));
-      expect(insertIdx).toBeGreaterThanOrEqual(0);
-
-      const insertParams = capturedParams[insertIdx];
-      // $5 = payload JSON (title=$1, description=$2, dept=$3, goal_id=$4, payload=$5)
-      const payload = JSON.parse(insertParams[4]);
+      await createDeptHeartbeatTask(mockPool, dept, mockTaskCreator);
+      const payload = mockTaskCreator.mock.calls[0][0].payload;
       expect(payload.dept_name).toBe('zenithjoy');
       expect(payload.repo_path).toBe('/home/xx/perfect21/zenithjoy');
       expect(payload.max_llm_slots).toBe(2);
@@ -208,7 +194,7 @@ describe('dept-heartbeat task_type constraint (migration 070)', () => {
 
   describe('triggerDeptHeartbeats', () => {
     it('should trigger heartbeat for enabled depts', async () => {
-      const result = await triggerDeptHeartbeats(mockPool);
+      const result = await triggerDeptHeartbeats(mockPool, mockTaskCreator);
 
       expect(result.triggered).toBe(1);
       expect(result.skipped).toBe(0);

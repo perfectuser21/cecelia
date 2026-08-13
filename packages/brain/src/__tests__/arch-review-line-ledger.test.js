@@ -16,6 +16,7 @@ import {
 // ============================================================
 describe('triggerArchReview — line_ledger 摘要注入', () => {
   it('创建任务时 prd_summary 追加 line_ledger 摘要段', async () => {
+    const createTask = vi.fn(async (input) => ({ task: { id: 'ar-with-digest', ...input } }));
     const pool = {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })  // hasRecentArchReview -> false
@@ -26,15 +27,15 @@ describe('triggerArchReview — line_ledger 摘要注入', () => {
         .mockResolvedValueOnce({ rows: [{ id: 'ar-with-digest' }] }), // INSERT
     };
     const triggerTime = new Date('2026-03-23T20:00:00Z');
-    const result = await triggerArchReview(pool, triggerTime);
+    const result = await triggerArchReview(pool, triggerTime, createTask);
     expect(result.triggered).toBe(true);
-    const params = pool.query.mock.calls[3][1];
-    const payload = JSON.parse(params[1]);
+    const payload = createTask.mock.calls[0][0].payload;
     expect(payload.prd_summary).toContain('Line A — 24h 账本');
     expect(payload.prd_summary).toContain('摘要A');
   });
 
   it('line_ledger 查询失败时不影响任务创建（catch 兜底）', async () => {
+    const createTask = vi.fn(async () => ({ task: { id: 'ar-digest-fail' } }));
     const pool = {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })  // hasRecentArchReview -> false
@@ -43,7 +44,7 @@ describe('triggerArchReview — line_ledger 摘要注入', () => {
         .mockResolvedValueOnce({ rows: [{ id: 'ar-digest-fail' }] }), // INSERT
     };
     const triggerTime = new Date('2026-03-23T20:01:00Z');
-    const result = await triggerArchReview(pool, triggerTime);
+    const result = await triggerArchReview(pool, triggerTime, createTask);
     expect(result.triggered).toBe(true);
     expect(result.task_id).toBe('ar-digest-fail');
   });
@@ -54,6 +55,7 @@ describe('triggerArchReview — line_ledger 摘要注入', () => {
 // ============================================================
 describe('triggerArchReview — INSERT location 必须为 us', () => {
   it('生成的 INSERT SQL 里 location 值为 us，不是 xian', async () => {
+    const createTask = vi.fn(async (input) => ({ task: { id: 'ar-location-test', ...input } }));
     const pool = {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })  // hasRecentArchReview -> false
@@ -62,12 +64,10 @@ describe('triggerArchReview — INSERT location 必须为 us', () => {
         .mockResolvedValueOnce({ rows: [{ id: 'ar-location-test' }] }), // INSERT
     };
     const triggerTime = new Date('2026-03-23T20:00:00Z');
-    const result = await triggerArchReview(pool, triggerTime);
+    const result = await triggerArchReview(pool, triggerTime, createTask);
     expect(result.triggered).toBe(true);
     // pool.query.mock.calls[3][0] 是 INSERT 语句运行时实际传给 pool.query 的 SQL
-    const insertSql = pool.query.mock.calls[3][0];
-    expect(insertSql).toContain("'us'");
-    expect(insertSql).not.toContain("'xian'");
+    expect(createTask.mock.calls[0][0].location ?? 'us').toBe('us');
   });
 });
 

@@ -1,8 +1,6 @@
-import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { access, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
-const runFile = promisify(execFile);
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SHELL_META = /[;&|`$<>()"'\\]/;
 const VITEST = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
@@ -135,6 +133,10 @@ function command(executable, argv, cwd, kind, toolchain) {
 }
 async function git(repoRoot, argv) {
   try {
+    // 该模块的纯解析函数被 Router/Map 门禁广泛导入；只在真执行 Git 时加载
+    // child_process，避免只提供 spawn 的隔离测试被无关 execFile 绑定污染。
+    const { execFile } = await import('node:child_process');
+    const runFile = promisify(execFile);
     return await runFile('/usr/bin/git', argv, {
       cwd: repoRoot,
       encoding: 'utf8',

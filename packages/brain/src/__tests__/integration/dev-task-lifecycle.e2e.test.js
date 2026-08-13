@@ -20,6 +20,7 @@ import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
+import { cleanupRoutedTasks } from '../helpers/routed-task-cleanup.js';
 
 const MOCK_PR_URL = 'https://github.com/mock/cecelia/pull/42';
 
@@ -84,6 +85,7 @@ vi.mock('../../domain-detector.js', () => ({
 
 vi.mock('../../task-updater.js', () => ({
   blockTask: vi.fn(),
+  broadcastTaskState: vi.fn(),
 }));
 
 // ─── Mock: quarantine（同时为 task-tasks.js 提供 FAILURE_CLASS 常量）─────────
@@ -186,6 +188,15 @@ vi.mock('child_process', () => ({
 
 const testPool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
 const insertedTaskIds = [];
+const runKey = `${process.pid}-${Date.now()}`;
+const codingRoute = {
+  change_kind: 'bugfix',
+  mutation_intent: 'write',
+  repo_hint: 'cecelia',
+  map_scope_hint: ['cecelia'],
+  branch: `cp-e2e-${runKey}`,
+  base_sha: 'a'.repeat(40),
+};
 
 // ─── Express App 工厂 ────────────────────────────────────────────────────────
 
@@ -214,11 +225,11 @@ describe('Dev Task 全链路 E2E — docker spawn → callback → status=comple
 
   afterAll(async () => {
     if (insertedTaskIds.length > 0) {
-      await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [insertedTaskIds]);
       await testPool.query(
         'DELETE FROM callback_queue WHERE task_id = ANY($1::uuid[])',
         [insertedTaskIds]
       );
+      await cleanupRoutedTasks(testPool, insertedTaskIds);
     }
     await testPool.end();
   });
@@ -232,17 +243,19 @@ describe('Dev Task 全链路 E2E — docker spawn → callback → status=comple
       const res = await request(app)
         .post('/api/brain/tasks')
         .send({
-          title: '[e2e-lifecycle] Dev task 全链路测试',
+          title: `[e2e-lifecycle] Coding task 全链路测试 ${runKey}`,
           description: '全链路 E2E 测试自动创建，测试完毕后自动清理',
           task_type: 'dev',
           priority: 'P2',
           trigger_source: 'api',
+          source_id: `dev-lifecycle-success-${runKey}`,
+          ...codingRoute,
         })
         .expect(201);
 
       expect(res.body).toHaveProperty('id');
       expect(res.body.status).toBe('queued');
-      expect(res.body.task_type).toBe('dev');
+      expect(res.body.task_type).toBe('harness_initiative');
 
       createdTaskId = res.body.id;
       insertedTaskIds.push(createdTaskId);
@@ -253,7 +266,7 @@ describe('Dev Task 全链路 E2E — docker spawn → callback → status=comple
         [createdTaskId]
       );
       expect(dbRes.rows[0].status).toBe('queued');
-      expect(dbRes.rows[0].task_type).toBe('dev');
+      expect(dbRes.rows[0].task_type).toBe('harness_initiative');
     });
   });
 
@@ -293,7 +306,7 @@ describe('Dev Task 全链路 E2E — docker spawn → callback → status=comple
 
       const { writeDockerCallback } = await import('../../docker-executor.js');
       await writeDockerCallback(
-        { id: createdTaskId, task_type: 'dev' },
+        { id: createdTaskId, task_type: 'harness_initiative' },
         `mock-run-${createdTaskId}`,
         null,
         mockDockerResult
@@ -430,11 +443,13 @@ describe('Dev Task 全链路 E2E — docker spawn → callback → status=comple
       const res = await request(app)
         .post('/api/brain/tasks')
         .send({
-          title: '[e2e-lifecycle] Dev task 失败路径测试',
+          title: `[e2e-lifecycle] Coding task 失败路径测试 ${runKey}`,
           description: '全链路 E2E 失败路径测试自动创建，测试完毕后自动清理',
           task_type: 'dev',
           priority: 'P2',
           trigger_source: 'api',
+          source_id: `dev-lifecycle-failure-${runKey}`,
+          ...codingRoute,
         })
         .expect(201);
 
@@ -460,7 +475,7 @@ describe('Dev Task 全链路 E2E — docker spawn → callback → status=comple
 
       const { writeDockerCallback } = await import('../../docker-executor.js');
       await writeDockerCallback(
-        { id: failTaskId, task_type: 'dev' },
+        { id: failTaskId, task_type: 'harness_initiative' },
         `mock-run-fail-${failTaskId}`,
         null,
         failResult

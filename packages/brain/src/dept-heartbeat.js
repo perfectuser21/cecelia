@@ -109,7 +109,7 @@ export async function createDeptHeartbeatTask(pool, dept, taskCreator = createTa
  * @param {import('pg').Pool} pool
  * @returns {Promise<{ triggered: number, skipped: number, results: Array }>}
  */
-export async function triggerDeptHeartbeats(pool) {
+export async function triggerDeptHeartbeats(pool, taskCreator = createTask) {
   let triggered = 0;
   let skipped = 0;
   const results = [];
@@ -119,7 +119,7 @@ export async function triggerDeptHeartbeats(pool) {
 
     for (const dept of depts) {
       try {
-        const result = await createDeptHeartbeatTask(pool, dept);
+        const result = await createDeptHeartbeatTask(pool, dept, taskCreator);
         results.push({ dept: dept.dept_name, ...result });
 
         if (result.created) {

@@ -84,6 +84,9 @@ function makeSigningClient({ failTaskInsert = false, stale = false } = {}) {
       if (/pg_advisory_xact_lock/i.test(compact)) {
         return { rows: [] };
       }
+      if (/INSERT INTO cecelia_events/i.test(compact)) {
+        return { rows: [] };
+      }
       if (/FROM work_routing_receipts r/i.test(compact)) {
         return { rows: [] };
       }

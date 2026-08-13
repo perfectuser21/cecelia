@@ -14,8 +14,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
+const { mockCreateTask } = vi.hoisted(() => ({
+  mockCreateTask: vi.fn(),
+}));
 const mockPool = { query: vi.fn() };
 vi.mock('../db.js', () => ({ default: mockPool }));
+vi.mock('../actions.js', () => ({ createTask: mockCreateTask }));
 
 const mockRouteEvent = vi.fn().mockResolvedValue({
   level: 1, actions: [], rationale: 'mock', confidence: 0.9, safety: false,
@@ -211,6 +215,8 @@ describe('getGoalMetrics', () => {
   beforeEach(async () => {
     vi.resetModules();
     mockPool.query.mockReset();
+    mockCreateTask.mockReset();
+    mockCreateTask.mockResolvedValue({ task: { id: 'new-task-1' } });
     vi.doMock('../db.js', () => ({ default: mockPool }));
     const mod = await import('../goal-evaluator.js');
     getGoalMetrics = mod.getGoalMetrics;
@@ -400,8 +406,6 @@ describe('evaluateGoal', () => {
     mockRouteEvent.mockRejectedValueOnce(new Error('thalamus down'));
     // createInitiativePlanForStall: 检查已有任务 → 无
     mockPool.query.mockResolvedValueOnce({ rows: [] });
-    // createInitiativePlanForStall: INSERT 新任务
-    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'new-task-1' }] });
     // INSERT goal_evaluations
     mockPool.query.mockResolvedValueOnce({ rows: [] });
 
@@ -444,8 +448,8 @@ describe('evaluateGoal', () => {
     mockRouteEvent.mockRejectedValueOnce(new Error('thalamus down'));
     // createInitiativePlanForStall: 检查已有任务 → 无
     mockPool.query.mockResolvedValueOnce({ rows: [] });
-    // createInitiativePlanForStall: INSERT 也失败
-    mockPool.query.mockRejectedValueOnce(new Error('insert failed'));
+    // createInitiativePlanForStall: routed task creation 失败
+    mockCreateTask.mockRejectedValueOnce(new Error('insert failed'));
     // INSERT goal_evaluations
     mockPool.query.mockResolvedValueOnce({ rows: [] });
 

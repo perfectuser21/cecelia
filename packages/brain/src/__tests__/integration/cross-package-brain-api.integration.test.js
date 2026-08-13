@@ -22,6 +22,7 @@ import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
+import { cleanupRoutedTasks } from '../helpers/routed-task-cleanup.js';
 
 // ─── Mock 外部依赖 ────────────────────────────────────────────────────────────
 
@@ -113,6 +114,14 @@ async function makeApp() {
 // ─── 辅助：创建测试任务 ───────────────────────────────────────────────────────
 
 async function createTestTask(app, overrides = {}) {
+  const taskType = overrides.task_type ?? 'dev';
+  const codingRoute = taskType === 'dev'
+    ? {
+        mutation_intent: 'write',
+        change_kind: 'capability_change',
+        repo_hint: 'cecelia',
+      }
+    : {};
   const res = await request(app)
     .post('/api/brain/tasks')
     .send({
@@ -121,6 +130,7 @@ async function createTestTask(app, overrides = {}) {
       task_type: 'dev',
       priority: 'P2',
       trigger_source: 'api',
+      ...codingRoute,
       ...overrides,
     })
     .expect(201);
@@ -139,9 +149,7 @@ describe('Cross-Package Brain API — 核心端点合约验证（真实 PostgreS
   }, 20000);
 
   afterAll(async () => {
-    if (insertedTaskIds.length > 0) {
-      await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [insertedTaskIds]);
-    }
+    await cleanupRoutedTasks(testPool, insertedTaskIds);
     await testPool.end();
   });
 

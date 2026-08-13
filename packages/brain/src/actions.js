@@ -176,7 +176,9 @@ async function createTask({ title, description, priority, project_id, area_id, g
         phase: phase || 'dev',
         executor_kind: executor_kind || null,
       },
-    }, null, typeof db.connect === 'function' ? {} : { transaction: 'existing' });
+    }, null, typeof db.connect === 'function' && db.constructor?.name !== 'Client'
+      ? {}
+      : { transaction: 'existing' });
 
     const task = routed.task;
     console.log(`[Action] Created task: ${task.id} - ${title} (type: ${task.task_type})`);

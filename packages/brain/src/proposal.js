@@ -327,7 +327,7 @@ async function applyProposal(proposalId) {
   const snapshot = { tasks: {}, focus: null };
   const results = [];
 
-  for (const change of changes) {
+  for (const [changeIndex, change] of changes.entries()) {
     try {
       let result;
       switch (change.type) {

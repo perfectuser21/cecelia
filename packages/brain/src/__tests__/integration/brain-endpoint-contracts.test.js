@@ -44,6 +44,19 @@ vi.mock('../../task-updater.js', () => ({
   blockTask: vi.fn(),
 }));
 
+vi.mock('../../work-routing-store.js', () => ({
+  createRoutedTask: vi.fn(async (_db, input) => ({
+    task: {
+      id: 'task-new-001',
+      title: input.title,
+      description: input.description,
+      task_type: input.requested_task_type,
+      status: input.task.status,
+      priority: input.task.priority,
+    },
+  })),
+}));
+
 import pool from '../../db.js';
 import taskRouter from '../../routes/task-tasks.js';
 
@@ -165,14 +178,13 @@ describe('Brain Endpoint Contracts — Integration (mock DB)', () => {
     it('成功创建任务，返回 201 和包含 id 的任务对象', async () => {
       const newTask = { id: 'task-new-001', ...SAMPLE_TASK, status: 'queued' };
       pool.query.mockResolvedValueOnce({ rows: [] }); // C3 去重护栏：dedup 无命中
-      pool.query.mockResolvedValueOnce({ rows: [newTask] });
 
       const res = await request(makeApp())
         .post('/api/brain/tasks')
         .send({
           title: 'CI L3 集成测试门禁',
           description: '验证 Brain↔Engine↔API',
-          task_type: 'dev',
+          task_type: 'research',
           trigger_source: 'api',
         })
         .expect(201);

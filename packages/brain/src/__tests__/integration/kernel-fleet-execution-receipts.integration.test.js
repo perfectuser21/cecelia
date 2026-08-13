@@ -101,6 +101,7 @@ beforeAll(async () => {
     CREATE TABLE initiative_runs (
       id UUID PRIMARY KEY,
       phase TEXT NOT NULL DEFAULT 'planning',
+      map_recovery_contract_id UUID,
       orchestrator_version TEXT NOT NULL DEFAULT 'v1'
         CHECK (orchestrator_version IN ('v1','v2'))
     );

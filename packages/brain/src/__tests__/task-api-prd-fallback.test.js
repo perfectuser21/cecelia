@@ -43,7 +43,7 @@ describe('POST /api/brain/tasks — description fallback 3 层', () => {
       .post('/api/brain/tasks/')
       .send({
         title: 'smoke',
-        task_type: 'dev',
+        task_type: 'research',
         repo_hint: 'perfectuser21/cecelia',
         priority: 'P2',
         prd: '这是通过 prd 字段传入的 PRD 内容，至少 20 字符。',
@@ -60,7 +60,7 @@ describe('POST /api/brain/tasks — description fallback 3 层', () => {
       .post('/api/brain/tasks/')
       .send({
         title: 'smoke',
-        task_type: 'dev',
+        task_type: 'research',
         repo_hint: 'perfectuser21/cecelia',
         priority: 'P2',
         description: 'EXPLICIT_DESC',
@@ -77,7 +77,7 @@ describe('POST /api/brain/tasks — description fallback 3 层', () => {
       .post('/api/brain/tasks/')
       .send({
         title: 'smoke',
-        task_type: 'dev',
+        task_type: 'research',
         repo_hint: 'perfectuser21/cecelia',
         priority: 'P2',
         payload: { prd_summary: 'FROM_PAYLOAD' },
@@ -93,7 +93,7 @@ describe('POST /api/brain/tasks — description fallback 3 层', () => {
       .post('/api/brain/tasks/')
       .send({
         title: 'smoke',
-        task_type: 'dev',
+        task_type: 'research',
         repo_hint: 'perfectuser21/cecelia',
         priority: 'P2',
         payload: { prd_summary: 'WINS' },

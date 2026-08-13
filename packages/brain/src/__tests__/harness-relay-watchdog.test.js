@@ -55,7 +55,7 @@ function makeDeps({
 } = {}) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql, params = []) => {
-    if (/FROM initiative_runs r/.test(sql)) {
+    if (/FROM initiative_runs r(?:\s|$)/.test(sql)) {
       return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt }] };
     }
     if (/FROM tasks/.test(sql)) {

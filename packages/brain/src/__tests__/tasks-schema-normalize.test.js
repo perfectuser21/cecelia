@@ -9,9 +9,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock pool
 const mockQuery = vi.fn();
+const mockCreateRoutedTask = vi.hoisted(() => vi.fn());
 vi.mock('../db.js', () => ({
   default: { query: (...args) => mockQuery(...args) },
 }));
+vi.mock('../work-routing-store.js', () => ({ createRoutedTask: mockCreateRoutedTask }));
 
 // Mock domain-detector
 vi.mock('../domain-detector.js', () => ({
@@ -47,7 +49,7 @@ const postHandler = findPostHandler();
 // Mock req/res factory
 function mockReqRes(body) {
   const req = {
-    body,
+    body: { task_type: 'research', ...body },
     get: vi.fn(() => undefined),
   };
   const res = {
@@ -72,6 +74,17 @@ describe('POST /tasks schema normalize (C2)', () => {
         okr_initiative_id: null, created_at: '2026-04-16T00:00:00Z',
       }],
     });
+    mockCreateRoutedTask.mockReset();
+    mockCreateRoutedTask.mockImplementation(async (_db, input) => ({
+      task: {
+        id: 'test-uuid',
+        title: input.title,
+        description: input.description,
+        status: input.task.status,
+        task_type: input.requested_task_type,
+        priority: input.task.priority,
+      },
+    }));
   });
 
   describe('payload.prd_summary → description fallback', () => {
@@ -83,9 +96,7 @@ describe('POST /tasks schema normalize (C2)', () => {
       });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      // description is param index 1 (title=0, description=1)
-      const params = mockQuery.mock.calls[1][1];
-      expect(params[1]).toBe('PRD from payload field');
+      expect(mockCreateRoutedTask.mock.calls[0][1].description).toBe('PRD from payload field');
     });
 
     it('keeps original description when both are present', async () => {
@@ -96,14 +107,14 @@ describe('POST /tasks schema normalize (C2)', () => {
       });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[1][1][1]).toBe('Original');
+      expect(mockCreateRoutedTask.mock.calls[0][1].description).toBe('Original');
     });
 
     it('leaves description null when both are absent', async () => {
       const { req, res } = mockReqRes({ title: 'Test' });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[1][1][1]).toBeNull();
+      expect(mockCreateRoutedTask.mock.calls[0][1].description).toBeNull();
     });
   });
 
@@ -112,28 +123,28 @@ describe('POST /tasks schema normalize (C2)', () => {
       const { req, res } = mockReqRes({ title: 'Test', priority: 'normal' });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[1][1][2]).toBe('P2');
+      expect(mockCreateRoutedTask.mock.calls[0][1].task.priority).toBe('P2');
     });
 
     it('normalizes "high" to P1', async () => {
       const { req, res } = mockReqRes({ title: 'Test', priority: 'high' });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[1][1][2]).toBe('P1');
+      expect(mockCreateRoutedTask.mock.calls[0][1].task.priority).toBe('P1');
     });
 
     it('normalizes "urgent" to P0', async () => {
       const { req, res } = mockReqRes({ title: 'Test', priority: 'urgent' });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[1][1][2]).toBe('P0');
+      expect(mockCreateRoutedTask.mock.calls[0][1].task.priority).toBe('P0');
     });
 
     it('normalizes "Critical" to P0 (case-insensitive)', async () => {
       const { req, res } = mockReqRes({ title: 'Test', priority: 'Critical' });
       await postHandler(req, res);
       expect(res._status).toBe(201);
-      expect(mockQuery.mock.calls[1][1][2]).toBe('P0');
+      expect(mockCreateRoutedTask.mock.calls[0][1].task.priority).toBe('P0');
     });
 
     it('passes P0/P1/P2 through unchanged', async () => {
@@ -145,9 +156,11 @@ describe('POST /tasks schema normalize (C2)', () => {
         mockQuery.mockResolvedValueOnce({
           rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: p, project_id: null, area_id: null, goal_id: null, okr_initiative_id: null, created_at: '2026' }],
         });
+        mockCreateRoutedTask.mockClear();
         const { req, res } = mockReqRes({ title: 'Test', priority: p });
         await postHandler(req, res);
         expect(res._status).toBe(201);
+        expect(mockCreateRoutedTask.mock.calls[0][1].task.priority).toBe(p);
       }
     });
 

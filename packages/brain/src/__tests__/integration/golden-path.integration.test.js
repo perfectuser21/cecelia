@@ -8,6 +8,7 @@ import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
+import { cleanupRoutedTasks } from '../helpers/routed-task-cleanup.js';
 
 vi.mock('../../tick.js', () => ({
   getTickStatus: vi.fn().mockResolvedValue({
@@ -77,6 +78,7 @@ vi.mock('../../quarantine.js', () => ({
 
 vi.mock('../../task-updater.js', () => ({
   blockTask: vi.fn(),
+  broadcastTaskState: vi.fn(),
 }));
 
 // Path 2: content-pipeline 依赖的注册表 mock
@@ -100,10 +102,10 @@ vi.mock('../../llm-caller.js', () => ({
 }));
 
 // ops.js 依赖的 mock
-vi.mock('../../actions.js', () => ({
-  createTask: vi.fn(),
-  updateTask: vi.fn(),
-}));
+vi.mock('../../actions.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, updateTask: vi.fn() };
+});
 
 vi.mock('../../orchestrator-chat.js', () => ({
   handleChat: vi.fn(),
@@ -217,7 +219,7 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
 
   afterAll(async () => {
     if (insertedTaskIds.length > 0) {
-      await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [insertedTaskIds]);
+      await cleanupRoutedTasks(testPool, insertedTaskIds);
     }
     await testPool.end();
   });
@@ -232,9 +234,9 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
       const res = await request(app)
         .post('/api/brain/tasks')
         .send({
-          title: '[golden-path] Brain 调度链路测试任务',
+          title: `[golden-path] Brain 调度链路测试任务 ${runKey}`,
           description: 'Golden Path E2E 测试自动创建，测试完毕后自动清理',
-          task_type: 'dev',
+          task_type: 'research',
           priority: 'P2',
           trigger_source: 'api',
         })
@@ -243,7 +245,7 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
       expect(res.body).toHaveProperty('id');
       expect(res.body.title).toContain('golden-path');
       expect(res.body.status).toBe('queued');
-      expect(res.body.task_type).toBe('dev');
+      expect(res.body.task_type).toBe('research');
 
       createdTaskId = res.body.id;
       insertedTaskIds.push(createdTaskId);

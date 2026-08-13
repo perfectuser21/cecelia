@@ -648,6 +648,12 @@ async function generateArchitectureDesignTask(kr, project) {
       payload,
       domain,
       owner_role: getDomainRole(domain),
+      ...(isCodingDomain ? buildMutationRoute({
+        change_kind: 'new_capability',
+        map_scope: [initiative.id],
+        repo_hint: project.repo_path,
+        repo_root: project.repo_path,
+      }) : {}),
     });
     const newTask = created.task;
     console.log(`[planner] 自动生成 ${taskType} 任务: ${newTask.title} (${newTask.id}) for initiative ${initiative.id} (domain=${domain})`);
