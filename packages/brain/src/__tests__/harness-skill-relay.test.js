@@ -674,6 +674,61 @@ describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门
     const { rmSync } = await import('node:fs');
     try { rmSync(task.payload.sprint_dir, { recursive: true, force: true }); } catch { /* 忽略 */ }
   });
+
+  it('routed headed coding 建 Kernel run/Attempt，并向 tmux 注入完整 canonical identity', async () => {
+    const execCalls = [];
+    const runId = '22222222-2222-4222-8222-222222222222';
+    const attemptId = '33333333-3333-4333-8333-333333333333';
+    const task = makeHeadedTask({
+      payload: {
+        orchestrator: 'skill-relay',
+        harness_runtime: 'kernel-v1',
+        mode: 'headed',
+        executor: 'claude',
+        routing_receipt_id: '44444444-4444-4444-8444-444444444444',
+        repo: 'cecelia',
+        branch: 'cp-headed-kernel',
+        base_sha: 'a'.repeat(40),
+        sprint_dir: 'sprints/test-headed-kernel',
+      },
+    });
+    const deps = {
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      execFn: vi.fn((command) => {
+        execCalls.push(String(command));
+        return String(command).includes('tmux has-session') ? 'TMUX_DEAD' : '';
+      }),
+      loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT'),
+      ensureWt: vi.fn().mockResolvedValue('/tmp/wt/cp-headed-kernel'),
+      createKernelRun: vi.fn().mockResolvedValue({ created: true, run: { id: runId } }),
+      createHeadedAttempt: vi.fn().mockResolvedValue({ id: attemptId }),
+      launchKernel: vi.fn(),
+      now: () => new Date('2026-08-13T00:00:00Z'),
+      inDockerFn: () => false,
+      sshKeyFn: () => null,
+    };
+
+    const result = await spawnSkillRelaySession(task, deps);
+
+    expect(result).toMatchObject({ ok: true, mode: 'kernel-v1-headed', runId, attemptId });
+    expect(deps.createKernelRun).toHaveBeenCalledOnce();
+    expect(deps.createHeadedAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      runId,
+      task,
+      branch: 'cp-headed-kernel',
+      baseSha: 'a'.repeat(40),
+    }));
+    expect(deps.launchKernel).not.toHaveBeenCalled();
+    const tmux = execCalls.find((command) => command.includes('tmux new-session'));
+    for (const value of [
+      `CECELIA_TASK_ID=${task.id}`,
+      'CECELIA_ROUTING_RECEIPT_ID=44444444-4444-4444-8444-444444444444',
+      `CECELIA_RUN_ID=${runId}`,
+      'CECELIA_REPO=cecelia',
+      'CECELIA_BRANCH=cp-headed-kernel',
+      `CECELIA_BASE_SHA=${'a'.repeat(40)}`,
+    ]) expect(tmux).toContain(value);
+  });
 });
 
 describe('spawnSkillRelaySession preview 隔离闸（2026-08-05 preview-4643 事故）', () => {
