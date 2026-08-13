@@ -19,13 +19,13 @@ journey_type: autonomous
   Test: node -e "const p='packages/brain/src/__tests__/integration/f1-gp-identity-closure.integration.test.js';const cfg=require('fs').readFileSync('packages/brain/vitest.config.js','utf8');if(!require('fs').existsSync(p)||!cfg.includes('f1-gp-identity-closure.integration.test.js'))process.exit(1)"
 
 - [ ] [ARTIFACT] TDD RED 证据留存（Red→Green 时序，PRD NFR 第 63 行）
-  Test: node -e "const c=require('fs').readFileSync('sprints/0813-f1-capability-certification-r2/tests/RED-evidence-round1.log','utf8');if(!/3 failed/.test(c))process.exit(1)"
+  Test: node -e "const c=require('fs').readFileSync('sprints/0813-f1-capability-certification-r2/tests/RED-evidence-round1.txt','utf8');if(!/3 failed/.test(c))process.exit(1)"
 
 ## BEHAVIOR 条目
 
 - [ ] [BEHAVIOR] [L2] B-01: writer 冻结 GP identity 单元红转绿全过
   动作: 跑 sprint writer 单测（无 PG），验证 4 个用例（精确落库/缺失 fail-closed/串绑 fail-closed/legacy NULL）全绿
-  预期观察: vitest 报 `Tests 4 passed`（当前实现为 3 failed，见 RED-evidence-round1.log）
+  预期观察: vitest 报 `Tests 4 passed`（当前实现为 3 failed，见 RED-evidence-round1.txt）
   等待预算: 0s
   留证: /tmp/f1-writer.log 末 5 行
   Test: manual:bash -c 'cd /workspace && npx vitest run sprints/0813-f1-capability-certification-r2/tests/gp-identity-writer.test.js 2>&1 | tee /tmp/f1-writer.log | grep -qE "Tests[[:space:]]+4 passed"'

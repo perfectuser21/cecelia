@@ -293,4 +293,4 @@ echo "✅ F1 冻结 GP identity 闭环 E2E 验证通过（同 SHA writer→mappe
 - [validation-clock] → N/A：本 sprint 不建/不改 validation clock（不涉及 pr_url/pr_head_sha clock 建立路径），保持默认 fail-closed 不动。
 - [local_api-判绿] → 已在本合同「## 八要素需求规范/效果确认」与 NFR 声明「验证真相形态 = 真 PostgreSQL fixture」，对 judge 闸⑤(meta_verification_gap) 预先声明本类为 local_api 真 PG 验证，非无 UI 死锁场景。
 - [台账隔离] → N/A：本 sprint 不写 `.harness/progress.md`（controller 台账），不触及 git 追踪。
-- [证据窗口] → 锚定 DoD ARTIFACT「TDD RED 证据留存」（`tests/RED-evidence-round1.log` 含 `3 failed` 先红时序）；evaluator 须把 root-cause、Red→Green 时序、exit_code 排进 `.brain-result.json` judge 消费窗口前列（evaluator 侧执法，合同以 RED 证据文件为时序锚）。
+- [证据窗口] → 锚定 DoD ARTIFACT「TDD RED 证据留存」（`tests/RED-evidence-round1.txt` 含 `3 failed` 先红时序）；evaluator 须把 root-cause、Red→Green 时序、exit_code 排进 `.brain-result.json` judge 消费窗口前列（evaluator 侧执法，合同以 RED 证据文件为时序锚）。
