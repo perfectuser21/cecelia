@@ -360,9 +360,34 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   const isGrok = task.payload?.executor === 'grok';
   const isHeaded = task.payload?.mode === 'headed';
 
-  // kernel-v1 路径与 executor 无关（使用 launchKernelProcess，不走头/无头路由），
-  // 必须在 executor 白名单校验之前处理，避免 executor='auto' 被误拦截。
+  // kernel-v1 路径：在 early return 前插入两道门禁（sprint 08131623，task 89210ba1）
   if (task.payload?.harness_runtime === 'kernel-v1') {
+    // 门禁1（INV-6）：executor 白名单校验
+    // 合法值：'claude'、'claude-sonnet'、undefined、null、''（缺省走 claude）
+    // executor='auto' 等非法值 → loud-fail + task 回滚，不静默降级启动 Kernel
+    const executorVal = task.payload?.executor;
+    const ALLOWED_EXECUTORS = ['claude', 'claude-sonnet', undefined, null, ''];
+    if (executorVal && !ALLOWED_EXECUTORS.includes(executorVal)) {
+      console.error(`[skill-relay][ALERT] unsupported executor for kernel-v1: ${executorVal}`);
+      // 回滚 task 状态（fail-closed 铁律）
+      try {
+        await dbPool.query(
+          `UPDATE tasks SET status='queued', claimed_by=NULL, updated_at=NOW() WHERE id=$1`,
+          [task.id]
+        );
+      } catch (rollbackErr) {
+        console.error('[skill-relay][ALERT] task rollback failed', rollbackErr.message);
+      }
+      return { ok: false, error: `unsupported executor: ${executorVal}` };
+    }
+
+    // 门禁2（INV-5）：DB 幂等防重
+    // 活跃 run 存在时禁止同 task 二次 spawn，reason='active_run_guard'
+    const activeRun = await findActiveRunBlockingSpawn(dbPool, task.id);
+    if (activeRun) {
+      return { ok: false, deferred: true, reason: 'active_run_guard', activeRunId: activeRun.id };
+    }
+
     return _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps });
   }
 
