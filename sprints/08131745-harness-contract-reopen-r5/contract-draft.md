@@ -222,7 +222,7 @@ echo "✅ Golden Path 验证通过：合同重开后 v2 原子换版（v2 approv
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| reopen 后原子换版 | `packages/brain/src/orchestrator/__tests__/contract-store.test.js`（移植自 `sprints/08131745-harness-contract-reopen-r5/tests/contract-reopen-atomic-swap.test.js`） | `reopen v1 draft attached`；`reopen 换版幂等`；`fail-closed`；`run 首轮无 contract_id` | 修复前第 1 例抛 attached approved contract evidence mismatch → FAIL |
+| reopen 后原子换版 | `packages/brain/src/orchestrator/__tests__/contract-store.test.js`（移植自 `sprints/08131745-harness-contract-reopen-r5/tests/contract-reopen-atomic-swap.test.js`） | `reopen v1 draft attached`、`reopen 换版幂等`、`fail-closed`、`run 首轮无 contract_id` | 修复前第 1 例抛 attached approved contract evidence mismatch → FAIL |
 | reopen RED 规格（移植来源，冻结制品） | `sprints/08131745-harness-contract-reopen-r5/tests/contract-reopen-atomic-swap.test.js` | `reopen v1 draft attached` | 同内容已移植入永久池 `contract-store.test.js`，本冻结档留作 GAN 批准证据 |
 
 > BEHAVIOR 覆盖名均为对应 `it()` 测试名的字面子串，供下游按字符串映射 DoD↔用例。
