@@ -11,6 +11,13 @@
 # 被 `source` 调用（run-case.sh / E2E 脚本），运行在调用方的 `set -euo pipefail` 下，
 # 故所有展开都用 `${VAR:-}` 默认值，规避 nounset。
 
+# 关闭 vitest ANSI 颜色：run-case.sh / E2E 脚本用 `grep -qE 'Tests[^0-9]*[1-9][0-9]* passed'`
+# 断言 vitest 摘要，而彩色摘要里数字前的转义序列（如 [1m/[32m）含数字，会截断 [^0-9]* 桥接
+# 导致 grep 匹配不到真实计数（实证 dod-behavior-dynamic：测试 ✓ 通过但 run-case.sh 报 FAIL）。
+# run-case.sh 在跑 vitest 前 source 本文件，故在此关色让摘要为纯文本，断言即稳定命中。
+export NO_COLOR="${NO_COLOR:-1}"
+export FORCE_COLOR="${FORCE_COLOR:-0}"
+
 _SRC_URL="${DB_URL:-${DATABASE_URL:-${DB:-}}}"
 
 if [ -n "${_SRC_URL}" ]; then
