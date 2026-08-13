@@ -62,7 +62,10 @@ if [ -n "$RED_HISTORY" ]; then
     echo "ERROR: 无法读取 canonical Red commit 的测试树" >&2
     exit 1
   fi
-  if ! printf '%s\n' "$RED_TEST_TREE" | grep -qE '\.(test|spec)\.(ts|js)$'; then
+  # 测试文件扩展名：合同冻结测试可为 .test.ts/.js/.mjs/.cjs（vitest ESM/CJS）或 .test.sh
+  # （shell 契约回归，如 should-auto-merge 身份闸）。此处只判「Red commit 是否含测试文件」，
+  # 不可只认 ts/js 否则 .mjs/.sh 冻结测试会被误判为「Red commit 不含测试文件」。
+  if ! printf '%s\n' "$RED_TEST_TREE" | grep -qE '\.(test|spec)\.(ts|js|mjs|cjs|sh)$'; then
     echo "ERROR: canonical Red commit 不含测试文件" >&2
     exit 1
   fi
