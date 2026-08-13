@@ -148,3 +148,12 @@ if (task.payload?.harness_runtime === 'kernel-v1') {
 - AP-2: 活跃 run + kernel-v1 重打 → {ok:false, deferred:true, reason:'active_run_guard'}
 - AP-3: 合法路径 + kernel-v1 → {ok:true} + controller_session_id 非空
 - AP-4: createKernelRun 无 controllerSessionId → 抛 /missing controller ownership/
+
+---
+
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| ws1 | `packages/brain/src/__tests__/integration/kernel-controller-ownership.pg.integration.test.js` | `INV-6: executor=auto + kernel-v1 → 白名单拦截 + initiative_runs count=0` / `INV-5: 活跃 run 存在 + kernel-v1 重打 → DB 幂等防重拦截` / `AP-3: 合法路径 + kernel-v1 → controller_session_id 非空` / `AP-4: createKernelRun 无 controllerSessionId → 抛 missing controller ownership` | 修复前 harness-skill-relay.js 第 363-366 行 early return 绕过门禁，INV-6 白名单未校验、INV-5 findActiveRunBlockingSpawn 未调用，断言失败 |
+| ws1-e2e | `sprints/08131623-relay-89210ba1/e2e-verify.sh` | `E2E 验收：4 个判定点集成跑通` | 实现前测试套件报错（entry-point 缺失） |
