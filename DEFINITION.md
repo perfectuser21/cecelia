@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.15
+**Brain 版本**: 1.273.16
+
+## Brain 1.273.16 — Role-scoped Fleet Workspace Branches
+
+- Fleet Worker 分别验证不可变 Routing Receipt 分支与服务端签发的角色工作分支；Proposer 可在 `cp-harness-propose-*` 上执行，不再被误判为路由身份篡改。
 
 ## Brain 1.273.15 — Candidate-bound Generator Fix Feedback
 

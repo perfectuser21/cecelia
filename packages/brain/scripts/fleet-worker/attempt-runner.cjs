@@ -43,6 +43,7 @@ const MAX_STATE_BYTES = 1_048_576;
 const MAX_GITHUB_TOKEN_BYTES = 16_384;
 const RUNTIME_NETWORK_PATTERN = /^cecelia-attempt-[a-f0-9-]{36}$/;
 const ROUTING_REPO_PATTERN = /^[A-Za-z0-9._/-]+$/;
+const ROUTING_BRANCH_PATTERN = /^cp-[a-z0-9][a-z0-9._-]{0,126}$/;
 const RUNTIME_ENVIRONMENT_FIELDS = new Set([
   'DB_URL',
   'DATABASE_URL',
@@ -1010,7 +1011,9 @@ function taskExecutionContract(providerSpec, request, target) {
       )
       || !UUID_PATTERN.test(routingIdentity.routing_receipt_id ?? '')
       || !ROUTING_REPO_PATTERN.test(routingIdentity.repo ?? '')
-      || routingIdentity.branch !== request.workspace_spec.branch
+      || !ROUTING_BRANCH_PATTERN.test(routingIdentity.branch ?? '')
+      || routingIdentity.branch.includes('..')
+      || routingIdentity.branch.endsWith('.lock')
       || !/^[a-f0-9]{40}$/.test(routingIdentity.base_sha ?? '')
     ) {
       throw new Error('attempt_routing_identity_invalid');
