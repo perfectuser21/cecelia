@@ -3325,8 +3325,13 @@ describe('createDetachedLauncher', () => {
           routing_identity: {
             routing_receipt_id: 'receipt-1',
             repo: 'cecelia',
-            branch: 'cp-routing-identity',
+            branch: 'cp-top-level-receipt',
             base_sha: 'a'.repeat(40),
+          },
+          workspace_spec: {
+            repo: 'cecelia',
+            branch: 'cp-attempt-workspace',
+            base_sha: 'b'.repeat(40),
           },
         },
         constraints: { read_only: false },
@@ -3341,8 +3346,8 @@ describe('createDetachedLauncher', () => {
     expect(env.CECELIA_RUN_ID).toBe(runId);
     expect(env.CECELIA_REPO).toBe('cecelia');
     expect(env.CECELIA_ROUTING_REPO).toBe('cecelia');
-    expect(env.CECELIA_BRANCH).toBe('cp-routing-identity');
-    expect(env.CECELIA_BASE_SHA).toBe('a'.repeat(40));
+    expect(env.CECELIA_BRANCH).toBe('cp-attempt-workspace');
+    expect(env.CECELIA_BASE_SHA).toBe('b'.repeat(40));
     expect(env.CECELIA_ROUTING_BASE_SHA).toBe('a'.repeat(40));
     expect(env.HARNESS_TASK_ID).toBe(taskId);
   });
