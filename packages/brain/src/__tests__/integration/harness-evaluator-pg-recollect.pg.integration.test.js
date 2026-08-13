@@ -63,9 +63,27 @@ CREATE TABLE orchestrator_decision_log (
 );`;
 
 beforeAll(async () => {
-  adminPool = new Pool({ ...DB_DEFAULTS, database: 'postgres', max: 1 });
-  await adminPool.query(`CREATE DATABASE ${quotedIdentifier(databaseName)}`);
-  testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 4 });
+  // CI 上（dod-behavior-dynamic）Brain server 并发占用连接，CREATE DATABASE 偶发阻塞。
+  // fail-fast 连接 + 每次尝试 statement_timeout 上限 + 有限重试，整段稳收在 hook 30s 内。
+  adminPool = new Pool({ ...DB_DEFAULTS, database: 'postgres', max: 1, connectionTimeoutMillis: 6000 });
+  let created = false;
+  for (let attempt = 0; attempt < 3 && !created; attempt += 1) {
+    const client = await adminPool.connect();
+    try {
+      await client.query('SET statement_timeout = 6000');
+      await client.query(`CREATE DATABASE ${quotedIdentifier(databaseName)}`);
+      created = true;
+    } catch (err) {
+      if (!/timeout|deadlock|too many|being accessed|canceling statement/i.test(String(err.message))) {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    } finally {
+      client.release();
+    }
+  }
+  if (!created) throw new Error(`CREATE DATABASE ${databaseName} 多次重试仍失败（CI 连接争用）`);
+  testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 4, connectionTimeoutMillis: 6000 });
   await testPool.query(MINIMAL_SCHEMA_SQL);
 }, 60_000);
 
