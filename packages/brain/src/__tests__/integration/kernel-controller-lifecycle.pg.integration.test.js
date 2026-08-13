@@ -360,6 +360,30 @@ describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（�
     expect(fresh.rows[0].orchestrator_host).not.toBe('stale');
   });
 
+  it('active run 不能借用另一个 task 的 Controller authority',async()=>{
+    const left=await seedTask();
+    const right=await seedTask();
+    const leftRun=await createRoutedKernelRun(testPool,{...left,phase:'planning',
+      journeyId:null,abilityId:null,host:'kernel-v1',deadlineHours:8,createdSource:'kernel_dispatch'});
+    const rightRun=await createRoutedKernelRun(testPool,{...right,phase:'planning',
+      journeyId:null,abilityId:null,host:'kernel-v1',deadlineHours:8,createdSource:'kernel_dispatch'});
+    const client=await testPool.connect();
+    try {
+      await client.query('BEGIN');
+      await expect(client.query(
+        `UPDATE initiative_runs target SET
+           controller_session_id=source.controller_session_id,
+           controller_generation=source.controller_generation,
+           controller_lease_expires_at=source.controller_lease_expires_at
+         FROM initiative_runs source WHERE target.id=$1 AND source.id=$2`,
+        [leftRun.run.id,rightRun.run.id],
+      )).rejects.toThrow('active_v2_controller_authority_mismatch');
+    } finally {
+      await client.query('ROLLBACK').catch(()=>{});
+      client.release();
+    }
+  });
+
   it('heartbeat 与 sweeper 同时竞争时无死锁且只有一方取得终态',async()=>{
     const {initiativeId,taskId}=await seedTask();
     const created=await createRoutedKernelRun(testPool,{taskId,initiativeId,phase:'planning',

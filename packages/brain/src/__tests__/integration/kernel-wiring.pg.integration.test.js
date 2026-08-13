@@ -94,6 +94,7 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
   const taskId = randomUUID();
   const receiptId = randomUUID();
   const runId = randomUUID();
+  const controllerSessionId=randomUUID();
   const payload = {
     harness_runtime: 'kernel-v1',
     orchestrator: 'skill-relay',
@@ -133,14 +134,25 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
     })],
   );
   await testPool.query(
+    `INSERT INTO kernel_controller_sessions
+       (id,task_id,generation,source,status,last_heartbeat_at,lease_expires_at)
+     VALUES($1,$2,1,'kernel-wiring-fixture','active',NOW(),NOW()+INTERVAL '2 hours')`,
+    [controllerSessionId,taskId],
+  );
+  await testPool.query(
     `INSERT INTO initiative_runs
        (id, initiative_id, contract_id, phase, current_task_id, pr_url,
-        orchestrator_version, created_source, deadline_at)
+        orchestrator_version, created_source, deadline_at,controller_session_id,
+        controller_generation,controller_lease_expires_at)
      VALUES (
        $1, $2, $3, 'evaluate', $4, $5, 'v2', 'kernel_dispatch',
-       NOW() + INTERVAL '120 minutes'
+       NOW() + INTERVAL '120 minutes',$6,1,NOW()+INTERVAL '2 hours'
      )`,
-    [runId, initiativeId, contractId, taskId, PR_URL],
+    [runId, initiativeId, contractId, taskId, PR_URL,controllerSessionId],
+  );
+  await testPool.query(
+    'UPDATE kernel_controller_sessions SET run_id=$2 WHERE id=$1',
+    [controllerSessionId,runId],
   );
   return { initiativeId, contractId, taskId, receiptId, runId, payload };
 }
