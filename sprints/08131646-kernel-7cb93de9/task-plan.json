@@ -1,0 +1,26 @@
+{
+  "initiative_id": "9a39c017-4c",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain/ 编排层 dispatcher + 后端契约，无 UI/agent 协议/engine 介入，属自治后端流程",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "dispatcher buildInputs(evaluator) 注入 judge_feedback + 永久回归单测 + evaluator skill 消费侧提示词",
+      "scope": "在 packages/brain/src/orchestrator/dispatcher.js buildInputs 的 evaluator 分支，读 observed.judgeVerdict：verdict==='FAIL' 时注入 inputs.judge_feedback={summary(sanitizeDiagnostic 脱敏截断 observed.judgeVerdict.feedback), failure_class(observed.judgeVerdict.failure_class ?? null), round(observed.decisionLog 中 verdict:judge 且 detail.verdict==='FAIL' 的行数)}；无 judge verdict / PASS 时字段缺席（非空对象）；只注入最近一次不堆叠。同步把 sprints/08131646-kernel-7cb93de9/tests/dispatcher-judge-feedback.test.js 落到永久回归位 packages/brain/src/orchestrator/__tests__/dispatcher-judge-feedback.test.js（import 改 ../dispatcher.js / ../constants.js）。packages/workflows/skills/harness-evaluator/SKILL.md 消费侧加：TaskBundle 含 judge_feedback 时优先补齐 judge 点名缺失证据。不动 judge 侧逻辑 / generator-fix evaluator_feedback / validation clock / 证据窗口口径",
+      "dod": [
+        "[BEHAVIOR] 同 run 存在 judge FAIL 时 buildInputs(evaluator) 产 inputs.judge_feedback 含 summary/failure_class/round，无 judge verdict 或 PASS 时字段缺席",
+        "[BEHAVIOR] 超长 judge summary 截断后整包 TaskBundle ≤ HARNESS_BUNDLE_MAX_BYTES(256KB)",
+        "[ARTIFACT] packages/brain/src/orchestrator/__tests__/dispatcher-judge-feedback.test.js 永久回归存在",
+        "[ARTIFACT] packages/workflows/skills/harness-evaluator/SKILL.md 含 judge_feedback 消费指令（优先补齐点名缺失证据）"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/__tests__/dispatcher-judge-feedback.test.js",
+        "packages/workflows/skills/harness-evaluator/SKILL.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
