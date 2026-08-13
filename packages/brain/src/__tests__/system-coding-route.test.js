@@ -5,12 +5,14 @@ import { buildCeceliaMutationRoute, buildMutationRoute } from '../system-coding-
 describe('system coding route', () => {
   it('binds an explicit four-form change, Map scope and source revision', () => {
     const revisionReader = vi.fn().mockReturnValue('a'.repeat(40));
+    const branchReader = vi.fn().mockReturnValue('cp-router-fix');
 
     const route = buildCeceliaMutationRoute({
       change_kind: 'bugfix',
       map_scope: ['F1'],
       repo_root: '/repo',
       revision_reader: revisionReader,
+      branch_reader: branchReader,
     });
 
     expect(route).toEqual({
@@ -19,9 +21,11 @@ describe('system coding route', () => {
       declared_change_kind: 'bugfix',
       repo_hint: 'cecelia',
       map_scope_hint: ['F1'],
+      branch: 'cp-router-fix',
       base_sha: 'a'.repeat(40),
     });
     expect(revisionReader).toHaveBeenCalledWith('/repo');
+    expect(branchReader).toHaveBeenCalledWith('/repo');
   });
 
   it('rejects missing explicit Map scope', () => {
