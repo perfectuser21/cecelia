@@ -94,12 +94,14 @@ async function insertRawRun({
   taskId, initiativeId, phase = 'generate',
   controllerSessionId = null, leaseOffsetSeconds = null,
 }) {
+  // enforce_v2_run_insert_identity() 触发器要求 v2 run 带 current_task_id + created_source；
+  // 无主历史 run 用 historical_reconstruction（迁移前老数据语义），ownership 列刻意留空/过期。
   const { rows } = await testPool.query(
     `INSERT INTO initiative_runs (
-       initiative_id, current_task_id, phase, orchestrator_version,
+       initiative_id, current_task_id, phase, orchestrator_version, created_source,
        deadline_at, controller_session_id, controller_lease_expires_at
      ) VALUES (
-       $1, $2, $3, 'v2',
+       $1, $2, $3, 'v2', 'historical_reconstruction',
        NOW() + INTERVAL '8 hours', $4,
        ${leaseOffsetSeconds == null ? 'NULL' : `NOW() + ($5 * INTERVAL '1 second')`}
      ) RETURNING id`,
