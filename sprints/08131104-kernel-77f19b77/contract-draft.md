@@ -57,7 +57,7 @@ N/A — 任务无新增 HTTP 响应端点。本 sprint 是纯 Brain 内部编排
 **验证命令**:
 ```bash
 # 真 relay 启动链集成测试（真 PG + 真 createKernelRun，只替身最外层 launcher）
-cd packages/brain && npx vitest run src/__tests__/integration/kernel-controller-ownership.pg.integration.test.js -t 'harness_runtime=kernel-v1 直打不产生无 Controller run' --reporter=basic
+cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-controller-ownership.pg.integration.test.js -t 'harness_runtime=kernel-v1 直打不产生无 Controller run' --reporter=basic
 # 期望：exit 0；断言 relay 后 initiative_runs 行 controller_session_id 非空 或 Kernel run 不早于 Controller ownership 出现
 ```
 
@@ -72,7 +72,7 @@ cd packages/brain && npx vitest run src/__tests__/integration/kernel-controller-
 
 **验证命令**:
 ```bash
-cd packages/brain && npx vitest run src/__tests__/integration/kernel-controller-ownership.pg.integration.test.js -t 'createKernelRun 无 controllerSessionId fail-closed' --reporter=basic
+cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-controller-ownership.pg.integration.test.js -t 'createKernelRun 无 controllerSessionId fail-closed' --reporter=basic
 # 期望：exit 0；断言 createKernelRun 抛错、initiative_runs 无新行（真 PG count 校验）
 ```
 
@@ -87,7 +87,7 @@ cd packages/brain && npx vitest run src/__tests__/integration/kernel-controller-
 
 **验证命令**:
 ```bash
-cd packages/brain && npx vitest run src/__tests__/integration/kernel-controller-lifecycle.pg.integration.test.js --reporter=basic
+cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-controller-lifecycle.pg.integration.test.js --reporter=basic
 # 期望：exit 0；两个方向断言：Kernel fatal→Controller 存活 failure_reason 结构化；Controller fatal→Kernel 不无主（lease 兜底进恢复）
 ```
 
@@ -123,7 +123,7 @@ cd packages/brain && npx vitest run src/__tests__/kernel-change-kind-profile.tes
 
 **验证命令**:
 ```bash
-cd packages/brain && npx vitest run src/__tests__/integration/kernel-controller-lifecycle.pg.integration.test.js -t '无主历史 Kernel Run fail-closed 进恢复' --reporter=basic
+cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-controller-lifecycle.pg.integration.test.js -t '无主历史 Kernel Run fail-closed 进恢复' --reporter=basic
 # 期望：exit 0；无 controller_session_id 的历史 run 被判无主 → 恢复流程（不静默 done）
 ```
 
@@ -198,10 +198,10 @@ curl -sf -m 10 localhost:5221/api/brain/health | jq -e '.status == "healthy"' ||
 npx vitest run src/__tests__/kernel-change-kind-profile.test.js --reporter=basic || { echo "FAIL: 四档 Profile 状态机"; exit 1; }
 
 # 2. 真 Postgres 集成：migration 413 列 + createKernelRun fail-closed + 启动链 ownership
-npx vitest run src/__tests__/integration/kernel-controller-ownership.pg.integration.test.js --reporter=basic || { echo "FAIL: Controller ownership / fail-closed / migration 413"; exit 1; }
+npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-controller-ownership.pg.integration.test.js --reporter=basic || { echo "FAIL: Controller ownership / fail-closed / migration 413"; exit 1; }
 
 # 3. 真 Postgres 集成：Controller/Kernel 生命周期（fatal 隔离 + 无主 fail-closed 恢复）
-npx vitest run src/__tests__/integration/kernel-controller-lifecycle.pg.integration.test.js --reporter=basic || { echo "FAIL: Controller/Kernel 生命周期"; exit 1; }
+npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-controller-lifecycle.pg.integration.test.js --reporter=basic || { echo "FAIL: Controller/Kernel 生命周期"; exit 1; }
 
 echo "✅ Golden Path 全程验证通过（四档 Profile + ownership fail-closed + 生命周期隔离 + migration 413）"
 ```
