@@ -472,7 +472,8 @@ describe('selfcheck schema version', () => {
     // 408/409 = Impact Contract + Gap Ledger；410 = revision-indexed immutable graph snapshots；
     // 411 = reviewer-approved SHA 下的冻结合同测试制品；
     // 412 = approved Harness contract artifact manifests；
-    // 413 = initiative_runs Session Controller ownership（controller_session_id + lease）。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('413');
+    // 415 = initiative_runs Session Controller ownership（controller_session_id + lease，
+    // 413/414 与在途 PR 撞号后挪至 415）。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('415');
   });
 });
