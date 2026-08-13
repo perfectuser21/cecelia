@@ -37,7 +37,7 @@ for (const fn of ['buildHarnessReportInsert','spawnHarnessReport','readProductio
   if(!new RegExp('export (function|async function) '+fn).test(sp)){console.error('L1 FAIL: staging-promote 未导出 '+fn);process.exit(1)}
 }
 if(!/REPORT_KIND/.test(sp)){console.error('L1 FAIL: 缺 REPORT_KIND 三态');process.exit(1)}
-if(!/NOT EXISTS[\s\S]{0,120}initiative_id/i.test(sp)){console.error('L1 FAIL: 派 report 缺 initiative_id 幂等');process.exit(1)}
+if(!/source_id:\s*[^\n]*harness-report:/.test(sp)){console.error('L1 FAIL: 派 report 缺 Router source_id 幂等键');process.exit(1)}
 if(!/harness-report\.mjs/.test(sp)){console.error('L1 FAIL: 缺 script_path harness-report.mjs');process.exit(1)}
 
 const wd=fs.readFileSync('$WATCHDOG','utf8');

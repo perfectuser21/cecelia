@@ -4,6 +4,7 @@
 set -uo pipefail
 
 API="${BRAIN_URL:-http://localhost:5221}/api/brain"
+BASE_SHA="$(git rev-parse HEAD)"
 PASS=0; FAIL=0
 
 ok()   { echo "✅ $1"; ((PASS++)) || true; }
@@ -13,7 +14,7 @@ fail() { echo "❌ $1"; ((FAIL++)) || true; }
 echo "── 创建测试任务 ──"
 resp=$(curl -s -X POST "$API/tasks" \
   -H "Content-Type: application/json" \
-  -d '{"title":"smoke-t4-claim-protocol","task_type":"dev","priority":"P2"}')
+  -d "{\"title\":\"smoke-t4-claim-protocol\",\"task_type\":\"dev\",\"priority\":\"P2\",\"change_kind\":\"bugfix\",\"base_sha\":\"$BASE_SHA\"}")
 TASK_ID=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
 
 if [[ -z "$TASK_ID" ]]; then
@@ -51,7 +52,7 @@ executor_kind=$(echo "$task_resp" | python3 -c "import sys,json; print(json.load
 echo "── POST /claim 含 executor_kind ──"
 resp2=$(curl -s -X POST "$API/tasks" \
   -H "Content-Type: application/json" \
-  -d '{"title":"smoke-t4-claim-endpoint","task_type":"dev","priority":"P2"}')
+  -d "{\"title\":\"smoke-t4-claim-endpoint\",\"task_type\":\"dev\",\"priority\":\"P2\",\"change_kind\":\"bugfix\",\"base_sha\":\"$BASE_SHA\"}")
 TASK_ID2=$(echo "$resp2" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
 
 if [[ -n "$TASK_ID2" ]]; then

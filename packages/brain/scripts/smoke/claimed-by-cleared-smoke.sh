@@ -19,10 +19,7 @@ CLAIMED=$(psql "${DATABASE_URL:-postgresql://localhost/cecelia}" -tAc \
   "SELECT COALESCE(claimed_by,'') FROM tasks WHERE id='$ID'")
 if [ -n "$CLAIMED" ]; then
   echo "FAIL: claimed_by=$CLAIMED not cleared after failed"
-  psql "${DATABASE_URL:-postgresql://localhost/cecelia}" -c "DELETE FROM tasks WHERE id='$ID'" > /dev/null
   exit 1
 fi
 echo "✅ claimed_by cleared after failed"
-
-psql "${DATABASE_URL:-postgresql://localhost/cecelia}" -c "DELETE FROM tasks WHERE id='$ID'" > /dev/null
 echo "✅ smoke passed"

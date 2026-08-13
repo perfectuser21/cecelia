@@ -18,6 +18,7 @@ set -eo pipefail  # 不用 -u，python3 子进程偶有空输出导致 "unbound 
 
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 MAX_WAIT_SEC="${DISPATCHER_SMOKE_MAX_WAIT_SEC:-90}"
+BASE_SHA="$(git rev-parse HEAD)"
 
 echo "🔍 dispatcher-real-paths — Brain @ ${BRAIN_URL}"
 echo "  MAX_WAIT_SEC=${MAX_WAIT_SEC}"
@@ -52,6 +53,8 @@ d = {
   'task_type': '$3',
   'priority': '$4',
   'trigger_source': 'manual',
+  'change_kind': 'bugfix',
+  'base_sha': '$BASE_SHA',
 }
 if '${5:-}': d['project_id'] = '${5:-}'
 extra = os.environ.get('EXTRA_PAYLOAD_JSON', '')
@@ -151,8 +154,8 @@ PROJ_ID="00000000-0000-0000-0000-${PROJ_HEX}"
 # N4 orchestrator 硬校验落地后，harness_initiative 任务必须带 payload.orchestrator='skill-relay'，
 # 否则 executor 直接标 terminal failed（不会进 in_progress），initiative-lock 断言会变假绿
 # （两个任务都秒 terminal failed，根本没机会被锁挡住，不是真的验证了锁）。
-B1_TASK=$(register_task "[smoke-C1-${SMOKE_RUN_ID}] init B1 lock test" "Initiative B1 with sufficiently long description for pre-flight check passing" "harness_initiative" "P2" "$PROJ_ID" '{"orchestrator":"skill-relay"}')
-B2_TASK=$(register_task "[smoke-C2-${SMOKE_RUN_ID}] init B2 lock test" "Initiative B2 with sufficiently long description for pre-flight check passing" "harness_initiative" "P2" "$PROJ_ID" '{"orchestrator":"skill-relay"}')
+B1_TASK=$(register_task "[smoke-C1-${SMOKE_RUN_ID}] init B1 lock test" "Initiative B1 with sufficiently long description for pre-flight check passing" "harness_initiative" "P2" "$PROJ_ID" '{}')
+B2_TASK=$(register_task "[smoke-C2-${SMOKE_RUN_ID}] init B2 lock test" "Initiative B2 with sufficiently long description for pre-flight check passing" "harness_initiative" "P2" "$PROJ_ID" '{}')
 
 if [ -z "$B1_TASK" ] || [ -z "$B2_TASK" ]; then
   fail "Case C: 注册失败 B1=$B1_TASK B2=$B2_TASK"
@@ -191,18 +194,6 @@ for tid in "${A_TASK:-}" "${B1_TASK:-}" "${B2_TASK:-}"; do
     -H "Content-Type: application/json" \
     -d '{"status":"failed","result":{"smoke":"dispatcher-real-paths cleanup"}}' >/dev/null 2>&1 || true
 done
-
-# real-env-smoke 会在本脚本之后校验“每个 harness_initiative 都有迁移映射”。
-# 这些任务只用于本脚本的并发锁断言，不能作为无映射脏数据泄漏给后续 smoke。
-# 仅按本次运行刚取得的 UUID 精确删除，绝不扩大到其他任务。
-if command -v psql >/dev/null 2>&1; then
-  for tid in "${A_TASK:-}" "${B1_TASK:-}" "${B2_TASK:-}"; do
-    [ -z "$tid" ] && continue
-    psql "${DATABASE_URL:-postgresql://localhost/cecelia}" \
-      -v ON_ERROR_STOP=1 \
-      -c "DELETE FROM tasks WHERE id='${tid}'::uuid" >/dev/null
-  done
-fi
 
 echo "📊 dispatcher-real-paths smoke: PASSED=$PASSED FAILED=$FAILED"
 exit "$FAILED"

@@ -41,14 +41,14 @@ const exec=fs.readFileSync('$EXECUTOR_FILE','utf8');
 if(!/task_type === 'staging_e2e'/.test(exec) || !/staging-e2e-runner\.js/.test(exec)){
   console.error('L1 FAIL: executor 缺 staging_e2e native 短路');process.exit(1)}
 
-// 修正1+2（刀4阶段1，决策76ab76ea）：staging_e2e 派生已迁到 routes/harness.js POST /staging-e2e
-// 端点，按 payload->>'pr_url' WHERE NOT EXISTS 幂等去重，供 controller merge 成功后调用。
+// staging_e2e 派生在 routes/harness.js POST /staging-e2e：先精确查 pr_url，
+// 再以 Work Router source_id 作事务幂等权威。
 const route=fs.readFileSync('$ROUTE_FILE','utf8');
 const ri=route.indexOf(\"router.post('/staging-e2e'\");
 if(ri<0){console.error('L1 FAIL: routes/harness.js 缺 POST /staging-e2e 端点');process.exit(1)}
 const rh=route.slice(ri, route.indexOf('router.', ri+20));
-if(!/WHERE NOT EXISTS/i.test(rh) || !/payload->>'pr_url'/.test(rh)){
-  console.error('L1 FAIL: POST /staging-e2e 缺 pr_url 幂等去重（WHERE NOT EXISTS payload->>pr_url）');process.exit(1)}
+if(!/payload->>'pr_url'/.test(rh) || !/source_id:\s*[^\n]*staging-e2e:/.test(rh)){
+  console.error('L1 FAIL: POST /staging-e2e 缺 pr_url 预检或 Router source_id 幂等');process.exit(1)}
 if(!/task_type\s*=\s*'staging_e2e'/.test(rh)){
   console.error('L1 FAIL: POST /staging-e2e 未派生 task_type=staging_e2e');process.exit(1)}
 

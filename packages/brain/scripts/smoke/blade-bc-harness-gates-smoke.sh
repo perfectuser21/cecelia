@@ -13,6 +13,7 @@ set -euo pipefail
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
 SMOKE_TAG="blade-bc-${GITHUB_RUN_ID:-local}-$$-$RANDOM"
+BASE_SHA="$(git rev-parse HEAD)"
 JUDGE_WORKTREE="${JUDGE_WORKTREE:-$(pwd)}"
 if [ -n "${BRAIN_CONTAINER:-}" ]; then
   JUDGE_WORKTREE="/tmp"
@@ -24,7 +25,8 @@ cleanup() {
       "DELETE FROM initiative_runs WHERE current_task_id IN (
          SELECT id FROM tasks WHERE payload->>'smoke_tag' = '$SMOKE_TAG'
        );
-       DELETE FROM tasks WHERE payload->>'smoke_tag' = '$SMOKE_TAG';" \
+       UPDATE tasks SET status='cancelled', updated_at=NOW()
+        WHERE payload->>'smoke_tag' = '$SMOKE_TAG' AND status NOT IN ('completed','cancelled');" \
       >/dev/null 2>&1 || true
   fi
 }
@@ -46,7 +48,7 @@ fi
 
 TASK_RESP=$(curl -sf -X POST "$BRAIN_URL/api/brain/tasks" \
   -H "Content-Type: application/json" \
-  -d "{\"task_type\":\"harness_initiative\",\"title\":\"blade-bc-$SMOKE_TAG\",\"payload\":{\"orchestrator\":\"skill-relay\",\"worktree_path\":\"$JUDGE_WORKTREE\",\"sprint_dir\":\"sprints/s\",\"smoke_tag\":\"$SMOKE_TAG\"}}")
+  -d "{\"task_type\":\"harness_initiative\",\"title\":\"blade-bc-$SMOKE_TAG\",\"change_kind\":\"bugfix\",\"base_sha\":\"$BASE_SHA\",\"payload\":{\"worktree_path\":\"$JUDGE_WORKTREE\",\"sprint_dir\":\"sprints/s\",\"smoke_tag\":\"$SMOKE_TAG\"}}")
 TASK_ID=$(echo "$TASK_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
 if [ -z "$TASK_ID" ]; then
   echo "[blade-bc smoke] FAIL — 创建 Judge authority task 失败: $TASK_RESP"

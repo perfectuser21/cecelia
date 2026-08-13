@@ -3,6 +3,7 @@
 # 覆盖：task-tasks.js / journeys.js POST /issues / warroom.js 全景图 issues 查询
 set -euo pipefail
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
+BASE_SHA="$(git rev-parse HEAD)"
 PASS=0; FAIL=0
 ok()   { echo "  ✅ $1"; ((PASS++)) || true; }
 fail() { echo "  ❌ $1"; ((FAIL++)) || true; }
@@ -17,7 +18,7 @@ JID=$(curl -sf -X POST "$BRAIN/api/brain/journeys" -H 'Content-Type: application
 
 # POST /tasks 顶层 journey_id 应自动合并进 payload.journey_id
 TASK_RESP=$(curl -sf -X POST "$BRAIN/api/brain/tasks" -H 'Content-Type: application/json' \
-  -d "{\"title\":\"[smoke] journey-id task\",\"task_type\":\"dev\",\"journey_id\":\"$JID\"}")
+  -d "{\"title\":\"[smoke] journey-id task\",\"task_type\":\"dev\",\"change_kind\":\"bugfix\",\"base_sha\":\"$BASE_SHA\",\"journey_id\":\"$JID\"}")
 echo "$TASK_RESP" | jq -e --arg jid "$JID" '.payload.journey_id == $jid' >/dev/null 2>&1 \
   && ok "POST /tasks 顶层 journey_id 合并进 payload" || fail "task payload.journey_id 未写入"
 

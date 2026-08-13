@@ -26,8 +26,8 @@ const rt=fs.readFileSync('$ROUTE','utf8');
 const si=rt.indexOf(\"router.post('/staging-e2e'\");
 if(si<0){console.error('L1 FAIL: routes/harness.js 缺 POST /staging-e2e 端点');process.exit(1)}
 const sh=rt.slice(si, rt.indexOf('router.', si+20));
-if(!/WHERE NOT EXISTS/i.test(sh) || !/payload->>'pr_url'/.test(sh)){
-  console.error('L1 FAIL: POST /staging-e2e 缺 pr_url 幂等去重（WHERE NOT EXISTS payload->>pr_url）');process.exit(1)}
+if(!/payload->>'pr_url'/.test(sh) || !/source_id:\s*[^\n]*staging-e2e:/.test(sh)){
+  console.error('L1 FAIL: POST /staging-e2e 缺 pr_url 预检或 Router source_id 幂等');process.exit(1)}
 if(!/task_type\s*=\s*'staging_e2e'/.test(sh)){
   console.error('L1 FAIL: POST /staging-e2e 未派生 task_type=staging_e2e');process.exit(1)}
 

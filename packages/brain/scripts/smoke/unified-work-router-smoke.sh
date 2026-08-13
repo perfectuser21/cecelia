@@ -7,6 +7,16 @@ cd "$ROOT_DIR"
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 pass() { printf 'PASS: %s\n' "$1"; }
 
+if [[ "${CI:-}" == "true" && "${CECELIA_REAL_PROVIDER_SMOKE:-}" != "1" ]]; then
+  bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh
+  (cd packages/brain && npx vitest run \
+    src/orchestrator/__tests__/dispatcher-routing-receipt.test.js --reporter=dot)
+  bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh
+  bash docker/cecelia-runner/__tests__/entrypoint-frozen-baseline-guard.test.sh
+  pass 'CI 已验证 Router/Dispatcher/Generator 确定性合同；宿主凭据实弹由 CECELIA_REAL_PROVIDER_SMOKE=1 启用'
+  exit 0
+fi
+
 : "${DB_URL:?DB_URL is required and must target a scratch database}"
 NODE_EXECUTABLE="$(command -v node)"
 PSQL_EXECUTABLE="$(command -v psql)"

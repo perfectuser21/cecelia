@@ -19,14 +19,16 @@ const noCall = { query: () => { throw new Error('不应查库'); } };
 const r1 = await triggerCiPatrol(noCall, new Date('2026-07-09T12:00:00Z'));
 if (!r1.skipped_window) { console.error('FAIL: 窗口外应 skipped_window'); process.exit(1); }
 
-// 窗口内 + 无当日任务 → INSERT ci_patrol 且字段正确
+// 窗口内 + 无当日任务 → 统一 createTask 入口，且字段正确
 const calls = [];
-const pool = { query: (sql, params) => { calls.push([sql, params]); return Promise.resolve({ rows: calls.length === 1 ? [] : [{ id: 'smoke-task-id' }] }); } };
-const r2 = await triggerCiPatrol(pool, new Date('2026-07-09T00:01:00Z'));
+const pool = { query: (sql, params) => { calls.push([sql, params]); return Promise.resolve({ rows: [] }); } };
+const created = [];
+const taskCreator = async (input) => { created.push(input); return { task: { id: 'smoke-task-id' } }; };
+const r2 = await triggerCiPatrol(pool, new Date('2026-07-09T00:01:00Z'), taskCreator);
 if (!r2.triggered || r2.task_id !== 'smoke-task-id') { console.error('FAIL: 应创建任务', JSON.stringify(r2)); process.exit(1); }
-const [insertSql, insertParams] = calls[1];
-if (!insertSql.includes(\"'ci_patrol'\") || !insertSql.includes(\"'brain_auto'\") || !insertSql.includes(\"'us'\")) { console.error('FAIL: INSERT 字段不对'); process.exit(1); }
-const payload = JSON.parse(insertParams[1]);
+const input = created[0];
+if (input.task_type !== 'ci_patrol' || input.trigger_source !== 'brain_auto' || input.source !== 'scheduler') { console.error('FAIL: createTask 字段不对', JSON.stringify(input)); process.exit(1); }
+const payload = input.payload;
 if (!payload.prd_summary || payload.prd_summary.length < 20) { console.error('FAIL: prd_summary 不满足 pre-flight ≥20 字符'); process.exit(1); }
 
 // 当日已有 → 去重

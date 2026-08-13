@@ -4,6 +4,7 @@
 set -uo pipefail
 
 API="${BRAIN_URL:-http://localhost:5221}/api/brain"
+BASE_SHA="$(git rev-parse HEAD)"
 PASS=0; FAIL=0
 
 ok()   { echo "✅ $1"; ((PASS++)) || true; }
@@ -19,7 +20,7 @@ echo "── 2. pending_postdeploy 任务状态可写入 DB ──"
 # 插入 pending_postdeploy 状态任务验证 task-updater 白名单已更新
 TASK_ID=$(curl -s -X POST "$API/tasks" \
   -H "Content-Type: application/json" \
-  -d '{"task_type":"dev","title":"smoke: pending_postdeploy test","status":"pending_postdeploy","payload":{"postdeploy_check":{"command":"curl -s http://localhost:5221/api/brain/health","timeout_s":10}}}' \
+  -d "{\"task_type\":\"dev\",\"title\":\"smoke: pending_postdeploy test\",\"status\":\"pending_postdeploy\",\"change_kind\":\"bugfix\",\"base_sha\":\"$BASE_SHA\",\"payload\":{\"postdeploy_check\":{\"command\":\"curl -s http://localhost:5221/api/brain/health\",\"timeout_s\":10}}}" \
   | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).id||'')}catch{}})")
 if [ -n "$TASK_ID" ] && [ "$TASK_ID" != "null" ] && [ "$TASK_ID" != "undefined" ]; then
   ok "pending_postdeploy 任务创建成功 id=$TASK_ID"

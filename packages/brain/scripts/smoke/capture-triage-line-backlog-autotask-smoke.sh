@@ -32,7 +32,7 @@ const js = require('fs').readFileSync('$TRIAGE_SRC', 'utf8');
 if (!/export function isProductionSensitive/.test(js)) throw new Error('缺 isProductionSensitive 导出');
 if (!/import \{ createTask \} from '\.\/actions\.js'/.test(js)) throw new Error('缺 createTask import');
 if (!/task_type: 'harness_initiative'/.test(js)) throw new Error('缺 harness_initiative task_type');
-if (!/orchestrator: 'skill-relay'/.test(js)) throw new Error('缺 orchestrator=skill-relay 硬性字段');
+if (!/buildCeceliaMutationRoute/.test(js)) throw new Error('缺统一 coding route builder');
 console.log('PASS');
 " && pass "Case 1: 源码接线齐全" || fail "Case 1"
 echo ""
@@ -58,7 +58,8 @@ import('./src/capture-triage.js').then(async (triage) => {
   const atomProdId = require('crypto').randomUUID();
   const cleanup = async () => {
     await pool.query('DELETE FROM capture_atoms WHERE id = ANY(\$1::uuid[])', [[atomOkId, atomProdId]]);
-    await pool.query('DELETE FROM tasks WHERE id = \$1::uuid OR payload->>\'thin_prd\' = \$2', [srcTaskId, 'smoke:决策57d296a1line_backlog真环境验证']);
+    await pool.query("UPDATE tasks SET status='cancelled', updated_at=NOW() WHERE payload->>'thin_prd' = \$1 AND status NOT IN ('completed','cancelled')", ['smoke:决策57d296a1line_backlog真环境验证']);
+    await pool.query('DELETE FROM tasks WHERE id = \$1::uuid', [srcTaskId]);
   };
   try {
     await pool.query(
@@ -85,7 +86,7 @@ import('./src/capture-triage.js').then(async (triage) => {
       const { rows } = await pool.query('SELECT task_type, priority, payload FROM tasks WHERE id = \$1::uuid', [okAtom.routed_to_id]);
       okTaskRow = rows[0];
     }
-    const okTaskValid = okTaskRow && okTaskRow.task_type === 'harness_initiative' && okTaskRow.priority === 'P1' && okTaskRow.payload && okTaskRow.payload.orchestrator === 'skill-relay';
+    const okTaskValid = okTaskRow && okTaskRow.task_type === 'harness_initiative' && okTaskRow.priority === 'P1' && okTaskRow.payload && okTaskRow.payload.harness_runtime === 'kernel-v1' && typeof okTaskRow.payload.routing_receipt_id === 'string';
 
     const { rows: prodRows } = await pool.query('SELECT status, routed_to_table, routed_to_id FROM capture_atoms WHERE id = \$1::uuid', [atomProdId]);
     const prodAtom = prodRows[0];

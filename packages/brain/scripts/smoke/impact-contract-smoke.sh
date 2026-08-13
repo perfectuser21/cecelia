@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
+BASE_SHA="$(git rev-parse HEAD)"
 PASS=0; FAIL=0
 ok()   { echo "  ✅ $1"; ((PASS++)) || true; }
 fail() { echo "  ❌ $1"; ((FAIL++)) || true; }
@@ -13,7 +14,7 @@ trap 'rm -f "$RESP_FILE"' EXIT
 # task_type=dev(合法枚举), change_kind=bugfix(显式), payload.gear=segmented(通过 payload 传入)
 TASK=$(curl -sf -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
-  -d '{"title":"smoke:impact-contract","task_type":"dev","change_kind":"bugfix","payload":{"gear":"segmented","orchestrator":"skill-relay"}}' 2>/dev/null) || \
+  -d "{\"title\":\"smoke:impact-contract\",\"task_type\":\"dev\",\"change_kind\":\"bugfix\",\"base_sha\":\"$BASE_SHA\",\"payload\":{\"gear\":\"segmented\"}}" 2>/dev/null) || \
   { fail "POST /tasks 创建失败"; TASK="{}"; }
 
 TASK_ID=$(echo "$TASK" | jq -r '.id // empty' 2>/dev/null)
