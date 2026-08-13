@@ -100,6 +100,10 @@ describe('Unified Work Router Recovery RED [BEHAVIOR]', () => {
 });
 
 describe('Unified Work Router contract [BEHAVIOR]', () => {
+  it('Router to Judge service mechanical acceptance is executable', async () => {
+    const mod = await import('../../../packages/brain/src/orchestrator/unified-router-acceptance.js');
+    expect(mod.runUnifiedRouterAcceptance).toBeTypeOf('function');
+  });
   it('four change kinds map forward only through one router', async () => {
     const mod = await import('../../../packages/brain/src/work-router.js');
     expect(mod.CHANGE_KINDS).toEqual(['new_capability', 'capability_change', 'bugfix', 'parameter_only']);

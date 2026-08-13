@@ -1,0 +1,25 @@
+{
+  "initiative_id": "29c86f7d-8ced-4175-a5c3-d965aee44a2c",
+  "journey_type": "autonomous",
+  "journey_type_reason": "后端 Router、数据库、Runner 与 Judge 机械闸真实链路",
+  "tasks": [{
+    "task_id": "ws1",
+    "title": "补齐并验收 Unified Work Router 到 Judge 服务端机械闸",
+    "scope": "在冻结基线之上提供统一真实验收入口，并让 PRD Knife 0-5 的既有实现经 scratch、Evaluator 与 Judge 机械闸闭环",
+    "dod": [
+      "[BEHAVIOR] Router 到 Judge 统一验收输出 MECHANICAL_GATE=PASS",
+      "[ARTIFACT] packages/brain/src/orchestrator/unified-router-acceptance.js"
+    ],
+    "files": [
+      "packages/brain/src/orchestrator/unified-router-acceptance.js",
+      "packages/brain/src/orchestrator/__tests__/unified-router-acceptance.test.js",
+      "packages/brain/DEFINITION.md",
+      "packages/brain/package.json",
+      "packages/brain/package-lock.json",
+      ".brain-versions"
+    ],
+    "depends_on": [],
+    "complexity": "M",
+    "estimated_minutes": 90
+  }]
+}
