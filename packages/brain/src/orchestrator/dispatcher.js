@@ -230,6 +230,24 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     attempt_kind: attemptMetadata.attemptKind,
     workstream_key: attemptMetadata.workstreamKey,
   };
+  if (ctx.observed.routingReceipt?.work_kind === 'coding_mutation') {
+    const receipt = ctx.observed.routingReceipt;
+    const evidence = asObject(receipt.evidence);
+    if (
+      typeof receipt.id !== 'string'
+      || typeof receipt.repo !== 'string'
+      || typeof evidence.branch !== 'string'
+      || !GIT_SHA_PATTERN.test(evidence.base_sha ?? '')
+    ) {
+      throw new Error('routing_identity_invalid');
+    }
+    common.routing_identity = {
+      routing_receipt_id: receipt.id,
+      repo: receipt.repo,
+      branch: evidence.branch,
+      base_sha: evidence.base_sha,
+    };
+  }
   if (observed.implementationBaselineError) {
     throw new Error(observed.implementationBaselineError);
   }
@@ -1357,6 +1375,15 @@ export function createDetachedLauncher({
             CECELIA_EXECUTOR: spec.provider,
             CECELIA_MACHINE_ID: machineId,
             CECELIA_TASK_ID: bundle.inputs.task_id,
+            ...(bundle.inputs.routing_identity ? {
+              CECELIA_ROUTING_RECEIPT_ID: bundle.inputs.routing_identity.routing_receipt_id,
+              CECELIA_RUN_ID: attempt.run_id,
+              CECELIA_REPO: bundle.inputs.routing_identity.repo,
+              CECELIA_ROUTING_REPO: bundle.inputs.routing_identity.repo,
+              CECELIA_BRANCH: bundle.inputs.routing_identity.branch,
+              CECELIA_BASE_SHA: bundle.inputs.routing_identity.base_sha,
+              CECELIA_ROUTING_BASE_SHA: bundle.inputs.routing_identity.base_sha,
+            } : {}),
             HARNESS_TASK_ID: bundle.inputs.task_id,
             HARNESS_NODE: attempt.role,
             HARNESS_ATTEMPT_ID: attempt.id,

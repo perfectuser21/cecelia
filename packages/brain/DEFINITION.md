@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.272.52
+**Brain 版本**: 1.272.53
+
+## Canonical Provider Routing Identity（Brain 1.272.53）
+
+- Kernel TaskBundle 从已校验的 canonical Routing Receipt 构造执行身份；Provider 只接收服务端投影的 receipt、run、repo、branch 与冻结 base SHA，动作闸门不再依赖调用方自行拼装环境变量。
 
 ## Dispatcher Routing Receipt Gate（Brain 1.272.52）
 

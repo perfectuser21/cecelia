@@ -8,11 +8,15 @@
 
 
 
-**Brain 版本**: 1.272.52
+**Brain 版本**: 1.272.53
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.53 — Canonical Provider Routing Identity
+
+- Kernel Provider 的 receipt、run、repo、branch 与冻结 base SHA 由服务端从 canonical Routing Receipt 投影并注入，禁止调用方自报路由身份。
 
 ## Brain 1.272.40 — Unified Work Router 与可信恢复
 
