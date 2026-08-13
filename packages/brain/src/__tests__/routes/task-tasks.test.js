@@ -114,6 +114,44 @@ describe('task-tasks routes', () => {
   });
 
   describe('POST /tasks', () => {
+    it('rejects coding mutation without an explicit four-form change_kind', async () => {
+      const res = await request(app).post('/tasks').send({
+        title: 'Unclassified coding mutation',
+        task_type: 'dev',
+        mutation_intent: 'write',
+        repo_hint: 'perfectuser21/cecelia',
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.reason_code).toBe('change_kind_required');
+      expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+    });
+
+    it('binds explicit routing baseline fields from the public API envelope', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      const baseSha = 'a'.repeat(40);
+
+      const res = await request(app).post('/tasks').send({
+        title: 'Scoped coding mutation',
+        task_type: 'dev',
+        mutation_intent: 'write',
+        change_kind: 'bugfix',
+        repo_hint: 'perfectuser21/cecelia',
+        map_scope_hint: ['capability:router'],
+        branch: 'cp-router-fix',
+        base_sha: baseSha,
+      });
+
+      expect(res.status).toBe(201);
+      expect(mockCreateRoutedTask.mock.calls[0][1]).toMatchObject({
+        declared_change_kind: 'bugfix',
+        repo_hint: 'perfectuser21/cecelia',
+        map_scope_hint: ['capability:router'],
+        branch: 'cp-router-fix',
+        base_sha: baseSha,
+      });
+    });
+
     it('creates task with title only → 201', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] }); // dedup: 无命中
       mockPool.query.mockResolvedValueOnce({
