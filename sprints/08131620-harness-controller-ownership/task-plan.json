@@ -1,0 +1,28 @@
+{
+  "initiative_id": "63f796fb-ab13-4ee4-9365-4fd31c5ce181",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain 后端改动（dispatcher 组包谓词 + relay 建 run 事务 + 无主 run 巡检），无 UI/远端 agent 协议本体变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Harness 双运行时 Controller ownership 与 GP identity 收口（刀一 gpContractIdentity 触发谓词 + 刀二 legacy relay 四分支带 ownership 建 run）",
+      "scope": "刀一：dispatcher.gpContractIdentity 触发谓词剔除通用 journey_id，仅版本化 GP 身份字段（gp_contract_id/version/hash/golden_path_id/step_id）触发校验；journey-only 返回 null 正常组包，部分身份继续 fail-closed，完整身份继续透传 frozen contract。刀二：harness-skill-relay.js 四处直写 INSERT INTO initiative_runs（session/grok fallback/xian/headed）收敛为带 controller_session_id + controller_lease_expires_at 的创建（复用 createKernelRun 或等价单一创建函数），落库即带可续租 ownership；不改 kernel-v1 主派发、不新造续租守护进程。",
+      "dod": [
+        "[BEHAVIOR] journey-only generator-fix 组包不抛 GP_CONTRACT_IDENTITY_INVALID；部分身份仍抛、完整身份透传（真函数单测，见 contract-dod.md B-01/B-02）",
+        "[BEHAVIOR] legacy relay 四分支建 run 落库即带非空 controller_session_id + 未来 lease，活过一个 reconcile 巡检周期不被误杀，无主对照 run 仍被回收（真 PG 集成，见 contract-dod.md B-03..B-06）",
+        "[ARTIFACT] packages/brain/src/__tests__/dispatcher-gp-contract-identity.test.js 与 packages/brain/src/__tests__/integration/relay-ownership.pg.integration.test.js 存在且后者登记进 vitest POSTGRES_INTEGRATION_TESTS"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/src/__tests__/dispatcher-gp-contract-identity.test.js",
+        "packages/brain/src/__tests__/integration/relay-ownership.pg.integration.test.js",
+        "packages/brain/vitest.config.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
