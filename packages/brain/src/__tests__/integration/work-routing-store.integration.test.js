@@ -148,6 +148,22 @@ describe('routing store transaction contract', () => {
         [created.routing_receipt_id, 'tampered'],
       )).rejects.toThrow(/append_only/);
       await client.query('ROLLBACK TO SAVEPOINT immutable_probe');
+
+      await client.query('SAVEPOINT task_projection_probe');
+      await expect(client.query(
+        `UPDATE tasks
+            SET payload = jsonb_set(payload, '{repo}', '"other"'::jsonb)
+          WHERE id=$1`,
+        [created.task_id],
+      )).rejects.toThrow(/work_routing_task_projection_immutable/);
+      await client.query('ROLLBACK TO SAVEPOINT task_projection_probe');
+
+      await expect(client.query(
+        `UPDATE tasks
+            SET payload = payload || '{"unrelated_runtime_note":"ok"}'::jsonb
+          WHERE id=$1`,
+        [created.task_id],
+      )).resolves.toMatchObject({ rowCount: 1 });
     } finally {
       await client.query('ROLLBACK');
       client.release();

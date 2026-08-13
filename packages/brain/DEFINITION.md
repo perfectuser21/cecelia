@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.272.57
+**Brain 版本**: 1.272.58
+
+## Immutable Routing Task Projection（Brain 1.272.58）
+
+- Schema 417 在 receipt 创建后保护 task 的 canonical task type 与路由 payload 投影；运行期仍可追加非路由字段，但不能把已路由 coding 任务改回 legacy/dev 或篡改 repo/profile/runtime。Migration 413/417 均提供对称 rollback。
 
 ## Complete Task Creation Inventory（Brain 1.272.57）
 
@@ -53,7 +57,7 @@
 
 ## Unified Work Router（Brain 1.272.46）
 
-所有 coding mutation 由 Work Router 正向选择四档 Kernel Harness profile，并以同一事务写入 task 与 append-only Routing Receipt。Kernel run 强制使用 fresh Universal Map 与 active Impact Contract；有头工具和无头 Dispatcher 在动作前验证同一 receipt。Generator Provider 使用冻结基线血统闸、受限 UID/capabilities、敏感环境剥离和禁用 pushurl。Map 恢复合同与 Generator Attempt 以 append-only 消费事实原子绑定，仅允许冻结 Map 路径，merge 前要求目标 revision 全量事实恢复 fresh。Capture atom 持久化 repo、change_kind、Map scope 与 Git baseline，确认时不再丢失路由事实。显式 Capability 起点会沿 implements/proves/affects 反向下钻至 feature 与必跑 assertion；scratch smoke 用真实三入口、真实 Journey anchor 和 revision 命名空间验证可重复闭环。War Room 展示 receipt/Map/Impact Contract 审计字段和 Route/Map 覆盖率、direct dev、legacy、violation 指标；路由、preflight、合同和无头违规写稳定事件。Schema 地板为 416。
+所有 coding mutation 由 Work Router 正向选择四档 Kernel Harness profile，并以同一事务写入 task 与 append-only Routing Receipt。Kernel run 强制使用 fresh Universal Map 与 active Impact Contract；有头工具和无头 Dispatcher 在动作前验证同一 receipt。Generator Provider 使用冻结基线血统闸、受限 UID/capabilities、敏感环境剥离和禁用 pushurl。Map 恢复合同与 Generator Attempt 以 append-only 消费事实原子绑定，仅允许冻结 Map 路径，merge 前要求目标 revision 全量事实恢复 fresh。Capture atom 持久化 repo、change_kind、Map scope 与 Git baseline，确认时不再丢失路由事实。显式 Capability 起点会沿 implements/proves/affects 反向下钻至 feature 与必跑 assertion；scratch smoke 用真实三入口、真实 Journey anchor 和 revision 命名空间验证可重复闭环。War Room 展示 receipt/Map/Impact Contract 审计字段和 Route/Map 覆盖率、direct dev、legacy、violation 指标；路由、preflight、合同和无头违规写稳定事件。Schema 地板为 417。
 
 ## Approved contract TaskBundle deduplication
 
