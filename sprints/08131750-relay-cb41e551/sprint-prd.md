@@ -221,13 +221,43 @@ Step 9: commit + PR，永久进 CI
 
 ---
 
-## 累积 FR 加载
+## Invariant 约束
 
-| # | Invariant / FR |
-|---|----------------|
+| # | Invariant |
+|---|-----------|
 | 1 | collectDescendants BFS 必须同时遍历反向 implements/contains 边（to===current） |
 | 2 | backbone 节点由投影器从 journey_steps 动态生成，不写入 manifest |
 | 3 | capability → backbone 边类型为 `contains` |
 | 4 | StateBadge reason_code 必须翻译为人话，不裸渲技术码 |
 | 5 | 回归测试永久留 CI，不允许删除 |
 | 6 | 改 Brain 代码前必须过 DevGate 三件套 |
+
+---
+
+## 累积 FR 加载
+
+| # | FR |
+|---|----|
+| 1 | collectDescendants 同时收集 to===current 且 type in ['implements','contains'] 的反向边 |
+| 2 | runProjection() 追加 backbone 层：从 journey_steps JOIN journeys 查询，生成 backbone 节点与 capability→backbone contains 边 |
+| 3 | StateBadge 添加 reasonCodeMap 映射（9 个 code → 人话文案） |
+| 4 | 新增 vitest 测试文件：apps/api/features/planning/__tests__/map-collect-descendants.test.ts |
+| 5 | 先写 failing test（Red commit），再写实现（Green commit），顺序不可颠倒 |
+| 6 | 生产 /api/brain/map?scope=cecelia 返回 backbone 节点数 ≥4 |
+
+---
+
+## NFR
+
+- 性能：backbone 投影查询加 JOIN 后响应时间不超 500ms（生产 86 节点规模）
+- 兼容性：不改动 manifest 文件格式，backbone 完全由 DB 动态生成
+- 测试：回归测试永久留 CI，不允许删除
+
+---
+
+## journey_type: user_facing
+## journey_type_reason: 验收断言3要求 /map 页面点 F1 截图，涉及前端 UI 渲染路径。
+## target_environment: mac_web
+## target_environment_reason: Cecelia Dashboard 前端 UI → mac_web（localhost:5174，内网 Playwright）。
+## journey_id: 51754939-247e-4b22-8f93-f8464a8eb985
+## step_id: a4438f77-7ee0-48f7-ab96-40e1b322ba14
