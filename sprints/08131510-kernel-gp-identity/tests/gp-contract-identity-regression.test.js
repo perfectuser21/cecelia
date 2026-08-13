@@ -218,7 +218,12 @@ describe('DoD-1: journey-only 路径 — 组包成功，gp_contract 不注入', 
 // ── DoD-2: 部分 GP 身份 fail-closed ──────────────────────────────────────────
 
 describe('DoD-2: 部分 GP 身份 — fail-closed，GP_CONTRACT_IDENTITY_INVALID', () => {
-  it('payload 含 journey_id + golden_path_id，缺其余 GP 字段 → 抛 GP_CONTRACT_IDENTITY_INVALID', async () => {
+  // Reviewer 提示（DoD-2）：buildInputs 的 throw 被 dispatch() 外层 catch 捕获，
+  // 转为 preAttemptAssemblyFault 返回值（status:'DONE_WITH_CONCERNS'），
+  // 故断言方式为检查返回值含 assembly_fault + detail 含 GP_CONTRACT_IDENTITY_INVALID，
+  // 而非 rejects.toThrow。
+
+  it('payload 含 journey_id + golden_path_id，缺其余 GP 字段 → assembly_fault GP_CONTRACT_IDENTITY_INVALID', async () => {
     const deps = makeDeps();
 
     const partialGpObserved = {
@@ -234,18 +239,22 @@ describe('DoD-2: 部分 GP 身份 — fail-closed，GP_CONTRACT_IDENTITY_INVALID
       },
     };
 
-    await expect(
-      createDispatcher(deps)('spawn:generator-fix', {
-        taskId: TASK_ID,
-        runId: RUN_ID,
-        hop: 19,
-        observed: partialGpObserved,
-        decision: { phase: 'generate', reason: 'partial_gp_identity' },
-      }),
-    ).rejects.toThrow('GP_CONTRACT_IDENTITY_INVALID');
+    const result = await createDispatcher(deps)('spawn:generator-fix', {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      hop: 19,
+      observed: partialGpObserved,
+      decision: { phase: 'generate', reason: 'partial_gp_identity' },
+    });
+
+    expect(result).toMatchObject({
+      status: 'DONE_WITH_CONCERNS',
+      failure_class: 'assembly_fault',
+    });
+    expect(result.detail).toContain('GP_CONTRACT_IDENTITY_INVALID');
   });
 
-  it('anchor 含 gp_id（golden_path_id 存在），payload 无其余 GP 字段 → fail-closed', async () => {
+  it('anchor 含 gp_id（golden_path_id 存在），payload 无其余 GP 字段 → assembly_fault', async () => {
     const deps = makeDeps();
 
     const anchorGpObserved = {
@@ -261,18 +270,22 @@ describe('DoD-2: 部分 GP 身份 — fail-closed，GP_CONTRACT_IDENTITY_INVALID
       },
     };
 
-    await expect(
-      createDispatcher(deps)('spawn:generator', {
-        taskId: TASK_ID,
-        runId: RUN_ID,
-        hop: 10,
-        observed: anchorGpObserved,
-        decision: { phase: 'generate', reason: 'anchor_gp_id_partial' },
-      }),
-    ).rejects.toThrow('GP_CONTRACT_IDENTITY_INVALID');
+    const result = await createDispatcher(deps)('spawn:generator', {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      hop: 10,
+      observed: anchorGpObserved,
+      decision: { phase: 'generate', reason: 'anchor_gp_id_partial' },
+    });
+
+    expect(result).toMatchObject({
+      status: 'DONE_WITH_CONCERNS',
+      failure_class: 'assembly_fault',
+    });
+    expect(result.detail).toContain('GP_CONTRACT_IDENTITY_INVALID');
   });
 
-  it('payload 含 gp_contract_id（仅一个 GP 字段）→ fail-closed', async () => {
+  it('payload 含 gp_contract_id（仅一个 GP 字段）→ assembly_fault', async () => {
     const deps = makeDeps();
 
     const oneFieldGpObserved = {
@@ -288,15 +301,19 @@ describe('DoD-2: 部分 GP 身份 — fail-closed，GP_CONTRACT_IDENTITY_INVALID
       },
     };
 
-    await expect(
-      createDispatcher(deps)('spawn:generator', {
-        taskId: TASK_ID,
-        runId: RUN_ID,
-        hop: 10,
-        observed: oneFieldGpObserved,
-        decision: { phase: 'generate', reason: 'single_gp_field' },
-      }),
-    ).rejects.toThrow('GP_CONTRACT_IDENTITY_INVALID');
+    const result = await createDispatcher(deps)('spawn:generator', {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      hop: 10,
+      observed: oneFieldGpObserved,
+      decision: { phase: 'generate', reason: 'single_gp_field' },
+    });
+
+    expect(result).toMatchObject({
+      status: 'DONE_WITH_CONCERNS',
+      failure_class: 'assembly_fault',
+    });
+    expect(result.detail).toContain('GP_CONTRACT_IDENTITY_INVALID');
   });
 });
 
