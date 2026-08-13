@@ -1,0 +1,29 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain/（纯后端调度装配逻辑 buildInputs），无 UI/agent 协议/engine 触点",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "buildInputs role=evaluator 注入 judge_feedback（读最近 judge FAIL + 脱敏截断）+ 常驻回归 + evaluator SKILL 消费侧同步",
+      "scope": "在 dispatcher.js buildInputs 的 spec.role==='evaluator' 分支，新增读取本 run 最近一次 verdict:judge FAIL（按 hop 降序 find），脱敏截断其 detail.feedback 后注入 inputs.judge_feedback={hop,verdict:'FAIL',failure_class,summary}；无 judge FAIL 时不注入。把 GAN 冻结测试永久落到 brain-ci 路径。evaluator SKILL 快照消费侧新增 judge_feedback 优先补齐点名证据指令。不动 generator-fix 侧 evaluator_feedback。",
+      "dod": [
+        "[BEHAVIOR] run 存在 judge FAIL verdict 时 buildInputs(role=evaluator) 产出 inputs.judge_feedback 含 summary/failure_class/hop；无 judge verdict 时不注入（见 contract-dod.md B-01/B-02）",
+        "[BEHAVIOR] 同 run 多条 judge FAIL 只注入 hop 最大一次；judge PASS 不注入（B-03/B-06）",
+        "[BEHAVIOR] 超长 judge summary 经 sanitizeDiagnostic 截断至 ≤2000，注入后整条 bundle < 256KB（B-04）",
+        "[BEHAVIOR] failure_class 非 evidence 类仍注入 failure_class 供消费侧区分（INV-judge-fail-triage / B-05）",
+        "[BEHAVIOR] dispatcher-judge-feedback.test.js 6 条子测试在 PR 分支全绿（B-07）",
+        "[ARTIFACT] 常驻回归测试入库 packages/brain/src/orchestrator/__tests__/dispatcher-judge-feedback.test.js（与 sprint tests/ 冻结原文逐字一致）",
+        "[ARTIFACT] evaluator SKILL 快照 packages/workflows/skills/harness-evaluator/SKILL.md 新增 judge_feedback 消费段"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/__tests__/dispatcher-judge-feedback.test.js",
+        "packages/workflows/skills/harness-evaluator/SKILL.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
