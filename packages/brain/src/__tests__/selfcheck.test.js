@@ -212,9 +212,11 @@ describe('selfcheck', () => {
   // 410（revision-indexed immutable graph snapshots）推进地板到 410。
   // 411（reviewer-approved SHA 下的冻结合同测试制品）推进地板到 411。
   // 412（approved Harness contract artifact manifests）推进地板到 412。
-  // 413（initiative_runs Session Controller ownership: controller_session_id + lease）推进地板到 413。
-  it('EXPECTED_SCHEMA_VERSION should be 413', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('413');
+  // 413（work_routing_receipts production anchor — 补录 PR #4851）推进地板到 413。
+  // 414（map_recovery_contracts production anchor — 补录 PR #4851）推进地板到 414。
+  // 415（initiative_runs Session Controller ownership: controller_session_id + lease）推进地板到 415。
+  it('EXPECTED_SCHEMA_VERSION should be 415', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('415');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {
