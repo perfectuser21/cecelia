@@ -12,58 +12,58 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] `heartbeat.js` 的 UPDATE 续租 lease（GREATEST）+ CAS WHERE（session+phase）
+- [x] [ARTIFACT] `heartbeat.js` 的 UPDATE 续租 lease（GREATEST）+ CAS WHERE（session+phase）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/heartbeat.js','utf8');if(!(c.includes('controller_lease_expires_at')&&c.includes('GREATEST')&&c.includes('controller_session_id')&&/phase\s+NOT\s+IN/i.test(c)))process.exit(1)"
 
-- [ ] [ARTIFACT] `loop.js` 的 `beat()` 携带 `controllerSessionId`（心跳不再仅凭 run_id）
+- [x] [ARTIFACT] `loop.js` 的 `beat()` 携带 `controllerSessionId`（心跳不再仅凭 run_id）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/loop.js','utf8');if(!c.includes('controllerSessionId'))process.exit(1)"
 
-- [ ] [ARTIFACT] `harness-skill-relay.js` 导出 `buildKernelLaunchArgs` 且 `launchKernelProcess` 携 `--controller-session-id`
+- [x] [ARTIFACT] `harness-skill-relay.js` 导出 `buildKernelLaunchArgs` 且 `launchKernelProcess` 携 `--controller-session-id`
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/harness-skill-relay.js','utf8');if(!(c.includes('buildKernelLaunchArgs')&&c.includes('--controller-session-id')))process.exit(1)"
 
-- [ ] [ARTIFACT] `run.js` 的 `parseArgs` 认 `--controller-session-id` 并透传 `runKernelMain`→loop
+- [x] [ARTIFACT] `run.js` 的 `parseArgs` 认 `--controller-session-id` 并透传 `runKernelMain`→loop
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/run.js','utf8');if(!(c.includes('--controller-session-id')&&c.includes('controllerSessionId')))process.exit(1)"
 
-- [ ] [ARTIFACT] 永久回归文件落位 + 登记进 POSTGRES_INTEGRATION_TESTS（CI brain-integration 跑）
+- [x] [ARTIFACT] 永久回归文件落位 + 登记进 POSTGRES_INTEGRATION_TESTS（CI brain-integration 跑）
   Test: node -e "const fs=require('fs');fs.accessSync('packages/brain/src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js');const v=fs.readFileSync('packages/brain/vitest.config.js','utf8');if(!v.includes('kernel-controller-lease-renewal.pg.integration.test.js'))process.exit(1)"
 
-- [ ] [ARTIFACT] INV-2 [禁写死环境]：续租时长复用单一 SSOT，集成测试不另写死秒数
+- [x] [ARTIFACT] INV-2 [禁写死环境]：续租时长复用单一 SSOT，集成测试不另写死秒数
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/heartbeat.js','utf8');if(/\b1800\b/.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] INV-6 [日志脱敏]：`heartbeat.js` 不把 controller_session_id 打进日志明文
+- [x] [ARTIFACT] INV-6 [日志脱敏]：`heartbeat.js` 不把 controller_session_id 打进日志明文
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/heartbeat.js','utf8');if(/console\.(log|error|warn)[^\n]*controllerSessionId/.test(c))process.exit(1)"
 
 ## BEHAVIOR 条目（内嵌 manual:bash 单行命令，真 PostgreSQL 执行）
 
-- [ ] [BEHAVIOR] [L2] B-01: 正确 session 心跳跨 30m 边界 → lease 前移、run 保持 active、reconcile 回收数=0 [接缝×2]
+- [x] [BEHAVIOR] [L2] B-01: 正确 session 心跳跨 30m 边界 → lease 前移、run 保持 active、reconcile 回收数=0 [接缝×2]
   动作: 建 owned run(lease=1800s)，注入 now=建run+31min 用正确 session 调 writeHeartbeat，紧接 reconcileOwnerlessKernelRuns
   预期观察: writeHeartbeat 返回 rowCount=1；controller_lease_expires_at 前移到 now+1800s（严格晚于 now、未过期）；phase 仍非 done/failed；reconcile 回收列表不含该 run
   等待预算: 0s（注入 now 确定性跨界，无真实等待）
   留证: vitest RED-1 verbose 输出末 5 行（含 ✓ RED-1 / ✓ RED-1b）
   Test: manual:bash -c 'bash -lc "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_test} NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js -t RED-1 --reporter=verbose"'
 
-- [ ] [BEHAVIOR] [L2] B-02: 伪造/错误 session 心跳 → CAS rowCount=0、lease 不动，无主 run 仍被 reconcile fail-closed 回收 [接缝×2]
+- [x] [BEHAVIOR] [L2] B-02: 伪造/错误 session 心跳 → CAS rowCount=0、lease 不动，无主 run 仍被 reconcile fail-closed 回收 [接缝×2]
   动作: 建 owned run，注入越界 now 用错误 session 调 writeHeartbeat，再跑 reconcileOwnerlessKernelRuns
   预期观察: rowCount=0；controller_lease_expires_at 不变；reconcile 回收列表含该 run 且其 phase=failed（无主 fail-closed 铁律 INV-9）
   等待预算: 0s
   留证: vitest RED-2 verbose 输出末 5 行（含 ✓ RED-2）
   Test: manual:bash -c 'bash -lc "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_test} NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js -t RED-2 --reporter=verbose"'
 
-- [ ] [BEHAVIOR] [L2] B-03: phase=failed 的终态 run 心跳 → rowCount=0、lease 不复活（含 leaseSeconds SSOT 默认）
+- [x] [BEHAVIOR] [L2] B-03: phase=failed 的终态 run 心跳 → rowCount=0、lease 不复活（含 leaseSeconds SSOT 默认）
   动作: 建 owned run 后 finalizeKernelRun 置 failed，再注入越界 now 用正确 session 调 writeHeartbeat（省略 leaseSeconds）
   预期观察: rowCount=0；phase 仍 failed；lease 不变；另一活跃 run 省略 leaseSeconds 时续租量=CONTROLLER_LEASE_DEFAULT_SECONDS(1800s)
   等待预算: 0s
   留证: vitest RED-3 verbose 输出末 5 行（含 ✓ RED-3 / ✓ RED-3b）
   Test: manual:bash -c 'bash -lc "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_test} NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js -t RED-3 --reporter=verbose"'
 
-- [ ] [BEHAVIOR] [L2] B-04: controllerSessionId 从创建端可信透传到 detached child（禁止仅凭 run_id 续租，RED-4）
+- [x] [BEHAVIOR] [L2] B-04: controllerSessionId 从创建端可信透传到 detached child（禁止仅凭 run_id 续租，RED-4）
   动作: 跑纯装配单测——parseArgs 解析 --controller-session-id、buildKernelLaunchArgs 构造 argv、resumeToken 透传
   预期观察: 3 个 it 全绿：args.controllerSessionId=传入值；argv 含 --controller-session-id 且其后紧跟同一 sid；argv 含 --run-id 与 --resume-token
   等待预算: 0s
   留证: vitest passthrough verbose 输出（3 passed）
   Test: manual:bash -c 'bash -lc "cd packages/brain && npx vitest run src/__tests__/controller-session-passthrough.test.js --reporter=verbose"'
 
-- [ ] [BEHAVIOR] [L2] B-05: Golden Path 全链真 PG 端到端（续租 + CAS fail-closed + reconcile 回收数=0 / mismatch 回收）
+- [x] [BEHAVIOR] [L2] B-05: Golden Path 全链真 PG 端到端（续租 + CAS fail-closed + reconcile 回收数=0 / mismatch 回收）
   动作: 对空库跑真 migration 后，执行整份 kernel-controller-lease-renewal 真 PG 集成文件
   预期观察: 整文件退出码 0，RED-1/1b/2/3/3b 全绿——续租跨 30m 后不被误杀、伪造/终态一律 CAS 拦截
   等待预算: 0s
