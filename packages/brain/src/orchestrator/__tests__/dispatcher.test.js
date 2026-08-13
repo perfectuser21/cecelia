@@ -135,6 +135,14 @@ describe('resolveAction', () => {
 describe('createDispatcher', () => {
   it('publisher 只接收 Judge PASS 的精确候选，并固定到 Generator 实际机器', async () => {
     const deps = makeDeps();
+    deps.launcher.launch.mockResolvedValueOnce(Object.freeze({
+      actualMachineId: 'us-mac-m4',
+      executionTransport: 'local-docker',
+      remoteJobId: null,
+      attestationStatus: 'local',
+      containerId: 'container-publisher',
+      jobId: null,
+    }));
     const candidate = {
       type: 'git_candidate',
       verification_status: 'verified',

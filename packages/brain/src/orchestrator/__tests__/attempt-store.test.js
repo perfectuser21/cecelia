@@ -1026,7 +1026,7 @@ describe('attempt store', () => {
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
 
-  it('projects only a verified generator pull request before callback commit', async () => {
+  it('不再接受 Generator 自报的 verified PR 投影', async () => {
     const verifiedSha = 'b'.repeat(40);
     const callbackResult = {
       status: 'completed',
@@ -1073,14 +1073,10 @@ describe('attempt store', () => {
       result: callbackResult,
     });
 
-    expect(client.query.mock.calls[5][0]).toMatch(
-      /UPDATE initiative_runs[\s\S]*pr_url=\$2/i,
-    );
-    expect(client.query.mock.calls[5][1]).toEqual([
-      input.runId,
-      'https://github.com/acme/repo/pull/42',
-      ATTEMPT_COST_ACCRUAL_USD,
-    ]);
+    expect(client.query.mock.calls.some(([sql]) => /pr_url=\$2/i.test(sql))).toBe(false);
+    expect(client.query.mock.calls.some(([sql]) => (
+      /UPDATE initiative_runs/i.test(sql) && /cost_usd/i.test(sql)
+    ))).toBe(true);
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
 
@@ -1116,7 +1112,6 @@ describe('attempt store', () => {
         .mockResolvedValueOnce({ rows: [running] })
         .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
         .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [{ id: input.runId }], rowCount: 1 })
         .mockResolvedValueOnce({}),
       release: vi.fn(),
@@ -1131,15 +1126,15 @@ describe('attempt store', () => {
       result: callbackResult,
     });
 
-    expect(client.query.mock.calls[5][0]).toMatch(/UPDATE initiative_runs[\s\S]*pr_url=\$2/i);
-    expect(client.query.mock.calls[5][1]).toEqual([
+    expect(client.query.mock.calls[4][0]).toMatch(/UPDATE initiative_runs[\s\S]*pr_url=\$2/i);
+    expect(client.query.mock.calls[4][1]).toEqual([
       input.runId,
       'https://github.com/acme/repo/pull/43',
       ATTEMPT_COST_ACCRUAL_USD,
     ]);
   });
 
-  it('commits a verified generator-fix verdict and PR projection atomically', async () => {
+  it('generator-fix 同样不能在 Judge 前投影 PR', async () => {
     const verifiedSha = 'c'.repeat(40);
     const callbackResult = {
       status: 'completed',
@@ -1188,9 +1183,8 @@ describe('attempt store', () => {
       result: callbackResult,
     });
 
-    expect(client.query.mock.calls[5][0]).toMatch(/verdict:generator-fix-callback/i);
-    expect(client.query.mock.calls[5][1].join(' ')).toContain(verifiedSha);
-    expect(client.query.mock.calls[6][0]).toMatch(/UPDATE initiative_runs/i);
+    expect(client.query.mock.calls.some(([sql]) => /verdict:generator-fix-callback/i.test(sql))).toBe(false);
+    expect(client.query.mock.calls.some(([sql]) => /pr_url=\$2/i.test(sql))).toBe(false);
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
 

@@ -20,8 +20,14 @@ git -C "$TEST_ROOT/workspace" add base.txt
 git -C "$TEST_ROOT/workspace" commit -m base >/dev/null
 BASE_SHA=$(git -C "$TEST_ROOT/workspace" rev-parse HEAD)
 
+# Global task identity alone does not mean this is a routed coding mutation.
+# Non-coding Harness roles must not be rejected or receive a writable lock.
 export WORKTREE_PATH="$TEST_ROOT/workspace"
 export CECELIA_TASK_ID=11111111-1111-4111-8111-111111111111
+unset CECELIA_ROUTING_RECEIPT_ID CECELIA_RUN_ID CECELIA_REPO CECELIA_BRANCH CECELIA_BASE_SHA
+install_routing_action_gate
+test ! -e "$TEST_ROOT/workspace/.dev-lock.cp-action-gate"
+
 export CECELIA_ROUTING_RECEIPT_ID=22222222-2222-4222-8222-222222222222
 export CECELIA_RUN_ID=33333333-3333-4333-8333-333333333333
 export CECELIA_REPO=cecelia

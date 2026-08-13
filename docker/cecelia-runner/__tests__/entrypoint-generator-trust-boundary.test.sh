@@ -121,4 +121,19 @@ jq -e --arg sha "$HEAD_SHA" '
     and .url == "https://github.com/perfectuser21/cecelia/pull/999" and .head_sha == $sha)] | length == 1
 ' "$TEST_ROOT/publisher-result.json" >/dev/null
 
+# A Judge-approved Generator fix may advance an existing task branch. The
+# trusted publisher must allow that exact fast-forward while still rejecting
+# non-fast-forward replacement.
+PREVIOUS_HEAD_SHA="$HEAD_SHA"
+printf 'follow-up\n' > "$TEST_ROOT/workspace/follow-up.txt"
+git -C "$TEST_ROOT/workspace" add follow-up.txt
+git -C "$TEST_ROOT/workspace" commit -m 'fix: trusted publisher follow-up' >/dev/null
+HEAD_SHA=$(git -C "$TEST_ROOT/workspace" rev-parse HEAD)
+cat > "$TEST_ROOT/publisher.json" <<JSON
+{"task_bundle":{"role":"publisher","run_id":"11111111-1111-4111-8111-111111111111","attempt_id":"55555555-5555-4555-8555-555555555555","inputs":{"task_id":"33333333-3333-4333-8333-333333333333","candidate":{"source_attempt_id":"22222222-2222-4222-8222-222222222222","repo":"perfectuser21/cecelia","branch":"cp-trusted-publisher","base_sha":"$PREVIOUS_HEAD_SHA","head_sha":"$HEAD_SHA"},"judge_verdict":{"verdict":"PASS","pr_head_sha":"$HEAD_SHA"},"merge_fence":{"allowed":true,"head_sha":"$HEAD_SHA"},"workspace_spec":{"repo":"perfectuser21/cecelia","branch":"cp-trusted-publisher","base_sha":"$HEAD_SHA","expected_head_sha":"$HEAD_SHA"}}}}
+JSON
+printf '%s\n' '{"status":"completed","summary":"published follow-up","artifacts":[],"checks":[],"decision":null,"error":null,"case_file":null}' > "$TEST_ROOT/publisher-result.json"
+publish_approved_generator_candidate "$TEST_ROOT/publisher-result.json"
+test "$(git --git-dir "$TEST_ROOT/remote.git" rev-parse refs/heads/cp-trusted-publisher)" = "$HEAD_SHA"
+
 echo 'generator trust boundary PASS'

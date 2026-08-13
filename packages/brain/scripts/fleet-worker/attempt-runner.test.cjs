@@ -314,6 +314,38 @@ async function prepareAndStartContainer(docker, input) {
 }
 
 describe('Fleet Worker Attempt runner', () => {
+  it('把 canonical Routing Receipt 身份完整注入真实 Runner 动作闸', async () => {
+    const deps = dependencies();
+    const runner = createRunner(deps);
+    const routingReceiptId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const workspaceSpec = request().workspace_spec;
+
+    await runner.prepare(request({
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: providerPrompt('generator', {
+          workspace_spec: workspaceSpec,
+          routing_identity: {
+            routing_receipt_id: routingReceiptId,
+            repo: 'cecelia',
+            branch: workspaceSpec.branch,
+            base_sha: workspaceSpec.base_sha,
+          },
+        }),
+      },
+    }));
+
+    expect(deps.docker.prepare).toHaveBeenCalledWith(expect.objectContaining({
+      roleEnv: expect.objectContaining({
+        CECELIA_ROUTING_RECEIPT_ID: routingReceiptId,
+        CECELIA_RUN_ID: RUN_ID,
+        CECELIA_REPO: 'cecelia',
+        CECELIA_BRANCH: workspaceSpec.branch,
+        CECELIA_BASE_SHA: workspaceSpec.base_sha,
+      }),
+    }));
+  });
+
   it('在 Provider prepare 前校验并物化 approved contract artifacts', async () => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'contract-artifacts-'));
     const content = 'test("routing", () => {})';
@@ -1807,6 +1839,18 @@ describe('Fleet Worker Attempt runner', () => {
       });
     });
     expect(deps.docker.remove).toHaveBeenCalledOnce();
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
+    await expect(runner.inspect(ATTEMPT_ID, {
+      owner: 'dispatcher-1',
+      generation: 0,
+    })).resolves.toMatchObject({
+      status: 'retained',
+      attempt_id: ATTEMPT_ID,
+    });
+    await expect(runner.terminal(ATTEMPT_ID)).resolves.toMatchObject({
+      status: 'retained',
+      attempt_id: ATTEMPT_ID,
+    });
     expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
   });
 

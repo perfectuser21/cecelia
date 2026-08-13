@@ -337,7 +337,6 @@ describe('remote Bridge prepare', () => {
         output: { format: 'jsonl' },
       },
       credential_envelope: ENVELOPE,
-      github_credential_envelope: GITHUB_ENVELOPE,
       callback_url: `${BRAIN_URL}/api/brain/harness/attempts/attempt-1/callback`,
       callback_token: CALLBACK_TOKEN,
     });
@@ -403,6 +402,20 @@ describe('remote Bridge prepare', () => {
     });
   });
 
+  it('accepts an attested retained-candidate terminal receipt', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(200, cleanupReceipt({
+      status: 'retained',
+    })));
+    const transport = createTransport({ fetchFn });
+
+    await expect(transport.terminal(operationInput('terminal'))).resolves.toEqual({
+      status: 'retained',
+      attempt_id: 'attempt-1',
+      actual_machine_id: MACHINE,
+      attestation_status: 'verified',
+    });
+  });
+
   it('rejects invalid prepare timeouts before credentials or Worker transport', async () => {
     const invalidCases = [
       ['codex', undefined],
@@ -449,7 +462,31 @@ describe('remote Bridge prepare', () => {
     });
   });
 
-  it.each(['planner', 'proposer', 'generator', 'evaluator'])(
+  it('does not issue a Provider credential to the trusted publisher transport', async () => {
+    const providerIssue = vi.fn(async () => ENVELOPE);
+    const githubIssue = vi.fn(async () => GITHUB_ENVELOPE);
+    const fetchFn = vi.fn(async () => jsonResponse(202, acceptedPrepareResponse()));
+    const transport = createTransport({
+      fetchFn,
+      credentialBroker: { issue: providerIssue },
+      githubCredentialBroker: { issue: githubIssue },
+    });
+
+    await transport.prepare(prepareInput({
+      bundle: {
+        role: 'publisher',
+        inputs: prepareInput().bundle.inputs,
+        constraints: { timeout_seconds: 3600 },
+      },
+    }));
+
+    expect(providerIssue).not.toHaveBeenCalled();
+    expect(githubIssue).toHaveBeenCalledOnce();
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body))
+      .not.toHaveProperty('credential_envelope');
+  });
+
+  it.each(['planner', 'proposer', 'evaluator', 'publisher'])(
     'binds one GitHub credential envelope to a %s Attempt and deadline',
     async (role) => {
       const issue = vi.fn(async () => GITHUB_ENVELOPE);
@@ -485,7 +522,13 @@ describe('remote Bridge prepare', () => {
       githubCredentialBroker: undefined,
     });
 
-    await expect(transport.prepare(prepareInput())).rejects.toThrow(
+    await expect(transport.prepare(prepareInput({
+      bundle: {
+        role: 'publisher',
+        inputs: prepareInput().bundle.inputs,
+        constraints: { timeout_seconds: 3600 },
+      },
+    }))).rejects.toThrow(
       'remote_bridge_github_credential_broker_unavailable',
     );
     expect(fetchFn).not.toHaveBeenCalled();
