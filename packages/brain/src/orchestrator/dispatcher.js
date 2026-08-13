@@ -159,7 +159,7 @@ function gpContractIdentity(payload) {
 function buildEvaluatorFeedback(observed) {
   const verdict = asObject(observed.evaluateVerdict);
   const result = asObject(observed.evaluateResult);
-  const currentPrSha = observed.pr?.head_sha;
+  const currentPrSha = observed.candidate?.head_sha ?? observed.pr?.head_sha;
   const attemptId = verdict.attempt_id;
   const resultAttemptId = result.attempt_id;
   const summary = typeof result.summary === 'string' ? result.summary.trim() : '';

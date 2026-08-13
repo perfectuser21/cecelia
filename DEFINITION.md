@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.14
+**Brain 版本**: 1.273.15
+
+## Brain 1.273.15 — Candidate-bound Generator Fix Feedback
+
+- Generator-fix 以 retained candidate SHA 校验并接收 Evaluator 反馈，远端 PR 落后时不再丢弃本轮真实失败原因。
 
 ## Brain 1.273.14 — Candidate-first Verdict Projection
 
