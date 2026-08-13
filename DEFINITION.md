@@ -8,9 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.65
+**Brain 版本**: 1.272.66
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.272.66 — Server-authoritative Judge Verdict
+
+- Evaluator 的 `FIXED` / `PASS_WITH_CONCERNS` 在进入独立 Judge 前只归一为待审 `PASS`，Judge Provider 的 FAIL 不再被上游 verdict 覆盖；Publisher 只接收服务端终判的字面 PASS。
+- Runner 为 Judge 签发专属 strict output schema，完整保留逐步骤 coverage、failure class 与 failure signature。
+- Work Router 与 WorkspaceSpec 共用 canonical `cp-*` branch 校验；缺省 Git evidence 的幂等重放复用首次冻结值，不随 main 前进漂移。
 
 ---
 

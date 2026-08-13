@@ -15,11 +15,14 @@ const shaSchema = (field) => z.string().regex(
 );
 
 const branchSchema = z.string()
-  .regex(TASK_BRANCH, 'branch must be a canonical cp-* task branch')
-  .refine(
-    (value) => !value.includes('..') && !value.endsWith('.lock'),
-    'branch contains a forbidden Git ref sequence',
-  );
+  .refine(isCanonicalTaskBranch, 'branch must be a canonical cp-* task branch');
+
+export function isCanonicalTaskBranch(value) {
+  return typeof value === 'string'
+    && TASK_BRANCH.test(value)
+    && !value.includes('..')
+    && !value.endsWith('.lock');
+}
 
 const workspaceSpecSchema = z.object({
   repo: z.enum(WORKSPACE_REPOSITORIES),

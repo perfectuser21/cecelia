@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 import { routeWork } from './work-router.js';
+import { isCanonicalTaskBranch } from './orchestrator/workspace-spec.js';
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
-const GIT_BRANCH_PATTERN = /^(?!.*\.\.)(?!.*\/$)[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return value.map(canonicalJson);
@@ -53,7 +53,7 @@ export async function resolveCanonicalRoutingEvidence(request, repositoryFacts) 
       throw error;
     }
   }
-  if (!GIT_BRANCH_PATTERN.test(branch) || !GIT_SHA_PATTERN.test(baseSha)) {
+  if (!isCanonicalTaskBranch(branch) || !GIT_SHA_PATTERN.test(baseSha)) {
     const error = new Error('routing_evidence_invalid');
     error.code = 'routing_evidence_invalid';
     throw error;
@@ -85,18 +85,45 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
     const facts = repositoryFacts ?? await loadRepositoryFacts(client);
     let routedRequest = request;
     let decision = routeWork(routedRequest, facts);
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      [`work-route:${request.source}:${request.source_id}:${decision.router_version}`],
+    );
+    const existing = await client.query(
+      `SELECT r.id AS routing_receipt_id, r.task_id,
+              to_jsonb(r) AS persisted_receipt, t.*
+         FROM work_routing_receipts r
+         JOIN tasks t ON t.id = r.task_id
+        WHERE r.source=$1 AND r.source_id=$2 AND r.router_version=$3`,
+      [request.source, request.source_id, decision.router_version],
+    );
     if (
       decision.work_kind === 'coding_mutation'
       && (!decision.evidence.branch || !decision.evidence.base_sha)
     ) {
-      const evidenceResolver = options.resolveRoutingEvidence
-        ?? resolveCanonicalRoutingEvidence;
-      const evidence = await evidenceResolver(
-        { ...routedRequest, repo: decision.repo },
-        facts,
-      );
+      const persistedEvidence = existing.rows[0]?.persisted_receipt?.evidence;
+      const evidence = persistedEvidence
+        ? {
+            branch: request.branch ?? persistedEvidence.branch,
+            base_sha: request.base_sha ?? persistedEvidence.base_sha,
+          }
+        : await (options.resolveRoutingEvidence ?? resolveCanonicalRoutingEvidence)(
+          { ...routedRequest, repo: decision.repo },
+          facts,
+        );
       routedRequest = { ...routedRequest, ...evidence };
       decision = routeWork(routedRequest, facts);
+    }
+    if (
+      decision.work_kind === 'coding_mutation'
+      && (
+        !isCanonicalTaskBranch(decision.evidence.branch)
+        || !GIT_SHA_PATTERN.test(decision.evidence.base_sha ?? '')
+      )
+    ) {
+      const error = new Error('routing_evidence_invalid');
+      error.code = 'routing_evidence_invalid';
+      throw error;
     }
     const task = request.task ?? {};
     const payload = {
@@ -117,18 +144,6 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         harness_runtime: 'kernel-v1',
       } : {}),
     };
-    await client.query(
-      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-      [`work-route:${request.source}:${request.source_id}:${decision.router_version}`],
-    );
-    const existing = await client.query(
-      `SELECT r.id AS routing_receipt_id, r.task_id,
-              to_jsonb(r) AS persisted_receipt, t.*
-         FROM work_routing_receipts r
-         JOIN tasks t ON t.id = r.task_id
-        WHERE r.source=$1 AND r.source_id=$2 AND r.router_version=$3`,
-      [request.source, request.source_id, decision.router_version],
-    );
     if (existing.rows[0]) {
       const persisted = existing.rows[0].persisted_receipt;
       const sameRoute = persisted.work_kind === decision.work_kind

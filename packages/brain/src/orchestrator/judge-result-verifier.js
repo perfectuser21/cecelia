@@ -14,6 +14,12 @@ function evaluatorBrainResult(value) {
   };
 }
 
+function normalizeEvaluatorPassVerdict(verdict) {
+  return ['PASS', 'FIXED', 'PASS_WITH_CONCERNS'].includes(verdict)
+    ? 'PASS'
+    : verdict;
+}
+
 export async function verifyJudgeCallbackResult({ attempt, result, dbPool }) {
   if (attempt?.role !== 'judge') return result;
   if (!['completed', 'completed_with_concerns'].includes(result?.status)) return result;
@@ -25,7 +31,7 @@ export async function verifyJudgeCallbackResult({ attempt, result, dbPool }) {
   const targetHeadSha = pr?.head_sha ?? candidateHeadSha;
   const providerDecision = result.decision ?? {};
   const judged = await runJudgeGate({
-    agentVerdict: evaluator?.verdict,
+    agentVerdict: normalizeEvaluatorPassVerdict(evaluator?.verdict),
     agentFeedback: inputs.evaluator_result?.decision?.reason ?? null,
     brainResult: evaluator,
     transcript: inputs.evaluator_result?.transcript,

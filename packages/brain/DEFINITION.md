@@ -1,6 +1,12 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.272.65
+**Brain 版本**: 1.272.66
+
+## Server-authoritative Judge Verdict（Brain 1.272.66）
+
+- Evaluator pass-family 只作为触发独立 Judge 的输入，不能越过服务端机械闸或覆盖 Judge Provider FAIL；服务端最终只投影 PASS/FAIL。
+- Judge Runner 使用角色专属结构化输出 schema，coverage、failure_class 与 failure_signature 不再被通用 schema 丢弃。
+- Routing Receipt 的 branch 与 WorkspaceSpec 共用 `cp-*` 合同；同一缺省请求重放复用已冻结 branch/base SHA。
 
 ## Fleet Judge 与 Canonical Routing Evidence（Brain 1.272.65）
 
