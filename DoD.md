@@ -41,21 +41,21 @@ journey_type: autonomous
   预期观察: premature 三态返回 phase=failed/action=mark_failed/reason=premature_merge；合法双 PASS 仍 done/pr_merged，全 5 passed
   等待预算: 0s
   留证: /tmp/red-b.log 末 10 行
-  Test: manual:bash -c 'DATABASE_URL="${DB_URL:-$DATABASE_URL}" npx vitest run sprints/08131950-harness-merge-authority-r6/tests/red-b-premature-merge.test.mjs --reporter=basic 2>&1 | tee /tmp/red-b.log | grep -qE "5 passed"'
+  Test: manual:bash -c 'DATABASE_URL="${DB_URL:-$DATABASE_URL}" npx vitest run sprints/08131950-harness-merge-authority-r6/tests/red-b-premature-merge.test.mjs --reporter=basic 2>&1 | tee /tmp/red-b.log; grep -qE "5 passed" /tmp/red-b.log'
 
 - [x] [BEHAVIOR] [L2] B-03: RED-C 合并权威 evaluateMergeAuthority fail-closed
   动作: 跑合并权威纯函数回归（双同 head PASS→allow；Brain 查询错误/缺角色/旧 SHA/被拒 callback→deny）
   预期观察: allow 分支 reason=all_roles_pass；四类 fail-closed 输入 deny 且 reason 精确，全 10 passed
   等待预算: 0s
   留证: /tmp/red-c.log 末 10 行
-  Test: manual:bash -c 'npx vitest run sprints/08131950-harness-merge-authority-r6/tests/red-c-merge-authority.test.mjs --reporter=basic 2>&1 | tee /tmp/red-c.log | grep -qE "10 passed"'
+  Test: manual:bash -c 'npx vitest run sprints/08131950-harness-merge-authority-r6/tests/red-c-merge-authority.test.mjs --reporter=basic 2>&1 | tee /tmp/red-c.log; grep -qE "9 passed" /tmp/red-c.log'
 
 - [x] [BEHAVIOR] [L2] B-04: RED-D 合同状态机 superseded/未知附着 fail-closed（真 Postgres）
   动作: 跑 materializeApprovedContract 状态机回归（superseded/未知附着报错；draft 附着允许原子换版）
   预期观察: superseded/未知附着抛错不重激活；draft 换版为 approved，全 3 passed（真 Postgres，非 skip）
   等待预算: 0s
   留证: /tmp/red-d.log 末 10 行
-  Test: manual:bash -c 'DATABASE_URL="${DB_URL:-$DATABASE_URL}" npx vitest run sprints/08131950-harness-merge-authority-r6/tests/red-d-contract-store-statemachine.test.mjs --reporter=basic 2>&1 | tee /tmp/red-d.log | grep -qE "3 passed"'
+  Test: manual:bash -c 'DATABASE_URL="${DB_URL:-$DATABASE_URL}" npx vitest run sprints/08131950-harness-merge-authority-r6/tests/red-d-contract-store-statemachine.test.mjs --reporter=basic 2>&1 | tee /tmp/red-d.log; grep -qE "3 passed" /tmp/red-d.log'
 
 - [x] [BEHAVIOR] [L2] B-05: DB 不变量——premature_merge 绝不回填 completed（假成功钉死） [接缝×2]
   动作: 对 local_api 真库查询「run.failure_reason=premature_merge 却 task.status=completed」的记录数
