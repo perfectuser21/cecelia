@@ -49,6 +49,26 @@ describe('actions.js - domain 自动填充', () => {
 
   // ===== createTask =====
   describe('createTask - domain 填充', () => {
+    it('harness_initiative 缺省仍按 coding mutation 分类，不得落入 operations', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      mockCreateRoutedTask.mockResolvedValueOnce({
+        task: { id: 'task-kernel', title: '修复执行链', status: 'queued' },
+      });
+
+      await createTask({
+        title: '修复执行链',
+        task_type: 'harness_initiative',
+        trigger_source: 'cortex',
+        declared_change_kind: 'bugfix',
+        repo_hint: 'cecelia',
+      });
+
+      expect(mockCreateRoutedTask.mock.calls[0][1]).toMatchObject({
+        mutation_intent: 'write',
+        declared_domain: 'coding',
+      });
+    });
+
     it('传入 domain=coding 时 INSERT 包含该 domain', async () => {
       const fakeTask = { id: 'task-1', title: '测试', status: 'queued' };
       mockQuery.mockResolvedValueOnce({ rows: [] }); // dedup

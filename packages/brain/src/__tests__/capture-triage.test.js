@@ -121,6 +121,15 @@ describe('runCaptureTriage 四路落地', () => {
     const pool = makePool([{ id: 'a1', target_type: 'issue', target_subtype: 'P1', content: 'x', routed_to_table: 'issues', routed_to_id: 'i1' }]);
     const r = await runCaptureTriage(pool);
     expect(r.processed).toBe(1);
+    expect(createTask).toHaveBeenCalledWith(expect.objectContaining({
+      db: pool.client,
+      mutation_intent: 'write',
+      declared_domain: 'coding',
+      declared_change_kind: 'bugfix',
+      repo_hint: 'cecelia',
+      map_scope_hint: ['factory/F1'],
+      base_sha: expect.stringMatching(/^[a-f0-9]{40}$/),
+    }));
     const upd = pool.updates[0];
     expect(upd.sql).toMatch(/status = 'confirmed'/);
     expect(upd.params.join(' ')).toContain('[triage:urgent]');
@@ -140,6 +149,15 @@ describe('runCaptureTriage 四路落地', () => {
       mode: 'headed',
       journey_id: 'jrn-1',
     });
+    expect(callArg).toMatchObject({
+      db: pool.client,
+      mutation_intent: 'write',
+      declared_domain: 'coding',
+      declared_change_kind: 'bugfix',
+      repo_hint: 'cecelia',
+      map_scope_hint: ['factory/F1'],
+    });
+    expect(callArg.base_sha).toMatch(/^[a-f0-9]{40}$/);
     expect(callArg.dedupe_key).toBe('capture-triage-line-backlog-a2');
     const upd = pool.updates[0];
     expect(upd.sql).toMatch(/status = 'confirmed'/);
@@ -169,6 +187,18 @@ describe('runCaptureTriage 四路落地', () => {
     const upd = pool.updates[0];
     expect(upd.sql).not.toMatch(/status = 'confirmed'/);
     expect(upd.params.join(' ')).not.toMatch(/\[triage:/);
+  });
+
+  it('line_backlog：atom 更新失败时 task 与 receipt 共用事务并回滚', async () => {
+    const pool = makePool([
+      { id: 'a2e', target_type: 'handoff', target_subtype: 'FAIL', content: 'x', routed_to_table: 'tasks', routed_to_id: 't1' },
+    ], { updateThrows: true });
+
+    const result = await runCaptureTriage(pool);
+
+    expect(result.failed).toBe(1);
+    expect(createTask).toHaveBeenCalledWith(expect.objectContaining({ db: pool.client }));
+    expect(pool.txStatements).toEqual(['BEGIN', 'ROLLBACK']);
   });
 
   it('line_backlog 但源 task 无 journey_id → 转 parked，ai_reason 标 no_journey', async () => {
