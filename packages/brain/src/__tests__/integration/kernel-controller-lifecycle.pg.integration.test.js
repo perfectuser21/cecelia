@@ -478,6 +478,39 @@ describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（�
     expect((await runRow(created.run.id)).phase).toBe('failed');
   });
 
+  it('reconciler 扫描后 authority 已修复时不误杀 run',async()=>{
+    const {initiativeId,taskId}=await seedTask();
+    const created=await createRoutedKernelRun(testPool,{taskId,initiativeId,phase:'planning',
+      journeyId:null,abilityId:null,host:'kernel-v1',deadlineHours:8,createdSource:'kernel_dispatch'});
+    await testPool.query('UPDATE kernel_controller_sessions SET run_id=NULL WHERE id=$1',
+      [created.run.controller_session_id]);
+    const blocker=await testPool.connect();
+    const reconcilePool=new Pool({...DB_DEFAULTS,database:databaseName,max:1,
+      application_name:'ctllife-authority-repair-race'});
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('SELECT id FROM tasks WHERE id=$1 FOR UPDATE',[taskId]);
+      const sweep=reconcileOwnerlessKernelRuns(reconcilePool,{now:new Date()});
+      await waitForBackendLock('ctllife-authority-repair-race');
+      await testPool.query('UPDATE kernel_controller_sessions SET run_id=$2 WHERE id=$1',
+        [created.run.controller_session_id,created.run.id]);
+      await blocker.query('COMMIT');
+
+      expect(await sweep).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({runId:created.run.id}),
+      ]));
+      const row=await testPool.query(
+        `SELECT run.phase,session.status,session.run_id FROM initiative_runs run
+         JOIN kernel_controller_sessions session ON session.id=run.controller_session_id
+         WHERE run.id=$1`,[created.run.id]);
+      expect(row.rows[0]).toEqual({phase:'planning',status:'active',run_id:created.run.id});
+    } finally {
+      await blocker.query('ROLLBACK').catch(()=>{});
+      blocker.release();
+      await reconcilePool.end();
+    }
+  });
+
   it('heartbeat 与 sweeper 同时竞争时无死锁且只有一方取得终态',async()=>{
     const {initiativeId,taskId}=await seedTask();
     const created=await createRoutedKernelRun(testPool,{taskId,initiativeId,phase:'planning',
