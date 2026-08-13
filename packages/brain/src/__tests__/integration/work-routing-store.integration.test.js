@@ -243,4 +243,69 @@ describe('routing store transaction contract', () => {
       base_sha: 'c'.repeat(40),
     });
   });
+
+  it('拒绝 WorkspaceSpec 无法消费的非 cp-* coding branch，且不写 task/receipt', async () => {
+    const client = { query: vi.fn(async (sql) => {
+      if (String(sql).includes('INSERT INTO tasks')) return { rows: [{ id: 'must-not-exist' }] };
+      if (String(sql).includes('INSERT INTO work_routing_receipts')) {
+        return { rows: [{ id: 'must-not-exist' }] };
+      }
+      return { rows: [] };
+    }) };
+
+    await expect(createRoutedTask(client, {
+      source: 'api', source_id: 'invalid-feature-branch', title: 'invalid branch',
+      mutation_intent: 'write', declared_change_kind: 'bugfix',
+      repo_hint: 'perfectuser21/cecelia',
+      branch: 'feature/foo', base_sha: 'd'.repeat(40),
+    }, REPOSITORY_FACTS)).rejects.toThrow(/routing_evidence_invalid/);
+
+    expect(client.query.mock.calls.some(([sql]) => (
+      String(sql).includes('INSERT INTO tasks')
+      || String(sql).includes('INSERT INTO work_routing_receipts')
+    ))).toBe(false);
+  });
+
+  it('缺省 branch/base 的幂等重放复用已冻结 evidence，不重读已经前进的 main', async () => {
+    const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://localhost/cecelia_test';
+    const testPool = new Pool({ connectionString: databaseUrl });
+    const client = await testPool.connect();
+    const resolvedEvidence = [
+      { branch: 'cp-route-replay-stable', base_sha: 'e'.repeat(40) },
+      { branch: 'cp-route-replay-stable', base_sha: 'f'.repeat(40) },
+    ];
+    const resolveRoutingEvidence = vi.fn(async () => resolvedEvidence.shift());
+    try {
+      await client.query('BEGIN');
+      const sourceId = `routing-stable-replay-${crypto.randomUUID()}`;
+      const request = {
+        source: 'inbox', source_id: sourceId, title: 'stable replay',
+        mutation_intent: 'write', declared_change_kind: 'bugfix',
+        repo_hint: 'perfectuser21/cecelia',
+      };
+      const first = await createRoutedTask(client, request, REPOSITORY_FACTS, {
+        transaction: 'existing', resolveRoutingEvidence,
+      });
+      const replay = await createRoutedTask(client, request, REPOSITORY_FACTS, {
+        transaction: 'existing', resolveRoutingEvidence,
+      });
+
+      expect(resolveRoutingEvidence).toHaveBeenCalledOnce();
+      expect(replay).toMatchObject({
+        deduplicated: true,
+        task_id: first.task_id,
+        routing_receipt_id: first.routing_receipt_id,
+        decision: {
+          evidence: {
+            branch: 'cp-route-replay-stable',
+            base_sha: 'e'.repeat(40),
+          },
+        },
+      });
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+      await testPool.end();
+    }
+  });
 });
