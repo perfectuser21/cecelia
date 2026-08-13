@@ -14,9 +14,21 @@ import pool from '../db.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CONTENT_TYPES_DIR = __dirname;
+const CONTENT_TYPE_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/i;
 
 // 必填字段定义
 const REQUIRED_FIELDS = ['content_type', 'images', 'template', 'review_rules', 'copy_rules'];
+
+function assertValidContentTypeName(typeName) {
+  if (typeof typeName !== 'string' || !CONTENT_TYPE_NAME_PATTERN.test(typeName)) {
+    throw new Error('content_type_name_invalid');
+  }
+}
+
+function listYamlFileNames() {
+  return readdirSync(CONTENT_TYPES_DIR)
+    .filter((fileName) => fileName.endsWith('.yaml') || fileName.endsWith('.yml'));
+}
 
 /**
  * 验证内容类型配置是否包含所有必填字段
@@ -44,7 +56,13 @@ function validateConfig(typeName, config) {
  * @returns {object|null} 配置对象或 null
  */
 function getContentTypeFromYaml(typeName) {
-  const yamlPath = join(CONTENT_TYPES_DIR, `${typeName}.yaml`);
+  assertValidContentTypeName(typeName);
+  const yamlFileName = listYamlFileNames()
+    .find((fileName) => fileName.replace(/\.(yaml|yml)$/, '') === typeName);
+  if (!yamlFileName) {
+    return null;
+  }
+  const yamlPath = join(CONTENT_TYPES_DIR, yamlFileName);
 
   let rawContent;
   try {
@@ -74,14 +92,12 @@ function getContentTypeFromYaml(typeName) {
 function listContentTypesFromYaml() {
   let files;
   try {
-    files = readdirSync(CONTENT_TYPES_DIR);
+    files = listYamlFileNames();
   } catch (err) {
     throw new Error(`读取内容类型目录失败：${err.message}`);
   }
 
-  return files
-    .filter((f) => f.endsWith('.yaml') || f.endsWith('.yml'))
-    .map((f) => f.replace(/\.(yaml|yml)$/, ''));
+  return files.map((f) => f.replace(/\.(yaml|yml)$/, ''));
 }
 
 /**
@@ -91,9 +107,7 @@ function listContentTypesFromYaml() {
  * @throws {Error} 配置无效时抛出
  */
 async function getContentType(typeName) {
-  if (typeof typeName !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,127}$/i.test(typeName)) {
-    throw new Error('content_type_name_invalid');
-  }
+  assertValidContentTypeName(typeName);
   // 1. 先查 DB content_type_configs 表
   try {
     const result = await pool.query(
