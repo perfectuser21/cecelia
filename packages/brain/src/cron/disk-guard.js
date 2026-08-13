@@ -6,8 +6,11 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import { existsSync } from 'fs'
 import { homedir } from 'os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { raise } from '../alerting.js'
 import { sendBark } from '../notifier.js'
+import { cleanOldKernelLogs as cleanOldKernelLogsDefault } from './kernel-log-cleanup.js'
 
 const execAsync = promisify(exec)
 
@@ -51,6 +54,7 @@ export async function runDiskGuard(deps = {}) {
   const _raise = deps.raise || raise
   const _sendBark = deps.sendBark || sendBark
   const _runWorktreeReaper = deps.runWorktreeReaper || null
+  const _cleanOldKernelLogs = deps.cleanOldKernelLogs || cleanOldKernelLogsDefault
 
   let used = -1
   let action = 'none'
@@ -75,6 +79,13 @@ export async function runDiskGuard(deps = {}) {
         await runWorktreeReaper().catch(e => console.warn('[disk_check] worktree reaper failed:', e.message))
       }
       await _exec(buildHostCmd('npm cache clean --force 2>/dev/null; brew cleanup 2>/dev/null; true', inContainer)).catch(e => console.warn('[disk_check] npm/brew cache clean failed:', e.message))
+
+      const kernelLogDir = join(process.env.REPO_ROOT || fileURLToPath(new URL('../../../..', import.meta.url)), 'logs', 'kernel')
+      try {
+        await _cleanOldKernelLogs(kernelLogDir)
+      } catch (e) {
+        console.warn('[disk_check] kernel log cleanup failed:', e.message)
+      }
 
       // 复测
       const { stdout: stdout2 } = await _exec(hostCmd)
