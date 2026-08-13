@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.272.48
+**Brain 版本**: 1.272.49
+
+## Repeatable Router Acceptance（Brain 1.272.49）
+
+- Unified Work Router scratch 验收为同一 Git revision 的每次执行生成独立入口身份，确保连续运行仍真实创建新 task/run，并重新验证 stale Map fail-closed 与刷新恢复，而不是复用上次 active run 假绿。
 
 ## Routed Regression Closure（Brain 1.272.48）
 

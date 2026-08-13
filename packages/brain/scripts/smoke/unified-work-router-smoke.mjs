@@ -12,14 +12,13 @@ import { projectMapManifest } from '../../src/lib/map-projection-store.js';
 import { createKernelRun } from '../../src/orchestrator/kernel-run-store.js';
 import captureAtomsRouter from '../../src/routes/capture-atoms.js';
 import taskTasksRouter from '../../src/routes/task-tasks.js';
+import { createSmokeIdentity } from './unified-work-router-smoke-identity.mjs';
 
 const repoRoot = new URL('../../../..', import.meta.url).pathname.replace(/\/$/, '');
 const sourceRevision = execFileSync('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const branch = execFileSync('git', ['-C', repoRoot, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
 const mapScope = ['F0'];
-const smokeRevision = sourceRevision.slice(0, 12);
-const titlePrefix = `[uwr-smoke-${smokeRevision}]`;
-const sourceNamespace = `uwr-smoke:${sourceRevision}`;
+const { titlePrefix, sourceNamespace } = createSmokeIdentity(sourceRevision);
 const assertionRef = 'packages/brain/src/orchestrator/preflight/map-impact-contract.test.js';
 
 function invariant(condition, message) {
