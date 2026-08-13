@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.2
+**Brain 版本**: 1.273.3
+
+## Recovery Trust Boundary 回归合同（Brain 1.273.3）
+
+- 显式恢复 Run 仍精确继承 predecessor 与批准合同，但当前 Run 必须先由 Generator 封印候选再进入 Evaluator。
+- 恢复血统真库夹具显式持有 Controller session/lease，继续验证无主 Kernel Run fail-closed。
 
 ## Routed Controller 真实验收（Brain 1.273.2）
 

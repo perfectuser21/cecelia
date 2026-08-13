@@ -44,6 +44,8 @@ beforeAll(async () => {
       impact_contract_policy text, impact_contract_policy_reason text,
       impact_contract_policy_decision_id text, map_recovery_contract_id uuid,
       contract_id uuid, predecessor_run_id uuid,
+      controller_session_id uuid,
+      controller_lease_expires_at timestamptz,
       started_at timestamptz NOT NULL DEFAULT now()
     );
     CREATE UNIQUE INDEX one_active_kernel_run
@@ -116,6 +118,7 @@ describe('explicit recovery lineage [PostgreSQL]', () => {
       host: 'integration', deadlineHours: 1,
       createdSource: 'explicit_recovery',
       predecessorRunId: ids.predecessorRunId,
+      controllerSessionId: randomUUID(),
     }, {
       ensureMapImpactPreflight: async () => ({ contract: { id: 'impact', status: 'active' } }),
     });
@@ -144,6 +147,7 @@ describe('explicit recovery lineage [PostgreSQL]', () => {
       host: 'integration', deadlineHours: 1,
       createdSource: 'explicit_recovery',
       predecessorRunId: ids.predecessorRunId,
+      controllerSessionId: randomUUID(),
     }, {
       ensureMapImpactPreflight: async () => ({ contract: { id: 'impact', status: 'active' } }),
     })).rejects.toThrow('explicit recovery predecessor is invalid');

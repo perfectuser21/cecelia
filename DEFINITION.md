@@ -8,11 +8,16 @@
 
 
 
-**Brain 版本**: 1.273.2
+**Brain 版本**: 1.273.3
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.273.3 — Recovery Trust Boundary 回归合同
+
+- 显式恢复 Run 继承已批准合同与精确 predecessor，但不能借前序 PR 跳过当前 Run 的 Generator 候选封印。
+- PostgreSQL 恢复血统验收同步要求 Session Controller ownership，杜绝无主恢复 Run。
 
 ## Brain 1.273.2 — Routed Controller 真实验收
 
