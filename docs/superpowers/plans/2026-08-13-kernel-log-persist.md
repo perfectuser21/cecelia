@@ -18,7 +18,7 @@
 - Modify: `packages/brain/src/harness-skill-relay.js:134-138`
 - Test: `packages/brain/src/__tests__/harness-kernel-launch.test.js`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `packages/brain/src/__tests__/harness-kernel-launch.test.js` 的 `describe('launchKernelProcess detached spawn receipt', ...)` 块内，紧接在已有的"刀0：detached kernel 的 stdio 落盘..."测试后面，新增：
 
@@ -53,12 +53,12 @@
 
 不需要新增 import——`mkdtempSync`、`existsSync`、`tmpdir`、`join` 在该测试文件顶部已全部导入（第 2-4 行）。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd packages/brain && npx vitest run src/__tests__/harness-kernel-launch.test.js`
 Expected: 新增的这条 FAIL（实际路径仍含 `/tmp/cecelia-kernel-logs`，不等于 `expectedLogPath`）；已有 2 条测试仍 PASS。
 
-- [ ] **Step 3: 写最小实现**
+- [x] **Step 3: 写最小实现**
 
 编辑 `packages/brain/src/harness-skill-relay.js` 第 134-138 行，把：
 
@@ -87,12 +87,12 @@ Expected: 新增的这条 FAIL（实际路径仍含 `/tmp/cecelia-kernel-logs`�
 
 `join` 已在文件顶部导入（第 22 行 `import { join } from 'node:path';`），无需新增 import。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cd packages/brain && npx vitest run src/__tests__/harness-kernel-launch.test.js`
 Expected: 全部 3 条 PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/kernel-log-persist
@@ -114,7 +114,7 @@ git commit -m "fix(brain): kernel落盘日志默认目录改为REPO_ROOT/logs/ke
 - Create: `packages/brain/src/cron/kernel-log-cleanup.js`
 - Test: `packages/brain/src/cron/kernel-log-cleanup.test.js`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 创建 `packages/brain/src/cron/kernel-log-cleanup.test.js`：
 
@@ -168,12 +168,12 @@ describe('cleanOldKernelLogs', () => {
 })
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd packages/brain && npx vitest run src/cron/kernel-log-cleanup.test.js`
 Expected: FAIL（`kernel-log-cleanup.js` 不存在，`Cannot find module`）。
 
-- [ ] **Step 3: 写最小实现**
+- [x] **Step 3: 写最小实现**
 
 创建 `packages/brain/src/cron/kernel-log-cleanup.js`：
 
@@ -216,12 +216,12 @@ export function cleanOldKernelLogs(logDir, ttlMs = KERNEL_LOG_TTL_MS, nowMs = Da
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cd packages/brain && npx vitest run src/cron/kernel-log-cleanup.test.js`
 Expected: 全部 3 条 PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/kernel-log-persist
@@ -240,7 +240,7 @@ git commit -m "feat(brain): 新增kernel日志TTL清理函数(默认7天)
 - Modify: `packages/brain/src/cron/disk-guard.js`
 - Test: `packages/brain/src/cron/disk-guard.test.js:20-74`（扩展 `[BEHAVIOR-1]`）
 
-- [ ] **Step 1: 写失败测试（修改现有 BEHAVIOR-1）**
+- [x] **Step 1: 写失败测试（修改现有 BEHAVIOR-1）**
 
 在 `packages/brain/src/cron/disk-guard.test.js` 中，把 `[BEHAVIOR-1]` 测试（第 20-74 行）改为：
 
@@ -310,12 +310,12 @@ git commit -m "feat(brain): 新增kernel日志TTL清理函数(默认7天)
 
 （其余 `[BEHAVIOR-2]` 至 `[BEHAVIOR-10]` 测试不动。）
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd packages/brain && npx vitest run src/cron/disk-guard.test.js`
 Expected: `[BEHAVIOR-1]` FAIL（`callOrder` 实际序列缺 `kernel_log_cleanup`，`cleanOldKernelLogsMock` 未被调用）；`[BEHAVIOR-2]` 至 `[BEHAVIOR-10]` 仍 PASS。
 
-- [ ] **Step 3: 写最小实现**
+- [x] **Step 3: 写最小实现**
 
 编辑 `packages/brain/src/cron/disk-guard.js`：
 
@@ -355,12 +355,12 @@ import { cleanOldKernelLogs as cleanOldKernelLogsDefault } from './kernel-log-cl
 
 （`disk-guard.js` 在 `packages/brain/src/cron/`，比 `harness-skill-relay.js` 深一层，兜底相对路径用 4 级 `../../../..`——已用 node 脚本验证与 `ops.js` 同款深度，跟 Task 1 的 3 级不是同一个数字，不要弄混。）
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cd packages/brain && npx vitest run src/cron/disk-guard.test.js`
 Expected: 全部 10 条 `[BEHAVIOR-*]` PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/kernel-log-persist
@@ -385,7 +385,7 @@ git commit -m "feat(brain): disk-guard清理序列挂进kernel日志TTL清理
 
 当前版本（改动前实测）：`1.272.22`。本次改动触碰 `packages/brain/src/**`，`brain-version-bump-gate` 要求 PR 版本严格大于 base，patch bump 到 `1.272.23`。
 
-- [ ] **Step 1: bump packages/brain 自身版本**
+- [x] **Step 1: bump packages/brain 自身版本**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/kernel-log-persist/packages/brain
@@ -394,7 +394,7 @@ npm version patch --no-git-tag-version
 
 Expected: 输出 `v1.272.23`；`package.json` 与 `package-lock.json` 的 `version` 字段均变为 `1.272.23`。
 
-- [ ] **Step 2: 同步 .brain-versions**
+- [x] **Step 2: 同步 .brain-versions**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/kernel-log-persist
@@ -405,7 +405,7 @@ tail -3 .brain-versions
 
 Expected: 最后一行是 `1.272.23`。
 
-- [ ] **Step 3: 同步 DEFINITION.md**
+- [x] **Step 3: 同步 DEFINITION.md**
 
 编辑 `DEFINITION.md` 第 11 行，把：
 ```
@@ -416,7 +416,7 @@ Expected: 最后一行是 `1.272.23`。
 **Brain 版本**: 1.272.23
 ```
 
-- [ ] **Step 4: 同步根 package-lock.json 的 workspace 条目（容易漏的第 5 处，PR #4840 踩过）**
+- [x] **Step 4: 同步根 package-lock.json 的 workspace 条目（容易漏的第 5 处，PR #4840 踩过）**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/kernel-log-persist
@@ -429,7 +429,7 @@ console.log('root package-lock.json packages[\"packages/brain\"].version =', d.p
 
 Expected: 打印 `1.272.23`。
 
-- [ ] **Step 5: 跑本地 version sync 校验脚本确认全绿**
+- [x] **Step 5: 跑本地 version sync 校验脚本确认全绿**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/kernel-log-persist
@@ -438,7 +438,7 @@ bash scripts/check-version-sync.sh
 
 Expected: `✅ All version files in sync`。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/kernel-log-persist
@@ -458,7 +458,7 @@ kernel落盘日志持久化修复触碰packages/brain/src/**,brain-version-bump-
 
 **Files:** 无新文件，验证性任务
 
-- [ ] **Step 1: 跑受影响模块全部单测**
+- [x] **Step 1: 跑受影响模块全部单测**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/kernel-log-persist/packages/brain
@@ -467,7 +467,7 @@ npx vitest run src/__tests__/harness-kernel-launch.test.js src/__tests__/harness
 
 Expected: 全部 PASS，0 failed。
 
-- [ ] **Step 2: 跑 brain 全量单测（防止改动波及无关模块）**
+- [x] **Step 2: 跑 brain 全量单测（防止改动波及无关模块）**
 
 ```bash
 cd /Users/administrator/worktrees/cecelia/kernel-log-persist/packages/brain
@@ -476,7 +476,7 @@ npx vitest run
 
 Expected: 全部 PASS（跟 main 分支基线对比，不新增 failed）。
 
-- [ ] **Step 3: 集成验收（哨兵，环境接缝，CI 测不到，必须真实验证）**
+- [x] **Step 3: 集成验收（哨兵，环境接缝，CI 测不到，必须真实验证）**
 
 这是本次修复唯一的存在理由——PR merge 部署后，人工执行：
 
