@@ -58,6 +58,7 @@ import('./src/capture-triage.js').then(async (triage) => {
   const atomProdId = require('crypto').randomUUID();
   const cleanup = async () => {
     await pool.query('DELETE FROM capture_atoms WHERE id = ANY(\$1::uuid[])', [[atomOkId, atomProdId]]);
+    await pool.query("UPDATE tasks SET title = title || ' [smoke:' || left(id::text, 8) || ']', updated_at=NOW() WHERE payload->>'thin_prd' = \$1 AND status NOT IN ('completed','cancelled')", ['smoke:决策57d296a1line_backlog真环境验证']);
     await pool.query("UPDATE tasks SET status='cancelled', updated_at=NOW() WHERE payload->>'thin_prd' = \$1 AND status NOT IN ('completed','cancelled')", ['smoke:决策57d296a1line_backlog真环境验证']);
     await pool.query('DELETE FROM tasks WHERE id = \$1::uuid', [srcTaskId]);
   };
@@ -67,11 +68,11 @@ import('./src/capture-triage.js').then(async (triage) => {
       [srcTaskId, JSON.stringify({ journey_id: journeyId })]
     );
     await pool.query(
-      \"INSERT INTO capture_atoms (id, content, target_type, target_subtype, routed_to_table, routed_to_id, status) VALUES (\$1::uuid, \$2, 'handoff', 'FAIL', 'tasks', \$3::uuid, 'pending_review')\",
+      \"INSERT INTO capture_atoms (id, content, target_type, target_subtype, routed_to_table, routed_to_id, status, created_at) VALUES (\$1::uuid, \$2, 'handoff', 'FAIL', 'tasks', \$3::uuid, 'pending_review', '1900-01-01'::timestamptz)\",
       [atomOkId, 'smoke:决策57d296a1line_backlog真环境验证', srcTaskId]
     );
     await pool.query(
-      \"INSERT INTO capture_atoms (id, content, target_type, target_subtype, routed_to_table, routed_to_id, status) VALUES (\$1::uuid, \$2, 'handoff', 'FAIL', 'tasks', \$3::uuid, 'pending_review')\",
+      \"INSERT INTO capture_atoms (id, content, target_type, target_subtype, routed_to_table, routed_to_id, status, created_at) VALUES (\$1::uuid, \$2, 'handoff', 'FAIL', 'tasks', \$3::uuid, 'pending_review', '1900-01-01'::timestamptz)\",
       [atomProdId, '这是生产环境变更 smoke:决策57d296a1', srcTaskId]
     );
 

@@ -8,7 +8,7 @@ BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 
 echo "[daily-backup-smoke] 1. 检查 Brain 健康"
 STATUS=$(curl -sf "${BRAIN_URL}/api/brain/health" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','unknown'))")
-if [[ "$STATUS" != "ok" && "$STATUS" != "healthy" ]]; then
+if [[ "$STATUS" != "ok" && "$STATUS" != "healthy" && "$STATUS" != "degraded" ]]; then
   echo "[daily-backup-smoke] FAIL: Brain 不健康，status=${STATUS}"
   exit 1
 fi

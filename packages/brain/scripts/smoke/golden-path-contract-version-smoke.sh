@@ -3,7 +3,7 @@
 set -euo pipefail
 
 API="${BRAIN_URL:-http://localhost:5221}/api/brain"
-DB_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
+DB_URL="${DB_URL:-${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}}"
 RUN_KEY="gp-contract-smoke-$(date +%s)-$$"
 GP_ID=""
 JOURNEY_ID=""
@@ -11,13 +11,23 @@ PROPOSAL_TASK_ID=""
 ACTION_V1=""
 ACTION_V2=""
 
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+DATABASE_URL="$DB_URL" REPO_ROOT_CECELIA="$REPO_ROOT" \
+  GRAPH_REPOS=cecelia SKIP_GIT_PULL=1 FACT_SNAPSHOT_TEST_MODE=1 MAP_REBUILD_DISABLED=1 \
+  bash "$REPO_ROOT/scripts/scan/run-all-scans.sh"
+
 cleanup() {
   [ -n "$GP_ID" ] || return 0
   psql "$DB_URL" -v ON_ERROR_STOP=1 -q <<SQL
 DELETE FROM golden_path_contract_versions WHERE golden_path_id = '$GP_ID';
 DELETE FROM decisions WHERE context->>'golden_path_id' = '$GP_ID';
 DELETE FROM golden_paths WHERE id = '$GP_ID';
-DELETE FROM tasks
+UPDATE tasks
+   SET title = title || ' [smoke:' || left(id::text, 8) || ']',
+       updated_at = NOW()
+ WHERE id = NULLIF('$PROPOSAL_TASK_ID', '')::uuid
+    OR payload->>'golden_path_id' = '$GP_ID';
+UPDATE tasks SET status='cancelled', updated_at=NOW()
  WHERE id = NULLIF('$PROPOSAL_TASK_ID', '')::uuid
     OR payload->>'golden_path_id' = '$GP_ID';
 DELETE FROM pending_actions
@@ -58,7 +68,7 @@ JOURNEY_ID=$(psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc \
    RETURNING id" | head -1)
 
 request POST /golden-paths \
-  "{\"title\":\"$RUN_KEY\",\"one_liner\":\"真实合同签字生命周期\",\"journey_id\":\"$JOURNEY_ID\"}"
+  "{\"title\":\"$RUN_KEY\",\"one_liner\":\"真实合同签字生命周期\",\"journey_id\":\"$JOURNEY_ID\",\"change_kind\":\"bugfix\",\"base_repo\":\"cecelia\",\"map_scope\":[\"factory/F1\"]}"
 expect_code 201
 GP_ID=$(jq -er '.golden_path.id' <<<"$HTTP_BODY")
 
