@@ -313,6 +313,54 @@ export function parseHarnessResult(
   return classified;
 }
 
+// PG 真跑证据指纹：behavior_tests 里某条命令含 psql / pg_* 且 exit_code===0，
+// 即视为「合同 PG 必验项在执行位真跑过并留了退出码」。
+const POSTGRES_EVIDENCE_RE = /(?:^|[^A-Za-z0-9_])(?:psql|pg_[a-z][a-z0-9_]*)(?![A-Za-z0-9_])/;
+
+function hasPostgresRunEvidence(behaviorTests) {
+  if (!Array.isArray(behaviorTests)) return false;
+  return behaviorTests.some((bt) => (
+    bt
+    && POSTGRES_EVIDENCE_RE.test(String(bt.command ?? ''))
+    && Number(bt.exit_code) === 0
+  ));
+}
+
+/**
+ * Evaluator 出口守卫（本 sprint 新增）：合同必验项 unverifiable 时强制 verdict != 'PASS'。
+ *
+ * 「unverifiable」= 合同要求 postgres（requirements.postgres===true）但执行位
+ * runtime_resources.postgres!==true（PG 未供给），或 behavior_tests 缺 PG 真跑证据
+ * （无 psql/pg_* 命令 exit_code=0 的条目）。此时把 PASS 归为非 PASS（FAIL），
+ * failure_class='evidence_insufficient'（缺的是取证，走 Evaluator 补证而非 Generator 改码）。
+ * 合同不要求 postgres 时守卫不改动 verdict（边界不变）。
+ */
+export function enforceVerifiableEvaluatorVerdict({
+  verdict,
+  requirements,
+  runtimeResources,
+  behaviorTests,
+} = {}) {
+  const requiresPostgres = requirements?.postgres === true;
+  if (!requiresPostgres) {
+    return { verdict, downgraded: false };
+  }
+  const runtimeHasPostgres = runtimeResources?.postgres === true;
+  const verifiable = runtimeHasPostgres && hasPostgresRunEvidence(behaviorTests);
+  if (verifiable) {
+    return { verdict, downgraded: false };
+  }
+  // 必验项无法真验 → 禁 PASS。归 FAIL 并标 evidence_insufficient（反映缺证）。
+  return {
+    verdict: verdict === 'PASS' ? 'FAIL' : verdict,
+    downgraded: verdict === 'PASS',
+    failure_class: 'evidence_insufficient',
+    reason: !runtimeHasPostgres
+      ? 'contract_requires_postgres_but_runtime_unavailable'
+      : 'contract_requires_postgres_but_behavior_tests_missing_real_run',
+  };
+}
+
 export function toKernelStatus(status) {
   const mapping = {
     completed: 'DONE',

@@ -8,11 +8,16 @@
 
 
 
-**Brain 版本**: 1.272.37
+**Brain 版本**: 1.272.38
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.38 — Evaluator 真环境取证闭环 r2（PG runtime 自动申请 + Judge 反馈回灌）
+
+- 合同可执行验收含 `psql`/`pg_*` 命令时机械派生 PostgreSQL capability requirement（`contractRequiresPostgres`），不依赖人工手填；PG 不可供给时 dispatcher fail-closed 返回 `control_status=BLOCKED`。
+- recollect 轮向下一轮 Evaluator TaskBundle 注入 `inputs.judge_feedback`（缺证清单 + 原始反馈），打破同构重跑；`enforceVerifiableEvaluatorVerdict` 出口守卫在必验项 unverifiable 时强制 `verdict != PASS`；judge evidence_insufficient verdict 落库含结构化 `missing_evidence[]`。
 
 ## Brain 1.272.37 — Fleet pgvector 运行时契约
 
