@@ -1,0 +1,33 @@
+{
+  "initiative_id": "intent:7a81eb38-c72b-4ccd-b228-c78a7f6f1446:26",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动集中于 packages/brain 后端（fleet-worker 脚本 + orchestrator 状态机），无 UI/agent 协议/engine 路径命中。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Fleet Worker 实例 namespace ownership fence + quarantined attempt 确定终态",
+      "scope": "①容器 ownership 加稳定 instance namespace（fleet-worker.cjs 从 data root 持久化身份派生并落盘、重启复用，传入 createAttemptRunner；attempt-runner.cjs labelsFor 写 cecelia.fleet.instance_namespace，listOwned 按 worker_id+instance_namespace 过滤，reconcile 只回收本实例 namespace 容器，旧无 namespace 容器 fail-closed）。②reconcileExpiredAttempt 新增 quarantined 分支：专属 error_code worker_attempt_quarantined_terminalized 加入 TERMINAL_CODES，单事务标 failed+append-only evidence，返回 replacement_required（允许 derive replacement），不再 fall-through worker_attempt_state_unresolved；幂等。③补真实 Docker fence 集成 + 真实 PostgreSQL quarantined 集成（后者注册进 POSTGRES_INTEGRATION_TESTS），更新现有 attempt-runner.test.cjs orphan 回收断言使其对齐 namespace fence。绝不以 stop/删他人 Worker 或生产容器为修复手段。",
+      "dod": [
+        "[BEHAVIOR] B-01 真实 Docker 双实例只认领本 namespace 容器、他实例/旧容器全程存活（fence-listowned oracle）",
+        "[BEHAVIOR] B-02 真实 PostgreSQL quarantined→failed(worker_attempt_quarantined_terminalized)+evidence+replacement+幂等（pg integration）",
+        "[BEHAVIOR] B-03 reconcileExpiredAttempt(quarantined) 返回 replacement_required、不落 worker_attempt_state_unresolved（reconciler 单测）",
+        "[BEHAVIOR] B-05 reconcile 回收决策只作用本实例 namespace、旧容器 fail-closed（attempt-runner 单测）",
+        "[ARTIFACT] worker_attempt_quarantined_terminalized 加入 TERMINAL_CODES；labelsFor 写 instance_namespace label；pg 集成注册 POSTGRES_INTEGRATION_TESTS"
+      ],
+      "files": [
+        "packages/brain/scripts/fleet-worker/attempt-runner.cjs",
+        "packages/brain/scripts/fleet-worker/fleet-worker.cjs",
+        "packages/brain/src/orchestrator/expired-attempt-reconciler.js",
+        "packages/brain/scripts/fleet-worker/attempt-runner.test.cjs",
+        "packages/brain/scripts/fleet-worker/fleet-worker.test.js",
+        "packages/brain/scripts/fleet-worker/instance-namespace-fence.integration.test.cjs",
+        "packages/brain/src/orchestrator/expired-attempt-reconciler.test.js",
+        "packages/brain/src/__tests__/integration/expired-attempt-quarantined.pg.integration.test.js",
+        "packages/brain/vitest.config.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
