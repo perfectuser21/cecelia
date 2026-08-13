@@ -50,7 +50,8 @@ publisher_block="$(
 )"
 [[ -n "$publisher_block" ]] || { echo 'missing generator trusted publisher' >&2; exit 1; }
 eval "$publisher_block"
-type publish_generator_result >/dev/null
+type finalize_generator_candidate >/dev/null
+type publish_approved_generator_candidate >/dev/null
 
 git init --bare "$TEST_ROOT/remote.git" >/dev/null
 git init -b main "$TEST_ROOT/workspace" >/dev/null
@@ -96,11 +97,28 @@ gh() {
   return 1
 }
 
-publish_generator_result "$TEST_ROOT/result.json"
+finalize_generator_candidate "$TEST_ROOT/result.json"
+if git --git-dir "$TEST_ROOT/remote.git" rev-parse refs/heads/cp-trusted-publisher \
+    >/dev/null 2>&1; then
+  echo 'Generator finalized a remote ref before Judge' >&2
+  exit 1
+fi
+jq -e --arg sha "$HEAD_SHA" '
+  [.artifacts[] | select(.type == "git_candidate" and .verification_status == "verified"
+    and .source_attempt_id == "22222222-2222-4222-8222-222222222222"
+    and .head_sha == $sha)] | length == 1
+' "$TEST_ROOT/result.json" >/dev/null
+
+cat > "$TEST_ROOT/publisher.json" <<JSON
+{"task_bundle":{"role":"publisher","run_id":"11111111-1111-4111-8111-111111111111","attempt_id":"44444444-4444-4444-8444-444444444444","inputs":{"task_id":"33333333-3333-4333-8333-333333333333","candidate":{"source_attempt_id":"22222222-2222-4222-8222-222222222222","repo":"perfectuser21/cecelia","branch":"cp-trusted-publisher","base_sha":"$BASE_SHA","head_sha":"$HEAD_SHA"},"judge_verdict":{"verdict":"PASS","pr_head_sha":"$HEAD_SHA"},"merge_fence":{"allowed":true,"head_sha":"$HEAD_SHA"},"workspace_spec":{"repo":"perfectuser21/cecelia","branch":"cp-trusted-publisher","base_sha":"$HEAD_SHA","expected_head_sha":"$HEAD_SHA"}}}}
+JSON
+printf '%s\n' '{"status":"completed","summary":"published","artifacts":[],"checks":[],"decision":null,"error":null,"case_file":null}' > "$TEST_ROOT/publisher-result.json"
+export HARNESS_TASK_BUNDLE_FILE="$TEST_ROOT/publisher.json"
+publish_approved_generator_candidate "$TEST_ROOT/publisher-result.json"
 test "$(git --git-dir "$TEST_ROOT/remote.git" rev-parse refs/heads/cp-trusted-publisher)" = "$HEAD_SHA"
 jq -e --arg sha "$HEAD_SHA" '
   [.artifacts[] | select(.type == "pull_request" and .verification_status == "verified"
     and .url == "https://github.com/perfectuser21/cecelia/pull/999" and .head_sha == $sha)] | length == 1
-' "$TEST_ROOT/result.json" >/dev/null
+' "$TEST_ROOT/publisher-result.json" >/dev/null
 
 echo 'generator trust boundary PASS'
