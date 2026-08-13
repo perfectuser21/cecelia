@@ -15,6 +15,7 @@ const TASK_ID = '11111111-1111-4111-8111-111111111111';
 const INITIATIVE_ID = '22222222-2222-4222-8222-222222222222';
 const RUN_ID = '33333333-3333-4333-8333-333333333333';
 const RECEIPT_ID = '44444444-4444-4444-8444-444444444444';
+const PREDECESSOR_RUN_ID = '55555555-5555-4555-8555-555555555555';
 
 const VALID_INPUT = Object.freeze({
   taskId: TASK_ID,
@@ -49,6 +50,7 @@ function transactionPool({
     superseded: false,
   },
   activeRun = null,
+  predecessorRun = null,
 } = {}) {
   const order = [];
   const calls = [];
@@ -74,6 +76,10 @@ function transactionPool({
       if (/FROM tasks/.test(sql) && /FOR UPDATE/.test(sql)) {
         order.push('task-lock');
         return { rows: task ? [task] : [] };
+      }
+      if (/FROM initiative_runs/.test(sql) && /WHERE id = \$1/.test(sql)) {
+        order.push('predecessor-run');
+        return { rows: predecessorRun ? [predecessorRun] : [] };
       }
       if (/FROM initiative_runs/.test(sql)) {
         order.push('active-run');
@@ -211,6 +217,42 @@ function exactPatchPool({ task, activeAttempts = [] } = {}) {
 }
 
 describe('Kernel run store creation authority', () => {
+  it('binds explicit recovery to one trusted terminal predecessor and its approved contract', async () => {
+    const harness = transactionPool({
+      predecessorRun: {
+        id: PREDECESSOR_RUN_ID,
+        current_task_id: TASK_ID,
+        initiative_id: INITIATIVE_ID,
+        phase: 'failed',
+        record_trust_status: 'trusted',
+        contract_id: '66666666-6666-4666-8666-666666666666',
+      },
+    });
+
+    await createRun(harness, {
+      ...VALID_INPUT,
+      createdSource: 'explicit_recovery',
+      predecessorRunId: PREDECESSOR_RUN_ID,
+    });
+
+    const insert = harness.calls.find(({ sql }) => /INSERT INTO initiative_runs/.test(sql));
+    expect(insert.sql).toMatch(/contract_id[\s\S]+predecessor_run_id/);
+    expect(insert.params).toEqual(expect.arrayContaining([
+      PREDECESSOR_RUN_ID,
+      '66666666-6666-4666-8666-666666666666',
+    ]));
+    expect(harness.order.indexOf('predecessor-run')).toBeLessThan(harness.order.indexOf('insert-run'));
+  });
+
+  it('rejects explicit recovery without a predecessor before starting a transaction', async () => {
+    const harness = transactionPool();
+    await expect(createRun(harness, {
+      ...VALID_INPUT,
+      createdSource: 'explicit_recovery',
+    })).rejects.toThrow('explicit recovery predecessor is required');
+    expect(harness.order).toEqual([]);
+  });
+
   it('runs Map/Impact preflight before inserting the Kernel run', async () => {
     const harness = transactionPool();
     const ensurePreflight = vi.fn(async () => {

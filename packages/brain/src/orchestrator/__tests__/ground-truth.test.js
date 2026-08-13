@@ -116,6 +116,7 @@ function makeDeps({ rows = {}, exec = {}, files = {}, readAuthCircuit } = {}) {
       default_execution_profile: 'new-capability-v1',
       execution_profile_override: null,
       repo: 'cecelia',
+      evidence: { branch: 'cp-baseline', base_sha: 'a'.repeat(40) },
       superseded: false,
     }],
     harness_attempts: rows.attempts ?? [],
@@ -833,7 +834,11 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     const headSha = '7a07d99439c04fd01c3cd61407b040282d2846cf';
     const deps = makeDeps({
       rows: {
-        run: { pr_url: PR_URL, created_source: 'explicit_recovery' },
+        run: {
+          pr_url: PR_URL,
+          created_source: 'explicit_recovery',
+          predecessor_run_id: priorRunId,
+        },
         validationOrigins: [{
           validation_origin_run_id: priorRunId,
           observed: { pr: { url: PR_URL, head_sha: headSha } },
@@ -865,7 +870,41 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     expect(sql).toMatch(/record_trust_status IN \('trusted', 'reconstructed'\)/);
     expect(sql).toMatch(/role = 'generator'/);
     expect(sql).toMatch(/status IN \('completed', 'completed_with_concerns'\)/);
-    expect(params).toEqual([TASK_ID, RUN_ID]);
+    expect(sql).toMatch(/prior_run\.id = \$3/);
+    expect(sql).toMatch(/prior_run\.contract_id = \$5/);
+    expect(sql).toMatch(/evaluator_intent\.observed->'routingReceipt'->>'id' = \$4/);
+    expect(sql).toMatch(/evaluator_intent\.observed->'implementationBaseline'->>'base_sha' = \$6/);
+    expect(params).toEqual([
+      TASK_ID,
+      RUN_ID,
+      priorRunId,
+      ROUTING_RECEIPT_ID,
+      CONTRACT_ID,
+      'a'.repeat(40),
+    ]);
+  });
+
+  it('显式恢复 run 未声明 predecessor 时不查询也不建立既有 PR 信任源', async () => {
+    const headSha = '7a07d99439c04fd01c3cd61407b040282d2846cf';
+    const deps = makeDeps({
+      rows: {
+        run: { pr_url: PR_URL, created_source: 'explicit_recovery', predecessor_run_id: null },
+        validationOrigins: [{
+          validation_origin_run_id: 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff',
+          observed: { pr: { url: PR_URL, head_sha: headSha } },
+        }],
+      },
+      exec: {
+        prView: JSON.stringify({
+          state: 'OPEN', mergeStateStatus: 'CLEAN', headRefOid: headSha,
+          statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
+        }),
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(observed.verifiedExistingPrOrigin).toBeNull();
+    expect(deps.pool.calls.some(([sql]) => sql.includes('AS validation_origin_run_id'))).toBe(false);
   });
 
   it('显式恢复 run 的前序证据与当前 GitHub head 不一致时不建立既有 PR 信任源', async () => {
