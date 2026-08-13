@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.272.35
+**版本**: 1.272.36
 
 ## Frozen contract artifact deterministic ordering
 
