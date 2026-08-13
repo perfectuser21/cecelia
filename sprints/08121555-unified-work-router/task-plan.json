@@ -1,0 +1,34 @@
+{
+  "initiative_id": "29c86f7d-8ced-4175-a5c3-d965aee44a2c",
+  "journey_type": "autonomous",
+  "journey_type_reason": "真实 Controller、Generator、Evaluator 与 Judge 均属于后端自主治理链路，验收面为 local_api、PostgreSQL、Git 与 runner。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "真实验收 Unified Work Router 到 Judge r11",
+      "scope": "以冻结实现基线 dd0dffac1774d92d8080ff4a4524e0ae8359d530 为唯一实施血统，完成并真实运行 Recovery 与 Knife 0-5 全链，最终仅以服务端机械闸字面 PASS 收口。",
+      "dod": [
+        "[BEHAVIOR] API、Intent、Capture 三个 coding mutation 均经不可变 Routing Receipt、fresh Map、active Impact Contract、Generator、Evaluator 与 Judge，服务端机械闸返回字面 PASS。",
+        "[BEHAVIOR] content、research、read-only 对照不误入 Coding Harness，stale Map 失败关闭且刷新后 resume 保留审计。",
+        "[BEHAVIOR] 候选 HEAD 以 dd0dffac1774d92d8080ff4a4524e0ae8359d530 为祖先，Evaluator 与 Judge 使用各自运行时注入的身份并以 SHA-256 串联证据。",
+        "[ARTIFACT] Recovery、Router、Map/Impact、headed/headless guard、runner trust boundary、scratch smoke、版本同步与永久回归测试齐全。"
+      ],
+      "files": [
+        "packages/brain/src/",
+        "packages/brain/migrations/",
+        "packages/engine/hooks/",
+        "packages/engine/skills/dev/scripts/",
+        "docker/cecelia-runner/entrypoint.sh",
+        "packages/brain/scripts/smoke/unified-work-router-smoke.sh",
+        "apps/dashboard/src/pages/warroom/",
+        "packages/brain/DEFINITION.md",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
