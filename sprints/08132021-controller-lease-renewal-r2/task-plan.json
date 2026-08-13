@@ -1,0 +1,31 @@
+{
+  "initiative_id": "39542db5-f191-4c4f-902e-adc890dbabb3",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain 后端 orchestrator + SQL 行为修复，无 UI、无远端 agent 协议。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Controller heartbeat 续租 lease + controllerSessionId 可信透传 + 真 PG 回归",
+      "scope": "writeHeartbeat 增 controllerSessionId+leaseSeconds 入参，UPDATE 同写心跳三列与 controller_lease_expires_at=GREATEST(existing, now+lease)，WHERE 含 id+controller_session_id+phase NOT IN(done,failed)，返回 {rowCount}；loop.beat 携 controllerSessionId 并在 rowCount=0 时 Kernel fail-closed；relay 导出 buildKernelLaunchArgs 且 launchKernelProcess 携 --controller-session-id；run.parseArgs 解析该参数并经 runKernelMain 透传 loop；续租时长复用 CONTROLLER_LEASE_DEFAULT_SECONDS 单一 SSOT；新增真 PG 集成回归永久入 CI。",
+      "dod": [
+        "[BEHAVIOR] 正确 session 心跳跨 30m → lease 前移、reconcile 回收数=0（B-01 真 PG）",
+        "[BEHAVIOR] 伪造 session/终态 run → CAS rowCount=0 fail-closed，无主 run 仍被回收（B-02/B-03 真 PG）",
+        "[BEHAVIOR] controllerSessionId 从创建端透传到 detached child（B-04 parseArgs+buildKernelLaunchArgs）",
+        "[ARTIFACT] heartbeat.js 续租 GREATEST+CAS WHERE；loop.beat 携 session；relay/run 参数透传；集成文件登记进 POSTGRES_INTEGRATION_TESTS"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/heartbeat.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/orchestrator/run.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js",
+        "packages/brain/src/__tests__/controller-session-passthrough.test.js",
+        "packages/brain/vitest.config.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
