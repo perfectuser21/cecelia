@@ -199,10 +199,48 @@ describe('routing store transaction contract', () => {
         mutation_intent: 'write', declared_change_kind: 'new_capability',
         repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['cecelia'],
       }, REPOSITORY_FACTS, { transaction: 'existing' })).rejects.toThrow(/work_route_idempotency_conflict/);
+
+      await expect(createRoutedTask(client, {
+        source: 'api', source_id: sourceId, title: 'routing identity',
+        mutation_intent: 'write', declared_change_kind: 'bugfix',
+        repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['cecelia'],
+        branch: 'cp-different', base_sha: 'b'.repeat(40),
+      }, REPOSITORY_FACTS, { transaction: 'existing' })).rejects.toThrow(/work_route_idempotency_conflict/);
     } finally {
       await client.query('ROLLBACK');
       client.release();
       await testPool.end();
     }
+  });
+
+  it('coding request 缺 branch/base 时在创建前可信解析并冻结 canonical evidence', async () => {
+    const client = { query: vi.fn(async (sql) => {
+      if (String(sql).includes('INSERT INTO tasks')) return { rows: [{ id: 'task-auto-evidence' }] };
+      if (String(sql).includes('INSERT INTO work_routing_receipts')) return { rows: [{ id: 'receipt-auto-evidence' }] };
+      return { rows: [] };
+    }) };
+    const resolveRoutingEvidence = vi.fn(async () => ({
+      branch: 'cp-route-inbox-abc12345',
+      base_sha: 'c'.repeat(40),
+    }));
+
+    const created = await createRoutedTask(client, {
+      source: 'inbox', source_id: 'atom-without-git-evidence', title: 'urgent fix',
+      mutation_intent: 'write', declared_change_kind: 'bugfix',
+      repo_hint: 'perfectuser21/cecelia',
+    }, REPOSITORY_FACTS, { resolveRoutingEvidence });
+
+    expect(resolveRoutingEvidence).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'inbox', source_id: 'atom-without-git-evidence', repo: 'cecelia',
+    }), expect.any(Array));
+    expect(created.decision.evidence).toEqual({
+      source: 'inbox',
+      branch: 'cp-route-inbox-abc12345',
+      base_sha: 'c'.repeat(40),
+    });
+    expect(created.task.payload).toMatchObject({
+      branch: 'cp-route-inbox-abc12345',
+      base_sha: 'c'.repeat(40),
+    });
   });
 });

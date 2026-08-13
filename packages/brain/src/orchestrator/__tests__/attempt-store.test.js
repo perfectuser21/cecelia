@@ -1026,6 +1026,64 @@ describe('attempt store', () => {
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
 
+  it.each([
+    ['evaluator', 'verdict:evaluate'],
+    ['judge', 'verdict:judge'],
+  ])('本地 candidate 的 %s verdict 锚定 candidate SHA', async (role, action) => {
+    const candidateHead = 'd'.repeat(40);
+    const callbackResult = {
+      status: 'completed',
+      summary: `${role} passed local candidate`,
+      artifacts: [],
+      checks: [],
+      provider_metadata: { provider: 'codex' },
+      decision: { outcome: 'PASS', reason: 'candidate verified' },
+      error: null,
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'evaluate',
+      role,
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      task_bundle: { inputs: { pull_request: null, candidate: { head_sha: candidateHead } } },
+      result: null,
+    };
+    const completed = { ...running, status: 'completed', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 5 }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    const projection = client.query.mock.calls.find(
+      ([sql, params]) => String(sql).includes('orchestrator_decision_log')
+        && params?.[4] === action,
+    );
+    expect(projection).toBeDefined();
+    expect(JSON.parse(projection[1][5])).toMatchObject({
+      verdict: 'PASS',
+      pr_head_sha: candidateHead,
+    });
+  });
+
   it('不再接受 Generator 自报的 verified PR 投影', async () => {
     const verifiedSha = 'b'.repeat(40);
     const callbackResult = {

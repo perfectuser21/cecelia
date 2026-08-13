@@ -85,4 +85,38 @@ describe('Migration 411 — 批准合同测试不可变', () => {
       client.release();
     }
   });
+
+  it('真实 PostgreSQL 只允许 approved 到 superseded，禁止降级后绕过不可变性', async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: [contract] } = await client.query(
+        `INSERT INTO initiative_contracts (
+           initiative_id, version, status, branch, prd_content, contract_content,
+           approved_sha, frozen_artifacts
+         ) VALUES ($1, 99, 'approved', 'cp-original', 'prd-original', 'contract-original', $2, '[]'::jsonb)
+         RETURNING id`,
+        [randomUUID(), 'a'.repeat(40)],
+      );
+
+      await client.query('SAVEPOINT before_downgrade');
+      await expect(client.query(
+        `UPDATE initiative_contracts SET status='draft' WHERE id=$1`,
+        [contract.id],
+      )).rejects.toThrow(/approved contract identity is immutable/);
+      await client.query('ROLLBACK TO SAVEPOINT before_downgrade');
+
+      await expect(client.query(
+        `UPDATE initiative_contracts SET status='superseded' WHERE id=$1`,
+        [contract.id],
+      )).resolves.toMatchObject({ rowCount: 1 });
+      await expect(client.query(
+        `UPDATE initiative_contracts SET status='draft' WHERE id=$1`,
+        [contract.id],
+      )).rejects.toThrow(/approved contract identity is immutable/);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
 });

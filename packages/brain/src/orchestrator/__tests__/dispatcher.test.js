@@ -133,6 +133,52 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
+  it('Judge 与其他 coding 角色一样经过 launcher，不在 Brain 进程内短路执行', async () => {
+    const deps = makeDeps();
+    const inProcessJudge = vi.fn();
+    deps.handlers = { 'spawn:judge': inProcessJudge };
+    const candidate = {
+      type: 'git_candidate',
+      verification_status: 'verified',
+      source_attempt_id: '33333333-3333-4333-8333-333333333333',
+      repo: 'perfectuser21/cecelia',
+      branch: 'cp-local-candidate',
+      base_sha: 'a'.repeat(40),
+      head_sha: 'b'.repeat(40),
+      machine_id: 'brain-1',
+    };
+
+    const result = await createDispatcher(deps)('spawn:judge', {
+      taskId,
+      runId,
+      hop: 8,
+      observed: {
+        ...observed,
+        candidate,
+        evaluateVerdict: { verdict: 'PASS', pr_head_sha: candidate.head_sha },
+        evaluateResult: {
+          status: 'completed',
+          checks: [{ command: 'npm test', exit_code: 0, log_tail: 'passed' }],
+          decision: { outcome: 'PASS', reason: 'verified' },
+        },
+      },
+      decision: { phase: 'evaluate', reason: 'evaluate_passed_awaiting_judge' },
+      validationClock: {
+        pipeline_started_at: '2026-08-13T00:00:00.000Z',
+        deadline_at: '2026-08-13T01:30:00.000Z',
+      },
+    });
+
+    expect(result).toMatchObject({ status: 'LAUNCHED', provider: 'codex' });
+    expect(inProcessJudge).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).toHaveBeenCalledOnce();
+    expect(deps.attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'judge',
+      provider: 'codex',
+      machineId: 'brain-1',
+    }));
+  });
+
   it('publisher 只接收 Judge PASS 的精确候选，并固定到 Generator 实际机器', async () => {
     const deps = makeDeps();
     deps.launcher.launch.mockResolvedValueOnce(Object.freeze({

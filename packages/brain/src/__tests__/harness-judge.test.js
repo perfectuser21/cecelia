@@ -598,6 +598,16 @@ describe('independent judge stage facts — fail-closed 时序闸', () => {
     expect(validateIndependentJudgeStageFacts(validStageFacts)).toEqual({ pass: true, reasons: [] });
   });
 
+  it('未发布 local candidate 以精确 head_sha 进入独立 Judge', () => {
+    expect(validateIndependentJudgeStageFacts({
+      current_stage: 'local_candidate',
+      pr_state: null,
+      pr_merged: false,
+      head_sha: 'a'.repeat(40),
+      merge_gate_approved: false,
+    })).toEqual({ pass: true, reasons: [] });
+  });
+
   it.each([
     [{ ...validStageFacts, head_sha: null }, 'head_sha'],
     [{ ...validStageFacts, pr_state: 'CLOSED' }, 'pr_state'],

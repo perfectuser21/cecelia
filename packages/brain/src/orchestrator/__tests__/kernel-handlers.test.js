@@ -158,6 +158,43 @@ describe('kernel deterministic handlers', () => {
     expect(d.pool.query.mock.calls.some(([sql]) => /verdict:judge/.test(sql))).toBe(true);
   });
 
+  it('本地 candidate 的 Judge 使用 local_candidate 阶段事实并锚定 candidate SHA', async () => {
+    const d = deps();
+    const candidateHead = 'c'.repeat(40);
+    const ctx = context({
+      bundle: {
+        inputs: {
+          worktree_path: '/tmp/wt',
+          sprint_dir: 'sprints/x',
+          candidate: { head_sha: candidateHead },
+        },
+      },
+      observed: {
+        ...context().observed,
+        pr: null,
+        candidate: { head_sha: candidateHead },
+        evaluateVerdict: { verdict: 'PASS', pr_head_sha: candidateHead },
+      },
+    });
+
+    await createKernelHandlers(d)['spawn:judge'](ctx);
+
+    expect(d.judgeGate).toHaveBeenCalledWith(expect.objectContaining({
+      stageFacts: {
+        current_stage: 'local_candidate',
+        pr_state: null,
+        pr_merged: false,
+        head_sha: candidateHead,
+        merge_gate_approved: false,
+      },
+    }), expect.any(Object));
+    const verdictCall = d.pool.query.mock.calls.find(([sql]) => /verdict:judge/.test(sql));
+    expect(JSON.parse(verdictCall[1][3])).toMatchObject({
+      verdict: 'PASS',
+      pr_head_sha: candidateHead,
+    });
+  });
+
   it('judge 优先使用 evaluator attempt result，并把 checks 适配为机械闸证据', async () => {
     const d = deps();
     const evaluatorResult = {
