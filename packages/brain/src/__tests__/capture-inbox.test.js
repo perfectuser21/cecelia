@@ -17,7 +17,7 @@ describe('pushCaptureAtom', () => {
     expect(sql2).toMatch(/INSERT INTO capture_atoms/);
     // capture_atoms params: [captureId, content, target_type, target_subtype, routed_to_table, routed_to_id, lane]
     // （08-04 签名修复：routedToTable/routedToId/lane 恢复落库，不再静默丢弃）
-    expect(params2).toEqual(['atom-1', 'x', 'handoff', 'PASS', 'tasks', '11111111-1111-1111-1111-111111111111', null]);
+    expect(params2).toEqual(['atom-1', 'x', 'handoff', 'PASS', 'tasks', '11111111-1111-1111-1111-111111111111', null, '{}']);
   });
 
   it('content 超 2000 字截断（MAX_CONTENT_LEN=2000）', async () => {
