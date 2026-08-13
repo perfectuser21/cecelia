@@ -103,7 +103,7 @@ describe('watchdog headed 分支', () => {
     expect(execFn).toHaveBeenCalledWith(expect.stringContaining('tmux has-session'));
     expect(writeControllerHeartbeat).toHaveBeenCalledWith(pool,expect.objectContaining({
       runId:run.id,controllerSessionId,controllerGeneration:4,
-      host:'headed-watchdog:watchdog-host',pid:4321,
+      host:'skill-relay-codex-headed',pid:4321,
     }));
     expect(launchKernel).not.toHaveBeenCalled();
   });
