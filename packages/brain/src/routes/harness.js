@@ -154,6 +154,29 @@ async function loadJudgeAuthority(requestPool, { runId, taskId }) {
   };
 }
 
+// GET /api/brain/harness/merge-entitlement?repo=<repo>&pr=<n>&head_sha=<sha>
+// 通用 CI auto-merge 身份闸的只读判据源（should-auto-merge.sh 消费；法源 decision e4e37f10）。
+// 仅当受信 /dev 通道已为此 (repo, pr, head_sha) 三元组签发 entitlement 时才返回
+// entitled:true + trusted:true；否则 fail-closed 返回 entitled:false（调用方据此 SKIP）。
+//
+// 当前系统尚无 entitlement 签发存储（签发通道另立，本刀 PRD 显式「不新建签发通道」），
+// 故读侧一律 fail-closed：默认 entitled:false / trusted:false，绝不 fail-open 放行 merge。
+// 三元组原样回显，供 should-auto-merge.sh 做绑定精确比对（未来接入签发存储时替换判据即可，
+// 调用契约与输出 schema 不变）。只读、零副作用、不下发任何 internal token（PRD Invariant[受信通道]）。
+router.get('/merge-entitlement', (req, res) => {
+  const repo = typeof req.query.repo === 'string' ? req.query.repo : '';
+  const prRaw = typeof req.query.pr === 'string' ? req.query.pr : '';
+  const headSha = typeof req.query.head_sha === 'string' ? req.query.head_sha : '';
+  const prNumber = /^[0-9]+$/.test(prRaw) ? Number.parseInt(prRaw, 10) : null;
+  res.json({
+    entitled: false,
+    trusted: false,
+    repo,
+    pr_number: prNumber,
+    head_sha: headSha,
+  });
+});
+
 router.get('/initiative-runs/:id', async (req, res) => {
   const { id } = req.params;
   if (!UUID_RE.test(id)) {
