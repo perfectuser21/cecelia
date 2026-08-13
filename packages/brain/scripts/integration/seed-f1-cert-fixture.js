@@ -45,7 +45,9 @@ const ASSERTION_REF = 'sprints/0813-f1-capability-certification-r3/tests/f1-cert
 const CASES = new Set(['green', 'no_receipt', 'wrong_sha', 'missing_feature', 'no_contract', 'receipt_fail']);
 
 function resolveConnection() {
-  const connectionString = process.env.DATABASE_URL || process.env.DB_URL;
+  // Harness v5 的真机 smoke 已用 DB 指向与 Brain 相同的数据库；优先沿用该
+  // 连接，避免测试层默认 DB_NAME 覆盖后出现 seed 与 HTTP 回读分库。
+  const connectionString = process.env.DB || process.env.DATABASE_URL || process.env.DB_URL;
   if (connectionString) return { connectionString };
   return {
     host: process.env.DB_HOST || 'localhost',
