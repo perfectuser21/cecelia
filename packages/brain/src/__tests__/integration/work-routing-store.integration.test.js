@@ -48,7 +48,11 @@ describe('routing store transaction contract', () => {
       mutation_intent: 'write',
       declared_change_kind: 'bugfix',
       repo_hint: 'perfectuser21/cecelia',
-      task: { priority: 'P0', project_id: 'project-1', status: 'queued' },
+      task: {
+        priority: 'P0', project_id: 'project-1', status: 'queued',
+        tags: ['router'], prd_content: 'frozen prd', execution_profile: 'US_CODEX',
+        owner_role: 'developer', delivery_type: 'behavior-change', created_by: 'scheduler',
+      },
     }, REPOSITORY_FACTS);
 
     expect(pool.connect).toHaveBeenCalledOnce();
@@ -58,8 +62,20 @@ describe('routing store transaction contract', () => {
     expect(result.task).toMatchObject({ task_type: 'harness_initiative', priority: 'P0' });
     const taskInsert = calls.find(([sql]) => sql.includes('INSERT INTO tasks'));
     expect(taskInsert[0]).toContain('project_id');
+    expect(taskInsert[0]).toContain('tags');
+    expect(taskInsert[0]).toContain('prd_content');
+    expect(taskInsert[0]).toContain('execution_profile');
+    expect(taskInsert[0]).toContain('owner_role');
+    expect(taskInsert[0]).toContain('delivery_type');
+    expect(taskInsert[0]).toContain('created_by');
     expect(taskInsert[1]).toContain('P0');
     expect(taskInsert[1]).toContain('project-1');
+    expect(taskInsert[1]).toContainEqual(['router']);
+    expect(taskInsert[1]).toContain('frozen prd');
+    expect(taskInsert[1]).toContain('US_CODEX');
+    expect(taskInsert[1]).toContain('developer');
+    expect(taskInsert[1]).toContain('behavior-change');
+    expect(taskInsert[1]).toContain('scheduler');
   });
 
   it('joins an existing transaction without nested BEGIN/COMMIT', async () => {
