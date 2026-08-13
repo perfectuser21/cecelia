@@ -3261,7 +3261,7 @@ describe('createDetachedLauncher', () => {
     expect(env.GIT_CONFIG_VALUE_0).toBeUndefined();
   });
 
-  it('把同一 bundle task_id 注入 generator 的 Cecelia 与 harness 任务环境', async () => {
+  it('把 server-issued routing identity 注入 generator 的动作环境', async () => {
     const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
     const launcher = createDetachedLauncher({
       spawnDetached,
@@ -3271,7 +3271,16 @@ describe('createDetachedLauncher', () => {
     await launcher.launch({
       attempt: { id: attemptId, run_id: runId, hop: 8, role: 'generator' },
       bundle: {
-        inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+        inputs: {
+          task_id: taskId,
+          worktree_path: '/tmp/worktree',
+          routing_identity: {
+            routing_receipt_id: 'receipt-1',
+            repo: 'cecelia',
+            branch: 'cp-routing-identity',
+            base_sha: 'a'.repeat(40),
+          },
+        },
         constraints: { read_only: false },
       },
       spec: { provider: 'codex', args: [], stdin: '{}', env: {} },
@@ -3280,6 +3289,13 @@ describe('createDetachedLauncher', () => {
 
     const { env } = spawnDetached.mock.calls[0][0];
     expect(env.CECELIA_TASK_ID).toBe(taskId);
+    expect(env.CECELIA_ROUTING_RECEIPT_ID).toBe('receipt-1');
+    expect(env.CECELIA_RUN_ID).toBe(runId);
+    expect(env.CECELIA_REPO).toBe('cecelia');
+    expect(env.CECELIA_ROUTING_REPO).toBe('cecelia');
+    expect(env.CECELIA_BRANCH).toBe('cp-routing-identity');
+    expect(env.CECELIA_BASE_SHA).toBe('a'.repeat(40));
+    expect(env.CECELIA_ROUTING_BASE_SHA).toBe('a'.repeat(40));
     expect(env.HARNESS_TASK_ID).toBe(taskId);
   });
 
