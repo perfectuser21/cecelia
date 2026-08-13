@@ -185,6 +185,7 @@ describe('runLoop：全链 planning→done', () => {
       expectedTaskId: TASK_ID,
       expectedControllerSessionId: '22222222-2222-4222-8222-222222222222',
       expectedControllerGeneration: 2,
+      requireActiveControllerAuthority: true,
       outcome: 'failed',
       reason: 'automation_deadline_exceeded',
     });
