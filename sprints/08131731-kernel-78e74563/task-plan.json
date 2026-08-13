@@ -1,0 +1,32 @@
+{
+  "initiative_id": "intent:52e9241a-b7be-4f1c-b4b5-d333dc8bb5c8:4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain 纯后端容量计算，无 UI / 远端 agent / engine 路径",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "修复本机 kernel 容量三层失真（采集口径 + macOS 内核压力映射 + 轻角色 floor 保底）",
+      "scope": "①先打印 collectLocalStats() 实际返回值取证 physical=2 根因，修采集使本机 physical 反映真实资源；抽出纯函数 computeCapacityFromStats(stats,{macPressureLevel}) 承载物理/有效容量管道。②platform-utils.js 新增 macOSPressureLevelToFraction(level) 映射 0→0/1→0.3/2→0.7/3→1（非0-3→-1），把 getMacOSMemoryPressure() 接进容量链：darwin 且 level 有效时 pressure 采映射值，否则回退 used_ratio(free%)。③getRoleCapacity 对轻角色(weight≤2) effective≥1 时 capacity=max(1,floor)，重角色(weight=4)保持 floor 门控；effective=0 全角色仍 0。MAX_PHYSICAL_CAP/memPerTaskMb=400 不变。既有 fleet-resource-cache.test.js 的 platform-utils mock 需补 macOSPressureLevelToFraction 导出；新回归测试落 packages/brain/src 下相应 __tests__ 目录（禁 mock 被改的边，遵循禁 mock 边清单）。",
+      "dod": [
+        "[BEHAVIOR] B-01 computeCapacityFromStats(10核16384MB,Normal) physicalCapacity>=8 且 effectiveSlots>=4",
+        "[BEHAVIOR] B-02 macOSPressureLevelToFraction 0/1/2/3 精确映射 0/0.3/0.7/1，非0-3 返 -1",
+        "[BEHAVIOR] B-03 darwin macPressureLevel=2 → pressure=0.7（非 free% 0.9）；level=-1 回退 used_ratio 不崩溃",
+        "[BEHAVIOR] B-04 getRoleCapacity proposer base1>=1 / base0=0 / generator base3=0",
+        "[BEHAVIOR] B-05 getMachineCapacity effective_slots=1 proposer(no manual) available>=1；effective=0+manual available=0",
+        "[ARTIFACT] platform-utils.js 导出 macOSPressureLevelToFraction；fleet-resource-cache.js 导出并使用 computeCapacityFromStats"
+      ],
+      "files": [
+        "packages/brain/src/fleet-resource-cache.js",
+        "packages/brain/src/platform-utils.js",
+        "packages/brain/src/routes/infra-status.js",
+        "packages/brain/src/orchestrator/fleet-node/node-profile.js",
+        "packages/brain/src/orchestrator/preflight/production-probes.js",
+        "packages/brain/src/__tests__/fleet-resource-cache.test.js",
+        "packages/brain/src/orchestrator/preflight/production-probes.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
