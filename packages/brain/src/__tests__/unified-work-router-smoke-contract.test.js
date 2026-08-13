@@ -21,6 +21,8 @@ describe('Unified Work Router scratch smoke contract', () => {
     expect(shellSource).toContain('_scratch');
     expect(shellSource).toContain('map-fact-snapshot-smoke.sh');
     expect(shellSource).toContain('unified-work-router-smoke.mjs');
+    expect(shellSource).toContain('unified-work-router-real-runner-smoke.mjs');
+    expect(shellSource).toContain('CECELIA_REAL_RUNNER_IMAGE');
     expect(shellSource).toContain('DB_NAME=');
     expect(shellSource).toContain('schema_version');
     expect(shellSource).toContain('417');
