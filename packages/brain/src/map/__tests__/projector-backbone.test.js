@@ -130,7 +130,7 @@ function makeMockClient(backboneRows) {
 // 当前 runProjection 未查 journey_steps，所以 backbone 节点数 = 0，断言 = 4 会 FAIL
 // ──────────────────────────────────────────────
 describe('[RED→GREEN] runProjection() backbone 层装配', () => {
-  it('backbone 节点数 = step 数，边类型为 contains，from_key = capability_code', async () => {
+  it('backbone 节点数 = step 数，边类型为 `contains`，from_key = capability_code', async () => {
     const client = makeMockClient(BACKBONE_ROWS);
 
     await runProjection({

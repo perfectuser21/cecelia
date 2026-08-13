@@ -163,14 +163,14 @@ describe('[RED] collectDescendants — 当前 buggy 实现（只沿正向边）'
 // Red 测试：正确实现应该通过的断言（当前会失败，等 Green 实现后会通过）
 // ──────────────────────────────────────────────
 describe('[GREEN] collectDescendants — 修复后应通过的断言', () => {
-  it('F1 形态 fixture（所有边指向 capability），collectDescendants 应返回非空数组', () => {
+  it("F1 形态 fixture（所有边指向 capability），`collectDescendants('F1', edges, nodes)` 返回 `['feat-a', 'feat-b']` 非空数组（Red → Green 顺序）", () => {
     // Green 阶段：使用已修复的双向 BFS 实现（对应 MapPage.tsx 修复后的 collectDescendants）
     const result = collectDescendantsFixed('F1', UPSTREAM_EDGES, ALL_NODES);
     expect(result.map((n) => n.key)).toContain('feat-a');
     expect(result.map((n) => n.key)).toContain('feat-b');
   });
 
-  it('owned_by 反向边不纳入收集，只收集 implements/contains', () => {
+  it('`collectDescendants` 不收集 `owned_by` 反向边，只收集 `implements`/`contains`', () => {
     // 修复后：feat-a/feat-b 在（implements 边），some-crosscut 不在（owned_by 边）
     const result = collectDescendantsFixed('F1', UPSTREAM_EDGES, ALL_NODES);
     expect(result.map((n) => n.key)).toContain('feat-a');
