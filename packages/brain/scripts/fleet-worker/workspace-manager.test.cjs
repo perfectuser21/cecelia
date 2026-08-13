@@ -139,6 +139,37 @@ describe('Fleet Worker workspace manager', () => {
     expect(second.owner.attempt_id).toBe(ATTEMPT_B);
   });
 
+  it('从同机 retained Generator admin clone 物化远端不存在的精确候选', async () => {
+    const manager = createManager(fixture);
+    const generator = await manager.prepare(spec(fixture));
+    git(['config', 'user.name', 'Generator Test'], generator.path);
+    git(['config', 'user.email', 'generator@example.invalid'], generator.path);
+    fs.writeFileSync(path.join(generator.path, 'candidate.txt'), 'candidate\n');
+    git(['add', 'candidate.txt'], generator.path);
+    git(['commit', '-m', 'feat: local candidate'], generator.path);
+    const candidateHead = git(['rev-parse', 'HEAD'], generator.path);
+    expect(() => git([
+      '--git-dir', fixture.remote, 'cat-file', '-e', `${candidateHead}^{commit}`,
+    ], fixture.root)).toThrow();
+
+    const evaluator = await manager.prepare(spec(fixture, {
+      attempt_id: ATTEMPT_B,
+      branch: 'cp-07272050-writer-a',
+      base_sha: candidateHead,
+      expected_head_sha: candidateHead,
+      mode: 'read-only',
+      frozen_baseline: true,
+      source_attempt_id: ATTEMPT_A,
+    }));
+
+    expect(evaluator).toMatchObject({
+      head_sha: candidateHead,
+      source_attempt_id: ATTEMPT_A,
+    });
+    expect(git(['rev-parse', 'HEAD'], evaluator.path)).toBe(candidateHead);
+    expect(git(['remote', 'get-url', 'origin'], evaluator.path)).toBe(fixture.remote);
+  });
+
   // The Worker is the only place that observes the real checkout SHA. A frozen
   // Attempt must carry that observation forward, otherwise nothing downstream
   // can prove the Provider never left the pinned baseline.

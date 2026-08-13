@@ -53,8 +53,8 @@ describe('Judge 前本地候选与 Judge 后受信发布', () => {
     expect(derive(baseObserved({
       pr: null,
       candidate,
-      evaluateVerdict: null,
-      judgeVerdict: null,
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'c'.repeat(40) },
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: 'c'.repeat(40) },
     }))).toEqual({
       phase: 'evaluate',
       action: 'spawn:evaluator',
@@ -85,6 +85,25 @@ describe('Judge 前本地候选与 Judge 后受信发布', () => {
       phase: 'publish',
       action: 'publish:approved_ref',
       reason: 'judge_passed_publish_exact_candidate',
+    });
+  });
+
+  it('generator-fix 的新本地候选优先于仍指向旧 SHA 的 PR', () => {
+    expect(derive(baseObserved({
+      pr: {
+        url: 'https://github.com/x/y/pull/1',
+        state: 'OPEN',
+        ci: 'pass',
+        merged: false,
+        head_sha: 'c'.repeat(40),
+      },
+      candidate,
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'c'.repeat(40) },
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: 'c'.repeat(40) },
+    }))).toEqual({
+      phase: 'evaluate',
+      action: 'spawn:evaluator',
+      reason: 'no_evaluate_verdict_for_head_sha',
     });
   });
 });
