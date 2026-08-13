@@ -1,0 +1,29 @@
+{
+  "initiative_id": "3f722048-7464-447d-b8eb-3c20469447e3",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全链落在 packages/brain 后端（Mapper 投影/GP 合同/receipts/evaluator writer），无 UI、无远端 agent 协议、无 engine hooks，属纯后台自主认证链",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "F1 Capability 可信认证闭环：Mapper fail-closed 认证闸 + Evaluator receipt GP identity 绑定",
+      "scope": "在真实读路径 lib/map-state-resolver.js 为 Capability 投影加 fail-closed 认证闸（signed GP contract 存在 + receipt 绑定 gp_contract_id/hash + impact_contract_id + 当前 SHA + step-link 绑定 Feature/Assertion + Feature 子节点全绿，四者 AND 才 green，缺任一非绿并给精确 reason_code）；在写路径 impact-contract/assertion-receipts.js 让 Evaluator 落 PASS receipt 时绑定 gp_contract_id/gp_contract_hash（无 signed 合同则拒写）；golden-path-contracts.js 提供读 signed 合同 identity 的能力。复用现有表，不新增平行认证系统。",
+      "dod": [
+        "[BEHAVIOR] 四前提齐备时 F1 capability 投影 green（tests/f1-cert-harness.mjs --scenario=S0-happy exit 0）",
+        "[BEHAVIOR] 无 signed GP contract / receipt 未绑定 GP identity / 未绑定 Impact / 陈旧 SHA / step-link 未绑定 → F1 非绿且 reason_code 精确（harness S1/S3/S5 exit 0）",
+        "[BEHAVIOR] Evaluator persistTrustedEvaluatorReceipts 落 PASS receipt 绑定 gp_contract_id/hash（harness S6 exit 0）",
+        "[BEHAVIOR] validation-clock 身份完整性 fail-closed 不回退（harness INV1 exit 0）",
+        "[ARTIFACT] tests/f1-capability-certification.integration.test.ts 由红转绿（brain-integration CI 真 PG）"
+      ],
+      "files": [
+        "packages/brain/src/lib/map-state-resolver.js",
+        "packages/brain/src/impact-contract/assertion-receipts.js",
+        "packages/brain/src/golden-path-contracts.js",
+        "sprints/0813-f1-capability-certification/tests/f1-capability-certification.integration.test.ts",
+        "sprints/0813-f1-capability-certification/tests/f1-cert-harness.mjs"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 110
+    }
+  ]
+}
