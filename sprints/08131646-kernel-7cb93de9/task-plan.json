@@ -1,0 +1,27 @@
+{
+  "initiative_id": "bf94e911-b273-429e-bde8-561ae7e60cb0",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅在 packages/brain（dispatcher 纯函数 + 后端 skill SSOT），无 UI、无远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "buildInputs 在 evaluator bundle 注入本 run 最近 judge FAIL 的 judge_feedback（脱敏+截断）",
+      "scope": "dispatcher.js buildInputs evaluator 分支读 observed.decisionLog 最近 verdict:judge FAIL，注入 inputs.judge_feedback{summary,failure_class,round}；constants.js 加 4000 字符截断上限；harness-evaluator/SKILL.md 消费侧提示词；无 judge/PASS 不注入；整条 bundle ≤ 256KB；permanent 回归测试进 brain-unit CI",
+      "dod": [
+        "[BEHAVIOR] node sprints/08131646-kernel-7cb93de9/tests/verify-judge-feedback.mjs b01..b06 全 exit 0",
+        "[ARTIFACT] packages/brain/src/orchestrator/dispatcher.js 注入 judge_feedback",
+        "[ARTIFACT] packages/brain/src/orchestrator/dispatcher-judge-feedback.test.js permanent 回归测试",
+        "[ARTIFACT] packages/workflows/skills/harness-evaluator/SKILL.md 消费侧提示词"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/constants.js",
+        "packages/brain/src/orchestrator/dispatcher-judge-feedback.test.js",
+        "packages/workflows/skills/harness-evaluator/SKILL.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 50
+    }
+  ]
+}
