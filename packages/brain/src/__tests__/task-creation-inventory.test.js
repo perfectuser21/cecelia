@@ -25,6 +25,22 @@ describe('task creation inventory', () => {
     for (const row of TASK_CREATION_INVENTORY) expect(row).toMatchObject({ module: expect.any(String), source: expect.any(String), creates_executable_task: expect.any(Boolean), migration_status: expect.any(String) });
   });
 
+  it('lists every production module that calls the task creation boundary', async () => {
+    const sourceRoot = fileURLToPath(new URL('..', import.meta.url));
+    const modules = await listProductionModules(sourceRoot);
+    const inventoried = new Set(TASK_CREATION_INVENTORY.map((row) => row.module));
+    const missing = [];
+    for (const modulePath of modules) {
+      if (modulePath === path.join(sourceRoot, 'work-routing-store.js')) continue;
+      const source = await readFile(modulePath, 'utf8');
+      if (/\b(?:createTask|createRoutedTask|taskCreator)\s*\(/.test(source)) {
+        const relative = path.relative(sourceRoot, modulePath);
+        if (!inventoried.has(relative)) missing.push(relative);
+      }
+    }
+    expect(missing, 'task creation inventory must be generated from production callers').toEqual([]);
+  });
+
   it('routes every inventoried executable boundary through the unique task writer', async () => {
     for (const row of TASK_CREATION_INVENTORY) {
       if (!row.creates_executable_task) continue;
