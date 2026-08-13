@@ -100,6 +100,13 @@ describe('Unified Work Router Recovery RED [BEHAVIOR]', () => {
 });
 
 describe('Unified Work Router contract [BEHAVIOR]', () => {
+  it('real Controller Generator Evaluator Judge chain requires literal server PASS', async () => {
+    const source = await import('node:fs').then(fs => fs.readFileSync('packages/brain/scripts/smoke/unified-work-router-role-chain-smoke.sh', 'utf8'));
+    for (const token of ['controller', 'generator', 'evaluator', 'judge', 'evaluate_verdict', 'judge_verdict', 'all_gates_passed', 'docker inspect']) {
+      expect(source).toContain(token);
+    }
+  });
+
   it('four change kinds map forward only through one router', async () => {
     const mod = await import('../../../packages/brain/src/work-router.js');
     expect(mod.CHANGE_KINDS).toEqual(['new_capability', 'capability_change', 'bugfix', 'parameter_only']);
