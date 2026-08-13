@@ -122,7 +122,10 @@ describe('routing store transaction contract', () => {
 
       const persisted = await client.query(
         `SELECT task.task_type, task.payload->>'routing_receipt_id' AS projected_receipt_id,
-                receipt.pipeline, receipt.change_kind, receipt.repo
+                task.payload->>'orchestrator' AS runtime_orchestrator,
+                task.payload->>'harness_runtime' AS harness_runtime,
+                receipt.pipeline, receipt.change_kind, receipt.repo,
+                receipt.orchestrator AS receipt_orchestrator
            FROM tasks task
            JOIN work_routing_receipts receipt ON receipt.task_id = task.id
           WHERE task.id = $1`,
@@ -131,9 +134,12 @@ describe('routing store transaction contract', () => {
       expect(persisted.rows[0]).toMatchObject({
         task_type: 'harness_initiative',
         projected_receipt_id: created.routing_receipt_id,
+        runtime_orchestrator: 'skill-relay',
+        harness_runtime: 'kernel-v1',
         pipeline: 'harness',
         change_kind: 'bugfix',
         repo: 'cecelia',
+        receipt_orchestrator: 'kernel-harness-v2',
       });
 
       await client.query('SAVEPOINT immutable_probe');
