@@ -1310,6 +1310,12 @@ export function createDetachedLauncher({
       if (bundle.inputs.deadline_at) {
         roleEnv.HARNESS_DEADLINE_AT = String(bundle.inputs.deadline_at);
       }
+      if (bundle.inputs.workspace_spec?.base_sha) {
+        roleEnv.HARNESS_WORKSPACE_START_SHA = String(bundle.inputs.workspace_spec.base_sha);
+        roleEnv.HARNESS_FROZEN_BASELINE = String(
+          attempt.role === 'generator' || bundle.inputs.workspace_spec.frozen_baseline === true,
+        );
+      }
       if (attempt.role === 'evaluator' && bundle.inputs.pr_branch) {
         roleEnv.PR_BRANCH = String(bundle.inputs.pr_branch);
       }

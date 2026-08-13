@@ -8,11 +8,15 @@
 
 
 
-**Brain 版本**: 1.272.55
+**Brain 版本**: 1.272.56
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.56 — Generator Frozen Workspace Wiring
+
+- 所有 Generator Attempt 由 Dispatcher 注入 workspace 起始 SHA，并强制启用 Runner 的 frozen-baseline 双闸。
 
 ## Brain 1.272.55 — Canonical Action Validation
 

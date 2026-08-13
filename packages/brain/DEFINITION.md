@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.272.55
+**Brain 版本**: 1.272.56
+
+## Generator Frozen Workspace Wiring（Brain 1.272.56）
+
+- Dispatcher 将服务端 workspace base SHA 投影为 Runner 的起始断言；所有 Generator Attempt 无条件武装 frozen-baseline pre-push 与退出后血统复核，不再依赖任务 payload opt-in。
 
 ## Canonical Action Validation（Brain 1.272.55）
 
