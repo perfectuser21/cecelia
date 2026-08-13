@@ -10,6 +10,8 @@ import {
   GP_HARNESS_TARGET_ENVIRONMENT,
   GP_HARNESS_TARGET_ENVIRONMENTS,
 } from './golden-path-contract-task.js';
+import { createRoutedTask } from './work-routing-store.js';
+import { CHANGE_KINDS, normalizeRepoHint } from './work-router.js';
 
 export {
   DEFAULT_GP_YIELD_ORDER,
@@ -34,10 +36,55 @@ function resolveHarnessGlue(goldenPath) {
       400,
     );
   }
+  if (!CHANGE_KINDS.includes(goldenPath?.change_kind)) {
+    throw new GoldenPathContractError(
+      'GP_CHANGE_KIND_REQUIRED',
+      'Golden Path requires one explicit four-form change_kind before Harness launch',
+      400,
+    );
+  }
+  if (!Array.isArray(goldenPath?.map_scope)
+      || goldenPath.map_scope.length === 0
+      || goldenPath.map_scope.some((item) => typeof item !== 'string' || item.trim().length === 0)) {
+    throw new GoldenPathContractError(
+      'GP_MAP_SCOPE_REQUIRED',
+      'Golden Path requires a non-empty explicit Map scope before Harness launch',
+      400,
+    );
+  }
   return {
     baseRepo: goldenPath?.base_repo || GP_HARNESS_BASE_REPO,
     targetEnvironment,
+    changeKind: goldenPath.change_kind,
+    mapScope: [...new Set(goldenPath.map_scope.map((item) => item.trim()))].sort(),
   };
+}
+
+async function resolveFreshMapBaseline(db, baseRepo) {
+  const repoHint = normalizeRepoHint(baseRepo);
+  const { rows } = await db.query(
+    `SELECT repositories.repo,
+            min(headers.source_revision) AS source_revision
+       FROM map_scope_repositories AS repositories
+       JOIN fact_snapshot_headers AS headers
+         ON headers.repo = repositories.repo
+      WHERE repositories.repo = $1
+         OR repositories.adapter_config->'aliases' ? $1
+      GROUP BY repositories.repo
+     HAVING count(DISTINCT headers.kind) = 4
+        AND count(DISTINCT headers.source_revision) = 1
+        AND bool_and(headers.scanned_at >= now() - interval '15 minutes')`,
+    [repoHint],
+  );
+  const baseline = rows[0];
+  if (rows.length !== 1 || !/^[a-f0-9]{40}$/.test(baseline?.source_revision ?? '')) {
+    throw new GoldenPathContractError(
+      'GP_MAP_BASELINE_UNAVAILABLE',
+      'Golden Path requires one fresh, revision-consistent repository Map baseline',
+      409,
+    );
+  }
+  return baseline;
 }
 
 function parseContractOrThrow(contract) {
@@ -332,6 +379,7 @@ export async function signAndLaunchGoldenPathContract(db, {
   // 先解析胶水参数再动笔：非法 target_environment 必须在写 decision / 签合同版本 / 建 task
   // 之前拦掉，否则回滚要跨三张表。幂等分支在上面已经 return，走到这里必然要写。
   const harnessGlue = resolveHarnessGlue(goldenPath);
+  const mapBaseline = await resolveFreshMapBaseline(db, harnessGlue.baseRepo);
   if (goldenPath.status !== 'converged') {
     throw new GoldenPathContractError(
       'GP_NOT_CONVERGED',
@@ -424,25 +472,32 @@ export async function signAndLaunchGoldenPathContract(db, {
     gp_contract_id: signedVersion.id,
     gp_contract_version: signedVersion.version,
     gp_contract_hash: signedVersion.content_hash,
+    change_kind: harnessGlue.changeKind,
+    map_scope: harnessGlue.mapScope,
+    base_sha: mapBaseline.source_revision,
   };
-  const { rows: tasks } = await db.query(
-    `INSERT INTO tasks (
-       title,
-       description,
-       task_type,
-       status,
-       priority,
-       payload
-     )
-     VALUES ($1, $2, 'harness_initiative', 'queued', 'P1', $3::jsonb)
-     RETURNING *`,
-    [
-      `[GP harness] ${goldenPath.title}`,
-      `签字后 harness 实现任务——${goldenPath.one_liner}`,
-      JSON.stringify(taskPayload),
-    ],
-  );
-  const task = tasks[0];
+  const routed = await createRoutedTask(db, {
+    source: 'discovery',
+    source_id: `golden-path-contract:${signedVersion.id}`,
+    title: `[GP harness] ${goldenPath.title}`,
+    description: `签字后 harness 实现任务——${goldenPath.one_liner}`,
+    requested_task_type: 'harness_initiative',
+    declared_change_kind: harnessGlue.changeKind,
+    declared_domain: 'coding',
+    mutation_intent: 'write',
+    repo_hint: mapBaseline.repo,
+    map_scope_hint: harnessGlue.mapScope,
+    base_sha: mapBaseline.source_revision,
+    metadata: taskPayload,
+    task: {
+      priority: 'P1',
+      status: 'queued',
+      trigger_source: 'gp_controller',
+      domain: 'coding',
+      phase: 'dev',
+    },
+  }, null, { transaction: 'existing' });
+  const task = routed.task;
 
   const { rows: approvedPaths } = await db.query(
     `UPDATE golden_paths

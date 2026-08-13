@@ -81,10 +81,10 @@ function legacyWorkContract({ taskType, mutationIntent, workDomain }) {
  * @param {string} [params.dedupe_key] - DB 级幂等键，≤255 字符；超长调用方自行 hash（超长会抛错）
  * @param {number} [params.dedupe_ttl_sec] - dedupe_key 的存活时长（秒），默认 3600
  */
-async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput, delivery_type, journey_id, dedupe_key, dedupe_ttl_sec, source, source_id, mutation_intent, declared_domain, declared_change_kind, execution_profile_override_request, repo_hint, map_scope_hint, branch, base_sha, parent_task_id, db = pool }) {
+async function createTask({ title, description, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, blocked_at, tags, task_type, status, location, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput, delivery_type, created_by, dept, phase, executor_kind, journey_id, dedupe_key, dedupe_ttl_sec, source, source_id, mutation_intent, declared_domain, declared_change_kind, execution_profile_override_request, repo_hint, map_scope_hint, branch, base_sha, parent_task_id, allow_unscoped = false, db = pool }) {
   const requestedTaskType = task_type || 'dev';
   // Validate goal_id (required for most tasks except system tasks)
-  if (!goal_id && !isSystemTask(requestedTaskType, trigger_source)) {
+  if (!goal_id && !allow_unscoped && !isSystemTask(requestedTaskType, trigger_source)) {
     const error = `goal_id is required for task_type="${requestedTaskType}" trigger_source="${trigger_source}"`;
     console.error(`[Action] Validation failed: ${error}`);
     throw new Error(error);
@@ -93,25 +93,27 @@ async function createTask({ title, description, priority, project_id, goal_id, t
   // Dedup: skip if queued/in_progress, or completed within 24 h
   // For system-generated tasks (rumination/cortex/auto_fix), also skip failed within 72 h
   // to prevent self-reinforcing loops where a failed task triggers its own re-creation
-  const SYSTEM_TRIGGER_SOURCES = ['rumination', 'cortex', 'auto_fix'];
-  const isSystemTrigger = SYSTEM_TRIGGER_SOURCES.includes(trigger_source);
-  const dedupResult = await db.query(`
-    SELECT * FROM tasks
-    WHERE title = $1
-      AND (goal_id IS NOT DISTINCT FROM $2)
-      AND (project_id IS NOT DISTINCT FROM $3)
-      AND (
-        status IN ('queued', 'in_progress')
-        OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours')
-        OR ($4 AND status = 'failed' AND updated_at > NOW() - INTERVAL '72 hours')
-      )
-    LIMIT 1
-  `, [title, goal_id || null, project_id || null, isSystemTrigger]);
+  if (!source || !source_id) {
+    const SYSTEM_TRIGGER_SOURCES = ['rumination', 'cortex', 'auto_fix'];
+    const isSystemTrigger = SYSTEM_TRIGGER_SOURCES.includes(trigger_source);
+    const dedupResult = await db.query(`
+      SELECT * FROM tasks
+      WHERE title = $1
+        AND (goal_id IS NOT DISTINCT FROM $2)
+        AND (project_id IS NOT DISTINCT FROM $3)
+        AND (
+          status IN ('queued', 'in_progress')
+          OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours')
+          OR ($4 AND status = 'failed' AND updated_at > NOW() - INTERVAL '72 hours')
+        )
+      LIMIT 1
+    `, [title, goal_id || null, project_id || null, isSystemTrigger]);
 
-  if (dedupResult.rows.length > 0) {
-    const existing = dedupResult.rows[0];
-    console.log(`[Action] Dedup: task "${title}" already exists (id: ${existing.id}, status: ${existing.status})`);
-    return { success: true, task: existing, deduplicated: true };
+    if (dedupResult.rows.length > 0) {
+      const existing = dedupResult.rows[0];
+      console.log(`[Action] Dedup: task "${title}" already exists (id: ${existing.id}, status: ${existing.status})`);
+      return { success: true, task: existing, deduplicated: true };
+    }
   }
 
   // 协议卫生包：DB 级 dedupe_key 幂等（可选，跨 Brain 重启持久）
@@ -155,7 +157,13 @@ async function createTask({ title, description, priority, project_id, goal_id, t
       task: {
         priority: priority || 'P1',
         project_id: project_id || null,
+        area_id: area_id || null,
         goal_id: goal_id || null,
+        okr_initiative_id: okr_initiative_id || null,
+        ability_id: ability_id || null,
+        blocked_at: blocked_at || null,
+        status: status || 'queued',
+        location: location || 'us',
         tags: tags || [],
         prd_content: prd_content || null,
         execution_profile: execution_profile || null,
@@ -163,8 +171,12 @@ async function createTask({ title, description, priority, project_id, goal_id, t
         domain: taskDomain,
         owner_role: ownerRole,
         delivery_type: delivery_type || 'code-only',
+        created_by: created_by || null,
+        dept: dept || null,
+        phase: phase || 'dev',
+        executor_kind: executor_kind || null,
       },
-    }, null, db === pool ? {} : { transaction: 'existing' });
+    }, null, typeof db.connect === 'function' ? {} : { transaction: 'existing' });
 
     const task = routed.task;
     console.log(`[Action] Created task: ${task.id} - ${title} (type: ${task.task_type})`);

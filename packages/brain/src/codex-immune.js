@@ -8,6 +8,8 @@
  *   - ensureCodexImmune(dbPool) — 每 20 小时触发一次 Codex 免疫检查任务
  */
 
+import { createTask } from './actions.js';
+
 const IMMUNE_INTERVAL_MS = 20 * 60 * 60 * 1000; // 20 小时
 
 /**
@@ -15,7 +17,7 @@ const IMMUNE_INTERVAL_MS = 20 * 60 * 60 * 1000; // 20 小时
  * 查询最近一条 codex_qa 任务，若超过 20h（或从未有过），自动创建
  * @param {import('pg').Pool} dbPool
  */
-export async function ensureCodexImmune(dbPool) {
+export async function ensureCodexImmune(dbPool, taskCreator = createTask) {
   const result = await dbPool.query(`
     SELECT created_at FROM tasks
     WHERE task_type = 'codex_qa'
@@ -33,13 +35,17 @@ export async function ensureCodexImmune(dbPool) {
     return { skipped: true, reason: 'too_soon', elapsed_ms: elapsed };
   }
 
-  await dbPool.query(`
-    INSERT INTO tasks (title, description, status, priority, task_type, trigger_source)
-    VALUES ($1, $2, 'queued', 'P1', 'codex_qa', 'brain_auto')
-  `, [
-    'Codex 免疫检查 - cecelia-core',
-    '/Users/administrator/perfect21/cecelia/quality/scripts/run-codex-immune.sh'
-  ]);
+  await taskCreator({
+    db: dbPool,
+    source: 'scheduler',
+    source_id: `codex-immune:${new Date().toISOString().slice(0, 13)}`,
+    title: 'Codex 免疫检查 - cecelia-core',
+    description: '/Users/administrator/perfect21/cecelia/quality/scripts/run-codex-immune.sh',
+    priority: 'P1',
+    task_type: 'codex_qa',
+    trigger_source: 'brain_auto',
+    allow_unscoped: true,
+  });
 
   console.log('[codex-immune] task created (last check: ' +
     (lastCreatedAt ? new Date(lastCreatedAt).toISOString() : 'never') + ')');

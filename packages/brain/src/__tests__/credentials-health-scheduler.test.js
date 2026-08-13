@@ -58,10 +58,10 @@ import {
 function makePool({ hasToday = false, insertOk = true } = {}) {
   return {
     query: vi.fn().mockImplementation(async (sql) => {
-      if (sql.includes('SELECT id FROM tasks') && sql.includes('credentials_health')) {
+      if (sql.includes('SELECT id FROM cecelia_events') && sql.includes('credentials_health_completed')) {
         return { rows: hasToday ? [{ id: 'existing' }] : [] };
       }
-      if (sql.includes('INSERT INTO tasks')) {
+      if (sql.includes('INSERT INTO cecelia_events')) {
         if (!insertOk) throw new Error('DB insert failed');
         return { rows: [] };
       }

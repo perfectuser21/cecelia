@@ -44,34 +44,39 @@ describe('codex-immune.ensureCodexImmune', () => {
 
   it('created 路径：从未触发过（rows 为空）', async () => {
     const pool = makeMockPool({ rows: [] });
+    const taskCreator = vi.fn().mockResolvedValue({ task: { id: 'immune-task' } });
 
-    const result = await ensureCodexImmune(pool);
+    const result = await ensureCodexImmune(pool, taskCreator);
 
     expect(result.created).toBe(true);
     expect(result.elapsed_ms).toBe(Infinity);
-    expect(pool.queries).toHaveLength(2);
-    expect(pool.queries[1].sql).toMatch(/INSERT INTO tasks/);
-    // 验证 INSERT 参数
-    expect(pool.queries[1].params[0]).toMatch(/Codex 免疫检查/);
-    expect(pool.queries[1].params[1]).toMatch(/run-codex-immune\.sh/);
+    expect(pool.queries).toHaveLength(1);
+    expect(taskCreator).toHaveBeenCalledWith(expect.objectContaining({
+      db: pool,
+      title: expect.stringMatching(/Codex 免疫检查/),
+      description: expect.stringMatching(/run-codex-immune\.sh/),
+      task_type: 'codex_qa',
+      priority: 'P1',
+    }));
   });
 
   it('created 路径：距上次 > 20h', async () => {
     const old = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 小时前
     const pool = makeMockPool({ rows: [{ created_at: old }] });
+    const taskCreator = vi.fn().mockResolvedValue({ task: { id: 'immune-task' } });
 
-    const result = await ensureCodexImmune(pool);
+    const result = await ensureCodexImmune(pool, taskCreator);
 
     expect(result.created).toBe(true);
     expect(result.elapsed_ms).toBeGreaterThan(20 * 60 * 60 * 1000);
-    // 调了 INSERT
-    expect(pool.queries).toHaveLength(2);
-    expect(pool.queries[1].sql).toMatch(/INSERT INTO tasks/);
+    expect(pool.queries).toHaveLength(1);
+    expect(taskCreator).toHaveBeenCalledOnce();
   });
 
   it('SELECT 查询过滤 cancelled / canceled 状态', async () => {
     const pool = makeMockPool({ rows: [] });
-    await ensureCodexImmune(pool);
+    const taskCreator = vi.fn().mockResolvedValue({ task: { id: 'immune-task' } });
+    await ensureCodexImmune(pool, taskCreator);
 
     expect(pool.queries[0].sql).toMatch(/codex_qa/);
     expect(pool.queries[0].sql).toMatch(/NOT IN.*cancelled.*canceled|cancelled.*canceled/);

@@ -13,7 +13,14 @@ describe('task creation inventory', () => {
       if (!row.creates_executable_task) continue;
       expect(row.migration_status, row.module).toBe('routed');
       const source = await readFile(new URL(`../${row.module}`, import.meta.url), 'utf8');
-      expect(source, row.module).toMatch(/createRoutedTask\s*\(/);
+      const callsWriterDirectly = /(?:createRoutedTask|createTask)\s*\(/.test(source);
+      const callsInjectedWriter = /taskCreator\s*\(/.test(source) && /=\s*createTask\b/.test(source);
+      expect(callsWriterDirectly || callsInjectedWriter, row.module).toBe(true);
+      if ((callsWriterDirectly || callsInjectedWriter) && row.module !== 'actions.js') {
+        const importsActionsBoundary = /import\s+\{\s*createTask\s*\}\s+from\s+['"].*actions\.js['"]/.test(source);
+        const importsAtomicStore = /import\s+\{\s*createRoutedTask\s*\}\s+from\s+['"].*work-routing-store\.js['"]/.test(source);
+        expect(importsActionsBoundary || importsAtomicStore, row.module).toBe(true);
+      }
       expect(source, row.module).not.toMatch(/INSERT\s+INTO\s+tasks/i);
     }
   });

@@ -58,6 +58,8 @@ function makeSigningClient({ failTaskInsert = false, stale = false } = {}) {
             journey_id: 'journey-1',
             proposal_doc: '# proposal',
             status: 'converged',
+            change_kind: 'new_capability',
+            map_scope: ['capability_social_feed'],
           }],
         };
       }
@@ -65,6 +67,24 @@ function makeSigningClient({ failTaskInsert = false, stale = false } = {}) {
         return { rows: [contract] };
       }
       if (/FROM tasks/i.test(compact)) {
+        return { rows: [] };
+      }
+      if (/FROM map_scope_repositories AS repositories/i.test(compact)) {
+        return { rows: [{ repo: 'cecelia', source_revision: 'a'.repeat(40) }] };
+      }
+      if (/SELECT scope_key, repo, adapter_config FROM map_scope_repositories/i.test(compact)) {
+        return {
+          rows: [{
+            scope_key: 'cecelia',
+            repo: 'cecelia',
+            adapter_config: { aliases: ['perfectuser21/cecelia'] },
+          }],
+        };
+      }
+      if (/pg_advisory_xact_lock/i.test(compact)) {
+        return { rows: [] };
+      }
+      if (/FROM work_routing_receipts r/i.test(compact)) {
         return { rows: [] };
       }
       if (/INSERT INTO decisions/i.test(compact)) {
@@ -83,9 +103,15 @@ function makeSigningClient({ failTaskInsert = false, stale = false } = {}) {
         return {
           rows: [{
             id: 'task-1',
-            payload: JSON.parse(params[2]),
+            payload: JSON.parse(params[9]),
           }],
         };
+      }
+      if (/INSERT INTO work_routing_receipts/i.test(compact)) {
+        return { rows: [{ id: 'receipt-1' }] };
+      }
+      if (/UPDATE tasks SET payload = payload \|\|/i.test(compact)) {
+        return { rows: [], rowCount: 1 };
       }
       if (/UPDATE golden_paths/i.test(compact)) {
         return { rows: [{ id: 'gp-1', status: 'approved' }] };

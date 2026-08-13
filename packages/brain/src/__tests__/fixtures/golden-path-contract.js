@@ -55,6 +55,7 @@ export class StatefulContractDb {
     this.tasks = structuredClone(tasks);
     this.actions = [];
     this.decisions = [];
+    this.receipts = [];
     this.events = [];
   }
 
@@ -64,6 +65,41 @@ export class StatefulContractDb {
 
     if (/FROM golden_paths .*FOR UPDATE/i.test(compact)) {
       return { rows: this.gp ? [structuredClone(this.gp)] : [] };
+    }
+    if (/FROM map_scope_repositories AS repositories/i.test(compact)) {
+      return {
+        rows: [{ repo: 'cecelia', source_revision: 'a'.repeat(40) }],
+      };
+    }
+    if (/SELECT scope_key, repo, adapter_config FROM map_scope_repositories/i.test(compact)) {
+      return {
+        rows: [{
+          scope_key: 'cecelia',
+          repo: 'cecelia',
+          adapter_config: {
+            aliases: [
+              'perfectuser21/cecelia',
+              'https://github.com/perfectuser21/cecelia',
+            ],
+          },
+        }],
+      };
+    }
+    if (/pg_advisory_xact_lock/i.test(compact)) {
+      return { rows: [] };
+    }
+    if (/FROM work_routing_receipts r/i.test(compact)) {
+      const receipt = this.receipts.find((row) => (
+        row.source === params[0]
+        && row.source_id === params[1]
+        && row.router_version === params[2]
+      ));
+      const task = receipt && this.tasks.find((row) => row.id === receipt.task_id);
+      return {
+        rows: receipt && task
+          ? [{ ...structuredClone(task), routing_receipt_id: receipt.id, task_id: task.id }]
+          : [],
+      };
     }
     if (
       /FROM golden_path_contract_versions/i.test(compact)
@@ -179,16 +215,33 @@ export class StatefulContractDb {
       return { rows: [structuredClone(row)] };
     }
     if (/INSERT INTO tasks/i.test(compact)) {
+      const routedInsert = /project_id, area_id, goal_id/i.test(compact);
       const row = {
         id: `task-${this.tasks.length + 1}`,
         title: params[0],
         description: params[1],
         task_type: 'harness_initiative',
         status: 'queued',
-        payload: JSON.parse(params[2]),
+        payload: JSON.parse(routedInsert ? params[9] : params[2]),
       };
       this.tasks.push(row);
       return { rows: [structuredClone(row)] };
+    }
+    if (/INSERT INTO work_routing_receipts/i.test(compact)) {
+      const row = {
+        id: `receipt-${this.receipts.length + 1}`,
+        task_id: params[0],
+        source: params[1],
+        source_id: params[2],
+        router_version: params[13],
+      };
+      this.receipts.push(row);
+      return { rows: [{ id: row.id }] };
+    }
+    if (/UPDATE tasks SET payload = payload \|\|/i.test(compact)) {
+      const task = this.tasks.find((row) => row.id === params[0]);
+      task.payload = { ...task.payload, ...JSON.parse(params[1]) };
+      return { rows: [] };
     }
     if (
       /UPDATE golden_paths/i.test(compact)

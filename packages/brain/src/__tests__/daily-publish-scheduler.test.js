@@ -62,10 +62,15 @@ describe('isInPublishTriggerWindow', () => {
 describe('triggerDailyPublish', () => {
   let pool;
   let insertedTasks;
+  let taskCreator;
 
   beforeEach(() => {
     vi.clearAllMocks();
     insertedTasks = [];
+    taskCreator = vi.fn(async (request) => {
+      insertedTasks.push({ platform: request.payload.platform, payload: request.payload });
+      return { task: { id: `task-${insertedTasks.length}` } };
+    });
 
     pool = {
       query: vi.fn(async (sql, params) => {
@@ -117,13 +122,13 @@ describe('triggerDailyPublish', () => {
   });
 
   it('窗口内处理 pending jobs，创建 content_publish tasks', async () => {
-    const result = await triggerDailyPublish(pool, makeWindowTime());
+    const result = await triggerDailyPublish(pool, makeWindowTime(), { taskCreator });
     expect(result.skipped_window).toBe(false);
     expect(result.created).toBeGreaterThan(0);
   });
 
   it('窗口内优先级平台（douyin/xiaohongshu/wechat）均被创建', async () => {
-    await triggerDailyPublish(pool, makeWindowTime());
+    await triggerDailyPublish(pool, makeWindowTime(), { taskCreator });
     const platforms = insertedTasks.map(t => t.platform);
     expect(platforms).toContain('douyin');
     expect(platforms).toContain('wechat');

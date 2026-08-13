@@ -3,12 +3,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockQuery = vi.fn();
 const mockRelease = vi.fn();
 const mockConnect = vi.fn();
+const mockCreateTask = vi.fn();
 vi.mock('../../db.js', () => ({
   default: {
     query: mockQuery,
     connect: mockConnect,
   },
 }));
+vi.mock('../../actions.js', () => ({ createTask: mockCreateTask }));
 
 // 默认 1 slot（capacity gate: batchLimit = 1）
 vi.mock('../../fleet-resource-cache.js', () => ({ getTotalEffectiveSlots: vi.fn(() => 1) }));
@@ -30,6 +32,7 @@ describe('golden-paths routes（GP 蓝图级实体，区别于既有 golden_path
     mockQuery.mockReset();
     mockRelease.mockReset();
     mockConnect.mockReset();
+    mockCreateTask.mockReset();
     mockConnect.mockResolvedValue({
       query: mockQuery,
       release: mockRelease,
@@ -69,6 +72,30 @@ describe('golden-paths routes（GP 蓝图级实体，区别于既有 golden_path
       expect(res.status).toBe(201);
       expect(res.body.golden_path.status).toBe('candidate');
       expect(mockQuery.mock.calls[0][0]).toMatch(/INSERT INTO golden_paths/);
+    });
+
+    it('持久化 Golden Path 的四形式、Map scope 与 repo 胶水字段', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, change_kind: 'bugfix' }] });
+      const res = await (await req())(await makeApp())
+        .post('/api/brain/golden-paths')
+        .send({
+          title: '朋友圈GP',
+          one_liner: '一句话',
+          change_kind: 'bugfix',
+          map_scope: ['capability_social_feed'],
+          base_repo: 'cecelia',
+          target_environment: 'local_api',
+        });
+
+      expect(res.status).toBe(201);
+      expect(mockQuery.mock.calls[0][0]).toMatch(/change_kind/);
+      expect(mockQuery.mock.calls[0][0]).toMatch(/map_scope/);
+      expect(mockQuery.mock.calls[0][1]).toEqual(expect.arrayContaining([
+        'bugfix',
+        JSON.stringify(['capability_social_feed']),
+        'cecelia',
+        'local_api',
+      ]));
     });
 
     it('缺 title/one_liner 返回 400', async () => {
@@ -142,6 +169,34 @@ describe('golden-paths routes（GP 蓝图级实体，区别于既有 golden_path
       expect(res.status).toBe(200);
     });
 
+    it('允许为启动补齐显式 change_kind 和 map_scope', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ status: 'candidate' }] });
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, change_kind: 'capability_change' }] });
+      const res = await (await req())(await makeApp())
+        .patch('/api/brain/golden-paths/gp-1')
+        .send({ change_kind: 'capability_change', map_scope: ['capability_social_feed'] });
+
+      expect(res.status).toBe(200);
+      expect(mockQuery.mock.calls[1][0]).toMatch(/change_kind = /);
+      expect(mockQuery.mock.calls[1][0]).toMatch(/map_scope = /);
+      expect(mockQuery.mock.calls[1][1]).toContain(JSON.stringify(['capability_social_feed']));
+    });
+
+    it('拒绝第五种 change_kind 和空 Map scope', async () => {
+      mockQuery.mockResolvedValue({ rows: [{ status: 'candidate' }] });
+      const app = await makeApp();
+
+      const invalidKind = await (await req())(app)
+        .patch('/api/brain/golden-paths/gp-1')
+        .send({ change_kind: 'tiny_fix' });
+      const emptyScope = await (await req())(app)
+        .patch('/api/brain/golden-paths/gp-1')
+        .send({ map_scope: [] });
+
+      expect(invalidKind.status).toBe(400);
+      expect(emptyScope.status).toBe(400);
+    });
+
     it('空 body 返回 400', async () => {
       mockQuery.mockResolvedValueOnce({ rows: [{ status: 'candidate' }] });
       const res = await (await req())(await makeApp())
@@ -167,16 +222,24 @@ describe('golden-paths routes（GP 蓝图级实体，区别于既有 golden_path
     it('F3: candidate→proposed 且建 golden_path_proposal 任务', async () => {
       mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'candidate' }] }); // SELECT gp
       mockQuery.mockResolvedValueOnce({ rows: [{ cnt: 0 }] });                          // COUNT in-flight
-      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'task-abc' }] });                  // INSERT task
+      mockQuery.mockResolvedValueOnce({}); // BEGIN
+      mockCreateTask.mockResolvedValueOnce({ success: true, task: { id: 'task-abc' } });
       mockQuery.mockResolvedValueOnce({ rows: [{ ...GP_ROW, status: 'proposed', proposal_task_id: 'task-abc' }] }); // UPDATE gp
+      mockQuery.mockResolvedValueOnce({}); // COMMIT
       const res = await (await req())(await makeApp())
         .post('/api/brain/golden-paths/gp-1/select').send({});
       expect(res.status).toBe(200);
       expect(res.body.golden_path.status).toBe('proposed');
       expect(res.body.proposal_task_id).toBe('task-abc');
-      const taskInsertSql = mockQuery.mock.calls[2][0];
-      expect(taskInsertSql).toMatch(/INSERT INTO tasks/);
-      expect(taskInsertSql).toMatch(/golden_path_proposal/);
+      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+        db: expect.any(Object),
+        source: 'discovery',
+        source_id: 'golden-path-proposal:gp-1',
+        task_type: 'golden_path_proposal',
+        mutation_intent: 'none',
+      }));
+      expect(mockQuery.mock.calls.some(([sql]) => /INSERT INTO tasks/i.test(sql))).toBe(false);
+      expect(mockQuery.mock.calls.at(-1)[0]).toBe('COMMIT');
     });
 
     it('F4: 容量已满（in_flight >= batchLimit=1）→ 409 CAPACITY_EXCEEDED', async () => {

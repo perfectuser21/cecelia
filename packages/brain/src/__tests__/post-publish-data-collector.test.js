@@ -62,19 +62,19 @@ describe('schedulePostPublishCollection', () => {
 
     // fetchPendingCollectionTasks
     mockQuery.mockResolvedValueOnce({ rows: fakeTasks });
-    // dispatchScraperTask INSERT
-    mockQuery.mockResolvedValueOnce({ rows: [] });
+    const taskCreator = vi.fn().mockResolvedValue({ task: { id: 'scraper-task' } });
     // fetchQueuedScraperTasks → 空
     mockQuery.mockResolvedValueOnce({ rows: [] });
 
-    const result = await schedulePostPublishCollection(mockPool);
+    const result = await schedulePostPublishCollection(mockPool, { taskCreator });
 
     expect(result.scheduled).toBe(1);
-    expect(mockQuery).toHaveBeenCalledTimes(3);
-
-    const insertCall = mockQuery.mock.calls[1];
-    expect(insertCall[0]).toContain('INSERT INTO tasks');
-    expect(insertCall[1][0]).toBe('platform_scraper');
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(taskCreator).toHaveBeenCalledWith(expect.objectContaining({
+      db: mockPool,
+      source: 'child',
+      task_type: 'platform_scraper',
+    }));
   });
 
   it('DB 异常时不抛出，返回 scheduled=0', async () => {

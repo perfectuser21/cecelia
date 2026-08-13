@@ -3,12 +3,15 @@
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
+import { createTask } from '../actions.js';
 import { getTotalEffectiveSlots } from '../fleet-resource-cache.js';
 import {
   GoldenPathContractError,
   createGoldenPathContractVersion,
   launchLatestSignedGoldenPath,
 } from '../golden-path-contracts.js';
+import { GP_HARNESS_TARGET_ENVIRONMENTS } from '../golden-path-contract-task.js';
+import { CHANGE_KINDS } from '../work-router.js';
 
 const router = express.Router();
 router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
@@ -62,7 +65,30 @@ export const ALLOWED_TRANSITIONS = {
 };
 
 const PATCHABLE_FIELDS = ['one_liner', 'est_scale', 'proposal_doc', 'demo_url', 'judgment_refs',
-  'findings_log', 'auto_release', 'veto_deadline', 'review_after', 'status_reason', 'proposal_task_id'];
+  'findings_log', 'auto_release', 'veto_deadline', 'review_after', 'status_reason', 'proposal_task_id',
+  'change_kind', 'map_scope', 'base_repo', 'target_environment'];
+
+function validateRoutingFields(body) {
+  if (body.change_kind !== undefined && body.change_kind !== null
+      && !CHANGE_KINDS.includes(body.change_kind)) {
+    return 'invalid change_kind';
+  }
+  if (body.map_scope !== undefined && body.map_scope !== null
+      && (!Array.isArray(body.map_scope)
+        || body.map_scope.length === 0
+        || body.map_scope.some((item) => typeof item !== 'string' || item.trim().length === 0))) {
+    return 'invalid map_scope';
+  }
+  if (body.target_environment !== undefined && body.target_environment !== null
+      && !GP_HARNESS_TARGET_ENVIRONMENTS.includes(body.target_environment)) {
+    return 'invalid target_environment';
+  }
+  if (body.base_repo !== undefined && body.base_repo !== null
+      && (typeof body.base_repo !== 'string' || body.base_repo.trim().length === 0)) {
+    return 'invalid base_repo';
+  }
+  return null;
+}
 
 router.get('/golden-paths', async (req, res) => {
   try {
@@ -88,18 +114,33 @@ router.get('/golden-paths', async (req, res) => {
 
 router.post('/golden-paths', async (req, res) => {
   try {
-    const { title, one_liner, journey_id, kr_id, est_scale, source, proposal_doc } = req.body || {};
+    const {
+      title, one_liner, journey_id, kr_id, est_scale, source, proposal_doc,
+      change_kind, map_scope, base_repo, target_environment,
+    } = req.body || {};
     if (!title || !one_liner) {
       return res.status(400).json({ success: false, error: 'title 和 one_liner 必填' });
     }
     if (source && !GP_SOURCES.includes(source)) {
       return res.status(400).json({ success: false, error: `invalid source: ${source}` });
     }
+    const routingError = validateRoutingFields(req.body || {});
+    if (routingError) {
+      return res.status(400).json({ success: false, error: routingError });
+    }
     const { rows } = await pool.query(
-      `INSERT INTO golden_paths (title, one_liner, journey_id, kr_id, est_scale, source, proposal_doc)
-       VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'strategist'), $7)
+      `INSERT INTO golden_paths (
+         title, one_liner, journey_id, kr_id, est_scale, source, proposal_doc,
+         change_kind, map_scope, base_repo, target_environment
+       )
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'strategist'), $7, $8, $9::jsonb, $10, $11)
        RETURNING *`,
-      [title, one_liner, journey_id || null, kr_id || null, est_scale || null, source || null, proposal_doc || null]
+      [
+        title, one_liner, journey_id || null, kr_id || null, est_scale || null,
+        source || null, proposal_doc || null, change_kind || null,
+        map_scope ? JSON.stringify(map_scope) : null, base_repo || null,
+        target_environment || null,
+      ]
     );
     res.status(201).json({ success: true, golden_path: rows[0] });
   } catch (err) {
@@ -181,6 +222,10 @@ router.patch('/golden-paths/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const body = req.body || {};
+    const routingError = validateRoutingFields(body);
+    if (routingError) {
+      return res.status(400).json({ success: false, error: routingError });
+    }
     const { rows: cur } = await pool.query('SELECT status FROM golden_paths WHERE id = $1', [id]);
     if (cur.length === 0) {
       return res.status(404).json({ success: false, error: 'golden_path not found', code: 'GP_NOT_FOUND' });
@@ -212,7 +257,7 @@ router.patch('/golden-paths/:id', async (req, res) => {
     for (const f of PATCHABLE_FIELDS) {
       if (body[f] !== undefined) {
         sets.push(`${f} = $${i++}`);
-        vals.push(f === 'findings_log' ? JSON.stringify(body[f]) : body[f]);
+        vals.push(['findings_log', 'map_scope'].includes(f) ? JSON.stringify(body[f]) : body[f]);
       }
     }
     if (sets.length === 0) {
@@ -271,37 +316,52 @@ router.post('/golden-paths/:id/select', async (req, res) => {
       });
     }
 
-    // 建 golden_path_proposal 任务（直接 INSERT，task_type 已在 migration 335 注册）
+    // task + receipt + GP 状态在同一事务内提交；CAS 失败时全部回滚。
     const taskTitle = `[GP] ${gp.title}`;
-    const { rows: taskRows } = await pool.query(
-      `INSERT INTO tasks (title, description, task_type, status, priority, payload)
-       VALUES ($1, $2, 'golden_path_proposal', 'queued', 'P1', $3::jsonb)
-       RETURNING id`,
-      [
-        taskTitle,
-        gp.one_liner || gp.title,
-        JSON.stringify({ golden_path_id: id, title: gp.title, one_liner: gp.one_liner, orchestrator: 'skill-relay' }),
-      ]
-    );
-    const proposalTaskId = taskRows[0].id;
-
-    // 状态机：candidate → proposed，记录 proposal_task_id
-    const { rows } = await pool.query(
-      `UPDATE golden_paths
-       SET status = 'proposed', proposal_task_id = $1, updated_at = now()
-       WHERE id = $2 AND status = 'candidate'
-       RETURNING *`,
-      [proposalTaskId, id]
-    );
-    if (rows.length === 0) {
-      return res.status(409).json({
-        success: false,
-        error: '状态已被并发修改，请重读后重试',
-        code: 'CONCURRENT_MODIFICATION',
+    const selected = await withTransaction(async (client) => {
+      const taskResult = await createTask({
+        db: client,
+        source: 'discovery',
+        source_id: `golden-path-proposal:${id}`,
+        title: taskTitle,
+        description: gp.one_liner || gp.title,
+        task_type: 'golden_path_proposal',
+        priority: 'P1',
+        mutation_intent: 'none',
+        declared_domain: 'research',
+        trigger_source: 'golden_path_controller',
+        allow_unscoped: true,
+        payload: {
+          golden_path_id: id,
+          title: gp.title,
+          one_liner: gp.one_liner,
+          orchestrator: 'skill-relay',
+        },
       });
-    }
-    res.json({ success: true, golden_path: rows[0], proposal_task_id: proposalTaskId });
+      const proposalTaskId = taskResult.task.id;
+      const { rows } = await client.query(
+        `UPDATE golden_paths
+            SET status = 'proposed', proposal_task_id = $1, updated_at = now()
+          WHERE id = $2 AND status = 'candidate'
+          RETURNING *`,
+        [proposalTaskId, id],
+      );
+      if (rows.length === 0) {
+        throw new GoldenPathContractError(
+          'CONCURRENT_MODIFICATION',
+          '状态已被并发修改，请重读后重试',
+          409,
+        );
+      }
+      return { goldenPath: rows[0], proposalTaskId };
+    });
+    res.json({
+      success: true,
+      golden_path: selected.goldenPath,
+      proposal_task_id: selected.proposalTaskId,
+    });
   } catch (err) {
+    if (sendContractError(res, err)) return;
     console.error('[golden-paths] /select 失败:', err);
     res.status(500).json({ success: false, error: err.message });
   }

@@ -18,6 +18,7 @@
 import pool from './db.js';
 import { computeCapacity as _computeCapacity, isAtCapacity as _isAtCapacity } from './capacity.js';
 import { validateTaskDescription } from './task-quality-gate.js';
+import { createTask } from './actions.js';
 // [已清理] getDomainRole, ROLES — 不再需要（initiative_plan 路径已删除）
 
 // Dedup window: skip if decomposition task completed within this period
@@ -119,18 +120,19 @@ async function createDecompositionTask({ title, description, goalId, projectId, 
     return { id: null, title, rejected: true, reasons: validation.reasons };
   }
 
-  const result = await pool.query(`
-    INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, payload, trigger_source)
-    VALUES ($1, $2, 'queued', 'P0', $3, $4, 'dev', $5, 'brain_auto')
-    RETURNING id, title
-  `, [
+  const created = await createTask({
+    source: 'discovery',
+    source_id: `decomposition:${goalId}:${projectId || 'root'}`,
     title,
     description,
-    goalId,
-    projectId || null,
-    JSON.stringify({ decomposition: 'true', ...payload })
-  ]);
-  return result.rows[0];
+    goal_id: goalId,
+    project_id: projectId || null,
+    task_type: 'initiative_plan',
+    priority: 'P0',
+    trigger_source: 'brain_auto',
+    payload: { decomposition: 'true', ...payload },
+  });
+  return created.task;
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -402,13 +404,17 @@ async function checkObjectiveWithoutKR() {
       `优先级: ${objective.priority}`,
     ].join('\n');
 
-    const taskResult = await pool.query(`
-      INSERT INTO tasks (title, description, status, priority, goal_id, task_type, trigger_source)
-      VALUES ($1, $2, 'queued', $3, $4, 'strategic_meeting', 'brain_auto')
-      RETURNING id, title
-    `, [title, description, objective.priority || 'P1', objective.id]);
-
-    const task = taskResult.rows[0];
+    const created = await createTask({
+      source: 'discovery',
+      source_id: `objective-strategy:${objective.id}`,
+      title,
+      description,
+      goal_id: objective.id,
+      task_type: 'strategic_meeting',
+      priority: objective.priority || 'P1',
+      trigger_source: 'brain_auto',
+    });
+    const task = created.task;
     console.log(`[decomp-checker] Check D: Objective ${objective.id} (${objective.title}) has no KR, created strategic_meeting task`);
     actions.push({ action: 'create_strategic_meeting', check: 'objective_without_kr', goal_id: objective.id, task_id: task.id, title: objective.title });
   }

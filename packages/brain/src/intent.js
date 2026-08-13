@@ -10,6 +10,8 @@
  */
 
 import pool from './db.js';
+import { createTask } from './actions.js';
+import { buildMutationRoute } from './system-coding-route.js';
 import { renderPrd, renderTrd } from './templates.js';
 
 /**
@@ -1001,29 +1003,41 @@ async function parseAndCreate(input, options = {}) {
   const taskInitiativeId = isInitiativeId ? targetProjectId : null;
 
   if (createTasks) {
-    for (const task of parsedIntent.tasks) {
-      const newTask = await pool.query(`
-        INSERT INTO tasks (title, description, priority, project_id, okr_initiative_id, goal_id, status, trigger_source, domain, owner_role)
-        VALUES ($1, $2, $3, $4, $5, $6, 'queued', 'user_headed', $7, $8)
-        ON CONFLICT DO NOTHING
-        RETURNING *
-      `, [
-        task.title,
-        task.description,
-        task.priority,
-        taskProjectId,
-        taskInitiativeId,
-        goalId,
-        parsedIntent.domain,
-        parsedIntent.ownerRole
-      ]);
+    const inferredChangeKind = {
+      [INTENT_TYPES.CREATE_PROJECT]: 'new_capability',
+      [INTENT_TYPES.CREATE_FEATURE]: 'new_capability',
+      [INTENT_TYPES.FIX_BUG]: 'bugfix',
+      [INTENT_TYPES.REFACTOR]: 'capability_change',
+    }[parsedIntent.intentType] || null;
+    const codingMutation = inferredChangeKind !== null || parsedIntent.intentType === INTENT_TYPES.CREATE_TASK;
+    const mutationRoute = codingMutation
+      ? buildMutationRoute({
+          change_kind: options.changeKind || inferredChangeKind,
+          map_scope: options.mapScope,
+          repo_hint: options.repoHint,
+          repo_root: options.repoRoot || options.repoHint,
+        })
+      : {};
 
-      if (newTask.rows.length > 0) {
-        result.created.tasks.push(newTask.rows[0]);
-        console.log(`[Intent] Created task: ${newTask.rows[0].id} - ${task.title}`);
-      } else {
-        console.log(`[Intent] Dedup: task "${task.title}" already exists, skipped`);
-      }
+    for (const [taskIndex, task] of parsedIntent.tasks.entries()) {
+      const created = await createTask({
+        source: 'conversation',
+        source_id: `intent:${targetProjectId || 'unbound'}:${taskIndex}:${task.title}`,
+        title: task.title,
+        description: task.description,
+        priority: task.priority,
+        project_id: taskProjectId,
+        okr_initiative_id: taskInitiativeId,
+        goal_id: goalId,
+        task_type: codingMutation ? 'dev' : 'initiative_plan',
+        trigger_source: 'user_headed',
+        domain: parsedIntent.domain,
+        owner_role: parsedIntent.ownerRole,
+        allow_unscoped: true,
+        ...mutationRoute,
+      });
+      result.created.tasks.push(created.task);
+      console.log(`[Intent] Created task: ${created.task.id} - ${task.title}`);
     }
   }
 

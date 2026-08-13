@@ -25,6 +25,7 @@
  */
 
 import pool from './db.js';
+import { createTask } from './actions.js';
 
 // Planner（阶段 A）卡住阈值：15 分钟
 export const PLANNER_STUCK_MS = 15 * 60 * 1000;
@@ -200,7 +201,7 @@ async function checkInitiativeStuck(dbPool, run) {
  * @param {{initiativeId: string, phase: string, kind: string, elapsedMs: number, thresholdMs: number, detail: string}} info
  * @returns {Promise<{created: boolean, taskId?: string, reason?: string}>}
  */
-async function createInterventionTask(dbPool, info) {
+async function createInterventionTask(dbPool, info, taskCreator = createTask) {
   const { initiativeId, phase, kind, elapsedMs, thresholdMs, detail } = info;
 
   // 防重：同一 initiative 已有未结束（queued/in_progress/pending）的 harness_intervention 任务则跳过
@@ -248,14 +249,18 @@ async function createInterventionTask(dbPool, info) {
     console.warn(`[harness-initiative-patrol] 查在飞容器失败 initiative=${initiativeId} (non-fatal): ${err.message}`);
   }
 
-  const result = await dbPool.query(
-    `INSERT INTO tasks (title, description, status, priority, task_type, trigger_source, domain, payload)
-     VALUES ($1, $2, 'queued', 'P1', 'harness_intervention', 'brain_auto', 'agent_ops', $3)
-     RETURNING id`,
-    [
+  const created = await taskCreator({
+      db: dbPool,
+      source: 'discovery',
+      source_id: `harness-intervention:${initiativeId}:${phase}:${kind}`,
       title,
       description,
-      JSON.stringify({
+      task_type: 'harness_intervention',
+      priority: 'P1',
+      trigger_source: 'brain_auto',
+      domain: 'agent_ops',
+      allow_unscoped: true,
+      payload: {
         initiative_id: initiativeId,
         container_id: containerId,
         phase,
@@ -263,11 +268,9 @@ async function createInterventionTask(dbPool, info) {
         elapsed_ms: elapsedMs,
         threshold_ms: thresholdMs,
         detected_at: new Date().toISOString(),
-      }),
-    ]
-  );
-
-  const taskId = result.rows[0]?.id;
+      },
+  });
+  const taskId = created.task.id;
   console.log(`[harness-initiative-patrol] 创建 intervention 任务: ${title} (id: ${taskId})`);
   return { created: true, taskId };
 }

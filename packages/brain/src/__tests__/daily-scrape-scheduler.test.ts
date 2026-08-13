@@ -58,20 +58,14 @@ describe('scheduleDailyScrape()', () => {
   });
 
   it('force=true — 为未调度过的平台创建任务', async () => {
-    // 每个平台2次查询：SELECT（返回空行）+ INSERT（返回id）
-    mockPool.query.mockImplementation(() => {
-      const callCount = mockPool.query.mock.calls.length;
-      // 奇数次调用 = SELECT（返回空，表示未调度）; 偶数次 = INSERT（返回id）
-      if (callCount % 2 === 1) {
-        return Promise.resolve({ rows: [] });
-      }
-      return Promise.resolve({ rows: [{ id: `uuid-${callCount}` }] });
-    });
+    mockPool.query.mockResolvedValue({ rows: [] });
+    const taskCreator = vi.fn(async ({ source_id }) => ({ task: { id: source_id } }));
 
-    const result = await scheduleDailyScrape(mockPool, { force: true });
+    const result = await scheduleDailyScrape(mockPool, { force: true, taskCreator });
     expect(typeof result.scheduled).toBe('number');
     expect(typeof result.skipped).toBe('number');
     expect(result.scheduled + result.skipped).toBe(SCRAPE_PLATFORMS.length);
+    expect(taskCreator).toHaveBeenCalledTimes(SCRAPE_PLATFORMS.length);
   });
 
   it('force=true — 已调度过的平台被跳过', async () => {

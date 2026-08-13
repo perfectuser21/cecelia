@@ -194,6 +194,110 @@ describe('actions.js', () => {
       expect(mockQuery).toHaveBeenCalledOnce();
     });
 
+    it('explicit routing identity bypasses legacy title dedup and always receives a receipt', async () => {
+      mockCreateRoutedTask.mockResolvedValueOnce({
+        task: { id: 'task-routed', title: 'same title', status: 'queued' },
+      });
+
+      const result = await createTask({
+        source: 'scheduler',
+        source_id: 'scheduler:job:1',
+        title: 'same title',
+        task_type: 'research',
+      });
+
+      expect(result.task.id).toBe('task-routed');
+      expect(mockQuery).not.toHaveBeenCalled();
+      expect(mockCreateRoutedTask).toHaveBeenCalledOnce();
+    });
+
+    it('injected Pool keeps routed task and receipt in an owned transaction', async () => {
+      const injectedPool = {
+        connect: vi.fn(),
+        query: vi.fn().mockResolvedValue({ rows: [] }),
+      };
+      mockCreateRoutedTask.mockResolvedValueOnce({
+        task: { id: 'task-pool', title: 'pool task', status: 'queued' },
+      });
+
+      await createTask({
+        db: injectedPool,
+        title: 'pool task',
+        task_type: 'research',
+      });
+
+      expect(mockCreateRoutedTask).toHaveBeenCalledWith(
+        injectedPool,
+        expect.any(Object),
+        null,
+        {},
+      );
+    });
+
+    it('injected transaction Client reuses the caller transaction', async () => {
+      const injectedClient = {
+        query: vi.fn().mockResolvedValue({ rows: [] }),
+      };
+      mockCreateRoutedTask.mockResolvedValueOnce({
+        task: { id: 'task-client', title: 'client task', status: 'queued' },
+      });
+
+      await createTask({
+        db: injectedClient,
+        title: 'client task',
+        task_type: 'research',
+      });
+
+      expect(mockCreateRoutedTask).toHaveBeenCalledWith(
+        injectedClient,
+        expect.any(Object),
+        null,
+        { transaction: 'existing' },
+      );
+    });
+
+    it('preserves scheduler metadata at the routed task boundary', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      mockCreateRoutedTask.mockResolvedValueOnce({
+        task: { id: 'task-meta', title: 'metadata task', status: 'queued' },
+      });
+
+      await createTask({
+        title: 'metadata task',
+        task_type: 'research',
+        created_by: 'scheduler-a',
+        dept: 'agent_ops',
+        phase: 'review',
+        executor_kind: 'system',
+        location: 'cn',
+        status: 'blocked',
+        area_id: 'area-1',
+        okr_initiative_id: 'initiative-1',
+        ability_id: 'ability-1',
+        blocked_at: '2026-08-13T00:00:00.000Z',
+      });
+
+      expect(mockCreateRoutedTask).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          task: expect.objectContaining({
+            created_by: 'scheduler-a',
+            dept: 'agent_ops',
+            phase: 'review',
+            executor_kind: 'system',
+            location: 'cn',
+            status: 'blocked',
+            area_id: 'area-1',
+            okr_initiative_id: 'initiative-1',
+            ability_id: 'ability-1',
+            blocked_at: '2026-08-13T00:00:00.000Z',
+          }),
+        }),
+        null,
+        expect.anything(),
+      );
+    });
+
     it('使用 context 作为 description 的回退', async () => {
       const fakeTask = { id: 'task-ctx', title: '上下文', status: 'queued' };
       mockQuery.mockResolvedValueOnce({ rows: [] });

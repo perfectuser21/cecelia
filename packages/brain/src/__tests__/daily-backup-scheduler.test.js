@@ -80,26 +80,27 @@ describe('scheduleDailyBackup()', () => {
   it('在时间窗口且今天未触发 — 创建 trigger_backup 任务', async () => {
     vi.setSystemTime(new Date('2026-04-28T18:00:00Z'));
     mockPool.query.mockResolvedValueOnce({ rows: [] });
-    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'mock-backup-task-id' }] });
+    const taskCreator = vi.fn().mockResolvedValue({ task: { id: 'mock-backup-task-id' } });
 
-    const result = await scheduleDailyBackup(mockPool);
+    const result = await scheduleDailyBackup(mockPool, { taskCreator });
     expect(result.inWindow).toBe(true);
     expect(result.triggered).toBe(true);
     expect(result.alreadyDone).toBe(false);
     expect(result.taskId).toBe('mock-backup-task-id');
-    expect(mockPool.query).toHaveBeenCalledTimes(2);
-
-    // 验证 INSERT SQL 包含正确的 task_type
-    const insertCall = mockPool.query.mock.calls[1];
-    expect(insertCall[0]).toContain('trigger_backup');
+    expect(mockPool.query).toHaveBeenCalledOnce();
+    expect(taskCreator).toHaveBeenCalledWith(expect.objectContaining({
+      db: mockPool,
+      source: 'scheduler',
+      task_type: 'trigger_backup',
+    }));
   });
 
   it('force=true — 跳过时间窗口检查，直接触发', async () => {
     vi.setSystemTime(new Date('2026-04-28T12:00:00Z'));
     mockPool.query.mockResolvedValueOnce({ rows: [] });
-    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'forced-task-id' }] });
+    const taskCreator = vi.fn().mockResolvedValue({ task: { id: 'forced-task-id' } });
 
-    const result = await scheduleDailyBackup(mockPool, { force: true });
+    const result = await scheduleDailyBackup(mockPool, { force: true, taskCreator });
     expect(result.triggered).toBe(true);
     expect(result.taskId).toBe('forced-task-id');
   });

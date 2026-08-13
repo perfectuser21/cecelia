@@ -472,6 +472,7 @@ describe('selfcheck schema version', () => {
     // 408/409 = Impact Contract + Gap Ledger；410 = revision-indexed immutable graph snapshots；
     // 411 = reviewer-approved SHA 下的冻结合同测试制品；
     // 412 = approved Harness contract artifact manifests。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('413');
+    // 414 = Golden Path 显式四形式 + Map scope 路由输入。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('414');
   });
 });

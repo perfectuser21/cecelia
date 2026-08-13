@@ -28,6 +28,7 @@ import {
 } from './credential-broker.js';
 import { createGitHubCredentialBroker } from './github-credential-broker.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
+import { createTask } from '../actions.js';
 import { createProviderRegistry } from './provider-registry.js';
 import { claudeAdapter } from './providers/claude.js';
 import { codexAdapter } from './providers/codex.js';
@@ -114,20 +115,19 @@ export async function buildDefaultHandlers({ pool, execCmd, attemptStore, judgeG
 
   const spawnStaging = async (payload) => {
     if (!payload.pr_url) return { created: false, reason: 'missing_pr_url' };
-    const result = await pool.query(
-      `INSERT INTO tasks (title, description, task_type, status, priority, payload)
-       SELECT $1, $2, 'staging_e2e', 'queued', 'P2', $3::jsonb
-       WHERE NOT EXISTS (
-         SELECT 1 FROM tasks WHERE task_type='staging_e2e' AND payload->>'pr_url'=$4
-       )`,
-      [
-        `[Staging E2E] ${payload.pr_branch || payload.pr_url}`,
-        `Kernel post-merge staging verification for ${payload.pr_url}`,
-        JSON.stringify(payload),
-        payload.pr_url,
-      ],
-    );
-    return { created: result.rowCount > 0 };
+    const created = await createTask({
+      db: pool,
+      source: 'child',
+      source_id: `staging-e2e:${payload.pr_url}`,
+      title: `[Staging E2E] ${payload.pr_branch || payload.pr_url}`,
+      description: `Kernel post-merge staging verification for ${payload.pr_url}`,
+      task_type: 'staging_e2e',
+      priority: 'P2',
+      trigger_source: 'kernel_post_merge',
+      allow_unscoped: true,
+      payload,
+    });
+    return { created: !created.deduplicated };
   };
 
   return createKernelHandlers({

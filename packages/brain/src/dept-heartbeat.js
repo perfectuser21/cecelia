@@ -12,6 +12,7 @@
  */
 
 import { reportIncident } from './incident-reporter.js';
+import { createTask } from './actions.js';
 
 /**
  * 查询所有 enabled=true 的部门配置
@@ -61,7 +62,7 @@ export async function lookupDeptPrimaryGoal(pool, dept_name) {
  * @param {{ dept_name: string, repo_path: string, max_llm_slots: number }} dept
  * @returns {Promise<{ created: boolean, task_id?: string, reason?: string }>}
  */
-export async function createDeptHeartbeatTask(pool, dept) {
+export async function createDeptHeartbeatTask(pool, dept, taskCreator = createTask) {
   const { dept_name, repo_path, max_llm_slots } = dept;
 
   // 检查是否已有活跃 heartbeat（防重复）
@@ -83,28 +84,22 @@ export async function createDeptHeartbeatTask(pool, dept) {
   const description = `[dept-heartbeat] ${dept_name}: analyze OKR progress and report to Cecelia`;
 
   // 插入新 heartbeat task
-  const { rows } = await pool.query(
-    `INSERT INTO tasks (
-       title, description, task_type, status, priority,
-       dept, created_by, goal_id,
-       payload, trigger_source, location
-     )
-     VALUES (
-       $1, $2, 'dept_heartbeat', 'queued', 'P1',
-       $3, 'cecelia-brain', $4,
-       $5, 'brain_auto', 'us'
-     )
-     RETURNING id`,
-    [
-      `[heartbeat] ${dept_name}`,
-      description,
-      dept_name,
-      goalId,
-      JSON.stringify({ dept_name, repo_path, max_llm_slots }),
-    ]
-  );
-
-  const task_id = rows[0].id;
+  const created = await taskCreator({
+    db: pool,
+    source: 'scheduler',
+    source_id: `dept-heartbeat:${dept_name}:${new Date().toISOString().slice(0, 13)}`,
+    title: `[heartbeat] ${dept_name}`,
+    description,
+    task_type: 'dept_heartbeat',
+    priority: 'P1',
+    dept: dept_name,
+    created_by: 'cecelia-brain',
+    goal_id: goalId,
+    trigger_source: 'brain_auto',
+    allow_unscoped: true,
+    payload: { dept_name, repo_path, max_llm_slots },
+  });
+  const task_id = created.task.id;
   console.log(`[dept-heartbeat] Created heartbeat task ${task_id} for dept=${dept_name} goal_id=${goalId}`);
   return { created: true, task_id };
 }

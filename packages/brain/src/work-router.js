@@ -16,7 +16,7 @@ const PROFILE_STRENGTH = Object.freeze({
 });
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 
-function normalizeRepoHint(value) {
+export function normalizeRepoHint(value) {
   if (typeof value !== 'string') return value;
   const trimmed = value.trim();
   const github = trimmed.match(

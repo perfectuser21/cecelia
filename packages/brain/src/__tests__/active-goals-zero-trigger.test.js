@@ -20,6 +20,7 @@ function makePool({
   insertId = 'new-task-uuid',
 } = {}) {
   const calls = [];
+  const taskCreator = vi.fn().mockResolvedValue({ task: { id: insertId } });
   const pool = {
     query: vi.fn().mockImplementation(async (sql, params) => {
       calls.push({ sql: sql.trim(), params });
@@ -52,77 +53,71 @@ function makePool({
       return { rows: [], rowCount: 0 };
     }),
   };
-  return { pool, calls };
+  return { pool, calls, taskCreator };
 }
 
 describe('maybeTriggerStrategySession', () => {
   it('active_goals > 0 时不创建任务', async () => {
-    const { pool, calls } = makePool({ activeGoals: 3 });
-    const res = await maybeTriggerStrategySession(pool);
+    const { pool, taskCreator } = makePool({ activeGoals: 3 });
+    const res = await maybeTriggerStrategySession(pool, taskCreator);
     expect(res.created).toBe(false);
     expect(res.reason).toBe('active_goals_present');
     // 不应该执行 INSERT
-    expect(calls.find(c => c.sql.includes('INSERT INTO tasks'))).toBeUndefined();
+    expect(taskCreator).not.toHaveBeenCalled();
   });
 
   it('active_goals = 0 且无活跃 / 冷却中的 strategy_session → 创建新任务', async () => {
-    const { pool, calls } = makePool({ activeGoals: 0, activeSession: [], recentSession: [] });
-    const res = await maybeTriggerStrategySession(pool);
+    const { pool, taskCreator } = makePool({ activeGoals: 0, activeSession: [], recentSession: [] });
+    const res = await maybeTriggerStrategySession(pool, taskCreator);
     expect(res.created).toBe(true);
     expect(res.taskId).toBe('new-task-uuid');
 
-    // 验证 INSERT 执行了，且关键字段正确
-    const insert = calls.find(c => c.sql.includes('INSERT INTO tasks'));
-    expect(insert).toBeDefined();
-    expect(insert.sql).toMatch(/strategy_session/);
-    expect(insert.sql).toMatch(/'queued'/);
-    // 高优先级 P0 — 方向性崩溃前置信号
-    expect(insert.sql).toMatch(/'P0'/);
-    // 触发源标记，可追溯
-    expect(insert.sql).toMatch(/active_goals_zero/);
+    expect(taskCreator).toHaveBeenCalledWith(expect.objectContaining({
+      db: pool,
+      task_type: 'strategy_session',
+      priority: 'P0',
+      trigger_source: 'active_goals_zero',
+    }));
   });
 
   it('已有 queued strategy_session → 跳过（幂等）', async () => {
-    const { pool, calls } = makePool({
+    const { pool, taskCreator } = makePool({
       activeGoals: 0,
       activeSession: [{ id: 'existing-queued' }],
     });
-    const res = await maybeTriggerStrategySession(pool);
+    const res = await maybeTriggerStrategySession(pool, taskCreator);
     expect(res.created).toBe(false);
     expect(res.reason).toBe('strategy_session_already_active');
-    expect(calls.find(c => c.sql.includes('INSERT INTO tasks'))).toBeUndefined();
+    expect(taskCreator).not.toHaveBeenCalled();
   });
 
   it('已有 in_progress strategy_session → 跳过（幂等）', async () => {
-    const { pool, calls } = makePool({
+    const { pool, taskCreator } = makePool({
       activeGoals: 0,
       activeSession: [{ id: 'existing-running' }],
     });
-    const res = await maybeTriggerStrategySession(pool);
+    const res = await maybeTriggerStrategySession(pool, taskCreator);
     expect(res.created).toBe(false);
     expect(res.reason).toBe('strategy_session_already_active');
-    expect(calls.find(c => c.sql.includes('INSERT INTO tasks'))).toBeUndefined();
+    expect(taskCreator).not.toHaveBeenCalled();
   });
 
   it('24h 内已派发过 strategy_session → 跳过（冷却）', async () => {
-    const { pool, calls } = makePool({
+    const { pool, taskCreator } = makePool({
       activeGoals: 0,
       activeSession: [],
       recentSession: [{ id: 'recent-completed' }],
     });
-    const res = await maybeTriggerStrategySession(pool);
+    const res = await maybeTriggerStrategySession(pool, taskCreator);
     expect(res.created).toBe(false);
     expect(res.reason).toBe('recent_strategy_session_in_cooldown');
-    expect(calls.find(c => c.sql.includes('INSERT INTO tasks'))).toBeUndefined();
+    expect(taskCreator).not.toHaveBeenCalled();
   });
 
   it('payload 包含 learning_id 与触发来源（可追溯到 Cortex Insight）', async () => {
-    const { pool, calls } = makePool({ activeGoals: 0 });
-    await maybeTriggerStrategySession(pool);
-    const insert = calls.find(c => c.sql.includes('INSERT INTO tasks'));
-    const payloadParam = insert.params.find(p => typeof p === 'string' && p.includes('learning_id'));
-    expect(payloadParam).toBeDefined();
-    const payload = JSON.parse(payloadParam);
+    const { pool, taskCreator } = makePool({ activeGoals: 0 });
+    await maybeTriggerStrategySession(pool, taskCreator);
+    const payload = taskCreator.mock.calls[0][0].payload;
     expect(payload.reason).toBe('active_goals_zero');
     expect(payload.learning_id).toBe('7670a6c3-0455-4831-b1f8-a487a38071fa');
   });
@@ -147,8 +142,10 @@ describe('枚举漂移回归（judgment point：什么算活跃 OKR）', () => {
         return { rows: [] };
       }),
     };
-    const result = await maybeTriggerStrategySession(pool);
+    const taskCreator = vi.fn();
+    const result = await maybeTriggerStrategySession(pool, taskCreator);
     expect(result).toEqual({ created: false, reason: 'active_goals_present' });
+    expect(taskCreator).not.toHaveBeenCalled();
   });
 });
 
@@ -164,9 +161,9 @@ describe('maybeTriggerStrategySession — payload 携带 line_context', () => {
         return { rows: [] };
       }),
     };
-    await maybeTriggerStrategySession(pool);
-    const insertCall = pool.query.mock.calls.find((c) => /INSERT INTO tasks/.test(c[0]));
-    const payload = JSON.parse(insertCall[1][2]);
+    const taskCreator = vi.fn().mockResolvedValue({ task: { id: 'task-1' } });
+    await maybeTriggerStrategySession(pool, taskCreator);
+    const payload = taskCreator.mock.calls[0][0].payload;
     expect(payload.line_context).toContain('Line A — 24h 账本');
   });
 });

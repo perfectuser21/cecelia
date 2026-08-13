@@ -244,16 +244,12 @@ describe('createPlanAdjustmentTask', () => {
 
   it('D5: 创建 decomp_review task + decomp_reviews 记录', async () => {
     let reviewInserted = false;
-    let taskInserted = false;
+    const taskCreator = vi.fn().mockResolvedValue({ task: { id: 'task-uuid', title: '计划调整审查: Test' } });
 
     pool.query = vi.fn(async (sql) => {
       if (sql.includes('INSERT INTO decomp_reviews')) {
         reviewInserted = true;
         return { rows: [{ id: 'review-uuid' }] };
-      }
-      if (sql.includes('INSERT INTO tasks')) {
-        taskInserted = true;
-        return { rows: [{ id: 'task-uuid', title: '计划调整审查: Test' }] };
       }
       if (sql.includes('UPDATE decomp_reviews')) {
         return { rows: [] };
@@ -275,10 +271,14 @@ describe('createPlanAdjustmentTask', () => {
         totalProjects: 3,
         pendingProjects: [{ id: 'proj-2', name: 'Project 2' }],
       },
-    });
+    }, taskCreator);
 
     expect(reviewInserted).toBe(true);
-    expect(taskInserted).toBe(true);
+    expect(taskCreator).toHaveBeenCalledWith(expect.objectContaining({
+      db: pool,
+      source: 'child',
+      task_type: 'decomp_review',
+    }));
     expect(result.task.id).toBe('task-uuid');
     expect(result.review.id).toBe('review-uuid');
   });

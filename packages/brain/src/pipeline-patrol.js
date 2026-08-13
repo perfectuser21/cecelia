@@ -14,6 +14,8 @@
 import { execSync } from 'child_process';
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import path from 'path';
+import { createTask } from './actions.js';
+import { buildCeceliaMutationRoute } from './system-coding-route.js';
 
 // 卡住阈值（毫秒）
 const STAGE_TIMEOUT_MS = {
@@ -381,7 +383,7 @@ async function createRescueTask(dbPool, info) {
   // 这是防止 rescue storm 的关键：dedup 只看已结束的任务，无法阻止 queued/in_progress 期间的重复创建
   const totalCountResult = await dbPool.query(`
     SELECT COUNT(*) as count FROM tasks
-    WHERE task_type = 'pipeline_rescue'
+    WHERE COALESCE(payload->>'requested_task_type', task_type) = 'pipeline_rescue'
       AND payload->>'branch' = $1
   `, [branch]);
   const totalRescueCount = parseInt(totalCountResult.rows[0]?.count || '0', 10);
@@ -399,7 +401,7 @@ async function createRescueTask(dbPool, info) {
   // 使用 payload->>'branch' 精确匹配（避免 title LIKE 在多 worktree 场景下命中错误任务）
   const quarantineCountResult = await dbPool.query(`
     SELECT COUNT(*) as count FROM tasks
-    WHERE task_type = 'pipeline_rescue'
+    WHERE COALESCE(payload->>'requested_task_type', task_type) = 'pipeline_rescue'
       AND payload->>'branch' = $1
       AND status = 'quarantined'
   `, [branch]);
@@ -419,7 +421,7 @@ async function createRescueTask(dbPool, info) {
   // 使用 payload->>'branch' 精确匹配，防止多 worktree 扫描到同一分支时绕过 dedup
   const dedupResult = await dbPool.query(`
     SELECT id, created_at, status FROM tasks
-    WHERE task_type = 'pipeline_rescue'
+    WHERE COALESCE(payload->>'requested_task_type', task_type) = 'pipeline_rescue'
       AND payload->>'branch' = $1
       AND (
         status NOT IN ('completed', 'cancelled', 'canceled', 'failed', 'quarantined')
@@ -452,14 +454,19 @@ async function createRescueTask(dbPool, info) {
     `请诊断并恢复该 pipeline，或关闭对应任务。`,
   ].join('\n');
 
-  const result = await dbPool.query(`
-    INSERT INTO tasks (title, description, status, priority, task_type, trigger_source, domain, payload)
-    VALUES ($1, $2, 'queued', 'P1', 'pipeline_rescue', 'brain_auto', 'agent_ops', $3)
-    RETURNING id
-  `, [
+  const created = await createTask({
+    db: dbPool,
+    source: 'discovery',
+    source_id: `pipeline-rescue:${branch}:${new Date().toISOString().slice(0, 13)}`,
     title,
     description,
-    JSON.stringify({
+    task_type: 'pipeline_rescue',
+    priority: 'P1',
+    trigger_source: 'brain_auto',
+    domain: 'agent_ops',
+    allow_unscoped: true,
+    branch,
+    payload: {
       branch,
       current_stage: currentStage,
       block_reason: blockReason,
@@ -467,10 +474,15 @@ async function createRescueTask(dbPool, info) {
       worktree_path: worktreePath,
       is_orphan: isOrphan,
       detected_at: new Date().toISOString(),
+    },
+    ...buildCeceliaMutationRoute({
+      change_kind: 'bugfix',
+      map_scope: ['F1'],
+      repo_root: worktreePath,
     }),
-  ]);
+  });
 
-  const taskId = result.rows[0]?.id;
+  const taskId = created.task.id;
   console.log(`[pipeline-patrol] 创建 rescue 任务: ${title} (id: ${taskId})`);
 
   return { created: true, taskId };

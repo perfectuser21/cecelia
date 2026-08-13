@@ -6,6 +6,8 @@
  */
 
 import pool from './db.js';
+import { createTask } from './actions.js';
+import { buildMutationRoute } from './system-coding-route.js';
 import { getDailyFocus } from './focus.js';
 import { getDomainRole, ROLES } from './role-registry.js';
 import { detectDomain as _detectDomain } from './domain-detector.js';
@@ -625,31 +627,29 @@ async function generateArchitectureDesignTask(kr, project) {
       return null;
     }
 
-    const payload = JSON.stringify({
+    const payload = {
       initiative_id: initiative.id,
       parent_project_id: project.id,
       kr_id: kr.id,
       ...extraPayload
-    });
+    };
 
     // Create planning task with domain/owner_role propagation
-    const insertResult = await pool.query(`
-      INSERT INTO tasks (title, description, task_type, priority, okr_initiative_id, goal_id, status, trigger_source, payload, domain, owner_role)
-      VALUES ($1, $2, $3, $4, $5, $6, 'queued', 'brain_auto', $7, $8, $9)
-      RETURNING *
-    `, [
-      taskTitle,
-      taskDescription,
-      taskType,
-      kr.priority || 'P1',
-      initiative.id,
-      kr.id,
+    const created = await createTask({
+      source: 'child',
+      source_id: `initiative-planning:${initiative.id}:${taskType}`,
+      title: taskTitle,
+      description: taskDescription,
+      task_type: taskType,
+      priority: kr.priority || 'P1',
+      okr_initiative_id: initiative.id,
+      goal_id: kr.id,
+      trigger_source: 'brain_auto',
       payload,
       domain,
-      getDomainRole(domain)
-    ]);
-
-    const newTask = insertResult.rows[0];
+      owner_role: getDomainRole(domain),
+    });
+    const newTask = created.task;
     console.log(`[planner] 自动生成 ${taskType} 任务: ${newTask.title} (${newTask.id}) for initiative ${initiative.id} (domain=${domain})`);
     return newTask;
   } catch (err) {
@@ -1200,15 +1200,27 @@ async function handlePlanInput(input, dryRun = false) {
         throw new Error('Hard constraint: Task\'s project must have repo_path');
       }
 
-      const tResult = await pool.query(`
-        INSERT INTO tasks (title, description, priority, project_id, goal_id, status, payload, trigger_source)
-        VALUES ($1, $2, $3, $4, $5, 'queued', $6, 'brain_auto') RETURNING *
-      `, [
-        input.task.title, input.task.description || '', input.task.priority || 'P1',
-        input.task.project_id, input.task.goal_id || null,
-        JSON.stringify(input.task.payload || {})
-      ]);
-      result.created.tasks.push(tResult.rows[0]);
+      const repoPath = projCheck.rows[0].repo_path;
+      const created = await createTask({
+        source: 'child',
+        source_id: input.task.source_id || `planner-task:${input.task.project_id}:${input.task.title}`,
+        title: input.task.title,
+        description: input.task.description || '',
+        priority: input.task.priority || 'P1',
+        project_id: input.task.project_id,
+        goal_id: input.task.goal_id || null,
+        task_type: input.task.task_type || 'dev',
+        trigger_source: 'brain_auto',
+        allow_unscoped: true,
+        payload: input.task.payload || {},
+        ...buildMutationRoute({
+          change_kind: input.task.change_kind,
+          map_scope: input.task.map_scope,
+          repo_hint: repoPath,
+          repo_root: repoPath,
+        }),
+      });
+      result.created.tasks.push(created.task);
     }
   } else {
     throw new Error('Input must contain one of: objective, key_result, project, task');

@@ -283,6 +283,8 @@ describe('Golden Path contract signature and Harness launch', () => {
         journey_id: 'journey-1',
         proposal_doc: '# proposal',
         status: gpStatus,
+        change_kind: 'new_capability',
+        map_scope: ['capability_social_feed'],
         ...gp,
       },
       contracts,
@@ -335,7 +337,12 @@ describe('Golden Path contract signature and Harness launch', () => {
       gp_contract_id: 'contract-1',
       gp_contract_version: 1,
       gp_contract_hash: hashGoldenPathContract(VALID_CONTRACT),
+      change_kind: 'new_capability',
+      map_scope: ['capability_social_feed'],
+      base_sha: 'a'.repeat(40),
     });
+    expect(db.events.some((sql) => /INSERT INTO work_routing_receipts/i.test(sql)))
+      .toBe(true);
     expect(db.gp.status).toBe('approved');
     expect(result).toMatchObject({
       contract_version: { id: 'contract-1', status: 'signed' },
@@ -460,6 +467,24 @@ describe('Golden Path contract signature and Harness launch', () => {
       contentHash: db.contracts[0].content_hash,
       reviewer: 'owner',
     })).rejects.toMatchObject({ code: 'GP_TARGET_ENVIRONMENT_INVALID' });
+
+    expect(db.decisions).toEqual([]);
+    expect(db.tasks).toEqual([]);
+  });
+
+  it.each([
+    [{ change_kind: null }, 'GP_CHANGE_KIND_REQUIRED'],
+    [{ map_scope: [] }, 'GP_MAP_SCOPE_REQUIRED'],
+  ])('缺少显式 coding 路由字段时 fail closed 且不写 decision/task', async (gp, code) => {
+    const db = signingDb({ gp });
+
+    await expect(signAndLaunchGoldenPathContract(db, {
+      goldenPathId: 'gp-1',
+      contractId: 'contract-1',
+      version: 1,
+      contentHash: db.contracts[0].content_hash,
+      reviewer: 'owner',
+    })).rejects.toMatchObject({ code });
 
     expect(db.decisions).toEqual([]);
     expect(db.tasks).toEqual([]);

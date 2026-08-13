@@ -7,6 +7,7 @@
  */
 
 import pool from './db.js';
+import { createTask } from './actions.js';
 import { ALERTNESS_LEVELS } from './alertness/index.js';
 
 // Map new 5-level system to action thresholds
@@ -140,18 +141,16 @@ export async function notifyAlert(level, signals) {
  * Escalation: Trigger Cortex analysis (L2 brain)
  * Triggered at EMERGENCY level and above
  */
-export async function escalateToAnalysis(signals) {
+export async function escalateToAnalysis(signals, taskCreator = createTask) {
   console.log(`[alertness-actions] Escalating to Cortex for RCA analysis...`);
 
   try {
     // Create RCA task for Cortex to analyze
-    const result = await pool.query(
-      `INSERT INTO tasks (title, description, task_type, priority, status, payload)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id`,
-      [
-        'Alertness RCA - System Health Degradation',
-        `Brain alertness reached EMERGENCY level. Analyze root causes and recommend strategy adjustments.
+    const result = await taskCreator({
+      source: 'discovery',
+      source_id: `alertness-rca:${Date.now()}`,
+      title: 'Alertness RCA - System Health Degradation',
+      description: `Brain alertness reached EMERGENCY level. Analyze root causes and recommend strategy adjustments.
 
 Current signals: ${JSON.stringify(signals, null, 2)}
 
@@ -160,19 +159,17 @@ Required analysis:
 2. Contributing factors
 3. Recommended mitigations
 4. Strategy adjustments (thresholds, behaviors)`,
-        'research',  // Cortex task type
-        'P1',
-        'queued',
-        JSON.stringify({
-          trigger: 'alertness_emergency',
-          signals,
-          requires_cortex: true,
-          created_by: 'alertness_system',
-        }),
-      ]
-    );
+      task_type: 'research',
+      priority: 'P1',
+      trigger_source: 'alertness_system',
+      allow_unscoped: true,
+      payload: {
+        trigger: 'alertness_emergency', signals, requires_cortex: true,
+        created_by: 'alertness_system',
+      },
+    });
 
-    const taskId = result.rows[0].id;
+    const taskId = result.task.id;
     console.log(`[alertness-actions] Created RCA task: ${taskId}`);
 
     return { task_id: taskId };

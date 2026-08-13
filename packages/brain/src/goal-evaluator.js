@@ -12,6 +12,7 @@
  */
 
 import pool from './db.js';
+import { createTask } from './actions.js';
 import { routeEvent, EVENT_TYPES } from './thalamus.js';
 
 const EVAL_WINDOW_DAYS = 7;           // 评估窗口：7天
@@ -134,17 +135,17 @@ async function createInitiativePlanForStall(goalId, goalTitle) {
       return existing.rows[0].id;
     }
 
-    const result = await pool.query(`
-      INSERT INTO tasks (goal_id, title, description, task_type, priority, status)
-      VALUES ($1, $2, $3, 'initiative_plan', 'P0', 'queued')
-      RETURNING id
-    `, [
-      goalId,
-      `目标重新规划: ${goalTitle}`,
-      `目标「${goalTitle}」已停滞 ${STALL_THRESHOLD_DAYS} 天以上，触发自动重新规划。请分析当前进展，拆解新的 Initiative 和 Task。`,
-    ]);
-
-    return result.rows[0].id;
+    const created = await createTask({
+      source: 'discovery',
+      source_id: `stalled-goal-plan:${goalId}`,
+      goal_id: goalId,
+      title: `目标重新规划: ${goalTitle}`,
+      description: `目标「${goalTitle}」已停滞 ${STALL_THRESHOLD_DAYS} 天以上，触发自动重新规划。请分析当前进展，拆解新的 Initiative 和 Task。`,
+      task_type: 'initiative_plan',
+      priority: 'P0',
+      trigger_source: 'goal_evaluator',
+    });
+    return created.task.id;
   } catch (err) {
     console.error(`[goal-evaluator] Failed to create initiative_plan for goal ${goalId}:`, err.message);
     return null;

@@ -7,6 +7,8 @@
  */
 
 import pool from './db.js';
+import { createTask } from './actions.js';
+import { buildMutationRoute } from './system-coding-route.js';
 
 /**
  * Parse a simple cron expression and check if it matches the given date.
@@ -216,34 +218,42 @@ export async function checkRecurringTasks(now = new Date()) {
     const skill = EXECUTOR_SKILL_MAP[executor] ?? null;
     const taskType = skill ? 'skill' : (template.task_type || rt.task_type || 'dev');
 
-    const insertResult = await pool.query(`
-      INSERT INTO tasks (
-        title, description, status, priority,
-        task_type, goal_id, project_id,
-        prd_content, payload, trigger_source
-      ) VALUES (
-        $1, $2, 'queued', $3,
-        $4, $5, $6,
-        $7, $8, 'recurring'
-      ) RETURNING id, title
-    `, [
-      template.title || rt.title,
-      template.description || rt.description || '',
+    const codingMutation = skill === '/dev' || [
+      'dev', 'codex_dev', 'initiative_execute', 'sprint_generate', 'sprint_fix',
+      'harness_generate', 'harness_fix', 'pipeline_rescue',
+    ].includes(taskType);
+    const mutationRoute = codingMutation
+      ? buildMutationRoute({
+          change_kind: template.change_kind,
+          map_scope: template.map_scope,
+          repo_hint: template.repo_hint || template.repo_path,
+          repo_root: template.repo_root || template.repo_path,
+        })
+      : {};
+    const created = await createTask({
+      db: pool,
+      source: 'scheduler',
+      source_id: `recurring:${rt.id}:${now.toISOString()}`,
+      title: template.title || rt.title,
+      description: template.description || rt.description || '',
       priority,
-      taskType,
-      rt.goal_id || template.goal_id || null,
-      rt.project_id || template.project_id || null,
-      template.prd_content || null,
-      JSON.stringify({
+      task_type: taskType,
+      goal_id: rt.goal_id || template.goal_id || null,
+      project_id: rt.project_id || template.project_id || null,
+      prd_content: template.prd_content || null,
+      trigger_source: 'recurring',
+      allow_unscoped: true,
+      payload: {
         recurring_task_id: rt.id,
         recurring_title: rt.title,
         executor,
         ...(skill ? { skill } : {}),
         ...(template.payload || {})
-      })
-    ]);
+      },
+      ...mutationRoute,
+    });
 
-    const createdTask = insertResult.rows[0];
+    const createdTask = created.task;
     console.log(`[recurring] Created task instance: ${createdTask.title} (id=${createdTask.id}) from recurring=${rt.id}`);
 
     // Update recurring task with last_run_at, next_run_at, last_run_status

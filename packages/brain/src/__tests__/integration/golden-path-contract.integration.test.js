@@ -1,25 +1,11 @@
-import express from 'express';
-import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import pool from '../../db.js';
+import {
+  createGoldenPathContractVersion,
+  signAndLaunchGoldenPathContract,
+} from '../../golden-path-contracts.js';
 import { runMigrations } from '../../migrate.js';
-import actionsRouter from '../../routes/actions.js';
-import goldenPathsRouter from '../../routes/golden-paths.js';
-
-
-function makeApp() {
-  const app = express();
-  app.use(express.json());
-  app.use('/api/brain', goldenPathsRouter);
-  app.use('/api/brain', actionsRouter);
-  return app;
-}
-
-const testKey = `gp-contract-itest-${process.pid}-${Date.now()}`;
-let journeyId;
-let goldenPathId;
-const pendingActionIds = [];
 
 const CONTRACT_V1 = {
   fr_summary: { statements: ['用户提交后看到成功'] },
@@ -56,158 +42,126 @@ const CONTRACT_V1 = {
 };
 
 beforeAll(async () => {
+  const databaseName = new URL(
+    process.env.DATABASE_URL ?? 'postgresql://localhost/cecelia_test',
+  ).pathname.slice(1);
+  expect(databaseName).toMatch(/(?:_test|_scratch)$/);
   await runMigrations(pool);
 });
 
 afterAll(async () => {
-  try {
-    if (goldenPathId) {
-      await pool.query(
-        `DELETE FROM tasks
-          WHERE task_type = 'harness_initiative'
-            AND payload->>'golden_path_id' = $1`,
-        [goldenPathId],
-      );
-      await pool.query(
-        'DELETE FROM golden_path_contract_versions WHERE golden_path_id = $1',
-        [goldenPathId],
-      );
-      await pool.query(
-        `DELETE FROM decisions
-          WHERE context->>'golden_path_id' = $1
-            AND context->>'policy_key' = 'gp.contract.signature'`,
-        [goldenPathId],
-      );
-      await pool.query('DELETE FROM golden_paths WHERE id = $1', [goldenPathId]);
-    }
-    if (pendingActionIds.length > 0) {
-      await pool.query(
-        'DELETE FROM pending_actions WHERE id = ANY($1::uuid[])',
-        [pendingActionIds],
-      );
-    }
-    if (journeyId) {
-      await pool.query('DELETE FROM journeys WHERE id = $1', [journeyId]);
-    }
-  } finally {
-    await pool.end();
-  }
+  await pool.end();
 });
 
 describe('Golden Path contract real PostgreSQL lifecycle', () => {
-  it('signs v1, invalidates it on change, and signs a task-bound v2', async () => {
-    const app = makeApp();
+  it('atomically routes signed versions through immutable receipts and rolls fixtures back', async () => {
+    const client = await pool.connect();
+    await client.query('BEGIN');
+    try {
+      const marker = `gp-contract-${process.pid}-${Date.now()}`;
+      const repo = `${marker}-repo`;
+      const revision = 'a'.repeat(40);
+      const journey = await client.query(
+        `INSERT INTO journeys (name, description)
+         VALUES ($1, 'Golden Path contract integration fixture')
+         RETURNING id`,
+        [marker],
+      );
+      const gp = await client.query(
+        `INSERT INTO golden_paths (
+           title, one_liner, journey_id, proposal_doc, status,
+           base_repo, target_environment, change_kind, map_scope
+         ) VALUES ($1, '测试 GP 合同签字', $2, '# converged proposal', 'candidate',
+                   $3, 'local_api', 'new_capability', $4::jsonb)
+         RETURNING id`,
+        [marker, journey.rows[0].id, repo, JSON.stringify(['capability_social_feed'])],
+      );
+      const goldenPathId = gp.rows[0].id;
+      await client.query(
+        `INSERT INTO map_scope_repositories (scope_key, repo, adapter_key, adapter_config)
+         VALUES ($1, $1, 'legacy-ledger-v1', '{}'::jsonb)`,
+        [repo],
+      );
+      for (const [kind, scanner] of [
+        ['api', 'api-registry-v2'],
+        ['db_schema', 'db-schema-v2'],
+        ['test', 'test-registry-v2'],
+        ['graph', 'graph-v3'],
+      ]) {
+        await client.query(
+          `INSERT INTO fact_snapshot_headers
+             (kind, repo, source_revision, scanner_version, scanned_at, row_count)
+           VALUES ($1, $2, $3, $4, now(), 0)`,
+          [kind, repo, revision, scanner],
+        );
+      }
 
-    const journey = await pool.query(
-      `INSERT INTO journeys (name, description)
-       VALUES ($1, 'Golden Path contract integration fixture')
-       RETURNING id`,
-      [testKey],
-    );
-    journeyId = journey.rows[0].id;
-
-    const createGp = await request(app)
-      .post('/api/brain/golden-paths')
-      .send({
-        title: testKey,
-        one_liner: '测试 GP 合同签字',
-        journey_id: journeyId,
-        proposal_doc: '# converged proposal',
+      const submittedV1 = await createGoldenPathContractVersion(client, {
+        goldenPathId,
+        contract: CONTRACT_V1,
       });
-    expect(createGp.status).toBe(201);
-    goldenPathId = createGp.body.golden_path.id;
-
-    const propose = await request(app)
-      .patch(`/api/brain/golden-paths/${goldenPathId}`)
-      .send({ status: 'proposed' });
-    expect(propose.status).toBe(200);
-
-    const submitV1 = await request(app)
-      .post(`/api/brain/golden-paths/${goldenPathId}/contracts`)
-      .send(CONTRACT_V1);
-    expect(submitV1.status).toBe(201);
-    expect(submitV1.body.contract_version.version).toBe(1);
-    pendingActionIds.push(submitV1.body.pending_action_id);
-
-    const convergeV1 = await request(app)
-      .patch(`/api/brain/golden-paths/${goldenPathId}`)
-      .send({ status: 'converged' });
-    expect(convergeV1.status).toBe(200);
-
-    const signV1 = await request(app)
-      .post(`/api/brain/pending-actions/${submitV1.body.pending_action_id}/approve`)
-      .send({ reviewer: 'integration-owner' });
-    expect(signV1.status).toBe(200);
-    const taskV1 = signV1.body.execution_result.task;
-    expect(taskV1.payload).toMatchObject({
-      gp_contract_id: submitV1.body.contract_version.id,
-      gp_contract_version: 1,
-      gp_contract_hash: submitV1.body.contract_version.content_hash,
-    });
-
-    const contractV2 = structuredClone(CONTRACT_V1);
-    contractV2.success_and_close.observation_window = '48h';
-    const submitV2 = await request(app)
-      .post(`/api/brain/golden-paths/${goldenPathId}/contracts`)
-      .send(contractV2);
-    expect(submitV2.status).toBe(201);
-    expect(submitV2.body.contract_version.version).toBe(2);
-    pendingActionIds.push(submitV2.body.pending_action_id);
-
-    const afterChange = await pool.query(
-      `SELECT version, status, signed_by, invalidated_at
-         FROM golden_path_contract_versions
-        WHERE golden_path_id = $1
-        ORDER BY version`,
-      [goldenPathId],
-    );
-    expect(afterChange.rows).toMatchObject([
-      {
+      await client.query(
+        "UPDATE golden_paths SET status='converged' WHERE id=$1",
+        [goldenPathId],
+      );
+      const signedV1 = await signAndLaunchGoldenPathContract(client, {
+        goldenPathId,
+        contractId: submittedV1.contract_version.id,
         version: 1,
-        status: 'invalidated',
-        signed_by: 'integration-owner',
-      },
-      {
+        contentHash: submittedV1.contract_version.content_hash,
+        reviewer: 'integration-owner',
+      });
+      expect(signedV1.task).toMatchObject({
+        task_type: 'harness_initiative',
+        payload: {
+          gp_contract_id: submittedV1.contract_version.id,
+          routing_receipt_id: expect.any(String),
+          change_kind: 'new_capability',
+          repo,
+          base_sha: revision,
+        },
+      });
+
+      const contractV2 = structuredClone(CONTRACT_V1);
+      contractV2.success_and_close.observation_window = '48h';
+      const submittedV2 = await createGoldenPathContractVersion(client, {
+        goldenPathId,
+        contract: contractV2,
+      });
+      await client.query(
+        "UPDATE golden_paths SET status='converged' WHERE id=$1",
+        [goldenPathId],
+      );
+      const signedV2 = await signAndLaunchGoldenPathContract(client, {
+        goldenPathId,
+        contractId: submittedV2.contract_version.id,
         version: 2,
-        status: 'pending_signature',
-        signed_by: null,
-      },
-    ]);
-    expect(afterChange.rows[0].invalidated_at).not.toBeNull();
+        contentHash: submittedV2.contract_version.content_hash,
+        reviewer: 'integration-owner',
+      });
 
-    const oldTask = await pool.query(
-      'SELECT status FROM tasks WHERE id = $1',
-      [taskV1.id],
-    );
-    expect(oldTask.rows[0].status).toBe('cancelled');
-
-    const reconverge = await request(app)
-      .patch(`/api/brain/golden-paths/${goldenPathId}`)
-      .send({ status: 'converged' });
-    expect(reconverge.status).toBe(200);
-
-    const signV2 = await request(app)
-      .post(`/api/brain/pending-actions/${submitV2.body.pending_action_id}/approve`)
-      .send({ reviewer: 'integration-owner' });
-    expect(signV2.status).toBe(200);
-    const taskV2 = signV2.body.execution_result.task;
-    expect(taskV2.id).not.toBe(taskV1.id);
-    expect(taskV2.payload).toMatchObject({
-      gp_contract_id: submitV2.body.contract_version.id,
-      gp_contract_version: 2,
-      gp_contract_hash: submitV2.body.contract_version.content_hash,
-    });
-
-    const finalRows = await pool.query(
-      `SELECT version, status
-         FROM golden_path_contract_versions
-        WHERE golden_path_id = $1
-        ORDER BY version`,
-      [goldenPathId],
-    );
-    expect(finalRows.rows).toEqual([
-      { version: 1, status: 'invalidated' },
-      { version: 2, status: 'signed' },
-    ]);
+      expect(signedV2.task.id).not.toBe(signedV1.task.id);
+      const versions = await client.query(
+        `SELECT version, status
+           FROM golden_path_contract_versions
+          WHERE golden_path_id=$1
+          ORDER BY version`,
+        [goldenPathId],
+      );
+      expect(versions.rows).toEqual([
+        { version: 1, status: 'invalidated' },
+        { version: 2, status: 'signed' },
+      ]);
+      const receiptCount = await client.query(
+        `SELECT count(*)::int AS count
+           FROM work_routing_receipts
+          WHERE task_id IN ($1, $2)`,
+        [signedV1.task.id, signedV2.task.id],
+      );
+      expect(receiptCount.rows[0].count).toBe(2);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
   });
 });
