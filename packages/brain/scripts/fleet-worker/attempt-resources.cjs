@@ -173,7 +173,7 @@ function createAttemptResourceManager({
       }
       const username = `attempt_${suffix.slice(0, 16)}`;
       const password = suffix.slice(16, 48);
-      const database = `acceptance_${suffix.slice(48)}`;
+      const database = `acceptance_${suffix.slice(48)}_scratch`;
       let networkCreated = false;
       let containerCreated = false;
       try {

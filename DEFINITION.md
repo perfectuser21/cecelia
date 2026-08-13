@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.9
+**Brain 版本**: 1.273.10
+
+## Brain 1.273.10 — Scratch-safe Attempt Database
+
+- Fleet PostgreSQL sidecar 使用 `acceptance_<id>_scratch` 数据库名，使真实 smoke 的生产库防误连闸能够识别并放行隔离验收库。
 
 ## Brain 1.273.9 — Evaluator Isolated PostgreSQL
 
