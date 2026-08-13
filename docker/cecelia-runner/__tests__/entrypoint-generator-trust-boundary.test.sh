@@ -45,4 +45,53 @@ if (userIndex < 0 || args[userIndex + 1] !== 'root') {
 process.exit(0);
 NODE
 
+publisher_block="$(
+  sed -n '/^# generator-trusted-publisher:start$/,/^# generator-trusted-publisher:end$/p' "$SOURCE"
+)"
+[[ -n "$publisher_block" ]] || { echo 'missing generator trusted publisher' >&2; exit 1; }
+eval "$publisher_block"
+type publish_generator_result >/dev/null
+
+git init --bare "$TEST_ROOT/remote.git" >/dev/null
+git init -b main "$TEST_ROOT/workspace" >/dev/null
+git -C "$TEST_ROOT/workspace" config user.name 'Trusted Publisher Test'
+git -C "$TEST_ROOT/workspace" config user.email publisher@example.invalid
+git -C "$TEST_ROOT/workspace" config core.hooksPath /dev/null
+printf 'base\n' > "$TEST_ROOT/workspace/base.txt"
+git -C "$TEST_ROOT/workspace" add base.txt
+git -C "$TEST_ROOT/workspace" commit -m base >/dev/null
+BASE_SHA=$(git -C "$TEST_ROOT/workspace" rev-parse HEAD)
+git -C "$TEST_ROOT/workspace" checkout -b cp-trusted-publisher >/dev/null
+printf 'change\n' > "$TEST_ROOT/workspace/change.txt"
+git -C "$TEST_ROOT/workspace" add change.txt
+git -C "$TEST_ROOT/workspace" commit -m 'feat: trusted publisher fixture' >/dev/null
+HEAD_SHA=$(git -C "$TEST_ROOT/workspace" rev-parse HEAD)
+
+cat > "$TEST_ROOT/generator.json" <<JSON
+{"task_bundle":{"role":"generator","run_id":"11111111-1111-4111-8111-111111111111","attempt_id":"22222222-2222-4222-8222-222222222222","inputs":{"task_id":"33333333-3333-4333-8333-333333333333","workspace_spec":{"repo":"perfectuser21/cecelia","branch":"cp-trusted-publisher","base_sha":"$BASE_SHA"}}}}
+JSON
+printf '%s\n' '{"status":"completed","summary":"done","artifacts":[],"checks":[],"decision":null,"error":null,"case_file":null}' > "$TEST_ROOT/result.json"
+mkdir -p "$TEST_ROOT/trusted-gh"
+printf 'credential\n' > "$TEST_ROOT/trusted-gh/hosts.yml"
+export HARNESS_TASK_BUNDLE_FILE="$TEST_ROOT/generator.json"
+export WORKTREE_PATH="$TEST_ROOT/workspace"
+TRUSTED_GITHUB_CONFIG_DIR="$TEST_ROOT/trusted-gh"
+TRUSTED_PUBLISH_REMOTE_URL="$TEST_ROOT/remote.git"
+
+gh() {
+  if [[ "$1 $2" == 'auth setup-git' ]]; then return 0; fi
+  if [[ "$1 $2" == 'pr view' ]]; then
+    printf 'https://github.com/perfectuser21/cecelia/pull/999|%s\n' "$HEAD_SHA"
+    return 0
+  fi
+  return 1
+}
+
+publish_generator_result "$TEST_ROOT/result.json"
+test "$(git --git-dir "$TEST_ROOT/remote.git" rev-parse refs/heads/cp-trusted-publisher)" = "$HEAD_SHA"
+jq -e --arg sha "$HEAD_SHA" '
+  [.artifacts[] | select(.type == "pull_request" and .verification_status == "verified"
+    and .url == "https://github.com/perfectuser21/cecelia/pull/999" and .head_sha == $sha)] | length == 1
+' "$TEST_ROOT/result.json" >/dev/null
+
 echo 'generator trust boundary PASS'
