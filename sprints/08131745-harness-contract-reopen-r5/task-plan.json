@@ -1,0 +1,28 @@
+{
+  "initiative_id": "8f0aca1e-5162-431e-bae0-3886af0e0297",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain/ 纯后端合同状态机（contract-store.js），无 UI/agent 协议/engine 参与。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "materializeApprovedContract：附着 draft 合同走单事务原子换版，approved 保持 fail-closed",
+      "scope": "修 contract-store.js 已附着合同分支：按附着合同 status 分流——draft 附着不再当同轮批准证据比对，落到既有版本分配 + 原子插 v2 approved/置 v1 superseded/切 run.contract_id 路径；approved 附着保持 evidence_matches 比对（幂等命中/fail-closed 抛 mismatch）。加锚点注释 ATOMIC_RESWAP_ON_DRAFT。把 tests/contract-reopen-atomic-swap.test.js 的 4 例移植进 contract-store.test.js 的 runIf(HAS_REAL_POSTGRES) 块作永久回归。仅当 reopen 附着与 materialize 需共用状态机语义时才微调 loop.js 调用点。",
+      "dod": [
+        "[BEHAVIOR] reopen v1 draft 附着 + Round2 新证据 → 真 Postgres 验 v2 approved/v1 superseded/run.contract_id 切 v2（修复前复现 mismatch）",
+        "[BEHAVIOR] 相同 v2 证据幂等重放返回同一 contract.id、版本数不增",
+        "[BEHAVIOR] 附着 approved 合同证据不一致仍抛 attached approved contract evidence mismatch（fail-closed）",
+        "[BEHAVIOR] run 首轮无 contract_id 既有插入路径不回归",
+        "[ARTIFACT] 4 例永久回归落 packages/brain/src/orchestrator/__tests__/contract-store.test.js",
+        "[ARTIFACT] contract-store.js 含 draft 分流锚点 ATOMIC_RESWAP_ON_DRAFT"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/contract-store.js",
+        "packages/brain/src/orchestrator/__tests__/contract-store.test.js",
+        "packages/brain/src/orchestrator/loop.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
