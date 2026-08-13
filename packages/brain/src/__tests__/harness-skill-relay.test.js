@@ -92,7 +92,7 @@ describe('spawnSkillRelaySession', () => {
     });
     const task = {
       ...TASK,
-      payload: { ...TASK.payload, harness_runtime: 'kernel-v1', executor: 'auto' },
+      payload: { ...TASK.payload, harness_runtime: 'kernel-v1' },
     };
 
     const result = await spawnSkillRelaySession(task, deps);
@@ -143,7 +143,7 @@ describe('spawnSkillRelaySession', () => {
     });
     const task = {
       ...TASK,
-      payload: { ...TASK.payload, harness_runtime: 'kernel-v1', executor: 'auto' },
+      payload: { ...TASK.payload, harness_runtime: 'kernel-v1' },
     };
 
     const result = await spawnSkillRelaySession(task, deps);
@@ -168,7 +168,6 @@ describe('spawnSkillRelaySession', () => {
       payload: {
         ...TASK.payload,
         harness_runtime: 'kernel-v1',
-        executor: 'auto',
       },
     };
 
