@@ -8,11 +8,16 @@
 
 
 
-**Brain 版本**: 1.272.36
+**Brain 版本**: 1.272.38
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.38 — Fleet pgvector 运行时契约
+
+- Fleet 的隔离 PostgreSQL 基线改为固定 digest 的 `pgvector/pgvector:pg15`，与 migration 028 的 `CREATE EXTENSION vector` 要求一致。
+- NodeProfile、Worker、Probe、rollout、reconciler 与 runtime smoke 统一引用同一镜像，漂移继续 fail closed。
 
 ## Brain 1.272.36 — 冻结合同资产确定性排序
 

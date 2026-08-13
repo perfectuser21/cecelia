@@ -19,6 +19,7 @@ import {
 } from '../content-analytics.js';
 import { scheduleDailyScrape } from '../daily-scrape-scheduler.js';
 import { getAccountUsage } from '../account-usage.js';
+import { resolveF1CertificationWithPool } from '../map/f1-certification.js';
 
 const router = Router();
 
@@ -478,6 +479,52 @@ router.get('/capabilities', async (req, res) => {
       error: 'Failed to list capabilities',
       details: err.message
     });
+  }
+});
+
+/**
+ * GET /api/brain/capabilities/:capability/certification
+ * F1 Capability 可重复认证读回（复用 Mapper fail-closed 聚合，不新增平行认证系统）。
+ *
+ * Query（必填）: gp_contract_id, gp_contract_version, gp_contract_hash, journey_id, step_id
+ * Query（可选）: expected_merge_sha（缺省时 validation clock 缺锚点 → not green）
+ *
+ * 200: { capability, state, gp_contract_id, gp_contract_version, gp_contract_hash,
+ *        journey_id, step_id, receipt_id, synthetic, merge_sha, reason_code }
+ * 400: { error }（缺必填 query）
+ * 503: { error }（DB 不可达；纯读，调用方重试，不得静默当 green）
+ */
+router.get('/capabilities/:capability/certification', async (req, res) => {
+  const { capability } = req.params;
+  const {
+    gp_contract_id,
+    gp_contract_version,
+    gp_contract_hash,
+    journey_id,
+    step_id,
+    expected_merge_sha,
+  } = req.query;
+
+  const required = { gp_contract_id, gp_contract_version, gp_contract_hash, journey_id, step_id };
+  const missing = Object.keys(required).filter((k) => !required[k]);
+  if (missing.length > 0) {
+    return res.status(400).json({ error: `missing required query param(s): ${missing.join(', ')}` });
+  }
+
+  try {
+    const result = await resolveF1CertificationWithPool({
+      capability,
+      gp_contract_id,
+      gp_contract_version,
+      gp_contract_hash,
+      journey_id,
+      step_id,
+      expected_merge_sha: expected_merge_sha || null,
+    });
+    return res.json(result);
+  } catch (err) {
+    console.error('[API] capability certification 读回失败:', err.message);
+    return res.status(503).json({ error: err.message });
   }
 });
 
