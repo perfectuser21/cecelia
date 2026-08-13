@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.6
+**Brain 版本**: 1.273.7
+
+## Brain 1.273.7 — Retained Candidate Diff Evidence
+
+- Runner 将受信本地 candidate 的 changed-files 清单写入不可变证据；Controller 在 Evaluator 前以该证据执行 Impact Diff Gate，不再要求 Brain 本机持有远端 Fleet Git 对象。
 
 ## Brain 1.273.6 — Canonical Fleet Git Admin Mount
 

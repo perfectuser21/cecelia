@@ -277,7 +277,7 @@ finalize_generator_candidate() {
   is_generator_task_bundle || return 0
   local workspace="${WORKTREE_PATH:-/workspace}"
   local bundle="${HARNESS_TASK_BUNDLE_FILE:-}"
-  local repo branch base_sha bundle_attempt head_sha
+  local repo branch base_sha bundle_attempt head_sha changed_files_json
   local tmp_result
   [[ -f "$bundle" && -f "$result_file" ]] || return 1
   repo="$(jq -r '.task_bundle.inputs.workspace_spec.repo // empty' "$bundle")" || return 1
@@ -306,16 +306,29 @@ finalize_generator_candidate() {
     echo "[entrypoint] trusted Generator candidate rejected untracked output" >&2
     return 1
   fi
+  changed_files_json="$(git -C "$workspace" diff --name-only -z "$base_sha...$head_sha" \
+    | jq -Rs 'split("\u0000") | map(select(length > 0))')" || return 1
+  if ! jq -e 'type == "array" and length > 0 and length <= 10000
+      and all(.[]; type == "string" and length > 0 and length <= 4096
+        and (startswith("/") | not)
+        and (contains("\\") | not)
+        and (split("/") | index("..") | not))' \
+      <<<"$changed_files_json" >/dev/null; then
+    echo "[entrypoint] trusted Generator candidate changed-files invalid" >&2
+    return 1
+  fi
   tmp_result="${result_file}.trusted-candidate.$$"
   jq --arg head "$head_sha" --arg branch "$branch" --arg repo "$repo" \
     --arg base "$base_sha" --arg source "$bundle_attempt" \
-    --arg machine "${CECELIA_MACHINE_ID:-unknown}" '
+    --arg machine "${CECELIA_MACHINE_ID:-unknown}" \
+    --argjson changed_files "$changed_files_json" '
     (.artifacts // [] | if type == "array" then . else [] end) as $existing
     | .artifacts = (
         [$existing[] | select((type == "object" and (.type == "pull_request" or .type == "git_candidate")) | not)]
         + [{type:"git_candidate",verification_status:"verified",
             source_attempt_id:$source,head_sha:$head,base_sha:$base,
-            branch:$branch,repo:$repo,machine_id:$machine}]
+            branch:$branch,repo:$repo,machine_id:$machine,
+            changed_files:$changed_files}]
       )
   ' "$result_file" > "$tmp_result" || { rm -f "$tmp_result"; return 1; }
   mv "$tmp_result" "$result_file"

@@ -185,6 +185,20 @@ function verifiedLocalCandidate(attemptRows, runId, taskId) {
     const artifact = Array.isArray(result?.artifacts)
       ? result.artifacts.find((value) => value?.type === 'git_candidate')
       : null;
+    const changedFiles = artifact?.changed_files;
+    const changedFilesValid = changedFiles === undefined || (
+      Array.isArray(changedFiles)
+      && changedFiles.length > 0
+      && changedFiles.length <= 10_000
+      && changedFiles.every((filePath) => (
+        typeof filePath === 'string'
+        && filePath.length > 0
+        && filePath.length <= 4096
+        && !filePath.startsWith('/')
+        && !filePath.includes('\\')
+        && !filePath.split('/').includes('..')
+      ))
+    );
     if (
       artifact?.verification_status !== 'verified'
       || artifact.source_attempt_id !== attempt.id
@@ -199,6 +213,7 @@ function verifiedLocalCandidate(attemptRows, runId, taskId) {
       || !GIT_SHA_PATTERN.test(artifact.base_sha ?? '')
       || !GIT_SHA_PATTERN.test(artifact.head_sha ?? '')
       || artifact.base_sha === artifact.head_sha
+      || !changedFilesValid
     ) continue;
     return Object.freeze({ ...artifact });
   }

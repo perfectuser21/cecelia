@@ -1405,7 +1405,9 @@ async function runLoopOwned(
         impactGateReceipt = typeof evaluator === 'function'
           ? await evaluator({
               task: observed.task,
-              pr: observed.pr,
+              pr: impactGateMethod === 'beforeEvaluate'
+                ? (observed.candidate ?? observed.pr)
+                : observed.pr,
               decisionLog: observed.decisionLog,
               run: observed.run,
             })

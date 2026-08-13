@@ -318,14 +318,23 @@ export function createHarnessImpactGates({
         }, { head_revision: headRevision ?? null });
       }
       let changedFiles;
-      try {
-        changedFiles = await readChangedFiles(active.base_revision, headRevision, active.repo);
-      } catch {
-        return gateReceipt('diff', {
-          gate: 'impact_unknown',
-          reason: 'git_diff_unavailable',
-          retryable: true,
-        }, { head_revision: headRevision, contract_hash: active.contract_hash });
+      const verifiedCandidateFiles = (
+        pr?.type === 'git_candidate'
+        && pr?.verification_status === 'verified'
+        && Array.isArray(pr?.changed_files)
+      ) ? pr.changed_files : null;
+      if (verifiedCandidateFiles) {
+        changedFiles = verifiedCandidateFiles;
+      } else {
+        try {
+          changedFiles = await readChangedFiles(active.base_revision, headRevision, active.repo);
+        } catch {
+          return gateReceipt('diff', {
+            gate: 'impact_unknown',
+            reason: 'git_diff_unavailable',
+            retryable: true,
+          }, { head_revision: headRevision, contract_hash: active.contract_hash });
+        }
       }
       const result = await diffGate({
         db,
