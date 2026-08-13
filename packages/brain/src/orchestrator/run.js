@@ -2,7 +2,9 @@
  * run.js —— orchestrator CLI 入口（独立于 Brain 容器生命周期的主机进程，D6）。
  *
  * 主机进程用法：
- *   node packages/brain/src/orchestrator/run.js --task-id <uuid> [--run-id <uuid>] [--dry-run]
+ *   node packages/brain/src/orchestrator/run.js --task-id <uuid> --dry-run
+ *   node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid>
+ *     --controller-session-id <uuid> --controller-generation <n>
  *
  * --dry-run：只观测+推导+打印（F5 前台雏形），零写入零派发。
  * 非 dry-run 组装 provider-neutral dispatcher；Brain tick 拉起/watchdog 重拉另行接线。
@@ -90,7 +92,11 @@ export function parseArgs(argv) {
     else if (a === '--dry-run') args.dryRun = true;
   }
   if (!args.taskId) {
-    throw new Error('用法: node packages/brain/src/orchestrator/run.js --task-id <uuid> [--run-id <uuid>] [--dry-run]');
+    throw new Error('用法: node packages/brain/src/orchestrator/run.js --task-id <uuid> --dry-run | --run-id <uuid> --controller-session-id <uuid> --controller-generation <n>');
+  }
+  if (!args.dryRun && (!args.runId || !args.controllerSessionId
+      || !Number.isSafeInteger(args.controllerGeneration) || args.controllerGeneration < 1)) {
+    throw new Error('controller_lease_identity_missing');
   }
   return args;
 }
@@ -439,9 +445,9 @@ export async function runKernelMain({
   activateQueuedTask = activateQueuedKernelTask,
   logError = console.error,
 } = {}) {
-  if (!dryRun && runId) {
+  if (!dryRun) {
     const generation = Number(controllerGeneration);
-    if (!controllerSessionId || !Number.isSafeInteger(generation) || generation < 1) {
+    if (!runId || !controllerSessionId || !Number.isSafeInteger(generation) || generation < 1) {
       throw new Error('controller_lease_identity_missing');
     }
   }
