@@ -8,11 +8,15 @@
 
 
 
-**Brain 版本**: 1.273.1
+**Brain 版本**: 1.273.2
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.273.2 — Harness 入口旁路修复：kernel-v1 绕过 Session Controller 门禁（INV-5/INV-6）
+
+- `harness-skill-relay` `kernel-v1` early return 前新增两道门禁：executor 白名单校验（INV-6，`executor='auto'` 等非法值 loud-fail + task 回滚）+ `findActiveRunBlockingSpawn` DB 幂等防重（INV-5，活跃 run 存在时返回 `active_run_guard`）；`_spawnKernelRuntime` 本身不变，只修复调用者层的旁路绕过（PR #4869，接棒 77f19b77/PR #4860）。
 
 ## Brain 1.273.1 — Migration 413/414 production anchor + schema 地板升至 415
 
