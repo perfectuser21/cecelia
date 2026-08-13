@@ -290,6 +290,8 @@ describe('Kernel run store creation authority', () => {
     const [sql, params] = query.mock.calls[0];
     expect(sql).toContain('current_task_id = $1');
     expect(sql).toContain('commander_mode');
+    expect(sql).toContain('impact_contract_policy');
+    expect(sql).toContain('map_recovery_contract_id');
     expect(sql).not.toMatch(/OR\s+initiative_id/i);
     expect(params).toEqual([TASK_ID]);
   });

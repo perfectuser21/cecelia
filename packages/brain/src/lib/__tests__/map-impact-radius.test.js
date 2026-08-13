@@ -64,6 +64,22 @@ describe('computeMapImpactRadius', () => {
     ]);
   });
 
+  it('Capability 作为显式起点反向展开实现它的 feature 与必跑断言', () => {
+    const result = computeMapImpactRadius({
+      repo: 'repo-a', changedFiles: [], startNodeKeys: ['CAP_A'],
+      graphEdges, nodes, edges,
+    });
+    expect(result.affected_business_nodes.map(({ node_key }) => node_key)).toEqual([
+      'CAP_A', 'crosscut-a', 'feature-a', 'stream-a',
+    ]);
+    expect(result.must_run_assertions).toEqual([
+      expect.objectContaining({
+        assertion_ref: 'tests/core.test.js',
+        journey_step_link_id: ASSERTION_LINK_ID,
+      }),
+    ]);
+  });
+
   it('输入顺序和事实行顺序不影响确定排序', () => {
     const first = computeMapImpactRadius({
       repo: 'repo-a', changedFiles: ['src/core.js', 'src/api.js'], graphEdges, nodes, edges,

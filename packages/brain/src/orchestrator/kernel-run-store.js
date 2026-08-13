@@ -95,7 +95,9 @@ export async function loadActiveKernelRun(db, taskId, { forUpdate = false } = {}
   const { rows } = await db.query(
     `SELECT id, initiative_id, current_task_id, phase,
             orchestrator_heartbeat_at, orchestrator_pid, orchestrator_host,
-            started_at, created_source, commander_mode
+            started_at, created_source, commander_mode,
+            impact_contract_policy, impact_contract_policy_reason,
+            impact_contract_policy_decision_id, map_recovery_contract_id
        FROM initiative_runs
       WHERE current_task_id = $1
         AND orchestrator_version = 'v2'

@@ -43,7 +43,8 @@ function traverseBusiness(startIds, edges, mode) {
             && ['implements', 'proves', 'affects'].includes(edge.edge_type)) {
             neighbors.push(edge.to_node_id);
           }
-          if (edge.to_node_id === nodeId && ['contains', 'serves'].includes(edge.edge_type)) {
+          if (edge.to_node_id === nodeId
+            && ['contains', 'serves', 'implements', 'proves', 'affects'].includes(edge.edge_type)) {
             neighbors.push(edge.from_node_id);
           }
         }

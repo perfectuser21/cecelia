@@ -1022,8 +1022,16 @@ async function parseAndCreate(input, options = {}) {
     for (const [taskIndex, task] of parsedIntent.tasks.entries()) {
       const created = await createTask({
         source: 'conversation',
-        source_id: `intent:${targetProjectId || 'unbound'}:${taskIndex}:${task.title}`,
-        title: task.title,
+        source_id: buildIntentTaskSourceId({
+          sourceIdPrefix: options.sourceIdPrefix,
+          projectId: targetProjectId,
+          taskIndex,
+          taskTitle: task.title,
+        }),
+        title: buildIntentTaskTitle({
+          taskTitlePrefix: options.taskTitlePrefix,
+          taskTitle: task.title,
+        }),
         description: task.description,
         priority: task.priority,
         project_id: taskProjectId,
@@ -1044,6 +1052,15 @@ async function parseAndCreate(input, options = {}) {
   return result;
 }
 
+function buildIntentTaskSourceId({ sourceIdPrefix, projectId, taskIndex, taskTitle }) {
+  const namespace = sourceIdPrefix || `intent:${projectId || 'unbound'}`;
+  return `${namespace}:${taskIndex}:${taskTitle}`;
+}
+
+function buildIntentTaskTitle({ taskTitlePrefix, taskTitle }) {
+  return taskTitlePrefix ? `${taskTitlePrefix} ${taskTitle}` : taskTitle;
+}
+
 export {
   INTENT_TYPES,
   INTENT_PHRASES,
@@ -1062,5 +1079,7 @@ export {
   DOMAIN_KEYWORDS,
   DOMAIN_OWNER_MAP,
   parseIntent,
-  parseAndCreate
+  parseAndCreate,
+  buildIntentTaskSourceId,
+  buildIntentTaskTitle
 };
