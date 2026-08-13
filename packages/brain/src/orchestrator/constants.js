@@ -61,6 +61,7 @@ export const ACTION = Object.freeze({
   SPAWN_EVALUATOR: 'spawn:evaluator',
   SPAWN_EVALUATOR_EVIDENCE_REPAIR: 'spawn:evaluator-evidence-repair',
   SPAWN_JUDGE: 'spawn:judge',
+  PUBLISH_APPROVED_REF: 'publish:approved_ref',
   WAIT_RUNNING: 'wait:running',
   WAIT_POLL_CI: 'wait:poll_ci',
   WAIT_GENERATOR_FIX_CALLBACK: 'wait:generator_fix_callback',

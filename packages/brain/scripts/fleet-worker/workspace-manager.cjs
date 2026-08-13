@@ -19,6 +19,7 @@ const SPEC_FIELDS = new Set([
   'run_id',
   'attempt_id',
   'frozen_baseline',
+  'source_attempt_id',
 ]);
 // F7（复审）：npm ci 独立超时预算——180s prepare 总预算里留至少 60s 给 git
 // clone/worktree/verify 等其余步骤，npm ci 本身封顶 120s；超时按失败处理
@@ -89,6 +90,15 @@ function validateSpec(value, repoAllowlist) {
     && typeof value.frozen_baseline !== 'boolean'
   ) {
     throw new Error('workspace_frozen_baseline_invalid');
+  }
+  if (
+    value.source_attempt_id !== undefined
+    && (
+      !UUID_PATTERN.test(value.source_attempt_id)
+      || value.source_attempt_id === value.attempt_id
+    )
+  ) {
+    throw new Error('workspace_source_attempt_invalid');
   }
   return Object.freeze({
     ...value,
@@ -279,13 +289,27 @@ function createWorkspaceManager({
   return Object.freeze({
     async prepare(input, { nodeDeps = false } = {}) {
       const spec = validateSpec(input, allowedRepos);
-      const mirrorPath = await updateMirror(spec);
+      const sourceWorkspace = spec.source_attempt_id
+        ? readOwnedWorkspace(spec.source_attempt_id)
+        : null;
+      if (
+        spec.source_attempt_id
+        && (
+          !sourceWorkspace
+          || sourceWorkspace.repo !== spec.repo
+          || sourceWorkspace.owner.run_id !== spec.run_id
+        )
+      ) {
+        throw new Error('workspace_source_attempt_unavailable');
+      }
+      const mirrorPath = sourceWorkspace?.mirror_path ?? await updateMirror(spec);
+      const cloneSourcePath = sourceWorkspace?.admin_path ?? mirrorPath;
       await requireCommit(
-        mirrorPath,
+        cloneSourcePath,
         spec.base_sha,
         'workspace_base_sha_unavailable',
       );
-      await verifyExpectedHead(mirrorPath, spec);
+      await verifyExpectedHead(cloneSourcePath, spec);
 
       fs.mkdirSync(worktrees, { recursive: true, mode: 0o700 });
       fs.mkdirSync(adminRoot, { recursive: true, mode: 0o700 });
@@ -305,6 +329,9 @@ function createWorkspaceManager({
         // started. Pairing it with the invariant is what makes a push-time
         // lineage guard possible inside the container.
         frozen_baseline: spec.frozen_baseline === true,
+        ...(spec.source_attempt_id
+          ? { source_attempt_id: spec.source_attempt_id }
+          : {}),
         mode: spec.mode,
         path: workspacePath,
         mirror_path: mirrorPath,
@@ -321,7 +348,7 @@ function createWorkspaceManager({
           '--bare',
           '--no-hardlinks',
           '--',
-          mirrorPath,
+          cloneSourcePath,
           adminPath,
         ]);
         await git([

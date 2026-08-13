@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.272.59
+**Brain 版本**: 1.272.64
+
+## Judge-gated Candidate Publishing（Brain 1.272.64）
+
+- Generator 的受限 Provider 只提交本地 candidate；Fleet 保留工作区供 Evaluator/Judge 读取，Judge PASS 后由无 Provider 凭据的受信 Publisher 精确推送并创建 PR。
+- Fleet 将 Routing Receipt、run、repo、branch、base SHA 投影进真实 Runner 动作闸；真实容器 smoke 校验 UID、capability、凭据隔离、push 熔断和 callback candidate。
 
 ## Fail-closed Map Recovery Intent（Brain 1.272.59）
 

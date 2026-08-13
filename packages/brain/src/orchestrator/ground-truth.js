@@ -48,6 +48,7 @@ const TERMINAL_ATTEMPT_STATUSES = new Set([
 ]);
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const GITHUB_REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
+const ATTEMPT_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const SPAWN_ROLE_BY_ACTION = Object.freeze({
   [ACTION.SPAWN_PLANNER]: 'planner',
   [ACTION.SPAWN_PROPOSER]: 'proposer',
@@ -167,6 +168,40 @@ function generatorAttemptHasRuntimeEvidence(attempt, logRows) {
   if (attempt.provider_session_id != null || attempt.heartbeat_at != null) return true;
   if (attempt.status === 'running') return true;
   return GENERATOR_RUNTIME_ERROR_CODES.has(attempt.error_code);
+}
+
+function verifiedLocalCandidate(attemptRows, runId, taskId) {
+  const ordered = [...attemptRows].sort((left, right) => Number(right.hop) - Number(left.hop));
+  for (const attempt of ordered) {
+    if (
+      attempt.role !== 'generator'
+      || attempt.run_id !== runId
+      || !['completed', 'completed_with_concerns'].includes(attempt.status)
+    ) continue;
+    const bundle = asJson(attempt.task_bundle);
+    const result = asJson(attempt.result);
+    const workspace = bundle?.inputs?.workspace_spec;
+    const artifact = Array.isArray(result?.artifacts)
+      ? result.artifacts.find((value) => value?.type === 'git_candidate')
+      : null;
+    if (
+      artifact?.verification_status !== 'verified'
+      || artifact.source_attempt_id !== attempt.id
+      || !ATTEMPT_ID_PATTERN.test(artifact.source_attempt_id ?? '')
+      || bundle?.inputs?.task_id !== taskId
+      || workspace?.repo !== artifact.repo
+      || workspace?.branch !== artifact.branch
+      || workspace?.base_sha !== artifact.base_sha
+      || attempt.actual_machine_id !== artifact.machine_id
+      || !GITHUB_REPO_PATTERN.test(artifact.repo ?? '')
+      || !/^cp-[a-z0-9][a-z0-9._-]{0,126}$/.test(artifact.branch ?? '')
+      || !GIT_SHA_PATTERN.test(artifact.base_sha ?? '')
+      || !GIT_SHA_PATTERN.test(artifact.head_sha ?? '')
+      || artifact.base_sha === artifact.head_sha
+    ) continue;
+    return Object.freeze({ ...artifact });
+  }
+  return null;
 }
 
 /** docker --format "{{json .}}" 输出（每行一个 JSON）→ 对象数组 */
@@ -646,6 +681,7 @@ export async function collectGroundTruth(deps, opts) {
   const generatorSpawned = attemptRows.some((row) => (
     generatorAttemptHasRuntimeEvidence(row, decisionLog)
   ));
+  const candidate = verifiedLocalCandidate(attemptRows, runId, taskId);
   const evalRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_EVALUATE);
   const judgeRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_JUDGE);
   const evaluateVerdict = evalRow ? asJson(evalRow.detail) : null;
@@ -795,6 +831,7 @@ export async function collectGroundTruth(deps, opts) {
     implementationBaselineError,
     contract,
     pr,
+    candidate,
     verifiedExistingPrOrigin,
     inflight: {
       containers,

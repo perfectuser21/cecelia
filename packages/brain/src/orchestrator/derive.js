@@ -470,6 +470,7 @@ function attemptCallbackRoute(observed) {
   if (
     role === 'generator'
     && observed.pr == null
+    && observed.candidate == null
     && ['completed', 'completed_with_concerns'].includes(status)
   ) {
     if ((detail.artifacts ?? []).some((artifact) => (
@@ -900,14 +901,19 @@ function deriveGan(observed) {
 function deriveTask(observed) {
   const {
     pr,
+    candidate,
     lastAgentExit,
     generatorSpawned,
     counters,
     decisionLog,
   } = observed;
+  const unpublishedCandidate = candidate && candidate.head_sha !== pr?.head_sha
+    ? candidate
+    : null;
+  const implementationTarget = unpublishedCandidate ?? pr ?? candidate;
 
-  // 3a. !pr
-  if (!pr) {
+  // 3a. 既没有远端 PR，也没有 Runner 验证的本地候选。
+  if (!implementationTarget) {
     if (!generatorSpawned) {
       return { phase: 'generate', action: 'spawn:generator', reason: 'contract_approved' };
     }
@@ -927,6 +933,12 @@ function deriveTask(observed) {
     // generator 已退出且无 PR（no_pr）→ 计入 fix_round
     // （修订声明：旧图 routeAfterParse !pr_url→no_pr(END) 直接终局，新语义=可重试入 fix 上限）
     return fixRoute('no_pr');
+  }
+
+  // Generator Provider 只留下本地 commit。Evaluator/Judge 对同一个受控候选
+  // 运行；Judge PASS 后才允许 trusted transport 建远端 ref/PR。
+  if (unpublishedCandidate) {
+    return deriveVerdictChain({ ...observed, pr: null, candidate: unpublishedCandidate });
   }
 
   // 3d. exit/auth 观测分路（P0-3）——优先于 CI 状态判定：
@@ -1049,9 +1061,18 @@ function deriveFailureClassRoute(
  * 规则 4a-4e：evaluate → judge → human review → merge。
  */
 function deriveVerdictChain(observed) {
-  const { pr, evaluateVerdict, judgeVerdict, reviewRequired, reviewApproved, counters } = observed;
-  const evalRow = verdictForSha(evaluateVerdict, pr.head_sha);
-  const judgeRow = verdictForSha(judgeVerdict, pr.head_sha);
+  const {
+    pr,
+    candidate,
+    evaluateVerdict,
+    judgeVerdict,
+    reviewRequired,
+    reviewApproved,
+    counters,
+  } = observed;
+  const target = pr ?? candidate;
+  const evalRow = verdictForSha(evaluateVerdict, target.head_sha);
+  const judgeRow = verdictForSha(judgeVerdict, target.head_sha);
 
   // 4a. 当前 head_sha 无 evaluate PASS 记录 → evaluate（stale PASS+新 sha 也走这里重新 evaluate）
   if (!evalRow) {
@@ -1064,7 +1085,7 @@ function deriveVerdictChain(observed) {
       evalRow.failure_class,
       counters,
       observed.decisionLog,
-      pr.head_sha,
+      target.head_sha,
       evalRow,
       observed,
     );
@@ -1080,7 +1101,7 @@ function deriveVerdictChain(observed) {
     // recollect 收敛护栏（issue dbea513f 缺陷2）：若补证后产出了【晚于】最新 judge 的 evaluate
     // PASS，说明 Evaluator 已按 Judge 要求重新取证成功，此时陈旧 judge FAIL 不应再遮蔽新证据——
     // 派 judge 复核新证据（evaluate_passed_awaiting_judge），而非再进 failure_class 重派 evaluator。
-    if (hasNewerEvaluatePassThanJudge(observed.decisionLog, pr.head_sha)) {
+    if (hasNewerEvaluatePassThanJudge(observed.decisionLog, target.head_sha)) {
       return { phase: 'evaluate', action: 'spawn:judge', reason: 'evaluate_passed_awaiting_judge' };
     }
     if (judgeRow.failure_class == null) {
@@ -1088,7 +1109,7 @@ function deriveVerdictChain(observed) {
         'unknown',
         counters,
         observed.decisionLog,
-        pr.head_sha,
+        target.head_sha,
         judgeRow,
         observed,
       );
@@ -1097,11 +1118,22 @@ function deriveVerdictChain(observed) {
       judgeRow.failure_class,
       counters,
       observed.decisionLog,
-      pr.head_sha,
+      target.head_sha,
       judgeRow,
       observed,
     );
   }
+
+  // 本地候选没有 PR URL，无法形成 merge-review UI；Judge PASS 后先由受信
+  // transport 发布精确 SHA，再在远端 PR 上继续 CI/人工 merge fence。
+  if (!pr && candidate) {
+    return {
+      phase: 'publish',
+      action: ACTION.PUBLISH_APPROVED_REF,
+      reason: 'judge_passed_publish_exact_candidate',
+    };
+  }
+
 
   // 4d. 双 PASS && review_required && 未批准 → 等人工（Bark/预览副作用归 T3）
   if (reviewRequired && !reviewApproved) {

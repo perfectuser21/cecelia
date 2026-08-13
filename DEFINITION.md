@@ -8,11 +8,16 @@
 
 
 
-**Brain 版本**: 1.272.63
+**Brain 版本**: 1.272.64
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.64 — Judge-gated Candidate Publishing
+
+- Generator 只形成同机保留的、服务端验证的本地 Git candidate；Evaluator 与 Judge 精确继承该 SHA，只有 Judge PASS 后的受信 Publisher 才能快进推送并创建 PR。
+- Fleet Worker 把 canonical Routing Receipt 身份完整注入真实 Runner；真实容器验收验证 Provider 以 UID 5999、零 capabilities 运行，看不到控制面/GitHub 凭据，不能提前 push，并经 callback 返回精确 candidate SHA。
 
 ## Brain 1.272.63 — Headed Kernel Runtime Identity
 

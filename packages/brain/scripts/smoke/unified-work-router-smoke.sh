@@ -41,4 +41,11 @@ bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh
 bash docker/cecelia-runner/__tests__/entrypoint-frozen-baseline-guard.test.sh
 pass '有头、无头与 Generator trust boundary'
 
+REAL_RUNNER_AUTH="${CODEX_AUTH_JSON_PATH:-$HOME/.codex-team1/auth.json}"
+CODEX_AUTH_JSON_PATH="$REAL_RUNNER_AUTH" \
+  CECELIA_REAL_RUNNER_IMAGE="${CECELIA_REAL_RUNNER_IMAGE:-cecelia/runner:latest}" \
+  "$NODE_EXECUTABLE" \
+  packages/brain/scripts/smoke/unified-work-router-real-runner-smoke.mjs
+pass '真实 Runner 容器、Codex Provider、callback 与本地 candidate'
+
 printf '%s\n' 'ALL PASS: Unified Work Router scratch smoke'

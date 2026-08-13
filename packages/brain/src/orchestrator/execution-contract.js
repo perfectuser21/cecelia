@@ -16,6 +16,7 @@ export const ROLE_VALUES = [
   'generator',
   'evaluator',
   'judge',
+  'publisher',
   'reporter',
   'commander',
 ];

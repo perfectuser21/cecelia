@@ -233,6 +233,11 @@ is_generator_task_bundle() {
   [[ "$(jq -r '.task_bundle.role // empty' "$HARNESS_TASK_BUNDLE_FILE" 2>/dev/null)" == "generator" ]]
 }
 
+is_publisher_task_bundle() {
+  [[ -f "${HARNESS_TASK_BUNDLE_FILE:-}" ]] || return 1
+  [[ "$(jq -r '.task_bundle.role // empty' "$HARNESS_TASK_BUNDLE_FILE" 2>/dev/null)" == "publisher" ]]
+}
+
 is_untrusted_provider_task_bundle() {
   is_evaluator_task_bundle || is_generator_task_bundle
 }
@@ -241,21 +246,21 @@ is_untrusted_provider_task_bundle() {
 TRUSTED_GITHUB_CONFIG_DIR=""
 TRUSTED_PUBLISH_REMOTE_URL=""
 
-preserve_generator_github_credential() {
-  is_generator_task_bundle || return 0
+preserve_publisher_github_credential() {
+  is_publisher_task_bundle || return 0
   local source_dir="${GH_CONFIG_DIR:-/home/cecelia/.config/gh}"
   local attempt_id="${HARNESS_ATTEMPT_ID:-}"
   local repo=""
   if [[ "$(id -u)" != "0" ]] \
       || [[ ! "$attempt_id" =~ ^[0-9a-f-]{36}$ ]] \
       || [[ ! -s "$source_dir/hosts.yml" ]]; then
-    echo "[entrypoint] trusted Generator publisher credential unavailable" >&2
+    echo "[entrypoint] trusted publisher credential unavailable" >&2
     return 1
   fi
   repo="$(jq -r '.task_bundle.inputs.workspace_spec.repo // empty' \
     "$HARNESS_TASK_BUNDLE_FILE" 2>/dev/null)" || return 1
   if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
-    echo "[entrypoint] trusted Generator publisher repository invalid" >&2
+    echo "[entrypoint] trusted publisher repository invalid" >&2
     return 1
   fi
   TRUSTED_GITHUB_CONFIG_DIR="/run/cecelia-trusted/github-$attempt_id"
@@ -267,15 +272,14 @@ preserve_generator_github_credential() {
   chmod 0600 "$TRUSTED_GITHUB_CONFIG_DIR/hosts.yml" || return 1
 }
 
-publish_generator_result() {
+finalize_generator_candidate() {
   local result_file="$1"
   is_generator_task_bundle || return 0
   local workspace="${WORKTREE_PATH:-/workspace}"
   local bundle="${HARNESS_TASK_BUNDLE_FILE:-}"
-  local repo branch base_sha bundle_attempt head_sha remote_sha pr_info pr_url pr_head
+  local repo branch base_sha bundle_attempt head_sha
   local tmp_result
-  [[ -f "$bundle" && -f "$result_file" && -s "$TRUSTED_GITHUB_CONFIG_DIR/hosts.yml" ]] \
-    || return 1
+  [[ -f "$bundle" && -f "$result_file" ]] || return 1
   repo="$(jq -r '.task_bundle.inputs.workspace_spec.repo // empty' "$bundle")" || return 1
   branch="$(jq -r '.task_bundle.inputs.workspace_spec.branch // empty' "$bundle")" || return 1
   base_sha="$(jq -r '.task_bundle.inputs.workspace_spec.base_sha // empty' "$bundle")" || return 1
@@ -285,7 +289,7 @@ publish_generator_result() {
       || [[ ! "$base_sha" =~ ^[0-9a-f]{40}$ ]] \
       || [[ -n "${HARNESS_ATTEMPT_ID:-}" && "$bundle_attempt" != "$HARNESS_ATTEMPT_ID" ]] \
       || [[ "$(git -C "$workspace" branch --show-current 2>/dev/null)" != "$branch" ]]; then
-    echo "[entrypoint] trusted Generator publisher identity mismatch" >&2
+    echo "[entrypoint] trusted Generator candidate identity mismatch" >&2
     return 1
   fi
   head_sha="$(git -C "$workspace" rev-parse HEAD 2>/dev/null)" || return 1
@@ -293,39 +297,80 @@ publish_generator_result() {
       || ! git -C "$workspace" merge-base --is-ancestor "$base_sha" "$head_sha" \
       || ! git -C "$workspace" diff --quiet \
       || ! git -C "$workspace" diff --cached --quiet; then
-    echo "[entrypoint] trusted Generator publisher rejected uncommitted or empty output" >&2
+    echo "[entrypoint] trusted Generator candidate rejected uncommitted or empty output" >&2
     return 1
   fi
   if git -C "$workspace" status --porcelain --untracked-files=all \
       | grep -Ev '^\?\? (\.dev-lock\.|\.brain-result\.json$)' \
       | grep -q .; then
-    echo "[entrypoint] trusted Generator publisher rejected untracked output" >&2
+    echo "[entrypoint] trusted Generator candidate rejected untracked output" >&2
+    return 1
+  fi
+  tmp_result="${result_file}.trusted-candidate.$$"
+  jq --arg head "$head_sha" --arg branch "$branch" --arg repo "$repo" \
+    --arg base "$base_sha" --arg source "$bundle_attempt" \
+    --arg machine "${CECELIA_MACHINE_ID:-unknown}" '
+    (.artifacts // [] | if type == "array" then . else [] end) as $existing
+    | .artifacts = (
+        [$existing[] | select((type == "object" and (.type == "pull_request" or .type == "git_candidate")) | not)]
+        + [{type:"git_candidate",verification_status:"verified",
+            source_attempt_id:$source,head_sha:$head,base_sha:$base,
+            branch:$branch,repo:$repo,machine_id:$machine}]
+      )
+  ' "$result_file" > "$tmp_result" || { rm -f "$tmp_result"; return 1; }
+  mv "$tmp_result" "$result_file"
+  echo "[entrypoint] trusted Generator candidate verified head=$head_sha"
+}
+
+publish_approved_generator_candidate() {
+  local result_file="$1"
+  is_publisher_task_bundle || return 1
+  local workspace="${WORKTREE_PATH:-/workspace}"
+  local bundle="${HARNESS_TASK_BUNDLE_FILE:-}"
+  local repo branch base_sha source_attempt head_sha judge_sha fence_sha remote_sha
+  local pr_info pr_url pr_head tmp_result
+  [[ -f "$bundle" && -f "$result_file" && -s "$TRUSTED_GITHUB_CONFIG_DIR/hosts.yml" ]] \
+    || return 1
+  repo="$(jq -r '.task_bundle.inputs.candidate.repo // empty' "$bundle")" || return 1
+  branch="$(jq -r '.task_bundle.inputs.candidate.branch // empty' "$bundle")" || return 1
+  base_sha="$(jq -r '.task_bundle.inputs.candidate.base_sha // empty' "$bundle")" || return 1
+  source_attempt="$(jq -r '.task_bundle.inputs.candidate.source_attempt_id // empty' "$bundle")" || return 1
+  head_sha="$(jq -r '.task_bundle.inputs.candidate.head_sha // empty' "$bundle")" || return 1
+  judge_sha="$(jq -r 'select(.task_bundle.inputs.judge_verdict.verdict == "PASS") | .task_bundle.inputs.judge_verdict.pr_head_sha // empty' "$bundle")" || return 1
+  fence_sha="$(jq -r 'select(.task_bundle.inputs.merge_fence.allowed == true) | .task_bundle.inputs.merge_fence.head_sha // empty' "$bundle")" || return 1
+  if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
+      || [[ ! "$branch" =~ ^cp-[a-z0-9][a-z0-9._-]{0,126}$ ]] \
+      || [[ ! "$base_sha" =~ ^[0-9a-f]{40}$ ]] \
+      || [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]] \
+      || [[ ! "$source_attempt" =~ ^[0-9a-f-]{36}$ ]] \
+      || [[ "$judge_sha" != "$head_sha" || "$fence_sha" != "$head_sha" ]] \
+      || [[ "$(git -C "$workspace" rev-parse HEAD 2>/dev/null)" != "$head_sha" ]] \
+      || ! git -C "$workspace" merge-base --is-ancestor "$base_sha" "$head_sha"; then
+    echo "[entrypoint] trusted publisher approval or candidate identity mismatch" >&2
     return 1
   fi
   remote_sha="$(git -C "$workspace" ls-remote --heads "$TRUSTED_PUBLISH_REMOTE_URL" \
     "refs/heads/$branch" | awk 'NR == 1 {print $1}')" || return 1
-  if [[ -n "$remote_sha" && "$remote_sha" != "$head_sha" ]]; then
-    echo "[entrypoint] trusted Generator publisher refuses remote overwrite" >&2
+  if [[ -n "$remote_sha" && "$remote_sha" != "$head_sha" ]] \
+      && ! git -C "$workspace" merge-base --is-ancestor "$remote_sha" "$head_sha"; then
+    echo "[entrypoint] trusted publisher refuses remote overwrite" >&2
     return 1
   fi
-  GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" gh auth setup-git >/dev/null 2>&1 \
-    || return 1
+  GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" gh auth setup-git >/dev/null 2>&1 || return 1
   if [[ "$remote_sha" != "$head_sha" ]]; then
-    GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" \
-      git -C "$workspace" push "$TRUSTED_PUBLISH_REMOTE_URL" \
-        "$head_sha:refs/heads/$branch" >/dev/null || return 1
+    GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" git -C "$workspace" push \
+      "$TRUSTED_PUBLISH_REMOTE_URL" "$head_sha:refs/heads/$branch" >/dev/null || return 1
   fi
   remote_sha="$(git -C "$workspace" ls-remote --heads "$TRUSTED_PUBLISH_REMOTE_URL" \
     "refs/heads/$branch" | awk 'NR == 1 {print $1}')" || return 1
   [[ "$remote_sha" == "$head_sha" ]] || return 1
-
   pr_info="$(GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" gh pr view "$branch" \
     --repo "$repo" --json url,headRefOid --jq '"\(.url)|\(.headRefOid)"' 2>/dev/null || true)"
   if [[ -z "$pr_info" ]]; then
     GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" gh pr create \
       --repo "$repo" --head "$branch" --base main \
-      --title "Harness Generator ${CECELIA_TASK_ID:-task}" \
-      --body "Published by Cecelia trusted Generator transport for Attempt $bundle_attempt." \
+      --title "Harness approved candidate ${CECELIA_TASK_ID:-task}" \
+      --body "Published after Judge PASS for Generator Attempt $source_attempt." \
       >/dev/null || return 1
     pr_info="$(GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" gh pr view "$branch" \
       --repo "$repo" --json url,headRefOid --jq '"\(.url)|\(.headRefOid)"')" || return 1
@@ -333,20 +378,16 @@ publish_generator_result() {
   IFS='|' read -r pr_url pr_head <<< "$pr_info"
   if [[ ! "$pr_url" =~ ^https://github\.com/${repo}/pull/[1-9][0-9]*$ ]] \
       || [[ "$pr_head" != "$head_sha" ]]; then
-    echo "[entrypoint] trusted Generator publisher PR head mismatch" >&2
+    echo "[entrypoint] trusted publisher PR head mismatch" >&2
     return 1
   fi
   tmp_result="${result_file}.trusted-publisher.$$"
   jq --arg url "$pr_url" --arg head "$head_sha" --arg branch "$branch" --arg repo "$repo" '
-    (.artifacts // [] | if type == "array" then . else [] end) as $existing
-    | .artifacts = (
-        [$existing[] | select((type == "object" and .type == "pull_request") | not)]
-        + [{type:"pull_request",verification_status:"verified",url:$url,
-            head_sha:$head,branch:$branch,repo:$repo}]
-      )
+    .artifacts = [{type:"pull_request",verification_status:"verified",url:$url,
+      head_sha:$head,branch:$branch,repo:$repo}]
   ' "$result_file" > "$tmp_result" || { rm -f "$tmp_result"; return 1; }
   mv "$tmp_result" "$result_file"
-  echo "[entrypoint] trusted Generator publisher verified pr=$pr_url head=$head_sha"
+  echo "[entrypoint] trusted publisher verified pr=$pr_url head=$head_sha"
 }
 # generator-trusted-publisher:end
 
@@ -559,7 +600,7 @@ if is_evaluator_task_bundle; then
   prepare_evaluator_evidence_capsule
   seal_evaluator_evidence_capsule
 fi
-preserve_generator_github_credential
+preserve_publisher_github_credential
 destroy_untrusted_provider_github_credential
 
 # git-auth-setup:start
@@ -1009,8 +1050,7 @@ finalize_planner_output() {
 # these fields and cannot turn a non-routed task into an authorized one.
 install_routing_action_gate() {
   local workspace="${WORKTREE_PATH:-/workspace}"
-  local identity_values=(
-    "${CECELIA_TASK_ID:-}"
+  local routing_values=(
     "${CECELIA_ROUTING_RECEIPT_ID:-}"
     "${CECELIA_RUN_ID:-}"
     "${CECELIA_REPO:-}"
@@ -1019,11 +1059,11 @@ install_routing_action_gate() {
   )
   local present=0
   local value=""
-  for value in "${identity_values[@]}"; do
+  for value in "${routing_values[@]}"; do
     [[ -z "$value" ]] || present=$((present + 1))
   done
   [[ $present -eq 0 ]] && return 0
-  if [[ $present -ne ${#identity_values[@]} ]]; then
+  if [[ $present -ne ${#routing_values[@]} ]] || [[ -z "${CECELIA_TASK_ID:-}" ]]; then
     echo "[entrypoint] routing action identity is incomplete" >&2
     return 1
   fi
@@ -1049,6 +1089,10 @@ install_routing_action_gate() {
       || ! git -C "$actual_root" merge-base --is-ancestor "$CECELIA_BASE_SHA" HEAD 2>/dev/null; then
     echo "[entrypoint] routing action workspace does not match server identity" >&2
     return 1
+  fi
+  if [[ "${HARNESS_READ_ONLY:-false}" == "true" ]]; then
+    echo "[entrypoint] read-only routing identity validated for receipt=$CECELIA_ROUTING_RECEIPT_ID"
+    return 0
   fi
   local lock="$actual_root/.dev-lock.$actual_branch"
   local lock_tmp="$lock.tmp.$$"
@@ -2030,6 +2074,32 @@ run_provider_contract() {
     return 1
   fi
 
+  if is_publisher_task_bundle; then
+    provider="trusted-transport"
+    if [[ ! -f "$task_bundle_file" ]] \
+        || ! jq -e '.task_bundle.role == "publisher"' "$task_bundle_file" >/dev/null 2>&1; then
+      write_provider_bootstrap_failure \
+        "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
+        'Publisher TaskBundle rejected' invalid_publisher_task_bundle \
+        'trusted transport could not parse publisher authority'
+      return 1
+    fi
+    jq -n \
+      '{status:"completed",summary:"approved candidate published",artifacts:[],checks:[],decision:null,error:null,case_file:null}' \
+      > "$result_file"
+    if ! publish_approved_generator_candidate "$result_file"; then
+      write_provider_bootstrap_failure \
+        "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
+        'Approved candidate publish rejected' publisher_authority_invalid \
+        'Judge or merge-fence authority did not match the local candidate'
+      return 1
+    fi
+    normalize_provider_success \
+      "$task_bundle_file" "$result_file" "$NORMALIZED_RESULT_FILE" \
+      "$HARNESS_ATTEMPT_ID" "$provider" "" "" false
+    return 0
+  fi
+
   if [[ "$provider" == "codex" ]] && ! prepare_codex_credential; then
     write_provider_bootstrap_failure \
       "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
@@ -2355,8 +2425,8 @@ run_provider_contract() {
       provider_success=false
       provider_exit=1
     fi
-    if ! publish_generator_result "$result_file"; then
-      echo "[entrypoint] trusted Generator publisher rejected Provider output" >&2
+    if ! finalize_generator_candidate "$result_file"; then
+      echo "[entrypoint] trusted Generator candidate finalizer rejected Provider output" >&2
       provider_success=false
       provider_exit=1
     fi

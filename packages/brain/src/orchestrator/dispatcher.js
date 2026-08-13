@@ -86,6 +86,10 @@ const ACTION_SPECS = Object.freeze({
     role: 'judge', skill: null, readOnly: true,
     expectedOutput: 'harness-result/judge-v1',
   },
+  'publish:approved_ref': {
+    role: 'publisher', skill: null, readOnly: true,
+    expectedOutput: 'harness-result/publisher-v1',
+  },
   'spawn:commander': {
     role: 'commander', skill: null, readOnly: true,
     expectedOutput: 'commander-directive/v1',
@@ -99,6 +103,7 @@ const OBJECTIVES = Object.freeze({
   generator: 'Implement or fix the approved contract in the supplied worktree and produce a pull request artifact.',
   evaluator: 'Independently evaluate the current pull request against the approved contract and return evidence.',
   judge: 'Independently judge the evaluator evidence and return the final verification decision.',
+  publisher: 'Publish only the exact local candidate authorized by the Judge and merge fence.',
   commander: 'Observe one bounded Run snapshot and return exactly one provider-neutral Commander Directive.',
 });
 
@@ -424,12 +429,15 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     const evaluatorFeedback = buildEvaluatorFeedback(observed);
     if (evaluatorFeedback) common.evaluator_feedback = evaluatorFeedback;
   }
+  if (['evaluator', 'judge', 'publisher'].includes(spec.role) && observed.candidate) {
+    common.candidate = { ...observed.candidate };
+  }
   if (spec.role === 'evaluator' || spec.role === 'judge') {
     common.pull_request = observed.pr ?? null;
   }
   if (spec.role === 'evaluator') {
-    common.pr_branch = observed.pr?.head_ref ?? null;
-    common.pr_head_sha = observed.pr?.head_sha ?? null;
+    common.pr_branch = observed.pr?.head_ref ?? observed.candidate?.branch ?? null;
+    common.pr_head_sha = observed.pr?.head_sha ?? observed.candidate?.head_sha ?? null;
     if (payload.github_evidence_request) {
       common.github_evidence_request = payload.github_evidence_request;
     }
@@ -442,6 +450,19 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   }
   if (spec.role === 'judge') {
     common.evaluator_result = observed.evaluateVerdict ?? observed.callbackResult ?? null;
+  }
+  if (spec.role === 'publisher') {
+    const candidate = observed.candidate;
+    const judgeVerdict = observed.judgeVerdict;
+    if (
+      !candidate
+      || judgeVerdict?.verdict !== 'PASS'
+      || judgeVerdict.pr_head_sha !== candidate.head_sha
+    ) {
+      throw new Error('publisher_judge_authority_missing');
+    }
+    common.judge_verdict = { ...judgeVerdict };
+    common.merge_fence = { allowed: true, head_sha: candidate.head_sha };
   }
   return common;
 }
@@ -817,6 +838,7 @@ export function createDispatcher(deps) {
       provider: requestedProvider,
       requires: ['structured_output'],
     });
+    const candidateMachine = ctx.observed.candidate?.machine_id ?? null;
     const preferredTarget = spec.role === 'judge'
       ? null
       : spec.role === 'commander'
@@ -830,7 +852,7 @@ export function createDispatcher(deps) {
           provider: roleAssignment.provider ?? adapter.name,
           account: roleAssignment.account ?? requestedAccount,
           ...(requestedModel ? { model: requestedModel } : {}),
-          machine: roleAssignment.machine ?? machineId,
+          machine: candidateMachine ?? roleAssignment.machine ?? machineId,
         };
     let candidateTargets = spec.role === 'judge'
       ? []
@@ -856,7 +878,7 @@ export function createDispatcher(deps) {
     }
     const resolvedPreferredTarget = preferredTarget2;
     let selectedAccount = resolvedPreferredTarget?.account ?? requestedAccount;
-    let selectedMachine = resolvedPreferredTarget?.machine ?? machineId;
+    let selectedMachine = candidateMachine ?? resolvedPreferredTarget?.machine ?? machineId;
     let selectedTarget = resolvedPreferredTarget;
     let accountHome = null;
     const rawCapabilityRequirements = commanderContext?.capability_requirements
@@ -971,6 +993,9 @@ export function createDispatcher(deps) {
           capability_evidence: preflight.evidence,
         },
       };
+    }
+    if (candidateMachine && selectedMachine !== candidateMachine) {
+      throw new Error('candidate_machine_affinity_violation');
     }
     if (spec.role !== 'judge' && selectedAccount) {
       accountHome = resolveAccountHome(adapter.name, selectedAccount);

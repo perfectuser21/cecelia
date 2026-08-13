@@ -29,18 +29,20 @@ const PROVIDER_PATTERN = /^(codex|claude|grok)$/;
 const GITHUB_CREDENTIAL_ROLES = new Set([
   'planner',
   'proposer',
-  'generator',
   'evaluator',
+  'publisher',
 ]);
 const RUNTIME_RESULT_ROLES = new Set([
   'reviewer',
   'evaluator',
   'judge',
+  'publisher',
   'reporter',
 ]);
 const MAX_STATE_BYTES = 1_048_576;
 const MAX_GITHUB_TOKEN_BYTES = 16_384;
 const RUNTIME_NETWORK_PATTERN = /^cecelia-attempt-[a-f0-9-]{36}$/;
+const ROUTING_REPO_PATTERN = /^[A-Za-z0-9._/-]+$/;
 const RUNTIME_ENVIRONMENT_FIELDS = new Set(['DB_URL', 'DATABASE_URL']);
 const EMPTY_RUNTIME_RESOURCES = Object.freeze({
   runtime: Object.freeze({}),
@@ -486,7 +488,7 @@ function createDockerAdapter({
       const runtimeSource = canonicalMountSource(attemptRuntime);
       const promptFile = path.join(attemptRuntime, 'task-bundle.json');
       const stdoutFile = path.join(attemptRuntime, 'stdout.jsonl');
-      const isCodex = input.providerSpec?.provider === 'codex';
+      const isCodex = input.providerSpec?.provider === 'codex' && input.role !== 'publisher';
       const needsGitHubCredential = GITHUB_CREDENTIAL_ROLES.has(input.role);
       if (
         isCodex
@@ -551,7 +553,9 @@ function createDockerAdapter({
         '--name',
         containerName,
         ...labelArgs(input.labels),
-        ...(input.role === 'evaluator' ? ['--user', 'root'] : []),
+        ...(['generator', 'evaluator', 'publisher'].includes(input.role)
+          ? ['--user', 'root']
+          : []),
         ...(input.runtimeNetwork
           ? ['--network', input.runtimeNetwork]
           : []),
@@ -941,7 +945,7 @@ function validateTarget(value) {
   }
   if (
     typeof value.role !== 'string'
-    || !/^(commander|planner|proposer|reviewer|generator|evaluator|judge|reporter)$/
+    || !/^(commander|planner|proposer|reviewer|generator|evaluator|judge|publisher|reporter)$/
       .test(value.role)
   ) {
     throw new Error('attempt_target_role_invalid');
@@ -986,6 +990,34 @@ function taskExecutionContract(providerSpec, request, target) {
     throw new Error('attempt_task_bundle_invalid');
   }
 
+  const routingIdentity = inputs.routing_identity;
+  let routingIdentityEnv = {};
+  if (routingIdentity !== undefined) {
+    if (
+      !routingIdentity
+      || typeof routingIdentity !== 'object'
+      || Array.isArray(routingIdentity)
+      || Object.keys(routingIdentity).some(
+        (field) => !['routing_receipt_id', 'repo', 'branch', 'base_sha'].includes(field),
+      )
+      || !UUID_PATTERN.test(routingIdentity.routing_receipt_id ?? '')
+      || !ROUTING_REPO_PATTERN.test(routingIdentity.repo ?? '')
+      || routingIdentity.branch !== request.workspace_spec.branch
+      || !/^[a-f0-9]{40}$/.test(routingIdentity.base_sha ?? '')
+    ) {
+      throw new Error('attempt_routing_identity_invalid');
+    }
+    routingIdentityEnv = {
+      CECELIA_ROUTING_RECEIPT_ID: routingIdentity.routing_receipt_id,
+      CECELIA_RUN_ID: request.run_id,
+      CECELIA_REPO: routingIdentity.repo,
+      CECELIA_ROUTING_REPO: routingIdentity.repo,
+      CECELIA_BRANCH: request.workspace_spec.branch,
+      CECELIA_BASE_SHA: request.workspace_spec.base_sha,
+      CECELIA_ROUTING_BASE_SHA: routingIdentity.base_sha,
+    };
+  }
+
   const validationRole = ['generator', 'evaluator', 'judge'].includes(target.role);
   const contractArtifacts = validateContractArtifacts(inputs.contract_artifacts ?? []);
   let validationClockEnv = {};
@@ -1015,6 +1047,7 @@ function taskExecutionContract(providerSpec, request, target) {
 
   const roleEnv = {
     CECELIA_MACHINE_ID: target.machine,
+    ...routingIdentityEnv,
     ...(inputs.sprint_dir
       ? { SPRINT_DIR: String(inputs.sprint_dir) }
       : {}),
@@ -1426,6 +1459,30 @@ function createAttemptRunner({
     });
   }
 
+  async function releasePublishedSourceCandidate(state) {
+    const sourceAttemptId = state.workspace?.source_attempt_id;
+    if (state.role !== 'publisher' || !UUID_PATTERN.test(sourceAttemptId ?? '')) return;
+    const source = await stateStore.get(sourceAttemptId);
+    if (
+      source?.status !== 'candidate'
+      || source.role !== 'generator'
+      || source.run_id !== state.run_id
+      || source.worker_id !== workerId
+      || source.workspace?.owner?.attempt_id !== sourceAttemptId
+    ) return;
+    const cleaned = await workspaceManager.cleanup(source.workspace);
+    if (cleaned.status === 'quarantined') {
+      await stateStore.save({
+        ...source,
+        status: 'quarantined',
+        quarantine: cleaned,
+        updated_at: new Date().toISOString(),
+      });
+      return;
+    }
+    await stateStore.delete(sourceAttemptId);
+  }
+
   async function releaseResources(state) {
     if (!state.runtime_resources || Object.keys(state.runtime_resources).length === 0) {
       return;
@@ -1511,9 +1568,10 @@ function createAttemptRunner({
     terminalWaiters.add(state.attempt_id);
     void Promise.resolve()
       .then(() => docker.wait({ containerId: state.container_id }))
-      .then(() => finalizeAttempt(state.attempt_id, null, {
+      .then((terminal) => finalizeAttempt(state.attempt_id, null, {
         containerId: state.container_id,
         leaseGeneration: state.lease_generation,
+        statusCode: terminal?.statusCode,
       }))
       .catch(() => {})
       .finally(() => terminalWaiters.delete(state.attempt_id));
@@ -1570,6 +1628,27 @@ function createAttemptRunner({
         await releaseResources(state);
       } catch (error) {
         return quarantineState(state, error);
+      }
+      if (state.role === 'generator' && expected?.statusCode === 0) {
+        await stateStore.save({
+          attempt_id: state.attempt_id,
+          run_id: state.run_id,
+          worker_id: state.worker_id,
+          lease_owner: state.lease_owner,
+          lease_generation: state.lease_generation,
+          role: state.role,
+          status: 'candidate',
+          workspace: state.workspace,
+          retained_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+        return Object.freeze({
+          status: 'retained',
+          attempt_id: state.attempt_id,
+        });
+      }
+      if (state.role === 'publisher' && expected?.statusCode === 0) {
+        await releasePublishedSourceCandidate(state);
       }
       const result = await cleanupWorkspaceState(state, { deleteState: false });
       if (result.status === 'cleaned') {
@@ -1680,7 +1759,7 @@ function createAttemptRunner({
 
   function consumeAttemptCredentials(request, target) {
     let credential = null;
-    if (target.provider === 'codex') {
+    if (target.provider === 'codex' && target.role !== 'publisher') {
       if (
         !request.credential_envelope
         || typeof request.credential_envelope !== 'object'
@@ -1897,6 +1976,7 @@ function createAttemptRunner({
         lease_owner: request.lease_owner,
         lease_generation: request.lease_generation,
         provider: providerSpec.provider,
+        role: target.role,
         prepare_request_fingerprint: requestFingerprint,
         credential_delivery_status: 'pending',
         ...(credential ? { credential: credential.metadata } : {}),
@@ -2159,6 +2239,12 @@ function createAttemptRunner({
         throw new Error('attempt_worker_owner_mismatch');
       }
       assertLeaseFence(state, lease);
+      if (state.status === 'candidate') {
+        return Object.freeze({
+          attempt_id: attemptId,
+          status: 'retained',
+        });
+      }
       if (['prepared', 'starting', 'terminal', 'quarantined'].includes(state.status)) {
         return Object.freeze({
           attempt_id: attemptId,
@@ -2194,6 +2280,9 @@ function createAttemptRunner({
       }
       if (state.status === 'terminal') {
         return Object.freeze({ status: 'already_clean', attempt_id: attemptId });
+      }
+      if (state.status === 'candidate') {
+        return Object.freeze({ status: 'retained', attempt_id: attemptId });
       }
       try {
         await releaseRuntimeService(state);
@@ -2267,6 +2356,7 @@ function createAttemptRunner({
       const cleanedAttempts = [];
 
       for (const state of ownedStates) {
+        if (state.status === 'candidate') continue;
         const inspected = await docker.inspect({ containerId: state.container_id });
         const deliveryConfirmed =
           state.credential_delivery_status === 'delivered';

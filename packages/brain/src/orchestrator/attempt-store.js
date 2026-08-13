@@ -295,7 +295,7 @@ function callbackCaseFileProjection(attempt, result) {
 }
 
 function verifiedPullRequestArtifact(attempt, result) {
-  if (attempt.role !== 'generator') return null;
+  if (attempt.role !== 'publisher') return null;
   return (result.artifacts ?? []).find((artifact) => (
     artifact?.type === 'pull_request'
     && artifact.verification_status === 'verified'
