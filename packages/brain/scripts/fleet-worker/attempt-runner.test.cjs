@@ -1757,7 +1757,13 @@ describe('Fleet Worker Attempt runner', () => {
     deps.docker.wait.mockReturnValueOnce(containerExit);
     const runner = createRunner(deps);
 
-    await prepareAndStart(runner, request());
+    await prepareAndStart(runner, request({
+      provider_spec: {
+        ...request().provider_spec,
+        stdin: providerPrompt('evaluator'),
+      },
+      target: { ...request().target, role: 'evaluator' },
+    }));
     resolveExit({ statusCode: 0 });
 
     await vi.waitFor(() => {
@@ -1771,6 +1777,29 @@ describe('Fleet Worker Attempt runner', () => {
       'docker.remove',
       'workspace.cleanup',
     ]);
+  });
+
+  it('Generator exit=0 保留同机候选 workspace，供 Evaluator/Judge 精确继承', async () => {
+    let resolveExit;
+    const containerExit = new Promise((resolve) => {
+      resolveExit = resolve;
+    });
+    const deps = dependencies();
+    deps.docker.wait.mockReturnValueOnce(containerExit);
+    const runner = createRunner(deps);
+
+    await prepareAndStart(runner, request());
+    resolveExit({ statusCode: 0 });
+
+    await vi.waitFor(() => {
+      expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({
+        status: 'candidate',
+        role: 'generator',
+        workspace: deps.workspace,
+      });
+    });
+    expect(deps.docker.remove).toHaveBeenCalledOnce();
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
   });
 
   it('single-flights cancel with the docker waiter it wakes up', async () => {
