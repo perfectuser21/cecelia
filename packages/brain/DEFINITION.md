@@ -16,7 +16,7 @@
 ## Routed Controller 真实验收（Brain 1.273.2）
 
 - Controller/Profile 真库验收与统一 Router 共用 canonical task+receipt+Map/Impact 前置。
-- 合并后 Runner digest 与 Worker 1.272.15 已同步到三机准入配置。
+- 合并后 Runner digest 与 Worker 1.272.16 已同步到三机准入配置。
 
 ## Unified Router × Session Controller 集成（Brain 1.273.1）
 
@@ -34,7 +34,7 @@
 
 - Judge 通过同机 Fleet/Runner 读取精确 candidate，callback 再经服务端机械闸后原子写入 SHA 锚定 verdict；Generator-fix 从 retained candidate 继续并释放被替代工作区。
 - Work Router 在 coding task 提交前可信冻结 branch/base SHA，幂等重放同时比较完整 evidence；批准合同只允许单向进入 superseded，禁止降级绕过不可变性。
-- Runner 真实镜像固定为 `sha256:8e4baee5ea3d82961bca6afa52221bce8dfc809c620929a1fb9550161dfa6d64`；Fleet Worker `1.272.15` 与 Codex CLI `0.147.0` 作为三机准入基线。
+- Runner 真实镜像固定为 `sha256:6f2f62e94cc558b3895502b8f8822911b6d46b4b30ba9b76684f6692382cf6ea`；Fleet Worker `1.272.16` 与 Codex CLI `0.147.0` 作为三机准入基线。
 
 ## Judge-gated Candidate Publishing（Brain 1.272.64）
 

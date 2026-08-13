@@ -27,7 +27,7 @@
 ## Brain 1.273.2 — Routed Controller 真实验收
 
 - Session Controller 的真库验收夹具与 smoke 收口到 canonical Routing Receipt；生产闸门继续拒绝裸 coding run。
-- 合并后 Runner 固定为 `sha256:8e4baee5ea3d82961bca6afa52221bce8dfc809c620929a1fb9550161dfa6d64`，Fleet Worker 基线为 1.272.15。
+- 合并后 Runner 固定为 `sha256:6f2f62e94cc558b3895502b8f8822911b6d46b4b30ba9b76684f6692382cf6ea`，Fleet Worker 基线为 1.272.16。
 
 ## Brain 1.273.1 — Unified Router × Session Controller 集成
 
@@ -49,7 +49,7 @@
 
 - Judge 经同机 Fleet/Runner 执行，callback 由服务端机械闸裁定后写入精确 candidate SHA；Generator-fix 继承候选并回收被替代工作区。
 - 所有 coding receipt 在入队前冻结 branch/base SHA，幂等重放比较完整 evidence；批准合同状态只能单向进入 superseded。
-- 当前 Harness Runner 包含服务端 Judge 终判修复并冻结为 `sha256:8e4baee5ea3d82961bca6afa52221bce8dfc809c620929a1fb9550161dfa6d64`；Fleet Worker 基线升至 `1.272.15`，Codex CLI 基线保持 `0.147.0`。
+- 当前 Harness Runner 包含 Controller authority 终态写入隔离并冻结为 `sha256:6f2f62e94cc558b3895502b8f8822911b6d46b4b30ba9b76684f6692382cf6ea`；Fleet Worker 基线升至 `1.272.16`，Codex CLI 基线保持 `0.147.0`。
 
 ## Brain 1.272.64 — Judge-gated Candidate Publishing
 
