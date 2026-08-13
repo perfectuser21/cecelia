@@ -121,6 +121,7 @@ describe('resolveAction', () => {
     ['spawn:generator-fix', 'generator', 'harness-generator'],
     ['spawn:evaluator', 'evaluator', 'harness-evaluator'],
     ['spawn:judge', 'judge', null],
+    ['publish:approved_ref', 'publisher', null],
     ['spawn:commander', 'commander', null],
   ])('%s 映射为隔离的 %s/%s', (action, role, skill) => {
     expect(resolveAction(action)).toMatchObject({ role, skill });
@@ -132,6 +133,41 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
+  it('publisher 只接收 Judge PASS 的精确候选，并固定到 Generator 实际机器', async () => {
+    const deps = makeDeps();
+    const candidate = {
+      type: 'git_candidate',
+      verification_status: 'verified',
+      source_attempt_id: '33333333-3333-4333-8333-333333333333',
+      repo: 'perfectuser21/cecelia',
+      branch: 'cp-approved-candidate',
+      base_sha: 'a'.repeat(40),
+      head_sha: 'b'.repeat(40),
+      machine_id: 'us-mac-m4',
+    };
+    const judged = {
+      ...observed,
+      candidate,
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: candidate.head_sha },
+    };
+
+    await createDispatcher(deps)('publish:approved_ref', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: judged,
+      decision: { phase: 'publish', reason: 'judge_passed_publish_exact_candidate' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created).toMatchObject({ role: 'publisher', machineId: 'us-mac-m4' });
+    expect(created.bundle.inputs).toMatchObject({
+      candidate,
+      judge_verdict: { verdict: 'PASS', pr_head_sha: candidate.head_sha },
+      merge_fence: { allowed: true, head_sha: candidate.head_sha },
+    });
+  });
+
   it('从 canonical receipt 组装 provider routing identity，不信任 task 自报分支', async () => {
     const deps = makeDeps();
     const receiptId = '33333333-3333-4333-8333-333333333333';
