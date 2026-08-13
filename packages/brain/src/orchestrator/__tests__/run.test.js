@@ -32,16 +32,16 @@ describe('parseArgs', () => {
     });
   });
 
-  it('默认 dryRun=false、runId=null、resumeToken=null', () => {
-    const a = parseArgs(['--task-id', 'T1']);
-    expect(a).toEqual({
-      taskId: 'T1',
-      runId: null,
-      controllerSessionId: null,
-      controllerGeneration: null,
-      resumeToken: null,
-      dryRun: false,
-    });
+  it('非 dry-run 必须携带完整 run 与 Controller identity', () => {
+    expect(() => parseArgs(['--task-id', 'T1']))
+      .toThrow('controller_lease_identity_missing');
+    const a = parseArgs([
+      '--task-id', 'T1',
+      '--run-id', 'R1',
+      '--controller-session-id', 'S1',
+      '--controller-generation', '2',
+    ]);
+    expect(a).toMatchObject({ runId: 'R1', controllerSessionId: 'S1', controllerGeneration: 2 });
   });
 });
 
@@ -150,6 +150,19 @@ describe('runKernelMain fatal convergence', () => {
 
     expect(buildDeps).not.toHaveBeenCalled();
     expect(finalizeRun).not.toHaveBeenCalled();
+  });
+
+  it('非 dry-run 缺 runId 同样不组装依赖', async () => {
+    const buildDeps = vi.fn();
+    await expect(runKernelMain({
+      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      runId: null,
+      controllerSessionId: null,
+      controllerGeneration: null,
+      resumeToken: null,
+      dryRun: false,
+    }, { buildDeps })).rejects.toThrow('controller_lease_identity_missing');
+    expect(buildDeps).not.toHaveBeenCalled();
   });
 });
 
