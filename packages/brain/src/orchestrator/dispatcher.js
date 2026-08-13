@@ -111,7 +111,16 @@ function gpContractIdentity(payload) {
     journey_id: payload.journey_id,
     step_id: anchor.step_id,
   };
-  if (Object.values(values).every((value) => value == null || value === '')) return null;
+  // 仅以 GP 合同身份字段（不含 journey_id）判断是否进入 GP 校验。
+  // journey_id 是通用 F1 锚点字段，不属于 GP 合同身份集，不参与短路谓词。
+  const gpIdentityFields = {
+    id: values.id,
+    version: values.version,
+    hash: values.hash,
+    golden_path_id: values.golden_path_id,
+    step_id: values.step_id,
+  };
+  if (Object.values(gpIdentityFields).every((v) => v == null || v === '')) return null;
   const valid = UUID_PATTERN.test(values.id ?? '')
     && Number.isInteger(Number(values.version))
     && Number(values.version) > 0
