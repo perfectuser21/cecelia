@@ -1031,6 +1031,7 @@ describe('attempt store', () => {
     ['judge', 'verdict:judge'],
   ])('本地 candidate 的 %s verdict 锚定 candidate SHA', async (role, action) => {
     const candidateHead = 'd'.repeat(40);
+    const staleRemoteHead = 'a'.repeat(40);
     const callbackResult = {
       status: 'completed',
       summary: `${role} passed local candidate`,
@@ -1049,7 +1050,13 @@ describe('attempt store', () => {
       status: 'running',
       lease_owner: 'brain-1',
       lease_generation: 3,
-      task_bundle: { inputs: { pull_request: null, candidate: { head_sha: candidateHead } } },
+      task_bundle: {
+        inputs: {
+          pull_request: { head_sha: staleRemoteHead },
+          candidate: { head_sha: candidateHead },
+          pr_head_sha: candidateHead,
+        },
+      },
       result: null,
     };
     const completed = { ...running, status: 'completed', result: callbackResult };
