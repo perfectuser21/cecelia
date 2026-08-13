@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
+import pg from 'pg';
 import { createRoutedTask } from '../../work-routing-store.js';
+
+const { Pool } = pg;
 
 describe('routing store transaction contract', () => {
   it('creates task and immutable receipt in one client transaction', async () => {
@@ -71,5 +74,54 @@ describe('routing store transaction contract', () => {
     expect(calls).not.toContain('BEGIN');
     expect(calls).not.toContain('COMMIT');
     expect(calls).not.toContain('ROLLBACK');
+  });
+
+  it('persists task and immutable receipt atomically in a real test database', async () => {
+    const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://localhost/cecelia_test';
+    const databaseName = new URL(databaseUrl).pathname.slice(1);
+    expect(databaseName).toMatch(/(?:_test|_scratch)$/);
+    const testPool = new Pool({ connectionString: databaseUrl });
+    const client = await testPool.connect();
+    try {
+      await client.query('BEGIN');
+      const sourceId = `routing-pg-${crypto.randomUUID()}`;
+      const created = await createRoutedTask(client, {
+        source: 'api',
+        source_id: sourceId,
+        title: 'routing atomicity fixture',
+        mutation_intent: 'write',
+        declared_change_kind: 'bugfix',
+        repo_hint: 'perfectuser21/cecelia',
+        branch: 'cp-routing-pg',
+        base_sha: 'a'.repeat(40),
+      }, [], { transaction: 'existing' });
+
+      const persisted = await client.query(
+        `SELECT task.task_type, task.payload->>'routing_receipt_id' AS projected_receipt_id,
+                receipt.pipeline, receipt.change_kind, receipt.repo
+           FROM tasks task
+           JOIN work_routing_receipts receipt ON receipt.task_id = task.id
+          WHERE task.id = $1`,
+        [created.task_id],
+      );
+      expect(persisted.rows[0]).toMatchObject({
+        task_type: 'harness_initiative',
+        projected_receipt_id: created.routing_receipt_id,
+        pipeline: 'harness',
+        change_kind: 'bugfix',
+        repo: 'perfectuser21/cecelia',
+      });
+
+      await client.query('SAVEPOINT immutable_probe');
+      await expect(client.query(
+        'UPDATE work_routing_receipts SET route_reason=$2 WHERE id=$1',
+        [created.routing_receipt_id, 'tampered'],
+      )).rejects.toThrow(/append_only/);
+      await client.query('ROLLBACK TO SAVEPOINT immutable_probe');
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+      await testPool.end();
+    }
   });
 });

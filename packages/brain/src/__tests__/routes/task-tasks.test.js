@@ -6,7 +6,9 @@ import express from 'express';
 import request from 'supertest';
 
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
+const mockCreateRoutedTask = vi.hoisted(() => vi.fn());
 vi.mock('../../db.js', () => ({ default: mockPool }));
+vi.mock('../../work-routing-store.js', () => ({ createRoutedTask: mockCreateRoutedTask }));
 
 // isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
 let router;
@@ -24,11 +26,28 @@ function createApp() {
   return app;
 }
 
+function coding(body = {}) {
+  return { repo_hint: 'perfectuser21/cecelia', ...body };
+}
+
 describe('task-tasks routes', () => {
   let app;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    mockPool.query.mockReset();
+    mockCreateRoutedTask.mockReset();
+    mockCreateRoutedTask.mockImplementation(async (_pool, routed) => ({
+      task: {
+        id: 'new-uuid',
+        title: routed.title,
+        status: routed.task?.status ?? 'queued',
+        task_type: routed.mutation_intent === 'read_only' ? 'code_review' : 'harness_initiative',
+        priority: routed.task?.priority ?? 'P2',
+        project_id: routed.task?.project_id ?? null,
+        okr_initiative_id: routed.task?.okr_initiative_id ?? null,
+        payload: routed.metadata,
+      },
+    }));
     app = createApp();
   });
 
@@ -109,7 +128,7 @@ describe('task-tasks routes', () => {
         }],
       });
 
-      const res = await request(app).post('/tasks').send({ title: 'New Task' });
+      const res = await request(app).post('/tasks').send(coding({ title: 'New Task' }));
       expect(res.status).toBe(201);
       expect(res.body.title).toBe('New Task');
       expect(res.body.status).toBe('queued');
@@ -148,16 +167,16 @@ describe('task-tasks routes', () => {
         project_id: 'proj-123',
         trigger_source: 'architect',
         metadata: { architecture_ref: 'architecture.md' },
+        mutation_intent: 'read_only',
       });
 
       expect(res.status).toBe(201);
-      const [sql, params] = mockPool.query.mock.calls[1];
-      expect(sql).toContain('INSERT INTO tasks');
-      expect(params).toContain('Architecture Task');
-      expect(params).toContain('architecture_design');
-      expect(params).toContain('P1');
-      expect(params).toContain('architect');
-      expect(params).toContain('proj-123');
+      expect(mockCreateRoutedTask.mock.calls[0][1]).toMatchObject({
+        title: 'Architecture Task',
+        requested_task_type: 'architecture_design',
+        mutation_intent: 'read_only',
+        task: { priority: 'P1', trigger_source: 'architect', project_id: 'proj-123' },
+      });
     });
 
     // ── 回归测试：Bug1/Bug2/Bug3 修复验证 ──
@@ -168,15 +187,12 @@ describe('task-tasks routes', () => {
         rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: 'P2', project_id: null, created_at: '' }],
       });
 
-      await request(app).post('/tasks').send({
+      await request(app).post('/tasks').send(coding({
         title: 'T',
         payload: { depends_on: ['task-a', 'task-b'], architecture_ref: 'arch.md' },
-      });
+      }));
 
-      const [, params] = mockPool.query.mock.calls[1];
-      const payloadParam = params.find(p => typeof p === 'string' && p.includes('depends_on'));
-      expect(payloadParam).toBeDefined();
-      expect(JSON.parse(payloadParam)).toEqual({
+      expect(mockCreateRoutedTask.mock.calls[0][1].metadata).toEqual({
         depends_on: ['task-a', 'task-b'],
         architecture_ref: 'arch.md',
         tenant_id: 'default',
@@ -190,11 +206,9 @@ describe('task-tasks routes', () => {
         rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: 'P2', project_id: null, created_at: '' }],
       });
 
-      await request(app).post('/tasks').send({ title: 'T' });
+      await request(app).post('/tasks').send(coding({ title: 'T' }));
 
-      // params 顺序：title, description, priority, task_type, initialStatus, project_id, area_id, goal_id, location, payload, trigger_source
-      const [, params] = mockPool.query.mock.calls[1];
-      expect(params[8]).toBe('us'); // location 在第9个位置（index 8）——task-tasks.js增initialStatus后+1
+      expect(mockCreateRoutedTask.mock.calls[0][1].task.location).toBe('us');
     });
 
     it('[Bug3] 不传 trigger_source → INSERT params 包含 "auto"（不是 "api"）', async () => {
@@ -203,28 +217,26 @@ describe('task-tasks routes', () => {
         rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: 'P2', project_id: null, created_at: '' }],
       });
 
-      await request(app).post('/tasks').send({ title: 'T' });
+      await request(app).post('/tasks').send(coding({ title: 'T' }));
 
-      const [, params] = mockPool.query.mock.calls[1];
-      expect(params).toContain('auto');
-      expect(params).not.toContain('api');
+      expect(mockCreateRoutedTask.mock.calls[0][1].task.trigger_source).toBe('auto');
     });
 
     it('returns 400 for DB check constraint violation (23514)', async () => {
       const err = new Error('check constraint violated');
       err.code = '23514';
       mockPool.query.mockResolvedValueOnce({ rows: [] }); // dedup: 无命中
-      mockPool.query.mockRejectedValueOnce(err);
+      mockCreateRoutedTask.mockRejectedValueOnce(err);
 
-      const res = await request(app).post('/tasks').send({ title: 'Bad', task_type: 'invalid_type' });
+      const res = await request(app).post('/tasks').send({ title: 'Bad', task_type: 'invalid_type', mutation_intent: 'read_only' });
       expect(res.status).toBe(400);
     });
 
     it('returns 500 on generic DB error', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] }); // dedup: 无命中
-      mockPool.query.mockRejectedValueOnce(new Error('connection reset'));
+      mockCreateRoutedTask.mockRejectedValueOnce(new Error('connection reset'));
 
-      const res = await request(app).post('/tasks').send({ title: 'Task' });
+      const res = await request(app).post('/tasks').send(coding({ title: 'Task' }));
       expect(res.status).toBe(500);
     });
 
@@ -237,15 +249,13 @@ describe('task-tasks routes', () => {
           okr_initiative_id: initId, created_at: '' }],
       });
 
-      const res = await request(app).post('/tasks').send({
+      const res = await request(app).post('/tasks').send(coding({
         title: 'T',
         okr_initiative_id: initId,
-      });
+      }));
 
       expect(res.status).toBe(201);
-      const [sql, params] = mockPool.query.mock.calls[1];
-      expect(sql).toContain('okr_initiative_id');
-      expect(params).toContain(initId);
+      expect(mockCreateRoutedTask.mock.calls[0][1].task.okr_initiative_id).toBe(initId);
     });
 
     it('passes null okr_initiative_id when not provided', async () => {
@@ -255,12 +265,9 @@ describe('task-tasks routes', () => {
           priority: 'P2', project_id: null, okr_initiative_id: null, created_at: '' }],
       });
 
-      await request(app).post('/tasks').send({ title: 'T' });
+      await request(app).post('/tasks').send(coding({ title: 'T' }));
 
-      const [sql, params] = mockPool.query.mock.calls[1];
-      expect(sql).toContain('okr_initiative_id');
-      // last param should be null (okr_initiative_id default)
-      expect(params[params.length - 1]).toBeNull();
+      expect(mockCreateRoutedTask.mock.calls[0][1].task.okr_initiative_id).toBeNull();
     });
   });
 
@@ -324,11 +331,11 @@ describe('task-tasks routes', () => {
         rows: [{ id: 'hi-uuid', title: 'Test Initiative', status: 'queued', task_type: 'harness_initiative' }],
       });
 
-      const res = await request(app).post('/tasks').send({
+      const res = await request(app).post('/tasks').send(coding({
         title: 'Test Initiative',
         task_type: 'harness_initiative',
         payload: { sprint_dir: 'sprints/test' }, // 无 journey_id
-      });
+      }));
 
       expect(res.status).toBe(201);
       expect(res.body.warnings).toBeDefined();
@@ -341,11 +348,11 @@ describe('task-tasks routes', () => {
         rows: [{ id: 'hi-uuid2', title: 'Test Initiative', status: 'queued', task_type: 'harness_initiative' }],
       });
 
-      const res = await request(app).post('/tasks').send({
+      const res = await request(app).post('/tasks').send(coding({
         title: 'Test Initiative',
         task_type: 'harness_initiative',
         payload: { sprint_dir: 'sprints/test', journey_id: 'j-uuid-123' },
-      });
+      }));
 
       expect(res.status).toBe(201);
       expect(res.body.warnings).toBeUndefined();

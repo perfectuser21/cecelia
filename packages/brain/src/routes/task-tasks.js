@@ -9,6 +9,7 @@
  */
 
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
 import pool from '../db.js';
 import { detectDomain } from '../domain-detector.js';
 import taskErrorReportRoutes from './task-error-report.js';
@@ -47,6 +48,11 @@ router.post('/', async (req, res) => {
       journey_id = null,
       blocked_at: blockedAtInput = null,
       change_kind: changeKindInput = null,
+      mutation_intent: mutationIntentInput = null,
+      source_id: sourceIdInput = null,
+      repo_hint: repoHintInput = null,
+      map_scope_hint: mapScopeHintInput = null,
+      execution_profile_override_request: executionProfileOverride = null,
     } = req.body;
 
     if (!title || title.trim() === '') {
@@ -122,8 +128,10 @@ router.post('/', async (req, res) => {
     if (executor !== undefined && executor !== null && executor !== 'claude' && executor !== 'codex') {
       return res.status(400).json({ error: 'executor must be claude or codex' });
     }
-    if (executor === 'codex' && orchestrator !== 'skill-relay') {
-      return res.status(400).json({ error: 'executor=codex requires orchestrator=skill-relay' });
+    // executor/mode 只是 provider 偏好；顶层 orchestrator 只能由 Work Router
+    // 决定。旧 skill-relay 不能再由外部请求恢复为 coding 入口。
+    if (orchestrator === 'skill-relay') {
+      return res.status(400).json({ error: 'skill-relay is retired; coding mutations use Kernel Harness 2.0' });
     }
     // mode 白名单：缺省/headless/headed 合法（claude+headed 已解锁，T6 88e0b448）
     if (mode !== undefined && mode !== null && !['headless', 'headed'].includes(mode)) {
@@ -199,33 +207,40 @@ router.post('/', async (req, res) => {
 
     let result;
     try {
-      result = await pool.query(
-        `INSERT INTO tasks (
-         title, description, priority, task_type, status,
-         project_id, area_id, goal_id, location,
-         payload, trigger_source, domain, okr_initiative_id, ability_id,
-         blocked_at
-       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-         RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, payload, blocked_at, created_at`,
-        [
-          title.trim(),
-          description,
+      const mutationIntent = mutationIntentInput
+        ?? (resolvedChangeKind !== null ? 'write' : 'read_only');
+      const routed = await createRoutedTask(pool, {
+        source: 'api',
+        source_id: String(sourceIdInput ?? req.get('idempotency-key') ?? randomUUID()),
+        title: title.trim(),
+        description,
+        requested_task_type: task_type,
+        declared_change_kind: ['write', 'unknown'].includes(mutationIntent)
+          ? (resolvedChangeKind ?? 'new_capability')
+          : null,
+        execution_profile_override_request: executionProfileOverride,
+        declared_domain: domain,
+        mutation_intent: mutationIntent,
+        repo_hint: repoHintInput ?? payload.base_repo ?? payload.repo ?? null,
+        map_scope_hint: mapScopeHintInput ?? payload.map_scope ?? [],
+        branch: payload.branch ?? payload.pr_branch ?? null,
+        base_sha: payload.base_sha ?? payload.implementation_baseline?.base_sha ?? null,
+        metadata: payload,
+        task: {
           priority,
-          task_type,
-          initialStatus,
+          status: initialStatus,
           project_id,
           area_id,
           goal_id,
           location,
-          JSON.stringify(payload),
           trigger_source,
           domain,
           okr_initiative_id,
           ability_id,
-          initialBlockedAt,
-        ]
-      );
+          blocked_at: initialBlockedAt,
+        },
+      });
+      result = { rows: [routed.task] };
     } catch (insertError) {
       if (insertError.code !== '23505' || insertError.constraint !== 'idx_tasks_dedup_active') throw insertError;
       const winner = await pool.query(
@@ -248,6 +263,15 @@ router.post('/', async (req, res) => {
     if (resolvedChangeKind !== null) responseBody.change_kind = resolvedChangeKind;
     res.status(201).json(responseBody);
   } catch (err) {
+    if ([
+      'repo_unknown',
+      'change_kind_required',
+      'invalid_base_sha',
+      'invalid_execution_profile_override',
+      'execution_profile_downgrade_forbidden',
+    ].includes(err.message)) {
+      return res.status(400).json({ error: err.message, reason_code: err.message });
+    }
     if (err.code === '23514') {
       return res.status(400).json({ error: 'Invalid field value', details: err.message });
     }

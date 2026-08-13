@@ -216,8 +216,9 @@ async function routeAtomToTarget(client, atom, targetType, targetSubtype, areaId
       const routed = await createRoutedTask(client, {
         source: 'inbox', source_id: String(atom.id), title: atom.content.slice(0, 200),
         description: atom.content, mutation_intent: 'unknown', declared_change_kind: 'new_capability',
-        repo_hint: atom.metadata?.repo || 'perfectuser21/cecelia', metadata: { priority: 'P2' },
-      });
+        repo_hint: atom.metadata?.repo,
+        task: { priority: 'P2', trigger_source: 'capture' },
+      }, [], { transaction: 'existing' });
       return { routedTable: 'tasks', routedId: routed.task_id };
     }
 

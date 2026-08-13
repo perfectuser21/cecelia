@@ -8,13 +8,13 @@
 
 
 
-**Brain 版本**: 1.272.33
+**Brain 版本**: 1.272.34
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.272.33 — Unified Work Router 与可信恢复
+## Brain 1.272.34 — Unified Work Router 与可信恢复
 
 - 所有 coding mutation 由 Work Router 正向选择四档 Kernel Harness profile，并在同一事务写入 task 与 append-only Routing Receipt。
 - Kernel run 强制使用 fresh Universal Map 与 active Impact Contract；有头工具和无头 Dispatcher 在动作前验证同一 receipt。

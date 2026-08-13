@@ -30,8 +30,15 @@ export function assertDispatchRoutingReceipt(task, receipt) {
   if (!receipt
       || receipt.id !== task.payload?.routing_receipt_id
       || receipt.task_id !== task.id
+      || receipt.superseded === true
+      || receipt.router_version !== 'work-router-v1'
+      || receipt.work_kind !== 'coding_mutation'
       || receipt.pipeline !== 'harness'
-      || receipt.canonical_task_type !== 'harness_initiative') {
+      || receipt.canonical_task_type !== 'harness_initiative'
+      || receipt.change_kind !== task.payload?.change_kind
+      || receipt.repo !== task.payload?.repo
+      || receipt.impact_contract_required !== true
+      || task.task_type !== 'harness_initiative') {
     throw new Error('route_violation');
   }
   return true;
@@ -671,6 +678,7 @@ export function createDispatcher(deps) {
     }
 
     const spec = resolveAction(action);
+    assertDispatchRoutingReceipt(ctx.observed.task, ctx.observed.routingReceipt);
     const commanderContext = spec.role === 'commander' ? ctx.commander : null;
     if (spec.role === 'commander' && !commanderContext?.bundle) {
       throw new Error('spawn:commander requires coordinator context');
