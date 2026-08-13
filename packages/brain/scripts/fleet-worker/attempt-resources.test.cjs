@@ -62,7 +62,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
     ]);
     expect(provisioned.networkName).toBe(`cecelia-attempt-${ATTEMPT_ID}`);
     expect(provisioned.environment.DB_URL).toMatch(
-      /^postgresql:\/\/attempt_[a-f0-9]+:[a-f0-9]+@postgres:5432\/acceptance_[a-f0-9]+$/,
+      /^postgresql:\/\/attempt_[a-f0-9]+:[a-f0-9]+@postgres:5432\/acceptance_[a-f0-9]+_scratch$/,
     );
     expect(provisioned.environment.DATABASE_URL).toBe(
       provisioned.environment.DB_URL,
