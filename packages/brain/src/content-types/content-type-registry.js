@@ -91,6 +91,9 @@ function listContentTypesFromYaml() {
  * @throws {Error} 配置无效时抛出
  */
 async function getContentType(typeName) {
+  if (typeof typeName !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,127}$/i.test(typeName)) {
+    throw new Error('content_type_name_invalid');
+  }
   // 1. 先查 DB content_type_configs 表
   try {
     const result = await pool.query(

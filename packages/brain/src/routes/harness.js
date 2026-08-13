@@ -1570,6 +1570,11 @@ router.get('/sprint-docs', async (req, res) => {
   if (!sprint_dir) {
     return res.status(400).json({ error: 'sprint_dir is required' });
   }
+  const sprintMatch = /^sprints\/([a-z0-9][a-z0-9._-]{0,127})$/i.exec(String(sprint_dir));
+  if (!sprintMatch) {
+    return res.status(400).json({ error: 'invalid sprint_dir' });
+  }
+  const sprintRoot = join(REPO_ROOT, 'sprints', sprintMatch[1]);
 
   const fileMap = [
     ['prep_prd', 'prep-prd.md'],
@@ -1581,7 +1586,7 @@ router.get('/sprint-docs', async (req, res) => {
   const docs = {};
   for (const [key, filename] of fileMap) {
     try {
-      docs[key] = await readFile(join(REPO_ROOT, sprint_dir, filename), 'utf8');
+      docs[key] = await readFile(join(sprintRoot, filename), 'utf8');
     } catch {
       docs[key] = null;
     }

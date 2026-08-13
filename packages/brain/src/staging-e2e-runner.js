@@ -16,7 +16,7 @@
  *   SKIP  — staging 是"加分项"：无 docker / 无 .env.staging / 无合同 时跳过（非失败）
  */
 
-import { execSync, spawnSync } from 'child_process';
+import { execFileSync, execSync, spawnSync } from 'child_process';
 import fs, { existsSync } from 'fs';
 import os from 'os';
 import path from 'path';
@@ -52,7 +52,7 @@ function cap(s) {
  * @returns {{status:'success'|'skipped'|'failed', reason:string|null, output:string}}
  */
 export async function deployStaging(opts = {}) {
-  const exec = opts.exec || execSync;
+  const injectedExec = opts.exec;
   // 容器内 cwd=/app，部署脚本在 bind-mount 的 repo 根 scripts/；用绝对路径。
   // REPO_ROOT env（容器=bind-mount repo 根）优先；getRepoRoot() 仅本地直跑兜底（容器内返回 /）。
   const repoRoot = opts.cwd || process.env.REPO_ROOT || getRepoRoot();
@@ -81,9 +81,12 @@ export async function deployStaging(opts = {}) {
     let lastErr;
     let lastOut;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const cmd = `curl -sf --connect-timeout 30 --max-time 30 http://${host}:${ZJ_STAGING_PORT}/health`;
+      const healthUrl = `http://${host}:${ZJ_STAGING_PORT}/health`;
+      const curlArgs = ['-sf', '--connect-timeout', '30', '--max-time', '30', healthUrl];
       try {
-        const raw = exec(cmd, { encoding: 'utf8', timeout: 45_000, maxBuffer: 1024 * 1024 });
+        const raw = injectedExec
+          ? injectedExec(`curl ${curlArgs.join(' ')}`, { encoding: 'utf8', timeout: 45_000, maxBuffer: 1024 * 1024 })
+          : execFileSync('curl', curlArgs, { encoding: 'utf8', timeout: 45_000, maxBuffer: 1024 * 1024 });
         const out = typeof raw === 'string' ? raw : String(raw);
         lastOut = out;
         // JSON 层验证：/health 必须返回含 "status":"ok" 的 JSON，防 SPA fallback 返回 HTML 误判健康。
@@ -118,22 +121,28 @@ export async function deployStaging(opts = {}) {
     return { status: 'failed', reason, output: cap(combined), stagingPort };
   }
 
-  let script;
+  let processSpec;
   if (opts.deployScript) {
-    script = `bash ${opts.deployScript}`;
+    processSpec = { executable: 'bash', args: [opts.deployScript] };
   } else if (internal) {
     // --changed 显式指定 dashboard：harness 合 main 后在 main 上跑，git diff 为空，必须强制走 dashboard build。
-    script = `bash ${path.join(repoRoot, 'scripts/deploy-local.sh')} --changed=apps/dashboard/`;
+    processSpec = {
+      executable: 'bash',
+      args: [path.join(repoRoot, 'scripts/deploy-local.sh'), '--changed=apps/dashboard/'],
+    };
   } else {
-    script = `bash ${path.join(repoRoot, 'scripts/staging-deploy.sh')}`;
+    processSpec = { executable: 'bash', args: [path.join(repoRoot, 'scripts/staging-deploy.sh')] };
   }
   try {
-    const raw = exec(script, {
+    const processOptions = {
       encoding: 'utf8',
       cwd: repoRoot,
       timeout: DEPLOY_TIMEOUT_MS,
       maxBuffer: 20 * 1024 * 1024,
-    });
+    };
+    const raw = injectedExec
+      ? injectedExec([processSpec.executable, ...processSpec.args].join(' '), processOptions)
+      : execFileSync(processSpec.executable, processSpec.args, processOptions);
     const out = typeof raw === 'string' ? raw : (raw ? raw.toString('utf8') : '');
     const skip = out.match(/STAGING_SKIP_REASON=(\S+)/);
     if (skip) return { status: 'skipped', reason: skip[1], output: cap(out), stagingPort };

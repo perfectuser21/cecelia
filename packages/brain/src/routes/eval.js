@@ -16,6 +16,7 @@
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -31,6 +32,12 @@ import {
 import { renderReportHtml } from '../skill-eval-report-render.js';
 
 const router = Router();
+router.use(rateLimit({
+  windowMs: 60_000,
+  limit: 300,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+}));
 
 // ─── 配置 ──────────────────────────────────────────────────────────────────
 

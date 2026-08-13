@@ -105,11 +105,9 @@ function extractBehaviorTests(content) {
  */
 function runCmd(cmd, timeoutMs) {
   timeoutMs = timeoutMs || 60000;
-  // cmd 来自合同 DoD 的 Test: manual:bash -c "..." 内部——设计上是在 bash double-quote
-  // 上下文里的字符串，所以 \\ → \，\" → "（shell double-quote unescape 一层）
-  const unescaped = cmd.replace(/\\\\/g, "\\").replace(/\\"/g, '"');
-
-  const result = spawnSync("bash", ["-c", unescaped], {
+  // extractor 已移除 bash -c 外层引号；内部命令字节必须原样交给 bash，
+  // 不能再做第二轮反转义，否则正则、JSON 和路径中的反斜杠会被破坏。
+  const result = spawnSync("bash", ["-c", cmd], {
     encoding: "utf-8",
     timeout: timeoutMs,
   });

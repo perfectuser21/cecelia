@@ -7,10 +7,17 @@
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { createRoutedTask } from '../work-routing-store.js';
 
 const router = Router();
+router.use(rateLimit({
+  windowMs: 60_000,
+  limit: 300,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+}));
 
 // 三类系统产出来源（T10 统一收件箱）— 由 capture-triage tick 分诊，人工 confirm 不支持
 const AUTO_TRIAGE_SOURCE_TYPES = ['handoff', 'learning', 'issue'];

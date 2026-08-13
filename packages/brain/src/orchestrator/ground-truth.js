@@ -283,6 +283,12 @@ function scopeLastAgentExit({
  * 返回 derive(observed) 所需全部字段（counters 除外——loop 用 deriveCounters(decisionLog) 补齐），
  * 外加原始 decisionLog / authCircuit / callbackResult 供 loop 与 T3 dispatcher 消费。
  */
+export function isLegacyProposalBranchForTask(branch, taskId) {
+  if (typeof branch !== 'string') return false;
+  const match = /^cp-harness-propose-r\d+-([a-f0-9]{8})-a\d+$/.exec(branch);
+  return match?.[1] === String(taskId).slice(0, 8);
+}
+
 export async function collectGroundTruth(deps, opts) {
   const { pool, execCmd, fileExists, readFile } = deps;
   const { taskId, runId, prdPath = 'sprint-prd.md', callbackResultPath = '.brain-result.json' } = opts;
@@ -625,7 +631,7 @@ export async function collectGroundTruth(deps, opts) {
         && bundle.role === 'proposer'
         && bundle.inputs?.task_id === taskId
         && typeof branch === 'string'
-        && new RegExp(`^cp-harness-propose-r\\d+-${shortTask}-a\\d+$`).test(branch)
+        && isLegacyProposalBranchForTask(branch, taskId)
       ) {
         legacyBranchesForRun.add(branch);
       }
