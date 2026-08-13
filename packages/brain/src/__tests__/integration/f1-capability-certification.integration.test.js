@@ -124,6 +124,43 @@ afterAll(async () => {
 });
 
 describe('F1 Capability certification 负向矩阵 [PostgreSQL]', () => {
+  it('同 cell 上更新但不属于当前 GP Contract 的 receipt 不得遮蔽精确回执', async () => {
+    const mergeSha = sha40('gp-exact-merge');
+    const scenario = await seedScenario({ receipt: { verdict: 'PASS', source_sha: mergeSha } });
+    const now = new Date();
+    await client.query(
+      `INSERT INTO journey_assertion_receipts (
+         journey_step_link_id, run_id, assertion_revision, assertion_ref_snapshot,
+         assertion_digest, source_repo, source_sha, command_argv, verdict, exit_code,
+         scenario_count, scenario_evidence, machine_id, output_digest, output_tail,
+         synthetic, started_at, completed_at
+       ) VALUES (
+         $1, $2, 1, $3, $4, 'cecelia', $5, $6::jsonb, 'PASS', 0,
+         1, $7::jsonb, 'integration-test', $8, 'distractor', false, $9, $10
+       )`,
+      [
+        scenario.jslId,
+        `f1-cert-distractor-${randomUUID()}`,
+        ASSERTION_REF,
+        ASSERTION_DIGEST,
+        sha40('wrong-gp-newer-sha'),
+        JSON.stringify(['npx', 'vitest', 'run', ASSERTION_REF]),
+        JSON.stringify({ kind: 'distractor', passed: 1 }),
+        OUTPUT_DIGEST,
+        new Date(now.getTime() - 500).toISOString(),
+        now.toISOString(),
+      ]
+    );
+
+    const body = await resolveF1Certification(client, certifyParams(scenario, {
+      hash: scenario.contractHash,
+      expectedMergeSha: mergeSha,
+    }));
+
+    expect(body.state).toBe('green');
+    expect(body.merge_sha).toBe(mergeSha);
+  });
+
   it('非 synthetic PASS receipt 精确落账 → 端点回读 green（同一行）', async () => {
     const mergeSha = sha40('green-merge');
     const scenario = await seedScenario({ receipt: { verdict: 'PASS', source_sha: mergeSha } });

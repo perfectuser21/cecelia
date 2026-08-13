@@ -64,6 +64,27 @@ describe('decideF1State — fail-closed 判定顺序', () => {
 });
 
 describe('resolveF1Certification — 读回装配（依赖注入 fake db）', () => {
+  it('receipt 查询必须锁定同一 GP Contract id/hash，不能消费别的验收回执', async () => {
+    let receiptQuery = null;
+    const db = {
+      async query(sql, params) {
+        if (sql.includes('golden_path_contract_versions')) return { rows: [{ id: baseParams.gp_contract_id }] };
+        if (sql.includes('journey_step_links')) return { rows: [{ id: 'cell-1' }] };
+        if (sql.includes('journey_assertion_receipts')) {
+          receiptQuery = { sql, params };
+          return { rows: [] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    };
+
+    await resolveF1Certification(db, { ...baseParams, expected_merge_sha: SHA });
+
+    expect(receiptQuery.sql).toMatch(/gp_contract_id\s*=\s*\$2/);
+    expect(receiptQuery.sql).toMatch(/gp_contract_hash\s*=\s*\$3/);
+    expect(receiptQuery.params).toEqual(['cell-1', baseParams.gp_contract_id, HASH]);
+  });
+
   it('green：回显冻结身份 + receipt_id + merge_sha，synthetic 恒 false', async () => {
     const db = fakeDb({
       contract: [{ id: baseParams.gp_contract_id }],

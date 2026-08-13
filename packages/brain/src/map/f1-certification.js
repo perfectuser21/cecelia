@@ -85,7 +85,8 @@ export async function resolveF1Certification(db, {
   if (contractMatch) {
     const cellRes = await db.query(
       `SELECT id FROM journey_step_links
-       WHERE journey_id = $1 AND step_id = $2 AND feature_id IS NOT NULL
+       WHERE journey_id = $1 AND step_id = $2
+         AND feature_id IS NOT NULL AND assertion_ref IS NOT NULL
        ORDER BY (cell_kind = 'capability') DESC NULLS LAST, created_at ASC
        LIMIT 1`,
       [journey_id, step_id]
@@ -100,10 +101,11 @@ export async function resolveF1Certification(db, {
     const recRes = await db.query(
       `SELECT id, verdict, source_sha
        FROM journey_assertion_receipts
-       WHERE journey_step_link_id = $1 AND synthetic = false
+       WHERE journey_step_link_id = $1 AND gp_contract_id = $2
+         AND gp_contract_hash = $3 AND synthetic = false
        ORDER BY created_at DESC, completed_at DESC
        LIMIT 1`,
-      [cell.id]
+      [cell.id, gp_contract_id, gp_contract_hash]
     );
     receipt = recRes.rows[0] || null;
   }
