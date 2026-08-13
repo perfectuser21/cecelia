@@ -8,11 +8,15 @@
 
 
 
-**Brain 版本**: 1.272.58
+**Brain 版本**: 1.272.59
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.59 — Fail-closed Map Recovery Intent
+
+- Map fresh 时拒绝显式 recovery；恢复合同只在真实 scanner/Map/projection 故障后生成。
 
 ## Brain 1.272.58 — Immutable Routing Task Projection
 

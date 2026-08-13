@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.272.58
+**Brain 版本**: 1.272.59
+
+## Fail-closed Map Recovery Intent（Brain 1.272.59）
+
+- 显式 map_recovery 仅在正常 Map preflight 确认失败后才能创建恢复合同；Map 已 fresh 时以 `map_recovery_not_required` 拒绝，不能借恢复标志绕过正常 Golden Path。
 
 ## Immutable Routing Task Projection（Brain 1.272.58）
 

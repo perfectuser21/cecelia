@@ -290,6 +290,9 @@ async function ensureNormalMapImpactPreflight(client, { task, receipt }, deps = 
     inapplicable_items: [],
     metadata: { scope_key: scopeKey, map_scope: receipt.map_scope },
   };
+  if (task.payload?.map_recovery === true) {
+    throw new Error('map_recovery_not_required');
+  }
   const persisted = await persistContract(client, {
     task_id: task.id,
     change_kind: receipt.change_kind,
