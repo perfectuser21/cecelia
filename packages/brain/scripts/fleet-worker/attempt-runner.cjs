@@ -538,7 +538,7 @@ function createDockerAdapter({
       ].filter(Boolean).join(',');
       const runtimeMount = `type=bind,src=${runtimeSource},dst=/tmp/cecelia-prompts`;
       const workspaceAdminMount = [
-        `type=bind,src=${workspaceAdminSource},dst=${input.workspaceAdminMount.target}`,
+        `type=bind,src=${workspaceAdminSource},dst=${workspaceAdminSource}`,
         input.workspaceAdminMount.readOnly ? 'readonly' : null,
       ].filter(Boolean).join(',');
       // claude 单链凭据：宿主账号目录 rw 挂载（禁 readonly——token 刷新要写回原件）

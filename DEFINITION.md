@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.5
+**Brain 版本**: 1.273.6
+
+## Brain 1.273.6 — Canonical Fleet Git Admin Mount
+
+- Fleet Runner 将 Git admin worktree 同时按宿主规范路径挂载为容器目标，兼容 macOS `/var` → `/private/var` 解析并保证 Generator 能读取冻结工作区。
 
 ## Brain 1.273.5 — Routed Provenance Width
 
