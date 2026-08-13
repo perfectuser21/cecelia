@@ -63,35 +63,35 @@ function extractBehaviorTests(content) {
   const lines = content.split("\n");
 
   let currentId = null;
-  let inBehavior = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // 检测 [BEHAVIOR] 标题
-    const behaviorMatch = line.match(/###\s+\[BEHAVIOR\]\s+([\w-]+)/);
+    // 同时接受历史标题格式与 check-dod-mapping 使用的 checklist 格式。
+    const behaviorMatch = line.match(
+      /^\s*(?:###\s+|-\s+\[[ xX]\]\s+)\[BEHAVIOR\]\s+(?:\[L\d+\]\s+)?([\w-]+)/,
+    );
     if (behaviorMatch) {
       currentId = behaviorMatch[1];
-      inBehavior = true;
       continue;
     }
 
-    // 检测 Test: 行（在 BEHAVIOR 段内）
-    if (inBehavior && currentId) {
-      const testMatch = line.match(/^Test:\s+manual:bash\s+-c\s+"(.+)"$/);
+    // Test 行允许缩进、单/双引号 bash -c，也允许 node 等直接命令。
+    if (currentId) {
+      const testMatch = line.match(/^\s*Test:\s+manual:(.+?)\s*$/);
       if (testMatch) {
+        const rawCommand = testMatch[1].trim();
+        const bashCommand = rawCommand.match(/^bash\s+-c\s+(['"])([\s\S]*)\1$/);
         entries.push({
           id: currentId,
-          cmd: testMatch[1],
+          cmd: bashCommand ? bashCommand[2] : rawCommand,
         });
-        inBehavior = false;
         currentId = null;
         continue;
       }
 
-      // 遇到新的 ### 标题但不是 BEHAVIOR，退出当前 BEHAVIOR 段
-      if (line.startsWith("###") && !line.includes("[BEHAVIOR]")) {
-        inBehavior = false;
+      // 新 section/checklist 开始仍未出现 Test 时，当前条目无可执行断言。
+      if (/^\s*(?:###\s+|-\s+\[[ xX]\]\s+)/.test(line)) {
         currentId = null;
       }
     }
