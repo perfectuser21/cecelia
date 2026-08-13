@@ -3332,6 +3332,7 @@ describe('createDetachedLauncher', () => {
             repo: 'cecelia',
             branch: 'cp-attempt-workspace',
             base_sha: 'b'.repeat(40),
+            frozen_baseline: true,
           },
         },
         constraints: { read_only: false },
@@ -3349,6 +3350,8 @@ describe('createDetachedLauncher', () => {
     expect(env.CECELIA_BRANCH).toBe('cp-attempt-workspace');
     expect(env.CECELIA_BASE_SHA).toBe('b'.repeat(40));
     expect(env.CECELIA_ROUTING_BASE_SHA).toBe('a'.repeat(40));
+    expect(env.HARNESS_WORKSPACE_START_SHA).toBe('b'.repeat(40));
+    expect(env.HARNESS_FROZEN_BASELINE).toBe('true');
     expect(env.HARNESS_TASK_ID).toBe(taskId);
   });
 
