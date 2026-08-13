@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 
-import { readGitRevision } from './lib/git-revision.js';
+import { readGitBranch, readGitRevision } from './lib/git-revision.js';
 
 const DEFAULT_REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
@@ -9,7 +9,9 @@ export function buildMutationRoute({
   map_scope,
   repo_hint,
   repo_root,
+  branch,
   revision_reader = readGitRevision,
+  branch_reader = readGitBranch,
 }) {
   if (!Array.isArray(map_scope) || map_scope.length === 0) {
     throw new Error('system_coding_map_scope_required');
@@ -20,6 +22,7 @@ export function buildMutationRoute({
     declared_change_kind: change_kind,
     repo_hint,
     map_scope_hint: map_scope,
+    branch: branch || branch_reader(repo_root),
     base_sha: revision_reader(repo_root),
   };
 }

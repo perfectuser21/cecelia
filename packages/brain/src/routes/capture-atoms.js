@@ -215,10 +215,15 @@ async function routeAtomToTarget(client, atom, targetType, targetSubtype, areaId
     case 'task': {
       const routed = await createRoutedTask(client, {
         source: 'inbox', source_id: String(atom.id), title: atom.content.slice(0, 200),
-        description: atom.content, mutation_intent: 'unknown', declared_change_kind: 'new_capability',
+        description: atom.content, mutation_intent: 'unknown',
+        declared_change_kind: atom.metadata?.change_kind,
         repo_hint: atom.metadata?.repo,
+        map_scope_hint: atom.metadata?.map_scope,
+        branch: atom.metadata?.branch,
+        base_sha: atom.metadata?.base_sha,
+        metadata: atom.metadata ?? {},
         task: { priority: 'P2', trigger_source: 'capture' },
-      }, [], { transaction: 'existing' });
+      }, null, { transaction: 'existing' });
       return { routedTable: 'tasks', routedId: routed.task_id };
     }
 

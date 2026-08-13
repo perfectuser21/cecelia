@@ -10,6 +10,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
+const mockCreateRoutedTask = vi.hoisted(() => vi.fn());
+
 // Mock db.js 避免真实数据库连接
 vi.mock('../db.js', () => ({
   default: {
@@ -17,6 +19,7 @@ vi.mock('../db.js', () => ({
     connect: vi.fn(),
   },
 }));
+vi.mock('../work-routing-store.js', () => ({ createRoutedTask: mockCreateRoutedTask }));
 
 const MOCK_ATOM = {
   id: 'atom-uuid-1234',
@@ -40,6 +43,7 @@ describe('capture-atoms route', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockCreateRoutedTask.mockResolvedValue({ task_id: 'task-new-123' });
 
     const dbModule = await import('../db.js');
     mockPool = dbModule.default;
@@ -194,7 +198,6 @@ describe('capture-atoms route', () => {
       };
       mockClient.query.mockResolvedValueOnce({});
       mockClient.query.mockResolvedValueOnce({ rows: [MOCK_ATOM] });
-      mockClient.query.mockResolvedValueOnce({ rows: [{ id: 'task-new-123' }] });
       mockClient.query.mockResolvedValueOnce({});
       mockClient.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
       mockClient.query.mockResolvedValueOnce({});

@@ -38,6 +38,7 @@ describe('system coding route', () => {
 
   it('binds an arbitrary registered repo hint to its actual revision', () => {
     const revisionReader = vi.fn().mockReturnValue('b'.repeat(40));
+    const branchReader = vi.fn().mockReturnValue('cp-zj-change');
 
     expect(buildMutationRoute({
       change_kind: 'capability_change',
@@ -45,10 +46,12 @@ describe('system coding route', () => {
       repo_hint: 'zenithjoy-workspace',
       repo_root: '/workspace',
       revision_reader: revisionReader,
+      branch_reader: branchReader,
     })).toMatchObject({
       declared_change_kind: 'capability_change',
       repo_hint: 'zenithjoy-workspace',
       map_scope_hint: ['Z1'],
+      branch: 'cp-zj-change',
       base_sha: 'b'.repeat(40),
     });
   });

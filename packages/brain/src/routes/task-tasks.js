@@ -14,7 +14,7 @@ import pool from '../db.js';
 import { detectDomain } from '../domain-detector.js';
 import taskErrorReportRoutes from './task-error-report.js';
 import { queueLaneSql } from '../task-queue-lanes.js';
-import { resolveChangeKind, CHANGE_KINDS } from '../impact-contract/change-kind.js';
+import { normalizeChangeKind, CHANGE_KINDS } from '../impact-contract/change-kind.js';
 import { registerTaskPatchRoute } from './task-task-patch.js';
 import { createRoutedTask } from '../work-routing-store.js';
 
@@ -24,6 +24,10 @@ const router = Router();
 // 避免两套终态定义产生语义分裂）
 const TERMINAL_STATUSES = ['completed', 'cancelled'];
 const ACTIVE_DEDUP_STATUSES = ['queued', 'in_progress', 'blocked', 'paused'];
+const CODING_MUTATION_TASK_TYPES = new Set([
+  'dev', 'codex_dev', 'initiative_execute', 'sprint_generate', 'sprint_fix',
+  'harness_generate', 'harness_fix', 'pipeline_rescue', 'harness_initiative',
+]);
 
 // POST /tasks — 创建新任务（供外部 agent 如 /architect 注册任务到 Brain 队列）
 router.post('/', async (req, res) => {
@@ -52,6 +56,8 @@ router.post('/', async (req, res) => {
       source_id: sourceIdInput = null,
       repo_hint: repoHintInput = null,
       map_scope_hint: mapScopeHintInput = null,
+      branch: branchInput = null,
+      base_sha: baseShaInput = null,
       execution_profile_override_request: executionProfileOverride = null,
     } = req.body;
 
@@ -106,16 +112,26 @@ router.post('/', async (req, res) => {
 
     // ─── C3: change_kind 归一化（FR-1 Change Normalizer）────────────
     // change_kind 与 gear 严格分离：两者独立计算，禁止互相赋值。
-    // 显式传入 change_kind 优先；无则从 task_type 推导；两者均无则 null。
+    // change_kind 必须由调用方显式正向选择，禁止从 task_type 反推。
     // 非法值（空字符串/未知枚举）在入口层拒绝（400），不进 DB。
     // gear 字段完全不参与本段逻辑（由 executor 层 deriveGear() 独立处理）。
     let resolvedChangeKind;
     try {
-      resolvedChangeKind = resolveChangeKind({ change_kind: changeKindInput, task_type });
+      resolvedChangeKind = normalizeChangeKind(changeKindInput);
     } catch (ckErr) {
       return res.status(400).json({
         error: 'invalid_change_kind',
         details: ckErr.message,
+        allowed: [...CHANGE_KINDS],
+      });
+    }
+    const codingMutationRequested = ['write', 'unknown'].includes(mutationIntentInput)
+      || resolvedChangeKind !== null
+      || CODING_MUTATION_TASK_TYPES.has(task_type);
+    if (codingMutationRequested && resolvedChangeKind === null) {
+      return res.status(400).json({
+        error: 'change_kind_required',
+        reason_code: 'change_kind_required',
         allowed: [...CHANGE_KINDS],
       });
     }
@@ -208,7 +224,7 @@ router.post('/', async (req, res) => {
     let result;
     try {
       const mutationIntent = mutationIntentInput
-        ?? (resolvedChangeKind !== null ? 'write' : 'read_only');
+        ?? (codingMutationRequested ? 'write' : 'read_only');
       const routed = await createRoutedTask(pool, {
         source: 'api',
         source_id: String(sourceIdInput ?? req.get('idempotency-key') ?? randomUUID()),
@@ -216,15 +232,15 @@ router.post('/', async (req, res) => {
         description,
         requested_task_type: task_type,
         declared_change_kind: ['write', 'unknown'].includes(mutationIntent)
-          ? (resolvedChangeKind ?? 'new_capability')
+          ? resolvedChangeKind
           : null,
         execution_profile_override_request: executionProfileOverride,
         declared_domain: domain,
         mutation_intent: mutationIntent,
         repo_hint: repoHintInput ?? payload.base_repo ?? payload.repo ?? null,
         map_scope_hint: mapScopeHintInput ?? payload.map_scope ?? [],
-        branch: payload.branch ?? payload.pr_branch ?? null,
-        base_sha: payload.base_sha ?? payload.implementation_baseline?.base_sha ?? null,
+        branch: branchInput ?? payload.branch ?? payload.pr_branch ?? null,
+        base_sha: baseShaInput ?? payload.base_sha ?? payload.implementation_baseline?.base_sha ?? null,
         metadata: payload,
         task: {
           priority,

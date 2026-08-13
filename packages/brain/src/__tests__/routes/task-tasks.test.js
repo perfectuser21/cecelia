@@ -27,7 +27,12 @@ function createApp() {
 }
 
 function coding(body = {}) {
-  return { repo_hint: 'perfectuser21/cecelia', ...body };
+  return {
+    mutation_intent: 'write',
+    change_kind: 'capability_change',
+    repo_hint: 'perfectuser21/cecelia',
+    ...body,
+  };
 }
 
 describe('task-tasks routes', () => {
