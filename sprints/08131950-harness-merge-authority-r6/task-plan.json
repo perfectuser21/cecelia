@@ -1,0 +1,35 @@
+{
+  "initiative_id": "12a85c17-7603-40cf-b91a-28b3ee53ea2a",
+  "journey_type": "autonomous",
+  "journey_type_reason": "核心改动落在 packages/brain/orchestrator（Kernel/合同状态机）+ CI 合并脚本，无 UI/远端 agent 协议，属后端自治闭环",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "修复 Coding 合并身份闸与 AI 验收闭环：should-auto-merge fail-closed + premature_merge 终态 + evaluateMergeAuthority + 合同状态机守卫",
+      "scope": "严格 TDD 先落四段永久 RED 再改实现：(A) should-auto-merge.sh 改 entitlement + 身份闸 fail-closed（四态 SKIP，仅受信精确绑定 entitlement 才 MERGE，CI 调用点补 repo+PR+head_sha，Brain 侧只读 merge-entitlement 端点消费既有受信签发）；(B) derive.js merged 分支加同 head 双 PASS receipt 守卫，缺则 premature_merge→failed（loop.js markRunFailed 落 run failed/task 不 completed + 可追责事件），并更新旧 merged→done 用例补齐双 PASS receipt；(C) validation-identity-policy.js 新增 evaluateMergeAuthority 纯函数（含 brainQueryOk fail-closed，保留 evaluateValidationIdentityPolicy）；(D) contract-store.js materializeApprovedContract 加 superseded/未知附着状态守卫（报错不重激活，draft/approved 三态回归钉死）。四段测试迁入各自 __tests__ 规范位置。",
+      "dod": [
+        "[BEHAVIOR] RED-A should-auto-merge 身份闸四态 fail-closed + 受信 entitlement 才 MERGE（tests/red-a-should-auto-merge.test.sh PASS=7）",
+        "[BEHAVIOR] RED-B derive premature_merge→failed，合法双 PASS 仍 done（tests/red-b-premature-merge.test.mjs 5 passed）",
+        "[BEHAVIOR] RED-C evaluateMergeAuthority fail-closed（tests/red-c-merge-authority.test.mjs 10 passed）",
+        "[BEHAVIOR] RED-D materializeApprovedContract superseded/未知附着报错、draft 换版（真 Postgres，tests/red-d-contract-store-statemachine.test.mjs 3 passed）",
+        "[BEHAVIOR] DB 不变量：premature_merge 绝不回填 completed（psql count=0）",
+        "[ARTIFACT] should-auto-merge.sh / validation-identity-policy.js / derive.js / contract-store.js 四文件改动落地，四段回归测试迁入 __tests__"
+      ],
+      "files": [
+        ".github/workflows/scripts/should-auto-merge.sh",
+        ".github/workflows/scripts/__tests__/should-auto-merge.test.sh",
+        ".github/workflows/ci.yml",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/validation-identity-policy.js",
+        "packages/brain/src/orchestrator/contract-store.js",
+        "packages/brain/src/orchestrator/__tests__/derive.test.js",
+        "packages/brain/src/orchestrator/__tests__/validation-identity-policy.test.js",
+        "packages/brain/src/orchestrator/__tests__/contract-store.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
