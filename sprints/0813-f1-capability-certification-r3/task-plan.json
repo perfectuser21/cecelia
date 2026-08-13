@@ -1,0 +1,27 @@
+{
+  "initiative_id": "70f1984b-9a9d-445c-90d3-2774eb57f96d",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain 后端（Kernel Harness/Evaluator receipt/Mapper 聚合 + 认证表读写），无 UI/远端 agent/engine 路径",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "F1 冻结身份认证闭环：identity 贯穿 + receipt 精确落账 + Mapper fail-closed 回读端点 + smoke/nightly 矩阵",
+      "scope": "以 task_bundle 冻结 GP identity（gp_contract_id 48ef45ab / v1 / hash 3ade5843… / journey e6f803f2 / step aad25bdb）为唯一身份贯穿全链；复用 journey_assertion_receipts + golden_path_contract_versions + journey_step_links + journey_features + map/state-resolver（resolveNodeState/aggregateCapabilityState）+ harness-gates（verifyImpactMergeFence）+ persistTrustedEvaluatorReceipts，新增 GET /api/brain/capabilities/F1/certification 回读 Mapper 结论；交付幂等 seed helper；PR-CI smoke + nightly 负向矩阵。不新增平行认证系统，不改冻结 GP Contract 本体。",
+      "dod": [
+        "[BEHAVIOR] certification 端点对冻结身份返回 green（非 synthetic PASS receipt 支撑），四反向输入（无合同/无 receipt/错 SHA/缺 Feature）fail-closed 不 green",
+        "[BEHAVIOR] 非 synthetic PASS receipt 精确落 journey_assertion_receipts，绑定 run_id/journey_step_link_id/source_sha/impact_contract_hash",
+        "[ARTIFACT] GET /api/brain/capabilities/F1/certification 端点 + 幂等 seed-f1-cert-fixture.js + nightly 集成测试登记进 POSTGRES_INTEGRATION_TESTS"
+      ],
+      "files": [
+        "packages/brain/src/routes/analytics.js",
+        "packages/brain/src/impact-contract/capability-certification.js",
+        "packages/brain/scripts/integration/seed-f1-cert-fixture.js",
+        "packages/brain/src/__tests__/integration/f1-capability-certification.integration.test.js",
+        "packages/brain/vitest.config.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
