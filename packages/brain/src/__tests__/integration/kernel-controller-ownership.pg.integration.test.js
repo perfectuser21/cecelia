@@ -113,21 +113,24 @@ async function runCount(taskId) {
 beforeAll(createIsolatedDatabase, 60_000);
 afterAll(dropIsolatedDatabase, 30_000);
 
-describe('Session Controller ownership + fail-closed + migration 415（真 PG）', () => {
-  it('migration 415 加 controller ownership 列（initiative_runs information_schema）', async () => {
+describe('Session Controller durable authority（真 PG）', () => {
+  it('migration 422 建 authority 表与 generation FK', async () => {
     const { rows } = await testPool.query(
       `SELECT column_name
          FROM information_schema.columns
         WHERE table_name = 'initiative_runs'
-          AND column_name IN ('controller_session_id', 'controller_lease_expires_at')
+          AND column_name IN ('controller_session_id', 'controller_generation', 'controller_lease_expires_at')
         ORDER BY column_name`,
     );
     const cols = rows.map((r) => r.column_name);
     expect(cols).toContain('controller_session_id');
     expect(cols).toContain('controller_lease_expires_at');
+    expect(cols).toContain('controller_generation');
+    const authority = await testPool.query(`SELECT to_regclass('kernel_controller_sessions') AS name`);
+    expect(authority.rows[0].name).toBe('kernel_controller_sessions');
   });
 
-  it('createKernelRun 无 controllerSessionId fail-closed（缺失/空均拒绝，不写半态 run）', async () => {
+  it('拒绝调用方伪造 controllerSessionId，不写半态 run', async () => {
     const { taskId, initiativeId } = await seedTask();
     const baseInput = {
       taskId,
@@ -141,20 +144,15 @@ describe('Session Controller ownership + fail-closed + migration 415（真 PG）
     };
     expect(await runCount(taskId)).toBe(0);
 
-    // 缺失 controllerSessionId → fail-closed 抛错
-    await expect(createKernelRun(testPool, { ...baseInput }))
-      .rejects.toThrow(/missing controller ownership \(fail-closed\)/);
-    // 空串 controllerSessionId → fail-closed 抛错
-    await expect(createKernelRun(testPool, { ...baseInput, controllerSessionId: '' }))
-      .rejects.toThrow(/missing controller ownership \(fail-closed\)/);
+    await expect(createKernelRun(testPool, { ...baseInput, controllerSessionId: randomUUID() }))
+      .rejects.toThrow(/caller-provided ownership is forbidden/);
 
     // 真 PG count 校验：抛错后 initiative_runs 对该 task 无新行（不写半态）
     expect(await runCount(taskId)).toBe(0);
   });
 
-  it('createKernelRun 带 controllerSessionId → 建 run 且 ownership 先于 Kernel 可执行态落库', async () => {
+  it('createKernelRun 同事务签发 session 并绑定 run generation', async () => {
     const { taskId, initiativeId } = await seedTask();
-    const controllerSessionId = randomUUID();
     const created = await createRoutedKernelRun(testPool, {
       taskId,
       initiativeId,
@@ -164,15 +162,23 @@ describe('Session Controller ownership + fail-closed + migration 415（真 PG）
       host: 'kernel-v1',
       deadlineHours: 8,
       createdSource: 'kernel_dispatch',
-      controllerSessionId,
     });
     expect(created.created).toBe(true);
     const { rows } = await testPool.query(
-      `SELECT controller_session_id, controller_lease_expires_at, started_at
-         FROM initiative_runs WHERE id = $1`,
+      `SELECT run.controller_session_id,run.controller_generation,
+              run.controller_lease_expires_at,run.started_at,
+              session.run_id,session.task_id,session.status,session.generation
+         FROM initiative_runs run JOIN kernel_controller_sessions session
+           ON session.id=run.controller_session_id
+        WHERE run.id = $1`,
       [created.run.id],
     );
-    expect(rows[0].controller_session_id).toBe(controllerSessionId);
+    expect(rows[0].controller_session_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(rows[0].run_id).toBe(created.run.id);
+    expect(rows[0].task_id).toBe(taskId);
+    expect(rows[0].status).toBe('active');
+    expect(Number(rows[0].controller_generation)).toBe(1);
+    expect(Number(rows[0].generation)).toBe(1);
     // lease 落库且晚于创建时刻（ownership 在同一创建事务里先于 run 可执行态写入）
     expect(rows[0].controller_lease_expires_at).not.toBeNull();
     expect(new Date(rows[0].controller_lease_expires_at).getTime())
@@ -214,5 +220,38 @@ describe('Session Controller ownership + fail-closed + migration 415（真 PG）
       [taskId],
     );
     expect(ownerless[0].n).toBe(0);
+  });
+
+  it('headed 与 headless 共用真实 server authority，建立 run 与 running attempt', async () => {
+    const scratchDir = `/tmp/cecelia-headed-authority-${randomUUID()}`;
+    const seeded = await seedRoutedKernelTask(testPool, {
+      titlePrefix:'headed-authority',changeKind:'bugfix',
+      payload:{mode:'headed',executor:'claude',branch:'cp-headed-authority',
+        base_sha:'a'.repeat(40),sprint_dir:scratchDir,worktree_path:'/tmp/wt-headed'},
+    });
+    const task={id:seeded.taskId,ability_id:null,payload:seeded.payload};
+    const result = await spawnSkillRelaySession(task, {
+      pool:testPool,
+      createKernelRun:(dbPool,input)=>createRoutedKernelRun(dbPool,input),
+      execFn:(command)=>String(command).includes('tmux has-session')?'TMUX_DEAD':'',
+      loadSkill:()=> 'SKILL_CONTENT',
+      ensureWt:async()=>'/tmp/wt-headed',
+      now:()=>new Date(),inDockerFn:()=>false,sshKeyFn:()=>null,env:{},
+    });
+    expect(result).toMatchObject({ok:true,mode:'kernel-v1-headed'});
+    const { rows } = await testPool.query(
+      `SELECT run.controller_session_id,run.controller_generation,
+              session.status,attempt.status AS attempt_status
+         FROM initiative_runs run
+         JOIN kernel_controller_sessions session ON session.id=run.controller_session_id
+         JOIN harness_attempts attempt ON attempt.run_id=run.id
+        WHERE run.id=$1`,
+      [result.runId],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({status:'active',attempt_status:'running'});
+    expect(Number(rows[0].controller_generation)).toBe(1);
+    const { rmSync } = await import('node:fs');
+    rmSync(scratchDir,{recursive:true,force:true});
   });
 });

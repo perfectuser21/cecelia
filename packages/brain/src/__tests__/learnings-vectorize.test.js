@@ -474,6 +474,6 @@ describe('selfcheck schema version', () => {
     // 412 = approved Harness contract artifact manifests。
     // 413/414 = production routing authority anchors；415 = Session Controller ownership；
     // 416—421 = anchor hardening、Golden Path、Map consumption、Capture 与不可变治理。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('421');
+    expect(EXPECTED_SCHEMA_VERSION).toBe('422');
   });
 });

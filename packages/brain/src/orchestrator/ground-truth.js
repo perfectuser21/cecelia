@@ -832,7 +832,7 @@ export async function collectGroundTruth(deps, opts) {
     // initiative_runs.change_kind 每跳注入 observed，供 derive 按四档分派相位链。
     // 缺省（列不存在 / 存量 run / NULL）→ null，derive 不分叉（零回归）。change_kind 与
     // gear 独立注入、独立计算，禁互推导（决策 29ae54ae）。
-    change_kind: run.change_kind ?? null,
+    change_kind: routingReceipt?.change_kind ?? null,
     prdExists,
     prdEvidence,
     plannerPrdArtifact,

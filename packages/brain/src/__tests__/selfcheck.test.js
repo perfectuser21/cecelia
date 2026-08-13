@@ -214,8 +214,8 @@ describe('selfcheck', () => {
   // 412（approved Harness contract artifact manifests）推进地板到 412。
   // 413/414（production routing authority anchors）与 415（Session Controller ownership）。
   // 416—421（Work Router anchor hardening / Map / approved contract governance）推进地板到 421。
-  it('EXPECTED_SCHEMA_VERSION should be 421', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('421');
+  it('EXPECTED_SCHEMA_VERSION should be 422', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('422');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

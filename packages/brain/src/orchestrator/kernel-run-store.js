@@ -1,5 +1,6 @@
 import { COMMANDER_MODES } from './commander-contract.js';
 import { ensureMapImpactPreflight } from './preflight/map-impact-contract.js';
+import { randomUUID } from 'node:crypto';
 
 const ACTIVE_PHASES = new Set([
   'planning',
@@ -100,12 +101,9 @@ function validateCreateInput(input) {
   if (!VALID_COMMANDER_MODES.has(commanderMode)) {
     throw new Error(`invalid Kernel run commander mode: ${commanderMode}`);
   }
-  // 启动不变量（sprint 08131104 缺陷② + 交付1）：任何 Kernel Run 前必先有有效 Controller
-  // ownership。缺失/空/非字符串 controllerSessionId → fail-closed（拒绝创建、不写半态 run），
-  // 由此杜绝 detached 无主 Kernel（issue 962d399c）。在开事务前校验，保证 initiative_runs 零新行。
-  const controllerSessionId = input?.controllerSessionId;
-  if (typeof controllerSessionId !== 'string' || controllerSessionId.trim() === '') {
-    throw new Error('invalid Kernel run controller session: missing controller ownership (fail-closed)');
+  // Controller ownership 只能由 createKernelRun 在服务端事务内签发。
+  if (input?.controllerSessionId != null) {
+    throw new Error('invalid Kernel run controller session: caller-provided ownership is forbidden');
   }
   const controllerLeaseSeconds = input?.controllerLeaseSeconds === undefined
     ? CONTROLLER_LEASE_DEFAULT_SECONDS
@@ -113,7 +111,7 @@ function validateCreateInput(input) {
   if (!Number.isFinite(controllerLeaseSeconds) || controllerLeaseSeconds <= 0) {
     throw new Error(`invalid Kernel run controller lease seconds: ${controllerLeaseSeconds}`);
   }
-  return { commanderMode, controllerSessionId, controllerLeaseSeconds };
+  return { commanderMode, controllerLeaseSeconds };
 }
 
 export async function loadActiveKernelRun(db, taskId, { forUpdate = false } = {}) {
@@ -407,7 +405,11 @@ export async function patchLegacyKernelRunByInitiative(pool, {
 }
 
 export async function createKernelRun(pool, input, deps = {}) {
-  const { commanderMode, controllerSessionId, controllerLeaseSeconds } = validateCreateInput(input);
+  const { commanderMode, controllerLeaseSeconds } = validateCreateInput(input);
+  const controllerSessionId = (deps.controllerSessionIdFactory ?? randomUUID)();
+  if (!UUID_PATTERN.test(controllerSessionId)) {
+    throw new Error('invalid server-issued Kernel controller session');
+  }
   const client = await pool.connect();
   let committed = false;
   try {
@@ -518,6 +520,12 @@ export async function createKernelRun(pool, input, deps = {}) {
     const impactContractPolicyReason = `Map fresh and active Impact Contract ${preflight.contract.id}`;
     const impactContractPolicyDecisionId = '4bc109e9';
 
+    await client.query(
+      `INSERT INTO kernel_controller_sessions (id,task_id,generation,source,status,last_heartbeat_at,lease_expires_at)
+       VALUES ($1,$2,1,$3,'active',NOW(),NOW()+($4*INTERVAL '1 second'))`,
+      [controllerSessionId,input.taskId,input.createdSource,controllerLeaseSeconds],
+    );
+
     const { rows } = await client.query(
       `INSERT INTO initiative_runs (
          initiative_id, phase, journey_id, orchestrator_version,
@@ -526,12 +534,12 @@ export async function createKernelRun(pool, input, deps = {}) {
          impact_contract_policy, impact_contract_policy_reason,
          impact_contract_policy_decision_id, map_recovery_contract_id,
          contract_id, predecessor_run_id,
-         controller_session_id, controller_lease_expires_at
+         controller_session_id, controller_generation, controller_lease_expires_at
        ) VALUES (
          $1, $2, $3, 'v2', $4,
          NOW() + ($5 * INTERVAL '1 hour'), $6, $7, $8, $9, $10, $11,
          $12, $13, $14, $15, $16, $17,
-         $18, NOW() + ($19 * INTERVAL '1 second')
+         $18, 1, NOW() + ($19 * INTERVAL '1 second')
        )
        RETURNING *`,
       [
@@ -558,6 +566,11 @@ export async function createKernelRun(pool, input, deps = {}) {
         controllerSessionId,
         controllerLeaseSeconds,
       ],
+    );
+    await client.query(
+      `UPDATE kernel_controller_sessions SET run_id=$2,updated_at=NOW()
+        WHERE id=$1 AND generation=1 AND status='active'`,
+      [controllerSessionId,rows[0].id],
     );
     await client.query('COMMIT');
     committed = true;
@@ -593,6 +606,10 @@ export async function finalizeKernelRun(pool, {
   outcome,
   reason = null,
   afterTaskFinalized = null,
+  expectedControllerSessionId = null,
+  expectedControllerGeneration = null,
+  controllerExpiredAt = null,
+  closeControllerSession = true,
 }) {
   if (!['done', 'failed'].includes(outcome)) {
     throw new Error(`invalid Kernel terminal outcome: ${outcome}`);
@@ -639,7 +656,8 @@ export async function finalizeKernelRun(pool, {
     // createKernelRun also locks task before run. Keeping one global order
     // prevents create/finalize deadlocks under concurrent recovery.
     const { rows: runRows } = await client.query(
-      `SELECT id, current_task_id, phase
+      `SELECT id, current_task_id, phase, controller_session_id,
+              controller_generation, controller_lease_expires_at
          FROM initiative_runs
         WHERE id = $1
           AND orchestrator_version = 'v2'
@@ -651,6 +669,20 @@ export async function finalizeKernelRun(pool, {
       throw new Error(
         `Kernel run/task identity mismatch: ${runId}/${expectedTaskId}`,
       );
+    }
+
+    if (expectedControllerSessionId !== null) {
+      const lease = run.controller_lease_expires_at == null
+        ? null : new Date(run.controller_lease_expires_at);
+      const cutoff = controllerExpiredAt == null ? null : new Date(controllerExpiredAt);
+      const ownershipChanged = run.controller_session_id !== expectedControllerSessionId
+        || Number(run.controller_generation) !== Number(expectedControllerGeneration)
+        || (lease && cutoff && lease.getTime() >= cutoff.getTime());
+      if (ownershipChanged) {
+        await client.query('COMMIT');
+        committed = true;
+        return { changed: false, ownershipChanged: true, runId, taskId: expectedTaskId };
+      }
     }
 
     const runAlreadyTerminal = ['done', 'failed'].includes(run.phase);
@@ -717,6 +749,15 @@ export async function finalizeKernelRun(pool, {
       outcome,
       reason,
     });
+
+    if (closeControllerSession && run.controller_session_id) {
+      await client.query(
+        `UPDATE kernel_controller_sessions
+            SET status='closed',updated_at=NOW()
+          WHERE id=$1 AND generation=$2 AND status='active'`,
+        [run.controller_session_id,run.controller_generation],
+      );
+    }
 
     if (changed) {
       await client.query(

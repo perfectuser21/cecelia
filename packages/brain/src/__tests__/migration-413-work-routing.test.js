@@ -20,6 +20,7 @@ describe('production routing authority migrations 413/414/416', () => {
     expect(sql).toContain('idx_work_routing_receipts_task_created');
     expect(sql).toContain('map_recovery_contracts_attempt_id_fkey');
     expect(sql).toContain('map_recovery_contracts_immutable');
+    expect(sql).toContain('DROP CONSTRAINT IF EXISTS work_routing_receipts_task_id_key');
     expect(sql).toContain("VALUES ('416'");
   });
 

@@ -1,5 +1,11 @@
 BEGIN;
 
+-- Production 413 shipped with UNIQUE(task_id), which prevents append-only
+-- supersession.  416 is the first safe hardening point after that authority
+-- anchor, so remove only the auto-named single-task constraint here.
+ALTER TABLE work_routing_receipts
+  DROP CONSTRAINT IF EXISTS work_routing_receipts_task_id_key;
+
 CREATE INDEX IF NOT EXISTS idx_work_routing_receipts_task_created
   ON work_routing_receipts(task_id, created_at DESC);
 

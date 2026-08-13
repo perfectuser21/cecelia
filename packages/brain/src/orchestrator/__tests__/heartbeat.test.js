@@ -7,7 +7,7 @@ import { writeHeartbeat } from '../heartbeat.js';
 
 const RUN_ID = '00000000-0000-0000-0000-000000000312';
 
-function mockPool(result = { rows: [] }) {
+function mockPool(result = { rows: [{ id: RUN_ID }] }) {
   return { query: vi.fn().mockResolvedValue(result) };
 }
 
@@ -26,7 +26,7 @@ describe('writeHeartbeat', () => {
     for (const col of ['orchestrator_heartbeat_at', 'orchestrator_host', 'orchestrator_pid']) {
       expect(sql).toContain(col);
     }
-    expect(sql).toMatch(/WHERE id = \$1/);
+    expect(sql).toMatch(/WHERE run\.id\s*=\s*\$1/);
     expect(params).toEqual([RUN_ID, now, 'mac-mini-us', 4242, 1800]);
   });
 });

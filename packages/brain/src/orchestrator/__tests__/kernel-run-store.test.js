@@ -29,7 +29,6 @@ const VALID_INPUT = Object.freeze({
   host: 'kernel-v1',
   deadlineHours: 8,
   createdSource: 'kernel_dispatch',
-  controllerSessionId: CONTROLLER_SESSION_ID,
 });
 
 function transactionPool({
@@ -105,6 +104,14 @@ function transactionPool({
           }],
         };
       }
+      if (/INSERT INTO kernel_controller_sessions/.test(sql)) {
+        order.push('insert-controller');
+        return { rows: [], rowCount: 1 };
+      }
+      if (/UPDATE kernel_controller_sessions/.test(sql)) {
+        order.push('bind-controller');
+        return { rows: [], rowCount: 1 };
+      }
       if (/INSERT INTO cecelia_events/.test(sql)) {
         order.push('routing-event');
         return { rows: [], rowCount: 1 };
@@ -126,6 +133,7 @@ function createRun(harness, input = VALID_INPUT, deps = {}) {
     ensureMapImpactPreflight: vi.fn(async () => ({
       contract: { id: 'impact-1', status: 'active' },
     })),
+    controllerSessionIdFactory: () => CONTROLLER_SESSION_ID,
     ...deps,
   });
 }
@@ -407,7 +415,9 @@ describe('Kernel run store creation authority', () => {
       'task-lock',
       'active-run',
       'routing-receipt',
+      'insert-controller',
       'insert-run',
+      'bind-controller',
       'COMMIT',
       'release',
     ]);
@@ -431,7 +441,9 @@ describe('Kernel run store creation authority', () => {
       'task-lock',
       'active-run',
       'routing-receipt',
+      'insert-controller',
       'insert-run',
+      'bind-controller',
       'COMMIT',
       'release',
     ]);
@@ -574,24 +586,12 @@ describe('Kernel run store creation authority', () => {
     expect(harness.pool.connect).not.toHaveBeenCalled();
   });
 
-  it('fail-closed：缺失/空 controllerSessionId 在开事务前拒绝（无 Controller ownership）', async () => {
+  it('fail-closed：调用方不能注入 Controller ownership', async () => {
     const harness = transactionPool();
-    // 缺失
     await expect(createKernelRun(harness.pool, {
       ...VALID_INPUT,
-      controllerSessionId: undefined,
-    })).rejects.toThrow('missing controller ownership (fail-closed)');
-    // 空串
-    await expect(createKernelRun(harness.pool, {
-      ...VALID_INPUT,
-      controllerSessionId: '',
-    })).rejects.toThrow('missing controller ownership (fail-closed)');
-    // 纯空白
-    await expect(createKernelRun(harness.pool, {
-      ...VALID_INPUT,
-      controllerSessionId: '   ',
-    })).rejects.toThrow('missing controller ownership (fail-closed)');
-    // fail-closed：一律不开事务、不写半态 run
+      controllerSessionId: CONTROLLER_SESSION_ID,
+    })).rejects.toThrow('caller-provided ownership is forbidden');
     expect(harness.pool.connect).not.toHaveBeenCalled();
   });
 

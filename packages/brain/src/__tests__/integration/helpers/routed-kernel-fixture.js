@@ -9,9 +9,12 @@ export async function seedRoutedKernelTask(pool, {
   payload = {},
 }) {
   const receiptId = randomUUID();
-  const defaultExecutionProfile = changeKind === 'new_capability'
-    ? 'new-capability-v1'
-    : 'hotfix-v1';
+  const defaultExecutionProfile = ({
+    new_capability: 'new-capability-v1',
+    capability_change: 'capability-change-v1',
+    bugfix: 'hotfix-v1',
+    parameter_only: 'parameter-only-v1',
+  })[changeKind];
   const routedPayload = {
     ...payload,
     initiative_id: initiativeId,
@@ -56,7 +59,9 @@ export async function seedRoutedKernelTask(pool, {
 }
 
 export function createRoutedKernelRun(pool, input) {
-  return createKernelRun(pool, input, {
+  const serverOwnedInput = { ...input };
+  delete serverOwnedInput.controllerSessionId;
+  return createKernelRun(pool, serverOwnedInput, {
     ensureMapImpactPreflight: async () => ({
       contract: { id: randomUUID(), status: 'active' },
       recovery_contract: null,

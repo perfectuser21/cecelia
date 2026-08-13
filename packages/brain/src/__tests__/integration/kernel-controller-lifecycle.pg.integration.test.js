@@ -18,6 +18,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createKernelRun } from '../../orchestrator/kernel-run-store.js';
+import { writeHeartbeat } from '../../orchestrator/heartbeat.js';
 import {
   handleKernelProcessFatal,
   reconcileOwnerlessKernelRuns,
@@ -94,21 +95,36 @@ async function insertRawRun({
   taskId, initiativeId, phase = 'generate',
   controllerSessionId = null, leaseOffsetSeconds = null,
 }) {
+  if (controllerSessionId) {
+    await testPool.query(
+      `INSERT INTO kernel_controller_sessions
+         (id,task_id,generation,source,status,last_heartbeat_at,lease_expires_at)
+       VALUES ($1,$2,1,'integration','active',NOW(),
+               NOW()+($3*INTERVAL '1 second'))`,
+      [controllerSessionId,taskId,leaseOffsetSeconds ?? 1800],
+    );
+  }
   // enforce_v2_run_insert_identity() 触发器要求 v2 run 带 current_task_id + created_source；
   // 无主历史 run 用 historical_reconstruction（迁移前老数据语义），ownership 列刻意留空/过期。
   const { rows } = await testPool.query(
     `INSERT INTO initiative_runs (
        initiative_id, current_task_id, phase, orchestrator_version, created_source,
-       deadline_at, controller_session_id, controller_lease_expires_at
+       deadline_at, controller_session_id, controller_generation, controller_lease_expires_at
      ) VALUES (
        $1, $2, $3, 'v2', 'historical_reconstruction',
-       NOW() + INTERVAL '8 hours', $4,
+       NOW() + INTERVAL '8 hours', $4, ${controllerSessionId ? '1' : 'NULL'},
        ${leaseOffsetSeconds == null ? 'NULL' : `NOW() + ($5 * INTERVAL '1 second')`}
      ) RETURNING id`,
     leaseOffsetSeconds == null
       ? [initiativeId, taskId, phase, controllerSessionId]
       : [initiativeId, taskId, phase, controllerSessionId, leaseOffsetSeconds],
   );
+  if (controllerSessionId) {
+    await testPool.query(
+      'UPDATE kernel_controller_sessions SET run_id=$2 WHERE id=$1',
+      [controllerSessionId,rows[0].id],
+    );
+  }
   return rows[0].id;
 }
 
@@ -127,7 +143,6 @@ afterAll(dropIsolatedDatabase, 30_000);
 describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（真 PG）', () => {
   it('Kernel fatal 只结束 Kernel Controller 存活（失败回传结构化 failure_reason）', async () => {
     const { initiativeId, taskId } = await seedTask();
-    const controllerSessionId = randomUUID();
     const created = await createRoutedKernelRun(testPool, {
       taskId,
       initiativeId,
@@ -137,7 +152,6 @@ describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（�
       host: 'kernel-v1',
       deadlineHours: 8,
       createdSource: 'kernel_dispatch',
-      controllerSessionId,
     });
 
     const result = await handleKernelProcessFatal(testPool, {
@@ -152,7 +166,7 @@ describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（�
     expect(row.failure_reason).toBe(`${KERNEL_FATAL_REASON_PREFIX}:dependency_assembly_failed`);
     expect(row.failure_reason.length).toBeGreaterThan(0);
     // Controller ownership 记录存活（controller_session_id 未被 Kernel fatal 清除）
-    expect(row.controller_session_id).toBe(controllerSessionId);
+    expect(row.controller_session_id).toBe(created.run.controller_session_id);
   });
 
   it('failure_reason 结构化脱敏（不落 token/credential 明文）', async () => {
@@ -261,5 +275,40 @@ describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（�
     expect(row.phase).toBe('failed');
     expect(row.phase).not.toBe('done');
     expect(row.failure_reason.startsWith(`${OWNERLESS_RECOVERED_REASON_PREFIX}:`)).toBe(true);
+  });
+
+  it('心跳 CAS 续租可跨过扫描窗口，停止后并发扫描仅回收一次', async () => {
+    const { initiativeId,taskId } = await seedTask();
+    const created = await createRoutedKernelRun(testPool, {
+      taskId,initiativeId,phase:'planning',journeyId:null,abilityId:null,
+      host:'kernel-v1',deadlineHours:8,createdSource:'kernel_dispatch',
+    });
+    const now = new Date();
+    await testPool.query(
+      `UPDATE kernel_controller_sessions SET lease_expires_at=$2::timestamptz-INTERVAL '1 second'
+        WHERE id=$1`,
+      [created.run.controller_session_id,now],
+    );
+    await testPool.query(
+      `UPDATE initiative_runs SET controller_lease_expires_at=$2::timestamptz-INTERVAL '1 second'
+        WHERE id=$1`,
+      [created.run.id,now],
+    );
+    await writeHeartbeat(testPool, {
+      runId:created.run.id,host:'integration',pid:process.pid,now,leaseSeconds:2,
+    });
+    const withinLease = await reconcileOwnerlessKernelRuns(testPool, {
+      now:new Date(now.getTime()+1_000),
+    });
+    expect(withinLease).toEqual([]);
+    expect((await runRow(created.run.id)).phase).toBe('planning');
+
+    const expiredAt = new Date(now.getTime()+3_000);
+    const [left,right] = await Promise.all([
+      reconcileOwnerlessKernelRuns(testPool,{now:expiredAt}),
+      reconcileOwnerlessKernelRuns(testPool,{now:expiredAt}),
+    ]);
+    expect([...left,...right].filter((row)=>row.runId===created.run.id)).toHaveLength(1);
+    expect((await runRow(created.run.id)).phase).toBe('failed');
   });
 });

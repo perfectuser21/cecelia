@@ -79,6 +79,7 @@ export async function handleKernelProcessFatal(pool, { runId, expectedTaskId, fa
     expectedTaskId,
     outcome: 'failed',
     reason: failureReason,
+    closeControllerSession: false,
   });
   // finalizeKernelRun 不清 controller_session_id → Controller ownership 记录存活。
   return { controllerAlive: true, failureReason, run: result?.run ?? null };
@@ -97,7 +98,8 @@ export async function handleKernelProcessFatal(pool, { runId, expectedTaskId, fa
 export async function reconcileOwnerlessKernelRuns(pool, { now = new Date() } = {}) {
   const { rows } = await pool.query(
     `SELECT id, current_task_id, phase,
-            controller_session_id, controller_lease_expires_at
+            controller_session_id, controller_generation,
+            controller_lease_expires_at
        FROM initiative_runs
       WHERE orchestrator_version = 'v2'
         AND phase NOT IN ('done', 'failed')
@@ -119,12 +121,16 @@ export async function reconcileOwnerlessKernelRuns(pool, { now = new Date() } = 
       : 'controller_lease_expired';
     const failureReason = structuredFailureReason(OWNERLESS_RECOVERED_REASON_PREFIX, cause);
     try {
-      await finalizeKernelRun(pool, {
+      const finalized = await finalizeKernelRun(pool, {
         runId: run.id,
         expectedTaskId: run.current_task_id,
         outcome: 'failed',
         reason: failureReason,
+        expectedControllerSessionId: run.controller_session_id,
+        expectedControllerGeneration: run.controller_generation,
+        controllerExpiredAt: now,
       });
+      if (!finalized.changed) continue;
       recovered.push({
         runId: run.id, taskId: run.current_task_id, cause, failureReason,
       });

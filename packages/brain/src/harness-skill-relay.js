@@ -235,11 +235,9 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
   // 必为合法枚举；此调用是二次确认（defense-in-depth）。若真抛出，发生在 createRun 之前、
   // 无半态 run，作为 spawn 失败向上抛给调用方，仍是 fail-closed。
   const gear = deriveGear(task);
-  // 启动链收敛（sprint 08131104 缺陷①）：Dispatcher→Controller→Kernel。Session Controller
-  // 在拉起 Kernel 之前先取得 ownership —— controllerSessionId 随 createKernelRun 在同一创建事务
-  // 里落库（controller_session_id 先于 Kernel 可执行态），createKernelRun fail-closed 校验后才建 run。
+  // 启动链收敛：Dispatcher→Controller→Kernel。createKernelRun 在同一事务内
+  // 由服务端签发 durable Controller authority，然后才返回可执行 run。
   // 由此 payload.harness_runtime=kernel-v1 直打也不会产生 detached 无主 Kernel（issue 962d399c）。
-  const controllerSessionId = deps.controllerSessionId ?? randomUUID();
   const createRun = deps.createKernelRun ?? createKernelRun;
   const created = await createRun(dbPool, {
     taskId: task.id,
@@ -251,7 +249,6 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
     deadlineHours: 8,
     createdSource: 'kernel_dispatch',
     gear,
-    controllerSessionId,
   });
   const runId = created.run?.id;
   if (!runId) throw new Error('kernel-v1 run authority returned no id');
@@ -719,7 +716,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
             `INSERT INTO initiative_runs
                (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
                 deadline_at, ability_id, current_task_id, created_source)
-             VALUES ($1, 'A_planning', $2, 'v2', 'skill-relay-grok',
+             VALUES ($1, 'A_planning', $2, 'v1', 'skill-relay-grok',
                      NOW() + INTERVAL '${GROK_RELAY_DEADLINE_HOURS} hours',
                      $3, $4, 'legacy_relay')`,
             [initiativeId, task.payload?.journey_id || null, abilityId, task.id]
@@ -760,7 +757,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       `INSERT INTO initiative_runs
          (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
           deadline_at, ability_id, current_task_id, created_source)
-       VALUES ($1, 'A_planning', $2, 'v2', '${orchestratorHost}',
+       VALUES ($1, 'A_planning', $2, 'v1', '${orchestratorHost}',
                NOW() + INTERVAL '${deadlineHours} hours', $3, $4, 'legacy_relay')`,
       [initiativeId, task.payload?.journey_id || null, abilityId, task.id]
     );
@@ -866,7 +863,7 @@ async function _spawnXianBridgeSession(task, { dbPool, now, short, initiativeId,
     `INSERT INTO initiative_runs
        (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
         deadline_at, ability_id, current_task_id, created_source)
-     VALUES ($1, 'A_planning', $2, 'v2', $3,
+     VALUES ($1, 'A_planning', $2, 'v1', $3,
              NOW() + INTERVAL '${XIAN_RELAY_DEADLINE_HOURS} hours',
              $4, $5, 'legacy_relay')`,
     [initiativeId, task.payload?.journey_id || null, 'skill-relay-xian', abilityId, task.id]
@@ -1205,7 +1202,7 @@ async function _spawnHeadedSession(task, {
     `INSERT INTO initiative_runs
        (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
         deadline_at, ability_id, current_task_id, created_source)
-     VALUES ($1, 'A_planning', $2, 'v2', '${headedHost}',
+     VALUES ($1, 'A_planning', $2, 'v1', '${headedHost}',
              NOW() + INTERVAL '${HEADED_RELAY_DEADLINE_HOURS} hours',
              $3, $4, 'legacy_relay')`,
     [initiativeId, task.payload?.journey_id || null, headedAbilityId, task.id]

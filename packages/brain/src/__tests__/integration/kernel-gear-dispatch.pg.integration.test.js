@@ -199,6 +199,30 @@ beforeAll(createIsolatedDatabase, 60_000);
 afterAll(dropIsolatedDatabase, 30_000);
 
 describe('kernel gear：initiative_runs.gear round-trip + observed.gear 注入（真 PG）', () => {
+  it.each([
+    ['new_capability','spawn:planner'],
+    ['capability_change','spawn:planner'],
+    ['bugfix','spawn:generator'],
+    ['parameter_only','spawn:generator'],
+  ])('%s 真 route receipt→run→ground truth→derive = %s', async (changeKind,action) => {
+    const seeded = await seedRoutedKernelTask(testPool, {
+      titlePrefix:`four-form-${changeKind}`,changeKind,
+    });
+    const created = await createRoutedKernelRun(testPool, {
+      taskId:seeded.taskId,initiativeId:seeded.initiativeId,phase:'planning',
+      journeyId:null,abilityId:null,host:'kernel-v1',deadlineHours:8,
+      createdSource:'kernel_dispatch',
+    });
+    const observed = await collect(seeded.taskId,created.run.id,seeded.payload);
+    expect(observed.change_kind).toBe(changeKind);
+    expect(derive({
+      ...observed,
+      counters:deriveCounters(observed.decisionLog,{
+        proposeBranchMaxRn:observed.proposeBranchRn,
+      }),
+    }).action).toBe(action);
+  });
+
   it('gear 列可 round-trip 且 collectGroundTruth 注入 observed.gear 等于持久化值（hotfix，真 PG）', async () => {
     const { initiativeId, taskId, payload } = await seedTask('hotfix');
     const created = await createRoutedKernelRun(testPool, {

@@ -116,10 +116,9 @@ describe('spawnSkillRelaySession', () => {
       // TASK.payload 无 gear ⇒ 'default'（存量任务零影响，与旧行为等价）。
       gear: 'default',
     }));
-    // 启动链收敛（sprint 08131104）：Controller 先取 ownership —— createKernelRun 必带 controllerSessionId。
+    // Controller identity 不由 relay 注入；权威 ID 在 createKernelRun 事务内签发。
     const kernelRunInput = deps.createKernelRun.mock.calls[0][1];
-    expect(typeof kernelRunInput.controllerSessionId).toBe('string');
-    expect(kernelRunInput.controllerSessionId.length).toBeGreaterThan(0);
+    expect(kernelRunInput).not.toHaveProperty('controllerSessionId');
     expect(deps.launchKernel).toHaveBeenCalledWith(expect.objectContaining({
       taskId: TASK.id,
       runId: KERNEL_RUN_ID,
