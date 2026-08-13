@@ -61,9 +61,12 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       `INSERT INTO tasks (
          title, description, priority, task_type, status,
          project_id, area_id, goal_id, location, payload, trigger_source,
-         domain, okr_initiative_id, ability_id, blocked_at
+         domain, okr_initiative_id, ability_id, blocked_at,
+         tags, prd_content, execution_profile, owner_role, delivery_type,
+         created_by, dept, phase, executor_kind
        ) VALUES (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,
+         $16,$17,$18,$19,$20,$21,$22,$23,$24
        ) RETURNING *`,
       [
         request.title,
@@ -81,6 +84,15 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         task.okr_initiative_id ?? null,
         task.ability_id ?? null,
         task.blocked_at ?? null,
+        task.tags ?? [],
+        task.prd_content ?? null,
+        task.execution_profile ?? null,
+        task.owner_role ?? null,
+        task.delivery_type ?? 'code-only',
+        task.created_by ?? null,
+        task.dept ?? null,
+        task.phase ?? 'dev',
+        task.executor_kind ?? null,
       ],
     );
     const taskId = taskResult.rows[0].id;

@@ -1,8 +1,8 @@
 # Brain 模块定义
 
-**版本**: 1.272.37
+**版本**: 1.272.38
 
-## Unified Work Router（Brain 1.272.37）
+## Unified Work Router（Brain 1.272.38）
 
 所有 coding mutation 由 Work Router 正向选择四档 Kernel Harness profile，并以同一事务写入 task 与 append-only Routing Receipt。Kernel run 强制使用 fresh Universal Map 与 active Impact Contract；有头工具和无头 Dispatcher 在动作前验证同一 receipt。Generator Provider 使用冻结基线血统闸、受限 UID/capabilities、敏感环境剥离和禁用 pushurl。显式恢复 run 只接受可信前序 Generator 对精确 PR URL/SHA 的服务端证据。
 
