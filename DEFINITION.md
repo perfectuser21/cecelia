@@ -20,7 +20,7 @@
 - `harness-skill-relay` 启动链收敛为 Dispatcher→Controller→Kernel：Controller 先取 ownership 再拉起 Kernel；Kernel fatal 只结束 Kernel（Controller 存活、结构化脱敏 failure_reason 回传），Controller fatal / lease 过期 / 迁移前无主历史 run 一律 fail-closed 进恢复流程，不静默放行。
 - `orchestrator/derive.js` 真读 `change_kind` 分派执行 Profile：`bugfix`/`parameter_only` 初始态跳 Planner/GAN 直进 generate，`new_capability`/`capability_change` 保留全链；四档全部保留 Generate→Evaluate→Judge 与 merge fence；change_kind 与 gear 正交、禁互推导（决策 29ae54ae）。Schema 地板推进到 415。
 
-## Brain 1.272.37 — Fleet pgvector 运行时契约
+## Brain 1.272.38 — Fleet pgvector 运行时契约
 
 - Fleet 的隔离 PostgreSQL 基线改为固定 digest 的 `pgvector/pgvector:pg15`，与 migration 028 的 `CREATE EXTENSION vector` 要求一致。
 - NodeProfile、Worker、Probe、rollout、reconciler 与 runtime smoke 统一引用同一镜像，漂移继续 fail closed。
