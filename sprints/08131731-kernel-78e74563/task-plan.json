@@ -1,0 +1,28 @@
+{
+  "initiative_id": "intent:595f4fa7-91ff-4019-a962-3917b3a14db1:30",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain kernel 容量核算逻辑，无 UI/无远端 agent 协议/无 engine hooks",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "修复本机容量三层失真：真实 stats→physical≥8 / darwin 内核 pressure 映射 / 角色折算保底非零",
+      "scope": "① collectLocalStats 本机采集反映宿主真实资源（物理 mem/cores），使 calculatePhysicalCapacity 不再命中下限兜底 2；② platform-utils 新增 macPressureLevelToRatio(0→0/1→0.3/2→0.7/3→1，-1→null) 并在 fleet-resource-cache 采集侧对 darwin 本机接线 getMacOSMemoryPressure，-1 时回退既有 used_ratio；③ node-profile.getRoleCapacity 保底：baseCapacity≥1 时 capacity=Math.max(1,floor(base/weight)),baseCapacity=0 恒 0（不回退 offline/drained）",
+      "dod": [
+        "[BEHAVIOR] getRoleCapacity({baseCapacity:1,role:'proposer'}).capacity>=1 且 baseCapacity=0 恒 0（B-01/B-02/INV-1）",
+        "[BEHAVIOR] macPressureLevelToRatio 映射四点精确 + -1/非法→null（B-03/B-04）",
+        "[BEHAVIOR] calculatePhysicalCapacity(16384,10,400,0.5)>=8 守卫（B-05）",
+        "[BEHAVIOR] 部署后 curl capacity-budget us-mac-m4 physical>=8 且 effective>=4（B-06 真机接缝）",
+        "[ARTIFACT] platform-utils.js 导出 macPressureLevelToRatio；fleet-resource-cache.js 接线内核 pressure"
+      ],
+      "files": [
+        "packages/brain/src/platform-utils.js",
+        "packages/brain/src/fleet-resource-cache.js",
+        "packages/brain/src/routes/infra-status.js",
+        "packages/brain/src/orchestrator/fleet-node/node-profile.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
