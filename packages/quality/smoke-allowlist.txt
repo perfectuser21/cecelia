@@ -254,3 +254,4 @@ zenithjoy-schema-migration-smoke.sh
 map-reorg-smoke.sh
 scripts/ops/janitor.sh
 kernel-controller-ownership-smoke.sh
+kernel-controller-lease-renewal-smoke.sh
