@@ -8,11 +8,16 @@
 
 
 
-**Brain 版本**: 1.272.34
+**Brain 版本**: 1.272.35
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.35 — 冻结合同资产确定性排序
+
+- 已封存合同资产从 PostgreSQL 读回后，按与 JavaScript 完整性校验器相同的 Unicode 码点顺序规范化，消除数据库 locale 对大小写路径排序不同造成的 `order_or_duplicate` 假红。
+- source revision、内容摘要、字节数和 sealed manifest 继续逐项 fail-closed 校验；回归覆盖 F1 真实失败 Run 的 `gp-identity` / `RED-evidence` 混合大小写路径。
 
 ## Brain 1.272.32 — 已批准合同 TaskBundle 去重
 

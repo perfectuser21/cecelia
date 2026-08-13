@@ -5,6 +5,12 @@ export const CONTRACT_ARTIFACT_MAX_BYTES = 256 * 1024;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 
+export function compareContractArtifactPaths(leftPath, rightPath) {
+  if (leftPath < rightPath) return -1;
+  if (leftPath > rightPath) return 1;
+  return 0;
+}
+
 export function contractArtifactManifestDigest(artifacts) {
   const manifest = artifacts.map((artifact) => ({
     path: artifact.path,
@@ -61,7 +67,10 @@ export function validateContractArtifacts(artifacts, {
       throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:shape');
     }
     const artifactPath = assertContractArtifactPath(artifact.path);
-    if (previousPath != null && artifactPath <= previousPath) {
+    if (
+      previousPath != null
+      && compareContractArtifactPaths(previousPath, artifactPath) >= 0
+    ) {
       throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:order_or_duplicate');
     }
     previousPath = artifactPath;
@@ -144,7 +153,7 @@ export function collectApprovedContractArtifacts({
   const optionalPath = `${sprintDir}/task-plan.md`;
   const optionalPaths = listedSprintPaths.includes(optionalPath) ? [optionalPath] : [];
   const candidatePaths = [...requiredPaths, ...optionalPaths, ...testPaths];
-  const uniquePaths = [...new Set(candidatePaths)].sort();
+  const uniquePaths = [...new Set(candidatePaths)].sort(compareContractArtifactPaths);
   if (uniquePaths.length !== candidatePaths.length) {
     throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:duplicate_path');
   }

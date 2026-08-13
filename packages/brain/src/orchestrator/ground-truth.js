@@ -30,6 +30,7 @@ import { sanitizeDiagnostic } from './failure-persistence.js';
 import { loadCaseFile } from './case-file-store.js';
 import { CASE_FILE_FULL_TEXT_ROUNDS } from './constants.js';
 import {
+  compareContractArtifactPaths,
   contractArtifactManifestDigest,
   validateContractArtifacts,
 } from './contract-artifacts.js';
@@ -278,7 +279,10 @@ export async function collectGroundTruth(deps, opts) {
         ORDER BY path`,
       [run.contract_id],
     );
-    contractArtifacts = artifactRes.rows.map(({
+    const orderedArtifactRows = [...artifactRes.rows].sort((left, right) => (
+      compareContractArtifactPaths(left.path, right.path)
+    ));
+    contractArtifacts = orderedArtifactRows.map(({
       sealed_artifact_count: _sealedArtifactCount,
       sealed_manifest_sha256: _sealedManifestSha256,
       sealed_source_revision: _sealedSourceRevision,
@@ -288,7 +292,7 @@ export async function collectGroundTruth(deps, opts) {
       try {
         validateContractArtifacts(contractArtifacts, { requireTests: true, requireCore: true });
         const manifestDigest = contractArtifactManifestDigest(contractArtifacts);
-        const sealRowsMatch = artifactRes.rows.every((row) => (
+        const sealRowsMatch = orderedArtifactRows.every((row) => (
           Number(row.sealed_artifact_count) === contractArtifacts.length
           && row.sealed_manifest_sha256 === manifestDigest
           && row.sealed_source_revision === contractArtifacts[0].source_revision
