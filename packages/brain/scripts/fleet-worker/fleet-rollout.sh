@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 RUNNER_DIGEST='sha256:2102fb112d1d0f809ce2e7b08d152e58294541e89bc0a6d790ad32dbf4802108'
-POSTGRES_IMAGE='postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777'
+POSTGRES_IMAGE='pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62'
 POSTGRES_TAG="${POSTGRES_IMAGE%@*}"
 FLEET_WORKER_LABEL='com.perfect21.fleet-worker'
 FLEET_WORKER_DRAIN_MARKER='/var/run/cecelia/fleet-worker.drain'

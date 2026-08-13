@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, existsSync } from 'node:fs';
+import { mkdtempSync, existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const { spawnMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
@@ -94,6 +95,69 @@ describe('launchKernelProcess detached spawn receipt', () => {
     } finally {
       if (prev === undefined) delete process.env.CECELIA_KERNEL_LOG_DIR;
       else process.env.CECELIA_KERNEL_LOG_DIR = prev;
+    }
+  });
+
+  it('刀0遗留缺口修复：未设置 CECELIA_KERNEL_LOG_DIR 时，落盘目录落在 REPO_ROOT/logs/kernel/，不是 /tmp/', async () => {
+    const fakeRepoRoot = mkdtempSync(join(tmpdir(), 'repo-root-'));
+    const prevDir = process.env.CECELIA_KERNEL_LOG_DIR;
+    const prevRoot = process.env.REPO_ROOT;
+    delete process.env.CECELIA_KERNEL_LOG_DIR;
+    process.env.REPO_ROOT = fakeRepoRoot;
+    try {
+      spawnMock.mockReturnValueOnce(okChild());
+      const runId = '55555555-5555-4555-8555-555555555555';
+      await launchKernelProcess({
+        taskId: '66666666-6666-4666-8666-666666666666',
+        runId,
+        worktreePath: '/tmp',
+      });
+      const opts = spawnMock.mock.calls.at(-1)[2];
+      const expectedLogPath = join(fakeRepoRoot, 'logs', 'kernel', `kernel-${runId}.log`);
+      expect(opts.env.CECELIA_KERNEL_LOG_PATH).toBe(expectedLogPath);
+      expect(existsSync(expectedLogPath)).toBe(true);
+      expect(expectedLogPath.startsWith('/tmp/cecelia-kernel-logs')).toBe(false);
+    } finally {
+      if (prevDir === undefined) delete process.env.CECELIA_KERNEL_LOG_DIR;
+      else process.env.CECELIA_KERNEL_LOG_DIR = prevDir;
+      if (prevRoot === undefined) delete process.env.REPO_ROOT;
+      else process.env.REPO_ROOT = prevRoot;
+    }
+  });
+
+  it('刀0遗留缺口修复：CECELIA_KERNEL_LOG_DIR 和 REPO_ROOT 都未设置时，真的走 import.meta.url 兜底算出真实 repo 根（3级不是4级）', async () => {
+    const prevDir = process.env.CECELIA_KERNEL_LOG_DIR;
+    const prevRoot = process.env.REPO_ROOT;
+    delete process.env.CECELIA_KERNEL_LOG_DIR;
+    delete process.env.REPO_ROOT;
+    // 独立重算 harness-skill-relay.js 内 `new URL('../../..', import.meta.url)` 的结果：
+    // 从本测试文件（packages/brain/src/__tests__/）出发，先用同一相对路径写法定位到
+    // harness-skill-relay.js 本身的 URL（等价于该模块内部看到的 import.meta.url），
+    // 再套用源码里完全相同的 '../../..' 得到 repo 根——不是硬编码绝对路径，也不读环境变量，
+    // 真正验证的是 3 级而非 4 级这个本 Task 的核心易错点。
+    const relaySourceUrl = new URL('../harness-skill-relay.js', import.meta.url);
+    const repoRootPath = fileURLToPath(new URL('../../..', relaySourceUrl));
+    let expectedLogPath;
+    try {
+      spawnMock.mockReturnValueOnce(okChild());
+      const runId = '77777777-7777-4777-8777-777777777777';
+      await launchKernelProcess({
+        taskId: '88888888-8888-4888-8888-888888888888',
+        runId,
+        worktreePath: '/tmp',
+      });
+      const opts = spawnMock.mock.calls.at(-1)[2];
+      expectedLogPath = join(repoRootPath, 'logs', 'kernel', `kernel-${runId}.log`);
+      expect(opts.env.CECELIA_KERNEL_LOG_PATH).toBe(expectedLogPath);
+      expect(existsSync(expectedLogPath)).toBe(true);
+    } finally {
+      if (prevDir === undefined) delete process.env.CECELIA_KERNEL_LOG_DIR;
+      else process.env.CECELIA_KERNEL_LOG_DIR = prevDir;
+      if (prevRoot === undefined) delete process.env.REPO_ROOT;
+      else process.env.REPO_ROOT = prevRoot;
+      // 这条测试没有 CECELIA_KERNEL_LOG_DIR/REPO_ROOT 兜底隔离，会在真实 worktree 的
+      // logs/kernel/ 下落一个真文件（该目录已 .gitignore，不影响 git 状态）；测完自扫。
+      if (expectedLogPath && existsSync(expectedLogPath)) unlinkSync(expectedLogPath);
     }
   });
 });

@@ -21,7 +21,7 @@ const DEFAULT_CALLBACK_URL = 'http://127.0.0.1:5221/api/brain/health';
 const DEFAULT_DRAIN_MARKER = '/var/run/cecelia/fleet-worker.drain';
 const DEFAULT_WORKER_VERSION = '1.272.14';
 const DEFAULT_RUNNER_VERSION = 'cecelia-runner/v1';
-const DEFAULT_POSTGRES_IMAGE = 'postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777';
+const DEFAULT_POSTGRES_IMAGE = 'pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62';
 const MAX_CLOCK_OFFSET_SECONDS = 1;
 const EMPTY_DIGEST = `sha256:${'0'.repeat(64)}`;
 

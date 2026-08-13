@@ -143,6 +143,7 @@ kernel-fleet-transport-smoke.sh
 kernel-fleet-verification-smoke.sh
 kernel-frozen-baseline-guard-smoke.sh
 kernel-gear-dispatch-smoke.sh
+kernel-log-persist-smoke.sh
 kernel-run-exact-api-smoke.sh
 kernel-run-identity-terminalization-smoke.sh
 kernel-runtime-resource-smoke.sh
@@ -253,3 +254,4 @@ zenithjoy-db-pool-smoke.sh
 zenithjoy-schema-migration-smoke.sh
 map-reorg-smoke.sh
 scripts/ops/janitor.sh
+kernel-controller-ownership-smoke.sh

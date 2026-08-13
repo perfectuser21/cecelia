@@ -1165,6 +1165,32 @@ describe('规则 3a：contract approved && !pr', () => {
   });
 });
 
+describe('跨 Run 恢复：已有 PR 必须由当前 Run 的 Generator 重新封印', () => {
+  it.each(['default', 'segmented'])(
+    'gear=%s 且当前 Run 没有 Generator 证据时先派 generator-fix，不越级进 Evaluator',
+    (gear) => {
+      const r = derive(baseObserved({
+        gear,
+        generatorSpawned: false,
+        decisionLog: [],
+        pr: {
+          url: 'https://github.com/perfectuser21/cecelia/pull/4851',
+          state: 'OPEN',
+          ci: 'pass',
+          merged: false,
+          head_sha: '5fcb7b48b7f6cff567da93e79b6e7b463ace29e8',
+        },
+      }));
+
+      expect(r).toEqual({
+        phase: 'generate',
+        action: 'spawn:generator-fix',
+        reason: 'current_run_generator_required_for_existing_pr',
+      });
+    },
+  );
+});
+
 describe('规则 3d：exit/auth 观测分路（P0-3，routeAfterCallback ci_fail_type∈{container_exit,auth_failed}→fix）', () => {
   it('evaluator provider 退出 → 重派 evaluator，不误派 generator-fix', () => {
     const r = derive(baseObserved({

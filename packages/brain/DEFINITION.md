@@ -1,6 +1,14 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.272.66
+**Brain 版本**: 1.273.1
+
+## Unified Router × Session Controller 集成（Brain 1.273.1）
+
+- 统一 Work Router、Map/Impact 前置、服务端 Judge 与受信 Publisher 保持完整闭环。
+- Kernel Run 创建同时写入恢复/合同血统与 Session Controller ownership/lease；任一身份缺失均 fail-closed。
+- Schema 413—418 承载 Router/Map/合同治理，Session Controller ownership 顺延为 migration 419；Fleet 同时采用已验证 Runner 与 pgvector 运行时。
+
+## Server-authoritative Judge Verdict（Brain 1.272.66）
 
 ## Server-authoritative Judge Verdict（Brain 1.272.66）
 
@@ -79,6 +87,18 @@
 ## Unified Work Router（Brain 1.272.46）
 
 所有 coding mutation 由 Work Router 正向选择四档 Kernel Harness profile，并以同一事务写入 task 与 append-only Routing Receipt。Kernel run 强制使用 fresh Universal Map 与 active Impact Contract；有头工具和无头 Dispatcher 在动作前验证同一 receipt。Generator Provider 使用冻结基线血统闸、受限 UID/capabilities、敏感环境剥离和禁用 pushurl。Map 恢复合同与 Generator Attempt 以 append-only 消费事实原子绑定，仅允许冻结 Map 路径，merge 前要求目标 revision 全量事实恢复 fresh。Capture atom 持久化 repo、change_kind、Map scope 与 Git baseline，确认时不再丢失路由事实。显式 Capability 起点会沿 implements/proves/affects 反向下钻至 feature 与必跑 assertion；scratch smoke 用真实三入口、真实 Journey anchor 和 revision 命名空间验证可重复闭环。War Room 展示 receipt/Map/Impact Contract 审计字段和 Route/Map 覆盖率、direct dev、legacy、violation 指标；路由、preflight、合同和无头违规写稳定事件。Schema 地板为 417。
+## Fleet pgvector runtime contract（Brain 1.272.38）
+
+## Fleet pgvector runtime contract
+
+- Fleet 的隔离 PostgreSQL 运行时固定为与 Cecelia migration 契约一致的 `pgvector/pgvector:pg15` 镜像；Evaluator 声明 `runtime_resources.postgres=true` 时可完整执行包含 `CREATE EXTENSION vector` 的全库 bootstrap。
+- NodeProfile、Worker、Probe、rollout、reconciler 与 runtime smoke 共用同一不可变 digest，镜像漂移继续 fail closed。
+- 下游 TaskBundle 结构化透传冻结 GP Contract identity；Evaluator PASS receipt 只有在该 identity 命中 signed `golden_path_contract_versions` 与所属 Journey 时才会写入 `gp_contract_id/hash`。
+
+## Frozen contract artifact deterministic ordering
+
+- Kernel 从 PostgreSQL 读取已封存合同资产后，统一按与完整性校验器相同的 Unicode 码点顺序规范化路径；数据库 locale 不再把小写测试路径排到大写路径前并误报 `order_or_duplicate`。
+- 不可变内容、source revision、SHA-256、字节数与 sealed manifest 校验保持 fail-closed；回归测试覆盖生产 F1 Run 出现的 `gp-identity` / `RED-evidence` 混合大小写路径。
 
 ## Approved contract TaskBundle deduplication
 
@@ -332,7 +352,7 @@ open → assigned → fixing → verifying → resolved
 
 - Fleet Worker `1.267.95` 在离线载入 Runner archive 后，如果 pinned PostgreSQL 的
   repository-qualified digest 尚不可解析，会先验证 archive 已提供完全相同的裸 digest，
-  再恢复 `postgres:16-alpine` tag 并复验完整 pinned 引用；缺少精确内容仍 fail closed。
+  再恢复 `pgvector/pgvector:pg15` tag 并复验完整 pinned 引用；缺少精确内容仍 fail closed。
 - rollout producer 在导出 archive 前把已验证的完整 PostgreSQL digest 映射到固定 tag，
   新 archive 不再生成 `RepoTags: null` 的 PostgreSQL 记录；节点 bootstrap 不增加 registry
   依赖，Runner digest、NodeProfile 与 Worker 健康合同保持不变。

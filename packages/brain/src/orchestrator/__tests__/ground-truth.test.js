@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
 import { collectGroundTruth } from '../ground-truth.js';
 import { derive } from '../derive.js';
+import { contractArtifactManifestDigest } from '../contract-artifacts.js';
 
 const RUN_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const TASK_ID = '11111111-2222-4333-8444-555555555555';
@@ -398,6 +399,50 @@ describe('collectGroundTruth：DB 通道组装', () => {
     ));
     expect(sql).toMatch(/ORDER BY path/);
     expect(params).toEqual([CONTRACT_ID]);
+  });
+
+  it('数据库 collation 把小写路径排在大写路径前时仍恢复为 JS 确定性顺序', async () => {
+    const revision = '6faaa9f55e9789ffd29fd2760a9b5994df272e86';
+    const artifact = (path, content) => ({
+      path,
+      content,
+      sha256: createHash('sha256').update(content).digest('hex'),
+      byte_length: Buffer.byteLength(content),
+      source_revision: revision,
+    });
+    const canonical = [
+      artifact('sprints/router/contract-dod.md', '# DoD'),
+      artifact('sprints/router/contract-draft.md', '# Contract'),
+      artifact('sprints/router/sprint-prd.md', '# PRD'),
+      artifact('sprints/router/tests/RED-evidence.txt', 'RED'),
+      artifact('sprints/router/tests/gp-identity.test.mjs', 'test("gp", () => {})'),
+    ];
+    const manifestDigest = contractArtifactManifestDigest(canonical);
+    const withSeal = (row) => ({
+      ...row,
+      sealed_artifact_count: canonical.length,
+      sealed_manifest_sha256: manifestDigest,
+      sealed_source_revision: revision,
+    });
+    // 生产 PostgreSQL locale 的真实顺序：小写 gp 在大写 RED 之前。
+    const databaseOrder = [
+      ...canonical.slice(0, 3),
+      canonical[4],
+      canonical[3],
+    ].map(withSeal);
+    const deps = makeDeps({
+      rows: {
+        contracts: [{ id: CONTRACT_ID, status: 'approved' }],
+        contractArtifacts: databaseOrder,
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.contract.artifact_error).toBeNull();
+    expect(observed.contract.artifacts.map(({ path }) => path)).toEqual(
+      canonical.map(({ path }) => path),
+    );
   });
 
   it('artifact 行数与 seal 不一致时标记 frozen contract 读取失败', async () => {

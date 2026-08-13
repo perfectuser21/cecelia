@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const CANONICAL_IDS = ['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1'];
 const EXPECTED_RUNNER_DIGEST = 'sha256:2102fb112d1d0f809ce2e7b08d152e58294541e89bc0a6d790ad32dbf4802108';
-const EXPECTED_POSTGRES_IMAGE = 'postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777';
+const EXPECTED_POSTGRES_IMAGE = 'pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62';
 const EXPECTED_CAPACITIES = {
   'us-mac-m4': 7,
   'xian-mac-m4': 8,
@@ -59,11 +59,21 @@ describe('Fleet NodeProfile registry', () => {
       new URL('../../../scripts/fleet-worker/reconcile-fleet-node-baseline.sh', import.meta.url),
       'utf8',
     );
+    const worker = readFileSync(
+      new URL('../../../scripts/fleet-worker/fleet-worker.cjs', import.meta.url),
+      'utf8',
+    );
+    const probe = readFileSync(
+      new URL('../../../scripts/fleet-worker/node-probe.cjs', import.meta.url),
+      'utf8',
+    );
 
     expect(listNodeProfiles().map((profile) => profile.runtime_resources.postgres.image_digest))
       .toEqual([EXPECTED_POSTGRES_IMAGE, EXPECTED_POSTGRES_IMAGE, EXPECTED_POSTGRES_IMAGE]);
     expect(rollout).toContain(`POSTGRES_IMAGE='${EXPECTED_POSTGRES_IMAGE}'`);
     expect(reconciler).toContain(`POSTGRES_IMAGE='${EXPECTED_POSTGRES_IMAGE}'`);
+    expect(worker).toContain(`const POSTGRES_IMAGE = '${EXPECTED_POSTGRES_IMAGE}'`);
+    expect(probe).toContain(`const DEFAULT_POSTGRES_IMAGE = '${EXPECTED_POSTGRES_IMAGE}'`);
   });
 
   it('pins one immutable sha256 Runner digest and never admits a floating tag', async () => {

@@ -336,9 +336,9 @@ grep -Eq 'fetch --no-tags .* 0000000000000000000000000000000000000001$' \
   || fail "rollout bundle did not fetch the frozen commit"
 grep -Fq 'docker save --output' "$artifact_log" \
   || fail "rollout did not export the Runner image"
-grep -Fq 'docker image tag postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777 postgres:16-alpine' "$artifact_log" \
+grep -Fq 'docker image tag pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62 pgvector/pgvector:pg15' "$artifact_log" \
   || fail "rollout did not preserve the pinned PostgreSQL repository tag"
-grep -Eq 'docker save --output .* sha256:2102fb112d1d0f809ce2e7b08d152e58294541e89bc0a6d790ad32dbf4802108 postgres:16-alpine$' "$artifact_log" \
+grep -Eq 'docker save --output .* sha256:2102fb112d1d0f809ce2e7b08d152e58294541e89bc0a6d790ad32dbf4802108 pgvector/pgvector:pg15$' "$artifact_log" \
   || fail "rollout archive did not save the tagged PostgreSQL reference"
 grep -Fq 'docker run --rm --entrypoint sh' "$artifact_log" \
   && fail "rollout still uses a static source-string image contract"

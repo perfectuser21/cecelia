@@ -30,6 +30,7 @@ import { sanitizeDiagnostic } from './failure-persistence.js';
 import { loadCaseFile } from './case-file-store.js';
 import { CASE_FILE_FULL_TEXT_ROUNDS } from './constants.js';
 import {
+  compareContractArtifactPaths,
   contractArtifactManifestDigest,
   validateContractArtifacts,
 } from './contract-artifacts.js';
@@ -313,7 +314,10 @@ export async function collectGroundTruth(deps, opts) {
         ORDER BY path`,
       [run.contract_id],
     );
-    contractArtifacts = artifactRes.rows.map(({
+    const orderedArtifactRows = [...artifactRes.rows].sort((left, right) => (
+      compareContractArtifactPaths(left.path, right.path)
+    ));
+    contractArtifacts = orderedArtifactRows.map(({
       sealed_artifact_count: _sealedArtifactCount,
       sealed_manifest_sha256: _sealedManifestSha256,
       sealed_source_revision: _sealedSourceRevision,
@@ -323,7 +327,7 @@ export async function collectGroundTruth(deps, opts) {
       try {
         validateContractArtifacts(contractArtifacts, { requireTests: true, requireCore: true });
         const manifestDigest = contractArtifactManifestDigest(contractArtifacts);
-        const sealRowsMatch = artifactRes.rows.every((row) => (
+        const sealRowsMatch = orderedArtifactRows.every((row) => (
           Number(row.sealed_artifact_count) === contractArtifacts.length
           && row.sealed_manifest_sha256 === manifestDigest
           && row.sealed_source_revision === contractArtifacts[0].source_revision
@@ -824,6 +828,11 @@ export async function collectGroundTruth(deps, opts) {
     // 供 derive 状态机分叉。缺省（列 NULL / 存量行）→ 'default'，行为与现行逐字节等价（零回归）。
     // gear 是 observed 的可选字段，不进 derive 的 REQUIRED_FIELDS（否则存量用例全炸）。
     gear: run.gear ?? 'default',
+    // change_kind 执行 Profile（sprint 08131104）：镜像 gear 注入路径，把持久化的
+    // initiative_runs.change_kind 每跳注入 observed，供 derive 按四档分派相位链。
+    // 缺省（列不存在 / 存量 run / NULL）→ null，derive 不分叉（零回归）。change_kind 与
+    // gear 独立注入、独立计算，禁互推导（决策 29ae54ae）。
+    change_kind: run.change_kind ?? null,
     prdExists,
     prdEvidence,
     plannerPrdArtifact,

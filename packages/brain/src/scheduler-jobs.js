@@ -169,6 +169,13 @@ let running = false;
 
 /** 启动 60s 轮询 loop（幂等：重复调用返回同一 timer）。 */
 export function startSchedulerJobsLoop(pool) {
+  // Preview Brain 隔离闸：BRAIN_PREVIEW=1 时禁止启动 scheduler loop，防并发重复派发。
+  // 与 harness-skill-relay.js:338 守卫条件保持一致（同样检查 '1' 和 'true'）。
+  const preview = process.env.BRAIN_PREVIEW;
+  if (preview === '1' || preview === 'true') {
+    console.log('[scheduler-jobs] BRAIN_PREVIEW — scheduler loop skipped in preview mode');
+    return null;
+  }
   if (loopTimer) return loopTimer;
   // 供死人开关比对：预期 job 数写库，加 job 自动同步，哨兵脚本无需硬编码
   writeSentinelRaw(pool, 'scheduler_jobs_expected', { count: JOBS.length });
@@ -208,6 +215,12 @@ function runProjectionIteration(pool, runOnce) {
 
 /** 独立 projection loop：启动即跑，之后每 60s 一轮，不受慢速串行 job 阻塞。 */
 export function startProjectionJobsLoop(pool, { runOnce = runSchedulerJobsOnce } = {}) {
+  // Preview Brain 隔离闸：与 startSchedulerJobsLoop 守卫一致。
+  const preview = process.env.BRAIN_PREVIEW;
+  if (preview === '1' || preview === 'true') {
+    console.log('[projection-jobs] BRAIN_PREVIEW — projection loop skipped in preview mode');
+    return null;
+  }
   if (projectionLoopTimer) return projectionLoopTimer;
   runProjectionIteration(pool, runOnce);
   projectionLoopTimer = setInterval(

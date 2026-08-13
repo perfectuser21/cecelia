@@ -19,10 +19,13 @@ import { DB_DEFAULTS } from '../../db-config.js';
 import { derive } from '../../orchestrator/derive.js';
 import { deriveCounters } from '../../orchestrator/counters.js';
 import { collectGroundTruth } from '../../orchestrator/ground-truth.js';
-import { createKernelRun } from '../../orchestrator/kernel-run-store.js';
 import { createAttemptStore } from '../../orchestrator/attempt-store.js';
 import { resolveAction } from '../../orchestrator/dispatcher.js';
 import { runLoop } from '../../orchestrator/loop.js';
+import {
+  createRoutedKernelRun,
+  seedRoutedKernelTask,
+} from './helpers/routed-kernel-fixture.js';
 
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -98,12 +101,13 @@ async function seedTask(gear) {
     initiative_id: initiativeId,
     ...(gear === undefined ? {} : { gear }),
   };
-  await testPool.query(
-    `INSERT INTO tasks (id, title, status, priority, task_type, trigger_source, payload)
-     VALUES ($1, $2, 'in_progress', 'P2', 'harness_initiative', 'api', $3::jsonb)`,
-    [taskId, `kernel-gear-${taskId}`, JSON.stringify(payload)],
-  );
-  return { initiativeId, taskId, payload };
+  return seedRoutedKernelTask(testPool, {
+    titlePrefix: 'kernel-gear',
+    initiativeId,
+    taskId,
+    changeKind: gear === 'hotfix' ? 'bugfix' : 'new_capability',
+    payload,
+  });
 }
 
 // collectGroundTruth 的外部观测替身（launcher/世界的读侧）：fileExists 返回 false ⇒ prdExists=false
@@ -197,7 +201,7 @@ afterAll(dropIsolatedDatabase, 30_000);
 describe('kernel gear：initiative_runs.gear round-trip + observed.gear 注入（真 PG）', () => {
   it('gear 列可 round-trip 且 collectGroundTruth 注入 observed.gear 等于持久化值（hotfix，真 PG）', async () => {
     const { initiativeId, taskId, payload } = await seedTask('hotfix');
-    const created = await createKernelRun(testPool, {
+    const created = await createRoutedKernelRun(testPool, {
       taskId,
       initiativeId,
       phase: 'planning',
@@ -206,6 +210,7 @@ describe('kernel gear：initiative_runs.gear round-trip + observed.gear 注入�
       host: 'kernel-v1',
       deadlineHours: 8,
       createdSource: 'kernel_dispatch',
+      controllerSessionId: randomUUID(),
       gear: 'hotfix',
     });
     expect(created.created).toBe(true);
@@ -223,7 +228,7 @@ describe('kernel gear：initiative_runs.gear round-trip + observed.gear 注入�
 
   it('gear 缺省时列写 NULL 且 collectGroundTruth 降级 observed.gear===default（零回归边界）', async () => {
     const { initiativeId, taskId, payload } = await seedTask(undefined);
-    const created = await createKernelRun(testPool, {
+    const created = await createRoutedKernelRun(testPool, {
       taskId,
       initiativeId,
       phase: 'planning',
@@ -232,6 +237,7 @@ describe('kernel gear：initiative_runs.gear round-trip + observed.gear 注入�
       host: 'kernel-v1',
       deadlineHours: 8,
       createdSource: 'kernel_dispatch',
+      controllerSessionId: randomUUID(),
       // gear 不传 → 列 NULL
     });
     const runId = created.run.id;
@@ -251,7 +257,7 @@ describe('kernel gear：hotfix run 一跳角色分布（真 collectGroundTruth+d
   it('hotfix 首角色 generator 无 planner/proposer/reviewer；default 首角色 planner（真 PG，时间窗防伪）', async () => {
     // hotfix run：初始态 derive 直进 generate → 首角色 generator
     const hotfix = await seedTask('hotfix');
-    const hotfixRun = await createKernelRun(testPool, {
+    const hotfixRun = await createRoutedKernelRun(testPool, {
       taskId: hotfix.taskId,
       initiativeId: hotfix.initiativeId,
       phase: 'planning',
@@ -260,6 +266,7 @@ describe('kernel gear：hotfix run 一跳角色分布（真 collectGroundTruth+d
       host: 'kernel-v1',
       deadlineHours: 8,
       createdSource: 'kernel_dispatch',
+      controllerSessionId: randomUUID(),
       gear: 'hotfix',
     });
     // observed.gear 真注入后 derive 分叉（纯函数断言，先于 loop 驱动确认分叉方向）
@@ -282,7 +289,7 @@ describe('kernel gear：hotfix run 一跳角色分布（真 collectGroundTruth+d
 
     // default run：零回归锚点——初始态 derive 仍进 planning → 首角色 planner
     const def = await seedTask('default');
-    const defRun = await createKernelRun(testPool, {
+    const defRun = await createRoutedKernelRun(testPool, {
       taskId: def.taskId,
       initiativeId: def.initiativeId,
       phase: 'planning',
@@ -291,6 +298,7 @@ describe('kernel gear：hotfix run 一跳角色分布（真 collectGroundTruth+d
       host: 'kernel-v1',
       deadlineHours: 8,
       createdSource: 'kernel_dispatch',
+      controllerSessionId: randomUUID(),
       gear: 'default',
     });
     const defDispatch = await driveOneHop({

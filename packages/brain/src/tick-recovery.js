@@ -108,6 +108,16 @@ async function tryRecoverTickLoop() {
     return;
   }
 
+  // Preview Brain 隔离：BRAIN_PREVIEW=1 时绝不拉起 tick loop（防双派发）
+  if (process.env.BRAIN_PREVIEW === '1' || process.env.BRAIN_PREVIEW === 'true') {
+    tickLog('[tick-loop] Recovery skipped: BRAIN_PREVIEW=1（Preview 模式）');
+    if (tickState.recoveryTimer) {
+      clearInterval(tickState.recoveryTimer);
+      tickState.recoveryTimer = null;
+    }
+    return;
+  }
+
   tickLog('[tick-loop] Recovery: attempting to start tick loop...');
 
   try {
@@ -167,6 +177,12 @@ async function tryRecoverTickLoop() {
  * every INIT_RECOVERY_INTERVAL_MS until tick loop is successfully started.
  */
 async function initTickLoop() {
+  // Preview Brain 隔离：BRAIN_PREVIEW=1 时克隆 DB tick_enabled=true，若不拦截会造成并发双派发。
+  // 必须在 alertness / watchdog / startTickLoop 之前早返。
+  if (process.env.BRAIN_PREVIEW === '1' || process.env.BRAIN_PREVIEW === 'true') {
+    tickLog('[tick-loop] BRAIN_PREVIEW=1 — Preview 模式，跳过 tick loop 启动');
+    return { success: true, enabled: false, loop_running: false, preview: true };
+  }
   // BRAIN_DEPLOY_CANARY=1：蓝绿部署的 green canary 只验证镜像健康，绝不跑 tick——
   // 否则 green 与 blue 连同一 DB 会 double-dispatch 抢任务（issue f38f989f）。
   // 必须在 auto-enable / alertness / watchdog 之前早返。

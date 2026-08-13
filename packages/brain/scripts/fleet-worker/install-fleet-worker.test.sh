@@ -259,7 +259,7 @@ printf '%s\n' \
   'source="$(cat)"' \
   'case "$source" in' \
   '  *runner_image_digest*) printf "%s" "sha256:2102fb112d1d0f809ce2e7b08d152e58294541e89bc0a6d790ad32dbf4802108" ;;' \
-  '  *runtime_resources.postgres.image_digest*) printf "%s" "postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777" ;;' \
+  '  *runtime_resources.postgres.image_digest*) printf "%s" "pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62" ;;' \
   '  *resources.disk_min_free_gib*) printf "%s" "10" ;;' \
   '  *worker_bind_host*) printf "%s" "100.86.57.69" ;;' \
   '  *brain_health_url*) printf "%s" "http://100.71.151.105:5221/api/brain/health" ;;' \
@@ -507,7 +507,7 @@ for required in \
 done
 grep -Eq '<string>sha256:[a-f0-9]{64}</string>' <<<"$plist_body" \
   || fail "plist does not pin the Runner digest"
-grep -Fq '<string>postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777</string>' <<<"$plist_body" \
+grep -Fq '<string>pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62</string>' <<<"$plist_body" \
   || fail "plist does not pin the PostgreSQL runtime image"
 grep -Fq "$log_dir/fleet-worker.stdout.log" <<<"$plist_body" \
   || fail "stdout log path is not bounded"

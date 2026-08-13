@@ -102,7 +102,7 @@ describe('legacy POST /orchestrator/relay-runs/:initiative_id', () => {
         created_source: 'foreground_handoff',
       },
     });
-    expect(mockCreateKernelRun).toHaveBeenCalledWith(mockPool, {
+    expect(mockCreateKernelRun).toHaveBeenCalledWith(mockPool, expect.objectContaining({
       taskId: TASK_ID,
       initiativeId: INITIATIVE_ID,
       phase: 'planning',
@@ -113,7 +113,12 @@ describe('legacy POST /orchestrator/relay-runs/:initiative_id', () => {
       createdSource: 'foreground_handoff',
       commanderMode: 'kernel-only',
       predecessorRunId: null,
-    }, {});
+      controllerSessionId: expect.any(String),
+    }), {});
+    // 启动不变量（sprint 08131104）：foreground handoff 也须带 Controller ownership。
+    const passedInput = mockCreateKernelRun.mock.calls[0][1];
+    expect(typeof passedInput.controllerSessionId).toBe('string');
+    expect(passedInput.controllerSessionId.length).toBeGreaterThan(0);
   });
 
   it('returns the existing active run as an idempotent 200', async () => {

@@ -6,7 +6,18 @@
  * - gear：描述"这次执行走哪个档位"（default/hotfix/segmented）
  * 两者独立计算、独立存储，禁止互相赋值或互相推导。
  *
- * sprint: 08110022-relay-d96c9fa0 ws1
+ * 四档正向默认映射 + 执行 Profile（决策 29ae54ae — sprint 08131104 Harness 入口统一）：
+ * derive.js 按 change_kind 分派执行 Profile，四档全部保留 Generate→Evaluate→Judge 与 merge fence：
+ *   - new_capability    → 全链（planning → GAN → generate → evaluate → judge）+ 人审
+ *   - capability_change → 轻 Planner + 合同收敛（planning + GAN 保留，收敛兜底存在）
+ *   - bugfix            → 跳 Planner、跳 GAN（初始态直进 generate；与 gear=hotfix 正交、由 change_kind 驱动）
+ *   - parameter_only    → 最轻档（跳 Planner/GAN 直进 generate）
+ * 映射方向为「正向默认」：task_type 未显式指定时按上表自动推导默认档；调用方可显式覆盖，
+ * 但只允许「升档」（如 bugfix → 显式 new_capability，走更重的链路）。
+ * 禁反向推导降档：严禁从更轻的执行档反向倒推 change_kind、也严禁把显式 change_kind 降到更轻的档
+ *（防止用 parameter_only 之类轻档绕过 Planner/GAN 评审门）。change_kind 与 gear 仍禁互推导。
+ *
+ * sprint: 08110022-relay-d96c9fa0 ws1；08131104-kernel-77f19b77（29ae54ae 四档 Profile）
  */
 
 /** 四档 change_kind 枚举（规范值） */

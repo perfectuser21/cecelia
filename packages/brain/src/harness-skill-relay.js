@@ -17,6 +17,7 @@ import pool from './db.js';
 import { findActiveRunBlockingSpawn } from './lib/harness-run-guard.js';
 import { normalizeChangeKind } from './impact-contract/change-kind.js';
 import { execSync, spawn as nodeSpawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, copyFileSync, openSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -134,9 +135,14 @@ export async function launchKernelProcess({
   if (resumeToken) args.push('--resume-token', resumeToken);
   // 刀0：detached kernel 的 stdout/stderr 落盘到宿主可见目录，替代 stdio:'ignore'。
   // 原先零遗言——kernel 卡死/崩溃时看不到任何栈（planner 停摆 debug 不能）。
-  // 落 CECELIA_KERNEL_LOG_DIR（默认 /tmp/cecelia-kernel-logs，compose 已 bind-mount
-  // prompt 目录同款可见），文件名带 runId 便于按 run 定位；打不开日志不阻断 spawn。
-  const logDir = process.env.CECELIA_KERNEL_LOG_DIR || '/tmp/cecelia-kernel-logs';
+  // 落 CECELIA_KERNEL_LOG_DIR，未设置时落 REPO_ROOT/logs/kernel/（bind-mount 持久路径，
+  // 复用 ops.js:2857 deploy-webhook 同款已验证模式；原先默认 /tmp/cecelia-kernel-logs 落
+  // 容器 tmpfs，Brain 每次部署重建容器即清空——诊断 planner 停摆恰好必然伴随一次部署，
+  // 缺口和原问题同形状，2026-08-13 生产实测确认。相对路径层级注意：本文件比 ops.js 浅
+  // 一层（无 routes/ 子目录），用 3 级 ../../.. 不是 4 级，已用 node 脚本验证过）。
+  // 文件名带 runId 便于按 run 定位；打不开日志不阻断 spawn。
+  const logDir = process.env.CECELIA_KERNEL_LOG_DIR
+    || join(process.env.REPO_ROOT || fileURLToPath(new URL('../../..', import.meta.url)), 'logs', 'kernel');
   let stdioSpec = 'ignore';
   let logPath = null;
   try {
@@ -229,6 +235,11 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
   // 必为合法枚举；此调用是二次确认（defense-in-depth）。若真抛出，发生在 createRun 之前、
   // 无半态 run，作为 spawn 失败向上抛给调用方，仍是 fail-closed。
   const gear = deriveGear(task);
+  // 启动链收敛（sprint 08131104 缺陷①）：Dispatcher→Controller→Kernel。Session Controller
+  // 在拉起 Kernel 之前先取得 ownership —— controllerSessionId 随 createKernelRun 在同一创建事务
+  // 里落库（controller_session_id 先于 Kernel 可执行态），createKernelRun fail-closed 校验后才建 run。
+  // 由此 payload.harness_runtime=kernel-v1 直打也不会产生 detached 无主 Kernel（issue 962d399c）。
+  const controllerSessionId = deps.controllerSessionId ?? randomUUID();
   const createRun = deps.createKernelRun ?? createKernelRun;
   const created = await createRun(dbPool, {
     taskId: task.id,
@@ -240,6 +251,7 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
     deadlineHours: 8,
     createdSource: 'kernel_dispatch',
     gear,
+    controllerSessionId,
   });
   const runId = created.run?.id;
   if (!runId) throw new Error('kernel-v1 run authority returned no id');

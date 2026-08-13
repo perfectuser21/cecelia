@@ -255,9 +255,9 @@ write_executable "$fake_bin/codesign" \
 write_executable "$fake_bin/docker" \
   '#!/usr/bin/env bash' \
   'runner_digest="sha256:2102fb112d1d0f809ce2e7b08d152e58294541e89bc0a6d790ad32dbf4802108"' \
-  'postgres_digest="sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777"' \
-  'postgres_reference="postgres:16-alpine@$postgres_digest"' \
-  'postgres_tag="postgres:16-alpine"' \
+  'postgres_digest="sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62"' \
+  'postgres_reference="pgvector/pgvector:pg15@$postgres_digest"' \
+  'postgres_tag="pgvector/pgvector:pg15"' \
   'if [[ "${1:-} ${2:-}" == "info --format" ]]; then' \
   '  socket="${FLEET_TEST_SOCKET_ROOT:?}/Users/fleet-admin/.orbstack/run/docker.sock"' \
   '  mkdir -p "$(dirname "$socket")"' \
@@ -535,7 +535,7 @@ grep -Fq 'ditto orbstack' "$mutation_log" \
   || fail "pinned OrbStack app was not installed"
 grep -Fq 'docker load' "$mutation_log" \
   || fail "pinned Runner archive was not loaded"
-grep -Fq 'docker tag sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777 postgres:16-alpine' "$mutation_log" \
+grep -Fq 'docker tag sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62 pgvector/pgvector:pg15' "$mutation_log" \
   || fail "offline PostgreSQL content did not recover its pinned repository tag"
 grep -Fq 'installer xian-mac-m1 --apply home=/Users/fleet-admin' "$mutation_log" \
   || fail "Fleet Worker installer was not invoked"

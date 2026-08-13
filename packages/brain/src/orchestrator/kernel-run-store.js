@@ -31,6 +31,12 @@ const TERMINAL_TASK_STATUSES = new Set([
 const VALID_COMMANDER_MODES = new Set(COMMANDER_MODES);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+// Session Controller 所有权租约默认时长（秒）——sprint 08131104。
+// 「无 Controller ownership 不得存在活跃 Kernel Run」不变量的默认租约窗口：Controller 取得
+// ownership 后由心跳续租；过期且无存活 controller 即判无主进恢复。judgment-pending-user：
+// 具体秒数由主理人拍板，此处取与既有 watchdog 巡检节奏相容的 30 分钟保守默认（心跳按 tick 续租）。
+export const CONTROLLER_LEASE_DEFAULT_SECONDS = 1800;
+
 async function lockActiveKernelAttempts(client, runId) {
   const { rows } = await client.query(
     `SELECT id
@@ -94,7 +100,20 @@ function validateCreateInput(input) {
   if (!VALID_COMMANDER_MODES.has(commanderMode)) {
     throw new Error(`invalid Kernel run commander mode: ${commanderMode}`);
   }
-  return { commanderMode };
+  // 启动不变量（sprint 08131104 缺陷② + 交付1）：任何 Kernel Run 前必先有有效 Controller
+  // ownership。缺失/空/非字符串 controllerSessionId → fail-closed（拒绝创建、不写半态 run），
+  // 由此杜绝 detached 无主 Kernel（issue 962d399c）。在开事务前校验，保证 initiative_runs 零新行。
+  const controllerSessionId = input?.controllerSessionId;
+  if (typeof controllerSessionId !== 'string' || controllerSessionId.trim() === '') {
+    throw new Error('invalid Kernel run controller session: missing controller ownership (fail-closed)');
+  }
+  const controllerLeaseSeconds = input?.controllerLeaseSeconds === undefined
+    ? CONTROLLER_LEASE_DEFAULT_SECONDS
+    : input.controllerLeaseSeconds;
+  if (!Number.isFinite(controllerLeaseSeconds) || controllerLeaseSeconds <= 0) {
+    throw new Error(`invalid Kernel run controller lease seconds: ${controllerLeaseSeconds}`);
+  }
+  return { commanderMode, controllerSessionId, controllerLeaseSeconds };
 }
 
 export async function loadActiveKernelRun(db, taskId, { forUpdate = false } = {}) {
@@ -388,7 +407,7 @@ export async function patchLegacyKernelRunByInitiative(pool, {
 }
 
 export async function createKernelRun(pool, input, deps = {}) {
-  const { commanderMode } = validateCreateInput(input);
+  const { commanderMode, controllerSessionId, controllerLeaseSeconds } = validateCreateInput(input);
   const client = await pool.connect();
   let committed = false;
   try {
@@ -506,11 +525,13 @@ export async function createKernelRun(pool, input, deps = {}) {
          created_source, record_trust_status, commander_mode, gear,
          impact_contract_policy, impact_contract_policy_reason,
          impact_contract_policy_decision_id, map_recovery_contract_id,
-         contract_id, predecessor_run_id
+         contract_id, predecessor_run_id,
+         controller_session_id, controller_lease_expires_at
        ) VALUES (
          $1, $2, $3, 'v2', $4,
          NOW() + ($5 * INTERVAL '1 hour'), $6, $7, $8, $9, $10, $11,
-         $12, $13, $14, $15, $16, $17
+         $12, $13, $14, $15, $16, $17,
+         $18, NOW() + ($19 * INTERVAL '1 second')
        )
        RETURNING *`,
       [
@@ -532,6 +553,10 @@ export async function createKernelRun(pool, input, deps = {}) {
         preflight.recovery_contract?.id ?? null,
         predecessor?.contract_id ?? null,
         predecessor?.id ?? null,
+        // Session Controller ownership（sprint 08131104）：controller_session_id 先于 Kernel
+        // 可执行态在同一创建事务里落库（ownership 先于 run），lease 由 leaseSeconds 计算到期。
+        controllerSessionId,
+        controllerLeaseSeconds,
       ],
     );
     await client.query('COMMIT');

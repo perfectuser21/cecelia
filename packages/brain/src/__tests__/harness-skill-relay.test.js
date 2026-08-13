@@ -103,7 +103,7 @@ describe('spawnSkillRelaySession', () => {
       runId: KERNEL_RUN_ID,
       pid: 4242,
     });
-    expect(deps.createKernelRun).toHaveBeenCalledWith(deps.pool, {
+    expect(deps.createKernelRun).toHaveBeenCalledWith(deps.pool, expect.objectContaining({
       taskId: TASK.id,
       initiativeId: TASK.id,
       phase: 'planning',
@@ -115,7 +115,11 @@ describe('spawnSkillRelaySession', () => {
       // sprint 08091640：kernel 真读 gear——建 run 时 deriveGear(task) 读档随入参持久化。
       // TASK.payload 无 gear ⇒ 'default'（存量任务零影响，与旧行为等价）。
       gear: 'default',
-    });
+    }));
+    // 启动链收敛（sprint 08131104）：Controller 先取 ownership —— createKernelRun 必带 controllerSessionId。
+    const kernelRunInput = deps.createKernelRun.mock.calls[0][1];
+    expect(typeof kernelRunInput.controllerSessionId).toBe('string');
+    expect(kernelRunInput.controllerSessionId.length).toBeGreaterThan(0);
     expect(deps.launchKernel).toHaveBeenCalledWith(expect.objectContaining({
       taskId: TASK.id,
       runId: KERNEL_RUN_ID,
