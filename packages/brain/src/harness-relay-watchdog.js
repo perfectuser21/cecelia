@@ -12,7 +12,6 @@
  */
 import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
-import { hostname } from 'node:os';
 
 import pool from './db.js';
 import { createAttemptStore } from './orchestrator/attempt-store.js';

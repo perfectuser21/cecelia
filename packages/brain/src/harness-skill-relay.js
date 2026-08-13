@@ -17,7 +17,6 @@ import pool from './db.js';
 import { findActiveRunBlockingSpawn } from './lib/harness-run-guard.js';
 import { normalizeChangeKind } from './impact-contract/change-kind.js';
 import { execSync, spawn as nodeSpawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, copyFileSync, openSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1068,9 +1067,10 @@ async function _spawnHeadedSession(task, {
         || !/^[a-f0-9]{40}$/.test(baseSha ?? '')) {
       throw new Error('headed_kernel_identity_incomplete');
     }
-    const createAttempt = deps.createHeadedAttempt ?? ((input) => (
-      createHeadedKernelAttempt(dbPool, input)
-    ));
+    const createAttempt = deps.createHeadedAttempt;
+    if (typeof createAttempt !== 'function') {
+      throw new Error('headed_kernel_attempt_factory_missing');
+    }
     kernelAttempt = await createAttempt({
       runId: kernelAuthority.runId,
       task,

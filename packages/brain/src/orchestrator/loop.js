@@ -365,7 +365,7 @@ function frozenArtifactErrorCode(error) {
   return String(error?.message ?? '').match(/FROZEN_CONTRACT_ARTIFACT[A-Z_]*/)?.[0] ?? null;
 }
 
-async function materializeApprovedContractOrFail(deps, params, { runId, taskId, failRun }) {
+async function materializeApprovedContractOrFail(deps, params, { failRun }) {
   const materialize = deps.materializeApprovedContract ?? materializeApprovedContract;
   try {
     await materialize(deps.pool, params);

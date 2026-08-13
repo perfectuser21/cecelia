@@ -1,3 +1,7 @@
+import { ROUTER_VERSION } from './work-router.js';
+
+export const TASK_CREATION_INVENTORY_VERSION = ROUTER_VERSION;
+
 export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'actions.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'active-goals-zero-trigger.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },

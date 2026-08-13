@@ -252,7 +252,7 @@ async function createProposal(input) {
   }
 
   // Check DAG for dependency changes
-  for (const [changeIndex, change] of changes.entries()) {
+  for (const change of changes) {
     if (change.type === 'add_dependency') {
       const hasCycle = await detectCycle(change.task_id, change.depends_on_id);
       if (hasCycle) {
