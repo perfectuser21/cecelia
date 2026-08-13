@@ -63,4 +63,38 @@ describe('appendAttemptVerdict PostgreSQL contract', () => {
       }),
     })]);
   });
+
+  it('anchors an evaluator verdict to the retained candidate instead of a stale PR head', async () => {
+    const candidateHead = 'b'.repeat(40);
+    const stalePrHead = 'c'.repeat(40);
+    const evaluatorAttemptId = '33333333-3333-4333-8333-333333333333';
+    await appendAttemptVerdict({
+      id: evaluatorAttemptId,
+      run_id: runId,
+      role: 'evaluator',
+      task_bundle: {
+        inputs: {
+          pr_head_sha: candidateHead,
+          pull_request: { head_sha: stalePrHead },
+        },
+      },
+    }, {
+      status: 'completed',
+      decision: {
+        outcome: 'FAIL',
+        reason: 'candidate behavior failed',
+        failure_class: 'product_failure',
+      },
+    }, client);
+
+    const { rows } = await client.query(
+      `SELECT detail FROM orchestrator_decision_log
+        WHERE action='verdict:evaluate' AND detail->>'attempt_id'=$1`,
+      [evaluatorAttemptId],
+    );
+    expect(rows[0]?.detail).toMatchObject({
+      pr_head_sha: candidateHead,
+      failure_class: 'product_failure',
+    });
+  });
 });
