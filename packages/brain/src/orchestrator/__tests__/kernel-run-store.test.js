@@ -183,6 +183,32 @@ function exactPatchPool({ task, activeAttempts = [] } = {}) {
 }
 
 describe('Kernel run store creation authority', () => {
+  it('runs Map/Impact preflight before inserting the Kernel run', async () => {
+    const harness = transactionPool();
+    const ensurePreflight = vi.fn(async () => ({ contract: { id: 'impact-1' } }));
+
+    await createKernelRun(harness.pool, VALID_INPUT, {
+      ensureMapImpactPreflight: ensurePreflight,
+    });
+
+    expect(ensurePreflight).toHaveBeenCalledOnce();
+    const insertIndex = harness.order.indexOf('insert-run');
+    expect(insertIndex).toBeGreaterThan(-1);
+    expect(ensurePreflight.mock.invocationCallOrder[0])
+      .toBeLessThan(harness.client.query.mock.invocationCallOrder.at(-2));
+  });
+
+  it('creates zero run rows when Map/Impact preflight fails', async () => {
+    const harness = transactionPool();
+    const ensurePreflight = vi.fn(async () => { throw new Error('map_stale'); });
+
+    await expect(createKernelRun(harness.pool, VALID_INPUT, {
+      ensureMapImpactPreflight: ensurePreflight,
+    })).rejects.toThrow('map_stale');
+    expect(harness.calls.some(({ sql }) => /INSERT INTO initiative_runs/.test(sql))).toBe(false);
+    expect(harness.order).toContain('ROLLBACK');
+  });
+
   it('loads one v2 run only by primary key', async () => {
     const query = vi.fn(async () => ({ rows: [{ id: RUN_ID }] }));
 
