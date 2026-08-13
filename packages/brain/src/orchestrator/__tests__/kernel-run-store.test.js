@@ -334,6 +334,7 @@ describe('Kernel run store creation authority', () => {
       'required',
       'Map fresh and active Impact Contract impact-1',
       '4bc109e9',
+      null,
     ]);
     expect(harness.order).toEqual([
       'BEGIN',
@@ -393,6 +394,37 @@ describe('Kernel run store creation authority', () => {
       'required',
       'Map fresh and active Impact Contract impact-1',
     ]));
+  });
+
+  it('binds a server-authorized map recovery contract to the run without changing required policy', async () => {
+    const harness = transactionPool({
+      receipt: {
+        id: RECEIPT_ID,
+        task_id: TASK_ID,
+        work_kind: 'coding_mutation',
+        change_kind: 'bugfix',
+        pipeline: 'harness',
+        canonical_task_type: 'harness_initiative',
+        default_execution_profile: 'hotfix-v1',
+        impact_contract_required: true,
+        repo: 'cecelia',
+        map_scope: ['cap-map'],
+        evidence: { branch: 'cp-map-fix', base_sha: 'a'.repeat(40) },
+        superseded: false,
+      },
+    });
+
+    await createRun(harness, VALID_INPUT, {
+      ensureMapImpactPreflight: vi.fn(async () => ({
+        contract: { id: 'impact-recovery-1', status: 'active' },
+        recovery_contract: { id: 'recovery-1' },
+      })),
+    });
+
+    const insert = harness.calls.find(({ sql }) => /INSERT INTO initiative_runs/.test(sql));
+    expect(insert.sql).toContain('map_recovery_contract_id');
+    expect(insert.params).toContain('recovery-1');
+    expect(insert.params).toContain('required');
   });
 
   it('returns an existing active run without inserting', async () => {

@@ -1268,6 +1268,19 @@ describe('attempt store', () => {
     ]));
   });
 
+  it('atomically consumes a run-bound map recovery contract only with its generator attempt', async () => {
+    const pool = poolWith({ rows: [{ id: input.id, status: 'queued' }], rowCount: 1 });
+
+    await createAttemptStore(pool).createAttempt({ ...input, role: 'generator' });
+
+    const [sql, values] = pool.query.mock.calls[0];
+    expect(sql).toMatch(/map_recovery_contract_id/i);
+    expect(sql).toMatch(/INSERT INTO map_recovery_consumptions/i);
+    expect(sql).toMatch(/consumption\.attempt_id = existing\.id/i);
+    expect(sql).toMatch(/\$5 = 'generator'/i);
+    expect(values[4]).toBe('generator');
+  });
+
   it('refuses to create an attempt when the exact parent run is terminal or missing', async () => {
     const pool = poolWith(
       { rows: [], rowCount: 0 },
