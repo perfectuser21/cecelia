@@ -210,3 +210,116 @@ describe('Session Controller ownership + fail-closed + migration 413（真 PG）
     expect(ownerless[0].n).toBe(0);
   });
 });
+
+describe('INV-6 + INV-5：kernel-v1 旁路修复（sprint 08131623，task 89210ba1）', () => {
+  /**
+   * INV-6：executor 非白名单值（含 'auto'）→ loud-fail + task 回滚，不静默降级启动
+   *
+   * 被改边：harness-skill-relay.js 第 363 行 early return 前新增 executor 白名单校验
+   * 禁 mock 边：pool.query（initiative_runs INSERT）、createKernelRun
+   * 合同来源：contract-draft.md AP-1，sprints/08131623-relay-89210ba1/
+   */
+  it('INV-6: executor=auto + kernel-v1 → 白名单拦截 loud-fail，initiative_runs count=0，task 回滚', async () => {
+    const { taskId, payload } = await seedTask();
+    const task = {
+      id: taskId,
+      ability_id: null,
+      payload: {
+        ...payload,
+        executor: 'auto',  // 非法 executor，应被白名单拦截
+      },
+    };
+
+    const res = await spawnSkillRelaySession(task, {
+      pool: testPool,
+      // 只替身最外层（与被改的 executor 白名单边无关）。
+      // 禁 mock：pool.query / createKernelRun（被改边）。
+      ensureWt: async () => '/workspace',
+      launchKernel: async () => ({ pid: 4242 }),
+      now: () => new Date(),
+      env: {},
+    });
+
+    // 白名单拦截：loud-fail，返回 ok=false + error 含 'unsupported executor: auto'
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('unsupported executor: auto');
+
+    // 真 PG count 校验（禁 mock pool.query）：白名单拦截后不写任何 run
+    expect(await runCount(taskId)).toBe(0);
+
+    // task 回滚：tasks 表该行 status 应被改回 queued（fail-closed 回滚语义）
+    const { rows: taskRows } = await testPool.query(
+      `SELECT status, claimed_by FROM tasks WHERE id = $1`,
+      [taskId],
+    );
+    expect(taskRows[0].status).toBe('queued');
+    expect(taskRows[0].claimed_by).toBeNull();
+  });
+
+  /**
+   * INV-5：活跃 run 存在时禁止同 task 二次 spawn（DB 幂等防重）
+   *
+   * 被改边：harness-skill-relay.js 第 363 行 early return 前新增 findActiveRunBlockingSpawn
+   * 禁 mock 边：pool.query、findActiveRunBlockingSpawn（DB 幂等防重边）
+   * 合同来源：contract-draft.md AP-2，sprints/08131623-relay-89210ba1/
+   */
+  it('INV-5: 活跃 run 存在 + kernel-v1 重打 → DB 幂等防重拦截，不产生第二条 run', async () => {
+    const { taskId, initiativeId, payload } = await seedTask();
+
+    // 先插入一条非终态活跃 run（模拟第一次 spawn 已在跑）
+    const existingRunId = randomUUID();
+    const futureDeadline = new Date(Date.now() + 8 * 60 * 60 * 1000); // 8 小时后
+    const controllerSessionId = randomUUID();
+    await testPool.query(
+      `INSERT INTO initiative_runs
+         (id, current_task_id, initiative_id, phase, host, deadline_at,
+          created_source, controller_session_id, controller_lease_expires_at)
+       VALUES ($1, $2, $3, 'planning', 'kernel-v1', $4, 'kernel_dispatch', $5, $6)`,
+      [
+        existingRunId,
+        taskId,
+        initiativeId,
+        futureDeadline,
+        controllerSessionId,
+        futureDeadline,
+      ],
+    );
+
+    // 确认活跃 run 已在 DB
+    expect(await runCount(taskId)).toBe(1);
+
+    // 二次 spawn 同一 task（kernel-v1 路径，executor 合法）
+    const task = {
+      id: taskId,
+      ability_id: null,
+      payload,
+    };
+
+    const res = await spawnSkillRelaySession(task, {
+      pool: testPool,
+      // 只替身最外层（与被改的 findActiveRunBlockingSpawn 边无关）。
+      // 禁 mock：pool.query / findActiveRunBlockingSpawn（被改边）。
+      ensureWt: async () => '/workspace',
+      launchKernel: async () => ({ pid: 9999 }),
+      now: () => new Date(),
+      env: {},
+    });
+
+    // DB 幂等防重拦截：返回 deferred
+    expect(res.ok).toBe(false);
+    expect(res.deferred).toBe(true);
+    expect(res.reason).toBe('active_run_guard');
+
+    // 真 PG count 校验：仍只有 1 条 run，未新增
+    expect(await runCount(taskId)).toBe(1);
+
+    // 确认原有 run 未被污染
+    const { rows: runRows } = await testPool.query(
+      `SELECT id, phase, controller_session_id FROM initiative_runs WHERE current_task_id = $1`,
+      [taskId],
+    );
+    expect(runRows.length).toBe(1);
+    expect(runRows[0].id).toBe(existingRunId);
+    expect(runRows[0].controller_session_id).toBe(controllerSessionId);
+  });
+});
