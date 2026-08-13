@@ -97,12 +97,22 @@ export async function materializeApprovedContract(db, {
       if (!existing.rows[0]) {
         throw new Error(`attached approved contract ${run.contract_id} not found`);
       }
-      if (!existing.rows[0].evidence_matches) {
-        throw new Error(`attached approved contract evidence mismatch for run ${runId}`);
+      const attached = existing.rows[0];
+      // ATOMIC_RESWAP_ON_DRAFT: reopen_gan_contract 后 run.contract_id 可能仍附着一份
+      // v1 draft 合同（旧草稿），它不是「本轮批准证据」。只有附着合同已是 approved
+      // 时才走逐字段比对 + fail-closed（禁止静默覆盖已批准合同，安全红线）。
+      // 附着为 draft（或其他非 approved 态）时不比对，落到下方插入路径原子换版：
+      // 单事务内插 v2 approved + 置 v1 superseded + run.contract_id 切 v2，
+      // 修复 reopen 后把 draft 附件误判为已批准证据而抛 mismatch 的 run 死锁。
+      if (attached.status === 'approved') {
+        if (!attached.evidence_matches) {
+          throw new Error(`attached approved contract evidence mismatch for run ${runId}`);
+        }
+        delete attached.evidence_matches;
+        if (ownsClient) await client.query('COMMIT');
+        return attached;
       }
-      delete existing.rows[0].evidence_matches;
-      if (ownsClient) await client.query('COMMIT');
-      return existing.rows[0];
+      // draft 附着 → 不 return，继续走原子换版插入路径（run.contract_id 将被切到 v2）。
     }
 
     const versionResult = await client.query(
