@@ -1,0 +1,31 @@
+{
+  "initiative_id": "63f796fb-ab13-4ee4-9365-4fd31c5ce181",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain 后端改动（dispatcher 组包谓词 + relay 建 run 事务 + CAS 续租写路径 + 无主 run 巡检），无 UI/远端 agent 协议本体变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Harness 双运行时 Controller ownership 与 GP identity 收口（刀一 gpContractIdentity 触发谓词 + 刀二 legacy relay 四分支带 ownership 建 run + 生产 CAS 续租写路径）",
+      "scope": "刀一：dispatcher.gpContractIdentity 触发谓词剔除通用 journey_id，仅版本化 GP 身份字段（gp_contract_id/version/hash/golden_path_id/step_id）触发校验；journey-only 返回 null 正常组包，部分身份继续 fail-closed，完整身份继续透传 frozen contract。刀二建 run：harness-skill-relay.js 四处直写 INSERT INTO initiative_runs（session/grok fallback/xian/headed）收敛为带 controller_session_id + controller_lease_expires_at 的创建（复用 createKernelRun 或等价单一创建函数）。刀二续租（Round 2 关闭 E2-1）：kernel-run-store.js 新增 renewControllerLease CAS 续租写路径（WHERE id AND controller_session_id AND phase NOT IN ('done','failed')，owner 匹配且非终态才续，返回 renewed 布尔）；harness-relay-watchdog.js 新增 renewLiveRelayLeases 活容器续租扫描（docker ps 探活，活则调 renewControllerLease 续租），接入 harness-watchdog-loop.js runHarnessWatchdogOnce（复用既有 5min 看门狗，不新造守护进程）。不改 kernel-v1 主派发、不改 GP UUID/SHA 校验规则本身。",
+      "dod": [
+        "[BEHAVIOR] journey-only generator-fix 组包不抛 GP_CONTRACT_IDENTITY_INVALID；部分身份仍抛、完整身份透传（真函数单测，见 contract-dod.md B-01/B-02）",
+        "[BEHAVIOR] legacy relay 四分支建 run 落库即带非空 controller_session_id + 未来 lease，活过一个 reconcile 巡检周期不被误杀，无主对照 run 仍被回收（真 PG 集成，见 contract-dod.md B-03..B-06）",
+        "[BEHAVIOR] 生产 CAS 续租 renewControllerLease owner 匹配续/owner 不匹配拒/终态拒；活容器经 renewLiveRelayLeases 续租使健康 relay 活过 >30min lease 边界不被回收；死容器不续租则 lease 真过期被 controller_lease_expired 回收（真 PG 集成，见 contract-dod.md B-07..B-11）",
+        "[ARTIFACT] packages/brain/src/__tests__/dispatcher-gp-contract-identity.test.js 与 packages/brain/src/__tests__/integration/relay-ownership.pg.integration.test.js（含续租断言）存在且后者登记进 vitest POSTGRES_INTEGRATION_TESTS"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/src/harness-relay-watchdog.js",
+        "packages/brain/src/harness-watchdog-loop.js",
+        "packages/brain/src/__tests__/dispatcher-gp-contract-identity.test.js",
+        "packages/brain/src/__tests__/integration/relay-ownership.pg.integration.test.js",
+        "packages/brain/vitest.config.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 110
+    }
+  ]
+}
