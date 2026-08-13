@@ -1,17 +1,6 @@
-# Sprint: sprints/08101234-cecelia-map-reorg (f491a8dd-b0e3-4352-a5e0-6cb85df73d80)
-# 任务: Cecelia 承诺地图归位：2价值流·11Capability·横切件池7项落账
-# 开始时间: 2026-08-10
-# run_id: 0649895c-45af-487d-a335-61325fee9aab
-# 外部真相重建 — PR #4772 (OPEN) + 分支 5e483c430 存在产物，台账从 worktree 蒸发后恢复
-
-planner: done (rebuilt: sprint-prd.md@b7a7bdf9d, invariants=5, fr=8, 行数=?)
-gan: done (rebuilt: contract-draft.md@5e483c430, verdict=APPROVED, 铁律覆盖=5/5, judgments_written=8, rubric=.harness/verdicts/gan-f491a8dd.json [重建,无历史文件])
-generator: pr_opened (#4772, branch=cp-08101944-ws-f491a8dd)
-generator: done (rebuilt: pr=#4772, head=a106745, fix轮次=3)
-generator: fix-1 (smoke FAIL: 工厂线Capability=0，migration 398 UPDATE-only 在新建DB失效，需 INSERT ON CONFLICT DO UPDATE)
-generator: fix-1 DONE (CI=success, smoke=success, HEAD=87d8b44b)
-evaluator: start
-evaluator: done (PASS, B-1~B-6全通, 11/11 verify-map-reorg.sh PASS)
-judge: done (PASS, judged=false, fail-open)
-step6: start (REVIEW_REQUIRED=true)
-merge-conflict-resolve: main合并，.harness/progress.md 保留 map-reorg（preview-thin-clone 已 merged #4780）
+# Sprint: sprints/08131510-kernel-gp-identity (b858a8bb-a5c4-4e84-a975-a6cd79b55be0)
+# 任务: fix: Journey-only Harness 被 GP 合同身份误杀 r3
+# 开始时间: 2026-08-13
+# run_id: 59a41559-8f81-4694-9674-6c9b950f6a8b
+planner: done (sprints/08131510-kernel-gp-identity/sprint-prd.md@9ca47001d, invariants=3, fr=2)
+proposer: done (contract-draft.md + contract-dod.md + tests/gp-contract-identity-regression.test.js, dod=5, invariants=3)
