@@ -2,7 +2,9 @@
  * Brain v2 Phase D Part 1.5 — dispatchNextTask 抽出。
  *
  * 原在 tick.js L706-L1115（dispatchNextTask），瘦身抽出独立模块。
- * dev 任务与其他 task_type 一样走 triggerCeceliaRun 本地 spawn（活性信号已通）。
+ * dev 任务默认走 triggerCeceliaRun 本地 spawn（活性信号已通）；改代码类 dev 任务
+ * （见 dispatch-code-routing.js classifyCodeChange）在此之前已被改道 harness_initiative，
+ * 走 runHarnessInitiativeRouter（kernel evaluator/judge/GAN 全链路），不再走本地 spawn。
  *
  * 模块状态：
  * - `_lastDispatchTime` 私有计时器（旧逻辑只写不读，留作潜在 telemetry hook）
@@ -12,6 +14,7 @@
  */
 
 import pool from './db.js';
+import { classifyCodeChange, deriveGearForTask, buildHarnessRoutingPayload } from './dispatch-code-routing.js';
 import { isGlobalQuotaCooling, getQuotaCoolingState } from './quota-cooling.js';
 import { isDraining, getDrainStartedAt } from './drain.js';
 import {
@@ -792,6 +795,33 @@ export async function dispatchNextTask(goalIds) {
     }
   } catch (err) {
     console.warn(`[dispatch] allocation guide failed: ${err.message}, proceeding with original executor`);
+  }
+
+  const codeRouting = classifyCodeChange(taskToDispatch);
+  if (codeRouting.isCodeChange) {
+    const gear = deriveGearForTask(taskToDispatch);
+    const routingPayload = buildHarnessRoutingPayload(taskToDispatch, gear);
+    try {
+      await pool.query(
+        `UPDATE tasks
+           SET task_type = 'harness_initiative',
+               payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
+               updated_at = NOW()
+         WHERE id = $1`,
+        [taskToDispatch.id, JSON.stringify(routingPayload)]
+      );
+      taskToDispatch = {
+        ...taskToDispatch,
+        task_type: 'harness_initiative',
+        payload: { ...taskToDispatch.payload, ...routingPayload },
+      };
+      tickLog(`[dispatch] code_change_routing task=${taskToDispatch.id} origin_type=dev → harness_initiative gear=${gear}`);
+    } catch (persistErr) {
+      throw new Error(
+        `code_change_routing_persist_failed:${persistErr.message}`,
+        { cause: persistErr },
+      );
+    }
   }
 
   execResult = await triggerCeceliaRun(taskToDispatch);

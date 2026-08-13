@@ -1,6 +1,6 @@
 ---
 id: current-docs-readme
-version: 2.2.7
+version: 2.2.9
 created: 2026-03-10
 updated: 2026-08-12
 ---
@@ -33,7 +33,7 @@ updated: 2026-08-12
 | CI 流水线（L1-L4） | `docs/current/CI_PIPELINE.md` | ⚠️ 过期待重写（2026-03旧结构），仅存档参考 |
 | /dev 工作流 | `docs/current/DEV_PIPELINE.md` | ⚠️ 过期待重写（2026-03旧结构），仅存档参考 |
 | PR 学习记录 | `docs/learnings/cp-MMDDHHNN-xxx.md` | 每个PR自动写 |
-| 架构审查结果 | `docs/arch-reviews/YYYY-MM-DD.md` | 最新：2026-08-12 04:00 UTC，CRITICAL（9 高/19 中；preview-4827 真实认领当前 production task 且 callback 串环境、生产 internal auth 写面 503、staging 副作用 loops 与物理 schema 未隔离、三条 nightly 连续失败） |
+| 架构审查结果 | `docs/arch-reviews/YYYY-MM-DD.md` | 最新：2026-08-12 16:02 UTC，CRITICAL（10 高/16 中；1.272.28 与 migration 411 同 SHA 落地，但 dev→harness admission/跨仓 repo、review 10 次回队+15 次 callback 后仍非终态、staging 副作用、时间/schema parity、MJ5 与 nightly 仍未闭合） |
 | 操作手册（技能/功能） | `docs/instruction-book/` | 用户/AI 操作参考 |
 | 已知缺口 | `docs/gaps/` | 记录未覆盖区域 |
 | 历史文档 | `docs/archive/` | 不读，已过期 |

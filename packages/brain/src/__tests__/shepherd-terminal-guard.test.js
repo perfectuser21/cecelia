@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('child_process', () => ({
+  spawnSync: vi.fn(),
   execSync: vi.fn(),
   spawn: vi.fn(),
 }));
@@ -22,7 +23,7 @@ vi.mock('../quarantine.js', () => ({
   quarantineTask: vi.fn().mockResolvedValue({ success: true }),
 }));
 
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { shepherdOpenPRs } from '../shepherd.js';
 
 // ─── 场景 1: 主 SELECT WHERE 排除终态任务 ──────────────────────────────────
@@ -50,19 +51,19 @@ describe('shepherd 主 SELECT 排除终态任务', () => {
     const result = await shepherdOpenPRs({ query: queryMock });
     // 验证：processed=0，没有执行任何 gh CLI 调用
     expect(result.processed).toBe(0);
-    expect(execSync).not.toHaveBeenCalled();
+    expect(spawnSync).not.toHaveBeenCalled();
   });
 });
 
 // ─── 场景 2: re-queue UPDATE 终态状态守卫 ─────────────────────────────────
 describe('shepherd re-queue UPDATE 终态守卫', () => {
-  beforeEach(() => vi.mocked(execSync).mockReset());
+  beforeEach(() => vi.mocked(spawnSync).mockReset());
 
   it('CI 失败重排 UPDATE SQL 应含终态排除条件以防止 completed/failed 任务被回退到 queued', async () => {
     // 让 checkPrStatus 返回 ci_failed，触发 re-queue 路径
-    vi.mocked(execSync)
-      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' })) // state+mergeable
-      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'lint', conclusion: 'FAILURE', status: 'COMPLETED' }] })); // checks
+    vi.mocked(spawnSync)
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }), stderr: '' }) // state+mergeable
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ statusCheckRollup: [{ name: 'lint', conclusion: 'FAILURE', status: 'COMPLETED' }] }), stderr: '' }); // checks
 
     const updates = [];
     const queryMock = vi.fn(async (sql, params) => {
@@ -99,17 +100,17 @@ describe('shepherd re-queue UPDATE 终态守卫', () => {
 
 // ─── 场景 3: mergeable=UNKNOWN 应尝试合并而非无限等待 ─────────────────────
 describe('shepherd mergeable=UNKNOWN 触发合并尝试', () => {
-  beforeEach(() => vi.mocked(execSync).mockReset());
+  beforeEach(() => vi.mocked(spawnSync).mockReset());
 
   it('ciStatus=ci_passed + mergeable=UNKNOWN 应调用 executeMerge（非无限轮询等待）', async () => {
     // GitHub 对 OPEN PR 在未计算 mergeability 时返回 UNKNOWN
     // 修复前：此路径进入 else-if(mergeable !== MERGEABLE) → 只 log + set pr_status=ci_passed → 无限循环
     // 修复后：UNKNOWN 应与 MERGEABLE 同等处理，尝试 auto-merge
-    vi.mocked(execSync)
-      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'UNKNOWN' })) // state+mergeable
-      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] })) // CI checks
-      .mockReturnValueOnce('') // executeMerge 成功
-      .mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' })); // reload 后已 MERGED
+    vi.mocked(spawnSync)
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'OPEN', mergeable: 'UNKNOWN' }), stderr: '' }) // state+mergeable
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }), stderr: '' }) // CI checks
+      .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' }) // executeMerge 成功
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' }), stderr: '' }); // reload 后已 MERGED
 
     const updates = [];
     const queryMock = vi.fn(async (sql, params) => {
@@ -131,20 +132,19 @@ describe('shepherd mergeable=UNKNOWN 触发合并尝试', () => {
 
     const result = await shepherdOpenPRs({ query: queryMock });
 
-    // executeMerge 应被调用（第三次 execSync 调用是 gh pr merge）
-    expect(vi.mocked(execSync)).toHaveBeenCalledWith(
-      expect.stringContaining('gh pr merge'),
-      expect.any(Object)
-    );
+    // executeMerge 应被调用（第三次 spawnSync 调用是 gh pr merge）
+    const [cmd, args] = vi.mocked(spawnSync).mock.calls[2];
+    expect(cmd).toBe('gh');
+    expect(args).toContain('merge');
     // 应进入 merged 计数
     expect(result.merged).toBeGreaterThanOrEqual(1);
   });
 
   it('ciStatus=ci_passed + mergeable=CONFLICTING 不应尝试合并', async () => {
     // CONFLICTING 是真实的合并冲突，不应强行 merge
-    vi.mocked(execSync)
-      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'CONFLICTING' }))
-      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }));
+    vi.mocked(spawnSync)
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'OPEN', mergeable: 'CONFLICTING' }), stderr: '' })
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }), stderr: '' });
 
     const updates = [];
     const queryMock = vi.fn(async (sql, params) => {
@@ -167,8 +167,8 @@ describe('shepherd mergeable=UNKNOWN 触发合并尝试', () => {
     await shepherdOpenPRs({ query: queryMock });
 
     // gh pr merge 不应被调用
-    const mergeCalls = vi.mocked(execSync).mock.calls.filter(c =>
-      typeof c[0] === 'string' && c[0].includes('gh pr merge')
+    const mergeCalls = vi.mocked(spawnSync).mock.calls.filter(c =>
+      Array.isArray(c[1]) && c[1].includes('merge')
     );
     expect(mergeCalls).toHaveLength(0);
   });

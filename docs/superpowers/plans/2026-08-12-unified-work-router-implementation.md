@@ -15,7 +15,7 @@
 - Create `packages/brain/src/work-router.js`：纯函数 normalize/classify/repo/profile 决策。
 - Create `packages/brain/src/work-routing-store.js`：事务级 task + receipt 原子写入。
 - Create `packages/brain/src/routes/work-routing.js`：receipt 查询与动作期验证 API。
-- Create `packages/brain/migrations/411_work_routing_receipts.sql`：不可变 receipt 与恢复合同。
+- Create `packages/brain/migrations/413_work_routing_receipts.sql`：不可变 receipt 与恢复合同（合并 main 后避让既有 411/412）。
 - Modify `packages/brain/src/routes/task-tasks.js`：公开创建入口委托统一边界。
 - Modify 直接任务创建入口：逐项消除业务路径 `INSERT INTO tasks`。
 - Modify `packages/brain/src/orchestrator/kernel-run-store.js`、`derive.js`、`dispatcher.js`：四形式、Map preflight、动作闸和 L2 强制。
@@ -29,12 +29,12 @@
 - Create: `packages/brain/src/work-router.js`
 - Create: `packages/brain/src/work-routing-store.js`
 - Create: `packages/brain/src/routes/work-routing.js`
-- Create: `packages/brain/migrations/411_work_routing_receipts.sql`
+- Create: `packages/brain/migrations/413_work_routing_receipts.sql`
 - Modify: `packages/brain/src/routes/task-tasks.js`
 - Modify: `packages/brain/server.js`
 - Test: `packages/brain/src/__tests__/work-router.test.js`
 - Test: `packages/brain/src/__tests__/work-routing-entry.test.js`
-- Test: `packages/brain/src/__tests__/migration-411-work-routing.test.js`
+- Test: `packages/brain/src/__tests__/migration-413-work-routing.test.js`
 - Test: `packages/brain/src/__tests__/integration/work-routing-store.integration.test.js`
 
 - [ ] **Step 1: 提交 RED 合同**
@@ -52,7 +52,7 @@ expect(() => selectPipeline({ work_kind: 'coding_mutation', gear: 'hotfix' }))
 
 ```bash
 cd packages/brain
-npx vitest run src/__tests__/work-router.test.js src/__tests__/work-routing-entry.test.js src/__tests__/migration-411-work-routing.test.js src/__tests__/integration/work-routing-store.integration.test.js
+npx vitest run src/__tests__/work-router.test.js src/__tests__/work-routing-entry.test.js src/__tests__/migration-413-work-routing.test.js src/__tests__/integration/work-routing-store.integration.test.js
 ```
 
 期望：模块、表和统一边界不存在而失败。提交 `test(brain): define unified work routing contracts`。

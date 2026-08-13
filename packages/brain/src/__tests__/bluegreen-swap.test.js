@@ -68,6 +68,10 @@ esac
 }
 
 function runSwap(dir, log, extraEnv = {}) {
+  const credentialFile = extraEnv.CECELIA_INTERNAL_ENV_FILE ?? join(dir, 'cecelia-internal.env');
+  if (extraEnv.CECELIA_INTERNAL_ENV_FILE === undefined) {
+    writeFileSync(credentialFile, `CECELIA_INTERNAL_TOKEN=${'a'.repeat(64)}\n`);
+  }
   let code = 0;
   let stdout = '';
   try {
@@ -81,6 +85,7 @@ function runSwap(dir, log, extraEnv = {}) {
           PATH: `${dir}:${process.env.PATH}`,
           DOCKER_LOG: log,
           GREEN_STABLE_SUCCESSES: '1',
+          CECELIA_INTERNAL_ENV_FILE: credentialFile,
           ...extraEnv,
         },
         stdio: 'pipe',
@@ -171,6 +176,25 @@ describe('bluegreen_swap', () => {
       // blue 不应被删除（fail-safe）
       expect(calls).not.toMatch(/rm -f cecelia-node-brain(\n|$)/m);
       // 失败返回非0
+      expect(code).not.toBe(0);
+    } finally {
+      rmSync(deployRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('sidecar 凭据 SSOT 缺失时，blue 不被删除（fail-safe）', () => {
+    const log = makeMockDocker(tmp, { greenHealthy: true });
+    const deployRoot = mkdtempSync(join(tmpdir(), 'deploy-root-'));
+    writeFileSync(join(deployRoot, 'docker-compose.yml'), 'name: cecelia\nservices: {}\n');
+    try {
+      const missingCredential = join(tmp, 'missing-internal-auth.env');
+      const { code, calls, stdout } = runSwap(tmp, log, {
+        DEPLOY_ROOT_DIR: deployRoot,
+        CECELIA_INTERNAL_ENV_FILE: missingCredential,
+      });
+      expect(calls).not.toMatch(/rm -f cecelia-node-brain(\n|$)/m);
+      expect(calls).not.toMatch(/cecelia-bluegreen-sidecar/);
+      expect(stdout).toMatch(/无法读取内部鉴权凭据 SSOT/);
       expect(code).not.toBe(0);
     } finally {
       rmSync(deployRoot, { recursive: true, force: true });
@@ -327,6 +351,10 @@ exit 0
 }
 
 function runSidecar(dir, log, deployRoot, extraEnv = {}) {
+  const credentialFile = extraEnv.CECELIA_INTERNAL_ENV_FILE ?? join(dir, 'cecelia-internal.env');
+  if (extraEnv.CECELIA_INTERNAL_ENV_FILE === undefined) {
+    writeFileSync(credentialFile, `CECELIA_INTERNAL_TOKEN=${'a'.repeat(64)}\n`);
+  }
   let code = 0;
   let stdout = '';
   try {
@@ -338,6 +366,7 @@ function runSidecar(dir, log, deployRoot, extraEnv = {}) {
         BRAIN_VERSION: '9.9.9',
         ENV_REGION: 'us',
         DEPLOY_ROOT: deployRoot,
+        CECELIA_INTERNAL_ENV_FILE: credentialFile,
         BARK_TOKEN: '',
         ...extraEnv,
       },

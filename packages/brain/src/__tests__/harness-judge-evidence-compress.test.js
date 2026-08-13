@@ -84,6 +84,26 @@ describe('[BEHAVIOR-2] 修复后 KEYMARK 可见', () => {
   });
 });
 
+describe('冻结合同测试进入独立裁判证据', () => {
+  it('prompt carries the exact approved test path, digest, and source', () => {
+    const prompt = buildJudgePrompt({
+      ...makeMeta(),
+      frozenContractArtifacts: [{
+        type: 'frozen_contract_test',
+        path: 'sprints/example/tests/red.test.js',
+        content: 'FROZEN_RED_ORACLE',
+        sha256: 'a'.repeat(64),
+        source_sha: 'b'.repeat(40),
+      }],
+    });
+
+    expect(prompt).toContain('sprints/example/tests/red.test.js');
+    expect(prompt).toContain('FROZEN_RED_ORACLE');
+    expect(prompt).toContain('a'.repeat(64));
+    expect(prompt).toContain('b'.repeat(40));
+  });
+});
+
 // ─────────────────────────────────────────────
 // BEHAVIOR-3: 条目上限：10 条输入只展开前 8 条
 // ─────────────────────────────────────────────

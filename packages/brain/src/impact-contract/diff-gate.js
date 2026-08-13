@@ -16,6 +16,7 @@
 
 import { queryImpactRadius } from './map-client.js';
 import { getActiveImpactContract, persistImpactContract } from './contract-store.js';
+import { normalizeFreshnessEvidence } from './contract-schema.js';
 import {
   createRepairTaskForGap,
   openGapForDrift,
@@ -256,7 +257,7 @@ export async function evaluateDiffGate({
       manifest_digest: mapperResult.manifest_digest,
       projection_digest: mapperResult.projection_digest,
       fact_revisions: mapperResult.fact_revisions,
-      freshness_evidence: mapperResult.freshness,
+      freshness_evidence: normalizeFreshnessEvidence(mapperResult.freshness),
     };
     try {
       const persisted = await persistContract(db, {

@@ -2,17 +2,99 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-08-11
+**最后更新**: 2026-08-13
 
 
 
 
 
-**Brain 版本**: 1.272.21
+**Brain 版本**: 1.272.33
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.33 — Unified Work Router 与可信恢复
+
+- 所有 coding mutation 由 Work Router 正向选择四档 Kernel Harness profile，并在同一事务写入 task 与 append-only Routing Receipt。
+- Kernel run 强制使用 fresh Universal Map 与 active Impact Contract；有头工具和无头 Dispatcher 在动作前验证同一 receipt。
+- 显式恢复 run 仅在可信前序 Generator 与当前 GitHub PR URL/SHA 完全一致时建立新的共享 validation clock。
+
+## Brain 1.272.32 — 已批准合同 TaskBundle 去重
+
+- Generator、Evaluator、Judge 在冻结合同成为正文 SSOT 后，不再重复装载入口
+  description、thin PRD 与 PrepPRD，避免真实大合同触发 256KB 装配上限。
+- Planner 与 GAN 仍保留入口需求正文；冻结合同的完整性、摘要和来源 revision 校验不变。
+
+## Brain 1.272.31 — Harness 实现基线与角色检出点解耦
+
+- TaskBundle 新增整个 Run 内稳定的 `implementation_baseline`，显式任务基线优先，否则从最早的合法 WorkspaceSpec 恢复。
+- `workspace_spec.base_sha` 只负责当前角色的代码检出，Reviewer 合同 SHA 与 Evaluator PR SHA 不再污染实现基线。
+- Planner、Proposer、Reviewer、Generator、Evaluator 与 Judge 收到同一语义说明，禁止跨 GAN 轮次移动合同治理基点。
+
+## Brain 1.272.30 — Harness 重跑合同版本隔离
+
+- 同一 initiative 再次批准相同 GAN 轮次时，在事务化 initiative 锁内分配新的不可变合同版本，禁止历史审批 SHA 与新冻结制品被合并成混合合同。
+- 同 run、同证据重入幂等复用已附着合同；同 run、不同证据 fail-closed，两个并发 run 串行分配不同版本。
+- PostgreSQL 回归覆盖历史 r3 合同与新 r3 审批碰撞、同 run 重入和双连接并发，验证旧合同仅 supersede 且证据不被改写。
+
+## Brain 1.272.29 — approved contract artifact transport
+
+- Kernel 从精确 approved SHA 冻结完整合同测试资产，通过不可变数据库行进入 TaskBundle。
+- Fleet Runner 在 Provider 启动前验证路径、摘要、长度与 source revision，物化后回读校验。
+- 确定性 assembly/Impact 错误不再误入人审或无限重试；Harness watchdog 启动即扫描。
+- Impact Contract 对 schema 解析结果计算稳定 hash，空扩展字段不再触发伪换版。
+- 保留 1.272.27 的冻结测试兼容通道；新合同以 sealed artifact manifest 为唯一持久化事实。
+- Schema 地板推进到 412。
+
+## Brain 1.272.28 — 冻结合同 Runner 三机发布
+
+- 从已合并 main `a28bdb1f` 构建 canonical Runner `sha256:689b4694e3397b30eff54c8fb0ad59bc3a42c8179f9f07cfad313afc5fe7414b`，冻结制品 helper 与源码 SHA-256 一致。
+- NodeProfile、三机配置、rollout/reconcile、安装器测试与 smoke 同步新 digest；Fleet Worker 基线升级为 1.272.12。
+
+## Brain 1.272.27 — 冻结合同测试制品进入 TaskBundle
+
+## Brain 1.272.25 — Impact Gate fresh 证据规范化
+
+- Structure Gate 与 Diff Gate 在持久化 Impact Contract 前统一省略 fresh 证据中的 `reason_code: null`，保持 schema 合法与合同 hash 幂等。
+- 增加真实 Mapper fresh 响应形状回归，覆盖 Structure Gate 持久化边界。
+
+## Brain 1.272.24 — harness PR URL 全链路 canonical + argv-only 子进程（P0 hotfix）
+
+- harness_generate/fix/evaluate 对 callback、payload、result、DB、dev_records 候选逐项 trim + validate，非法 truthy 值不再遮蔽合法 fallback
+- Evaluator merge/rebase 与 harness CI/PR 查询改为无 shell 的 argv 调用，阻断恶意 PR URL 命令注入
+- terminal PR 对账 cursor 使用校验后的 ISO 文本排序，脏 payload 不再因 timestamptz cast 拖垮整批；batch limit 限制为正整数且封顶 100
+- 真实 HTTP route 回归覆盖 generate/fix/evaluate，断言 canonical URL 进入下游且恶意值不进入任何子进程
+
+## Brain 1.272.23 — sync resolver 独立校验 + shepherd 公平轮转 + 预算超时 + HTTP 路由隔离（P0 hotfix）
+
+- **[I1]** `lib/callback-utils.js`：`resolveCanonicalPrUrlSync` 逐项独立 trim+validate，invalid 高优先级不遮蔽合法低优先级 `existing_pr_url`。
+- **[I2]** `routes/execution.js`：harness_generate/fix/evaluate 三段均从 `resolvedPrUrl` 读取权威 pr_url，禁止再读 raw `pr_url`，确保 `existing_pr_url` 兜底路径畅通。
+- **[I3]** `shepherd.js`：`reconcileTerminalOpenPRs` 改用 `last_reconcile_checked_at` payload cursor 轮转排序（`COALESCE ... ASC`），OPEN 任务不重复占位，第 6+ 任务可在下轮处理。
+- **[I4]** `shepherd.js`：per-call spawn timeout = `min(PER_CALL_CAP_MS=30000, remainingBudget)`；remaining≤0 提前退出；支持 `_elapsedMsFn` 注入供测试精确断言。
+
+## Brain 1.272.22 — authority 安全与 Tick 活性四修（P0 hotfix）
+
+- **[Fix A]** `shepherd.js`：`checkPrStatus`/`executeMerge`/`reconcileTerminalOpenPRs` 全部从 `execSync` 迁移到 `spawnSync` args array，pr_url 先经 `isValidGithubPrUrl` 校验，非法 URL fail closed（errors++ 跳过）。
+- **[Fix B]** `reconcileTerminalOpenPRs`：增加模块级低频 gate（最短 5 分钟间隔）、非重入 guard、严格总预算（默认 25s）、小批约束（LIMIT 5）。
+- **[Fix C]** `resolveCanonicalPrUrl`：逐项独立校验（explicit → tasks.pr_url → payload.pr_url → payload.existing_pr_url），返回 trimmed 值；`maybeMarkCompletedNoPr` 同步修正，invalid 高优先级不再遮蔽合法低优先级。
+- **[Fix D]** `routes/execution.js`：generic HTTP callback 确定 `resolvedPrUrl` 后，CI diagnosis 与主动通知均使用 `resolvedPrUrl`，禁止再读 raw `pr_url`。
+- **[Fix E]** `reconcileTerminalOpenPRs`：UPDATE rowCount=0（幂等跳过）时不计入 `reconciled`。
+
+## Brain 1.272.21 — CI 夹具与 resolveCanonicalPrUrl 新 SELECT 对齐
+
+- `callback-processor.integration.test.js`：修复 resolveCanonicalPrUrl 新增 authority SELECT 导致的 mockResolvedValueOnce 顺序错位；按 SQL 意图分别返回 authority row 与 completed_no_pr row，保留无 PR dev → completed_no_pr 路径。
+- `harness-completion-authority.test.js`：将非法 `https://x/pr/9` 替换为合法 GitHub PR URL，保留 completed 预期，不削弱生产 URL 校验。
+
+## Brain 1.272.20 — existing PR 权威字段贯通 + 蓝绿内部鉴权凭据闭环
+
+- `writeDockerCallback`：stdout 无完整 URL 时，按优先级（stdout > tasks.pr_url > payload.pr_url > payload.existing_pr_url）兜底解析 canonical pr_url 写入 callback_queue._meta，防止 "PR #XXXX" 短输出导致 pr_url=null。
+- `maybeMarkCompletedNoPr`：检查 DB `tasks.pr_url`、`payload.pr_url`、`payload.existing_pr_url` 三路兜底；已知 existing PR 的 success 不再误标 `completed_no_pr`、不再递增 retry_count。
+- `matchTaskByBranchOrUrl`：新增 prUrl 参数，支持按 exact pr_url / existing_pr_url 精确匹配；覆盖 `completed_no_pr` 状态（原仅 completed）。
+- `handlePrMerged`：传入 prUrl 兜底匹配；`completed_no_pr` 任务在 GitHub MERGED 时升级为 `completed` + 写 pr_merged_at/pr_status=merged，清除 current_run_id。
+- TDD 回归测试永久锁入 CI（existing-pr-authority.test.js），覆盖 writeDockerCallback/maybeMarkCompletedNoPr/matchTaskByBranchOrUrl/handlePrMerged/幂等 五个断言组。
+- 蓝绿 sidecar 以只读挂载读取共享 internal token SSOT，并把同一路径显式传给容器内 Compose；凭据缺失时保留旧 Brain、拒绝切换。
+- Gate 3 在版本与真重启之外，要求生产敏感入口匿名请求返回 401；token 未注入的 503 与鉴权未生效的业务响应均阻断部署。
 
 ## Brain 1.272.19 — 同 PR+SHA 唯一权威 Run + 终态收账三修
 
@@ -72,7 +154,7 @@
 - Map/Impact/Journey 写入口使用共享 internal token；生产 Compose、蓝绿 canary、staging 与跨 checkout scanner 读取同一宿主 credentials SSOT。
 - Capability Mapper 在 Runner 只产 manifest artifact，拍板后的提交/激活统一走读取 credentials SSOT 的受信宿主 adapter。
 - 扫描只允许 clean main/exact SHA；批末复核 checkout 与四类 header revision，同 SHA 每 10 分钟保鲜。
-- Schema 地板推进到 410。
+- Schema 地板推进到 411。
 
 ---
 
@@ -2099,7 +2181,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | **Schema 版本**: 411 |
+| **schema_version** | 迁移版本追踪 | **Schema 版本**: 413 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -2487,7 +2569,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '411'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '413'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

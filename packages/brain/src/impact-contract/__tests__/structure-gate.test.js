@@ -9,6 +9,7 @@
 import { describe, test, expect, vi } from 'vitest';
 
 import { evaluateStructureGate } from '../structure-gate.js';
+import { validateImpactContract } from '../contract-schema.js';
 
 // ---------- 测试 fixtures ----------
 
@@ -225,6 +226,43 @@ describe('FR-3 Structure Gate', () => {
   });
 
   describe('放行条件（正向）', () => {
+
+    test('Mapper fresh 响应的 null reason_code 在持久化前必须规范化', async () => {
+      const taskId = '11111111-1111-4111-8111-111111111111';
+      const contract = {
+        ...BASE_CONTRACT,
+        task_id: taskId,
+        contract_body: {
+          ...BASE_CONTRACT.contract_body,
+          task_id: taskId,
+        },
+      };
+      const persistContract = vi.fn(async (_db, input) => {
+        const validation = validateImpactContract(input.contract_body);
+        if (!validation.success) throw validation.error;
+        return { contract: { id: 'contract-null-reason', ...input }, created: true };
+      });
+
+      const result = await evaluateStructureGate({
+        db: {},
+        task: { ...BASE_TASK, id: taskId },
+        contract,
+        mapClient: async ({ repo, baseRevision }) => ({
+          ...(await makeNormalMapClient()({ repo, baseRevision })),
+          affected_nodes: [{
+            capability_id: 'cap-001',
+            capability_name: 'Capability 1',
+            owner: 'cap-001',
+            impact_level: 'direct',
+          }],
+        }),
+        persistContract,
+      });
+
+      expect(result.gate).toBe('pass');
+      expect(persistContract.mock.calls[0][1].contract_body.freshness_evidence)
+        .toEqual({ status: 'fresh' });
+    });
 
     test('调用方 command 不能进入可信合同，必须由 Mapper 权威描述替换', async () => {
       const persistContract = vi.fn(async (_db, input) => ({

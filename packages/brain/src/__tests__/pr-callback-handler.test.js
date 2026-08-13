@@ -214,8 +214,9 @@ describe('matchTaskByBranchOrUrl', () => {
 
     expect(result).toEqual(mockCompletedTask);
     expect(mockPool.query).toHaveBeenCalledTimes(2);
-    // 第二次查询应包含 completed 和 pr_merged_at IS NULL
-    expect(mockPool.query.mock.calls[1][0]).toContain("status = 'completed'");
+    // 第二次查询应包含 completed/completed_no_pr 和 pr_merged_at IS NULL
+    // 修复后：status IN ('completed', 'completed_no_pr')，兼容 no_pr 终态提升
+    expect(mockPool.query.mock.calls[1][0]).toContain("'completed'");
     expect(mockPool.query.mock.calls[1][0]).toContain('pr_merged_at IS NULL');
     expect(mockPool.query.mock.calls[1][0]).toContain("pr_url LIKE");
   });

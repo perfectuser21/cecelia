@@ -3,6 +3,7 @@
  * 不测真外部：pool/execCmd/fileExists/readFile 全注入。
  * 重点：PR json 解析 / ci 状态映射 / rN 解析 / inflight label 过滤 / lastAgentExit hop 作用域（P0-3）。
  */
+import { createHash } from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
 import { collectGroundTruth } from '../ground-truth.js';
 import { derive } from '../derive.js';
@@ -24,6 +25,7 @@ function fakePool(rowsByTable = {}) {
       }
       if (sql.includes('FROM initiative_runs')) return { rows: rowsByTable.initiative_runs ?? [] };
       if (sql.includes('FROM initiative_contracts')) return { rows: rowsByTable.initiative_contracts ?? [] };
+      if (sql.includes('FROM initiative_contract_artifacts')) return { rows: rowsByTable.initiative_contract_artifacts ?? [] };
       if (sql.includes('FROM tasks')) return { rows: rowsByTable.tasks ?? [] };
       if (sql.includes('FROM harness_attempts')) {
         if (sql.includes("role = 'evaluator'")) {
@@ -89,6 +91,7 @@ function makeDeps({ rows = {}, exec = {}, files = {}, readAuthCircuit } = {}) {
   const pool = fakePool({
     initiative_runs: [runRow],
     initiative_contracts: rows.contracts ?? [{ id: CONTRACT_ID, status: 'draft' }],
+    initiative_contract_artifacts: rows.contractArtifacts ?? [],
     tasks: rows.tasks ?? [{ id: TASK_ID, status: 'in_progress', payload: {} }],
     harness_attempts: rows.attempts ?? [],
     harness_evaluator_attempts: rows.evaluatorAttempts ?? rows.attempts ?? [],
@@ -130,6 +133,209 @@ describe('collectGroundTruth：DB 通道组装', () => {
     expect(o.contract.id).toBe(CONTRACT_ID);
     expect(o.decisionLog).toEqual([]);
     expect(o.authCircuit).toEqual([{ account_id: 'account2', is_auth_failed: true, auth_fail_count: 2 }]);
+  });
+
+  it('未显式固定基线时，从本 Run 最早的合法 WorkspaceSpec 恢复稳定实现基线', async () => {
+    const baselineSha = '1'.repeat(40);
+    const laterContractSha = '2'.repeat(40);
+    const plannerAttemptId = '22222222-2222-4222-8222-222222222222';
+    const reviewerAttemptId = '33333333-3333-4333-8333-333333333333';
+    const taskBundle = ({ attemptId, hop, role, baseSha, mode, branch }) => ({
+      contract_version: '1.0',
+      run_id: RUN_ID,
+      attempt_id: attemptId,
+      hop,
+      phase: role === 'planner' ? 'planning' : 'gan',
+      role,
+      objective: `Run the ${role} role.`,
+      skill: null,
+      inputs: {
+        task_id: TASK_ID,
+        sprint_dir: 'sprints/stable-baseline',
+        execution_surface: 'fleet-worker',
+        workspace_spec: {
+          repo: 'perfectuser21/cecelia',
+          base_sha: baseSha,
+          branch,
+          expected_head_sha: role === 'reviewer' ? baseSha : null,
+          mode,
+          run_id: RUN_ID,
+          attempt_id: attemptId,
+          frozen_baseline: false,
+        },
+        artifacts: [],
+      },
+      constraints: {
+        read_only: mode === 'read-only',
+        fresh_session: true,
+        timeout_seconds: 5400,
+      },
+      expected_output: `harness-result/${role}-v1`,
+    });
+    const deps = makeDeps({
+      rows: {
+        tasks: [{ id: TASK_ID, status: 'in_progress', payload: {} }],
+        attempts: [
+          {
+            id: reviewerAttemptId,
+            run_id: RUN_ID,
+            hop: 4,
+            role: 'reviewer',
+            status: 'completed',
+            task_bundle: taskBundle({
+              attemptId: reviewerAttemptId,
+              hop: 4,
+              role: 'reviewer',
+              baseSha: laterContractSha,
+              mode: 'read-only',
+              branch: 'cp-harness-propose-r1-contract',
+            }),
+          },
+          {
+            id: plannerAttemptId,
+            run_id: RUN_ID,
+            hop: 1,
+            role: 'planner',
+            status: 'completed',
+            task_bundle: taskBundle({
+              attemptId: plannerAttemptId,
+              hop: 1,
+              role: 'planner',
+              baseSha: baselineSha,
+              mode: 'read-write',
+              branch: 'cp-harness-prd-stable-baseline',
+            }),
+          },
+        ],
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.implementationBaseline).toEqual({
+      repo: 'perfectuser21/cecelia',
+      base_sha: baselineSha,
+      source: 'initial_workspace',
+      frozen: false,
+    });
+  });
+
+  it('最早历史 TaskBundle 损坏时 fail-closed，不得从后续 Reviewer 合同 SHA 重建实现基线', async () => {
+    const reviewerAttemptId = '33333333-3333-4333-8333-333333333333';
+    const reviewerContractSha = '2'.repeat(40);
+    const deps = makeDeps({
+      rows: {
+        tasks: [{ id: TASK_ID, status: 'in_progress', payload: {} }],
+        attempts: [
+          {
+            id: reviewerAttemptId,
+            run_id: RUN_ID,
+            hop: 4,
+            role: 'reviewer',
+            status: 'completed',
+            task_bundle: {
+              contract_version: '1.0',
+              run_id: RUN_ID,
+              attempt_id: reviewerAttemptId,
+              hop: 4,
+              phase: 'gan',
+              role: 'reviewer',
+              objective: 'Review the contract.',
+              skill: null,
+              inputs: {
+                task_id: TASK_ID,
+                sprint_dir: 'sprints/stable-baseline',
+                execution_surface: 'fleet-worker',
+                workspace_spec: {
+                  repo: 'perfectuser21/cecelia',
+                  base_sha: reviewerContractSha,
+                  branch: 'cp-harness-propose-r1-contract',
+                  expected_head_sha: reviewerContractSha,
+                  mode: 'read-only',
+                  run_id: RUN_ID,
+                  attempt_id: reviewerAttemptId,
+                  frozen_baseline: false,
+                },
+                artifacts: [],
+              },
+              constraints: {
+                read_only: true,
+                fresh_session: true,
+                timeout_seconds: 5400,
+              },
+              expected_output: 'harness-result/reviewer-v1',
+            },
+          },
+          {
+            id: '22222222-2222-4222-8222-222222222222',
+            run_id: RUN_ID,
+            hop: 1,
+            role: 'planner',
+            status: 'completed',
+            task_bundle: { corrupted: true },
+          },
+        ],
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.implementationBaseline).toBeNull();
+    expect(observed.implementationBaselineError)
+      .toBe('implementation_baseline_unrecoverable');
+  });
+
+  it('approved contract 从不可变资产表读取按 path 排序的 TaskBundle 真相', async () => {
+    const artifacts = [
+      { path: 'sprints/router/tests/a.test.mjs', sha256: 'a'.repeat(64) },
+      { path: 'sprints/router/tests/z.test.mjs', sha256: 'b'.repeat(64) },
+    ];
+    const deps = makeDeps({
+      rows: {
+        contracts: [{ id: CONTRACT_ID, status: 'approved' }],
+        contractArtifacts: artifacts,
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.contract.artifacts).toEqual(artifacts);
+    const [sql, params] = deps.pool.calls.find(([query]) => (
+      query.includes('FROM initiative_contract_artifacts')
+    ));
+    expect(sql).toMatch(/ORDER BY path/);
+    expect(params).toEqual([CONTRACT_ID]);
+  });
+
+  it('artifact 行数与 seal 不一致时标记 frozen contract 读取失败', async () => {
+    const revision = '6faaa9f55e9789ffd29fd2760a9b5994df272e86';
+    const artifact = (path, content) => ({
+      path,
+      content,
+      sha256: createHash('sha256').update(content).digest('hex'),
+      byte_length: Buffer.byteLength(content),
+      source_revision: revision,
+      sealed_artifact_count: 3,
+      sealed_manifest_sha256: 'b'.repeat(64),
+      sealed_source_revision: revision,
+    });
+    const deps = makeDeps({
+      rows: {
+        contracts: [{ id: CONTRACT_ID, status: 'approved' }],
+        contractArtifacts: [
+          artifact('sprints/router/contract-dod.md', '# DoD'),
+          artifact('sprints/router/contract-draft.md', '# Contract'),
+          artifact('sprints/router/sprint-prd.md', '# PRD'),
+          artifact('sprints/router/tests/appended.test.mjs', 'test("appended", () => {})'),
+        ],
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.contract.artifact_error).toBe(
+      'FROZEN_CONTRACT_ARTIFACT_INVALID:seal_mismatch',
+    );
   });
 
   it('contract status=draft → approved:false；contract_id 为空 → 不查 contracts、approved:false', async () => {

@@ -84,7 +84,7 @@ describe('收账权收归 — callback-processor', () => {
 
     const { processExecutionCallback } = await import('../callback-processor.js');
     await processExecutionCallback(
-      { task_id: 't-dev-1', run_id: 'r2', status: 'AI Done', result: { ok: true }, pr_url: 'https://x/pr/9' },
+      { task_id: 't-dev-1', run_id: 'r2', status: 'AI Done', result: { ok: true }, pr_url: 'https://github.com/test/repo/pull/9' },
       mockPool
     );
 

@@ -10,8 +10,8 @@ target_environment: local_api
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] Work Router、原子 store、receipt API、migration 411、Map preflight、scratch smoke 与对应永久回归测试存在且接线。
-  Test: node -e "for(const p of ['packages/brain/src/work-router.js','packages/brain/src/work-routing-store.js','packages/brain/src/routes/work-routing.js','packages/brain/migrations/411_work_routing_receipts.sql','packages/brain/src/orchestrator/preflight/map-impact-contract.js','packages/brain/scripts/smoke/unified-work-router-smoke.sh'])require('fs').accessSync(p)"
+- [ ] [ARTIFACT] Work Router、原子 store、receipt API、migration 413、Map preflight、scratch smoke 与对应永久回归测试存在且接线。
+  Test: node -e "for(const p of ['packages/brain/src/work-router.js','packages/brain/src/work-routing-store.js','packages/brain/src/routes/work-routing.js','packages/brain/migrations/413_work_routing_receipts.sql','packages/brain/src/orchestrator/preflight/map-impact-contract.js','packages/brain/scripts/smoke/unified-work-router-smoke.sh'])require('fs').accessSync(p)"
 - [ ] [ARTIFACT] Brain 版本、DEFINITION、package-lock 与 `.brain-versions` 同步。
   Test: bash scripts/check-version-sync.sh
 - [ ] [ARTIFACT] 每个实现切片均永久保留先 RED 后 GREEN 的 Conventional Commit，baseline 仅为祖先。

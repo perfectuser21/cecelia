@@ -54,6 +54,7 @@ dev-env-db-guard-smoke.sh
 direction-proposer-t4-smoke.sh
 disk-guard-smoke.sh
 dispatch-allocation-guide-smoke.sh
+dispatch-code-routing-smoke.sh
 dispatch-fail-autoblock-smoke.sh
 doc-zombie-retire-smoke.sh
 drift-sentinel-smoke.sh
@@ -133,6 +134,7 @@ judge-level-smoke.sh
 kernel-attempt-telemetry-smoke.sh
 kernel-bounded-run-smoke.sh
 kernel-capability-gate-smoke.sh
+kernel-contract-artifacts-smoke.sh
 kernel-context-resume-action-smoke.sh
 kernel-fleet-bridge-smoke.sh
 kernel-fleet-node-admission-smoke.sh

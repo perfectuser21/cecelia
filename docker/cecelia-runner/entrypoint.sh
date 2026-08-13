@@ -1874,6 +1874,16 @@ run_provider_contract() {
     commander_contract=true
   fi
 
+  if ! node /usr/local/lib/cecelia/materialize-frozen-contract-artifacts.cjs \
+      "$task_bundle_file" "${WORKTREE_PATH:-$PWD}"; then
+    write_provider_bootstrap_failure \
+      "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
+      'Frozen contract tests rejected' frozen_contract_artifacts_invalid \
+      'runner could not materialize or verify exact approved contract tests' \
+      "${CREDENTIAL_REF:-}" "${CREDENTIAL_COPY_MUTATED:-false}"
+    return 1
+  fi
+
   result_schema_json="$(provider_result_schema_json "$task_bundle_file")"
   publish_provider_result_schema "$result_schema_file" "$result_schema_json"
 
@@ -2102,6 +2112,11 @@ run_provider_contract() {
   if ! terminate_evaluator_provider_processes; then
     provider_exit=1
     printf '%s\n' '{"error":"provider_descendant_cleanup_failed"}' >> "$STDOUT_FILE"
+  fi
+  if ! node /usr/local/lib/cecelia/materialize-frozen-contract-artifacts.cjs \
+      "$task_bundle_file" "${WORKTREE_PATH:-$PWD}"; then
+    provider_exit=1
+    printf '%s\n' '{"error":"frozen_contract_artifacts_changed"}' >> "$STDOUT_FILE"
   fi
   if ! verify_evaluator_evidence_capsule; then
     provider_exit=1

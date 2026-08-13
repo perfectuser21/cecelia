@@ -1,10 +1,41 @@
 # Brain 模块定义
 
-**版本**: 1.272.20
+**版本**: 1.272.33
 
-## Unified Work Router（Brain 1.272.20）
+## Unified Work Router（Brain 1.272.33）
 
-所有 coding mutation 由 Work Router 正向选择四档 Kernel Harness profile，并以同一事务写入 task 与 append-only Routing Receipt。Kernel run 强制使用 fresh Universal Map 与 active Impact Contract；有头工具和无头 Dispatcher 在动作前验证同一 receipt。Generator Provider 使用冻结基线血统闸、受限 UID/capabilities、敏感环境剥离和禁用 pushurl。
+所有 coding mutation 由 Work Router 正向选择四档 Kernel Harness profile，并以同一事务写入 task 与 append-only Routing Receipt。Kernel run 强制使用 fresh Universal Map 与 active Impact Contract；有头工具和无头 Dispatcher 在动作前验证同一 receipt。Generator Provider 使用冻结基线血统闸、受限 UID/capabilities、敏感环境剥离和禁用 pushurl。显式恢复 run 只接受可信前序 Generator 对精确 PR URL/SHA 的服务端证据。
+
+## Approved contract TaskBundle deduplication
+
+- Generator、Evaluator 与 Judge 以冻结 contract artifacts 为批准后正文 SSOT，不再重复携带入口 PRD 文本。
+- Planner/GAN 输入语义不变；合同 artifact 的完整性与 256KB 独立上限保持 fail-closed。
+
+## Harness stable implementation baseline
+
+- TaskBundle 将 Run 级实现基线与角色 WorkspaceSpec 检出点分离；显式任务基线优先，否则只从最早合法 Attempt 恢复。
+- 有历史 Attempt 却无法恢复初始基线时 fail-closed，禁止用 Reviewer 合同 SHA 或 Evaluator PR SHA 重建移动基线。
+
+## Harness rerun contract version isolation
+
+- Re-approving the same GAN round allocates a new immutable initiative contract version under a transactional initiative task lock, while exact same-run retries reuse the attached contract and mismatched retries fail closed.
+
+## Frozen contract Runner rollout
+
+- Canonical Runner 固定为从 main `a28bdb1f` 构建的 `sha256:689b4694e3397b30eff54c8fb0ad59bc3a42c8179f9f07cfad313afc5fe7414b`；Fleet Worker 基线升级为 1.272.12。
+
+## Approved contract artifact transport
+
+- Kernel 从精确 approved SHA 冻结 PRD、合同、DoD、task-plan 与 tests，并原子持久化到不可变合同资产表。
+- TaskBundle 携带路径、SHA-256、UTF-8 字节数和 source revision；Fleet Runner 在 Provider 启动前校验、物化并回读验证。
+- 合同资产与 Impact schema 确定性错误保留原错误码并一次收尾；watchdog 在 Brain 启动时立即执行受 lease/CAS 保护的恢复扫描。
+- Impact Contract 先按 schema 规范化再计算 hash，空的非 schema 字段不再制造伪版本。
+- 兼容 1.272.27 的冻结测试 TaskBundle，同时以 versioned rows + sealed manifest 作为新批准合同的唯一持久化事实。
+- Schema 地板推进到 412。
+
+## Blue-green internal auth credential closure
+
+- Blue-green sidecar 只读挂载共享 internal token SSOT；Gate 3 通过敏感入口匿名 401 验证生产容器真实启用鉴权。
 
 ## Linux runner dependency target
 
@@ -19,7 +50,7 @@
 - 五个 Map 读面与健康度共享一致性快照、统一 envelope 和查询时状态，不再消费旧 `src/map` 实现。
 - Dashboard 的唯一 `/map` 注册展示三层业务地图、事实锚点与 revision-bound receipt。
 - Harness 的 revision-locked radius 与 Dashboard 浏览 radius 在同一路由按合同字段机械分流，前者不降级成浏览裁决。
-- Schema 地板推进到 410。
+- Schema 地板推进到 411。
 
 ## Impact Contract 不可变证据闭环（Brain 1.272.9）
 
@@ -32,7 +63,7 @@
 - PostgreSQL 冻结 Impact Contract 语义字段与 Gap 权威身份，未解决 Gap 不可改归属或删除。
 - Harness Report Runner 不再写 Journey；Feature done 与测试锚点由已认证 Brain callback 回写。
 - 生产内部写接口使用共享 credentials token；scanner、Compose、蓝绿和 staging 使用同一 SSOT。
-- Schema 地板为 410。
+- Schema 地板为 411。
 
 ## F1 Impact Contract 系统（Brain 1.272.1）
 

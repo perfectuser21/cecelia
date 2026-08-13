@@ -16,7 +16,7 @@ import { raise } from './alerting.js';
 import { handleTaskFailure } from './quarantine.js';
 import { updateDesireFromTask } from './desire-feedback.js';
 import { resolveRelatedFailureMemories } from './routes/shared.js';
-import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from './lib/callback-utils.js';
+import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, resolveCanonicalPrUrl, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from './lib/callback-utils.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import { serialUnlockNext, writeReviewResult, promoteRegressionOnHarnessMerged } from './lib/callback-postprocess.js';
 
@@ -54,8 +54,11 @@ export async function processExecutionCallback(data, pool) {
   // 1. Status mapping
   let newStatus = normalizeCallbackStatus(status);
 
-  // P1-1: Dev task completed without PR → completed_no_pr
-  newStatus = await maybeMarkCompletedNoPr(newStatus, pr_url, task_id, pool, 'callback-processor');
+  // 权威 pr_url：callback/stdout > tasks.pr_url > payload.pr_url > payload.existing_pr_url
+  const resolvedPrUrl = await resolveCanonicalPrUrl(pr_url, task_id, pool);
+
+  // P1-1: Dev task completed without PR → completed_no_pr（传 resolvedPrUrl 避免二次 DB 查）
+  newStatus = await maybeMarkCompletedNoPr(newStatus, resolvedPrUrl, task_id, pool, 'callback-processor');
 
   // P1-0: terminal failure guard — DB 查询失败直接抛错，不再降级（防 stale completed 覆盖 failed）。
   if (newStatus === 'completed') {
@@ -81,7 +84,7 @@ export async function processExecutionCallback(data, pool) {
   }
 
   // 2. Build update payload
-  const lastRunResult = buildLastRunResult({ run_id, checkpoint_id, status, duration_ms, iterations, pr_url, result });
+  const lastRunResult = buildLastRunResult({ run_id, checkpoint_id, status, duration_ms, iterations, pr_url: resolvedPrUrl, result });
 
   // 3. ATOMIC transaction: task UPDATE + decision_log + progress step
   const client = await pool.connect();
@@ -97,7 +100,7 @@ export async function processExecutionCallback(data, pool) {
       console.warn(`[callback-processor] Task ${task_id} completed with empty findings/result`);
     }
 
-    const prNumber = extractPrNumber(pr_url);
+    const prNumber = extractPrNumber(resolvedPrUrl);
 
     const isQuotaExhausted = newStatus === 'quota_exhausted';
     const isTerminal = TERMINAL_CALLBACK_STATUSES.has(newStatus);
@@ -129,7 +132,7 @@ export async function processExecutionCallback(data, pool) {
         AND status IN ('in_progress', 'queued', 'dispatched')
         AND ($14::text IS NULL OR payload->>'current_run_id' = $14::text)
     `, [
-      task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null,
+      task_id, newStatus, JSON.stringify(lastRunResult), status, resolvedPrUrl || null,
       isCompleted, findingsValue, prNumber, errorMessage, blockedDetail,
       isQuotaExhausted, execMetaJson, isTerminal, run_id || null,
     ]);
@@ -178,7 +181,7 @@ export async function processExecutionCallback(data, pool) {
         errorCode: isSuccessfulExecution ? null : 'execution_failed',
         errorMessage: isSuccessfulExecution ? null : `Task execution failed with status: ${status}`,
         retryCount: iterations || 0,
-        artifacts: { pr_url: pr_url || null },
+        artifacts: { pr_url: resolvedPrUrl || null },
         metadata: { checkpoint_id: checkpoint_id || null, original_status: status },
         confidenceScore: isSuccessfulExecution ? 1.0 : 0.2,
       });
@@ -247,7 +250,7 @@ export async function processExecutionCallback(data, pool) {
     notifyTaskCompleted({ task_id, title: `Task ${task_id}`, run_id, duration_ms }).catch(err =>
       console.error('[callback-processor] notifyTaskCompleted error:', err.message)
     );
-    publishTaskCompleted(task_id, run_id, { pr_url, duration_ms, iterations });
+    publishTaskCompleted(task_id, run_id, { pr_url: resolvedPrUrl, duration_ms, iterations });
 
     // Thalamus: task completed
     try {
@@ -302,12 +305,12 @@ export async function processExecutionCallback(data, pool) {
     );
 
     // 5c11. 串行调度：dev task 完成 → 解锁下一个 blocked 串行 task（共享后处理管道）
-    await serialUnlockNext(task_id, result, pr_url, pool).catch(err =>
+    await serialUnlockNext(task_id, result, resolvedPrUrl, pool).catch(err =>
       console.error(`[callback-processor] serialUnlockNext 失败 (non-fatal): ${err.message}`)
     );
 
     // T2. harness merged 终态 → 累积 FR 冻结（共享后处理管道，dbOnly）
-    await promoteRegressionOnHarnessMerged(task_id, result, pr_url, pool).catch(err =>
+    await promoteRegressionOnHarnessMerged(task_id, result, resolvedPrUrl, pool).catch(err =>
       console.error(`[callback-processor] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${err.message}`)
     );
 

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import {
   parseTaskBundle,
@@ -7,6 +8,15 @@ import {
   RESULT_CONTRACT_VERSION,
   ROLE_VALUES,
 } from '../execution-contract.js';
+
+const CONTRACT_ARTIFACT_CONTENT = 'test("routing", () => {})';
+const CONTRACT_ARTIFACT = Object.freeze({
+  path: 'sprints/router/tests/routing.test.mjs',
+  content: CONTRACT_ARTIFACT_CONTENT,
+  sha256: createHash('sha256').update(CONTRACT_ARTIFACT_CONTENT).digest('hex'),
+  byte_length: Buffer.byteLength(CONTRACT_ARTIFACT_CONTENT),
+  source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+});
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
@@ -133,6 +143,42 @@ describe('TaskBundle contract', () => {
       contract_version: TASK_CONTRACT_VERSION,
       role: 'planner',
     });
+  });
+
+  it('接受自校验且按 path 排序的 approved contract artifacts', () => {
+    const bundle = validBundle();
+    bundle.inputs.contract_artifacts = [
+      { ...CONTRACT_ARTIFACT, path: 'sprints/router/tests/z.test.mjs' },
+      CONTRACT_ARTIFACT,
+    ].sort((left, right) => left.path.localeCompare(right.path));
+
+    expect(parseTaskBundle(bundle).inputs.contract_artifacts).toEqual(
+      bundle.inputs.contract_artifacts,
+    );
+  });
+
+  it.each([
+    ['路径遍历', { ...CONTRACT_ARTIFACT, path: '../escape.test.mjs' }],
+    ['反斜杠路径', { ...CONTRACT_ARTIFACT, path: 'tests\\escape.test.mjs' }],
+    ['摘要格式错误', { ...CONTRACT_ARTIFACT, sha256: 'bad' }],
+    ['字节长度不符', { ...CONTRACT_ARTIFACT, byte_length: 999 }],
+  ])('拒绝无效 approved contract artifact：%s', (_name, artifact) => {
+    const bundle = validBundle();
+    bundle.inputs.contract_artifacts = [artifact];
+    expect(() => parseTaskBundle(bundle)).toThrow(/contract_artifact/i);
+  });
+
+  it('拒绝重复或非排序的 approved contract artifacts', () => {
+    const duplicate = validBundle();
+    duplicate.inputs.contract_artifacts = [CONTRACT_ARTIFACT, CONTRACT_ARTIFACT];
+    expect(() => parseTaskBundle(duplicate)).toThrow(/contract_artifact/i);
+
+    const unsorted = validBundle();
+    unsorted.inputs.contract_artifacts = [
+      { ...CONTRACT_ARTIFACT, path: 'sprints/router/tests/z.test.mjs' },
+      CONTRACT_ARTIFACT,
+    ];
+    expect(() => parseTaskBundle(unsorted)).toThrow(/contract_artifact/i);
   });
 
   it('accepts a skill-free read-only canary bundle', () => {

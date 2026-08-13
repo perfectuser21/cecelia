@@ -99,4 +99,32 @@ export function readGitArtifact(commitSha, filePath, {
   });
 }
 
+/** List regular blobs below one immutable repository-relative prefix. */
+export function listGitArtifacts(commitSha, prefix, {
+  cwd = process.cwd(),
+  repo = null,
+  remoteUrlForRepo = defaultRemoteUrlForRepo,
+} = {}) {
+  const normalizedPrefix = String(prefix).replace(/\/+$/, '');
+  assertRepositoryRelative(normalizedPrefix);
+  ensureGitCommit(commitSha, { cwd, repo, remoteUrlForRepo });
+  const output = execFileSync(
+    'git',
+    ['ls-tree', '-r', commitSha, '--', normalizedPrefix],
+    { cwd, ...GIT_OPTIONS },
+  );
+  return String(output)
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(100644|100755) blob [a-f0-9]+\t(.+)$/);
+      return match?.[2] ?? null;
+    })
+    .filter((filePath) => (
+      filePath === normalizedPrefix
+      || filePath?.startsWith(`${normalizedPrefix}/`)
+    ))
+    .sort();
+}
+
 export const __test__ = { COMMIT_SHA, assertRepositoryRelative };

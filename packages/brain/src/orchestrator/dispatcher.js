@@ -13,6 +13,12 @@ import {
 import { deriveCapabilityRequirements } from './preflight/requirements.js';
 import { expandUnresolvedAccountTargets } from './preflight/execution-targets.js';
 import { HARNESS_BUNDLE_MAX_BYTES } from './constants.js';
+import {
+  implementationBaselineFromTaskPayload,
+  implementationBaselineFromWorkspace,
+  objectiveWithImplementationBaseline,
+  parseImplementationBaseline,
+} from './implementation-baseline.js';
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const MAX_EVALUATOR_FEEDBACK_CHECKS = 20;
@@ -180,19 +186,53 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   const task = observed.task;
   const payload = asObject(task.payload);
   const metadata = asObject(task.metadata);
+  const normalizedContractArtifacts = Array.isArray(observed.contract?.artifacts)
+    ? observed.contract.artifacts
+    : null;
+  // 合同批准后，冻结 artifacts 已经是 PRD/合同/DoD 的唯一权威正文。
+  // Generator/Evaluator/Judge 若继续携带入口 description/thin_prd/prep_prd_body，
+  // 会把同一份长 PRD 重复装进 TaskBundle；Evaluator skill 加入后尤其容易越过
+  // 256KB 传输闸。只对已批准且确有冻结 artifacts 的下游角色去重，Planner/GAN
+  // 仍保留入口正文，避免批准前丢失需求上下文。
+  const frozenContractIsCanonical = observed.contract?.approved === true
+    && normalizedContractArtifacts !== null
+    && ['generator', 'evaluator', 'judge'].includes(spec.role);
+  const compatibilityArtifacts = Array.isArray(ctx.frozenContractArtifacts)
+    ? ctx.frozenContractArtifacts
+    : (normalizedContractArtifacts ?? [])
+      .filter(({ path: artifactPath }) => artifactPath.includes('/tests/'))
+      .map((artifact) => ({
+        type: 'frozen_contract_test',
+        path: artifact.path,
+        content: artifact.content,
+        sha256: artifact.sha256,
+        source_sha: artifact.source_revision,
+      }));
   const common = {
     task_id: task.id ?? ctx.taskId,
     sprint_dir: payload.sprint_dir ?? task.sprint_dir,
     worktree_path: payload.worktree_path ?? ctx.worktreePath,
-    artifacts: [],
+    artifacts: compatibilityArtifacts,
     task: {
       title: task.title ?? '',
-      description: task.description ?? '',
+      ...(!frozenContractIsCanonical
+        ? { description: task.description ?? '' }
+        : {}),
     },
     logical_cycle_id: attemptMetadata.logicalCycleId,
     attempt_kind: attemptMetadata.attemptKind,
     workstream_key: attemptMetadata.workstreamKey,
   };
+  if (observed.implementationBaselineError) {
+    throw new Error(observed.implementationBaselineError);
+  }
+  const implementationBaseline = implementationBaselineFromTaskPayload(payload)
+    ?? (observed.implementationBaseline
+      ? parseImplementationBaseline(observed.implementationBaseline)
+      : null);
+  if (implementationBaseline) {
+    common.implementation_baseline = implementationBaseline;
+  }
   // POST /tasks/:id/dispatch promises to bypass slot checks. Preserve that
   // audited server-owned marker inside the TaskBundle so the Kernel preflight
   // can honor the same contract without trusting caller-controlled payload.
@@ -201,10 +241,18 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   }
   // GAN 收敛的 PRD 锚（issue ce42f68f）：r17 实证 payload 缺 thin_prd 时 Planner
   // 只能凭一句话 description 推断 PRD，"覆盖完 PRD 即收敛"失去锚点。有值才注入。
-  if (typeof payload.thin_prd === 'string' && payload.thin_prd.trim()) {
+  if (
+    !frozenContractIsCanonical
+    && typeof payload.thin_prd === 'string'
+    && payload.thin_prd.trim()
+  ) {
     common.thin_prd = payload.thin_prd;
   }
-  if (typeof payload.prep_prd_body === 'string' && payload.prep_prd_body.trim()) {
+  if (
+    !frozenContractIsCanonical
+    && typeof payload.prep_prd_body === 'string'
+    && payload.prep_prd_body.trim()
+  ) {
     common.prep_prd_body = payload.prep_prd_body;
   }
   if (Object.prototype.hasOwnProperty.call(payload, 'required_command_evidence')) {
@@ -310,7 +358,37 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     common.runtime_resources = { postgres: false, node_deps: true };
   }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
-    common.contract = observed.contract?.row ?? null;
+    if (observed.contract?.artifact_error) {
+      throw new Error(observed.contract.artifact_error);
+    }
+    const {
+      frozen_artifacts: _frozenArtifacts,
+      ...contractRow
+    } = observed.contract?.row ?? {};
+    common.contract = observed.contract?.row
+      ? {
+          ...contractRow,
+          ...(common.artifacts[0]?.source_sha
+            ? { approved_sha: common.artifacts[0].source_sha }
+            : {}),
+          frozen_artifact_manifest: common.artifacts.map((artifact) => ({
+            type: artifact.type,
+            path: artifact.path,
+            sha256: artifact.sha256,
+            source_sha: artifact.source_sha,
+          })),
+        }
+      : null;
+    if (normalizedContractArtifacts) {
+      if (
+        spec.role === 'generator'
+        && normalizedContractArtifacts.length === 0
+        && common.artifacts.length === 0
+      ) {
+        throw new Error('FROZEN_CONTRACT_ARTIFACTS_MISSING:approved_contract');
+      }
+      common.contract_artifacts = normalizedContractArtifacts.map((artifact) => ({ ...artifact }));
+    }
     common.contract_branch = observed.contract?.row?.branch
       ?? observed.contract?.row?.propose_branch
       ?? null;
@@ -360,9 +438,9 @@ function buildBundle(
     hop: ctx.hop,
     phase: ctx.decision?.phase ?? ctx.observed.run?.phase ?? 'unknown',
     role: spec.role,
-    objective: action === 'spawn:generator-fix'
+    objective: objectiveWithImplementationBaseline(action === 'spawn:generator-fix'
       ? `${OBJECTIVES.generator} This is a repair attempt; preserve the current pull request.`
-      : spec.objective ?? OBJECTIVES[spec.role],
+      : spec.objective ?? OBJECTIVES[spec.role], inputs.implementation_baseline),
     skill,
     inputs,
     constraints: {
@@ -377,6 +455,42 @@ function buildBundle(
 
 function bundleByteLength(bundle) {
   return Buffer.byteLength(JSON.stringify(bundle));
+}
+
+function frozenArtifactErrorCode(error) {
+  return String(error?.message ?? '').match(/FROZEN_CONTRACT_ARTIFACT[A-Z_]*/)?.[0] ?? null;
+}
+
+function frozenArtifactAssemblyFault(error, { attemptCreated = false } = {}) {
+  const code = frozenArtifactErrorCode(error);
+  if (!code) return null;
+  return {
+    status: 'DONE_WITH_CONCERNS',
+    control_status: 'BLOCKED',
+    detail: error.message,
+    failure_class: 'assembly_fault',
+    fallback_reason: code,
+    should_create_attempt: attemptCreated,
+    should_enter_generator_fix: false,
+  };
+}
+
+function preAttemptAssemblyFault(error, fallbackReason) {
+  const message = String(error?.message ?? error ?? 'assembly failed');
+  const frozenCode = frozenArtifactErrorCode(error);
+  const legacyFrozenCode = message.match(/frozen_contract_[a-z0-9_]+/i)?.[0]?.toUpperCase();
+  const bundleSizeCode = message.startsWith('task_bundle_size_limit_exceeded')
+    ? 'TASK_BUNDLE_SIZE_LIMIT_EXCEEDED'
+    : null;
+  return {
+    status: 'DONE_WITH_CONCERNS',
+    control_status: 'BLOCKED',
+    detail: message,
+    failure_class: 'assembly_fault',
+    fallback_reason: frozenCode ?? legacyFrozenCode ?? bundleSizeCode ?? fallbackReason,
+    should_create_attempt: false,
+    should_enter_generator_fix: false,
+  };
 }
 
 /**
@@ -413,10 +527,14 @@ function enforceBundleSizeLimit(bundle) {
 
   const finalBytes = bundleByteLength(trimmedBundle);
   if (finalBytes > HARNESS_BUNDLE_MAX_BYTES) {
-    console.warn(
-      `[dispatcher] TaskBundle exceeds ${HARNESS_BUNDLE_MAX_BYTES} bytes after trimming `
-      + `case_file feedback_md (run_id=${trimmedBundle.run_id} attempt_id=${trimmedBundle.attempt_id} `
-      + `bytes=${finalBytes})`,
+    if (
+      (trimmedBundle.inputs?.contract_artifacts?.length ?? 0) > 0
+      || (trimmedBundle.inputs?.artifacts?.length ?? 0) > 0
+    ) {
+      throw new Error(`FROZEN_CONTRACT_ARTIFACT_SIZE_LIMIT:task_bundle:${finalBytes}`);
+    }
+    throw new Error(
+      `task_bundle_size_limit_exceeded:${finalBytes}>${HARNESS_BUNDLE_MAX_BYTES}`,
     );
   }
   return trimmedBundle;
@@ -573,36 +691,65 @@ export function createDispatcher(deps) {
         : (action === 'spawn:generator-fix' ? 'fix' : 'initial'),
       workstreamKey: payload.workstream_index ?? payload.workstream_key ?? 'ws1',
     };
-    let bundle = buildBundle(
-      action,
-      spec,
-      ctx,
-      attemptId,
-      skill,
-      attemptMetadata,
-      { deferWorkspaceValidation: typeof deps.resolveWorkspaceSpec === 'function' },
-    );
-    if (typeof deps.resolveWorkspaceSpec === 'function') {
-      const workspaceSpec = await deps.resolveWorkspaceSpec({
+    let bundle;
+    let preparedCtx;
+    try {
+      const normalizedArtifacts = ctx.observed.contract?.artifacts;
+      const frozenContractArtifacts = (
+        ['generator', 'evaluator', 'judge'].includes(spec.role)
+        && ctx.observed.contract?.row?.id
+        && (!Array.isArray(normalizedArtifacts) || normalizedArtifacts.length === 0)
+        && typeof deps.resolveFrozenContractArtifacts === 'function'
+      )
+        ? await deps.resolveFrozenContractArtifacts({ action, role: spec.role, ctx })
+        : null;
+      preparedCtx = frozenContractArtifacts == null
+        ? ctx
+        : { ...ctx, frozenContractArtifacts };
+      bundle = buildBundle(
         action,
-        role: spec.role,
-        readOnly: spec.readOnly,
+        spec,
+        preparedCtx,
         attemptId,
-        ctx,
-        bundle,
-      });
-      const {
-        worktree_path: _discardedCallerPath,
-        ...pathFreeInputs
-      } = bundle.inputs;
-      bundle = parseTaskBundle({
-        ...bundle,
-        inputs: {
-          ...pathFreeInputs,
-          execution_surface: 'fleet-worker',
-          workspace_spec: workspaceSpec,
-        },
-      });
+        skill,
+        attemptMetadata,
+        { deferWorkspaceValidation: typeof deps.resolveWorkspaceSpec === 'function' },
+      );
+    } catch (error) {
+      return preAttemptAssemblyFault(error, 'TASK_BUNDLE_ASSEMBLY_FAILED');
+    }
+    if (typeof deps.resolveWorkspaceSpec === 'function') {
+      try {
+        const workspaceSpec = await deps.resolveWorkspaceSpec({
+          action,
+          role: spec.role,
+          readOnly: spec.readOnly,
+          attemptId,
+          ctx: preparedCtx,
+          bundle,
+        });
+        const {
+          worktree_path: _discardedCallerPath,
+          ...pathFreeInputs
+        } = bundle.inputs;
+        const implementationBaseline = pathFreeInputs.implementation_baseline
+          ?? implementationBaselineFromWorkspace(workspaceSpec);
+        bundle = parseTaskBundle({
+          ...bundle,
+          objective: objectiveWithImplementationBaseline(
+            bundle.objective,
+            implementationBaseline,
+          ),
+          inputs: {
+            ...pathFreeInputs,
+            execution_surface: 'fleet-worker',
+            workspace_spec: workspaceSpec,
+            implementation_baseline: implementationBaseline,
+          },
+        });
+      } catch (error) {
+        return preAttemptAssemblyFault(error, 'WORKSPACE_RESOLUTION_FAILED');
+      }
     }
     const roleAssignment = spec.role === 'commander'
       ? {}
@@ -784,7 +931,11 @@ export function createDispatcher(deps) {
       accountHome = resolveAccountHome(adapter.name, selectedAccount);
     }
 
-    bundle = enforceBundleSizeLimit(bundle);
+    try {
+      bundle = enforceBundleSizeLimit(bundle);
+    } catch (error) {
+      return preAttemptAssemblyFault(error, 'TASK_BUNDLE_SIZE_LIMIT_EXCEEDED');
+    }
 
     const persisted = await deps.attemptStore.createAttempt({
       id: attemptId,
@@ -896,11 +1047,16 @@ export function createDispatcher(deps) {
         errorMessage(error),
         cancelDiagnostic,
       ].filter(Boolean).join('; ');
+      const assemblyFault = fleetLaunch
+        ? frozenArtifactAssemblyFault(error, { attemptCreated: true })
+        : null;
       try {
         await deps.attemptStore.fail(attempt.id, {
-          code: 'launch_failed',
+          code: assemblyFault?.fallback_reason ?? 'launch_failed',
           message,
-          ...(spec.role === 'commander'
+          ...(assemblyFault
+            ? { failureClass: 'assembly_fault' }
+            : spec.role === 'commander'
             ? { failureClass: 'infrastructure_blocked' }
             : {}),
         }, {
@@ -915,6 +1071,7 @@ export function createDispatcher(deps) {
           persistenceError: failError,
         });
       }
+      if (assemblyFault) return { ...assemblyFault, detail: message };
       throw error;
     }
 

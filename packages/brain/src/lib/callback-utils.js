@@ -38,15 +38,97 @@ export function extractPrNumber(pr_url) {
  *
  * @returns {Promise<string>} 可能已更新的 newStatus
  */
+const GITHUB_PR_URL_RE = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
+
+export function isValidGithubPrUrl(url) {
+  return typeof url === 'string' && GITHUB_PR_URL_RE.test(url.trim());
+}
+
+/**
+ * 按优先级返回第一个合法的 GitHub PR URL。
+ * 每个候选独立 trim + validate，非法 truthy 值不能遮蔽后续合法值。
+ */
+export function firstValidGithubPrUrl(...candidates) {
+  for (const candidate of candidates) {
+    const trimmed = typeof candidate === 'string' ? candidate.trim() : null;
+    if (isValidGithubPrUrl(trimmed)) return trimmed;
+  }
+  return null;
+}
+
+function _isValidGithubPrUrl(url) { return isValidGithubPrUrl(url); }
+
+/**
+ * 纯函数：从 explicit URL + task row 解析权威 pr_url（无 DB 查询）。
+ * 优先级：explicit > task.pr_url > task.payload.pr_url > task.payload.existing_pr_url
+ * 每项独立 trim+validate，invalid 高优先级不遮蔽合法低优先级。
+ * 供 docker-executor 直接传入已有 task 对象使用。
+ */
+export function resolveCanonicalPrUrlSync(explicitUrl, taskRow) {
+  return firstValidGithubPrUrl(
+    explicitUrl,
+    taskRow?.pr_url,
+    taskRow?.payload?.pr_url,
+    taskRow?.payload?.existing_pr_url,
+  );
+}
+
+/**
+ * 解析权威 pr_url：callback/stdout > tasks.pr_url > payload.pr_url > payload.existing_pr_url。
+ * 单一 resolver，Docker queue、callback-processor、HTTP fallback 共用。
+ *
+ * Fix C: 逐项独立校验，invalid 高优先级不遮蔽合法低优先级。
+ * 每个来源先 trim 再校验；返回首个通过校验的 trimmed URL。
+ *
+ * @returns {Promise<string|null>} 合法的 GitHub PR URL 或 null
+ */
+export async function resolveCanonicalPrUrl(callbackPrUrl, task_id, pool) {
+  const explicit = firstValidGithubPrUrl(callbackPrUrl);
+  if (explicit) return explicit;
+
+  try {
+    const { rows } = await pool.query(
+      'SELECT pr_url, payload FROM tasks WHERE id = $1',
+      [task_id]
+    );
+    const row = rows[0];
+    if (!row) return null;
+
+    return firstValidGithubPrUrl(
+      row.pr_url,
+      row.payload?.pr_url,
+      row.payload?.existing_pr_url,
+    );
+  } catch {
+    return null;
+  }
+}
+
 export async function maybeMarkCompletedNoPr(newStatus, pr_url, task_id, pool, prefix) {
   if (newStatus !== 'completed' || pr_url) return newStatus;
   try {
-    const taskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
-    const taskType = taskRow.rows[0]?.task_type;
-    const isDecomposition = taskRow.rows[0]?.payload?.decomposition;
+    const taskRow = await pool.query(
+      'SELECT task_type, pr_url, payload FROM tasks WHERE id = $1',
+      [task_id]
+    );
+    const row = taskRow.rows[0];
+    if (!row) return newStatus;
+    const taskType = row.task_type;
+    const isDecomposition = row.payload?.decomposition;
     if (taskType === 'dev' && !isDecomposition) {
-      const isHarness = taskRow.rows[0]?.payload?.harness_mode;
+      const isHarness = row.payload?.harness_mode;
       if (!isHarness) {
+        // Fix C: 逐项独立校验（invalid tasks.pr_url 不遮蔽合法 payload.existing_pr_url）
+        // 场景：Agent stdout 只写 "PR #4827"，tasks.pr_url="PR #4827"（非法），
+        //       tasks.payload.existing_pr_url 有完整合法 URL。
+        const t1 = typeof row.pr_url === 'string' ? row.pr_url.trim() : null;
+        const t2 = typeof row.payload?.pr_url === 'string' ? row.payload.pr_url.trim() : null;
+        const t3 = typeof row.payload?.existing_pr_url === 'string' ? row.payload.existing_pr_url.trim() : null;
+        const hasCanonical = _isValidGithubPrUrl(t1) || _isValidGithubPrUrl(t2) || _isValidGithubPrUrl(t3);
+        if (hasCanonical) {
+          console.log(`[${prefix}] Dev task ${task_id} has canonical pr_url from DB/payload → skip completed_no_pr`);
+          return newStatus;
+        }
         console.warn(`[${prefix}] Dev task ${task_id} completed without PR → completed_no_pr`);
         return 'completed_no_pr';
       }

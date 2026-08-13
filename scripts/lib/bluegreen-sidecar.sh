@@ -8,12 +8,14 @@
 #   BRAIN_VERSION — 新版镜像 tag（必填）
 #   ENV_REGION    — 环境区域（默认 us）
 #   DEPLOY_ROOT   — cecelia-deploy-main 在宿主机的绝对路径（必填）
+#   CECELIA_INTERNAL_ENV_FILE — 只读挂载的内部鉴权凭据 SSOT（必填）
 #   BARK_TOKEN    — Bark 推送 token（可选，未设则静默）
 set -uo pipefail
 
 BRAIN_VERSION="${BRAIN_VERSION:?BRAIN_VERSION 必填}"
 ENV_REGION="${ENV_REGION:-us}"
 DEPLOY_ROOT="${DEPLOY_ROOT:?DEPLOY_ROOT 必填}"
+CECELIA_INTERNAL_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:?CECELIA_INTERNAL_ENV_FILE 必填}"
 BARK_TOKEN="${BARK_TOKEN:-}"
 # sidecar 本身由 `docker run` 起在独立容器内（见 bluegreen.sh bluegreen_swap），
 # 不在 node-brain 的 compose 网络里，也未 --network host。要够到宿主发布的

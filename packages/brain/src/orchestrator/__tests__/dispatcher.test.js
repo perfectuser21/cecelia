@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -131,6 +132,62 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
+  it('批准合同后不重复装载入口 PRD，Evaluator 大合同仍可派发', async () => {
+    const deps = makeDeps();
+    const sourceRevision = '6faaa9f55e9789ffd29fd2760a9b5994df272e86';
+    const artifact = (path, content) => ({
+      path,
+      content,
+      sha256: createHash('sha256').update(content).digest('hex'),
+      byte_length: Buffer.byteLength(content),
+      source_revision: sourceRevision,
+    });
+    const contractArtifacts = [
+      artifact('sprints/router/contract-dod.md', 'd'.repeat(20 * 1024)),
+      artifact('sprints/router/contract-draft.md', 'c'.repeat(70 * 1024)),
+      artifact('sprints/router/sprint-prd.md', 'p'.repeat(70 * 1024)),
+      artifact('sprints/router/tests/router.test.mjs', 'test("router", () => {})'),
+    ];
+    const largeApproved = {
+      ...observed,
+      task: {
+        ...observed.task,
+        description: '入口 PRD '.repeat(12_000),
+        payload: {
+          ...observed.task.payload,
+          thin_prd: 'thin '.repeat(12_000),
+          prep_prd_body: 'prep '.repeat(24_000),
+        },
+      },
+      contract: {
+        approved: true,
+        row: { branch: 'cp-approved-contract' },
+        artifacts: contractArtifacts,
+      },
+      pr: {
+        url: 'https://github.com/perfectuser21/cecelia/pull/4851',
+        head_ref: 'cp-approved-contract',
+        head_sha: sourceRevision,
+        ci: 'pass',
+      },
+    };
+
+    const result = await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: largeApproved,
+      decision: { phase: 'evaluate', reason: 'no_evaluate_verdict_for_head_sha' },
+    });
+
+    expect(result).toMatchObject({ status: 'LAUNCHED' });
+    const bundle = deps.attemptStore.createAttempt.mock.calls[0][0].bundle;
+    expect(bundle.inputs.contract_artifacts).toHaveLength(4);
+    expect(bundle.inputs).not.toHaveProperty('prep_prd_body');
+    expect(bundle.inputs).not.toHaveProperty('thin_prd');
+    expect(bundle.inputs.task).toEqual({ title: 'Provider-neutral Harness' });
+  });
+
   it('does not start a Fleet Runner until its attested receipt commit resolves', async () => {
     const calls = [];
     let resolveReceipt;
@@ -653,7 +710,7 @@ describe('createDispatcher', () => {
     ]);
   });
 
-  it('P2-3 膨胀闸2：全部丢完 feedback_md 仍超限时只 console.warn 不阻断派发', async () => {
+  it('P2-3 膨胀闸2：全部丢完 feedback_md 仍超限时 fail closed，不创建 Attempt', async () => {
     const deps = makeDeps();
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const caseFile = [
@@ -661,7 +718,7 @@ describe('createDispatcher', () => {
     ];
     const hugeDescription = 'y'.repeat(300 * 1024);
 
-    await createDispatcher(deps)('spawn:proposer', {
+    const result = await createDispatcher(deps)('spawn:proposer', {
       taskId,
       runId,
       hop: 6,
@@ -673,8 +730,14 @@ describe('createDispatcher', () => {
       decision: { phase: 'gan', reason: 'revision_requested' },
     });
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('TaskBundle exceeds'));
-    expect(deps.attemptStore.createAttempt).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'TASK_BUNDLE_SIZE_LIMIT_EXCEEDED',
+      should_create_attempt: false,
+    });
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
     warnSpy.mockRestore();
   });
 
@@ -1221,6 +1284,67 @@ describe('createDispatcher', () => {
     });
   });
 
+  it('GAN 每轮保持实现基线稳定，Reviewer 的合同检出 SHA 不得覆盖它', async () => {
+    const implementationBaseSha = 'b'.repeat(40);
+    const contractSha = 'a'.repeat(40);
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 8,
+      observed: {
+        ...observed,
+        proposeBranchSha: contractSha,
+        task: {
+          ...observed.task,
+          payload: {
+            ...observed.task.payload,
+            base_repo: 'perfectuser21/cecelia',
+            base_sha: implementationBaseSha,
+          },
+        },
+      },
+      decision: { phase: 'gan', reason: 'review' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.contract_sha).toBe(contractSha);
+    expect(created.bundle.inputs.implementation_baseline).toEqual({
+      repo: 'perfectuser21/cecelia',
+      base_sha: implementationBaseSha,
+      source: 'task_payload',
+      frozen: true,
+    });
+    expect(created.bundle.objective).toContain('inputs.implementation_baseline');
+    expect(created.bundle.objective).toContain('workspace_spec.base_sha');
+  });
+
+  it('历史实现基线不可恢复时，在创建下一角色 Attempt 前 fail-closed', async () => {
+    const deps = makeDeps();
+
+    const result = await createDispatcher(deps)('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 8,
+      observed: {
+        ...observed,
+        implementationBaseline: null,
+        implementationBaselineError: 'implementation_baseline_unrecoverable',
+      },
+      decision: { phase: 'gan', reason: 'review' },
+    });
+
+    expect(result).toMatchObject({
+      status: 'DONE_WITH_CONCERNS',
+      control_status: 'BLOCKED',
+      fallback_reason: 'TASK_BUNDLE_ASSEMBLY_FAILED',
+    });
+    expect(result.detail).toContain('implementation_baseline_unrecoverable');
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
+  });
+
   it('案卷式 GAN：reviewer TaskBundle 也注入 observed.caseFile 全量历轮行', async () => {
     const deps = makeDeps();
     const caseFile = [
@@ -1310,6 +1434,247 @@ describe('createDispatcher', () => {
     // 运行时依赖预装只对 proposer/reviewer/evaluator 默认开——generator 不该被塞
     // runtime_resources.node_deps；generator 仍由自身实现过程按需安装/构建。
     expect(created.bundle.inputs).not.toHaveProperty('runtime_resources');
+  });
+
+  it('generator bundle 只传输数据库冻结的 approved contract artifacts', async () => {
+    const deps = makeDeps();
+    const artifactContent = 'test("routing", () => {})';
+    const frozenArtifacts = [{
+      path: 'sprints/router/tests/routing.test.mjs',
+      content: artifactContent,
+      sha256: createHash('sha256').update(artifactContent).digest('hex'),
+      byte_length: Buffer.byteLength(artifactContent),
+      source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+    }];
+
+    await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-approved-contract' },
+          artifacts: frozenArtifacts,
+        },
+      },
+      decision: { phase: 'generate', reason: 'contract_approved' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.contract_artifacts).toEqual(frozenArtifacts);
+    expect(created.bundle.inputs.artifacts).toEqual([{
+      type: 'frozen_contract_test',
+      path: frozenArtifacts[0].path,
+      content: frozenArtifacts[0].content,
+      sha256: frozenArtifacts[0].sha256,
+      source_sha: frozenArtifacts[0].source_revision,
+    }]);
+  });
+
+  it('approved contract 资产为空时在 Attempt 创建前返回精确 assembly fault', async () => {
+    const deps = makeDeps();
+
+    const result = await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-approved-contract' },
+          artifacts: [],
+        },
+      },
+      decision: { phase: 'generate', reason: 'contract_approved' },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'FROZEN_CONTRACT_ARTIFACTS_MISSING',
+      should_create_attempt: false,
+    });
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
+  });
+
+  it('approved contract seal 核验失败时在 Attempt 创建前返回精确 assembly fault', async () => {
+    const deps = makeDeps();
+    const artifactContent = 'test("routing", () => {})';
+    const sealedArtifacts = [{
+      path: 'sprints/router/tests/routing.test.mjs',
+      content: artifactContent,
+      sha256: createHash('sha256').update(artifactContent).digest('hex'),
+      byte_length: Buffer.byteLength(artifactContent),
+      source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+    }];
+
+    const result = await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-approved-contract' },
+          artifacts: sealedArtifacts,
+          artifact_error: 'FROZEN_CONTRACT_ARTIFACT_INVALID:seal_mismatch',
+        },
+      },
+      decision: { phase: 'generate', reason: 'contract_approved' },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'FROZEN_CONTRACT_ARTIFACT_INVALID',
+      should_create_attempt: false,
+    });
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
+  });
+
+  it('合同资产使完整 TaskBundle 超过传输上限时硬失败，不创建 Attempt', async () => {
+    const deps = makeDeps();
+    const content = 'a'.repeat(255 * 1024);
+    const artifact = {
+      path: 'sprints/router/tests/large.test.mjs',
+      content,
+      sha256: createHash('sha256').update(content).digest('hex'),
+      byte_length: Buffer.byteLength(content),
+      source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+    };
+
+    const result = await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-approved-contract' },
+          artifacts: [artifact],
+        },
+      },
+      decision: { phase: 'generate', reason: 'contract_approved' },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'FROZEN_CONTRACT_ARTIFACT_SIZE_LIMIT',
+      should_create_attempt: false,
+    });
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+  });
+
+  it('Fleet Worker 装配拒绝时保留失败 Attempt 审计，但不启动 Provider 并返回精确 assembly fault', async () => {
+    const deps = makeDeps();
+    const content = 'test("materialize", () => {})';
+    const frozenArtifacts = [{
+      path: 'sprints/router/tests/materialize.test.mjs',
+      content,
+      sha256: createHash('sha256').update(content).digest('hex'),
+      byte_length: Buffer.byteLength(content),
+      source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+    }];
+    deps.resolveWorkspaceSpec = vi.fn(async () => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: 'cp-artifact-materialization-failure',
+      expected_head_sha: null,
+      mode: 'read-write',
+      run_id: runId,
+      attempt_id: attemptId,
+    }));
+    deps.launcher.prepare = vi.fn(async () => {
+      throw new Error('FROZEN_CONTRACT_ARTIFACT_DIGEST_MISMATCH:sprints/router/tests/materialize.test.mjs');
+    });
+    deps.launcher.start = vi.fn();
+    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cleaned', attempt_id: attemptId });
+
+    const result = await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-approved-contract' },
+          artifacts: frozenArtifacts,
+        },
+      },
+      decision: { phase: 'generate', reason: 'contract_approved' },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'FROZEN_CONTRACT_ARTIFACT_DIGEST_MISMATCH',
+      should_create_attempt: true,
+      should_enter_generator_fix: false,
+    });
+    expect(deps.attemptStore.createAttempt).toHaveBeenCalledOnce();
+    expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId, {
+      code: 'FROZEN_CONTRACT_ARTIFACT_DIGEST_MISMATCH',
+      message: expect.stringContaining('materialize.test.mjs'),
+      failureClass: 'assembly_fault',
+    }, {
+      leaseOwner: 'dispatcher-test:4242',
+      leaseGeneration: 0,
+    });
+    expect(deps.launcher.start).not.toHaveBeenCalled();
+  });
+
+  it('Fleet workspace 解析后发现数据库 artifact 损坏时在 Attempt 前精确收尾', async () => {
+    const deps = makeDeps();
+    deps.launcher.prepare = vi.fn();
+    const content = 'test("corrupt", () => {})';
+    deps.resolveWorkspaceSpec = vi.fn(async () => ({
+      repo: 'perfectuser21/cecelia',
+      base_sha: 'a'.repeat(40),
+      branch: 'cp-corrupt-artifact',
+      expected_head_sha: null,
+      mode: 'read-write',
+      run_id: runId,
+      attempt_id: attemptId,
+    }));
+
+    const result = await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: { branch: 'cp-approved-contract' },
+          artifacts: [{
+            path: 'sprints/router/tests/corrupt.test.mjs',
+            content,
+            sha256: '0'.repeat(64),
+            byte_length: Buffer.byteLength(content),
+            source_revision: '6faaa9f55e9789ffd29fd2760a9b5994df272e86',
+          }],
+        },
+      },
+      decision: { phase: 'generate', reason: 'contract_approved' },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'FROZEN_CONTRACT_ARTIFACT_INVALID',
+      should_create_attempt: false,
+    });
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+    expect(deps.launcher.prepare).not.toHaveBeenCalled();
   });
 
   it('copies the Controller-owned validation clock into the Generator TaskBundle', async () => {
@@ -1510,6 +1875,98 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).toMatchObject({
       contract_branch: 'cp-harness-propose-r2-production-schema',
     });
+  });
+
+  it('generator bundle carries exact frozen tests resolved from the approved contract SHA', async () => {
+    const deps = makeDeps();
+    const frozenArtifacts = [{
+      type: 'frozen_contract_test',
+      path: 'sprints/provider-neutral/tests/red.test.js',
+      content: 'it("starts red", () => { throw new Error("RED") });\n',
+      sha256: 'd'.repeat(64),
+      source_sha: 'c'.repeat(40),
+    }];
+    deps.resolveFrozenContractArtifacts = vi.fn(async () => frozenArtifacts);
+
+    await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: {
+            id: '33333333-3333-4333-8333-333333333333',
+            branch: 'cp-harness-propose-r2-production-schema',
+            approved_sha: 'c'.repeat(40),
+          },
+        },
+      },
+      decision: { phase: 'implement', reason: 'contract_approved' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(deps.resolveFrozenContractArtifacts).toHaveBeenCalledOnce();
+    expect(created.bundle.inputs.artifacts).toEqual(frozenArtifacts);
+  });
+
+  it('legacy artifact resolver failure is an assembly fault before Attempt creation', async () => {
+    const deps = makeDeps();
+    deps.resolveFrozenContractArtifacts = vi.fn(async () => {
+      throw new Error('frozen_contract_tests_missing');
+    });
+
+    const result = await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: {
+            id: '33333333-3333-4333-8333-333333333333',
+            branch: 'cp-harness-propose-r2-production-schema',
+            approved_sha: 'c'.repeat(40),
+          },
+        },
+      },
+      decision: { phase: 'implement', reason: 'contract_approved' },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'FROZEN_CONTRACT_TESTS_MISSING',
+      should_create_attempt: false,
+    });
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
+  });
+
+  it('workspace resolution failure is an assembly fault before Attempt creation', async () => {
+    const deps = makeDeps();
+    deps.resolveWorkspaceSpec = vi.fn(async () => {
+      throw new Error('workspace checkout failed');
+    });
+
+    const result = await createDispatcher(deps)('spawn:reviewer', {
+      taskId,
+      runId,
+      hop: 2,
+      observed,
+      decision: { phase: 'gan', reason: 'awaiting_review' },
+    });
+
+    expect(result).toMatchObject({
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      fallback_reason: 'WORKSPACE_RESOLUTION_FAILED',
+      should_create_attempt: false,
+    });
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
   });
 
   it('proposer bundle 指定下一轮规范分支，避免产物落到共享任务分支', async () => {

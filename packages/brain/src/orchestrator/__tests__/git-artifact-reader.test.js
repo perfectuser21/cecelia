@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -11,6 +11,33 @@ afterEach(() => {
 });
 
 describe('readGitArtifact', () => {
+  it('按精确 SHA 只列出给定目录下的普通 Git blobs，并保持排序', async () => {
+    const repo = mkdtempSync(path.join(os.tmpdir(), 'contract-tree-reader-'));
+    dirs.push(repo);
+    const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+    git('init');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    mkdirSync(path.join(repo, 'sprints/router/tests/nested'), { recursive: true });
+    writeFileSync(path.join(repo, 'sprints/router/tests/z.test.mjs'), 'z');
+    writeFileSync(path.join(repo, 'sprints/router/tests/a.test.mjs'), 'a');
+    writeFileSync(path.join(repo, 'sprints/router/tests/nested/b.test.mjs'), 'b');
+    writeFileSync(path.join(repo, 'outside.md'), 'outside');
+    git('add', '.');
+    git('commit', '-m', 'approved tests');
+    const approvedSha = git('rev-parse', 'HEAD');
+
+    const { listGitArtifacts } = await import('../git-artifact-reader.js');
+
+    expect(listGitArtifacts(approvedSha, 'sprints/router/tests', { cwd: repo })).toEqual([
+      'sprints/router/tests/a.test.mjs',
+      'sprints/router/tests/nested/b.test.mjs',
+      'sprints/router/tests/z.test.mjs',
+    ]);
+    expect(() => listGitArtifacts(approvedSha, '../tests', { cwd: repo }))
+      .toThrow(/repository-relative/);
+  });
+
   it('分支移动后仍按被批准 SHA 读取旧内容，并拒绝不安全对象路径', async () => {
     const repo = mkdtempSync(path.join(os.tmpdir(), 'contract-sha-reader-'));
     dirs.push(repo);
@@ -25,11 +52,31 @@ describe('readGitArtifact', () => {
     writeFileSync(path.join(repo, 'contract.md'), 'moved\n');
     git('commit', '-am', 'move branch');
 
-    const { readGitArtifact } = await import('../git-artifact-reader.js');
+    const { listGitArtifacts, readGitArtifact } = await import('../git-artifact-reader.js');
 
     expect(readGitArtifact(approvedSha, 'contract.md', { cwd: repo })).toBe('approved\n');
+    expect(listGitArtifacts(approvedSha, 'contract.md', { cwd: repo })).toEqual(['contract.md']);
     expect(() => readGitArtifact('HEAD', 'contract.md', { cwd: repo })).toThrow(/commit SHA/);
     expect(() => readGitArtifact(approvedSha, '../contract.md', { cwd: repo })).toThrow(/repository-relative/);
+  });
+
+  it('lists only frozen test paths below the approved prefix', async () => {
+    const repo = mkdtempSync(path.join(os.tmpdir(), 'contract-test-list-'));
+    dirs.push(repo);
+    const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+    git('init');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    mkdirSync(path.join(repo, 'sprints/demo/tests'), { recursive: true });
+    writeFileSync(path.join(repo, 'sprints/demo/tests/red.test.js'), 'RED\n');
+    writeFileSync(path.join(repo, 'sprints/demo/contract.md'), 'contract\n');
+    git('add', '.');
+    git('commit', '-m', 'approved contract tests');
+    const approvedSha = git('rev-parse', 'HEAD');
+    const { listGitArtifacts } = await import('../git-artifact-reader.js');
+
+    expect(listGitArtifacts(approvedSha, 'sprints/demo/tests/', { cwd: repo }))
+      .toEqual(['sprints/demo/tests/red.test.js']);
   });
 
   it('批准 SHA 只存在于 origin 时，按精确 SHA fetch 后读取不可变内容', async () => {

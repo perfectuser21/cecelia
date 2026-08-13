@@ -66,11 +66,19 @@ function makeDeployRoot(dir) {
 
 function runSwap(dir, extraEnv = {}) {
   const fakeHome = join(dir, 'home');
+  const credentialFile = join(dir, 'cecelia-internal.env');
   mkdirSync(fakeHome, { recursive: true });
+  writeFileSync(credentialFile, `CECELIA_INTERNAL_TOKEN=${'a'.repeat(64)}\n`);
   return execSync(
     `bash -c 'source "${BG_LIB}" && TARGET_VERSION=9.9.9 TEMP_PORT=5223 HEALTH_TIMEOUT=6 bluegreen_swap'`,
     {
-      env: { ...process.env, ...extraEnv, PATH: `${dir}:${process.env.PATH}`, HOME: fakeHome },
+      env: {
+        ...process.env,
+        ...extraEnv,
+        CECELIA_INTERNAL_ENV_FILE: credentialFile,
+        PATH: `${dir}:${process.env.PATH}`,
+        HOME: fakeHome,
+      },
       encoding: 'utf8',
     }
   );

@@ -134,6 +134,7 @@ function makeGroundTruthDeps(statusCheckRollup) {
         if (sql.includes('FROM initiative_contracts')) {
           return { rows: [{ id: CONTRACT_ID, status: 'approved' }] };
         }
+        if (sql.includes('FROM initiative_contract_artifacts')) return { rows: [] };
         if (sql.includes('FROM tasks')) {
           return { rows: [{ id: TASK_ID, status: 'in_progress', payload: {} }] };
         }

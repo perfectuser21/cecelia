@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('child_process', () => ({
+  spawnSync: vi.fn(),
   execSync: vi.fn(),
   spawn: vi.fn(),
 }));
@@ -20,12 +21,12 @@ vi.mock('../quarantine.js', () => ({
   quarantineTask: vi.fn().mockResolvedValue({ success: true }),
 }));
 
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { shepherdOpenPRs } from '../shepherd.js';
 
 describe('shepherdOpenPRs 主 SELECT WHERE', () => {
   beforeEach(() => {
-    vi.mocked(execSync).mockReset();
+    vi.mocked(spawnSync).mockReset();
   });
 
   it('SELECT WHERE 包含 ci_passed', async () => {
@@ -41,19 +42,19 @@ describe('shepherdOpenPRs 主 SELECT WHERE', () => {
 
 describe('ci_passed + MERGEABLE 分支：merge 后推进 status=completed', () => {
   beforeEach(() => {
-    vi.mocked(execSync).mockReset();
+    vi.mocked(spawnSync).mockReset();
   });
 
   it('executeMerge 后 reload state=MERGED → UPDATE status=completed + pr_status=merged', async () => {
-    vi.mocked(execSync)
+    vi.mocked(spawnSync)
       // checkPrStatus call 1: state+mergeable → OPEN
-      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }), stderr: '' })
       // checkPrStatus call 2: statusCheckRollup → CI 通过
-      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }))
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }), stderr: '' })
       // executeMerge（gh pr merge --squash）
-      .mockReturnValueOnce('')
+      .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' })
       // reload checkPrStatus call 1: state=MERGED（早返回）
-      .mockReturnValueOnce(JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' }));
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'MERGED', mergeable: 'UNKNOWN' }), stderr: '' });
 
     const updates = [];
     const queryMock = vi.fn(async (sql, params) => {
@@ -87,17 +88,17 @@ describe('ci_passed + MERGEABLE 分支：merge 后推进 status=completed', () =
   });
 
   it('executeMerge 后 reload 仍 OPEN → 仅 UPDATE pr_status=ci_passed', async () => {
-    vi.mocked(execSync)
+    vi.mocked(spawnSync)
       // checkPrStatus call 1: state+mergeable → OPEN
-      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }), stderr: '' })
       // checkPrStatus call 2: statusCheckRollup → CI 通过
-      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }))
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }), stderr: '' })
       // executeMerge OK
-      .mockReturnValueOnce('')
+      .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' })
       // reload checkPrStatus call 1: 还没 merged（OPEN，不早返回）
-      .mockReturnValueOnce(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }))
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }), stderr: '' })
       // reload checkPrStatus call 2: statusCheckRollup
-      .mockReturnValueOnce(JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }));
+      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify({ statusCheckRollup: [{ name: 'brain-ci', conclusion: 'SUCCESS', status: 'COMPLETED' }] }), stderr: '' });
 
     const updates = [];
     const queryMock = vi.fn(async (sql, params) => {
