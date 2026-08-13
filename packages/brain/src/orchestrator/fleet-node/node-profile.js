@@ -20,7 +20,7 @@ const CANONICAL_BASELINE = Object.freeze({
   runner_image_digest: 'sha256:689b4694e3397b30eff54c8fb0ad59bc3a42c8179f9f07cfad313afc5fe7414b',
   runtime_resources: Object.freeze({
     postgres: Object.freeze({
-      image_digest: 'postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777',
+      image_digest: 'pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62',
     }),
   }),
   resources: Object.freeze({
