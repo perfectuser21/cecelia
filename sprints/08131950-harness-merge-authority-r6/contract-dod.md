@@ -1,6 +1,3 @@
-contract_branch: cp-harness-propose-r1-12a85c17-r60fa6c43-a4
-sprint_dir: sprints/08131950-harness-merge-authority-r6
-
 ---
 skeleton: false
 journey_type: autonomous
