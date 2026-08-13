@@ -8,11 +8,15 @@
 
 
 
-**Brain 版本**: 1.272.56
+**Brain 版本**: 1.272.57
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.57 — Complete Task Creation Inventory
+
+- Inventory 动态覆盖全部生产 task creator 调用点，漏登记或新增旁路会被持续回归拦截。
 
 ## Brain 1.272.56 — Generator Frozen Workspace Wiring
 

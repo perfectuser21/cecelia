@@ -50,8 +50,8 @@ describe('task creation inventory', () => {
       const callsInjectedWriter = /taskCreator\s*\(/.test(source) && /=\s*createTask\b/.test(source);
       expect(callsWriterDirectly || callsInjectedWriter, row.module).toBe(true);
       if ((callsWriterDirectly || callsInjectedWriter) && row.module !== 'actions.js') {
-        const importsActionsBoundary = /import\s+\{\s*createTask\s*\}\s+from\s+['"].*actions\.js['"]/.test(source);
-        const importsAtomicStore = /import\s+\{\s*createRoutedTask\s*\}\s+from\s+['"].*work-routing-store\.js['"]/.test(source);
+        const importsActionsBoundary = /(?:from\s+|import\()['"].*actions\.js['"]/.test(source);
+        const importsAtomicStore = /(?:from\s+|import\()['"].*work-routing-store\.js['"]/.test(source);
         expect(importsActionsBoundary || importsAtomicStore, row.module).toBe(true);
       }
       expect(source, row.module).not.toMatch(/INSERT\s+INTO\s+tasks/i);

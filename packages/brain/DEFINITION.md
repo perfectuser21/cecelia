@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.272.56
+**Brain 版本**: 1.272.57
+
+## Complete Task Creation Inventory（Brain 1.272.57）
+
+- 任务创建 inventory 由生产调用点动态反查并覆盖全部统一创建边界；新增调用模块若未登记或绕过原子 Work Router，回归测试立即失败。
 
 ## Generator Frozen Workspace Wiring（Brain 1.272.56）
 
