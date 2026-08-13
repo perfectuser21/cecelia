@@ -44,6 +44,11 @@ jq -e --arg base "$BASE_SHA" '
 ' "$LOCK" >/dev/null
 
 rm "$LOCK"
+export HARNESS_READ_ONLY=true
+install_routing_action_gate
+test ! -e "$LOCK"
+export HARNESS_READ_ONLY=false
+
 (export CECELIA_RUN_ID=''; ! install_routing_action_gate >/dev/null 2>&1)
 test ! -e "$LOCK"
 
