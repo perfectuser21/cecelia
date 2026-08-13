@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { TASK_CREATION_INVENTORY } from '../task-creation-inventory.js';
+
+async function listProductionModules(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const modules = [];
+  for (const entry of entries) {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === '__tests__') continue;
+      modules.push(...await listProductionModules(absolute));
+    } else if (entry.isFile() && entry.name.endsWith('.js')) {
+      modules.push(absolute);
+    }
+  }
+  return modules;
+}
 
 describe('task creation inventory', () => {
   it('records each executable creation boundary', () => {
@@ -23,5 +40,21 @@ describe('task creation inventory', () => {
       }
       expect(source, row.module).not.toMatch(/INSERT\s+INTO\s+tasks/i);
     }
+  });
+
+  it('forbids production task writes outside the unique atomic routing store', async () => {
+    const sourceRoot = fileURLToPath(new URL('..', import.meta.url));
+    const modules = await listProductionModules(sourceRoot);
+    const violations = [];
+
+    for (const modulePath of modules) {
+      if (modulePath === path.join(sourceRoot, 'work-routing-store.js')) continue;
+      const source = await readFile(modulePath, 'utf8');
+      if (/INSERT\s+INTO\s+tasks/i.test(source)) {
+        violations.push(path.relative(sourceRoot, modulePath));
+      }
+    }
+
+    expect(violations, 'all executable task writes must create an atomic Routing Receipt').toEqual([]);
   });
 });
