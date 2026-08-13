@@ -1,0 +1,29 @@
+{
+  "initiative_id": "78e74563-66c6-4ee4-8bc2-de5f1a8cac48",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动全在 packages/brain/（fleet 容量调度/决策纯后端），无 UI、无远端 agent 协议、无 engine hooks。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "本机容量三层失真修复：真实主机采集 + macOS 内核 pressure 映射 + effective≥1 角色保底",
+      "scope": "① collectLocalStats 采集反映真实主机资源（不再被容器 cgroup 触底至 physical=2）；② 新增 resolveMemPressureRatio 内核 vm.memory_pressure 等级映射（0→0/1→0.3/2→0.7/3→1，darwin free% 不再参与，-1 明确 fallback）并接入 fleet effective 计算链；③ getRoleCapacity 保底：effective≥1 时任何角色 capacity≥1，drained/offline(0) 恒不可派；④ 采集链 warn 留痕（NFR 可观测）。保留三台机器 fleet 结构与 MAX_PHYSICAL_CAP=20 硬顶。",
+      "dod": [
+        "[BEHAVIOR] 注入主机级 stats(10核16384MB) → calculatePhysicalCapacity ≥ 8（B-01）",
+        "[BEHAVIOR] darwin 内核 pressure 映射 0/1/2/3→0/0.3/0.7/1 且 free% 不参与、-1 fallback（B-02）",
+        "[BEHAVIOR] effective=1 proposer(权重2) available≥1 且 drained/offline(0) 恒不可派（B-03）",
+        "[BEHAVIOR] 部署后 curl capacity-budget us-mac-m4 physical≥8 且 effective≥4（B-04 真验）",
+        "[ARTIFACT] packages/brain/src/__tests__/fleet-local-capacity-fix.test.js 永久保留 CI"
+      ],
+      "files": [
+        "packages/brain/src/routes/infra-status.js",
+        "packages/brain/src/platform-utils.js",
+        "packages/brain/src/fleet-resource-cache.js",
+        "packages/brain/src/orchestrator/fleet-node/node-profile.js",
+        "packages/brain/src/__tests__/fleet-local-capacity-fix.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
