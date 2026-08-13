@@ -1,0 +1,32 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "核心入口位于 Brain、Engine hook 与 runner，属于后端自主治理链路",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "统一 Work Router 与 Kernel Harness 2.0 生产恢复",
+      "scope": "交付 Recovery Addendum 与 Knife 0-5：统一路由凭证、Map/Impact Contract、动作闸、Generator 信任边界和 scratch 多入口验收",
+      "dod": [
+        "[BEHAVIOR] API、Intent、Capture 三个 coding mutation 均通过不可变 receipt 进入 Harness，Map/Impact Contract 缺失或过期时失败关闭",
+        "[BEHAVIOR] credential-bearing origin 不误删、不泄密，active detached Kernel workspace 不清理",
+        "[BEHAVIOR] frozen implementation baseline dd0dffac1774d92d8080ff4a4524e0ae8359d530 是候选 HEAD 祖先且 TDD RED/GREEN 历史可复跑",
+        "[ARTIFACT] Work Router、migration、入口清单、preflight、动作闸、runner boundary、scratch smoke 与版本同步产物完整"
+      ],
+      "files": [
+        "packages/brain/src/",
+        "packages/brain/migrations/",
+        "packages/engine/hooks/",
+        "packages/engine/skills/dev/scripts/",
+        "docker/cecelia-runner/entrypoint.sh",
+        "packages/brain/scripts/smoke/unified-work-router-smoke.sh",
+        "apps/dashboard/src/pages/warroom/",
+        "packages/brain/DEFINITION.md",
+        ".brain-versions"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}

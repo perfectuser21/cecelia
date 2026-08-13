@@ -103,7 +103,17 @@ describe('Unified Work Router contract [BEHAVIOR]', () => {
   it('four change kinds map forward only through one router', async () => {
     const mod = await import('../../../packages/brain/src/work-router.js');
     expect(mod.CHANGE_KINDS).toEqual(['new_capability', 'capability_change', 'bugfix', 'parameter_only']);
+    for (const change_kind of mod.CHANGE_KINDS) {
+      const decision = mod.selectPipeline({ work_kind: 'coding_mutation', change_kind });
+      expect(decision.orchestrator).toBe('kernel-harness-v2');
+    }
     expect(() => mod.selectPipeline({ work_kind: 'coding_mutation', gear: 'hotfix' })).toThrow('change_kind_required');
+  });
+
+  it('routed coding payload selects Kernel Harness 2.0 instead of legacy runtime', async () => {
+    const source = await import('node:fs').then(fs => fs.readFileSync('packages/brain/src/work-routing-store.js', 'utf8'));
+    expect(source).toContain("harness_runtime: 'kernel-v2'");
+    expect(source).not.toContain("harness_runtime: 'kernel-v1'");
   });
 
   it('coding run requires Map and Impact Contract before Provider creation', async () => {
