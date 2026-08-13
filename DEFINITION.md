@@ -8,11 +8,15 @@
 
 
 
-**Brain 版本**: 1.272.59
+**Brain 版本**: 1.272.60
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.60 — Real Unified Work Router Acceptance
+
+- Scratch smoke 真实穿过 Router、Dispatcher、Attempt Store、Fleet receipt 与 Runner 动作闸，并校验实现基线只作为当前 revision 的祖先证据。
 
 ## Brain 1.272.59 — Fail-closed Map Recovery Intent
 

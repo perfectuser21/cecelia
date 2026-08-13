@@ -6,6 +6,11 @@ const smokeSource = readFileSync(
   new URL('../../scripts/smoke/unified-work-router-smoke.mjs', import.meta.url),
   'utf8',
 );
+const dispatchSmokeSource = readFileSync(
+  new URL('../../scripts/smoke/unified-work-router-dispatch-smoke.mjs', import.meta.url),
+  'utf8',
+);
+const completeSmokeSource = `${smokeSource}\n${dispatchSmokeSource}`;
 
 describe('Unified Work Router scratch smoke contract', () => {
   it('保留 scratch、Map 刷新和三个真实入口合同', () => {
@@ -18,6 +23,7 @@ describe('Unified Work Router scratch smoke contract', () => {
     expect(shellSource).toContain('unified-work-router-smoke.mjs');
     expect(shellSource).toContain('DB_NAME=');
     expect(shellSource).toContain('schema_version');
+    expect(shellSource).toContain('417');
     expect(smokeSource).toContain('routes/task-tasks.js');
     expect(smokeSource).toContain('parseAndCreate');
     expect(smokeSource).toContain('routes/capture-atoms.js');
@@ -27,17 +33,17 @@ describe('Unified Work Router scratch smoke contract', () => {
   });
 
   it('必须经过真实 Dispatcher、Attempt Store 与 Runner 动作闸门', () => {
-    expect(smokeSource).toContain('createAttemptStore');
-    expect(smokeSource).toContain('createDispatcher');
-    expect(smokeSource).toContain('createDetachedLauncher');
-    expect(smokeSource).toContain('dispatchSmokeKernelAttempt');
-    expect(smokeSource).toContain('harness_attempts');
-    expect(smokeSource).toContain('install_routing_action_gate');
+    expect(completeSmokeSource).toContain('createAttemptStore');
+    expect(completeSmokeSource).toContain('createDispatcher');
+    expect(completeSmokeSource).toContain('createDetachedLauncher');
+    expect(completeSmokeSource).toContain('dispatchSmokeKernelAttempt');
+    expect(completeSmokeSource).toContain('harness_attempts');
+    expect(completeSmokeSource).toContain('install_routing_action_gate');
   });
 
   it('把 BASELINE_SHA 当实现基线校验，而不是伪装成当前 Map revision', () => {
     expect(smokeSource).toContain('process.env.BASELINE_SHA');
-    expect(smokeSource).toContain('merge-base');
+    expect(completeSmokeSource).toContain('merge-base');
     expect(smokeSource).toContain('sourceRevision');
   });
 });

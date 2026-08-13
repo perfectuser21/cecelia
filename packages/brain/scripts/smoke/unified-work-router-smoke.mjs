@@ -12,11 +12,16 @@ import { projectMapManifest } from '../../src/lib/map-projection-store.js';
 import { createKernelRun } from '../../src/orchestrator/kernel-run-store.js';
 import captureAtomsRouter from '../../src/routes/capture-atoms.js';
 import taskTasksRouter from '../../src/routes/task-tasks.js';
+import {
+  assertImplementationBaseline,
+  dispatchSmokeKernelAttempt,
+} from './unified-work-router-dispatch-smoke.mjs';
 import { createSmokeIdentity } from './unified-work-router-smoke-identity.mjs';
 
 const repoRoot = new URL('../../../..', import.meta.url).pathname.replace(/\/$/, '');
 const sourceRevision = execFileSync('git', ['-C', repoRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const branch = execFileSync('git', ['-C', repoRoot, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+const implementationBaseline = process.env.BASELINE_SHA?.trim() || sourceRevision;
 const mapScope = ['F0'];
 const { titlePrefix, sourceNamespace } = createSmokeIdentity(sourceRevision);
 const assertionRef = 'packages/brain/src/orchestrator/preflight/map-impact-contract.test.js';
@@ -192,6 +197,7 @@ async function assertRoutedCodingTasks(tasks, expectedSources) {
 }
 
 async function ensureKernelRuns(tasks) {
+  const runs = [];
   for (const task of tasks) {
     const run = await createKernelRun(pool, {
       taskId: task.id,
@@ -204,6 +210,7 @@ async function ensureKernelRuns(tasks) {
       createdSource: 'kernel_dispatch',
     });
     invariant(run.run.impact_contract_policy === 'required', `${task.id} run is not required`);
+    runs.push(run.run);
   }
   const result = await pool.query(
     `SELECT count(DISTINCT run.current_task_id)::int AS run_count,
@@ -221,6 +228,7 @@ async function ensureKernelRuns(tasks) {
   invariant(evidence.contract_count === tasks.length,
     `Impact Contract coverage ${evidence.contract_count}/${tasks.length}`);
   invariant(evidence.legacy_count === 0, `legacy_exempt=${evidence.legacy_count}`);
+  return runs;
 }
 
 async function assertNonCodingControls(app) {
@@ -295,6 +303,11 @@ async function staleAndResume(app) {
 }
 
 try {
+  assertImplementationBaseline({
+    repoRoot,
+    sourceRevision,
+    baselineSha: implementationBaseline,
+  });
   const currentDatabase = await pool.query('SELECT current_database() AS name');
   invariant(currentDatabase.rows[0].name.endsWith('_scratch'), 'driver requires a scratch database');
   await ensureScratchAssertionAnchor();
@@ -322,7 +335,15 @@ try {
   const codingTasks = [apiTask, ...intent.created.tasks, captureTask];
 
   await assertRoutedCodingTasks(codingTasks, ['api', 'conversation', 'inbox']);
-  await ensureKernelRuns(codingTasks);
+  const codingRuns = await ensureKernelRuns(codingTasks);
+  const dispatchedAttempt = await dispatchSmokeKernelAttempt({
+    pool,
+    task: apiTask,
+    run: codingRuns[0],
+    repoRoot,
+    branch,
+    sourceRevision,
+  });
   await assertNonCodingControls(app);
   await staleAndResume(app);
 
@@ -336,6 +357,13 @@ try {
     stale_resume: true,
     impact_contract_policy: 'required',
     legacy_exempt: 0,
+    implementation_baseline: implementationBaseline,
+    dispatcher_attempt: {
+      id: dispatchedAttempt.id,
+      role: dispatchedAttempt.role,
+      execution_transport: dispatchedAttempt.execution_transport,
+      action_gate: 'verified',
+    },
   }, null, 2));
   process.stdout.write('\n');
 } finally {

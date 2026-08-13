@@ -15,7 +15,7 @@ DATABASE_NAME="$($NODE_EXECUTABLE -e "const u=new URL(process.argv[1]);process.s
 ACTIVE_DATABASE="$($PSQL_EXECUTABLE "$DB_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')"
 [[ "$ACTIVE_DATABASE" == "$DATABASE_NAME" ]] || fail "连接目标不一致: $ACTIVE_DATABASE"
 SCHEMA_VERSION="$($PSQL_EXECUTABLE "$DB_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT max(version) FROM schema_version')"
-[[ "$SCHEMA_VERSION" -ge 416 ]] || fail "schema_version=$SCHEMA_VERSION, expected>=416"
+[[ "$SCHEMA_VERSION" -ge 417 ]] || fail "schema_version=$SCHEMA_VERSION, expected>=417"
 
 printf '%s\n' '── Unified Work Router scratch smoke ──'
 printf 'database=%s baseline=%s\n' "$DATABASE_NAME" "${BASELINE_SHA:-<unset>}"
@@ -26,7 +26,7 @@ pass '四类 repo 事实已刷新为当前 revision'
 
 DB_NAME="$DATABASE_NAME" NODE_ENV=test DB_URL="$DB_URL" \
   "$NODE_EXECUTABLE" packages/brain/scripts/smoke/unified-work-router-smoke.mjs
-pass 'API / Intent / Capture 真入口与 Kernel/Map/Impact 实弹'
+pass 'API / Intent / Capture 真入口与 Router/Dispatcher/Attempt/Runner 实弹'
 
 (cd packages/brain && DB_NAME="$DATABASE_NAME" NODE_ENV=test npx vitest run \
   --config vitest.integration.config.js \
