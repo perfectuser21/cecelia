@@ -117,7 +117,7 @@ if grep -Fq '| tee "$STDOUT_FILE"' <<< "$provider_contract"; then
 fi
 
 LOGIN_LINE="$(grep -n 'if ! prepare_github_credential' "$ENTRYPOINT" | head -1 | cut -d: -f1)"
-SETUP_LINE="$(grep -n 'gh auth setup-git' "$ENTRYPOINT" | head -1 | cut -d: -f1)"
+SETUP_LINE="$(grep -n 'if gh auth setup-git' "$ENTRYPOINT" | head -1 | cut -d: -f1)"
 if [[ -z "$LOGIN_LINE" || -z "$SETUP_LINE" || "$LOGIN_LINE" -ge "$SETUP_LINE" ]]; then
   echo "GitHub FIFO login does not precede gh auth setup-git" >&2
   exit 1

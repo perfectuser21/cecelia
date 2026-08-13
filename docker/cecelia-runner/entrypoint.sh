@@ -237,6 +237,119 @@ is_untrusted_provider_task_bundle() {
   is_evaluator_task_bundle || is_generator_task_bundle
 }
 
+# generator-trusted-publisher:start
+TRUSTED_GITHUB_CONFIG_DIR=""
+TRUSTED_PUBLISH_REMOTE_URL=""
+
+preserve_generator_github_credential() {
+  is_generator_task_bundle || return 0
+  local source_dir="${GH_CONFIG_DIR:-/home/cecelia/.config/gh}"
+  local attempt_id="${HARNESS_ATTEMPT_ID:-}"
+  local repo=""
+  if [[ "$(id -u)" != "0" ]] \
+      || [[ ! "$attempt_id" =~ ^[0-9a-f-]{36}$ ]] \
+      || [[ ! -s "$source_dir/hosts.yml" ]]; then
+    echo "[entrypoint] trusted Generator publisher credential unavailable" >&2
+    return 1
+  fi
+  repo="$(jq -r '.task_bundle.inputs.workspace_spec.repo // empty' \
+    "$HARNESS_TASK_BUNDLE_FILE" 2>/dev/null)" || return 1
+  if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+    echo "[entrypoint] trusted Generator publisher repository invalid" >&2
+    return 1
+  fi
+  TRUSTED_GITHUB_CONFIG_DIR="/run/cecelia-trusted/github-$attempt_id"
+  TRUSTED_PUBLISH_REMOTE_URL="https://github.com/$repo.git"
+  mkdir -p "$TRUSTED_GITHUB_CONFIG_DIR" || return 1
+  chmod 0700 "$TRUSTED_GITHUB_CONFIG_DIR" || return 1
+  cp "$source_dir/hosts.yml" "$TRUSTED_GITHUB_CONFIG_DIR/hosts.yml" || return 1
+  chown -R root:root "$TRUSTED_GITHUB_CONFIG_DIR" || return 1
+  chmod 0600 "$TRUSTED_GITHUB_CONFIG_DIR/hosts.yml" || return 1
+}
+
+publish_generator_result() {
+  local result_file="$1"
+  is_generator_task_bundle || return 0
+  local workspace="${WORKTREE_PATH:-/workspace}"
+  local bundle="${HARNESS_TASK_BUNDLE_FILE:-}"
+  local repo branch base_sha bundle_attempt head_sha remote_sha pr_info pr_url pr_head
+  local tmp_result
+  [[ -f "$bundle" && -f "$result_file" && -s "$TRUSTED_GITHUB_CONFIG_DIR/hosts.yml" ]] \
+    || return 1
+  repo="$(jq -r '.task_bundle.inputs.workspace_spec.repo // empty' "$bundle")" || return 1
+  branch="$(jq -r '.task_bundle.inputs.workspace_spec.branch // empty' "$bundle")" || return 1
+  base_sha="$(jq -r '.task_bundle.inputs.workspace_spec.base_sha // empty' "$bundle")" || return 1
+  bundle_attempt="$(jq -r '.task_bundle.attempt_id // empty' "$bundle")" || return 1
+  if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
+      || [[ ! "$branch" =~ ^cp-[a-z0-9][a-z0-9._-]{0,126}$ ]] \
+      || [[ ! "$base_sha" =~ ^[0-9a-f]{40}$ ]] \
+      || [[ -n "${HARNESS_ATTEMPT_ID:-}" && "$bundle_attempt" != "$HARNESS_ATTEMPT_ID" ]] \
+      || [[ "$(git -C "$workspace" branch --show-current 2>/dev/null)" != "$branch" ]]; then
+    echo "[entrypoint] trusted Generator publisher identity mismatch" >&2
+    return 1
+  fi
+  head_sha="$(git -C "$workspace" rev-parse HEAD 2>/dev/null)" || return 1
+  if [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ || "$head_sha" == "$base_sha" ]] \
+      || ! git -C "$workspace" merge-base --is-ancestor "$base_sha" "$head_sha" \
+      || ! git -C "$workspace" diff --quiet \
+      || ! git -C "$workspace" diff --cached --quiet; then
+    echo "[entrypoint] trusted Generator publisher rejected uncommitted or empty output" >&2
+    return 1
+  fi
+  if git -C "$workspace" status --porcelain --untracked-files=all \
+      | grep -Ev '^\?\? (\.dev-lock\.|\.brain-result\.json$)' \
+      | grep -q .; then
+    echo "[entrypoint] trusted Generator publisher rejected untracked output" >&2
+    return 1
+  fi
+  remote_sha="$(git -C "$workspace" ls-remote --heads "$TRUSTED_PUBLISH_REMOTE_URL" \
+    "refs/heads/$branch" | awk 'NR == 1 {print $1}')" || return 1
+  if [[ -n "$remote_sha" && "$remote_sha" != "$head_sha" ]]; then
+    echo "[entrypoint] trusted Generator publisher refuses remote overwrite" >&2
+    return 1
+  fi
+  GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" gh auth setup-git >/dev/null 2>&1 \
+    || return 1
+  if [[ "$remote_sha" != "$head_sha" ]]; then
+    GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" \
+      git -C "$workspace" push "$TRUSTED_PUBLISH_REMOTE_URL" \
+        "$head_sha:refs/heads/$branch" >/dev/null || return 1
+  fi
+  remote_sha="$(git -C "$workspace" ls-remote --heads "$TRUSTED_PUBLISH_REMOTE_URL" \
+    "refs/heads/$branch" | awk 'NR == 1 {print $1}')" || return 1
+  [[ "$remote_sha" == "$head_sha" ]] || return 1
+
+  pr_info="$(GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" gh pr view "$branch" \
+    --repo "$repo" --json url,headRefOid --jq '"\(.url)|\(.headRefOid)"' 2>/dev/null || true)"
+  if [[ -z "$pr_info" ]]; then
+    GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" gh pr create \
+      --repo "$repo" --head "$branch" --base main \
+      --title "Harness Generator ${CECELIA_TASK_ID:-task}" \
+      --body "Published by Cecelia trusted Generator transport for Attempt $bundle_attempt." \
+      >/dev/null || return 1
+    pr_info="$(GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" gh pr view "$branch" \
+      --repo "$repo" --json url,headRefOid --jq '"\(.url)|\(.headRefOid)"')" || return 1
+  fi
+  IFS='|' read -r pr_url pr_head <<< "$pr_info"
+  if [[ ! "$pr_url" =~ ^https://github\.com/${repo}/pull/[1-9][0-9]*$ ]] \
+      || [[ "$pr_head" != "$head_sha" ]]; then
+    echo "[entrypoint] trusted Generator publisher PR head mismatch" >&2
+    return 1
+  fi
+  tmp_result="${result_file}.trusted-publisher.$$"
+  jq --arg url "$pr_url" --arg head "$head_sha" --arg branch "$branch" --arg repo "$repo" '
+    (.artifacts // [] | if type == "array" then . else [] end) as $existing
+    | .artifacts = (
+        [$existing[] | select((type == "object" and .type == "pull_request") | not)]
+        + [{type:"pull_request",verification_status:"verified",url:$url,
+            head_sha:$head,branch:$branch,repo:$repo}]
+      )
+  ' "$result_file" > "$tmp_result" || { rm -f "$tmp_result"; return 1; }
+  mv "$tmp_result" "$result_file"
+  echo "[entrypoint] trusted Generator publisher verified pr=$pr_url head=$head_sha"
+}
+# generator-trusted-publisher:end
+
 prepare_evaluator_evidence_capsule() {
   is_evaluator_task_bundle || return 0
 
@@ -401,17 +514,18 @@ prepare_evaluator_provider_identity() {
     -u CECELIA_GITHUB_CREDENTIAL_FIFO
   )
   if is_generator_task_bundle; then
-    # Provider cannot publish refs. A trusted post-Judge transport restores and
-    # uses the canonical URL; remote.origin.pushurl makes provider push fail closed.
-    git -C "$PWD" config remote.origin.pushurl "file:///nonexistent/harness-provider-push-disabled" || return 1
+    # Provider cannot publish refs. The trusted parent publishes the exact local
+    # commit after Provider termination and lineage verification.
+    git -C "${WORKTREE_PATH:-$PWD}" config remote.origin.pushurl \
+      "file:///nonexistent/harness-provider-push-disabled" || return 1
   fi
   echo "[entrypoint] Provider constrained to UID ${provider_uid} without capabilities"
 }
 
 terminate_evaluator_provider_processes() {
-  is_evaluator_task_bundle || return 0
+  is_untrusted_provider_task_bundle || return 0
   if [[ "$(id -u)" != "0" ]] || ! command -v pkill >/dev/null 2>&1; then
-    echo "[entrypoint] Evaluator Provider process cleanup unavailable" >&2
+    echo "[entrypoint] untrusted Provider process cleanup unavailable" >&2
     return 1
   fi
 
@@ -428,7 +542,7 @@ terminate_evaluator_provider_processes() {
     pgrep -u cecelia >/dev/null 2>&1 || return 0
     sleep 0.1
   done
-  echo "[entrypoint] Evaluator Provider descendants survived cleanup" >&2
+  echo "[entrypoint] untrusted Provider descendants survived cleanup" >&2
   return 1
 }
 # evaluator-evidence-boundary:end
@@ -445,6 +559,7 @@ if is_evaluator_task_bundle; then
   prepare_evaluator_evidence_capsule
   seal_evaluator_evidence_capsule
 fi
+preserve_generator_github_credential
 destroy_untrusted_provider_github_credential
 
 # git-auth-setup:start
@@ -2237,6 +2352,11 @@ run_provider_contract() {
     }
     if ! finalize_planner_output "$result_file"; then
       echo "[entrypoint] planner finalizer did not establish a verified Git artifact" >&2
+      provider_success=false
+      provider_exit=1
+    fi
+    if ! publish_generator_result "$result_file"; then
+      echo "[entrypoint] trusted Generator publisher rejected Provider output" >&2
       provider_success=false
       provider_exit=1
     fi

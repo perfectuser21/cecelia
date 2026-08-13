@@ -62,6 +62,9 @@ git -C "$TEST_ROOT/workspace" add base.txt
 git -C "$TEST_ROOT/workspace" commit -m base >/dev/null
 BASE_SHA=$(git -C "$TEST_ROOT/workspace" rev-parse HEAD)
 git -C "$TEST_ROOT/workspace" checkout -b cp-trusted-publisher >/dev/null
+git -C "$TEST_ROOT/workspace" remote add origin "$TEST_ROOT/remote.git"
+git -C "$TEST_ROOT/workspace" config remote.origin.pushurl \
+  file:///nonexistent/harness-provider-push-disabled
 printf 'change\n' > "$TEST_ROOT/workspace/change.txt"
 git -C "$TEST_ROOT/workspace" add change.txt
 git -C "$TEST_ROOT/workspace" commit -m 'feat: trusted publisher fixture' >/dev/null
@@ -77,6 +80,12 @@ export HARNESS_TASK_BUNDLE_FILE="$TEST_ROOT/generator.json"
 export WORKTREE_PATH="$TEST_ROOT/workspace"
 TRUSTED_GITHUB_CONFIG_DIR="$TEST_ROOT/trusted-gh"
 TRUSTED_PUBLISH_REMOTE_URL="$TEST_ROOT/remote.git"
+
+if git -C "$TEST_ROOT/workspace" push origin HEAD:refs/heads/provider-must-not-publish \
+    >/dev/null 2>&1; then
+  echo 'untrusted Provider push unexpectedly succeeded' >&2
+  exit 1
+fi
 
 gh() {
   if [[ "$1 $2" == 'auth setup-git' ]]; then return 0; fi
