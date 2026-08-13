@@ -50,7 +50,10 @@ export function normalizeWorkRequest(input = {}) {
 
 export function classifyWork(request) {
   if (request.mutation_intent === 'write' || request.mutation_intent === 'unknown') return 'coding_mutation';
-  return request.declared_domain === 'content' ? 'content_creation' : request.declared_domain === 'research' ? 'research' : 'coding_review';
+  if (request.declared_domain === 'content') return 'content_creation';
+  if (request.declared_domain === 'research') return 'research';
+  if (request.declared_domain === 'operations') return 'operations';
+  return 'coding_review';
 }
 
 export function resolveRepo(request, repositoryFacts = []) {
@@ -78,9 +81,18 @@ export function selectPipeline(input) {
     }
     return { work_kind: input.work_kind, change_kind: input.change_kind, pipeline: 'harness', canonical_task_type: 'harness_initiative', default_execution_profile: defaultProfile, execution_profile_override: override, impact_contract_required: true, orchestrator: 'kernel-harness-v2' };
   }
-  const nonCoding = { content_creation: ['content', 'content_publish'], research: ['research', 'research'], coding_review: ['code_review', 'code_review'] }[input.work_kind];
+  const nonCoding = {
+    content_creation: ['content', 'content-pipeline'],
+    research: ['research', 'research'],
+    coding_review: ['code_review', 'code_review'],
+    operations: ['operations', 'data'],
+  }[input.work_kind];
   if (!nonCoding) throw new Error('unsupported_work_kind');
-  return { work_kind: input.work_kind, change_kind: null, pipeline: nonCoding[0], canonical_task_type: nonCoding[1], default_execution_profile: null, impact_contract_required: false, orchestrator: nonCoding[0] };
+  const requestedTaskType = input.requested_task_type;
+  if (requestedTaskType != null && !/^[a-z][a-z0-9_-]*$/.test(requestedTaskType)) {
+    throw new Error('invalid_requested_task_type');
+  }
+  return { work_kind: input.work_kind, change_kind: null, pipeline: nonCoding[0], canonical_task_type: requestedTaskType ?? nonCoding[1], default_execution_profile: null, impact_contract_required: false, orchestrator: nonCoding[0] };
 }
 
 export function routeWork(input, repositoryFacts = []) {
@@ -91,6 +103,7 @@ export function routeWork(input, repositoryFacts = []) {
     ...selectPipeline({
       work_kind,
       change_kind: request.declared_change_kind,
+      requested_task_type: request.requested_task_type,
       execution_profile_override_request: request.execution_profile_override_request,
     }),
     repo,
