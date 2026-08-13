@@ -1,0 +1,33 @@
+{
+  "initiative_id": "intent:4ea46fcd-c8fd-4334-b2d5-a6c9673dc688:4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动集中在 packages/brain（receipt writer + mapper + 真 PG fixture + dispatcher 透传），纯后端认证闭环，无 UI/agent 协议参与",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "F1 冻结 GP Contract identity 贯穿 Evaluator Receipt 与 Mapper（writer 精确落库 + mapper 五重判绿 + 真 PG 五级外键链 fixture + dispatcher 透传）",
+      "scope": "让 Task 冻结的 gp_contract_id/version/hash 经 dispatcher/evaluator task_bundle 显式传给 persistTrustedEvaluatorReceipts；writer 精确验证（格式 + 与 DB signed content_hash 交叉核对）并落 journey_assertion_receipts.gp_contract_id/hash，缺失/不一致 fail-closed，禁按 Journey 猜最新 signed GP；state-resolver 收紧 green 判据为五重（当前 SHA + 当前 Impact Contract + 精确 GP Contract + 非 synthetic PASS + 子节点齐备）；修复真 PG 五级外键链 fixture 使其不违反 migration 409/374 约束；复用现有表/API，禁新表。",
+      "dod": [
+        "[BEHAVIOR] writer 冻结 GP identity 单测 4 passed（sprints/.../tests/gp-identity-writer.test.js）",
+        "[BEHAVIOR] 真 PG 集成 f1-gp-identity-closure.integration.test.js 精确落库/反串绑/fail-closed/mapper 五重/五级外键链全过",
+        "[BEHAVIOR] 空库 migrate 后 journey_assertion_receipts 具备 gp_contract_id/gp_contract_hash/synthetic/executor_kind 四列",
+        "[ARTIFACT] 集成测试注册进 packages/brain/vitest.config.js 的 POSTGRES_INTEGRATION_TESTS",
+        "[ARTIFACT] scripts/smoke/f1-gp-identity-closure-smoke.sh（PR required 最短 smoke，无 PG）"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/assertion-receipts.js",
+        "packages/brain/src/routes/harness-callback.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/map/state-resolver.js",
+        "packages/brain/src/impact-contract/__tests__/assertion-receipts.test.js",
+        "packages/brain/src/orchestrator/__tests__/dispatcher-gp-thread.test.js",
+        "packages/brain/src/__tests__/integration/f1-gp-identity-closure.integration.test.js",
+        "packages/brain/vitest.config.js",
+        "scripts/smoke/f1-gp-identity-closure-smoke.sh"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
