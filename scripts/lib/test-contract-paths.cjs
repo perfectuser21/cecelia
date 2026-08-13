@@ -43,9 +43,12 @@ function parseTestContract(content) {
       continue;
     }
 
-    const behaviors = behaviorsRaw
+    // Protect commas inside backtick code spans so they don't become false behavior splits.
+    const COMMA_PH = '⁠';
+    const protectedRaw = behaviorsRaw.replace(/`[^`]*`/g, (m) => m.replace(/,/g, COMMA_PH));
+    const behaviors = protectedRaw
       .split(/[/,、]/)
-      .map((behavior) => behavior.trim().replace(/^`|`$/g, ""))
+      .map((b) => b.trim().replace(/⁠/g, ',').replace(/^`|`$/g, ''))
       .filter(Boolean);
     rows.push({ ws, testFile, behaviors });
   }

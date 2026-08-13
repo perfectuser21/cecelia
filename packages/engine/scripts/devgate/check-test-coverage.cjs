@@ -91,8 +91,8 @@ function checkContract(contractPath) {
     // .sh 合同测试：可执行验收脚本，无 it()/test() 结构，跳过 behavior 匹配
     if (row.testFile.endsWith(".sh")) continue;
     const testContent = fs.readFileSync(testFilePath, "utf-8");
-    const itMatches = [...testContent.matchAll(/\b(?:it|test)\(['"]([^'"]+)['"]/g)];
-    const itNames = itMatches.map((m) => m[1]);
+    const itMatches = [...testContent.matchAll(/\b(?:it|test)\((?:'([^']*)'|"([^"]*)"|`((?:[^`]|\\`)*)`)/g)];
+    const itNames = itMatches.map((m) => (m[1] ?? m[2] ?? m[3] ?? '').replace(/\\`/g, '`')).filter(Boolean);
     if (itNames.length === 0) {
       violations.push(`${row.ws}: ${testFilePath} 无 it()/test() 块`);
       continue;
