@@ -230,7 +230,7 @@ is_evaluator_task_bundle() {
 
 is_generator_task_bundle() {
   [[ -f "${HARNESS_TASK_BUNDLE_FILE:-}" ]] || return 1
-  [[ "$(jq -r '.role // empty' "$HARNESS_TASK_BUNDLE_FILE" 2>/dev/null)" == "generator" ]]
+  [[ "$(jq -r '.task_bundle.role // empty' "$HARNESS_TASK_BUNDLE_FILE" 2>/dev/null)" == "generator" ]]
 }
 
 is_untrusted_provider_task_bundle() {
@@ -284,8 +284,8 @@ prepare_evaluator_evidence_capsule() {
   echo "[entrypoint] Evaluator evidence capsule sealed for exact PR head"
 }
 
-destroy_evaluator_github_credential() {
-  is_evaluator_task_bundle || return 0
+destroy_untrusted_provider_github_credential() {
+  is_untrusted_provider_task_bundle || return 0
 
   local config_dir="${GH_CONFIG_DIR:-/home/cecelia/.config/gh}"
   if [[ "$config_dir" != /* || "$config_dir" == "/" ]]; then
@@ -298,10 +298,10 @@ destroy_evaluator_github_credential() {
   export GITHUB_CREDENTIAL_DESTROYED=true
   if [[ -e "$config_dir/hosts.yml" ]] \
       || gh auth token --hostname github.com >/dev/null 2>&1; then
-    echo "[entrypoint] Evaluator GitHub credential destruction failed" >&2
+    echo "[entrypoint] untrusted Provider GitHub credential destruction failed" >&2
     return 1
   fi
-  echo "[entrypoint] Evaluator GitHub credential destroyed before Provider"
+  echo "[entrypoint] untrusted Provider GitHub credential destroyed before Provider"
 }
 
 verify_evaluator_evidence_capsule() {
@@ -395,6 +395,10 @@ prepare_evaluator_provider_identity() {
     -u HARNESS_CALLBACK_TOKEN
     -u HARNESS_LEASE_OWNER
     -u HARNESS_LEASE_GENERATION
+    -u GH_TOKEN
+    -u GITHUB_TOKEN
+    -u CECELIA_GITHUB_CREDENTIAL_REF
+    -u CECELIA_GITHUB_CREDENTIAL_FIFO
   )
   if is_generator_task_bundle; then
     # Provider cannot publish refs. A trusted post-Judge transport restores and
@@ -440,8 +444,8 @@ fi
 if is_evaluator_task_bundle; then
   prepare_evaluator_evidence_capsule
   seal_evaluator_evidence_capsule
-  destroy_evaluator_github_credential
 fi
+destroy_untrusted_provider_github_credential
 
 # git-auth-setup:start
 # 宿主 gitconfig 可能引用只在 macOS 宿主存在的 credential helper。Fleet Runner 已从

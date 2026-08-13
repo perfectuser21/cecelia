@@ -18,6 +18,22 @@
             "command": "bash $CLAUDE_PROJECT_DIR/packages/engine/hooks/dev-mode-tool-guard.sh"
           }
         ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [{ "type": "command", "command": "bash $CLAUDE_PROJECT_DIR/packages/engine/hooks/dev-mode-tool-guard.sh" }]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [{ "type": "command", "command": "bash $CLAUDE_PROJECT_DIR/packages/engine/hooks/dev-mode-tool-guard.sh" }]
+      },
+      {
+        "matcher": "MultiEdit",
+        "hooks": [{ "type": "command", "command": "bash $CLAUDE_PROJECT_DIR/packages/engine/hooks/dev-mode-tool-guard.sh" }]
+      },
+      {
+        "matcher": "NotebookEdit",
+        "hooks": [{ "type": "command", "command": "bash $CLAUDE_PROJECT_DIR/packages/engine/hooks/dev-mode-tool-guard.sh" }]
       }
     ]
   }

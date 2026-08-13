@@ -79,6 +79,36 @@ is_in_worktree() {
     [[ "$git_dir" == *"worktrees"* ]]
 }
 
+# Routing Receipt 是有头 coding 动作的唯一授权。调用方必须从 Brain/Harness
+# 注入这些 server-issued identity；缺字段仍写入 JSON，但动作闸会 fail closed。
+write_routing_dev_lock() {
+    local lock_path="$1"
+    local branch="$2"
+    local owner_session="$3"
+    local worktree_path="$4"
+    local created_at
+    created_at=$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
+    command -v jq >/dev/null 2>&1 || {
+        echo -e "${RED}错误: 写 Routing Receipt lock 需要 jq${NC}" >&2
+        return 1
+    }
+    jq -n \
+      --arg task_id "${CECELIA_TASK_ID:-}" \
+      --arg routing_receipt_id "${CECELIA_ROUTING_RECEIPT_ID:-}" \
+      --arg run_id "${CECELIA_RUN_ID:-}" \
+      --arg repo "${CECELIA_REPO:-}" \
+      --arg branch "$branch" \
+      --arg base_sha "${CECELIA_BASE_SHA:-}" \
+      --arg owner_session "$owner_session" \
+      --arg session_id "headed-$$-$branch" \
+      --arg worktree_path "$worktree_path" \
+      --arg created_at "$created_at" \
+      '{task_id:$task_id,routing_receipt_id:$routing_receipt_id,run_id:$run_id,
+        repo:$repo,branch:$branch,base_sha:$base_sha,owner_session:$owner_session,
+        session_id:$session_id,worktree_path:$worktree_path,created_at:$created_at}' \
+      > "$lock_path"
+}
+
 # 生成 worktree 路径（v1.3.0: 默认使用 ~/worktrees/{project}，跨会话持久化）
 # 环境变量 WORKTREE_BASE 可覆盖默认路径（默认: ~/worktrees）
 generate_worktree_path() {
@@ -254,13 +284,15 @@ for pr in data:
     # 自动确保该路径在 .gitignore 中
     local gitignore_file="$main_wt/.gitignore"
     if [[ -f "$gitignore_file" && "$worktree_path" == "$main_wt"* ]]; then
-        local rel_path="${worktree_path#$main_wt/}"
+        local rel_path="${worktree_path#"$main_wt"/}"
         local rel_dir
         rel_dir="$(dirname "$rel_path")/"
         if ! grep -qF "$rel_dir" "$gitignore_file" 2>/dev/null; then
-            echo "" >> "$gitignore_file"
-            echo "# Claude Code worktrees" >> "$gitignore_file"
-            echo "${rel_dir}" >> "$gitignore_file"
+            {
+                echo ""
+                echo "# Claude Code worktrees"
+                echo "${rel_dir}"
+            } >> "$gitignore_file"
             echo -e "${GREEN}✅ 已添加 ${rel_dir} 到 .gitignore${NC}" >&2
         fi
     fi
@@ -285,15 +317,7 @@ for pr in data:
         _claude_sid_create=$(_resolve_claude_session_id 2>/dev/null || echo "")
         [[ -z "$_claude_sid_create" ]] && _claude_sid_create="${CLAUDE_SESSION_ID:-unknown}"
         local dev_lock_file="$worktree_path/.dev-lock.${branch_name}"
-        {
-            echo "dev"
-            echo "branch: ${branch_name}"
-            echo "session_id: headed-$$-${branch_name}"
-            echo "owner_session: ${_claude_sid_create}"
-            echo "tty: $(tty 2>/dev/null || echo "none")"
-            echo "worktree_path: ${worktree_path}"
-            echo "created: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)"
-        } > "$dev_lock_file"
+        write_routing_dev_lock "$dev_lock_file" "$branch_name" "$_claude_sid_create" "$worktree_path"
         echo -e "${GREEN}✅ .dev-lock 已写入: .dev-lock.${branch_name}${NC}" >&2
 
         # v19.0.0: 同步写 .dev-mode 标准格式（stop-dev.sh 用文件存在性判 /dev 流程身份）
@@ -321,7 +345,8 @@ DEV_MODE_EOF
             [[ -z "$_sid_short" || "$_sid_short" == "unknown" ]] && _sid_short="nosid000"
 
             local _light_file="$main_repo/.cecelia/lights/${_sid_short}-${branch_name}.live"
-            local _guardian_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/dev-heartbeat-guardian.sh"
+            local _guardian_lib
+            _guardian_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/dev-heartbeat-guardian.sh"
             [[ -f "$_guardian_lib" ]] || _guardian_lib="$(git rev-parse --show-toplevel 2>/dev/null)/packages/engine/lib/dev-heartbeat-guardian.sh"
 
             if [[ -f "$_guardian_lib" ]]; then
@@ -599,14 +624,7 @@ cmd_init_or_check() {
             local _claude_sid
             _claude_sid=$(_resolve_claude_session_id)
             [[ -z "$_claude_sid" ]] && _claude_sid="${CLAUDE_SESSION_ID:-unknown}"
-            cat > "$dev_lock_file" <<LOCKEOF
-dev
-branch: ${current_branch}
-session_id: headed-$(date +%s)-$$-${current_branch}
-owner_session: ${_claude_sid}
-tty: $(tty 2>/dev/null || echo "none")
-created: $(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)
-LOCKEOF
+            write_routing_dev_lock "$dev_lock_file" "$current_branch" "$_claude_sid" "$project_root"
             echo "✅ .dev-lock 已创建（owner_session=${_claude_sid}）"
         fi
     else

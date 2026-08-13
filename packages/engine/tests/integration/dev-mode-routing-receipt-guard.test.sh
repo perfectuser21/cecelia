@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT=$(git rev-parse --show-toplevel)
 HOOK="$ROOT/packages/engine/hooks/dev-mode-tool-guard.sh"
 SETTINGS="$ROOT/.claude/settings.json"
+WORKTREE_MANAGE="$ROOT/packages/engine/skills/dev/scripts/worktree-manage.sh"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
@@ -26,9 +27,18 @@ EOF
 chmod +x "$TEST_ROOT/bin/curl"
 export CURL_LOG="$TEST_ROOT/curl.log"
 
-cat > "$TEST_ROOT/worktree/.dev-lock.cp-routing" <<EOF
-{"task_id":"task-1","routing_receipt_id":"receipt-1","run_id":"run-1","repo":"perfectuser21/cecelia","branch":"cp-routing","base_sha":"$BASE_SHA"}
-EOF
+export CECELIA_TASK_ID=task-1
+export CECELIA_ROUTING_RECEIPT_ID=receipt-1
+export CECELIA_RUN_ID=run-1
+export CECELIA_REPO=perfectuser21/cecelia
+export CECELIA_BASE_SHA="$BASE_SHA"
+# shellcheck source=../../skills/dev/scripts/worktree-manage.sh
+# shellcheck disable=SC1091
+source "$WORKTREE_MANAGE"
+write_routing_dev_lock \
+  "$TEST_ROOT/worktree/.dev-lock.cp-routing" cp-routing test-session "$TEST_ROOT/worktree"
+jq -e '.task_id == "task-1" and .routing_receipt_id == "receipt-1" and .run_id == "run-1"' \
+  "$TEST_ROOT/worktree/.dev-lock.cp-routing" >/dev/null
 
 run_hook() {
   local tool_name="$1"

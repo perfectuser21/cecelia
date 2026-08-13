@@ -12,7 +12,7 @@ detectors="$(sed -n '/^is_evaluator_task_bundle()/,/^prepare_evaluator_evidence_
 eval "$detectors" || { echo 'task bundle detector extraction failed' >&2; exit 1; }
 
 printf '%s\n' '{"task_bundle":{"role":"generator"}}' > "$TEST_ROOT/generator.json"
-HARNESS_TASK_BUNDLE_FILE="$TEST_ROOT/generator.json"
+export HARNESS_TASK_BUNDLE_FILE="$TEST_ROOT/generator.json"
 is_generator_task_bundle || {
   echo 'real prompt envelope did not activate generator trust boundary' >&2
   exit 1
@@ -24,13 +24,25 @@ is_untrusted_provider_task_bundle || {
 
 grep -q 'remote.origin.pushurl' "$SOURCE"
 grep -q 'setpriv' "$SOURCE"
-for key in BRAIN_URL HARNESS_CALLBACK_URL HARNESS_CALLBACK_TOKEN HARNESS_LEASE_OWNER HARNESS_LEASE_GENERATION; do
+for key in BRAIN_URL HARNESS_CALLBACK_URL HARNESS_CALLBACK_TOKEN HARNESS_LEASE_OWNER HARNESS_LEASE_GENERATION GH_TOKEN GITHUB_TOKEN CECELIA_GITHUB_CREDENTIAL_REF CECELIA_GITHUB_CREDENTIAL_FIFO; do
   grep -q -- "-u $key" "$SOURCE"
 done
 
-grep -Eq "taskType === 'harness_(evaluator|generator)'.*taskType === 'harness_(generator|evaluator)'" "$DOCKER_EXECUTOR" || {
-  echo 'generator container does not start in trusted root stage before setpriv' >&2
-  exit 1
+NODE_ENV=test DB_NAME=cecelia_test node --input-type=module - "$DOCKER_EXECUTOR" <<'NODE'
+const modulePath = process.argv[2];
+const { buildDockerArgs } = await import(`file://${modulePath}`);
+const { args } = buildDockerArgs({
+  task: { id: 'generator-trust-test', task_type: 'harness_generator' },
+  worktreePath: '/tmp/generator-trust-test',
+  image: 'test-image',
+  minimalHostMounts: true,
+}, { homedir: '/tmp/empty-home', existsSyncFn: () => false });
+const userIndex = args.indexOf('--user');
+if (userIndex < 0 || args[userIndex + 1] !== 'root') {
+  console.error('generator container does not start in trusted root stage before setpriv');
+  process.exit(1);
 }
+process.exit(0);
+NODE
 
 echo 'generator trust boundary PASS'

@@ -34,19 +34,21 @@ CWD=$(parse_string_field cwd)
 [[ -z "$CWD" ]] && CWD="$PWD"
 [[ ! -d "$CWD" ]] && exit 0
 
-# 找主仓库根（cwd 可能在 worktree，git worktree list 第一行是主仓库）
+# receipt lock 属于精确 worktree，不能从共享主仓库读取；lights 仍由主仓库共享。
+WORKTREE_ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null || true)
+[[ -z "$WORKTREE_ROOT" ]] && exit 0  # 不在 git → 放行
 MAIN_REPO=$(git -C "$CWD" worktree list --porcelain 2>/dev/null | head -1 | awk '/^worktree /{print $2; exit}' || true)
-[[ -z "$MAIN_REPO" ]] && exit 0  # 不在 git → 放行
+[[ -z "$MAIN_REPO" ]] && MAIN_REPO="$WORKTREE_ROOT"
 
 # 所有可能写仓的工具在动作前共用 Work Router receipt 安全闸。未知 Bash
 # 命令按写入处理；只读诊断工具保持可用，便于修复失效凭证。
 case "$TOOL_NAME" in
-    Edit|Write|MultiEdit|NotebookEdit|Bash) MUTATION_CAPABLE=true ;;
-    *) MUTATION_CAPABLE=false ;;
+    Read|Grep|Glob|WebFetch|WebSearch|ScheduleWakeup) MUTATION_CAPABLE=false ;;
+    *) MUTATION_CAPABLE=true ;;
 esac
 if [[ "$MUTATION_CAPABLE" == "true" ]]; then
     BRANCH=$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-    LOCK_FILE="$MAIN_REPO/.dev-lock.$BRANCH"
+    LOCK_FILE="$WORKTREE_ROOT/.dev-lock.$BRANCH"
     if [[ ! -f "$LOCK_FILE" ]]; then
         echo '{"decision":"block","reason":"route_violation: live /dev routing receipt lock required"}'
         exit 2
@@ -55,15 +57,23 @@ if [[ "$MUTATION_CAPABLE" == "true" ]]; then
     task_id=$(jq -r '.task_id // empty' "$LOCK_FILE" 2>/dev/null || true)
     run_id=$(jq -r '.run_id // empty' "$LOCK_FILE" 2>/dev/null || true)
     repo=$(jq -r '.repo // empty' "$LOCK_FILE" 2>/dev/null || true)
+    lock_branch=$(jq -r '.branch // empty' "$LOCK_FILE" 2>/dev/null || true)
     base_sha=$(jq -r '.base_sha // empty' "$LOCK_FILE" 2>/dev/null || true)
-    if [[ -z "$routing_receipt_id" || -z "$task_id" || -z "$run_id" || -z "$repo" || -z "$base_sha" ]]; then
+    if [[ -z "$routing_receipt_id" || -z "$task_id" || -z "$run_id" || -z "$repo" \
+        || -z "$base_sha" || "$lock_branch" != "$BRANCH" ]]; then
         echo '{"decision":"block","reason":"route_violation: incomplete routing receipt lock"}'
+        exit 2
+    fi
+    if [[ ! "$base_sha" =~ ^[a-f0-9]{40}$ ]] \
+        || ! git -C "$WORKTREE_ROOT" cat-file -e "$base_sha^{commit}" 2>/dev/null \
+        || ! git -C "$WORKTREE_ROOT" merge-base --is-ancestor "$base_sha" HEAD 2>/dev/null; then
+        echo '{"decision":"block","reason":"route_violation: routing baseline is not current lineage"}'
         exit 2
     fi
     validation=$(curl -fsS --max-time 5 -X POST "${BRAIN_URL:-http://localhost:5221}/api/brain/work-routing/validate" \
         -H 'Content-Type: application/json' \
         ${BRAIN_AUTH_TOKEN:+-H "Authorization: Bearer $BRAIN_AUTH_TOKEN"} \
-        -d "$(jq -nc --arg routing_receipt_id "$routing_receipt_id" --arg task_id "$task_id" --arg repo "$repo" --arg branch "$BRANCH" --arg base_sha "$base_sha" '{routing_receipt_id:$routing_receipt_id,task_id:$task_id,repo:$repo,branch:$branch,base_sha:$base_sha}')" 2>/dev/null || true)
+        -d "$(jq -nc --arg routing_receipt_id "$routing_receipt_id" --arg task_id "$task_id" --arg run_id "$run_id" --arg repo "$repo" --arg branch "$BRANCH" --arg base_sha "$base_sha" '{routing_receipt_id:$routing_receipt_id,task_id:$task_id,run_id:$run_id,repo:$repo,branch:$branch,base_sha:$base_sha}')" 2>/dev/null || true)
     if [[ "$(printf '%s' "$validation" | jq -r '.valid // false' 2>/dev/null)" != "true" ]]; then
         echo '{"decision":"block","reason":"route_violation: receipt validation failed"}'
         exit 2
