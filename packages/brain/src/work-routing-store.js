@@ -35,6 +35,8 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       repo: decision.repo,
       map_scope: decision.map_scope,
       impact_contract_required: decision.impact_contract_required,
+      ...(request.branch ? { branch: request.branch } : {}),
+      ...(request.base_sha ? { base_sha: request.base_sha } : {}),
       ...(decision.pipeline === 'harness' ? {
         orchestrator: 'skill-relay',
         harness_runtime: 'kernel-v1',

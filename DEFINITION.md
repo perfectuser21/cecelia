@@ -8,11 +8,15 @@
 
 
 
-**Brain 版本**: 1.272.62
+**Brain 版本**: 1.272.63
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.63 — Headed Kernel Runtime Identity
+
+- 有头 coding 也建立真实 Kernel Run/Attempt，并向交互进程注入 canonical receipt、run、repo、branch 与冻结 base SHA；启动失败由 Kernel 终态事务统一收口。
 
 ## Brain 1.272.62 — Atomic Routing Governance
 

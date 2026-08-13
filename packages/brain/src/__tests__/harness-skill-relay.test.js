@@ -729,6 +729,60 @@ describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门
       `CECELIA_BASE_SHA=${'a'.repeat(40)}`,
     ]) expect(tmux).toContain(value);
   });
+
+  it('routed headed tmux 启动失败时原子终止 Kernel Run/Attempt，不把任务放回旧队列', async () => {
+    const runId = '55555555-5555-4555-8555-555555555555';
+    const attemptId = '66666666-6666-4666-8666-666666666666';
+    const task = makeHeadedTask({
+      payload: {
+        orchestrator: 'skill-relay',
+        harness_runtime: 'kernel-v1',
+        mode: 'headed',
+        executor: 'claude',
+        routing_receipt_id: '77777777-7777-4777-8777-777777777777',
+        repo: 'cecelia',
+        branch: 'cp-headed-kernel-failure',
+        base_sha: 'b'.repeat(40),
+        sprint_dir: 'sprints/test-headed-kernel-failure',
+      },
+    });
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    const deps = {
+      pool,
+      execFn: vi.fn((command) => {
+        if (String(command).includes('tmux has-session')) return 'TMUX_DEAD';
+        if (String(command).includes('tmux new-session')) throw new Error('tmux refused');
+        return '';
+      }),
+      loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT'),
+      ensureWt: vi.fn().mockResolvedValue('/tmp/wt/cp-headed-kernel-failure'),
+      createKernelRun: vi.fn().mockResolvedValue({ created: true, run: { id: runId } }),
+      createHeadedAttempt: vi.fn().mockResolvedValue({ id: attemptId }),
+      finalizeRun: vi.fn().mockResolvedValue({ changed: true, attemptsTerminalized: 1 }),
+      now: () => new Date('2026-08-13T00:00:00Z'),
+      inDockerFn: () => false,
+      sshKeyFn: () => null,
+    };
+
+    const result = await spawnSkillRelaySession(task, deps);
+
+    expect(result).toMatchObject({
+      ok: false,
+      mode: 'kernel-v1-headed',
+      runId,
+      terminalized: true,
+    });
+    expect(deps.finalizeRun).toHaveBeenCalledWith(pool, {
+      runId,
+      expectedTaskId: task.id,
+      outcome: 'failed',
+      reason: 'headed_kernel_launch_failed:ssh spawn failed: tmux refused',
+    });
+    expect(pool.query).not.toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE tasks SET status='queued'"),
+      expect.anything(),
+    );
+  });
 });
 
 describe('spawnSkillRelaySession preview 隔离闸（2026-08-05 preview-4643 事故）', () => {
