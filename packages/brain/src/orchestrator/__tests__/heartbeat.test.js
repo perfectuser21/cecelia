@@ -15,7 +15,7 @@ describe('writeHeartbeat', () => {
   it('同一权威 heartbeat 以 generation CAS 续租 session 与 run', async () => {
     const pool = mockPool();
     const now = new Date('2026-07-04T12:00:00Z');
-    await writeHeartbeat(pool, { runId: RUN_ID, host: 'mac-mini-us', pid: 4242, now });
+    await writeHeartbeat(pool, { runId: RUN_ID, controllerSessionId:'11111111-1111-4111-8111-111111111111',controllerGeneration:1,host: 'mac-mini-us', pid: 4242, now });
 
     expect(pool.query).toHaveBeenCalledTimes(1);
     const [sql, params] = pool.query.mock.calls[0];
@@ -27,6 +27,7 @@ describe('writeHeartbeat', () => {
       expect(sql).toContain(col);
     }
     expect(sql).toMatch(/WHERE run\.id\s*=\s*\$1/);
-    expect(params).toEqual([RUN_ID, now, 'mac-mini-us', 4242, 1800]);
+    expect(params).toEqual([RUN_ID, now, 'mac-mini-us', 4242, 1800,
+      '11111111-1111-4111-8111-111111111111',1]);
   });
 });

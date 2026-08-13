@@ -295,7 +295,9 @@ describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（�
       [created.run.id,now],
     );
     await writeHeartbeat(testPool, {
-      runId:created.run.id,host:'integration',pid:process.pid,now,leaseSeconds:2,
+      runId:created.run.id,controllerSessionId:created.run.controller_session_id,
+      controllerGeneration:created.run.controller_generation,
+      host:'integration',pid:process.pid,now,leaseSeconds:2,
     });
     const withinLease = await reconcileOwnerlessKernelRuns(testPool, {
       now:new Date(now.getTime()+1_000),
@@ -310,5 +312,36 @@ describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（�
     ]);
     expect([...left,...right].filter((row)=>row.runId===created.run.id)).toHaveLength(1);
     expect((await runRow(created.run.id)).phase).toBe('failed');
+  });
+
+  it('失权的 Controller 不能为新 generation 续租',async()=>{
+    const {initiativeId,taskId}=await seedTask();
+    const created=await createRoutedKernelRun(testPool,{taskId,initiativeId,phase:'planning',
+      journeyId:null,abilityId:null,host:'kernel-v1',deadlineHours:8,createdSource:'kernel_dispatch'});
+    const oldSession=created.run.controller_session_id;
+    const replacement=randomUUID();
+    await testPool.query(
+      `INSERT INTO kernel_controller_sessions(id,run_id,task_id,generation,source,status,last_heartbeat_at,lease_expires_at)
+       VALUES($1,$2,$3,2,'takeover','active',NOW(),NOW()-INTERVAL '1 second')`,
+      [replacement,created.run.id,taskId],
+    );
+    await testPool.query(
+      `UPDATE kernel_controller_sessions SET run_id=NULL,status='closed' WHERE id=$1`,
+      [oldSession],
+    );
+    await testPool.query(
+      `UPDATE initiative_runs SET controller_session_id=$2,controller_generation=2,
+       controller_lease_expires_at=NOW()-INTERVAL '1 second' WHERE id=$1`,
+      [created.run.id,replacement],
+    );
+    await expect(writeHeartbeat(testPool,{runId:created.run.id,
+      controllerSessionId:oldSession,controllerGeneration:1,host:'stale',pid:999,now:new Date()}))
+      .rejects.toThrow('controller_lease_renewal_lost');
+    const fresh=await testPool.query(
+      'SELECT orchestrator_host,controller_lease_expires_at<NOW() AS expired FROM initiative_runs WHERE id=$1',
+      [created.run.id],
+    );
+    expect(fresh.rows[0]).toMatchObject({expired:true});
+    expect(fresh.rows[0].orchestrator_host).not.toBe('stale');
   });
 });
