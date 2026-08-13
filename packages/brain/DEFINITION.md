@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.272.54
+**Brain 版本**: 1.272.55
+
+## Canonical Action Validation（Brain 1.272.55）
+
+- 有头动作验证同时核对 task payload 投影、四形式 canonical receipt、未终态 Kernel run，以及 active Attempt 的 workspace branch/base SHA；顶层 receipt branch 不再错误替代子阶段工作分支。
 
 ## Attempt Workspace Action Identity（Brain 1.272.54）
 

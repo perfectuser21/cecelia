@@ -8,11 +8,15 @@
 
 
 
-**Brain 版本**: 1.272.54
+**Brain 版本**: 1.272.55
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.55 — Canonical Action Validation
+
+- 动作验证核对 task/receipt/run/active Attempt workspace 全链身份，过期、取代、投影漂移或工作分支不符均失败关闭。
 
 ## Brain 1.272.54 — Attempt Workspace Action Identity
 
