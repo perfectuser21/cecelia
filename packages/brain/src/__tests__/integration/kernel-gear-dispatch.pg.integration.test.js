@@ -206,6 +206,7 @@ describe('kernel gear：initiative_runs.gear round-trip + observed.gear 注入�
       host: 'kernel-v1',
       deadlineHours: 8,
       createdSource: 'kernel_dispatch',
+      controllerSessionId: randomUUID(),
       gear: 'hotfix',
     });
     expect(created.created).toBe(true);
@@ -232,6 +233,7 @@ describe('kernel gear：initiative_runs.gear round-trip + observed.gear 注入�
       host: 'kernel-v1',
       deadlineHours: 8,
       createdSource: 'kernel_dispatch',
+      controllerSessionId: randomUUID(),
       // gear 不传 → 列 NULL
     });
     const runId = created.run.id;
@@ -260,6 +262,7 @@ describe('kernel gear：hotfix run 一跳角色分布（真 collectGroundTruth+d
       host: 'kernel-v1',
       deadlineHours: 8,
       createdSource: 'kernel_dispatch',
+      controllerSessionId: randomUUID(),
       gear: 'hotfix',
     });
     // observed.gear 真注入后 derive 分叉（纯函数断言，先于 loop 驱动确认分叉方向）
@@ -291,6 +294,7 @@ describe('kernel gear：hotfix run 一跳角色分布（真 collectGroundTruth+d
       host: 'kernel-v1',
       deadlineHours: 8,
       createdSource: 'kernel_dispatch',
+      controllerSessionId: randomUUID(),
       gear: 'default',
     });
     const defDispatch = await driveOneHop({

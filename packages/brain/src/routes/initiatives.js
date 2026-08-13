@@ -20,6 +20,7 @@
 
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
+import { randomUUID } from 'node:crypto';
 import pool from '../db.js';
 import {
   createKernelRun,
@@ -459,6 +460,9 @@ async function createRelayRun(req, res, legacyInitiativeId = null) {
       deadlineHours: 6,
       createdSource,
       commanderMode,
+      // 启动不变量（sprint 08131104）：foreground handoff 也须先有 Controller ownership，
+      // createKernelRun fail-closed 校验后才建 run（不可绕过路由层直接产生无主 run）。
+      controllerSessionId: body.controller_session_id ?? randomUUID(),
     });
     return res.status(result.created ? 201 : 200).json(result);
   } catch (err) {
