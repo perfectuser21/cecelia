@@ -8,11 +8,17 @@
 
 
 
-**Brain 版本**: 1.273.0
+**Brain 版本**: 1.273.1
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.273.1 — Migration 413/414 production anchor + schema 地板升至 415
+
+- Production DB 已有 schema 413（work_routing_receipts）和 414（map_recovery_contracts），补录进 main，selfcheck EXPECTED_SCHEMA_VERSION 随 PR #4860 升至 415。
+- PR #4860（Session Controller ownership，migration 415）已合并，三档 migration 全部对齐。
+- Root package-lock.json 与 packages/brain/package.json 版本同步。
 
 ## Brain 1.273.0 — Session Controller 所有权不变量 + 四档 change_kind 驱动 Profile
 

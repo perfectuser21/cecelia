@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.272.37
+**版本**: 1.273.1
 
 ## Fleet pgvector runtime contract
 
