@@ -1,63 +1,79 @@
-contract_branch: cp-harness-propose-r1-c9043059-r0dfcdf41-a12
-sprint_dir: sprints/08111523-kernel-c9043059
+contract_branch: cp-harness-propose-r1-3a0e60eb-r3f722048-a4
+sprint_dir: sprints/0813-f1-capability-certification
 
 ---
 skeleton: false
 journey_type: autonomous
+target_environment: local_api
 ---
-# Contract DoD — Sprint: derive 取证死循环双修（recollect 护栏 trigger_sha 兜底 + 新 evaluate PASS 必派 judge）
+# Contract DoD — Sprint: F1 Capability 可信认证闭环
 
-**范围**: 仅 `packages/brain/src/orchestrator/derive.js` 失败类路由/护栏字段/状态排序 + 其 `__tests__` 单测
-**大小**: S
-
-## Invariant 覆盖（铁律三源映射）
-
-- **INV-1 [证据不足补证]** judge FAIL evidence_insufficient 优先走 evaluator 补证轮 → 由下方
-  **B-03** 把守（首次 evidence_insufficient 仍走首次 spawn:evaluator，不改错人派 generator）。
-- **INV-2 [验证时钟 fail-closed]** → **N/A**：本 sprint 不触及 validation_clock / gates.js。
-- **INV-3 [证据窗口 前8×600]** → **N/A**：本 sprint 不改 judge 证据消费窗口。
+**范围**: 在 Mapper 真实读路径（`packages/brain/src/lib/map-state-resolver.js`）为 F1 Capability 投影加 fail-closed 认证闸；
+在 Evaluator receipt 写路径（`packages/brain/src/impact-contract/assertion-receipts.js`）补 GP identity 绑定；
+读 signed GP contract identity（`packages/brain/src/golden-path-contracts.js`）。复用现有表，不新增平行认证系统。
+**大小**: L
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] 复现回归测试文件存在且含双序列断言（awaiting_judge + after_recollect）
-  Test: node -e "const c=require('fs').readFileSync('sprints/08111523-kernel-c9043059/tests/derive-recollect-loop.test.ts','utf8');if(!c.includes('evaluate_passed_awaiting_judge')||!c.includes('evidence_insufficient_after_recollect'))process.exit(1)"
+- [x] [ARTIFACT] Mapper 认证闸落在真实读路径 map-state-resolver.js（新增读 gp_contract_id/impact_contract_id + signed 合同校验）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/lib/map-state-resolver.js','utf8');if(!(c.includes('gp_contract_id')&&c.includes('impact_contract_id')&&c.includes('golden_path_contract_versions')))process.exit(1)"
 
-- [x] [ARTIFACT] 两条复现断言已 port 进 derive.test.js 作永久 CI 回归（bug-fix 死规矩）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/__tests__/derive.test.js','utf8');if(!c.includes('evaluate_passed_awaiting_judge')||!c.includes('evidence_insufficient_after_recollect'))process.exit(1)"
+- [x] [ARTIFACT] Evaluator receipt 写路径落 gp_contract_id/gp_contract_hash 绑定
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/impact-contract/assertion-receipts.js','utf8');if(!(c.includes('gp_contract_id')&&c.includes('gp_contract_hash')))process.exit(1)"
 
-## BEHAVIOR 条目（真调 derive 纯函数，无 mock 被改的决策边）
+- [x] [ARTIFACT] E2E oracle harness 存在（真库 fixture 全矩阵）
+  Test: node -e "require('fs').accessSync('sprints/0813-f1-capability-certification/tests/f1-cert-harness.mjs')"
 
-- [x] [BEHAVIOR] [L2] B-01: recollect 返回更晚的 evaluate PASS → 派 judge 复核（run 06e4566c 死循环点）
-  动作: 喂 derive「judge FAIL evidence_insufficient(hop3) → spawn:evaluator 补证(hop4) → evaluate PASS(hop5，晚于最新 judge)」序列
-  预期观察: derive 返回 action=spawn:judge, reason=evaluate_passed_awaiting_judge（而非再次 spawn:evaluator）
+- [x] [ARTIFACT] 集成回归测试存在（TDD 红→绿，进 brain-integration CI）
+  Test: node -e "require('fs').accessSync('sprints/0813-f1-capability-certification/tests/f1-capability-certification.integration.test.ts')"
+
+## BEHAVIOR 条目（五行剧本，真 Postgres，target_environment=local_api）
+
+- [x] [BEHAVIOR] [L2] B-01: 四认证前提齐备时 F1 投影 green
+  动作: harness 在 throwaway scope seed 全链（signed GP contract + receipt 绑定 gp+impact identity + 当前 SHA + step-link 绑定 feature/assertion + feature 子节点绿），调用 loadMapNodeStates 读 F1 capability 态
+  预期观察: F1 capability node state=green，reason=receipt_pass（子节点冒泡）
   等待预算: 0s
-  留证: /tmp/derive-loop-e2e.log（含该用例 PASS 行）
-  Test: manual:bash -c 'W="${WORKSPACE_PATH:-/workspace}"; [ -x "$W/node_modules/.bin/vitest" ] || (cd "$W" && npm ci --no-audit --no-fund >/dev/null 2>&1); cd "$W" && node_modules/.bin/vitest run sprints/08111523-kernel-c9043059/tests/derive-recollect-loop.test.ts -t "派 judge 复核" 2>&1 | sed "s/\x1b\[[0-9;]*[mK]//g" | tee /tmp/derive-b01.out; grep -qE "Tests +1 passed" /tmp/derive-b01.out && ! grep -qE "[1-9][0-9]* failed" /tmp/derive-b01.out || { echo "FAIL B-01"; exit 1; }; echo OK'
+  留证: harness stdout「RESULT S0-happy state=green reason=receipt_pass」
+  Test: manual:bash -c 'OUT=$(node sprints/0813-f1-capability-certification/tests/f1-cert-harness.mjs --scenario=S0-happy); echo "$OUT"; echo "$OUT" | grep -q "S0-happy state=green"'
 
-- [x] [BEHAVIOR] [L2] B-02: recollect 后仍不足(trigger_sha 缺失，pr.head_sha 兜底) → 落人审 非第三次 recollect
-  动作: 喂 derive「补证后 judge 重审仍 evidence_insufficient(hop6，最新)，且 spawn:evaluator 快照缺顶层 trigger_sha 仅 pr.head_sha」序列
-  预期观察: derive 返回 action=wait:human_review, reason=evidence_insufficient_after_recollect（护栏兜底触发，不第三次 spawn:evaluator）
+- [x] [BEHAVIOR] [L2] B-02: 无 signed GP contract 时 F1 非绿（fail-closed）
+  动作: 同上 fixture 但 GP contract 置 pending_signature（无 signed 版本），其余前提不变，读 F1 态
+  预期观察: F1 capability state ∈ {red,gray,unknown} 且 ≠ green，reason=gp_contract_unsigned
   等待预算: 0s
-  留证: /tmp/derive-loop-e2e.log（含该用例 PASS 行）
-  Test: manual:bash -c 'W="${WORKSPACE_PATH:-/workspace}"; [ -x "$W/node_modules/.bin/vitest" ] || (cd "$W" && npm ci --no-audit --no-fund >/dev/null 2>&1); cd "$W" && node_modules/.bin/vitest run sprints/08111523-kernel-c9043059/tests/derive-recollect-loop.test.ts -t "落人审 非第三次 recollect" 2>&1 | sed "s/\x1b\[[0-9;]*[mK]//g" | tee /tmp/derive-b02.out; grep -qE "Tests +1 passed" /tmp/derive-b02.out && ! grep -qE "[1-9][0-9]* failed" /tmp/derive-b02.out || { echo "FAIL B-02"; exit 1; }; echo OK'
+  留证: harness stdout「RESULT S1-unsigned state=<非green> reason=gp_contract_unsigned」
+  Test: manual:bash -c 'OUT=$(node sprints/0813-f1-capability-certification/tests/f1-cert-harness.mjs --scenario=S1-unsigned); echo "$OUT"; echo "$OUT" | grep -q "reason=gp_contract_unsigned" && ! echo "$OUT" | grep -q "S1-unsigned state=green"'
 
-- [x] [BEHAVIOR] [L2] B-03: 首次 evidence_insufficient(evaluate 不晚于 judge) → 首次 spawn:evaluator 补证（INV-1 不回归，awaiting_judge 不过度触发）
-  动作: 喂 derive「judge FAIL evidence_insufficient(hop3，最新)，无更晚 evaluate、无既往 recollect」序列
-  预期观察: derive 返回 action=spawn:evaluator, reason=judge_evidence_insufficient_recollect（首轮补证语义不变）
+- [x] [BEHAVIOR] [L2] B-03: receipt 身份绑定缺失（未绑 GP identity / 未绑 Impact / 陈旧 SHA）时 F1 非绿
+  动作: 逐一破坏 receipt——gp_contract_id 置 NULL / impact_contract_id 置 NULL / source_sha 改非当前，各读一次 F1 态
+  预期观察: 三种破坏各令 F1 state≠green，reason 分别为 receipt_gp_contract_unbound / receipt_impact_contract_unbound / receipt_revision_mismatch
   等待预算: 0s
-  留证: /tmp/derive-loop-e2e.log（含该用例 PASS 行）
-  Test: manual:bash -c 'W="${WORKSPACE_PATH:-/workspace}"; [ -x "$W/node_modules/.bin/vitest" ] || (cd "$W" && npm ci --no-audit --no-fund >/dev/null 2>&1); cd "$W" && node_modules/.bin/vitest run sprints/08111523-kernel-c9043059/tests/derive-recollect-loop.test.ts -t "不误判 awaiting_judge" 2>&1 | sed "s/\x1b\[[0-9;]*[mK]//g" | tee /tmp/derive-b03.out; grep -qE "Tests +1 passed" /tmp/derive-b03.out && ! grep -qE "[1-9][0-9]* failed" /tmp/derive-b03.out || { echo "FAIL B-03"; exit 1; }; echo OK'
+  留证: harness stdout 三行 RESULT（含各 reason，均非 green）
+  Test: manual:bash -c 'OUT=$(node sprints/0813-f1-capability-certification/tests/f1-cert-harness.mjs --scenario=S3-receipt-binding); echo "$OUT"; echo "$OUT" | grep -q "receipt_gp_contract_unbound" && echo "$OUT" | grep -q "receipt_impact_contract_unbound" && ! echo "$OUT" | grep -q "S3.* state=green"'
 
-- [x] [BEHAVIOR] [L2] B-04: 显式 trigger_sha 护栏路径不回归 → 重审仍不足落人审
-  动作: 喂 derive「spawn:evaluator 快照【含】trigger_sha=sha-new 且 judge 重审(hop6)仍 evidence_insufficient」序列
-  预期观察: derive 返回 action=wait:human_review, reason=evidence_insufficient_after_recollect（既有显式路径不因兜底改动而回归）
+- [x] [BEHAVIOR] [L2] B-04: step link 未绑定 Feature/Assertion 时 F1 非绿
+  动作: 断开 journey_step_link 的 feature_id 或 assertion_ref，读 F1 态
+  预期观察: F1 state≠green，reason=step_link_unbound
   等待预算: 0s
-  留证: /tmp/derive-loop-e2e.log（含该用例 PASS 行）
-  Test: manual:bash -c 'W="${WORKSPACE_PATH:-/workspace}"; [ -x "$W/node_modules/.bin/vitest" ] || (cd "$W" && npm ci --no-audit --no-fund >/dev/null 2>&1); cd "$W" && node_modules/.bin/vitest run sprints/08111523-kernel-c9043059/tests/derive-recollect-loop.test.ts -t "显式路径不回归" 2>&1 | sed "s/\x1b\[[0-9;]*[mK]//g" | tee /tmp/derive-b04.out; grep -qE "Tests +1 passed" /tmp/derive-b04.out && ! grep -qE "[1-9][0-9]* failed" /tmp/derive-b04.out || { echo "FAIL B-04"; exit 1; }; echo OK'
+  留证: harness stdout「RESULT S5-steplink state=<非green> reason=step_link_unbound」
+  Test: manual:bash -c 'OUT=$(node sprints/0813-f1-capability-certification/tests/f1-cert-harness.mjs --scenario=S5-steplink); echo "$OUT"; echo "$OUT" | grep -q "reason=step_link_unbound" && ! echo "$OUT" | grep -q "S5-steplink state=green"'
 
-- [x] [BEHAVIOR] [L2] B-05: 现有 derive 全量单测不回归（基线 95 用例含 evidence_insufficient/product_failure 分支）
-  动作: 跑 packages/brain 现有 derive.test.js 全量
-  预期观察: 全部用例通过，无 failed；evidence_insufficient/product_failure 既有分支断言保持绿
+- [x] [BEHAVIOR] [L2] B-05: 真实 Evaluator 落 PASS receipt 时绑定 gp_contract_id（写侧 GP identity）
+  动作: 集成测试用真 Postgres + 真 persistTrustedEvaluatorReceipts(db,{attempt,result}) 落一条 PASS receipt，查落库行
+  预期观察: 落库 receipt 行 gp_contract_id=signed contract id 非空、gp_contract_hash 匹配 content_hash；无 signed 合同时拒写（抛 evidence 错误）
   等待预算: 0s
-  留证: /tmp/derive-full-e2e.log（Test Files 1 passed）
-  Test: manual:bash -c 'W="${WORKSPACE_PATH:-/workspace}"; cd "$W/packages/brain"; { [ -x node_modules/.bin/vitest ] && node_modules/.bin/vitest run src/orchestrator/__tests__/derive.test.js || npx vitest run src/orchestrator/__tests__/derive.test.js; } 2>&1 | sed "s/\x1b\[[0-9;]*[mK]//g" | tee /tmp/derive-b05.out; grep -qE "Test Files +1 passed" /tmp/derive-b05.out && ! grep -qE "[1-9][0-9]* failed" /tmp/derive-b05.out || { echo "FAIL B-05"; exit 1; }; echo OK'
+  留证: vitest 用例输出「evaluator writer 绑定 gp_contract_id」通过
+  Test: manual:bash -c 'node sprints/0813-f1-capability-certification/tests/f1-cert-harness.mjs --scenario=S6-evaluator-write'
+
+- [x] [BEHAVIOR] [L2] INV-1 [validation-clock]: Evaluator 落 receipt 的身份完整性 fail-closed 不回退
+  动作: harness 用缺失 impact identity 的 evaluator bundle 调 persistTrustedEvaluatorReceipts，观察是否仍拒绝
+  预期观察: 仍抛 assertion_receipt_evidence_invalid（HTTP 409），不静默落无绑定 receipt；validation 身份完整性守护未被本单放宽
+  等待预算: 0s
+  留证: harness stdout「RESULT INV-1 rejected=true」
+  Test: manual:bash -c 'OUT=$(node sprints/0813-f1-capability-certification/tests/f1-cert-harness.mjs --scenario=INV1-identity-failclosed); echo "$OUT"; echo "$OUT" | grep -q "INV-1 rejected=true"'
+
+- [x] [BEHAVIOR] [L2] INV-2 [judge-evidence]: N/A — 本 sprint 不触及 Judge evidence_insufficient vs 实现缺陷分支
+  动作: 认证闸只作用于 receipt 已落库后的 Mapper 投影读路径，不进入 harness-judge.js 的 evidence 区分分支
+  预期观察: harness-judge.js 的 evidence_insufficient 判定代码未被本单修改（源码守护）
+  等待预算: 0s
+  留证: grep 源码确认 judge evidence 分支存在且未被本单删改
+  Test: manual:bash -c 'node -e "const c=require(String.raw`fs`).readFileSync(String.raw`packages/brain/src/harness-judge.js`,String.raw`utf8`);process.exit(c.includes(String.raw`evidence_insufficient`)?0:1)"'
