@@ -18,6 +18,7 @@
  */
 
 import pool from './db.js';
+import { createTask } from './actions.js';
 import { getRecentLearnings, upsertLearning } from './learning.js';
 import { buildMemoryContext } from './memory-retriever.js';
 import { callLLM } from './llm-caller.js';
@@ -1663,17 +1664,27 @@ async function observeChat(signal, context = {}) {
       case 'create_task': {
         const title = signal.title || '对话中提到的任务';
         const description = signal.description || context.user_message || '';
-        const res = await pool.query(`
-          INSERT INTO tasks (title, description, priority, task_type, status, trigger_source)
-          VALUES ($1, $2, $3, $4, 'queued', 'chat_mouth')
-          RETURNING id
-        `, [
+        const result = await createTask({
           title,
           description,
-          signal.priority || 'P2',
-          signal.task_type || 'research',
-        ]);
-        const taskId = res.rows[0]?.id;
+          priority: signal.priority || 'P2',
+          task_type: signal.task_type || 'research',
+          status: 'queued',
+          trigger_source: 'chat_mouth',
+          source: 'conversation',
+          source_id: signal.source_id || signal.id,
+          mutation_intent: signal.mutation_intent,
+          declared_domain: signal.declared_domain,
+          declared_change_kind: signal.change_kind,
+          execution_profile_override_request: signal.execution_profile,
+          repo_hint: signal.repo,
+          map_scope_hint: signal.map_scope,
+          branch: signal.branch,
+          base_sha: signal.base_sha,
+          allow_unscoped: true,
+          db: pool,
+        });
+        const taskId = result.task?.id;
         console.log(`[thalamus] observeChat: task created — "${title}" (${taskId})`);
         if (taskId) generateTaskEmbeddingAsync(taskId, title, description);
         break;

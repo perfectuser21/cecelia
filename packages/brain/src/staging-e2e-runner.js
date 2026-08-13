@@ -450,7 +450,7 @@ export async function handlePromote(dbPool, { verdict, baseRepo, prUrl, initiati
       // Slice3：内部线 auto_promoted → 派成功交付证书 report；promote_failed → 失败报告。
       const prod = readProductionInfo(process.env.REPO_ROOT || getRepoRoot());
       await spawnHarnessReport(
-        { dbQuery: (sql, p) => dbPool.query(sql, p) },
+        { db: dbPool },
         {
           initiativeId, prUrl,
           reportKind: r.ok ? REPORT_KIND.SUCCESS : REPORT_KIND.FAILURE,

@@ -17,6 +17,7 @@
 import { computeCapacity } from './capacity.js';
 import { updateKrProgress } from './kr-progress.js';
 import { reviewProjectCompletion as _reviewProjectCompletion, shouldAdjustPlan, createPlanAdjustmentTask } from './progress-reviewer.js';
+import { createTask } from './actions.js';
 
 /**
  * 检查并关闭已完成的 Initiatives。
@@ -106,15 +107,19 @@ async function checkInitiativeCompletion(pool) {
           [parent.id]
         );
         if (existingPlan.rows.length === 0) {
-          await pool.query(`
-            INSERT INTO tasks (title, task_type, project_id, description, priority, status, trigger_source)
-            VALUES ($1, 'scope_plan', $2, $3, 'P1', 'queued', 'brain_auto')
-            ON CONFLICT DO NOTHING
-          `, [
-            `规划 ${parent.name} 下一个 Initiative`,
-            parent.id,
-            JSON.stringify({ scope_id: parent.id, reason: 'initiative_completed', completed_initiative_id: initiative.id })
-          ]);
+          await createTask({
+            title: `规划 ${parent.name} 下一个 Initiative`,
+            task_type: 'scope_plan',
+            project_id: parent.id,
+            description: JSON.stringify({ scope_id: parent.id, reason: 'initiative_completed', completed_initiative_id: initiative.id }),
+            priority: 'P1',
+            status: 'queued',
+            trigger_source: 'brain_auto',
+            source: 'child',
+            source_id: `initiative-closer:${initiative.id}:scope-plan`,
+            allow_unscoped: true,
+            db: pool,
+          });
           console.log(`[initiative-closer] Created scope_plan task for scope ${parent.id} (initiative ${initiative.name} completed)`);
         }
       }
@@ -393,15 +398,19 @@ async function checkScopeCompletion(pool) {
 
     // 触发 project_plan 飞轮：Scope 完成后创建 project_plan 任务规划下一个 Scope
     if (scope.parent_id) {
-      await pool.query(`
-        INSERT INTO tasks (title, task_type, project_id, description, priority, status, trigger_source)
-        VALUES ($1, 'project_plan', $2, $3, 'P1', 'queued', 'brain_auto')
-        ON CONFLICT DO NOTHING
-      `, [
-        `规划下一个 Scope (${scope.name} 已完成)`,
-        scope.parent_id,
-        JSON.stringify({ project_id: scope.parent_id, reason: 'scope_completed', completed_scope_id: scope.id, completed_scope_name: scope.name })
-      ]);
+      await createTask({
+        title: `规划下一个 Scope (${scope.name} 已完成)`,
+        task_type: 'project_plan',
+        project_id: scope.parent_id,
+        description: JSON.stringify({ project_id: scope.parent_id, reason: 'scope_completed', completed_scope_id: scope.id, completed_scope_name: scope.name }),
+        priority: 'P1',
+        status: 'queued',
+        trigger_source: 'brain_auto',
+        source: 'child',
+        source_id: `initiative-closer:${scope.id}:project-plan`,
+        allow_unscoped: true,
+        db: pool,
+      });
       console.log(`[initiative-closer] Created project_plan task for project ${scope.parent_id} (scope ${scope.name} completed)`);
     }
 

@@ -10,6 +10,8 @@ import { findDuplicateCheckKeys } from '../acceptance-spec.js';
 import { registerAiResultsRoute } from './acceptance-ai.js';
 import { registerReviewClosureRoutes } from './acceptance-review.js';
 import { checkCreateGate, checkFrozenStamps } from './acceptance-gates.js';
+import { createTask } from '../actions.js';
+import { buildCeceliaMutationRoute } from '../system-coding-route.js';
 
 export const ACCEPTANCE_KINDS = ['FR', 'NFR', 'Invariant', 'SOP'];
 export const ACCEPTANCE_RESULTS = ['通过', '不通过', '无法验证'];
@@ -177,15 +179,23 @@ export async function submitAcceptanceResults(pool, results, options = {}) {
           const detail = failedChecks.map((c) => `${c.check_key} ${c.name}${c.note ? `（${c.note}）` : ''}`).join('\n');
           try {
             await client.query('SAVEPOINT reject_task_insert');
-            await client.query(
-              `INSERT INTO tasks (title, description, task_type, priority, status, payload)
-               VALUES ($1, $2, 'dev', 'P1', 'queued', $3::jsonb)`,
-              [
-                `[验收驳回] ${prev.title}`,
-                `人工验收不通过，需修复后重新验收。GP: ${prev.gp_id || '未知'}，验收单: ${prev.run_key}。\n不通过项：\n${detail}`,
-                JSON.stringify({ acceptance_run_key: prev.run_key, gp_id: prev.gp_id, source: 'acceptance_rejection', harness_mode: false }),
-              ]
-            );
+            await createTask({
+              title: `[验收驳回] ${prev.title}`,
+              description: `人工验收不通过，需修复后重新验收。GP: ${prev.gp_id || '未知'}，验收单: ${prev.run_key}。\n不通过项：\n${detail}`,
+              task_type: 'dev',
+              priority: 'P1',
+              status: 'queued',
+              payload: { acceptance_run_key: prev.run_key, gp_id: prev.gp_id, source: 'acceptance_rejection', harness_mode: false },
+              trigger_source: 'acceptance_rejection',
+              source: 'child',
+              source_id: `acceptance-rejection:${prev.run_key}`,
+              allow_unscoped: true,
+              db: client,
+              ...buildCeceliaMutationRoute({
+                change_kind: 'bugfix',
+                map_scope: [prev.gp_id || `acceptance:${prev.run_key}`],
+              }),
+            });
             await client.query('RELEASE SAVEPOINT reject_task_insert');
           } catch (taskErr) {
             if (taskErr.code !== '23505') throw taskErr;
@@ -509,20 +519,28 @@ export function createAcceptanceInternalRouter({ pool }) {
           // 建 hard_green_p0 任务（SAVEPOINT 保护 23505）
           try {
             await client.query('SAVEPOINT hard_green_p0_insert');
-            await client.query(
-              `INSERT INTO tasks (title, description, task_type, priority, status, payload)
-               VALUES ($1, $2, 'dev', 'P0', 'queued', $3::jsonb)`,
-              [
-                `[Hard格绿裁决] ${run.run_key}/${check.check_key}`,
-                `Hard 格裁决绿，需即时跟进。run: ${run.run_key}，格: ${check.check_key}`,
-                JSON.stringify({
-                  acceptance_run_key: run.run_key,
-                  acceptance_bucket: 'hard_green_p0',
-                  check_key: check.check_key,
-                  priority: 'P0',
-                }),
-              ]
-            );
+            await createTask({
+              title: `[Hard格绿裁决] ${run.run_key}/${check.check_key}`,
+              description: `Hard 格裁决绿，需即时跟进。run: ${run.run_key}，格: ${check.check_key}`,
+              task_type: 'dev',
+              priority: 'P0',
+              status: 'queued',
+              payload: {
+                acceptance_run_key: run.run_key,
+                acceptance_bucket: 'hard_green_p0',
+                check_key: check.check_key,
+                priority: 'P0',
+              },
+              trigger_source: 'acceptance',
+              source: 'child',
+              source_id: `acceptance-hard-green:${run.run_key}:${check.check_key}`,
+              allow_unscoped: true,
+              db: client,
+              ...buildCeceliaMutationRoute({
+                change_kind: 'bugfix',
+                map_scope: [run.gp_id || `acceptance:${run.run_key}`, check.check_key],
+              }),
+            });
             await client.query('RELEASE SAVEPOINT hard_green_p0_insert');
           } catch (taskErr) {
             if (taskErr.code !== '23505') throw taskErr;
@@ -615,24 +633,30 @@ export function createAcceptanceInternalRouter({ pool }) {
 
         try {
           await client.query(`SAVEPOINT task_insert_${bucket.replace(/-/g, '_')}`);
-          const { rows } = await client.query(
-            `INSERT INTO tasks (title, description, task_type, priority, status, payload)
-             VALUES ($1, $2, 'dev', $3, 'queued', $4::jsonb)
-             RETURNING id`,
-            [
-              title,
-              description,
+          const created = await createTask({
+            title,
+            description,
+            task_type: 'dev',
+            priority,
+            status: 'queued',
+            payload: {
+              acceptance_run_key: run.run_key,
+              acceptance_bucket: bucket,
+              anchor,
               priority,
-              JSON.stringify({
-                acceptance_run_key: run.run_key,
-                acceptance_bucket: bucket,
-                anchor,
-                priority,
-              }),
-            ]
-          );
+            },
+            trigger_source: 'acceptance',
+            source: 'child',
+            source_id: `acceptance-closure:${run.run_key}:${bucket}`,
+            allow_unscoped: true,
+            db: client,
+            ...buildCeceliaMutationRoute({
+              change_kind: 'bugfix',
+              map_scope: [anchor.gp_id || `acceptance:${run.run_key}`, anchor.journey_id, anchor.step_id].filter(Boolean),
+            }),
+          });
           await client.query(`RELEASE SAVEPOINT task_insert_${bucket.replace(/-/g, '_')}`);
-          return rows[0];
+          return created.task;
         } catch (err) {
           if (err.code === '23505') {
             await client.query(`ROLLBACK TO SAVEPOINT task_insert_${bucket.replace(/-/g, '_')}`);

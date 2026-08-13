@@ -1,4 +1,5 @@
 /** Gap 修复任务、逐 Gap 硬依赖与查询操作。 */
+import { createTask } from '../actions.js';
 
 export async function assignRepairTask(db, gapId, repairTaskId) {
   const result = await db.query(
@@ -104,8 +105,13 @@ export async function assignRepairTaskWithDependency(db, gapId, repairTaskId) {
 export async function createRepairTaskForGap(db, gap, { repo } = {}) {
   if (gap.repair_task_id) return { id: gap.repair_task_id, created: false };
   const sourceResult = await db.query(
-    `SELECT title, goal_id, project_id, domain, payload
-     FROM tasks WHERE id = $1`,
+    `SELECT task.title, task.goal_id, task.project_id, task.domain, task.payload,
+            receipt.repo, receipt.evidence AS routing_evidence
+     FROM tasks task
+     LEFT JOIN work_routing_receipts receipt ON receipt.task_id = task.id
+     WHERE task.id = $1
+     ORDER BY receipt.created_at DESC NULLS LAST
+     LIMIT 1`,
     [gap.source_task_id],
   );
   const source = sourceResult.rows[0];
@@ -139,27 +145,36 @@ export async function createRepairTaskForGap(db, gap, { repo } = {}) {
     current_revision: gap.current_revision,
     base_repo: repo ?? sourcePayload.base_repo ?? null,
   };
-  const inserted = await db.query(
-    `INSERT INTO tasks (
-       title, description, task_type, status, priority, goal_id, project_id,
-       payload, trigger_source, domain, owner_role, created_by
-     ) VALUES (
-       $1, $2, 'dev', 'queued', $3, $4, $5,
-       $6::jsonb, 'impact_diff_gate', $7, $8, 'cecelia-brain'
-     )
-     RETURNING *`,
-    [
-      title,
-      `Repair Impact Contract drift for ${gap.impact_node_id} at ${gap.current_revision}`,
-      gap.severity === 'critical' ? 'P0' : 'P1',
-      source.goal_id,
-      source.project_id,
-      JSON.stringify(payload),
-      source.domain,
-      gap.owner,
-    ],
-  );
-  const repairTask = inserted.rows[0];
+  const routingEvidence = source.routing_evidence && typeof source.routing_evidence === 'object'
+    ? source.routing_evidence
+    : {};
+  const inserted = await createTask({
+    title,
+    description: `Repair Impact Contract drift for ${gap.impact_node_id} at ${gap.current_revision}`,
+    task_type: 'dev',
+    status: 'queued',
+    priority: gap.severity === 'critical' ? 'P0' : 'P1',
+    goal_id: source.goal_id,
+    project_id: source.project_id,
+    payload,
+    trigger_source: 'impact_diff_gate',
+    domain: source.domain,
+    owner_role: gap.owner,
+    created_by: 'cecelia-brain',
+    source: 'child',
+    source_id: `impact-gap:${gap.id}`,
+    parent_task_id: gap.source_task_id,
+    mutation_intent: 'write',
+    declared_domain: 'coding',
+    declared_change_kind: 'bugfix',
+    repo_hint: repo ?? source.repo ?? sourcePayload.base_repo,
+    map_scope_hint: [gap.impact_node_id],
+    branch: routingEvidence.branch,
+    base_sha: routingEvidence.base_sha,
+    allow_unscoped: true,
+    db,
+  });
+  const repairTask = inserted.task;
   if (!repairTask) throw new Error(`failed to create repair task for gap ${gap.id}`);
   await assignRepairTaskWithDependency(db, gap.id, repairTask.id);
   return { ...repairTask, created: true };

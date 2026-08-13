@@ -5,10 +5,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
+const mockCreateTask = vi.hoisted(() => vi.fn());
+
 // Mock db.js
 vi.mock('../db.js', () => ({
   default: { query: vi.fn() },
 }));
+vi.mock('../actions.js', () => ({ createTask: mockCreateTask }));
 
 // Mock content-type-registry
 vi.mock('../content-types/content-type-registry.js', () => ({
@@ -21,6 +24,19 @@ vi.mock('../content-types/content-type-registry.js', () => ({
 import pool from '../db.js';
 import { listContentTypes, getContentType } from '../content-types/content-type-registry.js';
 import contentPipelineRouter from '../routes/content-pipeline.js';
+
+function resetTaskCreator() {
+  mockCreateTask.mockReset();
+  mockCreateTask.mockImplementation(async (task) => ({
+    task: {
+      id: task.title.startsWith('[Pipeline]') ? 'pipe-e2e-1' : 'new-id',
+      title: task.title,
+      status: task.status,
+      priority: task.priority,
+      payload: task.payload,
+    },
+  }));
+}
 
 function makeApp() {
   const app = express();
@@ -84,7 +100,10 @@ describe('GET /api/brain/pipelines', () => {
 });
 
 describe('POST /api/brain/pipelines', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetTaskCreator();
+  });
 
   it('成功创建 content-pipeline 任务', async () => {
     listContentTypes.mockResolvedValue(['solo-company-case']);
@@ -137,7 +156,10 @@ describe('POST /api/brain/pipelines', () => {
 });
 
 describe('POST /api/brain/pipelines/batch', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetTaskCreator();
+  });
 
   it('批量创建 5 条 pipeline 返回 201 + 5 条记录', async () => {
     listContentTypes.mockResolvedValue(['solo-company-case']);
@@ -319,7 +341,10 @@ describe('POST /:id/run-langgraph — endpoint 已删除', () => {
 });
 
 describe('POST /api/brain/pipelines/e2e-trigger — 编排搬走后只创 task', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetTaskCreator();
+  });
 
   it('返回 200 + pipeline_id（不再同步 orchestrate）', async () => {
     pool.query.mockResolvedValueOnce({ rows: [{ id: 'pipe-e2e-1' }] });
@@ -330,13 +355,19 @@ describe('POST /api/brain/pipelines/e2e-trigger — 编排搬走后只创 task',
 
     expect(res.status).toBe(200);
     expect(res.body.pipeline_id).toBe('pipe-e2e-1');
-    // 只 INSERT 一次（不再 orchestrate / executeQueued）
-    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(mockCreateTask).toHaveBeenCalledTimes(1);
+    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+      task_type: 'content-pipeline',
+      source: 'api',
+    }));
   });
 });
 
 describe('POST /api/brain/pipelines — notebook_id 自动读取 + fail-fast 记录', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetTaskCreator();
+  });
 
   it('未传 notebook_id 时从 content-type 配置自动读取', async () => {
     listContentTypes.mockResolvedValue(['solo-company-case']);
@@ -356,10 +387,7 @@ describe('POST /api/brain/pipelines — notebook_id 自动读取 + fail-fast 记
       .send({ keyword: '测试关键词', content_type: 'solo-company-case' });
 
     expect(res.status).toBe(201);
-    // 验证 pool.query 被调用时 payload 包含自动读取的 notebook_id
-    const insertCall = pool.query.mock.calls.find(c => c[0].includes('INSERT'));
-    expect(insertCall).toBeDefined();
-    const payloadArg = JSON.parse(insertCall[1][6]);
+    const payloadArg = mockCreateTask.mock.calls[0][0].payload;
     expect(payloadArg.notebook_id).toBe('nb-auto-123');
   });
 
@@ -381,8 +409,7 @@ describe('POST /api/brain/pipelines — notebook_id 自动读取 + fail-fast 记
       .send({ keyword: '测试关键词', content_type: 'solo-company-case', notebook_id: 'nb-from-request' });
 
     expect(res.status).toBe(201);
-    const insertCall = pool.query.mock.calls.find(c => c[0].includes('INSERT'));
-    const payloadArg = JSON.parse(insertCall[1][6]);
+    const payloadArg = mockCreateTask.mock.calls[0][0].payload;
     expect(payloadArg.notebook_id).toBe('nb-from-request');
   });
 
@@ -404,8 +431,7 @@ describe('POST /api/brain/pipelines — notebook_id 自动读取 + fail-fast 记
       .send({ keyword: '无notebook', content_type: 'solo-company-case' });
 
     expect(res.status).toBe(201);
-    const insertCall = pool.query.mock.calls.find(c => c[0].includes('INSERT'));
-    const payloadArg = JSON.parse(insertCall[1][6]);
+    const payloadArg = mockCreateTask.mock.calls[0][0].payload;
     // 没有 notebook_id 时不应包含该字段（executeResearch 会在执行时 FAIL）
     expect(payloadArg).not.toHaveProperty('notebook_id');
   });

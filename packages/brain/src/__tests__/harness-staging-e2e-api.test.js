@@ -6,8 +6,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const { mockPool } = vi.hoisted(() => ({ mockPool: { query: vi.fn() } }));
+const { mockPool, mockCreateTask } = vi.hoisted(() => ({
+  mockPool: { query: vi.fn() },
+  mockCreateTask: vi.fn(),
+}));
 vi.mock('../db.js', () => ({ default: mockPool }));
+vi.mock('../actions.js', () => ({ createTask: mockCreateTask }));
 
 async function buildApp() {
   const { default: router } = await import('../routes/harness.js');
@@ -18,7 +22,11 @@ async function buildApp() {
 }
 
 describe('POST /api/brain/harness/staging-e2e', () => {
-  beforeEach(() => { mockPool.query.mockReset(); });
+  beforeEach(() => {
+    mockPool.query.mockReset();
+    mockCreateTask.mockReset();
+    mockCreateTask.mockResolvedValue({ task: { id: 'staging-task' } });
+  });
 
   it('缺 pr_url → 400，不 INSERT', async () => {
     const app = await buildApp();
@@ -28,7 +36,7 @@ describe('POST /api/brain/harness/staging-e2e', () => {
   });
 
   it('新建成功 → 200 {created:true}，payload 字段齐全', async () => {
-    mockPool.query.mockResolvedValue({ rowCount: 1 });
+    mockPool.query.mockResolvedValue({ rows: [] });
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/staging-e2e').send({
       pr_url: 'https://github.com/o/r/pull/9', pr_branch: 'cp-x', sub_task_id: 't1',
@@ -36,20 +44,22 @@ describe('POST /api/brain/harness/staging-e2e', () => {
     });
     expect(r.status).toBe(200);
     expect(r.body.created).toBe(true);
-    // INSERT 调用一次，payload（第 3 参）含全部字段，pr_url（第 4 参）用于幂等
-    const call = mockPool.query.mock.calls[0];
-    expect(call[0]).toMatch(/INSERT INTO tasks/);
-    expect(call[0]).toMatch(/staging_e2e/);
-    const payload = JSON.parse(call[1][2]);
+    expect(mockCreateTask).toHaveBeenCalledTimes(1);
+    const task = mockCreateTask.mock.calls[0][0];
+    const payload = task.payload;
     expect(payload).toMatchObject({
       pr_url: 'https://github.com/o/r/pull/9', pr_branch: 'cp-x', sub_task_id: 't1',
       initiative_id: 'i1', journey_id: 'j1', base_repo: 'https://github.com/o/r.git', project_id: 'p1',
     });
-    expect(call[1][3]).toBe('https://github.com/o/r/pull/9');
+    expect(task).toMatchObject({
+      task_type: 'staging_e2e',
+      source: 'child',
+      source_id: 'staging-e2e:https://github.com/o/r/pull/9',
+    });
   });
 
   it('幂等：同 pr_url 已存在（rowCount=0）→ 200 {created:false, reason:already_exists}', async () => {
-    mockPool.query.mockResolvedValue({ rowCount: 0 });
+    mockPool.query.mockResolvedValue({ rows: [{ id: 'existing' }] });
     const app = await buildApp();
     const r = await request(app).post('/api/brain/harness/staging-e2e').send({ pr_url: 'https://github.com/o/r/pull/9' });
     expect(r.status).toBe(200);
@@ -58,10 +68,10 @@ describe('POST /api/brain/harness/staging-e2e', () => {
   });
 
   it('可选字段缺省 → payload 用空串占位（不写 null）', async () => {
-    mockPool.query.mockResolvedValue({ rowCount: 1 });
+    mockPool.query.mockResolvedValue({ rows: [] });
     const app = await buildApp();
     await request(app).post('/api/brain/harness/staging-e2e').send({ pr_url: 'https://github.com/o/r/pull/9' });
-    const payload = JSON.parse(mockPool.query.mock.calls[0][1][2]);
+    const payload = mockCreateTask.mock.calls[0][0].payload;
     expect(payload.pr_branch).toBe('');
     expect(payload.base_repo).toBe('');
     expect(payload.project_id).toBe('');

@@ -19,8 +19,8 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { randomUUID } from 'crypto';
 import pool from '../db.js';
+import { createTask } from '../actions.js';
 import {
   validateZipBuffer,
   computeZipHash,
@@ -161,29 +161,31 @@ router.post(
       }
 
       // 6. 建 task + skill_evals 行
-      const taskId = randomUUID();
       const _slugName = (skill_name || 'unknown')
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .slice(0, 50);
 
-      // 建 tasks 行
-      await pool.query(
-        `INSERT INTO tasks (id, task_type, status, title, metadata, created_at, updated_at)
-         VALUES ($1, 'skill_eval', 'pending', $2, $3, now(), now())`,
-        [
-          taskId,
-          `Skill Eval: ${skill_name}`,
-          JSON.stringify({
-            skill_name: skill_name.trim(),
-            source_platform: platform || null,
-            journey_id: journey_id || null,
-            submitter: submitter || null,
-            zip_hash: zipHash,
-            staging_path: stagingPath,
-          }),
-        ]
-      );
+      // 建 tasks + Routing Receipt（同一原子任务入口）
+      const taskResult = await createTask({
+        task_type: 'skill_eval',
+        status: 'pending',
+        title: `Skill Eval: ${skill_name}`,
+        payload: {
+          skill_name: skill_name.trim(),
+          source_platform: platform || null,
+          journey_id: journey_id || null,
+          submitter: submitter || null,
+          zip_hash: zipHash,
+          staging_path: stagingPath,
+        },
+        trigger_source: 'skill_eval_api',
+        source: 'api',
+        source_id: `skill-eval:${zipHash}`,
+        allow_unscoped: true,
+        db: pool,
+      });
+      const taskId = taskResult.task.id;
 
       // 建 skill_evals 行
       await pool.query(

@@ -19,6 +19,7 @@ import { execSync } from 'child_process';
 import { readFileSync as fsReadFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createTask } from './actions.js';
 
 // promote_status 状态机取值
 export const PROMOTE_STATUS = {
@@ -36,10 +37,10 @@ export const PROMOTE_STATUS = {
 export const REPORT_KIND = { SUCCESS: 'success', FAILURE: 'failure' };
 
 /**
- * Slice3：构造派 harness_report 任务的 INSERT。
- * 幂等：按 initiative_id NOT EXISTS 去重（promote 完成点 / reportNode 失败路径都可能调，且可重入）。
+ * Slice3：构造派 harness_report 的规范化任务请求。
+ * 幂等由统一 Work Router 的 source/source_id receipt 负责。
  * payload 补全 staging E2E 结果 + 放行人/时间 + production 版本 + 回档锚点（决策 B 内容补全）。
- * @returns {{sql:string, params:any[]}|null}  无 initiativeId → null
+ * @returns {object|null}  无 initiativeId → null
  */
 export function buildHarnessReportInsert(args = {}) {
   const initiativeId = args.initiativeId;
@@ -69,19 +70,23 @@ export function buildHarnessReportInsert(args = {}) {
   };
   const title = `[Harness Report] ${args.title || initiativeId}`;
   const description = `Auto-spawned (${payload.report_kind}) after ${payload.promote_status || payload.final_e2e_verdict} for initiative ${initiativeId}`;
-  // 幂等：同 initiative 已有 harness_report 则不再派（promote 完成点 / 失败路径只出一份）
-  const sql = `
-    INSERT INTO tasks (title, description, task_type, status, priority, payload)
-    SELECT $1, $2, 'harness_report', 'queued', 'P2', $3::jsonb
-    WHERE NOT EXISTS (
-      SELECT 1 FROM tasks WHERE task_type = 'harness_report' AND payload->>'initiative_id' = $4
-    )`;
-  return { sql, params: [title, description, JSON.stringify(payload), String(initiativeId)] };
+  return {
+    title,
+    description,
+    task_type: 'harness_report',
+    status: 'queued',
+    priority: 'P2',
+    payload,
+    trigger_source: 'harness_watcher',
+    source: 'child',
+    source_id: `harness-report:${initiativeId}`,
+    allow_unscoped: true,
+  };
 }
 
 /**
  * Slice3：best-effort 派 harness_report（永不 throw）。
- * @param {{dbQuery:Function}} deps
+ * @param {{db:object, taskCreator?:Function}} deps
  * @param {object} args  同 buildHarnessReportInsert
  * @returns {Promise<{spawned:boolean}>}
  */
@@ -89,7 +94,11 @@ export async function spawnHarnessReport(deps, args = {}) {
   try {
     const ins = buildHarnessReportInsert(args);
     if (!ins) return { spawned: false };
-    await deps.dbQuery(ins.sql, ins.params);
+    if (deps.taskCreator) {
+      await deps.taskCreator({ ...ins, db: deps.db });
+    } else {
+      await createTask({ ...ins, db: deps.db });
+    }
     return { spawned: true };
   } catch (err) {
     console.warn(`[staging-promote] spawnHarnessReport failed (best-effort): ${err.message}`);
