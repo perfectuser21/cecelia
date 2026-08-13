@@ -35,7 +35,8 @@ pass 'API / Intent / Capture 真入口与 Kernel/Map/Impact 实弹'
 pass 'map_recovery 不可变合同与单 Attempt 消费'
 
 bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh
-npx vitest run packages/brain/src/orchestrator/__tests__/dispatcher-routing-receipt.test.js --reporter=dot
+(cd packages/brain && npx vitest run \
+  src/orchestrator/__tests__/dispatcher-routing-receipt.test.js --reporter=dot)
 bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh
 bash docker/cecelia-runner/__tests__/entrypoint-frozen-baseline-guard.test.sh
 pass '有头、无头与 Generator trust boundary'
