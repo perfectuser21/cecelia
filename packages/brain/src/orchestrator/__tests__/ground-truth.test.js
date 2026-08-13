@@ -19,6 +19,9 @@ function fakePool(rowsByTable = {}) {
     calls,
     query: vi.fn(async (sql, params) => {
       calls.push([sql, params]);
+      if (sql.includes('AS validation_origin_run_id')) {
+        return { rows: rowsByTable.validation_origins ?? [] };
+      }
       if (sql.includes('FROM initiative_runs')) return { rows: rowsByTable.initiative_runs ?? [] };
       if (sql.includes('FROM initiative_contracts')) return { rows: rowsByTable.initiative_contracts ?? [] };
       if (sql.includes('FROM tasks')) return { rows: rowsByTable.tasks ?? [] };
@@ -91,6 +94,7 @@ function makeDeps({ rows = {}, exec = {}, files = {}, readAuthCircuit } = {}) {
     harness_evaluator_attempts: rows.evaluatorAttempts ?? rows.attempts ?? [],
     orchestrator_decision_log: rows.log ?? [],
     historical_failure_sets: rows.historicalFailureSets ?? [],
+    validation_origins: rows.validationOrigins ?? [],
     account_usage_cache: rows.circuit ?? [],
     gan_case_file: rows.caseFile ?? [],
     ...(rows.attemptsQueryResult !== undefined
@@ -591,6 +595,70 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     });
     expect(deps.execCmd.calls.some((cmd) => cmd.includes(`gh pr view ${PR_URL}`))).toBe(true);
     expect(deps.execCmd.calls.some((cmd) => cmd.includes('gh pr list'))).toBe(false);
+  });
+
+  it('显式恢复 run 只采信同任务可信前序 run 对精确 PR URL/SHA 的 Generator 后观测', async () => {
+    const priorRunId = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
+    const headSha = '7a07d99439c04fd01c3cd61407b040282d2846cf';
+    const deps = makeDeps({
+      rows: {
+        run: { pr_url: PR_URL, created_source: 'explicit_recovery' },
+        validationOrigins: [{
+          validation_origin_run_id: priorRunId,
+          observed: { pr: { url: PR_URL, head_sha: headSha } },
+        }],
+      },
+      exec: {
+        prView: JSON.stringify({
+          number: 42,
+          state: 'OPEN',
+          mergeStateStatus: 'CLEAN',
+          headRefName: 'cp-recovery',
+          headRefOid: headSha,
+          statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
+        }),
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.verifiedExistingPrOrigin).toEqual({
+      source: 'trusted_prior_kernel_run',
+      run_id: priorRunId,
+      pr_url: PR_URL,
+      pr_head_sha: headSha,
+    });
+    const [sql, params] = deps.pool.calls.find(([query]) => (
+      query.includes('AS validation_origin_run_id')
+    ));
+    expect(sql).toMatch(/record_trust_status IN \('trusted', 'reconstructed'\)/);
+    expect(sql).toMatch(/role = 'generator'/);
+    expect(sql).toMatch(/status IN \('completed', 'completed_with_concerns'\)/);
+    expect(params).toEqual([TASK_ID, RUN_ID]);
+  });
+
+  it('显式恢复 run 的前序证据与当前 GitHub head 不一致时不建立既有 PR 信任源', async () => {
+    const deps = makeDeps({
+      rows: {
+        run: { pr_url: PR_URL, created_source: 'explicit_recovery' },
+        validationOrigins: [{
+          validation_origin_run_id: 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff',
+          observed: { pr: { url: PR_URL, head_sha: 'a'.repeat(40) } },
+        }],
+      },
+      exec: {
+        prView: JSON.stringify({
+          state: 'OPEN',
+          mergeStateStatus: 'CLEAN',
+          headRefOid: 'b'.repeat(40),
+          statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
+        }),
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.verifiedExistingPrOrigin).toBeNull();
   });
 
   it('task payload 的 pr_url 不是严格 GitHub PR URL → fail closed，不把声明值交给 shell', async () => {

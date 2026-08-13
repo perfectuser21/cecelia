@@ -324,6 +324,62 @@ describe('runLoop：全链 planning→done', () => {
     expect(deps.dispatch).not.toHaveBeenCalled();
   });
 
+  it('显式恢复 run 可用服务端核验的前序 Generator PR 建立新的 validation clock', async () => {
+    const prUrl = 'https://github.com/perfectuser21/cecelia/pull/4851';
+    const prHeadSha = '5fcb7b48b7f6cff567da93e79b6e7b463ace29e8';
+    const priorRunId = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
+    const recovered = obs({
+      run: {
+        id: RUN_ID,
+        phase: 'evaluate',
+        cost_usd: 0,
+        created_source: 'explicit_recovery',
+      },
+      generatorSpawned: false,
+      pr: {
+        url: prUrl,
+        state: 'OPEN',
+        mergeStateStatus: 'CLEAN',
+        ci: 'pass',
+        merged: false,
+        head_sha: prHeadSha,
+      },
+      verifiedExistingPrOrigin: {
+        source: 'trusted_prior_kernel_run',
+        run_id: priorRunId,
+        pr_url: prUrl,
+        pr_head_sha: prHeadSha,
+      },
+      task: {
+        id: TASK_ID,
+        status: 'in_progress',
+        payload: { timeout_seconds: 5400 },
+      },
+    });
+    const { deps, appended } = makeEnv({
+      observedSeq: [
+        recovered,
+        obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+      ],
+    });
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(deps.dispatch).toHaveBeenCalledWith(
+      'spawn:evaluator',
+      expect.objectContaining({
+        validationClock: {
+          pipeline_started_at: '2026-07-04T12:00:00.000Z',
+          deadline_at: '2026-07-04T13:30:00.000Z',
+        },
+      }),
+    );
+    expect(appended[0].detail).toMatchObject({
+      validation_origin: 'verified_existing_pr',
+      validation_origin_run_id: priorRunId,
+    });
+  });
+
   it('每个派发 hop：先 appendHop 再 dispatch（intent-before-dispatch 顺序）', async () => {
     const order = [];
     const observedSeq = [
