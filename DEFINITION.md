@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.16
+**Brain 版本**: 1.273.17
+
+## Brain 1.273.17 — Read-only Fleet Branch Binding
+
+- Fleet Worker 把 Reviewer、Evaluator 等只读工作区绑定到服务端批准的角色分支，确保容器内 Routing Action Gate 能验证分支身份而不落入 detached HEAD。
 
 ## Brain 1.273.16 — Role-scoped Fleet Workspace Branches
 

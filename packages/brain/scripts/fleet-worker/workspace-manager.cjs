@@ -368,15 +368,14 @@ function createWorkspaceManager({
           workspacePath,
           checkoutSha,
         ]);
-        if (spec.mode === 'read-write') {
-          // The per-Attempt bare admin clone can already contain a verified
-          // remote writer branch. Reset only this isolated clone's ref to the
-          // server-approved checkout SHA instead of failing on `switch -c`.
-          await git(
-            ['switch', '-C', spec.branch, checkoutSha],
-            { cwd: workspacePath },
-          );
-        }
+        // Every routed role, including a read-only Reviewer/Evaluator, must
+        // expose the server-approved branch to the in-container action gate.
+        // The per-Attempt admin clone is isolated, so resetting this local ref
+        // to the already-verified checkout SHA cannot mutate another Attempt.
+        await git(
+          ['switch', '-C', spec.branch, checkoutSha],
+          { cwd: workspacePath },
+        );
       } catch (error) {
         await git([
           '--git-dir',
