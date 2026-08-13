@@ -26,4 +26,20 @@ describe('dedupe integration（真 DB）', () => {
     const second = await claimDedupeKey('itest', 'expire-key', 60);
     expect(second.claimed).toBe(true);
   });
+
+  it('外层事务回滚会一并释放 create_task claim', async () => {
+    const client = await pool.connect();
+    const key = `tx-rollback-${crypto.randomUUID()}`;
+    try {
+      await client.query('BEGIN');
+      const first = await claimDedupeKey('itest', key, 60, client);
+      expect(first.claimed).toBe(true);
+      await client.query('ROLLBACK');
+      const retry = await claimDedupeKey('itest', key, 60);
+      expect(retry.claimed).toBe(true);
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+    }
+  });
 });

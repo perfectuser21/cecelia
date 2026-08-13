@@ -170,4 +170,39 @@ describe('routing store transaction contract', () => {
       await testPool.end();
     }
   });
+
+  it('同一幂等身份只有完全相同请求可重放，路由变化 fail closed', async () => {
+    const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://localhost/cecelia_test';
+    const testPool = new Pool({ connectionString: databaseUrl });
+    const client = await testPool.connect();
+    try {
+      await client.query('BEGIN');
+      const sourceId = `routing-conflict-${crypto.randomUUID()}`;
+      const first = await createRoutedTask(client, {
+        source: 'api', source_id: sourceId, title: 'routing identity',
+        mutation_intent: 'write', declared_change_kind: 'bugfix',
+        repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['cecelia'],
+      }, REPOSITORY_FACTS, { transaction: 'existing' });
+      const replay = await createRoutedTask(client, {
+        source: 'api', source_id: sourceId, title: 'routing identity',
+        mutation_intent: 'write', declared_change_kind: 'bugfix',
+        repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['cecelia'],
+      }, REPOSITORY_FACTS, { transaction: 'existing' });
+      expect(replay).toMatchObject({
+        deduplicated: true,
+        task_id: first.task_id,
+        routing_receipt_id: first.routing_receipt_id,
+        decision: { change_kind: 'bugfix' },
+      });
+      await expect(createRoutedTask(client, {
+        source: 'api', source_id: sourceId, title: 'routing identity',
+        mutation_intent: 'write', declared_change_kind: 'new_capability',
+        repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['cecelia'],
+      }, REPOSITORY_FACTS, { transaction: 'existing' })).rejects.toThrow(/work_route_idempotency_conflict/);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+      await testPool.end();
+    }
+  });
 });

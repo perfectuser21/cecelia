@@ -135,6 +135,16 @@ describe('runCaptureTriage 四路落地', () => {
     expect(upd.params.join(' ')).toContain('[triage:urgent]');
   });
 
+  it('urgent dedupe 未返回 task 时回滚，禁止 confirmed/tasks/NULL', async () => {
+    createTask.mockResolvedValueOnce({ success: true, deduplicated: true });
+    const pool = makePool([{ id: 'a-urgent-dedupe', target_type: 'issue', target_subtype: 'P1', content: 'x' }]);
+    const result = await runCaptureTriage(pool);
+    expect(result.failed).toBe(1);
+    expect(pool.txStatements).toContain('ROLLBACK');
+    expect(pool.txStatements).not.toContain('COMMIT');
+    expect(pool.updates).toHaveLength(0);
+  });
+
   it('line_backlog：handoff FAIL → 真调用 createTask 建 harness_initiative，atom 改写为 tasks/新task id', async () => {
     const pool = makePool([{ id: 'a2', target_type: 'handoff', target_subtype: 'FAIL', content: 'x', routed_to_table: 'tasks', routed_to_id: 't1' }]);
     await runCaptureTriage(pool);

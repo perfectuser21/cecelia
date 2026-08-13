@@ -55,4 +55,34 @@ describe('Migration 411 — 批准合同测试不可变', () => {
       client.release();
     }
   });
+
+  it('真实 PostgreSQL 拒绝原地改写批准合同的 branch、PRD 与合同正文', async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: [contract] } = await client.query(
+        `INSERT INTO initiative_contracts (
+           initiative_id, version, status, branch, prd_content, contract_content,
+           approved_sha, frozen_artifacts
+         ) VALUES ($1, 1, 'approved', 'cp-original', 'prd-A', 'contract-A', $2, '[]'::jsonb)
+         RETURNING id`,
+        [randomUUID(), 'a'.repeat(40)],
+      );
+      for (const [column, value] of [
+        ['branch', 'cp-tampered'],
+        ['prd_content', 'prd-B'],
+        ['contract_content', 'contract-B'],
+      ]) {
+        await client.query('SAVEPOINT immutable_contract');
+        await expect(client.query(
+          `UPDATE initiative_contracts SET ${column}=$2 WHERE id=$1`,
+          [contract.id, value],
+        )).rejects.toThrow(/approved contract identity is immutable/);
+        await client.query('ROLLBACK TO SAVEPOINT immutable_contract');
+      }
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
 });
