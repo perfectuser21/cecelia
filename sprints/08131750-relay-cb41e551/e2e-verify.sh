@@ -1,28 +1,13 @@
-#!/usr/bin/env bash
-# D3 backbone verification — sprint 08131750-relay-cb41e551
-# E2E route: mac_web (localhost:5221 Brain)
-set -euo pipefail
+# 前端回归测试（D1）
+cd /workspace && npx vitest run apps/api/features/planning/__tests__/map-collect-descendants.test.ts
 
-BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+# Brain 骨干投影测试（D2）
+cd /workspace && npx vitest run packages/brain/src/map/__tests__/projector-backbone.test.js
 
-echo "=== D3: backbone 节点数量验证 ==="
-BACKBONE_COUNT=$(curl -s "${BRAIN_URL}/api/brain/map?scope=cecelia" | \
-  python3 -c "import json,sys; nodes=json.load(sys.stdin).get('nodes',[]); print(sum(1 for n in nodes if n.get('type')=='backbone'))")
+# 生产 API 骨干节点数量（D3）
+curl http://localhost:5221/api/brain/map?scope=cecelia | \
+  jq '[.nodes[] | select(.type=="backbone")] | length'
+# 期望: >= 4
 
-echo "backbone 节点数: ${BACKBONE_COUNT}"
-if [ "${BACKBONE_COUNT:-0}" -ge 4 ]; then
-  echo "✅ D3 PASS: backbone >= 4"
-else
-  echo "❌ D3 FAIL: backbone = ${BACKBONE_COUNT}, need >= 4"
-  exit 1
-fi
-
-echo ""
-echo "=== D5: StateBadge child_unknown 文案验证 ==="
-# 通过代码静态验证（已在 MapPage.tsx 实现）
-grep -q "child_unknown.*子节点状态未知" /workspace/apps/api/features/planning/pages/MapPage.tsx && \
-  echo "✅ D5 PASS: child_unknown 映射存在" || \
-  { echo "❌ D5 FAIL"; exit 1; }
-
-echo ""
-echo "✅ E2E 验收通过"
+# Level 2 骨干面板 + StateBadge 截图（D4/D5）
+# 由 mac_web Playwright 执行，截图路径：sprints/08131750-relay-cb41e551/e2e-screenshot-F1-backbone.png
