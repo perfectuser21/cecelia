@@ -17,6 +17,7 @@ import { callLLM } from './llm-caller.js';
 import { checkInvariantCandidate } from './invariant-gate.js';
 import { createTask } from './actions.js';
 import { extractJsonObject } from './json-utils.js';
+import { buildCeceliaMutationRoute } from './system-coding-route.js';
 
 export const TRIAGE_SOURCE_TYPES = ['handoff', 'learning', 'issue'];
 export const ROUTES = ['urgent', 'line_backlog', 'invariant', 'okr'];
@@ -144,6 +145,10 @@ function resolveScope(atom, verdict) {
 /** 四路落地。返回该条是否成功处理。 */
 async function routeAtom(pool, atom, verdict, opts) {
   const { route, confidence, reason = '' } = verdict;
+  const codingRoute = () => buildCeceliaMutationRoute({
+    change_kind: 'bugfix',
+    map_scope: ['factory/F1'],
+  });
   if (route === 'urgent') {
     // 生产护栏：命中 → 仅 Bark，不自动建 task（决策 57d296a1）
     if (isProductionSensitive(atom)) {
@@ -159,6 +164,7 @@ async function routeAtom(pool, atom, verdict, opts) {
     try {
       await client.query('BEGIN');
       const result = await createTask({
+        db: client,
         title: `[紧急] ${atom.content.slice(0, 80)}`,
         description: `来源: capture_atoms urgent路由, atom_id=${atom.id}\n\n${atom.content}`,
         task_type: 'harness_initiative',
@@ -166,6 +172,7 @@ async function routeAtom(pool, atom, verdict, opts) {
         trigger_source: 'cortex',
         dedupe_key: `capture-triage-urgent-${atom.id}`,
         payload: { orchestrator: 'skill-relay', executor: 'claude', mode: 'headed' },
+        ...codingRoute(),
       });
       taskId = result?.task?.id;
       await updateAtom(client, atom.id, {
@@ -206,28 +213,42 @@ async function routeAtom(pool, atom, verdict, opts) {
       return updateAtom(pool, atom.id, { status: 'confirmed', routedToTable: 'journeys', routedToId: journeyId, confidence, aiReason: `[triage:line_backlog] 命中生产护栏，留人工排期。${reason}` });
     }
     const priority = atom.target_subtype === 'FAIL' ? 'P1' : 'P2';
-    const result = await createTask({
-      title: `[自动派工] ${atom.content.slice(0, 80)}`,
-      description: `系统自动创建（来源: capture_atoms分诊, atom_id=${atom.id}）\n\n${atom.content}`,
-      task_type: 'harness_initiative',
-      priority,
-      trigger_source: 'cortex',
-      dedupe_key: `capture-triage-line-backlog-${atom.id}`,
-      payload: {
-        orchestrator: 'skill-relay',
-        executor: 'claude',
-        mode: 'headed',
-        journey_id: journeyId,
-        thin_prd: atom.content,
-      },
-    });
-    const taskId = result?.task?.id;
-    if (!taskId) {
-      // dedupe_key 命中（并发/重试场景，task 大概率已存在或即将由并发方建好）：
-      // 不打 [triage:] 前缀，留待下一轮分诊重新拾取重试，避免与已存在的 task 失联却被永久归档进人工队列
-      return updateAtom(pool, atom.id, { confidence, aiReason: `createTask dedupe_key 命中，留待下轮重试。${reason}` });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await createTask({
+        db: client,
+        title: `[自动派工] ${atom.content.slice(0, 80)}`,
+        description: `系统自动创建（来源: capture_atoms分诊, atom_id=${atom.id}）\n\n${atom.content}`,
+        task_type: 'harness_initiative',
+        priority,
+        trigger_source: 'cortex',
+        dedupe_key: `capture-triage-line-backlog-${atom.id}`,
+        payload: {
+          orchestrator: 'skill-relay',
+          executor: 'claude',
+          mode: 'headed',
+          journey_id: journeyId,
+          thin_prd: atom.content,
+        },
+        ...codingRoute(),
+      });
+      const taskId = result?.task?.id;
+      if (!taskId) {
+        await client.query('ROLLBACK');
+        // dedupe_key 命中（并发/重试场景，task 大概率已存在或即将由并发方建好）：
+        // 不打 [triage:] 前缀，留待下一轮分诊重新拾取重试，避免与已存在的 task 失联却被永久归档进人工队列
+        return updateAtom(pool, atom.id, { confidence, aiReason: `createTask dedupe_key 命中，留待下轮重试。${reason}` });
+      }
+      await updateAtom(client, atom.id, { status: 'confirmed', routedToTable: 'tasks', routedToId: taskId, confidence, aiReason: `[triage:line_backlog] 自动创建 task ${taskId}。${reason}` });
+      await client.query('COMMIT');
+      return;
+    } catch (lineErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw lineErr;
+    } finally {
+      client.release();
     }
-    return updateAtom(pool, atom.id, { status: 'confirmed', routedToTable: 'tasks', routedToId: taskId, confidence, aiReason: `[triage:line_backlog] 自动创建 task ${taskId}。${reason}` });
   }
   if (route === 'invariant') {
     const gate = await checkInvariantCandidate(pool, atom, opts);

@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.272.50
+**Brain 版本**: 1.272.51
+
+## Capture Coding Route Atomicity（Brain 1.272.51）
+
+- Capture urgent 与 repair backlog 显式声明 Cecelia coding mutation 路由事实，并在同一数据库事务内创建 task+receipt 与更新 atom；`harness_initiative` 不再被旧分类器误判为 operations。
 
 ## Kernel Runtime Routing Projection（Brain 1.272.50）
 

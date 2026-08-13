@@ -42,7 +42,7 @@ const REVIEW_TASK_TYPES = new Set([
 ]);
 const CODING_TASK_TYPES = new Set([
   'dev', 'codex_dev', 'initiative_execute', 'sprint_generate', 'sprint_fix',
-  'harness_generate', 'harness_fix', 'pipeline_rescue',
+  'harness_generate', 'harness_fix', 'harness_initiative', 'pipeline_rescue',
 ]);
 
 function routeSource(triggerSource, explicitSource) {
