@@ -120,7 +120,7 @@ async function createTask({ title, description, priority, project_id, area_id, g
   let _dedupeClaimed = false;
   if (dedupe_key) {
     const { claimDedupeKey } = await import('./lib/dedupe.js');
-    const claim = await claimDedupeKey('create_task', dedupe_key, dedupe_ttl_sec || 3600);
+    const claim = await claimDedupeKey('create_task', dedupe_key, dedupe_ttl_sec || 3600, db);
     if (!claim.claimed) {
       console.log(`[Action] Dedup (dedupe_key): task "${title}" skipped (key=${dedupe_key})`);
       return { success: true, deduplicated: true, dedupe_key_hit: true };
@@ -190,7 +190,7 @@ async function createTask({ title, description, priority, project_id, area_id, g
   } catch (err) {
     if (_dedupeClaimed) {
       const { releaseDedupeKey } = await import('./lib/dedupe.js');
-      await releaseDedupeKey('create_task', dedupe_key);
+      await releaseDedupeKey('create_task', dedupe_key, db);
     }
     throw err;
   }

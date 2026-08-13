@@ -175,6 +175,9 @@ async function routeAtom(pool, atom, verdict, opts) {
         ...codingRoute(),
       });
       taskId = result?.task?.id;
+      if (!taskId) {
+        throw new Error('urgent_routed_task_missing');
+      }
       await updateAtom(client, atom.id, {
         status: 'confirmed',
         routedToTable: 'tasks',

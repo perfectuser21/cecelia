@@ -213,8 +213,8 @@ describe('selfcheck', () => {
   // 411（reviewer-approved SHA 下的冻结合同测试制品）推进地板到 411。
   // 412（approved Harness contract artifact manifests）推进地板到 412。
   // 417（Work Router task projection immutability）推进地板到 417。
-  it('EXPECTED_SCHEMA_VERSION should be 417', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('417');
+  it('EXPECTED_SCHEMA_VERSION should be 418', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('418');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

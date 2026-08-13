@@ -45,19 +45,53 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       [`work-route:${request.source}:${request.source_id}:${decision.router_version}`],
     );
     const existing = await client.query(
-      `SELECT r.id AS routing_receipt_id, r.task_id, t.*
+      `SELECT r.id AS routing_receipt_id, r.task_id,
+              to_jsonb(r) AS persisted_receipt, t.*
          FROM work_routing_receipts r
          JOIN tasks t ON t.id = r.task_id
         WHERE r.source=$1 AND r.source_id=$2 AND r.router_version=$3`,
       [request.source, request.source_id, decision.router_version],
     );
     if (existing.rows[0]) {
+      const persisted = existing.rows[0].persisted_receipt;
+      const sameRoute = persisted.work_kind === decision.work_kind
+        && persisted.change_kind === decision.change_kind
+        && persisted.pipeline === decision.pipeline
+        && persisted.canonical_task_type === decision.canonical_task_type
+        && persisted.default_execution_profile === decision.default_execution_profile
+        && (persisted.execution_profile_override ?? null)
+          === (decision.execution_profile_override ?? null)
+        && persisted.repo === decision.repo
+        && JSON.stringify(persisted.map_scope) === JSON.stringify(decision.map_scope)
+        && persisted.impact_contract_required === decision.impact_contract_required
+        && persisted.orchestrator === decision.orchestrator;
+      if (!sameRoute) {
+        const conflict = new Error('work_route_idempotency_conflict');
+        conflict.code = 'work_route_idempotency_conflict';
+        throw conflict;
+      }
+      const persistedDecision = {
+        work_kind: persisted.work_kind,
+        change_kind: persisted.change_kind,
+        pipeline: persisted.pipeline,
+        canonical_task_type: persisted.canonical_task_type,
+        default_execution_profile: persisted.default_execution_profile,
+        execution_profile_override: persisted.execution_profile_override ?? null,
+        repo: persisted.repo,
+        map_scope: persisted.map_scope,
+        impact_contract_required: persisted.impact_contract_required,
+        orchestrator: persisted.orchestrator,
+        router_version: persisted.router_version,
+        route_reason: persisted.route_reason,
+        evidence: persisted.evidence,
+        decided_at: persisted.created_at,
+      };
       if (ownsTransaction) await client.query('COMMIT');
       return {
         task_id: existing.rows[0].task_id,
         routing_receipt_id: existing.rows[0].routing_receipt_id,
         task: existing.rows[0],
-        decision,
+        decision: persistedDecision,
         deduplicated: true,
       };
     }
