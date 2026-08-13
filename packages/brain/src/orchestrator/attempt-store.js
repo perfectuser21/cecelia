@@ -149,9 +149,9 @@ function callbackRoleVerdictProjection(attempt, result) {
   const inputs = attemptTaskBundle(attempt).inputs ?? {};
   const verdict = normalizeRoleVerdict(attempt.role, result.decision.outcome);
   const failureSignature = normalizeFailureSignature(result.decision.failure_signature);
-  const targetHeadSha = inputs.pull_request?.head_sha
-    ?? inputs.candidate?.head_sha
+  const targetHeadSha = inputs.candidate?.head_sha
     ?? inputs.pr_head_sha
+    ?? inputs.pull_request?.head_sha
     ?? null;
   const detail = attempt.role === 'reviewer'
     ? {

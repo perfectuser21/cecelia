@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.13
+**Brain 版本**: 1.273.14
+
+## Brain 1.273.14 — Candidate-first Verdict Projection
+
+- Attempt 终态事务优先以受信 retained candidate SHA 投影 Evaluator/Judge Verdict，远端 PR 仍指向旧头时不会覆盖本轮候选身份。
 
 ## Brain 1.273.13 — Candidate-bound Evaluator Verdict
 
