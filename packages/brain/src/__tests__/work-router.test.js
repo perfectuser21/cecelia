@@ -33,4 +33,18 @@ describe('unified work router', () => {
     });
     expect(first.decided_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
+
+  it('resolves GitHub aliases only through Map repository facts', () => {
+    const request = {
+      source: 'api', source_id: 'request-alias', title: 'fix', mutation_intent: 'write',
+      declared_change_kind: 'bugfix', repo_hint: 'perfectuser21/cecelia',
+      decided_at: '2026-08-13T00:00:00.000Z',
+    };
+    expect(() => routeWork(request, [])).toThrow('repo_unknown');
+    expect(routeWork(request, [{
+      repo: 'cecelia',
+      scope_key: 'cecelia',
+      aliases: ['perfectuser21/cecelia'],
+    }])).toMatchObject({ repo: 'cecelia' });
+  });
 });
