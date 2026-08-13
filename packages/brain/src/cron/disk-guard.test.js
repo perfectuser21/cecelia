@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   runDiskGuard,
@@ -17,8 +19,8 @@ describe('disk-guard', () => {
     callOrder = []
   })
 
-  it('[BEHAVIOR-1] df 87% 触发完整清理序列，序列按 INV-04 顺序', async () => {
-    // INV-04 顺序：docker container prune → builder prune → worktree_reaper → npm/brew cache
+  it('[BEHAVIOR-1] df 87% 触发完整清理序列，序列按 INV-04 顺序（含kernel日志清理）', async () => {
+    // INV-04 顺序：docker container prune → builder prune → worktree_reaper → npm/brew cache → kernel_log_cleanup
 
     const execMock = vi.fn().mockImplementation(async (cmd) => {
       if (cmd.includes('df ')) {
@@ -50,6 +52,10 @@ describe('disk-guard', () => {
       callOrder.push('worktree_reaper')
       return { results: [] }
     })
+    const cleanOldKernelLogsMock = vi.fn(async () => {
+      callOrder.push('kernel_log_cleanup')
+      return { scanned: 0, removed: 0 }
+    })
     const raiseMock = vi.fn().mockResolvedValue(undefined)
     const barkMock = vi.fn().mockResolvedValue(undefined)
 
@@ -58,17 +64,23 @@ describe('disk-guard', () => {
       raise: raiseMock,
       sendBark: barkMock,
       runWorktreeReaper: worktreeReaperMock,
+      cleanOldKernelLogs: cleanOldKernelLogsMock,
     })
 
     // [BEHAVIOR-1]: df 87% → action=clean (retest=70% → no bark)
     expect(result.used).toBe(87)
     expect(result.action).toBe('clean')
 
-    // INV-04: 固定顺序断言
-    expect(callOrder).toEqual(['df_initial', 'docker_container_prune', 'docker_builder_prune', 'worktree_reaper', 'npm_cache', 'df_retest'])
+    // INV-04: 固定顺序断言（kernel_log_cleanup 追加在末尾，df_retest 之前）
+    expect(callOrder).toEqual(['df_initial', 'docker_container_prune', 'docker_builder_prune', 'worktree_reaper', 'npm_cache', 'kernel_log_cleanup', 'df_retest'])
 
-    // worktree reaper 被调用
+    // worktree reaper 与 kernel log cleanup 均被调用
     expect(worktreeReaperMock).toHaveBeenCalledOnce()
+    expect(cleanOldKernelLogsMock).toHaveBeenCalledOnce()
+    // kernel log cleanup 传入的目录路径精确等于按同款 4 级 ../../../.. 算出的 repo root/logs/kernel
+    // （用跟生产代码同款方式独立计算预期值，而非模糊后缀正则——正则匹配不出层级数算错，见 review 复测）
+    const expectedKernelLogDir = join(fileURLToPath(new URL('../../../..', import.meta.url)), 'logs', 'kernel')
+    expect(cleanOldKernelLogsMock).toHaveBeenCalledWith(expectedKernelLogDir)
     // raise 被调用（清理后通知）
     expect(raiseMock).toHaveBeenCalled()
   })
