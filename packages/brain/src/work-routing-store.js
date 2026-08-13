@@ -1,4 +1,65 @@
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+
 import { routeWork } from './work-router.js';
+
+const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
+const GIT_BRANCH_PATTERN = /^(?!.*\.\.)(?!.*\/$)[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, canonicalJson(value[key])]),
+    );
+  }
+  return value;
+}
+
+function repositoryRoot(repo, repositoryFacts) {
+  const fact = repositoryFacts.find((candidate) => candidate.repo === repo);
+  if (repo === 'cecelia' && process.env.REPO_ROOT) return process.env.REPO_ROOT;
+  if (repo === 'zenithjoy-workspace' && process.env.REPO_ROOT_ZENITHJOY) {
+    return process.env.REPO_ROOT_ZENITHJOY;
+  }
+  return fact?.path || process.cwd();
+}
+
+export async function resolveCanonicalRoutingEvidence(request, repositoryFacts) {
+  const branch = request.branch ?? [
+    'cp-route',
+    request.source,
+    createHash('sha256')
+      .update(`${request.source}:${request.source_id}`)
+      .digest('hex')
+      .slice(0, 8),
+  ].join('-');
+  let baseSha = request.base_sha ?? null;
+  if (!baseSha) {
+    try {
+      baseSha = execFileSync(
+        'git',
+        ['rev-parse', '--verify', 'origin/main^{commit}'],
+        {
+          cwd: repositoryRoot(request.repo, repositoryFacts),
+          encoding: 'utf8',
+          timeout: 10_000,
+          maxBuffer: 1024 * 1024,
+        },
+      ).trim();
+    } catch {
+      const error = new Error('routing_evidence_unavailable');
+      error.code = 'routing_evidence_unavailable';
+      throw error;
+    }
+  }
+  if (!GIT_BRANCH_PATTERN.test(branch) || !GIT_SHA_PATTERN.test(baseSha)) {
+    const error = new Error('routing_evidence_invalid');
+    error.code = 'routing_evidence_invalid';
+    throw error;
+  }
+  return Object.freeze({ branch, base_sha: baseSha });
+}
 
 async function loadRepositoryFacts(client) {
   const result = await client.query(
@@ -22,7 +83,21 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
   try {
     if (ownsTransaction) await client.query('BEGIN');
     const facts = repositoryFacts ?? await loadRepositoryFacts(client);
-    const decision = routeWork(request, facts);
+    let routedRequest = request;
+    let decision = routeWork(routedRequest, facts);
+    if (
+      decision.work_kind === 'coding_mutation'
+      && (!decision.evidence.branch || !decision.evidence.base_sha)
+    ) {
+      const evidenceResolver = options.resolveRoutingEvidence
+        ?? resolveCanonicalRoutingEvidence;
+      const evidence = await evidenceResolver(
+        { ...routedRequest, repo: decision.repo },
+        facts,
+      );
+      routedRequest = { ...routedRequest, ...evidence };
+      decision = routeWork(routedRequest, facts);
+    }
     const task = request.task ?? {};
     const payload = {
       ...(request.metadata || {}),
@@ -35,8 +110,8 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       repo: decision.repo,
       map_scope: decision.map_scope,
       impact_contract_required: decision.impact_contract_required,
-      ...(request.branch ? { branch: request.branch } : {}),
-      ...(request.base_sha ? { base_sha: request.base_sha } : {}),
+      ...(decision.evidence.branch ? { branch: decision.evidence.branch } : {}),
+      ...(decision.evidence.base_sha ? { base_sha: decision.evidence.base_sha } : {}),
       ...(decision.pipeline === 'harness' ? {
         orchestrator: 'skill-relay',
         harness_runtime: 'kernel-v1',
@@ -66,7 +141,9 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         && persisted.repo === decision.repo
         && JSON.stringify(persisted.map_scope) === JSON.stringify(decision.map_scope)
         && persisted.impact_contract_required === decision.impact_contract_required
-        && persisted.orchestrator === decision.orchestrator;
+        && persisted.orchestrator === decision.orchestrator
+        && JSON.stringify(canonicalJson(persisted.evidence))
+          === JSON.stringify(canonicalJson(decision.evidence));
       if (!sameRoute) {
         const conflict = new Error('work_route_idempotency_conflict');
         conflict.code = 'work_route_idempotency_conflict';

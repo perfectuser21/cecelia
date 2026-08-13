@@ -55,6 +55,7 @@ import {
 } from '../orchestrator/commit-lineage-resolver.js';
 import { normalizeFailureSignature } from '../orchestrator/convergence-signatures.js';
 import { parseBaseRepo } from '../orchestrator/github-pr-discovery.js';
+import { verifyJudgeCallbackResult } from '../orchestrator/judge-result-verifier.js';
 
 const router = Router();
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -927,6 +928,13 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
       resolver,
       commitLineageResolver,
     );
+    const judgeVerifier = req.app.get('kernelJudgeResultVerifier')
+      || verifyJudgeCallbackResult;
+    verifiedResult = await judgeVerifier({
+      attempt,
+      result: verifiedResult,
+      dbPool: db,
+    });
   } catch (error) {
     if (error.status) {
       return res.status(error.status).json({

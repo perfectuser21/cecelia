@@ -100,9 +100,9 @@ const OBJECTIVES = Object.freeze({
   planner: 'Produce the sprint PRD and executable acceptance plan from the supplied task evidence.',
   proposer: 'Propose or revise the implementation contract from the frozen PRD and current contract artifacts.',
   reviewer: 'Independently review the frozen contract against the PRD and return an approval decision.',
-  generator: 'Implement or fix the approved contract in the supplied worktree and produce a pull request artifact.',
+  generator: 'Implement or fix the approved contract in the supplied worktree and produce a committed local candidate. Do not push or create a pull request; Publisher owns remote publication after Judge PASS.',
   evaluator: 'Independently evaluate the current pull request against the approved contract and return evidence.',
-  judge: 'Independently judge the evaluator evidence and return the final verification decision.',
+  judge: 'Independently judge the evaluator evidence. Return PASS or FAIL, a coverage array for every contract or Golden Path step, and an explicit failure_class for FAIL. The server mechanical gate is authoritative.',
   publisher: 'Publish only the exact local candidate authorized by the Judge and merge fence.',
   commander: 'Observe one bounded Run snapshot and return exactly one provider-neutral Commander Directive.',
 });
@@ -424,8 +424,9 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
       ?? null;
   }
   if (action === 'spawn:generator-fix') {
-    common.pr_branch = observed.pr?.head_ref ?? null;
-    common.pr_head_sha = observed.pr?.head_sha ?? null;
+    common.pr_branch = observed.pr?.head_ref ?? observed.candidate?.branch ?? null;
+    common.pr_head_sha = observed.pr?.head_sha ?? observed.candidate?.head_sha ?? null;
+    if (observed.candidate) common.candidate = { ...observed.candidate };
     const evaluatorFeedback = buildEvaluatorFeedback(observed);
     if (evaluatorFeedback) common.evaluator_feedback = evaluatorFeedback;
   }
@@ -449,7 +450,10 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     }
   }
   if (spec.role === 'judge') {
-    common.evaluator_result = observed.evaluateVerdict ?? observed.callbackResult ?? null;
+    common.evaluator_result = observed.evaluateResult
+      ?? observed.evaluateVerdict
+      ?? observed.callbackResult
+      ?? null;
   }
   if (spec.role === 'publisher') {
     const candidate = observed.candidate;
@@ -834,14 +838,12 @@ export function createDispatcher(deps) {
       ? commanderTarget.model ?? null
       : roleAssignment.model
         ?? (payload.model && payload.model !== 'auto' ? payload.model : null);
-    let adapter = spec.role === 'judge' ? null : deps.registry.resolve({
+    let adapter = deps.registry.resolve({
       provider: requestedProvider,
       requires: ['structured_output'],
     });
     const candidateMachine = ctx.observed.candidate?.machine_id ?? null;
-    const preferredTarget = spec.role === 'judge'
-      ? null
-      : spec.role === 'commander'
+    const preferredTarget = spec.role === 'commander'
         ? {
             provider: commanderTarget.provider ?? adapter.name,
             account: commanderTarget.account ?? null,
@@ -854,9 +856,7 @@ export function createDispatcher(deps) {
           ...(requestedModel ? { model: requestedModel } : {}),
           machine: candidateMachine ?? roleAssignment.machine ?? machineId,
         };
-    let candidateTargets = spec.role === 'judge'
-      ? []
-      : spec.role === 'commander'
+    let candidateTargets = spec.role === 'commander'
         ? (commanderContext.candidate_targets ?? [commanderContext.target]).map(
             ({ role: _role, ...target }) => target,
           )
@@ -867,7 +867,7 @@ export function createDispatcher(deps) {
     // capability gate 会零探针跳过并判 all_execution_targets_exhausted。
     // 此处按白名单展开为具体账号候选；显式指定 account 的行为不变。
     let preferredTarget2 = preferredTarget;
-    if (spec.role !== 'judge' && candidateTargets.some((t) => t?.account == null)) {
+    if (candidateTargets.some((t) => t?.account == null)) {
       candidateTargets = expandUnresolvedAccountTargets(candidateTargets);
       if (preferredTarget?.account == null) {
         preferredTarget2 = candidateTargets.find(
@@ -893,7 +893,6 @@ export function createDispatcher(deps) {
     if (
       (rawCapabilityRequirements || spec.role === 'commander')
       && !deps.preflightGate
-      && spec.role !== 'judge'
     ) {
       const blocked = {
         status: 'DONE_WITH_CONCERNS',
@@ -909,7 +908,7 @@ export function createDispatcher(deps) {
       return blocked;
     }
 
-    if (deps.preflightGate && spec.role !== 'judge') {
+    if (deps.preflightGate) {
       const taskBundle = {
         ...bundle,
         task_id: ctx.observed.task.id ?? ctx.taskId,
@@ -997,7 +996,7 @@ export function createDispatcher(deps) {
     if (candidateMachine && selectedMachine !== candidateMachine) {
       throw new Error('candidate_machine_affinity_violation');
     }
-    if (spec.role !== 'judge' && selectedAccount) {
+    if (selectedAccount) {
       accountHome = resolveAccountHome(adapter.name, selectedAccount);
     }
 
@@ -1014,7 +1013,7 @@ export function createDispatcher(deps) {
       hop: ctx.hop,
       phase: bundle.phase,
       role: spec.role,
-      provider: spec.role === 'judge' ? 'independent-judge' : adapter.name,
+      provider: adapter.name,
       accountId: selectedAccount,
       machineId: selectedMachine,
       bundle,
@@ -1035,7 +1034,7 @@ export function createDispatcher(deps) {
         status: 'DONE_WITH_CONCERNS',
         detail: `run/hop already owns attempt ${persisted.id}; duplicate launch suppressed`,
         attemptId: persisted.id,
-        provider: persisted.provider ?? (spec.role === 'judge' ? 'independent-judge' : adapter.name),
+        provider: persisted.provider ?? adapter.name,
       };
     }
     let attempt = {
@@ -1047,20 +1046,6 @@ export function createDispatcher(deps) {
       task_bundle: persisted?.task_bundle ?? bundle,
       callbackSecret,
     };
-
-    if (spec.role === 'judge') {
-      try {
-        const judge = handlers[action];
-        if (!judge) throw new Error('spawn:judge requires an independent judge handler');
-        return await judge({ ...ctx, attempt, bundle });
-      } catch (error) {
-        await deps.attemptStore.fail(attempt.id, {
-          code: 'judge_failed',
-          message: error.message,
-        });
-        throw error;
-      }
-    }
 
     const claimed = await deps.attemptStore.markStarting(attempt.id, {
       leaseOwner,

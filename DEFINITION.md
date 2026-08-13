@@ -8,11 +8,16 @@
 
 
 
-**Brain 版本**: 1.272.64
+**Brain 版本**: 1.272.65
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.65 — Fleet Judge 与 Canonical Routing Evidence
+
+- Judge 经同机 Fleet/Runner 执行，callback 由服务端机械闸裁定后写入精确 candidate SHA；Generator-fix 继承候选并回收被替代工作区。
+- 所有 coding receipt 在入队前冻结 branch/base SHA，幂等重放比较完整 evidence；批准合同状态只能单向进入 superseded。
 
 ## Brain 1.272.64 — Judge-gated Candidate Publishing
 

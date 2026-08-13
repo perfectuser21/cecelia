@@ -143,12 +143,16 @@ function callbackRoleVerdictProjection(attempt, result) {
       },
     };
   }
-  if (!result.decision || !['reviewer', 'evaluator'].includes(attempt.role)) return null;
+  if (!result.decision || !['reviewer', 'evaluator', 'judge'].includes(attempt.role)) return null;
   if (!ADVERSARIAL_TERMINAL_STATUSES.has(result.status)) return null;
 
   const inputs = attemptTaskBundle(attempt).inputs ?? {};
   const verdict = normalizeRoleVerdict(attempt.role, result.decision.outcome);
   const failureSignature = normalizeFailureSignature(result.decision.failure_signature);
+  const targetHeadSha = inputs.pull_request?.head_sha
+    ?? inputs.candidate?.head_sha
+    ?? inputs.pr_head_sha
+    ?? null;
   const detail = attempt.role === 'reviewer'
     ? {
         attempt_id: attempt.id,
@@ -160,14 +164,18 @@ function callbackRoleVerdictProjection(attempt, result) {
     : {
         attempt_id: attempt.id,
         verdict,
-        pr_head_sha: inputs.pull_request?.head_sha ?? null,
+        pr_head_sha: targetHeadSha,
         failure_class: result.decision.failure_class ?? null,
         ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
         feedback: result.decision.reason,
       };
   const allowed = ['APPROVED', 'PASS', 'FIXED'].includes(verdict);
   return {
-    action: attempt.role === 'reviewer' ? 'verdict:reviewer' : 'verdict:evaluate',
+    action: attempt.role === 'reviewer'
+      ? 'verdict:reviewer'
+      : attempt.role === 'judge'
+        ? 'verdict:judge'
+        : 'verdict:evaluate',
     observed: { attempt_id: attempt.id, role: attempt.role },
     phase: attempt.role === 'reviewer' ? 'gan' : 'evaluate',
     gateVerdict: allowed ? 'allow' : `deny:${verdict.toLowerCase()}`,
@@ -304,8 +312,26 @@ function verifiedPullRequestArtifact(attempt, result) {
   )) ?? null;
 }
 
-async function appendGeneratorFixProjection(client, attempt, result, pullRequest) {
-  if (attempt.role !== 'generator' || pullRequest == null) return;
+function verifiedGeneratorCandidateArtifact(attempt, result) {
+  if (attempt.role !== 'generator') return null;
+  const workspace = attemptTaskBundle(attempt).inputs?.workspace_spec;
+  if (!workspace || typeof workspace !== 'object') return null;
+  return (result.artifacts ?? []).find((artifact) => (
+    artifact?.type === 'git_candidate'
+    && artifact.verification_status === 'verified'
+    && artifact.source_attempt_id === attempt.id
+    && artifact.repo === workspace.repo
+    && artifact.branch === workspace.branch
+    && artifact.base_sha === workspace.base_sha
+    && artifact.machine_id === attempt.actual_machine_id
+    && /^[0-9a-f]{40}$/.test(artifact.base_sha ?? '')
+    && /^[0-9a-f]{40}$/.test(artifact.head_sha ?? '')
+    && artifact.base_sha !== artifact.head_sha
+  )) ?? null;
+}
+
+async function appendGeneratorFixProjection(client, attempt, result, candidate) {
+  if (attempt.role !== 'generator' || candidate == null) return;
   if (!['completed', 'completed_with_concerns'].includes(result.status)) return;
 
   const context = firstRow(await client.query(
@@ -322,12 +348,12 @@ async function appendGeneratorFixProjection(client, attempt, result, pullRequest
   const observed = {
     attempt_id: attempt.id,
     trigger_hop: attempt.hop,
-    pr_head_sha: pullRequest.head_sha,
+    pr_head_sha: candidate.head_sha,
     provider: result.provider_metadata?.provider ?? attempt.provider ?? null,
   };
   const detail = {
     attempt_id: attempt.id,
-    pr_head_sha: pullRequest.head_sha,
+    pr_head_sha: candidate.head_sha,
     status: result.status,
     verification_status: 'verified',
     trigger_sha: context.trigger_sha ?? null,
@@ -879,7 +905,13 @@ export function createAttemptStore(pool) {
           }
 
           const pullRequest = verifiedPullRequestArtifact(terminalAttempt, result);
-          await appendGeneratorFixProjection(client, terminalAttempt, result, pullRequest);
+          const generatorCandidate = verifiedGeneratorCandidateArtifact(terminalAttempt, result);
+          await appendGeneratorFixProjection(
+            client,
+            terminalAttempt,
+            result,
+            generatorCandidate,
+          );
 
           // GAN budget cap 的唯一记账来源（决策 fbb0bc9d）：首次终态即累加固定单价。
           // exact-retry 走 isTerminal 早退不重复记账。

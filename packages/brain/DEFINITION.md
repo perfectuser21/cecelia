@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.272.64
+**Brain 版本**: 1.272.65
+
+## Fleet Judge 与 Canonical Routing Evidence（Brain 1.272.65）
+
+- Judge 通过同机 Fleet/Runner 读取精确 candidate，callback 再经服务端机械闸后原子写入 SHA 锚定 verdict；Generator-fix 从 retained candidate 继续并释放被替代工作区。
+- Work Router 在 coding task 提交前可信冻结 branch/base SHA，幂等重放同时比较完整 evidence；批准合同只允许单向进入 superseded，禁止降级绕过不可变性。
 
 ## Judge-gated Candidate Publishing（Brain 1.272.64）
 

@@ -848,6 +848,7 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
       dispatch: async (_action, ctx) => {
         dispatchCount += 1;
         const attemptId = randomUUID();
+        const candidateBranch = `cp-kernel-pg-${run.taskId}`;
         await attemptStore.createAttempt({
           id: attemptId,
           runId: run.runId,
@@ -861,6 +862,11 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
               task_id: run.taskId,
               sprint_dir: run.payload.sprint_dir,
               worktree_path: '/workspace',
+              workspace_spec: {
+                repo: 'perfectuser21/cecelia',
+                branch: candidateBranch,
+                base_sha: SECOND_SHA,
+              },
             },
           },
           callbackSecretHash: createHash('sha256').update(CALLBACK_TOKEN).digest('hex'),
@@ -893,8 +899,17 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
             contract_version: '1.0',
             attempt_id: attemptId,
             status: 'completed',
-            summary: 'provider changed but PR SHA did not advance',
-            artifacts: [{ type: 'pull_request', url: PR_URL, head_sha: HEAD_SHA }],
+            summary: 'provider changed but candidate SHA did not advance',
+            artifacts: [{
+              type: 'git_candidate',
+              verification_status: 'verified',
+              source_attempt_id: attemptId,
+              repo: 'perfectuser21/cecelia',
+              branch: candidateBranch,
+              base_sha: SECOND_SHA,
+              head_sha: HEAD_SHA,
+              machine_id: 'us-mac-m4',
+            }],
             checks: [],
             decision: null,
             error: null,

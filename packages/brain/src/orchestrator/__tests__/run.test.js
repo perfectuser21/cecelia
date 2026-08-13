@@ -294,7 +294,7 @@ describe('buildRealDeps', () => {
     expect(result).toMatchObject({ status: 'missing_terminalized', hop: 50 });
   });
 
-  it('wires the central Credential Broker into the real Fleet Worker launcher', async () => {
+  it('wires provider credentials but withholds GitHub credentials from Generator', async () => {
     const attemptId = '33333333-3333-4333-8333-333333333333';
     const sharedSecret = 'run-test-fleet-secret-that-is-long-enough';
     const credentialBroker = {
@@ -438,10 +438,7 @@ describe('buildRealDeps', () => {
       accountId: 'team4',
       machineId: 'us-mac-m4',
     }));
-    expect(githubCredentialBroker.issue).toHaveBeenCalledWith(expect.objectContaining({
-      attemptId,
-      machineId: 'us-mac-m4',
-    }));
+    expect(githubCredentialBroker.issue).not.toHaveBeenCalled();
     expect(fetchFn).toHaveBeenCalledTimes(2);
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
       'http://worker.internal:3458/harness/attempts/prepare',
@@ -449,8 +446,8 @@ describe('buildRealDeps', () => {
     ]);
     expect(JSON.parse(fetchFn.mock.calls[0][1].body).credential_envelope)
       .toMatchObject({ credential_ref: '44444444-4444-4444-8444-444444444444' });
-    expect(JSON.parse(fetchFn.mock.calls[0][1].body).github_credential_envelope)
-      .toMatchObject({ credential_ref: '55555555-5555-4555-8555-555555555555' });
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body))
+      .not.toHaveProperty('github_credential_envelope');
   });
 
   it('默认 registry 注册 Grok，可把 evaluator 派给不同厂商', async () => {

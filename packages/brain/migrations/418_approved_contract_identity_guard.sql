@@ -10,6 +10,9 @@ BEGIN
   END IF;
   IF OLD.status IN ('approved', 'superseded')
      AND (
+       (OLD.status = 'approved' AND NEW.status NOT IN ('approved', 'superseded'))
+       OR (OLD.status = 'superseded' AND NEW.status <> 'superseded')
+       OR
        NEW.version IS DISTINCT FROM OLD.version
        OR NEW.branch IS DISTINCT FROM OLD.branch
        OR NEW.prd_content IS DISTINCT FROM OLD.prd_content

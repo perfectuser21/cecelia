@@ -1459,9 +1459,13 @@ function createAttemptRunner({
     });
   }
 
-  async function releasePublishedSourceCandidate(state) {
+  async function releaseSourceCandidate(state) {
     const sourceAttemptId = state.workspace?.source_attempt_id;
-    if (state.role !== 'publisher' || !UUID_PATTERN.test(sourceAttemptId ?? '')) return;
+    if (
+      !['publisher', 'generator'].includes(state.role)
+      || !UUID_PATTERN.test(sourceAttemptId ?? '')
+      || sourceAttemptId === state.attempt_id
+    ) return;
     const source = await stateStore.get(sourceAttemptId);
     if (
       source?.status !== 'candidate'
@@ -1630,6 +1634,7 @@ function createAttemptRunner({
         return quarantineState(state, error);
       }
       if (state.role === 'generator' && expected?.statusCode === 0) {
+        await releaseSourceCandidate(state);
         await stateStore.save({
           attempt_id: state.attempt_id,
           run_id: state.run_id,
@@ -1648,7 +1653,7 @@ function createAttemptRunner({
         });
       }
       if (state.role === 'publisher' && expected?.statusCode === 0) {
-        await releasePublishedSourceCandidate(state);
+        await releaseSourceCandidate(state);
       }
       const result = await cleanupWorkspaceState(state, { deleteState: false });
       if (result.status === 'cleaned') {

@@ -67,13 +67,22 @@ async function insertRun(client, { initiativeId, contractId, phase = 'B_task_loo
   return r.rows[0].id;
 }
 
-async function insertSubtask(client, { initiativeId, title, status = 'queued', fixRounds = 0, costUsd = 0, prUrl = null }) {
+async function insertSubtask(client, {
+  initiativeId,
+  title,
+  status = 'queued',
+  fixRounds = 0,
+  costUsd = 0,
+  prUrl = null,
+  sortOrder = 0,
+}) {
   const r = await client.query(
-    `INSERT INTO tasks (task_type, title, status, priority, pr_url, payload)
+    `INSERT INTO tasks (task_type, title, status, priority, pr_url, payload, created_at)
      VALUES ('harness_task', $1, $2, 'P2', $3,
-       jsonb_build_object('parent_task_id', $4::text, 'fix_rounds', $5::int, 'cost_usd', $6::numeric))
+       jsonb_build_object('parent_task_id', $4::text, 'fix_rounds', $5::int, 'cost_usd', $6::numeric),
+       TIMESTAMPTZ '2026-01-01 00:00:00+00' + ($7 * INTERVAL '1 second'))
      RETURNING id`,
-    [title, status, prUrl, initiativeId, fixRounds, costUsd]
+    [title, status, prUrl, initiativeId, fixRounds, costUsd, sortOrder]
   );
   return r.rows[0].id;
 }
@@ -86,35 +95,25 @@ async function insertDep(client, { fromId, toId, edgeType = 'hard' }) {
   );
 }
 
-async function cleanup(client, initiativeId, subtaskIds) {
-  if (subtaskIds.length) {
-    await client.query(
-      `DELETE FROM task_dependencies WHERE from_task_id = ANY($1::uuid[]) OR to_task_id = ANY($1::uuid[])`,
-      [subtaskIds]
-    );
-    await client.query(`DELETE FROM tasks WHERE id = ANY($1::uuid[])`, [subtaskIds]);
-  }
-  await client.query(`DELETE FROM initiative_runs WHERE initiative_id = $1::uuid`, [initiativeId]);
-  await client.query(`DELETE FROM initiative_contracts WHERE initiative_id = $1::uuid`, [initiativeId]);
-  await client.query(`DELETE FROM tasks WHERE id = $1::uuid`, [initiativeId]);
-}
-
 // ─── tests ──────────────────────────────────────────────────────────────
 
 describe('GET /api/brain/initiatives/:id/dag', () => {
   let initiativeId;
-  let subtaskIds;
   let client;
+  let originalPoolQuery;
 
   beforeEach(async () => {
     initiativeId = randomUUID();
-    subtaskIds = [];
     client = await pool.connect();
+    await client.query('BEGIN');
+    originalPoolQuery = pool.query;
+    pool.query = client.query.bind(client);
   });
 
   afterEach(async () => {
     try {
-      await cleanup(client, initiativeId, subtaskIds);
+      pool.query = originalPoolQuery;
+      await client.query('ROLLBACK');
     } finally {
       client.release();
     }
@@ -127,16 +126,16 @@ describe('GET /api/brain/initiatives/:id/dag', () => {
 
     const t1 = await insertSubtask(client, {
       initiativeId, title: 'T1', status: 'completed', fixRounds: 1, costUsd: 0.4,
-      prUrl: 'https://github.com/a/b/pull/1',
+      prUrl: 'https://github.com/a/b/pull/1', sortOrder: 1,
     });
     const t2 = await insertSubtask(client, {
       initiativeId, title: 'T2', status: 'in_progress', fixRounds: 0, costUsd: 0.3,
+      sortOrder: 2,
     });
     const t3 = await insertSubtask(client, {
       initiativeId, title: 'T3', status: 'queued', fixRounds: 0, costUsd: 0,
+      sortOrder: 3,
     });
-    subtaskIds = [t1, t2, t3];
-
     await insertDep(client, { fromId: t2, toId: t1 });
     await insertDep(client, { fromId: t3, toId: t2 });
 

@@ -77,16 +77,17 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
     }
 
     const inputs = bundle?.inputs ?? {};
-    const candidate = ['evaluator', 'judge', 'publisher'].includes(role)
+    const generatorFix = action === 'spawn:generator-fix';
+    const candidate = (['evaluator', 'judge', 'publisher'].includes(role) || generatorFix)
       && inputs.candidate && typeof inputs.candidate === 'object'
       ? inputs.candidate
       : null;
     if (candidate && candidate.repo !== repo) {
       throw new Error('workspace_candidate_repo_mismatch');
     }
-    const generatorFix = action === 'spawn:generator-fix';
     if (
       generatorFix
+      && !candidate
       && (
         typeof inputs.pr_branch !== 'string'
         || typeof inputs.pr_head_sha !== 'string'

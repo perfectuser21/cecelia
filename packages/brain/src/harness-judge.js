@@ -157,12 +157,16 @@ export function normalizeJudgeVerdict(v) {
 }
 
 export function validateIndependentJudgeStageFacts(stageFacts) {
-  if (stageFacts?.current_stage !== 'independent_judge') {
+  const currentStage = stageFacts?.current_stage;
+  if (!['independent_judge', 'local_candidate'].includes(currentStage)) {
     return { pass: true, reasons: [] };
   }
   const reasons = [];
-  if (stageFacts.pr_state !== 'OPEN') {
+  if (currentStage === 'independent_judge' && stageFacts.pr_state !== 'OPEN') {
     reasons.push(`pr_state 必须为 "OPEN"，实际为 ${JSON.stringify(stageFacts.pr_state)}`);
+  }
+  if (currentStage === 'local_candidate' && stageFacts.pr_state != null) {
+    reasons.push(`local_candidate 的 pr_state 必须为空，实际为 ${JSON.stringify(stageFacts.pr_state)}`);
   }
   if (!String(stageFacts.head_sha || '').trim()) {
     reasons.push('head_sha 缺失');
