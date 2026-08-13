@@ -28,7 +28,7 @@
 
 - Work Router/Map/Impact/服务端 Judge/受信 Publisher 与 Session Controller ownership 合并为同一生产链。
 - Kernel Run 同一事务持久化 Routing/合同/恢复血统及 Controller session/lease，任何一侧证据不完整都失败关闭。
-- Schema 413—418 保留 Router/Map/合同治理，Controller ownership 顺延到 migration 419；Fleet 固定已真验 Runner digest，并采用 pgvector PostgreSQL 运行时。
+- Schema 413/414 保留 production authority anchor，Controller ownership 保持 migration 415；Router/Map/合同治理顺延到 416—421。
 
 ---
 
@@ -57,7 +57,7 @@
 
 ## Brain 1.272.62 — Atomic Routing Governance
 
-- Dedupe claim 跟随调用方事务回滚，幂等路由冲突 fail closed，Schema 418 保护批准合同核心身份与正文不可变。
+- Dedupe claim 跟随调用方事务回滚，幂等路由冲突 fail closed，Schema 421 保护批准合同核心身份与正文不可变。
 
 ---
 
@@ -75,7 +75,7 @@
 
 ## Brain 1.272.58 — Immutable Routing Task Projection
 
-- Schema 417 保护 receipt 对应的 task type/repo/profile/runtime 投影，并补齐 Work Router migrations 的对称 rollback。
+- Schema 420 保护 receipt 对应的 task type/repo/profile/runtime 投影，并补齐 Work Router migrations 的对称 rollback。
 
 ## Brain 1.272.57 — Complete Task Creation Inventory
 
@@ -104,7 +104,7 @@
 - 显式恢复 run 仅在可信前序 Generator 与当前 GitHub PR URL/SHA 完全一致时建立新的共享 validation clock。
 ## Brain 1.273.0 — Session Controller 所有权不变量 + 四档 change_kind 驱动 Profile
 
-- `initiative_runs` 新增 `controller_session_id` + `controller_lease_expires_at`（集成后 migration 419），建立「任何活跃 Kernel Run 前必先有有效 Controller ownership」不变量；`createKernelRun` 无 Controller identity 时 fail-closed 拒绝创建，杜绝 detached 无主 Kernel（issue 962d399c）。
+- `initiative_runs` 新增 `controller_session_id` + `controller_lease_expires_at`（migration 415），建立「任何活跃 Kernel Run 前必先有有效 Controller ownership」不变量；`createKernelRun` 无 Controller identity 时 fail-closed 拒绝创建，杜绝 detached 无主 Kernel（issue 962d399c）。
 - `harness-skill-relay` 启动链收敛为 Dispatcher→Controller→Kernel：Controller 先取 ownership 再拉起 Kernel；Kernel fatal 只结束 Kernel（Controller 存活、结构化脱敏 failure_reason 回传），Controller fatal / lease 过期 / 迁移前无主历史 run 一律 fail-closed 进恢复流程，不静默放行。
 - `orchestrator/derive.js` 真读 `change_kind` 分派执行 Profile：`bugfix`/`parameter_only` 初始态跳 Planner/GAN 直进 generate，`new_capability`/`capability_change` 保留全链；四档全部保留 Generate→Evaluate→Judge 与 merge fence；change_kind 与 gear 正交、禁互推导（决策 29ae54ae）。Schema 地板推进到 415。
 
@@ -114,10 +114,12 @@
 - NodeProfile、Worker、Probe、rollout、reconciler 与 runtime smoke 统一引用同一镜像，漂移继续 fail closed。
 - Generator、Evaluator、Judge 的 TaskBundle 结构化携带冻结 GP Contract 身份；可信 Evaluator writer 写 receipt 前必须回查 signed 合同 SSOT，并把同一 `gp_contract_id/hash` 精确落账。
 
-## Brain 1.272.36 — 冻结合同资产确定性排序
+## Brain 1.272.36 — 冻结合同资产确定性排序 + Migration 413/414 权威补录
 
 - 已封存合同资产从 PostgreSQL 读回后，按与 JavaScript 完整性校验器相同的 Unicode 码点顺序规范化，消除数据库 locale 对大小写路径排序不同造成的 `order_or_duplicate` 假红。
 - source revision、内容摘要、字节数和 sealed manifest 继续逐项 fail-closed 校验；回归覆盖 F1 真实失败 Run 的 `gp-identity` / `RED-evidence` 混合大小写路径。
+- Production DB 已有 schema 413（work_routing_receipts）和 414（map_recovery_contracts），来自已关闭 PR #4851；两份 migration 补录进 main 使代码权威对齐，selfcheck EXPECTED_SCHEMA_VERSION 升至 414。
+- PR #4860（Session Controller 所有权）的 migration 由 413 改为 415，消除同号不同语义碰撞。
 
 ## Brain 1.272.32 — 已批准合同 TaskBundle 去重
 
@@ -2668,7 +2670,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '419'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '421'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

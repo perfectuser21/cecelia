@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
 
-describe('migration 416 capture routing metadata', () => {
+describe('migration 419 capture routing metadata', () => {
   it('adds a non-null JSON routing envelope to real capture atoms', async () => {
     const sql = await readFile(
-      new URL('../../migrations/416_capture_atom_routing_metadata.sql', import.meta.url),
+      new URL('../../migrations/419_capture_atom_routing_metadata.sql', import.meta.url),
       'utf8',
     );
     expect(sql).toMatch(/ALTER TABLE capture_atoms/i);

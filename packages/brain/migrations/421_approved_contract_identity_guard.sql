@@ -31,7 +31,7 @@ BEFORE UPDATE OR DELETE ON initiative_contracts
 FOR EACH ROW EXECUTE FUNCTION reject_approved_contract_identity_mutation();
 
 INSERT INTO schema_version (version, description, applied_at)
-VALUES ('418', 'Protect approved contract identity and core projections', NOW())
+VALUES ('421', 'Protect approved contract identity and core projections', NOW())
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

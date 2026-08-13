@@ -47,7 +47,7 @@ BEFORE UPDATE OF task_type, payload ON tasks
 FOR EACH ROW EXECUTE FUNCTION reject_work_routing_task_projection_mutation();
 
 INSERT INTO schema_version (version, description, applied_at)
-VALUES ('417', 'Protect task projections of immutable Work Routing Receipts', NOW())
+VALUES ('420', 'Protect task projections of immutable Work Routing Receipts', NOW())
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

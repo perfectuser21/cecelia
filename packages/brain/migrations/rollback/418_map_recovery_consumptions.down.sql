@@ -12,3 +12,4 @@ ALTER TABLE map_recovery_contracts
   DROP CONSTRAINT IF EXISTS map_recovery_contracts_receipt_unique;
 ALTER TABLE work_routing_receipts
   DROP CONSTRAINT IF EXISTS work_routing_receipts_id_task_unique;
+DELETE FROM schema_version WHERE version = '418';

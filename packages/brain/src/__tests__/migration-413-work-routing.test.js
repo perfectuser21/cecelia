@@ -1,23 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
 
-describe('migration 413', () => {
-  it('creates immutable routing receipts and recovery contracts', async () => {
+describe('production routing authority migrations 413/414/416', () => {
+  it('keeps the production 413 receipt anchor one-version/one-meaning', async () => {
     const sql = await readFile(new URL('../../migrations/413_work_routing_receipts.sql', import.meta.url), 'utf8');
     expect(sql).toContain('work_routing_receipts');
-    expect(sql).toContain('map_recovery_contracts');
     expect(sql).toContain('TRIGGER');
+    expect(sql).not.toContain('CREATE TABLE IF NOT EXISTS map_recovery_contracts');
   });
 
-  it('has a complete rollback for every migration 413 object', async () => {
-    const sql = await readFile(new URL('../../migrations/rollback/413_work_routing_receipts.down.sql', import.meta.url), 'utf8');
-    expect(sql).toContain('DROP TABLE IF EXISTS map_recovery_contracts');
-    expect(sql).toContain('DROP TABLE IF EXISTS work_routing_receipts');
-    expect(sql).toContain("DELETE FROM schema_version WHERE version = '413'");
+  it('keeps the production 414 recovery-contract anchor separate', async () => {
+    const sql = await readFile(new URL('../../migrations/414_map_recovery_contracts.sql', import.meta.url), 'utf8');
+    expect(sql).toContain('map_recovery_contracts');
+    expect(sql).toContain("VALUES ('414'");
+  });
+
+  it('hardens both production anchors only in migration 416', async () => {
+    const sql = await readFile(new URL('../../migrations/416_work_routing_anchor_hardening.sql', import.meta.url), 'utf8');
+    expect(sql).toContain('idx_work_routing_receipts_task_created');
+    expect(sql).toContain('map_recovery_contracts_attempt_id_fkey');
+    expect(sql).toContain('map_recovery_contracts_immutable');
+    expect(sql).toContain("VALUES ('416'");
   });
 
   it('hardens the mutable task projection after receipt creation', async () => {
-    const sql = await readFile(new URL('../../migrations/417_work_routing_projection_guard.sql', import.meta.url), 'utf8');
+    const sql = await readFile(new URL('../../migrations/420_work_routing_projection_guard.sql', import.meta.url), 'utf8');
     expect(sql).toContain('work_routing_task_projection_immutable');
     expect(sql).toContain("NEW.payload->>'routing_receipt_id'");
     expect(sql).toContain("NEW.payload->>'harness_runtime'");

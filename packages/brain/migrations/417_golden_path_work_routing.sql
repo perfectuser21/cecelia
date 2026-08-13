@@ -31,7 +31,7 @@ ALTER TABLE golden_paths
   );
 
 INSERT INTO schema_version (version, description, applied_at)
-VALUES ('414', 'Explicit Golden Path work routing inputs', NOW())
+VALUES ('417', 'Explicit Golden Path work routing inputs', NOW())
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

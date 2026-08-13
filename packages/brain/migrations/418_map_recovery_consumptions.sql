@@ -95,5 +95,5 @@ CREATE TRIGGER trg_prevent_run_recovery_contract_mutation
   FOR EACH ROW EXECUTE FUNCTION prevent_run_recovery_contract_mutation();
 
 INSERT INTO schema_version (version, description)
-VALUES (415, 'append-only map recovery consumption')
+VALUES (418, 'append-only map recovery consumption')
 ON CONFLICT DO NOTHING;

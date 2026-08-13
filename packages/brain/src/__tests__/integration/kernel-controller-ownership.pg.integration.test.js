@@ -1,5 +1,5 @@
 /**
- * [BEHAVIOR] Session Controller ownership + createKernelRun fail-closed + migration 419 列
+ * [BEHAVIOR] Session Controller ownership + createKernelRun fail-closed + migration 415 列
  * + 启动链收敛（sprint 08131104 Harness 入口统一，issue 962d399c 无主 Kernel Run 修复）。
  *
  * 真 Postgres 集成——真 migrate（含 419）+ 真 createKernelRun + 真 spawnSkillRelaySession
@@ -113,8 +113,8 @@ async function runCount(taskId) {
 beforeAll(createIsolatedDatabase, 60_000);
 afterAll(dropIsolatedDatabase, 30_000);
 
-describe('Session Controller ownership + fail-closed + migration 419（真 PG）', () => {
-  it('migration 419 加 controller ownership 列（initiative_runs information_schema）', async () => {
+describe('Session Controller ownership + fail-closed + migration 415（真 PG）', () => {
+  it('migration 415 加 controller ownership 列（initiative_runs information_schema）', async () => {
     const { rows } = await testPool.query(
       `SELECT column_name
          FROM information_schema.columns
