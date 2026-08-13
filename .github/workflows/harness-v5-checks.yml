@@ -197,7 +197,11 @@ jobs:
         env:
           DB_HOST: localhost
           DB_PORT: '5432'
-          DB_NAME: cecelia
+          # Brain 必须与 "Run sprint tests" 步骤（DB_NAME=cecelia_test）读同一 DB：
+          # 同时命中 Brain HTTP 端点与直连 DB seed 的 sprint 测试（如 F1 认证 smoke，
+          # seed 落 cecelia_test 后再 curl Brain 回读）需要二者共库，否则 seed 与端点
+          # 各读一个库、正向断言必假红。cecelia_test 已在上游步骤跑过全套 migration。
+          DB_NAME: cecelia_test
           DB_USER: cecelia
           DB_PASSWORD: cecelia
           BRAIN_PORT: 5221
