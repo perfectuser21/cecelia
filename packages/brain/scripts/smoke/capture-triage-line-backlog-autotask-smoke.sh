@@ -58,8 +58,8 @@ import('./src/capture-triage.js').then(async (triage) => {
   const atomProdId = require('crypto').randomUUID();
   const cleanup = async () => {
     await pool.query('DELETE FROM capture_atoms WHERE id = ANY(\$1::uuid[])', [[atomOkId, atomProdId]]);
-    await pool.query("UPDATE tasks SET title = title || ' [smoke:' || left(id::text, 8) || ']', updated_at=NOW() WHERE payload->>'thin_prd' = \$1 AND status NOT IN ('completed','cancelled')", ['smoke:决策57d296a1line_backlog真环境验证']);
-    await pool.query("UPDATE tasks SET status='cancelled', updated_at=NOW() WHERE payload->>'thin_prd' = \$1 AND status NOT IN ('completed','cancelled')", ['smoke:决策57d296a1line_backlog真环境验证']);
+    await pool.query(\"UPDATE tasks SET title = title || ' [smoke:' || left(id::text, 8) || ']', updated_at=NOW() WHERE payload->>'thin_prd' = \$1 AND status NOT IN ('completed','cancelled')\", ['smoke:决策57d296a1line_backlog真环境验证']);
+    await pool.query(\"UPDATE tasks SET status='cancelled', updated_at=NOW() WHERE payload->>'thin_prd' = \$1 AND status NOT IN ('completed','cancelled')\", ['smoke:决策57d296a1line_backlog真环境验证']);
     await pool.query('DELETE FROM tasks WHERE id = \$1::uuid', [srcTaskId]);
   };
   try {
