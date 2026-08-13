@@ -74,11 +74,28 @@ function compareNodes(left: MapNode, right: MapNode) {
     || left.key.localeCompare(right.key);
 }
 
+const REASON_CODE_MAP: Record<string, string> = {
+  child_unknown: '子节点状态未知',
+  receipt_missing: '回执未提交',
+  no_anchor: '无事实锚点',
+  no_receipt: '无回执',
+  no_assertion: '无断言',
+  stale_receipt: '回执已过期',
+  assertion_failed: '断言失败',
+  unknown_state: '状态未知',
+  not_evaluated: '未评估',
+};
+
+function humanReason(reasonCode: string | null): string | null {
+  if (!reasonCode) return null;
+  return REASON_CODE_MAP[reasonCode] ?? reasonCode;
+}
+
 function StateBadge({ node }: { node: MapNode }) {
   return (
     <span className={`inline-flex flex-col rounded px-2 py-1 text-xs ${stateStyles[node.state]}`}>
       <span>{node.state}</span>
-      {node.state !== 'green' && node.state_reason && <span>{node.state_reason}</span>}
+      {node.state !== 'green' && node.state_reason && <span>{humanReason(node.state_reason)}</span>}
     </span>
   );
 }
@@ -125,8 +142,21 @@ function collectDescendants(root: string, edges: MapEdge[], nodes: MapNode[]) {
   const queue = [root];
   while (queue.length > 0) {
     const current = queue.shift() as string;
+    // 正向边：current → child（如 value_stream contains capability）
     for (const edge of edges.filter(({ from }) => from === current)) {
       const child = nodeByKey.get(edge.to);
+      if (child && !found.has(child.key)) {
+        found.set(child.key, child);
+        queue.push(child.key);
+      }
+    }
+    // 反向边：child --[implements|contains]--> current
+    // 真实数据中 feature/backbone 的边方向是 child → capability，需要反向收集
+    // 不收集 owned_by 反向边（语义：所属关系，不是子孙关系）
+    for (const edge of edges.filter(
+      ({ to, type }) => to === current && (type === 'implements' || type === 'contains'),
+    )) {
+      const child = nodeByKey.get(edge.from);
       if (child && !found.has(child.key)) {
         found.set(child.key, child);
         queue.push(child.key);

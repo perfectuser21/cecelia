@@ -238,6 +238,67 @@ export async function runProjection({
       );
     }
 
+    // 追加 backbone 层：查 journey_steps JOIN journeys，生成 backbone 节点和 capability→backbone contains 边
+    const { rows: backboneRows } = await client.query(
+      `SELECT js.id, js.step_key, js.name, js.promise, js.status, js.display_order,
+              j.capability_code
+         FROM journey_steps js
+         JOIN journeys j ON j.id = js.journey_id
+        WHERE j.biz_area = $1
+          AND j.capability_code IS NOT NULL
+        ORDER BY j.capability_code, js.display_order`,
+      [scopeKey]
+    );
+
+    let backboneNodeCount = 0;
+    let backboneEdgeCount = 0;
+    for (const row of backboneRows) {
+      const backboneNodeId = stableNodeId(scopeKey, 'backbone', row.step_key);
+      // backbone 节点
+      await client.query(
+        `INSERT INTO map_projection_nodes
+           (run_id, node_id, node_type, node_key, name, source_refs, attributes)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
+         ON CONFLICT (run_id, node_type, node_key) DO NOTHING`,
+        [
+          runId,
+          backboneNodeId,
+          'backbone',
+          row.step_key,
+          row.name,
+          JSON.stringify([]),
+          JSON.stringify({
+            promise: row.promise,
+            status: row.status,
+            display_order: row.display_order,
+            step_key: row.step_key,
+          }),
+        ]
+      );
+      backboneNodeCount++;
+
+      // capability → backbone contains 边
+      const capabilityNodeId = stableNodeId(scopeKey, 'capability', row.capability_code);
+      const edgeKey = `${row.capability_code}_contains_${row.step_key}`;
+      await client.query(
+        `INSERT INTO map_projection_edges
+           (run_id, edge_id, edge_type, edge_key, from_node_id, to_node_id, source_refs, attributes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
+         ON CONFLICT (run_id, edge_type, edge_key) DO NOTHING`,
+        [
+          runId,
+          stableEdgeId(scopeKey, 'contains', edgeKey),
+          'contains',
+          edgeKey,
+          capabilityNodeId,
+          backboneNodeId,
+          JSON.stringify([]),
+          JSON.stringify({}),
+        ]
+      );
+      backboneEdgeCount++;
+    }
+
     // 原子切换 active run（旧 active → superseded，新 run → active + activated_at）
     await client.query(
       `UPDATE map_projection_runs SET status = 'superseded' WHERE scope_key = $1 AND status = 'active'`,

@@ -162,25 +162,20 @@ describe('[RED] collectDescendants — 当前 buggy 实现（只沿正向边）'
 // ──────────────────────────────────────────────
 // Red 测试：正确实现应该通过的断言（当前会失败，等 Green 实现后会通过）
 // ──────────────────────────────────────────────
-describe('[RED→GREEN] collectDescendants — 修复后应通过的断言', () => {
-  it('FAIL: F1 形态 fixture（所有边指向 capability），collectDescendants 应返回非空数组', () => {
-    // 这个测试在 Red 阶段使用 buggy 实现，应该失败
-    // Green 阶段需将 collectDescendantsBuggy 改为 collectDescendantsFixed（或修复 MapPage.tsx 后 import）
-    const result = collectDescendantsBuggy('F1', UPSTREAM_EDGES, ALL_NODES);
-    // 期望返回 feat-a 和 feat-b，当前 buggy 实现返回空所以这个断言会 FAIL
+describe('[GREEN] collectDescendants — 修复后应通过的断言', () => {
+  it('F1 形态 fixture（所有边指向 capability），collectDescendants 应返回非空数组', () => {
+    // Green 阶段：使用已修复的双向 BFS 实现（对应 MapPage.tsx 修复后的 collectDescendants）
+    const result = collectDescendantsFixed('F1', UPSTREAM_EDGES, ALL_NODES);
     expect(result.map((n) => n.key)).toContain('feat-a');
     expect(result.map((n) => n.key)).toContain('feat-b');
   });
 
-  it('FAIL: owned_by 反向边不应被纳入收集', () => {
-    // 在 Red 阶段 buggy 实现因为返回空，所以 owned_by 确实也不在里面——
-    // 但这是因为 bug 导致的，不是正确行为。
-    // 需要同时验证：修复后 feat-a/feat-b 在，some-crosscut 不在。
-    // Green 阶段使用 fixed 实现验证：
-    const resultFixed = collectDescendantsFixed('F1', UPSTREAM_EDGES, ALL_NODES);
-    expect(resultFixed.map((n) => n.key)).toContain('feat-a');
-    expect(resultFixed.map((n) => n.key)).toContain('feat-b');
-    expect(resultFixed.map((n) => n.key)).not.toContain('some-crosscut');
+  it('owned_by 反向边不纳入收集，只收集 implements/contains', () => {
+    // 修复后：feat-a/feat-b 在（implements 边），some-crosscut 不在（owned_by 边）
+    const result = collectDescendantsFixed('F1', UPSTREAM_EDGES, ALL_NODES);
+    expect(result.map((n) => n.key)).toContain('feat-a');
+    expect(result.map((n) => n.key)).toContain('feat-b');
+    expect(result.map((n) => n.key)).not.toContain('some-crosscut');
   });
 });
 
