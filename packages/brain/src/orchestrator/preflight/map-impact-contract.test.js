@@ -76,6 +76,35 @@ describe('Map Impact Contract preflight', () => {
     expect(persistContract).not.toHaveBeenCalled();
   });
 
+  it('rejects an explicit recovery request while the normal Map path is fresh', async () => {
+    const baseSha = 'a'.repeat(40);
+    const persistContract = vi.fn(async (_db, input) => ({
+      created: true, contract: { id: 'normal-contract', status: 'active', ...input },
+    }));
+    await expect(ensureMapImpactPreflight({ query: vi.fn() }, {
+      task: { id: '22222222-2222-4222-8222-222222222222', payload: { map_recovery: true } },
+      receipt: {
+        repo: 'cecelia', change_kind: 'bugfix', map_scope: ['cap-router'],
+        evidence: { base_sha: baseSha },
+      },
+    }, {
+      resolveScopeKey: vi.fn(async () => 'cecelia'),
+      readMap: vi.fn(async () => ({
+        manifest_digest: 'b'.repeat(64), projection_digest: 'c'.repeat(64),
+        freshness: { status: 'fresh', repos: { cecelia: { status: 'fresh', source_revision: baseSha } } },
+      })),
+      readRadius: vi.fn(async () => ({
+        freshness: { status: 'fresh', repos: { cecelia: { status: 'fresh', source_revision: baseSha } } },
+        affected_business_nodes: [{ node_key: 'cap-router', node_type: 'capability', name: 'Router' }],
+        must_run_assertions: [{
+          assertion_ref: 'src/router.test.js', assertion_revision: 1,
+          node_key: '11111111-1111-4111-8111-111111111111',
+        }],
+      })),
+      persistContract,
+    })).rejects.toThrow('map_recovery_not_required');
+  });
+
   it('creates a server-authorized recovery contract from last-known-good evidence only after stable Map failure', async () => {
     const baseSha = 'd'.repeat(40);
     const taskId = '22222222-2222-4222-8222-222222222222';
