@@ -1,8 +1,8 @@
 /**
- * [BEHAVIOR] Session Controller ownership + createKernelRun fail-closed + migration 413 列
+ * [BEHAVIOR] Session Controller ownership + createKernelRun fail-closed + migration 419 列
  * + 启动链收敛（sprint 08131104 Harness 入口统一，issue 962d399c 无主 Kernel Run 修复）。
  *
- * 真 Postgres 集成——真 migrate（含 413）+ 真 createKernelRun + 真 spawnSkillRelaySession
+ * 真 Postgres 集成——真 migrate（含 419）+ 真 createKernelRun + 真 spawnSkillRelaySession
  * 启动链，仅替身最外层 launcher（deps.launchKernel）与 worktree ensure（deps.ensureWt）。
  *
  * 禁 mock 边（合同「禁 mock 边清单」）：
@@ -47,7 +47,7 @@ async function createIsolatedDatabase() {
   databaseName = `kernel_ctlown_${process.pid}_${randomUUID().replaceAll('-', '')}`;
   adminPool = new Pool({ ...DB_DEFAULTS, database: 'postgres', max: 1, statement_timeout: 10_000 });
   await adminPool.query(`CREATE DATABASE ${quotedIdentifier(databaseName)}`);
-  // 真跑仓库真实迁移（migrate.js 按文件名序执行至最新），controller ownership 列由 413 落库。
+  // 真跑仓库真实迁移（migrate.js 按文件名序执行至最新），controller ownership 列由 419 落库。
   execFileSync(process.execPath, ['src/migrate.js'], {
     cwd: BRAIN_ROOT,
     env: {
@@ -113,8 +113,8 @@ async function runCount(taskId) {
 beforeAll(createIsolatedDatabase, 60_000);
 afterAll(dropIsolatedDatabase, 30_000);
 
-describe('Session Controller ownership + fail-closed + migration 413（真 PG）', () => {
-  it('migration 413 加 controller ownership 列（initiative_runs information_schema）', async () => {
+describe('Session Controller ownership + fail-closed + migration 419（真 PG）', () => {
+  it('migration 419 加 controller ownership 列（initiative_runs information_schema）', async () => {
     const { rows } = await testPool.query(
       `SELECT column_name
          FROM information_schema.columns

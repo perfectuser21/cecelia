@@ -2,7 +2,7 @@
  * [BEHAVIOR] Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复 + 日志脱敏
  * （sprint 08131104 Harness 入口统一，issue 962d399c 无主 Kernel Run 修复）。
  *
- * 真 Postgres 集成——真 migrate（含 413）+ 真 createKernelRun + 真 finalizeKernelRun +
+ * 真 Postgres 集成——真 migrate（含 419）+ 真 createKernelRun + 真 finalizeKernelRun +
  * 真 kernel-controller-lifecycle（handleKernelProcessFatal / reconcileOwnerlessKernelRuns）。
  *
  * 禁 mock 边（合同「禁 mock 边清单」）：代码 ↔ initiative_runs（controller ownership/lease 写读）

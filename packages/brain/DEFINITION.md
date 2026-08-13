@@ -1,14 +1,17 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.1
+**Brain 版本**: 1.273.2
+
+## Routed Controller 真实验收（Brain 1.273.2）
+
+- Controller/Profile 真库验收与统一 Router 共用 canonical task+receipt+Map/Impact 前置。
+- 合并后 Runner digest 与 Worker 1.272.15 已同步到三机准入配置。
 
 ## Unified Router × Session Controller 集成（Brain 1.273.1）
 
 - 统一 Work Router、Map/Impact 前置、服务端 Judge 与受信 Publisher 保持完整闭环。
 - Kernel Run 创建同时写入恢复/合同血统与 Session Controller ownership/lease；任一身份缺失均 fail-closed。
 - Schema 413—418 承载 Router/Map/合同治理，Session Controller ownership 顺延为 migration 419；Fleet 同时采用已验证 Runner 与 pgvector 运行时。
-
-## Server-authoritative Judge Verdict（Brain 1.272.66）
 
 ## Server-authoritative Judge Verdict（Brain 1.272.66）
 
@@ -20,7 +23,7 @@
 
 - Judge 通过同机 Fleet/Runner 读取精确 candidate，callback 再经服务端机械闸后原子写入 SHA 锚定 verdict；Generator-fix 从 retained candidate 继续并释放被替代工作区。
 - Work Router 在 coding task 提交前可信冻结 branch/base SHA，幂等重放同时比较完整 evidence；批准合同只允许单向进入 superseded，禁止降级绕过不可变性。
-- Runner 真实镜像固定为 `sha256:2102fb112d1d0f809ce2e7b08d152e58294541e89bc0a6d790ad32dbf4802108`；Fleet Worker `1.272.14` 与 Codex CLI `0.147.0` 作为三机准入基线。
+- Runner 真实镜像固定为 `sha256:8e4baee5ea3d82961bca6afa52221bce8dfc809c620929a1fb9550161dfa6d64`；Fleet Worker `1.272.15` 与 Codex CLI `0.147.0` 作为三机准入基线。
 
 ## Judge-gated Candidate Publishing（Brain 1.272.64）
 
