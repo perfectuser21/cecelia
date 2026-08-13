@@ -133,9 +133,14 @@ export async function launchKernelProcess({
   if (resumeToken) args.push('--resume-token', resumeToken);
   // 刀0：detached kernel 的 stdout/stderr 落盘到宿主可见目录，替代 stdio:'ignore'。
   // 原先零遗言——kernel 卡死/崩溃时看不到任何栈（planner 停摆 debug 不能）。
-  // 落 CECELIA_KERNEL_LOG_DIR（默认 /tmp/cecelia-kernel-logs，compose 已 bind-mount
-  // prompt 目录同款可见），文件名带 runId 便于按 run 定位；打不开日志不阻断 spawn。
-  const logDir = process.env.CECELIA_KERNEL_LOG_DIR || '/tmp/cecelia-kernel-logs';
+  // 落 CECELIA_KERNEL_LOG_DIR，未设置时落 REPO_ROOT/logs/kernel/（bind-mount 持久路径，
+  // 复用 ops.js:2857 deploy-webhook 同款已验证模式；原先默认 /tmp/cecelia-kernel-logs 落
+  // 容器 tmpfs，Brain 每次部署重建容器即清空——诊断 planner 停摆恰好必然伴随一次部署，
+  // 缺口和原问题同形状，2026-08-13 生产实测确认。相对路径层级注意：本文件比 ops.js 浅
+  // 一层（无 routes/ 子目录），用 3 级 ../../.. 不是 4 级，已用 node 脚本验证过）。
+  // 文件名带 runId 便于按 run 定位；打不开日志不阻断 spawn。
+  const logDir = process.env.CECELIA_KERNEL_LOG_DIR
+    || join(process.env.REPO_ROOT || fileURLToPath(new URL('../../..', import.meta.url)), 'logs', 'kernel');
   let stdioSpec = 'ignore';
   let logPath = null;
   try {
