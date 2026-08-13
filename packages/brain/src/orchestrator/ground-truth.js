@@ -503,17 +503,36 @@ export async function collectGroundTruth(deps, opts) {
   // trusted prior Kernel run for the same task, then bind that server observation
   // to the exact PR URL and GitHub head currently observed above.
   let verifiedExistingPrOrigin = null;
-  if (run.created_source === 'explicit_recovery' && pr != null) {
+  const recoveryBaseSha = routingReceipt?.evidence?.base_sha;
+  if (
+    run.created_source === 'explicit_recovery'
+    && pr != null
+    && run.predecessor_run_id
+    && routingReceipt?.id
+    && run.contract_id
+    && GIT_SHA_PATTERN.test(recoveryBaseSha ?? '')
+  ) {
     const originRes = await pool.query(
       `SELECT prior_run.id AS validation_origin_run_id,
               evaluator_intent.observed
          FROM initiative_runs prior_run
+         JOIN initiative_contracts approved_contract
+           ON approved_contract.id = prior_run.contract_id
+          AND approved_contract.status = 'approved'
+          AND approved_contract.approved_sha ~ '^[a-f0-9]{40}$'
          JOIN orchestrator_decision_log evaluator_intent
            ON evaluator_intent.run_id = prior_run.id
           AND evaluator_intent.action = 'spawn:evaluator'
           AND evaluator_intent.gate_verdict = 'allow'
         WHERE prior_run.current_task_id = $1
           AND prior_run.id <> $2
+          AND prior_run.id = $3
+          AND evaluator_intent.observed->'routingReceipt'->>'id' = $4
+          AND prior_run.contract_id = $5
+          AND evaluator_intent.observed->'contract'->>'id' = $5
+          AND evaluator_intent.observed->'contract'->'row'->>'approved_sha'
+                = approved_contract.approved_sha
+          AND evaluator_intent.observed->'implementationBaseline'->>'base_sha' = $6
           AND prior_run.orchestrator_version = 'v2'
           AND prior_run.record_trust_status IN ('trusted', 'reconstructed')
           AND EXISTS (
@@ -525,7 +544,14 @@ export async function collectGroundTruth(deps, opts) {
                AND generator_attempt.result IS NOT NULL
           )
         ORDER BY evaluator_intent.created_at DESC, evaluator_intent.hop DESC`,
-      [taskId, runId],
+      [
+        taskId,
+        runId,
+        run.predecessor_run_id,
+        routingReceipt.id,
+        run.contract_id,
+        recoveryBaseSha,
+      ],
     );
     const matchingOrigin = originRes.rows.find((row) => {
       const observedPr = asJson(row.observed)?.pr;

@@ -459,10 +459,14 @@ async function createRelayRun(req, res, legacyInitiativeId = null) {
       deadlineHours: 6,
       createdSource,
       commanderMode,
+      predecessorRunId: body.predecessor_run_id ?? null,
     });
     return res.status(result.created ? 201 : 200).json(result);
   } catch (err) {
-    if (err.message?.startsWith('invalid Kernel run')) {
+    if (
+      err.message?.startsWith('invalid Kernel run')
+      || err.message?.startsWith('explicit recovery predecessor')
+    ) {
       return res.status(400).json({ error: err.message });
     }
     if (

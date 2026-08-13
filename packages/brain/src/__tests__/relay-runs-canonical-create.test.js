@@ -125,6 +125,26 @@ describe('canonical POST /orchestrator/relay-runs', () => {
     }));
   });
 
+  it('passes the declared predecessor identity for explicit recovery', async () => {
+    const app = await buildApp();
+    const predecessorRunId = '77777777-7777-4777-8777-777777777777';
+
+    const response = await request(app)
+      .post('/api/brain/orchestrator/relay-runs')
+      .send({
+        initiative_id: INITIATIVE_ID,
+        current_task_id: TASK_ID,
+        created_source: 'explicit_recovery',
+        predecessor_run_id: predecessorRunId,
+      });
+
+    expect(response.status).toBe(201);
+    expect(mockCreateKernelRun).toHaveBeenCalledWith(mockPool, expect.objectContaining({
+      createdSource: 'explicit_recovery',
+      predecessorRunId,
+    }));
+  });
+
   it('rejects an invalid commander mode without calling the Kernel store', async () => {
     const app = await buildApp();
 

@@ -29,6 +29,7 @@ const TERMINAL_TASK_STATUSES = new Set([
 ]);
 
 const VALID_COMMANDER_MODES = new Set(COMMANDER_MODES);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 async function lockActiveKernelAttempts(client, runId) {
   const { rows } = await client.query(
@@ -77,6 +78,12 @@ function validateCreateInput(input) {
   }
   if (!CREATED_SOURCES.has(input?.createdSource)) {
     throw new Error(`invalid Kernel run created source: ${input?.createdSource}`);
+  }
+  if (input.createdSource === 'explicit_recovery' && !input.predecessorRunId) {
+    throw new Error('explicit recovery predecessor is required');
+  }
+  if (input.predecessorRunId != null && !UUID_PATTERN.test(input.predecessorRunId)) {
+    throw new Error('invalid Kernel predecessor run id');
   }
   if (!Number.isFinite(input?.deadlineHours) || input.deadlineHours <= 0) {
     throw new Error(`invalid Kernel run deadline hours: ${input?.deadlineHours}`);
@@ -428,6 +435,36 @@ export async function createKernelRun(pool, input, deps = {}) {
       return { created: false, run: active };
     }
 
+    let predecessor = null;
+    if (input.createdSource === 'explicit_recovery') {
+      const { rows: predecessorRows } = await client.query(
+        `SELECT predecessor.id, predecessor.initiative_id,
+                predecessor.current_task_id, predecessor.phase,
+                predecessor.record_trust_status, predecessor.contract_id,
+                contract.status AS contract_status,
+                contract.approved_sha
+           FROM initiative_runs predecessor
+           JOIN initiative_contracts contract
+             ON contract.id = predecessor.contract_id
+          WHERE predecessor.id = $1
+          FOR SHARE OF predecessor, contract`,
+        [input.predecessorRunId],
+      );
+      predecessor = predecessorRows[0] ?? null;
+      if (
+        !predecessor
+        || predecessor.current_task_id !== input.taskId
+        || predecessor.initiative_id !== input.initiativeId
+        || !['done', 'failed'].includes(predecessor.phase)
+        || !['trusted', 'reconstructed'].includes(predecessor.record_trust_status)
+        || !predecessor.contract_id
+        || predecessor.contract_status !== 'approved'
+        || !/^[a-f0-9]{40}$/.test(predecessor.approved_sha ?? '')
+      ) {
+        throw new Error('explicit recovery predecessor is invalid');
+      }
+    }
+
     const receiptId = task.payload?.routing_receipt_id;
     if (!receiptId) throw new Error('routing_receipt_missing');
     const { rows: receiptRows } = await client.query(
@@ -468,11 +505,12 @@ export async function createKernelRun(pool, input, deps = {}) {
          orchestrator_host, deadline_at, ability_id, current_task_id,
          created_source, record_trust_status, commander_mode, gear,
          impact_contract_policy, impact_contract_policy_reason,
-         impact_contract_policy_decision_id, map_recovery_contract_id
+         impact_contract_policy_decision_id, map_recovery_contract_id,
+         contract_id, predecessor_run_id
        ) VALUES (
          $1, $2, $3, 'v2', $4,
          NOW() + ($5 * INTERVAL '1 hour'), $6, $7, $8, $9, $10, $11,
-         $12, $13, $14, $15
+         $12, $13, $14, $15, $16, $17
        )
        RETURNING *`,
       [
@@ -492,6 +530,8 @@ export async function createKernelRun(pool, input, deps = {}) {
         impactContractPolicyReason,
         impactContractPolicyDecisionId,
         preflight.recovery_contract?.id ?? null,
+        predecessor?.contract_id ?? null,
+        predecessor?.id ?? null,
       ],
     );
     await client.query('COMMIT');

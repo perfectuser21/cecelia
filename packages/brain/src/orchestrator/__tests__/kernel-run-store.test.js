@@ -77,7 +77,7 @@ function transactionPool({
         order.push('task-lock');
         return { rows: task ? [task] : [] };
       }
-      if (/FROM initiative_runs/.test(sql) && /WHERE id = \$1/.test(sql)) {
+      if (/FROM initiative_runs predecessor/.test(sql)) {
         order.push('predecessor-run');
         return { rows: predecessorRun ? [predecessorRun] : [] };
       }
@@ -226,6 +226,8 @@ describe('Kernel run store creation authority', () => {
         phase: 'failed',
         record_trust_status: 'trusted',
         contract_id: '66666666-6666-4666-8666-666666666666',
+        contract_status: 'approved',
+        approved_sha: 'a'.repeat(40),
       },
     });
 
@@ -385,6 +387,8 @@ describe('Kernel run store creation authority', () => {
       'required',
       'Map fresh and active Impact Contract impact-1',
       '4bc109e9',
+      null,
+      null,
       null,
     ]);
     expect(harness.order).toEqual([

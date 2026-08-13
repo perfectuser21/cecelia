@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**版本**: 1.272.46
+**版本**: 1.272.47
+
+## Recovery Lineage Binding（Brain 1.272.47）
+
+- `explicit_recovery` 必须指定精确的终态前序 Kernel Run，并继承该前序已批准的合同。
+- recovery ground truth 同时绑定 predecessor、Routing Receipt、合同与 implementation baseline，禁止跨合同复用旧 PR 信任源。
 
 ## Unified Work Router（Brain 1.272.46）
 

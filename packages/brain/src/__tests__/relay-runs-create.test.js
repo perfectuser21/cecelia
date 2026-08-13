@@ -112,6 +112,7 @@ describe('legacy POST /orchestrator/relay-runs/:initiative_id', () => {
       deadlineHours: 6,
       createdSource: 'foreground_handoff',
       commanderMode: 'kernel-only',
+      predecessorRunId: null,
     });
   });
 
