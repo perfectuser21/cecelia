@@ -41,21 +41,29 @@ const now = new Date();
 let client;
 let assertionId;
 let featureId;
+let signedContractId;
+let signedContractHash;
+let impactContractId;
+let impactContractHash;
+let evaluatorAttemptId;
 
 function digest(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
 async function insertReceipt({ verdict, completedAt, exitCode }) {
+  // 认证闸生效后，绿态 receipt 必须绑定 signed GP contract identity + Impact identity + 当前 SHA。
+  // impact_contract_id / harness_attempt_id 走真实外键行（migration 409 约束：impact 绑定必带 harness_attempt_id）。
   await client.query(
     `INSERT INTO journey_assertion_receipts (
       journey_step_link_id, run_id, assertion_revision, assertion_ref_snapshot,
       assertion_digest, source_repo, source_sha, command_argv, verdict, exit_code,
       scenario_count, scenario_evidence, machine_id, output_digest, output_tail,
-      started_at, completed_at
+      started_at, completed_at, gp_contract_id, gp_contract_hash,
+      impact_contract_id, impact_contract_hash, harness_attempt_id
     ) VALUES (
       $1,$2,1,$3,$4,$5,$6,$7::jsonb,$8,$9,1,$10::jsonb,
-      'map-state-integration',$11,'integration receipt',$12,$13
+      'map-state-integration',$11,'integration receipt',$12,$13,$14,$15,$16,$17,$18
     )`,
     [
       assertionId,
@@ -71,6 +79,11 @@ async function insertReceipt({ verdict, completedAt, exitCode }) {
       digest(`${verdict}-${completedAt.toISOString()}`),
       new Date(completedAt.getTime() - 1000),
       completedAt,
+      signedContractId,
+      signedContractHash,
+      impactContractId,
+      impactContractHash,
+      evaluatorAttemptId,
     ],
   );
 }
@@ -116,6 +129,61 @@ beforeAll(async () => {
     [journey.rows[0].id, step.rows[0].id, featureId, capabilityKey, testPath],
   );
   assertionId = assertion.rows[0].id;
+  // Owner-signed Golden Path contract（认证闸前提之一：golden_paths.journey_id → 'signed' 合同版本）
+  const goldenPath = await client.query(
+    `INSERT INTO golden_paths (title, one_liner, journey_id)
+     VALUES ('state fixture gp', 'query-time state proof', $1) RETURNING id`,
+    [journey.rows[0].id],
+  );
+  const contract = await client.query(
+    `INSERT INTO golden_path_contract_versions
+      (golden_path_id, version, contract_json, content_hash, status, signed_by, signed_at)
+     VALUES ($1, 1, '{"gp":"state"}'::jsonb, $2, 'signed', 'owner', NOW())
+     RETURNING id, content_hash`,
+    [goldenPath.rows[0].id, digest(`gp-contract-${scopeKey}`)],
+  );
+  signedContractId = contract.rows[0].id;
+  signedContractHash = contract.rows[0].content_hash;
+  // Impact identity 真实外键链：tasks → initiative_runs → harness_impact_contracts / harness_attempts
+  // （migration 409：receipt 绑定 impact 时 impact_contract_id 与 harness_attempt_id 必须为真实行）。
+  const sourceTaskId = randomUUID();
+  await client.query(
+    `INSERT INTO tasks (id, title, task_type, status, priority, payload)
+     VALUES ($1, 'map-state cert source', 'dev', 'queued', 'P1', '{}'::jsonb)`,
+    [sourceTaskId],
+  );
+  const runId = randomUUID();
+  await client.query(
+    `INSERT INTO initiative_runs
+      (id, initiative_id, current_task_id, phase, orchestrator_version, created_source)
+     VALUES ($1, $2, $3, 'evaluate', 'v2', 'kernel_dispatch')`,
+    [runId, sourceTaskId, sourceTaskId],
+  );
+  const impactContract = await client.query(
+    `INSERT INTO harness_impact_contracts
+      (task_id, version, status, schema_version, change_kind, repo,
+       base_revision, contract_hash, contract_body)
+     VALUES ($1, 1, 'draft', 1, 'bugfix', $2, $3, $4, $5::jsonb)
+     RETURNING id, contract_hash`,
+    [
+      sourceTaskId, repo, revision, digest(`impact-contract-${scopeKey}`),
+      JSON.stringify({ affected_capabilities: [{ capability_id: capabilityKey }], required_assertions: [] }),
+    ],
+  );
+  impactContractId = impactContract.rows[0].id;
+  impactContractHash = digest(`impact-hash-${scopeKey}`);
+  const attempt = await client.query(
+    `INSERT INTO harness_attempts
+      (id, run_id, hop, phase, role, provider, machine_id,
+       requested_machine_id, actual_machine_id, execution_transport,
+       machine_attestation_status, task_bundle, status, callback_secret_hash)
+     VALUES ($1, $2, 1, 'evaluate', 'evaluator', 'codex', 'map-state-runner',
+       'map-state-runner', 'map-state-runner', 'local-docker', 'local',
+       $3::jsonb, 'completed', $4)
+     RETURNING id`,
+    [randomUUID(), runId, JSON.stringify({ inputs: { task_id: sourceTaskId } }), '1'.repeat(64)],
+  );
+  evaluatorAttemptId = attempt.rows[0].id;
   await client.query(
     `INSERT INTO test_registry
       (repo, file_path, source_revision, scanner_version, scanned_at)
