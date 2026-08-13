@@ -104,19 +104,31 @@ export async function persistTrustedEvaluatorReceipts(db, { attempt, result }) {
     );
     for (const binding of sourceBindings(assertion)) {
       const receiptResult = await db.query(
-      `WITH inserted AS (
+      `WITH signed_gp AS (
+         SELECT gpc.id AS gp_contract_id, gpc.content_hash AS gp_contract_hash
+           FROM journey_step_links l
+           JOIN golden_paths gp ON gp.journey_id = l.journey_id
+           JOIN golden_path_contract_versions gpc
+             ON gpc.golden_path_id = gp.id AND gpc.status = 'signed'
+          WHERE l.id = $1
+          ORDER BY gpc.signed_at DESC NULLS LAST
+          LIMIT 1
+       ),
+       inserted AS (
          INSERT INTO journey_assertion_receipts (
            journey_step_link_id, run_id, assertion_revision,
            assertion_ref_snapshot, assertion_digest, source_repo, source_sha,
            impact_contract_id, impact_contract_hash, harness_attempt_id, command_argv,
            scenario_count, scenario_evidence, verdict, exit_code,
            started_at, completed_at, machine_id, output_digest, output_tail,
-           executor_kind, synthetic
-         ) VALUES (
+           executor_kind, synthetic, gp_contract_id, gp_contract_hash
+         )
+         SELECT
            $1, $2, $3, $4, $5, $6, $7,
            $8, $9, $10, $11::jsonb, $12, $13::jsonb, 'PASS', 0,
-           $14, $15, $16, $17, $18, 'brain_assertion_runner', false
-         )
+           $14, $15, $16, $17, $18, 'brain_assertion_runner', false,
+           signed_gp.gp_contract_id, signed_gp.gp_contract_hash
+         FROM signed_gp
          ON CONFLICT (
            run_id, journey_step_link_id, source_sha, impact_contract_hash
          ) DO NOTHING
@@ -150,6 +162,12 @@ export async function persistTrustedEvaluatorReceipts(db, { attempt, result }) {
         String(check.output_tail ?? '').slice(-8_000),
       ],
     );
+      // fail-closed：无 signed GP contract 时 signed_gp 为空 → 不落 receipt → 拒写（不静默落无绑定 PASS receipt）。
+      if (!receiptResult.rows[0]) {
+        throw evidenceError(
+          `trusted receipt requires a signed Golden Path contract identity: ${binding.journey_step_link_id}`,
+        );
+      }
       receipts.push(receiptResult.rows[0]);
     }
   }
