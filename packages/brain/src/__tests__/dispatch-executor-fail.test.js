@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { canonicalRoutingReceipt, routedCodingPayload } from './helpers/routing-receipt-fixture.js';
 
 // Mock DB
 const mockQuery = vi.fn();
@@ -324,7 +325,7 @@ describe('Bug 回归: harness_initiative bridge guard bypass', () => {
       task_type: 'harness_initiative',
       status: 'queued',
       priority: 'P1',
-      payload: { sprint_dir: 'sprints/test', base_repo: '/repo' },
+      payload: routedCodingPayload('harness-task-1', { sprint_dir: 'sprints/test', base_repo: '/repo' }),
     };
 
     mockQuery.mockResolvedValueOnce({ rows: [] });                    // retired drain
@@ -333,6 +334,8 @@ describe('Bug 回归: harness_initiative bridge guard bypass', () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ n: 0 }] });           // 全局 harness 并发计数（本 PR 加）→ 0 < cap
     mockQuery.mockResolvedValueOnce({ rows: [{ id: harnessTask.id }] }); // C1 claim
     mockQuery.mockResolvedValueOnce({ rows: [harnessTask] });        // full task fetch
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });      // allocation payload persist
+    mockQuery.mockResolvedValueOnce({ rows: [canonicalRoutingReceipt(harnessTask)] }); // canonical receipt
     mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });          // 其余 DB 调用
 
     const { dispatchNextTask } = await import('../tick.js');

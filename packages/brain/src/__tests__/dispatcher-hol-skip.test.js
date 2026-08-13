@@ -16,6 +16,7 @@
  * - 每次跳过 tickLog 一行含 "no_executor"（可观测）
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { canonicalRoutingReceipt, routedCodingPayload } from './helpers/routing-receipt-fixture.js';
 
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({
@@ -113,7 +114,7 @@ const HARNESS_TASK = {
   project_id: null,
   priority: 'P1',
   title: 'harness_initiative that does NOT need bridge',
-  payload: { sprint_dir: 'sprints/test', base_repo: '/repo' },
+  payload: routedCodingPayload('22222222-0000-0000-0000-000000000002', { sprint_dir: 'sprints/test', base_repo: '/repo' }),
 };
 
 /** 生成 N 个都需要 bridge 的 dev 候选 */
@@ -163,6 +164,9 @@ describe('dispatchNextTask — no_executor HOL skip (issue 0014cd42)', () => {
       if (/SELECT \* FROM tasks WHERE id/.test(sql)) {
         const row = candidates.find((c) => c.id === params[0]);
         return Promise.resolve({ rows: row ? [row] : [] });
+      }
+      if (/FROM work_routing_receipts receipt/.test(sql)) {
+        return Promise.resolve({ rows: [canonicalRoutingReceipt(HARNESS_TASK)] });
       }
       return Promise.resolve({ rows: [], rowCount: 0 });
     });

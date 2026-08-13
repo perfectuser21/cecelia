@@ -14,7 +14,7 @@
  */
 
 import pool from './db.js';
-import { classifyCodeChange, deriveGearForTask, buildHarnessRoutingPayload } from './dispatch-code-routing.js';
+import { assertDispatchRoutingReceipt } from './orchestrator/dispatcher.js';
 import { isGlobalQuotaCooling, getQuotaCoolingState } from './quota-cooling.js';
 import { isDraining, getDrainStartedAt } from './drain.js';
 import {
@@ -108,6 +108,47 @@ const _RETIRED_HARNESS_TYPES_DISPATCH = new Set([
 
 // 私有计时器（旧只写不读，保留 hook 给未来 telemetry）
 let _lastDispatchTime = 0;
+
+async function enforceDispatchRoutingReceipt(task) {
+  const isCoding = task?.task_type === 'dev'
+    || task?.task_type === 'harness_initiative'
+    || task?.payload?.work_kind === 'coding_mutation';
+  if (!isCoding) return;
+
+  let receipt = null;
+  const receiptId = task?.payload?.routing_receipt_id;
+  if (receiptId) {
+    const result = await pool.query(
+      `SELECT receipt.*,
+              EXISTS (
+                SELECT 1 FROM work_routing_receipts successor
+                 WHERE successor.supersedes_receipt_id = receipt.id
+              ) AS superseded
+         FROM work_routing_receipts receipt
+        WHERE receipt.id = $1 AND receipt.task_id = $2`,
+      [receiptId, task.id],
+    );
+    receipt = result.rows[0] ?? null;
+  }
+
+  try {
+    assertDispatchRoutingReceipt(task, receipt);
+  } catch (error) {
+    if (error?.message !== 'route_violation') throw error;
+    try {
+      await pool.query(
+        `INSERT INTO cecelia_events (event_type,source,payload)
+         VALUES ($1,'dispatcher',$2::jsonb)`,
+        ['route_violation', JSON.stringify({
+          task_id: task?.id ?? null,
+          routing_receipt_id: receiptId ?? null,
+          reason_code: 'route_violation',
+        })],
+      );
+    } catch { /* route_violation 保持权威，审计失败不得放行。 */ }
+    throw error;
+  }
+}
 
 // 日志 helper：[tick] 前缀 + Asia/Shanghai 时间戳，与 tick.js 同风格
 function tickLog(...args) {
@@ -797,32 +838,7 @@ export async function dispatchNextTask(goalIds) {
     console.warn(`[dispatch] allocation guide failed: ${err.message}, proceeding with original executor`);
   }
 
-  const codeRouting = classifyCodeChange(taskToDispatch);
-  if (codeRouting.isCodeChange) {
-    const gear = deriveGearForTask(taskToDispatch);
-    const routingPayload = buildHarnessRoutingPayload(taskToDispatch, gear);
-    try {
-      await pool.query(
-        `UPDATE tasks
-           SET task_type = 'harness_initiative',
-               payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
-               updated_at = NOW()
-         WHERE id = $1`,
-        [taskToDispatch.id, JSON.stringify(routingPayload)]
-      );
-      taskToDispatch = {
-        ...taskToDispatch,
-        task_type: 'harness_initiative',
-        payload: { ...taskToDispatch.payload, ...routingPayload },
-      };
-      tickLog(`[dispatch] code_change_routing task=${taskToDispatch.id} origin_type=dev → harness_initiative gear=${gear}`);
-    } catch (persistErr) {
-      throw new Error(
-        `code_change_routing_persist_failed:${persistErr.message}`,
-        { cause: persistErr },
-      );
-    }
-  }
+  await enforceDispatchRoutingReceipt(taskToDispatch);
 
   execResult = await triggerCeceliaRun(taskToDispatch);
 

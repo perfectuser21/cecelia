@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.272.51
+**Brain 版本**: 1.272.52
+
+## Dispatcher Routing Receipt Gate（Brain 1.272.52）
+
+- 生产 Dispatcher 在 coding task 点火前从 `work_routing_receipts` 读取 canonical receipt 并完整校验；存量 `dev` 或缺失/被取代/不一致 receipt 均记录 `route_violation` 后失败关闭，不再原地改写 task type 绕过 Work Router。
 
 ## Capture Coding Route Atomicity（Brain 1.272.51）
 

@@ -13,6 +13,7 @@
  * the task is marked failed instead of being left dangling.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { canonicalRoutingReceipt, routedCodingPayload } from './helpers/routing-receipt-fixture.js';
 
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({
@@ -93,6 +94,12 @@ vi.mock('../pre-flight-check.js', () => ({
 
 describe('dispatchNextTask — claim leak on mid-flight exception (fabf6bd6)', () => {
   const TASK_ID = 'bd7e251c-0000-0000-0000-000000000001';
+  const ROUTED_TASK = {
+    id: TASK_ID,
+    task_type: 'harness_initiative',
+    title: 'harness task',
+    payload: routedCodingPayload(TASK_ID),
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -153,7 +160,10 @@ describe('dispatchNextTask — claim leak on mid-flight exception (fabf6bd6)', (
       }
       if (/SELECT \* FROM tasks WHERE id/.test(sql)) {
         // succeeds normally this time — task really gets dispatched
-        return Promise.resolve({ rows: [{ id: TASK_ID, task_type: 'harness_initiative', title: 'harness task' }] });
+        return Promise.resolve({ rows: [ROUTED_TASK] });
+      }
+      if (/FROM work_routing_receipts receipt/.test(sql)) {
+        return Promise.resolve({ rows: [canonicalRoutingReceipt(ROUTED_TASK)] });
       }
       if (/INSERT INTO working_memory/.test(sql) && params?.[0] === 'tick_last_dispatch') {
         // simulate a transient DB hiccup on the post-success dispatch-info bookkeeping insert
