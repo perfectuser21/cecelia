@@ -1,0 +1,36 @@
+{
+  "initiative_id": "77f19b77-6cc1-4680-9806-e667a72078ef",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全部改动落在 packages/brain/（migration/启动链/状态机/schema），无 UI、无远端 agent 协议、非 engine hooks",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Session Controller 所有权不变量 + 四档 change_kind 驱动执行 Profile",
+      "scope": "migration 413 给 initiative_runs 加 controller_session_id + controller_lease_expires_at（含 rollback + selfcheck 413）；harness-skill-relay 启动链收敛为 Dispatcher→Controller→Kernel（Controller 先取 ownership 再拉 Kernel，harness_runtime 路由层派生，payload 直指不得绕过，保留缺省回滚路径）；createKernelRun 无 Controller identity fail-closed；ground-truth 注入 observed.change_kind；derive.js 按 change_kind 分派四档执行 Profile（四档全保留 Generate→Evaluate→Judge + merge fence，禁与 gear 互推导，禁反向降档）；Controller/Kernel 生命周期隔离与无主 fail-closed 恢复；change-kind.js 头注释同步；三个回归测试文件（含两个 .pg.integration）登记进 POSTGRES_INTEGRATION_TESTS 永久进 CI",
+      "dod": [
+        "[BEHAVIOR] 四档 change_kind 驱动 derive Profile：bugfix/parameter_only 跳 planning 直进 generate，new_capability 全链，四档保留 G→E→J（kernel-change-kind-profile.test.js exit 0）",
+        "[BEHAVIOR] createKernelRun 无 Controller identity fail-closed，真 PG initiative_runs 无半态行（kernel-controller-ownership.pg.integration.test.js exit 0）",
+        "[BEHAVIOR] harness_runtime=kernel-v1 直打不产生无 Controller run，Controller ownership 先于 Kernel run（kernel-controller-ownership.pg.integration.test.js exit 0）",
+        "[BEHAVIOR] Kernel fatal 只结束 Kernel Controller 存活回传结构化 failure_reason；Controller fatal/无主历史 run fail-closed 进恢复（kernel-controller-lifecycle.pg.integration.test.js exit 0）",
+        "[ARTIFACT] migration 413 + rollback + selfcheck EXPECTED_SCHEMA_VERSION=413 + change-kind.js 头注释同步 + vitest.config.js POSTGRES_INTEGRATION_TESTS 登记"
+      ],
+      "files": [
+        "packages/brain/migrations/413_initiative_run_controller_ownership.sql",
+        "packages/brain/migrations/rollback/413_initiative_run_controller_ownership.down.sql",
+        "packages/brain/src/selfcheck.js",
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/impact-contract/change-kind.js",
+        "packages/brain/src/__tests__/kernel-change-kind-profile.test.js",
+        "packages/brain/src/__tests__/integration/kernel-controller-ownership.pg.integration.test.js",
+        "packages/brain/src/__tests__/integration/kernel-controller-lifecycle.pg.integration.test.js",
+        "packages/brain/vitest.config.js"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
