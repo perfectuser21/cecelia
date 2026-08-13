@@ -15,10 +15,11 @@ describe('parseArgs', () => {
     expect(() => parseArgs([])).toThrow(/--task-id/);
   });
 
-  it('解析 --task-id / --run-id / --dry-run', () => {
+  it('解析 --task-id / --run-id / --controller-session-id / --resume-token / --dry-run', () => {
     const a = parseArgs([
       '--task-id', 'T1',
       '--run-id', 'R1',
+      '--controller-session-id', 'sess-1',
       '--resume-token', 'resume-token-1',
       '--dry-run',
     ]);
@@ -26,16 +27,18 @@ describe('parseArgs', () => {
       taskId: 'T1',
       runId: 'R1',
       resumeToken: 'resume-token-1',
+      controllerSessionId: 'sess-1',
       dryRun: true,
     });
   });
 
-  it('默认 dryRun=false、runId=null、resumeToken=null', () => {
+  it('默认 dryRun=false、runId=null、resumeToken=null、controllerSessionId=null', () => {
     const a = parseArgs(['--task-id', 'T1']);
     expect(a).toEqual({
       taskId: 'T1',
       runId: null,
       resumeToken: null,
+      controllerSessionId: null,
       dryRun: false,
     });
   });
