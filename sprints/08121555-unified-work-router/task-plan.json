@@ -1,0 +1,30 @@
+{
+  "initiative_id": "fa9cbd43-bb76-4aa4-980f-32434e15e383",
+  "journey_type": "autonomous",
+  "journey_type_reason": "核心入口、角色派发、服务端机械闸与审计证据均属于后端自主治理链路",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "完成 Unified Work Router 与真实 Harness 角色链终验",
+      "scope": "交付 Recovery、Knife 0-5、真实 Controller 到 Judge 角色链及服务端字面 PASS 终验，严格绑定冻结实现基线",
+      "dod": [
+        "[BEHAVIOR] API、Intent、Capture coding mutation 均经 receipt、Map、Impact Contract、Generator、Evaluator、Judge，并由服务端返回 evaluate_verdict=PASS、judge_verdict=PASS、all_gates_passed",
+        "[BEHAVIOR] 真 Docker Generator 容器无 push/callback 权限且保留独立 provenance",
+        "[ARTIFACT] packages/brain/scripts/smoke/unified-work-router-role-chain-smoke.sh 与永久 Vitest 回归测试"
+      ],
+      "files": [
+        "packages/brain/src/",
+        "packages/brain/migrations/",
+        "packages/engine/hooks/",
+        "packages/engine/skills/dev/scripts/",
+        "docker/cecelia-runner/entrypoint.sh",
+        "packages/brain/scripts/smoke/unified-work-router-smoke.sh",
+        "packages/brain/scripts/smoke/unified-work-router-role-chain-smoke.sh",
+        "sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
