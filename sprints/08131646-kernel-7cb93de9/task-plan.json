@@ -1,0 +1,25 @@
+{
+  "initiative_id": "intent:377c0c7a-3c2e-4e5b-82a9-8a7f8bf8a35f:4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain/src/orchestrator/（纯后端调度逻辑），无 UI/远端 agent 协议改动，属自治后端。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "dispatcher evaluator 分支注入 judge_feedback（读本 run 最近 judge FAIL verdict）+ 消费侧 SKILL.md + 回归单测",
+      "scope": "在 buildInputs 的 spec.role==='evaluator' 分支新增 buildJudgeFeedback(observed)：从 observed.decisionLog 取最近一次 verdict:judge 行，detail.verdict==='FAIL' 且 feedback 非空时注入 inputs.judge_feedback={summary(sanitizeDiagnostic 脱敏截断),failure_class,round(=hop)}；无 judge verdict/PASS/空 feedback 不注入。不改 evaluator_feedback 路径与 judge 判决逻辑。evaluator SKILL.md 新增 judge_feedback 消费段（优先补齐点名证据）。判 judge_feedback 的红→绿回归单测写入 __tests__/dispatcher.test.js（brain-unit CI 永久保留）。",
+      "dod": [
+        "[BEHAVIOR] 存在 judge FAIL verdict 时 buildInputs(role=evaluator).judge_feedback 含 summary/failure_class/round，无 judge verdict/PASS 时不注入（对应 contract-dod.md B-01~B-04 manual:bash）",
+        "[BEHAVIOR] 超长 summary 截断后整包 ≤ 256KB 且 summary 脱敏（对应 B-05/B-06 manual:bash）",
+        "[ARTIFACT] dispatcher.js 含 buildJudgeFeedback 且 evaluator 分支挂载 judge_feedback；__tests__/dispatcher.test.js 含 judge_feedback 回归用例；harness-evaluator/SKILL.md 含 judge_feedback 消费段"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/__tests__/dispatcher.test.js",
+        "packages/workflows/skills/harness-evaluator/SKILL.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
