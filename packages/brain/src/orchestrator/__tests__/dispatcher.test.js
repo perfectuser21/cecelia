@@ -132,6 +132,54 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
+  it('从 canonical receipt 组装 provider routing identity，不信任 task 自报分支', async () => {
+    const deps = makeDeps();
+    const receiptId = '33333333-3333-4333-8333-333333333333';
+    const baseSha = 'b'.repeat(40);
+    const routedObserved = {
+      ...observed,
+      task: {
+        ...observed.task,
+        task_type: 'harness_initiative',
+        payload: {
+          ...observed.task.payload,
+          routing_receipt_id: receiptId,
+          work_kind: 'coding_mutation',
+          change_kind: 'bugfix',
+          repo: 'cecelia',
+        },
+      },
+      routingReceipt: {
+        id: receiptId,
+        task_id: taskId,
+        superseded: false,
+        router_version: 'work-router-v1',
+        work_kind: 'coding_mutation',
+        change_kind: 'bugfix',
+        repo: 'cecelia',
+        pipeline: 'harness',
+        canonical_task_type: 'harness_initiative',
+        impact_contract_required: true,
+        evidence: { branch: 'cp-server-branch', base_sha: baseSha },
+      },
+    };
+
+    await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 1,
+      observed: routedObserved,
+      decision: { phase: 'generate', reason: 'approved' },
+    });
+
+    expect(deps.attemptStore.createAttempt.mock.calls[0][0].bundle.inputs.routing_identity).toEqual({
+      routing_receipt_id: receiptId,
+      repo: 'cecelia',
+      branch: 'cp-server-branch',
+      base_sha: baseSha,
+    });
+  });
+
   it('批准合同后不重复装载入口 PRD，Evaluator 大合同仍可派发', async () => {
     const deps = makeDeps();
     const sourceRevision = '6faaa9f55e9789ffd29fd2760a9b5994df272e86';
