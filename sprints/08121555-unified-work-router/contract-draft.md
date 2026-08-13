@@ -1,13 +1,14 @@
-# Sprint Contract Draft (Round 3)
+# Sprint Contract Draft (Round 1)
 
 ## Notes
 
-- 实现基线（唯一 SSOT）：`310ab9e704d4e3f866e6ce7beb25b79dd0f9d524`。角色 checkout `0d13851e...` 仅用于本轮起草，不得写入实现血统、Routing Receipt、Map 或 Impact Contract。
+- 实现基线（唯一 SSOT）：`7b6d3585522b9cacf70f39322abf69d54716927d`，来源为 `inputs.implementation_baseline`。`310ab9e704d4e3f866e6ce7beb25b79dd0f9d524` 仅是 PRD 指定的历史血统根；角色 checkout 只选择本轮工作区，不得替换实现基线。
 - contract-gate: enabled (`packages/brain/src/lib/contract-gate.js` exists)
 - gp-anchor: skipped (product-map.json not found)
-- Unified Map：scope=`cecelia`，repo=`perfectuser21/cecelia`；查询时 freshness=`fresh`，fact revision=`d4956f25993a2e389d9b06f3e807b15df7f2b268`。任务未声明 expected_files，radius 返回无 `must_run_assertions`，因此没有额外 Map 回归断言；不得用领域硬编码补造。
+- `[MAP_NOT_CONFIGURED]`：task payload 有 `map_scope=["F0"]`，但没有 `map_repo`，因此未调用 radius；`must_run_assertions=[]`、fact revisions/freshness 不可得。不得回退到领域硬编码猜测当前地图。
 - 本合同只 late-bind 执行身份：Evaluator/Judge 证据分别读取 Runner 注入的 `HARNESS_ATTEMPT_ID`、`HARNESS_PROVIDER`、`HARNESS_ACCOUNT`、`HARNESS_MACHINE`、`HARNESS_MODEL`、`HARNESS_RUNNER_DIGEST`、`CAPABILITY_SNAPSHOT_ID`；各角色保留各自 provenance，并以 SHA-256 串联证据，禁止共用起草角色身份。
-- Round 2 案卷修订：冻结 checkout 现已永久包含 `tests/unified-work-router-contract.test.ts`；本轮实跑该文件得到 6 failed / 1 passed 的真实 RED。TDD 账本的七行均改为可从仓库根目录直接复制执行的完整命令，历史验证器必须逐 SHA 使用这些精确命令复跑。
+- Registry 三类均为空，字段合同按 PRD 字面与现有源码标 `[NEW_PATTERN]` 推导；`context-manifest` 端点不可用，已在已知约束留痕。
+- Round 1 无上一轮 reviewer 案卷，closure 声明为空。
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -19,7 +20,7 @@
 - `docker/cecelia-runner/__tests__/entrypoint-frozen-baseline-guard.test.sh` → baseline guard 必须验证 lineage，不能接受 imported/rebased lineage。
 - `packages/brain/scripts/fleet-worker/workspace-manager.test.cjs` → frozen_baseline 必须作为严格布尔合同传播。
 - `[累积FR]` context-manifest 本轮不可用；保留 PRD 中 active decisions 与 Knife 0-5 为约束来源。
-- `[Map]` `must_run_assertions=[]`；freshness/fact revision 仅作起草证据，不得替代 frozen implementation baseline。
+- `[Map]` `[MAP_NOT_CONFIGURED]`，`must_run_assertions=[]`；不得以角色 checkout 或当前 HEAD 替代 frozen implementation baseline。
 
 ## 八要素需求规范
 
@@ -94,16 +95,16 @@ Generator 必须按下列顺序为每个切片永久保留一对独立提交；�
 | Recovery | `test(brain): reproduce harness worktree recovery failures` | `fix(brain): protect active harness worktrees and redact origins` | `npx vitest run sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts -t 'Unified Work Router Recovery RED' --reporter=verbose` |
 | Knife 0-1 | `test(brain): define unified work routing contracts` | `feat(brain): add transactional unified work router` | `cd packages/brain && DB_URL="$DB_URL" npx vitest run src/__tests__/work-router.test.js src/__tests__/work-routing-entry.test.js src/__tests__/migration-413-work-routing.test.js src/__tests__/integration/work-routing-store.integration.test.js --reporter=verbose` |
 | Knife 2 | `test(brain): expose legacy task creation routing defects` | `refactor(brain): route all executable task creation through one boundary` | `cd packages/brain && npx vitest run src/__tests__/task-creation-inventory.test.js src/__tests__/work-router-entrypoints.test.js src/routes/__tests__/capture-atoms-routing.test.js --reporter=verbose` |
-| Knife 3 | `test(brain): require map governed harness preflight` | `feat(brain): enforce map governed four-form harness runs` | `cd packages/brain && DB_URL="$DB_URL" BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 npx vitest run src/orchestrator/__tests__/change-kind-profiles.test.js src/orchestrator/preflight/map-impact-contract.test.js src/orchestrator/__tests__/map-recovery-contract.test.js --reporter=verbose` |
+| Knife 3 | `test(brain): require map governed harness preflight` | `feat(brain): enforce map governed four-form harness runs` | `cd packages/brain && DB_URL="$DB_URL" BASELINE_SHA=7b6d3585522b9cacf70f39322abf69d54716927d npx vitest run src/orchestrator/__tests__/change-kind-profiles.test.js src/orchestrator/preflight/map-impact-contract.test.js src/orchestrator/__tests__/map-recovery-contract.test.js --reporter=verbose` |
 | Knife 4 headed | `test(engine): require routing receipt before mutation` | `feat(engine): enforce routing receipt at mutation time` | `bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh` |
 | Knife 4 headless | `test(harness): expose generator and dispatcher trust gaps` | `feat(harness): gate headless coding and generator capabilities` | `cd packages/brain && npx vitest run src/orchestrator/__tests__/dispatcher-routing-receipt.test.js --reporter=verbose && cd ../.. && bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh` |
-| Knife 5 | `test(brain): define unified router scratch acceptance` | `feat(cecelia): enforce unified work routing across all coding` | `DB_URL="$DB_URL" BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 bash packages/brain/scripts/smoke/unified-work-router-smoke.sh && cd packages/brain && npx vitest run src/__tests__/work-routing-observability.test.js --reporter=verbose` |
+| Knife 5 | `test(brain): define unified router scratch acceptance` | `feat(cecelia): enforce unified work routing across all coding` | `DB_URL="$DB_URL" BASELINE_SHA=7b6d3585522b9cacf70f39322abf69d54716927d bash packages/brain/scripts/smoke/unified-work-router-smoke.sh && cd packages/brain && npx vitest run src/__tests__/work-routing-observability.test.js --reporter=verbose` |
 
-验证命令：`node packages/brain/scripts/verify-unified-work-router-tdd-history.mjs 310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 HEAD`。验证器须把表中命令作为精确 argv/shell command 合同，在隔离临时 worktree 中逐 SHA 执行；需要 PostgreSQL 的行使用同一 attempt-scoped `DB_URL`。硬阈值：7/7 对均存在；每对 `merge-base --is-ancestor RED GREEN` 为真；每个 RED checkout 对应完整命令 exit≠0；每个 GREEN checkout 同一完整命令 exit=0；任何缺失、顺序反转、命令缺省或仅 subject 匹配均 exit 1。
+验证命令：`node packages/brain/scripts/verify-unified-work-router-tdd-history.mjs 310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 7b6d3585522b9cacf70f39322abf69d54716927d`。验证器只审冻结候选内的历史提交，不把后续角色 checkout/合同提交当实现基线；需要 PostgreSQL 的行使用同一 attempt-scoped `DB_URL`。硬阈值：7/7 对均存在；每对 `merge-base --is-ancestor RED GREEN` 为真；每个 RED checkout 对应完整命令 exit≠0；每个 GREEN checkout 同一完整命令 exit=0。
 
 ## Golden Path
 
-覆盖父路 `factory/F1` 第 1-6 步
+独立小路（无父路）
 
 入口请求 → immutable Routing Receipt → Harness+fresh Map+Impact Contract → Knife 0-5 实现 → Evaluator/Judge → scratch 多入口真实验收
 
@@ -128,7 +129,7 @@ Generator 必须按下列顺序为每个切片永久保留一对独立提交；�
 ### Step 3: Map/Impact Contract 与 frozen baseline 强制启动
 **来源**: `[FROM_PRD]` — PRD §10、§18 Knife 3、Recovery Contract Correction。
 **可观测行为**: 所有新 coding run 都 required；fresh Map/contract 才进入 Provider；stale/missing/invalid/cross-repo 全 fail closed；合法 map_recovery 仅限 allowlist。
-**验证命令**: `BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 cd packages/brain && npx vitest run src/orchestrator/__tests__/change-kind-profiles.test.js src/orchestrator/preflight/map-impact-contract.test.js src/orchestrator/__tests__/map-recovery-contract.test.js --reporter=verbose`
+**验证命令**: `cd packages/brain && BASELINE_SHA=7b6d3585522b9cacf70f39322abf69d54716927d npx vitest run src/orchestrator/__tests__/change-kind-profiles.test.js src/orchestrator/preflight/map-impact-contract.test.js src/orchestrator/__tests__/map-recovery-contract.test.js --reporter=verbose`
 **硬阈值**: `impact_contract_policy=required`、`legacy_exempt=0`；receipt/Map/contract revision 精确等于 baseline；候选 HEAD 只要求 baseline 为祖先。
 
 ### Step 4: 有头/无头动作闸与 Generator trust boundary
@@ -140,14 +141,14 @@ Generator 必须按下列顺序为每个切片永久保留一对独立提交；�
 ### Step 5: scratch 多入口真实验收并保留审计
 **来源**: `[FROM_PRD]` — PRD §16.6、§18 Knife 5。
 **可观测行为**: API/Intent/Capture 三个 coding 入口均有 receipt、Harness run、正确 Map 与 active contract；content/research/review 不误路由，review 派生修复进入 Harness；stale→拒绝→刷新→resume 保留失败审计。
-**验证命令**: `DB_URL="$DB_URL" BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 bash packages/brain/scripts/smoke/unified-work-router-smoke.sh`
+**验证命令**: `DB_URL="$DB_URL" BASELINE_SHA=7b6d3585522b9cacf70f39322abf69d54716927d bash packages/brain/scripts/smoke/unified-work-router-smoke.sh`
 **硬阈值**: coding coverage=100%、coding dev direct=0、新 legacy_exempt=0，DB 副作用均在 5 分钟时间窗内。
 
 ### Step 6: baseline lineage 与治理收口
 **来源**: `[FROM_PRD]` — Recovery Contract Correction 与 required command evidence。
 **可观测行为**: 实现从 frozen baseline 追加永久 RED/GREEN commits；最终 HEAD 不要求等于 baseline，但必须以 baseline 为祖先；Evaluator/Judge 审实际 diff 与真实产出。
-**验证命令**: `BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524; git merge-base --is-ancestor "$BASELINE_SHA" HEAD && test "$(git rev-parse HEAD)" != "$BASELINE_SHA" && node packages/brain/scripts/verify-unified-work-router-tdd-history.mjs "$BASELINE_SHA" HEAD && node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs`
-**硬阈值**: ancestry exit 0、HEAD≠baseline、TDD 账本 7/7 在各自 SHA 真复跑满足 RED→GREEN、三项 DevGate exit 0。
+**验证命令**: `IMPLEMENTATION_BASELINE=7b6d3585522b9cacf70f39322abf69d54716927d; HISTORY_ROOT=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524; git merge-base --is-ancestor "$HISTORY_ROOT" HEAD && git merge-base --is-ancestor "$IMPLEMENTATION_BASELINE" HEAD && node packages/brain/scripts/verify-unified-work-router-tdd-history.mjs "$HISTORY_ROOT" "$IMPLEMENTATION_BASELINE" && node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs`
+**硬阈值**: 两个 ancestry 检查 exit 0；TDD 账本 7/7 在冻结候选范围内真复跑满足 RED→GREEN；三项 DevGate exit 0。
 
 ## E2E 验收（最终 final-e2e 跑）
 
@@ -160,13 +161,14 @@ set -euo pipefail
 : "${DB_URL:?Fleet must inject an attempt-scoped empty PostgreSQL DB_URL}"
 : "${HARNESS_ATTEMPT_ID:?Runner must inject current role identity}"
 : "${CAPABILITY_SNAPSHOT_ID:?Runner must inject current capability snapshot}"
-BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524
+BASELINE_SHA=7b6d3585522b9cacf70f39322abf69d54716927d
+HISTORY_ROOT=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524
 export DB_URL BASELINE_SHA
 STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EVIDENCE_DIR="${SPRINT_DIR:-sprints/08121555-unified-work-router}/evidence/${HARNESS_ATTEMPT_ID}"
 mkdir -p "$EVIDENCE_DIR"
 git merge-base --is-ancestor "$BASELINE_SHA" HEAD
-test "$(git rev-parse HEAD)" != "$BASELINE_SHA"
+git merge-base --is-ancestor "$HISTORY_ROOT" "$BASELINE_SHA"
 # attempt-scoped DB 是空库：业务测试前先运行仓库真实 migration runner。
 node --input-type=module -e 'import pg from "pg"; import {runMigrations} from "./packages/brain/src/migrate.js"; const pool=new pg.Pool({connectionString:process.env.DB_URL}); try { await runMigrations(pool); } finally { await pool.end(); }'
 psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc "SELECT to_regclass('public.tasks') IS NOT NULL AND to_regclass('public.schema_version') IS NOT NULL" | grep -qx t
@@ -174,7 +176,7 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc "SELECT EXISTS (SELECT 1 FROM information
 cd packages/brain
 npx vitest run src/__tests__/harness-worktree-recovery.test.js src/__tests__/work-router.test.js src/__tests__/task-creation-inventory.test.js src/__tests__/work-router-entrypoints.test.js src/routes/__tests__/capture-atoms-routing.test.js src/orchestrator/__tests__/change-kind-profiles.test.js src/orchestrator/preflight/map-impact-contract.test.js src/orchestrator/__tests__/map-recovery-contract.test.js src/orchestrator/__tests__/dispatcher-routing-receipt.test.js --reporter=verbose | tee "$OLDPWD/$EVIDENCE_DIR/vitest.log"
 cd ../..
-node packages/brain/scripts/verify-unified-work-router-tdd-history.mjs "$BASELINE_SHA" HEAD | tee "$EVIDENCE_DIR/tdd-history.log"
+node packages/brain/scripts/verify-unified-work-router-tdd-history.mjs "$HISTORY_ROOT" "$BASELINE_SHA" | tee "$EVIDENCE_DIR/tdd-history.log"
 bash packages/engine/tests/integration/dev-mode-routing-receipt-guard.test.sh | tee "$EVIDENCE_DIR/headed-guard.log"
 bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh | tee "$EVIDENCE_DIR/generator-boundary.log"
 DB_URL="$DB_URL" BASELINE_SHA="$BASELINE_SHA" bash packages/brain/scripts/smoke/unified-work-router-smoke.sh | tee "$EVIDENCE_DIR/scratch-smoke.log"
@@ -194,6 +196,7 @@ echo "Unified Work Router Golden Path PASS"
 |---|---|---|---|
 | Recovery 前置 | `tests/unified-work-router-contract.test.ts` | `credential-bearing origin canonicalization` | 当前 origin 规范化合同不存在 |
 | Recovery 前置 | `tests/unified-work-router-contract.test.ts` | `active detached Kernel workspace protection` | 当前 active workspace 保护合同不存在 |
+| Frozen baseline | `tests/unified-work-router-contract.test.ts` | `scratch routing receipts bind the frozen implementation baseline` | 当前 scratch 入口把 receipt base_sha 绑定到角色 checkout sourceRevision，而非 implementation baseline |
 | Router/基线 | `tests/unified-work-router-contract.test.ts` | `four change kinds map forward only through one router` | 当前 Work Router 与新 receipt migration 不存在 |
 | Router/基线 | `tests/unified-work-router-contract.test.ts` | `frozen baseline is an ancestor, not final HEAD` | 当前 frozen baseline lineage 合同不存在 |
 | Map/边界 | `tests/unified-work-router-contract.test.ts` | `coding run requires Map and Impact Contract before Provider creation` | 当前强制 Map/Impact wiring 未完成 |

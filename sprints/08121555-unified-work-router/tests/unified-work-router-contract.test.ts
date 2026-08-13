@@ -100,6 +100,15 @@ describe('Unified Work Router Recovery RED [BEHAVIOR]', () => {
 });
 
 describe('Unified Work Router contract [BEHAVIOR]', () => {
+  it('scratch routing receipts bind the frozen implementation baseline', async () => {
+    const source = await import('node:fs').then(fs => fs.readFileSync(
+      'packages/brain/scripts/smoke/unified-work-router-smoke.mjs',
+      'utf8',
+    ));
+    expect(source).toContain('base_sha: implementationBaseline');
+    expect(source).not.toContain('base_sha: sourceRevision');
+  });
+
   it('four change kinds map forward only through one router', async () => {
     const mod = await import('../../../packages/brain/src/work-router.js');
     expect(mod.CHANGE_KINDS).toEqual(['new_capability', 'capability_change', 'bugfix', 'parameter_only']);

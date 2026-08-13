@@ -1,0 +1,24 @@
+{
+  "initiative_id": "fa9cbd43-bb76-4aa4-980f-32434e15e383",
+  "journey_type": "autonomous",
+  "journey_type_reason": "核心验收面是 Brain 路由、PostgreSQL、Git 与 runner 的后端自主治理链路",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "完成 Unified Work Router 冻结候选的机械验收闭环",
+      "scope": "修正 scratch 验收中的实现基线绑定，并使 Recovery、Knife 0-5、TDD 历史、Map/Impact Contract、动作闸与 Generator trust boundary 的合同命令全部可重复通过",
+      "dod": [
+        "[BEHAVIOR] scratch 三个 coding 入口生成的 Routing Receipt、Universal Map 与 Impact Contract revision 精确等于 7b6d3585522b9cacf70f39322abf69d54716927d",
+        "[BEHAVIOR] contract-dod.md 的九条真实断言与 final E2E 均由 exit code 机械判定",
+        "[ARTIFACT] 永久保留 sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts 回归测试"
+      ],
+      "files": [
+        "packages/brain/scripts/smoke/unified-work-router-smoke.mjs",
+        "sprints/08121555-unified-work-router/tests/unified-work-router-contract.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}
