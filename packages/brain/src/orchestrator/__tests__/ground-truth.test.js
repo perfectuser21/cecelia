@@ -158,6 +158,7 @@ describe('collectGroundTruth：DB 通道组装', () => {
     expect(o.task.status).toBe('in_progress');
     expect(o.contract.approved).toBe(true);
     expect(o.contract.id).toBe(CONTRACT_ID);
+    expect(o.change_kind).toBe('new_capability');
     expect(o.decisionLog).toEqual([]);
     expect(o.authCircuit).toEqual([{ account_id: 'account2', is_auth_failed: true, auth_fail_count: 2 }]);
   });
