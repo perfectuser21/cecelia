@@ -25,6 +25,8 @@ describe('parseArgs', () => {
     expect(a).toEqual({
       taskId: 'T1',
       runId: 'R1',
+      controllerSessionId: null,
+      controllerGeneration: null,
       resumeToken: 'resume-token-1',
       dryRun: true,
     });
@@ -35,6 +37,8 @@ describe('parseArgs', () => {
     expect(a).toEqual({
       taskId: 'T1',
       runId: null,
+      controllerSessionId: null,
+      controllerGeneration: null,
       resumeToken: null,
       dryRun: false,
     });
@@ -66,6 +70,7 @@ describe('runKernelMain fatal convergence', () => {
       expectedTaskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       outcome: 'failed',
       reason: 'kernel_process_fatal:dependency_assembly_failed',
+      closeControllerSession:false,
     });
     expect(pool.end).toHaveBeenCalledOnce();
   });
@@ -91,6 +96,7 @@ describe('runKernelMain fatal convergence', () => {
       expectedTaskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       outcome: 'failed',
       reason: 'kernel_process_fatal:workspace_repo_not_supported',
+      closeControllerSession:false,
     });
     expect(pool.end).toHaveBeenCalledOnce();
   });

@@ -34,6 +34,7 @@ import { sendBark } from '../notifier.js';
 
 const TASK_ID = 'aaaabbbb-cccc-dddd-eeee-ffff00001111';
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
+const CONTROLLER_SESSION_ID = '99999999-9999-4999-8999-999999999999';
 const SHORT = 'aaaabbbb';
 
 const PR_URL = 'https://github.com/org/repo/pull/42';
@@ -56,7 +57,7 @@ function makeDeps({
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql, params = []) => {
     if (/FROM initiative_runs r(?:\s|$)/.test(sql)) {
-      return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt }] };
+      return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt, controller_session_id: CONTROLLER_SESSION_ID, controller_generation: '1' }] };
     }
     if (/FROM tasks/.test(sql)) {
       return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator, ...(harnessRuntime ? { harness_runtime: harnessRuntime } : {}) } }] };
@@ -460,6 +461,8 @@ describe('resumeStalledRelayRuns', () => {
     expect(deps.launchKernel).toHaveBeenCalledWith(expect.objectContaining({
       taskId: TASK_ID,
       runId: '11111111-1111-4111-8111-111111111111',
+      controllerSessionId: CONTROLLER_SESSION_ID,
+      controllerGeneration: 1,
     }));
     expect(deps.spawnFn).not.toHaveBeenCalled();
     expect(result.resumed).toBe(1);

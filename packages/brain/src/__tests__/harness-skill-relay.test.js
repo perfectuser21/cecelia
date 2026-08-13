@@ -40,7 +40,7 @@ function makeDeps(overrides = {}) {
     snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
     createKernelRun: vi.fn().mockResolvedValue({
       created: true,
-      run: { id: KERNEL_RUN_ID },
+      run: { id: KERNEL_RUN_ID,controller_session_id:'11111111-1111-4111-8111-111111111111',controller_generation:1 },
     }),
     finalizeRun: vi.fn().mockResolvedValue({
       changed: true,
@@ -703,7 +703,7 @@ describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门
       }),
       loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT'),
       ensureWt: vi.fn().mockResolvedValue('/tmp/wt/cp-headed-kernel'),
-      createKernelRun: vi.fn().mockResolvedValue({ created: true, run: { id: runId } }),
+      createKernelRun: vi.fn().mockResolvedValue({ created: true, run: { id: runId,controller_session_id:'11111111-1111-4111-8111-111111111111',controller_generation:1 } }),
       createHeadedAttempt: vi.fn().mockResolvedValue({ id: attemptId }),
       launchKernel: vi.fn(),
       now: () => new Date('2026-08-13T00:00:00Z'),
@@ -759,7 +759,7 @@ describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门
       }),
       loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT'),
       ensureWt: vi.fn().mockResolvedValue('/tmp/wt/cp-headed-kernel-failure'),
-      createKernelRun: vi.fn().mockResolvedValue({ created: true, run: { id: runId } }),
+      createKernelRun: vi.fn().mockResolvedValue({ created: true, run: { id: runId,controller_session_id:'11111111-1111-4111-8111-111111111111',controller_generation:1 } }),
       createHeadedAttempt: vi.fn().mockResolvedValue({ id: attemptId }),
       finalizeRun: vi.fn().mockResolvedValue({ changed: true, attemptsTerminalized: 1 }),
       now: () => new Date('2026-08-13T00:00:00Z'),

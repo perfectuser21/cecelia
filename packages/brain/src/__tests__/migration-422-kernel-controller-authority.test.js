@@ -8,6 +8,8 @@ describe('migration 422 Kernel Controller authority', () => {
       'utf8',
     );
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS kernel_controller_sessions/i);
+    expect(sql).not.toMatch(/run_id UUID UNIQUE/i);
+    expect(sql).toMatch(/CREATE UNIQUE INDEX[^;]+ON kernel_controller_sessions\(run_id\)[^;]+WHERE status='active'/is);
     expect(sql).toMatch(/generation BIGINT NOT NULL/i);
     expect(sql).toMatch(/ADD COLUMN IF NOT EXISTS controller_generation BIGINT/i);
     expect(sql).toMatch(/FOREIGN KEY \(controller_session_id\)/i);

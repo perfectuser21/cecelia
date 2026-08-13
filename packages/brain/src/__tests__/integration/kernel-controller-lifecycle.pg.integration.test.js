@@ -19,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createKernelRun } from '../../orchestrator/kernel-run-store.js';
 import { writeHeartbeat } from '../../orchestrator/heartbeat.js';
+import { runKernelMain } from '../../orchestrator/run.js';
 import {
   handleKernelProcessFatal,
   reconcileOwnerlessKernelRuns,
@@ -95,6 +96,9 @@ async function insertRawRun({
   taskId, initiativeId, phase = 'generate',
   controllerSessionId = null, leaseOffsetSeconds = null,
 }) {
+  if (!controllerSessionId) {
+    await testPool.query('ALTER TABLE initiative_runs DISABLE TRIGGER v2_controller_authority_required');
+  }
   if (controllerSessionId) {
     await testPool.query(
       `INSERT INTO kernel_controller_sessions
@@ -106,7 +110,9 @@ async function insertRawRun({
   }
   // enforce_v2_run_insert_identity() 触发器要求 v2 run 带 current_task_id + created_source；
   // 无主历史 run 用 historical_reconstruction（迁移前老数据语义），ownership 列刻意留空/过期。
-  const { rows } = await testPool.query(
+  let rows;
+  try {
+    ({ rows } = await testPool.query(
     `INSERT INTO initiative_runs (
        initiative_id, current_task_id, phase, orchestrator_version, created_source,
        deadline_at, controller_session_id, controller_generation, controller_lease_expires_at
@@ -118,7 +124,12 @@ async function insertRawRun({
     leaseOffsetSeconds == null
       ? [initiativeId, taskId, phase, controllerSessionId]
       : [initiativeId, taskId, phase, controllerSessionId, leaseOffsetSeconds],
-  );
+    ));
+  } finally {
+    if (!controllerSessionId) {
+      await testPool.query('ALTER TABLE initiative_runs ENABLE TRIGGER v2_controller_authority_required');
+    }
+  }
   if (controllerSessionId) {
     await testPool.query(
       'UPDATE kernel_controller_sessions SET run_id=$2 WHERE id=$1',
@@ -284,16 +295,6 @@ describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（�
       host:'kernel-v1',deadlineHours:8,createdSource:'kernel_dispatch',
     });
     const now = new Date();
-    await testPool.query(
-      `UPDATE kernel_controller_sessions SET lease_expires_at=$2::timestamptz-INTERVAL '1 second'
-        WHERE id=$1`,
-      [created.run.controller_session_id,now],
-    );
-    await testPool.query(
-      `UPDATE initiative_runs SET controller_lease_expires_at=$2::timestamptz-INTERVAL '1 second'
-        WHERE id=$1`,
-      [created.run.id,now],
-    );
     await writeHeartbeat(testPool, {
       runId:created.run.id,controllerSessionId:created.run.controller_session_id,
       controllerGeneration:created.run.controller_generation,
@@ -321,13 +322,13 @@ describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（�
     const oldSession=created.run.controller_session_id;
     const replacement=randomUUID();
     await testPool.query(
+      `UPDATE kernel_controller_sessions SET status='closed' WHERE id=$1`,
+      [oldSession],
+    );
+    await testPool.query(
       `INSERT INTO kernel_controller_sessions(id,run_id,task_id,generation,source,status,last_heartbeat_at,lease_expires_at)
        VALUES($1,$2,$3,2,'takeover','active',NOW(),NOW()-INTERVAL '1 second')`,
       [replacement,created.run.id,taskId],
-    );
-    await testPool.query(
-      `UPDATE kernel_controller_sessions SET run_id=NULL,status='closed' WHERE id=$1`,
-      [oldSession],
     );
     await testPool.query(
       `UPDATE initiative_runs SET controller_session_id=$2,controller_generation=2,
@@ -343,5 +344,23 @@ describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（�
     );
     expect(fresh.rows[0]).toMatchObject({expired:true});
     expect(fresh.rows[0].orchestrator_host).not.toBe('stale');
+  });
+
+  it('runKernelMain 真生产 fatal 路径保留 Controller authority',async()=>{
+    const {initiativeId,taskId}=await seedTask();
+    const created=await createRoutedKernelRun(testPool,{taskId,initiativeId,phase:'planning',
+      journeyId:null,abilityId:null,host:'kernel-v1',deadlineHours:8,createdSource:'kernel_dispatch'});
+    const runtimePool={query:(...args)=>testPool.query(...args),
+      connect:(...args)=>testPool.connect(...args),end:async()=>{}};
+    await expect(runKernelMain({taskId,runId:created.run.id,dryRun:false},{
+      buildDeps:async()=>({pool:runtimePool}),activateQueuedTask:async()=>{},
+      runLoopFn:async()=>{throw new Error('provider_process_crashed');},
+    })).rejects.toThrow('provider_process_crashed');
+    const result=await testPool.query(
+      `SELECT run.phase,run.failure_reason,session.status FROM initiative_runs run
+       JOIN kernel_controller_sessions session ON session.id=run.controller_session_id WHERE run.id=$1`,
+      [created.run.id],
+    );
+    expect(result.rows[0]).toEqual({phase:'failed',failure_reason:'kernel_process_fatal:provider_process_crashed',status:'active'});
   });
 });

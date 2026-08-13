@@ -7,8 +7,14 @@ import { writeHeartbeat } from '../heartbeat.js';
 
 const RUN_ID = '00000000-0000-0000-0000-000000000312';
 
-function mockPool(result = { rows: [{ id: RUN_ID }] }) {
-  return { query: vi.fn().mockResolvedValue(result) };
+function mockPool() {
+  const client={query:vi.fn(async(sql)=>{
+    if (/SELECT current_task_id/.test(sql)) return {rows:[{current_task_id:'task-1'}]};
+    if (/SELECT controller_session_id/.test(sql)) return {rows:[{controller_session_id:'11111111-1111-4111-8111-111111111111',controller_generation:'1'}]};
+    if (/UPDATE kernel_controller_sessions/.test(sql)) return {rows:[{lease_expires_at:new Date()}]};
+    return {rows:[]};
+  }),release:vi.fn()};
+  return {connect:vi.fn(async()=>client),client};
 }
 
 describe('writeHeartbeat', () => {
@@ -17,17 +23,15 @@ describe('writeHeartbeat', () => {
     const now = new Date('2026-07-04T12:00:00Z');
     await writeHeartbeat(pool, { runId: RUN_ID, controllerSessionId:'11111111-1111-4111-8111-111111111111',controllerGeneration:1,host: 'mac-mini-us', pid: 4242, now });
 
-    expect(pool.query).toHaveBeenCalledTimes(1);
-    const [sql, params] = pool.query.mock.calls[0];
+    const sessionCall=pool.client.query.mock.calls.find(([sql])=>/UPDATE kernel_controller_sessions/.test(sql));
+    const runCall=pool.client.query.mock.calls.find(([sql])=>/UPDATE initiative_runs/.test(sql));
+    const [sql, params] = sessionCall;
     expect(sql).toContain('kernel_controller_sessions');
-    expect(sql).toContain('controller_lease_expires_at');
-    expect(sql).toContain('controller_generation');
-    expect(sql).toContain('UPDATE initiative_runs');
+    expect(sql).toContain('generation=$4');
+    expect(runCall[0]).toContain('controller_lease_expires_at');
     for (const col of ['orchestrator_heartbeat_at', 'orchestrator_host', 'orchestrator_pid']) {
-      expect(sql).toContain(col);
+      expect(runCall[0]).toContain(col);
     }
-    expect(sql).toMatch(/WHERE run\.id\s*=\s*\$1/);
-    expect(params).toEqual([RUN_ID, now, 'mac-mini-us', 4242, 1800,
-      '11111111-1111-4111-8111-111111111111',1]);
+    expect(params).toEqual(['11111111-1111-4111-8111-111111111111',now,1800,1,RUN_ID]);
   });
 });

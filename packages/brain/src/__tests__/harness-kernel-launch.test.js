@@ -18,6 +18,16 @@ vi.mock('../db.js', () => ({
 
 import { launchKernelProcess } from '../harness-skill-relay.js';
 
+const CONTROLLER_SESSION_ID = '99999999-9999-4999-8999-999999999999';
+const CONTROLLER_GENERATION = 1;
+
+function authority() {
+  return {
+    controllerSessionId: CONTROLLER_SESSION_ID,
+    controllerGeneration: CONTROLLER_GENERATION,
+  };
+}
+
 function okChild(pid = 4321) {
   const listeners = new Map();
   const child = {
@@ -54,6 +64,15 @@ function failingChild(error) {
 }
 
 describe('launchKernelProcess detached spawn receipt', () => {
+  it('refuses to launch a Kernel process without durable Controller proof', async () => {
+    await expect(launchKernelProcess({
+      taskId: '11111111-1111-4111-8111-111111111111',
+      runId: '22222222-2222-4222-8222-222222222222',
+      worktreePath: '/tmp',
+    })).rejects.toThrow('controller_lease_identity_missing');
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
   it('rejects an asynchronous spawn error before unref so watchdog can roll back its token', async () => {
     const child = failingChild(Object.assign(
       new Error('spawn ENOENT'),
@@ -66,6 +85,7 @@ describe('launchKernelProcess detached spawn receipt', () => {
       runId: '22222222-2222-4222-8222-222222222222',
       worktreePath: '/missing/kernel-worktree',
       resumeToken: 'resume-token',
+      ...authority(),
     })).rejects.toThrow(/ENOENT/);
 
     expect(child.unref).not.toHaveBeenCalled();
@@ -82,6 +102,7 @@ describe('launchKernelProcess detached spawn receipt', () => {
         taskId: '44444444-4444-4444-8444-444444444444',
         runId,
         worktreePath: '/tmp',
+        ...authority(),
       });
       const opts = spawnMock.mock.calls.at(-1)[2];
       // stdio 不再是 'ignore'——是 [ignore, fd, fd] 数组，stdout/stderr 落 fd
@@ -111,6 +132,7 @@ describe('launchKernelProcess detached spawn receipt', () => {
         taskId: '66666666-6666-4666-8666-666666666666',
         runId,
         worktreePath: '/tmp',
+        ...authority(),
       });
       const opts = spawnMock.mock.calls.at(-1)[2];
       const expectedLogPath = join(fakeRepoRoot, 'logs', 'kernel', `kernel-${runId}.log`);
@@ -145,6 +167,7 @@ describe('launchKernelProcess detached spawn receipt', () => {
         taskId: '88888888-8888-4888-8888-888888888888',
         runId,
         worktreePath: '/tmp',
+        ...authority(),
       });
       const opts = spawnMock.mock.calls.at(-1)[2];
       expectedLogPath = join(repoRootPath, 'logs', 'kernel', `kernel-${runId}.log`);
