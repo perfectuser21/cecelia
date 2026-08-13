@@ -68,12 +68,15 @@ const CANONICAL_MACHINE_IDS = new Set([
   'xian-mac-m1',
 ]);
 
-/** 解析 --task-id / --run-id / --dry-run */
+/** 解析 --task-id / --run-id / --controller-session-id / --resume-token / --dry-run */
 export function parseArgs(argv) {
   const args = {
     taskId: null,
     runId: null,
     resumeToken: null,
+    // 创建端 Controller session（sprint 08132021）：detached child 续租身份，
+    // 由 launchKernelProcess 以 --controller-session-id 透传，禁止仅凭 run_id 续租。
+    controllerSessionId: null,
     dryRun: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -81,6 +84,7 @@ export function parseArgs(argv) {
     if (a === '--task-id') args.taskId = argv[++i];
     else if (a === '--run-id') args.runId = argv[++i];
     else if (a === '--resume-token') args.resumeToken = argv[++i];
+    else if (a === '--controller-session-id') args.controllerSessionId = argv[++i];
     else if (a === '--dry-run') args.dryRun = true;
   }
   if (!args.taskId) {
@@ -423,6 +427,7 @@ export async function runKernelMain({
   taskId,
   runId,
   resumeToken,
+  controllerSessionId = null,
   dryRun,
 }, {
   buildDeps = buildRealDeps,
@@ -455,6 +460,7 @@ export async function runKernelMain({
       taskId,
       runId,
       resumeToken,
+      controllerSessionId,
       dryRun,
     });
   } catch (error) {
@@ -485,12 +491,14 @@ async function main() {
     taskId,
     runId,
     resumeToken,
+    controllerSessionId,
     dryRun,
   } = args;
   const result = await runKernelMain({
     taskId,
     runId,
     resumeToken,
+    controllerSessionId,
     dryRun,
   });
   console.log(`[orchestrator] exit: ${result.exitReason} (hops=${result.hops})`);

@@ -123,15 +123,35 @@ export function shortId(id) {
   return String(id).replace(/-/g, '').slice(0, 8);
 }
 
+/**
+ * 组装 detached Kernel 的 CLI argv（纯装配 seam，无 spawn / 无 DB，便于单测）。
+ * 创建端 controllerSessionId 必须随参数一并落地（--controller-session-id），detached
+ * child 才能凭创建端 session 做可信续租——禁止仅凭 run_id 续租（sprint 08132021）。
+ */
+export function buildKernelLaunchArgs({
+  runner,
+  taskId,
+  runId,
+  controllerSessionId = null,
+  resumeToken = null,
+}) {
+  const args = [runner, '--task-id', taskId, '--run-id', runId];
+  if (controllerSessionId) args.push('--controller-session-id', controllerSessionId);
+  if (resumeToken) args.push('--resume-token', resumeToken);
+  return args;
+}
+
 export async function launchKernelProcess({
   taskId,
   runId,
   worktreePath,
+  controllerSessionId = null,
   resumeToken = null,
 }) {
   const runner = fileURLToPath(new URL('./orchestrator/run.js', import.meta.url));
-  const args = [runner, '--task-id', taskId, '--run-id', runId];
-  if (resumeToken) args.push('--resume-token', resumeToken);
+  const args = buildKernelLaunchArgs({
+    runner, taskId, runId, controllerSessionId, resumeToken,
+  });
   // 刀0：detached kernel 的 stdout/stderr 落盘到宿主可见目录，替代 stdio:'ignore'。
   // 原先零遗言——kernel 卡死/崩溃时看不到任何栈（planner 停摆 debug 不能）。
   // 落 CECELIA_KERNEL_LOG_DIR，未设置时落 REPO_ROOT/logs/kernel/（bind-mount 持久路径，
@@ -266,7 +286,9 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
 
   const launchKernel = deps.launchKernel || launchKernelProcess;
   try {
-    const launched = await launchKernel({ taskId: task.id, runId, worktreePath });
+    const launched = await launchKernel({
+      taskId: task.id, runId, worktreePath, controllerSessionId,
+    });
     console.log(`[skill-relay][kernel-v1] launched run=${runId} pid=${launched.pid ?? '?'}`);
     return { ok: true, mode: 'kernel-v1', runId, ...launched, sprintDir, worktreePath };
   } catch (error) {
