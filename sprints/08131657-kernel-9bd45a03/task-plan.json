@@ -1,0 +1,30 @@
+{
+  "initiative_id": "9bd45a03-60e8-4790-9616-44f516ef0270",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉 packages/brain harness 运行时（kernel/controller 进程调度），无 UI、无远端 agent 协议、无 engine hooks，落 autonomous 默认档。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "真身 Session Controller —— 每条 kernel run 一个常驻监护进程（认领→lease续租→监护→fatal分流→human_review冻结→终局回写退出）",
+      "scope": "新增 kernel-controller-runtime.js（renewControllerLease/classifyKernelFatal/superviseKernelFatal/guardPushDuringHumanReview/finalizeControllerExit/deriveControllerSessionId）+ kernel-controller.js 常驻 daemon 入口；改 _spawnKernelRuntime 先 spawn Controller 真身再由其拉起 Kernel、ownership 写真进程身份；Controller 只监护不执行任何阶段工作，orphan-guard 降级为后备保持不动。",
+      "dod": [
+        "[BEHAVIOR] createKernelRun 后存在活 Controller 进程且 controller_session_id 指向真身（node behavior.mjs B-01）",
+        "[BEHAVIOR] lease 两周期续租单调前移且错误 session 被拒（node behavior.mjs B-02）",
+        "[BEHAVIOR] kill -9 Kernel 可恢复类 resume run 不无主 / 不可恢复类结构化终止（node behavior.mjs B-03 / B-04）",
+        "[BEHAVIOR] kill -9 Controller lease 过期 orphan-guard 兜底接管（node behavior.mjs B-05）",
+        "[BEHAVIOR] human_review 冻结 PR push head 不漂移裁决后解冻（node behavior.mjs B-06）",
+        "[BEHAVIOR] merged 后回写 task.result（pr_url+merged）才退出（node behavior.mjs B-07）",
+        "[ARTIFACT] kernel-controller-runtime.js / kernel-controller.js 存在且 _spawnKernelRuntime 引用 spawnKernelController"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/kernel-controller-runtime.js",
+        "packages/brain/src/orchestrator/kernel-controller.js",
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/__tests__/integration/kernel-controller-runtime.pg.integration.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
