@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**版本**: 1.272.32
+**版本**: 1.272.36
+
+## Frozen contract artifact deterministic ordering
+
+- Kernel 从 PostgreSQL 读取已封存合同资产后，统一按与完整性校验器相同的 Unicode 码点顺序规范化路径；数据库 locale 不再把小写测试路径排到大写路径前并误报 `order_or_duplicate`。
+- 不可变内容、source revision、SHA-256、字节数与 sealed manifest 校验保持 fail-closed；回归测试覆盖生产 F1 Run 出现的 `gp-identity` / `RED-evidence` 混合大小写路径。
 
 ## Approved contract TaskBundle deduplication
 
