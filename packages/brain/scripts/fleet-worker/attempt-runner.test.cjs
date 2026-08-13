@@ -2665,6 +2665,11 @@ describe('Fleet Worker durable runtime adapters', () => {
         runtimeEnvironment: {
           DB_URL: 'postgresql://attempt:secret@postgres:5432/acceptance',
           DATABASE_URL: 'postgresql://attempt:secret@postgres:5432/acceptance',
+          DB_HOST: 'postgres',
+          DB_PORT: '5432',
+          DB_USER: 'attempt',
+          DB_PASSWORD: 'secret',
+          DB_NAME: 'acceptance_scratch',
         },
       })).resolves.toEqual({ containerId: 'container-created' });
 
@@ -2751,6 +2756,11 @@ describe('Fleet Worker durable runtime adapters', () => {
         '--env', `CECELIA_CREDENTIAL_REF=${CREDENTIAL.credentialRef}`,
         '--env', 'DB_URL=postgresql://attempt:secret@postgres:5432/acceptance',
         '--env', 'DATABASE_URL=postgresql://attempt:secret@postgres:5432/acceptance',
+        '--env', 'DB_HOST=postgres',
+        '--env', 'DB_PORT=5432',
+        '--env', 'DB_USER=attempt',
+        '--env', 'DB_PASSWORD=secret',
+        '--env', 'DB_NAME=acceptance_scratch',
       ]));
       expect(createArgs.join(' ')).not.toContain(CREDENTIAL.authJson);
       expect(createArgs.join(' ')).not.toContain(GITHUB_TOKEN);
