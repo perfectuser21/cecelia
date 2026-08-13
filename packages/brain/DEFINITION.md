@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.272.53
+**Brain 版本**: 1.272.54
+
+## Attempt Workspace Action Identity（Brain 1.272.54）
+
+- 动作闸的 branch/base SHA 绑定服务端解析后的当前 Attempt workspace；Routing Receipt 的起始 baseline 继续独立保留，跨 Planner、Generator 子分支时不再拿顶层 branch 冒充当前执行面。
 
 ## Canonical Provider Routing Identity（Brain 1.272.53）
 

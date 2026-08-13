@@ -8,11 +8,15 @@
 
 
 
-**Brain 版本**: 1.272.53
+**Brain 版本**: 1.272.54
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.54 — Attempt Workspace Action Identity
+
+- 动作闸的 branch/base SHA 由当前 Attempt workspace spec 提供；顶层 receipt baseline 单独保留用于完整血统核验。
 
 ## Brain 1.272.53 — Canonical Provider Routing Identity
 
