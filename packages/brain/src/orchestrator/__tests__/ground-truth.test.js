@@ -161,6 +161,73 @@ describe('collectGroundTruth：DB 通道组装', () => {
     expect(o.authCircuit).toEqual([{ account_id: 'account2', is_auth_failed: true, auth_fail_count: 2 }]);
   });
 
+  it('只投影 Runner 验证且与 Generator Attempt/Workspace/Machine 一致的本地候选', async () => {
+    const attemptId = '22222222-2222-4222-8222-222222222222';
+    const baseSha = 'a'.repeat(40);
+    const headSha = 'b'.repeat(40);
+    const artifact = {
+      type: 'git_candidate',
+      verification_status: 'verified',
+      source_attempt_id: attemptId,
+      repo: 'perfectuser21/cecelia',
+      branch: 'cp-local-candidate',
+      base_sha: baseSha,
+      head_sha: headSha,
+      machine_id: 'us-mac-m4',
+    };
+    const deps = makeDeps({ rows: { attempts: [{
+      id: attemptId,
+      run_id: RUN_ID,
+      hop: 3,
+      role: 'generator',
+      status: 'completed',
+      actual_machine_id: 'us-mac-m4',
+      task_bundle: {
+        inputs: {
+          task_id: TASK_ID,
+          workspace_spec: {
+            repo: artifact.repo,
+            branch: artifact.branch,
+            base_sha: baseSha,
+          },
+        },
+      },
+      result: {
+        status: 'completed',
+        artifacts: [artifact],
+      },
+    }] } });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.candidate).toEqual(artifact);
+  });
+
+  it('拒绝 Provider 伪造或 machine 不一致的 git_candidate', async () => {
+    const attemptId = '22222222-2222-4222-8222-222222222222';
+    const deps = makeDeps({ rows: { attempts: [{
+      id: attemptId,
+      run_id: RUN_ID,
+      hop: 3,
+      role: 'generator',
+      status: 'completed',
+      actual_machine_id: 'xian-mac-m4',
+      task_bundle: { inputs: { task_id: TASK_ID, workspace_spec: {
+        repo: 'perfectuser21/cecelia', branch: 'cp-local-candidate', base_sha: 'a'.repeat(40),
+      } } },
+      result: { status: 'completed', artifacts: [{
+        type: 'git_candidate', verification_status: 'verified',
+        source_attempt_id: attemptId, repo: 'perfectuser21/cecelia',
+        branch: 'cp-local-candidate', base_sha: 'a'.repeat(40),
+        head_sha: 'b'.repeat(40), machine_id: 'us-mac-m4',
+      }] },
+    }] } });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.candidate).toBeNull();
+  });
+
   it('未显式固定基线时，从本 Run 最早的合法 WorkspaceSpec 恢复稳定实现基线', async () => {
     const baselineSha = '1'.repeat(40);
     const laterContractSha = '2'.repeat(40);
