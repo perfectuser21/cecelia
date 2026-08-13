@@ -1,0 +1,25 @@
+{
+  "initiative_id": "416ce7c0-5423-47db-b398-96f6d080e591",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅改 packages/brain/ orchestrator dispatcher 纯后端装配逻辑，无 UI/远端 agent/engine 介入；验证走本地 vitest 单测",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "dispatcher.gpContractIdentity 分离 journey-only 锚判定 + journey_id 保留进 common bundle",
+      "scope": "gpContractIdentity 把 5 个 GP 字段(id/version/hash/golden_path_id/step_id)与 journey_id 分离判定：GP 字段全空时按 journey_id 合法性走 journey-only(返 null)或非法(抛错)分支，任一 GP 字段非空则进原全量严格校验(不削弱一致性)；buildInputs 在 journey-only(无 gp_contract 但 journey_id 合法 UUID)时把 journey_id 保留进 common。永久回归测试覆盖 journey-only/partial/complete 三态 + 边界 fail-closed，落 packages/brain/src/orchestrator/__tests__/。",
+      "dod": [
+        "[BEHAVIOR] journey-only 锚 spawn:generator 装配 status=LAUNCHED 且 bundle.inputs.gp_contract undefined、bundle.inputs.journey_id 保留(对应合同 B-01)",
+        "[BEHAVIOR] partial GP 字段与非法 journey_id 均 fail-closed 抛 GP_CONTRACT_IDENTITY_INVALID(对应合同 B-02/B-04)",
+        "[BEHAVIOR] 完整合同结构化注入 gp_contract 且原 dispatcher.test.js 回归不破(对应合同 B-03)",
+        "[ARTIFACT] packages/brain/src/orchestrator/__tests__/dispatcher-gp-contract-identity.test.js 存在于 CI include 路径"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/__tests__/dispatcher-gp-contract-identity.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
