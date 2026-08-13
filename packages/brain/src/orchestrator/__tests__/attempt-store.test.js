@@ -1246,6 +1246,85 @@ describe('attempt store', () => {
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
 
+  it('generator-fix 只用 Runner 验证的本地 candidate 投影进度', async () => {
+    const baseSha = 'a'.repeat(40);
+    const candidateSha = 'c'.repeat(40);
+    const workspaceSpec = {
+      repo: 'perfectuser21/cecelia',
+      branch: 'cp-candidate-progress',
+      base_sha: baseSha,
+    };
+    const callbackResult = {
+      status: 'completed',
+      summary: 'local candidate retained',
+      artifacts: [{
+        type: 'git_candidate',
+        verification_status: 'verified',
+        source_attempt_id: input.id,
+        repo: workspaceSpec.repo,
+        branch: workspaceSpec.branch,
+        base_sha: baseSha,
+        head_sha: candidateSha,
+        machine_id: 'us-mac-m4',
+      }],
+      provider_metadata: { provider: 'codex' },
+      decision: null,
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'generate',
+      role: 'generator',
+      provider: 'codex',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      actual_machine_id: 'us-mac-m4',
+      task_bundle: { inputs: { workspace_spec: workspaceSpec } },
+      result: null,
+    };
+    const completed = { ...running, status: 'completed', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ trigger_sha: baseSha }] })
+        .mockResolvedValueOnce({ rows: [{ hop: 5 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ id: input.runId }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    const projection = client.query.mock.calls.find(([sql]) => (
+      /verdict:generator-fix-callback/i.test(sql)
+    ));
+    expect(projection).toBeDefined();
+    expect(JSON.parse(projection[1][1])).toMatchObject({
+      attempt_id: input.id,
+      pr_head_sha: candidateSha,
+      provider: 'codex',
+    });
+    expect(JSON.parse(projection[1][2])).toMatchObject({
+      attempt_id: input.id,
+      pr_head_sha: candidateSha,
+      verification_status: 'verified',
+      trigger_sha: baseSha,
+    });
+    expect(client.query.mock.calls.some(([sql]) => /pr_url=\$2/i.test(sql))).toBe(false);
+  });
+
   it('an exact terminal retry never reprojects a PR into a now-terminal run', async () => {
     const callbackResult = {
       status: 'completed',
