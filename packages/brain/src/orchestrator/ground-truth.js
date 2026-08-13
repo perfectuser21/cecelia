@@ -416,6 +416,52 @@ export async function collectGroundTruth(deps, opts) {
     };
   }
 
+  // A recovery run may legitimately resume at Evaluator after an earlier trusted
+  // run generated the PR.  Do not trust the mutable task payload for that jump:
+  // require a completed Generator Attempt and an allowed Evaluator intent from a
+  // trusted prior Kernel run for the same task, then bind that server observation
+  // to the exact PR URL and GitHub head currently observed above.
+  let verifiedExistingPrOrigin = null;
+  if (run.created_source === 'explicit_recovery' && pr != null) {
+    const originRes = await pool.query(
+      `SELECT prior_run.id AS validation_origin_run_id,
+              evaluator_intent.observed
+         FROM initiative_runs prior_run
+         JOIN orchestrator_decision_log evaluator_intent
+           ON evaluator_intent.run_id = prior_run.id
+          AND evaluator_intent.action = 'spawn:evaluator'
+          AND evaluator_intent.gate_verdict = 'allow'
+        WHERE prior_run.current_task_id = $1
+          AND prior_run.id <> $2
+          AND prior_run.orchestrator_version = 'v2'
+          AND prior_run.record_trust_status IN ('trusted', 'reconstructed')
+          AND EXISTS (
+            SELECT 1
+              FROM harness_attempts generator_attempt
+             WHERE generator_attempt.run_id = prior_run.id
+               AND generator_attempt.role = 'generator'
+               AND generator_attempt.status IN ('completed', 'completed_with_concerns')
+               AND generator_attempt.result IS NOT NULL
+          )
+        ORDER BY evaluator_intent.created_at DESC, evaluator_intent.hop DESC`,
+      [taskId, runId],
+    );
+    const matchingOrigin = originRes.rows.find((row) => {
+      const observedPr = asJson(row.observed)?.pr;
+      return observedPr?.url === pr.url
+        && GIT_SHA_PATTERN.test(observedPr?.head_sha ?? '')
+        && observedPr.head_sha === pr.head_sha;
+    });
+    if (matchingOrigin) {
+      verifiedExistingPrOrigin = Object.freeze({
+        source: 'trusted_prior_kernel_run',
+        run_id: matchingOrigin.validation_origin_run_id,
+        pr_url: pr.url,
+        pr_head_sha: pr.head_sha,
+      });
+    }
+  }
+
   // ---- propose 分支 rN（外部真相，ganRound 唯一权威）----
   // 新分支同时绑定 task + run，防止同一 task 重跑时碰撞或消费旧 run 的合同。
   // 对部署前已在途的 legacy 分支，只在当前 run 的严格 TaskBundle 明确引用时兼容。
@@ -634,6 +680,7 @@ export async function collectGroundTruth(deps, opts) {
     plannerPrdArtifact,
     contract,
     pr,
+    verifiedExistingPrOrigin,
     inflight: {
       containers,
       host_pids: hostPids,

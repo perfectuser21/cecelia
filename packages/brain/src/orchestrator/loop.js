@@ -80,12 +80,26 @@ function asPayload(value) {
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 function allowsVerifiedExistingPrEvaluatorOrigin(observed, action) {
-  if (action !== ACTION.SPAWN_EVALUATOR || observed.gear !== 'hotfix') return false;
+  if (action !== ACTION.SPAWN_EVALUATOR) return false;
   if (observed.generatorSpawned === true) return false;
   if ((observed.decisionLog ?? []).some((row) => (
     ['spawn:generator', 'spawn:generator-fix'].includes(row?.action)
     || asPayload(row?.detail).validation_origin === VERIFIED_EXISTING_PR_ORIGIN
   ))) return false;
+
+  const priorOrigin = observed.verifiedExistingPrOrigin;
+  if (
+    observed.run?.created_source === 'explicit_recovery'
+    && priorOrigin?.source === 'trusted_prior_kernel_run'
+    && typeof priorOrigin.run_id === 'string'
+    && priorOrigin.pr_url === observed.pr?.url
+    && GIT_SHA_PATTERN.test(priorOrigin.pr_head_sha ?? '')
+    && priorOrigin.pr_head_sha === observed.pr?.head_sha
+  ) {
+    return true;
+  }
+
+  if (observed.gear !== 'hotfix') return false;
 
   const payload = asPayload(observed.task?.payload);
   const declaredUrl = payload.pr_url;
@@ -1386,7 +1400,15 @@ export async function runLoop(
           crossCheckMismatch: counters.crossCheckMismatch,
           ...(validationClock ?? {}),
           ...(allowEvaluatorOrigin
-            ? { validation_origin: VERIFIED_EXISTING_PR_ORIGIN }
+            ? {
+                validation_origin: VERIFIED_EXISTING_PR_ORIGIN,
+                ...(observed.verifiedExistingPrOrigin?.run_id
+                  ? {
+                      validation_origin_run_id:
+                        observed.verifiedExistingPrOrigin.run_id,
+                    }
+                  : {}),
+              }
             : {}),
           ...humanReviewDetail(observed, decision.reason),
           ...(impactGateReceipt ? { impact_gate: impactGateReceipt } : {}),
