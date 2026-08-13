@@ -8,11 +8,15 @@
 
 
 
-**Brain 版本**: 1.272.60
+**Brain 版本**: 1.272.61
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.272.61 — Injectable Kernel Run Preflight
+
+- Canonical relay-run API 支持服务端依赖注入，使 PostgreSQL 并发合同在完整 Routing Receipt 前置下可复现验证，生产默认仍使用真实 Map/Impact preflight。
 
 ## Brain 1.272.60 — Real Unified Work Router Acceptance
 

@@ -449,6 +449,7 @@ async function createRelayRun(req, res, legacyInitiativeId = null) {
 
   try {
     const requestPool = req.app.get('pool') || pool;
+    const kernelRunStoreDeps = req.app.get('kernelRunStoreDeps') || {};
     const result = await createKernelRun(requestPool, {
       taskId,
       initiativeId,
@@ -460,7 +461,7 @@ async function createRelayRun(req, res, legacyInitiativeId = null) {
       createdSource,
       commanderMode,
       predecessorRunId: body.predecessor_run_id ?? null,
-    });
+    }, kernelRunStoreDeps);
     return res.status(result.created ? 201 : 200).json(result);
   } catch (err) {
     if (
