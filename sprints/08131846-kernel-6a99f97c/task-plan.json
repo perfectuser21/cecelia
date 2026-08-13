@@ -1,0 +1,38 @@
+{
+  "initiative_id": "6a99f97c-e1d3-497a-8788-9a3c45975ef1",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动集中在 packages/brain 编排层（derive/gates/contract-store/kernel finalize）+ CI shell 判定脚本 + DB 写路径，无 UI/远端 agent/engine 路径，属纯后端自治闭环",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Harness PR 机器身份识别 + AI 验收前合并硬闸 + contract-store 状态分流",
+      "scope": "should-auto-merge.sh 改为凭不可伪造机器身份（harness label，第 3 参数）判定并移除 feat(harness): 标题猜测；ci.yml auto-merge job 传入 PR labels；Brain 编排层给 generator PR 签发 harness label（Brain 侧，runner 只读）；derive() 对『PR 外部已合 + Generator running + 无 Evaluator/Judge』fail-closed 路由 premature_merge，kernel finalize 不标 run done/task completed 并写 harness_run_events 可追责事件；gates.mergeGate 保持同 head_sha 三闸唯一权威；contract-store 附着 draft 原子换版 / approved 同证据幂等 / superseded·未知态 fail-closed 抛错。落地永久回归测试并把 PG 集成测试登记进 POSTGRES_INTEGRATION_TESTS 与 brain-integration job。",
+      "dod": [
+        "[BEHAVIOR] should-auto-merge.sh 凭 harness label SKIP、无身份 /dev MERGE（不靠标题猜），should-auto-merge.test.sh 全绿",
+        "[BEHAVIOR] derive() 对外部已合+Generator running+无验收路由 premature_merge，kernel-premature-merge.pg.integration 真 PG 验 run/task 未 completed + failure_reason=premature_merge + harness_run_events 可追责事件",
+        "[BEHAVIOR] gates.test.js 覆盖同 head_sha 三闸唯一权威（缺验收/stale 拒、齐备放行）",
+        "[BEHAVIOR] contract-store.test.js 真 PG 验 draft 换版 / approved 同证据幂等 / superseded·未知 fail-closed",
+        "[ARTIFACT] ci.yml auto-merge job 传入 PR labels；Brain 编排层存在 harness label 签发路径；PG 集成测试登记进 POSTGRES_INTEGRATION_TESTS"
+      ],
+      "files": [
+        ".github/workflows/scripts/should-auto-merge.sh",
+        ".github/workflows/scripts/__tests__/should-auto-merge.test.sh",
+        ".github/workflows/ci.yml",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/kernel-handlers.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/src/orchestrator/gates.js",
+        "packages/brain/src/orchestrator/contract-store.js",
+        "packages/brain/src/orchestrator/__tests__/derive-premature-merge.test.js",
+        "packages/brain/src/orchestrator/__tests__/kernel-premature-merge.pg.integration.test.js",
+        "packages/brain/src/orchestrator/__tests__/gates.test.js",
+        "packages/brain/src/orchestrator/__tests__/contract-store.test.js",
+        "packages/brain/src/orchestrator/__tests__/harness-pr-identity.test.js",
+        "packages/brain/vitest.config.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
