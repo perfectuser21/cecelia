@@ -96,6 +96,7 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
   const runId = randomUUID();
   const payload = {
     harness_runtime: 'kernel-v1',
+    orchestrator: 'skill-relay',
     sprint_dir: 'sprints/07231527-relay-50170af2',
     worktree_path: '/workspace',
     base_repo: 'perfectuser21/cecelia',
@@ -278,22 +279,17 @@ afterAll(dropIsolatedDatabase, 30_000);
 
 describe('Kernel restart recovery on real PostgreSQL decision log', () => {
   async function seedExpiredKernelAttempt(run, hop = 1) {
-    await testPool.query(
-      `UPDATE tasks
-          SET payload = payload || '{"orchestrator":"skill-relay"}'::jsonb
-        WHERE id=$1`,
-      [run.taskId],
-    );
     const attemptId = randomUUID();
     await testPool.query(
       `INSERT INTO harness_attempts (
          id, run_id, hop, phase, role, provider, task_bundle,
-         callback_secret_hash, status, lease_owner, lease_expires_at,
-         provider_session_id, logical_cycle_id, attempt_kind, workstream_key
+       callback_secret_hash, status, lease_owner, lease_expires_at,
+         provider_session_id, logical_cycle_id, attempt_kind, workstream_key,
+         execution_transport
        ) VALUES (
          $1,$2,$3,'generate','generator','codex','{}'::jsonb,
          'old-hash','running','old-owner',NOW()-INTERVAL '1 minute',
-         'provider-thread','task-cycle','initial','ws1'
+         'provider-thread','task-cycle','initial','ws1','local-docker'
        )`,
       [attemptId, run.runId, hop],
     );
@@ -303,6 +299,27 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
   it('public watchdog success resumes a new lineage child, never the expired parent', async () => {
     const run = await seedRun();
     const parentId = await seedExpiredKernelAttempt(run);
+    const recoveryFixture = await testPool.query(
+      `SELECT task.status, task.payload, attempt.status AS attempt_status,
+              attempt.lease_expires_at, attempt.execution_transport,
+              kernel.orchestrator_heartbeat_at, kernel.orchestrator_host
+         FROM tasks task
+         JOIN initiative_runs kernel ON kernel.current_task_id=task.id
+         JOIN harness_attempts attempt ON attempt.run_id=kernel.id
+        WHERE task.id=$1`,
+      [run.taskId],
+    );
+    expect(recoveryFixture.rows[0]).toMatchObject({
+      status: 'in_progress',
+      payload: expect.objectContaining({
+        orchestrator: 'skill-relay',
+        harness_runtime: 'kernel-v1',
+      }),
+      attempt_status: 'running',
+      execution_transport: 'local-docker',
+      orchestrator_heartbeat_at: null,
+      orchestrator_host: null,
+    });
     const resumeAttempt = vi.fn(async (child, context) => {
       expect(child.id).not.toBe(parentId);
       expect(context.originalParentAttempt.id).toBe(parentId);
@@ -322,7 +339,7 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
       launchKernel: vi.fn(),
     });
 
-    expect(result.resumed).toBe(1);
+    expect(result).toMatchObject({ scanned: 1, resumed: 1 });
     expect(resumeAttempt).toHaveBeenCalledOnce();
     const lineage = await testPool.query(
       `SELECT parent.status AS parent_status,
@@ -353,12 +370,6 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
     for (let index = 0; index < 21; index += 1) {
       const run = await seedRun();
       runs.push(run);
-      await testPool.query(
-        `UPDATE tasks
-            SET payload=payload || '{"orchestrator":"skill-relay"}'::jsonb
-          WHERE id=$1`,
-        [run.taskId],
-      );
       await testPool.query(
         `UPDATE initiative_runs
             SET phase='paused',
@@ -414,12 +425,6 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
     for (let index = 0; index < 21; index += 1) {
       const run = await seedRun();
       runs.push(run);
-      await testPool.query(
-        `UPDATE tasks
-            SET payload=payload || '{"orchestrator":"skill-relay"}'::jsonb
-          WHERE id=$1`,
-        [run.taskId],
-      );
       await testPool.query(
         `UPDATE initiative_runs
             SET phase='paused',

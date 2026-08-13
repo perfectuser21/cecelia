@@ -113,7 +113,7 @@ describe('legacy POST /orchestrator/relay-runs/:initiative_id', () => {
       createdSource: 'foreground_handoff',
       commanderMode: 'kernel-only',
       predecessorRunId: null,
-    });
+    }, {});
   });
 
   it('returns the existing active run as an idempotent 200', async () => {

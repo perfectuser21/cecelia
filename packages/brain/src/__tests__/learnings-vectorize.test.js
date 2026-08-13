@@ -472,7 +472,8 @@ describe('selfcheck schema version', () => {
     // 408/409 = Impact Contract + Gap Ledger；410 = revision-indexed immutable graph snapshots；
     // 411 = reviewer-approved SHA 下的冻结合同测试制品；
     // 412 = approved Harness contract artifact manifests。
-    // 416 = Work Router receipt governance 与 append-only recovery consumption。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('416');
+    // 417 = Work Router receipt governance、append-only recovery consumption
+    // 与 task projection immutability。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('417');
   });
 });

@@ -158,7 +158,7 @@ function setupDevDispatch(task) {
 
 // ─── I1: dev 派发集成测试 ─────────────────────────────────────────────────────
 
-describe('I1: dev task 集成派发路径（迁离 LangGraph）', () => {
+describe('I1: legacy dev task 不能绕过 Work Router', () => {
   beforeEach(() => {
     mocks.query.mockReset();
     mocks.triggerCeceliaRun.mockReset();
@@ -167,29 +167,26 @@ describe('I1: dev task 集成派发路径（迁离 LangGraph）', () => {
     mocks.triggerCeceliaRun.mockResolvedValue({ success: true, runId: 'run-i1-001' });
   });
 
-  it('dev task 派发走 triggerCeceliaRun（不走 LangGraph），dispatched:true', async () => {
+  it('无 receipt 的 dev task fail closed，且不启动 executor', async () => {
     const task = makeDevTask();
     setupDevDispatch(task);
 
     const result = await dispatchNextTask(['goal-t6']);
 
-    expect(result.dispatched).toBe(true);
-    expect(mocks.triggerCeceliaRun).toHaveBeenCalledTimes(1);
-    // 决策 bf361265（2026-08-12）：该 fixture 是默认仓库、无 doc/bugfix/large 关键词的 dev 任务，
-    // 命中 classifyCodeChange 改道 harness_initiative——这不是 LangGraph 复活（LangGraph 已物理删除，
-    // 见本文件顶部注释），只是从 legacy docker-executor 换成 kernel skill-relay，仍然不经过 LangGraph，
-    // 本用例的回归意图（"不经过 LangGraph"）依然成立，只是 task_type 断言需要同步更新。
-    expect(mocks.triggerCeceliaRun.mock.calls[0][0].task_type).toBe('harness_initiative');
+    expect(result.dispatched).toBe(false);
+    expect(mocks.triggerCeceliaRun).not.toHaveBeenCalled();
   });
 
-  it('dev 派发 → triggerCeceliaRun 接收到正确的 task id', async () => {
+  it('route violation 留在派发边界，不触发 legacy executor', async () => {
     const task = makeDevTask();
     setupDevDispatch(task);
 
     await dispatchNextTask(['goal-t6']);
 
-    expect(mocks.triggerCeceliaRun).toHaveBeenCalledTimes(1);
-    expect(mocks.triggerCeceliaRun.mock.calls[0][0].id).toBe(task.id);
+    expect(mocks.triggerCeceliaRun).not.toHaveBeenCalled();
+    expect(mocks.query.mock.calls.some(([, args]) => (
+      Array.isArray(args) && args.includes('route_violation')
+    ))).toBe(true);
   });
 });
 

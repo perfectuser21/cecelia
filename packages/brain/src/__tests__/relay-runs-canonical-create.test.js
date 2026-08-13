@@ -105,7 +105,7 @@ describe('canonical POST /orchestrator/relay-runs', () => {
     expect(response.status).toBe(201);
     expect(mockCreateKernelRun).toHaveBeenCalledWith(mockPool, expect.objectContaining({
       commanderMode: 'hybrid',
-    }));
+    }), {});
   });
 
   it('defaults commander mode to kernel-only', async () => {
@@ -122,7 +122,7 @@ describe('canonical POST /orchestrator/relay-runs', () => {
     expect(response.status).toBe(201);
     expect(mockCreateKernelRun).toHaveBeenCalledWith(mockPool, expect.objectContaining({
       commanderMode: 'kernel-only',
-    }));
+    }), {});
   });
 
   it('passes the declared predecessor identity for explicit recovery', async () => {
@@ -142,7 +142,7 @@ describe('canonical POST /orchestrator/relay-runs', () => {
     expect(mockCreateKernelRun).toHaveBeenCalledWith(mockPool, expect.objectContaining({
       createdSource: 'explicit_recovery',
       predecessorRunId,
-    }));
+    }), {});
   });
 
   it('rejects an invalid commander mode without calling the Kernel store', async () => {

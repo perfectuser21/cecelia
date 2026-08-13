@@ -180,6 +180,7 @@ vi.mock('../../spawn/middleware/resource-tier.js', () => ({
 
 vi.mock('child_process', () => ({
   exec: vi.fn(),
+  execFile: vi.fn(),
   execSync: vi.fn(),
   spawn: vi.fn(),
 }));
@@ -377,7 +378,9 @@ describe('Dev Task 全链路 E2E — docker spawn → callback → status=comple
       );
 
       expect(result.success).toBe(true);
-      expect(result.newStatus).toBe('completed');
+      // 新 coding task 由 Kernel 收账；普通 docker callback 不能越过
+      // Evaluator/Judge/merge fence 直接写 completed。
+      expect(result.newStatus).toBe('in_progress');
     });
 
     it('tasks.status = completed（DB 持久化验证）', async () => {
@@ -387,7 +390,7 @@ describe('Dev Task 全链路 E2E — docker spawn → callback → status=comple
         'SELECT status FROM tasks WHERE id = $1',
         [createdTaskId]
       );
-      expect(dbRes.rows[0].status).toBe('completed');
+      expect(dbRes.rows[0].status).toBe('in_progress');
     });
 
     it('tasks.pr_url = MOCK_PR_URL（pr_url 回填验证）', async () => {
@@ -422,7 +425,7 @@ describe('Dev Task 全链路 E2E — docker spawn → callback → status=comple
       ]);
 
       // tasks 终态
-      expect(taskRes.rows[0].status).toBe('completed');
+      expect(taskRes.rows[0].status).toBe('in_progress');
       expect(taskRes.rows[0].pr_url).toBe(MOCK_PR_URL);
 
       // callback_queue 有 success 行

@@ -64,7 +64,12 @@ describe('migration 350: 承诺地图两域 seed', () => {
 
   it('全部 cell 行 notion_synced_at 非空（不推 Notion）', async () => {
     const { rows } = await pool.query(
-      `SELECT COUNT(*)::int AS c FROM journey_step_links WHERE cell_kind IS NOT NULL AND notion_synced_at IS NULL`);
+      `SELECT COUNT(*)::int AS c
+         FROM journey_step_links link
+         JOIN journeys journey ON journey.id = link.journey_id
+        WHERE journey.domain IN ('智能客服', '公司级')
+          AND link.cell_kind IS NOT NULL
+          AND link.notion_synced_at IS NULL`);
     expect(rows[0].c).toBe(0);
   });
 
