@@ -9,6 +9,23 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 const mockQuery = vi.hoisted(() => vi.fn());
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
 
+const mockCreateRoutedTask = vi.hoisted(() => vi.fn());
+async function routedTaskDouble(db, request) {
+  const task = request.task;
+  const params = [
+    request.title, request.description, task.priority, task.project_id, task.goal_id,
+    task.tags, request.requested_task_type, task.prd_content, task.execution_profile,
+    Object.keys(request.metadata).length > 0 ? JSON.stringify(request.metadata) : null,
+    task.trigger_source, task.domain, task.owner_role, task.delivery_type,
+  ];
+  const result = await db.query(
+    `/* createRoutedTask test double: domain owner_role delivery_type */`,
+    params,
+  );
+  return { task: result.rows[0] };
+}
+vi.mock('../work-routing-store.js', () => ({ createRoutedTask: mockCreateRoutedTask }));
+
 const mockBroadcast = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock('../task-updater.js', () => ({ broadcastTaskState: mockBroadcast }));
 
@@ -26,6 +43,8 @@ beforeAll(async () => {
 describe('actions.js - domain 自动填充', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockCreateRoutedTask.mockReset().mockImplementation(routedTaskDouble);
   });
 
   // ===== createTask =====

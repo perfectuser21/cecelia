@@ -11,6 +11,28 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 const mockQuery = vi.hoisted(() => vi.fn());
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
 
+const mockCreateRoutedTask = vi.hoisted(() => vi.fn());
+async function routedTaskDouble(db, request) {
+  const task = request.task;
+  const common = [
+    request.title, request.description, task.priority, task.project_id, task.goal_id,
+    task.tags, request.requested_task_type, task.prd_content, task.execution_profile,
+    Object.keys(request.metadata).length > 0 ? JSON.stringify(request.metadata) : null,
+    task.trigger_source,
+  ];
+  const params = task.domain == null
+    ? [...common, null, task.delivery_type]
+    : [...common, task.domain, task.owner_role, task.delivery_type];
+  const result = await db.query(
+    task.domain == null
+      ? `/* createRoutedTask test double: domain delivery_type */`
+      : `/* createRoutedTask test double: domain owner_role delivery_type */`,
+    params,
+  );
+  return { task: result.rows[0] };
+}
+vi.mock('../work-routing-store.js', () => ({ createRoutedTask: mockCreateRoutedTask }));
+
 // Mock broadcastTaskState
 const mockBroadcast = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock('../task-updater.js', () => ({ broadcastTaskState: mockBroadcast }));
@@ -39,6 +61,8 @@ beforeAll(async () => {
 describe('actions.js', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockCreateRoutedTask.mockReset().mockImplementation(routedTaskDouble);
   });
 
   // ========== createTask ==========
@@ -153,24 +177,21 @@ describe('actions.js', () => {
       expect(mockQuery).toHaveBeenCalledTimes(1);
     });
 
-    it('竞态去重 - INSERT 返回空行时回查', async () => {
+    it('统一 writer 自己承担竞态幂等，不在 actions 二次写 tasks', async () => {
       const existing = { id: 'task-race', title: '竞态', status: 'queued' };
-      // 去重查询 - 无重复
       mockQuery.mockResolvedValueOnce({ rows: [] });
-      // INSERT ON CONFLICT DO NOTHING - 0 行
-      mockQuery.mockResolvedValueOnce({ rows: [] });
-      // 回查 - 找到已有
-      mockQuery.mockResolvedValueOnce({ rows: [existing] });
+      mockCreateRoutedTask.mockResolvedValueOnce({ task: existing, deduplicated: true });
 
       const result = await createTask({
         title: '竞态',
         goal_id: 'goal-1',
-        task_type: 'dev',
+        task_type: 'research',
       });
 
       expect(result.success).toBe(true);
-      expect(result.deduplicated).toBe(true);
       expect(result.task).toEqual(existing);
+      expect(mockCreateRoutedTask).toHaveBeenCalledOnce();
+      expect(mockQuery).toHaveBeenCalledOnce();
     });
 
     it('使用 context 作为 description 的回退', async () => {

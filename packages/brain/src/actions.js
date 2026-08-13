@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import pool from './db.js';
 import { broadcastTaskState } from './task-updater.js';
 import { detectDomain } from './domain-detector.js';
 import { getDomainRole } from './role-registry.js';
+import { createRoutedTask } from './work-routing-store.js';
 
 const N8N_API_URL = process.env.N8N_API_URL || 'http://localhost:5679';
 const N8N_API_KEY = process.env.N8N_API_KEY || '';
@@ -22,56 +24,42 @@ function isSystemTask(task_type, trigger_source) {
   return systemTypes.includes(task_type) || systemSources.includes(trigger_source);
 }
 
-/**
- * Build the 11-element common parameter array for task INSERT.
- * Centralises all default-value logic so createTask stays lean.
- */
-function buildCommonParams({ title, description, context, priority, project_id, goal_id, tags, task_type, prd_content, execution_profile, payload, trigger_source }) {
-  return [
-    title,
-    description || context || '',
-    priority || 'P1',
-    project_id || null,
-    goal_id || null,
-    tags || [],
-    task_type || 'dev',
-    prd_content || null,
-    execution_profile || null,
-    payload ? JSON.stringify(payload) : null,
-    trigger_source || 'brain_auto',
-  ];
+const CONTENT_TASK_TYPES = new Set([
+  'content-pipeline', 'content-research', 'content-copywriting', 'content-copy-review',
+  'content-generate', 'content-image-review', 'content-export', 'content_publish',
+]);
+const RESEARCH_TASK_TYPES = new Set([
+  'research', 'explore', 'knowledge', 'talk', 'strategy_session', 'intent_expand',
+  'suggestion_plan', 'scope_plan', 'project_plan', 'okr_initiative_plan',
+  'okr_scope_plan', 'okr_project_plan', 'initiative_plan', 'dept_heartbeat',
+  'strategist_decision',
+]);
+const REVIEW_TASK_TYPES = new Set([
+  'review', 'qa', 'audit', 'codex_qa', 'codex_test_gen', 'pr_review', 'code_review',
+  'decomp_review', 'initiative_verify', 'architecture_design', 'architecture_scan',
+  'arch_review', 'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
+  'ci_patrol', 'staging_e2e', 'harness_evaluate', 'harness_final_e2e',
+]);
+const CODING_TASK_TYPES = new Set([
+  'dev', 'codex_dev', 'initiative_execute', 'sprint_generate', 'sprint_fix',
+  'harness_generate', 'harness_fix', 'pipeline_rescue',
+]);
+
+function routeSource(triggerSource, explicitSource) {
+  if (explicitSource) return explicitSource;
+  if (['manual', 'chat', 'chat_thalamus', 'user_headed'].includes(triggerSource)) return 'conversation';
+  if (triggerSource?.includes('scheduler')) return 'scheduler';
+  if (['proposal', 'child', 'execution_callback_harness'].includes(triggerSource)) return 'child';
+  return 'discovery';
 }
 
-/**
- * Build the INSERT SQL and bound parameters.
- * Two variants: explicit domain (includes owner_role) vs auto-detected domain.
- */
-function buildInsertStatement(commonParams, { domainInput, ownerRoleInput, deliveryType, title, description, context }) {
-  const deliveryTypeValue = deliveryType || 'code-only';
-  if (domainInput !== undefined) {
-    // Explicit domain: include owner_role ($13) + delivery_type ($14)
-    const owner_role = ownerRoleInput ?? getDomainRole(domainInput);
-    return {
-      sql: `
-        INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, owner_role, delivery_type)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13, $14)
-        ON CONFLICT DO NOTHING
-        RETURNING *
-      `,
-      params: [...commonParams, domainInput, owner_role, deliveryTypeValue],
-    };
-  }
-  // Auto-detect domain from title + description; omit owner_role column
-  const detected = detectDomain(`${title} ${description || context || ''}`);
-  return {
-    sql: `
-      INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, delivery_type)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13)
-      ON CONFLICT DO NOTHING
-      RETURNING *
-    `,
-    params: [...commonParams, detected.confidence > 0 ? detected.domain : null, deliveryTypeValue],
-  };
+function legacyWorkContract({ taskType, mutationIntent, workDomain }) {
+  if (mutationIntent) return { mutation_intent: mutationIntent, declared_domain: workDomain };
+  if (CODING_TASK_TYPES.has(taskType)) return { mutation_intent: 'write', declared_domain: 'coding' };
+  if (CONTENT_TASK_TYPES.has(taskType)) return { mutation_intent: 'none', declared_domain: 'content' };
+  if (RESEARCH_TASK_TYPES.has(taskType)) return { mutation_intent: 'none', declared_domain: 'research' };
+  if (REVIEW_TASK_TYPES.has(taskType)) return { mutation_intent: 'read_only', declared_domain: 'coding' };
+  return { mutation_intent: 'none', declared_domain: 'operations' };
 }
 
 /**
@@ -93,10 +81,11 @@ function buildInsertStatement(commonParams, { domainInput, ownerRoleInput, deliv
  * @param {string} [params.dedupe_key] - DB 级幂等键，≤255 字符；超长调用方自行 hash（超长会抛错）
  * @param {number} [params.dedupe_ttl_sec] - dedupe_key 的存活时长（秒），默认 3600
  */
-async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput, delivery_type, journey_id, dedupe_key, dedupe_ttl_sec }) {
+async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput, delivery_type, journey_id, dedupe_key, dedupe_ttl_sec, source, source_id, mutation_intent, declared_domain, declared_change_kind, execution_profile_override_request, repo_hint, map_scope_hint, branch, base_sha, parent_task_id, db = pool }) {
+  const requestedTaskType = task_type || 'dev';
   // Validate goal_id (required for most tasks except system tasks)
-  if (!goal_id && !isSystemTask(task_type, trigger_source)) {
-    const error = `goal_id is required for task_type="${task_type}" trigger_source="${trigger_source}"`;
+  if (!goal_id && !isSystemTask(requestedTaskType, trigger_source)) {
+    const error = `goal_id is required for task_type="${requestedTaskType}" trigger_source="${trigger_source}"`;
     console.error(`[Action] Validation failed: ${error}`);
     throw new Error(error);
   }
@@ -106,7 +95,7 @@ async function createTask({ title, description, priority, project_id, goal_id, t
   // to prevent self-reinforcing loops where a failed task triggers its own re-creation
   const SYSTEM_TRIGGER_SOURCES = ['rumination', 'cortex', 'auto_fix'];
   const isSystemTrigger = SYSTEM_TRIGGER_SOURCES.includes(trigger_source);
-  const dedupResult = await pool.query(`
+  const dedupResult = await db.query(`
     SELECT * FROM tasks
     WHERE title = $1
       AND (goal_id IS NOT DISTINCT FROM $2)
@@ -139,32 +128,49 @@ async function createTask({ title, description, priority, project_id, goal_id, t
 
   try {
     const effectivePayload = journey_id ? { ...(payload ?? {}), journey_id } : payload;
-    const commonParams = buildCommonParams({ title, description, context, priority, project_id, goal_id, tags, task_type, prd_content, execution_profile, payload: effectivePayload, trigger_source });
-    const { sql, params } = buildInsertStatement(commonParams, { domainInput, ownerRoleInput, deliveryType: delivery_type, title, description, context });
+    const detected = detectDomain(`${title} ${description || context || ''}`);
+    const taskDomain = domainInput ?? (detected.confidence > 0 ? detected.domain : null);
+    const ownerRole = ownerRoleInput ?? (taskDomain ? getDomainRole(taskDomain) : null);
+    const workContract = legacyWorkContract({
+      taskType: requestedTaskType,
+      mutationIntent: mutation_intent,
+      workDomain: declared_domain,
+    });
+    const routed = await createRoutedTask(db, {
+      source: routeSource(trigger_source, source),
+      source_id: source_id ?? dedupe_key ?? randomUUID(),
+      title,
+      description: description || context || '',
+      requested_task_type: requestedTaskType,
+      declared_change_kind,
+      execution_profile_override_request,
+      declared_domain: workContract.declared_domain,
+      mutation_intent: workContract.mutation_intent,
+      repo_hint,
+      map_scope_hint,
+      parent_task_id,
+      branch,
+      base_sha,
+      metadata: effectivePayload ?? {},
+      task: {
+        priority: priority || 'P1',
+        project_id: project_id || null,
+        goal_id: goal_id || null,
+        tags: tags || [],
+        prd_content: prd_content || null,
+        execution_profile: execution_profile || null,
+        trigger_source: trigger_source || 'brain_auto',
+        domain: taskDomain,
+        owner_role: ownerRole,
+        delivery_type: delivery_type || 'code-only',
+      },
+    }, null, db === pool ? {} : { transaction: 'existing' });
 
-    const result = await pool.query(sql, params);
-
-    // ON CONFLICT DO NOTHING returns 0 rows on race-condition duplicate
-    if (result.rows.length === 0) {
-      const raceResult = await pool.query(`
-        SELECT * FROM tasks
-        WHERE title = $1
-          AND (goal_id IS NOT DISTINCT FROM $2)
-          AND (project_id IS NOT DISTINCT FROM $3)
-          AND status IN ('queued', 'in_progress')
-        LIMIT 1
-      `, [title, goal_id || null, project_id || null]);
-      if (raceResult.rows.length > 0) {
-        console.log(`[Action] Dedup (race): task "${title}" already exists (id: ${raceResult.rows[0].id})`);
-        return { success: true, task: raceResult.rows[0], deduplicated: true };
-      }
-    }
-
-    const task = result.rows[0];
-    console.log(`[Action] Created task: ${task.id} - ${title} (type: ${task_type || 'dev'})`);
+    const task = routed.task;
+    console.log(`[Action] Created task: ${task.id} - ${title} (type: ${task.task_type})`);
 
     // Broadcast task creation to WebSocket clients
-    await broadcastTaskState(task.id);
+    if (db === pool) await broadcastTaskState(task.id);
 
     return { success: true, task };
   } catch (err) {

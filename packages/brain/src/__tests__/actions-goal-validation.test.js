@@ -3,23 +3,45 @@
  * Tests for goal_id requirement enforcement in createTask()
  */
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 
 // isolate:false 修复：延迟导入，确保获取真实 pool 而非其他文件残留的 mock
-let pool, createTask;
+let pool, client, createTask;
+const CODING_ROUTE = {
+  source: 'api',
+  declared_change_kind: 'bugfix',
+  repo_hint: 'cecelia',
+  map_scope_hint: ['F0'],
+  base_sha: 'a'.repeat(40),
+};
 
 beforeAll(async () => {
   vi.resetModules();
   pool = (await import('../db.js')).default;
   createTask = (await import('../actions.js')).createTask;
+  client = await pool.connect();
 });
+
+afterAll(async () => {
+  client.release();
+});
+
+async function createTestTask(params) {
+  return createTask({
+    ...CODING_ROUTE,
+    source_id: crypto.randomUUID(),
+    ...params,
+    db: client,
+  });
+}
 
 describe('createTask - goal_id validation', () => {
   let testGoalId;
 
   beforeEach(async () => {
+    await client.query('BEGIN');
     // Create a test goal for valid tasks
-    const goalResult = await pool.query(`
+    const goalResult = await client.query(`
       INSERT INTO key_results (title, status, priority)
       VALUES ('Test Goal', 'pending', 'P1')
       RETURNING id
@@ -28,15 +50,13 @@ describe('createTask - goal_id validation', () => {
   });
 
   afterEach(async () => {
-    // Clean up test data
-    await pool.query(`DELETE FROM tasks WHERE title LIKE 'Test Task%'`);
-    await pool.query(`DELETE FROM key_results WHERE title = 'Test Goal'`);
+    await client.query('ROLLBACK');
   });
 
   describe('goal_id required validation', () => {
     it('should throw error when goal_id is missing for dev task', async () => {
       await expect(
-        createTask({
+        createTestTask({
           title: 'Test Task - Dev',
           description: 'Test task without goal_id',
           priority: 'P1',
@@ -48,7 +68,7 @@ describe('createTask - goal_id validation', () => {
 
     it('should throw error when goal_id is missing for review task', async () => {
       await expect(
-        createTask({
+        createTestTask({
           title: 'Test Task - Review',
           description: 'Test task without goal_id',
           priority: 'P1',
@@ -60,7 +80,7 @@ describe('createTask - goal_id validation', () => {
 
     it('should throw error when goal_id is missing for talk task', async () => {
       await expect(
-        createTask({
+        createTestTask({
           title: 'Test Task - Talk',
           description: 'Test task without goal_id',
           priority: 'P1',
@@ -71,7 +91,7 @@ describe('createTask - goal_id validation', () => {
     });
 
     it('should accept task when goal_id is provided', async () => {
-      const result = await createTask({
+      const result = await createTestTask({
         title: 'Test Task - Valid',
         description: 'Test task with goal_id',
         priority: 'P1',
@@ -89,7 +109,7 @@ describe('createTask - goal_id validation', () => {
     it('exploratory task (concept removed) now requires goal_id like any other type', async () => {
       // exploratory 已从 systemTypes 移除，不再豁免 goal_id 要求，应抛出错误
       await expect(
-        createTask({
+        createTestTask({
           title: 'Test Task - Exploratory',
           description: 'Exploratory task',
           priority: 'P1',
@@ -100,7 +120,7 @@ describe('createTask - goal_id validation', () => {
     });
 
     it('should allow research task without goal_id', async () => {
-      const result = await createTask({
+      const result = await createTestTask({
         title: 'Test Task - Research',
         description: 'Research task',
         priority: 'P1',
@@ -113,7 +133,7 @@ describe('createTask - goal_id validation', () => {
     });
 
     it('should allow manual trigger without goal_id', async () => {
-      const result = await createTask({
+      const result = await createTestTask({
         title: 'Test Task - Manual',
         description: 'Manual trigger task',
         priority: 'P1',
@@ -126,7 +146,7 @@ describe('createTask - goal_id validation', () => {
     });
 
     it('should allow test trigger without goal_id', async () => {
-      const result = await createTask({
+      const result = await createTestTask({
         title: 'Test Task - Test Trigger',
         description: 'Test trigger task',
         priority: 'P1',
@@ -139,7 +159,7 @@ describe('createTask - goal_id validation', () => {
     });
 
     it('should allow watchdog trigger without goal_id', async () => {
-      const result = await createTask({
+      const result = await createTestTask({
         title: 'Test Task - Watchdog',
         description: 'Watchdog task',
         priority: 'P1',
@@ -152,7 +172,7 @@ describe('createTask - goal_id validation', () => {
     });
 
     it('should allow circuit_breaker trigger without goal_id', async () => {
-      const result = await createTask({
+      const result = await createTestTask({
         title: 'Test Task - Circuit Breaker',
         description: 'Circuit breaker task',
         priority: 'P1',
@@ -168,7 +188,7 @@ describe('createTask - goal_id validation', () => {
   describe('okr_tick flow validation', () => {
     it('should require goal_id for okr_tick triggered dev task', async () => {
       await expect(
-        createTask({
+        createTestTask({
           title: 'Test Task - OKR Dev',
           description: 'OKR triggered dev task',
           priority: 'P0',
@@ -179,7 +199,7 @@ describe('createTask - goal_id validation', () => {
     });
 
     it('should accept okr_tick task with goal_id', async () => {
-      const result = await createTask({
+      const result = await createTestTask({
         title: 'Test Task - OKR Valid',
         description: 'OKR triggered task with goal_id',
         priority: 'P0',
@@ -202,7 +222,7 @@ describe('createTask - goal_id validation', () => {
   describe('error message quality', () => {
     it('should include task_type and trigger_source in error message', async () => {
       try {
-        await createTask({
+        await createTestTask({
           title: 'Test Task - Error Message',
           description: 'Test error message quality',
           priority: 'P1',
@@ -221,7 +241,7 @@ describe('createTask - goal_id validation', () => {
     it('should allow harness_fix without goal_id when triggered by execution_callback_harness', async () => {
       // Bug fix: execution_callback_harness was missing from systemSources,
       // causing harness_generate → harness_fix auto-creation to silently fail
-      const result = await createTask({
+      const result = await createTestTask({
         title: 'Test Task - Harness Fix',
         description: 'Harness fix auto-created by Brain execution callback',
         priority: 'P1',
@@ -232,11 +252,11 @@ describe('createTask - goal_id validation', () => {
 
       expect(result.success).toBe(true);
       expect(result.task.goal_id).toBeNull();
-      expect(result.task.task_type).toBe('harness_fix');
+      expect(result.task.task_type).toBe('harness_initiative');
     });
 
     it('should allow harness_fix without goal_id when triggered by execution_callback_harness (duplicate check)', async () => {
-      const result = await createTask({
+      const result = await createTestTask({
         title: 'Test Task - Harness Fix 2',
         description: 'Harness fix auto-created by Brain execution callback',
         priority: 'P1',
@@ -247,7 +267,7 @@ describe('createTask - goal_id validation', () => {
 
       expect(result.success).toBe(true);
       expect(result.task.goal_id).toBeNull();
-      expect(result.task.task_type).toBe('harness_fix');
+      expect(result.task.task_type).toBe('harness_initiative');
     });
   });
 });

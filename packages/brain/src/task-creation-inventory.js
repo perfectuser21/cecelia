@@ -1,5 +1,5 @@
 export const TASK_CREATION_INVENTORY = Object.freeze([
-  { module: 'actions.js', source: 'api', creates_executable_task: true, migration_status: 'inventory_frozen' },
+  { module: 'actions.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'active-goals-zero-trigger.js', source: 'api', creates_executable_task: true, migration_status: 'inventory_frozen' },
   { module: 'alertness-actions.js', source: 'api', creates_executable_task: true, migration_status: 'inventory_frozen' },
   { module: 'code-review-trigger.js', source: 'scheduler', creates_executable_task: true, migration_status: 'inventory_frozen' },
