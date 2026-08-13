@@ -1084,6 +1084,61 @@ describe('attempt store', () => {
     expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
   });
 
+  it('只允许 Judge 后 publisher 投影 verified PR，Generator 无权写 run.pr_url', async () => {
+    const verifiedSha = 'd'.repeat(40);
+    const callbackResult = {
+      status: 'completed',
+      summary: 'approved candidate published',
+      artifacts: [{
+        type: 'pull_request',
+        url: 'https://github.com/acme/repo/pull/43',
+        head_sha: verifiedSha,
+        verification_status: 'verified',
+      }],
+      provider_metadata: { provider: 'trusted-transport' },
+      decision: null,
+    };
+    const running = {
+      id: input.id,
+      run_id: input.runId,
+      hop: input.hop,
+      phase: 'publish',
+      role: 'publisher',
+      status: 'running',
+      lease_owner: 'brain-1',
+      lease_generation: 3,
+      result: null,
+    };
+    const completed = { ...running, status: 'completed', result: callbackResult };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [running] })
+        .mockResolvedValueOnce({ rows: [completed], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [{ hop: 4 }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ id: input.runId }], rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await createAttemptStore(pool).recordCallbackTerminal({
+      attemptId: input.id,
+      runId: input.runId,
+      leaseOwner: 'brain-1',
+      leaseGeneration: 3,
+      result: callbackResult,
+    });
+
+    expect(client.query.mock.calls[5][0]).toMatch(/UPDATE initiative_runs[\s\S]*pr_url=\$2/i);
+    expect(client.query.mock.calls[5][1]).toEqual([
+      input.runId,
+      'https://github.com/acme/repo/pull/43',
+      ATTEMPT_COST_ACCRUAL_USD,
+    ]);
+  });
+
   it('commits a verified generator-fix verdict and PR projection atomically', async () => {
     const verifiedSha = 'c'.repeat(40);
     const callbackResult = {
