@@ -7,12 +7,9 @@
 
 ## Test Contract
 
-| # | [BEHAVIOR] | 验收方式 | 优先级 |
-|---|---|---|---|
-| B-1 | `startSchedulerJobsLoop` 在 `BRAIN_PREVIEW=1` 时返回 null，setInterval 零次调用 | 单测 | P0 |
-| B-2 | `startProjectionJobsLoop` 在 `BRAIN_PREVIEW=1` 时返回 null，setInterval 零次调用 | 单测 | P0 |
-| B-3 | `BRAIN_PREVIEW` 未设置时 `startSchedulerJobsLoop` 正常启动，前进 60s handler 触发 | 单测（现有行为回归） | P0 |
-| B-4 | `BRAIN_PREVIEW=1` 时两个函数各打印含 "BRAIN_PREVIEW" 字样的 console 日志 | 单测 spy | P1 |
+| Workstream | Test File | Behaviors | Priority | Description |
+|---|---|---|---|---|
+| ws1 | `packages/brain/src/__tests__/scheduler-jobs.test.js` | BRAIN_PREVIEW=1 时 startSchedulerJobsLoop 返回 null，不启动 setInterval / BRAIN_PREVIEW=1 时 startProjectionJobsLoop 返回 null，不启动 setInterval / BRAIN_PREVIEW 未设置时 startSchedulerJobsLoop 正常启动，前进 60s 触发 handler / BRAIN_PREVIEW=1 时 startSchedulerJobsLoop 打印含 BRAIN_PREVIEW 的日志 | P0 | B-1~B-4 Preview Brain 隔离守卫 |
 
 ## 铁律
 
