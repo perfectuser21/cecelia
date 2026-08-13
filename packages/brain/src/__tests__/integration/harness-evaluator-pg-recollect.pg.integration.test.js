@@ -65,13 +65,15 @@ CREATE TABLE orchestrator_decision_log (
 beforeAll(async () => {
   // CI 上（dod-behavior-dynamic）Brain server 并发占用连接，CREATE DATABASE 偶发阻塞。
   // fail-fast 连接 + 每次尝试 statement_timeout 上限 + 有限重试，整段稳收在 hook 30s 内。
-  adminPool = new Pool({ ...DB_DEFAULTS, database: 'postgres', max: 1, connectionTimeoutMillis: 6000 });
+  adminPool = new Pool({ ...DB_DEFAULTS, database: 'postgres', max: 1, connectionTimeoutMillis: 8000 });
   let created = false;
   for (let attempt = 0; attempt < 3 && !created; attempt += 1) {
     const client = await adminPool.connect();
     try {
-      await client.query('SET statement_timeout = 6000');
-      await client.query(`CREATE DATABASE ${quotedIdentifier(databaseName)}`);
+      await client.query('SET statement_timeout = 20000');
+      // TEMPLATE template0 无活动连接：CREATE DATABASE 不会因 template1 上的并发会话
+      // （dod-behavior-dynamic 下 Brain server 在跑）而阻塞，秒级建成。
+      await client.query(`CREATE DATABASE ${quotedIdentifier(databaseName)} TEMPLATE template0`);
       created = true;
     } catch (err) {
       if (!/timeout|deadlock|too many|being accessed|canceling statement/i.test(String(err.message))) {
