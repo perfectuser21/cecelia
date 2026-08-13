@@ -97,6 +97,35 @@ export interface FeedTask {
   last_error?: string | null;
   /** 多个 PR 链接（一个 sprint 可能拆多 PR） */
   pr_urls?: string[] | null;
+  routing?: RoutingAudit | null;
+}
+
+export interface RoutingAudit {
+  work_kind: string | null;
+  change_kind?: string | null;
+  pipeline: string | null;
+  default_execution_profile?: string | null;
+  repo: string | null;
+  map_scope?: string[] | null;
+  map_status: string | null;
+  impact_contract_status: string | null;
+  impact_contract_policy?: string | null;
+  route_reason: string | null;
+  blocking_gate: string | null;
+}
+
+export interface WorkRoutingMetrics {
+  coding_mutation_total: number;
+  coding_receipt_coverage: number;
+  missing_business_receipts: number;
+  coding_dev_direct: number;
+  harness_map_query_coverage: number;
+  legacy_exempt: number;
+  events: {
+    work_route_blocked: number;
+    route_violation: number;
+    map_preflight_failed: number;
+  };
 }
 
 export interface FeedGroup {
@@ -123,9 +152,23 @@ export interface FeedStats {
 
 export interface FeedResponse {
   stats: FeedStats;
+  work_routing?: WorkRoutingMetrics;
   areas: FeedArea[];
   total: number;
   generated_at: string;
+}
+
+export function routingAuditRows(audit: RoutingAudit | null | undefined): Array<[string, string]> {
+  if (!audit) return [];
+  return [
+    ['Work kind', audit.work_kind],
+    ['Pipeline', audit.pipeline],
+    ['Repo', audit.repo],
+    ['Map', audit.map_status],
+    ['Impact Contract', audit.impact_contract_status],
+    ['Route reason', audit.route_reason],
+    ['阻塞 Gate', audit.blocking_gate],
+  ].filter((row): row is [string, string] => Boolean(row[1]));
 }
 
 // ====================== Line 中心化数据契约（对齐 /api/brain/warroom/lines | /line/:id）======================
@@ -889,6 +932,14 @@ function DetailPanel({ task, onOpen }: { task: FeedTask | null; onOpen: (t: Feed
         <div className="flex justify-between"><span className="text-slate-700">创建</span><span>{relativeTime(task.created_at)}</span></div>
         {elapsed && <div className="flex justify-between"><span className="text-slate-700">历时</span><span className="font-mono">{elapsed}</span></div>}
         <div className="flex justify-between gap-2"><span className="text-slate-700 flex-shrink-0">ID</span><span className="font-mono truncate">{task.id}</span></div>
+        {routingAuditRows(task.routing).map(([label, value]) => (
+          <div key={label} className="flex justify-between gap-2">
+            <span className="text-slate-700 flex-shrink-0">{label}</span>
+            <span className={`font-mono text-right break-all ${
+              label === '阻塞 Gate' ? 'text-red-400' : ''
+            }`}>{value}</span>
+          </div>
+        ))}
       </div>
 
       <div className="border-t border-slate-800/60 p-2 flex gap-1.5 flex-shrink-0">
@@ -1290,6 +1341,7 @@ export default function WarRoomPage() {
 
   const areas = data?.areas ?? [];
   const stats = data?.stats ?? { active: 0, done_today: 0, failed_today: 0, pr_this_month: 0 };
+  const routingMetrics = data?.work_routing;
   const visibleAreas = useMemo(
     () => applyViewFilters(
       filterByKind(filterArea(areas, areaFilter), kindFilter),
@@ -1373,6 +1425,30 @@ export default function WarRoomPage() {
             <span className="text-slate-300 font-mono">{stats.pr_this_month}</span>
             <span className="text-slate-600">本月 PR</span>
           </div>
+          {routingMetrics && (
+            <>
+              <div className="h-3 w-px bg-slate-800" />
+              <span className="text-slate-500" title="coding mutation Routing Receipt 覆盖率">
+                Route <b className={routingMetrics.coding_receipt_coverage === 1 ? 'text-emerald-400' : 'text-red-400'}>
+                  {Math.round(routingMetrics.coding_receipt_coverage * 100)}%
+                </b>
+              </span>
+              <span className="text-slate-500" title="Harness 启动时 Map 查询覆盖率">
+                Map <b className={routingMetrics.harness_map_query_coverage === 1 ? 'text-emerald-400' : 'text-red-400'}>
+                  {Math.round(routingMetrics.harness_map_query_coverage * 100)}%
+                </b>
+              </span>
+              <span className={routingMetrics.coding_dev_direct === 0 ? 'text-slate-500' : 'text-red-400'}>
+                direct dev {routingMetrics.coding_dev_direct}
+              </span>
+              <span className={routingMetrics.legacy_exempt === 0 ? 'text-slate-500' : 'text-red-400'}>
+                legacy {routingMetrics.legacy_exempt}
+              </span>
+              <span className={routingMetrics.events.route_violation === 0 ? 'text-slate-500' : 'text-red-400'}>
+                violation {routingMetrics.events.route_violation}
+              </span>
+            </>
+          )}
         </div>
 
         <div className="ml-auto flex items-center gap-3">

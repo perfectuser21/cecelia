@@ -120,6 +120,19 @@ describe('shanghaiDay', () => {
 });
 
 describe('toFeedItem', () => {
+  it('携带 Work Router / Map / Impact Contract 审计投影', () => {
+    const routing = {
+      work_kind: 'coding_mutation', pipeline: 'harness', repo: 'cecelia',
+      map_status: 'fresh', impact_contract_status: 'active',
+      route_reason: 'coding mutation requires Harness', blocking_gate: null,
+    };
+    const item = toFeedItem({
+      id: 'audit-1', task_type: 'harness_initiative', status: 'queued',
+      title: 'audit', created_at: '2026-08-13T00:00:00Z', routing,
+    }, null, null, Date.now());
+    expect(item.routing).toEqual(routing);
+  });
+
   const now = new Date('2026-06-02T04:00:00Z').getTime();
 
   it('active sprint：elapsed 用 now-started，带进度', () => {

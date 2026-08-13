@@ -103,6 +103,20 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
     );
     const receiptId = receiptResult.rows[0].id;
     await client.query('UPDATE tasks SET payload = payload || $2::jsonb WHERE id=$1', [taskId, JSON.stringify({ routing_receipt_id: receiptId })]);
+    await client.query(
+      `INSERT INTO cecelia_events (event_type,source,payload)
+       VALUES ($1,'work-router',$2::jsonb)`,
+      ['work_routed', JSON.stringify({
+        task_id: taskId,
+        routing_receipt_id: receiptId,
+        source: request.source,
+        work_kind: decision.work_kind,
+        change_kind: decision.change_kind,
+        pipeline: decision.pipeline,
+        repo: decision.repo,
+        route_reason: decision.route_reason,
+      })],
+    );
     if (ownsTransaction) await client.query('COMMIT');
     return {
       task_id: taskId,
@@ -115,6 +129,19 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
     };
   } catch (error) {
     if (ownsTransaction) await client.query('ROLLBACK');
+    if (ownsTransaction) {
+      try {
+        await client.query(
+          `INSERT INTO cecelia_events (event_type,source,payload)
+           VALUES ($1,'work-router',$2::jsonb)`,
+          ['work_route_blocked', JSON.stringify({
+            source: request?.source ?? null,
+            source_id: request?.source_id ?? null,
+            reason_code: error?.code ?? error?.message ?? 'work_route_blocked',
+          })],
+        );
+      } catch { /* 路由原错误保持权威，事件写入不得覆盖它。 */ }
+    }
     throw error;
   } finally {
     if (ownsTransaction && typeof client.release === 'function') client.release();

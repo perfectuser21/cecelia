@@ -498,7 +498,22 @@ export async function createKernelRun(pool, input, deps = {}) {
     committed = true;
     return { created: true, run: rows[0] };
   } catch (error) {
-    if (!committed) await client.query('ROLLBACK');
+    if (!committed) {
+      await client.query('ROLLBACK');
+      if (/^(?:map_|impact_)/.test(error?.message ?? '')) {
+        try {
+          await client.query(
+            `INSERT INTO cecelia_events (event_type,source,payload)
+             VALUES ($1,'kernel-preflight',$2::jsonb)`,
+            ['map_preflight_failed', JSON.stringify({
+              task_id: input?.taskId ?? null,
+              initiative_id: input?.initiativeId ?? null,
+              reason_code: error.message,
+            })],
+          );
+        } catch { /* preflight 原错误保持权威。 */ }
+      }
+    }
     throw error;
   } finally {
     client.release();

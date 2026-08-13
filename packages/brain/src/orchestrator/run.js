@@ -330,6 +330,7 @@ export async function buildRealDeps(overrides = {}) {
         );
       });
     dispatch = createDispatcher({
+      db: pool,
       attemptStore,
       registry,
       launcher,

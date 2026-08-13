@@ -23,7 +23,10 @@ function app() {
 }
 
 describe('GET /warroom/feed', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPool.query.mockResolvedValue({ rows: [] });
+  });
 
   it('聚合任务 → areas + stats 结构', async () => {
     mockPool.query

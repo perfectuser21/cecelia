@@ -22,6 +22,9 @@ describe('routing store transaction contract', () => {
     const result = await createRoutedTask(client, { source: 'api', source_id: '1', title: 'fix', mutation_intent: 'write', declared_change_kind: 'bugfix', repo_hint: 'perfectuser21/cecelia' }, REPOSITORY_FACTS);
     expect(result).toMatchObject({ task_id: 'task-1', routing_receipt_id: 'receipt-1' });
     expect(calls.map(([sql]) => sql)).toEqual(expect.arrayContaining(['BEGIN', 'COMMIT']));
+    expect(calls.some(([sql, args]) => (
+      String(sql).includes('INSERT INTO cecelia_events') && args[0] === 'work_routed'
+    ))).toBe(true);
   });
 
   it('uses one checked-out connection and preserves canonical task fields', async () => {

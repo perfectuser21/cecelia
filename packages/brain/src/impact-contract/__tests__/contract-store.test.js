@@ -241,6 +241,10 @@ describe('FR-2 Impact Contract 持久化', () => {
 
       expect(result.created).toBe(true);
       expect(result.contract).toMatchObject({ version: 3, status: 'active' });
+      expect(db.query.mock.calls.some(([sql, args]) => (
+        String(sql).includes('INSERT INTO cecelia_events')
+          && args?.[0] === 'impact_contract_revised'
+      ))).toBe(true);
     });
 
   });

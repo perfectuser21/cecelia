@@ -95,6 +95,10 @@ function transactionPool({
           }],
         };
       }
+      if (/INSERT INTO cecelia_events/.test(sql)) {
+        order.push('routing-event');
+        return { rows: [], rowCount: 1 };
+      }
       throw new Error(`unexpected SQL: ${sql}`);
     }),
     release: vi.fn(() => order.push('release')),
@@ -233,6 +237,9 @@ describe('Kernel run store creation authority', () => {
     })).rejects.toThrow('map_stale');
     expect(harness.calls.some(({ sql }) => /INSERT INTO initiative_runs/.test(sql))).toBe(false);
     expect(harness.order).toContain('ROLLBACK');
+    const event = harness.calls.find(({ sql }) => /INSERT INTO cecelia_events/.test(sql));
+    expect(event?.params?.[0]).toBe('map_preflight_failed');
+    expect(harness.order.indexOf('ROLLBACK')).toBeLessThan(harness.order.indexOf('routing-event'));
   });
 
   it('rejects a superseded routing receipt before Map preflight', async () => {

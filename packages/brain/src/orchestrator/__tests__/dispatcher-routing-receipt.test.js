@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
-import { assertDispatchRoutingReceipt } from '../dispatcher.js';
+import { assertDispatchRoutingReceipt, createDispatcher } from '../dispatcher.js';
 
 describe('headless routing receipt gate', () => {
   it('rejects coding execution without canonical receipt', () => {
@@ -15,5 +15,17 @@ describe('headless routing receipt gate', () => {
     const createAttempt = dispatchBody.indexOf('attemptStore.createAttempt(');
     expect(guard).toBeGreaterThanOrEqual(0);
     expect(createAttempt).toBeGreaterThan(guard);
+  });
+
+  it('records route_violation before refusing headless execution', async () => {
+    const db = { query: vi.fn(async () => ({ rows: [] })) };
+    const dispatch = createDispatcher({ db });
+    await expect(dispatch('spawn:generator', {
+      observed: { task: { id: 'task-1', task_type: 'dev', payload: {} }, routingReceipt: null },
+    })).rejects.toThrow('route_violation');
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO cecelia_events'),
+      ['route_violation', expect.stringContaining('"task_id":"task-1"')],
+    );
   });
 });

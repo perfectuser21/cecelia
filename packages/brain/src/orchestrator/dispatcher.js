@@ -678,7 +678,26 @@ export function createDispatcher(deps) {
     }
 
     const spec = resolveAction(action);
-    assertDispatchRoutingReceipt(ctx.observed.task, ctx.observed.routingReceipt);
+    try {
+      assertDispatchRoutingReceipt(ctx.observed.task, ctx.observed.routingReceipt);
+    } catch (error) {
+      if (error?.message === 'route_violation' && typeof deps.db?.query === 'function') {
+        try {
+          await deps.db.query(
+            `INSERT INTO cecelia_events (event_type,source,payload)
+             VALUES ($1,'kernel-dispatcher',$2::jsonb)`,
+            ['route_violation', JSON.stringify({
+              task_id: ctx.observed.task?.id ?? null,
+              run_id: ctx.runId ?? ctx.observed.run?.id ?? null,
+              routing_receipt_id: ctx.observed.task?.payload?.routing_receipt_id ?? null,
+              reason_code: 'route_violation',
+              action,
+            })],
+          );
+        } catch { /* route_violation 保持权威，审计写失败不得放行。 */ }
+      }
+      throw error;
+    }
     const commanderContext = spec.role === 'commander' ? ctx.commander : null;
     if (spec.role === 'commander' && !commanderContext?.bundle) {
       throw new Error('spawn:commander requires coordinator context');
