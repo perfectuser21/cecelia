@@ -471,7 +471,8 @@ describe('selfcheck schema version', () => {
     // 407 = explicit Universal Map repo adapters（406 已由 account_exhausted migration 占用）。
     // 408/409 = Impact Contract + Gap Ledger；410 = revision-indexed immutable graph snapshots；
     // 411 = reviewer-approved SHA 下的冻结合同测试制品；
-    // 412 = approved Harness contract artifact manifests。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('412');
+    // 412 = approved Harness contract artifact manifests；
+    // 413 = initiative_runs Session Controller ownership（controller_session_id + lease）。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('413');
   });
 });
