@@ -11,13 +11,25 @@ CREATE TABLE IF NOT EXISTS kernel_controller_sessions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE initiative_runs ADD COLUMN IF NOT EXISTS controller_generation BIGINT;
+
+-- Pre-422 controller strings have no durable authority row and therefore
+-- cannot prove a live owner.  Never bless them with a fresh lease: preserve
+-- the ownerless state so the startup sweeper immediately fails closed.
+UPDATE initiative_runs
+   SET controller_session_id=NULL,
+       controller_generation=NULL,
+       controller_lease_expires_at=NULL
+ WHERE orchestrator_version='v2'
+   AND phase NOT IN ('done','failed');
+
+-- Terminal history gets a closed audit identity only; it is never executable.
 INSERT INTO kernel_controller_sessions (id,run_id,task_id,generation,source,status,last_heartbeat_at,lease_expires_at)
 SELECT gen_random_uuid()::text, run.id, run.current_task_id, 1, 'migration-422',
-       CASE WHEN run.phase IN ('done','failed') THEN 'closed' ELSE 'active' END,
+       'closed',
        COALESCE(run.orchestrator_heartbeat_at,run.started_at,NOW()),
-       CASE WHEN run.phase IN ('done','failed') THEN NOW()
-            ELSE GREATEST(COALESCE(run.controller_lease_expires_at,NOW()),NOW()+INTERVAL '30 minutes') END
-FROM initiative_runs run WHERE run.orchestrator_version='v2' AND run.current_task_id IS NOT NULL
+       NOW()
+FROM initiative_runs run WHERE run.orchestrator_version='v2'
+ AND run.phase IN ('done','failed') AND run.current_task_id IS NOT NULL
 ON CONFLICT (run_id) DO NOTHING;
 UPDATE initiative_runs run SET controller_session_id=session.id,
  controller_generation=session.generation,controller_lease_expires_at=session.lease_expires_at
