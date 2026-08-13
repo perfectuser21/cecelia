@@ -25,6 +25,12 @@
 | B-3 | 两函数均打印 BRAIN_PREVIEW 日志 | `tickLog` 输出含 `"BRAIN_PREVIEW"` 字样 |
 | B-4 | 非 Preview 零回归 | `BRAIN_PREVIEW` 未设置时，`initTickLoop` 在 DB `tick_enabled=true` 时正常调用 `startTickLoop` |
 
+## Test Contract
+
+| Workstream | Test File | Behaviors | Priority | Description |
+|---|---|---|---|---|
+| ws1 | `packages/brain/src/__tests__/tick-recovery-preview.test.js` | [B-1] initTickLoop() BRAIN_PREVIEW=1 时返回 {success:true,enabled:false,loop_running:false,preview:true}，startTickLoop 不被调用 / [B-2] tryRecoverTickLoop() BRAIN_PREVIEW=1 时清除 recoveryTimer 并 return，startTickLoop 不被调用 / [B-3] initTickLoop() BRAIN_PREVIEW=1 时调用 console.log 且输出包含 "BRAIN_PREVIEW" / [B-4] BRAIN_PREVIEW 未设置时，initTickLoop() 在 DB tick_enabled=true 时正常调用 startTickLoop() | P0 | B-1~B-4 Preview Brain 主 Tick 隔离守卫 |
+
 ## E2E 验收
 
 `vitest run packages/brain/src/__tests__/tick-recovery-preview.test.js` 全绿（4 个测试用例，分别覆盖 B-1 ~ B-4）。
