@@ -624,6 +624,41 @@ export function getMacOSMemoryPressure() {
 }
 
 /**
+ * macOS 内核 memory pressure 等级 → pressure ratio 映射表（本 sprint 契约值）。
+ *   Normal(0)=0 / Warning(1)=0.3 / Urgent(2)=0.7 / Critical(3)=1
+ * 内核自评 `vm.memory_pressure` 是权威信号；macOS 缓存天然吃满内存，free% 恒
+ * 0.3-0.4 会让 effective 永久折半（本 bug 根因②），故 darwin 有有效内核等级时
+ * free%/usagePercent 不参与 pressure 计算。
+ */
+const DARWIN_KERNEL_PRESSURE_MAP = Object.freeze({ 0: 0, 1: 0.3, 2: 0.7, 3: 1 });
+
+/**
+ * 解析本机内存压力比（0-1），供 fleet effective_slots 计算链使用。
+ *
+ * - darwin 且 kernelLevel ∈ {0,1,2,3}：按内核自评映射表返回（free%/usagePercent 不参与）；
+ * - darwin 且 kernelLevel === -1（内核读取失败）：明确 fallback 到 usagePercent/100，
+ *   **不静默当 0**（否则会过派 OOM，见失败语义声明）；
+ * - 非 darwin（Linux 远端等）：走既有 usagePercent/100 路径，行为不变；
+ * - 非法 kernelLevel（如 4/null/NaN/字符串）：不落入映射表 → fallback 到 usagePercent，
+ *   不产生 NaN 污染。
+ *
+ * @param {object} opts
+ * @param {string} opts.platform          - 'darwin' | 'linux' | ...
+ * @param {number} opts.kernelLevel       - macOS 内核 pressure 等级 0/1/2/3，读取失败为 -1
+ * @param {number} opts.memUsagePercent   - 内存使用百分比 0-100（fallback 用）
+ * @returns {number} pressure ratio ∈ [0,1]
+ */
+export function resolveMemPressureRatio({ platform, kernelLevel, memUsagePercent } = {}) {
+  if (platform === 'darwin' && Object.hasOwn(DARWIN_KERNEL_PRESSURE_MAP, kernelLevel)) {
+    return DARWIN_KERNEL_PRESSURE_MAP[kernelLevel];
+  }
+  // 非 darwin，或 darwin 内核读取失败/非法等级 → 明确 fallback 到 usagePercent（不静默当 0）
+  const usage = Number(memUsagePercent);
+  if (!Number.isFinite(usage)) return 0;
+  return usage / 100;
+}
+
+/**
  * Get available memory in MB — platform-aware.
  *
  * macOS: os.freemem() only counts truly free pages (~66MB at rest), ignoring

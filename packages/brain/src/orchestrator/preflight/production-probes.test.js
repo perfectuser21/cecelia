@@ -268,7 +268,10 @@ describe('production capability probes', () => {
     },
   );
 
-  it('blocks the real capability gate when generator-weighted slots round to zero', async () => {
+  it('admits a generator when weighted slots would previously round to zero (dead-zone eliminated)', async () => {
+    // 回归 run 8783807c：effective_slots=3 + generator 权重4 → floor(3/4)=0 曾使
+    // 本机被算成不可派，spawn 卡 all_execution_targets_exhausted。effective≥1 保底
+    // 修复后 base>0 至少可派 1，闸不再误 block。
     const createProductionCapabilityProbes = await loadFactory();
     const productionProbes = createProductionCapabilityProbes({
       pool: { query: vi.fn() },
@@ -309,13 +312,22 @@ describe('production capability probes', () => {
         logical_cycle: 'weighted-capacity-gate',
       },
     })).resolves.toMatchObject({
-      status: 'blocked',
-      fallback_reason: 'all_execution_targets_exhausted',
-      should_create_attempt: false,
+      status: 'ok',
+      should_create_attempt: true,
+      evidence: {
+        machine_capacity: {
+          available: 1,
+          role: 'generator',
+          role_weight: 4,
+          effective_base_slots: 3,
+        },
+      },
     });
   });
 
-  it('honors an audited manual dispatch when role-weighted slots round to zero', async () => {
+  it('admits a low-slot evaluator on its own capacity now that the dead zone is gone (no manual override needed)', async () => {
+    // 曾经：evaluator 权重4 + effective_slots=1 → floor(1/4)=0，只有 manual_dispatch
+    // 审计豁免才能派。effective≥1 保底后 base=1 直接可派 1，无需 manual override 拐杖。
     const createProductionCapabilityProbes = await loadFactory();
     const productionProbes = createProductionCapabilityProbes({
       pool: { query: vi.fn() },
@@ -344,7 +356,7 @@ describe('production capability probes', () => {
       probeTimeoutMs: 100,
     });
 
-    await expect(gate.evaluate({
+    const result = await gate.evaluate({
       preferred_target: {
         provider: 'claude',
         account: 'account1',
@@ -356,17 +368,20 @@ describe('production capability probes', () => {
         logical_cycle: 'manual-dispatch-capacity',
         inputs: { manual_dispatch: true },
       },
-    })).resolves.toMatchObject({
+    });
+    expect(result).toMatchObject({
       status: 'ok',
       evidence: {
         machine_capacity: {
           available: 1,
-          physical_capacity: 1,
-          manual_capacity_override: true,
           role_weight: 4,
+          effective_base_slots: 1,
+          physical_base_slots: 2,
         },
       },
     });
+    // 保底已消灭死区，manual override 分支不再被触发（available 来自保底而非豁免）
+    expect(result.evidence.machine_capacity.manual_capacity_override).toBeUndefined();
   });
 
   it('fails closed on missing canonical identity and GitHub rejection without leaking token', async () => {

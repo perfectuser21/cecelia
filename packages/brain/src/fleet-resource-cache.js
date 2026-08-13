@@ -13,7 +13,7 @@
  */
 
 import { SERVERS, COMPUTE_SERVERS, collectLocalStats, collectRemoteUnixStats } from './routes/infra-status.js';
-import { calculatePhysicalCapacity } from './platform-utils.js';
+import { calculatePhysicalCapacity, resolveMemPressureRatio, getMacOSMemoryPressure, IS_DARWIN } from './platform-utils.js';
 
 const REFRESH_INTERVAL_MS = 30_000; // 30 秒
 const STALE_THRESHOLD_MS = 90_000;  // 90 秒后数据视为过期（不影响 offline_reason 判定）
@@ -54,9 +54,27 @@ async function collectServerStats(server, prevLastPingAt) {
     const physicalCapacity = calculatePhysicalCapacity(totalMemMB, cpuCores, 400, 0.5);
 
     const cpuPressure = stats.cpu.usagePercent / 100;
-    const memPressure = stats.memory.usagePercent / 100;
+    // 本机 darwin：内存压力改用内核 vm.memory_pressure 自评等级映射（根因②——
+    // macOS free% 恒 0.3-0.4 使 effective 永久折半）；远端/非 darwin：kernelLevel=-1
+    // → resolveMemPressureRatio fallback 到 usagePercent，既有行为不变。
+    const kernelLevel = (server.isLocal && IS_DARWIN) ? getMacOSMemoryPressure() : -1;
+    const memPressure = resolveMemPressureRatio({
+      platform: (server.isLocal && IS_DARWIN) ? 'darwin' : 'linux',
+      kernelLevel,
+      memUsagePercent: stats.memory.usagePercent,
+    });
     const maxPressure = Math.max(cpuPressure, memPressure);
     const effectiveSlots = Math.max(0, Math.floor(physicalCapacity * (1 - maxPressure)));
+
+    // 可观测留痕（NFR）：online 机器 effective 归零 / physical 触发下限兜底(≤2) 时
+    // warn 告警，不静默无限退避（根因③放大器——「无告警只有无限退避」）。
+    if (effectiveSlots === 0 || physicalCapacity <= 2) {
+      console.warn(
+        `[fleet-cache] ⚠️ ${server.id} 容量告警: physical=${physicalCapacity}` +
+        `${physicalCapacity <= 2 ? '(疑触发下限兜底)' : ''} effective=${effectiveSlots}` +
+        `${effectiveSlots === 0 ? '(effective 归零)' : ''} pressure=${maxPressure.toFixed(3)}`,
+      );
+    }
 
     return {
       online: true,

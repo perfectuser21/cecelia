@@ -39,15 +39,20 @@ describe('本机容量三层失真修复 [BEHAVIOR]', () => {
 
   // ── 根因② macOS pressure 用内核自评等级映射，darwin free% 不再参与 ──
   describe('② macOS 内核 pressure 映射', () => {
-    it.each([
-      [0, 0],
-      [1, 0.3],
-      [2, 0.7],
-      [3, 1],
-    ])('darwin 内核等级 %i → pressure ratio %f', (level, ratio) => {
-      expect(
-        resolveMemPressureRatio({ platform: 'darwin', kernelLevel: level, memUsagePercent: 90 }),
-      ).toBeCloseTo(ratio, 5);
+    // 展开为显式 it()（与冻结合同镜像的 it.each 等价，逐条断言不变）——
+    // Test Contract 覆盖检查器只提取 it()/test() 标题，不解析 it.each 标题模板，
+    // 故永久 CI 副本用显式 it() 让 BEHAVIOR「darwin 内核等级」可被覆盖检查匹配。
+    it('darwin 内核等级 0 → pressure ratio 0', () => {
+      expect(resolveMemPressureRatio({ platform: 'darwin', kernelLevel: 0, memUsagePercent: 90 })).toBeCloseTo(0, 5);
+    });
+    it('darwin 内核等级 1 → pressure ratio 0.3', () => {
+      expect(resolveMemPressureRatio({ platform: 'darwin', kernelLevel: 1, memUsagePercent: 90 })).toBeCloseTo(0.3, 5);
+    });
+    it('darwin 内核等级 2 → pressure ratio 0.7', () => {
+      expect(resolveMemPressureRatio({ platform: 'darwin', kernelLevel: 2, memUsagePercent: 90 })).toBeCloseTo(0.7, 5);
+    });
+    it('darwin 内核等级 3 → pressure ratio 1', () => {
+      expect(resolveMemPressureRatio({ platform: 'darwin', kernelLevel: 3, memUsagePercent: 90 })).toBeCloseTo(1, 5);
     });
 
     it('darwin 有有效内核等级时 free%/usagePercent 不参与（level=0 且 usage=90 → 0）', () => {

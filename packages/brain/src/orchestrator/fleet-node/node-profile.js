@@ -163,9 +163,15 @@ export function getRoleCapacity({ baseCapacity, role } = {}) {
   }
 
   const weight = ROLE_WEIGHTS[role];
+  // effective≥1 保底：消灭 floor(base/weight)=0 归零死区（本 bug 根因③——
+  // effective=1 + proposer 权重2 → floor(1/2)=0 → proposer 永远不可派）。
+  // baseCapacity>0 时任何角色至少可派 1；baseCapacity===0（drained/offline）
+  // 时保持 0（manual override 不可派语义不回退，保底不得抬到 ≥1）。
+  const raw = Math.floor(baseCapacity / weight);
+  const capacity = baseCapacity > 0 ? Math.max(1, raw) : 0;
   return {
     role,
     weight,
-    capacity: Math.floor(baseCapacity / weight),
+    capacity,
   };
 }
