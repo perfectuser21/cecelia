@@ -8,11 +8,17 @@
 
 
 
-**Brain 版本**: 1.273.0
+**Brain 版本**: 1.273.1
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.273.1 — Migration 413/414 production anchor + schema 地板升至 415
+
+- Production DB 已有 schema 413（work_routing_receipts）和 414（map_recovery_contracts），补录进 main，selfcheck EXPECTED_SCHEMA_VERSION 随 PR #4860 升至 415。
+- PR #4860（Session Controller ownership，migration 415）已合并，三档 migration 全部对齐。
+- Root package-lock.json 与 packages/brain/package.json 版本同步。
 
 ## Brain 1.273.0 — Session Controller 所有权不变量 + 四档 change_kind 驱动 Profile
 
@@ -26,10 +32,12 @@
 - NodeProfile、Worker、Probe、rollout、reconciler 与 runtime smoke 统一引用同一镜像，漂移继续 fail closed。
 - Generator、Evaluator、Judge 的 TaskBundle 结构化携带冻结 GP Contract 身份；可信 Evaluator writer 写 receipt 前必须回查 signed 合同 SSOT，并把同一 `gp_contract_id/hash` 精确落账。
 
-## Brain 1.272.36 — 冻结合同资产确定性排序
+## Brain 1.272.36 — 冻结合同资产确定性排序 + Migration 413/414 权威补录
 
 - 已封存合同资产从 PostgreSQL 读回后，按与 JavaScript 完整性校验器相同的 Unicode 码点顺序规范化，消除数据库 locale 对大小写路径排序不同造成的 `order_or_duplicate` 假红。
 - source revision、内容摘要、字节数和 sealed manifest 继续逐项 fail-closed 校验；回归覆盖 F1 真实失败 Run 的 `gp-identity` / `RED-evidence` 混合大小写路径。
+- Production DB 已有 schema 413（work_routing_receipts）和 414（map_recovery_contracts），来自已关闭 PR #4851；两份 migration 补录进 main 使代码权威对齐，selfcheck EXPECTED_SCHEMA_VERSION 升至 414。
+- PR #4860（Session Controller 所有权）的 migration 由 413 改为 415，消除同号不同语义碰撞。
 
 ## Brain 1.272.32 — 已批准合同 TaskBundle 去重
 

@@ -1,6 +1,6 @@
 # Brain 模块定义
 
-**版本**: 1.272.37
+**版本**: 1.273.1
 
 ## Fleet pgvector runtime contract
 
@@ -39,6 +39,12 @@
 - Impact Contract 先按 schema 规范化再计算 hash，空的非 schema 字段不再制造伪版本。
 - 兼容 1.272.27 的冻结测试 TaskBundle，同时以 versioned rows + sealed manifest 作为新批准合同的唯一持久化事实。
 - Schema 地板推进到 412。
+
+## Migration authority alignment — 413/414 production anchor
+
+- Production DB 在 PR #4851（已关闭）preview 部署期间应用了 migration 413（work_routing_receipts）和 414（map_recovery_contracts）。
+- 两份 migration 补录进 main，使代码库与 production schema_version 对齐；selfcheck EXPECTED_SCHEMA_VERSION 升至 414。
+- PR #4860（Session Controller 所有权）的 migration 由 413 改为 415，消除同号碰撞。
 
 ## Blue-green internal auth credential closure
 
