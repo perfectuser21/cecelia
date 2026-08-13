@@ -17,6 +17,7 @@ import pool from './db.js';
 import { findActiveRunBlockingSpawn } from './lib/harness-run-guard.js';
 import { normalizeChangeKind } from './impact-contract/change-kind.js';
 import { execSync, spawn as nodeSpawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, copyFileSync, openSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -233,6 +234,11 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
   // 必为合法枚举；此调用是二次确认（defense-in-depth）。若真抛出，发生在 createRun 之前、
   // 无半态 run，作为 spawn 失败向上抛给调用方，仍是 fail-closed。
   const gear = deriveGear(task);
+  // 启动链收敛（sprint 08131104 缺陷①）：Dispatcher→Controller→Kernel。Session Controller
+  // 在拉起 Kernel 之前先取得 ownership —— controllerSessionId 随 createKernelRun 在同一创建事务
+  // 里落库（controller_session_id 先于 Kernel 可执行态），createKernelRun fail-closed 校验后才建 run。
+  // 由此 payload.harness_runtime=kernel-v1 直打也不会产生 detached 无主 Kernel（issue 962d399c）。
+  const controllerSessionId = deps.controllerSessionId ?? randomUUID();
   const createRun = deps.createKernelRun ?? createKernelRun;
   const created = await createRun(dbPool, {
     taskId: task.id,
@@ -244,6 +250,7 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
     deadlineHours: 8,
     createdSource: 'kernel_dispatch',
     gear,
+    controllerSessionId,
   });
   const runId = created.run?.id;
   if (!runId) throw new Error('kernel-v1 run authority returned no id');

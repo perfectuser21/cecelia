@@ -28,6 +28,7 @@ import {
   reconcileKernelTaskTerminal,
 } from '../orchestrator/kernel-run-store.js';
 import { terminalizeRunsForTask, ORPHAN_RUN_FAILURE_REASON } from './harness-run-guard.js';
+import { reconcileOwnerlessKernelRuns } from '../orchestrator/kernel-controller-lifecycle.js';
 import { captureRelayForensicsByShortId } from './relay-forensics.js';
 
 export const WAIT_SUICIDE_PATTERN = /等\s*(?:待)?.{0,10}(?:Monitor|监控|通知)|waiting\s+for\s+.{0,12}(?:Monitor|notification|CI\b)/i;
@@ -414,6 +415,16 @@ export function startHarnessOrphanGuard({ pool = defaultPool, execFn = defaultEx
       await sweepOrphanHarnessTasks({ pool, execFn, idleMinutes });
     } catch (err) {
       console.error('[orphan-guard] sweep 异常:', err.message);
+    }
+    // Session Controller 生命周期恢复（sprint 08131104）：无主 Kernel Run（Controller fatal /
+    // lease 过期 / 迁移前无主历史 run）fail-closed 进恢复，绝不静默放行。与孤儿巡检同节奏。
+    try {
+      const recovered = await reconcileOwnerlessKernelRuns(pool);
+      if (recovered.length > 0) {
+        console.log(`[orphan-guard] ownerless kernel runs recovered=${recovered.length}`);
+      }
+    } catch (err) {
+      console.error('[orphan-guard] ownerless-run 恢复异常:', err.message);
     }
   }, intervalMs);
   if (timer.unref) timer.unref();

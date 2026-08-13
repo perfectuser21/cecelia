@@ -8,11 +8,17 @@
 
 
 
-**Brain 版本**: 1.272.38
+**Brain 版本**: 1.273.0
 
 **状态**: 生产运行中
 
 ---
+
+## Brain 1.273.0 — Session Controller 所有权不变量 + 四档 change_kind 驱动 Profile
+
+- `initiative_runs` 新增 `controller_session_id` + `controller_lease_expires_at`（migration 415），建立「任何活跃 Kernel Run 前必先有有效 Controller ownership」不变量；`createKernelRun` 无 Controller identity 时 fail-closed 拒绝创建，杜绝 detached 无主 Kernel（issue 962d399c）。
+- `harness-skill-relay` 启动链收敛为 Dispatcher→Controller→Kernel：Controller 先取 ownership 再拉起 Kernel；Kernel fatal 只结束 Kernel（Controller 存活、结构化脱敏 failure_reason 回传），Controller fatal / lease 过期 / 迁移前无主历史 run 一律 fail-closed 进恢复流程，不静默放行。
+- `orchestrator/derive.js` 真读 `change_kind` 分派执行 Profile：`bugfix`/`parameter_only` 初始态跳 Planner/GAN 直进 generate，`new_capability`/`capability_change` 保留全链；四档全部保留 Generate→Evaluate→Judge 与 merge fence；change_kind 与 gear 正交、禁互推导（决策 29ae54ae）。Schema 地板推进到 415。
 
 ## Brain 1.272.38 — Fleet pgvector 运行时契约
 
@@ -159,7 +165,7 @@
 - Map/Impact/Journey 写入口使用共享 internal token；生产 Compose、蓝绿 canary、staging 与跨 checkout scanner 读取同一宿主 credentials SSOT。
 - Capability Mapper 在 Runner 只产 manifest artifact，拍板后的提交/激活统一走读取 credentials SSOT 的受信宿主 adapter。
 - 扫描只允许 clean main/exact SHA；批末复核 checkout 与四类 header revision，同 SHA 每 10 分钟保鲜。
-- Schema 地板推进到 411。
+- Schema 地板推进到 415。
 
 ---
 
@@ -2186,7 +2192,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | **Schema 版本**: 411 |
+| **schema_version** | 迁移版本追踪 | **Schema 版本**: 415 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -2574,7 +2580,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '411'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '415'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

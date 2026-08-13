@@ -14,6 +14,9 @@ import {
 const TASK_ID = '11111111-1111-4111-8111-111111111111';
 const INITIATIVE_ID = '22222222-2222-4222-8222-222222222222';
 const RUN_ID = '33333333-3333-4333-8333-333333333333';
+// Session Controller ownership（sprint 08131104）：createKernelRun 现要求非空 controllerSessionId。
+const CONTROLLER_SESSION_ID = '44444444-4444-4444-8444-444444444444';
+const CONTROLLER_LEASE_DEFAULT_SECONDS = 1800;
 
 const VALID_INPUT = Object.freeze({
   taskId: TASK_ID,
@@ -24,6 +27,7 @@ const VALID_INPUT = Object.freeze({
   host: 'kernel-v1',
   deadlineHours: 8,
   createdSource: 'kernel_dispatch',
+  controllerSessionId: CONTROLLER_SESSION_ID,
 });
 
 function transactionPool({
@@ -234,6 +238,8 @@ describe('Kernel run store creation authority', () => {
     expect(insert.sql).toContain('commander_mode');
     expect(insert.sql).toContain('gear');
     expect(insert.sql).toContain('impact_contract_policy');
+    expect(insert.sql).toContain('controller_session_id');
+    expect(insert.sql).toContain('controller_lease_expires_at');
     expect(insert.params).toEqual([
       INITIATIVE_ID,
       'planning',
@@ -250,6 +256,9 @@ describe('Kernel run store creation authority', () => {
       'legacy_exempt',
       'MJ5 map/radius dependency is not active for this task',
       'f69c2f91',
+      // sprint 08131104：Session Controller ownership —— controller_session_id + lease 秒数。
+      CONTROLLER_SESSION_ID,
+      CONTROLLER_LEASE_DEFAULT_SECONDS,
     ]);
     expect(harness.order).toEqual([
       'BEGIN',
@@ -390,6 +399,27 @@ describe('Kernel run store creation authority', () => {
       ...VALID_INPUT,
       commanderMode: 'unsafe-mode',
     })).rejects.toThrow('invalid Kernel run commander mode: unsafe-mode');
+    expect(harness.pool.connect).not.toHaveBeenCalled();
+  });
+
+  it('fail-closed：缺失/空 controllerSessionId 在开事务前拒绝（无 Controller ownership）', async () => {
+    const harness = transactionPool();
+    // 缺失
+    await expect(createKernelRun(harness.pool, {
+      ...VALID_INPUT,
+      controllerSessionId: undefined,
+    })).rejects.toThrow('missing controller ownership (fail-closed)');
+    // 空串
+    await expect(createKernelRun(harness.pool, {
+      ...VALID_INPUT,
+      controllerSessionId: '',
+    })).rejects.toThrow('missing controller ownership (fail-closed)');
+    // 纯空白
+    await expect(createKernelRun(harness.pool, {
+      ...VALID_INPUT,
+      controllerSessionId: '   ',
+    })).rejects.toThrow('missing controller ownership (fail-closed)');
+    // fail-closed：一律不开事务、不写半态 run
     expect(harness.pool.connect).not.toHaveBeenCalled();
   });
 

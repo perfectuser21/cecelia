@@ -745,6 +745,24 @@ export function derive(observed) {
     return applyHopFence(deriveTask(observed), counters);
   }
 
+  // 0.7 change_kind 执行 Profile 分派（sprint 08131104：derive 真读 observed.change_kind，缺陷④修复）。
+  // change_kind 与 gear 正交独立（禁互推导，决策 29ae54ae）：gear 决定执行档位强度，change_kind
+  // 决定「这次变更语义走哪条相位链」。四档全部保留 Generate→Evaluate→Judge 与 merge fence，
+  // 只在「初始态（prd 未落盘 && 合同未批）」决定是否跳过 Planner/GAN：
+  //   - bugfix / parameter_only：跳 Planner、跳 GAN，初始态直进 generate（deriveTask 主线，
+  //     语义同 gear=hotfix 的免 planner/GAN，但由 change_kind 驱动、与 gear 正交叠加）。
+  //   - new_capability / capability_change：落到下面 planning 门，保留 planning + GAN 收敛。
+  // 缺省（change_kind=null：存量 run / 未注入）→ 不分叉，逐字节等价现行行为（零回归红线）。
+  // 非法 change_kind 由入口层 change-kind.js normalizeChangeKind throw（现有语义，不在此重复校验）。
+  const changeKind = observed.change_kind ?? null;
+  if (
+    (changeKind === 'bugfix' || changeKind === 'parameter_only')
+    && !prdExists
+    && !contract.approved
+  ) {
+    return applyHopFence(deriveTask(observed), counters);
+  }
+
   // 1. planning：sprint-prd.md 落盘即真相，丢失重跑 planner（D2，plannerOutput 不持久化）
   if (!prdExists) {
     return applyHopFence(

@@ -66,6 +66,8 @@ function runInput(taskId, initiativeId, createdSource = 'kernel_dispatch') {
     host: 'kernel-v1',
     deadlineHours: 8,
     createdSource,
+    // Session Controller ownership（sprint 08131104）：createKernelRun 现要求非空 controllerSessionId。
+    controllerSessionId: randomUUID(),
   };
 }
 
@@ -102,6 +104,8 @@ beforeAll(async () => {
       ability_id UUID,
       deadline_at TIMESTAMPTZ,
       failure_reason TEXT,
+      controller_session_id TEXT,
+      controller_lease_expires_at TIMESTAMPTZ,
       started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       completed_at TIMESTAMPTZ
