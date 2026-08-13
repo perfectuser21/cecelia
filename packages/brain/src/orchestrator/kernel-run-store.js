@@ -466,11 +466,11 @@ export async function createKernelRun(pool, input, deps = {}) {
          orchestrator_host, deadline_at, ability_id, current_task_id,
          created_source, record_trust_status, commander_mode, gear,
          impact_contract_policy, impact_contract_policy_reason,
-         impact_contract_policy_decision_id
+         impact_contract_policy_decision_id, map_recovery_contract_id
        ) VALUES (
          $1, $2, $3, 'v2', $4,
          NOW() + ($5 * INTERVAL '1 hour'), $6, $7, $8, $9, $10, $11,
-         $12, $13, $14
+         $12, $13, $14, $15
        )
        RETURNING *`,
       [
@@ -489,6 +489,7 @@ export async function createKernelRun(pool, input, deps = {}) {
         impactContractPolicy,
         impactContractPolicyReason,
         impactContractPolicyDecisionId,
+        preflight.recovery_contract?.id ?? null,
       ],
     );
     await client.query('COMMIT');

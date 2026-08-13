@@ -399,12 +399,34 @@ export function createAttemptStore(pool) {
       const skill = input.bundle?.skill ?? null;
       const result = await pool.query(
         `WITH guarded_run AS (
-           SELECT id
-             FROM initiative_runs
-            WHERE id = $2
-              AND orchestrator_version = 'v2'
-              AND phase NOT IN ('done','failed')
-            FOR KEY SHARE
+           SELECT run.id, run.map_recovery_contract_id
+             FROM initiative_runs run
+            WHERE run.id = $2
+              AND run.orchestrator_version = 'v2'
+              AND run.phase NOT IN ('done','failed')
+              AND (
+                run.map_recovery_contract_id IS NULL
+                OR (
+                  $5 = 'generator'
+                  AND (
+                    NOT EXISTS (
+                      SELECT 1
+                        FROM map_recovery_consumptions consumption
+                       WHERE consumption.contract_id = run.map_recovery_contract_id
+                    )
+                    OR EXISTS (
+                      SELECT 1
+                        FROM map_recovery_consumptions consumption
+                        JOIN harness_attempts existing
+                          ON consumption.attempt_id = existing.id
+                       WHERE consumption.contract_id = run.map_recovery_contract_id
+                         AND existing.run_id = run.id
+                         AND existing.hop = $3
+                    )
+                  )
+                )
+              )
+            FOR KEY SHARE OF run
          ),
          inserted AS (
            INSERT INTO harness_attempts (
@@ -420,6 +442,14 @@ export function createAttemptStore(pool) {
              FROM guarded_run
            ON CONFLICT (run_id, hop) DO NOTHING
            RETURNING *
+         ), consumed AS (
+           INSERT INTO map_recovery_consumptions (contract_id, attempt_id)
+           SELECT guarded_run.map_recovery_contract_id, inserted.id
+             FROM inserted
+             JOIN guarded_run ON guarded_run.id = inserted.run_id
+            WHERE guarded_run.map_recovery_contract_id IS NOT NULL
+              AND $5 = 'generator'
+           RETURNING contract_id, attempt_id
          )
          SELECT * FROM inserted
          UNION ALL

@@ -5,6 +5,15 @@ import { persistImpactContract } from '../../impact-contract/contract-store.js';
 
 const RECOVERY_REASONS = new Set(['map_unavailable', 'scanner_unavailable', 'projection_unavailable']);
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
+const MAP_RECOVERY_PATH_PREFIXES = Object.freeze([
+  'packages/brain/src/lib/map-',
+  'packages/brain/src/lib/fact-snapshot-',
+  'packages/brain/src/scanners/',
+  'packages/brain/scripts/scan-',
+  'packages/brain/scripts/run-all-scans.sh',
+  'scripts/scan-graph.mjs',
+  'scripts/run-all-scans.sh',
+]);
 
 export function assertMapImpactContract({ repo, base_sha, map, impact_contract }) {
   if (!map) throw new Error('map_missing');
@@ -17,10 +26,42 @@ export function assertMapImpactContract({ repo, base_sha, map, impact_contract }
   return { impact_contract_policy: 'required', base_sha, repo };
 }
 
-export function assertMapRecoveryContract(contract, now = Date.now()) {
-  if (contract.change_kind !== 'bugfix' || !RECOVERY_REASONS.has(contract.reason_code)) throw new Error('map_recovery_forbidden');
+export function assertMapRecoveryContract(contract, context = {}, now = Date.now()) {
+  if (typeof context === 'number') {
+    now = context;
+    context = {};
+  }
+  if (contract.change_kind !== 'bugfix' || !RECOVERY_REASONS.has(contract.reason_code)) {
+    throw new Error('map_recovery_forbidden');
+  }
   if (Date.parse(contract.expires_at) <= now) throw new Error('map_recovery_expired');
-  if (contract.attempt_id) throw new Error('map_recovery_consumed');
+  if (contract.attempt_id || contract.consumed_attempt_id) throw new Error('map_recovery_consumed');
+  for (const field of ['receipt_id', 'task_id', 'repo', 'branch', 'base_sha', 'reason_code']) {
+    if (context[field] != null && contract[field] !== context[field]) {
+      throw new Error('map_recovery_identity_mismatch');
+    }
+  }
+  const authority = contract.authorization_evidence;
+  if (
+    !authority
+    || typeof authority.authorized_by !== 'string'
+    || authority.authorized_by.length === 0
+    || authority.observed_reason_code !== contract.reason_code
+  ) {
+    throw new Error('map_recovery_authority_invalid');
+  }
+  return true;
+}
+
+export function assertMapRecoveryPaths(changedFiles) {
+  if (!Array.isArray(changedFiles) || changedFiles.length === 0) {
+    throw new Error('map_recovery_diff_missing');
+  }
+  const invalid = changedFiles.find((file) => (
+    typeof file !== 'string'
+    || !MAP_RECOVERY_PATH_PREFIXES.some((prefix) => file === prefix || file.startsWith(prefix))
+  ));
+  if (invalid) throw new Error('map_recovery_diff_forbidden');
   return true;
 }
 
@@ -36,7 +77,129 @@ async function resolveScopeKey(client, repo) {
   return result.rows[0].scope_key;
 }
 
-export async function ensureMapImpactPreflight(client, { task, receipt }, deps = {}) {
+function recoveryReasonCode(error) {
+  if (RECOVERY_REASONS.has(error?.code)) return error.code;
+  if (['map_stale', 'map_revision_mismatch', 'map_radius_stale'].includes(error?.message)) {
+    return 'scanner_unavailable';
+  }
+  if (['map_digest_invalid', 'impact_capability_missing', 'impact_assertion_missing'].includes(error?.message)) {
+    return 'projection_unavailable';
+  }
+  return null;
+}
+
+async function ensureMapRecoveryPreflight(client, { task, receipt, reasonCode }, deps) {
+  const payload = task?.payload ?? {};
+  if (payload.map_recovery !== true || receipt.change_kind !== 'bugfix') {
+    throw Object.assign(new Error(reasonCode), { code: reasonCode });
+  }
+  assertMapRecoveryPaths(payload.changed_files);
+  const branch = receipt.evidence?.branch;
+  const baseSha = receipt.evidence?.base_sha;
+  if (!receipt.id || !branch || !SHA_PATTERN.test(baseSha ?? '')) {
+    throw new Error('map_recovery_identity_missing');
+  }
+  const existing = await client.query(
+    `SELECT recovery.*, receipt.change_kind,
+            consumption.attempt_id AS consumed_attempt_id
+       FROM map_recovery_contracts recovery
+       JOIN work_routing_receipts receipt
+         ON receipt.id = recovery.receipt_id
+        AND receipt.task_id = recovery.task_id
+       LEFT JOIN map_recovery_consumptions consumption
+         ON consumption.contract_id = recovery.id
+      WHERE recovery.receipt_id=$1`,
+    [receipt.id],
+  );
+  let recoveryContract = existing.rows[0] ?? null;
+  if (!recoveryContract) {
+    const inserted = await client.query(
+      `INSERT INTO map_recovery_contracts (
+         receipt_id, task_id, repo, branch, base_sha, reason_code,
+         expires_at, authorization_evidence
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,$7,$8::jsonb
+       ) RETURNING *`,
+      [
+        receipt.id,
+        task.id,
+        receipt.repo,
+        branch,
+        baseSha,
+        reasonCode,
+        new Date((deps.now ?? new Date()).getTime() + 15 * 60 * 1000).toISOString(),
+        JSON.stringify({
+          authorized_by: 'brain-map-preflight',
+          observed_reason_code: reasonCode,
+          changed_files: payload.changed_files,
+        }),
+      ],
+    );
+    recoveryContract = {
+      ...inserted.rows[0],
+      change_kind: receipt.change_kind,
+      consumed_attempt_id: null,
+    };
+  }
+  assertMapRecoveryContract(recoveryContract, {
+    receipt_id: receipt.id,
+    task_id: task.id,
+    repo: receipt.repo,
+    branch,
+    base_sha: baseSha,
+    reason_code: reasonCode,
+  }, (deps.now ?? new Date()).getTime());
+  const lastKnownGood = await client.query(
+    `SELECT id, manifest_digest, projection_digest, contract_body
+       FROM harness_impact_contracts
+      WHERE repo=$1
+        AND status='active'
+        AND manifest_digest IS NOT NULL
+        AND projection_digest IS NOT NULL
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [receipt.repo],
+  );
+  const lkg = lastKnownGood.rows[0];
+  if (!lkg) throw new Error('map_recovery_lkg_missing');
+  const priorBody = typeof lkg.contract_body === 'string'
+    ? JSON.parse(lkg.contract_body)
+    : lkg.contract_body;
+  const now = deps.now ?? new Date();
+  const contractBody = {
+    schema_version: 1,
+    task_id: task.id,
+    change_kind: 'bugfix',
+    repo: receipt.repo,
+    base_revision: baseSha,
+    manifest_digest: lkg.manifest_digest,
+    projection_digest: lkg.projection_digest,
+    fact_revisions: priorBody.fact_revisions ?? {},
+    freshness_evidence: {
+      status: 'unknown', reason_code: reasonCode,
+      checked_at: now.toISOString(), mapper_revision: baseSha,
+    },
+    affected_capabilities: priorBody.affected_capabilities,
+    required_assertions: priorBody.required_assertions,
+    inapplicable_items: priorBody.inapplicable_items ?? [],
+    metadata: {
+      map_recovery_contract_id: recoveryContract.id,
+      lkg_impact_contract_id: lkg.id,
+    },
+  };
+  const persisted = await deps.persistContract(client, {
+    task_id: task.id,
+    change_kind: 'bugfix',
+    repo: receipt.repo,
+    base_revision: baseSha,
+    manifest_digest: lkg.manifest_digest,
+    projection_digest: lkg.projection_digest,
+    contract_body: contractBody,
+  });
+  return { ...persisted, recovery_contract: recoveryContract };
+}
+
+async function ensureNormalMapImpactPreflight(client, { task, receipt }, deps = {}) {
   if (!task?.id || !receipt || receipt.work_kind === 'coding_review') {
     throw new Error('routing_receipt_missing');
   }
@@ -137,4 +300,21 @@ export async function ensureMapImpactPreflight(client, { task, receipt }, deps =
     contract_body: contractBody,
   });
   return { ...persisted, map, radius, scope_key: scopeKey };
+}
+
+export async function ensureMapImpactPreflight(client, context, deps = {}) {
+  const resolvedDeps = {
+    ...deps,
+    persistContract: deps.persistContract ?? persistImpactContract,
+  };
+  try {
+    return await ensureNormalMapImpactPreflight(client, context, resolvedDeps);
+  } catch (error) {
+    const reasonCode = recoveryReasonCode(error);
+    if (!reasonCode || context.task?.payload?.map_recovery !== true) throw error;
+    return ensureMapRecoveryPreflight(client, {
+      ...context,
+      reasonCode,
+    }, resolvedDeps);
+  }
 }

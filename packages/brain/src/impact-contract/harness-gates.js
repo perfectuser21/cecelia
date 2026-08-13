@@ -3,6 +3,8 @@ import { getActiveImpactContract } from './contract-store.js';
 import { getGapById, transitionGapStatus } from './gap-store.js';
 import { evaluateStructureGate } from './structure-gate.js';
 import { canonicalAssertionArgv } from '../lib/gp-assertion-command.js';
+import { readMap } from '../lib/map-read-service.js';
+import { assertMapRecoveryPaths } from '../orchestrator/preflight/map-impact-contract.js';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 
@@ -73,6 +75,39 @@ async function repairContext(db, task, getGap) {
     return { error: 'repair_gap_identity_mismatch', gapId };
   }
   return { gap, gapId, sourceTaskId: gap.source_task_id };
+}
+
+async function loadMapRecoveryContext(db, runId) {
+  if (!runId) return null;
+  const result = await db.query(
+    `SELECT recovery.*, consumption.attempt_id AS consumed_attempt_id
+       FROM initiative_runs run
+       JOIN map_recovery_contracts recovery
+         ON recovery.id = run.map_recovery_contract_id
+       LEFT JOIN map_recovery_consumptions consumption
+         ON consumption.contract_id = recovery.id
+      WHERE run.id=$1`,
+    [runId],
+  );
+  return result.rows[0] ?? null;
+}
+
+async function validateRecoveryMapFreshness(db, { repo, headRevision }) {
+  const scope = await db.query(
+    `SELECT scope_key FROM map_scope_repositories WHERE repo=$1 ORDER BY scope_key`,
+    [repo],
+  );
+  if (scope.rows.length !== 1) return { status: 'unknown', reason: 'map_scope_unknown' };
+  const map = await readMap(db, { scopeKey: scope.rows[0].scope_key, now: new Date() });
+  const repoFreshness = map?.freshness?.repos?.[repo];
+  if (
+    map?.freshness?.status !== 'fresh'
+    || repoFreshness?.status !== 'fresh'
+    || repoFreshness.source_revision !== headRevision
+  ) {
+    return { status: 'unknown', reason: 'map_recovery_refresh_incomplete' };
+  }
+  return { status: 'fresh', source_revision: repoFreshness.source_revision };
 }
 
 export function findCurrentDiffPassReceipt(decisionLog, headRevision, contractHash) {
@@ -152,6 +187,8 @@ export function createHarnessImpactGates({
   getGap = getGapById,
   transitionGap = transitionGapStatus,
   updateGapRevision: updateRevision = updateGapRevision,
+  getRecoveryContext = loadMapRecoveryContext,
+  validateRecoveryFreshness = validateRecoveryMapFreshness,
   structureGate = evaluateStructureGate,
   diffGate = evaluateDiffGate,
   readChangedFiles,
@@ -160,6 +197,25 @@ export function createHarnessImpactGates({
   return Object.freeze({
     async beforeGenerate({ task, run }) {
       const payload = asObject(task?.payload);
+      if (run?.map_recovery_contract_id) {
+        const recovery = await getRecoveryContext(db, run.id);
+        if (!recovery || recovery.id !== run.map_recovery_contract_id) {
+          return gateReceipt('structure', { gate: 'blocked', reason: 'map_recovery_contract_missing' });
+        }
+        try {
+          assertMapRecoveryPaths(payload.changed_files);
+        } catch (error) {
+          return gateReceipt('structure', { gate: 'blocked', reason: error.message });
+        }
+        const active = await getActiveContract(db, task?.id);
+        if (!active || run.impact_contract_policy !== 'required') {
+          return gateReceipt('structure', { gate: 'blocked', reason: 'impact_contract_declaration_missing' });
+        }
+        return gateReceipt('structure', { gate: 'pass', contract: active }, {
+          map_recovery_contract_id: recovery.id,
+          base_revision: recovery.base_sha,
+        });
+      }
       const repair = await repairContext(db, task, getGap);
       if (repair?.error) {
         return gateReceipt('structure', { gate: 'blocked', reason: repair.error });
@@ -224,6 +280,27 @@ export function createHarnessImpactGates({
     },
 
     async beforeEvaluate({ task, pr, run }) {
+      if (run?.map_recovery_contract_id) {
+        const recovery = await getRecoveryContext(db, run.id);
+        const active = await getActiveContract(db, task?.id);
+        if (!recovery || !recovery.consumed_attempt_id || !active) {
+          return gateReceipt('diff', { gate: 'blocked', reason: 'map_recovery_consumption_missing' });
+        }
+        let changedFiles;
+        try {
+          changedFiles = await readChangedFiles(recovery.base_sha, pr?.head_sha, recovery.repo);
+          assertMapRecoveryPaths(changedFiles);
+        } catch (error) {
+          return gateReceipt('diff', {
+            gate: 'blocked', reason: error.message || 'map_recovery_diff_unavailable',
+          });
+        }
+        return gateReceipt('diff', { gate: 'pass', contract: active }, {
+          map_recovery_contract_id: recovery.id,
+          head_revision: pr?.head_sha,
+          repo: recovery.repo,
+        });
+      }
       const repair = await repairContext(db, task, getGap);
       if (repair?.error) {
         return gateReceipt('diff', { gate: 'blocked', reason: repair.error });
@@ -285,6 +362,37 @@ export function createHarnessImpactGates({
     },
 
     async beforeMerge({ task, pr, decisionLog, run }) {
+      if (run?.map_recovery_contract_id) {
+        const recovery = await getRecoveryContext(db, run.id);
+        const active = await getActiveContract(db, task?.id);
+        if (!recovery || !recovery.consumed_attempt_id || !active) {
+          return { gate: 'blocked', stage: 'merge', reason: 'map_recovery_consumption_missing' };
+        }
+        try {
+          const changedFiles = await readChangedFiles(
+            recovery.base_sha, pr?.head_sha, recovery.repo,
+          );
+          assertMapRecoveryPaths(changedFiles);
+        } catch (error) {
+          return { gate: 'blocked', stage: 'merge', reason: error.message };
+        }
+        const freshness = await validateRecoveryFreshness(db, {
+          repo: recovery.repo,
+          headRevision: pr?.head_sha,
+        });
+        if (freshness?.status !== 'fresh' || freshness.source_revision !== pr?.head_sha) {
+          return {
+            gate: 'blocked', stage: 'merge',
+            reason: freshness?.reason ?? 'map_recovery_refresh_incomplete',
+            retryable: true,
+          };
+        }
+        return {
+          gate: 'pass', stage: 'merge', contract_id: active.id,
+          contract_hash: active.contract_hash, head_revision: pr.head_sha,
+          map_recovery_contract_id: recovery.id,
+        };
+      }
       const repair = await repairContext(db, task, getGap);
       if (repair?.error) {
         return { gate: 'blocked', stage: 'merge', reason: repair.error, retryable: false };

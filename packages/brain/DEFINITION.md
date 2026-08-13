@@ -1,10 +1,10 @@
 # Brain 模块定义
 
-**版本**: 1.272.41
+**版本**: 1.272.42
 
-## Unified Work Router（Brain 1.272.41）
+## Unified Work Router（Brain 1.272.42）
 
-所有 coding mutation 由 Work Router 正向选择四档 Kernel Harness profile，并以同一事务写入 task 与 append-only Routing Receipt。Kernel run 强制使用 fresh Universal Map 与 active Impact Contract；有头工具和无头 Dispatcher 在动作前验证同一 receipt。Generator Provider 使用冻结基线血统闸、受限 UID/capabilities、敏感环境剥离和禁用 pushurl。显式恢复 run 只接受可信前序 Generator 对精确 PR URL/SHA 的服务端证据。
+所有 coding mutation 由 Work Router 正向选择四档 Kernel Harness profile，并以同一事务写入 task 与 append-only Routing Receipt。Kernel run 强制使用 fresh Universal Map 与 active Impact Contract；有头工具和无头 Dispatcher 在动作前验证同一 receipt。Generator Provider 使用冻结基线血统闸、受限 UID/capabilities、敏感环境剥离和禁用 pushurl。Map 恢复合同与 Generator Attempt 以 append-only 消费事实原子绑定，仅允许冻结 Map 路径，merge 前要求目标 revision 全量事实恢复 fresh。Schema 地板为 415。
 
 ## Approved contract TaskBundle deduplication
 
