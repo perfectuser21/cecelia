@@ -40,7 +40,7 @@ const CANONICAL_MACHINE_IDS = new Set([
   'xian-mac-m1',
 ]);
 const RUNNER_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
-const POSTGRES_IMAGE = 'postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777';
+const POSTGRES_IMAGE = 'pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62';
 
 function safeString(value, fallback = 'unavailable') {
   if (typeof value !== 'string' || value.length === 0) return fallback;
