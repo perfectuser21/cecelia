@@ -136,7 +136,14 @@ function gpContractIdentity(payload) {
     journey_id: payload.journey_id,
     step_id: anchor.step_id,
   };
-  if (Object.values(values).every((value) => value == null || value === '')) return null;
+  // 触发集 = 合同三件套（id/version/hash）。三件套全空 = 本次派发不携带合同身份，
+  // 返回 null 放行——锚点字段（journey_id / anchor.gp_id / anchor.step_id）由 S2
+  // 锚点执法管辖，不参与触发判定；把它们列入触发集会让所有守规矩带锚、尚未签署
+  // GP 合同的任务在派发时 fail-closed 全灭（2026-08-13 五条 run assembly_fault 实证，
+  // 决策「gpContractIdentity 触发集缩到合同三件套」）。
+  // 三件套任一非空 → 进入全套校验（含锚点配套字段），fail-closed 安全红线不变。
+  const contractTriplet = [values.id, values.version, values.hash];
+  if (contractTriplet.every((value) => value == null || value === '')) return null;
   const valid = UUID_PATTERN.test(values.id ?? '')
     && Number.isInteger(Number(values.version))
     && Number(values.version) > 0
