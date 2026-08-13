@@ -1,0 +1,34 @@
+{
+  "initiative_id": "9bd45a03-60e8-4790-9616-44f516ef0270",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动集中在 packages/brain/ 的 harness 运行时进程编排（Controller spawn/lease/监护/终局回写），无 UI、无远端 agent 协议、非 engine，属纯后端自治流程。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "真身 Session Controller：常驻监护进程（认领→续租→监护→人审冻结→终局回写→退出）",
+      "scope": "新增 kernel-controller.js（真身身份/ownership/续租/failure_class 决策/人审 push 冻结/终局 task.result 回写）；改 _spawnKernelRuntime 用真身身份替换 randomUUID 记账；扩展两份已登记 PG 集成测试；确认 orphan-guard 降级为后备、不回退。Controller 只监护不执行阶段工作。",
+      "dod": [
+        "[BEHAVIOR] B-01 续租两周期 lease 单调推进（真 PG）",
+        "[BEHAVIOR] B-02 真身身份 controller_session_id 非 UUID + 无无主活跃 run（真 PG）",
+        "[BEHAVIOR] B-03 Kernel fatal 后 run 不进入无主态（真 PG）",
+        "[BEHAVIOR] B-04 kill -9 Controller lease 过期 orphan-guard 兜底（真 fork + SIGKILL + 真 PG）",
+        "[BEHAVIOR] B-05 human_review 期间 push 冻结、裁决后解冻（真 PG）",
+        "[BEHAVIOR] B-06 终局回写 tasks.result 含 pr_url+merged 才退出（真 PG）",
+        "[BEHAVIOR] B-07 decideFatalAction 可恢复超上限转终止（纯函数）",
+        "[BEHAVIOR] INV-1 Controller 只监护不执行（不触碰阶段执行入口）",
+        "[ARTIFACT] packages/brain/src/lib/kernel-controller.js 存在且导出真身/续租/决策/冻结/终局公共面"
+      ],
+      "files": [
+        "packages/brain/src/lib/kernel-controller.js",
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/lib/kernel-liveness.js",
+        "packages/brain/src/orchestrator/kernel-controller-lifecycle.js",
+        "packages/brain/src/__tests__/integration/kernel-controller-lifecycle.pg.integration.test.js",
+        "packages/brain/src/__tests__/integration/kernel-controller-ownership.pg.integration.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 110
+    }
+  ]
+}
