@@ -10,6 +10,8 @@ function context(overrides = {}) {
   return {
     taskId,
     runId,
+    controllerSessionId: '33333333-3333-4333-8333-333333333333',
+    controllerGeneration: 4,
     hop: 5,
     attempt: { id: attemptId },
     bundle: { inputs: { worktree_path: '/tmp/wt', sprint_dir: 'sprints/x' } },
@@ -55,6 +57,7 @@ function deps() {
     syncOkr: vi.fn(async () => true),
     spawnStaging: vi.fn(async () => ({ created: true })),
     cleanup: vi.fn(async () => undefined),
+    proveControllerOwnership: vi.fn(async () => true),
     finalizeRun: vi.fn(async () => ({
       changed: true,
       outcome: 'done',
@@ -385,10 +388,29 @@ describe('kernel deterministic handlers', () => {
     expect(d.finalizeRun).toHaveBeenCalledWith(d.pool, {
       runId,
       expectedTaskId: taskId,
+      expectedControllerSessionId: '33333333-3333-4333-8333-333333333333',
+      expectedControllerGeneration: 4,
       outcome: 'done',
     });
     expect(d.pool.connect).not.toHaveBeenCalled();
     expect(result.status).toBe('DONE');
+  });
+
+  it('失权 Controller 的 report 在任何收尾副作用前让位', async () => {
+    const d = deps();
+    d.proveControllerOwnership.mockRejectedValueOnce(
+      new Error('controller_lease_renewal_lost'),
+    );
+
+    await expect(createKernelHandlers(d).report(context()))
+      .rejects.toThrow('orchestrator singleton conflict');
+
+    expect(d.promote).not.toHaveBeenCalled();
+    expect(d.saveHandoff).not.toHaveBeenCalled();
+    expect(d.syncOkr).not.toHaveBeenCalled();
+    expect(d.spawnStaging).not.toHaveBeenCalled();
+    expect(d.cleanup).not.toHaveBeenCalled();
+    expect(d.finalizeRun).not.toHaveBeenCalled();
   });
 
   it('repair report 在终态事务内自动关闭 gap', async () => {
