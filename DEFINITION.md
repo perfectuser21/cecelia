@@ -18,6 +18,7 @@
 
 - Judge 经同机 Fleet/Runner 执行，callback 由服务端机械闸裁定后写入精确 candidate SHA；Generator-fix 继承候选并回收被替代工作区。
 - 所有 coding receipt 在入队前冻结 branch/base SHA，幂等重放比较完整 evidence；批准合同状态只能单向进入 superseded。
+- 当前 Harness Runner 从 `19667e299f` 构建并冻结为 `sha256:bc0889dc1bea1354cbf80f7f46cd5152cd8fc7089b29bb1888c9d659d4fa55cc`；Fleet Worker 基线升至 `1.272.13`，Codex CLI 基线同步为 `0.147.0`。
 
 ## Brain 1.272.64 — Judge-gated Candidate Publishing
 
