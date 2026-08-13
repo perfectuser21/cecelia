@@ -193,6 +193,42 @@ export function resolveProviderAccountHome(provider, account) {
   throw new Error(`invalid ${provider} account: ${value}`);
 }
 
+// 汇总批准合同的可执行验收文本，供 contractRequiresPostgres 机械识别 PG 依赖。
+// 来源：contract row 的 contract_content / prd_content / e2e_acceptance + 冻结 artifacts 正文
+// （contract-draft.md / contract-dod.md 的 psql 命令都在这里）。
+function approvedContractText(observedContract) {
+  if (!observedContract || typeof observedContract !== 'object') return '';
+  const parts = [];
+  const row = asObject(observedContract.row);
+  for (const key of ['contract_content', 'prd_content', 'e2e_acceptance']) {
+    if (typeof row[key] === 'string') parts.push(row[key]);
+  }
+  const artifacts = Array.isArray(observedContract.artifacts) ? observedContract.artifacts : [];
+  for (const artifact of artifacts) {
+    if (artifact && typeof artifact.content === 'string') parts.push(artifact.content);
+  }
+  return parts.join('\n');
+}
+
+// recollect 轮把上一轮 Judge 的缺证清单 + 原始反馈打包成 inputs.judge_feedback。
+// 结构缺失也不静默丢弃：missing_evidence 回退空数组、raw_feedback 回退原始 verdict 文本，
+// 保证下一轮 Evaluator bundle 与上一轮不同构（打破同构重跑，PRD 步骤5）。
+function buildJudgeFeedback(judgeVerdict) {
+  const verdict = asObject(judgeVerdict);
+  const missing = Array.isArray(verdict.missing_evidence)
+    ? verdict.missing_evidence.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+  let rawFeedback = '';
+  if (typeof verdict.feedback === 'string' && verdict.feedback.trim()) {
+    rawFeedback = verdict.feedback.trim();
+  } else if (typeof verdict.raw_feedback === 'string' && verdict.raw_feedback.trim()) {
+    rawFeedback = verdict.raw_feedback.trim();
+  } else {
+    rawFeedback = JSON.stringify(verdict);
+  }
+  return { missing_evidence: missing, raw_feedback: rawFeedback };
+}
+
 function buildInputs(action, spec, ctx, attemptMetadata) {
   const { observed } = ctx;
   const task = observed.task;
@@ -421,6 +457,12 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   if (spec.role === 'evaluator') {
     common.pr_branch = observed.pr?.head_ref ?? null;
     common.pr_head_sha = observed.pr?.head_sha ?? null;
+    // recollect 轮（derive 路由 reason=judge_evidence_insufficient_recollect）：把上一轮
+    // Judge 的缺证清单 + 原始反馈注入 inputs.judge_feedback，供 Evaluator 定向补证。
+    // 缺失也注入（降级为无定向清单但保留原始 verdict 文本），绝不同构重跑。
+    if (ctx.decision?.reason === 'judge_evidence_insufficient_recollect') {
+      common.judge_feedback = buildJudgeFeedback(observed.judgeVerdict);
+    }
     if (payload.github_evidence_request) {
       common.github_evidence_request = payload.github_evidence_request;
     }
@@ -834,9 +876,16 @@ export function createDispatcher(deps) {
       ?? payload.contract_requirements
       ?? payload.capability_requirements
       ?? null;
+    // 合同 → PG capability 机械派生（本 sprint）：Evaluator 派发时从批准合同/可执行
+    // 验收文本机械识别 PG 依赖，不依赖人工在 payload 手填 contract_requirements.postgres。
+    // 只对 evaluator 生效——它是真跑 PG 必验项的执行位；其余角色边界不变。
+    const contractPgText = spec.role === 'evaluator'
+      ? approvedContractText(ctx.observed.contract)
+      : null;
     const capabilityRequirements = deriveCapabilityRequirements({
       role: spec.role,
       requirements: rawCapabilityRequirements,
+      contract: contractPgText,
     });
 
     if (
