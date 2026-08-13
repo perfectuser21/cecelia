@@ -417,10 +417,6 @@ export async function startHarnessOrphanGuard({
   reconcileOwnerless = reconcileOwnerlessKernelRuns,
 } = {}) {
   // 启动首轮是接流量前的安全闸；timer 仅为后备巡检。
-  const initialRecovered = await reconcileOwnerless(pool);
-  if (initialRecovered.length > 0) {
-    console.log(`[orphan-guard] startup ownerless kernel runs recovered=${initialRecovered.length}`);
-  }
   const timer = setInterval(async () => {
     try {
       await sweepOrphanHarnessTasks({ pool, execFn, idleMinutes });
@@ -439,6 +435,15 @@ export async function startHarnessOrphanGuard({
     }
   }, intervalMs);
   if (timer.unref) timer.unref();
+  try {
+    const initialRecovered = await reconcileOwnerless(pool);
+    if (initialRecovered.length > 0) {
+      console.log(`[orphan-guard] startup ownerless kernel runs recovered=${initialRecovered.length}`);
+    }
+  } catch (error) {
+    // server listener 前已有一次硬闸；这里失败仍保留周期后备，避免永久失去巡检。
+    console.error('[orphan-guard] startup ownerless-run 恢复异常:', error.message);
+  }
   console.log(`[orphan-guard] started (interval=${intervalMs}ms, idle=${idleMinutes}min)`);
   return timer;
 }

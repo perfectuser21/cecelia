@@ -1,4 +1,6 @@
 import { normalizeFailureSignature } from './convergence-signatures.js';
+import { SingletonConflictError } from './decision-log.js';
+import { writeHeartbeat } from './heartbeat.js';
 import { finalizeKernelRun } from './kernel-run-store.js';
 
 function shellQuote(value) {
@@ -216,6 +218,23 @@ export function createKernelHandlers(deps) {
     async report(ctx) {
       const { observed } = ctx;
       const payload = observed.task?.payload ?? {};
+      const proveControllerOwnership = deps.proveControllerOwnership ?? writeHeartbeat;
+      try {
+        await proveControllerOwnership(deps.pool, {
+          runId: ctx.runId,
+          controllerSessionId: ctx.controllerSessionId,
+          controllerGeneration: ctx.controllerGeneration,
+          host: observed.run?.orchestrator_host ?? 'kernel-v1',
+          pid: observed.run?.orchestrator_pid ?? process.pid,
+          now: deps.now?.() ?? new Date(),
+        });
+      } catch (error) {
+        if (['controller_lease_renewal_lost', 'controller_lease_identity_missing']
+          .includes(error?.message)) {
+          throw new SingletonConflictError(ctx.runId, 'controller-ownership', error);
+        }
+        throw error;
+      }
       await deps.promote(ctx.taskId, { merged: true, pr_url: observed.pr?.url }, observed.pr?.url, deps.pool);
       const handoff = deps.buildHandoff({
         task_id: ctx.taskId,
@@ -248,6 +267,9 @@ export function createKernelHandlers(deps) {
       const finalization = {
         runId: ctx.runId,
         expectedTaskId: ctx.taskId,
+        expectedControllerSessionId: ctx.controllerSessionId,
+        expectedControllerGeneration: ctx.controllerGeneration,
+        requireActiveControllerAuthority: true,
         outcome: 'done',
       };
       if (payload.harness_gap_id) {
@@ -259,7 +281,10 @@ export function createKernelHandlers(deps) {
           runId: ctx.runId,
         });
       }
-      await finalizeRun(deps.pool, finalization);
+      const finalized = await finalizeRun(deps.pool, finalization);
+      if (finalized?.ownershipChanged) {
+        throw new SingletonConflictError(ctx.runId, 'controller-ownership', null);
+      }
       return { status: 'DONE', detail: 'report chain completed' };
     },
   });

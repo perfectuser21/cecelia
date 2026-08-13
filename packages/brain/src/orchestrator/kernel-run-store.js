@@ -609,6 +609,8 @@ export async function finalizeKernelRun(pool, {
   expectedControllerSessionId = null,
   expectedControllerGeneration = null,
   enforceControllerOwnership = false,
+  expectedControllerAuthorityMismatch = false,
+  requireActiveControllerAuthority = false,
   controllerExpiredAt = null,
   closeControllerSession = true,
 }) {
@@ -680,6 +682,60 @@ export async function finalizeKernelRun(pool, {
         || Number(run.controller_generation) !== Number(expectedControllerGeneration)
         || (lease && cutoff && lease.getTime() >= cutoff.getTime());
       if (ownershipChanged) {
+        await client.query('COMMIT');
+        committed = true;
+        return { changed: false, ownershipChanged: true, runId, taskId: expectedTaskId };
+      }
+    }
+
+    if (requireActiveControllerAuthority) {
+      const { rows: activeSessionRows } = await client.query(
+        `SELECT run_id,task_id,generation,status,lease_expires_at,
+                lease_expires_at >= NOW() AS lease_valid
+           FROM kernel_controller_sessions
+          WHERE id=$1
+          FOR UPDATE`,
+        [run.controller_session_id],
+      );
+      const activeSession = activeSessionRows[0] ?? null;
+      const runLeaseMs = run.controller_lease_expires_at == null
+        ? null : new Date(run.controller_lease_expires_at).getTime();
+      const sessionLeaseMs = activeSession?.lease_expires_at == null
+        ? null : new Date(activeSession.lease_expires_at).getTime();
+      const controllerStillActive = activeSession !== null
+        && activeSession.run_id === run.id
+        && activeSession.task_id === expectedTaskId
+        && Number(activeSession.generation) === Number(run.controller_generation)
+        && activeSession.status === 'active'
+        && sessionLeaseMs === runLeaseMs
+        && activeSession.lease_valid === true;
+      if (!controllerStillActive) {
+        await client.query('COMMIT');
+        committed = true;
+        return { changed: false, ownershipChanged: true, runId, taskId: expectedTaskId };
+      }
+    }
+
+    if (expectedControllerAuthorityMismatch && run.controller_session_id) {
+      const { rows: sessionRows } = await client.query(
+        `SELECT run_id,task_id,generation,status,lease_expires_at
+           FROM kernel_controller_sessions
+          WHERE id=$1
+          FOR UPDATE`,
+        [run.controller_session_id],
+      );
+      const session = sessionRows[0] ?? null;
+      const runLease = run.controller_lease_expires_at == null
+        ? null : new Date(run.controller_lease_expires_at).getTime();
+      const sessionLease = session?.lease_expires_at == null
+        ? null : new Date(session.lease_expires_at).getTime();
+      const authorityHealthy = session !== null
+        && session.run_id === run.id
+        && session.task_id === expectedTaskId
+        && Number(session.generation) === Number(run.controller_generation)
+        && session.status === 'active'
+        && sessionLease === runLease;
+      if (authorityHealthy) {
         await client.query('COMMIT');
         committed = true;
         return { changed: false, ownershipChanged: true, runId, taskId: expectedTaskId };

@@ -88,6 +88,7 @@ export async function handleKernelProcessFatal(pool, {
     ...(expectedControllerSessionId !== null ? {
       expectedControllerSessionId,
       expectedControllerGeneration,
+      requireActiveControllerAuthority: true,
     } : {}),
   });
   if (result?.ownershipChanged) {
@@ -144,10 +145,10 @@ export async function reconcileOwnerlessKernelRuns(pool, { now = new Date() } = 
   for (const run of rows) {
     // 二次纯谓词确认（同一 now 语义），避免与并发续租竞态误伤。
     if (!isOwnerlessRun(run, now)) continue;
-    const cause = run.controller_authority_mismatch
-      ? 'controller_authority_mismatch'
-      : (run.controller_session_id == null || String(run.controller_session_id).trim() === '')
-        ? 'no_controller_ownership'
+    const cause = (run.controller_session_id == null || String(run.controller_session_id).trim() === '')
+      ? 'no_controller_ownership'
+      : run.controller_authority_mismatch
+        ? 'controller_authority_mismatch'
         : 'controller_lease_expired';
     const failureReason = structuredFailureReason(OWNERLESS_RECOVERED_REASON_PREFIX, cause);
     try {
@@ -159,6 +160,7 @@ export async function reconcileOwnerlessKernelRuns(pool, { now = new Date() } = 
         expectedControllerSessionId: run.controller_session_id,
         expectedControllerGeneration: run.controller_generation,
         enforceControllerOwnership: true,
+        expectedControllerAuthorityMismatch: cause === 'controller_authority_mismatch',
         ...(cause === 'controller_lease_expired' ? { controllerExpiredAt: now } : {}),
       });
       if (!finalized.changed) continue;

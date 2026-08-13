@@ -350,6 +350,7 @@ async function markRunFailed(deps, runId, taskId, reason, {
     ...(controllerSessionId !== null ? {
       expectedControllerSessionId: controllerSessionId,
       expectedControllerGeneration: controllerGeneration,
+      requireActiveControllerAuthority: true,
     } : {}),
     outcome: 'failed',
     reason,
@@ -1525,6 +1526,8 @@ async function runLoopOwned(
       : await deps.dispatch(decision.action, {
           taskId,
           runId: resolvedRunId,
+          controllerSessionId,
+          controllerGeneration,
           hop,
           observed,
           decision,

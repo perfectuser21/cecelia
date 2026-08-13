@@ -439,6 +439,12 @@ export async function runKernelMain({
   activateQueuedTask = activateQueuedKernelTask,
   logError = console.error,
 } = {}) {
+  if (!dryRun && runId) {
+    const generation = Number(controllerGeneration);
+    if (!controllerSessionId || !Number.isSafeInteger(generation) || generation < 1) {
+      throw new Error('controller_lease_identity_missing');
+    }
+  }
   let deps;
   let pool;
   try {

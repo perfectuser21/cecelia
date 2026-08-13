@@ -72,6 +72,7 @@ describe('runKernelMain fatal convergence', () => {
       expectedTaskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       expectedControllerSessionId: '22222222-2222-4222-8222-222222222222',
       expectedControllerGeneration: 3,
+      requireActiveControllerAuthority: true,
       outcome: 'failed',
       reason: 'kernel_process_fatal:dependency_assembly_failed',
       closeControllerSession:false,
@@ -102,6 +103,7 @@ describe('runKernelMain fatal convergence', () => {
       expectedTaskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       expectedControllerSessionId: '22222222-2222-4222-8222-222222222222',
       expectedControllerGeneration: 7,
+      requireActiveControllerAuthority: true,
       outcome: 'failed',
       reason: 'kernel_process_fatal:workspace_repo_not_supported',
       closeControllerSession:false,
@@ -164,6 +166,8 @@ describe('runKernelMain：task 启动置位', () => {
     const result = await runKernelMain({
       taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       runId: '11111111-1111-4111-8111-111111111111',
+      controllerSessionId: '22222222-2222-4222-8222-222222222222',
+      controllerGeneration: 1,
       resumeToken: null,
       dryRun: false,
     }, {
@@ -208,6 +212,8 @@ describe('runKernelMain：task 启动置位', () => {
     const result = await runKernelMain({
       taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       runId: '11111111-1111-4111-8111-111111111111',
+      controllerSessionId: '22222222-2222-4222-8222-222222222222',
+      controllerGeneration: 1,
       resumeToken: null,
       dryRun: false,
     }, {

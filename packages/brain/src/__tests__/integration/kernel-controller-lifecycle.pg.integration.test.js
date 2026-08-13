@@ -568,7 +568,9 @@ describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（�
       journeyId:null,abilityId:null,host:'kernel-v1',deadlineHours:8,createdSource:'kernel_dispatch'});
     const runtimePool={query:(...args)=>testPool.query(...args),
       connect:(...args)=>testPool.connect(...args),end:async()=>{}};
-    await expect(runKernelMain({taskId,runId:created.run.id,dryRun:false},{
+    await expect(runKernelMain({taskId,runId:created.run.id,
+      controllerSessionId:created.run.controller_session_id,
+      controllerGeneration:created.run.controller_generation,dryRun:false},{
       buildDeps:async()=>({pool:runtimePool}),activateQueuedTask:async()=>{},
       runLoopFn:async()=>{throw new Error('provider_process_crashed');},
     })).rejects.toThrow('provider_process_crashed');

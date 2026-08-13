@@ -3,6 +3,10 @@ import { runLoop } from '../../../packages/brain/src/orchestrator/loop.js';
 
 const TASK_ID = '10000000-0000-4000-8000-000000000001';
 const RUN_ID = '20000000-0000-4000-8000-000000000002';
+const CONTROLLER_IDENTITY = {
+  controllerSessionId: '30000000-0000-4000-8000-000000000003',
+  controllerGeneration: 1,
+};
 const BASE_MS = Date.parse('2026-07-23T00:00:00.000Z');
 const DEADLINE_MS = BASE_MS + 8 * 60 * 60 * 1000;
 
@@ -80,7 +84,7 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
       },
     });
 
-    await expect(runLoop(before.deps, { taskId: TASK_ID, runId: RUN_ID }))
+    await expect(runLoop(before.deps, { taskId: TASK_ID, runId: RUN_ID, ...CONTROLLER_IDENTITY }))
       .rejects.toThrow('boundary-dispatched');
     expect(beforeDispatches).toBe(1);
 
@@ -94,7 +98,7 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
       },
     });
 
-    const result = await runLoop(at.deps, { taskId: TASK_ID, runId: RUN_ID });
+    const result = await runLoop(at.deps, { taskId: TASK_ID, runId: RUN_ID, ...CONTROLLER_IDENTITY });
     expect(result.exitReason).toBe('automation_deadline_exceeded');
     expect(atCollects).toBe(0);
     expect(at.state.failureReason).toBe('automation_deadline_exceeded');
@@ -120,7 +124,7 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
       sleep: async () => { sleeps += 1; },
     });
 
-    const result = await runLoop(fixture.deps, { taskId: TASK_ID, runId: RUN_ID });
+    const result = await runLoop(fixture.deps, { taskId: TASK_ID, runId: RUN_ID, ...CONTROLLER_IDENTITY });
     expect(result.exitReason).toBe('automation_deadline_exceeded');
     expect(collections).toBe(1);
     expect(sleeps).toBe(0);
@@ -139,7 +143,7 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
       },
     });
 
-    const result = await runLoop(fixture.deps, { taskId: TASK_ID, runId: RUN_ID });
+    const result = await runLoop(fixture.deps, { taskId: TASK_ID, runId: RUN_ID, ...CONTROLLER_IDENTITY });
     expect(result.exitReason).toBe('automation_deadline_exceeded');
     expect(dispatches).toBe(0);
   });
@@ -231,7 +235,7 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
       log: () => {},
     };
 
-    await expect(runLoop(deps, { taskId: TASK_ID, runId: RUN_ID }))
+    await expect(runLoop(deps, { taskId: TASK_ID, runId: RUN_ID, ...CONTROLLER_IDENTITY }))
       .rejects.toThrow('open-review-sleep-sentinel');
     expect(state.collects).toBe(1);
     expect(state.failedWrites).toBe(0);
@@ -329,9 +333,10 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
           reason: 'automation_deadline_exceeded',
         });
       },
+      writeHeartbeat: async () => {},
       now: () => new Date(BASE_MS),
       log: () => {},
-    }, { taskId: TASK_ID, runId: RUN_ID });
+    }, { taskId: TASK_ID, runId: RUN_ID, ...CONTROLLER_IDENTITY });
 
     expect(result.exitReason).toBe('automation_deadline_exceeded');
     expect(state.collects).toBe(1);
@@ -381,9 +386,10 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
           reason: 'automation_deadline_exceeded',
         });
       },
+      writeHeartbeat: async () => {},
       now: () => new Date(BASE_MS),
       log: () => {},
-    }, { taskId: TASK_ID, runId: RUN_ID });
+    }, { taskId: TASK_ID, runId: RUN_ID, ...CONTROLLER_IDENTITY });
 
     expect(result.exitReason).toBe('automation_deadline_exceeded');
     expect(state.collects).toBe(0);
@@ -430,9 +436,10 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
         // 旧回归场景只验证终态不可覆盖；真实冲突语义由
         // kernel-run-store 的 unit + PostgreSQL integration 覆盖。
       },
+      writeHeartbeat: async () => {},
       now: () => new Date(BASE_MS),
       log: () => {},
-    }, { taskId: TASK_ID, runId: RUN_ID });
+    }, { taskId: TASK_ID, runId: RUN_ID, ...CONTROLLER_IDENTITY });
 
     expect(result.exitReason).toBe('automation_deadline_exceeded');
     expect(state).toEqual({ phase, failureReason });
