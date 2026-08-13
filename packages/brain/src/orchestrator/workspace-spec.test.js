@@ -370,6 +370,49 @@ describe('production WorkspaceSpec resolution', () => {
     });
   });
 
+  it.each(['evaluator', 'judge', 'publisher'])('%s 从同机 retained Generator Attempt 物化精确候选', async (role) => {
+    const resolveWorkspaceSpec = createWorkspaceSpecResolver({
+      resolveRepoHead: vi.fn(),
+    });
+    const sourceAttemptId = '33333333-3333-4333-8333-333333333333';
+    const candidateHead = 'f'.repeat(40);
+
+    const resolved = await resolveWorkspaceSpec({
+      action: role === 'publisher' ? 'publish:approved_ref' : `spawn:${role}`,
+      role,
+      readOnly: role !== 'publisher',
+      attemptId: ATTEMPT_ID,
+      ctx: {
+        runId: RUN_ID,
+        observed: {
+          task: { payload: { base_repo: 'perfectuser21/cecelia', base_sha: BASE_SHA } },
+          candidate: {
+            source_attempt_id: sourceAttemptId,
+            repo: 'perfectuser21/cecelia',
+            branch: 'cp-retained-candidate',
+            base_sha: BASE_SHA,
+            head_sha: candidateHead,
+          },
+        },
+      },
+      bundle: { inputs: { candidate: {
+        source_attempt_id: sourceAttemptId,
+        repo: 'perfectuser21/cecelia',
+        branch: 'cp-retained-candidate',
+        base_sha: BASE_SHA,
+        head_sha: candidateHead,
+      } } },
+    });
+
+    expect(resolved).toMatchObject({
+      base_sha: candidateHead,
+      expected_head_sha: candidateHead,
+      branch: 'cp-retained-candidate',
+      source_attempt_id: sourceAttemptId,
+      frozen_baseline: true,
+    });
+  });
+
   it('rejects a non-boolean frozen_baseline instead of coercing it', () => {
     expect(() => parseWorkspaceSpec(validSpec({ frozen_baseline: 'true' })))
       .toThrow(/frozen_baseline/);

@@ -37,6 +37,58 @@ function baseObserved(overrides = {}) {
   };
 }
 
+describe('Judge 前本地候选与 Judge 后受信发布', () => {
+  const candidate = {
+    type: 'git_candidate',
+    verification_status: 'verified',
+    source_attempt_id: '22222222-2222-4222-8222-222222222222',
+    repo: 'perfectuser21/cecelia',
+    branch: 'cp-local-candidate',
+    base_sha: 'a'.repeat(40),
+    head_sha: 'b'.repeat(40),
+    machine_id: 'us-mac-m4',
+  };
+
+  it('verified local candidate 在没有远端 PR 时进入 Evaluator，不再误判 no_pr', () => {
+    expect(derive(baseObserved({
+      pr: null,
+      candidate,
+      evaluateVerdict: null,
+      judgeVerdict: null,
+    }))).toEqual({
+      phase: 'evaluate',
+      action: 'spawn:evaluator',
+      reason: 'no_evaluate_verdict_for_head_sha',
+    });
+  });
+
+  it('Evaluator PASS 后对同一 local candidate 派 Judge', () => {
+    expect(derive(baseObserved({
+      pr: null,
+      candidate,
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: candidate.head_sha },
+      judgeVerdict: null,
+    }))).toEqual({
+      phase: 'evaluate',
+      action: 'spawn:judge',
+      reason: 'evaluate_passed_awaiting_judge',
+    });
+  });
+
+  it('Judge PASS 后只派受信 publisher，不直接 merge 未发布候选', () => {
+    expect(derive(baseObserved({
+      pr: null,
+      candidate,
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: candidate.head_sha },
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: candidate.head_sha },
+    }))).toEqual({
+      phase: 'publish',
+      action: 'publish:approved_ref',
+      reason: 'judge_passed_publish_exact_candidate',
+    });
+  });
+});
+
 describe('合同故障重开 GAN（r40 实证：CONTRACT IS LAW 死锁出路）', () => {
   // r40 实证：Evaluator 真跑判 FAIL,根因在合同资产自身(final-E2E 脚本比较方式
   // bug)。Generator 无权改合同(CONTRACT IS LAW),旧路由一刀切 wait:human_review
