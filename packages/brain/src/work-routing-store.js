@@ -35,6 +35,10 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       repo: decision.repo,
       map_scope: decision.map_scope,
       impact_contract_required: decision.impact_contract_required,
+      ...(decision.pipeline === 'harness' ? {
+        orchestrator: 'skill-relay',
+        harness_runtime: 'kernel-v1',
+      } : {}),
     };
     await client.query(
       'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',

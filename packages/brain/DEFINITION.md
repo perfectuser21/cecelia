@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.272.49
+**Brain 版本**: 1.272.50
+
+## Kernel Runtime Routing Projection（Brain 1.272.50）
+
+- Unified Work Router 为每个 `coding_mutation` 同步投影 `orchestrator=skill-relay` 与 `harness_runtime=kernel-v1`，使 task payload 的真实执行选择和不可变 receipt 的 `kernel-harness-v2` 决策保持一致。
 
 ## Repeatable Router Acceptance（Brain 1.272.49）
 
