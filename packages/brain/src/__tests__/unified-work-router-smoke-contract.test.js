@@ -19,6 +19,10 @@ const historyVerifierSource = readFileSync(
   new URL('../../scripts/verify-unified-work-router-tdd-history.mjs', import.meta.url),
   'utf8',
 );
+const roleChainSource = readFileSync(
+  new URL('../../scripts/smoke/unified-work-router-role-chain-smoke.sh', import.meta.url),
+  'utf8',
+);
 
 describe('Unified Work Router scratch smoke contract', () => {
   it('保留 scratch、Map 刷新和三个真实入口合同', () => {
@@ -76,5 +80,9 @@ describe('Unified Work Router scratch smoke contract', () => {
     const legacyTeamAuth = shellSource.indexOf('$HOME/.codex-team1/auth.json');
     expect(currentAttemptAuth).toBeGreaterThan(-1);
     expect(legacyTeamAuth).toBeGreaterThan(currentAttemptAuth);
+  });
+
+  it('真实角色链在 Router 顶层声明 coding change_kind 与 mutation_intent', () => {
+    expect(roleChainSource).toMatch(/\{title:\$title,task_type:"harness_initiative",priority:"P1",change_kind:"bugfix",mutation_intent:"write"/);
   });
 });
