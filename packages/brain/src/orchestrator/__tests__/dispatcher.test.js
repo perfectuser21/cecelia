@@ -326,6 +326,7 @@ describe('createDispatcher', () => {
       name: 'pre_judge',
       verdict_scope: 'candidate_and_upstream_evidence',
       deferred_checks: [
+        'host_docker_inspect',
         'judge_verdict',
         'publisher_result',
         'all_gates_passed',
@@ -334,6 +335,7 @@ describe('createDispatcher', () => {
     });
     expect(bundle.objective).toContain('Do not launch a nested Controller or Harness role chain');
     expect(bundle.objective).toContain('must not require its own future Judge verdict');
+    expect(bundle.objective).toContain('must not fail because Docker CLI or daemon access is absent');
   });
 
   it('批准合同后不重复装载入口 PRD，Evaluator 大合同仍可派发', async () => {
