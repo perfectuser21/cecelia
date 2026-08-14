@@ -98,14 +98,14 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
     ) {
       throw new Error('generator_fix_workspace_evidence_missing');
     }
-    // A payload-pinned baseline outranks a stale remote PR for a repair run.
-    // Until Publisher runs after Judge PASS, the authoritative implementation
-    // may intentionally exist only as a reachable object on another Harness
-    // ref. A retained local candidate still outranks the baseline on later
-    // repair rounds.
+    // The implementation baseline and the role checkout are separate facts.
+    // A repair of an existing PR must start at the server-observed PR head;
+    // payload.base_sha remains the immutable implementation baseline carried in
+    // the TaskBundle and is checked as an ancestor by the Runner. A retained
+    // local candidate still outranks the PR head on later repair rounds.
     const frozenBaseline = CANONICAL_SHA.test(String(payload.base_sha ?? ''));
     const immutableRoleSha = candidate?.head_sha ?? (generatorFix
-      ? (frozenBaseline ? payload.base_sha : inputs.pr_head_sha)
+      ? inputs.pr_head_sha
       : role === 'reviewer'
         ? inputs.contract_sha
         : (role === 'evaluator' || role === 'judge')

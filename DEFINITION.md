@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.28
+**Brain 版本**: 1.273.29
+
+## Brain 1.273.29 — Frozen PR Repair Checkout
+
+- Generator repair 从服务端观测到的当前 PR head 物化工作区；冻结实现基线继续独立携带并由 Runner 校验祖先关系。
 
 ## Brain 1.273.28 — Attempt-scoped Runner Smoke Credential
 
