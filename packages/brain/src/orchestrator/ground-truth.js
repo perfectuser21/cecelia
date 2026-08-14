@@ -589,7 +589,7 @@ export async function collectGroundTruth(deps, opts) {
           AND prior_run.id = $3
           AND evaluator_intent.observed->'routingReceipt'->>'id' = $4
           AND prior_run.contract_id = $5
-          AND evaluator_intent.observed->'contract'->>'id' = $5
+          AND evaluator_intent.observed->'contract'->>'id' = $5::text
           AND evaluator_intent.observed->'contract'->'row'->>'approved_sha'
                 = approved_contract.approved_sha
           AND evaluator_intent.observed->'implementationBaseline'->>'base_sha' = $6

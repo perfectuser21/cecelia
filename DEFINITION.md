@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.17
+**Brain 版本**: 1.273.18
+
+## Brain 1.273.18 — Recovery Lineage Type Safety
+
+- 显式恢复的可信前序查询将 JSON 合同 ID 按 text 与 UUID 参数的文本表示比较，避免 PostgreSQL `text = uuid` 在 Generator 前失败。
 
 ## Brain 1.273.17 — Read-only Fleet Branch Binding
 
