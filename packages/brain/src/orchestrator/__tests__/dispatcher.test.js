@@ -338,6 +338,33 @@ describe('createDispatcher', () => {
     expect(bundle.objective).toContain('must not fail because Docker CLI or daemon access is absent');
   });
 
+  it('Judge 只裁决 pre-Publisher 证据，并显式标记服务端后置验收', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:judge', {
+      taskId,
+      runId,
+      hop: 10,
+      observed,
+      decision: { phase: 'evaluate', reason: 'evaluate_passed_awaiting_judge' },
+    });
+
+    const bundle = deps.attemptStore.createAttempt.mock.calls[0][0].bundle;
+    expect(bundle.inputs.verification_stage).toEqual({
+      name: 'independent_judge',
+      verdict_scope: 'candidate_and_upstream_evidence',
+      deferred_checks: [
+        'host_docker_inspect',
+        'judge_verdict',
+        'publisher_result',
+        'all_gates_passed',
+        'completed_role_chain',
+      ],
+    });
+    expect(bundle.objective).toContain('must not require its own future server verdict');
+    expect(bundle.objective).toContain('deferred=true');
+  });
+
   it('批准合同后不重复装载入口 PRD，Evaluator 大合同仍可派发', async () => {
     const deps = makeDeps();
     const sourceRevision = '6faaa9f55e9789ffd29fd2760a9b5994df272e86';

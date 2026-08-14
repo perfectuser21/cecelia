@@ -475,6 +475,20 @@ describe('validateCoverage — 代码判 coverage 覆盖（不信裁判文字）
     expect(r.ok).toBe(false);
     expect(r.failed[0].evidence).toBe('无输出');
   });
+  it('仅允许服务端声明的 post-Judge 步骤以 deferred=true 延后', () => {
+    const steps = [
+      'B-08: scratch 多入口 Golden Path 真实产出全闭环',
+      'B-10: 真实 Harness Controller Generator Evaluator Judge 角色链，judge_verdict=PASS 且 all_gates_passed',
+    ];
+    const coverage = [
+      { step: steps[0], passed: true, evidence: 'smoke exit 0' },
+      { step: steps[1], passed: false, deferred: true, evidence: '等待当前 Judge 服务端终判' },
+    ];
+    expect(validateCoverage(coverage, steps, {
+      deferredChecks: ['judge_verdict', 'all_gates_passed', 'completed_role_chain'],
+    })).toMatchObject({ ok: true, deferred: [{ index: 2, step: steps[1] }] });
+    expect(validateCoverage(coverage, steps)).toMatchObject({ ok: false });
+  });
 });
 
 describe('parseGoldenPathSteps / extractE2ESection', () => {

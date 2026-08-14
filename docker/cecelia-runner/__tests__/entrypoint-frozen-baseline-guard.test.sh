@@ -12,6 +12,14 @@ ENTRYPOINT="$SCRIPT_DIR/../entrypoint.sh"
 TEST_ROOT="$(mktemp -d)"
 trap 'chmod -R u+w "$TEST_ROOT" 2>/dev/null || true; rm -rf "$TEST_ROOT"' EXIT
 
+# Reproduce the Evaluator/Judge runtime: the outer Runner installs a
+# process-scoped push fence. Fixture repositories must still be able to push to
+# their own local bare remotes without weakening that fence for the real repo.
+INHERITED_GIT_CONFIG_COUNT="${GIT_CONFIG_COUNT:-0}"
+export GIT_CONFIG_COUNT="$((INHERITED_GIT_CONFIG_COUNT + 1))"
+export "GIT_CONFIG_KEY_${INHERITED_GIT_CONFIG_COUNT}=remote.origin.pushurl"
+export "GIT_CONFIG_VALUE_${INHERITED_GIT_CONFIG_COUNT}=blocked-by-harness://evaluator-regression"
+
 guard_block="$(
   sed -n \
     '/^# frozen-baseline-guard:start$/,/^# frozen-baseline-guard:end$/p' \

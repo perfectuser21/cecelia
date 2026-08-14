@@ -201,7 +201,9 @@ describe('Fleet Judge callback verifier', () => {
         'outcome', 'reason', 'coverage', 'failure_class', 'failure_signature',
       ]));
       expect(decision.properties.coverage.items.required)
-        .toEqual(['step', 'passed', 'evidence']);
+        .toEqual(['step', 'passed', 'evidence', 'deferred']);
+      expect(decision.properties.coverage.items.properties.deferred)
+        .toEqual({ type: 'boolean' });
       expect(decision.properties.failure_class.anyOf[0].enum)
         .toEqual(['evidence_insufficient', 'product_failure', 'evidence_invalid']);
     } finally {
