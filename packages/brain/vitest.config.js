@@ -37,6 +37,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/kernel-run-trust-reconcile.pg.integration.test.js',
   'src/__tests__/integration/kernel-run-store.pg.integration.test.js',
   'src/__tests__/integration/kernel-stale-attempt-reconcile.pg.integration.test.js',
+  'src/__tests__/integration/kernel-instance-fencing-lineage.pg.integration.test.js',
   'src/__tests__/integration/kernel-terminal-mismatch-reconcile.pg.integration.test.js',
   'src/routes/__tests__/harness-attempt-verdict-pg.integration.test.js',
   'src/__tests__/integration/ledger-hygiene-m7-organic.integration.test.js',
