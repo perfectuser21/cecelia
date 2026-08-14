@@ -10,7 +10,7 @@
 
 - Judge 对候选与上游证据独立裁决；只有服务端声明的宿主 Docker、最终 Judge、Publisher、全闸门和完整角色链检查可结构化标记为后置验收。
 - Evaluator 的隔离 Git 夹具显式清除外层 pushurl 熔断变量，真实候选仓库仍保持禁止推送。
-- Runner 固定为 `sha256:8aeecbbdbb92b33011ead68a78964dc0e7c4ecd38c66251579c73a14303f8746`，Fleet Worker 准入版本同步为 `1.272.17`。
+- Runner 固定为 `sha256:c3649651ba4d6fa0280d2eaeeae1e47c327eeb7ac7b755f7f87a198031bccf5f`，Fleet Worker 准入版本同步为 `1.272.17`。
 
 ## Attempt-scoped Runner Smoke Credential（Brain 1.273.28）
 
