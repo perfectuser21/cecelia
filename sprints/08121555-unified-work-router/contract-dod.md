@@ -15,7 +15,7 @@ target_environment: local_api
 - [ ] [ARTIFACT] Brain 版本、DEFINITION、package-lock 与 `.brain-versions` 同步。
   Test: manual:bash scripts/check-version-sync.sh
 - [ ] [ARTIFACT] 每个实现切片均永久保留先 RED 后 GREEN 的 Conventional Commit，baseline 仅为祖先。
-  Test: manual:bash -c 'B=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524; git merge-base --is-ancestor "$B" HEAD && test "$(git rev-parse HEAD)" != "$B" && node packages/brain/scripts/verify-unified-work-router-tdd-history.mjs "$B" HEAD'
+  Test: manual:bash -c 'B=7b6d3585522b9cacf70f39322abf69d54716927d; git merge-base --is-ancestor "$B" HEAD && test "$(git rev-parse HEAD)" != "$B" && node packages/brain/scripts/verify-unified-work-router-tdd-history.mjs "$B" HEAD'
 
 ## BEHAVIOR 条目
 
@@ -41,7 +41,7 @@ target_environment: local_api
   留证: vitest verbose 输出
 
 - [ ] [BEHAVIOR] [L2] B-04: Map/Impact Contract 对所有 coding run fail-closed [接缝×2]
-  Test: manual:bash -c 'cd packages/brain && DB_URL="$DB_URL" BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 npx vitest run src/orchestrator/preflight/map-impact-contract.test.js src/orchestrator/__tests__/map-recovery-contract.test.js --reporter=verbose'
+  Test: manual:bash -c 'cd packages/brain && DB_URL="$DB_URL" BASELINE_SHA=7b6d3585522b9cacf70f39322abf69d54716927d npx vitest run src/orchestrator/preflight/map-impact-contract.test.js src/orchestrator/__tests__/map-recovery-contract.test.js --reporter=verbose'
   动作: 用真 PostgreSQL和真临时 Git repo依次执行 fresh、stale、missing、revision mismatch、scanner invalid、cross-repo 与 map_recovery
   预期观察: 仅 fresh 与合法单次 recovery 进入后续阶段；其余不创建 Provider attempt；policy 恒 required
   等待预算: 60s
@@ -62,22 +62,29 @@ target_environment: local_api
   留证: hook 与 dispatcher 输出
 
 - [ ] [BEHAVIOR] [L2] B-07: Generator frozen baseline 与 trust boundary 在真实命令链生效
-  Test: manual:bash -c 'bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh && bash docker/cecelia-runner/__tests__/entrypoint-frozen-baseline-guard.test.sh'
-  动作: 启动 runner 合同测试，检查容器 hook、setpriv、capability、pushurl 与敏感环境
-  预期观察: baseline 后追加 commit 合法且 imported lineage 拒绝；Provider push 失败；callback/lease 凭据不可见；trusted transport 才可发布
+  Test: manual:bash -c 'CID_FILE=$(mktemp); trap '\''rm -f "$CID_FILE"'\'' EXIT; DB_URL="$DB_URL" BASELINE_SHA=7b6d3585522b9cacf70f39322abf69d54716927d bash docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh --real-container --container-id-file "$CID_FILE"; CID=$(tr -d '\''[:space:]'\'' < "$CID_FILE"); [[ "$CID" =~ ^[0-9a-f]{12,64}$ ]]; docker inspect --format "{{.Id}} {{.State.Status}}" "$CID" | awk -v cid="$CID" '\''$1 ~ cid && $2=="exited" {ok=1} END{exit !ok}'\'''
+  动作: 父进程先创建 container-id receipt 文件并把路径显式传给 runner 合同测试；测试通过真实 Docker daemon 创建容器后原子写入 ID，父进程再从文件读取并 inspect
+  预期观察: receipt 仅含 12-64 位十六进制容器 ID；baseline 后追加 commit 合法且 imported lineage 拒绝；Provider push 失败；callback/lease 凭据不可见；docker inspect 对同一 ID 返回 exited
   等待预算: 120s
-  留证: runner shell test stdout
-  gate-allow: env-missing `docker/` 是仓库内脚本路径；该断言不调用 Docker daemon，运行资源由脚本自身声明
+  留证: runner shell test stdout、container-id receipt 文件读取值与对应 docker inspect 输出
+  gate-allow: env-missing docker 是本条真实容器接缝的必需运行资源；缺少 daemon 必须 FAIL，不作降级
+
+- [ ] [BEHAVIOR] [L2] B-10: 真实 Harness 角色链且服务端机械闸字面 PASS [接缝×2]
+  Test: manual:bash -c 'DB_URL="$DB_URL" BASELINE_SHA=7b6d3585522b9cacf70f39322abf69d54716927d bash packages/brain/scripts/smoke/unified-work-router-role-chain-smoke.sh'
+  动作: 从真实 Controller 入口创建运行，由 Fleet 依次派发 Generator、Evaluator、Judge 真实容器，轮询服务端权威 run 直到终态
+  预期观察: 四角色均有独立运行证据；Evaluator 证据引用 Generator receipt，Judge 引用 Evaluator SHA-256；服务端 evaluate_verdict 与 judge_verdict 均字面等于 PASS，merge reason 字面等于 all_gates_passed
+  等待预算: 900s
+  留证: Controller/Fleet 派发日志、四角色容器 ID、各角色 provenance、Evaluator/Judge 证据 SHA-256、服务端 run JSON 与 decision log
 
 - [ ] [BEHAVIOR] [L2] B-08: scratch 多入口 Golden Path 真实产出全闭环 [接缝×2]
-  Test: manual:bash -c 'DB_URL="$DB_URL" BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524 bash packages/brain/scripts/smoke/unified-work-router-smoke.sh'
+  Test: manual:bash -c 'DB_URL="$DB_URL" BASELINE_SHA=7b6d3585522b9cacf70f39322abf69d54716927d bash packages/brain/scripts/smoke/unified-work-router-smoke.sh'
   动作: 在 attempt 空库从 API/Intent/Capture 创建 coding 与 content/research/review 对照，制造 stale 后刷新并 resume
   预期观察: coding 三项均有 receipt/Harness/正确 Map/active contract；对照不误路由；review 修复进 Harness；失败审计保留
   等待预算: 180s
   留证: smoke stdout 与带 5 分钟窗口的 DB 查询输出
 
 - [ ] [BEHAVIOR] [L2] B-09: implementation baseline 是最终 HEAD 祖先且治理门禁全绿
-  Test: manual:bash -c 'B=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524; git merge-base --is-ancestor "$B" HEAD && test "$(git rev-parse HEAD)" != "$B" && node packages/brain/scripts/verify-unified-work-router-tdd-history.mjs "$B" HEAD && node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs'
+  Test: manual:bash -c 'B=7b6d3585522b9cacf70f39322abf69d54716927d; git merge-base --is-ancestor "$B" HEAD && test "$(git rev-parse HEAD)" != "$B" && node packages/brain/scripts/verify-unified-work-router-tdd-history.mjs "$B" HEAD && node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs'
   动作: 对候选 HEAD 做 ancestry，并由 TDD 历史验证器在临时 worktree 逐对 checkout 7 个 RED/GREEN SHA 复跑对应测试，再执行三项 DevGate
   预期观察: HEAD 不等于 baseline 但 lineage 合法；7/7 RED 失败且其 GREEN 后继通过；事实、版本与 DoD 映射一致
   等待预算: 120s
