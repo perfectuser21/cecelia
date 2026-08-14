@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.19
+**Brain 版本**: 1.273.20
+
+## Brain 1.273.20 — Atomic Explicit Recovery Reopen
+
+- 显式恢复在验证可信失败前序、Map 与 Impact Contract 后，于同一事务把失败任务重开为 queued 并创建新 run，消除失败任务无法进入恢复链的死锁。
 
 ## Brain 1.273.19 — Frozen Baseline Repair Workspace
 

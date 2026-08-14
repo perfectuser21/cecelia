@@ -430,10 +430,12 @@ export async function createKernelRun(pool, input, deps = {}) {
       [input.taskId],
     );
     const task = taskRows[0];
+    const reopensFailedTask = input.createdSource === 'explicit_recovery'
+      && task?.status === 'failed';
     if (
       !task
       || !ELIGIBLE_TASK_TYPES.has(task.task_type)
-      || TERMINAL_TASK_STATUSES.has(task.status)
+      || (TERMINAL_TASK_STATUSES.has(task.status) && !reopensFailedTask)
     ) {
       throw new Error(`kernel run task ${input.taskId} not eligible`);
     }
@@ -514,6 +516,19 @@ export async function createKernelRun(pool, input, deps = {}) {
     const preflight = await runPreflight(client, { task, receipt });
     if (!preflight?.contract?.id || preflight.contract.status !== 'active') {
       throw new Error('impact_contract_inactive');
+    }
+
+    if (reopensFailedTask) {
+      await client.query(
+        `UPDATE tasks
+            SET status = 'queued',
+                completed_at = NULL,
+                error_message = NULL,
+                updated_at = NOW()
+          WHERE id = $1
+            AND status = 'failed'`,
+        [input.taskId],
+      );
     }
 
     const impactContractPolicy = 'required';

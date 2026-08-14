@@ -112,6 +112,10 @@ function transactionPool({
         order.push('bind-controller');
         return { rows: [], rowCount: 1 };
       }
+      if (/UPDATE tasks[\s\S]+status = 'queued'/.test(sql)) {
+        order.push('reopen-task');
+        return { rows: [], rowCount: 1 };
+      }
       if (/INSERT INTO cecelia_events/.test(sql)) {
         order.push('routing-event');
         return { rows: [], rowCount: 1 };
