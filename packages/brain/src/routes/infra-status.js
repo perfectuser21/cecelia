@@ -128,11 +128,46 @@ export function readMacOSMemoryUsagePercent(execFn = execSync) {
 }
 
 /**
- * 采集本机状态
+ * 解析本机「主机真实资源」——修复容器 cgroup 口径冒充主机口径（本 bug 根因①）。
+ *
+ * 优先级：显式注入 hostResources > 环境变量注入（HOST_CPU_CORES / HOST_TOTAL_MEM_MB）
+ * > 容器内 os.*（保守 fallback，最坏退回当前行为，不引入过派）。
+ *
+ * @param {{cpuCores?:number,totalMemMB?:number}} [hostResources]
+ * @returns {{cores:number,totalMemBytes:number}}
  */
-export function collectLocalStats() {
+function resolveHostResources(hostResources) {
+  const osCores = os.cpus().length;
+  const osTotalMem = os.totalmem();
+
+  const pickCores = (v) => (Number.isFinite(v) && v > 0 ? Math.round(v) : null);
+  const pickMemBytes = (mb) => (Number.isFinite(mb) && mb > 0 ? Math.round(mb) * 1024 * 1024 : null);
+
+  // ① 显式注入优先
+  let cores = hostResources ? pickCores(hostResources.cpuCores) : null;
+  let totalMemBytes = hostResources ? pickMemBytes(hostResources.totalMemMB) : null;
+
+  // ② 环境变量注入（launcher 把主机真实资源注入容器）
+  if (cores === null) cores = pickCores(parseFloat(process.env.HOST_CPU_CORES));
+  if (totalMemBytes === null) totalMemBytes = pickMemBytes(parseFloat(process.env.HOST_TOTAL_MEM_MB));
+
+  // ③ 容器 os.* 保守 fallback
+  return {
+    cores: cores ?? osCores,
+    totalMemBytes: totalMemBytes ?? osTotalMem,
+  };
+}
+
+/**
+ * 采集本机状态
+ *
+ * @param {{hostResources?:{cpuCores?:number,totalMemMB?:number}}} [opts]
+ *   hostResources：主机真实资源，用于修复容器 cgroup 采集失真（根因①）。
+ *   不传时读环境变量注入，再 fallback 到容器 os.*（向后兼容既有无参调用）。
+ */
+export function collectLocalStats({ hostResources } = {}) {
+  const { cores: cpuCores, totalMemBytes: totalMem } = resolveHostResources(hostResources);
   const cpus = os.cpus();
-  const totalMem = os.totalmem();
   const freeMem = os.freemem();
   const loadAvg = os.loadavg();
 
@@ -154,12 +189,12 @@ export function collectLocalStats() {
   return {
     status: 'online',
     cpu: {
-      cores: cpus.length,
+      cores: cpuCores,
       model: cpus[0]?.model || 'Apple M4',
       loadAvg1: Math.round(loadAvg[0] * 100) / 100,
       loadAvg5: Math.round(loadAvg[1] * 100) / 100,
       loadAvg15: Math.round(loadAvg[2] * 100) / 100,
-      usagePercent: Math.round((loadAvg[0] / cpus.length) * 1000) / 10,
+      usagePercent: Math.round((loadAvg[0] / cpuCores) * 1000) / 10,
     },
     memory: {
       totalGB: Math.round(totalMem / 1024 / 1024 / 1024 * 10) / 10,

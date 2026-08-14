@@ -33,6 +33,9 @@ vi.mock('../routes/infra-status.js', () => ({
 
 vi.mock('../platform-utils.js', () => ({
   calculatePhysicalCapacity: vi.fn(() => 8),
+  resolveMemPressureRatio: vi.fn(({ memUsagePercent } = {}) => (Number(memUsagePercent) || 0) / 100),
+  getMacOSMemoryPressure: vi.fn(() => -1),
+  IS_DARWIN: false,
 }));
 
 describe('fleet heartbeat 可信度判定', () => {
