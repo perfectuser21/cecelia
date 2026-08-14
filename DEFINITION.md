@@ -8,9 +8,18 @@
 
 
 
-**Brain 版本**: 1.273.6
+**Brain 版本**: 1.273.7
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.273.7 — Controller lease 审计原子性与 Preview 端口冲突收敛
+
+- 成功 Controller lease 续租按 `(run_id, heartbeat_at)` 在同一事务幂等写 `cecelia_events`；错误 session/终态不造事件，事件失败回滚续租，payload 不含 controller session。
+- ownerless recovery 仅在 `finalizeKernelRun` 真实终态改变的同一事务写审计事件；`guardRejected` 和已终态路径不造事件。
+- legacy proposer 分支用静态正则 capture + task 前缀字符串比较关闭 CodeQL 动态正则 high；Preview `starting` 记录遇到外部 listener 占用时在 admission 锁内重新分配端口。
+- 保留 migration 416 nonblank ownership invariant，并以 evaluator-feedback amendment 校正 sprint PRD/contract/DoD/task-plan 与真实 diff。
 
 ---
 

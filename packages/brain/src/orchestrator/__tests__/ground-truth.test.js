@@ -4,6 +4,7 @@
  * 重点：PR json 解析 / ci 状态映射 / rN 解析 / inflight label 过滤 / lastAgentExit hop 作用域（P0-3）。
  */
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi } from 'vitest';
 import { collectGroundTruth } from '../ground-truth.js';
 import { derive } from '../derive.js';
@@ -1535,6 +1536,11 @@ describe('collectGroundTruth：propose 分支 rN 解析', () => {
 
     expect(observed.proposeBranchRn).toBe(4);
     expect(observed.proposeBranch).toBe(legacyBranch);
+  });
+
+  it('CodeQL 回归：命令行 taskId 的正则元字符不得进入动态 RegExp', () => {
+    const source = readFileSync(new URL('../ground-truth.js', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/new\s+RegExp\s*\(\s*`[^`]*\$\{shortTask\}/);
   });
 });
 

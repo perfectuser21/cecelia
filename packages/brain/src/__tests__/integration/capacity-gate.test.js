@@ -2,6 +2,7 @@
 // TDD Red 证据（vitest）。禁 mock 被测边：真连 cecelia_test Postgres（不 mock ../db.js），真文件系统。
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { writeFileSync, mkdtempSync, rmSync, mkdirSync } from 'fs';
+import { createServer } from 'net';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -11,6 +12,7 @@ const GIB = 1073741824;
 let pool;
 let readHostDisk;
 let admitPreview;
+let isTcpPortAvailable;
 const seededPrs = [];
 
 function testPr() {
@@ -19,7 +21,7 @@ function testPr() {
 
 beforeAll(async () => {
   pool = (await import('../../db.js')).default;
-  ({ readHostDisk, admitPreview } = await import('../../capacity-gate.js'));
+  ({ readHostDisk, admitPreview, isTcpPortAvailable } = await import('../../capacity-gate.js'));
 });
 
 afterEach(async () => {
@@ -78,6 +80,23 @@ describe('readHostDisk [BEHAVIOR] — 4 种拒绝分支', () => {
     expect(r.ok).toBe(false);
     expect(r.reason).toBe('sample_incomplete');
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('isTcpPortAvailable [BEHAVIOR] — 真 listener 探测', () => {
+  it('已 bind 的真实 TCP 端口不可用，listener 关闭后恢复可用', async () => {
+    const listener = createServer();
+    await new Promise((resolve, reject) => {
+      listener.once('error', reject);
+      listener.listen({ port: 0, host: '127.0.0.1', exclusive: true }, resolve);
+    });
+    const address = listener.address();
+    try {
+      expect(await isTcpPortAvailable(address.port)).toBe(false);
+    } finally {
+      await new Promise((resolve) => listener.close(resolve));
+    }
+    expect(await isTcpPortAvailable(address.port)).toBe(true);
   });
 });
 
@@ -170,5 +189,35 @@ describe('admitPreview [BEHAVIOR] — 四层判定 + 并发串行化', () => {
       [pr],
     );
     expect(rows.rows.map((row) => row.status)).toEqual(['inactive', 'starting']);
+  });
+
+  it('Preview 回归：starting 记录端口已被外部 listener 占用时重新分配并持久化空闲端口', async () => {
+    const samplePath = mkSampleFile({ sampled_at_epoch: Math.floor(Date.now() / 1000) - 999 });
+    const pr = testPr();
+    const occupiedPort = 5389;
+    seededPrs.push(pr);
+    await pool.query(
+      `INSERT INTO preview_environments (pr_number, branch_name, base_repo, port, db_name, status)
+       VALUES ($1, 'cp-collided', 'cecelia', $2, $3, 'starting')`,
+      [pr, occupiedPort, `cecelia_preview_${pr}`],
+    );
+
+    const checkedPorts = [];
+    const r = await admitPreview(pr, 'cp-collided', 'cecelia', pool, {
+      samplePath,
+      isPortAvailable: async (port) => {
+        checkedPorts.push(port);
+        return port !== occupiedPort;
+      },
+    });
+    const { rows } = await pool.query(
+      'SELECT port, status FROM preview_environments WHERE pr_number = $1',
+      [pr],
+    );
+
+    expect(r.admitted).toBe(true);
+    expect(checkedPorts).toContain(occupiedPort);
+    expect(r.port).not.toBe(occupiedPort);
+    expect(rows).toEqual([{ port: r.port, status: 'starting' }]);
   });
 });

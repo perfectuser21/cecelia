@@ -130,7 +130,8 @@ async function seedHistoricalBlankRun(controllerSessionId) {
 
 async function leaseOf(runId) {
   const { rows } = await testPool.query(
-    `SELECT r.controller_lease_expires_at, r.phase, r.failure_reason,
+    `SELECT r.controller_lease_expires_at, r.orchestrator_heartbeat_at,
+            r.phase, r.failure_reason,
             t.status AS task_status
        FROM initiative_runs r
        JOIN tasks t ON t.id = r.current_task_id
@@ -138,6 +139,50 @@ async function leaseOf(runId) {
     [runId],
   );
   return rows[0];
+}
+
+async function auditEvents(runId) {
+  const { rows } = await testPool.query(
+    `SELECT event_type, source, task_id, payload
+       FROM cecelia_events
+      WHERE payload->>'run_id' = $1
+      ORDER BY id`,
+    [runId],
+  );
+  return rows;
+}
+
+async function installRejectingAuditTrigger(eventType) {
+  if (![
+    'kernel_controller_lease_renewed',
+    'kernel_ownerless_run_recovered',
+  ].includes(eventType)) {
+    throw new Error(`unsafe audit event fixture: ${eventType}`);
+  }
+  await testPool.query(`
+    CREATE OR REPLACE FUNCTION reject_kernel_audit_event()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      IF NEW.event_type = TG_ARGV[0] THEN
+        RAISE EXCEPTION 'forced kernel audit failure';
+      END IF;
+      RETURN NEW;
+    END;
+    $$
+  `);
+  await testPool.query(
+    `CREATE TRIGGER reject_kernel_audit_event_trigger
+       BEFORE INSERT ON cecelia_events
+       FOR EACH ROW
+       EXECUTE FUNCTION reject_kernel_audit_event('${eventType}')`,
+  );
+}
+
+async function removeRejectingAuditTrigger() {
+  await testPool.query('DROP TRIGGER IF EXISTS reject_kernel_audit_event_trigger ON cecelia_events');
+  await testPool.query('DROP FUNCTION IF EXISTS reject_kernel_audit_event()');
 }
 
 async function waitForBlockedFinalize() {
@@ -199,6 +244,142 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
     const after = await leaseOf(runId);
     // now(past)+LEASE < 原 lease → GREATEST 保留原 lease，不回缩
     expect(Date.parse(after.controller_lease_expires_at)).toBe(Date.parse(before.controller_lease_expires_at));
+  });
+
+  it('AUDIT-1: 成功续租每个 hop 恰写一条幂等事件，错误 session/终态零假事件且 payload 不泄露 session', async () => {
+    const session = `controller-secret-${randomUUID()}`;
+    const { runId, taskId } = await seedOwnedRun({ controllerSessionId: session });
+    const heartbeatAt = new Date('2026-08-14T01:02:03.456Z');
+
+    const first = await writeHeartbeat(testPool, {
+      runId, host: 'kernel-audit', pid: 4242, now: heartbeatAt, controllerSessionId: session,
+    });
+    const replay = await writeHeartbeat(testPool, {
+      runId, host: 'kernel-audit', pid: 4242, now: heartbeatAt, controllerSessionId: session,
+    });
+    expect(first.rowCount).toBe(1);
+    expect(replay.rowCount).toBe(1);
+
+    const events = await auditEvents(runId);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      event_type: 'kernel_controller_lease_renewed',
+      source: 'kernel_orchestrator',
+      task_id: taskId,
+    });
+    expect(events[0].payload).toMatchObject({
+      run_id: runId,
+      task_id: taskId,
+      heartbeat_at: heartbeatAt.toISOString(),
+      host: 'kernel-audit',
+      pid: 4242,
+    });
+    expect(JSON.stringify(events[0].payload)).not.toContain(session);
+
+    const forged = await seedOwnedRun({ controllerSessionId: randomUUID() });
+    const forgedResult = await writeHeartbeat(testPool, {
+      runId: forged.runId,
+      host: 'kernel-audit',
+      pid: 4242,
+      now: heartbeatAt,
+      controllerSessionId: 'forged-wrong-session',
+    });
+    expect(forgedResult.rowCount).toBe(0);
+    expect(await auditEvents(forged.runId)).toEqual([]);
+
+    const terminalSession = randomUUID();
+    const terminal = await seedOwnedRun({ controllerSessionId: terminalSession });
+    await finalizeKernelRun(testPool, {
+      runId: terminal.runId,
+      expectedTaskId: terminal.taskId,
+      outcome: 'failed',
+      reason: 'audit-terminal-fixture',
+    });
+    const terminalResult = await writeHeartbeat(testPool, {
+      runId: terminal.runId,
+      host: 'kernel-audit',
+      pid: 4242,
+      now: heartbeatAt,
+      controllerSessionId: terminalSession,
+    });
+    expect(terminalResult.rowCount).toBe(0);
+    expect(await auditEvents(terminal.runId)).toEqual([]);
+  });
+
+  it('AUDIT-2: ownerless recovery 仅在真实终态改变时写一条事件，重复巡检不重复且 payload 无 session', async () => {
+    const session = `controller-secret-${randomUUID()}`;
+    const { runId, taskId } = await seedOwnedRun({ controllerSessionId: session });
+    const reconcileNow = new Date('2026-08-14T03:00:00.000Z');
+    await testPool.query(
+      `UPDATE initiative_runs
+          SET controller_lease_expires_at = $2
+        WHERE id = $1`,
+      [runId, new Date(reconcileNow.getTime() - MIN)],
+    );
+
+    const first = await reconcileOwnerlessKernelRuns(testPool, { now: reconcileNow });
+    const replay = await reconcileOwnerlessKernelRuns(testPool, { now: reconcileNow });
+    expect(first.map((row) => row.runId)).toContain(runId);
+    expect(replay.map((row) => row.runId)).not.toContain(runId);
+
+    const events = await auditEvents(runId);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      event_type: 'kernel_ownerless_run_recovered',
+      source: 'kernel_controller_lifecycle',
+      task_id: taskId,
+    });
+    expect(events[0].payload).toMatchObject({
+      run_id: runId,
+      task_id: taskId,
+      cause: 'controller_lease_expired',
+    });
+    expect(JSON.stringify(events[0].payload)).not.toContain(session);
+  });
+
+  it('AUDIT-3: 审计 INSERT 失败必须回滚对应续租或 recovery 状态改变', async () => {
+    const heartbeatSession = randomUUID();
+    const heartbeatRun = await seedOwnedRun({ controllerSessionId: heartbeatSession });
+    const heartbeatBefore = await leaseOf(heartbeatRun.runId);
+    const heartbeatAt = new Date('2026-08-14T04:00:00.000Z');
+
+    try {
+      await installRejectingAuditTrigger('kernel_controller_lease_renewed');
+      await expect(writeHeartbeat(testPool, {
+        runId: heartbeatRun.runId,
+        host: 'kernel-audit-rollback',
+        pid: 4242,
+        now: heartbeatAt,
+        controllerSessionId: heartbeatSession,
+      })).rejects.toThrow('forced kernel audit failure');
+    } finally {
+      await removeRejectingAuditTrigger();
+    }
+    const heartbeatAfter = await leaseOf(heartbeatRun.runId);
+    expect(heartbeatAfter.orchestrator_heartbeat_at).toBeNull();
+    expect(Date.parse(heartbeatAfter.controller_lease_expires_at))
+      .toBe(Date.parse(heartbeatBefore.controller_lease_expires_at));
+
+    const recoverySession = randomUUID();
+    const recoveryRun = await seedOwnedRun({ controllerSessionId: recoverySession });
+    const reconcileNow = new Date('2026-08-14T05:00:00.000Z');
+    await testPool.query(
+      `UPDATE initiative_runs
+          SET controller_lease_expires_at = $2
+        WHERE id = $1`,
+      [recoveryRun.runId, new Date(reconcileNow.getTime() - MIN)],
+    );
+    try {
+      await installRejectingAuditTrigger('kernel_ownerless_run_recovered');
+      const recovered = await reconcileOwnerlessKernelRuns(testPool, { now: reconcileNow });
+      expect(recovered.map((row) => row.runId)).not.toContain(recoveryRun.runId);
+    } finally {
+      await removeRejectingAuditTrigger();
+    }
+    const recoveryAfter = await leaseOf(recoveryRun.runId);
+    expect(recoveryAfter.phase).toBe('planning');
+    expect(recoveryAfter.task_status).toBe('in_progress');
+    expect(await auditEvents(recoveryRun.runId)).toEqual([]);
   });
 
   it('RED-2 + RED-5(mismatch): 错误 session 心跳 → CAS rowCount=0、lease 不动、无主 run 仍被 reconcile fail-closed 回收', async () => {
@@ -293,6 +474,9 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
       expect(after.phase).toBe('planning');
       expect(after.task_status).toBe('in_progress');
       expect(after.failure_reason).toBeNull();
+      const events = await auditEvents(runId);
+      expect(events.filter(({ event_type: type }) => type === 'kernel_controller_lease_renewed')).toHaveLength(1);
+      expect(events.filter(({ event_type: type }) => type === 'kernel_ownerless_run_recovered')).toHaveLength(0);
     } finally {
       await blocker.query('ROLLBACK').catch(() => {});
       blocker.release();

@@ -127,6 +127,28 @@ export async function reconcileOwnerlessKernelRuns(pool, { now = new Date() } = 
         // 候选 SELECT 只是提示。finalizeKernelRun 依既有 task→run 锁序锁住当前行后，
         // 必须按当前 ownership/lease 再判一次；旧快照无权终结已续租的 run。
         lockedRunGuard: (lockedRun) => isOwnerlessRun(lockedRun, now),
+        // 审计与 run/task 终态改变共用 finalizeKernelRun 的事务；changed=false、
+        // guardRejected 或 INSERT 失败都不会留下假事件/半完成状态。
+        afterRunFinalized: async (client) => {
+          await client.query(
+            `INSERT INTO cecelia_events (event_type, source, task_id, payload)
+             VALUES (
+               'kernel_ownerless_run_recovered',
+               'kernel_controller_lifecycle',
+               $1,
+               $2::jsonb
+             )`,
+            [
+              run.current_task_id,
+              JSON.stringify({
+                run_id: run.id,
+                task_id: run.current_task_id,
+                cause,
+                failure_reason: failureReason,
+              }),
+            ],
+          );
+        },
       });
       if (result.guardRejected) continue;
       recovered.push({

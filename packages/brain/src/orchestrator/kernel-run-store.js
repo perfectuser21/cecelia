@@ -520,6 +520,7 @@ export async function finalizeKernelRun(pool, {
   outcome,
   reason = null,
   afterTaskFinalized = null,
+  afterRunFinalized = null,
   lockedRunGuard = null,
 }) {
   if (!['done', 'failed'].includes(outcome)) {
@@ -643,6 +644,15 @@ export async function finalizeKernelRun(pool, {
           WHERE id = $1`,
         [expectedTaskId, taskOutcome, reason],
       );
+    }
+
+    if (changed && typeof afterRunFinalized === 'function') {
+      await afterRunFinalized(client, {
+        runId,
+        taskId: expectedTaskId,
+        outcome,
+        lockedRun: run,
+      });
     }
 
     if (outcome === 'done' && typeof afterTaskFinalized === 'function') {

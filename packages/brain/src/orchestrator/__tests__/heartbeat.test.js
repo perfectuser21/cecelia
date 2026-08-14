@@ -13,8 +13,22 @@ import { CONTROLLER_LEASE_DEFAULT_SECONDS } from '../kernel-run-store.js';
 const RUN_ID = '00000000-0000-0000-0000-000000000312';
 const SESSION = 'sess-controller-abc';
 
-function mockPool(result = { rowCount: 1, rows: [] }) {
-  return { query: vi.fn().mockResolvedValue(result) };
+function mockPool(result = {
+  rowCount: 1,
+  rows: [{
+    id: RUN_ID,
+    current_task_id: '11111111-2222-4333-8444-555555555555',
+    controller_lease_expires_at: new Date('2026-07-04T12:30:00Z'),
+  }],
+}) {
+  const client = {
+    query: vi.fn(async (sql) => {
+      if (sql.includes('UPDATE initiative_runs')) return result;
+      return { rowCount: 1, rows: [] };
+    }),
+    release: vi.fn(),
+  };
+  return { connect: vi.fn(async () => client), client };
 }
 
 describe('writeHeartbeat', () => {
@@ -25,8 +39,8 @@ describe('writeHeartbeat', () => {
       runId: RUN_ID, host: 'mac-mini-us', pid: 4242, now, controllerSessionId: SESSION,
     });
 
-    expect(pool.query).toHaveBeenCalledTimes(1);
-    const [sql, params] = pool.query.mock.calls[0];
+    const updateCall = pool.client.query.mock.calls.find(([sql]) => sql.includes('UPDATE initiative_runs'));
+    const [sql, params] = updateCall;
     expect(sql).toContain('UPDATE initiative_runs');
     for (const col of ['orchestrator_heartbeat_at', 'orchestrator_host', 'orchestrator_pid']) {
       expect(sql).toContain(col);
@@ -39,6 +53,16 @@ describe('writeHeartbeat', () => {
     expect(sql).toMatch(/phase\s+NOT\s+IN\s*\('done',\s*'failed'\)/);
     // 缺省 leaseSeconds 复用单一 SSOT（INV-2，禁止另写死秒数）。
     expect(params).toEqual([RUN_ID, now, 'mac-mini-us', 4242, SESSION, CONTROLLER_LEASE_DEFAULT_SECONDS]);
+    const eventCall = pool.client.query.mock.calls.find(([statement]) => statement.includes('INSERT INTO cecelia_events'));
+    expect(eventCall[0]).toContain("event_type = 'kernel_controller_lease_renewed'");
+    expect(JSON.stringify(eventCall[1])).not.toContain(SESSION);
+    expect(pool.client.query.mock.calls.map(([statement]) => statement.trim())).toEqual([
+      'BEGIN',
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      expect.stringContaining('UPDATE initiative_runs'),
+      expect.stringContaining('INSERT INTO cecelia_events'),
+      'COMMIT',
+    ]);
     // 返回 pg 结果供调用方读取 rowCount 做 CAS fail-closed 判定。
     expect(res.rowCount).toBe(1);
   });
@@ -49,7 +73,20 @@ describe('writeHeartbeat', () => {
     await writeHeartbeat(pool, {
       runId: RUN_ID, host: 'mac-mini-us', pid: 4242, now, controllerSessionId: SESSION, leaseSeconds: 900,
     });
-    const [, params] = pool.query.mock.calls[0];
+    const [, params] = pool.client.query.mock.calls.find(([sql]) => sql.includes('UPDATE initiative_runs'));
     expect(params[5]).toBe(900);
+  });
+
+  it('CAS 未命中时提交但不写审计事件', async () => {
+    const pool = mockPool({ rowCount: 0, rows: [] });
+    await writeHeartbeat(pool, {
+      runId: RUN_ID,
+      host: 'mac-mini-us',
+      pid: 4242,
+      now: new Date('2026-07-04T12:00:00Z'),
+      controllerSessionId: 'wrong-session',
+    });
+    expect(pool.client.query.mock.calls.some(([sql]) => sql.includes('INSERT INTO cecelia_events'))).toBe(false);
+    expect(pool.client.query).toHaveBeenCalledWith('COMMIT');
   });
 });

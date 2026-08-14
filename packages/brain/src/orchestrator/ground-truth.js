@@ -49,6 +49,7 @@ const TERMINAL_ATTEMPT_STATUSES = new Set([
 ]);
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const GITHUB_REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
+const LEGACY_PROPOSE_BRANCH_PATTERN = /^cp-harness-propose-r\d+-([a-zA-Z0-9]{8})-a\d+$/;
 const SPAWN_ROLE_BY_ACTION = Object.freeze({
   [ACTION.SPAWN_PLANNER]: 'planner',
   [ACTION.SPAWN_PROPOSER]: 'proposer',
@@ -497,13 +498,15 @@ export async function collectGroundTruth(deps, opts) {
     try {
       const bundle = parseTaskBundle(asJson(attempt.task_bundle));
       const branch = bundle.inputs?.propose_branch;
+      const legacyBranchMatch = typeof branch === 'string'
+        ? LEGACY_PROPOSE_BRANCH_PATTERN.exec(branch)
+        : null;
       if (
         bundle.run_id === runId
         && bundle.attempt_id === attempt.id
         && bundle.role === 'proposer'
         && bundle.inputs?.task_id === taskId
-        && typeof branch === 'string'
-        && new RegExp(`^cp-harness-propose-r\\d+-${shortTask}-a\\d+$`).test(branch)
+        && legacyBranchMatch?.[1] === shortTask
       ) {
         legacyBranchesForRun.add(branch);
       }
