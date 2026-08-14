@@ -8,9 +8,16 @@
 
 
 
-**Brain 版本**: 1.273.9
+**Brain 版本**: 1.273.10
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.273.10 — A10 shell 合同执行闭环
+
+- 永久 E2E oracle 机械提取 `contract-dod.md` A10 并原样交给 `/bin/bash -c`，防止 shell 双引号展开 SQL dollar quote。
+- A10 使用 `String.fromCharCode(36,36,59)` 构造 `$$;`；DoD 镜像、PRD/task-plan 版本事实同步，Schema 地板保持 416。
 
 ---
 

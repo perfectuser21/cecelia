@@ -51,14 +51,14 @@
 
 ## 预期受影响文件
 
-- `.brain-versions`: Brain 发布账本同步为本 sprint 的 `1.273.8`。
-- `DEFINITION.md`: Brain 版本与 schema 事实同步到 `1.273.8` / migration 416。
+- `.brain-versions`: Brain 发布账本同步为本 sprint 的 `1.273.10`。
+- `DEFINITION.md`: Brain 版本与 schema 事实同步到 `1.273.10` / migration 416。
 - `DoD.md`: Generator DoD 与批准合同的 lease、actual CLI、migration、审计和行数门禁条目一致。
 - `package-lock.json`: 根 workspace 锁文件同步 `packages/brain` 版本。
 - `packages/brain/migrations/416_controller_session_nonblank.sql`: 历史空白 ownership 归一为 NULL，新增并验证 nonblank CHECK。
 - `packages/brain/migrations/rollback/416_controller_session_nonblank.down.sql`: rollback 真移除 migration 416 CHECK 与 schema_version 标记。
 - `packages/brain/package-lock.json`: Brain 锁文件版本同步。
-- `packages/brain/package.json`: Brain 版本同步为 `1.273.8`。
+- `packages/brain/package.json`: Brain 版本同步为 `1.273.10`。
 - `packages/brain/scripts/smoke/kernel-controller-lease-renewal-smoke.sh`: 真环境 smoke 验证续租实现与 schema/CI 接线。
 - `packages/brain/src/__tests__/controller-session-passthrough.test.js`: 永久 RED-4 纯参数透传回归。
 - `packages/brain/src/__tests__/integration/capacity-gate.test.js`: Preview `starting` 端口冲突真 PG 回归。
