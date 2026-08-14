@@ -7,6 +7,25 @@ DOCKER_EXECUTOR="$ROOT/packages/brain/src/docker-executor.js"
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
+REAL_CONTAINER=false
+CONTAINER_ID_FILE=''
+while (($#)); do
+  case "$1" in
+    --real-container) REAL_CONTAINER=true ;;
+    --container-id-file)
+      shift
+      [[ $# -gt 0 ]] || { echo '--container-id-file requires a path' >&2; exit 2; }
+      CONTAINER_ID_FILE=$1
+      ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+if [[ "$REAL_CONTAINER" == true && -z "$CONTAINER_ID_FILE" ]]; then
+  echo '--real-container requires --container-id-file' >&2
+  exit 2
+fi
+
 detectors="$(sed -n '/^is_evaluator_task_bundle()/,/^prepare_evaluator_evidence_capsule()/p' "$SOURCE" | sed '$d')"
 [[ -n "$detectors" ]] || { echo 'missing task bundle detectors' >&2; exit 1; }
 eval "$detectors" || { echo 'task bundle detector extraction failed' >&2; exit 1; }
@@ -135,5 +154,22 @@ JSON
 printf '%s\n' '{"status":"completed","summary":"published follow-up","artifacts":[],"checks":[],"decision":null,"error":null,"case_file":null}' > "$TEST_ROOT/publisher-result.json"
 publish_approved_generator_candidate "$TEST_ROOT/publisher-result.json"
 test "$(git --git-dir "$TEST_ROOT/remote.git" rev-parse refs/heads/cp-trusted-publisher)" = "$HEAD_SHA"
+
+if [[ "$REAL_CONTAINER" == true ]]; then
+  command -v docker >/dev/null || {
+    echo 'docker is required for --real-container' >&2
+    exit 1
+  }
+  RUNNER_IMAGE=${CECELIA_REAL_RUNNER_IMAGE:-cecelia/runner:latest}
+  CONTAINER_ID=$(docker create --entrypoint /bin/sh "$RUNNER_IMAGE" -c 'exit 0')
+  [[ "$CONTAINER_ID" =~ ^[0-9a-f]{12,64}$ ]] || {
+    echo 'docker create returned an invalid container id' >&2
+    exit 1
+  }
+  docker start --attach "$CONTAINER_ID" >/dev/null
+  CONTAINER_ID_TMP="${CONTAINER_ID_FILE}.tmp.$$"
+  printf '%s\n' "$CONTAINER_ID" > "$CONTAINER_ID_TMP"
+  mv "$CONTAINER_ID_TMP" "$CONTAINER_ID_FILE"
+fi
 
 echo 'generator trust boundary PASS'
