@@ -2072,6 +2072,37 @@ validate_codex_terminal_receipt() {
     )
   ' "$stdout_file" >/dev/null 2>&1
 }
+
+# Claude's JSON mode can retain exit 1 after a completed primary turn. Accept
+# that contradiction only when the single CLI envelope proves success, binds
+# the preallocated session, and exactly matches the extracted structured result.
+validate_claude_terminal_receipt() {
+  local stdout_file="$1"
+  local result_file="$2"
+  local expected_session_id="$3"
+
+  [[ -s "$stdout_file" && -s "$result_file" && -n "$expected_session_id" ]] || return 1
+  jq -e -s \
+    --slurpfile result "$result_file" \
+    --arg expected_session "$expected_session_id" '
+      length == 1
+      and .[0].type == "result"
+      and .[0].subtype == "success"
+      and .[0].is_error == false
+      and .[0].terminal_reason == "completed"
+      and .[0].session_id == $expected_session
+      and .[0].structured_output == $result[0]
+      and ($result[0] | type) == "object"
+      and ($result[0].status | type) == "string"
+      and (["completed","completed_with_concerns","needs_context","blocked"]
+        | index($result[0].status)) != null
+      and ($result[0].summary | type) == "string"
+      and ($result[0].artifacts | type) == "array"
+      and ($result[0].checks | type) == "array"
+      and (($result[0].decision | type) == "object" or $result[0].decision == null)
+      and (($result[0].error | type) == "object" or $result[0].error == null)
+    ' "$stdout_file" >/dev/null 2>&1
+}
 # attempt-timeout-contract:end
 # commander-provider-contract:end
 
@@ -2370,13 +2401,15 @@ run_provider_contract() {
           printf '%s\n' "$safe_line" | tee -a "$STDOUT_FILE"
         done
     provider_exit=${PIPESTATUS[0]}
-    if [[ $provider_exit -eq 0 ]]; then
+    if [[ $provider_exit -ne 124 ]]; then
       jq -c '
         if .structured_output then .structured_output
         elif (.result | type) == "object" then .result
         else (.result | fromjson)
         end
-      ' "$STDOUT_FILE" > "$result_file" 2>/dev/null || provider_exit=1
+      ' "$STDOUT_FILE" > "$result_file" 2>/dev/null || {
+        [[ $provider_exit -ne 0 ]] || provider_exit=1
+      }
     fi
     provider_session_id=$(jq -r '.session_id // empty' "$STDOUT_FILE" 2>/dev/null || true)
   elif [[ "$provider" == "grok" ]]; then
@@ -2427,6 +2460,14 @@ run_provider_contract() {
     terminal_receipt='turn.completed'
     provider_exit=0
     echo "[entrypoint] recovered completed Codex turn from CLI exit $provider_cli_exit_code" >&2
+  fi
+  if [[ "$provider" == "claude" && $provider_exit -ne 0 && $provider_exit -ne 124 ]] \
+      && validate_claude_terminal_receipt \
+        "$STDOUT_FILE" "$result_file" "$provider_session_id"; then
+    provider_cli_exit_code="$provider_exit"
+    terminal_receipt='terminal_reason:completed'
+    provider_exit=0
+    echo "[entrypoint] recovered completed Claude turn from CLI exit $provider_cli_exit_code" >&2
   fi
   if ! terminate_evaluator_provider_processes; then
     provider_exit=1

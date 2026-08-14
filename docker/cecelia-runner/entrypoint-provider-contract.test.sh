@@ -396,7 +396,8 @@ jq -nc \
   > "$CLAUDE_RECEIPT_TMP/completed.json"
 validate_claude_terminal_receipt \
   "$CLAUDE_RECEIPT_TMP/completed.json" \
-  "$CLAUDE_RECEIPT_TMP/result.json" || {
+  "$CLAUDE_RECEIPT_TMP/result.json" \
+  "claude-receipt" || {
   echo 'strict receipt rejected a completed Claude turn with matching result' >&2
   exit 1
 }
@@ -405,7 +406,8 @@ jq '.structured_output.summary = "different result"' \
   "$CLAUDE_RECEIPT_TMP/completed.json" > "$CLAUDE_RECEIPT_TMP/mismatch.json"
 if validate_claude_terminal_receipt \
   "$CLAUDE_RECEIPT_TMP/mismatch.json" \
-  "$CLAUDE_RECEIPT_TMP/result.json"; then
+  "$CLAUDE_RECEIPT_TMP/result.json" \
+  "claude-receipt"; then
   echo 'strict Claude receipt accepted a structured-output mismatch' >&2
   exit 1
 fi
@@ -418,7 +420,8 @@ for mutation in \
     > "$CLAUDE_RECEIPT_TMP/rejected.json"
   if validate_claude_terminal_receipt \
     "$CLAUDE_RECEIPT_TMP/rejected.json" \
-    "$CLAUDE_RECEIPT_TMP/result.json"; then
+    "$CLAUDE_RECEIPT_TMP/result.json" \
+    "claude-receipt"; then
     echo "strict Claude receipt accepted invalid envelope: $mutation" >&2
     exit 1
   fi
@@ -429,7 +432,8 @@ printf '%s\n' '{"type":"unexpected-second-result"}' \
   >> "$CLAUDE_RECEIPT_TMP/trailing.json"
 if validate_claude_terminal_receipt \
   "$CLAUDE_RECEIPT_TMP/trailing.json" \
-  "$CLAUDE_RECEIPT_TMP/result.json"; then
+  "$CLAUDE_RECEIPT_TMP/result.json" \
+  "claude-receipt"; then
   echo 'strict Claude receipt accepted multiple outer results' >&2
   exit 1
 fi
