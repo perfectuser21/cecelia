@@ -10,7 +10,7 @@ const SCRIPT = resolve(
 );
 const fixtures: string[] = [];
 
-function createFixture(redEvidencePath: string) {
+function createFixture(redEvidencePath: string, { earlierRed = false } = {}) {
   const repo = mkdtempSync(join(tmpdir(), 'tdd-red-evidence-'));
   fixtures.push(repo);
   execSync('git init -q', { cwd: repo });
@@ -20,6 +20,17 @@ function createFixture(redEvidencePath: string) {
   writeFileSync(join(repo, 'README.md'), 'base\n');
   execSync('git add . && git commit -q -m "chore: base"', { cwd: repo });
   execSync('git branch base', { cwd: repo });
+
+  if (earlierRed) {
+    mkdirSync(join(repo, 'sprints/earlier-sprint/tests'), { recursive: true });
+    writeFileSync(
+      join(repo, 'sprints/earlier-sprint/tests/earlier.test.ts'),
+      'it("earlier red", () => {});\n',
+    );
+    execSync('git add . && git commit -q -m "test(harness): earlier sprint (Red)"', {
+      cwd: repo,
+    });
+  }
 
   mkdirSync(join(repo, 'sprints/test-sprint/tests'), { recursive: true });
   writeFileSync(
@@ -76,6 +87,14 @@ afterEach(() => {
 describe('check-tdd-commit-order Red evidence allowlist', () => {
   it('允许 Red commit 携带同 sprint 的 red-evidence.md', () => {
     const result = run(createFixture('sprints/test-sprint/red-evidence.md'));
+    expect(result.exitCode, result.output).toBe(0);
+  });
+
+  it('canonical red-evidence 覆盖同一长分支中更早 sprint 的 Red 锚点', () => {
+    const result = run(createFixture(
+      'sprints/test-sprint/red-evidence.md',
+      { earlierRed: true },
+    ));
     expect(result.exitCode, result.output).toBe(0);
   });
 
