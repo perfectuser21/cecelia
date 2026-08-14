@@ -10,6 +10,7 @@
  */
 
 import { getTaskLocation } from './task-router.js';
+import { createTask } from './actions.js';
 
 /**
  * 检查是否需要触发审查。
@@ -79,7 +80,7 @@ async function shouldTriggerReview(pool, entityType, entityId) {
  * @param {string} params.parentKrId - 所属 KR ID
  * @returns {Promise<Object>} 创建的 task + review 记录
  */
-async function createReviewTask(pool, { entityType, entityId, entityName, parentKrId }) {
+async function createReviewTask(pool, { entityType, entityId, entityName, parentKrId }, taskCreator = createTask) {
   // 1. 收集拆解产出信息
   let childrenSummary = '';
   if (entityType === 'project') {
@@ -112,13 +113,12 @@ async function createReviewTask(pool, { entityType, entityId, entityName, parent
 
   // 3. 创建 decomp_review task
   const location = getTaskLocation('decomp_review');
-  const task = await pool.query(
-    `INSERT INTO tasks (title, description, status, priority, goal_id, task_type, payload, trigger_source)
-     VALUES ($1, $2, 'queued', 'P0', $3, 'decomp_review', $4, 'brain_auto')
-     RETURNING id, title`,
-    [
-      `拆解审查: ${entityName}`,
-      [
+  const created = await taskCreator({
+    db: pool,
+    source: 'child',
+    source_id: `decomposition-review:${reviewId}`,
+    title: `拆解审查: ${entityName}`,
+    description: [
         `请审查「${entityName}」的拆解质量。`,
         '',
         `实体类型: ${entityType}`,
@@ -137,27 +137,31 @@ async function createReviewTask(pool, { entityType, entityId, entityName, parent
         '请返回 verdict: approved / needs_revision / rejected',
         '以及 findings（JSON）说明审查发现。',
       ].join('\n'),
-      parentKrId || null,
-      JSON.stringify({
-        entity_type: entityType,
-        entity_id: entityId,
-        review_id: reviewId,
-        review_scope: 'decomposition_quality',
-        routing: location,
-      }),
-    ]
-  );
+    goal_id: parentKrId || null,
+    task_type: 'decomp_review',
+    priority: 'P0',
+    trigger_source: 'brain_auto',
+    allow_unscoped: true,
+    payload: {
+      entity_type: entityType,
+      entity_id: entityId,
+      review_id: reviewId,
+      review_scope: 'decomposition_quality',
+      routing: location,
+    },
+  });
+  const task = created.task;
 
   // 4. 回填 task_id 到 review 记录
   await pool.query(
     `UPDATE decomp_reviews SET task_id = $1 WHERE id = $2`,
-    [task.rows[0].id, reviewId]
+    [task.id, reviewId]
   );
 
-  console.log(`[review-gate] Created review task ${task.rows[0].id} for ${entityType} "${entityName}" → ${location}`);
+  console.log(`[review-gate] Created review task ${task.id} for ${entityType} "${entityName}" → ${location}`);
 
   return {
-    task: task.rows[0],
+    task,
     review: { id: reviewId, entity_type: entityType, entity_id: entityId },
   };
 }
@@ -170,7 +174,7 @@ async function createReviewTask(pool, { entityType, entityId, entityName, parent
  * @param {string} verdict - 'approved' | 'needs_revision' | 'rejected'
  * @param {Object} findings - 审查发现（JSON）
  */
-async function processReviewResult(pool, taskId, verdict, findings) {
+async function processReviewResult(pool, taskId, verdict, findings, taskCreator = createTask) {
   // 1. 查找关联的 review 记录
   const reviewResult = await pool.query(
     `SELECT id, entity_type, entity_id FROM decomp_reviews WHERE task_id = $1`,
@@ -261,13 +265,12 @@ async function processReviewResult(pool, taskId, verdict, findings) {
       krId = krResult.rows[0]?.kr_id || null;
     }
 
-    const revisionTask = await pool.query(
-      `INSERT INTO tasks (title, description, status, priority, goal_id, task_type, payload, trigger_source)
-       VALUES ($1, $2, 'queued', 'P0', $3, 'dev', $4, 'brain_auto')
-       RETURNING id, title`,
-      [
-        `修正拆解: ${entityName}`,
-        [
+    const revisionTask = await taskCreator({
+      db: pool,
+      source: 'child',
+      source_id: `decomposition-revision:${reviewId}`,
+      title: `修正拆解: ${entityName}`,
+      description: [
           `Vivian 审查发现问题，请修正「${entityName}」的拆解。`,
           '',
           `审查发现:`,
@@ -275,17 +278,20 @@ async function processReviewResult(pool, taskId, verdict, findings) {
           '',
           '请根据审查意见修正拆解结构。',
         ].join('\n'),
-        krId,
-        JSON.stringify({
+      goal_id: krId,
+      task_type: 'initiative_plan',
+      priority: 'P0',
+      trigger_source: 'brain_auto',
+      allow_unscoped: true,
+      payload: {
           decomposition: 'true',
           revision: true,
           review_id: reviewId,
           entity_type: entityType,
           entity_id: entityId,
-        }),
-      ]
-    );
-    console.log(`[review-gate] Created revision task ${revisionTask.rows[0].id} for ${entityName}`);
+      },
+    });
+    console.log(`[review-gate] Created revision task ${revisionTask.task.id} for ${entityName}`);
 
   } else if (verdict === 'rejected') {
     // 标记实体 blocked

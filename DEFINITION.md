@@ -8,66 +8,242 @@
 
 
 
-**Brain 版本**: 1.273.10
+**Brain 版本**: 1.273.37
+
+## Brain 1.273.37 — Controller Lease Smoke Authority
+
+- Controller heartbeat 续租默认时长复用 authority SSOT；真实 smoke 同时校验 session 与 generation。
+- Unified Work Router 保留 canonical Red 后的永久回归测试；新 Run 必须使用与当前测试树一致的新合同 seal。
+
+## Brain 1.273.36 — Controller Authority Merge Closure
+
+- Controller lease 与 durable session/generation authority 收敛为同一 CAS 边界，心跳、终态和 ownerless 回收均不得跨代写入。
+- 真实 Harness 角色链的 opt-in 从执行环境显式注入，不改写已批准冻结合同。
+
+## Brain 1.273.35 — Authoritative PR Candidate Impact
+
+- Generator 修复轮使用 GitHub 分页返回的完整 PR 文件集，并只追加当前 PR HEAD 到新候选的差异，避免把冻结基线之后的 target-main 漂移误封为候选改动。
+
+## Brain 1.273.34 — Judge Deferred Coverage Closure
+
+- Judge 可在 Golden Path 顺序覆盖之外附加服务端白名单后置检查；只有显式 `deferred=true` 且命中声明边界的附加项可延后，未声明的失败项仍 fail-closed。
+
+## Brain 1.273.33 — Unified Router PR Discovery
+
+- Ground Truth 从统一 Router 的 `payload.repo` 读取仓库身份，同时兼容旧 `base_repo`，使 coding task 能发现并封印自己的现有 PR。
+
+## Brain 1.273.32 — Existing Candidate Seal Baseline
+
+- 本轮首次封印现有 PR 候选时，Generator 从服务端观测 HEAD 检出，同时继续以不可变实现基线计算候选差异；后续修复轮仍必须追加新提交。
+
+## Brain 1.273.31 — Role-chain Routing Envelope
+
+- B-10 真实角色链在任务 API 顶层声明 `change_kind`、`mutation_intent` 与 domain，保证统一 Router 在创建动作前完成确定性路由。
+
+## Brain 1.273.30 — Judge Deferred Acceptance Boundary
+
+- Judge 独立裁决候选与上游证据；只有服务端声明的宿主 Docker、最终 Judge、Publisher、全闸门和完整角色链检查可结构化标记为后置验收。
+- Evaluator 隔离 Git 夹具清除继承的 pushurl 熔断变量，候选仓库的禁止推送边界保持不变。
+- Runner 固定为 `sha256:47fe869774b789fe6aef2e2e93b6a8baa2726b83ab94392d60c702af1c1ec22f`，Fleet Worker 准入版本同步为 `1.272.17`。
+
+## Brain 1.273.29 — Frozen PR Repair Checkout
+
+- Generator repair 从服务端观测到的当前 PR head 物化工作区；冻结实现基线继续独立携带并由 Runner 校验祖先关系。
+
+## Brain 1.273.28 — Attempt-scoped Runner Smoke Credential
+
+- Unified Work Router 的真实 Runner smoke 在 Harness 容器内优先复用当前 attempt 的 `.codex/auth.json`，宿主旧 team1 路径只作兼容回退。
+
+## Brain 1.273.27 — Judge-guided Evidence Recollection
+
+- Judge 因证据不足要求补证时，Evaluator TaskBundle 会接收当前候选 SHA 对应的结构化 Judge feedback，避免无反馈地重复同一轮取证。
+
+## Brain 1.273.26 — Durable Fleet Candidate Handoff
+
+- Fleet 先落库 Generator candidate authority 再清理容器，重启恢复可安全完成资源回收并保留后续 Evaluator/Judge 的精确 Git 身份。
+
+## Brain 1.273.25 — Trusted Assertion Runner Baseline
+
+- Runner 可信断言的独立只读 checkout 已进入固定 Fleet 镜像 `sha256:d13bd0918e411546f408f4fc59dba7d182aa8c05ea3e37b43f042f8d3d614d3a`，节点准入与实际角色执行不再存在镜像漂移。
+
+## Brain 1.273.24 — Trusted Assertion Runtime
+
+- Required assertions 在 root-owned、只读 checkout 中向隔离身份开放最小读取/遍历权限。
+- 可信断言显式接收 attempt-scoped scratch DB、冻结实现基线与 Git safe-directory；宿主 Docker 接缝保留到 Judge 后验收。
+
+## Brain 1.273.23 — Trusted Host Docker Acceptance
+
+- Docker CLI/daemon 与 `docker inspect` 保持 Controller/Fleet 宿主受信检查，不向受限 Evaluator Provider 暴露；Evaluator 不再因预期的 Docker 隔离误判候选失败，真实容器证据仍由服务端 post-Judge 验收。
+
+## Brain 1.273.22 — Staged Evaluator Acceptance
+
+- Evaluator TaskBundle 明确冻结为 pre-Judge 裁决：只验证候选与上游证据，不递归启动 Harness，也不以尚未发生的 Judge、Publisher、`all_gates_passed` 或完整角色链作为自身 PASS 前置；这些终态证据由服务端 post-Judge 阶段收口。
+
+## Brain 1.273.21 — Candidate Manifest Runner Baseline
+
+- Fleet 三机准入、部署与修复脚本统一固定到 `sha256:fe6b953dc41339d7c78eee6048d09b880e7f6ad420fcf0f56803f965015b3ffc`；该 Runner 会在受信候选清单中携带 `changed_files`，使 Evaluator 的 Impact Diff Gate 能验证真实候选而不依赖 Brain 本机 Git 对象。
+
+## Brain 1.273.20 — Atomic Explicit Recovery Reopen
+
+- 显式恢复在验证可信失败前序、Map 与 Impact Contract 后，于同一事务把失败任务重开为 queued 并创建新 run，消除失败任务无法进入恢复链的死锁。
+
+## Brain 1.273.19 — Frozen Baseline Repair Workspace
+
+- 冻结基线任务存在落后的远端 PR 且没有 retained candidate 时，Generator-fix 仍从权威实现基线物化；远端 PR 不再把未发布的候选血统降级到旧提交。
+
+## Brain 1.273.18 — Recovery Lineage Type Safety
+
+- 显式恢复的可信前序查询将 JSON 合同 ID 按 text 与 UUID 参数的文本表示比较，避免 PostgreSQL `text = uuid` 在 Generator 前失败。
+
+## Brain 1.273.17 — Read-only Fleet Branch Binding
+
+- Fleet Worker 把 Reviewer、Evaluator 等只读工作区绑定到服务端批准的角色分支，确保容器内 Routing Action Gate 能验证分支身份而不落入 detached HEAD。
+
+## Brain 1.273.16 — Role-scoped Fleet Workspace Branches
+
+- Fleet Worker 分别验证不可变 Routing Receipt 分支与服务端签发的角色工作分支；Proposer 可在 `cp-harness-propose-*` 上执行，不再被误判为路由身份篡改。
+
+## Brain 1.273.15 — Candidate-bound Generator Fix Feedback
+
+- Generator-fix 以 retained candidate SHA 校验并接收 Evaluator 反馈，远端 PR 落后时不再丢弃本轮真实失败原因。
+
+## Brain 1.273.14 — Candidate-first Verdict Projection
+
+- Attempt 终态事务优先以受信 retained candidate SHA 投影 Evaluator/Judge Verdict，远端 PR 仍指向旧头时不会覆盖本轮候选身份。
+
+## Brain 1.273.13 — Candidate-bound Evaluator Verdict
+
+- Evaluator callback 优先以 Attempt 冻结的 retained candidate SHA 写入 Verdict，远端 PR 落后时不再把真实结果误判为 stale。
+
+## Brain 1.273.12 — Intent Routing Identity Freeze
+
+- Intent 入口把调用方批准的规范分支传播到每个不可变 Routing Receipt，防止同一 coding 请求被拆成多个随机分支身份。
+
+## Brain 1.273.11 — Canonical Attempt PostgreSQL Environment
+
+- Fleet PostgreSQL sidecar 同时注入连接串与标准 `DB_*` 变量，使 Brain 连接池、迁移器和真实 smoke 始终连接同一个 attempt-scoped scratch 数据库。
+
+## Brain 1.273.10 — Scratch-safe Attempt Database
+
+- Fleet PostgreSQL sidecar 使用 `acceptance_<id>_scratch` 数据库名，使真实 smoke 的生产库防误连闸能够识别并放行隔离验收库。
+
+## Brain 1.273.9 — Evaluator Isolated PostgreSQL
+
+- Evaluator 默认申请 attempt-scoped PostgreSQL，并由 Fleet Runner 注入隔离 `DB_URL`/`DATABASE_URL`，支持迁移与真库 Golden Path 验收。
+
+## Brain 1.273.8 — Retained Candidate Identity
+
+- Evaluator 与 Judge 在远端 PR 落后时统一锚定 Runner 已验证的 retained candidate SHA，避免旧 PR 头覆盖真实候选身份。
+
+## Brain 1.273.7 — Retained Candidate Diff Evidence
+
+- Runner 将受信本地 candidate 的 changed-files 清单写入不可变证据；Controller 在 Evaluator 前以该证据执行 Impact Diff Gate，不再要求 Brain 本机持有远端 Fleet Git 对象。
+
+## Brain 1.273.6 — Canonical Fleet Git Admin Mount
+
+- Fleet Runner 将 Git admin worktree 同时按宿主规范路径挂载为容器目标，兼容 macOS `/var` → `/private/var` 解析并保证 Generator 能读取冻结工作区。
+
+## Brain 1.273.5 — Routed Provenance Width
+
+- `tasks.trigger_source` 改为 `text`，完整保留 Work Router 调度来源。
+
+## Brain 1.273.4 — Kernel Controller Authority
+
+- Brain 同事务签发 durable Controller session，并用 generation CAS 心跳续租。
+- 四档 change_kind 直接投影不可变 Routing Receipt；Schema 地板为 424。
 
 **状态**: 生产运行中
 
 ---
 
-## Brain 1.273.10 — A10 shell 合同执行闭环
+## Brain 1.273.3 — Recovery Trust Boundary 回归合同
 
-- 永久 E2E oracle 机械提取 `contract-dod.md` A10 并原样交给 `/bin/bash -c`，防止 shell 双引号展开 SQL dollar quote。
-- A10 使用 `String.fromCharCode(36,36,59)` 构造 `$$;`；DoD 镜像、PRD/task-plan 版本事实同步，Schema 地板保持 416。
+- 显式恢复 Run 继承已批准合同与精确 predecessor，但不能借前序 PR 跳过当前 Run 的 Generator 候选封印。
+- PostgreSQL 恢复血统验收同步要求 Session Controller ownership，杜绝无主恢复 Run。
 
----
+## Brain 1.273.2 — Routed Controller 真实验收
 
-## Brain 1.273.9 — Controller heartbeat 与任务终态线性化
+- Session Controller 的真库验收夹具与 smoke 收口到 canonical Routing Receipt；生产闸门继续拒绝裸 coding run。
+- 合并后 Runner 固定为 `sha256:6f2f62e94cc558b3895502b8f8822911b6d46b4b30ba9b76684f6692382cf6ea`，Fleet Worker 基线为 1.272.16。
 
-- `writeHeartbeat` 与通用 task 终态写、`finalizeKernelRun` 统一使用 `task → run` 行锁顺序；心跳等待父 task 行锁后重读状态，终态事务先行时 heartbeat、lease 与续租事件均零推进。
-- 真实 PostgreSQL 双连接回归覆盖 `completed` / `cancelled` 未提交终态写与已排队 canonical finalizer，并以有限 lock/statement timeout 防死锁回归。
-- Schema 地板保持 416；Controller session 的 locale-independent POSIX+Unicode whitespace 约束不变。
+## Brain 1.273.1 — Unified Router × Session Controller 集成
 
----
-
-## Brain 1.273.8 — Controller lease 父任务终态与 Unicode 空白收敛
-
-- `writeHeartbeat` 在单条 `UPDATE ... FROM tasks` 中同时绑定权威 session、活跃 run phase 与父 task 非终态；`cancelled` / `completed` task 的残留 planning run 不再推进 heartbeat、lease 或审计事件。
-- Controller ownership 的空白语义统一为“至少含一个非空白字符”：JavaScript 创建/ownerless 判定与 PostgreSQL POSIX `[[:space:]]` 清洗、CHECK、heartbeat CAS 一致覆盖 TAB、NBSP 与 ideographic space。
-- migration 416 真 PostgreSQL 生命周期回归覆盖历史归一、新写拒绝、rollback/re-upgrade；schema 地板保持 416。
+- Work Router/Map/Impact/服务端 Judge/受信 Publisher 与 Session Controller ownership 合并为同一生产链。
+- Kernel Run 同一事务持久化 Routing/合同/恢复血统及 Controller session/lease，任何一侧证据不完整都失败关闭。
+- Schema 413—416 保留 production authority anchor；Router/Map/合同治理与 durable Controller authority 顺延到 417—424。
 
 ---
 
-## Brain 1.273.7 — Controller lease 审计原子性与 Preview 端口冲突收敛
+## Brain 1.272.66 — Server-authoritative Judge Verdict
 
-- 成功 Controller lease 续租按 `(run_id, heartbeat_at)` 在同一事务幂等写 `cecelia_events`；错误 session/终态不造事件，事件失败回滚续租，payload 不含 controller session。
-- ownerless recovery 仅在 `finalizeKernelRun` 真实终态改变的同一事务写审计事件；`guardRejected` 和已终态路径不造事件。
-- legacy proposer 分支用静态正则 capture + task 前缀字符串比较关闭 CodeQL 动态正则 high；Preview `starting` 记录遇到外部 listener 占用时在 admission 锁内重新分配端口。
-- 保留 migration 416 nonblank ownership invariant，并以 evaluator-feedback amendment 校正 sprint PRD/contract/DoD/task-plan 与真实 diff。
-
----
-
-## Brain 1.273.6 — Kernel CLI ownership 前置栅栏
-
-- `runKernelMain` 不再于 Controller ownership CAS 前激活 queued task；task 激活改为 `runLoop` 首次权威 CAS 成功后的回调。
-- 错误 Controller session 的真实 CLI 在 task/heartbeat/decision/attempt 零业务推进时以 `controller_lease_lost` 非零退出；正确 session 仍激活 queued task。
-- 沿用 `runLoop` 单次首次 heartbeat CAS，不新增重复心跳或 schema migration。
+- Evaluator 的 `FIXED` / `PASS_WITH_CONCERNS` 在进入独立 Judge 前只归一为待审 `PASS`，Judge Provider 的 FAIL 不再被上游 verdict 覆盖；Publisher 只接收服务端终判的字面 PASS。
+- Runner 为 Judge 签发专属 strict output schema，完整保留逐步骤 coverage、failure class 与 failure signature。
+- Work Router 与 WorkspaceSpec 共用 canonical `cp-*` branch 校验；缺省 Git evidence 的幂等重放复用首次冻结值，不随 main 前进漂移。
 
 ---
 
-## Brain 1.273.5 — Controller ownership 竞态与空白会话 fail-closed
+## Brain 1.272.65 — Fleet Judge 与 Canonical Routing Evidence
 
-- ownerless reconcile 在 `finalizeKernelRun` 的权威 task→run 锁边界重查当前 ownership/lease，旧候选快照不再终结已续租 run。
-- Kernel loop 在首次外部观测、决策日志与 dispatch 前完成 ownership CAS；`controller_lease_lost` 映射为非零 CLI 退出。
-- Migration 416 把历史空串/空白 `controller_session_id` 归一为 NULL，并以已验证 CHECK 阻止新空白 ownership；heartbeat/reconcile SQL 在滚动窗口同样 fail-closed。Schema 地板推进到 416。
+- Judge 经同机 Fleet/Runner 执行，callback 由服务端机械闸裁定后写入精确 candidate SHA；Generator-fix 继承候选并回收被替代工作区。
+- 所有 coding receipt 在入队前冻结 branch/base SHA，幂等重放比较完整 evidence；批准合同状态只能单向进入 superseded。
+- 当前 Harness Runner 包含 Controller authority 终态写入隔离并冻结为 `sha256:6f2f62e94cc558b3895502b8f8822911b6d46b4b30ba9b76684f6692382cf6ea`；Fleet Worker 基线升至 `1.272.16`，Codex CLI 基线保持 `0.147.0`。
+
+## Brain 1.272.64 — Judge-gated Candidate Publishing
+
+- Generator 只形成同机保留的、服务端验证的本地 Git candidate；Evaluator 与 Judge 精确继承该 SHA，只有 Judge PASS 后的受信 Publisher 才能快进推送并创建 PR。
+- Fleet Worker 把 canonical Routing Receipt 身份完整注入真实 Runner；真实容器验收验证 Provider 以 UID 5999、零 capabilities 运行，看不到控制面/GitHub 凭据，不能提前 push，并经 callback 返回精确 candidate SHA。
+
+## Brain 1.272.63 — Headed Kernel Runtime Identity
+
+- 有头 coding 也建立真实 Kernel Run/Attempt，并向交互进程注入 canonical receipt、run、repo、branch 与冻结 base SHA；启动失败由 Kernel 终态事务统一收口。
+
+## Brain 1.272.62 — Atomic Routing Governance
+
+- Dedupe claim 跟随调用方事务回滚，幂等路由冲突 fail closed，Schema 421 保护批准合同核心身份与正文不可变。
 
 ---
 
-## Brain 1.273.1 — Migration 413/414 production anchor + schema 地板升至 415
+## Brain 1.272.61 — Injectable Kernel Run Preflight
 
-- Production DB 已有 schema 413（work_routing_receipts）和 414（map_recovery_contracts），补录进 main，selfcheck EXPECTED_SCHEMA_VERSION 随 PR #4860 升至 415。
-- PR #4860（Session Controller ownership，migration 415）已合并，三档 migration 全部对齐。
-- Root package-lock.json 与 packages/brain/package.json 版本同步。
+- Canonical relay-run API 支持服务端依赖注入，使 PostgreSQL 并发合同在完整 Routing Receipt 前置下可复现验证，生产默认仍使用真实 Map/Impact preflight。
 
+## Brain 1.272.60 — Real Unified Work Router Acceptance
+
+- Scratch smoke 真实穿过 Router、Dispatcher、Attempt Store、Fleet receipt 与 Runner 动作闸，并校验实现基线只作为当前 revision 的祖先证据。
+
+## Brain 1.272.59 — Fail-closed Map Recovery Intent
+
+- Map fresh 时拒绝显式 recovery；恢复合同只在真实 scanner/Map/projection 故障后生成。
+
+## Brain 1.272.58 — Immutable Routing Task Projection
+
+- Schema 420 保护 receipt 对应的 task type/repo/profile/runtime 投影，并补齐 Work Router migrations 的对称 rollback。
+
+## Brain 1.272.57 — Complete Task Creation Inventory
+
+- Inventory 动态覆盖全部生产 task creator 调用点，漏登记或新增旁路会被持续回归拦截。
+
+## Brain 1.272.56 — Generator Frozen Workspace Wiring
+
+- 所有 Generator Attempt 由 Dispatcher 注入 workspace 起始 SHA，并强制启用 Runner 的 frozen-baseline 双闸。
+
+## Brain 1.272.55 — Canonical Action Validation
+
+- 动作验证核对 task/receipt/run/active Attempt workspace 全链身份，过期、取代、投影漂移或工作分支不符均失败关闭。
+
+## Brain 1.272.54 — Attempt Workspace Action Identity
+
+- 动作闸的 branch/base SHA 由当前 Attempt workspace spec 提供；顶层 receipt baseline 单独保留用于完整血统核验。
+
+## Brain 1.272.53 — Canonical Provider Routing Identity
+
+- Kernel Provider 的 receipt、run、repo、branch 与冻结 base SHA 由服务端从 canonical Routing Receipt 投影并注入，禁止调用方自报路由身份。
+
+## Brain 1.272.40 — Unified Work Router 与可信恢复
+
+- 所有 coding mutation 由 Work Router 正向选择四档 Kernel Harness profile，并在同一事务写入 task 与 append-only Routing Receipt。
+- Kernel run 强制使用 fresh Universal Map 与 active Impact Contract；有头工具和无头 Dispatcher 在动作前验证同一 receipt。
+- 显式恢复 run 仅在可信前序 Generator 与当前 GitHub PR URL/SHA 完全一致时建立新的共享 validation clock。
 ## Brain 1.273.0 — Session Controller 所有权不变量 + 四档 change_kind 驱动 Profile
 
 - `initiative_runs` 新增 `controller_session_id` + `controller_lease_expires_at`（migration 415），建立「任何活跃 Kernel Run 前必先有有效 Controller ownership」不变量；`createKernelRun` 无 Controller identity 时 fail-closed 拒绝创建，杜绝 detached 无主 Kernel（issue 962d399c）。
@@ -2248,7 +2424,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | **Schema 版本**: 416 |
+| **schema_version** | 迁移版本追踪 | **Schema 版本**: 422 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -2636,7 +2812,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '416'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '423'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

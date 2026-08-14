@@ -4,6 +4,7 @@
  */
 
 import pool from './db.js';
+import { createTask } from './actions.js';
 import { emit } from './event-bus.js';
 
 // Nightly tick configuration
@@ -245,22 +246,24 @@ async function executeNightlyAlignment() {
     if (existingReview.rows.length > 0) continue;
 
     // Create review task — dispatched by normal tick loop
-    const reviewResult = await pool.query(`
-      INSERT INTO tasks (title, description, status, priority, project_id, task_type, payload, trigger_source)
-      VALUES ($1, $2, 'queued', 'P1', $3, 'review', $4, 'brain_auto')
-      RETURNING id
-    `, [
-      `每日质检: ${report.project_name} (${today})`,
-      `每日质检任务，审查项目 ${report.project_name} 今日完成的 ${report.summary.completed_today} 个任务。\n\n检查要点：\n1. 代码质量：有无明显 bug、安全漏洞、性能问题\n2. 测试覆盖：新代码是否有对应测试\n3. 架构一致性：是否符合项目架构规范\n4. 回归风险：改动是否可能影响其他功能\n\n输出 REVIEW-REPORT.md 报告。`,
-      report.project_id,
-      JSON.stringify({ nightly_review: 'true', date: today, completed_count: report.summary.completed_today })
-    ]);
+    const reviewResult = await createTask({
+      source: 'child',
+      source_id: `nightly-review:${report.project_id}:${today}`,
+      title: `每日质检: ${report.project_name} (${today})`,
+      description: `每日质检任务，审查项目 ${report.project_name} 今日完成的 ${report.summary.completed_today} 个任务。\n\n检查要点：\n1. 代码质量：有无明显 bug、安全漏洞、性能问题\n2. 测试覆盖：新代码是否有对应测试\n3. 架构一致性：是否符合项目架构规范\n4. 回归风险：改动是否可能影响其他功能\n\n输出 REVIEW-REPORT.md 报告。`,
+      project_id: report.project_id,
+      task_type: 'review',
+      priority: 'P1',
+      trigger_source: 'brain_auto',
+      allow_unscoped: true,
+      payload: { nightly_review: 'true', date: today, completed_count: report.summary.completed_today },
+    });
 
-    reviewsCreated.push({ project: report.project_name, task_id: reviewResult.rows[0].id });
+    reviewsCreated.push({ project: report.project_name, task_id: reviewResult.task.id });
     actionsTaken.push({
       action: 'create_review_task',
       project_name: report.project_name,
-      task_id: reviewResult.rows[0].id
+      task_id: reviewResult.task.id
     });
   }
 

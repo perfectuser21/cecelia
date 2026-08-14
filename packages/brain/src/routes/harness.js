@@ -16,6 +16,7 @@ import { join, resolve, relative, isAbsolute, delimiter } from 'path';
 import { homedir, tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import pool from '../db.js';
+import { createTask } from '../actions.js';
 import { runJudgeGate, runMechanicalPreflightChecks, checkJudgmentsWritten } from '../harness-judge.js';
 import {
   DEFAULT_BASE_REPO,
@@ -1569,6 +1570,11 @@ router.get('/sprint-docs', async (req, res) => {
   if (!sprint_dir) {
     return res.status(400).json({ error: 'sprint_dir is required' });
   }
+  const sprintMatch = /^sprints\/([a-z0-9][a-z0-9._-]{0,127})$/i.exec(String(sprint_dir));
+  if (!sprintMatch) {
+    return res.status(400).json({ error: 'invalid sprint_dir' });
+  }
+  const sprintRoot = join(REPO_ROOT, 'sprints', sprintMatch[1]);
 
   const fileMap = [
     ['prep_prd', 'prep-prd.md'],
@@ -1580,7 +1586,7 @@ router.get('/sprint-docs', async (req, res) => {
   const docs = {};
   for (const [key, filename] of fileMap) {
     try {
-      docs[key] = await readFile(join(REPO_ROOT, sprint_dir, filename), 'utf8');
+      docs[key] = await readFile(join(sprintRoot, filename), 'utf8');
     } catch {
       docs[key] = null;
     }
@@ -1998,7 +2004,7 @@ router.post('/promote/:resultId', async (req, res) => {
     if (finalStatus === PROMOTE_STATUS.PROMOTED) {
       const prod = readProductionInfo(getRepoRoot());
       await spawnHarnessReport(
-        { dbQuery: (sql, p) => pool.query(sql, p) },
+        { db: pool },
         {
           initiativeId: row.initiative_id, prUrl: row.pr_url,
           reportKind: REPORT_KIND.SUCCESS,
@@ -2149,20 +2155,29 @@ router.post('/staging-e2e', async (req, res) => {
     project_id: project_id || '',
   };
   try {
-    const r = await pool.query(
-      `INSERT INTO tasks (title, description, task_type, status, priority, payload)
-       SELECT $1, $2, 'staging_e2e', 'queued', 'P2', $3::jsonb
-       WHERE NOT EXISTS (
-         SELECT 1 FROM tasks WHERE task_type = 'staging_e2e' AND payload->>'pr_url' = $4
-       )`,
-      [
-        `[Staging E2E] ${pr_branch || pr_url}`,
-        `Auto-spawned by controller relay (post-merge): deploy :5222 + contract E2E for ${pr_url}`,
-        JSON.stringify(payload),
-        pr_url,
-      ]
+    const existing = await pool.query(
+      `SELECT id FROM tasks
+       WHERE task_type = 'staging_e2e' AND payload->>'pr_url' = $1
+       LIMIT 1`,
+      [pr_url],
     );
-    const created = r.rowCount > 0;
+    if (existing.rows.length > 0) {
+      return res.json({ created: false, reason: 'already_exists' });
+    }
+    await createTask({
+      title: `[Staging E2E] ${pr_branch || pr_url}`,
+      description: `Auto-spawned by controller relay (post-merge): deploy :5222 + contract E2E for ${pr_url}`,
+      task_type: 'staging_e2e',
+      status: 'queued',
+      priority: 'P2',
+      payload,
+      trigger_source: 'harness_watcher',
+      source: 'child',
+      source_id: `staging-e2e:${pr_url}`,
+      allow_unscoped: true,
+      db: pool,
+    });
+    const created = true;
     if (created) console.log(`[staging-e2e endpoint] spawned staging_e2e task for pr=${pr_url}`);
     return res.json(created ? { created: true } : { created: false, reason: 'already_exists' });
   } catch (err) {

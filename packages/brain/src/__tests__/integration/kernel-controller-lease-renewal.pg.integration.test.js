@@ -2,13 +2,53 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { finalizeKernelRun, CONTROLLER_LEASE_DEFAULT_SECONDS } from '../../orchestrator/kernel-run-store.js';
-import { writeHeartbeat } from '../../orchestrator/heartbeat.js';
+import { writeHeartbeat as writeHeartbeatExact } from '../../orchestrator/heartbeat.js';
 import { reconcileOwnerlessKernelRuns } from '../../orchestrator/kernel-controller-lifecycle.js';
 import { runLoop } from '../../orchestrator/loop.js';
 import { createKernelLeasePgFixture, LEASE, MIN } from './kernel-controller-lease-renewal.pg-fixture.js';
 const fixture = createKernelLeasePgFixture();
 let testPool;
 const { auditEvents, installRejectingAuditTrigger, leaseOf, removeRejectingAuditTrigger, seedOwnedRun, waitForBlockedFinalize } = fixture;
+async function writeHeartbeat(pool, args) {
+  const { rows: [run] } = await pool.query(
+    'SELECT controller_generation FROM initiative_runs WHERE id=$1',
+    [args.runId],
+  );
+  try {
+    await writeHeartbeatExact(pool, {
+      ...args,
+      controllerGeneration: Number(run?.controller_generation),
+    });
+    return { rowCount: 1 };
+  } catch (error) {
+    if (error?.message === 'controller_lease_renewal_lost') return { rowCount: 0 };
+    throw error;
+  }
+}
+async function setAuthorityLease(runId, lease) {
+  const client = await testPool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE kernel_controller_sessions AS session
+          SET lease_expires_at=$2
+         FROM initiative_runs AS run
+        WHERE run.id=$1 AND session.id=run.controller_session_id
+          AND session.generation=run.controller_generation`,
+      [runId,lease],
+    );
+    await client.query(
+      'UPDATE initiative_runs SET controller_lease_expires_at=$2 WHERE id=$1',
+      [runId,lease],
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 async function expectTerminalTaskHeartbeatRejected(taskStatus) {
   const session = randomUUID();
   const { runId, taskId } = await seedOwnedRun({ controllerSessionId: session });
@@ -60,8 +100,8 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
     const session = randomUUID();
     const { runId } = await seedOwnedRun({ controllerSessionId: session });
     const before = await leaseOf(runId);
-    // 建 run 31 分钟后（已越过 30m/1800s 原始 lease）心跳一次
-    const now1 = new Date(Date.parse(before.controller_lease_expires_at) - LEASE * 1000 + 31 * MIN);
+    // 原租约到期前 1 分钟续租，新的租约跨过原 30m 边界。
+    const now1 = new Date(Date.parse(before.controller_lease_expires_at) - MIN);
     const res = await writeHeartbeat(testPool, {
       runId, host: 'kernel-v1', pid: 4242, now: now1, controllerSessionId: session,
     });
@@ -90,9 +130,10 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
     expect(Date.parse(after.controller_lease_expires_at)).toBe(Date.parse(before.controller_lease_expires_at));
   });
   it('AUDIT-1: 成功续租每个 hop 恰写一条幂等事件，错误 session/终态零假事件且 payload 不泄露 session', async () => {
-    const session = `controller-secret-${randomUUID()}`;
-    const { runId, taskId } = await seedOwnedRun({ controllerSessionId: session });
-    const heartbeatAt = new Date('2026-08-14T01:02:03.456Z');
+    const session = randomUUID();
+    const { runId, taskId, controllerGeneration } = await seedOwnedRun({ controllerSessionId: session });
+    const before = await leaseOf(runId);
+    const heartbeatAt = new Date(Date.parse(before.controller_lease_expires_at) - MIN);
     const first = await writeHeartbeat(testPool, {
       runId, host: 'kernel-audit', pid: 4242, now: heartbeatAt, controllerSessionId: session,
     });
@@ -130,11 +171,10 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
     expect(await auditEvents(terminal.runId)).toEqual([]);
   });
   it('AUDIT-2: ownerless recovery 仅在真实终态改变时写一条事件，重复巡检不重复且 payload 无 session', async () => {
-    const session = `controller-secret-${randomUUID()}`;
+    const session = randomUUID();
     const { runId, taskId } = await seedOwnedRun({ controllerSessionId: session });
-    const reconcileNow = new Date('2026-08-14T03:00:00.000Z');
-    await testPool.query(`UPDATE initiative_runs SET controller_lease_expires_at = $2 WHERE id = $1`,
-      [runId, new Date(reconcileNow.getTime() - MIN)]);
+    const reconcileNow = new Date();
+    await setAuthorityLease(runId,new Date(reconcileNow.getTime()-MIN));
     const first = await reconcileOwnerlessKernelRuns(testPool, { now: reconcileNow });
     const replay = await reconcileOwnerlessKernelRuns(testPool, { now: reconcileNow });
     expect(first.map((row) => row.runId)).toContain(runId);
@@ -151,7 +191,7 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
     const heartbeatSession = randomUUID();
     const heartbeatRun = await seedOwnedRun({ controllerSessionId: heartbeatSession });
     const heartbeatBefore = await leaseOf(heartbeatRun.runId);
-    const heartbeatAt = new Date('2026-08-14T04:00:00.000Z');
+    const heartbeatAt = new Date(Date.parse(heartbeatBefore.controller_lease_expires_at)-MIN);
     try {
       await installRejectingAuditTrigger('kernel_controller_lease_renewed');
       await expect(writeHeartbeat(testPool, {
@@ -166,9 +206,8 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
     expect(Date.parse(heartbeatAfter.controller_lease_expires_at)).toBe(Date.parse(heartbeatBefore.controller_lease_expires_at));
     const recoverySession = randomUUID();
     const recoveryRun = await seedOwnedRun({ controllerSessionId: recoverySession });
-    const reconcileNow = new Date('2026-08-14T05:00:00.000Z');
-    await testPool.query(`UPDATE initiative_runs SET controller_lease_expires_at = $2 WHERE id = $1`,
-      [recoveryRun.runId, new Date(reconcileNow.getTime() - MIN)]);
+    const reconcileNow = new Date();
+    await setAuthorityLease(recoveryRun.runId,new Date(reconcileNow.getTime()-MIN));
     try {
       await installRejectingAuditTrigger('kernel_ownerless_run_recovered');
       const recovered = await reconcileOwnerlessKernelRuns(testPool, { now: reconcileNow });
@@ -185,7 +224,7 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
     const session = randomUUID();
     const { runId } = await seedOwnedRun({ controllerSessionId: session });
     const before = await leaseOf(runId);
-    const now1 = new Date(Date.parse(before.controller_lease_expires_at) - LEASE * 1000 + 31 * MIN);
+    const now1 = new Date(Date.parse(before.controller_lease_expires_at) + MIN);
     const res = await writeHeartbeat(testPool, {
       runId, host: 'kernel-v1', pid: 4242, now: now1, controllerSessionId: 'forged-wrong-session',
     });
@@ -218,7 +257,7 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
     const session = randomUUID();
     const { runId } = await seedOwnedRun({ controllerSessionId: session });
     const before = await leaseOf(runId);
-    const now1 = new Date(Date.parse(before.controller_lease_expires_at) - LEASE * 1000 + 31 * MIN);
+    const now1 = new Date(Date.parse(before.controller_lease_expires_at) - MIN);
     const res = await writeHeartbeat(testPool, {
       runId, host: 'kernel-v1', pid: 4242, now: now1, controllerSessionId: session,
     });
@@ -268,8 +307,7 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
     const session = randomUUID();
     const { runId, taskId } = await seedOwnedRun({ controllerSessionId: session });
     const reconcileNow = new Date();
-    await testPool.query(`UPDATE initiative_runs SET controller_lease_expires_at = $2 WHERE id = $1`,
-      [runId, new Date(reconcileNow.getTime() - MIN)]);
+    await setAuthorityLease(runId,new Date(reconcileNow.getTime()-MIN));
     const blocker = await testPool.connect();
     let reconcilePromise;
     let heartbeatPromise;
@@ -307,8 +345,7 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
     const session = randomUUID();
     const { runId } = await seedOwnedRun({ controllerSessionId: session });
     const reconcileNow = new Date();
-    await testPool.query(`UPDATE initiative_runs SET controller_lease_expires_at = $2 WHERE id = $1`,
-      [runId, new Date(reconcileNow.getTime() - MIN)]);
+    await setAuthorityLease(runId,new Date(reconcileNow.getTime()-MIN));
     const recovered = await reconcileOwnerlessKernelRuns(testPool, { now: reconcileNow });
     expect(recovered.map((row) => row.runId)).toContain(runId);
     const heartbeat = await writeHeartbeat(testPool, {
@@ -322,7 +359,7 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
   });
   it('OWNERSHIP-B: 错误 session 在首次 collect/append/dispatch 前失败并零业务动作', async () => {
     const session = randomUUID();
-    const { runId, taskId } = await seedOwnedRun({ controllerSessionId: session });
+    const { runId, taskId, controllerGeneration } = await seedOwnedRun({ controllerSessionId: session });
     const collect = vi.fn(async () => ({
       run: { id: runId, phase: 'planning', cost_usd: 0 },
       task: { id: taskId, status: 'in_progress' },
@@ -340,10 +377,15 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
       pool: testPool, collectGroundTruth: collect, appendHop: append,
       nextHop: vi.fn(async () => ++hop), dispatch, sleep: vi.fn(async () => {}),
       now: () => new Date(), host: 'kernel-wrong-owner', pid: 4242, log: vi.fn(),
-    }, { taskId, runId, controllerSessionId: 'forged-wrong-session' });
+    }, {
+      taskId,
+      runId,
+      controllerSessionId: 'forged-wrong-session',
+      controllerGeneration,
+    });
     const { rows } = await testPool.query(
       `SELECT orchestrator_heartbeat_at, phase FROM initiative_runs WHERE id = $1`, [runId]);
-    expect(result).toEqual({ exitReason: 'controller_lease_lost', hops: 0 });
+    expect(result).toEqual({ exitReason: 'singleton_conflict', hops: 0 });
     expect(collect).not.toHaveBeenCalled();
     expect(append).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();

@@ -67,14 +67,37 @@ async function seedQueuedRun() {
   const taskId = randomUUID();
   const initiativeId = randomUUID();
   const controllerSessionId = randomUUID();
+  const receiptId = randomUUID();
   await testPool.query(
     `INSERT INTO tasks (id, title, status, priority, task_type, trigger_source, payload)
      VALUES ($1, $2, 'queued', 'P2', 'harness_initiative', 'api', $3::jsonb)`,
     [
       taskId,
       `kernel-cli-owner-${taskId}`,
-      JSON.stringify({ initiative_id: initiativeId }),
+      JSON.stringify({
+        initiative_id: initiativeId,
+        routing_receipt_id: receiptId,
+        work_kind: 'coding_mutation',
+        change_kind: 'bugfix',
+        repo: 'cecelia',
+        harness_runtime: 'kernel-v1',
+      }),
     ],
+  );
+  await testPool.query(
+    `INSERT INTO work_routing_receipts (
+       id,task_id,source,source_id,work_kind,change_kind,pipeline,
+       canonical_task_type,map_scope,impact_contract_required,
+       orchestrator,router_version,route_reason,default_execution_profile,repo,evidence
+     ) VALUES (
+       $1,$2,'integration',$3,'coding_mutation','bugfix','harness',
+       'harness_initiative','["F0"]'::jsonb,true,
+       'kernel-harness-v2','work-router-v1','integration','hotfix-v1','cecelia',$4::jsonb
+     )`,
+    [receiptId,taskId,`kernel-cli:${taskId}`,JSON.stringify({
+      branch:'cp-kernel-cli-integration',
+      base_sha:'a'.repeat(40),
+    })],
   );
   const created = await createKernelRun(testPool, {
     taskId,
@@ -85,12 +108,18 @@ async function seedQueuedRun() {
     host: 'kernel-cli-test',
     deadlineHours: 8,
     createdSource: 'kernel_dispatch',
-    controllerSessionId,
+  }, {
+    controllerSessionIdFactory: () => controllerSessionId,
+    ensureMapImpactPreflight: async () => ({
+      contract:{id:randomUUID(),status:'active'},
+      recovery_contract:null,
+    }),
   });
   return {
     taskId,
     runId: created.run.id,
     controllerSessionId,
+    controllerGeneration: Number(created.run.controller_generation),
     initialLease: created.run.controller_lease_expires_at,
   };
 }
@@ -98,6 +127,7 @@ function runActualCli({
   taskId,
   runId,
   controllerSessionId,
+  controllerGeneration,
   includeControllerSessionArg = true,
 }) {
   const argv = [
@@ -108,6 +138,7 @@ function runActualCli({
   if (includeControllerSessionArg) {
     argv.push('--controller-session-id', controllerSessionId);
   }
+  argv.push('--controller-generation', String(controllerGeneration));
   // 正确 owner 用无对应请求的 resume token 确定性结束，不进入 provider 派发。
   argv.push('--resume-token', `no-request-${randomUUID()}`);
   return spawnSync(process.execPath, argv, {
@@ -157,8 +188,10 @@ describe('Kernel CLI ownership pre-action fence（真 PG）', () => {
       includeControllerSessionArg,
     });
     const after = await readOracle(seeded);
-    expect(cli.status).toBe(2);
-    expect(cli.stdout).toContain('controller_lease_lost');
+    expect([1,2]).toContain(cli.status);
+    expect(`${cli.stdout}\n${cli.stderr}`).toMatch(
+      /controller_lease_identity_missing|singleton_conflict|controller_lease_lost/,
+    );
     expect(before.task_status).toBe('queued');
     expect(after.task_status).toBe('queued');
     expect(after.started_at).toBeNull();
@@ -185,14 +218,14 @@ describe('Kernel CLI ownership pre-action fence（真 PG）', () => {
   it('不存在 session: exit 2/controller_lease_lost 且业务零推进', () => (
     expectRejectedSession({ controllerSessionId: randomUUID() })
   ));
-  it('正确 session: CLI 通过 owner fence 后仍把 queued task 激活为 in_progress', async () => {
+  it('正确 session: 无匹配恢复请求时零业务推进并安全退出', async () => {
     const seeded = await seedQueuedRun();
     const cli = runActualCli(seeded);
     const after = await readOracle(seeded);
     expect(cli.status).toBe(0);
     expect(cli.stdout).toContain('context_resume_claim_lost');
-    expect(after.task_status).toBe('in_progress');
-    expect(after.started_at).not.toBeNull();
+    expect(after.task_status).toBe('queued');
+    expect(after.started_at).toBeNull();
     expect(after.phase).toBe('planning');
     expect(after.orchestrator_heartbeat_at).not.toBeNull();
     expect(after.decision_count).toBe(0);

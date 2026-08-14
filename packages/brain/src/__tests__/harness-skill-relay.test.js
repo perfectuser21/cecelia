@@ -40,7 +40,7 @@ function makeDeps(overrides = {}) {
     snapshotCodexHome: vi.fn().mockReturnValue('/tmp/fake-snapshot-dir'),
     createKernelRun: vi.fn().mockResolvedValue({
       created: true,
-      run: { id: KERNEL_RUN_ID },
+      run: { id: KERNEL_RUN_ID,controller_session_id:'11111111-1111-4111-8111-111111111111',controller_generation:1 },
     }),
     finalizeRun: vi.fn().mockResolvedValue({
       changed: true,
@@ -116,10 +116,9 @@ describe('spawnSkillRelaySession', () => {
       // TASK.payload 无 gear ⇒ 'default'（存量任务零影响，与旧行为等价）。
       gear: 'default',
     }));
-    // 启动链收敛（sprint 08131104）：Controller 先取 ownership —— createKernelRun 必带 controllerSessionId。
+    // Controller identity 不由 relay 注入；权威 ID 在 createKernelRun 事务内签发。
     const kernelRunInput = deps.createKernelRun.mock.calls[0][1];
-    expect(typeof kernelRunInput.controllerSessionId).toBe('string');
-    expect(kernelRunInput.controllerSessionId.length).toBeGreaterThan(0);
+    expect(kernelRunInput).not.toHaveProperty('controllerSessionId');
     expect(deps.launchKernel).toHaveBeenCalledWith(expect.objectContaining({
       taskId: TASK.id,
       runId: KERNEL_RUN_ID,
@@ -677,6 +676,115 @@ describe('headed claude relay — HARNESS_TASK_ID 注入（evaluator gate 守门
     // 清理 tui.log 真实写入目录
     const { rmSync } = await import('node:fs');
     try { rmSync(task.payload.sprint_dir, { recursive: true, force: true }); } catch { /* 忽略 */ }
+  });
+
+  it('routed headed coding 建 Kernel run/Attempt，并向 tmux 注入完整 canonical identity', async () => {
+    const execCalls = [];
+    const runId = '22222222-2222-4222-8222-222222222222';
+    const attemptId = '33333333-3333-4333-8333-333333333333';
+    const task = makeHeadedTask({
+      payload: {
+        orchestrator: 'skill-relay',
+        harness_runtime: 'kernel-v1',
+        mode: 'headed',
+        executor: 'claude',
+        routing_receipt_id: '44444444-4444-4444-8444-444444444444',
+        repo: 'cecelia',
+        branch: 'cp-headed-kernel',
+        base_sha: 'a'.repeat(40),
+        sprint_dir: 'sprints/test-headed-kernel',
+      },
+    });
+    const deps = {
+      pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+      execFn: vi.fn((command) => {
+        execCalls.push(String(command));
+        return String(command).includes('tmux has-session') ? 'TMUX_DEAD' : '';
+      }),
+      loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT'),
+      ensureWt: vi.fn().mockResolvedValue('/tmp/wt/cp-headed-kernel'),
+      createKernelRun: vi.fn().mockResolvedValue({ created: true, run: { id: runId,controller_session_id:'11111111-1111-4111-8111-111111111111',controller_generation:1 } }),
+      createHeadedAttempt: vi.fn().mockResolvedValue({ id: attemptId }),
+      launchKernel: vi.fn(),
+      now: () => new Date('2026-08-13T00:00:00Z'),
+      inDockerFn: () => false,
+      sshKeyFn: () => null,
+    };
+
+    const result = await spawnSkillRelaySession(task, deps);
+
+    expect(result).toMatchObject({ ok: true, mode: 'kernel-v1-headed', runId, attemptId });
+    expect(deps.createKernelRun).toHaveBeenCalledOnce();
+    expect(deps.createHeadedAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      runId,
+      task,
+      branch: 'cp-headed-kernel',
+      baseSha: 'a'.repeat(40),
+    }));
+    expect(deps.launchKernel).not.toHaveBeenCalled();
+    const tmux = execCalls.find((command) => command.includes('tmux new-session'));
+    for (const value of [
+      `CECELIA_TASK_ID=${task.id}`,
+      'CECELIA_ROUTING_RECEIPT_ID=44444444-4444-4444-8444-444444444444',
+      `CECELIA_RUN_ID=${runId}`,
+      'CECELIA_REPO=cecelia',
+      'CECELIA_BRANCH=cp-headed-kernel',
+      `CECELIA_BASE_SHA=${'a'.repeat(40)}`,
+    ]) expect(tmux).toContain(value);
+  });
+
+  it('routed headed tmux 启动失败时原子终止 Kernel Run/Attempt，不把任务放回旧队列', async () => {
+    const runId = '55555555-5555-4555-8555-555555555555';
+    const attemptId = '66666666-6666-4666-8666-666666666666';
+    const task = makeHeadedTask({
+      payload: {
+        orchestrator: 'skill-relay',
+        harness_runtime: 'kernel-v1',
+        mode: 'headed',
+        executor: 'claude',
+        routing_receipt_id: '77777777-7777-4777-8777-777777777777',
+        repo: 'cecelia',
+        branch: 'cp-headed-kernel-failure',
+        base_sha: 'b'.repeat(40),
+        sprint_dir: 'sprints/test-headed-kernel-failure',
+      },
+    });
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    const deps = {
+      pool,
+      execFn: vi.fn((command) => {
+        if (String(command).includes('tmux has-session')) return 'TMUX_DEAD';
+        if (String(command).includes('tmux new-session')) throw new Error('tmux refused');
+        return '';
+      }),
+      loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT'),
+      ensureWt: vi.fn().mockResolvedValue('/tmp/wt/cp-headed-kernel-failure'),
+      createKernelRun: vi.fn().mockResolvedValue({ created: true, run: { id: runId,controller_session_id:'11111111-1111-4111-8111-111111111111',controller_generation:1 } }),
+      createHeadedAttempt: vi.fn().mockResolvedValue({ id: attemptId }),
+      finalizeRun: vi.fn().mockResolvedValue({ changed: true, attemptsTerminalized: 1 }),
+      now: () => new Date('2026-08-13T00:00:00Z'),
+      inDockerFn: () => false,
+      sshKeyFn: () => null,
+    };
+
+    const result = await spawnSkillRelaySession(task, deps);
+
+    expect(result).toMatchObject({
+      ok: false,
+      mode: 'kernel-v1-headed',
+      runId,
+      terminalized: true,
+    });
+    expect(deps.finalizeRun).toHaveBeenCalledWith(pool, {
+      runId,
+      expectedTaskId: task.id,
+      outcome: 'failed',
+      reason: 'headed_kernel_launch_failed:ssh spawn failed: tmux refused',
+    });
+    expect(pool.query).not.toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE tasks SET status='queued'"),
+      expect.anything(),
+    );
   });
 });
 

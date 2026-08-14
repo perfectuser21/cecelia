@@ -8,84 +8,40 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { signMachineAttestation } from '../machine-attestation.js';
-import * as runEntry from '../run.js';
-
-const { buildRealDeps, parseArgs, runKernelMain } = runEntry;
+import { buildRealDeps, parseArgs, runKernelMain } from '../run.js';
 
 describe('parseArgs', () => {
   it('--task-id 必填，缺失即抛用法错误', () => {
     expect(() => parseArgs([])).toThrow(/--task-id/);
   });
 
-  it('解析 --task-id / --run-id / --controller-session-id / --resume-token / --dry-run', () => {
+  it('解析 --task-id / --run-id / --dry-run', () => {
     const a = parseArgs([
       '--task-id', 'T1',
       '--run-id', 'R1',
-      '--controller-session-id', 'sess-1',
       '--resume-token', 'resume-token-1',
       '--dry-run',
     ]);
     expect(a).toEqual({
       taskId: 'T1',
       runId: 'R1',
+      controllerSessionId: null,
+      controllerGeneration: null,
       resumeToken: 'resume-token-1',
-      controllerSessionId: 'sess-1',
       dryRun: true,
     });
   });
 
-  it('默认 dryRun=false、runId=null、resumeToken=null、controllerSessionId=null', () => {
-    const a = parseArgs(['--task-id', 'T1']);
-    expect(a).toEqual({
-      taskId: 'T1',
-      runId: null,
-      resumeToken: null,
-      controllerSessionId: null,
-      dryRun: false,
-    });
-  });
-});
-
-describe('CLI exit semantics', () => {
-  it('controller_lease_lost 设置非零进程退出码', async () => {
-    expect(typeof runEntry.main).toBe('function');
-    const setExitCode = vi.fn();
-    const result = await runEntry.main([
-      '--task-id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      '--run-id', '11111111-1111-4111-8111-111111111111',
-      '--controller-session-id', 'forged-wrong-session',
-    ], {
-      runKernelMainFn: vi.fn(async () => ({
-        exitReason: 'controller_lease_lost',
-        hops: 0,
-      })),
-      log: vi.fn(),
-      setExitCode,
-    });
-
-    expect(result.exitReason).toBe('controller_lease_lost');
-    expect(setExitCode).toHaveBeenCalledWith(2);
-
-    const runModuleUrl = new URL('../run.js', import.meta.url).href;
-    let childError;
-    try {
-      execFileSync(process.execPath, [
-        '--input-type=module',
-        '--eval',
-        `import { main } from ${JSON.stringify(runModuleUrl)};
-         await main([
-           '--task-id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-           '--run-id', '11111111-1111-4111-8111-111111111111',
-           '--controller-session-id', 'forged-wrong-session',
-         ], {
-           runKernelMainFn: async () => ({ exitReason: 'controller_lease_lost', hops: 0 }),
-           log: () => {},
-         });`,
-      ], { stdio: 'pipe' });
-    } catch (error) {
-      childError = error;
-    }
-    expect(childError?.status).toBe(2);
+  it('非 dry-run 必须携带完整 run 与 Controller identity', () => {
+    expect(() => parseArgs(['--task-id', 'T1']))
+      .toThrow('controller_lease_identity_missing');
+    const a = parseArgs([
+      '--task-id', 'T1',
+      '--run-id', 'R1',
+      '--controller-session-id', 'S1',
+      '--controller-generation', '2',
+    ]);
+    expect(a).toMatchObject({ runId: 'R1', controllerSessionId: 'S1', controllerGeneration: 2 });
   });
 });
 
@@ -101,6 +57,8 @@ describe('runKernelMain fatal convergence', () => {
     await expect(runKernelMain({
       taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       runId: '11111111-1111-4111-8111-111111111111',
+      controllerSessionId: '22222222-2222-4222-8222-222222222222',
+      controllerGeneration: 3,
       resumeToken: null,
       dryRun: false,
     }, {
@@ -112,8 +70,12 @@ describe('runKernelMain fatal convergence', () => {
     expect(finalizeRun).toHaveBeenCalledWith(pool, {
       runId: '11111111-1111-4111-8111-111111111111',
       expectedTaskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      expectedControllerSessionId: '22222222-2222-4222-8222-222222222222',
+      expectedControllerGeneration: 3,
+      requireActiveControllerAuthority: true,
       outcome: 'failed',
       reason: 'kernel_process_fatal:dependency_assembly_failed',
+      closeControllerSession:false,
     });
     expect(pool.end).toHaveBeenCalledOnce();
   });
@@ -126,6 +88,8 @@ describe('runKernelMain fatal convergence', () => {
     await expect(runKernelMain({
       taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       runId: '11111111-1111-4111-8111-111111111111',
+      controllerSessionId: '22222222-2222-4222-8222-222222222222',
+      controllerGeneration: 7,
       resumeToken: null,
       dryRun: false,
     }, {
@@ -137,8 +101,12 @@ describe('runKernelMain fatal convergence', () => {
     expect(finalizeRun).toHaveBeenCalledWith(pool, {
       runId: '11111111-1111-4111-8111-111111111111',
       expectedTaskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      expectedControllerSessionId: '22222222-2222-4222-8222-222222222222',
+      expectedControllerGeneration: 7,
+      requireActiveControllerAuthority: true,
       outcome: 'failed',
       reason: 'kernel_process_fatal:workspace_repo_not_supported',
+      closeControllerSession:false,
     });
     expect(pool.end).toHaveBeenCalledOnce();
   });
@@ -150,6 +118,8 @@ describe('runKernelMain fatal convergence', () => {
     await expect(runKernelMain({
       taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       runId: '11111111-1111-4111-8111-111111111111',
+      controllerSessionId: '22222222-2222-4222-8222-222222222222',
+      controllerGeneration: 5,
       resumeToken: null,
       dryRun: false,
     }, {
@@ -164,19 +134,47 @@ describe('runKernelMain fatal convergence', () => {
     expect(persisted).toContain('[REDACTED]');
     expect(persisted).not.toContain('raw-bridge-secret');
   });
+
+  it('非 dry-run 缺 Controller identity 时不组装依赖也不终结 run', async () => {
+    const buildDeps = vi.fn();
+    const finalizeRun = vi.fn();
+
+    await expect(runKernelMain({
+      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      runId: '11111111-1111-4111-8111-111111111111',
+      controllerSessionId: null,
+      controllerGeneration: null,
+      resumeToken: null,
+      dryRun: false,
+    }, { buildDeps, finalizeRun })).rejects.toThrow('controller_lease_identity_missing');
+
+    expect(buildDeps).not.toHaveBeenCalled();
+    expect(finalizeRun).not.toHaveBeenCalled();
+  });
+
+  it('非 dry-run 缺 runId 同样不组装依赖', async () => {
+    const buildDeps = vi.fn();
+    await expect(runKernelMain({
+      taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      runId: null,
+      controllerSessionId: null,
+      controllerGeneration: null,
+      resumeToken: null,
+      dryRun: false,
+    }, { buildDeps })).rejects.toThrow('controller_lease_identity_missing');
+    expect(buildDeps).not.toHaveBeenCalled();
+  });
 });
 
 // r17 实证：task.status 运行中恒 'queued'（派发时也不置 in_progress）。以下锁死
-// runKernelMain 必须把 activateQueuedTask（默认实现
-// kernel-run-store.activateQueuedKernelTask）交给 runLoop，在首次 owner CAS 成功后
-// 才执行单条 UPDATE；失败只告警不中断 loop
+// runKernelMain 启动流程装载 task 后必须调用 activateQueuedTask（默认实现
+// kernel-run-store.activateQueuedKernelTask）单条 UPDATE，失败只告警不中断 loop
 // （PrepPRD: docs/prd/2026-08-04-kernel-phase-persist-prep-prd.md）。
-describe('runKernelMain：ownership fence 后 task 启动置位', () => {
-  it('非 dry-run：进入 loop 前不激活，owner 验证回调才激活 task', async () => {
+describe('runKernelMain：task 启动置位', () => {
+  it('非 dry-run：启动时调用 activateQueuedTask(pool, taskId)，随后照常跑 loop', async () => {
     const pool = { end: vi.fn() };
     const activateQueuedTask = vi.fn(async () => ({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }));
     const runLoopFn = vi.fn(async (_deps, options) => {
-      expect(activateQueuedTask).not.toHaveBeenCalled();
       await options.onOwnershipVerified();
       return { exitReason: 'run_done', hops: 1 };
     });
@@ -184,6 +182,8 @@ describe('runKernelMain：ownership fence 后 task 启动置位', () => {
     const result = await runKernelMain({
       taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       runId: '11111111-1111-4111-8111-111111111111',
+      controllerSessionId: '22222222-2222-4222-8222-222222222222',
+      controllerGeneration: 1,
       resumeToken: null,
       dryRun: false,
     }, {
@@ -231,6 +231,8 @@ describe('runKernelMain：ownership fence 后 task 启动置位', () => {
     const result = await runKernelMain({
       taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       runId: '11111111-1111-4111-8111-111111111111',
+      controllerSessionId: '22222222-2222-4222-8222-222222222222',
+      controllerGeneration: 1,
       resumeToken: null,
       dryRun: false,
     }, {
@@ -350,7 +352,7 @@ describe('buildRealDeps', () => {
     expect(result).toMatchObject({ status: 'missing_terminalized', hop: 50 });
   });
 
-  it('wires the central Credential Broker into the real Fleet Worker launcher', async () => {
+  it('wires provider credentials but withholds GitHub credentials from Generator', async () => {
     const attemptId = '33333333-3333-4333-8333-333333333333';
     const sharedSecret = 'run-test-fleet-secret-that-is-long-enough';
     const credentialBroker = {
@@ -494,10 +496,7 @@ describe('buildRealDeps', () => {
       accountId: 'team4',
       machineId: 'us-mac-m4',
     }));
-    expect(githubCredentialBroker.issue).toHaveBeenCalledWith(expect.objectContaining({
-      attemptId,
-      machineId: 'us-mac-m4',
-    }));
+    expect(githubCredentialBroker.issue).not.toHaveBeenCalled();
     expect(fetchFn).toHaveBeenCalledTimes(2);
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
       'http://worker.internal:3458/harness/attempts/prepare',
@@ -505,8 +504,8 @@ describe('buildRealDeps', () => {
     ]);
     expect(JSON.parse(fetchFn.mock.calls[0][1].body).credential_envelope)
       .toMatchObject({ credential_ref: '44444444-4444-4444-8444-444444444444' });
-    expect(JSON.parse(fetchFn.mock.calls[0][1].body).github_credential_envelope)
-      .toMatchObject({ credential_ref: '55555555-5555-4555-8555-555555555555' });
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body))
+      .not.toHaveProperty('github_credential_envelope');
   });
 
   it('默认 registry 注册 Grok，可把 evaluator 派给不同厂商', async () => {

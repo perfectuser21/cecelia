@@ -92,21 +92,27 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
   const initiativeId = randomUUID();
   const contractId = randomUUID();
   const taskId = randomUUID();
+  const receiptId = randomUUID();
   const runId = randomUUID();
+  const controllerSessionId=randomUUID();
   const payload = {
     harness_runtime: 'kernel-v1',
+    orchestrator: 'skill-relay',
     sprint_dir: 'sprints/07231527-relay-50170af2',
     worktree_path: '/workspace',
     base_repo: 'perfectuser21/cecelia',
     review_required: reviewRequired,
     executor: 'codex',
     test_ci: ci,
+    routing_receipt_id: receiptId,
+    repo: 'cecelia',
+    change_kind: 'bugfix',
   };
   await testPool.query(
     `INSERT INTO initiative_contracts
-       (id, initiative_id, version, status, prd_content, contract_content, approved_at)
-     VALUES ($1, $2, 1, 'approved', 'prd', 'contract', NOW())`,
-    [contractId, initiativeId],
+       (id, initiative_id, version, status, prd_content, contract_content, approved_sha, approved_at)
+     VALUES ($1, $2, 1, 'approved', 'prd', 'contract', $3, NOW())`,
+    [contractId, initiativeId, HEAD_SHA],
   );
   await testPool.query(
     `INSERT INTO tasks
@@ -115,16 +121,41 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
     [taskId, `kernel-pg-${taskId}`, JSON.stringify(payload)],
   );
   await testPool.query(
+    `INSERT INTO work_routing_receipts
+       (id, task_id, source, source_id, work_kind, change_kind, pipeline,
+        canonical_task_type, default_execution_profile, repo, map_scope,
+        impact_contract_required, orchestrator, router_version, route_reason, evidence)
+     VALUES ($1, $2, 'api', $3, 'coding_mutation', 'bugfix', 'harness',
+             'harness_initiative', 'hotfix-v1', 'cecelia', '["cecelia"]'::jsonb,
+             true, 'kernel-harness-v2', 'work-router-v1', 'kernel-pg-fixture', $4::jsonb)`,
+    [receiptId, taskId, `kernel-pg:${taskId}`, JSON.stringify({
+      branch: `cp-kernel-pg-${taskId}`,
+      base_sha: HEAD_SHA,
+    })],
+  );
+  await testPool.query(
+    `INSERT INTO kernel_controller_sessions
+       (id,task_id,generation,source,status,last_heartbeat_at,lease_expires_at)
+     VALUES($1,$2,1,'kernel-wiring-fixture','active',NOW(),NOW()+INTERVAL '2 hours')`,
+    [controllerSessionId,taskId],
+  );
+  await testPool.query(
     `INSERT INTO initiative_runs
        (id, initiative_id, contract_id, phase, current_task_id, pr_url,
-        orchestrator_version, created_source, deadline_at)
+        orchestrator_version, created_source, deadline_at,controller_session_id,
+        controller_generation,controller_lease_expires_at)
      VALUES (
        $1, $2, $3, 'evaluate', $4, $5, 'v2', 'kernel_dispatch',
-       NOW() + INTERVAL '120 minutes'
+       NOW() + INTERVAL '120 minutes',$6,1,
+       (SELECT lease_expires_at FROM kernel_controller_sessions WHERE id=$6)
      )`,
-    [runId, initiativeId, contractId, taskId, PR_URL],
+    [runId, initiativeId, contractId, taskId, PR_URL,controllerSessionId],
   );
-  return { initiativeId, contractId, taskId, runId, payload };
+  await testPool.query(
+    'UPDATE kernel_controller_sessions SET run_id=$2 WHERE id=$1',
+    [controllerSessionId,runId],
+  );
+  return { initiativeId, contractId, taskId, receiptId, runId, payload };
 }
 
 async function seedCallbackAttempt(runId, {
@@ -261,22 +292,17 @@ afterAll(dropIsolatedDatabase, 30_000);
 
 describe('Kernel restart recovery on real PostgreSQL decision log', () => {
   async function seedExpiredKernelAttempt(run, hop = 1) {
-    await testPool.query(
-      `UPDATE tasks
-          SET payload = payload || '{"orchestrator":"skill-relay"}'::jsonb
-        WHERE id=$1`,
-      [run.taskId],
-    );
     const attemptId = randomUUID();
     await testPool.query(
       `INSERT INTO harness_attempts (
          id, run_id, hop, phase, role, provider, task_bundle,
-         callback_secret_hash, status, lease_owner, lease_expires_at,
-         provider_session_id, logical_cycle_id, attempt_kind, workstream_key
+       callback_secret_hash, status, lease_owner, lease_expires_at,
+         provider_session_id, logical_cycle_id, attempt_kind, workstream_key,
+         execution_transport
        ) VALUES (
          $1,$2,$3,'generate','generator','codex','{}'::jsonb,
          'old-hash','running','old-owner',NOW()-INTERVAL '1 minute',
-         'provider-thread','task-cycle','initial','ws1'
+         'provider-thread','task-cycle','initial','ws1','local-docker'
        )`,
       [attemptId, run.runId, hop],
     );
@@ -286,6 +312,27 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
   it('public watchdog success resumes a new lineage child, never the expired parent', async () => {
     const run = await seedRun();
     const parentId = await seedExpiredKernelAttempt(run);
+    const recoveryFixture = await testPool.query(
+      `SELECT task.status, task.payload, attempt.status AS attempt_status,
+              attempt.lease_expires_at, attempt.execution_transport,
+              kernel.orchestrator_heartbeat_at, kernel.orchestrator_host
+         FROM tasks task
+         JOIN initiative_runs kernel ON kernel.current_task_id=task.id
+         JOIN harness_attempts attempt ON attempt.run_id=kernel.id
+        WHERE task.id=$1`,
+      [run.taskId],
+    );
+    expect(recoveryFixture.rows[0]).toMatchObject({
+      status: 'in_progress',
+      payload: expect.objectContaining({
+        orchestrator: 'skill-relay',
+        harness_runtime: 'kernel-v1',
+      }),
+      attempt_status: 'running',
+      execution_transport: 'local-docker',
+      orchestrator_heartbeat_at: null,
+      orchestrator_host: null,
+    });
     const resumeAttempt = vi.fn(async (child, context) => {
       expect(child.id).not.toBe(parentId);
       expect(context.originalParentAttempt.id).toBe(parentId);
@@ -305,7 +352,7 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
       launchKernel: vi.fn(),
     });
 
-    expect(result.resumed).toBe(1);
+    expect(result).toMatchObject({ scanned: 1, resumed: 1 });
     expect(resumeAttempt).toHaveBeenCalledOnce();
     const lineage = await testPool.query(
       `SELECT parent.status AS parent_status,
@@ -336,12 +383,6 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
     for (let index = 0; index < 21; index += 1) {
       const run = await seedRun();
       runs.push(run);
-      await testPool.query(
-        `UPDATE tasks
-            SET payload=payload || '{"orchestrator":"skill-relay"}'::jsonb
-          WHERE id=$1`,
-        [run.taskId],
-      );
       await testPool.query(
         `UPDATE initiative_runs
             SET phase='paused',
@@ -397,12 +438,6 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
     for (let index = 0; index < 21; index += 1) {
       const run = await seedRun();
       runs.push(run);
-      await testPool.query(
-        `UPDATE tasks
-            SET payload=payload || '{"orchestrator":"skill-relay"}'::jsonb
-          WHERE id=$1`,
-        [run.taskId],
-      );
       await testPool.query(
         `UPDATE initiative_runs
             SET phase='paused',
@@ -826,6 +861,7 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
       dispatch: async (_action, ctx) => {
         dispatchCount += 1;
         const attemptId = randomUUID();
+        const candidateBranch = `cp-kernel-pg-${run.taskId}`;
         await attemptStore.createAttempt({
           id: attemptId,
           runId: run.runId,
@@ -839,6 +875,11 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
               task_id: run.taskId,
               sprint_dir: run.payload.sprint_dir,
               worktree_path: '/workspace',
+              workspace_spec: {
+                repo: 'perfectuser21/cecelia',
+                branch: candidateBranch,
+                base_sha: SECOND_SHA,
+              },
             },
           },
           callbackSecretHash: createHash('sha256').update(CALLBACK_TOKEN).digest('hex'),
@@ -871,8 +912,17 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
             contract_version: '1.0',
             attempt_id: attemptId,
             status: 'completed',
-            summary: 'provider changed but PR SHA did not advance',
-            artifacts: [{ type: 'pull_request', url: PR_URL, head_sha: HEAD_SHA }],
+            summary: 'provider changed but candidate SHA did not advance',
+            artifacts: [{
+              type: 'git_candidate',
+              verification_status: 'verified',
+              source_attempt_id: attemptId,
+              repo: 'perfectuser21/cecelia',
+              branch: candidateBranch,
+              base_sha: SECOND_SHA,
+              head_sha: HEAD_SHA,
+              machine_id: 'us-mac-m4',
+            }],
             checks: [],
             decision: null,
             error: null,

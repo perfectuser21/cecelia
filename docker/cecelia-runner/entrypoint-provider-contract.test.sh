@@ -275,6 +275,14 @@ type validate_codex_terminal_receipt >/dev/null 2>&1 || {
   echo 'missing strict Codex terminal receipt validator' >&2
   exit 1
 }
+type validate_claude_terminal_receipt >/dev/null 2>&1 || {
+  echo 'missing strict Claude terminal receipt validator' >&2
+  exit 1
+}
+type resolve_claude_session_binding >/dev/null 2>&1 || {
+  echo 'missing Claude session binding resolver' >&2
+  exit 1
+}
 type publish_provider_result_schema >/dev/null 2>&1 || {
   echo 'missing Provider-readable result schema publisher' >&2
   exit 1
@@ -377,6 +385,107 @@ if validate_codex_terminal_receipt \
   exit 1
 fi
 rm -rf "$CODEX_RECEIPT_TMP"
+
+# Claude CLI can likewise retain exit 1 after emitting a successful terminal
+# envelope. Recovery is legal only when the single outer result is explicitly
+# successful and its independently extracted structured_output matches the
+# result file byte-for-byte as JSON.
+CLAUDE_RECEIPT_TMP="$(mktemp -d)"
+cat > "$CLAUDE_RECEIPT_TMP/result.json" <<'JSON'
+{"status":"completed","summary":"generator completed","artifacts":[],"checks":[],"decision":null,"error":null}
+JSON
+jq -nc \
+  --slurpfile result "$CLAUDE_RECEIPT_TMP/result.json" \
+  '{type:"result",subtype:"success",is_error:false,session_id:"claude-receipt",terminal_reason:"completed",structured_output:$result[0]}' \
+  > "$CLAUDE_RECEIPT_TMP/completed.json"
+validate_claude_terminal_receipt \
+  "$CLAUDE_RECEIPT_TMP/completed.json" \
+  "$CLAUDE_RECEIPT_TMP/result.json" \
+  "claude-receipt" || {
+  echo 'strict receipt rejected a completed Claude turn with matching result' >&2
+  exit 1
+}
+
+# Current Claude CLI result envelopes bind the preallocated --session-id inside
+# the process but omit session_id from JSON; uuid is a message/envelope id, not
+# the resumable session id. The Runner-owned invocation remains authoritative.
+jq 'del(.session_id) | .uuid = "ba364d84-384b-4f4e-abc4-22793ce3ce0e"' \
+  "$CLAUDE_RECEIPT_TMP/completed.json" > "$CLAUDE_RECEIPT_TMP/current-cli.json"
+validate_claude_terminal_receipt \
+  "$CLAUDE_RECEIPT_TMP/current-cli.json" \
+  "$CLAUDE_RECEIPT_TMP/result.json" \
+  "claude-receipt" || {
+  echo 'strict receipt rejected the current Claude CLI envelope shape' >&2
+  exit 1
+}
+
+[[ "$(resolve_claude_session_binding \
+  "claude-receipt" "$CLAUDE_RECEIPT_TMP/current-cli.json")" == "claude-receipt" ]] || {
+  echo 'current Claude CLI envelope erased the Runner-owned session binding' >&2
+  exit 1
+}
+
+jq '.session_id = "different-session"' \
+  "$CLAUDE_RECEIPT_TMP/completed.json" > "$CLAUDE_RECEIPT_TMP/session-mismatch.json"
+if validate_claude_terminal_receipt \
+  "$CLAUDE_RECEIPT_TMP/session-mismatch.json" \
+  "$CLAUDE_RECEIPT_TMP/result.json" \
+  "claude-receipt"; then
+  echo 'strict Claude receipt accepted an explicit session mismatch' >&2
+  exit 1
+fi
+if resolve_claude_session_binding \
+  "claude-receipt" "$CLAUDE_RECEIPT_TMP/session-mismatch.json" >/dev/null; then
+  echo 'Claude session resolver accepted an explicit session mismatch' >&2
+  exit 1
+fi
+
+jq 'del(.session_id, .uuid)' \
+  "$CLAUDE_RECEIPT_TMP/completed.json" > "$CLAUDE_RECEIPT_TMP/identity-missing.json"
+if validate_claude_terminal_receipt \
+  "$CLAUDE_RECEIPT_TMP/identity-missing.json" \
+  "$CLAUDE_RECEIPT_TMP/result.json" \
+  "claude-receipt"; then
+  echo 'strict Claude receipt accepted a missing envelope identity' >&2
+  exit 1
+fi
+
+jq '.structured_output.summary = "different result"' \
+  "$CLAUDE_RECEIPT_TMP/completed.json" > "$CLAUDE_RECEIPT_TMP/mismatch.json"
+if validate_claude_terminal_receipt \
+  "$CLAUDE_RECEIPT_TMP/mismatch.json" \
+  "$CLAUDE_RECEIPT_TMP/result.json" \
+  "claude-receipt"; then
+  echo 'strict Claude receipt accepted a structured-output mismatch' >&2
+  exit 1
+fi
+
+for mutation in \
+  '.terminal_reason = "failed"' \
+  '.is_error = true' \
+  '.subtype = "error"'; do
+  jq "$mutation" "$CLAUDE_RECEIPT_TMP/completed.json" \
+    > "$CLAUDE_RECEIPT_TMP/rejected.json"
+  if validate_claude_terminal_receipt \
+    "$CLAUDE_RECEIPT_TMP/rejected.json" \
+    "$CLAUDE_RECEIPT_TMP/result.json" \
+    "claude-receipt"; then
+    echo "strict Claude receipt accepted invalid envelope: $mutation" >&2
+    exit 1
+  fi
+done
+
+cp "$CLAUDE_RECEIPT_TMP/completed.json" "$CLAUDE_RECEIPT_TMP/trailing.json"
+printf '%s\n' '{"type":"unexpected-second-result"}' \
+  >> "$CLAUDE_RECEIPT_TMP/trailing.json"
+if validate_claude_terminal_receipt \
+  "$CLAUDE_RECEIPT_TMP/trailing.json" \
+  "$CLAUDE_RECEIPT_TMP/result.json" \
+  "claude-receipt"; then
+  echo 'strict Claude receipt accepted multiple outer results' >&2
+  exit 1
+fi
+rm -rf "$CLAUDE_RECEIPT_TMP"
 
 PROVIDER_SCHEMA_PERMISSION_TMP="$(mktemp -d)"
 publish_provider_result_schema \
@@ -688,7 +797,7 @@ git -C "$EVIDENCE_TMP" config user.email runner-test@cecelia.local
 git -C "$EVIDENCE_TMP" config user.name cecelia-runner-test
 printf 'baseline\n' > "$EVIDENCE_TMP/tracked.txt"
 mkdir -p "$EVIDENCE_TMP/scripts/smoke"
-printf '#!/usr/bin/env bash\nprintf "runner-proof\\n"\n' \
+printf '#!/usr/bin/env bash\nset -euo pipefail\ntest "$DB_URL" = "postgresql://runner/assertion_scratch"\ntest "$BASELINE_SHA" = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"\ntest "$CECELIA_TRUSTED_ASSERTION" = "1"\ngit rev-parse HEAD >/dev/null\nprintf "runner-proof\\n"\n' \
   > "$EVIDENCE_TMP/scripts/smoke/runner-proof.sh"
 printf '#!/usr/bin/env bash\nexit 9\n' > "$EVIDENCE_TMP/scripts/smoke/assertion.sh"
 printf '#!/usr/bin/env bash\nprintf "failure\\n" >&2\nexit 7\n' \
@@ -707,11 +816,19 @@ RUNNER_ASSERTIONS_JSON="$(jq -cn '[{
 cat > "$EVIDENCE_TMP/result.json" <<'JSON'
 {"status":"completed","checks":[],"decision":{"outcome":"PASS","reason":"provider verified"}}
 JSON
+cat > "$EVIDENCE_TMP/assertion-task-bundle.json" <<'JSON'
+{"task_bundle":{"inputs":{"implementation_baseline":{"base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}}
+JSON
+ASSERTION_PRIOR_UMASK="$(umask)"
+umask 077
 HARNESS_NODE=evaluator EVALUATOR_EVIDENCE_PREPARED=1 \
   WORKTREE_PATH="$EVIDENCE_TMP" PR_HEAD_SHA="$RUNNER_ASSERTION_SHA" \
   CECELIA_MACHINE_ID=runner-machine HARNESS_CALLBACK_TOKEN=runner-secret \
+  HARNESS_TASK_BUNDLE_FILE="$EVIDENCE_TMP/assertion-task-bundle.json" \
+  DB_URL=postgresql://runner/assertion_scratch \
   HARNESS_REQUIRED_ASSERTIONS_JSON="$RUNNER_ASSERTIONS_JSON" \
   merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
+umask "$ASSERTION_PRIOR_UMASK"
 EXPECTED_RUNNER_DIGEST="$(printf 'runner-proof\n' | shasum -a 256 | awk '{print $1}')"
 jq -e --arg sha "$RUNNER_ASSERTION_SHA" --arg digest "$EXPECTED_RUNNER_DIGEST" '
   .decision.outcome == "PASS"

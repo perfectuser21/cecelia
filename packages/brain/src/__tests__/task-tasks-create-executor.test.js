@@ -36,12 +36,26 @@ function makeApp() {
   return app;
 }
 
+const routeFields = {
+  task_type: 'dev',
+  change_kind: 'bugfix',
+  mutation_intent: 'write',
+  repo_hint: 'perfectuser21/cecelia',
+  map_scope_hint: ['cecelia'],
+  branch: 'cp-executor-contract',
+  base_sha: 'a'.repeat(40),
+};
+
 beforeEach(() => {
   queryMock.mockReset();
   // 创建链路默认 mock：dedup SELECT 返回空（无重复），INSERT 返回新任务行
   queryMock.mockImplementation(async (sql) => {
     if (/INSERT INTO tasks/.test(sql)) {
-      return { rows: [{ id: 'task-new', title: 't', status: 'queued', task_type: 'dev', priority: 'P2', payload: {}, created_at: '2026-07-10T00:00:00Z' }] };
+      return { rows: [{ id: 'task-new', title: 't', status: 'queued', task_type: 'harness_initiative', priority: 'P2', payload: {}, created_at: '2026-07-10T00:00:00Z' }] };
+    }
+    if (/INSERT INTO work_routing_receipts/.test(sql)) return { rows: [{ id: 'receipt-new' }] };
+    if (/FROM map_scope_repositories/.test(sql)) {
+      return { rows: [{ scope_key: 'cecelia', repo: 'cecelia', adapter_config: { aliases: ['perfectuser21/cecelia'] } }] };
     }
     return { rows: [] };
   });
@@ -51,29 +65,30 @@ describe('POST /api/brain/tasks — B1 executor/mode 白名单', () => {
   it('executor=claude + mode=headed → 不再 400（有头 claude 已解锁）', async () => {
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: '有头dev任务', payload: { executor: 'claude', mode: 'headed' } });
+      .send({ title: '有头dev任务', ...routeFields, payload: { executor: 'claude', mode: 'headed' } });
     expect(res.status).toBe(201);
     expect(res.body.error).toBeUndefined();
   });
 
-  it('executor=codex + mode=headed + orchestrator=skill-relay → 合法', async () => {
+  it('executor=codex + mode=headed → 由 Router 统一进入 Kernel Harness', async () => {
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: 'codex任务', payload: { executor: 'codex', mode: 'headed', orchestrator: 'skill-relay' } });
+      .send({ title: 'codex任务', ...routeFields, payload: { executor: 'codex', mode: 'headed' } });
     expect(res.status).toBe(201);
+    expect(res.body.task_type).toBe('harness_initiative');
   });
 
   it('executor=claude + mode=headless → 合法', async () => {
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: '无头claude任务', payload: { executor: 'claude', mode: 'headless' } });
+      .send({ title: '无头claude任务', ...routeFields, payload: { executor: 'claude', mode: 'headless' } });
     expect(res.status).toBe(201);
   });
 
   it('mode=xxx 非白名单值 → 仍 400', async () => {
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: '非法mode任务', payload: { executor: 'claude', mode: 'xxx' } });
+      .send({ title: '非法mode任务', ...routeFields, payload: { executor: 'claude', mode: 'xxx' } });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/mode must be headless or headed/);
   });
@@ -81,7 +96,7 @@ describe('POST /api/brain/tasks — B1 executor/mode 白名单', () => {
   it('executor 非 claude/codex → 仍 400（白名单不回归）', async () => {
     const res = await request(makeApp())
       .post('/api/brain/tasks')
-      .send({ title: '非法executor任务', payload: { executor: 'gpt' } });
+      .send({ title: '非法executor任务', ...routeFields, payload: { executor: 'gpt' } });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/executor must be claude or codex/);
   });

@@ -11,11 +11,11 @@
 
 import crypto from 'crypto';
 import pool from './db.js';
+import { createTask } from './actions.js';
 import { generateEmbedding } from './openai-client.js';
 import { generateLearningEmbeddingAsync } from './embedding-service.js';
 import { generateL0Summary } from './memory-utils.js';
 import { callLLM } from './llm-caller.js';
-import { createTask } from './actions.js';
 import { pushCaptureAtom } from './capture-inbox.js';
 
 // Strategy adjustment whitelist (safety measure)
@@ -478,13 +478,11 @@ export async function createLearningTask(failureContext) {
   const { trigger, failures, signals } = failureContext;
 
   try {
-    const result = await pool.query(`
-      INSERT INTO tasks (title, description, task_type, priority, status, payload)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING id
-    `, [
-      `Learning - ${trigger}`,
-      `Analyze systemic failure pattern and generate strategy adjustments.
+    const created = await createTask({
+      source: 'discovery',
+      source_id: `systemic-learning:${trigger}:${Date.now()}`,
+      title: `Learning - ${trigger}`,
+      description: `Analyze systemic failure pattern and generate strategy adjustments.
 
 Trigger: ${trigger}
 Recent failures: ${failures?.length || 0}
@@ -497,20 +495,19 @@ Required analysis:
 2. Contributing factors
 3. Strategy adjustments (specific parameter changes)
 4. Recommended mitigations`,
-      'research',
-      'P1',
-      'queued',
-      JSON.stringify({
+      task_type: 'research',
+      priority: 'P1',
+      trigger_source: 'learning_system',
+      payload: {
         requires_cortex: true,
         requires_learning: true,
         trigger,
         failures,
         signals,
         created_by: 'learning_system',
-      }),
-    ]);
-
-    const taskId = result.rows[0].id;
+      },
+    });
+    const taskId = created.task.id;
     console.log(`[learning] Created learning task: ${taskId}`);
     return taskId;
   } catch (err) {

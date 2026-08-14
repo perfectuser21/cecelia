@@ -3,6 +3,7 @@ import { parseBaseRepo } from './github-pr-discovery.js';
 
 const CANONICAL_SHA = /^[a-f0-9]{40}$/;
 const TASK_BRANCH = /^cp-[a-z0-9][a-z0-9._-]{0,126}$/;
+const ATTEMPT_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 export const WORKSPACE_REPOSITORIES = Object.freeze([
   'perfectuser21/cecelia',
   'perfectuser21/zenithjoy-workspace',
@@ -14,11 +15,14 @@ const shaSchema = (field) => z.string().regex(
 );
 
 const branchSchema = z.string()
-  .regex(TASK_BRANCH, 'branch must be a canonical cp-* task branch')
-  .refine(
-    (value) => !value.includes('..') && !value.endsWith('.lock'),
-    'branch contains a forbidden Git ref sequence',
-  );
+  .refine(isCanonicalTaskBranch, 'branch must be a canonical cp-* task branch');
+
+export function isCanonicalTaskBranch(value) {
+  return typeof value === 'string'
+    && TASK_BRANCH.test(value)
+    && !value.includes('..')
+    && !value.endsWith('.lock');
+}
 
 const workspaceSpecSchema = z.object({
   repo: z.enum(WORKSPACE_REPOSITORIES),
@@ -32,6 +36,7 @@ const workspaceSpecSchema = z.object({
   // must never import another lineage (latest main, a competing candidate) on
   // top of the SHA the server pinned. Every layer below re-reads this bit.
   frozen_baseline: z.boolean().default(false),
+  source_attempt_id: z.string().regex(ATTEMPT_ID, 'source_attempt_id must be a UUID').optional(),
 }).strict();
 
 export function parseWorkspaceSpec(value, expected = {}) {
@@ -76,8 +81,16 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
 
     const inputs = bundle?.inputs ?? {};
     const generatorFix = action === 'spawn:generator-fix';
+    const candidate = (['evaluator', 'judge', 'publisher'].includes(role) || generatorFix)
+      && inputs.candidate && typeof inputs.candidate === 'object'
+      ? inputs.candidate
+      : null;
+    if (candidate && candidate.repo !== repo) {
+      throw new Error('workspace_candidate_repo_mismatch');
+    }
     if (
       generatorFix
+      && !candidate
       && (
         typeof inputs.pr_branch !== 'string'
         || typeof inputs.pr_head_sha !== 'string'
@@ -85,25 +98,36 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
     ) {
       throw new Error('generator_fix_workspace_evidence_missing');
     }
-    const immutableRoleSha = generatorFix
+    // The implementation baseline and the role checkout are separate facts.
+    // A repair of an existing PR must start at the server-observed PR head;
+    // payload.base_sha remains the immutable implementation baseline carried in
+    // the TaskBundle and is checked as an ancestor by the Runner. A retained
+    // local candidate still outranks the PR head on later repair rounds.
+    const frozenBaseline = CANONICAL_SHA.test(String(payload.base_sha ?? ''));
+    const immutableRoleSha = candidate?.head_sha ?? (generatorFix
       ? inputs.pr_head_sha
       : role === 'reviewer'
         ? inputs.contract_sha
         : (role === 'evaluator' || role === 'judge')
           ? inputs.pr_head_sha
-          : null;
+          : null);
     const plannerBaseSha = role === 'proposer'
       ? inputs.planner_head_sha
       : null;
+    const sealingExistingCandidate = generatorFix
+      && candidate == null
+      && ctx?.decision?.reason === 'current_run_generator_required_for_existing_pr';
     // A task that pins payload.base_sha has chosen an exact baseline instead of
     // latest main — that is the observable, server-side signal for a frozen or
     // comparison run. Ordinary dev leaves it unset and keeps latest-main rebase.
-    const frozenBaseline = CANONICAL_SHA.test(String(payload.base_sha ?? ''));
     const baseSha = plannerBaseSha
+      ?? (sealingExistingCandidate ? payload.base_sha : null)
       ?? immutableRoleSha
       ?? payload.base_sha
       ?? await resolveRepoHead(repo);
     const branch = (
+      candidate?.branch
+      ??
       (generatorFix ? inputs.pr_branch : null)
       ?? (role === 'evaluator' || role === 'judge' ? inputs.pr_branch : null)
       ?? (role === 'reviewer' ? inputs.contract_branch : null)
@@ -121,7 +145,10 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
       mode: readOnly ? 'read-only' : 'read-write',
       run_id: ctx?.runId,
       attempt_id: attemptId,
-      frozen_baseline: frozenBaseline,
+      frozen_baseline: candidate != null || frozenBaseline,
+      ...(candidate?.source_attempt_id
+        ? { source_attempt_id: candidate.source_attempt_id }
+        : {}),
     });
   };
 }

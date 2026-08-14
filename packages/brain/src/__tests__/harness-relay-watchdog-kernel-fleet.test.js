@@ -10,6 +10,7 @@ import { signMachineAttestation } from '../orchestrator/machine-attestation.js';
 const PARENT_ID = '11111111-1111-4111-8111-111111111111';
 const CHILD_ID = '22222222-2222-4222-8222-222222222222';
 const RUN_ID = '33333333-3333-4333-8333-333333333333';
+const CONTROLLER_SESSION_ID = '55555555-5555-4555-8555-555555555555';
 const SECRET = 'watchdog-fleet-secret-at-least-32-bytes';
 const CALLBACK_TOKEN = 'watchdog-child-callback-token';
 const BRIDGE_URL = 'http://xian-m4.internal:3458';
@@ -221,6 +222,8 @@ describe('kernel fleet watchdog recovery', () => {
 
     await _resumePausedKernelContext({
       id: RUN_ID,
+      controller_session_id: CONTROLLER_SESSION_ID,
+      controller_generation: '3',
       phase: 'paused',
       context_resume: {
         context_request_hop: 8,
@@ -239,6 +242,8 @@ describe('kernel fleet watchdog recovery', () => {
 
     expect(launchKernel).toHaveBeenCalledWith(expect.objectContaining({
       resumeToken: 'resume-token-1',
+      controllerSessionId: CONTROLLER_SESSION_ID,
+      controllerGeneration: 3,
     }));
     expect(queries[0].sql).not.toContain('SET phase');
     expect(queries[0].sql).toMatch(/NOT EXISTS[\s\S]*newer/i);

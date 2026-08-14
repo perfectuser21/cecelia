@@ -8,8 +8,8 @@ const DISPOSABLE_CANARY_WORKSPACE_KIND = 'disposable-canary-v1';
 const GITHUB_CREDENTIAL_ROLES = new Set([
   'planner',
   'proposer',
-  'generator',
   'evaluator',
+  'publisher',
 ]);
 const CANCEL_RECEIPT_STATUSES = new Set([
   'cleaned',
@@ -29,6 +29,7 @@ const INSPECT_RECEIPT_STATUSES = new Set([
   'dead',
   'terminal',
   'quarantined',
+  'retained',
 ]);
 const START_TERMINAL_STATUSES = new Set([
   'cleaned',
@@ -48,6 +49,7 @@ const WORKSPACE_SPEC_FIELDS = Object.freeze([
   'run_id',
   'attempt_id',
   'frozen_baseline',
+  'source_attempt_id',
 ]);
 
 function isNonemptyString(value) {
@@ -282,8 +284,10 @@ export function createRemoteBridgeTransport({
         throw new Error('remote_bridge_invalid_attempt_timeout');
       }
       const needsGitHubCredential = GITHUB_CREDENTIAL_ROLES.has(bundle?.role);
+      const needsProviderCredential = target?.provider === 'codex'
+        && bundle?.role !== 'publisher';
       let deadlineAt;
-      if (target?.provider === 'codex' || needsGitHubCredential) {
+      if (needsProviderCredential || needsGitHubCredential) {
         const nowMs = configuredNow();
         if (!Number.isFinite(nowMs)) {
           throw new Error('remote_bridge_invalid_clock');
@@ -298,7 +302,7 @@ export function createRemoteBridgeTransport({
         deadlineAt = new Date(deadlineMs).toISOString();
       }
       let credentialEnvelope;
-      if (target?.provider === 'codex') {
+      if (needsProviderCredential) {
         if (typeof configuredCredentialBroker?.issue !== 'function') {
           throw new Error('remote_bridge_credential_broker_unavailable');
         }
@@ -600,7 +604,8 @@ export function createRemoteBridgeTransport({
           if (
             receipt?.attempt_id !== attempt.id
             || receipt?.actual_machine_id !== machine
-            || !['cleaned', 'already_clean', 'quarantined'].includes(receipt?.status)
+            || !['cleaned', 'already_clean', 'quarantined', 'retained']
+              .includes(receipt?.status)
             || !verifyMachineAttestation({
               secret: configuredSecret,
               attemptId: attempt.id,

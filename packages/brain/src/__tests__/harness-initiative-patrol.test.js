@@ -12,6 +12,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
+const mockCreateTask = vi.fn();
+vi.mock('../actions.js', () => ({ createTask: (...args) => mockCreateTask(...args) }));
 
 const {
   runHarnessInitiativePatrol,
@@ -33,6 +35,7 @@ function routeMock(opts) {
     dedupRows = [],
     insertId = 'task-new',
   } = opts;
+  mockCreateTask.mockResolvedValue({ task: { id: insertId } });
   mockQuery.mockImplementation((sql) => {
     if (sql.includes('INSERT INTO tasks')) {
       return Promise.resolve({ rows: [{ id: insertId }] });
@@ -54,6 +57,8 @@ function routeMock(opts) {
 
 beforeEach(() => {
   mockQuery.mockReset();
+  mockCreateTask.mockReset();
+  mockCreateTask.mockResolvedValue({ task: { id: 'task-new' } });
 });
 
 describe('阈值常量', () => {
@@ -101,13 +106,10 @@ describe('Planner 卡住检测', () => {
     expect(r.stuck).toBe(1);
     expect(r.intervened).toBe(1);
 
-    const insertCall = mockQuery.mock.calls.find(
-      (c) => typeof c[0] === 'string' && c[0].includes('INSERT INTO tasks')
-    );
-    expect(insertCall).toBeTruthy();
-    expect(insertCall[0]).toContain("'harness_intervention'");
-    // payload 含 initiative_id
-    expect(insertCall[1].some((p) => String(p).includes('init-1'))).toBe(true);
+    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+      task_type: 'harness_intervention',
+      payload: expect.objectContaining({ initiative_id: 'init-1' }),
+    }));
   });
 
   it('阶段 A 停留未超过 15min → 不创建任务', async () => {
@@ -303,12 +305,9 @@ describe('Kernel v1 GAN 轮次卡死检测（harness_attempts）', () => {
     expect(call[1]).toContain('run-k1');
 
     // intervention payload 带 kind=gan_round
-    const insertCall = mockQuery.mock.calls.find(
-      (c) => typeof c[0] === 'string' && c[0].includes('INSERT INTO tasks')
-    );
-    const payloadJson = insertCall[1].find((p) => typeof p === 'string' && p.includes('initiative_id'));
-    expect(JSON.parse(payloadJson).kind).toBe('gan_round');
-    expect(JSON.parse(payloadJson).initiative_id).toBe('init-k1');
+    const payload = mockCreateTask.mock.calls[0][0].payload;
+    expect(payload.kind).toBe('gan_round');
+    expect(payload.initiative_id).toBe('init-k1');
   });
 
   it('kernel run 的 GAN 活性只从 harness_attempts 推导，不查 initiative_run_events', async () => {
@@ -464,9 +463,7 @@ describe('Slice5: intervention payload 带 container_id', () => {
     expect(lookupCall[1].some((p) => String(p).includes('init-1'))).toBe(true);
 
     // payload.container_id 被塞入
-    const insertCall = mockQuery.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('INSERT INTO tasks'));
-    const payloadJson = insertCall[1].find((p) => typeof p === 'string' && p.includes('initiative_id'));
-    expect(JSON.parse(payloadJson).container_id).toBe('harness-task-init1-r0-abcd');
+    expect(mockCreateTask.mock.calls[0][0].payload.container_id).toBe('harness-task-init1-r0-abcd');
   });
 
   it('thread_lookup 无在飞容器 → payload.container_id=null（降级，不报错仍建任务）', async () => {
@@ -483,8 +480,6 @@ describe('Slice5: intervention payload 带 container_id', () => {
     });
 
     await runHarnessInitiativePatrol();
-    const insertCall = mockQuery.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('INSERT INTO tasks'));
-    const payloadJson = insertCall[1].find((p) => typeof p === 'string' && p.includes('initiative_id'));
-    expect(JSON.parse(payloadJson).container_id).toBeNull();
+    expect(mockCreateTask.mock.calls[0][0].payload.container_id).toBeNull();
   });
 });

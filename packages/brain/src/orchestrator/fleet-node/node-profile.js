@@ -17,7 +17,7 @@ const CANONICAL_BASELINE = Object.freeze({
     'xian-mac-m4': 'http://100.71.151.105:5221/api/brain/health',
     'xian-mac-m1': 'http://100.71.151.105:5221/api/brain/health',
   }),
-  runner_image_digest: 'sha256:689b4694e3397b30eff54c8fb0ad59bc3a42c8179f9f07cfad313afc5fe7414b',
+  runner_image_digest: 'sha256:47fe869774b789fe6aef2e2e93b6a8baa2726b83ab94392d60c702af1c1ec22f',
   runtime_resources: Object.freeze({
     postgres: Object.freeze({
       image_digest: 'pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62',
@@ -40,11 +40,11 @@ const CANONICAL_BASELINE = Object.freeze({
     orbstack: '2.2.1',
     worker_protocol: 'kernel-harness/v1',
     worker_contract: 'fleet-node-health/v1',
-    worker: '1.272.12',
+    worker: '1.272.17',
     runner: 'cecelia-runner/v1',
     git: '2.39.5',
     node: '25.8.0',
-    codex: '0.145.0',
+    codex: '0.147.0',
   }),
 });
 const CANONICAL_IDS = Object.freeze(Object.keys(CANONICAL_BASELINE.capacities));

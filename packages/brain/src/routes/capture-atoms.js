@@ -7,9 +7,17 @@
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
+import { createRoutedTask } from '../work-routing-store.js';
 
 const router = Router();
+router.use(rateLimit({
+  windowMs: 60_000,
+  limit: 300,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+}));
 
 // 三类系统产出来源（T10 统一收件箱）— 由 capture-triage tick 分诊，人工 confirm 不支持
 const AUTO_TRIAGE_SOURCE_TYPES = ['handoff', 'learning', 'issue'];
@@ -212,21 +220,26 @@ async function routeAtomToTarget(client, atom, targetType, targetSubtype, areaId
     }
 
     case 'task': {
-      const r = await client.query(
-        `INSERT INTO tasks (title, description, status, task_type, priority)
-         VALUES ($1, $2, 'pending', 'dev', 'p2')
-         RETURNING id`,
-        [atom.content.slice(0, 200), atom.content]
-      );
-      return { routedTable: 'tasks', routedId: r.rows[0].id };
+      const routed = await createRoutedTask(client, {
+        source: 'inbox', source_id: String(atom.id), title: atom.content.slice(0, 200),
+        description: atom.content, mutation_intent: 'unknown',
+        declared_change_kind: atom.metadata?.change_kind,
+        repo_hint: atom.metadata?.repo,
+        map_scope_hint: atom.metadata?.map_scope,
+        branch: atom.metadata?.branch,
+        base_sha: atom.metadata?.base_sha,
+        metadata: atom.metadata ?? {},
+        task: { priority: 'P2', trigger_source: 'capture' },
+      }, null, { transaction: 'existing' });
+      return { routedTable: 'tasks', routedId: routed.task_id };
     }
 
     case 'decision': {
       const r = await client.query(
-        `INSERT INTO decisions (title, description, status, area_id)
-         VALUES ($1, $2, 'active', $3)
+        `INSERT INTO decisions (category, topic, decision, reason, status)
+         VALUES ('capture', $1, $2, $3, 'active')
          RETURNING id`,
-        [atom.content.slice(0, 200), atom.content, areaId || null]
+        [atom.content.slice(0, 200), atom.content, targetSubtype || 'captured decision']
       );
       return { routedTable: 'decisions', routedId: r.rows[0].id };
     }

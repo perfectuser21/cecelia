@@ -8,7 +8,7 @@ import { buildHarnessReportInsert, spawnHarnessReport, REPORT_KIND } from '../st
 // 派 harness_report 幂等：按 initiative_id NOT EXISTS 去重。
 // ──────────────────────────────────────────────────────────────────────────
 
-describe('buildHarnessReportInsert — 派 harness_report（幂等 + 内容补全）', () => {
+describe('buildHarnessReportInsert — 构造统一路由请求（幂等 + 内容补全）', () => {
   const args = {
     initiativeId: 'init-1',
     title: 'feat X',
@@ -22,24 +22,24 @@ describe('buildHarnessReportInsert — 派 harness_report（幂等 + 内容补�
     rollbackAnchor: 'prod-cecelia-v42',
   };
 
-  it('生成 INSERT INTO tasks，task_type=harness_report、status=queued', () => {
-    const { sql } = buildHarnessReportInsert(args);
-    expect(sql).toMatch(/INSERT INTO tasks/i);
-    expect(sql).toMatch(/harness_report/);
-    expect(sql).toMatch(/queued/);
+  it('生成 child 路由请求，task_type=harness_report、status=queued', () => {
+    const task = buildHarnessReportInsert(args);
+    expect(task).toMatchObject({
+      task_type: 'harness_report',
+      status: 'queued',
+      source: 'child',
+      source_id: 'harness-report:init-1',
+    });
   });
 
-  it('幂等：按 initiative_id NOT EXISTS 去重（防重复派 report）', () => {
-    const { sql } = buildHarnessReportInsert(args);
-    expect(sql).toMatch(/NOT EXISTS/i);
-    expect(sql).toMatch(/initiative_id/);
+  it('幂等：用稳定 source_id 交给 receipt 唯一键去重', () => {
+    const task = buildHarnessReportInsert(args);
+    expect(task.source_id).toBe('harness-report:init-1');
+    expect(task.payload.initiative_id).toBe('init-1');
   });
 
   it('payload 补全 Slice3 字段：staging_e2e_verdict/promote_status/promoted_at/promoted_by/production_version/rollback_anchor + report_kind', () => {
-    const { params } = buildHarnessReportInsert(args);
-    const payloadStr = params.find((p) => typeof p === 'string' && p.includes('production_version'));
-    expect(payloadStr).toBeTruthy();
-    const payload = JSON.parse(payloadStr);
+    const { payload } = buildHarnessReportInsert(args);
     expect(payload.report_kind).toBe('success');
     expect(payload.staging_e2e_verdict).toBe('PASS');
     expect(payload.promote_status).toBe('auto_promoted');
@@ -52,8 +52,7 @@ describe('buildHarnessReportInsert — 派 harness_report（幂等 + 内容补�
   });
 
   it('失败报告 report_kind=failure（不含 production 段空值无所谓）', () => {
-    const { params } = buildHarnessReportInsert({ ...args, reportKind: REPORT_KIND.FAILURE, stagingE2eVerdict: 'FAIL', promoteStatus: 'n_a' });
-    const payload = JSON.parse(params.find((p) => typeof p === 'string' && p.includes('report_kind')));
+    const { payload } = buildHarnessReportInsert({ ...args, reportKind: REPORT_KIND.FAILURE, stagingE2eVerdict: 'FAIL', promoteStatus: 'n_a' });
     expect(payload.report_kind).toBe('failure');
   });
 
@@ -63,27 +62,28 @@ describe('buildHarnessReportInsert — 派 harness_report（幂等 + 内容补�
 });
 
 describe('spawnHarnessReport — best-effort 落库（永不 throw）', () => {
-  it('调 dbQuery 跑 INSERT；返回 spawned=true', async () => {
-    const calls = [];
-    const dbQuery = vi.fn(async (sql, params) => { calls.push({ sql, params }); return { rows: [] }; });
-    const r = await spawnHarnessReport({ dbQuery }, {
+  it('调统一 taskCreator；返回 spawned=true', async () => {
+    const taskCreator = vi.fn(async () => ({ task: { id: 'report-task' } }));
+    const r = await spawnHarnessReport({ db: {}, taskCreator }, {
       initiativeId: 'i1', prUrl: 'https://pr/x', reportKind: REPORT_KIND.SUCCESS,
     });
-    expect(dbQuery).toHaveBeenCalled();
-    expect(calls[0].sql).toMatch(/harness_report/);
+    expect(taskCreator).toHaveBeenCalledWith(expect.objectContaining({
+      task_type: 'harness_report',
+      source_id: 'harness-report:i1',
+    }));
     expect(r.spawned).toBe(true);
   });
 
-  it('dbQuery 抛错 → 不 throw，返回 spawned=false', async () => {
-    const dbQuery = vi.fn(async () => { throw new Error('db down'); });
-    const r = await spawnHarnessReport({ dbQuery }, { initiativeId: 'i1' });
+  it('taskCreator 抛错 → 不 throw，返回 spawned=false', async () => {
+    const taskCreator = vi.fn(async () => { throw new Error('db down'); });
+    const r = await spawnHarnessReport({ db: {}, taskCreator }, { initiativeId: 'i1' });
     expect(r.spawned).toBe(false);
   });
 
   it('无 initiativeId → 不派，spawned=false', async () => {
-    const dbQuery = vi.fn();
-    const r = await spawnHarnessReport({ dbQuery }, { initiativeId: null });
-    expect(dbQuery).not.toHaveBeenCalled();
+    const taskCreator = vi.fn();
+    const r = await spawnHarnessReport({ db: {}, taskCreator }, { initiativeId: null });
+    expect(taskCreator).not.toHaveBeenCalled();
     expect(r.spawned).toBe(false);
   });
 });

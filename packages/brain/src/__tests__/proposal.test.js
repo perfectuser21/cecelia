@@ -20,6 +20,8 @@ const mockQuery = vi.hoisted(() => vi.fn().mockResolvedValue({ rows: [] }));
 vi.mock('../db.js', () => ({
   default: { query: mockQuery },
 }));
+const mockCreateTask = vi.hoisted(() => vi.fn());
+vi.mock('../actions.js', () => ({ createTask: mockCreateTask }));
 
 import {
   validateChange,
@@ -44,6 +46,8 @@ describe('proposal', () => {
     vi.clearAllMocks();
     mockQuery.mockReset();
     mockQuery.mockResolvedValue({ rows: [] });
+    mockCreateTask.mockReset();
+    mockCreateTask.mockResolvedValue({ task: { id: 'new-task-id', title: '新任务' } });
   });
 
   // ==========================================================
@@ -735,7 +739,6 @@ describe('proposal', () => {
         ],
       };
       mockQuery.mockResolvedValueOnce({ rows: [proposal] }); // getProposal
-      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'new-task-id', title: '新任务' }] }); // INSERT task
       mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE proposals (mark applied)
 
       const result = await applyProposal('p1');
@@ -907,7 +910,7 @@ describe('proposal', () => {
       // set_focus: 查 focus → 失败
       mockQuery.mockRejectedValueOnce(new Error('DB 连接断开'));
       // create_task: 成功
-      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'new-id', title: '任务' }] });
+      mockCreateTask.mockResolvedValueOnce({ task: { id: 'new-id', title: '任务' } });
       // UPDATE proposals
       mockQuery.mockResolvedValueOnce({ rows: [] });
 

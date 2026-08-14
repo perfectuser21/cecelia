@@ -43,6 +43,7 @@ beforeAll(async () => {
       phase TEXT NOT NULL DEFAULT 'planning',
       failure_reason TEXT,
       completed_at TIMESTAMPTZ,
+      map_recovery_contract_id UUID,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );

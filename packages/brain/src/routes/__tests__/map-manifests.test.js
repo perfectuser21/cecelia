@@ -55,17 +55,23 @@ describe('Map manifest 写入口鉴权', () => {
       activate: vi.fn(),
     };
     const { app } = createApp({ services });
-
-    for (let requestNumber = 1; requestNumber <= 300; requestNumber += 1) {
-      await request(app)
+    const server = app.listen();
+    try {
+      for (let requestNumber = 1; requestNumber <= 300; requestNumber += 1) {
+        await request(server)
+          .post('/api/brain/map/manifests/validate')
+          .send(loadManifest())
+          .expect(200);
+      }
+      await request(server)
         .post('/api/brain/map/manifests/validate')
         .send(loadManifest())
-        .expect(200);
+        .expect(429);
+    } finally {
+      await new Promise((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
     }
-    await request(app)
-      .post('/api/brain/map/manifests/validate')
-      .send(loadManifest())
-      .expect(429);
   });
 });
 

@@ -22,6 +22,7 @@ import os from 'os';
 import path from 'path';
 import { DB_DEFAULTS } from '../../db-config.js';
 import evalRouter from '../../routes/eval.js';
+import { cleanupRoutedTasks } from '../helpers/routed-task-cleanup.js';
 
 const testPool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
 
@@ -61,7 +62,7 @@ describe('POST /api/skill-eval/upload — 真实 PostgreSQL 集成测试', () =>
   afterAll(async () => {
     if (insertedTaskIds.length > 0) {
       await testPool.query('DELETE FROM skill_evals WHERE task_id = ANY($1)', [insertedTaskIds]);
-      await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [insertedTaskIds]);
+      await cleanupRoutedTasks(testPool, insertedTaskIds);
     }
     await testPool.end();
     for (const dir of createdTmpDirs) {

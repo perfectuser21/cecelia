@@ -333,7 +333,7 @@ describe('production WorkspaceSpec resolution', () => {
     expect(resolveRepoHead).toHaveBeenCalledWith('perfectuser21/cecelia');
   });
 
-  it('keeps the frozen invariant on a generator-fix resuming the pinned candidate', async () => {
+  it('repairs the observed PR head while preserving the frozen implementation baseline separately', async () => {
     const resolveWorkspaceSpec = createWorkspaceSpecResolver({
       resolveRepoHead: vi.fn(),
     });
@@ -366,6 +366,130 @@ describe('production WorkspaceSpec resolution', () => {
     expect(resolved).toMatchObject({
       base_sha: prHead,
       expected_head_sha: prHead,
+      branch: 'cp-08010101-frozen-candidate',
+      frozen_baseline: true,
+    });
+  });
+
+  it('seals an existing PR candidate against the immutable implementation baseline', async () => {
+    const resolveWorkspaceSpec = createWorkspaceSpecResolver({
+      resolveRepoHead: vi.fn(),
+    });
+    const prHead = 'e'.repeat(40);
+
+    const resolved = await resolveWorkspaceSpec({
+      action: 'spawn:generator-fix',
+      role: 'generator',
+      readOnly: false,
+      attemptId: ATTEMPT_ID,
+      ctx: {
+        runId: RUN_ID,
+        decision: { reason: 'current_run_generator_required_for_existing_pr' },
+        observed: {
+          task: {
+            payload: {
+              base_repo: 'perfectuser21/cecelia',
+              base_sha: BASE_SHA,
+            },
+          },
+        },
+      },
+      bundle: {
+        inputs: {
+          pr_branch: 'cp-08010101-existing-candidate',
+          pr_head_sha: prHead,
+        },
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      base_sha: BASE_SHA,
+      expected_head_sha: prHead,
+      branch: 'cp-08010101-existing-candidate',
+      frozen_baseline: true,
+    });
+  });
+
+  it.each(['evaluator', 'judge', 'publisher'])('%s 从同机 retained Generator Attempt 物化精确候选', async (role) => {
+    const resolveWorkspaceSpec = createWorkspaceSpecResolver({
+      resolveRepoHead: vi.fn(),
+    });
+    const sourceAttemptId = '33333333-3333-4333-8333-333333333333';
+    const candidateHead = 'f'.repeat(40);
+
+    const resolved = await resolveWorkspaceSpec({
+      action: role === 'publisher' ? 'publish:approved_ref' : `spawn:${role}`,
+      role,
+      readOnly: role !== 'publisher',
+      attemptId: ATTEMPT_ID,
+      ctx: {
+        runId: RUN_ID,
+        observed: {
+          task: { payload: { base_repo: 'perfectuser21/cecelia', base_sha: BASE_SHA } },
+          candidate: {
+            source_attempt_id: sourceAttemptId,
+            repo: 'perfectuser21/cecelia',
+            branch: 'cp-retained-candidate',
+            base_sha: BASE_SHA,
+            head_sha: candidateHead,
+          },
+        },
+      },
+      bundle: { inputs: { candidate: {
+        source_attempt_id: sourceAttemptId,
+        repo: 'perfectuser21/cecelia',
+        branch: 'cp-retained-candidate',
+        base_sha: BASE_SHA,
+        head_sha: candidateHead,
+      } } },
+    });
+
+    expect(resolved).toMatchObject({
+      base_sha: candidateHead,
+      expected_head_sha: candidateHead,
+      branch: 'cp-retained-candidate',
+      source_attempt_id: sourceAttemptId,
+      frozen_baseline: true,
+    });
+  });
+
+  it('generator-fix 可从无 PR 的 retained candidate 精确物化', async () => {
+    const resolveWorkspaceSpec = createWorkspaceSpecResolver({ resolveRepoHead: vi.fn() });
+    const candidateHead = 'd'.repeat(40);
+    const sourceAttemptId = '33333333-3333-4333-8333-333333333333';
+
+    const resolved = await resolveWorkspaceSpec({
+      action: 'spawn:generator-fix',
+      role: 'generator',
+      readOnly: false,
+      attemptId: ATTEMPT_ID,
+      ctx: {
+        runId: RUN_ID,
+        observed: {
+          task: { payload: { base_repo: 'perfectuser21/cecelia' } },
+          candidate: {
+            source_attempt_id: sourceAttemptId,
+            repo: 'perfectuser21/cecelia',
+            branch: 'cp-retained-fix',
+            base_sha: BASE_SHA,
+            head_sha: candidateHead,
+          },
+        },
+      },
+      bundle: { inputs: { candidate: {
+        source_attempt_id: sourceAttemptId,
+        repo: 'perfectuser21/cecelia',
+        branch: 'cp-retained-fix',
+        base_sha: BASE_SHA,
+        head_sha: candidateHead,
+      } } },
+    });
+
+    expect(resolved).toMatchObject({
+      base_sha: candidateHead,
+      expected_head_sha: candidateHead,
+      branch: 'cp-retained-fix',
+      source_attempt_id: sourceAttemptId,
       frozen_baseline: true,
     });
   });

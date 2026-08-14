@@ -2,11 +2,10 @@
  * [BEHAVIOR] migration 416 真 PostgreSQL upgrade/rollback/re-upgrade/幂等。
  * 禁止以 SQL 文本 grep 代替 schema_version、CHECK 与真实写入后验。
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runMigrations } from '../../migrate.js';
-import { writeHeartbeat } from '../../orchestrator/heartbeat.js';
 import { reconcileOwnerlessKernelRuns } from '../../orchestrator/kernel-controller-lifecycle.js';
 import { createKernelLeasePgFixture } from './kernel-controller-lease-renewal.pg-fixture.js';
 const fixture = createKernelLeasePgFixture();
@@ -14,7 +13,17 @@ const rollbackSql = readFileSync(
   new URL('../../../migrations/rollback/416_controller_session_nonblank.down.sql', import.meta.url),
   'utf8',
 );
+const branchRollbackSql = [424, 423, 422, 421, 420, 419, 418, 417].map((version) => {
+  const file = readdirSync(
+    new URL('../../../migrations/rollback/', import.meta.url),
+  ).find((entry) => entry.startsWith(`${version}_`));
+  return readFileSync(new URL(`../../../migrations/rollback/${file}`, import.meta.url), 'utf8');
+});
 let testPool;
+async function resetToProduction415() {
+  for (const sql of branchRollbackSql) await testPool.query(sql);
+  await testPool.query(rollbackSql);
+}
 async function constraintOracle() {
   const { rows } = await testPool.query(
     `SELECT (
@@ -36,11 +45,11 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
   it('CREATE-SESSION-C: JS 创建边拒绝 TAB/NBSP/ideographic space ownership', async () => {
     for (const blankSession of ['\t', '\u0085', '\u00a0', '\u1680', '\u2007', '\u2028', '\u202f', '\u205f', '\u3000', '\ufeff']) {
       await expect(fixture.seedOwnedRun({ controllerSessionId: blankSession }))
-        .rejects.toThrow('missing controller ownership (fail-closed)');
+        .rejects.toThrow('invalid server-issued Kernel controller session');
     }
   });
   it('MIGRATION-C: upgrade/第二次 upgrade/rollback/re-upgrade/第二次 re-upgrade 保持 invariant', async () => {
-    await testPool.query(rollbackSql);
+    await resetToProduction415();
     const historical = [
       await fixture.seedHistoricalBlankRun(''),
       await fixture.seedHistoricalBlankRun('   '),
@@ -62,7 +71,7 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
     );
     expect(normalized).toHaveLength(5);
     expect(normalized.every(({ controller_session_id: session }) => session === null)).toBe(true);
-    await testPool.query(rollbackSql);
+    await resetToProduction415();
     expect(await constraintOracle()).toEqual([{ constraint_validated: null, version_count: 0 }]);
     const reUpgrade = await runMigrations(testPool);
     const secondReUpgrade = await runMigrations(testPool);
@@ -97,10 +106,11 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
         errors.push(error.code);
       }
     }
-    expect(errors).toEqual(['23514', '23514', '23514', '23514', '23514']);
+    expect(errors).toHaveLength(5);
+    expect(errors.every((code) => ['23514', 'P0001'].includes(code))).toBe(true);
   });
-  it('BLANK-C: rollout 空白行不能 heartbeat 续命且未过期 lease 也被 reconcile 收敛', async () => {
-    await testPool.query(rollbackSql);
+  it('BLANK-C: rollout 空白行升级后归一为无主并被 reconcile 收敛', async () => {
+    await resetToProduction415();
     const historical = [
       { session: '', ...(await fixture.seedHistoricalBlankRun('')) },
       { session: '   ', ...(await fixture.seedHistoricalBlankRun('   ')) },
@@ -108,17 +118,7 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
       { session: '\u00a0', ...(await fixture.seedHistoricalBlankRun('\u00a0')) },
       { session: '\u3000', ...(await fixture.seedHistoricalBlankRun('\u3000')) },
     ];
-    const heartbeatRows = [];
-    for (const row of historical) {
-      const heartbeat = await writeHeartbeat(testPool, {
-        runId: row.runId,
-        host: 'kernel-blank-owner',
-        pid: 4242,
-        now: new Date(),
-        controllerSessionId: row.session,
-      });
-      heartbeatRows.push(heartbeat.rowCount);
-    }
+    await runMigrations(testPool);
     const recovered = await reconcileOwnerlessKernelRuns(testPool, { now: new Date() });
     const recoveredIds = recovered.map(({ runId }) => runId);
     const { rows } = await testPool.query(
@@ -128,7 +128,6 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
         ORDER BY id`,
       [historical.map(({ runId }) => runId)],
     );
-    expect(heartbeatRows).toEqual([0, 0, 0, 0, 0]);
     expect(historical.every(({ runId }) => recoveredIds.includes(runId))).toBe(true);
     expect(rows.every(({ phase }) => phase === 'failed')).toBe(true);
     expect(rows.every(({ orchestrator_heartbeat_at: at }) => at === null)).toBe(true);

@@ -14,8 +14,10 @@ import {
 const TASK_ID = '11111111-1111-4111-8111-111111111111';
 const INITIATIVE_ID = '22222222-2222-4222-8222-222222222222';
 const RUN_ID = '33333333-3333-4333-8333-333333333333';
+const RECEIPT_ID = '44444444-4444-4444-8444-444444444444';
+const PREDECESSOR_RUN_ID = '55555555-5555-4555-8555-555555555555';
 // Session Controller ownership（sprint 08131104）：createKernelRun 现要求非空 controllerSessionId。
-const CONTROLLER_SESSION_ID = '44444444-4444-4444-8444-444444444444';
+const CONTROLLER_SESSION_ID = '66666666-6666-4666-8666-666666666666';
 const CONTROLLER_LEASE_DEFAULT_SECONDS = 1800;
 
 const VALID_INPUT = Object.freeze({
@@ -27,7 +29,6 @@ const VALID_INPUT = Object.freeze({
   host: 'kernel-v1',
   deadlineHours: 8,
   createdSource: 'kernel_dispatch',
-  controllerSessionId: CONTROLLER_SESSION_ID,
 });
 
 function transactionPool({
@@ -35,9 +36,24 @@ function transactionPool({
     id: TASK_ID,
     task_type: 'harness_initiative',
     status: 'in_progress',
-    payload: { initiative_id: INITIATIVE_ID },
+    payload: { initiative_id: INITIATIVE_ID, routing_receipt_id: RECEIPT_ID },
+  },
+  receipt = {
+    id: RECEIPT_ID,
+    task_id: TASK_ID,
+    work_kind: 'coding_mutation',
+    change_kind: 'new_capability',
+    pipeline: 'harness',
+    canonical_task_type: 'harness_initiative',
+    default_execution_profile: 'new-capability-v1',
+    impact_contract_required: true,
+    repo: 'cecelia',
+    map_scope: ['cap-router'],
+    evidence: { base_sha: 'a'.repeat(40) },
+    superseded: false,
   },
   activeRun = null,
+  predecessorRun = null,
 } = {}) {
   const order = [];
   const calls = [];
@@ -64,13 +80,17 @@ function transactionPool({
         order.push('task-lock');
         return { rows: task ? [task] : [] };
       }
+      if (/FROM initiative_runs predecessor/.test(sql)) {
+        order.push('predecessor-run');
+        return { rows: predecessorRun ? [predecessorRun] : [] };
+      }
       if (/FROM initiative_runs/.test(sql)) {
         order.push('active-run');
         return { rows: activeRun ? [activeRun] : [] };
       }
-      if (/FROM harness_impact_contracts/.test(sql)) {
-        order.push('impact-contract');
-        return { rows: [] };
+      if (/FROM work_routing_receipts receipt/.test(sql)) {
+        order.push('routing-receipt');
+        return { rows: receipt ? [receipt] : [] };
       }
       if (/INSERT INTO initiative_runs/.test(sql)) {
         order.push('insert-run');
@@ -84,6 +104,22 @@ function transactionPool({
           }],
         };
       }
+      if (/INSERT INTO kernel_controller_sessions/.test(sql)) {
+        order.push('insert-controller');
+        return { rows: [], rowCount: 1 };
+      }
+      if (/UPDATE kernel_controller_sessions/.test(sql)) {
+        order.push('bind-controller');
+        return { rows: [], rowCount: 1 };
+      }
+      if (/UPDATE tasks[\s\S]+status = 'queued'/.test(sql)) {
+        order.push('reopen-task');
+        return { rows: [], rowCount: 1 };
+      }
+      if (/INSERT INTO cecelia_events/.test(sql)) {
+        order.push('routing-event');
+        return { rows: [], rowCount: 1 };
+      }
       throw new Error(`unexpected SQL: ${sql}`);
     }),
     release: vi.fn(() => order.push('release')),
@@ -94,6 +130,16 @@ function transactionPool({
     calls,
     order,
   };
+}
+
+function createRun(harness, input = VALID_INPUT, deps = {}) {
+  return createKernelRun(harness.pool, input, {
+    ensureMapImpactPreflight: vi.fn(async () => ({
+      contract: { id: 'impact-1', status: 'active' },
+    })),
+    controllerSessionIdFactory: () => CONTROLLER_SESSION_ID,
+    ...deps,
+  });
 }
 
 function finalizationPool({
@@ -187,6 +233,140 @@ function exactPatchPool({ task, activeAttempts = [] } = {}) {
 }
 
 describe('Kernel run store creation authority', () => {
+  it('binds explicit recovery to one trusted terminal predecessor and its approved contract', async () => {
+    const harness = transactionPool({
+      predecessorRun: {
+        id: PREDECESSOR_RUN_ID,
+        current_task_id: TASK_ID,
+        initiative_id: INITIATIVE_ID,
+        phase: 'failed',
+        record_trust_status: 'trusted',
+        contract_id: '66666666-6666-4666-8666-666666666666',
+        contract_status: 'approved',
+        approved_sha: 'a'.repeat(40),
+      },
+    });
+
+    await createRun(harness, {
+      ...VALID_INPUT,
+      createdSource: 'explicit_recovery',
+      predecessorRunId: PREDECESSOR_RUN_ID,
+    });
+
+    const insert = harness.calls.find(({ sql }) => /INSERT INTO initiative_runs/.test(sql));
+    expect(insert.sql).toMatch(/contract_id[\s\S]+predecessor_run_id/);
+    expect(insert.params).toEqual(expect.arrayContaining([
+      PREDECESSOR_RUN_ID,
+      '66666666-6666-4666-8666-666666666666',
+    ]));
+    expect(harness.order.indexOf('predecessor-run')).toBeLessThan(harness.order.indexOf('insert-run'));
+  });
+
+  it('atomically reopens a failed task after validating an explicit recovery predecessor', async () => {
+    const harness = transactionPool({
+      task: {
+        id: TASK_ID,
+        task_type: 'harness_initiative',
+        status: 'failed',
+        payload: { initiative_id: INITIATIVE_ID, routing_receipt_id: RECEIPT_ID },
+      },
+      predecessorRun: {
+        id: PREDECESSOR_RUN_ID,
+        current_task_id: TASK_ID,
+        initiative_id: INITIATIVE_ID,
+        phase: 'failed',
+        record_trust_status: 'trusted',
+        contract_id: '66666666-6666-4666-8666-666666666666',
+        contract_status: 'approved',
+        approved_sha: 'a'.repeat(40),
+      },
+    });
+
+    await createRun(harness, {
+      ...VALID_INPUT,
+      createdSource: 'explicit_recovery',
+      predecessorRunId: PREDECESSOR_RUN_ID,
+    });
+
+    const reopen = harness.calls.find(({ sql }) => /UPDATE tasks[\s\S]+status = 'queued'/.test(sql));
+    expect(reopen?.params).toEqual([TASK_ID]);
+    expect(harness.calls.indexOf(reopen)).toBeLessThan(
+      harness.calls.findIndex(({ sql }) => /INSERT INTO initiative_runs/.test(sql)),
+    );
+  });
+
+  it('rejects explicit recovery without a predecessor before starting a transaction', async () => {
+    const harness = transactionPool();
+    await expect(createRun(harness, {
+      ...VALID_INPUT,
+      createdSource: 'explicit_recovery',
+    })).rejects.toThrow('explicit recovery predecessor is required');
+    expect(harness.order).toEqual([]);
+  });
+
+  it('runs Map/Impact preflight before inserting the Kernel run', async () => {
+    const harness = transactionPool();
+    const ensurePreflight = vi.fn(async () => {
+      harness.order.push('map-preflight');
+      return { contract: { id: 'impact-1', status: 'active' } };
+    });
+
+    await createKernelRun(harness.pool, VALID_INPUT, {
+      ensureMapImpactPreflight: ensurePreflight,
+    });
+
+    expect(ensurePreflight).toHaveBeenCalledOnce();
+    const insertIndex = harness.order.indexOf('insert-run');
+    expect(insertIndex).toBeGreaterThan(-1);
+    expect(harness.order.indexOf('map-preflight')).toBeLessThan(insertIndex);
+  });
+
+  it('creates zero run rows when Map/Impact preflight fails', async () => {
+    const harness = transactionPool();
+    const ensurePreflight = vi.fn(async () => { throw new Error('map_stale'); });
+
+    await expect(createKernelRun(harness.pool, VALID_INPUT, {
+      ensureMapImpactPreflight: ensurePreflight,
+    })).rejects.toThrow('map_stale');
+    expect(harness.calls.some(({ sql }) => /INSERT INTO initiative_runs/.test(sql))).toBe(false);
+    expect(harness.order).toContain('ROLLBACK');
+    const event = harness.calls.find(({ sql }) => /INSERT INTO cecelia_events/.test(sql));
+    expect(event?.params?.[0]).toBe('map_preflight_failed');
+    expect(harness.order.indexOf('ROLLBACK')).toBeLessThan(harness.order.indexOf('routing-event'));
+  });
+
+  it('rejects a superseded routing receipt before Map preflight', async () => {
+    const harness = transactionPool({
+      receipt: {
+        id: RECEIPT_ID,
+        task_id: TASK_ID,
+        work_kind: 'coding_mutation',
+        pipeline: 'harness',
+        canonical_task_type: 'harness_initiative',
+        impact_contract_required: true,
+        superseded: true,
+      },
+    });
+    const ensurePreflight = vi.fn();
+
+    await expect(createKernelRun(harness.pool, VALID_INPUT, {
+      ensureMapImpactPreflight: ensurePreflight,
+    })).rejects.toThrow('routing_receipt_invalid');
+    expect(ensurePreflight).not.toHaveBeenCalled();
+    expect(harness.calls.some(({ sql }) => /INSERT INTO initiative_runs/.test(sql))).toBe(false);
+  });
+
+  it('rejects a non-active preflight contract before run insertion', async () => {
+    const harness = transactionPool();
+
+    await expect(createKernelRun(harness.pool, VALID_INPUT, {
+      ensureMapImpactPreflight: vi.fn(async () => ({
+        contract: { id: 'impact-1', status: 'superseded' },
+      })),
+    })).rejects.toThrow('impact_contract_inactive');
+    expect(harness.calls.some(({ sql }) => /INSERT INTO initiative_runs/.test(sql))).toBe(false);
+  });
+
   it('loads one v2 run only by primary key', async () => {
     const query = vi.fn(async () => ({ rows: [{ id: RUN_ID }] }));
 
@@ -210,6 +390,8 @@ describe('Kernel run store creation authority', () => {
     const [sql, params] = query.mock.calls[0];
     expect(sql).toContain('current_task_id = $1');
     expect(sql).toContain('commander_mode');
+    expect(sql).toContain('impact_contract_policy');
+    expect(sql).toContain('map_recovery_contract_id');
     expect(sql).not.toMatch(/OR\s+initiative_id/i);
     expect(params).toEqual([TASK_ID]);
   });
@@ -217,7 +399,7 @@ describe('Kernel run store creation authority', () => {
   it('creates a fully identified run under a task row lock', async () => {
     const harness = transactionPool();
 
-    const result = await createKernelRun(harness.pool, VALID_INPUT);
+    const result = await createRun(harness);
 
     expect(result).toMatchObject({
       created: true,
@@ -253,9 +435,12 @@ describe('Kernel run store creation authority', () => {
       'kernel-only',
       // sprint 08091640：gear 入参缺省写 NULL（= default 语义，存量行零变化）。
       null,
-      'legacy_exempt',
-      'MJ5 map/radius dependency is not active for this task',
-      'f69c2f91',
+      'required',
+      'Map fresh and active Impact Contract impact-1',
+      '4bc109e9',
+      null,
+      null,
+      null,
       // sprint 08131104：Session Controller ownership —— controller_session_id + lease 秒数。
       CONTROLLER_SESSION_ID,
       CONTROLLER_LEASE_DEFAULT_SECONDS,
@@ -266,8 +451,10 @@ describe('Kernel run store creation authority', () => {
       'advisory-lock',
       'task-lock',
       'active-run',
-      'impact-contract',
+      'routing-receipt',
+      'insert-controller',
       'insert-run',
+      'bind-controller',
       'COMMIT',
       'release',
     ]);
@@ -276,7 +463,7 @@ describe('Kernel run store creation authority', () => {
   it('persists an explicit commander mode in the creation transaction', async () => {
     const harness = transactionPool();
 
-    await createKernelRun(harness.pool, {
+    await createRun(harness, {
       ...VALID_INPUT,
       commanderMode: 'hybrid',
     });
@@ -290,8 +477,10 @@ describe('Kernel run store creation authority', () => {
       'advisory-lock',
       'task-lock',
       'active-run',
-      'impact-contract',
+      'routing-receipt',
+      'insert-controller',
       'insert-run',
+      'bind-controller',
       'COMMIT',
       'release',
     ]);
@@ -306,17 +495,49 @@ describe('Kernel run store creation authority', () => {
         payload: {
           initiative_id: INITIATIVE_ID,
           impact_contract_required: true,
+          routing_receipt_id: RECEIPT_ID,
         },
       },
     });
 
-    await createKernelRun(harness.pool, VALID_INPUT);
+    await createRun(harness);
 
     const insert = harness.calls.find(({ sql }) => /INSERT INTO initiative_runs/.test(sql));
     expect(insert.params).toEqual(expect.arrayContaining([
       'required',
-      'task payload requires Impact Contract',
+      'Map fresh and active Impact Contract impact-1',
     ]));
+  });
+
+  it('binds a server-authorized map recovery contract to the run without changing required policy', async () => {
+    const harness = transactionPool({
+      receipt: {
+        id: RECEIPT_ID,
+        task_id: TASK_ID,
+        work_kind: 'coding_mutation',
+        change_kind: 'bugfix',
+        pipeline: 'harness',
+        canonical_task_type: 'harness_initiative',
+        default_execution_profile: 'hotfix-v1',
+        impact_contract_required: true,
+        repo: 'cecelia',
+        map_scope: ['cap-map'],
+        evidence: { branch: 'cp-map-fix', base_sha: 'a'.repeat(40) },
+        superseded: false,
+      },
+    });
+
+    await createRun(harness, VALID_INPUT, {
+      ensureMapImpactPreflight: vi.fn(async () => ({
+        contract: { id: 'impact-recovery-1', status: 'active' },
+        recovery_contract: { id: 'recovery-1' },
+      })),
+    });
+
+    const insert = harness.calls.find(({ sql }) => /INSERT INTO initiative_runs/.test(sql));
+    expect(insert.sql).toContain('map_recovery_contract_id');
+    expect(insert.params).toContain('recovery-1');
+    expect(insert.params).toContain('required');
   });
 
   it('returns an existing active run without inserting', async () => {
@@ -329,7 +550,7 @@ describe('Kernel run store creation authority', () => {
     };
     const harness = transactionPool({ activeRun });
 
-    const result = await createKernelRun(harness.pool, VALID_INPUT);
+    const result = await createRun(harness);
 
     expect(result).toEqual({ created: false, run: activeRun });
     expect(harness.order).toEqual([
@@ -366,7 +587,7 @@ describe('Kernel run store creation authority', () => {
   ])('rolls back for an ineligible task: $label', async ({ task }) => {
     const harness = transactionPool({ task });
 
-    await expect(createKernelRun(harness.pool, VALID_INPUT))
+    await expect(createRun(harness))
       .rejects.toThrow(`kernel run task ${TASK_ID} not eligible`);
     expect(harness.order).toEqual([
       'BEGIN',
@@ -381,11 +602,11 @@ describe('Kernel run store creation authority', () => {
   it('rejects an invalid phase or source before opening a transaction', async () => {
     const harness = transactionPool();
 
-    await expect(createKernelRun(harness.pool, {
+    await expect(createRun(harness, {
       ...VALID_INPUT,
       phase: 'done',
     })).rejects.toThrow('invalid Kernel run start phase: done');
-    await expect(createKernelRun(harness.pool, {
+    await expect(createRun(harness, {
       ...VALID_INPUT,
       createdSource: 'guessed',
     })).rejects.toThrow('invalid Kernel run created source: guessed');
@@ -395,31 +616,19 @@ describe('Kernel run store creation authority', () => {
   it('rejects an invalid commander mode before opening a transaction', async () => {
     const harness = transactionPool();
 
-    await expect(createKernelRun(harness.pool, {
+    await expect(createRun(harness, {
       ...VALID_INPUT,
       commanderMode: 'unsafe-mode',
     })).rejects.toThrow('invalid Kernel run commander mode: unsafe-mode');
     expect(harness.pool.connect).not.toHaveBeenCalled();
   });
 
-  it('fail-closed：缺失/空 controllerSessionId 在开事务前拒绝（无 Controller ownership）', async () => {
+  it('fail-closed：调用方不能注入 Controller ownership', async () => {
     const harness = transactionPool();
-    // 缺失
     await expect(createKernelRun(harness.pool, {
       ...VALID_INPUT,
-      controllerSessionId: undefined,
-    })).rejects.toThrow('missing controller ownership (fail-closed)');
-    // 空串
-    await expect(createKernelRun(harness.pool, {
-      ...VALID_INPUT,
-      controllerSessionId: '',
-    })).rejects.toThrow('missing controller ownership (fail-closed)');
-    // 纯空白
-    await expect(createKernelRun(harness.pool, {
-      ...VALID_INPUT,
-      controllerSessionId: '   ',
-    })).rejects.toThrow('missing controller ownership (fail-closed)');
-    // fail-closed：一律不开事务、不写半态 run
+      controllerSessionId: CONTROLLER_SESSION_ID,
+    })).rejects.toThrow('caller-provided ownership is forbidden');
     expect(harness.pool.connect).not.toHaveBeenCalled();
   });
 
@@ -433,7 +642,7 @@ describe('Kernel run store creation authority', () => {
       },
     });
 
-    await expect(createKernelRun(harness.pool, VALID_INPUT))
+    await expect(createRun(harness))
       .rejects.toThrow(
         `kernel run task ${TASK_ID} initiative mismatch: ${INITIATIVE_ID}/${RUN_ID}`,
       );

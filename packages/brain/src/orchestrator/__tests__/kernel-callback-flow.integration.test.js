@@ -118,6 +118,7 @@ import { runLoop } from '../loop.js';
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
 const TASK_ID = '22222222-2222-4222-8222-222222222222';
+const RECEIPT_ID = '77777777-7777-4777-8777-777777777777';
 const ATTEMPT_IDS = [
   '33333333-3333-4333-8333-333333333333',
   '44444444-4444-4444-8444-444444444444',
@@ -199,6 +200,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       title: 'stabilize provider-neutral kernel',
       description: 'exercise the real callback boundary',
       payload: {
+        routing_receipt_id: RECEIPT_ID,
         harness_runtime: 'kernel-v1',
         executor: 'codex',
         sprint_dir: SPRINT_DIR,
@@ -219,6 +221,23 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
     runtime.pool.query.mockImplementation(async (sql) => {
       if (sql.includes('SELECT * FROM initiative_runs WHERE id')) return { rows: [run] };
       if (sql.includes('SELECT * FROM tasks WHERE id')) return { rows: [task] };
+      if (sql.includes('FROM work_routing_receipts receipt')) {
+        return { rows: [{
+          id: RECEIPT_ID,
+          task_id: TASK_ID,
+          work_kind: 'coding_mutation',
+          change_kind: 'new_capability',
+          pipeline: 'harness',
+          canonical_task_type: 'harness_initiative',
+          default_execution_profile: 'new-capability-v1',
+          execution_profile_override: null,
+          repo: 'cecelia',
+          map_scope: ['cecelia'],
+          impact_contract_required: true,
+          evidence: { branch: 'cp-callback-flow', base_sha: 'a'.repeat(40) },
+          superseded: false,
+        }] };
+      }
       if (sql.includes('FROM orchestrator_decision_log')) return { rows: [...decisionLog] };
       if (sql.includes('FROM account_usage_cache')) return { rows: [] };
       return { rows: [], rowCount: 1 };

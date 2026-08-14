@@ -472,10 +472,9 @@ describe('selfcheck schema version', () => {
     // 408/409 = Impact Contract + Gap Ledger；410 = revision-indexed immutable graph snapshots；
     // 411 = reviewer-approved SHA 下的冻结合同测试制品；
     // 412 = approved Harness contract artifact manifests。
-    // 413 = work_routing_receipts append-only + 不可变触发器（production anchor from PR #4851）。
-    // 414 = map_recovery_contracts fallback 路由授权合同（production anchor from PR #4851）。
-    // 415 = initiative_runs Session Controller ownership（controller_session_id + lease）。
-    // 416 = controller_session_id 非空白约束与历史空白值归一。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('416');
+    // 413/414 = production routing authority anchors；415 = Session Controller ownership；
+    // 416—421 = anchor hardening、Golden Path、Map consumption、Capture 与不可变治理；
+    // 422 = Controller authority；423 = routed task provenance。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('424');
   });
 });

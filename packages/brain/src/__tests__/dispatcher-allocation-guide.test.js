@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { canonicalRoutingReceipt, routedCodingPayload } from './helpers/routing-receipt-fixture.js';
 
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({
@@ -100,7 +101,7 @@ vi.mock('../task-updater.js', () => ({ blockTask: vi.fn() }));
 vi.mock('../alerting.js', () => ({ raise: vi.fn() }));
 vi.mock('../anchor-check.js', () => ({ checkAnchor: vi.fn(() => ({ blocked: false })) }));
 vi.mock('../token-budget-planner.js', () => ({
-  shouldDowngrade: vi.fn((taskType, budgetState) => taskType === 'dev' && (budgetState === 'tight' || budgetState === 'critical')),
+  shouldDowngrade: vi.fn((taskType, budgetState) => ['dev', 'harness_initiative'].includes(taskType) && (budgetState === 'tight' || budgetState === 'critical')),
 }));
 vi.mock('../alertness-actions.js', () => ({
   getMitigationState: vi.fn().mockReturnValue({ p2_paused: false, drain_mode_requested: false }),
@@ -111,15 +112,15 @@ describe('dispatcher allocation guide', () => {
     vi.clearAllMocks();
   });
 
-  it('tight 预算下的 dev 任务 → triggerCeceliaRun 收到 payload.executor=codex', async () => {
+  it('tight 预算下的 routed coding 任务 → triggerCeceliaRun 收到 payload.executor=codex', async () => {
     const task = {
       id: 'task-guided-1',
       title: 'guided dev task',
       description: 'dev task',
-      task_type: 'dev',
+      task_type: 'harness_initiative',
       status: 'queued',
       priority: 'P1',
-      payload: {},
+      payload: routedCodingPayload('task-guided-1'),
       created_at: '2026-07-16T00:00:00Z',
     };
 
@@ -127,12 +128,12 @@ describe('dispatcher allocation guide', () => {
     selectNextDispatchableTask.mockResolvedValue(task);
     mockTriggerCeceliaRun.mockResolvedValueOnce({ success: true, taskId: task.id, runId: 'run-1' });
 
-    mockQuery
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ id: task.id }] })
-      .mockResolvedValueOnce({ rows: [task] })
-      .mockResolvedValue({ rows: [], rowCount: 1 });
+    mockQuery.mockImplementation(async (sql) => {
+      if (String(sql).includes('UPDATE tasks SET claimed_by = $1')) return { rows: [{ id: task.id }], rowCount: 1 };
+      if (String(sql).includes('SELECT * FROM tasks WHERE id = $1')) return { rows: [task], rowCount: 1 };
+      if (String(sql).includes('FROM work_routing_receipts receipt')) return { rows: [canonicalRoutingReceipt(task)] };
+      return { rows: [], rowCount: 1 };
+    });
 
     const { dispatchNextTask } = await import('../dispatcher.js');
     const result = await dispatchNextTask([]);
@@ -177,7 +178,7 @@ describe('dispatcher allocation guide', () => {
       task_type: 'harness_initiative',
       status: 'queued',
       priority: 'P1',
-      payload: { orchestrator: 'skill-relay' },
+      payload: routedCodingPayload('task-guided-2'),
       created_at: '2026-07-21T00:00:00Z',
     };
 
@@ -204,6 +205,9 @@ describe('dispatcher allocation guide', () => {
       }
       if (typeof sql === 'string' && sql.includes('SELECT * FROM tasks WHERE id = $1')) {
         return { rows: [task], rowCount: 1 };
+      }
+      if (typeof sql === 'string' && sql.includes('FROM work_routing_receipts receipt')) {
+        return { rows: [canonicalRoutingReceipt(task)], rowCount: 1 };
       }
       if (typeof sql === 'string' && sql.includes('WHERE id = $1')) {
         return { rows: [{ id: task.id }], rowCount: 1 };

@@ -11,11 +11,18 @@ PASS=0
 FAIL=0
 TMPROOT=$(mktemp -d -t guard-test-XXXXXX)
 trap 'rm -rf "$TMPROOT"' EXIT
+mkdir -p "$TMPROOT/bin"
+cat > "$TMPROOT/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' '{"valid":true,"routing_receipt_id":"receipt-test","expires_at":"2099-01-01T00:00:00Z"}'
+EOF
+chmod +x "$TMPROOT/bin/curl"
 
 make_repo() {
-    local repo="$1"
+    local repo="$1" branch="${2:-main}"
     mkdir -p "$repo"
-    ( cd "$repo" && git init -q -b main && git -c user.email=t@t.com -c user.name=t commit -q --allow-empty -m init )
+    ( cd "$repo" && git init -q -b "$branch" && git config core.hooksPath /dev/null \
+      && git -c user.email=t@t.com -c user.name=t commit -q --allow-empty -m init )
 }
 
 activate_dev() {
@@ -25,6 +32,11 @@ activate_dev() {
     cat > "$repo/.cecelia/lights/${sid_short}-${branch}.live" <<EOF
 {"branch":"$branch","worktree_path":"$repo","started_at":"2026-05-04T00:00:00Z","session_id":"test"}
 EOF
+    local base_sha
+    base_sha=$(git -C "$repo" rev-parse HEAD)
+    cat > "$repo/.dev-lock.$branch" <<EOF
+{"routing_receipt_id":"receipt-test","task_id":"task-test","run_id":"run-test","repo":"cecelia","branch":"$branch","base_sha":"$base_sha"}
+EOF
 }
 
 run_guard() {
@@ -32,7 +44,7 @@ run_guard() {
     local stdin_json="{\"session_id\":\"test\",\"cwd\":\"$cwd\",\"tool_name\":\"$tool_name\""
     [[ -n "$extra_input" ]] && stdin_json="${stdin_json},${extra_input}"
     stdin_json="${stdin_json}}"
-    echo "$stdin_json" | bash "$GUARD" 2>&1
+    echo "$stdin_json" | PATH="$TMPROOT/bin:$PATH" bash "$GUARD" 2>&1
     echo "EXIT:$?"
 }
 
@@ -72,7 +84,7 @@ assert_contains "Case B reason 含 foreground" "foreground" "$out"
 echo ""
 echo "=== Case C: live light + Bash bg=true → 拦 ==="
 C_REPO="$TMPROOT/case-c"
-make_repo "$C_REPO"
+make_repo "$C_REPO" "cp-test-c"
 activate_dev "$C_REPO" "cp-test-c"
 out=$(run_guard "$C_REPO" "Bash" '"tool_input":{"command":"echo hi","run_in_background":true}')
 exit_code=$(echo "$out" | grep -oE 'EXIT:[0-9]+' | sed 's/EXIT://')
@@ -83,7 +95,7 @@ assert_contains "Case C reason 含 run_in_background" "run_in_background" "$out"
 echo ""
 echo "=== Case D: live light + Bash bg=false → 放行 ==="
 D_REPO="$TMPROOT/case-d"
-make_repo "$D_REPO"
+make_repo "$D_REPO" "cp-test-d"
 activate_dev "$D_REPO" "cp-test-d"
 out=$(run_guard "$D_REPO" "Bash" '"tool_input":{"command":"echo hi","run_in_background":false}')
 exit_code=$(echo "$out" | grep -oE 'EXIT:[0-9]+' | sed 's/EXIT://')
@@ -93,7 +105,7 @@ assert_exit "Case D 放行" "0" "$exit_code"
 echo ""
 echo "=== Case E: Bash 无 bg 字段 → 放行 ==="
 E_REPO="$TMPROOT/case-e"
-make_repo "$E_REPO"
+make_repo "$E_REPO" "cp-test-e"
 activate_dev "$E_REPO" "cp-test-e"
 out=$(run_guard "$E_REPO" "Bash" '"tool_input":{"command":"echo hi"}')
 exit_code=$(echo "$out" | grep -oE 'EXIT:[0-9]+' | sed 's/EXIT://')

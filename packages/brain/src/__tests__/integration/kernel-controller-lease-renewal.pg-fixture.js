@@ -73,10 +73,33 @@ export function createKernelLeasePgFixture() {
   async function seedOwnedRun({ controllerSessionId }) {
     const initiativeId = randomUUID();
     const taskId = randomUUID();
+    const receiptId = randomUUID();
     await pool().query(
       `INSERT INTO tasks (id, title, status, priority, task_type, trigger_source, payload)
        VALUES ($1, $2, 'in_progress', 'P2', 'harness_initiative', 'api', $3::jsonb)`,
-      [taskId, `kernel-leaserenew-${taskId}`, JSON.stringify({ initiative_id: initiativeId })],
+      [taskId, `kernel-leaserenew-${taskId}`, JSON.stringify({
+        initiative_id: initiativeId,
+        routing_receipt_id: receiptId,
+        work_kind: 'coding_mutation',
+        change_kind: 'bugfix',
+        repo: 'cecelia',
+        harness_runtime: 'kernel-v1',
+      })],
+    );
+    await pool().query(
+      `INSERT INTO work_routing_receipts (
+         id,task_id,source,source_id,work_kind,change_kind,pipeline,
+         canonical_task_type,map_scope,impact_contract_required,
+         orchestrator,router_version,route_reason,default_execution_profile,repo,evidence
+       ) VALUES (
+         $1,$2,'integration',$3,'coding_mutation','bugfix','harness',
+         'harness_initiative','["F0"]'::jsonb,true,
+         'kernel-harness-v2','work-router-v1','integration','hotfix-v1','cecelia',$4::jsonb
+       )`,
+      [receiptId,taskId,`kernel-lease:${taskId}`,JSON.stringify({
+        branch:'cp-kernel-lease-integration',
+        base_sha:'a'.repeat(40),
+      })],
     );
     const created = await createKernelRun(pool(), {
       taskId,
@@ -87,9 +110,20 @@ export function createKernelLeasePgFixture() {
       host: 'kernel-v1',
       deadlineHours: 8,
       createdSource: 'kernel_dispatch',
-      controllerSessionId,
+    }, {
+      controllerSessionIdFactory: () => controllerSessionId,
+      ensureMapImpactPreflight: async () => ({
+        contract:{id:randomUUID(),status:'active'},
+        recovery_contract:null,
+      }),
     });
-    return { runId: created.run.id, taskId, initiativeId };
+    return {
+      runId: created.run.id,
+      taskId,
+      initiativeId,
+      controllerSessionId: created.run.controller_session_id,
+      controllerGeneration: Number(created.run.controller_generation),
+    };
   }
   async function seedHistoricalBlankRun(controllerSessionId) {
     const initiativeId = randomUUID();

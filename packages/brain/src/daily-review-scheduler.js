@@ -10,6 +10,7 @@
  *   1. projects 表中有 repo_path 且非 null 的记录（去重）
  *   2. 如果 DB 查询失败，fallback 到硬编码列表
  */
+import { createTask } from './actions.js';
 
 // 每日触发时间（UTC 小时）
 const DAILY_REVIEW_HOUR_UTC = 2;
@@ -91,7 +92,7 @@ export async function hasTodayReview(pool, repoPath) {
  * @param {string} repoPath
  * @returns {Promise<{ created: boolean, task_id?: string, reason?: string }>}
  */
-export async function createCodeReviewTask(pool, repoPath) {
+export async function createCodeReviewTask(pool, repoPath, taskCreator = createTask) {
   // 去重检查
   const alreadyExists = await hasTodayReview(pool, repoPath);
   if (alreadyExists) {
@@ -101,23 +102,19 @@ export async function createCodeReviewTask(pool, repoPath) {
   const repoName = repoPath.split('/').pop() || repoPath;
   const today = new Date().toISOString().slice(0, 10);
 
-  const { rows } = await pool.query(
-    `INSERT INTO tasks (
-       title, task_type, status, priority,
-       created_by, payload, trigger_source, location
-     )
-     VALUES (
-       $1, 'code_review', 'queued', 'P2',
-       'cecelia-brain', $2, 'brain_auto', 'us'
-     )
-     RETURNING id`,
-    [
-      `[code-review] ${repoName} ${today}`,
-      JSON.stringify({ repo_path: repoPath, since_hours: 24, scope: 'daily' }),
-    ]
-  );
-
-  const task_id = rows[0].id;
+  const created = await taskCreator({
+    db: pool,
+    source: 'scheduler',
+    source_id: `daily-code-review:${repoPath}:${today}`,
+    title: `[code-review] ${repoName} ${today}`,
+    task_type: 'code_review',
+    priority: 'P2',
+    created_by: 'cecelia-brain',
+    trigger_source: 'brain_auto',
+    allow_unscoped: true,
+    payload: { repo_path: repoPath, since_hours: 24, scope: 'daily' },
+  });
+  const task_id = created.task.id;
   console.log(`[daily-review] Created code_review task ${task_id} for repo=${repoName}`);
   return { created: true, task_id, repo_path: repoPath };
 }
@@ -279,7 +276,7 @@ export async function hasCompletedDevTaskSinceLastArchReview(pool) {
  * @param {Date} [now] - 可注入时间（测试用）
  * @returns {Promise<{ triggered: boolean, skipped_window: boolean, skipped_recent: boolean, skipped_guard: boolean }>}
  */
-export async function triggerArchReview(pool, now = new Date()) {
+export async function triggerArchReview(pool, now = new Date(), taskCreator = createTask) {
   if (!isInArchReviewWindow(now)) {
     return { triggered: false, skipped_window: true, skipped_recent: false, skipped_guard: false };
   }
@@ -309,20 +306,23 @@ export async function triggerArchReview(pool, now = new Date()) {
     const digestSuffix = lineLedgerDigest
       ? ('\n\n## 各线 24h 账本（line_ledger 摘要）\n' + lineLedgerDigest)
       : '';
-    const { rows } = await pool.query(
-      `INSERT INTO tasks (title, task_type, status, priority, created_by, payload, trigger_source, location)
-       VALUES ($1, 'arch_review', 'queued', 'P2', 'cecelia-brain', $2, 'brain_auto', 'us')
-       RETURNING id`,
-      [
-        `[arch-review] 定时架构巡检 ${timestamp} UTC`,
-        JSON.stringify({
-          scope: 'scheduled',
-          trigger: '4h',
-          prd_summary: `架构巡检：扫描 ${timestamp} UTC 时点的 drift / 未收敛模式 / 依赖异常，输出 4A/4B 报告供复盘。${digestSuffix}`,
-        }),
-      ]
-    );
-    const task_id = rows[0].id;
+    const created = await taskCreator({
+      db: pool,
+      source: 'scheduler',
+      source_id: `arch-review:${now.toISOString().slice(0, 13)}`,
+      title: `[arch-review] 定时架构巡检 ${timestamp} UTC`,
+      task_type: 'arch_review',
+      priority: 'P2',
+      created_by: 'cecelia-brain',
+      trigger_source: 'brain_auto',
+      allow_unscoped: true,
+      payload: {
+        scope: 'scheduled',
+        trigger: '4h',
+        prd_summary: `架构巡检：扫描 ${timestamp} UTC 时点的 drift / 未收敛模式 / 依赖异常，输出 4A/4B 报告供复盘。${digestSuffix}`,
+      },
+    });
+    const task_id = created.task.id;
     console.log(`[arch-review] Created arch_review task ${task_id}`);
     return { triggered: true, skipped_window: false, skipped_recent: false, skipped_guard: false, task_id };
   } catch (err) {
@@ -413,7 +413,7 @@ export async function hasTodayCiPatrol(pool) {
  * @param {Date} [now] - 可注入时间（测试用）
  * @returns {Promise<{ triggered: boolean, skipped_window: boolean, skipped_recent: boolean }>}
  */
-export async function triggerCiPatrol(pool, now = new Date()) {
+export async function triggerCiPatrol(pool, now = new Date(), taskCreator = createTask) {
   if (!isInCiPatrolWindow(now)) {
     return { triggered: false, skipped_window: true, skipped_recent: false };
   }
@@ -428,21 +428,22 @@ export async function triggerCiPatrol(pool, now = new Date()) {
 
   try {
     const today = now.toISOString().slice(0, 10);
-    const { rows } = await pool.query(
-      `INSERT INTO tasks (title, task_type, status, priority, created_by, payload, trigger_source, location)
-       VALUES ($1, 'ci_patrol', 'queued', 'P2', 'cecelia-brain', $2, 'brain_auto', 'us')
-       RETURNING id`,
-      [
-        `[ci-patrol] CI/CD 巡检日报 ${today}`,
-        JSON.stringify({
-          scope: 'scheduled',
-          trigger: 'daily',
-          date: today,
-          prd_summary: `每日 CI/CD 巡检：按 line 报 4 硬伤（没写/写了没进CI/假绿/正在红），产出日报到 AI Notes + 棘轮 guard。`,
-        }),
-      ]
-    );
-    const task_id = rows[0].id;
+    const created = await taskCreator({
+      db: pool,
+      source: 'scheduler',
+      source_id: `ci-patrol:${today}`,
+      title: `[ci-patrol] CI/CD 巡检日报 ${today}`,
+      task_type: 'ci_patrol',
+      priority: 'P2',
+      created_by: 'cecelia-brain',
+      trigger_source: 'brain_auto',
+      allow_unscoped: true,
+      payload: {
+        scope: 'scheduled', trigger: 'daily', date: today,
+        prd_summary: '每日 CI/CD 巡检：按 line 报 4 硬伤（没写/写了没进CI/假绿/正在红），产出日报到 AI Notes + 棘轮 guard。',
+      },
+    });
+    const task_id = created.task.id;
     console.log(`[ci-patrol] Created ci_patrol task ${task_id}`);
     return { triggered: true, skipped_window: false, skipped_recent: false, task_id };
   } catch (err) {

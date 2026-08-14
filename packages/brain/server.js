@@ -26,6 +26,7 @@ import taskProjectsRoutes from './src/routes/task-projects.js';
 import taskGoalsRoutes from './src/routes/task-goals.js';
 import taskAreasRoutes from './src/routes/task-areas.js';
 import taskTasksRoutes from './src/routes/task-tasks.js';
+import workRoutingRoutes from './src/routes/work-routing.js';
 import innerLifeRoutes from './src/routes/inner-life.js';
 import intentMatchRoutes from './src/routes/intent-match.js';
 import selfReportsRoutes from './src/routes/self-reports.js';
@@ -437,6 +438,7 @@ app.get('/api/brain/autonomous/sessions', createAutonomousRouter(join(dirname(fi
 // POST /api/brain/tasks fallback: brainRoutes 无 POST /tasks handler，此处补齐
 // 必须在 brainRoutes 之后，避免干扰已有 GET/PATCH /api/brain/tasks
 app.use('/api/brain/tasks', taskTasksRoutes);
+app.use('/api/brain/work-routing', internalAuth, workRoutingRoutes);
 
 app.use('/api/brain', licenseRoutes);
 app.use('/api/brain', agentCreditRoutes);
@@ -655,6 +657,16 @@ if (!process.env.VITEST) {
   // DBOS durable 底座（flag 门控，默认关=行为零变化）。bootDurable 内部 try/catch degrade，
   // launch 失败只记日志、绝不阻断 brain 启动。放 listen 之前，确保 tick 路由时 DBOS 已就绪。
   await bootDurable();
+
+  // migration 422 会把无法证明存活 authority 的旧 active v2 run 留为 ownerless。
+  // 在 listener 接受任何请求前先 fail-closed 收敛，定时 orphan guard 只做后备。
+  const { reconcileOwnerlessKernelRuns } = await import(
+    './src/orchestrator/kernel-controller-lifecycle.js'
+  );
+  const startupRecovered = await reconcileOwnerlessKernelRuns(pool);
+  if (startupRecovered.length > 0) {
+    console.log(`[Server] startup ownerless Kernel runs recovered=${startupRecovered.length}`);
+  }
 
   await listenWithRetry(server, Number(PORT), { maxAttempts: 3, retryDelayMs: 2_000 });
 
@@ -970,7 +982,7 @@ async function onBrainListening() {
     const { startZombieReaper } = await import('./src/zombie-reaper.js');
     startZombieReaper();
     const { startHarnessOrphanGuard } = await import('./src/lib/harness-orphan-guard.js');
-    startHarnessOrphanGuard();
+    await startHarnessOrphanGuard();
     console.log('[Server] Zombie Reaper started (5min interval) - auto-reap in_progress tasks idle >30min');
   } catch (e) {
     console.warn('[Server] Zombie Reaper init failed (non-fatal):', e.message);

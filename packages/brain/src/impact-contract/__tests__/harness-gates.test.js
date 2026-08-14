@@ -106,6 +106,72 @@ describe('Harness Impact Gate 生产接线适配器', () => {
     }));
   });
 
+  it('uses the run-bound recovery contract for frozen-path structure, diff and fresh-map merge gates', async () => {
+    const active = {
+      id: 'impact-recovery-1', repo: 'cecelia', base_revision: BASE_SHA,
+      contract_hash: 'c'.repeat(64), contract_body: { required_assertions: [] },
+    };
+    const recovery = {
+      id: 'recovery-1', repo: 'cecelia', base_sha: BASE_SHA,
+      branch: 'cp-map-fix', reason_code: 'map_unavailable',
+      consumed_attempt_id: 'generator-attempt-1',
+    };
+    const readChangedFiles = vi.fn().mockResolvedValue([
+      'packages/brain/src/lib/map-read-service.js',
+    ]);
+    const validateRecoveryFreshness = vi.fn().mockResolvedValue({
+      status: 'fresh', source_revision: HEAD_SHA,
+    });
+    const gates = createHarnessImpactGates({
+      db: {},
+      getActiveContract: vi.fn().mockResolvedValue(active),
+      getRecoveryContext: vi.fn().mockResolvedValue(recovery),
+      readChangedFiles,
+      validateRecoveryFreshness,
+    });
+    const task = { id: TASK_ID, payload: {
+      change_kind: 'bugfix',
+      changed_files: ['packages/brain/src/lib/map-read-service.js'],
+    } };
+    const run = { id: RUN_ID, impact_contract_policy: 'required', map_recovery_contract_id: 'recovery-1' };
+
+    await expect(gates.beforeGenerate({ task, run })).resolves.toMatchObject({
+      gate: 'pass', stage: 'structure', map_recovery_contract_id: 'recovery-1',
+    });
+    await expect(gates.beforeEvaluate({ task, run, pr: { head_sha: HEAD_SHA } }))
+      .resolves.toMatchObject({
+        gate: 'pass', stage: 'diff', map_recovery_contract_id: 'recovery-1',
+      });
+    await expect(gates.beforeMerge({ task, run, pr: { head_sha: HEAD_SHA }, decisionLog: [] }))
+      .resolves.toMatchObject({
+        gate: 'pass', stage: 'merge', map_recovery_contract_id: 'recovery-1',
+      });
+    expect(validateRecoveryFreshness).toHaveBeenCalledWith({}, {
+      repo: 'cecelia', headRevision: HEAD_SHA,
+    });
+  });
+
+  it('blocks recovery diff outside the frozen Map implementation allowlist', async () => {
+    const gates = createHarnessImpactGates({
+      db: {},
+      getActiveContract: vi.fn().mockResolvedValue({
+        id: 'impact-recovery-1', repo: 'cecelia', base_revision: BASE_SHA,
+        contract_hash: 'c'.repeat(64), contract_body: { required_assertions: [] },
+      }),
+      getRecoveryContext: vi.fn().mockResolvedValue({
+        id: 'recovery-1', repo: 'cecelia', base_sha: BASE_SHA,
+        consumed_attempt_id: 'generator-attempt-1',
+      }),
+      readChangedFiles: vi.fn().mockResolvedValue(['packages/brain/src/orchestrator/dispatcher.js']),
+    });
+
+    await expect(gates.beforeEvaluate({
+      task: { id: TASK_ID, payload: { change_kind: 'bugfix' } },
+      run: { id: RUN_ID, map_recovery_contract_id: 'recovery-1' },
+      pr: { head_sha: HEAD_SHA },
+    })).resolves.toMatchObject({ gate: 'blocked', reason: 'map_recovery_diff_forbidden' });
+  });
+
   it('generator-fix 对已扩展合同按 head revision 验 freshness', async () => {
     const active = {
       id: 'contract-1',
@@ -157,6 +223,34 @@ describe('Harness Impact Gate 生产接线适配器', () => {
       taskId: TASK_ID,
       headRevision: HEAD_SHA,
       changedFiles: ['packages/brain/src/tick.js'],
+    }));
+  });
+
+  it('evaluator 对 Runner 验证的本地候选使用冻结 changed_files，不要求 Brain 拥有候选对象', async () => {
+    const active = {
+      id: 'contract-1', repo: 'perfectuser21/cecelia',
+      base_revision: BASE_SHA, contract_hash: 'c'.repeat(64),
+    };
+    const diffGate = vi.fn().mockResolvedValue({ gate: 'pass', contract: active });
+    const readChangedFiles = vi.fn().mockRejectedValue(new Error('candidate object is remote'));
+    const gates = createHarnessImpactGates({
+      db: {}, getActiveContract: vi.fn().mockResolvedValue(active), diffGate, readChangedFiles,
+    });
+
+    const result = await gates.beforeEvaluate({
+      task: { id: TASK_ID, payload: {} },
+      pr: {
+        head_sha: HEAD_SHA,
+        type: 'git_candidate',
+        verification_status: 'verified',
+        changed_files: ['docker/cecelia-runner/entrypoint.sh'],
+      },
+    });
+
+    expect(result.gate).toBe('pass');
+    expect(readChangedFiles).not.toHaveBeenCalled();
+    expect(diffGate).toHaveBeenCalledWith(expect.objectContaining({
+      changedFiles: ['docker/cecelia-runner/entrypoint.sh'],
     }));
   });
 

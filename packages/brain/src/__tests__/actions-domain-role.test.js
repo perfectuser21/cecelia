@@ -9,6 +9,23 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 const mockQuery = vi.hoisted(() => vi.fn());
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
 
+const mockCreateRoutedTask = vi.hoisted(() => vi.fn());
+async function routedTaskDouble(db, request) {
+  const task = request.task;
+  const params = [
+    request.title, request.description, task.priority, task.project_id, task.goal_id,
+    task.tags, request.requested_task_type, task.prd_content, task.execution_profile,
+    Object.keys(request.metadata).length > 0 ? JSON.stringify(request.metadata) : null,
+    task.trigger_source, task.domain, task.owner_role, task.delivery_type,
+  ];
+  const result = await db.query(
+    `/* createRoutedTask test double: domain owner_role delivery_type */`,
+    params,
+  );
+  return { task: result.rows[0] };
+}
+vi.mock('../work-routing-store.js', () => ({ createRoutedTask: mockCreateRoutedTask }));
+
 const mockBroadcast = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock('../task-updater.js', () => ({ broadcastTaskState: mockBroadcast }));
 
@@ -26,10 +43,32 @@ beforeAll(async () => {
 describe('actions.js - domain 自动填充', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockCreateRoutedTask.mockReset().mockImplementation(routedTaskDouble);
   });
 
   // ===== createTask =====
   describe('createTask - domain 填充', () => {
+    it('harness_initiative 缺省仍按 coding mutation 分类，不得落入 operations', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      mockCreateRoutedTask.mockResolvedValueOnce({
+        task: { id: 'task-kernel', title: '修复执行链', status: 'queued' },
+      });
+
+      await createTask({
+        title: '修复执行链',
+        task_type: 'harness_initiative',
+        trigger_source: 'cortex',
+        declared_change_kind: 'bugfix',
+        repo_hint: 'cecelia',
+      });
+
+      expect(mockCreateRoutedTask.mock.calls[0][1]).toMatchObject({
+        mutation_intent: 'write',
+        declared_domain: 'coding',
+      });
+    });
+
     it('传入 domain=coding 时 INSERT 包含该 domain', async () => {
       const fakeTask = { id: 'task-1', title: '测试', status: 'queued' };
       mockQuery.mockResolvedValueOnce({ rows: [] }); // dedup

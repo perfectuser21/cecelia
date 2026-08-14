@@ -12,6 +12,7 @@
  */
 
 import _pool from './db.js';
+import { createTask } from './actions.js';
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -207,7 +208,7 @@ async function getSuggestionById(dbPool, id) {
 async function createPipelineTask(dbPool, suggestion) {
   const today = toDateString(new Date());
   const title = `[内容流水线] ${suggestion.keyword} ${today}`;
-  const payload = JSON.stringify({
+  const payload = {
     pipeline_keyword: suggestion.keyword,
     content_type: suggestion.content_type || 'solo-company-case',
     title_candidates: suggestion.title_candidates || [],
@@ -217,22 +218,25 @@ async function createPipelineTask(dbPool, suggestion) {
     trigger_source: 'daily_topic_selection',
     selected_date: today,
     suggestion_id: suggestion.id,
+  };
+
+  const result = await createTask({
+    title,
+    task_type: 'content-pipeline',
+    status: 'queued',
+    priority: 'P1',
+    goal_id: CONTENT_KR_GOAL_ID,
+    created_by: 'cecelia-brain',
+    payload,
+    trigger_source: 'brain_auto',
+    location: 'us',
+    domain: 'content',
+    source: 'scheduler',
+    source_id: `topic-suggestion:${suggestion.id}`,
+    db: dbPool,
   });
 
-  const { rows } = await dbPool.query(
-    `INSERT INTO tasks (
-       title, task_type, status, priority,
-       goal_id, created_by, payload, trigger_source, location, domain
-     )
-     VALUES (
-       $1, 'content-pipeline', 'queued', 'P1',
-       $2, 'cecelia-brain', $3, 'brain_auto', 'us', 'content'
-     )
-     RETURNING id`,
-    [title, CONTENT_KR_GOAL_ID, payload]
-  );
-
-  return rows[0].id;
+  return result.task.id;
 }
 
 function toDateString(date) {

@@ -48,38 +48,41 @@ describe('triggerCiPatrol', () => {
     expect(r).toEqual({ triggered: false, skipped_window: false, skipped_recent: true });
   });
   it('窗口内且无当日任务 → INSERT 正确字段', async () => {
+    const createTask = vi.fn(async (input) => ({ task: { id: 'new-task-id', ...input } }));
     const pool = {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })                    // hasTodayCiPatrol
         .mockResolvedValueOnce({ rows: [{ id: 'new-task-id' }] }), // INSERT
     };
-    const r = await triggerCiPatrol(pool, new Date('2026-07-09T00:01:00Z'));
+    const r = await triggerCiPatrol(pool, new Date('2026-07-09T00:01:00Z'), createTask);
     expect(r.triggered).toBe(true);
     expect(r.task_id).toBe('new-task-id');
-    const [sql, params] = pool.query.mock.calls[1];
-    expect(sql).toContain("'ci_patrol'");
-    expect(sql).toContain("'brain_auto'");
-    expect(sql).toContain("'us'");
-    expect(params[0]).toContain('[ci-patrol]');
-    const payload = JSON.parse(params[1]);
+    const params = createTask.mock.calls[0][0];
+    expect(params.task_type).toBe('ci_patrol');
+    expect(params.trigger_source).toBe('brain_auto');
+    expect(params.location ?? 'us').toBe('us');
+    expect(params.title).toContain('[ci-patrol]');
+    const payload = params.payload;
     expect(payload.prd_summary.length).toBeGreaterThanOrEqual(20);
   });
   it('去重查询失败时 warn 后继续创建（宁重不漏，同 arch 模式）', async () => {
+    const createTask = vi.fn(async () => ({ task: { id: 'new-task-id' } }));
     const pool = {
       query: vi.fn()
         .mockRejectedValueOnce(new Error('db down'))
         .mockResolvedValueOnce({ rows: [{ id: 'new-task-id' }] }),
     };
-    const r = await triggerCiPatrol(pool, new Date('2026-07-09T00:01:00Z'));
+    const r = await triggerCiPatrol(pool, new Date('2026-07-09T00:01:00Z'), createTask);
     expect(r.triggered).toBe(true);
   });
   it('INSERT 失败返回 error 不抛出', async () => {
+    const createTask = vi.fn(async () => { throw new Error('insert fail'); });
     const pool = {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [] })
         .mockRejectedValueOnce(new Error('insert fail')),
     };
-    const r = await triggerCiPatrol(pool, new Date('2026-07-09T00:01:00Z'));
+    const r = await triggerCiPatrol(pool, new Date('2026-07-09T00:01:00Z'), createTask);
     expect(r.triggered).toBe(false);
     expect(r.error).toBe('insert fail');
   });

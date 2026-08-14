@@ -35,6 +35,10 @@ describe('content-type-registry', () => {
       const config = await getContentType('nonexistent-type-xyz');
       expect(config).toBeNull();
     });
+
+    it('拒绝把内容类型名称解释为文件系统路径', async () => {
+      await expect(getContentType('../package')).rejects.toThrow('content_type_name_invalid');
+    });
   });
 
   describe('listContentTypes', () => {

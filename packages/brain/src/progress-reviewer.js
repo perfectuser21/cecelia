@@ -10,6 +10,7 @@
  */
 
 import { getTaskLocation } from './task-router.js';
+import { createTask } from './actions.js';
 
 /**
  * 收集 Project 完成数据，对比时间预算。
@@ -160,7 +161,7 @@ async function shouldAdjustPlan(pool, krId, completedProjectId) {
  * @param {Object} params.suggestion - 调整建议
  * @returns {Promise<Object>} 创建的 task + review 记录
  */
-async function createPlanAdjustmentTask(pool, { krId, completedProjectId, suggestion }) {
+async function createPlanAdjustmentTask(pool, { krId, completedProjectId, suggestion }, taskCreator = createTask) {
   // 1. 创建 decomp_reviews 记录
   const reviewRow = await pool.query(
     `INSERT INTO decomp_reviews (entity_type, entity_id, reviewer)
@@ -172,13 +173,12 @@ async function createPlanAdjustmentTask(pool, { krId, completedProjectId, sugges
 
   // 2. 创建 decomp_review task
   const location = getTaskLocation('decomp_review');
-  const task = await pool.query(
-    `INSERT INTO tasks (title, description, status, priority, goal_id, task_type, payload, trigger_source)
-     VALUES ($1, $2, 'queued', 'P1', $3, 'decomp_review', $4, 'brain_auto')
-     RETURNING id, title`,
-    [
-      `计划调整审查: ${suggestion.completedProjectName}`,
-      [
+  const created = await taskCreator({
+    db: pool,
+    source: 'child',
+    source_id: `plan-adjustment-review:${reviewId}`,
+    title: `计划调整审查: ${suggestion.completedProjectName}`,
+    description: [
         `Project「${suggestion.completedProjectName}」已完成，请审查执行情况并决定是否调整后续计划。`,
         '',
         `执行数据:`,
@@ -197,28 +197,31 @@ async function createPlanAdjustmentTask(pool, { krId, completedProjectId, sugges
         '- verdict: approved（继续按计划）/ needs_revision（需要调整）',
         '- findings: { plan_adjustment: true/false, adjustments: [...] }',
       ].join('\n'),
-      krId,
-      JSON.stringify({
-        entity_type: 'project',
-        entity_id: completedProjectId,
-        review_id: reviewId,
-        review_scope: 'plan_adjustment',
-        plan_context: suggestion,
-        routing: location,
-      }),
-    ]
-  );
+    goal_id: krId,
+    task_type: 'decomp_review',
+    priority: 'P1',
+    trigger_source: 'brain_auto',
+    payload: {
+      entity_type: 'project',
+      entity_id: completedProjectId,
+      review_id: reviewId,
+      review_scope: 'plan_adjustment',
+      plan_context: suggestion,
+      routing: location,
+    },
+  });
+  const task = created.task;
 
   // 3. 回填 task_id
   await pool.query(
     `UPDATE decomp_reviews SET task_id = $1 WHERE id = $2`,
-    [task.rows[0].id, reviewId]
+    [task.id, reviewId]
   );
 
-  console.log(`[progress-reviewer] Created plan adjustment task ${task.rows[0].id} for project "${suggestion.completedProjectName}"`);
+  console.log(`[progress-reviewer] Created plan adjustment task ${task.id} for project "${suggestion.completedProjectName}"`);
 
   return {
-    task: task.rows[0],
+    task,
     review: { id: reviewId },
   };
 }

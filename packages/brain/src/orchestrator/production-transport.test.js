@@ -259,10 +259,7 @@ describe('production execution transport', () => {
         ...ENVELOPE,
         machine_id: machine,
       });
-      expect(body.github_credential_envelope).toEqual({
-        ...GITHUB_ENVELOPE,
-        machine_id: machine,
-      });
+      expect(body).not.toHaveProperty('github_credential_envelope');
       expect(JSON.stringify(body)).not.toMatch(
         /worktree_path|workspace_path|\/Users\/operator/,
       );

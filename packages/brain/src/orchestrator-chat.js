@@ -12,7 +12,9 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import pool from './db.js';
+import { createTask } from './actions.js';
 import { buildMemoryContext, CHAT_TOKEN_BUDGET } from './memory-retriever.js';
 import { extractAndSaveUserFacts, getUserProfileContext } from './user-profile.js';
 import { callLLM } from './llm-caller.js';
@@ -785,10 +787,26 @@ async function _executeChatAction(action) {
   switch (action.type) {
     case 'create_task': {
       const p = action.params || {};
-      await pool.query(`
-        INSERT INTO tasks (title, description, priority, task_type, status, trigger_source)
-        VALUES ($1, $2, $3, $4, 'queued', 'chat_thalamus')
-      `, [p.title || 'Chat-triggered task', p.description || '', p.priority || 'P2', p.task_type || 'research']);
+      await createTask({
+        source: 'conversation',
+        source_id: p.source_id || `chat-thalamus:${randomUUID()}`,
+        title: p.title || 'Chat-triggered task',
+        description: p.description || '',
+        priority: p.priority || 'P2',
+        task_type: p.task_type || 'research',
+        goal_id: p.goal_id,
+        trigger_source: 'chat_thalamus',
+        allow_unscoped: true,
+        mutation_intent: p.mutation_intent,
+        declared_domain: p.declared_domain,
+        declared_change_kind: p.declared_change_kind,
+        execution_profile_override_request: p.execution_profile_override_request,
+        repo_hint: p.repo_hint,
+        map_scope_hint: p.map_scope_hint,
+        branch: p.branch,
+        base_sha: p.base_sha,
+        payload: p.payload,
+      });
       break;
     }
     case 'adjust_priority': {

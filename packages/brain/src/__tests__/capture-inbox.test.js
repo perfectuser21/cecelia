@@ -17,7 +17,7 @@ describe('pushCaptureAtom', () => {
     expect(sql2).toMatch(/INSERT INTO capture_atoms/);
     // capture_atoms params: [captureId, content, target_type, target_subtype, routed_to_table, routed_to_id, lane]
     // （08-04 签名修复：routedToTable/routedToId/lane 恢复落库，不再静默丢弃）
-    expect(params2).toEqual(['atom-1', 'x', 'handoff', 'PASS', 'tasks', '11111111-1111-1111-1111-111111111111', null]);
+    expect(params2).toEqual(['atom-1', 'x', 'handoff', 'PASS', 'tasks', '11111111-1111-1111-1111-111111111111', null, '{}']);
   });
 
   it('content 超 2000 字截断（MAX_CONTENT_LEN=2000）', async () => {
@@ -46,6 +46,25 @@ describe('pushCaptureAtom', () => {
  * 永久保留在 CI 作为 regression（合同 C3）。
  */
 describe('pushCapture 幂等（F6加厚回归 — Contract ed911a7c）', () => {
+  it('persists the complete coding routing baseline on a task atom', async () => {
+    const pool = { query: vi.fn()
+      .mockResolvedValueOnce({ rows: [{ id: 'capture-route', inserted: true }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'atom-route' }] }) };
+    const metadata = {
+      repo: 'cecelia', change_kind: 'bugfix', map_scope: ['F0'],
+      branch: 'cp-map-fix', base_sha: 'a'.repeat(40),
+    };
+
+    await pushCapture(pool, {
+      content: 'fix map', targetType: 'task', targetSubtype: 'bugfix',
+      routingMetadata: metadata,
+    });
+
+    const atomInsert = pool.query.mock.calls.find(([sql]) => /INSERT INTO capture_atoms/.test(sql));
+    expect(atomInsert[0]).toMatch(/metadata/);
+    expect(JSON.parse(atomInsert[1].at(-1))).toEqual(metadata);
+  });
+
   it('[REGRESSION] ON CONFLICT 命中已有 capture 时返回 dedupeHit=true', async () => {
     const pool = {
       query: vi.fn().mockResolvedValue({ rows: [{ id: 'cap-existing', inserted: false }] }),

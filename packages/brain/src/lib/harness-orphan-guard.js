@@ -16,7 +16,7 @@
  *   - 只动 status='in_progress' 的行(UPDATE 带条件守卫,防与正常回写竞态)
  */
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import defaultPool from '../db.js';
 import {
   assessKernelLiveness,
@@ -43,13 +43,15 @@ function shortIdOf(taskOrContainerId) {
   return String(taskOrContainerId.id || '').replace(/-/g, '').slice(0, 8) || null;
 }
 
-function defaultExecFn(cmd) {
-  return execSync(cmd, { encoding: 'utf8', timeout: 10000 });
+function defaultExecFn(executable, args) {
+  return execFileSync(executable, args, { encoding: 'utf8', timeout: 10000 });
 }
 
 /** 该 initiative 是否还有活容器(可排除某个正在退出的容器名)。抛错=判活失败,由调用方 fail-open。 */
 export function findLiveRelayContainers(execFn, shortId, excludeName = null) {
-  const out = execFn(`docker ps --format '{{.Names}}' --filter name=cecelia-relay-${shortId}`) || '';
+  const out = execFn('docker', [
+    'ps', '--format', '{{.Names}}', '--filter', `name=cecelia-relay-${shortId}`,
+  ]) || '';
   return out
     .split('\n')
     .map((s) => s.trim())
@@ -409,7 +411,14 @@ export async function sweepOrphanHarnessTasks({
 }
 
 /** 定时器(与 zombie-reaper 同节奏 5 分钟,由 server.js 启动)。 */
-export function startHarnessOrphanGuard({ pool = defaultPool, execFn = defaultExecFn, idleMinutes = 15, intervalMs = 5 * 60 * 1000 } = {}) {
+export async function startHarnessOrphanGuard({
+  pool = defaultPool,
+  execFn = defaultExecFn,
+  idleMinutes = 15,
+  intervalMs = 5 * 60 * 1000,
+  reconcileOwnerless = reconcileOwnerlessKernelRuns,
+} = {}) {
+  // 启动首轮是接流量前的安全闸；timer 仅为后备巡检。
   const timer = setInterval(async () => {
     try {
       await sweepOrphanHarnessTasks({ pool, execFn, idleMinutes });
@@ -419,7 +428,7 @@ export function startHarnessOrphanGuard({ pool = defaultPool, execFn = defaultEx
     // Session Controller 生命周期恢复（sprint 08131104）：无主 Kernel Run（Controller fatal /
     // lease 过期 / 迁移前无主历史 run）fail-closed 进恢复，绝不静默放行。与孤儿巡检同节奏。
     try {
-      const recovered = await reconcileOwnerlessKernelRuns(pool);
+      const recovered = await reconcileOwnerless(pool);
       if (recovered.length > 0) {
         console.log(`[orphan-guard] ownerless kernel runs recovered=${recovered.length}`);
       }
@@ -428,6 +437,15 @@ export function startHarnessOrphanGuard({ pool = defaultPool, execFn = defaultEx
     }
   }, intervalMs);
   if (timer.unref) timer.unref();
+  try {
+    const initialRecovered = await reconcileOwnerless(pool);
+    if (initialRecovered.length > 0) {
+      console.log(`[orphan-guard] startup ownerless kernel runs recovered=${initialRecovered.length}`);
+    }
+  } catch (error) {
+    // server listener 前已有一次硬闸；这里失败仍保留周期后备，避免永久失去巡检。
+    console.error('[orphan-guard] startup ownerless-run 恢复异常:', error.message);
+  }
   console.log(`[orphan-guard] started (interval=${intervalMs}ms, idle=${idleMinutes}min)`);
   return timer;
 }

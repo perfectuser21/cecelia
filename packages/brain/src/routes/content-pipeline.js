@@ -35,6 +35,7 @@ import { listContentTypes, getContentType, getContentTypeFromYaml, listContentTy
 import { triggerDailyTopicSelection, hasTodayTopics } from '../topic-selection-scheduler.js';
 import { callLLM } from '../llm-caller.js';
 import { validateAllVariants } from '../content-quality-validator.js';
+import { createTask } from '../actions.js';
 
 const router = express.Router();
 
@@ -362,23 +363,22 @@ router.post('/', async (req, res) => {
       payload.notebook_id = resolvedNotebookId;
     }
 
-    const result = await pool.query(
-      `INSERT INTO tasks (title, description, task_type, status, priority,
-                          project_id, goal_id, trigger_source, payload, created_at)
-       VALUES ($1, $2, 'content-pipeline', 'queued', $3, $4, $5, $6, $7, NOW())
-       RETURNING id, title, status, priority, payload, created_at`,
-      [
-        `[内容工厂] ${keyword} (${content_type})`,
-        `内容工厂 Pipeline：关键词「${keyword}」，类型「${content_type}」。将由 tick 自动编排 content-research → content-generate → content-review → content-export 四个阶段。`,
-        priority,
-        project_id,
-        goal_id,
-        'content_pipeline_api',
-        JSON.stringify(payload),
-      ]
-    );
+    const result = await createTask({
+      title: `[内容工厂] ${keyword} (${content_type})`,
+      description: `内容工厂 Pipeline：关键词「${keyword}」，类型「${content_type}」。将由 tick 自动编排 content-research → content-generate → content-review → content-export 四个阶段。`,
+      task_type: 'content-pipeline',
+      status: 'queued',
+      priority,
+      project_id,
+      goal_id,
+      trigger_source: 'content_api',
+      payload,
+      source: 'api',
+      allow_unscoped: true,
+      db: pool,
+    });
 
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(result.task);
   } catch (err) {
     console.error('[routes/content-pipeline] POST / error:', err.message);
     res.status(500).json({ error: err.message });
@@ -443,22 +443,21 @@ router.post('/batch', async (req, res) => {
     for (const item of items) {
       const keyword = item.keyword.trim();
       const content_type = (item.content_type || default_content_type).trim();
-      const result = await pool.query(
-        `INSERT INTO tasks (title, description, task_type, status, priority,
-                            project_id, goal_id, trigger_source, payload, created_at)
-         VALUES ($1, $2, 'content-pipeline', 'queued', $3, $4, $5, $6, $7, NOW())
-         RETURNING id, title, status, priority, payload, created_at`,
-        [
-          `[内容工厂] ${keyword} (${content_type})`,
-          `内容工厂 Pipeline：关键词「${keyword}」，类型「${content_type}」。批量创建，将由 tick 自动编排四阶段。`,
-          priority,
-          project_id,
-          goal_id,
-          'content_pipeline_batch_api',
-          JSON.stringify({ keyword, content_type }),
-        ]
-      );
-      created.push(result.rows[0]);
+      const result = await createTask({
+        title: `[内容工厂] ${keyword} (${content_type})`,
+        description: `内容工厂 Pipeline：关键词「${keyword}」，类型「${content_type}」。批量创建，将由 tick 自动编排四阶段。`,
+        task_type: 'content-pipeline',
+        status: 'queued',
+        priority,
+        project_id,
+        goal_id,
+        trigger_source: 'content_batch_api',
+        payload: { keyword, content_type },
+        source: 'api',
+        allow_unscoped: true,
+        db: pool,
+      });
+      created.push(result.task);
     }
 
     res.status(201).json({ count: created.length, pipelines: created });
@@ -1091,14 +1090,20 @@ router.post('/e2e-trigger', async (req, res) => {
       triggered_at: new Date().toISOString(),
     };
 
-    const insertResult = await pool.query(
-      `INSERT INTO tasks (title, task_type, status, payload, priority, tags)
-       VALUES ($1, 'content-pipeline', 'queued', $2::jsonb, 'P2', ARRAY['e2e-trigger','auto'])
-       RETURNING id`,
-      [`[Pipeline] ${cleanKeyword} (${content_type})`, JSON.stringify(pipelinePayload)]
-    );
+    const insertResult = await createTask({
+      title: `[Pipeline] ${cleanKeyword} (${content_type})`,
+      task_type: 'content-pipeline',
+      status: 'queued',
+      payload: pipelinePayload,
+      priority: 'P2',
+      tags: ['e2e-trigger', 'auto'],
+      trigger_source: 'content_e2e',
+      source: 'api',
+      allow_unscoped: true,
+      db: pool,
+    });
 
-    const pipelineId = insertResult.rows[0].id;
+    const pipelineId = insertResult.task.id;
     console.log(`[e2e-trigger] 创建 pipeline ${pipelineId}：${cleanKeyword}（等 ZJ pipeline-worker 拉取）`);
 
     return res.json({
@@ -1180,14 +1185,20 @@ router.post('/batch-e2e-trigger', async (req, res) => {
         triggered_at: new Date().toISOString(),
       };
 
-      const insertResult = await pool.query(
-        `INSERT INTO tasks (title, task_type, status, payload, priority, tags)
-         VALUES ($1, 'content-pipeline', 'queued', $2::jsonb, 'P2', ARRAY['batch-e2e-trigger','auto'])
-         RETURNING id`,
-        [`[Pipeline] ${keyword} (${content_type})`, JSON.stringify(pipelinePayload)]
-      );
+      const insertResult = await createTask({
+        title: `[Pipeline] ${keyword} (${content_type})`,
+        task_type: 'content-pipeline',
+        status: 'queued',
+        payload: pipelinePayload,
+        priority: 'P2',
+        tags: ['batch-e2e-trigger', 'auto'],
+        trigger_source: 'content_batch_e2e',
+        source: 'api',
+        allow_unscoped: true,
+        db: pool,
+      });
 
-      const pipelineId = insertResult.rows[0].id;
+      const pipelineId = insertResult.task.id;
       results.push({ pipeline_id: pipelineId, keyword, content_type, status: 'queued' });
       console.log(`[batch-e2e-trigger] [${i + 1}/${keywords.length}] 创建 pipeline ${pipelineId}：${keyword} (${content_type})`);
     } catch (err) {

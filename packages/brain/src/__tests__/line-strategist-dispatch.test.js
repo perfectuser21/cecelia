@@ -15,20 +15,20 @@ describe('dispatchStrategistDecisions', () => {
     });
     // 2. 查重：该 journey_id 无排队中的 strategist_decision
     mockPool.query.mockResolvedValueOnce({ rows: [] });
-    // 3. INSERT INTO tasks（新建 strategist_decision）
-    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'new-task-id' }] });
-    // 4. UPDATE tasks payload 标记 strategist_dispatched（task-1）
+    const taskCreator = vi.fn().mockResolvedValue({ task: { id: 'new-task-id' } });
+    // 3. UPDATE tasks payload 标记 strategist_dispatched（task-1）
     mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-    const result = await dispatchStrategistDecisions(mockPool);
+    const result = await dispatchStrategistDecisions(mockPool, { taskCreator });
 
     expect(result).toEqual({ scanned: 1, dispatched: 1, skipped_duplicate: 0, marked: 1, failed: 0 });
 
-    const [insertSql, insertParams] = mockPool.query.mock.calls[2];
-    expect(insertSql).toMatch(/INSERT INTO tasks/);
-    expect(insertSql).toMatch(/trigger_source/);
-    expect(insertParams).toContain('strategist_decision');
-    expect(insertParams).toContain('brain_auto');
+    expect(taskCreator).toHaveBeenCalledWith(expect.objectContaining({
+      db: mockPool,
+      source: 'child',
+      task_type: 'strategist_decision',
+      trigger_source: 'brain_auto',
+    }));
   });
 
   it('skips creating a new task when a queued strategist_decision already exists for the journey', async () => {
@@ -63,11 +63,11 @@ describe('dispatchStrategistDecisions', () => {
       ],
     });
     mockPool.query.mockResolvedValueOnce({ rows: [] }); // 查重（一次，因为同一 journey_id 只查一次）
-    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'new-task-id' }] }); // INSERT
     mockPool.query.mockResolvedValueOnce({ rows: [] }); // 标记 task-1
     mockPool.query.mockResolvedValueOnce({ rows: [] }); // 标记 task-2
+    const taskCreator = vi.fn().mockResolvedValue({ task: { id: 'new-task-id' } });
 
-    const result = await dispatchStrategistDecisions(mockPool);
+    const result = await dispatchStrategistDecisions(mockPool, { taskCreator });
 
     expect(result).toEqual({ scanned: 2, dispatched: 1, skipped_duplicate: 0, marked: 2, failed: 0 });
   });
@@ -86,17 +86,18 @@ describe('dispatchStrategistDecisions', () => {
         { id: 'task-ok', journey_id: 'journey-ok', status: 'completed' },
       ],
     });
-    // journey-fail: 查重通过，INSERT 抛错
+    const taskCreator = vi.fn()
+      .mockRejectedValueOnce(new Error('violates check constraint tasks_task_type_check'))
+      .mockResolvedValueOnce({ task: { id: 'new-task-id' } });
+    // journey-fail: 查重通过，统一 writer 抛错
     mockPool.query.mockResolvedValueOnce({ rows: [] }); // 查重 journey-fail
-    mockPool.query.mockRejectedValueOnce(new Error('violates check constraint tasks_task_type_check')); // INSERT 失败
-    // journey-ok: 查重通过，INSERT 成功
+    // journey-ok: 查重通过，统一 writer 成功
     mockPool.query.mockResolvedValueOnce({ rows: [] }); // 查重 journey-ok
-    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'new-task-id' }] }); // INSERT 成功
     // 标记两条源任务
     mockPool.query.mockResolvedValueOnce({ rows: [] }); // 标记 task-fail
     mockPool.query.mockResolvedValueOnce({ rows: [] }); // 标记 task-ok
 
-    const result = await dispatchStrategistDecisions(mockPool);
+    const result = await dispatchStrategistDecisions(mockPool, { taskCreator });
 
     expect(result).toEqual({
       scanned: 2, dispatched: 1, skipped_duplicate: 0, marked: 2, failed: 1,

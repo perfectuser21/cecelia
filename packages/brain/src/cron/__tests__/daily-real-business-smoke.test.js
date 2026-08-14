@@ -26,6 +26,9 @@ vi.mock('../../db.js', () => ({
   default: { query: vi.fn() },
 }));
 
+const mockCreateTask = vi.hoisted(() => vi.fn());
+vi.mock('../../actions.js', () => ({ createTask: mockCreateTask }));
+
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -37,6 +40,11 @@ vi.mock('fs', async (importOriginal) => {
 
 import { raise } from '../../alerting.js';
 import { existsSync, readdirSync } from 'fs';
+
+beforeEach(() => {
+  mockCreateTask.mockReset();
+  mockCreateTask.mockResolvedValue({ task: { id: 'task-123' } });
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // isInSmokeWindow
@@ -109,24 +117,21 @@ describe('createSmokeTask', () => {
     const id = await createSmokeTask(mockPool, now);
 
     expect(id).toBe('task-123');
-    const [sql, params] = mockPool.query.mock.calls[0];
-    expect(sql).toContain('content-pipeline');
-    expect(sql).toContain('brain_cron_daily_smoke');
-    expect(params[0]).toBe('[E2E daily smoke] 2026-04-27');
-    const payload = JSON.parse(params[1]);
+    const params = mockCreateTask.mock.calls[0][0];
+    expect(params.task_type).toBe('content-pipeline');
+    expect(params.trigger_source).toBe('brain_cron_daily_smoke');
+    expect(params.title).toBe('[E2E daily smoke] 2026-04-27');
+    const payload = params.payload;
     expect(payload.content_type).toBe('solo-company-case');
     expect(payload.triggered_by).toBe('brain_cron_daily_smoke');
   });
 
   it('ON CONFLICT → 查询已有记录并返回', async () => {
-    const mockPool = {
-      query: vi.fn()
-        .mockResolvedValueOnce({ rows: [] })             // INSERT ON CONFLICT: 无新行
-        .mockResolvedValueOnce({ rows: [{ id: 'existing-456' }] }),  // 查已有
-    };
+    const mockPool = { query: vi.fn() };
+    mockCreateTask.mockResolvedValueOnce({ task: { id: 'existing-456' }, deduplicated: true });
     const id = await createSmokeTask(mockPool, new Date('2026-04-27T20:01:00Z'));
     expect(id).toBe('existing-456');
-    expect(mockPool.query).toHaveBeenCalledTimes(2);
+    expect(mockCreateTask).toHaveBeenCalledOnce();
   });
 });
 
@@ -268,10 +273,10 @@ describe('handleSmokeFailure', () => {
     await handleSmokeFailure(mockPool, 'task-999', 'pipeline failed', 'content-research');
 
     expect(raise).toHaveBeenCalledWith('P0', 'daily_smoke_failed', expect.stringContaining('content-research'));
-    const [sql, params] = mockPool.query.mock.calls[0];
-    expect(sql).toContain("'dev'");
-    expect(params[0]).toContain('smoke-alert');
-    const payload = JSON.parse(params[1]);
+    const params = mockCreateTask.mock.calls[0][0];
+    expect(params.task_type).toBe('dev');
+    expect(params.title).toContain('smoke-alert');
+    const payload = params.payload;
     expect(payload.pipeline_id).toBe('task-999');
     expect(payload.failed_stage).toBe('content-research');
   });
@@ -288,6 +293,7 @@ describe('handleSmokeFailure', () => {
     const mockPool = {
       query: vi.fn().mockRejectedValue(new Error('DB error')),
     };
+    mockCreateTask.mockRejectedValueOnce(new Error('DB error'));
     // 不应抛出
     await expect(handleSmokeFailure(mockPool, 'task-1', '失败', null)).resolves.toBeUndefined();
   });
@@ -353,6 +359,7 @@ describe('runDailySmoke', () => {
         .mockResolvedValueOnce({ rows: [{ id: 'new-task-777' }] }),  // createSmokeTask
     };
     const inWindow = new Date('2026-04-27T20:01:00Z');
+    mockCreateTask.mockResolvedValueOnce({ task: { id: 'new-task-777' } });
     const result = await runDailySmoke(mockPool, inWindow);
 
     expect(result.triggered).toBe(true);
@@ -370,6 +377,7 @@ describe('runDailySmoke', () => {
         .mockRejectedValueOnce(new Error('DB down')),  // createSmokeTask 失败
     };
     const inWindow = new Date('2026-04-27T20:01:00Z');
+    mockCreateTask.mockRejectedValueOnce(new Error('DB down'));
     const result = await runDailySmoke(mockPool, inWindow);
 
     expect(result.triggered).toBe(false);

@@ -10,6 +10,9 @@
 import { createHash } from 'node:crypto';
 import { describe, test, expect, vi } from 'vitest';
 
+const mockCreateTask = vi.hoisted(() => vi.fn());
+vi.mock('../../actions.js', () => ({ createTask: mockCreateTask }));
+
 import {
   addHardDependency,
   assignRepairTaskWithDependency,
@@ -23,6 +26,7 @@ import {
 describe('FR-5 Gap Ledger', () => {
 
   test('drift 自动创建可由 Kernel/Harness 执行的 repair task', async () => {
+    mockCreateTask.mockResolvedValueOnce({ task: { id: 'repair-task', payload: {} } });
     const gap = {
       id: 'gap-auto',
       source_task_id: 'source-task',
@@ -34,7 +38,7 @@ describe('FR-5 Gap Ledger', () => {
     const db = {
       query: vi.fn(async (sql) => {
         const s = String(sql);
-        if (s.includes('FROM tasks WHERE id')) {
+        if (s.includes('FROM tasks task') && s.includes('WHERE task.id')) {
           return { rows: [{
             title: 'Source', goal_id: 'goal', project_id: 'project', domain: 'factory',
             payload: {
@@ -58,8 +62,7 @@ describe('FR-5 Gap Ledger', () => {
 
     await createRepairTaskForGap(db, gap, { repo: 'perfectuser21/cecelia' });
 
-    const insert = db.query.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO tasks'));
-    const payload = JSON.parse(insert[1][5]);
+    const payload = mockCreateTask.mock.calls[0][0].payload;
     expect(payload).toMatchObject({
       change_kind: 'bugfix',
       harness_gap_id: gap.id,

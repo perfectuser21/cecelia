@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   transactionClient: { query: vi.fn() },
   terminalize: vi.fn(),
   receiptWriter: vi.fn(),
+  judgeVerifier: vi.fn(),
 }));
 
 vi.mock('../../orchestrator/attempt-store.js', () => ({
@@ -226,6 +227,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       attestation_status: 'verified',
     });
     mocks.receiptWriter.mockResolvedValue([]);
+    mocks.judgeVerifier.mockImplementation(async ({ result }) => result);
     mocks.pool.query.mockImplementation(async (sql) => {
       if (String(sql).includes('FROM initiative_runs r')) {
         return {
@@ -245,6 +247,7 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     app.set('kernelFleetBridgeToken', fleetSecret);
     app.set('kernelFleetTerminalizer', mocks.terminalize);
     app.set('kernelAssertionReceiptWriter', mocks.receiptWriter);
+    app.set('kernelJudgeResultVerifier', mocks.judgeVerifier);
     app.use(express.json());
     app.use('/api/brain', router);
   });
@@ -257,6 +260,49 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ ok: true, deduped: false });
     expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledOnce();
+  });
+
+  it('Judge callback 先过服务端机械闸，再原子投影权威 verdict', async () => {
+    const candidateHead = 'b'.repeat(40);
+    const judgeAttempt = fleetAttempt({
+      role: 'judge',
+      task_bundle: {
+        inputs: {
+          candidate: { head_sha: candidateHead },
+          evaluator_result: {
+            status: 'completed',
+            checks: [{ command: 'npm test', exit_code: 0, log_tail: 'passed' }],
+            decision: { outcome: 'PASS', reason: 'verified' },
+          },
+        },
+      },
+    });
+    mocks.store.getById.mockResolvedValue(judgeAttempt);
+    mocks.judgeVerifier.mockResolvedValueOnce({
+      ...fleetResult(),
+      decision: {
+        outcome: 'FAIL',
+        reason: 'mechanical evidence rejected',
+        failure_class: 'evidence_insufficient',
+      },
+    });
+
+    const response = await postCallback(app, fleetResult());
+
+    expect(response.status).toBe(200);
+    expect(mocks.judgeVerifier).toHaveBeenCalledWith({
+      attempt: judgeAttempt,
+      result: expect.objectContaining({ decision: expect.objectContaining({ outcome: 'PASS' }) }),
+      dbPool: mocks.pool,
+    });
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(expect.objectContaining({
+      result: expect.objectContaining({
+        decision: expect.objectContaining({
+          outcome: 'FAIL',
+          failure_class: 'evidence_insufficient',
+        }),
+      }),
+    }));
   });
 
   it('Fleet callback 在持久化终态前完成 Worker 清理并封存回执', async () => {

@@ -19,7 +19,7 @@ evidence_block="$(
 
 eval "$evidence_block"
 type prepare_evaluator_evidence_capsule >/dev/null 2>&1
-type destroy_evaluator_github_credential >/dev/null 2>&1
+type destroy_untrusted_provider_github_credential >/dev/null 2>&1
 type verify_evaluator_evidence_capsule >/dev/null 2>&1
 type seal_evaluator_evidence_capsule >/dev/null 2>&1
 type prepare_evaluator_provider_identity >/dev/null 2>&1
@@ -59,7 +59,7 @@ prepare_evaluator_evidence_capsule
 test "$EVALUATOR_EVIDENCE_MANIFEST_DIGEST" = "$(printf '%064d' 0)"
 test -f "$HARNESS_EVIDENCE_CAPSULE_DIR/manifest.json"
 
-destroy_evaluator_github_credential
+destroy_untrusted_provider_github_credential
 test ! -e "$GH_HOME/hosts.yml"
 test -z "${CECELIA_GITHUB_CREDENTIAL_FIFO:-}"
 test -z "${GITHUB_CREDENTIAL_SECRET:-}"
@@ -87,7 +87,7 @@ if ! grep -q '"${PROVIDER_IDENTITY_PREFIX\[@\]}"' "$ENTRYPOINT"; then
 fi
 
 PREPARE_LINE="$(grep -n '^  prepare_evaluator_evidence_capsule$' "$ENTRYPOINT" | head -1 | cut -d: -f1)"
-DESTROY_LINE="$(grep -n '^  destroy_evaluator_github_credential$' "$ENTRYPOINT" | head -1 | cut -d: -f1)"
+DESTROY_LINE="$(grep -n '^destroy_untrusted_provider_github_credential$' "$ENTRYPOINT" | head -1 | cut -d: -f1)"
 PROVIDER_LINE="$(grep -n '^run_provider_contract() {' "$ENTRYPOINT" | head -1 | cut -d: -f1)"
 if [[ -z "$PREPARE_LINE" || -z "$DESTROY_LINE" || -z "$PROVIDER_LINE" \
     || "$PREPARE_LINE" -ge "$PROVIDER_LINE" || "$DESTROY_LINE" -ge "$PROVIDER_LINE" ]]; then

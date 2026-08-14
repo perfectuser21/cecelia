@@ -111,7 +111,7 @@ function makeCodexTask(id = 'codex-1', priority = 'P1') {
 }
 
 function makeClaudeTask(id = 'claude-1', priority = 'P1') {
-  return { id, task_type: 'dev', priority, title: `Claude task ${id}`, payload: {}, project_id: null, created_at: '2026-07-16T00:00:00Z' };
+  return { id, task_type: 'research', priority, title: `Claude task ${id}`, payload: {}, project_id: null, created_at: '2026-07-16T00:00:00Z' };
 }
 
 function setupQueryMocks(dispatchedTaskId) {
@@ -126,7 +126,7 @@ function setupQueryMocks(dispatchedTaskId) {
       return Promise.resolve({ rows: [] });
     }
     if (/SELECT \* FROM tasks WHERE id/.test(sql)) {
-      return Promise.resolve({ rows: [{ id: dispatchedTaskId, task_type: 'dev', payload: {}, priority: 'P1', title: 'Claude task' }] });
+      return Promise.resolve({ rows: [{ id: dispatchedTaskId, task_type: 'research', payload: {}, priority: 'P1', title: 'Claude task' }] });
     }
     return Promise.resolve({ rows: [], rowCount: 0 });
   });
@@ -138,7 +138,7 @@ describe('dispatcher HOL blocking fix', () => {
     mockQuery.mockReset();
   });
 
-  it('C1: 队首 codex task (P1) + codex pool 满 + 第二位 dev task → 跳过队首，派 dev task', async () => {
+  it('C1: 队首 codex task (P1) + codex pool 满 + 第二位 Claude task → 跳过队首并派发', async () => {
     const { calculateSlotBudget } = await import('../slot-allocator.js');
     calculateSlotBudget.mockResolvedValue(makeSlotBudget({ codexAvailable: false }));
 

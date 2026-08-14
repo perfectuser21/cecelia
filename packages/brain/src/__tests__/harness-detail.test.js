@@ -155,3 +155,14 @@ describe('GET /harness/initiative/:id/detail', () => {
     expect(typeof res.body.error).toBe('string');
   });
 });
+
+describe('GET /harness/sprint-docs path boundary', () => {
+  it('拒绝目录穿越，不把 query 参数解释为任意文件系统路径', async () => {
+    const res = await request(createApp())
+      .get('/harness/sprint-docs')
+      .query({ sprint_dir: '../../packages/brain' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid sprint_dir');
+  });
+});

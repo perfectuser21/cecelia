@@ -8,7 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock db
-const mockQuery = vi.fn();
+const mockQuery = vi.hoisted(() => vi.fn());
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
 vi.mock('child_process', () => ({ execSync: vi.fn().mockReturnValue('') }));
 vi.mock('fs', () => ({

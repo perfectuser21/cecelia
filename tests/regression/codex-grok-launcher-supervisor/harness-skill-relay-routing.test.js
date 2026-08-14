@@ -18,28 +18,30 @@ function readRelay() {
   return fs.readFileSync(RELAY_PATH, 'utf8');
 }
 
+function readSpawnHeadedSession() {
+  const src = readRelay();
+  const functionDeclaration = 'async function _spawnHeadedSession';
+  const fnStart = src.indexOf(functionDeclaration);
+  expect(fnStart).toBeGreaterThanOrEqual(0);
+  return src.slice(fnStart);
+}
+
 describe('harness-skill-relay-routing: INV-1 三分支路由', () => {
   // ─── 测试 1: executor=grok 时 innerCmd 含 grok-launch.sh（INV-1 GREEN） ─────
   test('executor=grok 时 innerCmd 含 grok-launch.sh（三分支 GREEN）', () => {
-    const src = readRelay();
-    const fnStart = src.indexOf('_spawnHeadedSession');
-    const section = fnStart >= 0 ? src.slice(fnStart, fnStart + 5000) : src;
+    const section = readSpawnHeadedSession();
     expect(/grok-launch\.sh/.test(section)).toBe(true);
   });
 
   // ─── 测试 2: executor=claude 时 innerCmd 含 claude-launch.sh（GP1 不回归） ──
   test('executor=claude 时 innerCmd 仍含 claude-launch.sh（GP1 零回归）', () => {
-    const src = readRelay();
-    const fnStart = src.indexOf('_spawnHeadedSession');
-    const section = fnStart >= 0 ? src.slice(fnStart, fnStart + 5000) : src;
+    const section = readSpawnHeadedSession();
     expect(/claude-launch\.sh/.test(section)).toBe(true);
   });
 
   // ─── 测试 3: 禁止二元形式 isClaudeHeaded ? ... : codex（INV-1 反向断言） ────
   test('innerCmd 无二元 isClaudeHeaded ? ... : codex 形态（INV-1 GREEN）', () => {
-    const src = readRelay();
-    const fnStart = src.indexOf('_spawnHeadedSession');
-    const section = fnStart >= 0 ? src.slice(fnStart, fnStart + 5000) : src;
+    const section = readSpawnHeadedSession();
     // 检测 innerCmd 赋值时的二元形式：isClaudeHeaded ? ... : `...codex ...`
     const binaryPattern = /const innerCmd\s*=\s*isClaudeHeaded[\s\S]{0,200}:\s*`[^`]*codex[^`]*`/;
     expect(binaryPattern.test(section)).toBe(false);
@@ -78,9 +80,7 @@ describe('harness-skill-relay-routing: INV-1 三分支路由', () => {
 
   // ─── 测试 9: isGrokHeaded 三分支变量在 _spawnHeadedSession 中存在 ────────────
   test('_spawnHeadedSession 中 isGrokHeaded 变量被使用（三分支逻辑存在）', () => {
-    const src = readRelay();
-    const fnStart = src.indexOf('_spawnHeadedSession');
-    const section = fnStart >= 0 ? src.slice(fnStart, fnStart + 5000) : src;
+    const section = readSpawnHeadedSession();
     expect(/isGrokHeaded/.test(section)).toBe(true);
   });
 });

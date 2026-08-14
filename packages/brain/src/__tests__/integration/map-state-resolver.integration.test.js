@@ -245,7 +245,12 @@ describe('Map State Resolver — 真实 PostgreSQL', () => {
       expect.arrayContaining([capabilityKey, featureId]),
     );
     expect(radius.must_run_assertions).toEqual([
-      { node_key: assertionId, assertion_ref: testPath },
+      {
+        node_key: assertionId,
+        assertion_ref: testPath,
+        journey_step_link_id: assertionId,
+        assertion_revision: 1,
+      },
     ]);
 
     const crosscut = await loadMapImpactRadius(client, {
@@ -318,7 +323,12 @@ describe('Map State Resolver — 真实 PostgreSQL', () => {
       freshness: { status: 'fresh' },
     });
     expect(radius.must_run_assertions).toEqual([
-      { node_key: assertionId, assertion_ref: testPath },
+      {
+        node_key: assertionId,
+        assertion_ref: testPath,
+        journey_step_link_id: assertionId,
+        assertion_revision: 1,
+      },
     ]);
 
     const health = await readHealth(client, { scopeKey, now: readAt });

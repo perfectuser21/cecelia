@@ -107,7 +107,8 @@ Claude 的本地 session 文件按 attempt 持久化在宿主
 node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid> --dry-run
 
 # 真实运行（通常由 skill-relay 启动）
-node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid>
+node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid> \
+  --controller-session-id <uuid> --controller-generation <n>
 
 # provider runner 静态契约
 bash docker/cecelia-runner/entrypoint-provider-contract.test.sh

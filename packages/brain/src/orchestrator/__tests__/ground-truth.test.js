@@ -6,14 +6,23 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi } from 'vitest';
-import { collectGroundTruth } from '../ground-truth.js';
+import { collectGroundTruth, isLegacyProposalBranchForTask } from '../ground-truth.js';
 import { derive } from '../derive.js';
 import { contractArtifactManifestDigest } from '../contract-artifacts.js';
 
 const RUN_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const TASK_ID = '11111111-2222-4333-8444-555555555555';
 const CONTRACT_ID = '99999999-8888-4777-8666-555555555555';
+const ROUTING_RECEIPT_ID = '77777777-6666-4555-8444-333333333333';
 const PR_URL = 'https://github.com/o/r/pull/42';
+
+describe('legacy proposal branch parser', () => {
+  it('匹配固定语法并按值绑定 task，不从 task id 构造动态正则', () => {
+    expect(isLegacyProposalBranchForTask('cp-harness-propose-r12-11111111-a3', TASK_ID)).toBe(true);
+    expect(isLegacyProposalBranchForTask('cp-harness-propose-r12-aaaaaaaa-a3', TASK_ID)).toBe(false);
+    expect(isLegacyProposalBranchForTask('cp-harness-propose-r12-11111111-a3/../../x', TASK_ID)).toBe(false);
+  });
+});
 
 /** 按 SQL 表名路由的 fake pool */
 function fakePool(rowsByTable = {}) {
@@ -22,10 +31,14 @@ function fakePool(rowsByTable = {}) {
     calls,
     query: vi.fn(async (sql, params) => {
       calls.push([sql, params]);
+      if (sql.includes('AS validation_origin_run_id')) {
+        return { rows: rowsByTable.validation_origins ?? [] };
+      }
       if (sql.includes('FROM initiative_runs')) return { rows: rowsByTable.initiative_runs ?? [] };
       if (sql.includes('FROM initiative_contracts')) return { rows: rowsByTable.initiative_contracts ?? [] };
       if (sql.includes('FROM initiative_contract_artifacts')) return { rows: rowsByTable.initiative_contract_artifacts ?? [] };
       if (sql.includes('FROM tasks')) return { rows: rowsByTable.tasks ?? [] };
+      if (sql.includes('FROM work_routing_receipts')) return { rows: rowsByTable.work_routing_receipts ?? [] };
       if (sql.includes('FROM harness_attempts')) {
         if (sql.includes("role = 'evaluator'")) {
           return { rows: rowsByTable.harness_evaluator_attempts ?? [] };
@@ -57,6 +70,7 @@ function fakeExecCmd(handlers = {}) {
   const fn = vi.fn((cmd) => {
     calls.push(cmd);
     if (cmd.includes('gh pr list')) return handlers.prList ?? '[]';
+    if (cmd.includes('gh api --paginate')) return handlers.prFiles ?? '';
     if (cmd.includes('gh pr view')) return handlers.prView ?? '';
     if (cmd.includes('gh pr checks')) {
       if (handlers.prChecksUnsupported) {
@@ -87,15 +101,40 @@ function makeDeps({ rows = {}, exec = {}, files = {}, readAuthCircuit } = {}) {
     cost_usd: '1.50', current_task_id: TASK_ID,
     ...(rows.run ?? {}),
   };
+  const taskRows = (rows.tasks ?? [{ id: TASK_ID, status: 'in_progress', payload: {} }])
+    .map((task) => {
+      const payload = {
+        ...(typeof task.payload === 'string' ? JSON.parse(task.payload) : (task.payload ?? {})),
+        routing_receipt_id: ROUTING_RECEIPT_ID,
+      };
+      return {
+        ...task,
+        payload: typeof task.payload === 'string' ? JSON.stringify(payload) : payload,
+      };
+    });
   const pool = fakePool({
     initiative_runs: [runRow],
     initiative_contracts: rows.contracts ?? [{ id: CONTRACT_ID, status: 'draft' }],
     initiative_contract_artifacts: rows.contractArtifacts ?? [],
-    tasks: rows.tasks ?? [{ id: TASK_ID, status: 'in_progress', payload: {} }],
+    tasks: taskRows,
+    work_routing_receipts: rows.routingReceipts ?? [{
+      id: ROUTING_RECEIPT_ID,
+      task_id: TASK_ID,
+      work_kind: 'coding_mutation',
+      change_kind: 'new_capability',
+      pipeline: 'harness',
+      canonical_task_type: 'harness_initiative',
+      default_execution_profile: 'new-capability-v1',
+      execution_profile_override: null,
+      repo: 'cecelia',
+      evidence: { branch: 'cp-baseline', base_sha: 'a'.repeat(40) },
+      superseded: false,
+    }],
     harness_attempts: rows.attempts ?? [],
     harness_evaluator_attempts: rows.evaluatorAttempts ?? rows.attempts ?? [],
     orchestrator_decision_log: rows.log ?? [],
     historical_failure_sets: rows.historicalFailureSets ?? [],
+    validation_origins: rows.validationOrigins ?? [],
     account_usage_cache: rows.circuit ?? [],
     gan_case_file: rows.caseFile ?? [],
     ...(rows.attemptsQueryResult !== undefined
@@ -129,8 +168,97 @@ describe('collectGroundTruth：DB 通道组装', () => {
     expect(o.task.status).toBe('in_progress');
     expect(o.contract.approved).toBe(true);
     expect(o.contract.id).toBe(CONTRACT_ID);
+    expect(o.change_kind).toBe('new_capability');
     expect(o.decisionLog).toEqual([]);
     expect(o.authCircuit).toEqual([{ account_id: 'account2', is_auth_failed: true, auth_fail_count: 2 }]);
+  });
+
+  it('只投影 Runner 验证且与 Generator Attempt/Workspace/Machine 一致的本地候选', async () => {
+    const attemptId = '22222222-2222-4222-8222-222222222222';
+    const baseSha = 'a'.repeat(40);
+    const headSha = 'b'.repeat(40);
+    const artifact = {
+      type: 'git_candidate',
+      verification_status: 'verified',
+      source_attempt_id: attemptId,
+      repo: 'perfectuser21/cecelia',
+      branch: 'cp-local-candidate',
+      base_sha: baseSha,
+      head_sha: headSha,
+      machine_id: 'us-mac-m4',
+      changed_files: ['docker/cecelia-runner/entrypoint.sh'],
+    };
+    const deps = makeDeps({ rows: { attempts: [{
+      id: attemptId,
+      run_id: RUN_ID,
+      hop: 3,
+      role: 'generator',
+      status: 'completed',
+      actual_machine_id: 'us-mac-m4',
+      task_bundle: {
+        inputs: {
+          task_id: TASK_ID,
+          workspace_spec: {
+            repo: artifact.repo,
+            branch: artifact.branch,
+            base_sha: baseSha,
+          },
+        },
+      },
+      result: {
+        status: 'completed',
+        artifacts: [artifact],
+      },
+    }] } });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.candidate).toEqual(artifact);
+  });
+
+  it('拒绝带不安全 diff 路径的本地候选', async () => {
+    const attemptId = '22222222-2222-4222-8222-222222222222';
+    const deps = makeDeps({ rows: { attempts: [{
+      id: attemptId, run_id: RUN_ID, hop: 3, role: 'generator', status: 'completed',
+      actual_machine_id: 'us-mac-m4',
+      task_bundle: { inputs: { task_id: TASK_ID, workspace_spec: {
+        repo: 'perfectuser21/cecelia', branch: 'cp-local-candidate', base_sha: 'a'.repeat(40),
+      } } },
+      result: { status: 'completed', artifacts: [{
+        type: 'git_candidate', verification_status: 'verified',
+        source_attempt_id: attemptId, repo: 'perfectuser21/cecelia',
+        branch: 'cp-local-candidate', base_sha: 'a'.repeat(40),
+        head_sha: 'b'.repeat(40), machine_id: 'us-mac-m4', changed_files: ['../escape'],
+      }] },
+    }] } });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(observed.candidate).toBeNull();
+  });
+
+  it('拒绝 Provider 伪造或 machine 不一致的 git_candidate', async () => {
+    const attemptId = '22222222-2222-4222-8222-222222222222';
+    const deps = makeDeps({ rows: { attempts: [{
+      id: attemptId,
+      run_id: RUN_ID,
+      hop: 3,
+      role: 'generator',
+      status: 'completed',
+      actual_machine_id: 'xian-mac-m4',
+      task_bundle: { inputs: { task_id: TASK_ID, workspace_spec: {
+        repo: 'perfectuser21/cecelia', branch: 'cp-local-candidate', base_sha: 'a'.repeat(40),
+      } } },
+      result: { status: 'completed', artifacts: [{
+        type: 'git_candidate', verification_status: 'verified',
+        source_attempt_id: attemptId, repo: 'perfectuser21/cecelia',
+        branch: 'cp-local-candidate', base_sha: 'a'.repeat(40),
+        head_sha: 'b'.repeat(40), machine_id: 'us-mac-m4',
+      }] },
+    }] } });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.candidate).toBeNull();
   });
 
   it('未显式固定基线时，从本 Run 最早的合法 WorkspaceSpec 恢复稳定实现基线', async () => {
@@ -845,6 +973,108 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     expect(deps.execCmd.calls.some((cmd) => cmd.includes('gh pr list'))).toBe(false);
   });
 
+  it('显式恢复 run 只采信同任务可信前序 run 对精确 PR URL/SHA 的 Generator 后观测', async () => {
+    const priorRunId = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
+    const headSha = '7a07d99439c04fd01c3cd61407b040282d2846cf';
+    const deps = makeDeps({
+      rows: {
+        run: {
+          pr_url: PR_URL,
+          created_source: 'explicit_recovery',
+          predecessor_run_id: priorRunId,
+        },
+        validationOrigins: [{
+          validation_origin_run_id: priorRunId,
+          observed: { pr: { url: PR_URL, head_sha: headSha } },
+        }],
+      },
+      exec: {
+        prView: JSON.stringify({
+          number: 42,
+          state: 'OPEN',
+          mergeStateStatus: 'CLEAN',
+          headRefName: 'cp-recovery',
+          headRefOid: headSha,
+          statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
+        }),
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.verifiedExistingPrOrigin).toEqual({
+      source: 'trusted_prior_kernel_run',
+      run_id: priorRunId,
+      pr_url: PR_URL,
+      pr_head_sha: headSha,
+    });
+    const [sql, params] = deps.pool.calls.find(([query]) => (
+      query.includes('AS validation_origin_run_id')
+    ));
+    expect(sql).toMatch(/record_trust_status IN \('trusted', 'reconstructed'\)/);
+    expect(sql).toMatch(/role = 'generator'/);
+    expect(sql).toMatch(/status IN \('completed', 'completed_with_concerns'\)/);
+    expect(sql).toMatch(/prior_run\.id = \$3/);
+    expect(sql).toMatch(/prior_run\.contract_id = \$5/);
+    expect(sql).toMatch(/evaluator_intent\.observed->'routingReceipt'->>'id' = \$4/);
+    expect(sql).toMatch(/evaluator_intent\.observed->'implementationBaseline'->>'base_sha' = \$6/);
+    expect(params).toEqual([
+      TASK_ID,
+      RUN_ID,
+      priorRunId,
+      ROUTING_RECEIPT_ID,
+      CONTRACT_ID,
+      'a'.repeat(40),
+    ]);
+  });
+
+  it('显式恢复 run 未声明 predecessor 时不查询也不建立既有 PR 信任源', async () => {
+    const headSha = '7a07d99439c04fd01c3cd61407b040282d2846cf';
+    const deps = makeDeps({
+      rows: {
+        run: { pr_url: PR_URL, created_source: 'explicit_recovery', predecessor_run_id: null },
+        validationOrigins: [{
+          validation_origin_run_id: 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff',
+          observed: { pr: { url: PR_URL, head_sha: headSha } },
+        }],
+      },
+      exec: {
+        prView: JSON.stringify({
+          state: 'OPEN', mergeStateStatus: 'CLEAN', headRefOid: headSha,
+          statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
+        }),
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(observed.verifiedExistingPrOrigin).toBeNull();
+    expect(deps.pool.calls.some(([sql]) => sql.includes('AS validation_origin_run_id'))).toBe(false);
+  });
+
+  it('显式恢复 run 的前序证据与当前 GitHub head 不一致时不建立既有 PR 信任源', async () => {
+    const deps = makeDeps({
+      rows: {
+        run: { pr_url: PR_URL, created_source: 'explicit_recovery' },
+        validationOrigins: [{
+          validation_origin_run_id: 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff',
+          observed: { pr: { url: PR_URL, head_sha: 'a'.repeat(40) } },
+        }],
+      },
+      exec: {
+        prView: JSON.stringify({
+          state: 'OPEN',
+          mergeStateStatus: 'CLEAN',
+          headRefOid: 'b'.repeat(40),
+          statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
+        }),
+      },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.verifiedExistingPrOrigin).toBeNull();
+  });
+
   it('task payload 的 pr_url 不是严格 GitHub PR URL → fail closed，不把声明值交给 shell', async () => {
     const deps = makeDeps({
       rows: {
@@ -1026,6 +1256,10 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     const deps = makeDeps({
       rows: { run: { pr_url: PR_URL } },
       exec: {
+        prFiles: [
+          'packages/brain/src/work-router.js',
+          'sprints/08121555-unified-work-router/contract-dod.md',
+        ].join('\n'),
         prView: JSON.stringify({
           state: 'MERGED', mergeStateStatus: 'CLEAN', headRefOid: 'sha-abc',
           statusCheckRollup: [{ state: 'SUCCESS' }],
@@ -1037,6 +1271,14 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     expect(o.pr.state).toBe('MERGED');
     expect(o.pr.merged).toBe(true);
     expect(o.pr.head_sha).toBe('sha-abc');
+    expect(o.pr.changed_files).toEqual([
+      'packages/brain/src/work-router.js',
+      'sprints/08121555-unified-work-router/contract-dod.md',
+    ]);
+    expect(deps.execCmd.calls.some((cmd) => (
+      cmd.includes('gh api --paginate')
+      && cmd.includes('repos/o/r/pulls/42/files?per_page=100')
+    ))).toBe(true);
   });
 
   it('ci 映射：任一 check FAILURE → fail', async () => {

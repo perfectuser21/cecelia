@@ -14,11 +14,7 @@
  *
  * 禁 mock 边：本模块直接对真 pg.Pool + initiative_runs 读写；测试真 PG 验真，禁 mock pool。
  */
-import {
-  CONTROLLER_SESSION_BLANK_SQL_PATTERN,
-  finalizeKernelRun,
-  hasControllerOwnershipSession,
-} from './kernel-run-store.js';
+import { finalizeKernelRun } from './kernel-run-store.js';
 import { redactSecrets } from './failure-persistence.js';
 
 /** 结构化 Kernel fatal failure_reason 前缀（可观测约定：kernel_process_fatal:<code>）。 */
@@ -54,9 +50,10 @@ export function structuredFailureReason(prefix, code) {
 export function isOwnerlessRun(runRow, now) {
   if (!runRow) return false;
   if (TERMINAL_PHASES.has(runRow.phase)) return false;
+  if (runRow.controller_authority_mismatch === true) return true;
   // A. 从未取 ownership（含迁移前无 controller_session_id 的历史 run）
   const sid = runRow.controller_session_id;
-  if (!hasControllerOwnershipSession(sid)) return true;
+  if (sid == null || String(sid).trim() === '') return true;
   // B. lease 缺失或已过期（Controller 已死）
   const leaseRaw = runRow.controller_lease_expires_at;
   if (leaseRaw == null) return true;
@@ -76,14 +73,27 @@ export function isOwnerlessRun(runRow, now) {
  * @param {{runId:string, expectedTaskId:string, failureCode:string}} params
  * @returns {Promise<{controllerAlive:boolean, failureReason:string, run:object}>}
  */
-export async function handleKernelProcessFatal(pool, { runId, expectedTaskId, failureCode }) {
+export async function handleKernelProcessFatal(pool, {
+  runId,expectedTaskId,failureCode,
+  expectedControllerSessionId=null,expectedControllerGeneration=null,
+  finalizeRun=finalizeKernelRun,
+}) {
   const failureReason = structuredFailureReason(KERNEL_FATAL_REASON_PREFIX, failureCode);
-  const result = await finalizeKernelRun(pool, {
+  const result = await finalizeRun(pool, {
     runId,
     expectedTaskId,
     outcome: 'failed',
     reason: failureReason,
+    closeControllerSession: false,
+    ...(expectedControllerSessionId !== null ? {
+      expectedControllerSessionId,
+      expectedControllerGeneration,
+      requireActiveControllerAuthority: true,
+    } : {}),
   });
+  if (result?.ownershipChanged) {
+    return { controllerAlive: false, ownershipChanged: true, failureReason, run: null };
+  }
   // finalizeKernelRun 不清 controller_session_id → Controller ownership 记录存活。
   return { controllerAlive: true, failureReason, run: result?.run ?? null };
 }
@@ -100,62 +110,72 @@ export async function handleKernelProcessFatal(pool, { runId, expectedTaskId, fa
  */
 export async function reconcileOwnerlessKernelRuns(pool, { now = new Date() } = {}) {
   const { rows } = await pool.query(
-    `SELECT id, current_task_id, phase,
-            controller_session_id, controller_lease_expires_at
-       FROM initiative_runs
-      WHERE orchestrator_version = 'v2'
-        AND phase NOT IN ('done', 'failed')
+    `SELECT run.id, run.current_task_id, run.phase,
+            run.controller_session_id, run.controller_generation,
+            run.controller_lease_expires_at,
+            (
+              session.id IS NULL
+              OR session.run_id IS DISTINCT FROM run.id
+              OR session.task_id IS DISTINCT FROM run.current_task_id
+              OR session.generation IS DISTINCT FROM run.controller_generation
+              OR session.status IS DISTINCT FROM 'active'
+              OR session.lease_expires_at IS DISTINCT FROM run.controller_lease_expires_at
+            ) AS controller_authority_mismatch
+       FROM initiative_runs run
+       LEFT JOIN kernel_controller_sessions session
+         ON session.id=run.controller_session_id
+      WHERE run.orchestrator_version = 'v2'
+        AND run.phase NOT IN ('done', 'failed')
         AND (
-          controller_session_id IS NULL
-          OR controller_session_id ~ $2
-          OR controller_lease_expires_at IS NULL
-          OR controller_lease_expires_at < $1
+          run.controller_session_id IS NULL
+          OR run.controller_lease_expires_at IS NULL
+          OR run.controller_lease_expires_at < $1
+          OR session.id IS NULL
+          OR session.run_id IS DISTINCT FROM run.id
+          OR session.task_id IS DISTINCT FROM run.current_task_id
+          OR session.generation IS DISTINCT FROM run.controller_generation
+          OR session.status IS DISTINCT FROM 'active'
+          OR session.lease_expires_at IS DISTINCT FROM run.controller_lease_expires_at
         )
-      ORDER BY id`,
-    [now, CONTROLLER_SESSION_BLANK_SQL_PATTERN],
+      ORDER BY run.id`,
+    [now],
   );
 
   const recovered = [];
   for (const run of rows) {
     // 二次纯谓词确认（同一 now 语义），避免与并发续租竞态误伤。
     if (!isOwnerlessRun(run, now)) continue;
-    const cause = !hasControllerOwnershipSession(run.controller_session_id)
+    const cause = (run.controller_session_id == null || String(run.controller_session_id).trim() === '')
       ? 'no_controller_ownership'
-      : 'controller_lease_expired';
+      : run.controller_authority_mismatch
+        ? 'controller_authority_mismatch'
+        : 'controller_lease_expired';
     const failureReason = structuredFailureReason(OWNERLESS_RECOVERED_REASON_PREFIX, cause);
     try {
-      const result = await finalizeKernelRun(pool, {
+      const finalized = await finalizeKernelRun(pool, {
         runId: run.id,
         expectedTaskId: run.current_task_id,
         outcome: 'failed',
         reason: failureReason,
-        // 候选 SELECT 只是提示。finalizeKernelRun 依既有 task→run 锁序锁住当前行后，
-        // 必须按当前 ownership/lease 再判一次；旧快照无权终结已续租的 run。
-        lockedRunGuard: (lockedRun) => isOwnerlessRun(lockedRun, now),
-        // 审计与 run/task 终态改变共用 finalizeKernelRun 的事务；changed=false、
-        // guardRejected 或 INSERT 失败都不会留下假事件/半完成状态。
+        expectedControllerSessionId: run.controller_session_id,
+        expectedControllerGeneration: run.controller_generation,
+        enforceControllerOwnership: true,
+        expectedControllerAuthorityMismatch: cause === 'controller_authority_mismatch',
+        ...(cause === 'controller_lease_expired' ? { controllerExpiredAt: now } : {}),
         afterRunFinalized: async (client) => {
           await client.query(
-            `INSERT INTO cecelia_events (event_type, source, task_id, payload)
-             VALUES (
-               'kernel_ownerless_run_recovered',
-               'kernel_controller_lifecycle',
-               $1,
-               $2::jsonb
-             )`,
-            [
-              run.current_task_id,
-              JSON.stringify({
-                run_id: run.id,
-                task_id: run.current_task_id,
-                cause,
-                failure_reason: failureReason,
-              }),
-            ],
+            `INSERT INTO cecelia_events (event_type,source,task_id,payload)
+             VALUES ('kernel_ownerless_run_recovered','kernel_controller_lifecycle',$1,$2::jsonb)`,
+            [run.current_task_id,JSON.stringify({
+              run_id:run.id,
+              task_id:run.current_task_id,
+              cause,
+              failure_reason:failureReason,
+            })],
           );
         },
       });
-      if (result.guardRejected) continue;
+      if (!finalized.changed) continue;
       recovered.push({
         runId: run.id, taskId: run.current_task_id, cause, failureReason,
       });

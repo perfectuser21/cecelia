@@ -27,6 +27,7 @@ export async function pushCapture(pool, {
   targetSubtype = null,
   routedToTable = null,
   routedToId = null,
+  routingMetadata = {},
 } = {}) {
   if (!content) return null;
   try {
@@ -64,11 +65,11 @@ export async function pushCapture(pool, {
     if (targetType && captureId) {
       try {
         const { rows } = await pool.query(
-          `INSERT INTO capture_atoms (capture_id, content, target_type, target_subtype, routed_to_table, routed_to_id, lane)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+          `INSERT INTO capture_atoms (capture_id, content, target_type, target_subtype, routed_to_table, routed_to_id, lane, metadata)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
            ON CONFLICT (capture_id, target_type) DO NOTHING
            RETURNING id`,
-          [captureId, truncated, targetType, targetSubtype, routedToTable, routedToId, lane]
+          [captureId, truncated, targetType, targetSubtype, routedToTable, routedToId, lane, JSON.stringify(routingMetadata)]
         );
         return { captureId, atomId: rows[0]?.id ?? null, dedupeHit };
       } catch (atomErr) {

@@ -29,6 +29,7 @@ import {
   roadmapRows,
   normalizeLineAreas,
   groupAdvancementsByAbility,
+  routingAuditRows,
   type LineAdvancementItem,
   type FeedArea,
   type FeedTask,
@@ -37,6 +38,20 @@ import {
   type LineArea,
   type LineStep,
 } from '../WarRoomPage';
+
+describe('routingAuditRows（Work Router 审计）', () => {
+  it('展示 work kind、Pipeline、repo、Map、Impact Contract、reason 与阻塞 Gate', () => {
+    expect(routingAuditRows({
+      work_kind: 'coding_mutation', pipeline: 'harness', repo: 'cecelia',
+      map_status: 'fresh', impact_contract_status: 'active',
+      route_reason: 'coding mutation requires Harness', blocking_gate: 'map_stale',
+    })).toEqual([
+      ['Work kind', 'coding_mutation'], ['Pipeline', 'harness'], ['Repo', 'cecelia'],
+      ['Map', 'fresh'], ['Impact Contract', 'active'],
+      ['Route reason', 'coding mutation requires Harness'], ['阻塞 Gate', 'map_stale'],
+    ]);
+  });
+});
 
 describe('formatElapsed（耗时格式化）', () => {
   it('null / 0 / 负数返回空串', () => {

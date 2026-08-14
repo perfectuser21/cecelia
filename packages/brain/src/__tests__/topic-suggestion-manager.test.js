@@ -8,13 +8,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock db.js pool（topic-suggestion-manager.js 在模块级导入 pool）
 const mockQuery = vi.hoisted(() => vi.fn());
+const mockCreateTask = vi.hoisted(() => vi.fn());
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
+vi.mock('../actions.js', () => ({ createTask: mockCreateTask }));
 
 let saveSuggestions, getActiveSuggestions, autoPromoteSuggestions, approveSuggestion, rejectSuggestion;
 
 beforeEach(async () => {
   vi.resetModules();
   vi.clearAllMocks();
+  mockCreateTask.mockResolvedValue({ task: { id: 'new-task-id' } });
   const mod = await import('../topic-suggestion-manager.js');
   saveSuggestions = mod.saveSuggestions;
   getActiveSuggestions = mod.getActiveSuggestions;
@@ -114,19 +117,22 @@ describe('autoPromoteSuggestions', () => {
     };
 
     // 第1次 query: SELECT pending → 返回1条
-    // 第2次 query: INSERT tasks → 返回新 task id
-    // 第3次 query: UPDATE topic_suggestions status = auto_promoted
+    // 第2次 query: UPDATE topic_suggestions status = auto_promoted
     let callCount = 0;
     mockQuery.mockImplementation(async (sql) => {
       callCount++;
       if (sql.trim().startsWith('SELECT id')) return { rows: [pendingSuggestion] };
-      if (sql.trim().startsWith('INSERT INTO tasks')) return { rows: [{ id: 'new-task-id' }] };
       return { rows: [] };
     });
 
     const dbPool = { query: mockQuery };
     const promoted = await autoPromoteSuggestions(dbPool);
     expect(promoted).toBe(1);
+    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+      task_type: 'content-pipeline',
+      source: 'scheduler',
+      source_id: 'topic-suggestion:sug-001',
+    }));
   });
 });
 

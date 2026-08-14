@@ -202,6 +202,19 @@ export async function persistImpactContract(db, input) {
       ]
     );
 
+    await client.query(
+      `INSERT INTO cecelia_events (event_type,source,payload)
+       VALUES ($1,'impact-contract',$2::jsonb)`,
+      [activeId ? 'impact_contract_revised' : 'impact_contract_created', JSON.stringify({
+        task_id,
+        impact_contract_id: insertRes.rows[0].id,
+        version: newVersion,
+        supersedes_id: activeId,
+        repo,
+        base_revision,
+      })],
+    );
+
     if (isPool) await client.query('COMMIT');
     return { contract: insertRes.rows[0], created: true };
   } catch (err) {

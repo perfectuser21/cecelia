@@ -14,7 +14,7 @@ import express from 'express';
 // ─── Mock 所有外部依赖（hoisted，在 vi.mock 前运行）────────────────────────
 
 const { mockPool, mockValidateZipBuffer, mockComputeZipHash, mockCheckZipDuplication,
-  mockCheckSlotAvailable, mockGetEvalQueuePosition, mockFsPromises, mockRandomUUID } = vi.hoisted(() => {
+  mockCheckSlotAvailable, mockGetEvalQueuePosition, mockFsPromises, mockRandomUUID, mockCreateTask } = vi.hoisted(() => {
   const mockPool = { query: vi.fn() };
   const mockValidateZipBuffer = vi.fn().mockResolvedValue({ valid: true, entries: ['SKILL.md'] });
   const mockComputeZipHash = vi.fn().mockReturnValue('abc123def456');
@@ -28,13 +28,15 @@ const { mockPool, mockValidateZipBuffer, mockComputeZipHash, mockCheckZipDuplica
     readFile: vi.fn().mockResolvedValue(Buffer.from('fake zip bytes')),
   };
   const mockRandomUUID = vi.fn().mockReturnValue('test-uuid-1234');
+  const mockCreateTask = vi.fn().mockResolvedValue({ task: { id: 'test-uuid-1234' } });
   return {
     mockPool, mockValidateZipBuffer, mockComputeZipHash, mockCheckZipDuplication,
-    mockCheckSlotAvailable, mockGetEvalQueuePosition, mockFsPromises, mockRandomUUID,
+    mockCheckSlotAvailable, mockGetEvalQueuePosition, mockFsPromises, mockRandomUUID, mockCreateTask,
   };
 });
 
 vi.mock('../../db.js', () => ({ default: mockPool }));
+vi.mock('../../actions.js', () => ({ createTask: mockCreateTask }));
 vi.mock('../../skill-eval-validator.js', () => ({
   validateZipBuffer: mockValidateZipBuffer,
   computeZipHash: mockComputeZipHash,
@@ -86,6 +88,7 @@ describe('routes/eval.js — POST /api/skill-eval/upload', () => {
     mockCheckZipDuplication.mockResolvedValue({ isDuplicate: false });
     mockCheckSlotAvailable.mockResolvedValue({ queueFull: false, pendingCount: 0 });
     mockRandomUUID.mockReturnValue('test-uuid-1234');
+    mockCreateTask.mockResolvedValue({ task: { id: 'test-uuid-1234' } });
     mockPool.query.mockResolvedValue({ rows: [] });
     mockFsPromises.mkdir.mockResolvedValue(undefined);
     mockFsPromises.writeFile.mockResolvedValue(undefined);

@@ -16,6 +16,7 @@
 import { generateTopics } from './topic-selector.js';
 import { saveSuggestions } from './topic-suggestion-manager.js';
 import { sampleTopics } from './content-types/ai-solopreneur-topic-library.js';
+import { createTask } from './actions.js';
 
 // ─── 常量 ────────────────────────────────────────────────────────────────────
 
@@ -155,7 +156,7 @@ export async function hasTodayTopics(pool) {
  */
 async function createContentPipelineTask(pool, topic, today) {
   const title = `[内容流水线] ${topic.keyword} ${today}`;
-  const payload = JSON.stringify({
+  const payload = {
     pipeline_keyword: topic.keyword,
     content_type: topic.content_type,
     title_candidates: topic.title_candidates,
@@ -164,19 +165,23 @@ async function createContentPipelineTask(pool, topic, today) {
     priority_score: topic.priority_score,
     trigger_source: 'daily_topic_selection',
     selected_date: today,
-  });
+  };
 
-  await pool.query(
-    `INSERT INTO tasks (
-       title, task_type, status, priority,
-       goal_id, created_by, payload, trigger_source, location, domain
-     )
-     VALUES (
-       $1, 'content-pipeline', 'queued', 'P1',
-       $2, 'cecelia-brain', $3, 'brain_auto', 'us', 'content'
-     )`,
-    [title, CONTENT_KR_GOAL_ID, payload]
-  );
+  await createTask({
+    title,
+    task_type: 'content-pipeline',
+    status: 'queued',
+    priority: 'P1',
+    goal_id: CONTENT_KR_GOAL_ID,
+    created_by: 'cecelia-brain',
+    payload,
+    trigger_source: 'brain_auto',
+    location: 'us',
+    domain: 'content',
+    source: 'scheduler',
+    source_id: `daily-topic:${today}:${topic.keyword}`,
+    db: pool,
+  });
 
   // 同步写入 topic_selection_log（可选，失败不影响主流程）
   try {

@@ -12,6 +12,7 @@
 
 /** scraper 任务类型 */
 const SCRAPER_TASK_TYPE = 'platform_scraper';
+import { createTask } from './actions.js';
 
 /**
  * 查询已完成超过 4 小时、尚未触发数据采集的 content_publish 任务。
@@ -48,26 +49,25 @@ async function fetchPendingCollectionTasks(pool) {
  * @param {import('pg').Pool} pool
  * @param {object} publishTask - 原始 content_publish 任务
  */
-async function dispatchScraperTask(pool, publishTask) {
+async function dispatchScraperTask(pool, publishTask, taskCreator = createTask) {
   const { id: publishTaskId, pipeline_id: pipelineId, platform } = publishTask;
 
-  await pool.query(
-    `INSERT INTO tasks (
-       task_type, title, status, priority, payload, created_at, updated_at
-     ) VALUES (
-       $1, $2, 'queued', 30, $3, NOW(), NOW()
-     )`,
-    [
-      SCRAPER_TASK_TYPE,
-      `数据采集: ${platform} pipeline=${pipelineId}`,
-      JSON.stringify({
-        platform,
-        pipeline_id: pipelineId,
-        source_publish_task_id: publishTaskId,
-        triggered_by: 'post-publish-data-collector',
-      }),
-    ]
-  );
+  await taskCreator({
+    db: pool,
+    source: 'child',
+    source_id: `post-publish-scrape:${publishTaskId}`,
+    task_type: SCRAPER_TASK_TYPE,
+    title: `数据采集: ${platform} pipeline=${pipelineId}`,
+    priority: 30,
+    trigger_source: 'post-publish-data-collector',
+    allow_unscoped: true,
+    payload: {
+      platform,
+      pipeline_id: pipelineId,
+      source_publish_task_id: publishTaskId,
+      triggered_by: 'post-publish-data-collector',
+    },
+  });
 }
 
 /**
@@ -254,7 +254,7 @@ export async function processPendingScraperTasks(pool) {
  * @param {import('pg').Pool} pool
  * @returns {Promise<{scheduled: number}>}
  */
-export async function schedulePostPublishCollection(pool) {
+export async function schedulePostPublishCollection(pool, { taskCreator = createTask } = {}) {
   let scheduled = 0;
 
   try {
@@ -262,7 +262,7 @@ export async function schedulePostPublishCollection(pool) {
 
     for (const task of tasks) {
       try {
-        await dispatchScraperTask(pool, task);
+        await dispatchScraperTask(pool, task, taskCreator);
         scheduled++;
       } catch (err) {
         console.error(`[post-publish-collector] 派发任务失败 ${task.id}: ${err.message}`);

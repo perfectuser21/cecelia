@@ -25,6 +25,33 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_EVALUATOR_FEEDBACK_CHECKS = 20;
 const RUNTIME_RESULT_ROLES = new Set(['reviewer', 'evaluator', 'judge', 'reporter']);
+const DEFERRED_ACCEPTANCE_CHECKS = Object.freeze([
+  'host_docker_inspect',
+  'judge_verdict',
+  'publisher_result',
+  'all_gates_passed',
+  'completed_role_chain',
+]);
+
+export function assertDispatchRoutingReceipt(task, receipt) {
+  const isCoding = task?.task_type === 'dev' || task?.task_type === 'harness_initiative' || task?.payload?.work_kind === 'coding_mutation';
+  if (!isCoding) return true;
+  if (!receipt
+      || receipt.id !== task.payload?.routing_receipt_id
+      || receipt.task_id !== task.id
+      || receipt.superseded === true
+      || receipt.router_version !== 'work-router-v1'
+      || receipt.work_kind !== 'coding_mutation'
+      || receipt.pipeline !== 'harness'
+      || receipt.canonical_task_type !== 'harness_initiative'
+      || receipt.change_kind !== task.payload?.change_kind
+      || receipt.repo !== task.payload?.repo
+      || receipt.impact_contract_required !== true
+      || task.task_type !== 'harness_initiative') {
+    throw new Error('route_violation');
+  }
+  return true;
+}
 
 const ACTION_SPECS = Object.freeze({
   'spawn:planner': {
@@ -68,6 +95,10 @@ const ACTION_SPECS = Object.freeze({
     role: 'judge', skill: null, readOnly: true,
     expectedOutput: 'harness-result/judge-v1',
   },
+  'publish:approved_ref': {
+    role: 'publisher', skill: null, readOnly: true,
+    expectedOutput: 'harness-result/publisher-v1',
+  },
   'spawn:commander': {
     role: 'commander', skill: null, readOnly: true,
     expectedOutput: 'commander-directive/v1',
@@ -78,9 +109,10 @@ const OBJECTIVES = Object.freeze({
   planner: 'Produce the sprint PRD and executable acceptance plan from the supplied task evidence.',
   proposer: 'Propose or revise the implementation contract from the frozen PRD and current contract artifacts.',
   reviewer: 'Independently review the frozen contract against the PRD and return an approval decision.',
-  generator: 'Implement or fix the approved contract in the supplied worktree and produce a pull request artifact.',
-  evaluator: 'Independently evaluate the current pull request against the approved contract and return evidence.',
-  judge: 'Independently judge the evaluator evidence and return the final verification decision.',
+  generator: 'Implement or fix the approved contract in the supplied worktree and produce a committed local candidate. Do not push or create a pull request; Publisher owns remote publication after Judge PASS.',
+  evaluator: 'Independently evaluate the current candidate against the approved contract and return pre-Judge evidence. Do not launch a nested Controller or Harness role chain. A pre-Judge verdict must not require its own future Judge verdict, Publisher result, all_gates_passed decision, or completed role chain. Host Docker inspection is a trusted Controller/Fleet check: the Evaluator must not fail because Docker CLI or daemon access is absent. These checks are deferred to the server-owned post-Judge acceptance stage.',
+  judge: 'Independently judge the evaluator evidence for the pre-Publisher stage. Return PASS or FAIL, a coverage array for every contract or Golden Path step, and an explicit failure_class for FAIL. Every coverage item must include deferred=true or deferred=false. A step whose only unavailable evidence is named by inputs.verification_stage.deferred_checks must use passed=false, deferred=true and cite the satisfied precondition; it must not make the overall verdict FAIL. In particular, the verdict must not require its own future server verdict, Publisher result, all_gates_passed decision, completed role chain, or host Docker inspection. The server mechanical gate is authoritative and owns those deferred checks.',
+  publisher: 'Publish only the exact local candidate authorized by the Judge and merge fence.',
   commander: 'Observe one bounded Run snapshot and return exactly one provider-neutral Commander Directive.',
 });
 
@@ -134,7 +166,7 @@ function gpContractIdentity(payload) {
 function buildEvaluatorFeedback(observed) {
   const verdict = asObject(observed.evaluateVerdict);
   const result = asObject(observed.evaluateResult);
-  const currentPrSha = observed.pr?.head_sha;
+  const currentPrSha = observed.candidate?.head_sha ?? observed.pr?.head_sha;
   const attemptId = verdict.attempt_id;
   const resultAttemptId = result.attempt_id;
   const summary = typeof result.summary === 'string' ? result.summary.trim() : '';
@@ -242,6 +274,24 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     attempt_kind: attemptMetadata.attemptKind,
     workstream_key: attemptMetadata.workstreamKey,
   };
+  if (ctx.observed.routingReceipt?.work_kind === 'coding_mutation') {
+    const receipt = ctx.observed.routingReceipt;
+    const evidence = asObject(receipt.evidence);
+    if (
+      typeof receipt.id !== 'string'
+      || typeof receipt.repo !== 'string'
+      || typeof evidence.branch !== 'string'
+      || !GIT_SHA_PATTERN.test(evidence.base_sha ?? '')
+    ) {
+      throw new Error('routing_identity_invalid');
+    }
+    common.routing_identity = {
+      routing_receipt_id: receipt.id,
+      repo: receipt.repo,
+      branch: evidence.branch,
+      base_sha: evidence.base_sha,
+    };
+  }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
     const gpContract = gpContractIdentity(payload);
     if (gpContract) common.gp_contract = gpContract;
@@ -364,7 +414,9 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   // 运行时依赖预装（design doc §运行时依赖，r17 实证：fleet workspace clone
   // 后不装依赖，proposer 的 product-map:check 因缺 ajv 每轮红——ajv 本在
   // workspace package.json）。dispatcher 对 proposer/reviewer/evaluator 默认开启
-  // node_deps，让 workspace-manager checkout 后自动 npm ci。两个字段都显式
+  // node_deps，让 workspace-manager checkout 后自动 npm ci；Evaluator 还必须
+  // 申请 attempt-scoped PostgreSQL，Golden Path 的迁移与真库行为验收不能回退
+  // 到宿主默认库，也不能用冻结单测替代。两个字段都显式
   // 写出（而不是只写 node_deps），方便 fleet 侧的 request/bundle 一致性校验
   // 稳定匹配（attempt-runner.cjs taskExecutionContract）。
   //
@@ -378,7 +430,7 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   // 有，独立立项后续再做；当前"案卷（case_file）全量历轮反馈"就是唯一的
   // 跨轮记忆机制，读案卷本身不是"降级"，是本期设计好的常态路径。
   if (['proposer', 'reviewer', 'evaluator'].includes(spec.role)) {
-    common.runtime_resources = { postgres: false, node_deps: true };
+    common.runtime_resources = { postgres: spec.role === 'evaluator', node_deps: true };
   }
   if (['generator', 'evaluator', 'judge'].includes(spec.role)) {
     if (observed.contract?.artifact_error) {
@@ -417,17 +469,39 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
       ?? null;
   }
   if (action === 'spawn:generator-fix') {
-    common.pr_branch = observed.pr?.head_ref ?? null;
-    common.pr_head_sha = observed.pr?.head_sha ?? null;
+    common.pr_branch = observed.candidate?.branch ?? observed.pr?.head_ref ?? null;
+    common.pr_head_sha = observed.candidate?.head_sha ?? observed.pr?.head_sha ?? null;
+    common.pull_request = observed.pr ?? null;
+    if (observed.candidate) common.candidate = { ...observed.candidate };
     const evaluatorFeedback = buildEvaluatorFeedback(observed);
     if (evaluatorFeedback) common.evaluator_feedback = evaluatorFeedback;
+  }
+  if (['evaluator', 'judge', 'publisher'].includes(spec.role) && observed.candidate) {
+    common.candidate = { ...observed.candidate };
   }
   if (spec.role === 'evaluator' || spec.role === 'judge') {
     common.pull_request = observed.pr ?? null;
   }
+  if (spec.role === 'evaluator' || spec.role === 'judge') {
+    common.verification_stage = {
+      name: spec.role === 'evaluator' ? 'pre_judge' : 'independent_judge',
+      verdict_scope: 'candidate_and_upstream_evidence',
+      deferred_checks: [...DEFERRED_ACCEPTANCE_CHECKS],
+    };
+  }
   if (spec.role === 'evaluator') {
-    common.pr_branch = observed.pr?.head_ref ?? null;
-    common.pr_head_sha = observed.pr?.head_sha ?? null;
+    // retained Generator candidate 是本轮实际验收对象。远端 PR 可能仍指向
+    // Generator 启动前的旧头，不能用它覆盖 Runner 已验证的候选身份。
+    common.pr_branch = observed.candidate?.branch ?? observed.pr?.head_ref ?? null;
+    common.pr_head_sha = observed.candidate?.head_sha ?? observed.pr?.head_sha ?? null;
+    const judgeVerdict = observed.judgeVerdict;
+    if (
+      ctx.decision?.reason === 'judge_evidence_insufficient_recollect'
+      && judgeVerdict?.failure_class === 'evidence_insufficient'
+      && judgeVerdict.pr_head_sha === common.pr_head_sha
+    ) {
+      common.judge_feedback = { ...judgeVerdict };
+    }
     if (payload.github_evidence_request) {
       common.github_evidence_request = payload.github_evidence_request;
     }
@@ -439,7 +513,23 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     }
   }
   if (spec.role === 'judge') {
-    common.evaluator_result = observed.evaluateVerdict ?? observed.callbackResult ?? null;
+    common.evaluator_result = observed.evaluateResult
+      ?? observed.evaluateVerdict
+      ?? observed.callbackResult
+      ?? null;
+  }
+  if (spec.role === 'publisher') {
+    const candidate = observed.candidate;
+    const judgeVerdict = observed.judgeVerdict;
+    if (
+      !candidate
+      || judgeVerdict?.verdict !== 'PASS'
+      || judgeVerdict.pr_head_sha !== candidate.head_sha
+    ) {
+      throw new Error('publisher_judge_authority_missing');
+    }
+    common.judge_verdict = { ...judgeVerdict };
+    common.merge_fence = { allowed: true, head_sha: candidate.head_sha };
   }
   return common;
 }
@@ -694,6 +784,26 @@ export function createDispatcher(deps) {
     }
 
     const spec = resolveAction(action);
+    try {
+      assertDispatchRoutingReceipt(ctx.observed.task, ctx.observed.routingReceipt);
+    } catch (error) {
+      if (error?.message === 'route_violation' && typeof deps.db?.query === 'function') {
+        try {
+          await deps.db.query(
+            `INSERT INTO cecelia_events (event_type,source,payload)
+             VALUES ($1,'kernel-dispatcher',$2::jsonb)`,
+            ['route_violation', JSON.stringify({
+              task_id: ctx.observed.task?.id ?? null,
+              run_id: ctx.runId ?? ctx.observed.run?.id ?? null,
+              routing_receipt_id: ctx.observed.task?.payload?.routing_receipt_id ?? null,
+              reason_code: 'route_violation',
+              action,
+            })],
+          );
+        } catch { /* route_violation 保持权威，审计写失败不得放行。 */ }
+      }
+      throw error;
+    }
     const commanderContext = spec.role === 'commander' ? ctx.commander : null;
     if (spec.role === 'commander' && !commanderContext?.bundle) {
       throw new Error('spawn:commander requires coordinator context');
@@ -791,13 +901,12 @@ export function createDispatcher(deps) {
       ? commanderTarget.model ?? null
       : roleAssignment.model
         ?? (payload.model && payload.model !== 'auto' ? payload.model : null);
-    let adapter = spec.role === 'judge' ? null : deps.registry.resolve({
+    let adapter = deps.registry.resolve({
       provider: requestedProvider,
       requires: ['structured_output'],
     });
-    const preferredTarget = spec.role === 'judge'
-      ? null
-      : spec.role === 'commander'
+    const candidateMachine = ctx.observed.candidate?.machine_id ?? null;
+    const preferredTarget = spec.role === 'commander'
         ? {
             provider: commanderTarget.provider ?? adapter.name,
             account: commanderTarget.account ?? null,
@@ -808,11 +917,9 @@ export function createDispatcher(deps) {
           provider: roleAssignment.provider ?? adapter.name,
           account: roleAssignment.account ?? requestedAccount,
           ...(requestedModel ? { model: requestedModel } : {}),
-          machine: roleAssignment.machine ?? machineId,
+          machine: candidateMachine ?? roleAssignment.machine ?? machineId,
         };
-    let candidateTargets = spec.role === 'judge'
-      ? []
-      : spec.role === 'commander'
+    let candidateTargets = spec.role === 'commander'
         ? (commanderContext.candidate_targets ?? [commanderContext.target]).map(
             ({ role: _role, ...target }) => target,
           )
@@ -823,7 +930,7 @@ export function createDispatcher(deps) {
     // capability gate 会零探针跳过并判 all_execution_targets_exhausted。
     // 此处按白名单展开为具体账号候选；显式指定 account 的行为不变。
     let preferredTarget2 = preferredTarget;
-    if (spec.role !== 'judge' && candidateTargets.some((t) => t?.account == null)) {
+    if (candidateTargets.some((t) => t?.account == null)) {
       candidateTargets = expandUnresolvedAccountTargets(candidateTargets);
       if (preferredTarget?.account == null) {
         preferredTarget2 = candidateTargets.find(
@@ -834,7 +941,7 @@ export function createDispatcher(deps) {
     }
     const resolvedPreferredTarget = preferredTarget2;
     let selectedAccount = resolvedPreferredTarget?.account ?? requestedAccount;
-    let selectedMachine = resolvedPreferredTarget?.machine ?? machineId;
+    let selectedMachine = candidateMachine ?? resolvedPreferredTarget?.machine ?? machineId;
     let selectedTarget = resolvedPreferredTarget;
     let accountHome = null;
     const rawCapabilityRequirements = commanderContext?.capability_requirements
@@ -849,7 +956,6 @@ export function createDispatcher(deps) {
     if (
       (rawCapabilityRequirements || spec.role === 'commander')
       && !deps.preflightGate
-      && spec.role !== 'judge'
     ) {
       const blocked = {
         status: 'DONE_WITH_CONCERNS',
@@ -865,7 +971,7 @@ export function createDispatcher(deps) {
       return blocked;
     }
 
-    if (deps.preflightGate && spec.role !== 'judge') {
+    if (deps.preflightGate) {
       const taskBundle = {
         ...bundle,
         task_id: ctx.observed.task.id ?? ctx.taskId,
@@ -950,7 +1056,10 @@ export function createDispatcher(deps) {
         },
       };
     }
-    if (spec.role !== 'judge' && selectedAccount) {
+    if (candidateMachine && selectedMachine !== candidateMachine) {
+      throw new Error('candidate_machine_affinity_violation');
+    }
+    if (selectedAccount) {
       accountHome = resolveAccountHome(adapter.name, selectedAccount);
     }
 
@@ -967,7 +1076,7 @@ export function createDispatcher(deps) {
       hop: ctx.hop,
       phase: bundle.phase,
       role: spec.role,
-      provider: spec.role === 'judge' ? 'independent-judge' : adapter.name,
+      provider: adapter.name,
       accountId: selectedAccount,
       machineId: selectedMachine,
       bundle,
@@ -988,7 +1097,7 @@ export function createDispatcher(deps) {
         status: 'DONE_WITH_CONCERNS',
         detail: `run/hop already owns attempt ${persisted.id}; duplicate launch suppressed`,
         attemptId: persisted.id,
-        provider: persisted.provider ?? (spec.role === 'judge' ? 'independent-judge' : adapter.name),
+        provider: persisted.provider ?? adapter.name,
       };
     }
     let attempt = {
@@ -1000,20 +1109,6 @@ export function createDispatcher(deps) {
       task_bundle: persisted?.task_bundle ?? bundle,
       callbackSecret,
     };
-
-    if (spec.role === 'judge') {
-      try {
-        const judge = handlers[action];
-        if (!judge) throw new Error('spawn:judge requires an independent judge handler');
-        return await judge({ ...ctx, attempt, bundle });
-      } catch (error) {
-        await deps.attemptStore.fail(attempt.id, {
-          code: 'judge_failed',
-          message: error.message,
-        });
-        throw error;
-      }
-    }
 
     const claimed = await deps.attemptStore.markStarting(attempt.id, {
       leaseOwner,
@@ -1288,6 +1383,15 @@ export function createDetachedLauncher({
       if (bundle.inputs.deadline_at) {
         roleEnv.HARNESS_DEADLINE_AT = String(bundle.inputs.deadline_at);
       }
+      if (bundle.inputs.workspace_spec?.base_sha) {
+        roleEnv.HARNESS_WORKSPACE_START_SHA = String(
+          bundle.inputs.workspace_spec.expected_head_sha
+            ?? bundle.inputs.workspace_spec.base_sha,
+        );
+        roleEnv.HARNESS_FROZEN_BASELINE = String(
+          attempt.role === 'generator' || bundle.inputs.workspace_spec.frozen_baseline === true,
+        );
+      }
       if (attempt.role === 'evaluator' && bundle.inputs.pr_branch) {
         roleEnv.PR_BRANCH = String(bundle.inputs.pr_branch);
       }
@@ -1353,6 +1457,15 @@ export function createDetachedLauncher({
             CECELIA_EXECUTOR: spec.provider,
             CECELIA_MACHINE_ID: machineId,
             CECELIA_TASK_ID: bundle.inputs.task_id,
+            ...(bundle.inputs.routing_identity ? {
+              CECELIA_ROUTING_RECEIPT_ID: bundle.inputs.routing_identity.routing_receipt_id,
+              CECELIA_RUN_ID: attempt.run_id,
+              CECELIA_REPO: bundle.inputs.routing_identity.repo,
+              CECELIA_ROUTING_REPO: bundle.inputs.routing_identity.repo,
+              CECELIA_BRANCH: bundle.inputs.workspace_spec?.branch,
+              CECELIA_BASE_SHA: bundle.inputs.workspace_spec?.base_sha,
+              CECELIA_ROUTING_BASE_SHA: bundle.inputs.routing_identity.base_sha,
+            } : {}),
             HARNESS_TASK_ID: bundle.inputs.task_id,
             HARNESS_NODE: attempt.role,
             HARNESS_ATTEMPT_ID: attempt.id,

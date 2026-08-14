@@ -9,6 +9,7 @@
  */
 
 import pool from './db.js';
+import { createTask } from './actions.js';
 
 // ============================================================
 // Constants
@@ -326,29 +327,38 @@ async function applyProposal(proposalId) {
   const snapshot = { tasks: {}, focus: null };
   const results = [];
 
-  for (const change of changes) {
+  for (const [changeIndex, change] of changes.entries()) {
     try {
       let result;
       switch (change.type) {
         case 'create_task': {
-          const taskResult = await pool.query(`
-            INSERT INTO tasks (title, description, priority, project_id, goal_id, status, task_type, payload, trigger_source)
-            VALUES ($1, $2, $3, $4, $5, 'queued', $6, $7, 'proposal')
-            RETURNING id, title
-          `, [
-            change.title,
-            change.description || '',
-            change.priority || 'P1',
-            change.project_id,
-            change.goal_id || null,
-            change.skill || 'dev',
-            JSON.stringify({
+          const created = await createTask({
+            source: 'child',
+            source_id: `proposal:${proposalId}:${changeIndex}`,
+            title: change.title,
+            description: change.description || '',
+            priority: change.priority || 'P1',
+            project_id: change.project_id,
+            goal_id: change.goal_id || null,
+            task_type: change.task_type || 'dev',
+            trigger_source: 'proposal',
+            allow_unscoped: true,
+            mutation_intent: change.mutation_intent,
+            declared_domain: change.declared_domain,
+            declared_change_kind: change.change_kind,
+            execution_profile_override_request: change.execution_profile_override,
+            repo_hint: change.repo_hint,
+            map_scope_hint: change.map_scope,
+            branch: change.branch,
+            base_sha: change.base_sha,
+            payload: {
               depends_on: change.depends_on || [],
               estimated_minutes: change.estimated_minutes || null,
               proposal_id: proposalId,
-            }),
-          ]);
-          result = { success: true, action: 'created', task_id: taskResult.rows[0].id };
+              skill: change.skill || null,
+            },
+          });
+          result = { success: true, action: 'created', task_id: created.task.id };
           break;
         }
 

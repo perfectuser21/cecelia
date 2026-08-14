@@ -300,6 +300,7 @@ export function toFeedItem(t, journeyName, progress, nowMs, report = null, lg = 
     pr_url,
     verdict: report ? (report.verdict || null) : null,
     findings_count: report ? (report.findings_count ?? null) : null,
+    routing: t.routing ?? null,
     detail_route: detailRoute(t, kind),
     // —— LangGraph 富字段（仅 sprint，join harness-pipelines）——
     node_label: useLg ? (useLg.node_label ?? null) : null,

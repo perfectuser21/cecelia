@@ -7,6 +7,8 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { createTask } from './actions.js';
+import { buildCeceliaMutationRoute } from './system-coding-route.js';
 
 const execAsync = promisify(exec);
 
@@ -143,25 +145,30 @@ export async function triggerCodeQualityScan(pool) {
         }
       }
 
-      // 创建任务到数据库，补充 project_id / goal_id / task_type
-      const result = await pool.query(
-        `INSERT INTO tasks (title, description, priority, status, tags, metadata, project_id, goal_id, task_type, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
-         RETURNING id`,
-        [
-          taskData.title,
-          taskData.description,
-          taskData.priority || 'P1',
-          'queued',
-          taskData.tags || [],
-          metadata,
-          TASK_GENERATOR_PROJECT_ID,
-          TASK_GENERATOR_GOAL_ID,
-          'dev',
-        ]
-      );
+      // Coding 任务必须经 Work Router 收敛为 harness_initiative，并携带真实 Git baseline。
+      const route = buildCeceliaMutationRoute({
+        change_kind: 'bugfix',
+        map_scope: [module_path || 'packages/brain'],
+      });
+      const result = await createTask({
+        title: taskData.title,
+        description: taskData.description,
+        priority: taskData.priority || 'P1',
+        status: 'queued',
+        tags: taskData.tags || [],
+        payload: metadata,
+        project_id: TASK_GENERATOR_PROJECT_ID,
+        goal_id: TASK_GENERATOR_GOAL_ID,
+        task_type: 'dev',
+        trigger_source: 'scheduler',
+        source: 'scheduler',
+        source_id: `quality-scan:${route.base_sha}:${scannerName || 'unknown'}:${module_path || taskData.title}:${issue_type || 'unknown'}`,
+        allow_unscoped: true,
+        db: pool,
+        ...route,
+      });
 
-      const newTaskId = result.rows[0]?.id;
+      const newTaskId = result.task?.id;
 
       // 持久化扫描结果（关联新任务）
       if (hasDeupKey) {

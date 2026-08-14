@@ -74,6 +74,49 @@ function makeWatchdogDeps(overrides = {}) {
 
 describe('watchdog headed 分支', () => {
 
+  it('kernel-v1 headed tmux 存活时以原 Controller generation 续租而不转成 headless',async()=>{
+    const controllerSessionId='99999999-9999-4999-8999-999999999999';
+    const run=makeHeadedRun({
+      phase:'planning',
+      controller_session_id:controllerSessionId,
+      controller_generation:'4',
+    });
+    const task=makeHeadedTask({
+      payload:{...makeHeadedTask().payload,harness_runtime:'kernel-v1'},
+    });
+    const pool={query:vi.fn(async(sql)=>{
+      if (/FROM initiative_runs r/.test(sql)) return {rows:[run]};
+      if (/SELECT.*FROM tasks WHERE id/.test(sql)) return {rows:[task]};
+      if (/FROM harness_attempts/.test(sql)) return {rows:[]};
+      return {rows:[]};
+    })};
+    const writeControllerHeartbeat=vi.fn(async(_pool,{host})=>{
+      // 模拟真实 heartbeat 把 reporter host 写回 run；第二轮必须仍识别 headed。
+      run.orchestrator_host=host;
+    });
+    const launchKernel=vi.fn(async()=>({pid:123}));
+    const execFn=vi.fn(()=> 'TMUX_ALIVE');
+
+    await resumeStalledRelayRuns({
+      pool,execFn,writeControllerHeartbeat,launchKernel,
+      now:()=>new Date('2026-08-13T10:00:00.000Z'),
+      hostname:()=> 'watchdog-host',watchdogPid:4321,
+    });
+    await resumeStalledRelayRuns({
+      pool,execFn,writeControllerHeartbeat,launchKernel,
+      now:()=>new Date('2026-08-13T10:10:00.000Z'),
+      hostname:()=> 'watchdog-host',watchdogPid:4321,
+    });
+
+    expect(execFn).toHaveBeenCalledWith(expect.stringContaining('tmux has-session'));
+    expect(writeControllerHeartbeat).toHaveBeenCalledWith(pool,expect.objectContaining({
+      runId:run.id,controllerSessionId,controllerGeneration:4,
+      host:'skill-relay-codex-headed',pid:4321,
+    }));
+    expect(writeControllerHeartbeat).toHaveBeenCalledTimes(2);
+    expect(launchKernel).not.toHaveBeenCalled();
+  });
+
   describe('1. fail-open — ssh 命令本身失败时不重点火', () => {
     it('ssh 命令抛错（connection refused）→ fail-open：不重点火（spawnFn 不被调用）', async () => {
       const deps = makeWatchdogDeps({

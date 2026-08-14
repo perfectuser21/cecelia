@@ -10,6 +10,8 @@ function context(overrides = {}) {
   return {
     taskId,
     runId,
+    controllerSessionId: '33333333-3333-4333-8333-333333333333',
+    controllerGeneration: 4,
     hop: 5,
     attempt: { id: attemptId },
     bundle: { inputs: { worktree_path: '/tmp/wt', sprint_dir: 'sprints/x' } },
@@ -55,6 +57,7 @@ function deps() {
     syncOkr: vi.fn(async () => true),
     spawnStaging: vi.fn(async () => ({ created: true })),
     cleanup: vi.fn(async () => undefined),
+    proveControllerOwnership: vi.fn(async () => true),
     finalizeRun: vi.fn(async () => ({
       changed: true,
       outcome: 'done',
@@ -156,6 +159,43 @@ describe('kernel deterministic handlers', () => {
       decision: { outcome: 'PASS', reason: 'independent judge verdict' },
     }));
     expect(d.pool.query.mock.calls.some(([sql]) => /verdict:judge/.test(sql))).toBe(true);
+  });
+
+  it('本地 candidate 的 Judge 使用 local_candidate 阶段事实并锚定 candidate SHA', async () => {
+    const d = deps();
+    const candidateHead = 'c'.repeat(40);
+    const ctx = context({
+      bundle: {
+        inputs: {
+          worktree_path: '/tmp/wt',
+          sprint_dir: 'sprints/x',
+          candidate: { head_sha: candidateHead },
+        },
+      },
+      observed: {
+        ...context().observed,
+        pr: null,
+        candidate: { head_sha: candidateHead },
+        evaluateVerdict: { verdict: 'PASS', pr_head_sha: candidateHead },
+      },
+    });
+
+    await createKernelHandlers(d)['spawn:judge'](ctx);
+
+    expect(d.judgeGate).toHaveBeenCalledWith(expect.objectContaining({
+      stageFacts: {
+        current_stage: 'local_candidate',
+        pr_state: null,
+        pr_merged: false,
+        head_sha: candidateHead,
+        merge_gate_approved: false,
+      },
+    }), expect.any(Object));
+    const verdictCall = d.pool.query.mock.calls.find(([sql]) => /verdict:judge/.test(sql));
+    expect(JSON.parse(verdictCall[1][3])).toMatchObject({
+      verdict: 'PASS',
+      pr_head_sha: candidateHead,
+    });
   });
 
   it('judge 优先使用 evaluator attempt result，并把 checks 适配为机械闸证据', async () => {
@@ -348,10 +388,30 @@ describe('kernel deterministic handlers', () => {
     expect(d.finalizeRun).toHaveBeenCalledWith(d.pool, {
       runId,
       expectedTaskId: taskId,
+      expectedControllerSessionId: '33333333-3333-4333-8333-333333333333',
+      expectedControllerGeneration: 4,
+      requireActiveControllerAuthority: true,
       outcome: 'done',
     });
     expect(d.pool.connect).not.toHaveBeenCalled();
     expect(result.status).toBe('DONE');
+  });
+
+  it('失权 Controller 的 report 在任何收尾副作用前让位', async () => {
+    const d = deps();
+    d.proveControllerOwnership.mockRejectedValueOnce(
+      new Error('controller_lease_renewal_lost'),
+    );
+
+    await expect(createKernelHandlers(d).report(context()))
+      .rejects.toThrow('orchestrator singleton conflict');
+
+    expect(d.promote).not.toHaveBeenCalled();
+    expect(d.saveHandoff).not.toHaveBeenCalled();
+    expect(d.syncOkr).not.toHaveBeenCalled();
+    expect(d.spawnStaging).not.toHaveBeenCalled();
+    expect(d.cleanup).not.toHaveBeenCalled();
+    expect(d.finalizeRun).not.toHaveBeenCalled();
   });
 
   it('repair report 在终态事务内自动关闭 gap', async () => {

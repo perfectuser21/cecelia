@@ -24,12 +24,12 @@ const MAX_KEY_LEN = 255;
  * @param {number} ttlSec
  * @returns {Promise<{claimed: boolean, degraded?: boolean}>}
  */
-async function claimDedupeKey(kind, key, ttlSec) {
+async function claimDedupeKey(kind, key, ttlSec, db = pool) {
   if (typeof key !== 'string' || key.length === 0 || key.length > MAX_KEY_LEN) {
     throw new Error(`dedupe_key 必须是 1-${MAX_KEY_LEN} 字符字符串（超长请调用方自行 hash），got length=${key?.length}`);
   }
   try {
-    const result = await pool.query(
+    const result = await db.query(
       `INSERT INTO side_effect_dedupe (kind, dedupe_key, expires_at)
        VALUES ($1, $2, NOW() + make_interval(secs => $3))
        ON CONFLICT (kind, dedupe_key)
@@ -48,9 +48,9 @@ async function claimDedupeKey(kind, key, ttlSec) {
 }
 
 /** claim 后副作用执行失败时释放，让 TTL 内的合法重试不被误挡。错误全吞。 */
-async function releaseDedupeKey(kind, key) {
+async function releaseDedupeKey(kind, key, db = pool) {
   try {
-    await pool.query(
+    await db.query(
       'DELETE FROM side_effect_dedupe WHERE kind = $1 AND dedupe_key = $2',
       [kind, key]
     );

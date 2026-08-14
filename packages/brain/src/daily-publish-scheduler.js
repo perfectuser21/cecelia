@@ -33,6 +33,7 @@ const PLATFORM_PRIORITY = [
 
 /** working_memory key：今日发布触发记录 */
 const WM_KEY = 'daily_publish_triggered';
+import { createTask } from './actions.js';
 
 // ─── 时间工具 ─────────────────────────────────────────────────────────────────
 
@@ -125,7 +126,7 @@ async function hasTodayPublishTask(pool, platform, today) {
  * @param {string} today - YYYY-MM-DD
  * @returns {Promise<string>} 创建的 task id
  */
-async function createPublishTask(pool, job, today) {
+async function createPublishTask(pool, job, today, taskCreator = createTask) {
   const payload = {
     platform: job.platform,
     content_type: job.content_type,
@@ -135,18 +136,18 @@ async function createPublishTask(pool, job, today) {
     scheduled_date: today,
   };
 
-  const { rows } = await pool.query(
-    `INSERT INTO tasks (title, task_type, status, priority, trigger_source, payload, created_at)
-     VALUES ($1, 'content_publish', 'queued', $2, 'daily_publish_scheduler', $3, NOW())
-     RETURNING id`,
-    [
-      `[每日发布] ${job.platform} — ${today}`,
-      job.platform === 'douyin' || job.platform === 'xiaohongshu' || job.platform === 'wechat' ? 'P1' : 'P2',
-      JSON.stringify(payload),
-    ]
-  );
-
-  return rows[0]?.id;
+  const created = await taskCreator({
+    db: pool,
+    source: 'scheduler',
+    source_id: `daily-publish:${job.id}:${today}`,
+    title: `[每日发布] ${job.platform} — ${today}`,
+    task_type: 'content_publish',
+    priority: job.platform === 'douyin' || job.platform === 'xiaohongshu' || job.platform === 'wechat' ? 'P1' : 'P2',
+    trigger_source: 'daily_publish_scheduler',
+    payload,
+    allow_unscoped: true,
+  });
+  return created.task.id;
 }
 
 /**
@@ -189,7 +190,7 @@ async function recordTodayTrigger(pool, today, created, platforms) {
  * @param {Date} [now] - 当前时间（测试时可注入）
  * @returns {Promise<{created: number, skipped: boolean, skipped_window: boolean, platforms: string[]}>}
  */
-export async function triggerDailyPublish(pool, now = new Date()) {
+export async function triggerDailyPublish(pool, now = new Date(), { taskCreator = createTask } = {}) {
   // 1. 判断是否在触发窗口内
   if (!isInPublishTriggerWindow(now)) {
     return { created: 0, skipped: false, skipped_window: true, platforms: [] };
@@ -232,7 +233,7 @@ export async function triggerDailyPublish(pool, now = new Date()) {
     }
 
     try {
-      const taskId = await createPublishTask(pool, job, today);
+      const taskId = await createPublishTask(pool, job, today, taskCreator);
       await markJobRunning(pool, job.id);
       created++;
       createdPlatforms.push(job.platform);

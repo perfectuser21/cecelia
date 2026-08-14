@@ -112,11 +112,11 @@ describe('legacy POST /orchestrator/relay-runs/:initiative_id', () => {
       deadlineHours: 6,
       createdSource: 'foreground_handoff',
       commanderMode: 'kernel-only',
-    }));
-    // 启动不变量（sprint 08131104）：foreground handoff 也须带 Controller ownership。
+      predecessorRunId: null,
+    }), {});
+    // foreground 也不能注入 Controller identity，由 store 事务签发。
     const passedInput = mockCreateKernelRun.mock.calls[0][1];
-    expect(typeof passedInput.controllerSessionId).toBe('string');
-    expect(passedInput.controllerSessionId.length).toBeGreaterThan(0);
+    expect(passedInput).not.toHaveProperty('controllerSessionId');
   });
 
   it('returns the existing active run as an idempotent 200', async () => {

@@ -27,6 +27,14 @@ describe('dedupe claimDedupeKey', () => {
     expect(r.claimed).toBe(false);
   });
 
+  it('调用方可把 claim 绑定到现有事务连接', async () => {
+    const transactionDb = { query: vi.fn().mockResolvedValue({ rowCount: 1 }) };
+    const result = await claimDedupeKey('create_task', 'tx-key', 120, transactionDb);
+    expect(result.claimed).toBe(true);
+    expect(transactionDb.query).toHaveBeenCalledOnce();
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
   it('fail-open：DB 错误 → claimed:true + degraded:true + P2 降级告警', async () => {
     mockQuery.mockRejectedValueOnce(new Error('connection refused'));
     const r = await claimDedupeKey('create_task', 'k2', 300);
@@ -45,6 +53,13 @@ describe('dedupe claimDedupeKey', () => {
     await releaseDedupeKey('create_task', 'k3');
     expect(mockQuery.mock.calls[0][0]).toMatch(/DELETE FROM side_effect_dedupe/);
     expect(mockQuery.mock.calls[0][1]).toEqual(['create_task', 'k3']);
+  });
+
+  it('release 使用与 claim 相同的事务连接', async () => {
+    const transactionDb = { query: vi.fn().mockResolvedValue({ rowCount: 1 }) };
+    await releaseDedupeKey('create_task', 'tx-release', transactionDb);
+    expect(transactionDb.query).toHaveBeenCalledOnce();
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 
   it('releaseDedupeKey DB 错误全吞（不抛）', async () => {

@@ -32,15 +32,17 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 -c "
     branch = EXCLUDED.branch, approved_at = NOW()
 " || { echo "[B13 smoke] first INSERT failed"; exit 1; }
 
+# 批准后合同身份必须不可变：同 identity 的完全相同重放允许幂等，
+# 任何内容/分支变更都必须新建 version，不能 ON CONFLICT 覆盖历史。
 psql "$DB_URL" -v ON_ERROR_STOP=1 -c "
   INSERT INTO initiative_contracts (initiative_id, version, status, prd_content, contract_content, review_rounds, budget_cap_usd, timeout_sec, branch, approved_at)
-  VALUES ('$TEST_ID'::uuid, 1, 'approved', 'prd-v2', 'contract-v2', 2, 20.0, 7200, 'branch-v2', NOW())
+  VALUES ('$TEST_ID'::uuid, 1, 'approved', 'prd-v1', 'contract-v1', 1, 10.0, 3600, 'branch-v1', NOW())
   ON CONFLICT (initiative_id, version) DO UPDATE SET
     status = EXCLUDED.status, prd_content = EXCLUDED.prd_content,
     contract_content = EXCLUDED.contract_content, review_rounds = EXCLUDED.review_rounds,
     budget_cap_usd = EXCLUDED.budget_cap_usd, timeout_sec = EXCLUDED.timeout_sec,
     branch = EXCLUDED.branch, approved_at = NOW()
-" || { echo "[B13 smoke] second INSERT (must UPDATE) failed"; exit 1; }
+" || { echo "[B13 smoke] identical replay failed"; exit 1; }
 
 ROW_COUNT=$(psql "$DB_URL" -tAc \
   "SELECT count(*) FROM initiative_contracts WHERE initiative_id='$TEST_ID'::uuid")
@@ -48,6 +50,14 @@ ROW_COUNT=$(psql "$DB_URL" -tAc \
 
 CONTRACT=$(psql "$DB_URL" -tAc \
   "SELECT contract_content FROM initiative_contracts WHERE initiative_id='$TEST_ID'::uuid")
-[[ "$CONTRACT" == "contract-v2" ]] || { echo "[B13 smoke] expected contract-v2, got $CONTRACT"; exit 1; }
+[[ "$CONTRACT" == "contract-v1" ]] || { echo "[B13 smoke] expected immutable contract-v1, got $CONTRACT"; exit 1; }
 
-echo "[B13 smoke] PASS — dbUpsert ON CONFLICT 幂等验证通过"
+if psql "$DB_URL" -v ON_ERROR_STOP=1 -c "
+  UPDATE initiative_contracts SET contract_content='mutated', branch='branch-v2'
+   WHERE initiative_id='$TEST_ID'::uuid AND version=1
+" >/dev/null 2>&1; then
+  echo "[B13 smoke] approved contract mutation unexpectedly succeeded"
+  exit 1
+fi
+
+echo "[B13 smoke] PASS — identical replay idempotent; approved identity immutable"

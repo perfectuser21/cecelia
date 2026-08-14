@@ -3,8 +3,28 @@ import {
   requeueOrphanTask,
   handleRelayExitConsistency,
   sweepOrphanHarnessTasks,
+  startHarnessOrphanGuard,
   WAIT_SUICIDE_PATTERN,
 } from '../harness-orphan-guard.js';
+
+describe('startHarnessOrphanGuard', () => {
+  it('接流量前立即完成一次 ownerless Kernel 收敛', async () => {
+    vi.useFakeTimers();
+    const reconcileOwnerless = vi.fn(async () => []);
+    try {
+      const timer = await startHarnessOrphanGuard({
+        pool: {},
+        execFn: vi.fn(),
+        reconcileOwnerless,
+        intervalMs: 300_000,
+      });
+      expect(reconcileOwnerless).toHaveBeenCalledOnce();
+      clearInterval(timer);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 function mockPool(taskRow) {
   const calls = [];
@@ -127,7 +147,9 @@ describe('handleRelayExitConsistency', () => {
     const execFn = vi.fn(() => `cecelia-relay-${shortId}-alive1\n`);
     const r = await handleRelayExitConsistency({ pool, execFn, containerId, exitCode: 1, resultText: '' });
     expect(r.action).toBe('noop');
-    expect(execFn).toHaveBeenCalled();
+    expect(execFn).toHaveBeenCalledWith('docker', [
+      'ps', '--format', '{{.Names}}', '--filter', `name=cecelia-relay-${shortId}`,
+    ]);
   });
 
   it('任务 in_progress 且无活容器 → requeue', async () => {

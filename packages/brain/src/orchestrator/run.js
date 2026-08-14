@@ -2,7 +2,9 @@
  * run.js —— orchestrator CLI 入口（独立于 Brain 容器生命周期的主机进程，D6）。
  *
  * 主机进程用法：
- *   node packages/brain/src/orchestrator/run.js --task-id <uuid> [--run-id <uuid>] [--dry-run]
+ *   node packages/brain/src/orchestrator/run.js --task-id <uuid> --dry-run
+ *   node packages/brain/src/orchestrator/run.js --task-id <uuid> --run-id <uuid>
+ *     --controller-session-id <uuid> --controller-generation <n>
  *
  * --dry-run：只观测+推导+打印（F5 前台雏形），零写入零派发。
  * 非 dry-run 组装 provider-neutral dispatcher；Brain tick 拉起/watchdog 重拉另行接线。
@@ -28,6 +30,7 @@ import {
 } from './credential-broker.js';
 import { createGitHubCredentialBroker } from './github-credential-broker.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
+import { createTask } from '../actions.js';
 import { createProviderRegistry } from './provider-registry.js';
 import { claudeAdapter } from './providers/claude.js';
 import { codexAdapter } from './providers/codex.js';
@@ -52,6 +55,7 @@ import { createRunEventStore } from './run-event-store.js';
 import { parseBaseRepo } from './github-pr-discovery.js';
 import { activateQueuedKernelTask, finalizeKernelRun } from './kernel-run-store.js';
 import { sanitizeDiagnostic } from './failure-persistence.js';
+import { handleKernelProcessFatal } from './kernel-controller-lifecycle.js';
 import {
   createHarnessImpactGates,
   verifyImpactMergeFence,
@@ -73,22 +77,26 @@ export function parseArgs(argv) {
   const args = {
     taskId: null,
     runId: null,
-    resumeToken: null,
-    // 创建端 Controller session（sprint 08132021）：detached child 续租身份，
-    // 由 launchKernelProcess 以 --controller-session-id 透传，禁止仅凭 run_id 续租。
     controllerSessionId: null,
+    controllerGeneration: null,
+    resumeToken: null,
     dryRun: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--task-id') args.taskId = argv[++i];
     else if (a === '--run-id') args.runId = argv[++i];
-    else if (a === '--resume-token') args.resumeToken = argv[++i];
     else if (a === '--controller-session-id') args.controllerSessionId = argv[++i];
+    else if (a === '--controller-generation') args.controllerGeneration = Number(argv[++i]);
+    else if (a === '--resume-token') args.resumeToken = argv[++i];
     else if (a === '--dry-run') args.dryRun = true;
   }
   if (!args.taskId) {
-    throw new Error('用法: node packages/brain/src/orchestrator/run.js --task-id <uuid> [--run-id <uuid>] [--dry-run]');
+    throw new Error('用法: node packages/brain/src/orchestrator/run.js --task-id <uuid> --dry-run | --run-id <uuid> --controller-session-id <uuid> --controller-generation <n>');
+  }
+  if (!args.dryRun && (!args.runId || !args.controllerSessionId
+      || !Number.isSafeInteger(args.controllerGeneration) || args.controllerGeneration < 1)) {
+    throw new Error('controller_lease_identity_missing');
   }
   return args;
 }
@@ -118,20 +126,19 @@ export async function buildDefaultHandlers({ pool, execCmd, attemptStore, judgeG
 
   const spawnStaging = async (payload) => {
     if (!payload.pr_url) return { created: false, reason: 'missing_pr_url' };
-    const result = await pool.query(
-      `INSERT INTO tasks (title, description, task_type, status, priority, payload)
-       SELECT $1, $2, 'staging_e2e', 'queued', 'P2', $3::jsonb
-       WHERE NOT EXISTS (
-         SELECT 1 FROM tasks WHERE task_type='staging_e2e' AND payload->>'pr_url'=$4
-       )`,
-      [
-        `[Staging E2E] ${payload.pr_branch || payload.pr_url}`,
-        `Kernel post-merge staging verification for ${payload.pr_url}`,
-        JSON.stringify(payload),
-        payload.pr_url,
-      ],
-    );
-    return { created: result.rowCount > 0 };
+    const created = await createTask({
+      db: pool,
+      source: 'child',
+      source_id: `staging-e2e:${payload.pr_url}`,
+      title: `[Staging E2E] ${payload.pr_branch || payload.pr_url}`,
+      description: `Kernel post-merge staging verification for ${payload.pr_url}`,
+      task_type: 'staging_e2e',
+      priority: 'P2',
+      trigger_source: 'kernel_post_merge',
+      allow_unscoped: true,
+      payload,
+    });
+    return { created: !created.deduplicated };
   };
 
   return createKernelHandlers({
@@ -334,6 +341,7 @@ export async function buildRealDeps(overrides = {}) {
         );
       });
     dispatch = createDispatcher({
+      db: pool,
       attemptStore,
       registry,
       launcher,
@@ -426,8 +434,9 @@ export async function buildRealDeps(overrides = {}) {
 export async function runKernelMain({
   taskId,
   runId,
+  controllerSessionId,
+  controllerGeneration,
   resumeToken,
-  controllerSessionId = null,
   dryRun,
 }, {
   buildDeps = buildRealDeps,
@@ -436,6 +445,12 @@ export async function runKernelMain({
   activateQueuedTask = activateQueuedKernelTask,
   logError = console.error,
 } = {}) {
+  if (!dryRun) {
+    const generation = Number(controllerGeneration);
+    if (!runId || !controllerSessionId || !Number.isSafeInteger(generation) || generation < 1) {
+      throw new Error('controller_lease_identity_missing');
+    }
+  }
   let deps;
   let pool;
   try {
@@ -459,19 +474,22 @@ export async function runKernelMain({
     return await runLoopFn(deps, {
       taskId,
       runId,
-      resumeToken,
       controllerSessionId,
+      controllerGeneration,
+      resumeToken,
       dryRun,
       onOwnershipVerified,
     });
   } catch (error) {
     if (pool && runId && !dryRun) {
       try {
-        await finalizeRun(pool, {
+        await handleKernelProcessFatal(pool, {
           runId,
           expectedTaskId: taskId,
-          outcome: 'failed',
-          reason: `kernel_process_fatal:${sanitizeDiagnostic(error?.message)}`,
+          failureCode:sanitizeDiagnostic(error?.message),
+          expectedControllerSessionId:controllerSessionId,
+          expectedControllerGeneration:controllerGeneration,
+          finalizeRun,
         });
       } catch (finalizeError) {
         logError(
@@ -504,15 +522,17 @@ export async function main(
   const {
     taskId,
     runId,
-    resumeToken,
     controllerSessionId,
+    controllerGeneration,
+    resumeToken,
     dryRun,
   } = args;
   const result = await runKernelMainFn({
     taskId,
     runId,
-    resumeToken,
     controllerSessionId,
+    controllerGeneration,
+    resumeToken,
     dryRun,
   });
   log(`[orchestrator] exit: ${result.exitReason} (hops=${result.hops})`);

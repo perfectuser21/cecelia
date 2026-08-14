@@ -173,7 +173,7 @@ function createAttemptResourceManager({
       }
       const username = `attempt_${suffix.slice(0, 16)}`;
       const password = suffix.slice(16, 48);
-      const database = `acceptance_${suffix.slice(48)}`;
+      const database = `acceptance_${suffix.slice(48)}_scratch`;
       let networkCreated = false;
       let containerCreated = false;
       try {
@@ -237,6 +237,11 @@ function createAttemptResourceManager({
           environment: Object.freeze({
             DB_URL: dbUrl,
             DATABASE_URL: dbUrl,
+            DB_HOST: 'postgres',
+            DB_PORT: '5432',
+            DB_USER: username,
+            DB_PASSWORD: password,
+            DB_NAME: database,
           }),
           networkName,
         });

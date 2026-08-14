@@ -49,7 +49,7 @@ const TERMINAL_ATTEMPT_STATUSES = new Set([
 ]);
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const GITHUB_REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
-const LEGACY_PROPOSE_BRANCH_PATTERN = /^cp-harness-propose-r\d+-([a-zA-Z0-9]{8})-a\d+$/;
+const ATTEMPT_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const SPAWN_ROLE_BY_ACTION = Object.freeze({
   [ACTION.SPAWN_PLANNER]: 'planner',
   [ACTION.SPAWN_PROPOSER]: 'proposer',
@@ -144,6 +144,46 @@ function asJson(value) {
   return value;
 }
 
+function isSafeChangedFilePath(filePath) {
+  const hasControlCharacter = typeof filePath === 'string'
+    && [...filePath].some((character) => {
+      const codePoint = character.codePointAt(0);
+      return codePoint <= 0x1f || codePoint === 0x7f;
+    });
+  return (
+    typeof filePath === 'string'
+    && filePath.length > 0
+    && filePath.length <= 4096
+    && !filePath.startsWith('/')
+    && !filePath.includes('\\')
+    && !hasControlCharacter
+    && !filePath.split('/').includes('..')
+  );
+}
+
+function loadPrChangedFiles(prUrl, execCmd) {
+  const match = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)$/.exec(prUrl);
+  if (!match) return null;
+  const [, owner, repo, number] = match;
+  try {
+    const stdout = execTolerant(
+      execCmd,
+      `gh api --paginate "repos/${owner}/${repo}/pulls/${number}/files?per_page=100" --jq '.[].filename'`,
+    );
+    const changedFiles = String(stdout ?? '')
+      .split('\n')
+      .filter((filePath) => filePath.length > 0);
+    if (
+      changedFiles.length === 0
+      || changedFiles.length > 10_000
+      || !changedFiles.every(isSafeChangedFilePath)
+    ) return null;
+    return [...new Set(changedFiles)].sort();
+  } catch {
+    return null;
+  }
+}
+
 function hasMatchedGeneratorLaunchEffect(attempt, logRows) {
   return logRows.some((row) => {
     if (row.action !== LOG_ACTION.ATTEMPT_LAUNCHED) return false;
@@ -169,6 +209,55 @@ function generatorAttemptHasRuntimeEvidence(attempt, logRows) {
   if (attempt.provider_session_id != null || attempt.heartbeat_at != null) return true;
   if (attempt.status === 'running') return true;
   return GENERATOR_RUNTIME_ERROR_CODES.has(attempt.error_code);
+}
+
+function verifiedLocalCandidate(attemptRows, runId, taskId) {
+  const ordered = [...attemptRows].sort((left, right) => Number(right.hop) - Number(left.hop));
+  for (const attempt of ordered) {
+    if (
+      attempt.role !== 'generator'
+      || attempt.run_id !== runId
+      || !['completed', 'completed_with_concerns'].includes(attempt.status)
+    ) continue;
+    const bundle = asJson(attempt.task_bundle);
+    const result = asJson(attempt.result);
+    const workspace = bundle?.inputs?.workspace_spec;
+    const artifact = Array.isArray(result?.artifacts)
+      ? result.artifacts.find((value) => value?.type === 'git_candidate')
+      : null;
+    const changedFiles = artifact?.changed_files;
+    const changedFilesValid = changedFiles === undefined || (
+      Array.isArray(changedFiles)
+      && changedFiles.length > 0
+      && changedFiles.length <= 10_000
+      && changedFiles.every((filePath) => (
+        typeof filePath === 'string'
+        && filePath.length > 0
+        && filePath.length <= 4096
+        && !filePath.startsWith('/')
+        && !filePath.includes('\\')
+        && !filePath.split('/').includes('..')
+      ))
+    );
+    if (
+      artifact?.verification_status !== 'verified'
+      || artifact.source_attempt_id !== attempt.id
+      || !ATTEMPT_ID_PATTERN.test(artifact.source_attempt_id ?? '')
+      || bundle?.inputs?.task_id !== taskId
+      || workspace?.repo !== artifact.repo
+      || workspace?.branch !== artifact.branch
+      || workspace?.base_sha !== artifact.base_sha
+      || attempt.actual_machine_id !== artifact.machine_id
+      || !GITHUB_REPO_PATTERN.test(artifact.repo ?? '')
+      || !/^cp-[a-z0-9][a-z0-9._-]{0,126}$/.test(artifact.branch ?? '')
+      || !GIT_SHA_PATTERN.test(artifact.base_sha ?? '')
+      || !GIT_SHA_PATTERN.test(artifact.head_sha ?? '')
+      || artifact.base_sha === artifact.head_sha
+      || !changedFilesValid
+    ) continue;
+    return Object.freeze({ ...artifact });
+  }
+  return null;
 }
 
 /** docker --format "{{json .}}" 输出（每行一个 JSON）→ 对象数组 */
@@ -249,6 +338,12 @@ function scopeLastAgentExit({
  * 返回 derive(observed) 所需全部字段（counters 除外——loop 用 deriveCounters(decisionLog) 补齐），
  * 外加原始 decisionLog / authCircuit / callbackResult 供 loop 与 T3 dispatcher 消费。
  */
+export function isLegacyProposalBranchForTask(branch, taskId) {
+  if (typeof branch !== 'string') return false;
+  const match = /^cp-harness-propose-r\d+-([a-f0-9]{8})-a\d+$/.exec(branch);
+  return match?.[1] === String(taskId).slice(0, 8);
+}
+
 export async function collectGroundTruth(deps, opts) {
   const { pool, execCmd, fileExists, readFile } = deps;
   const { taskId, runId, prdPath = 'sprint-prd.md', callbackResultPath = '.brain-result.json' } = opts;
@@ -319,6 +414,22 @@ export async function collectGroundTruth(deps, opts) {
   const tRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
   const task = tRes.rows[0] ?? null;
   if (!task) throw new Error(`collectGroundTruth: tasks 无此 task 行: ${taskId}`);
+  const taskPayload = asJson(task.payload) ?? {};
+  let routingReceipt = null;
+  if (taskPayload.routing_receipt_id != null) {
+    const receiptRes = await pool.query(
+      `SELECT receipt.*,
+              EXISTS (
+                SELECT 1 FROM work_routing_receipts successor
+                 WHERE successor.supersedes_receipt_id = receipt.id
+              ) AS superseded
+         FROM work_routing_receipts receipt
+        WHERE receipt.id = $1
+          AND receipt.task_id = $2`,
+      [taskPayload.routing_receipt_id, taskId],
+    );
+    routingReceipt = receiptRes.rows[0] ?? null;
+  }
 
   const logRes = await pool.query(
     'SELECT hop, action, observed, derived_phase, gate_verdict, detail, created_at FROM orchestrator_decision_log WHERE run_id = $1 ORDER BY hop',
@@ -437,7 +548,6 @@ export async function collectGroundTruth(deps, opts) {
 
   // ---- PR 状态（gh 封装）----
   let pr = null;
-  const taskPayload = asJson(task.payload) ?? {};
   let implementationBaseline = null;
   let implementationBaselineError = null;
   try {
@@ -474,6 +584,7 @@ export async function collectGroundTruth(deps, opts) {
       `gh pr view ${prUrl} --json number,state,mergeStateStatus,headRefName,headRefOid,statusCheckRollup`,
     )) ?? {};
     const checks = normalizeStatusCheckRollup(view.statusCheckRollup);
+    const changedFiles = loadPrChangedFiles(prUrl, execCmd);
     pr = {
       number: view.number ?? null,
       url: prUrl,
@@ -484,7 +595,80 @@ export async function collectGroundTruth(deps, opts) {
       head_sha: view.headRefOid ?? null,
       ci: mapCiStatus(checks, view.mergeStateStatus),
       failed_checks: failedCheckNames(checks),
+      changed_files: changedFiles,
     };
+  }
+
+  // A recovery run may legitimately resume at Evaluator after an earlier trusted
+  // run generated the PR.  Do not trust the mutable task payload for that jump:
+  // require a completed Generator Attempt and an allowed Evaluator intent from a
+  // trusted prior Kernel run for the same task, then bind that server observation
+  // to the exact PR URL and GitHub head currently observed above.
+  let verifiedExistingPrOrigin = null;
+  const recoveryBaseSha = routingReceipt?.evidence?.base_sha;
+  if (
+    run.created_source === 'explicit_recovery'
+    && pr != null
+    && run.predecessor_run_id
+    && routingReceipt?.id
+    && run.contract_id
+    && GIT_SHA_PATTERN.test(recoveryBaseSha ?? '')
+  ) {
+    const originRes = await pool.query(
+      `SELECT prior_run.id AS validation_origin_run_id,
+              evaluator_intent.observed
+         FROM initiative_runs prior_run
+         JOIN initiative_contracts approved_contract
+           ON approved_contract.id = prior_run.contract_id
+          AND approved_contract.status = 'approved'
+          AND approved_contract.approved_sha ~ '^[a-f0-9]{40}$'
+         JOIN orchestrator_decision_log evaluator_intent
+           ON evaluator_intent.run_id = prior_run.id
+          AND evaluator_intent.action = 'spawn:evaluator'
+          AND evaluator_intent.gate_verdict = 'allow'
+        WHERE prior_run.current_task_id = $1
+          AND prior_run.id <> $2
+          AND prior_run.id = $3
+          AND evaluator_intent.observed->'routingReceipt'->>'id' = $4
+          AND prior_run.contract_id = $5
+          AND evaluator_intent.observed->'contract'->>'id' = $5::text
+          AND evaluator_intent.observed->'contract'->'row'->>'approved_sha'
+                = approved_contract.approved_sha
+          AND evaluator_intent.observed->'implementationBaseline'->>'base_sha' = $6
+          AND prior_run.orchestrator_version = 'v2'
+          AND prior_run.record_trust_status IN ('trusted', 'reconstructed')
+          AND EXISTS (
+            SELECT 1
+              FROM harness_attempts generator_attempt
+             WHERE generator_attempt.run_id = prior_run.id
+               AND generator_attempt.role = 'generator'
+               AND generator_attempt.status IN ('completed', 'completed_with_concerns')
+               AND generator_attempt.result IS NOT NULL
+          )
+        ORDER BY evaluator_intent.created_at DESC, evaluator_intent.hop DESC`,
+      [
+        taskId,
+        runId,
+        run.predecessor_run_id,
+        routingReceipt.id,
+        run.contract_id,
+        recoveryBaseSha,
+      ],
+    );
+    const matchingOrigin = originRes.rows.find((row) => {
+      const observedPr = asJson(row.observed)?.pr;
+      return observedPr?.url === pr.url
+        && GIT_SHA_PATTERN.test(observedPr?.head_sha ?? '')
+        && observedPr.head_sha === pr.head_sha;
+    });
+    if (matchingOrigin) {
+      verifiedExistingPrOrigin = Object.freeze({
+        source: 'trusted_prior_kernel_run',
+        run_id: matchingOrigin.validation_origin_run_id,
+        pr_url: pr.url,
+        pr_head_sha: pr.head_sha,
+      });
+    }
   }
 
   // ---- propose 分支 rN（外部真相，ganRound 唯一权威）----
@@ -498,15 +682,13 @@ export async function collectGroundTruth(deps, opts) {
     try {
       const bundle = parseTaskBundle(asJson(attempt.task_bundle));
       const branch = bundle.inputs?.propose_branch;
-      const legacyBranchMatch = typeof branch === 'string'
-        ? LEGACY_PROPOSE_BRANCH_PATTERN.exec(branch)
-        : null;
       if (
         bundle.run_id === runId
         && bundle.attempt_id === attempt.id
         && bundle.role === 'proposer'
         && bundle.inputs?.task_id === taskId
-        && legacyBranchMatch?.[1] === shortTask
+        && typeof branch === 'string'
+        && isLegacyProposalBranchForTask(branch, taskId)
       ) {
         legacyBranchesForRun.add(branch);
       }
@@ -566,6 +748,7 @@ export async function collectGroundTruth(deps, opts) {
   const generatorSpawned = attemptRows.some((row) => (
     generatorAttemptHasRuntimeEvidence(row, decisionLog)
   ));
+  const candidate = verifiedLocalCandidate(attemptRows, runId, taskId);
   const evalRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_EVALUATE);
   const judgeRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_JUDGE);
   const evaluateVerdict = evalRow ? asJson(evalRow.detail) : null;
@@ -665,7 +848,12 @@ export async function collectGroundTruth(deps, opts) {
   // review gate：required 来自 tasks.payload（harness-initiative 透传 review_required）；
   // approved 权威 = 决策日志 verdict:human_review 行，锚定当前 head_sha（stale 批准不放行）
   const payload = asJson(task.payload) ?? {};
-  const reviewRequired = payload.review_required === true;
+  const effectiveProfile = routingReceipt
+    ? (routingReceipt.execution_profile_override ?? routingReceipt.default_execution_profile)
+    : null;
+  const reviewRequired = routingReceipt
+    ? ['new-capability-v1', 'capability-change-v1'].includes(effectiveProfile)
+    : payload.review_required === true;
   const mergeApproval = latestRow(decisionLog, (row) => {
     if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW || !pr) return false;
     const detail = asJson(row.detail);
@@ -698,6 +886,7 @@ export async function collectGroundTruth(deps, opts) {
   return {
     run,
     task,
+    routingReceipt,
     // harness gear 档位（sprint 08091640）：把持久化的 initiative_runs.gear 每跳注入 observed，
     // 供 derive 状态机分叉。缺省（列 NULL / 存量行）→ 'default'，行为与现行逐字节等价（零回归）。
     // gear 是 observed 的可选字段，不进 derive 的 REQUIRED_FIELDS（否则存量用例全炸）。
@@ -706,7 +895,7 @@ export async function collectGroundTruth(deps, opts) {
     // initiative_runs.change_kind 每跳注入 observed，供 derive 按四档分派相位链。
     // 缺省（列不存在 / 存量 run / NULL）→ null，derive 不分叉（零回归）。change_kind 与
     // gear 独立注入、独立计算，禁互推导（决策 29ae54ae）。
-    change_kind: run.change_kind ?? null,
+    change_kind: routingReceipt?.change_kind ?? null,
     prdExists,
     prdEvidence,
     plannerPrdArtifact,
@@ -714,6 +903,8 @@ export async function collectGroundTruth(deps, opts) {
     implementationBaselineError,
     contract,
     pr,
+    candidate,
+    verifiedExistingPrOrigin,
     inflight: {
       containers,
       host_pids: hostPids,

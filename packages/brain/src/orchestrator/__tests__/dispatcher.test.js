@@ -121,6 +121,7 @@ describe('resolveAction', () => {
     ['spawn:generator-fix', 'generator', 'harness-generator'],
     ['spawn:evaluator', 'evaluator', 'harness-evaluator'],
     ['spawn:judge', 'judge', null],
+    ['publish:approved_ref', 'publisher', null],
     ['spawn:commander', 'commander', null],
   ])('%s 映射为隔离的 %s/%s', (action, role, skill) => {
     expect(resolveAction(action)).toMatchObject({ role, skill });
@@ -132,6 +133,146 @@ describe('resolveAction', () => {
 });
 
 describe('createDispatcher', () => {
+  it('Judge 与其他 coding 角色一样经过 launcher，不在 Brain 进程内短路执行', async () => {
+    const deps = makeDeps();
+    const inProcessJudge = vi.fn();
+    deps.handlers = { 'spawn:judge': inProcessJudge };
+    const candidate = {
+      type: 'git_candidate',
+      verification_status: 'verified',
+      source_attempt_id: '33333333-3333-4333-8333-333333333333',
+      repo: 'perfectuser21/cecelia',
+      branch: 'cp-local-candidate',
+      base_sha: 'a'.repeat(40),
+      head_sha: 'b'.repeat(40),
+      machine_id: 'brain-1',
+    };
+
+    const result = await createDispatcher(deps)('spawn:judge', {
+      taskId,
+      runId,
+      hop: 8,
+      observed: {
+        ...observed,
+        candidate,
+        evaluateVerdict: { verdict: 'PASS', pr_head_sha: candidate.head_sha },
+        evaluateResult: {
+          status: 'completed',
+          checks: [{ command: 'npm test', exit_code: 0, log_tail: 'passed' }],
+          decision: { outcome: 'PASS', reason: 'verified' },
+        },
+      },
+      decision: { phase: 'evaluate', reason: 'evaluate_passed_awaiting_judge' },
+      validationClock: {
+        pipeline_started_at: '2026-08-13T00:00:00.000Z',
+        deadline_at: '2026-08-13T01:30:00.000Z',
+      },
+    });
+
+    expect(result).toMatchObject({ status: 'LAUNCHED', provider: 'codex' });
+    expect(inProcessJudge).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).toHaveBeenCalledOnce();
+    expect(deps.attemptStore.createAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'judge',
+      provider: 'codex',
+      machineId: 'brain-1',
+    }));
+  });
+
+  it('publisher 只接收 Judge PASS 的精确候选，并固定到 Generator 实际机器', async () => {
+    const deps = makeDeps();
+    deps.launcher.launch.mockResolvedValueOnce(Object.freeze({
+      actualMachineId: 'us-mac-m4',
+      executionTransport: 'local-docker',
+      remoteJobId: null,
+      attestationStatus: 'local',
+      containerId: 'container-publisher',
+      jobId: null,
+    }));
+    const candidate = {
+      type: 'git_candidate',
+      verification_status: 'verified',
+      source_attempt_id: '33333333-3333-4333-8333-333333333333',
+      repo: 'perfectuser21/cecelia',
+      branch: 'cp-approved-candidate',
+      base_sha: 'a'.repeat(40),
+      head_sha: 'b'.repeat(40),
+      machine_id: 'us-mac-m4',
+    };
+    const judged = {
+      ...observed,
+      candidate,
+      judgeVerdict: { verdict: 'PASS', pr_head_sha: candidate.head_sha },
+    };
+
+    await createDispatcher(deps)('publish:approved_ref', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: judged,
+      decision: { phase: 'publish', reason: 'judge_passed_publish_exact_candidate' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created).toMatchObject({ role: 'publisher', machineId: 'us-mac-m4' });
+    expect(created.bundle.inputs).toMatchObject({
+      candidate,
+      judge_verdict: { verdict: 'PASS', pr_head_sha: candidate.head_sha },
+      merge_fence: { allowed: true, head_sha: candidate.head_sha },
+    });
+  });
+
+  it('从 canonical receipt 组装 provider routing identity，不信任 task 自报分支', async () => {
+    const deps = makeDeps();
+    const receiptId = '33333333-3333-4333-8333-333333333333';
+    const baseSha = 'b'.repeat(40);
+    const routedObserved = {
+      ...observed,
+      task: {
+        ...observed.task,
+        task_type: 'harness_initiative',
+        payload: {
+          ...observed.task.payload,
+          routing_receipt_id: receiptId,
+          work_kind: 'coding_mutation',
+          change_kind: 'bugfix',
+          repo: 'cecelia',
+        },
+      },
+      routingReceipt: {
+        id: receiptId,
+        task_id: taskId,
+        superseded: false,
+        router_version: 'work-router-v1',
+        work_kind: 'coding_mutation',
+        change_kind: 'bugfix',
+        repo: 'cecelia',
+        pipeline: 'harness',
+        canonical_task_type: 'harness_initiative',
+        impact_contract_required: true,
+        evidence: { branch: 'cp-server-branch', base_sha: baseSha },
+      },
+    };
+
+    await createDispatcher(deps)('spawn:generator', {
+      taskId,
+      runId,
+      hop: 1,
+      observed: routedObserved,
+      decision: { phase: 'generate', reason: 'approved' },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.routing_identity).toEqual({
+      routing_receipt_id: receiptId,
+      repo: 'cecelia',
+      branch: 'cp-server-branch',
+      base_sha: baseSha,
+    });
+    expect(created.bundle.objective).toContain('local candidate');
+    expect(created.bundle.objective).not.toContain('pull request artifact');
+  });
+
   it('把冻结 GP Contract 身份结构化注入下游 TaskBundle', async () => {
     const deps = makeDeps();
     const gpObserved = {
@@ -167,6 +308,61 @@ describe('createDispatcher', () => {
       journey_id: '88888888-8888-4888-8888-888888888888',
       step_id: '99999999-9999-4999-8999-999999999999',
     });
+  });
+
+  it('Evaluator 只裁决 pre-Judge 证据，不递归要求自己的 Judge 终态', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed,
+      decision: { phase: 'evaluate', reason: 'candidate_ready' },
+    });
+
+    const bundle = deps.attemptStore.createAttempt.mock.calls[0][0].bundle;
+    expect(bundle.inputs.verification_stage).toEqual({
+      name: 'pre_judge',
+      verdict_scope: 'candidate_and_upstream_evidence',
+      deferred_checks: [
+        'host_docker_inspect',
+        'judge_verdict',
+        'publisher_result',
+        'all_gates_passed',
+        'completed_role_chain',
+      ],
+    });
+    expect(bundle.objective).toContain('Do not launch a nested Controller or Harness role chain');
+    expect(bundle.objective).toContain('must not require its own future Judge verdict');
+    expect(bundle.objective).toContain('must not fail because Docker CLI or daemon access is absent');
+  });
+
+  it('Judge 只裁决 pre-Publisher 证据，并显式标记服务端后置验收', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:judge', {
+      taskId,
+      runId,
+      hop: 10,
+      observed,
+      decision: { phase: 'evaluate', reason: 'evaluate_passed_awaiting_judge' },
+    });
+
+    const bundle = deps.attemptStore.createAttempt.mock.calls[0][0].bundle;
+    expect(bundle.inputs.verification_stage).toEqual({
+      name: 'independent_judge',
+      verdict_scope: 'candidate_and_upstream_evidence',
+      deferred_checks: [
+        'host_docker_inspect',
+        'judge_verdict',
+        'publisher_result',
+        'all_gates_passed',
+        'completed_role_chain',
+      ],
+    });
+    expect(bundle.objective).toContain('must not require its own future server verdict');
+    expect(bundle.objective).toContain('deferred=true');
   });
 
   it('批准合同后不重复装载入口 PRD，Evaluator 大合同仍可派发', async () => {
@@ -1430,7 +1626,7 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs.runtime_resources).toEqual({ postgres: false, node_deps: true });
   });
 
-  it('运行时依赖预装：evaluator TaskBundle 默认注入 runtime_resources.node_deps=true', async () => {
+  it('Evaluator 默认申请隔离 PostgreSQL 并预装 node 依赖', async () => {
     const deps = makeDeps();
 
     await createDispatcher(deps)('spawn:evaluator', {
@@ -1442,7 +1638,7 @@ describe('createDispatcher', () => {
     });
 
     const created = deps.attemptStore.createAttempt.mock.calls[0][0];
-    expect(created.bundle.inputs.runtime_resources).toEqual({ postgres: false, node_deps: true });
+    expect(created.bundle.inputs.runtime_resources).toEqual({ postgres: true, node_deps: true });
   });
 
   it('generator bundle 从已批准合同导出 contract_branch，供 launcher 注入环境', async () => {
@@ -1780,6 +1976,7 @@ describe('createDispatcher', () => {
     const deps = makeDeps();
     const evaluatorAttemptId = '33333333-3333-4333-8333-333333333333';
     const prHeadSha = 'b'.repeat(40);
+    const staleRemoteHeadSha = 'a'.repeat(40);
 
     await createDispatcher(deps)('spawn:generator-fix', {
       taskId,
@@ -1790,7 +1987,14 @@ describe('createDispatcher', () => {
         pr: {
           number: 1571,
           head_ref: 'cp-android-cancel',
+          head_sha: staleRemoteHeadSha,
+          changed_files: ['packages/brain/src/orchestrator/dispatcher.js'],
+        },
+        candidate: {
+          type: 'git_candidate',
+          branch: 'cp-android-cancel',
           head_sha: prHeadSha,
+          verification_status: 'verified',
         },
         contract: {
           approved: true,
@@ -1827,6 +2031,12 @@ describe('createDispatcher', () => {
     });
 
     const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.pull_request).toEqual({
+      number: 1571,
+      head_ref: 'cp-android-cancel',
+      head_sha: staleRemoteHeadSha,
+      changed_files: ['packages/brain/src/orchestrator/dispatcher.js'],
+    });
     expect(created.bundle.inputs.evaluator_feedback).toEqual({
       attempt_id: evaluatorAttemptId,
       pr_head_sha: prHeadSha,
@@ -2086,6 +2296,87 @@ describe('createDispatcher', () => {
     expect(deps.launcher.launch).toHaveBeenCalledWith(expect.objectContaining({
       bundle: expect.objectContaining({ constraints: expect.objectContaining({ read_only: false }) }),
     }));
+  });
+
+  it('Evaluator 有未发布候选时用候选 SHA 绑定 PR_HEAD_SHA，而不是旧远端 PR 头', async () => {
+    const deps = makeDeps();
+    const stalePrHead = 'a'.repeat(40);
+    const candidateHead = 'b'.repeat(40);
+    const candidate = {
+      type: 'git_candidate',
+      verification_status: 'verified',
+      source_attempt_id: '33333333-3333-4333-8333-333333333333',
+      repo: 'perfectuser21/cecelia',
+      branch: 'cp-local-candidate',
+      base_sha: stalePrHead,
+      head_sha: candidateHead,
+      machine_id: 'brain-1',
+    };
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 7,
+      observed: {
+        ...observed,
+        candidate,
+        pr: {
+          url: 'https://github.com/o/r/pull/42',
+          head_ref: 'cp-remote-stale',
+          head_sha: stalePrHead,
+          ci: 'pass',
+        },
+      },
+      decision: { phase: 'evaluate', reason: 'candidate_ready' },
+    });
+
+    const inputs = deps.attemptStore.createAttempt.mock.calls[0][0].bundle.inputs;
+    expect(inputs).toMatchObject({
+      candidate,
+      pr_branch: candidate.branch,
+      pr_head_sha: candidateHead,
+    });
+  });
+
+  it('Judge 证据不足触发补证时把当前 SHA 的结构化反馈交给 Evaluator', async () => {
+    const deps = makeDeps();
+    const candidateHead = 'b'.repeat(40);
+    const candidate = {
+      type: 'git_candidate',
+      verification_status: 'verified',
+      source_attempt_id: '33333333-3333-4333-8333-333333333333',
+      repo: 'perfectuser21/cecelia',
+      branch: 'cp-local-candidate',
+      base_sha: 'a'.repeat(40),
+      head_sha: candidateHead,
+      machine_id: 'brain-1',
+    };
+    const judgeVerdict = {
+      verdict: 'FAIL',
+      pr_head_sha: candidateHead,
+      failure_class: 'evidence_insufficient',
+      failure_signature: 'required_smoke_exit_1',
+      feedback: '完整 smoke 必须 exit 0，并提供真实容器 receipt/inspect。',
+      coverage: [{ step: 'B-10', passed: false, evidence: '角色链证据缺失' }],
+    };
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        candidate,
+        judgeVerdict,
+      },
+      decision: {
+        phase: 'evaluate',
+        reason: 'judge_evidence_insufficient_recollect',
+      },
+    });
+
+    const inputs = deps.attemptStore.createAttempt.mock.calls[0][0].bundle.inputs;
+    expect(inputs.judge_feedback).toEqual(judgeVerdict);
   });
 
   it('只把结构化 GitHub 取证请求交给 evaluator TaskBundle', async () => {
@@ -3298,7 +3589,7 @@ describe('createDetachedLauncher', () => {
     expect(env.GIT_CONFIG_VALUE_0).toBeUndefined();
   });
 
-  it('把同一 bundle task_id 注入 generator 的 Cecelia 与 harness 任务环境', async () => {
+  it('把 server-issued routing identity 注入 generator 的动作环境', async () => {
     const spawnDetached = vi.fn(async ({ containerId }) => ({ containerId }));
     const launcher = createDetachedLauncher({
       spawnDetached,
@@ -3308,7 +3599,23 @@ describe('createDetachedLauncher', () => {
     await launcher.launch({
       attempt: { id: attemptId, run_id: runId, hop: 8, role: 'generator' },
       bundle: {
-        inputs: { task_id: taskId, worktree_path: '/tmp/worktree' },
+        inputs: {
+          task_id: taskId,
+          worktree_path: '/tmp/worktree',
+          routing_identity: {
+            routing_receipt_id: 'receipt-1',
+            repo: 'cecelia',
+            branch: 'cp-top-level-receipt',
+            base_sha: 'a'.repeat(40),
+          },
+          workspace_spec: {
+            repo: 'cecelia',
+            branch: 'cp-attempt-workspace',
+            base_sha: 'b'.repeat(40),
+            expected_head_sha: 'c'.repeat(40),
+            frozen_baseline: true,
+          },
+        },
         constraints: { read_only: false },
       },
       spec: { provider: 'codex', args: [], stdin: '{}', env: {} },
@@ -3317,6 +3624,15 @@ describe('createDetachedLauncher', () => {
 
     const { env } = spawnDetached.mock.calls[0][0];
     expect(env.CECELIA_TASK_ID).toBe(taskId);
+    expect(env.CECELIA_ROUTING_RECEIPT_ID).toBe('receipt-1');
+    expect(env.CECELIA_RUN_ID).toBe(runId);
+    expect(env.CECELIA_REPO).toBe('cecelia');
+    expect(env.CECELIA_ROUTING_REPO).toBe('cecelia');
+    expect(env.CECELIA_BRANCH).toBe('cp-attempt-workspace');
+    expect(env.CECELIA_BASE_SHA).toBe('b'.repeat(40));
+    expect(env.CECELIA_ROUTING_BASE_SHA).toBe('a'.repeat(40));
+    expect(env.HARNESS_WORKSPACE_START_SHA).toBe('c'.repeat(40));
+    expect(env.HARNESS_FROZEN_BASELINE).toBe('true');
     expect(env.HARNESS_TASK_ID).toBe(taskId);
   });
 

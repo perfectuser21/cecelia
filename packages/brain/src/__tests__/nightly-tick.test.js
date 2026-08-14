@@ -34,6 +34,9 @@ vi.mock('../event-bus.js', () => ({
   emit: vi.fn().mockResolvedValue(undefined)
 }));
 
+const mockCreateTask = vi.hoisted(() => vi.fn());
+vi.mock('../actions.js', () => ({ createTask: mockCreateTask }));
+
 // ------------------------------------------------------------------
 // 工具函数：构建标准 project 对象
 // ------------------------------------------------------------------
@@ -502,9 +505,6 @@ describe('executeNightlyAlignment', () => {
     for (const p of projects) {
       if (parseInt(p.completed_today) > 0) {
         calls.push({ rows: reviewExistsForProjects ? [{ id: 'existing-review' }] : [] }); // SELECT dedup
-        if (!reviewExistsForProjects) {
-          calls.push({ rows: [{ id: 'review-task-id' }] }); // INSERT task
-        }
       }
     }
 
@@ -519,6 +519,8 @@ describe('executeNightlyAlignment', () => {
     const dbMod = await import('../db.js');
     mockPool = dbMod.default;
     mockPool.query.mockReset();
+    mockCreateTask.mockReset();
+    mockCreateTask.mockResolvedValue({ task: { id: 'review-task-id' } });
 
     const eventMod = await import('../event-bus.js');
     mockEmit = eventMod.emit;

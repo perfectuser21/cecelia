@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # kernel-controller-lease-renewal-smoke.sh
 # 验收（sprint 08132021-controller-lease-renewal-r2 —— 修 Controller heartbeat 不续租致 30 分钟杀跑）：
-#   1. buildKernelLaunchArgs 把创建端 controllerSessionId 透传成 --controller-session-id（真 import，纯函数）
-#   2. run.js parseArgs 认 --controller-session-id（真 import，纯函数）
+#   1. buildKernelLaunchArgs 把创建端 session+generation 一起透传（真 import，纯函数）
+#   2. run.js parseArgs 认 session+generation（真 import，纯函数）
 #   3. heartbeat.js writeHeartbeat 续租 SQL：GREATEST + CAS（controller_session_id + phase NOT IN）（真源码断言）
 #   4. migration：initiative_runs 有 controller_lease_expires_at 续租载体列（真 PG）
 #   5. Brain liveness（真 curl 现网 Brain）
@@ -16,11 +16,12 @@ fail() { echo "❌ $1"; FAIL=$((FAIL + 1)); }
 
 # 1. buildKernelLaunchArgs 透传 controllerSessionId（真 orchestrator 装配 seam，纯函数无 DB）
 echo "── buildKernelLaunchArgs 透传 --controller-session-id ──"
-if node --input-type=module -e '
+if DB_NAME="${DB_NAME:-cecelia_test}" node --input-type=module -e '
 import { buildKernelLaunchArgs } from "./packages/brain/src/harness-skill-relay.js";
-const argv = buildKernelLaunchArgs({ runner: "/x/run.js", taskId: "t-1", runId: "r-1", controllerSessionId: "sess-abc" });
+const argv = buildKernelLaunchArgs({ runner: "/x/run.js", taskId: "t-1", runId: "r-1", controllerSessionId: "sess-abc", controllerGeneration: 7 });
 const i = argv.indexOf("--controller-session-id");
-if (i < 0 || argv[i + 1] !== "sess-abc" || !argv.includes("--run-id")) {
+const g = argv.indexOf("--controller-generation");
+if (i < 0 || argv[i + 1] !== "sess-abc" || g < 0 || argv[g + 1] !== "7" || !argv.includes("--run-id")) {
   console.error("argv mismatch:", JSON.stringify(argv)); process.exit(1);
 }
 '; then
@@ -31,10 +32,10 @@ fi
 
 # 2. parseArgs 认 --controller-session-id（真 import run.js，纯函数）
 echo "── parseArgs 认 --controller-session-id ──"
-if node --input-type=module -e '
+if DB_NAME="${DB_NAME:-cecelia_test}" node --input-type=module -e '
 import { parseArgs } from "./packages/brain/src/orchestrator/run.js";
-const a = parseArgs(["--task-id", "t-1", "--run-id", "r-1", "--controller-session-id", "sess-abc"]);
-if (a.controllerSessionId !== "sess-abc") { console.error("parseArgs:", JSON.stringify(a)); process.exit(1); }
+const a = parseArgs(["--task-id", "t-1", "--run-id", "r-1", "--controller-session-id", "sess-abc", "--controller-generation", "7"]);
+if (a.controllerSessionId !== "sess-abc" || a.controllerGeneration !== 7) { console.error("parseArgs:", JSON.stringify(a)); process.exit(1); }
 '; then
   ok "parseArgs.controllerSessionId 解析正确（心跳不再仅凭 run_id）"
 else
@@ -46,10 +47,13 @@ echo "── writeHeartbeat 续租 CAS SQL ──"
 if node -e '
 const c = require("fs").readFileSync("./packages/brain/src/orchestrator/heartbeat.js", "utf8");
 if (!(c.includes("controller_lease_expires_at") && c.includes("GREATEST")
+      && c.includes("CONTROLLER_LEASE_DEFAULT_SECONDS")
       && c.includes("controller_session_id") && /phase\s+NOT\s+IN/i.test(c))) {
-  console.error("heartbeat renew SQL missing GREATEST/CAS"); process.exit(1);
+  console.error("heartbeat renew SQL missing lease SSOT/GREATEST/CAS"); process.exit(1);
 }
-if (/\b1800\b/.test(c)) { console.error("heartbeat hardcodes 1800 (INV-2 violated)"); process.exit(1); }
+if (/leaseSeconds\s*=\s*1800/.test(c) || /INTERVAL[^\n]*1800/i.test(c)) {
+  console.error("heartbeat hardcodes 1800 outside lease SSOT (INV-2 violated)"); process.exit(1);
+}
 '; then
   ok "heartbeat.js 续租 SQL 含 GREATEST + CAS（session+phase），不写死 1800"
 else

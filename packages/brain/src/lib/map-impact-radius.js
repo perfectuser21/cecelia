@@ -43,7 +43,8 @@ function traverseBusiness(startIds, edges, mode) {
             && ['implements', 'proves', 'affects'].includes(edge.edge_type)) {
             neighbors.push(edge.to_node_id);
           }
-          if (edge.to_node_id === nodeId && ['contains', 'serves'].includes(edge.edge_type)) {
+          if (edge.to_node_id === nodeId
+            && ['contains', 'serves', 'implements', 'proves', 'affects'].includes(edge.edge_type)) {
             neighbors.push(edge.from_node_id);
           }
         }
@@ -120,6 +121,8 @@ export function computeMapImpactRadius({
     .map((node) => ({
       node_key: node.node_key,
       assertion_ref: node.attributes?.assertion_ref ?? null,
+      assertion_revision: Number(node.attributes?.assertion_revision),
+      journey_step_link_id: node.node_key,
     }))
     .filter(({ assertion_ref: assertionRef }) => Boolean(assertionRef))
     .sort((left, right) => lexical(left.node_key, right.node_key));

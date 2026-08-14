@@ -475,6 +475,43 @@ describe('validateCoverage — 代码判 coverage 覆盖（不信裁判文字）
     expect(r.ok).toBe(false);
     expect(r.failed[0].evidence).toBe('无输出');
   });
+  it('仅允许服务端声明的 post-Judge 步骤以 deferred=true 延后', () => {
+    const steps = [
+      'B-08: scratch 多入口 Golden Path 真实产出全闭环',
+      'B-10: 真实 Harness Controller Generator Evaluator Judge 角色链，judge_verdict=PASS 且 all_gates_passed',
+    ];
+    const coverage = [
+      { step: steps[0], passed: true, evidence: 'smoke exit 0' },
+      { step: steps[1], passed: false, deferred: true, evidence: '等待当前 Judge 服务端终判' },
+    ];
+    expect(validateCoverage(coverage, steps, {
+      deferredChecks: ['judge_verdict', 'all_gates_passed', 'completed_role_chain'],
+    })).toMatchObject({ ok: true, deferred: [{ index: 2, step: steps[1] }] });
+    expect(validateCoverage(coverage, steps)).toMatchObject({ ok: false });
+  });
+  it('允许 Judge 在 Golden Path 之外附加服务端声明的 deferred 后置检查', () => {
+    const steps = ['Knife 0-5 实现验收'];
+    const coverage = [
+      { step: steps[0], passed: true, deferred: false, evidence: '29 tests passed' },
+      {
+        step: 'B-07 / B-08 real-runner container + host Docker seam',
+        passed: false,
+        deferred: true,
+        evidence: '等待服务端 host Docker inspect',
+      },
+    ];
+
+    expect(validateCoverage(coverage, steps, {
+      deferredChecks: ['host_docker_inspect'],
+    })).toMatchObject({
+      ok: true,
+      deferred: [{
+        index: 2,
+        step: 'B-07 / B-08 real-runner container + host Docker seam',
+      }],
+    });
+    expect(validateCoverage(coverage, steps)).toMatchObject({ ok: false });
+  });
 });
 
 describe('parseGoldenPathSteps / extractE2ESection', () => {
@@ -596,6 +633,16 @@ describe('buildJudgePrompt / normalizeJudgeVerdict', () => {
 describe('independent judge stage facts — fail-closed 时序闸', () => {
   it('只允许有当前 head、尚未 merge、尚未批准 merge gate 的 judge 阶段', () => {
     expect(validateIndependentJudgeStageFacts(validStageFacts)).toEqual({ pass: true, reasons: [] });
+  });
+
+  it('未发布 local candidate 以精确 head_sha 进入独立 Judge', () => {
+    expect(validateIndependentJudgeStageFacts({
+      current_stage: 'local_candidate',
+      pr_state: null,
+      pr_merged: false,
+      head_sha: 'a'.repeat(40),
+      merge_gate_approved: false,
+    })).toEqual({ pass: true, reasons: [] });
   });
 
   it.each([

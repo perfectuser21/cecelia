@@ -228,6 +228,213 @@ is_evaluator_task_bundle() {
     && [[ "$(jq -r '.task_bundle.role // empty' "$task_bundle_file" 2>/dev/null)" == "evaluator" ]]
 }
 
+is_generator_task_bundle() {
+  [[ -f "${HARNESS_TASK_BUNDLE_FILE:-}" ]] || return 1
+  [[ "$(jq -r '.task_bundle.role // empty' "$HARNESS_TASK_BUNDLE_FILE" 2>/dev/null)" == "generator" ]]
+}
+
+is_publisher_task_bundle() {
+  [[ -f "${HARNESS_TASK_BUNDLE_FILE:-}" ]] || return 1
+  [[ "$(jq -r '.task_bundle.role // empty' "$HARNESS_TASK_BUNDLE_FILE" 2>/dev/null)" == "publisher" ]]
+}
+
+is_untrusted_provider_task_bundle() {
+  is_evaluator_task_bundle || is_generator_task_bundle
+}
+
+# generator-trusted-publisher:start
+TRUSTED_GITHUB_CONFIG_DIR=""
+TRUSTED_PUBLISH_REMOTE_URL=""
+
+preserve_publisher_github_credential() {
+  is_publisher_task_bundle || return 0
+  local source_dir="${GH_CONFIG_DIR:-/home/cecelia/.config/gh}"
+  local attempt_id="${HARNESS_ATTEMPT_ID:-}"
+  local repo=""
+  if [[ "$(id -u)" != "0" ]] \
+      || [[ ! "$attempt_id" =~ ^[0-9a-f-]{36}$ ]] \
+      || [[ ! -s "$source_dir/hosts.yml" ]]; then
+    echo "[entrypoint] trusted publisher credential unavailable" >&2
+    return 1
+  fi
+  repo="$(jq -r '.task_bundle.inputs.workspace_spec.repo // empty' \
+    "$HARNESS_TASK_BUNDLE_FILE" 2>/dev/null)" || return 1
+  if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+    echo "[entrypoint] trusted publisher repository invalid" >&2
+    return 1
+  fi
+  TRUSTED_GITHUB_CONFIG_DIR="/run/cecelia-trusted/github-$attempt_id"
+  TRUSTED_PUBLISH_REMOTE_URL="https://github.com/$repo.git"
+  mkdir -p "$TRUSTED_GITHUB_CONFIG_DIR" || return 1
+  chmod 0700 "$TRUSTED_GITHUB_CONFIG_DIR" || return 1
+  cp "$source_dir/hosts.yml" "$TRUSTED_GITHUB_CONFIG_DIR/hosts.yml" || return 1
+  chown -R root:root "$TRUSTED_GITHUB_CONFIG_DIR" || return 1
+  chmod 0600 "$TRUSTED_GITHUB_CONFIG_DIR/hosts.yml" || return 1
+}
+
+finalize_generator_candidate() {
+  local result_file="$1"
+  is_generator_task_bundle || return 0
+  local workspace="${WORKTREE_PATH:-/workspace}"
+  local bundle="${HARNESS_TASK_BUNDLE_FILE:-}"
+  local repo branch base_sha bundle_attempt head_sha changed_files_json
+  local pull_request_present pr_head_sha expected_head_sha pr_changed_files_json candidate_delta_json
+  local tmp_result
+  [[ -f "$bundle" && -f "$result_file" ]] || return 1
+  repo="$(jq -r '.task_bundle.inputs.workspace_spec.repo // empty' "$bundle")" || return 1
+  branch="$(jq -r '.task_bundle.inputs.workspace_spec.branch // empty' "$bundle")" || return 1
+  base_sha="$(jq -r '.task_bundle.inputs.workspace_spec.base_sha // empty' "$bundle")" || return 1
+  bundle_attempt="$(jq -r '.task_bundle.attempt_id // empty' "$bundle")" || return 1
+  if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
+      || [[ ! "$branch" =~ ^cp-[a-z0-9][a-z0-9._-]{0,126}$ ]] \
+      || [[ ! "$base_sha" =~ ^[0-9a-f]{40}$ ]] \
+      || [[ -n "${HARNESS_ATTEMPT_ID:-}" && "$bundle_attempt" != "$HARNESS_ATTEMPT_ID" ]] \
+      || [[ "$(git -C "$workspace" branch --show-current 2>/dev/null)" != "$branch" ]]; then
+    echo "[entrypoint] trusted Generator candidate identity mismatch" >&2
+    return 1
+  fi
+  head_sha="$(git -C "$workspace" rev-parse HEAD 2>/dev/null)" || return 1
+  if [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ || "$head_sha" == "$base_sha" ]] \
+      || ! git -C "$workspace" merge-base --is-ancestor "$base_sha" "$head_sha" \
+      || ! git -C "$workspace" diff --quiet \
+      || ! git -C "$workspace" diff --cached --quiet; then
+    echo "[entrypoint] trusted Generator candidate rejected uncommitted or empty output" >&2
+    return 1
+  fi
+  if git -C "$workspace" status --porcelain --untracked-files=all \
+      | grep -Ev '^\?\? (\.dev-lock\.|\.brain-result\.json$)' \
+      | grep -q .; then
+    echo "[entrypoint] trusted Generator candidate rejected untracked output" >&2
+    return 1
+  fi
+  pull_request_present="$(jq -r '.task_bundle.inputs | has("pull_request")' "$bundle")" || return 1
+  pr_head_sha="$(jq -r '.task_bundle.inputs.pull_request.head_sha // empty' "$bundle")" || return 1
+  expected_head_sha="$(jq -r '.task_bundle.inputs.workspace_spec.expected_head_sha // empty' "$bundle")" \
+    || return 1
+  pr_changed_files_json="$(jq -c '.task_bundle.inputs.pull_request.changed_files // null' "$bundle")" \
+    || return 1
+  if [[ "$pull_request_present" == "true" ]]; then
+    if [[ ! "$pr_head_sha" =~ ^[0-9a-f]{40}$ ]] \
+        || [[ ! "$expected_head_sha" =~ ^[0-9a-f]{40}$ ]] \
+        || ! git -C "$workspace" merge-base --is-ancestor "$pr_head_sha" "$expected_head_sha" \
+        || ! git -C "$workspace" merge-base --is-ancestor "$expected_head_sha" "$head_sha" \
+        || ! git -C "$workspace" merge-base --is-ancestor "$pr_head_sha" "$head_sha" \
+        || ! jq -e 'type == "array" and length > 0 and length <= 10000
+          and all(.[]; type == "string" and length > 0 and length <= 4096
+            and (startswith("/") | not)
+            and (contains("\\") | not)
+            and (explode | all(. >= 32 and . != 127))
+            and (split("/") | index("..") | not))' \
+          <<<"$pr_changed_files_json" >/dev/null; then
+      echo "[entrypoint] trusted Generator pull-request evidence invalid" >&2
+      return 1
+    fi
+    candidate_delta_json="$(git -C "$workspace" diff --name-only -z "$pr_head_sha...$head_sha" \
+      | jq -Rs 'split("\u0000") | map(select(length > 0))')" || return 1
+    changed_files_json="$(jq -cn \
+      --argjson existing "$pr_changed_files_json" \
+      --argjson delta "$candidate_delta_json" \
+      '$existing + $delta | unique | sort')" || return 1
+  else
+    changed_files_json="$(git -C "$workspace" diff --name-only -z "$base_sha...$head_sha" \
+      | jq -Rs 'split("\u0000") | map(select(length > 0))')" || return 1
+  fi
+  if ! jq -e 'type == "array" and length > 0 and length <= 10000
+      and all(.[]; type == "string" and length > 0 and length <= 4096
+        and (startswith("/") | not)
+        and (contains("\\") | not)
+        and (split("/") | index("..") | not))' \
+      <<<"$changed_files_json" >/dev/null; then
+    echo "[entrypoint] trusted Generator candidate changed-files invalid" >&2
+    return 1
+  fi
+  tmp_result="${result_file}.trusted-candidate.$$"
+  jq --arg head "$head_sha" --arg branch "$branch" --arg repo "$repo" \
+    --arg base "$base_sha" --arg source "$bundle_attempt" \
+    --arg machine "${CECELIA_MACHINE_ID:-unknown}" \
+    --argjson changed_files "$changed_files_json" '
+    (.artifacts // [] | if type == "array" then . else [] end) as $existing
+    | .artifacts = (
+        [$existing[] | select((type == "object" and (.type == "pull_request" or .type == "git_candidate")) | not)]
+        + [{type:"git_candidate",verification_status:"verified",
+            source_attempt_id:$source,head_sha:$head,base_sha:$base,
+            branch:$branch,repo:$repo,machine_id:$machine,
+            changed_files:$changed_files}]
+      )
+  ' "$result_file" > "$tmp_result" || { rm -f "$tmp_result"; return 1; }
+  mv "$tmp_result" "$result_file"
+  echo "[entrypoint] trusted Generator candidate verified head=$head_sha"
+}
+
+publish_approved_generator_candidate() {
+  local result_file="$1"
+  is_publisher_task_bundle || return 1
+  local workspace="${WORKTREE_PATH:-/workspace}"
+  local bundle="${HARNESS_TASK_BUNDLE_FILE:-}"
+  local repo branch base_sha source_attempt head_sha judge_sha fence_sha remote_sha
+  local pr_info pr_url pr_head tmp_result
+  [[ -f "$bundle" && -f "$result_file" && -s "$TRUSTED_GITHUB_CONFIG_DIR/hosts.yml" ]] \
+    || return 1
+  repo="$(jq -r '.task_bundle.inputs.candidate.repo // empty' "$bundle")" || return 1
+  branch="$(jq -r '.task_bundle.inputs.candidate.branch // empty' "$bundle")" || return 1
+  base_sha="$(jq -r '.task_bundle.inputs.candidate.base_sha // empty' "$bundle")" || return 1
+  source_attempt="$(jq -r '.task_bundle.inputs.candidate.source_attempt_id // empty' "$bundle")" || return 1
+  head_sha="$(jq -r '.task_bundle.inputs.candidate.head_sha // empty' "$bundle")" || return 1
+  judge_sha="$(jq -r 'select(.task_bundle.inputs.judge_verdict.verdict == "PASS") | .task_bundle.inputs.judge_verdict.pr_head_sha // empty' "$bundle")" || return 1
+  fence_sha="$(jq -r 'select(.task_bundle.inputs.merge_fence.allowed == true) | .task_bundle.inputs.merge_fence.head_sha // empty' "$bundle")" || return 1
+  if [[ ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
+      || [[ ! "$branch" =~ ^cp-[a-z0-9][a-z0-9._-]{0,126}$ ]] \
+      || [[ ! "$base_sha" =~ ^[0-9a-f]{40}$ ]] \
+      || [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]] \
+      || [[ ! "$source_attempt" =~ ^[0-9a-f-]{36}$ ]] \
+      || [[ "$judge_sha" != "$head_sha" || "$fence_sha" != "$head_sha" ]] \
+      || [[ "$(git -C "$workspace" rev-parse HEAD 2>/dev/null)" != "$head_sha" ]] \
+      || ! git -C "$workspace" merge-base --is-ancestor "$base_sha" "$head_sha"; then
+    echo "[entrypoint] trusted publisher approval or candidate identity mismatch" >&2
+    return 1
+  fi
+  remote_sha="$(git -C "$workspace" ls-remote --heads "$TRUSTED_PUBLISH_REMOTE_URL" \
+    "refs/heads/$branch" | awk 'NR == 1 {print $1}')" || return 1
+  if [[ -n "$remote_sha" && "$remote_sha" != "$head_sha" ]] \
+      && ! git -C "$workspace" merge-base --is-ancestor "$remote_sha" "$head_sha"; then
+    echo "[entrypoint] trusted publisher refuses remote overwrite" >&2
+    return 1
+  fi
+  GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" gh auth setup-git >/dev/null 2>&1 || return 1
+  if [[ "$remote_sha" != "$head_sha" ]]; then
+    GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" git -C "$workspace" push \
+      "$TRUSTED_PUBLISH_REMOTE_URL" "$head_sha:refs/heads/$branch" >/dev/null || return 1
+  fi
+  remote_sha="$(git -C "$workspace" ls-remote --heads "$TRUSTED_PUBLISH_REMOTE_URL" \
+    "refs/heads/$branch" | awk 'NR == 1 {print $1}')" || return 1
+  [[ "$remote_sha" == "$head_sha" ]] || return 1
+  pr_info="$(GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" gh pr view "$branch" \
+    --repo "$repo" --json url,headRefOid --jq '"\(.url)|\(.headRefOid)"' 2>/dev/null || true)"
+  if [[ -z "$pr_info" ]]; then
+    GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" gh pr create \
+      --repo "$repo" --head "$branch" --base main \
+      --title "Harness approved candidate ${CECELIA_TASK_ID:-task}" \
+      --body "Published after Judge PASS for Generator Attempt $source_attempt." \
+      >/dev/null || return 1
+    pr_info="$(GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" gh pr view "$branch" \
+      --repo "$repo" --json url,headRefOid --jq '"\(.url)|\(.headRefOid)"')" || return 1
+  fi
+  IFS='|' read -r pr_url pr_head <<< "$pr_info"
+  if [[ ! "$pr_url" =~ ^https://github\.com/${repo}/pull/[1-9][0-9]*$ ]] \
+      || [[ "$pr_head" != "$head_sha" ]]; then
+    echo "[entrypoint] trusted publisher PR head mismatch" >&2
+    return 1
+  fi
+  tmp_result="${result_file}.trusted-publisher.$$"
+  jq --arg url "$pr_url" --arg head "$head_sha" --arg branch "$branch" --arg repo "$repo" '
+    .artifacts = [{type:"pull_request",verification_status:"verified",url:$url,
+      head_sha:$head,branch:$branch,repo:$repo}]
+  ' "$result_file" > "$tmp_result" || { rm -f "$tmp_result"; return 1; }
+  mv "$tmp_result" "$result_file"
+  echo "[entrypoint] trusted publisher verified pr=$pr_url head=$head_sha"
+}
+# generator-trusted-publisher:end
+
 prepare_evaluator_evidence_capsule() {
   is_evaluator_task_bundle || return 0
 
@@ -275,8 +482,8 @@ prepare_evaluator_evidence_capsule() {
   echo "[entrypoint] Evaluator evidence capsule sealed for exact PR head"
 }
 
-destroy_evaluator_github_credential() {
-  is_evaluator_task_bundle || return 0
+destroy_untrusted_provider_github_credential() {
+  is_untrusted_provider_task_bundle || return 0
 
   local config_dir="${GH_CONFIG_DIR:-/home/cecelia/.config/gh}"
   if [[ "$config_dir" != /* || "$config_dir" == "/" ]]; then
@@ -289,10 +496,10 @@ destroy_evaluator_github_credential() {
   export GITHUB_CREDENTIAL_DESTROYED=true
   if [[ -e "$config_dir/hosts.yml" ]] \
       || gh auth token --hostname github.com >/dev/null 2>&1; then
-    echo "[entrypoint] Evaluator GitHub credential destruction failed" >&2
+    echo "[entrypoint] untrusted Provider GitHub credential destruction failed" >&2
     return 1
   fi
-  echo "[entrypoint] Evaluator GitHub credential destroyed before Provider"
+  echo "[entrypoint] untrusted Provider GitHub credential destroyed before Provider"
 }
 
 verify_evaluator_evidence_capsule() {
@@ -330,7 +537,7 @@ seal_evaluator_evidence_capsule() {
 }
 
 prepare_evaluator_provider_identity() {
-  is_evaluator_task_bundle || {
+  is_untrusted_provider_task_bundle || {
     PROVIDER_IDENTITY_PREFIX=()
     PROVIDER_TRUST_BOUNDARY_ENV=()
     ASSERTION_IDENTITY_PREFIX=()
@@ -386,14 +593,24 @@ prepare_evaluator_provider_identity() {
     -u HARNESS_CALLBACK_TOKEN
     -u HARNESS_LEASE_OWNER
     -u HARNESS_LEASE_GENERATION
+    -u GH_TOKEN
+    -u GITHUB_TOKEN
+    -u CECELIA_GITHUB_CREDENTIAL_REF
+    -u CECELIA_GITHUB_CREDENTIAL_FIFO
   )
-  echo "[entrypoint] Evaluator Provider constrained to UID ${provider_uid} without capabilities"
+  if is_generator_task_bundle; then
+    # Provider cannot publish refs. The trusted parent publishes the exact local
+    # commit after Provider termination and lineage verification.
+    git -C "${WORKTREE_PATH:-$PWD}" config remote.origin.pushurl \
+      "file:///nonexistent/harness-provider-push-disabled" || return 1
+  fi
+  echo "[entrypoint] Provider constrained to UID ${provider_uid} without capabilities"
 }
 
 terminate_evaluator_provider_processes() {
-  is_evaluator_task_bundle || return 0
+  is_untrusted_provider_task_bundle || return 0
   if [[ "$(id -u)" != "0" ]] || ! command -v pkill >/dev/null 2>&1; then
-    echo "[entrypoint] Evaluator Provider process cleanup unavailable" >&2
+    echo "[entrypoint] untrusted Provider process cleanup unavailable" >&2
     return 1
   fi
 
@@ -410,7 +627,7 @@ terminate_evaluator_provider_processes() {
     pgrep -u cecelia >/dev/null 2>&1 || return 0
     sleep 0.1
   done
-  echo "[entrypoint] Evaluator Provider descendants survived cleanup" >&2
+  echo "[entrypoint] untrusted Provider descendants survived cleanup" >&2
   return 1
 }
 # evaluator-evidence-boundary:end
@@ -426,8 +643,9 @@ fi
 if is_evaluator_task_bundle; then
   prepare_evaluator_evidence_capsule
   seal_evaluator_evidence_capsule
-  destroy_evaluator_github_credential
 fi
+preserve_publisher_github_credential
+destroy_untrusted_provider_github_credential
 
 # git-auth-setup:start
 # 宿主 gitconfig 可能引用只在 macOS 宿主存在的 credential helper。Fleet Runner 已从
@@ -870,6 +1088,78 @@ finalize_planner_output() {
 }
 # planner-finalizer:end
 
+# routing-action-gate:start
+# A routed coding Provider may only start with a lock projected by the trusted
+# Runner from the server-issued Attempt identity. The Provider never chooses
+# these fields and cannot turn a non-routed task into an authorized one.
+install_routing_action_gate() {
+  local workspace="${WORKTREE_PATH:-/workspace}"
+  local routing_values=(
+    "${CECELIA_ROUTING_RECEIPT_ID:-}"
+    "${CECELIA_RUN_ID:-}"
+    "${CECELIA_REPO:-}"
+    "${CECELIA_BRANCH:-}"
+    "${CECELIA_BASE_SHA:-}"
+  )
+  local present=0
+  local value=""
+  for value in "${routing_values[@]}"; do
+    [[ -z "$value" ]] || present=$((present + 1))
+  done
+  [[ $present -eq 0 ]] && return 0
+  if [[ $present -ne ${#routing_values[@]} ]] || [[ -z "${CECELIA_TASK_ID:-}" ]]; then
+    echo "[entrypoint] routing action identity is incomplete" >&2
+    return 1
+  fi
+  if [[ ! "${CECELIA_TASK_ID}" =~ ^[0-9a-f-]{36}$ ]] \
+      || [[ ! "${CECELIA_ROUTING_RECEIPT_ID}" =~ ^[0-9a-f-]{36}$ ]] \
+      || [[ ! "${CECELIA_RUN_ID}" =~ ^[0-9a-f-]{36}$ ]] \
+      || [[ ! "${CECELIA_REPO}" =~ ^[A-Za-z0-9._/-]+$ ]] \
+      || [[ ! "${CECELIA_BRANCH}" =~ ^cp-[a-z0-9][a-z0-9._-]{0,126}$ ]] \
+      || [[ ! "${CECELIA_BASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "[entrypoint] routing action identity is malformed" >&2
+    return 1
+  fi
+  if [[ ! -d "$workspace" ]] || ! git -C "$workspace" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "[entrypoint] routing action workspace is unavailable" >&2
+    return 1
+  fi
+  local actual_branch actual_root
+  actual_branch=$(git -C "$workspace" branch --show-current 2>/dev/null || true)
+  actual_root=$(git -C "$workspace" rev-parse --show-toplevel 2>/dev/null || true)
+  if [[ "$actual_branch" != "$CECELIA_BRANCH" ]] \
+      || [[ -z "$actual_root" ]] \
+      || ! git -C "$actual_root" cat-file -e "${CECELIA_BASE_SHA}^{commit}" 2>/dev/null \
+      || ! git -C "$actual_root" merge-base --is-ancestor "$CECELIA_BASE_SHA" HEAD 2>/dev/null; then
+    echo "[entrypoint] routing action workspace does not match server identity" >&2
+    return 1
+  fi
+  if [[ "${HARNESS_READ_ONLY:-false}" == "true" ]]; then
+    echo "[entrypoint] read-only routing identity validated for receipt=$CECELIA_ROUTING_RECEIPT_ID"
+    return 0
+  fi
+  local lock="$actual_root/.dev-lock.$actual_branch"
+  local lock_tmp="$lock.tmp.$$"
+  if ! jq -n \
+      --arg task_id "$CECELIA_TASK_ID" \
+      --arg routing_receipt_id "$CECELIA_ROUTING_RECEIPT_ID" \
+      --arg run_id "$CECELIA_RUN_ID" \
+      --arg repo "$CECELIA_REPO" \
+      --arg branch "$actual_branch" \
+      --arg base_sha "$CECELIA_BASE_SHA" \
+      --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '{task_id:$task_id,routing_receipt_id:$routing_receipt_id,run_id:$run_id,
+        repo:$repo,branch:$branch,base_sha:$base_sha,created_at:$created_at}' \
+      > "$lock_tmp"; then
+    rm -f "$lock_tmp"
+    return 1
+  fi
+  chmod 0444 "$lock_tmp" || { rm -f "$lock_tmp"; return 1; }
+  mv -f "$lock_tmp" "$lock" || { rm -f "$lock_tmp"; return 1; }
+  echo "[entrypoint] routing action gate armed for receipt=$CECELIA_ROUTING_RECEIPT_ID"
+}
+# routing-action-gate:end
+
 # frozen-baseline-guard:start
 # 生产 run d9785137 / attempt 3aa00156：任务 payload.base_sha 钉死了盲测冻结基线，
 # Generator 仍按 SKILL Step 0.5 无条件 rebase 到 origin/main，把对照候选的血统带进
@@ -1059,7 +1349,14 @@ merge_required_assertion_evidence() {
   local assertion_executor="/usr/local/lib/cecelia/assertion-exec.mjs"
   local node_bin="/usr/local/bin/node"
   local evidence_dir checks_file assertion_home npm_cache tracked_paths_file
+  local assertion_baseline_sha=""
+  local assertion_git_dir=""
   local validation_error=""
+
+  assertion_baseline_sha="$(
+    jq -r '.task_bundle.inputs.implementation_baseline.base_sha // empty' \
+      "${HARNESS_TASK_BUNDLE_FILE:-/nonexistent}" 2>/dev/null || true
+  )"
 
   jq -e '
     .status == "completed"
@@ -1123,8 +1420,13 @@ merge_required_assertion_evidence() {
   mkdir -p "$assertion_home" "$npm_cache"
   chmod 0555 "$assertion_home"
   assertion_workspace="$evidence_dir/worktree"
-  if ! git -C "$workspace" worktree add --detach "$assertion_workspace" "$expected_sha" \
-    > "$evidence_dir/worktree-setup.log" 2>&1; then
+  # 独立 clone 避免 assertion checkout 的 .git 文件反向指向 Provider
+  # workspace 的共享 admin dir。否则隔离身份要么读不到（umask 077），要么
+  # 必须放宽整座源仓 Git admin，破坏最小权限边界。
+  if ! git clone --no-local --no-checkout "$workspace" "$assertion_workspace" \
+      > "$evidence_dir/worktree-setup.log" 2>&1 \
+    || ! git -C "$assertion_workspace" -c core.hooksPath=/dev/null \
+      checkout --detach "$expected_sha" >> "$evidence_dir/worktree-setup.log" 2>&1; then
     jq '.checks = []
         | .decision.outcome = "FAIL"
         | .decision.reason = "trusted assertion checkout creation failed"' \
@@ -1133,6 +1435,7 @@ merge_required_assertion_evidence() {
     rm -rf "$evidence_dir"
     return 0
   fi
+  assertion_git_dir="$(git -C "$assertion_workspace" rev-parse --absolute-git-dir)"
   if (( use_isolated_identity == 1 )); then
     chmod 0711 "$evidence_dir"
     chown -R nobody:nogroup "$assertion_workspace"
@@ -1153,7 +1456,6 @@ merge_required_assertion_evidence() {
         | .decision.reason = "trusted assertion dependency install failed"' \
       "$normalized_result_file" > "$merged_result_file"
     mv "$merged_result_file" "$normalized_result_file"
-    git -C "$workspace" worktree remove --force "$assertion_workspace" >/dev/null 2>&1 || true
     rm -rf "$evidence_dir"
     return 0
   fi
@@ -1166,7 +1468,12 @@ merge_required_assertion_evidence() {
   git -C "$assertion_workspace" ls-files -z > "$tracked_paths_file"
   chmod 0444 "$tracked_paths_file"
   if (( use_isolated_identity == 1 )); then
-    chmod -R a-w "$assertion_workspace"
+    # prepare_codex_credential 把进程 umask 收紧为 077。worktree 与它的
+    # per-worktree Git admin 因此可能是 root:root 0700；直接降权到 nobody
+    # 会在 realpath/git 之前稳定报 path unavailable。可信 Runner 保持属主为
+    # root、去掉所有写位，同时只补执行断言所需的只读/遍历权限。
+    chmod -R a-w,go+rX "$assertion_workspace"
+    chmod -R a-w,go+rX "$assertion_git_dir"
   fi
   checks_file="$evidence_dir/checks.json"
   printf '[]\n' > "$checks_file"
@@ -1189,6 +1496,8 @@ merge_required_assertion_evidence() {
     if ! assertion_argv="$(cd "$assertion_workspace" && \
       "${assertion_identity_prefix[@]}" \
       env -i HOME="$assertion_home" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+      DB_URL="${DB_URL:-}" BASELINE_SHA="$assertion_baseline_sha" \
+      CECELIA_TRUSTED_ASSERTION=1 \
       CECELIA_ASSERTION_TRACKED_PATHS_FILE="$tracked_paths_file" \
       "$node_bin" "$assertion_executor" --describe "$assertion_json" 2> "$log_file")"; then
       assertion_argv='null'
@@ -1199,6 +1508,8 @@ merge_required_assertion_evidence() {
         "$(runner_assertion_budget_seconds)s" \
         "${assertion_identity_prefix[@]}" \
         env -i HOME="$assertion_home" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+        DB_URL="${DB_URL:-}" BASELINE_SHA="$assertion_baseline_sha" \
+        CECELIA_TRUSTED_ASSERTION=1 \
         CECELIA_ASSERTION_TRACKED_PATHS_FILE="$tracked_paths_file" \
         "$node_bin" "$assertion_executor" --run "$assertion_json") > "$log_file" 2>&1; then
       exit_code=0
@@ -1251,7 +1562,6 @@ merge_required_assertion_evidence() {
       "$normalized_result_file" > "$merged_result_file"
   fi
   mv "$merged_result_file" "$normalized_result_file"
-  git -C "$workspace" worktree remove --force "$assertion_workspace" >/dev/null 2>&1 || true
   rm -rf "$evidence_dir"
 }
 
@@ -1540,12 +1850,31 @@ provider_result_schema_json() {
     printf '%s' '{"type":"object","properties":{"schema":{"type":"string","const":"commander-directive/v1"},"run_id":{"type":"string","format":"uuid"},"event_cursor":{"type":"integer","minimum":0},"action":{"type":"string","enum":["continue_default","dispatch_role","retry_attempt","revise_guidance","switch_provider","switch_machine","pause_run","request_human","abort_run"]},"target_role":{"type":["string","null"],"enum":["commander","planner","proposer","reviewer","generator","evaluator","judge",null]},"target_attempt_id":{"anyOf":[{"type":"string","format":"uuid"},{"type":"null"}]},"reason":{"type":"string","minLength":1,"maxLength":4000},"guidance":{"type":["string","null"],"maxLength":4000},"route":{"anyOf":[{"type":"object","properties":{"machine":{"type":["string","null"]},"provider":{"type":["string","null"]},"account":{"type":["string","null"]},"model":{"type":["string","null"]}},"required":["machine","provider","account","model"],"additionalProperties":false},{"type":"null"}]},"evidence_refs":{"type":"array","minItems":1,"maxItems":128,"items":{"type":"string","pattern":"^(event:[1-9][0-9]*|attempt:[0-9a-fA-F-]{36})$"}}},"required":["schema","run_id","event_cursor","action","target_role","target_attempt_id","reason","guidance","route","evidence_refs"],"additionalProperties":false}'
     return
   fi
+  if [[ "$expected_output" == "harness-result/judge-v1" ]]; then
+    printf '%s' '{"type":"object","properties":{"status":{"type":"string","enum":["completed","completed_with_concerns","needs_context","blocked"]},"summary":{"type":"string"},"artifacts":{"type":"array","items":{"type":"string"}},"checks":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"object","properties":{"command":{"type":"string"},"exit_code":{"type":"integer"},"log_tail":{"type":"string"},"verification_level":{"type":"string","enum":["L1","L2","L3"]},"action":{"anyOf":[{"type":"string"},{"type":"null"}]},"expected":{"anyOf":[{"type":"string"},{"type":"null"}]},"wait_budget":{"anyOf":[{"type":"string"},{"type":"null"}]},"evidence":{"anyOf":[{"type":"string"},{"type":"null"}]}},"required":["command","exit_code","log_tail","verification_level","action","expected","wait_budget","evidence"],"additionalProperties":false}]}},"decision":{"anyOf":[{"type":"object","properties":{"outcome":{"type":"string","enum":["PASS","FAIL"]},"reason":{"type":"string"},"coverage":{"type":"array","items":{"type":"object","properties":{"step":{"type":"string"},"passed":{"type":"boolean"},"evidence":{"type":"string"}},"required":["step","passed","evidence"],"additionalProperties":false}},"failure_class":{"anyOf":[{"type":"string","enum":["evidence_insufficient","product_failure","evidence_invalid"]},{"type":"null"}]},"failure_signature":{"anyOf":[{"type":"string"},{"type":"null"}]}},"required":["outcome","reason","coverage","failure_class","failure_signature"],"additionalProperties":false},{"type":"null"}]},"error":{"anyOf":[{"type":"object","properties":{"code":{"type":"string"},"message":{"type":"string"}},"required":["code","message"],"additionalProperties":false},{"type":"null"}]},"case_file":{"type":"null"}},"required":["status","summary","artifacts","checks","decision","error","case_file"],"additionalProperties":false}'
+    return
+  fi
   printf '%s' '{"type":"object","properties":{"status":{"type":"string","enum":["completed","completed_with_concerns","needs_context","blocked"]},"summary":{"type":"string"},"artifacts":{"type":"array","items":{"type":"string"}},"checks":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"object","properties":{"command":{"type":"string"},"exit_code":{"type":"integer"},"log_tail":{"type":"string"},"verification_level":{"type":"string","enum":["L1","L2","L3"]},"action":{"anyOf":[{"type":"string"},{"type":"null"}]},"expected":{"anyOf":[{"type":"string"},{"type":"null"}]},"wait_budget":{"anyOf":[{"type":"string"},{"type":"null"}]},"evidence":{"anyOf":[{"type":"string"},{"type":"null"}]}},"required":["command","exit_code","log_tail","verification_level","action","expected","wait_budget","evidence"],"additionalProperties":false}]}},"decision":{"anyOf":[{"type":"object","properties":{"outcome":{"type":"string"},"reason":{"type":"string"},"rubric_scores":{"anyOf":[{"type":"object","properties":{"dod_machineability":{"type":"number"},"scope_match_prd":{"type":"number"},"test_is_red":{"type":"number"},"internal_consistency":{"type":"number"},"risk_registered":{"type":"number"},"verification_oracle_completeness":{"type":"number"},"ci_workflow_alignment":{"type":"number"}},"required":["dod_machineability","scope_match_prd","test_is_red","internal_consistency","risk_registered","verification_oracle_completeness","ci_workflow_alignment"],"additionalProperties":false},{"type":"null"}]}},"required":["outcome","reason","rubric_scores"],"additionalProperties":false},{"type":"null"}]},"error":{"anyOf":[{"type":"object","properties":{"code":{"type":"string"},"message":{"type":"string"}},"required":["code","message"],"additionalProperties":false},{"type":"null"}]},"case_file":{"anyOf":[{"type":"object","properties":{"blockers":{"type":"array","items":{"anyOf":[{"type":"object","properties":{"id":{"type":"string"},"dimension":{"type":"string"},"title":{"type":"string"},"detail":{"type":"string"},"status":{"type":"string"},"why_not_found_earlier":{"type":"string"},"prd_gap":{"type":"string"}},"required":["id","dimension","title","detail","status","why_not_found_earlier","prd_gap"],"additionalProperties":false},{"type":"object","properties":{"id":{"type":"string"},"closure":{"type":"string"}},"required":["id","closure"],"additionalProperties":false}]}},"feedback_md":{"type":"string"}},"required":["blockers","feedback_md"],"additionalProperties":false},{"type":"null"}]}},"required":["status","summary","artifacts","checks","decision","error","case_file"],"additionalProperties":false}'
 }
 
 publish_provider_result_schema() {
   local schema_file="$1"
   local schema_json="$2"
+
+  # Judge may explicitly defer only server-owned post-Judge checks. Keep the
+  # generic result contract unchanged and extend the Judge coverage item at the
+  # final published-schema boundary.
+  if jq -e '
+      .properties.decision.anyOf[0].properties.coverage.items.properties.passed.type
+        == "boolean"
+    ' <<<"$schema_json" >/dev/null 2>&1; then
+    schema_json="$(jq -c '
+      .properties.decision.anyOf[0].properties.coverage.items.properties.deferred
+        = {"type":"boolean"}
+      | .properties.decision.anyOf[0].properties.coverage.items.required
+        += ["deferred"]
+    ' <<<"$schema_json")"
+  fi
 
   printf '%s' "$schema_json" > "$schema_file" || return 1
   # Evaluator preflight runs as root so it can own the immutable evidence
@@ -1774,6 +2103,64 @@ validate_codex_terminal_receipt() {
     )
   ' "$stdout_file" >/dev/null 2>&1
 }
+
+# Claude's JSON mode can retain exit 1 after a completed primary turn. Accept
+# that contradiction only when the single CLI envelope proves success and
+# exactly matches the extracted structured result. The Runner owns and persists
+# the preallocated --session-id before launch. Current Claude CLI envelopes omit
+# session_id and expose only a message-level uuid; when session_id is present it
+# must still match the Runner-owned identity exactly.
+validate_claude_terminal_receipt() {
+  local stdout_file="$1"
+  local result_file="$2"
+  local expected_session_id="$3"
+
+  [[ -s "$stdout_file" && -s "$result_file" && -n "$expected_session_id" ]] || return 1
+  jq -e -s \
+    --slurpfile result "$result_file" \
+    --arg expected_session "$expected_session_id" '
+      length == 1
+      and .[0].type == "result"
+      and .[0].subtype == "success"
+      and .[0].is_error == false
+      and .[0].terminal_reason == "completed"
+      and (
+        if (.[0] | has("session_id"))
+        then .[0].session_id == $expected_session
+        else (.[0].uuid | type == "string"
+          and test("^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$"))
+        end
+      )
+      and .[0].structured_output == $result[0]
+      and ($result[0] | type) == "object"
+      and ($result[0].status | type) == "string"
+      and (["completed","completed_with_concerns","needs_context","blocked"]
+        | index($result[0].status)) != null
+      and ($result[0].summary | type) == "string"
+      and ($result[0].artifacts | type) == "array"
+      and ($result[0].checks | type) == "array"
+      and (($result[0].decision | type) == "object" or $result[0].decision == null)
+      and (($result[0].error | type) == "object" or $result[0].error == null)
+  ' "$stdout_file" >/dev/null 2>&1
+}
+
+# Claude's current result envelope omits the resumable session_id and exposes a
+# separate message uuid. Keep the Runner-owned invocation identity in that case;
+# if a future CLI does report session_id, require exact agreement.
+resolve_claude_session_binding() {
+  local expected_session_id="$1"
+  local stdout_file="$2"
+  local reported_session_id=""
+
+  [[ -n "$expected_session_id" && -s "$stdout_file" ]] || return 1
+  reported_session_id="$(
+    jq -r 'if type == "object" then (.session_id // empty) else empty end' \
+      "$stdout_file" 2>/dev/null
+  )" || return 1
+  [[ -z "$reported_session_id" || "$reported_session_id" == "$expected_session_id" ]] \
+    || return 1
+  printf '%s\n' "$expected_session_id"
+}
 # attempt-timeout-contract:end
 # commander-provider-contract:end
 
@@ -1828,6 +2215,32 @@ run_provider_contract() {
     return 1
   fi
 
+  if is_publisher_task_bundle; then
+    provider="trusted-transport"
+    if [[ ! -f "$task_bundle_file" ]] \
+        || ! jq -e '.task_bundle.role == "publisher"' "$task_bundle_file" >/dev/null 2>&1; then
+      write_provider_bootstrap_failure \
+        "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
+        'Publisher TaskBundle rejected' invalid_publisher_task_bundle \
+        'trusted transport could not parse publisher authority'
+      return 1
+    fi
+    jq -n \
+      '{status:"completed",summary:"approved candidate published",artifacts:[],checks:[],decision:null,error:null,case_file:null}' \
+      > "$result_file"
+    if ! publish_approved_generator_candidate "$result_file"; then
+      write_provider_bootstrap_failure \
+        "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
+        'Approved candidate publish rejected' publisher_authority_invalid \
+        'Judge or merge-fence authority did not match the local candidate'
+      return 1
+    fi
+    normalize_provider_success \
+      "$task_bundle_file" "$result_file" "$NORMALIZED_RESULT_FILE" \
+      "$HARNESS_ATTEMPT_ID" "$provider" "" "" false
+    return 0
+  fi
+
   if [[ "$provider" == "codex" ]] && ! prepare_codex_credential; then
     write_provider_bootstrap_failure \
       "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
@@ -1866,6 +2279,15 @@ run_provider_contract() {
       "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
       'Frozen contract tests rejected' frozen_contract_artifacts_invalid \
       'runner could not materialize or verify exact approved contract tests' \
+      "${CREDENTIAL_REF:-}" "${CREDENTIAL_COPY_MUTATED:-false}"
+    return 1
+  fi
+
+  if ! install_routing_action_gate; then
+    write_provider_bootstrap_failure \
+      "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
+      'Routing action gate rejected' routing_action_gate_invalid \
+      'runner could not bind the Provider workspace to its canonical receipt' \
       "${CREDENTIAL_REF:-}" "${CREDENTIAL_COPY_MUTATED:-false}"
     return 1
   fi
@@ -2016,6 +2438,7 @@ run_provider_contract() {
       claude_args+=(--dangerously-skip-permissions)
     fi
     if [[ -n "${HARNESS_RESUME_SESSION_ID:-}" ]]; then
+      provider_session_id="$HARNESS_RESUME_SESSION_ID"
       claude_args+=(--resume "$HARNESS_RESUME_SESSION_ID")
     else
       # Claude JSON output exposes session_id only at process exit. Pre-allocate a
@@ -2037,15 +2460,19 @@ run_provider_contract() {
           printf '%s\n' "$safe_line" | tee -a "$STDOUT_FILE"
         done
     provider_exit=${PIPESTATUS[0]}
-    if [[ $provider_exit -eq 0 ]]; then
+    if [[ $provider_exit -ne 124 ]]; then
       jq -c '
         if .structured_output then .structured_output
         elif (.result | type) == "object" then .result
         else (.result | fromjson)
         end
-      ' "$STDOUT_FILE" > "$result_file" 2>/dev/null || provider_exit=1
+      ' "$STDOUT_FILE" > "$result_file" 2>/dev/null || {
+        [[ $provider_exit -ne 0 ]] || provider_exit=1
+      }
     fi
-    provider_session_id=$(jq -r '.session_id // empty' "$STDOUT_FILE" 2>/dev/null || true)
+    provider_session_id="$(
+      resolve_claude_session_binding "$provider_session_id" "$STDOUT_FILE"
+    )" || provider_exit=1
   elif [[ "$provider" == "grok" ]]; then
     local grok_args=(
       --cwd "${WORKTREE_PATH:-$PWD}"
@@ -2095,6 +2522,14 @@ run_provider_contract() {
     provider_exit=0
     echo "[entrypoint] recovered completed Codex turn from CLI exit $provider_cli_exit_code" >&2
   fi
+  if [[ "$provider" == "claude" && $provider_exit -ne 0 && $provider_exit -ne 124 ]] \
+      && validate_claude_terminal_receipt \
+        "$STDOUT_FILE" "$result_file" "$provider_session_id"; then
+    provider_cli_exit_code="$provider_exit"
+    terminal_receipt='terminal_reason:completed'
+    provider_exit=0
+    echo "[entrypoint] recovered completed Claude turn from CLI exit $provider_cli_exit_code" >&2
+  fi
   if ! terminate_evaluator_provider_processes; then
     provider_exit=1
     printf '%s\n' '{"error":"provider_descendant_cleanup_failed"}' >> "$STDOUT_FILE"
@@ -2141,6 +2576,11 @@ run_provider_contract() {
     }
     if ! finalize_planner_output "$result_file"; then
       echo "[entrypoint] planner finalizer did not establish a verified Git artifact" >&2
+      provider_success=false
+      provider_exit=1
+    fi
+    if ! finalize_generator_candidate "$result_file"; then
+      echo "[entrypoint] trusted Generator candidate finalizer rejected Provider output" >&2
       provider_success=false
       provider_exit=1
     fi

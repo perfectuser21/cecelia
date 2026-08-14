@@ -13,6 +13,7 @@ import {
   transitionGapStatus,
 } from '../../impact-contract/gap-store.js';
 import { verifyImpactMergeFence } from '../../impact-contract/harness-gates.js';
+import { seedOwnedActiveV2RunInClient } from './helpers/controller-authority-fixture.js';
 
 let pool;
 
@@ -367,16 +368,14 @@ describe('Impact Contract → Gap → 修复 → 恢复真实 PostgreSQL 闭环'
       await transitionGapStatus(client, gap.id, 'assigned');
       await transitionGapStatus(client, gap.id, 'fixing');
       await transitionGapStatus(client, gap.id, 'verifying');
-      await client.query(
-        `INSERT INTO initiative_runs (
-           id, initiative_id, current_task_id, phase, orchestrator_version,
-           created_source, impact_contract_policy, impact_contract_policy_reason
-         ) VALUES (
-           $1, $2, $3, 'evaluate', 'v2', 'kernel_dispatch',
-           'required', 'integration repair run'
-         )`,
-        [repairRunId, repairTaskId, repairTaskId],
-      );
+      await seedOwnedActiveV2RunInClient(client, {
+        runId: repairRunId,
+        initiativeId: repairTaskId,
+        taskId: repairTaskId,
+        phase: 'evaluate',
+        impactContractPolicy: 'required',
+        impactContractPolicyReason: 'integration repair run',
+      });
       await client.query(
         "UPDATE tasks SET status = 'completed', completed_at = NOW() WHERE id = $1",
         [repairTaskId],

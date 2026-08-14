@@ -11,8 +11,9 @@
  *  1. 扫描窗口只看近 N 分钟内落终态且未被本模块处理过的任务（payload.strategist_dispatched 标记）
  *  2. 建任务前查该 journey_id 是否已有排队中的 strategist_decision，存在则跳过
  */
+import { createTask } from './actions.js';
 
-export async function dispatchStrategistDecisions(pool, { windowMinutes = 10 } = {}) {
+export async function dispatchStrategistDecisions(pool, { windowMinutes = 10, taskCreator = createTask } = {}) {
   const scanResult = await pool.query(
     `SELECT id, payload->>'journey_id' AS journey_id, status
      FROM tasks
@@ -53,24 +54,22 @@ export async function dispatchStrategistDecisions(pool, { windowMinutes = 10 } =
       if (dupCheck.rows.length > 0) {
         skippedDuplicate++;
       } else {
-        await pool.query(
-          `INSERT INTO tasks (title, description, task_type, priority, status, payload, trigger_source)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
-           RETURNING id`,
-          [
-            `Line 军师决策 — journey ${journeyId}`,
-            `任务终态触发（run_terminal），line-strategist 分析该 line 近期完成/失败任务并给出决策`,
-            'strategist_decision',
-            'P2',
-            'queued',
-            JSON.stringify({
+        await taskCreator({
+          db: pool,
+          source: 'child',
+          source_id: `line-strategist:${journeyId}:${group.map(t => t.id).sort().join(',')}`,
+          title: `Line 军师决策 — journey ${journeyId}`,
+          description: '任务终态触发（run_terminal），line-strategist 分析该 line 近期完成/失败任务并给出决策',
+          task_type: 'strategist_decision',
+          priority: 'P2',
+          trigger_source: 'brain_auto',
+          allow_unscoped: true,
+          payload: {
               journey_id: journeyId,
               trigger: 'run_terminal',
               trigger_context: { terminal_task_ids: group.map(t => t.id) },
-            }),
-            'brain_auto',
-          ]
-        );
+          },
+        });
         dispatched++;
       }
     } catch (err) {

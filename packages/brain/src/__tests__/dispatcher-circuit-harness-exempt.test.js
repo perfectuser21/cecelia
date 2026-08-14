@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { canonicalRoutingReceipt, routedCodingPayload } from './helpers/routing-receipt-fixture.js';
 
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({
@@ -96,12 +97,21 @@ vi.mock('../pre-flight-check.js', () => ({
 
 // 让 SELECT * FROM tasks + UPDATE claimed_by 正常返回，使 dispatch 到达 triggerCeceliaRun
 function makeHarnessQueryMock(taskId) {
+  const task = {
+    id: taskId,
+    task_type: 'harness_initiative',
+    title: 'harness sprint',
+    payload: routedCodingPayload(taskId),
+  };
   return (sql) => {
     if (/UPDATE tasks SET claimed_by/.test(sql)) {
       return Promise.resolve({ rows: [{ id: taskId }] });
     }
     if (/SELECT \* FROM tasks WHERE id/.test(sql)) {
-      return Promise.resolve({ rows: [{ id: taskId, task_type: 'harness_initiative', title: 'harness sprint' }] });
+      return Promise.resolve({ rows: [task] });
+    }
+    if (/FROM work_routing_receipts receipt/.test(sql)) {
+      return Promise.resolve({ rows: [canonicalRoutingReceipt(task)] });
     }
     if (/count\(\*\)/i.test(sql) && /harness_initiative/.test(sql)) {
       return Promise.resolve({ rows: [{ n: 0 }] }); // cap not reached
@@ -128,6 +138,7 @@ describe('dispatcher circuit-breaker — harness_initiative 豁免', () => {
       task_type: 'harness_initiative',
       project_id: 'proj-1',
       title: 'harness sprint',
+      payload: routedCodingPayload('task-harness-1'),
     });
 
     const { dispatchNextTask } = await import('../dispatcher.js');
@@ -175,6 +186,7 @@ describe('dispatcher circuit-breaker — harness_initiative 豁免', () => {
       task_type: 'harness_initiative',
       project_id: 'proj-2',
       title: 'harness sprint 2',
+      payload: routedCodingPayload('task-harness-2'),
     });
 
     const { dispatchNextTask } = await import('../dispatcher.js');

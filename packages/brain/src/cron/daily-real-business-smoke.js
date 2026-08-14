@@ -22,6 +22,8 @@
 import { existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { raise } from '../alerting.js';
+import { createTask } from '../actions.js';
+import { buildCeceliaMutationRoute } from '../system-coding-route.js';
 
 // 触发时间：UTC 20:00 = 北京时间 04:00
 export const SMOKE_HOUR_UTC = 20;
@@ -90,36 +92,21 @@ export async function createSmokeTask(db, now = new Date()) {
     triggered_at: now.toISOString(),
   };
 
-  const { rows } = await db.query(
-    `INSERT INTO tasks (
-       title, task_type, status, priority,
-       created_by, payload, trigger_source,
-       location, domain, tags
-     )
-     VALUES (
-       $1, 'content-pipeline', 'queued', 'P1',
-       'brain-cron-smoke', $2, 'brain_cron_daily_smoke',
-       'us', 'content', ARRAY['daily-smoke', 'e2e']
-     )
-     ON CONFLICT DO NOTHING
-     RETURNING id`,
-    [topic, JSON.stringify(payload)]
-  );
-
-  if (!rows.length) {
-    // ON CONFLICT：当天已存在 smoke，取已有记录
-    const existing = await db.query(
-      `SELECT id FROM tasks
-       WHERE trigger_source = 'brain_cron_daily_smoke'
-         AND created_at >= $1::date::timestamptz
-         AND created_at <  ($1::date + INTERVAL '1 day')::timestamptz
-       LIMIT 1`,
-      [dateStr]
-    );
-    return existing.rows[0]?.id;
-  }
-
-  return rows[0].id;
+  const created = await createTask({
+    db,
+    source: 'scheduler',
+    source_id: `daily-business-smoke:${dateStr}`,
+    title: topic,
+    task_type: 'content-pipeline',
+    priority: 'P1',
+    created_by: 'brain-cron-smoke',
+    trigger_source: 'brain_cron_daily_smoke',
+    domain: 'content',
+    tags: ['daily-smoke', 'e2e'],
+    payload,
+    allow_unscoped: true,
+  });
+  return created.task.id;
 }
 
 /**
@@ -231,25 +218,24 @@ export async function handleSmokeFailure(db, taskId, reason, failedStage = null)
 
   try {
     const dateStr = new Date().toISOString().slice(0, 10);
-    await db.query(
-      `INSERT INTO tasks (
-         title, task_type, status, priority,
-         created_by, payload, trigger_source, location
-       )
-       VALUES (
-         $1, 'dev', 'queued', 'P1',
-         'brain-cron-smoke', $2, 'brain_cron_smoke_alert', 'us'
-       )`,
-      [
-        `[smoke-alert] 每日真业务 E2E 失败 ${dateStr}`,
-        JSON.stringify({
-          pipeline_id: taskId,
-          reason,
-          failed_stage: failedStage,
-          alert_type: 'daily_smoke_failed',
-        }),
-      ]
-    );
+    await createTask({
+      db,
+      source: 'scheduler',
+      source_id: `daily-business-smoke-alert:${taskId}:${dateStr}`,
+      title: `[smoke-alert] 每日真业务 E2E 失败 ${dateStr}`,
+      task_type: 'dev',
+      priority: 'P1',
+      created_by: 'brain-cron-smoke',
+      trigger_source: 'brain_cron_smoke_alert',
+      payload: {
+        pipeline_id: taskId,
+        reason,
+        failed_stage: failedStage,
+        alert_type: 'daily_smoke_failed',
+      },
+      allow_unscoped: true,
+      ...buildCeceliaMutationRoute({ change_kind: 'bugfix', map_scope: ['F1'] }),
+    });
     console.log(`[daily-smoke] 已创建告警 dev task，pipeline=${taskId}`);
   } catch (err) {
     console.error('[daily-smoke] 创建告警 task 失败:', err.message);

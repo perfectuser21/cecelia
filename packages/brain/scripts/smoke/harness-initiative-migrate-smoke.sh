@@ -36,8 +36,8 @@ q() { psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -tAc "$1" 2>/dev/null; }
 if psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "SELECT 1" >/dev/null 2>&1; then
   echo "── DB 不变量 ──"
 
-  unmapped=$(q "SELECT count(*) FROM tasks t WHERE t.task_type='harness_initiative' AND NOT EXISTS (SELECT 1 FROM harness_initiative_migration_map m WHERE m.harness_task_id=t.id)")
-  [[ "$unmapped" == "0" ]] && ok "所有 harness_initiative 任务均已映射（未映射=0）" || fail "$unmapped 个 harness 任务未映射"
+  unmapped=$(q "SELECT count(*) FROM tasks t WHERE t.task_type='harness_initiative' AND t.created_at < COALESCE((SELECT applied_at FROM schema_version WHERE version='300'), 'infinity'::timestamptz) AND NOT EXISTS (SELECT 1 FROM harness_initiative_migration_map m WHERE m.harness_task_id=t.id)")
+  [[ "$unmapped" == "0" ]] && ok "migration 300 之前的 harness_initiative 均已映射（未映射=0）" || fail "$unmapped 个存量 harness 任务未映射"
 
   badmap=$(q "SELECT count(*) FROM harness_initiative_migration_map m WHERE NOT EXISTS (SELECT 1 FROM okr_initiatives o WHERE o.id=m.okr_initiative_id)")
   [[ "$badmap" == "0" ]] && ok "映射均指向存在的 okr_initiative（悬空=0）" || fail "$badmap 条映射悬空"

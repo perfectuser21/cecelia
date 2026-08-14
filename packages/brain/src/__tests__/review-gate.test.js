@@ -18,7 +18,7 @@ vi.mock('../task-router.js', () => ({
 }));
 
 // Mock actions.js（供 D2 测试追踪 createTask 调用）
-const mockCreateTask = vi.fn(async () => ({ id: 'new-task', title: 'mock task' }));
+const mockCreateTask = vi.fn(async () => ({ task: { id: 'task-uuid', title: 'mock task' } }));
 vi.mock('../actions.js', () => ({
   createTask: (...args) => mockCreateTask(...args),
 }));
@@ -133,6 +133,7 @@ describe('createReviewTask', () => {
 
   beforeEach(() => {
     pool = makeMockPool();
+    mockCreateTask.mockClear();
   });
 
   it('D3: 创建 task_type=decomp_review 路由到 HK', async () => {
@@ -168,14 +169,10 @@ describe('createReviewTask', () => {
     expect(result.task.id).toBe('task-uuid');
     expect(result.review.entity_type).toBe('project');
 
-    // 验证 task 插入参数
-    const taskInsert = insertCalls.find(c => c.sql.includes('INSERT INTO tasks'));
-    expect(taskInsert).toBeDefined();
-    expect(taskInsert.params[0]).toBe('拆解审查: Test Project');
-    // task_type='decomp_review' 硬编码在 SQL 中
-    expect(taskInsert.sql).toContain('decomp_review');
-    // payload 应包含 routing: hk
-    const payload = JSON.parse(taskInsert.params[3]);
+    const taskInput = mockCreateTask.mock.calls[0][0];
+    expect(taskInput.title).toBe('拆解审查: Test Project');
+    expect(taskInput.task_type).toBe('decomp_review');
+    const payload = taskInput.payload;
     expect(payload.routing).toBe('hk');
     expect(payload.entity_type).toBe('project');
     expect(payload.entity_id).toBe('proj-1');
@@ -243,7 +240,6 @@ describe('processReviewResult', () => {
   });
 
   it('D6: verdict=needs_revision → 创建修正 decomp task', async () => {
-    let revisionTaskCreated = false;
     pool.query = vi.fn(async (sql, params) => {
       if (sql.includes('SELECT') && sql.includes('decomp_reviews') && sql.includes('task_id')) {
         return { rows: [{ id: 'review-1', entity_type: 'project', entity_id: 'proj-1' }] };
@@ -259,16 +255,14 @@ describe('processReviewResult', () => {
       if (sql.includes('project_kr_links')) {
         return { rows: [{ kr_id: 'kr-1' }] };
       }
-      // 创建修正 task（title 在 params 中，不在 SQL 中）
-      if (sql.includes('INSERT INTO tasks')) {
-        revisionTaskCreated = true;
-        return { rows: [{ id: 'revision-task', title: '修正拆解: Test Project' }] };
-      }
       return { rows: [] };
     });
 
     await processReviewResult(pool, 'task-1', 'needs_revision', { issue: 'too coarse' });
-    expect(revisionTaskCreated).toBe(true);
+    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+      title: '修正拆解: Test Project',
+      task_type: 'initiative_plan',
+    }));
   });
 
   it('D7: verdict=rejected → 标记实体 blocked', async () => {

@@ -22,6 +22,7 @@ import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
+import { cleanupRoutedTasks } from '../helpers/routed-task-cleanup.js';
 
 // ─── Mock 外部依赖 ────────────────────────────────────────────────────────────
 
@@ -113,6 +114,16 @@ async function makeApp() {
 // ─── 辅助：创建测试任务 ───────────────────────────────────────────────────────
 
 async function createTestTask(app, overrides = {}) {
+  const taskType = overrides.task_type ?? 'dev';
+  const codingRoute = taskType === 'dev'
+    ? {
+        mutation_intent: 'write',
+        change_kind: 'capability_change',
+        repo_hint: 'cecelia',
+        branch: 'cp-cross-package-fixture',
+        base_sha: 'a'.repeat(40),
+      }
+    : {};
   const res = await request(app)
     .post('/api/brain/tasks')
     .send({
@@ -121,6 +132,7 @@ async function createTestTask(app, overrides = {}) {
       task_type: 'dev',
       priority: 'P2',
       trigger_source: 'api',
+      ...codingRoute,
       ...overrides,
     })
     .expect(201);
@@ -139,9 +151,7 @@ describe('Cross-Package Brain API — 核心端点合约验证（真实 PostgreS
   }, 20000);
 
   afterAll(async () => {
-    if (insertedTaskIds.length > 0) {
-      await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [insertedTaskIds]);
-    }
+    await cleanupRoutedTasks(testPool, insertedTaskIds);
     await testPool.end();
   });
 
@@ -210,17 +220,17 @@ describe('Cross-Package Brain API — 核心端点合约验证（真实 PostgreS
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe('GET /api/brain/tasks — status / task_type / limit 三个过滤参数', () => {
-    let queuedDevTaskId;
+    let queuedCodingTaskId;
     let inProgressAnalysisTaskId;
 
     beforeAll(async () => {
-      // 创建两个不同 status 和 task_type 的任务
+      // 创建一个会被统一路由的 coding 任务，以及一个非 coding 任务
       const devTask = await createTestTask(app, {
         title: '[cross-package-test] queued dev 任务',
         task_type: 'dev',
         priority: 'P2',
       });
-      queuedDevTaskId = devTask.id;
+      queuedCodingTaskId = devTask.id;
 
       const analysisTask = await createTestTask(app, {
         title: '[cross-package-test] research 任务',
@@ -236,14 +246,14 @@ describe('Cross-Package Brain API — 核心端点合约验证（真实 PostgreS
         .expect(200);
     });
 
-    it('status=queued 过滤：返回数组，包含刚创建的 dev 任务', async () => {
+    it('status=queued 过滤：返回数组，包含刚创建并统一路由的 coding 任务', async () => {
       const res = await request(app)
         .get('/api/brain/tasks?status=queued&limit=100')
         .expect(200);
 
       expect(Array.isArray(res.body)).toBe(true);
       const ids = res.body.map(t => t.id);
-      expect(ids).toContain(queuedDevTaskId);
+      expect(ids).toContain(queuedCodingTaskId);
       // in_progress 任务不应在 queued 过滤结果中
       expect(ids).not.toContain(inProgressAnalysisTaskId);
     });
@@ -257,18 +267,18 @@ describe('Cross-Package Brain API — 核心端点合约验证（真实 PostgreS
       const ids = res.body.map(t => t.id);
       expect(ids).toContain(inProgressAnalysisTaskId);
       // queued 任务不应在 in_progress 过滤结果中
-      expect(ids).not.toContain(queuedDevTaskId);
+      expect(ids).not.toContain(queuedCodingTaskId);
     });
 
-    it('task_type=dev 过滤：所有结果都是 dev 类型', async () => {
+    it('task_type=harness_initiative 过滤：包含统一路由后的 coding 任务', async () => {
       const res = await request(app)
-        .get('/api/brain/tasks?task_type=dev&limit=50')
+        .get('/api/brain/tasks?task_type=harness_initiative&limit=50')
         .expect(200);
 
       expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.length).toBeGreaterThanOrEqual(1);
+      expect(res.body.map(task => task.id)).toContain(queuedCodingTaskId);
       const taskTypes = res.body.map(t => t.task_type);
-      expect(taskTypes.every(tt => tt === 'dev')).toBe(true);
+      expect(taskTypes.every(tt => tt === 'harness_initiative')).toBe(true);
     });
 
     it('task_type=research 过滤：所有结果都是 research 类型', async () => {

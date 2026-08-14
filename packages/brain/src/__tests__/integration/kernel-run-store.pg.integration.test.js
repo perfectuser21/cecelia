@@ -49,11 +49,45 @@ const schemaPool = {
 };
 
 async function insertTask(taskId, initiativeId) {
+  const receiptId = randomUUID();
   await schemaPool.query(
     `INSERT INTO tasks (id,task_type,status,payload)
      VALUES ($1,'harness_initiative','in_progress',$2::jsonb)`,
-    [taskId, JSON.stringify({ initiative_id: initiativeId })],
+    [taskId, JSON.stringify({
+      initiative_id: initiativeId,
+      routing_receipt_id: receiptId,
+      work_kind: 'coding_mutation',
+      change_kind: 'bugfix',
+      repo: 'cecelia',
+      harness_runtime: 'kernel-v1',
+    })],
   );
+  await schemaPool.query(
+    `INSERT INTO work_routing_receipts (
+       id,task_id,source,source_id,work_kind,change_kind,pipeline,
+       canonical_task_type,map_scope,impact_contract_required,
+       orchestrator,router_version,evidence
+     ) VALUES (
+       $1,$2,'integration',$3,'coding_mutation','bugfix','harness',
+       'harness_initiative','["F0"]'::jsonb,true,
+       'kernel-harness-v2','work-router-v1',$4::jsonb
+     )`,
+    [receiptId, taskId, `kernel-run-store:${taskId}`, JSON.stringify({
+      branch: 'cp-kernel-run-store-integration',
+      base_sha: 'a'.repeat(40),
+    })],
+  );
+}
+
+const kernelRunStoreDeps = {
+  ensureMapImpactPreflight: async () => ({
+    contract: { id: randomUUID(), status: 'active' },
+    recovery_contract: null,
+  }),
+};
+
+function createTestKernelRun(inputPool, input) {
+  return createKernelRun(inputPool, input, kernelRunStoreDeps);
 }
 
 function runInput(taskId, initiativeId, createdSource = 'kernel_dispatch') {
@@ -66,8 +100,6 @@ function runInput(taskId, initiativeId, createdSource = 'kernel_dispatch') {
     host: 'kernel-v1',
     deadlineHours: 8,
     createdSource,
-    // Session Controller ownership（sprint 08131104）：createKernelRun 现要求非空 controllerSessionId。
-    controllerSessionId: randomUUID(),
   };
 }
 
@@ -85,6 +117,22 @@ beforeAll(async () => {
       completed_at TIMESTAMPTZ,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE work_routing_receipts (
+      id UUID PRIMARY KEY,
+      task_id UUID NOT NULL REFERENCES tasks(id),
+      source TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      work_kind TEXT NOT NULL,
+      change_kind TEXT,
+      pipeline TEXT NOT NULL,
+      canonical_task_type TEXT NOT NULL,
+      map_scope JSONB NOT NULL DEFAULT '[]'::jsonb,
+      impact_contract_required BOOLEAN NOT NULL DEFAULT false,
+      orchestrator TEXT NOT NULL,
+      router_version TEXT NOT NULL,
+      evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+      supersedes_receipt_id UUID REFERENCES work_routing_receipts(id)
+    );
     CREATE TABLE initiative_runs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       initiative_id UUID NOT NULL,
@@ -97,6 +145,9 @@ beforeAll(async () => {
       impact_contract_policy TEXT NOT NULL DEFAULT 'legacy_exempt',
       impact_contract_policy_reason TEXT,
       impact_contract_policy_decision_id TEXT,
+      map_recovery_contract_id UUID,
+      contract_id UUID,
+      predecessor_run_id UUID,
       orchestrator_host TEXT,
       orchestrator_heartbeat_at TIMESTAMPTZ,
       orchestrator_pid INTEGER,
@@ -105,10 +156,23 @@ beforeAll(async () => {
       deadline_at TIMESTAMPTZ,
       failure_reason TEXT,
       controller_session_id TEXT,
+      controller_generation BIGINT,
       controller_lease_expires_at TIMESTAMPTZ,
       started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       completed_at TIMESTAMPTZ
+    );
+    CREATE TABLE kernel_controller_sessions (
+      id TEXT PRIMARY KEY,
+      run_id UUID REFERENCES initiative_runs(id) ON DELETE CASCADE,
+      task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      generation BIGINT NOT NULL DEFAULT 1,
+      source TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      last_heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      lease_expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE TABLE harness_impact_contracts (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -151,7 +215,7 @@ describe('Kernel run store PostgreSQL concurrency', () => {
     const taskId = randomUUID();
     const initiativeId = randomUUID();
     await insertTask(taskId, initiativeId);
-    const created = await createKernelRun(
+    const created = await createTestKernelRun(
       schemaPool,
       runInput(taskId, initiativeId),
     );
@@ -193,6 +257,7 @@ describe('Kernel run store PostgreSQL concurrency', () => {
 
     const app = express();
     app.set('pool', schemaPool);
+    app.set('kernelRunStoreDeps', kernelRunStoreDeps);
     app.use(express.json());
     app.use('/api/brain/orchestrator', initiativesRouter);
     const body = {
@@ -228,6 +293,7 @@ describe('Kernel run store PostgreSQL concurrency', () => {
 
     const app = express();
     app.set('pool', schemaPool);
+    app.set('kernelRunStoreDeps', kernelRunStoreDeps);
     app.use(express.json());
     app.use('/api/brain/orchestrator', initiativesRouter);
     const created = await request(app)
@@ -255,7 +321,7 @@ describe('Kernel run store PostgreSQL concurrency', () => {
     const initiativeId = randomUUID();
     await insertTask(taskId, initiativeId);
 
-    const created = await createKernelRun(
+    const created = await createTestKernelRun(
       schemaPool,
       runInput(taskId, initiativeId),
     );
@@ -271,7 +337,7 @@ describe('Kernel run store PostgreSQL concurrency', () => {
     const taskId = randomUUID();
     const initiativeId = randomUUID();
     await insertTask(taskId, initiativeId);
-    const created = await createKernelRun(
+    const created = await createTestKernelRun(
       schemaPool,
       runInput(taskId, initiativeId),
     );
@@ -301,9 +367,9 @@ describe('Kernel run store PostgreSQL concurrency', () => {
       reason: 'integration_interleaving',
     });
     await new Promise((resolve) => setTimeout(resolve, 40));
-    const recovering = createKernelRun(
+    const recovering = createTestKernelRun(
       schemaPool,
-      runInput(taskId, initiativeId, 'explicit_recovery'),
+      runInput(taskId, initiativeId),
     );
     const results = await Promise.allSettled([finalizing, recovering]);
 
@@ -327,7 +393,7 @@ describe('Kernel run store PostgreSQL concurrency', () => {
     const taskId = randomUUID();
     const initiativeId = randomUUID();
     await insertTask(taskId, initiativeId);
-    const old = await createKernelRun(
+    const old = await createTestKernelRun(
       schemaPool,
       runInput(taskId, initiativeId),
     );
@@ -344,9 +410,9 @@ describe('Kernel run store PostgreSQL concurrency', () => {
 
     let activeRunId = null;
     const finalizeAfterRecovery = async (targetPool, options) => {
-      const recovery = await createKernelRun(
+      const recovery = await createTestKernelRun(
         targetPool,
-        runInput(taskId, initiativeId, 'explicit_recovery'),
+        runInput(taskId, initiativeId),
       );
       activeRunId = recovery.run.id;
       return finalizeKernelRun(targetPool, options);

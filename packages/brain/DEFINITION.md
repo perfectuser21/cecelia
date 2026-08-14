@@ -1,6 +1,170 @@
 # Brain 模块定义
 
-**版本**: 1.273.1
+**Brain 版本**: 1.273.37
+
+## Controller Lease Smoke Authority（Brain 1.273.37）
+
+- heartbeat 续租默认时长复用 `CONTROLLER_LEASE_DEFAULT_SECONDS`，smoke 以 session + generation 验证权威身份。
+- 保留 canonical Red 后的永久合同测试；Controller 重跑须绑定与当前测试树一致的新合同 seal。
+
+## Controller Authority Merge Closure（Brain 1.273.36）
+
+- 合并 Controller lease 权威语义：心跳续租、终态写入和 ownerless 回收统一受 session/generation CAS 保护。
+- 保持已批准 Harness 合同不可变；真实角色链的 opt-in 只由执行环境注入。
+
+## Authoritative PR Candidate Impact（Brain 1.273.35）
+
+- Ground Truth 分页采集 GitHub PR 文件清单；Generator 修复候选以该权威清单并集本轮新增差异，保持冻结基线身份不变且避免 target-main 漂移污染 Map Impact。
+
+## Judge Deferred Coverage Closure（Brain 1.273.34）
+
+- Judge 额外报告的服务端后置检查仅在声明白名单中且 `deferred=true` 时允许延后，避免已通过 Golden Path 因 host Docker 等 post-Judge 证据进入无限补证循环。
+
+## Role-chain Routing Envelope（Brain 1.273.31）
+
+- B-10 真实角色链在任务 API 顶层声明 `change_kind`、`mutation_intent` 与 domain，避免 coding 路由输入被 payload 层级吞掉。
+
+## Judge Deferred Acceptance Boundary（Brain 1.273.30）
+
+- Judge 对候选与上游证据独立裁决；只有服务端声明的宿主 Docker、最终 Judge、Publisher、全闸门和完整角色链检查可结构化标记为后置验收。
+- Evaluator 的隔离 Git 夹具显式清除外层 pushurl 熔断变量，真实候选仓库仍保持禁止推送。
+- Runner 固定为 `sha256:47fe869774b789fe6aef2e2e93b6a8baa2726b83ab94392d60c702af1c1ec22f`，Fleet Worker 准入版本同步为 `1.272.17`。
+
+## Attempt-scoped Runner Smoke Credential（Brain 1.273.28）
+
+- Unified Work Router 的真实 Runner smoke 在 Harness 容器内优先复用当前 attempt 的 `.codex/auth.json`，旧 team1 路径仅作兼容回退。
+
+## Judge-guided Evidence Recollection（Brain 1.273.27）
+
+- Judge 因证据不足要求补证时，Evaluator TaskBundle 会接收当前候选 SHA 对应的结构化 Judge feedback。
+
+## Durable Fleet Candidate Handoff（Brain 1.273.26）
+
+- Generator 成功退出时先持久化 candidate authority，再回收容器与运行时资源；worker 在两步之间重启后会继续收敛，不会删除下一角色所需的 Git 候选。
+
+## Trusted Assertion Runner Baseline（Brain 1.273.25）
+
+- Fleet 三机 Runner 准入基线固定到包含独立只读 assertion checkout 的镜像 digest，健康探针与真实执行使用同一不可变内容摘要。
+
+## Trusted Assertion Runtime（Brain 1.273.24）
+
+- Evaluator 的 Runner-owned assertion checkout 保持 root-owned 且不可写，同时允许隔离 nobody 身份读取与遍历。
+- assertion executor 只透传 attempt-scoped `DB_URL`、冻结 `BASELINE_SHA` 和可信阶段标记，并为只读 Git 检查绑定 exact checkout。
+- Unified Work Router 的容器内可信断言执行 scratch 验收；真实宿主 Docker/Provider 接缝在 Judge 后执行。
+
+## Trusted Host Docker Acceptance（Brain 1.273.23）
+
+- Evaluator Provider 不持有 Docker CLI/daemon；宿主 `docker inspect` 由 Controller/Fleet 在 post-Judge 阶段执行，不能把预期的信任隔离误判为候选失败。
+
+## Staged Evaluator Acceptance（Brain 1.273.22）
+
+- Evaluator 只裁决 candidate 与 upstream evidence；Judge、Publisher、`all_gates_passed` 和完整角色链由服务端 post-Judge 阶段验证，禁止在 Evaluator 内递归启动 Harness。
+
+## Candidate Manifest Runner Baseline（Brain 1.273.21）
+
+- Fleet 三机准入、部署与修复脚本统一固定到 `sha256:d13bd0918e411546f408f4fc59dba7d182aa8c05ea3e37b43f042f8d3d614d3a`。
+- Runner 在受信候选清单中携带 `changed_files`，供 Controller 在 Evaluator 前执行 Impact Diff Gate。
+
+## Kernel Controller Authority（Brain 1.273.4）
+
+- Controller identity 由 Brain 在 Run 创建事务中签发并绑定 generation，禁止请求方注入。
+- Heartbeat 用 session/run/generation CAS 续租，无主扫描锁后重验，与并发续租只能一方成功。
+- 四档 change_kind 直接投影不可变 Routing Receipt；Schema 地板为 422。
+
+## Recovery Trust Boundary 回归合同（Brain 1.273.3）
+
+- 显式恢复 Run 仍精确继承 predecessor 与批准合同，但当前 Run 必须先由 Generator 封印候选再进入 Evaluator。
+- 恢复血统真库夹具显式持有 Controller session/lease，继续验证无主 Kernel Run fail-closed。
+
+## Routed Controller 真实验收（Brain 1.273.2）
+
+- Controller/Profile 真库验收与统一 Router 共用 canonical task+receipt+Map/Impact 前置。
+- 合并后 Runner digest 与 Worker 1.272.16 已同步到三机准入配置。
+
+## Unified Router × Session Controller 集成（Brain 1.273.1）
+
+- 统一 Work Router、Map/Impact 前置、服务端 Judge 与受信 Publisher 保持完整闭环。
+- Kernel Run 创建同时写入恢复/合同血统与 Session Controller ownership/lease；任一身份缺失均 fail-closed。
+- Schema 413/414 保留 production authority anchor，Controller ownership 保持 migration 415；Router/Map/合同治理顺延到 416—421。
+
+## Server-authoritative Judge Verdict（Brain 1.272.66）
+
+- Evaluator pass-family 只作为触发独立 Judge 的输入，不能越过服务端机械闸或覆盖 Judge Provider FAIL；服务端最终只投影 PASS/FAIL。
+- Judge Runner 使用角色专属结构化输出 schema，coverage、failure_class 与 failure_signature 不再被通用 schema 丢弃。
+- Routing Receipt 的 branch 与 WorkspaceSpec 共用 `cp-*` 合同；同一缺省请求重放复用已冻结 branch/base SHA。
+
+## Fleet Judge 与 Canonical Routing Evidence（Brain 1.272.65）
+
+- Judge 通过同机 Fleet/Runner 读取精确 candidate，callback 再经服务端机械闸后原子写入 SHA 锚定 verdict；Generator-fix 从 retained candidate 继续并释放被替代工作区。
+- Work Router 在 coding task 提交前可信冻结 branch/base SHA，幂等重放同时比较完整 evidence；批准合同只允许单向进入 superseded，禁止降级绕过不可变性。
+- Runner 真实镜像固定为 `sha256:6f2f62e94cc558b3895502b8f8822911b6d46b4b30ba9b76684f6692382cf6ea`；Fleet Worker `1.272.16` 与 Codex CLI `0.147.0` 作为三机准入基线。
+
+## Judge-gated Candidate Publishing（Brain 1.272.64）
+
+- Generator 的受限 Provider 只提交本地 candidate；Fleet 保留工作区供 Evaluator/Judge 读取，Judge PASS 后由无 Provider 凭据的受信 Publisher 精确推送并创建 PR。
+- Fleet 将 Routing Receipt、run、repo、branch、base SHA 投影进真实 Runner 动作闸；真实容器 smoke 校验 UID、capability、凭据隔离、push 熔断和 callback candidate。
+
+## Fail-closed Map Recovery Intent（Brain 1.272.59）
+
+- 显式 map_recovery 仅在正常 Map preflight 确认失败后才能创建恢复合同；Map 已 fresh 时以 `map_recovery_not_required` 拒绝，不能借恢复标志绕过正常 Golden Path。
+
+## Immutable Routing Task Projection（Brain 1.272.58）
+
+- Schema 420 在 receipt 创建后保护 task 的 canonical task type 与路由 payload 投影；运行期仍可追加非路由字段，但不能把已路由 coding 任务改回 legacy/dev 或篡改 repo/profile/runtime。相关 migration 均提供对称 rollback。
+
+## Complete Task Creation Inventory（Brain 1.272.57）
+
+- 任务创建 inventory 由生产调用点动态反查并覆盖全部统一创建边界；新增调用模块若未登记或绕过原子 Work Router，回归测试立即失败。
+
+## Generator Frozen Workspace Wiring（Brain 1.272.56）
+
+- Dispatcher 将服务端 workspace base SHA 投影为 Runner 的起始断言；所有 Generator Attempt 无条件武装 frozen-baseline pre-push 与退出后血统复核，不再依赖任务 payload opt-in。
+
+## Canonical Action Validation（Brain 1.272.55）
+
+- 有头动作验证同时核对 task payload 投影、四形式 canonical receipt、未终态 Kernel run，以及 active Attempt 的 workspace branch/base SHA；顶层 receipt branch 不再错误替代子阶段工作分支。
+
+## Attempt Workspace Action Identity（Brain 1.272.54）
+
+- 动作闸的 branch/base SHA 绑定服务端解析后的当前 Attempt workspace；Routing Receipt 的起始 baseline 继续独立保留，跨 Planner、Generator 子分支时不再拿顶层 branch 冒充当前执行面。
+
+## Canonical Provider Routing Identity（Brain 1.272.53）
+
+- Kernel TaskBundle 从已校验的 canonical Routing Receipt 构造执行身份；Provider 只接收服务端投影的 receipt、run、repo、branch 与冻结 base SHA，动作闸门不再依赖调用方自行拼装环境变量。
+
+## Dispatcher Routing Receipt Gate（Brain 1.272.52）
+
+- 生产 Dispatcher 在 coding task 点火前从 `work_routing_receipts` 读取 canonical receipt 并完整校验；存量 `dev` 或缺失/被取代/不一致 receipt 均记录 `route_violation` 后失败关闭，不再原地改写 task type 绕过 Work Router。
+
+## Capture Coding Route Atomicity（Brain 1.272.51）
+
+- Capture urgent 与 repair backlog 显式声明 Cecelia coding mutation 路由事实，并在同一数据库事务内创建 task+receipt 与更新 atom；`harness_initiative` 不再被旧分类器误判为 operations。
+
+## Kernel Runtime Routing Projection（Brain 1.272.50）
+
+- Unified Work Router 为每个 `coding_mutation` 同步投影 `orchestrator=skill-relay` 与 `harness_runtime=kernel-v1`，使 task payload 的真实执行选择和不可变 receipt 的 `kernel-harness-v2` 决策保持一致。
+
+## Repeatable Router Acceptance（Brain 1.272.49）
+
+- Unified Work Router scratch 验收为同一 Git revision 的每次执行生成独立入口身份，确保连续运行仍真实创建新 task/run，并重新验证 stale Map fail-closed 与刷新恢复，而不是复用上次 active run 假绿。
+
+## Routed Regression Closure（Brain 1.272.48）
+
+- 修复 Git 断言命令在模块加载期静态绑定 `execFile`，避免只提供 `spawn` 的 Harness 运行时/测试环境在未执行 Git 断言前崩溃。
+- 修复 proposal 创建任务时未定义的 change index，以及 recurring 创建结果覆盖累计数组的真实运行时错误。
+- 修复共享任务创建在 `pg.Client` 上误开第二连接，以及部门 heartbeat 未透传统一 task creator 的事务/接线回归。
+- Planner 自动生成 coding architecture task 时补齐显式 `new_capability`、Map scope、repo、branch 与冻结 base SHA 路由字段。
+- 全部任务创建回归夹具改为验证统一 Work Router / Routing Receipt；coding mutation 继续严格要求 change kind、repo、Map scope、branch 与 base SHA。
+
+## Recovery Lineage Binding（Brain 1.272.47）
+
+- `explicit_recovery` 必须指定精确的终态前序 Kernel Run，并继承该前序已批准的合同。
+- recovery ground truth 同时绑定 predecessor、Routing Receipt、合同与 implementation baseline，禁止跨合同复用旧 PR 信任源。
+
+## Unified Work Router（Brain 1.272.46）
+
+所有 coding mutation 由 Work Router 正向选择四档 Kernel Harness profile，并以同一事务写入 task 与 append-only Routing Receipt。Kernel run 强制使用 fresh Universal Map 与 active Impact Contract；有头工具和无头 Dispatcher 在动作前验证同一 receipt。Generator Provider 使用冻结基线血统闸、受限 UID/capabilities、敏感环境剥离和禁用 pushurl。Map 恢复合同与 Generator Attempt 以 append-only 消费事实原子绑定，仅允许冻结 Map 路径，merge 前要求目标 revision 全量事实恢复 fresh。Capture atom 持久化 repo、change_kind、Map scope 与 Git baseline，确认时不再丢失路由事实。显式 Capability 起点会沿 implements/proves/affects 反向下钻至 feature 与必跑 assertion；scratch smoke 用真实三入口、真实 Journey anchor 和 revision 命名空间验证可重复闭环。War Room 展示 receipt/Map/Impact Contract 审计字段和 Route/Map 覆盖率、direct dev、legacy、violation 指标；路由、preflight、合同和无头违规写稳定事件。Schema 地板为 422。
+## Fleet pgvector runtime contract（Brain 1.272.38）
 
 ## Fleet pgvector runtime contract
 

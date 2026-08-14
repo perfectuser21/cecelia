@@ -28,9 +28,8 @@ echo "[smoke:ability-id] Case 3: task-tasks.js 接线 ability_id"
 node -e "
 const js = require('fs').readFileSync('$ROUTE', 'utf8');
 if (!/ability_id\s*=\s*null/.test(js)) throw new Error('Case 3 FAIL: destructure 未含 ability_id');
-if (!/INSERT INTO tasks[\s\S]*ability_id/.test(js)) throw new Error('Case 3 FAIL: INSERT 列未含 ability_id');
-if (!/RETURNING[\s\S]*ability_id/.test(js)) throw new Error('Case 3 FAIL: RETURNING 未含 ability_id');
-console.log('  PASS: destructure + INSERT + RETURNING 均接线');
+if (!/createRoutedTask[\s\S]*ability_id/.test(js)) throw new Error('Case 3 FAIL: 统一 Router task contract 未透传 ability_id');
+console.log('  PASS: destructure + createRoutedTask contract 均接线');
 "
 
 echo "[smoke:ability-id] Case 4: 真环境 DB 列校验（DB 可达时）"

@@ -132,6 +132,65 @@ function makeEnv({ observedSeq, dispatch, finalizeRun } = {}) {
 }
 
 describe('runLoop：全链 planning→done', () => {
+  it('首个可观察动作前必须证明 exact Controller ownership', async () => {
+    const { deps } = makeEnv({
+      observedSeq: [obs({
+        run: {
+          id: RUN_ID,
+          phase: 'generate',
+          cost_usd: 0,
+          deadline_at: '2026-07-04T11:59:00.000Z',
+        },
+      })],
+    });
+    deps.writeHeartbeat = vi.fn(async () => {
+      throw new Error('controller_lease_renewal_lost');
+    });
+
+    const result = await runLoop(deps, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      controllerSessionId: '22222222-2222-4222-8222-222222222222',
+      controllerGeneration: 2,
+    });
+
+    expect(result).toEqual({ exitReason: 'singleton_conflict', hops: 0 });
+    expect(deps.writeHeartbeat).toHaveBeenCalledOnce();
+    expect(deps.collectGroundTruth).not.toHaveBeenCalled();
+    expect(deps.finalizeRun).not.toHaveBeenCalled();
+  });
+
+  it('deadline 终态写携带 exact Controller ownership fence', async () => {
+    const { deps } = makeEnv({
+      observedSeq: [obs({
+        run: {
+          id: RUN_ID,
+          phase: 'generate',
+          cost_usd: 0,
+          deadline_at: '2026-07-04T11:59:00.000Z',
+        },
+      })],
+    });
+
+    const result = await runLoop(deps, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      controllerSessionId: '22222222-2222-4222-8222-222222222222',
+      controllerGeneration: 2,
+    });
+
+    expect(result).toEqual({ exitReason: 'automation_deadline_exceeded', hops: 0 });
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      expectedControllerSessionId: '22222222-2222-4222-8222-222222222222',
+      expectedControllerGeneration: 2,
+      requireActiveControllerAuthority: true,
+      outcome: 'failed',
+      reason: 'automation_deadline_exceeded',
+    });
+  });
+
   it('逐跳推进 planner→proposer→reviewer→persist→generator→poll→evaluator→judge→merge→report→exit', async () => {
     const approvedSha = '9'.repeat(40);
     const prMeta = {
@@ -442,6 +501,65 @@ describe('runLoop：全链 planning→done', () => {
     await expect(runLoop(deps, { taskId: TASK_ID, runId: RUN_ID }))
       .rejects.toThrow('validation_clock_required');
     expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('显式恢复 run 的前序 Generator PR 不能绕过当前 run 的 Generator 信任边界', async () => {
+    const prUrl = 'https://github.com/perfectuser21/cecelia/pull/4851';
+    const prHeadSha = '5fcb7b48b7f6cff567da93e79b6e7b463ace29e8';
+    const priorRunId = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
+    const recovered = obs({
+      run: {
+        id: RUN_ID,
+        phase: 'evaluate',
+        cost_usd: 0,
+        created_source: 'explicit_recovery',
+      },
+      generatorSpawned: false,
+      pr: {
+        url: prUrl,
+        state: 'OPEN',
+        mergeStateStatus: 'CLEAN',
+        ci: 'pass',
+        merged: false,
+        head_sha: prHeadSha,
+      },
+      verifiedExistingPrOrigin: {
+        source: 'trusted_prior_kernel_run',
+        run_id: priorRunId,
+        pr_url: prUrl,
+        pr_head_sha: prHeadSha,
+      },
+      task: {
+        id: TASK_ID,
+        status: 'in_progress',
+        payload: { timeout_seconds: 5400 },
+      },
+    });
+    const { deps, appended } = makeEnv({
+      observedSeq: [
+        recovered,
+        obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+      ],
+    });
+
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(deps.dispatch).toHaveBeenCalledWith(
+      'spawn:generator-fix',
+      expect.objectContaining({
+        validationClock: {
+          pipeline_started_at: '2026-07-04T12:00:00.000Z',
+          deadline_at: '2026-07-04T13:30:00.000Z',
+        },
+      }),
+    );
+    expect(appended[0].detail).toMatchObject({
+      reason: 'current_run_generator_required_for_existing_pr',
+      pipeline_started_at: '2026-07-04T12:00:00.000Z',
+      deadline_at: '2026-07-04T13:30:00.000Z',
+    });
+    expect(appended[0].detail).not.toHaveProperty('validation_origin');
+    expect(appended[0].detail).not.toHaveProperty('validation_origin_run_id');
   });
 
   it('每个派发 hop：先 appendHop 再 dispatch（intent-before-dispatch 顺序）', async () => {

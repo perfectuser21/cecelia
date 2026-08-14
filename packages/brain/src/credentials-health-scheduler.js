@@ -77,9 +77,9 @@ export function isInCredentialsHealthWindow(now = new Date()) {
 export async function hasTodayCredentialsCheck(pool) {
   try {
     const { rows } = await pool.query(
-      `SELECT id FROM tasks
-       WHERE task_type = 'credentials_health'
-         AND created_by = 'credentials-health-scheduler'
+      `SELECT id FROM cecelia_events
+       WHERE event_type = 'credentials_health_completed'
+         AND source = 'credentials-health-scheduler'
          AND created_at >= CURRENT_DATE::timestamptz
          AND created_at < (CURRENT_DATE + INTERVAL '1 day')::timestamptz
        LIMIT 1`
@@ -219,10 +219,14 @@ async function alertAndMaybeCreateTask(credKey, level, message, taskPriority = n
   if (taskPriority) {
     try {
       await createTask({
+        source: 'scheduler',
+        source_id: `credentials-health:${credKey}:${new Date().toISOString().slice(0, 10)}`,
         title: `[凭据刷新][${taskPriority}] ${credKey}`,
         task_type: 'credentials_health',
         priority: taskPriority,
         created_by: 'credentials-health-scheduler',
+        trigger_source: 'brain_auto',
+        allow_unscoped: true,
         tags: ['credential-alert', 'auto-generated'],
         payload: { credential: credKey, alert_message: message },
       });
@@ -346,13 +350,12 @@ export async function runCredentialsHealthCheck(pool, now = new Date()) {
     console.error('[cred-health] 发布器提醒失败:', err.message);
   }
 
-  // ── 记录本次巡检（DB 去重 sentinel）────────────────────────────────────────
+  // ── 记录本次巡检（事件账本去重 sentinel，不伪造可执行 task）────────────────
   try {
     await pool.query(
-      `INSERT INTO tasks (title, task_type, status, priority, created_by, payload, trigger_source, location)
-       VALUES ($1, 'credentials_health', 'completed', 'P3', 'credentials-health-scheduler', $2, 'brain_auto', 'us')`,
+      `INSERT INTO cecelia_events (event_type, source, payload)
+       VALUES ('credentials_health_completed', 'credentials-health-scheduler', $1::jsonb)`,
       [
-        `[cred-health] 凭据巡检完成 ${now.toISOString().slice(0, 10)}`,
         JSON.stringify({ results, checked_at: now.toISOString() }),
       ]
     );

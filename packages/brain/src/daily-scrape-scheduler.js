@@ -14,6 +14,7 @@
 
 /** 每日触发小时（UTC）= 北京时间 04:00 次日 */
 const DAILY_SCRAPE_HOUR_UTC = 20;
+import { createTask } from './actions.js';
 
 /** 支持的采集平台列表 */
 const SCRAPE_PLATFORMS = [
@@ -65,23 +66,24 @@ async function alreadyScheduledToday(pool, platform) {
  * @param {string} platform
  * @returns {Promise<string>} 新任务 ID
  */
-async function createPlatformScraperTask(pool, platform) {
-  const { rows } = await pool.query(
-    `INSERT INTO tasks (
-       task_type, title, status, priority, payload, created_at, updated_at
-     ) VALUES (
-       'platform_scraper', $1, 'queued', 30, $2, NOW(), NOW()
-     ) RETURNING id`,
-    [
-      `每日采集: ${platform}`,
-      JSON.stringify({
-        platform,
-        triggered_by: 'daily-scrape-scheduler',
-        scheduled_at: new Date().toISOString(),
-      }),
-    ]
-  );
-  return rows[0].id;
+async function createPlatformScraperTask(pool, platform, taskCreator = createTask) {
+  const date = new Date().toISOString().slice(0, 10);
+  const created = await taskCreator({
+    db: pool,
+    source: 'scheduler',
+    source_id: `daily-scrape:${platform}:${date}`,
+    task_type: 'platform_scraper',
+    title: `每日采集: ${platform}`,
+    priority: 30,
+    trigger_source: 'daily-scrape-scheduler',
+    allow_unscoped: true,
+    payload: {
+      platform,
+      triggered_by: 'daily-scrape-scheduler',
+      scheduled_at: new Date().toISOString(),
+    },
+  });
+  return created.task.id;
 }
 
 /**
@@ -92,7 +94,7 @@ async function createPlatformScraperTask(pool, platform) {
  * @param {boolean} [opts.force] - 强制立即触发（跳过时间窗口检查），用于 API 手动触发
  * @returns {Promise<{scheduled: number, skipped: number, inWindow: boolean}>}
  */
-export async function scheduleDailyScrape(pool, { force = false } = {}) {
+export async function scheduleDailyScrape(pool, { force = false, taskCreator = createTask } = {}) {
   const now = new Date();
   const inWindow = isInDailyScrapeWindow(now);
 
@@ -110,7 +112,7 @@ export async function scheduleDailyScrape(pool, { force = false } = {}) {
         skipped++;
         continue;
       }
-      await createPlatformScraperTask(pool, platform);
+      await createPlatformScraperTask(pool, platform, taskCreator);
       scheduled++;
     } catch (err) {
       console.error(`[daily-scrape-scheduler] 创建 ${platform} 任务失败: ${err.message}`);

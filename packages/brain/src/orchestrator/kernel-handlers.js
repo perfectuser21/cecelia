@@ -1,4 +1,6 @@
 import { normalizeFailureSignature } from './convergence-signatures.js';
+import { SingletonConflictError } from './decision-log.js';
+import { writeHeartbeat } from './heartbeat.js';
 import { finalizeKernelRun } from './kernel-run-store.js';
 
 function shellQuote(value) {
@@ -35,6 +37,10 @@ async function appendJudgeVerdict(
   // unknown and must not be silently filled from the evaluator verdict.
   const failureClass = judgeFailureClass ?? null;
   const failureSignature = normalizeFailureSignature(judgeFailureSignature);
+  const targetHeadSha = ctx.observed.pr?.head_sha
+    ?? ctx.observed.candidate?.head_sha
+    ?? ctx.bundle.inputs.candidate?.head_sha
+    ?? null;
 
   await pool.query(
     `INSERT INTO orchestrator_decision_log
@@ -50,11 +56,13 @@ async function appendJudgeVerdict(
       WHERE run_id = $1`,
     [
       ctx.runId,
-      JSON.stringify({ pr: { head_sha: ctx.observed.pr?.head_sha ?? null } }),
+      JSON.stringify({
+        [ctx.observed.pr ? 'pr' : 'candidate']: { head_sha: targetHeadSha },
+      }),
       verdict === 'PASS' ? 'allow' : 'deny:judge_fail',
       JSON.stringify({
         verdict,
-        pr_head_sha: ctx.observed.pr?.head_sha ?? null,
+        pr_head_sha: targetHeadSha,
         feedback: feedback ?? null,
         failure_class: failureClass,
         ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
@@ -71,6 +79,10 @@ export function createKernelHandlers(deps) {
       const evaluateResult = ctx.observed.evaluateResult ?? null;
       const brainResult = evaluatorBrainResult(evaluateResult) ?? ctx.observed.callbackResult;
       const contract = ctx.bundle.inputs.contract ?? {};
+      const candidateHeadSha = ctx.observed.candidate?.head_sha
+        ?? ctx.bundle.inputs.candidate?.head_sha
+        ?? null;
+      const targetHeadSha = ctx.observed.pr?.head_sha ?? candidateHeadSha;
       const result = await deps.judgeGate({
         agentVerdict: evaluator.verdict ?? evaluateResult?.decision?.outcome,
         agentFeedback: evaluator.feedback ?? evaluateResult?.decision?.reason ?? null,
@@ -86,10 +98,10 @@ export function createKernelHandlers(deps) {
         instanceLabel: `kernel-${String(ctx.attempt.id).slice(0, 8)}`,
         promptDir: deps.promptDir,
         stageFacts: {
-          current_stage: 'independent_judge',
+          current_stage: ctx.observed.pr ? 'independent_judge' : 'local_candidate',
           pr_state: ctx.observed.pr?.state ?? null,
           pr_merged: ctx.observed.pr?.merged === true,
-          head_sha: ctx.observed.pr?.head_sha ?? null,
+          head_sha: targetHeadSha,
           merge_gate_approved: ctx.observed.reviewApproved === true,
         },
       }, { strict: true, dbPool: deps.pool });
@@ -206,6 +218,23 @@ export function createKernelHandlers(deps) {
     async report(ctx) {
       const { observed } = ctx;
       const payload = observed.task?.payload ?? {};
+      const proveControllerOwnership = deps.proveControllerOwnership ?? writeHeartbeat;
+      try {
+        await proveControllerOwnership(deps.pool, {
+          runId: ctx.runId,
+          controllerSessionId: ctx.controllerSessionId,
+          controllerGeneration: ctx.controllerGeneration,
+          host: observed.run?.orchestrator_host ?? 'kernel-v1',
+          pid: observed.run?.orchestrator_pid ?? process.pid,
+          now: deps.now?.() ?? new Date(),
+        });
+      } catch (error) {
+        if (['controller_lease_renewal_lost', 'controller_lease_identity_missing']
+          .includes(error?.message)) {
+          throw new SingletonConflictError(ctx.runId, 'controller-ownership', error);
+        }
+        throw error;
+      }
       await deps.promote(ctx.taskId, { merged: true, pr_url: observed.pr?.url }, observed.pr?.url, deps.pool);
       const handoff = deps.buildHandoff({
         task_id: ctx.taskId,
@@ -238,6 +267,9 @@ export function createKernelHandlers(deps) {
       const finalization = {
         runId: ctx.runId,
         expectedTaskId: ctx.taskId,
+        expectedControllerSessionId: ctx.controllerSessionId,
+        expectedControllerGeneration: ctx.controllerGeneration,
+        requireActiveControllerAuthority: true,
         outcome: 'done',
       };
       if (payload.harness_gap_id) {
@@ -249,7 +281,10 @@ export function createKernelHandlers(deps) {
           runId: ctx.runId,
         });
       }
-      await finalizeRun(deps.pool, finalization);
+      const finalized = await finalizeRun(deps.pool, finalization);
+      if (finalized?.ownershipChanged) {
+        throw new SingletonConflictError(ctx.runId, 'controller-ownership', null);
+      }
       return { status: 'DONE', detail: 'report chain completed' };
     },
   });

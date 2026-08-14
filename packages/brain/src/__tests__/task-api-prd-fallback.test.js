@@ -15,6 +15,12 @@ async function buildApp(capturedInserts) {
         capturedInserts.push({ sql, params });
         return { rows: [{ id: 'test-id', title: params[0], status: 'queued', task_type: params[3], priority: params[2] }] };
       }
+      if (sql.includes('INSERT INTO work_routing_receipts')) {
+        return { rows: [{ id: 'receipt-test' }] };
+      }
+      if (sql.includes('FROM map_scope_repositories')) {
+        return { rows: [{ scope_key: 'cecelia', repo: 'cecelia', adapter_config: { aliases: ['perfectuser21/cecelia'] } }] };
+      }
       return { rows: [] };
     }),
   };
@@ -37,7 +43,8 @@ describe('POST /api/brain/tasks — description fallback 3 层', () => {
       .post('/api/brain/tasks/')
       .send({
         title: 'smoke',
-        task_type: 'dev',
+        task_type: 'research',
+        repo_hint: 'perfectuser21/cecelia',
         priority: 'P2',
         prd: '这是通过 prd 字段传入的 PRD 内容，至少 20 字符。',
       });
@@ -53,7 +60,8 @@ describe('POST /api/brain/tasks — description fallback 3 层', () => {
       .post('/api/brain/tasks/')
       .send({
         title: 'smoke',
-        task_type: 'dev',
+        task_type: 'research',
+        repo_hint: 'perfectuser21/cecelia',
         priority: 'P2',
         description: 'EXPLICIT_DESC',
         prd: 'SHOULD_NOT_WIN',
@@ -69,7 +77,8 @@ describe('POST /api/brain/tasks — description fallback 3 层', () => {
       .post('/api/brain/tasks/')
       .send({
         title: 'smoke',
-        task_type: 'dev',
+        task_type: 'research',
+        repo_hint: 'perfectuser21/cecelia',
         priority: 'P2',
         payload: { prd_summary: 'FROM_PAYLOAD' },
       });
@@ -84,7 +93,8 @@ describe('POST /api/brain/tasks — description fallback 3 层', () => {
       .post('/api/brain/tasks/')
       .send({
         title: 'smoke',
-        task_type: 'dev',
+        task_type: 'research',
+        repo_hint: 'perfectuser21/cecelia',
         priority: 'P2',
         payload: { prd_summary: 'WINS' },
         prd: 'LOSES',

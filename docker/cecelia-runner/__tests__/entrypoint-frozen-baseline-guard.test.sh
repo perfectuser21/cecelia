@@ -12,6 +12,18 @@ ENTRYPOINT="$SCRIPT_DIR/../entrypoint.sh"
 TEST_ROOT="$(mktemp -d)"
 trap 'chmod -R u+w "$TEST_ROOT" 2>/dev/null || true; rm -rf "$TEST_ROOT"' EXIT
 
+# Reproduce the Evaluator/Judge runtime: the outer Runner installs a
+# process-scoped push fence. Fixture repositories must still be able to push to
+# their own local bare remotes without weakening that fence for the real repo.
+INHERITED_GIT_CONFIG_COUNT="${GIT_CONFIG_COUNT:-0}"
+export GIT_CONFIG_COUNT="$((INHERITED_GIT_CONFIG_COUNT + 1))"
+export "GIT_CONFIG_KEY_${INHERITED_GIT_CONFIG_COUNT}=remote.origin.pushurl"
+export "GIT_CONFIG_VALUE_${INHERITED_GIT_CONFIG_COUNT}=blocked-by-harness://evaluator-regression"
+FIXTURE_GIT_ENV=(env -u GIT_CONFIG_COUNT)
+for ((i = 0; i < GIT_CONFIG_COUNT; i += 1)); do
+  FIXTURE_GIT_ENV+=(-u "GIT_CONFIG_KEY_$i" -u "GIT_CONFIG_VALUE_$i")
+done
+
 guard_block="$(
   sed -n \
     '/^# frozen-baseline-guard:start$/,/^# frozen-baseline-guard:end$/p' \
@@ -66,6 +78,24 @@ commit_on_top() {
   git -C "$workspace" commit -m "feat: $marker" >/dev/null
 }
 
+fixture_push() {
+  local workspace="$1"
+  shift
+  local fixture_remote
+  fixture_remote="$(git -C "$workspace" config --local --get remote.origin.url)"
+  "${FIXTURE_GIT_ENV[@]}" git -C "$workspace" push "$fixture_remote" "$@"
+}
+
+provider_fixture_push() {
+  local workspace="$1"
+  local hooks_dir="$2"
+  shift 2
+  local fixture_remote
+  fixture_remote="$(git -C "$workspace" config --local --get remote.origin.url)"
+  "${FIXTURE_GIT_ENV[@]}" git -c core.hooksPath="$hooks_dir" \
+    -C "$workspace" push "$fixture_remote" "$@"
+}
+
 # ── 1. Legitimate append on top of the frozen start SHA still pushes ─────────
 CASE="$(new_case legit)"
 WS="$CASE/workspace"
@@ -83,7 +113,7 @@ test -x "$CASE/guard/hooks/pre-push"
 git -C "$WS" checkout -b cp-08022012-frozen-candidate >/dev/null 2>&1
 commit_on_top "$WS" red
 commit_on_top "$WS" green
-"${FROZEN_BASELINE_PROVIDER_ENV[@]}" git -C "$WS" push origin HEAD:refs/heads/cp-08022012-frozen-candidate >/dev/null 2>&1
+provider_fixture_push "$WS" "$CASE/guard/hooks" HEAD:refs/heads/cp-08022012-frozen-candidate >/dev/null 2>&1
 
 HARNESS_FROZEN_BASELINE=true \
 HARNESS_WORKSPACE_START_SHA="$START_SHA" \
@@ -102,7 +132,7 @@ START_SHA="$(git -C "$WS" rev-parse HEAD)"
 
 git -C "$WS" checkout -b other-candidate >/dev/null 2>&1
 commit_on_top "$WS" one-session
-git -C "$WS" push origin HEAD:refs/heads/main >/dev/null 2>&1
+fixture_push "$WS" HEAD:refs/heads/main >/dev/null 2>&1
 git -C "$WS" checkout main >/dev/null 2>&1
 git -C "$WS" reset --hard "$START_SHA" >/dev/null 2>&1
 
@@ -116,7 +146,7 @@ git -C "$WS" checkout -b cp-08022012-candidate >/dev/null 2>&1
 commit_on_top "$WS" kernel
 
 # 2a. No false positive: main having moved on is not by itself a violation.
-"${FROZEN_BASELINE_PROVIDER_ENV[@]}" git -C "$WS" push origin HEAD:refs/heads/cp-08022012-candidate >/dev/null 2>&1
+provider_fixture_push "$WS" "$CASE/guard/hooks" HEAD:refs/heads/cp-08022012-candidate >/dev/null 2>&1
 HARNESS_FROZEN_BASELINE=true \
 HARNESS_WORKSPACE_START_SHA="$START_SHA" \
 WORKTREE_PATH="$WS" \
@@ -131,14 +161,14 @@ git -C "$WS" merge-base --is-ancestor "$START_SHA" HEAD || {
   exit 1
 }
 
-if "${FROZEN_BASELINE_PROVIDER_ENV[@]}" git -C "$WS" push origin HEAD:refs/heads/cp-08022012-contaminated >/dev/null 2>&1; then
+if provider_fixture_push "$WS" "$CASE/guard/hooks" HEAD:refs/heads/cp-08022012-contaminated >/dev/null 2>&1; then
   echo "frozen baseline guard let a rebased-onto-latest-main candidate push" >&2
   exit 1
 fi
 
 # --no-verify skips hooks by design; the post-Provider assertion is the backstop
 # that turns the whole Attempt into a failure the callback cannot project.
-"${FROZEN_BASELINE_PROVIDER_ENV[@]}" git -C "$WS" push --no-verify origin HEAD:refs/heads/cp-08022012-noverify >/dev/null 2>&1 || true
+provider_fixture_push "$WS" "$CASE/guard/hooks" --no-verify HEAD:refs/heads/cp-08022012-noverify >/dev/null 2>&1 || true
 if HARNESS_FROZEN_BASELINE=true \
   HARNESS_WORKSPACE_START_SHA="$START_SHA" \
   WORKTREE_PATH="$WS" \
@@ -183,9 +213,10 @@ START_SHA="$(git -C "$WS" rev-parse HEAD)"
 
 git -C "$WS" checkout -b other-candidate >/dev/null 2>&1
 commit_on_top "$WS" upstream
-git -C "$WS" push origin HEAD:refs/heads/main >/dev/null 2>&1
+fixture_push "$WS" HEAD:refs/heads/main >/dev/null 2>&1
 git -C "$WS" checkout main >/dev/null 2>&1
 
+HARNESS_FROZEN_BASELINE=false \
 HARNESS_WORKSPACE_START_SHA="$START_SHA" \
 WORKTREE_PATH="$WS" \
 FROZEN_BASELINE_GUARD_DIR="$CASE/guard" \
@@ -198,8 +229,9 @@ git -C "$WS" checkout -b cp-08022012-ordinary >/dev/null 2>&1
 commit_on_top "$WS" feature
 git -C "$WS" fetch origin main >/dev/null 2>&1
 git -C "$WS" rebase origin/main >/dev/null 2>&1
-git -C "$WS" push origin HEAD:refs/heads/cp-08022012-ordinary >/dev/null 2>&1
+fixture_push "$WS" HEAD:refs/heads/cp-08022012-ordinary >/dev/null 2>&1
 
+HARNESS_FROZEN_BASELINE=false \
 HARNESS_WORKSPACE_START_SHA="$START_SHA" \
 WORKTREE_PATH="$WS" \
 FROZEN_BASELINE_GUARD_DIR="$CASE/guard" \

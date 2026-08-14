@@ -20,23 +20,28 @@ describe('controllerSessionId 可信透传（RED-4）', () => {
   it('parseArgs 解析 --controller-session-id 作为 Kernel 续租身份', () => {
     const args = parseArgs([
       '--task-id', 't-1', '--run-id', 'r-1', '--controller-session-id', 'sess-abc',
+      '--controller-generation', '3',
     ]);
     expect(args.controllerSessionId).toBe('sess-abc');
+    expect(args.controllerGeneration).toBe(3);
   });
 
   it('buildKernelLaunchArgs 把创建时 controllerSessionId 透传给 detached child（不止 run_id）', () => {
     const argv = buildKernelLaunchArgs({
       runner: '/x/run.js', taskId: 't-1', runId: 'r-1', controllerSessionId: 'sess-abc',
+      controllerGeneration: 3,
     });
     const idx = argv.indexOf('--controller-session-id');
     expect(idx).toBeGreaterThan(-1);
     expect(argv[idx + 1]).toBe('sess-abc');
+    expect(argv).toContain('--controller-generation');
     expect(argv).toContain('--run-id'); // run_id 仍在，但续租身份必须随参数一并落地
   });
 
   it('buildKernelLaunchArgs 透传 resumeToken（存在时）且不注入伪 session', () => {
     const argv = buildKernelLaunchArgs({
-      runner: '/x/run.js', taskId: 't-1', runId: 'r-1', controllerSessionId: 'sess-abc', resumeToken: 'rt-9',
+      runner: '/x/run.js', taskId: 't-1', runId: 'r-1', controllerSessionId: 'sess-abc',
+      controllerGeneration: 3, resumeToken: 'rt-9',
     });
     const ri = argv.indexOf('--resume-token');
     expect(ri).toBeGreaterThan(-1);

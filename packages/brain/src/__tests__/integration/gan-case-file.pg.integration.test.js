@@ -14,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createAttemptStore } from '../../orchestrator/attempt-store.js';
 import { loadCaseFile } from '../../orchestrator/case-file-store.js';
+import { seedOwnedActiveV2Run } from './helpers/controller-authority-fixture.js';
 
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -77,13 +78,7 @@ async function seedRunWithAttempt(pool, { role, hop, phase, taskBundleInputs }) 
     `INSERT INTO tasks (id, title, status) VALUES ($1, $2, 'in_progress')`,
     [taskId, `gan case file pg test ${taskId}`],
   );
-  await pool.query(
-    `INSERT INTO initiative_runs (
-       id, initiative_id, phase, current_task_id, orchestrator_version,
-       created_source, record_trust_status
-     ) VALUES ($1, $2, $3, $4, 'v2', 'kernel_dispatch', 'trusted')`,
-    [runId, randomUUID(), phase, taskId],
-  );
+  await seedOwnedActiveV2Run(pool, { runId, taskId, phase });
   const store = createAttemptStore(pool);
   await store.createAttempt({
     id: attemptId,
@@ -208,13 +203,7 @@ describe('案卷式 GAN 写读全链（真库）', () => {
       `INSERT INTO tasks (id, title, status) VALUES ($1, $2, 'in_progress')`,
       [taskId, `gan case file multi-round ${taskId}`],
     );
-    await testPool.query(
-      `INSERT INTO initiative_runs (
-         id, initiative_id, phase, current_task_id, orchestrator_version,
-         created_source, record_trust_status
-       ) VALUES ($1, $2, 'gan', $3, 'v2', 'kernel_dispatch', 'trusted')`,
-      [runId, randomUUID(), taskId],
-    );
+    await seedOwnedActiveV2Run(testPool, { runId, taskId, phase: 'gan' });
     const store = createAttemptStore(testPool);
 
     const rounds = [
@@ -276,13 +265,7 @@ describe('案卷式 GAN 写读全链（真库）', () => {
       `INSERT INTO tasks (id, title, status) VALUES ($1, $2, 'in_progress')`,
       [taskId, `gan case file failed-then-authoritative ${taskId}`],
     );
-    await testPool.query(
-      `INSERT INTO initiative_runs (
-         id, initiative_id, phase, current_task_id, orchestrator_version,
-         created_source, record_trust_status
-       ) VALUES ($1, $2, 'gan', $3, 'v2', 'kernel_dispatch', 'trusted')`,
-      [runId, randomUUID(), taskId],
-    );
+    await seedOwnedActiveV2Run(testPool, { runId, taskId, phase: 'gan' });
     const store = createAttemptStore(testPool);
 
     // 第一次：reviewer attempt 基础设施崩溃，status=failed（即使意外带了
@@ -374,13 +357,7 @@ describe('案卷式 GAN 写读全链（真库）', () => {
       `INSERT INTO tasks (id, title, status) VALUES ($1, $2, 'in_progress')`,
       [taskId, `gan case file full-text-window ${taskId}`],
     );
-    await testPool.query(
-      `INSERT INTO initiative_runs (
-         id, initiative_id, phase, current_task_id, orchestrator_version,
-         created_source, record_trust_status
-       ) VALUES ($1, $2, 'gan', $3, 'v2', 'kernel_dispatch', 'trusted')`,
-      [runId, randomUUID(), taskId],
-    );
+    await seedOwnedActiveV2Run(testPool, { runId, taskId, phase: 'gan' });
     const store = createAttemptStore(testPool);
 
     for (const round of [1, 2, 3]) {

@@ -17,7 +17,6 @@ import pool from './db.js';
 import { findActiveRunBlockingSpawn } from './lib/harness-run-guard.js';
 import { normalizeChangeKind } from './impact-contract/change-kind.js';
 import { execSync, spawn as nodeSpawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, copyFileSync, openSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,6 +25,7 @@ import {
   createKernelRun,
   finalizeKernelRun,
 } from './orchestrator/kernel-run-store.js';
+import { spawnHeadedKernelRuntime } from './orchestrator/headed-kernel-runtime.js';
 
 const RELAY_FLAG = 'skill-relay';
 const RELAY_DEADLINE_HOURS = 6;
@@ -123,20 +123,25 @@ export function shortId(id) {
   return String(id).replace(/-/g, '').slice(0, 8);
 }
 
-/**
- * 组装 detached Kernel 的 CLI argv（纯装配 seam，无 spawn / 无 DB，便于单测）。
- * 创建端 controllerSessionId 必须随参数一并落地（--controller-session-id），detached
- * child 才能凭创建端 session 做可信续租——禁止仅凭 run_id 续租（sprint 08132021）。
- */
 export function buildKernelLaunchArgs({
   runner,
   taskId,
   runId,
-  controllerSessionId = null,
+  controllerSessionId,
+  controllerGeneration,
   resumeToken = null,
 }) {
-  const args = [runner, '--task-id', taskId, '--run-id', runId];
-  if (controllerSessionId) args.push('--controller-session-id', controllerSessionId);
+  const expectedGeneration = Number(controllerGeneration);
+  if (!controllerSessionId || !Number.isSafeInteger(expectedGeneration) || expectedGeneration < 1) {
+    throw new Error('controller_lease_identity_missing');
+  }
+  const args = [
+    runner,
+    '--task-id', taskId,
+    '--run-id', runId,
+    '--controller-session-id', controllerSessionId,
+    '--controller-generation', String(expectedGeneration),
+  ];
   if (resumeToken) args.push('--resume-token', resumeToken);
   return args;
 }
@@ -144,13 +149,19 @@ export function buildKernelLaunchArgs({
 export async function launchKernelProcess({
   taskId,
   runId,
+  controllerSessionId,
+  controllerGeneration,
   worktreePath,
-  controllerSessionId = null,
   resumeToken = null,
 }) {
   const runner = fileURLToPath(new URL('./orchestrator/run.js', import.meta.url));
   const args = buildKernelLaunchArgs({
-    runner, taskId, runId, controllerSessionId, resumeToken,
+    runner,
+    taskId,
+    runId,
+    controllerSessionId,
+    controllerGeneration,
+    resumeToken,
   });
   // 刀0：detached kernel 的 stdout/stderr 落盘到宿主可见目录，替代 stdio:'ignore'。
   // 原先零遗言——kernel 卡死/崩溃时看不到任何栈（planner 停摆 debug 不能）。
@@ -254,11 +265,9 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
   // 必为合法枚举；此调用是二次确认（defense-in-depth）。若真抛出，发生在 createRun 之前、
   // 无半态 run，作为 spawn 失败向上抛给调用方，仍是 fail-closed。
   const gear = deriveGear(task);
-  // 启动链收敛（sprint 08131104 缺陷①）：Dispatcher→Controller→Kernel。Session Controller
-  // 在拉起 Kernel 之前先取得 ownership —— controllerSessionId 随 createKernelRun 在同一创建事务
-  // 里落库（controller_session_id 先于 Kernel 可执行态），createKernelRun fail-closed 校验后才建 run。
+  // 启动链收敛：Dispatcher→Controller→Kernel。createKernelRun 在同一事务内
+  // 由服务端签发 durable Controller authority，然后才返回可执行 run。
   // 由此 payload.harness_runtime=kernel-v1 直打也不会产生 detached 无主 Kernel（issue 962d399c）。
-  const controllerSessionId = deps.controllerSessionId ?? randomUUID();
   const createRun = deps.createKernelRun ?? createKernelRun;
   const created = await createRun(dbPool, {
     taskId: task.id,
@@ -270,7 +279,6 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
     deadlineHours: 8,
     createdSource: 'kernel_dispatch',
     gear,
-    controllerSessionId,
   });
   const runId = created.run?.id;
   if (!runId) throw new Error('kernel-v1 run authority returned no id');
@@ -287,7 +295,9 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
   const launchKernel = deps.launchKernel || launchKernelProcess;
   try {
     const launched = await launchKernel({
-      taskId: task.id, runId, worktreePath, controllerSessionId,
+      taskId:task.id,runId,worktreePath,
+      controllerSessionId:created.run.controller_session_id,
+      controllerGeneration:Number(created.run.controller_generation),
     });
     console.log(`[skill-relay][kernel-v1] launched run=${runId} pid=${launched.pid ?? '?'}`);
     return { ok: true, mode: 'kernel-v1', runId, ...launched, sprintDir, worktreePath };
@@ -307,6 +317,25 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
       terminalized: true,
     };
   }
+}
+
+async function _spawnHeadedKernelRuntime(task, context) {
+  const { dbPool, now, initiativeId, short, deps } = context;
+  return spawnHeadedKernelRuntime({
+    task,
+    dbPool,
+    initiativeId,
+    deps,
+    gear: deriveGear(task),
+    spawnSession: ({ runId,controllerSessionId,controllerGeneration,createAttempt }) => _spawnHeadedSession(task, {
+      dbPool,
+      now,
+      short,
+      initiativeId,
+      deps: { ...deps, createHeadedAttempt: createAttempt },
+      kernelAuthority: { runId,controllerSessionId,controllerGeneration },
+    }),
+  });
 }
 
 /** 上海时区 MMDDHHNN（sprint_dir 缺省生成用；now 注入保持可测确定性） */
@@ -384,6 +413,11 @@ export async function spawnSkillRelaySession(task, deps = {}) {
 
   // kernel-v1 路径与 executor 无关（使用 launchKernelProcess，不走头/无头路由），
   // 必须在 executor 白名单校验之前处理，避免 executor='auto' 被误拦截。
+  if (task.payload?.harness_runtime === 'kernel-v1' && isHeaded) {
+    return _spawnHeadedKernelRuntime(task, {
+      dbPool, now, short, initiativeId, deps,
+    });
+  }
   if (task.payload?.harness_runtime === 'kernel-v1') {
     return _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps });
   }
@@ -716,7 +750,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
             `INSERT INTO initiative_runs
                (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
                 deadline_at, ability_id, current_task_id, created_source)
-             VALUES ($1, 'A_planning', $2, 'v2', 'skill-relay-grok',
+             VALUES ($1, 'A_planning', $2, 'v1', 'skill-relay-grok',
                      NOW() + INTERVAL '${GROK_RELAY_DEADLINE_HOURS} hours',
                      $3, $4, 'legacy_relay')`,
             [initiativeId, task.payload?.journey_id || null, abilityId, task.id]
@@ -757,7 +791,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       `INSERT INTO initiative_runs
          (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
           deadline_at, ability_id, current_task_id, created_source)
-       VALUES ($1, 'A_planning', $2, 'v2', '${orchestratorHost}',
+       VALUES ($1, 'A_planning', $2, 'v1', '${orchestratorHost}',
                NOW() + INTERVAL '${deadlineHours} hours', $3, $4, 'legacy_relay')`,
       [initiativeId, task.payload?.journey_id || null, abilityId, task.id]
     );
@@ -863,7 +897,7 @@ async function _spawnXianBridgeSession(task, { dbPool, now, short, initiativeId,
     `INSERT INTO initiative_runs
        (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
         deadline_at, ability_id, current_task_id, created_source)
-     VALUES ($1, 'A_planning', $2, 'v2', $3,
+     VALUES ($1, 'A_planning', $2, 'v1', $3,
              NOW() + INTERVAL '${XIAN_RELAY_DEADLINE_HOURS} hours',
              $4, $5, 'legacy_relay')`,
     [initiativeId, task.payload?.journey_id || null, 'skill-relay-xian', abilityId, task.id]
@@ -892,7 +926,14 @@ export { HEADED_HOSTS, HEADED_TMUX_PREFIXES };
  * headed 模式：ssh 逃逸宿主，tmux new-session 启动 codex TUI / claude-launch.sh / grok。
  * 不走 docker，不产生 extraMounts，不注入 GITHUB_TOKEN 进 tmux 命令串。
  */
-async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, deps }) {
+async function _spawnHeadedSession(task, {
+  dbPool,
+  now,
+  short,
+  initiativeId,
+  deps,
+  kernelAuthority = null,
+}) {
   // executor 映射：claude/grok 显式判，其余（codex/缺省）按 codex 处理（入口白名单已限 claude/codex/grok/缺省）
   const headedExecutor = task.payload?.executor === 'claude'
     ? 'claude'
@@ -1038,6 +1079,29 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     initiativeId,
     baseRepo: task.payload?.base_repo,
   });
+  let kernelAttempt = null;
+  if (kernelAuthority) {
+    const branch = task.payload?.branch;
+    const baseSha = task.payload?.base_sha;
+    if (!task.payload?.routing_receipt_id || !task.payload?.repo
+        || !/^cp-[a-z0-9][a-z0-9._-]{0,126}$/.test(branch ?? '')
+        || !/^[a-f0-9]{40}$/.test(baseSha ?? '')) {
+      throw new Error('headed_kernel_identity_incomplete');
+    }
+    const createAttempt = deps.createHeadedAttempt;
+    if (typeof createAttempt !== 'function') {
+      throw new Error('headed_kernel_attempt_factory_missing');
+    }
+    kernelAttempt = await createAttempt({
+      runId: kernelAuthority.runId,
+      task,
+      worktreePath,
+      branch,
+      baseSha,
+      provider: headedExecutor,
+    });
+    if (!kernelAttempt?.id) throw new Error('headed_kernel_attempt_missing');
+  }
 
   // claude-launch.sh 在宿主直跑，host.docker.internal 对宿主进程不可达是已知形态；
   // codex 原值不动防回归。
@@ -1045,7 +1109,7 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   let brainUrl = 'http://host.docker.internal:5221';
   if (isClaudeHeaded) { brainUrl = 'http://localhost:5221'; }
   const prompt = [
-    `你是 harness-controller session（headed 模式）。按下面 SKILL 指令跑完整条 sprint。`,
+    `你是 Kernel Harness 2.0 headed session。按下面 SKILL 指令跑完整条 sprint。`,
     ``,
     skillContent,
     ``,
@@ -1087,10 +1151,12 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
       );
     } catch (err) {
       console.error(`[skill-relay][headed] prompt 文件写入失败: ${err.message}`);
-      await dbPool.query(
-        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
-        [task.id]
-      );
+      if (!kernelAuthority) {
+        await dbPool.query(
+          `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+          [task.id]
+        );
+      }
       return { ok: false, mode: headedHost, error: `prompt write failed: ${err.message}` };
     }
     // tmux new-session：cd 进 worktree + 注入 CODEX_HOME（不注入=烧宿主默认账号）+
@@ -1113,13 +1179,23 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
     // (P0 a638f840 根治：PR 在 evaluator 运行前被 GitHub 自动合并)。
     // headless docker relay 已通过 spawnFn env 参数注入，此处仅补 headed 路径。
     // 三分支路由（INV-1 + FR-R1/R3/R4）：claude / grok / codex 各占一条独立分支
+    const identityEnv = kernelAuthority
+      ? ` CECELIA_TASK_ID=${task.id}`
+        + ` CECELIA_ROUTING_RECEIPT_ID=${task.payload.routing_receipt_id}`
+        + ` CECELIA_RUN_ID=${kernelAuthority.runId}`
+        + ` CECELIA_CONTROLLER_SESSION_ID=${kernelAuthority.controllerSessionId}`
+        + ` CECELIA_CONTROLLER_GENERATION=${kernelAuthority.controllerGeneration}`
+        + ` CECELIA_REPO=${task.payload.repo}`
+        + ` CECELIA_BRANCH=${task.payload.branch}`
+        + ` CECELIA_BASE_SHA=${task.payload.base_sha}`
+      : '';
     let innerCmd;
     if (isClaudeHeaded) {
-      innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller CECELIA_DISPATCH=1 CECELIA_LAUNCHED_BY=skill-relay-claude-headed && ${claudeCfgPrefix}bash ${hostRepo}/scripts/claude-launch.sh --dangerously-skip-permissions \\"\\$(cat ${promptFile})\\"`;
+      innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller${identityEnv} CECELIA_DISPATCH=1 CECELIA_LAUNCHED_BY=skill-relay-claude-headed && ${claudeCfgPrefix}bash ${hostRepo}/scripts/claude-launch.sh --dangerously-skip-permissions \\"\\$(cat ${promptFile})\\"`;
     } else if (isGrokHeaded) {
-      innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller && bash ${hostRepo}/scripts/grok-launch.sh --task-id ${task.id} --prompt-file ${promptFile}`;
+      innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id} HARNESS_NODE=controller${identityEnv} && bash ${hostRepo}/scripts/grok-launch.sh --task-id ${task.id} --prompt-file ${promptFile}`;
     } else {
-      innerCmd = `cd ${worktreePath} && CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
+      innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id}${identityEnv} && CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
     }
     try {
       execFn(
@@ -1127,10 +1203,12 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
       );
     } catch (spawnErr) {
       console.error(`[skill-relay][headed][ALERT] ssh tmux spawn failed: ${spawnErr.message}`);
-      await dbPool.query(
-        `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
-        [task.id]
-      );
+      if (!kernelAuthority) {
+        await dbPool.query(
+          `UPDATE tasks SET status='queued', claimed_by=NULL, claimed_at=NULL WHERE id=$1`,
+          [task.id]
+        );
+      }
       return { ok: false, mode: headedHost, error: `ssh spawn failed: ${spawnErr.message}` };
     }
   } else {
@@ -1157,11 +1235,11 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   // initiative_runs 落行（orchestrator_host 按 executor 映射内联，便于测试断言；
   // headedHost 来自 HEADED_HOSTS 固定映射，无注入面）
   const headedAbilityId = task.ability_id || task.payload?.ability_id || null;
-  await dbPool.query(
+  if (!kernelAuthority) await dbPool.query(
     `INSERT INTO initiative_runs
        (initiative_id, phase, journey_id, orchestrator_version, orchestrator_host,
         deadline_at, ability_id, current_task_id, created_source)
-     VALUES ($1, 'A_planning', $2, 'v2', '${headedHost}',
+     VALUES ($1, 'A_planning', $2, 'v1', '${headedHost}',
              NOW() + INTERVAL '${HEADED_RELAY_DEADLINE_HOURS} hours',
              $3, $4, 'legacy_relay')`,
     [initiativeId, task.payload?.journey_id || null, headedAbilityId, task.id]
@@ -1182,5 +1260,15 @@ async function _spawnHeadedSession(task, { dbPool, now, short, initiativeId, dep
   }
 
   console.log(`[skill-relay][headed] session spawned: tmux=${tmuxSession} sprint=${sprintDir} host=${sshHost}`);
-  return { ok: true, mode: headedHost, tmuxSession, sprintDir, extraMounts: undefined };
+  return {
+    ok: true,
+    mode: kernelAuthority ? 'kernel-v1-headed' : headedHost,
+    ...(kernelAuthority ? {
+      runId: kernelAuthority.runId,
+      attemptId: kernelAttempt.id,
+    } : {}),
+    tmuxSession,
+    sprintDir,
+    extraMounts: undefined,
+  };
 }

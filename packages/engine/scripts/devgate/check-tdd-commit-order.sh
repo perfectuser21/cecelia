@@ -61,10 +61,24 @@ COMMIT_ARR=($COMMITS)
 COMMIT_COUNT=${#COMMIT_ARR[@]}
 VIOLATIONS=0
 
-# ── 查找第一个 Red commit（含 (Red) 或 test( 前缀）────────────────────────
-# 允许在 Red commit 之前存在 "import contract" 预提交（chore(harness): import contract）
-# 这些预提交被允许含任何 sprints/ 文件
+# ── 定位当前合同的 canonical Red commit ──────────────────────────────────
+# 长分支可能先后承载多个 sprint。若当前变更的 sprint 已写入 red-evidence.md，
+# 以最后一个 canonical marker 为最终冻结点；此前 proposal/旧 sprint 的 Red
+# 不得抢占本合同锚点。无 marker 的 legacy 分支才回退到第一个 Red。
 RED_IDX=-1
+HARNESS_SPRINTS=$(printf '%s\n' "$HARNESS_TEST_CHANGES" |
+  sed -E 's|^sprints/([^/]+)/.*|\1|' | sort -u)
+for ((i = 0; i < COMMIT_COUNT; i++)); do
+  FILES=$(git show --name-only --format= "${COMMIT_ARR[$i]}")
+  while IFS= read -r SPRINT; do
+    [ -n "$SPRINT" ] || continue
+    if printf '%s\n' "$FILES" | grep -qx "sprints/${SPRINT}/red-evidence.md"; then
+      RED_IDX=$i
+    fi
+  done <<< "$HARNESS_SPRINTS"
+done
+
+if [ $RED_IDX -eq -1 ]; then
 for ((i = 0; i < COMMIT_COUNT; i++)); do
   MSG=$(git log -1 --format=%s "${COMMIT_ARR[$i]}")
   if echo "$MSG" | grep -qE '\(Red\)|^test\('; then
@@ -72,6 +86,7 @@ for ((i = 0; i < COMMIT_COUNT; i++)); do
     break
   fi
 done
+fi
 
 # 打印所有 commits 供调试
 for ((i = 0; i < COMMIT_COUNT; i++)); do
@@ -99,6 +114,11 @@ RED_COMMIT_FILES=$(git show --name-only --format= "$RED_COMMIT")
 
 echo "🔴 Red commit detected at position $((RED_IDX + 1)): $RED_COMMIT"
 echo "  message: $RED_COMMIT_MSG"
+
+if ! echo "$RED_COMMIT_MSG" | grep -qE '\(Red\)|^test\('; then
+  echo -e "  ${RED}❌ canonical red-evidence 所在 commit 不是 Red：${RESET}"
+  VIOLATIONS=$((VIOLATIONS + 1))
+fi
 
 BAD_FILES_RED=$(
   printf '%s\n' "$RED_COMMIT_FILES" |

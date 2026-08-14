@@ -6,6 +6,7 @@
  *
  * 每次 tick 触发，纯 SQL 逻辑，无 LLM。
  */
+import { createTask } from './actions.js';
 
 /**
  * Initiative 完成检测
@@ -99,19 +100,22 @@ async function checkOkrInitiativeCompletion(pool) {
           );
           const scopeTitle = scopeResult.rows[0]?.title || initiative.scope_id;
 
-          await pool.query(`
-            INSERT INTO tasks (title, task_type, description, priority, status, trigger_source)
-            VALUES ($1, 'okr_scope_plan', $2, 'P1', 'queued', 'brain_auto')
-            ON CONFLICT DO NOTHING
-          `, [
-            `规划 OKR Scope「${scopeTitle}」下一个 Initiative`,
-            JSON.stringify({
+          await createTask({
+            db: pool,
+            source: 'child',
+            source_id: `okr-scope-plan:${initiative.scope_id}:${initiative.id}`,
+            title: `规划 OKR Scope「${scopeTitle}」下一个 Initiative`,
+            task_type: 'okr_scope_plan',
+            priority: 'P1',
+            trigger_source: 'brain_auto',
+            allow_unscoped: true,
+            payload: {
               okr_scope_id: initiative.scope_id,
               reason: 'okr_initiative_completed',
               completed_initiative_id: initiative.id,
               completed_initiative_title: initiative.title,
-            }),
-          ]);
+            },
+          });
 
         }
       }
@@ -188,19 +192,22 @@ async function checkOkrScopeCompletion(pool) {
         );
         const projectTitle = projectResult.rows[0]?.title || scope.project_id;
 
-        await pool.query(`
-          INSERT INTO tasks (title, task_type, description, priority, status, trigger_source)
-          VALUES ($1, 'okr_project_plan', $2, 'P1', 'queued', 'brain_auto')
-          ON CONFLICT DO NOTHING
-        `, [
-          `规划 OKR Project「${projectTitle}」下一个 Scope`,
-          JSON.stringify({
+        await createTask({
+          db: pool,
+          source: 'child',
+          source_id: `okr-project-plan:${scope.project_id}:${scope.id}`,
+          title: `规划 OKR Project「${projectTitle}」下一个 Scope`,
+          task_type: 'okr_project_plan',
+          priority: 'P1',
+          trigger_source: 'brain_auto',
+          allow_unscoped: true,
+          payload: {
             okr_project_id: scope.project_id,
             reason: 'okr_scope_completed',
             completed_scope_id: scope.id,
             completed_scope_title: scope.title,
-          }),
-        ]);
+          },
+        });
 
       }
     }

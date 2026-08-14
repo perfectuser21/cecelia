@@ -43,6 +43,8 @@
  */
 
 import pool from './db.js';
+import { createTask } from './actions.js';
+import { buildMutationRoute } from './system-coding-route.js';
 
 // ───────────────────────────────────────────────────────
 // 常量
@@ -85,7 +87,7 @@ async function _startOnePipeline(task, dbPool) {
   const existingResult = await dbPool.query(`
     SELECT id FROM tasks
     WHERE payload->>'parent_crystallize_id' = $1
-      AND task_type = 'crystallize_scope'
+      AND COALESCE(payload->>'pipeline_stage', task_type) = 'crystallize_scope'
       AND status IN ('queued', 'in_progress', 'completed')
     LIMIT 1
   `, [pipelineId]);
@@ -100,24 +102,28 @@ async function _startOnePipeline(task, dbPool) {
   }
 
   // 创建第一个子任务：crystallize_scope
-  await dbPool.query(`
-    INSERT INTO tasks (title, description, task_type, status, priority, project_id, goal_id,
-                      trigger_source, payload, created_at)
-    VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, NOW())
-  `, [
-    `[Scope] ${target}`,
-    `Crystallize 流水线子任务（阶段1/4）：为「${target}」定义 DoD 和验收标准。\n父任务 ID: ${pipelineId}`,
-    'crystallize_scope',
+  await createTask({
+    db: dbPool,
+    source: 'child',
+    source_id: `crystallize:${pipelineId}:scope`,
+    title: `[Scope] ${target}`,
+    description: `Crystallize 流水线子任务（阶段1/4）：为「${target}」定义 DoD 和验收标准。\n父任务 ID: ${pipelineId}`,
+    task_type: 'crystallize_scope',
     priority,
-    task.project_id,
-    task.goal_id,
-    'crystallize_orchestrator',
-    JSON.stringify({
+    project_id: task.project_id,
+    goal_id: task.goal_id,
+    trigger_source: 'crystallize_orchestrator',
+    allow_unscoped: true,
+    payload: {
       parent_crystallize_id: pipelineId,
       pipeline_stage: 'crystallize_scope',
       pipeline_target: target,
-    }),
-  ]);
+      repo_hint: task.payload?.repo_hint || task.payload?.repo || null,
+      repo_root: task.payload?.repo_root || null,
+      map_scope: task.payload?.map_scope || null,
+      change_kind: task.payload?.change_kind || null,
+    },
+  });
 
   // 标记 pipeline 为 in_progress
   await dbPool.query(
@@ -193,7 +199,7 @@ export async function advanceCrystallizeStage(taskId, status, findings = {}, dbP
   const { parent_crystallize_id: pipelineId, pipeline_target: target, retry_count = 0 } = task.payload || {};
   if (!pipelineId) return;
 
-  const currentStage = task.task_type;
+  const currentStage = task.payload?.pipeline_stage || task.task_type;
   const currentIdx = CRYSTALLIZE_STAGES.indexOf(currentStage);
   if (currentIdx === -1) return;
 
@@ -220,27 +226,38 @@ export async function advanceCrystallizeStage(taskId, status, findings = {}, dbP
 
     // 重建 crystallize_forge（重试）
     const newRetryCount = retry_count + 1;
-    await dbPool.query(`
-      INSERT INTO tasks (title, description, task_type, status, priority, project_id, goal_id,
-                        trigger_source, payload, created_at)
-      VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, NOW())
-    `, [
-      `[Forge 重试${newRetryCount}] ${target}`,
-      `Crystallize 流水线子任务（Forge 重试 ${newRetryCount}/${MAX_VERIFY_RETRY}）：根据 Verify 反馈修复脚本。\n父任务 ID: ${pipelineId}`,
-      'crystallize_forge',
-      task.priority,
-      task.project_id,
-      task.goal_id,
-      'crystallize_orchestrator',
-      JSON.stringify({
+    const retryPayload = {
         parent_crystallize_id: pipelineId,
         pipeline_stage: 'crystallize_forge',
         pipeline_target: target,
         retry_count: newRetryCount,
         verify_feedback: findings?.feedback || '验证失败，请检查脚本',
         ...(findings?.script_path ? { script_path: findings.script_path } : {}),
+        repo_hint: task.payload?.repo_hint,
+        repo_root: task.payload?.repo_root,
+        map_scope: task.payload?.map_scope,
+        change_kind: 'bugfix',
+    };
+    await createTask({
+      db: dbPool,
+      source: 'child',
+      source_id: `crystallize:${pipelineId}:forge:retry:${newRetryCount}`,
+      title: `[Forge 重试${newRetryCount}] ${target}`,
+      description: `Crystallize 流水线子任务（Forge 重试 ${newRetryCount}/${MAX_VERIFY_RETRY}）：根据 Verify 反馈修复脚本。\n父任务 ID: ${pipelineId}`,
+      task_type: 'crystallize_forge',
+      priority: task.priority,
+      project_id: task.project_id,
+      goal_id: task.goal_id,
+      trigger_source: 'crystallize_orchestrator',
+      allow_unscoped: true,
+      payload: retryPayload,
+      ...buildMutationRoute({
+        change_kind: 'bugfix',
+        map_scope: retryPayload.map_scope,
+        repo_hint: retryPayload.repo_hint,
+        repo_root: retryPayload.repo_root,
       }),
-    ]);
+    });
     console.log(`[crystallize-orchestrator] pipeline ${pipelineId} verify 失败，重建 forge（retry ${newRetryCount}）`);
     return;
   }
@@ -261,30 +278,43 @@ export async function advanceCrystallizeStage(taskId, status, findings = {}, dbP
   const stageLabels = { crystallize_forge: 'Forge', crystallize_verify: 'Verify', crystallize_register: 'Register' };
   const label = stageLabels[nextStage] || nextStage;
 
-  await dbPool.query(`
-    INSERT INTO tasks (title, description, task_type, status, priority, project_id, goal_id,
-                      trigger_source, payload, created_at)
-    VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, NOW())
-  `, [
-    `[${label}] ${target}`,
-    `Crystallize 流水线子任务（阶段${stageNum}/4）。\n父任务 ID: ${pipelineId}`,
-    nextStage,
-    task.priority,
-    task.project_id,
-    task.goal_id,
-    'crystallize_orchestrator',
-    JSON.stringify({
+  const nextPayload = {
       parent_crystallize_id: pipelineId,
       pipeline_stage: nextStage,
       pipeline_target: target,
       // 传递 retry_count，确保 crystallize_verify 能读到正确的重试次数
       retry_count,
       ...(findings?.script_path ? { script_path: findings.script_path } : {}),
-    }),
-  ]);
+      repo_hint: task.payload?.repo_hint,
+      repo_root: task.payload?.repo_root,
+      map_scope: task.payload?.map_scope,
+      change_kind: task.payload?.change_kind,
+  };
+  const mutationRoute = nextStage === 'crystallize_forge'
+    ? buildMutationRoute({
+        change_kind: nextPayload.change_kind,
+        map_scope: nextPayload.map_scope,
+        repo_hint: nextPayload.repo_hint,
+        repo_root: nextPayload.repo_root,
+      })
+    : {};
+  await createTask({
+    db: dbPool,
+    source: 'child',
+    source_id: `crystallize:${pipelineId}:${nextStage}:${retry_count}`,
+    title: `[${label}] ${target}`,
+    description: `Crystallize 流水线子任务（阶段${stageNum}/4）。\n父任务 ID: ${pipelineId}`,
+    task_type: nextStage,
+    priority: task.priority,
+    project_id: task.project_id,
+    goal_id: task.goal_id,
+    trigger_source: 'crystallize_orchestrator',
+    allow_unscoped: true,
+    payload: nextPayload,
+    ...mutationRoute,
+  });
 
   console.log(`[crystallize-orchestrator] pipeline ${pipelineId} → ${nextStage} 已创建`);
 }
-
 
 

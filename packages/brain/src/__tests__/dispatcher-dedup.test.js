@@ -164,7 +164,7 @@ describe('dispatchNextTask — 判重跳过不消耗 pre-flight attempt 预算�
     }));
     const legitCandidate = {
       id: 'legit-1',
-      task_type: 'dev',
+      task_type: 'research',
       title: '独一无二的合法任务标题',
       project_id: null,
       priority: 'P1',

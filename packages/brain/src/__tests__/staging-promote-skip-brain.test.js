@@ -5,20 +5,20 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const execSyncMock = vi.fn(() => 'promoted');
-vi.mock('child_process', () => ({ execSync: (...args) => execSyncMock(...args) }));
+const execFileSyncMock = vi.fn(() => 'promoted');
+vi.mock('child_process', () => ({ execFileSync: (...args) => execFileSyncMock(...args) }));
 
 import { defaultPromoteExec } from '../staging-promote.js';
 
 describe('defaultPromoteExec — 注入 CECELIA_SKIP_BRAIN_PROMOTE 防自杀', () => {
-  beforeEach(() => execSyncMock.mockClear());
+  beforeEach(() => execFileSyncMock.mockClear());
 
-  it('execSync 的 env 必须含 CECELIA_SKIP_BRAIN_PROMOTE=1', () => {
+  it('execFileSync 的 env 必须含 CECELIA_SKIP_BRAIN_PROMOTE=1', () => {
     const promoteExec = defaultPromoteExec('/repo/root');
     const r = promoteExec();
     expect(r.ok).toBe(true);
-    expect(execSyncMock).toHaveBeenCalledTimes(1);
-    const optsArg = execSyncMock.mock.calls[0][1];
+    expect(execFileSyncMock).toHaveBeenCalledTimes(1);
+    const optsArg = execFileSyncMock.mock.calls[0][2];
     expect(optsArg.env).toBeTruthy();
     expect(optsArg.env.CECELIA_SKIP_BRAIN_PROMOTE).toBe('1');
   });
@@ -26,8 +26,9 @@ describe('defaultPromoteExec — 注入 CECELIA_SKIP_BRAIN_PROMOTE 防自杀', (
   it('用传入的 repoRoot 拼绝对脚本路径 + cwd（不裸 getRepoRoot）', () => {
     const promoteExec = defaultPromoteExec('/repo/root');
     promoteExec();
-    const [cmd, optsArg] = execSyncMock.mock.calls[0];
-    expect(cmd).toBe('bash /repo/root/scripts/promote-dashboard.sh');
+    const [executable, args, optsArg] = execFileSyncMock.mock.calls[0];
+    expect(executable).toBe('bash');
+    expect(args).toEqual(['/repo/root/scripts/promote-dashboard.sh']);
     expect(optsArg.cwd).toBe('/repo/root');
   });
 
@@ -35,7 +36,7 @@ describe('defaultPromoteExec — 注入 CECELIA_SKIP_BRAIN_PROMOTE 防自杀', (
     process.env.__SEAM_TEST_KEEP__ = 'keep-me';
     const promoteExec = defaultPromoteExec('/repo/root');
     promoteExec();
-    const optsArg = execSyncMock.mock.calls[0][1];
+    const optsArg = execFileSyncMock.mock.calls[0][2];
     expect(optsArg.env.__SEAM_TEST_KEEP__).toBe('keep-me');
     delete process.env.__SEAM_TEST_KEEP__;
   });

@@ -18,6 +18,11 @@ import {
 import { buildPipelineRecord } from './status.js';
 import { fetchLineContext, formatLineContextForPrompt } from '../harness-line-context.js';
 import { buildLineDreamData } from '../line-dreaming.js';
+import {
+  loadTaskRoutingAudit,
+  loadWorkRoutingObservability,
+  summarizeWorkRouting,
+} from '../work-routing-observability.js';
 
 const router = Router();
 
@@ -159,13 +164,31 @@ router.get('/feed', async (req, res) => {
     //     join key：harness_initiative.id === harness-pipelines.planner_task_id。
     const lgByPlannerTaskId = await fetchLgByPlannerTaskId(tasks);
 
+    let routingByTaskId = {};
+    try {
+      routingByTaskId = await loadTaskRoutingAudit(pool, tasks.map(({ id }) => id));
+    } catch (error) {
+      console.error('[warroom] routing audit join failed:', error.message);
+    }
+    for (const task of tasks) task.routing = routingByTaskId[task.id] ?? null;
+
+    let workRouting = summarizeWorkRouting({});
+    try {
+      workRouting = await loadWorkRoutingObservability(pool, { days });
+    } catch (error) {
+      console.error('[warroom] routing metrics failed:', error.message);
+    }
+
     // 4. 装配
     const nowMs = Date.now();
     const todayStr = shanghaiDay(new Date().toISOString());
     const areas = buildFeed(tasks, journeyNameById, progressById, nowMs, reportByInitiativeId, lgByPlannerTaskId);
     const stats = computeStats(tasks, todayStr);
 
-    res.json({ stats, areas, total: tasks.length, generated_at: new Date().toISOString() });
+    res.json({
+      stats, work_routing: workRouting, areas, total: tasks.length,
+      generated_at: new Date().toISOString(),
+    });
   } catch (err) {
     console.error('[GET /warroom/feed]', err.message);
     res.status(500).json({ error: err.message });

@@ -62,11 +62,18 @@ describe('Fleet Worker Attempt runtime resources', () => {
     ]);
     expect(provisioned.networkName).toBe(`cecelia-attempt-${ATTEMPT_ID}`);
     expect(provisioned.environment.DB_URL).toMatch(
-      /^postgresql:\/\/attempt_[a-f0-9]+:[a-f0-9]+@postgres:5432\/acceptance_[a-f0-9]+$/,
+      /^postgresql:\/\/attempt_[a-f0-9]+:[a-f0-9]+@postgres:5432\/acceptance_[a-f0-9]+_scratch$/,
     );
     expect(provisioned.environment.DATABASE_URL).toBe(
       provisioned.environment.DB_URL,
     );
+    expect(provisioned.environment).toMatchObject({
+      DB_HOST: 'postgres',
+      DB_PORT: '5432',
+      DB_USER: expect.stringMatching(/^attempt_[a-f0-9]+$/),
+      DB_PASSWORD: expect.stringMatching(/^[a-f0-9]+$/),
+      DB_NAME: expect.stringMatching(/^acceptance_[a-f0-9]+_scratch$/),
+    });
     expect(provisioned.runtime).toEqual({
       postgres: {
         container_name: `cecelia-pg-${ATTEMPT_ID}`,

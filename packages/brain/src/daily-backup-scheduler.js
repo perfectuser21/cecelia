@@ -12,6 +12,7 @@
 
 /** 每日触发小时（UTC）= 北京时间 02:00 */
 const DAILY_BACKUP_HOUR_UTC = 18;
+import { createTask } from './actions.js';
 
 /**
  * 判断当前时间是否在每日备份触发窗口内（UTC 18:00 ± 5 分钟 = 北京时间 02:00-02:05）。
@@ -47,23 +48,24 @@ async function alreadyScheduledToday(pool) {
  * @param {import('pg').Pool} pool
  * @returns {Promise<string>} 新任务 ID
  */
-async function createBackupTask(pool) {
-  const { rows } = await pool.query(
-    `INSERT INTO tasks (
-       task_type, title, status, priority, payload, created_at, updated_at
-     ) VALUES (
-       'trigger_backup', $1, 'queued', 40, $2, NOW(), NOW()
-     ) RETURNING id`,
-    [
-      '每日 DB 备份',
-      JSON.stringify({
-        triggered_by: 'daily-backup-scheduler',
-        scheduled_at: new Date().toISOString(),
-        backup_type: 'daily',
-      }),
-    ]
-  );
-  return rows[0].id;
+async function createBackupTask(pool, taskCreator = createTask) {
+  const date = new Date().toISOString().slice(0, 10);
+  const created = await taskCreator({
+    db: pool,
+    source: 'scheduler',
+    source_id: `daily-backup:${date}`,
+    task_type: 'trigger_backup',
+    title: '每日 DB 备份',
+    priority: 40,
+    trigger_source: 'daily-backup-scheduler',
+    allow_unscoped: true,
+    payload: {
+      triggered_by: 'daily-backup-scheduler',
+      scheduled_at: new Date().toISOString(),
+      backup_type: 'daily',
+    },
+  });
+  return created.task.id;
 }
 
 /**
@@ -74,7 +76,7 @@ async function createBackupTask(pool) {
  * @param {boolean} [opts.force] - 强制立即触发（跳过时间窗口检查），用于 API 手动触发
  * @returns {Promise<{inWindow: boolean, triggered: boolean, alreadyDone: boolean, taskId?: string}>}
  */
-export async function scheduleDailyBackup(pool, { force = false } = {}) {
+export async function scheduleDailyBackup(pool, { force = false, taskCreator = createTask } = {}) {
   const now = new Date();
   const inWindow = isInDailyBackupWindow(now);
 
@@ -88,7 +90,7 @@ export async function scheduleDailyBackup(pool, { force = false } = {}) {
       return { inWindow, triggered: false, alreadyDone: true };
     }
 
-    const taskId = await createBackupTask(pool);
+    const taskId = await createBackupTask(pool, taskCreator);
     console.log(`[daily-backup-scheduler] 每日备份任务已创建: taskId=${taskId}`);
     return { inWindow, triggered: true, alreadyDone: false, taskId };
   } catch (err) {
