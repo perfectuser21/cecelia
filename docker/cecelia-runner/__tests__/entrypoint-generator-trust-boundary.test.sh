@@ -26,6 +26,10 @@ if [[ "$REAL_CONTAINER" == true && -z "$CONTAINER_ID_FILE" ]]; then
   exit 2
 fi
 
+# This fixture creates its own candidate identity below. Runner-injected identity
+# belongs to the outer acceptance run and must not constrain the temporary repo.
+unset HARNESS_ATTEMPT_ID PR_HEAD_SHA
+
 detectors="$(sed -n '/^is_evaluator_task_bundle()/,/^prepare_evaluator_evidence_capsule()/p' "$SOURCE" | sed '$d')"
 [[ -n "$detectors" ]] || { echo 'missing task bundle detectors' >&2; exit 1; }
 eval "$detectors" || { echo 'task bundle detector extraction failed' >&2; exit 1; }
