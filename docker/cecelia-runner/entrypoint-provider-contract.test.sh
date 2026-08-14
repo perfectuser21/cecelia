@@ -275,6 +275,10 @@ type validate_codex_terminal_receipt >/dev/null 2>&1 || {
   echo 'missing strict Codex terminal receipt validator' >&2
   exit 1
 }
+type validate_claude_terminal_receipt >/dev/null 2>&1 || {
+  echo 'missing strict Claude terminal receipt validator' >&2
+  exit 1
+}
 type publish_provider_result_schema >/dev/null 2>&1 || {
   echo 'missing Provider-readable result schema publisher' >&2
   exit 1
@@ -377,6 +381,59 @@ if validate_codex_terminal_receipt \
   exit 1
 fi
 rm -rf "$CODEX_RECEIPT_TMP"
+
+# Claude CLI can likewise retain exit 1 after emitting a successful terminal
+# envelope. Recovery is legal only when the single outer result is explicitly
+# successful and its independently extracted structured_output matches the
+# result file byte-for-byte as JSON.
+CLAUDE_RECEIPT_TMP="$(mktemp -d)"
+cat > "$CLAUDE_RECEIPT_TMP/result.json" <<'JSON'
+{"status":"completed","summary":"generator completed","artifacts":[],"checks":[],"decision":null,"error":null}
+JSON
+jq -nc \
+  --slurpfile result "$CLAUDE_RECEIPT_TMP/result.json" \
+  '{type:"result",subtype:"success",is_error:false,session_id:"claude-receipt",terminal_reason:"completed",structured_output:$result[0]}' \
+  > "$CLAUDE_RECEIPT_TMP/completed.json"
+validate_claude_terminal_receipt \
+  "$CLAUDE_RECEIPT_TMP/completed.json" \
+  "$CLAUDE_RECEIPT_TMP/result.json" || {
+  echo 'strict receipt rejected a completed Claude turn with matching result' >&2
+  exit 1
+}
+
+jq '.structured_output.summary = "different result"' \
+  "$CLAUDE_RECEIPT_TMP/completed.json" > "$CLAUDE_RECEIPT_TMP/mismatch.json"
+if validate_claude_terminal_receipt \
+  "$CLAUDE_RECEIPT_TMP/mismatch.json" \
+  "$CLAUDE_RECEIPT_TMP/result.json"; then
+  echo 'strict Claude receipt accepted a structured-output mismatch' >&2
+  exit 1
+fi
+
+for mutation in \
+  '.terminal_reason = "failed"' \
+  '.is_error = true' \
+  '.subtype = "error"'; do
+  jq "$mutation" "$CLAUDE_RECEIPT_TMP/completed.json" \
+    > "$CLAUDE_RECEIPT_TMP/rejected.json"
+  if validate_claude_terminal_receipt \
+    "$CLAUDE_RECEIPT_TMP/rejected.json" \
+    "$CLAUDE_RECEIPT_TMP/result.json"; then
+    echo "strict Claude receipt accepted invalid envelope: $mutation" >&2
+    exit 1
+  fi
+done
+
+cp "$CLAUDE_RECEIPT_TMP/completed.json" "$CLAUDE_RECEIPT_TMP/trailing.json"
+printf '%s\n' '{"type":"unexpected-second-result"}' \
+  >> "$CLAUDE_RECEIPT_TMP/trailing.json"
+if validate_claude_terminal_receipt \
+  "$CLAUDE_RECEIPT_TMP/trailing.json" \
+  "$CLAUDE_RECEIPT_TMP/result.json"; then
+  echo 'strict Claude receipt accepted multiple outer results' >&2
+  exit 1
+fi
+rm -rf "$CLAUDE_RECEIPT_TMP"
 
 PROVIDER_SCHEMA_PERMISSION_TMP="$(mktemp -d)"
 publish_provider_result_schema \
