@@ -1,6 +1,12 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.23
+**Brain 版本**: 1.273.24
+
+## Trusted Assertion Runtime（Brain 1.273.24）
+
+- Evaluator 的 Runner-owned assertion checkout 保持 root-owned 且不可写，同时允许隔离 nobody 身份读取与遍历。
+- assertion executor 只透传 attempt-scoped `DB_URL`、冻结 `BASELINE_SHA` 和可信阶段标记，并为只读 Git 检查绑定 exact checkout。
+- Unified Work Router 的容器内可信断言执行 scratch 验收；真实宿主 Docker/Provider 接缝在 Judge 后执行。
 
 ## Trusted Host Docker Acceptance（Brain 1.273.23）
 

@@ -132,6 +132,12 @@ const child = spawnSync(command.executable, command.argv, {
     PATH: '/usr/local/bin:/usr/bin:/bin',
     LANG: 'C.UTF-8',
     LC_ALL: 'C.UTF-8',
+    DB_URL: process.env.DB_URL ?? '',
+    BASELINE_SHA: process.env.BASELINE_SHA ?? '',
+    CECELIA_TRUSTED_ASSERTION: process.env.CECELIA_TRUSTED_ASSERTION ?? '',
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'safe.directory',
+    GIT_CONFIG_VALUE_0: repoRoot,
     CECELIA_ASSERTION_TRACKED_PATHS_FILE:
       process.env.CECELIA_ASSERTION_TRACKED_PATHS_FILE ?? '',
   },

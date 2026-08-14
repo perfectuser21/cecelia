@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.23
+**Brain 版本**: 1.273.24
+
+## Brain 1.273.24 — Trusted Assertion Runtime
+
+- Required assertions 在 root-owned、只读 checkout 中向隔离身份开放最小读取/遍历权限。
+- 可信断言显式接收 attempt-scoped scratch DB、冻结实现基线与 Git safe-directory；宿主 Docker 接缝保留到 Judge 后验收。
 
 ## Brain 1.273.23 — Trusted Host Docker Acceptance
 

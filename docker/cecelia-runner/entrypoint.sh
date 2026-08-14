@@ -1318,7 +1318,14 @@ merge_required_assertion_evidence() {
   local assertion_executor="/usr/local/lib/cecelia/assertion-exec.mjs"
   local node_bin="/usr/local/bin/node"
   local evidence_dir checks_file assertion_home npm_cache tracked_paths_file
+  local assertion_baseline_sha=""
+  local assertion_git_dir=""
   local validation_error=""
+
+  assertion_baseline_sha="$(
+    jq -r '.task_bundle.inputs.implementation_baseline.base_sha // empty' \
+      "${HARNESS_TASK_BUNDLE_FILE:-/nonexistent}" 2>/dev/null || true
+  )"
 
   jq -e '
     .status == "completed"
@@ -1382,8 +1389,13 @@ merge_required_assertion_evidence() {
   mkdir -p "$assertion_home" "$npm_cache"
   chmod 0555 "$assertion_home"
   assertion_workspace="$evidence_dir/worktree"
-  if ! git -C "$workspace" worktree add --detach "$assertion_workspace" "$expected_sha" \
-    > "$evidence_dir/worktree-setup.log" 2>&1; then
+  # 独立 clone 避免 assertion checkout 的 .git 文件反向指向 Provider
+  # workspace 的共享 admin dir。否则隔离身份要么读不到（umask 077），要么
+  # 必须放宽整座源仓 Git admin，破坏最小权限边界。
+  if ! git clone --no-local --no-checkout "$workspace" "$assertion_workspace" \
+      > "$evidence_dir/worktree-setup.log" 2>&1 \
+    || ! git -C "$assertion_workspace" -c core.hooksPath=/dev/null \
+      checkout --detach "$expected_sha" >> "$evidence_dir/worktree-setup.log" 2>&1; then
     jq '.checks = []
         | .decision.outcome = "FAIL"
         | .decision.reason = "trusted assertion checkout creation failed"' \
@@ -1392,6 +1404,7 @@ merge_required_assertion_evidence() {
     rm -rf "$evidence_dir"
     return 0
   fi
+  assertion_git_dir="$(git -C "$assertion_workspace" rev-parse --absolute-git-dir)"
   if (( use_isolated_identity == 1 )); then
     chmod 0711 "$evidence_dir"
     chown -R nobody:nogroup "$assertion_workspace"
@@ -1412,7 +1425,6 @@ merge_required_assertion_evidence() {
         | .decision.reason = "trusted assertion dependency install failed"' \
       "$normalized_result_file" > "$merged_result_file"
     mv "$merged_result_file" "$normalized_result_file"
-    git -C "$workspace" worktree remove --force "$assertion_workspace" >/dev/null 2>&1 || true
     rm -rf "$evidence_dir"
     return 0
   fi
@@ -1425,7 +1437,12 @@ merge_required_assertion_evidence() {
   git -C "$assertion_workspace" ls-files -z > "$tracked_paths_file"
   chmod 0444 "$tracked_paths_file"
   if (( use_isolated_identity == 1 )); then
-    chmod -R a-w "$assertion_workspace"
+    # prepare_codex_credential 把进程 umask 收紧为 077。worktree 与它的
+    # per-worktree Git admin 因此可能是 root:root 0700；直接降权到 nobody
+    # 会在 realpath/git 之前稳定报 path unavailable。可信 Runner 保持属主为
+    # root、去掉所有写位，同时只补执行断言所需的只读/遍历权限。
+    chmod -R a-w,go+rX "$assertion_workspace"
+    chmod -R a-w,go+rX "$assertion_git_dir"
   fi
   checks_file="$evidence_dir/checks.json"
   printf '[]\n' > "$checks_file"
@@ -1448,6 +1465,8 @@ merge_required_assertion_evidence() {
     if ! assertion_argv="$(cd "$assertion_workspace" && \
       "${assertion_identity_prefix[@]}" \
       env -i HOME="$assertion_home" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+      DB_URL="${DB_URL:-}" BASELINE_SHA="$assertion_baseline_sha" \
+      CECELIA_TRUSTED_ASSERTION=1 \
       CECELIA_ASSERTION_TRACKED_PATHS_FILE="$tracked_paths_file" \
       "$node_bin" "$assertion_executor" --describe "$assertion_json" 2> "$log_file")"; then
       assertion_argv='null'
@@ -1458,6 +1477,8 @@ merge_required_assertion_evidence() {
         "$(runner_assertion_budget_seconds)s" \
         "${assertion_identity_prefix[@]}" \
         env -i HOME="$assertion_home" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+        DB_URL="${DB_URL:-}" BASELINE_SHA="$assertion_baseline_sha" \
+        CECELIA_TRUSTED_ASSERTION=1 \
         CECELIA_ASSERTION_TRACKED_PATHS_FILE="$tracked_paths_file" \
         "$node_bin" "$assertion_executor" --run "$assertion_json") > "$log_file" 2>&1; then
       exit_code=0
@@ -1510,7 +1531,6 @@ merge_required_assertion_evidence() {
       "$normalized_result_file" > "$merged_result_file"
   fi
   mv "$merged_result_file" "$normalized_result_file"
-  git -C "$workspace" worktree remove --force "$assertion_workspace" >/dev/null 2>&1 || true
   rm -rf "$evidence_dir"
 }
 
