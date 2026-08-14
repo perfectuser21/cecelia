@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT_DIR"
 
+if [[ "${HARNESS_ROLE_CHAIN_ENABLED:-}" != '1' ]]; then
+  printf '%s\n' 'SKIP: real Harness role chain requires explicit opt-in'
+  exit 0
+fi
+
 : "${DB_URL:?DB_URL is required}"
 : "${BASELINE_SHA:?BASELINE_SHA is required}"
 BRAIN_URL=${BRAIN_URL:-http://127.0.0.1:5221}

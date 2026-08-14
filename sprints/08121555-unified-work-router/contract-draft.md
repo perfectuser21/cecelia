@@ -181,7 +181,7 @@ DB_URL="$DB_URL" BASELINE_SHA="$BASELINE_SHA" bash packages/brain/scripts/smoke/
 # 真实 Controller 创建 run，Fleet 必须启动 Generator/Evaluator/Judge 独立容器；
 # 脚本只从服务端权威状态判定 PASS，不接受 agent stdout 自报。
 ROLE_CHAIN_EVIDENCE_DIR="$EVIDENCE_DIR/role-chain" DB_URL="$DB_URL" BASELINE_SHA="$BASELINE_SHA" \
-  bash packages/brain/scripts/smoke/unified-work-router-role-chain-smoke.sh | tee "$EVIDENCE_DIR/role-chain.log"
+  HARNESS_ROLE_CHAIN_ENABLED=1 bash packages/brain/scripts/smoke/unified-work-router-role-chain-smoke.sh | tee "$EVIDENCE_DIR/role-chain.log"
 HARNESS_ROLE_CHAIN_RUN_ID=$(cat "$EVIDENCE_DIR/role-chain/run-id")
 [[ "$HARNESS_ROLE_CHAIN_RUN_ID" =~ ^[0-9a-f-]{36}$ ]]
 RUN_JSON=$(curl -sf "http://127.0.0.1:5221/api/brain/orchestrator/relay-runs/by-id/$HARNESS_ROLE_CHAIN_RUN_ID")
