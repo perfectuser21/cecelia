@@ -20,192 +20,38 @@
  *
  * 禁止：vi.mock('pg') / jest.mock('pg') / stub writeHeartbeat / stub reconciler。
  */
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
-import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { DB_DEFAULTS } from '../../db-config.js';
-import { runMigrations } from '../../migrate.js';
 import {
-  createKernelRun,
   finalizeKernelRun,
   CONTROLLER_LEASE_DEFAULT_SECONDS,
 } from '../../orchestrator/kernel-run-store.js';
 import { writeHeartbeat } from '../../orchestrator/heartbeat.js';
 import { reconcileOwnerlessKernelRuns } from '../../orchestrator/kernel-controller-lifecycle.js';
 import { runLoop } from '../../orchestrator/loop.js';
+import {
+  createKernelLeasePgFixture,
+  LEASE,
+  MIN,
+} from './kernel-controller-lease-renewal.pg-fixture.js';
 
-const { Pool } = pg;
-const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
-const LEASE = CONTROLLER_LEASE_DEFAULT_SECONDS; // 1800（唯一 SSOT，禁止本文件另写死秒数）
-const MIN = 60_000;
-
-let adminPool;
+const fixture = createKernelLeasePgFixture();
 let testPool;
-let databaseName;
 
-function quotedIdentifier(value) {
-  if (!/^kernel_leaserenew_[a-z0-9_]+$/.test(value)) {
-    throw new Error(`unsafe test database identifier: ${value}`);
-  }
-  return `"${value}"`;
-}
+const {
+  auditEvents,
+  installRejectingAuditTrigger,
+  leaseOf,
+  removeRejectingAuditTrigger,
+  seedOwnedRun,
+  waitForBlockedFinalize,
+} = fixture;
 
-async function createIsolatedDatabase() {
-  databaseName = `kernel_leaserenew_${process.pid}_${randomUUID().replaceAll('-', '')}`;
-  adminPool = new Pool({ ...DB_DEFAULTS, database: 'postgres', max: 1, statement_timeout: 10_000 });
-  await adminPool.query(`CREATE DATABASE ${quotedIdentifier(databaseName)}`);
-  execFileSync(process.execPath, ['src/migrate.js'], {
-    cwd: BRAIN_ROOT,
-    env: {
-      ...process.env,
-      NODE_ENV: 'test',
-      DB_HOST: DB_DEFAULTS.host,
-      DB_PORT: String(DB_DEFAULTS.port),
-      DB_USER: DB_DEFAULTS.user,
-      DB_PASSWORD: DB_DEFAULTS.password,
-      DB_NAME: databaseName,
-    },
-    stdio: 'pipe',
-  });
-  testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 10 });
-}
-
-async function dropIsolatedDatabase() {
-  if (testPool) await testPool.end().catch(() => {});
-  if (adminPool && databaseName) {
-    await adminPool.query('UPDATE pg_database SET datallowconn=false WHERE datname=$1', [databaseName]).catch(() => {});
-    await adminPool.query(
-      'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid()',
-      [databaseName],
-    ).catch(() => {});
-    await adminPool.query(`DROP DATABASE IF EXISTS ${quotedIdentifier(databaseName)}`).catch(() => {});
-  }
-  if (adminPool) await adminPool.end().catch(() => {});
-}
-
-async function seedOwnedRun({ controllerSessionId }) {
-  const initiativeId = randomUUID();
-  const taskId = randomUUID();
-  await testPool.query(
-    `INSERT INTO tasks (id, title, status, priority, task_type, trigger_source, payload)
-     VALUES ($1, $2, 'in_progress', 'P2', 'harness_initiative', 'api', $3::jsonb)`,
-    [taskId, `kernel-leaserenew-${taskId}`, JSON.stringify({ initiative_id: initiativeId })],
-  );
-  const created = await createKernelRun(testPool, {
-    taskId,
-    initiativeId,
-    phase: 'planning',
-    journeyId: null,
-    abilityId: null,
-    host: 'kernel-v1',
-    deadlineHours: 8,
-    createdSource: 'kernel_dispatch',
-    controllerSessionId,
-  });
-  return { runId: created.run.id, taskId, initiativeId };
-}
-
-async function seedHistoricalBlankRun(controllerSessionId) {
-  const initiativeId = randomUUID();
-  const taskId = randomUUID();
-  await testPool.query(
-    `INSERT INTO tasks (id, title, status, priority, task_type, trigger_source, payload)
-     VALUES ($1, $2, 'in_progress', 'P2', 'harness_initiative', 'api', $3::jsonb)`,
-    [taskId, `kernel-blank-${taskId}`, JSON.stringify({ initiative_id: initiativeId })],
-  );
-  const { rows } = await testPool.query(
-    `INSERT INTO initiative_runs (
-       initiative_id, current_task_id, phase, orchestrator_version, created_source,
-       deadline_at, controller_session_id, controller_lease_expires_at
-     ) VALUES (
-       $1, $2, 'planning', 'v2', 'historical_reconstruction',
-       NOW() + INTERVAL '8 hours', $3, NOW() + INTERVAL '1 hour'
-     ) RETURNING id`,
-    [initiativeId, taskId, controllerSessionId],
-  );
-  return { runId: rows[0].id, taskId };
-}
-
-async function leaseOf(runId) {
-  const { rows } = await testPool.query(
-    `SELECT r.controller_lease_expires_at, r.orchestrator_heartbeat_at,
-            r.phase, r.failure_reason,
-            t.status AS task_status
-       FROM initiative_runs r
-       JOIN tasks t ON t.id = r.current_task_id
-      WHERE r.id = $1`,
-    [runId],
-  );
-  return rows[0];
-}
-
-async function auditEvents(runId) {
-  const { rows } = await testPool.query(
-    `SELECT event_type, source, task_id, payload
-       FROM cecelia_events
-      WHERE payload->>'run_id' = $1
-      ORDER BY id`,
-    [runId],
-  );
-  return rows;
-}
-
-async function installRejectingAuditTrigger(eventType) {
-  if (![
-    'kernel_controller_lease_renewed',
-    'kernel_ownerless_run_recovered',
-  ].includes(eventType)) {
-    throw new Error(`unsafe audit event fixture: ${eventType}`);
-  }
-  await testPool.query(`
-    CREATE OR REPLACE FUNCTION reject_kernel_audit_event()
-    RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-    BEGIN
-      IF NEW.event_type = TG_ARGV[0] THEN
-        RAISE EXCEPTION 'forced kernel audit failure';
-      END IF;
-      RETURN NEW;
-    END;
-    $$
-  `);
-  await testPool.query(
-    `CREATE TRIGGER reject_kernel_audit_event_trigger
-       BEFORE INSERT ON cecelia_events
-       FOR EACH ROW
-       EXECUTE FUNCTION reject_kernel_audit_event('${eventType}')`,
-  );
-}
-
-async function removeRejectingAuditTrigger() {
-  await testPool.query('DROP TRIGGER IF EXISTS reject_kernel_audit_event_trigger ON cecelia_events');
-  await testPool.query('DROP FUNCTION IF EXISTS reject_kernel_audit_event()');
-}
-
-async function waitForBlockedFinalize() {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    const { rows } = await testPool.query(
-      `SELECT count(*)::int AS blocked
-         FROM pg_stat_activity
-        WHERE datname = current_database()
-          AND wait_event_type = 'Lock'
-          AND cardinality(pg_blocking_pids(pid)) > 0
-          AND query LIKE '%SELECT id, status%'
-          AND query LIKE '%FROM tasks%'
-          AND query LIKE '%FOR UPDATE%'`,
-    );
-    if (rows[0].blocked > 0) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('reconcile did not reach the blocked finalize boundary');
-}
-
-beforeAll(createIsolatedDatabase, 60_000);
-afterAll(dropIsolatedDatabase, 30_000);
+beforeAll(async () => {
+  await fixture.createIsolatedDatabase();
+  testPool = fixture.pool();
+}, 60_000);
+afterAll(() => fixture.dropIsolatedDatabase(), 30_000);
 
 describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
   it('RED-1: 正确 session 心跳跨过 30m 边界 → lease 随心跳前移、run 保持 active、reconcile 回收数=0', async () => {
@@ -569,101 +415,4 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
     expect(rows[0].phase).toBe('planning');
   });
 
-  it('MIGRATION-C: 历史空串/空白 ownership 归一为 NULL 并验证非空白 CHECK', async () => {
-    await testPool.query(
-      'ALTER TABLE initiative_runs DROP CONSTRAINT IF EXISTS initiative_runs_controller_session_nonblank_check',
-    );
-    await testPool.query("DELETE FROM schema_version WHERE version = '416'");
-    const historical = [
-      await seedHistoricalBlankRun(''),
-      await seedHistoricalBlankRun('   '),
-    ];
-
-    const applied = await runMigrations(testPool);
-    const { rows } = await testPool.query(
-      `SELECT id, controller_session_id
-         FROM initiative_runs
-        WHERE id = ANY($1::uuid[])
-        ORDER BY id`,
-      [historical.map(({ runId }) => runId)],
-    );
-    const { rows: constraints } = await testPool.query(
-      `SELECT convalidated
-         FROM pg_constraint
-        WHERE conrelid = 'initiative_runs'::regclass
-          AND conname = 'initiative_runs_controller_session_nonblank_check'`,
-    );
-
-    expect(applied).toContain('416');
-    expect(rows).toHaveLength(2);
-    expect(rows.every((row) => row.controller_session_id === null)).toBe(true);
-    expect(constraints).toEqual([{ convalidated: true }]);
-  });
-
-  it('NEW-WRITE-C: 数据库权威边拒绝新写入空串或纯空白 ownership', async () => {
-    const errors = [];
-    for (const blankSession of ['', '   ']) {
-      const initiativeId = randomUUID();
-      const taskId = randomUUID();
-      await testPool.query(
-        `INSERT INTO tasks (id, title, status, priority, task_type, trigger_source, payload)
-         VALUES ($1, $2, 'in_progress', 'P2', 'harness_initiative', 'api', $3::jsonb)`,
-        [taskId, `kernel-blank-write-${taskId}`, JSON.stringify({ initiative_id: initiativeId })],
-      );
-      try {
-        await testPool.query(
-          `INSERT INTO initiative_runs (
-             initiative_id, current_task_id, phase, orchestrator_version, created_source,
-             deadline_at, controller_session_id, controller_lease_expires_at
-           ) VALUES (
-             $1, $2, 'planning', 'v2', 'historical_reconstruction',
-             NOW() + INTERVAL '8 hours', $3, NOW() + INTERVAL '1 hour'
-           )`,
-          [initiativeId, taskId, blankSession],
-        );
-        errors.push(null);
-        await testPool.query('DELETE FROM initiative_runs WHERE current_task_id = $1', [taskId]);
-      } catch (error) {
-        errors.push(error.code);
-      }
-    }
-    expect(errors).toEqual(['23514', '23514']);
-  });
-
-  it('BLANK-C: rollout 中的空串/空白行不能 heartbeat 续命且未过期 lease 也被 reconcile 收敛', async () => {
-    // 模拟应用代码先于 migration 416 到达的生产滚动窗口。
-    await testPool.query(
-      'ALTER TABLE initiative_runs DROP CONSTRAINT IF EXISTS initiative_runs_controller_session_nonblank_check',
-    );
-    const historical = [
-      { session: '', ...(await seedHistoricalBlankRun('')) },
-      { session: '   ', ...(await seedHistoricalBlankRun('   ')) },
-    ];
-
-    const heartbeatRows = [];
-    for (const row of historical) {
-      const heartbeat = await writeHeartbeat(testPool, {
-        runId: row.runId,
-        host: 'kernel-blank-owner',
-        pid: 4242,
-        now: new Date(),
-        controllerSessionId: row.session,
-      });
-      heartbeatRows.push(heartbeat.rowCount);
-    }
-    const recovered = await reconcileOwnerlessKernelRuns(testPool, { now: new Date() });
-    const recoveredIds = recovered.map((row) => row.runId);
-    const { rows } = await testPool.query(
-      `SELECT id, phase, orchestrator_heartbeat_at
-         FROM initiative_runs
-        WHERE id = ANY($1::uuid[])
-        ORDER BY id`,
-      [historical.map(({ runId }) => runId)],
-    );
-
-    expect(heartbeatRows).toEqual([0, 0]);
-    expect(historical.every(({ runId }) => recoveredIds.includes(runId))).toBe(true);
-    expect(rows.every((row) => row.phase === 'failed')).toBe(true);
-    expect(rows.every((row) => row.orchestrator_heartbeat_at === null)).toBe(true);
-  });
 });

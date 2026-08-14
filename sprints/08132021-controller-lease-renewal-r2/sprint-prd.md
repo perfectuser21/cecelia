@@ -2,7 +2,7 @@
 
 ## Evaluator-feedback amendment（2026-08-14，PR #4876）
 
-独立 Evaluator 在冻结实现 SHA `c940fa988283a95a929723d93c1e538d931ca5ee` 上确认：migration 416 的非空白 ownership 约束是已真验的必要实现，不得删除；同时原合同承诺的 `cecelia_events` 审计尚未实现，CodeQL 报告命令行 `taskId` 流入动态正则，Preview allocator 对被外部 listener 占用的 `starting` 端口盲目复用。本 amendment 只校正已批准资产与真实实现/评估反馈的机械一致性，并补充相应验收；`tests/` 下两份冻结测试保持逐字节不变。
+独立 Evaluator 先在 SHA `c940fa988283a95a929723d93c1e538d931ca5ee` 上确认 migration 416、审计、CodeQL 与 Preview 缺口；随后对冻结 SHA `93a1c50f4bbe038f3e27ad45f11cc6156823d9eb` 正式 FAIL，指出 actual Node CLI 与 migration 416 缺可执行合同行为、永久 CI 登记机检不完整、预期文件清单未对齐真实 38 文件，以及新增真 PG 测试 669 行违反单文件上限。本 amendment 将这些反馈收敛为可执行合同、真 PG/actual CLI 回归、≤500 行机械门禁和 base→head 文件闭环；`tests/` 下两份冻结测试保持逐字节不变。
 
 ## OKR 对齐
 
@@ -49,16 +49,47 @@
 
 ## 预期受影响文件
 
-- `packages/brain/src/orchestrator/heartbeat.js`: `writeHeartbeat` 增 `controllerSessionId` 入参 + lease 参数；UPDATE 加 `controller_lease_expires_at=GREATEST(...)`，WHERE 加 session/phase 条件；返回 rowCount 供 CAS 判定。
-- `packages/brain/src/orchestrator/loop.js`: `beat()` 透传 `controllerSessionId`；CAS rowCount=0 时让 Kernel fail-closed 退出。
-- `packages/brain/src/harness-skill-relay.js`: `launchKernelProcess` args 加 `--controller-session-id`，把创建时 session 传给 detached child。
-- `packages/brain/src/orchestrator/run.js`: `runKernelMain` 解析 `--controller-session-id` 并透传给 loop。
-- `packages/brain/src/orchestrator/kernel-run-store.js`: 复用 `CONTROLLER_LEASE_DEFAULT_SECONDS` 作续租时长 SSOT（如需导出给 heartbeat）。
-- `packages/brain/src/orchestrator/kernel-controller-lifecycle.js`: recovery 只在 `finalizeKernelRun` 真实 changed 的同一事务写审计事件。
-- `packages/brain/migrations/416_controller_session_nonblank.sql` + `packages/brain/migrations/rollback/416_controller_session_nonblank.down.sql`: 历史空白归一、nonblank CHECK 与可逆 rollback。
-- `packages/brain/src/orchestrator/ground-truth.js`: legacy proposer 分支改用静态正则 capture + 常量字符串比较，关闭 CodeQL high。
-- `packages/brain/src/capacity-gate.js`: `starting` 记录的端口若被外部 listener 占用，在 admission 锁内重新分配并持久化。
-- `packages/brain/src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js`（及相关 unit）: 新增 lease、审计、竞态与原子回滚回归，永久入 CI。
+- `.brain-versions`: Brain 发布账本同步为本 sprint 的 `1.273.7`。
+- `DEFINITION.md`: Brain 版本与 schema 事实同步到 `1.273.7` / migration 416。
+- `DoD.md`: Generator DoD 与批准合同的 lease、actual CLI、migration、审计和行数门禁条目一致。
+- `package-lock.json`: 根 workspace 锁文件同步 `packages/brain` 版本。
+- `packages/brain/migrations/416_controller_session_nonblank.sql`: 历史空白 ownership 归一为 NULL，新增并验证 nonblank CHECK。
+- `packages/brain/migrations/rollback/416_controller_session_nonblank.down.sql`: rollback 真移除 migration 416 CHECK 与 schema_version 标记。
+- `packages/brain/package-lock.json`: Brain 锁文件版本同步。
+- `packages/brain/package.json`: Brain 版本同步为 `1.273.7`。
+- `packages/brain/scripts/smoke/kernel-controller-lease-renewal-smoke.sh`: 真环境 smoke 验证续租实现与 schema/CI 接线。
+- `packages/brain/src/__tests__/controller-session-passthrough.test.js`: 永久 RED-4 纯参数透传回归。
+- `packages/brain/src/__tests__/integration/capacity-gate.test.js`: Preview `starting` 端口冲突真 PG 回归。
+- `packages/brain/src/__tests__/integration/kernel-cli-ownership-preaction.pg.integration.test.js`: actual Node CLI 对错误、空白、缺失、不存在/正确 session 的真 PG 业务后验。
+- `packages/brain/src/__tests__/integration/kernel-controller-lease-renewal.pg-fixture.js`: lease/audit/race/migration 测试共享的隔离真 PostgreSQL fixture。
+- `packages/brain/src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js`: 续租 CAS、审计原子幂等、reconcile 竞态与 pre-action ownership 真 PG 回归（拆分后 ≤500 行）。
+- `packages/brain/src/__tests__/integration/migration-416-controller-session-nonblank.pg.integration.test.js`: migration 416 upgrade/重复 upgrade/rollback/re-upgrade/重复 re-upgrade 真 PG 回归。
+- `packages/brain/src/__tests__/kernel-controller-lease-renewal-e2e-oracle.test.js`: final-e2e 新鲜业务行 canonical oracle 回归。
+- `packages/brain/src/__tests__/kernel-controller-lease-renewal-file-size.test.js`: 本 sprint 新增/拆出 JavaScript 测试与 helper 的永久 ≤500 行门禁。
+- `packages/brain/src/__tests__/learnings-vectorize.test.js`: Brain 版本伴随的 learnings vectorize 测试事实同步。
+- `packages/brain/src/__tests__/selfcheck.test.js`: schema 416 selfcheck 回归。
+- `packages/brain/src/capacity-gate.js`: `starting` 记录端口被外部 listener 占用时在 admission 锁内重新分配并持久化。
+- `packages/brain/src/harness-skill-relay.js`: `launchKernelProcess` 通过 `--controller-session-id` 透传创建端 session。
+- `packages/brain/src/orchestrator/heartbeat.js`: `writeHeartbeat` 以 session/phase CAS + GREATEST 续租，并与审计事件同事务。
+- `packages/brain/src/orchestrator/kernel-controller-lifecycle.js`: ownerless recovery 仅在真实状态改变时同事务写幂等审计。
+- `packages/brain/src/orchestrator/kernel-run-store.js`: 导出/复用 `CONTROLLER_LEASE_DEFAULT_SECONDS`，并维护 task 激活 ownership 栅栏。
+- `packages/brain/src/orchestrator/loop.js`: 首次及逐跳 heartbeat 携 session，rowCount=0 在业务动作前 fail-closed。
+- `packages/brain/src/orchestrator/run.js`: CLI 解析 session、延迟 task 激活，并把 ownership 丢失映射为 exit 2。
+- `packages/brain/src/orchestrator/ground-truth.js`: legacy proposer 用静态 regex capture + 字符串比较关闭 CodeQL high。
+- `packages/brain/src/orchestrator/__tests__/ground-truth.test.js`: 动态正则与严格 proposer 识别回归。
+- `packages/brain/src/orchestrator/__tests__/heartbeat.test.js`: heartbeat CAS/事务审计单元回归。
+- `packages/brain/src/orchestrator/__tests__/run.test.js`: CLI session 透传、ownership 后 task 激活与 exit code 单元回归。
+- `packages/brain/src/selfcheck.js`: `EXPECTED_SCHEMA_VERSION` 同步为 416。
+- `packages/brain/vitest.config.js`: lease、actual CLI、migration 416 真 PG文件登记进 `POSTGRES_INTEGRATION_TESTS`。
+- `packages/quality/smoke-allowlist.txt`: 登记 controller lease smoke。
+- `sprints/08132021-controller-lease-renewal-r2/contract-dod.md`: 可执行 ARTIFACT/BEHAVIOR 验收闭环。
+- `sprints/08132021-controller-lease-renewal-r2/contract-draft.md`: actual CLI、migration 和拆分后永久测试合同事实同步。
+- `sprints/08132021-controller-lease-renewal-r2/red-evidence.md`: 原始功能 RED 与本轮 669 行机械门禁 RED 证据。
+- `sprints/08132021-controller-lease-renewal-r2/sprint-prd.md`: 本清单与真实 base→head diff 逐项对齐。
+- `sprints/08132021-controller-lease-renewal-r2/task-plan.json`: 单 task scope/dod/files 与真实 diff 精确对齐。
+- `sprints/08132021-controller-lease-renewal-r2/tests/controller-session-passthrough.test.js`: 冻结 RED-4 制品，字节与批准 SHA-256 不变。
+- `sprints/08132021-controller-lease-renewal-r2/tests/kernel-controller-lease-renewal.pg.integration.test.js`: 冻结 lease 真 PG 制品，字节与批准 SHA-256 不变。
+- `tests/regression/relay-50170af2/kernel-wiring-deadline.integration.test.js`: 既有 deadline harness fixture 适配 transactional heartbeat ownership。
 
 ## NFR 约束
 

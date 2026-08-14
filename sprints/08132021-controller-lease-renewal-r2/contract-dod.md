@@ -21,8 +21,11 @@ journey_type: autonomous
 - [x] [ARTIFACT] `run.js` 的 `parseArgs` 认 `--controller-session-id` 并透传 `runKernelMain`→loop
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/run.js','utf8');if(!(c.includes('--controller-session-id')&&c.includes('controllerSessionId')))process.exit(1)"
 
-- [x] [ARTIFACT] 永久回归文件落位 + 登记进 POSTGRES_INTEGRATION_TESTS（CI brain-integration 跑）
-  Test: node -e "const fs=require('fs');fs.accessSync('packages/brain/src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js');const v=fs.readFileSync('packages/brain/vitest.config.js','utf8');if(!v.includes('kernel-controller-lease-renewal.pg.integration.test.js'))process.exit(1)"
+- [x] [ARTIFACT] lease、actual CLI、migration 416 三份真 PG 永久回归均落位并登记进 POSTGRES_INTEGRATION_TESTS（CI brain-integration 跑）
+  Test: node -e "const fs=require('fs');const tests=['kernel-controller-lease-renewal.pg.integration.test.js','kernel-cli-ownership-preaction.pg.integration.test.js','migration-416-controller-session-nonblank.pg.integration.test.js'];for(const f of tests)fs.accessSync('packages/brain/src/__tests__/integration/'+f);const v=fs.readFileSync('packages/brain/vitest.config.js','utf8');if(tests.some((f)=>!v.includes(f)))process.exit(1)"
+
+- [x] [ARTIFACT] 本 sprint 新增/拆出的 JavaScript 测试与真 PG helper 均由永久机械门禁约束为单文件不超过 500 行
+  Test: manual:bash -c 'bash -lc "cd packages/brain && npx vitest run src/__tests__/kernel-controller-lease-renewal-file-size.test.js --reporter=verbose"'
 
 - [x] [ARTIFACT] 合同 E2E 的本轮业务写入领域 oracle 有永久回归测试（canonical parser 提取后验 `psql` 新鲜度与状态）
   Test: manual:bash -c 'bash -lc "cd packages/brain && npx vitest run src/__tests__/kernel-controller-lease-renewal-e2e-oracle.test.js --reporter=verbose"'
@@ -92,6 +95,20 @@ journey_type: autonomous
   等待预算: 0s
   留证: capacity-gate integration regression 输出
   Test: manual:bash -c 'bash -lc "cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/capacity-gate.test.js -t \"Preview 回归\" --reporter=verbose"'
+
+- [x] [BEHAVIOR] [L2] B-08: actual Node CLI 在 Controller ownership 栅栏前 fail-closed，正确 session 才激活 task
+  动作: 真 PostgreSQL seed queued task/run，分别以错误、空白、缺失、不存在和正确 session 启动 actual `node src/orchestrator/run.js` 子进程
+  预期观察: 前四类均 exit 2/controller_lease_lost，task 仍 queued，started_at/heartbeat/decision/attempt/event 均不推进；正确 session exit 0 且 task 激活为 in_progress
+  等待预算: 15s/子进程
+  留证: actual CLI integration verbose 输出（5 passed）与真 PG 后验
+  Test: manual:bash -c 'bash -lc "cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-cli-ownership-preaction.pg.integration.test.js --reporter=verbose"'
+
+- [x] [BEHAVIOR] [L2] B-09: migration 416 真 PG upgrade/rollback/re-upgrade 与重复执行幂等
+  动作: 隔离真库回到 415 后 seed 历史空串/空白 ownership，依次执行 upgrade、第二次 upgrade、rollback、re-upgrade、第二次 re-upgrade
+  预期观察: 两次首次应用均归一历史空白为 NULL 并得到 validated nonblank CHECK；rollback 真移除 CHECK/schema_version 416；两次重复 upgrade 均无新 migration 且约束仅一份
+  等待预算: 0s（本地隔离库直接执行）
+  留证: migration 416 integration verbose 输出及 schema_version/pg_constraint/真实空白写入后验
+  Test: manual:bash -c 'bash -lc "cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/migration-416-controller-session-nonblank.pg.integration.test.js --reporter=verbose"'
 
 ## Invariant 覆盖（铁律逐条映射，Step 1.3）
 

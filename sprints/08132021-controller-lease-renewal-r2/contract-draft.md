@@ -2,7 +2,7 @@
 
 ## Evaluator-feedback amendment（2026-08-14，PR #4876）
 
-独立 Evaluator 对冻结 SHA `c940fa988283a95a929723d93c1e538d931ca5ee` 的反馈构成本轮合同修订依据：保留并声明 migration 416；把原已承诺但事件数为 0 的续租/recovery 审计补成原子、幂等、脱敏的真 PG 验收；关闭 `ground-truth.js` 动态正则 CodeQL high；修复 Preview `starting` 端口被外部 listener 占用后永久卡住。合同正文和 DoD 可按反馈修订，`tests/` 下两份冻结测试哈希不得变化。
+独立 Evaluator 先对 SHA `c940fa988283a95a929723d93c1e538d931ca5ee` 要求保留 migration 416、补齐审计、CodeQL 与 Preview 修复；随后对冻结 SHA `93a1c50f4bbe038f3e27ad45f11cc6156823d9eb` 正式 FAIL，要求 actual Node CLI 与 migration 416 的真实可执行 oracle、完整永久 CI 登记、PRD/DoD/task-plan/diff 事实闭环，以及把 669 行真 PG 测试拆到每个新增测试/helper ≤500 行。本合同据此增加 actual CLI 五类 session 后验、migration 五阶段往返和永久行数门禁；`tests/` 下两份冻结测试哈希不得变化。
 
 ## 锚定父路声明
 
@@ -70,9 +70,11 @@ psql "$PSQL_CONN" -tAc "SELECT count(*) FROM information_schema.columns WHERE ta
 **验证命令**:
 ```bash
 cd packages/brain && npx vitest run src/__tests__/controller-session-passthrough.test.js --reporter=verbose
+cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js \
+  src/__tests__/integration/kernel-cli-ownership-preaction.pg.integration.test.js --reporter=verbose
 ```
 
-**硬阈值**: 3 个 it 全绿（parseArgs 认参 + args 含 `--controller-session-id sid` + resumeToken 透传）。
+**硬阈值**: 参数装配 3 个 it 全绿；actual CLI 5 个 it 全绿：错误/空白/缺失/不存在 session 均 exit 2 且 task/heartbeat/decision/attempt/event 零推进，正确 session 激活 queued task。
 
 ---
 
@@ -137,7 +139,7 @@ N/A — 本刀不依赖任何第三方 API（LLM/支付/短信/平台）。
 
 ## 未覆盖真实链路清单
 
-- **loop `beat()` → `writeHeartbeat` 的 session 透传 + rowCount=0 fail-closed 退出**：本刀在 DoD 以 `[ARTIFACT]` 机检 `loop.js` 的 `beat` 调用携带 `controllerSessionId`、且 rowCount=0 分支返回 fail-closed exitReason（静态 grep）；`writeHeartbeat` 的 CAS 语义（rowCount 0/1）本身由 RED-1..3 真 PG 真执行覆盖。未用真实 detached 进程端到端跑「loop 连续心跳 40 分钟真机跨界」——补位计划：generator 追加 `loop.js` 单元测试（注入 fake `writeHeartbeat`，断言 beat 携 `controllerSessionId`、返回 rowCount=0 时 runLoop 以 `controller_lease_lost` fail-closed 退出），归入 brain-unit CI；真机长跑由生产 run 自举验证（见 PRD prep 证据 B 的审计 CAS）。
+- **真实 detached spawn 由同一 Node CLI seam 覆盖，不做墙钟 40 分钟睡眠**：`kernel-cli-ownership-preaction.pg.integration.test.js` 以 actual `node src/orchestrator/run.js` 子进程 + 真 PostgreSQL 验证首次 `beat()` 携 session、rowCount=0 映射 exit 2 且业务零推进；正确 session 才激活 task。跨 30m 由真 PG lease 测试注入越界 `now` 确定性验证，避免用墙钟等待替代可重复 oracle。
 
 ## 禁 mock 边清单
 
@@ -200,6 +202,9 @@ contract-gate: present（cecelia worktree，`packages/brain/src/lib/contract-gat
 |---|---|---|---|
 | 续租 CAS + reconcile（真 PG） | `tests/kernel-controller-lease-renewal.pg.integration.test.js`（永久位 `packages/brain/src/__tests__/integration/`） | `RED-1`、`RED-1b`、`RED-2 + RED-5(mismatch)`、`RED-3`、`RED-3b` | 现网 `writeHeartbeat` 无 `controllerSessionId` 入参、不写 lease、返回 `undefined` → 全部断言 FAIL |
 | session 透传（RED-4，纯装配） | `tests/controller-session-passthrough.test.js`（永久位 `packages/brain/src/__tests__/`） | `parseArgs 解析 --controller-session-id`、`buildKernelLaunchArgs 把创建时 controllerSessionId 透传给 detached child`、`buildKernelLaunchArgs 透传 resumeToken` | `buildKernelLaunchArgs is not a function` + `parseArgs` 无 `controllerSessionId` 字段 → 3 FAIL（本轮已实测 3 failed） |
+| actual Node CLI ownership 前置栅栏（真 PG） | `packages/brain/src/__tests__/integration/kernel-cli-ownership-preaction.pg.integration.test.js` | 错误/空白/缺失/不存在 session 均 exit 2 且 task/heartbeat/decision/attempt/event 零推进；正确 session 激活 task | 原实现先激活 queued task，wrong session 后 task 已推进 |
+| migration 416 生命周期（真 PG） | `packages/brain/src/__tests__/integration/migration-416-controller-session-nonblank.pg.integration.test.js` | upgrade、第二次 upgrade、rollback、re-upgrade、第二次 re-upgrade 与真实 CHECK/空白写入后验 | 原合同仅 grep SQL 文本，无 rollback/re-upgrade 行为 oracle |
+| JavaScript 测试/helper 行数门禁 | `packages/brain/src/__tests__/kernel-controller-lease-renewal-file-size.test.js` | 本 sprint 新增/拆出相关测试与 helper 均 ≤500 行 | 拆分前永久真 PG 文件为 669 行 |
 | final-e2e 业务写入领域 oracle | `packages/brain/src/__tests__/kernel-controller-lease-renewal-e2e-oracle.test.js` | `用本轮唯一 run 的新鲜业务行断言 heartbeat、lease 与 phase` | 修复前提取脚本仅有 `information_schema` psql，缺 `created_at > NOW() - interval` → 1 FAIL（本轮已实测） |
 | 续租/recovery 审计原子幂等（真 PG） | `packages/brain/src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js` | `AUDIT-1`、`AUDIT-2`、`AUDIT-3`、`RACE-A` | 冻结 SHA 上成功续租与 recovery 的 `cecelia_events` count 均为 0 |
 | CodeQL 动态正则 | `packages/brain/src/orchestrator/__tests__/ground-truth.test.js` | `CodeQL 回归：命令行 taskId 的正则元字符不得进入动态 RegExp` | source assertion 命中 `new RegExp(...${shortTask}...)` |
@@ -379,10 +384,23 @@ npx vitest run --config vitest.integration.config.js \
 # 5. controllerSessionId 可信透传红线（RED-4，纯装配）
 npx vitest run src/__tests__/controller-session-passthrough.test.js --reporter=verbose
 
+# 6. actual Node CLI ownership pre-action（错误/空白/缺失/不存在/正确 session）
+npx vitest run --config vitest.integration.config.js \
+  src/__tests__/integration/kernel-cli-ownership-preaction.pg.integration.test.js \
+  --reporter=verbose
+
+# 7. migration 416 真 PG upgrade/rollback/re-upgrade/重复执行幂等
+npx vitest run --config vitest.integration.config.js \
+  src/__tests__/integration/migration-416-controller-session-nonblank.pg.integration.test.js \
+  --reporter=verbose
+
+# 8. 本 sprint 新增/拆出 JavaScript 测试与 helper 单文件 ≤500 行
+npx vitest run src/__tests__/kernel-controller-lease-renewal-file-size.test.js --reporter=verbose
+
 echo "OK: Controller lease 续租 Golden Path 已由本轮 run=$RUN_ID 的真 PostgreSQL 业务行验证"
 ```
 
-**通过标准**: 脚本 exit 0（migration 415 两列与 migration 416 validated CHECK 存在 + 本轮唯一 run 的新鲜业务行 `psql count=1` + heartbeat/lease 前移与 phase=planning + 续租事件 count=1/secret count=0 + reconcile 不回收 + 集成文件全绿 + 透传测试全绿），随后清理本轮行并删除隔离数据库。
+**通过标准**: 脚本 exit 0（migration 415 两列与 migration 416 validated CHECK 存在 + 本轮唯一 run 的新鲜业务行 `psql count=1` + heartbeat/lease 前移与 phase=planning + 续租事件 count=1/secret count=0 + reconcile 不回收 + lease/AUDIT/RACE 全绿 + actual CLI 五类 session 后验全绿 + migration 416 五阶段往返全绿 + 行数门禁全绿），随后清理本轮行并删除隔离数据库。
 
 ## 探索提示（L3 探索层 — evaluator 剧本全过后执行）
 

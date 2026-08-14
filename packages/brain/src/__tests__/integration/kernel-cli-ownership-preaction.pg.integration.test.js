@@ -101,15 +101,23 @@ async function seedQueuedRun() {
   };
 }
 
-function runActualCli({ taskId, runId, controllerSessionId }) {
-  return spawnSync(process.execPath, [
+function runActualCli({
+  taskId,
+  runId,
+  controllerSessionId,
+  includeControllerSessionArg = true,
+}) {
+  const argv = [
     'src/orchestrator/run.js',
     '--task-id', taskId,
     '--run-id', runId,
-    '--controller-session-id', controllerSessionId,
-    // 正确 owner 用无对应请求的 resume token 确定性结束，不进入 provider 派发。
-    '--resume-token', `no-request-${randomUUID()}`,
-  ], {
+  ];
+  if (includeControllerSessionArg) {
+    argv.push('--controller-session-id', controllerSessionId);
+  }
+  // 正确 owner 用无对应请求的 resume token 确定性结束，不进入 provider 派发。
+  argv.push('--resume-token', `no-request-${randomUUID()}`);
+  return spawnSync(process.execPath, argv, {
     cwd: BRAIN_ROOT,
     env: {
       ...process.env,
@@ -135,7 +143,9 @@ async function readOracle({ taskId, runId }) {
             r.controller_lease_expires_at,
             r.orchestrator_heartbeat_at,
             (SELECT count(*)::int FROM orchestrator_decision_log d WHERE d.run_id = r.id) AS decision_count,
-            (SELECT count(*)::int FROM harness_attempts a WHERE a.run_id = r.id) AS attempt_count
+            (SELECT count(*)::int FROM harness_attempts a WHERE a.run_id = r.id) AS attempt_count,
+            (SELECT count(*)::int FROM cecelia_events e
+              WHERE e.payload->>'run_id' = r.id::text) AS event_count
        FROM tasks t
        JOIN initiative_runs r ON r.current_task_id = t.id
       WHERE t.id = $1 AND r.id = $2`,
@@ -148,12 +158,22 @@ beforeAll(createIsolatedDatabase, 60_000);
 afterAll(dropIsolatedDatabase, 30_000);
 
 describe('Kernel CLI ownership pre-action fence（真 PG）', () => {
-  it('wrong session: exit 2/controller_lease_lost 且 queued task 零业务推进', async () => {
+  it.each([
+    ['错误 session', () => 'forged-wrong-session', true],
+    ['空白 session', () => '', true],
+    ['缺失 session 参数', () => undefined, false],
+    ['不存在 session', () => randomUUID(), true],
+  ])('%s: exit 2/controller_lease_lost 且 task/heartbeat/decision/attempt/event 零推进', async (
+    _caseName,
+    sessionValue,
+    includeControllerSessionArg,
+  ) => {
     const seeded = await seedQueuedRun();
     const before = await readOracle(seeded);
     const cli = runActualCli({
       ...seeded,
-      controllerSessionId: 'forged-wrong-session',
+      controllerSessionId: sessionValue(),
+      includeControllerSessionArg,
     });
     const after = await readOracle(seeded);
 
@@ -170,6 +190,8 @@ describe('Kernel CLI ownership pre-action fence（真 PG）', () => {
     expect(after.orchestrator_heartbeat_at).toBeNull();
     expect(after.decision_count).toBe(0);
     expect(after.attempt_count).toBe(0);
+    expect(before.event_count).toBe(0);
+    expect(after.event_count).toBe(0);
   });
 
   it('correct session: CLI 通过 owner fence 后仍把 queued task 激活为 in_progress', async () => {
@@ -185,5 +207,6 @@ describe('Kernel CLI ownership pre-action fence（真 PG）', () => {
     expect(after.orchestrator_heartbeat_at).not.toBeNull();
     expect(after.decision_count).toBe(0);
     expect(after.attempt_count).toBe(0);
+    expect(after.event_count).toBe(1);
   });
 });
