@@ -471,6 +471,7 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   if (action === 'spawn:generator-fix') {
     common.pr_branch = observed.candidate?.branch ?? observed.pr?.head_ref ?? null;
     common.pr_head_sha = observed.candidate?.head_sha ?? observed.pr?.head_sha ?? null;
+    common.pull_request = observed.pr ?? null;
     if (observed.candidate) common.candidate = { ...observed.candidate };
     const evaluatorFeedback = buildEvaluatorFeedback(observed);
     if (evaluatorFeedback) common.evaluator_feedback = evaluatorFeedback;

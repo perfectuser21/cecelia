@@ -69,6 +69,7 @@ function fakeExecCmd(handlers = {}) {
   const fn = vi.fn((cmd) => {
     calls.push(cmd);
     if (cmd.includes('gh pr list')) return handlers.prList ?? '[]';
+    if (cmd.includes('gh api --paginate')) return handlers.prFiles ?? '';
     if (cmd.includes('gh pr view')) return handlers.prView ?? '';
     if (cmd.includes('gh pr checks')) {
       if (handlers.prChecksUnsupported) {
@@ -1254,13 +1255,13 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     const deps = makeDeps({
       rows: { run: { pr_url: PR_URL } },
       exec: {
+        prFiles: [
+          'packages/brain/src/work-router.js',
+          'sprints/08121555-unified-work-router/contract-dod.md',
+        ].join('\n'),
         prView: JSON.stringify({
           state: 'MERGED', mergeStateStatus: 'CLEAN', headRefOid: 'sha-abc',
           statusCheckRollup: [{ state: 'SUCCESS' }],
-          files: [
-            { path: 'packages/brain/src/work-router.js' },
-            { path: 'sprints/08121555-unified-work-router/contract-dod.md' },
-          ],
         }),
       },
     });
@@ -1273,7 +1274,10 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
       'packages/brain/src/work-router.js',
       'sprints/08121555-unified-work-router/contract-dod.md',
     ]);
-    expect(deps.execCmd.calls.some((cmd) => cmd.includes('statusCheckRollup,files'))).toBe(true);
+    expect(deps.execCmd.calls.some((cmd) => (
+      cmd.includes('gh api --paginate')
+      && cmd.includes('repos/o/r/pulls/42/files?per_page=100')
+    ))).toBe(true);
   });
 
   it('ci 映射：任一 check FAILURE → fail', async () => {

@@ -278,6 +278,7 @@ finalize_generator_candidate() {
   local workspace="${WORKTREE_PATH:-/workspace}"
   local bundle="${HARNESS_TASK_BUNDLE_FILE:-}"
   local repo branch base_sha bundle_attempt head_sha changed_files_json
+  local pull_request_present pr_head_sha expected_head_sha pr_changed_files_json candidate_delta_json
   local tmp_result
   [[ -f "$bundle" && -f "$result_file" ]] || return 1
   repo="$(jq -r '.task_bundle.inputs.workspace_spec.repo // empty' "$bundle")" || return 1
@@ -306,8 +307,38 @@ finalize_generator_candidate() {
     echo "[entrypoint] trusted Generator candidate rejected untracked output" >&2
     return 1
   fi
-  changed_files_json="$(git -C "$workspace" diff --name-only -z "$base_sha...$head_sha" \
-    | jq -Rs 'split("\u0000") | map(select(length > 0))')" || return 1
+  pull_request_present="$(jq -r '.task_bundle.inputs | has("pull_request")' "$bundle")" || return 1
+  pr_head_sha="$(jq -r '.task_bundle.inputs.pull_request.head_sha // empty' "$bundle")" || return 1
+  expected_head_sha="$(jq -r '.task_bundle.inputs.workspace_spec.expected_head_sha // empty' "$bundle")" \
+    || return 1
+  pr_changed_files_json="$(jq -c '.task_bundle.inputs.pull_request.changed_files // null' "$bundle")" \
+    || return 1
+  if [[ "$pull_request_present" == "true" ]]; then
+    if [[ ! "$pr_head_sha" =~ ^[0-9a-f]{40}$ ]] \
+        || [[ ! "$expected_head_sha" =~ ^[0-9a-f]{40}$ ]] \
+        || ! git -C "$workspace" merge-base --is-ancestor "$pr_head_sha" "$expected_head_sha" \
+        || ! git -C "$workspace" merge-base --is-ancestor "$expected_head_sha" "$head_sha" \
+        || ! git -C "$workspace" merge-base --is-ancestor "$pr_head_sha" "$head_sha" \
+        || ! jq -e 'type == "array" and length > 0 and length <= 10000
+          and all(.[]; type == "string" and length > 0 and length <= 4096
+            and (startswith("/") | not)
+            and (contains("\\") | not)
+            and (explode | all(. >= 32 and . != 127))
+            and (split("/") | index("..") | not))' \
+          <<<"$pr_changed_files_json" >/dev/null; then
+      echo "[entrypoint] trusted Generator pull-request evidence invalid" >&2
+      return 1
+    fi
+    candidate_delta_json="$(git -C "$workspace" diff --name-only -z "$pr_head_sha...$head_sha" \
+      | jq -Rs 'split("\u0000") | map(select(length > 0))')" || return 1
+    changed_files_json="$(jq -cn \
+      --argjson existing "$pr_changed_files_json" \
+      --argjson delta "$candidate_delta_json" \
+      '$existing + $delta | unique | sort')" || return 1
+  else
+    changed_files_json="$(git -C "$workspace" diff --name-only -z "$base_sha...$head_sha" \
+      | jq -Rs 'split("\u0000") | map(select(length > 0))')" || return 1
+  fi
   if ! jq -e 'type == "array" and length > 0 and length <= 10000
       and all(.[]; type == "string" and length > 0 and length <= 4096
         and (startswith("/") | not)

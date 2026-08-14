@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.34
+**Brain 版本**: 1.273.35
+
+## Brain 1.273.35 — Authoritative PR Candidate Impact
+
+- Generator 修复轮使用 GitHub 分页返回的完整 PR 文件集，并只追加当前 PR HEAD 到新候选的差异，避免把冻结基线之后的 target-main 漂移误封为候选改动。
 
 ## Brain 1.273.34 — Judge Deferred Coverage Closure
 

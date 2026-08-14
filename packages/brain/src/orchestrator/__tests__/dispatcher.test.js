@@ -1988,6 +1988,7 @@ describe('createDispatcher', () => {
           number: 1571,
           head_ref: 'cp-android-cancel',
           head_sha: staleRemoteHeadSha,
+          changed_files: ['packages/brain/src/orchestrator/dispatcher.js'],
         },
         candidate: {
           type: 'git_candidate',
@@ -2030,6 +2031,12 @@ describe('createDispatcher', () => {
     });
 
     const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.pull_request).toEqual({
+      number: 1571,
+      head_ref: 'cp-android-cancel',
+      head_sha: staleRemoteHeadSha,
+      changed_files: ['packages/brain/src/orchestrator/dispatcher.js'],
+    });
     expect(created.bundle.inputs.evaluator_feedback).toEqual({
       attempt_id: evaluatorAttemptId,
       pr_head_sha: prHeadSha,

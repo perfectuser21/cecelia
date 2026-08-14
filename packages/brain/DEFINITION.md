@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.34
+**Brain 版本**: 1.273.35
+
+## Authoritative PR Candidate Impact（Brain 1.273.35）
+
+- Ground Truth 分页采集 GitHub PR 文件清单；Generator 修复候选以该权威清单并集本轮新增差异，保持冻结基线身份不变且避免 target-main 漂移污染 Map Impact。
 
 ## Judge Deferred Coverage Closure（Brain 1.273.34）
 

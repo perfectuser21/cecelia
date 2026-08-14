@@ -144,6 +144,41 @@ function asJson(value) {
   return value;
 }
 
+function isSafeChangedFilePath(filePath) {
+  return (
+    typeof filePath === 'string'
+    && filePath.length > 0
+    && filePath.length <= 4096
+    && !filePath.startsWith('/')
+    && !filePath.includes('\\')
+    && !/[\u0000-\u001f\u007f]/.test(filePath)
+    && !filePath.split('/').includes('..')
+  );
+}
+
+function loadPrChangedFiles(prUrl, execCmd) {
+  const match = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)$/.exec(prUrl);
+  if (!match) return null;
+  const [, owner, repo, number] = match;
+  try {
+    const stdout = execTolerant(
+      execCmd,
+      `gh api --paginate "repos/${owner}/${repo}/pulls/${number}/files?per_page=100" --jq '.[].filename'`,
+    );
+    const changedFiles = String(stdout ?? '')
+      .split('\n')
+      .filter((filePath) => filePath.length > 0);
+    if (
+      changedFiles.length === 0
+      || changedFiles.length > 10_000
+      || !changedFiles.every(isSafeChangedFilePath)
+    ) return null;
+    return [...new Set(changedFiles)].sort();
+  } catch {
+    return null;
+  }
+}
+
 function hasMatchedGeneratorLaunchEffect(attempt, logRows) {
   return logRows.some((row) => {
     if (row.action !== LOG_ACTION.ATTEMPT_LAUNCHED) return false;
@@ -544,6 +579,7 @@ export async function collectGroundTruth(deps, opts) {
       `gh pr view ${prUrl} --json number,state,mergeStateStatus,headRefName,headRefOid,statusCheckRollup`,
     )) ?? {};
     const checks = normalizeStatusCheckRollup(view.statusCheckRollup);
+    const changedFiles = loadPrChangedFiles(prUrl, execCmd);
     pr = {
       number: view.number ?? null,
       url: prUrl,
@@ -554,6 +590,7 @@ export async function collectGroundTruth(deps, opts) {
       head_sha: view.headRefOid ?? null,
       ci: mapCiStatus(checks, view.mergeStateStatus),
       failed_checks: failedCheckNames(checks),
+      changed_files: changedFiles,
     };
   }
 
