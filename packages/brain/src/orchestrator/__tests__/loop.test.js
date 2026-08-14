@@ -173,8 +173,13 @@ describe('runLoop：全链 planning→done', () => {
         evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1' },
         judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1' },
       }),
-      // 10. merged → report
-      obs({ generatorSpawned: true, pr: { ...prMeta, ci: 'pass', merged: true } }),
+      // 10. merged（同 head 双 PASS receipt 齐备 = 合法合并）→ report
+      obs({
+        generatorSpawned: true,
+        pr: { ...prMeta, ci: 'pass', merged: true },
+        evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1' },
+        judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1' },
+      }),
       // 11. run.phase=done → exit
       obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
     ];

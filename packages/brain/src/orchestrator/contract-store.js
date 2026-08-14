@@ -98,6 +98,15 @@ export async function materializeApprovedContract(db, {
         throw new Error(`attached approved contract ${run.contract_id} not found`);
       }
       const attached = existing.rows[0];
+      // 状态机守卫（fail-closed）：附着合同只有 draft（可原子换版）与 approved（幂等/mismatch
+      // 比对）两态是合法可继续的。superseded / 未知状态附着若落到下方 draft 换版插入路径，会把
+      // 已作废合同「重激活」成新 approved（复活废弃合同证据，安全红线）——一律报错，事务回滚。
+      if (attached.status !== 'approved' && attached.status !== 'draft') {
+        throw new Error(
+          `invalid_attached_contract_status: 附着合同状态 '${attached.status}' 不得重激活`
+          + `（仅 draft 可原子换版；approved 走幂等/mismatch；superseded/未知一律拒绝）`,
+        );
+      }
       // ATOMIC_RESWAP_ON_DRAFT: reopen_gan_contract 后 run.contract_id 可能仍附着一份
       // v1 draft 合同（旧草稿），它不是「本轮批准证据」。只有附着合同已是 approved
       // 时才走逐字段比对 + fail-closed（禁止静默覆盖已批准合同，安全红线）。

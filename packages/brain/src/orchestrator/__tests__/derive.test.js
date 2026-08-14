@@ -784,31 +784,49 @@ describe('规则 0.6：MAX_HOPS 宽兜底（P2）', () => {
   });
 });
 
-describe('merged 短路（routeAfterPoll merged 语义）', () => {
-  it('任何时刻 pr.merged=true → 直入 report，跳过所有 spawn', () => {
+describe('merged 短路（routeAfterPoll merged 语义 — fail-closed 双 PASS receipt 守卫）', () => {
+  // #4870 修法：merged 不再无条件 done。合法合并须同一 head_sha 上 Evaluator PASS/FIXED
+  // + Judge PASS 双 receipt 齐备（Harness merge handler 合法路径），旧「merged 即 done」用例
+  // 补齐双 PASS receipt；缺 receipt 的外部提前合并另立 premature_merge 用例覆盖。
+  const dualPass = (sha) => ({
+    evaluateVerdict: { verdict: 'PASS', pr_head_sha: sha },
+    judgeVerdict: { verdict: 'PASS', pr_head_sha: sha },
+  });
+
+  it('双 PASS receipt + pr.merged=true → 直入 report，跳过所有 spawn', () => {
     const r = derive(baseObserved({
       pr: { url: 'u', state: 'MERGED', ci: 'fail', merged: true, head_sha: 's' },
       contract: { approved: true },
+      ...dualPass('s'),
     }));
     expect(r.action).toBe('report');
     expect(r.phase).toBe('done');
   });
 
-  it('ci fail 也不入 fix，merged 优先', () => {
+  it('ci fail 也不入 fix，merged（双 PASS receipt）优先', () => {
     const r = derive(baseObserved({
       pr: { url: 'u', state: 'MERGED', ci: 'fail', merged: true, head_sha: 's' },
       counters: { hops: 1, fixRound: 3, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
+      ...dualPass('s'),
     }));
     expect(r.action).toBe('report');
   });
 
-  it('no-progress 已落库后 PR 被 merge，merged 仍优先收敛为 done', () => {
+  it('no-progress 已落库后 PR 被 merge（双 PASS receipt）→ 仍收敛为 done', () => {
     const r = derive(baseObserved({
       pr: { url: 'u', state: 'MERGED', ci: 'fail', merged: true, head_sha: 's' },
       noProgress: true,
       noProgressReason: 'no_progress_same_sha',
+      ...dualPass('s'),
     }));
     expect(r).toEqual({ phase: 'done', action: 'report', reason: 'pr_merged' });
+  });
+
+  it('外部提前合并（merged=true 但缺同 head 双 PASS receipt）→ premature_merge，不假 done', () => {
+    const r = derive(baseObserved({
+      pr: { url: 'u', state: 'MERGED', ci: 'pass', merged: true, head_sha: 's' },
+    }));
+    expect(r).toEqual({ phase: 'failed', action: 'mark_failed', reason: 'premature_merge' });
   });
 });
 

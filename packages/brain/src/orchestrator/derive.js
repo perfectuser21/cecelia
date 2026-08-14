@@ -682,9 +682,22 @@ export function derive(observed) {
     return { phase: 'terminal', action: 'exit', reason: `task_${task.status}` };
   }
 
-  // merged 短路：GitHub merged 是外部终态真相，必须先于所有 fence / 在途观测。
+  // merged 短路 fail-closed（#4870 假成功根因修法）：GitHub merged 是外部终态真相，但
+  // 「见 merged 即成功」会把「Generator 仍在跑、同 head_sha 无 Evaluator/Judge PASS receipt
+  // 时被通用 auto-merge 抢先合并」记成假 done/completed。合法合并只有一条路径——Harness
+  // merge handler 在同一 pr.head_sha 上 Evaluator PASS/FIXED + Judge PASS 双 receipt 齐备后
+  // 合并。因此：双 receipt 齐备 → done/pr_merged；否则 → premature_merge（run 落 failed、
+  // task 不 completed，交事故追责，不回填成功）。verdictForSha 已对旧 sha 的 receipt 视为不存在。
   if (pr && pr.merged) {
-    return { phase: 'done', action: 'report', reason: 'pr_merged' };
+    const headSha = pr.head_sha ?? null;
+    const evalReceipt = verdictForSha(observed.evaluateVerdict, headSha);
+    const judgeReceipt = verdictForSha(observed.judgeVerdict, headSha);
+    const legitMerge = evalReceipt && isPassVerdict(evalReceipt.verdict)
+      && judgeReceipt && isPassVerdict(judgeReceipt.verdict);
+    if (legitMerge) {
+      return { phase: 'done', action: 'report', reason: 'pr_merged' };
+    }
+    return { phase: 'failed', action: ACTION.MARK_FAILED, reason: 'premature_merge' };
   }
 
   if (currentHumanReviewRejection(observed.decisionLog, pr?.head_sha ?? null)) {
