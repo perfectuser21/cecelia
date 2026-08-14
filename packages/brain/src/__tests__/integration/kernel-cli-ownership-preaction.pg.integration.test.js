@@ -158,21 +158,12 @@ beforeAll(createIsolatedDatabase, 60_000);
 afterAll(dropIsolatedDatabase, 30_000);
 
 describe('Kernel CLI ownership pre-action fence（真 PG）', () => {
-  it.each([
-    ['错误 session', () => 'forged-wrong-session', true],
-    ['空白 session', () => '', true],
-    ['缺失 session 参数', () => undefined, false],
-    ['不存在 session', () => randomUUID(), true],
-  ])('%s: exit 2/controller_lease_lost 且 task/heartbeat/decision/attempt/event 零推进', async (
-    _caseName,
-    sessionValue,
-    includeControllerSessionArg,
-  ) => {
+  async function expectRejectedSession({ controllerSessionId, includeControllerSessionArg = true }) {
     const seeded = await seedQueuedRun();
     const before = await readOracle(seeded);
     const cli = runActualCli({
       ...seeded,
-      controllerSessionId: sessionValue(),
+      controllerSessionId,
       includeControllerSessionArg,
     });
     const after = await readOracle(seeded);
@@ -192,9 +183,25 @@ describe('Kernel CLI ownership pre-action fence（真 PG）', () => {
     expect(after.attempt_count).toBe(0);
     expect(before.event_count).toBe(0);
     expect(after.event_count).toBe(0);
-  });
+  }
 
-  it('correct session: CLI 通过 owner fence 后仍把 queued task 激活为 in_progress', async () => {
+  it('错误 session: exit 2/controller_lease_lost 且业务零推进', () => (
+    expectRejectedSession({ controllerSessionId: 'forged-wrong-session' })
+  ));
+
+  it('空白 session: exit 2/controller_lease_lost 且业务零推进', () => (
+    expectRejectedSession({ controllerSessionId: '' })
+  ));
+
+  it('缺失 session 参数: exit 2/controller_lease_lost 且业务零推进', () => (
+    expectRejectedSession({ controllerSessionId: undefined, includeControllerSessionArg: false })
+  ));
+
+  it('不存在 session: exit 2/controller_lease_lost 且业务零推进', () => (
+    expectRejectedSession({ controllerSessionId: randomUUID() })
+  ));
+
+  it('正确 session: CLI 通过 owner fence 后仍把 queued task 激活为 in_progress', async () => {
     const seeded = await seedQueuedRun();
     const cli = runActualCli(seeded);
     const after = await readOracle(seeded);
