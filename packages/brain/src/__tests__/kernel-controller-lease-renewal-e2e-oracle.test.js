@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +13,16 @@ const CONTRACT_PATH = resolve(
 );
 
 describe('Controller lease 合同 E2E 领域 oracle', () => {
+  it('原样交给 bash 执行 migration 416 ARTIFACT 合同', () => {
+    const contract = readFileSync(resolve(REPO_ROOT, 'sprints/08132021-controller-lease-renewal-r2/contract-dod.md'), 'utf8');
+    const testCommand = contract.match(
+      /- \[x\] \[ARTIFACT\] migration 416 与 rollback 资产存在[\s\S]*?\n  Test: (.+)/,
+    )?.[1];
+    expect(testCommand).toBeTruthy();
+    const result = spawnSync('/bin/bash', ['-c', testCommand], { cwd: REPO_ROOT });
+    expect(result.status, result.stderr?.toString()).toBe(0);
+  });
+
   it('用本轮唯一 run 的新鲜业务行断言 heartbeat、lease 与 phase', () => {
     const contract = readFileSync(CONTRACT_PATH, 'utf8');
     const e2e = parseCanonicalE2EScript(contract);
