@@ -70,7 +70,7 @@ target_environment: local_api
   gate-allow: env-missing docker 是本条真实容器接缝的必需运行资源；缺少 daemon 必须 FAIL，不作降级
 
 - [ ] [BEHAVIOR] [L2] B-10: 真实 Harness 角色链且服务端机械闸字面 PASS [接缝×2]
-  Test: manual:bash -c 'HARNESS_ROLE_CHAIN_ENABLED=1 DB_URL="$DB_URL" BASELINE_SHA=7b6d3585522b9cacf70f39322abf69d54716927d bash packages/brain/scripts/smoke/unified-work-router-role-chain-smoke.sh'
+  Test: manual:bash -c 'DB_URL="$DB_URL" BASELINE_SHA=7b6d3585522b9cacf70f39322abf69d54716927d bash packages/brain/scripts/smoke/unified-work-router-role-chain-smoke.sh'
   动作: 从真实 Controller 入口创建运行，由 Fleet 依次派发 Generator、Evaluator、Judge 真实容器，轮询服务端权威 run 直到终态
   预期观察: 四角色均有独立运行证据；Evaluator 证据引用 Generator receipt，Judge 引用 Evaluator SHA-256；服务端 evaluate_verdict 与 judge_verdict 均字面等于 PASS，merge reason 字面等于 all_gates_passed
   等待预算: 900s
