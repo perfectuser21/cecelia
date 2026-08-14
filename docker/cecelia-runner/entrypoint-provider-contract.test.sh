@@ -707,11 +707,14 @@ RUNNER_ASSERTIONS_JSON="$(jq -cn '[{
 cat > "$EVIDENCE_TMP/result.json" <<'JSON'
 {"status":"completed","checks":[],"decision":{"outcome":"PASS","reason":"provider verified"}}
 JSON
+ASSERTION_PRIOR_UMASK="$(umask)"
+umask 077
 HARNESS_NODE=evaluator EVALUATOR_EVIDENCE_PREPARED=1 \
   WORKTREE_PATH="$EVIDENCE_TMP" PR_HEAD_SHA="$RUNNER_ASSERTION_SHA" \
   CECELIA_MACHINE_ID=runner-machine HARNESS_CALLBACK_TOKEN=runner-secret \
   HARNESS_REQUIRED_ASSERTIONS_JSON="$RUNNER_ASSERTIONS_JSON" \
   merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
+umask "$ASSERTION_PRIOR_UMASK"
 EXPECTED_RUNNER_DIGEST="$(printf 'runner-proof\n' | shasum -a 256 | awk '{print $1}')"
 jq -e --arg sha "$RUNNER_ASSERTION_SHA" --arg digest "$EXPECTED_RUNNER_DIGEST" '
   .decision.outcome == "PASS"
