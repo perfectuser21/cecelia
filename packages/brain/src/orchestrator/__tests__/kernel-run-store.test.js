@@ -258,6 +258,39 @@ describe('Kernel run store creation authority', () => {
     expect(harness.order.indexOf('predecessor-run')).toBeLessThan(harness.order.indexOf('insert-run'));
   });
 
+  it('atomically reopens a failed task after validating an explicit recovery predecessor', async () => {
+    const harness = transactionPool({
+      task: {
+        id: TASK_ID,
+        task_type: 'harness_initiative',
+        status: 'failed',
+        payload: { initiative_id: INITIATIVE_ID, routing_receipt_id: RECEIPT_ID },
+      },
+      predecessorRun: {
+        id: PREDECESSOR_RUN_ID,
+        current_task_id: TASK_ID,
+        initiative_id: INITIATIVE_ID,
+        phase: 'failed',
+        record_trust_status: 'trusted',
+        contract_id: '66666666-6666-4666-8666-666666666666',
+        contract_status: 'approved',
+        approved_sha: 'a'.repeat(40),
+      },
+    });
+
+    await createRun(harness, {
+      ...VALID_INPUT,
+      createdSource: 'explicit_recovery',
+      predecessorRunId: PREDECESSOR_RUN_ID,
+    });
+
+    const reopen = harness.calls.find(({ sql }) => /UPDATE tasks[\s\S]+status = 'queued'/.test(sql));
+    expect(reopen?.params).toEqual([TASK_ID]);
+    expect(harness.calls.indexOf(reopen)).toBeLessThan(
+      harness.calls.findIndex(({ sql }) => /INSERT INTO initiative_runs/.test(sql)),
+    );
+  });
+
   it('rejects explicit recovery without a predecessor before starting a transaction', async () => {
     const harness = transactionPool();
     await expect(createRun(harness, {
