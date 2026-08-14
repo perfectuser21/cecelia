@@ -6,13 +6,13 @@
 -- 与存量扫描，最终保证约束已验证。
 
 UPDATE initiative_runs
-   SET controller_session_id = NULL
+ SET controller_session_id = NULL
  WHERE controller_session_id IS NOT NULL
-   AND BTRIM(controller_session_id) = '';
+   AND controller_session_id ~ '^[[:space:]]*$';
 
 ALTER TABLE initiative_runs
   ADD CONSTRAINT initiative_runs_controller_session_nonblank_check
-  CHECK (controller_session_id IS NULL OR BTRIM(controller_session_id) <> '')
+  CHECK (controller_session_id IS NULL OR controller_session_id !~ '^[[:space:]]*$')
   NOT VALID;
 
 ALTER TABLE initiative_runs

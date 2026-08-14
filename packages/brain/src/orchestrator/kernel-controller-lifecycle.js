@@ -14,7 +14,10 @@
  *
  * 禁 mock 边：本模块直接对真 pg.Pool + initiative_runs 读写；测试真 PG 验真，禁 mock pool。
  */
-import { finalizeKernelRun } from './kernel-run-store.js';
+import {
+  finalizeKernelRun,
+  hasControllerOwnershipSession,
+} from './kernel-run-store.js';
 import { redactSecrets } from './failure-persistence.js';
 
 /** 结构化 Kernel fatal failure_reason 前缀（可观测约定：kernel_process_fatal:<code>）。 */
@@ -52,7 +55,7 @@ export function isOwnerlessRun(runRow, now) {
   if (TERMINAL_PHASES.has(runRow.phase)) return false;
   // A. 从未取 ownership（含迁移前无 controller_session_id 的历史 run）
   const sid = runRow.controller_session_id;
-  if (sid == null || String(sid).trim() === '') return true;
+  if (!hasControllerOwnershipSession(sid)) return true;
   // B. lease 缺失或已过期（Controller 已死）
   const leaseRaw = runRow.controller_lease_expires_at;
   if (leaseRaw == null) return true;
@@ -102,7 +105,8 @@ export async function reconcileOwnerlessKernelRuns(pool, { now = new Date() } = 
       WHERE orchestrator_version = 'v2'
         AND phase NOT IN ('done', 'failed')
         AND (
-          NULLIF(BTRIM(controller_session_id), '') IS NULL
+          controller_session_id IS NULL
+          OR controller_session_id ~ '^[[:space:]]*$'
           OR controller_lease_expires_at IS NULL
           OR controller_lease_expires_at < $1
         )
@@ -114,7 +118,7 @@ export async function reconcileOwnerlessKernelRuns(pool, { now = new Date() } = 
   for (const run of rows) {
     // 二次纯谓词确认（同一 now 语义），避免与并发续租竞态误伤。
     if (!isOwnerlessRun(run, now)) continue;
-    const cause = (run.controller_session_id == null || String(run.controller_session_id).trim() === '')
+    const cause = !hasControllerOwnershipSession(run.controller_session_id)
       ? 'no_controller_ownership'
       : 'controller_lease_expired';
     const failureReason = structuredFailureReason(OWNERLESS_RECOVERED_REASON_PREFIX, cause);

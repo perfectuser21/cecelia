@@ -2,7 +2,7 @@
 
 ## Evaluator-feedback amendment（2026-08-14，PR #4876）
 
-独立 Evaluator 先对 SHA `c940fa988283a95a929723d93c1e538d931ca5ee` 要求保留 migration 416、补齐审计、CodeQL 与 Preview 修复；随后对冻结 SHA `93a1c50f4bbe038f3e27ad45f11cc6156823d9eb` 正式 FAIL，要求 actual Node CLI 与 migration 416 的真实可执行 oracle、完整永久 CI 登记、PRD/DoD/task-plan/diff 事实闭环，以及把 669 行真 PG 测试拆到每个新增测试/helper ≤500 行。本合同据此增加 actual CLI 五类 session 后验、migration 五阶段往返和永久行数门禁；`tests/` 下两份冻结测试哈希不得变化。
+独立 Evaluator 先对 SHA `c940fa988283a95a929723d93c1e538d931ca5ee` 要求保留 migration 416、补齐审计、CodeQL 与 Preview 修复；随后对冻结 SHA `93a1c50f4bbe038f3e27ad45f11cc6156823d9eb` 正式 FAIL，要求 actual Node CLI 与 migration 416 的真实可执行 oracle、完整永久 CI 登记、PRD/DoD/task-plan/diff 事实闭环，以及把 669 行真 PG 测试拆到每个新增测试/helper ≤500 行。第 7 轮又在起点 `f2526d838e9c9cde44ac80f0d2cf5790cf54e207` 的 27 个真 PG 动作中得到 23 PASS / 4 FAIL：task 已 `cancelled` 或 `completed` 的 planning run 仍可续租并写事件；migration 416 仍接受 TAB 与 NBSP，且现场证明 TAB/NBSP/ideographic space 均命中 PostgreSQL POSIX space。本合同据此增加 parent task 终态 CAS、POSIX whitespace、actual CLI 五类 session、migration 五阶段往返和永久行数门禁；`tests/` 下两份冻结测试哈希不得变化。
 
 ## 锚定父路声明
 
@@ -23,6 +23,8 @@ N/A — 任务无 HTTP 响应。本刀是 `packages/brain` 内部 orchestrator +
 - `finalizeKernelRun` 不清 `controller_session_id`（Controller ownership 记录 Kernel fatal 后存活）——本刀 UPDATE 不触碰该列。
 - `createKernelRun` 在同一创建事务落 `controller_session_id` + `controller_lease_expires_at = now + leaseSeconds`，缺 session fail-closed 拒建——本刀复用，不改。
 - `CONTROLLER_LEASE_DEFAULT_SECONDS = 1800`（`kernel-run-store.js`）是 lease 时长唯一 SSOT——续租复用同一常量，禁止第二处硬编码。
+- migration 379 已规定 active v2 run 不得绑定终态 parent task；heartbeat 同样必须在单条 SQL 中绑定 parent task 非终态，不能因残留 planning phase 给 terminal task 续命。
+- ownership 有效性的唯一语义是“至少含一个非空白字符”：JavaScript `\S` 与 PostgreSQL POSIX `[[:space:]]` 分别作为各自执行引擎的等价谓词。
 
 来源 `[累积FR]`：`context-manifest` 端点在本 proposer 环境不可达（Brain 未起）；PRD 累积 FR 段声明「本 line 暂无历史」（journey `e6f803f2` 全部 ability planned）。记：`context-manifest: unavailable`（无历史累积 FR 冲突）。
 
@@ -80,9 +82,9 @@ cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.co
 
 ### Step 3: loop 每跳携 session 调 writeHeartbeat，UPDATE 同写心跳 + lease（GREATEST）
 
-**来源**: `[FROM_PRD]` — PRD Golden Path 第 3 步（第 20 行）：UPDATE 同时写 orchestrator 三列心跳与 `controller_lease_expires_at = GREATEST(existing, now + lease)`，WHERE 含 `id` + `controller_session_id` + `phase NOT IN ('done','failed')`。
+**来源**: `[FROM_PRD]` — PRD Golden Path 第 3 步（第 20 行）：单条 `UPDATE ... FROM tasks` 同时写 orchestrator 三列心跳与 `controller_lease_expires_at = GREATEST(existing, now + lease)`，WHERE 含 run `id` + 权威 `controller_session_id` + active phase + parent task 非终态。
 
-**可观测行为**: 正确 session + 活跃 phase 的心跳跨过 30m 边界后，`controller_lease_expires_at` 随心跳前移到 `now + 1800s`（未过期）；`GREATEST` 保证 lease 只增不减（过去时刻心跳不缩短已有租约）；run.phase 仍非 done/failed；同一事务写一条 `kernel_controller_lease_renewed`。
+**可观测行为**: 正确 session + 活跃 phase + 非终态 parent task 的心跳跨过 30m 边界后，`controller_lease_expires_at` 随心跳前移到 `now + 1800s`（未过期）；`GREATEST` 保证 lease 只增不减（过去时刻心跳不缩短已有租约）；run.phase 仍非 done/failed；同一事务写一条 `kernel_controller_lease_renewed`。parent task 判定与 run UPDATE 共用一个 PostgreSQL statement snapshot，不存在应用层 SELECT→UPDATE TOCTOU。
 
 **验证命令**:
 ```bash
@@ -94,11 +96,11 @@ cd packages/brain && npx vitest run --config vitest.integration.config.js \
 
 ---
 
-### Step 4: CAS fail-closed —— rowCount=0（session mismatch / 终态）不静默续跑
+### Step 4: CAS fail-closed —— rowCount=0（session mismatch / run 或 parent task 终态 / 纯空白）不静默续跑
 
 **来源**: `[FROM_PRD]` — PRD Golden Path 第 4 步（第 21 行）+ 边界情况（第 28-29 行）。
 
-**可观测行为**: 错误/伪造 `controller_session_id` → CAS rowCount=0、lease 不动，Kernel fail-closed；`phase=done/failed` 的 run → rowCount=0、lease 不复活。
+**可观测行为**: 错误/伪造或 POSIX 纯空白 `controller_session_id` → CAS rowCount=0、lease 不动，Kernel fail-closed；`phase=done/failed` 的 run → rowCount=0、lease 不复活；parent task 已 `cancelled`/`completed` 时即使 run 仍 planning，也必须 heartbeat/lease/event 零推进。
 
 **验证命令**:
 ```bash
@@ -106,9 +108,13 @@ cd packages/brain && npx vitest run --config vitest.integration.config.js \
   src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js -t 'RED-2' --reporter=verbose
 cd packages/brain && npx vitest run --config vitest.integration.config.js \
   src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js -t 'RED-3' --reporter=verbose
+cd packages/brain && npx vitest run --config vitest.integration.config.js \
+  src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js -t 'TASK-TERMINAL-' --reporter=verbose
+cd packages/brain && npx vitest run --config vitest.integration.config.js \
+  src/__tests__/integration/migration-416-controller-session-nonblank.pg.integration.test.js --reporter=verbose
 ```
 
-**硬阈值**: RED-2 绿（伪造 session rowCount=0 且 lease 不动）；RED-3 + RED-3b 绿（终态 run rowCount=0；省略 leaseSeconds 用 SSOT 默认续租）。
+**硬阈值**: RED-2 绿（伪造 session rowCount=0 且 lease 不动）；RED-3 + RED-3b 绿（终态 run rowCount=0；省略 leaseSeconds 用 SSOT 默认续租）；TASK-TERMINAL-CANCELLED/COMPLETED 2/2 绿；CREATE-SESSION-C/MIGRATION-C/NEW-WRITE-C/BLANK-C 4/4 绿。
 
 ---
 
@@ -163,9 +169,9 @@ contract-gate: present（cecelia worktree，`packages/brain/src/lib/contract-gat
 
 | 要素 | 说明 | 本次答案 |
 |------|------|----------|
-| **FR（做什么）** | 系统对外承诺 | `writeHeartbeat` 增 `controllerSessionId`+lease 入参，UPDATE 写心跳三列 + `controller_lease_expires_at=GREATEST(existing, now+lease)`，WHERE 含 `id`+`controller_session_id`+`phase NOT IN('done','failed')`，返回 `{rowCount}` 供 CAS；`controllerSessionId` 从创建端经 `launchKernelProcess`→`runKernelMain`→loop 可信透传。 |
-| **NFR（做得多好）** | 性能/可靠性 | lease 时长唯一 SSOT `CONTROLLER_LEASE_DEFAULT_SECONDS`（1800s）；每个成功 hop 在同一事务做 CAS UPDATE + `cecelia_events` INSERT，按 `(run_id, heartbeat_at)` 去重，约 90s/跳即单 run 上界约 960 条/日；PR 明确包含 migration 416 的历史空白归一 + validated nonblank CHECK 及 rollback。 |
-| **Invariant（永不违反）** | 硬红线 | 无主 fail-closed（INV-9）：错误/空 session 或终态 run 续租一律 rowCount=0 → Kernel fail-closed，不静默续跑；lease 只增不减（GREATEST，防时钟回拨误缩）。 |
+| **FR（做什么）** | 系统对外承诺 | `writeHeartbeat` 增 `controllerSessionId`+lease 入参，单条 `UPDATE ... FROM tasks` 写心跳三列 + `controller_lease_expires_at=GREATEST(existing, now+lease)`，WHERE 含 run `id`+权威 session+active phase+parent task 非终态，返回 `{rowCount}` 供 CAS；`controllerSessionId` 从创建端经 `launchKernelProcess`→`runKernelMain`→loop 可信透传。 |
+| **NFR（做得多好）** | 性能/可靠性 | lease 时长唯一 SSOT `CONTROLLER_LEASE_DEFAULT_SECONDS`（1800s）；每个成功 hop 在同一事务做 CAS UPDATE + `cecelia_events` INSERT，按 `(run_id, heartbeat_at)` 去重，约 90s/跳即单 run 上界约 960 条/日；migration 416 以 POSIX `[[:space:]]` 做历史空白归一 + validated nonblank CHECK 及 rollback。 |
+| **Invariant（永不违反）** | 硬红线 | 无主 fail-closed（INV-9）：错误/纯空白 session、终态 run 或终态 parent task 续租一律 rowCount=0 → Kernel fail-closed，不静默续跑；lease 只增不减（GREATEST，防时钟回拨误缩）。 |
 | **判定点（怎么知道）** | 对模糊现实的判断 | 见下方登记表。 |
 | **保质期（何时过期）** | 失效与退役 | lease 每跳滚动续 1800s；run 达 `deadline_at`（8h）由既有 deadline fence 收敛；migration 415 前无 session 历史 run 由 reconcile 回收（本刀不回填）。 |
 | **死亡告警（停了谁知道）** | 告警手段 | 续租失败（rowCount=0）→ Kernel fail-closed 退出 + run 终态 failed（`OWNERLESS_RECOVERED_REASON_PREFIX`），既有 reconcile/watchdog 巡检可从 run 终态 + kernel 日志定位；成功续租写 `kernel_controller_lease_renewed`，真实 ownerless recovery 写 `kernel_ownerless_run_recovered`。 |
@@ -179,6 +185,8 @@ contract-gate: present（cecelia worktree，`packages/brain/src/lib/contract-gat
 | （示例：微信群是否发送成功） | A. 监听按钮变灰; B. 读聊天记录 API | A | 记录 API 不稳定 | 静默丢消息 |
 | ⚠️ run 的心跳身份是否可信（能否续租） | A. 仅凭 run_id 续租; B. `id`+`controller_session_id` CAS | B（CAS，携带创建端 session） | 仅凭 run_id 无法区分真 Controller 与假冒/串号，会给无主/错主 run 续命 | 静默给无主 run 续租 → 「无主 fail-closed」铁律被绕过（不可逆放行） |
 | ⚠️ run 是否仍活跃（可续租） | A. 只查 phase 非 done; B. WHERE `phase NOT IN('done','failed')` 纳入 CAS | B（纳入同一 CAS 原子判定） | 分两步查再 UPDATE 有 TOCTOU 竞态；纳入 WHERE 原子 | 终态 run 被心跳复活 lease → 僵尸 run 继续跑 |
+| ⚠️ parent task 是否仍活跃 | A. 只看 run phase; B. 单条 `UPDATE ... FROM tasks` 同时过滤 parent task 终态 | B | 第 7 轮证明 cancelled/completed task 可残留 planning run；应用层分查有 TOCTOU | 已终态 task 的残留 run 被续命并造审计事件 |
+| ownership 是否为纯空白 | A. `BTRIM`; B. JS `\S` + PostgreSQL POSIX `[[:space:]]` 等价语义 | B | `BTRIM` 未覆盖 TAB/NBSP/ideographic space，真 PG 已复现 | 纯空白 owner 绕过 CHECK 并续租 |
 | lease 是否应前移（防回拨缩短） | A. 直接 `now+lease`; B. `GREATEST(existing, now+lease)` | B | 并发/时钟回拨下直接赋值会缩短已有租约、诱发误杀 | 误缩租约 → 又一次 30m 误杀 |
 
 > ⚠️ 行判定点误判后果严重（不可逆放行 / 绕过无主铁律），属「升拍板点」级别。PrepPRD thin_prd 已显式拍定 CAS 三件套（`id`+`controller_session_id`+`phase NOT IN done/failed`）+ GREATEST，本刀按已拍板方案实现。`judgment-pending-user: 无`（方案已在 PRD 拍定）。
@@ -187,26 +195,26 @@ contract-gate: present（cecelia worktree，`packages/brain/src/lib/contract-gat
 
 | 场景 | 失败行为 | 重试幂等？ | 降级策略 |
 |------|----------|-----------|----------|
-| 续租 CAS rowCount=0（session mismatch/终态） | Kernel fail-closed 退出（非 0 exit），不续跑 | 是（幂等键=`id`+`controller_session_id`；重放同心跳只会再次 rowCount=0，无副作用） | 交既有 `reconcileOwnerlessKernelRuns` 回收 + 恢复流程重派 |
+| 续租 CAS rowCount=0（session mismatch/纯空白/run 或 parent task 终态） | Kernel fail-closed 退出（非 0 exit），不续跑 | 是（幂等键=`id`+`controller_session_id`；重放同心跳只会再次 rowCount=0，无副作用） | 交既有 `reconcileOwnerlessKernelRuns` 回收 + 恢复流程重派 |
 | 时钟回拨/并发心跳 | `GREATEST` 保留较晚 lease，UPDATE 幂等 | 是 | 无需降级（只增不减） |
 | DB 写超时/连接失败 | UPDATE 抛错 → loop 既有错误路径处理；lease 不前移 | 是（下一跳重试同一 UPDATE） | 心跳落后 → lease 自然到期 → reconcile fail-closed 回收（不静默续跑） |
 | 审计事件 INSERT 失败 | 同事务整体回滚 lease 或 recovery 状态改变，不留下半完成状态 | 是（同 `(run_id,heartbeat_at)` 重试；recovery 仅 changed=true 写） | 下一跳/下一轮 reconcile 重试，禁止吞错后提交状态 |
 
 ### 输入对抗面
 
-本刀无对外 HTTP 输入；但 CLI `taskId`/`shortTask` 仍按不可信命令行输入处理。legacy proposer 分支只用静态正则 capture 固定 8 位 token，再与 `shortTask` 做常量字符串比较，禁止把输入拼入动态 `RegExp`。`controllerSessionId` 为进程内创建端生成、经本机 CLI 参数透传；它仅参与 CAS，不进入日志或审计 payload。
+本刀无对外 HTTP 输入；但 CLI `taskId`/`shortTask` 仍按不可信命令行输入处理。legacy proposer 分支只用静态正则 capture 固定 8 位 token，再与 `shortTask` 做常量字符串比较，禁止把输入拼入动态 `RegExp`。`controllerSessionId` 为进程内创建端生成、经本机 CLI 参数透传；JS 创建边与 PostgreSQL heartbeat/历史行/CHECK 都拒绝纯空白，它仅参与 CAS，不进入日志或审计 payload。
 
 ## Test Contract
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 续租 CAS + reconcile（真 PG） | `tests/kernel-controller-lease-renewal.pg.integration.test.js`（永久位 `packages/brain/src/__tests__/integration/`） | `RED-1`、`RED-1b`、`RED-2 + RED-5(mismatch)`、`RED-3`、`RED-3b` | 现网 `writeHeartbeat` 无 `controllerSessionId` 入参、不写 lease、返回 `undefined` → 全部断言 FAIL |
+| 续租 CAS + reconcile（真 PG） | `tests/kernel-controller-lease-renewal.pg.integration.test.js`（永久位 `packages/brain/src/__tests__/integration/`） | `RED-1:`、`RED-1b:`、`RED-2 + RED-5(mismatch):`、`RED-3:`、`RED-3b:` | 现网 `writeHeartbeat` 无 `controllerSessionId` 入参、不写 lease、返回 `undefined` → 全部断言 FAIL |
 | session 透传（RED-4，纯装配） | `tests/controller-session-passthrough.test.js`（永久位 `packages/brain/src/__tests__/`） | `parseArgs 解析 --controller-session-id`、`buildKernelLaunchArgs 把创建时 controllerSessionId 透传给 detached child`、`buildKernelLaunchArgs 透传 resumeToken` | `buildKernelLaunchArgs is not a function` + `parseArgs` 无 `controllerSessionId` 字段 → 3 FAIL（本轮已实测 3 failed） |
 | actual Node CLI ownership 前置栅栏（真 PG） | `packages/brain/src/__tests__/integration/kernel-cli-ownership-preaction.pg.integration.test.js` | `错误 session`、`空白 session`、`缺失 session 参数`、`不存在 session`、`正确 session` | 原实现先激活 queued task，wrong session 后 task 已推进 |
-| migration 416 生命周期（真 PG） | `packages/brain/src/__tests__/integration/migration-416-controller-session-nonblank.pg.integration.test.js` | `MIGRATION-C`、`NEW-WRITE-C`、`BLANK-C` | 原合同仅 grep SQL 文本，无 rollback/re-upgrade 行为 oracle |
+| migration 416 + whitespace 生命周期（真 PG） | `packages/brain/src/__tests__/integration/migration-416-controller-session-nonblank.pg.integration.test.js` | `CREATE-SESSION-C:`、`MIGRATION-C:`、`NEW-WRITE-C:`、`BLANK-C:` | `BTRIM` 留下 TAB/NBSP/ideographic space：历史未归一、新写被接受、heartbeat rowCount=1 |
 | JavaScript 测试/helper 行数门禁 | `packages/brain/src/__tests__/kernel-controller-lease-renewal-file-size.test.js` | 本 sprint 新增/拆出相关测试与 helper 均 ≤500 行 | 拆分前永久真 PG 文件为 669 行 |
 | final-e2e 业务写入领域 oracle | `packages/brain/src/__tests__/kernel-controller-lease-renewal-e2e-oracle.test.js` | `用本轮唯一 run 的新鲜业务行断言 heartbeat、lease 与 phase` | 修复前提取脚本仅有 `information_schema` psql，缺 `created_at > NOW() - interval` → 1 FAIL（本轮已实测） |
-| 续租/recovery 审计原子幂等（真 PG） | `packages/brain/src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js` | `AUDIT-1`、`AUDIT-2`、`AUDIT-3`、`RACE-A` | 冻结 SHA 上成功续租与 recovery 的 `cecelia_events` count 均为 0 |
+| 续租/recovery/parent task 原子门禁（真 PG） | `packages/brain/src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js` | `AUDIT-1:`、`AUDIT-2:`、`AUDIT-3:`、`RACE-A:`、`TASK-TERMINAL-CANCELLED:`、`TASK-TERMINAL-COMPLETED:` | 第 7 轮 terminal task 两例 rowCount=1、lease/heartbeat 前移且 event count=1 |
 | CodeQL 动态正则 | `packages/brain/src/orchestrator/__tests__/ground-truth.test.js` | `CodeQL 回归：命令行 taskId 的正则元字符不得进入动态 RegExp` | source assertion 命中 `new RegExp(...${shortTask}...)` |
 | Preview starting 端口冲突 | `packages/brain/src/__tests__/integration/capacity-gate.test.js` | `Preview 回归：starting 记录端口已被外部 listener 占用时重新分配` | allocator 未调用端口探针并返回仍被占用的 5389 |
 
@@ -400,13 +408,16 @@ npx vitest run src/__tests__/kernel-controller-lease-renewal-file-size.test.js -
 echo "OK: Controller lease 续租 Golden Path 已由本轮 run=$RUN_ID 的真 PostgreSQL 业务行验证"
 ```
 
-**通过标准**: 脚本 exit 0（migration 415 两列与 migration 416 validated CHECK 存在 + 本轮唯一 run 的新鲜业务行 `psql count=1` + heartbeat/lease 前移与 phase=planning + 续租事件 count=1/secret count=0 + reconcile 不回收 + lease/AUDIT/RACE 全绿 + actual CLI 五类 session 后验全绿 + migration 416 五阶段往返全绿 + 行数门禁全绿），随后清理本轮行并删除隔离数据库。
+**通过标准**: 脚本 exit 0（migration 415 两列与 migration 416 validated CHECK 存在 + 本轮唯一 run 的新鲜业务行 `psql count=1` + heartbeat/lease 前移与 phase=planning + 续租事件 count=1/secret count=0 + reconcile 不回收 + lease/AUDIT/RACE/TASK-TERMINAL 全绿 + actual CLI 五类 session 后验全绿 + JS 创建及 migration 416 POSIX whitespace 五阶段往返全绿 + 行数门禁全绿），随后清理本轮行并删除隔离数据库。
 
 ## 探索提示（L3 探索层 — evaluator 剧本全过后执行）
 
+第 7 轮基线证据：27 个独立动作，23 PASS / 4 FAIL；失败 oracle 固化为 `TASK-TERMINAL-CANCELLED:`、`TASK-TERMINAL-COMPLETED:`、`NEW-WRITE-C:` 与 `BLANK-C:`，同时 `MIGRATION-C:` 负责历史归一。
+
 探索预算: 10 分钟 / 15 动作（默认）
 高风险面:
-- 错输入: `writeHeartbeat` 传 `controllerSessionId=null`/空串 → 应 rowCount=0（不得因 SQL `= NULL` 恒 false 之外的路径误续租）；传不存在的 `runId` → rowCount=0。
+- 错输入: `writeHeartbeat` 传 `controllerSessionId=null`/空串/TAB/NBSP/ideographic space → 应 rowCount=0（参数和同值历史行均不得续租）；传不存在的 `runId` → rowCount=0。
+- 状态分叉: parent task 已 `cancelled`/`completed` 且 run 仍 planning → rowCount=0，lease/heartbeat/event 零推进。
 - 重复提交: 同一心跳（同 now、同 session）连打两次 → 第二次 `GREATEST` 幂等，lease 不重复叠加、不缩短。
 - 中途中断: 续租 UPDATE 与并发 `reconcileOwnerlessKernelRuns` 交错（同一 run）→ 不得出现「续租成功但仍被回收」或「回收后又被续活」（同一 now 语义下二选一，不振荡）。
 - 边界值: `now` 恰等于 `controller_lease_expires_at`（lease 边界瞬间）→ 续租/回收判定一致（`< now` 严格小于语义，不得两边都命中）。

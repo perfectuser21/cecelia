@@ -8,9 +8,17 @@
 
 
 
-**Brain 版本**: 1.273.7
+**Brain 版本**: 1.273.8
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.273.8 — Controller lease 父任务终态与 Unicode 空白收敛
+
+- `writeHeartbeat` 在单条 `UPDATE ... FROM tasks` 中同时绑定权威 session、活跃 run phase 与父 task 非终态；`cancelled` / `completed` task 的残留 planning run 不再推进 heartbeat、lease 或审计事件。
+- Controller ownership 的空白语义统一为“至少含一个非空白字符”：JavaScript 创建/ownerless 判定与 PostgreSQL POSIX `[[:space:]]` 清洗、CHECK、heartbeat CAS 一致覆盖 TAB、NBSP 与 ideographic space。
+- migration 416 真 PostgreSQL 生命周期回归覆盖历史归一、新写拒绝、rollback/re-upgrade；schema 地板保持 416。
 
 ---
 

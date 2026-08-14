@@ -45,11 +45,15 @@ describe('writeHeartbeat', () => {
     for (const col of ['orchestrator_heartbeat_at', 'orchestrator_host', 'orchestrator_pid']) {
       expect(sql).toContain(col);
     }
-    // 续租：GREATEST(existing, now + lease) 只增不减；CAS WHERE 含 session + 活跃 phase。
+    // 续租：GREATEST(existing, now + lease) 只增不减；CAS 同时绑定 session、活跃 phase、父 task 非终态。
     expect(sql).toContain('controller_lease_expires_at');
     expect(sql).toContain('GREATEST');
-    expect(sql).toMatch(/WHERE id = \$1/);
+    expect(sql).toMatch(/FROM tasks AS parent_task/);
+    expect(sql).toMatch(/WHERE run\.id = \$1/);
+    expect(sql).toMatch(/parent_task\.status NOT IN \('completed', 'failed', 'cancelled', 'canceled'\)/);
     expect(sql).toContain('controller_session_id = $5');
+    expect(sql).toContain("controller_session_id !~ '^[[:space:]]*$'");
+    expect(sql).toContain("$5::text !~ '^[[:space:]]*$'");
     expect(sql).toMatch(/phase\s+NOT\s+IN\s*\('done',\s*'failed'\)/);
     // 缺省 leaseSeconds 复用单一 SSOT（INV-2，禁止另写死秒数）。
     expect(params).toEqual([RUN_ID, now, 'mac-mini-us', 4242, SESSION, CONTROLLER_LEASE_DEFAULT_SECONDS]);

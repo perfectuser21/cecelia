@@ -4,13 +4,13 @@ journey_type: autonomous
 ---
 # Contract DoD — Sprint: Controller heartbeat 续租 lease（修 30 分钟杀跑）
 
-**范围**: `writeHeartbeat` 续租 CAS + fail-closed；`controllerSessionId` 可信透传；续租/recovery 审计原子幂等；migration 416 nonblank invariant；CodeQL 动态正则；Preview `starting` 端口冲突；真 PG/actual CLI/永久 CI 回归；final-e2e 以本轮唯一 run 和事件作领域 oracle。
+**范围**: `writeHeartbeat` 续租 CAS + parent task 非终态原子绑定 + fail-closed；`controllerSessionId` 可信透传；POSIX whitespace ownership invariant；续租/recovery 审计原子幂等；migration 416；CodeQL 动态正则；Preview `starting` 端口冲突；真 PG/actual CLI/永久 CI 回归；final-e2e 以本轮唯一 run 和事件作领域 oracle。
 **大小**: M
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `heartbeat.js` 的 UPDATE 续租 lease（GREATEST）+ CAS WHERE（session+phase）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/heartbeat.js','utf8');if(!(c.includes('controller_lease_expires_at')&&c.includes('GREATEST')&&c.includes('controller_session_id')&&/phase\s+NOT\s+IN/i.test(c)))process.exit(1)"
+- [x] [ARTIFACT] `heartbeat.js` 的单条 UPDATE...FROM 续租 lease（GREATEST）+ CAS WHERE（session+phase+parent task 非终态+POSIX whitespace）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/heartbeat.js','utf8');if(!(c.includes('controller_lease_expires_at')&&c.includes('GREATEST')&&c.includes('FROM tasks AS parent_task')&&c.includes('parent_task.status NOT IN')&&c.includes('[[:space:]]')))process.exit(1)"
 
 - [x] [ARTIFACT] `loop.js` 的 `beat()` 携带 `controllerSessionId`（心跳不再仅凭 run_id）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/loop.js','utf8');if(!c.includes('controllerSessionId'))process.exit(1)"
@@ -36,8 +36,8 @@ journey_type: autonomous
 - [x] [ARTIFACT] INV-6 [日志脱敏]：`heartbeat.js` 不把 controller_session_id 打进日志明文
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/heartbeat.js','utf8');if(/console\.(log|error|warn)[^\n]*controllerSessionId/.test(c))process.exit(1)"
 
-- [x] [ARTIFACT] migration 416 与 rollback 资产存在，up 含历史空白归一 + validated nonblank CHECK，down 只移除 CHECK
-  Test: node -e "const fs=require('fs');const up=fs.readFileSync('packages/brain/migrations/416_controller_session_nonblank.sql','utf8');const down=fs.readFileSync('packages/brain/migrations/rollback/416_controller_session_nonblank.down.sql','utf8');if(!(up.includes('BTRIM(controller_session_id)')&&up.includes('initiative_runs_controller_session_nonblank_check')&&up.includes('VALIDATE CONSTRAINT')&&down.includes('DROP CONSTRAINT IF EXISTS initiative_runs_controller_session_nonblank_check')))process.exit(1)"
+- [x] [ARTIFACT] migration 416 与 rollback 资产存在，up 用 POSIX whitespace 做历史归一 + validated nonblank CHECK，down 只移除 CHECK
+  Test: node -e "const fs=require('fs');const up=fs.readFileSync('packages/brain/migrations/416_controller_session_nonblank.sql','utf8');const down=fs.readFileSync('packages/brain/migrations/rollback/416_controller_session_nonblank.down.sql','utf8');if(!(up.includes('[[:space:]]')&&up.includes('initiative_runs_controller_session_nonblank_check')&&up.includes('VALIDATE CONSTRAINT')&&down.includes('DROP CONSTRAINT IF EXISTS initiative_runs_controller_session_nonblank_check')))process.exit(1)"
 
 - [x] [ARTIFACT] CodeQL high 回归禁止 `shortTask` 拼入动态 RegExp，legacy 分支用静态 capture + 字符串比较
   Test: manual:bash -c 'bash -lc "cd packages/brain && npx vitest run src/orchestrator/__tests__/ground-truth.test.js -t \"CodeQL 回归|仅为当前 run 的严格 Proposer\""'
@@ -108,7 +108,21 @@ journey_type: autonomous
   预期观察: 两次首次应用均归一历史空白为 NULL 并得到 validated nonblank CHECK；rollback 真移除 CHECK/schema_version 416；两次重复 upgrade 均无新 migration 且约束仅一份
   等待预算: 0s（本地隔离库直接执行）
   留证: migration 416 integration verbose 输出及 schema_version/pg_constraint/真实空白写入后验
-  Test: manual:bash -c 'bash -lc "cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/migration-416-controller-session-nonblank.pg.integration.test.js --reporter=verbose"'
+  Test: manual:bash -c 'bash -lc "cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/migration-416-controller-session-nonblank.pg.integration.test.js -t MIGRATION-C --reporter=verbose"'
+
+- [x] [BEHAVIOR] [L2] B-10: parent task 为 cancelled/completed 时 active planning run 心跳零推进
+  动作: 真 PostgreSQL 建 owned planning run，将 parent task 分别置 cancelled/completed，再用正确 session 调 writeHeartbeat
+  预期观察: 两例 rowCount=0；run 仍 planning；orchestrator_heartbeat_at 仍 NULL；lease 不动；续租事件 count=0
+  等待预算: 0s
+  留证: `TASK-TERMINAL-CANCELLED:` 与 `TASK-TERMINAL-COMPLETED:` verbose 输出（2 passed）
+  Test: manual:bash -c 'bash -lc "cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js -t TASK-TERMINAL- --reporter=verbose"'
+
+- [x] [BEHAVIOR] [L2] B-11: JS 创建、migration 416 与 heartbeat 对 TAB/NBSP/ideographic space 使用同一非空白语义
+  动作: 真 PostgreSQL 依次验证 JS 创建拒绝、历史纯空白归一为 NULL、新写 CHECK 23514、rollback 窗口同值参数/历史行 heartbeat rowCount=0
+  预期观察: `CREATE-SESSION-C:`、`NEW-WRITE-C:`、`BLANK-C:` 3/3 通过；TAB/NBSP/ideographic space 均无 lease/heartbeat/event 推进
+  等待预算: 0s
+  留证: migration whitespace integration verbose 输出（3 passed）
+  Test: manual:bash -c 'bash -lc "cd packages/brain && NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/migration-416-controller-session-nonblank.pg.integration.test.js -t \"CREATE-SESSION-C|NEW-WRITE-C|BLANK-C\" --reporter=verbose"'
 
 ## Invariant 覆盖（铁律逐条映射，Step 1.3）
 
@@ -120,5 +134,5 @@ journey_type: autonomous
 - INV-6 [日志脱敏] → 见上 ARTIFACT「INV-6」与 B-06：heartbeat.js 不打印 controller_session_id，事件 payload 也不包含它。
 - INV-7 [端点鉴权] → N/A：无新增 HTTP 端点。
 - INV-8 [租户隔离] → N/A：无跨租户 SQL。
-- INV-9 [无主fail-closed] → 见 B-02：错误/空 session 或终态 run 续租一律 rowCount=0 → fail-closed；无主 run 仍被 reconcile 回收（本刀核心）。
+- INV-9 [无主fail-closed] → 见 B-02/B-10/B-11：错误/纯空白 session、终态 run 或终态 parent task 续租一律 rowCount=0 → fail-closed；无主 run 仍被 reconcile 回收（本刀核心）。
 - INV-10 [热修时钟] → N/A：本刀走 default 标准全链（非 hotfix gear），不建共享 validation 时钟。

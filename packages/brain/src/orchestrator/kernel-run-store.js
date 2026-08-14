@@ -35,6 +35,11 @@ const VALID_COMMANDER_MODES = new Set(COMMANDER_MODES);
 // 具体秒数由主理人拍板，此处取与既有 watchdog 巡检节奏相容的 30 分钟保守默认（心跳按 tick 续租）。
 export const CONTROLLER_LEASE_DEFAULT_SECONDS = 1800;
 
+/** Controller ownership 必须至少含一个非空白字符。 */
+export function hasControllerOwnershipSession(value) {
+  return typeof value === 'string' && /\S/u.test(value);
+}
+
 async function lockActiveKernelAttempts(client, runId) {
   const { rows } = await client.query(
     `SELECT id
@@ -96,7 +101,7 @@ function validateCreateInput(input) {
   // ownership。缺失/空/非字符串 controllerSessionId → fail-closed（拒绝创建、不写半态 run），
   // 由此杜绝 detached 无主 Kernel（issue 962d399c）。在开事务前校验，保证 initiative_runs 零新行。
   const controllerSessionId = input?.controllerSessionId;
-  if (typeof controllerSessionId !== 'string' || controllerSessionId.trim() === '') {
+  if (!hasControllerOwnershipSession(controllerSessionId)) {
     throw new Error('invalid Kernel run controller session: missing controller ownership (fail-closed)');
   }
   const controllerLeaseSeconds = input?.controllerLeaseSeconds === undefined

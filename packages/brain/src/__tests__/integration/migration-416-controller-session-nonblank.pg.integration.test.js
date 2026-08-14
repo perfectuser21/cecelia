@@ -37,6 +37,13 @@ beforeAll(async () => {
 afterAll(() => fixture.dropIsolatedDatabase(), 30_000);
 
 describe('migration 416 controller session nonblank（真 PG）', () => {
+  it('CREATE-SESSION-C: JS 创建边拒绝 TAB/NBSP/ideographic space ownership', async () => {
+    for (const blankSession of ['\t', '\u00a0', '\u3000']) {
+      await expect(fixture.seedOwnedRun({ controllerSessionId: blankSession }))
+        .rejects.toThrow('missing controller ownership (fail-closed)');
+    }
+  });
+
   it('MIGRATION-C: upgrade/第二次 upgrade/rollback/re-upgrade/第二次 re-upgrade 保持 invariant', async () => {
     await testPool.query(rollbackSql);
     const historical = [
