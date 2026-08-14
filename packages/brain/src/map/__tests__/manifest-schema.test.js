@@ -80,7 +80,11 @@ describe('Manifest JSON Schema 校验', () => {
     const mj5 = productionManifest.capabilities.find(({ key }) => key === 'MJ5');
     const g2 = productionManifest.capabilities.find(({ key }) => key === 'G2');
 
-    expect(f1.path_prefixes).toEqual(expect.arrayContaining(['scripts/', 'sprints/']));
+    expect(f1.path_prefixes).toEqual(expect.arrayContaining([
+      '.github/workflows/',
+      'scripts/',
+      'sprints/',
+    ]));
     expect(f2.exact_paths).toEqual(expect.arrayContaining([
       'scripts/brain-deploy.sh',
       'scripts/lib/internal-auth-token.sh',
