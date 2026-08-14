@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.24
+**Brain 版本**: 1.273.25
+
+## Trusted Assertion Runner Baseline（Brain 1.273.25）
+
+- Fleet 三机 Runner 准入基线固定到包含独立只读 assertion checkout 的镜像 digest，健康探针与真实执行使用同一不可变内容摘要。
 
 ## Trusted Assertion Runtime（Brain 1.273.24）
 
@@ -18,7 +22,7 @@
 
 ## Candidate Manifest Runner Baseline（Brain 1.273.21）
 
-- Fleet 三机准入、部署与修复脚本统一固定到 `sha256:fe6b953dc41339d7c78eee6048d09b880e7f6ad420fcf0f56803f965015b3ffc`。
+- Fleet 三机准入、部署与修复脚本统一固定到 `sha256:d13bd0918e411546f408f4fc59dba7d182aa8c05ea3e37b43f042f8d3d614d3a`。
 - Runner 在受信候选清单中携带 `changed_files`，供 Controller 在 Evaluator 前执行 Impact Diff Gate。
 
 ## Kernel Controller Authority（Brain 1.273.4）

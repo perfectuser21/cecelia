@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.24
+**Brain 版本**: 1.273.25
+
+## Brain 1.273.25 — Trusted Assertion Runner Baseline
+
+- Runner 可信断言的独立只读 checkout 已进入固定 Fleet 镜像 `sha256:d13bd0918e411546f408f4fc59dba7d182aa8c05ea3e37b43f042f8d3d614d3a`，节点准入与实际角色执行不再存在镜像漂移。
 
 ## Brain 1.273.24 — Trusted Assertion Runtime
 

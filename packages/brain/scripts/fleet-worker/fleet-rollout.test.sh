@@ -34,7 +34,7 @@ artifact_log="$test_root/artifacts.log"
 transport_log="$test_root/transport.log"
 node_log="$test_root/node.log"
 worker_token="$test_root/worker-token"
-expected_runner_digest='sha256:fe6b953dc41339d7c78eee6048d09b880e7f6ad420fcf0f56803f965015b3ffc'
+expected_runner_digest='sha256:d13bd0918e411546f408f4fc59dba7d182aa8c05ea3e37b43f042f8d3d614d3a'
 touch "$artifact_log" "$transport_log" "$node_log"
 printf 'fleet-worker-transport-token-at-least-32-bytes\n' > "$worker_token"
 chmod 0600 "$worker_token"
@@ -338,7 +338,7 @@ grep -Fq 'docker save --output' "$artifact_log" \
   || fail "rollout did not export the Runner image"
 grep -Fq 'docker image tag pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62 pgvector/pgvector:pg15' "$artifact_log" \
   || fail "rollout did not preserve the pinned PostgreSQL repository tag"
-grep -Eq 'docker save --output .* sha256:fe6b953dc41339d7c78eee6048d09b880e7f6ad420fcf0f56803f965015b3ffc pgvector/pgvector:pg15$' "$artifact_log" \
+grep -Eq 'docker save --output .* sha256:d13bd0918e411546f408f4fc59dba7d182aa8c05ea3e37b43f042f8d3d614d3a pgvector/pgvector:pg15$' "$artifact_log" \
   || fail "rollout archive did not save the tagged PostgreSQL reference"
 grep -Fq 'docker run --rm --entrypoint sh' "$artifact_log" \
   && fail "rollout still uses a static source-string image contract"
