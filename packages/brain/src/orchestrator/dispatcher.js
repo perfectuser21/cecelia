@@ -13,6 +13,7 @@ import {
 import { deriveCapabilityRequirements } from './preflight/requirements.js';
 import { expandUnresolvedAccountTargets } from './preflight/execution-targets.js';
 import { HARNESS_BUNDLE_MAX_BYTES } from './constants.js';
+import { AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED } from './attempt-machine-capacity.js';
 import {
   implementationBaselineFromTaskPayload,
   implementationBaselineFromWorkspace,
@@ -943,6 +944,7 @@ export function createDispatcher(deps) {
     let selectedAccount = resolvedPreferredTarget?.account ?? requestedAccount;
     let selectedMachine = candidateMachine ?? resolvedPreferredTarget?.machine ?? machineId;
     let selectedTarget = resolvedPreferredTarget;
+    let trustedCapacitySnapshot = null;
     let accountHome = null;
     const rawCapabilityRequirements = commanderContext?.capability_requirements
       ?? payload.contract_requirements
@@ -1017,6 +1019,7 @@ export function createDispatcher(deps) {
         await deps.onPreflightBlocked?.(blocked, { action, ctx });
         return blocked;
       }
+      trustedCapacitySnapshot = preflight.snapshot;
       const preflightTarget = preflight.to_target ?? {
         provider: preflight.snapshot.provider,
         account: preflight.snapshot.account,
@@ -1069,29 +1072,47 @@ export function createDispatcher(deps) {
       return preAttemptAssemblyFault(error, 'TASK_BUNDLE_SIZE_LIMIT_EXCEEDED');
     }
 
-    const persisted = await deps.attemptStore.createAttempt({
-      id: attemptId,
-      runId: ctx.runId,
-      run_id: ctx.runId,
-      hop: ctx.hop,
-      phase: bundle.phase,
-      role: spec.role,
-      provider: adapter.name,
-      accountId: selectedAccount,
-      machineId: selectedMachine,
-      bundle,
-      callbackSecretHash: hashCallbackSecret(callbackSecret),
-      logicalCycleId: attemptMetadata.logicalCycleId,
-      attemptKind: attemptMetadata.attemptKind,
-      retryOfAttemptId: commanderContext?.retry_of_attempt_id
-        ?? ctx.retry?.retry_of_attempt_id
-        ?? null,
-      restartReason: commanderContext?.restart_reason
-        ?? ctx.retry?.restart_reason
-        ?? (action === 'spawn:generator-fix' ? 'evaluator_failed' : null),
-      workstreamKey: attemptMetadata.workstreamKey,
-      timeDerived: ['judge', 'reporter'].includes(spec.role),
-    });
+    let persisted;
+    try {
+      persisted = await deps.attemptStore.createAttempt({
+        id: attemptId,
+        runId: ctx.runId,
+        run_id: ctx.runId,
+        hop: ctx.hop,
+        phase: bundle.phase,
+        role: spec.role,
+        provider: adapter.name,
+        accountId: selectedAccount,
+        machineId: selectedMachine,
+        bundle,
+        callbackSecretHash: hashCallbackSecret(callbackSecret),
+        logicalCycleId: attemptMetadata.logicalCycleId,
+        attemptKind: attemptMetadata.attemptKind,
+        retryOfAttemptId: commanderContext?.retry_of_attempt_id
+          ?? ctx.retry?.retry_of_attempt_id
+          ?? null,
+        restartReason: commanderContext?.restart_reason
+          ?? ctx.retry?.restart_reason
+          ?? (action === 'spawn:generator-fix' ? 'evaluator_failed' : null),
+        workstreamKey: attemptMetadata.workstreamKey,
+        timeDerived: ['judge', 'reporter'].includes(spec.role),
+        ...(trustedCapacitySnapshot
+          ? { capacitySnapshot: trustedCapacitySnapshot }
+          : {}),
+      });
+    } catch (error) {
+      if (error?.message !== AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED) throw error;
+      return {
+        status: 'DONE_WITH_CONCERNS',
+        control_status: 'BLOCKED',
+        detail: error.message,
+        action: 'wait:capacity',
+        failure_class: 'infrastructure_blocked',
+        fallback_reason: error.message,
+        should_create_attempt: false,
+        should_enter_generator_fix: false,
+      };
+    }
     if (persisted?.id && persisted.id !== attemptId) {
       return {
         status: 'DONE_WITH_CONCERNS',

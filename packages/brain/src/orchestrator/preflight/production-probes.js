@@ -7,6 +7,12 @@ const DEFAULT_BRAIN_URL = 'http://127.0.0.1:5221';
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_NODE_ADMISSION_TIMEOUT_MS = 20_000;
 const DEFAULT_CACHE_TTL_MS = 1_000;
+const AUTONOMOUS_SINGLETON_ROLES = new Set([
+  'proposer',
+  'generator',
+  'evaluator',
+  'judge',
+]);
 
 function accountRows(snapshot, provider) {
   const rows = snapshot?.vendors?.[provider]?.accounts;
@@ -198,20 +204,29 @@ export function createProductionCapabilityProbes(deps = {}) {
         baseCapacity: physicalBaseSlots,
         role,
       });
+      const autonomousProgressFloor = row?.online === true
+        && effectiveBaseSlots > 0
+        && physicalBaseSlots > 0
+        && availableCapacity.capacity < 1
+        && AUTONOMOUS_SINGLETON_ROLES.has(role);
       // Manual dispatch is a server-owned, audited override written by the
       // dispatch endpoint. It may consume the final admitted base slot even
       // when role weighting rounds the capacity to zero, but it must never
       // revive a drained/offline or genuinely zero-capacity machine.
-      const manualCapacityOverride = taskBundle?.inputs?.manual_dispatch === true
+      const manualCapacityOverride = !autonomousProgressFloor
+        && row?.online === true
+        && taskBundle?.inputs?.manual_dispatch === true
         && effectiveBaseSlots > 0
         && physicalBaseSlots > 0
         && availableCapacity.capacity < 1;
+      const singletonCapacity = autonomousProgressFloor || manualCapacityOverride;
       return {
         ok: row?.online === true,
-        available: manualCapacityOverride ? 1 : availableCapacity.capacity,
-        physical_capacity: manualCapacityOverride
+        available: singletonCapacity ? 1 : availableCapacity.capacity,
+        physical_capacity: singletonCapacity
           ? Math.max(1, physicalCapacity.capacity)
           : physicalCapacity.capacity,
+        ...(autonomousProgressFloor ? { autonomous_progress_floor: true } : {}),
         ...(manualCapacityOverride ? { manual_capacity_override: true } : {}),
         role,
         role_weight: availableCapacity.weight,

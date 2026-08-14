@@ -2,13 +2,37 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-08-14
+**最后更新**: 2026-08-15
 
 
 
 
 
-**Brain 版本**: 1.273.37
+**Brain 版本**: 1.273.42
+
+## Brain 1.273.42 — Attempt Projection Lock Compatibility
+
+- Attempt 投影写事务以共享父 Run 锁阻止父 Run 终态化，同时与直接 Run 事件外键锁兼容，消除 actor inbox 事件追加竞态死锁。
+- 清理 outbox 只接受规范 pending 初态与 object receipt，并增加 pending 到期及 leased 过期投递索引。
+
+## Brain 1.273.41 — Attempt Cleanup Lock and Claim Guards
+
+- Harness attempt 持久化父 Run 终态标记，终态收口按 Run 到 attempt 的固定锁序推进，并阻止历史 attempt 复活。
+- 清理 outbox 收紧租约领取、重领与释放状态机，回滚在存在清理证据时 fail-closed。
+
+## Brain 1.273.40 — Durable Attempt Cleanup Intent
+
+- v2 Run 进入终态时，数据库在提交前按固定锁序取消全部活动 Harness attempt，并以旧租约和执行目标身份幂等追加清理 outbox。
+- 清理 outbox 冻结执行身份，限制投递状态迁移与未确认删除，为后续幽灵 Worker 清理执行器保留 durable claim、CAS、receipt 和错误字段。
+
+## Brain 1.273.39 — Autonomous Singleton Capacity
+
+- 单机自动角色在物理容量可用但权重取整为零时获得单槽守活容量；attempt 创建用同机事务锁与可信服务端分配标记原子阻止 singleton/普通请求交叉超发。
+- 容量竞争返回可重试的 BLOCKED 控制结果，不进入 Generator 修复路径。
+
+## Brain 1.273.38 — Never-started Run Identity Fence
+
+- Harness watchdog 按 orchestrator 版本识别 task 对应 run，并在 task 行锁事务内二次确认 exact run 后才终结从未启动的任务。
 
 ## Brain 1.273.37 — Controller Lease Smoke Authority
 
@@ -2424,7 +2448,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | **Schema 版本**: 422 |
+| **schema_version** | 迁移版本追踪 | **Schema 版本**: 425 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -2812,7 +2836,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '423'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '425'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

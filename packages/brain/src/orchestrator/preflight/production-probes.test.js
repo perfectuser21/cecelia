@@ -268,7 +268,93 @@ describe('production capability probes', () => {
     },
   );
 
-  it('blocks the real capability gate when generator-weighted slots round to zero', async () => {
+  it.each(['proposer', 'generator', 'evaluator', 'judge'])(
+    'gives autonomous %s one singleton slot when admitted online base capacity is positive',
+    async (role) => {
+      const createProductionCapabilityProbes = await loadFactory();
+      const probes = createProductionCapabilityProbes({
+        pool: { query: vi.fn() },
+        registry: { get: vi.fn() },
+        fetchFn: vi.fn(async () => response({
+          fleet: [{
+            id: 'us-mac-m4',
+            online: true,
+            effective_slots: 1,
+            physical_capacity: 1,
+            pressure: 0.27,
+          }],
+        })),
+        env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
+        nodeAdmissionClient: {
+          getAdmission: vi.fn(async () => ({
+            state: 'base_admitted',
+            base_admitted: true,
+            dispatch_ready: true,
+            reasons: [],
+          })),
+        },
+      });
+
+      const automatic = await probes.getMachineCapacity({
+        machine: 'us-mac-m4',
+        task_bundle: { role },
+      });
+      const auditedManual = await probes.getMachineCapacity({
+        machine: 'us-mac-m4',
+        task_bundle: { role, inputs: { manual_dispatch: true } },
+      });
+
+      expect(automatic).toMatchObject({
+        ok: true,
+        available: 1,
+        physical_capacity: 1,
+        autonomous_progress_floor: true,
+        effective_base_slots: 1,
+        physical_base_slots: 1,
+      });
+      expect(auditedManual).toEqual(automatic);
+      expect(automatic).not.toHaveProperty('manual_capacity_override');
+    },
+  );
+
+  it.each([
+    ['effective zero', { online: true, effective_slots: 0, physical_capacity: 1 }],
+    ['physical zero', { online: true, effective_slots: 1, physical_capacity: 0 }],
+    ['offline', { online: false, effective_slots: 1, physical_capacity: 1 }],
+  ])('keeps autonomous singleton floor blocked when machine is %s', async (_name, row) => {
+    const createProductionCapabilityProbes = await loadFactory();
+    const probes = createProductionCapabilityProbes({
+      pool: { query: vi.fn() },
+      registry: { get: vi.fn() },
+      fetchFn: vi.fn(async () => response({
+        fleet: [{ id: 'us-mac-m4', pressure: 1, ...row }],
+      })),
+      env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
+      nodeAdmissionClient: {
+        getAdmission: vi.fn(async () => ({
+          state: 'base_admitted',
+          base_admitted: true,
+          dispatch_ready: true,
+          reasons: [],
+        })),
+      },
+    });
+
+    for (const manual_dispatch of [false, true]) {
+      const capacity = await probes.getMachineCapacity({
+        machine: 'us-mac-m4',
+        task_bundle: { role: 'generator', inputs: { manual_dispatch } },
+      });
+      expect(capacity).toMatchObject({
+        ok: row.online,
+        available: 0,
+      });
+      expect(capacity).not.toHaveProperty('autonomous_progress_floor');
+      expect(capacity).not.toHaveProperty('manual_capacity_override');
+    }
+  });
+
+  it('admits the real capability gate through the autonomous generator singleton floor', async () => {
     const createProductionCapabilityProbes = await loadFactory();
     const productionProbes = createProductionCapabilityProbes({
       pool: { query: vi.fn() },
@@ -309,9 +395,14 @@ describe('production capability probes', () => {
         logical_cycle: 'weighted-capacity-gate',
       },
     })).resolves.toMatchObject({
-      status: 'blocked',
-      fallback_reason: 'all_execution_targets_exhausted',
-      should_create_attempt: false,
+      status: 'ok',
+      should_create_attempt: true,
+      evidence: {
+        machine_capacity: {
+          available: 1,
+          autonomous_progress_floor: true,
+        },
+      },
     });
   });
 
@@ -362,7 +453,7 @@ describe('production capability probes', () => {
         machine_capacity: {
           available: 1,
           physical_capacity: 1,
-          manual_capacity_override: true,
+          autonomous_progress_floor: true,
           role_weight: 4,
         },
       },

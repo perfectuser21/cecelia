@@ -859,6 +859,7 @@ export async function resumeKernelAttempt(attempt, {
 
 async function _recoverKernelRun(run, task, deps, out) {
   const dbPool = deps.pool || deps.dbPool || pool;
+  const attemptStore = deps.attemptStore ?? createAttemptStore(dbPool);
   const onRecoveryAlert = deps.onRecoveryAlert ?? (async (detail) => {
     const { raise } = await import('./alerting.js');
     const alertCode = detail.kind === 'failure_persistence'
@@ -899,6 +900,7 @@ async function _recoverKernelRun(run, task, deps, out) {
     const lowerResume = deps.resumeAttempt || resumeKernelAttempt;
     const resumed = await reconcileExpiredKernelAttempt({
       db: dbPool,
+      attemptStore,
       attemptId: attempt.id,
       leaseOwner: `watchdog:${process.pid}`,
       reserveChildHop: (parentAttempt) => reserveResumeIntent(dbPool, parentAttempt),
@@ -932,15 +934,15 @@ async function _recoverKernelRun(run, task, deps, out) {
     && attempt
     && attempt.execution_transport !== 'fleet-worker'
   ) {
-    await dbPool.query(
-      `UPDATE harness_attempts
-          SET status='failed', error_code='recovery_without_session',
-              error_message='expired attempt had no resumable provider session',
-              completed_at=NOW(), lease_owner=NULL, lease_expires_at=NULL, updated_at=NOW()
-        WHERE id=$1 AND status IN ('queued','starting','running')
-          AND (lease_expires_at IS NULL OR lease_expires_at < NOW())`,
-      [attempt.id],
-    );
+    await attemptStore.fail(attempt.id, {
+      status: 'failed',
+      code: 'recovery_without_session',
+      message: 'expired attempt had no resumable provider session',
+    }, {
+      leaseOwner: attempt.lease_owner,
+      leaseGeneration: attempt.lease_generation,
+      requireExpired: true,
+    });
   }
 
   // No resumable session: restart only the deterministic reconcile process. It re-reads

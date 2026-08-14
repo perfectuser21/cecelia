@@ -31,6 +31,7 @@ vi.mock('../orchestrator/kernel-run-store.js', () => ({
 
 import { resumeStalledRelayRuns, MAX_RELAY_ATTEMPTS, scanStuckHarness } from '../harness-relay-watchdog.js';
 import { sendBark } from '../notifier.js';
+import { createAttemptStore } from '../orchestrator/attempt-store.js';
 
 const TASK_ID = 'aaaabbbb-cccc-dddd-eeee-ffff00001111';
 const RUN_ID = '11111111-1111-4111-8111-111111111111';
@@ -69,20 +70,23 @@ function makeDeps({
       return { rows: [{ hop: params[1] }] };
     }
     if (
-      /WITH guarded_run AS \([\s\S]*inserted AS \(\s*INSERT INTO harness_attempts/.test(sql)
+      /WITH guarded_run AS MATERIALIZED \([\s\S]*inserted AS \(\s*INSERT INTO harness_attempts/.test(sql)
     ) {
       return {
         rows: [{
-          id: params[0],
-          run_id: params[1],
-          hop: params[2],
-          status: 'queued',
-          local_container_naming: params[9],
-          task_bundle: params[13],
-          callback_secret_hash: params[14],
-          logical_cycle_id: params[15],
-          attempt_kind: params[16],
-          retry_of_attempt_id: params[17],
+          attempt: {
+            id: params[0],
+            run_id: params[1],
+            hop: params[2],
+            status: 'queued',
+            local_container_naming: params[9],
+            task_bundle: params[13],
+            callback_secret_hash: params[14],
+            logical_cycle_id: params[15],
+            attempt_kind: params[16],
+            retry_of_attempt_id: params[17],
+          },
+          machine_capacity_contended: false,
         }],
       };
     }
@@ -151,6 +155,7 @@ function makeDeps({
   });
   return {
     pool,
+    attemptStore: createAttemptStore(pool, { queryOnlyTestAdapter: true }),
     execFn,
     spawnFn: vi.fn().mockResolvedValue({ ok: true, containerId: 'cecelia-relay-x' }),
   };
@@ -496,6 +501,41 @@ describe('resumeStalledRelayRuns', () => {
       String(sql).includes("error_code='recovery_without_session'")
     ))).toBe(false);
     expect(result.resumed).toBe(1);
+  });
+
+  it('expired non-Fleet attempt without a session uses run-first attempt authority', async () => {
+    const latestAttempt = {
+      id: '22222222-2222-4222-8222-222222222222',
+      run_id: RUN_ID,
+      provider_session_id: null,
+      execution_transport: 'local',
+      status: 'running',
+      lease_owner: 'worker:expired',
+      lease_generation: 4,
+      lease_expires_at: new Date(Date.now() - 60_000).toISOString(),
+    };
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      latestAttempt,
+    });
+    deps.attemptStore = { fail: vi.fn(async () => ({ attempt: latestAttempt })) };
+    deps.launchKernel = vi.fn(async () => ({ pid: 7373 }));
+
+    await resumeStalledRelayRuns(deps);
+
+    expect(deps.attemptStore.fail).toHaveBeenCalledWith(
+      latestAttempt.id,
+      expect.objectContaining({ code: 'recovery_without_session', status: 'failed' }),
+      expect.objectContaining({
+        leaseOwner: latestAttempt.lease_owner,
+        leaseGeneration: latestAttempt.lease_generation,
+        requireExpired: true,
+      }),
+    );
+    expect(deps.pool.query.mock.calls.some(([sql]) => (
+      /UPDATE harness_attempts[\s\S]*recovery_without_session/.test(String(sql))
+    ))).toBe(false);
   });
 
   it('kernel-v1 attempt lease 仍有效时不恢复、不重启', async () => {

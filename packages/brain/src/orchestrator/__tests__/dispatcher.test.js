@@ -1413,6 +1413,89 @@ describe('createDispatcher', () => {
     expect(evaluatedBundle.inputs.manual_dispatch).toBe(true);
   });
 
+  it('passes the validated server-owned capacity snapshot into createAttempt', async () => {
+    const deps = makeDeps();
+    const capacitySnapshot = {
+      verified: true,
+      provider: 'codex',
+      account: null,
+      machine: 'brain-1',
+      capability_snapshot_id: 'snapshot-autonomous-singleton',
+      capacity: {
+        ok: true,
+        available: 1,
+        physical_capacity: 1,
+        autonomous_progress_floor: true,
+      },
+    };
+    deps.preflightGate = {
+      evaluate: vi.fn(async () => ({
+        status: 'ok',
+        snapshot: capacitySnapshot,
+        evidence: {},
+      })),
+      validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
+    };
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 30,
+      observed,
+      decision: { phase: 'evaluate', reason: 'autonomous_singleton_capacity' },
+    });
+
+    expect(deps.attemptStore.createAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ capacitySnapshot }),
+    );
+  });
+
+  it('returns retryable BLOCKED when autonomous singleton machine capacity is contended', async () => {
+    const deps = makeDeps();
+    deps.preflightGate = {
+      evaluate: vi.fn(async () => ({
+        status: 'ok',
+        snapshot: {
+          verified: true,
+          provider: 'codex',
+          account: null,
+          machine: 'brain-1',
+          capability_snapshot_id: 'snapshot-contended',
+          capacity: {
+            ok: true,
+            available: 1,
+            physical_capacity: 1,
+            autonomous_progress_floor: true,
+          },
+        },
+        evidence: {},
+      })),
+      validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
+    };
+    deps.attemptStore.createAttempt.mockRejectedValueOnce(
+      new Error('autonomous_singleton_capacity_contended'),
+    );
+
+    const result = await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 31,
+      observed,
+      decision: { phase: 'evaluate', reason: 'autonomous_singleton_capacity' },
+    });
+
+    expect(result).toMatchObject({
+      status: 'DONE_WITH_CONCERNS',
+      control_status: 'BLOCKED',
+      fallback_reason: 'autonomous_singleton_capacity_contended',
+      failure_class: 'infrastructure_blocked',
+      should_create_attempt: false,
+      should_enter_generator_fix: false,
+    });
+    expect(deps.attemptStore.markStarting).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
+  });
+
   it('preserves the source logical cycle for an L0-authorized role retry', async () => {
     const deps = makeDeps();
     const sourceAttemptId = '33333333-3333-4333-8333-333333333333';
