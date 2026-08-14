@@ -32,6 +32,11 @@ assert_decision() {
 assert_decision "SKIP" "harness PR（feat(harness):）→ 跳过 auto-merge" \
   "cp-0704084753-abc" "feat(harness): 抖音发布 skeleton"
 
+# Work Router 会把 task 短 ID 放在 Harness PR 标题前。该前缀不能让通用
+# auto-merge 绕过 Evaluator + Judge；PR #4872 曾因此在 Judge 前被合并。
+assert_decision "SKIP" "带任务前缀的 harness PR → 跳过 auto-merge" \
+  "cp-08122220-a8da7da7" "[4478f294] feat(harness): route all coding work through Kernel Harness 2.0"
+
 # 普通手动 /dev 的 fix 类 PR → 正常走 auto-merge（不能误伤 /dev 流程，关键）。
 assert_decision "MERGE" "普通 fix(brain) PR → 正常 auto-merge" \
   "cp-0704084753-abc" "fix(brain): 修复调度队头阻塞"
