@@ -15,6 +15,10 @@ const intentSource = readFileSync(
   new URL('../intent.js', import.meta.url),
   'utf8',
 );
+const historyVerifierSource = readFileSync(
+  new URL('../../scripts/verify-unified-work-router-tdd-history.mjs', import.meta.url),
+  'utf8',
+);
 
 describe('Unified Work Router scratch smoke contract', () => {
   it('保留 scratch、Map 刷新和三个真实入口合同', () => {
@@ -56,5 +60,10 @@ describe('Unified Work Router scratch smoke contract', () => {
   it('Intent 入口把批准分支绑定到每个不可变 Routing Receipt', () => {
     expect(smokeSource).toMatch(/parseAndCreate[\s\S]*?branch,/);
     expect(intentSource).toContain('branch: options.branch');
+  });
+
+  it('TDD 账本以候选 ancestry 为证据且运行期基线来自参数', () => {
+    expect(historyVerifierSource).toContain("['log', '--format=%H%x09%s', head]");
+    expect(historyVerifierSource).not.toContain('BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524');
   });
 });
