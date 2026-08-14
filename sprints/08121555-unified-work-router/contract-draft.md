@@ -212,14 +212,14 @@ echo "Unified Work Router Golden Path PASS"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| Recovery 前置 | `packages/brain/src/__tests__/harness-worktree-recovery.test.js` | `credential-bearing origin canonicalization` | 当前 origin 规范化合同不存在 |
-| Recovery 前置 | `packages/brain/src/__tests__/harness-worktree-recovery.test.js` | `active detached Kernel workspace protection` | 当前 active workspace 保护合同不存在 |
-| Generator 容器证据 | `docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh` | `container id crosses process boundary through receipt file` | 当前 runner 合同测试未提供跨进程 container-id receipt 文件接口 |
+| Recovery 前置 | `packages/brain/src/__tests__/harness-worktree-recovery.test.js` | `canonicalizes credential-bearing origin` | 当前 origin 规范化合同不存在 |
+| Recovery 前置 | `packages/brain/src/__tests__/harness-worktree-recovery.test.js` | `protects active detached Kernel workspace` | 当前 active workspace 保护合同不存在 |
+| Generator 容器证据 | `packages/brain/scripts/smoke/unified-work-router-role-chain-smoke.sh` | `container id crosses process boundary through receipt file` | 当前 runner 合同测试未提供跨进程 container-id receipt 文件接口 |
 | 真实角色链 | `packages/brain/scripts/smoke/unified-work-router-role-chain-smoke.sh` | `Controller → Generator → Evaluator → Judge requires literal server PASS` | 当前真实角色链与服务端机械闸证据不存在 |
-| Router/基线 | `packages/brain/src/__tests__/work-router.test.js` | `four change kinds map forward only through one router` | 当前 Work Router 与新 receipt migration 不存在 |
-| Router/基线 | `docker/cecelia-runner/__tests__/entrypoint-frozen-baseline-guard.test.sh` | `frozen baseline is an ancestor, not final HEAD` | 当前 frozen baseline lineage 合同不存在 |
-| Map/边界 | `packages/brain/src/orchestrator/preflight/map-impact-contract.test.js` | `coding run requires Map and Impact Contract before Provider creation` | 当前强制 Map/Impact wiring 未完成 |
-| Map/边界 | `docker/cecelia-runner/__tests__/entrypoint-generator-trust-boundary.test.sh` | `Generator trust boundary removes privileged channels` | 当前 Generator trust boundary 未完成 |
+| Router/基线 | `packages/brain/src/__tests__/work-router.test.js` | `maps all four change kinds forward` | 当前 Work Router 与新 receipt migration 不存在 |
+| Router/基线 | `packages/brain/scripts/smoke/unified-work-router-role-chain-smoke.sh` | `frozen baseline is an ancestor, not final HEAD` | 当前 frozen baseline lineage 合同不存在 |
+| Map/边界 | `packages/brain/src/orchestrator/preflight/map-impact-contract.test.js` | `accepts only fresh same-repo same-revision contracts` | 当前强制 Map/Impact wiring 未完成 |
+| Map/边界 | `packages/brain/scripts/smoke/unified-work-router-role-chain-smoke.sh` | `Generator trust boundary removes privileged channels` | 当前 Generator trust boundary 未完成 |
 
 ## 探索提示（L3 探索层 — evaluator 剧本全过后执行）
 
