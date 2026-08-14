@@ -1861,6 +1861,11 @@ describe('Fleet Worker Attempt runner', () => {
       resolveExit = resolve;
     });
     const deps = dependencies();
+    const durableSave = deps.stateStore.save.getMockImplementation();
+    deps.stateStore.save.mockImplementation(async (entry) => {
+      if (entry.status === 'candidate') deps.events.push('state.candidate');
+      return durableSave(entry);
+    });
     deps.docker.wait.mockReturnValueOnce(containerExit);
     const runner = createRunner(deps);
 
@@ -1875,6 +1880,9 @@ describe('Fleet Worker Attempt runner', () => {
       });
     });
     expect(deps.docker.remove).toHaveBeenCalledOnce();
+    expect(deps.events.indexOf('state.candidate')).toBeLessThan(
+      deps.events.indexOf('docker.remove'),
+    );
     expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
     await expect(runner.inspect(ATTEMPT_ID, {
       owner: 'dispatcher-1',
