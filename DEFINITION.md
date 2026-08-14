@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.26
+**Brain 版本**: 1.273.27
+
+## Brain 1.273.27 — Judge-guided Evidence Recollection
+
+- Judge 因证据不足要求补证时，Evaluator TaskBundle 会接收当前候选 SHA 对应的结构化 Judge feedback，避免无反馈地重复同一轮取证。
 
 ## Brain 1.273.26 — Durable Fleet Candidate Handoff
 

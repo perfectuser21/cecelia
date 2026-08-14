@@ -490,6 +490,14 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     // Generator 启动前的旧头，不能用它覆盖 Runner 已验证的候选身份。
     common.pr_branch = observed.candidate?.branch ?? observed.pr?.head_ref ?? null;
     common.pr_head_sha = observed.candidate?.head_sha ?? observed.pr?.head_sha ?? null;
+    const judgeVerdict = observed.judgeVerdict;
+    if (
+      ctx.decision?.reason === 'judge_evidence_insufficient_recollect'
+      && judgeVerdict?.failure_class === 'evidence_insufficient'
+      && judgeVerdict.pr_head_sha === common.pr_head_sha
+    ) {
+      common.judge_feedback = { ...judgeVerdict };
+    }
     if (payload.github_evidence_request) {
       common.github_evidence_request = payload.github_evidence_request;
     }
