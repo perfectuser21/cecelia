@@ -145,13 +145,18 @@ function asJson(value) {
 }
 
 function isSafeChangedFilePath(filePath) {
+  const hasControlCharacter = typeof filePath === 'string'
+    && [...filePath].some((character) => {
+      const codePoint = character.codePointAt(0);
+      return codePoint <= 0x1f || codePoint === 0x7f;
+    });
   return (
     typeof filePath === 'string'
     && filePath.length > 0
     && filePath.length <= 4096
     && !filePath.startsWith('/')
     && !filePath.includes('\\')
-    && !/[\u0000-\u001f\u007f]/.test(filePath)
+    && !hasControlCharacter
     && !filePath.split('/').includes('..')
   );
 }

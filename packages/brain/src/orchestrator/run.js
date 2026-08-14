@@ -80,9 +80,6 @@ export function parseArgs(argv) {
     controllerSessionId: null,
     controllerGeneration: null,
     resumeToken: null,
-    // 创建端 Controller session（sprint 08132021）：detached child 续租身份，
-    // 由 launchKernelProcess 以 --controller-session-id 透传，禁止仅凭 run_id 续租。
-    controllerSessionId: null,
     dryRun: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -92,7 +89,6 @@ export function parseArgs(argv) {
     else if (a === '--controller-session-id') args.controllerSessionId = argv[++i];
     else if (a === '--controller-generation') args.controllerGeneration = Number(argv[++i]);
     else if (a === '--resume-token') args.resumeToken = argv[++i];
-    else if (a === '--controller-session-id') args.controllerSessionId = argv[++i];
     else if (a === '--dry-run') args.dryRun = true;
   }
   if (!args.taskId) {
