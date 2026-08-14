@@ -37,3 +37,38 @@ Tests 3 failed | 6 passed (9)
 ```
 
 该 RED 只针对本 sprint 新增/拆出的 JavaScript 测试与真 PG helper；两份冻结测试未修改。拆分完成后同一门禁必须 9/9 GREEN。
+
+## Generator-fix6 真 PG RED（起点 f2526d838e，2026-08-14）
+
+Evaluator 第 7 轮的四个 P1 finding 已在既有永久真 PostgreSQL 测试资产中复现；
+生产实现尚未修改。
+
+```text
+NODE_ENV=test npx vitest run --config vitest.integration.config.js \
+  src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js \
+  -t 'TASK-TERMINAL-' --reporter=verbose
+
+× TASK-TERMINAL-CANCELLED: cancelled parent task 的 active run 心跳必须零推进
+  → expected rowCount 0, received 1
+× TASK-TERMINAL-COMPLETED: completed parent task 的 active run 心跳必须零推进
+  → expected rowCount 0, received 1
+Tests 2 failed | 11 skipped (13)
+```
+
+```text
+NODE_ENV=test npx vitest run --config vitest.integration.config.js \
+  src/__tests__/integration/migration-416-controller-session-nonblank.pg.integration.test.js \
+  --reporter=verbose
+
+× MIGRATION-C: TAB/NBSP/ideographic space 历史行未全部归一为 NULL
+  → normalized.every(session === null): expected true, received false
+× NEW-WRITE-C: 数据库仍接受 TAB/NBSP/ideographic space 新写入
+  → error codes: ['23514', '23514', null, null, null]
+× BLANK-C: 纯空白参数与同值历史行仍可 heartbeat 续命
+  → rowCounts: [0, 0, 1, 1, 1]
+Tests 3 failed (3)
+```
+
+对照检查 `kernel-run-store.test.js` 的创建校验以 TAB/NBSP/ideographic space 运行通过，
+说明 JavaScript `trim()` 已拒绝这些值；RED 根因是 heartbeat 与 migration 416 的
+PostgreSQL `BTRIM` 语义未覆盖 POSIX whitespace，以及 heartbeat UPDATE 未绑定父 task 终态。

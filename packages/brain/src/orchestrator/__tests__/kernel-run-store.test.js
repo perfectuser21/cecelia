@@ -419,6 +419,12 @@ describe('Kernel run store creation authority', () => {
       ...VALID_INPUT,
       controllerSessionId: '   ',
     })).rejects.toThrow('missing controller ownership (fail-closed)');
+    for (const unicodeBlank of ['\t', '\u00a0', '\u3000']) {
+      await expect(createKernelRun(harness.pool, {
+        ...VALID_INPUT,
+        controllerSessionId: unicodeBlank,
+      })).rejects.toThrow('missing controller ownership (fail-closed)');
+    }
     // fail-closed：一律不开事务、不写半态 run
     expect(harness.pool.connect).not.toHaveBeenCalled();
   });

@@ -47,6 +47,30 @@ const {
   waitForBlockedFinalize,
 } = fixture;
 
+async function expectTerminalTaskHeartbeatRejected(taskStatus) {
+  const session = randomUUID();
+  const { runId, taskId } = await seedOwnedRun({ controllerSessionId: session });
+  await testPool.query('UPDATE tasks SET status = $2 WHERE id = $1', [taskId, taskStatus]);
+  const before = await leaseOf(runId);
+
+  const heartbeat = await writeHeartbeat(testPool, {
+    runId,
+    host: `kernel-terminal-task-${taskStatus}`,
+    pid: 4242,
+    now: new Date(Date.parse(before.controller_lease_expires_at) + MIN),
+    controllerSessionId: session,
+  });
+  const after = await leaseOf(runId);
+
+  expect(heartbeat.rowCount).toBe(0);
+  expect(after.phase).toBe('planning');
+  expect(after.task_status).toBe(taskStatus);
+  expect(after.orchestrator_heartbeat_at).toBeNull();
+  expect(Date.parse(after.controller_lease_expires_at))
+    .toBe(Date.parse(before.controller_lease_expires_at));
+  expect(await auditEvents(runId)).toEqual([]);
+}
+
 beforeAll(async () => {
   await fixture.createIsolatedDatabase();
   testPool = fixture.pool();
@@ -279,6 +303,14 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
     expect(res.rowCount).toBe(1);
     const after = await leaseOf(runId);
     expect(Date.parse(after.controller_lease_expires_at)).toBe(now1.getTime() + CONTROLLER_LEASE_DEFAULT_SECONDS * 1000);
+  });
+
+  it('TASK-TERMINAL-CANCELLED: cancelled parent task 的 active run 心跳必须零推进', async () => {
+    await expectTerminalTaskHeartbeatRejected('cancelled');
+  });
+
+  it('TASK-TERMINAL-COMPLETED: completed parent task 的 active run 心跳必须零推进', async () => {
+    await expectTerminalTaskHeartbeatRejected('completed');
   });
 
   it('RACE-A: reconcile 旧快照无权终结随后已被正确 heartbeat 续租的 run', async () => {

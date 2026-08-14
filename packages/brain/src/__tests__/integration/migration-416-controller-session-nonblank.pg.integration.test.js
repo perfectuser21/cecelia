@@ -42,6 +42,9 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
     const historical = [
       await fixture.seedHistoricalBlankRun(''),
       await fixture.seedHistoricalBlankRun('   '),
+      await fixture.seedHistoricalBlankRun('\t'),
+      await fixture.seedHistoricalBlankRun('\u00a0'),
+      await fixture.seedHistoricalBlankRun('\u3000'),
     ];
 
     const upgrade = await runMigrations(testPool);
@@ -57,7 +60,7 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
         ORDER BY id`,
       [historical.map(({ runId }) => runId)],
     );
-    expect(normalized).toHaveLength(2);
+    expect(normalized).toHaveLength(5);
     expect(normalized.every(({ controller_session_id: session }) => session === null)).toBe(true);
 
     await testPool.query(rollbackSql);
@@ -72,7 +75,7 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
 
   it('NEW-WRITE-C: 数据库权威边拒绝新写入空串或纯空白 ownership', async () => {
     const errors = [];
-    for (const blankSession of ['', '   ']) {
+    for (const blankSession of ['', '   ', '\t', '\u00a0', '\u3000']) {
       const initiativeId = randomUUID();
       const taskId = randomUUID();
       await testPool.query(
@@ -97,7 +100,7 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
         errors.push(error.code);
       }
     }
-    expect(errors).toEqual(['23514', '23514']);
+    expect(errors).toEqual(['23514', '23514', '23514', '23514', '23514']);
   });
 
   it('BLANK-C: rollout 空白行不能 heartbeat 续命且未过期 lease 也被 reconcile 收敛', async () => {
@@ -105,6 +108,9 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
     const historical = [
       { session: '', ...(await fixture.seedHistoricalBlankRun('')) },
       { session: '   ', ...(await fixture.seedHistoricalBlankRun('   ')) },
+      { session: '\t', ...(await fixture.seedHistoricalBlankRun('\t')) },
+      { session: '\u00a0', ...(await fixture.seedHistoricalBlankRun('\u00a0')) },
+      { session: '\u3000', ...(await fixture.seedHistoricalBlankRun('\u3000')) },
     ];
 
     const heartbeatRows = [];
@@ -128,7 +134,7 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
       [historical.map(({ runId }) => runId)],
     );
 
-    expect(heartbeatRows).toEqual([0, 0]);
+    expect(heartbeatRows).toEqual([0, 0, 0, 0, 0]);
     expect(historical.every(({ runId }) => recoveredIds.includes(runId))).toBe(true);
     expect(rows.every(({ phase }) => phase === 'failed')).toBe(true);
     expect(rows.every(({ orchestrator_heartbeat_at: at }) => at === null)).toBe(true);
