@@ -772,9 +772,17 @@ export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [
   }
   // 即使无 Golden Path，裁判自报覆盖里出现 passed=false 也判失败。
   for (let i = steps.length; i < cov.length; i++) {
-    if (cov[i] && cov[i].passed === false) {
-      failed.push({ index: i + 1, step: cov[i].step || `coverage[${i}]`, evidence: cov[i].evidence || null });
+    const entry = cov[i];
+    if (!entry || entry.passed !== false) continue;
+    const step = entry.step || `coverage[${i}]`;
+    if (
+      entry.deferred === true
+      && stepMatchesDeferredCheck(step, deferredChecks)
+    ) {
+      deferred.push({ index: i + 1, step });
+      continue;
     }
+    failed.push({ index: i + 1, step, evidence: entry.evidence || null });
   }
   return { ok: missing.length === 0 && failed.length === 0, missing, failed, deferred };
 }

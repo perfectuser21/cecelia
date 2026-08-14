@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.31
+**Brain 版本**: 1.273.34
+
+## Judge Deferred Coverage Closure（Brain 1.273.34）
+
+- Judge 额外报告的服务端后置检查仅在声明白名单中且 `deferred=true` 时允许延后，避免已通过 Golden Path 因 host Docker 等 post-Judge 证据进入无限补证循环。
 
 ## Role-chain Routing Envelope（Brain 1.273.31）
 

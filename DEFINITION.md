@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.33
+**Brain 版本**: 1.273.34
+
+## Brain 1.273.34 — Judge Deferred Coverage Closure
+
+- Judge 可在 Golden Path 顺序覆盖之外附加服务端白名单后置检查；只有显式 `deferred=true` 且命中声明边界的附加项可延后，未声明的失败项仍 fail-closed。
 
 ## Brain 1.273.33 — Unified Router PR Discovery
 
