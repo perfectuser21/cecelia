@@ -29,7 +29,9 @@ export function createKernelLeasePgFixture() {
       max: 1,
       statement_timeout: 10_000,
     });
-    await adminPool.query(`CREATE DATABASE ${quotedIdentifier(databaseName)}`);
+    await adminPool.query(
+      `CREATE DATABASE ${quotedIdentifier(databaseName)} TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C'`,
+    );
     execFileSync(process.execPath, ['src/migrate.js'], {
       cwd: BRAIN_ROOT,
       env: {
