@@ -103,7 +103,7 @@ const OBJECTIVES = Object.freeze({
   proposer: 'Propose or revise the implementation contract from the frozen PRD and current contract artifacts.',
   reviewer: 'Independently review the frozen contract against the PRD and return an approval decision.',
   generator: 'Implement or fix the approved contract in the supplied worktree and produce a committed local candidate. Do not push or create a pull request; Publisher owns remote publication after Judge PASS.',
-  evaluator: 'Independently evaluate the current candidate against the approved contract and return pre-Judge evidence. Do not launch a nested Controller or Harness role chain. A pre-Judge verdict must not require its own future Judge verdict, Publisher result, all_gates_passed decision, or completed role chain; those checks are deferred to the server-owned post-Judge acceptance stage.',
+  evaluator: 'Independently evaluate the current candidate against the approved contract and return pre-Judge evidence. Do not launch a nested Controller or Harness role chain. A pre-Judge verdict must not require its own future Judge verdict, Publisher result, all_gates_passed decision, or completed role chain. Host Docker inspection is a trusted Controller/Fleet check: the Evaluator must not fail because Docker CLI or daemon access is absent. These checks are deferred to the server-owned post-Judge acceptance stage.',
   judge: 'Independently judge the evaluator evidence. Return PASS or FAIL, a coverage array for every contract or Golden Path step, and an explicit failure_class for FAIL. The server mechanical gate is authoritative.',
   publisher: 'Publish only the exact local candidate authorized by the Judge and merge fence.',
   commander: 'Observe one bounded Run snapshot and return exactly one provider-neutral Commander Directive.',
@@ -479,6 +479,7 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
       name: 'pre_judge',
       verdict_scope: 'candidate_and_upstream_evidence',
       deferred_checks: [
+        'host_docker_inspect',
         'judge_verdict',
         'publisher_result',
         'all_gates_passed',

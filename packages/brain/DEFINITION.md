@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.22
+**Brain 版本**: 1.273.23
+
+## Trusted Host Docker Acceptance（Brain 1.273.23）
+
+- Evaluator Provider 不持有 Docker CLI/daemon；宿主 `docker inspect` 由 Controller/Fleet 在 post-Judge 阶段执行，不能把预期的信任隔离误判为候选失败。
 
 ## Staged Evaluator Acceptance（Brain 1.273.22）
 

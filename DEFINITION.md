@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.22
+**Brain 版本**: 1.273.23
+
+## Brain 1.273.23 — Trusted Host Docker Acceptance
+
+- Docker CLI/daemon 与 `docker inspect` 保持 Controller/Fleet 宿主受信检查，不向受限 Evaluator Provider 暴露；Evaluator 不再因预期的 Docker 隔离误判候选失败，真实容器证据仍由服务端 post-Judge 验收。
 
 ## Brain 1.273.22 — Staged Evaluator Acceptance
 
