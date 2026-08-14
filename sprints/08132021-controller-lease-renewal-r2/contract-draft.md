@@ -194,6 +194,7 @@ N/A — 本刀无对外暴露 agent / 无外部用户可写入接口；`controll
 |---|---|---|---|
 | 续租 CAS + reconcile（真 PG） | `tests/kernel-controller-lease-renewal.pg.integration.test.js`（永久位 `packages/brain/src/__tests__/integration/`） | `RED-1`、`RED-1b`、`RED-2 + RED-5(mismatch)`、`RED-3`、`RED-3b` | 现网 `writeHeartbeat` 无 `controllerSessionId` 入参、不写 lease、返回 `undefined` → 全部断言 FAIL |
 | session 透传（RED-4，纯装配） | `tests/controller-session-passthrough.test.js`（永久位 `packages/brain/src/__tests__/`） | `parseArgs 解析 --controller-session-id`、`buildKernelLaunchArgs 把创建时 controllerSessionId 透传给 detached child`、`buildKernelLaunchArgs 透传 resumeToken` | `buildKernelLaunchArgs is not a function` + `parseArgs` 无 `controllerSessionId` 字段 → 3 FAIL（本轮已实测 3 failed） |
+| final-e2e 业务写入领域 oracle | `packages/brain/src/__tests__/kernel-controller-lease-renewal-e2e-oracle.test.js` | `用本轮唯一 run 的新鲜业务行断言 heartbeat、lease 与 phase` | 修复前提取脚本仅有 `information_schema` psql，缺 `created_at > NOW() - interval` → 1 FAIL（本轮已实测） |
 
 > 「BEHAVIOR 覆盖」列每个名均为对应 `it()` 名的字面子串（下游字符串匹配用）。
 
@@ -202,7 +203,7 @@ N/A — 本刀无对外暴露 agent / 无外部用户可写入接口；`controll
 **journey_type**: autonomous
 **target_environment**: local_api
 
-> 本刀无 HTTP 面（内部 orchestrator + SQL）。E2E 在真 PostgreSQL 上驱动 `createKernelRun`→`writeHeartbeat`(续租)→`reconcileOwnerlessKernelRuns` 全真代码路径；30m 边界由集成测试内注入 `now = 建 run + 31min` 确定性跨越（lease 默认 1800s），AI Evaluator 据此独立跨过 30m 边界 + 真 PG 复现，不靠 CI 绿、不靠真实等待。
+> 本刀无 HTTP 面（内部 orchestrator + SQL）。E2E 在隔离的真 PostgreSQL 数据库中以本轮唯一 UUID 驱动 `createKernelRun`→`writeHeartbeat`(续租)→`reconcileOwnerlessKernelRuns` 全真代码路径；30m 边界由注入 `now = 原 lease + 1min` 确定性跨越（lease 默认 1800s），并在清理前用 `psql` 绑定本轮唯一 `run_id` 验证新鲜业务行、heartbeat/lease 前移与 phase，不靠历史数据、CI 绿或真实等待。
 
 ```bash
 #!/bin/bash
@@ -210,27 +211,142 @@ set -euo pipefail
 # 无 HTTP 面：直接在真 PostgreSQL 上跑 Golden Path 全链（续租 + CAS + reconcile）。
 cd packages/brain
 export NODE_ENV=test
-export DB_NAME="${DB_NAME:-cecelia_test}"
-PSQL_CONN="${DATABASE_URL:-${DB:-postgresql://${DB_USER:-cecelia}@${DB_HOST:-localhost}:${DB_PORT:-5432}/${DB_NAME}}}"
+export PGHOST="${DB_HOST:-localhost}"
+export PGPORT="${DB_PORT:-5432}"
+export PGUSER="${DB_USER:-cecelia}"
+export PGPASSWORD="${DB_PASSWORD:-}"
+E2E_DB="kernel_lease_e2e_$(node -e "console.log(require('node:crypto').randomUUID().replaceAll('-', ''))")"
+export DB_NAME="$E2E_DB"
+TASK_ID="$(node -e "console.log(require('node:crypto').randomUUID())")"
+INITIATIVE_ID="$(node -e "console.log(require('node:crypto').randomUUID())")"
+CONTROLLER_SESSION_ID="$(node -e "console.log(require('node:crypto').randomUUID())")"
+RUN_ID=""
 
-# 1. 空库 migration bootstrap（真 schema，含 migration 415 controller ownership 两列）
+cleanup_e2e() {
+  set +e
+  if [[ -n "${RUN_ID:-}" ]]; then
+    psql -d "$E2E_DB" -v ON_ERROR_STOP=1 -v run_id="$RUN_ID" -v task_id="$TASK_ID" >/dev/null <<'SQL'
+DELETE FROM initiative_runs WHERE id = :'run_id'::uuid;
+DELETE FROM tasks WHERE id = :'task_id'::uuid;
+SQL
+  fi
+  psql -d postgres -v db_name="$E2E_DB" -tA >/dev/null <<'SQL'
+SELECT pg_terminate_backend(pid)
+  FROM pg_stat_activity
+ WHERE datname = :'db_name'
+   AND pid <> pg_backend_pid();
+SQL
+  psql -d postgres -v db_name="$E2E_DB" >/dev/null <<'SQL'
+DROP DATABASE IF EXISTS :"db_name";
+SQL
+}
+trap cleanup_e2e EXIT
+
+# 1. 隔离空库 migration bootstrap（真 schema，含 migration 415 controller ownership 两列）
+psql -d postgres -v ON_ERROR_STOP=1 -v db_name="$E2E_DB" >/dev/null <<'SQL'
+CREATE DATABASE :"db_name";
+SQL
 node src/migrate.js
 # 目标列存在性机检（缺列直接 FAIL）
 # gate-allow: domain/db-no-time-window schema 列存在性探测（information_schema，非业务产出，无时间窗语义）
-psql "$PSQL_CONN" -tAc "SELECT count(*) FROM information_schema.columns WHERE table_name='initiative_runs' AND column_name IN ('controller_session_id','controller_lease_expires_at')" | grep -qx 2 || { echo "FAIL: migration 415 两列缺失"; exit 1; }
+psql -d "$E2E_DB" -tAc "SELECT count(*) FROM information_schema.columns WHERE table_name='initiative_runs' AND column_name IN ('controller_session_id','controller_lease_expires_at')" | grep -qx 2 || { echo "FAIL: migration 415 两列缺失"; exit 1; }
 
-# 2. 真 PG 集成回归：跨 30m 边界续租 + CAS fail-closed + reconcile 回收数=0 / mismatch 回收
+# 2. 本轮唯一标识真调 createKernelRun → writeHeartbeat → reconcile。
+export TASK_ID INITIATIVE_ID CONTROLLER_SESSION_ID
+E2E_RESULT="$(node --input-type=module <<'NODE'
+import { randomUUID } from 'node:crypto';
+import pg from 'pg';
+import { DB_DEFAULTS } from './src/db-config.js';
+import { createKernelRun } from './src/orchestrator/kernel-run-store.js';
+import { writeHeartbeat } from './src/orchestrator/heartbeat.js';
+import { reconcileOwnerlessKernelRuns } from './src/orchestrator/kernel-controller-lifecycle.js';
+
+const { Pool } = pg;
+const pool = new Pool({ ...DB_DEFAULTS, database: process.env.DB_NAME, max: 2 });
+try {
+  await pool.query(
+    `INSERT INTO tasks (id, title, status, priority, task_type, trigger_source, payload)
+     VALUES ($1, $2, 'in_progress', 'P2', 'harness_initiative', 'api', $3::jsonb)`,
+    [
+      process.env.TASK_ID,
+      `kernel-lease-e2e-${randomUUID()}`,
+      JSON.stringify({ initiative_id: process.env.INITIATIVE_ID }),
+    ],
+  );
+  const created = await createKernelRun(pool, {
+    taskId: process.env.TASK_ID,
+    initiativeId: process.env.INITIATIVE_ID,
+    phase: 'planning',
+    journeyId: null,
+    abilityId: null,
+    host: 'kernel-e2e',
+    deadlineHours: 8,
+    createdSource: 'kernel_dispatch',
+    controllerSessionId: process.env.CONTROLLER_SESSION_ID,
+  });
+  if (!created.created) throw new Error('E2E run identifier was not created this round');
+
+  const beforeLease = new Date(created.run.controller_lease_expires_at);
+  const heartbeatAt = new Date(beforeLease.getTime() + 60_000);
+  const heartbeat = await writeHeartbeat(pool, {
+    runId: created.run.id,
+    host: 'kernel-e2e',
+    pid: process.pid,
+    now: heartbeatAt,
+    controllerSessionId: process.env.CONTROLLER_SESSION_ID,
+  });
+  if (heartbeat.rowCount !== 1) throw new Error(`heartbeat CAS rowCount=${heartbeat.rowCount}`);
+
+  const reconciled = await reconcileOwnerlessKernelRuns(pool, {
+    now: new Date(heartbeatAt.getTime() + 1000),
+  });
+  if (reconciled.some(({ runId }) => runId === created.run.id)) {
+    throw new Error('freshly renewed run was reconciled as ownerless');
+  }
+  console.log(JSON.stringify({
+    runId: created.run.id,
+    beforeLease: beforeLease.toISOString(),
+    heartbeatAt: heartbeatAt.toISOString(),
+  }));
+} finally {
+  await pool.end();
+}
+NODE
+)"
+RUN_ID="$(jq -er '.runId' <<<"$E2E_RESULT")"
+BEFORE_LEASE="$(jq -er '.beforeLease' <<<"$E2E_RESULT")"
+HEARTBEAT_AT="$(jq -er '.heartbeatAt' <<<"$E2E_RESULT")"
+
+# 3. 清理前由 psql 对本轮唯一业务行做领域 oracle；历史行无法命中 run_id + 新鲜度窗口。
+ROW_COUNT="$(psql -d "$E2E_DB" -v ON_ERROR_STOP=1 \
+  -v run_id="$RUN_ID" -v before_lease="$BEFORE_LEASE" -v heartbeat_at="$HEARTBEAT_AT" -tA <<'SQL'
+SELECT count(*)
+  FROM initiative_runs
+ WHERE id = :'run_id'::uuid
+   AND created_at > NOW() - interval '5 minutes'
+   AND orchestrator_heartbeat_at = :'heartbeat_at'::timestamptz
+   AND orchestrator_heartbeat_at > created_at
+   AND controller_lease_expires_at > :'before_lease'::timestamptz
+   AND controller_lease_expires_at > orchestrator_heartbeat_at
+   AND phase = 'planning';
+SQL
+)"
+ROW_COUNT="$(tr -d '[:space:]' <<<"$ROW_COUNT")"
+[[ "$ROW_COUNT" == "1" ]] || { echo "FAIL: 本轮 run 的新鲜度/heartbeat/lease/phase oracle 未命中（count=$ROW_COUNT）"; exit 1; }
+echo "DB_ORACLE_PASS run_id=$RUN_ID count=$ROW_COUNT"
+
+# 4. 真 PG 集成回归：跨 30m 边界续租 + CAS fail-closed + reconcile 回收数=0 / mismatch 回收
 npx vitest run --config vitest.integration.config.js \
   src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js \
   --reporter=verbose
 
-# 3. controllerSessionId 可信透传红线（RED-4，纯装配）
+# 5. controllerSessionId 可信透传红线（RED-4，纯装配）
 npx vitest run src/__tests__/controller-session-passthrough.test.js --reporter=verbose
 
-echo "OK: Controller lease 续租 Golden Path 全链在真 PostgreSQL 上验证通过（30m 边界已跨越）"
+echo "OK: Controller lease 续租 Golden Path 已由本轮 run=$RUN_ID 的真 PostgreSQL 业务行验证"
 ```
 
-**通过标准**: 脚本 exit 0（migration 两列存在 + 集成文件全绿 + 透传测试全绿）。
+**通过标准**: 脚本 exit 0（隔离库 migration 两列存在 + 本轮唯一 run 的新鲜业务行 `psql count=1` + heartbeat/lease 前移与 phase=planning + reconcile 不回收 + 集成文件全绿 + 透传测试全绿），随后清理本轮行并删除隔离数据库。
 
 ## 探索提示（L3 探索层 — evaluator 剧本全过后执行）
 

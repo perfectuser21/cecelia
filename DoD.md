@@ -7,7 +7,7 @@ journey_type: autonomous
 ---
 # Contract DoD — Sprint: Controller heartbeat 续租 lease（修 30 分钟杀跑）
 
-**范围**: `writeHeartbeat` 续租 CAS + fail-closed；`controllerSessionId` 从创建端经 `launchKernelProcess`→`runKernelMain`→loop 可信透传；真 PG 集成回归永久入 CI。
+**范围**: `writeHeartbeat` 续租 CAS + fail-closed；`controllerSessionId` 从创建端经 `launchKernelProcess`→`runKernelMain`→loop 可信透传；真 PG 集成回归永久入 CI；final-e2e 以本轮唯一 run 的新鲜业务行作领域 oracle。
 **大小**: M
 
 ## ARTIFACT 条目
@@ -26,6 +26,9 @@ journey_type: autonomous
 
 - [x] [ARTIFACT] 永久回归文件落位 + 登记进 POSTGRES_INTEGRATION_TESTS（CI brain-integration 跑）
   Test: node -e "const fs=require('fs');fs.accessSync('packages/brain/src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js');const v=fs.readFileSync('packages/brain/vitest.config.js','utf8');if(!v.includes('kernel-controller-lease-renewal.pg.integration.test.js'))process.exit(1)"
+
+- [x] [ARTIFACT] 合同 E2E 的本轮业务写入领域 oracle 有永久回归测试（canonical parser 提取后验 `psql` 新鲜度与状态）
+  Test: manual:bash -c 'bash -lc "cd packages/brain && npx vitest run src/__tests__/kernel-controller-lease-renewal-e2e-oracle.test.js --reporter=verbose"'
 
 - [x] [ARTIFACT] INV-2 [禁写死环境]：续租时长复用单一 SSOT，集成测试不另写死秒数
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/heartbeat.js','utf8');if(/\b1800\b/.test(c))process.exit(1)"
@@ -63,11 +66,11 @@ journey_type: autonomous
   留证: vitest passthrough verbose 输出（3 passed）
   Test: manual:bash -c 'bash -lc "cd packages/brain && npx vitest run src/__tests__/controller-session-passthrough.test.js --reporter=verbose"'
 
-- [x] [BEHAVIOR] [L2] B-05: Golden Path 全链真 PG 端到端（续租 + CAS fail-closed + reconcile 回收数=0 / mismatch 回收）
-  动作: 对空库跑真 migration 后，执行整份 kernel-controller-lease-renewal 真 PG 集成文件
-  预期观察: 整文件退出码 0，RED-1/1b/2/3/3b 全绿——续租跨 30m 后不被误杀、伪造/终态一律 CAS 拦截
+- [x] [BEHAVIOR] [L2] B-05: Golden Path 全链真 PG 端到端（本轮新鲜业务行 oracle + 续租 + CAS fail-closed + reconcile）
+  动作: 隔离空库 migration 后，以唯一 task/session 真调 createKernelRun→writeHeartbeat→reconcile；清理前用 psql 绑定本轮 run_id 验业务行，再执行整份真 PG 集成文件
+  预期观察: psql count=1 且 created_at 在 5 分钟内、heartbeat/lease 前移、phase=planning、reconcile 不含本 run；RED-1/1b/2/3/3b 全绿
   等待预算: 0s
-  留证: vitest 整文件 verbose 输出末 5 行（Tests N passed, 0 failed）
+  留证: final-e2e 输出本轮 run_id 与 OK；vitest 整文件 verbose 输出末 5 行（Tests N passed, 0 failed）
   Test: manual:bash -c 'bash -lc "cd packages/brain && DB_NAME=${DB_NAME:-cecelia_test} NODE_ENV=test npx vitest run --config vitest.integration.config.js src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js --reporter=verbose"'
 
 ## Invariant 覆盖（铁律逐条映射，Step 1.3）
