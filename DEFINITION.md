@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.36
+**Brain 版本**: 1.273.37
+
+## Brain 1.273.37 — Controller Lease Smoke Authority
+
+- Controller heartbeat 续租默认时长复用 authority SSOT；真实 smoke 同时校验 session 与 generation。
+- Unified Work Router 保留 canonical Red 后的永久回归测试；新 Run 必须使用与当前测试树一致的新合同 seal。
 
 ## Brain 1.273.36 — Controller Authority Merge Closure
 

@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.36
+**Brain 版本**: 1.273.37
+
+## Controller Lease Smoke Authority（Brain 1.273.37）
+
+- heartbeat 续租默认时长复用 `CONTROLLER_LEASE_DEFAULT_SECONDS`，smoke 以 session + generation 验证权威身份。
+- 保留 canonical Red 后的永久合同测试；Controller 重跑须绑定与当前测试树一致的新合同 seal。
 
 ## Controller Authority Merge Closure（Brain 1.273.36）
 

@@ -4,10 +4,13 @@
  * UPDATE initiative_runs 三列（migration 312）：orchestrator_heartbeat_at / orchestrator_host /
  * orchestrator_pid。host+pid 一起才可用于 watchdog 重拉判断（跨主机裸 pid 无意义）。
  * now 从参数注入（确定性纪律：本文件不自取时间）。
+ * 续租时长复用 Controller authority 的单一默认值，避免心跳路径另写秒数。
  */
+import { CONTROLLER_LEASE_DEFAULT_SECONDS } from './kernel-run-store.js';
 
 export async function writeHeartbeat(pool, {
-  runId,controllerSessionId,controllerGeneration,host,pid,now,leaseSeconds=1800,
+  runId,controllerSessionId,controllerGeneration,host,pid,now,
+  leaseSeconds=CONTROLLER_LEASE_DEFAULT_SECONDS,
 }) {
   const expectedGeneration=Number(controllerGeneration);
   if (!controllerSessionId || !Number.isSafeInteger(expectedGeneration) || expectedGeneration<1) {
