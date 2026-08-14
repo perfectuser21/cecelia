@@ -98,8 +98,14 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
     ) {
       throw new Error('generator_fix_workspace_evidence_missing');
     }
+    // A payload-pinned baseline outranks a stale remote PR for a repair run.
+    // Until Publisher runs after Judge PASS, the authoritative implementation
+    // may intentionally exist only as a reachable object on another Harness
+    // ref. A retained local candidate still outranks the baseline on later
+    // repair rounds.
+    const frozenBaseline = CANONICAL_SHA.test(String(payload.base_sha ?? ''));
     const immutableRoleSha = candidate?.head_sha ?? (generatorFix
-      ? inputs.pr_head_sha
+      ? (frozenBaseline ? payload.base_sha : inputs.pr_head_sha)
       : role === 'reviewer'
         ? inputs.contract_sha
         : (role === 'evaluator' || role === 'judge')
@@ -111,7 +117,6 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
     // A task that pins payload.base_sha has chosen an exact baseline instead of
     // latest main — that is the observable, server-side signal for a frozen or
     // comparison run. Ordinary dev leaves it unset and keeps latest-main rebase.
-    const frozenBaseline = CANONICAL_SHA.test(String(payload.base_sha ?? ''));
     const baseSha = plannerBaseSha
       ?? immutableRoleSha
       ?? payload.base_sha

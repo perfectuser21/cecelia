@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.18
+**Brain 版本**: 1.273.19
+
+## Brain 1.273.19 — Frozen Baseline Repair Workspace
+
+- 冻结基线任务存在落后的远端 PR 且没有 retained candidate 时，Generator-fix 仍从权威实现基线物化；远端 PR 不再把未发布的候选血统降级到旧提交。
 
 ## Brain 1.273.18 — Recovery Lineage Type Safety
 
