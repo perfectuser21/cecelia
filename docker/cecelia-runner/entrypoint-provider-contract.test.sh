@@ -415,6 +415,26 @@ validate_claude_terminal_receipt \
   exit 1
 }
 
+jq '.session_id = "different-session"' \
+  "$CLAUDE_RECEIPT_TMP/completed.json" > "$CLAUDE_RECEIPT_TMP/session-mismatch.json"
+if validate_claude_terminal_receipt \
+  "$CLAUDE_RECEIPT_TMP/session-mismatch.json" \
+  "$CLAUDE_RECEIPT_TMP/result.json" \
+  "claude-receipt"; then
+  echo 'strict Claude receipt accepted an explicit session mismatch' >&2
+  exit 1
+fi
+
+jq 'del(.session_id, .uuid)' \
+  "$CLAUDE_RECEIPT_TMP/completed.json" > "$CLAUDE_RECEIPT_TMP/identity-missing.json"
+if validate_claude_terminal_receipt \
+  "$CLAUDE_RECEIPT_TMP/identity-missing.json" \
+  "$CLAUDE_RECEIPT_TMP/result.json" \
+  "claude-receipt"; then
+  echo 'strict Claude receipt accepted a missing envelope identity' >&2
+  exit 1
+fi
+
 jq '.structured_output.summary = "different result"' \
   "$CLAUDE_RECEIPT_TMP/completed.json" > "$CLAUDE_RECEIPT_TMP/mismatch.json"
 if validate_claude_terminal_receipt \

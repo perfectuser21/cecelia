@@ -2074,8 +2074,11 @@ validate_codex_terminal_receipt() {
 }
 
 # Claude's JSON mode can retain exit 1 after a completed primary turn. Accept
-# that contradiction only when the single CLI envelope proves success, binds
-# the preallocated session, and exactly matches the extracted structured result.
+# that contradiction only when the single CLI envelope proves success and
+# exactly matches the extracted structured result. The Runner owns and persists
+# the preallocated --session-id before launch. Current Claude CLI envelopes omit
+# session_id and expose only a message-level uuid; when session_id is present it
+# must still match the Runner-owned identity exactly.
 validate_claude_terminal_receipt() {
   local stdout_file="$1"
   local result_file="$2"
@@ -2090,7 +2093,13 @@ validate_claude_terminal_receipt() {
       and .[0].subtype == "success"
       and .[0].is_error == false
       and .[0].terminal_reason == "completed"
-      and .[0].session_id == $expected_session
+      and (
+        if (.[0] | has("session_id"))
+        then .[0].session_id == $expected_session
+        else (.[0].uuid | type == "string"
+          and test("^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$"))
+        end
+      )
       and .[0].structured_output == $result[0]
       and ($result[0] | type) == "object"
       and ($result[0].status | type) == "string"
