@@ -45,7 +45,13 @@ export function createKernelLeasePgFixture() {
       },
       stdio: 'pipe',
     });
-    testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 10 });
+    testPool = new Pool({
+      ...DB_DEFAULTS,
+      database: databaseName,
+      max: 10,
+      statement_timeout: 10_000,
+      lock_timeout: 5_000,
+    });
   }
   async function dropIsolatedDatabase() {
     if (testPool) await testPool.end().catch(() => {});

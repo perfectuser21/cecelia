@@ -47,6 +47,45 @@ async function expectTerminalTaskHeartbeatRejected(taskStatus) {
     .toBe(Date.parse(before.controller_lease_expires_at));
   expect(await auditEvents(runId)).toEqual([]);
 }
+async function expectConcurrentTerminalWriteWins(taskStatus) {
+  const session = randomUUID();
+  const { runId, taskId } = await seedOwnedRun({ controllerSessionId: session });
+  const before = await leaseOf(runId);
+  const writer = await testPool.connect();
+  let heartbeatPromise;
+  let settledBeforeCommit;
+  try {
+    await writer.query('BEGIN');
+    await writer.query('UPDATE tasks SET status = $2 WHERE id = $1', [taskId, taskStatus]);
+    heartbeatPromise = writeHeartbeat(testPool, {
+      runId,
+      host: `kernel-terminal-race-${taskStatus}`,
+      pid: 4242,
+      now: new Date(Date.parse(before.controller_lease_expires_at) + MIN),
+      controllerSessionId: session,
+    });
+    settledBeforeCommit = await Promise.race([
+      heartbeatPromise.then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), 150)),
+    ]);
+    await writer.query('COMMIT');
+  } finally {
+    await writer.query('ROLLBACK').catch(() => {});
+    writer.release();
+  }
+  const heartbeat = await heartbeatPromise;
+  const after = await leaseOf(runId);
+  expect.soft(settledBeforeCommit).toBe(false);
+  expect.soft(heartbeat.rowCount).toBe(0);
+  expect.soft(after).toMatchObject({
+    phase: 'planning',
+    task_status: taskStatus,
+    orchestrator_heartbeat_at: null,
+  });
+  expect.soft(Date.parse(after.controller_lease_expires_at))
+    .toBe(Date.parse(before.controller_lease_expires_at));
+  expect.soft(await auditEvents(runId)).toEqual([]);
+}
 beforeAll(async () => {
   await fixture.createIsolatedDatabase();
   testPool = fixture.pool();
@@ -262,6 +301,56 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
   it('TASK-TERMINAL-COMPLETED: completed parent task 的 active run 心跳必须零推进', async () => {
     await expectTerminalTaskHeartbeatRejected('completed');
   });
+  it.each(['completed', 'cancelled'])(
+    'TASK-TERMINAL-RACE-%s: 未提交终态写必须先于 heartbeat 线性化且零续租',
+    expectConcurrentTerminalWriteWins,
+  );
+  it('TASK-FINALIZER-RACE: canonical finalizer 已排队时 heartbeat 不得越过 task 锁续租', async () => {
+    const session = randomUUID();
+    const { runId, taskId } = await seedOwnedRun({ controllerSessionId: session });
+    const before = await leaseOf(runId);
+    const blocker = await testPool.connect();
+    let finalizationPromise;
+    let heartbeatPromise;
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('SELECT id FROM tasks WHERE id = $1 FOR UPDATE', [taskId]);
+      finalizationPromise = finalizeKernelRun(testPool, {
+        runId, expectedTaskId: taskId, outcome: 'done', reason: 'race-finalized',
+      });
+      await waitForBlockedFinalize();
+      heartbeatPromise = writeHeartbeat(testPool, {
+        runId,
+        host: 'kernel-finalizer-race',
+        pid: 4242,
+        now: new Date(Date.parse(before.controller_lease_expires_at) + MIN),
+        controllerSessionId: session,
+      });
+      const settledBeforeUnlock = await Promise.race([
+        heartbeatPromise.then(() => true),
+        new Promise((resolve) => setTimeout(() => resolve(false), 150)),
+      ]);
+      await blocker.query('ROLLBACK');
+      const [finalization, heartbeat] = await Promise.all([finalizationPromise, heartbeatPromise]);
+      const after = await leaseOf(runId);
+      expect.soft(settledBeforeUnlock).toBe(false);
+      expect.soft(finalization.changed).toBe(true);
+      expect.soft(heartbeat.rowCount).toBe(0);
+      expect.soft(after).toMatchObject({
+        phase: 'done',
+        task_status: 'completed',
+        orchestrator_heartbeat_at: null,
+      });
+      expect.soft(Date.parse(after.controller_lease_expires_at))
+        .toBe(Date.parse(before.controller_lease_expires_at));
+      expect.soft(await auditEvents(runId)).toEqual([]);
+    } finally {
+      await blocker.query('ROLLBACK').catch(() => {});
+      blocker.release();
+      await finalizationPromise?.catch(() => {});
+      await heartbeatPromise?.catch(() => {});
+    }
+  }, 10_000);
   it('RACE-A: reconcile 旧快照无权终结随后已被正确 heartbeat 续租的 run', async () => {
     const session = randomUUID();
     const { runId, taskId } = await seedOwnedRun({ controllerSessionId: session });
