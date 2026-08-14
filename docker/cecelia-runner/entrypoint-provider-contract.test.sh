@@ -688,7 +688,7 @@ git -C "$EVIDENCE_TMP" config user.email runner-test@cecelia.local
 git -C "$EVIDENCE_TMP" config user.name cecelia-runner-test
 printf 'baseline\n' > "$EVIDENCE_TMP/tracked.txt"
 mkdir -p "$EVIDENCE_TMP/scripts/smoke"
-printf '#!/usr/bin/env bash\nprintf "runner-proof\\n"\n' \
+printf '#!/usr/bin/env bash\nset -euo pipefail\ntest "$DB_URL" = "postgresql://runner/assertion_scratch"\ntest "$BASELINE_SHA" = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"\ntest "$CECELIA_TRUSTED_ASSERTION" = "1"\ngit rev-parse HEAD >/dev/null\nprintf "runner-proof\\n"\n' \
   > "$EVIDENCE_TMP/scripts/smoke/runner-proof.sh"
 printf '#!/usr/bin/env bash\nexit 9\n' > "$EVIDENCE_TMP/scripts/smoke/assertion.sh"
 printf '#!/usr/bin/env bash\nprintf "failure\\n" >&2\nexit 7\n' \
@@ -707,11 +707,16 @@ RUNNER_ASSERTIONS_JSON="$(jq -cn '[{
 cat > "$EVIDENCE_TMP/result.json" <<'JSON'
 {"status":"completed","checks":[],"decision":{"outcome":"PASS","reason":"provider verified"}}
 JSON
+cat > "$EVIDENCE_TMP/assertion-task-bundle.json" <<'JSON'
+{"task_bundle":{"inputs":{"implementation_baseline":{"base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}}
+JSON
 ASSERTION_PRIOR_UMASK="$(umask)"
 umask 077
 HARNESS_NODE=evaluator EVALUATOR_EVIDENCE_PREPARED=1 \
   WORKTREE_PATH="$EVIDENCE_TMP" PR_HEAD_SHA="$RUNNER_ASSERTION_SHA" \
   CECELIA_MACHINE_ID=runner-machine HARNESS_CALLBACK_TOKEN=runner-secret \
+  HARNESS_TASK_BUNDLE_FILE="$EVIDENCE_TMP/assertion-task-bundle.json" \
+  DB_URL=postgresql://runner/assertion_scratch \
   HARNESS_REQUIRED_ASSERTIONS_JSON="$RUNNER_ASSERTIONS_JSON" \
   merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
 umask "$ASSERTION_PRIOR_UMASK"
