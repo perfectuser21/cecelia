@@ -489,6 +489,29 @@ describe('validateCoverage — 代码判 coverage 覆盖（不信裁判文字）
     })).toMatchObject({ ok: true, deferred: [{ index: 2, step: steps[1] }] });
     expect(validateCoverage(coverage, steps)).toMatchObject({ ok: false });
   });
+  it('允许 Judge 在 Golden Path 之外附加服务端声明的 deferred 后置检查', () => {
+    const steps = ['Knife 0-5 实现验收'];
+    const coverage = [
+      { step: steps[0], passed: true, deferred: false, evidence: '29 tests passed' },
+      {
+        step: 'B-07 / B-08 real-runner container + host Docker seam',
+        passed: false,
+        deferred: true,
+        evidence: '等待服务端 host Docker inspect',
+      },
+    ];
+
+    expect(validateCoverage(coverage, steps, {
+      deferredChecks: ['host_docker_inspect'],
+    })).toMatchObject({
+      ok: true,
+      deferred: [{
+        index: 2,
+        step: 'B-07 / B-08 real-runner container + host Docker seam',
+      }],
+    });
+    expect(validateCoverage(coverage, steps)).toMatchObject({ ok: false });
+  });
 });
 
 describe('parseGoldenPathSteps / extractE2ESection', () => {
