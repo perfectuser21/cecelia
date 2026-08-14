@@ -1,6 +1,14 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.26
+**Brain 版本**: 1.273.28
+
+## Attempt-scoped Runner Smoke Credential（Brain 1.273.28）
+
+- Unified Work Router 的真实 Runner smoke 在 Harness 容器内优先复用当前 attempt 的 `.codex/auth.json`，旧 team1 路径仅作兼容回退。
+
+## Judge-guided Evidence Recollection（Brain 1.273.27）
+
+- Judge 因证据不足要求补证时，Evaluator TaskBundle 会接收当前候选 SHA 对应的结构化 Judge feedback。
 
 ## Durable Fleet Candidate Handoff（Brain 1.273.26）
 

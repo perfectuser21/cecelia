@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.27
+**Brain 版本**: 1.273.28
+
+## Brain 1.273.28 — Attempt-scoped Runner Smoke Credential
+
+- Unified Work Router 的真实 Runner smoke 在 Harness 容器内优先复用当前 attempt 的 `.codex/auth.json`，宿主旧 team1 路径只作兼容回退。
 
 ## Brain 1.273.27 — Judge-guided Evidence Recollection
 

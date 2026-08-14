@@ -54,7 +54,13 @@ pass '有头、无头与 Generator trust boundary'
 if [[ "${CECELIA_TRUSTED_ASSERTION:-0}" == "1" ]]; then
   pass '宿主 Docker/Provider 接缝已留给 Judge 后可信验收'
 else
-  REAL_RUNNER_AUTH="${CODEX_AUTH_JSON_PATH:-$HOME/.codex-team1/auth.json}"
+  if [[ -n "${CODEX_AUTH_JSON_PATH:-}" ]]; then
+    REAL_RUNNER_AUTH="$CODEX_AUTH_JSON_PATH"
+  elif [[ -s "$HOME/.codex/auth.json" ]]; then
+    REAL_RUNNER_AUTH="$HOME/.codex/auth.json"
+  else
+    REAL_RUNNER_AUTH="$HOME/.codex-team1/auth.json"
+  fi
   CODEX_AUTH_JSON_PATH="$REAL_RUNNER_AUTH" \
     CECELIA_REAL_RUNNER_IMAGE="${CECELIA_REAL_RUNNER_IMAGE:-cecelia/runner:latest}" \
     "$NODE_EXECUTABLE" \
