@@ -2304,6 +2304,47 @@ describe('createDispatcher', () => {
     });
   });
 
+  it('Judge 证据不足触发补证时把当前 SHA 的结构化反馈交给 Evaluator', async () => {
+    const deps = makeDeps();
+    const candidateHead = 'b'.repeat(40);
+    const candidate = {
+      type: 'git_candidate',
+      verification_status: 'verified',
+      source_attempt_id: '33333333-3333-4333-8333-333333333333',
+      repo: 'perfectuser21/cecelia',
+      branch: 'cp-local-candidate',
+      base_sha: 'a'.repeat(40),
+      head_sha: candidateHead,
+      machine_id: 'brain-1',
+    };
+    const judgeVerdict = {
+      verdict: 'FAIL',
+      pr_head_sha: candidateHead,
+      failure_class: 'evidence_insufficient',
+      failure_signature: 'required_smoke_exit_1',
+      feedback: '完整 smoke 必须 exit 0，并提供真实容器 receipt/inspect。',
+      coverage: [{ step: 'B-10', passed: false, evidence: '角色链证据缺失' }],
+    };
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed: {
+        ...observed,
+        candidate,
+        judgeVerdict,
+      },
+      decision: {
+        phase: 'evaluate',
+        reason: 'judge_evidence_insufficient_recollect',
+      },
+    });
+
+    const inputs = deps.attemptStore.createAttempt.mock.calls[0][0].bundle.inputs;
+    expect(inputs.judge_feedback).toEqual(judgeVerdict);
+  });
+
   it('只把结构化 GitHub 取证请求交给 evaluator TaskBundle', async () => {
     const deps = makeDeps();
     const headSha = 'b8be843d8a35064690a40e885eb235fc8523ea62';
