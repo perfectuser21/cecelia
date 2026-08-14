@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.42
+**Brain 版本**: 1.273.43
+
+## Brain 1.273.43 — Durable Attempt Cleanup Claim Store
+
+- 清理 outbox 以单条 SKIP LOCKED CTE 完成待投递与过期租约的互斥认领，并用无损十进制 generation 执行确认、重试和阻断 CAS。
+- 重试与阻断在释放 claim 前持久化脱敏错误，确认只接受 object receipt，所有无效输入在执行 SQL 前 fail-closed。
 
 ## Brain 1.273.42 — Attempt Projection Lock Compatibility
 

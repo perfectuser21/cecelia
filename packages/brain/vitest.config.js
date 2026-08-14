@@ -16,6 +16,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/kernel-attempt-cleanup-outbox.pg.integration.test.js',
   'src/__tests__/integration/migration-425-populated-upgrade.pg.integration.test.js',
   'src/__tests__/integration/migration-425-outbox-shape.pg.integration.test.js',
+  'src/__tests__/integration/attempt-cleanup-outbox-store.pg.integration.test.js',
   'src/__tests__/integration/attempt-store-run-lock.pg.integration.test.js',
   'src/__tests__/integration/migration-416-controller-session-nonblank.pg.integration.test.js',
   'src/__tests__/integration/kernel-cli-ownership-preaction.pg.integration.test.js',
