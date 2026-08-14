@@ -1,0 +1,43 @@
+{
+  "initiative_id": "39542db5-f191-4c4f-902e-adc890dbabb3",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅修改 packages/brain 的 Kernel orchestrator、Controller lease SQL 写路径与真实 PostgreSQL 回归，不涉及 UI 或远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Controller session 可信透传、heartbeat lease 续租 CAS 与 ownership 前置栅栏",
+      "scope": "让创建端 controllerSessionId 经 detached Kernel CLI 透传到 loop，使用正确 session 对活跃 run 的 heartbeat 原子续租 lease，错误 session 或终态 run fail-closed；在任何 task 业务状态改变前完成权威 owner CAS，同时保留正确 owner 对 queued task 的激活，并以真 PostgreSQL、actual Node CLI 和永久 CI 回归验证续租、回收与零推进后验。",
+      "dod": [
+        "[BEHAVIOR] B-01 正确 session 心跳跨过 30 分钟边界后 lease 前移、run 保持 active、reconcile 不回收",
+        "[BEHAVIOR] B-02 错误 session 的 heartbeat CAS rowCount=0、lease 不动且无主 run 仍被 fail-closed 回收",
+        "[BEHAVIOR] B-03 failed 终态 run 不被 heartbeat 复活且默认续租时长复用 CONTROLLER_LEASE_DEFAULT_SECONDS",
+        "[BEHAVIOR] B-04 controllerSessionId 经 buildKernelLaunchArgs、run.js parseArgs 与 runKernelMain 可信透传",
+        "[BEHAVIOR] B-05 真 PostgreSQL Golden Path 验证本轮新鲜 run 的 heartbeat、lease、phase 与 reconcile 后验",
+        "[BEHAVIOR] 错误 session 的 actual Node CLI 以 controller_lease_lost 非零退出，task 保持 queued，heartbeat、decision、attempt 均不推进",
+        "[BEHAVIOR] 正确 session 的 actual Node CLI 通过 owner fence 后仍把 queued task 激活为 in_progress",
+        "[ARTIFACT] 真 PostgreSQL 集成测试与 actual Node CLI 回归登记进 POSTGRES_INTEGRATION_TESTS 永久执行",
+        "[ARTIFACT] Brain 版本与 DEFINITION.md 同步且不新增 schema migration"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/heartbeat.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/run.js",
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/src/orchestrator/__tests__/heartbeat.test.js",
+        "packages/brain/src/orchestrator/__tests__/run.test.js",
+        "packages/brain/src/__tests__/controller-session-passthrough.test.js",
+        "packages/brain/src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js",
+        "packages/brain/src/__tests__/integration/kernel-cli-ownership-preaction.pg.integration.test.js",
+        "packages/brain/vitest.config.js",
+        "packages/brain/scripts/smoke/kernel-controller-lease-renewal-smoke.sh",
+        "DEFINITION.md",
+        "sprints/08132021-controller-lease-renewal-r2/tests/",
+        "sprints/08132021-controller-lease-renewal-r2/task-plan.json"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 120
+    }
+  ]
+}

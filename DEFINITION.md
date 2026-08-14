@@ -2,15 +2,23 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-08-13
+**最后更新**: 2026-08-14
 
 
 
 
 
-**Brain 版本**: 1.273.5
+**Brain 版本**: 1.273.6
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.273.6 — Kernel CLI ownership 前置栅栏
+
+- `runKernelMain` 不再于 Controller ownership CAS 前激活 queued task；task 激活改为 `runLoop` 首次权威 CAS 成功后的回调。
+- 错误 Controller session 的真实 CLI 在 task/heartbeat/decision/attempt 零业务推进时以 `controller_lease_lost` 非零退出；正确 session 仍激活 queued task。
+- 沿用 `runLoop` 单次首次 heartbeat CAS，不新增重复心跳或 schema migration。
 
 ---
 

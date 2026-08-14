@@ -445,9 +445,9 @@ export async function runKernelMain({
       },
     });
     pool ??= deps?.pool;
-    // r17 实证修复：task.status 派发时也不置 in_progress，运行中恒 'queued'。
-    // 启动流程装载 task 后一次性翻面；非关键路径，失败只告警不阻断 loop 启动。
-    if (!dryRun) {
+    const onOwnershipVerified = dryRun ? null : async () => {
+      // task 激活必须晚于 runLoop 的首次 Controller ownership CAS；错误 session
+      // 在任何 task 业务状态改变前 fail-closed。激活失败仍只告警，不阻断 loop。
       try {
         await activateQueuedTask(pool, taskId);
       } catch (err) {
@@ -455,13 +455,14 @@ export async function runKernelMain({
           `[orchestrator] task 启动置位失败 task=${taskId}: ${err.message}`,
         );
       }
-    }
+    };
     return await runLoopFn(deps, {
       taskId,
       runId,
       resumeToken,
       controllerSessionId,
       dryRun,
+      onOwnershipVerified,
     });
   } catch (error) {
     if (pool && runId && !dryRun) {

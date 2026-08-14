@@ -524,6 +524,7 @@ export async function runLoop(
     resumeToken = null,
     controllerSessionId = null,
     dryRun = false,
+    onOwnershipVerified = null,
   },
 ) {
   const collect = deps.collectGroundTruth ?? defaultCollect;
@@ -563,6 +564,9 @@ export async function runLoop(
     if (leaseLost) {
       return { exitReason: 'controller_lease_lost', hops };
     }
+  }
+  if (!dryRun && onOwnershipVerified) {
+    await onOwnershipVerified();
   }
 
   if (resumeToken) {
