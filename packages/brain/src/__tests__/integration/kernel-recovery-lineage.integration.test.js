@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 
 import pool from '../../db.js';
 import { createKernelRun } from '../../orchestrator/kernel-run-store.js';
+import { collectGroundTruth } from '../../orchestrator/ground-truth.js';
 
 const schema = `kernel_recovery_lineage_${process.pid}_${randomUUID().replaceAll('-', '')}`;
 const quote = (value) => `"${value.replaceAll('"', '""')}"`;
@@ -77,6 +78,17 @@ beforeAll(async () => {
     CREATE TABLE cecelia_events (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), event_type text,
       source text, payload jsonb
+    );
+    CREATE TABLE orchestrator_decision_log (
+      run_id uuid NOT NULL, hop integer NOT NULL, action text NOT NULL,
+      observed jsonb NOT NULL DEFAULT '{}', derived_phase text,
+      gate_verdict text, detail text, created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE TABLE harness_attempts (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), run_id uuid NOT NULL,
+      role text NOT NULL, status text NOT NULL, result jsonb,
+      error_code text, hop integer NOT NULL DEFAULT 1,
+      created_at timestamptz NOT NULL DEFAULT now(), completed_at timestamptz
     );
   `);
 });
@@ -169,5 +181,86 @@ describe('explicit recovery lineage [PostgreSQL]', () => {
       [ids.predecessorRunId],
     );
     expect(count.rows[0].count).toBe(0);
+  });
+
+  it('queries explicit-recovery validation lineage without comparing json text to uuid', async () => {
+    const ids = await fixture();
+    const recoveryRunId = randomUUID();
+    const headSha = 'c'.repeat(40);
+    const prUrl = 'https://github.com/perfectuser21/cecelia/pull/4872';
+    await schemaPool.query(
+      `INSERT INTO orchestrator_decision_log
+         (run_id,hop,action,observed,derived_phase,gate_verdict)
+       VALUES ($1,7,'spawn:evaluator',$2::jsonb,'evaluate','allow')`,
+      [ids.predecessorRunId, JSON.stringify({
+        routingReceipt: { id: ids.receiptId },
+        contract: { id: ids.contractId, row: { approved_sha: 'b'.repeat(40) } },
+        implementationBaseline: { base_sha: 'a'.repeat(40) },
+        pr: { url: prUrl, head_sha: headSha },
+      })],
+    );
+    await schemaPool.query(
+      `INSERT INTO harness_attempts (run_id,role,status,result,completed_at)
+       VALUES ($1,'generator','completed','{}',now())`,
+      [ids.predecessorRunId],
+    );
+
+    const groundTruthPool = {
+      async query(sql, params) {
+        if (sql.includes('AS validation_origin_run_id')) {
+          return schemaPool.query(sql, params);
+        }
+        if (sql.startsWith('SELECT * FROM initiative_runs')) return { rows: [{
+          id: recoveryRunId, current_task_id: ids.taskId, phase: 'evaluate',
+          contract_id: ids.contractId, pr_url: prUrl,
+          created_source: 'explicit_recovery', predecessor_run_id: ids.predecessorRunId,
+          record_trust_status: 'trusted',
+        }] };
+        if (sql.startsWith('SELECT * FROM initiative_contracts')) {
+          return { rows: [{ id: ids.contractId, status: 'approved', approved_sha: 'b'.repeat(40) }] };
+        }
+        if (sql.includes('FROM initiative_contract_artifacts')) return { rows: [] };
+        if (sql.startsWith('SELECT * FROM tasks')) return { rows: [{
+          id: ids.taskId, status: 'in_progress',
+          payload: { routing_receipt_id: ids.receiptId, pr_url: prUrl },
+        }] };
+        if (sql.includes('FROM work_routing_receipts receipt')) return { rows: [{
+          id: ids.receiptId, task_id: ids.taskId, work_kind: 'coding_mutation',
+          change_kind: 'bugfix', pipeline: 'harness', repo: 'cecelia',
+          evidence: { branch: 'cp-recovery', base_sha: 'a'.repeat(40) },
+          superseded: false,
+        }] };
+        if (sql.includes('FROM orchestrator_decision_log fix')) return { rows: [] };
+        if (sql.includes('FROM orchestrator_decision_log')) return { rows: [] };
+        if (sql.includes('FROM harness_attempts')) return { rows: [] };
+        if (sql.includes('FROM account_usage_cache')) return { rows: [] };
+        if (sql.includes('FROM gan_case_file')) return { rows: [] };
+        throw new Error(`unexpected sql: ${sql}`);
+      },
+    };
+    const execCmd = (command) => {
+      if (command.includes('gh pr view')) return JSON.stringify({
+        number: 4872, state: 'OPEN', mergeStateStatus: 'CLEAN',
+        headRefName: 'cp-08122220-a8da7da7', headRefOid: headSha,
+        statusCheckRollup: [],
+      });
+      if (command.includes('docker ps')) return '';
+      if (command.includes('ls-remote')) return '';
+      return '';
+    };
+
+    const observed = await collectGroundTruth({
+      pool: groundTruthPool,
+      execCmd,
+      fileExists: () => false,
+      readFile: () => '',
+    }, { taskId: ids.taskId, runId: recoveryRunId });
+
+    expect(observed.verifiedExistingPrOrigin).toMatchObject({
+      source: 'trusted_prior_kernel_run',
+      run_id: ids.predecessorRunId,
+      pr_url: prUrl,
+      pr_head_sha: headSha,
+    });
   });
 });
