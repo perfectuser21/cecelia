@@ -9,14 +9,12 @@ import { runMigrations } from '../../migrate.js';
 import { writeHeartbeat } from '../../orchestrator/heartbeat.js';
 import { reconcileOwnerlessKernelRuns } from '../../orchestrator/kernel-controller-lifecycle.js';
 import { createKernelLeasePgFixture } from './kernel-controller-lease-renewal.pg-fixture.js';
-
 const fixture = createKernelLeasePgFixture();
 const rollbackSql = readFileSync(
   new URL('../../../migrations/rollback/416_controller_session_nonblank.down.sql', import.meta.url),
   'utf8',
 );
 let testPool;
-
 async function constraintOracle() {
   const { rows } = await testPool.query(
     `SELECT (
@@ -29,13 +27,11 @@ async function constraintOracle() {
   );
   return rows;
 }
-
 beforeAll(async () => {
   await fixture.createIsolatedDatabase();
   testPool = fixture.pool();
 }, 60_000);
 afterAll(() => fixture.dropIsolatedDatabase(), 30_000);
-
 describe('migration 416 controller session nonblank（真 PG）', () => {
   it('CREATE-SESSION-C: JS 创建边拒绝 TAB/NBSP/ideographic space ownership', async () => {
     for (const blankSession of ['\t', '\u00a0', '\u3000']) {
@@ -43,7 +39,6 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
         .rejects.toThrow('missing controller ownership (fail-closed)');
     }
   });
-
   it('MIGRATION-C: upgrade/第二次 upgrade/rollback/re-upgrade/第二次 re-upgrade 保持 invariant', async () => {
     await testPool.query(rollbackSql);
     const historical = [
@@ -53,13 +48,11 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
       await fixture.seedHistoricalBlankRun('\u00a0'),
       await fixture.seedHistoricalBlankRun('\u3000'),
     ];
-
     const upgrade = await runMigrations(testPool);
     const secondUpgrade = await runMigrations(testPool);
     expect(upgrade).toContain('416');
     expect(secondUpgrade).toEqual([]);
     expect(await constraintOracle()).toEqual([{ constraint_validated: true, version_count: 1 }]);
-
     const { rows: normalized } = await testPool.query(
       `SELECT controller_session_id
          FROM initiative_runs
@@ -69,17 +62,14 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
     );
     expect(normalized).toHaveLength(5);
     expect(normalized.every(({ controller_session_id: session }) => session === null)).toBe(true);
-
     await testPool.query(rollbackSql);
     expect(await constraintOracle()).toEqual([{ constraint_validated: null, version_count: 0 }]);
-
     const reUpgrade = await runMigrations(testPool);
     const secondReUpgrade = await runMigrations(testPool);
     expect(reUpgrade).toContain('416');
     expect(secondReUpgrade).toEqual([]);
     expect(await constraintOracle()).toEqual([{ constraint_validated: true, version_count: 1 }]);
   });
-
   it('NEW-WRITE-C: 数据库权威边拒绝新写入空串或纯空白 ownership', async () => {
     const errors = [];
     for (const blankSession of ['', '   ', '\t', '\u00a0', '\u3000']) {
@@ -109,7 +99,6 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
     }
     expect(errors).toEqual(['23514', '23514', '23514', '23514', '23514']);
   });
-
   it('BLANK-C: rollout 空白行不能 heartbeat 续命且未过期 lease 也被 reconcile 收敛', async () => {
     await testPool.query(rollbackSql);
     const historical = [
@@ -119,7 +108,6 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
       { session: '\u00a0', ...(await fixture.seedHistoricalBlankRun('\u00a0')) },
       { session: '\u3000', ...(await fixture.seedHistoricalBlankRun('\u3000')) },
     ];
-
     const heartbeatRows = [];
     for (const row of historical) {
       const heartbeat = await writeHeartbeat(testPool, {
@@ -140,7 +128,6 @@ describe('migration 416 controller session nonblank（真 PG）', () => {
         ORDER BY id`,
       [historical.map(({ runId }) => runId)],
     );
-
     expect(heartbeatRows).toEqual([0, 0, 0, 0, 0]);
     expect(historical.every(({ runId }) => recoveredIds.includes(runId))).toBe(true);
     expect(rows.every(({ phase }) => phase === 'failed')).toBe(true);

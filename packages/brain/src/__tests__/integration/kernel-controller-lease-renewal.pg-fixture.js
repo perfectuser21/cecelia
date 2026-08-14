@@ -7,25 +7,20 @@ import {
   createKernelRun,
   CONTROLLER_LEASE_DEFAULT_SECONDS,
 } from '../../orchestrator/kernel-run-store.js';
-
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
-
 export const LEASE = CONTROLLER_LEASE_DEFAULT_SECONDS;
 export const MIN = 60_000;
-
 export function createKernelLeasePgFixture() {
   let adminPool;
   let testPool;
   let databaseName;
-
   function quotedIdentifier(value) {
     if (!/^kernel_leaserenew_[a-z0-9_]+$/.test(value)) {
       throw new Error(`unsafe test database identifier: ${value}`);
     }
     return `"${value}"`;
   }
-
   async function createIsolatedDatabase() {
     databaseName = `kernel_leaserenew_${process.pid}_${randomUUID().replaceAll('-', '')}`;
     adminPool = new Pool({
@@ -50,7 +45,6 @@ export function createKernelLeasePgFixture() {
     });
     testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 10 });
   }
-
   async function dropIsolatedDatabase() {
     if (testPool) await testPool.end().catch(() => {});
     if (adminPool && databaseName) {
@@ -68,12 +62,10 @@ export function createKernelLeasePgFixture() {
     }
     if (adminPool) await adminPool.end().catch(() => {});
   }
-
   function pool() {
     if (!testPool) throw new Error('kernel lease PG fixture is not initialized');
     return testPool;
   }
-
   async function seedOwnedRun({ controllerSessionId }) {
     const initiativeId = randomUUID();
     const taskId = randomUUID();
@@ -95,7 +87,6 @@ export function createKernelLeasePgFixture() {
     });
     return { runId: created.run.id, taskId, initiativeId };
   }
-
   async function seedHistoricalBlankRun(controllerSessionId) {
     const initiativeId = randomUUID();
     const taskId = randomUUID();
@@ -116,7 +107,6 @@ export function createKernelLeasePgFixture() {
     );
     return { runId: rows[0].id, taskId };
   }
-
   async function leaseOf(runId) {
     const { rows } = await pool().query(
       `SELECT r.controller_lease_expires_at, r.orchestrator_heartbeat_at,
@@ -129,7 +119,6 @@ export function createKernelLeasePgFixture() {
     );
     return rows[0];
   }
-
   async function auditEvents(runId) {
     const { rows } = await pool().query(
       `SELECT event_type, source, task_id, payload
@@ -140,7 +129,6 @@ export function createKernelLeasePgFixture() {
     );
     return rows;
   }
-
   async function installRejectingAuditTrigger(eventType) {
     if (!['kernel_controller_lease_renewed', 'kernel_ownerless_run_recovered'].includes(eventType)) {
       throw new Error(`unsafe audit event fixture: ${eventType}`);
@@ -163,12 +151,10 @@ export function createKernelLeasePgFixture() {
          EXECUTE FUNCTION reject_kernel_audit_event('${eventType}')`,
     );
   }
-
   async function removeRejectingAuditTrigger() {
     await pool().query('DROP TRIGGER IF EXISTS reject_kernel_audit_event_trigger ON cecelia_events');
     await pool().query('DROP FUNCTION IF EXISTS reject_kernel_audit_event()');
   }
-
   async function waitForBlockedFinalize() {
     const deadline = Date.now() + 5_000;
     while (Date.now() < deadline) {
@@ -187,7 +173,6 @@ export function createKernelLeasePgFixture() {
     }
     throw new Error('reconcile did not reach the blocked finalize boundary');
   }
-
   return {
     auditEvents,
     createIsolatedDatabase,

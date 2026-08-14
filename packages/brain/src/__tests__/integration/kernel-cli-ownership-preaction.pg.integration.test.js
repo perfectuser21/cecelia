@@ -11,21 +11,17 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createKernelRun } from '../../orchestrator/kernel-run-store.js';
-
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
-
 let adminPool;
 let testPool;
 let databaseName;
-
 function quotedIdentifier(value) {
   if (!/^kernel_cli_owner_[a-z0-9_]+$/.test(value)) {
     throw new Error(`unsafe test database identifier: ${value}`);
   }
   return `"${value}"`;
 }
-
 async function createIsolatedDatabase() {
   databaseName = `kernel_cli_owner_${process.pid}_${randomUUID().replaceAll('-', '')}`;
   adminPool = new Pool({
@@ -50,7 +46,6 @@ async function createIsolatedDatabase() {
   });
   testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 5 });
 }
-
 async function dropIsolatedDatabase() {
   if (testPool) await testPool.end().catch(() => {});
   if (adminPool && databaseName) {
@@ -68,7 +63,6 @@ async function dropIsolatedDatabase() {
   }
   if (adminPool) await adminPool.end().catch(() => {});
 }
-
 async function seedQueuedRun() {
   const taskId = randomUUID();
   const initiativeId = randomUUID();
@@ -100,7 +94,6 @@ async function seedQueuedRun() {
     initialLease: created.run.controller_lease_expires_at,
   };
 }
-
 function runActualCli({
   taskId,
   runId,
@@ -132,7 +125,6 @@ function runActualCli({
     timeout: 15_000,
   });
 }
-
 async function readOracle({ taskId, runId }) {
   const { rows } = await testPool.query(
     `SELECT t.status AS task_status,
@@ -153,10 +145,8 @@ async function readOracle({ taskId, runId }) {
   );
   return rows[0];
 }
-
 beforeAll(createIsolatedDatabase, 60_000);
 afterAll(dropIsolatedDatabase, 30_000);
-
 describe('Kernel CLI ownership pre-action fence（真 PG）', () => {
   async function expectRejectedSession({ controllerSessionId, includeControllerSessionArg = true }) {
     const seeded = await seedQueuedRun();
@@ -167,7 +157,6 @@ describe('Kernel CLI ownership pre-action fence（真 PG）', () => {
       includeControllerSessionArg,
     });
     const after = await readOracle(seeded);
-
     expect(cli.status).toBe(2);
     expect(cli.stdout).toContain('controller_lease_lost');
     expect(before.task_status).toBe('queued');
@@ -184,28 +173,22 @@ describe('Kernel CLI ownership pre-action fence（真 PG）', () => {
     expect(before.event_count).toBe(0);
     expect(after.event_count).toBe(0);
   }
-
   it('错误 session: exit 2/controller_lease_lost 且业务零推进', () => (
     expectRejectedSession({ controllerSessionId: 'forged-wrong-session' })
   ));
-
   it('空白 session: exit 2/controller_lease_lost 且业务零推进', () => (
     expectRejectedSession({ controllerSessionId: '' })
   ));
-
   it('缺失 session 参数: exit 2/controller_lease_lost 且业务零推进', () => (
     expectRejectedSession({ controllerSessionId: undefined, includeControllerSessionArg: false })
   ));
-
   it('不存在 session: exit 2/controller_lease_lost 且业务零推进', () => (
     expectRejectedSession({ controllerSessionId: randomUUID() })
   ));
-
   it('正确 session: CLI 通过 owner fence 后仍把 queued task 激活为 in_progress', async () => {
     const seeded = await seedQueuedRun();
     const cli = runActualCli(seeded);
     const after = await readOracle(seeded);
-
     expect(cli.status).toBe(0);
     expect(cli.stdout).toContain('context_resume_claim_lost');
     expect(after.task_status).toBe('in_progress');
