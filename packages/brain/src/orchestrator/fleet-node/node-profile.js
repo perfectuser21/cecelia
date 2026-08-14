@@ -17,7 +17,7 @@ const CANONICAL_BASELINE = Object.freeze({
     'xian-mac-m4': 'http://100.71.151.105:5221/api/brain/health',
     'xian-mac-m1': 'http://100.71.151.105:5221/api/brain/health',
   }),
-  runner_image_digest: 'sha256:5fa1b7badc19a9cc1a806777d17023092e51d74330612143798d9ac7228693cc',
+  runner_image_digest: 'sha256:8aeecbbdbb92b33011ead68a78964dc0e7c4ecd38c66251579c73a14303f8746',
   runtime_resources: Object.freeze({
     postgres: Object.freeze({
       image_digest: 'pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62',
