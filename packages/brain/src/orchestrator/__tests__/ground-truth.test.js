@@ -1257,6 +1257,10 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
         prView: JSON.stringify({
           state: 'MERGED', mergeStateStatus: 'CLEAN', headRefOid: 'sha-abc',
           statusCheckRollup: [{ state: 'SUCCESS' }],
+          files: [
+            { path: 'packages/brain/src/work-router.js' },
+            { path: 'sprints/08121555-unified-work-router/contract-dod.md' },
+          ],
         }),
       },
     });
@@ -1265,6 +1269,11 @@ describe('collectGroundTruth：PR 状态（gh 封装）', () => {
     expect(o.pr.state).toBe('MERGED');
     expect(o.pr.merged).toBe(true);
     expect(o.pr.head_sha).toBe('sha-abc');
+    expect(o.pr.changed_files).toEqual([
+      'packages/brain/src/work-router.js',
+      'sprints/08121555-unified-work-router/contract-dod.md',
+    ]);
+    expect(deps.execCmd.calls.some((cmd) => cmd.includes('statusCheckRollup,files'))).toBe(true);
   });
 
   it('ci 映射：任一 check FAILURE → fail', async () => {

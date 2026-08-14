@@ -89,13 +89,20 @@ git -C "$TEST_ROOT/workspace" checkout -b cp-trusted-publisher >/dev/null
 git -C "$TEST_ROOT/workspace" remote add origin "$TEST_ROOT/remote.git"
 git -C "$TEST_ROOT/workspace" config remote.origin.pushurl \
   file:///nonexistent/harness-provider-push-disabled
+printf 'already on target main\n' > "$TEST_ROOT/workspace/main-drift.txt"
+git -C "$TEST_ROOT/workspace" add main-drift.txt
+git -C "$TEST_ROOT/workspace" commit -m 'chore: target main drift fixture' >/dev/null
+printf 'existing PR change\n' > "$TEST_ROOT/workspace/task-existing.txt"
+git -C "$TEST_ROOT/workspace" add task-existing.txt
+git -C "$TEST_ROOT/workspace" commit -m 'feat: existing PR fixture' >/dev/null
+PR_HEAD_SHA=$(git -C "$TEST_ROOT/workspace" rev-parse HEAD)
 printf 'change\n' > "$TEST_ROOT/workspace/change.txt"
 git -C "$TEST_ROOT/workspace" add change.txt
 git -C "$TEST_ROOT/workspace" commit -m 'feat: trusted publisher fixture' >/dev/null
 HEAD_SHA=$(git -C "$TEST_ROOT/workspace" rev-parse HEAD)
 
 cat > "$TEST_ROOT/generator.json" <<JSON
-{"task_bundle":{"role":"generator","run_id":"11111111-1111-4111-8111-111111111111","attempt_id":"22222222-2222-4222-8222-222222222222","inputs":{"task_id":"33333333-3333-4333-8333-333333333333","workspace_spec":{"repo":"perfectuser21/cecelia","branch":"cp-trusted-publisher","base_sha":"$BASE_SHA"}}}}
+{"task_bundle":{"role":"generator","run_id":"11111111-1111-4111-8111-111111111111","attempt_id":"22222222-2222-4222-8222-222222222222","inputs":{"task_id":"33333333-3333-4333-8333-333333333333","pull_request":{"head_sha":"$PR_HEAD_SHA","changed_files":["task-existing.txt"]},"workspace_spec":{"repo":"perfectuser21/cecelia","branch":"cp-trusted-publisher","base_sha":"$BASE_SHA","expected_head_sha":"$PR_HEAD_SHA"}}}}
 JSON
 printf '%s\n' '{"status":"completed","summary":"done","artifacts":[],"checks":[],"decision":null,"error":null,"case_file":null}' > "$TEST_ROOT/result.json"
 mkdir -p "$TEST_ROOT/trusted-gh"
@@ -129,7 +136,8 @@ fi
 jq -e --arg sha "$HEAD_SHA" '
   [.artifacts[] | select(.type == "git_candidate" and .verification_status == "verified"
     and .source_attempt_id == "22222222-2222-4222-8222-222222222222"
-    and .head_sha == $sha)] | length == 1
+    and .head_sha == $sha
+    and .changed_files == ["change.txt", "task-existing.txt"])] | length == 1
 ' "$TEST_ROOT/result.json" >/dev/null
 
 cat > "$TEST_ROOT/publisher.json" <<JSON
