@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.30
+**Brain 版本**: 1.273.31
+
+## Brain 1.273.31 — Role-chain Routing Envelope
+
+- B-10 真实角色链在任务 API 顶层声明 `change_kind`、`mutation_intent` 与 domain，保证统一 Router 在创建动作前完成确定性路由。
 
 ## Brain 1.273.30 — Judge Deferred Acceptance Boundary
 

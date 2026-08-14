@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.30
+**Brain 版本**: 1.273.31
+
+## Role-chain Routing Envelope（Brain 1.273.31）
+
+- B-10 真实角色链在任务 API 顶层声明 `change_kind`、`mutation_intent` 与 domain，避免 coding 路由输入被 payload 层级吞掉。
 
 ## Judge Deferred Acceptance Boundary（Brain 1.273.30）
 

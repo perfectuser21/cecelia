@@ -29,7 +29,7 @@ if [[ -z "$TASK_ID" ]]; then
     --arg title "Unified Work Router role-chain $(date -u +%Y%m%dT%H%M%SZ)" \
     --arg base "$BASELINE_SHA" \
     --arg branch "$(git branch --show-current)" \
-    '{title:$title,task_type:"harness_initiative",priority:"P1",payload:{mutation_intent:"write",domain:"coding",change_kind:"bugfix",repo:"cecelia",map_scope:["F0"],base_sha:$base,branch:$branch,target_environment:"local_api"}}')
+    '{title:$title,task_type:"harness_initiative",priority:"P1",change_kind:"bugfix",mutation_intent:"write",domain:"coding",payload:{repo:"cecelia",map_scope:["F0"],base_sha:$base,branch:$branch,target_environment:"local_api"}}')
   CREATE_RESPONSE=$(curl -fsS -X POST "$BRAIN_URL/api/brain/tasks" \
     -H 'content-type: application/json' -d "$CREATE_BODY") \
     || fail 'Controller failed to create role-chain task'
