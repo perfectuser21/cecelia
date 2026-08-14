@@ -11,11 +11,6 @@ const denylist = fileURLToPath(new URL(
   '../../../../quality/smoke-denylist.txt',
   import.meta.url,
 ));
-const contractDod = fileURLToPath(new URL(
-  '../../../../../sprints/08121555-unified-work-router/contract-dod.md',
-  import.meta.url,
-));
-
 describe('unified work router role-chain smoke CI contract', () => {
   it('requires an explicit real Harness opt-in outside the generic smoke job', () => {
     const result = spawnSync('bash', [script], {
@@ -33,8 +28,17 @@ describe('unified work router role-chain smoke CI contract', () => {
       .toMatch(/^unified-work-router-role-chain-smoke\.sh$/m);
   });
 
-  it('keeps the authoritative DoD command explicitly opted in', () => {
-    expect(readFileSync(contractDod, 'utf8'))
-      .toContain('HARNESS_ROLE_CHAIN_ENABLED=1');
+  it('accepts the opt-in only from the execution environment', () => {
+    const result = spawnSync('bash', [script], {
+      encoding: 'utf8',
+      env: {
+        PATH: process.env.PATH,
+        HARNESS_ROLE_CHAIN_ENABLED: '1',
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).not.toContain('SKIP:');
+    expect(result.stderr).toContain('DB_URL is required');
   });
 });

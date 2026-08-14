@@ -8,4 +8,4 @@ END $$;
 ALTER TABLE tasks
   ALTER COLUMN trigger_source TYPE varchar(20);
 
-DELETE FROM schema_version WHERE version = '423';
+DELETE FROM schema_version WHERE version = '424';

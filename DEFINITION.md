@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.35
+**Brain 版本**: 1.273.36
+
+## Brain 1.273.36 — Controller Authority Merge Closure
+
+- Controller lease 与 durable session/generation authority 收敛为同一 CAS 边界，心跳、终态和 ownerless 回收均不得跨代写入。
+- 真实 Harness 角色链的 opt-in 从执行环境显式注入，不改写已批准冻结合同。
 
 ## Brain 1.273.35 — Authoritative PR Candidate Impact
 
@@ -140,7 +145,7 @@
 ## Brain 1.273.4 — Kernel Controller Authority
 
 - Brain 同事务签发 durable Controller session，并用 generation CAS 心跳续租。
-- 四档 change_kind 直接投影不可变 Routing Receipt；Schema 地板为 422。
+- 四档 change_kind 直接投影不可变 Routing Receipt；Schema 地板为 424。
 
 **状态**: 生产运行中
 
@@ -160,7 +165,7 @@
 
 - Work Router/Map/Impact/服务端 Judge/受信 Publisher 与 Session Controller ownership 合并为同一生产链。
 - Kernel Run 同一事务持久化 Routing/合同/恢复血统及 Controller session/lease，任何一侧证据不完整都失败关闭。
-- Schema 413/414 保留 production authority anchor，Controller ownership 保持 migration 415；Router/Map/合同治理顺延到 416—421。
+- Schema 413—416 保留 production authority anchor；Router/Map/合同治理与 durable Controller authority 顺延到 417—424。
 
 ---
 

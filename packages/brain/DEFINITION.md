@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.35
+**Brain 版本**: 1.273.36
+
+## Controller Authority Merge Closure（Brain 1.273.36）
+
+- 合并 Controller lease 权威语义：心跳续租、终态写入和 ownerless 回收统一受 session/generation CAS 保护。
+- 保持已批准 Harness 合同不可变；真实角色链的 opt-in 只由执行环境注入。
 
 ## Authoritative PR Candidate Impact（Brain 1.273.35）
 

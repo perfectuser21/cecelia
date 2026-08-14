@@ -17,6 +17,12 @@ export async function writeHeartbeat(pool, {
   let committed=false;
   try {
     await client.query('BEGIN');
+    const heartbeatAt = new Date(now).toISOString();
+    const auditIdentity = `kernel_controller_lease_renewed:${runId}:${heartbeatAt}`;
+    await client.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      [auditIdentity],
+    );
     const task=await client.query(
       `SELECT current_task_id FROM initiative_runs WHERE id=$1`,[runId],
     );
@@ -32,7 +38,10 @@ export async function writeHeartbeat(pool, {
     }
     const session=await client.query(
       `UPDATE kernel_controller_sessions SET last_heartbeat_at=$2::timestamptz,
-         lease_expires_at=$2::timestamptz+($3*INTERVAL '1 second'),updated_at=$2::timestamptz
+         lease_expires_at=GREATEST(
+           lease_expires_at,
+           $2::timestamptz+($3*INTERVAL '1 second')
+         ),updated_at=$2::timestamptz
        WHERE id=$1 AND generation=$4 AND run_id=$5 AND status='active'
          AND lease_expires_at >= $2::timestamptz
        RETURNING lease_expires_at`,
@@ -40,11 +49,35 @@ export async function writeHeartbeat(pool, {
     );
     if (session.rows.length!==1) throw new Error('controller_lease_renewal_lost');
     await client.query(
-      `UPDATE initiative_runs SET orchestrator_heartbeat_at=$2,orchestrator_host=$3,
-       orchestrator_pid=$4,controller_lease_expires_at=$5 WHERE id=$1`,
-      [runId,now,host,pid,session.rows[0].lease_expires_at],
+      `UPDATE initiative_runs AS run
+          SET orchestrator_heartbeat_at=$2,orchestrator_host=$3,
+              orchestrator_pid=$4,controller_lease_expires_at=session.lease_expires_at
+         FROM kernel_controller_sessions AS session
+        WHERE run.id=$1 AND session.id=$5 AND session.generation=$6`,
+      [runId,now,host,pid,controllerSessionId,expectedGeneration],
+    );
+    await client.query(
+      `INSERT INTO cecelia_events (event_type,source,task_id,payload)
+       SELECT 'kernel_controller_lease_renewed','kernel_orchestrator',$2,$3::jsonb
+        WHERE NOT EXISTS (
+          SELECT 1 FROM cecelia_events
+           WHERE event_type='kernel_controller_lease_renewed'
+             AND source='kernel_orchestrator'
+             AND task_id=$2
+             AND payload->>'run_id'=$1
+             AND payload->>'heartbeat_at'=$4
+        )`,
+      [runId,task.rows[0].current_task_id,JSON.stringify({
+        run_id:runId,
+        task_id:task.rows[0].current_task_id,
+        heartbeat_at:heartbeatAt,
+        lease_expires_at:new Date(session.rows[0].lease_expires_at).toISOString(),
+        host,
+        pid,
+      }),heartbeatAt],
     );
     await client.query('COMMIT');committed=true;
+    return { rowCount: 1, rows: session.rows };
   } catch(error) {
     if (!committed) await client.query('ROLLBACK');
     throw error;

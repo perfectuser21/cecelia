@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS kernel_controller_sessions (
 );
 ALTER TABLE initiative_runs ADD COLUMN IF NOT EXISTS controller_generation BIGINT;
 
--- Pre-422 controller strings have no durable authority row and therefore
+-- Pre-423 controller strings have no durable authority row and therefore
 -- cannot prove a live owner.  Never bless them with a fresh lease: preserve
 -- the ownerless state so the startup sweeper immediately fails closed.
 UPDATE initiative_runs
@@ -24,7 +24,7 @@ UPDATE initiative_runs
 
 -- Terminal history gets a closed audit identity only; it is never executable.
 INSERT INTO kernel_controller_sessions (id,run_id,task_id,generation,source,status,last_heartbeat_at,lease_expires_at)
-SELECT gen_random_uuid()::text, run.id, run.current_task_id, 1, 'migration-422',
+SELECT gen_random_uuid()::text, run.id, run.current_task_id, 1, 'migration-423',
        'closed',
        COALESCE(run.orchestrator_heartbeat_at,run.started_at,NOW()),
        NOW()
@@ -75,6 +75,6 @@ BEFORE INSERT OR UPDATE OF phase,orchestrator_version,controller_session_id,
 FOR EACH ROW EXECUTE FUNCTION enforce_v2_controller_authority();
 
 INSERT INTO schema_version(version,description,applied_at)
-VALUES ('422','Durable server-issued Kernel Controller authority and generation leases',NOW())
+VALUES ('423','Durable server-issued Kernel Controller authority and generation leases',NOW())
 ON CONFLICT(version) DO NOTHING;
 COMMIT;

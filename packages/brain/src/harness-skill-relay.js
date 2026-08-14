@@ -123,6 +123,29 @@ export function shortId(id) {
   return String(id).replace(/-/g, '').slice(0, 8);
 }
 
+export function buildKernelLaunchArgs({
+  runner,
+  taskId,
+  runId,
+  controllerSessionId,
+  controllerGeneration,
+  resumeToken = null,
+}) {
+  const expectedGeneration = Number(controllerGeneration);
+  if (!controllerSessionId || !Number.isSafeInteger(expectedGeneration) || expectedGeneration < 1) {
+    throw new Error('controller_lease_identity_missing');
+  }
+  const args = [
+    runner,
+    '--task-id', taskId,
+    '--run-id', runId,
+    '--controller-session-id', controllerSessionId,
+    '--controller-generation', String(expectedGeneration),
+  ];
+  if (resumeToken) args.push('--resume-token', resumeToken);
+  return args;
+}
+
 export async function launchKernelProcess({
   taskId,
   runId,
@@ -131,17 +154,15 @@ export async function launchKernelProcess({
   worktreePath,
   resumeToken = null,
 }) {
-  const expectedGeneration=Number(controllerGeneration);
-  if (!controllerSessionId || !Number.isSafeInteger(expectedGeneration) || expectedGeneration<1) {
-    throw new Error('controller_lease_identity_missing');
-  }
   const runner = fileURLToPath(new URL('./orchestrator/run.js', import.meta.url));
-  const args = [runner, '--task-id', taskId, '--run-id', runId];
-  args.push(
-    '--controller-session-id',controllerSessionId,
-    '--controller-generation',String(expectedGeneration),
-  );
-  if (resumeToken) args.push('--resume-token', resumeToken);
+  const args = buildKernelLaunchArgs({
+    runner,
+    taskId,
+    runId,
+    controllerSessionId,
+    controllerGeneration,
+    resumeToken,
+  });
   // 刀0：detached kernel 的 stdout/stderr 落盘到宿主可见目录，替代 stdio:'ignore'。
   // 原先零遗言——kernel 卡死/崩溃时看不到任何栈（planner 停摆 debug 不能）。
   // 落 CECELIA_KERNEL_LOG_DIR，未设置时落 REPO_ROOT/logs/kernel/（bind-mount 持久路径，

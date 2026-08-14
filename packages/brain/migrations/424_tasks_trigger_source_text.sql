@@ -5,5 +5,5 @@ ALTER TABLE tasks
   ALTER COLUMN trigger_source TYPE text;
 
 INSERT INTO schema_version (version, description, applied_at)
-VALUES ('423', 'preserve full routed task trigger provenance', NOW())
+VALUES ('424', 'preserve full routed task trigger provenance', NOW())
 ON CONFLICT (version) DO NOTHING;

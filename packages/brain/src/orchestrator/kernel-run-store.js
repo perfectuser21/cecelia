@@ -621,6 +621,7 @@ export async function finalizeKernelRun(pool, {
   outcome,
   reason = null,
   afterTaskFinalized = null,
+  afterRunFinalized = null,
   expectedControllerSessionId = null,
   expectedControllerGeneration = null,
   enforceControllerOwnership = false,
@@ -805,6 +806,14 @@ export async function finalizeKernelRun(pool, {
           WHERE id = $1`,
         [expectedTaskId, taskOutcome, reason],
       );
+    }
+
+    if (changed && typeof afterRunFinalized === 'function') {
+      await afterRunFinalized(client, {
+        runId,
+        taskId: expectedTaskId,
+        outcome,
+      });
     }
 
     if (outcome === 'done' && typeof afterTaskFinalized === 'function') {

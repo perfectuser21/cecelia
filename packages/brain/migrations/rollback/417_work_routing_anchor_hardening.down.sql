@@ -24,6 +24,6 @@ BEGIN
   END IF;
 END
 $$;
-DELETE FROM schema_version WHERE version = '416';
+DELETE FROM schema_version WHERE version = '417';
 
 COMMIT;

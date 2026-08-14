@@ -174,7 +174,10 @@ describe('runKernelMain：task 启动置位', () => {
   it('非 dry-run：启动时调用 activateQueuedTask(pool, taskId)，随后照常跑 loop', async () => {
     const pool = { end: vi.fn() };
     const activateQueuedTask = vi.fn(async () => ({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }));
-    const runLoopFn = vi.fn(async () => ({ exitReason: 'run_done', hops: 1 }));
+    const runLoopFn = vi.fn(async (_deps, options) => {
+      await options.onOwnershipVerified();
+      return { exitReason: 'run_done', hops: 1 };
+    });
 
     const result = await runKernelMain({
       taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -219,7 +222,10 @@ describe('runKernelMain：task 启动置位', () => {
   it('activateQueuedTask 失败只告警，不中断 loop（非关键路径）', async () => {
     const pool = { end: vi.fn() };
     const activateQueuedTask = vi.fn(async () => { throw new Error('connection refused'); });
-    const runLoopFn = vi.fn(async () => ({ exitReason: 'run_done', hops: 1 }));
+    const runLoopFn = vi.fn(async (_deps, options) => {
+      await options.onOwnershipVerified();
+      return { exitReason: 'run_done', hops: 1 };
+    });
     const logError = vi.fn();
 
     const result = await runKernelMain({

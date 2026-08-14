@@ -1,7 +1,7 @@
 BEGIN;
 
 -- Production 413 shipped with UNIQUE(task_id), which prevents append-only
--- supersession.  416 is the first safe hardening point after that authority
+-- supersession.  417 is the first safe hardening point after that authority
 -- anchor, so remove only the auto-named single-task constraint here.
 ALTER TABLE work_routing_receipts
   DROP CONSTRAINT IF EXISTS work_routing_receipts_task_id_key;
@@ -43,7 +43,7 @@ BEFORE UPDATE OR DELETE ON map_recovery_contracts
 FOR EACH ROW EXECUTE FUNCTION reject_map_recovery_contract_mutation();
 
 INSERT INTO schema_version (version, description, applied_at)
-VALUES ('416', 'Harden production routing authority anchors', NOW())
+VALUES ('417', 'Harden production routing authority anchors', NOW())
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

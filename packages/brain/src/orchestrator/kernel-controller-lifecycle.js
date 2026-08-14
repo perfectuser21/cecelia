@@ -162,6 +162,18 @@ export async function reconcileOwnerlessKernelRuns(pool, { now = new Date() } = 
         enforceControllerOwnership: true,
         expectedControllerAuthorityMismatch: cause === 'controller_authority_mismatch',
         ...(cause === 'controller_lease_expired' ? { controllerExpiredAt: now } : {}),
+        afterRunFinalized: async (client) => {
+          await client.query(
+            `INSERT INTO cecelia_events (event_type,source,task_id,payload)
+             VALUES ('kernel_ownerless_run_recovered','kernel_controller_lifecycle',$1,$2::jsonb)`,
+            [run.current_task_id,JSON.stringify({
+              run_id:run.id,
+              task_id:run.current_task_id,
+              cause,
+              failure_reason:failureReason,
+            })],
+          );
+        },
       });
       if (!finalized.changed) continue;
       recovered.push({

@@ -1,6 +1,3 @@
-contract_branch: cp-harness-propose-r1-39542db5-rcbb7227b-a4
-sprint_dir: sprints/08132021-controller-lease-renewal-r2
-
 ---
 skeleton: false
 journey_type: autonomous

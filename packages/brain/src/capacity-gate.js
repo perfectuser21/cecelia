@@ -14,6 +14,7 @@
  */
 
 import { readFile } from 'fs/promises';
+import { createServer } from 'net';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import pool from './db.js';
@@ -42,6 +43,33 @@ const REQUIRED_SAMPLE_FIELDS = [
   'effective_free_bytes',
   'usage_pct',
 ];
+
+/** 在当前网络 namespace 真 bind 探测端口；任何监听错误都按不可用 fail-closed。 */
+export function isTcpPortAvailable(port, host = '127.0.0.1') {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.unref();
+    server.once('error', () => resolve(false));
+    server.listen({ port, host, exclusive: true }, () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
+async function findAvailablePreviewPort(client, isPortAvailable, excludePrNumber = null) {
+  const usedRes = await client.query(
+    `SELECT port
+       FROM preview_environments
+      WHERE status != 'inactive'
+        AND ($1::int IS NULL OR pr_number <> $1)`,
+    [excludePrNumber],
+  );
+  const usedPorts = new Set(usedRes.rows.map((row) => row.port));
+  for (let port = PORT_MIN; port <= PORT_MAX; port++) {
+    if (!usedPorts.has(port) && await isPortAvailable(port)) return port;
+  }
+  return null;
+}
 
 /**
  * 读取并校验宿主磁盘采样文件。
@@ -118,10 +146,11 @@ function rejection(reason, freeBytes) {
  * @param {string} branchName
  * @param {string} baseRepo
  * @param {import('pg').Pool} dbPool
- * @param {{samplePath?: string}} [opts]
+ * @param {{samplePath?: string,isPortAvailable?:(port:number)=>Promise<boolean>}} [opts]
  * @returns {Promise<{admitted:true,port:number,db_name:string}|{admitted:false,reason:string,free_bytes:number|null,projected_cost_bytes:number,need_release_bytes:number}>}
  */
 export async function admitPreview(prNumber, branchName, baseRepo, dbPool = pool, opts = {}) {
+  const isPortAvailable = opts.isPortAvailable ?? isTcpPortAvailable;
   const client = await dbPool.connect();
   try {
     await client.query('BEGIN');
@@ -130,19 +159,37 @@ export async function admitPreview(prNumber, branchName, baseRepo, dbPool = pool
 
     // ── 幂等复用：已存在活跃记录（status != 'inactive'）的 PR 重推，跳过四层判定直接放行 ──
     const existing = await client.query(
-      `SELECT port, db_name FROM preview_environments WHERE pr_number = $1 AND status != 'inactive'`,
+      `SELECT port, db_name, status
+         FROM preview_environments
+        WHERE pr_number = $1
+          AND status != 'inactive'`,
       [prNumber],
     );
     if (existing.rows.length > 0) {
+      const current = existing.rows[0];
+      let port = current.port;
+      // active 记录对应的监听由 start 脚本按既有 PID 接管；starting 记录若端口已被
+      // 外部 listener 占用则不能盲目复用，否则 API 永远停在 starting。
+      if (current.status === 'starting' && !await isPortAvailable(port)) {
+        port = await findAvailablePreviewPort(client, isPortAvailable, prNumber);
+        if (port == null) {
+          await client.query('ROLLBACK');
+          return rejection('too_many_active', null);
+        }
+      }
       await client.query(
         `UPDATE preview_environments
-            SET status = 'starting', updated_at = NOW()
+            SET branch_name = $2,
+                base_repo = $3,
+                port = $4,
+                status = 'starting',
+                updated_at = NOW()
           WHERE pr_number = $1
             AND status != 'inactive'`,
-        [prNumber],
+        [prNumber, branchName, baseRepo, port],
       );
       await client.query('COMMIT');
-      return { admitted: true, port: existing.rows[0].port, db_name: existing.rows[0].db_name };
+      return { admitted: true, port, db_name: current.db_name };
     }
 
     // ── layer1：采样新鲜度/完整性 ──
@@ -183,12 +230,7 @@ export async function admitPreview(prNumber, branchName, baseRepo, dbPool = pool
     }
 
     // ── 全部通过：同一把锁内扫描空闲端口 + INSERT ──
-    const usedRes = await client.query(`SELECT port FROM preview_environments WHERE status != 'inactive'`);
-    const usedPorts = new Set(usedRes.rows.map((r) => r.port));
-    let port = null;
-    for (let p = PORT_MIN; p <= PORT_MAX; p++) {
-      if (!usedPorts.has(p)) { port = p; break; }
-    }
+    const port = await findAvailablePreviewPort(client, isPortAvailable);
     if (!port) {
       await client.query('ROLLBACK');
       return rejection('too_many_active', freeBytes);
