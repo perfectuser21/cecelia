@@ -402,6 +402,19 @@ validate_claude_terminal_receipt \
   exit 1
 }
 
+# Current Claude CLI result envelopes bind the preallocated --session-id inside
+# the process but omit session_id from JSON; uuid is a message/envelope id, not
+# the resumable session id. The Runner-owned invocation remains authoritative.
+jq 'del(.session_id) | .uuid = "ba364d84-384b-4f4e-abc4-22793ce3ce0e"' \
+  "$CLAUDE_RECEIPT_TMP/completed.json" > "$CLAUDE_RECEIPT_TMP/current-cli.json"
+validate_claude_terminal_receipt \
+  "$CLAUDE_RECEIPT_TMP/current-cli.json" \
+  "$CLAUDE_RECEIPT_TMP/result.json" \
+  "claude-receipt" || {
+  echo 'strict receipt rejected the current Claude CLI envelope shape' >&2
+  exit 1
+}
+
 jq '.structured_output.summary = "different result"' \
   "$CLAUDE_RECEIPT_TMP/completed.json" > "$CLAUDE_RECEIPT_TMP/mismatch.json"
 if validate_claude_terminal_receipt \
