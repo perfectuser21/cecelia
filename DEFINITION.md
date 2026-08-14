@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.25
+**Brain 版本**: 1.273.26
+
+## Brain 1.273.26 — Durable Fleet Candidate Handoff
+
+- Fleet 先落库 Generator candidate authority 再清理容器，重启恢复可安全完成资源回收并保留后续 Evaluator/Judge 的精确 Git 身份。
 
 ## Brain 1.273.25 — Trusted Assertion Runner Baseline
 

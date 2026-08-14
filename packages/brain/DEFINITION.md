@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.25
+**Brain 版本**: 1.273.26
+
+## Durable Fleet Candidate Handoff（Brain 1.273.26）
+
+- Generator 成功退出时先持久化 candidate authority，再回收容器与运行时资源；worker 在两步之间重启后会继续收敛，不会删除下一角色所需的 Git 候选。
 
 ## Trusted Assertion Runner Baseline（Brain 1.273.25）
 

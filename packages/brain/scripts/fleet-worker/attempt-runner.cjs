@@ -1572,6 +1572,21 @@ function createAttemptRunner({
     return tombstone;
   }
 
+  function retainedCandidateState(state) {
+    return Object.freeze({
+      attempt_id: state.attempt_id,
+      run_id: state.run_id,
+      worker_id: state.worker_id,
+      lease_owner: state.lease_owner,
+      lease_generation: state.lease_generation,
+      role: state.role,
+      status: 'candidate',
+      workspace: state.workspace,
+      retained_at: state.retained_at ?? new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+  }
+
   function hasRequiredPendingCredentials(state) {
     const pending = pendingCredentials.get(state.attempt_id);
     return (!state.credential || Boolean(pending?.credential))
@@ -1628,6 +1643,20 @@ function createAttemptRunner({
         assertLeaseFence(state, lease);
       }
       pendingCredentials.delete(attemptId);
+      const retainsGeneratorCandidate = state.role === 'generator'
+        && expected?.statusCode === 0;
+      if (retainsGeneratorCandidate) {
+        // Persist the candidate authority before removing the only container
+        // that still carries its exit status. If the worker dies after Docker
+        // cleanup, startup reconciliation can finish cleanup without deleting
+        // the candidate workspace and Git objects needed by the next role.
+        await stateStore.save({
+          ...state,
+          status: 'candidate',
+          retained_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
       try {
         await docker.remove({
           containerId: state.container_id,
@@ -1644,20 +1673,9 @@ function createAttemptRunner({
       } catch (error) {
         return quarantineState(state, error);
       }
-      if (state.role === 'generator' && expected?.statusCode === 0) {
+      if (retainsGeneratorCandidate) {
         await releaseSourceCandidate(state);
-        await stateStore.save({
-          attempt_id: state.attempt_id,
-          run_id: state.run_id,
-          worker_id: state.worker_id,
-          lease_owner: state.lease_owner,
-          lease_generation: state.lease_generation,
-          role: state.role,
-          status: 'candidate',
-          workspace: state.workspace,
-          retained_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
+        await stateStore.save(retainedCandidateState(state));
         return Object.freeze({
           status: 'retained',
           attempt_id: state.attempt_id,
@@ -2372,7 +2390,22 @@ function createAttemptRunner({
       const cleanedAttempts = [];
 
       for (const state of ownedStates) {
-        if (state.status === 'candidate') continue;
+        if (state.status === 'candidate') {
+          if (state.container_id) {
+            const inspected = await docker.inspect({ containerId: state.container_id });
+            await docker.remove({
+              containerId: state.container_id,
+              attemptId: state.attempt_id,
+              ...(inspected.status === 'missing'
+                ? { containerMissing: true }
+                : {}),
+            });
+            await releaseResources(state);
+            await releaseSourceCandidate(state);
+            await stateStore.save(retainedCandidateState(state));
+          }
+          continue;
+        }
         const inspected = await docker.inspect({ containerId: state.container_id });
         const deliveryConfirmed =
           state.credential_delivery_status === 'delivered';
