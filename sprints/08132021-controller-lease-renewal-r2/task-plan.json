@@ -6,7 +6,7 @@
     {
       "task_id": "ws1",
       "title": "Controller lease 续租、ownership 栅栏与 evaluator-feedback 闭环",
-      "scope": "让创建端 controllerSessionId 经 detached Kernel CLI 透传到 loop，使用正确 session 对活跃 run 的 heartbeat 原子续租 lease；单条 UPDATE...FROM 同时绑定权威 session、active run phase 与 parent task 非终态，错误/纯空白 session、终态 run 或终态 task 均 fail-closed；JavaScript 创建/ownerless 与 PostgreSQL migration 416/CHECK/heartbeat 统一非空白 ownership 语义；在任何 task 业务状态改变前完成权威 owner CAS；把成功续租与 ownerless recovery 事件和对应状态改变原子提交并按 hop 幂等；关闭动态 RegExp CodeQL high 与 Preview starting 端口冲突；以真 PostgreSQL、actual Node CLI、migration 往返和永久 CI 回归验证。",
+      "scope": "让创建端 controllerSessionId 经 detached Kernel CLI 透传到 loop，使用正确 session 对活跃 run 的 heartbeat 原子续租 lease；单条 UPDATE...FROM 同时绑定权威 session、active run phase 与 parent task 非终态，错误/纯空白 session、终态 run 或终态 task 均 fail-closed；JavaScript 创建/ownerless 与 PostgreSQL migration 416/CHECK/heartbeat 统一 locale-independent POSIX+Unicode whitespace ownership 语义；在任何 task 业务状态改变前完成权威 owner CAS；把成功续租与 ownerless recovery 事件和对应状态改变原子提交并按 hop 幂等；关闭动态 RegExp CodeQL high 与 Preview starting 端口冲突；以真 PostgreSQL、actual Node CLI、migration 往返和永久 CI 回归验证。",
       "dod": [
         "[BEHAVIOR] B-01 正确 session 心跳跨过 30 分钟边界后 lease 前移、run 保持 active、reconcile 不回收",
         "[BEHAVIOR] B-02 错误 session 的 heartbeat CAS rowCount=0、lease 不动且无主 run 仍被 fail-closed 回收",

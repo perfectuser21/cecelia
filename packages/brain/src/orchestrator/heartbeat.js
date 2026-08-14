@@ -24,7 +24,10 @@
  * 续租时长复用单一 SSOT CONTROLLER_LEASE_DEFAULT_SECONDS（禁止本文件另写死秒数，
  * INV-2）；now 从参数注入（确定性纪律：本文件不自取时间）。
  */
-import { CONTROLLER_LEASE_DEFAULT_SECONDS } from './kernel-run-store.js';
+import {
+  CONTROLLER_LEASE_DEFAULT_SECONDS,
+  CONTROLLER_SESSION_BLANK_SQL_PATTERN,
+} from './kernel-run-store.js';
 
 export async function writeHeartbeat(pool, {
   runId,
@@ -59,11 +62,11 @@ export async function writeHeartbeat(pool, {
           AND run.current_task_id = parent_task.id
           AND parent_task.status NOT IN ('completed', 'failed', 'cancelled', 'canceled')
           AND run.controller_session_id = $5
-          AND run.controller_session_id !~ '^[[:space:]]*$'
-          AND $5::text !~ '^[[:space:]]*$'
+          AND run.controller_session_id !~ $7
+          AND $5::text !~ $7
           AND run.phase NOT IN ('done', 'failed')
         RETURNING run.id, run.current_task_id, run.controller_lease_expires_at`,
-      [runId, now, host, pid, controllerSessionId, leaseSeconds],
+      [runId, now, host, pid, controllerSessionId, leaseSeconds, CONTROLLER_SESSION_BLANK_SQL_PATTERN],
     );
     if (result.rowCount === 1) {
       const renewed = result.rows[0];

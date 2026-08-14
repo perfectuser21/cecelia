@@ -69,6 +69,8 @@ NODE_ENV=test npx vitest run --config vitest.integration.config.js \
 Tests 3 failed (3)
 ```
 
-对照检查 `kernel-run-store.test.js` 的创建校验以 TAB/NBSP/ideographic space 运行通过，
-说明 JavaScript `trim()` 已拒绝这些值；RED 根因是 heartbeat 与 migration 416 的
-PostgreSQL `BTRIM` 语义未覆盖 POSIX whitespace，以及 heartbeat UPDATE 未绑定父 task 终态。
+对照检查 JS 创建校验以 TAB/NBSP/ideographic space 运行通过；初始 RED 根因是 PostgreSQL
+`BTRIM` 未覆盖 POSIX whitespace，以及 heartbeat UPDATE 未绑定父 task 终态。后续 CI 在 C locale
+暴露裸 `[[:space:]]` 对 NBSP/ideographic space 的 locale 漂移；永久 fixture 固定 UTF-8/C 后，旧实现
+稳定得到 `MIGRATION-C/NEW-WRITE-C/BLANK-C` 3 FAIL 与 heartbeat `[0,0,0,1,1]`。该追加 RED commit
+为 `264193761e`，要求 POSIX 类加完整 Unicode whitespace/FEFF 后在不同 locale 保持同一 oracle。

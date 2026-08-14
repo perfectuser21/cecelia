@@ -34,10 +34,11 @@ const VALID_COMMANDER_MODES = new Set(COMMANDER_MODES);
 // ownership 后由心跳续租；过期且无存活 controller 即判无主进恢复。judgment-pending-user：
 // 具体秒数由主理人拍板，此处取与既有 watchdog 巡检节奏相容的 30 分钟保守默认（心跳按 tick 续租）。
 export const CONTROLLER_LEASE_DEFAULT_SECONDS = 1800;
+export const CONTROLLER_SESSION_BLANK_SQL_PATTERN = '^[[:space:]\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*$';
 
 /** Controller ownership 必须至少含一个非空白字符。 */
 export function hasControllerOwnershipSession(value) {
-  return typeof value === 'string' && /\S/u.test(value);
+  return typeof value === 'string' && /[^\p{White_Space}\uFEFF]/u.test(value);
 }
 
 async function lockActiveKernelAttempts(client, runId) {

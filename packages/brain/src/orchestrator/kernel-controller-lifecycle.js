@@ -15,6 +15,7 @@
  * 禁 mock 边：本模块直接对真 pg.Pool + initiative_runs 读写；测试真 PG 验真，禁 mock pool。
  */
 import {
+  CONTROLLER_SESSION_BLANK_SQL_PATTERN,
   finalizeKernelRun,
   hasControllerOwnershipSession,
 } from './kernel-run-store.js';
@@ -106,12 +107,12 @@ export async function reconcileOwnerlessKernelRuns(pool, { now = new Date() } = 
         AND phase NOT IN ('done', 'failed')
         AND (
           controller_session_id IS NULL
-          OR controller_session_id ~ '^[[:space:]]*$'
+          OR controller_session_id ~ $2
           OR controller_lease_expires_at IS NULL
           OR controller_lease_expires_at < $1
         )
       ORDER BY id`,
-    [now],
+    [now, CONTROLLER_SESSION_BLANK_SQL_PATTERN],
   );
 
   const recovered = [];

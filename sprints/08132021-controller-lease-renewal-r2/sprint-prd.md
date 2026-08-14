@@ -32,7 +32,7 @@
 - 错误/伪造 `controller_session_id`：CAS rowCount=0，不得续租，Kernel fail-closed。
 - `phase` 已 `done`/`failed`：心跳 CAS rowCount=0，不得复活 lease。
 - parent task 已 `completed`/`failed`/`cancelled`/`canceled`：即使 run 仍为 planning，心跳也必须 rowCount=0，heartbeat/lease/event 零推进。
-- ownership 纯空白统一定义为“不含任何非空白字符”：JS 创建/ownerless 判定与 PostgreSQL POSIX `[[:space:]]` 清洗、CHECK、heartbeat 参数及历史行判定一致覆盖 ASCII whitespace、TAB、NBSP、ideographic space。
+- ownership 纯空白统一定义为“不含任何非空白字符”：JS Unicode White_Space+FEFF 与 PostgreSQL POSIX `[[:space:]]`+完整 Unicode whitespace 清洗、CHECK、heartbeat 参数及历史行判定一致，且不依赖数据库 locale。
 - 存量 run（migration 415 前）`controller_session_id IS NULL`：读回 NULL 由 reconcile 接管回收，本刀不回填。
 - `GREATEST(existing, now+lease)`：并发/时钟回拨下 lease 只增不减，避免误缩短已有租约。
 - 审计身份：成功续租按 `(run_id, heartbeat_at)` 识别一个 hop，同身份重放只保留一条事件；错误 session、终态和 `guardRejected` 均为零事件。
@@ -40,14 +40,14 @@
 
 ## 范围限定
 
-**在范围内**：`writeHeartbeat` 续租 CAS + parent task 非终态原子绑定 + fail-closed；`controllerSessionId` 从创建端经 `launchKernelProcess`→`runKernelMain`→loop 的可信透传；续租/recovery 审计的原子幂等语义；migration 416 与运行时 POSIX whitespace ownership invariant；Evaluator 指出的动态正则 CodeQL high；Preview `starting` 端口冲突；真 PG 集成回归；永久入 CI。
+**在范围内**：`writeHeartbeat` 续租 CAS + parent task 非终态原子绑定 + fail-closed；`controllerSessionId` 从创建端经 `launchKernelProcess`→`runKernelMain`→loop 的可信透传；续租/recovery 审计的原子幂等语义；migration 416 与运行时 locale-independent whitespace ownership invariant；Evaluator 指出的动态正则 CodeQL high；Preview `starting` 端口冲突；真 PG 集成回归；永久入 CI。
 **不在范围内**：gear=hotfix 冻结合同物化（`FROZEN_CONTRACT_ARTIFACTS_MISSING`，仅附加回归记录，本刀不修）；lease 时长调参；reaper 巡检节奏变更。
 
 ## 假设
 
 - [ASSUMPTION: `CONTROLLER_LEASE_DEFAULT_SECONDS=1800` 保持为 lease 时长唯一 SSOT，heartbeat 续租复用同一常量，不新增第二处时长定义。]
 - [ASSUMPTION: 心跳频率沿用现状（loop 约 90s 一跳），远小于 1800s lease，不在本刀调整。]
-- [AMENDED FACT: migration 415 提供 `controller_session_id` / `controller_lease_expires_at` 两列；本 PR 明确包含 migration 416，以 PostgreSQL POSIX `[[:space:]]` 把历史纯空白 ownership 归一为 NULL，再加已验证的 nonblank CHECK，rollback 仅移除该 CHECK。续租运行时写路径使用既有表的原子 `UPDATE ... FROM tasks` + `cecelia_events` INSERT。]
+- [AMENDED FACT: migration 415 提供 `controller_session_id` / `controller_lease_expires_at` 两列；本 PR 明确包含 migration 416，以 PostgreSQL POSIX `[[:space:]]` 加完整 Unicode whitespace（含 FEFF）的 locale-independent helper 把历史纯空白 ownership 归一为 NULL，再加已验证的 nonblank CHECK，rollback 移除 CHECK/helper。续租运行时写路径使用既有表的原子 `UPDATE ... FROM tasks` + `cecelia_events` INSERT。]
 
 ## 预期受影响文件
 
@@ -72,9 +72,9 @@
 - `packages/brain/src/__tests__/selfcheck.test.js`: schema 416 selfcheck 回归。
 - `packages/brain/src/capacity-gate.js`: `starting` 记录端口被外部 listener 占用时在 admission 锁内重新分配并持久化。
 - `packages/brain/src/harness-skill-relay.js`: `launchKernelProcess` 通过 `--controller-session-id` 透传创建端 session。
-- `packages/brain/src/orchestrator/heartbeat.js`: `writeHeartbeat` 以单条 SQL 绑定 session/phase/parent task + POSIX whitespace + GREATEST 续租，并与审计事件同事务。
-- `packages/brain/src/orchestrator/kernel-controller-lifecycle.js`: ownerless recovery 复用 JS 非空白 ownership 谓词与 PostgreSQL POSIX 扫描，仅在真实状态改变时同事务写幂等审计。
-- `packages/brain/src/orchestrator/kernel-run-store.js`: 导出/复用 `CONTROLLER_LEASE_DEFAULT_SECONDS` 与 JS 非空白 ownership 谓词，并维护 task 激活 ownership 栅栏。
+- `packages/brain/src/orchestrator/heartbeat.js`: `writeHeartbeat` 以单条 SQL 绑定 session/phase/parent task + locale-independent whitespace + GREATEST 续租，并与审计事件同事务。
+- `packages/brain/src/orchestrator/kernel-controller-lifecycle.js`: ownerless recovery 复用 JS 非空白 ownership 谓词与参数化 PostgreSQL whitespace SSOT，仅在真实状态改变时同事务写幂等审计。
+- `packages/brain/src/orchestrator/kernel-run-store.js`: 导出/复用 lease 与参数化 SQL whitespace SSOT，JS 使用 Unicode White_Space+FEFF 谓词，并维护 task 激活 ownership 栅栏。
 - `packages/brain/src/orchestrator/loop.js`: 首次及逐跳 heartbeat 携 session，rowCount=0 在业务动作前 fail-closed。
 - `packages/brain/src/orchestrator/run.js`: CLI 解析 session、延迟 task 激活，并把 ownership 丢失映射为 exit 2。
 - `packages/brain/src/orchestrator/ground-truth.js`: legacy proposer 用静态 regex capture + 字符串比较关闭 CodeQL high。

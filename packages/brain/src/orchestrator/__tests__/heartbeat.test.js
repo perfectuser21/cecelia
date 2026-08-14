@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { writeHeartbeat } from '../heartbeat.js';
-import { CONTROLLER_LEASE_DEFAULT_SECONDS } from '../kernel-run-store.js';
+import { CONTROLLER_LEASE_DEFAULT_SECONDS, CONTROLLER_SESSION_BLANK_SQL_PATTERN } from '../kernel-run-store.js';
 
 const RUN_ID = '00000000-0000-0000-0000-000000000312';
 const SESSION = 'sess-controller-abc';
@@ -52,11 +52,12 @@ describe('writeHeartbeat', () => {
     expect(sql).toMatch(/WHERE run\.id = \$1/);
     expect(sql).toMatch(/parent_task\.status NOT IN \('completed', 'failed', 'cancelled', 'canceled'\)/);
     expect(sql).toContain('controller_session_id = $5');
-    expect(sql).toContain("controller_session_id !~ '^[[:space:]]*$'");
-    expect(sql).toContain("$5::text !~ '^[[:space:]]*$'");
+    expect(sql).toContain('controller_session_id !~ $7');
+    expect(sql).toContain('$5::text !~ $7');
     expect(sql).toMatch(/phase\s+NOT\s+IN\s*\('done',\s*'failed'\)/);
     // 缺省 leaseSeconds 复用单一 SSOT（INV-2，禁止另写死秒数）。
-    expect(params).toEqual([RUN_ID, now, 'mac-mini-us', 4242, SESSION, CONTROLLER_LEASE_DEFAULT_SECONDS]);
+    expect(params).toEqual([RUN_ID, now, 'mac-mini-us', 4242, SESSION, CONTROLLER_LEASE_DEFAULT_SECONDS, CONTROLLER_SESSION_BLANK_SQL_PATTERN]);
+    for (const whitespace of ['[:space:]', '\u0085', '\u00a0', '\u3000', '\ufeff']) expect(params[6]).toContain(whitespace);
     const eventCall = pool.client.query.mock.calls.find(([statement]) => statement.includes('INSERT INTO cecelia_events'));
     expect(eventCall[0]).toContain("event_type = 'kernel_controller_lease_renewed'");
     expect(JSON.stringify(eventCall[1])).not.toContain(SESSION);

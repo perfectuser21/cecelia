@@ -34,7 +34,7 @@ beforeAll(async () => {
 afterAll(() => fixture.dropIsolatedDatabase(), 30_000);
 describe('migration 416 controller session nonblank（真 PG）', () => {
   it('CREATE-SESSION-C: JS 创建边拒绝 TAB/NBSP/ideographic space ownership', async () => {
-    for (const blankSession of ['\t', '\u00a0', '\u3000']) {
+    for (const blankSession of ['\t', '\u0085', '\u00a0', '\u1680', '\u2007', '\u2028', '\u202f', '\u205f', '\u3000', '\ufeff']) {
       await expect(fixture.seedOwnedRun({ controllerSessionId: blankSession }))
         .rejects.toThrow('missing controller ownership (fail-closed)');
     }
