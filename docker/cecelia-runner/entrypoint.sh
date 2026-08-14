@@ -2110,7 +2110,25 @@ validate_claude_terminal_receipt() {
       and ($result[0].checks | type) == "array"
       and (($result[0].decision | type) == "object" or $result[0].decision == null)
       and (($result[0].error | type) == "object" or $result[0].error == null)
-    ' "$stdout_file" >/dev/null 2>&1
+  ' "$stdout_file" >/dev/null 2>&1
+}
+
+# Claude's current result envelope omits the resumable session_id and exposes a
+# separate message uuid. Keep the Runner-owned invocation identity in that case;
+# if a future CLI does report session_id, require exact agreement.
+resolve_claude_session_binding() {
+  local expected_session_id="$1"
+  local stdout_file="$2"
+  local reported_session_id=""
+
+  [[ -n "$expected_session_id" && -s "$stdout_file" ]] || return 1
+  reported_session_id="$(
+    jq -r 'if type == "object" then (.session_id // empty) else empty end' \
+      "$stdout_file" 2>/dev/null
+  )" || return 1
+  [[ -z "$reported_session_id" || "$reported_session_id" == "$expected_session_id" ]] \
+    || return 1
+  printf '%s\n' "$expected_session_id"
 }
 # attempt-timeout-contract:end
 # commander-provider-contract:end
@@ -2389,6 +2407,7 @@ run_provider_contract() {
       claude_args+=(--dangerously-skip-permissions)
     fi
     if [[ -n "${HARNESS_RESUME_SESSION_ID:-}" ]]; then
+      provider_session_id="$HARNESS_RESUME_SESSION_ID"
       claude_args+=(--resume "$HARNESS_RESUME_SESSION_ID")
     else
       # Claude JSON output exposes session_id only at process exit. Pre-allocate a
@@ -2420,7 +2439,9 @@ run_provider_contract() {
         [[ $provider_exit -ne 0 ]] || provider_exit=1
       }
     fi
-    provider_session_id=$(jq -r '.session_id // empty' "$STDOUT_FILE" 2>/dev/null || true)
+    provider_session_id="$(
+      resolve_claude_session_binding "$provider_session_id" "$STDOUT_FILE"
+    )" || provider_exit=1
   elif [[ "$provider" == "grok" ]]; then
     local grok_args=(
       --cwd "${WORKTREE_PATH:-$PWD}"
