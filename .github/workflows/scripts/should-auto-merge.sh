@@ -20,6 +20,12 @@
 #   fix(xxx):/feat(xxx): 等其它前缀，绝不会用 feat(harness):。命中该前缀 → 跳过通用
 #   auto-merge，把 merge 决定权完全交还给 harness 自己的 evaluator+裁判 gate。
 #
+#   ⚠️ Work Router 会在 Harness PR 标题的 conventional-commit 前缀前再加一段任务短 ID
+#   方括号前缀，形如 `[4478f294] feat(harness): ...`（见 PR #4872）。裸 `^feat\(harness\):`
+#   锚定会漏掉这种带前缀标题，让通用 auto-merge 在 Judge 前抢先合并、架空裁判——这正是
+#   本次 fence 修复的根因。因此匹配时允许一段可选的 `[...] ` 任务前缀，但不放宽到其它
+#   conventional-commit 前缀（fix(ci)/fix(brain)/feat(dashboard) 等仍必须正常 auto-merge）。
+#
 # ⚠️ 未来维护者注意：
 #   - 不要删掉 feat(harness): 判断当「多余代码」——删了会让裁判 gate 再次被架空。
 #   - 不要把这个跳过逻辑错误地套到手动 /dev 的 fix/feat PR 上——那些 PR 就该被通用
@@ -36,7 +42,9 @@ if ! printf '%s' "$HEAD_BRANCH" | grep -qE '^cp-'; then
 fi
 
 # harness-owned PR：交给 harness 自己的 evaluator+DeepSeek 裁判 gate 决定 merge。
-if printf '%s' "$PR_TITLE" | grep -qE '^feat\(harness\):'; then
+# 允许一段可选的 `[任务短ID] ` 前缀（Work Router 会在标题前注入，见 PR #4872），
+# 但只放宽前缀位置，不放宽到 feat(harness): 以外的 conventional-commit 前缀。
+if printf '%s' "$PR_TITLE" | grep -qE '^(\[[^]]*\][[:space:]]*)?feat\(harness\):'; then
   echo "SKIP: harness-owned PR（标题匹配 feat(harness): 前缀），跳过 CI 通用 auto-merge，交给 harness 自己的 evaluator+裁判 gate 处理 merge"
   exit 0
 fi
