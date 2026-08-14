@@ -1,0 +1,29 @@
+{
+  "initiative_id": "4ccfe523-8c69-40d8-a805-8502813fc3c5",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain 后端 —— fleet-worker attempt 生命周期与 Docker 资源治理，无前端/无用户界面",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Fleet Worker 实例互杀防护 + quarantined attempt 终态闭环（namespace 隔离 + fail-closed + restart_reason lineage + PG runtime 投影）",
+      "scope": "在 attempt-resources.cjs reconcile 叠加 instance namespace 过滤维度（cecelia.fleet.instance 标签），只回收本实例且非 retained 的容器/网络；workspace-manager.cjs 暴露 resolveInstanceNamespace（生成/持久化 data root 锚定、重启稳定）；旧无 namespace 容器 fail-closed（不删仅告警）；attempt-runner.cjs 暴露 projectContractRequirements 把 contract_requirements.postgres 机械投影为 runtime_resources.postgres；harness-relay-watchdog.js reconcileExpiredKernelAttempt 对 expired fleet-worker attempt 一次事务终态化为 failed、append-only evidence、生成 replacement 并结构化记录 restart_reason lineage、重复 reconcile 幂等。",
+      "dod": [
+        "[BEHAVIOR] scripts/fleet-worker/instance-fencing.test.cjs 四例转绿（namespace 重启稳定 / 实例隔离不误删他实例 / 旧无 namespace fail-closed / contract→runtime 投影）",
+        "[BEHAVIOR] src/__tests__/integration/kernel-instance-fencing-lineage.pg.integration.test.js 真 PG 两例转绿（expired→failed+restart_reason lineage / 二次 reconcile 幂等无第二 replacement）",
+        "[BEHAVIOR] ## E2E 验收 local_api 脚本全场景通过（真 Docker 双 data root 互杀防护 + pg_isready + namespace 重启稳定 + fail-closed + 场景C 真 PG）",
+        "[ARTIFACT] attempt-resources.cjs 含 cecelia.fleet.instance；workspace-manager.cjs 含 resolveInstanceNamespace；attempt-runner.cjs 含 projectContractRequirements；vitest.config.js 已登记新 PG 集成测试"
+      ],
+      "files": [
+        "packages/brain/scripts/fleet-worker/attempt-resources.cjs",
+        "packages/brain/scripts/fleet-worker/workspace-manager.cjs",
+        "packages/brain/scripts/fleet-worker/attempt-runner.cjs",
+        "packages/brain/src/harness-relay-watchdog.js",
+        "packages/brain/scripts/fleet-worker/instance-fencing.test.cjs",
+        "packages/brain/src/__tests__/integration/kernel-instance-fencing-lineage.pg.integration.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
