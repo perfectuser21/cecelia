@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.21
+**Brain 版本**: 1.273.22
+
+## Staged Evaluator Acceptance（Brain 1.273.22）
+
+- Evaluator 只裁决 candidate 与 upstream evidence；Judge、Publisher、`all_gates_passed` 和完整角色链由服务端 post-Judge 阶段验证，禁止在 Evaluator 内递归启动 Harness。
 
 ## Candidate Manifest Runner Baseline（Brain 1.273.21）
 

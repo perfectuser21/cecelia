@@ -103,7 +103,7 @@ const OBJECTIVES = Object.freeze({
   proposer: 'Propose or revise the implementation contract from the frozen PRD and current contract artifacts.',
   reviewer: 'Independently review the frozen contract against the PRD and return an approval decision.',
   generator: 'Implement or fix the approved contract in the supplied worktree and produce a committed local candidate. Do not push or create a pull request; Publisher owns remote publication after Judge PASS.',
-  evaluator: 'Independently evaluate the current pull request against the approved contract and return evidence.',
+  evaluator: 'Independently evaluate the current candidate against the approved contract and return pre-Judge evidence. Do not launch a nested Controller or Harness role chain. A pre-Judge verdict must not require its own future Judge verdict, Publisher result, all_gates_passed decision, or completed role chain; those checks are deferred to the server-owned post-Judge acceptance stage.',
   judge: 'Independently judge the evaluator evidence. Return PASS or FAIL, a coverage array for every contract or Golden Path step, and an explicit failure_class for FAIL. The server mechanical gate is authoritative.',
   publisher: 'Publish only the exact local candidate authorized by the Judge and merge fence.',
   commander: 'Observe one bounded Run snapshot and return exactly one provider-neutral Commander Directive.',
@@ -475,6 +475,16 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     common.pull_request = observed.pr ?? null;
   }
   if (spec.role === 'evaluator') {
+    common.verification_stage = {
+      name: 'pre_judge',
+      verdict_scope: 'candidate_and_upstream_evidence',
+      deferred_checks: [
+        'judge_verdict',
+        'publisher_result',
+        'all_gates_passed',
+        'completed_role_chain',
+      ],
+    };
     // retained Generator candidate 是本轮实际验收对象。远端 PR 可能仍指向
     // Generator 启动前的旧头，不能用它覆盖 Runner 已验证的候选身份。
     common.pr_branch = observed.candidate?.branch ?? observed.pr?.head_ref ?? null;

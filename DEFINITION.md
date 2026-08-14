@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.21
+**Brain 版本**: 1.273.22
+
+## Brain 1.273.22 — Staged Evaluator Acceptance
+
+- Evaluator TaskBundle 明确冻结为 pre-Judge 裁决：只验证候选与上游证据，不递归启动 Harness，也不以尚未发生的 Judge、Publisher、`all_gates_passed` 或完整角色链作为自身 PASS 前置；这些终态证据由服务端 post-Judge 阶段收口。
 
 ## Brain 1.273.21 — Candidate Manifest Runner Baseline
 
