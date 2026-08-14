@@ -8,7 +8,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { signMachineAttestation } from '../machine-attestation.js';
-import { buildRealDeps, parseArgs, runKernelMain } from '../run.js';
+import * as runEntry from '../run.js';
+
+const { buildRealDeps, parseArgs, runKernelMain } = runEntry;
 
 describe('parseArgs', () => {
   it('--task-id 必填，缺失即抛用法错误', () => {
@@ -41,6 +43,49 @@ describe('parseArgs', () => {
       controllerSessionId: null,
       dryRun: false,
     });
+  });
+});
+
+describe('CLI exit semantics', () => {
+  it('controller_lease_lost 设置非零进程退出码', async () => {
+    expect(typeof runEntry.main).toBe('function');
+    const setExitCode = vi.fn();
+    const result = await runEntry.main([
+      '--task-id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      '--run-id', '11111111-1111-4111-8111-111111111111',
+      '--controller-session-id', 'forged-wrong-session',
+    ], {
+      runKernelMainFn: vi.fn(async () => ({
+        exitReason: 'controller_lease_lost',
+        hops: 0,
+      })),
+      log: vi.fn(),
+      setExitCode,
+    });
+
+    expect(result.exitReason).toBe('controller_lease_lost');
+    expect(setExitCode).toHaveBeenCalledWith(2);
+
+    const runModuleUrl = new URL('../run.js', import.meta.url).href;
+    let childError;
+    try {
+      execFileSync(process.execPath, [
+        '--input-type=module',
+        '--eval',
+        `import { main } from ${JSON.stringify(runModuleUrl)};
+         await main([
+           '--task-id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+           '--run-id', '11111111-1111-4111-8111-111111111111',
+           '--controller-session-id', 'forged-wrong-session',
+         ], {
+           runKernelMainFn: async () => ({ exitReason: 'controller_lease_lost', hops: 0 }),
+           log: () => {},
+         });`,
+      ], { stdio: 'pipe' });
+    } catch (error) {
+      childError = error;
+    }
+    expect(childError?.status).toBe(2);
   });
 });
 

@@ -102,7 +102,7 @@ export async function reconcileOwnerlessKernelRuns(pool, { now = new Date() } = 
       WHERE orchestrator_version = 'v2'
         AND phase NOT IN ('done', 'failed')
         AND (
-          controller_session_id IS NULL
+          NULLIF(BTRIM(controller_session_id), '') IS NULL
           OR controller_lease_expires_at IS NULL
           OR controller_lease_expires_at < $1
         )
@@ -119,12 +119,16 @@ export async function reconcileOwnerlessKernelRuns(pool, { now = new Date() } = 
       : 'controller_lease_expired';
     const failureReason = structuredFailureReason(OWNERLESS_RECOVERED_REASON_PREFIX, cause);
     try {
-      await finalizeKernelRun(pool, {
+      const result = await finalizeKernelRun(pool, {
         runId: run.id,
         expectedTaskId: run.current_task_id,
         outcome: 'failed',
         reason: failureReason,
+        // 候选 SELECT 只是提示。finalizeKernelRun 依既有 task→run 锁序锁住当前行后，
+        // 必须按当前 ownership/lease 再判一次；旧快照无权终结已续租的 run。
+        lockedRunGuard: (lockedRun) => isOwnerlessRun(lockedRun, now),
       });
+      if (result.guardRejected) continue;
       recovered.push({
         runId: run.id, taskId: run.current_task_id, cause, failureReason,
       });

@@ -540,6 +540,31 @@ export async function runLoop(
   const pid = deps.pid ?? process.pid;
 
   const resolvedRunId = runId ?? (await resolveRunId(deps.pool, taskId));
+  let hops = 0;
+  // Controller lease CAS 心跳（sprint 08132021）：每跳携带创建端 controllerSessionId
+  // 续租 lease，心跳不再仅凭 run_id。writeHeartbeat 返回 rowCount=0（session mismatch
+  // 或 run 已终态）= 本 Kernel 已失去 Controller ownership，fail-closed 退出。
+  let leaseLost = false;
+  const beat = async () => {
+    const res = await heartbeat(deps.pool, {
+      runId: resolvedRunId, host, pid, now: now(), controllerSessionId,
+    });
+    if (res && res.rowCount === 0) leaseLost = true;
+    return res;
+  };
+
+  // ownership CAS 是所有外部观测、决策日志与 dispatch 的前置栅栏。
+  // 保留旧单测的心跳注入接口：只有生产默认边或显式传入 session
+  // 时强制首次 CAS；dry-run 仍保持零写入。
+  const ownershipFenceRequired = !dryRun
+    && (heartbeat === defaultWriteHeartbeat || controllerSessionId != null);
+  if (ownershipFenceRequired) {
+    await beat();
+    if (leaseLost) {
+      return { exitReason: 'controller_lease_lost', hops };
+    }
+  }
+
   if (resumeToken) {
     const activate = deps.activateContextResume ?? activateContextResume;
     const activated = await activate(deps.pool, {
@@ -556,20 +581,6 @@ export async function runLoop(
   const groundTruthPaths = collect === defaultCollect
     ? await resolveGroundTruthPaths(deps.pool, taskId)
     : {};
-
-  let hops = 0;
-  // Controller lease CAS 心跳（sprint 08132021）：每跳携带创建端 controllerSessionId
-  // 续租 lease，心跳不再仅凭 run_id。writeHeartbeat 返回 rowCount=0（session mismatch
-  // 或 run 已终态）= 本 Kernel 已失去 Controller ownership，置 leaseLost 让下一跳
-  // fail-closed 退出，绝不静默续跑（INV-9 无主 fail-closed）。
-  let leaseLost = false;
-  const beat = async () => {
-    const res = await heartbeat(deps.pool, {
-      runId: resolvedRunId, host, pid, now: now(), controllerSessionId,
-    });
-    if (res && res.rowCount === 0) leaseLost = true;
-    return res;
-  };
 
   // deadline fence 辅助：检查 run.deadline_at 是否已超过当前时间
   function deadlineExceeded(run) {

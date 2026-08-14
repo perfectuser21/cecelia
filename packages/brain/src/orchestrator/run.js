@@ -485,8 +485,21 @@ export async function runKernelMain({
   }
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+export function exitCodeForExitReason(exitReason) {
+  return ['singleton_conflict', 'controller_lease_lost'].includes(exitReason)
+    ? 2
+    : 0;
+}
+
+export async function main(
+  argv = process.argv.slice(2),
+  {
+    runKernelMainFn = runKernelMain,
+    log = console.log,
+    setExitCode = (code) => { process.exitCode = code; },
+  } = {},
+) {
+  const args = parseArgs(argv);
   const {
     taskId,
     runId,
@@ -494,15 +507,16 @@ async function main() {
     controllerSessionId,
     dryRun,
   } = args;
-  const result = await runKernelMain({
+  const result = await runKernelMainFn({
     taskId,
     runId,
     resumeToken,
     controllerSessionId,
     dryRun,
   });
-  console.log(`[orchestrator] exit: ${result.exitReason} (hops=${result.hops})`);
-  process.exitCode = result.exitReason === 'singleton_conflict' ? 2 : 0;
+  log(`[orchestrator] exit: ${result.exitReason} (hops=${result.hops})`);
+  setExitCode(exitCodeForExitReason(result.exitReason));
+  return result;
 }
 
 // 仅直接执行时跑 main（被测试 import 时不执行）

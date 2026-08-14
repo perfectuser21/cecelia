@@ -40,6 +40,8 @@ export async function writeHeartbeat(pool, {
             updated_at = NOW()
       WHERE id = $1
         AND controller_session_id = $5
+        AND NULLIF(BTRIM(controller_session_id), '') IS NOT NULL
+        AND NULLIF(BTRIM($5::text), '') IS NOT NULL
         AND phase NOT IN ('done', 'failed')`,
     [runId, now, host, pid, controllerSessionId, leaseSeconds],
   );

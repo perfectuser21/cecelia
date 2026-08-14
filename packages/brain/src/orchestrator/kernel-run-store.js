@@ -520,6 +520,7 @@ export async function finalizeKernelRun(pool, {
   outcome,
   reason = null,
   afterTaskFinalized = null,
+  lockedRunGuard = null,
 }) {
   if (!['done', 'failed'].includes(outcome)) {
     throw new Error(`invalid Kernel terminal outcome: ${outcome}`);
@@ -566,7 +567,8 @@ export async function finalizeKernelRun(pool, {
     // createKernelRun also locks task before run. Keeping one global order
     // prevents create/finalize deadlocks under concurrent recovery.
     const { rows: runRows } = await client.query(
-      `SELECT id, current_task_id, phase
+      `SELECT id, current_task_id, phase,
+              controller_session_id, controller_lease_expires_at
          FROM initiative_runs
         WHERE id = $1
           AND orchestrator_version = 'v2'
@@ -578,6 +580,19 @@ export async function finalizeKernelRun(pool, {
       throw new Error(
         `Kernel run/task identity mismatch: ${runId}/${expectedTaskId}`,
       );
+    }
+
+    if (typeof lockedRunGuard === 'function' && !lockedRunGuard(run)) {
+      await client.query('COMMIT');
+      committed = true;
+      return {
+        changed: false,
+        outcome,
+        runId,
+        taskId: expectedTaskId,
+        attemptsTerminalized: 0,
+        guardRejected: true,
+      };
     }
 
     const runAlreadyTerminal = ['done', 'failed'].includes(run.phase);

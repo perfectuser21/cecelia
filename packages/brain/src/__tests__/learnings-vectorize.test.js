@@ -475,6 +475,7 @@ describe('selfcheck schema version', () => {
     // 413 = work_routing_receipts append-only + 不可变触发器（production anchor from PR #4851）。
     // 414 = map_recovery_contracts fallback 路由授权合同（production anchor from PR #4851）。
     // 415 = initiative_runs Session Controller ownership（controller_session_id + lease）。
-    expect(EXPECTED_SCHEMA_VERSION).toBe('415');
+    // 416 = controller_session_id 非空白约束与历史空白值归一。
+    expect(EXPECTED_SCHEMA_VERSION).toBe('416');
   });
 });
