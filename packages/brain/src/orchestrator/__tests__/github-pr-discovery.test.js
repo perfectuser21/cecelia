@@ -41,4 +41,23 @@ describe('github-pr-discovery', () => {
     expect(command).toContain('gh pr list --repo "owner/repo"');
     expect(result).toMatchObject({ url: 'merged-url', state: 'MERGED' });
   });
+
+  it('discovers PRs for tasks created by the unified router repo field', () => {
+    let command = '';
+    const execFn = (value) => {
+      command = value;
+      return JSON.stringify([
+        { headRefName: 'cp-route-abc12345', title: 'open', url: 'open-url', state: 'OPEN' },
+      ]);
+    };
+
+    const result = discoverPrFromGithub(
+      { payload: { repo: 'cecelia' } },
+      'abc12345',
+      execFn,
+    );
+
+    expect(command).toContain('gh pr list --repo "perfectuser21/cecelia"');
+    expect(result).toMatchObject({ url: 'open-url', state: 'OPEN' });
+  });
 });
