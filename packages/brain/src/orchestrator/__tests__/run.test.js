@@ -8,17 +8,20 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { signMachineAttestation } from '../machine-attestation.js';
-import { buildRealDeps, parseArgs, runKernelMain } from '../run.js';
+import * as runEntry from '../run.js';
+
+const { buildRealDeps, parseArgs, runKernelMain } = runEntry;
 
 describe('parseArgs', () => {
   it('--task-id 必填，缺失即抛用法错误', () => {
     expect(() => parseArgs([])).toThrow(/--task-id/);
   });
 
-  it('解析 --task-id / --run-id / --dry-run', () => {
+  it('解析 --task-id / --run-id / --controller-session-id / --resume-token / --dry-run', () => {
     const a = parseArgs([
       '--task-id', 'T1',
       '--run-id', 'R1',
+      '--controller-session-id', 'sess-1',
       '--resume-token', 'resume-token-1',
       '--dry-run',
     ]);
@@ -26,18 +29,63 @@ describe('parseArgs', () => {
       taskId: 'T1',
       runId: 'R1',
       resumeToken: 'resume-token-1',
+      controllerSessionId: 'sess-1',
       dryRun: true,
     });
   });
 
-  it('默认 dryRun=false、runId=null、resumeToken=null', () => {
+  it('默认 dryRun=false、runId=null、resumeToken=null、controllerSessionId=null', () => {
     const a = parseArgs(['--task-id', 'T1']);
     expect(a).toEqual({
       taskId: 'T1',
       runId: null,
       resumeToken: null,
+      controllerSessionId: null,
       dryRun: false,
     });
+  });
+});
+
+describe('CLI exit semantics', () => {
+  it('controller_lease_lost 设置非零进程退出码', async () => {
+    expect(typeof runEntry.main).toBe('function');
+    const setExitCode = vi.fn();
+    const result = await runEntry.main([
+      '--task-id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      '--run-id', '11111111-1111-4111-8111-111111111111',
+      '--controller-session-id', 'forged-wrong-session',
+    ], {
+      runKernelMainFn: vi.fn(async () => ({
+        exitReason: 'controller_lease_lost',
+        hops: 0,
+      })),
+      log: vi.fn(),
+      setExitCode,
+    });
+
+    expect(result.exitReason).toBe('controller_lease_lost');
+    expect(setExitCode).toHaveBeenCalledWith(2);
+
+    const runModuleUrl = new URL('../run.js', import.meta.url).href;
+    let childError;
+    try {
+      execFileSync(process.execPath, [
+        '--input-type=module',
+        '--eval',
+        `import { main } from ${JSON.stringify(runModuleUrl)};
+         await main([
+           '--task-id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+           '--run-id', '11111111-1111-4111-8111-111111111111',
+           '--controller-session-id', 'forged-wrong-session',
+         ], {
+           runKernelMainFn: async () => ({ exitReason: 'controller_lease_lost', hops: 0 }),
+           log: () => {},
+         });`,
+      ], { stdio: 'pipe' });
+    } catch (error) {
+      childError = error;
+    }
+    expect(childError?.status).toBe(2);
   });
 });
 
@@ -119,14 +167,19 @@ describe('runKernelMain fatal convergence', () => {
 });
 
 // r17 实证：task.status 运行中恒 'queued'（派发时也不置 in_progress）。以下锁死
-// runKernelMain 启动流程装载 task 后必须调用 activateQueuedTask（默认实现
-// kernel-run-store.activateQueuedKernelTask）单条 UPDATE，失败只告警不中断 loop
+// runKernelMain 必须把 activateQueuedTask（默认实现
+// kernel-run-store.activateQueuedKernelTask）交给 runLoop，在首次 owner CAS 成功后
+// 才执行单条 UPDATE；失败只告警不中断 loop
 // （PrepPRD: docs/prd/2026-08-04-kernel-phase-persist-prep-prd.md）。
-describe('runKernelMain：task 启动置位', () => {
-  it('非 dry-run：启动时调用 activateQueuedTask(pool, taskId)，随后照常跑 loop', async () => {
+describe('runKernelMain：ownership fence 后 task 启动置位', () => {
+  it('非 dry-run：进入 loop 前不激活，owner 验证回调才激活 task', async () => {
     const pool = { end: vi.fn() };
     const activateQueuedTask = vi.fn(async () => ({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }));
-    const runLoopFn = vi.fn(async () => ({ exitReason: 'run_done', hops: 1 }));
+    const runLoopFn = vi.fn(async (_deps, options) => {
+      expect(activateQueuedTask).not.toHaveBeenCalled();
+      await options.onOwnershipVerified();
+      return { exitReason: 'run_done', hops: 1 };
+    });
 
     const result = await runKernelMain({
       taskId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -169,7 +222,10 @@ describe('runKernelMain：task 启动置位', () => {
   it('activateQueuedTask 失败只告警，不中断 loop（非关键路径）', async () => {
     const pool = { end: vi.fn() };
     const activateQueuedTask = vi.fn(async () => { throw new Error('connection refused'); });
-    const runLoopFn = vi.fn(async () => ({ exitReason: 'run_done', hops: 1 }));
+    const runLoopFn = vi.fn(async (_deps, options) => {
+      await options.onOwnershipVerified();
+      return { exitReason: 'run_done', hops: 1 };
+    });
     const logError = vi.fn();
 
     const result = await runKernelMain({

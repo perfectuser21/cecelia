@@ -34,6 +34,12 @@ const VALID_COMMANDER_MODES = new Set(COMMANDER_MODES);
 // ownership 后由心跳续租；过期且无存活 controller 即判无主进恢复。judgment-pending-user：
 // 具体秒数由主理人拍板，此处取与既有 watchdog 巡检节奏相容的 30 分钟保守默认（心跳按 tick 续租）。
 export const CONTROLLER_LEASE_DEFAULT_SECONDS = 1800;
+export const CONTROLLER_SESSION_BLANK_SQL_PATTERN = '^[[:space:]\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*$';
+
+/** Controller ownership 必须至少含一个非空白字符。 */
+export function hasControllerOwnershipSession(value) {
+  return typeof value === 'string' && /[^\p{White_Space}\uFEFF]/u.test(value);
+}
 
 async function lockActiveKernelAttempts(client, runId) {
   const { rows } = await client.query(
@@ -96,7 +102,7 @@ function validateCreateInput(input) {
   // ownership。缺失/空/非字符串 controllerSessionId → fail-closed（拒绝创建、不写半态 run），
   // 由此杜绝 detached 无主 Kernel（issue 962d399c）。在开事务前校验，保证 initiative_runs 零新行。
   const controllerSessionId = input?.controllerSessionId;
-  if (typeof controllerSessionId !== 'string' || controllerSessionId.trim() === '') {
+  if (!hasControllerOwnershipSession(controllerSessionId)) {
     throw new Error('invalid Kernel run controller session: missing controller ownership (fail-closed)');
   }
   const controllerLeaseSeconds = input?.controllerLeaseSeconds === undefined
@@ -520,6 +526,8 @@ export async function finalizeKernelRun(pool, {
   outcome,
   reason = null,
   afterTaskFinalized = null,
+  afterRunFinalized = null,
+  lockedRunGuard = null,
 }) {
   if (!['done', 'failed'].includes(outcome)) {
     throw new Error(`invalid Kernel terminal outcome: ${outcome}`);
@@ -566,7 +574,8 @@ export async function finalizeKernelRun(pool, {
     // createKernelRun also locks task before run. Keeping one global order
     // prevents create/finalize deadlocks under concurrent recovery.
     const { rows: runRows } = await client.query(
-      `SELECT id, current_task_id, phase
+      `SELECT id, current_task_id, phase,
+              controller_session_id, controller_lease_expires_at
          FROM initiative_runs
         WHERE id = $1
           AND orchestrator_version = 'v2'
@@ -578,6 +587,19 @@ export async function finalizeKernelRun(pool, {
       throw new Error(
         `Kernel run/task identity mismatch: ${runId}/${expectedTaskId}`,
       );
+    }
+
+    if (typeof lockedRunGuard === 'function' && !lockedRunGuard(run)) {
+      await client.query('COMMIT');
+      committed = true;
+      return {
+        changed: false,
+        outcome,
+        runId,
+        taskId: expectedTaskId,
+        attemptsTerminalized: 0,
+        guardRejected: true,
+      };
     }
 
     const runAlreadyTerminal = ['done', 'failed'].includes(run.phase);
@@ -628,6 +650,15 @@ export async function finalizeKernelRun(pool, {
           WHERE id = $1`,
         [expectedTaskId, taskOutcome, reason],
       );
+    }
+
+    if (changed && typeof afterRunFinalized === 'function') {
+      await afterRunFinalized(client, {
+        runId,
+        taskId: expectedTaskId,
+        outcome,
+        lockedRun: run,
+      });
     }
 
     if (outcome === 'done' && typeof afterTaskFinalized === 'function') {

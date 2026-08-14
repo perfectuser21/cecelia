@@ -1,29 +1,100 @@
 /**
  * heartbeat.js 单测（IO 薄层，mock pool）。
  * 原并入 decision-log.test.js，为满足 lint-test-pairing（一实现文件一配对测试）拆出。
+ *
+ * sprint 08132021：writeHeartbeat 先锁 parent task，再以 UPDATE 续租 Controller lease
+ *（CAS + GREATEST），单测校验 SQL 形状与参数装配（真 PG 续租行为由
+ * kernel-controller-lease-renewal.pg.integration.test.js 在真 Postgres 上验证）。
  */
 import { describe, it, expect, vi } from 'vitest';
 import { writeHeartbeat } from '../heartbeat.js';
+import { CONTROLLER_LEASE_DEFAULT_SECONDS, CONTROLLER_SESSION_BLANK_SQL_PATTERN } from '../kernel-run-store.js';
 
 const RUN_ID = '00000000-0000-0000-0000-000000000312';
+const SESSION = 'sess-controller-abc';
 
-function mockPool(result = { rows: [] }) {
-  return { query: vi.fn().mockResolvedValue(result) };
+function mockPool(result = {
+  rowCount: 1,
+  rows: [{
+    id: RUN_ID,
+    current_task_id: '11111111-2222-4333-8444-555555555555',
+    controller_lease_expires_at: new Date('2026-07-04T12:30:00Z'),
+  }],
+}) {
+  const client = {
+    query: vi.fn(async (sql) => {
+      if (sql.includes('UPDATE initiative_runs')) return result;
+      return { rowCount: 1, rows: [] };
+    }),
+    release: vi.fn(),
+  };
+  return { connect: vi.fn(async () => client), client };
 }
 
 describe('writeHeartbeat', () => {
-  it('UPDATE initiative_runs 三列，now 从参数注入不自取时间', async () => {
+  it('UPDATE initiative_runs 三列心跳 + 续租 lease（CAS + GREATEST），now 从参数注入不自取时间', async () => {
     const pool = mockPool();
     const now = new Date('2026-07-04T12:00:00Z');
-    await writeHeartbeat(pool, { runId: RUN_ID, host: 'mac-mini-us', pid: 4242, now });
+    const res = await writeHeartbeat(pool, {
+      runId: RUN_ID, host: 'mac-mini-us', pid: 4242, now, controllerSessionId: SESSION,
+    });
 
-    expect(pool.query).toHaveBeenCalledTimes(1);
-    const [sql, params] = pool.query.mock.calls[0];
+    const updateCall = pool.client.query.mock.calls.find(([sql]) => sql.includes('UPDATE initiative_runs'));
+    const [sql, params] = updateCall;
     expect(sql).toContain('UPDATE initiative_runs');
     for (const col of ['orchestrator_heartbeat_at', 'orchestrator_host', 'orchestrator_pid']) {
       expect(sql).toContain(col);
     }
-    expect(sql).toMatch(/WHERE id = \$1/);
-    expect(params).toEqual([RUN_ID, now, 'mac-mini-us', 4242]);
+    // 续租：GREATEST(existing, now + lease) 只增不减；CAS 同时绑定 session、活跃 phase、父 task 非终态。
+    expect(sql).toContain('controller_lease_expires_at');
+    expect(sql).toContain('GREATEST');
+    expect(sql).toMatch(/FROM tasks AS parent_task/);
+    expect(sql).toMatch(/WHERE run\.id = \$1/);
+    expect(sql).toMatch(/parent_task\.status NOT IN \('completed', 'failed', 'cancelled', 'canceled'\)/);
+    expect(sql).toContain('controller_session_id = $5');
+    expect(sql).toContain('controller_session_id !~ $7');
+    expect(sql).toContain('$5::text !~ $7');
+    expect(sql).toMatch(/phase\s+NOT\s+IN\s*\('done',\s*'failed'\)/);
+    const taskLockCall = pool.client.query.mock.calls.find(([statement]) => statement.includes('FOR UPDATE OF parent_task'));
+    expect(taskLockCall[0]).toContain('parent_task.status');
+    // 缺省 leaseSeconds 复用单一 SSOT（INV-2，禁止另写死秒数）。
+    expect(params).toEqual([RUN_ID, now, 'mac-mini-us', 4242, SESSION, CONTROLLER_LEASE_DEFAULT_SECONDS, CONTROLLER_SESSION_BLANK_SQL_PATTERN]);
+    for (const whitespace of ['[:space:]', '\u0085', '\u00a0', '\u3000', '\ufeff']) expect(params[6]).toContain(whitespace);
+    const eventCall = pool.client.query.mock.calls.find(([statement]) => statement.includes('INSERT INTO cecelia_events'));
+    expect(eventCall[0]).toContain("event_type = 'kernel_controller_lease_renewed'");
+    expect(JSON.stringify(eventCall[1])).not.toContain(SESSION);
+    expect(pool.client.query.mock.calls.map(([statement]) => statement.trim())).toEqual([
+      'BEGIN',
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      expect.stringContaining('FOR UPDATE OF parent_task'),
+      expect.stringContaining('UPDATE initiative_runs'),
+      expect.stringContaining('INSERT INTO cecelia_events'),
+      'COMMIT',
+    ]);
+    // 返回 pg 结果供调用方读取 rowCount 做 CAS fail-closed 判定。
+    expect(res.rowCount).toBe(1);
+  });
+
+  it('显式 leaseSeconds 覆盖默认续租时长', async () => {
+    const pool = mockPool();
+    const now = new Date('2026-07-04T12:00:00Z');
+    await writeHeartbeat(pool, {
+      runId: RUN_ID, host: 'mac-mini-us', pid: 4242, now, controllerSessionId: SESSION, leaseSeconds: 900,
+    });
+    const [, params] = pool.client.query.mock.calls.find(([sql]) => sql.includes('UPDATE initiative_runs'));
+    expect(params[5]).toBe(900);
+  });
+
+  it('CAS 未命中时提交但不写审计事件', async () => {
+    const pool = mockPool({ rowCount: 0, rows: [] });
+    await writeHeartbeat(pool, {
+      runId: RUN_ID,
+      host: 'mac-mini-us',
+      pid: 4242,
+      now: new Date('2026-07-04T12:00:00Z'),
+      controllerSessionId: 'wrong-session',
+    });
+    expect(pool.client.query.mock.calls.some(([sql]) => sql.includes('INSERT INTO cecelia_events'))).toBe(false);
+    expect(pool.client.query).toHaveBeenCalledWith('COMMIT');
   });
 });

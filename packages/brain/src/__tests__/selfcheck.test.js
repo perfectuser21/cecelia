@@ -215,8 +215,9 @@ describe('selfcheck', () => {
   // 413（work_routing_receipts production anchor — 补录 PR #4851）推进地板到 413。
   // 414（map_recovery_contracts production anchor — 补录 PR #4851）推进地板到 414。
   // 415（initiative_runs Session Controller ownership: controller_session_id + lease）推进地板到 415。
-  it('EXPECTED_SCHEMA_VERSION should be 415', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('415');
+  // 416（controller_session_id 非空白约束）推进地板到 416。
+  it('EXPECTED_SCHEMA_VERSION should be 416', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('416');
   });
 
   it('should pass when DB schema version is ahead of expected (>= check)', async () => {

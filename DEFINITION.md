@@ -2,15 +2,63 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-08-13
+**最后更新**: 2026-08-14
 
 
 
 
 
-**Brain 版本**: 1.273.3
+**Brain 版本**: 1.273.10
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.273.10 — A10 shell 合同执行闭环
+
+- 永久 E2E oracle 机械提取 `contract-dod.md` A10 并原样交给 `/bin/bash -c`，防止 shell 双引号展开 SQL dollar quote。
+- A10 使用 `String.fromCharCode(36,36,59)` 构造 `$$;`；DoD 镜像、PRD/task-plan 版本事实同步，Schema 地板保持 416。
+
+---
+
+## Brain 1.273.9 — Controller heartbeat 与任务终态线性化
+
+- `writeHeartbeat` 与通用 task 终态写、`finalizeKernelRun` 统一使用 `task → run` 行锁顺序；心跳等待父 task 行锁后重读状态，终态事务先行时 heartbeat、lease 与续租事件均零推进。
+- 真实 PostgreSQL 双连接回归覆盖 `completed` / `cancelled` 未提交终态写与已排队 canonical finalizer，并以有限 lock/statement timeout 防死锁回归。
+- Schema 地板保持 416；Controller session 的 locale-independent POSIX+Unicode whitespace 约束不变。
+
+---
+
+## Brain 1.273.8 — Controller lease 父任务终态与 Unicode 空白收敛
+
+- `writeHeartbeat` 在单条 `UPDATE ... FROM tasks` 中同时绑定权威 session、活跃 run phase 与父 task 非终态；`cancelled` / `completed` task 的残留 planning run 不再推进 heartbeat、lease 或审计事件。
+- Controller ownership 的空白语义统一为“至少含一个非空白字符”：JavaScript 创建/ownerless 判定与 PostgreSQL POSIX `[[:space:]]` 清洗、CHECK、heartbeat CAS 一致覆盖 TAB、NBSP 与 ideographic space。
+- migration 416 真 PostgreSQL 生命周期回归覆盖历史归一、新写拒绝、rollback/re-upgrade；schema 地板保持 416。
+
+---
+
+## Brain 1.273.7 — Controller lease 审计原子性与 Preview 端口冲突收敛
+
+- 成功 Controller lease 续租按 `(run_id, heartbeat_at)` 在同一事务幂等写 `cecelia_events`；错误 session/终态不造事件，事件失败回滚续租，payload 不含 controller session。
+- ownerless recovery 仅在 `finalizeKernelRun` 真实终态改变的同一事务写审计事件；`guardRejected` 和已终态路径不造事件。
+- legacy proposer 分支用静态正则 capture + task 前缀字符串比较关闭 CodeQL 动态正则 high；Preview `starting` 记录遇到外部 listener 占用时在 admission 锁内重新分配端口。
+- 保留 migration 416 nonblank ownership invariant，并以 evaluator-feedback amendment 校正 sprint PRD/contract/DoD/task-plan 与真实 diff。
+
+---
+
+## Brain 1.273.6 — Kernel CLI ownership 前置栅栏
+
+- `runKernelMain` 不再于 Controller ownership CAS 前激活 queued task；task 激活改为 `runLoop` 首次权威 CAS 成功后的回调。
+- 错误 Controller session 的真实 CLI 在 task/heartbeat/decision/attempt 零业务推进时以 `controller_lease_lost` 非零退出；正确 session 仍激活 queued task。
+- 沿用 `runLoop` 单次首次 heartbeat CAS，不新增重复心跳或 schema migration。
+
+---
+
+## Brain 1.273.5 — Controller ownership 竞态与空白会话 fail-closed
+
+- ownerless reconcile 在 `finalizeKernelRun` 的权威 task→run 锁边界重查当前 ownership/lease，旧候选快照不再终结已续租 run。
+- Kernel loop 在首次外部观测、决策日志与 dispatch 前完成 ownership CAS；`controller_lease_lost` 映射为非零 CLI 退出。
+- Migration 416 把历史空串/空白 `controller_session_id` 归一为 NULL，并以已验证 CHECK 阻止新空白 ownership；heartbeat/reconcile SQL 在滚动窗口同样 fail-closed。Schema 地板推进到 416。
 
 ---
 
@@ -2200,7 +2248,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | **Schema 版本**: 415 |
+| **schema_version** | 迁移版本追踪 | **Schema 版本**: 416 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -2588,7 +2636,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '415'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '416'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

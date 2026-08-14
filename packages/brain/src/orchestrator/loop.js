@@ -522,7 +522,9 @@ export async function runLoop(
     taskId,
     runId,
     resumeToken = null,
+    controllerSessionId = null,
     dryRun = false,
+    onOwnershipVerified = null,
   },
 ) {
   const collect = deps.collectGroundTruth ?? defaultCollect;
@@ -539,6 +541,34 @@ export async function runLoop(
   const pid = deps.pid ?? process.pid;
 
   const resolvedRunId = runId ?? (await resolveRunId(deps.pool, taskId));
+  let hops = 0;
+  // Controller lease CAS 心跳（sprint 08132021）：每跳携带创建端 controllerSessionId
+  // 续租 lease，心跳不再仅凭 run_id。writeHeartbeat 返回 rowCount=0（session mismatch
+  // 或 run 已终态）= 本 Kernel 已失去 Controller ownership，fail-closed 退出。
+  let leaseLost = false;
+  const beat = async () => {
+    const res = await heartbeat(deps.pool, {
+      runId: resolvedRunId, host, pid, now: now(), controllerSessionId,
+    });
+    if (res && res.rowCount === 0) leaseLost = true;
+    return res;
+  };
+
+  // ownership CAS 是所有外部观测、决策日志与 dispatch 的前置栅栏。
+  // 保留旧单测的心跳注入接口：只有生产默认边或显式传入 session
+  // 时强制首次 CAS；dry-run 仍保持零写入。
+  const ownershipFenceRequired = !dryRun
+    && (heartbeat === defaultWriteHeartbeat || controllerSessionId != null);
+  if (ownershipFenceRequired) {
+    await beat();
+    if (leaseLost) {
+      return { exitReason: 'controller_lease_lost', hops };
+    }
+  }
+  if (!dryRun && onOwnershipVerified) {
+    await onOwnershipVerified();
+  }
+
   if (resumeToken) {
     const activate = deps.activateContextResume ?? activateContextResume;
     const activated = await activate(deps.pool, {
@@ -556,9 +586,6 @@ export async function runLoop(
     ? await resolveGroundTruthPaths(deps.pool, taskId)
     : {};
 
-  let hops = 0;
-  const beat = () => heartbeat(deps.pool, { runId: resolvedRunId, host, pid, now: now() });
-
   // deadline fence 辅助：检查 run.deadline_at 是否已超过当前时间
   function deadlineExceeded(run) {
     if (!run || !run.deadline_at) return false;
@@ -566,6 +593,13 @@ export async function runLoop(
   }
 
   while (true) {
+    // ---- Controller lease fence：上一跳心跳 CAS rowCount=0 → 已失去 ownership ----
+    // 失去 Controller ownership 的 Kernel 绝不继续观测/派发，fail-closed 退出交
+    // reconcileOwnerlessKernelRuns 回收（sprint 08132021，INV-9）。
+    if (leaseLost) {
+      return { exitReason: 'controller_lease_lost', hops };
+    }
+
     // ---- Deadline fence 1：collect 前 ----
     // collect 会调用 git/gh/docker，过期 run 不应再触发任何外部观测。
     const deadlineState = await loadRunDeadlineState(deps.pool, resolvedRunId);

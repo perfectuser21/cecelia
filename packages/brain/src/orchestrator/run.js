@@ -68,12 +68,15 @@ const CANONICAL_MACHINE_IDS = new Set([
   'xian-mac-m1',
 ]);
 
-/** 解析 --task-id / --run-id / --dry-run */
+/** 解析 --task-id / --run-id / --controller-session-id / --resume-token / --dry-run */
 export function parseArgs(argv) {
   const args = {
     taskId: null,
     runId: null,
     resumeToken: null,
+    // 创建端 Controller session（sprint 08132021）：detached child 续租身份，
+    // 由 launchKernelProcess 以 --controller-session-id 透传，禁止仅凭 run_id 续租。
+    controllerSessionId: null,
     dryRun: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -81,6 +84,7 @@ export function parseArgs(argv) {
     if (a === '--task-id') args.taskId = argv[++i];
     else if (a === '--run-id') args.runId = argv[++i];
     else if (a === '--resume-token') args.resumeToken = argv[++i];
+    else if (a === '--controller-session-id') args.controllerSessionId = argv[++i];
     else if (a === '--dry-run') args.dryRun = true;
   }
   if (!args.taskId) {
@@ -423,6 +427,7 @@ export async function runKernelMain({
   taskId,
   runId,
   resumeToken,
+  controllerSessionId = null,
   dryRun,
 }, {
   buildDeps = buildRealDeps,
@@ -440,9 +445,9 @@ export async function runKernelMain({
       },
     });
     pool ??= deps?.pool;
-    // r17 实证修复：task.status 派发时也不置 in_progress，运行中恒 'queued'。
-    // 启动流程装载 task 后一次性翻面；非关键路径，失败只告警不阻断 loop 启动。
-    if (!dryRun) {
+    const onOwnershipVerified = dryRun ? null : async () => {
+      // task 激活必须晚于 runLoop 的首次 Controller ownership CAS；错误 session
+      // 在任何 task 业务状态改变前 fail-closed。激活失败仍只告警，不阻断 loop。
       try {
         await activateQueuedTask(pool, taskId);
       } catch (err) {
@@ -450,12 +455,14 @@ export async function runKernelMain({
           `[orchestrator] task 启动置位失败 task=${taskId}: ${err.message}`,
         );
       }
-    }
+    };
     return await runLoopFn(deps, {
       taskId,
       runId,
       resumeToken,
+      controllerSessionId,
       dryRun,
+      onOwnershipVerified,
     });
   } catch (error) {
     if (pool && runId && !dryRun) {
@@ -479,22 +486,38 @@ export async function runKernelMain({
   }
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+export function exitCodeForExitReason(exitReason) {
+  return ['singleton_conflict', 'controller_lease_lost'].includes(exitReason)
+    ? 2
+    : 0;
+}
+
+export async function main(
+  argv = process.argv.slice(2),
+  {
+    runKernelMainFn = runKernelMain,
+    log = console.log,
+    setExitCode = (code) => { process.exitCode = code; },
+  } = {},
+) {
+  const args = parseArgs(argv);
   const {
     taskId,
     runId,
     resumeToken,
+    controllerSessionId,
     dryRun,
   } = args;
-  const result = await runKernelMain({
+  const result = await runKernelMainFn({
     taskId,
     runId,
     resumeToken,
+    controllerSessionId,
     dryRun,
   });
-  console.log(`[orchestrator] exit: ${result.exitReason} (hops=${result.hops})`);
-  process.exitCode = result.exitReason === 'singleton_conflict' ? 2 : 0;
+  log(`[orchestrator] exit: ${result.exitReason} (hops=${result.hops})`);
+  setExitCode(exitCodeForExitReason(result.exitReason));
+  return result;
 }
 
 // 仅直接执行时跑 main（被测试 import 时不执行）
