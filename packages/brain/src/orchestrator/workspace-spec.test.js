@@ -333,7 +333,7 @@ describe('production WorkspaceSpec resolution', () => {
     expect(resolveRepoHead).toHaveBeenCalledWith('perfectuser21/cecelia');
   });
 
-  it('keeps the authoritative frozen baseline when a stale PR exists without a retained candidate', async () => {
+  it('repairs the observed PR head while preserving the frozen implementation baseline separately', async () => {
     const resolveWorkspaceSpec = createWorkspaceSpecResolver({
       resolveRepoHead: vi.fn(),
     });
@@ -364,8 +364,8 @@ describe('production WorkspaceSpec resolution', () => {
     });
 
     expect(resolved).toMatchObject({
-      base_sha: BASE_SHA,
-      expected_head_sha: BASE_SHA,
+      base_sha: prHead,
+      expected_head_sha: prHead,
       branch: 'cp-08010101-frozen-candidate',
       frozen_baseline: true,
     });
