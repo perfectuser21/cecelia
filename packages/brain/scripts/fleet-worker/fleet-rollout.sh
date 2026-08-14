@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-RUNNER_DIGEST='sha256:d13bd0918e411546f408f4fc59dba7d182aa8c05ea3e37b43f042f8d3d614d3a'
+RUNNER_DIGEST='sha256:5fa1b7badc19a9cc1a806777d17023092e51d74330612143798d9ac7228693cc'
 POSTGRES_IMAGE='pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62'
 POSTGRES_TAG="${POSTGRES_IMAGE%@*}"
 FLEET_WORKER_LABEL='com.perfect21.fleet-worker'

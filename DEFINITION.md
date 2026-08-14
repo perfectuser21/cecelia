@@ -14,6 +14,7 @@
 
 - Judge 独立裁决候选与上游证据；只有服务端声明的宿主 Docker、最终 Judge、Publisher、全闸门和完整角色链检查可结构化标记为后置验收。
 - Evaluator 隔离 Git 夹具清除继承的 pushurl 熔断变量，候选仓库的禁止推送边界保持不变。
+- Runner 固定为 `sha256:5fa1b7badc19a9cc1a806777d17023092e51d74330612143798d9ac7228693cc`，Fleet Worker 准入版本同步为 `1.272.17`。
 
 ## Brain 1.273.29 — Frozen PR Repair Checkout
 
