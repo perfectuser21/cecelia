@@ -306,6 +306,7 @@ describe('Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复（�
     const created = await createRoutedKernelRun(testPool, {
       taskId,initiativeId,phase:'planning',journeyId:null,abilityId:null,
       host:'kernel-v1',deadlineHours:8,createdSource:'kernel_dispatch',
+      controllerLeaseSeconds:2,
     });
     const now = new Date();
     await writeHeartbeat(testPool, {
