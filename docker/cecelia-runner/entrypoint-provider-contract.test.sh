@@ -279,6 +279,10 @@ type validate_claude_terminal_receipt >/dev/null 2>&1 || {
   echo 'missing strict Claude terminal receipt validator' >&2
   exit 1
 }
+type resolve_claude_session_binding >/dev/null 2>&1 || {
+  echo 'missing Claude session binding resolver' >&2
+  exit 1
+}
 type publish_provider_result_schema >/dev/null 2>&1 || {
   echo 'missing Provider-readable result schema publisher' >&2
   exit 1
@@ -415,6 +419,12 @@ validate_claude_terminal_receipt \
   exit 1
 }
 
+[[ "$(resolve_claude_session_binding \
+  "claude-receipt" "$CLAUDE_RECEIPT_TMP/current-cli.json")" == "claude-receipt" ]] || {
+  echo 'current Claude CLI envelope erased the Runner-owned session binding' >&2
+  exit 1
+}
+
 jq '.session_id = "different-session"' \
   "$CLAUDE_RECEIPT_TMP/completed.json" > "$CLAUDE_RECEIPT_TMP/session-mismatch.json"
 if validate_claude_terminal_receipt \
@@ -422,6 +432,11 @@ if validate_claude_terminal_receipt \
   "$CLAUDE_RECEIPT_TMP/result.json" \
   "claude-receipt"; then
   echo 'strict Claude receipt accepted an explicit session mismatch' >&2
+  exit 1
+fi
+if resolve_claude_session_binding \
+  "claude-receipt" "$CLAUDE_RECEIPT_TMP/session-mismatch.json" >/dev/null; then
+  echo 'Claude session resolver accepted an explicit session mismatch' >&2
   exit 1
 fi
 
