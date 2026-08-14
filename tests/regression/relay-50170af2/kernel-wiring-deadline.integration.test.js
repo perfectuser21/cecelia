@@ -316,6 +316,8 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
       },
       nextHop: async () => 11,
       appendHop: async () => {},
+      // 本用例只验证 deadline fence；heartbeat 的事务/审计边由真 PG 回归覆盖。
+      writeHeartbeat: async () => ({ rowCount: 1 }),
       dispatch: async () => {
         state.dispatches += 1;
         throw new Error('stale-review-dispatched');
