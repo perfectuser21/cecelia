@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.20
+**Brain 版本**: 1.273.21
+
+## Brain 1.273.21 — Candidate Manifest Runner Baseline
+
+- Fleet 三机准入、部署与修复脚本统一固定到 `sha256:fe6b953dc41339d7c78eee6048d09b880e7f6ad420fcf0f56803f965015b3ffc`；该 Runner 会在受信候选清单中携带 `changed_files`，使 Evaluator 的 Impact Diff Gate 能验证真实候选而不依赖 Brain 本机 Git 对象。
 
 ## Brain 1.273.20 — Atomic Explicit Recovery Reopen
 

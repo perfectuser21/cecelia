@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.4
+**Brain 版本**: 1.273.21
+
+## Candidate Manifest Runner Baseline（Brain 1.273.21）
+
+- Fleet 三机准入、部署与修复脚本统一固定到 `sha256:fe6b953dc41339d7c78eee6048d09b880e7f6ad420fcf0f56803f965015b3ffc`。
+- Runner 在受信候选清单中携带 `changed_files`，供 Controller 在 Evaluator 前执行 Impact Diff Gate。
 
 ## Kernel Controller Authority（Brain 1.273.4）
 
