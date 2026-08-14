@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.32
+**Brain 版本**: 1.273.33
+
+## Brain 1.273.33 — Unified Router PR Discovery
+
+- Ground Truth 从统一 Router 的 `payload.repo` 读取仓库身份，同时兼容旧 `base_repo`，使 coding task 能发现并封印自己的现有 PR。
 
 ## Brain 1.273.32 — Existing Candidate Seal Baseline
 

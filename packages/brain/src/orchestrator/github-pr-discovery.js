@@ -31,7 +31,7 @@ export function parseBaseRepo(baseRepo) {
 }
 
 export function discoverPrFromGithub(task, short, execFn) {
-  const repo = parseBaseRepo(task.payload?.base_repo);
+  const repo = parseBaseRepo(task.payload?.base_repo ?? task.payload?.repo);
   if (!repo) return null;
   const raw = execFn(`gh pr list --repo "${repo}" --state all --limit 100 --json headRefName,title,url,state`);
   const prs = JSON.parse(raw);
