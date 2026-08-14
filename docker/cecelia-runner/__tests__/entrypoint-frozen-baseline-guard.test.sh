@@ -186,6 +186,7 @@ commit_on_top "$WS" upstream
 git -C "$WS" push origin HEAD:refs/heads/main >/dev/null 2>&1
 git -C "$WS" checkout main >/dev/null 2>&1
 
+HARNESS_FROZEN_BASELINE=false \
 HARNESS_WORKSPACE_START_SHA="$START_SHA" \
 WORKTREE_PATH="$WS" \
 FROZEN_BASELINE_GUARD_DIR="$CASE/guard" \
@@ -200,6 +201,7 @@ git -C "$WS" fetch origin main >/dev/null 2>&1
 git -C "$WS" rebase origin/main >/dev/null 2>&1
 git -C "$WS" push origin HEAD:refs/heads/cp-08022012-ordinary >/dev/null 2>&1
 
+HARNESS_FROZEN_BASELINE=false \
 HARNESS_WORKSPACE_START_SHA="$START_SHA" \
 WORKTREE_PATH="$WS" \
 FROZEN_BASELINE_GUARD_DIR="$CASE/guard" \
