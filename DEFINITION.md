@@ -2,13 +2,18 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-08-13
+**最后更新**: 2026-08-14
 
 
 
 
 
-**Brain 版本**: 1.273.29
+**Brain 版本**: 1.273.30
+
+## Brain 1.273.30 — Judge Deferred Acceptance Boundary
+
+- Judge 独立裁决候选与上游证据；只有服务端声明的宿主 Docker、最终 Judge、Publisher、全闸门和完整角色链检查可结构化标记为后置验收。
+- Evaluator 隔离 Git 夹具清除继承的 pushurl 熔断变量，候选仓库的禁止推送边界保持不变。
 
 ## Brain 1.273.29 — Frozen PR Repair Checkout
 

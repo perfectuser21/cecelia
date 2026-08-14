@@ -183,19 +183,22 @@ describe('Fleet Judge callback verifier', () => {
       import.meta.url,
     );
     const source = readFileSync(entrypointPath, 'utf8');
-    const fn = source.match(
-      /provider_result_schema_json\(\) \{[\s\S]*?\n\}\n\npublish_provider_result_schema\(\)/,
-    )?.[0].replace(/\n\npublish_provider_result_schema\(\)$/, '');
-    expect(fn).toBeTruthy();
+    const functions = source.match(
+      /provider_result_schema_json\(\) \{[\s\S]*?\n\}\n\nvalidate_commander_task_bundle\(\)/,
+    )?.[0].replace(/\n\nvalidate_commander_task_bundle\(\)$/, '');
+    expect(functions).toBeTruthy();
     const root = mkdtempSync(path.join(tmpdir(), 'judge-schema-'));
     try {
       const bundle = path.join(root, 'bundle.json');
       writeFileSync(bundle, JSON.stringify({
         task_bundle: { expected_output: 'harness-result/judge-v1', role: 'judge' },
       }));
-      const schema = JSON.parse(execFileSync('/bin/bash', [
-        '-c', `${fn}\nprovider_result_schema_json "$1"`, '_', bundle,
-      ], { encoding: 'utf8' }));
+      const schemaFile = path.join(root, 'schema.json');
+      execFileSync('/bin/bash', [
+        '-c', `${functions}\nschema="$(provider_result_schema_json "$1")"\npublish_provider_result_schema "$2" "$schema"`,
+        '_', bundle, schemaFile,
+      ], { encoding: 'utf8' });
+      const schema = JSON.parse(readFileSync(schemaFile, 'utf8'));
       const decision = schema.properties.decision.anyOf[0];
       expect(decision.required).toEqual(expect.arrayContaining([
         'outcome', 'reason', 'coverage', 'failure_class', 'failure_signature',

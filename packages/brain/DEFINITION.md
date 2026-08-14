@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.28
+**Brain 版本**: 1.273.30
+
+## Judge Deferred Acceptance Boundary（Brain 1.273.30）
+
+- Judge 对候选与上游证据独立裁决；只有服务端声明的宿主 Docker、最终 Judge、Publisher、全闸门和完整角色链检查可结构化标记为后置验收。
+- Evaluator 的隔离 Git 夹具显式清除外层 pushurl 熔断变量，真实候选仓库仍保持禁止推送。
 
 ## Attempt-scoped Runner Smoke Credential（Brain 1.273.28）
 

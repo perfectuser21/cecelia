@@ -1830,6 +1830,21 @@ publish_provider_result_schema() {
   local schema_file="$1"
   local schema_json="$2"
 
+  # Judge may explicitly defer only server-owned post-Judge checks. Keep the
+  # generic result contract unchanged and extend the Judge coverage item at the
+  # final published-schema boundary.
+  if jq -e '
+      .properties.decision.anyOf[0].properties.coverage.items.properties.passed.type
+        == "boolean"
+    ' <<<"$schema_json" >/dev/null 2>&1; then
+    schema_json="$(jq -c '
+      .properties.decision.anyOf[0].properties.coverage.items.properties.deferred
+        = {"type":"boolean"}
+      | .properties.decision.anyOf[0].properties.coverage.items.required
+        += ["deferred"]
+    ' <<<"$schema_json")"
+  fi
+
   printf '%s' "$schema_json" > "$schema_file" || return 1
   # Evaluator preflight runs as root so it can own the immutable evidence
   # capsule, then Provider execution drops to the image-defined non-root UID. The schema is public

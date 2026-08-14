@@ -42,6 +42,7 @@ export async function verifyJudgeCallbackResult({ attempt, result, dbPool }) {
     prdText: inputs.contract?.prd_content ?? null,
     frozenContractArtifacts: inputs.artifacts,
     requiredCommandEvidence: inputs.required_command_evidence,
+    verificationStage: inputs.verification_stage,
     taskId: inputs.task_id,
     instanceLabel: `fleet-judge-${String(attempt.id).slice(0, 8)}`,
     stageFacts: {

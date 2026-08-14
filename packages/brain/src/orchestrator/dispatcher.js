@@ -25,6 +25,13 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_EVALUATOR_FEEDBACK_CHECKS = 20;
 const RUNTIME_RESULT_ROLES = new Set(['reviewer', 'evaluator', 'judge', 'reporter']);
+const DEFERRED_ACCEPTANCE_CHECKS = Object.freeze([
+  'host_docker_inspect',
+  'judge_verdict',
+  'publisher_result',
+  'all_gates_passed',
+  'completed_role_chain',
+]);
 
 export function assertDispatchRoutingReceipt(task, receipt) {
   const isCoding = task?.task_type === 'dev' || task?.task_type === 'harness_initiative' || task?.payload?.work_kind === 'coding_mutation';
@@ -104,7 +111,7 @@ const OBJECTIVES = Object.freeze({
   reviewer: 'Independently review the frozen contract against the PRD and return an approval decision.',
   generator: 'Implement or fix the approved contract in the supplied worktree and produce a committed local candidate. Do not push or create a pull request; Publisher owns remote publication after Judge PASS.',
   evaluator: 'Independently evaluate the current candidate against the approved contract and return pre-Judge evidence. Do not launch a nested Controller or Harness role chain. A pre-Judge verdict must not require its own future Judge verdict, Publisher result, all_gates_passed decision, or completed role chain. Host Docker inspection is a trusted Controller/Fleet check: the Evaluator must not fail because Docker CLI or daemon access is absent. These checks are deferred to the server-owned post-Judge acceptance stage.',
-  judge: 'Independently judge the evaluator evidence. Return PASS or FAIL, a coverage array for every contract or Golden Path step, and an explicit failure_class for FAIL. The server mechanical gate is authoritative.',
+  judge: 'Independently judge the evaluator evidence for the pre-Publisher stage. Return PASS or FAIL, a coverage array for every contract or Golden Path step, and an explicit failure_class for FAIL. Every coverage item must include deferred=true or deferred=false. A step whose only unavailable evidence is named by inputs.verification_stage.deferred_checks must use passed=false, deferred=true and cite the satisfied precondition; it must not make the overall verdict FAIL. In particular, the verdict must not require its own future server verdict, Publisher result, all_gates_passed decision, completed role chain, or host Docker inspection. The server mechanical gate is authoritative and owns those deferred checks.',
   publisher: 'Publish only the exact local candidate authorized by the Judge and merge fence.',
   commander: 'Observe one bounded Run snapshot and return exactly one provider-neutral Commander Directive.',
 });
@@ -474,18 +481,14 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   if (spec.role === 'evaluator' || spec.role === 'judge') {
     common.pull_request = observed.pr ?? null;
   }
-  if (spec.role === 'evaluator') {
+  if (spec.role === 'evaluator' || spec.role === 'judge') {
     common.verification_stage = {
-      name: 'pre_judge',
+      name: spec.role === 'evaluator' ? 'pre_judge' : 'independent_judge',
       verdict_scope: 'candidate_and_upstream_evidence',
-      deferred_checks: [
-        'host_docker_inspect',
-        'judge_verdict',
-        'publisher_result',
-        'all_gates_passed',
-        'completed_role_chain',
-      ],
+      deferred_checks: [...DEFERRED_ACCEPTANCE_CHECKS],
     };
+  }
+  if (spec.role === 'evaluator') {
     // retained Generator candidate 是本轮实际验收对象。远端 PR 可能仍指向
     // Generator 启动前的旧头，不能用它覆盖 Runner 已验证的候选身份。
     common.pr_branch = observed.candidate?.branch ?? observed.pr?.head_ref ?? null;
