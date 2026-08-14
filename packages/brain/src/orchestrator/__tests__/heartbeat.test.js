@@ -2,8 +2,8 @@
  * heartbeat.js 单测（IO 薄层，mock pool）。
  * 原并入 decision-log.test.js，为满足 lint-test-pairing（一实现文件一配对测试）拆出。
  *
- * sprint 08132021：writeHeartbeat 在同一条 UPDATE 里续租 Controller lease（CAS +
- * GREATEST），单测校验 SQL 形状与参数装配（真 PG 续租行为由
+ * sprint 08132021：writeHeartbeat 先锁 parent task，再以 UPDATE 续租 Controller lease
+ *（CAS + GREATEST），单测校验 SQL 形状与参数装配（真 PG 续租行为由
  * kernel-controller-lease-renewal.pg.integration.test.js 在真 Postgres 上验证）。
  */
 import { describe, it, expect, vi } from 'vitest';
@@ -55,6 +55,8 @@ describe('writeHeartbeat', () => {
     expect(sql).toContain('controller_session_id !~ $7');
     expect(sql).toContain('$5::text !~ $7');
     expect(sql).toMatch(/phase\s+NOT\s+IN\s*\('done',\s*'failed'\)/);
+    const taskLockCall = pool.client.query.mock.calls.find(([statement]) => statement.includes('FOR UPDATE OF parent_task'));
+    expect(taskLockCall[0]).toContain('parent_task.status');
     // 缺省 leaseSeconds 复用单一 SSOT（INV-2，禁止另写死秒数）。
     expect(params).toEqual([RUN_ID, now, 'mac-mini-us', 4242, SESSION, CONTROLLER_LEASE_DEFAULT_SECONDS, CONTROLLER_SESSION_BLANK_SQL_PATTERN]);
     for (const whitespace of ['[:space:]', '\u0085', '\u00a0', '\u3000', '\ufeff']) expect(params[6]).toContain(whitespace);
@@ -64,6 +66,7 @@ describe('writeHeartbeat', () => {
     expect(pool.client.query.mock.calls.map(([statement]) => statement.trim())).toEqual([
       'BEGIN',
       'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      expect.stringContaining('FOR UPDATE OF parent_task'),
       expect.stringContaining('UPDATE initiative_runs'),
       expect.stringContaining('INSERT INTO cecelia_events'),
       'COMMIT',

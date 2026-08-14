@@ -9,8 +9,8 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] `heartbeat.js` 的单条 UPDATE...FROM 续租 lease（GREATEST）+ CAS WHERE（session+phase+parent task 非终态+locale-independent whitespace）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/heartbeat.js','utf8');if(!(c.includes('controller_lease_expires_at')&&c.includes('GREATEST')&&c.includes('FROM tasks AS parent_task')&&c.includes('parent_task.status NOT IN')&&c.includes('[[:space:]]')))process.exit(1)"
+- [x] [ARTIFACT] `heartbeat.js` 复用 whitespace SSOT，按 task→run 锁序线性化父 task 终态，再以 session+phase+非终态 CAS 续租 lease（GREATEST）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/heartbeat.js','utf8');const required=['CONTROLLER_SESSION_BLANK_SQL_PATTERN','FOR UPDATE OF parent_task','UPDATE initiative_runs AS run','GREATEST(','parent_task.status NOT IN','run.controller_session_id =','run.controller_session_id !~','run.phase NOT IN'];const imported=/import\s*\{[^}]*CONTROLLER_SESSION_BLANK_SQL_PATTERN[^}]*\}\s*from '.\/kernel-run-store\.js'/s.test(c);if(!(imported&&required.every((text)=>c.includes(text))&&c.indexOf('FOR UPDATE OF parent_task')<c.indexOf('UPDATE initiative_runs AS run')))process.exit(1)"
 
 - [x] [ARTIFACT] `loop.js` 的 `beat()` 携带 `controllerSessionId`（心跳不再仅凭 run_id）
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/loop.js','utf8');if(!c.includes('controllerSessionId'))process.exit(1)"
@@ -37,7 +37,7 @@ journey_type: autonomous
   Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/heartbeat.js','utf8');if(/console\.(log|error|warn)[^\n]*controllerSessionId/.test(c))process.exit(1)"
 
 - [x] [ARTIFACT] migration 416 与 rollback 资产存在，up 用 POSIX+完整 Unicode whitespace helper 做 locale-independent 历史归一 + validated nonblank CHECK，down 移除 CHECK/helper
-  Test: node -e "const fs=require('fs');const up=fs.readFileSync('packages/brain/migrations/416_controller_session_nonblank.sql','utf8');const down=fs.readFileSync('packages/brain/migrations/rollback/416_controller_session_nonblank.down.sql','utf8');if(!(up.includes('[[:space:]]')&&up.includes('initiative_runs_controller_session_nonblank_check')&&up.includes('VALIDATE CONSTRAINT')&&down.includes('DROP CONSTRAINT IF EXISTS initiative_runs_controller_session_nonblank_check')))process.exit(1)"
+  Test: node -e "const fs=require('fs');const up=fs.readFileSync('packages/brain/migrations/416_controller_session_nonblank.sql','utf8');const down=fs.readFileSync('packages/brain/migrations/rollback/416_controller_session_nonblank.down.sql','utf8');const fn='cecelia_controller_session_is_blank';const start=up.indexOf('CREATE OR REPLACE FUNCTION '+fn),end=up.indexOf('$$;',start),helper=up.slice(start,end),slash=String.fromCharCode(92);const points=['0085','00A0','1680','2028','2029','202F','205F','3000','FEFF'];const unicode=points.every((point)=>helper.includes(slash+point))&&helper.includes(slash+'2000-'+slash+'200A');const cleanup=up.includes('SET controller_session_id = NULL')&&up.includes(fn+'(controller_session_id)');const check=up.includes('ADD CONSTRAINT initiative_runs_controller_session_nonblank_check')&&up.includes('NOT VALID')&&up.includes('VALIDATE CONSTRAINT initiative_runs_controller_session_nonblank_check');const rollback=down.includes('DROP CONSTRAINT IF EXISTS initiative_runs_controller_session_nonblank_check')&&down.includes('DROP FUNCTION IF EXISTS '+fn+'(text)');if(!(start>=0&&end>start&&helper.includes('[[:space:]')&&unicode&&cleanup&&check&&rollback))process.exit(1)"
 
 - [x] [ARTIFACT] CodeQL high 回归禁止 `shortTask` 拼入动态 RegExp，legacy 分支用静态 capture + 字符串比较
   Test: manual:bash -c 'bash -lc "cd packages/brain && npx vitest run src/orchestrator/__tests__/ground-truth.test.js -t \"CodeQL 回归|仅为当前 run 的严格 Proposer\""'

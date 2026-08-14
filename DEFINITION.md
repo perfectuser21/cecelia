@@ -8,9 +8,17 @@
 
 
 
-**Brain 版本**: 1.273.8
+**Brain 版本**: 1.273.9
 
 **状态**: 生产运行中
+
+---
+
+## Brain 1.273.9 — Controller heartbeat 与任务终态线性化
+
+- `writeHeartbeat` 与通用 task 终态写、`finalizeKernelRun` 统一使用 `task → run` 行锁顺序；心跳等待父 task 行锁后重读状态，终态事务先行时 heartbeat、lease 与续租事件均零推进。
+- 真实 PostgreSQL 双连接回归覆盖 `completed` / `cancelled` 未提交终态写与已排队 canonical finalizer，并以有限 lock/statement timeout 防死锁回归。
+- Schema 地板保持 416；Controller session 的 locale-independent POSIX+Unicode whitespace 约束不变。
 
 ---
 

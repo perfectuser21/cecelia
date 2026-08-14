@@ -1,18 +1,19 @@
 /**
  * heartbeat.js —— 每跳心跳 + Controller lease 续租（IO 薄层，D8）。
  *
- * 在同一事务内 UPDATE initiative_runs 三列心跳（migration 312）：orchestrator_heartbeat_at /
+ * 在同一事务内更新 initiative_runs 三列心跳（migration 312）：orchestrator_heartbeat_at /
  * orchestrator_host / orchestrator_pid，host+pid 一起才可用于 watchdog 重拉判断
  * （跨主机裸 pid 无意义）；并在同一条 UPDATE 里续租 Controller ownership lease
  * （migration 415 的 controller_lease_expires_at）。
  *
- * 续租走单条 UPDATE...FROM CAS（sprint 08132021）：WHERE 同时约束 run id +
- * controller_session_id + active phase + parent task 非终态，只有仍绑定非终态 task、
- * 且持有创建端 session 的活跃 run 才能续租——
+ * 续租先按全局 task→run 锁序锁 parent task，再走 UPDATE...FROM CAS（sprint
+ * 08132021）：终态写若已持有/排队 task 行锁，心跳必须等待；后续语句重读 task 后，
+ * WHERE 同时约束 run id + controller_session_id + active phase + parent task 非终态。
+ * 只有仍绑定非终态 task、且持有创建端 session 的活跃 run 才能续租——
  * 心跳仅凭 run_id 无法区分真 Controller 与假冒/串号，会给无主/错主 run 续命，
  * 绕过「无主 fail-closed」铁律（INV-9）。rowCount=0（session mismatch / 终态）
- * 交调用方做 Kernel fail-closed，不静默续跑。parent task 判定与 run UPDATE 共用一个
- * PostgreSQL statement snapshot，禁止应用层先 SELECT 再 UPDATE 的 TOCTOU。
+ * 交调用方做 Kernel fail-closed，不静默续跑。task 行锁持有到续租/审计一起提交，
+ * 与通用终态 UPDATE 和 canonical finalizer 形成线性化边界。
  *
  * lease 只增不减（GREATEST）：并发/时钟回拨下直接赋值会缩短已有租约、诱发误杀，
  * 故取 GREATEST(existing, now + lease)，过去时刻的心跳不缩短已有租约。
@@ -46,6 +47,14 @@ export async function writeHeartbeat(pool, {
     await client.query(
       'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
       [auditIdentity],
+    );
+    await client.query(
+      `SELECT parent_task.id, parent_task.status
+         FROM initiative_runs AS run
+         JOIN tasks AS parent_task ON parent_task.id = run.current_task_id
+        WHERE run.id = $1
+        FOR UPDATE OF parent_task`,
+      [runId],
     );
     const result = await client.query(
       `UPDATE initiative_runs AS run

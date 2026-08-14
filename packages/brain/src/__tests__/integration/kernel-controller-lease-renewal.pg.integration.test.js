@@ -351,7 +351,7 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
       await heartbeatPromise?.catch(() => {});
     }
   }, 10_000);
-  it('RACE-A: reconcile 旧快照无权终结随后已被正确 heartbeat 续租的 run', async () => {
+  it('RACE-A: reconcile 已先排队时按 task→run 锁序终结，随后 heartbeat 零推进', async () => {
     const session = randomUUID();
     const { runId, taskId } = await seedOwnedRun({ controllerSessionId: session });
     const reconcileNow = new Date();
@@ -363,35 +363,40 @@ describe('Controller lease heartbeat 续租 CAS（真 PG）', () => {
     );
     const blocker = await testPool.connect();
     let reconcilePromise;
+    let heartbeatPromise;
     try {
       await blocker.query('BEGIN');
       await blocker.query('SELECT id FROM tasks WHERE id = $1 FOR UPDATE', [taskId]);
       reconcilePromise = reconcileOwnerlessKernelRuns(testPool, { now: reconcileNow });
       await waitForBlockedFinalize();
       const heartbeatAt = new Date(reconcileNow.getTime() + MIN);
-      const heartbeat = await writeHeartbeat(testPool, {
+      heartbeatPromise = writeHeartbeat(testPool, {
         runId,
-        host: 'kernel-race-heartbeat-wins',
+        host: 'kernel-race-reconcile-queued-first',
         pid: 4242,
         now: heartbeatAt,
         controllerSessionId: session,
       });
-      expect(heartbeat.rowCount).toBe(1);
+      const settledBeforeUnlock = await Promise.race([
+        heartbeatPromise.then(() => true),
+        new Promise((resolve) => setTimeout(() => resolve(false), 150)),
+      ]);
       await blocker.query('COMMIT');
-      const recovered = await reconcilePromise;
+      const [recovered, heartbeat] = await Promise.all([reconcilePromise, heartbeatPromise]);
       const after = await leaseOf(runId);
-      expect(recovered.map((row) => row.runId)).not.toContain(runId);
-      expect(Date.parse(after.controller_lease_expires_at)).toBeGreaterThan(reconcileNow.getTime());
-      expect(after.phase).toBe('planning');
-      expect(after.task_status).toBe('in_progress');
-      expect(after.failure_reason).toBeNull();
+      expect(settledBeforeUnlock).toBe(false);
+      expect(recovered.map((row) => row.runId)).toContain(runId);
+      expect(heartbeat.rowCount).toBe(0);
+      expect(after.phase).toBe('failed');
+      expect(after.task_status).toBe('failed');
       const events = await auditEvents(runId);
-      expect(events.filter(({ event_type: type }) => type === 'kernel_controller_lease_renewed')).toHaveLength(1);
-      expect(events.filter(({ event_type: type }) => type === 'kernel_ownerless_run_recovered')).toHaveLength(0);
+      expect(events.filter(({ event_type: type }) => type === 'kernel_controller_lease_renewed')).toHaveLength(0);
+      expect(events.filter(({ event_type: type }) => type === 'kernel_ownerless_run_recovered')).toHaveLength(1);
     } finally {
       await blocker.query('ROLLBACK').catch(() => {});
       blocker.release();
       await reconcilePromise?.catch(() => {});
+      await heartbeatPromise?.catch(() => {});
     }
   });
   it('RACE-A reverse: reconcile 先终结时随后的正确 heartbeat 不得复活 run', async () => {
