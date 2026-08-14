@@ -371,6 +371,45 @@ describe('production WorkspaceSpec resolution', () => {
     });
   });
 
+  it('seals an existing PR candidate against the immutable implementation baseline', async () => {
+    const resolveWorkspaceSpec = createWorkspaceSpecResolver({
+      resolveRepoHead: vi.fn(),
+    });
+    const prHead = 'e'.repeat(40);
+
+    const resolved = await resolveWorkspaceSpec({
+      action: 'spawn:generator-fix',
+      role: 'generator',
+      readOnly: false,
+      attemptId: ATTEMPT_ID,
+      ctx: {
+        runId: RUN_ID,
+        decision: { reason: 'current_run_generator_required_for_existing_pr' },
+        observed: {
+          task: {
+            payload: {
+              base_repo: 'perfectuser21/cecelia',
+              base_sha: BASE_SHA,
+            },
+          },
+        },
+      },
+      bundle: {
+        inputs: {
+          pr_branch: 'cp-08010101-existing-candidate',
+          pr_head_sha: prHead,
+        },
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      base_sha: BASE_SHA,
+      expected_head_sha: prHead,
+      branch: 'cp-08010101-existing-candidate',
+      frozen_baseline: true,
+    });
+  });
+
   it.each(['evaluator', 'judge', 'publisher'])('%s 从同机 retained Generator Attempt 物化精确候选', async (role) => {
     const resolveWorkspaceSpec = createWorkspaceSpecResolver({
       resolveRepoHead: vi.fn(),
