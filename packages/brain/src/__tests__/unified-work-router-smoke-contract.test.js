@@ -66,4 +66,15 @@ describe('Unified Work Router scratch smoke contract', () => {
     expect(historyVerifierSource).toContain("['log', '--format=%H%x09%s', head]");
     expect(historyVerifierSource).not.toContain('BASELINE_SHA=310ab9e704d4e3f866e6ce7beb25b79dd0f9d524');
   });
+
+  it('真实 Runner smoke 优先复用当前 Codex 容器的 attempt-scoped credential', () => {
+    const shellSource = readFileSync(
+      new URL('../../scripts/smoke/unified-work-router-smoke.sh', import.meta.url),
+      'utf8',
+    );
+    const currentAttemptAuth = shellSource.indexOf('$HOME/.codex/auth.json');
+    const legacyTeamAuth = shellSource.indexOf('$HOME/.codex-team1/auth.json');
+    expect(currentAttemptAuth).toBeGreaterThan(-1);
+    expect(legacyTeamAuth).toBeGreaterThan(currentAttemptAuth);
+  });
 });
