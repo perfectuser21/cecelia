@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.31
+**Brain 版本**: 1.273.32
+
+## Brain 1.273.32 — Existing Candidate Seal Baseline
+
+- 本轮首次封印现有 PR 候选时，Generator 从服务端观测 HEAD 检出，同时继续以不可变实现基线计算候选差异；后续修复轮仍必须追加新提交。
 
 ## Brain 1.273.31 — Role-chain Routing Envelope
 

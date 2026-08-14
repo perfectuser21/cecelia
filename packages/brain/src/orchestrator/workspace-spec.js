@@ -114,10 +114,14 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
     const plannerBaseSha = role === 'proposer'
       ? inputs.planner_head_sha
       : null;
+    const sealingExistingCandidate = generatorFix
+      && candidate == null
+      && ctx?.decision?.reason === 'current_run_generator_required_for_existing_pr';
     // A task that pins payload.base_sha has chosen an exact baseline instead of
     // latest main — that is the observable, server-side signal for a frozen or
     // comparison run. Ordinary dev leaves it unset and keeps latest-main rebase.
     const baseSha = plannerBaseSha
+      ?? (sealingExistingCandidate ? payload.base_sha : null)
       ?? immutableRoleSha
       ?? payload.base_sha
       ?? await resolveRepoHead(repo);
