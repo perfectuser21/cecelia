@@ -381,9 +381,14 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
           reason: 'automation_deadline_exceeded',
         });
       },
+      writeHeartbeat: async () => ({ rowCount: 1 }),
       now: () => new Date(BASE_MS),
       log: () => {},
-    }, { taskId: TASK_ID, runId: RUN_ID });
+    }, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      controllerSessionId: 'deadline-test-controller',
+    });
 
     expect(result.exitReason).toBe('automation_deadline_exceeded');
     expect(state.collects).toBe(0);
@@ -430,9 +435,14 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
         // 旧回归场景只验证终态不可覆盖；真实冲突语义由
         // kernel-run-store 的 unit + PostgreSQL integration 覆盖。
       },
+      writeHeartbeat: async () => ({ rowCount: 1 }),
       now: () => new Date(BASE_MS),
       log: () => {},
-    }, { taskId: TASK_ID, runId: RUN_ID });
+    }, {
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      controllerSessionId: 'deadline-test-controller',
+    });
 
     expect(result.exitReason).toBe('automation_deadline_exceeded');
     expect(state).toEqual({ phase, failureReason });
