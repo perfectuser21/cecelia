@@ -1,0 +1,31 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动集中在 packages/brain（fleet-worker 脚本 + harness watchdog + orchestrator）+ DB 写路径 + 测试薄包装，纯后端自治流程，无 UI / 无远端 agent 协议。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Fleet Worker 实例隔离 + expired attempt 单入口原子闭环 + postgres 投影真验 + sprint_dir/tests 薄包装",
+      "scope": "实例级容器 namespace 隔离（持久化 + 旧无 namespace 容器 fail-closed，禁跨实例 stop/rm）；expired fleet-worker attempt 由 reconcileExpiredKernelAttempt 单入口单事务终态化为 failed 并生成 attempt_kind=resume / retry_of_attempt_id=parent / restart_reason 非空的 replacement，重复 reconcile 幂等；contract_requirements.postgres=true 机械投影为 runtime_resources.postgres=true 并真连验证；落单一测试实现 packages/brain/scripts/fleet-worker/instance-fencing.test.cjs，sprint_dir/tests 薄包装加载它保 CI 单源 + artifact 收集兼容。同步更新 harness-relay-watchdog-kernel-fleet.test.js 中锁死 deferred_to_controller 的旧 expired 用例。",
+      "dod": [
+        "[BEHAVIOR] 薄包装真跑单源全绿（docker 互杀隔离 / namespace 持久 fail-closed / expired 单入口闭环 / restart_reason lineage / postgres runtime），node sprints/08132138-fleet-worker-instance-fencing/tests/instance-fencing.wrapper.cjs exit 0",
+        "[BEHAVIOR] 真 PG 复核：expired fleet-worker parent 终态化 failed 单条 + resume replacement 单条（retry_of/restart_reason 非空），重复 reconcile 幂等（replacement 每 parent ≤1）",
+        "[BEHAVIOR] contract_requirements.postgres=true → runtime_resources.postgres=true 投影，psql SELECT 1 真连",
+        "[ARTIFACT] sprints/08132138-fleet-worker-instance-fencing/tests/instance-fencing.wrapper.cjs 存在，加载单源、不复制断言、单源缺失 fail-closed",
+        "[ARTIFACT] packages/brain/scripts/fleet-worker/instance-fencing.test.cjs 单一测试实现存在（CI 单源）"
+      ],
+      "files": [
+        "packages/brain/scripts/fleet-worker/instance-fencing.test.cjs",
+        "packages/brain/scripts/fleet-worker/fleet-worker.cjs",
+        "packages/brain/src/harness-relay-watchdog.js",
+        "packages/brain/src/orchestrator/execution-contract.js",
+        "packages/brain/src/orchestrator/contract-artifacts.js",
+        "packages/brain/src/__tests__/harness-relay-watchdog-kernel-fleet.test.js",
+        "sprints/08132138-fleet-worker-instance-fencing/tests/instance-fencing.wrapper.cjs"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
