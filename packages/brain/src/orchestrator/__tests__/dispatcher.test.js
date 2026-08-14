@@ -310,6 +310,32 @@ describe('createDispatcher', () => {
     });
   });
 
+  it('Evaluator 只裁决 pre-Judge 证据，不递归要求自己的 Judge 终态', async () => {
+    const deps = makeDeps();
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 9,
+      observed,
+      decision: { phase: 'evaluate', reason: 'candidate_ready' },
+    });
+
+    const bundle = deps.attemptStore.createAttempt.mock.calls[0][0].bundle;
+    expect(bundle.inputs.verification_stage).toEqual({
+      name: 'pre_judge',
+      verdict_scope: 'candidate_and_upstream_evidence',
+      deferred_checks: [
+        'judge_verdict',
+        'publisher_result',
+        'all_gates_passed',
+        'completed_role_chain',
+      ],
+    });
+    expect(bundle.objective).toContain('Do not launch a nested Controller or Harness role chain');
+    expect(bundle.objective).toContain('must not require its own future Judge verdict');
+  });
+
   it('批准合同后不重复装载入口 PRD，Evaluator 大合同仍可派发', async () => {
     const deps = makeDeps();
     const sourceRevision = '6faaa9f55e9789ffd29fd2760a9b5994df272e86';
