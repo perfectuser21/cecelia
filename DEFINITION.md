@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.55
+**Brain 版本**: 1.273.56
+
+## Brain 1.273.56 — Fleet Runner Baseline Recovery
+
+- Canonical Runner 更新为从冻结源码与供应链标签重建并验证的 `sha256:d9087a85a3bbaa668628dfb3166f980a62c3851c8033d5d26e194fc975b55d0a`；全部 Fleet pin 点保持一致。
+- Fleet Worker 准入版本同步为 `1.272.20`，旧进程或缺失镜像继续 fail-closed；通过正式 rollout 恢复生产节点，不放宽 digest、容器探针或 Runner 合同。
 
 ## Brain 1.273.55 — Generator Local Candidate Runtime Authority
 
