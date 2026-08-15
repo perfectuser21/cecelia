@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.46
+**Brain 版本**: 1.273.47
+
+## Brain 1.273.47 — Map Recovery Projection Authority
+
+- Map authority 锁发现 active manifest/projection 缺失或身份不一致时，显式 recovery bugfix 将该确定性故障归类为 `projection_unavailable`，继续消费受信的 last-known-good Impact Contract；普通 coding mutation 仍以 `map_projection_changed` fail-closed。
+- Map Recovery 的真实 PostgreSQL 消费回归使用显式事务客户端创建 machine-scoped Generator Attempt，持续验证容量锁、单次 recovery consumption 与终态阻断。
 
 ## Brain 1.273.46 — Trusted Human Evaluation and Recovery Closure
 

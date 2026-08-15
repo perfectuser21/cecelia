@@ -112,6 +112,7 @@ async function resolveScopeKey(client, repo) {
 
 function recoveryReasonCode(error) {
   if (RECOVERY_REASONS.has(error?.code)) return error.code;
+  if (error?.code === 'map_projection_changed') return 'projection_unavailable';
   if (['map_stale', 'map_revision_mismatch', 'map_radius_stale'].includes(error?.message)) {
     return 'scanner_unavailable';
   }

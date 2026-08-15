@@ -132,7 +132,8 @@ describeDb('map recovery PostgreSQL consumption', () => {
     );
     await client.query('UPDATE kernel_controller_sessions SET run_id=$2 WHERE id=$1',
       [controllerSessionId,runId]);
-    const attempt = await createAttemptStore(client).createAttempt({
+    const attemptStore = createAttemptStore(client, { transactionClient: true });
+    const attempt = await attemptStore.createAttempt({
       id: attemptId,
       runId,
       hop: 1,
@@ -154,7 +155,7 @@ describeDb('map recovery PostgreSQL consumption', () => {
       contract_id: preflight.recovery_contract.id,
       attempt_id: attemptId,
     }]);
-    await expect(createAttemptStore(client).createAttempt({
+    await expect(attemptStore.createAttempt({
       id: randomUUID(), runId, hop: 2, phase: 'generate', role: 'generator',
       provider: 'codex', accountId: null, machineId: 'integration',
       callbackSecretHash: 'f'.repeat(64), bundle: {},
