@@ -131,6 +131,7 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
       (generatorFix ? inputs.pr_branch : null)
       ?? (role === 'evaluator' || role === 'judge' ? inputs.pr_branch : null)
       ?? (role === 'reviewer' ? inputs.contract_branch : null)
+      ?? (role === 'planner' ? inputs.planner_branch : null)
       ?? inputs.propose_branch
       ?? payload.branch_name
       ?? payload.branch

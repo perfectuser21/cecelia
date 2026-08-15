@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.56
+**Brain 版本**: 1.273.57
+
+## Brain 1.273.57 — Planner Role Branch Authority
+
+- Dispatcher/Fleet 在 Planner 启动前把工作区直接置于 TaskBundle 签发的 `planner_branch`，routing action gate 与 Planner finalizer 观察同一角色分支身份。
+- Planner Skill 只验证当前分支等于 `PLANNER_BRANCH`，不再由 Provider 自行 checkout/switch，避免分支漂移后 mutation guard 把恢复动作一并拒绝。
 
 ## Brain 1.273.56 — Fleet Runner Baseline Recovery
 
