@@ -1,0 +1,28 @@
+{
+  "initiative_id": "b3c7710a-8cea-406a-a10c-feccf6f7c4b2",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅修改本地 Brain smoke 输出与永久 Vitest 回归，通过真实 Brain/PostgreSQL 验收",
+  "implementation_baseline": {
+    "repo": "perfectuser21/cecelia",
+    "base_sha": "329f2bf0a68759fae45de61d805800e278a2d587"
+  },
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "让 control-plane smoke PASS 报告真实 Brain runtime version",
+      "scope": "先提交永久失败回归，再把最终 PASS 的版本来源绑定到本轮 /api/brain/version 响应，同时保持 schema 430 与四项 authority fail-closed 检查不变",
+      "dod": [
+        "[BEHAVIOR] 两个不同 runtime API version 均在 PASS 中逐字报告，固定版本实现转红",
+        "[BEHAVIOR] schema 429 与 authority FAIL 均非零退出且不打印 PASS",
+        "[ARTIFACT] packages/brain/scripts/__tests__/harness-control-plane-complete-repair-smoke.test.mjs 永久进入 Brain Vitest CI"
+      ],
+      "files": [
+        "packages/brain/scripts/smoke/harness-control-plane-complete-repair-smoke.sh",
+        "packages/brain/scripts/__tests__/harness-control-plane-complete-repair-smoke.test.mjs"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
