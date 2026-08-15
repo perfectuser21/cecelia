@@ -7,6 +7,11 @@ const GITHUB_ROLES = new Set([
   'evaluator',
 ]);
 
+const POSTGRES_ROLES = new Set([
+  'generator',
+  'evaluator',
+]);
+
 /**
  * Build the server-owned minimum for a role, then allow the approved
  * structured contract to add requirements. Payload values can never weaken
@@ -21,7 +26,7 @@ export function deriveCapabilityRequirements({ role, requirements } = {}) {
   return {
     provider_auth: true,
     github: GITHUB_ROLES.has(role) || contract.github,
-    postgres: contract.postgres,
+    postgres: POSTGRES_ROLES.has(role) || contract.postgres,
     model_capabilities: [...modelCapabilities],
   };
 }

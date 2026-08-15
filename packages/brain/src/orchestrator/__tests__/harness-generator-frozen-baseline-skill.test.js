@@ -65,17 +65,22 @@ describe('harness-generator SKILL frozen baseline doctrine', () => {
     expect(preflight).toMatch(/git fetch origin main[\s\S]{0,200}git rebase origin\/main/);
   });
 
-  it('lets a green frozen PR finish when GitHub reports BEHIND', () => {
-    const behindBlock = content.slice(
-      content.indexOf('[ "$MERGE_STATE" = "BEHIND" ]'),
-      content.indexOf('if [ "$FAILED" -eq 0 ]'),
-    );
-    const frozenBranch = behindBlock.slice(
-      behindBlock.indexOf('HARNESS_FROZEN_BASELINE'),
-      behindBlock.indexOf('EVA v2'),
-    );
+  it('does not update a remote PR branch from the frozen Generator workspace', () => {
+    const activeInstructions = content.slice(content.indexOf('## Mode 1:'));
 
-    expect(frozenBranch).not.toContain('continue');
-    expect(behindBlock).toContain('gh pr update-branch');
+    expect(activeInstructions).not.toContain('MERGE_STATE');
+    expect(activeInstructions).not.toContain('update-branch');
+  });
+
+  it('hands publication to the trusted Publisher instead of telling Generator to push', () => {
+    const activeInstructions = content.slice(content.indexOf('## Mode 1:'));
+    const executableRemoteWrites = activeInstructions
+      .split('\n')
+      .filter((line) => /^\s*(git\s+push|gh\s+pr\s+create)\b/.test(line));
+
+    expect(activeInstructions).toContain('local_candidate_committed');
+    expect(activeInstructions).toContain('Publisher');
+    expect(executableRemoteWrites).toEqual([]);
+    expect(activeInstructions).not.toContain('### Step 7: Push + PR');
   });
 });

@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.54
+**Brain 版本**: 1.273.55
+
+## Brain 1.273.55 — Generator Local Candidate Runtime Authority
+
+- Generator 与 Evaluator 的 capability baseline 强制申请 attempt-scoped PostgreSQL，任务 payload 不能用 `postgres:false` 降级合同要求；Fleet TaskBundle 会携带隔离 `DB_URL`。
+- Generator Skill 只形成并上报服务端可验证的 `local_candidate_committed` 本地候选；远端发布、PR、CI 与合并继续由独立 Evaluator/Judge 通过后的可信 Publisher 独占。
 
 ## Brain 1.273.54 — Fleet Generator Brain URL Authority
 
