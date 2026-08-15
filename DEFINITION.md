@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.49
+**Brain 版本**: 1.273.50
 
 ## Brain 1.273.49 — Claude Terminal Receipt Recovery
 
