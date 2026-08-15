@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.54
+**Brain 版本**: 1.273.55
+
+## Generator Local Candidate Runtime Authority（Brain 1.273.55）
+
+- `deriveCapabilityRequirements` 为 Generator/Evaluator 建立不可降级的 attempt-scoped PostgreSQL 基线，合同需要的真库验证不再因 payload 缺失或 false 而失去 `DB_URL`。
+- Generator runtime SSOT 只允许提交本地候选并返回 `local_candidate_committed`；Runner 冻结 exact candidate 后交独立 Evaluator/Judge，可信 Publisher 才能执行远端发布与 PR 生命周期。
 
 ## Fleet Generator Brain URL Authority（Brain 1.273.54）
 

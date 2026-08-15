@@ -108,7 +108,7 @@ function context(role, requirements) {
 }
 
 describe('server-owned capability requirements', () => {
-  it.each(['planner', 'proposer', 'generator', 'evaluator'])(
+  it.each(['planner', 'proposer'])(
     'payload false cannot disable %s provider auth, GitHub, or structured output',
     async (role) => {
       const { dispatch, evaluate } = dispatcherWithCapturedPreflight();
@@ -127,6 +127,36 @@ describe('server-owned capability requirements', () => {
           postgres: false,
           model_capabilities: ['structured_output'],
         },
+      }));
+    },
+  );
+
+  it.each(['generator', 'evaluator'])(
+    'payload false cannot disable %s attempt-scoped PostgreSQL',
+    async (role) => {
+      const { dispatch, evaluate, launcher } = dispatcherWithCapturedPreflight();
+
+      await dispatch(`spawn:${role}`, context(role, {
+        provider_auth: false,
+        github: false,
+        postgres: false,
+        model_capabilities: [],
+      }));
+
+      expect(evaluate).toHaveBeenCalledWith(expect.objectContaining({
+        requirements: {
+          provider_auth: true,
+          github: true,
+          postgres: true,
+          model_capabilities: ['structured_output'],
+        },
+      }));
+      expect(launcher.launch).toHaveBeenCalledWith(expect.objectContaining({
+        bundle: expect.objectContaining({
+          inputs: expect.objectContaining({
+            runtime_resources: expect.objectContaining({ postgres: true }),
+          }),
+        }),
       }));
     },
   );

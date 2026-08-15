@@ -4,11 +4,12 @@ description: |
   Harness Generator — 严格合同执行者 × Superpowers 融合。
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
-  CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。一个 Sprint = 一个 Generator = 一个 PR。
-version: 7.14.1
+  CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。一个 Sprint = 一个 Generator 本地候选；远端发布只由 Judge PASS 后的可信 Publisher 执行。
+version: 7.15.0
 created: 2026-04-08
 updated: 2026-08-15
 changelog:
+  - 7.15.0: Generator 与 Kernel 本地候选协议对齐——Generator 只提交并返回 `local_candidate_committed`，不得写远端或创建 PR；Runner 冻结候选后交独立 Evaluator/Judge，只有可信 Publisher 可以发布、建 PR、等待 CI 与合并
   - 7.14.1: Fleet Codex 环境兼容——从 Runner 服务端注入的 HARNESS_BRAIN_URL 恢复 BRAIN_URL，避免 Codex 子工具环境过滤通用 BRAIN_URL 后 Generator 在 Step 0 假阻塞；原 BRAIN_URL 仍优先兼容
   - 7.14.0: 冻结测试制品协议闭环——冻结档测试的唯一来源改为 TaskBundle `inputs.artifacts[]` 的 `frozen_contract_test` 描述；Runner 在 Provider 前按 approved SHA + SHA-256 原样落盘、Provider 后复验，Generator 只消费现成文件并拒绝自行重建
   - 7.13.0: 冻结档合同来源死锁修复（r42 实证 FROZEN_CONTRACT_ARTIFACTS_MISSING 拒工）——Step 1 原文只有 git fetch/show 合同分支一条路，与冻结档「禁 fetch 任何分支」自相矛盾且合同分支本就不在远端，模型守规则=必死、自作主张=侥幸活（r41/r42 同条件二象性实证）。修法：Step 1 按 HARNESS_FROZEN_BASELINE 分叉，冻结档下合同资产一律从 TaskBundle inputs.contract（Brain 锁定版）原样落盘到 ${SPRINT_DIR}/，这是官方来源不算重写；FROZEN_CONTRACT_ARTIFACTS_MISSING 只允许在 bundle 内也无合同内容时上报
@@ -53,7 +54,7 @@ changelog:
 合同里有的：全部实现
 合同里没有的：一个字不加
 测试文件（从合同 checkout）：commit 1 后绝对不可修改，由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制
-发现其他问题：写进 PR description，不实现
+发现其他问题：写进结构化 result/case_file，不实现
 ```
 
 **禁 mock 边执行规则（v7.10 — CONTRACT IS LAW 的一部分，配套 proposer 9.12.0）**：合同 `## 禁 mock 边清单` 列出的每条边（模块A↔模块B、代码↔DB表X），测试代码中 `vi.mock` / `jest.mock` / stub **命中即违约**——清单里说「代码↔DB表X 禁 mock」，测试就必须真 Postgres 验真行落库，不许 mock pg/db 模块；清单里说「模块A↔模块B 禁 mock」，测试就必须真调 B，只允许 mock 更外层的无关依赖。evaluator 会机械 grep 测试文件的 mock 目标对照清单，命中 = CONTRACT-IS-LAW FAIL。需要真 PG 的测试放 integration 命名/位置（按合同指定），CI 由 brain-integration job 起真 Postgres 跑，不要因"vitest 单测环境没有 DB"而回退成 mock。
@@ -190,14 +191,14 @@ fi
 - 禁止 `git reset --hard` / `git checkout` 到 `HARNESS_WORKSPACE_START_SHA` 血统之外的 commit
 - 禁止 `git push --force` / `--force-with-lease`——冻结档只做 fast-forward 追加
 - 禁止 `git push --no-verify`——运输层 pre-push 血统闸不是建议
-- 唯一合法动作：在 `HARNESS_WORKSPACE_START_SHA` 之上**追加** Red/Green commit 后正常 push
+- 唯一合法动作：在 `HARNESS_WORKSPACE_START_SHA` 之上**追加** Red/Green commit，留下本地候选
 - 合同资产来源：冻结档下**只认 TaskBundle inputs.contract**（见 Step 1 冻结分支）——盘上没有 sprint 目录不是拒工理由，bundle 里有合同就落盘开工
 
-> 这些禁令由 Runner 侧 pre-push 血统闸 + Provider 退出后的血统断言 + Brain callback 服务端 lineage 校验三层机械执行。任何一层发现 `HARNESS_WORKSPACE_START_SHA` 不再是 HEAD 的祖先，push 失败、Attempt 判死、PR 不被投影。绕过闸门不会让你通过，只会把这次 Attempt 变成 `frozen_baseline_violation`。
+> 这些禁令由 Runner 的候选血统闸、Provider 退出后的血统断言、Brain callback 服务端 lineage 校验三层机械执行。任何一层发现 `HARNESS_WORKSPACE_START_SHA` 不再是 HEAD 的祖先，Attempt 判死、候选不被 Publisher 接受。
 
 **普通 dev 档禁止事项**：
 - 禁止跳过 rebase 直接开工
-- 禁止用 `git merge origin/main` 代替 rebase（会产生 merge commit 污染历史）——此禁令仅适用于**开工 rebase 阶段**；PR 阶段 BEHIND 用 `gh pr update-branch` 产生的 merge commit 不违规（EVA v2 G4）
+- 禁止用 `git merge origin/main` 代替 rebase（会产生 merge commit 污染历史）
 
 ### Step 1: 读合同 + 测试文件清单
 
@@ -353,7 +354,7 @@ fi
 git commit -m "test(harness): sprint failing tests (Red)"
 ```
 
-**Red 证据贴进 commit 1 的 git notes 或临时保存在 /tmp/red-evidence.txt，后面进 PR body。**
+**Red 证据贴进 commit 1 的 git notes 或保存在结构化 result/case_file，供后续 Evaluator/Judge 与 Publisher 使用。**
 
 **Skeleton 模式**：`IS_SKELETON=true` 时，commit message 改为：
 ```
@@ -390,7 +391,7 @@ git commit -m "feat(harness): sprint implementation (Green)"
 - 允许 stub 中间层（返回 hardcode），但每个 stub 必须有注释：`// SKELETON STUB — replaced in <task_id>`
 - stub 的函数签名/接口必须与最终实现兼容，不得为了省事修改接口
 
-### Step 5: ★ Verification 阶段（push 前必须实跑 + 贴证据）
+### Step 5: ★ Verification 阶段（候选封存前必须实跑 + 留证据）
 
 **调用 skill: `superpowers:verification-before-completion`** — 禁止自己声称"测试通过"，必须贴 npm test 实际输出。
 
@@ -404,7 +405,7 @@ npx vitest run "${SPRINT_DIR}/tests/" --reporter=verbose 2>&1 | tee /tmp/green-e
 # - 无新增红
 ```
 
-Test Evidence 要贴进 PR body 的 `## Test Evidence` 章节（Red → Green 对比）。
+Test Evidence 要写进结构化 result/case_file（Red → Green 对比），供后续角色消费。
 
 ### Step 5.5: ★ RPA 代码真机自验（快验通道 dev-verify — target_environment=windows_wechat 等真机 RPA 必做）
 
@@ -413,7 +414,7 @@ Test Evidence 要贴进 PR body 的 `## Test Evidence` 章节（Red → Green �
 **判定是否适用**：本 sprint 改动碰了 RPA 执行路径（wechat-rpa/*.py、agent handlers、UIA/ADB/CDP 脚本）→ 必做；纯中台/UI/DB 代码 → 跳过本步。
 
 ```bash
-# commit 2 之后、push 之前，至少真跑一次本次改动对应的动作：
+# commit 2 之后、候选封存之前，至少真跑一次本次改动对应的动作：
 curl -s -m 65 -X POST localhost:5221/api/brain/rpa/dev-verify \
   -H "Content-Type: application/json" \
   -d '{"line":"wechat","action":"<本次改动的白名单动作>","params":{...},"timeout_ms":30000}'
@@ -421,9 +422,9 @@ curl -s -m 65 -X POST localhost:5221/api/brain/rpa/dev-verify \
 
 - 白名单动作（Agent 侧 DEV_VERIFY_WHITELIST，两端已对齐）：`health_check` / `wechat_private_chat_send` / `wechat_moments_send` / `wechat_qr_bind`；白名单外必拒（`action_not_allowed`），不要试图绕
 - 回执读法：`ok:true` 且 `exit_code:0` = 真机执行成功，`stdout` 是脚本真实输出（按合同断言其内容）；`rejected:not_dev_machine` = 打到了生产机或研发机 env 未设，找 controller 报障而不是跳过；`error:agent_unreachable/timeout` = 通道故障，同样报障
-- 回执（完整 JSON）贴进 PR body 的 `## Test Evidence`，与 vitest Green 证据并列——**没有真机回执的 RPA 类 PR，evaluator 按合同会直接 FAIL**
+- 回执（完整 JSON）写进结构化 result/case_file，与 vitest Green 证据并列——没有真机回执的 RPA 候选，Evaluator 按合同会直接 FAIL
 
-### Step 6: ★ Code Review 阶段（push 前内联自审 diff）
+### Step 6: ★ Code Review 阶段（候选封存前内联自审 diff）
 
 > **relay 铁律**：你（generator）是 controller 派出的 **sub-agent，没有 Task 工具，不能再派 sub**。因此这里**不调 `superpowers:requesting-code-review`（它会 dispatch 一个 review 子 agent，在 relay 下物理失效、静默跳过 → high 级问题漏检进 PR）**。改由你**自己内联**按 requesting-code-review 的检查清单审自己的 diff。
 
@@ -437,11 +438,11 @@ git diff origin/main...HEAD -- . ':!DoD.md' ':!docs/learnings/'
 - **可维护**：重复代码、命名、死代码、未用 import、遗留 console.log
 - **测试**：新逻辑是否被合同测试真正覆盖（不是只加行数）
 
-分级处理：**high → 当场修**（修完重跑 Step 3/6.5 验证）；**medium → 记进 PR body 的 Review Summary**；**low → 忽略**。自审结论（含 high 修了什么 / medium 遗留项）写进 PR body。
+分级处理：**high → 当场修**（修完重跑 Step 3/6.5 验证）；**medium → 记进结构化 result/case_file**；**low → 忽略**。自审结论随候选交给后续角色。
 
-### Step 6.5: ★ Contract Self-Verification（v6.1 新增 — push 前必须自跑合同 [BEHAVIOR] 全过）
+### Step 6.5: ★ Contract Self-Verification（候选封存前必须自跑合同 [BEHAVIOR] 全过）
 
-**目的**：W19/W20/W21/W22 实证 generator 频繁推漂移实现给 evaluator 兜底，浪费 evaluator 跑 + retry 周期。本步骤强制 generator push 前自验所有 contract [BEHAVIOR] manual:bash 命令，**任一 FAIL 不准 push，必须自修**。
+**目的**：Generator 必须在候选封存前自验所有 contract [BEHAVIOR] manual:bash 命令，任一 FAIL 不准返回 completed，必须自修。
 
 ```bash
 # 1. 提取 contract DoD 文件所有 [BEHAVIOR] Test: 命令
@@ -471,18 +472,18 @@ done < /tmp/contract-behavior-cmds.sh
 
 echo "[contract-self-verify] $PASS_COUNT / $CMD_COUNT PASS"
 
-# 3. 任一 FAIL → 不准 push
+# 3. 任一 FAIL → 不准封存候选
 if [ "$PASS_COUNT" -lt "$CMD_COUNT" ]; then
-  echo "❌ Contract 自验未全过，禁止 push："
+  echo "❌ Contract 自验未全过，禁止封存候选："
   echo -e "$FAIL_LOG"
   echo ""
   echo "下一步：检查实现是否漂移了 contract 字段名/HTTP code/error format。"
   echo "禁止改 contract 来迁就实现（违反 CONTRACT IS LAW）。"
-  echo "禁止 push，自修后重新跑本 step。"
+  echo "禁止返回 completed，自修后重新跑本 step。"
   exit 1
 fi
 
-echo "✅ Contract 自验全过，可以 push"
+echo "✅ Contract 自验全过，可以封存本地候选"
 ```
 
 **核心规则**：
@@ -490,12 +491,12 @@ echo "✅ Contract 自验全过，可以 push"
 - generator 自验跟 evaluator 跑同一套 manual:bash 命令——所以"自验过 = evaluator 也会过"（除了环境差异）
 - 自验失败 → 自修代码（不改 contract）
 - 自修后重新跑 Step 6.5 直到全过
-- **禁止跳过 Step 6.5 直接 push**（W19/W20/W21/W22 教训）
+- **禁止跳过 Step 6.5 直接返回 completed**
 
 **windows_cloud target 例外说明**：
 - contract-dod.md 里的 `[BEHAVIOR]` 条目必须是 **bash-executable**（curl/psql/jq 等 API-level 检查），generator 在 Linux Docker 里跑这些没问题
 - PowerShell / Windows 专属命令只写在 contract-draft.md 的 `## E2E 验收` 区块里，供 evaluator 触发 GHA workflow 时使用
-- 如果自验时发现 [BEHAVIOR] 里有 PowerShell 命令 → 这是 proposer 写错了（应在 E2E 区块），告知 generator 无法在本地验证、标 `[CI_GAP]` 并 push，让 evaluator 的 windows_cloud Mode B 去跑
+- 如果自验时发现 [BEHAVIOR] 里有 PowerShell 命令 → 这是 proposer 写错了（应在 E2E 区块），在结构化 result 标 `[CI_GAP]` 并返回 failed，由 Kernel 处理
 
 **Step 6.5 失败重试工作流（FAIL 时必走，禁止直接放弃或改测试）**：
 
@@ -508,11 +509,11 @@ git commit -m "fix(harness): 修实现让 contract 自验过 (Green after fix)"
    ↓
 重跑 Step 6.5
    ↓
-过 → 进 Step 7 push；仍 FAIL → 计数 +1，回到「修实现代码」
+过 → 进 Step 7 封存本地候选；仍 FAIL → 计数 +1，回到「修实现代码」
    ↓
 连续 3 轮仍 FAIL（ROUND≥3）→ 不再死磕：
-   - PR description 顶部标 [BEHAVIOR_FAIL]，列出仍失败的 manual:bash 命令 + 实际输出
-   - 正常 push（不阻塞），交 evaluator 处理（evaluator 是判官，generator 不自判 PASS）
+   - 在结构化 result 的 summary/case_file 记录仍失败的 manual:bash 命令 + 实际输出
+   - 返回 failed，交 Kernel 决定后续动作；Generator 不写远端、不创建 PR
 ```
 
 ```bash
@@ -521,16 +522,16 @@ ROUND=$(cat "$SELFVERIFY_ROUND_FILE" 2>/dev/null || echo 0)
 # ...（每次 Step 6.5 FAIL 后）
 ROUND=$((ROUND+1)); echo "$ROUND" > "$SELFVERIFY_ROUND_FILE"
 if [ "$ROUND" -ge 3 ]; then
-  echo "⚠️ Step 6.5 连续 $ROUND 轮 FAIL，标 [BEHAVIOR_FAIL] 并 push 交 evaluator"
-  # 在 PR body 顶部加 [BEHAVIOR_FAIL] 段（列出失败命令 + 输出），然后正常走 Step 7
+  echo "⚠️ Step 6.5 连续 $ROUND 轮 FAIL，记录 [BEHAVIOR_FAIL] 并返回 Kernel"
+  # 在结构化 result 中记录失败命令 + 输出，然后走 Step 7 的失败出口
 fi
 ```
 
 **死规则**：重试期间**只能改实现代码**，绝不允许改 contract / 改测试文件来迁就（违反 CONTRACT IS LAW，测试文件不可改由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。
 
-### Step 6.7: ★ push 前 CI 门禁自查（EVA v2：3827 实证缺这步多烧 2 个 fix commit）
+### Step 6.7: ★ 本地候选封存前 CI 门禁自查
 
-**目的**：把 CI 必挂项左移到 push 前自查。以下三条任一缺 → 补完（补 smoke / 勾 DoD / 补测试映射）再 push，禁止带着已知 CI 必挂项 push。
+**目的**：把 CI 必挂项左移到候选封存前自查。以下三条任一缺 → 补完（补 smoke / 勾 DoD / 补测试映射）再提交候选，禁止把已知 CI 必挂项交给 Publisher。
 
 ```bash
 # ① smoke 脚本存在且登记（按 base_repo 分派）
@@ -549,7 +550,7 @@ else
     || echo "❌ smoke 未登记：smoke-baseline.txt"
 fi
 
-# ② DoD 条目全部 [x]（存在未勾 [ ] 条目 = 不许 push）
+# ② DoD 条目全部 [x]（存在未勾 [ ] 条目 = 不许封存候选）
 ! grep -q '\- \[ \]' "${SPRINT_DIR}/contract-dod.md" || { echo "❌ DoD 有未勾 [ ] 条目"; exit 1; }
 
 # ③ [BEHAVIOR] 覆盖：每条 [BEHAVIOR] 的覆盖文本必须能与测试 it()/文件名子串匹配
@@ -559,142 +560,29 @@ grep -oE '\[BEHAVIOR\][^|]*' "${SPRINT_DIR}/contract-dod.md" | while read -r b; 
 done
 ```
 
-**规则**：出现任何 ❌ → 不准 push，补完对应项后重跑本 step 直到无 ❌（EVA v2：3827 实证缺这步多烧 2 个 fix commit）。
+**规则**：出现任何 ❌ → 不准封存候选，补完对应项后重跑本 step 直到无 ❌。
 
-### Step 7: Push + PR
-
-```bash
-git push origin HEAD
-
-PR_URL=$(gh pr create --title "feat(harness): <Sprint 目标>" --body "$(cat <<'PRBODY'
-## Summary
-<本 Sprint 实现的完整功能>
-
-## Test Evidence
-
-### Red (commit 1)
-\`\`\`
-<贴 /tmp/red-evidence.txt 的摘要>
-\`\`\`
-
-### Green (commit 2+)
-\`\`\`
-<贴 /tmp/green-evidence.txt 的摘要>
-\`\`\`
-
-## Review Summary
-<贴 Step 6 内联自审的 high（已修）/medium（遗留）issues 摘要>
-
-## Learning
-docs/learnings/cp-xxx-xxx.md
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-PRBODY
-)" | tail -1)
-
-echo "PR created: $PR_URL"
-```
-
-### Step 7.5: 轮询 CI 到全绿（PR 创建后立刻执行，不退出；禁止 merge）
-
-PR 创建完不退出，原地轮询直到 **CI 全绿**，然后进 Step 8 输出 verdict。
-
-> **🚫 红线（v7.5.0）：generator 禁止执行任何 `gh pr merge`（含 `--auto`）。**
-> merge 是 Brain `mergePrNode` 在 **evaluator PASS 之后**的职责。generator 自行 merge =
-> 绕过 evaluator pre-merge gate（"evaluator 不 PASS，main 不变动"被破坏）。
-> 实证：2026-06-11 PR #3342 被 generator 的 `--auto` 在 CI 绿后自动合并，evaluator 从未运行。
+### Step 7: 封存本地候选并返回 Kernel
 
 ```bash
-# 从 PR_URL 提取 PR 号
-PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
-REPO=$(echo "$PR_URL" | grep -oE 'github\.com/[^/]+/[^/]+' | sed 's|github.com/||')
-MAX_FIXES=3
-# FIX_COUNT 持久化到文件，防止 Bash timeout 重调用后计数归零
-FIX_COUNT_FILE="/tmp/generator-fix-count-${PR_NUMBER}"
-FIX_COUNT=$(cat "$FIX_COUNT_FILE" 2>/dev/null || echo 0)
-
-while true; do
-  STATE=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state --jq '.state' 2>/dev/null)
-  # 容错出口：恢复场景下 PR 可能已被 mergePrNode 合并/人工关闭
-  [ "$STATE" = "MERGED" ] && { echo "PR #$PR_NUMBER already merged (by mergePrNode)"; rm -f "$FIX_COUNT_FILE"; break; }
-  [ "$STATE" = "CLOSED" ] && { echo "PR #$PR_NUMBER closed"; break; }
-
-  CHECKS=$(gh pr checks "$PR_NUMBER" --repo "$REPO" 2>/dev/null)
-  FAILED=$(echo "$CHECKS" | grep -c "fail" 2>/dev/null || echo 0)
-  PENDING=$(echo "$CHECKS" | grep -cE "pending|in_progress|queued" 2>/dev/null || echo 0)
-  MERGE_STATE=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null)
-
-  if [ "$FAILED" -gt 0 ]; then
-    if [ "$FIX_COUNT" -ge "$MAX_FIXES" ]; then
-      echo "CI failed $MAX_FIXES times, giving up"
-      rm -f "$FIX_COUNT_FILE"
-      # EVA v2（G5）：giving up 不是流程真空——break 后立即执行 Step 8 输出
-      # {"verdict":"FAILED","pr_url":"<url>","reason":"<最后一轮 CI 失败摘要>"}
-      # relay 模式下报告末尾输出 RELAY_STATUS: BLOCKED
-      break
-    fi
-    FIX_COUNT=$((FIX_COUNT+1))
-    echo "$FIX_COUNT" > "$FIX_COUNT_FILE"
-    # CI 失败 → 读日志修复
-    RUN_ID=$(gh pr checks "$PR_NUMBER" --repo "$REPO" --json name,conclusion,databaseId 2>/dev/null \
-      | jq -r '[.[] | select(.conclusion=="failure")] | sort_by(.databaseId) | last | .databaseId // empty')
-    echo "CI failed (attempt $FIX_COUNT), reading logs..."
-    gh run view "$RUN_ID" --repo "$REPO" --log-failed 2>/dev/null | tail -100
-    # 分析日志 → 在 worktree 里修复 → git commit + push
-    # （根据日志内容直接修复，此处为 Claude 的内联操作，不另起 session）
-    continue
-  fi
-
-  [ "$MERGE_STATE" = "BEHIND" ] && {
-    if [[ "${HARNESS_FROZEN_BASELINE:-false}" == "true" ]]; then
-      # 冻结档下 update-branch 会把 main（可能已含对照候选）merge 进本分支 ——
-      # 血统闸看不出来（merge commit 保留祖先），但盲测已被污染。BEHIND 不是本
-      # Attempt 能解决的问题，不许自行同步；继续落到下方全绿完成判断。
-      echo "frozen baseline: BEHIND 不做 update-branch，保持冻结边界并按 CI 结果收尾"
-    else
-      # EVA v2（G4）：BEHIND 统一走 gh pr update-branch（与 controller 实践/全局规范对齐），
-      # 不再本地 rebase + force-with-lease push
-      echo "branch behind main, update-branch..."
-      gh pr update-branch "$PR_NUMBER" --repo "$REPO"
-      continue
-    fi
-  }
-
-  if [ "$FAILED" -eq 0 ] && [ "$PENDING" -eq 0 ]; then
-    echo "CI 全绿，generator 任务完成（merge 交给 evaluator PASS 后的 mergePrNode）"
-    rm -f "$FIX_COUNT_FILE"
-    break
-  fi
-
-  echo "$(TZ=Asia/Shanghai date '+%H:%M:%S') OPEN | pending=$PENDING fail=$FAILED | $MERGE_STATE"
-  sleep 30
-done
+git status --short
+git diff --cached --quiet
+test "$(git rev-parse HEAD)" != "${HARNESS_WORKSPACE_START_SHA:?}"
+git merge-base --is-ancestor "$HARNESS_WORKSPACE_START_SHA" HEAD
 ```
 
-> **说明**：Bash 工具单次 timeout 上限 600000ms（10 分钟）。超时后立刻重新发 Bash 调用继续轮询，不输出任何文字，不结束 turn。直到 CI 全绿为止。
+**远端发布铁律**：Generator 不得执行任何远端写入，也不得创建、更新或合并 PR。Runner 会在 Provider 退出后验证并冻结 exact local candidate；独立 Evaluator 与 Judge 都通过后，可信 Publisher 才发布这个 exact SHA、创建 PR、等待 CI 并执行合并。
 
-> **EVA v2（G5）MAX_FIXES 用尽出口（死规则）**：CI 修复 3 次用尽走到 `giving up` 分支后，禁止静默结束——**立即执行 Step 8**，输出 `{"verdict":"FAILED","pr_url":"<url>","reason":"<最后一轮 CI 失败摘要>"}`；relay 模式下报告末尾输出 `RELAY_STATUS: BLOCKED`。消除 break 后的流程真空。
-
-### Step 8: 输出 verdict JSON（⚠️ Brain 通过此提取 pr_url，CI 全绿后执行）
+### Step 8: 输出 harness-result/generator-v1
 
 > **CRITICAL**: 最后一条消息必须是**纯 JSON**，禁止任何其他文字（不加 markdown、不加说明）。
-> Brain 的 execution.js 依赖此 JSON 提取 pr_url。
-
-**verdict JSON schema（三态，各自必带字段）**：
-
-| verdict | 用于 | 必带字段 | 说明 |
-|---|---|---|---|
-| `DONE` | Mode 1 首次实现成功 push + CI 全绿（未 merge，merge 由 mergePrNode 做）| `verdict`, `pr_url` | `pr_url` 必须是真实 URL（见下方占位符红线）|
-| `FIXED` | Mode 2 harness_fix 修复后 push | `verdict`, `pr_url`, `fixes`（修复说明数组）| 在原 PR 分支修复，不新建 PR |
-| `FAILED` | 连续 3 轮自验/CI 仍 FAIL，放弃 | `verdict`, `pr_url`, `reason`（失败根因）| PR body 已标 [BEHAVIOR_FAIL]，交 evaluator/人处理 |
+> Brain 只接受 TaskBundle 指定的结构化结果；不得返回旧版 verdict/pr_url 协议。
 
 ```bash
-echo "{\"verdict\": \"DONE\", \"pr_url\": \"$PR_URL\"}"
+echo '{"contract_version":"1.0","attempt_id":"'"$HARNESS_ATTEMPT_ID"'","status":"completed","summary":"approved contract implemented as a committed local candidate","artifacts":[],"checks":[],"decision":{"outcome":"local_candidate_committed","reason":"local Red/Green candidate committed; remote publication delegated to trusted Publisher","rubric_scores":null},"error":null,"provider_metadata":{"provider":"codex","session_id":null},"case_file":null}'
 ```
 
 输出这一行作为最后消息（纯 JSON，不加其他内容）。
-
-> 🚫 **严禁照抄示例占位 URL**：任何含 `x/y`、`OWNER/REPO`、`org/repo`、`pull/123` 的 URL 都是占位符，原样输出会让 Brain 报 `generator_pr_not_found`、整条 harness 线作废。`pr_url` 必须取自你刚 `gh pr create` 实际返回的 `$PR_URL`（或 `gh pr view --json url -q .url`），不是从本文档示例里复制的字面值。
 
 ---
 
@@ -706,25 +594,17 @@ echo "{\"verdict\": \"DONE\", \"pr_url\": \"$PR_URL\"}"
 2. 如果现有测试不足以复现 → 写一个复现测试（**但仅限修复相关的新测试，禁止动合同原测试**）
 3. 按 Red-Green-Refactor 修实现代码
 4. 本地跑测试 + verification-before-completion 确认所有原有测试仍绿
-5. push 到原 PR 分支（不创建新 PR）
+5. 在当前 retained candidate 工作区提交修复后的本地候选，不执行远端写入
 
 ```bash
-# 切到 PR 分支
-gh pr checkout <pr_number>
-
 # systematic-debugging 流程
 # ... 定位 → 复现 → 修 → 验证 ...
 
 git add <修复文件>
 git commit -m "fix(harness): <修复说明> (Green after fix)"
-git push origin HEAD
 ```
 
-**最后一条消息（纯 JSON，禁止其他文字）**：
-
-```bash
-echo "{\"verdict\": \"FIXED\", \"fixes\": [\"<Feature X: 修复说明>\"], \"pr_url\": \"$PR_URL\"}"
-```
+**最后一条消息**仍使用 Step 8 的 `harness-result/generator-v1`，decision.outcome 保持 `local_candidate_committed`，summary 说明本轮修复。
 
 ---
 
@@ -745,10 +625,10 @@ commit 1: test(harness): skeleton e2e test (Skeleton Red)
 
 commit 2: feat(harness): skeleton implementation (Skeleton Green)
   — stub 实现，让 E2E 通过
-  — PR body 必须含 ## Stub 清单 section
+  — 结构化 result/case_file 必须含 Stub 清单
 ```
 
-### PR body 必须追加 Stub 清单（IS_SKELETON=true 时）
+### 结构化 result 必须追加 Stub 清单（IS_SKELETON=true 时）
 ```markdown
 ## Stub 清单（Skeleton 阶段）
 
@@ -775,10 +655,10 @@ commit 2: feat(harness): skeleton implementation (Skeleton Green)
 
 | 想法 | 真相 |
 |---|---|
-| "测试写得太严，改一下让它能过" | 改测试 = 违反 CONTRACT IS LAW，push 时 CI 会抓 |
+| "测试写得太严，改一下让它能过" | 改测试 = 违反 CONTRACT IS LAW，Evaluator/Judge 会抓 |
 | "我知道 BEHAVIOR 应该是啥，不看测试直接写实现" | 违反 TDD Red-Green 顺序，evaluator/judge 复核会抓（lint-tdd-commit-order 只校验文件序，不校验标签顺序——EVA v2）|
 | "先让一个测试过，其他等 CI 告诉我" | 违反 verification-before-completion，必须本地先全绿 |
-| "合同写漏了一个功能，顺手加上" | 违反合同外不加，只能写进 PR description 上报 |
+| "合同写漏了一个功能，顺手加上" | 违反合同外不加，只能写进结构化 result/case_file 上报 |
 | "跑测试挺慢，跳过这一步吧" | 违反 verification-before-completion，禁止"看起来应该过了"的假设 |
 
 # GREEN commit 前真验：见 Step 6.5 Contract Self-Verification（v6.1+）
@@ -789,7 +669,7 @@ commit 2: feat(harness): skeleton implementation (Skeleton Green)
 ## Relay 模式出口协议（T5，harness-controller 派发时生效）
 
 当你是 harness-controller 的 subagent（派发 prompt 声明"按 Relay 出口协议报告"）时：
-**上面所有流程与 verdict JSON 输出一字不变**（双轨期 v1 图仍消费原 JSON），只在报告最末尾追加一行：
+**上面所有流程与 harness-result/generator-v1 输出不变**；若 prompt 明确要求 Relay 状态，可在 summary/case_file 中映射以下四态，不能在最终 JSON 后追加非 JSON 文本：
 
 ```
 RELAY_STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
@@ -797,8 +677,8 @@ RELAY_STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 
 | 状态 | 何时用 | 必须附带 |
 |---|---|---|
-| DONE | 完成且验收证据齐（PR 存在/Red-Green/自验过） | pr_url + 两个 commit SHA |
-| DONE_WITH_CONCERNS | 完成但有疑虑（如 [BEHAVIOR_FAIL] 标记 push、文件超 500 行） | 疑虑清单 |
+| DONE | 完成且验收证据齐（本地候选/Red-Green/自验过） | candidate HEAD + 两个 commit SHA |
+| DONE_WITH_CONCERNS | 完成但有疑虑（如 [BEHAVIOR_FAIL]、文件超 500 行） | 疑虑清单 |
 | NEEDS_CONTEXT | 缺信息无法开工/继续 | 确切缺什么（controller 补料后原模型重派） |
 | BLOCKED | 干不了 | 原因分类：缺上下文 / 需更强推理 / 任务太大该拆 / 合同本身错该上报 |
 
