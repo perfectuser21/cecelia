@@ -419,6 +419,32 @@ validate_claude_terminal_receipt \
   exit 1
 }
 
+# Claude can return the schema-constrained result through the legacy `result`
+# string even though the turn itself completed successfully. The extraction
+# path above already accepts this envelope, so terminal recovery must bind to
+# the same canonical object instead of requiring `structured_output` only.
+jq -nc \
+  --slurpfile result "$CLAUDE_RECEIPT_TMP/result.json" \
+  '{type:"result",subtype:"success",is_error:false,terminal_reason:"completed",fast_mode_state:"off",origin:{kind:"task-notification"},uuid:"ba364d84-384b-4f4e-abc4-22793ce3ce0e",result:($result[0] | tojson)}' \
+  > "$CLAUDE_RECEIPT_TMP/completed-result-string.json"
+validate_claude_terminal_receipt \
+  "$CLAUDE_RECEIPT_TMP/completed-result-string.json" \
+  "$CLAUDE_RECEIPT_TMP/result.json" \
+  "claude-receipt" || {
+  echo 'strict receipt rejected a completed Claude result-string envelope' >&2
+  exit 1
+}
+jq '.result = ({status:"completed",summary:"different result",artifacts:[],checks:[],decision:null,error:null} | tojson)' \
+  "$CLAUDE_RECEIPT_TMP/completed-result-string.json" \
+  > "$CLAUDE_RECEIPT_TMP/result-string-mismatch.json"
+if validate_claude_terminal_receipt \
+  "$CLAUDE_RECEIPT_TMP/result-string-mismatch.json" \
+  "$CLAUDE_RECEIPT_TMP/result.json" \
+  "claude-receipt"; then
+  echo 'strict Claude receipt accepted a result-string mismatch' >&2
+  exit 1
+fi
+
 [[ "$(resolve_claude_session_binding \
   "claude-receipt" "$CLAUDE_RECEIPT_TMP/current-cli.json")" == "claude-receipt" ]] || {
   echo 'current Claude CLI envelope erased the Runner-owned session binding' >&2
