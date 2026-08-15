@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.47
+**Brain 版本**: 1.273.48
+
+## Brain 1.273.48 — Fleet Codex Admission Pin Closure
+
+- Fleet baseline reconciler 安装的 Codex 版本与 NodeProfile 的 `version_policy.codex` 统一为 `0.147.0`，避免 Worker rollout 后健康报告仍被 `codex_version_drift` 拒绝。
+- Canonical pin 守卫同时校验 NodeProfile、三机 registry 与 rollout reconciler 的 Codex 版本；策略与真实安装器再次漂移时在 CI fail-closed。
 
 ## Brain 1.273.47 — Map Recovery Projection Authority
 
