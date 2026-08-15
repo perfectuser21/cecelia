@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.49
+**Brain 版本**: 1.273.51
+
+## Claude Authentication Failover Runner（Brain 1.273.51）
+
+- Claude 结构化终态中的登录失效、OAuth 过期和认证失败统一映射为 `provider_unavailable`，Harness 在同一 run 内排除失效账户并切换 Provider。
+- Canonical Runner 更新为 `sha256:065bc4ecab7ef582e2fd844af5e3761ab2d430380bd0d0714cb201f319d341ea`，所有 Fleet pin 点同步。
 
 ## Claude Terminal Receipt Recovery（Brain 1.273.49）
 
