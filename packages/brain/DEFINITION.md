@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.37
+**Brain 版本**: 1.273.49
+
+## Claude Terminal Receipt Recovery（Brain 1.273.49）
+
+- Claude 成功终态的非零 CLI 退出只在外层 success/completed、Runner-owned session 身份与提取结果全部一致时恢复；当前 CLI 的 JSON-string `result` 与旧 `structured_output` 均受同一校验。
+- Canonical Runner 更新为 `sha256:33a8195883be13252dbb4a2a355e0ee90f7ae89ff6846cde5d898a4bc515561b`，所有 Fleet pin 点同步。
 
 ## Controller Lease Smoke Authority（Brain 1.273.37）
 
@@ -28,7 +33,7 @@
 
 - Judge 对候选与上游证据独立裁决；只有服务端声明的宿主 Docker、最终 Judge、Publisher、全闸门和完整角色链检查可结构化标记为后置验收。
 - Evaluator 的隔离 Git 夹具显式清除外层 pushurl 熔断变量，真实候选仓库仍保持禁止推送。
-- Runner 固定为 `sha256:47fe869774b789fe6aef2e2e93b6a8baa2726b83ab94392d60c702af1c1ec22f`，Fleet Worker 准入版本同步为 `1.272.17`。
+- Runner 固定为 `sha256:33a8195883be13252dbb4a2a355e0ee90f7ae89ff6846cde5d898a4bc515561b`，Fleet Worker 准入版本同步为 `1.272.17`。
 
 ## Attempt-scoped Runner Smoke Credential（Brain 1.273.28）
 
