@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## 合同基线与证据来源
 
@@ -8,6 +8,8 @@
 - `[MAP_NOT_CONFIGURED]`: task payload 有 `map_scope=["F1"]`，但无 `map_repo`，因此不猜测 Unified Map 影响半径，`must_run_assertions=[]`。
 - gp-anchor: skipped (product-map.json not found)
 - contract-gate: enabled (`packages/brain/src/lib/contract-gate.js` exists)
+- 永久回归测试唯一权威落点: `packages/brain/scripts/__tests__/harness-control-plane-complete-repair-smoke.test.mjs`。该文件命中 `packages/brain/vitest.config.js` 的 `scripts/**/*.{test,spec}.?(c|m)[jt]s?(x)` include，必须由 DoD、Final E2E 和 Brain CI 真实执行。
+- `sprints/08151949-kernel-r6/tests/runtime-version-reporting.test.ts` 仅是 Proposer 阶段的 TDD Red 规格种子，不是交付件、CI oracle 或验收来源；Generator 必须把其中三条行为断言实现到上述唯一权威 `.mjs`，此后所有 GREEN/验收只执行 `.mjs`，不要求两份文件逐字一致。
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -148,7 +150,7 @@ jq -e '((.schema_version|tonumber)>=430) and (keys|index("version")!=null) and (
 OUT=$(BRAIN_URL="$BASE_URL" DATABASE_URL="$DB_URL" bash packages/brain/scripts/smoke/harness-control-plane-complete-repair-smoke.sh)
 printf '%s\n' "$OUT" | tee "$EVIDENCE_DIR/smoke-output.txt"
 printf '%s\n' "$OUT" | grep -Fx "PASS: Brain $RUNTIME_VERSION schema 430 control-plane authorities are deployed"
-npx vitest run sprints/08151949-kernel-r6/tests/runtime-version-reporting.test.ts --reporter=verbose
+npx vitest run packages/brain/scripts/__tests__/harness-control-plane-complete-repair-smoke.test.mjs --reporter=verbose
 printf '{"attempt_id":"%s","provider":"%s","account":"%s","machine":"%s","model":"%s","runner_digest":"%s","capability_snapshot_id":"%s","runtime_version":"%s"}\n' "$HARNESS_ATTEMPT_ID" "${HARNESS_PROVIDER:?}" "${HARNESS_ACCOUNT:?}" "${HARNESS_MACHINE:?}" "${HARNESS_MODEL:?}" "${HARNESS_RUNNER_DIGEST:?}" "$CAPABILITY_SNAPSHOT_ID" "$RUNTIME_VERSION" > "$EVIDENCE_DIR/provenance.json"
 ```
 
@@ -168,11 +170,11 @@ printf '{"attempt_id":"%s","provider":"%s","account":"%s","machine":"%s","model"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 真实版本报告 | `tests/runtime-version-reporting.test.ts` | `PASS reports the exact runtime API version instead of a hard-coded version` | 当前硬编码输出不含 fixture API 版本，1 个 test FAIL |
-| fail-closed 保留 | `tests/runtime-version-reporting.test.ts` | `schema below 430 remains fail-closed`、`authority-table failure remains fail-closed` | 保护逻辑被删时对应 test FAIL |
+| 真实版本报告 | `packages/brain/scripts/__tests__/harness-control-plane-complete-repair-smoke.test.mjs` | `PASS reports the exact runtime API version instead of a hard-coded version` | 当前硬编码输出不含 fixture API 版本，永久测试 1 个 test FAIL |
+| fail-closed 保留 | `packages/brain/scripts/__tests__/harness-control-plane-complete-repair-smoke.test.mjs` | `schema below 430 remains fail-closed`、`authority-table failure remains fail-closed` | 保护逻辑被删时永久测试对应 test FAIL |
 
 ## Notes
 
 - 本任务 `journey_type=autonomous`，不适用 staging 预览闸。
-- Generator 必须先提交本合同 Red 测试，再改 smoke；永久测试落位 `packages/brain/scripts/__tests__/harness-control-plane-complete-repair-smoke.test.mjs` 并保持相同测试名子串。
+- Generator 必须先新增并提交唯一权威永久 Red 测试 `packages/brain/scripts/__tests__/harness-control-plane-complete-repair-smoke.test.mjs`，以硬编码 smoke 运行取得 FAIL 证据，再改 smoke 取得同一测试 GREEN；sprint-local `.ts` 只提供起草期 Red 规格，不得作为 GREEN 或 CI 证据。
 - Validator identity 全部 late-bound；Evaluator 保存自身 provenance，Judge 以不同 provider/account/session 引用 Evaluator evidence SHA-256，不复用本 Proposer identity。

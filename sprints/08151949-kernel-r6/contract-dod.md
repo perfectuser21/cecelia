@@ -14,7 +14,7 @@ implementation_base_sha: 329f2bf0a68759fae45de61d805800e278a2d587
 - [ ] [ARTIFACT] smoke 最终 PASS 使用从 `VERSION_JSON.version` 提取的变量，最终 printf 不含固定 SemVer 字面
   Test: node -e "const fs=require('fs');const s=fs.readFileSync('packages/brain/scripts/smoke/harness-control-plane-complete-repair-smoke.sh','utf8');const line=s.split(/\n/).find(x=>x.includes('control-plane authorities are deployed'));if(!line||!/\$\{?[A-Z_]*VERSION/.test(line)||/Brain [0-9]+\.[0-9]+\.[0-9]+/.test(line))process.exit(1)"
 
-- [ ] [ARTIFACT] 永久 Vitest 回归位于 Brain CI include 路径并含真实版本与两项 fail-closed 测试
+- [ ] [ARTIFACT] 唯一权威永久 Vitest 回归位于 Brain CI include 路径并含真实版本与两项 fail-closed 测试；本静态检查仅辅助确认落点，行为验收由 B-03/B-04/B-05 真实执行该文件
   Test: node -e "const fs=require('fs');const p='packages/brain/scripts/__tests__/harness-control-plane-complete-repair-smoke.test.mjs';const s=fs.readFileSync(p,'utf8');for(const x of ['describe','it(','expect(','PASS reports the exact runtime API version instead of a hard-coded version','schema below 430 remains fail-closed','authority-table failure remains fail-closed'])if(!s.includes(x))process.exit(1)"
 
 ## BEHAVIOR 条目
@@ -38,21 +38,21 @@ implementation_base_sha: 329f2bf0a68759fae45de61d805800e278a2d587
   预期观察: 每次 stdout 只报告各自 API version；固定版本实现至少一轮失败
   等待预算: 10s
   留证: Vitest 两个 fixture 的 assertion diff
-  Test: manual:bash -c 'npx vitest run sprints/08151949-kernel-r6/tests/runtime-version-reporting.test.ts -t "PASS reports the exact runtime API version instead of a hard-coded version" --reporter=verbose'
+  Test: manual:bash -c 'npx vitest run packages/brain/scripts/__tests__/harness-control-plane-complete-repair-smoke.test.mjs -t "PASS reports the exact runtime API version instead of a hard-coded version" --reporter=verbose'
 
 - [ ] [BEHAVIOR] [L1] B-04: schema 低于 430 保持 fail-closed
   动作: 以 schema_version=429 fixture 执行真实 smoke 子进程
   预期观察: 进程非零退出且 stdout 没有 PASS
   等待预算: 10s
   留证: Vitest 退出码与 stdout 断言
-  Test: manual:bash -c 'npx vitest run sprints/08151949-kernel-r6/tests/runtime-version-reporting.test.ts -t "schema below 430 remains fail-closed" --reporter=verbose'
+  Test: manual:bash -c 'npx vitest run packages/brain/scripts/__tests__/harness-control-plane-complete-repair-smoke.test.mjs -t "schema below 430 remains fail-closed" --reporter=verbose'
 
 - [ ] [BEHAVIOR] [L1] B-05: authority-table 缺失保持 fail-closed
   动作: 以 authority 查询返回 FAIL fixture 执行真实 smoke 子进程
   预期观察: grep 保护令进程非零退出且 stdout 没有 PASS
   等待预算: 10s
   留证: Vitest 退出码与 stdout 断言
-  Test: manual:bash -c 'npx vitest run sprints/08151949-kernel-r6/tests/runtime-version-reporting.test.ts -t "authority-table failure remains fail-closed" --reporter=verbose'
+  Test: manual:bash -c 'npx vitest run packages/brain/scripts/__tests__/harness-control-plane-complete-repair-smoke.test.mjs -t "authority-table failure remains fail-closed" --reporter=verbose'
 
 ## Invariant 映射
 
