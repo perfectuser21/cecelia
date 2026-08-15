@@ -2585,16 +2585,33 @@ normalize_provider_failure() {
   fi
 
   local stderr_tail
+  local failure_code="provider_exit"
+  local failure_summary="provider process failed"
   stderr_tail=$(tail -c 2000 "$stdout_file" 2>/dev/null || true)
+  if [[ "$provider" == "claude" ]] \
+      && jq -e '
+        select(.type == "result" and .is_error == true)
+        | (.result // "") as $message
+        | ($message | type) == "string"
+          and ($message | test(
+            "not[[:space:]]+logged[[:space:]]+in|please[[:space:]]+run[[:space:]]*/?login|failed[[:space:]]+to[[:space:]]+authenticate|oauth[[:space:]]+session[[:space:]]+expired";
+            "i"
+          ))
+      ' "$stdout_file" >/dev/null 2>&1; then
+    failure_code="provider_unavailable"
+    failure_summary="provider authentication unavailable"
+  fi
   jq -n \
     --arg attempt "$attempt_id" \
     --arg provider "$provider" \
     --arg session "$session_id" \
     --arg credential_ref "$credential_ref" \
     --argjson credential_copy_mutated "$credential_copy_mutated" \
+    --arg failure_code "$failure_code" \
+    --arg failure_summary "$failure_summary" \
     --arg message "$stderr_tail" \
     --argjson exit_code "$provider_exit" \
-    '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"provider process failed",artifacts:[],checks:[],decision:null,error:{code:"provider_exit",message:$message,exit_code:$exit_code},provider_metadata:({provider:$provider,session_id:(if $session == "" then null else $session end)} + (if $credential_ref == "" then {} else {credential_ref:$credential_ref,credential_copy_mutated:$credential_copy_mutated} end))}' \
+    '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:$failure_summary,artifacts:[],checks:[],decision:null,error:{code:$failure_code,message:$message,exit_code:$exit_code},provider_metadata:({provider:$provider,session_id:(if $session == "" then null else $session end)} + (if $credential_ref == "" then {} else {credential_ref:$credential_ref,credential_copy_mutated:$credential_copy_mutated} end))}' \
     > "$normalized_file"
 }
 

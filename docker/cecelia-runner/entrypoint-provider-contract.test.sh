@@ -1296,4 +1296,5 @@ if grep -Eq -- '--model[[:space:]]+(sonnet|opus|haiku|gpt-|o[0-9])' <<<"$SECTION
 fi
 
 bash "$SCRIPT_DIR/__tests__/entrypoint-evaluator-worktree-integrity.test.sh"
+bash "$SCRIPT_DIR/__tests__/entrypoint-provider-auth-failure.test.sh"
 echo 'provider-neutral runner contract: PASS'
