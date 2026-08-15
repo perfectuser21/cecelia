@@ -3840,6 +3840,7 @@ describe('createDetachedLauncher', () => {
         PROPOSE_ROUND: '2',
         PROPOSE_BRANCH: 'cp-harness-propose-r2-aaaaaaaa-a17',
         CONTRACT_BRANCH: 'cp-harness-propose-r1-aaaaaaaa-a3',
+        HARNESS_BRAIN_URL: 'http://host.docker.internal:5221',
       }),
     }));
     expect(spawnDetached.mock.calls[0][0].env.BRAIN_RESULT_FILE).toBeUndefined();

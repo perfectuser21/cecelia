@@ -628,6 +628,7 @@ function createDockerAdapter({
             : undefined,
           WORKTREE_PATH: '/workspace',
           BRAIN_URL: callbackBrainUrl(input.callback.url),
+          HARNESS_BRAIN_URL: callbackBrainUrl(input.callback.url),
           ...input.roleEnv,
           ...runtimeEnvironment,
         }),

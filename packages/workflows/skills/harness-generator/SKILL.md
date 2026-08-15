@@ -5,10 +5,11 @@ description: |
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。一个 Sprint = 一个 Generator = 一个 PR。
-version: 7.14.0
+version: 7.14.1
 created: 2026-04-08
-updated: 2026-08-12
+updated: 2026-08-15
 changelog:
+  - 7.14.1: Fleet Codex 环境兼容——从 Runner 服务端注入的 HARNESS_BRAIN_URL 恢复 BRAIN_URL，避免 Codex 子工具环境过滤通用 BRAIN_URL 后 Generator 在 Step 0 假阻塞；原 BRAIN_URL 仍优先兼容
   - 7.14.0: 冻结测试制品协议闭环——冻结档测试的唯一来源改为 TaskBundle `inputs.artifacts[]` 的 `frozen_contract_test` 描述；Runner 在 Provider 前按 approved SHA + SHA-256 原样落盘、Provider 后复验，Generator 只消费现成文件并拒绝自行重建
   - 7.13.0: 冻结档合同来源死锁修复（r42 实证 FROZEN_CONTRACT_ARTIFACTS_MISSING 拒工）——Step 1 原文只有 git fetch/show 合同分支一条路，与冻结档「禁 fetch 任何分支」自相矛盾且合同分支本就不在远端，模型守规则=必死、自作主张=侥幸活（r41/r42 同条件二象性实证）。修法：Step 1 按 HARNESS_FROZEN_BASELINE 分叉，冻结档下合同资产一律从 TaskBundle inputs.contract（Brain 锁定版）原样落盘到 ${SPRINT_DIR}/，这是官方来源不算重写；FROZEN_CONTRACT_ARTIFACTS_MISSING 只允许在 bundle 内也无合同内容时上报
   - 7.12.0: 冻结基线档（生产 run d9785137 / attempt 3aa00156 事故修法）——Step 0.5 从「无条件 rebase 到最新 main」改为按 Kernel 注入的 `HARNESS_FROZEN_BASELINE` 二选一：冻结/对比任务以 `HARNESS_WORKSPACE_START_SHA` 为唯一边界，禁 fetch/rebase/merge/cherry-pick/pull 任何其他候选血统、禁 force push、禁 --no-verify，只许在起始 SHA 之上追加；Step 7 CI 轮询里 BEHIND 在冻结档下不做 `gh pr update-branch`（merge 会把对照候选带进来，血统闸看不出）；普通 dev 档 latest-main rebase 一字不变。三层机械执行：Runner pre-push 血统闸 + Provider 退出后血统断言 + Brain callback 服务端 lineage 校验
@@ -94,6 +95,11 @@ PLANNER_BRANCH={planner_branch}
 **CONTRACT_BRANCH / SPRINT_DIR / BRAIN_URL 任一未定义时绝对禁止继续。**
 
 ```bash
+# Fleet Codex 的子工具环境只保证透传 HARNESS_* 权威变量；通用 BRAIN_URL
+# 可能被 Provider 环境策略过滤。优先保留已有 BRAIN_URL，否则从 Runner
+# 服务端注入的非敏感 HARNESS_BRAIN_URL 恢复。
+BRAIN_URL="${BRAIN_URL:-${HARNESS_BRAIN_URL:-}}"
+
 # 自检 — Brain dispatch 必须把这 3 个 env 都注入进来
 for var in CONTRACT_BRANCH SPRINT_DIR BRAIN_URL; do
   if [ -z "${!var:-}" ]; then

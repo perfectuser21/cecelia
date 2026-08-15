@@ -1630,6 +1630,7 @@ export function createDetachedLauncher({
             HARNESS_CANARY: String(spec.canary === true),
             HARNESS_CALLBACK_URL: `${brainUrl}/api/brain/harness/attempts/${attempt.id}/callback`,
             BRAIN_URL: brainUrl,
+            HARNESS_BRAIN_URL: brainUrl,
           },
         });
         if (typeof launched?.containerId !== 'string' || launched.containerId.length === 0) {

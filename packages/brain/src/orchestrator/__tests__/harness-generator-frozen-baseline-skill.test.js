@@ -17,6 +17,18 @@ describe('harness-generator SKILL frozen baseline doctrine', () => {
     expect(preflight).not.toBe('');
   });
 
+  it('restores the Brain URL from the server-owned Harness environment', () => {
+    const stepZero = content.slice(
+      content.indexOf('### Step 0:'),
+      content.indexOf('### Step 0.4:'),
+    );
+
+    expect(stepZero).toContain('HARNESS_BRAIN_URL');
+    expect(stepZero).toMatch(
+      /BRAIN_URL="\$\{BRAIN_URL:-\$\{HARNESS_BRAIN_URL:-\}\}"/,
+    );
+  });
+
   it('never rebases onto origin/main unconditionally', () => {
     const rebaseLine = preflight
       .split('\n')
