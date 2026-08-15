@@ -198,6 +198,11 @@ const INFRA_RETRY_ACTION_BY_ROLE = Object.freeze({
   reporter: { phase: 'done', action: ACTION.SPAWN_CANARY },
 });
 
+const GENERATOR_ACTIONS = new Set([
+  ACTION.SPAWN_GENERATOR,
+  ACTION.SPAWN_GENERATOR_FIX,
+]);
+
 const CONTEXT_RETRY_PHASE_BY_ACTION = Object.freeze({
   [ACTION.SPAWN_PLANNER]: 'planning',
   [ACTION.SPAWN_PROPOSER]: 'gan',
@@ -211,6 +216,30 @@ const CONTEXT_RETRY_PHASE_BY_ACTION = Object.freeze({
 
 function callbackDetail(row) {
   return asStructuredJson(row?.detail) ?? {};
+}
+
+function infrastructureRetryForCallback(role, callbackRow, decisionLog) {
+  const defaultRetry = INFRA_RETRY_ACTION_BY_ROLE[role];
+  if (role !== 'generator') return defaultRetry;
+
+  const rows = sortedLogRows(decisionLog);
+  const dispatchedHop = Number(callbackDetail(callbackRow).hop);
+  const exactDispatch = Number.isInteger(dispatchedHop)
+    ? rows.find((row) => (
+      Number(row.hop) === dispatchedHop
+      && GENERATOR_ACTIONS.has(row.action)
+    ))
+    : null;
+  const precedingDispatch = exactDispatch ?? [...rows].reverse().find((row) => (
+    Number(row.hop) < Number(callbackRow.hop)
+    && GENERATOR_ACTIONS.has(row.action)
+  ));
+  if (!precedingDispatch) return defaultRetry;
+
+  return {
+    phase: 'generate',
+    action: precedingDispatch.action,
+  };
 }
 
 function latestUnconsumedAttemptResult(decisionLog) {
@@ -354,7 +383,7 @@ function attemptCallbackRoute(observed) {
     (status === 'blocked' || status === 'failed')
     && failureClass === 'infrastructure_blocked'
   ) {
-    const retry = INFRA_RETRY_ACTION_BY_ROLE[role];
+    const retry = infrastructureRetryForCallback(role, row, observed.decisionLog);
     if (!retry) {
       return {
         phase: 'review',
@@ -373,7 +402,7 @@ function attemptCallbackRoute(observed) {
   // 由 resolveExecutionTarget 消费 account-usage CAPPED 判定轮换到下一可用账号）。
   // 复用 INFRA_RETRY_ACTION_BY_ROLE 的非终态重试相位/动作，仅 reason 区分为 account_exhausted。
   if (status === 'failed' && failureClass === 'account_exhausted') {
-    const retry = INFRA_RETRY_ACTION_BY_ROLE[role];
+    const retry = infrastructureRetryForCallback(role, row, observed.decisionLog);
     if (!retry) {
       return {
         phase: 'review',

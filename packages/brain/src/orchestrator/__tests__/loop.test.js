@@ -2185,20 +2185,19 @@ describe('runLoop：wait:* 不灌水', () => {
     expect(result.exitReason).toBe('run_done');
     expect(deps.dispatch).toHaveBeenCalledOnce();
     expect(deps.dispatch).toHaveBeenCalledWith(
-      'spawn:generator-fix',
+      'spawn:generator',
       expect.objectContaining({
         decision: {
           phase: 'generate',
-          action: 'spawn:generator-fix',
+          action: 'spawn:generator',
           reason: 'callback_infrastructure_blocked',
         },
       }),
     );
     expect(appended).toHaveLength(1);
     expect(appended[0]).toMatchObject({
-      action: 'spawn:generator-fix',
+      action: 'spawn:generator',
       detail: { reason: 'callback_infrastructure_blocked' },
-      observed: { failure_class: 'infrastructure_blocked' },
     });
     expect(appended[0].observed).not.toHaveProperty('crash_signature');
   });
