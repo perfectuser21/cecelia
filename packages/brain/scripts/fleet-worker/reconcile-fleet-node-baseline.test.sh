@@ -124,7 +124,7 @@ write_executable "$fake_bin/tar" \
   'mkdir -p "$prefix/bin"' \
   'cat > "$prefix/bin/codex" <<'"'"'CODEX"'"'' \
   '#!/usr/bin/env bash' \
-  'echo "codex-cli 0.145.0"' \
+  'echo "codex-cli 0.147.0"' \
   'CODEX' \
   'chmod +x "$prefix/bin/codex"' \
   'printf "npm pinned-codex\n" >> "${FLEET_TEST_MUTATION_LOG:?}"' \
@@ -166,7 +166,7 @@ write_executable "$fake_bin/toolchain-codex" \
   'if [[ "${FLEET_TEST_REQUIRE_TOOLCHAIN_NODE_PATH:-0}" == 1 ]]; then' \
   '  [[ "$(command -v node || true)" == "${FLEET_TEST_EXPECTED_NODE:?}" ]] || { echo "clean-codex-node-path-missing" >&2; exit 127; }' \
   'fi' \
-  'echo "codex-cli 0.145.0"'
+  'echo "codex-cli 0.147.0"'
 
 write_executable "$fake_bin/toolchain-npm" \
   '#!/usr/bin/env bash' \

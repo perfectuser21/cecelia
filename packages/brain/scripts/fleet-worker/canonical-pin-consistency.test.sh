@@ -47,4 +47,18 @@ profiles_worker_count="$(grep -c "\"worker\": \"$policy_worker\"" \
 [[ "$profiles_worker_count" -eq 3 ]] \
   || fail "fleet-node-profiles.json should pin worker=$policy_worker on 3 machines, got $profiles_worker_count"
 
+# Codex 版本必须与实际 rollout reconciler 一致。Node admission 会逐字比较
+# health report 与 version_policy.codex；若这里只改策略却漏改 installer，三台机器
+# 会在 rollout 后全部保持 draining，且现有 Runner/Worker pin 守卫无法发现。
+policy_codex="$(sed -nE "s/.*codex: '([0-9.]+)'.*/\1/p" "$NODE_PROFILE" | head -1)"
+[[ -n "$policy_codex" ]] || fail "cannot parse version_policy.codex from node-profile.js"
+reconciler_codex="$(sed -nE "s/^CODEX_VERSION='([0-9.]+)'.*/\1/p" \
+  "$REPO_ROOT/packages/brain/scripts/fleet-worker/reconcile-fleet-node-baseline.sh" | head -1)"
+[[ "$reconciler_codex" == "$policy_codex" ]] \
+  || fail "reconciler CODEX_VERSION ($reconciler_codex) != version_policy.codex ($policy_codex)"
+profiles_codex_count="$(grep -c "\"codex\": \"$policy_codex\"" \
+  "$REPO_ROOT/packages/brain/config/fleet-node-profiles.json")"
+[[ "$profiles_codex_count" -eq 3 ]] \
+  || fail "fleet-node-profiles.json should pin codex=$policy_codex on 3 machines, got $profiles_codex_count"
+
 echo "PASS: canonical-pin-consistency.test.sh"
