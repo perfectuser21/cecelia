@@ -8,9 +8,16 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const { mockPool, mockRunJudgeGate } = vi.hoisted(() => ({
+const {
+  mockPool,
+  mockRunJudgeGate,
+  mockCollectGroundTruth,
+  mockPersistJudgeReceipt,
+} = vi.hoisted(() => ({
   mockPool: { query: vi.fn() },
   mockRunJudgeGate: vi.fn(),
+  mockCollectGroundTruth: vi.fn(),
+  mockPersistJudgeReceipt: vi.fn(),
 }));
 vi.mock('../db.js', () => ({ default: mockPool }));
 vi.mock('../harness-judge.js', () => ({
@@ -28,6 +35,8 @@ import {
 async function buildApp() {
   const { default: router } = await import('../routes/harness.js');
   const a = express();
+  a.set('kernelOneSessionGroundTruthCollector', mockCollectGroundTruth);
+  a.set('kernelOneSessionJudgeReceiptWriter', mockPersistJudgeReceipt);
   a.use(express.json());
   a.use('/api/brain/harness', router);
   return a;
@@ -57,11 +66,42 @@ function installAuthorityMock({ worktree, taskId, updateError = null }) {
   });
 }
 
+function installJudgeGroundTruth() {
+  mockCollectGroundTruth.mockImplementation(async ({ runId, taskId }) => ({
+    run: { id: runId },
+    task: { id: taskId },
+    pr: {
+      url: 'https://github.com/example/repo/pull/1',
+      head_sha: 'a'.repeat(40),
+    },
+    contract: {
+      id: '22222222-3333-4444-8555-666666666666',
+      approved: true,
+      identity: {
+        contract_id: '22222222-3333-4444-8555-666666666666',
+        manifest_sha256: 'b'.repeat(64),
+        source_revision: 'c'.repeat(40),
+      },
+      artifacts: [{
+        path: 'sprints/x/contract-draft.md',
+        content: '# Contract',
+        sha256: 'd'.repeat(64),
+        byte_length: 10,
+        source_revision: 'c'.repeat(40),
+      }],
+    },
+  }));
+  mockPersistJudgeReceipt.mockResolvedValue({ persisted: true });
+}
+
 describe('POST /api/brain/harness/judge — 刀B 机械预检', () => {
   let wt;
   beforeEach(async () => {
     wt = await mkdtemp(join(tmpdir(), 'judge-blade-'));
     mockRunJudgeGate.mockReset();
+    mockCollectGroundTruth.mockReset();
+    mockPersistJudgeReceipt.mockReset();
+    installJudgeGroundTruth();
     mockPool.query.mockReset();
     installAuthorityMock({
       worktree: wt,
@@ -158,6 +198,9 @@ describe('POST /api/brain/harness/judge — 刀C-2 judge_verdict 落库', () => 
   beforeEach(async () => {
     wt = await mkdtemp(join(tmpdir(), 'judge-c2-'));
     mockRunJudgeGate.mockReset();
+    mockCollectGroundTruth.mockReset();
+    mockPersistJudgeReceipt.mockReset();
+    installJudgeGroundTruth();
     mockPool.query.mockReset();
     installAuthorityMock({
       worktree: wt,

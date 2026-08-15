@@ -25,6 +25,7 @@ import { collectGroundTruth as defaultCollect } from './ground-truth.js';
 import { appendHop as defaultAppendHop, nextHop as defaultNextHop, SingletonConflictError } from './decision-log.js';
 import { writeHeartbeat as defaultWriteHeartbeat } from './heartbeat.js';
 import { materializeApprovedContract } from './contract-store.js';
+import { materializeDirectProfileContract } from './direct-profile-contract.js';
 import { collectApprovedContractArtifacts } from './contract-artifacts.js';
 import { insertCaseFileRow } from './case-file-store.js';
 import { evaluateValidationIdentityPolicy } from './validation-identity-policy.js';
@@ -894,6 +895,24 @@ async function runLoopOwned(
       await markRunPaused(deps.pool, resolvedRunId, observed);
       return { exitReason: decision.reason, hops };
     }
+    if (decision.action === ACTION.MATERIALIZE_DIRECT_PROFILE_CONTRACT) {
+      const materializeDirect = deps.materializeDirectProfileContract
+        ?? ((runId) => materializeDirectProfileContract(deps.pool, runId));
+      try {
+        await materializeDirect(resolvedRunId);
+      } catch (error) {
+        const artifactCode = frozenArtifactErrorCode(error);
+        if (artifactCode) {
+          await failRun(`assembly_fault:${artifactCode}`);
+          return { exitReason: 'assembly_fault', hops };
+        }
+        if (error?.code !== 'DIRECT_PROFILE_CONTRACT_INVALID') throw error;
+        await failRun('assembly_fault:DIRECT_PROFILE_CONTRACT_INVALID');
+        return { exitReason: 'assembly_fault', hops };
+      }
+      await beat();
+      continue;
+    }
     if (decision.action === ACTION.PERSIST_CONTRACT_APPROVAL) {
       if (!observed.proposeBranch || !Number.isInteger(observed.proposeBranchRn)
           || observed.proposeBranchRn < 1) {
@@ -1441,6 +1460,7 @@ async function runLoopOwned(
         evaluateVerdict: observed.evaluateVerdict,
         judgeVerdict: observed.judgeVerdict,
         prHeadSha: observed.pr.head_sha,
+        contractIdentity: observed.contract?.identity ?? null,
         reviewRequired: observed.reviewRequired,
         reviewApproved: observed.reviewApproved,
       });

@@ -82,6 +82,40 @@ describe('Golden Path contract real PostgreSQL lifecycle', () => {
          VALUES ($1, $1, 'legacy-ledger-v1', '{}'::jsonb)`,
         [repo],
       );
+      const mapDecision = await client.query(
+        `INSERT INTO decisions (category, topic, decision)
+         VALUES ('testing', $1, 'activate Golden Path routing fixture')
+         RETURNING id`,
+        [`${marker}-map`],
+      );
+      const manifestDigest = 'b'.repeat(64);
+      const projectionDigest = 'c'.repeat(64);
+      const manifest = await client.query(
+        `INSERT INTO map_manifest_versions (
+           scope_key, version, source_decision_id, manifest, digest, status, activated_at
+         ) VALUES ($1, 1, $2, $3::jsonb, $4, 'active', NOW())
+         RETURNING id`,
+        [
+          repo,
+          mapDecision.rows[0].id,
+          JSON.stringify({ scope_key: repo, schema_version: 1 }),
+          manifestDigest,
+        ],
+      );
+      const projection = await client.query(
+        `INSERT INTO map_projection_runs (
+           scope_key, manifest_version_id, manifest_digest, fact_revisions,
+           projector_version, projection_digest, status, activated_at
+         ) VALUES ($1, $2, $3, '{}'::jsonb, 'golden-path-test-v1', $4, 'active', NOW())
+         RETURNING id`,
+        [repo, manifest.rows[0].id, manifestDigest, projectionDigest],
+      );
+      await client.query(
+        `INSERT INTO map_projection_nodes (
+           run_id, node_id, node_type, node_key, name
+         ) VALUES ($1, $2, 'capability', 'capability_social_feed', 'Social Feed')`,
+        [projection.rows[0].id, 'd'.repeat(64)],
+      );
       for (const [kind, scanner] of [
         ['api', 'api-registry-v2'],
         ['db_schema', 'db-schema-v2'],

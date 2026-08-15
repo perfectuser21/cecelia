@@ -9,7 +9,7 @@ import { reconcileOwnerlessKernelRuns } from '../../orchestrator/kernel-controll
 
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../',import.meta.url));
-const DOWN = [423,422,421,420,419,418,417];
+const DOWN = [430,429,428,427,426,425,424,423,422,421,420,419,418,417];
 let adminPool;
 let pool;
 let databaseName;
@@ -42,9 +42,11 @@ async function assertAuthority() {
   expect(shape).toEqual({golden_kind:true,consumptions:true,controller_sessions:true,
     capture_metadata:true,attempt_fk:true,recovery_immutable:true,supersession_enabled:true});
   const versions = await pool.query(
-    `SELECT version FROM schema_version WHERE version::int BETWEEN 413 AND 423 ORDER BY version::int`,
+    `SELECT version FROM schema_version WHERE version::int BETWEEN 413 AND 430 ORDER BY version::int`,
   );
-  expect(versions.rows.map(({version})=>Number(version))).toEqual([413,414,415,416,417,418,419,420,421,422,423]);
+  expect(versions.rows.map(({version})=>Number(version))).toEqual(
+    Array.from({length:18},(_,index)=>413+index),
+  );
 }
 
 beforeAll(async()=>{
@@ -66,7 +68,7 @@ afterAll(async()=>{
 },30000);
 
 describe('production 413–416 anchors → PR migrations 往返（真 PG）',()=>{
-  it('417–423 逆序 down 后 migrate 能精确重建全部合同',async()=>{
+  it('417–430 逆序 down 后 migrate 能精确重建全部合同',async()=>{
     await assertAuthority();
     for (const version of DOWN) {
       const [name] = (await import('node:fs')).readdirSync(`${BRAIN_ROOT}/migrations/rollback`)
@@ -74,7 +76,7 @@ describe('production 413–416 anchors → PR migrations 往返（真 PG）',()=
       await pool.query(await readFile(`${BRAIN_ROOT}/migrations/rollback/${name}`,'utf8'));
     }
     const anchors = await pool.query(
-      `SELECT version FROM schema_version WHERE version::int BETWEEN 413 AND 423 ORDER BY version::int`,
+      `SELECT version FROM schema_version WHERE version::int BETWEEN 413 AND 430 ORDER BY version::int`,
     );
     expect(anchors.rows.map(({version})=>Number(version))).toEqual([413,414,415,416]);
     const legacyTaskId=randomUUID();

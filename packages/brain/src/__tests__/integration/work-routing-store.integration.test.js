@@ -14,18 +14,175 @@ const ROUTING_EVIDENCE = Object.freeze({
   base_sha: 'a'.repeat(40),
 });
 
+function activeF1Result(sql) {
+  return String(sql).includes('WITH authoritative_scope AS')
+    ? { rows: [{ node_key: 'F1' }] }
+    : null;
+}
+
+async function seedActiveF1(client) {
+  await client.query("SELECT pg_advisory_xact_lock(hashtext('work-routing-active-f1-fixture'))");
+  let manifest = (await client.query(
+    "SELECT id,scope_key,digest FROM map_manifest_versions WHERE scope_key='cecelia' AND status='active'",
+  )).rows[0];
+  if (!manifest) {
+    const decisionId = crypto.randomUUID();
+    const manifestId = crypto.randomUUID();
+    const digest = crypto.randomUUID().replaceAll('-', '').repeat(2);
+    const version = (await client.query(
+      "SELECT COALESCE(MAX(version),0)+1 AS version FROM map_manifest_versions WHERE scope_key='cecelia'",
+    )).rows[0].version;
+    await client.query(
+      "INSERT INTO decisions(id,category,topic,decision) VALUES($1,'testing','routing fixture','active F1')",
+      [decisionId],
+    );
+    await client.query(
+      `INSERT INTO map_manifest_versions(
+         id,scope_key,version,source_decision_id,manifest,digest,status,activated_at
+       ) VALUES($1,'cecelia',$2,$3,$4::jsonb,$5,'active',NOW())`,
+      [manifestId, version, decisionId, JSON.stringify({
+        scope_key: 'cecelia', schema_version: 1, source_decision_id: decisionId,
+      }), digest],
+    );
+    manifest = { id: manifestId, scope_key: 'cecelia', digest };
+  }
+  let runId = (await client.query(
+    "SELECT id FROM map_projection_runs WHERE scope_key='cecelia' AND status='active'",
+  )).rows[0]?.id;
+  if (!runId) {
+    runId = crypto.randomUUID();
+    await client.query(
+      `INSERT INTO map_projection_runs(
+         id,scope_key,manifest_version_id,manifest_digest,fact_revisions,
+         projector_version,projection_digest,status,activated_at
+       ) VALUES($1,'cecelia',$2,$3,'{}','test-v1',$4,'active',NOW())`,
+      [runId, manifest.id, manifest.digest, crypto.randomUUID().replaceAll('-', '').repeat(2)],
+    );
+  }
+  await client.query(
+    `INSERT INTO map_projection_nodes(run_id,node_id,node_type,node_key,name)
+     SELECT $1,$2,'capability','F1','Factory F1'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM map_projection_nodes WHERE run_id=$1 AND node_key='F1'
+      )`,
+    [runId, crypto.randomUUID().replaceAll('-', '').repeat(2)],
+  );
+}
+
+async function ensureRouteValidationFixtureSchema(client) {
+  await client.query(
+    'ALTER TABLE work_routing_receipts ADD COLUMN IF NOT EXISTS map_scope_validation_version text',
+  );
+  await client.query(
+    'ALTER TABLE work_routing_receipts ADD COLUMN IF NOT EXISTS direct_contract_seed jsonb',
+  );
+}
+
 describe('routing store transaction contract', () => {
+  it.each([
+    ['bugfix', 'hotfix-v1'],
+    ['parameter_only', 'parameter-only-v1'],
+  ])('freezes a server-normalized direct contract seed for %s in the receipt INSERT', async (
+    declaredChangeKind,
+    expectedProfile,
+  ) => {
+    const calls = [];
+    const client = { query: vi.fn(async (sql, args) => {
+      calls.push([String(sql), args]);
+      if (activeF1Result(sql)) return activeF1Result(sql);
+      if (String(sql).includes('INSERT INTO tasks')) return { rows: [{ id: 'task-direct' }] };
+      if (String(sql).includes('INSERT INTO work_routing_receipts')) {
+        return { rows: [{ id: 'receipt-direct' }] };
+      }
+      return { rows: [] };
+    }) };
+
+    await createRoutedTask(client, {
+      source: 'api',
+      source_id: `direct-${declaredChangeKind}`,
+      title: '  Repair callback ownership  ',
+      description: '  Preserve exact lease CAS and add regression coverage.  ',
+      mutation_intent: 'write',
+      declared_change_kind: declaredChangeKind,
+      repo_hint: 'perfectuser21/cecelia',
+      map_scope_hint: ['F1'],
+      ...ROUTING_EVIDENCE,
+    }, REPOSITORY_FACTS);
+
+    const receiptInsert = calls.find(([sql]) => sql.includes('INSERT INTO work_routing_receipts'));
+    expect(receiptInsert[0]).toContain('direct_contract_seed');
+    const seed = receiptInsert[1].find((value) => {
+      if (typeof value !== 'string') return false;
+      try { return JSON.parse(value).contract_version === 'direct-profile-contract-seed/v1'; }
+      catch { return false; }
+    });
+    expect(JSON.parse(seed)).toEqual({
+      contract_version: 'direct-profile-contract-seed/v1',
+      title: 'Repair callback ownership',
+      objective: 'Preserve exact lease CAS and add regression coverage.',
+      execution_profile: expectedProfile,
+    });
+  });
+
+  it('does not create a direct seed for a planner profile', async () => {
+    const calls = [];
+    const client = { query: vi.fn(async (sql, args) => {
+      calls.push([String(sql), args]);
+      if (activeF1Result(sql)) return activeF1Result(sql);
+      if (String(sql).includes('INSERT INTO tasks')) return { rows: [{ id: 'task-planner' }] };
+      if (String(sql).includes('INSERT INTO work_routing_receipts')) {
+        return { rows: [{ id: 'receipt-planner' }] };
+      }
+      return { rows: [] };
+    }) };
+
+    await createRoutedTask(client, {
+      source: 'api', source_id: 'planner-seed-null', title: 'new feature',
+      description: 'requires planner', mutation_intent: 'write',
+      declared_change_kind: 'new_capability', repo_hint: 'perfectuser21/cecelia',
+      map_scope_hint: ['F1'], ...ROUTING_EVIDENCE,
+    }, REPOSITORY_FACTS);
+
+    const receiptInsert = calls.find(([sql]) => sql.includes('INSERT INTO work_routing_receipts'));
+    expect(receiptInsert[0]).toContain('direct_contract_seed');
+    expect(receiptInsert[1]).toContain(null);
+  });
+
+  it('rejects an oversized UTF-8 direct objective before task persistence', async () => {
+    const calls = [];
+    const client = { query: vi.fn(async (sql) => {
+      calls.push(String(sql));
+      if (activeF1Result(sql)) return activeF1Result(sql);
+      if (String(sql).includes('INSERT INTO tasks')) return { rows: [{ id: 'must-not-exist' }] };
+      return { rows: [] };
+    }) };
+
+    await expect(createRoutedTask(client, {
+      source: 'api', source_id: 'oversized-direct-seed', title: 'small title',
+      description: '汉'.repeat(50_000), mutation_intent: 'write',
+      declared_change_kind: 'bugfix', repo_hint: 'perfectuser21/cecelia',
+      map_scope_hint: ['F1'], ...ROUTING_EVIDENCE,
+    }, REPOSITORY_FACTS)).rejects.toMatchObject({
+      code: 'DIRECT_PROFILE_CONTRACT_SEED_SIZE_LIMIT',
+    });
+    expect(calls.some((sql) => sql.includes('INSERT INTO tasks'))).toBe(false);
+  });
+
   it('creates task and immutable receipt in one client transaction', async () => {
     const calls = [];
     const client = { query: async (sql, args) => {
       calls.push([sql, args]);
+      if (activeF1Result(sql)) return activeF1Result(sql);
       if (String(sql).includes('INSERT INTO tasks')) return { rows: [{ id: 'task-1' }] };
       if (String(sql).includes('INSERT INTO work_routing_receipts')) return { rows: [{ id: 'receipt-1' }] };
       return { rows: [] };
     }};
-    const result = await createRoutedTask(client, { source: 'api', source_id: '1', title: 'fix', mutation_intent: 'write', declared_change_kind: 'bugfix', repo_hint: 'perfectuser21/cecelia', ...ROUTING_EVIDENCE }, REPOSITORY_FACTS);
+    const result = await createRoutedTask(client, { source: 'api', source_id: '1', title: 'fix', mutation_intent: 'write', declared_change_kind: 'bugfix', repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['F1'], ...ROUTING_EVIDENCE }, REPOSITORY_FACTS);
     expect(result).toMatchObject({ task_id: 'task-1', routing_receipt_id: 'receipt-1' });
     expect(calls.map(([sql]) => sql)).toEqual(expect.arrayContaining(['BEGIN', 'COMMIT']));
+    const mapAuthorityQuery = calls.find(([sql]) => String(sql).includes('WITH authoritative_scope AS'))[0];
+    expect(mapAuthorityQuery).toMatch(/FOR SHARE OF mapping/);
+    expect(mapAuthorityQuery).toMatch(/FOR SHARE OF run, node/);
     expect(calls.some(([sql, args]) => (
       String(sql).includes('INSERT INTO cecelia_events') && args[0] === 'work_routed'
     ))).toBe(true);
@@ -36,6 +193,7 @@ describe('routing store transaction contract', () => {
     const client = {
       query: vi.fn(async (sql, args) => {
         calls.push([String(sql), args]);
+        if (activeF1Result(sql)) return activeF1Result(sql);
         if (String(sql).includes('INSERT INTO tasks')) {
           return { rows: [{ id: 'task-2', task_type: 'harness_initiative', priority: 'P0' }] };
         }
@@ -55,6 +213,7 @@ describe('routing store transaction contract', () => {
       mutation_intent: 'write',
       declared_change_kind: 'bugfix',
       repo_hint: 'perfectuser21/cecelia',
+      map_scope_hint: ['F1'],
       ...ROUTING_EVIDENCE,
       task: {
         priority: 'P0', project_id: 'project-1', status: 'queued',
@@ -90,6 +249,7 @@ describe('routing store transaction contract', () => {
     const calls = [];
     const client = { query: vi.fn(async (sql) => {
       calls.push(String(sql));
+      if (activeF1Result(sql)) return activeF1Result(sql);
       if (String(sql).includes('INSERT INTO tasks')) return { rows: [{ id: 'task-3' }] };
       if (String(sql).includes('INSERT INTO work_routing_receipts')) return { rows: [{ id: 'receipt-3' }] };
       return { rows: [] };
@@ -98,6 +258,7 @@ describe('routing store transaction contract', () => {
     await createRoutedTask(client, {
       source: 'inbox', source_id: 'atom-3', title: 'fix', mutation_intent: 'unknown',
       declared_change_kind: 'bugfix', repo_hint: 'perfectuser21/cecelia',
+      map_scope_hint: ['F1'],
       ...ROUTING_EVIDENCE,
     }, REPOSITORY_FACTS, { transaction: 'existing' });
 
@@ -114,6 +275,8 @@ describe('routing store transaction contract', () => {
     const client = await testPool.connect();
     try {
       await client.query('BEGIN');
+      await ensureRouteValidationFixtureSchema(client);
+      await seedActiveF1(client);
       const sourceId = `routing-pg-${crypto.randomUUID()}`;
       const created = await createRoutedTask(client, {
         source: 'api',
@@ -122,6 +285,7 @@ describe('routing store transaction contract', () => {
         mutation_intent: 'write',
         declared_change_kind: 'bugfix',
         repo_hint: 'perfectuser21/cecelia',
+        map_scope_hint: ['F1'],
         branch: 'cp-routing-pg',
         base_sha: 'a'.repeat(40),
       }, REPOSITORY_FACTS, { transaction: 'existing' });
@@ -183,17 +347,19 @@ describe('routing store transaction contract', () => {
     const client = await testPool.connect();
     try {
       await client.query('BEGIN');
+      await ensureRouteValidationFixtureSchema(client);
+      await seedActiveF1(client);
       const sourceId = `routing-conflict-${crypto.randomUUID()}`;
       const first = await createRoutedTask(client, {
         source: 'api', source_id: sourceId, title: 'routing identity',
         mutation_intent: 'write', declared_change_kind: 'bugfix',
-        repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['cecelia'],
+        repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['F1'],
         ...ROUTING_EVIDENCE,
       }, REPOSITORY_FACTS, { transaction: 'existing' });
       const replay = await createRoutedTask(client, {
         source: 'api', source_id: sourceId, title: 'routing identity',
         mutation_intent: 'write', declared_change_kind: 'bugfix',
-        repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['cecelia'],
+        repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['F1'],
         ...ROUTING_EVIDENCE,
       }, REPOSITORY_FACTS, { transaction: 'existing' });
       expect(replay).toMatchObject({
@@ -205,14 +371,14 @@ describe('routing store transaction contract', () => {
       await expect(createRoutedTask(client, {
         source: 'api', source_id: sourceId, title: 'routing identity',
         mutation_intent: 'write', declared_change_kind: 'new_capability',
-        repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['cecelia'],
+        repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['F1'],
         ...ROUTING_EVIDENCE,
       }, REPOSITORY_FACTS, { transaction: 'existing' })).rejects.toThrow(/work_route_idempotency_conflict/);
 
       await expect(createRoutedTask(client, {
         source: 'api', source_id: sourceId, title: 'routing identity',
         mutation_intent: 'write', declared_change_kind: 'bugfix',
-        repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['cecelia'],
+        repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['F1'],
         branch: 'cp-different', base_sha: 'b'.repeat(40),
       }, REPOSITORY_FACTS, { transaction: 'existing' })).rejects.toThrow(/work_route_idempotency_conflict/);
     } finally {
@@ -224,6 +390,7 @@ describe('routing store transaction contract', () => {
 
   it('coding request 缺 branch/base 时在创建前可信解析并冻结 canonical evidence', async () => {
     const client = { query: vi.fn(async (sql) => {
+      if (activeF1Result(sql)) return activeF1Result(sql);
       if (String(sql).includes('INSERT INTO tasks')) return { rows: [{ id: 'task-auto-evidence' }] };
       if (String(sql).includes('INSERT INTO work_routing_receipts')) return { rows: [{ id: 'receipt-auto-evidence' }] };
       return { rows: [] };
@@ -237,6 +404,7 @@ describe('routing store transaction contract', () => {
       source: 'inbox', source_id: 'atom-without-git-evidence', title: 'urgent fix',
       mutation_intent: 'write', declared_change_kind: 'bugfix',
       repo_hint: 'perfectuser21/cecelia',
+      map_scope_hint: ['F1'],
     }, REPOSITORY_FACTS, { resolveRoutingEvidence });
 
     expect(resolveRoutingEvidence).toHaveBeenCalledWith(expect.objectContaining({
@@ -275,6 +443,28 @@ describe('routing store transaction contract', () => {
     ))).toBe(false);
   });
 
+  it('拒绝把 repo scope key 冒充 mutation 业务节点，且不写 task/receipt', async () => {
+    const client = { query: vi.fn(async (sql) => {
+      if (String(sql).includes('INSERT INTO tasks')) return { rows: [{ id: 'must-not-exist' }] };
+      if (String(sql).includes('INSERT INTO work_routing_receipts')) {
+        return { rows: [{ id: 'must-not-exist' }] };
+      }
+      return { rows: [] };
+    }) };
+
+    await expect(createRoutedTask(client, {
+      source: 'api', source_id: 'repo-scope-is-not-business-node', title: 'invalid map scope',
+      mutation_intent: 'write', declared_change_kind: 'bugfix',
+      repo_hint: 'perfectuser21/cecelia', map_scope_hint: ['cecelia'],
+      branch: 'cp-invalid-map-scope', base_sha: 'd'.repeat(40),
+    }, REPOSITORY_FACTS)).rejects.toThrow(/routing_map_scope_unresolved/);
+
+    expect(client.query.mock.calls.some(([sql]) => (
+      String(sql).includes('INSERT INTO tasks')
+      || String(sql).includes('INSERT INTO work_routing_receipts')
+    ))).toBe(false);
+  });
+
   it('缺省 branch/base 的幂等重放复用已冻结 evidence，不重读已经前进的 main', async () => {
     const databaseUrl = process.env.DATABASE_URL ?? 'postgresql://localhost/cecelia_test';
     const testPool = new Pool({ connectionString: databaseUrl });
@@ -286,11 +476,14 @@ describe('routing store transaction contract', () => {
     const resolveRoutingEvidence = vi.fn(async () => resolvedEvidence.shift());
     try {
       await client.query('BEGIN');
+      await ensureRouteValidationFixtureSchema(client);
+      await seedActiveF1(client);
       const sourceId = `routing-stable-replay-${crypto.randomUUID()}`;
       const request = {
         source: 'inbox', source_id: sourceId, title: 'stable replay',
         mutation_intent: 'write', declared_change_kind: 'bugfix',
         repo_hint: 'perfectuser21/cecelia',
+        map_scope_hint: ['F1'],
       };
       const first = await createRoutedTask(client, request, REPOSITORY_FACTS, {
         transaction: 'existing', resolveRoutingEvidence,

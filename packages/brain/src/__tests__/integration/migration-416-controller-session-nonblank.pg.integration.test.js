@@ -13,7 +13,10 @@ const rollbackSql = readFileSync(
   new URL('../../../migrations/rollback/416_controller_session_nonblank.down.sql', import.meta.url),
   'utf8',
 );
-const branchRollbackSql = [424, 423, 422, 421, 420, 419, 418, 417].map((version) => {
+const branchRollbackSql = [
+  430, 429, 428, 427, 426, 425, 424,
+  423, 422, 421, 420, 419, 418, 417,
+].map((version) => {
   const file = readdirSync(
     new URL('../../../migrations/rollback/', import.meta.url),
   ).find((entry) => entry.startsWith(`${version}_`));
@@ -21,6 +24,22 @@ const branchRollbackSql = [424, 423, 422, 421, 420, 419, 418, 417].map((version)
 });
 let testPool;
 async function resetToProduction415() {
+  // CREATE-SESSION-C 在 createKernelRun 拒绝非法 session 前会先出生真实的
+  // test-only routed task/receipt。回放 427 down 必须先清掉这些夹具 authority，
+  // 否则 append-only 保护会正确 fail-closed，但无法验证 416 本身的往返。
+  await testPool.query(
+    'ALTER TABLE work_routing_receipts DISABLE TRIGGER work_routing_receipts_immutable',
+  );
+  try {
+    await testPool.query(
+      "DELETE FROM work_routing_receipts WHERE source='integration' AND source_id LIKE 'kernel-lease:%'",
+    );
+  } finally {
+    await testPool.query(
+      'ALTER TABLE work_routing_receipts ENABLE TRIGGER work_routing_receipts_immutable',
+    );
+  }
+  await testPool.query("DELETE FROM tasks WHERE title LIKE 'kernel-leaserenew-%'");
   for (const sql of branchRollbackSql) await testPool.query(sql);
   await testPool.query(rollbackSql);
 }

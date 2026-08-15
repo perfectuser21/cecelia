@@ -16,13 +16,18 @@ import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
 // ---- helpers ----
 
 const BASE_COUNTERS = { hops: 5, fixRound: 0, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 };
+const CONTRACT_IDENTITY = Object.freeze({
+  contract_id: 'c1',
+  manifest_sha256: 'b'.repeat(64),
+  source_revision: 'c'.repeat(40),
+});
 
 function makeObserved(failureClass) {
   return {
     run: { phase: 'evaluate', cost_usd: '0' },
     task: { status: 'in_progress', payload: {} },
     prdExists: true,
-    contract: { approved: true, id: 'c1', row: {} },
+    contract: { approved: true, id: 'c1', identity: CONTRACT_IDENTITY, row: {} },
     pr: { url: 'https://github.com/test/repo/pull/99', state: 'OPEN', merged: false, ci: 'pass', head_sha: 'sha-abc' },
     inflight: { containers: [], host_pids: [] },
     lastAgentExit: { code: null, auth_failed: false, action: null },
@@ -30,12 +35,17 @@ function makeObserved(failureClass) {
     ganLatestRoundVerdict: null,
     generatorSpawned: true,
     evaluateVerdict: {
-      verdict: 'FAIL',
+      verdict: 'PASS',
       pr_head_sha: 'sha-abc',
-      failure_class: failureClass ?? null,
+      contract_identity: CONTRACT_IDENTITY,
     },
     evaluateResult: null,
-    judgeVerdict: null,
+    judgeVerdict: {
+      verdict: 'FAIL',
+      pr_head_sha: 'sha-abc',
+      contract_identity: CONTRACT_IDENTITY,
+      failure_class: failureClass ?? null,
+    },
     reviewRequired: false,
     reviewApproved: false,
     decisionLog: [],
@@ -47,13 +57,10 @@ function makeObserved(failureClass) {
 
 function makeJudgeObserved(judgeVerdict) {
   const observed = makeObserved('product_failure');
-  observed.evaluateVerdict = {
-    verdict: 'PASS',
-    pr_head_sha: observed.pr.head_sha,
-  };
   observed.judgeVerdict = {
     verdict: 'FAIL',
     pr_head_sha: observed.pr.head_sha,
+    contract_identity: CONTRACT_IDENTITY,
     ...judgeVerdict,
   };
   return observed;
@@ -80,23 +87,25 @@ describe('[BEHAVIOR] B-04 failure_class 五类路由矩阵', () => {
   });
 
   /**
-   * T-11-a: failure_class 缺失（null）→ spawn:generator-fix（保守，视为产品失败）
+   * T-11-a: Judge failure_class 缺失（null）→ human review（不猜产品错）
    */
-  test('T-11-a: failure_class null → spawn:generator-fix（保守）', () => {
+  test('T-11-a: failure_class null → wait:human_review（fail-closed）', () => {
     const result = derive(makeObserved(null));
-    // INV-K3：Judge 缺 failure_class → unknown，不默认归为产品代码失败
-    // 但对 evaluator，null failure_class 保守路由 generator-fix
-    expect(result.action).toBe('spawn:generator-fix');
+    expect(result.action).toBe('wait:human_review');
   });
 
   /**
-   * T-11-b: failure_class 缺失（undefined）→ spawn:generator-fix（保守）
+   * T-11-b: Judge failure_class 缺失（undefined）→ human review
    */
-  test('T-11-b: failure_class undefined → spawn:generator-fix（保守）', () => {
+  test('T-11-b: failure_class undefined → wait:human_review（fail-closed）', () => {
     const obs = makeObserved(undefined);
-    obs.evaluateVerdict = { verdict: 'FAIL', pr_head_sha: 'sha-abc' }; // 无 failure_class 字段
+    obs.judgeVerdict = {
+      verdict: 'FAIL',
+      pr_head_sha: 'sha-abc',
+      contract_identity: CONTRACT_IDENTITY,
+    }; // 无 failure_class 字段
     const result = derive(obs);
-    expect(result.action).toBe('spawn:generator-fix');
+    expect(result.action).toBe('wait:human_review');
   });
 
   /**
@@ -205,7 +214,13 @@ describe('[BEHAVIOR] B-04 Judge 落库保留 failure_class', () => {
         callbackResult: null,
       },
       attempt: { id: 'attempt-1' },
-      bundle: { inputs: { worktree_path: '/tmp/wt', sprint_dir: 'sprints/test' } },
+      bundle: {
+        inputs: {
+          worktree_path: '/tmp/wt',
+          sprint_dir: 'sprints/test',
+          contract_identity: CONTRACT_IDENTITY,
+        },
+      },
     };
 
     // 动态 import（kernel-handlers 使用 createKernelHandlers 工厂）

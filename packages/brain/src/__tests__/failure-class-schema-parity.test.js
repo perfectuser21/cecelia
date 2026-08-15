@@ -33,8 +33,10 @@ function extractCodeClasses() {
     new URL('../orchestrator/execution-contract.js', import.meta.url),
     'utf8',
   );
-  // 找到 failure_class: z.enum([ ... ]) 块
-  const match = src.match(
+  // Judge 语义裁决有自己的三类枚举；DB 列存的是 Harness Attempt
+  // 基础设施分类。必须只在 harnessResultSchema 区段中取后者。
+  const harnessResultSource = src.slice(src.indexOf('const harnessResultSchema'));
+  const match = harnessResultSource.match(
     /failure_class:\s*z\.enum\(\s*\[([\s\S]*?)\]\s*\)/,
   );
   if (!match) throw new Error('Could not locate failure_class z.enum([...]) in execution-contract.js');

@@ -11,10 +11,15 @@ describe('Map Impact Contract preflight', () => {
 
   it('materializes an active contract only from fresh same-revision Map evidence', async () => {
     const baseSha = 'a'.repeat(40);
-    const readMap = vi.fn(async () => ({
+    const authority = {
+      manifest_version_id: '11111111-1111-4111-8111-111111111111',
       manifest_digest: 'b'.repeat(64),
+      projection_run_id: '22222222-2222-4222-8222-222222222222',
       projection_digest: 'c'.repeat(64),
       fact_revisions: { cecelia: baseSha },
+    };
+    const readMap = vi.fn(async () => ({
+      ...authority,
       freshness: {
         status: 'fresh',
         repos: { cecelia: { status: 'fresh', source_revision: baseSha } },
@@ -22,6 +27,7 @@ describe('Map Impact Contract preflight', () => {
       nodes: [{ key: 'cap-router', type: 'capability', name: 'Router' }],
     }));
     const readRadius = vi.fn(async () => ({
+      ...authority,
       freshness: {
         status: 'fresh',
         repos: { cecelia: { status: 'fresh', source_revision: baseSha } },
@@ -48,7 +54,12 @@ describe('Map Impact Contract preflight', () => {
         map_scope: ['cap-router'],
         evidence: { base_sha: baseSha },
       },
-    }, { readMap, readRadius, persistContract });
+    }, {
+      readMap,
+      readRadius,
+      persistContract,
+      lockMapProjectionAuthority: vi.fn(async () => authority),
+    });
 
     expect(result.contract).toMatchObject({ status: 'active', repo: 'cecelia' });
     expect(persistContract).toHaveBeenCalledOnce();
@@ -59,6 +70,13 @@ describe('Map Impact Contract preflight', () => {
 
   it('fails before contract persistence for stale Map evidence', async () => {
     const persistContract = vi.fn();
+    const authority = {
+      manifest_version_id: '11111111-1111-4111-8111-111111111111',
+      manifest_digest: 'b'.repeat(64),
+      projection_run_id: '22222222-2222-4222-8222-222222222222',
+      projection_digest: 'c'.repeat(64),
+      fact_revisions: { cecelia: 'a'.repeat(40) },
+    };
     const client = {
       query: vi.fn(async () => ({ rows: [{ scope_key: 'cecelia' }] })),
     };
@@ -72,12 +90,66 @@ describe('Map Impact Contract preflight', () => {
       readMap: vi.fn(async () => ({ freshness: { status: 'unknown' } })),
       readRadius: vi.fn(),
       persistContract,
+      lockMapProjectionAuthority: vi.fn(async () => authority),
     })).rejects.toThrow('map_stale');
+    expect(persistContract).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before persistence when map and radius projection identities drift', async () => {
+    const baseSha = 'a'.repeat(40);
+    const authority = {
+      manifest_version_id: '11111111-1111-4111-8111-111111111111',
+      manifest_digest: 'b'.repeat(64),
+      projection_run_id: '22222222-2222-4222-8222-222222222222',
+      projection_digest: 'c'.repeat(64),
+      fact_revisions: { cecelia: baseSha },
+    };
+    const persistContract = vi.fn();
+    await expect(ensureMapImpactPreflight({ query: vi.fn() }, {
+      task: { id: '33333333-3333-4333-8333-333333333333', payload: {} },
+      receipt: {
+        repo: 'cecelia', change_kind: 'bugfix', map_scope: ['cap-router'],
+        evidence: { base_sha: baseSha },
+      },
+    }, {
+      resolveScopeKey: vi.fn(async () => 'cecelia'),
+      lockMapProjectionAuthority: vi.fn(async () => authority),
+      readMap: vi.fn(async () => ({
+        ...authority,
+        freshness: {
+          status: 'fresh',
+          repos: { cecelia: { status: 'fresh', source_revision: baseSha } },
+        },
+      })),
+      readRadius: vi.fn(async () => ({
+        ...authority,
+        projection_run_id: '44444444-4444-4444-8444-444444444444',
+        freshness: {
+          status: 'fresh',
+          repos: { cecelia: { status: 'fresh', source_revision: baseSha } },
+        },
+        affected_business_nodes: [{
+          node_key: 'cap-router', node_type: 'capability', name: 'Router',
+        }],
+        must_run_assertions: [{
+          node_key: '55555555-5555-4555-8555-555555555555',
+          assertion_ref: 'src/router.test.js', assertion_revision: 1,
+        }],
+      })),
+      persistContract,
+    })).rejects.toThrow('map_projection_changed');
     expect(persistContract).not.toHaveBeenCalled();
   });
 
   it('rejects an explicit recovery request while the normal Map path is fresh', async () => {
     const baseSha = 'a'.repeat(40);
+    const authority = {
+      manifest_version_id: '11111111-1111-4111-8111-111111111111',
+      manifest_digest: 'b'.repeat(64),
+      projection_run_id: '22222222-2222-4222-8222-222222222222',
+      projection_digest: 'c'.repeat(64),
+      fact_revisions: { cecelia: baseSha },
+    };
     const persistContract = vi.fn(async (_db, input) => ({
       created: true, contract: { id: 'normal-contract', status: 'active', ...input },
     }));
@@ -90,10 +162,11 @@ describe('Map Impact Contract preflight', () => {
     }, {
       resolveScopeKey: vi.fn(async () => 'cecelia'),
       readMap: vi.fn(async () => ({
-        manifest_digest: 'b'.repeat(64), projection_digest: 'c'.repeat(64),
+        ...authority,
         freshness: { status: 'fresh', repos: { cecelia: { status: 'fresh', source_revision: baseSha } } },
       })),
       readRadius: vi.fn(async () => ({
+        ...authority,
         freshness: { status: 'fresh', repos: { cecelia: { status: 'fresh', source_revision: baseSha } } },
         affected_business_nodes: [{ node_key: 'cap-router', node_type: 'capability', name: 'Router' }],
         must_run_assertions: [{
@@ -102,6 +175,7 @@ describe('Map Impact Contract preflight', () => {
         }],
       })),
       persistContract,
+      lockMapProjectionAuthority: vi.fn(async () => authority),
     })).rejects.toThrow('map_recovery_not_required');
   });
 
@@ -160,6 +234,13 @@ describe('Map Impact Contract preflight', () => {
       readMap: vi.fn(async () => { throw Object.assign(new Error('offline'), { code: 'map_unavailable' }); }),
       persistContract,
       now: new Date(),
+      lockMapProjectionAuthority: vi.fn(async () => ({
+        manifest_version_id: '11111111-1111-4111-8111-111111111111',
+        manifest_digest: 'b'.repeat(64),
+        projection_run_id: '22222222-2222-4222-8222-222222222222',
+        projection_digest: 'c'.repeat(64),
+        fact_revisions: { cecelia: baseSha },
+      })),
     });
 
     expect(result.recovery_contract).toMatchObject({ id: 'recovery-1' });

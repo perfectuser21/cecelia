@@ -28,8 +28,10 @@ import {
   patchKernelRunById,
 } from '../orchestrator/kernel-run-store.js';
 import { COMMANDER_MODES } from '../orchestrator/commander-contract.js';
+import { createPlannerRecoveryRouter } from './planner-recovery.js';
 
 const router = Router();
+router.use('/runs', createPlannerRecoveryRouter());
 const initiativeHistoryRateLimit = rateLimit({
   windowMs: 60_000,
   limit: 300,

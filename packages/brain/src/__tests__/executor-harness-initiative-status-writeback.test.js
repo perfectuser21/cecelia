@@ -8,9 +8,13 @@ import fs from 'node:fs';
 describe('executor.js harness_initiative 状态回写', () => {
   const SRC = fs.readFileSync(new URL('../executor.js', import.meta.url), 'utf8');
 
-  // 提取完整 harness_initiative 分支；Kernel authority guard 让该块略长。
+  // 提取完整 harness_initiative 分支；以下一个路由注释作边界，
+  // 不使用易随 Kernel authority guard 增长而失真的固定字符数。
   const harnessStart = SRC.indexOf("task.task_type === 'harness_initiative'");
-  const harnessBlock = harnessStart >= 0 ? SRC.slice(harnessStart, harnessStart + 3200) : '';
+  const harnessEnd = SRC.indexOf('// Retired harness task_types', harnessStart);
+  const harnessBlock = harnessStart >= 0
+    ? SRC.slice(harnessStart, harnessEnd > harnessStart ? harnessEnd : undefined)
+    : '';
 
   it('harness_initiative 成功路径调用 updateTaskStatus completed', () => {
     expect(harnessBlock).toMatch(/updateTaskStatus\s*\(\s*task\.id\s*,\s*['"]completed['"]/);

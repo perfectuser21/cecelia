@@ -22,6 +22,7 @@ export function canonicalRoutingReceipt(task) {
     pipeline: 'harness',
     canonical_task_type: 'harness_initiative',
     impact_contract_required: true,
+    map_scope_validation_version: 'active-business-node-v1',
   };
 }
 import { ROUTER_VERSION } from '../../work-router.js';

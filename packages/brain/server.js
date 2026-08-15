@@ -122,6 +122,11 @@ import { waitForPortFree, listenWithRetry } from './src/startup-port-guard.js';
 import { setupGitCredentials } from './src/lib/git-credentials-setup.js';
 import { bootDurable } from './src/durable/dbos-runtime.js';
 import { createProductionExecutionTransport } from './src/orchestrator/production-transport.js';
+import { createAttemptCleanupWorker } from './src/orchestrator/attempt-cleanup-worker.js';
+import {
+  createAttemptCleanupLoop,
+  shouldStartAttemptCleanupLoop,
+} from './src/orchestrator/attempt-cleanup-loop.js';
 
 // 容器 git 凭据初始化（必须在任何 git clone/fetch/push 之前）：
 // 宿主 ~/.gitconfig 只读挂载进容器、配了容器内不存在的 credential.helper，
@@ -140,6 +145,12 @@ const kernelFleetTerminalTransport = createProductionExecutionTransport({
   env: process.env,
   fetchFn: globalThis.fetch,
 });
+const attemptCleanupWorker = createAttemptCleanupWorker({
+  pool,
+  transport: kernelFleetTerminalTransport,
+  claimOwner: `brain-cleanup:${process.env.CECELIA_MACHINE_ID ?? 'unknown'}:${process.pid}`,
+});
+const attemptCleanupLoop = createAttemptCleanupLoop({ worker: attemptCleanupWorker });
 app.set('kernelFleetTerminalizer', (attempt) => (
   kernelFleetTerminalTransport.terminal({
     attempt,
@@ -182,6 +193,7 @@ let acceptancePublicServer = null;
 async function gracefulShutdown(signal) {
   if (__shuttingDown) return;
   __shuttingDown = true;
+  attemptCleanupLoop.stop();
   // 诊断日志：Brain 周期性出现 exit 0 不明原因 — 临终 dump 上下文便于下次定位。
   // 日志同时写 stdout 和 /tmp/shutdown-trace.jsonl（tmpfs，不持久，但 docker logs 会捕获）。
   try {
@@ -684,6 +696,13 @@ if (!process.env.VITEST) {
 
 async function onBrainListening() {
   console.log(`Cecelia Brain running on http://localhost:${PORT}`);
+
+  if (shouldStartAttemptCleanupLoop(process.env)) {
+    attemptCleanupLoop.start();
+    console.log('[Server] Attempt Cleanup Loop started (30s interval)');
+  } else {
+    console.log('[Server] Attempt Cleanup Loop passive in preview/evaluator mode');
+  }
 
   // Initialize WebSocket server
   initWebSocketServer(server);

@@ -46,6 +46,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
         status text NOT NULL DEFAULT 'draft',
         prd_content text,
         contract_content text,
+        approval_provenance jsonb,
         approved_sha text,
         frozen_artifacts jsonb NOT NULL DEFAULT '[]'::jsonb,
         review_rounds integer DEFAULT 0,
@@ -58,6 +59,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       CREATE TABLE ${concurrencySchema}.initiative_runs (
         id uuid PRIMARY KEY,
         initiative_id uuid NOT NULL,
+        current_task_id uuid NOT NULL,
         contract_id uuid,
         updated_at timestamptz DEFAULT now()
       );
@@ -89,6 +91,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
         status text NOT NULL DEFAULT 'draft',
         prd_content text,
         contract_content text,
+        approval_provenance jsonb,
         approved_sha text,
         frozen_artifacts jsonb NOT NULL DEFAULT '[]'::jsonb,
         review_rounds integer DEFAULT 0,
@@ -101,6 +104,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       CREATE TEMP TABLE initiative_runs (
         id uuid PRIMARY KEY,
         initiative_id uuid NOT NULL,
+        current_task_id uuid NOT NULL,
         contract_id uuid,
         updated_at timestamptz DEFAULT now()
       ) ON COMMIT DROP;
@@ -140,10 +144,13 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       BEFORE INSERT ON initiative_contract_artifacts
       FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_sealed_artifact_append();
     `);
-    await client.query('INSERT INTO tasks (id) VALUES ($1::uuid)', [initiativeId]);
     await client.query(
-      `INSERT INTO initiative_runs (id, initiative_id)
-       VALUES ($1::uuid, $3::uuid), ($2::uuid, $3::uuid)`,
+      'INSERT INTO tasks (id) VALUES ($1::uuid),($2::uuid)',
+      [runId, rerunId],
+    );
+    await client.query(
+      `INSERT INTO initiative_runs (id, initiative_id, current_task_id)
+       VALUES ($1::uuid, $3::uuid, $1::uuid), ($2::uuid, $3::uuid, $2::uuid)`,
       [runId, rerunId, initiativeId],
     );
     await client.query(
@@ -337,10 +344,13 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       source_revision: sourceRevision,
     }));
     try {
-      await firstPool.query('INSERT INTO tasks (id) VALUES ($1::uuid)', [concurrentInitiativeId]);
       await firstPool.query(
-        `INSERT INTO initiative_runs (id, initiative_id)
-         VALUES ($2::uuid, $1::uuid), ($3::uuid, $1::uuid)`,
+        'INSERT INTO tasks (id) VALUES ($1::uuid),($2::uuid)',
+        [concurrentRunA, concurrentRunB],
+      );
+      await firstPool.query(
+        `INSERT INTO initiative_runs (id, initiative_id, current_task_id)
+         VALUES ($2::uuid, $1::uuid, $2::uuid), ($3::uuid, $1::uuid, $3::uuid)`,
         [concurrentInitiativeId, concurrentRunA, concurrentRunB],
       );
       const [first, second] = await Promise.all([
@@ -425,6 +435,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract 合同重开后�
         status text NOT NULL DEFAULT 'draft',
         prd_content text,
         contract_content text,
+        approval_provenance jsonb,
         approved_sha text,
         frozen_artifacts jsonb NOT NULL DEFAULT '[]'::jsonb,
         review_rounds integer DEFAULT 0,
@@ -437,6 +448,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract 合同重开后�
       CREATE TEMP TABLE initiative_runs (
         id uuid PRIMARY KEY,
         initiative_id uuid NOT NULL,
+        current_task_id uuid NOT NULL,
         contract_id uuid,
         updated_at timestamptz DEFAULT now()
       ) ON COMMIT DROP;
@@ -470,9 +482,10 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract 合同重开后�
   });
 
   async function seedRun(initiativeId, runId) {
-    await reopenClient.query('INSERT INTO tasks (id) VALUES ($1::uuid)', [initiativeId]);
+    await reopenClient.query('INSERT INTO tasks (id) VALUES ($1::uuid)', [runId]);
     await reopenClient.query(
-      'INSERT INTO initiative_runs (id, initiative_id) VALUES ($1::uuid, $2::uuid)',
+      `INSERT INTO initiative_runs (id, initiative_id, current_task_id)
+       VALUES ($1::uuid, $2::uuid, $1::uuid)`,
       [runId, initiativeId],
     );
   }
@@ -618,7 +631,13 @@ describe('materializeApprovedContract concurrency contract', () => {
     const client = {
       query: async (sql) => {
         queries.push(sql);
-        if (/FOR UPDATE OF run, task/i.test(sql)) {
+        if (/SELECT run\.initiative_id, run\.current_task_id/i.test(sql)) {
+          return { rows: [{ initiative_id: initiativeId, current_task_id: rerunId }] };
+        }
+        if (/FROM tasks[\s\S]*FOR UPDATE/i.test(sql)) {
+          return { rows: [{ id: rerunId }] };
+        }
+        if (/initiative_id = \$2::uuid[\s\S]*current_task_id = \$3::uuid[\s\S]*FOR UPDATE OF run/i.test(sql)) {
           return { rows: [{ initiative_id: initiativeId, contract_id: null }] };
         }
         if (/GREATEST\(\$2::integer/i.test(sql)) {
@@ -651,9 +670,13 @@ describe('materializeApprovedContract concurrency contract', () => {
     })).resolves.toMatchObject({ status: 'approved' });
 
     expect(queries[0]).toBe('BEGIN');
-    expect(queries[1]).toMatch(/FOR UPDATE OF run, task/i);
-    expect(queries[2]).toMatch(/GREATEST\(\$2::integer/i);
-    expect(queries[3]).toMatch(/UPDATE initiative_runs AS run/i);
+    expect(queries[1]).toMatch(/SELECT run\.initiative_id, run\.current_task_id/i);
+    expect(queries[1]).not.toMatch(/FOR UPDATE/i);
+    expect(queries[2]).toMatch(/pg_advisory_xact_lock\(hashtextextended/i);
+    expect(queries[3]).toMatch(/FROM tasks[\s\S]*FOR UPDATE/i);
+    expect(queries[4]).toMatch(/initiative_id = \$2::uuid[\s\S]*current_task_id = \$3::uuid/);
+    expect(queries[5]).toMatch(/GREATEST\(\$2::integer/i);
+    expect(queries[6]).toMatch(/UPDATE initiative_runs AS run/i);
     expect(queries.at(-1)).toBe('COMMIT');
     expect(client.release).toHaveBeenCalledOnce();
   });
@@ -663,7 +686,13 @@ describe('materializeApprovedContract concurrency contract', () => {
     const client = {
       query: vi.fn(async (sql) => {
         queries.push(sql);
-        if (/FOR UPDATE OF run, task/i.test(sql)) {
+        if (/SELECT run\.initiative_id, run\.current_task_id/i.test(sql)) {
+          return { rows: [{ initiative_id: initiativeId, current_task_id: rerunId }] };
+        }
+        if (/FROM tasks[\s\S]*FOR UPDATE/i.test(sql)) {
+          return { rows: [{ id: rerunId }] };
+        }
+        if (/initiative_id = \$2::uuid[\s\S]*current_task_id = \$3::uuid[\s\S]*FOR UPDATE OF run/i.test(sql)) {
           return { rows: [{ initiative_id: initiativeId, contract_id: null }] };
         }
         if (/GREATEST\(\$2::integer/i.test(sql)) {

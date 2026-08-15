@@ -17,7 +17,7 @@
  *   reviewRequired / reviewApproved
  *   counters:{hops,fixRound,pollCount,noPushStreak,noVerdictStreak,ganCostUsd}
  */
-import { caps, isPassVerdict } from './gates.js';
+import { caps, isPassVerdict, sameContractIdentity } from './gates.js';
 import { ACTION, LOG_ACTION } from './constants.js';
 import { replayProductConvergence } from './counters.js';
 import { detectRubricTrend } from './rubric-trend.js';
@@ -48,6 +48,12 @@ const EXECUTION_PROFILES = new Set([
   'hotfix-v1',
   'parameter-only-v1',
 ]);
+const EXECUTION_PROFILE_STRENGTH = Object.freeze({
+  'parameter-only-v1': 0,
+  'hotfix-v1': 0,
+  'capability-change-v1': 1,
+  'new-capability-v1': 2,
+});
 
 function assertObservedShape(observed) {
   for (const field of REQUIRED_FIELDS) {
@@ -57,9 +63,13 @@ function assertObservedShape(observed) {
   }
 }
 
-/** verdict 记录是否锚定在当前 PR head SHA 上（P0-2：旧 sha 的记录视为不存在） */
-function verdictForSha(verdictRow, headSha) {
-  return verdictRow && verdictRow.pr_head_sha === headSha ? verdictRow : null;
+/** verdict 必须同时锚定当前候选 SHA 与当前冻结合同，任一漂移都视为不存在。 */
+function verdictForAuthority(verdictRow, headSha, contractIdentity) {
+  return verdictRow
+    && verdictRow.pr_head_sha === headSha
+    && sameContractIdentity(verdictRow.contract_identity, contractIdentity)
+    ? verdictRow
+    : null;
 }
 
 /**
@@ -752,10 +762,37 @@ export function derive(observed) {
   const executionProfile = receipt
     ? (receipt.execution_profile_override ?? receipt.default_execution_profile)
     : null;
+  const executionProfileOverride = receipt?.execution_profile_override ?? null;
+  if (
+    receipt
+    && executionProfileOverride != null
+    && (
+      !EXECUTION_PROFILES.has(receipt.default_execution_profile)
+      || !EXECUTION_PROFILES.has(executionProfileOverride)
+      || (
+        executionProfileOverride !== receipt.default_execution_profile
+        && EXECUTION_PROFILE_STRENGTH[executionProfileOverride]
+          <= EXECUTION_PROFILE_STRENGTH[receipt.default_execution_profile]
+      )
+    )
+  ) {
+    return {
+      phase: 'failed',
+      action: ACTION.MARK_FAILED,
+      reason: 'invalid_execution_profile_override',
+    };
+  }
   if (receipt && !EXECUTION_PROFILES.has(executionProfile)) {
     return { phase: 'failed', action: ACTION.MARK_FAILED, reason: 'invalid_execution_profile' };
   }
   if (executionProfile === 'hotfix-v1' || executionProfile === 'parameter-only-v1') {
+    if (!contract.approved) {
+      return applyHopFence({
+        phase: 'generate',
+        action: ACTION.MATERIALIZE_DIRECT_PROFILE_CONTRACT,
+        reason: 'direct_profile_contract_required',
+      }, counters);
+    }
     return applyHopFence(deriveTask(observed), counters);
   }
   if (executionProfile === 'capability-change-v1') {
@@ -791,7 +828,7 @@ export function derive(observed) {
   //   - new_capability / capability_change：落到下面 planning 门，保留 planning + GAN 收敛。
   // 缺省（change_kind=null：存量 run / 未注入）→ 不分叉，逐字节等价现行行为（零回归红线）。
   // 非法 change_kind 由入口层 change-kind.js normalizeChangeKind throw（现有语义，不在此重复校验）。
-  const changeKind = observed.change_kind ?? null;
+  const changeKind = receipt ? null : (observed.change_kind ?? null);
   if (
     (changeKind === 'bugfix' || changeKind === 'parameter_only')
     && !prdExists
@@ -1109,29 +1146,32 @@ function deriveVerdictChain(observed) {
     counters,
   } = observed;
   const target = pr ?? candidate;
-  const evalRow = verdictForSha(evaluateVerdict, target.head_sha);
-  const judgeRow = verdictForSha(judgeVerdict, target.head_sha);
+  const contractIdentity = observed.contract?.identity ?? null;
+  const evalRow = verdictForAuthority(
+    evaluateVerdict,
+    target.head_sha,
+    contractIdentity,
+  );
+  const judgeRow = verdictForAuthority(
+    judgeVerdict,
+    target.head_sha,
+    contractIdentity,
+  );
 
   // 4a. 当前 head_sha 无 evaluate PASS 记录 → evaluate（stale PASS+新 sha 也走这里重新 evaluate）
   if (!evalRow) {
     return { phase: 'evaluate', action: 'spawn:evaluator', reason: 'no_evaluate_verdict_for_head_sha' };
   }
-  if (!isPassVerdict(evalRow.verdict)) {
-    // routeAfterEvaluate 语义：failure_class 差异路由矩阵（Sprint 07231527 Blocking 3）
-    // INV-K3：Judge 缺 failure_class → unknown，禁止默认归为产品代码失败
-    return deriveFailureClassRoute(
-      evalRow.failure_class,
-      counters,
-      observed.decisionLog,
-      target.head_sha,
-      evalRow,
-      observed,
-    );
-  }
-
-  // 4b. evaluate PASS(本 sha) && 无 judge 记录(本 sha) → judge（硬门禁，代码强制）
+  // 4b. Evaluator 只负责产出人式验收事实，不能给自己的 PASS/FAIL 发最终奖牌。
+  // 无论 Evaluator 自报什么 outcome，都必须由独立 Judge 在同一候选+合同身份上复核。
   if (!judgeRow) {
-    return { phase: 'evaluate', action: 'spawn:judge', reason: 'evaluate_passed_awaiting_judge' };
+    return {
+      phase: 'evaluate',
+      action: 'spawn:judge',
+      reason: isPassVerdict(evalRow.verdict)
+        ? 'evaluate_passed_awaiting_judge'
+        : 'evaluate_completed_awaiting_judge',
+    };
   }
 
   // 4c. judge FAIL(本 sha) → 按 failure_class 显式分支；缺失分类归 unknown 等人工。

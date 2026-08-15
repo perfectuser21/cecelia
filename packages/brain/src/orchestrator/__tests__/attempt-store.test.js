@@ -1032,13 +1032,19 @@ describe('attempt store', () => {
   ])('本地 candidate 的 %s verdict 锚定 candidate SHA', async (role, action) => {
     const candidateHead = 'd'.repeat(40);
     const staleRemoteHead = 'a'.repeat(40);
+    const contractIdentity = {
+      contract_id: '12121212-1212-4121-8121-121212121212',
+      manifest_sha256: 'e'.repeat(64),
+      source_revision: 'f'.repeat(40),
+    };
+    const coverage = [{ step: 'frozen contract', passed: true, evidence: 'verified' }];
     const callbackResult = {
       status: 'completed',
       summary: `${role} passed local candidate`,
       artifacts: [],
       checks: [],
       provider_metadata: { provider: 'codex' },
-      decision: { outcome: 'PASS', reason: 'candidate verified' },
+      decision: { outcome: 'PASS', reason: 'candidate verified', coverage },
       error: null,
     };
     const running = {
@@ -1055,6 +1061,7 @@ describe('attempt store', () => {
           pull_request: { head_sha: staleRemoteHead },
           candidate: { head_sha: candidateHead },
           pr_head_sha: candidateHead,
+          contract_identity: contractIdentity,
         },
       },
       result: null,
@@ -1088,6 +1095,8 @@ describe('attempt store', () => {
     expect(JSON.parse(projection[1][5])).toMatchObject({
       verdict: 'PASS',
       pr_head_sha: candidateHead,
+      contract_identity: contractIdentity,
+      coverage,
     });
   });
 

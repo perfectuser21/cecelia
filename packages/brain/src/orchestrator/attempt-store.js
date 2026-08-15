@@ -36,6 +36,9 @@ const SUCCESS_TERMINAL_STATUSES = new Set([
 
 const TERMINAL_SQL = TERMINAL_STATUSES.map((status) => `'${status}'`).join(',');
 const DERIVED_TIME_ROLES = new Set(['judge', 'reporter']);
+const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 
 // 权威裁决终态：只有这两个状态代表"角色真的跑完并产出了结果"。
 // callbackRoleVerdictProjection（既有）与 callbackCaseFileProjection（案卷式
@@ -153,6 +156,15 @@ function callbackRoleVerdictProjection(attempt, result) {
   if (!ADVERSARIAL_TERMINAL_STATUSES.has(result.status)) return null;
 
   const inputs = attemptTaskBundle(attempt).inputs ?? {};
+  const contractIdentity = inputs.contract_identity;
+  if (contractIdentity != null && (
+    typeof contractIdentity !== 'object'
+    || !UUID_PATTERN.test(contractIdentity.contract_id ?? '')
+    || !SHA256_PATTERN.test(contractIdentity.manifest_sha256 ?? '')
+    || !GIT_SHA_PATTERN.test(contractIdentity.source_revision ?? '')
+  )) {
+    throw new Error('frozen_contract_identity_invalid');
+  }
   const verdict = normalizeRoleVerdict(attempt.role, result.decision.outcome);
   const failureSignature = normalizeFailureSignature(result.decision.failure_signature);
   const targetHeadSha = inputs.candidate?.head_sha
@@ -174,6 +186,10 @@ function callbackRoleVerdictProjection(attempt, result) {
         failure_class: result.decision.failure_class ?? null,
         ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
         feedback: result.decision.reason,
+        ...(contractIdentity == null ? {} : { contract_identity: contractIdentity }),
+        ...(Array.isArray(result.decision.coverage)
+          ? { coverage: result.decision.coverage }
+          : {}),
       };
   const allowed = ['APPROVED', 'PASS', 'FIXED'].includes(verdict);
   return {

@@ -8,7 +8,31 @@
 
 
 
-**Brain 版本**: 1.273.43
+**Brain 版本**: 1.273.46
+
+## Brain 1.273.46 — Trusted Human Evaluation and Recovery Closure
+
+- 所有 coding mutation 由不可变 Routing Receipt、Map/Impact authority 与 Kernel Harness v2 驱动；Direct Profile 先物化并封印服务端合同，再进入 Generator、独立 Evaluator session 与逐断言 Judge，不再把可变 task description 或粗粒度 CI 结果当验收权威。
+- Evaluator 保留 findings、screenshots 与 exploration notes 的人式探索证据；Runner 在 Provider 后执行 root-owned Git、工作树与依赖完整性对账，并由可信 assertion checkout 执行 required assertions，任何源码、Git admin、依赖或 cleanup trust 漂移均 fail-closed。
+- Judge 对 exact candidate SHA 与 exact contract identity 做服务端绑定，逐条校验冻结 DoD/Impact assertions；one-session 路径同样写不可变 Judge receipt，并只允许服务端 merge endpoint 消费，不再存在客户端 verdict 或直接 `gh merge` 旁路。
+- Planner 成功回调封存 exact remote commit blob receipt；失败 Run 只能一次性创建新的 successor task，并以 receipt/consumption/run 三层不可变绑定从 GAN Proposer 恢复，旧 task、旧合同、晚到 branch SHA 均不能被复活或继承。
+- Map 路由 E2E 夹具自建唯一 active projection，正式数据库生命周期测试不再依赖共享测试库的历史 Map 状态。
+
+## Brain 1.273.45 — Durable Worker Cleanup Delivery
+
+- 父 Run 终态化产生的清理 outbox 由独立 30 秒循环领取；Worker 取消始终携带冻结的 exact attempt、machine 与 lease authority，确认、重试和阻断使用 generation CAS。
+- 只有 Worker 返回同一 attempt 的 `cleaned` / `already_clean` 才能在同一事务内确认 outbox 并追加 `effect:attempt_cleanup_confirmed` 决策证据；超时、5xx 与暂时不可达继续重试，身份错配或拒绝 fail-closed。
+- 清理循环早于启动恢复与 Tick 异步点火，preview 和 evaluator Brain 保持被动；三机 smoke 默认 dry-run，实弹要求隔离身份、三台 exact lease 均处于 running，并在 Run→Attempt 锁事务内终态化后逐条核验物理清理回执。
+- Kernel Map preflight 在同一 run 创建事务中按 activation 锁序冻结 active manifest/projection，并让 Map 与 radius 显式读取同一版本身份；radius 只按该 projection 的 repo fact revision 读取不可变 graph snapshot，缺少 exact snapshot 或快照边数与冻结 `row_count` 不符即 fail-closed；持久化 Impact Contract 前逐项核对 ID、digest 与 fact revisions，漂移以 `map_projection_changed` 回滚且不留下合同或 run 半态。
+
+## Brain 1.273.44 — Routed Map Scope and Kernel Authority
+
+- coding mutation 在 task/receipt 原子写入前校验 Map scope 必须命中活跃业务节点，拒绝把 repo scope key 当作影响节点，并把 capture triage 的 F1 锚点统一为 canonical node key。
+- repo 到 Map scope 由数据库唯一索引固化为单一权威；路由事务以共享行锁冻结 mapping、active projection 与业务节点，防止校验后切图造成 TOCTOU。
+- Kernel executor 只有创建 run authority 才能报告成功并透传 runId；dispatcher 对缺 runId 的假成功 fail-closed，回排任务、释放 claim 并持久化 failed_dispatch。
+- Kernel router 异常或进程内去重返回无 runId 时，executor 以 task 绑定的 v2 run 数据库权威重建 active/terminal/no-run 结果；查询不可用时保留 claim 交由 Watchdog 收敛，不伪装成可重试失败。
+- Relay 返回 `terminalized` 只能作为回读触发信号；executor 必须以返回的 runId、task ID、v2 orchestrator 和数据库终态精确验真，未终态或身份不符均按权威未知保留 claim，禁止写假成功派发事件。
+- 没有 run 的 Kernel pre-run task-only 终态必须经 tasks 表终态验真；dispatcher 只清理终态任务的残留 claim，不回 queued、不计入派发熔断。
 
 ## Brain 1.273.43 — Durable Attempt Cleanup Claim Store
 
@@ -2453,7 +2477,7 @@ AI提议 / 人提议 ──批准──▶ 未开始 ──▶ 进行中 ──�
 | **topic_decision_feedback** | 选题热度反馈（migration 214，week_key + topic_keyword 唯一索引，高热话题注入选题 Prompt） |
 | **topic_suggestions** | 选题推荐审核队列（migration 217，pending/approved/rejected/auto_promoted，2h 自动晋级） |
 | **llm_usage_snapshots** | LLM 算力消耗快照（migration 218，每日定时采集账号用量，供周报趋势分析） |
-| **schema_version** | 迁移版本追踪 | **Schema 版本**: 425 |
+| **schema_version** | 迁移版本追踪 | **Schema 版本**: 430 |
 | **initiative_run_events** | Harness pipeline 节点状态流（migration 279，initiative_id/node/status/attempt/ts BIGINT） |
 | **harness_attempts** | Provider-neutral Harness 的逐 hop 执行账本（migration 357，TaskBundle/Result、provider session、lease/heartbeat） |
 | **publish_success_daily** | 每日每平台发布成功率快照（migration 276，platform/date UNIQUE，Brain tick 写入） |
@@ -2841,7 +2865,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '425'；>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= EXPECTED_SCHEMA_VERSION（selfcheck.js 常量，当前 '430'；>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

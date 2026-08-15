@@ -49,6 +49,8 @@ function transactionPool({
     impact_contract_required: true,
     repo: 'cecelia',
     map_scope: ['cap-router'],
+    map_scope_validation_version: 'active-business-node-v1',
+    has_v2_run: false,
     evidence: { base_sha: 'a'.repeat(40) },
     superseded: false,
   },
@@ -80,17 +82,20 @@ function transactionPool({
         order.push('task-lock');
         return { rows: task ? [task] : [] };
       }
+      if (/FROM planner_recovery_receipts receipt/.test(sql)) {
+        return { rows: [] };
+      }
       if (/FROM initiative_runs predecessor/.test(sql)) {
         order.push('predecessor-run');
         return { rows: predecessorRun ? [predecessorRun] : [] };
       }
-      if (/FROM initiative_runs/.test(sql)) {
-        order.push('active-run');
-        return { rows: activeRun ? [activeRun] : [] };
-      }
       if (/FROM work_routing_receipts receipt/.test(sql)) {
         order.push('routing-receipt');
         return { rows: receipt ? [receipt] : [] };
+      }
+      if (/FROM initiative_runs/.test(sql)) {
+        order.push('active-run');
+        return { rows: activeRun ? [activeRun] : [] };
       }
       if (/INSERT INTO initiative_runs/.test(sql)) {
         order.push('insert-run');
@@ -321,6 +326,57 @@ describe('Kernel run store creation authority', () => {
     expect(harness.order.indexOf('map-preflight')).toBeLessThan(insertIndex);
   });
 
+  it('rejects an active legacy receipt with no prior v2 run before Map preflight', async () => {
+    const harness = transactionPool({
+      receipt: {
+        id: RECEIPT_ID,
+        task_id: TASK_ID,
+        work_kind: 'coding_mutation',
+        change_kind: 'bugfix',
+        pipeline: 'harness',
+        canonical_task_type: 'harness_initiative',
+        default_execution_profile: 'hotfix-v1',
+        impact_contract_required: true,
+        repo: 'cecelia',
+        map_scope: ['F1'],
+        evidence: { base_sha: 'a'.repeat(40) },
+        superseded: false,
+        map_scope_validation_version: null,
+        has_v2_run: false,
+      },
+    });
+    const ensurePreflight = vi.fn();
+
+    await expect(createKernelRun(harness.pool, VALID_INPUT, {
+      ensureMapImpactPreflight: ensurePreflight,
+    })).rejects.toThrow('legacy_route_snapshot_unvalidated');
+    expect(ensurePreflight).not.toHaveBeenCalled();
+    expect(harness.calls.some(({ sql }) => /INSERT INTO initiative_runs/.test(sql))).toBe(false);
+  });
+
+  it('allows a legacy receipt after that task has already created a v2 run', async () => {
+    const harness = transactionPool({
+      receipt: {
+        id: RECEIPT_ID,
+        task_id: TASK_ID,
+        work_kind: 'coding_mutation',
+        change_kind: 'bugfix',
+        pipeline: 'harness',
+        canonical_task_type: 'harness_initiative',
+        default_execution_profile: 'hotfix-v1',
+        impact_contract_required: true,
+        repo: 'cecelia',
+        map_scope: ['F1'],
+        evidence: { base_sha: 'a'.repeat(40) },
+        superseded: false,
+        map_scope_validation_version: null,
+        has_v2_run: true,
+      },
+    });
+
+    await expect(createRun(harness)).resolves.toMatchObject({ created: true });
+  });
+
   it('creates zero run rows when Map/Impact preflight fails', async () => {
     const harness = transactionPool();
     const ensurePreflight = vi.fn(async () => { throw new Error('map_stale'); });
@@ -377,6 +433,7 @@ describe('Kernel run store creation authority', () => {
     expect(sql).toMatch(/WHERE id\s*=\s*\$1/i);
     expect(sql).toContain("orchestrator_version = 'v2'");
     expect(sql).toContain('commander_mode');
+    expect(sql).toContain('planner_recovery_receipt_id');
     expect(sql).not.toMatch(/initiative_id\s*=\s*\$1/i);
     expect(params).toEqual([RUN_ID]);
   });
@@ -440,6 +497,8 @@ describe('Kernel run store creation authority', () => {
       '4bc109e9',
       null,
       null,
+      null,
+      // 普通 run 没有 Planner recovery receipt 绑定。
       null,
       // sprint 08131104：Session Controller ownership —— controller_session_id + lease 秒数。
       CONTROLLER_SESSION_ID,
@@ -522,6 +581,8 @@ describe('Kernel run store creation authority', () => {
         impact_contract_required: true,
         repo: 'cecelia',
         map_scope: ['cap-map'],
+        map_scope_validation_version: 'active-business-node-v1',
+        has_v2_run: false,
         evidence: { branch: 'cp-map-fix', base_sha: 'a'.repeat(40) },
         superseded: false,
       },

@@ -12,6 +12,9 @@ describe('work-routing-store atomic boundary', () => {
   it('commits the canonical coding task and immutable receipt on one connection', async () => {
     const client = {
       query: vi.fn(async (sql) => {
+        if (String(sql).includes('WITH authoritative_scope AS')) {
+          return { rows: [{ node_key: 'F1' }] };
+        }
         if (String(sql).includes('INSERT INTO tasks')) {
           return { rows: [{ id: 'task-pairing', task_type: 'harness_initiative' }] };
         }
@@ -31,6 +34,7 @@ describe('work-routing-store atomic boundary', () => {
       mutation_intent: 'write',
       declared_change_kind: 'bugfix',
       repo_hint: 'perfectuser21/cecelia',
+      map_scope_hint: ['F1'],
       branch: 'cp-route-pairing',
       base_sha: 'a'.repeat(40),
     }, REPOSITORIES);

@@ -11,10 +11,25 @@ import {
 } from './kernel-fleet-three-machine-canary.mjs';
 
 const liveMocks = vi.hoisted(() => ({
-  pool: {
-    query: vi.fn(),
-    end: vi.fn(),
-  },
+  pool: (() => {
+    const pool = {
+      query: vi.fn(),
+      end: vi.fn(),
+    };
+    pool.connect = vi.fn(async () => ({
+      query: async (sql, params) => {
+        if (/^(?:BEGIN|COMMIT|ROLLBACK)$/i.test(String(sql).trim())) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (/FOR SHARE OF run/i.test(String(sql))) {
+          return { rows: [{ id: RUN_ID }], rowCount: 1 };
+        }
+        return pool.query(sql, params);
+      },
+      release: vi.fn(),
+    }));
+    return pool;
+  })(),
   buildRealDeps: vi.fn(),
 }));
 

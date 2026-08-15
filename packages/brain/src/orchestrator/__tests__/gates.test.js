@@ -18,10 +18,16 @@ const {
 } = constants;
 
 function baseInput(overrides = {}) {
+  const contractIdentity = {
+    contract_id: '11111111-1111-4111-8111-111111111111',
+    manifest_sha256: 'a'.repeat(64),
+    source_revision: 'b'.repeat(40),
+  };
   return {
-    evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1' },
-    judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1' },
+    evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1', contract_identity: contractIdentity },
+    judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1', contract_identity: contractIdentity },
     prHeadSha: 'sha-1',
+    contractIdentity,
     reviewRequired: false,
     reviewApproved: false,
     ...overrides,
@@ -46,7 +52,10 @@ describe('mergeGate（mergePrNode 前置门=evaluate_verdict PASS + review_gate 
   });
 
   it('evaluate FIXED 归一为 PASS → 放行（harness-evaluator-verdict-bug）', () => {
-    const r = mergeGate(baseInput({ evaluateVerdict: { verdict: 'FIXED', pr_head_sha: 'sha-1' } }));
+    const contractIdentity = baseInput().contractIdentity;
+    const r = mergeGate(baseInput({
+      evaluateVerdict: { verdict: 'FIXED', pr_head_sha: 'sha-1', contract_identity: contractIdentity },
+    }));
     expect(r.allow).toBe(true);
   });
 
@@ -71,6 +80,18 @@ describe('mergeGate（mergePrNode 前置门=evaluate_verdict PASS + review_gate 
     const r = mergeGate(baseInput({ judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-old' } }));
     expect(r.allow).toBe(false);
     expect(r.reason).toMatch(/stale/);
+  });
+
+  it('Judge PASS 绑定旧合同身份时拒绝 merge，即使 candidate SHA 未变化', () => {
+    const current = baseInput().contractIdentity;
+    const r = mergeGate(baseInput({
+      judgeVerdict: {
+        verdict: 'PASS',
+        pr_head_sha: 'sha-1',
+        contract_identity: { ...current, manifest_sha256: 'c'.repeat(64) },
+      },
+    }));
+    expect(r).toEqual({ allow: false, reason: 'stale_judge_contract' });
   });
 
   it('review_required && 未批准 → 拒', () => {

@@ -2,6 +2,7 @@ import { normalizeFailureSignature } from './convergence-signatures.js';
 import { SingletonConflictError } from './decision-log.js';
 import { writeHeartbeat } from './heartbeat.js';
 import { finalizeKernelRun } from './kernel-run-store.js';
+import { normalizeEvaluatorBrainResult } from './evaluator-brain-result.js';
 
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
@@ -12,17 +13,6 @@ function prNumber(prUrl) {
   return value ? Number(value) : null;
 }
 
-function evaluatorBrainResult(result) {
-  if (!result) return null;
-  if (Array.isArray(result.behavior_tests)) return result;
-  return {
-    verdict: result.decision?.outcome ?? null,
-    behavior_tests: Array.isArray(result.checks) ? result.checks : [],
-    judgments_written: result.judgments_written ?? result.decision?.judgments_written,
-    summary: result.summary ?? null,
-  };
-}
-
 async function appendJudgeVerdict(
   pool,
   ctx,
@@ -30,6 +20,7 @@ async function appendJudgeVerdict(
   feedback,
   judgeFailureClass,
   judgeFailureSignature,
+  judgeCoverage,
 ) {
   const evaluateVerdict = ctx.observed.evaluateVerdict ?? {};
   const evaluatorFailureClass = evaluateVerdict.failure_class ?? null;
@@ -37,6 +28,7 @@ async function appendJudgeVerdict(
   // unknown and must not be silently filled from the evaluator verdict.
   const failureClass = judgeFailureClass ?? null;
   const failureSignature = normalizeFailureSignature(judgeFailureSignature);
+  const contractIdentity = ctx.bundle.inputs.contract_identity ?? null;
   const targetHeadSha = ctx.observed.pr?.head_sha
     ?? ctx.observed.candidate?.head_sha
     ?? ctx.bundle.inputs.candidate?.head_sha
@@ -66,6 +58,8 @@ async function appendJudgeVerdict(
         feedback: feedback ?? null,
         failure_class: failureClass,
         ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
+        ...(Array.isArray(judgeCoverage) ? { coverage: judgeCoverage } : {}),
+        ...(contractIdentity == null ? {} : { contract_identity: contractIdentity }),
         evaluator_failure_class: evaluatorFailureClass,
       }),
     ],
@@ -77,7 +71,8 @@ export function createKernelHandlers(deps) {
     async 'spawn:judge'(ctx) {
       const evaluator = ctx.observed.evaluateVerdict ?? {};
       const evaluateResult = ctx.observed.evaluateResult ?? null;
-      const brainResult = evaluatorBrainResult(evaluateResult) ?? ctx.observed.callbackResult;
+      const brainResult = normalizeEvaluatorBrainResult(evaluateResult)
+        ?? ctx.observed.callbackResult;
       const contract = ctx.bundle.inputs.contract ?? {};
       const candidateHeadSha = ctx.observed.candidate?.head_sha
         ?? ctx.bundle.inputs.candidate?.head_sha
@@ -128,6 +123,7 @@ export function createKernelHandlers(deps) {
         result.feedback,
         result.failure_class ?? null,
         result.failure_signature ?? null,
+        result.coverage,
       );
       const failureSignature = normalizeFailureSignature(result.failure_signature);
       await deps.attemptStore.complete(ctx.attempt.id, {
@@ -142,6 +138,10 @@ export function createKernelHandlers(deps) {
           reason: 'independent judge verdict',
           ...(result.failure_class == null ? {} : { failure_class: result.failure_class }),
           ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
+          ...(Array.isArray(result.coverage) ? { coverage: result.coverage } : {}),
+          ...(ctx.bundle.inputs.contract_identity == null
+            ? {}
+            : { contract_identity: ctx.bundle.inputs.contract_identity }),
         },
         error: null,
         provider_metadata: { provider: 'independent-judge', session_id: null },

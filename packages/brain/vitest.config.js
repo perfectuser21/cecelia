@@ -5,6 +5,10 @@ import { defineConfig } from 'vitest/config';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const POSTGRES_INTEGRATION_TESTS = [
+  'src/__tests__/integration/one-session-judge-merge.pg.integration.test.js',
+  'src/__tests__/integration/planner-recovery-run-binding.pg.integration.test.js',
+  'src/__tests__/integration/planner-recovery-consumption.pg.integration.test.js',
+  'src/__tests__/integration/planner-recovery-receipt.pg.integration.test.js',
   'src/__tests__/integration/migration-routing-authority-roundtrip.pg.integration.test.js',
   'src/__tests__/integration/impact-contract-loop.integration.test.js',
   'src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js',
@@ -17,6 +21,12 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/migration-425-populated-upgrade.pg.integration.test.js',
   'src/__tests__/integration/migration-425-outbox-shape.pg.integration.test.js',
   'src/__tests__/integration/attempt-cleanup-outbox-store.pg.integration.test.js',
+  'src/__tests__/integration/attempt-cleanup-worker.pg.integration.test.js',
+  'src/__tests__/integration/direct-profile-contract.pg.integration.test.js',
+  'src/__tests__/integration/take-map-kernel-authority.pg.integration.test.js',
+  'src/__tests__/integration/migration-426-validation-version.pg.integration.test.js',
+  'src/__tests__/integration/executor-kernel-authority-reconciliation.pg.integration.test.js',
+  'src/__tests__/integration/map-preflight-projection-race.pg.integration.test.js',
   'src/__tests__/integration/attempt-store-run-lock.pg.integration.test.js',
   'src/__tests__/integration/migration-416-controller-session-nonblank.pg.integration.test.js',
   'src/__tests__/integration/kernel-cli-ownership-preaction.pg.integration.test.js',

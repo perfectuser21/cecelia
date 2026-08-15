@@ -48,7 +48,9 @@ const schemaPool = {
   },
 };
 
-async function insertTask(taskId, initiativeId) {
+async function insertTask(taskId, initiativeId, {
+  validationVersion = 'active-business-node-v1',
+} = {}) {
   const receiptId = randomUUID();
   await schemaPool.query(
     `INSERT INTO tasks (id,task_type,status,payload)
@@ -66,16 +68,16 @@ async function insertTask(taskId, initiativeId) {
     `INSERT INTO work_routing_receipts (
        id,task_id,source,source_id,work_kind,change_kind,pipeline,
        canonical_task_type,map_scope,impact_contract_required,
-       orchestrator,router_version,evidence
+       orchestrator,router_version,evidence,map_scope_validation_version
      ) VALUES (
        $1,$2,'integration',$3,'coding_mutation','bugfix','harness',
        'harness_initiative','["F0"]'::jsonb,true,
-       'kernel-harness-v2','work-router-v1',$4::jsonb
+       'kernel-harness-v2','work-router-v1',$4::jsonb,$5
      )`,
     [receiptId, taskId, `kernel-run-store:${taskId}`, JSON.stringify({
       branch: 'cp-kernel-run-store-integration',
       base_sha: 'a'.repeat(40),
-    })],
+    }), validationVersion],
   );
 }
 
@@ -131,6 +133,7 @@ beforeAll(async () => {
       orchestrator TEXT NOT NULL,
       router_version TEXT NOT NULL,
       evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+      map_scope_validation_version TEXT,
       supersedes_receipt_id UUID REFERENCES work_routing_receipts(id)
     );
     CREATE TABLE initiative_runs (
@@ -148,6 +151,7 @@ beforeAll(async () => {
       map_recovery_contract_id UUID,
       contract_id UUID,
       predecessor_run_id UUID,
+      planner_recovery_receipt_id UUID,
       orchestrator_host TEXT,
       orchestrator_heartbeat_at TIMESTAMPTZ,
       orchestrator_pid INTEGER,
@@ -173,6 +177,16 @@ beforeAll(async () => {
       lease_expires_at TIMESTAMPTZ NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE planner_recovery_receipts (
+      id UUID PRIMARY KEY,
+      predecessor_run_id UUID NOT NULL,
+      source_task_id UUID NOT NULL
+    );
+    CREATE TABLE planner_recovery_consumptions (
+      receipt_id UUID PRIMARY KEY,
+      successor_task_id UUID NOT NULL UNIQUE,
+      routing_receipt_id UUID NOT NULL UNIQUE
     );
     CREATE TABLE harness_impact_contracts (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -211,6 +225,23 @@ afterAll(async () => {
 });
 
 describe('Kernel run store PostgreSQL concurrency', () => {
+  it('creates no authority rows for an active legacy receipt with no prior v2 run', async () => {
+    const taskId = randomUUID();
+    const initiativeId = randomUUID();
+    await insertTask(taskId, initiativeId, { validationVersion: null });
+
+    await expect(createTestKernelRun(schemaPool, runInput(taskId, initiativeId)))
+      .rejects.toThrow('legacy_route_snapshot_unvalidated');
+
+    const persisted = await schemaPool.query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM initiative_runs WHERE current_task_id=$1) AS runs,
+         (SELECT COUNT(*)::int FROM kernel_controller_sessions WHERE task_id=$1) AS controllers`,
+      [taskId],
+    );
+    expect(persisted.rows[0]).toEqual({ runs: 0, controllers: 0 });
+  });
+
   it('leaves no active attempt when its exact parent run becomes terminal', async () => {
     const taskId = randomUUID();
     const initiativeId = randomUUID();

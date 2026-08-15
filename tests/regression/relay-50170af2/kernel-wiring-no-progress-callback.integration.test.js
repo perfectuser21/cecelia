@@ -46,6 +46,11 @@ const VERIFIED_SHA = 'abcdefabcdefabcdefabcdefabcdefabcdefabcd';
 const UPPERCASE_VERIFIED_SHA = VERIFIED_SHA.toUpperCase();
 const SHORT_SHA = 'abc1234';
 const FAKE_SHA = 'ffffffffffffffffffffffffffffffffffffffff';
+const CONTRACT_IDENTITY = Object.freeze({
+  contract_id: '70000000-0000-4000-8000-000000000007',
+  manifest_sha256: '7'.repeat(64),
+  source_revision: '6'.repeat(40),
+});
 
 function callbackRowFromResult(result, triggerSha = SHA) {
   const pullRequest = result.artifacts.find((artifact) => (
@@ -157,7 +162,12 @@ function observed(decisionLog, provider) {
       payload: { provider, sprint_dir: 'sprints/kernel', worktree_path: '/workspace' },
     },
     prdExists: true,
-    contract: { approved: true, id: 'contract-1', row: {} },
+    contract: {
+      approved: true,
+      id: CONTRACT_IDENTITY.contract_id,
+      identity: CONTRACT_IDENTITY,
+      row: {},
+    },
     pr: {
       url: PR_URL,
       state: 'OPEN',
@@ -174,9 +184,15 @@ function observed(decisionLog, provider) {
       verdict: 'FAIL',
       pr_head_sha: SHA,
       failure_class: 'product_failure',
+      contract_identity: CONTRACT_IDENTITY,
     },
     evaluateResult: null,
-    judgeVerdict: null,
+    judgeVerdict: {
+      verdict: 'FAIL',
+      pr_head_sha: SHA,
+      failure_class: 'product_failure',
+      contract_identity: CONTRACT_IDENTITY,
+    },
     reviewRequired: false,
     reviewApproved: false,
     decisionLog: decisionLog.map((row) => structuredClone(row)),

@@ -136,7 +136,7 @@ function runEvaluatorWriterAndBridge(result, { attemptId, command, logTail }) {
     import.meta.url,
   ));
   try {
-    writeFileSync(path.join(tempDir, 'result.json'), JSON.stringify(result));
+    writeFileSync(path.join(tempDir, 'normalized-result.json'), JSON.stringify(result));
     writeFileSync(path.join(tempDir, 'e2e-result.log'), `${logTail}\n`);
     writeFileSync(path.join(tempDir, 'evaluator-execution.json'), JSON.stringify({
       task_id: TASK_ID,
@@ -151,7 +151,7 @@ function runEvaluatorWriterAndBridge(result, { attemptId, command, logTail }) {
       eval "$BRIDGE"
       prepare_evaluator_evidence
       eval "$RESULT_WRITER"
-      merge_evaluator_evidence "$2/result.json"
+      merge_evaluator_evidence "$2/normalized-result.json"
     `, 'bridge-test', entrypoint, tempDir, evaluatorSkill], {
       env: {
         ...process.env,
@@ -166,9 +166,10 @@ function runEvaluatorWriterAndBridge(result, { attemptId, command, logTail }) {
         E2E_RESULT_LOG: path.join(tempDir, 'e2e-result.log'),
         SCREENSHOTS_JSON: '[]',
         CASCADE_ASSERTIONS: '[]',
+        BRAIN_RESULT_FILE: path.join(tempDir, 'brain-result.json'),
       },
     });
-    return JSON.parse(readFileSync(path.join(tempDir, 'result.json'), 'utf8'));
+    return JSON.parse(readFileSync(path.join(tempDir, 'normalized-result.json'), 'utf8'));
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -388,6 +389,9 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       checks: ['provider summary only'],
       decision: { outcome: 'PASS', reason: 'verified' },
       error: null,
+      findings: [],
+      screenshots: [],
+      exploration_notes: ['exercised the evaluator callback and Judge evidence bridge'],
       provider_metadata: { provider: 'codex', session_id: 'thread-evaluator' },
     }, {
       attemptId: evaluatorAttemptId,
@@ -395,6 +399,9 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       logTail: '12 tests passed',
     });
     expect(bridgedResult.checks).toEqual(behaviorTests);
+    expect(bridgedResult.exploration_notes).toEqual([
+      'exercised the evaluator callback and Judge evidence bridge',
+    ]);
 
     const app = express();
     app.use(express.json());
@@ -406,7 +413,7 @@ describe('provider-neutral kernel spawn → callback → next hop', () => {
       .set('X-Harness-Lease-Generation', '0')
       .send(bridgedResult);
 
-    expect(callback.status).toBe(200);
+    expect(callback.status, JSON.stringify(callback.body)).toBe(200);
     const judgeGate = vi.fn(async () => ({ verdict: 'PASS', feedback: 'grounded', judged: true }));
     const handlers = createKernelHandlers({
       pool: runtime.pool,

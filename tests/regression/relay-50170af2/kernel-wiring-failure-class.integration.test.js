@@ -5,6 +5,11 @@ import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
 const RUN_ID = '50000000-0000-4000-8000-000000000005';
 const TASK_ID = '60000000-0000-4000-8000-000000000006';
 const SHA = 'failure-class-head';
+const CONTRACT_IDENTITY = Object.freeze({
+  contract_id: 'contract-1',
+  manifest_sha256: 'b'.repeat(64),
+  source_revision: 'c'.repeat(40),
+});
 
 describe('kernel wiring: evaluator and judge failure classes remain distinct', () => {
   test('judge classification is appended without cleansing evaluator classification and drives derive', async () => {
@@ -15,6 +20,7 @@ describe('kernel wiring: evaluator and judge failure classes remain distinct', (
       detail: {
         verdict: 'PASS',
         pr_head_sha: SHA,
+        contract_identity: CONTRACT_IDENTITY,
         failure_class: 'evidence_invalid',
       },
     }];
@@ -47,9 +53,16 @@ describe('kernel wiring: evaluator and judge failure classes remain distinct', (
       runId: RUN_ID,
       taskId: TASK_ID,
       attempt: { id: '70000000-0000-4000-8000-000000000007' },
-      bundle: { inputs: { worktree_path: '/tmp/kernel', sprint_dir: 'sprints/kernel' } },
+      bundle: {
+        inputs: {
+          worktree_path: '/tmp/kernel',
+          sprint_dir: 'sprints/kernel',
+          contract_identity: CONTRACT_IDENTITY,
+        },
+      },
       observed: {
         pr: { head_sha: SHA },
+        contract: { identity: CONTRACT_IDENTITY },
         evaluateVerdict: rows[0].detail,
         evaluateResult: null,
         callbackResult: { verdict: 'PASS', behavior_tests: [] },
@@ -69,7 +82,12 @@ describe('kernel wiring: evaluator and judge failure classes remain distinct', (
       run: { phase: 'evaluate', cost_usd: '0' },
       task: { status: 'in_progress', payload: {} },
       prdExists: true,
-      contract: { approved: true, id: 'contract-1', row: {} },
+      contract: {
+        approved: true,
+        id: 'contract-1',
+        identity: CONTRACT_IDENTITY,
+        row: {},
+      },
       pr: {
         url: 'https://github.com/example/repo/pull/1',
         state: 'OPEN',

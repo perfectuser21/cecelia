@@ -75,7 +75,10 @@ export function selectPipeline(input) {
     const override = input.execution_profile_override_request ?? null;
     if (override != null) {
       if (!(override in PROFILE_STRENGTH)) throw new Error('invalid_execution_profile_override');
-      if (PROFILE_STRENGTH[override] < PROFILE_STRENGTH[defaultProfile]) {
+      if (
+        override !== defaultProfile
+        && PROFILE_STRENGTH[override] <= PROFILE_STRENGTH[defaultProfile]
+      ) {
         throw new Error('execution_profile_downgrade_forbidden');
       }
     }

@@ -1,6 +1,8 @@
 import { COMMANDER_MODES } from './commander-contract.js';
 import { ensureMapImpactPreflight } from './preflight/map-impact-contract.js';
 import { randomUUID } from 'node:crypto';
+import { assertRouteSnapshotLaunchAuthority } from './route-snapshot-authority.js';
+import { resolvePlannerRecoveryRunAuthority } from './planner-recovery-run-authority.js';
 
 const ACTIVE_PHASES = new Set([
   'planning',
@@ -14,6 +16,7 @@ const CREATED_SOURCES = new Set([
   'foreground_handoff',
   'legacy_relay',
   'explicit_recovery',
+  'planner_recovery',
   'historical_reconstruction',
 ]);
 
@@ -119,7 +122,8 @@ export async function loadActiveKernelRun(db, taskId, { forUpdate = false } = {}
   const { rows } = await db.query(
     `SELECT id, initiative_id, current_task_id, phase,
             orchestrator_heartbeat_at, orchestrator_pid, orchestrator_host,
-            started_at, created_source, commander_mode,
+            started_at, created_source, predecessor_run_id,
+            planner_recovery_receipt_id, commander_mode,
             impact_contract_policy, impact_contract_policy_reason,
             impact_contract_policy_decision_id, map_recovery_contract_id
        FROM initiative_runs
@@ -141,6 +145,7 @@ export async function loadKernelRunById(db, runId) {
             deadline_at, completed_at, failure_reason, pr_url,
             evaluate_verdict, judge_verdict, cost_usd, created_source,
             record_trust_status, record_trust_reason, predecessor_run_id,
+            planner_recovery_receipt_id,
             commander_mode
        FROM initiative_runs
       WHERE id = $1
@@ -446,6 +451,9 @@ export async function createKernelRun(pool, input, deps = {}) {
         + `${input.initiativeId}/${taskInitiativeId}`,
       );
     }
+    const plannerRecovery = await resolvePlannerRecoveryRunAuthority(client, { task, input });
+    const effectivePhase = plannerRecovery?.phase ?? input.phase;
+    const effectiveCreatedSource = plannerRecovery?.createdSource ?? input.createdSource;
 
     const active = await loadActiveKernelRun(
       client,
@@ -453,19 +461,37 @@ export async function createKernelRun(pool, input, deps = {}) {
       { forUpdate: true },
     );
     if (active) {
+      if (
+        plannerRecovery
+        && (
+          active.created_source !== plannerRecovery.createdSource
+          || active.planner_recovery_receipt_id !== plannerRecovery.receiptId
+          || active.predecessor_run_id !== plannerRecovery.predecessorRunId
+        )
+      ) {
+        throw new Error('planner_recovery_active_run_invalid');
+      }
       await client.query('COMMIT');
       committed = true;
       return { created: false, run: active };
     }
 
     let predecessor = null;
-    if (input.createdSource === 'explicit_recovery') {
+    if (effectiveCreatedSource === 'explicit_recovery') {
       const { rows: predecessorRows } = await client.query(
         `SELECT predecessor.id, predecessor.initiative_id,
                 predecessor.current_task_id, predecessor.phase,
                 predecessor.record_trust_status, predecessor.contract_id,
                 contract.status AS contract_status,
-                contract.approved_sha
+                contract.approved_sha,
+                EXISTS (
+                  SELECT 1
+                    FROM planner_recovery_receipts recovery
+                    JOIN planner_recovery_consumptions consumption
+                      ON consumption.receipt_id=recovery.id
+                   WHERE recovery.predecessor_run_id=predecessor.id
+                     AND recovery.source_task_id=predecessor.current_task_id
+                ) AS planner_recovery_consumed
            FROM initiative_runs predecessor
            JOIN initiative_contracts contract
              ON contract.id = predecessor.contract_id
@@ -474,6 +500,9 @@ export async function createKernelRun(pool, input, deps = {}) {
         [input.predecessorRunId],
       );
       predecessor = predecessorRows[0] ?? null;
+      if (predecessor?.planner_recovery_consumed === true) {
+        throw new Error('explicit recovery predecessor already consumed by planner recovery');
+      }
       if (
         !predecessor
         || predecessor.current_task_id !== input.taskId
@@ -495,7 +524,12 @@ export async function createKernelRun(pool, input, deps = {}) {
               EXISTS (
                 SELECT 1 FROM work_routing_receipts successor
                  WHERE successor.supersedes_receipt_id = receipt.id
-              ) AS superseded
+              ) AS superseded,
+              EXISTS (
+                SELECT 1 FROM initiative_runs historical_run
+                 WHERE historical_run.current_task_id = receipt.task_id
+                   AND historical_run.orchestrator_version = 'v2'
+              ) AS has_v2_run
          FROM work_routing_receipts receipt
         WHERE receipt.id = $1
           AND receipt.task_id = $2`,
@@ -512,6 +546,11 @@ export async function createKernelRun(pool, input, deps = {}) {
     ) {
       throw new Error('routing_receipt_invalid');
     }
+    assertRouteSnapshotLaunchAuthority({
+      taskStatus: task.status,
+      validationVersion: receipt.map_scope_validation_version,
+      hasV2Run: receipt.has_v2_run,
+    });
     const runPreflight = deps.ensureMapImpactPreflight ?? ensureMapImpactPreflight;
     const preflight = await runPreflight(client, { task, receipt });
     if (!preflight?.contract?.id || preflight.contract.status !== 'active') {
@@ -538,7 +577,7 @@ export async function createKernelRun(pool, input, deps = {}) {
     await client.query(
       `INSERT INTO kernel_controller_sessions (id,task_id,generation,source,status,last_heartbeat_at,lease_expires_at)
        VALUES ($1,$2,1,$3,'active',NOW(),NOW()+($4*INTERVAL '1 second'))`,
-      [controllerSessionId,input.taskId,input.createdSource,controllerLeaseSeconds],
+      [controllerSessionId,input.taskId,effectiveCreatedSource,controllerLeaseSeconds],
     );
 
     const { rows } = await client.query(
@@ -548,24 +587,24 @@ export async function createKernelRun(pool, input, deps = {}) {
          created_source, record_trust_status, commander_mode, gear,
          impact_contract_policy, impact_contract_policy_reason,
          impact_contract_policy_decision_id, map_recovery_contract_id,
-         contract_id, predecessor_run_id,
+         contract_id, predecessor_run_id, planner_recovery_receipt_id,
          controller_session_id, controller_generation, controller_lease_expires_at
        ) VALUES (
          $1, $2, $3, 'v2', $4,
          NOW() + ($5 * INTERVAL '1 hour'), $6, $7, $8, $9, $10, $11,
-         $12, $13, $14, $15, $16, $17,
-         $18, 1, NOW() + ($19 * INTERVAL '1 second')
+         $12, $13, $14, $15, $16, $17, $18,
+         $19, 1, NOW() + ($20 * INTERVAL '1 second')
        )
        RETURNING *`,
       [
         input.initiativeId,
-        input.phase,
+        effectivePhase,
         input.journeyId,
         input.host,
         input.deadlineHours,
         input.abilityId,
         input.taskId,
-        input.createdSource,
+        effectiveCreatedSource,
         'trusted',
         commanderMode,
         // gear 缺省写 NULL（= default 语义）；deriveGear 已在 relay 层保证合法枚举/非法 throw。
@@ -575,7 +614,8 @@ export async function createKernelRun(pool, input, deps = {}) {
         impactContractPolicyDecisionId,
         preflight.recovery_contract?.id ?? null,
         predecessor?.contract_id ?? null,
-        predecessor?.id ?? null,
+        plannerRecovery?.predecessorRunId ?? predecessor?.id ?? null,
+        plannerRecovery?.receiptId ?? null,
         // Session Controller ownership（sprint 08131104）：controller_session_id 先于 Kernel
         // 可执行态在同一创建事务里落库（ownership 先于 run），lease 由 leaseSeconds 计算到期。
         controllerSessionId,

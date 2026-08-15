@@ -12,6 +12,11 @@ import { POLL_INTERVAL_MS } from '../constants.js';
 const RUN_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
 const CONTRACT_ID = '99999999-8888-7777-6666-555555555555';
+const CONTRACT_IDENTITY = Object.freeze({
+  contract_id: CONTRACT_ID,
+  manifest_sha256: 'a'.repeat(64),
+  source_revision: 'b'.repeat(40),
+});
 const HYBRID_TASK = Object.freeze({
   status: 'in_progress',
   payload: {
@@ -33,7 +38,7 @@ const HYBRID_TASK = Object.freeze({
 
 /** 造一份完整 observed（derive 契约字段全齐），供逐跳喂给 fake collectGroundTruth */
 function obs(overrides = {}) {
-  return {
+  const observed = {
     run: { id: RUN_ID, phase: 'generate', cost_usd: 0 },
     task: { status: 'in_progress' },
     prdExists: true,
@@ -53,6 +58,22 @@ function obs(overrides = {}) {
     callbackResult: null,
     ...overrides,
   };
+  if (observed.contract?.approved === true && observed.contract.identity == null) {
+    observed.contract = { ...observed.contract, identity: CONTRACT_IDENTITY };
+  }
+  if (observed.evaluateVerdict && observed.evaluateVerdict.contract_identity == null) {
+    observed.evaluateVerdict = {
+      ...observed.evaluateVerdict,
+      contract_identity: CONTRACT_IDENTITY,
+    };
+  }
+  if (observed.judgeVerdict && observed.judgeVerdict.contract_identity == null) {
+    observed.judgeVerdict = {
+      ...observed.judgeVerdict,
+      contract_identity: CONTRACT_IDENTITY,
+    };
+  }
+  return observed;
 }
 
 /** fake 全套 deps：observed 队列 + 可编程 dispatch，记录 append/heartbeat/sql/sleep */
@@ -68,6 +89,18 @@ function makeEnv({ observedSeq, dispatch, finalizeRun } = {}) {
     pool: {
       query: vi.fn(async (sql, params) => {
         sqls.push([sql, params]);
+        if (sql.includes('SELECT run.initiative_id, run.current_task_id')) {
+          return { rows: [{ initiative_id: TASK_ID, current_task_id: TASK_ID }] };
+        }
+        if (sql.includes('pg_advisory_xact_lock')) {
+          return { rows: [{}] };
+        }
+        if (sql.includes('SELECT id FROM tasks') && sql.includes('FOR UPDATE')) {
+          return { rows: [{ id: TASK_ID }] };
+        }
+        if (sql.includes('SELECT run.initiative_id, run.contract_id')) {
+          return { rows: [{ initiative_id: TASK_ID, contract_id: null }] };
+        }
         if (sql.includes('FOR UPDATE OF run, task')) {
           return { rows: [{ initiative_id: TASK_ID, contract_id: null }] };
         }
@@ -1062,6 +1095,120 @@ describe('runLoop：四态返回控制流', () => {
 });
 
 describe('runLoop：控制 action 自消费', () => {
+  it('direct profile contract materialization is consumed in-process with runId only', async () => {
+    const observedSeq = [
+      obs({
+        contract: { approved: false, id: null },
+        routingReceipt: {
+          id: '88888888-7777-6666-5555-444444444444',
+          default_execution_profile: 'hotfix-v1',
+          execution_profile_override: null,
+        },
+        prdExists: false,
+      }),
+      obs({
+        contract: { approved: true, id: CONTRACT_ID },
+        routingReceipt: {
+          id: '88888888-7777-6666-5555-444444444444',
+          default_execution_profile: 'hotfix-v1',
+          execution_profile_override: null,
+        },
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps } = makeEnv({ observedSeq });
+    deps.materializeDirectProfileContract = vi.fn(async () => ({ id: CONTRACT_ID }));
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('run_done');
+    expect(deps.materializeDirectProfileContract).toHaveBeenCalledOnce();
+    expect(deps.materializeDirectProfileContract).toHaveBeenCalledWith(RUN_ID);
+    expect(deps.dispatch).toHaveBeenCalledWith('spawn:generator', expect.any(Object));
+    expect(deps.dispatch).not.toHaveBeenCalledWith(
+      'materialize:direct_profile_contract',
+      expect.any(Object),
+    );
+  });
+
+  it('deterministic direct seed failure becomes assembly fault without dispatch', async () => {
+    const observedSeq = [obs({
+      contract: { approved: false, id: null },
+      routingReceipt: {
+        id: '88888888-7777-6666-5555-444444444444',
+        default_execution_profile: 'hotfix-v1',
+        execution_profile_override: null,
+      },
+      prdExists: false,
+    })];
+    const { deps } = makeEnv({ observedSeq });
+    const invalid = new Error('DIRECT_PROFILE_CONTRACT_INVALID:seed_missing');
+    invalid.code = 'DIRECT_PROFILE_CONTRACT_INVALID';
+    deps.materializeDirectProfileContract = vi.fn(async () => { throw invalid; });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result).toEqual({ exitReason: 'assembly_fault', hops: 0 });
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'assembly_fault:DIRECT_PROFILE_CONTRACT_INVALID',
+    });
+  });
+
+  it('terminalizes direct frozen-artifact size failures exactly once without dispatch', async () => {
+    const observedSeq = [obs({
+      contract: { approved: false, id: null },
+      routingReceipt: {
+        id: '88888888-7777-6666-5555-444444444444',
+        default_execution_profile: 'hotfix-v1',
+        execution_profile_override: null,
+      },
+      prdExists: false,
+    })];
+    const { deps } = makeEnv({ observedSeq });
+    deps.materializeDirectProfileContract = vi.fn(async () => {
+      throw new Error('FROZEN_CONTRACT_ARTIFACT_SIZE_LIMIT:262145');
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result).toEqual({ exitReason: 'assembly_fault', hops: 0 });
+    expect(deps.materializeDirectProfileContract).toHaveBeenCalledOnce();
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'assembly_fault:FROZEN_CONTRACT_ARTIFACT_SIZE_LIMIT',
+    });
+  });
+
+  it('transient direct materialization database errors escape for retry ownership', async () => {
+    const observedSeq = [obs({
+      contract: { approved: false, id: null },
+      routingReceipt: {
+        id: '88888888-7777-6666-5555-444444444444',
+        default_execution_profile: 'parameter-only-v1',
+        execution_profile_override: null,
+      },
+      prdExists: false,
+    })];
+    const { deps } = makeEnv({ observedSeq });
+    deps.materializeDirectProfileContract = vi.fn(async () => {
+      const error = new Error('connection reset');
+      error.code = '08006';
+      throw error;
+    });
+
+    await expect(runLoop(deps, { taskId: TASK_ID, runId: RUN_ID }))
+      .rejects.toMatchObject({ code: '08006' });
+    expect(deps.finalizeRun).not.toHaveBeenCalled();
+    expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+
   it('mark_failed（宽 hop 兜底）→ 事务终结 run/task + 退出，不派发', async () => {
     const bigLog = Array.from({ length: 4096 }, (_, k) => ({
       hop: k + 1,

@@ -11,10 +11,11 @@
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { readFile, access, realpath } from 'fs/promises';
+import { existsSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { join, resolve, relative, isAbsolute, delimiter } from 'path';
 import { homedir, tmpdir } from 'os';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import pool from '../db.js';
 import { createTask } from '../actions.js';
 import { runJudgeGate, runMechanicalPreflightChecks, checkJudgmentsWritten } from '../harness-judge.js';
@@ -22,6 +23,11 @@ import {
   DEFAULT_BASE_REPO,
   harnessTaskWorktreePath,
 } from '../harness-worktree.js';
+import { collectGroundTruth } from '../orchestrator/ground-truth.js';
+import { sameContractIdentity } from '../orchestrator/gates.js';
+import { persistOneSessionJudgeReceipt } from '../orchestrator/one-session-judge-receipt.js';
+import { executeOneSessionMerge } from '../orchestrator/one-session-merge.js';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 
 const router = Router();
 const judgeRateLimit = rateLimit({
@@ -153,6 +159,57 @@ async function loadJudgeAuthority(requestPool, { runId, taskId }) {
       || harnessTaskWorktreePath(authority.current_task_id),
     sprintDir: authority.sprint_dir,
   };
+}
+
+async function collectOneSessionJudgeGroundTruth(req, {
+  requestPool,
+  authority,
+  safeWorktree,
+  safeSprintDir,
+}) {
+  const injected = req.app.get('kernelOneSessionGroundTruthCollector');
+  const observed = typeof injected === 'function'
+    ? await injected({
+        pool: requestPool,
+        runId: authority.runId,
+        taskId: authority.taskId,
+        worktreePath: safeWorktree,
+        sprintDir: safeSprintDir,
+      })
+    : await collectGroundTruth({
+        pool: requestPool,
+        execCmd: (command) => execSync(command, {
+          cwd: safeWorktree,
+          encoding: 'utf8',
+          maxBuffer: 16 * 1024 * 1024,
+          timeout: 60_000,
+        }),
+        fileExists: existsSync,
+        readFile: (filePath) => readFileSync(filePath, 'utf8'),
+        listHostPids: async () => [],
+      }, {
+        taskId: authority.taskId,
+        runId: authority.runId,
+        prdPath: `${safeSprintDir}/sprint-prd.md`,
+        callbackResultPath: '.brain-result.json',
+      });
+  const identity = observed?.contract?.identity;
+  const artifacts = observed?.contract?.artifacts;
+  const prHeadSha = observed?.pr?.head_sha ?? observed?.candidate?.head_sha ?? null;
+  if (
+    String(observed?.run?.id ?? '') !== String(authority.runId)
+    || String(observed?.task?.id ?? '') !== String(authority.taskId)
+    || observed?.contract?.approved !== true
+    || identity == null
+    || !Array.isArray(artifacts)
+    || artifacts.length === 0
+    || !/^[a-f0-9]{40}$/.test(prHeadSha ?? '')
+  ) {
+    const error = new Error('one_session_judge_authority_incomplete');
+    error.status = 409;
+    throw error;
+  }
+  return { observed, identity, artifacts, prHeadSha };
 }
 
 router.get('/initiative-runs/:id', async (req, res) => {
@@ -2033,7 +2090,7 @@ router.post('/promote/:resultId', async (req, res) => {
  * 三必填校验 → verdict 回退读 .brain-result.json → FIXED 归一 PASS → runJudgeGate 透传。
  * HTTP 恒 200 承载裁决（等价 CLI exit 0/2 由调用方按 body.verdict 分支）。
  */
-router.post('/judge', judgeRateLimit, async (req, res) => {
+router.post('/judge', judgeRateLimit, internalAuthOrLoopback, async (req, res) => {
   const { task_id, run_id, sprint_dir, worktree, agent_verdict, agent_feedback, prompt_dir, transcript_file } = req.body || {};
   if (!task_id || !sprint_dir || !worktree) {
     return res.status(400).json({ error: 'task_id/sprint_dir/worktree 必填' });
@@ -2057,9 +2114,11 @@ router.post('/judge', judgeRateLimit, async (req, res) => {
   let safeWorktree;
   let safeSprintDir;
   let authoritativeRunId;
+  let requestPool;
+  let authority;
   try {
-    const requestPool = req.app.get('pool') || pool;
-    const authority = await loadJudgeAuthority(requestPool, {
+    requestPool = req.app.get('pool') || pool;
+    authority = await loadJudgeAuthority(requestPool, {
       runId: run_id,
       taskId: task_id,
     });
@@ -2073,21 +2132,41 @@ router.post('/judge', judgeRateLimit, async (req, res) => {
     return res.status(err.status || 400).json({ error: err.message });
   }
 
+  let judgeAuthority;
+  try {
+    judgeAuthority = await collectOneSessionJudgeGroundTruth(req, {
+      requestPool,
+      authority,
+      safeWorktree,
+      safeSprintDir,
+    });
+  } catch (err) {
+    return res.status(err.status || 409).json({ error: err.message });
+  }
+
   // 读取 .brain-result.json（完整对象，供机械预检 + runJudgeGate 使用）
   let resolvedBrainResult = null;
-  let verdict = agent_verdict;
-  let feedback = agent_feedback;
+  let brainResultRaw = null;
   try {
-    resolvedBrainResult = JSON.parse(
-      await readFile(join(safeWorktree, '.brain-result.json'), 'utf8'),
-    );
-    if (!verdict) { verdict = resolvedBrainResult.verdict; }
-    if (feedback === undefined) { feedback = resolvedBrainResult.feedback; }
-  } catch { /* verdict 缺省路径下方统一 400 */ }
-  if (!verdict) {
-    return res.status(400).json({ error: 'agent_verdict 缺失且 .brain-result.json 不可读' });
+    brainResultRaw = await readFile(join(safeWorktree, '.brain-result.json'), 'utf8');
+    resolvedBrainResult = JSON.parse(brainResultRaw);
+  } catch {
+    return res.status(400).json({ error: '.brain-result.json 不可读或不是合法 JSON' });
   }
+  let verdict = resolvedBrainResult?.verdict;
+  let feedback = resolvedBrainResult?.feedback;
+  if (!verdict) return res.status(400).json({ error: '.brain-result.json verdict 缺失' });
   if (verdict === 'FIXED') verdict = 'PASS'; // 前科语义归一（memory: harness-evaluator-verdict-bug）
+  const claimedVerdict = agent_verdict === 'FIXED' ? 'PASS' : agent_verdict;
+  if (claimedVerdict && claimedVerdict !== verdict) {
+    return res.status(409).json({ error: 'evaluator_result_conflict' });
+  }
+  if (agent_feedback !== undefined && agent_feedback !== feedback) {
+    return res.status(409).json({ error: 'evaluator_result_conflict' });
+  }
+  const evaluatorEvidenceSha256 = createHash('sha256')
+    .update(brainResultRaw, 'utf8')
+    .digest('hex');
 
   // 刀B — 机械预检（同步，纯结构校验，不调 AI）
   const mechFailSync = runMechanicalPreflightChecks(resolvedBrainResult);
@@ -2108,13 +2187,50 @@ router.post('/judge', judgeRateLimit, async (req, res) => {
       agentFeedback: feedback,
       worktreePath: safeWorktree,
       sprintDir: safeSprintDir,
+      contractText: judgeAuthority.observed.contract.row?.contract_content ?? null,
+      prdText: judgeAuthority.observed.contract.row?.prd_content ?? null,
+      frozenContractArtifacts: judgeAuthority.artifacts,
       taskId: task_id,
       instanceLabel: `judge-api-${String(task_id).slice(0, 8)}`,
-    }, { dbPool: pool });
+    }, { dbPool: pool, strict: true });
+
+    if (result?.judged !== true) {
+      return res.status(409).json({
+        error: 'independent_judge_not_completed',
+        feedback: result?.feedback ?? null,
+      });
+    }
+
+
+    const refreshedAuthority = await collectOneSessionJudgeGroundTruth(req, {
+      requestPool,
+      authority,
+      safeWorktree,
+      safeSprintDir,
+    });
+    if (
+      refreshedAuthority.prHeadSha !== judgeAuthority.prHeadSha
+      || !sameContractIdentity(refreshedAuthority.identity, judgeAuthority.identity)
+    ) {
+      return res.status(409).json({ error: 'one_session_judge_authority_changed' });
+    }
+
+    const receiptWriter = req.app.get('kernelOneSessionJudgeReceiptWriter')
+      || persistOneSessionJudgeReceipt;
+    const receipt = await receiptWriter(requestPool, {
+      runId: authoritativeRunId,
+      taskId: task_id,
+      prHeadSha: judgeAuthority.prHeadSha,
+      contractIdentity: judgeAuthority.identity,
+      evaluatorVerdict: verdict,
+      evaluatorFeedback: feedback,
+      evaluatorEvidenceSha256,
+      judgeResult: result,
+    });
 
     // 刀C-2：judge 判定后自写 judge_verdict 落库（不依赖 controller 容器内 curl 上报）
     // 只写 judged=true 的真实裁决；PASS 禁被回退，FAIL→PASS 允许收敛；写失败 non-fatal
-    if (result?.judged === true) {
+    if (result.judged === true) {
       try {
         await pool.query(
           `UPDATE initiative_runs SET judge_verdict = $1
@@ -2129,10 +2245,80 @@ router.post('/judge', judgeRateLimit, async (req, res) => {
       }
     }
 
-    return res.json(result);
+    return res.json({
+      ...result,
+      authority: {
+        run_id: authoritativeRunId,
+        task_id,
+        pr_head_sha: judgeAuthority.prHeadSha,
+        contract_identity: judgeAuthority.identity,
+      },
+      receipt,
+    });
   } catch (err) {
     console.error('[POST /harness/judge]', err.message);
     return res.status(500).json({ error: 'internal error' });
+  }
+});
+
+router.post('/runs/:runId/merge', internalAuthOrLoopback, async (req, res) => {
+  const runId = req.params.runId;
+  const body = req.body ?? {};
+  if (!UUID_RE.test(runId) || !UUID_RE.test(String(body.task_id ?? ''))) {
+    return res.status(400).json({ error: 'exact run_id/task_id 必须是 uuid' });
+  }
+  if (Object.keys(body).some((key) => key !== 'task_id')) {
+    return res.status(400).json({ error: 'merge authority 字段只允许由服务端解析' });
+  }
+  const requestPool = req.app.get('pool') || pool;
+  let authority;
+  let safeWorktree;
+  let safeSprintDir;
+  try {
+    authority = await loadJudgeAuthority(requestPool, {
+      runId,
+      taskId: body.task_id,
+    });
+    safeWorktree = await resolveStoredJudgeWorktree(authority.worktreePath);
+    safeSprintDir = normalizeJudgeSprintDir(authority.sprintDir);
+  } catch (error) {
+    return res.status(error.status || 409).json({ error: error.message });
+  }
+
+  try {
+    const injected = req.app.get('kernelOneSessionMergeExecutor');
+    let result;
+    if (typeof injected === 'function') {
+      result = await injected({
+        pool: requestPool,
+        taskId: body.task_id,
+        runId,
+        worktreePath: safeWorktree,
+        sprintDir: safeSprintDir,
+      });
+    } else {
+      const { buildRealDeps } = await import('../orchestrator/run.js');
+      const deps = await buildRealDeps({ pool: requestPool });
+      result = await executeOneSessionMerge({
+        pool: requestPool,
+        taskId: body.task_id,
+        runId,
+        collect: () => collectGroundTruth(deps, {
+          taskId: body.task_id,
+          runId,
+          prdPath: `${safeSprintDir}/sprint-prd.md`,
+          callbackResultPath: '.brain-result.json',
+        }),
+        impactGate: deps.impactGate,
+        dispatch: deps.dispatch,
+      });
+    }
+    const status = result?.status === 'DONE'
+      ? 200
+      : (result?.status === 'DONE_WITH_CONCERNS' ? 202 : 409);
+    return res.status(status).json(result);
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message });
   }
 });
 

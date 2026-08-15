@@ -147,7 +147,7 @@ async function routeAtom(pool, atom, verdict, opts) {
   const { route, confidence, reason = '' } = verdict;
   const codingRoute = () => buildCeceliaMutationRoute({
     change_kind: 'bugfix',
-    map_scope: ['factory/F1'],
+    map_scope: ['F1'],
   });
   if (route === 'urgent') {
     // 生产护栏：命中 → 仅 Bark，不自动建 task（决策 57d296a1）

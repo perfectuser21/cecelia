@@ -290,9 +290,9 @@ describe('runJudgeGate 接线：机械闸 FAIL → 不调 DeepSeek', () => {
     expect(r.judged).toBe(true);
     expect(judgeFn).not.toHaveBeenCalled();
   });
-  it('agentVerdict=FAIL 直接透传（机械闸只管 PASS 复核路径）', async () => {
+  it('agentVerdict=FAIL 也由独立 Judge 形成受信终判', async () => {
     const r = await runJudgeGate({ agentVerdict: 'FAIL', agentFeedback: 'x' }, {});
     expect(r.verdict).toBe('FAIL');
-    expect(r.judged).toBe(false);
+    expect(r.judged).toBe(true);
   });
 });

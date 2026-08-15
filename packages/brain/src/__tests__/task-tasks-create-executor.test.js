@@ -41,7 +41,7 @@ const routeFields = {
   change_kind: 'bugfix',
   mutation_intent: 'write',
   repo_hint: 'perfectuser21/cecelia',
-  map_scope_hint: ['cecelia'],
+  map_scope_hint: ['F1'],
   branch: 'cp-executor-contract',
   base_sha: 'a'.repeat(40),
 };
@@ -50,6 +50,9 @@ beforeEach(() => {
   queryMock.mockReset();
   // 创建链路默认 mock：dedup SELECT 返回空（无重复），INSERT 返回新任务行
   queryMock.mockImplementation(async (sql) => {
+    if (/WITH authoritative_scope AS/.test(sql)) {
+      return { rows: [{ node_key: 'F1' }] };
+    }
     if (/INSERT INTO tasks/.test(sql)) {
       return { rows: [{ id: 'task-new', title: 't', status: 'queued', task_type: 'harness_initiative', priority: 'P2', payload: {}, created_at: '2026-07-10T00:00:00Z' }] };
     }

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -160,5 +161,110 @@ describe('independent judge default assembly integration', () => {
     expect(modelBoundary).toHaveBeenCalledOnce();
     expect(renderedPrompt).toContain('embedded contract check');
     expect(renderedPrompt).toContain('embedded fleet step');
+  });
+
+  it('Direct Runner 回执经默认 Brain 接线逐 assertion 交给独立 Judge', async () => {
+    const requiredAssertions = [
+      {
+        assertion_id: 'A1-save',
+        command: 'npm test -- save',
+        covers_capability_ids: ['save-api'],
+      },
+      {
+        assertion_id: 'A2-reload',
+        command: 'npm test -- reload',
+        covers_capability_ids: ['reload-api'],
+      },
+    ];
+    const content = [
+      '# Frozen impact assertions',
+      '',
+      '```json',
+      JSON.stringify({
+        impact_contract_id: 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff',
+        impact_contract_hash: 'a'.repeat(64),
+        required_assertions: requiredAssertions,
+      }, null, 2),
+      '```',
+    ].join('\n');
+    const artifact = {
+      type: 'frozen_contract_test',
+      path: 'direct-contracts/receipt-1/tests/impact-contract.md',
+      content,
+      sha256: createHash('sha256').update(content).digest('hex'),
+      source_sha: 'c'.repeat(40),
+    };
+    let renderedPrompt = '';
+    const modelBoundary = vi.fn(async (input) => {
+      renderedPrompt = buildJudgePrompt(input);
+      return {
+        verdict: 'PASS',
+        coverage: input.goldenPathSteps.map((step) => ({
+          step,
+          passed: true,
+          deferred: false,
+          evidence: `trusted Runner receipt: ${step}`,
+        })),
+        failure_class: null,
+        failure_signature: null,
+        feedback: null,
+      };
+    });
+    const judgeGate = (ctx, opts) => runJudgeGate(ctx, {
+      ...opts,
+      judgeFn: modelBoundary,
+      listTestFilesFn: async () => ['impact-contract.md'],
+    });
+    const pool = { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) };
+    const attemptStore = { complete: vi.fn(async () => ({ deduped: false })) };
+    const handlers = await buildDefaultHandlers({
+      pool,
+      execCmd: vi.fn(),
+      attemptStore,
+      judgeGate,
+    });
+
+    const result = await handlers['spawn:judge']({
+      taskId,
+      runId,
+      hop: 11,
+      attempt: { id: attemptId },
+      bundle: { inputs: {
+        sprint_dir: 'direct-contracts/receipt-1',
+        artifacts: [artifact],
+        contract: {
+          contract_content: '# Direct profile contract',
+          prd_content: '# Direct objective',
+        },
+      } },
+      observed: {
+        run: { id: runId },
+        pr: { state: 'OPEN', merged: false, head_sha: headSha },
+        reviewApproved: false,
+        evaluateVerdict: { verdict: 'PASS', pr_head_sha: headSha },
+        evaluateResult: {
+          status: 'completed',
+          summary: 'human exploration and trusted assertions passed',
+          checks: requiredAssertions.map((assertion) => ({
+            assertion_id: assertion.assertion_id,
+            command_argv: ['bash', '-lc', assertion.command],
+            exit_code: 0,
+            output_tail: `${assertion.assertion_id} passed`,
+            output_digest: 'd'.repeat(64),
+          })),
+          findings: [],
+          screenshots: [],
+          exploration_notes: ['Explored happy path, bad input, and repeat operation.'],
+          decision: { outcome: 'PASS', reason: 'human exploration passed' },
+        },
+      },
+    });
+
+    expect(result).toMatchObject({ status: 'DONE', detail: 'judge:PASS' });
+    expect(modelBoundary).toHaveBeenCalledOnce();
+    expect(renderedPrompt).toContain('required_assertion:A1-save');
+    expect(renderedPrompt).toContain('required_assertion:A2-reload');
+    expect(renderedPrompt).toContain('A1-save passed');
+    expect(renderedPrompt).toContain('A2-reload passed');
   });
 });

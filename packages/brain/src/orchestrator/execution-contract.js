@@ -128,6 +128,64 @@ const decisionSchema = z.object({
   rubric_scores: z.record(z.unknown()).nullish(),
 }).passthrough();
 
+const judgeCoverageEntrySchema = z.object({
+  step: z.string().min(1),
+  passed: z.boolean(),
+  deferred: z.boolean(),
+  evidence: z.string().min(1),
+}).strict();
+
+const judgeDecisionSchema = z.object({
+  outcome: z.enum(['PASS', 'FAIL']),
+  reason: z.string().min(1),
+  coverage: z.array(judgeCoverageEntrySchema),
+  failure_class: z.enum([
+    'evidence_insufficient',
+    'product_failure',
+    'evidence_invalid',
+  ]).nullable(),
+  failure_signature: z.array(z.string().min(1)).min(1).nullable(),
+}).strict().superRefine((decision, ctx) => {
+  if (
+    Array.isArray(decision.failure_signature)
+    && new Set(decision.failure_signature).size !== decision.failure_signature.length
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['failure_signature'],
+      message: 'failure_signature entries must be unique',
+    });
+  }
+  if (
+    decision.outcome === 'PASS'
+    && (decision.failure_class !== null || decision.failure_signature !== null)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'PASS must not carry failure metadata',
+    });
+  }
+  if (
+    decision.outcome === 'FAIL'
+    && (decision.failure_class === null || decision.failure_signature === null)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'FAIL requires failure metadata',
+    });
+  }
+});
+
+export function parseJudgeDecision(value) {
+  try {
+    return judgeDecisionSchema.parse(value);
+  } catch (error) {
+    const contractError = new Error(`judge_result_decision_invalid:${error.message}`);
+    contractError.status = 409;
+    throw contractError;
+  }
+}
+
 // 案卷式 GAN 出口字段（design doc §数据流1）。r17 教训：zod 对象 schema 默认
 // strip 未声明字段——case_file 必须在顶层逐字段显式声明，不能指望顶层
 // passthrough（那会放行任意垃圾字段）。blockers 内部条目形状因角色而异
@@ -138,6 +196,17 @@ const caseFileSchema = z.object({
   blockers: z.array(caseFileBlockerSchema).default([]),
   feedback_md: z.string().optional(),
 }).nullish();
+
+const evaluatorFindingSchema = z.object({
+  id: z.string().min(1),
+  severity: z.enum(['P0', 'P1', 'P2', 'P3']),
+  title: z.string().min(1),
+  expected: z.string(),
+  actual: z.string(),
+  reproduction_steps: z.array(z.string()),
+  evidence: z.array(z.string()),
+  screenshot_paths: z.array(z.string()),
+}).strict();
 
 const harnessResultSchema = z.object({
   contract_version: z.literal(RESULT_CONTRACT_VERSION),
@@ -160,6 +229,9 @@ const harnessResultSchema = z.object({
     session_id: z.string().min(1).nullable().optional(),
   }).passthrough(),
   case_file: caseFileSchema,
+  findings: z.array(evaluatorFindingSchema).optional(),
+  screenshots: z.array(z.string()).optional(),
+  exploration_notes: z.array(z.string()).optional(),
 });
 
 export function parseTaskBundle(value) {
@@ -293,6 +365,34 @@ export function parseHarnessResult(
   const adversarialRole = ['reviewer', 'evaluator', 'judge'].includes(role);
   if (decisionRequired && adversarialRole && !classified.decision) {
     throw new Error(`decision is required for adversarial role ${role}`);
+  }
+  if (
+    decisionRequired
+    && (role === 'evaluator' || expectedOutput === 'harness-result/evaluator-v1')
+    && (
+      !Array.isArray(classified.findings)
+      || !Array.isArray(classified.screenshots)
+      || !Array.isArray(classified.exploration_notes)
+      || (
+        classified.findings.length === 0
+        && classified.screenshots.length === 0
+        && classified.exploration_notes.length === 0
+      )
+    )
+  ) {
+    throw new Error('evaluator_result_human_evidence_required');
+  }
+  if (
+    decisionRequired
+    && (role === 'judge' || expectedOutput === 'harness-result/judge-v1')
+  ) {
+    if (role !== 'judge' || expectedOutput !== 'harness-result/judge-v1') {
+      throw new Error('judge_transport_contract_mismatch');
+    }
+    return {
+      ...classified,
+      decision: parseJudgeDecision(classified.decision),
+    };
   }
   if (decisionRequired && adversarialRole && classified.decision) {
     const outcome = classified.decision.outcome ?? classified.decision.verdict;

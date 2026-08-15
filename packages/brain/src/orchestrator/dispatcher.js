@@ -14,6 +14,9 @@ import { deriveCapabilityRequirements } from './preflight/requirements.js';
 import { expandUnresolvedAccountTargets } from './preflight/execution-targets.js';
 import { HARNESS_BUNDLE_MAX_BYTES } from './constants.js';
 import { AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED } from './attempt-machine-capacity.js';
+import { assertRouteSnapshotLaunchAuthority } from './route-snapshot-authority.js';
+import { DIRECT_PROFILE_CONTRACT_POLICY_VERSION } from './direct-profile-contract.js';
+import { sameContractIdentity } from './gates.js';
 import {
   implementationBaselineFromTaskPayload,
   implementationBaselineFromWorkspace,
@@ -25,6 +28,7 @@ const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_EVALUATOR_FEEDBACK_CHECKS = 20;
+const MAX_JUDGE_FEEDBACK_COVERAGE = 40;
 const RUNTIME_RESULT_ROLES = new Set(['reviewer', 'evaluator', 'judge', 'reporter']);
 const DEFERRED_ACCEPTANCE_CHECKS = Object.freeze([
   'host_docker_inspect',
@@ -34,7 +38,7 @@ const DEFERRED_ACCEPTANCE_CHECKS = Object.freeze([
   'completed_role_chain',
 ]);
 
-export function assertDispatchRoutingReceipt(task, receipt) {
+export function assertDispatchRoutingReceipt(task, receipt, { hasV2Run = false } = {}) {
   const isCoding = task?.task_type === 'dev' || task?.task_type === 'harness_initiative' || task?.payload?.work_kind === 'coding_mutation';
   if (!isCoding) return true;
   if (!receipt
@@ -49,6 +53,16 @@ export function assertDispatchRoutingReceipt(task, receipt) {
       || receipt.repo !== task.payload?.repo
       || receipt.impact_contract_required !== true
       || task.task_type !== 'harness_initiative') {
+    throw new Error('route_violation');
+  }
+  try {
+    assertRouteSnapshotLaunchAuthority({
+      taskStatus: task.status,
+      validationVersion: receipt.map_scope_validation_version,
+      hasV2Run,
+    });
+  } catch (error) {
+    if (error?.code !== 'legacy_route_snapshot_unvalidated') throw error;
     throw new Error('route_violation');
   }
   return true;
@@ -201,6 +215,30 @@ function buildEvaluatorFeedback(observed) {
         log_tail: sanitizeDiagnostic(check.log_tail),
       }))
     : [];
+  const findings = Array.isArray(result.findings)
+    ? result.findings.slice(0, 8).map((finding) => ({
+        id: sanitizeDiagnostic(finding?.id),
+        severity: sanitizeDiagnostic(finding?.severity),
+        title: sanitizeDiagnostic(finding?.title),
+        expected: sanitizeDiagnostic(finding?.expected),
+        actual: sanitizeDiagnostic(finding?.actual),
+        reproduction_steps: Array.isArray(finding?.reproduction_steps)
+          ? finding.reproduction_steps.slice(0, 20).map(sanitizeDiagnostic)
+          : [],
+        evidence: Array.isArray(finding?.evidence)
+          ? finding.evidence.slice(0, 20).map(sanitizeDiagnostic)
+          : [],
+        screenshot_paths: Array.isArray(finding?.screenshot_paths)
+          ? finding.screenshot_paths.slice(0, 20).map(sanitizeDiagnostic)
+          : [],
+      }))
+    : [];
+  const screenshots = Array.isArray(result.screenshots)
+    ? result.screenshots.slice(0, 20).map(sanitizeDiagnostic)
+    : [];
+  const explorationNotes = Array.isArray(result.exploration_notes)
+    ? result.exploration_notes.slice(0, 20).map(sanitizeDiagnostic)
+    : [];
 
   return Object.freeze({
     attempt_id: attemptId,
@@ -209,6 +247,44 @@ function buildEvaluatorFeedback(observed) {
     summary: sanitizeDiagnostic(summary),
     reason: sanitizeDiagnostic(reason),
     checks,
+    findings,
+    screenshots,
+    exploration_notes: explorationNotes,
+  });
+}
+
+function buildJudgeProductFeedback(observed) {
+  const verdict = asObject(observed.judgeVerdict);
+  const currentHeadSha = observed.candidate?.head_sha ?? observed.pr?.head_sha;
+  const feedback = typeof verdict.feedback === 'string' ? verdict.feedback.trim() : '';
+  if (
+    verdict.verdict !== 'FAIL'
+    || verdict.failure_class !== 'product_failure'
+    || !GIT_SHA_PATTERN.test(currentHeadSha ?? '')
+    || verdict.pr_head_sha !== currentHeadSha
+    || feedback.length === 0
+  ) {
+    return null;
+  }
+  const coverage = Array.isArray(verdict.coverage)
+    ? verdict.coverage.slice(0, MAX_JUDGE_FEEDBACK_COVERAGE).map((item) => ({
+        step: sanitizeDiagnostic(item?.step),
+        passed: item?.passed === true,
+        evidence: sanitizeDiagnostic(item?.evidence),
+      }))
+    : [];
+  const failureSignature = Array.isArray(verdict.failure_signature)
+    ? verdict.failure_signature.slice(0, 40).map((item) => sanitizeDiagnostic(item))
+    : verdict.failure_signature == null
+      ? null
+      : sanitizeDiagnostic(verdict.failure_signature);
+  return Object.freeze({
+    verdict: 'FAIL',
+    pr_head_sha: currentHeadSha,
+    failure_class: 'product_failure',
+    ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
+    feedback: sanitizeDiagnostic(feedback),
+    coverage,
   });
 }
 
@@ -366,8 +442,19 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     };
   }
 
+  const plannerArtifact = spec.role === 'proposer'
+    ? observed.plannerPrdArtifact
+    : null;
+  const plannerArtifactPath = (
+    plannerArtifact?.verification_status === 'verified'
+    && /^sprints\/[A-Za-z0-9._/-]+\/sprint-prd[.]md$/.test(plannerArtifact.path ?? '')
+    && !/(^\/|\\|\/\/|(^|\/)\.[.]?(\/|$))/.test(plannerArtifact.path)
+  ) ? plannerArtifact.path : null;
+  if (plannerArtifactPath) {
+    common.sprint_dir = plannerArtifactPath.slice(0, -'/sprint-prd.md'.length);
+  }
   if (spec.role !== 'planner') {
-    common.prd = { path: `${common.sprint_dir}/sprint-prd.md` };
+    common.prd = { path: plannerArtifactPath ?? `${common.sprint_dir}/sprint-prd.md` };
   }
   if (spec.role === 'planner') {
     common.planner_branch = [
@@ -379,7 +466,6 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   }
   if (spec.role === 'proposer') {
     const nextRound = Number(observed.proposeBranchRn ?? 0) + 1;
-    const plannerArtifact = observed.plannerPrdArtifact;
     if (plannerArtifact?.verification_status === 'verified') {
       common.planner_branch = plannerArtifact.branch;
       common.planner_head_sha = plannerArtifact.head_sha;
@@ -465,6 +551,17 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
       }
       common.contract_artifacts = normalizedContractArtifacts.map((artifact) => ({ ...artifact }));
     }
+    const contractIdentity = observed.contract?.identity;
+    if (contractIdentity != null) {
+      if (
+        !UUID_PATTERN.test(contractIdentity.contract_id ?? '')
+        || !SHA256_PATTERN.test(contractIdentity.manifest_sha256 ?? '')
+        || !GIT_SHA_PATTERN.test(contractIdentity.source_revision ?? '')
+      ) {
+        throw new Error('FROZEN_CONTRACT_IDENTITY_INVALID');
+      }
+      common.contract_identity = { ...contractIdentity };
+    }
     common.contract_branch = observed.contract?.row?.branch
       ?? observed.contract?.row?.propose_branch
       ?? null;
@@ -476,6 +573,8 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     if (observed.candidate) common.candidate = { ...observed.candidate };
     const evaluatorFeedback = buildEvaluatorFeedback(observed);
     if (evaluatorFeedback) common.evaluator_feedback = evaluatorFeedback;
+    const judgeFeedback = buildJudgeProductFeedback(observed);
+    if (judgeFeedback) common.judge_feedback = judgeFeedback;
   }
   if (['evaluator', 'judge', 'publisher'].includes(spec.role) && observed.candidate) {
     common.candidate = { ...observed.candidate };
@@ -512,8 +611,34 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
         common.required_assertions = ctx.impactGateReceipt.required_assertions;
       }
     }
+    const approvalProvenance = asObject(observed.contract?.row?.approval_provenance);
+    if (approvalProvenance?.kind === 'direct') {
+      if (
+        approvalProvenance.policy_version !== DIRECT_PROFILE_CONTRACT_POLICY_VERSION
+        || !Array.isArray(common.required_assertions)
+        || common.required_assertions.length === 0
+      ) throw new Error('DIRECT_EVALUATION_AUTHORITY_INVALID');
+      common.evaluation_mode = {
+        kind: 'direct-required-assertions/v1',
+        provider_scope: 'human_exploration',
+        runner_scope: 'trusted_required_assertions',
+        contract_e2e_required: false,
+      };
+    }
   }
   if (spec.role === 'judge') {
+    const evaluatorVerdict = asObject(observed.evaluateVerdict);
+    const evaluatorResult = asObject(observed.evaluateResult);
+    if (
+      !UUID_PATTERN.test(evaluatorVerdict.attempt_id ?? '')
+      || evaluatorResult.attempt_id !== evaluatorVerdict.attempt_id
+      || !sameContractIdentity(
+        evaluatorVerdict.contract_identity,
+        observed.contract?.identity,
+      )
+    ) {
+      throw new Error('judge_evaluator_authority_mismatch');
+    }
     common.evaluator_result = observed.evaluateResult
       ?? observed.evaluateVerdict
       ?? observed.callbackResult
@@ -545,6 +670,12 @@ function buildBundle(
   { deferWorkspaceValidation = false } = {},
 ) {
   const inputs = buildInputs(action, spec, ctx, attemptMetadata);
+  const baseObjective = action === 'spawn:generator-fix'
+    ? `${OBJECTIVES.generator} This is a repair attempt; preserve the current pull request.`
+    : spec.objective ?? OBJECTIVES[spec.role];
+  const objective = inputs.evaluation_mode?.kind === 'direct-required-assertions/v1'
+    ? `${baseObjective} 这是 server-owned direct 验收：合同没有 E2E 段不是失败。Provider 负责人式探索并如实报告 findings；Provider 退出后由 Runner 执行全部可信 required assertions，Provider 不得伪造这些 checks。`
+    : baseObjective;
   const bundle = {
     contract_version: '1.0',
     run_id: ctx.runId,
@@ -552,9 +683,7 @@ function buildBundle(
     hop: ctx.hop,
     phase: ctx.decision?.phase ?? ctx.observed.run?.phase ?? 'unknown',
     role: spec.role,
-    objective: objectiveWithImplementationBaseline(action === 'spawn:generator-fix'
-      ? `${OBJECTIVES.generator} This is a repair attempt; preserve the current pull request.`
-      : spec.objective ?? OBJECTIVES[spec.role], inputs.implementation_baseline),
+    objective: objectiveWithImplementationBaseline(objective, inputs.implementation_baseline),
     skill,
     inputs,
     constraints: {
@@ -786,7 +915,9 @@ export function createDispatcher(deps) {
 
     const spec = resolveAction(action);
     try {
-      assertDispatchRoutingReceipt(ctx.observed.task, ctx.observed.routingReceipt);
+      assertDispatchRoutingReceipt(ctx.observed.task, ctx.observed.routingReceipt, {
+        hasV2Run: Boolean(ctx.observed.run?.id ?? ctx.runId),
+      });
     } catch (error) {
       if (error?.message === 'route_violation' && typeof deps.db?.query === 'function') {
         try {

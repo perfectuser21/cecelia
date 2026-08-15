@@ -16,12 +16,18 @@ const {
   BUDGET_CAP_USD,
 } = constants;
 
+const CURRENT_CONTRACT_IDENTITY = Object.freeze({
+  contract_id: '99999999-9999-4999-8999-999999999999',
+  manifest_sha256: '9'.repeat(64),
+  source_revision: '8'.repeat(64),
+});
+
 function baseObserved(overrides = {}) {
-  return {
+  const observed = {
     run: { phase: 'generate' },
     task: { status: 'in_progress' },
     prdExists: true,
-    contract: { approved: true },
+    contract: { approved: true, identity: CURRENT_CONTRACT_IDENTITY },
     pr: { url: 'https://github.com/x/y/pull/1', state: 'OPEN', ci: 'pass', merged: false, head_sha: 'sha-new' },
     inflight: { containers: [], host_pids: [], attempts: [] },
     lastAgentExit: { code: 0, auth_failed: false },
@@ -35,6 +41,15 @@ function baseObserved(overrides = {}) {
     counters: { hops: 5, fixRound: 0, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
     ...overrides,
   };
+  for (const field of ['evaluateVerdict', 'judgeVerdict']) {
+    if (observed[field] && !observed[field].contract_identity) {
+      observed[field] = {
+        ...observed[field],
+        contract_identity: observed.contract?.identity ?? CURRENT_CONTRACT_IDENTITY,
+      };
+    }
+  }
+  return observed;
 }
 
 describe('Judge 前本地候选与 Judge 后受信发布', () => {
@@ -1294,22 +1309,51 @@ describe('规则 4a：evaluate（verdict SHA 锚定，P0-2）', () => {
     expect(r.action).toBe('spawn:evaluator');
   });
 
+  it('同一 SHA 的旧合同 Evaluator PASS 视为不存在，必须按当前冻结合同重跑', () => {
+    const currentIdentity = {
+      contract_id: '11111111-1111-4111-8111-111111111111',
+      manifest_sha256: 'a'.repeat(64),
+      source_revision: 'b'.repeat(64),
+    };
+    const r = derive(baseObserved({
+      contract: { approved: true, identity: currentIdentity },
+      evaluateVerdict: {
+        verdict: 'PASS',
+        pr_head_sha: 'sha-new',
+        contract_identity: { ...currentIdentity, manifest_sha256: 'c'.repeat(64) },
+      },
+    }));
+
+    expect(r).toEqual({
+      phase: 'evaluate',
+      action: 'spawn:evaluator',
+      reason: 'no_evaluate_verdict_for_head_sha',
+    });
+  });
+
   it('FIXED 归一为 PASS → 进 judge 而非重新 evaluate（harness-evaluator-verdict-bug）', () => {
     const r = derive(baseObserved({ evaluateVerdict: { verdict: 'FIXED', pr_head_sha: 'sha-new' } }));
     expect(r.action).toBe('spawn:judge');
   });
 
-  it("failure_class='contract_invalid' → failed 不入 fix loop（routeAfterEvaluate 语义：责任在 GAN）", () => {
+  it("Evaluator 报 contract_invalid 也必须先由独立 Judge 复核", () => {
     const r = derive(baseObserved({
       evaluateVerdict: { verdict: 'FAIL', pr_head_sha: 'sha-new', failure_class: 'contract_invalid' },
     }));
-    expect(r.phase).toBe('failed');
-    expect(r.reason).toBe('contract_invalid');
+    expect(r).toEqual({
+      phase: 'evaluate',
+      action: 'spawn:judge',
+      reason: 'evaluate_completed_awaiting_judge',
+    });
   });
 
-  it('evaluate FAIL（非 contract_invalid，本 sha）→ spawn:generator-fix（routeAfterEvaluate 否则 fix）', () => {
+  it('evaluate FAIL（本 sha）仍先派独立 Judge 确认，不允许 Evaluator 自判后直接改码', () => {
     const r = derive(baseObserved({ evaluateVerdict: { verdict: 'FAIL', pr_head_sha: 'sha-new' } }));
-    expect(r.action).toBe('spawn:generator-fix');
+    expect(r).toEqual({
+      phase: 'evaluate',
+      action: 'spawn:judge',
+      reason: 'evaluate_completed_awaiting_judge',
+    });
   });
 });
 
@@ -1328,6 +1372,31 @@ describe('规则 4b：judge 硬门禁', () => {
       judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-old' },
     }));
     expect(r.action).toBe('spawn:judge');
+  });
+
+  it('同一 SHA 的旧合同 Judge PASS 视为不存在，当前合同重新派 Judge', () => {
+    const currentIdentity = {
+      contract_id: '22222222-2222-4222-8222-222222222222',
+      manifest_sha256: 'd'.repeat(64),
+      source_revision: 'e'.repeat(64),
+    };
+    const r = derive(baseObserved({
+      contract: { approved: true, identity: currentIdentity },
+      evaluateVerdict: {
+        verdict: 'PASS', pr_head_sha: 'sha-new', contract_identity: currentIdentity,
+      },
+      judgeVerdict: {
+        verdict: 'PASS',
+        pr_head_sha: 'sha-new',
+        contract_identity: { ...currentIdentity, source_revision: 'f'.repeat(64) },
+      },
+    }));
+
+    expect(r).toEqual({
+      phase: 'evaluate',
+      action: 'spawn:judge',
+      reason: 'evaluate_passed_awaiting_judge',
+    });
   });
 });
 
@@ -1394,7 +1463,8 @@ describe('规则 4c：unsigned evidence approval one-shot repair', () => {
 
   it('approval unlocks exactly one unsigned evidence repair', () => {
     const r = derive(baseObserved({
-      evaluateVerdict: repeatedUnsignedVerdict.detail,
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-new' },
+      judgeVerdict: repeatedUnsignedVerdict.detail,
       decisionLog: [
         unsignedVerdict,
         firstRepair,
@@ -1430,7 +1500,8 @@ describe('规则 4c：unsigned evidence approval one-shot repair', () => {
       },
     };
     const r = derive(baseObserved({
-      evaluateVerdict: postApprovalVerdict.detail,
+      evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-new' },
+      judgeVerdict: postApprovalVerdict.detail,
       decisionLog: [
         unsignedVerdict,
         firstRepair,

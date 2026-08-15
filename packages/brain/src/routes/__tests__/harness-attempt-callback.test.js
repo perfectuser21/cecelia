@@ -19,11 +19,14 @@ const mocks = vi.hoisted(() => ({
   transactionClient: { query: vi.fn() },
   terminalize: vi.fn(),
   receiptWriter: vi.fn(),
+  plannerReceiptWriter: vi.fn(),
+  exactBlobResolver: vi.fn(),
   judgeVerifier: vi.fn(),
 }));
 
 vi.mock('../../orchestrator/attempt-store.js', () => ({
   createAttemptStore: () => mocks.store,
+  normalizeRoleVerdict: (_role, verdict) => verdict,
 }));
 vi.mock('../../db.js', () => ({ default: mocks.pool }));
 vi.mock('../../lib/harness-thread-lookup.js', () => ({ lookupHarnessThread: vi.fn() }));
@@ -58,6 +61,7 @@ const attempt = {
   machine_attestation_status: 'local',
   callback_secret_hash: createHash('sha256').update(callbackToken).digest('hex'),
   task_bundle: {
+    expected_output: 'harness-result/evaluator-v1',
     inputs: {
       contract_round: 2,
       pull_request: { head_sha: 'sha-1' },
@@ -72,6 +76,9 @@ const validResult = {
   summary: 'all checks passed',
   artifacts: [],
   checks: [{ command: 'npm test', exit_code: 0 }],
+  findings: [],
+  screenshots: [],
+  exploration_notes: ['Exercised the declared acceptance surface.'],
   decision: { outcome: 'PASS', reason: 'behavior tests passed' },
   error: null,
   provider_metadata: { provider: 'codex', session_id: 'thread-1' },
@@ -198,6 +205,35 @@ it('production server 从环境注入 bridge token 且不记录 secret', () => {
   );
 });
 
+describe('Evaluator verdict exact contract identity', () => {
+  it('把 server-owned TaskBundle contract identity 写入 evaluator verdict', async () => {
+    const { appendAttemptVerdict } = await import('../harness-callback.js');
+    const contractIdentity = {
+      contract_id: '12121212-1212-4121-8121-121212121212',
+      manifest_sha256: 'a'.repeat(64),
+      source_revision: 'b'.repeat(40),
+    };
+    const db = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    await appendAttemptVerdict({
+      ...attempt,
+      task_bundle: { inputs: {
+        pr_head_sha: 'c'.repeat(40),
+        contract_identity: contractIdentity,
+      } },
+    }, {
+      ...validResult,
+      decision: {
+        outcome: 'PASS',
+        reason: 'human acceptance passed',
+        failure_signature: null,
+      },
+    }, db);
+
+    const detail = JSON.parse(db.query.mock.calls[0][1][4]);
+    expect(detail.contract_identity).toEqual(contractIdentity);
+  });
+});
+
 describe('POST /harness/attempts/:attemptId/callback', () => {
   let app;
 
@@ -210,7 +246,10 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     mocks.store.recordCallbackTerminal.mockImplementation(async ({ result, beforeCommit }) => {
       callbackCount += 1;
       if (typeof beforeCommit === 'function') {
-        await beforeCommit(mocks.transactionClient);
+        await beforeCommit(mocks.transactionClient, {
+          attempt: { ...attempt, status: result.status },
+          result,
+        });
       }
       return {
         attempt: { ...attempt, status: result.status, result },
@@ -227,6 +266,11 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       attestation_status: 'verified',
     });
     mocks.receiptWriter.mockResolvedValue([]);
+    mocks.plannerReceiptWriter.mockResolvedValue(null);
+    mocks.exactBlobResolver.mockImplementation(async ({ result }) => ({
+      sanitizedResult: result,
+      exactEvidence: null,
+    }));
     mocks.judgeVerifier.mockImplementation(async ({ result }) => result);
     mocks.pool.query.mockImplementation(async (sql) => {
       if (String(sql).includes('FROM initiative_runs r')) {
@@ -247,9 +291,66 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     app.set('kernelFleetBridgeToken', fleetSecret);
     app.set('kernelFleetTerminalizer', mocks.terminalize);
     app.set('kernelAssertionReceiptWriter', mocks.receiptWriter);
+    app.set('kernelPlannerRecoveryReceiptWriter', mocks.plannerReceiptWriter);
+    app.set('kernelPlannerRecoveryExactBlobResolver', mocks.exactBlobResolver);
     app.set('kernelJudgeResultVerifier', mocks.judgeVerifier);
     app.use(express.json());
     app.use('/api/brain', router);
+    // Legacy route tests below inject the retired branch-head seam. Adapt that
+    // seam inside the test double only; production always uses exact blob
+    // authority and never treats the callback artifact as identity.
+    mocks.exactBlobResolver.mockImplementation(async ({ attempt: ownedAttempt, result }) => {
+      const resolveHead = app.get('kernelGitBranchHeadResolver');
+      if (
+        ownedAttempt.role !== 'planner'
+        || !['completed', 'completed_with_concerns'].includes(result.status)
+        || typeof resolveHead !== 'function'
+      ) return { sanitizedResult: result, exactEvidence: null };
+      const inputs = ownedAttempt.task_bundle.inputs;
+      const targetPath = `${inputs.sprint_dir}/sprint-prd.md`;
+      const claim = result.artifacts.find((artifact) => artifact?.type === 'git_artifact');
+      let resolved;
+      try {
+        resolved = await resolveHead({
+          repo: inputs.workspace_spec.repo,
+          branch: inputs.planner_branch,
+          path: targetPath,
+        });
+      } catch (cause) {
+        const error = new Error('planner_git_artifact_verification_unavailable');
+        error.status = 503;
+        error.cause = cause;
+        throw error;
+      }
+      if (resolved.path_exists !== true) {
+        const error = new Error('planner_git_artifact_path_missing');
+        error.status = 409;
+        throw error;
+      }
+      if (resolved.head_sha !== claim?.head_sha) {
+        const error = new Error('planner_git_artifact_mismatch');
+        error.status = 409;
+        throw error;
+      }
+      return {
+        sanitizedResult: {
+          ...result,
+          artifacts: [{ ...claim, verification_status: 'verified' }],
+          server_verification: {
+            planner_git_artifact: {
+              method: 'git_branch_head',
+              artifact: {
+                path: targetPath,
+                repo: inputs.workspace_spec.repo,
+                branch: inputs.planner_branch,
+                head_sha: resolved.head_sha,
+              },
+            },
+          },
+        },
+        exactEvidence: null,
+      };
+    });
   });
 
   it('接受 machine attestation 与 launch receipt 一致的 xian callback', async () => {
@@ -262,11 +363,43 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledOnce();
   });
 
+  it.each(['evaluator', 'judge'])(
+    '成功 %s callback 必须携带可验证的独立 session_id',
+    async (role) => {
+      mocks.store.getById.mockResolvedValue({
+        ...attempt,
+        role,
+        task_bundle: {
+          expected_output: `harness-result/${role}-v1`,
+          inputs: {},
+        },
+      });
+      const body = {
+        ...validResult,
+        provider_metadata: { provider: 'codex', session_id: null },
+        ...(role === 'judge' ? {
+          decision: {
+            outcome: 'PASS', reason: 'covered', coverage: [],
+            failure_class: null, failure_signature: null,
+          },
+        } : {}),
+      };
+
+      const response = await postCallback(app, body);
+
+      expect(response.status).toBe(409);
+      expect(response.body.error).toBe('provider_session_required');
+      expect(mocks.store.assertFreshRoleSession).not.toHaveBeenCalled();
+      expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
+    },
+  );
+
   it('Judge callback 先过服务端机械闸，再原子投影权威 verdict', async () => {
     const candidateHead = 'b'.repeat(40);
     const judgeAttempt = fleetAttempt({
       role: 'judge',
       task_bundle: {
+        expected_output: 'harness-result/judge-v1',
         inputs: {
           candidate: { head_sha: candidateHead },
           evaluator_result: {
@@ -287,7 +420,16 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
       },
     });
 
-    const response = await postCallback(app, fleetResult());
+    const response = await postCallback(app, {
+      ...fleetResult(),
+      decision: {
+        outcome: 'PASS',
+        reason: 'provider covered every rubric step',
+        coverage: [],
+        failure_class: null,
+        failure_signature: null,
+      },
+    });
 
     expect(response.status).toBe(200);
     expect(mocks.judgeVerifier).toHaveBeenCalledWith({
@@ -303,6 +445,39 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
         }),
       }),
     }));
+  });
+
+  it('Judge callback 的畸形 decision 返回 409 且不写 attempt 终态', async () => {
+    mocks.store.getById.mockResolvedValue(fleetAttempt({
+      role: 'judge',
+      task_bundle: {
+        expected_output: 'harness-result/judge-v1',
+        inputs: {
+          candidate: { head_sha: 'b'.repeat(40) },
+          evaluator_result: {
+            status: 'completed',
+            checks: [],
+            decision: { outcome: 'PASS', reason: 'verified' },
+          },
+        },
+      },
+    }));
+
+    const response = await postCallback(app, {
+      ...fleetResult(),
+      decision: {
+        outcome: 'PASS',
+        reason: 'forged',
+        coverage: [{ step: 123, passed: 'yes' }],
+        failure_class: 'forged_class',
+        failure_signature: { bad: true },
+      },
+    });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toMatch(/judge_result_decision_invalid/);
+    expect(mocks.judgeVerifier).not.toHaveBeenCalled();
+    expect(mocks.store.recordCallbackTerminal).not.toHaveBeenCalled();
   });
 
   it('Fleet callback 在持久化终态前完成 Worker 清理并封存回执', async () => {
@@ -966,6 +1141,130 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(expect.objectContaining({
       beforeCommit: expect.any(Function),
     }));
+  });
+
+  it('Evaluator 人式证据经 parse 后原样进入终态事务与 Judge 可消费结果', async () => {
+    const findings = [{
+      id: 'F-1', severity: 'P1', title: 'Save failed',
+      expected: 'Save succeeds', actual: 'POST /save returned 500',
+      reproduction_steps: ['Open form', 'Click Save'],
+      evidence: ['network:500'], screenshot_paths: ['/tmp/evidence/save.png'],
+    }];
+    const response = await postCallback(app, {
+      ...validResult,
+      findings,
+      screenshots: ['/tmp/evidence/save.png'],
+      exploration_notes: ['Covered success and error paths.'],
+      decision: {
+        outcome: 'FAIL', reason: 'interactive failure',
+        failure_class: 'product_failure', failure_signature: ['save_500'],
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.store.recordCallbackTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          findings,
+          screenshots: ['/tmp/evidence/save.png'],
+          exploration_notes: ['Covered success and error paths.'],
+        }),
+      }),
+    );
+  });
+
+  it('planner exact evidence 仅经闭包进入 hook，并串行写入同一事务', async () => {
+    const plannerBranch = `cp-harness-prd-${attemptId.slice(0, 8)}-a4`;
+    const terminalAttempt = remoteAttempt({
+      role: 'planner',
+      status: 'completed',
+      task_bundle: {
+        inputs: {
+          task_id: '33333333-3333-4333-8333-333333333333',
+          sprint_dir: 'sprints/kernel-real',
+          planner_branch: plannerBranch,
+          workspace_spec: {
+            repo: 'perfectuser21/cecelia',
+            base_sha: 'a'.repeat(40),
+          },
+        },
+      },
+    });
+    const exactEvidence = Object.freeze({ content: '# exact\n' });
+    const sanitizedResult = {
+      ...remoteResult(),
+      artifacts: [],
+      server_verification: {
+        planner_recovery_receipt: {
+          head_sha: 'b'.repeat(40),
+          content_sha256: 'c'.repeat(64),
+          byte_length: 8,
+          changed_files_digest: 'd'.repeat(64),
+          verification_method: 'remote_exact_commit_blob',
+        },
+      },
+    };
+    mocks.store.getById.mockResolvedValue({ ...terminalAttempt, status: 'running' });
+    mocks.exactBlobResolver.mockResolvedValue({ sanitizedResult, exactEvidence });
+    mocks.store.recordCallbackTerminal.mockImplementationOnce(async ({ result, beforeCommit }) => {
+      await beforeCommit(mocks.transactionClient, { attempt: terminalAttempt, result });
+      return { attempt: terminalAttempt, deduped: false };
+    });
+    const order = [];
+    mocks.receiptWriter.mockImplementationOnce(async () => { order.push('evaluator'); });
+    mocks.plannerReceiptWriter.mockImplementationOnce(async () => { order.push('planner'); });
+
+    const response = await postCallback(app, remoteResult());
+
+    expect(response.status).toBe(200);
+    expect(mocks.exactBlobResolver).toHaveBeenCalledWith({
+      attempt: expect.objectContaining({ id: attemptId, status: 'running' }),
+      result: expect.objectContaining({ status: 'completed' }),
+    });
+    expect(mocks.receiptWriter).toHaveBeenCalledWith(mocks.transactionClient, {
+      attempt: terminalAttempt,
+      result: expect.objectContaining({
+        server_verification: sanitizedResult.server_verification,
+      }),
+    });
+    expect(mocks.plannerReceiptWriter).toHaveBeenCalledWith(mocks.transactionClient, {
+      terminalAttempt,
+      result: expect.objectContaining({
+        server_verification: sanitizedResult.server_verification,
+      }),
+      exactEvidence,
+    });
+    expect(order).toEqual(['evaluator', 'planner']);
+  });
+
+  it('planner receipt writer 拒绝证据时 callback 返回 409 且不确认终态', async () => {
+    mocks.store.getById.mockResolvedValue(remoteAttempt({ role: 'planner' }));
+    mocks.exactBlobResolver.mockResolvedValue({
+      sanitizedResult: remoteResult(),
+      exactEvidence: Object.freeze({ content: '# exact\n' }),
+    });
+    const error = new Error('invalid exact evidence');
+    error.code = 'planner_recovery_receipt_evidence_invalid';
+    error.httpStatus = 409;
+    mocks.plannerReceiptWriter.mockRejectedValueOnce(error);
+
+    const response = await postCallback(app, remoteResult());
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe('planner_recovery_receipt_evidence_invalid');
+  });
+
+  it('local-docker planner callback 正常完成但不授 recovery receipt', async () => {
+    mocks.store.getById.mockResolvedValue({ ...attempt, role: 'planner' });
+
+    const response = await postCallback(app, validResult);
+
+    expect(response.status).toBe(200);
+    expect(mocks.exactBlobResolver).toHaveBeenCalledOnce();
+    expect(mocks.plannerReceiptWriter).toHaveBeenCalledWith(
+      mocks.transactionClient,
+      expect.objectContaining({ exactEvidence: null }),
+    );
   });
 
   it('无密钥或错密钥的 callback 返回 401，伪造 reviewer APPROVED 不得写 verdict', async () => {

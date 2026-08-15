@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import pool from '../../db.js';
 import { resolveImpactRadius } from '../../map/radius.js';
 
@@ -12,6 +12,7 @@ const projectionDigest = '2'.repeat(64);
 const capabilityJourneyId = 'e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29';
 const changedFile = 'packages/brain/src/routes/map.js';
 const assertionRef = 'packages/brain/src/impact-contract/__tests__/diff-gate.test.js';
+const assertionDigest = createHash('sha256').update(assertionRef).digest('hex');
 
 describePg('Map radius × Impact Contract [PostgreSQL]', () => {
   let client;
@@ -113,12 +114,20 @@ describePg('Map radius × Impact Contract [PostgreSQL]', () => {
       fact_revisions: { 'perfectuser21/cecelia': baseRevision },
       freshness: { status: 'fresh', reason_code: null },
       affected_nodes: [{ capability_id: 'F1', owner: 'F1' }],
-      required_assertions: [{
-        assertion_id: assertionRef,
-        journey_step_link_id: linkId,
-        assertion_revision: 1,
-        covers_capability_ids: ['F1'],
-      }],
+    });
+    const targetAssertion = result.required_assertions.find(
+      ({ assertion_id: assertionId }) => assertionId === assertionRef,
+    );
+    expect(targetAssertion).toMatchObject({
+      assertion_id: assertionRef,
+      command: `npx vitest run ${assertionRef}`,
+      covers_capability_ids: ['F1'],
+      owner: 'F1',
+    });
+    expect(targetAssertion.source_bindings).toContainEqual({
+      journey_step_link_id: linkId,
+      assertion_revision: 1,
+      assertion_digest: assertionDigest,
     });
   });
 

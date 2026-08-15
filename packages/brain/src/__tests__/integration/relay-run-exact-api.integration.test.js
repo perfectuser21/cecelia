@@ -66,6 +66,7 @@ beforeAll(async () => {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       initiative_id UUID NOT NULL,
       current_task_id UUID,
+      planner_recovery_receipt_id UUID,
       phase TEXT NOT NULL,
       orchestrator_version TEXT,
       commander_mode TEXT NOT NULL DEFAULT 'kernel-only'

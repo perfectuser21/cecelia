@@ -225,7 +225,46 @@ describe('kernel deterministic handlers', () => {
         behavior_tests: evaluatorResult.checks,
         judgments_written: 2,
         summary: 'all checks passed',
+        findings: [],
+        screenshots: [],
+        exploration_notes: [],
       },
+    }), expect.any(Object));
+  });
+
+  it('judge 把 Runner required assertion 回执适配为含身份和日志的机械证据', async () => {
+    const d = deps();
+    const trustedCheck = {
+      assertion_id: 'A1-save',
+      command_argv: ['bash', 'scripts/assertion.sh'],
+      exit_code: 0,
+      output_tail: 'trusted runner proof',
+      output_digest: 'a'.repeat(64),
+    };
+    const ctx = context({
+      observed: {
+        ...context().observed,
+        evaluateResult: {
+          status: 'completed',
+          summary: 'runner assertions completed',
+          checks: [trustedCheck],
+          decision: { outcome: 'PASS', reason: 'verified' },
+        },
+        callbackResult: null,
+      },
+    });
+
+    await createKernelHandlers(d)['spawn:judge'](ctx);
+
+    expect(d.judgeGate).toHaveBeenCalledWith(expect.objectContaining({
+      brainResult: expect.objectContaining({
+        behavior_tests: [expect.objectContaining({
+          assertion_id: 'A1-save',
+          command: 'required_assertion:A1-save argv:["bash","scripts/assertion.sh"]',
+          exit_code: 0,
+          log_tail: 'trusted runner proof',
+        })],
+      }),
     }), expect.any(Object));
   });
 
@@ -264,6 +303,42 @@ describe('kernel deterministic handlers', () => {
     const detail = JSON.parse(verdictCall[1][3]);
     expect(detail.failure_class).toBeNull();
     expect(detail.evaluator_failure_class).toBe('product_failure');
+  });
+
+  it('Judge 的覆盖缺陷和 failure signature 同时写入决策日志与 attempt 结果', async () => {
+    const d = deps();
+    const coverage = [{ step: 'interactive save', passed: false, evidence: 'POST /save 500' }];
+    d.judgeGate.mockResolvedValueOnce({
+      verdict: 'FAIL',
+      judged: true,
+      feedback: 'save is broken',
+      failure_class: 'product_failure',
+      failure_signature: ['save_endpoint_500'],
+      coverage,
+    });
+
+    const contractIdentity = {
+      contract_id: '12121212-1212-4121-8121-121212121212',
+      manifest_sha256: 'a'.repeat(64),
+      source_revision: 'b'.repeat(40),
+    };
+    const ctx = context();
+    ctx.bundle.inputs.contract_identity = contractIdentity;
+    await createKernelHandlers(d)['spawn:judge'](ctx);
+
+    const verdictCall = d.pool.query.mock.calls.find(([sql]) => /verdict:judge/.test(sql));
+    expect(JSON.parse(verdictCall[1][3])).toMatchObject({
+      coverage,
+      failure_signature: ['save_endpoint_500'],
+      contract_identity: contractIdentity,
+    });
+    expect(d.attemptStore.complete).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      decision: expect.objectContaining({
+        coverage,
+        failure_signature: ['save_endpoint_500'],
+        contract_identity: contractIdentity,
+      }),
+    }));
   });
 
   it('human review 首次创建预览并通知', async () => {

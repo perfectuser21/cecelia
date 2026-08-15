@@ -9,6 +9,11 @@ const RUN_ID = 'b0000000-0000-4000-8000-00000000000b';
 const TASK_ID = 'c0000000-0000-4000-8000-00000000000c';
 const SHA = 'approval-head';
 const REVIEW_HOP = 14;
+const CONTRACT_IDENTITY = Object.freeze({
+  contract_id: 'contract-1',
+  manifest_sha256: 'b'.repeat(64),
+  source_revision: 'c'.repeat(40),
+});
 
 function fakePool() {
   const decisionLog = [{
@@ -144,7 +149,12 @@ describe('kernel wiring: authenticated approval route', () => {
       run: { phase: 'review', cost_usd: '0' },
       task: { status: 'in_progress', payload: { review_required: true } },
       prdExists: true,
-      contract: { approved: true, id: 'contract-1', row: {} },
+      contract: {
+        approved: true,
+        id: 'contract-1',
+        identity: CONTRACT_IDENTITY,
+        row: {},
+      },
       pr: {
         url: 'https://github.com/example/repo/pull/42',
         state: 'OPEN',
@@ -157,8 +167,16 @@ describe('kernel wiring: authenticated approval route', () => {
       proposeBranchRn: 0,
       ganLatestRoundVerdict: null,
       generatorSpawned: true,
-      evaluateVerdict: { verdict: 'PASS', pr_head_sha: SHA },
-      judgeVerdict: { verdict: 'PASS', pr_head_sha: SHA },
+      evaluateVerdict: {
+        verdict: 'PASS',
+        pr_head_sha: SHA,
+        contract_identity: CONTRACT_IDENTITY,
+      },
+      judgeVerdict: {
+        verdict: 'PASS',
+        pr_head_sha: SHA,
+        contract_identity: CONTRACT_IDENTITY,
+      },
       reviewRequired: true,
       reviewApproved: approval.detail.verdict === 'APPROVED'
         && approval.detail.pr_head_sha === SHA,

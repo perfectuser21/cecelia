@@ -245,10 +245,10 @@ describe('kernel trust reconciliation on real PostgreSQL', () => {
         await testPool.query(
           `INSERT INTO harness_attempts (
              id, run_id, hop, phase, role, provider,
-             task_bundle, callback_secret_hash
+             task_bundle, callback_secret_hash, status, completed_at
            ) VALUES
-             ($1, $3, 1, 'generate', 'generator', 'auto', '{}'::jsonb, 'x'),
-             ($2, $3, 2, 'generate', 'generator', 'auto', '{}'::jsonb, 'y')`,
+             ($1, $3, 1, 'generate', 'generator', 'auto', '{}'::jsonb, 'x', 'completed', NOW()),
+             ($2, $3, 2, 'generate', 'generator', 'auto', '{}'::jsonb, 'y', 'completed', NOW())`,
           [randomUUID(), randomUUID(), runId],
         );
       }

@@ -35,15 +35,22 @@ async function seedTask({ initiativeId = randomUUID(), withRouting = false } = {
       `INSERT INTO work_routing_receipts (
          id,task_id,source,source_id,work_kind,change_kind,pipeline,
          canonical_task_type,map_scope,impact_contract_required,
-         orchestrator,router_version,route_reason,default_execution_profile,repo,evidence
+         orchestrator,router_version,route_reason,default_execution_profile,repo,evidence,
+         direct_contract_seed,map_scope_validation_version
        ) VALUES (
          $1,$2,'integration',$3,'coding_mutation','bugfix','harness',
          'harness_initiative','["F0"]'::jsonb,true,
-         'kernel-harness-v2','work-router-v1','integration','hotfix-v1','cecelia',$4::jsonb
+         'kernel-harness-v2','work-router-v1','integration','hotfix-v1','cecelia',$4::jsonb,
+         $5::jsonb,'active-business-node-v1'
        )`,
       [receiptId, taskId, `watchdog-race:${taskId}`, JSON.stringify({
         branch: 'cp-watchdog-race-integration',
         base_sha: 'a'.repeat(40),
+      }), JSON.stringify({
+        contract_version: 'direct-profile-contract-seed/v1',
+        title: `watchdog-kernel-identity-${taskId}`,
+        objective: `watchdog-kernel-identity-${taskId}`,
+        execution_profile: 'hotfix-v1',
       })],
     );
   }

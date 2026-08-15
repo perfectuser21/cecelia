@@ -92,7 +92,12 @@ export async function main(argv, deps = {}) {
       instanceLabel: `judge-cli-${args.taskId.slice(0, 8)}`,
       promptDir: args.promptDir || null,
       taskId: args.taskId,
-    });
+    }, { strict: true });
+
+    if (result?.judged !== true) {
+      console.error('judge 未完成独立裁决，禁止把 Provider/Evaluator verdict 当作 PASS');
+      return 1;
+    }
 
     log(JSON.stringify(result));
     return result.verdict === 'PASS' ? 0 : 2;
