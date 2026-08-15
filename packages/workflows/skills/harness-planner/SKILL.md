@@ -7,10 +7,11 @@ description: |
   人类启动 harness/sprint 通过 /dev 路径C（POST localhost:5221/api/brain/tasks，payload 必须带 orchestrator=skill-relay）。
   直接调本 skill = 绕过 controller 接力链，违反 zero-human-gate 原则。
   （2026-07-05 cecelia #3554 起 LangGraph 图编排已废弃，"Brain executor Layer 1 节点"为过时语义。）
-version: 8.17.0
+version: 8.18.0
 created: 2026-04-08
-updated: 2026-08-11
+updated: 2026-08-15
 changelog:
+  - 8.18.0: Planner 直接使用 Dispatcher/Fleet 预置的 server-owned PLANNER_BRANCH；禁止在 Provider 内自行 checkout/switch，避免 routing receipt guard 在分支漂移后把恢复命令一并锁死
   - 8.17.0: 从 task.payload.map_scope/map_repo 读取 Unified Map，作为 scope 锚定的唯一当前地图；缺显式映射时如实记录未配置，不做领域猜测
   - 8.16.0: 修复 #4406 快照同步误revert的 android_realmachine 枚举（原 #3996 洞①修复，本地 cecelia 快照被从 SSOT 覆盖后丢失，回归测试harness-android-target-environment.test.ts 4条断言里的planner 2条转红）——PRD模板枚举行+发货前机械闸正则同步补回；后续需把该枚举回补进 zenithjoy-skills 真身SSOT，否则下次快照同步会再次丢失
   - 8.15.0: EVA v2 审计五修 — ① 修 Step 0.3 THIN_PRD 引用未定义变量 bug（TASK_PAYLOAD→TASK_JSON）；② Step 2 后新增「发货前机械闸」（journey_type/target_environment 枚举 + Invariant/累积FR/NFR/journey_id/step_id 五段结构 + thin-slice 行数自查，任一 FAIL 禁进 Step 3，恢复/重跑同样过闸——d063b3e5 实证 299 行 PRD 穿透）；③ 执行规则加防漂移铁律（输入真相只来自 task payload API，Step 0-3 不可跳）；④ 累积 FR 段加语义反例（禁表格、禁写本 sprint 新行为）；⑤ Step 3 出口 JSON 增 status 四态（DONE/DONE_WITH_CONCERNS/NEEDS_CONTEXT/BLOCKED）
@@ -484,7 +485,9 @@ BODY_LINES=$(sed '/^## Invariant 约束/,/^## [^I]/d' "$SPRINT_DIR/sprint-prd.md
 ### Step 3: push + 返回
 
 ```bash
-git checkout -b "cp-$(TZ=Asia/Shanghai date +%m%d%H%M)-harness-prd"
+CURRENT_BRANCH=$(git branch --show-current)
+[ -n "${PLANNER_BRANCH:-}" ] && [ "$CURRENT_BRANCH" = "$PLANNER_BRANCH" ] \
+  || { echo "FAIL: 当前分支不是服务端签发的 PLANNER_BRANCH"; exit 1; }
 git add "$SPRINT_DIR/sprint-prd.md"
 git commit -m "feat(harness): Initiative PRD — {目标}"
 git push origin HEAD 2>/dev/null || echo "[harness-planner] push skipped (no creds), commit retained on local branch"
@@ -493,7 +496,7 @@ git push origin HEAD 2>/dev/null || echo "[harness-planner] push skipped (no cre
 **最后一条消息**：
 
 ```
-{"verdict": "DONE", "branch": "cp-...", "sprint_dir": "sprints/run-...", "planner_branch": "cp-...", "review_required": false, "status": "DONE"}
+{"verdict": "DONE", "branch": "$PLANNER_BRANCH", "sprint_dir": "sprints/run-...", "planner_branch": "$PLANNER_BRANCH", "review_required": false, "status": "DONE"}
 ```
 
 说明：`planner_branch` 字段供 Brain `runGanLoopNode` 读取，作为 GAN proposer 的 `PLANNER_BRANCH` env，避免回退到 main 读 PRD。

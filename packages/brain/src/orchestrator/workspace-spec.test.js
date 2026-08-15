@@ -241,6 +241,39 @@ describe('production WorkspaceSpec resolution', () => {
     expect(resolveRepoHead).not.toHaveBeenCalled();
   });
 
+  it('starts planner directly on the server-owned planner branch instead of the routing branch', async () => {
+    const resolveRepoHead = vi.fn();
+    const resolveWorkspaceSpec = createWorkspaceSpecResolver({ resolveRepoHead });
+    const plannerBranch = 'cp-harness-prd-aaaaaaaa-r11111111-a2';
+
+    const resolved = await resolveWorkspaceSpec({
+      action: 'spawn:planner',
+      role: 'planner',
+      readOnly: false,
+      attemptId: ATTEMPT_ID,
+      ctx: {
+        runId: RUN_ID,
+        observed: {
+          task: {
+            payload: {
+              branch: 'cp-route-api-locked',
+              base_sha: BASE_SHA,
+            },
+          },
+        },
+      },
+      bundle: { inputs: { planner_branch: plannerBranch } },
+    });
+
+    expect(resolved).toMatchObject({
+      base_sha: BASE_SHA,
+      branch: plannerBranch,
+      expected_head_sha: null,
+      mode: 'read-write',
+    });
+    expect(resolveRepoHead).not.toHaveBeenCalled();
+  });
+
   it('keeps generator-fix on the server-observed pull request branch and head', async () => {
     const resolveRepoHead = vi.fn();
     const resolveWorkspaceSpec = createWorkspaceSpecResolver({ resolveRepoHead });
